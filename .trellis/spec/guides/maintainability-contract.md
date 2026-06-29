@@ -1,0 +1,49 @@
+# Maintainability Contract
+
+> Hard requirements for every change in this project.
+
+日期：2026-06-17
+执行者：Codex
+
+---
+
+## Core Requirements
+
+This project is built for long-term maintenance. Every implementation must optimize for clear ownership, stable structure, readable code, and easy future modification.
+
+Code should be explicit about the real business path. Do not bury the main logic under excessive fallbacks, broad compatibility branches, silent default values, or speculative recovery paths.
+
+---
+
+## Hard Rules
+
+- Prefer boring, direct implementations over clever abstractions.
+- Keep modules small and named by business purpose or technical responsibility.
+- Add abstractions only when they remove proven duplication or match an existing project pattern.
+- Make invalid states visible early with clear errors instead of silently continuing with guessed data.
+- Do not add fallback behavior unless there is a concrete product requirement or documented external dependency instability.
+- Do not catch broad errors only to return empty data, default success, or a vague generic state.
+- Do not introduce compatibility layers for versions, APIs, or data shapes that this project does not actively support.
+- Do not hide failed network, parsing, storage, or API operations behind mock data in production code.
+- Do not add "just in case" branches without a test proving the branch is required.
+
+---
+
+## Acceptable Fallbacks
+
+Fallbacks are allowed only when all of the following are true:
+
+- The failure mode is expected in normal use.
+- The fallback behavior is visible to the caller or user.
+- The fallback preserves correctness rather than merely hiding the problem.
+- The code has a focused test for the fallback path.
+
+---
+
+## Review Checklist
+
+- Can a new maintainer understand the main path without reading unrelated fallback branches?
+- Does each fallback have a real reason documented in code, tests, or product behavior?
+- Are errors surfaced at the correct layer?
+- Would removing a fallback make a hidden bug visible? If yes, remove or redesign it.
+- Does this change reduce future maintenance cost instead of moving complexity elsewhere?

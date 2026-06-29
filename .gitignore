@@ -19,12 +19,22 @@ backend/bin/
 backend/*.test
 
 .codex/
-.agents/
-.trellis/
+.agents/*
+!.agents/skills/
+!.agents/skills/**
 .vscode/
-AGENTS.md
+/AGENTS.md
 frontend/CODEX_PROMPT.md
 verification.md
+
+.trellis/.developer
+.trellis/.current-task
+.trellis/.runtime/
+.trellis/.template-hashes.json
+.trellis/tasks/
+.trellis/workspace/
+.trellis/**/__pycache__/
+.trellis/**/*.pyc
 
 docs/assets/
 docs/design-assets/
