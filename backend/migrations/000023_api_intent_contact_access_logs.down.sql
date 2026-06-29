@@ -1,0 +1,3 @@
+DROP INDEX IF EXISTS ix_api_intent_contact_access_logs_viewer_accessed;
+DROP INDEX IF EXISTS ix_api_intent_contact_access_logs_intent_accessed;
+DROP TABLE IF EXISTS api_purchase_intent_contact_access_logs;

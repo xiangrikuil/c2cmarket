@@ -1,0 +1,407 @@
+package profile
+
+import (
+	"bytes"
+	"context"
+	"crypto/rand"
+	"crypto/tls"
+	"encoding/hex"
+	"fmt"
+	"html/template"
+	"io"
+	"mime"
+	"mime/quotedprintable"
+	"net"
+	"net/http"
+	"net/mail"
+	"net/smtp"
+	"strconv"
+	"strings"
+	"time"
+
+	"c2c-market/backend/internal/domain"
+)
+
+type EmailSender interface {
+	SendVerificationCode(ctx context.Context, toEmail, code string, expiresAt time.Time) *domain.AppError
+	SendRegistrationSuccess(ctx context.Context, toEmail, username, displayName string, registeredAt time.Time) *domain.AppError
+	SendCarpoolApplicationCreated(ctx context.Context, toEmail, listingTitle, applicationID string, createdAt time.Time) *domain.AppError
+	ExposeDevCode() bool
+}
+
+type DevelopmentEmailSender struct{}
+
+func NewDevelopmentEmailSender() DevelopmentEmailSender {
+	return DevelopmentEmailSender{}
+}
+
+func (DevelopmentEmailSender) SendVerificationCode(context.Context, string, string, time.Time) *domain.AppError {
+	return nil
+}
+
+func (DevelopmentEmailSender) SendRegistrationSuccess(context.Context, string, string, string, time.Time) *domain.AppError {
+	return nil
+}
+
+func (DevelopmentEmailSender) SendCarpoolApplicationCreated(context.Context, string, string, string, time.Time) *domain.AppError {
+	return nil
+}
+
+func (DevelopmentEmailSender) ExposeDevCode() bool {
+	return true
+}
+
+type SMTPConfig struct {
+	Host        string
+	Port        int
+	Username    string
+	Password    string
+	FromAddress string
+	FromName    string
+}
+
+type smtpClient interface {
+	Auth(smtp.Auth) error
+	Mail(string) error
+	Rcpt(string) error
+	Data() (io.WriteCloser, error)
+	Quit() error
+	Close() error
+}
+
+type smtpDialer func(ctx context.Context, host, address string) (smtpClient, error)
+
+type SMTPEmailSender struct {
+	host        string
+	port        int
+	username    string
+	password    string
+	fromAddress string
+	fromName    string
+	templates   *emailTemplates
+	dial        smtpDialer
+}
+
+func NewSMTPEmailSender(cfg SMTPConfig) (*SMTPEmailSender, error) {
+	cfg.Host = strings.TrimSpace(cfg.Host)
+	cfg.Username = strings.TrimSpace(cfg.Username)
+	cfg.Password = strings.TrimSpace(cfg.Password)
+	cfg.FromAddress = strings.TrimSpace(cfg.FromAddress)
+	cfg.FromName = strings.TrimSpace(cfg.FromName)
+	if cfg.Port == 0 {
+		cfg.Port = 465
+	}
+	if cfg.FromAddress == "" {
+		cfg.FromAddress = "noreply@example.com"
+	}
+	if cfg.FromName == "" {
+		cfg.FromName = "C2CMarket"
+	}
+	if cfg.Host == "" || cfg.Username == "" || cfg.Password == "" {
+		return nil, fmt.Errorf("SMTP 配置不完整")
+	}
+	if cfg.Port != 465 {
+		return nil, fmt.Errorf("SMTP_PORT 必须为 465")
+	}
+	if _, err := mail.ParseAddress(cfg.FromAddress); err != nil {
+		return nil, fmt.Errorf("MAIL_FROM_ADDRESS 格式不正确")
+	}
+	templates, err := newEmailTemplates()
+	if err != nil {
+		return nil, err
+	}
+	return &SMTPEmailSender{
+		host:        cfg.Host,
+		port:        cfg.Port,
+		username:    cfg.Username,
+		password:    cfg.Password,
+		fromAddress: cfg.FromAddress,
+		fromName:    cfg.FromName,
+		templates:   templates,
+		dial:        dialImplicitTLSSMTP,
+	}, nil
+}
+
+func (s *SMTPEmailSender) SendVerificationCode(ctx context.Context, toEmail, code string, expiresAt time.Time) *domain.AppError {
+	if s == nil {
+		return emailUnavailableError()
+	}
+	htmlBody, err := s.templates.renderVerification(verificationTemplateData{
+		Code:      strings.TrimSpace(code),
+		ExpiresAt: expiresAt.UTC().Format(time.RFC3339),
+	})
+	if err != nil {
+		return emailUnavailableError()
+	}
+	return s.send(ctx, emailMessage{
+		To:       toEmail,
+		Subject:  "C2CMarket 邮箱验证码",
+		TextBody: verificationTextBody(code, expiresAt),
+		HTMLBody: htmlBody,
+	})
+}
+
+func (s *SMTPEmailSender) SendRegistrationSuccess(ctx context.Context, toEmail, username, displayName string, registeredAt time.Time) *domain.AppError {
+	if s == nil {
+		return emailUnavailableError()
+	}
+	name := strings.TrimSpace(displayName)
+	if name == "" {
+		name = strings.TrimSpace(username)
+	}
+	htmlBody, err := s.templates.renderRegistration(registrationTemplateData{
+		DisplayName:  name,
+		Username:     strings.TrimSpace(username),
+		RegisteredAt: registeredAt.UTC().Format(time.RFC3339),
+	})
+	if err != nil {
+		return emailUnavailableError()
+	}
+	return s.send(ctx, emailMessage{
+		To:       toEmail,
+		Subject:  "C2CMarket 注册成功",
+		TextBody: registrationTextBody(username, displayName, registeredAt),
+		HTMLBody: htmlBody,
+	})
+}
+
+func (s *SMTPEmailSender) SendCarpoolApplicationCreated(ctx context.Context, toEmail, listingTitle, applicationID string, createdAt time.Time) *domain.AppError {
+	if s == nil {
+		return emailUnavailableError()
+	}
+	title := strings.TrimSpace(listingTitle)
+	if title == "" {
+		title = "你的车源"
+	}
+	applicationID = strings.TrimSpace(applicationID)
+	htmlBody, err := s.templates.renderCarpoolApplication(carpoolApplicationTemplateData{
+		ListingTitle:  title,
+		ApplicationID: applicationID,
+		CreatedAt:     createdAt.UTC().Format(time.RFC3339),
+	})
+	if err != nil {
+		return emailUnavailableError()
+	}
+	return s.send(ctx, emailMessage{
+		To:       toEmail,
+		Subject:  "C2CMarket 收到新的上车申请",
+		TextBody: carpoolApplicationTextBody(title, applicationID, createdAt),
+		HTMLBody: htmlBody,
+	})
+}
+
+func (s *SMTPEmailSender) ExposeDevCode() bool {
+	return false
+}
+
+func (s *SMTPEmailSender) send(ctx context.Context, message emailMessage) *domain.AppError {
+	to, err := mail.ParseAddress(strings.TrimSpace(message.To))
+	if err != nil {
+		return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Email invalid", "邮箱格式不正确。", "email", "invalid", "邮箱格式不正确。")
+	}
+	from := mail.Address{Name: s.fromName, Address: s.fromAddress}
+	body, err := buildMIMEMessage(from, *to, message)
+	if err != nil {
+		return emailUnavailableError()
+	}
+	client, err := s.dial(ctx, s.host, net.JoinHostPort(s.host, strconv.Itoa(s.port)))
+	if err != nil {
+		return emailSendFailedError()
+	}
+	defer client.Close()
+	if err := client.Auth(smtp.PlainAuth("", s.username, s.password, s.host)); err != nil {
+		return emailSendFailedError()
+	}
+	if err := client.Mail(s.fromAddress); err != nil {
+		return emailSendFailedError()
+	}
+	if err := client.Rcpt(to.Address); err != nil {
+		return emailSendFailedError()
+	}
+	writer, err := client.Data()
+	if err != nil {
+		return emailSendFailedError()
+	}
+	if _, err := writer.Write(body); err != nil {
+		_ = writer.Close()
+		return emailSendFailedError()
+	}
+	if err := writer.Close(); err != nil {
+		return emailSendFailedError()
+	}
+	if err := client.Quit(); err != nil {
+		return emailSendFailedError()
+	}
+	return nil
+}
+
+type standardSMTPClient struct {
+	*smtp.Client
+}
+
+func dialImplicitTLSSMTP(ctx context.Context, host, address string) (smtpClient, error) {
+	dialer := net.Dialer{Timeout: 5 * time.Second}
+	conn, err := dialer.DialContext(ctx, "tcp", address)
+	if err != nil {
+		return nil, err
+	}
+	tlsConn := tls.Client(conn, &tls.Config{
+		ServerName: host,
+		MinVersion: tls.VersionTLS12,
+	})
+	if err := tlsConn.HandshakeContext(ctx); err != nil {
+		_ = conn.Close()
+		return nil, err
+	}
+	client, err := smtp.NewClient(tlsConn, host)
+	if err != nil {
+		_ = tlsConn.Close()
+		return nil, err
+	}
+	return standardSMTPClient{Client: client}, nil
+}
+
+type emailMessage struct {
+	To       string
+	Subject  string
+	TextBody string
+	HTMLBody string
+}
+
+func buildMIMEMessage(from, to mail.Address, message emailMessage) ([]byte, error) {
+	boundary := "c2cmarket-" + randomHex(12)
+	var buf bytes.Buffer
+	writeHeader(&buf, "From", from.String())
+	writeHeader(&buf, "To", to.String())
+	writeHeader(&buf, "Subject", mime.QEncoding.Encode("utf-8", strings.TrimSpace(message.Subject)))
+	writeHeader(&buf, "MIME-Version", "1.0")
+	writeHeader(&buf, "Content-Type", `multipart/alternative; boundary="`+boundary+`"`)
+	buf.WriteString("\r\n")
+	writeMIMEPart(&buf, boundary, "text/plain", message.TextBody)
+	writeMIMEPart(&buf, boundary, "text/html", message.HTMLBody)
+	buf.WriteString("--" + boundary + "--\r\n")
+	return buf.Bytes(), nil
+}
+
+func writeHeader(buf *bytes.Buffer, key, value string) {
+	buf.WriteString(key)
+	buf.WriteString(": ")
+	buf.WriteString(strings.ReplaceAll(value, "\n", ""))
+	buf.WriteString("\r\n")
+}
+
+func writeMIMEPart(buf *bytes.Buffer, boundary, contentType, body string) {
+	buf.WriteString("--" + boundary + "\r\n")
+	buf.WriteString("Content-Type: " + contentType + "; charset=UTF-8\r\n")
+	buf.WriteString("Content-Transfer-Encoding: quoted-printable\r\n\r\n")
+	writer := quotedprintable.NewWriter(buf)
+	_, _ = writer.Write([]byte(body))
+	_ = writer.Close()
+	buf.WriteString("\r\n")
+}
+
+func randomHex(size int) string {
+	buf := make([]byte, size)
+	if _, err := rand.Read(buf); err != nil {
+		return "static-boundary"
+	}
+	return hex.EncodeToString(buf)
+}
+
+type emailTemplates struct {
+	verification       *template.Template
+	registration       *template.Template
+	carpoolApplication *template.Template
+}
+
+func newEmailTemplates() (*emailTemplates, error) {
+	verification, err := template.New("verification").Parse(verificationHTMLTemplate)
+	if err != nil {
+		return nil, err
+	}
+	registration, err := template.New("registration").Parse(registrationHTMLTemplate)
+	if err != nil {
+		return nil, err
+	}
+	carpoolApplication, err := template.New("carpool_application").Parse(carpoolApplicationHTMLTemplate)
+	if err != nil {
+		return nil, err
+	}
+	return &emailTemplates{
+		verification:       verification,
+		registration:       registration,
+		carpoolApplication: carpoolApplication,
+	}, nil
+}
+
+type verificationTemplateData struct {
+	Code      string
+	ExpiresAt string
+}
+
+type registrationTemplateData struct {
+	DisplayName  string
+	Username     string
+	RegisteredAt string
+}
+
+type carpoolApplicationTemplateData struct {
+	ListingTitle  string
+	ApplicationID string
+	CreatedAt     string
+}
+
+func (t *emailTemplates) renderVerification(data verificationTemplateData) (string, error) {
+	var buf bytes.Buffer
+	err := t.verification.Execute(&buf, data)
+	return buf.String(), err
+}
+
+func (t *emailTemplates) renderRegistration(data registrationTemplateData) (string, error) {
+	var buf bytes.Buffer
+	err := t.registration.Execute(&buf, data)
+	return buf.String(), err
+}
+
+func (t *emailTemplates) renderCarpoolApplication(data carpoolApplicationTemplateData) (string, error) {
+	var buf bytes.Buffer
+	err := t.carpoolApplication.Execute(&buf, data)
+	return buf.String(), err
+}
+
+func verificationTextBody(code string, expiresAt time.Time) string {
+	return fmt.Sprintf("你的 C2CMarket 邮箱验证码是：%s\n\n验证码将在 %s 过期。若非本人操作，请忽略本邮件。", strings.TrimSpace(code), expiresAt.UTC().Format(time.RFC3339))
+}
+
+func registrationTextBody(username, displayName string, registeredAt time.Time) string {
+	name := strings.TrimSpace(displayName)
+	if name == "" {
+		name = strings.TrimSpace(username)
+	}
+	if name == "" {
+		name = "C2CMarket 用户"
+	}
+	return fmt.Sprintf("你好，%s：\n\n你的 C2CMarket 账号已注册成功。\n注册时间：%s\n\n若非本人操作，请忽略本邮件。", name, registeredAt.UTC().Format(time.RFC3339))
+}
+
+func carpoolApplicationTextBody(listingTitle, applicationID string, createdAt time.Time) string {
+	title := strings.TrimSpace(listingTitle)
+	if title == "" {
+		title = "你的车源"
+	}
+	return fmt.Sprintf("你的车源「%s」收到新的上车申请。\n申请 ID：%s\n提交时间：%s\n\n请登录 C2CMarket，在商户工作台的订单管理中查看申请详情。", title, strings.TrimSpace(applicationID), createdAt.UTC().Format(time.RFC3339))
+}
+
+func emailUnavailableError() *domain.AppError {
+	return domain.NewError(http.StatusBadGateway, domain.CodeInternalError, "Email sender unavailable", "邮件服务未配置。")
+}
+
+func emailSendFailedError() *domain.AppError {
+	return domain.NewError(http.StatusBadGateway, domain.CodeInternalError, "Email send failed", "邮件发送失败，请稍后重试。")
+}
+
+const verificationHTMLTemplate = `<p>你的 C2CMarket 邮箱验证码是：</p><p style="font-size:24px;font-weight:700;letter-spacing:4px">{{.Code}}</p><p>验证码将在 {{.ExpiresAt}} 过期。若非本人操作，请忽略本邮件。</p>`
+
+const registrationHTMLTemplate = `<p>你好，{{if .DisplayName}}{{.DisplayName}}{{else}}C2CMarket 用户{{end}}：</p><p>你的 C2CMarket 账号已注册成功。</p><p>注册时间：{{.RegisteredAt}}</p><p>若非本人操作，请忽略本邮件。</p>`
+
+const carpoolApplicationHTMLTemplate = `<p>你的车源「{{.ListingTitle}}」收到新的上车申请。</p><p>申请 ID：{{.ApplicationID}}</p><p>提交时间：{{.CreatedAt}}</p><p>请登录 C2CMarket，在商户工作台的订单管理中查看申请详情。</p>`

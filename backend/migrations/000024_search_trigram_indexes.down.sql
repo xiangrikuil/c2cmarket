@@ -1,0 +1,10 @@
+DROP INDEX IF EXISTS ix_merchant_profiles_search_trgm;
+DROP INDEX IF EXISTS ix_linux_do_bindings_search_trgm;
+DROP INDEX IF EXISTS ix_users_search_trgm;
+DROP INDEX IF EXISTS ix_api_model_providers_search_trgm;
+DROP INDEX IF EXISTS ix_api_model_catalog_search_trgm;
+DROP INDEX IF EXISTS ix_product_plans_search_trgm;
+DROP INDEX IF EXISTS ix_demands_search_trgm;
+DROP INDEX IF EXISTS ix_carpool_listings_search_trgm;
+DROP INDEX IF EXISTS ix_api_service_models_search_trgm;
+DROP INDEX IF EXISTS ix_api_services_search_trgm;

@@ -1,0 +1,651 @@
+<script setup lang="ts">
+import { computed, reactive, ref, watchEffect } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
+import { toast } from 'vue-sonner'
+import { Car, ContactRound, Eye, Link2, LockKeyhole, LogIn, MailCheck, RefreshCw, Save, ShoppingBag, Trash2, UserRound, UsersRound } from 'lucide-vue-next'
+import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
+import { Card } from '@/components/ui/card'
+import { Input } from '@/components/ui/input'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { Textarea } from '@/components/ui/textarea'
+import StatCard from '@/components/market/StatCard.vue'
+import SoftTable from '@/components/market/SoftTable.vue'
+import TablePagination from '@/components/market/TablePagination.vue'
+import { usePagination } from '@/composables/usePagination'
+import { getPricingDisplay, getRemainingSeats } from '@/lib/pricing'
+import { getApiMerchantDisplayName, getApiMerchantVisibilityLabel, getApiServicePublicDetailUrl, type ApiService, type AvatarMode, type ContactMethodType, type ContactUsageScope, type SaveContactMethodRequest, type UserContactMethod, type UserPrivacySettings } from '@/lib/api'
+import {
+  useApiServices,
+  useConfirmEmailVerificationMutation,
+  useCreateContactMethodMutation,
+  useDeleteContactMethodMutation,
+  useDeleteCustomAvatarMutation,
+  useMyContactMethodsQuery,
+  useMyApiServices,
+  useMyCarpools,
+  usePauseApiServiceMutation,
+  useMyProfileQuery,
+  usePublishApiServiceMutation,
+  useResumeApiServiceMutation,
+  useSetBackupPasswordMutation,
+  useSetDefaultContactMethodMutation,
+  useStartEmailVerificationMutation,
+  useUpdateContactMethodMutation,
+  useUpdateMyProfileMutation,
+  useUseLinuxDoAvatarMutation,
+  useVerifyContactMethodMutation,
+} from '@/queries/useMarketQueries'
+
+const route = useRoute()
+const router = useRouter()
+const profileQuery = useMyProfileQuery()
+const profile = profileQuery.data
+const { data: contacts } = useMyContactMethodsQuery()
+const { data: carpools } = useMyCarpools()
+const { data: apiServices } = useMyApiServices()
+
+const updateProfileMutation = useUpdateMyProfileMutation()
+const deleteAvatarMutation = useDeleteCustomAvatarMutation()
+const useLinuxDoAvatarMutation = useUseLinuxDoAvatarMutation()
+const setPasswordMutation = useSetBackupPasswordMutation()
+const startEmailVerificationMutation = useStartEmailVerificationMutation()
+const confirmEmailVerificationMutation = useConfirmEmailVerificationMutation()
+const createContactMutation = useCreateContactMethodMutation()
+const updateContactMutation = useUpdateContactMethodMutation()
+const deleteContactMutation = useDeleteContactMethodMutation()
+const setDefaultContactMutation = useSetDefaultContactMethodMutation()
+const verifyContactMutation = useVerifyContactMethodMutation()
+const publishApiServiceMutation = usePublishApiServiceMutation()
+const pauseApiServiceMutation = usePauseApiServiceMutation()
+const resumeApiServiceMutation = useResumeApiServiceMutation()
+
+const sectionLinks = [
+  { label: '概览', to: '/my', key: 'overview' },
+  { label: '个人资料', to: '/my/profile', key: 'profile' },
+  { label: '联系方式', to: '/my/contacts', key: 'contacts' },
+  { label: '账号与认证', to: '/my/account', key: 'account' },
+  { label: '隐私设置', to: '/my/privacy', key: 'privacy' },
+  { label: '我的收藏', to: '/my/favorites', key: 'favorites' },
+  { label: '通知设置', to: '/my/notifications', key: 'notifications' },
+] as const
+
+const contactTypeOptions: { value: ContactMethodType, label: string }[] = [
+  { value: 'linuxdo', label: 'linux.do 私信' },
+  { value: 'wechat', label: '微信' },
+  { value: 'email', label: '邮箱' },
+  { value: 'telegram', label: 'Telegram' },
+  { value: 'other', label: '其他' },
+]
+
+const usageScopeOptions: { value: ContactUsageScope, label: string }[] = [
+  { value: 'carpool_owner', label: '拼车车主' },
+  { value: 'api_merchant', label: 'API 商户' },
+  { value: 'buyer', label: '买家' },
+  { value: 'dispute', label: '纠纷联系' },
+]
+
+const activeSection = computed(() => {
+  if (route.path === '/my/profile') return 'profile'
+  if (route.path === '/my/contacts') return 'contacts'
+  if (route.path === '/my/account') return 'account'
+  if (route.path === '/my/privacy') return 'privacy'
+  if (route.path === '/my/favorites') return 'favorites'
+  if (route.path === '/my/notifications') return 'notifications'
+  return 'overview'
+})
+
+const profileForm = reactive({
+  displayName: '',
+  username: '',
+  bio: '',
+  regionCode: '',
+  timezone: 'Asia/Shanghai',
+  avatarMode: 'linuxdo' as AvatarMode,
+  avatarUrl: '',
+})
+
+const passwordForm = reactive({
+  currentPassword: '',
+  newPassword: '',
+  confirmPassword: '',
+})
+
+const emailForm = reactive({
+  email: '',
+  code: '',
+  devCode: '',
+})
+
+const privacyForm = reactive<UserPrivacySettings>({
+  showCreatedAt: true,
+  showLastActiveAt: true,
+  showCompletionStats: true,
+  showResponseMedian: true,
+  showResolvedDisputeSummary: true,
+  allowPublicProfileReport: true,
+})
+
+const contactForm = reactive<SaveContactMethodRequest>({
+  type: 'wechat',
+  label: '微信',
+  displayValue: '',
+  usageScopes: ['carpool_owner'],
+  isDefault: false,
+  enabled: true,
+})
+const editingContactId = ref('')
+
+watchEffect(() => {
+  if (!profile.value) return
+  profileForm.displayName = profile.value.displayName
+  profileForm.username = profile.value.username
+  profileForm.bio = profile.value.bio ?? ''
+  profileForm.regionCode = profile.value.regionCode ?? ''
+  profileForm.timezone = profile.value.timezone ?? 'Asia/Shanghai'
+  profileForm.avatarMode = profile.value.avatarMode
+  profileForm.avatarUrl = profile.value.customAvatarUrl ?? ''
+  if (!emailForm.email) emailForm.email = profile.value.email ?? ''
+  Object.assign(privacyForm, profile.value.privacy)
+})
+
+const carpoolRows = computed(() => carpools.value ?? [])
+const apiServiceRows = computed(() => apiServices.value ?? [])
+const carpoolPagination = usePagination(carpoolRows)
+const apiServicePagination = usePagination(apiServiceRows)
+const enabledContactCount = computed(() => (contacts.value ?? []).filter(item => item.enabled).length)
+const avatarText = computed(() => (profile.value?.displayName || profile.value?.username || '我').slice(0, 1).toUpperCase())
+const profileErrorMessage = computed(() => {
+  const error = profileQuery.error.value
+  return error instanceof Error ? error.message : '无法读取个人资料，请登录后重试。'
+})
+
+function isSectionActive(to: string) {
+  return route.path === to
+}
+
+function contactTypeLabel(type: ContactMethodType) {
+  return contactTypeOptions.find(item => item.value === type)?.label ?? type
+}
+
+function scopeLabels(scopes: ContactUsageScope[]) {
+  return scopes.map(scope => usageScopeOptions.find(item => item.value === scope)?.label ?? scope).join('、')
+}
+
+function toggleScope(scope: ContactUsageScope) {
+  contactForm.usageScopes = contactForm.usageScopes.includes(scope)
+    ? contactForm.usageScopes.filter(item => item !== scope)
+    : [...contactForm.usageScopes, scope]
+}
+
+function resetContactForm() {
+  editingContactId.value = ''
+  contactForm.type = 'wechat'
+  contactForm.label = '微信'
+  contactForm.displayValue = ''
+  contactForm.usageScopes = ['carpool_owner']
+  contactForm.isDefault = false
+  contactForm.enabled = true
+}
+
+function editContact(contact: UserContactMethod) {
+  editingContactId.value = contact.id
+  contactForm.type = contact.type
+  contactForm.label = contact.label
+  contactForm.displayValue = contact.displayValue
+  contactForm.usageScopes = [...contact.usageScopes]
+  contactForm.isDefault = contact.isDefault
+  contactForm.enabled = contact.enabled
+}
+
+function saveProfile() {
+  updateProfileMutation.mutate({
+    displayName: profileForm.displayName,
+    username: profileForm.username,
+    bio: profileForm.bio || null,
+    regionCode: profileForm.regionCode || null,
+    timezone: profileForm.timezone || null,
+    avatarMode: profileForm.avatarMode,
+    avatarUrl: profileForm.avatarMode === 'custom_url' ? profileForm.avatarUrl.trim() : null,
+    privacy: privacyForm,
+  }, {
+    onSuccess: () => toast.success('个人资料已保存。'),
+    onError: error => toast.error(error instanceof Error ? error.message : '保存失败'),
+  })
+}
+
+function savePassword() {
+  if (passwordForm.newPassword !== passwordForm.confirmPassword) {
+    toast.warning('两次输入的新密码不一致。')
+    return
+  }
+  setPasswordMutation.mutate({
+    currentPassword: passwordForm.currentPassword || undefined,
+    newPassword: passwordForm.newPassword,
+  }, {
+    onSuccess: () => {
+      passwordForm.currentPassword = ''
+      passwordForm.newPassword = ''
+      passwordForm.confirmPassword = ''
+      toast.success('备用密码已更新。')
+    },
+    onError: error => toast.error(error instanceof Error ? error.message : '备用密码更新失败。'),
+  })
+}
+
+function startEmailVerification() {
+  startEmailVerificationMutation.mutate(emailForm.email, {
+    onSuccess: challenge => {
+      emailForm.email = challenge.email
+      emailForm.code = ''
+      emailForm.devCode = challenge.devCode ?? ''
+      toast.success('验证码已发送。')
+    },
+    onError: error => toast.error(error instanceof Error ? error.message : '验证码发送失败。'),
+  })
+}
+
+function confirmEmailVerification() {
+  confirmEmailVerificationMutation.mutate({
+    email: emailForm.email,
+    code: emailForm.code,
+  }, {
+    onSuccess: () => {
+      emailForm.code = ''
+      emailForm.devCode = ''
+      toast.success('邮箱已绑定。')
+    },
+    onError: error => toast.error(error instanceof Error ? error.message : '邮箱绑定失败。'),
+  })
+}
+
+function savePrivacy() {
+  if (!profile.value) return
+  saveProfile()
+}
+
+function saveContact() {
+  if (!contactForm.usageScopes.length) {
+    toast.warning('至少选择一个适用场景。')
+    return
+  }
+  const payload = { ...contactForm, usageScopes: [...contactForm.usageScopes] }
+  const mutationOptions = {
+    onSuccess: () => {
+      toast.success(editingContactId.value ? '联系方式已更新。' : '联系方式已新增。')
+      resetContactForm()
+    },
+    onError: (error: Error) => toast.error(error.message),
+  }
+  if (editingContactId.value) {
+    updateContactMutation.mutate({ contactId: editingContactId.value, payload }, mutationOptions)
+    return
+  }
+  createContactMutation.mutate(payload, mutationOptions)
+}
+
+function removeContact(contact: UserContactMethod) {
+  deleteContactMutation.mutate(contact.id, {
+    onSuccess: () => toast.success('联系方式已删除。'),
+    onError: error => toast.error(error instanceof Error ? error.message : '删除失败'),
+  })
+}
+
+function setDefaultContact(contact: UserContactMethod) {
+  setDefaultContactMutation.mutate(contact.id, {
+    onSuccess: () => toast.success('默认联系方式已更新。'),
+    onError: error => toast.error(error instanceof Error ? error.message : '设置失败'),
+  })
+}
+
+function verifyContact(contact: UserContactMethod) {
+  verifyContactMutation.mutate(contact.id, {
+    onSuccess: () => toast.success('联系方式已标记为已验证，本地 mock 状态。'),
+    onError: error => toast.error(error instanceof Error ? error.message : '验证失败'),
+  })
+}
+
+function apiServiceStatusLabel(state: string, online: boolean) {
+  if (online) return '在线'
+  if (state === 'reviewing') return '审核中'
+  if (state === 'paused') return '暂停'
+  return '离线'
+}
+
+function apiServiceStatusVariant(state: string, online: boolean) {
+  if (online) return 'default'
+  if (state === 'reviewing') return 'secondary'
+  if (state === 'paused') return 'secondary'
+  return 'outline'
+}
+
+function apiServicePublicDetailUrl(item: ApiService) {
+  return getApiServicePublicDetailUrl(item)
+}
+
+function publishService(id: string) {
+  publishApiServiceMutation.mutate(id, {
+    onSuccess: () => toast.success('API 服务已上线。'),
+    onError: error => toast.error(error instanceof Error ? error.message : '上线失败。'),
+  })
+}
+
+function pauseService(id: string) {
+  pauseApiServiceMutation.mutate(id, {
+    onSuccess: () => toast.success('API 服务已暂停。'),
+    onError: error => toast.error(error instanceof Error ? error.message : '暂停失败。'),
+  })
+}
+
+function resumeService(id: string) {
+  resumeApiServiceMutation.mutate(id, {
+    onSuccess: () => toast.success('API 服务已恢复上线。'),
+    onError: error => toast.error(error instanceof Error ? error.message : '恢复失败。'),
+  })
+}
+
+function goToLogin() {
+  router.push({ path: '/login', query: { returnTo: route.fullPath } })
+}
+</script>
+
+<template>
+  <div v-if="profileQuery.isPending.value" class="rounded-xl border border-border bg-card p-8 text-sm text-muted-foreground">正在加载个人资料...</div>
+  <Card v-else-if="profileQuery.isError.value || !profile" class="mx-auto max-w-2xl p-6">
+    <div class="flex flex-col gap-4 sm:flex-row sm:items-start">
+      <div class="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-primary/10 text-primary">
+        <LogIn class="h-5 w-5" />
+      </div>
+      <div class="min-w-0 flex-1">
+        <h1 class="text-lg font-semibold tracking-tight">请先登录后查看我的中心</h1>
+        <p class="mt-2 text-sm leading-6 text-muted-foreground">
+          {{ profileErrorMessage }}
+        </p>
+        <div class="mt-5 flex flex-wrap gap-2">
+          <Button @click="goToLogin"><LogIn class="h-4 w-4" />去登录</Button>
+          <Button variant="outline" :disabled="profileQuery.isFetching.value" @click="profileQuery.refetch()">
+            <RefreshCw class="h-4 w-4" :class="profileQuery.isFetching.value ? 'animate-spin' : ''" />
+            重新读取
+          </Button>
+        </div>
+      </div>
+    </div>
+  </Card>
+  <div v-else class="space-y-5">
+    <Card class="p-5">
+      <div class="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+        <div class="flex min-w-0 gap-4">
+          <div class="grid h-16 w-16 shrink-0 place-items-center overflow-hidden rounded-full bg-primary text-xl font-semibold text-primary-foreground">
+            <img v-if="profile.avatarUrl" :src="profile.avatarUrl" alt="当前头像" class="h-full w-full object-cover" />
+            <span v-else>{{ avatarText }}</span>
+          </div>
+          <div class="min-w-0">
+            <div class="flex flex-wrap items-center gap-2">
+              <h1 class="text-2xl font-semibold tracking-tight">{{ profile.displayName }}</h1>
+              <Badge v-for="badge in profile.badges" :key="badge.id" :variant="badge.type === 'system' ? 'default' : 'secondary'">{{ badge.label }}</Badge>
+            </div>
+            <p class="mt-1 text-sm text-muted-foreground">
+              @{{ profile.username }} · linux.do @{{ profile.linuxDoBinding.linuxDoUsername }} · 信任等级{{ profile.linuxDoBinding.trustLevel }}
+            </p>
+            <p class="mt-2 max-w-3xl text-sm text-muted-foreground">{{ profile.bio }}</p>
+          </div>
+        </div>
+        <div class="flex flex-wrap gap-2">
+          <Button variant="outline" @click="router.push(`/u/${profile.username}`)"><Eye class="h-4 w-4" />查看公开主页</Button>
+          <Button @click="router.push('/my/profile')"><UserRound class="h-4 w-4" />编辑个人资料</Button>
+        </div>
+      </div>
+    </Card>
+
+    <nav class="flex gap-2 overflow-x-auto pb-1" aria-label="我的中心二级导航">
+      <RouterLink
+        v-for="item in sectionLinks"
+        :key="item.to"
+        :to="item.to"
+        class="shrink-0 rounded-md border px-3 py-2 text-sm transition"
+        :class="isSectionActive(item.to) ? 'border-primary bg-primary text-primary-foreground' : 'border-border bg-card text-muted-foreground hover:bg-accent hover:text-foreground'"
+      >
+        {{ item.label }}
+      </RouterLink>
+    </nav>
+
+    <section v-if="activeSection === 'overview'" class="space-y-5">
+      <div class="grid gap-3 md:grid-cols-4">
+        <RouterLink to="/my/carpools"><StatCard label="我的开车" :value="String(carpoolRows.length)" hint="仅展示当前用户车源" :icon="Car" accent /></RouterLink>
+        <RouterLink to="/my/rides"><StatCard label="我的上车" value="5" hint="1 个待完成" :icon="UsersRound" /></RouterLink>
+        <RouterLink to="/my/api-orders"><StatCard label="API 意向" value="2" hint="1 个站外确认中" :icon="ShoppingBag" /></RouterLink>
+        <RouterLink to="/my/contacts"><StatCard label="启用联系方式" :value="String(enabledContactCount)" hint="只在私有页和联系窗口内可见" :icon="ContactRound" /></RouterLink>
+      </div>
+
+      <div class="grid gap-5 lg:grid-cols-2">
+        <section class="space-y-3">
+          <h2 class="font-semibold">我的开车</h2>
+          <SoftTable :columns="['车源', '价格', '车位', '状态']">
+            <tr v-for="item in carpoolPagination.paginatedRows.value" :key="item.id">
+              <td>{{ item.product }}</td>
+              <td>{{ getPricingDisplay(item).primaryLabel }} ¥{{ getPricingDisplay(item).primaryPrice }}</td>
+              <td>剩余 {{ getRemainingSeats(item) }} 位</td>
+              <td><Badge>{{ item.status }}</Badge></td>
+            </tr>
+            <tr v-if="carpoolRows.length === 0"><td colspan="4" class="py-8 text-center text-sm text-muted-foreground">暂无当前用户车源。</td></tr>
+            <template #footer>
+              <TablePagination v-model:page="carpoolPagination.page.value" :page-count="carpoolPagination.pageCount.value" :total="carpoolPagination.total.value" :start-item="carpoolPagination.startItem.value" :end-item="carpoolPagination.endItem.value" />
+            </template>
+          </SoftTable>
+        </section>
+
+        <section class="space-y-3">
+          <h2 class="font-semibold">API 服务</h2>
+          <SoftTable :columns="['服务', '对外商家名', '额度', '状态', '操作']">
+            <tr v-for="item in apiServicePagination.paginatedRows.value" :key="item.id">
+              <td>{{ item.title }}</td>
+              <td>
+                <div>{{ getApiMerchantDisplayName(item) }}</div>
+                <div class="text-xs text-muted-foreground">{{ getApiMerchantVisibilityLabel(item) }}</div>
+              </td>
+              <td>¥{{ item.balance }}</td>
+              <td><Badge :variant="apiServiceStatusVariant(item.state, item.online)">{{ apiServiceStatusLabel(item.state, item.online) }}</Badge></td>
+              <td>
+                <div class="flex flex-wrap gap-2">
+                  <Button v-if="item.state === 'offline'" size="sm" @click="publishService(item.id)">上线</Button>
+                  <Button v-if="item.online" size="sm" variant="outline" @click="pauseService(item.id)">暂停</Button>
+                  <Button v-if="item.state === 'paused'" size="sm" variant="outline" @click="resumeService(item.id)">恢复</Button>
+                  <RouterLink v-if="apiServicePublicDetailUrl(item)" :to="apiServicePublicDetailUrl(item)!"><Button size="sm" variant="outline">查看</Button></RouterLink>
+                  <Button v-else size="sm" variant="outline" disabled>待配置接单</Button>
+                </div>
+              </td>
+            </tr>
+            <tr v-if="apiServiceRows.length === 0"><td colspan="5" class="py-8 text-center text-sm text-muted-foreground">暂无当前用户 API 服务。</td></tr>
+            <template #footer>
+              <TablePagination v-model:page="apiServicePagination.page.value" :page-count="apiServicePagination.pageCount.value" :total="apiServicePagination.total.value" :start-item="apiServicePagination.startItem.value" :end-item="apiServicePagination.endItem.value" />
+            </template>
+          </SoftTable>
+        </section>
+      </div>
+    </section>
+
+    <section v-else-if="activeSection === 'profile'" class="grid gap-5 xl:grid-cols-[1fr_360px]">
+      <Card class="p-5">
+        <h2 class="font-semibold">个人资料设置</h2>
+        <div class="mt-5 grid gap-4 md:grid-cols-2">
+          <label class="space-y-2"><span class="text-sm font-medium">显示名称</span><Input v-model="profileForm.displayName" /></label>
+          <label class="space-y-2"><span class="text-sm font-medium">站内用户名</span><Input v-model="profileForm.username" /></label>
+          <label class="space-y-2 md:col-span-2"><span class="text-sm font-medium">个人简介</span><Textarea v-model="profileForm.bio" class="min-h-28" maxlength="300" /></label>
+          <label class="space-y-2"><span class="text-sm font-medium">常用地区</span><Input v-model="profileForm.regionCode" placeholder="cn-east / hk / jp" /></label>
+          <label class="space-y-2">
+            <span class="text-sm font-medium">时区</span>
+            <Select v-model="profileForm.timezone">
+              <SelectTrigger class="w-full bg-background"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="Asia/Shanghai">Asia/Shanghai</SelectItem>
+                <SelectItem value="Asia/Hong_Kong">Asia/Hong_Kong</SelectItem>
+                <SelectItem value="Asia/Tokyo">Asia/Tokyo</SelectItem>
+                <SelectItem value="America/Los_Angeles">America/Los_Angeles</SelectItem>
+              </SelectContent>
+            </Select>
+          </label>
+        </div>
+        <Button class="mt-5" :disabled="updateProfileMutation.isPending.value" @click="saveProfile"><Save class="h-4 w-4" />保存个人资料</Button>
+      </Card>
+
+      <Card class="p-5">
+        <h2 class="font-semibold">头像</h2>
+        <div class="mt-4 space-y-3">
+          <label class="flex items-center gap-2 text-sm"><input v-model="profileForm.avatarMode" type="radio" value="linuxdo" />跟随 linux.do 头像</label>
+          <label class="flex items-center gap-2 text-sm"><input v-model="profileForm.avatarMode" type="radio" value="custom_url" />使用 HTTPS 图片 URL</label>
+          <label class="space-y-2">
+            <span class="text-sm font-medium">自定义头像 URL</span>
+            <Input v-model="profileForm.avatarUrl" :disabled="profileForm.avatarMode !== 'custom_url'" placeholder="https://example.com/avatar.webp" />
+          </label>
+          <div class="rounded-md border border-border bg-accent/50 p-3 text-xs leading-5 text-muted-foreground">
+            第一版不做本地上传。自定义头像必须是 HTTPS JPG、PNG 或 WebP 图片 URL；平台不代理、不下载、不缓存图片。
+          </div>
+          <div class="flex flex-wrap gap-2">
+            <Button size="sm" variant="outline" @click="useLinuxDoAvatarMutation.mutate()"><Link2 class="h-4 w-4" />恢复 linux.do</Button>
+            <Button size="sm" variant="outline" @click="deleteAvatarMutation.mutate()"><Trash2 class="h-4 w-4" />删除自定义头像</Button>
+            <Button size="sm" @click="saveProfile"><Save class="h-4 w-4" />保存头像来源</Button>
+          </div>
+        </div>
+      </Card>
+    </section>
+
+    <section v-else-if="activeSection === 'contacts'" class="grid gap-5 xl:grid-cols-[1fr_380px]">
+      <div class="space-y-3">
+        <Card v-for="contact in contacts ?? []" :key="contact.id" class="p-4">
+          <div class="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+            <div>
+              <div class="flex flex-wrap items-center gap-2">
+                <h2 class="font-semibold">{{ contact.label }}</h2>
+                <Badge>{{ contactTypeLabel(contact.type) }}</Badge>
+                <Badge :variant="contact.enabled ? 'default' : 'secondary'">{{ contact.enabled ? '启用' : '停用' }}</Badge>
+                <Badge :variant="contact.verified ? 'verified' : 'secondary'">{{ contact.verified ? '已验证' : '未验证' }}</Badge>
+                <Badge v-if="contact.isDefault" variant="secondary">默认联系方式</Badge>
+              </div>
+              <p class="mt-2 text-sm text-muted-foreground">{{ contact.maskedValue }} · 适用：{{ scopeLabels(contact.usageScopes) }}</p>
+            </div>
+            <div class="flex flex-wrap gap-2">
+              <Button size="sm" variant="outline" @click="editContact(contact)">编辑</Button>
+              <Button size="sm" variant="outline" @click="setDefaultContact(contact)">设为默认</Button>
+              <Button v-if="!contact.verified" size="sm" variant="outline" @click="verifyContact(contact)"><MailCheck class="h-4 w-4" />验证</Button>
+              <Button size="sm" variant="outline" @click="removeContact(contact)"><Trash2 class="h-4 w-4" />删除</Button>
+            </div>
+          </div>
+        </Card>
+      </div>
+
+      <Card class="p-5">
+        <h2 class="font-semibold">{{ editingContactId ? '编辑联系方式' : '新增联系方式' }}</h2>
+        <div class="mt-4 space-y-4">
+          <label class="space-y-2">
+            <span class="text-sm font-medium">类型</span>
+            <Select v-model="contactForm.type" :disabled="Boolean(editingContactId && contactForm.type === 'linuxdo')">
+              <SelectTrigger class="w-full bg-background"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem v-for="item in contactTypeOptions.filter(option => option.value !== 'linuxdo')" :key="item.value" :value="item.value">{{ item.label }}</SelectItem>
+              </SelectContent>
+            </Select>
+          </label>
+          <label class="space-y-2"><span class="text-sm font-medium">显示名称</span><Input v-model="contactForm.label" /></label>
+          <label class="space-y-2"><span class="text-sm font-medium">联系方式内容</span><Input v-model="contactForm.displayValue" /></label>
+          <div class="space-y-2">
+            <span class="text-sm font-medium">适用场景</span>
+            <div class="grid gap-2">
+              <label v-for="scope in usageScopeOptions" :key="scope.value" class="flex items-center gap-2 text-sm">
+                <input :checked="contactForm.usageScopes.includes(scope.value)" type="checkbox" @change="toggleScope(scope.value)" />
+                {{ scope.label }}
+              </label>
+            </div>
+          </div>
+          <label class="flex items-center gap-2 text-sm"><input v-model="contactForm.isDefault" type="checkbox" />设为默认联系方式</label>
+          <label class="flex items-center gap-2 text-sm"><input v-model="contactForm.enabled" type="checkbox" />启用</label>
+          <div class="flex flex-wrap gap-2">
+            <Button @click="saveContact"><Save class="h-4 w-4" />保存联系方式</Button>
+            <Button variant="outline" @click="resetContactForm">清空</Button>
+          </div>
+          <p class="text-xs leading-5 text-muted-foreground">
+            联系方式只用于参与方之间的站外联系；公开主页、首页、车源列表和 API 市集不会展示完整联系方式。
+          </p>
+        </div>
+      </Card>
+    </section>
+
+    <section v-else-if="activeSection === 'account'" class="grid gap-4 lg:grid-cols-2">
+      <Card class="p-5">
+        <h2 class="font-semibold">linux.do 身份绑定</h2>
+        <div class="mt-4 space-y-3 text-sm">
+          <div class="flex justify-between gap-4"><span class="text-muted-foreground">linux.do 绑定状态</span><span>{{ profile.linuxDoBinding.bound ? '已绑定 linux.do' : '未绑定' }}</span></div>
+          <div class="flex justify-between gap-4"><span class="text-muted-foreground">linux.do 用户名</span><span>@{{ profile.linuxDoBinding.linuxDoUsername }}</span></div>
+          <div class="flex justify-between gap-4"><span class="text-muted-foreground">linux.do 用户 ID</span><span>{{ profile.linuxDoBinding.linuxDoUserId }}</span></div>
+          <div class="flex justify-between gap-4"><span class="text-muted-foreground">信任等级</span><span>{{ profile.linuxDoBinding.trustLevel }}</span></div>
+          <div class="flex justify-between gap-4"><span class="text-muted-foreground">头像同步</span><span>{{ profile.avatarMode === 'linuxdo' ? '跟随 linux.do' : '自定义头像' }}</span></div>
+          <div class="flex justify-between gap-4"><span class="text-muted-foreground">最近同步</span><span>{{ profile.linuxDoBinding.lastSyncedAt }}</span></div>
+          <div class="flex justify-between gap-4"><span class="text-muted-foreground">账号状态</span><span>{{ profile.accountStatus }}</span></div>
+          <div class="flex justify-between gap-4"><span class="text-muted-foreground">绑定邮箱</span><span>{{ profile.emailVerified ? profile.email : '未绑定' }}</span></div>
+          <div class="flex justify-between gap-4"><span class="text-muted-foreground">备用密码</span><span>{{ profile.passwordConfigured ? '已设置' : '未设置' }}</span></div>
+        </div>
+        <p class="mt-4 rounded-md border border-border bg-accent/50 p-3 text-xs leading-5 text-muted-foreground">
+          linux.do 绑定不可自助解绑或换绑；异常情况请联系管理员人工处理。
+        </p>
+      </Card>
+      <Card class="p-5">
+        <h2 class="font-semibold">备用密码</h2>
+        <div class="mt-4 space-y-3">
+          <label v-if="profile.passwordConfigured" class="space-y-2"><span class="text-sm font-medium">当前密码</span><Input v-model="passwordForm.currentPassword" type="password" autocomplete="current-password" /></label>
+          <label class="space-y-2"><span class="text-sm font-medium">新密码</span><Input v-model="passwordForm.newPassword" type="password" autocomplete="new-password" /></label>
+          <label class="space-y-2"><span class="text-sm font-medium">确认新密码</span><Input v-model="passwordForm.confirmPassword" type="password" autocomplete="new-password" /></label>
+          <Button :disabled="setPasswordMutation.isPending.value" @click="savePassword"><LockKeyhole class="h-4 w-4" />{{ profile.passwordConfigured ? '修改备用密码' : '设置备用密码' }}</Button>
+        </div>
+      </Card>
+      <Card class="p-5">
+        <h2 class="font-semibold">邮箱绑定</h2>
+        <div class="mt-4 space-y-3">
+          <label class="space-y-2"><span class="text-sm font-medium">邮箱</span><Input v-model="emailForm.email" type="email" autocomplete="email" /></label>
+          <div class="flex flex-wrap gap-2">
+            <Button variant="outline" :disabled="startEmailVerificationMutation.isPending.value" @click="startEmailVerification"><MailCheck class="h-4 w-4" />发送验证码</Button>
+            <Badge :variant="profile.emailVerified ? 'verified' : 'secondary'">{{ profile.emailVerified ? '邮箱已绑定' : '邮箱未绑定' }}</Badge>
+          </div>
+          <label class="space-y-2"><span class="text-sm font-medium">验证码</span><Input v-model="emailForm.code" inputmode="numeric" maxlength="6" placeholder="6 位验证码" /></label>
+          <div v-if="emailForm.devCode" class="rounded-md border border-border bg-accent/50 p-3 text-xs text-muted-foreground">
+            开发验证码：{{ emailForm.devCode }}
+          </div>
+          <Button :disabled="confirmEmailVerificationMutation.isPending.value" @click="confirmEmailVerification">确认绑定邮箱</Button>
+        </div>
+      </Card>
+      <Card class="p-5">
+        <h2 class="font-semibold">系统铭牌与限制</h2>
+        <div class="mt-4 flex flex-wrap gap-2"><Badge v-for="badge in profile.badges" :key="badge.id" variant="secondary">{{ badge.label }}</Badge></div>
+        <div class="mt-4 rounded-md border border-border bg-accent/50 p-3 text-sm text-muted-foreground">
+          当前功能限制：{{ profile.restrictions.length ? profile.restrictions.join('、') : '无' }}。
+        </div>
+        <div class="mt-4 flex flex-wrap gap-2">
+          <Button variant="outline" @click="toast('linux.do 信息已同步，本地 mock 状态。')">同步 linux.do 信息</Button>
+          <Button variant="outline" @click="router.push('/my/profile')">切换头像跟随模式</Button>
+          <Button variant="outline" @click="toast('申诉入口已记录为本地 mock 状态。')"><LockKeyhole class="h-4 w-4" />提交申诉</Button>
+        </div>
+      </Card>
+    </section>
+
+    <section v-else-if="activeSection === 'privacy'" class="grid gap-4 lg:grid-cols-2">
+      <Card class="p-5">
+        <h2 class="font-semibold">公开主页隐私设置</h2>
+        <div class="mt-4 space-y-3">
+          <label class="flex items-center justify-between gap-4 text-sm"><span>展示最近活跃时间</span><input v-model="privacyForm.showLastActiveAt" type="checkbox" /></label>
+          <label class="flex items-center justify-between gap-4 text-sm"><span>展示加入时间</span><input v-model="privacyForm.showCreatedAt" type="checkbox" /></label>
+          <label class="flex items-center justify-between gap-4 text-sm"><span>展示近 30 天完成数量</span><input v-model="privacyForm.showCompletionStats" type="checkbox" /></label>
+          <label class="flex items-center justify-between gap-4 text-sm"><span>展示响应中位时间</span><input v-model="privacyForm.showResponseMedian" type="checkbox" /></label>
+          <label class="flex items-center justify-between gap-4 text-sm"><span>展示已处理纠纷摘要</span><input v-model="privacyForm.showResolvedDisputeSummary" type="checkbox" /></label>
+          <label class="flex items-center justify-between gap-4 text-sm"><span>允许他人从公开主页举报</span><input v-model="privacyForm.allowPublicProfileReport" type="checkbox" /></label>
+        </div>
+        <Button class="mt-5" @click="savePrivacy"><Save class="h-4 w-4" />保存隐私设置</Button>
+      </Card>
+      <Card class="p-5">
+        <h2 class="font-semibold">不能关闭的公开信号</h2>
+        <div class="mt-4 space-y-3 text-sm text-muted-foreground">
+          <p>账号处罚状态、严重未解决纠纷提示、系统认证铭牌和已绑定 linux.do 状态始终会在必要位置展示。</p>
+          <p>隐私设置不影响有效意向参与者查看必要联系方式。</p>
+          <p>公开主页不会展示微信、邮箱、Telegram、其他联系方式、登录邮箱、手机号、IP、设备信息或意向敏感详情。</p>
+        </div>
+      </Card>
+    </section>
+  </div>
+</template>

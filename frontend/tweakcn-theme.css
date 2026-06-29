@@ -1,0 +1,125 @@
+/*
+ * C2CMarket — Aqua Console
+ * tweakcn/shadcn compatible variables exported from the active app theme.
+ */
+
+:root {
+  --radius: 0.625rem;
+
+  --background: oklch(0.984 0.006 196);
+  --foreground: oklch(0.208 0.040 266);
+
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.208 0.040 266);
+
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.208 0.040 266);
+
+  --primary: oklch(0.704 0.123 182.5);
+  --primary-foreground: oklch(1 0 0);
+
+  --secondary: oklch(0.968 0.007 248);
+  --secondary-foreground: oklch(0.280 0.037 260);
+
+  --muted: oklch(0.968 0.007 248);
+  --muted-foreground: oklch(0.554 0.041 257.4);
+
+  --accent: oklch(0.984 0.019 200.9);
+  --accent-foreground: oklch(0.371 0.039 257.3);
+
+  --destructive: oklch(0.637 0.208 25.3);
+  --destructive-foreground: oklch(1 0 0);
+
+  --border: oklch(0.929 0.013 255.5);
+  --input: oklch(0.929 0.013 255.5);
+  --ring: oklch(0.704 0.123 182.5);
+
+  --chart-1: oklch(0.704 0.123 182.5);
+  --chart-2: oklch(0.609 0.111 221.7);
+  --chart-3: oklch(0.696 0.149 162.5);
+  --chart-4: oklch(0.606 0.219 292.7);
+  --chart-5: oklch(0.769 0.165 70.1);
+
+  --sidebar: oklch(1 0 0);
+  --sidebar-foreground: oklch(0.280 0.037 260);
+  --sidebar-primary: oklch(0.704 0.123 182.5);
+  --sidebar-primary-foreground: oklch(1 0 0);
+  --sidebar-accent: oklch(0.984 0.014 180.7);
+  --sidebar-accent-foreground: oklch(0.600 0.104 184.7);
+  --sidebar-border: oklch(0.929 0.013 255.5);
+  --sidebar-ring: oklch(0.704 0.123 182.5);
+
+  --success: oklch(0.696 0.149 162.5);
+  --success-foreground: oklch(1 0 0);
+  --warning: oklch(0.769 0.165 70.1);
+  --warning-foreground: oklch(0.208 0.040 266);
+  --info: oklch(0.609 0.111 221.7);
+  --info-foreground: oklch(1 0 0);
+  --signal: oklch(0.704 0.123 182.5);
+  --signal-foreground: oklch(1 0 0);
+  --signal-soft: oklch(0.984 0.019 200.9);
+
+  --shadow-2xs: 0 1px 2px 0 rgb(15 23 42 / 0.025);
+  --shadow-xs: 0 1px 2px 0 rgb(15 23 42 / 0.035);
+  --shadow-sm: 0 1px 3px 0 rgb(15 23 42 / 0.045), 0 1px 2px -1px rgb(15 23 42 / 0.035);
+  --shadow: 0 4px 16px -4px rgb(15 23 42 / 0.08);
+  --shadow-md: 0 8px 24px -8px rgb(15 23 42 / 0.11);
+  --shadow-lg: 0 16px 40px -12px rgb(15 23 42 / 0.14);
+  --shadow-xl: 0 24px 56px -18px rgb(15 23 42 / 0.17);
+  --shadow-2xl: 0 32px 72px -24px rgb(15 23 42 / 0.22);
+}
+
+.dark {
+  --background: oklch(0.129 0.041 264.7);
+  --foreground: oklch(0.968 0.007 248);
+
+  --card: oklch(0.208 0.040 266);
+  --card-foreground: oklch(0.968 0.007 248);
+
+  --popover: oklch(0.208 0.040 266);
+  --popover-foreground: oklch(0.968 0.007 248);
+
+  --primary: oklch(0.785 0.133 181.9);
+  --primary-foreground: oklch(0.129 0.041 264.7);
+
+  --secondary: oklch(0.280 0.037 260);
+  --secondary-foreground: oklch(0.968 0.007 248);
+
+  --muted: oklch(0.280 0.037 260);
+  --muted-foreground: oklch(0.711 0.035 256.8);
+
+  --accent: oklch(0.310 0.048 220);
+  --accent-foreground: oklch(0.968 0.007 248);
+
+  --destructive: oklch(0.704 0.191 22.2);
+  --destructive-foreground: oklch(0.985 0 0);
+
+  --border: oklch(0.372 0.039 257.3 / 0.72);
+  --input: oklch(0.372 0.039 257.3 / 0.9);
+  --ring: oklch(0.785 0.133 181.9);
+
+  --chart-1: oklch(0.785 0.133 181.9);
+  --chart-2: oklch(0.716 0.129 215);
+  --chart-3: oklch(0.765 0.149 162.5);
+  --chart-4: oklch(0.720 0.182 292.7);
+  --chart-5: oklch(0.820 0.150 70.1);
+
+  --sidebar: oklch(0.168 0.040 264.7);
+  --sidebar-foreground: oklch(0.929 0.013 255.5);
+  --sidebar-primary: oklch(0.785 0.133 181.9);
+  --sidebar-primary-foreground: oklch(0.129 0.041 264.7);
+  --sidebar-accent: oklch(0.238 0.043 247);
+  --sidebar-accent-foreground: oklch(0.785 0.133 181.9);
+  --sidebar-border: oklch(0.280 0.037 260);
+  --sidebar-ring: oklch(0.785 0.133 181.9);
+
+  --success: oklch(0.765 0.149 162.5);
+  --success-foreground: oklch(0.129 0.041 264.7);
+  --warning: oklch(0.820 0.150 70.1);
+  --warning-foreground: oklch(0.129 0.041 264.7);
+  --info: oklch(0.716 0.129 215);
+  --info-foreground: oklch(0.129 0.041 264.7);
+  --signal: oklch(0.785 0.133 181.9);
+  --signal-foreground: oklch(0.129 0.041 264.7);
+  --signal-soft: oklch(0.310 0.048 220);
+}

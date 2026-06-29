@@ -1,0 +1,78 @@
+services:
+  postgres:
+    image: postgres:18-alpine
+    container_name: c2c-market-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-c2c_market}
+      POSTGRES_USER: ${POSTGRES_USER:-c2c_market}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-c2c_market_dev_password}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - c2c_postgres_data:/var/lib/postgresql
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - pg_isready -U "$${POSTGRES_USER}" -d "$${POSTGRES_DB}"
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+
+  migrate:
+    image: migrate/migrate:v4.18.3
+    container_name: c2c-market-migrate
+    profiles:
+      - migrate
+    volumes:
+      - ./backend/migrations:/migrations:ro
+    command:
+      - -path=/migrations
+      - -database=postgres://${POSTGRES_USER:-c2c_market}:${POSTGRES_PASSWORD:-c2c_market_dev_password}@postgres:5432/${POSTGRES_DB:-c2c_market}?sslmode=disable
+      - up
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  backend:
+    build:
+      context: ./backend
+    container_name: c2c-market-backend
+    profiles:
+      - app
+    restart: unless-stopped
+    environment:
+      PORT: ${BACKEND_PORT:-8080}
+      APP_ENV: ${APP_ENV:-development}
+      ENABLE_DEV_AUTH: ${ENABLE_DEV_AUTH:-true}
+      FRONTEND_ORIGIN: ${FRONTEND_ORIGIN:-http://127.0.0.1:5173}
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-http://127.0.0.1:5173,http://localhost:5173,http://127.0.0.1:4173,http://localhost:4173}
+      OAUTH_PROVIDER_MODE: ${OAUTH_PROVIDER_MODE:-fake}
+      OAUTH_CLIENT_ID: ${OAUTH_CLIENT_ID:-}
+      OAUTH_CLIENT_SECRET: ${OAUTH_CLIENT_SECRET:-}
+      OAUTH_AUTHORIZE_URL: ${OAUTH_AUTHORIZE_URL:-}
+      OAUTH_TOKEN_URL: ${OAUTH_TOKEN_URL:-}
+      OAUTH_USERINFO_URL: ${OAUTH_USERINFO_URL:-}
+      OAUTH_REDIRECT_URL: ${OAUTH_REDIRECT_URL:-http://127.0.0.1:${BACKEND_PORT:-8080}/api/v1/auth/oauth/callback}
+      OAUTH_SCOPES: ${OAUTH_SCOPES:-openid profile}
+      DATABASE_URL: postgres://${POSTGRES_USER:-c2c_market}:${POSTGRES_PASSWORD:-c2c_market_dev_password}@postgres:5432/${POSTGRES_DB:-c2c_market}?sslmode=disable
+      CONTACT_ENCRYPTION_KEY: ${CONTACT_ENCRYPTION_KEY:-c2cmarket-local-contact-encryption-key-v1}
+      CONTACT_FINGERPRINT_KEY: ${CONTACT_FINGERPRINT_KEY:-c2cmarket-local-contact-fingerprint-key-v1}
+      CONTACT_KEY_VERSION: ${CONTACT_KEY_VERSION:-local-dev-v1}
+      EMAIL_PROVIDER: ${EMAIL_PROVIDER:-development}
+      SMTP_HOST: ${SMTP_HOST:-smtpdm.aliyun.com}
+      SMTP_PORT: ${SMTP_PORT:-465}
+      SMTP_USERNAME: ${SMTP_USERNAME:-noreply@example.com}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      MAIL_FROM_ADDRESS: ${MAIL_FROM_ADDRESS:-noreply@example.com}
+      MAIL_FROM_NAME: ${MAIL_FROM_NAME:-C2CMarket}
+    ports:
+      - "${BACKEND_PORT:-8080}:${BACKEND_PORT:-8080}"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+volumes:
+  c2c_postgres_data:

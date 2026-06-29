@@ -1,0 +1,42 @@
+{
+  "name": "c2cmarket-frontend",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 0.0.0.0",
+    "build": "vue-tsc -b && vite build",
+    "preview": "vite preview --host 0.0.0.0",
+    "typecheck": "vue-tsc -b"
+  },
+  "dependencies": {
+    "@radix-icons/vue": "^1.0.0",
+    "@tanstack/vue-query": "latest",
+    "@tanstack/vue-table": "^8.21.3",
+    "@unovis/ts": "^1.6.5",
+    "@unovis/vue": "^1.6.5",
+    "@vueuse/core": "latest",
+    "class-variance-authority": "latest",
+    "clsx": "latest",
+    "dompurify": "^3.4.11",
+    "lucide-vue-next": "latest",
+    "marked": "^18.0.5",
+    "pinia": "latest",
+    "reka-ui": "^2.9.10",
+    "tailwind-merge": "latest",
+    "vue": "latest",
+    "vue-router": "latest",
+    "vue-sonner": "^2.0.9"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "latest",
+    "@tsconfig/node20": "latest",
+    "@types/node": "latest",
+    "@vitejs/plugin-vue": "latest",
+    "@vue/tsconfig": "latest",
+    "tailwindcss": "4.3.1",
+    "typescript": "latest",
+    "vite": "^8.0.0",
+    "vue-tsc": "latest"
+  }
+}
