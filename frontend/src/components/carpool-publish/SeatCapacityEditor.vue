@@ -31,7 +31,7 @@ function setOccupiedSeats(value: number) {
 
 <template>
   <PublishSectionCard
-    :index="3"
+    :index="2"
     title="名额设置"
     description="分别维护总名额和已上车人数，剩余名额由系统自动计算并重点展示。"
   >

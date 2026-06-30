@@ -1,11 +1,13 @@
 <script setup lang="ts">
 import { Textarea } from '@/components/ui/textarea'
-import type { CarpoolPublishForm } from './types'
+import type { CarpoolPublishForm, PublishFieldState } from './types'
 import PublishSectionCard from './PublishSectionCard.vue'
 
-defineProps<{
+const props = defineProps<{
   form: CarpoolPublishForm
   errors: Partial<Record<string, string>>
+  fieldState?: PublishFieldState
+  highlightedKey?: string
 }>()
 
 const templates = [
@@ -25,23 +27,54 @@ function insertTemplate(form: CarpoolPublishForm, value: string) {
   if (form.rulesNote.includes(value)) return
   form.rulesNote = [form.rulesNote.trim(), value].filter(Boolean).join('；')
 }
+
+function shellClass() {
+  return [
+    'rounded-lg border p-3 transition-colors',
+    props.fieldState === 'error' ? 'border-destructive/45 bg-destructive/5' : '',
+    props.fieldState === 'pendingRequired' ? 'border-warning/40 bg-warning/5' : '',
+    props.fieldState === 'complete' ? 'border-border bg-background' : '',
+    props.highlightedKey === 'rulesNote' ? 'ring-2 ring-primary/60 ring-offset-2 ring-offset-background' : '',
+  ]
+}
+
+function stateLabel() {
+  if (props.fieldState === 'error') return '需要处理'
+  if (props.fieldState === 'pendingRequired') return '待填写'
+  if (props.fieldState === 'complete') return '已完成'
+  return ''
+}
+
+function stateLabelClass() {
+  if (props.fieldState === 'error') return 'bg-destructive/10 text-destructive'
+  if (props.fieldState === 'pendingRequired') return 'bg-warning/10 text-warning'
+  if (props.fieldState === 'complete') return 'bg-success/10 text-success'
+  return 'bg-muted text-muted-foreground'
+}
 </script>
 
 <template>
   <PublishSectionCard
-    :index="7"
+    :index="6"
     title="规则说明与买家须知"
     description="写清付款周期、退款规则、名额变化、中转或托管边界、Web 端支持、禁止用途和车主承诺响应；倍率和每月额度已在基础信息中结构化填写。"
   >
-    <Textarea
-      v-model="form.rulesNote"
-      class="min-h-32"
-      maxlength="1200"
-      placeholder="建议说明：付款周期、价格锁定、退款规则、名额变化；中转方式（VPS 转发 / 家宽转发 / 成员邀请）；家宽地区（只写国家或地区，不写具体 IP）；是否支持 Sub2API 托管管理（仅站外确认，平台不收集凭据）；是否可用 Web 端；车主承诺响应。倍率和每月额度请使用基础信息中的结构化字段，不要填写账号密码、管理员凭据、session token、refresh token、API Key、付款二维码或银行卡号。"
-    />
-    <div class="mt-2 flex items-center justify-between gap-3">
-      <p v-if="errors.rulesNote" class="text-xs text-destructive">{{ errors.rulesNote }}</p>
-      <p class="ml-auto text-xs text-muted-foreground">已输入 {{ form.rulesNote.length }} / 1200 字</p>
+    <div id="carpool-task-rulesNote" :class="shellClass()">
+      <div class="mb-2 flex items-center justify-between gap-2">
+        <span class="text-sm font-medium">买家须知 <span class="text-xs text-primary">必填</span></span>
+        <span v-if="stateLabel()" class="rounded-full px-2 py-0.5 text-xs font-medium" :class="stateLabelClass()">{{ stateLabel() }}</span>
+      </div>
+      <Textarea
+        v-model="form.rulesNote"
+        class="min-h-32"
+        maxlength="1200"
+        placeholder="建议说明：付款周期、价格锁定、退款规则、名额变化；中转方式（VPS 转发 / 家宽转发 / 成员邀请）；家宽地区（只写国家或地区，不写具体 IP）；是否支持 Sub2API 托管管理（仅站外确认，平台不收集凭据）；是否可用 Web 端；车主承诺响应。倍率和每月额度请使用基础信息中的结构化字段，不要填写账号密码、管理员凭据、session token、refresh token、API Key、付款二维码或银行卡号。"
+      />
+      <div class="mt-2 flex items-center justify-between gap-3">
+        <p v-if="errors.rulesNote" class="text-xs text-destructive">{{ errors.rulesNote }}</p>
+        <p v-else-if="fieldState === 'pendingRequired'" class="text-xs text-warning">补充买家下单前需要知道的使用规则。</p>
+        <p class="ml-auto text-xs text-muted-foreground">已输入 {{ form.rulesNote.length }} / 1200 字</p>
+      </div>
     </div>
     <details class="mt-3 rounded-md border border-border bg-muted/30 p-3">
       <summary class="cursor-pointer text-sm font-medium">常用说明模板</summary>

@@ -18,7 +18,7 @@ const options: Array<{ value: CarpoolWarrantyMode, title: string, description: s
 
 <template>
   <PublishSectionCard
-    :index="6"
+    :index="5"
     title="车主承诺与售后"
     description="使用结构化规则表达车主承诺口径；平台不担保、不代赔。"
   >

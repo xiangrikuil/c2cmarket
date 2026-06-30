@@ -75,6 +75,24 @@ Use the official shadcn-vue `sonner` component and `vue-sonner` API.
 
 ---
 
+## Responsive Dialogs
+
+When a dialog is only meant for one breakpoint, gate the open state as well as the content classes. `DialogContent` can be hidden with responsive Tailwind classes, but the dialog overlay is rendered by the primitive separately and will still cover the page if the dialog is open.
+
+Required pattern:
+
+- Use the existing shadcn-vue `Dialog` primitive.
+- Keep product-specific sheet styling at the call site.
+- Before opening a mobile-only dialog from shared submit handlers, check the same breakpoint used by the CSS, for example `window.matchMedia('(max-width: 639px)').matches` for `sm:hidden`.
+- Desktop failure states should use inline summaries, field errors, focus, and scroll targets instead of opening a hidden mobile sheet.
+
+Avoid:
+
+- Setting `open = true` unconditionally and relying on `sm:hidden` or `hidden` on `DialogContent` to suppress the desktop UI.
+- Editing generated dialog primitives to solve one page's responsive behavior.
+
+---
+
 ## Selects
 
 Use the official composed select API:

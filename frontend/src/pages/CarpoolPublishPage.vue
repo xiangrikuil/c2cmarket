@@ -1,8 +1,8 @@
 <script setup lang="ts">
-import { computed, reactive, ref, watch } from 'vue'
+import { computed, nextTick, reactive, ref, watch } from 'vue'
 import { useMutation, useQueryClient } from '@tanstack/vue-query'
 import { RouterLink } from 'vue-router'
-import { Eye, Loader2, LogIn, RefreshCw, Save, Send, ShieldCheck } from 'lucide-vue-next'
+import { ChevronDown, ChevronUp, Eye, Loader2, LogIn, RefreshCw, Save, Send, ShieldCheck } from 'lucide-vue-next'
 import { toast } from 'vue-sonner'
 import CarpoolBasicInfoSection from '@/components/carpool-publish/CarpoolBasicInfoSection.vue'
 import CarpoolPublishAssistant from '@/components/carpool-publish/CarpoolPublishAssistant.vue'
@@ -13,7 +13,17 @@ import ChannelPaymentSection from '@/components/carpool-publish/ChannelPaymentSe
 import LinuxDoTopicImport from '@/components/carpool-publish/LinuxDoTopicImport.vue'
 import PublishSectionCard from '@/components/carpool-publish/PublishSectionCard.vue'
 import SeatCapacityEditor from '@/components/carpool-publish/SeatCapacityEditor.vue'
-import type { CarpoolProductCatalogItem, CarpoolPublishForm, CompletenessItem, ParsedLinuxDoTopic, TrustItem } from '@/components/carpool-publish/types'
+import type {
+  CarpoolProductCatalogItem,
+  CarpoolPublishForm,
+  CompletenessItem,
+  ParsedLinuxDoTopic,
+  PublishDefaultItem,
+  PublishFieldState,
+  PublishTask,
+  PublishTaskKey,
+  TrustItem,
+} from '@/components/carpool-publish/types'
 import {
   accessArrangementComplete,
   availableSeats,
@@ -73,9 +83,14 @@ const queryClient = useQueryClient()
 const parsedTopic = ref<ParsedLinuxDoTopic | null>(null)
 const submittedId = ref('')
 const oauthPending = ref(false)
+const hasTriedPublish = ref(false)
+const mobileCheckOpen = ref(false)
+const linuxDoImportOpen = ref(false)
+const highlightedTaskKey = ref<string | null>(null)
 const errors = reactive<FieldErrors<Field>>({})
 const publishReturnTo = '/carpools/new'
 const publishLoginRoute = { path: '/login', query: { returnTo: publishReturnTo } }
+let highlightTimer: ReturnType<typeof window.setTimeout> | null = null
 
 const form = reactive<CarpoolPublishForm>({
   linuxDoTopicUrl: '',
@@ -191,6 +206,266 @@ function setErrors(next: FieldErrors<Field>) {
   Object.assign(errors, next)
 }
 
+function clearError(key: Field) {
+  if (errors[key]) delete errors[key]
+}
+
+const publishTaskFieldIds: Record<PublishTaskKey, string> = {
+  product: 'carpool-task-product',
+  region: 'carpool-task-region',
+  monthlyPrice: 'carpool-task-monthlyPrice',
+  monthlyQuota: 'carpool-task-monthlyQuota',
+  openingChannel: 'carpool-task-openingChannel',
+  paymentMethods: 'carpool-task-paymentMethods',
+  rulesNote: 'carpool-task-rulesNote',
+  linuxDoImport: 'carpool-tool-linuxdo-import',
+}
+
+function fieldErrorForTask(key: PublishTaskKey) {
+  if (!hasTriedPublish.value) return ''
+  if (key === 'product') return errors.product ?? ''
+  if (key === 'region') return errors.region ?? ''
+  if (key === 'monthlyPrice') return errors.monthlyPriceCny ?? ''
+  if (key === 'monthlyQuota') return errors.monthlyQuota ?? ''
+  if (key === 'openingChannel') return errors.openingChannelCode ?? ''
+  if (key === 'paymentMethods') return errors.paymentMethodCodes ?? ''
+  if (key === 'rulesNote') return errors.rulesNote ?? ''
+  return ''
+}
+
+function taskComplete(key: PublishTaskKey) {
+  if (key === 'product') return Boolean(form.productId && (form.productId !== 'other-custom' || form.customProductName?.trim()))
+  if (key === 'region') return Boolean(form.regionCode)
+  if (key === 'monthlyPrice') return Boolean(form.monthlyPriceCny && form.monthlyPriceCny > 0)
+  if (key === 'monthlyQuota') return Boolean(form.monthlyQuotaAmount && form.monthlyQuotaAmount > 0)
+  if (key === 'openingChannel') return Boolean(form.openingChannelCode)
+  if (key === 'paymentMethods') return Boolean(form.paymentMethodCodes.length)
+  if (key === 'rulesNote') return Boolean(form.rulesNote.trim())
+  return Boolean(form.linuxDoTopicUrl.trim())
+}
+
+const publishTasks = computed<PublishTask[]>(() => [
+  {
+    key: 'product',
+    label: '选择产品',
+    shortLabel: '产品',
+    section: 'basic',
+    fieldId: publishTaskFieldIds.product,
+    description: '车源基础信息',
+    complete: taskComplete('product'),
+    error: fieldErrorForTask('product'),
+  },
+  {
+    key: 'region',
+    label: '选择开通区',
+    shortLabel: '开通区',
+    section: 'basic',
+    fieldId: publishTaskFieldIds.region,
+    description: '车源基础信息',
+    complete: taskComplete('region'),
+    error: fieldErrorForTask('region'),
+  },
+  {
+    key: 'monthlyPrice',
+    label: '填写月费',
+    shortLabel: '月费',
+    section: 'basic',
+    fieldId: publishTaskFieldIds.monthlyPrice,
+    description: '车源基础信息',
+    complete: taskComplete('monthlyPrice'),
+    error: fieldErrorForTask('monthlyPrice'),
+  },
+  {
+    key: 'monthlyQuota',
+    label: `填写${quotaFieldLabel(selectedProductForValidation.value)}`,
+    shortLabel: quotaFieldLabel(selectedProductForValidation.value),
+    section: 'basic',
+    fieldId: publishTaskFieldIds.monthlyQuota,
+    description: '车源基础信息',
+    complete: taskComplete('monthlyQuota'),
+    error: fieldErrorForTask('monthlyQuota'),
+  },
+  {
+    key: 'openingChannel',
+    label: '选择开通渠道',
+    shortLabel: '开通渠道',
+    section: 'activationPayment',
+    fieldId: publishTaskFieldIds.openingChannel,
+    description: '开通与付款方式',
+    complete: taskComplete('openingChannel'),
+    error: fieldErrorForTask('openingChannel'),
+  },
+  {
+    key: 'paymentMethods',
+    label: '选择支付方式',
+    shortLabel: '支付方式',
+    section: 'activationPayment',
+    fieldId: publishTaskFieldIds.paymentMethods,
+    description: '开通与付款方式',
+    complete: taskComplete('paymentMethods'),
+    error: fieldErrorForTask('paymentMethods'),
+  },
+  {
+    key: 'rulesNote',
+    label: '补充买家须知',
+    shortLabel: '买家须知',
+    section: 'rules',
+    fieldId: publishTaskFieldIds.rulesNote,
+    description: '使用规则',
+    complete: taskComplete('rulesNote'),
+    error: fieldErrorForTask('rulesNote'),
+  },
+])
+
+const completedPublishTasks = computed(() => publishTasks.value.filter(item => item.complete))
+const pendingPublishTasks = computed(() => publishTasks.value.filter(item => !item.complete))
+const publishProgressPercent = computed(() => Math.round((completedPublishTasks.value.length / publishTasks.value.length) * 100))
+const errorSummaryText = computed(() => {
+  if (!hasTriedPublish.value) return ''
+  if (pendingPublishTasks.value.length) return `请补充：${pendingPublishTasks.value.map(item => item.shortLabel).join('、')}。`
+  const blockingErrors = (Object.entries(errors) as Array<[Field, string]>)
+    .filter(([key]) => key !== 'sensitive')
+    .map(([, message]) => message)
+    .filter(Boolean)
+  if (blockingErrors.length) return blockingErrors.join(' ')
+  return errors.sensitive ?? ''
+})
+const mobileStatusText = computed(() => {
+  if (!pendingPublishTasks.value.length) return '发布必填项已完成'
+  return `还差：${pendingPublishTasks.value.map(item => item.shortLabel).slice(0, 2).join('、')}`
+})
+
+function stateForTask(key: PublishTaskKey): PublishFieldState {
+  const complete = taskComplete(key)
+  if (complete) return 'complete'
+  if (hasTriedPublish.value && fieldErrorForTask(key)) return 'error'
+  return 'pendingRequired'
+}
+
+function stateForFullValidation(field: Field): PublishFieldState {
+  if (field === 'serviceMultiplier') {
+    if (hasTriedPublish.value && errors.serviceMultiplier) return 'error'
+    return form.serviceMultiplier && form.serviceMultiplier > 0 ? 'defaulted' : 'pendingRequired'
+  }
+  if (field === 'seats') {
+    if (hasTriedPublish.value && errors.seats) return 'error'
+    return form.totalSeats >= 1 && form.totalSeats <= 20 && form.occupiedSeats >= 0 && form.occupiedSeats <= form.totalSeats ? 'defaulted' : 'pendingRequired'
+  }
+  if (field === 'accessArrangement') {
+    if (hasTriedPublish.value && errors.accessArrangement) return 'error'
+    return accessArrangementComplete(form, selectedProductForValidation.value) ? 'defaulted' : 'pendingRequired'
+  }
+  if (field === 'warranty') {
+    if (hasTriedPublish.value && errors.warranty) return 'error'
+    return warrantyComplete(form.warranty) ? 'defaulted' : 'pendingRequired'
+  }
+  return 'idle'
+}
+
+const basicFieldStates = computed<Partial<Record<string, PublishFieldState>>>(() => ({
+  product: stateForTask('product'),
+  region: stateForTask('region'),
+  monthlyPrice: stateForTask('monthlyPrice'),
+  monthlyQuota: stateForTask('monthlyQuota'),
+  serviceMultiplier: stateForFullValidation('serviceMultiplier'),
+}))
+
+const channelPaymentFieldStates = computed<Partial<Record<string, PublishFieldState>>>(() => ({
+  openingChannel: stateForTask('openingChannel'),
+  paymentMethods: stateForTask('paymentMethods'),
+}))
+
+const defaultItems = computed<PublishDefaultItem[]>(() => [
+  {
+    key: 'serviceMultiplier',
+    label: '倍率已默认',
+    description: `${form.serviceMultiplier ?? 1}x，可按实际情况修改。`,
+    status: stateForFullValidation('serviceMultiplier'),
+  },
+  {
+    key: 'seats',
+    label: '名额设置已默认',
+    description: `总 ${form.totalSeats} 人，已上车 ${form.occupiedSeats} 人。`,
+    status: stateForFullValidation('seats'),
+  },
+  {
+    key: 'accessArrangement',
+    label: '访问安排已默认',
+    description: accessArrangementComplete(form, selectedProductForValidation.value) ? '可继续修改访问边界说明。' : '需要确认访问安排边界。',
+    status: stateForFullValidation('accessArrangement'),
+  },
+  {
+    key: 'warranty',
+    label: '车主承诺已默认',
+    description: warrantyComplete(form.warranty) ? '可继续修改售后承诺。' : '需要补全售后承诺。',
+    status: stateForFullValidation('warranty'),
+  },
+])
+
+const sectionStatus = computed(() => {
+  const basicPending = publishTasks.value.filter(item => item.section === 'basic' && !item.complete).length
+  const activationPending = publishTasks.value.filter(item => item.section === 'activationPayment' && !item.complete).length
+  const rulesPending = publishTasks.value.filter(item => item.section === 'rules' && !item.complete).length
+  return {
+    basic: basicPending ? (hasTriedPublish.value ? 'error' : 'pendingRequired') as PublishFieldState : 'complete' as PublishFieldState,
+    seats: stateForFullValidation('seats'),
+    activationPayment: activationPending ? (hasTriedPublish.value ? 'error' : 'pendingRequired') as PublishFieldState : 'complete' as PublishFieldState,
+    accessArrangement: stateForFullValidation('accessArrangement'),
+    warranty: stateForFullValidation('warranty'),
+    rules: rulesPending ? (hasTriedPublish.value ? 'error' : 'pendingRequired') as PublishFieldState : 'complete' as PublishFieldState,
+  }
+})
+
+function sectionStatusLabel(status: PublishFieldState, pendingCount = 0) {
+  if (status === 'error') return pendingCount ? `待补 ${pendingCount} 项` : '需要处理'
+  if (status === 'pendingRequired') return pendingCount ? `待填写 ${pendingCount} 项` : '待填写'
+  if (status === 'defaulted') return '系统默认'
+  if (status === 'complete') return '已完成'
+  return ''
+}
+
+function taskFromErrorKey(key: Field): PublishTaskKey | null {
+  if (key === 'product') return 'product'
+  if (key === 'region') return 'region'
+  if (key === 'monthlyPriceCny') return 'monthlyPrice'
+  if (key === 'monthlyQuota') return 'monthlyQuota'
+  if (key === 'openingChannelCode') return 'openingChannel'
+  if (key === 'paymentMethodCodes') return 'paymentMethods'
+  if (key === 'rulesNote') return 'rulesNote'
+  if (key === 'serviceMultiplier') return 'monthlyPrice'
+  if (key === 'seats') return 'monthlyPrice'
+  if (key === 'accessArrangement') return 'rulesNote'
+  if (key === 'warranty') return 'rulesNote'
+  if (key === 'sensitive') return 'rulesNote'
+  return null
+}
+
+async function jumpToTask(key: PublishTaskKey | string) {
+  if (key === 'linuxDoImport') linuxDoImportOpen.value = true
+  await nextTick()
+  const targetId = publishTaskFieldIds[key as PublishTaskKey]
+  const target = targetId ? document.getElementById(targetId) : null
+  if (!target) return
+  target.scrollIntoView({ behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth', block: 'center' })
+  const focusable = target.querySelector<HTMLElement>('input, textarea, button, [tabindex]:not([tabindex="-1"])')
+  focusable?.focus({ preventScroll: true })
+  highlightedTaskKey.value = key
+  if (highlightTimer) window.clearTimeout(highlightTimer)
+  highlightTimer = window.setTimeout(() => {
+    highlightedTaskKey.value = null
+  }, 1200)
+}
+
+async function focusFirstInvalidTask() {
+  const firstMissing = pendingPublishTasks.value[0]?.key
+  const firstErrorKey = (Object.keys(errors) as Field[]).map(taskFromErrorKey).find(Boolean)
+  await jumpToTask(firstMissing ?? firstErrorKey ?? 'product')
+}
+
+function isMobilePublishCheckViewport() {
+  return window.matchMedia('(max-width: 639px)').matches
+}
+
 function applyParsedTopic(topic: ParsedLinuxDoTopic) {
   form.parsedTopicId = topic.topicId
   if (topic.detected.productId && !form.productId) form.productId = topic.detected.productId
@@ -223,6 +498,53 @@ function defaultAccessArrangementNote(product: CarpoolProductCatalogItem) {
   }
   return '站外访问安排需由双方确认，平台不保存、不交付任何密码、Session、Cookie 或 token。'
 }
+
+watch(() => [form.productId, form.customProductName], () => {
+  if (taskComplete('product')) clearError('product')
+})
+
+watch(() => form.regionCode, () => {
+  if (taskComplete('region')) clearError('region')
+})
+
+watch(() => form.monthlyPriceCny, () => {
+  if (taskComplete('monthlyPrice')) clearError('monthlyPriceCny')
+})
+
+watch(() => form.monthlyQuotaAmount, () => {
+  if (taskComplete('monthlyQuota')) clearError('monthlyQuota')
+})
+
+watch(() => form.serviceMultiplier, () => {
+  if (form.serviceMultiplier && form.serviceMultiplier > 0) clearError('serviceMultiplier')
+})
+
+watch(() => [form.totalSeats, form.occupiedSeats], () => {
+  if (form.totalSeats >= 1 && form.totalSeats <= 20 && form.occupiedSeats >= 0 && form.occupiedSeats <= form.totalSeats) clearError('seats')
+})
+
+watch(() => form.openingChannelCode, () => {
+  if (taskComplete('openingChannel')) clearError('openingChannelCode')
+})
+
+watch(() => form.paymentMethodCodes.length, () => {
+  if (taskComplete('paymentMethods')) clearError('paymentMethodCodes')
+})
+
+watch(() => [form.accessArrangementMode, form.accessArrangementNote, form.riskAcknowledged, form.productId], () => {
+  if (accessArrangementComplete(form, selectedProductForValidation.value)) clearError('accessArrangement')
+  if (!hasSensitiveText.value) clearError('sensitive')
+})
+
+watch(() => [form.warranty.mode, form.warranty.fixedWarrantyDays, form.warranty.compensationMethod, form.warranty.exclusions], () => {
+  if (warrantyComplete(form.warranty)) clearError('warranty')
+  if (!hasSensitiveText.value) clearError('sensitive')
+})
+
+watch(() => form.rulesNote, () => {
+  if (taskComplete('rulesNote')) clearError('rulesNote')
+  if (!hasSensitiveText.value) clearError('sensitive')
+})
 
 function validate(requireComplete: boolean) {
   const next: FieldErrors<Field> = {}
@@ -330,10 +652,13 @@ function saveDraft() {
   saveDraftMutation.mutate()
 }
 
-function submitReview() {
+async function submitReview() {
   if (!ensurePublishAccess()) return
+  hasTriedPublish.value = true
   if (!validate(true)) {
+    mobileCheckOpen.value = isMobilePublishCheckViewport()
     toast.warning(firstError(errors) ?? '请先补全车源配置。')
+    await focusFirstInvalidTask()
     return
   }
   submitReviewMutation.mutate()
@@ -389,13 +714,6 @@ const submittedMessage = computed(() => {
   return `已生成本地演示车源记录：${submittedId.value}。`
 })
 
-const requiredDoneCount = computed(() => completeness.value.filter(item => item.status === 'done').length)
-const completenessPercent = computed(() => Math.round((requiredDoneCount.value / completeness.value.length) * 100))
-const pendingRequiredItems = computed(() => completeness.value.filter(item => item.status !== 'done'))
-const mobileStatusText = computed(() => {
-  if (!pendingRequiredItems.value.length) return '发布必填项已完成'
-  return `还差：${pendingRequiredItems.value.map(item => item.label).slice(0, 2).join('、')}`
-})
 const hasSensitiveText = computed(() => containsSensitiveContent([
   form.customProductName ?? '',
   form.warranty.compensationMethod ?? '',
@@ -446,7 +764,7 @@ async function copyPostText() {
       </div>
       <div v-if="canAccessPublishForm" class="hidden gap-2 sm:flex">
         <Button variant="outline" :disabled="saveDraftMutation.isPending.value" @click="saveDraft"><Save class="h-4 w-4" />保存草稿</Button>
-        <Button :disabled="submitReviewMutation.isPending.value" @click="submitReview"><Send class="h-4 w-4" />发布车源</Button>
+        <Button :disabled="submitReviewMutation.isPending.value" @click="submitReview"><Send class="h-4 w-4" />检查并发布</Button>
       </div>
     </div>
 
@@ -515,16 +833,54 @@ async function copyPostText() {
     <template v-else>
       <div class="rounded-lg border border-primary/15 bg-primary/5 p-3 sm:hidden">
         <div class="flex items-center justify-between gap-3 text-sm font-medium">
-          <span>完整度 {{ completenessPercent }}%</span>
+          <span>发布必填 {{ completedPublishTasks.length }} / {{ publishTasks.length }}</span>
           <span class="text-xs text-muted-foreground">{{ form.linuxDoTopicUrl.trim() ? '原帖已填写' : '原帖可选 · 手动发布' }}</span>
         </div>
         <div class="mt-2 h-2 overflow-hidden rounded-full bg-background">
-          <div class="h-full rounded-full bg-primary" :style="{ width: `${completenessPercent}%` }" />
+          <div class="h-full rounded-full bg-primary" :style="{ width: `${publishProgressPercent}%` }" />
         </div>
-        <p class="mt-2 text-xs leading-5 text-muted-foreground">{{ mobileStatusText }}</p>
+        <div class="mt-2 flex items-center justify-between gap-3">
+          <p class="text-xs leading-5 text-muted-foreground">{{ mobileStatusText }}</p>
+          <Button size="sm" variant="outline" @click="mobileCheckOpen = true">查看待补项</Button>
+        </div>
       </div>
 
-      <div v-if="errors.sensitive" class="rounded-lg border border-destructive/30 bg-destructive/5 px-4 py-3 text-sm text-destructive">
+      <div class="hidden rounded-lg border border-border bg-card p-4 shadow-sm sm:block">
+        <div class="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+          <div>
+            <div class="text-sm font-medium">发布必填 {{ completedPublishTasks.length }} / {{ publishTasks.length }}</div>
+            <p class="mt-1 text-xs text-muted-foreground">
+              {{ pendingPublishTasks.length ? `还差 ${pendingPublishTasks.length} 项可提交审核` : '发布必填项已完成，可提交审核。' }}
+              <span class="ml-1">系统已默认 {{ defaultItems.filter(item => item.status === 'defaulted').length }} 项，可修改。</span>
+            </p>
+          </div>
+          <div class="flex flex-wrap gap-2">
+            <span class="rounded-full border border-warning/25 bg-warning/10 px-3 py-1 text-xs font-medium text-warning">待补 {{ pendingPublishTasks.length }}</span>
+            <span class="rounded-full border border-success/25 bg-success/10 px-3 py-1 text-xs font-medium text-success">已完成 {{ completedPublishTasks.length }}</span>
+            <Button size="sm" variant="outline" class="sm:hidden" @click="mobileCheckOpen = true">发布前检查</Button>
+          </div>
+        </div>
+        <div class="mt-3 h-2 overflow-hidden rounded-full bg-muted">
+          <div class="h-full rounded-full bg-primary" :style="{ width: `${publishProgressPercent}%` }" />
+        </div>
+      </div>
+
+      <div
+        v-if="hasTriedPublish && Object.keys(errors).length"
+        class="rounded-lg border border-destructive/30 bg-destructive/5 px-4 py-3 text-sm text-destructive"
+      >
+        <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <div class="font-medium">还差 {{ pendingPublishTasks.length }} 项才能发布</div>
+            <p class="mt-1 text-xs leading-5">{{ errorSummaryText || errors.sensitive || '请先处理发布前检查提示。' }}</p>
+          </div>
+          <Button size="sm" variant="outline" class="border-destructive/30 bg-background text-destructive hover:bg-destructive/10" @click="focusFirstInvalidTask">
+            跳到第一个待补项
+          </Button>
+        </div>
+      </div>
+
+      <div v-if="errors.sensitive && !hasTriedPublish" class="rounded-lg border border-destructive/30 bg-destructive/5 px-4 py-3 text-sm text-destructive">
         {{ errors.sensitive }}
       </div>
       <div v-if="submittedId" class="rounded-lg border border-border bg-accent px-4 py-3 text-sm">
@@ -537,20 +893,54 @@ async function copyPostText() {
 
       <div class="grid gap-5 lg:grid-cols-[minmax(0,1fr)_minmax(320px,360px)] lg:items-start">
         <section class="space-y-4">
-          <LinuxDoTopicImport
-            v-model:topic-url="form.linuxDoTopicUrl"
-            :parsed-topic="parsedTopic"
-            :parse-pending="parseTopicMutation.isPending.value"
-            :error="errors.linuxDoTopicUrl"
-            @parse="parseTopic"
+          <Card id="carpool-tool-linuxdo-import" class="overflow-hidden p-0 shadow-sm" :class="highlightedTaskKey === 'linuxDoImport' ? 'ring-2 ring-primary/60 ring-offset-2 ring-offset-background' : ''">
+            <button
+              type="button"
+              class="flex w-full items-center justify-between gap-3 px-4 py-4 text-left"
+              @click="linuxDoImportOpen = !linuxDoImportOpen"
+            >
+              <span class="min-w-0">
+                <span class="block text-base font-semibold">导入 linux.do 原帖（可选）</span>
+                <span class="mt-1 block text-xs leading-5 text-muted-foreground">一键导入可自动回填产品、价格、地区、渠道和支付信息；没有原帖也可以直接手动填写。</span>
+              </span>
+              <ChevronUp v-if="linuxDoImportOpen" class="h-4 w-4 shrink-0 text-muted-foreground" />
+              <ChevronDown v-else class="h-4 w-4 shrink-0 text-muted-foreground" />
+            </button>
+            <div v-if="linuxDoImportOpen" class="border-t border-border px-4 pb-4 pt-3">
+              <LinuxDoTopicImport
+                v-model:topic-url="form.linuxDoTopicUrl"
+                :parsed-topic="parsedTopic"
+                :parse-pending="parseTopicMutation.isPending.value"
+                :error="errors.linuxDoTopicUrl"
+                embedded
+                @parse="parseTopic"
+              />
+            </div>
+          </Card>
+
+          <CarpoolBasicInfoSection
+            :form="form"
+            :catalog="catalog"
+            :regions="regionOptions"
+            :errors="errors"
+            :field-states="basicFieldStates"
+            :highlighted-key="highlightedTaskKey ?? undefined"
           />
-          <CarpoolBasicInfoSection :form="form" :catalog="catalog" :regions="regionOptions" :errors="errors" />
           <SeatCapacityEditor :form="form" :errors="errors" />
-          <ChannelPaymentSection :form="form" :opening-channels="channelOptions" :payment-methods="paymentOptions" :errors="errors" />
+          <ChannelPaymentSection
+            :form="form"
+            :opening-channels="channelOptions"
+            :payment-methods="paymentOptions"
+            :errors="errors"
+            :field-states="channelPaymentFieldStates"
+            :highlighted-key="highlightedTaskKey ?? undefined"
+          />
           <PublishSectionCard
-            :index="5"
+            :index="4"
             title="访问安排与边界确认"
             description="选择买家加入方式，并说明访问安排；不得共享主账号、密码或登录态。"
+            :status="sectionStatus.accessArrangement"
+            :status-label="sectionStatusLabel(sectionStatus.accessArrangement)"
           >
             <div class="space-y-4">
               <div class="grid gap-2 md:grid-cols-2">
@@ -599,7 +989,12 @@ async function copyPostText() {
             </div>
           </PublishSectionCard>
           <CarpoolWarrantySelector :form="form" :errors="errors" />
-          <CarpoolRulesEditor :form="form" :errors="errors" />
+          <CarpoolRulesEditor
+            :form="form"
+            :errors="errors"
+            :field-state="stateForTask('rulesNote')"
+            :highlighted-key="highlightedTaskKey ?? undefined"
+          />
         </section>
 
         <div class="space-y-3 lg:sticky lg:[top:calc(var(--app-header-height)+16px)]">
@@ -631,7 +1026,8 @@ async function copyPostText() {
             </DialogContent>
           </Dialog>
           <CarpoolPublishAssistant
-            :required-items="completeness"
+            :tasks="publishTasks"
+            :default-items="defaultItems"
             :trust-items="trustItems"
             :reminders="reminders"
             :remaining-seats="availableSeats(form)"
@@ -643,14 +1039,56 @@ async function copyPostText() {
             @save-draft="saveDraft"
             @submit-review="submitReview"
             @copy-post-text="copyPostText"
+            @jump-to-task="jumpToTask"
           />
         </div>
       </div>
 
       <div class="sticky bottom-0 z-30 grid grid-cols-2 gap-2 border-t border-border bg-background/95 py-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))] backdrop-blur sm:hidden">
         <Button variant="outline" :disabled="saveDraftMutation.isPending.value" @click="saveDraft">保存草稿</Button>
-        <Button :disabled="submitReviewMutation.isPending.value" @click="submitReview">发布车源</Button>
+        <Button :disabled="submitReviewMutation.isPending.value" @click="submitReview">检查并发布</Button>
       </div>
+
+      <Dialog v-model:open="mobileCheckOpen">
+        <DialogContent class="bottom-0 left-0 top-auto max-h-[80dvh] max-w-full translate-x-0 translate-y-0 rounded-b-none rounded-t-2xl p-0 sm:hidden">
+          <div class="mx-auto mt-3 h-1 w-10 rounded-full bg-muted" />
+          <div class="px-4 pb-4 pt-3">
+            <DialogHeader class="pr-8 text-left">
+              <DialogTitle>发布前检查</DialogTitle>
+              <DialogDescription>
+                {{ pendingPublishTasks.length ? `还差 ${pendingPublishTasks.length} 项可发布，点击任一项可跳转。` : '发布必填项已完成。' }}
+              </DialogDescription>
+            </DialogHeader>
+            <div class="mt-4 h-2 overflow-hidden rounded-full bg-muted">
+              <div class="h-full rounded-full bg-primary" :style="{ width: `${publishProgressPercent}%` }" />
+            </div>
+            <div class="mt-4 space-y-2">
+              <button
+                v-for="(task, index) in pendingPublishTasks"
+                :key="task.key"
+                type="button"
+                class="flex w-full items-center gap-3 rounded-lg border border-border bg-background px-3 py-3 text-left text-sm"
+                :class="hasTriedPublish ? 'border-warning/35' : ''"
+                @click="mobileCheckOpen = false; jumpToTask(task.key)"
+              >
+                <span class="grid h-6 w-6 place-items-center rounded-full bg-warning/10 text-xs font-semibold text-warning">{{ index + 1 }}</span>
+                <span class="min-w-0 flex-1">
+                  <span class="block font-medium">{{ task.label }}</span>
+                  <span class="mt-0.5 block text-xs text-muted-foreground">{{ task.description }}</span>
+                </span>
+                <span class="text-muted-foreground">→</span>
+              </button>
+              <div v-if="!pendingPublishTasks.length" class="rounded-lg border border-success/25 bg-success/10 px-3 py-4 text-sm text-success">
+                发布必填项已完成，可以提交审核。
+              </div>
+            </div>
+            <div class="mt-4 grid grid-cols-2 gap-2">
+              <Button variant="outline" @click="saveDraft">先存草稿</Button>
+              <Button :disabled="submitReviewMutation.isPending.value" @click="submitReview">检查并发布</Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
     </template>
   </div>
 </template>

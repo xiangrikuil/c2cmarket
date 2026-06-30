@@ -153,3 +153,40 @@ export type TrustItem = {
   status: 'done' | 'pending'
   description?: string
 }
+
+export type PublishTaskKey =
+  | 'product'
+  | 'region'
+  | 'monthlyPrice'
+  | 'monthlyQuota'
+  | 'openingChannel'
+  | 'paymentMethods'
+  | 'rulesNote'
+  | 'linuxDoImport'
+
+export type PublishSectionKey =
+  | 'basic'
+  | 'seats'
+  | 'activationPayment'
+  | 'rules'
+  | 'tools'
+
+export type PublishFieldState = 'idle' | 'pendingRequired' | 'error' | 'complete' | 'defaulted'
+
+export type PublishTask = {
+  key: PublishTaskKey
+  label: string
+  shortLabel: string
+  section: PublishSectionKey
+  fieldId: string
+  description: string
+  complete: boolean
+  error?: string
+}
+
+export type PublishDefaultItem = {
+  key: string
+  label: string
+  description: string
+  status: PublishFieldState
+}
