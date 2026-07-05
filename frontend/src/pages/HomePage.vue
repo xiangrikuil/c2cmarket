@@ -378,7 +378,11 @@ const homeAnnouncementCtaLabel = computed(() => homeAnnouncement.value ? '查看
                 </td>
                 <td><span class="font-semibold text-slate-900">¥{{ row.completed }}</span></td>
                 <td>{{ row.supply }}</td>
-                <td><RouterLink :to="row.to" class="text-xs font-medium text-blue-600">查看全部</RouterLink></td>
+                <td>
+                  <RouterLink :to="row.to" class="home-table-action-link">
+                    查看全部 <ArrowRight class="h-3 w-3" />
+                  </RouterLink>
+                </td>
               </tr>
             </tbody>
           </table>

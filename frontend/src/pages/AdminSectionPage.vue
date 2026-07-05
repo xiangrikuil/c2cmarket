@@ -102,7 +102,7 @@ const panelCopy = computed(() => {
     'price-leads': { title: '低价线索审核', description: '核对地区、渠道、原币价格和来源帖，再决定通过、复核或下架。' },
     carpools: { title: '车源治理', description: '查看车主、席位资格、价格、车主承诺和原帖状态，支持下架、恢复和遗留审核队列处理。' },
     demands: { title: '求车管理', description: '查看预算、地区、车主偏好和原帖状态，支持关闭或恢复匹配。' },
-    'api-services': { title: 'API 服务审核', description: '核对接入方式、用量可见性、最低意向金额和商户身份展示。' },
+    'api-services': { title: 'API 服务审核', description: '核对模型价格、最低意向金额、交易说明和商户身份展示。' },
     'api-merchants': { title: 'API 商户审核', description: '店铺名模式只在管理台展示真实用户映射，公开页继续隐藏。' },
     'trade-intents': { title: '购买意向监控', description: '关注意向状态、商户响应、取消责任和纠纷标记；管理员不查看完整联系方式。' },
     'carpool-applications': { title: '上车申请监控', description: '查看申请人、车主、席位、预留和当前状态，辅助纠纷判断。' },
@@ -111,7 +111,7 @@ const panelCopy = computed(() => {
     'audit-logs': { title: '审计日志', description: '只读查看管理动作、前后状态和原因。' },
     logs: { title: '审计日志', description: '只读查看管理动作、前后状态和原因。' },
   }
-  return map[section.value] ?? { title: '管理处理', description: '查看当前对象上下文并执行本地 mock 管理动作。' }
+  return map[section.value] ?? { title: '管理处理', description: '查看当前对象上下文并执行管理动作。' }
 })
 
 const drawerTitle = computed(() => {

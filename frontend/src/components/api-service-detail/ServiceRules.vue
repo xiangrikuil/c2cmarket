@@ -1,8 +1,6 @@
 <script setup lang="ts">
-import DeliveryModeTooltip from '@/components/api/DeliveryModeTooltip.vue'
 import { Card } from '@/components/ui/card'
 import type { ApiService } from '@/lib/api'
-import { deliveryModeLabel, usageVisibilityLabel } from './utils'
 
 defineProps<{
   service: ApiService
@@ -17,17 +15,12 @@ defineProps<{
     </div>
     <dl class="grid gap-x-8 px-4 py-3 text-sm md:grid-cols-2">
       <div class="grid grid-cols-[96px_1fr] gap-4 border-b border-border py-3">
-        <dt class="text-muted-foreground">接入方式</dt>
-        <dd class="space-y-1 font-semibold">
-          <span v-for="mode in service.deliveryModes" :key="mode" class="inline-flex items-center gap-1 rounded-md border border-border px-2 py-1 text-xs">
-            {{ deliveryModeLabel(mode) }}
-            <DeliveryModeTooltip :mode="mode" />
-          </span>
-        </dd>
+        <dt class="text-muted-foreground">接入细节</dt>
+        <dd class="font-semibold">提交意向后与商户站外确认</dd>
       </div>
       <div class="grid grid-cols-[96px_1fr] gap-4 border-b border-border py-3">
-        <dt class="text-muted-foreground">用量查看</dt>
-        <dd class="font-semibold">{{ usageVisibilityLabel(service.usageVisibility) }}</dd>
+        <dt class="text-muted-foreground">用量核对</dt>
+        <dd class="font-semibold">商户说明，买家自行核对</dd>
       </div>
       <div class="grid grid-cols-[96px_1fr] gap-4 border-b border-border py-3">
         <dt class="text-muted-foreground">最低意向</dt>
@@ -50,8 +43,8 @@ defineProps<{
         <dd class="font-semibold">近 30 天完成 {{ service.completed30d }} 单</dd>
       </div>
       <div class="grid grid-cols-[96px_1fr] gap-4 py-3">
-        <dt class="text-muted-foreground">用量同步</dt>
-        <dd class="font-semibold">{{ service.usageVisibility === 'panel_realtime' ? '商户面板站外确认' : usageVisibilityLabel(service.usageVisibility) }}</dd>
+        <dt class="text-muted-foreground">平台边界</dt>
+        <dd class="font-semibold">不托管凭据，不提供实时校验</dd>
       </div>
     </dl>
   </Card>

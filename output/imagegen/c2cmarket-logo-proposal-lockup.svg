@@ -1,0 +1,18 @@
+<svg width="1280" height="360" viewBox="0 0 1280 360" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="lockup-bg" x1="60" y1="48" x2="252" y2="252" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#16C7B5"/>
+      <stop offset="1" stop-color="#0F8F86"/>
+    </linearGradient>
+  </defs>
+  <rect width="1280" height="360" rx="48" fill="#F8FEFD"/>
+  <rect x="64" y="54" width="252" height="252" rx="70" fill="url(#lockup-bg)"/>
+  <path d="M164.8 110H139.1C114.6 110 97.1 129.8 97.1 156.6V203.4C97.1 230.2 114.6 250 139.1 250H164.8" stroke="#F7FFFD" stroke-width="28" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M216.2 110H241.9C266.4 110 283.9 129.8 283.9 156.6V203.4C283.9 230.2 266.4 250 241.9 250H216.2" stroke="#F7FFFD" stroke-width="28" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M141.5 161.3H218.6" stroke="#0E2630" stroke-width="21" stroke-linecap="round"/>
+  <path d="M218.6 135.6L253.6 170.6L218.6 205.6V135.6Z" fill="#0E2630"/>
+  <path d="M239.6 198.7H162.5" stroke="#0E2630" stroke-width="21" stroke-linecap="round"/>
+  <path d="M162.5 224.4L127.5 189.4L162.5 154.4V224.4Z" fill="#0E2630"/>
+  <text x="376" y="170" font-family="Inter, Noto Sans SC, PingFang SC, Microsoft YaHei, Arial, sans-serif" font-size="84" font-weight="800" letter-spacing="0" fill="#172033">C2CMarket</text>
+  <text x="380" y="232" font-family="Inter, Noto Sans SC, PingFang SC, Microsoft YaHei, Arial, sans-serif" font-size="30" font-weight="600" letter-spacing="0" fill="#0F8F86">community marketplace for shared access</text>
+</svg>

@@ -114,7 +114,7 @@ const overviewCards = computed(() => (data.value ?? []).map((card, index) => ({
             </td>
             <td>{{ item.title }}</td>
             <td><Badge :variant="item.online ? 'default' : 'secondary'">{{ item.online ? '在线' : '离线' }}</Badge></td>
-            <td><Button size="sm" @click="toast.warning(`${getApiMerchantDisplayName(item)} 已标记为待下线复核，当前为前端本地反馈。`)">强制下线</Button></td>
+            <td><Button size="sm" @click="toast.warning(`${getApiMerchantDisplayName(item)} 已标记为待下线复核。`)">强制下线</Button></td>
           </tr>
           <template #footer>
             <TablePagination

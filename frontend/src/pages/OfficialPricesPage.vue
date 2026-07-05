@@ -54,8 +54,8 @@ const sortOptions: Array<{ label: string, value: SortMode }> = [
   { label: '提交时间最新', value: 'submitted_desc' },
 ]
 const pageDescription = shouldUseRealBackend()
-  ? '按产品、地区、渠道和开通方式维护官网公开价；当前只展示真实后端审核通过的已验证价格记录。'
-  : '按产品、地区、渠道和开通方式维护官网公开价与社区低价线索；当前为前端演示数据。'
+  ? '按产品、地区、渠道和开通方式维护官网公开价；公开表仅展示审核通过的已验证价格记录。'
+  : '按产品、地区、渠道和开通方式维护官网公开价与社区低价线索。'
 
 watch(
   [q, product, region, channel, status, plan, openingMethod, source, trust, sort],

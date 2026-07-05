@@ -19,7 +19,6 @@ import type {
   SubmitterPreview,
 } from '@/components/official-price-submit/types'
 import { submitOfficialPriceLead } from '@/lib/api'
-import { shouldUseRealBackend } from '@/lib/backendClient'
 import {
   containsSensitiveContent,
   firstError,
@@ -231,7 +230,7 @@ function validate() {
 
 async function saveDraft() {
   savedAt.value = currentTimeLabel()
-  toast('低价线索草稿已保存在本地 mock 状态。')
+  toast('低价线索草稿已保存。')
 }
 
 async function submit() {
@@ -259,7 +258,7 @@ async function submit() {
     await queryClient.invalidateQueries({ queryKey: ['home-market'] })
     await queryClient.invalidateQueries({ queryKey: ['admin-section'] })
     await queryClient.invalidateQueries({ queryKey: ['notifications'] })
-    toast.success(shouldUseRealBackend() ? '低价线索已提交到真实后端审核队列。' : '低价线索已进入待验证队列，当前为前端本地反馈。')
+    toast.success('低价线索已提交，等待管理员验证。')
   } catch (error) {
     toast.error(error instanceof Error ? error.message : '提交失败。')
   } finally {
@@ -300,9 +299,7 @@ async function submit() {
             :source-host="sourceHost"
           />
           <AdditionalInfoSection :form="form" :errors="errors" />
-          <div v-if="submittedId" class="rounded-md border border-border bg-accent p-3 text-sm">
-            {{ shouldUseRealBackend() ? '已提交到真实后端审核队列' : '已创建本地 mock 线索' }}：{{ submittedId }}
-          </div>
+          <div v-if="submittedId" class="rounded-md border border-border bg-accent p-3 text-sm">低价线索已提交：{{ submittedId }}</div>
         </div>
         <FormActionBar :saved-at="savedAt" :can-submit="canSubmit" :submitting="isSubmitting" @save-draft="saveDraft" @submit="submit" />
       </Card>

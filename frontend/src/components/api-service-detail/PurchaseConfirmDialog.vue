@@ -1,8 +1,7 @@
 <script setup lang="ts">
-import DeliveryModeTooltip from '@/components/api/DeliveryModeTooltip.vue'
 import { Button } from '@/components/ui/button'
 import type { ApiDeliveryMode, ApiService } from '@/lib/api'
-import { deliveryModeLabel, formatCredit, formatCny, formatMultiplier } from './utils'
+import { formatCredit, formatCny, formatMultiplier } from './utils'
 
 defineProps<{
   open: boolean
@@ -40,11 +39,8 @@ const emit = defineEmits<{
             <dd class="font-semibold">{{ formatMultiplier(service.defaultMultiplier) }}</dd>
           </div>
           <div class="flex justify-between gap-4">
-            <dt class="text-muted-foreground">接入方式</dt>
-            <dd class="flex items-center justify-end gap-1 text-right font-semibold">
-              {{ deliveryModeLabel(selectedDeliveryMode) }}
-              <DeliveryModeTooltip :mode="selectedDeliveryMode" />
-            </dd>
+            <dt class="text-muted-foreground">接入细节</dt>
+            <dd class="text-right font-semibold">提交意向后站外确认</dd>
           </div>
           <div class="flex justify-between gap-4">
             <dt class="text-muted-foreground">有效期</dt>

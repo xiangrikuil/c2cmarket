@@ -17,19 +17,19 @@ const options: Array<{ value: ApiProviderCategory, title: string, description: s
     value: 'gpt',
     title: 'GPT',
     description: '可选择多个 GPT / OpenAI 模型。',
-    detail: 'Sub2API 模式下可配置文生图和图生图能力。',
+    detail: '适合出售 OpenAI 兼容额度。',
   },
   {
     value: 'claude',
     title: 'Claude',
     description: '可选择多个 Claude 模型。',
-    detail: '不显示 GPT 图像生成配置。',
+    detail: '适合出售 Anthropic 兼容额度。',
   },
   {
     value: 'other',
     title: '其他',
     description: '适用于 Gemini、其他代理模型或人工审核目录。',
-    detail: '进入审核时需要说明模型来源和用量查看方式。',
+    detail: '接入细节在备注中说明。',
   },
 ]
 </script>
@@ -39,8 +39,8 @@ const options: Array<{ value: ApiProviderCategory, title: string, description: s
     <div class="api-publish-card-header">
       <div class="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <h2>2. 模型大类</h2>
-          <p class="mt-1 text-xs text-muted-foreground">每条服务只能选择一个模型大类；GPT 与 Claude 必须分开发布。</p>
+          <h2>2. 出售模型</h2>
+          <p class="mt-1 text-xs text-muted-foreground">选择出售的模型大类和具体模型；GPT 与 Claude 需要分开发布。</p>
         </div>
         <Badge variant="model">{{ providerCategoryLabels[modelValue] }}</Badge>
       </div>
@@ -63,7 +63,7 @@ const options: Array<{ value: ApiProviderCategory, title: string, description: s
       </div>
 
       <div class="mt-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-5 text-amber-800">
-        GPT 与 Claude 必须分开发布，不能同时存在于同一服务中。切换模型大类会清空不兼容模型；当前已选择 {{ selectedCount }} 个模型。
+        当前已选择 {{ selectedCount }} 个模型。切换模型大类会清空不兼容模型。
       </div>
     </div>
   </section>

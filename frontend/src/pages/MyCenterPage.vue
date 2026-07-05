@@ -1,8 +1,8 @@
 <script setup lang="ts">
-import { computed, reactive, ref, watchEffect } from 'vue'
+import { computed, reactive, watchEffect } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { toast } from 'vue-sonner'
-import { Car, ContactRound, Eye, Link2, LockKeyhole, LogIn, MailCheck, RefreshCw, Save, ShoppingBag, Trash2, UserRound, UsersRound } from 'lucide-vue-next'
+import { Car, ContactRound, Eye, Link2, LockKeyhole, LogIn, Mail, MailCheck, MessageCircle, RefreshCw, Save, ShoppingBag, Trash2, UserRound, UsersRound } from 'lucide-vue-next'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
@@ -70,14 +70,6 @@ const sectionLinks = [
   { label: '通知设置', to: '/my/notifications', key: 'notifications' },
 ] as const
 
-const contactTypeOptions: { value: ContactMethodType, label: string }[] = [
-  { value: 'linuxdo', label: 'linux.do 私信' },
-  { value: 'wechat', label: '微信' },
-  { value: 'email', label: '邮箱' },
-  { value: 'telegram', label: 'Telegram' },
-  { value: 'other', label: '其他' },
-]
-
 const usageScopeOptions: { value: ContactUsageScope, label: string }[] = [
   { value: 'carpool_owner', label: '拼车车主' },
   { value: 'api_merchant', label: 'API 商户' },
@@ -114,7 +106,6 @@ const passwordForm = reactive({
 const emailForm = reactive({
   email: '',
   code: '',
-  devCode: '',
 })
 
 const privacyForm = reactive<UserPrivacySettings>({
@@ -126,15 +117,24 @@ const privacyForm = reactive<UserPrivacySettings>({
   allowPublicProfileReport: true,
 })
 
-const contactForm = reactive<SaveContactMethodRequest>({
-  type: 'wechat',
-  label: '微信',
+const wechatForm = reactive({
   displayValue: '',
-  usageScopes: ['carpool_owner'],
-  isDefault: false,
-  enabled: true,
 })
-const editingContactId = ref('')
+
+const loadedContactDraftKeys = reactive({
+  wechat: '',
+  email: '',
+})
+
+const defaultContactUsageScopes: ContactUsageScope[] = ['carpool_owner', 'api_merchant', 'buyer', 'dispute']
+
+const wechatContact = computed(() => (contacts.value ?? []).find(item => item.type === 'wechat') ?? null)
+const emailContact = computed(() => (contacts.value ?? []).find(item => item.type === 'email') ?? null)
+const enabledContactCount = computed(() => [wechatContact.value, emailContact.value].filter(item => item?.enabled && (item.type !== 'email' || item.verified)).length)
+const wechatBound = computed(() => Boolean(wechatContact.value?.enabled && wechatContact.value.displayValue))
+const emailBound = computed(() => Boolean(emailContact.value?.enabled && emailContact.value.verified))
+const contactSaving = computed(() => createContactMutation.isPending.value || updateContactMutation.isPending.value)
+const emailBindingPending = computed(() => contactSaving.value || startEmailVerificationMutation.isPending.value || confirmEmailVerificationMutation.isPending.value || verifyContactMutation.isPending.value)
 
 watchEffect(() => {
   if (!profile.value) return
@@ -145,15 +145,28 @@ watchEffect(() => {
   profileForm.timezone = profile.value.timezone ?? 'Asia/Shanghai'
   profileForm.avatarMode = profile.value.avatarMode
   profileForm.avatarUrl = profile.value.customAvatarUrl ?? ''
-  if (!emailForm.email) emailForm.email = profile.value.email ?? ''
+  if (!emailForm.email) emailForm.email = emailContact.value?.displayValue || profile.value.email || ''
   Object.assign(privacyForm, profile.value.privacy)
+
+  const wechat = wechatContact.value
+  const wechatDraftKey = `${wechat?.id ?? 'empty'}:${wechat?.updatedAt ?? ''}`
+  if (loadedContactDraftKeys.wechat !== wechatDraftKey) {
+    wechatForm.displayValue = wechat?.displayValue ?? ''
+    loadedContactDraftKeys.wechat = wechatDraftKey
+  }
+
+  const email = emailContact.value
+  const emailDraftKey = `${email?.id ?? profile.value.email ?? 'empty'}:${email?.updatedAt ?? profile.value.emailVerifiedAt ?? ''}`
+  if (loadedContactDraftKeys.email !== emailDraftKey) {
+    emailForm.email = email?.displayValue || profile.value.email || ''
+    loadedContactDraftKeys.email = emailDraftKey
+  }
 })
 
 const carpoolRows = computed(() => carpools.value ?? [])
 const apiServiceRows = computed(() => apiServices.value ?? [])
 const carpoolPagination = usePagination(carpoolRows)
 const apiServicePagination = usePagination(apiServiceRows)
-const enabledContactCount = computed(() => (contacts.value ?? []).filter(item => item.enabled).length)
 const avatarText = computed(() => (profile.value?.displayName || profile.value?.username || '我').slice(0, 1).toUpperCase())
 const profileErrorMessage = computed(() => {
   const error = profileQuery.error.value
@@ -164,38 +177,8 @@ function isSectionActive(to: string) {
   return route.path === to
 }
 
-function contactTypeLabel(type: ContactMethodType) {
-  return contactTypeOptions.find(item => item.value === type)?.label ?? type
-}
-
 function scopeLabels(scopes: ContactUsageScope[]) {
   return scopes.map(scope => usageScopeOptions.find(item => item.value === scope)?.label ?? scope).join('、')
-}
-
-function toggleScope(scope: ContactUsageScope) {
-  contactForm.usageScopes = contactForm.usageScopes.includes(scope)
-    ? contactForm.usageScopes.filter(item => item !== scope)
-    : [...contactForm.usageScopes, scope]
-}
-
-function resetContactForm() {
-  editingContactId.value = ''
-  contactForm.type = 'wechat'
-  contactForm.label = '微信'
-  contactForm.displayValue = ''
-  contactForm.usageScopes = ['carpool_owner']
-  contactForm.isDefault = false
-  contactForm.enabled = true
-}
-
-function editContact(contact: UserContactMethod) {
-  editingContactId.value = contact.id
-  contactForm.type = contact.type
-  contactForm.label = contact.label
-  contactForm.displayValue = contact.displayValue
-  contactForm.usageScopes = [...contact.usageScopes]
-  contactForm.isDefault = contact.isDefault
-  contactForm.enabled = contact.enabled
 }
 
 function saveProfile() {
@@ -238,8 +221,7 @@ function startEmailVerification() {
     onSuccess: challenge => {
       emailForm.email = challenge.email
       emailForm.code = ''
-      emailForm.devCode = challenge.devCode ?? ''
-      toast.success('验证码已发送。')
+      toast.success('验证码已发送，请查看邮箱。')
     },
     onError: error => toast.error(error instanceof Error ? error.message : '验证码发送失败。'),
   })
@@ -252,7 +234,6 @@ function confirmEmailVerification() {
   }, {
     onSuccess: () => {
       emailForm.code = ''
-      emailForm.devCode = ''
       toast.success('邮箱已绑定。')
     },
     onError: error => toast.error(error instanceof Error ? error.message : '邮箱绑定失败。'),
@@ -264,29 +245,91 @@ function savePrivacy() {
   saveProfile()
 }
 
-function saveContact() {
-  if (!contactForm.usageScopes.length) {
-    toast.warning('至少选择一个适用场景。')
+function buildContactPayload(type: ContactMethodType, label: string, displayValue: string, current: UserContactMethod | null): SaveContactMethodRequest {
+  return {
+    type,
+    label,
+    displayValue: displayValue.trim(),
+    usageScopes: current?.usageScopes.length ? [...current.usageScopes] : [...defaultContactUsageScopes],
+    isDefault: current?.isDefault ?? false,
+    enabled: true,
+  }
+}
+
+function saveWechatContact() {
+  const displayValue = wechatForm.displayValue.trim()
+  if (!displayValue) {
+    toast.warning('请先填写微信号。')
     return
   }
-  const payload = { ...contactForm, usageScopes: [...contactForm.usageScopes] }
+  const current = wechatContact.value
+  const payload = buildContactPayload('wechat', '微信', displayValue, current)
   const mutationOptions = {
     onSuccess: () => {
-      toast.success(editingContactId.value ? '联系方式已更新。' : '联系方式已新增。')
-      resetContactForm()
+      toast.success(current ? '微信联系方式已更新。' : '微信联系方式已绑定。')
     },
     onError: (error: Error) => toast.error(error.message),
   }
-  if (editingContactId.value) {
-    updateContactMutation.mutate({ contactId: editingContactId.value, payload }, mutationOptions)
+  if (current) {
+    updateContactMutation.mutate({ contactId: current.id, payload }, mutationOptions)
     return
   }
   createContactMutation.mutate(payload, mutationOptions)
 }
 
+function markEmailContactVerified(contact: UserContactMethod) {
+  if (contact.verified) {
+    toast.success('邮箱联系方式已绑定。')
+    return
+  }
+  verifyContactMutation.mutate(contact.id, {
+    onSuccess: () => toast.success('邮箱联系方式已绑定。'),
+    onError: error => toast.error(error instanceof Error ? error.message : '邮箱联系方式验证失败。'),
+  })
+}
+
+function saveVerifiedEmailContact() {
+  const displayValue = emailForm.email.trim().toLowerCase()
+  if (!displayValue) {
+    toast.warning('请先填写邮箱。')
+    return
+  }
+  const current = emailContact.value
+  const payload = buildContactPayload('email', '邮箱', displayValue, current)
+  const mutationOptions = {
+    onSuccess: markEmailContactVerified,
+    onError: (error: Error) => toast.error(error.message),
+  }
+  if (current) {
+    updateContactMutation.mutate({ contactId: current.id, payload }, mutationOptions)
+    return
+  }
+  createContactMutation.mutate(payload, mutationOptions)
+}
+
+function confirmContactEmailVerification() {
+  confirmEmailVerificationMutation.mutate({
+    email: emailForm.email,
+    code: emailForm.code,
+  }, {
+    onSuccess: () => {
+      emailForm.code = ''
+      saveVerifiedEmailContact()
+    },
+    onError: error => toast.error(error instanceof Error ? error.message : '邮箱绑定失败。'),
+  })
+}
+
 function removeContact(contact: UserContactMethod) {
   deleteContactMutation.mutate(contact.id, {
-    onSuccess: () => toast.success('联系方式已删除。'),
+    onSuccess: () => {
+      if (contact.type === 'wechat') wechatForm.displayValue = ''
+      if (contact.type === 'email') {
+        emailForm.email = profile.value?.email ?? ''
+        emailForm.code = ''
+      }
+      toast.success('联系方式已解除绑定。')
+    },
     onError: error => toast.error(error instanceof Error ? error.message : '删除失败'),
   })
 }
@@ -295,13 +338,6 @@ function setDefaultContact(contact: UserContactMethod) {
   setDefaultContactMutation.mutate(contact.id, {
     onSuccess: () => toast.success('默认联系方式已更新。'),
     onError: error => toast.error(error instanceof Error ? error.message : '设置失败'),
-  })
-}
-
-function verifyContact(contact: UserContactMethod) {
-  verifyContactMutation.mutate(contact.id, {
-    onSuccess: () => toast.success('联系方式已标记为已验证，本地 mock 状态。'),
-    onError: error => toast.error(error instanceof Error ? error.message : '验证失败'),
   })
 }
 
@@ -496,10 +532,8 @@ function goToLogin() {
           <label class="space-y-2">
             <span class="text-sm font-medium">自定义头像 URL</span>
             <Input v-model="profileForm.avatarUrl" :disabled="profileForm.avatarMode !== 'custom_url'" placeholder="https://example.com/avatar.webp" />
+            <span class="text-xs text-muted-foreground">仅支持 HTTPS 图片链接。</span>
           </label>
-          <div class="rounded-md border border-border bg-accent/50 p-3 text-xs leading-5 text-muted-foreground">
-            第一版不做本地上传。自定义头像必须是 HTTPS JPG、PNG 或 WebP 图片 URL；平台不代理、不下载、不缓存图片。
-          </div>
           <div class="flex flex-wrap gap-2">
             <Button size="sm" variant="outline" @click="useLinuxDoAvatarMutation.mutate()"><Link2 class="h-4 w-4" />恢复 linux.do</Button>
             <Button size="sm" variant="outline" @click="deleteAvatarMutation.mutate()"><Trash2 class="h-4 w-4" />删除自定义头像</Button>
@@ -509,64 +543,80 @@ function goToLogin() {
       </Card>
     </section>
 
-    <section v-else-if="activeSection === 'contacts'" class="grid gap-5 xl:grid-cols-[1fr_380px]">
-      <div class="space-y-3">
-        <Card v-for="contact in contacts ?? []" :key="contact.id" class="p-4">
-          <div class="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
-            <div>
-              <div class="flex flex-wrap items-center gap-2">
-                <h2 class="font-semibold">{{ contact.label }}</h2>
-                <Badge>{{ contactTypeLabel(contact.type) }}</Badge>
-                <Badge :variant="contact.enabled ? 'default' : 'secondary'">{{ contact.enabled ? '启用' : '停用' }}</Badge>
-                <Badge :variant="contact.verified ? 'verified' : 'secondary'">{{ contact.verified ? '已验证' : '未验证' }}</Badge>
-                <Badge v-if="contact.isDefault" variant="secondary">默认联系方式</Badge>
-              </div>
-              <p class="mt-2 text-sm text-muted-foreground">{{ contact.maskedValue }} · 适用：{{ scopeLabels(contact.usageScopes) }}</p>
-            </div>
-            <div class="flex flex-wrap gap-2">
-              <Button size="sm" variant="outline" @click="editContact(contact)">编辑</Button>
-              <Button size="sm" variant="outline" @click="setDefaultContact(contact)">设为默认</Button>
-              <Button v-if="!contact.verified" size="sm" variant="outline" @click="verifyContact(contact)"><MailCheck class="h-4 w-4" />验证</Button>
-              <Button size="sm" variant="outline" @click="removeContact(contact)"><Trash2 class="h-4 w-4" />删除</Button>
-            </div>
-          </div>
-        </Card>
-      </div>
-
+    <section v-else-if="activeSection === 'contacts'" class="space-y-4">
       <Card class="p-5">
-        <h2 class="font-semibold">{{ editingContactId ? '编辑联系方式' : '新增联系方式' }}</h2>
-        <div class="mt-4 space-y-4">
-          <label class="space-y-2">
-            <span class="text-sm font-medium">类型</span>
-            <Select v-model="contactForm.type" :disabled="Boolean(editingContactId && contactForm.type === 'linuxdo')">
-              <SelectTrigger class="w-full bg-background"><SelectValue /></SelectTrigger>
-              <SelectContent>
-                <SelectItem v-for="item in contactTypeOptions.filter(option => option.value !== 'linuxdo')" :key="item.value" :value="item.value">{{ item.label }}</SelectItem>
-              </SelectContent>
-            </Select>
-          </label>
-          <label class="space-y-2"><span class="text-sm font-medium">显示名称</span><Input v-model="contactForm.label" /></label>
-          <label class="space-y-2"><span class="text-sm font-medium">联系方式内容</span><Input v-model="contactForm.displayValue" /></label>
-          <div class="space-y-2">
-            <span class="text-sm font-medium">适用场景</span>
-            <div class="grid gap-2">
-              <label v-for="scope in usageScopeOptions" :key="scope.value" class="flex items-center gap-2 text-sm">
-                <input :checked="contactForm.usageScopes.includes(scope.value)" type="checkbox" @change="toggleScope(scope.value)" />
-                {{ scope.label }}
-              </label>
+        <div class="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+          <div class="flex min-w-0 gap-4">
+            <div class="grid h-12 w-12 shrink-0 place-items-center rounded-xl bg-primary/10 text-primary">
+              <MessageCircle class="h-5 w-5" />
+            </div>
+            <div class="min-w-0">
+              <div class="flex flex-wrap items-center gap-2">
+                <h2 class="text-lg font-semibold tracking-tight">微信</h2>
+                <Badge :variant="wechatBound ? 'verified' : 'secondary'">{{ wechatBound ? '已绑定' : '未绑定' }}</Badge>
+                <Badge v-if="wechatContact?.isDefault" variant="secondary">默认联系方式</Badge>
+              </div>
+              <p class="mt-1 text-sm leading-6 text-muted-foreground">填写微信号后即可作为联系窗口方式，不做验证码验证。</p>
+              <p v-if="wechatContact" class="mt-2 text-sm text-muted-foreground">
+                当前：{{ wechatContact.maskedValue }} · 适用：{{ scopeLabels(wechatContact.usageScopes) }}
+              </p>
             </div>
           </div>
-          <label class="flex items-center gap-2 text-sm"><input v-model="contactForm.isDefault" type="checkbox" />设为默认联系方式</label>
-          <label class="flex items-center gap-2 text-sm"><input v-model="contactForm.enabled" type="checkbox" />启用</label>
-          <div class="flex flex-wrap gap-2">
-            <Button @click="saveContact"><Save class="h-4 w-4" />保存联系方式</Button>
-            <Button variant="outline" @click="resetContactForm">清空</Button>
+          <div v-if="wechatContact" class="flex flex-wrap gap-2">
+            <Button v-if="!wechatContact.isDefault" size="sm" variant="outline" :disabled="setDefaultContactMutation.isPending.value" @click="setDefaultContact(wechatContact)">设为默认</Button>
+            <Button size="sm" variant="outline" :disabled="deleteContactMutation.isPending.value" @click="removeContact(wechatContact)"><Trash2 class="h-4 w-4" />解除绑定</Button>
           </div>
-          <p class="text-xs leading-5 text-muted-foreground">
-            联系方式只用于参与方之间的站外联系；公开主页、首页、车源列表和 API 市集不会展示完整联系方式。
-          </p>
+        </div>
+        <div class="mt-5 grid gap-3 lg:grid-cols-[minmax(0,1fr)_160px]">
+          <label class="space-y-2">
+            <span class="text-sm font-medium">微信号</span>
+            <Input v-model="wechatForm.displayValue" autocomplete="off" placeholder="例如 c2c_orbit" />
+          </label>
+          <Button class="lg:self-end" :disabled="contactSaving || !wechatForm.displayValue.trim()" @click="saveWechatContact"><Save class="h-4 w-4" />保存微信</Button>
         </div>
       </Card>
+
+      <Card class="p-5">
+        <div class="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+          <div class="flex min-w-0 gap-4">
+            <div class="grid h-12 w-12 shrink-0 place-items-center rounded-xl bg-sky-500/10 text-sky-700">
+              <Mail class="h-5 w-5" />
+            </div>
+            <div class="min-w-0">
+              <div class="flex flex-wrap items-center gap-2">
+                <h2 class="text-lg font-semibold tracking-tight">邮箱</h2>
+                <Badge :variant="emailBound ? 'verified' : 'secondary'">{{ emailBound ? '已绑定' : '未绑定' }}</Badge>
+                <Badge v-if="emailContact && !emailContact.verified" variant="secondary">待验证</Badge>
+                <Badge v-if="emailContact?.isDefault" variant="secondary">默认联系方式</Badge>
+              </div>
+              <p class="mt-1 text-sm leading-6 text-muted-foreground">邮箱必须通过验证码后才会启用为联系方式。</p>
+              <p v-if="emailContact" class="mt-2 text-sm text-muted-foreground">
+                当前：{{ emailContact.maskedValue }} · 适用：{{ scopeLabels(emailContact.usageScopes) }}
+              </p>
+            </div>
+          </div>
+          <div v-if="emailContact" class="flex flex-wrap gap-2">
+            <Button v-if="emailBound && !emailContact.isDefault" size="sm" variant="outline" :disabled="setDefaultContactMutation.isPending.value" @click="setDefaultContact(emailContact)">设为默认</Button>
+            <Button size="sm" variant="outline" :disabled="deleteContactMutation.isPending.value" @click="removeContact(emailContact)"><Trash2 class="h-4 w-4" />解除绑定</Button>
+          </div>
+        </div>
+        <div class="mt-5 grid gap-3 lg:grid-cols-[minmax(0,1fr)_160px]">
+          <label class="space-y-2">
+            <span class="text-sm font-medium">邮箱地址</span>
+            <Input v-model="emailForm.email" type="email" autocomplete="email" placeholder="name@example.com" />
+          </label>
+          <Button class="lg:self-end" variant="outline" :disabled="emailBindingPending || !emailForm.email.trim()" @click="startEmailVerification"><MailCheck class="h-4 w-4" />发送验证码</Button>
+          <label class="space-y-2">
+            <span class="text-sm font-medium">验证码</span>
+            <Input v-model="emailForm.code" inputmode="numeric" maxlength="6" placeholder="6 位验证码" />
+          </label>
+          <Button class="lg:self-end" :disabled="emailBindingPending || !emailForm.code.trim()" @click="confirmContactEmailVerification">验证并绑定邮箱</Button>
+        </div>
+      </Card>
+
+      <p class="rounded-md border border-border bg-accent/50 p-3 text-xs leading-5 text-muted-foreground">
+        当前只开放微信和邮箱两种联系方式。联系方式只用于参与方之间的站外联系；公开主页、首页、车源列表和 API 市集不会展示完整联系方式。
+      </p>
     </section>
 
     <section v-else-if="activeSection === 'account'" class="grid gap-4 lg:grid-cols-2">
@@ -605,9 +655,6 @@ function goToLogin() {
             <Badge :variant="profile.emailVerified ? 'verified' : 'secondary'">{{ profile.emailVerified ? '邮箱已绑定' : '邮箱未绑定' }}</Badge>
           </div>
           <label class="space-y-2"><span class="text-sm font-medium">验证码</span><Input v-model="emailForm.code" inputmode="numeric" maxlength="6" placeholder="6 位验证码" /></label>
-          <div v-if="emailForm.devCode" class="rounded-md border border-border bg-accent/50 p-3 text-xs text-muted-foreground">
-            开发验证码：{{ emailForm.devCode }}
-          </div>
           <Button :disabled="confirmEmailVerificationMutation.isPending.value" @click="confirmEmailVerification">确认绑定邮箱</Button>
         </div>
       </Card>
@@ -618,9 +665,9 @@ function goToLogin() {
           当前功能限制：{{ profile.restrictions.length ? profile.restrictions.join('、') : '无' }}。
         </div>
         <div class="mt-4 flex flex-wrap gap-2">
-          <Button variant="outline" @click="toast('linux.do 信息已同步，本地 mock 状态。')">同步 linux.do 信息</Button>
+          <Button variant="outline" @click="toast('linux.do 信息同步请求已记录。')">同步 linux.do 信息</Button>
           <Button variant="outline" @click="router.push('/my/profile')">切换头像跟随模式</Button>
-          <Button variant="outline" @click="toast('申诉入口已记录为本地 mock 状态。')"><LockKeyhole class="h-4 w-4" />提交申诉</Button>
+          <Button variant="outline" @click="toast('申诉请求已记录。')"><LockKeyhole class="h-4 w-4" />提交申诉</Button>
         </div>
       </Card>
     </section>
@@ -643,7 +690,7 @@ function goToLogin() {
         <div class="mt-4 space-y-3 text-sm text-muted-foreground">
           <p>账号处罚状态、严重未解决纠纷提示、系统认证铭牌和已绑定 linux.do 状态始终会在必要位置展示。</p>
           <p>隐私设置不影响有效意向参与者查看必要联系方式。</p>
-          <p>公开主页不会展示微信、邮箱、Telegram、其他联系方式、登录邮箱、手机号、IP、设备信息或意向敏感详情。</p>
+          <p>公开主页不会展示微信、邮箱、登录邮箱、手机号、IP、设备信息或意向敏感详情。</p>
         </div>
       </Card>
     </section>

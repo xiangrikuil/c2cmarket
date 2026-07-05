@@ -4,6 +4,7 @@ export type DistributionSystem = 'sub2api' | 'new_api_proxy' | 'other'
 export type ApiProviderCategory = 'gpt' | 'claude' | 'other'
 export type BillingMode = 'metered_credit' | 'manual_credit' | 'fixed_package'
 export type PublishDeliveryMode = 'api_key_endpoint' | 'sub2api_panel_account'
+export type PublishPaymentMethod = 'wechat' | 'alipay' | 'usdt'
 export type UsageVisibility = 'panel_realtime' | 'panel_balance_only' | 'merchant_confirmed' | 'fixed_package_only' | 'not_available'
 export type ValidityMode = 'days' | 'permanent'
 export type WarrantyMode = 'no_warranty' | 'upstream_refund_only' | 'merchant_warranty'
@@ -32,6 +33,12 @@ export type ApiServicePackage = {
   inventory: number | null
 }
 
+export type ApiServicePaymentOption = {
+  paymentMethod: PublishPaymentMethod
+  enabled: boolean
+  paymentInstructions: string
+}
+
 export type WarrantyConfig = {
   mode: WarrantyMode
   warrantyDays: number | null
@@ -58,6 +65,8 @@ export type ApiServicePublishForm = {
   availableCreditUsd: number | null
   minimumPurchaseCny: number | null
   maximumPurchaseCny: number | null
+  paymentWindowMinutes: number
+  paymentOptions: ApiServicePaymentOption[]
   packages: ApiServicePackage[]
   validity: {
     mode: ValidityMode

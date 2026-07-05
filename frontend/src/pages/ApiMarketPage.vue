@@ -11,17 +11,13 @@ import TablePagination from '@/components/market/TablePagination.vue'
 import { usePagination } from '@/composables/usePagination'
 import {
   canOpenApiMerchantProfile,
-  getApiDeliveryModeLabel,
   getApiMerchantAvatarText,
   getApiMerchantDisplayName,
   getApiMerchantProfileUrl,
   getApiMerchantVisibilityLabel,
-  getApiUsageVisibilityLabel,
   formatUsdQuota,
   type ApiBillingMode,
-  type ApiDeliveryMode,
   type ApiService,
-  type ApiUsageVisibility,
   type MinimumPurchaseFilter,
   type OtherApiMarketFilters,
   type OtherApiMarketSort,
@@ -32,7 +28,6 @@ import { useOtherApiMarketQuery, useSub2ApiMarketQuery } from '@/queries/useMark
 
 type MerchantFilter = 'all' | 'personal_first' | 'personal' | 'api'
 type Panel = 'sub2api' | 'other'
-type DeliveryFilter = 'all' | ApiDeliveryMode
 type OnlineFilter = 'all' | 'online' | 'offline'
 type ImageFilter = 'all' | 'supported' | 'none'
 type BillingFilter = 'all' | ApiBillingMode
@@ -46,7 +41,6 @@ const activePanel = ref<Panel>(route.query.panel === 'other' ? 'other' : 'sub2ap
 const sub2Search = ref('')
 const sub2Model = ref('全部')
 const sub2CreditPriceMax = ref('all')
-const sub2DeliveryMode = ref<DeliveryFilter>('all')
 const sub2ImageCapability = ref<ImageFilter>('all')
 const sub2MinimumPurchase = ref<MinimumPurchaseFilter>('all')
 const sub2Online = ref<OnlineFilter>('all')
@@ -57,7 +51,6 @@ const sub2Sort = ref<Sub2ApiMarketSort>('recommended')
 const otherSearch = ref('')
 const otherDistribution = ref<DistributionFilter>('all')
 const otherBilling = ref<BillingFilter>('all')
-const otherDeliveryMode = ref<DeliveryFilter>('all')
 const otherMinimumPurchase = ref<MinimumPurchaseFilter>('all')
 const otherOnline = ref<OnlineFilter>('all')
 const otherSort = ref<OtherApiMarketSort>('recommended')
@@ -96,7 +89,6 @@ const sub2Filters = computed<Sub2ApiMarketFilters>(() => ({
   search: sub2Search.value.trim() || undefined,
   model: sub2Model.value === '全部' ? undefined : sub2Model.value,
   creditPriceMax: creditPriceMax(sub2CreditPriceMax.value),
-  deliveryMode: sub2DeliveryMode.value === 'all' ? undefined : sub2DeliveryMode.value,
   imageCapability: sub2ImageCapability.value,
   minimumPurchase: sub2MinimumPurchase.value,
   online: onlineValue(sub2Online.value),
@@ -109,7 +101,6 @@ const otherFilters = computed<OtherApiMarketFilters>(() => ({
   search: otherSearch.value.trim() || undefined,
   distributionSystem: otherDistribution.value,
   billingMode: otherBilling.value,
-  deliveryMode: otherDeliveryMode.value === 'all' ? undefined : otherDeliveryMode.value,
   minimumPurchase: otherMinimumPurchase.value,
   online: onlineValue(otherOnline.value),
   sort: otherSort.value,
@@ -128,7 +119,6 @@ const activePanelLabel = computed(() => activePanel.value === 'sub2api' ? 'Sub2A
 
 const sub2Chips = computed(() => {
   const chips: { label: string, reset: () => void }[] = []
-  if (sub2DeliveryMode.value !== 'all') chips.push({ label: getApiDeliveryModeLabel(sub2DeliveryMode.value), reset: () => { sub2DeliveryMode.value = 'all' } })
   if (sub2ImageCapability.value !== 'all') chips.push({ label: sub2ImageCapability.value === 'supported' ? '支持生图' : '不支持生图', reset: () => { sub2ImageCapability.value = 'all' } })
   if (sub2MinimumPurchase.value !== 'all') chips.push({ label: minimumPurchaseLabel(sub2MinimumPurchase.value), reset: () => { sub2MinimumPurchase.value = 'all' } })
   if (sub2TrustLevel.value !== 'all') chips.push({ label: `信任等级${sub2TrustLevel.value}+`, reset: () => { sub2TrustLevel.value = 'all' } })
@@ -191,7 +181,6 @@ const otherChips = computed(() => {
   const chips: { label: string, reset: () => void }[] = []
   if (otherDistribution.value && otherDistribution.value !== 'all') chips.push({ label: otherDistribution.value, reset: () => { otherDistribution.value = 'all' } })
   if (otherBilling.value !== 'all') chips.push({ label: billingModeLabel(otherBilling.value), reset: () => { otherBilling.value = 'all' } })
-  if (otherDeliveryMode.value !== 'all') chips.push({ label: getApiDeliveryModeLabel(otherDeliveryMode.value), reset: () => { otherDeliveryMode.value = 'all' } })
   if (otherMinimumPurchase.value !== 'all') chips.push({ label: minimumPurchaseLabel(otherMinimumPurchase.value), reset: () => { otherMinimumPurchase.value = 'all' } })
   return chips
 })
@@ -215,24 +204,12 @@ function minimumPurchaseLabel(value: MinimumPurchaseFilter) {
   return '不限'
 }
 
-function deliveryModesLabel(modes: ApiDeliveryMode[]) {
-  return modes.map(getApiDeliveryModeLabel).join(' / ')
+function accessConfirmationLabel() {
+  return '提交意向后站外确认'
 }
 
-function deliveryModeHint(mode: ApiDeliveryMode) {
-  return mode === 'api_key_endpoint' ? '提交意向后查看站外确认说明' : '提交意向后联系商户确认接入方式'
-}
-
-function deliveryModeColumnLabel(mode: ApiDeliveryMode) {
-  return mode === 'api_key_endpoint' ? '请求地址说明' : '面板接入说明'
-}
-
-function deliveryModesHint(modes: ApiDeliveryMode[]) {
-  return modes.includes('api_key_endpoint') ? deliveryModeHint('api_key_endpoint') : deliveryModeHint('sub2api_panel_account')
-}
-
-function deliveryModePillClass(index: number) {
-  return index === 0 ? 'c2c-api-delivery-pill-primary' : 'c2c-api-delivery-pill-secondary'
+function usageVerificationLabel() {
+  return '用量与余额由商户说明，买家自行核对'
 }
 
 function creditPriceLabel(row: ApiService) {
@@ -251,12 +228,13 @@ function imagePricingLabel(row: ApiService) {
 }
 
 function serviceSummary(row: ApiService) {
-  return `${deliveryModesLabel(row.deliveryModes)} · ${getApiUsageVisibilityLabel(row.usageVisibility)} · ${row.warranty}`
+  return `${accessConfirmationLabel()} · ${usageVerificationLabel()} · ${row.warranty}`
 }
 
 function capabilityBadges(row: ApiService) {
   return [
-    getApiUsageVisibilityLabel(row.usageVisibility),
+    '站外确认接入',
+    '买家自行核对用量',
     row.imagePricing.supported ? '支持生图' : '不支持生图',
     row.warranty.includes('补') || row.warranty.includes('承诺') || row.warranty.includes('24') ? '商户承诺' : '售后协商',
   ]
@@ -326,9 +304,9 @@ function merchantProfileUrl(row: ApiService) {
         @click="setPanel('sub2api')"
       >
         <span class="api-market-panel-icon"><Sparkles class="h-4 w-4" /></span>
-        <span class="min-w-0">
-          <span class="api-market-panel-title">Sub2API 标准额度</span>
-          <span class="api-market-panel-desc">统一倍率，优先比较美元额度售价、接入方式和履约记录</span>
+          <span class="min-w-0">
+            <span class="api-market-panel-title">Sub2API 标准额度</span>
+          <span class="api-market-panel-desc">统一倍率，优先比较美元额度售价、生图价格和履约记录</span>
         </span>
         <Badge variant="trust">{{ sub2Rows.length }} 条</Badge>
       </button>
@@ -357,7 +335,7 @@ function merchantProfileUrl(row: ApiService) {
             <Badge variant="secondary">可售美元额度</Badge>
           </div>
           <p class="mt-1 text-sm leading-6 text-muted-foreground">
-            文本与生图倍率固定 1.00x；买家主要比较美元额度售价、接入方式、用量可见性、生图价格、商户承诺和履约记录。可售美元额度是商户声明的最大可购买额度参考，不由平台发放或托管。
+            文本与生图倍率固定 1.00x；买家主要比较美元额度售价、生图价格、商户承诺和履约记录。可售美元额度是商户声明的最大可购买额度参考，不由平台发放或托管；接入细节和用量核对由双方站外确认。
           </p>
         </div>
       </div>
@@ -401,13 +379,6 @@ function merchantProfileUrl(row: ApiService) {
             <PopoverContent align="end" class="w-[360px]">
               <div class="grid gap-3">
                 <div class="text-sm font-medium">Sub2API 筛选</div>
-                <label class="grid gap-1 text-xs text-muted-foreground">接入方式
-                  <select v-model="sub2DeliveryMode" class="h-8 rounded-md border border-input bg-background px-2 text-xs text-foreground">
-                    <option value="all">全部</option>
-                    <option value="api_key_endpoint">API 请求地址接入说明</option>
-                    <option value="sub2api_panel_account">Sub2API 面板接入说明</option>
-                  </select>
-                </label>
                 <label class="grid gap-1 text-xs text-muted-foreground">生图能力
                   <select v-model="sub2ImageCapability" class="h-8 rounded-md border border-input bg-background px-2 text-xs text-foreground">
                     <option value="all">全部</option>
@@ -438,7 +409,6 @@ function merchantProfileUrl(row: ApiService) {
             <option value="recommended">综合推荐</option>
             <option value="credit_price_asc">额度售价最低</option>
             <option value="minimum_purchase_asc">最低意向金额</option>
-            <option value="panel_supported">支持面板登录</option>
             <option value="response_fast">响应最快</option>
             <option value="recent">最近上架</option>
           </select>
@@ -456,7 +426,7 @@ function merchantProfileUrl(row: ApiService) {
       </div>
 
       <div v-if="sub2Rows.length === 0" class="rounded-xl border border-border bg-card p-8 text-center text-sm text-muted-foreground">当前筛选条件下暂无 Sub2API 标准额度服务。</div>
-      <SoftTable v-else :columns="['服务', '额度售价', '接入方式', '用量可见', '生图价格', '商户承诺', '最低意向', '商户', '状态 / 响应', '操作']">
+      <SoftTable v-else :columns="['服务', '额度售价', '接入 / 核对', '生图价格', '商户承诺', '最低意向', '商户', '状态 / 响应', '操作']">
         <tr v-for="row in sub2Pagination.paginatedRows.value" :key="row.id" class="api-market-table-row">
           <td class="api-market-service-cell">
             <div class="font-semibold text-slate-900">{{ row.title }}</div>
@@ -470,24 +440,11 @@ function merchantProfileUrl(row: ApiService) {
             <div class="mt-1 text-xs text-muted-foreground">可售 {{ formatUsdQuota(row.balance) }}</div>
           </td>
           <td>
-            <div class="grid gap-2">
-              <div class="flex flex-wrap gap-1.5">
-                <span
-                  v-for="(mode, index) in row.deliveryModes"
-                  :key="mode"
-                  class="c2c-api-delivery-pill inline-flex w-fit items-center whitespace-nowrap rounded-full border px-2 py-1 text-xs font-medium leading-none"
-                  :class="deliveryModePillClass(index)"
-                >
-                  {{ deliveryModeColumnLabel(mode) }}
-                </span>
-              </div>
-              <div class="flex items-start gap-1.5 text-xs leading-5 text-muted-foreground">
-                <span class="mt-2 h-1.5 w-1.5 shrink-0 rounded-full bg-primary"></span>
-                <span>{{ deliveryModesHint(row.deliveryModes) }}</span>
-              </div>
+            <div class="grid gap-1">
+              <div class="text-sm font-medium">{{ accessConfirmationLabel() }}</div>
+              <div class="text-xs leading-5 text-muted-foreground">{{ usageVerificationLabel() }}</div>
             </div>
           </td>
-          <td>{{ getApiUsageVisibilityLabel(row.usageVisibility) }}</td>
           <td>{{ imagePricingLabel(row) }}</td>
           <td>{{ row.warranty }}</td>
           <td><span class="api-market-minimum">¥{{ row.minimumPurchaseCny }} 起</span></td>
@@ -575,13 +532,6 @@ function merchantProfileUrl(row: ApiService) {
             <PopoverContent align="end" class="w-[320px]">
               <div class="grid gap-3">
                 <div class="text-sm font-medium">其他 API 筛选</div>
-                <label class="grid gap-1 text-xs text-muted-foreground">接入方式
-                  <select v-model="otherDeliveryMode" class="h-8 rounded-md border border-input bg-background px-2 text-xs text-foreground">
-                    <option value="all">全部</option>
-                    <option value="api_key_endpoint">API 请求地址接入说明</option>
-                    <option value="sub2api_panel_account">Sub2API 面板接入说明</option>
-                  </select>
-                </label>
                 <label class="grid gap-1 text-xs text-muted-foreground">最低意向金额
                   <select v-model="otherMinimumPurchase" class="h-8 rounded-md border border-input bg-background px-2 text-xs text-foreground">
                     <option value="all">不限</option>
@@ -613,7 +563,7 @@ function merchantProfileUrl(row: ApiService) {
       </div>
 
       <div v-if="otherRows.length === 0" class="rounded-xl border border-border bg-card p-8 text-center text-sm text-muted-foreground">当前筛选条件下暂无其他 API 接入服务。</div>
-      <SoftTable v-else :columns="['服务', '分发系统', '计费方式', '接入方式', '用量可见', '商户承诺', '最低意向', '商户', '状态', '操作']">
+      <SoftTable v-else :columns="['服务', '分发系统', '计费方式', '接入 / 核对', '商户承诺', '最低意向', '商户', '状态', '操作']">
         <tr v-for="row in otherPagination.paginatedRows.value" :key="row.id" class="api-market-table-row">
           <td class="api-market-service-cell">
             <div class="font-semibold text-slate-900">{{ row.title }}</div>
@@ -622,24 +572,11 @@ function merchantProfileUrl(row: ApiService) {
           <td>{{ row.delivery }}</td>
           <td>{{ billingModeLabel(row.billingMode) }}</td>
           <td>
-            <div class="grid gap-2">
-              <div class="flex flex-wrap gap-1.5">
-                <span
-                  v-for="(mode, index) in row.deliveryModes"
-                  :key="mode"
-                  class="c2c-api-delivery-pill inline-flex w-fit items-center whitespace-nowrap rounded-full border px-2 py-1 text-xs font-medium leading-none"
-                  :class="deliveryModePillClass(index)"
-                >
-                  {{ deliveryModeColumnLabel(mode) }}
-                </span>
-              </div>
-              <div class="flex items-start gap-1.5 text-xs leading-5 text-muted-foreground">
-                <span class="mt-2 h-1.5 w-1.5 shrink-0 rounded-full bg-primary"></span>
-                <span>{{ deliveryModesHint(row.deliveryModes) }}</span>
-              </div>
+            <div class="grid gap-1">
+              <div class="text-sm font-medium">{{ accessConfirmationLabel() }}</div>
+              <div class="text-xs leading-5 text-muted-foreground">{{ usageVerificationLabel() }}</div>
             </div>
           </td>
-          <td>{{ getApiUsageVisibilityLabel(row.usageVisibility) }}</td>
           <td>{{ row.warranty }}</td>
           <td><span class="api-market-minimum">¥{{ row.minimumPurchaseCny }} 起</span></td>
           <td>

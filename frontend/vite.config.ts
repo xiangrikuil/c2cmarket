@@ -3,6 +3,11 @@ import vue from '@vitejs/plugin-vue'
 import tailwindcss from '@tailwindcss/vite'
 import { defineConfig, loadEnv } from 'vite'
 
+const matchesNodeModulePackage = (id: string, packageNames: string[]) => {
+  const normalizedId = id.replace(/\\/g, '/')
+  return packageNames.some(packageName => normalizedId.includes(`/node_modules/${packageName}/`))
+}
+
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '')
   const apiMode = env.VITE_API_MODE
@@ -13,6 +18,56 @@ export default defineConfig(({ mode }) => {
 
   return {
     plugins: [vue(), tailwindcss()],
+    build: {
+      rolldownOptions: {
+        output: {
+          codeSplitting: {
+            groups: [
+              {
+                name: 'vendor-framework',
+                test: id => matchesNodeModulePackage(id, [
+                  'vue',
+                  'vue-router',
+                  'pinia',
+                  '@tanstack/query-core',
+                  '@tanstack/vue-query',
+                ]),
+                priority: 30,
+                minSize: 20 * 1024,
+              },
+              {
+                name: 'vendor-ui',
+                test: id => matchesNodeModulePackage(id, [
+                  '@floating-ui/core',
+                  '@floating-ui/dom',
+                  '@floating-ui/utils',
+                  '@radix-icons/vue',
+                  '@vueuse/core',
+                  'lucide-vue-next',
+                  'reka-ui',
+                  'vue-sonner',
+                ]),
+                priority: 20,
+                minSize: 20 * 1024,
+              },
+              {
+                name: 'vendor-content',
+                test: id => matchesNodeModulePackage(id, ['dompurify', 'marked']),
+                priority: 20,
+                minSize: 20 * 1024,
+              },
+              {
+                name: 'vendor-charts',
+                test: id => matchesNodeModulePackage(id, ['@unovis/ts', '@unovis/vue']),
+                priority: 20,
+                minSize: 20 * 1024,
+                maxSize: 450 * 1024,
+              },
+            ],
+          },
+        },
+      },
+    },
     resolve: {
       alias: {
         '@': path.resolve(__dirname, './src'),

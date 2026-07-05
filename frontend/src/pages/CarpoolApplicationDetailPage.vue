@@ -99,7 +99,7 @@ function markContacted() {
 
 function markContactedFromCard() {
   if (realBackend) {
-    toast('真实后端读取联系窗口后可直接确认上车。')
+    toast('联系窗口已开放，可直接确认上车。')
     return
   }
   if (!ownerMode.value && canBuyerContact.value) {
@@ -165,7 +165,7 @@ function openDispute() {
 
 function submitReview() {
   if (!application.value) return
-  runAction(() => reviewCarpoolApplication(application.value!.id, { rating: 5, tags: ['规则清楚', '服务稳定'], note: '本地 mock 评价' }), '评价已记录。')
+  runAction(() => reviewCarpoolApplication(application.value!.id, { rating: 5, tags: ['规则清楚', '服务稳定'], note: '规则清楚，服务稳定。' }), '评价已记录。')
 }
 </script>
 
@@ -173,7 +173,7 @@ function submitReview() {
   <div v-if="isLoading" class="rounded-xl border border-border bg-card p-8 text-sm text-muted-foreground">正在加载上车申请...</div>
   <div v-else-if="!application" class="rounded-xl border border-border bg-card p-8">
     <h1 class="text-xl font-semibold">未找到上车申请</h1>
-    <p class="mt-2 text-sm text-muted-foreground">该申请不存在或当前 mock 数据尚未同步。</p>
+    <p class="mt-2 text-sm text-muted-foreground">该申请不存在或暂不可见。</p>
     <Button class="mt-5" variant="outline" @click="router.push('/my/rides')">返回我的上车</Button>
   </div>
   <div v-else class="space-y-4">

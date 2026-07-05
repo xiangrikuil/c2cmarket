@@ -168,7 +168,7 @@ function openNotifications() {
 }
 
 function logoutMock() {
-  toast('已退出登录，本地 mock 状态。')
+  toast('已退出登录。')
   router.push('/login')
 }
 
@@ -194,7 +194,7 @@ function closeMenu() {
         class="flex h-[60px] items-center border-b border-slate-200 font-semibold tracking-tight"
         :class="sidebarCollapsed ? 'justify-center px-0' : 'gap-2.5 px-5'"
       >
-        <img src="/c2cmarket-logo-mark.svg" alt="C2CMarket" class="h-7 w-7 shrink-0" />
+        <img src="/c2cmarket-logo-mark.svg?v=20260704-logo2" alt="C2CMarket" class="h-7 w-7 shrink-0" />
         <span v-if="!sidebarCollapsed" class="min-w-0">
           <span class="block truncate text-[19px] font-bold leading-tight text-slate-900">C2CMarket</span>
         </span>
@@ -269,7 +269,7 @@ function closeMenu() {
     >
       <div class="flex h-[60px] items-center justify-between border-b border-border px-4">
         <RouterLink to="/" class="flex min-w-0 items-center gap-3 font-semibold tracking-tight" @click="closeMenu">
-          <img src="/c2cmarket-logo-mark.svg" alt="C2CMarket" class="h-8 w-8 shrink-0" />
+          <img src="/c2cmarket-logo-mark.svg?v=20260704-logo2" alt="C2CMarket" class="h-8 w-8 shrink-0" />
           <span class="min-w-0">
             <span class="block truncate text-[18px] font-bold leading-tight">C2CMarket</span>
           </span>
@@ -321,7 +321,7 @@ function closeMenu() {
             <Menu class="h-4 w-4" />
           </Button>
           <RouterLink to="/" class="flex items-center gap-2 font-semibold tracking-tight lg:hidden">
-            <img src="/c2cmarket-logo-mark.svg" alt="C2CMarket" class="h-8 w-8" />
+            <img src="/c2cmarket-logo-mark.svg?v=20260704-logo2" alt="C2CMarket" class="h-8 w-8" />
           </RouterLink>
           <div class="hidden min-w-0 shrink-0 md:block lg:w-[260px] 2xl:w-[338px]">
             <div class="truncate text-lg font-semibold text-slate-900">{{ currentTitle }}</div>

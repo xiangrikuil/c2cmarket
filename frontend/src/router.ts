@@ -1,41 +1,42 @@
 import { createRouter, createWebHistory } from 'vue-router'
-import HomePage from '@/pages/HomePage.vue'
-import OfficialPricesPage from '@/pages/OfficialPricesPage.vue'
-import OfficialPriceDetailPage from '@/pages/OfficialPriceDetailPage.vue'
-import OfficialPriceSubmitPage from '@/pages/OfficialPriceSubmitPage.vue'
-import OfficialPriceManagePage from '@/pages/OfficialPriceManagePage.vue'
-import CarpoolsPage from '@/pages/CarpoolsPage.vue'
-import CarpoolDetailPage from '@/pages/CarpoolDetailPage.vue'
-import CarpoolPublishPage from '@/pages/CarpoolPublishPage.vue'
-import DemandsPage from '@/pages/DemandsPage.vue'
-import DemandDetailPage from '@/pages/DemandDetailPage.vue'
-import ApiMarketPage from '@/pages/ApiMarketPage.vue'
-import ApiServiceDetailPage from '@/pages/ApiServiceDetailPage.vue'
-import ApiServicePublishPage from '@/pages/ApiServicePublishPage.vue'
-import SearchPage from '@/pages/SearchPage.vue'
-import MyCenterPage from '@/pages/MyCenterPage.vue'
-import MyCarpoolsPage from '@/pages/MyCarpoolsPage.vue'
-import MyRidesPage from '@/pages/MyRidesPage.vue'
-import CarpoolApplicationDetailPage from '@/pages/CarpoolApplicationDetailPage.vue'
-import MyApiOrdersPage from '@/pages/MyApiOrdersPage.vue'
-import ApiPurchaseOrderDetailPage from '@/pages/ApiPurchaseOrderDetailPage.vue'
-import MerchantApiOrdersPage from '@/pages/MerchantApiOrdersPage.vue'
-import MerchantCarpoolApplicationsPage from '@/pages/MerchantCarpoolApplicationsPage.vue'
-import MyFavoritesPage from '@/pages/MyFavoritesPage.vue'
-import MyReviewsPage from '@/pages/MyReviewsPage.vue'
-import MyNotificationsPage from '@/pages/MyNotificationsPage.vue'
-import MyFeedbackPage from '@/pages/MyFeedbackPage.vue'
-import AnnouncementDetailPage from '@/pages/AnnouncementDetailPage.vue'
-import LoginPage from '@/pages/LoginPage.vue'
-import PublicUserPage from '@/pages/PublicUserPage.vue'
-import AdminPage from '@/pages/AdminPage.vue'
-import AdminFeedbackPage from '@/pages/AdminFeedbackPage.vue'
-import AdminAnnouncementsPage from '@/pages/AdminAnnouncementsPage.vue'
-import AdminAnnouncementEditorPage from '@/pages/AdminAnnouncementEditorPage.vue'
-import AdminProductPlansPage from '@/pages/AdminProductPlansPage.vue'
-import AdminApiModelsPage from '@/pages/AdminApiModelsPage.vue'
-import AdminSectionPage from '@/pages/AdminSectionPage.vue'
-import NotFoundPage from '@/pages/NotFoundPage.vue'
+
+const HomePage = () => import('@/pages/HomePage.vue')
+const OfficialPricesPage = () => import('@/pages/OfficialPricesPage.vue')
+const OfficialPriceDetailPage = () => import('@/pages/OfficialPriceDetailPage.vue')
+const OfficialPriceSubmitPage = () => import('@/pages/OfficialPriceSubmitPage.vue')
+const OfficialPriceManagePage = () => import('@/pages/OfficialPriceManagePage.vue')
+const CarpoolsPage = () => import('@/pages/CarpoolsPage.vue')
+const CarpoolDetailPage = () => import('@/pages/CarpoolDetailPage.vue')
+const CarpoolPublishPage = () => import('@/pages/CarpoolPublishPage.vue')
+const DemandsPage = () => import('@/pages/DemandsPage.vue')
+const DemandDetailPage = () => import('@/pages/DemandDetailPage.vue')
+const ApiMarketPage = () => import('@/pages/ApiMarketPage.vue')
+const ApiServiceDetailPage = () => import('@/pages/ApiServiceDetailPage.vue')
+const ApiServicePublishPage = () => import('@/pages/ApiServicePublishPage.vue')
+const SearchPage = () => import('@/pages/SearchPage.vue')
+const MyCenterPage = () => import('@/pages/MyCenterPage.vue')
+const MyCarpoolsPage = () => import('@/pages/MyCarpoolsPage.vue')
+const MyRidesPage = () => import('@/pages/MyRidesPage.vue')
+const CarpoolApplicationDetailPage = () => import('@/pages/CarpoolApplicationDetailPage.vue')
+const MyApiOrdersPage = () => import('@/pages/MyApiOrdersPage.vue')
+const ApiPurchaseOrderDetailPage = () => import('@/pages/ApiPurchaseOrderDetailPage.vue')
+const MerchantApiOrdersPage = () => import('@/pages/MerchantApiOrdersPage.vue')
+const MerchantCarpoolApplicationsPage = () => import('@/pages/MerchantCarpoolApplicationsPage.vue')
+const MyFavoritesPage = () => import('@/pages/MyFavoritesPage.vue')
+const MyReviewsPage = () => import('@/pages/MyReviewsPage.vue')
+const MyNotificationsPage = () => import('@/pages/MyNotificationsPage.vue')
+const MyFeedbackPage = () => import('@/pages/MyFeedbackPage.vue')
+const AnnouncementDetailPage = () => import('@/pages/AnnouncementDetailPage.vue')
+const LoginPage = () => import('@/pages/LoginPage.vue')
+const PublicUserPage = () => import('@/pages/PublicUserPage.vue')
+const AdminPage = () => import('@/pages/AdminPage.vue')
+const AdminFeedbackPage = () => import('@/pages/AdminFeedbackPage.vue')
+const AdminAnnouncementsPage = () => import('@/pages/AdminAnnouncementsPage.vue')
+const AdminAnnouncementEditorPage = () => import('@/pages/AdminAnnouncementEditorPage.vue')
+const AdminProductPlansPage = () => import('@/pages/AdminProductPlansPage.vue')
+const AdminApiModelsPage = () => import('@/pages/AdminApiModelsPage.vue')
+const AdminSectionPage = () => import('@/pages/AdminSectionPage.vue')
+const NotFoundPage = () => import('@/pages/NotFoundPage.vue')
 
 const adminChildren = [
   ['official-prices', '官网公开价格管理', '维护各产品、地区、渠道的公开价格、社区线索和验证状态。'],
@@ -43,7 +44,7 @@ const adminChildren = [
   ['carpools', '车源治理', '处理公开车源下架恢复、遗留审核队列、价格、车主承诺、原帖绑定和纠纷状态。'],
   ['demands', '求车管理', '查看求车需求、关闭状态和 linux.do 求车原帖绑定。'],
   ['api-merchants', 'API 商户审核', '审核商户资料、在线状态和可售额度资质。'],
-  ['api-services', 'API 服务审核', '审核模型价格、接入方式、最低意向金额和商户承诺规则。'],
+  ['api-services', 'API 服务审核', '审核模型价格、最低意向金额、交易说明和商户承诺规则。'],
   ['trade-intents', '交易意向管理', '查看购买意向、参与方联系方式、完成和取消状态。'],
   ['carpool-applications', '上车申请管理', '查看上车申请、席位预留、超时、确认和纠纷状态。'],
   ['certifications', '认证 / 铭牌管理', '管理个人车主、可信新车主和 linux.do 绑定标识。'],

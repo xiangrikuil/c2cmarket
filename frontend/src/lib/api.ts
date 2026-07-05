@@ -899,14 +899,11 @@ function normalizeMerchantDisplayName(payload: Record<string, unknown>) {
 }
 
 export function getApiDeliveryModeLabel(mode: ApiDeliveryMode) {
-  return mode === 'api_key_endpoint' ? 'API 请求地址接入说明' : 'Sub2API 面板接入说明'
+  return '站外确认接入细节'
 }
 
 export function getApiDeliveryModeDescription(mode: ApiDeliveryMode) {
-  if (mode === 'api_key_endpoint') {
-    return '提交购买意向后，平台只展示商户联系方式和非敏感接入说明；只允许买家专属、可撤销的子 Key 或子账号由双方站外确认。平台不保存任何凭据，界面也不会呈现凭据内容。禁止共享主账号、主 Key、Session、Cookie 或第三方 Token。'
-  }
-  return '提交购买意向后，平台只记录站外确认状态；只允许买家专属、可撤销的子账号或子 Key。面板账号密码、主账号、主 Key、token、Session、Cookie 或登录态不得填写、粘贴或上传到平台。'
+  return '提交购买意向后，平台只展示商户联系方式和非敏感说明；接入细节由双方站外确认。平台不保存 API Key、token、账号密码、Session、Cookie 或面板凭据。'
 }
 
 export function isApiServicePubliclyOrderable(service: Pick<ApiService, 'online' | 'publiclyOrderable'>) {
@@ -939,9 +936,9 @@ export function getReadableStatus(value: string | null | undefined) {
 
 export function getApiUsageVisibilityLabel(value: ApiService['usageVisibility']) {
   const labels: Record<ApiService['usageVisibility'], string> = {
-    none: '不展示用量',
-    merchant_readonly: '商户只读确认',
-    panel_realtime: '面板实时可见',
+    none: '未展示用量核对',
+    merchant_readonly: '商户说明，买家自行核对',
+    panel_realtime: '商户说明，买家自行核对',
   }
   return labels[value]
 }
@@ -2157,7 +2154,7 @@ export async function getAdminSectionRows(section: AdminSection): Promise<AdminR
     return withAdminRowLinks(apiServiceStore.map(item => ({
       id: item.id,
       primary: item.title,
-      secondary: `${item.models.join(' / ')} · ${item.delivery} · 接入方式 ${item.deliveryModes.map(getApiDeliveryModeLabel).join(' / ')}`,
+      secondary: `${item.models.join(' / ')} · ${item.delivery} · 接入细节站外确认`,
       owner: canOpenApiMerchantProfile(item)
         ? `${getApiMerchantDisplayName(item)} · 信任等级${item.trustLevel}`
         : `${getApiMerchantDisplayName(item)} → ${item.merchantUsername} · 信任等级${item.trustLevel}`,
@@ -2168,7 +2165,7 @@ export async function getAdminSectionRows(section: AdminSection): Promise<AdminR
       detailItems: [
         { label: '商户身份', value: item.merchantIdentityMode === 'store_alias' ? `店铺名展示，真实用户 ${item.merchantUsername}` : '公开主页展示' },
         { label: '最低意向金额', value: `¥${item.minimumPurchaseCny}` },
-        { label: '用量可见', value: getApiUsageVisibilityLabel(item.usageVisibility) },
+        { label: '用量核对', value: getApiUsageVisibilityLabel(item.usageVisibility) },
         { label: '有效期', value: item.expiresAt },
       ],
     })))
@@ -2345,7 +2342,6 @@ function assertCarpoolAccessArrangement(payload: SaveCarpoolDraftPayload, produc
 
 function apiGatewayFromDistribution(value: unknown): ApiService['delivery'] {
   if (value === 'sub2api') return 'Sub2API'
-  if (value === 'new_api_proxy') return 'NewAPI Proxy'
   return '其他'
 }
 
@@ -2503,6 +2499,12 @@ export async function submitApiService(payload: Record<string, unknown>) {
   const deliveryModes = apiDeliveryModes(payload.deliveryModes)
   const billing = apiBillingMode(payload.billingMode)
   const isPublish = payload.status === 'reviewing'
+  const paymentOptions = Array.isArray(payload.paymentOptions)
+    ? payload.paymentOptions as Array<{ enabled?: boolean, paymentInstructions?: string }>
+    : []
+  const hasEnabledPayment = paymentOptions.some(item => item.enabled && String(item.paymentInstructions ?? '').trim())
+  const publiclyOrderable = isPublish && hasEnabledPayment
+  const responseMinutes = numberValue(payload.paymentWindowMinutes, 10)
   const state: ApiServiceState = isPublish ? 'online' : 'offline'
   const service: ApiService = {
     id,
@@ -2542,16 +2544,16 @@ export async function submitApiService(payload: Record<string, unknown>) {
     panelLoginUrlVisibility: deliveryModes.includes('sub2api_panel_account') ? 'after_intent' : 'off_platform',
     state,
     online: isPublish,
-    publiclyOrderable: isPublish,
+    publiclyOrderable,
     lastOnlineConfirmedAt: nowText(),
     onlineExpiresAt: nowText(),
-    expectedResponseMinutes: 10,
-    responseMedianMinutes: 10,
+    expectedResponseMinutes: responseMinutes,
+    responseMedianMinutes: responseMinutes,
     dailyOrderLimit: 5,
     todayOrderCount: 0,
     unresolvedDisputes: 0,
-    warning: isPublish ? undefined : '草稿尚未上线',
-    warranty: (payload.warranty as { mode?: string, warrantyDays?: number | null } | undefined)?.mode === 'merchant_warranty' ? `商户承诺：${(payload.warranty as { warrantyDays?: number | null }).warrantyDays ?? 7} 天可用性处理，平台不担保、不代赔` : '售后协商',
+    warning: publiclyOrderable ? undefined : isPublish ? '待配置接单设置' : '草稿尚未上线',
+    warranty: (payload.warranty as { mode?: string, warrantyDays?: number | null } | undefined)?.mode === 'merchant_warranty' ? `商户承诺：${(payload.warranty as { warrantyDays?: number | null }).warrantyDays ?? 7} 天可用性处理，平台不担保、不代赔` : '按商户备注站外协商，平台不担保、不代赔',
     refundPolicy: stringValue((payload.warranty as { refundNote?: string } | undefined)?.refundNote, '按服务说明站外协商'),
     expiresAt: payload.validity && (payload.validity as { mode?: string, days?: number | null }).mode === 'days' ? `${(payload.validity as { days?: number | null }).days ?? 30} 天` : '长期有效',
     completed30d: 0,
@@ -3552,8 +3554,8 @@ export async function createApiPurchaseIntent(payload: CreateApiPurchaseIntentPa
   const service = apiServiceStore.find(item => item.id === payload.serviceId)
   if (!service) throw new Error(`API service not found: ${payload.serviceId}`)
   if (!isApiServicePubliclyOrderable(service) || service.state !== 'online') throw new Error('服务当前不可提交购买意向。')
-  if (!service.deliveryModes.includes(payload.deliveryMode)) throw new Error('选择的接入方式不属于该服务。')
-  if (service.delivery !== 'Sub2API' && payload.deliveryMode === 'sub2api_panel_account') throw new Error('NewAPI Proxy 或其他系统不能选择 Sub2API 面板接入说明。')
+  if (!service.deliveryModes.includes(payload.deliveryMode)) throw new Error('选择的站外确认方式不属于该服务。')
+  if (service.delivery !== 'Sub2API' && payload.deliveryMode === 'sub2api_panel_account') throw new Error('当前服务不支持该站外确认方式。')
   if (payload.purchaseAmountCny < service.minimumPurchaseCny) throw new Error(`最低意向金额为 ¥${service.minimumPurchaseCny}`)
   if (payload.purchaseAmountCny > service.maxBuy) throw new Error(`单笔最高意向金额为 ¥${service.maxBuy}`)
   if (payload.purchaseAmountCny > service.balance / service.creditPerCny) throw new Error('超过商户当前可售美元额度上限。')

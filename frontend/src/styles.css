@@ -678,8 +678,8 @@ a { color: inherit; text-decoration: none; }
 
 .home-exact-stats {
   display: grid;
-  height: 114px;
-  min-height: 114px;
+  height: 124px;
+  min-height: 124px;
   grid-template-columns: repeat(4, minmax(0, 1fr));
   overflow: hidden;
   border-color: #9fe5df;
@@ -902,6 +902,44 @@ a { color: inherit; text-decoration: none; }
   color: #536276;
 }
 
+.home-table-action-link {
+  display: inline-flex;
+  height: 26px;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  border: 1px solid #b8e8e2;
+  border-radius: 6px;
+  background: #effdfb;
+  padding: 0 9px;
+  color: #0f766e;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1;
+  white-space: nowrap;
+  transition:
+    border-color 150ms ease,
+    background 150ms ease,
+    box-shadow 150ms ease,
+    color 150ms ease,
+    transform 150ms ease;
+}
+
+.home-table-action-link:hover {
+  border-color: #13b8a6;
+  background: #dcf7f3;
+  color: #0f5f59;
+  box-shadow: 0 10px 20px -18px rgb(15 118 110 / 0.55);
+}
+
+.home-table-action-link:active {
+  transform: translateY(1px);
+}
+
+.home-table-action-link svg {
+  flex-shrink: 0;
+}
+
 .home-exact-table tr:last-child td {
   border-bottom: 0;
 }
@@ -951,6 +989,15 @@ a { color: inherit; text-decoration: none; }
     grid-template-rows: 290px minmax(0, 1fr);
   }
 
+  .home-action-stack {
+    height: 290px;
+    grid-template-rows: repeat(3, minmax(0, 1fr));
+  }
+
+  .home-action-card {
+    height: auto;
+  }
+
   .home-right-stack {
     grid-column: 3;
     grid-row: 1 / span 2;
@@ -990,6 +1037,8 @@ a { color: inherit; text-decoration: none; }
   }
 
   .home-exact-stats {
+    height: auto;
+    min-height: 0;
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
@@ -1609,6 +1658,44 @@ a { color: inherit; text-decoration: none; }
   gap: 7px;
 }
 
+.api-publish-payment-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.api-publish-payment-card {
+  min-height: 116px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: color-mix(in oklab, var(--card) 94%, white);
+  padding: 10px;
+  transition:
+    border-color 150ms ease,
+    background 150ms ease,
+    box-shadow 150ms ease;
+}
+
+.api-publish-payment-card.is-active {
+  border-color: var(--primary);
+  background: color-mix(in oklab, var(--primary) 8%, var(--card));
+  box-shadow: 0 0 0 1px var(--primary) inset;
+}
+
+.api-publish-payment-card strong {
+  display: block;
+  font-size: 13px;
+  line-height: 1.25;
+}
+
+.api-publish-payment-card span span {
+  display: block;
+  margin-top: 3px;
+  color: var(--muted-foreground);
+  font-size: 11px;
+  line-height: 1.45;
+}
+
 .api-publish-compute-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -1637,6 +1724,29 @@ a { color: inherit; text-decoration: none; }
 
 .api-publish-model-table {
   min-width: 760px;
+}
+
+.api-publish-model-card {
+  width: 100%;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: color-mix(in oklab, var(--card) 94%, white);
+  padding: 10px;
+  text-align: left;
+  transition:
+    border-color 150ms ease,
+    background 150ms ease,
+    box-shadow 150ms ease;
+}
+
+.api-publish-model-card:hover {
+  background: color-mix(in oklab, var(--accent) 42%, var(--card));
+}
+
+.api-publish-model-card.is-active {
+  border-color: var(--primary);
+  background: color-mix(in oklab, var(--primary) 11%, var(--card));
+  box-shadow: 0 0 0 1px var(--primary) inset;
 }
 
 .api-publish-model-table th {
@@ -1819,6 +1929,7 @@ a { color: inherit; text-decoration: none; }
   .api-publish-provider-grid,
   .api-publish-delivery-grid,
   .api-publish-billing-grid,
+  .api-publish-payment-grid,
   .api-publish-compute-grid,
   .api-publish-image-price-grid {
     grid-template-columns: 1fr;

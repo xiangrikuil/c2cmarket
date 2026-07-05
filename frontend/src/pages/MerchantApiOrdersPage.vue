@@ -15,13 +15,11 @@ import {
   cancelApiPurchaseIntent,
   closeApiPurchaseIntent,
   formatUsdQuota,
-  getApiDeliveryModeLabel,
   getApiIntentNextAction,
   getApiMerchantDisplayName,
   getApiMerchantVisibilityLabel,
   getApiStatusLabel,
   markApiPurchaseIntentContacted,
-  type ApiDeliveryMode,
   type ApiPurchaseIntent,
 } from '@/lib/api'
 import { useMerchantApiPurchaseIntents } from '@/queries/useMarketQueries'
@@ -30,7 +28,6 @@ const queryClient = useQueryClient()
 const { data } = useMerchantApiPurchaseIntents({ sort: 'default_merchant' })
 const activeTab = ref('全部')
 const keyword = ref('')
-const deliveryMode = ref<'all' | ApiDeliveryMode>('all')
 const serviceFilter = ref('all')
 const sortMode = ref<'default' | 'updated' | 'amount'>('default')
 const busyId = ref('')
@@ -57,7 +54,6 @@ const rows = computed(() => {
         || (activeTab.value === '已记录联系' && item.status === 'contacted')
         || (activeTab.value === '已关闭' && closedStatuses.includes(item.status))
       return tabMatched
-        && (deliveryMode.value === 'all' || item.selectedDeliveryMode === deliveryMode.value)
         && (serviceFilter.value === 'all' || item.serviceId === serviceFilter.value)
         && (!q || [item.id, item.buyer, item.snapshot.serviceTitle].some(value => value.toLowerCase().includes(q)))
     })
@@ -114,13 +110,8 @@ async function runAction(item: ApiPurchaseIntent, action: () => Promise<unknown>
 
     <StatusTabs v-model="activeTab" :items="['全部', '新意向', '已记录联系', '已关闭']" />
 
-    <div class="grid gap-2 md:grid-cols-[1fr_180px_180px_180px]">
+    <div class="grid gap-2 md:grid-cols-[1fr_180px_180px]">
       <Input v-model="keyword" placeholder="搜索意向编号、买家、服务" />
-      <select v-model="deliveryMode" class="h-9 rounded-md border border-input bg-background px-3 text-sm">
-        <option value="all">全部接入方式</option>
-        <option value="api_key_endpoint">API 请求地址接入说明</option>
-        <option value="sub2api_panel_account">Sub2API 面板接入说明</option>
-      </select>
       <select v-model="serviceFilter" class="h-9 rounded-md border border-input bg-background px-3 text-sm">
         <option value="all">全部服务</option>
         <option v-for="service in serviceOptions" :key="service.id" :value="service.id">{{ service.title }}</option>
@@ -133,7 +124,7 @@ async function runAction(item: ApiPurchaseIntent, action: () => Promise<unknown>
     </div>
 
     <div v-if="rows.length === 0" class="rounded-xl border border-border bg-card p-8 text-center text-sm text-muted-foreground">当前筛选条件下暂无商户意向记录。</div>
-    <SoftTable v-else :columns="['意向记录', '买家 / 服务', '意向金额 / 额度上限', '接入方式', '状态', '更新', '操作']">
+    <SoftTable v-else :columns="['意向记录', '买家 / 服务', '意向金额 / 额度上限', '接入细节', '状态', '更新', '操作']">
       <tr v-for="item in pagination.paginatedRows.value" :key="item.id">
         <td><div class="font-medium">{{ item.id }}</div><div class="text-xs text-muted-foreground">{{ item.createdAt }}</div></td>
         <td>
@@ -141,7 +132,7 @@ async function runAction(item: ApiPurchaseIntent, action: () => Promise<unknown>
           <div class="text-xs text-muted-foreground">{{ item.snapshot.serviceTitle }} · {{ getApiMerchantDisplayName(item) }} · {{ getApiMerchantVisibilityLabel(item.snapshot) }}</div>
         </td>
         <td><div class="font-semibold">¥{{ item.purchaseAmountCny }}</div><div class="text-xs text-muted-foreground">上限 {{ formatUsdQuota(item.purchasedCredit) }}</div></td>
-        <td>{{ getApiDeliveryModeLabel(item.selectedDeliveryMode) }}</td>
+        <td>提交意向后站外确认</td>
         <td><Badge :variant="activeStatuses.includes(item.status) ? 'default' : 'secondary'">{{ getApiStatusLabel(item.status) }}</Badge></td>
         <td class="text-xs text-muted-foreground">{{ item.updatedAt }}</td>
         <td>

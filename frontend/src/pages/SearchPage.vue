@@ -35,7 +35,7 @@ function runSearch() {
 
 <template>
   <div class="space-y-5">
-    <PageTitle title="全局搜索" description="聚合官网公开价格、车源、求车、API 服务和公开用户；真实模式下只展示当前公开可见的业务结果。" />
+    <PageTitle title="全局搜索" description="聚合官网公开价格、车源、求车、API 服务和公开用户；只展示当前公开可见的业务结果。" />
 
     <Card class="p-5">
       <div class="flex gap-2">

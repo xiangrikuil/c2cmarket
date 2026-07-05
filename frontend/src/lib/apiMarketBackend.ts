@@ -51,6 +51,13 @@ type BackendServicePackage = {
   sortOrder: number
 }
 
+type BackendPaymentOption = {
+  id?: string
+  paymentMethod: string
+  enabled: boolean
+  paymentInstructions: string
+}
+
 type BackendAPIService = {
   id: string
   ownerUserId?: string
@@ -75,7 +82,11 @@ type BackendAPIService = {
   publicationStatus?: string
   moderationStatus?: string
   acceptingOrders?: boolean
+  paymentWindowMinutes?: number
+  acceptedPaymentMethods?: string[]
+  paymentOptions?: BackendPaymentOption[]
   isOrderable?: boolean
+  orderableReasons?: string[]
   accessModes: BackendAccessMode[]
   models: BackendServiceModel[]
   packages: BackendServicePackage[]
@@ -155,7 +166,6 @@ function deliveryModes(modes: BackendAccessMode[]): ApiDeliveryMode[] {
 
 function distributionLabel(value: string): ApiService['delivery'] {
   if (value === 'sub2api') return 'Sub2API'
-  if (value === 'new_api_proxy') return 'NewAPI Proxy'
   if (value === 'fixed_package') return '固定套餐'
   if (value === 'manual_usage_check') return '商户手工核对'
   return '其他'
@@ -247,13 +257,13 @@ export function mapBackendAPIService(service: BackendAPIService): ApiService {
     publiclyOrderable,
     lastOnlineConfirmedAt: service.updatedAt,
     onlineExpiresAt: service.updatedAt,
-    expectedResponseMinutes: 10,
-    responseMedianMinutes: 10,
+    expectedResponseMinutes: service.paymentWindowMinutes ?? 10,
+    responseMedianMinutes: service.paymentWindowMinutes ?? 10,
     dailyOrderLimit: 10,
     todayOrderCount: 0,
     unresolvedDisputes: 0,
     warning: state === 'reviewing' ? '等待管理员审核' : online && !publiclyOrderable ? '待配置接单设置' : undefined,
-    warranty: service.merchantSupportNote || '商户承诺按服务说明处理，平台不担保、不代赔',
+    warranty: service.merchantSupportNote || '按商户备注站外协商，平台不担保、不代赔',
     refundPolicy: '最终金额和售后由双方站外确认，平台不处理支付或托管',
     expiresAt: '按服务说明',
     completed30d: 0,
@@ -561,8 +571,17 @@ export async function backendSubmitAPIService(payload: Record<string, unknown>) 
   if (payload.status === 'reviewing') {
     response = await backendOwnerAPIServiceAction(response.id, 'submit-review', response.version)
     response = await backendOwnerAPIServiceAction(response.id, 'publish', response.version)
+    response = await backendUpdateAPIServiceOrderSettings(response.id, payload, response.version)
   }
   return mapBackendAPIService(response)
+}
+
+async function backendUpdateAPIServiceOrderSettings(id: string, payload: Record<string, unknown>, version: number) {
+  return backendMutation<BackendAPIService>(`/api/v1/owner/api-services/${id}/order-settings`, toBackendOrderSettingsRequest(payload), {
+    method: 'PATCH',
+    idempotencyPrefix: 'api-service-order-settings',
+    ifMatch: version,
+  })
 }
 
 async function backendOwnerAPIServiceAction(id: string, action: 'submit-review' | 'publish' | 'pause' | 'resume' | 'start-revision', version?: number) {
@@ -626,6 +645,21 @@ function toBackendServiceRequest(payload: Record<string, unknown>) {
   }
 }
 
+function toBackendOrderSettingsRequest(payload: Record<string, unknown>) {
+  const paymentOptions = Array.isArray(payload.paymentOptions)
+    ? payload.paymentOptions as Array<{ paymentMethod?: string, enabled?: boolean, paymentInstructions?: string }>
+    : []
+  return {
+    acceptingOrders: true,
+    paymentWindowMinutes: Number(payload.paymentWindowMinutes ?? 10),
+    paymentOptions: paymentOptions.map(option => ({
+      paymentMethod: String(option.paymentMethod ?? ''),
+      enabled: Boolean(option.enabled),
+      paymentInstructions: String(option.paymentInstructions ?? ''),
+    })),
+  }
+}
+
 async function ensureMerchantProfile(payload: Record<string, unknown>) {
   const existing = await backendMyMerchantProfile()
   if (existing) return existing
@@ -671,7 +705,7 @@ function serviceAdminRow(service: BackendAPIService): AdminRow {
   return {
     id: service.id,
     primary: service.title,
-    secondary: `${mapped.models.join(' / ')} · ${mapped.delivery} · 接入方式 ${mapped.deliveryModes.map(mode => mode === 'sub2api_panel_account' ? 'Sub2API 面板接入说明' : 'API 请求地址接入说明').join(' / ')}`,
+    secondary: `${mapped.models.join(' / ')} · ${mapped.delivery} · 接入细节站外确认`,
     owner: `${mapped.merchantDisplayName} · ${service.ownerUserId ? `用户 ${service.ownerUserId.slice(0, 8)}` : '真实后端用户'}`,
     status: backendServiceStatus(service),
     risk: service.moderationStatus === 'clear' ? mapped.warranty : service.moderationStatus ?? 'clear',
@@ -682,7 +716,7 @@ function serviceAdminRow(service: BackendAPIService): AdminRow {
       { label: '治理状态', value: service.moderationStatus ?? 'clear' },
       { label: '版本', value: String(service.version) },
       { label: '最低意向金额', value: `¥${mapped.minimumPurchaseCny}` },
-      { label: '用量可见', value: service.usageVisibility },
+      { label: '用量核对', value: service.usageVisibility },
     ],
     targetTo: mapped.publiclyOrderable ? `/api-market/${service.id}` : null,
   }

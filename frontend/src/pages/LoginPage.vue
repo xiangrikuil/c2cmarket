@@ -189,7 +189,7 @@ async function logout() {
               </Button>
 
               <p class="text-center text-xs leading-5 text-muted-foreground">
-                第一版本仅支持 linux.do OAuth。备用密码只供已绑定 linux.do 的账号恢复登录。
+                请使用 linux.do 登录；备用密码仅用于已绑定 linux.do 的账号恢复访问。
               </p>
 
               <div class="relative">

@@ -5,11 +5,11 @@ export const announcementSeeds: Announcement[] = [
     id: 'ann-rules-api-publish-20260620',
     slug: 'platform-rules-api-service-publish-update',
     title: 'API 服务发布规范已调整',
-    summary: '平台已更新 API 服务发布规范，发布前请确认接入方式、意向金额和站外确认说明符合新要求。',
+    summary: '平台已更新 API 服务发布规范，发布前请确认意向金额、交易说明和站外确认边界符合新要求。',
     contentMarkdown: [
       '## API 服务发布规范已调整',
       '',
-      '为了减少误解，API 服务发布页已统一使用“接入方式”和“购买意向”相关描述。',
+      '为了减少误解，API 服务发布页已统一使用“站外确认”和“购买意向”相关描述。',
       '',
       '- 不得在平台填写、粘贴或上传 API Key、账号密码、token 或 session。',
       '- 商户需要在服务说明中明确站外确认方式。',

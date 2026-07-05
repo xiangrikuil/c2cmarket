@@ -66,7 +66,7 @@ function cancelIntent() {
   <div v-if="isLoading" class="rounded-xl border border-border bg-card p-8 text-sm text-muted-foreground">正在加载 API 意向记录...</div>
   <div v-else-if="!intent" class="rounded-xl border border-border bg-card p-8">
     <h1 class="text-xl font-semibold">未找到 API 意向记录</h1>
-    <p class="mt-2 text-sm text-muted-foreground">该意向记录不存在或当前 mock 数据尚未同步。</p>
+    <p class="mt-2 text-sm text-muted-foreground">该意向记录不存在或暂不可见。</p>
     <Button class="mt-5" variant="outline" @click="router.push('/my/api-orders')">返回我的 API 意向</Button>
   </div>
   <div v-else class="space-y-4">
@@ -121,11 +121,10 @@ function cancelIntent() {
         <div class="mt-4 grid gap-3 text-sm sm:grid-cols-2">
           <div><span class="text-muted-foreground">模型</span><div>{{ intent.snapshot.models.join(' / ') }}</div></div>
           <div><span class="text-muted-foreground">目标模型</span><div>{{ intent.targetModel }}</div></div>
-          <div><span class="text-muted-foreground">接入方式</span><div>{{ getApiDeliveryModeLabel(intent.selectedDeliveryMode) }}</div></div>
-          <div><span class="text-muted-foreground">用量可见性</span><div>{{ getApiUsageVisibilityLabel(intent.snapshot.usageVisibility) }}</div></div>
+          <div><span class="text-muted-foreground">接入细节</span><div>提交意向后与商户站外确认</div></div>
+          <div><span class="text-muted-foreground">用量核对</span><div>{{ getApiUsageVisibilityLabel(intent.snapshot.usageVisibility) }}</div></div>
           <div><span class="text-muted-foreground">商户承诺</span><div>{{ intent.snapshot.warranty }} · 平台不作保、不代赔</div></div>
           <div><span class="text-muted-foreground">取消/商户处理</span><div>{{ intent.snapshot.refundPolicy }}</div></div>
-          <div v-if="intent.selectedDeliveryMode === 'sub2api_panel_account'"><span class="text-muted-foreground">面板说明</span><div>仅记录站外确认状态，不在平台展示面板登录凭据。</div></div>
           <div><span class="text-muted-foreground">访问说明</span><div>按快照规则展示非敏感说明，站外仅允许确认买家专属、可撤销的子账号或子 Key。</div></div>
         </div>
           <div class="mt-4 rounded-md border border-border bg-accent/60 p-3 text-sm">

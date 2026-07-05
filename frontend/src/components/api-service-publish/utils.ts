@@ -1,11 +1,31 @@
 import type { ModelCatalogItem } from '@/lib/api'
-import type { ApiProviderCategory, ApiServicePublishForm, BillingMode, CatalogById, DistributionSystem, PublishDeliveryMode, UsageVisibility, WarrantyConfig } from './types'
+import type { ApiProviderCategory, ApiServicePaymentOption, ApiServicePublishForm, BillingMode, CatalogById, DistributionSystem, PublishPaymentMethod, WarrantyConfig } from './types'
 
 export const distributionLabels: Record<DistributionSystem, string> = {
   sub2api: 'Sub2API',
-  new_api_proxy: 'NewAPI Proxy',
-  other: '其他',
+  new_api_proxy: '其他 API 接入',
+  other: '其他 API 接入',
 }
+
+export const publishDistributionOptions = [
+  {
+    value: 'sub2api',
+    title: 'Sub2API',
+    description: '文本模型倍率和生图倍率固定 1.00x。',
+    detail: '商户配置额度售价、模型、库存、有效期和交易承诺。',
+  },
+  {
+    value: 'other',
+    title: '其他 API 接入',
+    description: '适用于 NewAPI、自建中转、固定套餐或手工核对额度。',
+    detail: '进入人工审核，接入细节由双方站外确认。',
+  },
+] satisfies Array<{
+  value: Exclude<DistributionSystem, 'new_api_proxy'>
+  title: string
+  description: string
+  detail: string
+}>
 
 export const providerCategoryLabels: Record<ApiProviderCategory, string> = {
   gpt: 'GPT',
@@ -19,19 +39,6 @@ export const billingLabels: Record<BillingMode, string> = {
   fixed_package: '固定套餐',
 }
 
-export const deliveryLabels: Record<PublishDeliveryMode, string> = {
-  api_key_endpoint: 'API 请求地址接入说明',
-  sub2api_panel_account: 'Sub2API 面板接入说明',
-}
-
-export const usageLabels: Record<UsageVisibility, string> = {
-  panel_realtime: '面板实时可见',
-  panel_balance_only: '仅面板余额可见',
-  merchant_confirmed: '商户确认用量',
-  fixed_package_only: '固定套餐',
-  not_available: '不展示用量',
-}
-
 export const sub2ApiPricingPolicy = {
   textModelMultiplier: 1,
   imageMultiplier: 1,
@@ -43,6 +50,94 @@ export const sub2ApiPricingPolicy = {
   minimumCnyPerUsdCredit: 0.01,
   maximumCnyPerUsdCredit: 100,
 } as const
+
+export const simplifiedApiQuotaRules = {
+  minimumPurchaseCny: 20,
+  maximumPurchaseCny: 300,
+  validityDays: 30,
+} as const
+
+export const defaultPaymentWindowMinutes = 10
+
+export const paymentMethodLabels: Record<PublishPaymentMethod, string> = {
+  wechat: '微信',
+  alipay: '支付宝',
+  usdt: 'USDT',
+}
+
+export const publishPaymentMethods = [
+  { value: 'wechat', label: paymentMethodLabels.wechat, hint: '提交意向后站外确认微信收款信息。' },
+  { value: 'alipay', label: paymentMethodLabels.alipay, hint: '提交意向后站外确认支付宝收款信息。' },
+  { value: 'usdt', label: paymentMethodLabels.usdt, hint: '提交意向后站外确认网络和地址。' },
+] satisfies Array<{ value: PublishPaymentMethod, label: string, hint: string }>
+
+export const apiQuotaDefaultRuleText = `默认：最低意向 ¥${simplifiedApiQuotaRules.minimumPurchaseCny}，单笔最高 ¥${simplifiedApiQuotaRules.maximumPurchaseCny}，站外确认后 ${simplifiedApiQuotaRules.validityDays} 天有效。`
+
+export const apiQuotaBoundaryNotice = 'C2CMarket 仅提供信息撮合，不托管支付、不保存 API Key、不担保交付、不代赔。买家提交意向后，双方站外确认接入细节和售后处理。'
+
+export const merchantNoteTemplate = [
+  '接入方式：提交意向后站外确认接入细节。',
+  '用量核对：用量由商户说明，买家自行核对。',
+  '限速规则：请勿高并发压测或滥用。',
+  '可用时间：高峰期可能响应变慢，部分模型可能临时维护。',
+  '售后口径：如遇不可用，请先联系商户协商处理。',
+].join('\n')
+
+export const merchantNoteQuickInserts = [
+  '建议首次提交 ¥20 意向测试',
+  '提交意向后站外确认接入细节',
+  '用量由商户说明，买家自行核对',
+  '高峰期响应可能变慢',
+  '部分模型可能临时维护',
+  '滥用或高并发压测不在服务范围内',
+  '平台不担保、不代赔',
+] as const
+
+export function createDefaultPaymentOptions(): ApiServicePaymentOption[] {
+  return publishPaymentMethods.map(item => ({
+    paymentMethod: item.value,
+    enabled: false,
+    paymentInstructions: '',
+  }))
+}
+
+export function enabledPaymentOptions(form: ApiServicePublishForm) {
+  return form.paymentOptions.filter(option => option.enabled)
+}
+
+export function applySimplifiedApiQuotaDefaults(form: ApiServicePublishForm) {
+  form.distributionSystem = 'sub2api'
+  form.distributionSystemNote = 'Sub2API 标准美元额度，接入细节由双方站外确认。'
+  form.billingMode = 'metered_credit'
+  form.deliveryModes = ['api_key_endpoint']
+  form.usageVisibility = 'merchant_confirmed'
+  form.defaultMultiplier = sub2ApiPricingPolicy.textModelMultiplier
+  form.minimumPurchaseCny = simplifiedApiQuotaRules.minimumPurchaseCny
+  form.maximumPurchaseCny = simplifiedApiQuotaRules.maximumPurchaseCny
+  form.validity = {
+    mode: 'days',
+    days: simplifiedApiQuotaRules.validityDays,
+    startsAt: 'delivered_at',
+  }
+  form.manualBillingNote = ''
+  form.packages = []
+  form.imageCapability = {
+    enabled: false,
+    supportsTextToImage: false,
+    supportsImageToImage: false,
+    pricingMode: 'same_multiplier',
+    customMultiplier: null,
+    note: '',
+  }
+  form.warranty = {
+    mode: 'no_warranty',
+    warrantyDays: null,
+    coverage: null,
+    compensation: null,
+    exclusions: null,
+    refundNote: null,
+  }
+}
 
 export function modelProviderCategory(provider: ModelCatalogItem['provider']): ApiProviderCategory {
   if (provider === 'openai') return 'gpt'
@@ -99,9 +194,8 @@ export function selectedCatalogItems(form: ApiServicePublishForm, catalogById: C
 
 export function generatedTitle(form: ApiServicePublishForm, catalogById: CatalogById) {
   const providerSummary = providerCategoryLabels[form.providerCategory]
-  if (form.distributionSystem === 'sub2api') return `${providerSummary} · Sub2API 标准额度`
-  if (form.distributionSystem === 'new_api_proxy') return `${providerSummary} · NewAPI Proxy ${form.billingMode === 'fixed_package' ? '固定套餐' : '商户确认用量'}`
-  return `${providerSummary} · 其他 API 服务`
+  if (form.distributionSystem === 'sub2api') return `${providerSummary} · API 美元额度`
+  return `${providerSummary} · 其他 API 接入 ${form.billingMode === 'fixed_package' ? '固定套餐' : '手工核对额度'}`
 }
 
 export function warrantyLabel(warranty: WarrantyConfig) {

@@ -19,10 +19,10 @@ const realBackend = shouldUseRealBackend()
 
 function setReferenceLabel(product: string, plan: string) {
   if (realBackend) {
-    toast.warning('真实模式下当前参考价由管理员审核通过的后端记录决定。')
+    toast.warning('当前参考价由管理员审核通过的记录决定。')
     return
   }
-  toast.success(`${product} ${plan} 已标记为当前在售参考，当前为前端本地反馈。`)
+  toast.success(`${product} ${plan} 已标记为当前在售参考。`)
 }
 </script>
 
@@ -34,7 +34,7 @@ function setReferenceLabel(product: string, plan: string) {
         <p class="mt-2 text-muted-foreground">维护每个产品、地区和渠道的官网公开价、社区低价线索、编辑记录和提交人。</p>
       </div>
       <div class="flex gap-2">
-        <Button variant="outline" @click="toast('CSV 导入入口已打开，后续接入文件解析。')">
+        <Button variant="outline" @click="toast('CSV 导入暂不可用，请先通过新增参考价或低价线索提交。')">
           <Download class="h-4 w-4" />导入 CSV
         </Button>
         <Button @click="toast.success('已新增一条参考价草稿。')">

@@ -8,7 +8,6 @@ import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import SoftTable from '@/components/market/SoftTable.vue'
 import StatusTabs from '@/components/market/StatusTabs.vue'
-import { getApiDeliveryModeLabel } from '@/lib/api'
 import { getPricingDisplay, getRemainingSeats } from '@/lib/pricing'
 import { useCreatePublicUserReportMutation, usePublicUserProfileQuery } from '@/queries/useMarketQueries'
 
@@ -31,8 +30,8 @@ const completionLabel = computed(() => {
 })
 
 function serviceSummary(service: { deliveryModes: Array<'api_key_endpoint' | 'sub2api_panel_account'>, usageVisibility: string, warranty: string }) {
-  const access = service.deliveryModes.map(getApiDeliveryModeLabel).join(' / ')
-  const visibility = service.usageVisibility === 'panel_realtime' ? '面板实时可见' : service.usageVisibility === 'merchant_readonly' ? '商户只读确认' : '不展示用量'
+  const access = '接入细节站外确认'
+  const visibility = service.usageVisibility === 'none' ? '未展示用量核对' : '用量由商户说明，买家自行核对'
   const warranty = service.warranty.includes('24') || service.warranty.includes('补') || service.warranty.includes('承诺') ? '商户承诺' : '售后协商'
   return `${access} · ${visibility} · ${warranty}`
 }
@@ -57,7 +56,7 @@ function reportPublicProfile() {
   <div v-if="isLoading" class="rounded-xl border border-border bg-card p-8 text-sm text-muted-foreground">正在加载用户主页...</div>
   <div v-else-if="!data || !profile" class="rounded-xl border border-border bg-card p-8">
     <h1 class="text-xl font-semibold">未找到用户</h1>
-    <p class="mt-2 text-sm text-muted-foreground">该公开主页不存在或尚未同步到当前 mock 数据。</p>
+    <p class="mt-2 text-sm text-muted-foreground">该公开主页不存在或暂不可见。</p>
     <Button class="mt-5" variant="outline" @click="router.push('/api-market')">返回 API 集市</Button>
   </div>
   <div v-else class="space-y-4">
@@ -82,7 +81,7 @@ function reportPublicProfile() {
             </div>
             <p v-if="profile.bio" class="mt-2 max-w-3xl text-sm text-muted-foreground">{{ profile.bio }}</p>
             <div class="mt-2 flex flex-wrap gap-2">
-              <Button size="sm" variant="outline" @click="toast('将打开 linux.do 主页；当前 mock 不跳转外部站点。')"><ExternalLink class="h-4 w-4" />查看 linux.do 主页</Button>
+              <Button size="sm" variant="outline" @click="toast('该用户的 linux.do 主页链接暂不可用。')"><ExternalLink class="h-4 w-4" />查看 linux.do 主页</Button>
               <Button v-if="profile.privacy.allowPublicProfileReport" size="sm" variant="outline" :disabled="reportMutation.isPending.value" @click="reportPublicProfile"><Flag class="h-4 w-4" />举报</Button>
             </div>
           </div>
@@ -146,11 +145,11 @@ function reportPublicProfile() {
       </tr>
     </SoftTable>
 
-    <SoftTable v-else-if="activeTab === '完成记录'" :columns="['日期', '服务类型', '接入方式', '金额范围', '完成状态']">
+    <SoftTable v-else-if="activeTab === '完成记录'" :columns="['日期', '服务类型', '接入细节', '金额范围', '完成状态']">
       <tr v-for="record in data.completions" :key="record.id">
         <td>{{ record.date }}</td>
         <td>{{ record.serviceType }}</td>
-        <td>{{ getApiDeliveryModeLabel(record.deliveryMode) }}</td>
+        <td>站外确认</td>
         <td>{{ record.amountRange }}</td>
         <td><Badge variant="verified">{{ record.status }}</Badge></td>
       </tr>

@@ -1,0 +1,20 @@
+<svg width="1280" height="360" viewBox="0 0 1280 360" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="lockup-cn-bg" x1="18" y1="16" x2="112" y2="116" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#16C7B5"/>
+      <stop offset="1" stop-color="#0F8F86"/>
+    </linearGradient>
+  </defs>
+  <rect width="1280" height="360" rx="48" fill="#F8FEFD"/>
+  <g transform="translate(64 54) scale(1.96875)">
+    <rect x="10" y="10" width="108" height="108" rx="30" fill="url(#lockup-cn-bg)"/>
+    <path d="M53 34H42C31.5 34 24 42.5 24 54V74C24 85.5 31.5 94 42 94H53" stroke="#F7FFFD" stroke-width="12" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M75 34H86C96.5 34 104 42.5 104 54V74C104 85.5 96.5 94 86 94H75" stroke="#F7FFFD" stroke-width="12" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M43 56H76" stroke="#0E2630" stroke-width="9" stroke-linecap="round"/>
+    <path d="M76 45L91 60L76 75V45Z" fill="#0E2630"/>
+    <path d="M85 72H52" stroke="#0E2630" stroke-width="9" stroke-linecap="round"/>
+    <path d="M52 83L37 68L52 53V83Z" fill="#0E2630"/>
+  </g>
+  <text x="376" y="170" font-family="Inter, Noto Sans SC, PingFang SC, Microsoft YaHei, Arial, sans-serif" font-size="84" font-weight="800" letter-spacing="0" fill="#172033">C2CMarket</text>
+  <text x="380" y="232" font-family="Inter, Noto Sans SC, PingFang SC, Microsoft YaHei, Arial, sans-serif" font-size="34" font-weight="600" letter-spacing="0" fill="#0F8F86">信息撮合 · 风险透明</text>
+</svg>

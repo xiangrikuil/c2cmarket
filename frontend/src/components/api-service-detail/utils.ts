@@ -1,5 +1,4 @@
-import type { ApiDeliveryMode, ApiService, ApiUsageVisibility } from '@/lib/api'
-import { getApiDeliveryModeLabel, getApiUsageVisibilityLabel } from '@/lib/api'
+import type { ApiService } from '@/lib/api'
 
 export function merchantIdentityLabel(type: ApiService['merchantType']) {
   return type === '商户' ? 'API 商户' : type === '可信新车主' ? '可信新商户' : '个人商户'
@@ -34,16 +33,4 @@ export function formatPricePerMillion(value: number | null, prefix: '$' | '¥') 
   if (value === null) return '—'
   const digits = value < 1 ? 3 : 2
   return `${prefix}${value.toFixed(digits).replace(/\.?0+$/, '')} / M`
-}
-
-export function deliveryModeLabel(mode: ApiDeliveryMode) {
-  return getApiDeliveryModeLabel(mode)
-}
-
-export function usageVisibilityLabel(value: ApiUsageVisibility) {
-  return getApiUsageVisibilityLabel(value)
-}
-
-export function deliveryModesLabel(modes: ApiDeliveryMode[]) {
-  return modes.map(deliveryModeLabel).join(' / ')
 }

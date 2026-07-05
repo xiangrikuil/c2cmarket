@@ -97,7 +97,7 @@ async function applyToJoin() {
   <div v-if="isLoading" class="rounded-xl border border-border bg-card p-8 text-sm text-muted-foreground">正在加载车源详情...</div>
   <div v-else-if="!carpool" class="rounded-xl border border-border bg-card p-8">
     <h1 class="text-xl font-semibold">未找到车源</h1>
-    <p class="mt-2 text-sm text-muted-foreground">该车源 ID 不存在，可能已下架或尚未同步到当前 mock 数据。</p>
+    <p class="mt-2 text-sm text-muted-foreground">该车源 ID 不存在，可能已下架或暂不可见。</p>
     <RouterLink to="/carpools"><Button class="mt-5" variant="outline">返回订阅拼车</Button></RouterLink>
   </div>
   <div v-else>
@@ -253,7 +253,7 @@ async function applyToJoin() {
           <div class="flex justify-between"><span class="text-muted-foreground">车主类型</span><span>{{ carpool.ownerType }}</span></div>
           <div class="flex justify-between"><span class="text-muted-foreground">原帖</span><Badge :variant="carpool.linuxdoBound ? 'default' : 'secondary'">{{ carpool.linuxdoBound ? '已绑定' : '待绑定' }}</Badge></div>
           <SourceBadges :badges="[carpool.linuxdoBound ? '原帖已绑定' : '待绑定原帖', '近期确认', getCarpoolAccessArrangementLabel(carpool.accessArrangementMode), isHighRiskSubscriptionCarpool(carpool) ? '风险已确认' : '普通风险']" />
-          <Button class="w-full" variant="outline" @click="toast('后续会打开 linux.do 原帖链接；当前 mock 未配置真实 URL。')"><ExternalLink class="h-4 w-4" />打开原帖</Button>
+          <Button class="w-full" variant="outline" @click="toast('当前车源暂未提供可打开的原帖链接。')"><ExternalLink class="h-4 w-4" />打开原帖</Button>
         </div>
       </Card>
     </div>

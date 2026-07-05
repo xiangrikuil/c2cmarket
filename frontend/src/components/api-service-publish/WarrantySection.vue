@@ -17,7 +17,8 @@ const options: Array<{ value: WarrantyMode, title: string, description: string }
 
 const templates = [
   '建议首次提交 ¥20 意向测试',
-  '站外确认后按所选接入方式使用',
+  '提交意向后站外确认接入细节',
+  '用量与余额由商户说明，买家自行核对',
   '高峰期响应可能变慢',
   '部分模型可能临时维护',
   '禁止滥用或高并发压测',
@@ -34,8 +35,8 @@ function insertTemplate(form: ApiServicePublishForm, value: string) {
 <template>
   <Card class="api-publish-card">
     <div class="api-publish-card-header">
-      <h2>7. 商户承诺与买家须知</h2>
-      <p>Sub2API 标准额度至少选择一项商户承诺，买家须知用于前台展示提交意向前注意事项；平台不担保、不代赔。</p>
+      <h2>5. 交易说明与承诺</h2>
+      <p>说明服务边界、补偿范围、特殊接入要求和用量核对方式；平台不担保、不代赔。</p>
     </div>
 
     <div class="api-publish-card-body space-y-4">
@@ -103,7 +104,7 @@ function insertTemplate(form: ApiServicePublishForm, value: string) {
           v-model="form.merchantNote"
           class="min-h-28"
           maxlength="800"
-          placeholder="请填写提交意向前需要确认的事项。"
+          placeholder="请填写提交意向前需要确认的事项，例如请求地址、面板说明、限速规则、用量核对方式等。"
         />
         <div class="flex items-center justify-between gap-3">
           <p v-if="errors.merchantNote" class="text-xs text-destructive">{{ errors.merchantNote }}</p>

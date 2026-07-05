@@ -1,7 +1,6 @@
 <script setup lang="ts">
-import DeliveryModeTooltip from '@/components/api/DeliveryModeTooltip.vue'
 import type { ApiDeliveryMode, ApiService } from '@/lib/api'
-import { deliveryModeLabel, formatCredit, formatCreditConversion, formatCny, formatMultiplier } from './utils'
+import { formatCredit, formatCreditConversion, formatCny, formatMultiplier } from './utils'
 
 defineProps<{
   service: ApiService
@@ -29,11 +28,8 @@ defineProps<{
       <dd class="font-semibold">{{ formatCreditConversion(service) }}</dd>
     </div>
     <div class="flex justify-between gap-4 border-b border-border px-3 py-2.5">
-      <dt class="text-muted-foreground">接入方式</dt>
-      <dd class="flex items-center justify-end gap-1 text-right font-semibold">
-        {{ deliveryModeLabel(selectedDeliveryMode) }}
-        <DeliveryModeTooltip :mode="selectedDeliveryMode" />
-      </dd>
+      <dt class="text-muted-foreground">接入细节</dt>
+      <dd class="text-right font-semibold">提交意向后站外确认</dd>
     </div>
     <div class="flex justify-between gap-4 border-b border-border px-3 py-2.5">
       <dt class="text-muted-foreground">有效期</dt>

@@ -188,7 +188,7 @@ function statusVariant(item: FeedbackTicket) {
         <Card class="p-4">
           <div class="mb-4">
             <h2 class="font-semibold">提交反馈</h2>
-            <p class="mt-1 text-sm text-muted-foreground">第一版仅提交页面上下文、关联内容和文字描述。</p>
+            <p class="mt-1 text-sm text-muted-foreground">提交时会附带页面上下文、关联内容和文字描述，便于管理员定位问题。</p>
           </div>
           <div class="grid gap-3 md:grid-cols-2">
             <label class="space-y-1.5">

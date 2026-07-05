@@ -2281,7 +2281,7 @@ export const publicCompletionRecords: PublicCompletionRecord[] = [
 ]
 
 export const publicReviewRecords: PublicReviewRecord[] = [
-  { id: 'review-orbit-1', username: 'orbit', date: '2026-06-18', serviceType: 'GPT / Claude API 服务', tags: ['响应及时', '接入说明清楚', '用量透明'], note: '站外确认节奏清楚，面板用量可见。', verified: true },
+  { id: 'review-orbit-1', username: 'orbit', date: '2026-06-18', serviceType: 'GPT / Claude API 服务', tags: ['响应及时', '说明清楚', '核对顺畅'], note: '站外确认节奏清楚，用量核对说明充分。', verified: true },
   { id: 'review-orbit-2', username: 'orbit', date: '2026-06-12', serviceType: 'Claude Sonnet API 服务', tags: ['倍率一致', '售后正常'], note: '倍率和页面说明一致。', verified: true },
   { id: 'review-qingning-1', username: 'qingning', date: '2026-06-19', serviceType: '轻量模型开发额度', tags: ['响应及时', '倍率一致'], note: '记录较少，但本单信息清楚。', verified: true },
   { id: 'review-beifeng-1', username: 'beifeng-api', date: '2026-06-15', serviceType: '多模型备用池', tags: ['响应较慢', '用量不透明'], note: '已完成交易，用量展示需要提前说明。', verified: true },
@@ -2289,7 +2289,7 @@ export const publicReviewRecords: PublicReviewRecord[] = [
 
 export const publicDisputeRecords: PublicDisputeRecord[] = [
   { id: 'dispute-orbit-1', username: 'orbit', type: '响应超时', result: '已补偿等值额度，记录关闭', handledAt: '2026-05-28', unresolved: false },
-  { id: 'dispute-beifeng-1', username: 'beifeng-api', type: '用量可见性不一致', result: '处理中，服务已暂停接单', handledAt: '2026-06-17', unresolved: true },
+  { id: 'dispute-beifeng-1', username: 'beifeng-api', type: '用量核对说明不一致', result: '处理中，服务已暂停接单', handledAt: '2026-06-17', unresolved: true },
   { id: 'dispute-beifeng-2', username: 'beifeng-api', type: '站外确认信息缺失', result: '商户补充说明后关闭', handledAt: '2026-05-31', unresolved: false },
 ]
 
