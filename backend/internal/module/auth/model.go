@@ -50,6 +50,16 @@ type PasswordCredential struct {
 	Hash      string
 }
 
+type BootstrapAdminInput struct {
+	Username string
+	Password string
+}
+
+type BootstrapAdminResult struct {
+	User    User
+	Created bool
+}
+
 type OAuthUserResult struct {
 	User    User
 	Created bool

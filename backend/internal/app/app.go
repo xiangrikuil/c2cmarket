@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"strings"
 	"time"
 
 	"c2c-market/backend/internal/config"
@@ -78,6 +79,27 @@ func New(ctx context.Context, cfg config.Config) (*App, error) {
 			Search:            store,
 			Report:            store,
 		}, emailSender)
+	}
+	if strings.TrimSpace(cfg.BootstrapAdminPassword) != "" {
+		result, appErr := service.BootstrapAdmin(ctx, core.BootstrapAdminInput{
+			Username: cfg.BootstrapAdminUsername,
+			Password: cfg.BootstrapAdminPassword,
+		})
+		if appErr != nil {
+			if store != nil {
+				store.Close()
+			}
+			return nil, fmt.Errorf("bootstrap admin failed: %w", appErr)
+		}
+		username := strings.TrimSpace(cfg.BootstrapAdminUsername)
+		if username == "" {
+			username = "admin"
+		}
+		if result.Created {
+			log.Printf("管理员 bootstrap 已完成 username=%s", result.User.Username)
+		} else {
+			log.Printf("管理员 bootstrap 已跳过，已有管理员密码凭证 username=%s", username)
+		}
 	}
 
 	handler := server.NewServer(service, server.ServerOptions{

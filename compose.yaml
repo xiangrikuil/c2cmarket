@@ -61,6 +61,8 @@ services:
       CONTACT_ENCRYPTION_KEY: ${CONTACT_ENCRYPTION_KEY:-c2cmarket-local-contact-encryption-key-v1}
       CONTACT_FINGERPRINT_KEY: ${CONTACT_FINGERPRINT_KEY:-c2cmarket-local-contact-fingerprint-key-v1}
       CONTACT_KEY_VERSION: ${CONTACT_KEY_VERSION:-local-dev-v1}
+      C2C_BOOTSTRAP_ADMIN_USERNAME: ${C2C_BOOTSTRAP_ADMIN_USERNAME:-}
+      C2C_BOOTSTRAP_ADMIN_PASSWORD: ${C2C_BOOTSTRAP_ADMIN_PASSWORD:-}
       EMAIL_PROVIDER: ${EMAIL_PROVIDER:-development}
       SMTP_HOST: ${SMTP_HOST:-smtpdm.aliyun.com}
       SMTP_PORT: ${SMTP_PORT:-465}

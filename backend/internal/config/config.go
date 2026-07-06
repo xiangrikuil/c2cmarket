@@ -14,24 +14,26 @@ const (
 )
 
 type Config struct {
-	Port                  string
-	AppEnv                string
-	DatabaseURL           string
-	EnableDevAuth         bool
-	AllowedOrigins        []string
-	OAuthProviderMode     string
-	OAuthClientID         string
-	OAuthClientSecret     string
-	OAuthAuthorizeURL     string
-	OAuthTokenURL         string
-	OAuthUserInfoURL      string
-	OAuthRedirectURL      string
-	OAuthScopes           string
-	ContactEncryptionKey  string
-	ContactFingerprintKey string
-	ContactKeyVersion     string
-	EmailProvider         string
-	SMTP                  SMTPConfig
+	Port                   string
+	AppEnv                 string
+	DatabaseURL            string
+	EnableDevAuth          bool
+	AllowedOrigins         []string
+	OAuthProviderMode      string
+	OAuthClientID          string
+	OAuthClientSecret      string
+	OAuthAuthorizeURL      string
+	OAuthTokenURL          string
+	OAuthUserInfoURL       string
+	OAuthRedirectURL       string
+	OAuthScopes            string
+	ContactEncryptionKey   string
+	ContactFingerprintKey  string
+	ContactKeyVersion      string
+	BootstrapAdminUsername string
+	BootstrapAdminPassword string
+	EmailProvider          string
+	SMTP                   SMTPConfig
 }
 
 type SMTPConfig struct {
@@ -51,22 +53,24 @@ const (
 
 func Load() (Config, error) {
 	cfg := Config{
-		Port:                  strings.TrimSpace(os.Getenv("PORT")),
-		AppEnv:                strings.ToLower(strings.TrimSpace(os.Getenv("APP_ENV"))),
-		DatabaseURL:           strings.TrimSpace(os.Getenv("DATABASE_URL")),
-		AllowedOrigins:        parseAllowedOrigins(os.Getenv("ALLOWED_ORIGINS"), os.Getenv("FRONTEND_ORIGIN")),
-		OAuthProviderMode:     strings.ToLower(strings.TrimSpace(os.Getenv("OAUTH_PROVIDER_MODE"))),
-		OAuthClientID:         strings.TrimSpace(os.Getenv("OAUTH_CLIENT_ID")),
-		OAuthClientSecret:     strings.TrimSpace(os.Getenv("OAUTH_CLIENT_SECRET")),
-		OAuthAuthorizeURL:     strings.TrimSpace(os.Getenv("OAUTH_AUTHORIZE_URL")),
-		OAuthTokenURL:         strings.TrimSpace(os.Getenv("OAUTH_TOKEN_URL")),
-		OAuthUserInfoURL:      strings.TrimSpace(os.Getenv("OAUTH_USERINFO_URL")),
-		OAuthRedirectURL:      strings.TrimSpace(os.Getenv("OAUTH_REDIRECT_URL")),
-		OAuthScopes:           strings.TrimSpace(os.Getenv("OAUTH_SCOPES")),
-		ContactEncryptionKey:  strings.TrimSpace(os.Getenv("CONTACT_ENCRYPTION_KEY")),
-		ContactFingerprintKey: strings.TrimSpace(os.Getenv("CONTACT_FINGERPRINT_KEY")),
-		ContactKeyVersion:     strings.TrimSpace(os.Getenv("CONTACT_KEY_VERSION")),
-		EmailProvider:         strings.ToLower(strings.TrimSpace(os.Getenv("EMAIL_PROVIDER"))),
+		Port:                   strings.TrimSpace(os.Getenv("PORT")),
+		AppEnv:                 strings.ToLower(strings.TrimSpace(os.Getenv("APP_ENV"))),
+		DatabaseURL:            strings.TrimSpace(os.Getenv("DATABASE_URL")),
+		AllowedOrigins:         parseAllowedOrigins(os.Getenv("ALLOWED_ORIGINS"), os.Getenv("FRONTEND_ORIGIN")),
+		OAuthProviderMode:      strings.ToLower(strings.TrimSpace(os.Getenv("OAUTH_PROVIDER_MODE"))),
+		OAuthClientID:          strings.TrimSpace(os.Getenv("OAUTH_CLIENT_ID")),
+		OAuthClientSecret:      strings.TrimSpace(os.Getenv("OAUTH_CLIENT_SECRET")),
+		OAuthAuthorizeURL:      strings.TrimSpace(os.Getenv("OAUTH_AUTHORIZE_URL")),
+		OAuthTokenURL:          strings.TrimSpace(os.Getenv("OAUTH_TOKEN_URL")),
+		OAuthUserInfoURL:       strings.TrimSpace(os.Getenv("OAUTH_USERINFO_URL")),
+		OAuthRedirectURL:       strings.TrimSpace(os.Getenv("OAUTH_REDIRECT_URL")),
+		OAuthScopes:            strings.TrimSpace(os.Getenv("OAUTH_SCOPES")),
+		ContactEncryptionKey:   strings.TrimSpace(os.Getenv("CONTACT_ENCRYPTION_KEY")),
+		ContactFingerprintKey:  strings.TrimSpace(os.Getenv("CONTACT_FINGERPRINT_KEY")),
+		ContactKeyVersion:      strings.TrimSpace(os.Getenv("CONTACT_KEY_VERSION")),
+		BootstrapAdminUsername: strings.TrimSpace(os.Getenv("C2C_BOOTSTRAP_ADMIN_USERNAME")),
+		BootstrapAdminPassword: strings.TrimSpace(os.Getenv("C2C_BOOTSTRAP_ADMIN_PASSWORD")),
+		EmailProvider:          strings.ToLower(strings.TrimSpace(os.Getenv("EMAIL_PROVIDER"))),
 		SMTP: SMTPConfig{
 			Host:        strings.TrimSpace(os.Getenv("SMTP_HOST")),
 			Username:    strings.TrimSpace(os.Getenv("SMTP_USERNAME")),
@@ -124,6 +128,9 @@ func Load() (Config, error) {
 	}
 	if cfg.EmailProvider != "development" && cfg.EmailProvider != "aliyun_directmail" {
 		return Config{}, fmt.Errorf("EMAIL_PROVIDER must be development or aliyun_directmail")
+	}
+	if cfg.BootstrapAdminUsername != "" && cfg.BootstrapAdminPassword == "" {
+		return Config{}, fmt.Errorf("C2C_BOOTSTRAP_ADMIN_PASSWORD is required when C2C_BOOTSTRAP_ADMIN_USERNAME is set")
 	}
 
 	devAuthRaw := strings.TrimSpace(os.Getenv("ENABLE_DEV_AUTH"))

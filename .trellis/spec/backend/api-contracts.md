@@ -189,7 +189,7 @@ If-Match: "<version>"                            # required for versioned admin 
 - Problem responses use `application/problem+json` and include `code` plus `requestId`.
 - Session auth is same-origin cookie auth. Production code must not accept request headers as user impersonation.
 - `POST /api/v1/auth/dev-session` is a development entry only. It must be disabled outside development/test by `APP_ENV` / `ENABLE_DEV_AUTH` startup configuration.
-- First-release public registration/login is linux.do OAuth only. Native username/password is a backup login path only for accounts with `linuxDoBinding.bound=true`: `POST /api/v1/auth/password` must reject unbound users with `403 LINUX_DO_BINDING_REQUIRED`, and `POST /api/v1/auth/password/login` must reject stored credentials for unbound users with the same code before creating a session. Password credentials must be stored only as salted hashes; plaintext passwords must never be stored in PostgreSQL, logs, OpenAPI examples, or frontend state.
+- First-release public registration/login is linux.do OAuth only. Native username/password is a backup login path for accounts with `linuxDoBinding.bound=true`, plus the explicit first-admin bootstrap account. `POST /api/v1/auth/password` and `POST /api/v1/auth/password/login` must reject unbound non-admin users with `403 LINUX_DO_BINDING_REQUIRED` before creating or changing credentials. Password credentials must be stored only as salted hashes; plaintext passwords must never be stored in PostgreSQL, logs, OpenAPI examples, or frontend state.
 - `POST /api/v1/auth/email-registration/start` and `POST /api/v1/auth/email-registration/confirm` are retained only as stable disabled compatibility endpoints. Both return `403 EMAIL_REGISTRATION_DISABLED` and must not send registration email, create challenges, create users, create sessions, or set session cookies. Login-bound `/me/email-verification/*` remains a profile/contact verification feature.
 - OAuth login is another real session entry. `GET /api/v1/auth/oauth/start?returnTo=/path` sets an HttpOnly OAuth state cookie and returns `{authorizationUrl}`. `GET /api/v1/auth/oauth/callback?code=...&state=...` must compare query state with the state cookie, exchange the code for a provider profile, upsert `users`, `auth_identities`, `linux_do_bindings`, create an `auth_sessions` row, set `c2c_session`, clear the state cookie, and redirect to the sanitized same-origin `returnTo`.
 - OAuth provider mode can be `fake` only in development/test for smoke automation. Production must use `OAUTH_PROVIDER_MODE=oauth2` with `OAUTH_CLIENT_ID`, `OAUTH_CLIENT_SECRET`, `OAUTH_AUTHORIZE_URL`, `OAUTH_TOKEN_URL`, `OAUTH_USERINFO_URL`, and `OAUTH_REDIRECT_URL`.
@@ -1114,6 +1114,8 @@ OAUTH_TOKEN_URL=<required in production oauth2>
 OAUTH_USERINFO_URL=<required in production oauth2>
 OAUTH_REDIRECT_URL=<required in production oauth2>
 OAUTH_SCOPES=openid profile
+C2C_BOOTSTRAP_ADMIN_USERNAME=<optional first admin username>
+C2C_BOOTSTRAP_ADMIN_PASSWORD=<optional first admin password>
 ```
 
 Session user response includes:
@@ -1137,7 +1139,11 @@ Session user response includes:
 
 ### 3. Contracts
 
-- `password/login` must validate native credentials through salted hashes in `user_password_credentials`, require the target user to have `linuxDoBinding.bound=true`, create the same cookie-backed session contract as OAuth, and return `401 INVALID_CREDENTIALS` for missing users or bad passwords without revealing which field failed.
+- `password/login` must validate native credentials through salted hashes in `user_password_credentials`, create the same cookie-backed session contract as OAuth, and return `401 INVALID_CREDENTIALS` for missing users or bad passwords without revealing which field failed.
+- New or changed native passwords must write `password_algorithm='argon2id_v1'`. `sha256_salted_v1` is legacy verification-only; a successful legacy login must rehash the credential to `argon2id_v1` before session creation completes.
+- Native password login and set-password must require `linuxDoBinding.bound=true` for non-admin users. Admin users may use native password login without linux.do binding only to support the explicit first-admin bootstrap path.
+- First-admin bootstrap is environment-driven at process startup. If `C2C_BOOTSTRAP_ADMIN_PASSWORD` is empty, bootstrap is skipped. If password is present and username is empty, username defaults to `admin`. If username is present without password, config loading must fail.
+- Bootstrap must create or promote the requested user, grant `user_permissions(permission='admin')`, and write an Argon2id password credential only when no admin password credential exists. Re-running bootstrap after an admin password credential exists must not overwrite credentials.
 - `email-registration/start` and `email-registration/confirm` are disabled first-release compatibility endpoints. They return `403 EMAIL_REGISTRATION_DISABLED` and must not create accounts or sessions.
 - `start` must store only state plus same-origin `returnTo` in the state cookie. External URLs, protocol-relative URLs, and empty values normalize to `/`.
 - `callback` must clear the state cookie after successful login.
@@ -1152,7 +1158,10 @@ Session user response includes:
 | Condition | HTTP | Code |
 | --- | ---: | --- |
 | Bad native username/password | 401 | `INVALID_CREDENTIALS` |
-| Native password set/login for user without linux.do binding | 403 | `LINUX_DO_BINDING_REQUIRED` |
+| Native password set/login for non-admin user without linux.do binding | 403 | `LINUX_DO_BINDING_REQUIRED` |
+| Legacy `sha256_salted_v1` password login succeeds | 200 plus credential rehash | n/a |
+| Bootstrap username set without bootstrap password | startup failure | n/a |
+| Bootstrap rerun after admin credential exists | no-op, no overwrite | n/a |
 | Email registration start/confirm | 403 | `EMAIL_REGISTRATION_DISABLED` |
 | Missing state cookie or state query | 403 | `CSRF_TOKEN_INVALID` |
 | State mismatch | 403 | `CSRF_TOKEN_INVALID` |
@@ -1164,15 +1173,18 @@ Session user response includes:
 
 ### 5. Good/Base/Bad Cases
 
-- Good: linux.do-bound native admin login returns the normal session response with `permissions:["admin"]`, while an incorrect password returns `401 INVALID_CREDENTIALS` and creates no session.
+- Good: linux.do-bound native user login returns the normal session response, while an incorrect password returns `401 INVALID_CREDENTIALS` and creates no session.
+- Good: a legacy `sha256_salted_v1` credential logs in once and is persisted back as `argon2id_v1`; the same wrong password does not create a session or rehash.
+- Good: first startup with `C2C_BOOTSTRAP_ADMIN_USERNAME=admin` and `C2C_BOOTSTRAP_ADMIN_PASSWORD=<secret>` creates or promotes admin and writes an Argon2id credential; the second startup skips without changing the existing credential.
 - Good: email registration start/confirm return `EMAIL_REGISTRATION_DISABLED` and do not set `c2c_session`.
 - Good: fake provider smoke logs in `fake-auth-user-*`, session shows `linuxDoBinding.bound=true`, admin route returns `403` for non-admin, and `fake-auth-admin-*` receives `permissions:["admin"]`.
 - Base: existing smoke scripts may call `/auth/dev-session` only when `APP_ENV=development|test` and `ENABLE_DEV_AUTH=true`.
-- Bad: real frontend mode silently calls `/auth/dev-session` to switch from buyer to admin, exposes email registration as a public sign-up path, lets an unbound user use backup password, or backend stores OAuth access tokens in `auth_identities`.
+- Bad: real frontend mode silently calls `/auth/dev-session` to switch from buyer to admin, exposes email registration as a public sign-up path, lets an unbound non-admin user use backup password, writes new `sha256_salted_v1` credentials, overwrites an existing admin password during bootstrap, or backend stores OAuth access tokens in `auth_identities`.
 
 ### 6. Tests Required
 
 - `cd backend && /opt/homebrew/bin/go test ./...` for config, route parity, and auth behavior.
+- Auth unit tests must assert Argon2id login success, legacy login plus rehash, wrong password no session/no rehash, Argon2id set-password writes, first-admin bootstrap creation, and bootstrap no-overwrite.
 - OpenAPI YAML parse to verify auth path/schema contract.
 - `scripts/auth-smoke.mjs` against PostgreSQL with `OAUTH_PROVIDER_MODE=fake` for start/callback/session/admin/logout.
 - Product-boundary scan for token persistence, plaintext password storage, linux.do official endorsement, platform custody, and automatic credential delivery wording.

@@ -213,6 +213,86 @@ func (s *Store) UpsertOAuthUser(ctx context.Context, profile auth.OAuthProfile, 
 	return auth.OAuthUserResult{User: user, Created: inserted}, nil
 }
 
+func (s *Store) BootstrapAdminPassword(ctx context.Context, credential auth.PasswordCredential, now time.Time) (auth.BootstrapAdminResult, *domain.AppError) {
+	if s == nil || s.pool == nil {
+		return auth.BootstrapAdminResult{}, internalStoreError()
+	}
+	username := strings.TrimSpace(strings.ToLower(credential.User.Username))
+	if username == "" {
+		return auth.BootstrapAdminResult{}, domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Invalid username", "管理员用户名格式不正确。", "username", "invalid", "管理员用户名格式不正确。")
+	}
+
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return auth.BootstrapAdminResult{}, internalStoreError()
+	}
+	defer rollback(ctx, tx)
+
+	if _, err = tx.Exec(ctx, `LOCK TABLE user_permissions, user_password_credentials IN SHARE ROW EXCLUSIVE MODE`); err != nil {
+		return auth.BootstrapAdminResult{}, internalStoreError()
+	}
+
+	var adminCredentialExists bool
+	err = tx.QueryRow(ctx, `
+		SELECT EXISTS(
+			SELECT 1
+			FROM user_permissions p
+			JOIN user_password_credentials c ON c.user_id = p.user_id
+			WHERE p.permission = 'admin'
+		)
+	`).Scan(&adminCredentialExists)
+	if err != nil {
+		return auth.BootstrapAdminResult{}, internalStoreError()
+	}
+	if adminCredentialExists {
+		return auth.BootstrapAdminResult{}, nil
+	}
+
+	displayName := strings.TrimSpace(credential.User.DisplayName)
+	if displayName == "" {
+		displayName = username
+	}
+	var user auth.User
+	err = tx.QueryRow(ctx, `
+		INSERT INTO users (username, display_name, account_status, created_at, updated_at)
+		VALUES ($1, $2, 'active', $3, $3)
+		ON CONFLICT (username) DO UPDATE
+		SET display_name = COALESCE(NULLIF(users.display_name, ''), EXCLUDED.display_name)
+		RETURNING id::text, username, display_name, account_status
+	`, username, displayName, now).Scan(&user.ID, &user.Username, &user.DisplayName, &user.Status)
+	if err != nil {
+		return auth.BootstrapAdminResult{}, internalStoreError()
+	}
+
+	_, err = tx.Exec(ctx, `
+		INSERT INTO user_permissions (user_id, permission)
+		VALUES ($1, 'admin')
+		ON CONFLICT DO NOTHING
+	`, user.ID)
+	if err != nil {
+		return auth.BootstrapAdminResult{}, internalStoreError()
+	}
+
+	_, err = tx.Exec(ctx, `
+		INSERT INTO user_password_credentials (user_id, password_algorithm, password_salt, password_hash, created_at, password_updated_at)
+		VALUES ($1, $2, $3, $4, $5, $5)
+		ON CONFLICT (user_id) DO UPDATE
+		SET password_algorithm = EXCLUDED.password_algorithm,
+		    password_salt = EXCLUDED.password_salt,
+		    password_hash = EXCLUDED.password_hash,
+		    password_updated_at = EXCLUDED.password_updated_at
+	`, user.ID, strings.TrimSpace(credential.Algorithm), strings.TrimSpace(credential.Salt), strings.TrimSpace(credential.Hash), now)
+	if err != nil {
+		return auth.BootstrapAdminResult{}, internalStoreError()
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return auth.BootstrapAdminResult{}, internalStoreError()
+	}
+	user.IsAdmin = true
+	return auth.BootstrapAdminResult{User: user, Created: true}, nil
+}
+
 func (s *Store) PasswordCredential(ctx context.Context, username string) (auth.PasswordCredential, *domain.AppError) {
 	if s == nil || s.pool == nil {
 		return auth.PasswordCredential{}, internalStoreError()

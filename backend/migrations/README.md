@@ -34,7 +34,7 @@ versions:
 | `000022_reports_disputes_appeals` | user reports, dispute cases, appeals, and append-only dispute events |
 | `000023_api_intent_contact_access_logs` | API purchase intent direct contact disclosure audit logs without plaintext contact values |
 | `000024_search_trigram_indexes` | `pg_trgm` extension and GIN trigram indexes for public search fields |
-| `000025_native_admin_login` | native username/password credential table plus initial `admin` account with admin permission |
+| `000025_native_admin_login` | native username/password credential table without fixed password seeds |
 | `000026_account_identity_profile` | account profile fields for password, email verification, and custom avatar URL |
 | `000027_api_service_instant_orders` | API service orderability settings, API orders, order events, and payment-instruction access logs |
 | `000028_api_order_dispute_targets` | report/dispute/appeal target constraint support for API order disputes |
@@ -42,6 +42,7 @@ versions:
 | `000030_carpool_quota_fields` | carpool listing service multiplier and average quota disclosure fields |
 | `000031_email_registration_verification` | email registration challenge, verification, and auth identity contract |
 | `000032_carpool_cancel_exit_lifecycle` | buyer application cancel, owner acceptance withdrawal status constraints, and cancelled contact-session history |
+| `000035_password_argon2_admin_bootstrap` | Argon2id password algorithm support and fixed admin seed cleanup |
 
 The current runnable Go slice supports both in-memory tests and PostgreSQL runtime.
 When `DATABASE_URL` is configured, users, auth sessions, idempotency, product

@@ -17,9 +17,17 @@ import (
 	"c2c-market/backend/internal/domain"
 
 	"github.com/google/uuid"
+	"golang.org/x/crypto/argon2"
 )
 
-const PasswordAlgorithmSHA256SaltedV1 = "sha256_salted_v1"
+const (
+	PasswordAlgorithmArgon2IDV1            = "argon2id_v1"
+	PasswordAlgorithmSHA256SaltedV1        = "sha256_salted_v1"
+	argon2idV1MemoryKB              uint32 = 64 * 1024
+	argon2idV1Iterations            uint32 = 3
+	argon2idV1Parallelism           uint8  = 1
+	argon2idV1KeyLength             uint32 = 32
+)
 
 type Service struct {
 	mu                          sync.Mutex
@@ -231,17 +239,23 @@ func (s *Service) LoginWithPassword(ctx context.Context, username, password stri
 		credential.User = user
 		s.mu.Unlock()
 	}
-	if credential.Algorithm != PasswordAlgorithmSHA256SaltedV1 || !passwordHashMatches(credential.Salt, password, credential.Hash) {
+	matched, needsRehash := passwordCredentialMatches(credential, password)
+	if !matched {
 		return User{}, Session{}, domain.NewError(http.StatusUnauthorized, domain.CodeInvalidCredentials, "Invalid credentials", "用户名或密码不正确。")
 	}
 	if credential.User.Status != "active" {
 		return User{}, Session{}, domain.NewError(http.StatusForbidden, domain.CodeAccountRestricted, "Account restricted", "当前账号不可执行该操作。")
 	}
-	if appErr := requireLinuxDoBoundUser(credential.User); appErr != nil {
+	if appErr := requireNativePasswordUser(credential.User); appErr != nil {
 		return User{}, Session{}, appErr
 	}
 
 	now := s.now()
+	if needsRehash {
+		if appErr := s.rehashPasswordCredential(ctx, credential, password, now); appErr != nil {
+			return User{}, Session{}, appErr
+		}
+	}
 	session := Session{
 		ID:        newSecret("sess"),
 		UserID:    credential.User.ID,
@@ -258,6 +272,43 @@ func (s *Service) LoginWithPassword(ctx context.Context, username, password stri
 		s.mu.Unlock()
 	}
 	return credential.User, session, nil
+}
+
+func (s *Service) BootstrapAdmin(ctx context.Context, input BootstrapAdminInput) (BootstrapAdminResult, *domain.AppError) {
+	username := normalizeUsername(input.Username)
+	if username == "" {
+		username = "admin"
+	}
+	password := strings.TrimSpace(input.Password)
+	if password == "" {
+		return BootstrapAdminResult{}, nil
+	}
+	if !usernamePattern.MatchString(username) {
+		return BootstrapAdminResult{}, domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Invalid username", "管理员用户名格式不正确。", "username", "invalid", "用户名只能包含 3-24 位字母、数字、下划线或连字符。")
+	}
+	if appErr := validateNewPassword(password); appErr != nil {
+		return BootstrapAdminResult{}, appErr
+	}
+
+	credential := newPasswordCredential(User{
+		Username:    username,
+		DisplayName: username,
+		IsAdmin:     true,
+		Status:      "active",
+	}, password)
+	if s.repo != nil {
+		return s.repo.BootstrapAdminPassword(ctx, credential, s.now())
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.hasAdminPasswordCredentialLocked() {
+		return BootstrapAdminResult{}, nil
+	}
+	user := s.ensureUserLocked(username, true)
+	credential.User = user
+	s.passwordCredentialsByUserID[user.ID] = credential
+	return BootstrapAdminResult{User: user, Created: true}, nil
 }
 
 func (s *Service) SetPassword(ctx context.Context, input SetPasswordInput) *domain.AppError {
@@ -278,7 +329,7 @@ func (s *Service) SetPassword(ctx context.Context, input SetPasswordInput) *doma
 		if appErr != nil {
 			return appErr
 		}
-		if appErr := requireLinuxDoBoundUser(user); appErr != nil {
+		if appErr := requireNativePasswordUser(user); appErr != nil {
 			return appErr
 		}
 		credential, appErr = s.repo.PasswordCredentialByUserID(ctx, input.UserID)
@@ -292,9 +343,9 @@ func (s *Service) SetPassword(ctx context.Context, input SetPasswordInput) *doma
 			s.mu.Unlock()
 			return domain.NewError(http.StatusUnauthorized, domain.CodeSessionExpired, "Session required", "请先登录。")
 		}
-		if user.LinuxDoBinding == nil || !user.LinuxDoBinding.Bound {
+		if appErr := requireNativePasswordUser(user); appErr != nil {
 			s.mu.Unlock()
-			return linuxDoBindingRequiredError()
+			return appErr
 		}
 		credential = s.passwordCredentialsByUserID[input.UserID]
 		if credential.User.ID == "" {
@@ -308,19 +359,12 @@ func (s *Service) SetPassword(ctx context.Context, input SetPasswordInput) *doma
 		if input.CurrentPassword == "" {
 			return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Current password required", "修改备用密码必须输入当前密码。", "currentPassword", "required", "必须输入当前密码。")
 		}
-		if credential.Algorithm != PasswordAlgorithmSHA256SaltedV1 || !passwordHashMatches(credential.Salt, input.CurrentPassword, credential.Hash) {
+		matched, _ := passwordCredentialMatches(credential, input.CurrentPassword)
+		if !matched {
 			return domain.NewError(http.StatusUnauthorized, domain.CodeInvalidCredentials, "Invalid credentials", "当前密码不正确。")
 		}
 	}
-	salt := newPasswordSalt()
-	next := PasswordCredential{
-		User: User{
-			ID: input.UserID,
-		},
-		Algorithm: PasswordAlgorithmSHA256SaltedV1,
-		Salt:      salt,
-		Hash:      passwordHash(salt, input.NewPassword),
-	}
+	next := newPasswordCredential(User{ID: input.UserID}, input.NewPassword)
 	if s.repo != nil {
 		return s.repo.UpsertPasswordCredential(ctx, next, s.now())
 	}
@@ -428,6 +472,33 @@ func (s *Service) Logout(ctx context.Context, sessionID string) {
 	s.sessions[sessionID] = session
 }
 
+func (s *Service) rehashPasswordCredential(ctx context.Context, credential PasswordCredential, password string, now time.Time) *domain.AppError {
+	next := newPasswordCredential(User{ID: credential.User.ID}, password)
+	if s.repo != nil {
+		return s.repo.UpsertPasswordCredential(ctx, next, now)
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if user := s.users[credential.User.ID]; user.ID != "" {
+		next.User = user
+	}
+	s.passwordCredentialsByUserID[credential.User.ID] = next
+	return nil
+}
+
+func (s *Service) hasAdminPasswordCredentialLocked() bool {
+	for userID, credential := range s.passwordCredentialsByUserID {
+		if credential.User.ID == "" {
+			continue
+		}
+		user := s.users[userID]
+		if user.IsAdmin {
+			return true
+		}
+	}
+	return false
+}
+
 func (s *Service) ensureUserLocked(username string, isAdmin bool) User {
 	username = normalizeUsername(username)
 	if id := s.usersByUsername[username]; id != "" {
@@ -473,12 +544,55 @@ func hashOpaqueToken(value string) string {
 	return hex.EncodeToString(sum[:])
 }
 
-func passwordHashMatches(salt, password, expectedHash string) bool {
-	actual := passwordHash(salt, password)
+func passwordCredentialMatches(credential PasswordCredential, password string) (bool, bool) {
+	switch credential.Algorithm {
+	case PasswordAlgorithmArgon2IDV1:
+		return argon2idPasswordHashMatches(credential.Salt, password, credential.Hash), false
+	case PasswordAlgorithmSHA256SaltedV1:
+		return legacyPasswordHashMatches(credential.Salt, password, credential.Hash), true
+	default:
+		return false, false
+	}
+}
+
+func newPasswordCredential(user User, password string) PasswordCredential {
+	salt := newPasswordSalt()
+	return PasswordCredential{
+		User:      user,
+		Algorithm: PasswordAlgorithmArgon2IDV1,
+		Salt:      salt,
+		Hash:      argon2idPasswordHash(salt, password),
+	}
+}
+
+func argon2idPasswordHashMatches(salt, password, expectedHash string) bool {
+	saltBytes, err := hex.DecodeString(strings.TrimSpace(salt))
+	if err != nil || len(saltBytes) == 0 {
+		return false
+	}
+	expected, err := hex.DecodeString(strings.TrimSpace(expectedHash))
+	if err != nil || len(expected) != int(argon2idV1KeyLength) {
+		return false
+	}
+	actual := argon2.IDKey([]byte(password), saltBytes, argon2idV1Iterations, argon2idV1MemoryKB, argon2idV1Parallelism, argon2idV1KeyLength)
+	return subtle.ConstantTimeCompare(actual, expected) == 1
+}
+
+func argon2idPasswordHash(salt, password string) string {
+	saltBytes, err := hex.DecodeString(strings.TrimSpace(salt))
+	if err != nil || len(saltBytes) == 0 {
+		panic("invalid argon2id password salt")
+	}
+	sum := argon2.IDKey([]byte(password), saltBytes, argon2idV1Iterations, argon2idV1MemoryKB, argon2idV1Parallelism, argon2idV1KeyLength)
+	return hex.EncodeToString(sum)
+}
+
+func legacyPasswordHashMatches(salt, password, expectedHash string) bool {
+	actual := legacyPasswordHash(salt, password)
 	return subtle.ConstantTimeCompare([]byte(actual), []byte(strings.TrimSpace(expectedHash))) == 1
 }
 
-func passwordHash(salt, password string) string {
+func legacyPasswordHash(salt, password string) string {
 	sum := sha256.Sum256([]byte(salt + ":" + password))
 	return hex.EncodeToString(sum[:])
 }
@@ -498,6 +612,13 @@ func requireLinuxDoBoundUser(user User) *domain.AppError {
 		return linuxDoBindingRequiredError()
 	}
 	return nil
+}
+
+func requireNativePasswordUser(user User) *domain.AppError {
+	if user.IsAdmin {
+		return nil
+	}
+	return requireLinuxDoBoundUser(user)
 }
 
 func emailRegistrationDisabledError() *domain.AppError {

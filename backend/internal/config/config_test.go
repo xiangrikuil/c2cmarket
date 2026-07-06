@@ -223,3 +223,13 @@ func TestLoadAllowsExplicitNonProductionDevAuthDisable(t *testing.T) {
 		t.Fatalf("expected dev auth disabled")
 	}
 }
+
+func TestLoadRejectsBootstrapUsernameWithoutPassword(t *testing.T) {
+	t.Setenv("APP_ENV", EnvDevelopment)
+	t.Setenv("C2C_BOOTSTRAP_ADMIN_USERNAME", "admin")
+	t.Setenv("C2C_BOOTSTRAP_ADMIN_PASSWORD", "")
+
+	if _, err := Load(); err == nil {
+		t.Fatalf("expected bootstrap username without password to fail")
+	}
+}

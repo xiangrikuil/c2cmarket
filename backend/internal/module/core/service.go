@@ -180,6 +180,10 @@ func (s *Service) LoginWithPassword(ctx context.Context, username, password stri
 	return s.authService.LoginWithPassword(ctx, username, password)
 }
 
+func (s *Service) BootstrapAdmin(ctx context.Context, input BootstrapAdminInput) (BootstrapAdminResult, *domain.AppError) {
+	return s.authService.BootstrapAdmin(ctx, input)
+}
+
 func (s *Service) StartEmailRegistration(ctx context.Context, input EmailRegistrationStartInput) (EmailRegistrationChallenge, *domain.AppError) {
 	return s.authService.StartEmailRegistration(ctx, input)
 }

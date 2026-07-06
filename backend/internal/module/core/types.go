@@ -24,6 +24,10 @@ type Session = auth.Session
 
 type OAuthProfile = auth.OAuthProfile
 
+type BootstrapAdminInput = auth.BootstrapAdminInput
+
+type BootstrapAdminResult = auth.BootstrapAdminResult
+
 type SetPasswordInput = auth.SetPasswordInput
 
 type EmailRegistrationStartInput = auth.EmailRegistrationStartInput

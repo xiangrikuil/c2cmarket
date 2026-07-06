@@ -29,6 +29,17 @@ func (f *fakeAuthRepository) UpsertOAuthUser(context.Context, OAuthProfile, time
 	return f.oauthResult, nil
 }
 
+func (f *fakeAuthRepository) BootstrapAdminPassword(_ context.Context, credential PasswordCredential, _ time.Time) (BootstrapAdminResult, *domain.AppError) {
+	if f.credential.User.IsAdmin && f.credential.User.ID != "" {
+		return BootstrapAdminResult{}, nil
+	}
+	credential.User.ID = "bootstrap-admin"
+	credential.User.IsAdmin = true
+	credential.User.Status = "active"
+	f.credential = credential
+	return BootstrapAdminResult{User: credential.User, Created: true}, nil
+}
+
 func (f *fakeAuthRepository) UserByID(_ context.Context, userID string) (User, *domain.AppError) {
 	if f.user.ID == userID {
 		return f.user, nil
@@ -54,6 +65,14 @@ func (f *fakeAuthRepository) PasswordCredentialByUserID(_ context.Context, userI
 }
 
 func (f *fakeAuthRepository) UpsertPasswordCredential(_ context.Context, credential PasswordCredential, _ time.Time) *domain.AppError {
+	if credential.User.Username == "" {
+		switch credential.User.ID {
+		case f.credential.User.ID:
+			credential.User = f.credential.User
+		case f.user.ID:
+			credential.User = f.user
+		}
+	}
 	f.credential = credential
 	return nil
 }
@@ -95,23 +114,49 @@ func (f *fakeAuthRepository) RevokeSession(context.Context, string, time.Time) *
 	return nil
 }
 
-func TestLoginWithPasswordCreatesSession(t *testing.T) {
-	repo := &fakeAuthRepository{
-		credential: PasswordCredential{
-			User: User{
-				ID:          "user-admin",
-				Username:    "admin",
-				DisplayName: "C2CMarket Admin",
-				IsAdmin:     true,
-				Status:      "active",
-				LinuxDoBinding: &LinuxDoBinding{
-					Bound: true,
-				},
-			},
-			Algorithm: PasswordAlgorithmSHA256SaltedV1,
-			Salt:      "test-salt",
-			Hash:      "d1012a27230a9cb86e493ce308459b904562e29a3fd87ec523e79f8554b96746",
+func boundAdminUserForTest() User {
+	return User{
+		ID:          "user-admin",
+		Username:    "admin",
+		DisplayName: "C2CMarket Admin",
+		IsAdmin:     true,
+		Status:      "active",
+		LinuxDoBinding: &LinuxDoBinding{
+			Bound: true,
 		},
+	}
+}
+
+func boundUserForTest() User {
+	return User{
+		ID:       "user-oauth",
+		Username: "oauth-user",
+		Status:   "active",
+		LinuxDoBinding: &LinuxDoBinding{
+			Bound: true,
+		},
+	}
+}
+
+func argon2idCredentialForTest(user User, password string) PasswordCredential {
+	credential := newPasswordCredential(user, password)
+	credential.User = user
+	return credential
+}
+
+func legacyCredentialForTest(user User, password string) PasswordCredential {
+	salt := "test-salt"
+	return PasswordCredential{
+		User:      user,
+		Algorithm: PasswordAlgorithmSHA256SaltedV1,
+		Salt:      salt,
+		Hash:      legacyPasswordHash(salt, password),
+	}
+}
+
+func TestLoginWithArgon2idPasswordCreatesSession(t *testing.T) {
+	repo := &fakeAuthRepository{
+		credential: argon2idCredentialForTest(boundAdminUserForTest(), "unit-test-password"),
 	}
 	service := NewService(repo, func() time.Time { return time.Date(2026, 6, 23, 12, 0, 0, 0, time.UTC) })
 
@@ -127,6 +172,32 @@ func TestLoginWithPasswordCreatesSession(t *testing.T) {
 	}
 	if repo.session.ID == "" || repo.session.CSRFToken == "" {
 		t.Fatalf("expected persisted hashed session")
+	}
+}
+
+func TestLoginWithLegacyPasswordRehashesCredential(t *testing.T) {
+	repo := &fakeAuthRepository{
+		credential: legacyCredentialForTest(boundAdminUserForTest(), "unit-test-password"),
+	}
+	legacySalt := repo.credential.Salt
+	legacyHash := repo.credential.Hash
+	service := NewService(repo, func() time.Time { return time.Date(2026, 6, 23, 12, 0, 0, 0, time.UTC) })
+
+	_, session, appErr := service.LoginWithPassword(context.Background(), "admin", "unit-test-password")
+	if appErr != nil {
+		t.Fatalf("legacy login with password: %v", appErr)
+	}
+	if session.ID == "" {
+		t.Fatalf("expected session after legacy login")
+	}
+	if repo.credential.Algorithm != PasswordAlgorithmArgon2IDV1 {
+		t.Fatalf("expected legacy credential to rehash to argon2id, got %+v", repo.credential)
+	}
+	if repo.credential.Salt == legacySalt || repo.credential.Hash == legacyHash {
+		t.Fatalf("expected rehash to replace salt/hash")
+	}
+	if matched, needsRehash := passwordCredentialMatches(repo.credential, "unit-test-password"); !matched || needsRehash {
+		t.Fatalf("expected rehashed credential to verify without another rehash")
 	}
 }
 
@@ -319,22 +390,9 @@ func TestLoginWithOAuthProfileDoesNotFailWhenRegistrationEmailFails(t *testing.T
 
 func TestLoginWithPasswordRejectsInvalidPassword(t *testing.T) {
 	repo := &fakeAuthRepository{
-		credential: PasswordCredential{
-			User: User{
-				ID:          "user-admin",
-				Username:    "admin",
-				DisplayName: "C2CMarket Admin",
-				IsAdmin:     true,
-				Status:      "active",
-				LinuxDoBinding: &LinuxDoBinding{
-					Bound: true,
-				},
-			},
-			Algorithm: PasswordAlgorithmSHA256SaltedV1,
-			Salt:      "test-salt",
-			Hash:      "d1012a27230a9cb86e493ce308459b904562e29a3fd87ec523e79f8554b96746",
-		},
+		credential: argon2idCredentialForTest(boundAdminUserForTest(), "unit-test-password"),
 	}
+	original := repo.credential
 	service := NewService(repo, time.Now)
 
 	_, _, appErr := service.LoginWithPassword(context.Background(), "admin", "wrong-password")
@@ -344,16 +402,15 @@ func TestLoginWithPasswordRejectsInvalidPassword(t *testing.T) {
 	if repo.session.ID != "" {
 		t.Fatalf("invalid password must not create session: %+v", repo.session)
 	}
+	if repo.credential.Algorithm != original.Algorithm || repo.credential.Salt != original.Salt || repo.credential.Hash != original.Hash {
+		t.Fatalf("invalid password must not rehash credential: before=%+v after=%+v", original, repo.credential)
+	}
 }
 
 func TestLoginWithPasswordRequiresLinuxDoBinding(t *testing.T) {
+	user := User{ID: "user-email", Username: "email-user", Status: "active"}
 	repo := &fakeAuthRepository{
-		credential: PasswordCredential{
-			User:      User{ID: "user-email", Username: "email-user", Status: "active"},
-			Algorithm: PasswordAlgorithmSHA256SaltedV1,
-			Salt:      "test-salt",
-			Hash:      "d1012a27230a9cb86e493ce308459b904562e29a3fd87ec523e79f8554b96746",
-		},
+		credential: argon2idCredentialForTest(user, "unit-test-password"),
 	}
 	service := NewService(repo, time.Now)
 
@@ -368,14 +425,7 @@ func TestLoginWithPasswordRequiresLinuxDoBinding(t *testing.T) {
 
 func TestSetPasswordCreatesCredentialWithoutCurrentPasswordForLinuxDoBoundUser(t *testing.T) {
 	repo := &fakeAuthRepository{
-		user: User{
-			ID:       "user-oauth",
-			Username: "oauth-user",
-			Status:   "active",
-			LinuxDoBinding: &LinuxDoBinding{
-				Bound: true,
-			},
-		},
+		user: boundUserForTest(),
 	}
 	service := NewService(repo, time.Now)
 
@@ -388,6 +438,9 @@ func TestSetPasswordCreatesCredentialWithoutCurrentPasswordForLinuxDoBoundUser(t
 	}
 	if repo.credential.User.ID != "user-oauth" || repo.credential.Hash == "" || repo.credential.Salt == "" {
 		t.Fatalf("expected credential upsert, got %+v", repo.credential)
+	}
+	if repo.credential.Algorithm != PasswordAlgorithmArgon2IDV1 {
+		t.Fatalf("expected argon2id credential, got %+v", repo.credential)
 	}
 }
 
@@ -410,21 +463,11 @@ func TestSetPasswordRequiresLinuxDoBinding(t *testing.T) {
 }
 
 func TestSetPasswordRequiresCurrentPasswordWhenConfigured(t *testing.T) {
+	user := boundUserForTest()
 	repo := &fakeAuthRepository{
-		credential: PasswordCredential{
-			User: User{
-				ID:       "user-oauth",
-				Username: "oauth-user",
-				Status:   "active",
-				LinuxDoBinding: &LinuxDoBinding{
-					Bound: true,
-				},
-			},
-			Algorithm: PasswordAlgorithmSHA256SaltedV1,
-			Salt:      "test-salt",
-			Hash:      "d1012a27230a9cb86e493ce308459b904562e29a3fd87ec523e79f8554b96746",
-		},
+		credential: legacyCredentialForTest(user, "unit-test-password"),
 	}
+	legacyHash := repo.credential.Hash
 	service := NewService(repo, time.Now)
 
 	appErr := service.SetPassword(context.Background(), SetPasswordInput{
@@ -442,7 +485,64 @@ func TestSetPasswordRequiresCurrentPasswordWhenConfigured(t *testing.T) {
 	if appErr != nil {
 		t.Fatalf("change password: %v", appErr)
 	}
-	if repo.credential.Hash == "d1012a27230a9cb86e493ce308459b904562e29a3fd87ec523e79f8554b96746" {
+	if repo.credential.Hash == legacyHash {
 		t.Fatalf("expected changed password hash")
+	}
+	if repo.credential.Algorithm != PasswordAlgorithmArgon2IDV1 {
+		t.Fatalf("expected changed password to use argon2id, got %+v", repo.credential)
+	}
+}
+
+func TestBootstrapAdminCreatesFirstAdminCredential(t *testing.T) {
+	service := NewService(nil, func() time.Time {
+		return time.Date(2026, 7, 6, 10, 0, 0, 0, time.UTC)
+	})
+
+	result, appErr := service.BootstrapAdmin(context.Background(), BootstrapAdminInput{
+		Username: "Admin Root",
+		Password: "bootstrap-password",
+	})
+	if appErr != nil {
+		t.Fatalf("bootstrap admin: %v", appErr)
+	}
+	if !result.Created || result.User.Username != "admin-root" || !result.User.IsAdmin {
+		t.Fatalf("unexpected bootstrap result: %+v", result)
+	}
+
+	user, session, appErr := service.LoginWithPassword(context.Background(), "admin-root", "bootstrap-password")
+	if appErr != nil {
+		t.Fatalf("login with bootstrapped admin: %v", appErr)
+	}
+	if !user.IsAdmin || session.ID == "" {
+		t.Fatalf("unexpected bootstrapped admin login: user=%+v session=%+v", user, session)
+	}
+}
+
+func TestBootstrapAdminDoesNotOverwriteExistingAdminCredential(t *testing.T) {
+	service := NewService(nil, time.Now)
+
+	first, appErr := service.BootstrapAdmin(context.Background(), BootstrapAdminInput{
+		Username: "admin",
+		Password: "first-bootstrap-password",
+	})
+	if appErr != nil || !first.Created {
+		t.Fatalf("first bootstrap admin result=%+v err=%v", first, appErr)
+	}
+	second, appErr := service.BootstrapAdmin(context.Background(), BootstrapAdminInput{
+		Username: "admin",
+		Password: "second-bootstrap-password",
+	})
+	if appErr != nil {
+		t.Fatalf("second bootstrap admin: %v", appErr)
+	}
+	if second.Created {
+		t.Fatalf("second bootstrap must not overwrite existing admin credential: %+v", second)
+	}
+
+	if _, _, appErr := service.LoginWithPassword(context.Background(), "admin", "first-bootstrap-password"); appErr != nil {
+		t.Fatalf("first bootstrap password should still work: %v", appErr)
+	}
+	if _, _, appErr := service.LoginWithPassword(context.Background(), "admin", "second-bootstrap-password"); appErr == nil || appErr.Code != domain.CodeInvalidCredentials {
+		t.Fatalf("second bootstrap password must not work, got %v", appErr)
 	}
 }
