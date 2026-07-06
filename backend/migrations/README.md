@@ -42,7 +42,10 @@ versions:
 | `000030_carpool_quota_fields` | carpool listing service multiplier and average quota disclosure fields |
 | `000031_email_registration_verification` | email registration challenge, verification, and auth identity contract |
 | `000032_carpool_cancel_exit_lifecycle` | buyer application cancel, owner acceptance withdrawal status constraints, and cancelled contact-session history |
+| `000033_product_plan_quota_unit_carpool` | product-plan quota units and carpool listing quota-unit snapshots |
+| `000034_api_model_provider_catalog` | managed API model providers and provider-backed model catalog |
 | `000035_password_argon2_admin_bootstrap` | Argon2id password algorithm support and fixed admin seed cleanup |
+| `000036_search_trigram_alignment` | merchant-profile trigram expression alignment for display-name-only public search |
 
 The current runnable Go slice supports both in-memory tests and PostgreSQL runtime.
 When `DATABASE_URL` is configured, users, auth sessions, idempotency, product
@@ -110,9 +113,15 @@ records buyer-contact reads.
 
 Version 24 enables PostgreSQL `pg_trgm` and adds GIN trigram indexes over public
 search text expressions for API services/models, carpool listings, demands,
-official price records, public users/linux.do usernames, merchant profiles,
-product plans, and API model catalog rows. These indexes are performance support
-only; they do not change search visibility predicates or response DTOs.
+product-plan text used by official price search, public users/linux.do
+usernames, merchant profiles, and API model catalog rows. These indexes are
+performance support only; they do not change search visibility predicates or
+response DTOs. Use `scripts/explain-search.sql` from the repository root to
+verify that global search predicates keep matching the expression indexes.
+
+Version 36 realigns the merchant-profile trigram index to `lower(display_name)`
+so store-alias API service search can use the index while preserving the public
+search contract that matches and displays public merchant display names only.
 
 Version 21 stores `carpool_reviews`. Reviews are constrained to
 `source_type='carpool_membership'`, `reviewer_role='buyer'`, and

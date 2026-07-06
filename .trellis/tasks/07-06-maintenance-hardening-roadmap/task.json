@@ -26,7 +26,8 @@
     "07-06-dependency-toolchain-hardening",
     "07-06-frontend-api-mock-isolation",
     "07-06-backend-service-boundary-cleanup",
-    "07-06-database-level-pagination"
+    "07-06-database-level-pagination",
+    "07-06-search-index-query-alignment"
   ],
   "parent": null,
   "relatedFiles": [],

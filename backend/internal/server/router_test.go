@@ -106,7 +106,7 @@ func TestReadinessReportsDatabaseFailure(t *testing.T) {
 }
 
 func TestReadinessReportsExpectedMigrationVersion(t *testing.T) {
-	version := int64(34)
+	version := int64(35)
 	dirty := false
 	reason := "schema migration version is behind expected version"
 	checker := fakeReadinessChecker{status: health.Status{
@@ -114,7 +114,7 @@ func TestReadinessReportsExpectedMigrationVersion(t *testing.T) {
 		OK:                    false,
 		SchemaVersion:         &version,
 		SchemaDirty:           &dirty,
-		ExpectedSchemaVersion: 35,
+		ExpectedSchemaVersion: 36,
 		CheckedAt:             time.Date(2026, 7, 6, 12, 0, 0, 0, time.UTC),
 		FailureSummary:        reason,
 	}}
@@ -134,7 +134,7 @@ func TestReadinessReportsExpectedMigrationVersion(t *testing.T) {
 	if err := json.NewDecoder(response.Body).Decode(&body); err != nil {
 		t.Fatalf("decode readiness: %v", err)
 	}
-	if body.ExpectedSchemaVersion != 35 || body.SchemaVersion == nil || *body.SchemaVersion != version || body.SchemaDirty == nil || *body.SchemaDirty {
+	if body.ExpectedSchemaVersion != 36 || body.SchemaVersion == nil || *body.SchemaVersion != version || body.SchemaDirty == nil || *body.SchemaDirty {
 		t.Fatalf("unexpected readiness schema fields: %+v", body)
 	}
 	if body.Reason == nil || *body.Reason != reason {

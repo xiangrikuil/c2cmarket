@@ -80,13 +80,15 @@ FROM official_price_records r
 LEFT JOIN product_plans p ON p.id = r.product_plan_id
 WHERE r.status = 'active'
   AND (
-	LOWER(COALESCE(p.display_name, '')) ILIKE $1 ESCAPE '\'
-	OR LOWER(r.product_plan_id::text) ILIKE $1 ESCAPE '\'
-	OR LOWER(r.region_code) ILIKE $1 ESCAPE '\'
-	OR LOWER(r.channel) ILIKE $1 ESCAPE '\'
-	OR LOWER(r.opening_method) ILIKE $1 ESCAPE '\'
-	OR LOWER(r.original_amount::text) ILIKE $1 ESCAPE '\'
-	OR LOWER(r.normalized_monthly_cny::text) ILIKE $1 ESCAPE '\'
+	LOWER(p.display_name || ' ' || p.provider_code || ' ' || p.slug) ILIKE $1 ESCAPE '\'
+	OR LOWER(
+		r.product_plan_id::text || ' ' ||
+		r.region_code || ' ' ||
+		r.channel || ' ' ||
+		r.opening_method || ' ' ||
+		r.original_amount::text || ' ' ||
+		r.normalized_monthly_cny::text
+	) ILIKE $1 ESCAPE '\'
   )
 ORDER BY r.created_at DESC
 LIMIT $2
@@ -113,14 +115,14 @@ LEFT JOIN LATERAL (
 ) reserved ON true
 WHERE l.status = 'active'
   AND (
-	LOWER(l.title) ILIKE $1 ESCAPE '\'
-	OR LOWER(l.summary) ILIKE $1 ESCAPE '\'
-	OR LOWER(l.access_arrangement) ILIKE $1 ESCAPE '\'
-	OR LOWER(COALESCE(l.source_url, '')) ILIKE $1 ESCAPE '\'
-	OR LOWER(l.price_monthly_cny::text) ILIKE $1 ESCAPE '\'
-	OR LOWER(l.monthly_quota_amount::text) ILIKE $1 ESCAPE '\'
-	OR LOWER(l.quota_label) ILIKE $1 ESCAPE '\'
-	OR LOWER(l.quota_unit) ILIKE $1 ESCAPE '\'
+	LOWER(l.title || ' ' || l.summary || ' ' || l.access_arrangement) ILIKE $1 ESCAPE '\'
+	OR LOWER(
+		COALESCE(l.source_url, '') || ' ' ||
+		l.price_monthly_cny::text || ' ' ||
+		l.monthly_quota_amount::text || ' ' ||
+		l.quota_label || ' ' ||
+		l.quota_unit
+	) ILIKE $1 ESCAPE '\'
   )
 ORDER BY l.updated_at DESC
 LIMIT $2
@@ -139,12 +141,8 @@ FROM demands d
 JOIN users u ON u.id = d.publisher_user_id
 WHERE d.status = 'active'
   AND (
-	LOWER(d.title) ILIKE $1 ESCAPE '\'
-	OR LOWER(d.region_code) ILIKE $1 ESCAPE '\'
-	OR LOWER(d.owner_preference) ILIKE $1 ESCAPE '\'
-	OR LOWER(COALESCE(d.note, '')) ILIKE $1 ESCAPE '\'
-	OR LOWER(u.username) ILIKE $1 ESCAPE '\'
-	OR LOWER(u.display_name) ILIKE $1 ESCAPE '\'
+	LOWER(d.title || ' ' || d.region_code || ' ' || d.owner_preference || ' ' || COALESCE(d.note, '')) ILIKE $1 ESCAPE '\'
+	OR LOWER(u.username || ' ' || u.display_name) ILIKE $1 ESCAPE '\'
   )
 ORDER BY d.updated_at DESC
 LIMIT $2
@@ -163,17 +161,21 @@ SELECT
 FROM api_services s
 LEFT JOIN merchant_profiles mp ON mp.id = s.merchant_profile_id AND mp.owner_user_id = s.owner_user_id
 LEFT JOIN LATERAL (
-	SELECT string_agg(m.model_name_snapshot, ' / ' ORDER BY m.model_name_snapshot) AS model_names,
-	       string_agg(m.model_name_snapshot, ' ' ORDER BY m.model_name_snapshot) AS searchable_models
+	SELECT string_agg(m.model_name_snapshot, ' / ' ORDER BY m.model_name_snapshot) AS model_names
 	FROM api_service_models m
 	WHERE m.api_service_id = s.id AND m.enabled = true
 ) models ON true
 WHERE ` + publicAPIServiceOrderablePredicate("s") + `
   AND (
-	LOWER(s.title) ILIKE $1 ESCAPE '\'
-	OR LOWER(s.short_description) ILIKE $1 ESCAPE '\'
-	OR LOWER(COALESCE(mp.display_name, '')) ILIKE $1 ESCAPE '\'
-	OR LOWER(COALESCE(models.searchable_models, '')) ILIKE $1 ESCAPE '\'
+	LOWER(s.title || ' ' || s.short_description) ILIKE $1 ESCAPE '\'
+	OR LOWER(mp.display_name) ILIKE $1 ESCAPE '\'
+	OR EXISTS (
+		SELECT 1
+		FROM api_service_models search_model
+		WHERE search_model.api_service_id = s.id
+		  AND search_model.enabled = true
+		  AND LOWER(search_model.model_name_snapshot || ' ' || search_model.provider_snapshot) ILIKE $1 ESCAPE '\'
+	)
   )
 ORDER BY s.updated_at DESC
 LIMIT $2
@@ -192,9 +194,8 @@ FROM users u
 LEFT JOIN linux_do_bindings l ON l.user_id = u.id
 WHERE u.account_status = 'active'
   AND (
-	LOWER(u.username) ILIKE $1 ESCAPE '\'
-	OR LOWER(u.display_name) ILIKE $1 ESCAPE '\'
-	OR LOWER(COALESCE(l.linux_do_username, '')) ILIKE $1 ESCAPE '\'
+	LOWER(u.username || ' ' || u.display_name) ILIKE $1 ESCAPE '\'
+	OR LOWER(l.linux_do_username) ILIKE $1 ESCAPE '\'
   )
 ORDER BY u.updated_at DESC
 LIMIT $2
@@ -215,9 +216,8 @@ WHERE ` + publicAPIServiceOrderablePredicate("s") + `
   AND s.merchant_identity_mode = 'public_profile'
   AND owner.account_status = 'active'
   AND (
-	LOWER(owner.username) ILIKE $1 ESCAPE '\'
-	OR LOWER(owner.display_name) ILIKE $1 ESCAPE '\'
-	OR LOWER(s.title) ILIKE $1 ESCAPE '\'
+	LOWER(owner.username || ' ' || owner.display_name) ILIKE $1 ESCAPE '\'
+	OR LOWER(s.title || ' ' || s.short_description) ILIKE $1 ESCAPE '\'
   )
 GROUP BY owner.username, owner.display_name
 ORDER BY owner.username ASC, rank_time DESC
