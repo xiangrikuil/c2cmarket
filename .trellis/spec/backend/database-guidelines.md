@@ -95,6 +95,7 @@ The process-level PostgreSQL runtime foundation is wired through `pgx/v5/pgxpool
 - Monetary amounts, FX rates, and multipliers use `numeric`, never `float`.
 - Local Docker PostgreSQL uses the root `compose.yaml` `migrate` one-shot service. Run `docker compose --profile migrate run --rm migrate` after PostgreSQL is healthy.
 - Do not rely on `/docker-entrypoint-initdb.d/` for application schema upgrades; it only runs for empty database volumes.
+- Backend readiness owns an explicit `ExpectedMigrationVersion` constant matching the latest migration number. When adding a new migration, update the constant and keep `/readyz` tests aligned so PostgreSQL readiness fails while `schema_migrations.version` is behind.
 - PostgreSQL 18 Docker images must mount persistent storage at `/var/lib/postgresql`, not `/var/lib/postgresql/data`, because the image stores versioned cluster data below that parent directory.
 
 ## Docker Runtime

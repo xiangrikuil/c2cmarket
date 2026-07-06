@@ -105,6 +105,43 @@ func TestReadinessReportsDatabaseFailure(t *testing.T) {
 	}
 }
 
+func TestReadinessReportsExpectedMigrationVersion(t *testing.T) {
+	version := int64(34)
+	dirty := false
+	reason := "schema migration version is behind expected version"
+	checker := fakeReadinessChecker{status: health.Status{
+		Configured:            true,
+		OK:                    false,
+		SchemaVersion:         &version,
+		SchemaDirty:           &dirty,
+		ExpectedSchemaVersion: 35,
+		CheckedAt:             time.Date(2026, 7, 6, 12, 0, 0, 0, time.UTC),
+		FailureSummary:        reason,
+	}}
+	server := NewServer(app.NewService(), ServerOptions{
+		EnableDevAuth:    true,
+		ReadinessChecker: checker,
+	})
+	request := httptest.NewRequest(http.MethodGet, "/readyz", nil)
+	response := httptest.NewRecorder()
+
+	server.ServeHTTP(response, request)
+
+	if response.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected service unavailable, got %d body %s", response.Code, response.Body.String())
+	}
+	var body readinessResponse
+	if err := json.NewDecoder(response.Body).Decode(&body); err != nil {
+		t.Fatalf("decode readiness: %v", err)
+	}
+	if body.ExpectedSchemaVersion != 35 || body.SchemaVersion == nil || *body.SchemaVersion != version || body.SchemaDirty == nil || *body.SchemaDirty {
+		t.Fatalf("unexpected readiness schema fields: %+v", body)
+	}
+	if body.Reason == nil || *body.Reason != reason {
+		t.Fatalf("unexpected readiness reason: %+v", body)
+	}
+}
+
 func TestDevSessionCanBeDisabled(t *testing.T) {
 	server := NewServer(app.NewService(), ServerOptions{EnableDevAuth: false})
 	request := newJSONRequest(http.MethodPost, "/api/v1/auth/dev-session", `{"username":"buyer"}`)

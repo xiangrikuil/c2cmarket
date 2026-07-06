@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"log"
 	"net/netip"
 	"time"
 
@@ -291,12 +292,15 @@ func NewServer(service Service, options ...ServerOptions) http.Handler {
 	}
 	server.routes()
 	return middleware.WithRequestID(
-		middleware.WithSecurityHeaders(
-			middleware.WithCORSAndOrigin(server.mux, middleware.CORSOptions{
-				AllowedOrigins: server.allowedOrigins,
-				Production:     option.AppEnv == config.EnvProduction,
-			}),
-			middleware.SecurityHeadersOptions{HSTS: option.AppEnv == config.EnvProduction},
+		middleware.WithRequestLogging(
+			log.Default(),
+			middleware.WithSecurityHeaders(
+				middleware.WithCORSAndOrigin(server.mux, middleware.CORSOptions{
+					AllowedOrigins: server.allowedOrigins,
+					Production:     option.AppEnv == config.EnvProduction,
+				}),
+				middleware.SecurityHeadersOptions{HSTS: option.AppEnv == config.EnvProduction},
+			),
 		),
 	)
 }

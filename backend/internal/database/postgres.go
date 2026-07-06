@@ -11,6 +11,8 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
+const ExpectedMigrationVersion int64 = 35
+
 func OpenPostgres(ctx context.Context, databaseURL string) (*pgxpool.Pool, error) {
 	pool, err := pgxpool.New(ctx, databaseURL)
 	if err != nil {
@@ -25,10 +27,12 @@ func OpenPostgres(ctx context.Context, databaseURL string) (*pgxpool.Pool, error
 
 func PostgresReadiness(ctx context.Context, pool *pgxpool.Pool) health.Status {
 	snapshot := health.Status{
-		Configured: pool != nil,
-		CheckedAt:  time.Now().UTC(),
+		Configured:            pool != nil,
+		ExpectedSchemaVersion: ExpectedMigrationVersion,
+		CheckedAt:             time.Now().UTC(),
 	}
 	if !snapshot.Configured {
+		snapshot.ExpectedSchemaVersion = 0
 		snapshot.OK = true
 		return snapshot
 	}
@@ -50,11 +54,28 @@ func PostgresReadiness(ctx context.Context, pool *pgxpool.Pool) health.Status {
 		return snapshot
 	}
 
-	snapshot.OK = !dirty
-	snapshot.SchemaVersion = &version
-	snapshot.SchemaDirty = &dirty
-	if dirty {
-		snapshot.FailureSummary = "schema migration is dirty"
+	return migrationReadinessStatus(version, dirty, snapshot.CheckedAt)
+}
+
+func migrationReadinessStatus(version int64, dirty bool, checkedAt time.Time) health.Status {
+	schemaVersion := version
+	schemaDirty := dirty
+	status := health.Status{
+		Configured:            true,
+		OK:                    true,
+		SchemaVersion:         &schemaVersion,
+		SchemaDirty:           &schemaDirty,
+		ExpectedSchemaVersion: ExpectedMigrationVersion,
+		CheckedAt:             checkedAt,
 	}
-	return snapshot
+	if dirty {
+		status.OK = false
+		status.FailureSummary = "schema migration is dirty"
+		return status
+	}
+	if version < ExpectedMigrationVersion {
+		status.OK = false
+		status.FailureSummary = "schema migration version is behind expected version"
+	}
+	return status
 }

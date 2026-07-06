@@ -196,7 +196,7 @@ If-Match: "<version>"                            # required for versioned admin 
 - OAuth token responses are request-time credentials only. Do not persist provider access tokens, refresh tokens, userinfo raw payloads, session cookies, or OAuth codes in database rows, logs, OpenAPI examples, or frontend state.
 - `GET /api/v1/auth/session` returns `user.permissions` and `user.linuxDoBinding`. Admin UI and backend admin routes must derive admin authority from the returned backend session/user permission source, not frontend-selected mock roles.
 - `linuxDoBinding` means the account has a bound linux.do identity summary. It must not be worded as linux.do official certification, endorsement, or guarantee.
-- `GET /readyz` is an unversioned operational endpoint. It returns process/database readiness and `schema_migrations` state when PostgreSQL is configured; business APIs must not depend on it for authorization or user-visible status.
+- `GET /readyz` is an unversioned operational endpoint. It returns process/database readiness, `schema_migrations` state, and the expected migration version when PostgreSQL is configured; business APIs must not depend on it for authorization or user-visible status.
 - State-changing endpoints must call session and CSRF validation before decoding business actions.
 - Create/action endpoints must reserve an idempotency entry before running the action and replay completed responses when method, route key, key, and request hash match.
 - Multi-row state-changing actions with durable side effects, such as official price approval, carpool application acceptance, carpool join/completion, and API purchase-intent creation/actions, must write the completed idempotency response cache in the same PostgreSQL transaction as the business rows/events/audit/notifications. Do not leave a committed business side effect with a still-processing idempotency row.
@@ -1369,7 +1369,7 @@ MAIL_FROM_NAME=C2CMarket
 
 ### 3. Contracts
 
-- `cmd/api` must use explicit `http.Server` with `ReadHeaderTimeout=5s`, `ReadTimeout=15s`, `WriteTimeout=30s`, and `IdleTimeout=60s`.
+- `cmd/api` must use explicit `http.Server` with `ReadHeaderTimeout=5s`, `ReadTimeout=15s`, `WriteTimeout=30s`, and `IdleTimeout=60s`. It must handle `SIGINT` and `SIGTERM`, call `Shutdown(ctx)` with a bounded timeout, treat `http.ErrServerClosed` as normal, and close the PostgreSQL pool during app cleanup.
 - Production cookies for `c2c_session` and OAuth state must use `Secure=true`, `HttpOnly=true`, and `SameSite=Lax`; clear cookies must use matching Path/Secure/SameSite values.
 - OAuth token exchange and userinfo requests must use a dedicated `http.Client{Timeout: 10 * time.Second}` or stricter equivalent and must limit JSON response reads to 1 MiB.
 - `ALLOWED_ORIGINS` / `FRONTEND_ORIGIN` is required in production. Cookie-authenticated CORS responses must echo an allowlisted origin and must not use `Access-Control-Allow-Origin: *`.
@@ -1377,6 +1377,7 @@ MAIL_FROM_NAME=C2CMarket
 - Production email uses Aliyun DirectMail SMTP over implicit TLS on port 465. Do not use Alibaba Cloud AccessKey or DirectMail API SDK for backend email. SMTP passwords are environment-only secrets and must not be printed in logs, wrapped into errors, or copied into docs beyond placeholder values.
 - Email registration uses `email_verification_codes.purpose='email_registration'`, stores only code hashes, creates the verified-email user and auth session in one PostgreSQL transaction, and sends the registration-success email only after commit. Username defaults to the sanitized email prefix and appends a short random suffix on conflict. Email-registered users must return `linuxDoBinding.bound=false` until a separate linux.do binding flow exists.
 - Security headers must include `X-Content-Type-Options: nosniff` and `Referrer-Policy: strict-origin-when-cross-origin`; production also sets HSTS. CSP remains a frontend/reverse-proxy concern unless the Go API starts serving pages.
+- Request logging must include method, path without query string, status, duration, and request ID. It must not log request bodies, query strings, cookies, CSRF tokens, contact values, passwords, or bearer/API tokens.
 - JSON request helpers must reject empty bodies, malformed JSON, unknown fields, bodies over 1 MiB, and trailing JSON values with stable Problem Details. Helpers that only own `request.Body` must use `io.LimitReader`, not `http.MaxBytesReader(nil)`.
 - Rate-limit client IP keys must not trust `X-Forwarded-For` or `X-Real-IP` by default. `TRUST_X_FORWARDED_FOR=true` may read forwarding headers only when the immediate `RemoteAddr` belongs to a configured `TRUSTED_PROXIES` IP/CIDR entry; missing or invalid forwarding headers fall back to the direct peer address.
 - Rate limits return HTTP `429`, Problem Details `code=RATE_LIMITED`, and `Retry-After` when available.
@@ -1391,6 +1392,8 @@ MAIL_FROM_NAME=C2CMarket
 | Production missing `ALLOWED_ORIGINS` and `FRONTEND_ORIGIN` | startup fail | n/a |
 | Production dev auth enabled | startup fail | n/a |
 | Production fake OAuth provider | startup fail | n/a |
+| Configured database migration version below expected version | 503 | readiness JSON with reason |
+| Configured database migration dirty flag | 503 | readiness JSON with reason |
 | Browser unsafe request from disallowed `Origin` | 403 | `CSRF_TOKEN_INVALID` |
 | Empty, malformed, unknown-field, or multi-object JSON body | 400 | `VALIDATION_FAILED` |
 | JSON body larger than 1 MiB | 413 | `VALIDATION_FAILED` |
@@ -1406,13 +1409,17 @@ MAIL_FROM_NAME=C2CMarket
 
 - Good: production config with `FRONTEND_ORIGIN=https://app.example.com` starts, sets secure session cookies, rejects `Origin: https://evil.example` mutations, rejects malformed/trailing JSON, ignores forged forwarding headers by default, and returns 429 for repeated protected requests.
 - Good: a deployment behind a known reverse proxy sets `TRUST_X_FORWARDED_FOR=true` and `TRUSTED_PROXIES=10.0.0.0/24`; only requests from that proxy range use the first valid `X-Forwarded-For` address for rate limiting.
+- Good: a configured PostgreSQL deployment whose `schema_migrations.version` equals `ExpectedMigrationVersion` returns `/readyz` 200 with `schemaVersion`, `schemaDirty=false`, and `expectedSchemaVersion`.
 - Base: development/test without explicit origins defaults to local Vite origins and keeps cookies non-secure for HTTP local testing.
-- Bad: production accepts wildcard CORS with cookies, trusts client-supplied `X-Forwarded-For` from the public internet, uses `http.DefaultClient` for OAuth, caches contact-containing responses, or logs provider tokens/raw userinfo.
+- Base: no-database local mode returns `/readyz` 200 with `database=not_configured`.
+- Bad: production accepts wildcard CORS with cookies, trusts client-supplied `X-Forwarded-For` from the public internet, uses `http.DefaultClient` for OAuth, caches contact-containing responses, logs provider tokens/raw userinfo, logs request bodies/query strings, or reports ready while migrations are dirty or behind the expected version.
 
 ### 6. Tests Required
 
 - Config tests for production allowed-origin requirement and fake/dev-auth rejection.
 - Server tests for production cookie `Secure`, clear-cookie consistency, Origin rejection, strict JSON body rejection, rate-limit `429 RATE_LIMITED`, forged forwarding-header bypass prevention, trusted-proxy forwarding behavior, OAuth oversized response rejection, and pagination validation.
+- Readiness tests for configured current schema, configured behind schema, configured dirty schema, database query failure, and no-database local mode. Assertions must cover HTTP status plus `schemaVersion`, `schemaDirty`, `expectedSchemaVersion`, and reason where applicable.
+- Request logging tests must prove the log line includes method, path without query string, status, duration, and request ID, and omits request body and query string content.
 - Idempotency tests for completed replay, different request hash reuse conflict, non-expired processing conflict, and expired processing retry.
 - PostgreSQL integration or smoke assertion that API purchase intent direct contact disclosure writes merchant-side and buyer-side access logs.
 - OpenAPI route parity, YAML parse, and docs update for pagination params and `429 RATE_LIMITED`.
@@ -1425,6 +1432,7 @@ MAIL_FROM_NAME=C2CMarket
 http.ListenAndServe(addr, handler)
 http.DefaultClient.Do(oauthRequest)
 w.Header().Set("Access-Control-Allow-Origin", "*")
+log.Printf("request=%s", rawBody)
 ```
 
 #### Correct
@@ -1439,6 +1447,7 @@ server := &http.Server{
     IdleTimeout:       60 * time.Second,
 }
 oauthClient := &http.Client{Timeout: 10 * time.Second}
+log.Printf("method=%s path=%s status=%d duration=%s request_id=%s", method, urlPath, status, duration, requestID)
 ```
 
 ## Scenario: Feedback Ticket Loop Contract

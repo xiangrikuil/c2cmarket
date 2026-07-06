@@ -19,12 +19,13 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 }
 
 type readinessResponse struct {
-	Status        string  `json:"status"`
-	Database      string  `json:"database"`
-	SchemaVersion *int64  `json:"schemaVersion,omitempty"`
-	SchemaDirty   *bool   `json:"schemaDirty,omitempty"`
-	CheckedAt     string  `json:"checkedAt"`
-	Reason        *string `json:"reason,omitempty"`
+	Status                string  `json:"status"`
+	Database              string  `json:"database"`
+	SchemaVersion         *int64  `json:"schemaVersion,omitempty"`
+	SchemaDirty           *bool   `json:"schemaDirty,omitempty"`
+	ExpectedSchemaVersion int64   `json:"expectedSchemaVersion,omitempty"`
+	CheckedAt             string  `json:"checkedAt"`
+	Reason                *string `json:"reason,omitempty"`
 }
 
 func (s *Server) handleReadiness(w http.ResponseWriter, r *http.Request) {
@@ -41,11 +42,12 @@ func (s *Server) handleReadiness(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 	status := s.readinessChecker.Readiness(ctx)
 	payload := readinessResponse{
-		Status:        "ok",
-		Database:      "ok",
-		SchemaVersion: status.SchemaVersion,
-		SchemaDirty:   status.SchemaDirty,
-		CheckedAt:     status.CheckedAt.UTC().Format(time.RFC3339),
+		Status:                "ok",
+		Database:              "ok",
+		SchemaVersion:         status.SchemaVersion,
+		SchemaDirty:           status.SchemaDirty,
+		ExpectedSchemaVersion: status.ExpectedSchemaVersion,
+		CheckedAt:             status.CheckedAt.UTC().Format(time.RFC3339),
 	}
 	code := http.StatusOK
 	if !status.Configured {
