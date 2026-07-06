@@ -50,6 +50,10 @@ VITE_API_MODE=real VITE_API_BASE_URL=https://CHANGE_ME_DOMAIN pnpm build
 
 部署 `dist/` 时，静态服务器需要把 SPA 路由回退到 `index.html`，API 请求由 `VITE_API_BASE_URL` 指向 Go 后端。完整部署流程见 `../docs/ops/deployment-runbook.md`。
 
+## 账号恢复设置
+
+公开注册和主登录入口仍是 linux.do OAuth。OAuth 首次创建的站内账号没有默认密码；登录后必须在 `/my/account` 绑定验证邮箱并设置备用密码，完成后才能进入大部分业务页。备用密码只用于已绑定 linux.do 用户恢复访问，不是公开密码注册入口。
+
 ## 页面
 
 ```text

@@ -47,6 +47,7 @@ import {
 import { useFeedbackUnreadCount, useMerchantApiPurchaseIntents, useMerchantCarpoolApplications, useMyApiPurchaseIntents, useMyCarpoolApplications, useMyProfileQuery, useNotifications } from '@/queries/useMarketQueries'
 import { useImportantAnnouncementUnreadCount } from '@/queries/useAnnouncementQueries'
 import { appThemes, applyAppTheme, getInitialAppTheme, isAppTheme } from '@/theme/appThemes'
+import { ACCOUNT_RECOVERY_PATH, isAccountRecoveryAllowedPath, isAccountRecoveryComplete } from '@/lib/accountRecovery'
 
 const route = useRoute()
 const router = useRouter()
@@ -75,6 +76,7 @@ const currentDisplayName = computed(() => myProfile.value?.displayName ?? myProf
 const currentAvatarText = computed(() => currentDisplayName.value.slice(0, 1).toUpperCase())
 const canViewAdminNav = computed(() => myProfile.value?.permissions.includes('admin') ?? false)
 const announcementCenterTo = '/my/notifications?tab=announcements'
+const accountRecoveryRequired = computed(() => myProfile.value ? !isAccountRecoveryComplete(myProfile.value) : false)
 
 const navGroups = computed(() => {
   const browseGroup = {
@@ -155,6 +157,18 @@ watch(
   () => {
     menuOpen.value = false
   },
+)
+
+watch(
+  () => [route.fullPath, accountRecoveryRequired.value] as const,
+  () => {
+    if (!accountRecoveryRequired.value || isAccountRecoveryAllowedPath(route.path)) return
+    router.replace({
+      path: ACCOUNT_RECOVERY_PATH,
+      query: { returnTo: route.fullPath },
+    })
+  },
+  { immediate: true },
 )
 
 function runSearch() {

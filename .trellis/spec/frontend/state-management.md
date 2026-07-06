@@ -56,6 +56,78 @@ In real backend mode, auth state belongs to backend cookies plus `GET /api/v1/au
 
 In real backend mode, product catalog state belongs to `GET /api/v1/product-categories`, `GET /api/v1/product-plans`, and admin `/api/v1/admin/product-plans`. Admin create/update/activate/deactivate mutations must invalidate admin plan queries and user-facing active catalog caches. If a backend adapter keeps a small in-memory product-plan cache for publish forms, expose a cache-clear helper and call it from the admin product catalog mutation success path.
 
+## Scenario: Account Recovery Gate After OAuth Registration
+
+### 1. Scope / Trigger
+
+- Trigger: frontend work touching post-login routing, `AppShell.vue`, `MyCenterPage.vue`, `/my/account`, login return targets, verified email state, or backup password state.
+- The first public registration/login path is linux.do OAuth. OAuth-created accounts have no default password, so the frontend must force users to complete recoverable login settings before ordinary business use.
+
+### 2. Signatures
+
+```ts
+type AccountRecoveryProfile = Pick<UserProfile, 'emailVerified' | 'passwordConfigured'>
+
+const ACCOUNT_RECOVERY_PATH = '/my/account'
+
+function isAccountRecoveryComplete(profile: AccountRecoveryProfile): boolean
+function accountRecoveryRequirements(profile: AccountRecoveryProfile): AccountRecoveryRequirement[]
+function isAccountRecoveryAllowedPath(path: string): boolean
+function sanitizeAccountRecoveryReturnTo(value: unknown): string | null
+```
+
+### 3. Contracts
+
+- The source of truth is `GET /api/v1/me/profile` mapped to `UserProfile.emailVerified` and `UserProfile.passwordConfigured`.
+- Do not store an additional "onboarding complete" flag in Pinia, localStorage, sessionStorage, or route meta.
+- Incomplete logged-in accounts must be redirected from ordinary business pages to `/my/account`.
+- Allowed paths before completion are intentionally narrow: root overview, login/mock route, `/my/account`, announcement detail pages, and public user profiles.
+- Redirects may preserve an internal `returnTo`, but `returnTo` must be same-origin path-only and must not point back to an allowed/setup page.
+- `/my/account` must show both requirements and let the user continue to the sanitized `returnTo` only after both are complete.
+- The gate is frontend-enforced. If backend API blocking is required later, create a separate backend policy task instead of hiding that decision in frontend code.
+
+### 4. Validation & Error Matrix
+
+| Condition | Expected behavior |
+| --- | --- |
+| `emailVerified=false` or `passwordConfigured=false` and user opens `/carpools` | Redirect to `/my/account?returnTo=/carpools...`. |
+| Both fields are true | No redirect; original route remains usable. |
+| Incomplete account opens `/my/account` | No redirect loop; recovery tasks render. |
+| Incomplete account opens `/u/:username` or `/announcements/:slug` | No redirect. |
+| `returnTo` is external, protocol-relative, blank, or points to setup/allowed path | Drop it and do not render a continue action. |
+
+### 5. Good/Base/Bad Cases
+
+- Good: `AppShell.vue` imports shared account recovery helpers and redirects incomplete accounts from `/api-market/new` to `/my/account`.
+- Base: login page still uses linux.do OAuth and backup password login copy; it does not become a public password registration page.
+- Bad: each page independently checks `profile.emailVerified` and redirects with locally duplicated whitelist logic.
+
+### 6. Tests Required
+
+- Unit tests for completion, outstanding requirements, allowed paths, and return target sanitization.
+- Type check: `pnpm --dir frontend exec vue-tsc -b --pretty false`.
+- Production build: `VITE_API_MODE=real pnpm --dir frontend exec vite build`.
+- Browser smoke when available:
+  - incomplete account opens a business route and reaches `/my/account`;
+  - public allowed route is not redirected;
+  - completing email plus backup password allows continuing to the original route.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```ts
+if (!profile.emailVerified) router.push('/my/account')
+```
+
+#### Correct
+
+```ts
+if (!isAccountRecoveryComplete(profile) && !isAccountRecoveryAllowedPath(route.path)) {
+  router.replace({ path: ACCOUNT_RECOVERY_PATH, query: { returnTo: route.fullPath } })
+}
+```
+
 ## Scenario: API Service Account Payment Defaults Snapshot Into Publish Payload
 
 ### 1. Scope / Trigger

@@ -2,7 +2,7 @@
 import { computed, reactive, watchEffect } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { toast } from 'vue-sonner'
-import { Car, ContactRound, CreditCard, Eye, ImageUp, Link2, LockKeyhole, LogIn, Mail, MailCheck, MessageCircle, RefreshCw, Save, ShoppingBag, Trash2, UserRound, UsersRound, X } from 'lucide-vue-next'
+import { AlertTriangle, Car, CheckCircle2, ContactRound, CreditCard, Eye, ImageUp, Link2, LockKeyhole, LogIn, Mail, MailCheck, MessageCircle, RefreshCw, Save, ShoppingBag, Trash2, UserRound, UsersRound, X } from 'lucide-vue-next'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
@@ -15,6 +15,7 @@ import TablePagination from '@/components/market/TablePagination.vue'
 import { usePagination } from '@/composables/usePagination'
 import { getPricingDisplay, getRemainingSeats } from '@/lib/pricing'
 import { getApiMerchantDisplayName, getApiMerchantVisibilityLabel, getApiServicePublicDetailUrl, type ApiService, type AvatarMode, type ContactMethodType, type ContactUsageScope, type SaveContactMethodRequest, type UserContactMethod, type UserPrivacySettings } from '@/lib/api'
+import { accountRecoveryRequirements, isAccountRecoveryComplete, sanitizeAccountRecoveryReturnTo } from '@/lib/accountRecovery'
 import {
   apiPaymentMethods,
   apiPaymentMethodRequiresQrCode,
@@ -163,6 +164,9 @@ const emailBindingPending = computed(() => contactSaving.value || startEmailVeri
 const apiPaymentComplete = computed(() => isApiPaymentAccountSettingsComplete(apiPaymentForm))
 const apiPaymentMissingReasonText = computed(() => apiPaymentSettingsMissingReason(apiPaymentForm))
 const apiPaymentSummaryText = computed(() => apiPaymentSettingsSummary(apiPaymentForm))
+const accountRecoveryItems = computed(() => profile.value ? accountRecoveryRequirements(profile.value) : [])
+const accountRecoveryComplete = computed(() => profile.value ? isAccountRecoveryComplete(profile.value) : false)
+const accountRecoveryReturnTo = computed(() => sanitizeAccountRecoveryReturnTo(route.query.returnTo))
 
 watchEffect(() => {
   if (!profile.value) return
@@ -293,6 +297,12 @@ function savePassword() {
     },
     onError: error => toast.error(error instanceof Error ? error.message : '备用密码更新失败。'),
   })
+}
+
+function continueAfterAccountRecovery() {
+  const returnTo = accountRecoveryReturnTo.value
+  if (!returnTo) return
+  router.push(returnTo)
 }
 
 function startEmailVerification() {
@@ -820,7 +830,40 @@ function goToLogin() {
       </p>
     </section>
 
-    <section v-else-if="activeSection === 'account'" class="grid gap-4 lg:grid-cols-2">
+    <section v-else-if="activeSection === 'account'" class="space-y-4">
+      <Card class="border-primary/25 bg-primary/5 p-5">
+        <div class="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+          <div>
+            <h2 class="font-semibold">账号恢复设置</h2>
+            <p class="mt-2 max-w-2xl text-sm leading-6 text-muted-foreground">
+              绑定验证邮箱并设置备用密码后，才能进入大部分业务页；linux.do 暂不可用时也可以继续使用站内账号登录。
+            </p>
+          </div>
+          <Badge :variant="accountRecoveryComplete ? 'verified' : 'secondary'">{{ accountRecoveryComplete ? '已完成' : '待完善' }}</Badge>
+        </div>
+        <div class="mt-4 grid gap-3 md:grid-cols-2">
+          <div
+            v-for="item in accountRecoveryItems"
+            :key="item.id"
+            class="rounded-md border bg-card p-3"
+            :class="item.completed ? 'border-emerald-200' : 'border-amber-200'"
+          >
+            <div class="flex items-start gap-3">
+              <CheckCircle2 v-if="item.completed" class="mt-0.5 h-4 w-4 shrink-0 text-emerald-600" />
+              <AlertTriangle v-else class="mt-0.5 h-4 w-4 shrink-0 text-amber-600" />
+              <div>
+                <div class="text-sm font-medium">{{ item.label }}</div>
+                <p class="mt-1 text-xs leading-5 text-muted-foreground">{{ item.description }}</p>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div v-if="accountRecoveryComplete && accountRecoveryReturnTo" class="mt-4">
+          <Button @click="continueAfterAccountRecovery">继续访问原页面</Button>
+        </div>
+      </Card>
+
+      <div class="grid gap-4 lg:grid-cols-2">
       <Card class="p-5">
         <h2 class="font-semibold">linux.do 身份绑定</h2>
         <div class="mt-4 space-y-3 text-sm">
@@ -871,6 +914,7 @@ function goToLogin() {
           <Button variant="outline" @click="toast('申诉请求已记录。')"><LockKeyhole class="h-4 w-4" />提交申诉</Button>
         </div>
       </Card>
+      </div>
     </section>
 
     <section v-else-if="activeSection === 'privacy'" class="grid gap-4 lg:grid-cols-2">
