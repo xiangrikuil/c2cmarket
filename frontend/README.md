@@ -20,8 +20,8 @@
 ## 运行
 
 ```bash
-npm install
-npm run dev
+pnpm install --frozen-lockfile
+pnpm dev
 ```
 
 打开：
@@ -33,7 +33,7 @@ http://localhost:5173
 开发模式默认读取 `frontend/.env.development`，使用真实 API 模式，并通过 Vite proxy 把 `/api`、`/health`、`/readyz` 转发到 `http://127.0.0.1:8080`。如需换后端地址：
 
 ```bash
-VITE_DEV_API_PROXY_TARGET=http://127.0.0.1:18090 npm run dev
+VITE_DEV_API_PROXY_TARGET=http://127.0.0.1:18090 pnpm dev
 ```
 
 本地初始管理员账号来自 migration `000025_native_admin_login`，用户名为 `admin`。初始密码只在交付记录中提供，不写入仓库文档。
@@ -43,7 +43,7 @@ VITE_DEV_API_PROXY_TARGET=http://127.0.0.1:18090 npm run dev
 生产构建需要把前端切到真实 API：
 
 ```bash
-VITE_API_MODE=real VITE_API_BASE_URL=https://CHANGE_ME_DOMAIN npm run build
+VITE_API_MODE=real VITE_API_BASE_URL=https://CHANGE_ME_DOMAIN pnpm build
 ```
 
 部署 `dist/` 时，静态服务器需要把 SPA 路由回退到 `index.html`，API 请求由 `VITE_API_BASE_URL` 指向 Go 后端。完整部署流程见 `../docs/ops/deployment-runbook.md`。

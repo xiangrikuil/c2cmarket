@@ -15,7 +15,7 @@ jobs:
           go-version-file: backend/go.mod
       - uses: actions/setup-node@v4
         with:
-          node-version: 24
+          node-version: 24.11
       - run: go test ./...
         working-directory: backend
       - run: node scripts/check-openapi-routes.mjs
@@ -29,7 +29,7 @@ jobs:
           version: 10
       - uses: actions/setup-node@v4
         with:
-          node-version: 24
+          node-version: 24.11
           cache: pnpm
           cache-dependency-path: frontend/pnpm-lock.yaml
       - run: pnpm install --frozen-lockfile

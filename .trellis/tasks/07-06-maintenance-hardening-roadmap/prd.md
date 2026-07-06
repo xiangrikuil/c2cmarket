@@ -20,7 +20,7 @@ Parent task for completing the staged C2CMarket long-term maintenance hardening 
 - [x] Child task exists and passes for P0 auth hardening: Argon2id, legacy sha256 verification/rehash, no fixed admin password/hash bootstrap, and tests.
 - [x] Child task exists and passes for P0 request/proxy hardening: strict JSON body handling and trusted proxy/rate-limit behavior.
 - [x] Child task exists and passes for runtime readiness: expected migration version, graceful shutdown, request ID/logging baseline.
-- [ ] Child task exists and passes for dependency/toolchain hardening: no `latest` frontend dependencies, engines declared, toolchain docs/CI aligned.
+- [x] Child task exists and passes for dependency/toolchain hardening: no `latest` frontend dependencies, engines declared, toolchain docs/CI aligned.
 - [ ] Child task exists and passes for frontend API/mock isolation with at least one migrated domain slice and no production mock fallback.
 - [ ] Child task exists and passes for backend service boundary cleanup without growing giant interfaces.
 - [ ] Child task exists and passes for database-level pagination on the prioritized list endpoints.

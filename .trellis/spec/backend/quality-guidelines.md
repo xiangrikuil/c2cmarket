@@ -29,6 +29,7 @@ All backend changes must follow [Maintainability Contract](../guides/maintainabi
 - Return typed domain errors or explicit status decisions instead of ambiguous booleans.
 - Log operational failures at the layer that has enough context to explain them.
 - Delete obsolete fallback branches when replacing data contracts or integrations.
+- Treat `backend/go.mod` as the source of truth for the Go toolchain version. Dockerfile base images, CI setup, README prerequisites, and Docker-based local verification must stay aligned with that version.
 
 ---
 

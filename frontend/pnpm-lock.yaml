@@ -12,7 +12,7 @@ importers:
         specifier: ^1.0.0
         version: 1.0.0(vue@3.5.38(typescript@6.0.3))
       '@tanstack/vue-query':
-        specifier: latest
+        specifier: ^5.101.0
         version: 5.101.0(vue@3.5.38(typescript@6.0.3))
       '@tanstack/vue-table':
         specifier: ^8.21.3
@@ -24,62 +24,62 @@ importers:
         specifier: ^1.6.5
         version: 1.6.5(@unovis/ts@1.6.5)(vue@3.5.38(typescript@6.0.3))
       '@vueuse/core':
-        specifier: latest
+        specifier: ^14.3.0
         version: 14.3.0(vue@3.5.38(typescript@6.0.3))
       class-variance-authority:
-        specifier: latest
+        specifier: ^0.7.1
         version: 0.7.1
       clsx:
-        specifier: latest
+        specifier: ^2.1.1
         version: 2.1.1
       dompurify:
         specifier: ^3.4.11
         version: 3.4.11
       lucide-vue-next:
-        specifier: latest
+        specifier: ^1.0.0
         version: 1.0.0(vue@3.5.38(typescript@6.0.3))
       marked:
         specifier: ^18.0.5
         version: 18.0.5
       pinia:
-        specifier: latest
+        specifier: ^3.0.4
         version: 3.0.4(typescript@6.0.3)(vue@3.5.38(typescript@6.0.3))
       reka-ui:
         specifier: ^2.9.10
         version: 2.9.10(vue@3.5.38(typescript@6.0.3))
       tailwind-merge:
-        specifier: latest
+        specifier: ^3.6.0
         version: 3.6.0
       vue:
-        specifier: latest
+        specifier: ^3.5.38
         version: 3.5.38(typescript@6.0.3)
       vue-router:
-        specifier: latest
+        specifier: ^5.1.0
         version: 5.1.0(@vue/compiler-sfc@3.5.38)(pinia@3.0.4(typescript@6.0.3)(vue@3.5.38(typescript@6.0.3)))(vite@8.0.16(@types/node@25.9.3)(jiti@2.7.0)(yaml@2.9.0))(vue@3.5.38(typescript@6.0.3))
       vue-sonner:
         specifier: ^2.0.9
         version: 2.0.9
     devDependencies:
       '@tailwindcss/vite':
-        specifier: latest
+        specifier: 4.3.1
         version: 4.3.1(vite@8.0.16(@types/node@25.9.3)(jiti@2.7.0)(yaml@2.9.0))
       '@tsconfig/node20':
-        specifier: latest
+        specifier: ^20.1.9
         version: 20.1.9
       '@types/node':
-        specifier: latest
+        specifier: ^25.9.3
         version: 25.9.3
       '@vitejs/plugin-vue':
-        specifier: latest
+        specifier: ^6.0.7
         version: 6.0.7(vite@8.0.16(@types/node@25.9.3)(jiti@2.7.0)(yaml@2.9.0))(vue@3.5.38(typescript@6.0.3))
       '@vue/tsconfig':
-        specifier: latest
+        specifier: ^0.9.1
         version: 0.9.1(typescript@6.0.3)(vue@3.5.38(typescript@6.0.3))
       tailwindcss:
         specifier: 4.3.1
         version: 4.3.1
       typescript:
-        specifier: latest
+        specifier: ^6.0.3
         version: 6.0.3
       vite:
         specifier: ^8.0.0
@@ -88,7 +88,7 @@ importers:
         specifier: 4.1.9
         version: 4.1.9(@types/node@25.9.3)(vite@8.0.16(@types/node@25.9.3)(jiti@2.7.0)(yaml@2.9.0))
       vue-tsc:
-        specifier: latest
+        specifier: ^3.3.5
         version: 3.3.5(typescript@6.0.3)
 
 packages:
