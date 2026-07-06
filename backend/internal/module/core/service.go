@@ -503,7 +503,31 @@ func (s *Service) withAPIMerchantProfile(ctx context.Context, service APIService
 }
 
 func (s *Service) CreateAPIPurchaseIntentWithIdempotency(ctx context.Context, userID, routeKey, key, requestHash string, input CreateAPIPurchaseIntentInput, buildCompletion APIPurchaseIntentCompletionBuilder) (IdempotencyCompletion, *domain.AppError) {
-	return s.apiIntent.CreateWithIdempotency(ctx, userID, routeKey, key, requestHash, input, buildCompletion)
+	intent, completion, created, appErr := s.apiIntent.CreateWithIdempotency(ctx, userID, routeKey, key, requestHash, input, buildCompletion)
+	if appErr != nil {
+		return IdempotencyCompletion{}, appErr
+	}
+	if created {
+		s.sendAPIPurchaseIntentEmailIfNeeded(ctx, intent)
+	}
+	return completion, nil
+}
+
+func (s *Service) sendAPIPurchaseIntentEmailIfNeeded(ctx context.Context, intent APIPurchaseIntent) {
+	if s == nil || s.emailSender == nil || s.profileService == nil {
+		return
+	}
+	ownerProfile, appErr := s.profileService.MyProfile(ctx, User{ID: intent.OwnerUserID})
+	if appErr != nil {
+		log.Printf("API 购买意向邮件跳过：读取商户资料失败 intent_id=%s owner_user_id=%s code=%s title=%s", intent.ID, intent.OwnerUserID, appErr.Code, appErr.Title)
+		return
+	}
+	if strings.TrimSpace(ownerProfile.Email) == "" || ownerProfile.EmailVerifiedAt == nil {
+		return
+	}
+	if appErr := s.emailSender.SendAPIPurchaseIntentCreated(ctx, ownerProfile.Email, intent.ServiceTitleSnapshot, intent.ID, intent.BuyerNote, intent.CreatedAt); appErr != nil {
+		log.Printf("API 购买意向邮件发送失败 intent_id=%s owner_user_id=%s code=%s title=%s", intent.ID, intent.OwnerUserID, appErr.Code, appErr.Title)
+	}
 }
 
 func (s *Service) MyAPIPurchaseIntents(ctx context.Context, user User) ([]APIPurchaseIntent, *domain.AppError) {
@@ -674,7 +698,31 @@ func (s *Service) OwnerCarpoolApplication(ctx context.Context, user User, applic
 }
 
 func (s *Service) AcceptCarpoolApplicationWithIdempotency(ctx context.Context, userID, routeKey, key, requestHash string, input AcceptCarpoolApplicationInput, buildCompletion CarpoolApplicationCompletionBuilder) (IdempotencyCompletion, *domain.AppError) {
-	return s.carpoolService.AcceptApplicationWithIdempotency(ctx, userID, routeKey, key, requestHash, input, buildCompletion)
+	application, completion, accepted, appErr := s.carpoolService.AcceptApplicationWithIdempotency(ctx, userID, routeKey, key, requestHash, input, buildCompletion)
+	if appErr != nil {
+		return IdempotencyCompletion{}, appErr
+	}
+	if accepted {
+		s.sendCarpoolApplicationAcceptedEmailIfNeeded(ctx, application)
+	}
+	return completion, nil
+}
+
+func (s *Service) sendCarpoolApplicationAcceptedEmailIfNeeded(ctx context.Context, application CarpoolApplication) {
+	if s == nil || s.emailSender == nil || s.profileService == nil {
+		return
+	}
+	buyerProfile, appErr := s.profileService.MyProfile(ctx, User{ID: application.BuyerUserID})
+	if appErr != nil {
+		log.Printf("上车申请接受邮件跳过：读取买家资料失败 application_id=%s buyer_user_id=%s code=%s title=%s", application.ID, application.BuyerUserID, appErr.Code, appErr.Title)
+		return
+	}
+	if strings.TrimSpace(buyerProfile.Email) == "" || buyerProfile.EmailVerifiedAt == nil {
+		return
+	}
+	if appErr := s.emailSender.SendCarpoolApplicationAccepted(ctx, buyerProfile.Email, application.ListingTitleSnapshot, application.ID, application.JoinConfirmationDeadline); appErr != nil {
+		log.Printf("上车申请接受邮件发送失败 application_id=%s buyer_user_id=%s code=%s title=%s", application.ID, application.BuyerUserID, appErr.Code, appErr.Title)
+	}
 }
 
 func (s *Service) RejectCarpoolApplication(ctx context.Context, input RejectCarpoolApplicationInput) (CarpoolApplication, *domain.AppError) {

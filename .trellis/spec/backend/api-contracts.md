@@ -1535,3 +1535,72 @@ const contextLabel = route.fullPath
 const unreadFeedback = await getFeedbackUnreadCount()
 const contextLabel = 'API 服务详情'
 ```
+
+## Scenario: Business Email Reminders
+
+### 1. Scope / Trigger
+
+- Trigger: backend work that sends transactional email after an existing business action succeeds.
+- Current allowed reminder triggers are limited to: carpool owner accepts an application, and buyer creates an API purchase intent.
+- These reminders are separate from the durable `notifications` inbox. Inbox read/update routes must still not send external email, SMS, WebSocket, webhook, or ticketing messages.
+
+### 2. Signatures
+
+```text
+profile.EmailSender.SendCarpoolApplicationAccepted(ctx, toEmail, listingTitle, applicationID, joinDeadline)
+profile.EmailSender.SendAPIPurchaseIntentCreated(ctx, toEmail, serviceTitle, intentID, buyerNote, createdAt)
+
+No new HTTP routes, OpenAPI schemas, database tables, environment keys, queues, or background workers.
+```
+
+### 3. Contracts
+
+- Carpool acceptance sends to the buyer only after the accept action succeeds and only when the buyer profile has a non-empty verified email.
+- API purchase intent creation sends to the API service owner only after the intent create action succeeds and only when the owner profile has a non-empty verified email.
+- Email sending is best-effort: profile lookup or SMTP send failure is logged with resource IDs and actor IDs, must not include contact values, note bodies, SMTP credentials, cookies, tokens, or request bodies, and must not roll back or block the business operation.
+- Idempotency replay must not send duplicate reminder email. The module service should return both the business entity and an explicit `created` / `accepted` flag so the core facade can send only for a new side effect.
+- SMTP templates may include public/resource titles, resource IDs, RFC3339 timestamps, reservation deadline, and short buyer note summaries. Templates must use Go `html/template` for HTML escaping and keep text bodies credential-free.
+
+### 4. Validation & Error Matrix
+
+| Condition | Result |
+| --- | --- |
+| Recipient profile has no email or unverified email | Skip email, business action succeeds |
+| Recipient profile lookup fails after business success | Log skip, business action succeeds |
+| SMTP sender returns an error | Log failure, business action succeeds |
+| Same idempotency key replays a completed action | Replay response without another email |
+
+### 5. Good/Base/Bad Cases
+
+- Good: a carpool owner accepts an application, the buyer has a verified profile email, one buyer reminder is sent with the listing title, application ID, and join deadline.
+- Base: the same accept request is replayed with the same `Idempotency-Key`; the response is stable and no second email is sent.
+- Bad: API purchase-intent creation sends email to an unverified merchant email, stores the email body in `notifications`, logs buyer note text, or adds a queue/background worker without a dedicated task.
+
+### 6. Tests Required
+
+- SMTP sender unit tests for both reminder methods, including HTML escaping and expected workflow copy.
+- Core service tests for verified-recipient send, unverified-recipient skip, idempotent replay no-duplicate behavior, and non-blocking send failure for both reminder families.
+- Full backend `go test ./...` after changing `profile.EmailSender` or idempotent service method signatures.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```go
+completion, err := acceptApplication(...)
+emailSender.SendCarpoolApplicationAccepted(ctx, buyerEmail, title, applicationID, deadline)
+return completion, err
+```
+
+#### Correct
+
+```go
+application, completion, accepted, err := acceptApplication(...)
+if err != nil {
+	return completion, err
+}
+if accepted && verifiedEmail != "" {
+	sendBestEffortReminder(ctx, application)
+}
+return completion, nil
+```

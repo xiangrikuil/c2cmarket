@@ -129,6 +129,76 @@ func TestSMTPEmailSenderSendsCarpoolApplicationReminder(t *testing.T) {
 	}
 }
 
+func TestSMTPEmailSenderSendsCarpoolAcceptanceReminder(t *testing.T) {
+	client := &fakeSMTPClient{}
+	sender, err := NewSMTPEmailSender(SMTPConfig{
+		Host:        "smtpdm.aliyun.com",
+		Port:        465,
+		Username:    "noreply@example.com",
+		Password:    "unit-test-password",
+		FromAddress: "noreply@example.com",
+		FromName:    "C2CMarket",
+	})
+	if err != nil {
+		t.Fatalf("new smtp sender: %v", err)
+	}
+	sender.dial = func(context.Context, string, string) (smtpClient, error) {
+		return client, nil
+	}
+
+	deadline := time.Date(2026, 7, 6, 10, 30, 0, 0, time.UTC)
+	appErr := sender.SendCarpoolApplicationAccepted(context.Background(), "buyer@example.com", "Claude Pro <拼车>", "app-accepted", &deadline)
+	if appErr != nil {
+		t.Fatalf("send carpool acceptance reminder: %v", appErr)
+	}
+	if !client.authCalled || client.mailFrom != "noreply@example.com" || client.rcptTo != "buyer@example.com" {
+		t.Fatalf("unexpected smtp calls auth=%v mail=%q rcpt=%q", client.authCalled, client.mailFrom, client.rcptTo)
+	}
+	decoded, err := io.ReadAll(quotedprintable.NewReader(strings.NewReader(client.data.String())))
+	if err != nil {
+		t.Fatalf("decode quoted-printable message: %v", err)
+	}
+	decodedMessage := string(decoded)
+	if !strings.Contains(decodedMessage, "Claude Pro &lt;拼车&gt;") || !strings.Contains(decodedMessage, "app-accepted") || !strings.Contains(decodedMessage, deadline.Format(time.RFC3339)) || !strings.Contains(decodedMessage, "联系窗口") {
+		t.Fatalf("expected escaped listing title and buyer workflow copy, got %s", decodedMessage)
+	}
+}
+
+func TestSMTPEmailSenderSendsAPIPurchaseIntentReminder(t *testing.T) {
+	client := &fakeSMTPClient{}
+	sender, err := NewSMTPEmailSender(SMTPConfig{
+		Host:        "smtpdm.aliyun.com",
+		Port:        465,
+		Username:    "noreply@example.com",
+		Password:    "unit-test-password",
+		FromAddress: "noreply@example.com",
+		FromName:    "C2CMarket",
+	})
+	if err != nil {
+		t.Fatalf("new smtp sender: %v", err)
+	}
+	sender.dial = func(context.Context, string, string) (smtpClient, error) {
+		return client, nil
+	}
+
+	createdAt := time.Date(2026, 7, 6, 11, 0, 0, 0, time.UTC)
+	appErr := sender.SendAPIPurchaseIntentCreated(context.Background(), "merchant@example.com", "Sub2API <额度>", "intent-123", "希望站外确认 20 美元额度。", createdAt)
+	if appErr != nil {
+		t.Fatalf("send API purchase intent reminder: %v", appErr)
+	}
+	if !client.authCalled || client.mailFrom != "noreply@example.com" || client.rcptTo != "merchant@example.com" {
+		t.Fatalf("unexpected smtp calls auth=%v mail=%q rcpt=%q", client.authCalled, client.mailFrom, client.rcptTo)
+	}
+	decoded, err := io.ReadAll(quotedprintable.NewReader(strings.NewReader(client.data.String())))
+	if err != nil {
+		t.Fatalf("decode quoted-printable message: %v", err)
+	}
+	decodedMessage := string(decoded)
+	if !strings.Contains(decodedMessage, "Sub2API &lt;额度&gt;") || !strings.Contains(decodedMessage, "intent-123") || !strings.Contains(decodedMessage, "希望站外确认 20 美元额度。") || !strings.Contains(decodedMessage, "站外联系") {
+		t.Fatalf("expected escaped service title and merchant workflow copy, got %s", decodedMessage)
+	}
+}
+
 func TestSMTPEmailSenderErrorDoesNotLeakPassword(t *testing.T) {
 	sender, err := NewSMTPEmailSender(SMTPConfig{
 		Host:        "smtpdm.aliyun.com",

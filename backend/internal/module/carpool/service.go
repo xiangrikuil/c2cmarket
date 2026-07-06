@@ -552,51 +552,51 @@ func (s *Service) OwnerApplication(ctx context.Context, user auth.User, applicat
 	return application, nil
 }
 
-func (s *Service) AcceptApplicationWithIdempotency(ctx context.Context, userID, routeKey, key, requestHash string, input AcceptApplicationInput, buildCompletion ApplicationCompletionBuilder) (idempotency.Completion, *domain.AppError) {
+func (s *Service) AcceptApplicationWithIdempotency(ctx context.Context, userID, routeKey, key, requestHash string, input AcceptApplicationInput, buildCompletion ApplicationCompletionBuilder) (Application, idempotency.Completion, bool, *domain.AppError) {
 	key = strings.TrimSpace(key)
 	if err := idempotency.ValidateKey(key); err != nil {
-		return idempotency.Completion{}, err
+		return Application{}, idempotency.Completion{}, false, err
 	}
 	if buildCompletion == nil {
-		return idempotency.Completion{}, domain.NewError(http.StatusInternalServerError, domain.CodeInternalError, "Internal error", "响应编码失败。")
+		return Application{}, idempotency.Completion{}, false, domain.NewError(http.StatusInternalServerError, domain.CodeInternalError, "Internal error", "响应编码失败。")
 	}
 	input.OwnerUserID = userID
 	if err := validateAcceptApplicationInput(input); err != nil {
-		return idempotency.Completion{}, err
+		return Application{}, idempotency.Completion{}, false, err
 	}
 
 	entry, appErr := s.idempotency.Begin(ctx, userID, routeKey, key, requestHash)
 	if appErr != nil {
-		return idempotency.Completion{}, appErr
+		return Application{}, idempotency.Completion{}, false, appErr
 	}
 	if entry.State == "completed" {
-		return idempotency.CompletionFromEntry(entry), nil
+		return Application{}, idempotency.CompletionFromEntry(entry), false, nil
 	}
 
 	if s.repo != nil {
-		_, completion, appErr := s.repo.AcceptCarpoolApplicationWithIdempotency(ctx, *entry, input, s.now(), buildCompletion)
+		application, completion, appErr := s.repo.AcceptCarpoolApplicationWithIdempotency(ctx, *entry, input, s.now(), buildCompletion)
 		if appErr != nil {
 			s.idempotency.Cancel(ctx, entry)
-			return idempotency.Completion{}, appErr
+			return Application{}, idempotency.Completion{}, false, appErr
 		}
-		return completion, nil
+		return application, completion, true, nil
 	}
 
 	application, appErr := s.acceptApplicationInMemory(input)
 	if appErr != nil {
 		s.idempotency.Cancel(ctx, entry)
-		return idempotency.Completion{}, appErr
+		return Application{}, idempotency.Completion{}, false, appErr
 	}
 	completion, appErr := buildCompletion(application)
 	if appErr != nil {
 		s.idempotency.Cancel(ctx, entry)
-		return idempotency.Completion{}, appErr
+		return Application{}, idempotency.Completion{}, false, appErr
 	}
 	if appErr := s.idempotency.Complete(ctx, entry, completion.Status, completion.ContentType, completion.Body, completion.ResourceType, completion.ResourceID); appErr != nil {
 		s.idempotency.Cancel(ctx, entry)
-		return idempotency.Completion{}, appErr
+		return Application{}, idempotency.Completion{}, false, appErr
 	}
-	return completion, nil
+	return application, completion, true, nil
 }
 
 func (s *Service) RejectApplication(ctx context.Context, input RejectApplicationInput) (Application, *domain.AppError) {

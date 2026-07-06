@@ -62,68 +62,69 @@ func (s *Manager) SetOrderExistenceChecker(checker OrderExistenceChecker) {
 	s.orders = checker
 }
 
-func (s *Manager) CreateWithIdempotency(ctx context.Context, userID, routeKey, key, requestHash string, input CreateIntentInput, buildCompletion CompletionBuilder) (idempotency.Completion, *domain.AppError) {
+func (s *Manager) CreateWithIdempotency(ctx context.Context, userID, routeKey, key, requestHash string, input CreateIntentInput, buildCompletion CompletionBuilder) (Intent, idempotency.Completion, bool, *domain.AppError) {
 	key = strings.TrimSpace(key)
 	if err := idempotency.ValidateKey(key); err != nil {
-		return idempotency.Completion{}, err
+		return Intent{}, idempotency.Completion{}, false, err
 	}
 	if buildCompletion == nil {
-		return idempotency.Completion{}, domain.NewError(http.StatusInternalServerError, domain.CodeInternalError, "Internal error", "响应编码失败。")
+		return Intent{}, idempotency.Completion{}, false, domain.NewError(http.StatusInternalServerError, domain.CodeInternalError, "Internal error", "响应编码失败。")
 	}
 	if s.services == nil {
-		return idempotency.Completion{}, domain.NewError(http.StatusInternalServerError, domain.CodeInternalError, "Internal error", "API 服务目录不可用。")
+		return Intent{}, idempotency.Completion{}, false, domain.NewError(http.StatusInternalServerError, domain.CodeInternalError, "Internal error", "API 服务目录不可用。")
 	}
 	input.BuyerUserID = userID
 
 	entry, appErr := s.idempotency.Begin(ctx, userID, routeKey, key, requestHash)
 	if appErr != nil {
-		return idempotency.Completion{}, appErr
+		return Intent{}, idempotency.Completion{}, false, appErr
 	}
 	if entry.State == "completed" {
 		if entry.ResourceType == resourceType && entry.ResourceID != "" {
 			intent, replayErr := s.buyerIntentWithMerchantContact(ctx, userID, entry.ResourceID, input.RequestID)
 			if replayErr != nil {
-				return idempotency.Completion{}, replayErr
+				return Intent{}, idempotency.Completion{}, false, replayErr
 			}
-			return buildCompletion(intent)
+			completion, completionErr := buildCompletion(intent)
+			return intent, completion, false, completionErr
 		}
-		return idempotency.CompletionFromEntry(entry), nil
+		return Intent{}, idempotency.CompletionFromEntry(entry), false, nil
 	}
 
 	service, appErr := s.services.PublicService(ctx, input.APIServiceID)
 	if appErr != nil {
 		s.idempotency.Cancel(ctx, entry)
-		return idempotency.Completion{}, appErr
+		return Intent{}, idempotency.Completion{}, false, appErr
 	}
 	if err := validateCreateInput(input, service); err != nil {
 		s.idempotency.Cancel(ctx, entry)
-		return idempotency.Completion{}, err
+		return Intent{}, idempotency.Completion{}, false, err
 	}
 
 	if s.repo != nil {
-		_, completion, appErr := s.repo.CreateAPIPurchaseIntentWithIdempotency(ctx, *entry, input, s.now(), buildCompletion)
+		intent, completion, appErr := s.repo.CreateAPIPurchaseIntentWithIdempotency(ctx, *entry, input, s.now(), buildCompletion)
 		if appErr != nil {
 			s.idempotency.Cancel(ctx, entry)
-			return idempotency.Completion{}, appErr
+			return Intent{}, idempotency.Completion{}, false, appErr
 		}
-		return completion, nil
+		return intent, completion, true, nil
 	}
 
 	intent, appErr := s.createInMemory(input, service)
 	if appErr != nil {
 		s.idempotency.Cancel(ctx, entry)
-		return idempotency.Completion{}, appErr
+		return Intent{}, idempotency.Completion{}, false, appErr
 	}
 	completion, appErr := buildCompletion(intent)
 	if appErr != nil {
 		s.idempotency.Cancel(ctx, entry)
-		return idempotency.Completion{}, appErr
+		return Intent{}, idempotency.Completion{}, false, appErr
 	}
 	if appErr := s.idempotency.Complete(ctx, entry, completion.Status, completion.ContentType, nil, completion.ResourceType, completion.ResourceID); appErr != nil {
 		s.idempotency.Cancel(ctx, entry)
-		return idempotency.Completion{}, appErr
+		return Intent{}, idempotency.Completion{}, false, appErr
 	}
-	return completion, nil
+	return intent, completion, true, nil
 }
 
 func (s *Manager) BuyerIntents(ctx context.Context, user auth.User) ([]Intent, *domain.AppError) {
