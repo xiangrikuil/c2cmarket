@@ -54,7 +54,7 @@ function openLinuxDoMessage(item: OrderContactSnapshotItem) {
   window.open(item.actionUrl, '_blank', 'noopener,noreferrer')
 }
 
-function reportContact(item: OrderContactSnapshotItem, reasonCode: 'invalid' | 'unreachable' | 'impersonation' | 'other') {
+function reportContact(item: OrderContactSnapshotItem, reasonCode: 'contact_invalid' | 'unreachable' | 'impersonation' | 'other') {
   reportMutation.mutate({
     orderType: props.snapshot.orderType,
     orderId: props.snapshot.orderId,
@@ -102,7 +102,7 @@ function reportContact(item: OrderContactSnapshotItem, reasonCode: 'invalid' | '
             <Button v-else size="sm" variant="outline" @click="copyContact(item)">
               <Copy class="h-4 w-4" />复制
             </Button>
-            <Button size="sm" variant="outline" @click="reportContact(item, 'invalid')">
+            <Button size="sm" variant="outline" @click="reportContact(item, 'contact_invalid')">
               <Flag class="h-4 w-4" />无效
             </Button>
           </div>

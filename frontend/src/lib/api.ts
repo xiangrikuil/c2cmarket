@@ -196,10 +196,12 @@ import {
 import {
   backendAdminAppealRows,
   backendAdminReportRows,
+  backendCreateManualInterventionReport,
   backendCreatePublicUserReport,
   backendCreateReport,
   backendRunReportAdminAction,
   backendUpdateReportAdminStatus,
+  type CreateManualInterventionReportRequest,
   type CreatePublicUserReportRequest,
 } from '@/lib/reportBackend'
 import { shouldUseRealBackend } from '@/lib/backendClient'
@@ -2024,6 +2026,23 @@ export async function createContactReport(payload: CreateContactReportRequest) {
     reason: payload.note || '用户提交联系方式问题',
   })
   return clone({ id: `contact-report-${Date.now()}`, createdAt: nowText(), ...payload })
+}
+
+export async function createManualInterventionReport(payload: CreateManualInterventionReportRequest) {
+  if (shouldUseRealBackend()) return backendCreateManualInterventionReport(payload)
+  await wait()
+  appendAdminAuditLog({
+    actorType: 'admin',
+    actorLabel: '系统',
+    action: '举报 / 申请人工介入',
+    targetType: payload.targetType,
+    targetId: payload.targetId,
+    targetLabel: payload.targetLabel ?? payload.targetId,
+    beforeStatus: null,
+    afterStatus: payload.reasonCode,
+    reason: payload.description,
+  })
+  return clone({ id: `manual-intervention-${Date.now()}`, createdAt: nowText(), ...payload })
 }
 
 export async function createPublicUserReport(payload: CreatePublicProfileReportRequest) {
@@ -3903,6 +3922,7 @@ export type {
   ContactMethodType,
   ContactUsageScope,
   CreateContactReportRequest,
+  CreateManualInterventionReportRequest,
   ModelPriceRow,
   OfficialPrice,
   OrderContactSnapshot,

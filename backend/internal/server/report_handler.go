@@ -33,31 +33,35 @@ type createAppealRequest struct {
 }
 
 type reportActionRequest struct {
-	Reason        string `json:"reason"`
-	PublicSummary string `json:"publicSummary"`
-	PublicResult  string `json:"publicResult"`
+	Reason           string `json:"reason"`
+	PublicSummary    string `json:"publicSummary"`
+	PublicResultCode string `json:"publicResultCode"`
+	PublicResult     string `json:"publicResult"`
 }
 
 type reportResponse struct {
-	ID               string  `json:"id"`
-	ReporterUserID   string  `json:"reporterUserId,omitempty"`
-	ReporterUsername string  `json:"reporterUsername"`
-	ReporterName     string  `json:"reporterName"`
-	TargetType       string  `json:"targetType"`
-	TargetID         string  `json:"targetId"`
-	TargetLabel      string  `json:"targetLabel"`
-	ReportedUsername string  `json:"reportedUsername"`
-	ReasonCode       string  `json:"reasonCode"`
-	Title            string  `json:"title"`
-	Description      string  `json:"description,omitempty"`
-	Status           string  `json:"status"`
-	AdminReason      string  `json:"adminReason,omitempty"`
-	HandledByAdminID string  `json:"handledByAdminId,omitempty"`
-	HandledAt        *string `json:"handledAt,omitempty"`
-	DisputeID        string  `json:"disputeId,omitempty"`
-	CreatedAt        string  `json:"createdAt"`
-	UpdatedAt        string  `json:"updatedAt"`
-	Version          int64   `json:"version"`
+	ID                  string  `json:"id"`
+	ReporterUserID      string  `json:"reporterUserId,omitempty"`
+	ReporterUsername    string  `json:"reporterUsername"`
+	ReporterName        string  `json:"reporterName"`
+	TargetType          string  `json:"targetType"`
+	TargetID            string  `json:"targetId"`
+	CanonicalTargetType string  `json:"canonicalTargetType"`
+	CanonicalTargetID   string  `json:"canonicalTargetId"`
+	TargetLabel         string  `json:"targetLabel"`
+	TargetSnapshotJSON  string  `json:"targetSnapshotJson,omitempty"`
+	ReportedUsername    string  `json:"reportedUsername"`
+	ReasonCode          string  `json:"reasonCode"`
+	Title               string  `json:"title"`
+	Description         string  `json:"description,omitempty"`
+	Status              string  `json:"status"`
+	AdminReason         string  `json:"adminReason,omitempty"`
+	HandledByAdminID    string  `json:"handledByAdminId,omitempty"`
+	HandledAt           *string `json:"handledAt,omitempty"`
+	DisputeID           string  `json:"disputeId,omitempty"`
+	CreatedAt           string  `json:"createdAt"`
+	UpdatedAt           string  `json:"updatedAt"`
+	Version             int64   `json:"version"`
 }
 
 type disputeResponse struct {
@@ -74,6 +78,7 @@ type disputeResponse struct {
 	CounterpartyName     string  `json:"counterpartyName"`
 	Status               string  `json:"status"`
 	PublicSummary        string  `json:"publicSummary"`
+	PublicResultCode     string  `json:"publicResultCode"`
 	PublicResult         string  `json:"publicResult"`
 	AdminReason          string  `json:"adminReason,omitempty"`
 	OpenedByAdminID      string  `json:"openedByAdminId,omitempty"`
@@ -268,12 +273,20 @@ func (s *Server) handleTriageReport(w http.ResponseWriter, r *http.Request) {
 	s.handleAdminReportAction(w, r, "triage")
 }
 
+func (s *Server) handleRequestReportInfo(w http.ResponseWriter, r *http.Request) {
+	s.handleAdminReportAction(w, r, "request_info")
+}
+
 func (s *Server) handleRejectReport(w http.ResponseWriter, r *http.Request) {
 	s.handleAdminReportAction(w, r, "reject")
 }
 
 func (s *Server) handleOpenReportDispute(w http.ResponseWriter, r *http.Request) {
 	s.handleAdminReportAction(w, r, "open_dispute")
+}
+
+func (s *Server) handleCloseReport(w http.ResponseWriter, r *http.Request) {
+	s.handleAdminReportAction(w, r, "close")
 }
 
 func (s *Server) handleAdminReportAction(w http.ResponseWriter, r *http.Request, action string) {
@@ -295,13 +308,14 @@ func (s *Server) handleAdminReportAction(w http.ResponseWriter, r *http.Request,
 	id := chi.URLParam(r, "id")
 	routeKey := "POST /api/v1/admin/reports/{id}/" + action + ":" + id
 	completion, appErr := s.app.AdminReportActionWithIdempotency(r.Context(), user, routeKey, r.Header.Get("Idempotency-Key"), requestHash(r.Method, routeKey, body), report.AdminActionInput{
-		ID:              id,
-		Action:          action,
-		Reason:          req.Reason,
-		PublicSummary:   req.PublicSummary,
-		PublicResult:    req.PublicResult,
-		ExpectedVersion: version,
-		RequestID:       requestIDFrom(r),
+		ID:               id,
+		Action:           action,
+		Reason:           req.Reason,
+		PublicSummary:    req.PublicSummary,
+		PublicResultCode: req.PublicResultCode,
+		PublicResult:     req.PublicResult,
+		ExpectedVersion:  version,
+		RequestID:        requestIDFrom(r),
 	}, adminMutationCompletionBuilder)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
@@ -370,13 +384,14 @@ func (s *Server) handleAdminDisputeAction(w http.ResponseWriter, r *http.Request
 	id := chi.URLParam(r, "id")
 	routeKey := "POST /api/v1/admin/disputes/{id}/" + action + ":" + id
 	completion, appErr := s.app.AdminDisputeActionWithIdempotency(r.Context(), user, routeKey, r.Header.Get("Idempotency-Key"), requestHash(r.Method, routeKey, body), report.AdminActionInput{
-		ID:              id,
-		Action:          action,
-		Reason:          req.Reason,
-		PublicSummary:   req.PublicSummary,
-		PublicResult:    req.PublicResult,
-		ExpectedVersion: version,
-		RequestID:       requestIDFrom(r),
+		ID:               id,
+		Action:           action,
+		Reason:           req.Reason,
+		PublicSummary:    req.PublicSummary,
+		PublicResultCode: req.PublicResultCode,
+		PublicResult:     req.PublicResult,
+		ExpectedVersion:  version,
+		RequestID:        requestIDFrom(r),
 	}, adminMutationCompletionBuilder)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
@@ -532,25 +547,28 @@ func toReportResponses(items []report.Report, includeAdmin bool) []reportRespons
 
 func toReportResponse(item report.Report, includeAdmin bool) reportResponse {
 	response := reportResponse{
-		ID:               item.ID,
-		ReporterUsername: item.ReporterUsername,
-		ReporterName:     item.ReporterName,
-		TargetType:       item.TargetType,
-		TargetID:         item.TargetID,
-		TargetLabel:      item.TargetLabel,
-		ReportedUsername: item.ReportedUsername,
-		ReasonCode:       item.ReasonCode,
-		Title:            item.Title,
-		Status:           item.Status,
-		HandledAt:        formatOptionalTime(item.HandledAt),
-		DisputeID:        item.DisputeID,
-		CreatedAt:        item.CreatedAt.UTC().Format(time.RFC3339),
-		UpdatedAt:        item.UpdatedAt.UTC().Format(time.RFC3339),
-		Version:          item.Version,
+		ID:                  item.ID,
+		ReporterUsername:    item.ReporterUsername,
+		ReporterName:        item.ReporterName,
+		TargetType:          item.TargetType,
+		TargetID:            item.TargetID,
+		CanonicalTargetType: item.CanonicalTargetType,
+		CanonicalTargetID:   item.CanonicalTargetID,
+		TargetLabel:         item.TargetLabel,
+		ReportedUsername:    item.ReportedUsername,
+		ReasonCode:          item.ReasonCode,
+		Title:               item.Title,
+		Status:              item.Status,
+		HandledAt:           formatOptionalTime(item.HandledAt),
+		DisputeID:           item.DisputeID,
+		CreatedAt:           item.CreatedAt.UTC().Format(time.RFC3339),
+		UpdatedAt:           item.UpdatedAt.UTC().Format(time.RFC3339),
+		Version:             item.Version,
 	}
 	if includeAdmin {
 		response.ReporterUserID = item.ReporterUserID
 		response.Description = item.Description
+		response.TargetSnapshotJSON = item.TargetSnapshotJSON
 		response.AdminReason = item.AdminReason
 		response.HandledByAdminID = item.HandledByAdminID
 	}
@@ -578,6 +596,7 @@ func toDisputeResponse(item report.DisputeCase, includeAdmin bool) disputeRespon
 		CounterpartyName:     item.CounterpartyName,
 		Status:               item.Status,
 		PublicSummary:        item.PublicSummary,
+		PublicResultCode:     item.PublicResultCode,
 		PublicResult:         item.PublicResult,
 		OpenedAt:             item.OpenedAt.UTC().Format(time.RFC3339),
 		ResolvedAt:           formatOptionalTime(item.ResolvedAt),

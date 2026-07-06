@@ -7,8 +7,9 @@ type ListResponse<T> = {
   nextCursor?: string | null
 }
 
-type BackendReportTargetType = 'contact_snapshot' | 'public_user' | 'carpool_membership' | 'api_purchase_intent' | 'api_order'
-type BackendReportReasonCode = 'invalid' | 'unreachable' | 'impersonation' | 'other'
+type BackendReportTargetType = 'contact_snapshot' | 'public_user' | 'carpool_application' | 'carpool_membership' | 'api_purchase_intent' | 'api_order'
+type BackendReportReasonCode = 'unreachable' | 'contact_invalid' | 'impersonation' | 'description_mismatch' | 'seat_rule_dispute' | 'api_quota_dispute' | 'order_delivery_dispute' | 'other'
+type BackendPublicResultCode = 'no_action' | 'contact_invalid' | 'impersonation_confirmed' | 'description_mismatch' | 'rule_or_seat_issue' | 'api_delivery_issue' | 'other_resolved'
 
 type BackendReport = {
   id: string
@@ -17,12 +18,15 @@ type BackendReport = {
   reporterName: string
   targetType: BackendReportTargetType
   targetId: string
+  canonicalTargetType: BackendReportTargetType
+  canonicalTargetId: string
   targetLabel: string
+  targetSnapshotJson?: string
   reportedUsername: string
   reasonCode: BackendReportReasonCode
   title: string
   description?: string
-  status: 'submitted' | 'triaged' | 'rejected' | 'dispute_opened'
+  status: 'submitted' | 'triaged' | 'needs_info' | 'rejected' | 'dispute_opened' | 'closed'
   adminReason?: string
   handledByAdminId?: string
   handledAt?: string | null
@@ -46,6 +50,7 @@ type BackendDispute = {
   counterpartyName: string
   status: 'open' | 'waiting_info' | 'resolved' | 'closed'
   publicSummary: string
+  publicResultCode: BackendPublicResultCode
   publicResult: string
   adminReason?: string
   openedByAdminId?: string
@@ -99,6 +104,16 @@ export type CreatePublicUserReportRequest = {
   description: string
 }
 
+export type CreateManualInterventionReportRequest = {
+  targetType: BackendReportTargetType
+  targetId: string
+  targetLabel?: string
+  reportedUsername?: string
+  reasonCode: BackendReportReasonCode
+  title: string
+  description: string
+}
+
 export type CreateAppealRequest = {
   reportId?: string
   disputeId?: string
@@ -126,6 +141,7 @@ function targetTypeLabel(value: BackendReportTargetType) {
   const labels: Record<BackendReportTargetType, string> = {
     contact_snapshot: '联系快照',
     public_user: '公开主页',
+    carpool_application: '拼车申请',
     carpool_membership: '拼车成员关系',
     api_purchase_intent: 'API 意向',
     api_order: 'API 订单',
@@ -135,9 +151,13 @@ function targetTypeLabel(value: BackendReportTargetType) {
 
 function reasonLabel(value: BackendReportReasonCode) {
   const labels: Record<BackendReportReasonCode, string> = {
-    invalid: '联系方式无效',
     unreachable: '无法联系',
+    contact_invalid: '联系方式无效',
     impersonation: '疑似冒充',
+    description_mismatch: '服务描述不一致',
+    seat_rule_dispute: '规则/席位争议',
+    api_quota_dispute: 'API 接入或额度说明争议',
+    order_delivery_dispute: '订单确认或交付说明争议',
     other: '其他问题',
   }
   return labels[value]
@@ -147,8 +167,10 @@ function reportStatusLabel(value: BackendReport['status']) {
   const labels: Record<BackendReport['status'], string> = {
     submitted: '待处理',
     triaged: '已分诊',
+    needs_info: '需要补充信息',
     rejected: '已拒绝',
     dispute_opened: '处理中',
+    closed: '已关闭',
   }
   return labels[value]
 }
@@ -163,6 +185,19 @@ function disputeStatusLabel(value: BackendDispute['status']) {
   return labels[value]
 }
 
+function publicResultCodeLabel(value: BackendPublicResultCode) {
+  const labels: Record<BackendPublicResultCode, string> = {
+    no_action: '未记录处置',
+    contact_invalid: '联系方式无效',
+    impersonation_confirmed: '确认冒充',
+    description_mismatch: '描述不一致',
+    rule_or_seat_issue: '规则/席位争议',
+    api_delivery_issue: 'API 接入/额度争议',
+    other_resolved: '其他已处理',
+  }
+  return labels[value]
+}
+
 function appealStatusLabel(value: BackendAppeal['status']) {
   const labels: Record<BackendAppeal['status'], string> = {
     submitted: '申诉复核中',
@@ -173,12 +208,16 @@ function appealStatusLabel(value: BackendAppeal['status']) {
 }
 
 function mapContactTargetType(value: CreateContactReportRequest['orderType']): BackendReportTargetType {
-  if (value === 'carpool_application') return 'contact_snapshot'
-  return 'api_purchase_intent'
+  return 'contact_snapshot'
 }
 
 function reportTargetTo(row: BackendReport) {
   if (row.targetType === 'public_user' && row.reportedUsername) return `/u/${row.reportedUsername}`
+  if (row.canonicalTargetType === 'carpool_application') return `/my/rides/${row.canonicalTargetId}`
+  if (row.canonicalTargetType === 'carpool_membership') return null
+  if (row.canonicalTargetType === 'api_purchase_intent') return `/my/api-orders/${row.canonicalTargetId}`
+  if (row.canonicalTargetType === 'api_order') return `/my/api-orders/${row.canonicalTargetId}`
+  if (row.targetType === 'carpool_application') return `/my/rides/${row.targetId}`
   if (row.targetType === 'carpool_membership') return null
   if (row.targetType === 'api_purchase_intent') return `/my/api-orders/${row.targetId}`
   if (row.targetType === 'api_order') return `/my/api-orders/${row.targetId}`
@@ -199,6 +238,7 @@ function mapReportRow(item: BackendReport): AdminRow {
     detailItems: [
       { label: '后端状态', value: item.status },
       { label: '目标类型', value: targetTypeLabel(item.targetType) },
+      { label: '归一目标', value: `${targetTypeLabel(item.canonicalTargetType)} · ${item.canonicalTargetId}` },
       { label: '原因', value: reasonLabel(item.reasonCode) },
       { label: '关联目标', value: item.targetLabel || item.targetId },
       { label: '更新时间', value: formatTime(item.updatedAt) },
@@ -221,6 +261,7 @@ function mapDisputeRow(item: BackendDispute): AdminRow {
     detailItems: [
       { label: '后端状态', value: item.status },
       { label: '公开摘要', value: item.publicSummary || '未填写' },
+      { label: '公开结果代码', value: publicResultCodeLabel(item.publicResultCode || 'no_action') },
       { label: '公开结果', value: item.publicResult || '未填写' },
       { label: '关联举报', value: item.reportId || '无' },
       { label: '更新时间', value: formatTime(item.updatedAt) },
@@ -273,12 +314,27 @@ export async function backendCreateReport(payload: CreateContactReportRequest) {
   return backendMutation<BackendReport>('/api/v1/reports', {
     targetType: mapContactTargetType(payload.orderType),
     targetId: payload.orderId,
-    targetLabel: `${payload.orderType} · ${payload.contactType}`,
+    targetLabel: `联系方式快照 · ${payload.orderType} · ${payload.contactType}`,
     reasonCode: payload.reasonCode,
-    title: reasonLabel(payload.reasonCode),
-    description: payload.note || reasonLabel(payload.reasonCode),
+    title: `举报 / 申请人工介入：${reasonLabel(payload.reasonCode)}`,
+    description: payload.note || `联系快照存在问题：${reasonLabel(payload.reasonCode)}。平台仅记录脱敏说明和处理状态，不追回付款、不托管、不担保、不验真 API Key。`,
   }, {
     idempotencyPrefix: 'report-create',
+  })
+}
+
+export async function backendCreateManualInterventionReport(payload: CreateManualInterventionReportRequest) {
+  await ensureBackendSession('buyer', false)
+  return backendMutation<BackendReport>('/api/v1/reports', {
+    targetType: payload.targetType,
+    targetId: payload.targetId,
+    targetLabel: payload.targetLabel ?? '',
+    reportedUsername: payload.reportedUsername ?? '',
+    reasonCode: payload.reasonCode,
+    title: payload.title,
+    description: payload.description,
+  }, {
+    idempotencyPrefix: 'manual-intervention-report',
   })
 }
 
@@ -291,7 +347,7 @@ export async function backendCreatePublicUserReport(payload: CreatePublicUserRep
     reportedUsername: payload.username,
     reasonCode: payload.reasonCode,
     title: payload.title,
-    description: payload.description,
+    description: `${payload.description}\n\n平台仅记录脱敏说明和处理状态，不追回付款、不托管、不担保、不裁决站外支付、不验真 API Key。`,
   }, {
     idempotencyPrefix: 'public-user-report',
   })
@@ -349,12 +405,17 @@ export async function backendRunReportAdminAction(row: AdminRow, action: 'approv
     const detail = await adminReport(row.id)
     const pathAction = action === 'approve'
       ? 'triage'
-      : action === 'request_changes' || action === 'restore'
+      : action === 'request_changes'
+        ? 'request-info'
+        : action === 'restore'
         ? 'open-dispute'
-        : 'reject'
+        : action === 'suspend'
+          ? 'close'
+          : 'reject'
     const result = await backendMutation<BackendAdminMutation>(`/api/v1/admin/reports/${encodeURIComponent(row.id)}/${pathAction}`, {
       reason: reason || '管理台举报处理',
       publicSummary: reason || detail.title || detail.targetLabel,
+      publicResultCode: 'no_action',
       publicResult: pathAction === 'open-dispute' ? '已进入人工处理中' : '',
     }, {
       idempotencyPrefix: `report-admin-${pathAction}`,
@@ -373,6 +434,7 @@ export async function backendRunReportAdminAction(row: AdminRow, action: 'approv
     const result = await backendMutation<BackendAdminMutation>(`/api/v1/admin/disputes/${encodeURIComponent(row.id)}/${pathAction}`, {
       reason: reason || '管理台纠纷处理',
       publicSummary: detail.publicSummary || reason || detail.targetLabel,
+      publicResultCode: pathAction === 'resolve' ? 'other_resolved' : 'no_action',
       publicResult: pathAction === 'request-info' ? '等待补充信息' : reason || detail.publicResult || '已处理',
     }, {
       idempotencyPrefix: `dispute-admin-${pathAction}`,

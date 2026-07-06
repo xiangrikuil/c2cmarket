@@ -318,7 +318,7 @@ export type OrderContactSnapshot = {
   createdAt: string
 }
 
-export type ContactReportReasonCode = 'invalid' | 'unreachable' | 'impersonation' | 'other'
+export type ContactReportReasonCode = 'contact_invalid' | 'unreachable' | 'impersonation' | 'other'
 
 export type CreateContactReportRequest = {
   orderType: OrderContactSnapshot['orderType']

@@ -8,26 +8,41 @@ import (
 )
 
 const (
-	TargetContactSnapshot   = "contact_snapshot"
-	TargetPublicUser        = "public_user"
-	TargetCarpoolMembership = "carpool_membership"
-	TargetAPIPurchaseIntent = "api_purchase_intent"
-	TargetAPIOrder          = "api_order"
+	TargetContactSnapshot    = "contact_snapshot"
+	TargetPublicUser         = "public_user"
+	TargetCarpoolApplication = "carpool_application"
+	TargetCarpoolMembership  = "carpool_membership"
+	TargetAPIPurchaseIntent  = "api_purchase_intent"
+	TargetAPIOrder           = "api_order"
 
-	ReportReasonInvalid       = "invalid"
-	ReportReasonUnreachable   = "unreachable"
-	ReportReasonImpersonation = "impersonation"
-	ReportReasonOther         = "other"
+	ReportReasonUnreachable          = "unreachable"
+	ReportReasonContactInvalid       = "contact_invalid"
+	ReportReasonImpersonation        = "impersonation"
+	ReportReasonDescriptionMismatch  = "description_mismatch"
+	ReportReasonSeatRuleDispute      = "seat_rule_dispute"
+	ReportReasonAPIQuotaDispute      = "api_quota_dispute"
+	ReportReasonOrderDeliveryDispute = "order_delivery_dispute"
+	ReportReasonOther                = "other"
 
 	ReportStatusSubmitted     = "submitted"
 	ReportStatusTriaged       = "triaged"
+	ReportStatusNeedsInfo     = "needs_info"
 	ReportStatusRejected      = "rejected"
 	ReportStatusDisputeOpened = "dispute_opened"
+	ReportStatusClosed        = "closed"
 
 	DisputeStatusOpen        = "open"
 	DisputeStatusWaitingInfo = "waiting_info"
 	DisputeStatusResolved    = "resolved"
 	DisputeStatusClosed      = "closed"
+
+	PublicResultNoAction               = "no_action"
+	PublicResultContactInvalid         = "contact_invalid"
+	PublicResultImpersonationConfirmed = "impersonation_confirmed"
+	PublicResultDescriptionMismatch    = "description_mismatch"
+	PublicResultRuleOrSeatIssue        = "rule_or_seat_issue"
+	PublicResultAPIDeliveryIssue       = "api_delivery_issue"
+	PublicResultOtherResolved          = "other_resolved"
 
 	AppealStatusSubmitted = "submitted"
 	AppealStatusApproved  = "approved"
@@ -35,25 +50,28 @@ const (
 )
 
 type Report struct {
-	ID               string
-	ReporterUserID   string
-	ReporterUsername string
-	ReporterName     string
-	TargetType       string
-	TargetID         string
-	TargetLabel      string
-	ReportedUsername string
-	ReasonCode       string
-	Title            string
-	Description      string
-	Status           string
-	AdminReason      string
-	HandledByAdminID string
-	HandledAt        *time.Time
-	DisputeID        string
-	CreatedAt        time.Time
-	UpdatedAt        time.Time
-	Version          int64
+	ID                  string
+	ReporterUserID      string
+	ReporterUsername    string
+	ReporterName        string
+	TargetType          string
+	TargetID            string
+	CanonicalTargetType string
+	CanonicalTargetID   string
+	TargetLabel         string
+	TargetSnapshotJSON  string
+	ReportedUsername    string
+	ReasonCode          string
+	Title               string
+	Description         string
+	Status              string
+	AdminReason         string
+	HandledByAdminID    string
+	HandledAt           *time.Time
+	DisputeID           string
+	CreatedAt           time.Time
+	UpdatedAt           time.Time
+	Version             int64
 }
 
 type DisputeCase struct {
@@ -70,6 +88,7 @@ type DisputeCase struct {
 	CounterpartyName     string
 	Status               string
 	PublicSummary        string
+	PublicResultCode     string
 	PublicResult         string
 	AdminReason          string
 	OpenedByAdminID      string
@@ -153,14 +172,15 @@ type CreateAppealInput struct {
 }
 
 type AdminActionInput struct {
-	ID              string
-	AdminUserID     string
-	Action          string
-	Reason          string
-	PublicSummary   string
-	PublicResult    string
-	ExpectedVersion int64
-	RequestID       string
+	ID               string
+	AdminUserID      string
+	Action           string
+	Reason           string
+	PublicSummary    string
+	PublicResultCode string
+	PublicResult     string
+	ExpectedVersion  int64
+	RequestID        string
 }
 
 type MutationResult struct {

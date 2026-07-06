@@ -2,7 +2,7 @@
 import { computed, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useQueryClient } from '@tanstack/vue-query'
-import { RotateCcw } from 'lucide-vue-next'
+import { Flag, RotateCcw } from 'lucide-vue-next'
 import { toast } from 'vue-sonner'
 import OrderContactCard from '@/components/profile/OrderContactCard.vue'
 import { Badge } from '@/components/ui/badge'
@@ -11,6 +11,7 @@ import { Card } from '@/components/ui/card'
 import {
   apiIntentMerchantContactSnapshot,
   cancelApiPurchaseIntent,
+  createManualInterventionReport,
   formatUsdQuota,
   getApiMerchantDisplayName,
   getApiMerchantVisibilityLabel,
@@ -72,6 +73,20 @@ function cancelIntent() {
   if (!intent.value) return
   runAction(() => cancelApiPurchaseIntent(intent.value!.id, '买家不再继续该购买意向。'), '已取消购买意向。')
 }
+
+function requestManualIntervention() {
+  if (!intent.value) return
+  const description = window.prompt('请填写 4-1000 字脱敏说明。平台只记录处理状态和公开摘要，不追回付款、不托管、不担保、不裁决站外支付、不验真 API Key。')
+  if (!description?.trim()) return
+  runAction(() => createManualInterventionReport({
+    targetType: 'api_purchase_intent',
+    targetId: intent.value!.id,
+    targetLabel: intent.value!.snapshot.serviceTitle,
+    reasonCode: 'api_quota_dispute',
+    title: '举报 / 申请人工介入：API 接入或额度说明争议',
+    description: description.trim(),
+  }), '已提交人工介入申请。')
+}
 </script>
 
 <template>
@@ -100,6 +115,9 @@ function cancelIntent() {
         </Button>
         <Button v-if="canCancel" variant="outline" :disabled="actionBusy" @click="cancelIntent">
           <RotateCcw class="h-4 w-4" />取消
+        </Button>
+        <Button variant="outline" :disabled="actionBusy" @click="requestManualIntervention">
+          <Flag class="h-4 w-4" />申请人工介入
         </Button>
       </div>
     </div>

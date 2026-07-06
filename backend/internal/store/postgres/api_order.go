@@ -544,13 +544,13 @@ func openDisputeFromAPIOrderInTx(ctx context.Context, tx pgx.Tx, order apiorder.
 	item, err := scanDispute(ctx, tx, `
 		INSERT INTO dispute_cases (
 			report_id, target_type, target_id, target_label, primary_user_id, counterparty_user_id,
-			status, public_summary, public_result, admin_reason, opened_by_admin_id, opened_at,
+			status, public_summary, public_result_code, public_result, admin_reason, opened_by_admin_id, opened_at,
 			created_at, updated_at, version
 		)
-		VALUES (NULL, $1, $2, $3, $4, $5, 'open', $6, $7, $8, $9, $10, $10, $10, 1)
+		VALUES (NULL, $1, $2, $3, $4, $5, 'open', $6, $7, $8, $9, $10, $11, $11, $11, 1)
 		RETURNING `+disputeReturningColumns+`
 	`, report.TargetAPIOrder, order.ID, strings.TrimSpace(order.ServiceTitleSnapshot), input.ActorUserID, counterpartyID,
-		"API 订单纠纷", "已进入人工处理中", strings.TrimSpace(input.Reason), input.ActorUserID, now)
+		"API 订单纠纷", report.PublicResultNoAction, "已进入人工处理中", strings.TrimSpace(input.Reason), input.ActorUserID, now)
 	if err != nil {
 		return report.DisputeCase{}, internalStoreError()
 	}

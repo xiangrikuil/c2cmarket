@@ -43,6 +43,7 @@ const (
 	CodeAccountRestricted             = "ACCOUNT_RESTRICTED"
 	CodeActiveApplicationExists       = "ACTIVE_APPLICATION_EXISTS"
 	CodeActiveAPIIntentExists         = "ACTIVE_API_INTENT_EXISTS"
+	CodeActiveReportExists            = "ACTIVE_REPORT_EXISTS"
 	CodeAPIPurchaseIntentHasOrder     = "API_PURCHASE_INTENT_HAS_ORDER"
 	CodeActiveMembershipExists        = "ACTIVE_MEMBERSHIP_EXISTS"
 	CodeContactAccessForbidden        = "CONTACT_ACCESS_FORBIDDEN"

@@ -2,6 +2,7 @@ package postgres
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"strings"
@@ -13,6 +14,27 @@ import (
 
 	"github.com/jackc/pgx/v5"
 )
+
+type reportTargetResolution struct {
+	TargetLabel         string
+	CanonicalTargetType string
+	CanonicalTargetID   string
+	ReportedUserID      string
+	ReportedUsername    string
+	ReporterRole        string
+	RespondentUserID    string
+	RespondentUsername  string
+	Participants        []reportTargetParticipant
+	BusinessStatus      string
+	HasOrder            bool
+	HasMembership       bool
+}
+
+type reportTargetParticipant struct {
+	Role     string `json:"role"`
+	UserID   string `json:"userId"`
+	Username string `json:"username"`
+}
 
 func (s *Store) CreateReportWithIdempotency(ctx context.Context, entry idempotency.Entry, input report.CreateReportInput, now time.Time, buildCompletion report.ReportCompletionBuilder) (report.Report, idempotency.Completion, *domain.AppError) {
 	tx, err := s.pool.Begin(ctx)
@@ -327,26 +349,41 @@ func (s *Store) PublicUserDisputeStats(ctx context.Context, username string, now
 }
 
 func createReportInTx(ctx context.Context, tx pgx.Tx, input report.CreateReportInput, now time.Time) (report.Report, *domain.AppError) {
-	targetLabel, reportedID, reportedUsername, appErr := resolveReportTarget(ctx, tx, input)
+	input.TargetType = strings.TrimSpace(strings.ToLower(input.TargetType))
+	input.ReasonCode = strings.TrimSpace(strings.ToLower(input.ReasonCode))
+	input.ReportedUsername = strings.TrimSpace(strings.ToLower(input.ReportedUsername))
+	resolution, appErr := resolveReportTarget(ctx, tx, input)
 	if appErr != nil {
 		return report.Report{}, appErr
 	}
 	if strings.TrimSpace(input.TargetLabel) != "" {
-		targetLabel = strings.TrimSpace(input.TargetLabel)
+		resolution.TargetLabel = strings.TrimSpace(input.TargetLabel)
 	}
-	if reportedUsername == "" {
-		reportedUsername = strings.TrimSpace(strings.ToLower(input.ReportedUsername))
+	if resolution.ReportedUsername == "" {
+		resolution.ReportedUsername = strings.TrimSpace(strings.ToLower(input.ReportedUsername))
+	}
+	snapshotJSON, appErr := buildReportTargetSnapshot(input, resolution)
+	if appErr != nil {
+		return report.Report{}, appErr
+	}
+	if appErr := ensureNoActiveReportForCanonicalTarget(ctx, tx, input.ReporterUserID, resolution.CanonicalTargetType, resolution.CanonicalTargetID); appErr != nil {
+		return report.Report{}, appErr
 	}
 	item, err := scanReport(ctx, tx, `
 		INSERT INTO reports (
-			reporter_user_id, target_type, target_id, target_label, reported_user_id, reported_username,
+			reporter_user_id, target_type, target_id, canonical_target_type, canonical_target_id,
+			target_label, target_snapshot_json, reported_user_id, reported_username,
 			reason_code, title, description, status, created_at, updated_at, version
 		)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'submitted', $10, $10, 1)
+		VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9, $10, $11, $12, 'submitted', $13, $13, 1)
 		RETURNING `+reportReturningColumns+`
-	`, input.ReporterUserID, input.TargetType, strings.TrimSpace(input.TargetID), targetLabel, nullUUID(reportedID), reportedUsername,
+	`, input.ReporterUserID, input.TargetType, strings.TrimSpace(input.TargetID), resolution.CanonicalTargetType, resolution.CanonicalTargetID,
+		resolution.TargetLabel, snapshotJSON, nullUUID(resolution.ReportedUserID), resolution.ReportedUsername,
 		input.ReasonCode, strings.TrimSpace(input.Title), strings.TrimSpace(input.Description), now)
 	if err != nil {
+		if isUniqueViolationOnConstraint(err, "ux_reports_active_canonical_target") {
+			return report.Report{}, activeReportExists()
+		}
 		return report.Report{}, internalStoreError()
 	}
 	return item, nil
@@ -372,18 +409,48 @@ func updateReportAdminInTx(ctx context.Context, tx pgx.Tx, input report.AdminAct
 		if appErr != nil {
 			return report.MutationResult{}, appErr
 		}
+		if appErr := insertReportModerationAuditLog(ctx, tx, input, current, updated, now); appErr != nil {
+			return report.MutationResult{}, appErr
+		}
+		return report.MutationResult{Report: &updated}, nil
+	case "request_info":
+		if current.Status != report.ReportStatusSubmitted && current.Status != report.ReportStatusTriaged {
+			return report.MutationResult{}, reportInvalidState("只有新提交或已分诊的举报可以要求补充信息。")
+		}
+		updated, appErr := updateReportStatus(ctx, tx, current.ID, report.ReportStatusNeedsInfo, input.AdminUserID, input.Reason, now)
+		if appErr != nil {
+			return report.MutationResult{}, appErr
+		}
+		if appErr := insertReportModerationAuditLog(ctx, tx, input, current, updated, now); appErr != nil {
+			return report.MutationResult{}, appErr
+		}
 		return report.MutationResult{Report: &updated}, nil
 	case "reject":
-		if current.Status == report.ReportStatusRejected || current.Status == report.ReportStatusDisputeOpened {
+		if !canFinishReport(current.Status) {
 			return report.MutationResult{}, reportInvalidState("当前举报不能拒绝。")
 		}
 		updated, appErr := updateReportStatus(ctx, tx, current.ID, report.ReportStatusRejected, input.AdminUserID, input.Reason, now)
 		if appErr != nil {
 			return report.MutationResult{}, appErr
 		}
+		if appErr := insertReportModerationAuditLog(ctx, tx, input, current, updated, now); appErr != nil {
+			return report.MutationResult{}, appErr
+		}
+		return report.MutationResult{Report: &updated}, nil
+	case "close":
+		if !canFinishReport(current.Status) {
+			return report.MutationResult{}, reportInvalidState("当前举报不能关闭。")
+		}
+		updated, appErr := updateReportStatus(ctx, tx, current.ID, report.ReportStatusClosed, input.AdminUserID, input.Reason, now)
+		if appErr != nil {
+			return report.MutationResult{}, appErr
+		}
+		if appErr := insertReportModerationAuditLog(ctx, tx, input, current, updated, now); appErr != nil {
+			return report.MutationResult{}, appErr
+		}
 		return report.MutationResult{Report: &updated}, nil
 	case "open_dispute":
-		if current.Status == report.ReportStatusRejected || current.Status == report.ReportStatusDisputeOpened {
+		if !canOpenDisputeFromReport(current.Status) {
 			return report.MutationResult{}, reportInvalidState("当前举报不能打开纠纷。")
 		}
 		dispute, appErr := openDisputeFromReport(ctx, tx, current, input, now)
@@ -392,6 +459,9 @@ func updateReportAdminInTx(ctx context.Context, tx pgx.Tx, input report.AdminAct
 		}
 		updated, appErr := updateReportStatusWithDispute(ctx, tx, current.ID, dispute.ID, input.AdminUserID, input.Reason, now)
 		if appErr != nil {
+			return report.MutationResult{}, appErr
+		}
+		if appErr := insertReportModerationAuditLog(ctx, tx, input, current, updated, now); appErr != nil {
 			return report.MutationResult{}, appErr
 		}
 		return report.MutationResult{Report: &updated, Dispute: &dispute}, nil
@@ -422,8 +492,8 @@ func createAppealInTx(ctx context.Context, tx pgx.Tx, input report.CreateAppealI
 		if err != nil {
 			return report.Appeal{}, internalStoreError()
 		}
-		targetType = existing.TargetType
-		targetID = existing.TargetID
+		targetType = nonEmpty(existing.CanonicalTargetType, existing.TargetType)
+		targetID = nonEmpty(existing.CanonicalTargetID, existing.TargetID)
 	}
 	item, err := scanAppeal(ctx, tx, `
 		INSERT INTO appeals (
@@ -475,6 +545,9 @@ func updateAppealAdminInTx(ctx context.Context, tx pgx.Tx, input report.AdminAct
 	if err != nil {
 		return report.MutationResult{}, internalStoreError()
 	}
+	if appErr := insertAppealModerationAuditLog(ctx, tx, input, current, item, now); appErr != nil {
+		return report.MutationResult{}, appErr
+	}
 	return report.MutationResult{Appeal: &item}, nil
 }
 
@@ -517,18 +590,22 @@ func updateDisputeAdminInTx(ctx context.Context, tx pgx.Tx, input report.AdminAc
 		UPDATE dispute_cases
 		SET status = $2,
 		    public_summary = $3,
-		    public_result = $4,
-		    admin_reason = $5,
-		    resolved_at = $6,
-		    closed_at = $7,
-		    updated_at = $8,
+		    public_result_code = $4,
+		    public_result = $5,
+		    admin_reason = $6,
+		    resolved_at = $7,
+		    closed_at = $8,
+		    updated_at = $9,
 		    version = version + 1
 		WHERE id = $1
 		RETURNING `+disputeReturningColumns+`
-	`, current.ID, next, nonEmpty(input.PublicSummary, current.PublicSummary), nonEmpty(input.PublicResult, current.PublicResult),
-		strings.TrimSpace(input.Reason), resolvedAt, closedAt, now)
+	`, current.ID, next, nonEmpty(input.PublicSummary, current.PublicSummary), nonEmpty(input.PublicResultCode, current.PublicResultCode, report.PublicResultNoAction),
+		nonEmpty(input.PublicResult, current.PublicResult), strings.TrimSpace(input.Reason), resolvedAt, closedAt, now)
 	if err != nil {
 		return report.MutationResult{}, internalStoreError()
+	}
+	if appErr := insertDisputeModerationAuditLog(ctx, tx, input, current, item, now); appErr != nil {
+		return report.MutationResult{}, appErr
 	}
 	return report.MutationResult{Dispute: &item}, nil
 }
@@ -584,21 +661,21 @@ func openDisputeFromReport(ctx context.Context, tx pgx.Tx, source report.Report,
 	item, err := scanDispute(ctx, tx, `
 		INSERT INTO dispute_cases (
 			report_id, target_type, target_id, target_label, primary_user_id, counterparty_user_id,
-			status, public_summary, public_result, admin_reason, opened_by_admin_id, opened_at,
+			status, public_summary, public_result_code, public_result, admin_reason, opened_by_admin_id, opened_at,
 			created_at, updated_at, version
 		)
-		VALUES ($1, $2, $3, $4, $5, $6, 'open', $7, $8, $9, $10, $11, $11, $11, 1)
+		VALUES ($1, $2, $3, $4, $5, $6, 'open', $7, $8, $9, $10, $11, $12, $12, $12, 1)
 		RETURNING `+disputeReturningColumns+`
-	`, source.ID, source.TargetType, source.TargetID, source.TargetLabel, source.ReporterUserID, counterpartyID,
-		strings.TrimSpace(input.PublicSummary), nonEmpty(input.PublicResult, "已进入人工处理中"),
-		strings.TrimSpace(input.Reason), input.AdminUserID, now)
+	`, source.ID, nonEmpty(source.CanonicalTargetType, source.TargetType), nonEmpty(source.CanonicalTargetID, source.TargetID), source.TargetLabel, source.ReporterUserID, counterpartyID,
+		strings.TrimSpace(input.PublicSummary), nonEmpty(input.PublicResultCode, report.PublicResultNoAction),
+		nonEmpty(input.PublicResult, "已进入人工处理中"), strings.TrimSpace(input.Reason), input.AdminUserID, now)
 	if err != nil {
 		return report.DisputeCase{}, internalStoreError()
 	}
 	return item, nil
 }
 
-func resolveReportTarget(ctx context.Context, q queryer, input report.CreateReportInput) (string, string, string, *domain.AppError) {
+func resolveReportTarget(ctx context.Context, q queryer, input report.CreateReportInput) (reportTargetResolution, *domain.AppError) {
 	targetID := strings.TrimSpace(input.TargetID)
 	switch input.TargetType {
 	case report.TargetPublicUser:
@@ -608,75 +685,305 @@ func resolveReportTarget(ctx context.Context, q queryer, input report.CreateRepo
 		}
 		userID, appErr := userIDForUsername(ctx, q, username)
 		if appErr != nil {
-			return "", "", "", appErr
+			return reportTargetResolution{}, appErr
 		}
 		if userID == "" {
-			return "", "", "", publicProfileNotFound()
+			return reportTargetResolution{}, publicProfileNotFound()
 		}
-		return "公开主页 @" + username, userID, username, nil
-	case report.TargetCarpoolMembership:
-		var title, ownerID, ownerUsername, buyerID, buyerUsername string
-		err := q.QueryRow(ctx, `
-			SELECT l.title, owner.id::text, owner.username, buyer.id::text, buyer.username
-			FROM carpool_memberships m
-			JOIN carpool_listings l ON l.id = m.carpool_listing_id
-			JOIN users owner ON owner.id = m.owner_user_id
-			JOIN users buyer ON buyer.id = m.buyer_user_id
-			WHERE m.id = $1
-		`, targetID).Scan(&title, &ownerID, &ownerUsername, &buyerID, &buyerUsername)
-		if errors.Is(err, pgx.ErrNoRows) {
-			return "", "", "", targetNotFound()
+		if input.ReporterUserID == userID || strings.EqualFold(input.ReporterUsername, username) {
+			return reportTargetResolution{}, selfReportForbidden()
 		}
-		if err != nil {
-			return "", "", "", internalStoreError()
-		}
-		if input.ReporterUserID == ownerID {
-			return title, buyerID, buyerUsername, nil
-		}
-		return title, ownerID, ownerUsername, nil
-	case report.TargetAPIPurchaseIntent:
-		var title, ownerID, ownerUsername, buyerID, buyerUsername string
-		err := q.QueryRow(ctx, `
-			SELECT service_title_snapshot, owner.id::text, owner.username, buyer.id::text, buyer.username
-			FROM api_purchase_intents i
-			JOIN users owner ON owner.id = i.owner_user_id
-			JOIN users buyer ON buyer.id = i.buyer_user_id
-			WHERE i.id = $1
-		`, targetID).Scan(&title, &ownerID, &ownerUsername, &buyerID, &buyerUsername)
-		if errors.Is(err, pgx.ErrNoRows) {
-			return "", "", "", targetNotFound()
-		}
-		if err != nil {
-			return "", "", "", internalStoreError()
-		}
-		if input.ReporterUserID == ownerID {
-			return title, buyerID, buyerUsername, nil
-		}
-		return title, ownerID, ownerUsername, nil
-	case report.TargetAPIOrder:
-		var title, ownerID, ownerUsername, buyerID, buyerUsername string
-		err := q.QueryRow(ctx, `
-			SELECT service_title_snapshot, owner.id::text, owner.username, buyer.id::text, buyer.username
-			FROM api_orders o
-			JOIN users owner ON owner.id = o.seller_user_id
-			JOIN users buyer ON buyer.id = o.buyer_user_id
-			WHERE o.id = $1
-		`, targetID).Scan(&title, &ownerID, &ownerUsername, &buyerID, &buyerUsername)
-		if errors.Is(err, pgx.ErrNoRows) {
-			return "", "", "", targetNotFound()
-		}
-		if err != nil {
-			return "", "", "", internalStoreError()
-		}
-		if input.ReporterUserID == ownerID {
-			return title, buyerID, buyerUsername, nil
-		}
-		return title, ownerID, ownerUsername, nil
+		return reportTargetResolution{
+			TargetLabel:         "公开主页 @" + username,
+			CanonicalTargetType: report.TargetPublicUser,
+			CanonicalTargetID:   userID,
+			ReportedUserID:      userID,
+			ReportedUsername:    username,
+			ReporterRole:        "reporter",
+			RespondentUserID:    userID,
+			RespondentUsername:  username,
+			Participants: []reportTargetParticipant{{
+				Role:     "reported_user",
+				UserID:   userID,
+				Username: username,
+			}},
+			BusinessStatus: "active",
+		}, nil
 	case report.TargetContactSnapshot:
-		return nonEmpty(input.TargetLabel, "联系快照"), "", strings.TrimSpace(strings.ToLower(input.ReportedUsername)), nil
+		return resolveContactSnapshotTarget(ctx, q, input)
+	case report.TargetCarpoolApplication:
+		resolution, found, appErr := resolveCarpoolApplicationTarget(ctx, q, input)
+		if appErr != nil {
+			return reportTargetResolution{}, appErr
+		}
+		if !found {
+			return reportTargetResolution{}, targetNotFound()
+		}
+		return resolution, nil
+	case report.TargetCarpoolMembership:
+		return resolveCarpoolMembershipTarget(ctx, q, input)
+	case report.TargetAPIPurchaseIntent:
+		resolution, found, appErr := resolveAPIIntentTarget(ctx, q, input)
+		if appErr != nil {
+			return reportTargetResolution{}, appErr
+		}
+		if !found {
+			return reportTargetResolution{}, targetNotFound()
+		}
+		return resolution, nil
+	case report.TargetAPIOrder:
+		resolution, found, appErr := resolveAPIOrderTarget(ctx, q, input)
+		if appErr != nil {
+			return reportTargetResolution{}, appErr
+		}
+		if !found {
+			return reportTargetResolution{}, targetNotFound()
+		}
+		return resolution, nil
 	default:
-		return "", "", "", domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Report validation failed", "举报目标类型不支持。", "targetType", "invalid", "举报目标类型不支持。")
+		return reportTargetResolution{}, domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Report validation failed", "举报目标类型不支持。", "targetType", "invalid", "举报目标类型不支持。")
 	}
+}
+
+func resolveContactSnapshotTarget(ctx context.Context, q queryer, input report.CreateReportInput) (reportTargetResolution, *domain.AppError) {
+	if resolution, found, appErr := resolveCarpoolApplicationTarget(ctx, q, input); appErr != nil || found {
+		return resolution, appErr
+	}
+	if resolution, found, appErr := resolveAPIOrderTarget(ctx, q, input); appErr != nil || found {
+		return resolution, appErr
+	}
+	if resolution, found, appErr := resolveAPIIntentTarget(ctx, q, input); appErr != nil || found {
+		return resolution, appErr
+	}
+	return reportTargetResolution{}, targetNotFound()
+}
+
+func resolveCarpoolApplicationTarget(ctx context.Context, q queryer, input report.CreateReportInput) (reportTargetResolution, bool, *domain.AppError) {
+	targetID := strings.TrimSpace(input.TargetID)
+	var title, status, ownerID, ownerUsername, buyerID, buyerUsername, membershipID, membershipStatus string
+	err := q.QueryRow(ctx, `
+		SELECT a.listing_title_snapshot, a.status, owner.id::text, owner.username,
+		       buyer.id::text, buyer.username, COALESCE(m.id::text, ''), COALESCE(m.status, '')
+		FROM carpool_applications a
+		JOIN users owner ON owner.id = a.owner_user_id
+		JOIN users buyer ON buyer.id = a.buyer_user_id
+		LEFT JOIN carpool_memberships m ON m.carpool_application_id = a.id
+		WHERE a.id = $1
+	`, targetID).Scan(&title, &status, &ownerID, &ownerUsername, &buyerID, &buyerUsername, &membershipID, &membershipStatus)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return reportTargetResolution{}, false, nil
+	}
+	if err != nil {
+		return reportTargetResolution{}, true, internalStoreError()
+	}
+	reporterRole, respondentID, respondentUsername, appErr := participantRole(input.ReporterUserID, ownerID, ownerUsername, buyerID, buyerUsername, "owner", "buyer")
+	if appErr != nil {
+		return reportTargetResolution{}, true, appErr
+	}
+	canonicalType := report.TargetCarpoolApplication
+	canonicalID := targetID
+	if membershipID != "" {
+		canonicalType = report.TargetCarpoolMembership
+		canonicalID = membershipID
+	}
+	return reportTargetResolution{
+		TargetLabel:         nonEmpty(input.TargetLabel, title, "拼车申请"),
+		CanonicalTargetType: canonicalType,
+		CanonicalTargetID:   canonicalID,
+		ReportedUserID:      respondentID,
+		ReportedUsername:    respondentUsername,
+		ReporterRole:        reporterRole,
+		RespondentUserID:    respondentID,
+		RespondentUsername:  respondentUsername,
+		Participants:        reportParticipants("owner", ownerID, ownerUsername, "buyer", buyerID, buyerUsername),
+		BusinessStatus:      joinedStatus("application", status, "membership", membershipStatus),
+		HasMembership:       membershipID != "",
+	}, true, nil
+}
+
+func resolveCarpoolMembershipTarget(ctx context.Context, q queryer, input report.CreateReportInput) (reportTargetResolution, *domain.AppError) {
+	targetID := strings.TrimSpace(input.TargetID)
+	var title, status, ownerID, ownerUsername, buyerID, buyerUsername string
+	err := q.QueryRow(ctx, `
+		SELECT l.title, m.status, owner.id::text, owner.username, buyer.id::text, buyer.username
+		FROM carpool_memberships m
+		JOIN carpool_listings l ON l.id = m.carpool_listing_id
+		JOIN users owner ON owner.id = m.owner_user_id
+		JOIN users buyer ON buyer.id = m.buyer_user_id
+		WHERE m.id = $1
+	`, targetID).Scan(&title, &status, &ownerID, &ownerUsername, &buyerID, &buyerUsername)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return reportTargetResolution{}, targetNotFound()
+	}
+	if err != nil {
+		return reportTargetResolution{}, internalStoreError()
+	}
+	reporterRole, respondentID, respondentUsername, appErr := participantRole(input.ReporterUserID, ownerID, ownerUsername, buyerID, buyerUsername, "owner", "buyer")
+	if appErr != nil {
+		return reportTargetResolution{}, appErr
+	}
+	return reportTargetResolution{
+		TargetLabel:         nonEmpty(input.TargetLabel, title, "拼车成员关系"),
+		CanonicalTargetType: report.TargetCarpoolMembership,
+		CanonicalTargetID:   targetID,
+		ReportedUserID:      respondentID,
+		ReportedUsername:    respondentUsername,
+		ReporterRole:        reporterRole,
+		RespondentUserID:    respondentID,
+		RespondentUsername:  respondentUsername,
+		Participants:        reportParticipants("owner", ownerID, ownerUsername, "buyer", buyerID, buyerUsername),
+		BusinessStatus:      status,
+		HasMembership:       true,
+	}, nil
+}
+
+func resolveAPIIntentTarget(ctx context.Context, q queryer, input report.CreateReportInput) (reportTargetResolution, bool, *domain.AppError) {
+	targetID := strings.TrimSpace(input.TargetID)
+	var title, status, ownerID, ownerUsername, buyerID, buyerUsername, orderID, orderStatus string
+	err := q.QueryRow(ctx, `
+		SELECT i.service_title_snapshot, i.status, owner.id::text, owner.username,
+		       buyer.id::text, buyer.username, COALESCE(o.id::text, ''), COALESCE(o.status, '')
+		FROM api_purchase_intents i
+		JOIN users owner ON owner.id = i.owner_user_id
+		JOIN users buyer ON buyer.id = i.buyer_user_id
+		LEFT JOIN api_orders o ON o.api_purchase_intent_id = i.id
+		WHERE i.id = $1
+	`, targetID).Scan(&title, &status, &ownerID, &ownerUsername, &buyerID, &buyerUsername, &orderID, &orderStatus)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return reportTargetResolution{}, false, nil
+	}
+	if err != nil {
+		return reportTargetResolution{}, true, internalStoreError()
+	}
+	reporterRole, respondentID, respondentUsername, appErr := participantRole(input.ReporterUserID, ownerID, ownerUsername, buyerID, buyerUsername, "merchant", "buyer")
+	if appErr != nil {
+		return reportTargetResolution{}, true, appErr
+	}
+	canonicalType := report.TargetAPIPurchaseIntent
+	canonicalID := targetID
+	if orderID != "" {
+		canonicalType = report.TargetAPIOrder
+		canonicalID = orderID
+	}
+	return reportTargetResolution{
+		TargetLabel:         nonEmpty(input.TargetLabel, title, "API 购买意向"),
+		CanonicalTargetType: canonicalType,
+		CanonicalTargetID:   canonicalID,
+		ReportedUserID:      respondentID,
+		ReportedUsername:    respondentUsername,
+		ReporterRole:        reporterRole,
+		RespondentUserID:    respondentID,
+		RespondentUsername:  respondentUsername,
+		Participants:        reportParticipants("merchant", ownerID, ownerUsername, "buyer", buyerID, buyerUsername),
+		BusinessStatus:      joinedStatus("intent", status, "order", orderStatus),
+		HasOrder:            orderID != "",
+	}, true, nil
+}
+
+func resolveAPIOrderTarget(ctx context.Context, q queryer, input report.CreateReportInput) (reportTargetResolution, bool, *domain.AppError) {
+	targetID := strings.TrimSpace(input.TargetID)
+	var title, status, ownerID, ownerUsername, buyerID, buyerUsername string
+	err := q.QueryRow(ctx, `
+		SELECT o.service_title_snapshot, o.status, owner.id::text, owner.username, buyer.id::text, buyer.username
+		FROM api_orders o
+		JOIN users owner ON owner.id = o.seller_user_id
+		JOIN users buyer ON buyer.id = o.buyer_user_id
+		WHERE o.id = $1
+	`, targetID).Scan(&title, &status, &ownerID, &ownerUsername, &buyerID, &buyerUsername)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return reportTargetResolution{}, false, nil
+	}
+	if err != nil {
+		return reportTargetResolution{}, true, internalStoreError()
+	}
+	reporterRole, respondentID, respondentUsername, appErr := participantRole(input.ReporterUserID, ownerID, ownerUsername, buyerID, buyerUsername, "merchant", "buyer")
+	if appErr != nil {
+		return reportTargetResolution{}, true, appErr
+	}
+	return reportTargetResolution{
+		TargetLabel:         nonEmpty(input.TargetLabel, title, "API 订单"),
+		CanonicalTargetType: report.TargetAPIOrder,
+		CanonicalTargetID:   targetID,
+		ReportedUserID:      respondentID,
+		ReportedUsername:    respondentUsername,
+		ReporterRole:        reporterRole,
+		RespondentUserID:    respondentID,
+		RespondentUsername:  respondentUsername,
+		Participants:        reportParticipants("merchant", ownerID, ownerUsername, "buyer", buyerID, buyerUsername),
+		BusinessStatus:      status,
+		HasOrder:            true,
+	}, true, nil
+}
+
+func participantRole(reporterID, ownerID, ownerUsername, buyerID, buyerUsername, ownerRole, buyerRole string) (string, string, string, *domain.AppError) {
+	switch reporterID {
+	case ownerID:
+		return ownerRole, buyerID, buyerUsername, nil
+	case buyerID:
+		return buyerRole, ownerID, ownerUsername, nil
+	default:
+		return "", "", "", reportPermissionDenied()
+	}
+}
+
+func reportParticipants(firstRole, firstUserID, firstUsername, secondRole, secondUserID, secondUsername string) []reportTargetParticipant {
+	return []reportTargetParticipant{
+		{Role: firstRole, UserID: firstUserID, Username: firstUsername},
+		{Role: secondRole, UserID: secondUserID, Username: secondUsername},
+	}
+}
+
+func buildReportTargetSnapshot(input report.CreateReportInput, resolution reportTargetResolution) (string, *domain.AppError) {
+	payload := map[string]any{
+		"submittedTargetType":       strings.TrimSpace(input.TargetType),
+		"submittedTargetId":         strings.TrimSpace(input.TargetID),
+		"canonicalTargetType":       resolution.CanonicalTargetType,
+		"canonicalTargetId":         resolution.CanonicalTargetID,
+		"targetLabel":               resolution.TargetLabel,
+		"reportedUsername":          resolution.ReportedUsername,
+		"reporterRole":              resolution.ReporterRole,
+		"primaryRespondentUserId":   resolution.RespondentUserID,
+		"primaryRespondentUsername": resolution.RespondentUsername,
+		"participants":              resolution.Participants,
+		"businessStatus":            resolution.BusinessStatus,
+		"hasOrder":                  resolution.HasOrder,
+		"hasMembership":             resolution.HasMembership,
+		"containsContactValue":      false,
+	}
+	data, err := json.Marshal(payload)
+	if err != nil {
+		return "", internalStoreError()
+	}
+	return string(data), nil
+}
+
+func ensureNoActiveReportForCanonicalTarget(ctx context.Context, q queryer, reporterID, targetType, targetID string) *domain.AppError {
+	var existingID string
+	err := q.QueryRow(ctx, `
+		SELECT id::text
+		FROM reports
+		WHERE reporter_user_id = $1
+		  AND canonical_target_type = $2
+		  AND canonical_target_id = $3
+		  AND status IN ('submitted', 'triaged', 'needs_info', 'dispute_opened')
+		LIMIT 1
+	`, reporterID, targetType, targetID).Scan(&existingID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return internalStoreError()
+	}
+	return activeReportExists()
+}
+
+func joinedStatus(firstLabel, firstValue, secondLabel, secondValue string) string {
+	firstValue = strings.TrimSpace(firstValue)
+	secondValue = strings.TrimSpace(secondValue)
+	if secondValue == "" {
+		return firstValue
+	}
+	return firstLabel + ":" + firstValue + " " + secondLabel + ":" + secondValue
 }
 
 func userIDForUsername(ctx context.Context, q queryer, username string) (string, *domain.AppError) {
@@ -717,6 +1024,81 @@ func insertDisputeEvent(ctx context.Context, tx pgx.Tx, entityType, entityID, ac
 	return nil
 }
 
+func insertReportModerationAuditLog(ctx context.Context, tx pgx.Tx, input report.AdminActionInput, before, after report.Report, now time.Time) *domain.AppError {
+	return insertModerationAuditLog(ctx, tx, input, "report", after.ID, after.ID, "", "", reportAuditPayload(before), reportAuditPayload(after), now)
+}
+
+func insertDisputeModerationAuditLog(ctx context.Context, tx pgx.Tx, input report.AdminActionInput, before, after report.DisputeCase, now time.Time) *domain.AppError {
+	return insertModerationAuditLog(ctx, tx, input, "dispute_case", after.ID, after.ReportID, after.ID, "", disputeAuditPayload(before), disputeAuditPayload(after), now)
+}
+
+func insertAppealModerationAuditLog(ctx context.Context, tx pgx.Tx, input report.AdminActionInput, before, after report.Appeal, now time.Time) *domain.AppError {
+	return insertModerationAuditLog(ctx, tx, input, "appeal", after.ID, after.ReportID, after.DisputeID, after.ID, appealAuditPayload(before), appealAuditPayload(after), now)
+}
+
+func insertModerationAuditLog(ctx context.Context, tx pgx.Tx, input report.AdminActionInput, objectType, objectID, basisReportID, basisDisputeID, basisAppealID string, beforePayload, afterPayload map[string]any, now time.Time) *domain.AppError {
+	beforeJSON, err := json.Marshal(beforePayload)
+	if err != nil {
+		return internalStoreError()
+	}
+	afterJSON, err := json.Marshal(afterPayload)
+	if err != nil {
+		return internalStoreError()
+	}
+	_, err = tx.Exec(ctx, `
+		INSERT INTO moderation_audit_logs (
+			actor_admin_id, action, object_type, object_id,
+			basis_report_id, basis_dispute_case_id, basis_appeal_id,
+			before_json, after_json, reason_internal, request_id, created_at
+		)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9::jsonb, $10, $11, $12)
+	`, input.AdminUserID, input.Action, objectType, objectID, nullUUID(basisReportID), nullUUID(basisDisputeID), nullUUID(basisAppealID),
+		string(beforeJSON), string(afterJSON), strings.TrimSpace(input.Reason), strings.TrimSpace(input.RequestID), now)
+	if err != nil {
+		return internalStoreError()
+	}
+	return nil
+}
+
+func reportAuditPayload(item report.Report) map[string]any {
+	return map[string]any{
+		"id":                  item.ID,
+		"status":              item.Status,
+		"version":             item.Version,
+		"canonicalTargetType": item.CanonicalTargetType,
+		"canonicalTargetId":   item.CanonicalTargetID,
+		"disputeId":           item.DisputeID,
+		"handledAt":           item.HandledAt,
+	}
+}
+
+func disputeAuditPayload(item report.DisputeCase) map[string]any {
+	return map[string]any{
+		"id":               item.ID,
+		"reportId":         item.ReportID,
+		"status":           item.Status,
+		"version":          item.Version,
+		"targetType":       item.TargetType,
+		"targetId":         item.TargetID,
+		"publicSummary":    item.PublicSummary,
+		"publicResultCode": item.PublicResultCode,
+		"publicResult":     item.PublicResult,
+		"resolvedAt":       item.ResolvedAt,
+		"closedAt":         item.ClosedAt,
+	}
+}
+
+func appealAuditPayload(item report.Appeal) map[string]any {
+	return map[string]any{
+		"id":        item.ID,
+		"reportId":  item.ReportID,
+		"disputeId": item.DisputeID,
+		"status":    item.Status,
+		"version":   item.Version,
+		"handledAt": item.HandledAt,
+	}
+}
+
 func scanReports(rows pgx.Rows) ([]report.Report, *domain.AppError) {
 	items := []report.Report{}
 	for rows.Next() {
@@ -745,7 +1127,10 @@ func scanReportRow(row scanner) (report.Report, error) {
 		&item.ReporterName,
 		&item.TargetType,
 		&item.TargetID,
+		&item.CanonicalTargetType,
+		&item.CanonicalTargetID,
 		&item.TargetLabel,
+		&item.TargetSnapshotJSON,
 		&item.ReportedUsername,
 		&item.ReasonCode,
 		&item.Title,
@@ -797,6 +1182,7 @@ func scanDisputeRow(row scanner) (report.DisputeCase, error) {
 		&item.CounterpartyName,
 		&item.Status,
 		&item.PublicSummary,
+		&item.PublicResultCode,
 		&item.PublicResult,
 		&item.AdminReason,
 		&item.OpenedByAdminID,
@@ -873,12 +1259,42 @@ func targetNotFound() *domain.AppError {
 	return domain.NewError(http.StatusNotFound, domain.CodeObjectNotFound, "Report target not found", "举报目标不存在或不可见。")
 }
 
+func reportPermissionDenied() *domain.AppError {
+	return domain.NewError(http.StatusForbidden, domain.CodePermissionDenied, "Permission denied", "你没有权限举报该对象。")
+}
+
+func selfReportForbidden() *domain.AppError {
+	return domain.NewError(http.StatusForbidden, domain.CodePermissionDenied, "Permission denied", "不能举报自己。")
+}
+
+func activeReportExists() *domain.AppError {
+	return domain.NewError(http.StatusConflict, domain.CodeActiveReportExists, "Active report exists", "你已对该对象提交过进行中的举报或人工介入申请。")
+}
+
 func reportInvalidState(detail string) *domain.AppError {
 	return domain.NewError(http.StatusConflict, domain.CodeInvalidStateTransition, "Invalid report state", detail)
 }
 
 func versionConflict() *domain.AppError {
 	return domain.NewError(http.StatusPreconditionFailed, domain.CodeVersionConflict, "Version conflict", "资源版本已变化，请刷新后重试。")
+}
+
+func canFinishReport(status string) bool {
+	switch status {
+	case report.ReportStatusSubmitted, report.ReportStatusTriaged, report.ReportStatusNeedsInfo:
+		return true
+	default:
+		return false
+	}
+}
+
+func canOpenDisputeFromReport(status string) bool {
+	switch status {
+	case report.ReportStatusSubmitted, report.ReportStatusTriaged, report.ReportStatusNeedsInfo:
+		return true
+	default:
+		return false
+	}
 }
 
 func nonEmpty(values ...string) string {
@@ -904,7 +1320,10 @@ const reportColumns = `
 	reporter.display_name,
 	r.target_type,
 	r.target_id,
+	r.canonical_target_type,
+	r.canonical_target_id,
 	r.target_label,
+	r.target_snapshot_json::text,
 	COALESCE(NULLIF(r.reported_username, ''), reported.username, ''),
 	r.reason_code,
 	r.title,
@@ -925,7 +1344,10 @@ const reportReturningColumns = `
 	(SELECT display_name FROM users WHERE users.id = reports.reporter_user_id),
 	reports.target_type,
 	reports.target_id,
+	reports.canonical_target_type,
+	reports.canonical_target_id,
 	reports.target_label,
+	reports.target_snapshot_json::text,
 	COALESCE(NULLIF(reports.reported_username, ''), (SELECT username FROM users WHERE users.id = reports.reported_user_id), ''),
 	reports.reason_code,
 	reports.title,
@@ -959,6 +1381,7 @@ const disputeColumns = `
 	COALESCE(counterparty_user.display_name, ''),
 	d.status,
 	d.public_summary,
+	d.public_result_code,
 	d.public_result,
 	d.admin_reason,
 	d.opened_by_admin_id::text,
@@ -983,6 +1406,7 @@ const disputeReturningColumns = `
 	COALESCE((SELECT display_name FROM users WHERE users.id = dispute_cases.counterparty_user_id), ''),
 	dispute_cases.status,
 	dispute_cases.public_summary,
+	dispute_cases.public_result_code,
 	dispute_cases.public_result,
 	dispute_cases.admin_reason,
 	dispute_cases.opened_by_admin_id::text,

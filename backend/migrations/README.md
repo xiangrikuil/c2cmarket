@@ -130,13 +130,14 @@ completed and that reviewer/reviewee match the membership buyer/owner. The uniqu
 `(source_type, source_id, reviewer_user_id)` constraint makes repeated review
 submission an update of the same review rather than a second public record.
 
-Version 22 stores `reports`, `dispute_cases`, `appeals`, and `dispute_events`.
+Version 22 stores `reports`, `dispute_cases`, `appeals`, `dispute_events`, and
+`moderation_audit_logs`.
 Report and appeal creation plus admin actions are idempotent, versioned where
 applicable, and append dispute events in the same transaction. Public dispute
-reads come only from `dispute_cases.public_summary` and `public_result`; they
-must not expose reporter IDs, admin IDs, contact values, internal notes, evidence
-descriptions, payment, refund, compensation, escrow, guarantee, fulfillment, or
-credential-delivery semantics.
+reads come only from `dispute_cases.public_summary`, `public_result_code`, and
+`public_result`; they must not expose reporter IDs, admin IDs, contact values,
+internal notes, evidence descriptions, payment, refund, compensation, escrow,
+guarantee, fulfillment, or credential-delivery semantics.
 
 ## Contact Retention And Destruction
 

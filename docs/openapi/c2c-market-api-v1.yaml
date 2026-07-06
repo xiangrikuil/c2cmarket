@@ -1361,8 +1361,8 @@ paths:
       security:
         - sessionCookie: []
           csrfToken: []
-      summary: Submit a report for a contact snapshot, public user, carpool membership, or API purchase intent.
-      description: User-submitted content must not contain full contact values, passwords, API keys, tokens, sessions, cookies, recovery codes, or other credential material.
+      summary: Submit a report or manual-intervention request for a public user, contact snapshot, carpool record, API intent, or API order.
+      description: User-submitted content must be de-identified. The platform records status and public-safe summaries only; it does not refund, compensate, escrow, guarantee, adjudicate off-platform payment, or verify API keys.
       parameters:
         - $ref: "#/components/parameters/IdempotencyKey"
       requestBody:
@@ -3835,6 +3835,40 @@ paths:
           $ref: "#/components/responses/Problem"
         "428":
           $ref: "#/components/responses/Problem"
+  /api/v1/admin/reports/{id}/request-info:
+    post:
+      operationId: requestReportInfo
+      tags: [AdminReports]
+      security:
+        - sessionCookie: []
+          csrfToken: []
+      parameters:
+        - $ref: "#/components/parameters/ResourceId"
+        - $ref: "#/components/parameters/IfMatch"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ReportActionRequest"
+      responses:
+        "200":
+          description: Report marked as needing additional information before dispute opening.
+          headers:
+            ETag:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminReportMutation"
+        "409":
+          $ref: "#/components/responses/Problem"
+        "412":
+          $ref: "#/components/responses/Problem"
+        "428":
+          $ref: "#/components/responses/Problem"
   /api/v1/admin/reports/{id}/reject:
     post:
       operationId: rejectReport
@@ -3889,6 +3923,40 @@ paths:
       responses:
         "200":
           description: Report converted into an open dispute case.
+          headers:
+            ETag:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminReportMutation"
+        "409":
+          $ref: "#/components/responses/Problem"
+        "412":
+          $ref: "#/components/responses/Problem"
+        "428":
+          $ref: "#/components/responses/Problem"
+  /api/v1/admin/reports/{id}/close:
+    post:
+      operationId: closeReport
+      tags: [AdminReports]
+      security:
+        - sessionCookie: []
+          csrfToken: []
+      parameters:
+        - $ref: "#/components/parameters/ResourceId"
+        - $ref: "#/components/parameters/IfMatch"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ReportActionRequest"
+      responses:
+        "200":
+          description: Report closed without opening a dispute.
           headers:
             ETag:
               schema:
@@ -7700,7 +7768,7 @@ components:
       properties:
         targetType:
           type: string
-          enum: [contact_snapshot, public_user, carpool_membership, api_purchase_intent, api_order]
+          enum: [contact_snapshot, public_user, carpool_application, carpool_membership, api_purchase_intent, api_order]
         targetId:
           type: string
           description: Target resource id, contact snapshot id, or reported username for public-user reports.
@@ -7712,7 +7780,7 @@ components:
           description: Required for public-user reports and optional for contact snapshot reports.
         reasonCode:
           type: string
-          enum: [invalid, unreachable, impersonation, other]
+          enum: [unreachable, contact_invalid, impersonation, description_mismatch, seat_rule_dispute, api_quota_dispute, order_delivery_dispute, other]
         title:
           type: string
           minLength: 2
@@ -7724,7 +7792,7 @@ components:
           description: Must not contain full contact values, passwords, API keys, tokens, sessions, cookies, recovery codes, or other credential material.
     Report:
       type: object
-      required: [id, reporterUsername, reporterName, targetType, targetId, targetLabel, reportedUsername, reasonCode, title, status, createdAt, updatedAt, version]
+      required: [id, reporterUsername, reporterName, targetType, targetId, canonicalTargetType, canonicalTargetId, targetLabel, reportedUsername, reasonCode, title, status, createdAt, updatedAt, version]
       properties:
         id:
           type: string
@@ -7739,16 +7807,24 @@ components:
           type: string
         targetType:
           type: string
-          enum: [contact_snapshot, public_user, carpool_membership, api_purchase_intent, api_order]
+          enum: [contact_snapshot, public_user, carpool_application, carpool_membership, api_purchase_intent, api_order]
         targetId:
+          type: string
+        canonicalTargetType:
+          type: string
+          enum: [contact_snapshot, public_user, carpool_application, carpool_membership, api_purchase_intent, api_order]
+        canonicalTargetId:
           type: string
         targetLabel:
           type: string
+        targetSnapshotJson:
+          type: string
+          description: Admin response only. JSON string with de-identified target context; never contains contact values, payment credentials, raw evidence, or secrets.
         reportedUsername:
           type: string
         reasonCode:
           type: string
-          enum: [invalid, unreachable, impersonation, other]
+          enum: [unreachable, contact_invalid, impersonation, description_mismatch, seat_rule_dispute, api_quota_dispute, order_delivery_dispute, other]
         title:
           type: string
         description:
@@ -7756,7 +7832,7 @@ components:
           description: Admin response only; user-facing lists omit raw report description.
         status:
           type: string
-          enum: [submitted, triaged, rejected, dispute_opened]
+          enum: [submitted, triaged, needs_info, rejected, dispute_opened, closed]
         adminReason:
           type: string
           description: Admin/self moderation context only; never part of public dispute summaries.
@@ -7803,6 +7879,10 @@ components:
           minLength: 2
           maxLength: 120
           description: Public-safe dispute summary for open/resolve/close actions.
+        publicResultCode:
+          type: string
+          enum: [no_action, contact_invalid, impersonation_confirmed, description_mismatch, rule_or_seat_issue, api_delivery_issue, other_resolved]
+          description: Stable public-safe result code. Required when resolving a dispute.
         publicResult:
           type: string
           minLength: 2
@@ -7810,7 +7890,7 @@ components:
           description: Public-safe result text. It must not mention refunds, payment custody, guarantees, or credentials.
     DisputeCase:
       type: object
-      required: [id, targetType, targetId, targetLabel, primaryUsername, primaryDisplayName, counterpartyUsername, counterpartyName, status, publicSummary, publicResult, openedAt, createdAt, updatedAt, version]
+      required: [id, targetType, targetId, targetLabel, primaryUsername, primaryDisplayName, counterpartyUsername, counterpartyName, status, publicSummary, publicResultCode, publicResult, openedAt, createdAt, updatedAt, version]
       properties:
         id:
           type: string
@@ -7820,7 +7900,7 @@ components:
           format: uuid
         targetType:
           type: string
-          enum: [contact_snapshot, public_user, carpool_membership, api_purchase_intent, api_order]
+          enum: [contact_snapshot, public_user, carpool_application, carpool_membership, api_purchase_intent, api_order]
         targetId:
           type: string
         targetLabel:
@@ -7846,6 +7926,9 @@ components:
           enum: [open, waiting_info, resolved, closed]
         publicSummary:
           type: string
+        publicResultCode:
+          type: string
+          enum: [no_action, contact_invalid, impersonation_confirmed, description_mismatch, rule_or_seat_issue, api_delivery_issue, other_resolved]
         publicResult:
           type: string
         adminReason:
@@ -7925,7 +8008,7 @@ components:
           format: uuid
         targetType:
           type: string
-          enum: [contact_snapshot, public_user, carpool_membership, api_purchase_intent, api_order]
+          enum: [contact_snapshot, public_user, carpool_application, carpool_membership, api_purchase_intent, api_order]
         targetId:
           type: string
         title:

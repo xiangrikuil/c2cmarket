@@ -2,7 +2,7 @@
 import { computed, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useQueryClient } from '@tanstack/vue-query'
-import { CheckCircle2, RotateCcw, ShieldAlert, Star, UserCheck, XCircle } from 'lucide-vue-next'
+import { CheckCircle2, Flag, RotateCcw, ShieldAlert, Star, UserCheck, XCircle } from 'lucide-vue-next'
 import { toast } from 'vue-sonner'
 import OrderContactCard from '@/components/profile/OrderContactCard.vue'
 import { Badge } from '@/components/ui/badge'
@@ -14,6 +14,7 @@ import {
   buyerConfirmCarpoolCompleted,
   buyerConfirmCarpoolJoined,
   cancelCarpoolApplication,
+  createManualInterventionReport,
   disputeCarpoolApplication,
   getCarpoolApplicationNextAction,
   getCarpoolApplicationStatusLabel,
@@ -163,6 +164,20 @@ function openDispute() {
   runAction(() => disputeCarpoolApplication(application.value!.id, realBackend ? '车主主动移除成员关系' : '用户发起人工复核'), realBackend ? '已移除成员关系。' : '已进入纠纷记录。')
 }
 
+function requestManualIntervention() {
+  if (!application.value) return
+  const description = window.prompt('请填写 4-1000 字脱敏说明。平台只记录处理状态和公开摘要，不追回付款、不托管、不担保、不裁决站外支付、不验真 API Key。')
+  if (!description?.trim()) return
+  runAction(() => createManualInterventionReport({
+    targetType: 'carpool_application',
+    targetId: application.value!.id,
+    targetLabel: application.value!.snapshot.productName,
+    reasonCode: 'seat_rule_dispute',
+    title: '举报 / 申请人工介入：规则或席位争议',
+    description: description.trim(),
+  }), '已提交人工介入申请。')
+}
+
 function submitReview() {
   if (!application.value) return
   runAction(() => reviewCarpoolApplication(application.value!.id, { rating: 5, tags: ['规则清楚', '服务稳定'], note: '规则清楚，服务稳定。' }), '评价已记录。')
@@ -197,6 +212,7 @@ function submitReview() {
         <Button v-if="canReview" variant="outline" :disabled="actionBusy" @click="submitReview"><Star class="h-4 w-4" />评价车主</Button>
         <Button v-if="canOwnerWithdrawAcceptance" variant="outline" :disabled="actionBusy" @click="withdrawAcceptance"><RotateCcw class="h-4 w-4" />撤回接受</Button>
         <Button v-if="canRemoveMember" variant="outline" :disabled="actionBusy" @click="openDispute"><ShieldAlert class="h-4 w-4" />{{ realBackend ? '移除成员' : '纠纷' }}</Button>
+        <Button variant="outline" :disabled="actionBusy" @click="requestManualIntervention"><Flag class="h-4 w-4" />申请人工介入</Button>
         <Button v-if="canBuyerCancelApplication" variant="outline" :disabled="actionBusy" @click="cancelApplication"><RotateCcw class="h-4 w-4" />{{ buyerCancelLabel }}</Button>
         <Button v-if="canBuyerLeaveMembership" variant="outline" :disabled="actionBusy" @click="leaveMembership"><RotateCcw class="h-4 w-4" />退出拼车</Button>
       </div>

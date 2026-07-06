@@ -48,6 +48,9 @@ func (s *Service) CreateReportWithIdempotency(ctx context.Context, user auth.Use
 	input.ReporterUserID = user.ID
 	input.ReporterUsername = user.Username
 	input.ReporterName = displayName(user)
+	input.TargetType = normalize(input.TargetType)
+	input.ReasonCode = normalizeReason(input.ReasonCode)
+	input.ReportedUsername = normalizeUsername(input.ReportedUsername)
 	if appErr := validateCreateReport(input); appErr != nil {
 		return idempotency.Completion{}, appErr
 	}
@@ -66,7 +69,11 @@ func (s *Service) CreateReportWithIdempotency(ctx context.Context, user auth.Use
 		}
 		return completion, nil
 	}
-	item := s.createReportMemory(input)
+	item, appErr := s.createReportMemory(input)
+	if appErr != nil {
+		s.idempotency.Cancel(ctx, entry)
+		return idempotency.Completion{}, appErr
+	}
 	completion, appErr := buildCompletion(item)
 	return s.complete(ctx, entry, completion, appErr)
 }
@@ -128,6 +135,7 @@ func (s *Service) AdminReportActionWithIdempotency(ctx context.Context, user aut
 		return idempotency.Completion{}, appErr
 	}
 	input.AdminUserID = user.ID
+	input.PublicResultCode = normalizePublicResultCode(input.PublicResultCode)
 	if appErr := validateReportAction(input); appErr != nil {
 		return idempotency.Completion{}, appErr
 	}
@@ -193,6 +201,7 @@ func (s *Service) AdminDisputeActionWithIdempotency(ctx context.Context, user au
 		return idempotency.Completion{}, appErr
 	}
 	input.AdminUserID = user.ID
+	input.PublicResultCode = normalizePublicResultCode(input.PublicResultCode)
 	if appErr := validateDisputeAction(input); appErr != nil {
 		return idempotency.Completion{}, appErr
 	}
@@ -407,6 +416,7 @@ func (s *Service) RegisterAPIOrderDispute(ctx context.Context, input apiorder.Di
 		CounterpartyUserID: strings.TrimSpace(counterpartyID),
 		Status:             DisputeStatusOpen,
 		PublicSummary:      "API 订单纠纷",
+		PublicResultCode:   PublicResultNoAction,
 		PublicResult:       "已进入人工处理中",
 		AdminReason:        strings.TrimSpace(input.Reason),
 		OpenedByAdminID:    strings.TrimSpace(input.ActorUserID),
@@ -421,29 +431,49 @@ func (s *Service) RegisterAPIOrderDispute(ctx context.Context, input apiorder.Di
 	return item.ID, nil
 }
 
-func (s *Service) createReportMemory(input CreateReportInput) Report {
+func (s *Service) createReportMemory(input CreateReportInput) (Report, *domain.AppError) {
 	now := s.now()
+	reportedUsername := normalizeUsername(input.ReportedUsername)
+	if input.TargetType == TargetPublicUser {
+		if reportedUsername == "" {
+			reportedUsername = normalizeUsername(input.TargetID)
+		}
+		if reportedUsername != "" && matchesUsername(reportedUsername, input.ReporterUsername) {
+			return Report{}, selfReportForbidden()
+		}
+	}
 	item := Report{
-		ID:               uuid.NewString(),
-		ReporterUserID:   input.ReporterUserID,
-		ReporterUsername: input.ReporterUsername,
-		ReporterName:     input.ReporterName,
-		TargetType:       strings.TrimSpace(input.TargetType),
-		TargetID:         strings.TrimSpace(input.TargetID),
-		TargetLabel:      strings.TrimSpace(input.TargetLabel),
-		ReportedUsername: normalizeUsername(input.ReportedUsername),
-		ReasonCode:       normalizeReason(input.ReasonCode),
-		Title:            strings.TrimSpace(input.Title),
-		Description:      strings.TrimSpace(input.Description),
-		Status:           ReportStatusSubmitted,
-		CreatedAt:        now,
-		UpdatedAt:        now,
-		Version:          1,
+		ID:                  uuid.NewString(),
+		ReporterUserID:      input.ReporterUserID,
+		ReporterUsername:    input.ReporterUsername,
+		ReporterName:        input.ReporterName,
+		TargetType:          strings.TrimSpace(input.TargetType),
+		TargetID:            strings.TrimSpace(input.TargetID),
+		CanonicalTargetType: strings.TrimSpace(input.TargetType),
+		CanonicalTargetID:   strings.TrimSpace(input.TargetID),
+		TargetLabel:         strings.TrimSpace(input.TargetLabel),
+		TargetSnapshotJSON:  "{}",
+		ReportedUsername:    reportedUsername,
+		ReasonCode:          normalizeReason(input.ReasonCode),
+		Title:               strings.TrimSpace(input.Title),
+		Description:         strings.TrimSpace(input.Description),
+		Status:              ReportStatusSubmitted,
+		CreatedAt:           now,
+		UpdatedAt:           now,
+		Version:             1,
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	for _, existing := range s.reports {
+		if existing.ReporterUserID == item.ReporterUserID &&
+			existing.CanonicalTargetType == item.CanonicalTargetType &&
+			existing.CanonicalTargetID == item.CanonicalTargetID &&
+			isActiveReportStatus(existing.Status) {
+			return Report{}, activeReportExists()
+		}
+	}
 	s.reports[item.ID] = item
-	return item
+	return item, nil
 }
 
 func (s *Service) updateReportAdminMemory(input AdminActionInput) (MutationResult, *domain.AppError) {
@@ -463,20 +493,30 @@ func (s *Service) updateReportAdminMemory(input AdminActionInput) (MutationResul
 			return MutationResult{}, invalidState("只有新提交的举报可以标记分诊。")
 		}
 		item.Status = ReportStatusTriaged
+	case "request_info":
+		if item.Status != ReportStatusSubmitted && item.Status != ReportStatusTriaged {
+			return MutationResult{}, invalidState("只有新提交或已分诊的举报可以要求补充信息。")
+		}
+		item.Status = ReportStatusNeedsInfo
 	case "reject":
-		if item.Status == ReportStatusRejected || item.Status == ReportStatusDisputeOpened {
+		if !canFinishReport(item.Status) {
 			return MutationResult{}, invalidState("当前举报不能拒绝。")
 		}
 		item.Status = ReportStatusRejected
+	case "close":
+		if !canFinishReport(item.Status) {
+			return MutationResult{}, invalidState("当前举报不能关闭。")
+		}
+		item.Status = ReportStatusClosed
 	case "open_dispute":
-		if item.Status == ReportStatusDisputeOpened || item.Status == ReportStatusRejected {
+		if !canOpenDisputeFromReport(item.Status) {
 			return MutationResult{}, invalidState("当前举报不能打开纠纷。")
 		}
 		dispute := DisputeCase{
 			ID:                   uuid.NewString(),
 			ReportID:             item.ID,
-			TargetType:           item.TargetType,
-			TargetID:             item.TargetID,
+			TargetType:           nonEmpty(item.CanonicalTargetType, item.TargetType),
+			TargetID:             nonEmpty(item.CanonicalTargetID, item.TargetID),
 			TargetLabel:          nonEmpty(input.PublicSummary, item.TargetLabel, item.Title),
 			PrimaryUserID:        item.ReporterUserID,
 			PrimaryUsername:      item.ReporterUsername,
@@ -484,6 +524,7 @@ func (s *Service) updateReportAdminMemory(input AdminActionInput) (MutationResul
 			CounterpartyUsername: item.ReportedUsername,
 			Status:               DisputeStatusOpen,
 			PublicSummary:        nonEmpty(input.PublicSummary, item.Title),
+			PublicResultCode:     nonEmpty(normalizePublicResultCode(input.PublicResultCode), PublicResultNoAction),
 			PublicResult:         nonEmpty(input.PublicResult, "已进入人工处理中"),
 			AdminReason:          strings.TrimSpace(input.Reason),
 			OpenedByAdminID:      input.AdminUserID,
@@ -548,6 +589,7 @@ func (s *Service) updateDisputeAdminMemory(input AdminActionInput) (MutationResu
 	}
 	item.AdminReason = strings.TrimSpace(input.Reason)
 	item.PublicSummary = nonEmpty(input.PublicSummary, item.PublicSummary)
+	item.PublicResultCode = nonEmpty(normalizePublicResultCode(input.PublicResultCode), item.PublicResultCode, PublicResultNoAction)
 	item.PublicResult = nonEmpty(input.PublicResult, item.PublicResult)
 	item.UpdatedAt = now
 	item.Version++
@@ -685,7 +727,7 @@ func validateCreateAppeal(input CreateAppealInput) *domain.AppError {
 
 func validateReportAction(input AdminActionInput) *domain.AppError {
 	switch input.Action {
-	case "triage", "reject", "open_dispute":
+	case "triage", "request_info", "reject", "open_dispute", "close":
 	default:
 		return invalidState("举报处理动作不支持。")
 	}
@@ -698,6 +740,9 @@ func validateReportAction(input AdminActionInput) *domain.AppError {
 		}
 		if appErr := validateText("publicResult", nonEmpty(input.PublicResult, "已进入人工处理中"), 2, 120, "公开处理结果需为 2 至 120 个字符。"); appErr != nil {
 			return appErr
+		}
+		if strings.TrimSpace(input.PublicResultCode) != "" && !validPublicResultCodes[normalizePublicResultCode(input.PublicResultCode)] {
+			return fieldError("publicResultCode", "公开结果代码不支持。")
 		}
 	}
 	return validateText("reason", input.Reason, 2, 800, "处理原因需为 2 至 800 个字符。")
@@ -724,6 +769,12 @@ func validateDisputeAction(input AdminActionInput) *domain.AppError {
 		if appErr := validateText("publicResult", input.PublicResult, 2, 120, "公开处理结果需为 2 至 120 个字符。"); appErr != nil {
 			return appErr
 		}
+	}
+	if input.Action == "resolve" && strings.TrimSpace(input.PublicResultCode) == "" {
+		return fieldError("publicResultCode", "处理完成必须选择公开结果代码。")
+	}
+	if strings.TrimSpace(input.PublicResultCode) != "" && !validPublicResultCodes[normalizePublicResultCode(input.PublicResultCode)] {
+		return fieldError("publicResultCode", "公开结果代码不支持。")
 	}
 	return nil
 }
@@ -832,6 +883,10 @@ func normalizeReason(value string) string {
 	return value
 }
 
+func normalizePublicResultCode(value string) string {
+	return normalize(value)
+}
+
 func normalizeUsername(value string) string {
 	return normalize(value)
 }
@@ -851,18 +906,7 @@ func nonEmpty(values ...string) string {
 }
 
 func looksLikeSecret(value string) bool {
-	lower := strings.ToLower(value)
-	needles := []string{
-		"password", "密码", "api key", "api_key", "apikey", "sub2api key",
-		"token", "session", "cookie", "secret", "bearer ", "access_token",
-		"refresh_token", "恢复码", "mfa", "验证码",
-	}
-	for _, needle := range needles {
-		if strings.Contains(lower, needle) {
-			return true
-		}
-	}
-	return false
+	return domain.LooksLikeSecretContent(value)
 }
 
 func requireAdmin(user auth.User) *domain.AppError {
@@ -908,17 +952,67 @@ func publicProfileNotFound() *domain.AppError {
 	return domain.NewError(http.StatusNotFound, domain.CodeObjectNotFound, "Profile not found", "公开主页不存在。")
 }
 
+func selfReportForbidden() *domain.AppError {
+	return domain.NewError(http.StatusForbidden, domain.CodePermissionDenied, "Permission denied", "不能举报自己。")
+}
+
+func activeReportExists() *domain.AppError {
+	return domain.NewError(http.StatusConflict, domain.CodeActiveReportExists, "Active report exists", "你已对该对象提交过进行中的举报或人工介入申请。")
+}
+
 var validTargets = map[string]bool{
-	TargetContactSnapshot:   true,
-	TargetPublicUser:        true,
-	TargetCarpoolMembership: true,
-	TargetAPIPurchaseIntent: true,
-	TargetAPIOrder:          true,
+	TargetContactSnapshot:    true,
+	TargetPublicUser:         true,
+	TargetCarpoolApplication: true,
+	TargetCarpoolMembership:  true,
+	TargetAPIPurchaseIntent:  true,
+	TargetAPIOrder:           true,
 }
 
 var validReasons = map[string]bool{
-	ReportReasonInvalid:       true,
-	ReportReasonUnreachable:   true,
-	ReportReasonImpersonation: true,
-	ReportReasonOther:         true,
+	ReportReasonUnreachable:          true,
+	ReportReasonContactInvalid:       true,
+	ReportReasonImpersonation:        true,
+	ReportReasonDescriptionMismatch:  true,
+	ReportReasonSeatRuleDispute:      true,
+	ReportReasonAPIQuotaDispute:      true,
+	ReportReasonOrderDeliveryDispute: true,
+	ReportReasonOther:                true,
+}
+
+var validPublicResultCodes = map[string]bool{
+	PublicResultNoAction:               true,
+	PublicResultContactInvalid:         true,
+	PublicResultImpersonationConfirmed: true,
+	PublicResultDescriptionMismatch:    true,
+	PublicResultRuleOrSeatIssue:        true,
+	PublicResultAPIDeliveryIssue:       true,
+	PublicResultOtherResolved:          true,
+}
+
+func canFinishReport(status string) bool {
+	switch status {
+	case ReportStatusSubmitted, ReportStatusTriaged, ReportStatusNeedsInfo:
+		return true
+	default:
+		return false
+	}
+}
+
+func canOpenDisputeFromReport(status string) bool {
+	switch status {
+	case ReportStatusSubmitted, ReportStatusTriaged, ReportStatusNeedsInfo:
+		return true
+	default:
+		return false
+	}
+}
+
+func isActiveReportStatus(status string) bool {
+	switch status {
+	case ReportStatusSubmitted, ReportStatusTriaged, ReportStatusNeedsInfo, ReportStatusDisputeOpened:
+		return true
+	default:
+		return false
+	}
 }
