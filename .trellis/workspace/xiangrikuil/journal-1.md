@@ -168,3 +168,37 @@ Aligned the report/dispute moderation model with v0.4.1: clean pre-launch schema
 ### Next Steps
 
 - None - task complete
+
+
+## Session 5: OAuth account recovery setup
+
+**Date**: 2026-07-06
+**Task**: OAuth account recovery setup
+**Package**: frontend
+**Branch**: `main`
+
+### Summary
+
+Forced frontend account recovery setup after linux.do OAuth: incomplete accounts redirect to account settings, complete verified email plus backup password, and can return to the original page.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `95dff64` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
