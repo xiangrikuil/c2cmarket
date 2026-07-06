@@ -6,7 +6,6 @@ import {
   createContactReport,
   createPublicUserReport,
   confirmEmailVerification,
-  closeDemand,
   deleteContactMethod,
   deleteCustomAvatar,
   getAdminFeedbackTicket,
@@ -42,8 +41,6 @@ import {
   getCarpoolProductCatalog,
   getCarpoolRegions,
   getCarpools,
-  getDemandById,
-  getDemands,
   getFavorites,
   getFeedbackUnreadCount,
   getHomeMarket,
@@ -67,7 +64,6 @@ import {
   setBackupPassword,
   setDefaultContactMethod,
   startEmailVerification,
-  submitDemand,
   submitFeedback,
   submitReview,
   resumeApiService,
@@ -92,11 +88,17 @@ import {
   type CreatePublicProfileReportRequest,
   type SaveContactMethodRequest,
   type SetBackupPasswordRequest,
-  type SubmitDemandPayload,
   type SubmitReviewPayload,
   type TransactionTrendRange,
   type UpdateMyProfileRequest,
 } from '@/lib/api'
+import {
+  closeDemand,
+  getDemandById,
+  getDemands,
+  submitDemand,
+  type SubmitDemandPayload,
+} from '@/features/demand/api'
 
 function valueOf<T>(value: Ref<T> | T): T {
   return typeof value === 'object' && value !== null && 'value' in value ? value.value : value

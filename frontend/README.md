@@ -46,6 +46,8 @@ VITE_DEV_API_PROXY_TARGET=http://127.0.0.1:18090 pnpm dev
 VITE_API_MODE=real VITE_API_BASE_URL=https://CHANGE_ME_DOMAIN pnpm build
 ```
 
+生产构建会拒绝 `VITE_ENABLE_MOCK=true`，避免显式 mock 开关混入发布产物。
+
 部署 `dist/` 时，静态服务器需要把 SPA 路由回退到 `index.html`，API 请求由 `VITE_API_BASE_URL` 指向 Go 后端。完整部署流程见 `../docs/ops/deployment-runbook.md`。
 
 ## 页面

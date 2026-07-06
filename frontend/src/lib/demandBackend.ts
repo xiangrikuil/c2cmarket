@@ -1,4 +1,5 @@
-import type { AdminRow, DemandRecord, SubmitDemandPayload } from '@/lib/api'
+import type { DemandRecord, SubmitDemandPayload } from '@/features/demand/types'
+import type { AdminRow } from '@/lib/api'
 import { backendMutation, backendRequest, ensureBackendSession } from '@/lib/backendClient'
 
 type ListResponse<T> = { items: T[] }

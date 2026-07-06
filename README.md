@@ -142,6 +142,8 @@ pnpm --dir frontend test
 cd backend && go test ./...
 ```
 
+前端生产构建必须使用真实后端配置，并且会拒绝 `VITE_ENABLE_MOCK=true`。
+
 当前真实业务 smoke 脚本：
 
 ```bash

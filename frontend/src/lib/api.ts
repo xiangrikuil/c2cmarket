@@ -13,7 +13,6 @@ import {
   carpoolRegions,
   carpools,
   categoryRows,
-  demands,
   modelCatalog,
   officialPrices,
   myContactMethods,
@@ -166,11 +165,7 @@ import {
 } from '@/lib/officialPriceBackend'
 import {
   backendAdminDemandRows,
-  backendCloseDemand,
-  backendDemandById,
-  backendDemands,
   backendRunAdminDemandAction,
-  backendSubmitDemand,
   backendUpdateAdminDemandStatus,
 } from '@/lib/demandBackend'
 import {
@@ -208,20 +203,20 @@ import {
   type CreatePublicUserReportRequest,
 } from '@/lib/reportBackend'
 import { shouldUseRealBackend } from '@/lib/backendClient'
+import {
+  closeDemand,
+  getDemandById,
+  getDemands,
+  submitDemand,
+} from '@/features/demand/api'
 
-export type Demand = (typeof demands)[number]
-export type DemandStatus = Demand['status'] | '已关闭' | '待审核'
-export type DemandRecord = Demand & {
-  region: string
-  ownerPreference: 'personal' | 'only-personal' | 'only_personal' | 'any'
-  sourceUrl: string
-  note: string
-  createdAt: string
-  updatedAt: string
-  status: DemandStatus
-  backendKind?: 'demand'
-  backendVersion?: number
+export {
+  closeDemand,
+  getDemandById,
+  getDemands,
+  submitDemand,
 }
+export type { DemandRecord, DemandStatus, SubmitDemandPayload } from '@/features/demand/api'
 export type AdminSection =
   | 'official-prices'
   | 'price-leads'
@@ -317,15 +312,6 @@ export type ReviewCenterRow = {
   tags: string[]
   note: string
   createdAt: string
-}
-
-export type SubmitDemandPayload = {
-  sourceUrl: string
-  title: string
-  maxPrice: number
-  region: string
-  ownerPreference: 'personal' | 'only-personal' | 'any'
-  note: string
 }
 
 export type FeedbackTicketType = 'function_issue' | 'data_correction' | 'experience_suggestion' | 'publish_contact_block'
@@ -490,7 +476,6 @@ const carpoolStorageKey = 'c2cmarket.carpools.v1'
 const apiServiceStorageKey = 'c2cmarket.apiServices.v1'
 const apiServicePaymentSnapshotStorageKey = 'c2cmarket.apiServicePaymentSnapshots.v1'
 const apiPaymentAccountSettingsStorageKey = 'c2cmarket.apiPaymentAccountSettings.v1'
-const demandStorageKey = 'c2cmarket.demands.v1'
 const feedbackStorageKey = 'c2cmarket.feedbackTickets.v1'
 const notificationReadStorageKey = 'c2cmarket.notificationReadState.v1'
 const favoriteStorageKey = 'c2cmarket.favorites.v1'
@@ -510,15 +495,6 @@ let carpoolStore = normalizeCarpoolStore(readSessionStore<Carpool[]>(carpoolStor
 let apiServiceStore = normalizeApiServiceStore(readSessionStore<ApiService[]>(apiServiceStorageKey, apiServices))
 let apiServicePaymentSnapshotStore = readSessionStore<Record<string, ApiPaymentOption[]>>(apiServicePaymentSnapshotStorageKey, {})
 let apiPaymentAccountSettingsStore = normalizeApiPaymentAccountSettings(readLocalStore<ApiPaymentAccountSettings | null>(apiPaymentAccountSettingsStorageKey, null))
-let demandStore = readSessionStore<DemandRecord[]>(demandStorageKey, demands.map(item => ({
-  ...item,
-  region: item.title.includes('菲律宾') ? '菲律宾区' : item.title.includes('香港') ? '香港区' : '不限',
-  ownerPreference: item.require.includes('个人车主') ? 'personal' : 'any',
-  sourceUrl: `https://linux.do/t/demand-${item.id}`,
-  note: item.require,
-  createdAt: '2026-06-19 12:00',
-  updatedAt: '2026-06-19 12:00',
-})))
 let feedbackTicketStore = readSessionStore<FeedbackTicket[]>(feedbackStorageKey, [])
 let notificationReadStore = readSessionStore<string[]>(notificationReadStorageKey, [])
 let favoriteStore = readSessionStore<FavoriteRecord[]>(favoriteStorageKey, [])
@@ -687,7 +663,6 @@ function persistMarketStores() {
   window.sessionStorage.setItem(carpoolStorageKey, JSON.stringify(carpoolStore))
   window.sessionStorage.setItem(apiServiceStorageKey, JSON.stringify(apiServiceStore))
   window.sessionStorage.setItem(apiServicePaymentSnapshotStorageKey, JSON.stringify(apiServicePaymentSnapshotStore))
-  window.sessionStorage.setItem(demandStorageKey, JSON.stringify(demandStore))
 }
 
 function persistApiPaymentAccountSettings() {
@@ -1133,6 +1108,27 @@ function appendAdminAuditLog(log: Omit<AdminAuditLog, 'id' | 'createdAt'> & { cr
   persistAdminStores()
 }
 
+function registerMockDemandAuditListener() {
+  if (shouldUseRealBackend()) return
+  void import('@/mocks/demand').then(({ setMockDemandCreatedListener }) => {
+    setMockDemandCreatedListener(demand => {
+      appendAdminAuditLog({
+        actorType: 'system',
+        actorLabel: currentBuyerName,
+        action: '提交求车需求',
+        targetType: 'demand',
+        targetId: demand.id,
+        targetLabel: demand.title,
+        beforeStatus: null,
+        afterStatus: demand.status,
+        reason: demand.note || '用户提交求车需求',
+      })
+    })
+  })
+}
+
+registerMockDemandAuditListener()
+
 function findCarpoolApplication(id: string) {
   const application = carpoolApplicationStore.find(item => item.id === id)
   if (!application) throw new Error(`Carpool application not found: ${id}`)
@@ -1482,13 +1478,14 @@ export async function getHomeMarket() {
       backendOfficialPrices(),
       backendGetCarpools(),
       backendAPIServices({ online: true }),
-      backendDemands(),
+      getDemands(),
     ])
 
     return clone({ categoryRows, officialPrices, carpools, apiServices: apiServices.filter(isApiServicePubliclyOrderable), demands, productTrends, transactionRecords, apiPurchaseIntents: apiPurchaseIntentStore })
   }
   await wait()
-  return clone({ categoryRows, officialPrices: officialPriceStore, carpools: carpoolStore, apiServices: apiServiceStore.filter(isApiServicePubliclyOrderable), demands: demandStore, productTrends, transactionRecords, apiPurchaseIntents: apiPurchaseIntentStore })
+  const demands = await getDemands()
+  return clone({ categoryRows, officialPrices: officialPriceStore, carpools: carpoolStore, apiServices: apiServiceStore.filter(isApiServicePubliclyOrderable), demands, productTrends, transactionRecords, apiPurchaseIntents: apiPurchaseIntentStore })
 }
 
 export async function getTransactionTrendSummary(productId: string, range: TransactionTrendRange): Promise<TransactionTrendSummary | null> {
@@ -1595,12 +1592,6 @@ export async function parseLinuxDoTopic(topicUrl: string) {
     ...parsedLinuxDoTopicMock,
     topicUrl,
   })
-}
-
-export async function getDemands() {
-  if (shouldUseRealBackend()) return backendDemands()
-  await wait()
-  return clone(demandStore)
 }
 
 export async function getModelCatalog() {
@@ -2194,7 +2185,8 @@ export async function getAdminSectionRows(section: AdminSection): Promise<AdminR
   }
 
   if (section === 'demands') {
-    return withAdminRowLinks(demandStore.map(item => ({
+    const demands = await getDemands()
+    return withAdminRowLinks(demands.map(item => ({
       id: item.id,
       primary: item.title,
       secondary: `最高 ¥${item.maxPrice}/月 · ${item.require}`,
@@ -2691,59 +2683,6 @@ export async function resumeApiService(id: string) {
   return clone(target)
 }
 
-export async function submitDemand(payload: SubmitDemandPayload) {
-  if (shouldUseRealBackend()) return backendSubmitDemand(payload)
-  await wait()
-  const id = `demand-${Date.now()}`
-  const demand: DemandRecord = {
-    id,
-    title: payload.title.trim(),
-    maxPrice: payload.maxPrice,
-    require: `${payload.region} · ${payload.ownerPreference === 'only-personal' ? '只看个人车主' : payload.ownerPreference === 'personal' ? '个人车主优先' : '不限车主'} · ${payload.note.trim() || '等待车主匹配'}`,
-    poster: currentBuyerName,
-    trustLevel: 3,
-    linuxdoPost: '已绑定求车帖',
-    status: '匹配中',
-    region: payload.region,
-    ownerPreference: payload.ownerPreference,
-    sourceUrl: payload.sourceUrl,
-    note: payload.note,
-    createdAt: nowText(),
-    updatedAt: nowText(),
-  }
-  demandStore.unshift(demand)
-  persistMarketStores()
-  appendAdminAuditLog({
-    actorType: 'system',
-    actorLabel: currentBuyerName,
-    action: '提交求车需求',
-    targetType: 'demand',
-    targetId: id,
-    targetLabel: demand.title,
-    beforeStatus: null,
-    afterStatus: demand.status,
-    reason: demand.note || '用户提交求车需求',
-  })
-  return clone(demand)
-}
-
-export async function getDemandById(id: string) {
-  if (shouldUseRealBackend()) return backendDemandById(id)
-  await wait()
-  return clone(demandStore.find(item => item.id === id) ?? null)
-}
-
-export async function closeDemand(id: string) {
-  if (shouldUseRealBackend()) return backendCloseDemand(id)
-  await wait()
-  const target = demandStore.find(item => item.id === id)
-  if (!target) throw new Error('未找到求车需求')
-  target.status = target.status === '已关闭' ? '匹配中' : '已关闭'
-  target.updatedAt = nowText()
-  persistMarketStores()
-  return clone(target)
-}
-
 export function getFeedbackTypeLabel(value: FeedbackTicketType) {
   return feedbackTypeLabel(value)
 }
@@ -3012,7 +2951,7 @@ function markReadState<T extends { id: string, unread: boolean }>(items: T[]) {
   return items.map(item => ({ ...item, unread: item.unread && !notificationReadStore.includes(item.id) }))
 }
 
-function buildUnifiedNotifications(): UnifiedNotification[] {
+async function buildUnifiedNotifications(): Promise<UnifiedNotification[]> {
   const carpoolRows: UnifiedNotification[] = carpoolApplicationStore
     .filter(item => [currentBuyerId, currentOwnerId].includes(item.applicantUserId) || [currentBuyerId, currentOwnerId].includes(item.ownerUserId))
     .filter(item => ['pending_owner', 'accepted_reserved', 'contacted', 'joined_pending_confirmation', 'pending_completion', 'disputed', 'rejected'].includes(item.status))
@@ -3054,7 +2993,8 @@ function buildUnifiedNotifications(): UnifiedNotification[] {
       to: `/official-prices/${item.id}`,
     }))
 
-  const demandRows: UnifiedNotification[] = demandStore
+  const demands = await getDemands()
+  const demandRows: UnifiedNotification[] = demands
     .filter(item => item.poster === currentBuyerName || item.status === '匹配中')
     .slice(0, 6)
     .map(item => ({
@@ -3110,7 +3050,7 @@ function buildUnifiedNotifications(): UnifiedNotification[] {
 export async function getNotifications(): Promise<UnifiedNotification[]> {
   if (shouldUseRealBackend()) return backendNotifications()
   await wait()
-  return clone(buildUnifiedNotifications())
+  return clone(await buildUnifiedNotifications())
 }
 
 export async function markNotificationRead(id: string) {
@@ -3135,7 +3075,8 @@ export async function markNotificationRead(id: string) {
       persistFeedbackTickets()
     }
   }
-  return clone(buildUnifiedNotifications().find(item => item.id === id) ?? null)
+  const notifications = await buildUnifiedNotifications()
+  return clone(notifications.find(item => item.id === id) ?? null)
 }
 
 export async function markAllNotificationsRead() {
@@ -3148,14 +3089,15 @@ export async function markAllNotificationsRead() {
     return notifications
   }
   await wait()
-  notificationReadStore = Array.from(new Set([...notificationReadStore, ...buildUnifiedNotifications().map(item => item.id)]))
+  const notifications = await buildUnifiedNotifications()
+  notificationReadStore = Array.from(new Set([...notificationReadStore, ...notifications.map(item => item.id)]))
   persistNotificationReadState()
   const now = nowText()
   feedbackTicketStore = feedbackTicketStore.map(item => feedbackUnread(item)
     ? { ...item, submitterReadAt: now, updatedAt: now, version: item.version + 1 }
     : item)
   persistFeedbackTickets()
-  return clone(buildUnifiedNotifications())
+  return clone(await buildUnifiedNotifications())
 }
 
 export async function toggleFavorite(targetType: FavoriteTargetType, targetId: string) {
@@ -3209,7 +3151,7 @@ export async function searchMarket(keyword: string): Promise<SearchResult[]> {
   await wait()
   const q = keyword.trim().toLowerCase()
   if (!q) return []
-  const demandRows = shouldUseRealBackend() ? await backendDemands() : demandStore
+  const demandRows = await getDemands()
   const officialResults = officialPriceStore
     .filter(item => [item.product, item.plan, item.region, item.channel, item.submitter].some(value => value.toLowerCase().includes(q)))
     .map(item => ({ id: `official-${item.id}`, type: '官方价格' as const, title: `${item.product} ${item.plan}`, subtitle: `${item.region} · ${item.originalPrice} · ${item.status}`, badge: item.status, to: `/official-prices/${item.id}` }))
@@ -3799,7 +3741,7 @@ export async function updateAdminRowStatus(row: AdminRow, status: string, reason
     || (status === '待复核' && row.status.includes('复核'))) {
     throw new Error('当前状态已经匹配该操作，不能重复写入审计记录。')
   }
-  applyAdminStatusToTarget(row, status)
+  await applyAdminStatusToTarget(row, status)
   appendAdminAuditLog({
     actorType: 'admin',
     actorLabel: '管理员',
@@ -3814,7 +3756,7 @@ export async function updateAdminRowStatus(row: AdminRow, status: string, reason
   return { ...row, status }
 }
 
-function applyAdminStatusToTarget(row: AdminRow, status: string) {
+async function applyAdminStatusToTarget(row: AdminRow, status: string) {
   if (row.targetType === 'official-price') {
     const target = officialPriceStore.find(item => item.id === row.id)
     const nextStatus = status === '已通过' || status === '已恢复'
@@ -3837,12 +3779,8 @@ function applyAdminStatusToTarget(row: AdminRow, status: string) {
     }
   }
   if (row.targetType === 'demand') {
-    const target = demandStore.find(item => item.id === row.id)
-    if (target) {
-      target.status = status === '已关闭' || status === '已下架' ? '已关闭' : status === '待复核' ? '待审核' : status === '已通过' || status === '已恢复' ? '匹配中' : target.status
-      target.updatedAt = nowText()
-      persistMarketStores()
-    }
+    const { updateMockDemandAdminStatus } = await import('@/mocks/demand')
+    updateMockDemandAdminStatus(row.id, status)
   }
   if (row.targetType === 'api-service' || row.targetType === 'api-merchant') {
     const target = apiServiceStore.find(item => item.id === row.id)
@@ -3907,7 +3845,7 @@ export async function runAdminModerationAction(row: AdminRow, action: 'approve' 
     ban: '永久封禁',
   }
   const nextStatus = labels[action]
-  applyAdminStatusToTarget(row, nextStatus)
+  await applyAdminStatusToTarget(row, nextStatus)
 
   if (row.targetType === 'user') {
     const target = adminUserRiskProfileStore.find(item => item.id === row.id)

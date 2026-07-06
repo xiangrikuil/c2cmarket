@@ -12,6 +12,10 @@ export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '')
   const apiMode = env.VITE_API_MODE
   const apiBaseURL = env.VITE_API_BASE_URL
+  const enableMock = env.VITE_ENABLE_MOCK
+  if (mode === 'production' && enableMock === 'true') {
+    throw new Error('Production frontend builds must not set VITE_ENABLE_MOCK=true.')
+  }
   if (mode === 'production' && apiMode !== 'real' && !apiBaseURL) {
     throw new Error('Production frontend builds must set VITE_API_MODE=real or VITE_API_BASE_URL to avoid mock/demo fallback.')
   }
