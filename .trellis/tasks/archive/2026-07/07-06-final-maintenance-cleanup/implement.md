@@ -17,7 +17,7 @@
       `VITE_API_MODE=real pnpm --dir frontend build`,
       `pnpm --dir frontend test`.
 - [x] Update PRD checkboxes and parent roadmap final acceptance items.
-- [ ] Commit and archive this child task.
+- [x] Commit and archive this child task.
 
 ## Validation Commands
 
