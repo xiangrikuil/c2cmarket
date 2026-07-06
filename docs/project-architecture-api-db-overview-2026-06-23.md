@@ -14,6 +14,14 @@
 
 生产化方面，仓库已经有 production env 模板、Compose 覆盖、migration 服务、Dockerfile、runbook、smoke 脚本和后端 hardening：HTTP server timeout、生产 Secure cookie、OAuth timeout/响应大小限制、CORS/Origin allowlist、安全响应头、基础限流、列表分页、幂等 processing 过期恢复、API purchase intent 联系方式访问审计、搜索 trigram indexes。真实生产仍需要外部 OAuth provider、正式域名/TLS、静态前端托管、数据库备份恢复、日志/监控/告警、密钥轮换、反向代理和受控生产验证流程。产品边界明确不包含支付、托管、担保、凭据交付、第三方 API key/账号凭据保管或上游 API 代理；站内账号密码仅保存不可逆哈希。
 
+### 2026-07-06 维护更新
+
+- 当前最新 PostgreSQL migration 是 `000036_search_trigram_alignment`，后端 `ExpectedMigrationVersion=36`，`/readyz` 会在数据库 schema 低于该版本时降级。
+- 密码写入已升级到 `argon2id_v1`，旧 `sha256_salted_v1` 只保留登录校验和成功后 rehash；首个 admin 通过显式 bootstrap 环境变量创建，不再由 migration 固定密码种子创建。
+- 前端生产构建必须显式配置真实后端：`VITE_API_MODE=real` 或 `VITE_API_BASE_URL`；`VITE_ENABLE_MOCK=true` 在 production build 中会失败。Mock/demo 仍保留为本地开发路径，真实模式不得静默 fallback 到 mock 成功数据。
+- 后端 service 迁移策略已经明确：`internal/module/<domain>` 拥有业务 service/repository contract，`internal/module/core` 只作为兼容 facade 委托，不再作为新增业务能力的膨胀入口。
+- CI 新增 migration 文档漂移检查；源码发布包通过 `scripts/package-source.sh` 生成并自检排除 `.git/`、`output/`、`tmp/`、`node_modules/`、`dist/`、`build/`、`coverage/` 等临时/构建产物。
+
 ## 2. 整体项目目录结构
 
 ```text
@@ -195,6 +203,18 @@ if (shouldUseRealBackend()) return backendXxx(...)
 | `000022_reports_disputes_appeals` | 举报、纠纷、申诉、追加式 dispute events。 |
 | `000023_api_intent_contact_access_logs` | API purchase intent 直接披露联系方式访问审计，不存联系方式明文。 |
 | `000024_search_trigram_indexes` | 启用 `pg_trgm` 并为公开搜索字段增加 GIN trigram indexes。 |
+| `000025_native_admin_login` | 站内密码 credential 表和无固定密码种子的 admin bootstrap 基础。 |
+| `000026_account_identity_profile` | 账号资料、邮箱验证和自定义头像字段。 |
+| `000027_api_service_instant_orders` | API 服务接单设置、API orders、订单事件和付款说明读取审计。 |
+| `000028_api_order_dispute_targets` | API order 作为举报/纠纷/申诉目标的约束支持。 |
+| `000029_feedback_tickets` | 用户反馈工单、补充、admin 处理事件和未读状态。 |
+| `000030_carpool_quota_fields` | 拼车服务倍率和平均额度披露字段。 |
+| `000031_email_registration_verification` | 邮箱注册 challenge/verification 表；当前公网注册端点仍禁用。 |
+| `000032_carpool_cancel_exit_lifecycle` | 买家取消、车主撤回接受和取消联系窗口历史。 |
+| `000033_product_plan_quota_unit_carpool` | 套餐额度单位和车源额度单位快照。 |
+| `000034_api_model_provider_catalog` | 可管理 API model provider 与 provider-backed model catalog。 |
+| `000035_password_argon2_admin_bootstrap` | Argon2id 密码算法和固定 admin seed 清理。 |
+| `000036_search_trigram_alignment` | 商户资料搜索 trigram expression 对齐到 display-name-only 公开搜索。 |
 
 ### 5.2 全部核心表清单
 
@@ -207,11 +227,16 @@ announcement_receipts
 announcements
 api_model_catalog
 api_model_price_versions
+api_model_providers
+api_order_events
+api_order_payment_instruction_access_logs
+api_orders
 api_purchase_intent_contact_access_logs
 api_purchase_intents
 api_service_access_modes
 api_service_models
 api_service_packages
+api_service_payment_options
 api_services
 appeals
 auth_identities
@@ -234,7 +259,10 @@ demands
 dispute_cases
 dispute_events
 domain_events
+email_verification_codes
 favorites
+feedback_events
+feedback_tickets
 idempotency_keys
 linux_do_bindings
 merchant_profiles
@@ -248,6 +276,7 @@ reports
 risk_notice_versions
 risk_notices
 user_permissions
+user_password_credentials
 user_restrictions
 users
 ```
@@ -270,7 +299,7 @@ users
 | 收藏 | `favorites` |
 | 评价 | `carpool_reviews` |
 | 举报 / 纠纷 / 申诉 | `reports`、`dispute_cases`、`appeals`、`dispute_events` |
-| 搜索 | 无独立表；从官方价格、车源、需求、API 服务、用户/商户公开资料聚合读取；`000024` 只增加 `pg_trgm`/GIN 索引。 |
+| 搜索 | 无独立表；从官方价格、车源、需求、API 服务、用户/商户公开资料聚合读取；`000024` 增加 `pg_trgm`/GIN 索引，`000036` 将商户资料索引对齐为 display-name-only。 |
 
 ## 7. API 路由按域分组
 

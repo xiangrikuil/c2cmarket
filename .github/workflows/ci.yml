@@ -19,6 +19,7 @@ jobs:
       - run: go test ./...
         working-directory: backend
       - run: node scripts/check-openapi-routes.mjs
+      - run: node scripts/check-migrations-doc.mjs
 
   frontend:
     runs-on: ubuntu-latest
