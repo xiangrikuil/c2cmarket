@@ -56,6 +56,26 @@ func writePaginatedJSON[T any](w http.ResponseWriter, r *http.Request, items []T
 	return true
 }
 
+func parsePageRequest(r *http.Request) (domain.PageRequest, *domain.AppError) {
+	values := r.URL.Query()
+	limit := defaultPageLimit
+	if raw := strings.TrimSpace(values.Get("limit")); raw != "" {
+		parsed, err := strconv.Atoi(raw)
+		if err != nil || parsed < 1 || parsed > maxPageLimit {
+			return domain.PageRequest{}, domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Invalid limit", "分页 limit 必须是 1 到 100 之间的整数。", "limit", "invalid", "limit 必须是 1 到 100 之间的整数。")
+		}
+		limit = parsed
+	}
+	return domain.PageRequest{
+		Limit:  limit,
+		Cursor: strings.TrimSpace(values.Get("cursor")),
+	}, nil
+}
+
+func writePageJSON[T any](w http.ResponseWriter, page domain.Page[T]) {
+	writeJSON(w, http.StatusOK, listResponse[T]{Items: page.Items, NextCursor: page.NextCursor})
+}
+
 func parsePagination(r *http.Request) (int, int, *domain.AppError) {
 	values := r.URL.Query()
 	limit := defaultPageLimit

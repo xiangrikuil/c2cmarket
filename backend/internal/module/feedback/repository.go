@@ -10,7 +10,7 @@ import (
 
 type Repository interface {
 	CreateFeedbackTicketWithIdempotency(ctx context.Context, entry idempotency.Entry, input CreateInput, now time.Time, buildCompletion CompletionBuilder) (Ticket, idempotency.Completion, *domain.AppError)
-	ListFeedbackTicketsBySubmitter(ctx context.Context, submitterUserID string) ([]Ticket, *domain.AppError)
+	ListFeedbackTicketsBySubmitter(ctx context.Context, submitterUserID string, page domain.PageRequest) (domain.Page[Ticket], *domain.AppError)
 	GetFeedbackTicketForSubmitter(ctx context.Context, submitterUserID, id string) (Ticket, *domain.AppError)
 	AddFeedbackSupplementWithIdempotency(ctx context.Context, entry idempotency.Entry, input SupplementInput, now time.Time, buildCompletion CompletionBuilder) (Ticket, idempotency.Completion, *domain.AppError)
 	MarkFeedbackRead(ctx context.Context, submitterUserID, id string, now time.Time) (Ticket, *domain.AppError)

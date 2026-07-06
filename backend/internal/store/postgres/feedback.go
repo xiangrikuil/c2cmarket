@@ -52,16 +52,38 @@ func (s *Store) CreateFeedbackTicketWithIdempotency(ctx context.Context, entry i
 	return item, completion, nil
 }
 
-func (s *Store) ListFeedbackTicketsBySubmitter(ctx context.Context, submitterUserID string) ([]feedback.Ticket, *domain.AppError) {
-	rows, err := s.pool.Query(ctx, feedbackTicketSelectSQL+`
-		WHERE ft.submitter_user_id = $1
-		ORDER BY ft.updated_at DESC
-	`, submitterUserID)
+func (s *Store) ListFeedbackTicketsBySubmitter(ctx context.Context, submitterUserID string, page domain.PageRequest) (domain.Page[feedback.Ticket], *domain.AppError) {
+	page = normalizePageRequest(page)
+	position, appErr := decodeKeysetCursor(page.Cursor)
+	if appErr != nil {
+		return domain.Page[feedback.Ticket]{}, appErr
+	}
+	limit := page.Limit + 1
+	var rows pgx.Rows
+	var err error
+	if page.Cursor == "" {
+		rows, err = s.pool.Query(ctx, feedbackTicketSelectSQL+`
+			WHERE ft.submitter_user_id = $1
+			ORDER BY ft.updated_at DESC, ft.id DESC
+			LIMIT $2
+		`, submitterUserID, limit)
+	} else {
+		rows, err = s.pool.Query(ctx, feedbackTicketSelectSQL+`
+			WHERE ft.submitter_user_id = $1
+			  AND (ft.updated_at, ft.id) < ($2, $3::uuid)
+			ORDER BY ft.updated_at DESC, ft.id DESC
+			LIMIT $4
+		`, submitterUserID, position.Time, position.ID, limit)
+	}
 	if err != nil {
-		return nil, internalStoreError()
+		return domain.Page[feedback.Ticket]{}, internalStoreError()
 	}
 	defer rows.Close()
-	return scanFeedbackTickets(rows)
+	items, appErr := scanFeedbackTickets(rows)
+	if appErr != nil {
+		return domain.Page[feedback.Ticket]{}, appErr
+	}
+	return pageFromItems(items, page, func(item feedback.Ticket) (time.Time, string) { return item.UpdatedAt, item.ID }), nil
 }
 
 func (s *Store) GetFeedbackTicketForSubmitter(ctx context.Context, submitterUserID, id string) (feedback.Ticket, *domain.AppError) {

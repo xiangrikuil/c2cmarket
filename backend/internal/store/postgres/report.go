@@ -54,13 +54,29 @@ func (s *Store) ListReportsByUser(ctx context.Context, userID string) ([]report.
 	return scanReports(rows)
 }
 
-func (s *Store) ListAdminReports(ctx context.Context) ([]report.Report, *domain.AppError) {
-	rows, err := s.pool.Query(ctx, reportSelectSQL+` ORDER BY r.updated_at DESC`)
+func (s *Store) ListAdminReports(ctx context.Context, page domain.PageRequest) (domain.Page[report.Report], *domain.AppError) {
+	page = normalizePageRequest(page)
+	position, appErr := decodeKeysetCursor(page.Cursor)
+	if appErr != nil {
+		return domain.Page[report.Report]{}, appErr
+	}
+	limit := page.Limit + 1
+	var rows pgx.Rows
+	var err error
+	if page.Cursor == "" {
+		rows, err = s.pool.Query(ctx, reportSelectSQL+` ORDER BY r.updated_at DESC, r.id DESC LIMIT $1`, limit)
+	} else {
+		rows, err = s.pool.Query(ctx, reportSelectSQL+` WHERE (r.updated_at, r.id) < ($1, $2::uuid) ORDER BY r.updated_at DESC, r.id DESC LIMIT $3`, position.Time, position.ID, limit)
+	}
 	if err != nil {
-		return nil, internalStoreError()
+		return domain.Page[report.Report]{}, internalStoreError()
 	}
 	defer rows.Close()
-	return scanReports(rows)
+	items, appErr := scanReports(rows)
+	if appErr != nil {
+		return domain.Page[report.Report]{}, appErr
+	}
+	return pageFromItems(items, page, func(item report.Report) (time.Time, string) { return item.UpdatedAt, item.ID }), nil
 }
 
 func (s *Store) GetAdminReport(ctx context.Context, id string) (report.Report, *domain.AppError) {

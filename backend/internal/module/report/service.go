@@ -90,12 +90,12 @@ func (s *Service) MyReports(ctx context.Context, user auth.User) ([]Report, *dom
 	return items, nil
 }
 
-func (s *Service) AdminReports(ctx context.Context, user auth.User) ([]Report, *domain.AppError) {
+func (s *Service) AdminReports(ctx context.Context, user auth.User, page domain.PageRequest) (domain.Page[Report], *domain.AppError) {
 	if appErr := requireAdmin(user); appErr != nil {
-		return nil, appErr
+		return domain.Page[Report]{}, appErr
 	}
 	if s.repo != nil {
-		return s.repo.ListAdminReports(ctx)
+		return s.repo.ListAdminReports(ctx, page)
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -104,7 +104,7 @@ func (s *Service) AdminReports(ctx context.Context, user auth.User) ([]Report, *
 		items = append(items, item)
 	}
 	sortReports(items)
-	return items, nil
+	return domain.PageItems(items, page), nil
 }
 
 func (s *Service) AdminReport(ctx context.Context, user auth.User, id string) (Report, *domain.AppError) {

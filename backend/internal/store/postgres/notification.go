@@ -12,19 +12,41 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-func (s *Store) ListNotifications(ctx context.Context, userID string) ([]notification.Notification, *domain.AppError) {
+func (s *Store) ListNotifications(ctx context.Context, userID string, page domain.PageRequest) (domain.Page[notification.Notification], *domain.AppError) {
 	if s == nil || s.pool == nil {
-		return nil, internalStoreError()
+		return domain.Page[notification.Notification]{}, internalStoreError()
 	}
-	rows, err := s.pool.Query(ctx, notificationSelectSQL+`
-		WHERE user_id = $1
-		ORDER BY created_at DESC
-	`, userID)
+	page = normalizePageRequest(page)
+	position, appErr := decodeKeysetCursor(page.Cursor)
+	if appErr != nil {
+		return domain.Page[notification.Notification]{}, appErr
+	}
+	limit := page.Limit + 1
+	var rows pgx.Rows
+	var err error
+	if page.Cursor == "" {
+		rows, err = s.pool.Query(ctx, notificationSelectSQL+`
+			WHERE user_id = $1
+			ORDER BY created_at DESC, id DESC
+			LIMIT $2
+		`, userID, limit)
+	} else {
+		rows, err = s.pool.Query(ctx, notificationSelectSQL+`
+			WHERE user_id = $1
+			  AND (created_at, id) < ($2, $3::uuid)
+			ORDER BY created_at DESC, id DESC
+			LIMIT $4
+		`, userID, position.Time, position.ID, limit)
+	}
 	if err != nil {
-		return nil, internalStoreError()
+		return domain.Page[notification.Notification]{}, internalStoreError()
 	}
 	defer rows.Close()
-	return scanNotifications(rows)
+	items, appErr := scanNotifications(rows)
+	if appErr != nil {
+		return domain.Page[notification.Notification]{}, appErr
+	}
+	return pageFromItems(items, page, func(item notification.Notification) (time.Time, string) { return item.CreatedAt, item.ID }), nil
 }
 
 func (s *Store) UnreadNotificationCount(ctx context.Context, userID string) (int, *domain.AppError) {
@@ -92,11 +114,23 @@ func (s *Store) MarkAllNotificationsRead(ctx context.Context, userID string, now
 	`, userID, now).Scan(&count); err != nil {
 		return notification.ReadAllResult{}, internalStoreError()
 	}
-	items, appErr := s.ListNotifications(ctx, userID)
+	items, appErr := s.listAllNotifications(ctx, userID)
 	if appErr != nil {
 		return notification.ReadAllResult{}, appErr
 	}
 	return notification.ReadAllResult{Count: count, Items: items}, nil
+}
+
+func (s *Store) listAllNotifications(ctx context.Context, userID string) ([]notification.Notification, *domain.AppError) {
+	rows, err := s.pool.Query(ctx, notificationSelectSQL+`
+		WHERE user_id = $1
+		ORDER BY created_at DESC, id DESC
+	`, userID)
+	if err != nil {
+		return nil, internalStoreError()
+	}
+	defer rows.Close()
+	return scanNotifications(rows)
 }
 
 func scanNotifications(rows pgx.Rows) ([]notification.Notification, *domain.AppError) {

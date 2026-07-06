@@ -275,12 +275,20 @@ func (s *Server) handleSubmitCarpoolReview(w http.ResponseWriter, r *http.Reques
 }
 
 func (s *Server) handlePublicCarpools(w http.ResponseWriter, r *http.Request) {
-	listings, appErr := s.carpools.PublicCarpoolListings(r.Context())
+	pageRequest, appErr := parsePageRequest(r)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
 	}
-	writePaginatedJSON(w, r, toCarpoolListingResponses(listings))
+	listings, appErr := s.carpools.PublicCarpoolListings(r.Context(), pageRequest)
+	if appErr != nil {
+		writeProblem(w, r, appErr)
+		return
+	}
+	writePageJSON(w, domain.Page[carpoolListingResponse]{
+		Items:      toCarpoolListingResponses(listings.Items),
+		NextCursor: listings.NextCursor,
+	})
 }
 
 func (s *Server) handlePublicCarpool(w http.ResponseWriter, r *http.Request) {
@@ -313,12 +321,20 @@ func (s *Server) handleAdminCarpools(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, r, appErr)
 		return
 	}
-	listings, appErr := s.carpools.AdminCarpoolListings(r.Context(), user)
+	pageRequest, appErr := parsePageRequest(r)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
 	}
-	writePaginatedJSON(w, r, toCarpoolListingResponses(listings))
+	listings, appErr := s.carpools.AdminCarpoolListings(r.Context(), user, pageRequest)
+	if appErr != nil {
+		writeProblem(w, r, appErr)
+		return
+	}
+	writePageJSON(w, domain.Page[carpoolListingResponse]{
+		Items:      toCarpoolListingResponses(listings.Items),
+		NextCursor: listings.NextCursor,
+	})
 }
 
 func (s *Server) handleAdminCarpool(w http.ResponseWriter, r *http.Request) {

@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"time"
 
+	"c2c-market/backend/internal/domain"
 	"c2c-market/backend/internal/module/notification"
 
 	"github.com/go-chi/chi/v5"
@@ -38,12 +39,20 @@ func (s *Server) handleMyNotifications(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, r, appErr)
 		return
 	}
-	items, appErr := s.app.MyNotifications(r.Context(), user)
+	pageRequest, appErr := parsePageRequest(r)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
 	}
-	writePaginatedJSON(w, r, toNotificationDTOs(items))
+	items, appErr := s.app.MyNotifications(r.Context(), user, pageRequest)
+	if appErr != nil {
+		writeProblem(w, r, appErr)
+		return
+	}
+	writePageJSON(w, domain.Page[notificationDTO]{
+		Items:      toNotificationDTOs(items.Items),
+		NextCursor: items.NextCursor,
+	})
 }
 
 func (s *Server) handleNotificationUnreadCount(w http.ResponseWriter, r *http.Request) {

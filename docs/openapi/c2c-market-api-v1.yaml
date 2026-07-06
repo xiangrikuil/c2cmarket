@@ -5050,7 +5050,7 @@ components:
       name: cursor
       in: query
       required: false
-      description: Opaque pagination cursor returned as nextCursor. Current implementation encodes an offset cursor and clients must not inspect it.
+      description: Opaque pagination cursor returned as nextCursor. Clients must pass it back unchanged and must not inspect its internal encoding.
       schema:
         type: string
     FavoriteTargetType:

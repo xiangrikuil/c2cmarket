@@ -12,10 +12,10 @@ import (
 type Repository interface {
 	CreateCarpoolListing(ctx context.Context, listing Listing, ack *RiskAcknowledgement) *domain.AppError
 	PublishCarpoolListing(ctx context.Context, listing Listing, ack *RiskAcknowledgement, now time.Time) (Listing, *domain.AppError)
-	ListPublicCarpoolListings(ctx context.Context) ([]Listing, *domain.AppError)
+	ListPublicCarpoolListings(ctx context.Context, page domain.PageRequest) (domain.Page[Listing], *domain.AppError)
 	GetPublicCarpoolListing(ctx context.Context, listingID string) (Listing, *domain.AppError)
 	ListCarpoolListingsByOwner(ctx context.Context, ownerUserID string) ([]Listing, *domain.AppError)
-	ListAdminCarpoolListings(ctx context.Context) ([]Listing, *domain.AppError)
+	ListAdminCarpoolListings(ctx context.Context, page domain.PageRequest) (domain.Page[Listing], *domain.AppError)
 	GetAdminCarpoolListing(ctx context.Context, listingID string) (Listing, *domain.AppError)
 	UpdateCarpoolListing(ctx context.Context, input UpdateListingInput, ack *RiskAcknowledgement, now time.Time) (Listing, *domain.AppError)
 	SubmitCarpoolListingForReview(ctx context.Context, user auth.User, input SubmitListingReviewInput, now time.Time) (Listing, *domain.AppError)

@@ -306,9 +306,9 @@ func (s *Service) SubmitListingForReview(ctx context.Context, user auth.User, in
 	return s.withSeatSummaryLocked(listing), nil
 }
 
-func (s *Service) PublicListings(ctx context.Context) ([]Listing, *domain.AppError) {
+func (s *Service) PublicListings(ctx context.Context, page domain.PageRequest) (domain.Page[Listing], *domain.AppError) {
 	if s.repo != nil {
-		return s.repo.ListPublicCarpoolListings(ctx)
+		return s.repo.ListPublicCarpoolListings(ctx, page)
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -320,7 +320,7 @@ func (s *Service) PublicListings(ctx context.Context) ([]Listing, *domain.AppErr
 			listings = append(listings, listing)
 		}
 	}
-	return listings, nil
+	return domain.PageItems(listings, page), nil
 }
 
 func (s *Service) PublicListing(ctx context.Context, listingID string) (Listing, *domain.AppError) {
@@ -354,12 +354,12 @@ func (s *Service) MyListings(ctx context.Context, user auth.User) ([]Listing, *d
 	return listings, nil
 }
 
-func (s *Service) AdminListings(ctx context.Context, user auth.User) ([]Listing, *domain.AppError) {
+func (s *Service) AdminListings(ctx context.Context, user auth.User, page domain.PageRequest) (domain.Page[Listing], *domain.AppError) {
 	if !user.IsAdmin {
-		return nil, domain.NewError(http.StatusForbidden, domain.CodePermissionDenied, "Permission denied", "需要管理员权限。")
+		return domain.Page[Listing]{}, domain.NewError(http.StatusForbidden, domain.CodePermissionDenied, "Permission denied", "需要管理员权限。")
 	}
 	if s.repo != nil {
-		return s.repo.ListAdminCarpoolListings(ctx)
+		return s.repo.ListAdminCarpoolListings(ctx, page)
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -368,7 +368,7 @@ func (s *Service) AdminListings(ctx context.Context, user auth.User) ([]Listing,
 	for _, id := range s.listingOrder {
 		listings = append(listings, s.withSeatSummaryLocked(s.listings[id]))
 	}
-	return listings, nil
+	return domain.PageItems(listings, page), nil
 }
 
 func (s *Service) AdminListing(ctx context.Context, user auth.User, listingID string) (Listing, *domain.AppError) {

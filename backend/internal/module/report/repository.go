@@ -11,7 +11,7 @@ import (
 type Repository interface {
 	CreateReportWithIdempotency(ctx context.Context, entry idempotency.Entry, input CreateReportInput, now time.Time, buildCompletion ReportCompletionBuilder) (Report, idempotency.Completion, *domain.AppError)
 	ListReportsByUser(ctx context.Context, userID string) ([]Report, *domain.AppError)
-	ListAdminReports(ctx context.Context) ([]Report, *domain.AppError)
+	ListAdminReports(ctx context.Context, page domain.PageRequest) (domain.Page[Report], *domain.AppError)
 	GetAdminReport(ctx context.Context, id string) (Report, *domain.AppError)
 	UpdateReportAdminWithIdempotency(ctx context.Context, entry idempotency.Entry, input AdminActionInput, now time.Time, buildCompletion AdminCompletionBuilder) (MutationResult, idempotency.Completion, *domain.AppError)
 

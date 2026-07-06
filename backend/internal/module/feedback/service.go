@@ -102,12 +102,12 @@ func (s *Service) createMemory(input CreateInput) Ticket {
 	return item
 }
 
-func (s *Service) MyTickets(ctx context.Context, user auth.User) ([]Ticket, *domain.AppError) {
+func (s *Service) MyTickets(ctx context.Context, user auth.User, page domain.PageRequest) (domain.Page[Ticket], *domain.AppError) {
 	if appErr := requireSession(user); appErr != nil {
-		return nil, appErr
+		return domain.Page[Ticket]{}, appErr
 	}
 	if s.repo != nil {
-		return s.repo.ListFeedbackTicketsBySubmitter(ctx, user.ID)
+		return s.repo.ListFeedbackTicketsBySubmitter(ctx, user.ID, page)
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -118,7 +118,7 @@ func (s *Service) MyTickets(ctx context.Context, user auth.User) ([]Ticket, *dom
 		}
 	}
 	sortTickets(items)
-	return items, nil
+	return domain.PageItems(items, page), nil
 }
 
 func (s *Service) MyTicket(ctx context.Context, user auth.User, id string) (Ticket, *domain.AppError) {
@@ -221,13 +221,11 @@ func (s *Service) UnreadCount(ctx context.Context, user auth.User) (int, *domain
 	if s.repo != nil {
 		return s.repo.UnreadFeedbackCount(ctx, user.ID)
 	}
-	items, appErr := s.MyTickets(ctx, user)
-	if appErr != nil {
-		return 0, appErr
-	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	count := 0
-	for _, item := range items {
-		if hasUnreadAdminUpdate(item) {
+	for _, item := range s.tickets {
+		if item.SubmitterUserID == user.ID && hasUnreadAdminUpdate(item) {
 			count++
 		}
 	}

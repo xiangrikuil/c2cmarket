@@ -116,12 +116,20 @@ func (s *Server) handleMyFeedbackTickets(w http.ResponseWriter, r *http.Request)
 		writeProblem(w, r, appErr)
 		return
 	}
-	items, appErr := s.app.MyFeedbackTickets(r.Context(), user)
+	pageRequest, appErr := parsePageRequest(r)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
 	}
-	writePaginatedJSON(w, r, toFeedbackTicketResponses(items, false))
+	items, appErr := s.app.MyFeedbackTickets(r.Context(), user, pageRequest)
+	if appErr != nil {
+		writeProblem(w, r, appErr)
+		return
+	}
+	writePageJSON(w, domain.Page[feedbackTicketResponse]{
+		Items:      toFeedbackTicketResponses(items.Items, false),
+		NextCursor: items.NextCursor,
+	})
 }
 
 func (s *Server) handleMyFeedbackUnreadCount(w http.ResponseWriter, r *http.Request) {

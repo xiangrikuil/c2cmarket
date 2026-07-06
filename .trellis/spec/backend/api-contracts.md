@@ -1381,8 +1381,9 @@ MAIL_FROM_NAME=C2CMarket
 - JSON request helpers must reject empty bodies, malformed JSON, unknown fields, bodies over 1 MiB, and trailing JSON values with stable Problem Details. Helpers that only own `request.Body` must use `io.LimitReader`, not `http.MaxBytesReader(nil)`.
 - Rate-limit client IP keys must not trust `X-Forwarded-For` or `X-Real-IP` by default. `TRUST_X_FORWARDED_FOR=true` may read forwarding headers only when the immediate `RemoteAddr` belongs to a configured `TRUSTED_PROXIES` IP/CIDR entry; missing or invalid forwarding headers fall back to the direct peer address.
 - Rate limits return HTTP `429`, Problem Details `code=RATE_LIMITED`, and `Retry-After` when available.
-- Pagination `limit` defaults to 20, maxes at 100, and invalid values return `422 VALIDATION_FAILED`. `cursor` is opaque; current implementation can be offset-backed but clients must only pass through `nextCursor`.
+- Pagination `limit` defaults to 20, maxes at 100, and invalid values return `422 VALIDATION_FAILED`. `cursor` is opaque; clients must only pass through `nextCursor` and must not depend on whether a route currently uses offset or keyset internals.
 - List responses using pagination return `{ "items": [...], "nextCursor": "..." }` with `nextCursor` omitted/null when there are no more results.
+- Database-backed list repositories should accept `domain.PageRequest` and return `domain.Page[T]`; high-volume lists must use repository-level pagination rather than loading all rows for `server.paginateSlice`.
 - API purchase intent create, buyer detail, and owner detail responses that include full contact values must set `Cache-Control: no-store` and write API purchase intent contact access audit rows without plaintext contact values.
 
 ### 4. Validation & Error Matrix

@@ -21,7 +21,7 @@ const (
 
 type PublicReader interface {
 	PublicOfficialPriceRecords(ctx context.Context) ([]officialprice.Record, *domain.AppError)
-	PublicCarpoolListings(ctx context.Context) ([]carpool.Listing, *domain.AppError)
+	PublicCarpoolListings(ctx context.Context, page domain.PageRequest) (domain.Page[carpool.Listing], *domain.AppError)
 	PublicDemands(ctx context.Context) ([]demand.Demand, *domain.AppError)
 	PublicAPIServices(ctx context.Context, filter apimarket.PublicServiceFilter) ([]apimarket.Service, *domain.AppError)
 }
@@ -102,23 +102,30 @@ func (s *Service) searchInMemory(ctx context.Context, keyword string) ([]Result,
 		})
 	}
 
-	carpools, appErr := s.reader.PublicCarpoolListings(ctx)
-	if appErr != nil {
-		return nil, appErr
-	}
-	for _, item := range carpools {
-		if !matches(q, item.Title, item.Summary, item.AccessArrangement, item.PriceMonthlyCNY) {
-			continue
+	carpoolCursor := ""
+	for {
+		carpoolPage, appErr := s.reader.PublicCarpoolListings(ctx, domain.PageRequest{Limit: 100, Cursor: carpoolCursor})
+		if appErr != nil {
+			return nil, appErr
 		}
-		results = append(results, Result{
-			ID:       "carpool-" + item.ID,
-			Type:     TypeCarpool,
-			Title:    item.Title,
-			Subtitle: "¥" + item.PriceMonthlyCNY + "/月 · 可用席位 " + strconv.Itoa(item.AvailableSeats),
-			Badge:    item.Status,
-			To:       "/carpools/" + item.ID,
-			RankTime: item.UpdatedAt,
-		})
+		for _, item := range carpoolPage.Items {
+			if !matches(q, item.Title, item.Summary, item.AccessArrangement, item.PriceMonthlyCNY) {
+				continue
+			}
+			results = append(results, Result{
+				ID:       "carpool-" + item.ID,
+				Type:     TypeCarpool,
+				Title:    item.Title,
+				Subtitle: "¥" + item.PriceMonthlyCNY + "/月 · 可用席位 " + strconv.Itoa(item.AvailableSeats),
+				Badge:    item.Status,
+				To:       "/carpools/" + item.ID,
+				RankTime: item.UpdatedAt,
+			})
+		}
+		if carpoolPage.NextCursor == nil {
+			break
+		}
+		carpoolCursor = *carpoolPage.NextCursor
 	}
 
 	demands, appErr := s.reader.PublicDemands(ctx)

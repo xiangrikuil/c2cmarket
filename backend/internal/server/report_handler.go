@@ -233,12 +233,20 @@ func (s *Server) handleAdminReports(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, r, appErr)
 		return
 	}
-	items, appErr := s.app.AdminReports(r.Context(), user)
+	pageRequest, appErr := parsePageRequest(r)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
 	}
-	writePaginatedJSON(w, r, toReportResponses(items, true))
+	items, appErr := s.app.AdminReports(r.Context(), user, pageRequest)
+	if appErr != nil {
+		writeProblem(w, r, appErr)
+		return
+	}
+	writePageJSON(w, domain.Page[reportResponse]{
+		Items:      toReportResponses(items.Items, true),
+		NextCursor: items.NextCursor,
+	})
 }
 
 func (s *Server) handleAdminReport(w http.ResponseWriter, r *http.Request) {

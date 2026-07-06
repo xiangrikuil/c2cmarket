@@ -442,12 +442,20 @@ func (s *Server) handleOwnerAPIServices(w http.ResponseWriter, r *http.Request) 
 		writeProblem(w, r, appErr)
 		return
 	}
-	services, appErr := s.app.OwnerAPIServices(r.Context(), user)
+	pageRequest, appErr := parsePageRequest(r)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
 	}
-	writePaginatedJSON(w, r, toAPIServiceResponses(services))
+	services, appErr := s.app.OwnerAPIServices(r.Context(), user, pageRequest)
+	if appErr != nil {
+		writeProblem(w, r, appErr)
+		return
+	}
+	writePageJSON(w, domain.Page[apiServiceResponse]{
+		Items:      toAPIServiceResponses(services.Items),
+		NextCursor: services.NextCursor,
+	})
 }
 
 func (s *Server) handleOwnerAPIService(w http.ResponseWriter, r *http.Request) {
@@ -664,12 +672,20 @@ func (s *Server) handleAdminAPIServices(w http.ResponseWriter, r *http.Request) 
 		writeProblem(w, r, appErr)
 		return
 	}
-	services, appErr := s.app.AdminAPIServices(r.Context(), user)
+	pageRequest, appErr := parsePageRequest(r)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
 	}
-	writePaginatedJSON(w, r, toAPIServiceResponses(services))
+	services, appErr := s.app.AdminAPIServices(r.Context(), user, pageRequest)
+	if appErr != nil {
+		writeProblem(w, r, appErr)
+		return
+	}
+	writePageJSON(w, domain.Page[apiServiceResponse]{
+		Items:      toAPIServiceResponses(services.Items),
+		NextCursor: services.NextCursor,
+	})
 }
 
 func (s *Server) handleAdminAPIService(w http.ResponseWriter, r *http.Request) {

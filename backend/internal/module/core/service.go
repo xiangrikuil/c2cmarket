@@ -399,12 +399,16 @@ func (s *Service) PublicAPIService(ctx context.Context, serviceID string) (APISe
 	return s.withAPIMerchantProfile(ctx, service)
 }
 
-func (s *Service) OwnerAPIServices(ctx context.Context, user User) ([]APIService, *domain.AppError) {
-	services, appErr := s.apiMarket.OwnerServices(ctx, user)
+func (s *Service) OwnerAPIServices(ctx context.Context, user User, page domain.PageRequest) (domain.Page[APIService], *domain.AppError) {
+	services, appErr := s.apiMarket.OwnerServices(ctx, user, page)
 	if appErr != nil {
-		return nil, appErr
+		return domain.Page[APIService]{}, appErr
 	}
-	return s.withAPIMerchantProfiles(ctx, services)
+	items, appErr := s.withAPIMerchantProfiles(ctx, services.Items)
+	if appErr != nil {
+		return domain.Page[APIService]{}, appErr
+	}
+	return domain.Page[APIService]{Items: items, NextCursor: services.NextCursor}, nil
 }
 
 func (s *Service) OwnerAPIService(ctx context.Context, user User, serviceID string) (APIService, *domain.AppError) {
@@ -415,12 +419,16 @@ func (s *Service) OwnerAPIService(ctx context.Context, user User, serviceID stri
 	return s.withAPIMerchantProfile(ctx, service)
 }
 
-func (s *Service) AdminAPIServices(ctx context.Context, user User) ([]APIService, *domain.AppError) {
-	services, appErr := s.apiMarket.AdminServices(ctx, user)
+func (s *Service) AdminAPIServices(ctx context.Context, user User, page domain.PageRequest) (domain.Page[APIService], *domain.AppError) {
+	services, appErr := s.apiMarket.AdminServices(ctx, user, page)
 	if appErr != nil {
-		return nil, appErr
+		return domain.Page[APIService]{}, appErr
 	}
-	return s.withAPIMerchantProfiles(ctx, services)
+	items, appErr := s.withAPIMerchantProfiles(ctx, services.Items)
+	if appErr != nil {
+		return domain.Page[APIService]{}, appErr
+	}
+	return domain.Page[APIService]{Items: items, NextCursor: services.NextCursor}, nil
 }
 
 func (s *Service) AdminAPIService(ctx context.Context, user User, serviceID string) (APIService, *domain.AppError) {
@@ -599,8 +607,8 @@ func (s *Service) SubmitCarpoolListingForReview(ctx context.Context, user User, 
 	return s.carpoolService.SubmitListingForReview(ctx, user, input)
 }
 
-func (s *Service) PublicCarpoolListings(ctx context.Context) ([]CarpoolListing, *domain.AppError) {
-	return s.carpoolService.PublicListings(ctx)
+func (s *Service) PublicCarpoolListings(ctx context.Context, page domain.PageRequest) (domain.Page[CarpoolListing], *domain.AppError) {
+	return s.carpoolService.PublicListings(ctx, page)
 }
 
 func (s *Service) PublicCarpoolListing(ctx context.Context, listingID string) (CarpoolListing, *domain.AppError) {
@@ -611,8 +619,8 @@ func (s *Service) MyCarpoolListings(ctx context.Context, user User) ([]CarpoolLi
 	return s.carpoolService.MyListings(ctx, user)
 }
 
-func (s *Service) AdminCarpoolListings(ctx context.Context, user User) ([]CarpoolListing, *domain.AppError) {
-	return s.carpoolService.AdminListings(ctx, user)
+func (s *Service) AdminCarpoolListings(ctx context.Context, user User, page domain.PageRequest) (domain.Page[CarpoolListing], *domain.AppError) {
+	return s.carpoolService.AdminListings(ctx, user, page)
 }
 
 func (s *Service) AdminCarpoolListing(ctx context.Context, user User, listingID string) (CarpoolListing, *domain.AppError) {
@@ -870,8 +878,8 @@ func (s *Service) AnnouncementAuditLogs(ctx context.Context, user User) ([]Annou
 	return s.announcement.AnnouncementAuditLogs(ctx, user)
 }
 
-func (s *Service) MyNotifications(ctx context.Context, user User) ([]notification.Notification, *domain.AppError) {
-	return s.notification.List(ctx, user.ID)
+func (s *Service) MyNotifications(ctx context.Context, user User, page domain.PageRequest) (domain.Page[notification.Notification], *domain.AppError) {
+	return s.notification.List(ctx, user.ID, page)
 }
 
 func (s *Service) MyNotificationUnreadCount(ctx context.Context, user User) (int, *domain.AppError) {
@@ -934,8 +942,8 @@ func (s *Service) CreateFeedbackTicketWithIdempotency(ctx context.Context, user 
 	return s.feedbackService.CreateWithIdempotency(ctx, user, routeKey, key, requestHash, input, buildCompletion)
 }
 
-func (s *Service) MyFeedbackTickets(ctx context.Context, user User) ([]FeedbackTicket, *domain.AppError) {
-	return s.feedbackService.MyTickets(ctx, user)
+func (s *Service) MyFeedbackTickets(ctx context.Context, user User, page domain.PageRequest) (domain.Page[FeedbackTicket], *domain.AppError) {
+	return s.feedbackService.MyTickets(ctx, user, page)
 }
 
 func (s *Service) MyFeedbackTicket(ctx context.Context, user User, id string) (FeedbackTicket, *domain.AppError) {
@@ -1031,8 +1039,8 @@ func (s *Service) MyReports(ctx context.Context, user User) ([]report.Report, *d
 	return s.reportService.MyReports(ctx, user)
 }
 
-func (s *Service) AdminReports(ctx context.Context, user User) ([]report.Report, *domain.AppError) {
-	return s.reportService.AdminReports(ctx, user)
+func (s *Service) AdminReports(ctx context.Context, user User, page domain.PageRequest) (domain.Page[report.Report], *domain.AppError) {
+	return s.reportService.AdminReports(ctx, user, page)
 }
 
 func (s *Service) AdminReport(ctx context.Context, user User, id string) (report.Report, *domain.AppError) {

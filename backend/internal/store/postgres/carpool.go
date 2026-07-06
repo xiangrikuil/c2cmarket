@@ -114,21 +114,45 @@ func insertCarpoolListingInTx(ctx context.Context, tx pgx.Tx, listing carpool.Li
 	return nil
 }
 
-func (s *Store) ListPublicCarpoolListings(ctx context.Context) ([]carpool.Listing, *domain.AppError) {
+func (s *Store) ListPublicCarpoolListings(ctx context.Context, page domain.PageRequest) (domain.Page[carpool.Listing], *domain.AppError) {
 	if s == nil || s.pool == nil {
-		return nil, internalStoreError()
+		return domain.Page[carpool.Listing]{}, internalStoreError()
 	}
-	rows, err := s.pool.Query(ctx, `
-		SELECT `+carpoolListingColumns+`
-		FROM `+carpoolListingViewSource+`
-		WHERE status = 'active'
-		ORDER BY updated_at DESC
-	`)
+	page = normalizePageRequest(page)
+	position, appErr := decodeKeysetCursor(page.Cursor)
+	if appErr != nil {
+		return domain.Page[carpool.Listing]{}, appErr
+	}
+	limit := page.Limit + 1
+	var rows pgx.Rows
+	var err error
+	if page.Cursor == "" {
+		rows, err = s.pool.Query(ctx, `
+			SELECT `+carpoolListingColumns+`
+			FROM `+carpoolListingViewSource+`
+			WHERE status = 'active'
+			ORDER BY updated_at DESC, id DESC
+			LIMIT $1
+		`, limit)
+	} else {
+		rows, err = s.pool.Query(ctx, `
+			SELECT `+carpoolListingColumns+`
+			FROM `+carpoolListingViewSource+`
+			WHERE status = 'active'
+			  AND (updated_at, id) < ($1, $2::uuid)
+			ORDER BY updated_at DESC, id DESC
+			LIMIT $3
+		`, position.Time, position.ID, limit)
+	}
 	if err != nil {
-		return nil, internalStoreError()
+		return domain.Page[carpool.Listing]{}, internalStoreError()
 	}
 	defer rows.Close()
-	return scanCarpoolListings(rows)
+	listings, appErr := scanCarpoolListings(rows)
+	if appErr != nil {
+		return domain.Page[carpool.Listing]{}, appErr
+	}
+	return pageFromItems(listings, page, func(item carpool.Listing) (time.Time, string) { return item.UpdatedAt, item.ID }), nil
 }
 
 func (s *Store) GetPublicCarpoolListing(ctx context.Context, listingID string) (carpool.Listing, *domain.AppError) {
@@ -162,20 +186,43 @@ func (s *Store) ListCarpoolListingsByOwner(ctx context.Context, ownerUserID stri
 	return scanCarpoolListings(rows)
 }
 
-func (s *Store) ListAdminCarpoolListings(ctx context.Context) ([]carpool.Listing, *domain.AppError) {
+func (s *Store) ListAdminCarpoolListings(ctx context.Context, page domain.PageRequest) (domain.Page[carpool.Listing], *domain.AppError) {
 	if s == nil || s.pool == nil {
-		return nil, internalStoreError()
+		return domain.Page[carpool.Listing]{}, internalStoreError()
 	}
-	rows, err := s.pool.Query(ctx, `
-		SELECT `+carpoolListingColumns+`
-		FROM `+carpoolListingViewSource+`
-		ORDER BY updated_at DESC
-	`)
+	page = normalizePageRequest(page)
+	position, appErr := decodeKeysetCursor(page.Cursor)
+	if appErr != nil {
+		return domain.Page[carpool.Listing]{}, appErr
+	}
+	limit := page.Limit + 1
+	var rows pgx.Rows
+	var err error
+	if page.Cursor == "" {
+		rows, err = s.pool.Query(ctx, `
+			SELECT `+carpoolListingColumns+`
+			FROM `+carpoolListingViewSource+`
+			ORDER BY updated_at DESC, id DESC
+			LIMIT $1
+		`, limit)
+	} else {
+		rows, err = s.pool.Query(ctx, `
+			SELECT `+carpoolListingColumns+`
+			FROM `+carpoolListingViewSource+`
+			WHERE (updated_at, id) < ($1, $2::uuid)
+			ORDER BY updated_at DESC, id DESC
+			LIMIT $3
+		`, position.Time, position.ID, limit)
+	}
 	if err != nil {
-		return nil, internalStoreError()
+		return domain.Page[carpool.Listing]{}, internalStoreError()
 	}
 	defer rows.Close()
-	return scanCarpoolListings(rows)
+	listings, appErr := scanCarpoolListings(rows)
+	if appErr != nil {
+		return domain.Page[carpool.Listing]{}, appErr
+	}
+	return pageFromItems(listings, page, func(item carpool.Listing) (time.Time, string) { return item.UpdatedAt, item.ID }), nil
 }
 
 func (s *Store) GetAdminCarpoolListing(ctx context.Context, listingID string) (carpool.Listing, *domain.AppError) {

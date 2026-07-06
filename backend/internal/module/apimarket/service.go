@@ -190,9 +190,9 @@ func (s *Manager) PublicService(ctx context.Context, serviceID string) (Service,
 	return WithOrderability(service), nil
 }
 
-func (s *Manager) OwnerServices(ctx context.Context, user auth.User) ([]Service, *domain.AppError) {
+func (s *Manager) OwnerServices(ctx context.Context, user auth.User, page domain.PageRequest) (domain.Page[Service], *domain.AppError) {
 	if s.repo != nil {
-		return s.repo.ListAPIServicesByOwner(ctx, user.ID)
+		return s.repo.ListAPIServicesByOwner(ctx, user.ID, page)
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -204,7 +204,7 @@ func (s *Manager) OwnerServices(ctx context.Context, user auth.User) ([]Service,
 			services = append(services, service)
 		}
 	}
-	return services, nil
+	return domain.PageItems(services, page), nil
 }
 
 func (s *Manager) OwnerService(ctx context.Context, user auth.User, serviceID string) (Service, *domain.AppError) {
@@ -221,12 +221,12 @@ func (s *Manager) OwnerService(ctx context.Context, user auth.User, serviceID st
 	return WithOrderability(service), nil
 }
 
-func (s *Manager) AdminServices(ctx context.Context, user auth.User) ([]Service, *domain.AppError) {
+func (s *Manager) AdminServices(ctx context.Context, user auth.User, page domain.PageRequest) (domain.Page[Service], *domain.AppError) {
 	if !user.IsAdmin {
-		return nil, domain.NewError(http.StatusForbidden, domain.CodePermissionDenied, "Permission denied", "需要管理员权限。")
+		return domain.Page[Service]{}, domain.NewError(http.StatusForbidden, domain.CodePermissionDenied, "Permission denied", "需要管理员权限。")
 	}
 	if s.repo != nil {
-		return s.repo.ListAdminAPIServices(ctx)
+		return s.repo.ListAdminAPIServices(ctx, page)
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -235,7 +235,7 @@ func (s *Manager) AdminServices(ctx context.Context, user auth.User) ([]Service,
 	for _, id := range s.serviceOrder {
 		services = append(services, WithOrderability(s.services[id]))
 	}
-	return services, nil
+	return domain.PageItems(services, page), nil
 }
 
 func (s *Manager) AdminService(ctx context.Context, user auth.User, serviceID string) (Service, *domain.AppError) {

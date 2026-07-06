@@ -15,6 +15,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"math/big"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -87,8 +88,8 @@ func publicAPIServiceOrderablePredicate(alias string) string {
 		  )`, alias)
 }
 
-func (s *Store) ListAPIServicesByOwner(ctx context.Context, ownerUserID string) ([]apimarket.Service, *domain.AppError) {
-	return s.listAPIServices(ctx, `WHERE owner_user_id = $1`, []any{ownerUserID})
+func (s *Store) ListAPIServicesByOwner(ctx context.Context, ownerUserID string, page domain.PageRequest) (domain.Page[apimarket.Service], *domain.AppError) {
+	return s.listAPIServicesPage(ctx, `WHERE owner_user_id = $1`, []any{ownerUserID}, page)
 }
 
 func (s *Store) GetAPIServiceForOwner(ctx context.Context, ownerUserID, serviceID string) (apimarket.Service, *domain.AppError) {
@@ -102,8 +103,8 @@ func (s *Store) GetAPIServiceForOwner(ctx context.Context, ownerUserID, serviceI
 	return service, nil
 }
 
-func (s *Store) ListAdminAPIServices(ctx context.Context) ([]apimarket.Service, *domain.AppError) {
-	return s.listAPIServices(ctx, "", nil)
+func (s *Store) ListAdminAPIServices(ctx context.Context, page domain.PageRequest) (domain.Page[apimarket.Service], *domain.AppError) {
+	return s.listAPIServicesPage(ctx, "", nil, page)
 }
 
 func (s *Store) GetAdminAPIService(ctx context.Context, serviceID string) (apimarket.Service, *domain.AppError) {
@@ -532,6 +533,49 @@ func (s *Store) listAPIServices(ctx context.Context, whereClause string, args []
 		}
 	}
 	return services, nil
+}
+
+func (s *Store) listAPIServicesPage(ctx context.Context, whereClause string, args []any, page domain.PageRequest) (domain.Page[apimarket.Service], *domain.AppError) {
+	if s == nil || s.pool == nil {
+		return domain.Page[apimarket.Service]{}, internalStoreError()
+	}
+	page = normalizePageRequest(page)
+	position, appErr := decodeKeysetCursor(page.Cursor)
+	if appErr != nil {
+		return domain.Page[apimarket.Service]{}, appErr
+	}
+	query := `SELECT ` + apiServiceColumns + ` FROM api_services `
+	whereClause = strings.TrimSpace(whereClause)
+	if whereClause != "" {
+		query += whereClause
+	}
+	args = append([]any(nil), args...)
+	if page.Cursor != "" {
+		if whereClause == "" {
+			query += `WHERE `
+		} else {
+			query += ` AND `
+		}
+		args = append(args, position.Time, position.ID)
+		query += `(updated_at, id) < ($` + strconv.Itoa(len(args)-1) + `, $` + strconv.Itoa(len(args)) + `::uuid)`
+	}
+	args = append(args, page.Limit+1)
+	query += ` ORDER BY updated_at DESC, id DESC LIMIT $` + strconv.Itoa(len(args))
+	rows, err := s.pool.Query(ctx, query, args...)
+	if err != nil {
+		return domain.Page[apimarket.Service]{}, internalStoreError()
+	}
+	defer rows.Close()
+	services, appErr := scanAPIServices(rows)
+	if appErr != nil {
+		return domain.Page[apimarket.Service]{}, appErr
+	}
+	for i := range services {
+		if appErr := s.loadAPIServiceChildren(ctx, s.pool, &services[i]); appErr != nil {
+			return domain.Page[apimarket.Service]{}, appErr
+		}
+	}
+	return pageFromItems(services, page, func(item apimarket.Service) (time.Time, string) { return item.UpdatedAt, item.ID }), nil
 }
 
 func (s *Store) getAPIService(ctx context.Context, q queryer, serviceID string, forUpdate bool) (apimarket.Service, error) {

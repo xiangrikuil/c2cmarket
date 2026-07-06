@@ -31,12 +31,12 @@ func NewService(repo Repository, now func() time.Time) *Service {
 	}
 }
 
-func (s *Service) List(ctx context.Context, userID string) ([]Notification, *domain.AppError) {
+func (s *Service) List(ctx context.Context, userID string, page domain.PageRequest) (domain.Page[Notification], *domain.AppError) {
 	if appErr := validateUserID(userID); appErr != nil {
-		return nil, appErr
+		return domain.Page[Notification]{}, appErr
 	}
 	if s.repo != nil {
-		return s.repo.ListNotifications(ctx, userID)
+		return s.repo.ListNotifications(ctx, userID, page)
 	}
 	s.mu.Lock()
 	items := make([]Notification, 0, len(s.items))
@@ -47,7 +47,7 @@ func (s *Service) List(ctx context.Context, userID string) ([]Notification, *dom
 	}
 	s.mu.Unlock()
 	sortNotifications(items)
-	return items, nil
+	return domain.PageItems(items, page), nil
 }
 
 func (s *Service) UnreadCount(ctx context.Context, userID string) (int, *domain.AppError) {
@@ -57,13 +57,11 @@ func (s *Service) UnreadCount(ctx context.Context, userID string) (int, *domain.
 	if s.repo != nil {
 		return s.repo.UnreadNotificationCount(ctx, userID)
 	}
-	items, appErr := s.List(ctx, userID)
-	if appErr != nil {
-		return 0, appErr
-	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	count := 0
-	for _, item := range items {
-		if item.ReadAt == nil {
+	for _, item := range s.items {
+		if item.UserID == userID && item.ReadAt == nil {
 			count++
 		}
 	}
@@ -112,11 +110,14 @@ func (s *Service) MarkAllRead(ctx context.Context, userID string) (ReadAllResult
 			count++
 		}
 	}
-	s.mu.Unlock()
-	items, appErr := s.List(ctx, userID)
-	if appErr != nil {
-		return ReadAllResult{}, appErr
+	items := make([]Notification, 0, len(s.items))
+	for _, item := range s.items {
+		if item.UserID == userID {
+			items = append(items, item)
+		}
 	}
+	s.mu.Unlock()
+	sortNotifications(items)
 	return ReadAllResult{Count: count, Items: items}, nil
 }
 
