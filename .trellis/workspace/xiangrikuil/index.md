@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 3
+- **Total Sessions**: 4
 - **Last Active**: 2026-07-06
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~120 | Active |
+| `journal-1.md` | ~165 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 4 | 2026-07-06 | Report dispute moderation v0.4.1 | `a27d8c7` | `main` |
 | 3 | 2026-07-06 | Complete maintenance hardening roadmap | `311fb1a`, `1192f4e` | `main` |
 | 2 | 2026-07-06 | Backend service boundary cleanup | `635caf1272072deda8b5f027de94133bff85386e` | `main` |
 | 1 | 2026-07-06 | Auth Hardening Bootstrap | `af95f14` | `main` |

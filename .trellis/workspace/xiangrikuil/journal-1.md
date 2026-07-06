@@ -129,3 +129,42 @@ Completed final maintenance cleanup checks, archived the final child task and pa
 ### Next Steps
 
 - None - task complete
+
+
+## Session 4: Report dispute moderation v0.4.1
+
+**Date**: 2026-07-06
+**Task**: Report dispute moderation v0.4.1
+**Package**: frontend
+**Branch**: `main`
+
+### Summary
+
+Aligned the report/dispute moderation model with v0.4.1: clean pre-launch schema, public result codes, moderation audit logs, canonical target snapshots, OpenAPI/frontend sync, and verification.
+
+### Main Changes
+
+- Reworked the report/dispute baseline for the pre-launch clean schema decision.
+- Added `public_result_code`, `moderation_audit_logs`, canonical target snapshots, duplicate active report protection, and report target resolver coverage.
+- Synced backend DTOs, OpenAPI, frontend adapters, entry points, and Trellis/backend specs with the v0.4.1 contract.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `a27d8c7` | (see git log) |
+
+### Testing
+
+- [OK] `docker run --rm -e GOPROXY=https://goproxy.cn,direct ... golang:1.26-alpine go test ./...`
+- [OK] `./node_modules/.bin/vue-tsc -b`
+- [OK] `VITE_API_MODE=real ./node_modules/.bin/vite build`
+- [OK] `git diff --check`
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
