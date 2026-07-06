@@ -83,3 +83,49 @@ Split carpool handlers from the legacy server.Service facade, documented core.Se
 ### Next Steps
 
 - Continue the parent maintenance roadmap with database-level pagination, search index/query alignment, and final docs/source/test hardening tasks.
+
+
+## Session 3: Complete maintenance hardening roadmap
+
+**Date**: 2026-07-06
+**Task**: Complete maintenance hardening roadmap
+**Package**: frontend
+**Branch**: `main`
+
+### Summary
+
+Completed final maintenance cleanup checks, archived the final child task and parent roadmap, and ignored generated source package output.
+
+### Main Changes
+
+- Added `scripts/check-migrations-doc.mjs` and wired it into CI.
+- Added `scripts/package-source.sh`, then ignored generated `output/` archives.
+- Added focused `backendClient` Vitest coverage for real session failures,
+  Problem Details decoding, and stale CSRF retry.
+- Updated architecture/deployment docs and added
+  `docs/maintenance-hardening-report.md`.
+- Archived the final cleanup child task and the parent maintenance roadmap.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `311fb1a` | (see git log) |
+| `1192f4e` | (see git log) |
+
+### Testing
+
+- [OK] Migration docs check: 36 migrations documented, latest version 36.
+- [OK] Source package self-check excluded forbidden generated/control paths.
+- [OK] OpenAPI route guard: 211 method/path pairs.
+- [OK] Docker backend `go test ./...` with `GOPROXY=https://goproxy.cn,direct`.
+- [OK] Frontend `vue-tsc`, real-mode Vite build, and Vitest suite using Node 24.
+- [OK] `git diff --check`.
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
