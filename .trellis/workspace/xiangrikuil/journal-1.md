@@ -44,3 +44,42 @@ Committed Argon2id password hashing, legacy rehash, env-driven first-admin boots
 ### Next Steps
 
 - Continue the parent maintenance roadmap with P0 request/proxy hardening.
+
+
+## Session 2: Backend service boundary cleanup
+
+**Date**: 2026-07-06
+**Task**: Backend service boundary cleanup
+**Package**: backend
+**Branch**: `main`
+
+### Summary
+
+Split carpool handlers from the legacy server.Service facade, documented core.Service as a compatibility facade, recorded the backend service-boundary pattern, verified backend tests, and archived the child task.
+
+### Main Changes
+
+- Added `server.CarpoolService` and `server.ApplicationService` so carpool handlers depend on a focused domain transport boundary.
+- Moved carpool handler service calls from `s.app` to `s.carpools`.
+- Documented `core.Service` as a legacy compatibility facade and recorded the focused server-side service interface pattern in backend specs.
+- Updated the parent maintenance roadmap and archived the backend service boundary cleanup child task.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `635caf1272072deda8b5f027de94133bff85386e` | `chore: split carpool server service boundary` |
+
+### Testing
+
+- [OK] Docker `go test ./...` in `backend`
+- [OK] `git diff --check`
+- [OK] Source scans for carpool handler `s.app` usage and migrated methods in legacy `server.Service`
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- Continue the parent maintenance roadmap with database-level pagination, search index/query alignment, and final docs/source/test hardening tasks.
