@@ -94,6 +94,9 @@ const (
 	DemandStatusTakenDown        = demand.StatusTakenDown
 )
 
+// Service is a legacy compatibility facade that wires domain services together
+// for existing app/server construction. New behavior should prefer a
+// domain-specific service boundary instead of adding more facade methods here.
 type Service struct {
 	now                func() time.Time
 	authService        *authmodule.Service

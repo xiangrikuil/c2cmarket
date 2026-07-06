@@ -59,6 +59,8 @@ type OAuthOptions struct {
 	Scopes       string
 }
 
+// Service is the legacy application facade for handlers that have not yet been
+// moved to domain-specific server dependencies.
 type Service interface {
 	CreateDevSession(ctx context.Context, username string, isAdmin bool) (auth.User, auth.Session, *domain.AppError)
 	LoginWithOAuthProfile(ctx context.Context, profile auth.OAuthProfile) (auth.User, auth.Session, *domain.AppError)
@@ -152,31 +154,6 @@ type Service interface {
 	AdminAppealActionWithIdempotency(ctx context.Context, user auth.User, routeKey, key, requestHash string, input report.AdminActionInput, buildCompletion report.AdminCompletionBuilder) (idempotency.Completion, *domain.AppError)
 	PublicUserDisputes(ctx context.Context, username string) ([]report.PublicDispute, *domain.AppError)
 
-	CreateCarpoolListing(ctx context.Context, user auth.User, input carpool.CreateListingInput) (carpool.Listing, *domain.AppError)
-	PublishCarpoolListing(ctx context.Context, user auth.User, input carpool.PublishListingInput) (carpool.Listing, *domain.AppError)
-	UpdateCarpoolListing(ctx context.Context, user auth.User, input carpool.UpdateListingInput) (carpool.Listing, *domain.AppError)
-	SubmitCarpoolListingForReview(ctx context.Context, user auth.User, input carpool.SubmitListingReviewInput) (carpool.Listing, *domain.AppError)
-	PublicCarpoolListings(ctx context.Context) ([]carpool.Listing, *domain.AppError)
-	PublicCarpoolListing(ctx context.Context, listingID string) (carpool.Listing, *domain.AppError)
-	MyCarpoolListings(ctx context.Context, user auth.User) ([]carpool.Listing, *domain.AppError)
-	AdminCarpoolListings(ctx context.Context, user auth.User) ([]carpool.Listing, *domain.AppError)
-	AdminCarpoolListing(ctx context.Context, user auth.User, listingID string) (carpool.Listing, *domain.AppError)
-	UpdateCarpoolListingReviewStatus(ctx context.Context, user auth.User, input carpool.ReviewInput) (carpool.Listing, *domain.AppError)
-	CreateCarpoolApplication(ctx context.Context, user auth.User, input carpool.CreateApplicationInput) (carpool.Application, *domain.AppError)
-	MyCarpoolApplications(ctx context.Context, user auth.User) ([]carpool.Application, *domain.AppError)
-	MyCarpoolApplication(ctx context.Context, user auth.User, applicationID string) (carpool.Application, *domain.AppError)
-	OwnerCarpoolApplications(ctx context.Context, user auth.User) ([]carpool.Application, *domain.AppError)
-	OwnerCarpoolApplication(ctx context.Context, user auth.User, applicationID string) (carpool.Application, *domain.AppError)
-	AcceptCarpoolApplicationWithIdempotency(ctx context.Context, userID, routeKey, key, requestHash string, input carpool.AcceptApplicationInput, buildCompletion carpool.ApplicationCompletionBuilder) (idempotency.Completion, *domain.AppError)
-	RejectCarpoolApplication(ctx context.Context, input carpool.RejectApplicationInput) (carpool.Application, *domain.AppError)
-	CancelCarpoolApplicationWithIdempotency(ctx context.Context, userID, routeKey, key, requestHash string, input carpool.CancelApplicationInput, buildCompletion carpool.ApplicationCompletionBuilder) (idempotency.Completion, *domain.AppError)
-	WithdrawCarpoolAcceptanceWithIdempotency(ctx context.Context, userID, routeKey, key, requestHash string, input carpool.WithdrawAcceptanceInput, buildCompletion carpool.ApplicationCompletionBuilder) (idempotency.Completion, *domain.AppError)
-	ConfirmCarpoolApplicationJoinWithIdempotency(ctx context.Context, userID, routeKey, key, requestHash string, input carpool.ConfirmApplicationJoinInput, buildCompletion carpool.ApplicationCompletionBuilder) (idempotency.Completion, *domain.AppError)
-	MyCarpoolMemberships(ctx context.Context, user auth.User) ([]carpool.Membership, *domain.AppError)
-	OwnerCarpoolMemberships(ctx context.Context, user auth.User) ([]carpool.Membership, *domain.AppError)
-	ConfirmCarpoolMembershipCompleteWithIdempotency(ctx context.Context, userID, routeKey, key, requestHash string, input carpool.ConfirmMembershipCompleteInput, buildCompletion carpool.MembershipCompletionBuilder) (idempotency.Completion, *domain.AppError)
-	EndCarpoolMembershipWithIdempotency(ctx context.Context, userID, routeKey, key, requestHash string, input carpool.EndMembershipInput, buildCompletion carpool.MembershipCompletionBuilder) (idempotency.Completion, *domain.AppError)
-
 	CreateAPIService(ctx context.Context, user auth.User, input apimarket.CreateServiceInput) (apimarket.Service, *domain.AppError)
 	UpdateAPIService(ctx context.Context, user auth.User, input apimarket.UpdateServiceInput) (apimarket.Service, *domain.AppError)
 	PublicAPIServices(ctx context.Context, filter apimarket.PublicServiceFilter) ([]apimarket.Service, *domain.AppError)
@@ -255,8 +232,44 @@ type Service interface {
 	MarkAllNotificationsRead(ctx context.Context, user auth.User) (notification.ReadAllResult, *domain.AppError)
 }
 
+// CarpoolService is the server transport boundary for carpool handlers.
+type CarpoolService interface {
+	CreateCarpoolListing(ctx context.Context, user auth.User, input carpool.CreateListingInput) (carpool.Listing, *domain.AppError)
+	PublishCarpoolListing(ctx context.Context, user auth.User, input carpool.PublishListingInput) (carpool.Listing, *domain.AppError)
+	UpdateCarpoolListing(ctx context.Context, user auth.User, input carpool.UpdateListingInput) (carpool.Listing, *domain.AppError)
+	SubmitCarpoolListingForReview(ctx context.Context, user auth.User, input carpool.SubmitListingReviewInput) (carpool.Listing, *domain.AppError)
+	PublicCarpoolListings(ctx context.Context) ([]carpool.Listing, *domain.AppError)
+	PublicCarpoolListing(ctx context.Context, listingID string) (carpool.Listing, *domain.AppError)
+	MyCarpoolListings(ctx context.Context, user auth.User) ([]carpool.Listing, *domain.AppError)
+	AdminCarpoolListings(ctx context.Context, user auth.User) ([]carpool.Listing, *domain.AppError)
+	AdminCarpoolListing(ctx context.Context, user auth.User, listingID string) (carpool.Listing, *domain.AppError)
+	UpdateCarpoolListingReviewStatus(ctx context.Context, user auth.User, input carpool.ReviewInput) (carpool.Listing, *domain.AppError)
+	CreateCarpoolApplication(ctx context.Context, user auth.User, input carpool.CreateApplicationInput) (carpool.Application, *domain.AppError)
+	MyCarpoolApplications(ctx context.Context, user auth.User) ([]carpool.Application, *domain.AppError)
+	MyCarpoolApplication(ctx context.Context, user auth.User, applicationID string) (carpool.Application, *domain.AppError)
+	OwnerCarpoolApplications(ctx context.Context, user auth.User) ([]carpool.Application, *domain.AppError)
+	OwnerCarpoolApplication(ctx context.Context, user auth.User, applicationID string) (carpool.Application, *domain.AppError)
+	AcceptCarpoolApplicationWithIdempotency(ctx context.Context, userID, routeKey, key, requestHash string, input carpool.AcceptApplicationInput, buildCompletion carpool.ApplicationCompletionBuilder) (idempotency.Completion, *domain.AppError)
+	RejectCarpoolApplication(ctx context.Context, input carpool.RejectApplicationInput) (carpool.Application, *domain.AppError)
+	CancelCarpoolApplicationWithIdempotency(ctx context.Context, userID, routeKey, key, requestHash string, input carpool.CancelApplicationInput, buildCompletion carpool.ApplicationCompletionBuilder) (idempotency.Completion, *domain.AppError)
+	WithdrawCarpoolAcceptanceWithIdempotency(ctx context.Context, userID, routeKey, key, requestHash string, input carpool.WithdrawAcceptanceInput, buildCompletion carpool.ApplicationCompletionBuilder) (idempotency.Completion, *domain.AppError)
+	ConfirmCarpoolApplicationJoinWithIdempotency(ctx context.Context, userID, routeKey, key, requestHash string, input carpool.ConfirmApplicationJoinInput, buildCompletion carpool.ApplicationCompletionBuilder) (idempotency.Completion, *domain.AppError)
+	MyCarpoolMemberships(ctx context.Context, user auth.User) ([]carpool.Membership, *domain.AppError)
+	OwnerCarpoolMemberships(ctx context.Context, user auth.User) ([]carpool.Membership, *domain.AppError)
+	ConfirmCarpoolMembershipCompleteWithIdempotency(ctx context.Context, userID, routeKey, key, requestHash string, input carpool.ConfirmMembershipCompleteInput, buildCompletion carpool.MembershipCompletionBuilder) (idempotency.Completion, *domain.AppError)
+	EndCarpoolMembershipWithIdempotency(ctx context.Context, userID, routeKey, key, requestHash string, input carpool.EndMembershipInput, buildCompletion carpool.MembershipCompletionBuilder) (idempotency.Completion, *domain.AppError)
+}
+
+// ApplicationService is the constructor aggregate while handlers migrate from
+// the legacy facade to domain-specific service boundaries.
+type ApplicationService interface {
+	Service
+	CarpoolService
+}
+
 type Server struct {
 	app                  Service
+	carpools             CarpoolService
 	mux                  chi.Router
 	enableDevAuth        bool
 	readinessChecker     health.Checker
@@ -269,7 +282,7 @@ type Server struct {
 	trustedProxyPrefixes []netip.Prefix
 }
 
-func NewServer(service Service, options ...ServerOptions) http.Handler {
+func NewServer(service ApplicationService, options ...ServerOptions) http.Handler {
 	option := ServerOptions{EnableDevAuth: true, AppEnv: config.EnvDevelopment}
 	if len(options) > 0 {
 		option = options[0]
@@ -279,6 +292,7 @@ func NewServer(service Service, options ...ServerOptions) http.Handler {
 	}
 	server := &Server{
 		app:                  service,
+		carpools:             service,
 		mux:                  chi.NewRouter(),
 		enableDevAuth:        option.EnableDevAuth,
 		readinessChecker:     option.ReadinessChecker,

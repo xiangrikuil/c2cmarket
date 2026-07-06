@@ -39,6 +39,25 @@ docs/openapi/
 - Add new endpoint handlers in `internal/server` unless the target business module already owns a handler adapter.
 - Keep process dependency wiring in `internal/app`; do not put business state machines there.
 - Keep `internal/module/core` as a compatibility facade only. It may keep legacy service method names during the transition, but business state machines belong in module-owned services.
+- Keep `backend/internal/server.Service` as a legacy handler facade only. When adding or migrating domain handler behavior, prefer a focused server-side interface named for the domain, store it separately on `Server`, and use a constructor aggregate only to preserve `NewServer` as a single-service call:
+
+```go
+type CarpoolService interface {
+	// Domain methods used by carpool handlers.
+}
+
+type ApplicationService interface {
+	Service
+	CarpoolService
+}
+
+type Server struct {
+	app      Service
+	carpools CarpoolService
+}
+```
+
+  During the transition, `internal/module/core.Service` may implement both the legacy facade and the focused domain interface, but new handler-owned domain methods must not be added back to the giant facade without a task-specific reason.
 - `internal/module/auth`, `internal/module/idempotency`, `internal/module/contact`, `internal/module/catalog`, `internal/module/officialprice`, `internal/module/carpool`, `internal/module/apimarket`, `internal/module/apiintent`, `internal/module/profile`, and `internal/module/announcement` own their models, repository contracts, and module services. `internal/module/core` delegates to these services.
 - New module work should prefer focused files under `internal/module/<domain>` for handler, service, repository interface, model, DTO, and errors when that domain is touched.
 - Keep stable error codes and error constructors in `internal/domain`.

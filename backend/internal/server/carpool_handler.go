@@ -151,7 +151,7 @@ func (s *Server) handleCreateCarpool(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.withIdempotency(w, r, user.ID, "POST /api/v1/carpools", body, func() (int, any, string, string, *domain.AppError) {
-		listing, errApp := s.app.CreateCarpoolListing(r.Context(), user, toAppCreateCarpoolInput(req))
+		listing, errApp := s.carpools.CreateCarpoolListing(r.Context(), user, toAppCreateCarpoolInput(req))
 		if errApp != nil {
 			return 0, nil, "", "", errApp
 		}
@@ -173,7 +173,7 @@ func (s *Server) handlePublishCarpool(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.withIdempotency(w, r, user.ID, "POST /api/v1/carpools/publish", body, func() (int, any, string, string, *domain.AppError) {
-		listing, errApp := s.app.PublishCarpoolListing(r.Context(), user, toAppCreateCarpoolInput(req))
+		listing, errApp := s.carpools.PublishCarpoolListing(r.Context(), user, toAppCreateCarpoolInput(req))
 		if errApp != nil {
 			return 0, nil, "", "", errApp
 		}
@@ -198,7 +198,7 @@ func (s *Server) handleUpdateCarpool(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, r, appErr)
 		return
 	}
-	listing, appErr := s.app.UpdateCarpoolListing(r.Context(), user, carpool.UpdateListingInput{
+	listing, appErr := s.carpools.UpdateCarpoolListing(r.Context(), user, carpool.UpdateListingInput{
 		ListingID:            chi.URLParam(r, "id"),
 		ProductPlanID:        req.ProductPlanID,
 		OwnerContactMethodID: req.OwnerContactMethodID,
@@ -261,7 +261,7 @@ func (s *Server) handleSubmitCarpoolReview(w http.ResponseWriter, r *http.Reques
 	listingID := chi.URLParam(r, "id")
 	routeKey := "POST /api/v1/carpools/{id}/submit-review:" + listingID
 	s.withIdempotency(w, r, user.ID, routeKey, body, func() (int, any, string, string, *domain.AppError) {
-		listing, errApp := s.app.SubmitCarpoolListingForReview(r.Context(), user, carpool.SubmitListingReviewInput{
+		listing, errApp := s.carpools.SubmitCarpoolListingForReview(r.Context(), user, carpool.SubmitListingReviewInput{
 			ListingID:       listingID,
 			ExpectedVersion: version,
 			RequestID:       requestIDFrom(r),
@@ -275,7 +275,7 @@ func (s *Server) handleSubmitCarpoolReview(w http.ResponseWriter, r *http.Reques
 }
 
 func (s *Server) handlePublicCarpools(w http.ResponseWriter, r *http.Request) {
-	listings, appErr := s.app.PublicCarpoolListings(r.Context())
+	listings, appErr := s.carpools.PublicCarpoolListings(r.Context())
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
@@ -284,7 +284,7 @@ func (s *Server) handlePublicCarpools(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handlePublicCarpool(w http.ResponseWriter, r *http.Request) {
-	listing, appErr := s.app.PublicCarpoolListing(r.Context(), chi.URLParam(r, "id"))
+	listing, appErr := s.carpools.PublicCarpoolListing(r.Context(), chi.URLParam(r, "id"))
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
@@ -299,7 +299,7 @@ func (s *Server) handleMyCarpools(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, r, appErr)
 		return
 	}
-	listings, appErr := s.app.MyCarpoolListings(r.Context(), user)
+	listings, appErr := s.carpools.MyCarpoolListings(r.Context(), user)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
@@ -313,7 +313,7 @@ func (s *Server) handleAdminCarpools(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, r, appErr)
 		return
 	}
-	listings, appErr := s.app.AdminCarpoolListings(r.Context(), user)
+	listings, appErr := s.carpools.AdminCarpoolListings(r.Context(), user)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
@@ -327,7 +327,7 @@ func (s *Server) handleAdminCarpool(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, r, appErr)
 		return
 	}
-	listing, appErr := s.app.AdminCarpoolListing(r.Context(), user, chi.URLParam(r, "id"))
+	listing, appErr := s.carpools.AdminCarpoolListing(r.Context(), user, chi.URLParam(r, "id"))
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
@@ -375,7 +375,7 @@ func (s *Server) handleCarpoolReviewStatus(w http.ResponseWriter, r *http.Reques
 	listingID := chi.URLParam(r, "id")
 	routeKey := "POST /api/v1/admin/carpools/{id}/" + action + ":" + listingID
 	s.withIdempotency(w, r, user.ID, routeKey, body, func() (int, any, string, string, *domain.AppError) {
-		listing, errApp := s.app.UpdateCarpoolListingReviewStatus(r.Context(), user, carpool.ReviewInput{
+		listing, errApp := s.carpools.UpdateCarpoolListingReviewStatus(r.Context(), user, carpool.ReviewInput{
 			ListingID:       listingID,
 			Action:          action,
 			Status:          status,
@@ -405,7 +405,7 @@ func (s *Server) handleCreateCarpoolApplication(w http.ResponseWriter, r *http.R
 	listingID := chi.URLParam(r, "id")
 	routeKey := "POST /api/v1/carpools/{id}/applications:" + listingID
 	s.withIdempotency(w, r, user.ID, routeKey, body, func() (int, any, string, string, *domain.AppError) {
-		application, errApp := s.app.CreateCarpoolApplication(r.Context(), user, carpool.CreateApplicationInput{
+		application, errApp := s.carpools.CreateCarpoolApplication(r.Context(), user, carpool.CreateApplicationInput{
 			ListingID:            listingID,
 			BuyerContactMethodID: req.BuyerContactMethodID,
 			RiskAcknowledgement:  toAppRiskAck(req.RiskAcknowledgement),
@@ -424,7 +424,7 @@ func (s *Server) handleMyCarpoolApplications(w http.ResponseWriter, r *http.Requ
 		writeProblem(w, r, appErr)
 		return
 	}
-	applications, appErr := s.app.MyCarpoolApplications(r.Context(), user)
+	applications, appErr := s.carpools.MyCarpoolApplications(r.Context(), user)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
@@ -438,7 +438,7 @@ func (s *Server) handleMyCarpoolApplication(w http.ResponseWriter, r *http.Reque
 		writeProblem(w, r, appErr)
 		return
 	}
-	application, appErr := s.app.MyCarpoolApplication(r.Context(), user, chi.URLParam(r, "id"))
+	application, appErr := s.carpools.MyCarpoolApplication(r.Context(), user, chi.URLParam(r, "id"))
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
@@ -469,7 +469,7 @@ func (s *Server) handleCancelCarpoolApplication(w http.ResponseWriter, r *http.R
 	}
 	applicationID := chi.URLParam(r, "id")
 	routeKey := "POST /api/v1/me/carpool-applications/{id}/cancel:" + applicationID
-	completion, appErr := s.app.CancelCarpoolApplicationWithIdempotency(
+	completion, appErr := s.carpools.CancelCarpoolApplicationWithIdempotency(
 		r.Context(),
 		user.ID,
 		routeKey,
@@ -516,7 +516,7 @@ func (s *Server) handleMyCarpoolMemberships(w http.ResponseWriter, r *http.Reque
 		writeProblem(w, r, appErr)
 		return
 	}
-	memberships, appErr := s.app.MyCarpoolMemberships(r.Context(), user)
+	memberships, appErr := s.carpools.MyCarpoolMemberships(r.Context(), user)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
@@ -529,7 +529,7 @@ func (s *Server) handleOwnerCarpoolApplications(w http.ResponseWriter, r *http.R
 		writeProblem(w, r, appErr)
 		return
 	}
-	applications, appErr := s.app.OwnerCarpoolApplications(r.Context(), user)
+	applications, appErr := s.carpools.OwnerCarpoolApplications(r.Context(), user)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
@@ -543,7 +543,7 @@ func (s *Server) handleOwnerCarpoolApplication(w http.ResponseWriter, r *http.Re
 		writeProblem(w, r, appErr)
 		return
 	}
-	application, appErr := s.app.OwnerCarpoolApplication(r.Context(), user, chi.URLParam(r, "id"))
+	application, appErr := s.carpools.OwnerCarpoolApplication(r.Context(), user, chi.URLParam(r, "id"))
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
@@ -570,7 +570,7 @@ func (s *Server) handleAcceptCarpoolApplication(w http.ResponseWriter, r *http.R
 	}
 	applicationID := chi.URLParam(r, "id")
 	routeKey := "POST /api/v1/owner/carpool-applications/{id}/accept:" + applicationID
-	completion, appErr := s.app.AcceptCarpoolApplicationWithIdempotency(
+	completion, appErr := s.carpools.AcceptCarpoolApplicationWithIdempotency(
 		r.Context(),
 		user.ID,
 		routeKey,
@@ -621,7 +621,7 @@ func (s *Server) handleRejectCarpoolApplication(w http.ResponseWriter, r *http.R
 	applicationID := chi.URLParam(r, "id")
 	routeKey := "POST /api/v1/owner/carpool-applications/{id}/reject:" + applicationID
 	s.withIdempotency(w, r, user.ID, routeKey, body, func() (int, any, string, string, *domain.AppError) {
-		application, errApp := s.app.RejectCarpoolApplication(r.Context(), carpool.RejectApplicationInput{
+		application, errApp := s.carpools.RejectCarpoolApplication(r.Context(), carpool.RejectApplicationInput{
 			ApplicationID:   applicationID,
 			OwnerUserID:     user.ID,
 			Reason:          req.Reason,
@@ -654,7 +654,7 @@ func (s *Server) handleWithdrawCarpoolAcceptance(w http.ResponseWriter, r *http.
 	}
 	applicationID := chi.URLParam(r, "id")
 	routeKey := "POST /api/v1/owner/carpool-applications/{id}/withdraw-acceptance:" + applicationID
-	completion, appErr := s.app.WithdrawCarpoolAcceptanceWithIdempotency(
+	completion, appErr := s.carpools.WithdrawCarpoolAcceptanceWithIdempotency(
 		r.Context(),
 		user.ID,
 		routeKey,
@@ -705,7 +705,7 @@ func (s *Server) handleOwnerCarpoolMemberships(w http.ResponseWriter, r *http.Re
 		writeProblem(w, r, appErr)
 		return
 	}
-	memberships, appErr := s.app.OwnerCarpoolMemberships(r.Context(), user)
+	memberships, appErr := s.carpools.OwnerCarpoolMemberships(r.Context(), user)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
@@ -734,7 +734,7 @@ func (s *Server) handleConfirmCarpoolJoin(w http.ResponseWriter, r *http.Request
 		routePrefix = "POST /api/v1/owner/carpool-applications/{id}/confirm-join"
 	}
 	routeKey := routePrefix + ":" + applicationID
-	completion, appErr := s.app.ConfirmCarpoolApplicationJoinWithIdempotency(
+	completion, appErr := s.carpools.ConfirmCarpoolApplicationJoinWithIdempotency(
 		r.Context(),
 		user.ID,
 		routeKey,
@@ -789,7 +789,7 @@ func (s *Server) handleConfirmCarpoolMembershipComplete(w http.ResponseWriter, r
 		routePrefix = "POST /api/v1/owner/carpool-memberships/{id}/confirm-complete"
 	}
 	routeKey := routePrefix + ":" + membershipID
-	completion, appErr := s.app.ConfirmCarpoolMembershipCompleteWithIdempotency(
+	completion, appErr := s.carpools.ConfirmCarpoolMembershipCompleteWithIdempotency(
 		r.Context(),
 		user.ID,
 		routeKey,
@@ -844,7 +844,7 @@ func (s *Server) handleEndCarpoolMembership(w http.ResponseWriter, r *http.Reque
 		routePrefix = "POST /api/v1/owner/carpool-memberships/{id}/remove"
 	}
 	routeKey := routePrefix + ":" + membershipID
-	completion, appErr := s.app.EndCarpoolMembershipWithIdempotency(
+	completion, appErr := s.carpools.EndCarpoolMembershipWithIdempotency(
 		r.Context(),
 		user.ID,
 		routeKey,
