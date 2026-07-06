@@ -1,0 +1,29 @@
+{
+  "id": "maintenance-hardening-roadmap",
+  "name": "maintenance-hardening-roadmap",
+  "title": "Maintenance hardening roadmap",
+  "description": "Parent task for completing the staged C2CMarket long-term maintenance hardening plan from the reviewed Codex maintenance prompt.",
+  "status": "planning",
+  "dev_type": null,
+  "scope": null,
+  "package": "backend",
+  "priority": "P0",
+  "creator": "xiangrikuil",
+  "assignee": "xiangrikuil",
+  "createdAt": "2026-07-06",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "main",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [
+    "07-06-ci-frontend-test-safety-net",
+    "07-06-p0-password-hashing-admin-bootstrap"
+  ],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {}
+}
