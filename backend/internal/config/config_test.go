@@ -233,3 +233,57 @@ func TestLoadRejectsBootstrapUsernameWithoutPassword(t *testing.T) {
 		t.Fatalf("expected bootstrap username without password to fail")
 	}
 }
+
+func TestLoadTrustedProxyDefaultsDisabled(t *testing.T) {
+	t.Setenv("APP_ENV", EnvDevelopment)
+	t.Setenv("TRUST_X_FORWARDED_FOR", "")
+	t.Setenv("TRUSTED_PROXIES", "")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+	if cfg.TrustXForwardedFor {
+		t.Fatalf("expected X-Forwarded-For trust disabled by default")
+	}
+	if len(cfg.TrustedProxies) != 0 {
+		t.Fatalf("expected no trusted proxies by default, got %+v", cfg.TrustedProxies)
+	}
+}
+
+func TestLoadTrustedProxyRequiresTrustedProxies(t *testing.T) {
+	t.Setenv("APP_ENV", EnvDevelopment)
+	t.Setenv("TRUST_X_FORWARDED_FOR", "true")
+	t.Setenv("TRUSTED_PROXIES", "")
+
+	if _, err := Load(); err == nil {
+		t.Fatalf("expected forwarding trust without trusted proxies to fail")
+	}
+}
+
+func TestLoadTrustedProxyRejectsInvalidEntry(t *testing.T) {
+	t.Setenv("APP_ENV", EnvDevelopment)
+	t.Setenv("TRUST_X_FORWARDED_FOR", "true")
+	t.Setenv("TRUSTED_PROXIES", "not-an-ip")
+
+	if _, err := Load(); err == nil {
+		t.Fatalf("expected invalid trusted proxy entry to fail")
+	}
+}
+
+func TestLoadTrustedProxyParsesIPAndCIDR(t *testing.T) {
+	t.Setenv("APP_ENV", EnvDevelopment)
+	t.Setenv("TRUST_X_FORWARDED_FOR", "true")
+	t.Setenv("TRUSTED_PROXIES", "10.0.0.1, 192.168.0.0/24")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+	if !cfg.TrustXForwardedFor {
+		t.Fatalf("expected X-Forwarded-For trust enabled")
+	}
+	if len(cfg.TrustedProxies) != 2 || cfg.TrustedProxies[0] != "10.0.0.1" || cfg.TrustedProxies[1] != "192.168.0.0/24" {
+		t.Fatalf("unexpected trusted proxies: %+v", cfg.TrustedProxies)
+	}
+}

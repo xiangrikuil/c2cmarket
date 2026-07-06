@@ -5,7 +5,9 @@ import (
 	"c2c-market/backend/internal/middleware"
 	"c2c-market/backend/internal/module/auth"
 	"encoding/json"
+	"net"
 	"net/http"
+	"net/netip"
 	"strings"
 )
 
@@ -81,7 +83,7 @@ func (s *Server) checkRateLimit(r *http.Request, routeGroup string, limit int) *
 	if s.rateLimiter == nil || limit <= 0 {
 		return nil
 	}
-	keys := []string{"ip:" + routeGroup + ":" + clientIP(r)}
+	keys := []string{"ip:" + routeGroup + ":" + s.clientIP(r)}
 	if sessionToken, ok := middleware.SessionToken(r); ok {
 		if user, _, appErr := s.app.GetSession(r.Context(), sessionToken); appErr == nil && strings.TrimSpace(user.ID) != "" {
 			keys = append(keys, "user:"+routeGroup+":"+user.ID)
@@ -96,21 +98,102 @@ func (s *Server) checkRateLimit(r *http.Request, routeGroup string, limit int) *
 	return nil
 }
 
-func clientIP(r *http.Request) string {
-	forwardedFor := strings.TrimSpace(r.Header.Get("X-Forwarded-For"))
-	if forwardedFor != "" {
-		parts := strings.Split(forwardedFor, ",")
-		if first := strings.TrimSpace(parts[0]); first != "" {
-			return first
+func (s *Server) clientIP(r *http.Request) string {
+	remote := directRemoteAddr(r)
+	remoteAddr, ok := parseIPAddr(remote)
+	if !ok {
+		return valueOrUnknown(remote)
+	}
+	if s.trustXForwardedFor && s.isTrustedProxy(remoteAddr) {
+		if forwarded := firstForwardedClientIP(r.Header.Get("X-Forwarded-For")); forwarded != "" {
+			return forwarded
+		}
+		if realIP := singleHeaderIP(r.Header.Get("X-Real-IP")); realIP != "" {
+			return realIP
 		}
 	}
-	realIP := strings.TrimSpace(r.Header.Get("X-Real-IP"))
-	if realIP != "" {
-		return realIP
+	return remoteAddr.String()
+}
+
+func (s *Server) isTrustedProxy(addr netip.Addr) bool {
+	addr = addr.Unmap()
+	for _, prefix := range s.trustedProxyPrefixes {
+		if prefix.Contains(addr) {
+			return true
+		}
+	}
+	return false
+}
+
+func directRemoteAddr(r *http.Request) string {
+	if r == nil {
+		return ""
 	}
 	remote := strings.TrimSpace(r.RemoteAddr)
-	if host, _, ok := strings.Cut(remote, ":"); ok && host != "" {
-		return host
+	if host, _, err := net.SplitHostPort(remote); err == nil {
+		return strings.Trim(host, "[]")
 	}
-	return remote
+	return strings.Trim(remote, "[]")
+}
+
+func firstForwardedClientIP(value string) string {
+	parts := strings.Split(value, ",")
+	if len(parts) == 0 {
+		return ""
+	}
+	return singleHeaderIP(parts[0])
+}
+
+func singleHeaderIP(value string) string {
+	addr, ok := parseIPAddr(value)
+	if !ok {
+		return ""
+	}
+	return addr.String()
+}
+
+func parseIPAddr(value string) (netip.Addr, bool) {
+	value = strings.Trim(strings.TrimSpace(value), "[]")
+	if value == "" {
+		return netip.Addr{}, false
+	}
+	addr, err := netip.ParseAddr(value)
+	if err != nil {
+		return netip.Addr{}, false
+	}
+	return addr.Unmap(), true
+}
+
+func trustedProxyPrefixes(values []string) []netip.Prefix {
+	prefixes := []netip.Prefix{}
+	for _, value := range values {
+		if prefix, ok := trustedProxyPrefix(value); ok {
+			prefixes = append(prefixes, prefix)
+		}
+	}
+	return prefixes
+}
+
+func trustedProxyPrefix(value string) (netip.Prefix, bool) {
+	value = strings.Trim(strings.TrimSpace(value), "[]")
+	if value == "" {
+		return netip.Prefix{}, false
+	}
+	if prefix, err := netip.ParsePrefix(value); err == nil {
+		return prefix.Masked(), true
+	}
+	addr, err := netip.ParseAddr(value)
+	if err != nil {
+		return netip.Prefix{}, false
+	}
+	addr = addr.Unmap()
+	return netip.PrefixFrom(addr, addr.BitLen()), true
+}
+
+func valueOrUnknown(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return "unknown"
+	}
+	return value
 }

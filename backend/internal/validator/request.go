@@ -13,26 +13,25 @@ import (
 	"time"
 )
 
+const MaxJSONBodyBytes int64 = 1 << 20
+
 func DecodeJSON(r *http.Request, dst any) *domain.AppError {
-	decoder := json.NewDecoder(r.Body)
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(dst); err != nil {
-		return domain.NewError(http.StatusBadRequest, domain.CodeValidationFailed, "Invalid JSON", "请求 JSON 格式不正确或包含未知字段。")
+	body, appErr := readJSONBody(r)
+	if appErr != nil {
+		return appErr
 	}
-	return nil
+	return decodeJSONBody(body, dst)
 }
 
 func DecodeStrictJSON[T any](r *http.Request) ([]byte, T, *domain.AppError) {
 	var zero T
-	body, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
-	if err != nil {
-		return nil, zero, domain.NewError(http.StatusBadRequest, domain.CodeValidationFailed, "Invalid body", "读取请求体失败。")
+	body, appErr := readJSONBody(r)
+	if appErr != nil {
+		return nil, zero, appErr
 	}
-	decoder := json.NewDecoder(bytes.NewReader(body))
-	decoder.DisallowUnknownFields()
 	var req T
-	if err := decoder.Decode(&req); err != nil {
-		return nil, zero, domain.NewError(http.StatusBadRequest, domain.CodeValidationFailed, "Invalid JSON", "请求 JSON 格式不正确或包含未知字段。")
+	if appErr := decodeJSONBody(body, &req); appErr != nil {
+		return nil, zero, appErr
 	}
 	return body, req, nil
 }
@@ -40,6 +39,40 @@ func DecodeStrictJSON[T any](r *http.Request) ([]byte, T, *domain.AppError) {
 func DecodeStrictJSONOnly[T any](r *http.Request) (T, *domain.AppError) {
 	_, req, appErr := DecodeStrictJSON[T](r)
 	return req, appErr
+}
+
+func readJSONBody(r *http.Request) ([]byte, *domain.AppError) {
+	if r == nil || r.Body == nil {
+		return nil, invalidJSONError()
+	}
+	body, err := io.ReadAll(io.LimitReader(r.Body, MaxJSONBodyBytes+1))
+	if err != nil {
+		return nil, domain.NewError(http.StatusBadRequest, domain.CodeValidationFailed, "Invalid body", "读取请求体失败。")
+	}
+	if int64(len(body)) > MaxJSONBodyBytes {
+		return nil, domain.NewError(http.StatusRequestEntityTooLarge, domain.CodeValidationFailed, "Request body too large", "请求体不能超过 1 MiB。")
+	}
+	if len(bytes.TrimSpace(body)) == 0 {
+		return nil, invalidJSONError()
+	}
+	return body, nil
+}
+
+func decodeJSONBody(body []byte, dst any) *domain.AppError {
+	decoder := json.NewDecoder(bytes.NewReader(body))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(dst); err != nil {
+		return invalidJSONError()
+	}
+	var trailing struct{}
+	if err := decoder.Decode(&trailing); err != io.EOF {
+		return invalidJSONError()
+	}
+	return nil
+}
+
+func invalidJSONError() *domain.AppError {
+	return domain.NewError(http.StatusBadRequest, domain.CodeValidationFailed, "Invalid JSON", "请求 JSON 格式不正确或包含未知字段。")
 }
 
 func ParseOptionalTime(value string) (time.Time, error) {

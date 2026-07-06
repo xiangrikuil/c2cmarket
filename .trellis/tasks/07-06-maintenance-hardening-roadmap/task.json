@@ -20,7 +20,8 @@
   "subtasks": [],
   "children": [
     "07-06-ci-frontend-test-safety-net",
-    "07-06-p0-password-hashing-admin-bootstrap"
+    "07-06-p0-password-hashing-admin-bootstrap",
+    "07-06-p0-request-proxy-hardening"
   ],
   "parent": null,
   "relatedFiles": [],

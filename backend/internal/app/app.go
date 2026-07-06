@@ -103,10 +103,12 @@ func New(ctx context.Context, cfg config.Config) (*App, error) {
 	}
 
 	handler := server.NewServer(service, server.ServerOptions{
-		EnableDevAuth:    cfg.EnableDevAuth,
-		ReadinessChecker: store,
-		AppEnv:           cfg.AppEnv,
-		AllowedOrigins:   cfg.AllowedOrigins,
+		EnableDevAuth:      cfg.EnableDevAuth,
+		ReadinessChecker:   store,
+		AppEnv:             cfg.AppEnv,
+		AllowedOrigins:     cfg.AllowedOrigins,
+		TrustXForwardedFor: cfg.TrustXForwardedFor,
+		TrustedProxies:     cfg.TrustedProxies,
 		OAuth: server.OAuthOptions{
 			ProviderMode: cfg.OAuthProviderMode,
 			ClientID:     cfg.OAuthClientID,

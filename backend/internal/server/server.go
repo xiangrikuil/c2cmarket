@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"net/netip"
 	"time"
 
 	"c2c-market/backend/internal/config"
@@ -37,11 +38,13 @@ const (
 )
 
 type ServerOptions struct {
-	EnableDevAuth    bool
-	ReadinessChecker health.Checker
-	AppEnv           string
-	AllowedOrigins   []string
-	OAuth            OAuthOptions
+	EnableDevAuth      bool
+	ReadinessChecker   health.Checker
+	AppEnv             string
+	AllowedOrigins     []string
+	OAuth              OAuthOptions
+	TrustXForwardedFor bool
+	TrustedProxies     []string
 }
 
 type OAuthOptions struct {
@@ -252,15 +255,17 @@ type Service interface {
 }
 
 type Server struct {
-	app              Service
-	mux              chi.Router
-	enableDevAuth    bool
-	readinessChecker health.Checker
-	oauth            OAuthOptions
-	cookieSecure     bool
-	allowedOrigins   []string
-	rateLimiter      *middleware.RateLimiter
-	oauthHTTPClient  *http.Client
+	app                  Service
+	mux                  chi.Router
+	enableDevAuth        bool
+	readinessChecker     health.Checker
+	oauth                OAuthOptions
+	cookieSecure         bool
+	allowedOrigins       []string
+	rateLimiter          *middleware.RateLimiter
+	oauthHTTPClient      *http.Client
+	trustXForwardedFor   bool
+	trustedProxyPrefixes []netip.Prefix
 }
 
 func NewServer(service Service, options ...ServerOptions) http.Handler {
@@ -272,15 +277,17 @@ func NewServer(service Service, options ...ServerOptions) http.Handler {
 		option.AppEnv = config.EnvDevelopment
 	}
 	server := &Server{
-		app:              service,
-		mux:              chi.NewRouter(),
-		enableDevAuth:    option.EnableDevAuth,
-		readinessChecker: option.ReadinessChecker,
-		oauth:            option.OAuth,
-		cookieSecure:     option.AppEnv == config.EnvProduction,
-		allowedOrigins:   append([]string(nil), option.AllowedOrigins...),
-		rateLimiter:      middleware.NewRateLimiter(time.Minute),
-		oauthHTTPClient:  &http.Client{Timeout: 10 * time.Second},
+		app:                  service,
+		mux:                  chi.NewRouter(),
+		enableDevAuth:        option.EnableDevAuth,
+		readinessChecker:     option.ReadinessChecker,
+		oauth:                option.OAuth,
+		cookieSecure:         option.AppEnv == config.EnvProduction,
+		allowedOrigins:       append([]string(nil), option.AllowedOrigins...),
+		rateLimiter:          middleware.NewRateLimiter(time.Minute),
+		oauthHTTPClient:      &http.Client{Timeout: 10 * time.Second},
+		trustXForwardedFor:   option.TrustXForwardedFor,
+		trustedProxyPrefixes: trustedProxyPrefixes(option.TrustedProxies),
 	}
 	server.routes()
 	return middleware.WithRequestID(

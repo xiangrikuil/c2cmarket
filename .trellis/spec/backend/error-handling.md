@@ -71,6 +71,7 @@ Baseline mapping:
 | Rate limit exceeded | 429 | `RATE_LIMITED` |
 | Version conflict | 412 | `VERSION_CONFLICT` |
 | Field validation | 422 | `VALIDATION_FAILED` |
+| JSON body too large | 413 | `VALIDATION_FAILED` |
 | Secret-looking evidence | 422 | `SECRET_CONTENT_DETECTED` |
 
 ---
@@ -79,5 +80,5 @@ Baseline mapping:
 
 - In Go, use `http.StatusUnprocessableEntity`; `http.Status422UnprocessableEntity` is not a standard-library constant.
 - `http.MaxBytesReader` requires a response writer and should not be called with `nil`; use `io.LimitReader` in helpers that only have a request body.
-- Strict JSON decoding is required for public submit endpoints so authority fields fail loudly instead of being silently ignored.
+- Strict JSON decoding is required for public submit endpoints and shared JSON helpers so authority fields, empty bodies, malformed JSON, oversized bodies, and trailing JSON values fail loudly instead of being silently ignored.
 - Rate limits must use `http.StatusTooManyRequests` with stable code `RATE_LIMITED` and Problem Details content type; do not return ad hoc plaintext 429 bodies.

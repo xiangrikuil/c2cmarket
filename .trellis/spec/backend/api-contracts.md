@@ -1346,6 +1346,8 @@ APP_ENV=production
 DATABASE_URL=<postgres URL>
 FRONTEND_ORIGIN=https://app.example.com
 ALLOWED_ORIGINS=https://app.example.com[,https://admin.example.com]
+TRUST_X_FORWARDED_FOR=false
+TRUSTED_PROXIES=<comma-separated proxy IP/CIDR list, required only when forwarding trust is enabled>
 OAUTH_PROVIDER_MODE=oauth2
 OAUTH_CLIENT_ID=<id>
 OAUTH_CLIENT_SECRET=<secret>
@@ -1375,6 +1377,8 @@ MAIL_FROM_NAME=C2CMarket
 - Production email uses Aliyun DirectMail SMTP over implicit TLS on port 465. Do not use Alibaba Cloud AccessKey or DirectMail API SDK for backend email. SMTP passwords are environment-only secrets and must not be printed in logs, wrapped into errors, or copied into docs beyond placeholder values.
 - Email registration uses `email_verification_codes.purpose='email_registration'`, stores only code hashes, creates the verified-email user and auth session in one PostgreSQL transaction, and sends the registration-success email only after commit. Username defaults to the sanitized email prefix and appends a short random suffix on conflict. Email-registered users must return `linuxDoBinding.bound=false` until a separate linux.do binding flow exists.
 - Security headers must include `X-Content-Type-Options: nosniff` and `Referrer-Policy: strict-origin-when-cross-origin`; production also sets HSTS. CSP remains a frontend/reverse-proxy concern unless the Go API starts serving pages.
+- JSON request helpers must reject empty bodies, malformed JSON, unknown fields, bodies over 1 MiB, and trailing JSON values with stable Problem Details. Helpers that only own `request.Body` must use `io.LimitReader`, not `http.MaxBytesReader(nil)`.
+- Rate-limit client IP keys must not trust `X-Forwarded-For` or `X-Real-IP` by default. `TRUST_X_FORWARDED_FOR=true` may read forwarding headers only when the immediate `RemoteAddr` belongs to a configured `TRUSTED_PROXIES` IP/CIDR entry; missing or invalid forwarding headers fall back to the direct peer address.
 - Rate limits return HTTP `429`, Problem Details `code=RATE_LIMITED`, and `Retry-After` when available.
 - Pagination `limit` defaults to 20, maxes at 100, and invalid values return `422 VALIDATION_FAILED`. `cursor` is opaque; current implementation can be offset-backed but clients must only pass through `nextCursor`.
 - List responses using pagination return `{ "items": [...], "nextCursor": "..." }` with `nextCursor` omitted/null when there are no more results.
@@ -1388,6 +1392,10 @@ MAIL_FROM_NAME=C2CMarket
 | Production dev auth enabled | startup fail | n/a |
 | Production fake OAuth provider | startup fail | n/a |
 | Browser unsafe request from disallowed `Origin` | 403 | `CSRF_TOKEN_INVALID` |
+| Empty, malformed, unknown-field, or multi-object JSON body | 400 | `VALIDATION_FAILED` |
+| JSON body larger than 1 MiB | 413 | `VALIDATION_FAILED` |
+| `TRUST_X_FORWARDED_FOR=true` without `TRUSTED_PROXIES` | startup fail | n/a |
+| Invalid `TRUSTED_PROXIES` IP/CIDR entry | startup fail | n/a |
 | Rate limit exceeded | 429 | `RATE_LIMITED` |
 | Invalid `limit` or `cursor` | 422 | `VALIDATION_FAILED` |
 | OAuth state missing/mismatched | 403 | `CSRF_TOKEN_INVALID` |
@@ -1396,14 +1404,15 @@ MAIL_FROM_NAME=C2CMarket
 
 ### 5. Good/Base/Bad Cases
 
-- Good: production config with `FRONTEND_ORIGIN=https://app.example.com` starts, sets secure session cookies, rejects `Origin: https://evil.example` mutations, and returns 429 for repeated protected requests.
+- Good: production config with `FRONTEND_ORIGIN=https://app.example.com` starts, sets secure session cookies, rejects `Origin: https://evil.example` mutations, rejects malformed/trailing JSON, ignores forged forwarding headers by default, and returns 429 for repeated protected requests.
+- Good: a deployment behind a known reverse proxy sets `TRUST_X_FORWARDED_FOR=true` and `TRUSTED_PROXIES=10.0.0.0/24`; only requests from that proxy range use the first valid `X-Forwarded-For` address for rate limiting.
 - Base: development/test without explicit origins defaults to local Vite origins and keeps cookies non-secure for HTTP local testing.
-- Bad: production accepts wildcard CORS with cookies, uses `http.DefaultClient` for OAuth, caches contact-containing responses, or logs provider tokens/raw userinfo.
+- Bad: production accepts wildcard CORS with cookies, trusts client-supplied `X-Forwarded-For` from the public internet, uses `http.DefaultClient` for OAuth, caches contact-containing responses, or logs provider tokens/raw userinfo.
 
 ### 6. Tests Required
 
 - Config tests for production allowed-origin requirement and fake/dev-auth rejection.
-- Server tests for production cookie `Secure`, clear-cookie consistency, Origin rejection, rate-limit `429 RATE_LIMITED`, OAuth oversized response rejection, and pagination validation.
+- Server tests for production cookie `Secure`, clear-cookie consistency, Origin rejection, strict JSON body rejection, rate-limit `429 RATE_LIMITED`, forged forwarding-header bypass prevention, trusted-proxy forwarding behavior, OAuth oversized response rejection, and pagination validation.
 - Idempotency tests for completed replay, different request hash reuse conflict, non-expired processing conflict, and expired processing retry.
 - PostgreSQL integration or smoke assertion that API purchase intent direct contact disclosure writes merchant-side and buyer-side access logs.
 - OpenAPI route parity, YAML parse, and docs update for pagination params and `429 RATE_LIMITED`.

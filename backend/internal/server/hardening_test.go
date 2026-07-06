@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/netip"
 	"strings"
 	"testing"
 	"time"
@@ -95,6 +96,106 @@ func TestRateLimitedEndpointReturnsProblem429(t *testing.T) {
 	}
 }
 
+func TestJSONRequestBodyStrictParsingFailures(t *testing.T) {
+	server := newTestServer(time.Now())
+	cases := []struct {
+		name       string
+		body       string
+		wantStatus int
+	}{
+		{name: "empty body", body: "", wantStatus: http.StatusBadRequest},
+		{name: "malformed json", body: `{"username":`, wantStatus: http.StatusBadRequest},
+		{name: "multiple json objects", body: `{"username":"admin","password":"password"} {}`, wantStatus: http.StatusBadRequest},
+		{name: "oversized json body", body: `{"username":"` + strings.Repeat("a", 1<<20) + `"}`, wantStatus: http.StatusRequestEntityTooLarge},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			request := newJSONRequest(http.MethodPost, "/api/v1/auth/password/login", tc.body)
+			response := httptest.NewRecorder()
+			server.ServeHTTP(response, request)
+
+			if response.Code != tc.wantStatus {
+				t.Fatalf("expected status %d, got %d body %s", tc.wantStatus, response.Code, response.Body.String())
+			}
+			assertProblemCode(t, response, domain.CodeValidationFailed)
+		})
+	}
+}
+
+func TestRateLimitIgnoresForgedForwardingHeadersByDefault(t *testing.T) {
+	server := &Server{
+		app:         app.NewService(),
+		rateLimiter: middleware.NewRateLimiter(time.Minute),
+	}
+	handler := server.limitHandler("test_forged_xff", 1, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	})
+	wrapped := middleware.WithRequestID(http.HandlerFunc(handler))
+
+	for i, forwardedFor := range []string{"198.51.100.10", "198.51.100.11"} {
+		request := httptest.NewRequest(http.MethodGet, "/test-forged-xff", nil)
+		request.RemoteAddr = "203.0.113.10:4321"
+		request.Header.Set("X-Forwarded-For", forwardedFor)
+		request.Header.Set("X-Real-IP", forwardedFor)
+		response := httptest.NewRecorder()
+		wrapped.ServeHTTP(response, request)
+
+		if i == 0 && response.Code != http.StatusNoContent {
+			t.Fatalf("first request expected no content, got %d body %s", response.Code, response.Body.String())
+		}
+		if i == 1 {
+			if response.Code != http.StatusTooManyRequests {
+				t.Fatalf("forged XFF must not bypass rate limit, got %d body %s", response.Code, response.Body.String())
+			}
+			assertProblemCode(t, response, domain.CodeRateLimited)
+		}
+	}
+}
+
+func TestTrustedProxyForwardingHeadersAffectRateLimitOnlyForTrustedPeer(t *testing.T) {
+	server := &Server{
+		app:                  app.NewService(),
+		rateLimiter:          middleware.NewRateLimiter(time.Minute),
+		trustXForwardedFor:   true,
+		trustedProxyPrefixes: mustTrustedProxyPrefixes(t, "10.0.0.0/24"),
+	}
+	handler := server.limitHandler("test_trusted_xff", 1, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	})
+	wrapped := middleware.WithRequestID(http.HandlerFunc(handler))
+
+	for _, forwardedFor := range []string{"198.51.100.10", "198.51.100.11"} {
+		request := httptest.NewRequest(http.MethodGet, "/test-trusted-xff", nil)
+		request.RemoteAddr = "10.0.0.9:4321"
+		request.Header.Set("X-Forwarded-For", forwardedFor)
+		response := httptest.NewRecorder()
+		wrapped.ServeHTTP(response, request)
+		if response.Code != http.StatusNoContent {
+			t.Fatalf("trusted proxy request for %s expected no content, got %d body %s", forwardedFor, response.Code, response.Body.String())
+		}
+	}
+
+	untrustedFirst := httptest.NewRequest(http.MethodGet, "/test-trusted-xff", nil)
+	untrustedFirst.RemoteAddr = "203.0.113.10:4321"
+	untrustedFirst.Header.Set("X-Forwarded-For", "198.51.100.12")
+	untrustedFirstResponse := httptest.NewRecorder()
+	wrapped.ServeHTTP(untrustedFirstResponse, untrustedFirst)
+	if untrustedFirstResponse.Code != http.StatusNoContent {
+		t.Fatalf("untrusted first request expected no content, got %d body %s", untrustedFirstResponse.Code, untrustedFirstResponse.Body.String())
+	}
+
+	untrustedSecond := httptest.NewRequest(http.MethodGet, "/test-trusted-xff", nil)
+	untrustedSecond.RemoteAddr = "203.0.113.10:4321"
+	untrustedSecond.Header.Set("X-Forwarded-For", "198.51.100.13")
+	untrustedSecondResponse := httptest.NewRecorder()
+	wrapped.ServeHTTP(untrustedSecondResponse, untrustedSecond)
+	if untrustedSecondResponse.Code != http.StatusTooManyRequests {
+		t.Fatalf("untrusted peer must ignore XFF and rate-limit remote address, got %d body %s", untrustedSecondResponse.Code, untrustedSecondResponse.Body.String())
+	}
+	assertProblemCode(t, untrustedSecondResponse, domain.CodeRateLimited)
+}
+
 func TestFetchOAuthJSONRejectsOversizedBody(t *testing.T) {
 	payload := strings.Repeat("x", oauthMaxResponseBodyBytes+1)
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -167,4 +268,13 @@ func findCookie(t *testing.T, cookies []*http.Cookie, name string) *http.Cookie 
 	}
 	t.Fatalf("cookie %s not found in %+v", name, cookies)
 	return nil
+}
+
+func mustTrustedProxyPrefixes(t *testing.T, values ...string) []netip.Prefix {
+	t.Helper()
+	prefixes := trustedProxyPrefixes(values)
+	if len(prefixes) != len(values) {
+		t.Fatalf("expected all trusted proxy prefixes to parse: values=%+v prefixes=%+v", values, prefixes)
+	}
+	return prefixes
 }

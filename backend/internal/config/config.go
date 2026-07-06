@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"net/netip"
 	"os"
 	"strconv"
 	"strings"
@@ -32,6 +33,8 @@ type Config struct {
 	ContactKeyVersion      string
 	BootstrapAdminUsername string
 	BootstrapAdminPassword string
+	TrustXForwardedFor     bool
+	TrustedProxies         []string
 	EmailProvider          string
 	SMTP                   SMTPConfig
 }
@@ -70,6 +73,7 @@ func Load() (Config, error) {
 		ContactKeyVersion:      strings.TrimSpace(os.Getenv("CONTACT_KEY_VERSION")),
 		BootstrapAdminUsername: strings.TrimSpace(os.Getenv("C2C_BOOTSTRAP_ADMIN_USERNAME")),
 		BootstrapAdminPassword: strings.TrimSpace(os.Getenv("C2C_BOOTSTRAP_ADMIN_PASSWORD")),
+		TrustedProxies:         parseCommaSeparated(os.Getenv("TRUSTED_PROXIES")),
 		EmailProvider:          strings.ToLower(strings.TrimSpace(os.Getenv("EMAIL_PROVIDER"))),
 		SMTP: SMTPConfig{
 			Host:        strings.TrimSpace(os.Getenv("SMTP_HOST")),
@@ -131,6 +135,20 @@ func Load() (Config, error) {
 	}
 	if cfg.BootstrapAdminUsername != "" && cfg.BootstrapAdminPassword == "" {
 		return Config{}, fmt.Errorf("C2C_BOOTSTRAP_ADMIN_PASSWORD is required when C2C_BOOTSTRAP_ADMIN_USERNAME is set")
+	}
+
+	trustXForwardedFor, err := parseBoolEnv("TRUST_X_FORWARDED_FOR", os.Getenv("TRUST_X_FORWARDED_FOR"), false)
+	if err != nil {
+		return Config{}, err
+	}
+	cfg.TrustXForwardedFor = trustXForwardedFor
+	if len(cfg.TrustedProxies) > 0 {
+		if err := validateTrustedProxies(cfg.TrustedProxies); err != nil {
+			return Config{}, err
+		}
+	}
+	if cfg.TrustXForwardedFor && len(cfg.TrustedProxies) == 0 {
+		return Config{}, fmt.Errorf("TRUSTED_PROXIES is required when TRUST_X_FORWARDED_FOR=true")
 	}
 
 	devAuthRaw := strings.TrimSpace(os.Getenv("ENABLE_DEV_AUTH"))
@@ -218,21 +236,60 @@ func validateSMTPConfig(cfg SMTPConfig) error {
 	return nil
 }
 
+func parseBoolEnv(name, raw string, fallback bool) (bool, error) {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "":
+		return fallback, nil
+	case "1", "true", "yes", "on":
+		return true, nil
+	case "0", "false", "no", "off":
+		return false, nil
+	default:
+		return false, fmt.Errorf("%s must be true or false", name)
+	}
+}
+
 func parseAllowedOrigins(values ...string) []string {
+	return parseCommaSeparated(values...)
+}
+
+func parseCommaSeparated(values ...string) []string {
 	seen := map[string]struct{}{}
-	origins := []string{}
+	result := []string{}
 	for _, raw := range values {
 		for _, part := range strings.Split(raw, ",") {
-			origin := strings.TrimSpace(part)
-			if origin == "" {
+			value := strings.TrimSpace(part)
+			if value == "" {
 				continue
 			}
-			if _, ok := seen[origin]; ok {
+			if _, ok := seen[value]; ok {
 				continue
 			}
-			seen[origin] = struct{}{}
-			origins = append(origins, origin)
+			seen[value] = struct{}{}
+			result = append(result, value)
 		}
 	}
-	return origins
+	return result
+}
+
+func validateTrustedProxies(values []string) error {
+	for _, value := range values {
+		if _, err := trustedProxyPrefix(value); err != nil {
+			return fmt.Errorf("TRUSTED_PROXIES contains invalid IP or CIDR %q", value)
+		}
+	}
+	return nil
+}
+
+func trustedProxyPrefix(value string) (netip.Prefix, error) {
+	value = strings.Trim(strings.TrimSpace(value), "[]")
+	if prefix, err := netip.ParsePrefix(value); err == nil {
+		return prefix.Masked(), nil
+	}
+	addr, err := netip.ParseAddr(value)
+	if err != nil {
+		return netip.Prefix{}, err
+	}
+	addr = addr.Unmap()
+	return netip.PrefixFrom(addr, addr.BitLen()), nil
 }
