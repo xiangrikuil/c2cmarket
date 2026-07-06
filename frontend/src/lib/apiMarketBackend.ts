@@ -18,6 +18,7 @@ import type {
   UserContactMethod,
 } from '@/lib/api'
 import { backendMutation, backendRequest, ensureBackendSession } from '@/lib/backendClient'
+import { apiPaymentMethodRequiresQrCode, isApiPaymentMethod, normalizeQrCodeDataUrl } from '@/lib/apiPaymentSettings'
 import { backendMyMerchantProfile, backendUpsertMerchantProfile } from '@/lib/profileBackend'
 
 type ListResponse<T> = { items: T[] }
@@ -647,16 +648,23 @@ function toBackendServiceRequest(payload: Record<string, unknown>) {
 
 function toBackendOrderSettingsRequest(payload: Record<string, unknown>) {
   const paymentOptions = Array.isArray(payload.paymentOptions)
-    ? payload.paymentOptions as Array<{ paymentMethod?: string, enabled?: boolean, paymentInstructions?: string }>
+    ? payload.paymentOptions as Array<{ paymentMethod?: string, enabled?: boolean, paymentInstructions?: string, paymentQrCodeDataUrl?: string | null }>
     : []
   return {
     acceptingOrders: true,
     paymentWindowMinutes: Number(payload.paymentWindowMinutes ?? 10),
-    paymentOptions: paymentOptions.map(option => ({
-      paymentMethod: String(option.paymentMethod ?? ''),
-      enabled: Boolean(option.enabled),
-      paymentInstructions: String(option.paymentInstructions ?? ''),
-    })),
+    paymentOptions: paymentOptions.map(option => {
+      const paymentMethod = String(option.paymentMethod ?? '')
+      const paymentInstructions = String(option.paymentInstructions ?? '').trim()
+      const paymentQrCodeDataUrl = normalizeQrCodeDataUrl(option.paymentQrCodeDataUrl)
+      return {
+        paymentMethod,
+        enabled: Boolean(option.enabled),
+        paymentInstructions: paymentInstructions || (isApiPaymentMethod(paymentMethod) && apiPaymentMethodRequiresQrCode(paymentMethod) && paymentQrCodeDataUrl
+          ? '买家提交意向后查看收款码并站外确认。'
+          : ''),
+      }
+    }),
   }
 }
 

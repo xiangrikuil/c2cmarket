@@ -29,6 +29,7 @@ All frontend changes must follow [Maintainability Contract](../guides/maintainab
 - Put reusable request logic in query/composable modules instead of duplicating it in pages.
 - Surface failed operations through an explicit UI state or error path.
 - Production Vite builds must fail during config loading unless a real backend is configured through `VITE_API_MODE=real` or `VITE_API_BASE_URL`; development may still use mock/demo mode intentionally.
+- Vite dev-server backend proxies must match API paths narrowly. Use `/api/` or an equivalent anchored matcher for backend API routes; do not use a broad `/api` proxy key because it also captures SPA routes such as `/api-market/new`.
 - Prefer typed data contracts over optional chains spread across components.
 - Remove obsolete UI states, feature flags, and compatibility branches when replacing behavior.
 
@@ -39,6 +40,7 @@ All frontend changes must follow [Maintainability Contract](../guides/maintainab
 - Test the normal user path for every feature.
 - Test only required fallback paths; do not create tests that preserve speculative behavior.
 - When a fallback is necessary, assert that the failure is visible and does not masquerade as success.
+- When changing Vite proxy config or adding a route that starts with an API-like prefix, smoke direct deep links with `curl http://localhost:<port>/<route>` and verify they return `text/html`, while real backend paths such as `/api/v1/...` still return JSON through the proxy.
 
 ---
 

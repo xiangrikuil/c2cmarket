@@ -670,6 +670,14 @@ export type ApiPurchaseIntentSnapshot = {
   officialPricingVersion: string
   officialPricingUpdatedAt: string
   modelPrices: ModelPriceRow[]
+  paymentOptions?: ApiIntentPaymentOption[]
+}
+
+export type ApiIntentPaymentOption = {
+  paymentMethod: 'wechat' | 'alipay' | 'usdt'
+  enabled: boolean
+  paymentInstructions: string
+  paymentQrCodeDataUrl: string | null
 }
 
 export type ApiCredentialHandoffRecord = {

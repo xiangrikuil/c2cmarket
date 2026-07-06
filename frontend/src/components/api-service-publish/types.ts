@@ -1,10 +1,11 @@
 import type { ApiMerchantIdentityMode, ModelCatalogItem } from '@/lib/api'
+import type { ApiPaymentMethod } from '@/lib/apiPaymentSettings'
 
 export type DistributionSystem = 'sub2api' | 'new_api_proxy' | 'other'
 export type ApiProviderCategory = 'gpt' | 'claude' | 'other'
 export type BillingMode = 'metered_credit' | 'manual_credit' | 'fixed_package'
 export type PublishDeliveryMode = 'api_key_endpoint' | 'sub2api_panel_account'
-export type PublishPaymentMethod = 'wechat' | 'alipay' | 'usdt'
+export type PublishPaymentMethod = ApiPaymentMethod
 export type UsageVisibility = 'panel_realtime' | 'panel_balance_only' | 'merchant_confirmed' | 'fixed_package_only' | 'not_available'
 export type ValidityMode = 'days' | 'permanent'
 export type WarrantyMode = 'no_warranty' | 'upstream_refund_only' | 'merchant_warranty'
@@ -37,6 +38,7 @@ export type ApiServicePaymentOption = {
   paymentMethod: PublishPaymentMethod
   enabled: boolean
   paymentInstructions: string
+  paymentQrCodeDataUrl: string | null
 }
 
 export type WarrantyConfig = {

@@ -75,7 +75,8 @@ export default defineConfig(({ mode }) => {
     },
     server: {
       proxy: {
-        '/api': {
+        // 仅代理真实后端 API，避免误拦截 /api-market 这类前端 history 路由。
+        '^/api(?:/|\\?|$)': {
           target: process.env.VITE_DEV_API_PROXY_TARGET ?? 'http://127.0.0.1:8080',
           changeOrigin: true,
         },

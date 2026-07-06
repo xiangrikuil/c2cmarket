@@ -56,6 +56,101 @@ In real backend mode, auth state belongs to backend cookies plus `GET /api/v1/au
 
 In real backend mode, product catalog state belongs to `GET /api/v1/product-categories`, `GET /api/v1/product-plans`, and admin `/api/v1/admin/product-plans`. Admin create/update/activate/deactivate mutations must invalidate admin plan queries and user-facing active catalog caches. If a backend adapter keeps a small in-memory product-plan cache for publish forms, expose a cache-clear helper and call it from the admin product catalog mutation success path.
 
+## Scenario: API Service Account Payment Defaults Snapshot Into Publish Payload
+
+### 1. Scope / Trigger
+
+- Trigger: frontend work touching API service payment settings, `ApiServicePublishPage.vue`, My Center contact/workspace settings, or `submitApiService()` payload construction.
+- The platform is a matching surface, not a payment processor. Account-level settings may describe off-platform confirmation instructions only.
+
+### 2. Signatures
+
+```ts
+type ApiPaymentMethod = 'wechat' | 'alipay' | 'usdt'
+
+type ApiPaymentAccountSettings = {
+  paymentWindowMinutes: number
+  paymentOptions: Array<{
+    paymentMethod: ApiPaymentMethod
+    enabled: boolean
+    paymentInstructions: string
+    paymentQrCodeDataUrl: string | null
+  }>
+  updatedAt: string
+}
+
+getApiPaymentAccountSettings(): Promise<ApiPaymentAccountSettings>
+updateApiPaymentAccountSettings(payload: Omit<ApiPaymentAccountSettings, 'updatedAt'>): Promise<ApiPaymentAccountSettings>
+```
+
+Publish payload fields remain service-level:
+
+```ts
+submitApiService({
+  paymentWindowMinutes: number,
+  paymentOptions: ApiPaymentAccountSettings['paymentOptions'],
+  ...
+})
+```
+
+### 3. Contracts
+
+- My Center owns editing API payment defaults.
+- The buyer payment confirmation window is fixed at 10 minutes; do not restore a 3-15 minute editor.
+- WeChat Pay and Alipay settings are complete when a QR-code data URL is present. Their text instructions are optional operational notes.
+- USDT settings are complete when off-platform network/address confirmation instructions are present. USDT does not use the QR-code field.
+- Do not add real-name identity fields to API payment settings.
+- The API service publish page must render a summary of those defaults, not a full payment editor.
+- Publishing must copy the current account defaults into `paymentWindowMinutes` and `paymentOptions` so every service stores a publish-time snapshot.
+- Updating My Center later must not silently change already-published services.
+- Frontend workspace persistence may use a local facade store until a real account-level backend endpoint exists, but service publish must still submit the existing service-level backend order-settings payload.
+- Public API service list/detail responses must not expose raw payment instructions or QR-code material. A purchase-intent detail may show the frozen snapshot to participants only.
+
+### 4. Validation & Error Matrix
+
+| Condition | Expected behavior |
+| --- | --- |
+| `paymentWindowMinutes !== 10` | My Center save blocks; publish page remains blocked. |
+| No enabled payment method | My Center shows a missing-settings reason; publish CTA says to configure account payment settings. |
+| Enabled WeChat Pay / Alipay lacks a QR code | My Center save blocks and publish remains incomplete. |
+| Enabled USDT has blank instructions | My Center save blocks and publish remains incomplete. |
+| Instructions include API keys, tokens, passwords, cookies, sessions, payment codes, bank-card numbers, or panel credentials | Save/publish validation rejects the content with visible boundary copy. |
+| Account settings complete | Publish page copies settings into the hidden service snapshot fields and preview shows method labels plus confirmation window. |
+
+### 5. Good/Base/Bad Cases
+
+- Good: merchant uploads a WeChat Pay QR code once in My Center; `/api-market/new` shows `微信 · 固定 10 分钟确认`; submit still includes service-level `paymentOptions`.
+- Base: no account settings exist; publish page shows a read-only summary with a link to `/my/contacts` and disables submission.
+- Bad: every API service publish form asks the merchant to retype payment instructions, or a service stores a live reference to mutable account settings.
+
+### 6. Tests Required
+
+- `pnpm --dir frontend exec vue-tsc -b --pretty false`.
+- Real-mode build: `VITE_API_MODE=real pnpm --dir frontend exec vite build`.
+- Source scan product-boundary copy around the touched publish/My Center files for payment custody, credentials, API keys, tokens, cookies, sessions, payment codes, and escrow wording.
+- Browser or curl smoke must verify `/api-market/new` direct deep link renders the SPA and does not get swallowed by the Vite `/api/` proxy.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```vue
+<PaymentSettingsSection :form="form" />
+```
+
+#### Correct
+
+```vue
+<AccountPaymentSummarySection :form="form" :settings="accountPaymentSettingsValue" />
+```
+
+```ts
+watch(accountPaymentSettingsValue, settings => {
+  form.paymentWindowMinutes = settings.paymentWindowMinutes
+  form.paymentOptions = settings.paymentOptions.map(option => ({ ...option }))
+}, { immediate: true })
+```
+
 ---
 
 ## When to Use Global State

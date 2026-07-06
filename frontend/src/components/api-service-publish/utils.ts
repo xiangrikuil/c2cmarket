@@ -1,4 +1,10 @@
 import type { ModelCatalogItem } from '@/lib/api'
+import {
+  apiPaymentMethodLabels,
+  createDefaultApiPaymentOptions,
+  defaultApiPaymentWindowMinutes,
+  enabledApiPaymentOptions,
+} from '@/lib/apiPaymentSettings'
 import type { ApiProviderCategory, ApiServicePaymentOption, ApiServicePublishForm, BillingMode, CatalogById, DistributionSystem, PublishPaymentMethod, WarrantyConfig } from './types'
 
 export const distributionLabels: Record<DistributionSystem, string> = {
@@ -57,19 +63,8 @@ export const simplifiedApiQuotaRules = {
   validityDays: 30,
 } as const
 
-export const defaultPaymentWindowMinutes = 10
-
-export const paymentMethodLabels: Record<PublishPaymentMethod, string> = {
-  wechat: '微信',
-  alipay: '支付宝',
-  usdt: 'USDT',
-}
-
-export const publishPaymentMethods = [
-  { value: 'wechat', label: paymentMethodLabels.wechat, hint: '提交意向后站外确认微信收款信息。' },
-  { value: 'alipay', label: paymentMethodLabels.alipay, hint: '提交意向后站外确认支付宝收款信息。' },
-  { value: 'usdt', label: paymentMethodLabels.usdt, hint: '提交意向后站外确认网络和地址。' },
-] satisfies Array<{ value: PublishPaymentMethod, label: string, hint: string }>
+export const defaultPaymentWindowMinutes = defaultApiPaymentWindowMinutes
+export const paymentMethodLabels: Record<PublishPaymentMethod, string> = apiPaymentMethodLabels
 
 export const apiQuotaDefaultRuleText = `默认：最低意向 ¥${simplifiedApiQuotaRules.minimumPurchaseCny}，单笔最高 ¥${simplifiedApiQuotaRules.maximumPurchaseCny}，站外确认后 ${simplifiedApiQuotaRules.validityDays} 天有效。`
 
@@ -94,15 +89,11 @@ export const merchantNoteQuickInserts = [
 ] as const
 
 export function createDefaultPaymentOptions(): ApiServicePaymentOption[] {
-  return publishPaymentMethods.map(item => ({
-    paymentMethod: item.value,
-    enabled: false,
-    paymentInstructions: '',
-  }))
+  return createDefaultApiPaymentOptions()
 }
 
 export function enabledPaymentOptions(form: ApiServicePublishForm) {
-  return form.paymentOptions.filter(option => option.enabled)
+  return enabledApiPaymentOptions(form)
 }
 
 export function applySimplifiedApiQuotaDefaults(form: ApiServicePublishForm) {

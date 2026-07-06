@@ -22,7 +22,7 @@ const merchantDisplayName = computed(() => props.form.merchantIdentityMode === '
 const selectedModels = computed(() => selectedCatalogItems(props.form, props.catalogById))
 const paymentSummary = computed(() => {
   const labels = enabledPaymentOptions(props.form).map(option => paymentMethodLabels[option.paymentMethod])
-  return labels.length ? `${labels.join(' / ')} · ${props.form.paymentWindowMinutes} 分钟` : '待配置'
+  return labels.length ? `${labels.join(' / ')} · 固定 ${props.form.paymentWindowMinutes} 分钟` : '待配置'
 })
 const pendingItems = computed(() => props.completeness.filter(item => item.status === 'pending'))
 const conflictItems = computed(() => props.completeness.filter(item => item.status === 'conflict'))

@@ -21,6 +21,6 @@ const completeSummary = apiPublishAssistantSummary([
 ])
 
 assert.equal(completeSummary.badgeText, '可发布')
-assert.equal(completeSummary.topPendingText, '发布必填项已完成，可提交审核')
+assert.equal(completeSummary.topPendingText, '发布必填项已完成，可发布')
 assert.equal(apiServiceDetailPath('api-123'), '/api-market/api-123')
 assert.equal(apiServiceDetailPath(''), '')

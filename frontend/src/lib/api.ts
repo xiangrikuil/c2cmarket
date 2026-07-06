@@ -75,6 +75,15 @@ import { getPricingDisplay } from '@/lib/pricing'
 import { defaultQuotaLabel, defaultQuotaPeriod, defaultQuotaUnit } from '@/lib/quota'
 import { getMockPublicAPIModels } from '@/lib/apiModelCatalogBackend'
 import {
+  cloneApiPaymentAccountSettings,
+  isApiPaymentMethod,
+  isApiPaymentOptionComplete,
+  normalizeApiPaymentAccountSettings,
+  normalizeQrCodeDataUrl,
+  type ApiPaymentAccountSettings,
+  type ApiPaymentOption,
+} from '@/lib/apiPaymentSettings'
+import {
   backendAcceptCarpoolApplication,
   backendAdminCarpoolRows,
   backendBuyerLeaveCarpool,
@@ -397,6 +406,7 @@ export type SubmitReviewPayload = {
 export type CreatePublicProfileReportRequest = CreatePublicUserReportRequest
 
 export type TransactionTrendRange = '7d' | '30d' | '90d'
+export type { ApiPaymentAccountSettings, ApiPaymentMethod, ApiPaymentOption } from '@/lib/apiPaymentSettings'
 
 export type TransactionTrendSummary = {
   productId: string
@@ -478,6 +488,8 @@ const adminUserRiskProfileStorageKey = 'c2cmarket.adminUserRiskProfiles.v1'
 const officialPriceStorageKey = 'c2cmarket.officialPrices.v1'
 const carpoolStorageKey = 'c2cmarket.carpools.v1'
 const apiServiceStorageKey = 'c2cmarket.apiServices.v1'
+const apiServicePaymentSnapshotStorageKey = 'c2cmarket.apiServicePaymentSnapshots.v1'
+const apiPaymentAccountSettingsStorageKey = 'c2cmarket.apiPaymentAccountSettings.v1'
 const demandStorageKey = 'c2cmarket.demands.v1'
 const feedbackStorageKey = 'c2cmarket.feedbackTickets.v1'
 const notificationReadStorageKey = 'c2cmarket.notificationReadState.v1'
@@ -496,6 +508,8 @@ let adminUserRiskProfileStore = readSessionStore(adminUserRiskProfileStorageKey,
 let officialPriceStore = readSessionStore<OfficialPrice[]>(officialPriceStorageKey, officialPrices)
 let carpoolStore = normalizeCarpoolStore(readSessionStore<Carpool[]>(carpoolStorageKey, carpools))
 let apiServiceStore = normalizeApiServiceStore(readSessionStore<ApiService[]>(apiServiceStorageKey, apiServices))
+let apiServicePaymentSnapshotStore = readSessionStore<Record<string, ApiPaymentOption[]>>(apiServicePaymentSnapshotStorageKey, {})
+let apiPaymentAccountSettingsStore = normalizeApiPaymentAccountSettings(readLocalStore<ApiPaymentAccountSettings | null>(apiPaymentAccountSettingsStorageKey, null))
 let demandStore = readSessionStore<DemandRecord[]>(demandStorageKey, demands.map(item => ({
   ...item,
   region: item.title.includes('菲律宾') ? '菲律宾区' : item.title.includes('香港') ? '香港区' : '不限',
@@ -532,6 +546,12 @@ function readSessionStore<T>(key: string, seed: T): T {
     return mergeSeedRecords(seed, parsed) as T
   }
   return parsed
+}
+
+function readLocalStore<T>(key: string, seed: T): T {
+  const stored = window.localStorage.getItem(key)
+  if (!stored) return clone(seed)
+  return JSON.parse(stored) as T
 }
 
 type IdRecord = { id: string }
@@ -666,7 +686,12 @@ function persistMarketStores() {
   window.sessionStorage.setItem(officialPriceStorageKey, JSON.stringify(officialPriceStore))
   window.sessionStorage.setItem(carpoolStorageKey, JSON.stringify(carpoolStore))
   window.sessionStorage.setItem(apiServiceStorageKey, JSON.stringify(apiServiceStore))
+  window.sessionStorage.setItem(apiServicePaymentSnapshotStorageKey, JSON.stringify(apiServicePaymentSnapshotStore))
   window.sessionStorage.setItem(demandStorageKey, JSON.stringify(demandStore))
+}
+
+function persistApiPaymentAccountSettings() {
+  window.localStorage.setItem(apiPaymentAccountSettingsStorageKey, JSON.stringify(apiPaymentAccountSettingsStore))
 }
 
 function persistFeedbackTickets() {
@@ -903,7 +928,7 @@ export function getApiDeliveryModeLabel(mode: ApiDeliveryMode) {
 }
 
 export function getApiDeliveryModeDescription(mode: ApiDeliveryMode) {
-  return '提交购买意向后，平台只展示商户联系方式和非敏感说明；接入细节由双方站外确认。平台不保存 API Key、token、账号密码、Session、Cookie 或面板凭据。'
+  return '提交购买意向后，平台只向参与方展示商户联系方式和收款确认资料；接入细节由双方站外确认。平台不保存 API Key、token、账号密码、Session、Cookie 或面板凭据。'
 }
 
 export function isApiServicePubliclyOrderable(service: Pick<ApiService, 'online' | 'publiclyOrderable'>) {
@@ -1183,6 +1208,25 @@ function updateApiPurchaseIntent(id: string, updater: (intent: ApiPurchaseIntent
   return clone(intent)
 }
 
+function apiServicePaymentSnapshot(serviceId: string) {
+  return normalizeApiPaymentAccountSettings({
+    paymentOptions: apiServicePaymentSnapshotStore[serviceId] ?? [],
+  }).paymentOptions.filter(option => option.enabled)
+}
+
+function normalizeRawApiPaymentOptions(options: Array<{ paymentMethod?: string, enabled?: boolean, paymentInstructions?: string, paymentQrCodeDataUrl?: string | null }>) {
+  return options.flatMap(option => {
+    const paymentMethod = String(option.paymentMethod ?? '')
+    if (!isApiPaymentMethod(paymentMethod)) return []
+    return {
+      paymentMethod,
+      enabled: Boolean(option.enabled),
+      paymentInstructions: String(option.paymentInstructions ?? ''),
+      paymentQrCodeDataUrl: normalizeQrCodeDataUrl(option.paymentQrCodeDataUrl),
+    }
+  })
+}
+
 function createSnapshot(service: ApiService): ApiPurchaseIntent['snapshot'] {
   return {
     serviceId: service.id,
@@ -1212,6 +1256,7 @@ function createSnapshot(service: ApiService): ApiPurchaseIntent['snapshot'] {
     officialPricingVersion: service.officialPricingVersion,
     officialPricingUpdatedAt: service.officialPricingUpdatedAt,
     modelPrices: clone(getSupportedModelPriceRows(service)),
+    paymentOptions: apiServicePaymentSnapshot(service.id),
   }
 }
 
@@ -1883,6 +1928,22 @@ export async function verifyContactMethod(contactId: string) {
   return clone(myContactMethodStore.find(item => item.id === contactId)!)
 }
 
+export async function getApiPaymentAccountSettings() {
+  await wait()
+  return cloneApiPaymentAccountSettings(apiPaymentAccountSettingsStore)
+}
+
+export async function updateApiPaymentAccountSettings(payload: Omit<ApiPaymentAccountSettings, 'updatedAt'>) {
+  await wait()
+  apiPaymentAccountSettingsStore = normalizeApiPaymentAccountSettings({
+    paymentWindowMinutes: payload.paymentWindowMinutes,
+    paymentOptions: payload.paymentOptions,
+    updatedAt: nowText(),
+  })
+  persistApiPaymentAccountSettings()
+  return cloneApiPaymentAccountSettings(apiPaymentAccountSettingsStore)
+}
+
 export async function getPublicMerchantProfile(username: string) {
   if (shouldUseRealBackend()) return backendPublicMerchantProfile(username)
   await wait()
@@ -2500,9 +2561,10 @@ export async function submitApiService(payload: Record<string, unknown>) {
   const billing = apiBillingMode(payload.billingMode)
   const isPublish = payload.status === 'reviewing'
   const paymentOptions = Array.isArray(payload.paymentOptions)
-    ? payload.paymentOptions as Array<{ enabled?: boolean, paymentInstructions?: string }>
+    ? payload.paymentOptions as Array<{ paymentMethod?: string, enabled?: boolean, paymentInstructions?: string, paymentQrCodeDataUrl?: string | null }>
     : []
-  const hasEnabledPayment = paymentOptions.some(item => item.enabled && String(item.paymentInstructions ?? '').trim())
+  const normalizedPaymentOptions = normalizeRawApiPaymentOptions(paymentOptions)
+  const hasEnabledPayment = normalizedPaymentOptions.some(item => item.enabled && isApiPaymentOptionComplete(item))
   const publiclyOrderable = isPublish && hasEnabledPayment
   const responseMinutes = numberValue(payload.paymentWindowMinutes, 10)
   const state: ApiServiceState = isPublish ? 'online' : 'offline'
@@ -2564,6 +2626,10 @@ export async function submitApiService(payload: Record<string, unknown>) {
     modelPriceRows: buildModelPriceRowsFromPayload(payload, defaultMultiplier, gateway === 'Sub2API'),
     contactChannels: [{ type: 'linuxdo', label: 'linux.do 私信', value: `@${currentMerchantName}` }],
   }
+  apiServicePaymentSnapshotStore[id] = normalizeApiPaymentAccountSettings({
+    paymentWindowMinutes: responseMinutes,
+    paymentOptions: normalizedPaymentOptions,
+  }).paymentOptions
   apiServiceStore.unshift(service)
   persistMarketStores()
   appendAdminAuditLog({
@@ -3585,7 +3651,7 @@ export async function createApiPurchaseIntent(payload: CreateApiPurchaseIntentPa
       selectedDeliveryMode: payload.deliveryMode,
       status: 'not_started',
       requiresFirstLoginPasswordReset: payload.deliveryMode === 'sub2api_panel_account' && service.panelRequiresPasswordReset,
-      note: '购买意向已提交，商户联系方式已向买家展示，商户可查看买家选择的联系方式',
+      note: '购买意向已提交，商户联系方式和收款确认资料已向买家展示，商户可查看买家选择的联系方式',
     },
     contactChannels: service.contactChannels,
     merchantResponseDeadline: service.online ? minutesFromNow(service.expectedResponseMinutes) : undefined,

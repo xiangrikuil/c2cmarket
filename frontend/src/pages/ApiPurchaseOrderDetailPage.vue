@@ -19,6 +19,12 @@ import {
   getApiStatusLabel,
   getApiUsageVisibilityLabel,
 } from '@/lib/api'
+import {
+  apiPaymentMethodLabels,
+  apiPaymentMethodRequiresQrCode,
+  isApiPaymentOptionComplete,
+  type ApiPaymentOption,
+} from '@/lib/apiPaymentSettings'
 import { useApiPurchaseIntent, useApiPurchaseIntentEvents } from '@/queries/useMarketQueries'
 
 const route = useRoute()
@@ -32,6 +38,12 @@ const actionBusy = ref(false)
 const canCancel = computed(() => intent.value && ['open', 'contacted'].includes(intent.value.status))
 const canCreateAgain = computed(() => intent.value && ['buyer_cancelled', 'owner_closed'].includes(intent.value.status))
 const merchantContactSnapshot = computed(() => intent.value ? apiIntentMerchantContactSnapshot(intent.value) : null)
+const paymentOptions = computed(() => intent.value?.snapshot.paymentOptions?.filter(option => option.enabled) ?? [])
+
+function paymentOptionStatus(option: ApiPaymentOption) {
+  if (isApiPaymentOptionComplete(option)) return '已就绪'
+  return apiPaymentMethodRequiresQrCode(option.paymentMethod) ? '缺收款码' : '缺说明'
+}
 
 async function refresh() {
   await queryClient.invalidateQueries({ queryKey: ['api-purchase-intents'] })
@@ -141,16 +153,48 @@ function cancelIntent() {
         </div>
       </Card>
 
-      <OrderContactCard
-        v-if="merchantContactSnapshot"
-        :snapshot="merchantContactSnapshot"
-        title="联系商户"
-        context-label="购买意向创建成功后即展示本次冻结的商户联系方式"
-        visible-label="已向本次意向买家展示"
-        hidden-label="仅参与方可见"
-        footer-text="联系方式来自创建购买意向时冻结的快照；商户后续修改联系方式不会改变当前意向记录。"
-        :show-contacted-action="false"
-      />
+      <div class="space-y-4">
+        <Card v-if="paymentOptions.length" class="p-5">
+          <div class="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+            <div>
+              <h2 class="font-semibold">收款资料</h2>
+              <p class="mt-1 text-xs text-muted-foreground">来自购买意向创建时的收款快照，仅参与方可见。</p>
+            </div>
+            <Badge variant="secondary">固定 10 分钟确认</Badge>
+          </div>
+
+          <div class="mt-4 space-y-3">
+            <div v-for="option in paymentOptions" :key="option.paymentMethod" class="rounded-md border border-border p-3">
+              <div class="flex flex-wrap items-center justify-between gap-2">
+                <span class="font-medium">{{ apiPaymentMethodLabels[option.paymentMethod] }}</span>
+                <Badge :variant="isApiPaymentOptionComplete(option) ? 'verified' : 'secondary'">{{ paymentOptionStatus(option) }}</Badge>
+              </div>
+
+              <div v-if="apiPaymentMethodRequiresQrCode(option.paymentMethod)" class="mt-3 flex flex-col gap-3 sm:flex-row sm:items-center">
+                <div class="grid h-28 w-28 shrink-0 place-items-center overflow-hidden rounded-md border border-border bg-muted/40">
+                  <img v-if="option.paymentQrCodeDataUrl" :src="option.paymentQrCodeDataUrl" :alt="`${apiPaymentMethodLabels[option.paymentMethod]}收款码`" class="h-full w-full object-cover" />
+                  <span v-else class="px-2 text-center text-xs text-muted-foreground">未上传收款码</span>
+                </div>
+                <p class="text-sm leading-6 text-muted-foreground">{{ option.paymentInstructions || '扫码后请通过商户联系方式站外确认。' }}</p>
+              </div>
+              <p v-else class="mt-3 whitespace-pre-line text-sm leading-6 text-muted-foreground">
+                {{ option.paymentInstructions }}
+              </p>
+            </div>
+          </div>
+        </Card>
+
+        <OrderContactCard
+          v-if="merchantContactSnapshot"
+          :snapshot="merchantContactSnapshot"
+          title="联系商户"
+          context-label="购买意向创建成功后即展示本次冻结的商户联系方式"
+          visible-label="已向本次意向买家展示"
+          hidden-label="仅参与方可见"
+          footer-text="联系方式来自创建购买意向时冻结的快照；商户后续修改联系方式不会改变当前意向记录。"
+          :show-contacted-action="false"
+        />
+      </div>
     </div>
 
     <Card class="p-5">

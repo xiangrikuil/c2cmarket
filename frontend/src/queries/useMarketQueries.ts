@@ -15,6 +15,7 @@ import {
   getAdminSectionRows,
   getApiPurchaseIntentById,
   getApiPurchaseIntentEvents,
+  getApiPaymentAccountSettings,
   getApiOrderNotifications,
   getCarpoolApplicationById,
   getCarpoolApplicationContacts,
@@ -71,11 +72,13 @@ import {
   submitReview,
   resumeApiService,
   updateContactMethod,
+  updateApiPaymentAccountSettings,
   updateMyProfile,
   toggleFavorite,
   useLinuxDoAvatar,
   verifyContactMethod,
   type AdminSection,
+  type ApiPaymentAccountSettings,
   type ApiPurchaseIntentFilters,
   type ApiServiceFilters,
   type FavoriteTargetType,
@@ -302,6 +305,10 @@ export function myContactMethodsQueryKey() {
   return ['my-contact-methods'] as const
 }
 
+export function apiPaymentAccountSettingsQueryKey() {
+  return ['api-payment-account-settings'] as const
+}
+
 export function publicUserProfileQueryKey(username: string) {
   return ['public-user-profile', username] as const
 }
@@ -450,6 +457,25 @@ export function useVerifyContactMethodMutation() {
     mutationFn: (contactId: string) => verifyContactMethod(contactId),
     onSuccess() {
       queryClient.invalidateQueries({ queryKey: myContactMethodsQueryKey() })
+    },
+  })
+}
+
+export function useApiPaymentAccountSettingsQuery() {
+  return useQuery({
+    queryKey: apiPaymentAccountSettingsQueryKey(),
+    queryFn: getApiPaymentAccountSettings,
+    staleTime: 30_000,
+    refetchOnWindowFocus: false,
+  })
+}
+
+export function useUpdateApiPaymentAccountSettingsMutation() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (payload: Omit<ApiPaymentAccountSettings, 'updatedAt'>) => updateApiPaymentAccountSettings(payload),
+    onSuccess(data) {
+      queryClient.setQueryData(apiPaymentAccountSettingsQueryKey(), data)
     },
   })
 }

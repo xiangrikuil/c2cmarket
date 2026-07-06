@@ -4,10 +4,10 @@ import { RouterLink } from 'vue-router'
 import { useMutation, useQueryClient } from '@tanstack/vue-query'
 import { Eye, Send, ShieldCheck } from 'lucide-vue-next'
 import { toast } from 'vue-sonner'
+import AccountPaymentSummarySection from '@/components/api-service-publish/AccountPaymentSummarySection.vue'
 import ApiServicePublishPreview from '@/components/api-service-publish/ApiServicePublishPreview.vue'
 import MerchantNoteSection from '@/components/api-service-publish/MerchantNoteSection.vue'
 import ModelMultiSelect from '@/components/api-service-publish/ModelMultiSelect.vue'
-import PaymentSettingsSection from '@/components/api-service-publish/PaymentSettingsSection.vue'
 import PriceInventorySection from '@/components/api-service-publish/PriceInventorySection.vue'
 import ProviderCategorySelector from '@/components/api-service-publish/ProviderCategorySelector.vue'
 import type { ApiProviderCategory, ApiServicePublishForm } from '@/components/api-service-publish/types'
@@ -23,7 +23,6 @@ import {
   generatedTitle,
   merchantNoteTemplate,
   modelProviderCategory,
-  paymentMethodLabels,
   providerCategoryLabels,
   selectedCatalogItems,
   sub2ApiPricingPolicy,
@@ -34,7 +33,8 @@ import { Card } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { containsSensitiveContent, firstError, type FieldErrors } from '@/lib/formValidation'
 import { submitApiService } from '@/lib/api'
-import { useModelCatalog } from '@/queries/useMarketQueries'
+import { apiPaymentSettingsMissingReason, cloneApiPaymentAccountSettings, isApiPaymentAccountSettingsComplete, isApiPaymentOptionComplete, isApiPaymentWindowValid } from '@/lib/apiPaymentSettings'
+import { useApiPaymentAccountSettingsQuery, useModelCatalog } from '@/queries/useMarketQueries'
 
 type Field =
   | 'merchantIdentity'
@@ -49,6 +49,7 @@ type Field =
   | 'sensitive'
 
 const { data: modelCatalog, isLoading: catalogLoading } = useModelCatalog()
+const { data: accountPaymentSettings, isLoading: paymentSettingsLoading } = useApiPaymentAccountSettingsQuery()
 const queryClient = useQueryClient()
 const submittedId = ref('')
 const errors = reactive<FieldErrors<Field>>({})
@@ -110,8 +111,14 @@ const pendingProviderCategoryLabel = computed(() => pendingProviderCategory.valu
 const quotaForMinimumPurchase = computed(() => formatUsdQuotaForCny(form.cnyPerUsdCredit, form.minimumPurchaseCny ?? 0))
 const submittedServicePath = computed(() => apiServiceDetailPath(submittedId.value))
 const enabledPayments = computed(() => enabledPaymentOptions(form))
-const paymentWindowValid = computed(() => form.paymentWindowMinutes >= 3 && form.paymentWindowMinutes <= 15)
-const paymentSettingsComplete = computed(() => enabledPayments.value.length > 0 && enabledPayments.value.every(option => option.paymentInstructions.trim()) && paymentWindowValid.value)
+const paymentWindowValid = computed(() => isApiPaymentWindowValid(form.paymentWindowMinutes))
+const paymentSettingsComplete = computed(() => isApiPaymentAccountSettingsComplete(form))
+const accountPaymentSettingsValue = computed(() => accountPaymentSettings.value ? cloneApiPaymentAccountSettings(accountPaymentSettings.value) : {
+  paymentWindowMinutes: defaultPaymentWindowMinutes,
+  paymentOptions: createDefaultPaymentOptions(),
+  updatedAt: '',
+})
+const accountPaymentSettingsComplete = computed(() => isApiPaymentAccountSettingsComplete(accountPaymentSettingsValue.value))
 
 function syncHiddenPublishFields() {
   applySimplifiedApiQuotaDefaults(form)
@@ -133,6 +140,11 @@ watch([catalog, () => form.providerCategory], () => {
   form.selectedModels = firstModel
     ? [{ modelId: firstModel.id, multiplierOverride: null, enabled: true }]
     : []
+}, { immediate: true })
+
+watch(accountPaymentSettingsValue, settings => {
+  form.paymentWindowMinutes = settings.paymentWindowMinutes
+  form.paymentOptions = settings.paymentOptions.map(option => ({ ...option }))
 }, { immediate: true })
 
 function setErrors(next: FieldErrors<Field>) {
@@ -167,12 +179,12 @@ function validate(requireComplete: boolean) {
   if (!form.selectedModels.some(item => item.enabled)) next.selectedModels = '至少选择一个模型。'
   if (missingSelectedModels.value.length) next.selectedModels = '已选模型不在当前后端模型目录中，请重新选择。'
   if (incompatibleSelectedModels.value.length) next.selectedModels = '已选模型必须全部属于当前模型大类。'
-  if (!paymentWindowValid.value) next.paymentWindowMinutes = '买家确认付款窗口必须在 3 到 15 分钟之间。'
+  if (!paymentWindowValid.value) next.paymentWindowMinutes = '买家确认付款窗口固定为 10 分钟。'
   if (!enabledPayments.value.length) {
     next.paymentOptions = '请至少启用一种收款方式。'
   } else {
-    const missingInstruction = enabledPayments.value.find(option => !option.paymentInstructions.trim())
-    if (missingInstruction) next.paymentOptions = `请填写${paymentMethodLabels[missingInstruction.paymentMethod]}收款说明。`
+    const missingOption = enabledPayments.value.find(option => !isApiPaymentOptionComplete(option))
+    if (missingOption) next.paymentOptions = apiPaymentSettingsMissingReason(form)
   }
   if (!form.merchantNote.trim()) next.merchantNote = '请填写备注信息。'
   if (form.merchantNote.length > 800) next.merchantNote = '备注信息最多 800 字。'
@@ -206,7 +218,7 @@ const completeness = computed(() => {
     form.merchantIdentityMode === 'public_profile' || form.merchantDisplayName.trim() ? done('展示身份') : pending('展示身份'),
     form.cnyPerUsdCredit && form.cnyPerUsdCredit > 0 ? done('额度售价') : pending('额度售价'),
     form.availableCreditUsd && form.availableCreditUsd > 0 ? done('可售额度') : pending('可售额度'),
-    paymentSettingsComplete.value ? done('收款方式') : pending('收款方式'),
+    accountPaymentSettingsComplete.value && paymentSettingsComplete.value ? done('收款方式') : pending('收款方式'),
     form.providerCategory ? done('模型大类') : pending('模型大类'),
     incompatibleSelectedModels.value.length ? conflict('具体模型') : form.selectedModels.some(item => item.enabled) ? done('具体模型') : pending('具体模型'),
     form.merchantNote.trim() ? done('备注信息') : pending('备注信息'),
@@ -225,9 +237,9 @@ const publishBlockReason = computed(() => {
   if (canSubmit.value) return ''
   const pendingItem = completeness.value.find(item => item.status !== 'done')
   if (pendingItem?.label === '收款方式') {
-    if (!paymentWindowValid.value) return '买家确认付款窗口必须在 3 到 15 分钟之间。'
-    if (!enabledPayments.value.length) return '先启用并填写至少一种收款方式，发布后才会进入公开服务列表。'
-    return '请填写已启用收款方式的站外收款说明。'
+    if (!paymentWindowValid.value) return '买家确认付款窗口固定为 10 分钟。'
+    if (!accountPaymentSettingsComplete.value || !enabledPayments.value.length) return '先到我的中心配置 API 收款设置，发布后才会进入公开服务列表。'
+    return apiPaymentSettingsMissingReason(form) || '请到我的中心补全已启用收款方式。'
   }
   if (pendingItem) return `请先补全：${pendingItem.label}。`
   return '请先补全发布配置。'
@@ -346,7 +358,11 @@ function confirmProviderCategoryChange() {
       <section class="min-w-0 space-y-3">
         <PriceInventorySection :form="form" :errors="errors" />
 
-        <PaymentSettingsSection :form="form" :errors="errors" />
+        <AccountPaymentSummarySection
+          :form="form"
+          :settings="accountPaymentSettingsValue"
+          :loading="paymentSettingsLoading"
+        />
 
         <ProviderCategorySelector
           :model-value="form.providerCategory"
@@ -411,7 +427,7 @@ function confirmProviderCategoryChange() {
           </label>
         </div>
         <div class="grid gap-2 md:flex md:shrink-0">
-          <Button :disabled="publishMutation.isPending.value || !canSubmit" @click="publishService"><Send class="h-4 w-4" />{{ publishMutation.isPending.value ? '发布中' : !paymentSettingsComplete ? '先配置收款方式' : '发布 API 额度' }}</Button>
+          <Button :disabled="publishMutation.isPending.value || !canSubmit" @click="publishService"><Send class="h-4 w-4" />{{ publishMutation.isPending.value ? '发布中' : !accountPaymentSettingsComplete ? '先配置账号收款' : !paymentSettingsComplete ? '先配置收款方式' : '发布 API 额度' }}</Button>
           <p v-if="publishBlockReason" class="max-w-xs text-xs leading-5 text-warning md:text-right">{{ publishBlockReason }}</p>
         </div>
       </div>

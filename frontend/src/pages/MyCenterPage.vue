@@ -2,7 +2,7 @@
 import { computed, reactive, watchEffect } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { toast } from 'vue-sonner'
-import { Car, ContactRound, Eye, Link2, LockKeyhole, LogIn, Mail, MailCheck, MessageCircle, RefreshCw, Save, ShoppingBag, Trash2, UserRound, UsersRound } from 'lucide-vue-next'
+import { Car, ContactRound, CreditCard, Eye, ImageUp, Link2, LockKeyhole, LogIn, Mail, MailCheck, MessageCircle, RefreshCw, Save, ShoppingBag, Trash2, UserRound, UsersRound, X } from 'lucide-vue-next'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
@@ -16,6 +16,21 @@ import { usePagination } from '@/composables/usePagination'
 import { getPricingDisplay, getRemainingSeats } from '@/lib/pricing'
 import { getApiMerchantDisplayName, getApiMerchantVisibilityLabel, getApiServicePublicDetailUrl, type ApiService, type AvatarMode, type ContactMethodType, type ContactUsageScope, type SaveContactMethodRequest, type UserContactMethod, type UserPrivacySettings } from '@/lib/api'
 import {
+  apiPaymentMethods,
+  apiPaymentMethodRequiresQrCode,
+  apiPaymentSettingsMissingReason,
+  apiPaymentSettingsSummary,
+  createDefaultApiPaymentOptions,
+  defaultApiPaymentWindowMinutes,
+  isApiPaymentAccountSettingsComplete,
+  isApiPaymentOptionComplete,
+  type ApiPaymentAccountSettings,
+  type ApiPaymentMethod,
+  type ApiPaymentOption,
+} from '@/lib/apiPaymentSettings'
+import { containsSensitiveContent } from '@/lib/formValidation'
+import {
+  useApiPaymentAccountSettingsQuery,
   useApiServices,
   useConfirmEmailVerificationMutation,
   useCreateContactMethodMutation,
@@ -31,6 +46,7 @@ import {
   useSetBackupPasswordMutation,
   useSetDefaultContactMethodMutation,
   useStartEmailVerificationMutation,
+  useUpdateApiPaymentAccountSettingsMutation,
   useUpdateContactMethodMutation,
   useUpdateMyProfileMutation,
   useUseLinuxDoAvatarMutation,
@@ -42,6 +58,7 @@ const router = useRouter()
 const profileQuery = useMyProfileQuery()
 const profile = profileQuery.data
 const { data: contacts } = useMyContactMethodsQuery()
+const { data: apiPaymentSettings } = useApiPaymentAccountSettingsQuery()
 const { data: carpools } = useMyCarpools()
 const { data: apiServices } = useMyApiServices()
 
@@ -56,9 +73,11 @@ const updateContactMutation = useUpdateContactMethodMutation()
 const deleteContactMutation = useDeleteContactMethodMutation()
 const setDefaultContactMutation = useSetDefaultContactMethodMutation()
 const verifyContactMutation = useVerifyContactMethodMutation()
+const updateApiPaymentSettingsMutation = useUpdateApiPaymentAccountSettingsMutation()
 const publishApiServiceMutation = usePublishApiServiceMutation()
 const pauseApiServiceMutation = usePauseApiServiceMutation()
 const resumeApiServiceMutation = useResumeApiServiceMutation()
+const apiPaymentQrMaxBytes = 512 * 1024
 
 const sectionLinks = [
   { label: '概览', to: '/my', key: 'overview' },
@@ -124,6 +143,12 @@ const wechatForm = reactive({
 const loadedContactDraftKeys = reactive({
   wechat: '',
   email: '',
+  apiPayment: '',
+})
+
+const apiPaymentForm = reactive<Omit<ApiPaymentAccountSettings, 'updatedAt'>>({
+  paymentWindowMinutes: defaultApiPaymentWindowMinutes,
+  paymentOptions: createDefaultApiPaymentOptions(),
 })
 
 const defaultContactUsageScopes: ContactUsageScope[] = ['carpool_owner', 'api_merchant', 'buyer', 'dispute']
@@ -135,6 +160,9 @@ const wechatBound = computed(() => Boolean(wechatContact.value?.enabled && wecha
 const emailBound = computed(() => Boolean(emailContact.value?.enabled && emailContact.value.verified))
 const contactSaving = computed(() => createContactMutation.isPending.value || updateContactMutation.isPending.value)
 const emailBindingPending = computed(() => contactSaving.value || startEmailVerificationMutation.isPending.value || confirmEmailVerificationMutation.isPending.value || verifyContactMutation.isPending.value)
+const apiPaymentComplete = computed(() => isApiPaymentAccountSettingsComplete(apiPaymentForm))
+const apiPaymentMissingReasonText = computed(() => apiPaymentSettingsMissingReason(apiPaymentForm))
+const apiPaymentSummaryText = computed(() => apiPaymentSettingsSummary(apiPaymentForm))
 
 watchEffect(() => {
   if (!profile.value) return
@@ -161,6 +189,14 @@ watchEffect(() => {
     emailForm.email = email?.displayValue || profile.value.email || ''
     loadedContactDraftKeys.email = emailDraftKey
   }
+
+  const payment = apiPaymentSettings.value
+  const paymentDraftKey = payment?.updatedAt || 'empty'
+  if (payment && loadedContactDraftKeys.apiPayment !== paymentDraftKey) {
+    apiPaymentForm.paymentWindowMinutes = payment.paymentWindowMinutes
+    apiPaymentForm.paymentOptions = payment.paymentOptions.map(option => ({ ...option }))
+    loadedContactDraftKeys.apiPayment = paymentDraftKey
+  }
 })
 
 const carpoolRows = computed(() => carpools.value ?? [])
@@ -179,6 +215,49 @@ function isSectionActive(to: string) {
 
 function scopeLabels(scopes: ContactUsageScope[]) {
   return scopes.map(scope => usageScopeOptions.find(item => item.value === scope)?.label ?? scope).join('、')
+}
+
+function apiPaymentMethodLabel(method: ApiPaymentMethod) {
+  return apiPaymentMethods.find(item => item.value === method)?.label ?? method
+}
+
+function apiPaymentInstructionsPlaceholder(method: ApiPaymentMethod) {
+  if (apiPaymentMethodRequiresQrCode(method)) return '可选：填写收款码备注、核对口径或站外确认节奏。'
+  return '填写 USDT 网络、地址确认方式和站外核对说明。'
+}
+
+function handleApiPaymentQrUpload(event: Event, option: ApiPaymentOption) {
+  const input = event.target
+  if (!(input instanceof HTMLInputElement)) return
+  const file = input.files?.[0]
+  input.value = ''
+  if (!file) return
+  if (!['image/png', 'image/jpeg', 'image/webp'].includes(file.type)) {
+    toast.warning('请上传 PNG、JPG 或 WebP 格式的收款码图片。')
+    return
+  }
+  if (file.size > apiPaymentQrMaxBytes) {
+    toast.warning('收款码图片不能超过 512KB。')
+    return
+  }
+  const reader = new FileReader()
+  reader.onload = () => {
+    if (typeof reader.result !== 'string') {
+      toast.error('收款码读取失败，请重新选择图片。')
+      return
+    }
+    option.paymentQrCodeDataUrl = reader.result
+  }
+  reader.onerror = () => toast.error('收款码读取失败，请重新选择图片。')
+  reader.readAsDataURL(file)
+}
+
+function removeApiPaymentQr(option: ApiPaymentOption) {
+  option.paymentQrCodeDataUrl = null
+}
+
+function apiPaymentOptionReady(option: ApiPaymentOption) {
+  return isApiPaymentOptionComplete(option)
 }
 
 function saveProfile() {
@@ -331,6 +410,27 @@ function removeContact(contact: UserContactMethod) {
       toast.success('联系方式已解除绑定。')
     },
     onError: error => toast.error(error instanceof Error ? error.message : '删除失败'),
+  })
+}
+
+function saveApiPaymentSettings() {
+  if (!apiPaymentComplete.value) {
+    toast.warning(apiPaymentMissingReasonText.value || '请先补全 API 收款设置。')
+    return
+  }
+  if (containsSensitiveContent(apiPaymentForm.paymentOptions.map(option => option.paymentInstructions))) {
+    toast.warning('收款说明不能包含 API Key、token、密码、Session、Cookie、付款码或面板凭据。')
+    return
+  }
+  updateApiPaymentSettingsMutation.mutate({
+    paymentWindowMinutes: defaultApiPaymentWindowMinutes,
+    paymentOptions: apiPaymentForm.paymentOptions.map(option => ({
+      ...option,
+      paymentInstructions: option.paymentInstructions.trim(),
+    })),
+  }, {
+    onSuccess: () => toast.success('API 收款设置已保存。'),
+    onError: error => toast.error(error instanceof Error ? error.message : 'API 收款设置保存失败。'),
   })
 }
 
@@ -612,6 +712,107 @@ function goToLogin() {
           </label>
           <Button class="lg:self-end" :disabled="emailBindingPending || !emailForm.code.trim()" @click="confirmContactEmailVerification">验证并绑定邮箱</Button>
         </div>
+      </Card>
+
+      <Card class="border-emerald-200 bg-emerald-50/40 p-4">
+        <div class="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+          <div class="flex min-w-0 gap-4">
+            <div class="grid h-10 w-10 shrink-0 place-items-center rounded-lg bg-emerald-500/10 text-emerald-700">
+              <CreditCard class="h-5 w-5" />
+            </div>
+            <div class="min-w-0">
+              <div class="flex flex-wrap items-center gap-2">
+                <h2 class="text-lg font-semibold tracking-tight">API 收款设置</h2>
+                <Badge :variant="apiPaymentComplete ? 'verified' : 'secondary'">{{ apiPaymentComplete ? '已配置' : '待配置' }}</Badge>
+              </div>
+              <p class="mt-1 text-sm leading-6 text-muted-foreground">
+                发布 API 额度时默认使用这里的收款资料，并在发布时复制为该服务的接单快照。
+              </p>
+              <p class="mt-2 text-sm text-muted-foreground">{{ apiPaymentSummaryText }}</p>
+            </div>
+          </div>
+          <Button :disabled="updateApiPaymentSettingsMutation.isPending.value" @click="saveApiPaymentSettings">
+            <Save class="h-4 w-4" />保存 API 收款设置
+          </Button>
+        </div>
+
+        <div class="mt-4 space-y-3">
+          <div class="flex flex-col gap-2 rounded-md border border-emerald-200 bg-white/70 px-3 py-2 text-sm sm:flex-row sm:items-center sm:justify-between">
+            <span class="font-medium">买家确认付款窗口</span>
+            <span class="text-muted-foreground">固定 {{ defaultApiPaymentWindowMinutes }} 分钟</span>
+          </div>
+
+          <div class="space-y-2">
+            <div
+              v-for="option in apiPaymentForm.paymentOptions"
+              :key="option.paymentMethod"
+              class="grid gap-3 rounded-md border bg-white/80 p-3 lg:grid-cols-[minmax(170px,220px)_minmax(0,1fr)_auto]"
+              :class="option.enabled ? 'border-primary/35' : 'border-border'"
+            >
+              <label class="flex cursor-pointer items-start gap-3 lg:items-center">
+                <input v-model="option.enabled" type="checkbox" class="mt-1 h-4 w-4 accent-primary" />
+                <span class="min-w-0">
+                  <strong class="block text-sm">{{ apiPaymentMethodLabel(option.paymentMethod) }}</strong>
+                  <span class="mt-1 block text-xs leading-5 text-muted-foreground">
+                    {{ apiPaymentMethods.find(item => item.value === option.paymentMethod)?.hint }}
+                  </span>
+                </span>
+              </label>
+
+              <div v-if="option.enabled" class="min-w-0">
+                <div v-if="apiPaymentMethodRequiresQrCode(option.paymentMethod)" class="flex flex-col gap-3 sm:flex-row sm:items-center">
+                  <div class="grid h-20 w-20 shrink-0 place-items-center overflow-hidden rounded-md border border-border bg-muted/40">
+                    <img v-if="option.paymentQrCodeDataUrl" :src="option.paymentQrCodeDataUrl" :alt="`${apiPaymentMethodLabel(option.paymentMethod)}收款码`" class="h-full w-full object-cover" />
+                    <ImageUp v-else class="h-5 w-5 text-muted-foreground" />
+                  </div>
+                  <div class="min-w-0 flex-1 space-y-2">
+                    <div class="flex flex-wrap gap-2">
+                      <input
+                        :id="`api-payment-qr-${option.paymentMethod}`"
+                        class="sr-only"
+                        type="file"
+                        accept="image/png,image/jpeg,image/webp"
+                        @change="handleApiPaymentQrUpload($event, option)"
+                      />
+                      <label
+                        :for="`api-payment-qr-${option.paymentMethod}`"
+                        class="inline-flex h-9 cursor-pointer items-center justify-center gap-2 rounded-md border border-input bg-background px-3 text-sm font-medium shadow-xs hover:bg-accent hover:text-accent-foreground"
+                      >
+                        <ImageUp class="h-4 w-4" />{{ option.paymentQrCodeDataUrl ? '替换收款码' : '上传收款码' }}
+                      </label>
+                      <Button v-if="option.paymentQrCodeDataUrl" type="button" size="sm" variant="outline" @click="removeApiPaymentQr(option)">
+                        <X class="h-4 w-4" />移除
+                      </Button>
+                    </div>
+                    <p class="text-xs leading-5 text-muted-foreground">支持 PNG、JPG、WebP，最多 512KB。</p>
+                  </div>
+                </div>
+
+                <Textarea
+                  v-model="option.paymentInstructions"
+                  class="mt-3 min-h-16 text-sm"
+                  maxlength="160"
+                  :placeholder="apiPaymentInstructionsPlaceholder(option.paymentMethod)"
+                />
+              </div>
+              <div v-else class="text-sm text-muted-foreground lg:self-center">未启用</div>
+
+              <Badge class="lg:self-center" :variant="option.enabled && apiPaymentOptionReady(option) ? 'verified' : 'secondary'">
+                {{ option.enabled && apiPaymentOptionReady(option) ? '已就绪' : option.enabled ? '待补全' : '未启用' }}
+              </Badge>
+            </div>
+          </div>
+        </div>
+
+        <p
+          class="mt-4 rounded-md border px-3 py-2 text-xs leading-5"
+          :class="apiPaymentComplete ? 'border-success/20 bg-success/5 text-success' : 'border-warning/25 bg-warning/10 text-warning'"
+        >
+          {{ apiPaymentComplete ? 'API 发布页将直接读取这组设置，不需要每次重新填写。' : apiPaymentMissingReasonText }}
+        </p>
+        <p class="mt-2 rounded-md border border-border bg-accent/50 p-3 text-xs leading-5 text-muted-foreground">
+          收款资料只在买家提交购买意向后用于站外确认；不要填写付款码、银行卡号、API Key、token、账号密码、Cookie、Session 或面板凭据。
+        </p>
       </Card>
 
       <p class="rounded-md border border-border bg-accent/50 p-3 text-xs leading-5 text-muted-foreground">
