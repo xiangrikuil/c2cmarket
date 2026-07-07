@@ -59,29 +59,47 @@ async function request(path, options = {}, auth) {
   return decode(response, options.expectedStatus)
 }
 
-async function submitLead(auth, suffix, overrides = {}) {
-  return request('/api/v1/official-price-leads', {
-    method: 'POST',
-    idempotencyPrefix: `official-price-smoke-lead-${suffix}`,
-    body: {
-      productText: 'ChatGPT',
-      planText: `Pro Smoke ${suffix}`,
-      regionCode: 'ph',
-      channel: 'Web',
-      openingMethod: 'Apple Store / local card',
-      sourceUrl: `https://linux.do/t/official-price-smoke-${suffix}/${Date.now()}`,
-      sourceTitle: `Official price smoke ${suffix}`,
-      evidenceSummary: 'Smoke 验证真实后端低价线索提交和审核流。',
-      note: '不包含支付、托管、担保或凭据内容。',
-      observedAt: new Date().toISOString(),
-      billingPeriod: 'monthly',
-      currency: 'PHP',
-      originalAmount: overrides.originalAmount ?? '7990.00',
-      originalPriceText: overrides.originalPriceText ?? 'PHP 7,990',
-      taxIncluded: true,
-      ...overrides,
-    },
-  }, auth)
+function recordPayload(planId, suffix, overrides = {}) {
+  const now = new Date().toISOString()
+  return {
+    productPlanId: planId,
+    productText: 'ChatGPT',
+    planText: `Pro Smoke ${suffix}`,
+    regionCode: 'ph',
+    channel: 'web',
+    openingMethod: `official_web_smoke_${suffix}`,
+    sourceUrl: `https://linux.do/t/official-price-smoke-${suffix}/${Date.now()}`,
+    observedAt: now,
+    billingPeriod: 'monthly',
+    currency: 'PHP',
+    originalAmount: '7990.00',
+    taxIncluded: true,
+    fxRateToCny: '0.1230',
+    fxSource: 'smoke-fx',
+    fxObservedAt: now,
+    validFrom: now,
+    reason: 'official price admin maintenance smoke',
+    ...overrides,
+  }
+}
+
+function disabledSubmitPayload(suffix) {
+  return {
+    productText: 'ChatGPT',
+    planText: `Pro Smoke ${suffix}`,
+    regionCode: 'ph',
+    channel: 'web',
+    openingMethod: 'official_web',
+    sourceUrl: `https://linux.do/t/official-price-disabled-${suffix}`,
+    sourceTitle: 'disabled user submit smoke',
+    evidenceSummary: '用户提交入口禁用验证。',
+    observedAt: new Date().toISOString(),
+    billingPeriod: 'monthly',
+    currency: 'PHP',
+    originalAmount: '7990.00',
+    originalPriceText: 'PHP 7,990',
+    taxIncluded: true,
+  }
 }
 
 async function main() {
@@ -90,85 +108,78 @@ async function main() {
 
   const buyer = await session('official-price-smoke-buyer')
   const admin = await session('official-price-smoke-admin', true)
+  const suffix = Date.now().toString(36)
 
   const productPlans = await request('/api/v1/product-plans')
   const plan = productPlans.items.find(item => item.publishPolicy !== 'blocked') ?? productPlans.items[0]
   assert(plan?.id, 'product plan catalog should not be empty')
 
-  const lead = await submitLead(buyer, 'approve')
-  assert(lead.status === 'pending', 'submitted lead should be pending')
-  assert(lead.version === 1, 'submitted lead should start at version 1')
-
-  const myLeads = await request('/api/v1/me/official-price-leads', {}, buyer)
-  assert(myLeads.items.some(item => item.id === lead.id), 'my official price leads should include submitted lead')
-
-  const adminLeads = await request('/api/v1/admin/official-price-leads', {}, admin)
-  assert(adminLeads.items.some(item => item.id === lead.id), 'admin leads should include submitted lead')
-
-  const adminDetail = await request(`/api/v1/admin/official-price-leads/${lead.id}`, {}, admin)
-  assert(adminDetail.id === lead.id, 'admin detail should read submitted lead')
-  assert(adminDetail.channel === 'Web', 'admin detail should include channel')
-  assert(adminDetail.version === 1, 'admin detail should include version for If-Match')
-
-  const approved = await request(`/api/v1/admin/official-price-leads/${lead.id}/approve`, {
+  const disabled = await request('/api/v1/official-price-leads', {
     method: 'POST',
-    idempotencyPrefix: 'official-price-smoke-approve',
-    ifMatch: adminDetail.version,
-    body: {
-      reason: 'official price smoke approve',
-      resolvedProductPlanId: plan.id,
-      validFrom: new Date().toISOString(),
-      fxSnapshot: {
-        rateToCny: '0.1230',
-        source: 'smoke-fx',
-        observedAt: new Date().toISOString(),
-      },
-    },
+    idempotencyPrefix: `official-price-smoke-disabled-${suffix}`,
+    expectedStatus: 403,
+    body: disabledSubmitPayload(suffix),
+  }, buyer)
+  assert(disabled.code === 'OFFICIAL_PRICE_USER_SUBMIT_DISABLED', 'user lead submit should be disabled')
+
+  const created = await request('/api/v1/admin/official-price-records', {
+    method: 'POST',
+    idempotencyPrefix: `official-price-smoke-create-${suffix}`,
+    body: recordPayload(plan.id, suffix),
   }, admin)
-  assert(approved.lead.status === 'approved', 'lead should be approved')
-  assert(approved.record.id, 'approve should create public price record')
-  assert(approved.record.normalizedMonthlyCny, 'approved record should include normalized monthly CNY')
+  assert(created.id, 'admin create should return record id')
+  assert(created.status === 'active', 'created record should be active')
+  assert(created.normalizedMonthlyCny === '982.77', `unexpected normalized CNY ${created.normalizedMonthlyCny}`)
 
   const publicPrices = await request('/api/v1/official-prices')
-  assert(publicPrices.items.some(item => item.id === approved.record.id), 'public official prices should include approved record')
+  assert(publicPrices.items.some(item => item.id === created.id), 'public official prices should include created record')
 
-  const publicDetail = await request(`/api/v1/official-prices/${approved.record.id}`)
-  assert(publicDetail.id === approved.record.id, 'public official price detail should read approved record')
-  assert(publicDetail.leadId === lead.id, 'public record should point back to approved lead')
+  const publicDetail = await request(`/api/v1/official-prices/${created.id}`)
+  assert(publicDetail.id === created.id, 'public official price detail should read created record')
+  assert(publicDetail.leadId, 'admin-created record should keep an internal lead reference')
 
-  const changesLead = await submitLead(buyer, 'changes', {
-    originalAmount: '6990.00',
-    originalPriceText: 'PHP 6,990',
-  })
-  const changesDetail = await request(`/api/v1/admin/official-price-leads/${changesLead.id}`, {}, admin)
-  const changesRequested = await request(`/api/v1/admin/official-price-leads/${changesLead.id}/request-changes`, {
-    method: 'POST',
-    idempotencyPrefix: 'official-price-smoke-request-changes',
-    ifMatch: changesDetail.version,
-    body: { reason: 'smoke request changes' },
+  const updated = await request(`/api/v1/admin/official-price-records/${created.id}`, {
+    method: 'PUT',
+    idempotencyPrefix: `official-price-smoke-update-${suffix}`,
+    ifMatch: created.version,
+    body: recordPayload(plan.id, suffix, {
+      originalAmount: '6990.00',
+      reason: 'official price admin maintenance smoke update',
+    }),
   }, admin)
-  assert(changesRequested.status === 'changes_requested', 'request-changes should move lead to changes_requested')
+  assert(updated.id && updated.id !== created.id, 'update should create a replacement active record')
+  assert(updated.status === 'active', 'updated record should be active')
+  assert(updated.normalizedMonthlyCny === '859.77', `unexpected updated normalized CNY ${updated.normalizedMonthlyCny}`)
 
-  const rejectLead = await submitLead(buyer, 'reject', {
-    originalAmount: '8990.00',
-    originalPriceText: 'PHP 8,990',
+  const oldPublicDetail = await request(`/api/v1/official-prices/${created.id}`, {
+    expectedStatus: 404,
   })
-  const rejectDetail = await request(`/api/v1/admin/official-price-leads/${rejectLead.id}`, {}, admin)
-  const rejected = await request(`/api/v1/admin/official-price-leads/${rejectLead.id}/reject`, {
+  assert(oldPublicDetail.code === 'OBJECT_NOT_FOUND', 'superseded record should be hidden from public detail')
+
+  const adminRecords = await request('/api/v1/admin/official-price-records', {}, admin)
+  assert(adminRecords.items.some(item => item.id === created.id && item.status === 'superseded'), 'admin list should include superseded record')
+  assert(adminRecords.items.some(item => item.id === updated.id && item.status === 'active'), 'admin list should include replacement active record')
+
+  const takenDown = await request(`/api/v1/admin/official-price-records/${updated.id}/take-down`, {
     method: 'POST',
-    idempotencyPrefix: 'official-price-smoke-reject',
-    ifMatch: rejectDetail.version,
-    body: { reason: 'smoke reject' },
+    idempotencyPrefix: `official-price-smoke-take-down-${suffix}`,
+    ifMatch: updated.version,
+    body: { reason: 'official price admin maintenance smoke take down' },
   }, admin)
-  assert(rejected.status === 'rejected', 'reject should move lead to rejected')
+  assert(takenDown.status === 'taken_down', 'take-down should mark record taken_down')
+
+  const hiddenDetail = await request(`/api/v1/official-prices/${updated.id}`, {
+    expectedStatus: 404,
+  })
+  assert(hiddenDetail.code === 'OBJECT_NOT_FOUND', 'taken-down record should be hidden from public detail')
 
   console.log(JSON.stringify({
     ok: true,
-    approvedLeadId: lead.id,
-    recordId: approved.record.id,
-    changesLeadId: changesLead.id,
-    rejectLeadId: rejectLead.id,
-    publicPriceCount: publicPrices.items.length,
+    disabledSubmitCode: disabled.code,
+    createdRecordId: created.id,
+    updatedRecordId: updated.id,
+    takenDownStatus: takenDown.status,
+    adminRecordCount: adminRecords.items.length,
   }, null, 2))
 }
 

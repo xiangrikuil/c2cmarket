@@ -91,6 +91,7 @@ import {
   type SubmitReviewPayload,
   type TransactionTrendRange,
   type UpdateMyProfileRequest,
+  type UserProfile,
 } from '@/lib/api'
 import {
   closeDemand,
@@ -356,6 +357,7 @@ export function useSetBackupPasswordMutation() {
   return useMutation({
     mutationFn: (payload: SetBackupPasswordRequest) => setBackupPassword(payload),
     onSuccess() {
+      queryClient.setQueryData<UserProfile | undefined>(myProfileQueryKey(), current => current ? { ...current, passwordConfigured: true } : current)
       queryClient.invalidateQueries({ queryKey: myProfileQueryKey() })
     },
   })

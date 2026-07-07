@@ -60,7 +60,7 @@ In real backend mode, product catalog state belongs to `GET /api/v1/product-cate
 
 ### 1. Scope / Trigger
 
-- Trigger: frontend work touching post-login routing, `AppShell.vue`, `MyCenterPage.vue`, `/my/account`, login return targets, verified email state, or backup password state.
+- Trigger: frontend work touching post-login routing, `AppShell.vue`, `MyCenterPage.vue`, `/my/account`, login return targets, verified email state, or password state.
 - The first public registration/login path is linux.do OAuth. OAuth-created accounts have no default password, so the frontend must force users to complete recoverable login settings before ordinary business use.
 
 ### 2. Signatures
@@ -99,7 +99,7 @@ function sanitizeAccountRecoveryReturnTo(value: unknown): string | null
 ### 5. Good/Base/Bad Cases
 
 - Good: `AppShell.vue` imports shared account recovery helpers and redirects incomplete accounts from `/api-market/new` to `/my/account`.
-- Base: login page still uses linux.do OAuth and backup password login copy; it does not become a public password registration page.
+- Base: login page still uses linux.do OAuth and password-login recovery copy; it does not become a public password registration page.
 - Bad: each page independently checks `profile.emailVerified` and redirects with locally duplicated whitelist logic.
 
 ### 6. Tests Required
@@ -110,7 +110,7 @@ function sanitizeAccountRecoveryReturnTo(value: unknown): string | null
 - Browser smoke when available:
   - incomplete account opens a business route and reaches `/my/account`;
   - public allowed route is not redirected;
-  - completing email plus backup password allows continuing to the original route.
+  - completing email plus password setup allows continuing to the original route.
 
 ### 7. Wrong vs Correct
 

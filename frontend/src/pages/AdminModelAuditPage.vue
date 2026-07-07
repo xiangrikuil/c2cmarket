@@ -105,7 +105,7 @@ const targetDialogOpen = ref(false)
 const baselineDialogOpen = ref(false)
 const editingTargetId = ref('')
 const baselineParamsText = ref('{"temperature":0.7}')
-const baselineFeaturesText = ref('{"random_distance_reference":0}')
+const baselineFeaturesText = ref(JSON.stringify(defaultBaselineFeatureJson(), null, 2))
 
 const targetForm = reactive<ModelAuditTargetInput>(emptyTargetForm())
 const baselineForm = reactive<ModelAuditBaselineInput>(emptyBaselineForm())
@@ -166,8 +166,22 @@ function emptyBaselineForm(): ModelAuditBaselineInput {
     sourceType: 'official_api',
     probeSetVersion: '2026-07-v1',
     paramsJson: { temperature: 0.7 },
-    featureJson: { random_distance_reference: 0 },
+    featureJson: defaultBaselineFeatureJson(),
     sampleCount: 0,
+  }
+}
+
+function defaultBaselineFeatureJson(): Record<string, unknown> {
+  return {
+    randomFingerprint: {
+      categorical: [{
+        promptId: 'rand_digit_1_10_v1',
+        n: 80,
+        counts: { '7': 72, '4': 8 },
+        values: ['4', '7'],
+        invalidRate: 0,
+      }],
+    },
   }
 }
 

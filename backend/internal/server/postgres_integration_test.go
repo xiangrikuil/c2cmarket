@@ -20,7 +20,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-func TestPostgresOfficialPriceLeadFlow(t *testing.T) {
+func TestPostgresAdminOfficialPriceRecordFlow(t *testing.T) {
 	databaseURL := os.Getenv("C2C_TEST_DATABASE_URL")
 	if databaseURL == "" {
 		t.Skip("C2C_TEST_DATABASE_URL is not set")
@@ -35,24 +35,18 @@ func TestPostgresOfficialPriceLeadFlow(t *testing.T) {
 	defer store.Close()
 
 	server := NewServer(app.NewServiceWithPersistence(store))
-	buyerSession := createSession(t, server, "pg-buyer", false)
 	adminSession := createSession(t, server, "pg-admin", true)
 
-	lead := submitLead(t, server, buyerSession, "pg-lead-"+time.Now().Format("150405.000000000"))
-	approveBody := `{
-		"reason":"来源可访问，价格字段完整。",
-		"resolvedProductPlanId":"00000000-0000-0000-0000-000000000303",
-		"validFrom":"2026-06-21T00:00:00Z",
-		"fxSnapshot":{"rateToCny":"0.12210000","source":"admin_configured_snapshot","observedAt":"2026-06-21T06:00:00Z"}
-	}`
-	first := approveLead(t, server, adminSession, lead.ID, approveBody, "pg-approve-"+lead.ID)
-	second := approveLead(t, server, adminSession, lead.ID, approveBody, "pg-approve-"+lead.ID)
+	suffix := time.Now().Format("150405.000000000")
+	body := adminRecordPayload("pg-record-"+suffix, "799.00", "0.12210000")
+	first := createAdminOfficialPriceRecordWithBody(t, server, adminSession, body, "pg-record-"+suffix)
+	second := createAdminOfficialPriceRecordWithBody(t, server, adminSession, body, "pg-record-"+suffix)
 
-	if first.Record.ID == "" || first.Record.ID != second.Record.ID {
-		t.Fatalf("expected postgres idempotent replay, got %q and %q", first.Record.ID, second.Record.ID)
+	if first.ID == "" || first.ID != second.ID {
+		t.Fatalf("expected postgres idempotent replay, got %q and %q", first.ID, second.ID)
 	}
-	if first.Record.NormalizedMonthlyCNY != "97.56" {
-		t.Fatalf("expected normalized price 97.56, got %q", first.Record.NormalizedMonthlyCNY)
+	if first.NormalizedMonthlyCNY != "97.56" {
+		t.Fatalf("expected normalized price 97.56, got %q", first.NormalizedMonthlyCNY)
 	}
 
 	listRequest := httptest.NewRequest(http.MethodGet, "/api/v1/official-prices", nil)
@@ -61,11 +55,11 @@ func TestPostgresOfficialPriceLeadFlow(t *testing.T) {
 	if listResponse.Code != http.StatusOK {
 		t.Fatalf("list public prices status %d body %s", listResponse.Code, listResponse.Body.String())
 	}
-	if !strings.Contains(listResponse.Body.String(), first.Record.ID) {
+	if !strings.Contains(listResponse.Body.String(), first.ID) {
 		t.Fatalf("expected approved record in public price list")
 	}
 
-	detailRequest := httptest.NewRequest(http.MethodGet, "/api/v1/official-prices/"+first.Record.ID, nil)
+	detailRequest := httptest.NewRequest(http.MethodGet, "/api/v1/official-prices/"+first.ID, nil)
 	detailResponse := httptest.NewRecorder()
 	server.ServeHTTP(detailResponse, detailRequest)
 	if detailResponse.Code != http.StatusOK {
@@ -75,7 +69,7 @@ func TestPostgresOfficialPriceLeadFlow(t *testing.T) {
 		t.Fatalf("expected normalized price in public detail, got %s", detailResponse.Body.String())
 	}
 
-	assertOfficialPriceApprovalSideEffects(t, databaseURL, lead.ID, first.Record.ID, 1)
+	assertOfficialPriceRecordAdminSideEffects(t, databaseURL, first.ID, "official_price_record.created", "official_price_record.create", 1)
 }
 
 func TestPostgresProductCatalogReadAPIs(t *testing.T) {
@@ -723,7 +717,7 @@ func TestPostgresCarpoolMembershipIntegrityConstraints(t *testing.T) {
 	assertPostgresConstraintError(t, err, "wrong buyer completion confirmation actor must be rejected")
 }
 
-func TestPostgresOfficialPriceApprovalSideEffectsAreIdempotent(t *testing.T) {
+func TestPostgresOfficialPriceAdminRecordSideEffectsAreIdempotent(t *testing.T) {
 	databaseURL := os.Getenv("C2C_TEST_DATABASE_URL")
 	if databaseURL == "" {
 		t.Skip("C2C_TEST_DATABASE_URL is not set")
@@ -739,23 +733,16 @@ func TestPostgresOfficialPriceApprovalSideEffectsAreIdempotent(t *testing.T) {
 
 	server := NewServer(app.NewServiceWithPersistence(store))
 	suffix := time.Now().Format("150405.000000000")
-	buyerSession := createSession(t, server, "pg-side-buyer-"+suffix, false)
 	adminSession := createSession(t, server, "pg-side-admin-"+suffix, true)
-	lead := submitLead(t, server, buyerSession, "pg-side-lead-"+suffix)
-	body := `{
-		"reason":"来源可访问，价格字段完整。",
-		"resolvedProductPlanId":"00000000-0000-0000-0000-000000000303",
-		"validFrom":"2026-06-21T00:00:00Z",
-		"fxSnapshot":{"rateToCny":"0.12210000","source":"admin_configured_snapshot","observedAt":"2026-06-21T06:00:00Z"}
-	}`
+	body := adminRecordPayload("pg-side-record-"+suffix, "799.00", "0.12210000")
 
-	first := approveLead(t, server, adminSession, lead.ID, body, "pg-side-approve-"+suffix)
-	second := approveLead(t, server, adminSession, lead.ID, body, "pg-side-approve-"+suffix)
-	if first.Record.ID != second.Record.ID {
-		t.Fatalf("expected idempotent replay record, got %s and %s", first.Record.ID, second.Record.ID)
+	first := createAdminOfficialPriceRecordWithBody(t, server, adminSession, body, "pg-side-record-"+suffix)
+	second := createAdminOfficialPriceRecordWithBody(t, server, adminSession, body, "pg-side-record-"+suffix)
+	if first.ID != second.ID {
+		t.Fatalf("expected idempotent replay record, got %s and %s", first.ID, second.ID)
 	}
-	assertOfficialPriceApprovalSideEffects(t, databaseURL, lead.ID, first.Record.ID, 1)
-	assertOfficialPriceApprovalIdempotencyCache(t, databaseURL, adminSession.userID, lead.ID, "pg-side-approve-"+suffix, first.Record.ID)
+	assertOfficialPriceRecordAdminSideEffects(t, databaseURL, first.ID, "official_price_record.created", "official_price_record.create", 1)
+	assertOfficialPriceRecordIdempotencyCache(t, databaseURL, adminSession.userID, "pg-side-record-"+suffix, first.ID)
 }
 
 func TestPostgresCarpoolApplicationFlow(t *testing.T) {
@@ -1363,7 +1350,7 @@ func assertPostgresConstraintError(t *testing.T, err error, label string) {
 	}
 }
 
-func assertOfficialPriceApprovalSideEffects(t *testing.T, databaseURL, leadID, recordID string, want int) {
+func assertOfficialPriceRecordAdminSideEffects(t *testing.T, databaseURL, recordID, eventType, auditAction string, want int) {
 	t.Helper()
 	pool := openTestPool(t, databaseURL)
 	defer pool.Close()
@@ -1372,37 +1359,32 @@ func assertOfficialPriceApprovalSideEffects(t *testing.T, databaseURL, leadID, r
 		"records": `
 			SELECT count(*)::int
 			FROM official_price_records
-			WHERE lead_id = $1 AND id = $2
+			WHERE id = $1
 		`,
 		"events": `
 			SELECT count(*)::int
 			FROM domain_events
-			WHERE aggregate_type = 'official_price_lead'
+			WHERE aggregate_type = 'official_price_record'
 			  AND aggregate_id = $1
-			  AND event_type = 'official_price_lead.approved'
+			  AND event_type = $2
 		`,
 		"audit": `
 			SELECT count(*)::int
 			FROM admin_audit_logs
-			WHERE target_type = 'official_price_lead'
+			WHERE target_type = 'official_price_record'
 			  AND target_id = $1
-			  AND action = 'official_price_lead.approve'
-		`,
-		"notifications": `
-			SELECT count(*)::int
-			FROM notifications
-			WHERE target_type = 'official_price_lead'
-			  AND target_id = $1
-			  AND type = 'official_price_lead_approved'
+			  AND action = $2
 		`,
 	}
 	for name, query := range checks {
 		var count int
 		var err error
 		if name == "records" {
-			err = pool.QueryRow(context.Background(), query, leadID, recordID).Scan(&count)
+			err = pool.QueryRow(context.Background(), query, recordID).Scan(&count)
+		} else if name == "events" {
+			err = pool.QueryRow(context.Background(), query, recordID, eventType).Scan(&count)
 		} else {
-			err = pool.QueryRow(context.Background(), query, leadID).Scan(&count)
+			err = pool.QueryRow(context.Background(), query, recordID, auditAction).Scan(&count)
 		}
 		if err != nil {
 			t.Fatalf("count %s side effects: %v", name, err)
@@ -1413,12 +1395,12 @@ func assertOfficialPriceApprovalSideEffects(t *testing.T, databaseURL, leadID, r
 	}
 }
 
-func assertOfficialPriceApprovalIdempotencyCache(t *testing.T, databaseURL, adminUserID, leadID, key, recordID string) {
+func assertOfficialPriceRecordIdempotencyCache(t *testing.T, databaseURL, adminUserID, key, recordID string) {
 	t.Helper()
 	pool := openTestPool(t, databaseURL)
 	defer pool.Close()
 
-	routeKey := "POST /api/v1/admin/official-price-leads/{id}/approve:" + leadID
+	routeKey := "POST /api/v1/admin/official-price-records"
 	var status string
 	var responseStatus int
 	var contentType string

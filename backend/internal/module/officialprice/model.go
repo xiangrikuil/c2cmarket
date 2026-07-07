@@ -15,6 +15,7 @@ const (
 
 	RecordStatusActive     = "active"
 	RecordStatusSuperseded = "superseded"
+	RecordStatusTakenDown  = "taken_down"
 )
 
 type Lead struct {
@@ -127,6 +128,38 @@ type ApproveLeadInput struct {
 	FXRateToCNY           string
 	FXSource              string
 	FXObservedAt          time.Time
+}
+
+type AdminRecordInput struct {
+	RecordID        string
+	AdminUserID     string
+	ExpectedVersion int64
+	RequestID       string
+	ProductPlanID   string
+	ProductText     string
+	PlanText        string
+	RegionCode      string
+	Channel         string
+	OpeningMethod   string
+	SourceURL       string
+	ObservedAt      time.Time
+	BillingPeriod   string
+	Currency        string
+	OriginalAmount  string
+	TaxIncluded     bool
+	FXRateToCNY     string
+	FXSource        string
+	FXObservedAt    time.Time
+	ValidFrom       time.Time
+	Reason          string
+}
+
+type AdminRecordActionInput struct {
+	RecordID        string
+	AdminUserID     string
+	ExpectedVersion int64
+	RequestID       string
+	Reason          string
 }
 
 type ApprovalCompletionBuilder func(Lead, Record) (idempotency.Completion, *domain.AppError)

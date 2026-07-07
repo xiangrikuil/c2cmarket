@@ -194,6 +194,30 @@ type approveLeadResponse struct {
 	Record priceRecordResponse `json:"record"`
 }
 
+type adminOfficialPriceRecordRequest struct {
+	ProductPlanID  string `json:"productPlanId"`
+	ProductText    string `json:"productText"`
+	PlanText       string `json:"planText"`
+	RegionCode     string `json:"regionCode"`
+	Channel        string `json:"channel"`
+	OpeningMethod  string `json:"openingMethod"`
+	SourceURL      string `json:"sourceUrl"`
+	ObservedAt     string `json:"observedAt"`
+	BillingPeriod  string `json:"billingPeriod"`
+	Currency       string `json:"currency"`
+	OriginalAmount string `json:"originalAmount"`
+	TaxIncluded    bool   `json:"taxIncluded"`
+	FXRateToCNY    string `json:"fxRateToCny"`
+	FXSource       string `json:"fxSource"`
+	FXObservedAt   string `json:"fxObservedAt"`
+	ValidFrom      string `json:"validFrom"`
+	Reason         string `json:"reason"`
+}
+
+type adminOfficialPriceRecordActionRequest struct {
+	Reason string `json:"reason"`
+}
+
 type priceRecordResponse struct {
 	ID                   string  `json:"id"`
 	LeadID               string  `json:"leadId"`
@@ -217,6 +241,7 @@ type priceRecordResponse struct {
 	FXObservedAt         string  `json:"fxObservedAt"`
 	OfferKey             string  `json:"offerKey"`
 	IsLowestReference    bool    `json:"isLowestReference"`
+	Version              int64   `json:"version"`
 	CreatedAt            string  `json:"createdAt"`
 }
 
@@ -237,6 +262,127 @@ func (s *Server) handleOfficialPrice(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, toPriceRecordResponse(record))
 }
+
+func (s *Server) handleAdminOfficialPriceRecords(w http.ResponseWriter, r *http.Request) {
+	user, _, appErr := s.requireSession(r)
+	if appErr != nil {
+		writeProblem(w, r, appErr)
+		return
+	}
+	records, appErr := s.app.AdminOfficialPriceRecords(r.Context(), user)
+	if appErr != nil {
+		writeProblem(w, r, appErr)
+		return
+	}
+	writePaginatedJSON(w, r, toPriceRecordResponses(records))
+}
+
+func (s *Server) handleAdminOfficialPriceRecord(w http.ResponseWriter, r *http.Request) {
+	user, _, appErr := s.requireSession(r)
+	if appErr != nil {
+		writeProblem(w, r, appErr)
+		return
+	}
+	record, appErr := s.app.AdminOfficialPriceRecord(r.Context(), user, chi.URLParam(r, "id"))
+	if appErr != nil {
+		writeProblem(w, r, appErr)
+		return
+	}
+	setETag(w, record.Version)
+	writeJSON(w, http.StatusOK, toPriceRecordResponse(record))
+}
+
+func (s *Server) handleCreateAdminOfficialPriceRecord(w http.ResponseWriter, r *http.Request) {
+	user, _, appErr := s.requireSessionAndCSRF(r)
+	if appErr != nil {
+		writeProblem(w, r, appErr)
+		return
+	}
+	body, req, appErr := decodeStrictJSON[adminOfficialPriceRecordRequest](r)
+	if appErr != nil {
+		writeProblem(w, r, appErr)
+		return
+	}
+	input, appErr := toAdminOfficialPriceRecordInput(req, "", user.ID, 0, requestIDFrom(r))
+	if appErr != nil {
+		writeProblem(w, r, appErr)
+		return
+	}
+	s.withIdempotency(w, r, user.ID, "POST /api/v1/admin/official-price-records", body, func() (int, any, string, string, *domain.AppError) {
+		record, errApp := s.app.CreateAdminOfficialPriceRecord(r.Context(), user, input)
+		if errApp != nil {
+			return 0, nil, "", "", errApp
+		}
+		return http.StatusCreated, toPriceRecordResponse(record), "official_price_record", record.ID, nil
+	})
+}
+
+func (s *Server) handleUpdateAdminOfficialPriceRecord(w http.ResponseWriter, r *http.Request) {
+	user, _, appErr := s.requireSessionAndCSRF(r)
+	if appErr != nil {
+		writeProblem(w, r, appErr)
+		return
+	}
+	body, req, appErr := decodeStrictJSON[adminOfficialPriceRecordRequest](r)
+	if appErr != nil {
+		writeProblem(w, r, appErr)
+		return
+	}
+	version, appErr := requireIfMatchVersion(r)
+	if appErr != nil {
+		writeProblem(w, r, appErr)
+		return
+	}
+	recordID := chi.URLParam(r, "id")
+	input, appErr := toAdminOfficialPriceRecordInput(req, recordID, user.ID, version, requestIDFrom(r))
+	if appErr != nil {
+		writeProblem(w, r, appErr)
+		return
+	}
+	routeKey := "PUT /api/v1/admin/official-price-records/{id}:" + recordID
+	s.withIdempotency(w, r, user.ID, routeKey, body, func() (int, any, string, string, *domain.AppError) {
+		record, errApp := s.app.UpdateAdminOfficialPriceRecord(r.Context(), user, input)
+		if errApp != nil {
+			return 0, nil, "", "", errApp
+		}
+		return http.StatusOK, toPriceRecordResponse(record), "official_price_record", record.ID, nil
+	})
+}
+
+func (s *Server) handleTakeDownAdminOfficialPriceRecord(w http.ResponseWriter, r *http.Request) {
+	user, _, appErr := s.requireSessionAndCSRF(r)
+	if appErr != nil {
+		writeProblem(w, r, appErr)
+		return
+	}
+	body, req, appErr := decodeStrictJSON[adminOfficialPriceRecordActionRequest](r)
+	if appErr != nil {
+		writeProblem(w, r, appErr)
+		return
+	}
+	version, appErr := requireIfMatchVersion(r)
+	if appErr != nil {
+		writeProblem(w, r, appErr)
+		return
+	}
+	recordID := chi.URLParam(r, "id")
+	input := officialprice.AdminRecordActionInput{
+		RecordID:        recordID,
+		AdminUserID:     user.ID,
+		ExpectedVersion: version,
+		RequestID:       requestIDFrom(r),
+		Reason:          req.Reason,
+	}
+	routeKey := "POST /api/v1/admin/official-price-records/{id}/take-down:" + recordID
+	s.withIdempotency(w, r, user.ID, routeKey, body, func() (int, any, string, string, *domain.AppError) {
+		record, errApp := s.app.TakeDownAdminOfficialPriceRecord(r.Context(), user, input)
+		if errApp != nil {
+			return 0, nil, "", "", errApp
+		}
+		return http.StatusOK, toPriceRecordResponse(record), "official_price_record", record.ID, nil
+	})
+}
+
 func (s *Server) handleApproveOfficialPriceLead(w http.ResponseWriter, r *http.Request) {
 	user, _, appErr := s.requireSessionAndCSRF(r)
 	if appErr != nil {
@@ -349,6 +495,45 @@ func (s *Server) handleLeadReviewStatus(w http.ResponseWriter, r *http.Request, 
 		return http.StatusOK, toLeadResponse(lead), "official_price_lead", lead.ID, nil
 	})
 }
+
+func toAdminOfficialPriceRecordInput(req adminOfficialPriceRecordRequest, recordID, adminUserID string, expectedVersion int64, requestID string) (officialprice.AdminRecordInput, *domain.AppError) {
+	observedAt, appErr := parseRequiredTime(req.ObservedAt, "observedAt")
+	if appErr != nil {
+		return officialprice.AdminRecordInput{}, appErr
+	}
+	fxObservedAt, appErr := parseRequiredTime(req.FXObservedAt, "fxObservedAt")
+	if appErr != nil {
+		return officialprice.AdminRecordInput{}, appErr
+	}
+	validFrom, appErr := parseRequiredTime(req.ValidFrom, "validFrom")
+	if appErr != nil {
+		return officialprice.AdminRecordInput{}, appErr
+	}
+	return officialprice.AdminRecordInput{
+		RecordID:        recordID,
+		AdminUserID:     adminUserID,
+		ExpectedVersion: expectedVersion,
+		RequestID:       requestID,
+		ProductPlanID:   req.ProductPlanID,
+		ProductText:     req.ProductText,
+		PlanText:        req.PlanText,
+		RegionCode:      req.RegionCode,
+		Channel:         req.Channel,
+		OpeningMethod:   req.OpeningMethod,
+		SourceURL:       req.SourceURL,
+		ObservedAt:      observedAt,
+		BillingPeriod:   req.BillingPeriod,
+		Currency:        req.Currency,
+		OriginalAmount:  req.OriginalAmount,
+		TaxIncluded:     req.TaxIncluded,
+		FXRateToCNY:     req.FXRateToCNY,
+		FXSource:        req.FXSource,
+		FXObservedAt:    fxObservedAt,
+		ValidFrom:       validFrom,
+		Reason:          req.Reason,
+	}, nil
+}
+
 func toLeadResponses(leads []officialprice.Lead) []leadResponse {
 	items := make([]leadResponse, 0, len(leads))
 	for _, lead := range leads {
@@ -468,6 +653,7 @@ func toPriceRecordResponse(record officialprice.Record) priceRecordResponse {
 		FXObservedAt:         record.FXObservedAt.UTC().Format(time.RFC3339),
 		OfferKey:             record.OfferKey,
 		IsLowestReference:    record.IsLowestReference,
+		Version:              record.Version,
 		CreatedAt:            record.CreatedAt.UTC().Format(time.RFC3339),
 	}
 }

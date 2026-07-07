@@ -250,6 +250,26 @@ func (s *Service) AdminOfficialPriceLead(ctx context.Context, user User, leadID 
 	return s.officialPrice.AdminLead(ctx, user, leadID)
 }
 
+func (s *Service) AdminOfficialPriceRecords(ctx context.Context, user User) ([]OfficialPriceRecord, *domain.AppError) {
+	return s.officialPrice.AdminRecords(ctx, user)
+}
+
+func (s *Service) AdminOfficialPriceRecord(ctx context.Context, user User, recordID string) (OfficialPriceRecord, *domain.AppError) {
+	return s.officialPrice.AdminRecord(ctx, user, recordID)
+}
+
+func (s *Service) CreateAdminOfficialPriceRecord(ctx context.Context, user User, input AdminOfficialPriceRecordInput) (OfficialPriceRecord, *domain.AppError) {
+	return s.officialPrice.AdminCreateRecord(ctx, user, input)
+}
+
+func (s *Service) UpdateAdminOfficialPriceRecord(ctx context.Context, user User, input AdminOfficialPriceRecordInput) (OfficialPriceRecord, *domain.AppError) {
+	return s.officialPrice.AdminUpdateRecord(ctx, user, input)
+}
+
+func (s *Service) TakeDownAdminOfficialPriceRecord(ctx context.Context, user User, input AdminOfficialPriceRecordActionInput) (OfficialPriceRecord, *domain.AppError) {
+	return s.officialPrice.AdminTakeDownRecord(ctx, user, input)
+}
+
 func (s *Service) ApproveOfficialPriceLead(ctx context.Context, input ApproveLeadInput) (OfficialPriceLead, OfficialPriceRecord, *domain.AppError) {
 	return s.officialPrice.ApproveLead(ctx, input)
 }

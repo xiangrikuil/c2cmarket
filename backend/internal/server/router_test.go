@@ -233,17 +233,8 @@ func TestPublicResourceIDsAreUUIDs(t *testing.T) {
 	adminSession := createSession(t, server, "admin", true)
 
 	assertUUID(t, buyerSession.userID, "user id")
-	lead := submitLead(t, server, buyerSession, "uuid-lead")
-	assertUUID(t, lead.ID, "lead id")
-
-	approveBody := `{
-		"reason":"来源可访问，价格字段完整。",
-		"resolvedProductPlanId":"00000000-0000-0000-0000-000000000303",
-		"validFrom":"2026-06-21T00:00:00Z",
-		"fxSnapshot":{"rateToCny":"0.12210000","source":"admin_configured_snapshot","observedAt":"2026-06-21T06:00:00Z"}
-	}`
-	approved := approveLead(t, server, adminSession, lead.ID, approveBody, "uuid-approve")
-	assertUUID(t, approved.Record.ID, "price record id")
+	record := createAdminOfficialPriceRecord(t, server, adminSession, "uuid-record", "799.00", "0.12210000")
+	assertUUID(t, record.ID, "price record id")
 
 	contact := createContactMethod(t, server, buyerSession, "telegram", "UUID TG", "@uuid")
 	assertUUID(t, contact.ID, "contact method id")
@@ -305,12 +296,28 @@ func TestOfficialPriceLeadSubmitRejectsAuthorityFields(t *testing.T) {
 	}
 }
 
-func TestOfficialPriceLeadSubmitRejectsCredentialURL(t *testing.T) {
+func TestOfficialPriceLeadSubmitDisabled(t *testing.T) {
 	server := newTestServer(time.Now())
 	session := createSession(t, server, "buyer", false)
 
-	request := newJSONRequest(http.MethodPost, "/api/v1/official-price-leads", leadPayload(`https://example.com/post?access_token=secret`))
-	addAuth(request, session, "lead-url")
+	request := newJSONRequest(http.MethodPost, "/api/v1/official-price-leads", leadPayload(`https://linux.do/t/example/submit-disabled`))
+	addAuth(request, session, "lead-disabled")
+	response := httptest.NewRecorder()
+	server.ServeHTTP(response, request)
+
+	if response.Code != http.StatusForbidden {
+		t.Fatalf("expected disabled submit forbidden, got %d body %s", response.Code, response.Body.String())
+	}
+	assertProblemCode(t, response, "OFFICIAL_PRICE_USER_SUBMIT_DISABLED")
+}
+
+func TestAdminOfficialPriceRecordRejectsCredentialURL(t *testing.T) {
+	server := newTestServer(time.Now())
+	adminSession := createSession(t, server, "admin", true)
+
+	body := strings.Replace(adminRecordPayload("credential-url", "799.00", "0.12210000"), "https://linux.do/t/example/credential-url", "https://example.com/post?access_token=secret", 1)
+	request := newJSONRequest(http.MethodPost, "/api/v1/admin/official-price-records", body)
+	addAuth(request, adminSession, "admin-record-url")
 	response := httptest.NewRecorder()
 	server.ServeHTTP(response, request)
 
@@ -320,44 +327,30 @@ func TestOfficialPriceLeadSubmitRejectsCredentialURL(t *testing.T) {
 	assertProblemCode(t, response, "SECRET_CONTENT_DETECTED")
 }
 
-func TestOfficialPriceLeadApproveIsIdempotent(t *testing.T) {
+func TestAdminOfficialPriceRecordCreateIsIdempotent(t *testing.T) {
 	server := newTestServer(time.Now())
-	buyerSession := createSession(t, server, "buyer", false)
 	adminSession := createSession(t, server, "admin", true)
 
-	lead := submitLead(t, server, buyerSession, "lead-create")
-	approveBody := `{
-		"reason":"来源可访问，价格字段完整。",
-		"resolvedProductPlanId":"00000000-0000-0000-0000-000000000303",
-		"validFrom":"2026-06-21T00:00:00Z",
-		"fxSnapshot":{"rateToCny":"0.12210000","source":"admin_configured_snapshot","observedAt":"2026-06-21T06:00:00Z"}
-	}`
+	body := adminRecordPayload("record-create", "799.00", "0.12210000")
+	first := createAdminOfficialPriceRecordWithBody(t, server, adminSession, body, "record-create-key")
+	second := createAdminOfficialPriceRecordWithBody(t, server, adminSession, body, "record-create-key")
 
-	first := approveLead(t, server, adminSession, lead.ID, approveBody, "approve-key")
-	second := approveLead(t, server, adminSession, lead.ID, approveBody, "approve-key")
-
-	if first.Record.ID == "" || first.Record.ID != second.Record.ID {
-		t.Fatalf("expected idempotent record replay, got %q and %q", first.Record.ID, second.Record.ID)
+	if first.ID == "" || first.ID != second.ID {
+		t.Fatalf("expected idempotent record replay, got %q and %q", first.ID, second.ID)
 	}
-	if first.Record.NormalizedMonthlyCNY != "97.56" {
-		t.Fatalf("expected normalized price 97.56, got %q", first.Record.NormalizedMonthlyCNY)
+	if first.NormalizedMonthlyCNY != "97.56" {
+		t.Fatalf("expected normalized price 97.56, got %q", first.NormalizedMonthlyCNY)
 	}
 }
 
-func TestOfficialPriceLeadApproveRequiresIfMatch(t *testing.T) {
+func TestAdminOfficialPriceRecordUpdateRequiresIfMatch(t *testing.T) {
 	server := newTestServer(time.Now())
-	buyerSession := createSession(t, server, "buyer", false)
 	adminSession := createSession(t, server, "admin", true)
-	lead := submitLead(t, server, buyerSession, "lead-if-match-create")
+	record := createAdminOfficialPriceRecord(t, server, adminSession, "record-if-match", "799.00", "0.12210000")
 
-	body := `{
-		"reason":"来源可访问，价格字段完整。",
-		"resolvedProductPlanId":"00000000-0000-0000-0000-000000000303",
-		"validFrom":"2026-06-21T00:00:00Z",
-		"fxSnapshot":{"rateToCny":"0.12210000","source":"admin_configured_snapshot","observedAt":"2026-06-21T06:00:00Z"}
-	}`
-	request := newJSONRequest(http.MethodPost, "/api/v1/admin/official-price-leads/"+lead.ID+"/approve", body)
-	addAuth(request, adminSession, "approve-no-if-match")
+	body := adminRecordPayload("record-if-match", "899.00", "0.12210000")
+	request := newJSONRequest(http.MethodPut, "/api/v1/admin/official-price-records/"+record.ID, body)
+	addAuth(request, adminSession, "record-update-no-if-match")
 	request.Header.Del("If-Match")
 	response := httptest.NewRecorder()
 	server.ServeHTTP(response, request)
@@ -370,17 +363,9 @@ func TestOfficialPriceLeadApproveRequiresIfMatch(t *testing.T) {
 
 func TestPublicOfficialPricesExposeApprovedRecords(t *testing.T) {
 	server := newTestServer(time.Now())
-	buyerSession := createSession(t, server, "buyer", false)
 	adminSession := createSession(t, server, "admin", true)
 
-	lead := submitLead(t, server, buyerSession, "public-price-create")
-	approveBody := `{
-		"reason":"来源可访问，价格字段完整。",
-		"resolvedProductPlanId":"00000000-0000-0000-0000-000000000303",
-		"validFrom":"2026-06-21T00:00:00Z",
-		"fxSnapshot":{"rateToCny":"0.12210000","source":"admin_configured_snapshot","observedAt":"2026-06-21T06:00:00Z"}
-	}`
-	approved := approveLead(t, server, adminSession, lead.ID, approveBody, "public-price-approve")
+	created := createAdminOfficialPriceRecord(t, server, adminSession, "public-price-create", "799.00", "0.12210000")
 
 	listRequest := httptest.NewRequest(http.MethodGet, "/api/v1/official-prices", nil)
 	listResponseRecorder := httptest.NewRecorder()
@@ -395,14 +380,14 @@ func TestPublicOfficialPricesExposeApprovedRecords(t *testing.T) {
 	if len(list.Items) != 1 {
 		t.Fatalf("expected one public price record, got %d", len(list.Items))
 	}
-	if list.Items[0].ID != approved.Record.ID || list.Items[0].NormalizedMonthlyCNY != "97.56" {
+	if list.Items[0].ID != created.ID || list.Items[0].NormalizedMonthlyCNY != "97.56" {
 		t.Fatalf("unexpected public price item: %+v", list.Items[0])
 	}
 	if list.Items[0].FXObservedAt == "" || list.Items[0].SourceURL == "" {
 		t.Fatalf("expected public price item to include source and fx observation metadata: %+v", list.Items[0])
 	}
 
-	detailRequest := httptest.NewRequest(http.MethodGet, "/api/v1/official-prices/"+approved.Record.ID, nil)
+	detailRequest := httptest.NewRequest(http.MethodGet, "/api/v1/official-prices/"+created.ID, nil)
 	detailResponseRecorder := httptest.NewRecorder()
 	server.ServeHTTP(detailResponseRecorder, detailRequest)
 	if detailResponseRecorder.Code != http.StatusOK {
@@ -412,18 +397,17 @@ func TestPublicOfficialPricesExposeApprovedRecords(t *testing.T) {
 	if err := json.NewDecoder(detailResponseRecorder.Body).Decode(&detail); err != nil {
 		t.Fatalf("decode public price detail: %v", err)
 	}
-	if detail.ID != approved.Record.ID || detail.OfferKey == "" {
+	if detail.ID != created.ID || detail.OfferKey == "" {
 		t.Fatalf("unexpected public price detail: %+v", detail)
 	}
 }
 
 func TestPublicOfficialPricesSortByPriceAndMarkLowestReference(t *testing.T) {
 	server := newTestServer(time.Now())
-	buyerSession := createSession(t, server, "buyer", false)
 	adminSession := createSession(t, server, "admin", true)
 
-	expensive := createApprovedOfficialPriceRecord(t, server, buyerSession, adminSession, "public-price-expensive", "999.00", "0.12000000")
-	cheap := createApprovedOfficialPriceRecord(t, server, buyerSession, adminSession, "public-price-cheap", "799.00", "0.12000000")
+	expensive := createAdminOfficialPriceRecord(t, server, adminSession, "public-price-expensive", "999.00", "0.12000000")
+	cheap := createAdminOfficialPriceRecord(t, server, adminSession, "public-price-cheap", "799.00", "0.12000000")
 
 	listRequest := httptest.NewRequest(http.MethodGet, "/api/v1/official-prices", nil)
 	listResponseRecorder := httptest.NewRecorder()
@@ -438,17 +422,17 @@ func TestPublicOfficialPricesSortByPriceAndMarkLowestReference(t *testing.T) {
 	if len(list.Items) != 2 {
 		t.Fatalf("expected two public price records, got %d", len(list.Items))
 	}
-	if list.Items[0].ID != cheap.Record.ID || list.Items[0].NormalizedMonthlyCNY != "95.88" {
+	if list.Items[0].ID != cheap.ID || list.Items[0].NormalizedMonthlyCNY != "95.88" {
 		t.Fatalf("expected cheapest record first, got %+v", list.Items[0])
 	}
 	if !list.Items[0].IsLowestReference || !list.Items[1].IsLowestReference {
 		t.Fatalf("expected active records in separate API-created groups to include lowest reference marker, got %+v", list.Items)
 	}
-	if list.Items[1].ID != expensive.Record.ID || list.Items[1].NormalizedMonthlyCNY != "119.88" {
+	if list.Items[1].ID != expensive.ID || list.Items[1].NormalizedMonthlyCNY != "119.88" {
 		t.Fatalf("expected expensive record second, got %+v", list.Items[1])
 	}
 
-	detailRequest := httptest.NewRequest(http.MethodGet, "/api/v1/official-prices/"+cheap.Record.ID, nil)
+	detailRequest := httptest.NewRequest(http.MethodGet, "/api/v1/official-prices/"+cheap.ID, nil)
 	detailResponseRecorder := httptest.NewRecorder()
 	server.ServeHTTP(detailResponseRecorder, detailRequest)
 	if detailResponseRecorder.Code != http.StatusOK {
@@ -907,41 +891,68 @@ func TestOfficialPriceLeadSubmitRejectsDeprecatedPublicPricingFields(t *testing.
 	}
 }
 
-func TestApprovedLeadRejectsFurtherReviewActions(t *testing.T) {
+func TestAdminOfficialPriceRecordUpdateSupersedesOldRecord(t *testing.T) {
 	server := newTestServer(time.Now())
-	buyerSession := createSession(t, server, "buyer", false)
 	adminSession := createSession(t, server, "admin", true)
 
-	lead := submitLead(t, server, buyerSession, "lead-state-create")
-	approveBody := `{
-		"reason":"来源可访问，价格字段完整。",
-		"resolvedProductPlanId":"00000000-0000-0000-0000-000000000303",
-		"validFrom":"2026-06-21T00:00:00Z",
-		"fxSnapshot":{"rateToCny":"0.12210000","source":"admin_configured_snapshot","observedAt":"2026-06-21T06:00:00Z"}
-	}`
-	_ = approveLead(t, server, adminSession, lead.ID, approveBody, "state-approve")
+	record := createAdminOfficialPriceRecord(t, server, adminSession, "record-update", "799.00", "0.12210000")
+	updated := updateAdminOfficialPriceRecord(t, server, adminSession, record.ID, record.Version, adminRecordPayload("record-update", "899.00", "0.12210000"), "record-update-key")
 
-	request := newJSONRequest(http.MethodPost, "/api/v1/admin/official-price-leads/"+lead.ID+"/request-changes", `{
-		"reason":"重复点击复核动作。"
-	}`)
-	addAuth(request, adminSession, "state-changes")
-	request.Header.Set("If-Match", `"2"`)
-	response := httptest.NewRecorder()
-	server.ServeHTTP(response, request)
-
-	if response.Code != http.StatusConflict {
-		t.Fatalf("expected invalid transition conflict, got %d body %s", response.Code, response.Body.String())
+	if updated.ID == record.ID || updated.Status != "active" || updated.NormalizedMonthlyCNY != "109.77" {
+		t.Fatalf("unexpected updated record: %+v", updated)
 	}
-	assertProblemCode(t, response, "INVALID_STATE_TRANSITION")
+
+	oldDetail := httptest.NewRequest(http.MethodGet, "/api/v1/official-prices/"+record.ID, nil)
+	oldDetailResponse := httptest.NewRecorder()
+	server.ServeHTTP(oldDetailResponse, oldDetail)
+	if oldDetailResponse.Code != http.StatusNotFound {
+		t.Fatalf("expected superseded old record hidden publicly, got %d body %s", oldDetailResponse.Code, oldDetailResponse.Body.String())
+	}
+
+	newDetail := httptest.NewRequest(http.MethodGet, "/api/v1/official-prices/"+updated.ID, nil)
+	newDetailResponse := httptest.NewRecorder()
+	server.ServeHTTP(newDetailResponse, newDetail)
+	if newDetailResponse.Code != http.StatusOK {
+		t.Fatalf("expected updated record public, got %d body %s", newDetailResponse.Code, newDetailResponse.Body.String())
+	}
+}
+
+func TestAdminOfficialPriceRecordTakeDownHidesPublicRecord(t *testing.T) {
+	server := newTestServer(time.Now())
+	adminSession := createSession(t, server, "admin", true)
+
+	record := createAdminOfficialPriceRecord(t, server, adminSession, "record-take-down", "799.00", "0.12210000")
+	takenDown := takeDownAdminOfficialPriceRecord(t, server, adminSession, record.ID, record.Version, "record-take-down-key")
+	if takenDown.Status != "taken_down" || takenDown.Version != record.Version+1 {
+		t.Fatalf("unexpected taken down record: %+v", takenDown)
+	}
+
+	detailRequest := httptest.NewRequest(http.MethodGet, "/api/v1/official-prices/"+record.ID, nil)
+	detailResponse := httptest.NewRecorder()
+	server.ServeHTTP(detailResponse, detailRequest)
+	if detailResponse.Code != http.StatusNotFound {
+		t.Fatalf("expected taken down record hidden publicly, got %d body %s", detailResponse.Code, detailResponse.Body.String())
+	}
+
+	repeat := newJSONRequest(http.MethodPost, "/api/v1/admin/official-price-records/"+record.ID+"/take-down", `{"reason":"重复下架。 "}`)
+	addAuth(repeat, adminSession, "record-take-down-repeat")
+	repeat.Header.Set("If-Match", `"2"`)
+	repeatResponse := httptest.NewRecorder()
+	server.ServeHTTP(repeatResponse, repeat)
+	if repeatResponse.Code != http.StatusConflict {
+		t.Fatalf("expected invalid transition conflict, got %d body %s", repeatResponse.Code, repeatResponse.Body.String())
+	}
+	assertProblemCode(t, repeatResponse, "INVALID_STATE_TRANSITION")
 }
 
 func TestIdempotencyKeyConflict(t *testing.T) {
 	server := newTestServer(time.Now())
-	session := createSession(t, server, "buyer", false)
+	session := createSession(t, server, "admin", true)
 
-	_ = submitLead(t, server, session, "same-key")
+	body := adminRecordPayload("same-key", "799.00", "0.12210000")
+	_ = createAdminOfficialPriceRecordWithBody(t, server, session, body, "same-key")
 
-	request := newJSONRequest(http.MethodPost, "/api/v1/official-price-leads", strings.Replace(leadPayload("https://linux.do/t/example/123"), "799.00", "899.00", 1))
+	request := newJSONRequest(http.MethodPost, "/api/v1/admin/official-price-records", strings.Replace(body, "799.00", "899.00", 1))
 	addAuth(request, session, "same-key")
 	response := httptest.NewRecorder()
 	server.ServeHTTP(response, request)
@@ -2141,8 +2152,12 @@ func TestAccountIdentityProfilePasswordEmailAndAvatarFlow(t *testing.T) {
 	if getProfileResponse.Code != http.StatusOK {
 		t.Fatalf("get profile status %d body %s", getProfileResponse.Code, getProfileResponse.Body.String())
 	}
-	if !strings.Contains(getProfileResponse.Body.String(), `"passwordConfigured":true`) {
-		t.Fatalf("expected profile to report configured backup password, got %s", getProfileResponse.Body.String())
+	profileBody := getProfileResponse.Body.String()
+	if !strings.Contains(profileBody, `"passwordConfigured":true`) {
+		t.Fatalf("expected profile to report configured backup password, got %s", profileBody)
+	}
+	if strings.Contains(profileBody, `"restrictions":null`) || !strings.Contains(profileBody, `"restrictions":[]`) {
+		t.Fatalf("expected profile restrictions to serialize as an empty array, got %s", profileBody)
 	}
 }
 
@@ -2378,6 +2393,83 @@ func createLinuxDoSession(t *testing.T, server http.Handler, username string) te
 		t.Fatalf("expected oauth session to bind linux.do, got %+v", payload.User.LinuxDo)
 	}
 	return testSession{cookie: sessionCookie, csrf: payload.CSRFToken, userID: payload.User.ID}
+}
+
+func adminRecordPayload(slug, amount, rate string) string {
+	return `{
+		"productPlanId":"00000000-0000-0000-0000-000000000303",
+		"productText":"ChatGPT Pro",
+		"planText":"Pro",
+		"regionCode":"ph",
+		"channel":"web",
+		"openingMethod":"official_web_` + slug + `",
+		"sourceUrl":"https://linux.do/t/example/` + slug + `",
+		"observedAt":"2026-06-21T06:30:00Z",
+		"billingPeriod":"monthly",
+		"currency":"PHP",
+		"originalAmount":"` + amount + `",
+		"taxIncluded":true,
+		"fxRateToCny":"` + rate + `",
+		"fxSource":"admin_configured_snapshot",
+		"fxObservedAt":"2026-06-21T06:00:00Z",
+		"validFrom":"2026-06-21T00:00:00Z",
+		"reason":"管理员维护官网公开价格。"
+	}`
+}
+
+func createAdminOfficialPriceRecord(t *testing.T, server http.Handler, session testSession, slug, amount, rate string) priceRecordResponse {
+	t.Helper()
+	return createAdminOfficialPriceRecordWithBody(t, server, session, adminRecordPayload(slug, amount, rate), "admin-record-"+slug)
+}
+
+func createAdminOfficialPriceRecordWithBody(t *testing.T, server http.Handler, session testSession, body, key string) priceRecordResponse {
+	t.Helper()
+	request := newJSONRequest(http.MethodPost, "/api/v1/admin/official-price-records", body)
+	addAuth(request, session, key)
+	response := httptest.NewRecorder()
+	server.ServeHTTP(response, request)
+	if response.Code != http.StatusCreated {
+		t.Fatalf("create admin official price record status %d body %s", response.Code, response.Body.String())
+	}
+	var record priceRecordResponse
+	if err := json.NewDecoder(response.Body).Decode(&record); err != nil {
+		t.Fatalf("decode admin official price record: %v", err)
+	}
+	return record
+}
+
+func updateAdminOfficialPriceRecord(t *testing.T, server http.Handler, session testSession, recordID string, version int64, body, key string) priceRecordResponse {
+	t.Helper()
+	request := newJSONRequest(http.MethodPut, "/api/v1/admin/official-price-records/"+recordID, body)
+	addAuth(request, session, key)
+	request.Header.Set("If-Match", `"`+strconv.FormatInt(version, 10)+`"`)
+	response := httptest.NewRecorder()
+	server.ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("update admin official price record status %d body %s", response.Code, response.Body.String())
+	}
+	var record priceRecordResponse
+	if err := json.NewDecoder(response.Body).Decode(&record); err != nil {
+		t.Fatalf("decode updated admin official price record: %v", err)
+	}
+	return record
+}
+
+func takeDownAdminOfficialPriceRecord(t *testing.T, server http.Handler, session testSession, recordID string, version int64, key string) priceRecordResponse {
+	t.Helper()
+	request := newJSONRequest(http.MethodPost, "/api/v1/admin/official-price-records/"+recordID+"/take-down", `{"reason":"官网公开价格已失效。"}`)
+	addAuth(request, session, key)
+	request.Header.Set("If-Match", `"`+strconv.FormatInt(version, 10)+`"`)
+	response := httptest.NewRecorder()
+	server.ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("take down admin official price record status %d body %s", response.Code, response.Body.String())
+	}
+	var record priceRecordResponse
+	if err := json.NewDecoder(response.Body).Decode(&record); err != nil {
+		t.Fatalf("decode taken down admin official price record: %v", err)
+	}
+	return record
 }
 
 func submitLead(t *testing.T, server http.Handler, session testSession, key string) createdLead {

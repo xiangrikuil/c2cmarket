@@ -33,8 +33,8 @@ export function accountRecoveryRequirements(profile: AccountRecoveryProfile): Ac
     },
     {
       id: 'password',
-      label: '设置备用密码',
-      description: 'linux.do 暂不可用时，可用站内用户名和备用密码登录。',
+      label: '设置密码',
+      description: 'linux.do 暂不可用时，可用站内用户名和密码登录。',
       completed: profile.passwordConfigured,
     },
   ]

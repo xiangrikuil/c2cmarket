@@ -126,12 +126,15 @@ Backend direction:
 
 ## Official Price Intelligence Contract
 
-Official price intelligence records one verified monthly single-account opening price. It is not a carpool seat price, shared-seat price, bulk quantity price, annual commitment price, or an absolute all-market lowest-price guarantee.
+Official price intelligence records one admin-maintained monthly single-account official opening price. It is not a user-submitted lead workflow, carpool seat price, shared-seat price, bulk quantity price, annual commitment price, or an absolute all-market lowest-price guarantee.
 
-Public official price lists should show only approved active price records. User-submitted leads that are pending, changes-requested, or rejected belong in the submitter/admin lead views, not in the public price table.
+Public official price lists should show only active price records maintained by admins. Legacy lead rows may exist as compatibility/audit carriers, but current user-facing product flows must not expose a submit-low-price-lead entry or promise that users can submit official price records.
 
 Preferred wording:
 
+- `官网价格记录`
+- `官网价格维护`
+- `折合人民币`
 - `已验证参考低价`
 - `已验证低价记录`
 - `官网公开价`

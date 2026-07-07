@@ -6,6 +6,16 @@ export const appThemes = [
     label: '水色控制台',
     swatch: 'oklch(0.704 0.123 182.5)',
   },
+  {
+    value: 'neumorphic-cool',
+    label: '柔灰浮雕',
+    swatch: '#E0E5EC',
+  },
+  {
+    value: 'minimal-modern',
+    label: '极简电蓝',
+    swatch: '#0052FF',
+  },
 ] as const
 
 export type AppTheme = typeof appThemes[number]['value']

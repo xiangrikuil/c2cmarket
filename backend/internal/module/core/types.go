@@ -51,6 +51,10 @@ type SubmitLeadInput = officialprice.SubmitLeadInput
 
 type ApproveLeadInput = officialprice.ApproveLeadInput
 
+type AdminOfficialPriceRecordInput = officialprice.AdminRecordInput
+
+type AdminOfficialPriceRecordActionInput = officialprice.AdminRecordActionInput
+
 type OfficialPriceApprovalCompletionBuilder = officialprice.ApprovalCompletionBuilder
 
 type ProductCategory = catalog.ProductCategory

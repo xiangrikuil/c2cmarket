@@ -1049,9 +1049,11 @@ paths:
     post:
       operationId: submitOfficialPriceLead
       tags: [OfficialPriceLeads]
+      deprecated: true
       security:
         - sessionCookie: []
           csrfToken: []
+      summary: Disabled legacy user submission endpoint.
       parameters:
         - $ref: "#/components/parameters/IdempotencyKey"
       requestBody:
@@ -1061,12 +1063,8 @@ paths:
             schema:
               $ref: "#/components/schemas/SubmitOfficialPriceLeadRequest"
       responses:
-        "201":
-          description: Lead submitted.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/OfficialPriceLeadSummary"
+        "403":
+          $ref: "#/components/responses/Problem"
         "400":
           $ref: "#/components/responses/Problem"
         "409":
@@ -3090,6 +3088,133 @@ paths:
               schema:
                 $ref: "#/components/schemas/OfficialPriceLeadSummary"
         "412":
+          $ref: "#/components/responses/Problem"
+        "428":
+          $ref: "#/components/responses/Problem"
+  /api/v1/admin/official-price-records:
+    get:
+      operationId: listAdminOfficialPriceRecords
+      tags: [AdminOfficialPriceRecords]
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
+      responses:
+        "200":
+          description: Admin-maintained official price records across all statuses.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OfficialPriceRecordList"
+        "403":
+          $ref: "#/components/responses/Problem"
+    post:
+      operationId: createAdminOfficialPriceRecord
+      tags: [AdminOfficialPriceRecords]
+      security:
+        - sessionCookie: []
+          csrfToken: []
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AdminOfficialPriceRecordRequest"
+      responses:
+        "201":
+          description: Official price record created by an admin.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OfficialPriceRecord"
+        "403":
+          $ref: "#/components/responses/Problem"
+        "409":
+          $ref: "#/components/responses/Problem"
+        "422":
+          $ref: "#/components/responses/Problem"
+  /api/v1/admin/official-price-records/{id}:
+    get:
+      operationId: getAdminOfficialPriceRecord
+      tags: [AdminOfficialPriceRecords]
+      parameters:
+        - $ref: "#/components/parameters/ResourceId"
+      responses:
+        "200":
+          description: Admin official price record detail, including inactive records.
+          headers:
+            ETag:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OfficialPriceRecord"
+        "403":
+          $ref: "#/components/responses/Problem"
+        "404":
+          $ref: "#/components/responses/Problem"
+    put:
+      operationId: updateAdminOfficialPriceRecord
+      tags: [AdminOfficialPriceRecords]
+      security:
+        - sessionCookie: []
+          csrfToken: []
+      parameters:
+        - $ref: "#/components/parameters/ResourceId"
+        - $ref: "#/components/parameters/IfMatch"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AdminOfficialPriceRecordRequest"
+      responses:
+        "200":
+          description: Official price record updated; previous active record is superseded.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OfficialPriceRecord"
+        "409":
+          $ref: "#/components/responses/Problem"
+        "412":
+          $ref: "#/components/responses/Problem"
+        "422":
+          $ref: "#/components/responses/Problem"
+        "428":
+          $ref: "#/components/responses/Problem"
+  /api/v1/admin/official-price-records/{id}/take-down:
+    post:
+      operationId: takeDownAdminOfficialPriceRecord
+      tags: [AdminOfficialPriceRecords]
+      security:
+        - sessionCookie: []
+          csrfToken: []
+      parameters:
+        - $ref: "#/components/parameters/ResourceId"
+        - $ref: "#/components/parameters/IfMatch"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AdminOfficialPriceRecordActionRequest"
+      responses:
+        "200":
+          description: Official price record taken down and hidden from public reads.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OfficialPriceRecord"
+        "409":
+          $ref: "#/components/responses/Problem"
+        "412":
+          $ref: "#/components/responses/Problem"
+        "422":
           $ref: "#/components/responses/Problem"
         "428":
           $ref: "#/components/responses/Problem"
@@ -7912,6 +8037,76 @@ components:
           $ref: "#/components/schemas/OfficialPriceLeadSummary"
         record:
           $ref: "#/components/schemas/OfficialPriceRecord"
+    AdminOfficialPriceRecordRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - productPlanId
+        - regionCode
+        - channel
+        - openingMethod
+        - sourceUrl
+        - observedAt
+        - billingPeriod
+        - currency
+        - originalAmount
+        - taxIncluded
+        - fxRateToCny
+        - fxSource
+        - fxObservedAt
+        - validFrom
+        - reason
+      properties:
+        productPlanId:
+          type: string
+          format: uuid
+        productText:
+          type: string
+        planText:
+          type: string
+        regionCode:
+          type: string
+        channel:
+          type: string
+        openingMethod:
+          type: string
+        sourceUrl:
+          type: string
+          format: uri
+        observedAt:
+          type: string
+          format: date-time
+        billingPeriod:
+          type: string
+          enum: [monthly]
+        currency:
+          type: string
+          pattern: '^[A-Z]{3}$'
+          minLength: 3
+          maxLength: 3
+        originalAmount:
+          $ref: "#/components/schemas/DecimalString"
+        taxIncluded:
+          type: boolean
+        fxRateToCny:
+          $ref: "#/components/schemas/DecimalString"
+        fxSource:
+          type: string
+        fxObservedAt:
+          type: string
+          format: date-time
+        validFrom:
+          type: string
+          format: date-time
+        reason:
+          type: string
+    AdminOfficialPriceRecordActionRequest:
+      type: object
+      additionalProperties: false
+      required: [reason]
+      properties:
+        reason:
+          type: string
     OfficialPriceRecord:
       type: object
       required:
@@ -7936,6 +8131,7 @@ components:
         - fxObservedAt
         - offerKey
         - isLowestReference
+        - version
         - createdAt
       properties:
         id:
@@ -7990,6 +8186,8 @@ components:
           type: string
         isLowestReference:
           type: boolean
+        version:
+          type: integer
         createdAt:
           type: string
           format: date-time

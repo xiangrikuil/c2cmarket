@@ -31,11 +31,11 @@ const chartMargin = {
 const chartConfig = {
   medianPrice: {
     label: '完成参考',
-    color: '#13aaa0',
+    color: 'var(--chart-1)',
   },
   priceRange: {
     label: '参考区间',
-    color: '#b8eee8',
+    color: 'var(--chart-2)',
   },
 } satisfies ChartConfig
 
@@ -133,7 +133,7 @@ function formatDateTick(tick: number | Date) {
         :num-ticks="5"
         :tick-format="formatPriceTick"
         tick-text-font-size="11px"
-        tick-text-color="#7b8799"
+        tick-text-color="var(--muted-foreground)"
         :tick-padding="8"
       />
       <VisAxis
@@ -145,7 +145,7 @@ function formatDateTick(tick: number | Date) {
         :tick-format="formatDateTick"
         :tick-values="tickValues"
         tick-text-font-size="11px"
-        tick-text-color="#7b8799"
+        tick-text-color="var(--muted-foreground)"
         :tick-text-fit-mode="FitMode.Trim"
         :tick-text-align="TextAlign.Center"
         :tick-padding="8"
@@ -174,6 +174,6 @@ function formatDateTick(tick: number | Date) {
 }
 
 .home-trend-chart :deep(.vis-axis .grid-line) {
-  stroke: #e8eef5;
+  stroke: var(--border);
 }
 </style>

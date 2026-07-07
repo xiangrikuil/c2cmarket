@@ -91,45 +91,30 @@ async function createContact(auth, value, label) {
   }, auth)
 }
 
-async function createOfficialPriceRecord(admin, buyer, keyword, plan) {
-  const lead = await request('/api/v1/official-price-leads', {
+async function createOfficialPriceRecord(admin, keyword, plan) {
+  return request('/api/v1/admin/official-price-records', {
     method: 'POST',
-    idempotencyPrefix: 'search-smoke-price-lead',
+    idempotencyPrefix: 'search-smoke-price-record',
     body: {
+      productPlanId: plan.id,
       productText: 'ChatGPT',
       planText: `Search Smoke ${keyword}`,
       regionCode: 'ph',
       channel: keyword,
       openingMethod: 'search_smoke_channel',
       sourceUrl: `https://linux.do/t/search-smoke-price/${Date.now()}`,
-      sourceTitle: `Search smoke price ${keyword}`,
-      evidenceSummary: '搜索 smoke 验证公开价格聚合。',
-      note: '不包含支付、托管、担保或凭据内容。',
       observedAt: new Date().toISOString(),
       billingPeriod: 'monthly',
       currency: 'PHP',
       originalAmount: '7990.00',
-      originalPriceText: 'PHP 7,990',
       taxIncluded: true,
-    },
-  }, buyer)
-  const detail = await request(`/api/v1/admin/official-price-leads/${lead.id}`, {}, admin)
-  const approved = await request(`/api/v1/admin/official-price-leads/${lead.id}/approve`, {
-    method: 'POST',
-    idempotencyPrefix: 'search-smoke-price-approve',
-    ifMatch: detail.version,
-    body: {
-      reason: 'search smoke approve',
-      resolvedProductPlanId: plan.id,
+      fxRateToCny: '0.1230',
+      fxSource: 'search-smoke-fx',
+      fxObservedAt: new Date().toISOString(),
       validFrom: new Date().toISOString(),
-      fxSnapshot: {
-        rateToCny: '0.1230',
-        source: 'search-smoke-fx',
-        observedAt: new Date().toISOString(),
-      },
+      reason: 'search smoke admin price record',
     },
   }, admin)
-  return approved.record
 }
 
 async function createCarpool(owner, keyword, plan) {
@@ -280,7 +265,7 @@ async function main() {
   const plan = plans.items.find(item => item.riskAckRequired && item.publishPolicy === 'allowed') ?? plans.items[0]
   assert(plan?.id, 'product plan catalog is empty')
 
-  const officialRecord = await createOfficialPriceRecord(admin, buyer, keyword, plan)
+  const officialRecord = await createOfficialPriceRecord(admin, keyword, plan)
   const carpool = await createCarpool(owner, keyword, plan)
   const demand = await createDemand(admin, buyer, keyword)
   const apiService = await createAPIService(owner, keyword)

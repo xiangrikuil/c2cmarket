@@ -189,17 +189,17 @@ async function logout() {
               </Button>
 
               <p class="text-center text-xs leading-5 text-muted-foreground">
-                请使用 linux.do 登录；备用密码仅用于已绑定 linux.do 的账号恢复访问。
+                请使用 linux.do 登录；密码登录仅用于已绑定 linux.do 的账号恢复访问。
               </p>
 
               <div class="relative">
                 <div class="absolute inset-0 flex items-center"><span class="w-full border-t border-border"></span></div>
-                <div class="relative flex justify-center text-xs"><span class="bg-card px-3 text-muted-foreground">备用入口</span></div>
+                <div class="relative flex justify-center text-xs"><span class="bg-card px-3 text-muted-foreground">账号恢复</span></div>
               </div>
 
               <Button type="button" variant="outline" class="h-10 w-full rounded-lg bg-card/80 text-sm" @click="showPasswordLogin = !showPasswordLogin">
                 <LockKeyhole class="h-4 w-4" />
-                {{ showPasswordLogin ? '收起备用密码登录' : '已绑定 linux.do 用户备用密码登录' }}
+                {{ showPasswordLogin ? '收起密码登录' : '已绑定 linux.do 用户密码登录' }}
               </Button>
             </div>
           </template>
@@ -246,7 +246,7 @@ async function logout() {
             <Button class="h-10 w-full rounded-lg text-base shadow-lg shadow-primary/25" :disabled="passwordLoading" type="submit">
               <Loader2 v-if="passwordLoading" class="h-4 w-4 animate-spin" />
               <LogIn v-else class="h-4 w-4" />
-              备用密码登录
+              密码登录
             </Button>
           </form>
         </div>

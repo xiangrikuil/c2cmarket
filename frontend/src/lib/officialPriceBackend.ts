@@ -27,7 +27,58 @@ type BackendOfficialPriceRecord = {
   fxObservedAt: string
   offerKey: string
   isLowestReference?: boolean
+  version: number
   createdAt: string
+}
+
+export type OfficialPriceAdminRecord = {
+  id: string
+  productPlanId: string
+  productName: string
+  product: string
+  plan: string
+  regionCode: string
+  region: string
+  channel: string
+  openingMethod: string
+  sourceUrl: string
+  status: string
+  statusLabel: string
+  validFrom: string
+  validTo?: string | null
+  observedAt: string
+  billingPeriod: string
+  currency: string
+  originalAmount: string
+  originalPrice: string
+  taxIncluded: boolean
+  normalizedMonthlyCny: string
+  fxRateToCny: string
+  fxSource: string
+  fxObservedAt: string
+  isLowestReference: boolean
+  version: number
+  createdAt: string
+}
+
+export type OfficialPriceAdminRecordPayload = {
+  productPlanId: string
+  productText?: string
+  planText?: string
+  regionCode: string
+  channel: string
+  openingMethod: string
+  sourceUrl: string
+  observedAt: string
+  billingPeriod: string
+  currency: string
+  originalAmount: string
+  taxIncluded: boolean
+  fxRateToCny: string
+  fxSource: string
+  fxObservedAt: string
+  validFrom: string
+  reason: string
 }
 
 type BackendOfficialPriceLeadSummary = {
@@ -162,6 +213,14 @@ function backendAdminStatus(value: string) {
   return value || '待处理'
 }
 
+function backendRecordAdminStatus(value: string) {
+  if (value === 'active') return '生效中'
+  if (value === 'superseded') return '已被替换'
+  if (value === 'taken_down') return '已下架'
+  if (value === 'expired') return '已过期'
+  return value || '待处理'
+}
+
 function priceText(currency: string, amount: string) {
   return `${currency} ${amount}`.trim()
 }
@@ -202,10 +261,44 @@ export async function mapOfficialPriceRecord(record: BackendOfficialPriceRecord)
     cny: decimalNumber(record.normalizedMonthlyCny),
     status: backendRecordStatus(record.status),
     source: record.sourceUrl,
-    submitter: '管理员审核',
+    submitter: '管理员维护',
     submitterTrust: 0,
     updatedAt: formatDate(record.validFrom || record.createdAt),
     isLowest: record.isLowestReference === true,
+  }
+}
+
+async function mapAdminOfficialPriceRecord(record: BackendOfficialPriceRecord): Promise<OfficialPriceAdminRecord> {
+  const planName = await productPlanName(record.productPlanId)
+  const productPlan = splitProductPlanName(planName)
+  return {
+    id: record.id,
+    productPlanId: record.productPlanId,
+    productName: planName || record.productPlanId,
+    product: productPlan.product,
+    plan: productPlan.plan,
+    regionCode: record.regionCode,
+    region: regionLabel(record.regionCode),
+    channel: record.channel || '其他',
+    openingMethod: record.openingMethod || '其他',
+    sourceUrl: record.sourceUrl,
+    status: record.status,
+    statusLabel: backendRecordAdminStatus(record.status),
+    validFrom: record.validFrom,
+    validTo: record.validTo,
+    observedAt: record.observedAt,
+    billingPeriod: record.billingPeriod,
+    currency: record.currency,
+    originalAmount: record.originalAmount,
+    originalPrice: priceText(record.currency, record.originalAmount),
+    taxIncluded: record.taxIncluded,
+    normalizedMonthlyCny: record.normalizedMonthlyCny,
+    fxRateToCny: record.fxRate,
+    fxSource: record.fxSource,
+    fxObservedAt: record.fxObservedAt,
+    isLowestReference: record.isLowestReference === true,
+    version: record.version,
+    createdAt: record.createdAt,
   }
 }
 
@@ -238,6 +331,63 @@ export async function backendOfficialPrices() {
 export async function backendOfficialPriceById(id: string) {
   const record = await backendRequest<BackendOfficialPriceRecord>(`/api/v1/official-prices/${id}`)
   return mapOfficialPriceRecord(record)
+}
+
+function toAdminRecordRequest(payload: OfficialPriceAdminRecordPayload) {
+  return {
+    productPlanId: stringValue(payload.productPlanId),
+    productText: stringValue(payload.productText),
+    planText: stringValue(payload.planText),
+    regionCode: regionCode(stringValue(payload.regionCode)),
+    channel: stringValue(payload.channel, 'web'),
+    openingMethod: stringValue(payload.openingMethod, 'official_web'),
+    sourceUrl: stringValue(payload.sourceUrl),
+    observedAt: payload.observedAt,
+    billingPeriod: stringValue(payload.billingPeriod, 'monthly'),
+    currency: stringValue(payload.currency, 'CNY').toUpperCase(),
+    originalAmount: normalizeAmountText(stringValue(payload.originalAmount)),
+    taxIncluded: payload.taxIncluded === true,
+    fxRateToCny: normalizeAmountText(stringValue(payload.fxRateToCny, '1')),
+    fxSource: stringValue(payload.fxSource, 'admin_configured_snapshot'),
+    fxObservedAt: payload.fxObservedAt,
+    validFrom: payload.validFrom,
+    reason: stringValue(payload.reason, '管理员维护官网公开价格。'),
+  }
+}
+
+export async function backendAdminOfficialPriceRecords() {
+  await ensureBackendSession('admin', true)
+  const response = await backendRequest<ListResponse<BackendOfficialPriceRecord>>('/api/v1/admin/official-price-records')
+  return Promise.all(response.items.map(mapAdminOfficialPriceRecord))
+}
+
+export async function backendCreateAdminOfficialPriceRecord(payload: OfficialPriceAdminRecordPayload) {
+  await ensureBackendSession('admin', true)
+  const record = await backendMutation<BackendOfficialPriceRecord>('/api/v1/admin/official-price-records', toAdminRecordRequest(payload), {
+    idempotencyPrefix: 'official-price-record-create',
+  })
+  return mapAdminOfficialPriceRecord(record)
+}
+
+export async function backendUpdateAdminOfficialPriceRecord(id: string, version: number, payload: OfficialPriceAdminRecordPayload) {
+  await ensureBackendSession('admin', true)
+  const record = await backendMutation<BackendOfficialPriceRecord>(`/api/v1/admin/official-price-records/${id}`, toAdminRecordRequest(payload), {
+    method: 'PUT',
+    idempotencyPrefix: 'official-price-record-update',
+    ifMatch: version,
+  })
+  return mapAdminOfficialPriceRecord(record)
+}
+
+export async function backendTakeDownAdminOfficialPriceRecord(id: string, version: number, reason: string) {
+  await ensureBackendSession('admin', true)
+  const record = await backendMutation<BackendOfficialPriceRecord>(`/api/v1/admin/official-price-records/${id}/take-down`, {
+    reason: reason || '管理员下架官网公开价格。',
+  }, {
+    idempotencyPrefix: 'official-price-record-take-down',
+    ifMatch: version,
+  })
+  return mapAdminOfficialPriceRecord(record)
 }
 
 function toSubmitRequest(payload: SubmitOfficialPriceLeadPayload) {
@@ -312,10 +462,40 @@ async function leadAdminRow(summary: BackendOfficialPriceLeadSummary): Promise<A
   }
 }
 
+async function recordAdminRow(record: BackendOfficialPriceRecord): Promise<AdminRow> {
+  const detail = await mapAdminOfficialPriceRecord(record)
+  return recordAdminRowFromDetail(detail)
+}
+
+function recordAdminRowFromDetail(detail: OfficialPriceAdminRecord): AdminRow {
+  return {
+    id: detail.id,
+    primary: `${detail.product} ${detail.plan}`.trim(),
+    secondary: `${detail.region} · ${detail.channel} · ${detail.originalPrice}`,
+    owner: '管理员维护 · 真实后端',
+    status: detail.statusLabel,
+    risk: detail.status === 'active' ? `折合人民币 ¥${detail.normalizedMonthlyCny}` : detail.statusLabel,
+    targetType: 'official-price',
+    backendKind: 'official-price-record',
+    backendVersion: detail.version,
+    detailItems: [
+      { label: '后端状态', value: detail.status },
+      { label: '版本', value: String(detail.version) },
+      { label: '来源', value: detail.sourceUrl },
+      { label: '开通方式', value: detail.openingMethod },
+      { label: '官网公开价', value: detail.originalPrice },
+      { label: '折合人民币', value: `¥${detail.normalizedMonthlyCny}` },
+      { label: '汇率来源', value: detail.fxSource },
+      { label: '生效时间', value: formatDate(detail.validFrom) },
+    ],
+    targetTo: `/official-prices/${detail.id}`,
+  }
+}
+
 export async function backendAdminOfficialPriceRows() {
   await ensureBackendSession('admin', true)
-  const response = await backendRequest<ListResponse<BackendOfficialPriceLeadSummary>>('/api/v1/admin/official-price-leads')
-  return Promise.all(response.items.map(leadAdminRow))
+  const response = await backendRequest<ListResponse<BackendOfficialPriceRecord>>('/api/v1/admin/official-price-records')
+  return Promise.all(response.items.map(recordAdminRow))
 }
 
 async function adminLead(id: string) {
@@ -376,12 +556,20 @@ async function updateLeadReviewStatus(row: AdminRow, action: 'reject' | 'request
 
 export async function backendUpdateOfficialPriceAdminStatus(row: AdminRow, status: string, reason: string) {
   if (row.targetType !== 'official-price') return row
+  if (row.backendKind === 'official-price-record') return row
   if (status === '已通过') return approveLead(row, reason)
   return updateLeadReviewStatus(row, 'request-changes', reason)
 }
 
 export async function backendRunOfficialPriceAdminAction(row: AdminRow, action: 'approve' | 'request_changes' | 'take_down' | 'restore' | 'restrict' | 'warn' | 'suspend' | 'ban', reason: string) {
   if (row.targetType !== 'official-price') return row
+  if (row.backendKind === 'official-price-record') {
+    if (action === 'take_down' || action === 'restrict' || action === 'suspend' || action === 'ban') {
+      const record = await backendTakeDownAdminOfficialPriceRecord(row.id, row.backendVersion ?? 0, reason)
+      return recordAdminRowFromDetail(record)
+    }
+    return row
+  }
   if (action === 'approve' || action === 'restore') return approveLead(row, reason)
   if (action === 'request_changes' || action === 'warn') return updateLeadReviewStatus(row, 'request-changes', reason)
   return updateLeadReviewStatus(row, 'reject', reason)

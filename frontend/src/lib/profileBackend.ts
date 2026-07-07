@@ -62,8 +62,8 @@ type BackendProfile = {
     trustLevel: number | null
     lastSyncedAt: string | null
   }
-  badges: string[]
-  restrictions: string[]
+  badges: string[] | null
+  restrictions: string[] | null
   usernameChangePolicy: {
     canChange: boolean
     nextAvailableAt: string | null
@@ -259,10 +259,10 @@ function mapProfile(value: BackendProfile): UserProfile {
       trustLevel: value.linuxDoBinding.trustLevel,
       lastSyncedAt: value.linuxDoBinding.lastSyncedAt,
     },
-    badges: value.badges.map(code => ({ id: `backend-${code}`, code, label: code, type: code === 'admin' ? 'system' : 'identity' })),
+    badges: (value.badges ?? []).map(code => ({ id: `backend-${code}`, code, label: code, type: code === 'admin' ? 'system' : 'identity' })),
     accountStatus: value.accountStatus as UserProfile['accountStatus'],
     permissions: value.permissions,
-    restrictions: value.restrictions,
+    restrictions: value.restrictions ?? [],
     usernameChangePolicy: value.usernameChangePolicy,
     privacy: {
       showCreatedAt: value.privacy.showCreatedAt,

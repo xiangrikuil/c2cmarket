@@ -1,37 +1,88 @@
 package modelaudit
 
-import "sort"
+import (
+	"encoding/json"
+	"sort"
+)
+
+const (
+	randomFingerprintFeatureJSONKey = "randomFingerprint"
+	randomFingerprintMinSamples     = 40
+)
 
 type RandomFingerprintFeatureSet struct {
-	Categorical []CategoricalFingerprintFeature
-	Binary      []BinarySequenceFeature
+	Categorical []CategoricalFingerprintFeature `json:"categorical"`
+	Binary      []BinarySequenceFeature         `json:"binary"`
 }
 
 type CategoricalFingerprintFeature struct {
-	PromptID    string
-	N           int
-	Counts      map[string]int
-	Values      []string
-	InvalidRate float64
+	PromptID    string         `json:"promptId"`
+	N           int            `json:"n"`
+	Counts      map[string]int `json:"counts"`
+	Values      []string       `json:"values"`
+	InvalidRate float64        `json:"invalidRate"`
 }
 
 type BinarySequenceFeature struct {
-	PromptID    string
-	NSequences  int
-	TotalBits   int
-	POne        float64
-	PZero       float64
-	BigramProbs map[string]float64
-	InvalidRate float64
+	PromptID    string             `json:"promptId"`
+	NSequences  int                `json:"nSequences"`
+	TotalBits   int                `json:"totalBits"`
+	POne        float64            `json:"pOne"`
+	PZero       float64            `json:"pZero"`
+	BigramProbs map[string]float64 `json:"bigramProbs"`
+	InvalidRate float64            `json:"invalidRate"`
+}
+
+func DecodeRandomFingerprintFeatureSet(featureJSON map[string]any) (RandomFingerprintFeatureSet, bool) {
+	if len(featureJSON) == 0 {
+		return RandomFingerprintFeatureSet{}, false
+	}
+	if value, ok := featureJSON[randomFingerprintFeatureJSONKey]; ok {
+		return decodeRandomFingerprintFeatureSet(value)
+	}
+	return decodeRandomFingerprintFeatureSet(featureJSON)
+}
+
+func decodeRandomFingerprintFeatureSet(value any) (RandomFingerprintFeatureSet, bool) {
+	raw, err := json.Marshal(value)
+	if err != nil {
+		return RandomFingerprintFeatureSet{}, false
+	}
+	var featureSet RandomFingerprintFeatureSet
+	if err := json.Unmarshal(raw, &featureSet); err != nil {
+		return RandomFingerprintFeatureSet{}, false
+	}
+	normalizeRandomFingerprintFeatureSet(&featureSet)
+	return featureSet, randomSampleCount(featureSet) >= randomFingerprintMinSamples
+}
+
+func normalizeRandomFingerprintFeatureSet(featureSet *RandomFingerprintFeatureSet) {
+	for index := range featureSet.Categorical {
+		feature := &featureSet.Categorical[index]
+		if feature.Counts == nil {
+			feature.Counts = map[string]int{}
+		}
+		if feature.N == 0 {
+			for _, count := range feature.Counts {
+				feature.N += count
+			}
+		}
+	}
+	for index := range featureSet.Binary {
+		feature := &featureSet.Binary[index]
+		if feature.BigramProbs == nil {
+			feature.BigramProbs = map[string]float64{}
+		}
+	}
 }
 
 func ScoreRandomFingerprint(baseline, target RandomFingerprintFeatureSet) ProbeScore {
 	sampleCount := randomSampleCount(target)
-	if sampleCount < 40 {
+	if sampleCount < randomFingerprintMinSamples {
 		return ProbeScore{
 			Probe:      ProbeRandomFingerprint,
 			Risk:       RiskInsufficientData,
-			Confidence: clamp01(float64(sampleCount) / 40),
+			Confidence: clamp01(float64(sampleCount) / randomFingerprintMinSamples),
 			Score:      0,
 			Evidence:   map[string]any{"sample_count": sampleCount},
 		}
@@ -51,9 +102,9 @@ func ScoreRandomFingerprint(baseline, target RandomFingerprintFeatureSet) ProbeS
 		distance := JensenShannonDistance(baselineProb, targetProb)
 		distances = append(distances, distance)
 		evidence[targetFeature.PromptID] = map[string]any{
-			"js_distance":        distance,
-			"baseline_mode":      categoricalMode(baselineFeature),
-			"target_mode":        categoricalMode(targetFeature),
+			"js_distance":         distance,
+			"baseline_mode":       categoricalMode(baselineFeature),
+			"target_mode":         categoricalMode(targetFeature),
 			"target_invalid_rate": targetFeature.InvalidRate,
 		}
 	}

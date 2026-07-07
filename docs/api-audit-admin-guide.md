@@ -31,6 +31,24 @@
 
 基线 JSON 必须是对象。新 prompt bank、官方模型更新或模型参数变化后应创建新基线，而不是覆盖旧基线。
 
+随机指纹基线的 `featureJson` 使用 `randomFingerprint` 字段承载结构化分布。最小可用格式如下：
+
+```json
+{
+  "randomFingerprint": {
+    "categorical": [
+      {
+        "promptId": "rand_digit_1_10_v1",
+        "n": 80,
+        "counts": { "7": 72, "4": 8 },
+        "values": ["4", "7"],
+        "invalidRate": 0
+      }
+    ]
+  }
+}
+```
+
 ## Run Modes
 
 - `quick`: 执行低成本随机指纹和协议探针。

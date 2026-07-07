@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { RouterLink } from 'vue-router'
-import { ArrowRight, Box, Car, Check, Info, Megaphone, Tag } from 'lucide-vue-next'
+import { ArrowRight, Box, Car, Check, Info, Megaphone } from 'lucide-vue-next'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
@@ -164,7 +164,6 @@ const stats = computed(() => {
 
 const quickActions = [
   { title: '发布车源', desc: '有可用账号？发布车源接收申请', to: '/carpools/new', icon: Car, tone: 'from-teal-500 to-cyan-500' },
-  { title: '提交低价线索', desc: '发现更低价格？提交线索参考', to: '/official-prices/submit', icon: Tag, tone: 'from-blue-500 to-sky-500' },
   { title: '发布 API 服务', desc: '提供 API 额度？发布服务', to: '/api-market/new', icon: Box, tone: 'from-violet-500 to-purple-500' },
 ]
 
@@ -181,7 +180,7 @@ const homeAnnouncementCtaLabel = computed(() => homeAnnouncement.value ? '查看
       <div class="home-exact-hero">
         <div>
           <h1>社区行情总览</h1>
-          <p>汇聚全网低价线索、拼车车源、求车需求与 API 额度信息，为你提供更透明的 AI 服务交易参考。</p>
+          <p>汇聚官网价格记录、拼车车源、求车需求与 API 额度信息，为你提供更透明的 AI 服务交易参考。</p>
         </div>
         <div class="home-hero-art" aria-hidden="true">
           <div class="home-hero-cube"></div>

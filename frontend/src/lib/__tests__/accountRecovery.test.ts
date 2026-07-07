@@ -18,7 +18,7 @@ const incompleteProfile = {
   passwordConfigured: false,
 }
 
-test('account recovery requires both verified email and backup password', () => {
+test('account recovery requires both verified email and password', () => {
   assert.equal(isAccountRecoveryComplete(completeProfile), true)
   assert.equal(isAccountRecoveryComplete(incompleteProfile), false)
   assert.deepEqual(

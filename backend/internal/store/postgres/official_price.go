@@ -450,6 +450,175 @@ func (s *Store) GetOfficialPriceRecord(ctx context.Context, recordID string) (of
 	return record, nil
 }
 
+func (s *Store) ListAdminOfficialPriceRecords(ctx context.Context) ([]officialprice.Record, *domain.AppError) {
+	if s == nil || s.pool == nil {
+		return nil, internalStoreError()
+	}
+	rows, err := s.pool.Query(ctx, `
+		SELECT `+officialPriceRecordColumns+`
+		FROM official_price_records
+		ORDER BY created_at DESC, id ASC
+	`)
+	if err != nil {
+		return nil, internalStoreError()
+	}
+	defer rows.Close()
+	return scanOfficialPriceRecords(rows)
+}
+
+func (s *Store) GetAdminOfficialPriceRecord(ctx context.Context, recordID string) (officialprice.Record, *domain.AppError) {
+	if s == nil || s.pool == nil {
+		return officialprice.Record{}, internalStoreError()
+	}
+	record, err := s.getOfficialPriceRecord(ctx, s.pool, recordID, false)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return officialprice.Record{}, domain.NewError(http.StatusNotFound, domain.CodeObjectNotFound, "Price record not found", "价格记录不存在。")
+	}
+	if err != nil {
+		return officialprice.Record{}, internalStoreError()
+	}
+	return record, nil
+}
+
+func (s *Store) CreateAdminOfficialPriceRecord(ctx context.Context, input officialprice.AdminRecordInput, normalizedMonthlyCNY, offerKey, fingerprint string, now time.Time) (officialprice.Record, *domain.AppError) {
+	if s == nil || s.pool == nil {
+		return officialprice.Record{}, internalStoreError()
+	}
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return officialprice.Record{}, internalStoreError()
+	}
+	defer rollback(ctx, tx)
+
+	_, err = tx.Exec(ctx, `
+		UPDATE official_price_records
+		SET status = 'superseded', valid_to = $2, version = version + 1
+		WHERE offer_key = $1 AND status = 'active'
+	`, offerKey, now)
+	if err != nil {
+		return officialprice.Record{}, internalStoreError()
+	}
+
+	lead, record, appErr := s.insertAdminOfficialPriceRecordInTx(ctx, tx, input, normalizedMonthlyCNY, offerKey, fingerprint, now)
+	if appErr != nil {
+		return officialprice.Record{}, appErr
+	}
+	if appErr := s.writeOfficialPriceRecordAuditInTx(ctx, tx, input.AdminUserID, "official_price_record.created", "official_price_record.create", input.Reason, input.RequestID, record.ID, record.Version, nil, record, map[string]string{"leadId": lead.ID}, now); appErr != nil {
+		return officialprice.Record{}, appErr
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return officialprice.Record{}, internalStoreError()
+	}
+	return record, nil
+}
+
+func (s *Store) UpdateAdminOfficialPriceRecord(ctx context.Context, input officialprice.AdminRecordInput, normalizedMonthlyCNY, offerKey, fingerprint string, now time.Time) (officialprice.Record, *domain.AppError) {
+	if s == nil || s.pool == nil {
+		return officialprice.Record{}, internalStoreError()
+	}
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return officialprice.Record{}, internalStoreError()
+	}
+	defer rollback(ctx, tx)
+
+	oldRecord, err := s.getOfficialPriceRecord(ctx, tx, input.RecordID, true)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return officialprice.Record{}, domain.NewError(http.StatusNotFound, domain.CodeObjectNotFound, "Price record not found", "价格记录不存在。")
+	}
+	if err != nil {
+		return officialprice.Record{}, internalStoreError()
+	}
+	if oldRecord.Status != officialprice.RecordStatusActive {
+		return officialprice.Record{}, domain.NewError(http.StatusConflict, domain.CodeInvalidStateTransition, "Invalid state transition", "只有生效中的价格记录可以编辑。")
+	}
+	if input.ExpectedVersion > 0 && oldRecord.Version != input.ExpectedVersion {
+		return officialprice.Record{}, domain.NewError(http.StatusPreconditionFailed, domain.CodeVersionConflict, "Version conflict", "资源版本已变化，请刷新后重试。")
+	}
+	beforeRecord := oldRecord
+	oldRecord.Status = officialprice.RecordStatusSuperseded
+	validTo := now
+	oldRecord.ValidTo = &validTo
+	oldRecord.Version++
+	_, err = tx.Exec(ctx, `
+		UPDATE official_price_records
+		SET status = $2, valid_to = $3, version = $4
+		WHERE id = $1
+	`, oldRecord.ID, oldRecord.Status, oldRecord.ValidTo, oldRecord.Version)
+	if err != nil {
+		return officialprice.Record{}, internalStoreError()
+	}
+
+	_, err = tx.Exec(ctx, `
+		UPDATE official_price_records
+		SET status = 'superseded', valid_to = $2, version = version + 1
+		WHERE offer_key = $1 AND status = 'active' AND id <> $3
+	`, offerKey, now, oldRecord.ID)
+	if err != nil {
+		return officialprice.Record{}, internalStoreError()
+	}
+
+	lead, record, appErr := s.insertAdminOfficialPriceRecordInTx(ctx, tx, input, normalizedMonthlyCNY, offerKey, fingerprint, now)
+	if appErr != nil {
+		return officialprice.Record{}, appErr
+	}
+	if appErr := s.writeOfficialPriceRecordAuditInTx(ctx, tx, input.AdminUserID, "official_price_record.updated", "official_price_record.update", input.Reason, input.RequestID, record.ID, record.Version, beforeRecord, record, map[string]string{"leadId": lead.ID, "supersededRecordId": oldRecord.ID}, now); appErr != nil {
+		return officialprice.Record{}, appErr
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return officialprice.Record{}, internalStoreError()
+	}
+	return record, nil
+}
+
+func (s *Store) TakeDownOfficialPriceRecord(ctx context.Context, input officialprice.AdminRecordActionInput, now time.Time) (officialprice.Record, *domain.AppError) {
+	if s == nil || s.pool == nil {
+		return officialprice.Record{}, internalStoreError()
+	}
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return officialprice.Record{}, internalStoreError()
+	}
+	defer rollback(ctx, tx)
+
+	record, err := s.getOfficialPriceRecord(ctx, tx, input.RecordID, true)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return officialprice.Record{}, domain.NewError(http.StatusNotFound, domain.CodeObjectNotFound, "Price record not found", "价格记录不存在。")
+	}
+	if err != nil {
+		return officialprice.Record{}, internalStoreError()
+	}
+	if record.Status != officialprice.RecordStatusActive {
+		return officialprice.Record{}, domain.NewError(http.StatusConflict, domain.CodeInvalidStateTransition, "Invalid state transition", "只有生效中的价格记录可以下架。")
+	}
+	if input.ExpectedVersion > 0 && record.Version != input.ExpectedVersion {
+		return officialprice.Record{}, domain.NewError(http.StatusPreconditionFailed, domain.CodeVersionConflict, "Version conflict", "资源版本已变化，请刷新后重试。")
+	}
+	beforeRecord := record
+	validTo := now
+	record.Status = officialprice.RecordStatusTakenDown
+	record.ValidTo = &validTo
+	record.Version++
+	_, err = tx.Exec(ctx, `
+		UPDATE official_price_records
+		SET status = $2, valid_to = $3, version = $4
+		WHERE id = $1
+	`, record.ID, record.Status, record.ValidTo, record.Version)
+	if err != nil {
+		return officialprice.Record{}, internalStoreError()
+	}
+	if appErr := s.writeOfficialPriceRecordAuditInTx(ctx, tx, input.AdminUserID, "official_price_record.taken_down", "official_price_record.take_down", input.Reason, input.RequestID, record.ID, record.Version, beforeRecord, record, nil, now); appErr != nil {
+		return officialprice.Record{}, appErr
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return officialprice.Record{}, internalStoreError()
+	}
+	return record, nil
+}
+
 const officialPriceLeadColumns = `
 	id::text, submitter_user_id::text, COALESCE(product_plan_id::text, ''), product_text,
 	COALESCE(plan_text, ''), region_code, channel, opening_method, source_url,
@@ -480,6 +649,203 @@ func (s *Store) getOfficialPriceLead(ctx context.Context, q queryer, leadID stri
 	var lead officialprice.Lead
 	err := scanOfficialPriceLead(q.QueryRow(ctx, query, leadID), &lead)
 	return lead, err
+}
+
+func (s *Store) getOfficialPriceRecord(ctx context.Context, q queryer, recordID string, forUpdate bool) (officialprice.Record, error) {
+	query := `SELECT ` + officialPriceRecordColumns + ` FROM official_price_records WHERE id = $1`
+	if forUpdate {
+		query += ` FOR UPDATE`
+	}
+	var record officialprice.Record
+	err := scanOfficialPriceRecord(q.QueryRow(ctx, query, recordID), &record)
+	return record, err
+}
+
+func (s *Store) insertAdminOfficialPriceRecordInTx(ctx context.Context, tx pgx.Tx, input officialprice.AdminRecordInput, normalizedMonthlyCNY, offerKey, fingerprint string, now time.Time) (officialprice.Lead, officialprice.Record, *domain.AppError) {
+	fxObservedAt := input.FXObservedAt
+	reviewedAt := now
+	lead := officialprice.Lead{
+		ID:                   uuid.NewString(),
+		SubmitterUserID:      input.AdminUserID,
+		ProductPlanID:        input.ProductPlanID,
+		ProductText:          input.ProductText,
+		PlanText:             input.PlanText,
+		RegionCode:           input.RegionCode,
+		Channel:              input.Channel,
+		OpeningMethod:        input.OpeningMethod,
+		SourceURL:            input.SourceURL,
+		SourceTitle:          "管理员维护官网价格",
+		EvidenceSummary:      input.Reason,
+		Status:               officialprice.LeadStatusApproved,
+		ReviewedByAdminID:    input.AdminUserID,
+		ReviewedAt:           &reviewedAt,
+		ReviewReason:         input.Reason,
+		ObservedAt:           input.ObservedAt,
+		BillingPeriod:        input.BillingPeriod,
+		CommitmentMonths:     nil,
+		PriceUnit:            "per_account",
+		SeatCount:            nil,
+		Quantity:             1,
+		Currency:             input.Currency,
+		OriginalAmount:       input.OriginalAmount,
+		OriginalPriceText:    officialPriceOriginalText(input),
+		TaxIncluded:          input.TaxIncluded,
+		NormalizedMonthlyCNY: normalizedMonthlyCNY,
+		FXRate:               input.FXRateToCNY,
+		FXSource:             input.FXSource,
+		FXObservedAt:         &fxObservedAt,
+		ConversionMode:       "monthly_normalized",
+		RoundingRule:         "round_half_up_2",
+		Fingerprint:          fingerprint,
+		OfferKey:             offerKey,
+		CreatedAt:            now,
+		UpdatedAt:            now,
+		Version:              1,
+	}
+	_, err := tx.Exec(ctx, `
+		INSERT INTO official_price_leads (
+			id, submitter_user_id, product_plan_id, product_text, plan_text, region_code, channel,
+			opening_method, source_url, source_title, evidence_summary, note, status,
+			reviewed_by_admin_id, reviewed_at, review_reason, observed_at, billing_period,
+			commitment_months, price_unit, seat_count, quantity, currency, original_amount,
+			original_price_text, tax_included, normalized_monthly_cny, fx_rate, fx_source,
+			fx_observed_at, conversion_mode, rounding_rule, fingerprint, offer_key,
+			created_at, updated_at, version
+		)
+		VALUES (
+			$1, $2, $3, $4, $5, $6, $7,
+			$8, $9, $10, $11, $12, $13,
+			$14, $15, $16, $17, $18,
+			$19, $20, $21, $22, $23, $24,
+			$25, $26, $27, $28, $29,
+			$30, $31, $32, $33, $34,
+			$35, $36, $37
+		)
+	`, lead.ID, lead.SubmitterUserID, nullUUID(lead.ProductPlanID), lead.ProductText, nullText(lead.PlanText), lead.RegionCode, lead.Channel,
+		lead.OpeningMethod, lead.SourceURL, nullText(lead.SourceTitle), lead.EvidenceSummary, nullText(lead.Note), lead.Status,
+		lead.ReviewedByAdminID, lead.ReviewedAt, lead.ReviewReason, lead.ObservedAt, lead.BillingPeriod,
+		lead.CommitmentMonths, lead.PriceUnit, lead.SeatCount, lead.Quantity, lead.Currency, lead.OriginalAmount,
+		lead.OriginalPriceText, lead.TaxIncluded, lead.NormalizedMonthlyCNY, lead.FXRate, lead.FXSource,
+		lead.FXObservedAt, lead.ConversionMode, lead.RoundingRule, lead.Fingerprint, lead.OfferKey,
+		lead.CreatedAt, lead.UpdatedAt, lead.Version)
+	if err != nil {
+		return officialprice.Lead{}, officialprice.Record{}, internalStoreError()
+	}
+
+	record := officialprice.Record{
+		ID:                   uuid.NewString(),
+		LeadID:               lead.ID,
+		ProductPlanID:        input.ProductPlanID,
+		RegionCode:           input.RegionCode,
+		Channel:              input.Channel,
+		OpeningMethod:        input.OpeningMethod,
+		SourceURL:            input.SourceURL,
+		ApprovedByAdminID:    input.AdminUserID,
+		ApprovedAt:           now,
+		ValidFrom:            input.ValidFrom,
+		Status:               officialprice.RecordStatusActive,
+		ObservedAt:           input.ObservedAt,
+		BillingPeriod:        input.BillingPeriod,
+		CommitmentMonths:     nil,
+		PriceUnit:            "per_account",
+		SeatCount:            nil,
+		Quantity:             1,
+		Currency:             input.Currency,
+		OriginalAmount:       input.OriginalAmount,
+		TaxIncluded:          input.TaxIncluded,
+		NormalizedMonthlyCNY: normalizedMonthlyCNY,
+		FXRate:               input.FXRateToCNY,
+		FXSource:             input.FXSource,
+		FXObservedAt:         input.FXObservedAt,
+		ConversionMode:       "monthly_normalized",
+		RoundingRule:         "round_half_up_2",
+		Fingerprint:          fingerprint,
+		OfferKey:             offerKey,
+		CreatedAt:            now,
+		Version:              1,
+	}
+	_, err = tx.Exec(ctx, `
+		INSERT INTO official_price_records (
+			id, lead_id, product_plan_id, region_code, channel, opening_method, source_url,
+			approved_by_admin_id, approved_at, valid_from, status, observed_at, billing_period,
+			commitment_months, price_unit, seat_count, quantity, currency, original_amount,
+			tax_included, normalized_monthly_cny, fx_rate, fx_source, fx_observed_at,
+			conversion_mode, rounding_rule, fingerprint, offer_key, created_at, version
+		)
+		VALUES (
+			$1, $2, $3, $4, $5, $6, $7,
+			$8, $9, $10, $11, $12, $13,
+			$14, $15, $16, $17, $18, $19,
+			$20, $21, $22, $23, $24,
+			$25, $26, $27, $28, $29, $30
+		)
+	`, record.ID, record.LeadID, record.ProductPlanID, record.RegionCode, record.Channel, record.OpeningMethod, record.SourceURL,
+		record.ApprovedByAdminID, record.ApprovedAt, record.ValidFrom, record.Status, record.ObservedAt, record.BillingPeriod,
+		record.CommitmentMonths, record.PriceUnit, record.SeatCount, record.Quantity, record.Currency, record.OriginalAmount,
+		record.TaxIncluded, record.NormalizedMonthlyCNY, record.FXRate, record.FXSource, record.FXObservedAt,
+		record.ConversionMode, record.RoundingRule, record.Fingerprint, record.OfferKey, record.CreatedAt, record.Version)
+	if err != nil {
+		if isUniqueViolation(err) {
+			return officialprice.Lead{}, officialprice.Record{}, domain.NewError(http.StatusConflict, domain.CodeInvalidStateTransition, "Invalid state transition", "活跃官网价格记录冲突，请刷新后重试。")
+		}
+		return officialprice.Lead{}, officialprice.Record{}, internalStoreError()
+	}
+	return lead, record, nil
+}
+
+func (s *Store) writeOfficialPriceRecordAuditInTx(ctx context.Context, tx pgx.Tx, adminUserID, eventType, auditAction, reason, requestID string, recordID string, version int64, before any, after any, metadata map[string]string, now time.Time) *domain.AppError {
+	eventID := uuid.NewString()
+	if strings.TrimSpace(requestID) == "" {
+		requestID = "unknown"
+	}
+	if metadata == nil {
+		metadata = map[string]string{}
+	}
+	metadataJSON, err := json.Marshal(metadata)
+	if err != nil {
+		return internalStoreError()
+	}
+	_, err = tx.Exec(ctx, `
+		INSERT INTO domain_events (
+			id, aggregate_type, aggregate_id, event_type, actor_user_id, actor_kind,
+			aggregate_version, request_id, metadata_json, created_at
+		)
+		VALUES (
+			$1, 'official_price_record', $2, $3, $4, 'admin',
+			$5, $6, $7, $8
+		)
+	`, eventID, recordID, eventType, adminUserID, version, requestID, json.RawMessage(metadataJSON), now)
+	if err != nil {
+		return internalStoreError()
+	}
+
+	var beforeJSON any
+	if before != nil {
+		body, err := json.Marshal(before)
+		if err != nil {
+			return internalStoreError()
+		}
+		beforeJSON = json.RawMessage(body)
+	}
+	afterJSON, err := json.Marshal(after)
+	if err != nil {
+		return internalStoreError()
+	}
+	_, err = tx.Exec(ctx, `
+		INSERT INTO admin_audit_logs (
+			admin_user_id, action, target_type, target_id, reason, before_json,
+			after_json, request_id, created_at
+		)
+		VALUES ($1, $2, 'official_price_record', $3, $4, $5, $6, $7, $8)
+	`, adminUserID, auditAction, recordID, strings.TrimSpace(reason), beforeJSON, json.RawMessage(afterJSON), requestID, now)
+	if err != nil {
+		return internalStoreError()
+	}
+	return nil
+}
+
+func officialPriceOriginalText(input officialprice.AdminRecordInput) string {
+	return strings.TrimSpace(input.Currency + " " + input.OriginalAmount + " / month")
 }
 
 func scanOfficialPriceLeads(rows pgx.Rows) ([]officialprice.Lead, *domain.AppError) {

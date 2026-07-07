@@ -98,8 +98,8 @@ const drawerAction = computed(() => drawerMode.value === 'detail' ? null : drawe
 const confirmRow = computed(() => localRows.value.find(row => row.id === confirmRowId.value) ?? null)
 const panelCopy = computed(() => {
   const map: Partial<Record<AdminSection, { title: string, description: string }>> = {
-    'official-prices': { title: '低价线索审核', description: '核对地区、渠道、原币价格和来源帖，再决定通过、复核或下架。' },
-    'price-leads': { title: '低价线索审核', description: '核对地区、渠道、原币价格和来源帖，再决定通过、复核或下架。' },
+    'official-prices': { title: '官网价格维护', description: '维护地区、渠道、原币价格、折合人民币和来源记录，再决定通过、复核或下架。' },
+    'price-leads': { title: '价格记录维护', description: '维护地区、渠道、原币价格、折合人民币和来源记录，再决定通过、复核或下架。' },
     carpools: { title: '车源治理', description: '查看车主、席位资格、价格、车主承诺和原帖状态，支持下架、恢复和遗留审核队列处理。' },
     demands: { title: '求车管理', description: '查看预算、地区、车主偏好和原帖状态，支持关闭或恢复匹配。' },
     'api-services': { title: 'API 服务审核', description: '核对模型价格、最低意向金额、交易说明和商户身份展示。' },

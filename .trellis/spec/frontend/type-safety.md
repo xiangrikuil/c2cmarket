@@ -302,14 +302,12 @@ export type AdminRow = {
 - Navigating directly to `/merchant...` must remain in the normal `user` role because merchant workspaces belong to the same user permission class.
 - Admin negative actions (`take_down`, `restore`, `restrict`, `warn`, `suspend`, `ban`) require a reason and explicit second confirmation.
 - Restore actions are enabled only for restorable statuses; take-down actions are enabled only for currently active/verified/online-like statuses.
-- Official price/lead admin rows must include review context:
-  - evidence preview,
+- Official price admin maintenance rows must include record context:
   - source,
   - historical price context,
   - exchange-rate timestamp,
-  - duplicate lead check,
+  - duplicate offer check,
   - region restriction note,
-  - submitter history,
   - operation log summary.
 
 ### 4. Validation & Error Matrix
@@ -322,14 +320,14 @@ export type AdminRow = {
 | Negative admin action without reason | Block action and show warning |
 | Negative admin action without second confirmation | Block action and show warning |
 | Restore on a non-restorable row | Button disabled and action rejected |
-| Official price lead selected | Detail panel shows evidence/context fields listed above |
+| Official price record selected | Detail panel shows record/source/context fields listed above |
 
 ### 5. Good/Base/Bad Cases
 
 - Good: profile with `permissions: ['admin']` shows personal workspace, merchant workspace, and an appended management module.
 - Good: profile without `admin` permission shows personal workspace and merchant workspace only.
-- Good: admin price-lead panel shows `证据预览`, `历史价格`, `汇率时间`, `重复线索`, `地区限制`, `提交者历史`, and `操作记录`.
-- Base: direct `/admin/price-leads` remains reachable in frontend mock for review.
+- Good: admin official-price panel shows `来源`, `历史价格`, `汇率时间`, `重复 offer`, `地区限制`, and `操作记录`.
+- Base: direct `/admin/price-leads` redirects to `/admin/official-prices` for compatibility.
 - Bad: ordinary user sidebar always lists `用户管理`, `低价线索审核`, and `举报纠纷`.
 - Bad: ordinary user sidebar hides merchant workspace links behind a separate `商户` role switch.
 - Bad: sidebar has a manual `用户 / 管理员` role toggle.

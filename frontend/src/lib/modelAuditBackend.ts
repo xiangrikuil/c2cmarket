@@ -277,11 +277,25 @@ function seedBaselines(): ModelAuditBaseline[] {
     sourceType: 'official_api',
     probeSetVersion: '2026-07-v1',
     paramsJson: { temperature: 0.7 },
-    featureJson: { random_distance_reference: 0 },
+    featureJson: seedRandomFingerprintFeatures(),
     sampleCount: 220,
     validFrom: now,
     createdAt: now,
   }]
+}
+
+function seedRandomFingerprintFeatures(): Record<string, unknown> {
+  return {
+    randomFingerprint: {
+      categorical: [{
+        promptId: 'rand_digit_1_10_v1',
+        n: 80,
+        counts: { '7': 72, '4': 8 },
+        values: ['4', '7'],
+        invalidRate: 0,
+      }],
+    },
+  }
 }
 
 function seedRuns(): ModelAuditRun[] {

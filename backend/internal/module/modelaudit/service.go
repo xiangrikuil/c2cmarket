@@ -263,13 +263,22 @@ func (s *Service) CreateRun(ctx context.Context, user auth.User, input RunInput)
 	if claimedModel == "" {
 		claimedModel = target.ClaimedModel
 	}
+	baselineID := strings.TrimSpace(input.BaselineID)
+	var baseline *Baseline
+	if baselineID != "" {
+		loaded, appErr := s.getBaseline(ctx, baselineID)
+		if appErr != nil {
+			return Run{}, appErr
+		}
+		baseline = &loaded
+	}
 	now := s.now().UTC()
 	run := Run{
 		ID:           uuid.NewString(),
 		TargetID:     target.ID,
 		TargetName:   target.Name,
 		ClaimedModel: claimedModel,
-		BaselineID:    strings.TrimSpace(input.BaselineID),
+		BaselineID:   baselineID,
 		Status:       RunStatusRunning,
 		Mode:         input.Mode,
 		StartedAt:    &now,
@@ -280,7 +289,8 @@ func (s *Service) CreateRun(ctx context.Context, user auth.User, input RunInput)
 		return Run{}, appErr
 	}
 
-	completed := s.executeRun(ctx, created, target, apiKey, input)
+	target.ClaimedModel = claimedModel
+	completed := s.executeRun(ctx, created, target, baseline, apiKey, input)
 	return s.updateRun(ctx, completed)
 }
 
@@ -392,16 +402,16 @@ func (s *Service) CreateMonitor(ctx context.Context, user auth.User, input Monit
 	return monitor, nil
 }
 
-func (s *Service) executeRun(ctx context.Context, run Run, target Target, apiKey string, input RunInput) Run {
+func (s *Service) executeRun(ctx context.Context, run Run, target Target, baseline *Baseline, apiKey string, input RunInput) Run {
 	adapter := s.adapterFactory(target, apiKey)
 	scores := []ProbeScore{}
 	samples := []Sample{}
 
-	randomScore, randomSamples := s.runRandomProbe(ctx, run, target, adapter, input)
+	randomScore, randomSamples := s.runRandomProbe(ctx, run, target, baseline, adapter, input)
 	scores = append(scores, randomScore)
 	samples = append(samples, randomSamples...)
 
-	billingScore := s.runBillingLatencyProbe(ctx, target, adapter, samples)
+	billingScore := s.runBillingLatencyProbe(ctx, run, adapter, samples)
 	scores = append(scores, billingScore)
 
 	if input.Mode != AuditModeQuick {
@@ -449,10 +459,18 @@ func (s *Service) executeRun(ctx context.Context, run Run, target Target, apiKey
 	return run
 }
 
-func (s *Service) runRandomProbe(ctx context.Context, run Run, target Target, adapter ProviderAdapter, input RunInput) (ProbeScore, []Sample) {
-	prompt := RandomPromptBank()[0]
+func (s *Service) runRandomProbe(ctx context.Context, run Run, target Target, baseline *Baseline, adapter ProviderAdapter, input RunInput) (ProbeScore, []Sample) {
+	baselineFeatures, hasBaselineFeatures := randomFingerprintBaselineFeatures(baseline)
+	prompt := selectRandomFingerprintPrompt(baselineFeatures)
+	sampleTarget := 1
+	if hasBaselineFeatures {
+		sampleTarget = randomFingerprintMinSamples
+	}
+	counts := map[string]int{}
+	invalidCount := 0
+	samples := make([]Sample, 0, sampleTarget)
 	request := AuditChatRequest{
-		Model: target.ClaimedModel,
+		Model: run.ClaimedModel,
 		Messages: []AuditChatMessage{{
 			Role:    "user",
 			Content: prompt.Instruction,
@@ -462,60 +480,95 @@ func (s *Service) runRandomProbe(ctx context.Context, run Run, target Target, ad
 		MaxTokens:   8,
 		Timeout:     15 * time.Second,
 	}
-	response, err := adapter.Chat(ctx, request)
-	sample := Sample{
-		ID:                uuid.NewString(),
-		RunID:             run.ID,
-		TargetID:          target.ID,
-		ProbeType:         ProbeRandomFingerprint,
-		PromptID:          prompt.ID,
-		PromptHash:        hashText(prompt.Instruction),
-		RequestParamsJSON: map[string]any{"temperature": request.Temperature, "top_p": request.TopP, "max_tokens": request.MaxTokens},
-		CreatedAt:         s.now().UTC(),
+	for i := 0; i < sampleTarget; i++ {
+		response, err := adapter.Chat(ctx, request)
+		sample := Sample{
+			ID:         uuid.NewString(),
+			RunID:      run.ID,
+			TargetID:   target.ID,
+			ProbeType:  ProbeRandomFingerprint,
+			PromptID:   prompt.ID,
+			PromptHash: hashText(prompt.Instruction),
+			RequestParamsJSON: map[string]any{
+				"model":       request.Model,
+				"temperature": request.Temperature,
+				"top_p":       request.TopP,
+				"max_tokens":  request.MaxTokens,
+			},
+			CreatedAt: s.now().UTC(),
+		}
+		if input.StorePromptText {
+			sample.PromptText = prompt.Instruction
+		}
+		if err != nil {
+			sample.ErrorMessage = err.Error()
+			samples = append(samples, sample)
+			return ProbeScore{
+				Probe:      ProbeRandomFingerprint,
+				Risk:       RiskInsufficientData,
+				Confidence: 0.1,
+				Score:      0,
+				Evidence:   map[string]any{"error": "target_call_failed", "sample_count": len(samples), "baseline_id": run.BaselineID, "claimed_model": run.ClaimedModel},
+			}, samples
+		}
+		parsed := strings.TrimSpace(response.Text)
+		sample.ParsedValue = parsed
+		sample.ResponseHash = hashText(response.Text)
+		sample.LatencyMS = response.LatencyMS
+		sample.FirstTokenLatencyMS = response.FirstTokenLatencyMS
+		if response.Usage != nil {
+			sample.UsagePromptTokens = response.Usage.PromptTokens
+			sample.UsageCompletionTokens = response.Usage.CompletionTokens
+		}
+		if input.StoreResponseText {
+			sample.ResponseText = response.Text
+		}
+		if !randomPromptAllowsValue(prompt, parsed) {
+			invalidCount++
+		}
+		counts[parsed]++
+		samples = append(samples, sample)
 	}
-	if input.StorePromptText {
-		sample.PromptText = prompt.Instruction
-	}
-	if err != nil {
-		sample.ErrorMessage = err.Error()
+	targetFeatures := RandomFingerprintFeatureSet{Categorical: []CategoricalFingerprintFeature{{
+		PromptID:    prompt.ID,
+		N:           len(samples),
+		Counts:      counts,
+		Values:      prompt.AllowedValues,
+		InvalidRate: float64(invalidCount) / float64(len(samples)),
+	}}}
+	if !hasBaselineFeatures {
 		return ProbeScore{
 			Probe:      ProbeRandomFingerprint,
 			Risk:       RiskInsufficientData,
-			Confidence: 0.1,
+			Confidence: clamp01(float64(len(samples)) / randomFingerprintMinSamples),
 			Score:      0,
-			Evidence:   map[string]any{"error": "target_call_failed"},
-		}, []Sample{sample}
+			Evidence: map[string]any{
+				"reason":        "missing_random_fingerprint_baseline",
+				"sample_count":  len(samples),
+				"baseline_id":   run.BaselineID,
+				"claimed_model": run.ClaimedModel,
+			},
+		}, samples
 	}
-	parsed := strings.TrimSpace(response.Text)
-	sample.ParsedValue = parsed
-	sample.ResponseHash = hashText(response.Text)
-	sample.LatencyMS = response.LatencyMS
-	sample.FirstTokenLatencyMS = response.FirstTokenLatencyMS
-	if response.Usage != nil {
-		sample.UsagePromptTokens = response.Usage.PromptTokens
-		sample.UsageCompletionTokens = response.Usage.CompletionTokens
+	score := ScoreRandomFingerprint(baselineFeatures, targetFeatures)
+	if score.Evidence == nil {
+		score.Evidence = map[string]any{}
 	}
-	if input.StoreResponseText {
-		sample.ResponseText = response.Text
-	}
-	targetFeatures := RandomFingerprintFeatureSet{Categorical: []CategoricalFingerprintFeature{{
-		PromptID: prompt.ID,
-		N:        1,
-		Counts:   map[string]int{parsed: 1},
-		Values:   prompt.AllowedValues,
-	}}}
-	score := ScoreRandomFingerprint(RandomFingerprintFeatureSet{}, targetFeatures)
-	return score, []Sample{sample}
+	score.Evidence["baseline_id"] = run.BaselineID
+	score.Evidence["claimed_model"] = run.ClaimedModel
+	return score, samples
 }
 
-func (s *Service) runBillingLatencyProbe(ctx context.Context, target Target, adapter ProviderAdapter, samples []Sample) ProbeScore {
-	evidence := map[string]any{"claimed_model": target.ClaimedModel}
-	if lister, ok := adapter.(interface{ ListModels(context.Context) ([]string, error) }); ok {
+func (s *Service) runBillingLatencyProbe(ctx context.Context, run Run, adapter ProviderAdapter, samples []Sample) ProbeScore {
+	evidence := map[string]any{"claimed_model": run.ClaimedModel}
+	if lister, ok := adapter.(interface {
+		ListModels(context.Context) ([]string, error)
+	}); ok {
 		models, err := lister.ListModels(ctx)
 		if err == nil {
 			contains := false
 			for _, model := range models {
-				if model == target.ClaimedModel {
+				if model == run.ClaimedModel {
 					contains = true
 					break
 				}
@@ -625,6 +678,22 @@ func (s *Service) targetWithSecret(ctx context.Context, targetID string) (Target
 	return target, s.targetSecrets[targetID], nil
 }
 
+func (s *Service) getBaseline(ctx context.Context, baselineID string) (Baseline, *domain.AppError) {
+	if strings.TrimSpace(baselineID) == "" {
+		return Baseline{}, validation("baselineId", "required", "必须选择基线。")
+	}
+	if s.repo != nil {
+		return s.repo.GetModelAuditBaseline(ctx, baselineID)
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	baseline, ok := s.baselines[baselineID]
+	if !ok {
+		return Baseline{}, notFound("基线不存在。")
+	}
+	return baseline, nil
+}
+
 func (s *Service) createRun(ctx context.Context, run Run) (Run, *domain.AppError) {
 	if s.repo != nil {
 		return s.repo.CreateModelAuditRun(ctx, run)
@@ -710,6 +779,44 @@ func validAuditMode(mode AuditMode) bool {
 	default:
 		return false
 	}
+}
+
+func randomFingerprintBaselineFeatures(baseline *Baseline) (RandomFingerprintFeatureSet, bool) {
+	if baseline == nil {
+		return RandomFingerprintFeatureSet{}, false
+	}
+	return DecodeRandomFingerprintFeatureSet(baseline.FeatureJSON)
+}
+
+func selectRandomFingerprintPrompt(baselineFeatures RandomFingerprintFeatureSet) RandomPrompt {
+	prompts := RandomPromptBank()
+	if len(prompts) == 0 {
+		return RandomPrompt{}
+	}
+	byID := map[string]RandomPrompt{}
+	for _, prompt := range prompts {
+		byID[prompt.ID] = prompt
+	}
+	for _, feature := range baselineFeatures.Categorical {
+		if prompt, ok := byID[feature.PromptID]; ok {
+			return prompt
+		}
+	}
+	for _, feature := range baselineFeatures.Binary {
+		if prompt, ok := byID[feature.PromptID]; ok {
+			return prompt
+		}
+	}
+	return prompts[0]
+}
+
+func randomPromptAllowsValue(prompt RandomPrompt, value string) bool {
+	for _, allowed := range prompt.AllowedValues {
+		if value == allowed {
+			return true
+		}
+	}
+	return false
 }
 
 func hashText(value string) string {

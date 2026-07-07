@@ -1,0 +1,90 @@
+/*
+ * C2CMarket 柔灰浮雕主题。
+ * 来源：用户提供的 Neumorphism / Soft UI 主题提示词，按现有语义变量体系落地。
+ */
+
+html[data-theme="neumorphic-cool"] {
+  color-scheme: light;
+
+  --radius: 1.125rem;
+  --radius-card: 2rem;
+  --radius-control: 1rem;
+
+  --background: #e0e5ec;
+  --foreground: #3d4852;
+
+  --card: #e0e5ec;
+  --card-foreground: #3d4852;
+
+  --popover: #e0e5ec;
+  --popover-foreground: #3d4852;
+
+  --primary: #6258e8;
+  --primary-foreground: #ffffff;
+
+  --secondary: #d9dfe8;
+  --secondary-foreground: #3d4852;
+
+  --muted: #d4dbe5;
+  --muted-foreground: #5f6c7a;
+
+  --accent: #eceff6;
+  --accent-foreground: #3d4852;
+
+  --destructive: #d9485f;
+  --destructive-foreground: #ffffff;
+
+  --border: rgb(163 177 198 / 0.28);
+  --input: #e0e5ec;
+  --ring: #6258e8;
+
+  --chart-1: #6258e8;
+  --chart-2: #7c8cff;
+  --chart-3: #4b8cf7;
+  --chart-4: #9b8cff;
+  --chart-5: #f59e0b;
+
+  --sidebar: #e0e5ec;
+  --sidebar-foreground: #3d4852;
+  --sidebar-primary: #6258e8;
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-accent: #eceff6;
+  --sidebar-accent-foreground: #3d4852;
+  --sidebar-border: rgb(163 177 198 / 0.28);
+  --sidebar-ring: #6c63ff;
+
+  --success: #5866d6;
+  --success-foreground: #ffffff;
+  --warning: #d18400;
+  --warning-foreground: #3d4852;
+  --info: #4b8cf7;
+  --info-foreground: #ffffff;
+  --signal: #6258e8;
+  --signal-foreground: #ffffff;
+  --signal-soft: rgb(98 88 232 / 0.11);
+  --mesh-a: rgb(98 88 232 / 0.11);
+  --mesh-b: rgb(124 140 255 / 0.09);
+  --scrollbar-track: #d9dfe8;
+  --scrollbar-thumb: #a3b1c6;
+  --scrollbar-thumb-hover: #8f9db2;
+  --scrollbar-thumb-active: #728096;
+
+  --shadow-2xs: 3px 3px 6px rgb(163 177 198 / 0.48), -3px -3px 6px rgb(255 255 255 / 0.42);
+  --shadow-xs: 5px 5px 10px rgb(163 177 198 / 0.52), -5px -5px 10px rgb(255 255 255 / 0.45);
+  --shadow-sm: 7px 7px 14px rgb(163 177 198 / 0.55), -7px -7px 14px rgb(255 255 255 / 0.48);
+  --shadow: 9px 9px 16px rgb(163 177 198 / 0.60), -9px -9px 16px rgb(255 255 255 / 0.50);
+  --shadow-md: 12px 12px 20px rgb(163 177 198 / 0.66), -12px -12px 20px rgb(255 255 255 / 0.56);
+  --shadow-lg: 16px 16px 28px rgb(163 177 198 / 0.68), -16px -16px 28px rgb(255 255 255 / 0.58);
+  --shadow-xl: 22px 22px 38px rgb(163 177 198 / 0.70), -22px -22px 38px rgb(255 255 255 / 0.60);
+  --shadow-2xl: 28px 28px 48px rgb(163 177 198 / 0.72), -28px -28px 48px rgb(255 255 255 / 0.62);
+
+  --surface-raised-sm: 5px 5px 10px rgb(163 177 198 / 0.60), -5px -5px 10px rgb(255 255 255 / 0.50);
+  --surface-raised: 9px 9px 16px rgb(163 177 198 / 0.60), -9px -9px 16px rgb(255 255 255 / 0.50);
+  --surface-hover: 12px 12px 20px rgb(163 177 198 / 0.70), -12px -12px 20px rgb(255 255 255 / 0.60);
+  --surface-inset: inset 6px 6px 10px rgb(163 177 198 / 0.60), inset -6px -6px 10px rgb(255 255 255 / 0.50);
+  --surface-inset-deep: inset 10px 10px 20px rgb(163 177 198 / 0.70), inset -10px -10px 20px rgb(255 255 255 / 0.60);
+  --surface-pressed: inset 3px 3px 6px rgb(163 177 198 / 0.60), inset -3px -3px 6px rgb(255 255 255 / 0.50);
+  --surface-ring-shadow: 0 0 0 3px rgb(98 88 232 / 0.22), inset 10px 10px 20px rgb(163 177 198 / 0.70), inset -10px -10px 20px rgb(255 255 255 / 0.60);
+  --app-body-background: #e0e5ec;
+  --app-grid-line: rgb(163 177 198 / 0.24);
+}

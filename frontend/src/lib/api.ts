@@ -1760,8 +1760,8 @@ export async function updateMyProfile(payload: UpdateMyProfileRequest) {
 export async function setBackupPassword(payload: SetBackupPasswordRequest) {
   if (shouldUseRealBackend()) return backendSetPassword(payload)
   await wait()
-  if (payload.newPassword.length < 8) throw new Error('备用密码至少 8 个字符')
-  if (myUserProfileStore.passwordConfigured && !payload.currentPassword?.trim()) throw new Error('修改备用密码必须输入当前密码')
+  if (payload.newPassword.length < 8) throw new Error('密码至少 8 个字符')
+  if (myUserProfileStore.passwordConfigured && !payload.currentPassword?.trim()) throw new Error('修改密码必须输入当前密码')
   myUserProfileStore = {
     ...myUserProfileStore,
     passwordConfigured: true,

@@ -20,4 +20,9 @@ type Repository interface {
 	UpdateLeadReviewStatus(ctx context.Context, user auth.User, leadID, status, reason string, ifMatchVersion int64, now time.Time) (Lead, *domain.AppError)
 	ListOfficialPriceRecords(ctx context.Context) ([]Record, *domain.AppError)
 	GetOfficialPriceRecord(ctx context.Context, recordID string) (Record, *domain.AppError)
+	ListAdminOfficialPriceRecords(ctx context.Context) ([]Record, *domain.AppError)
+	GetAdminOfficialPriceRecord(ctx context.Context, recordID string) (Record, *domain.AppError)
+	CreateAdminOfficialPriceRecord(ctx context.Context, input AdminRecordInput, normalizedMonthlyCNY, offerKey, fingerprint string, now time.Time) (Record, *domain.AppError)
+	UpdateAdminOfficialPriceRecord(ctx context.Context, input AdminRecordInput, normalizedMonthlyCNY, offerKey, fingerprint string, now time.Time) (Record, *domain.AppError)
+	TakeDownOfficialPriceRecord(ctx context.Context, input AdminRecordActionInput, now time.Time) (Record, *domain.AppError)
 }

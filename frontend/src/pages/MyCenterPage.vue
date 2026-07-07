@@ -1,13 +1,16 @@
 <script setup lang="ts">
-import { computed, reactive, watchEffect } from 'vue'
+import { computed, onUnmounted, reactive, ref, watch, watchEffect } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { toast } from 'vue-sonner'
-import { AlertTriangle, Car, CheckCircle2, ContactRound, CreditCard, Eye, ImageUp, Link2, LockKeyhole, LogIn, Mail, MailCheck, MessageCircle, RefreshCw, Save, ShoppingBag, Trash2, UserRound, UsersRound, X } from 'lucide-vue-next'
+import { Bell, Car, CheckCircle2, ContactRound, CreditCard, Eye, ImageUp, KeyRound, Link2, LockKeyhole, LogIn, Mail, MailCheck, MessageCircle, RefreshCw, Save, ShieldCheck, ShoppingBag, Trash2, UserRound, UsersRound, X } from 'lucide-vue-next'
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { Stepper, StepperIndicator, StepperItem, StepperSeparator, StepperTitle, StepperTrigger } from '@/components/ui/stepper'
 import { Textarea } from '@/components/ui/textarea'
 import StatCard from '@/components/market/StatCard.vue'
 import SoftTable from '@/components/market/SoftTable.vue'
@@ -15,7 +18,7 @@ import TablePagination from '@/components/market/TablePagination.vue'
 import { usePagination } from '@/composables/usePagination'
 import { getPricingDisplay, getRemainingSeats } from '@/lib/pricing'
 import { getApiMerchantDisplayName, getApiMerchantVisibilityLabel, getApiServicePublicDetailUrl, type ApiService, type AvatarMode, type ContactMethodType, type ContactUsageScope, type SaveContactMethodRequest, type UserContactMethod, type UserPrivacySettings } from '@/lib/api'
-import { accountRecoveryRequirements, isAccountRecoveryComplete, sanitizeAccountRecoveryReturnTo } from '@/lib/accountRecovery'
+import { ACCOUNT_RECOVERY_PATH, accountRecoveryRequirements, isAccountRecoveryComplete, sanitizeAccountRecoveryReturnTo } from '@/lib/accountRecovery'
 import {
   apiPaymentMethods,
   apiPaymentMethodRequiresQrCode,
@@ -89,6 +92,9 @@ const sectionLinks = [
   { label: '我的收藏', to: '/my/favorites', key: 'favorites' },
   { label: '通知设置', to: '/my/notifications', key: 'notifications' },
 ] as const
+
+type AccountSetupDialogMode = 'required' | 'password' | 'email'
+type AccountSetupStep = 'email' | 'password' | 'complete'
 
 const usageScopeOptions: { value: ContactUsageScope, label: string }[] = [
   { value: 'carpool_owner', label: '拼车车主' },
@@ -164,9 +170,89 @@ const emailBindingPending = computed(() => contactSaving.value || startEmailVeri
 const apiPaymentComplete = computed(() => isApiPaymentAccountSettingsComplete(apiPaymentForm))
 const apiPaymentMissingReasonText = computed(() => apiPaymentSettingsMissingReason(apiPaymentForm))
 const apiPaymentSummaryText = computed(() => apiPaymentSettingsSummary(apiPaymentForm))
-const accountRecoveryItems = computed(() => profile.value ? accountRecoveryRequirements(profile.value) : [])
+const accountRecoveryMissingItems = computed(() => profile.value ? accountRecoveryRequirements(profile.value).filter(item => !item.completed) : [])
 const accountRecoveryComplete = computed(() => profile.value ? isAccountRecoveryComplete(profile.value) : false)
 const accountRecoveryReturnTo = computed(() => sanitizeAccountRecoveryReturnTo(route.query.returnTo))
+const accountRecoveryDialogOpen = ref(false)
+const dismissedAccountRecoveryDialogKey = ref('')
+const accountSetupDialogMode = ref<AccountSetupDialogMode>('required')
+const accountSetupActiveStep = ref<AccountSetupStep>('email')
+const emailVerificationExpiresAt = ref<number | null>(null)
+const emailVerificationNow = ref(Date.now())
+let emailVerificationTimer: number | null = null
+const accountRecoveryDialogKey = computed(() => {
+  if (activeSection.value !== 'account' || accountRecoveryComplete.value) return ''
+  const missingIds = accountRecoveryMissingItems.value.map(item => item.id).join(',')
+  return `${accountRecoveryReturnTo.value ?? ''}:${missingIds}`
+})
+const accountSetupStepValue = computed(() => {
+  if (accountSetupActiveStep.value === 'password') return 2
+  if (accountSetupActiveStep.value === 'complete') return 3
+  return 1
+})
+const accountSetupSteps = computed(() => [
+  {
+    id: 'email' as const,
+    step: 1,
+    label: '绑定邮箱',
+    completed: Boolean(profile.value?.emailVerified),
+    active: accountSetupActiveStep.value === 'email',
+  },
+  {
+    id: 'password' as const,
+    step: 2,
+    label: '设置密码',
+    completed: Boolean(profile.value?.passwordConfigured),
+    active: accountSetupActiveStep.value === 'password',
+  },
+  {
+    id: 'complete' as const,
+    step: 3,
+    label: '完成',
+    completed: accountRecoveryComplete.value || accountSetupActiveStep.value === 'complete',
+    active: accountSetupActiveStep.value === 'complete',
+  },
+])
+const accountSecurityBenefits = [
+  {
+    title: '账号安全',
+    description: '邮箱和密码让账号恢复路径更清晰。',
+    icon: ShieldCheck,
+  },
+  {
+    title: '便捷登录',
+    description: '认证入口暂不可用时，也可使用站内账号登录。',
+    icon: KeyRound,
+  },
+  {
+    title: '重要通知',
+    description: '接收订单状态、系统通知等重要信息。',
+    icon: Bell,
+  },
+] as const
+const emailVerificationRemainingSeconds = computed(() => {
+  if (!emailVerificationExpiresAt.value) return null
+  return Math.max(0, Math.ceil((emailVerificationExpiresAt.value - emailVerificationNow.value) / 1000))
+})
+const emailVerificationHint = computed(() => {
+  const remaining = emailVerificationRemainingSeconds.value
+  if (remaining === null) return '验证码发送后请在 15 分钟内完成验证。'
+  if (remaining <= 0) return '验证码已过期，请重新发送。'
+  const minutes = Math.floor(remaining / 60)
+  const seconds = String(remaining % 60).padStart(2, '0')
+  return `验证码已发送，${minutes}:${seconds} 内有效。`
+})
+
+watch(accountRecoveryDialogKey, key => {
+  if (!key || dismissedAccountRecoveryDialogKey.value === key) return
+  openAccountSetupDialog('required')
+}, { immediate: true })
+
+watch(accountRecoveryComplete, complete => {
+  if (complete && accountRecoveryDialogOpen.value && accountSetupDialogMode.value === 'required') {
+    accountSetupActiveStep.value = 'complete'
+  }
+})
 
 watchEffect(() => {
   if (!profile.value) return
@@ -217,6 +303,39 @@ function isSectionActive(to: string) {
   return route.path === to
 }
 
+function isSectionLocked(to: string) {
+  return !accountRecoveryComplete.value && to !== ACCOUNT_RECOVERY_PATH
+}
+
+function handleSectionLinkClick(to: string, event: MouseEvent) {
+  if (!isSectionLocked(to)) return
+  event.preventDefault()
+  openAccountSetupDialog('required')
+}
+
+function defaultAccountSetupStep(mode: AccountSetupDialogMode): AccountSetupStep {
+  if (mode === 'email') return 'email'
+  if (mode === 'password') return 'password'
+  if (!profile.value?.emailVerified) return 'email'
+  if (!profile.value.passwordConfigured) return 'password'
+  return 'complete'
+}
+
+function openAccountSetupDialog(mode: AccountSetupDialogMode = 'required') {
+  accountSetupDialogMode.value = mode
+  accountSetupActiveStep.value = defaultAccountSetupStep(mode)
+  accountRecoveryDialogOpen.value = true
+}
+
+function setAccountRecoveryDialogOpen(open: boolean) {
+  accountRecoveryDialogOpen.value = open
+  if (open) return
+  const key = accountRecoveryDialogKey.value
+  if (key) dismissedAccountRecoveryDialogKey.value = key
+  accountSetupDialogMode.value = 'required'
+  accountSetupActiveStep.value = defaultAccountSetupStep('required')
+}
+
 function scopeLabels(scopes: ContactUsageScope[]) {
   return scopes.map(scope => usageScopeOptions.find(item => item.value === scope)?.label ?? scope).join('、')
 }
@@ -264,6 +383,25 @@ function apiPaymentOptionReady(option: ApiPaymentOption) {
   return isApiPaymentOptionComplete(option)
 }
 
+function stopEmailVerificationTimer() {
+  if (emailVerificationTimer === null) return
+  window.clearInterval(emailVerificationTimer)
+  emailVerificationTimer = null
+}
+
+function startEmailVerificationTimer(expiresAt: string) {
+  const expiresAtTime = new Date(expiresAt).getTime()
+  emailVerificationExpiresAt.value = Number.isFinite(expiresAtTime) ? expiresAtTime : Date.now() + 15 * 60 * 1000
+  emailVerificationNow.value = Date.now()
+  stopEmailVerificationTimer()
+  emailVerificationTimer = window.setInterval(() => {
+    emailVerificationNow.value = Date.now()
+    if (emailVerificationRemainingSeconds.value === 0) stopEmailVerificationTimer()
+  }, 1000)
+}
+
+onUnmounted(stopEmailVerificationTimer)
+
 function saveProfile() {
   updateProfileMutation.mutate({
     displayName: profileForm.displayName,
@@ -281,6 +419,14 @@ function saveProfile() {
 }
 
 function savePassword() {
+  if (profile.value?.passwordConfigured && !passwordForm.currentPassword.trim()) {
+    toast.warning('请输入当前密码。')
+    return
+  }
+  if (passwordForm.newPassword.length < 8 || passwordForm.newPassword.length > 32) {
+    toast.warning('密码需为 8-32 位字符。')
+    return
+  }
   if (passwordForm.newPassword !== passwordForm.confirmPassword) {
     toast.warning('两次输入的新密码不一致。')
     return
@@ -293,9 +439,10 @@ function savePassword() {
       passwordForm.currentPassword = ''
       passwordForm.newPassword = ''
       passwordForm.confirmPassword = ''
-      toast.success('备用密码已更新。')
+      accountSetupActiveStep.value = profile.value?.emailVerified ? 'complete' : 'email'
+      toast.success('密码已更新。')
     },
-    onError: error => toast.error(error instanceof Error ? error.message : '备用密码更新失败。'),
+    onError: error => toast.error(error instanceof Error ? error.message : '密码更新失败。'),
   })
 }
 
@@ -310,6 +457,7 @@ function startEmailVerification() {
     onSuccess: challenge => {
       emailForm.email = challenge.email
       emailForm.code = ''
+      startEmailVerificationTimer(challenge.expiresAt)
       toast.success('验证码已发送，请查看邮箱。')
     },
     onError: error => toast.error(error instanceof Error ? error.message : '验证码发送失败。'),
@@ -321,8 +469,11 @@ function confirmEmailVerification() {
     email: emailForm.email,
     code: emailForm.code,
   }, {
-    onSuccess: () => {
+    onSuccess: updatedProfile => {
       emailForm.code = ''
+      stopEmailVerificationTimer()
+      emailVerificationExpiresAt.value = null
+      accountSetupActiveStep.value = updatedProfile.passwordConfigured ? 'complete' : 'password'
       toast.success('邮箱已绑定。')
     },
     onError: error => toast.error(error instanceof Error ? error.message : '邮箱绑定失败。'),
@@ -403,6 +554,8 @@ function confirmContactEmailVerification() {
   }, {
     onSuccess: () => {
       emailForm.code = ''
+      stopEmailVerificationTimer()
+      emailVerificationExpiresAt.value = null
       saveVerifiedEmailContact()
     },
     onError: error => toast.error(error instanceof Error ? error.message : '邮箱绑定失败。'),
@@ -518,6 +671,191 @@ function goToLogin() {
     </div>
   </Card>
   <div v-else class="space-y-5">
+    <Dialog :open="accountRecoveryDialogOpen" @update:open="setAccountRecoveryDialogOpen">
+      <DialogContent class="account-security-dialog w-[calc(100vw-2rem)] gap-0 overflow-hidden p-0 sm:max-w-[860px]">
+        <div class="grid min-h-[560px] md:grid-cols-[300px_minmax(0,1fr)]">
+          <aside class="account-security-side flex flex-col p-6 sm:p-7">
+            <div class="account-security-side-icon grid h-16 w-16 place-items-center rounded-2xl">
+              <ShieldCheck class="h-8 w-8" />
+            </div>
+            <div class="mt-6">
+              <h2 class="text-2xl font-semibold tracking-tight">完善账号安全</h2>
+              <p class="mt-3 text-sm leading-6 text-muted-foreground">
+                完成邮箱和密码设置后，可以使用更多账号功能。
+              </p>
+              <p class="mt-3 rounded-md border border-primary/15 bg-card/70 px-3 py-2 text-xs leading-5 text-muted-foreground">
+                当前身份已完成认证，无需重新注册。
+              </p>
+            </div>
+
+            <div class="mt-8 space-y-4">
+              <div v-for="item in accountSecurityBenefits" :key="item.title" class="flex gap-3">
+                <div class="account-security-benefit-icon grid h-10 w-10 shrink-0 place-items-center rounded-xl">
+                  <component :is="item.icon" class="h-5 w-5" />
+                </div>
+                <div class="min-w-0">
+                  <h3 class="text-sm font-semibold">{{ item.title }}</h3>
+                  <p class="mt-1 text-xs leading-5 text-muted-foreground">{{ item.description }}</p>
+                </div>
+              </div>
+            </div>
+
+            <p class="mt-auto flex gap-2 pt-8 text-xs leading-5 text-muted-foreground">
+              <ShieldCheck class="mt-0.5 h-4 w-4 shrink-0 text-success" />
+              这些设置只用于站内账号通知、找回和登录。
+            </p>
+          </aside>
+
+          <div class="flex min-w-0 flex-col">
+            <DialogHeader class="account-security-header px-5 py-5 pr-12 sm:px-6">
+              <DialogTitle>{{ accountRecoveryComplete ? '账号设置' : '完善账号安全' }}</DialogTitle>
+              <DialogDescription>
+                {{ accountRecoveryComplete ? '可以在这里更新邮箱或密码。' : '补全后即可访问我的中心其他页面和业务页。' }}
+              </DialogDescription>
+            </DialogHeader>
+
+            <div class="flex-1 px-5 py-5 sm:px-6">
+              <Stepper :model-value="accountSetupStepValue" class="account-security-stepper" aria-label="账号安全步骤">
+                <StepperItem
+                  v-for="(step, index) in accountSetupSteps"
+                  :key="step.id"
+                  :step="step.step"
+                  :completed="step.completed && !step.active"
+                  class="account-security-step"
+                >
+                  <StepperTrigger as="div" class="account-security-step-trigger">
+                    <StepperIndicator class="account-security-step-dot">
+                      <CheckCircle2 v-if="step.completed" class="h-4 w-4" />
+                      <span v-else>{{ step.step }}</span>
+                    </StepperIndicator>
+                    <StepperTitle class="account-security-step-label">{{ step.label }}</StepperTitle>
+                  </StepperTrigger>
+                  <StepperSeparator v-if="index < accountSetupSteps.length - 1" class="account-security-step-separator" />
+                </StepperItem>
+              </Stepper>
+
+              <section v-if="accountSetupActiveStep === 'email'" class="mt-7 space-y-5">
+                <div>
+                  <h3 class="text-base font-semibold">绑定验证邮箱</h3>
+                  <p class="mt-2 text-sm leading-6 text-muted-foreground">
+                    用于接收验证码、重要通知和后续找回密码。
+                  </p>
+                </div>
+
+                <div class="space-y-4">
+                  <label class="block space-y-2">
+                    <span class="text-sm font-medium">邮箱地址</span>
+                    <span class="relative block">
+                      <Mail class="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                      <Input v-model="emailForm.email" class="h-11 pl-10" type="email" autocomplete="email" placeholder="name@example.com" />
+                    </span>
+                  </label>
+
+                  <label class="block space-y-2">
+                    <span class="text-sm font-medium">验证码</span>
+                    <span class="grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto]">
+                      <span class="relative block">
+                        <MailCheck class="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                        <Input v-model="emailForm.code" class="h-11 pl-10" inputmode="numeric" maxlength="6" placeholder="6 位验证码" />
+                      </span>
+                      <Button
+                        variant="outline"
+                        class="h-11 shrink-0 sm:min-w-[120px]"
+                        :disabled="startEmailVerificationMutation.isPending.value || !emailForm.email.trim() || (emailVerificationRemainingSeconds !== null && emailVerificationRemainingSeconds > 0)"
+                        @click="startEmailVerification"
+                      >
+                        <MailCheck class="h-4 w-4" />{{ startEmailVerificationMutation.isPending.value ? '发送中' : '发送验证码' }}
+                      </Button>
+                    </span>
+                    <span class="block min-h-5 text-xs leading-5 text-muted-foreground">{{ emailVerificationHint }}</span>
+                  </label>
+                </div>
+              </section>
+
+              <section v-else-if="accountSetupActiveStep === 'password'" class="mt-7 space-y-5">
+                <div>
+                  <h3 class="text-base font-semibold">{{ profile.passwordConfigured ? '修改密码' : '设置密码' }}</h3>
+                  <p class="mt-2 text-sm leading-6 text-muted-foreground">
+                    设置后可使用账号密码登录。
+                  </p>
+                </div>
+
+                <div class="grid gap-4 sm:grid-cols-2">
+                  <label v-if="profile.passwordConfigured" class="block space-y-2 sm:col-span-2">
+                    <span class="text-sm font-medium">当前密码</span>
+                    <Input v-model="passwordForm.currentPassword" class="h-11" type="password" autocomplete="current-password" />
+                  </label>
+                  <label class="block space-y-2">
+                    <span class="text-sm font-medium">新密码</span>
+                    <Input v-model="passwordForm.newPassword" class="h-11" type="password" autocomplete="new-password" />
+                  </label>
+                  <label class="block space-y-2">
+                    <span class="text-sm font-medium">确认新密码</span>
+                    <Input v-model="passwordForm.confirmPassword" class="h-11" type="password" autocomplete="new-password" />
+                  </label>
+                </div>
+
+                <p class="rounded-md border border-border bg-accent/50 px-3 py-2 text-xs leading-5 text-muted-foreground">
+                  8-32 位字符，建议包含数字和字母。
+                </p>
+              </section>
+
+              <section v-else class="mt-7 space-y-5 text-center">
+                <div class="mx-auto grid h-16 w-16 place-items-center rounded-2xl bg-success/10 text-success">
+                  <CheckCircle2 class="h-8 w-8" />
+                </div>
+                <div>
+                  <h3 class="text-lg font-semibold">账号安全设置完成</h3>
+                  <p class="mt-2 text-sm leading-6 text-muted-foreground">
+                    现在可以继续访问原页面，或留在账号页检查其他设置。
+                  </p>
+                </div>
+                <dl class="grid gap-3 rounded-lg border border-border bg-card/70 p-4 text-left text-sm sm:grid-cols-2">
+                  <div>
+                    <dt class="text-muted-foreground">绑定邮箱</dt>
+                    <dd class="mt-1 font-medium">{{ profile.emailVerified ? profile.email : '待同步' }}</dd>
+                  </div>
+                  <div>
+                    <dt class="text-muted-foreground">密码</dt>
+                    <dd class="mt-1 font-medium">{{ profile.passwordConfigured ? '已设置' : '待同步' }}</dd>
+                  </div>
+                </dl>
+              </section>
+
+              <Alert class="account-security-note mt-6">
+                <ShieldCheck class="h-4 w-4" />
+                <AlertTitle>为什么需要设置？</AlertTitle>
+                <AlertDescription class="text-xs leading-5">
+                  绑定邮箱并设置密码后，可继续使用站内账号登录，并接收必要的账号通知。
+                </AlertDescription>
+              </Alert>
+            </div>
+
+            <DialogFooter class="account-security-footer gap-2 border-t border-border px-5 py-4 sm:justify-end sm:px-6">
+              <Button
+                v-if="accountSetupActiveStep === 'email'"
+                :disabled="confirmEmailVerificationMutation.isPending.value || !emailForm.code.trim()"
+                @click="confirmEmailVerification"
+              >
+                下一步
+              </Button>
+              <Button
+                v-else-if="accountSetupActiveStep === 'password'"
+                :disabled="setPasswordMutation.isPending.value"
+                @click="savePassword"
+              >
+                <LockKeyhole class="h-4 w-4" />{{ profile.passwordConfigured ? '保存密码' : '完成设置' }}
+              </Button>
+              <Button v-else-if="accountRecoveryReturnTo" :disabled="!accountRecoveryComplete" @click="continueAfterAccountRecovery">
+                继续访问原页面
+              </Button>
+              <Button v-else @click="setAccountRecoveryDialogOpen(false)">进入个人中心</Button>
+            </DialogFooter>
+          </div>
+        </div>
+      </DialogContent>
+    </Dialog>
+
     <Card class="p-5">
       <div class="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
         <div class="flex min-w-0 gap-4">
@@ -549,7 +887,12 @@ function goToLogin() {
         :key="item.to"
         :to="item.to"
         class="shrink-0 rounded-md border px-3 py-2 text-sm transition"
-        :class="isSectionActive(item.to) ? 'border-primary bg-primary text-primary-foreground' : 'border-border bg-card text-muted-foreground hover:bg-accent hover:text-foreground'"
+        :aria-disabled="isSectionLocked(item.to)"
+        :class="[
+          isSectionActive(item.to) ? 'border-primary bg-primary text-primary-foreground' : 'border-border bg-card text-muted-foreground hover:bg-accent hover:text-foreground',
+          isSectionLocked(item.to) ? 'cursor-help opacity-75' : '',
+        ]"
+        @click.capture="handleSectionLinkClick(item.to, $event)"
       >
         {{ item.label }}
       </RouterLink>
@@ -830,91 +1173,60 @@ function goToLogin() {
       </p>
     </section>
 
-    <section v-else-if="activeSection === 'account'" class="space-y-4">
-      <Card class="border-primary/25 bg-primary/5 p-5">
-        <div class="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+    <section v-else-if="activeSection === 'account'">
+      <Card class="p-5">
+        <div class="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
           <div>
-            <h2 class="font-semibold">账号恢复设置</h2>
+            <div class="flex flex-wrap items-center gap-2">
+              <h2 class="font-semibold">账号状态</h2>
+              <Badge :variant="accountRecoveryComplete ? 'verified' : 'secondary'">{{ accountRecoveryComplete ? '已完成' : '待完善' }}</Badge>
+            </div>
             <p class="mt-2 max-w-2xl text-sm leading-6 text-muted-foreground">
-              绑定验证邮箱并设置备用密码后，才能进入大部分业务页；linux.do 暂不可用时也可以继续使用站内账号登录。
+              linux.do 身份、密码、邮箱和账号限制集中在这里查看；需要补全时会在弹框内完成。
             </p>
           </div>
-          <Badge :variant="accountRecoveryComplete ? 'verified' : 'secondary'">{{ accountRecoveryComplete ? '已完成' : '待完善' }}</Badge>
+          <div class="flex flex-wrap gap-2">
+            <Button v-if="!profile.passwordConfigured" @click="openAccountSetupDialog('password')"><LockKeyhole class="h-4 w-4" />设置密码</Button>
+            <Button v-else variant="outline" @click="openAccountSetupDialog('password')"><LockKeyhole class="h-4 w-4" />修改密码</Button>
+            <Button v-if="!profile.emailVerified" variant="outline" @click="openAccountSetupDialog('email')"><MailCheck class="h-4 w-4" />绑定邮箱</Button>
+            <Button v-else variant="outline" @click="openAccountSetupDialog('email')"><MailCheck class="h-4 w-4" />更新邮箱</Button>
+            <Button v-if="accountRecoveryComplete && accountRecoveryReturnTo" @click="continueAfterAccountRecovery">继续访问原页面</Button>
+          </div>
         </div>
-        <div class="mt-4 grid gap-3 md:grid-cols-2">
-          <div
-            v-for="item in accountRecoveryItems"
-            :key="item.id"
-            class="rounded-md border bg-card p-3"
-            :class="item.completed ? 'border-emerald-200' : 'border-amber-200'"
-          >
-            <div class="flex items-start gap-3">
-              <CheckCircle2 v-if="item.completed" class="mt-0.5 h-4 w-4 shrink-0 text-emerald-600" />
-              <AlertTriangle v-else class="mt-0.5 h-4 w-4 shrink-0 text-amber-600" />
-              <div>
-                <div class="text-sm font-medium">{{ item.label }}</div>
-                <p class="mt-1 text-xs leading-5 text-muted-foreground">{{ item.description }}</p>
-              </div>
+
+        <div class="mt-5 grid gap-x-10 gap-y-5 lg:grid-cols-2">
+          <div class="space-y-3 text-sm">
+            <h3 class="text-sm font-semibold">linux.do 身份</h3>
+            <div class="flex justify-between gap-4"><span class="text-muted-foreground">绑定状态</span><span>{{ profile.linuxDoBinding.bound ? '已绑定 linux.do' : '未绑定' }}</span></div>
+            <div class="flex justify-between gap-4"><span class="text-muted-foreground">用户名</span><span>@{{ profile.linuxDoBinding.linuxDoUsername }}</span></div>
+            <div class="flex justify-between gap-4"><span class="text-muted-foreground">用户 ID</span><span>{{ profile.linuxDoBinding.linuxDoUserId }}</span></div>
+            <div class="flex justify-between gap-4"><span class="text-muted-foreground">信任等级</span><span>{{ profile.linuxDoBinding.trustLevel }}</span></div>
+            <div class="flex justify-between gap-4"><span class="text-muted-foreground">头像同步</span><span>{{ profile.avatarMode === 'linuxdo' ? '跟随 linux.do' : '自定义头像' }}</span></div>
+            <div class="flex justify-between gap-4"><span class="text-muted-foreground">最近同步</span><span>{{ profile.linuxDoBinding.lastSyncedAt }}</span></div>
+          </div>
+
+          <div class="space-y-3 text-sm">
+            <h3 class="text-sm font-semibold">邮箱、密码与限制</h3>
+            <div class="flex justify-between gap-4"><span class="text-muted-foreground">账号状态</span><span>{{ profile.accountStatus }}</span></div>
+            <div class="flex justify-between gap-4"><span class="text-muted-foreground">绑定邮箱</span><span>{{ profile.emailVerified ? profile.email : '未绑定' }}</span></div>
+            <div class="flex justify-between gap-4"><span class="text-muted-foreground">密码</span><span>{{ profile.passwordConfigured ? '已设置' : '未设置' }}</span></div>
+            <div class="flex justify-between gap-4"><span class="text-muted-foreground">功能限制</span><span>{{ profile.restrictions.length ? profile.restrictions.join('、') : '无' }}</span></div>
+            <div class="space-y-2">
+              <span class="block text-muted-foreground">系统铭牌</span>
+              <div class="flex flex-wrap gap-2"><Badge v-for="badge in profile.badges" :key="badge.id" variant="secondary">{{ badge.label }}</Badge></div>
             </div>
           </div>
         </div>
-        <div v-if="accountRecoveryComplete && accountRecoveryReturnTo" class="mt-4">
-          <Button @click="continueAfterAccountRecovery">继续访问原页面</Button>
-        </div>
-      </Card>
 
-      <div class="grid gap-4 lg:grid-cols-2">
-      <Card class="p-5">
-        <h2 class="font-semibold">linux.do 身份绑定</h2>
-        <div class="mt-4 space-y-3 text-sm">
-          <div class="flex justify-between gap-4"><span class="text-muted-foreground">linux.do 绑定状态</span><span>{{ profile.linuxDoBinding.bound ? '已绑定 linux.do' : '未绑定' }}</span></div>
-          <div class="flex justify-between gap-4"><span class="text-muted-foreground">linux.do 用户名</span><span>@{{ profile.linuxDoBinding.linuxDoUsername }}</span></div>
-          <div class="flex justify-between gap-4"><span class="text-muted-foreground">linux.do 用户 ID</span><span>{{ profile.linuxDoBinding.linuxDoUserId }}</span></div>
-          <div class="flex justify-between gap-4"><span class="text-muted-foreground">信任等级</span><span>{{ profile.linuxDoBinding.trustLevel }}</span></div>
-          <div class="flex justify-between gap-4"><span class="text-muted-foreground">头像同步</span><span>{{ profile.avatarMode === 'linuxdo' ? '跟随 linux.do' : '自定义头像' }}</span></div>
-          <div class="flex justify-between gap-4"><span class="text-muted-foreground">最近同步</span><span>{{ profile.linuxDoBinding.lastSyncedAt }}</span></div>
-          <div class="flex justify-between gap-4"><span class="text-muted-foreground">账号状态</span><span>{{ profile.accountStatus }}</span></div>
-          <div class="flex justify-between gap-4"><span class="text-muted-foreground">绑定邮箱</span><span>{{ profile.emailVerified ? profile.email : '未绑定' }}</span></div>
-          <div class="flex justify-between gap-4"><span class="text-muted-foreground">备用密码</span><span>{{ profile.passwordConfigured ? '已设置' : '未设置' }}</span></div>
+        <div class="mt-5 flex flex-wrap gap-2">
+          <Button variant="outline" @click="toast('linux.do 信息同步请求已记录。')">同步 linux.do 信息</Button>
+          <Button variant="outline" @click="router.push('/my/profile')">切换头像跟随模式</Button>
+          <Button variant="outline" @click="toast('申诉请求已记录。')"><LockKeyhole class="h-4 w-4" />提交申诉</Button>
         </div>
         <p class="mt-4 rounded-md border border-border bg-accent/50 p-3 text-xs leading-5 text-muted-foreground">
           linux.do 绑定不可自助解绑或换绑；异常情况请联系管理员人工处理。
         </p>
       </Card>
-      <Card class="p-5">
-        <h2 class="font-semibold">备用密码</h2>
-        <div class="mt-4 space-y-3">
-          <label v-if="profile.passwordConfigured" class="space-y-2"><span class="text-sm font-medium">当前密码</span><Input v-model="passwordForm.currentPassword" type="password" autocomplete="current-password" /></label>
-          <label class="space-y-2"><span class="text-sm font-medium">新密码</span><Input v-model="passwordForm.newPassword" type="password" autocomplete="new-password" /></label>
-          <label class="space-y-2"><span class="text-sm font-medium">确认新密码</span><Input v-model="passwordForm.confirmPassword" type="password" autocomplete="new-password" /></label>
-          <Button :disabled="setPasswordMutation.isPending.value" @click="savePassword"><LockKeyhole class="h-4 w-4" />{{ profile.passwordConfigured ? '修改备用密码' : '设置备用密码' }}</Button>
-        </div>
-      </Card>
-      <Card class="p-5">
-        <h2 class="font-semibold">邮箱绑定</h2>
-        <div class="mt-4 space-y-3">
-          <label class="space-y-2"><span class="text-sm font-medium">邮箱</span><Input v-model="emailForm.email" type="email" autocomplete="email" /></label>
-          <div class="flex flex-wrap gap-2">
-            <Button variant="outline" :disabled="startEmailVerificationMutation.isPending.value" @click="startEmailVerification"><MailCheck class="h-4 w-4" />发送验证码</Button>
-            <Badge :variant="profile.emailVerified ? 'verified' : 'secondary'">{{ profile.emailVerified ? '邮箱已绑定' : '邮箱未绑定' }}</Badge>
-          </div>
-          <label class="space-y-2"><span class="text-sm font-medium">验证码</span><Input v-model="emailForm.code" inputmode="numeric" maxlength="6" placeholder="6 位验证码" /></label>
-          <Button :disabled="confirmEmailVerificationMutation.isPending.value" @click="confirmEmailVerification">确认绑定邮箱</Button>
-        </div>
-      </Card>
-      <Card class="p-5">
-        <h2 class="font-semibold">系统铭牌与限制</h2>
-        <div class="mt-4 flex flex-wrap gap-2"><Badge v-for="badge in profile.badges" :key="badge.id" variant="secondary">{{ badge.label }}</Badge></div>
-        <div class="mt-4 rounded-md border border-border bg-accent/50 p-3 text-sm text-muted-foreground">
-          当前功能限制：{{ profile.restrictions.length ? profile.restrictions.join('、') : '无' }}。
-        </div>
-        <div class="mt-4 flex flex-wrap gap-2">
-          <Button variant="outline" @click="toast('linux.do 信息同步请求已记录。')">同步 linux.do 信息</Button>
-          <Button variant="outline" @click="router.push('/my/profile')">切换头像跟随模式</Button>
-          <Button variant="outline" @click="toast('申诉请求已记录。')"><LockKeyhole class="h-4 w-4" />提交申诉</Button>
-        </div>
-      </Card>
-      </div>
     </section>
 
     <section v-else-if="activeSection === 'privacy'" class="grid gap-4 lg:grid-cols-2">

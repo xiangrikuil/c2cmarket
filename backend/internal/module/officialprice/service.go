@@ -52,6 +52,10 @@ func NewService(repo Repository, idempotencyService *idempotency.Service, now fu
 }
 
 func (s *Service) SubmitLead(ctx context.Context, user auth.User, input SubmitLeadInput) (Lead, *domain.AppError) {
+	return Lead{}, domain.NewError(http.StatusForbidden, domain.CodeOfficialPriceUserSubmitDisabled, "Official price user submit disabled", "官网价格已改为管理员维护，用户不再提交低价线索。")
+}
+
+func (s *Service) submitLeadLegacy(ctx context.Context, user auth.User, input SubmitLeadInput) (Lead, *domain.AppError) {
 	if err := validateSubmitLeadInput(input); err != nil {
 		return Lead{}, err
 	}
@@ -181,6 +185,194 @@ func (s *Service) AdminLead(ctx context.Context, user auth.User, leadID string) 
 		return Lead{}, domain.NewError(http.StatusNotFound, domain.CodeObjectNotFound, "Lead not found", "低价线索不存在。")
 	}
 	return lead, nil
+}
+
+func (s *Service) AdminRecords(ctx context.Context, user auth.User) ([]Record, *domain.AppError) {
+	if !user.IsAdmin {
+		return nil, domain.NewError(http.StatusForbidden, domain.CodePermissionDenied, "Permission denied", "需要管理员权限。")
+	}
+	if s.repo != nil {
+		records, appErr := s.repo.ListAdminOfficialPriceRecords(ctx)
+		if appErr != nil {
+			return nil, appErr
+		}
+		markLowestReferences(records)
+		return records, nil
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	records := make([]Record, 0, len(s.records))
+	for _, record := range s.records {
+		records = append(records, record)
+	}
+	sort.Slice(records, func(i, j int) bool {
+		if !records[i].CreatedAt.Equal(records[j].CreatedAt) {
+			return records[i].CreatedAt.After(records[j].CreatedAt)
+		}
+		return records[i].ID < records[j].ID
+	})
+	markLowestReferences(records)
+	return records, nil
+}
+
+func (s *Service) AdminRecord(ctx context.Context, user auth.User, recordID string) (Record, *domain.AppError) {
+	if !user.IsAdmin {
+		return Record{}, domain.NewError(http.StatusForbidden, domain.CodePermissionDenied, "Permission denied", "需要管理员权限。")
+	}
+	if s.repo != nil {
+		return s.repo.GetAdminOfficialPriceRecord(ctx, recordID)
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	record, ok := s.records[recordID]
+	if !ok {
+		return Record{}, domain.NewError(http.StatusNotFound, domain.CodeObjectNotFound, "Price record not found", "价格记录不存在。")
+	}
+	return record, nil
+}
+
+func (s *Service) AdminCreateRecord(ctx context.Context, user auth.User, input AdminRecordInput) (Record, *domain.AppError) {
+	if !user.IsAdmin {
+		return Record{}, domain.NewError(http.StatusForbidden, domain.CodePermissionDenied, "Permission denied", "需要管理员权限。")
+	}
+	input.AdminUserID = user.ID
+	prepared, normalized, offerKey, fingerprint, appErr := prepareAdminRecordInput(input)
+	if appErr != nil {
+		return Record{}, appErr
+	}
+	now := s.now()
+	if s.repo != nil {
+		return s.repo.CreateAdminOfficialPriceRecord(ctx, prepared, normalized, offerKey, fingerprint, now)
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if activeID := s.activeRecordByOffer[offerKey]; activeID != "" {
+		active := s.records[activeID]
+		if active.Status == RecordStatusActive {
+			validTo := now
+			active.Status = RecordStatusSuperseded
+			active.ValidTo = &validTo
+			active.Version++
+			s.records[activeID] = active
+		}
+		delete(s.activeRecordByOffer, offerKey)
+	}
+
+	lead := buildAdminRecordLead(prepared, normalized, offerKey, fingerprint, now)
+	record := buildAdminRecord(prepared, lead, normalized, offerKey, fingerprint, now)
+	s.leads[lead.ID] = lead
+	s.leadOrder = append(s.leadOrder, lead.ID)
+	s.records[record.ID] = record
+	s.recordByLeadID[lead.ID] = record.ID
+	s.activeRecordByOffer[offerKey] = record.ID
+	return record, nil
+}
+
+func (s *Service) AdminUpdateRecord(ctx context.Context, user auth.User, input AdminRecordInput) (Record, *domain.AppError) {
+	if !user.IsAdmin {
+		return Record{}, domain.NewError(http.StatusForbidden, domain.CodePermissionDenied, "Permission denied", "需要管理员权限。")
+	}
+	input.AdminUserID = user.ID
+	prepared, normalized, offerKey, fingerprint, appErr := prepareAdminRecordInput(input)
+	if appErr != nil {
+		return Record{}, appErr
+	}
+	if strings.TrimSpace(prepared.RecordID) == "" {
+		return Record{}, domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Record ID required", "必须提供价格记录 ID。", "recordId", "required", "必须提供价格记录 ID。")
+	}
+	now := s.now()
+	if s.repo != nil {
+		return s.repo.UpdateAdminOfficialPriceRecord(ctx, prepared, normalized, offerKey, fingerprint, now)
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	oldRecord, ok := s.records[prepared.RecordID]
+	if !ok {
+		return Record{}, domain.NewError(http.StatusNotFound, domain.CodeObjectNotFound, "Price record not found", "价格记录不存在。")
+	}
+	if oldRecord.Status != RecordStatusActive {
+		return Record{}, domain.NewError(http.StatusConflict, domain.CodeInvalidStateTransition, "Invalid state transition", "只有生效中的价格记录可以编辑。")
+	}
+	if prepared.ExpectedVersion > 0 && oldRecord.Version != prepared.ExpectedVersion {
+		return Record{}, domain.NewError(http.StatusPreconditionFailed, domain.CodeVersionConflict, "Version conflict", "资源版本已变化，请刷新后重试。")
+	}
+
+	validTo := now
+	oldRecord.Status = RecordStatusSuperseded
+	oldRecord.ValidTo = &validTo
+	oldRecord.Version++
+	s.records[oldRecord.ID] = oldRecord
+	if s.activeRecordByOffer[oldRecord.OfferKey] == oldRecord.ID {
+		delete(s.activeRecordByOffer, oldRecord.OfferKey)
+	}
+	if activeID := s.activeRecordByOffer[offerKey]; activeID != "" {
+		active := s.records[activeID]
+		if active.Status == RecordStatusActive {
+			validTo := now
+			active.Status = RecordStatusSuperseded
+			active.ValidTo = &validTo
+			active.Version++
+			s.records[activeID] = active
+		}
+		delete(s.activeRecordByOffer, offerKey)
+	}
+
+	lead := buildAdminRecordLead(prepared, normalized, offerKey, fingerprint, now)
+	record := buildAdminRecord(prepared, lead, normalized, offerKey, fingerprint, now)
+	s.leads[lead.ID] = lead
+	s.leadOrder = append(s.leadOrder, lead.ID)
+	s.records[record.ID] = record
+	s.recordByLeadID[lead.ID] = record.ID
+	s.activeRecordByOffer[offerKey] = record.ID
+	return record, nil
+}
+
+func (s *Service) AdminTakeDownRecord(ctx context.Context, user auth.User, input AdminRecordActionInput) (Record, *domain.AppError) {
+	if !user.IsAdmin {
+		return Record{}, domain.NewError(http.StatusForbidden, domain.CodePermissionDenied, "Permission denied", "需要管理员权限。")
+	}
+	input.AdminUserID = user.ID
+	if strings.TrimSpace(input.RecordID) == "" {
+		return Record{}, domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Record ID required", "必须提供价格记录 ID。", "recordId", "required", "必须提供价格记录 ID。")
+	}
+	if strings.TrimSpace(input.Reason) == "" {
+		return Record{}, domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Action reason required", "下架价格记录必须填写原因。", "reason", "required", "必须填写下架原因。")
+	}
+	now := s.now()
+	if s.repo != nil {
+		return s.repo.TakeDownOfficialPriceRecord(ctx, input, now)
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	record, ok := s.records[input.RecordID]
+	if !ok {
+		return Record{}, domain.NewError(http.StatusNotFound, domain.CodeObjectNotFound, "Price record not found", "价格记录不存在。")
+	}
+	if record.Status != RecordStatusActive {
+		return Record{}, domain.NewError(http.StatusConflict, domain.CodeInvalidStateTransition, "Invalid state transition", "只有生效中的价格记录可以下架。")
+	}
+	if input.ExpectedVersion > 0 && record.Version != input.ExpectedVersion {
+		return Record{}, domain.NewError(http.StatusPreconditionFailed, domain.CodeVersionConflict, "Version conflict", "资源版本已变化，请刷新后重试。")
+	}
+	validTo := now
+	record.Status = RecordStatusTakenDown
+	record.ValidTo = &validTo
+	record.Version++
+	s.records[record.ID] = record
+	if s.activeRecordByOffer[record.OfferKey] == record.ID {
+		delete(s.activeRecordByOffer, record.OfferKey)
+	}
+	return record, nil
 }
 
 func (s *Service) ApproveLead(ctx context.Context, input ApproveLeadInput) (Lead, Record, *domain.AppError) {
@@ -517,6 +709,204 @@ func (s *Service) approvePersistentLead(ctx context.Context, input ApproveLeadIn
 	}
 	offerKey := computeOfferKey(lead, input.ResolvedProductPlanID)
 	return s.repo.ApproveOfficialPriceLead(ctx, input, normalized, offerKey, s.now())
+}
+
+func prepareAdminRecordInput(input AdminRecordInput) (AdminRecordInput, string, string, string, *domain.AppError) {
+	input = normalizeAdminRecordInput(input)
+	if err := validateAdminRecordInput(input); err != nil {
+		return AdminRecordInput{}, "", "", "", err
+	}
+	normalized, err := normalizeMonthlyCNY(input.OriginalAmount, input.FXRateToCNY, input.BillingPeriod)
+	if err != nil {
+		return AdminRecordInput{}, "", "", "", domain.NewError(http.StatusUnprocessableEntity, domain.CodePriceNormalizationRequired, "Price normalization required", "价格归一化失败。")
+	}
+	fingerprint := computeLeadFingerprint(adminRecordSubmitInput(input))
+	lead := Lead{
+		ProductPlanID:    input.ProductPlanID,
+		RegionCode:       input.RegionCode,
+		Channel:          input.Channel,
+		OpeningMethod:    input.OpeningMethod,
+		BillingPeriod:    input.BillingPeriod,
+		CommitmentMonths: nil,
+		PriceUnit:        "per_account",
+		SeatCount:        nil,
+		Quantity:         1,
+		TaxIncluded:      input.TaxIncluded,
+	}
+	offerKey := computeOfferKey(lead, input.ProductPlanID)
+	return input, normalized, offerKey, fingerprint, nil
+}
+
+func normalizeAdminRecordInput(input AdminRecordInput) AdminRecordInput {
+	input.RecordID = strings.TrimSpace(input.RecordID)
+	input.AdminUserID = strings.TrimSpace(input.AdminUserID)
+	input.RequestID = strings.TrimSpace(input.RequestID)
+	input.ProductPlanID = strings.TrimSpace(input.ProductPlanID)
+	input.ProductText = strings.TrimSpace(input.ProductText)
+	input.PlanText = strings.TrimSpace(input.PlanText)
+	input.RegionCode = strings.ToLower(strings.TrimSpace(input.RegionCode))
+	input.Channel = strings.TrimSpace(input.Channel)
+	input.OpeningMethod = strings.TrimSpace(input.OpeningMethod)
+	input.SourceURL = strings.TrimSpace(input.SourceURL)
+	input.BillingPeriod = strings.TrimSpace(input.BillingPeriod)
+	input.Currency = strings.ToUpper(strings.TrimSpace(input.Currency))
+	input.OriginalAmount = strings.TrimSpace(input.OriginalAmount)
+	input.FXRateToCNY = strings.TrimSpace(input.FXRateToCNY)
+	input.FXSource = strings.TrimSpace(input.FXSource)
+	input.Reason = strings.TrimSpace(input.Reason)
+	return input
+}
+
+func validateAdminRecordInput(input AdminRecordInput) *domain.AppError {
+	if strings.TrimSpace(input.ProductPlanID) == "" {
+		return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeProductPlanResolutionRequired, "Product plan required", "管理员维护价格记录必须选择产品套餐。", "productPlanId", "required", "必须选择产品套餐。")
+	}
+	if strings.TrimSpace(input.RegionCode) == "" {
+		return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Region required", "必须填写地区代码。", "regionCode", "required", "必须填写地区代码。")
+	}
+	if strings.TrimSpace(input.Channel) == "" {
+		return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Channel required", "必须填写价格渠道。", "channel", "required", "必须填写价格渠道。")
+	}
+	if strings.TrimSpace(input.OpeningMethod) == "" {
+		return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Opening method required", "必须填写开通方式。", "openingMethod", "required", "必须填写开通方式。")
+	}
+	if err := validateEvidenceURL(input.SourceURL); err != nil {
+		return err
+	}
+	if input.ObservedAt.IsZero() {
+		return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Observed time required", "必须填写价格观察时间。", "observedAt", "required", "必须填写观察时间。")
+	}
+	if input.BillingPeriod != "monthly" {
+		return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodePriceNormalizationRequired, "Billing period not supported", "官网价格当前只支持单账号月付价格。", "billingPeriod", "unsupported", "当前仅支持 monthly。")
+	}
+	if amount, ok := parsePositiveDecimal(input.OriginalAmount); !ok || amount.Sign() <= 0 {
+		return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Amount invalid", "原始金额格式不正确。", "originalAmount", "invalid", "金额必须为正数。")
+	}
+	if len(input.Currency) != 3 {
+		return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Currency invalid", "币种必须是三位代码。", "currency", "invalid", "币种必须是三位代码。")
+	}
+	if _, ok := parsePositiveDecimal(input.FXRateToCNY); !ok {
+		return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodePriceNormalizationRequired, "FX rate required", "必须提供有效汇率。", "fxRateToCny", "invalid", "汇率必须为正数。")
+	}
+	if strings.TrimSpace(input.FXSource) == "" {
+		return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "FX source required", "必须填写汇率来源。", "fxSource", "required", "必须填写汇率来源。")
+	}
+	if input.FXObservedAt.IsZero() {
+		return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "FX observed time required", "必须填写汇率观察时间。", "fxObservedAt", "required", "必须填写汇率观察时间。")
+	}
+	if input.ValidFrom.IsZero() {
+		return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Valid from required", "必须填写价格生效时间。", "validFrom", "required", "必须填写生效时间。")
+	}
+	if strings.TrimSpace(input.Reason) == "" {
+		return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Reason required", "维护价格记录必须填写原因。", "reason", "required", "必须填写维护原因。")
+	}
+	return nil
+}
+
+func adminRecordSubmitInput(input AdminRecordInput) SubmitLeadInput {
+	return SubmitLeadInput{
+		ProductPlanID:     input.ProductPlanID,
+		ProductText:       input.ProductText,
+		PlanText:          input.PlanText,
+		RegionCode:        input.RegionCode,
+		Channel:           input.Channel,
+		OpeningMethod:     input.OpeningMethod,
+		SourceURL:         input.SourceURL,
+		SourceTitle:       "管理员维护官网价格",
+		EvidenceSummary:   input.Reason,
+		ObservedAt:        input.ObservedAt,
+		BillingPeriod:     input.BillingPeriod,
+		CommitmentMonths:  nil,
+		PriceUnit:         "per_account",
+		SeatCount:         nil,
+		Quantity:          1,
+		Currency:          input.Currency,
+		OriginalAmount:    input.OriginalAmount,
+		OriginalPriceText: originalPriceText(input),
+		TaxIncluded:       input.TaxIncluded,
+	}
+}
+
+func buildAdminRecordLead(input AdminRecordInput, normalizedMonthlyCNY, offerKey, fingerprint string, now time.Time) Lead {
+	fxObservedAt := input.FXObservedAt
+	reviewedAt := now
+	return Lead{
+		ID:                   uuid.NewString(),
+		SubmitterUserID:      input.AdminUserID,
+		ProductPlanID:        input.ProductPlanID,
+		ProductText:          input.ProductText,
+		PlanText:             input.PlanText,
+		RegionCode:           input.RegionCode,
+		Channel:              input.Channel,
+		OpeningMethod:        input.OpeningMethod,
+		SourceURL:            input.SourceURL,
+		SourceTitle:          "管理员维护官网价格",
+		EvidenceSummary:      input.Reason,
+		Status:               LeadStatusApproved,
+		ReviewedByAdminID:    input.AdminUserID,
+		ReviewedAt:           &reviewedAt,
+		ReviewReason:         input.Reason,
+		ObservedAt:           input.ObservedAt,
+		BillingPeriod:        input.BillingPeriod,
+		CommitmentMonths:     nil,
+		PriceUnit:            "per_account",
+		SeatCount:            nil,
+		Quantity:             1,
+		Currency:             input.Currency,
+		OriginalAmount:       input.OriginalAmount,
+		OriginalPriceText:    originalPriceText(input),
+		TaxIncluded:          input.TaxIncluded,
+		NormalizedMonthlyCNY: normalizedMonthlyCNY,
+		FXRate:               input.FXRateToCNY,
+		FXSource:             input.FXSource,
+		FXObservedAt:         &fxObservedAt,
+		ConversionMode:       "monthly_normalized",
+		RoundingRule:         "round_half_up_2",
+		Fingerprint:          fingerprint,
+		OfferKey:             offerKey,
+		CreatedAt:            now,
+		UpdatedAt:            now,
+		Version:              1,
+	}
+}
+
+func buildAdminRecord(input AdminRecordInput, lead Lead, normalizedMonthlyCNY, offerKey, fingerprint string, now time.Time) Record {
+	return Record{
+		ID:                   uuid.NewString(),
+		LeadID:               lead.ID,
+		ProductPlanID:        input.ProductPlanID,
+		RegionCode:           input.RegionCode,
+		Channel:              input.Channel,
+		OpeningMethod:        input.OpeningMethod,
+		SourceURL:            input.SourceURL,
+		ApprovedByAdminID:    input.AdminUserID,
+		ApprovedAt:           now,
+		ValidFrom:            input.ValidFrom,
+		Status:               RecordStatusActive,
+		ObservedAt:           input.ObservedAt,
+		BillingPeriod:        input.BillingPeriod,
+		CommitmentMonths:     nil,
+		PriceUnit:            "per_account",
+		SeatCount:            nil,
+		Quantity:             1,
+		Currency:             input.Currency,
+		OriginalAmount:       input.OriginalAmount,
+		TaxIncluded:          input.TaxIncluded,
+		NormalizedMonthlyCNY: normalizedMonthlyCNY,
+		FXRate:               input.FXRateToCNY,
+		FXSource:             input.FXSource,
+		FXObservedAt:         input.FXObservedAt,
+		ConversionMode:       "monthly_normalized",
+		RoundingRule:         "round_half_up_2",
+		Fingerprint:          fingerprint,
+		OfferKey:             offerKey,
+		CreatedAt:            now,
+		Version:              1,
+	}
+}
+
+func originalPriceText(input AdminRecordInput) string {
+	return strings.TrimSpace(input.Currency + " " + input.OriginalAmount + " / month")
 }
 
 func validateSubmitLeadInput(input SubmitLeadInput) *domain.AppError {

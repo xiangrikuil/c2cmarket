@@ -44,7 +44,7 @@ const regions = ['全部', '菲律宾', '土耳其', '香港', '日本', '美国
 const channels = ['全部', 'Web', 'iOS App Store', 'Google Play', '其他']
 const plans = ['全部', 'Plus', 'Pro', 'Business', '其他']
 const openingMethods = ['全部', '本地卡', '礼品卡', '虚拟卡', 'Apple Store', 'Google Play', '其他']
-const sources = ['全部', 'linux.do 原帖', '官方页面', '用户截图', '管理员录入', '其他']
+const sources = ['全部', 'linux.do 原帖', '官方页面', '页面截图', '管理员录入', '其他']
 const trustLevels = ['不限', '信任等级1+', '信任等级2+', '信任等级3+', '信任等级4']
 const sortOptions: Array<{ label: string, value: SortMode }> = [
   { label: '人民币价格最低', value: 'cny_asc' },
@@ -55,7 +55,7 @@ const sortOptions: Array<{ label: string, value: SortMode }> = [
 ]
 const pageDescription = shouldUseRealBackend()
   ? '按产品、地区、渠道和开通方式维护官网公开价；公开表仅展示审核通过的已验证价格记录。'
-  : '按产品、地区、渠道和开通方式维护官网公开价与社区低价线索。'
+  : '按产品、地区、渠道和开通方式维护官网公开价格记录。'
 
 watch(
   [q, product, region, channel, status, plan, openingMethod, source, trust, sort],
@@ -162,7 +162,7 @@ function setStatus(value: StatusFilter) {
 
 <template>
   <div>
-    <PageTitle title="官网公开价格与社区低价线索" :description="pageDescription" action-text="提交低价线索" action-to="/official-prices/submit" />
+    <PageTitle title="官网公开价格对比" :description="pageDescription" />
 
     <div class="mb-4 grid gap-3 lg:grid-cols-[minmax(0,1.35fr)_minmax(220px,0.75fr)_minmax(220px,0.75fr)]">
       <Card class="official-signal-card official-signal-primary min-w-0 p-3.5">
@@ -184,14 +184,14 @@ function setStatus(value: StatusFilter) {
           <div class="grid min-w-0 gap-1.5 pt-1 text-xs md:pl-3">
             <div class="grid min-w-0 grid-cols-[auto_minmax(0,1fr)] gap-3">
               <span class="text-muted-foreground">来源</span>
-              <span class="min-w-0 break-all text-right font-medium">{{ lowestVerified?.source ?? '社区线索' }}</span>
+              <span class="min-w-0 break-all text-right font-medium">{{ lowestVerified?.source ?? '管理员维护记录' }}</span>
             </div>
             <div class="grid min-w-0 grid-cols-[auto_minmax(0,1fr)] gap-3">
-              <span class="text-muted-foreground">提交人</span>
+              <span class="text-muted-foreground">维护人</span>
               <span class="min-w-0 break-all text-right font-medium">{{ lowestVerified?.submitter ?? '-' }}</span>
             </div>
             <div class="grid min-w-0 grid-cols-[auto_minmax(0,1fr)] gap-3">
-              <span class="text-muted-foreground">信任等级</span>
+              <span class="text-muted-foreground">记录等级</span>
               <span class="min-w-0 break-all text-right font-medium">{{ lowestVerified?.submitterTrust ?? '-' }}</span>
             </div>
             <div class="grid min-w-0 grid-cols-[auto_minmax(0,1fr)] gap-3">
@@ -207,7 +207,7 @@ function setStatus(value: StatusFilter) {
 
       <Card class="official-signal-card official-signal-warning p-3.5">
         <div class="flex items-center gap-2 text-xs font-medium text-muted-foreground">
-          <span class="h-2 w-2 rounded-full bg-warning"></span>{{ shouldUseRealBackend() ? '今日新增记录' : '今日新增线索' }}
+          <span class="h-2 w-2 rounded-full bg-warning"></span>今日新增记录
         </div>
         <div class="mt-2 text-[30px] font-semibold leading-none">{{ todayNewCount }}</div>
         <div class="mt-1.5 text-sm text-muted-foreground">{{ shouldUseRealBackend() ? '公开表仅展示审核通过记录' : `其中 ${pendingCount} 条正在等待管理员验证` }}</div>
@@ -219,20 +219,20 @@ function setStatus(value: StatusFilter) {
 
       <Card class="official-signal-card official-signal-success p-3.5">
         <div class="flex items-center gap-2 text-xs font-medium text-muted-foreground">
-          <span class="h-2 w-2 rounded-full bg-success"></span>价格贡献者
+          <span class="h-2 w-2 rounded-full bg-success"></span>维护来源
         </div>
         <div class="mt-2 text-[30px] font-semibold leading-none">{{ contributorCount }}</div>
         <div class="mt-1.5 text-sm text-muted-foreground">{{ shouldUseRealBackend() ? '按已验证公开记录统计' : '按有效价格线索和复核记录统计' }}</div>
         <div class="mt-3 flex justify-between border-t border-border pt-2.5 text-sm">
           <span class="text-muted-foreground">本周新增</span>
-          <span class="font-semibold">+5 人</span>
+          <span class="font-semibold">+5 条</span>
         </div>
       </Card>
     </div>
 
     <div class="c2c-filterbar mb-4 rounded-lg border border-border bg-card px-3 py-2">
       <div class="grid gap-2 xl:grid-cols-[minmax(260px,1fr)_150px_150px_160px_auto_auto_160px]">
-        <Input v-model="q" name="official-price-search" class="h-8 bg-background text-sm" placeholder="搜索产品、价格线索或提交人" />
+        <Input v-model="q" name="official-price-search" class="h-8 bg-background text-sm" placeholder="搜索产品、地区、渠道或来源" />
         <label class="grid gap-1">
           <span class="text-[11px] font-medium leading-none text-muted-foreground">产品</span>
           <Select v-model="product">
@@ -294,13 +294,13 @@ function setStatus(value: StatusFilter) {
                     <SelectContent><SelectItem v-for="item in detailedStatuses" :key="item" :value="item">{{ item }}</SelectItem></SelectContent>
                   </Select>
                 </label>
-                <label class="grid gap-1 text-xs text-muted-foreground">提交来源
+                <label class="grid gap-1 text-xs text-muted-foreground">记录来源
                   <Select v-model="source">
                     <SelectTrigger class="h-8 bg-background text-xs text-foreground"><SelectValue /></SelectTrigger>
                     <SelectContent><SelectItem v-for="item in sources" :key="item" :value="item">{{ item }}</SelectItem></SelectContent>
                   </Select>
                 </label>
-                <label class="grid gap-1 text-xs text-muted-foreground">提交人信任等级
+                <label class="grid gap-1 text-xs text-muted-foreground">记录等级
                   <Select v-model="trust">
                     <SelectTrigger class="h-8 bg-background text-xs text-foreground"><SelectValue /></SelectTrigger>
                     <SelectContent><SelectItem v-for="item in trustLevels" :key="item" :value="item">{{ item }}</SelectItem></SelectContent>
@@ -336,9 +336,9 @@ function setStatus(value: StatusFilter) {
     </div>
 
     <div v-if="rows.length === 0" class="rounded-xl border border-border bg-card p-8 text-center text-sm text-muted-foreground">
-      {{ shouldUseRealBackend() ? '当前筛选条件下暂无已验证官网公开价格记录。' : '当前筛选条件下暂无官网公开价格或社区低价线索。' }}
+      {{ shouldUseRealBackend() ? '当前筛选条件下暂无已验证官网公开价格记录。' : '当前筛选条件下暂无官网公开价格记录。' }}
     </div>
-    <SoftTable v-else :columns="['产品', '地区 / 渠道', '官网公开价', '折合人民币', '状态', '线索帖', '提交人', '更新时间']">
+    <SoftTable v-else :columns="['产品', '地区 / 渠道', '官网公开价', '折合人民币', '状态', '来源', '维护人', '更新时间']">
       <tr v-for="row in pagination.paginatedRows.value" :key="row.id">
         <td><div class="font-medium">{{ row.product }} {{ row.plan }}</div><div class="text-xs text-muted-foreground">{{ row.openingMethod }}</div></td>
         <td><div>{{ row.region }}</div><div class="text-xs text-muted-foreground">{{ row.channel }}</div></td>
@@ -346,7 +346,7 @@ function setStatus(value: StatusFilter) {
         <td class="font-semibold">¥{{ row.cny }}</td>
         <td><Badge :variant="row.status === '已验证' ? 'default' : 'secondary'">{{ row.status }}</Badge></td>
         <td><RouterLink :to="`/official-prices/${row.id}`"><Button variant="outline" size="sm"><ExternalLink class="h-4 w-4" />查看</Button></RouterLink></td>
-        <td><div>{{ row.submitter }}</div><div class="text-xs text-muted-foreground">信任等级{{ row.submitterTrust }}</div></td>
+        <td><div>{{ row.submitter }}</div><div class="text-xs text-muted-foreground">记录等级{{ row.submitterTrust }}</div></td>
         <td class="text-muted-foreground">{{ row.updatedAt }}</td>
       </tr>
       <template #footer>

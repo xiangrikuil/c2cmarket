@@ -3,7 +3,7 @@
 中文名：C2C 市集
 英文名：C2CMarket
 
-定位：AI 官方低价情报、订阅拼车、求车需求和 API 额度撮合平台。
+定位：AI 官网价格情报、订阅拼车、求车需求和 API 额度撮合平台。
 
 ## 技术栈
 
@@ -65,17 +65,17 @@ pnpm build
 
 不要把 Umami API key、后台账号密码、share URL 或管理台 URL 放进 `VITE_*`。自定义事件只发送低基数字段和分桶，不发送搜索词、URL query、用户 ID、联系方式、举报说明、支付说明、API key、token、session 或 cookie。
 
-## 账号恢复设置
+## 账号安全设置
 
-公开注册和主登录入口仍是 linux.do OAuth。OAuth 首次创建的站内账号没有默认密码；登录后必须在 `/my/account` 绑定验证邮箱并设置备用密码，完成后才能进入大部分业务页。备用密码只用于已绑定 linux.do 用户恢复访问，不是公开密码注册入口。
+公开注册和主登录入口仍是 linux.do OAuth。OAuth 首次创建的站内账号没有默认密码；登录后必须在 `/my/account` 绑定验证邮箱并设置密码，完成后才能进入大部分业务页。密码只用于已绑定 linux.do 用户的站内登录，不是公开密码注册入口。
 
 ## 页面
 
 ```text
 /                         行情首页
-/official-prices          官方低价情报
-/official-prices/submit   提交低价线索
-/official-prices/manage   官方最低价格管理
+/official-prices          官网价格情报
+/official-prices/submit   重定向到官网价格列表，不提供用户提交
+/admin/official-prices    管理员维护官网价格记录
 /carpools                 订阅拼车列表
 /carpools/c1              车源详情
 /demands                  找车源 / 求车需求
@@ -88,6 +88,8 @@ pnpm build
 ## 主题
 
 - 项目内置主题：`src/theme/aqua-console.css`
+- 可选主题：`src/theme/neumorphic-cool.css`
+- 可选主题：`src/theme/minimal-modern.css`
 - 可粘贴到 tweakcn/shadcn 的 Aqua Console 变量块：`tweakcn-theme.css`
 - Aqua Console 主题 JSON：`tweakcn-theme.json`
 

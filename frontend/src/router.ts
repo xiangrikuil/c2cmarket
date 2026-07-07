@@ -3,7 +3,6 @@ import { createRouter, createWebHistory } from 'vue-router'
 const HomePage = () => import('@/pages/HomePage.vue')
 const OfficialPricesPage = () => import('@/pages/OfficialPricesPage.vue')
 const OfficialPriceDetailPage = () => import('@/pages/OfficialPriceDetailPage.vue')
-const OfficialPriceSubmitPage = () => import('@/pages/OfficialPriceSubmitPage.vue')
 const OfficialPriceManagePage = () => import('@/pages/OfficialPriceManagePage.vue')
 const CarpoolsPage = () => import('@/pages/CarpoolsPage.vue')
 const CarpoolDetailPage = () => import('@/pages/CarpoolDetailPage.vue')
@@ -40,8 +39,6 @@ const AdminSectionPage = () => import('@/pages/AdminSectionPage.vue')
 const NotFoundPage = () => import('@/pages/NotFoundPage.vue')
 
 const adminChildren = [
-  ['official-prices', '官网公开价格管理', '维护各产品、地区、渠道的公开价格、社区线索和验证状态。'],
-  ['price-leads', '低价线索审核', '审核用户提交的低价线索、来源帖和复核状态。'],
   ['carpools', '车源治理', '处理公开车源下架恢复、遗留审核队列、价格、车主承诺、原帖绑定和纠纷状态。'],
   ['demands', '求车管理', '查看求车需求、关闭状态和 linux.do 求车原帖绑定。'],
   ['api-merchants', 'API 商户审核', '审核商户资料、在线状态和可售额度资质。'],
@@ -66,8 +63,8 @@ export const router = createRouter({
     { path: '/auth/mock', redirect: '/login' },
     { path: '/official-prices', name: 'official-prices', component: OfficialPricesPage },
     { path: '/official-prices/detail', redirect: '/official-prices/p1' },
-    { path: '/official-prices/submit', name: 'official-prices-submit', component: OfficialPriceSubmitPage },
-    { path: '/official-prices/manage', name: 'official-prices-manage', component: OfficialPriceManagePage },
+    { path: '/official-prices/submit', redirect: '/official-prices' },
+    { path: '/official-prices/manage', redirect: '/admin/official-prices' },
     { path: '/official-prices/:id', name: 'official-prices-detail', component: OfficialPriceDetailPage },
     { path: '/carpools', name: 'carpools', component: CarpoolsPage },
     { path: '/carpools/detail', redirect: '/carpools/c1' },
@@ -108,6 +105,8 @@ export const router = createRouter({
     { path: '/admin/model-audit', name: 'admin-model-audit', component: AdminModelAuditPage },
     { path: '/admin/feedback', name: 'admin-feedback', component: AdminFeedbackPage },
     { path: '/admin/feedback/:id', name: 'admin-feedback-detail', component: AdminFeedbackPage },
+    { path: '/admin/official-prices', name: 'admin-official-prices', component: OfficialPriceManagePage },
+    { path: '/admin/price-leads', redirect: '/admin/official-prices' },
     ...adminChildren.map(([path, title, description]) => ({
       path: `/admin/${path}`,
       name: `admin-${path}`,

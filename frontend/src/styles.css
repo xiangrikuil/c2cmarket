@@ -1,5 +1,7 @@
 @import "tailwindcss";
 @import "./theme/aqua-console.css";
+@import "./theme/neumorphic-cool.css";
+@import "./theme/minimal-modern.css";
 
 @theme inline {
   --color-background: var(--background);
@@ -30,6 +32,14 @@
   --color-warning-foreground: var(--warning-foreground);
   --color-info: var(--info);
   --color-info-foreground: var(--info-foreground);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
   --color-scrollbar-track: var(--scrollbar-track);
   --color-scrollbar-thumb: var(--scrollbar-thumb);
   --color-scrollbar-thumb-hover: var(--scrollbar-thumb-hover);
@@ -49,6 +59,17 @@
     --chart-3: oklch(0.696 0.149 162.5);
     --chart-4: oklch(0.606 0.219 292.7);
     --chart-5: oklch(0.769 0.165 70.1);
+    --surface-raised-sm: var(--shadow-xs);
+    --surface-raised: var(--shadow-sm);
+    --surface-hover: var(--shadow);
+    --surface-inset: inset 0 0 0 1px var(--border);
+    --surface-inset-deep: inset 0 0 0 1px var(--input);
+    --surface-pressed: inset 0 1px 3px rgb(15 23 42 / 0.08);
+    --surface-ring-shadow: 0 0 0 3px color-mix(in oklab, var(--ring) 24%, transparent);
+    --radius-card: var(--radius);
+    --radius-control: var(--radius);
+    --app-body-background: linear-gradient(180deg, #fbfdff 0%, color-mix(in oklab, var(--background) 96%, white) 45%, #ffffff 100%);
+    --app-grid-line: color-mix(in oklab, var(--border) 55%, transparent);
   }
 
   .dark {
@@ -69,7 +90,7 @@ body {
   margin: 0;
   min-width: 320px;
   min-height: 100vh;
-  background: linear-gradient(180deg, #fbfdff 0%, color-mix(in oklab, var(--background) 96%, white) 45%, #ffffff 100%);
+  background: var(--app-body-background);
   color: var(--foreground);
   font-family: var(--font-sans);
   font-size: 14px;
@@ -131,8 +152,8 @@ a { color: inherit; text-decoration: none; }
 
 .c2c-grid-bg {
   background-image:
-    linear-gradient(color-mix(in oklab, var(--border) 55%, transparent) 1px, transparent 1px),
-    linear-gradient(90deg, color-mix(in oklab, var(--border) 55%, transparent) 1px, transparent 1px);
+    linear-gradient(var(--app-grid-line) 1px, transparent 1px),
+    linear-gradient(90deg, var(--app-grid-line) 1px, transparent 1px);
   background-size: 44px 44px;
   background-position: -1px -1px;
 }
@@ -147,6 +168,113 @@ a { color: inherit; text-decoration: none; }
 [data-slot="card"] {
   border-radius: var(--radius);
   gap: 1rem;
+}
+
+html[data-theme="neumorphic-cool"] [data-slot="card"] {
+  border-color: transparent;
+  border-radius: var(--radius-card);
+  box-shadow: var(--surface-raised);
+}
+
+html[data-theme="neumorphic-cool"] [data-slot="button"] {
+  border-color: transparent;
+  border-radius: var(--radius-control);
+  box-shadow: var(--surface-raised-sm);
+  transition-duration: 300ms;
+  transition-timing-function: ease-out;
+}
+
+html[data-theme="neumorphic-cool"] [data-slot="button"]:hover {
+  box-shadow: var(--surface-hover);
+  transform: translateY(-1px);
+}
+
+html[data-theme="neumorphic-cool"] [data-slot="button"]:active {
+  box-shadow: var(--surface-pressed);
+  transform: translateY(0.5px);
+}
+
+html[data-theme="neumorphic-cool"] [data-slot="button"][data-variant="link"] {
+  box-shadow: none;
+}
+
+html[data-theme="neumorphic-cool"] [data-slot="input"],
+html[data-theme="neumorphic-cool"] [data-slot="textarea"],
+html[data-theme="neumorphic-cool"] [data-slot="select-trigger"] {
+  background: var(--input);
+  border-color: transparent;
+  border-radius: var(--radius-control);
+  box-shadow: var(--surface-inset);
+}
+
+html[data-theme="neumorphic-cool"] [data-slot="input"]:focus-visible,
+html[data-theme="neumorphic-cool"] [data-slot="textarea"]:focus-visible,
+html[data-theme="neumorphic-cool"] [data-slot="select-trigger"]:focus-visible {
+  box-shadow: var(--surface-ring-shadow);
+}
+
+html[data-theme="neumorphic-cool"] [data-slot="dropdown-menu-content"] {
+  border-color: transparent;
+  border-radius: var(--radius-control);
+  box-shadow: var(--surface-raised);
+}
+
+html[data-theme="neumorphic-cool"] [data-slot="badge"] {
+  border-color: transparent;
+  box-shadow: var(--surface-raised-sm);
+}
+
+html[data-theme="neumorphic-cool"] .c2c-card,
+html[data-theme="neumorphic-cool"] .c2c-card-soft {
+  border-color: transparent;
+  box-shadow: var(--surface-raised);
+}
+
+html[data-theme="neumorphic-cool"] .text-teal-700,
+html[data-theme="neumorphic-cool"] .text-teal-800,
+html[data-theme="neumorphic-cool"] .text-teal-900,
+html[data-theme="neumorphic-cool"] .text-emerald-600,
+html[data-theme="neumorphic-cool"] .text-emerald-700,
+html[data-theme="neumorphic-cool"] .text-emerald-800 {
+  color: var(--success);
+}
+
+html[data-theme="neumorphic-cool"] .text-teal-800\/80 {
+  color: color-mix(in oklab, var(--success) 78%, var(--muted-foreground));
+}
+
+html[data-theme="neumorphic-cool"] .bg-teal-600,
+html[data-theme="neumorphic-cool"] .bg-emerald-500 {
+  background-color: var(--success);
+}
+
+html[data-theme="neumorphic-cool"] .bg-emerald-50,
+html[data-theme="neumorphic-cool"] .bg-emerald-50\/40,
+html[data-theme="neumorphic-cool"] .bg-emerald-100,
+html[data-theme="neumorphic-cool"] .hover\:bg-emerald-100:hover {
+  background-color: color-mix(in oklab, var(--success) 11%, var(--background));
+}
+
+html[data-theme="neumorphic-cool"] .bg-emerald-500\/10 {
+  background-color: color-mix(in oklab, var(--success) 13%, transparent);
+}
+
+html[data-theme="neumorphic-cool"] .border-emerald-200 {
+  border-color: color-mix(in oklab, var(--success) 24%, var(--border));
+}
+
+html[data-theme="neumorphic-cool"] .from-teal-500 {
+  --tw-gradient-from: var(--success) var(--tw-gradient-from-position);
+  --tw-gradient-stops: var(--tw-gradient-via-stops, var(--tw-gradient-position), var(--tw-gradient-from) var(--tw-gradient-from-position), var(--tw-gradient-to) var(--tw-gradient-to-position));
+}
+
+html[data-theme="neumorphic-cool"] .to-cyan-500 {
+  --tw-gradient-to: #8b84ff var(--tw-gradient-to-position);
+}
+
+html[data-theme="neumorphic-cool"] .group:hover .group-hover\:text-teal-700,
+html[data-theme="neumorphic-cool"] .group:hover .group-hover\:text-teal-900 {
+  color: #454fc4;
 }
 
 .table-scroll {
@@ -164,6 +292,170 @@ a { color: inherit; text-decoration: none; }
   background: color-mix(in oklab, var(--card) 82%, var(--muted));
   border: 1px solid var(--border);
   border-radius: var(--radius);
+}
+
+.account-security-dialog {
+  border-color: color-mix(in oklab, var(--primary) 16%, var(--border));
+  border-radius: calc(var(--radius) + 10px);
+  background: var(--card);
+  box-shadow: var(--shadow-2xl);
+}
+
+.account-security-side {
+  border-right: 1px solid color-mix(in oklab, var(--primary) 12%, var(--border));
+  background:
+    radial-gradient(circle at 50% 18%, color-mix(in oklab, var(--primary) 14%, transparent) 0 72px, transparent 74px),
+    linear-gradient(180deg, color-mix(in oklab, var(--signal-soft) 72%, var(--card)) 0%, color-mix(in oklab, var(--card) 84%, var(--accent)) 100%);
+}
+
+.account-security-side-icon {
+  background: color-mix(in oklab, var(--primary) 12%, var(--card));
+  color: var(--primary);
+  box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--primary) 14%, transparent);
+}
+
+.account-security-benefit-icon {
+  background: color-mix(in oklab, var(--primary) 10%, var(--card));
+  color: var(--primary);
+}
+
+.account-security-header,
+.account-security-footer {
+  background: color-mix(in oklab, var(--card) 94%, var(--accent));
+}
+
+.account-security-stepper {
+  display: flex;
+  gap: 0;
+}
+
+.account-security-step {
+  position: relative;
+  flex: 1 1 0;
+  min-width: 0;
+  color: var(--muted-foreground);
+}
+
+.account-security-step-trigger {
+  min-width: 0;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 8px;
+  text-align: center;
+  cursor: default;
+  outline: none;
+}
+
+.account-security-step-dot {
+  height: 34px;
+  width: 34px;
+  border: 1px solid color-mix(in oklab, var(--border) 88%, transparent);
+  border-radius: 999px;
+  background: var(--card);
+  color: var(--muted-foreground);
+  font-size: 13px;
+  font-weight: 700;
+  box-shadow: var(--shadow-xs);
+}
+
+.account-security-step-label {
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  text-align: center;
+  font-size: 12px;
+  font-weight: 650;
+  line-height: 1.3;
+  white-space: normal;
+}
+
+.account-security-step[data-state="active"] {
+  color: var(--primary);
+}
+
+.account-security-step[data-state="active"] .account-security-step-dot {
+  border-color: var(--primary);
+  background: var(--primary);
+  color: var(--primary-foreground);
+  box-shadow: 0 10px 22px -16px color-mix(in oklab, var(--primary) 82%, black);
+}
+
+.account-security-step[data-state="completed"] {
+  color: var(--success);
+}
+
+.account-security-step[data-state="completed"] .account-security-step-dot {
+  border-color: color-mix(in oklab, var(--success) 32%, var(--border));
+  background: color-mix(in oklab, var(--success) 12%, var(--card));
+  color: var(--success);
+}
+
+.account-security-step-separator {
+  position: absolute;
+  left: calc(50% + 22px);
+  right: calc(-50% + 22px);
+  top: 17px;
+  height: 1px;
+  background: color-mix(in oklab, var(--border) 90%, transparent);
+}
+
+.account-security-step-separator[data-state="completed"] {
+  background: color-mix(in oklab, var(--success) 54%, var(--border));
+}
+
+.account-security-note {
+  border-color: color-mix(in oklab, var(--warning) 34%, var(--border));
+  background: color-mix(in oklab, var(--warning) 10%, var(--card));
+  color: color-mix(in oklab, var(--warning) 72%, var(--foreground));
+}
+
+html[data-theme="neumorphic-cool"] .account-security-dialog {
+  border-color: transparent;
+  border-radius: var(--radius-card);
+  box-shadow: var(--shadow-2xl);
+}
+
+html[data-theme="neumorphic-cool"] .account-security-side {
+  border-right-color: transparent;
+  background: color-mix(in oklab, var(--card) 92%, var(--accent));
+  box-shadow: var(--surface-inset);
+}
+
+html[data-theme="neumorphic-cool"] .account-security-side-icon,
+html[data-theme="neumorphic-cool"] .account-security-benefit-icon,
+html[data-theme="neumorphic-cool"] .account-security-step-dot {
+  border-color: transparent;
+  box-shadow: var(--surface-raised-sm);
+}
+
+html[data-theme="neumorphic-cool"] .account-security-header,
+html[data-theme="neumorphic-cool"] .account-security-footer {
+  background: var(--card);
+}
+
+html[data-theme="neumorphic-cool"] .account-security-step[data-state="active"] .account-security-step-dot {
+  box-shadow: var(--surface-raised-sm);
+}
+
+html[data-theme="minimal-modern"] .account-security-dialog {
+  border-color: var(--border);
+  border-radius: calc(var(--radius) + 6px);
+  box-shadow: var(--shadow-xl);
+}
+
+html[data-theme="minimal-modern"] .account-security-side {
+  background: linear-gradient(180deg, color-mix(in oklab, var(--accent) 62%, var(--card)) 0%, var(--card) 100%);
+}
+
+html[data-theme="minimal-modern"] .account-security-step-dot {
+  box-shadow: none;
+}
+
+@media (max-width: 767px) {
+  .account-security-side {
+    border-right: 0;
+    border-bottom: 1px solid color-mix(in oklab, var(--primary) 12%, var(--border));
+  }
 }
 
 .c2c-table {
@@ -1944,4 +2236,262 @@ a { color: inherit; text-decoration: none; }
     max-width: none;
     text-align: left;
   }
+}
+
+html[data-theme="neumorphic-cool"] .home-exact {
+  color: var(--foreground);
+}
+
+html[data-theme="neumorphic-cool"] .home-exact-hero {
+  border-color: color-mix(in oklab, var(--success) 24%, var(--border));
+  background:
+    radial-gradient(circle at 82% 50%, color-mix(in oklab, var(--success) 12%, transparent) 0 18%, transparent 40%),
+    linear-gradient(135deg, color-mix(in oklab, var(--card) 90%, white) 0%, var(--card) 58%, color-mix(in oklab, var(--success) 9%, var(--background)) 100%);
+}
+
+html[data-theme="neumorphic-cool"] .home-exact-hero::before {
+  background-image:
+    linear-gradient(30deg, color-mix(in oklab, var(--success) 11%, transparent) 1px, transparent 1px),
+    linear-gradient(150deg, color-mix(in oklab, var(--primary) 8%, transparent) 1px, transparent 1px);
+}
+
+html[data-theme="neumorphic-cool"] .home-hero-cube,
+html[data-theme="neumorphic-cool"] .home-hero-card {
+  border-color: color-mix(in oklab, var(--success) 22%, var(--border));
+}
+
+html[data-theme="neumorphic-cool"] .home-hero-card {
+  box-shadow: 0 10px 24px -18px color-mix(in oklab, var(--success) 70%, black);
+}
+
+html[data-theme="neumorphic-cool"] .home-hero-pie {
+  background: conic-gradient(var(--success) 0 74deg, color-mix(in oklab, var(--success) 13%, var(--background)) 74deg 360deg);
+}
+
+html[data-theme="neumorphic-cool"] .home-hero-bars span {
+  background: color-mix(in oklab, var(--success) 56%, white);
+}
+
+html[data-theme="neumorphic-cool"] .home-hero-bars span:nth-child(2) {
+  background: var(--success);
+}
+
+html[data-theme="neumorphic-cool"] .home-hero-bars span:nth-child(3) {
+  background: color-mix(in oklab, var(--primary) 50%, white);
+}
+
+html[data-theme="neumorphic-cool"] .home-chip-active {
+  border-color: var(--success);
+  background: var(--success);
+  color: var(--success-foreground);
+}
+
+html[data-theme="neumorphic-cool"] .home-action-icon.from-teal-500 {
+  background-image: linear-gradient(to bottom right, var(--success), #8b84ff);
+}
+
+html[data-theme="neumorphic-cool"] .home-announcement {
+  border-color: color-mix(in oklab, var(--success) 24%, var(--border));
+  background:
+    linear-gradient(135deg, color-mix(in oklab, var(--success) 11%, var(--background)), color-mix(in oklab, var(--card) 92%, white));
+}
+
+html[data-theme="neumorphic-cool"] .home-table-action-link {
+  border-color: color-mix(in oklab, var(--success) 26%, var(--border));
+  background: color-mix(in oklab, var(--success) 10%, var(--background));
+  color: var(--success);
+}
+
+html[data-theme="neumorphic-cool"] .home-table-action-link:hover {
+  border-color: color-mix(in oklab, var(--success) 42%, var(--border));
+  background: color-mix(in oklab, var(--success) 15%, var(--background));
+  color: #454fc4;
+  box-shadow: 0 10px 20px -18px color-mix(in oklab, var(--success) 72%, black);
+}
+
+html[data-theme="minimal-modern"] [data-slot="card"] {
+  border-radius: var(--radius-card);
+  box-shadow: var(--surface-raised-sm);
+}
+
+html[data-theme="minimal-modern"] [data-slot="card"]:hover {
+  box-shadow: var(--surface-hover);
+}
+
+html[data-theme="minimal-modern"] [data-slot="button"] {
+  border-radius: var(--radius-control);
+  transition-duration: 200ms;
+  transition-timing-function: ease-out;
+}
+
+html[data-theme="minimal-modern"] [data-slot="button"][data-variant="default"] {
+  border-color: transparent;
+  background-image: var(--accent-gradient);
+  box-shadow: 0 6px 18px -12px rgb(0 82 255 / 0.55);
+}
+
+html[data-theme="minimal-modern"] [data-slot="button"]:hover {
+  transform: translateY(-1px);
+}
+
+html[data-theme="minimal-modern"] [data-slot="button"][data-variant="default"]:hover {
+  box-shadow: 0 12px 28px -14px rgb(0 82 255 / 0.62);
+  filter: brightness(1.06);
+}
+
+html[data-theme="minimal-modern"] [data-slot="button"]:active {
+  transform: scale(0.98);
+}
+
+html[data-theme="minimal-modern"] [data-slot="input"],
+html[data-theme="minimal-modern"] [data-slot="textarea"],
+html[data-theme="minimal-modern"] [data-slot="select-trigger"] {
+  border-radius: var(--radius-control);
+  background: color-mix(in oklab, var(--card) 86%, var(--muted));
+  box-shadow: none;
+}
+
+html[data-theme="minimal-modern"] [data-slot="input"]:focus-visible,
+html[data-theme="minimal-modern"] [data-slot="textarea"]:focus-visible,
+html[data-theme="minimal-modern"] [data-slot="select-trigger"]:focus-visible {
+  border-color: var(--ring);
+  box-shadow: var(--surface-ring-shadow);
+}
+
+html[data-theme="minimal-modern"] [data-slot="dropdown-menu-content"] {
+  border-radius: var(--radius-card);
+  box-shadow: var(--shadow-lg);
+}
+
+html[data-theme="minimal-modern"] [data-slot="badge"] {
+  border-radius: 999px;
+}
+
+html[data-theme="minimal-modern"] .c2c-card,
+html[data-theme="minimal-modern"] .c2c-card-soft {
+  box-shadow: var(--surface-raised-sm);
+}
+
+html[data-theme="minimal-modern"] .text-teal-700,
+html[data-theme="minimal-modern"] .text-teal-800,
+html[data-theme="minimal-modern"] .text-teal-900,
+html[data-theme="minimal-modern"] .text-emerald-600,
+html[data-theme="minimal-modern"] .text-emerald-700,
+html[data-theme="minimal-modern"] .text-emerald-800 {
+  color: var(--primary);
+}
+
+html[data-theme="minimal-modern"] .text-teal-800\/80 {
+  color: color-mix(in oklab, var(--primary) 70%, var(--muted-foreground));
+}
+
+html[data-theme="minimal-modern"] .bg-teal-600,
+html[data-theme="minimal-modern"] .bg-emerald-500 {
+  background-color: var(--primary);
+}
+
+html[data-theme="minimal-modern"] .bg-emerald-50,
+html[data-theme="minimal-modern"] .bg-emerald-50\/40,
+html[data-theme="minimal-modern"] .bg-emerald-100,
+html[data-theme="minimal-modern"] .hover\:bg-emerald-100:hover {
+  background-color: color-mix(in oklab, var(--primary) 8%, white);
+}
+
+html[data-theme="minimal-modern"] .bg-emerald-500\/10 {
+  background-color: color-mix(in oklab, var(--primary) 10%, transparent);
+}
+
+html[data-theme="minimal-modern"] .border-emerald-200 {
+  border-color: color-mix(in oklab, var(--primary) 24%, var(--border));
+}
+
+html[data-theme="minimal-modern"] .from-teal-500 {
+  --tw-gradient-from: var(--primary) var(--tw-gradient-from-position);
+  --tw-gradient-stops: var(--tw-gradient-via-stops, var(--tw-gradient-position), var(--tw-gradient-from) var(--tw-gradient-from-position), var(--tw-gradient-to) var(--tw-gradient-to-position));
+}
+
+html[data-theme="minimal-modern"] .to-cyan-500 {
+  --tw-gradient-to: #4d7cff var(--tw-gradient-to-position);
+}
+
+html[data-theme="minimal-modern"] .group:hover .group-hover\:text-teal-700,
+html[data-theme="minimal-modern"] .group:hover .group-hover\:text-teal-900 {
+  color: #003ecc;
+}
+
+html[data-theme="minimal-modern"] .home-exact {
+  color: var(--foreground);
+}
+
+html[data-theme="minimal-modern"] .home-exact :where(.home-card, .home-exact-hero, .home-exact-stats, .home-announcement, .home-action-card) {
+  border-color: var(--border);
+  background: var(--card);
+  box-shadow: var(--surface-raised);
+}
+
+html[data-theme="minimal-modern"] .home-exact-hero {
+  border-color: color-mix(in oklab, var(--primary) 28%, var(--border));
+  background:
+    radial-gradient(circle at 82% 50%, rgb(0 82 255 / 0.08) 0 18%, transparent 42%),
+    linear-gradient(135deg, #ffffff 0%, #f8fbff 58%, #eef4ff 100%);
+}
+
+html[data-theme="minimal-modern"] .home-exact-hero::before {
+  background-image:
+    linear-gradient(30deg, rgb(0 82 255 / 0.08) 1px, transparent 1px),
+    linear-gradient(150deg, rgb(77 124 255 / 0.06) 1px, transparent 1px);
+}
+
+html[data-theme="minimal-modern"] .home-hero-cube,
+html[data-theme="minimal-modern"] .home-hero-card {
+  border-color: color-mix(in oklab, var(--primary) 20%, var(--border));
+}
+
+html[data-theme="minimal-modern"] .home-hero-card {
+  box-shadow: 0 14px 32px -20px rgb(0 82 255 / 0.42);
+}
+
+html[data-theme="minimal-modern"] .home-hero-pie {
+  background: conic-gradient(var(--primary) 0 74deg, color-mix(in oklab, var(--primary) 12%, white) 74deg 360deg);
+}
+
+html[data-theme="minimal-modern"] .home-hero-bars span {
+  background: color-mix(in oklab, var(--primary) 42%, white);
+}
+
+html[data-theme="minimal-modern"] .home-hero-bars span:nth-child(2) {
+  background: var(--primary);
+}
+
+html[data-theme="minimal-modern"] .home-hero-bars span:nth-child(3) {
+  background: #4d7cff;
+}
+
+html[data-theme="minimal-modern"] .home-chip-active {
+  border-color: var(--primary);
+  background: var(--accent-gradient);
+  color: var(--primary-foreground);
+}
+
+html[data-theme="minimal-modern"] .home-action-icon.from-teal-500 {
+  background-image: var(--accent-gradient);
+}
+
+html[data-theme="minimal-modern"] .home-announcement {
+  border-color: color-mix(in oklab, var(--primary) 24%, var(--border));
+  background:
+    linear-gradient(135deg, color-mix(in oklab, var(--primary) 8%, white), #ffffff);
+}
+
+html[data-theme="minimal-modern"] .home-table-action-link {
+  border-color: color-mix(in oklab, var(--primary) 26%, var(--border));
+  background: color-mix(in oklab, var(--primary) 8%, white);
+  color: var(--primary);
+}
+
+html[data-theme="minimal-modern"] .home-table-action-link:hover {
+  border-color: color-mix(in oklab, var(--primary) 42%, var(--border));
+  background: color-mix(in oklab, var(--primary) 12%, white);
+  color: #003ecc;
+  box-shadow: 0 10px 20px -18px rgb(0 82 255 / 0.55);
 }

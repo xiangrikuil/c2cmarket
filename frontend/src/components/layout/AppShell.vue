@@ -92,7 +92,6 @@ const navGroups = computed(() => {
   const publishGroup = {
     title: '发布',
     items: [
-      { label: '提交低价线索', to: '/official-prices/submit', count: null, icon: MessageSquarePlus },
       { label: '发布车源', to: '/carpools/new', count: null, icon: Car },
       { label: '发布 API 服务', to: '/api-market/new', count: null, icon: PackageSearch },
     ],
@@ -116,7 +115,7 @@ const navGroups = computed(() => {
       { label: '管理台总览', to: '/admin', count: 12, icon: PackageSearch },
       { label: '套餐目录', to: '/admin/product-plans', count: null, icon: PackageSearch },
       { label: 'API 模型目录', to: '/admin/api-models', count: null, icon: Code2 },
-      { label: '低价线索审核', to: '/admin/price-leads', count: 4, icon: ShieldCheck },
+      { label: '官网价格维护', to: '/admin/official-prices', count: 4, icon: ShieldCheck },
       { label: '车源治理', to: '/admin/carpools', count: 8, icon: Car },
       { label: 'API 服务审核', to: '/admin/api-services', count: 3, icon: Code2 },
       { label: '公告管理', to: '/admin/announcements', count: null, icon: Megaphone },
@@ -202,21 +201,21 @@ function closeMenu() {
     class="min-h-screen bg-background lg:grid"
     :style="{ gridTemplateColumns: sidebarCollapsed ? '64px minmax(0, 1fr)' : '222px minmax(0, 1fr)' }"
   >
-    <aside class="sticky top-0 hidden h-screen overflow-hidden border-r border-slate-200 bg-white/95 backdrop-blur transition-[width] duration-200 lg:flex lg:flex-col">
+    <aside class="sticky top-0 hidden h-screen overflow-hidden border-r border-sidebar-border bg-sidebar/95 text-sidebar-foreground backdrop-blur transition-[width] duration-200 lg:flex lg:flex-col">
       <RouterLink
         to="/"
-        class="flex h-[60px] items-center border-b border-slate-200 font-semibold tracking-tight"
+        class="flex h-[60px] items-center border-b border-sidebar-border font-semibold tracking-tight"
         :class="sidebarCollapsed ? 'justify-center px-0' : 'gap-2.5 px-5'"
       >
         <img src="/c2cmarket-logo-mark.svg?v=20260704-logo2" alt="C2CMarket" class="h-7 w-7 shrink-0" />
         <span v-if="!sidebarCollapsed" class="min-w-0">
-          <span class="block truncate text-[19px] font-bold leading-tight text-slate-900">C2CMarket</span>
+          <span class="block truncate text-[19px] font-bold leading-tight text-sidebar-foreground">C2CMarket</span>
         </span>
       </RouterLink>
       <nav class="c2c-sidebar-scroll min-h-0 flex-1 space-y-[26px] overflow-y-auto px-3 py-5">
         <section v-for="group in navGroups" :key="group.title">
           <h2
-            class="flex h-5 items-center px-2 text-[12px] font-medium text-slate-500"
+            class="flex h-5 items-center px-2 text-[12px] font-medium text-sidebar-foreground/60"
             :class="sidebarCollapsed ? 'justify-center px-0' : ''"
           >
             <span v-if="sidebarCollapsed" class="h-px w-6 bg-border"></span>
@@ -227,9 +226,9 @@ function closeMenu() {
               v-for="item in group.items"
               :key="item.to"
               :to="item.to"
-              class="flex h-9 items-center rounded-md text-[14px] font-semibold text-slate-700 transition hover:bg-teal-50 hover:text-teal-700"
+              class="flex h-9 items-center rounded-md text-[14px] font-semibold text-sidebar-foreground/80 transition hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
               :title="sidebarCollapsed ? item.label : undefined"
-              :class="isActive(item.to) ? 'bg-teal-50 text-teal-700 shadow-sm' : ''"
+              :class="isActive(item.to) ? 'bg-sidebar-accent text-sidebar-accent-foreground shadow-sm' : ''"
             >
               <span
                 class="flex min-w-0 items-center"
@@ -243,22 +242,22 @@ function closeMenu() {
           </div>
         </section>
       </nav>
-      <div class="border-t border-slate-200 p-2">
+      <div class="border-t border-sidebar-border p-2">
         <RouterLink
           v-if="!sidebarCollapsed"
           :to="announcementCenterTo"
-          class="mb-3 flex items-center justify-between rounded-md border border-slate-200 bg-white px-3 py-3 text-xs leading-5 text-slate-600 shadow-sm transition hover:border-teal-200 hover:bg-teal-50/70 hover:text-teal-800"
+          class="mb-3 flex items-center justify-between rounded-md border border-sidebar-border bg-sidebar-accent/45 px-3 py-3 text-xs leading-5 text-sidebar-foreground/75 shadow-sm transition hover:border-sidebar-primary/30 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
         >
           <div>
-            <div class="font-medium text-teal-700">平台公告</div>
+            <div class="font-medium text-sidebar-primary">平台公告</div>
             <div class="mt-1">查看公告与更新</div>
           </div>
-          <ChevronDown class="h-4 w-4 -rotate-90 text-slate-400" />
+          <ChevronDown class="h-4 w-4 -rotate-90 text-sidebar-foreground/45" />
         </RouterLink>
         <Button
           variant="ghost"
           size="sm"
-          class="h-9 w-full justify-start gap-2 px-2 text-[13px] text-slate-500"
+          class="h-9 w-full justify-start gap-2 px-2 text-[13px] text-sidebar-foreground/65"
           :class="sidebarCollapsed ? 'justify-center px-0' : ''"
           :title="sidebarCollapsed ? '展开侧栏' : '收起侧栏'"
           @click="sidebarCollapsed = !sidebarCollapsed"
@@ -272,7 +271,7 @@ function closeMenu() {
 
     <div
       v-if="menuOpen"
-      class="fixed inset-0 z-40 bg-black/30 lg:hidden"
+      class="fixed inset-0 z-40 bg-foreground/35 lg:hidden"
       @click="closeMenu"
     ></div>
 
@@ -306,8 +305,8 @@ function closeMenu() {
               v-for="item in group.items"
               :key="item.to"
               :to="item.to"
-              class="flex items-center justify-between rounded-md px-3 py-2.5 text-sm font-medium text-slate-600 transition hover:bg-teal-50 hover:text-teal-700"
-              :class="isActive(item.to) ? 'bg-teal-50 text-teal-700' : ''"
+              class="flex items-center justify-between rounded-md px-3 py-2.5 text-sm font-medium text-sidebar-foreground/80 transition hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
+              :class="isActive(item.to) ? 'bg-sidebar-accent text-sidebar-accent-foreground' : ''"
               @click="closeMenu"
             >
               <span class="flex min-w-0 items-center gap-2">
@@ -321,7 +320,7 @@ function closeMenu() {
       </nav>
       <RouterLink
         :to="announcementCenterTo"
-        class="border-t border-border p-4 text-xs leading-5 text-muted-foreground transition hover:bg-teal-50 hover:text-teal-800"
+        class="border-t border-border p-4 text-xs leading-5 text-muted-foreground transition hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
         @click="closeMenu"
       >
         平台公告 · 查看公告与更新
@@ -329,7 +328,7 @@ function closeMenu() {
     </div>
 
     <div class="min-w-0">
-      <header class="sticky top-0 z-50 border-b border-slate-200 bg-white/88 backdrop-blur">
+      <header class="sticky top-0 z-50 border-b border-border bg-card/88 backdrop-blur">
         <div class="flex h-[60px] items-center gap-4 px-4 sm:px-5 lg:px-5">
           <Button variant="ghost" size="icon" class="lg:hidden" aria-label="打开导航菜单" @click="menuOpen = true">
             <Menu class="h-4 w-4" />
@@ -338,20 +337,20 @@ function closeMenu() {
             <img src="/c2cmarket-logo-mark.svg?v=20260704-logo2" alt="C2CMarket" class="h-8 w-8" />
           </RouterLink>
           <div class="hidden min-w-0 shrink-0 md:block lg:w-[260px] 2xl:w-[338px]">
-            <div class="truncate text-lg font-semibold text-slate-900">{{ currentTitle }}</div>
+            <div class="truncate text-lg font-semibold text-foreground">{{ currentTitle }}</div>
           </div>
           <div class="hidden w-[548px] max-w-[34vw] items-center md:flex 2xl:max-w-[40vw]">
             <div class="relative w-full">
-              <Search class="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+              <Search class="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
               <Input
                 v-model="searchText"
                 name="global-search"
-                class="h-9 rounded-md bg-white pl-9 pr-14 shadow-none"
+                class="h-9 rounded-md bg-background pl-9 pr-14 shadow-none"
                 aria-label="搜索产品、车源、开通方式、地区或商户"
                 placeholder="搜索产品、车源、API 服务"
                 @keyup.enter="runSearch"
               />
-              <button class="absolute right-2 top-1/2 -translate-y-1/2 rounded border border-slate-200 px-1.5 py-0.5 text-xs text-slate-400" type="button" @click="runSearch">⌘ K</button>
+              <button class="absolute right-2 top-1/2 -translate-y-1/2 rounded border border-input bg-background px-1.5 py-0.5 text-xs text-muted-foreground" type="button" @click="runSearch">⌘ K</button>
             </div>
           </div>
           <div class="flex-1" />
@@ -374,7 +373,7 @@ function closeMenu() {
           </DropdownMenu>
           <DropdownMenu>
             <DropdownMenuTrigger as-child>
-              <Button variant="ghost" size="icon" class="relative text-slate-600" @click="openNotifications">
+              <Button variant="ghost" size="icon" class="relative text-muted-foreground" @click="openNotifications">
                 <Bell class="h-4 w-4" />
                 <span v-if="unreadCount" class="absolute -right-0.5 -top-0.5 inline-flex h-4 min-w-[16px] items-center justify-center rounded-full bg-primary px-1 text-[10px] leading-none text-primary-foreground">{{ unreadCount }}</span>
               </Button>
@@ -402,11 +401,6 @@ function closeMenu() {
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" class="w-48">
               <DropdownMenuItem as-child>
-                <RouterLink to="/official-prices/submit" class="flex items-center gap-2">
-                  <ShieldCheck class="h-4 w-4" />提交低价线索
-                </RouterLink>
-              </DropdownMenuItem>
-              <DropdownMenuItem as-child>
                 <RouterLink to="/carpools/new" class="flex items-center gap-2">
                   <Upload class="h-4 w-4" />导入 / 发布车源
                 </RouterLink>
@@ -426,8 +420,8 @@ function closeMenu() {
           </RouterLink>
           <DropdownMenu v-else>
             <DropdownMenuTrigger as-child>
-              <Button variant="ghost" size="sm" class="hidden gap-2 text-slate-700 md:inline-flex">
-                <span class="grid h-7 w-7 place-items-center rounded-full bg-slate-200 text-[12px] text-slate-700">{{ currentAvatarText }}</span>
+              <Button variant="ghost" size="sm" class="hidden gap-2 text-foreground md:inline-flex">
+                <span class="grid h-7 w-7 place-items-center rounded-full bg-secondary text-[12px] text-secondary-foreground">{{ currentAvatarText }}</span>
                 <span class="font-semibold">{{ currentDisplayName }}</span>
                 <ChevronDown class="h-4 w-4" />
               </Button>

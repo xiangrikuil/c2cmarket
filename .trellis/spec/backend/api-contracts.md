@@ -125,6 +125,11 @@ GET  /api/v1/admin/official-price-leads/{id}
 POST /api/v1/admin/official-price-leads/{id}/approve
 POST /api/v1/admin/official-price-leads/{id}/reject
 POST /api/v1/admin/official-price-leads/{id}/request-changes
+GET  /api/v1/admin/official-price-records
+POST /api/v1/admin/official-price-records
+GET  /api/v1/admin/official-price-records/{id}
+PUT  /api/v1/admin/official-price-records/{id}
+POST /api/v1/admin/official-price-records/{id}/take-down
 GET  /api/v1/admin/carpools
 GET  /api/v1/admin/carpools/{id}
 POST /api/v1/admin/carpools/{id}/approve
@@ -199,10 +204,10 @@ If-Match: "<version>"                            # required for versioned admin 
 - `GET /readyz` is an unversioned operational endpoint. It returns process/database readiness, `schema_migrations` state, and the expected migration version when PostgreSQL is configured; business APIs must not depend on it for authorization or user-visible status.
 - State-changing endpoints must call session and CSRF validation before decoding business actions.
 - Create/action endpoints must reserve an idempotency entry before running the action and replay completed responses when method, route key, key, and request hash match.
-- Multi-row state-changing actions with durable side effects, such as official price approval, carpool application acceptance, carpool join/completion, and API purchase-intent creation/actions, must write the completed idempotency response cache in the same PostgreSQL transaction as the business rows/events/audit/notifications. Do not leave a committed business side effect with a still-processing idempotency row.
+- Multi-row state-changing actions with durable side effects, such as admin official price record create/update/take-down, legacy official price approval, carpool application acceptance, carpool join/completion, and API purchase-intent creation/actions, must write the completed idempotency response cache in the same PostgreSQL transaction as the business rows/events/audit/notifications. Do not leave a committed business side effect with a still-processing idempotency row.
 - Versioned admin actions must require `If-Match`; missing preconditions return `428 PRECONDITION_REQUIRED`, stale versions return `412 VERSION_CONFLICT`. Do not accept a body-level `expectedVersion` in new endpoints.
-- Official price lead public submission accepts only raw observed fields. It must reject public authority fields such as `fxRate`, `normalizedMonthlyCny`, `fingerprint`, and `offerKey` through strict JSON decoding.
-- Official price lead approval computes normalized CNY price, fingerprint, and offer key server-side/admin-side. The PostgreSQL runtime writes the lead update, price record, domain event, admin audit log, submitter notification, and completed idempotency response cache in one transaction.
+- Public `POST /api/v1/official-price-leads` is a disabled compatibility endpoint. It must not create leads or records and returns `403 OFFICIAL_PRICE_USER_SUBMIT_DISABLED`.
+- Admin official price record create/update computes normalized CNY price, fingerprint, and offer key server-side/admin-side. The PostgreSQL runtime writes the compatibility lead, price record, domain event, admin audit log, notification, and completed idempotency response cache in one transaction.
 - Public official price read endpoints return active approved records only. They may expose public source URL, channel, normalized price, FX snapshot source, and offer key, but must not expose reviewed admin ID, fingerprint, duplicate detection internals, or audit fields.
 - `GET/PATCH /api/v1/me/profile` owns editable user profile, privacy flags, display name, avatar mode, username, and public-profile toggles. Public profile routes must not expose contact values, contact method IDs, hidden owner mappings, or private owner user IDs.
 - `GET/POST/PATCH /api/v1/me/merchant-profile` owns the current user's store alias profile. Self responses may include the owner ID; public merchant profile responses must not expose owner user ID or contact values.
@@ -397,12 +402,12 @@ WHERE id = $1
 
 The catalog row remains durable, and public reads decide visibility through the active-only predicate.
 
-## Scenario: Official Verified Reference Price Contract
+## Scenario: Admin-Maintained Official Price Contract
 
 ### 1. Scope / Trigger
 
-- Trigger: backend, OpenAPI, frontend adapter, smoke, or UI work touching official price public reads, official price lead submission, admin lead approval, or "lowest price" wording.
-- Product contract: official price intelligence means one verified monthly single-account opening price. It is not carpool pricing, seat sharing, bulk purchase pricing, annual lock-in pricing, or an absolute all-market lowest-price guarantee.
+- Trigger: backend, OpenAPI, frontend adapter, smoke, or UI work touching official price public reads, admin official price maintenance, legacy official price lead routes, or "lowest price" wording.
+- Product contract: official price intelligence means one admin-maintained monthly single-account official opening price. It is not carpool pricing, seat sharing, bulk purchase pricing, annual lock-in pricing, user-submitted lead collection, or an absolute all-market lowest-price guarantee.
 
 ### 2. Signatures
 
@@ -412,6 +417,33 @@ Cookie: c2c_session=<buyer session>
 X-CSRF-Token: <session token>
 Idempotency-Key: <opaque key>
 Body: SubmitOfficialPriceLeadRequest
+Response: 403 Problem Details code=OFFICIAL_PRICE_USER_SUBMIT_DISABLED
+
+GET /api/v1/admin/official-price-records
+Response: OfficialPriceRecordList including active, superseded, and taken_down records
+
+POST /api/v1/admin/official-price-records
+Cookie: c2c_session=<admin session>
+X-CSRF-Token: <session token>
+Idempotency-Key: <opaque key>
+Body: AdminOfficialPriceRecordRequest
+Response: OfficialPriceRecord
+
+PUT /api/v1/admin/official-price-records/{id}
+Cookie: c2c_session=<admin session>
+X-CSRF-Token: <session token>
+Idempotency-Key: <opaque key>
+If-Match: "<record version>"
+Body: AdminOfficialPriceRecordRequest
+Response: replacement OfficialPriceRecord
+
+POST /api/v1/admin/official-price-records/{id}/take-down
+Cookie: c2c_session=<admin session>
+X-CSRF-Token: <session token>
+Idempotency-Key: <opaque key>
+If-Match: "<record version>"
+Body: { "reason": string }
+Response: OfficialPriceRecord status="taken_down"
 
 GET /api/v1/official-prices
 Response: OfficialPriceRecordList
@@ -422,22 +454,30 @@ Response: OfficialPriceRecord
 
 ### 3. Contracts
 
-- `SubmitOfficialPriceLeadRequest` accepts only observed single-account monthly price fields:
+- Public submit is disabled. `SubmitOfficialPriceLeadRequest` is retained only so old clients receive a stable `OFFICIAL_PRICE_USER_SUBMIT_DISABLED` problem instead of silently creating a user lead.
+- `AdminOfficialPriceRecordRequest` accepts admin-maintained single-account monthly official price fields:
   - `productText`, optional `productPlanId`, optional `planText`
   - `regionCode`, `channel`, `openingMethod`
-  - `sourceUrl`, optional `sourceTitle`, optional `evidenceSummary`, optional `note`
+  - `sourceUrl`
   - `observedAt`
   - `billingPeriod="monthly"`
-  - `currency`, `originalAmount`, `originalPriceText`, `taxIncluded`
-- Official price submit UI should source known product/plan candidates from `GET /api/v1/product-plans` instead of maintaining a separate hard-coded plan list.
-- User-entered product/plan text remains allowed. When a catalog row is selected, the frontend sends both `productPlanId` and the visible `productText` / `planText`; when the user creates a custom value, the frontend sends the text and leaves `productPlanId` empty for admin mapping.
-- Public submit must not accept `priceUnit`, `seatCount`, `quantity`, or `commitmentMonths`. Strict JSON decoding should reject them as unknown fields.
+  - `currency`, `originalAmount`, `taxIncluded`
+  - `fxRateToCny`, `fxSource`, `fxObservedAt`
+  - `validFrom`, `reason`
+- Admin maintenance UI should source known product/plan candidates from `GET /api/v1/product-plans` instead of maintaining a separate hard-coded plan list.
+- Admin-entered product/plan text remains allowed. When a catalog row is selected, the frontend sends both `productPlanId` and the visible `productText` / `planText`; custom text leaves `productPlanId` empty.
+- Admin create/update must not accept `priceUnit`, `seatCount`, `quantity`, or `commitmentMonths`. Strict JSON decoding should reject them as unknown fields.
 - The service still normalizes durable official price rows to the database baseline:
   - `price_unit='per_account'`
   - `seat_count=NULL`
   - `quantity=1`
   - `commitment_months=NULL`
-- `GET /api/v1/official-prices` returns approved active records only. Pending, changes-requested, and rejected leads remain in owner/admin lead views only.
+- Because `official_price_records.lead_id` is currently required, admin create/update internally creates an admin-owned compatibility lead in the same transaction as the active record. That lead is an audit/source carrier, not a user submission workflow.
+- Admin create for an offer supersedes any existing active record for the same offer key before writing the new active record.
+- Admin update creates a replacement active record and marks the old public record `superseded`; it does not mutate the old active row in place.
+- Admin take-down marks the active record `taken_down`. Public list/detail must not return taken-down or superseded records.
+- `GET /api/v1/admin/official-price-records` may return active, superseded, and taken_down records for maintenance and audit.
+- `GET /api/v1/official-prices` returns active records only. Legacy pending, changes-requested, and rejected leads are admin compatibility data only.
 - Public record responses include `isLowestReference`. This is a backend-derived flag, not a frontend guess.
 - Public list order is `normalized_monthly_cny ASC`, then stable tie-breakers.
 - Lowest-reference grouping uses:
@@ -449,34 +489,58 @@ Response: OfficialPriceRecord
   - `priceUnit`
   - `taxIncluded`
 - Lowest-reference grouping explicitly ignores `commitmentMonths`, `seatCount`, and `quantity`.
-- UI copy should use "已验证参考低价" or "已验证低价记录". Avoid "官方最低价", "官方已验证最低", and other absolute guarantees.
+- UI copy should use "官网公开价", "官网价格记录", "已验证参考低价", or "已验证低价记录". Avoid "官方最低价", "官方已验证最低", "全网最低", and other absolute guarantees.
 
 ### 4. Validation & Error Matrix
 
 | Condition | HTTP | Code / Behavior |
 | --- | ---: | --- |
-| Submit body contains `priceUnit`, `seatCount`, `quantity`, or `commitmentMonths` | 400 | Strict JSON unknown-field rejection |
-| Submit body contains authority fields such as `fxRate`, `normalizedMonthlyCny`, `fingerprint`, or `offerKey` | 400 | Strict JSON unknown-field rejection |
-| Submit body has custom product/plan text and empty `productPlanId` | 201 | Lead remains pending; admin resolves to a product plan during approval |
+| Public user posts `/api/v1/official-price-leads` | 403 | `OFFICIAL_PRICE_USER_SUBMIT_DISABLED`; no lead or record is created |
+| Admin create/update body contains `priceUnit`, `seatCount`, `quantity`, or `commitmentMonths` | 400 | Strict JSON unknown-field rejection |
+| Admin create/update body contains authority fields such as `fingerprint` or `offerKey` | 400 | Strict JSON unknown-field rejection |
+| Admin create/update has custom product/plan text and empty `productPlanId` | 201/200 | Record is created with text fields and no catalog mapping |
 | `billingPeriod` is not `monthly` | 422 | `PRICE_NORMALIZATION_REQUIRED` / validation field error |
-| Public list contains pending / rejected lead | Bug | Public list must source only active records |
+| Missing `If-Match` on admin update/take-down | 428 | `PRECONDITION_REQUIRED` |
+| Stale record version on admin update/take-down | 412 | `VERSION_CONFLICT` |
+| Public list/detail contains superseded or taken_down record | Bug | Public reads must source only active records |
 | Frontend receives missing `isLowestReference` from an older mock or fixture | N/A | Treat as `false`, never infer from `status === active` |
 
 ### 5. Good/Base/Bad Cases
 
-- Good: buyer submits a monthly single-account observed price, admin approves it, public list returns the active record sorted by normalized monthly CNY and marks the group reference low via `isLowestReference`.
-- Base: a new approved record with the same `offer_key` supersedes the previous active record; only the new active record is public.
-- Bad: frontend maps every `active` record to "lowest"; this overstates the contract and hides backend grouping mistakes.
+- Good: admin creates a monthly single-account official price, public list returns the active record sorted by normalized monthly CNY and marks the group reference low via `isLowestReference`.
+- Base: admin edits an active record; the response is a replacement active record, the old record becomes `superseded`, and public detail for the old record returns `404 OBJECT_NOT_FOUND`.
+- Base: admin takes down an active record; admin list still shows it as `taken_down`, while public list/detail hide it.
+- Bad: a public user submit request creates a lead, admin UI exposes "submit low-price lead", or frontend maps every `active` record to "lowest".
 
 ### 6. Tests Required
 
-- Handler tests must assert deprecated public submit fields are rejected.
+- Handler tests must assert public submit returns `403 OFFICIAL_PRICE_USER_SUBMIT_DISABLED`.
+- Handler/service tests must assert admin create, update replacement, take-down, required `If-Match`, active-only public listing, and hidden public detail for superseded/taken-down records.
 - Service tests must assert `isLowestReference` ignores `commitmentMonths`, `seatCount`, and `quantity`.
 - Public API tests must assert active-only listing, price ascending order, and `isLowestReference` on list/detail responses.
-- OpenAPI route parity tests must pass after changing official price DTOs.
+- PostgreSQL integration tests must assert admin create/update/take-down writes record, compatibility lead, domain event, admin audit log, notification, and completed idempotency cache in one transaction.
+- OpenAPI route parity and YAML parse tests must pass after changing official price DTOs.
 - Frontend type-check must pass after adapter DTO changes.
+- Smoke must cover disabled public submit plus admin create/update/take-down and search creation through admin records.
 
 ### 7. Wrong vs Correct
+
+#### Wrong
+
+```ts
+await submitOfficialPriceLead(userPayload)
+await approveOfficialPriceLead(lead.id)
+```
+
+This revives the user-submitted lead workflow and exposes a product path that no longer exists.
+
+#### Correct
+
+```ts
+await createAdminOfficialPriceRecord(adminPayload)
+```
+
+Admin maintenance is the only current write path for official price records.
 
 #### Wrong
 

@@ -1,0 +1,94 @@
+/*
+ * C2CMarket 极简电蓝主题。
+ * 来源：用户提供的 Minimalist Modern 主题提示词，按现有语义变量体系落地。
+ */
+
+html[data-theme="minimal-modern"] {
+  color-scheme: light;
+
+  --radius: 0.75rem;
+  --radius-card: 1rem;
+  --radius-control: 0.75rem;
+
+  --background: #fafafa;
+  --foreground: #0f172a;
+
+  --card: #ffffff;
+  --card-foreground: #0f172a;
+
+  --popover: #ffffff;
+  --popover-foreground: #0f172a;
+
+  --primary: #0052ff;
+  --primary-foreground: #ffffff;
+
+  --secondary: #f1f5f9;
+  --secondary-foreground: #0f172a;
+
+  --muted: #f1f5f9;
+  --muted-foreground: #64748b;
+
+  --accent: #eef4ff;
+  --accent-foreground: #0052ff;
+
+  --destructive: #dc2626;
+  --destructive-foreground: #ffffff;
+
+  --border: #e2e8f0;
+  --input: #e2e8f0;
+  --ring: #0052ff;
+
+  --chart-1: #0052ff;
+  --chart-2: #4d7cff;
+  --chart-3: #7aa2ff;
+  --chart-4: #0f172a;
+  --chart-5: #f59e0b;
+
+  --sidebar: #ffffff;
+  --sidebar-foreground: #0f172a;
+  --sidebar-primary: #0052ff;
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-accent: #eef4ff;
+  --sidebar-accent-foreground: #0052ff;
+  --sidebar-border: #e2e8f0;
+  --sidebar-ring: #0052ff;
+
+  --success: #0052ff;
+  --success-foreground: #ffffff;
+  --warning: #d97706;
+  --warning-foreground: #0f172a;
+  --info: #4d7cff;
+  --info-foreground: #ffffff;
+  --signal: #0052ff;
+  --signal-foreground: #ffffff;
+  --signal-soft: rgb(0 82 255 / 0.08);
+  --mesh-a: rgb(0 82 255 / 0.08);
+  --mesh-b: rgb(77 124 255 / 0.06);
+  --scrollbar-track: #f1f5f9;
+  --scrollbar-thumb: #cbd5e1;
+  --scrollbar-thumb-hover: #94a3b8;
+  --scrollbar-thumb-active: #64748b;
+
+  --shadow-2xs: 0 1px 2px 0 rgb(15 23 42 / 0.04);
+  --shadow-xs: 0 1px 2px 0 rgb(15 23 42 / 0.05);
+  --shadow-sm: 0 1px 3px 0 rgb(15 23 42 / 0.06), 0 1px 2px -1px rgb(15 23 42 / 0.05);
+  --shadow: 0 4px 12px -6px rgb(15 23 42 / 0.13);
+  --shadow-md: 0 8px 20px -10px rgb(15 23 42 / 0.16);
+  --shadow-lg: 0 14px 34px -18px rgb(15 23 42 / 0.20);
+  --shadow-xl: 0 24px 52px -24px rgb(15 23 42 / 0.24);
+  --shadow-2xl: 0 36px 72px -30px rgb(15 23 42 / 0.30);
+
+  --surface-raised-sm: 0 1px 3px rgb(15 23 42 / 0.06), 0 1px 2px -1px rgb(15 23 42 / 0.05);
+  --surface-raised: 0 10px 26px -20px rgb(15 23 42 / 0.24);
+  --surface-hover: 0 18px 42px -24px rgb(15 23 42 / 0.28);
+  --surface-inset: inset 0 0 0 1px var(--input);
+  --surface-inset-deep: inset 0 0 0 1px var(--input), 0 0 0 3px rgb(0 82 255 / 0.08);
+  --surface-pressed: inset 0 2px 4px rgb(15 23 42 / 0.10);
+  --surface-ring-shadow: 0 0 0 3px rgb(0 82 255 / 0.16);
+  --accent-gradient: linear-gradient(135deg, #0052ff, #4d7cff);
+  --accent-gradient-soft: linear-gradient(135deg, rgb(0 82 255 / 0.10), rgb(77 124 255 / 0.06));
+  --app-body-background:
+    radial-gradient(circle at 18% 0%, rgb(0 82 255 / 0.045) 0 240px, transparent 300px),
+    linear-gradient(180deg, #ffffff 0%, #fafafa 42%, #f8fafc 100%);
+  --app-grid-line: rgb(226 232 240 / 0.70);
+}

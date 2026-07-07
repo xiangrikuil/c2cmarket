@@ -356,7 +356,7 @@ func toMyProfileResponse(value profile.UserProfile) myProfileResponse {
 			LastSyncedAt:     formatOptionalTime(value.LinuxDoLastSyncedAt),
 		},
 		Badges:       badgesFor(value),
-		Restrictions: value.Restrictions,
+		Restrictions: stringList(value.Restrictions),
 		UsernameChangePolicy: usernameChangePolicyDTO{
 			CanChange:       value.UsernameCanChange,
 			NextAvailableAt: formatOptionalTime(value.UsernameNextChangeAt),
@@ -469,6 +469,13 @@ func permissionsFor(isAdmin bool) []string {
 		return []string{"admin"}
 	}
 	return []string{}
+}
+
+func stringList(values []string) []string {
+	if values == nil {
+		return []string{}
+	}
+	return values
 }
 
 func badgesFor(value profile.UserProfile) []string {

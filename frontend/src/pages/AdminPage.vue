@@ -35,7 +35,7 @@ const overviewCards = computed(() => (data.value ?? []).map((card, index) => ({
     <div class="flex flex-wrap items-end justify-between gap-4">
       <div>
         <h1 class="text-3xl font-semibold tracking-tight">管理台</h1>
-        <p class="mt-2 text-muted-foreground">审核线索、治理车源、管理求车、API 商户和交易意向。所有关键操作保留日志。</p>
+        <p class="mt-2 text-muted-foreground">维护官网价格、治理车源、管理求车、API 商户和交易意向。所有关键操作保留日志。</p>
       </div>
       <Badge>管理员</Badge>
     </div>
@@ -45,7 +45,6 @@ const overviewCards = computed(() => (data.value ?? []).map((card, index) => ({
         ['套餐目录', '/admin/product-plans'],
         ['API 模型目录', '/admin/api-models'],
         ['模型审计', '/admin/model-audit'],
-        ['低价线索', '/admin/price-leads'],
         ['车源治理', '/admin/carpools'],
         ['求车管理', '/admin/demands'],
         ['API 商户', '/admin/api-merchants'],
@@ -72,7 +71,11 @@ const overviewCards = computed(() => (data.value ?? []).map((card, index) => ({
             <td>{{ item.region }}</td>
             <td class="font-semibold">{{ item.cny ? `¥${item.cny}` : '待验证' }}</td>
             <td><Badge :variant="item.status === '已验证' ? 'default' : 'secondary'">{{ item.status }}</Badge></td>
-            <td><Button size="sm" @click="toast(`正在编辑 ${item.product} ${item.plan} 的价格记录。`)">编辑</Button></td>
+            <td>
+              <Button size="sm" as-child>
+                <RouterLink to="/admin/official-prices">维护</RouterLink>
+              </Button>
+            </td>
           </tr>
           <template #footer>
             <TablePagination
