@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, reactive, ref, watch } from 'vue'
-import { RouterLink } from 'vue-router'
+import { RouterLink, useRoute } from 'vue-router'
 import { useMutation, useQueryClient } from '@tanstack/vue-query'
 import { Eye, Send, ShieldCheck } from 'lucide-vue-next'
 import { toast } from 'vue-sonner'
@@ -33,6 +33,8 @@ import { Card } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { containsSensitiveContent, firstError, type FieldErrors } from '@/lib/formValidation'
 import { submitApiService } from '@/lib/api'
+import { trackAnalytics } from '@/lib/analytics'
+import { beijingDateTimeInputToISOString, defaultQuotaExpiresAtInput } from '@/lib/apiQuotaExpiration'
 import { apiPaymentSettingsMissingReason, cloneApiPaymentAccountSettings, isApiPaymentAccountSettingsComplete, isApiPaymentOptionComplete, isApiPaymentWindowValid } from '@/lib/apiPaymentSettings'
 import { useApiPaymentAccountSettingsQuery, useModelCatalog } from '@/queries/useMarketQueries'
 
@@ -43,6 +45,7 @@ type Field =
   | 'cnyPerUsdCredit'
   | 'selectedModels'
   | 'availableCreditUsd'
+  | 'quotaExpiresAt'
   | 'paymentWindowMinutes'
   | 'paymentOptions'
   | 'merchantNote'
@@ -51,6 +54,8 @@ type Field =
 const { data: modelCatalog, isLoading: catalogLoading } = useModelCatalog()
 const { data: accountPaymentSettings, isLoading: paymentSettingsLoading } = useApiPaymentAccountSettingsQuery()
 const queryClient = useQueryClient()
+const route = useRoute()
+const analyticsSourceRoute = () => String(route.name ?? 'unknown')
 const submittedId = ref('')
 const errors = reactive<FieldErrors<Field>>({})
 const pendingProviderCategory = ref<ApiProviderCategory | null>(null)
@@ -79,6 +84,7 @@ const form = reactive<ApiServicePublishForm>({
     note: '',
   },
   availableCreditUsd: 500,
+  quotaExpiresAt: defaultQuotaExpiresAtInput(),
   minimumPurchaseCny: 20,
   maximumPurchaseCny: 300,
   paymentWindowMinutes: defaultPaymentWindowMinutes,
@@ -176,6 +182,9 @@ function validate(requireComplete: boolean) {
     next.cnyPerUsdCredit = '每 $1 美元额度售价必须大于 0。'
   }
   if (!form.availableCreditUsd || form.availableCreditUsd <= 0) next.availableCreditUsd = '可售美元额度必须大于 0。'
+  const quotaExpiresAtISO = beijingDateTimeInputToISOString(form.quotaExpiresAt)
+  if (!quotaExpiresAtISO) next.quotaExpiresAt = '请填写有效的额度有效至时间。'
+  else if (new Date(quotaExpiresAtISO).getTime() <= Date.now()) next.quotaExpiresAt = '额度有效至时间必须晚于当前时间。'
   if (!form.selectedModels.some(item => item.enabled)) next.selectedModels = '至少选择一个模型。'
   if (missingSelectedModels.value.length) next.selectedModels = '已选模型不在当前后端模型目录中，请重新选择。'
   if (incompatibleSelectedModels.value.length) next.selectedModels = '已选模型必须全部属于当前模型大类。'
@@ -200,6 +209,7 @@ function validate(requireComplete: boolean) {
     delete next.providerCategory
     delete next.selectedModels
     delete next.availableCreditUsd
+    delete next.quotaExpiresAt
     delete next.cnyPerUsdCredit
     delete next.paymentWindowMinutes
     delete next.paymentOptions
@@ -218,6 +228,7 @@ const completeness = computed(() => {
     form.merchantIdentityMode === 'public_profile' || form.merchantDisplayName.trim() ? done('展示身份') : pending('展示身份'),
     form.cnyPerUsdCredit && form.cnyPerUsdCredit > 0 ? done('额度售价') : pending('额度售价'),
     form.availableCreditUsd && form.availableCreditUsd > 0 ? done('可售额度') : pending('可售额度'),
+    beijingDateTimeInputToISOString(form.quotaExpiresAt) ? done('有效时间') : pending('有效时间'),
     accountPaymentSettingsComplete.value && paymentSettingsComplete.value ? done('收款方式') : pending('收款方式'),
     form.providerCategory ? done('模型大类') : pending('模型大类'),
     incompatibleSelectedModels.value.length ? conflict('具体模型') : form.selectedModels.some(item => item.enabled) ? done('具体模型') : pending('具体模型'),
@@ -257,6 +268,13 @@ const publishMutation = useMutation({
   async onSuccess(result) {
     submittedId.value = String(result.id)
     await invalidateApiServicePublishQueries()
+    trackAnalytics('api_service_publish_success', {
+      source_route: analyticsSourceRoute(),
+      provider_category: form.providerCategory,
+      billing_mode: form.billingMode,
+      delivery_mode: form.deliveryModes[0],
+      minimum_purchase_cny: form.minimumPurchaseCny,
+    })
     toast.success('API 服务已发布并开启接单，已进入公开服务列表。')
   },
   onError(error) {

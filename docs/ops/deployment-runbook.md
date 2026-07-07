@@ -35,6 +35,7 @@ Replace every `CHANGE_ME` value before production use:
 - `SMTP_PASSWORD`
 - `MAIL_FROM_ADDRESS`
 - `VITE_API_BASE_URL`
+- Optional Umami tracker fields: `VITE_UMAMI_ENABLED`, `VITE_UMAMI_SCRIPT_URL`, `VITE_UMAMI_WEBSITE_ID`, `VITE_UMAMI_DOMAINS`, `VITE_UMAMI_HOST_URL`
 
 Production must keep:
 
@@ -67,6 +68,24 @@ MAIL_FROM_NAME=C2CMarket
 ```
 
 If the Aliyun DirectMail SMTP account or sender address is not ready yet, keep the `CHANGE_ME` placeholders in the template but do not start production; the backend intentionally fails fast when SMTP credentials are missing.
+
+Optional Umami analytics:
+
+```text
+VITE_UMAMI_ENABLED=true
+VITE_UMAMI_SCRIPT_URL=https://<umami-origin>/script.js
+VITE_UMAMI_WEBSITE_ID=<website-id>
+VITE_UMAMI_DOMAINS=<frontend-domain>
+VITE_UMAMI_HOST_URL=https://<umami-origin>
+```
+
+Only public tracker configuration belongs in `VITE_*`. Do not expose Umami API keys,
+admin credentials, share URLs, report URLs, or dashboard-only URLs to the frontend.
+The frontend custom events intentionally send low-cardinality product, price bucket,
+seat bucket, result bucket, entity type, and reason-code fields only. They must not
+include raw search terms, URL query strings, user IDs, contact values, report text,
+linux.do identifiers, payment instructions, API keys, tokens, sessions, cookies, or
+panel credentials.
 
 ## First Deploy
 
@@ -103,7 +122,7 @@ curl -fsS http://127.0.0.1:${BACKEND_PORT:-8080}/readyz
 ```
 
 `/readyz` must report PostgreSQL readiness and `schemaDirty=false`.
-The expected schema version in the current backend is `36`.
+The expected schema version in the current backend is `38`.
 
 ## Backend Hardening Checks
 
@@ -172,6 +191,11 @@ pnpm --dir frontend build
 Deploy `frontend/dist/` with a static file server or CDN. The SPA should route all frontend paths to `index.html`; API requests should go to the Go backend origin configured by `VITE_API_BASE_URL`.
 Production builds intentionally fail when `VITE_ENABLE_MOCK=true`, and must not
 ship a mock/demo fallback.
+
+When Umami is enabled, verify the browser loads the configured tracker script and
+that custom events appear in Umami Events. Network checks should show requests to
+the Umami collector after route views or success actions, but the request payload
+must not contain raw search text, contact details, report descriptions, or IDs.
 
 ## Source Package
 

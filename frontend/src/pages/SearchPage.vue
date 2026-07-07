@@ -7,16 +7,23 @@ import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import PageTitle from '@/components/market/PageTitle.vue'
+import { trackAnalytics } from '@/lib/analytics'
 import { useSearchMarket } from '@/queries/useMarketQueries'
 
 const route = useRoute()
 const router = useRouter()
+const analyticsSourceRoute = () => String(route.name ?? 'unknown')
 const keyword = computed(() => String(route.query.q ?? '').trim())
 const draft = ref(keyword.value)
+const pendingSearchKeyword = ref<string | null>(null)
 const { data, isFetching } = useSearchMarket(keyword)
 
 watch(keyword, value => {
   draft.value = value
+})
+
+watch([data, isFetching], () => {
+  flushPendingSearchTrack()
 })
 
 const groupedResults = computed(() => {
@@ -27,9 +34,23 @@ const groupedResults = computed(() => {
   return Array.from(groups.entries()).map(([type, rows]) => ({ type, rows }))
 })
 
+function flushPendingSearchTrack() {
+  if (pendingSearchKeyword.value === null || isFetching.value || keyword.value !== pendingSearchKeyword.value) return
+  trackAnalytics('search_submit', {
+    source_route: analyticsSourceRoute(),
+    has_query: Boolean(keyword.value),
+    result_count: data.value?.length ?? 0,
+    filters_count: 0,
+  })
+  pendingSearchKeyword.value = null
+}
+
 function runSearch() {
   const q = draft.value.trim()
-  router.push(q ? { path: '/search', query: { q } } : { path: '/search' })
+  pendingSearchKeyword.value = q
+  void router.push(q ? { path: '/search', query: { q } } : { path: '/search' }).finally(() => {
+    flushPendingSearchTrack()
+  })
 }
 </script>
 

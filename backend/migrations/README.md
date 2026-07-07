@@ -46,6 +46,8 @@ versions:
 | `000034_api_model_provider_catalog` | managed API model providers and provider-backed model catalog |
 | `000035_password_argon2_admin_bootstrap` | Argon2id password algorithm support and fixed admin seed cleanup |
 | `000036_search_trigram_alignment` | merchant-profile trigram expression alignment for display-name-only public search |
+| `000037_model_audit` | model audit targets, encrypted API key storage, baselines, runs, samples, probe scores, passive call features, and scheduled monitors |
+| `000038_api_service_quota_expires_at` | fixed expiration timestamp for metered API quota service listings |
 
 The current runnable Go slice supports both in-memory tests and PostgreSQL runtime.
 When `DATABASE_URL` is configured, users, auth sessions, idempotency, product
@@ -122,6 +124,10 @@ verify that global search predicates keep matching the expression indexes.
 Version 36 realigns the merchant-profile trigram index to `lower(display_name)`
 so store-alias API service search can use the index while preserving the public
 search contract that matches and displays public merchant display names only.
+
+Version 38 adds `api_services.quota_expires_at` for metered USD quota listings.
+Metered API quota services must have a fixed future expiration timestamp, and
+public orderable predicates exclude expired quota listings.
 
 Version 21 stores `carpool_reviews`. Reviews are constrained to
 `source_type='carpool_membership'`, `reviewer_role='buyer'`, and

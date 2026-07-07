@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, reactive, ref, watch } from 'vue'
 import { useMutation, useQueryClient } from '@tanstack/vue-query'
-import { RouterLink } from 'vue-router'
+import { RouterLink, useRoute } from 'vue-router'
 import { ChevronDown, ChevronUp, Eye, Loader2, LogIn, RefreshCw, Save, Send, ShieldCheck } from 'lucide-vue-next'
 import { toast } from 'vue-sonner'
 import CarpoolBasicInfoSection from '@/components/carpool-publish/CarpoolBasicInfoSection.vue'
@@ -48,6 +48,7 @@ import { Textarea } from '@/components/ui/textarea'
 import { shouldUseRealBackend, startOAuthLogin } from '@/lib/backendClient'
 import { containsSensitiveContent, firstError, isLinuxDoTopicUrl, type FieldErrors } from '@/lib/formValidation'
 import { parseLinuxDoTopic, submitCarpool } from '@/lib/api'
+import { trackAnalytics } from '@/lib/analytics'
 import {
   useCarpoolOpeningChannels,
   useCarpoolPaymentMethods,
@@ -79,6 +80,8 @@ const { data: paymentMethods } = useCarpoolPaymentMethods()
 const profileQuery = useMyProfileQuery()
 const profile = profileQuery.data
 const queryClient = useQueryClient()
+const route = useRoute()
+const analyticsSourceRoute = () => String(route.name ?? 'unknown')
 
 const parsedTopic = ref<ParsedLinuxDoTopic | null>(null)
 const submittedId = ref('')
@@ -171,6 +174,15 @@ const submitReviewMutation = useMutation({
   async onSuccess(result) {
     submittedId.value = String(result.id)
     await invalidateCarpoolPublishQueries()
+    trackAnalytics('carpool_publish_success', {
+      source_route: analyticsSourceRoute(),
+      product: selectedProductForValidation.value?.categoryCode ?? form.productId,
+      monthly_price_cny: form.monthlyPriceCny,
+      seats: form.totalSeats,
+      access_mode: form.accessArrangementMode,
+      risk_ack_required: Boolean(form.riskNoticeCode),
+      risk_notice: form.riskNoticeCode ?? 'none',
+    })
     toast.success('车源已提交。')
   },
 })

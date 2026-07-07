@@ -8,11 +8,13 @@ import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import SoftTable from '@/components/market/SoftTable.vue'
 import StatusTabs from '@/components/market/StatusTabs.vue'
+import { trackAnalytics } from '@/lib/analytics'
 import { getPricingDisplay, getRemainingSeats } from '@/lib/pricing'
 import { useCreatePublicUserReportMutation, usePublicUserProfileQuery } from '@/queries/useMarketQueries'
 
 const route = useRoute()
 const router = useRouter()
+const analyticsSourceRoute = () => String(route.name ?? 'unknown')
 const username = computed(() => String(route.params.username ?? ''))
 const { data, isLoading } = usePublicUserProfileQuery(username)
 const reportMutation = useCreatePublicUserReportMutation()
@@ -46,7 +48,14 @@ function reportPublicProfile() {
     title: '公开主页举报',
     description,
   }, {
-    onSuccess: () => toast.success('举报已提交。'),
+    onSuccess: () => {
+      trackAnalytics('report_submit', {
+        source_route: analyticsSourceRoute(),
+        entity_type: 'public_user',
+        reason_code: 'other',
+      })
+      toast.success('举报已提交。')
+    },
     onError: error => toast.error(error instanceof Error ? error.message : '提交失败'),
   })
 }

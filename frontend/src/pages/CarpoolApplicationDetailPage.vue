@@ -26,12 +26,14 @@ import {
   reviewCarpoolApplication,
   withdrawCarpoolAcceptance,
 } from '@/lib/api'
+import { trackAnalytics } from '@/lib/analytics'
 import { shouldUseRealBackend } from '@/lib/backendClient'
 import { useCarpoolApplication, useCarpoolApplicationContactsQuery, useCarpoolApplicationEvents } from '@/queries/useMarketQueries'
 
 const route = useRoute()
 const router = useRouter()
 const queryClient = useQueryClient()
+const analyticsSourceRoute = () => String(route.name ?? 'unknown')
 const id = computed(() => String(route.params.id ?? ''))
 const ownerMode = computed(() => route.path.startsWith('/merchant/'))
 const { data: application, isLoading } = useCarpoolApplication(id)
@@ -168,14 +170,21 @@ function requestManualIntervention() {
   if (!application.value) return
   const description = window.prompt('请填写 4-1000 字脱敏说明。平台只记录处理状态和公开摘要，不追回付款、不托管、不担保、不裁决站外支付、不验真 API Key。')
   if (!description?.trim()) return
-  runAction(() => createManualInterventionReport({
-    targetType: 'carpool_application',
-    targetId: application.value!.id,
-    targetLabel: application.value!.snapshot.productName,
-    reasonCode: 'seat_rule_dispute',
-    title: '举报 / 申请人工介入：规则或席位争议',
-    description: description.trim(),
-  }), '已提交人工介入申请。')
+  runAction(async () => {
+    await createManualInterventionReport({
+      targetType: 'carpool_application',
+      targetId: application.value!.id,
+      targetLabel: application.value!.snapshot.productName,
+      reasonCode: 'seat_rule_dispute',
+      title: '举报 / 申请人工介入：规则或席位争议',
+      description: description.trim(),
+    })
+    trackAnalytics('report_submit', {
+      source_route: analyticsSourceRoute(),
+      entity_type: 'carpool_application',
+      reason_code: 'seat_rule_dispute',
+    })
+  }, '已提交人工介入申请。')
 }
 
 function submitReview() {

@@ -12,6 +12,7 @@ import (
 	"c2c-market/backend/internal/module/demand"
 	"c2c-market/backend/internal/module/feedback"
 	"c2c-market/backend/internal/module/idempotency"
+	"c2c-market/backend/internal/module/modelaudit"
 	"c2c-market/backend/internal/module/officialprice"
 	"c2c-market/backend/internal/module/profile"
 	"c2c-market/backend/internal/module/report"
@@ -241,3 +242,21 @@ type FeedbackSupplementInput = feedback.SupplementInput
 type FeedbackAdminHandleInput = feedback.AdminHandleInput
 
 type FeedbackCompletionBuilder = feedback.CompletionBuilder
+
+type ModelAuditTarget = modelaudit.Target
+
+type ModelAuditTargetInput = modelaudit.TargetInput
+
+type ModelAuditBaseline = modelaudit.Baseline
+
+type ModelAuditBaselineInput = modelaudit.BaselineInput
+
+type ModelAuditRun = modelaudit.Run
+
+type ModelAuditRunInput = modelaudit.RunInput
+
+type ModelAuditReport = modelaudit.AuditReport
+
+type ModelAuditMonitor = modelaudit.Monitor
+
+type ModelAuditMonitorInput = modelaudit.MonitorInput

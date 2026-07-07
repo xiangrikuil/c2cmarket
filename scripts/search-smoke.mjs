@@ -211,6 +211,7 @@ async function createAPIService(owner, keyword) {
       billingMode: 'metered_usd_quota',
       declaredCnyPerUsdAllowance: '0.8',
       declaredMaxUsdAllowancePerIntent: '100',
+      quotaExpiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
       minimumIntentCny: '20',
       maximumIntentCny: '300',
       usageVisibility: 'offsite_panel_readonly',

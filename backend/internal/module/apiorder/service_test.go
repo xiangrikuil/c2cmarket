@@ -145,6 +145,7 @@ func (r *testPublicServiceResolver) PublicService(context.Context, string) (apim
 }
 
 func testOrderableService(now time.Time) apimarket.Service {
+	quotaExpiresAt := now.Add(30 * 24 * time.Hour)
 	return apimarket.Service{
 		ID:                         "service-1",
 		OwnerUserID:                "seller-1",
@@ -153,6 +154,7 @@ func testOrderableService(now time.Time) apimarket.Service {
 		DistributionSystem:         apimarket.ServiceDistributionSub2API,
 		BillingMode:                apimarket.ServiceBillingModeMetered,
 		DeclaredCNYPerUSDAllowance: "0.8000",
+		QuotaExpiresAt:             &quotaExpiresAt,
 		MinimumIntentCNY:           "10.00",
 		AcceptingOrders:            true,
 		PaymentWindowMinutes:       10,

@@ -9,6 +9,7 @@ import {
   merchantNoteTemplate,
 } from '../utils.ts'
 import type { ApiServicePublishForm } from '../types.ts'
+import { beijingDateTimeInputToISOString } from '@/lib/apiQuotaExpiration'
 
 test('applies simplified API quota publish defaults', () => {
   const form: ApiServicePublishForm = {
@@ -33,6 +34,7 @@ test('applies simplified API quota publish defaults', () => {
       note: '旧图像能力',
     },
     availableCreditUsd: 500,
+    quotaExpiresAt: '2026-07-10T00:00',
     minimumPurchaseCny: null,
     maximumPurchaseCny: null,
     paymentWindowMinutes: defaultPaymentWindowMinutes,
@@ -68,7 +70,7 @@ test('applies simplified API quota publish defaults', () => {
   assert.deepEqual(form.paymentOptions.map(item => item.paymentMethod), ['wechat', 'alipay', 'usdt'])
   assert.equal(form.paymentOptions.some(item => item.enabled), false)
   assert.equal(form.paymentOptions.every(item => item.paymentQrCodeDataUrl === null), true)
-  assert.deepEqual(form.validity, { mode: 'days', days: 30, startsAt: 'delivered_at' })
+  assert.equal(form.quotaExpiresAt, '2026-07-10T00:00')
   assert.equal(form.warranty.mode, 'no_warranty')
   assert.equal(form.warranty.warrantyDays, null)
   assert.equal(form.imageCapability.enabled, false)
@@ -79,4 +81,10 @@ test('applies simplified API quota publish defaults', () => {
   assert.match(merchantNoteTemplate, /接入方式：/)
   assert.match(apiQuotaBoundaryNotice, /不托管支付/)
   assert.match(apiQuotaBoundaryNotice, /不保存 API Key/)
+})
+
+test('converts Beijing quota expiration input to a backend timestamp', () => {
+  assert.equal(beijingDateTimeInputToISOString('2026-07-10T00:00'), '2026-07-09T16:00:00.000Z')
+  assert.equal(beijingDateTimeInputToISOString('  '), '')
+  assert.equal(beijingDateTimeInputToISOString('invalid'), '')
 })

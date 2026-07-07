@@ -4766,6 +4766,296 @@ paths:
           $ref: "#/components/responses/Problem"
         "404":
           $ref: "#/components/responses/Problem"
+  /api/v1/admin/model-audit/targets:
+    get:
+      operationId: listAdminModelAuditTargets
+      tags: [AdminModelAudit]
+      summary: List model audit targets.
+      responses:
+        "200":
+          description: Admin model audit targets. Plaintext API keys are never returned.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ModelAuditTargetList"
+        "403":
+          $ref: "#/components/responses/Problem"
+    post:
+      operationId: createAdminModelAuditTarget
+      tags: [AdminModelAudit]
+      security:
+        - sessionCookie: []
+          csrfToken: []
+      summary: Create a model audit target with an encrypted API key.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ModelAuditTargetRequest"
+      responses:
+        "201":
+          description: Model audit target created. Plaintext API keys are never returned.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ModelAuditTarget"
+        "403":
+          $ref: "#/components/responses/Problem"
+        "409":
+          $ref: "#/components/responses/Problem"
+        "422":
+          $ref: "#/components/responses/Problem"
+  /api/v1/admin/model-audit/targets/{id}:
+    get:
+      operationId: getAdminModelAuditTarget
+      tags: [AdminModelAudit]
+      parameters:
+        - $ref: "#/components/parameters/ResourceId"
+      responses:
+        "200":
+          description: Admin model audit target detail without plaintext API key.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ModelAuditTarget"
+        "403":
+          $ref: "#/components/responses/Problem"
+        "404":
+          $ref: "#/components/responses/Problem"
+    patch:
+      operationId: updateAdminModelAuditTarget
+      tags: [AdminModelAudit]
+      security:
+        - sessionCookie: []
+          csrfToken: []
+      parameters:
+        - $ref: "#/components/parameters/ResourceId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ModelAuditTargetRequest"
+      responses:
+        "200":
+          description: Model audit target updated. Omit apiKey or pass an empty string to keep the existing encrypted key.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ModelAuditTarget"
+        "403":
+          $ref: "#/components/responses/Problem"
+        "404":
+          $ref: "#/components/responses/Problem"
+        "409":
+          $ref: "#/components/responses/Problem"
+        "422":
+          $ref: "#/components/responses/Problem"
+    delete:
+      operationId: deleteAdminModelAuditTarget
+      tags: [AdminModelAudit]
+      security:
+        - sessionCookie: []
+          csrfToken: []
+      parameters:
+        - $ref: "#/components/parameters/ResourceId"
+      responses:
+        "204":
+          description: Model audit target disabled or deleted.
+        "403":
+          $ref: "#/components/responses/Problem"
+        "404":
+          $ref: "#/components/responses/Problem"
+  /api/v1/admin/model-audit/baselines:
+    get:
+      operationId: listAdminModelAuditBaselines
+      tags: [AdminModelAudit]
+      responses:
+        "200":
+          description: Admin model audit baselines.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ModelAuditBaselineList"
+        "403":
+          $ref: "#/components/responses/Problem"
+    post:
+      operationId: createAdminModelAuditBaseline
+      tags: [AdminModelAudit]
+      security:
+        - sessionCookie: []
+          csrfToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ModelAuditBaselineRequest"
+      responses:
+        "201":
+          description: Model audit baseline created.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ModelAuditBaseline"
+        "403":
+          $ref: "#/components/responses/Problem"
+        "422":
+          $ref: "#/components/responses/Problem"
+  /api/v1/admin/model-audit/baselines/{id}:
+    get:
+      operationId: getAdminModelAuditBaseline
+      tags: [AdminModelAudit]
+      parameters:
+        - $ref: "#/components/parameters/ResourceId"
+      responses:
+        "200":
+          description: Admin model audit baseline detail.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ModelAuditBaseline"
+        "403":
+          $ref: "#/components/responses/Problem"
+        "404":
+          $ref: "#/components/responses/Problem"
+  /api/v1/admin/model-audit/runs:
+    get:
+      operationId: listAdminModelAuditRuns
+      tags: [AdminModelAudit]
+      responses:
+        "200":
+          description: Admin model audit runs.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ModelAuditRunList"
+        "403":
+          $ref: "#/components/responses/Problem"
+    post:
+      operationId: createAdminModelAuditRun
+      tags: [AdminModelAudit]
+      security:
+        - sessionCookie: []
+          csrfToken: []
+      summary: Run a quick, standard, strict, or scheduled model audit.
+      description: Runs generate risk signals and evidence only; they are not legal, cryptographic, or absolute proof of model identity.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ModelAuditRunRequest"
+      responses:
+        "201":
+          description: Model audit run created and executed or failed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ModelAuditRun"
+        "403":
+          $ref: "#/components/responses/Problem"
+        "422":
+          $ref: "#/components/responses/Problem"
+  /api/v1/admin/model-audit/runs/{id}:
+    get:
+      operationId: getAdminModelAuditRun
+      tags: [AdminModelAudit]
+      parameters:
+        - $ref: "#/components/parameters/ResourceId"
+      responses:
+        "200":
+          description: Admin model audit run detail.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ModelAuditRun"
+        "403":
+          $ref: "#/components/responses/Problem"
+        "404":
+          $ref: "#/components/responses/Problem"
+  /api/v1/admin/model-audit/runs/{id}/cancel:
+    post:
+      operationId: cancelAdminModelAuditRun
+      tags: [AdminModelAudit]
+      security:
+        - sessionCookie: []
+          csrfToken: []
+      parameters:
+        - $ref: "#/components/parameters/ResourceId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/EmptyRequest"
+      responses:
+        "200":
+          description: Model audit run cancelled when still cancellable.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ModelAuditRun"
+        "403":
+          $ref: "#/components/responses/Problem"
+        "404":
+          $ref: "#/components/responses/Problem"
+        "409":
+          $ref: "#/components/responses/Problem"
+  /api/v1/admin/model-audit/runs/{id}/report:
+    get:
+      operationId: getAdminModelAuditReport
+      tags: [AdminModelAudit]
+      parameters:
+        - $ref: "#/components/parameters/ResourceId"
+      responses:
+        "200":
+          description: JSON and Markdown report for a model audit run.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ModelAuditReport"
+        "403":
+          $ref: "#/components/responses/Problem"
+        "404":
+          $ref: "#/components/responses/Problem"
+  /api/v1/admin/model-audit/scheduled-monitors:
+    get:
+      operationId: listAdminModelAuditScheduledMonitors
+      tags: [AdminModelAudit]
+      responses:
+        "200":
+          description: Admin model audit scheduled monitor configurations.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ModelAuditMonitorList"
+        "403":
+          $ref: "#/components/responses/Problem"
+    post:
+      operationId: createAdminModelAuditScheduledMonitor
+      tags: [AdminModelAudit]
+      security:
+        - sessionCookie: []
+          csrfToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ModelAuditMonitorRequest"
+      responses:
+        "201":
+          description: Model audit scheduled monitor created.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ModelAuditMonitor"
+        "403":
+          $ref: "#/components/responses/Problem"
+        "422":
+          $ref: "#/components/responses/Problem"
   /api/v1/admin/announcements:
     get:
       operationId: listAdminAnnouncements
@@ -6134,6 +6424,389 @@ components:
             $ref: "#/components/schemas/APIModel"
         nextCursor:
           type: [string, "null"]
+    ModelAuditRiskLevel:
+      type: string
+      enum: [consistent, suspicious, high_risk, insufficient_data]
+    ModelAuditProbeRiskLevel:
+      type: string
+      enum: [consistent, suspicious, high_risk, insufficient_data, not_applicable]
+    ModelAuditMode:
+      type: string
+      enum: [quick, standard, strict, scheduled]
+    ModelAuditRunStatus:
+      type: string
+      enum: [queued, running, completed, failed, cancelled]
+    ModelAuditTarget:
+      type: object
+      required: [id, name, baseUrl, providerType, claimedModel, enabled, createdAt, updatedAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        baseUrl:
+          type: string
+          format: uri
+        providerType:
+          type: string
+          description: First supported provider type is openai_compatible.
+        claimedModel:
+          type: string
+        enabled:
+          type: boolean
+        apiServiceId:
+          type: string
+          format: uuid
+        apiServiceModelId:
+          type: string
+          format: uuid
+        lastRiskLevel:
+          $ref: "#/components/schemas/ModelAuditRiskLevel"
+        lastRunId:
+          type: string
+          format: uuid
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+    ModelAuditTargetRequest:
+      type: object
+      additionalProperties: false
+      required: [name, baseUrl, providerType, claimedModel, enabled]
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 120
+        baseUrl:
+          type: string
+          format: uri
+          maxLength: 500
+        providerType:
+          type: string
+          enum: [openai_compatible]
+        claimedModel:
+          type: string
+          minLength: 1
+          maxLength: 120
+        apiKey:
+          type: string
+          maxLength: 512
+          writeOnly: true
+          description: Required on create. On update, omit or pass an empty string to keep the existing encrypted key.
+        enabled:
+          type: boolean
+        apiServiceId:
+          type: string
+          format: uuid
+        apiServiceModelId:
+          type: string
+          format: uuid
+    ModelAuditTargetList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/ModelAuditTarget"
+    ModelAuditBaseline:
+      type: object
+      required: [id, baselineName, model, sourceType, probeSetVersion, paramsJson, featureJson, sampleCount, validFrom, createdAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        baselineName:
+          type: string
+        sourceTargetId:
+          type: string
+          format: uuid
+        model:
+          type: string
+        sourceType:
+          type: string
+          enum: [official_api, trusted_target, imported]
+        probeSetVersion:
+          type: string
+        paramsJson:
+          type: object
+          additionalProperties: true
+        featureJson:
+          type: object
+          additionalProperties: true
+        sampleCount:
+          type: integer
+          minimum: 0
+        validFrom:
+          type: string
+          format: date-time
+        validTo:
+          type: string
+          format: date-time
+        createdAt:
+          type: string
+          format: date-time
+    ModelAuditBaselineRequest:
+      type: object
+      additionalProperties: false
+      required: [baselineName, model, sourceType, probeSetVersion, paramsJson, featureJson, sampleCount]
+      properties:
+        baselineName:
+          type: string
+          minLength: 1
+          maxLength: 120
+        sourceTargetId:
+          type: string
+          format: uuid
+        model:
+          type: string
+          minLength: 1
+          maxLength: 120
+        sourceType:
+          type: string
+          enum: [official_api, trusted_target, imported]
+        probeSetVersion:
+          type: string
+          minLength: 1
+          maxLength: 80
+        paramsJson:
+          type: object
+          additionalProperties: true
+        featureJson:
+          type: object
+          additionalProperties: true
+        sampleCount:
+          type: integer
+          minimum: 1
+    ModelAuditBaselineList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/ModelAuditBaseline"
+    ModelAuditProbeScore:
+      type: object
+      required: [probe, risk, confidence, score, evidence]
+      properties:
+        probe:
+          type: string
+          enum: [random_fingerprint, billing_latency_protocol, llmmap_active, kbf_knowledge_boundary, model_equality, logprob_tracking, border_input_change]
+        risk:
+          $ref: "#/components/schemas/ModelAuditProbeRiskLevel"
+        confidence:
+          type: number
+          format: double
+          minimum: 0
+          maximum: 1
+        score:
+          type: number
+          format: double
+          minimum: 0
+          maximum: 1
+        evidence:
+          type: object
+          additionalProperties: true
+    ModelAuditRun:
+      type: object
+      required: [id, targetId, targetName, claimedModel, status, mode, confidence, overallScore, createdAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        targetId:
+          type: string
+          format: uuid
+        targetName:
+          type: string
+        claimedModel:
+          type: string
+        baselineId:
+          type: string
+          format: uuid
+        status:
+          $ref: "#/components/schemas/ModelAuditRunStatus"
+        mode:
+          $ref: "#/components/schemas/ModelAuditMode"
+        riskLevel:
+          $ref: "#/components/schemas/ModelAuditRiskLevel"
+        confidence:
+          type: number
+          format: double
+          minimum: 0
+          maximum: 1
+        overallScore:
+          type: number
+          format: double
+          minimum: 0
+          maximum: 1
+        errorMessage:
+          type: string
+        probeScores:
+          type: array
+          items:
+            $ref: "#/components/schemas/ModelAuditProbeScore"
+        startedAt:
+          type: string
+          format: date-time
+        finishedAt:
+          type: string
+          format: date-time
+        createdAt:
+          type: string
+          format: date-time
+    ModelAuditRunRequest:
+      type: object
+      additionalProperties: false
+      required: [targetId, mode, enableModelEquality, enableLogprobs, storePromptText, storeResponseText]
+      properties:
+        targetId:
+          type: string
+          format: uuid
+        baselineId:
+          type: string
+          format: uuid
+        claimedModel:
+          type: string
+          maxLength: 120
+        mode:
+          $ref: "#/components/schemas/ModelAuditMode"
+        enableModelEquality:
+          type: boolean
+        enableLogprobs:
+          type: string
+          enum: [auto, enabled, disabled]
+        storePromptText:
+          type: boolean
+          description: Defaults should keep canary prompt text only and avoid passive user prompt storage.
+        storeResponseText:
+          type: boolean
+          description: Defaults should avoid storing passive user response text.
+        scheduledMonitorId:
+          type: string
+          format: uuid
+    ModelAuditRunList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/ModelAuditRun"
+    ModelAuditReport:
+      type: object
+      required: [runId, targetId, targetName, claimedModel, mode, riskLevel, confidence, overallRiskScore, summary, probeScores, recommendations, caveats, createdAt, markdown]
+      properties:
+        runId:
+          type: string
+          format: uuid
+        targetId:
+          type: string
+          format: uuid
+        targetName:
+          type: string
+        claimedModel:
+          type: string
+        baselineId:
+          type: string
+          format: uuid
+        mode:
+          $ref: "#/components/schemas/ModelAuditMode"
+        riskLevel:
+          $ref: "#/components/schemas/ModelAuditRiskLevel"
+        confidence:
+          type: number
+          format: double
+          minimum: 0
+          maximum: 1
+        overallRiskScore:
+          type: number
+          format: double
+          minimum: 0
+          maximum: 1
+        summary:
+          type: string
+        probeScores:
+          type: array
+          items:
+            $ref: "#/components/schemas/ModelAuditProbeScore"
+        recommendations:
+          type: array
+          items:
+            type: string
+        caveats:
+          type: array
+          items:
+            type: string
+        createdAt:
+          type: string
+          format: date-time
+        markdown:
+          type: string
+    ModelAuditMonitor:
+      type: object
+      required: [id, targetId, mode, enabled, createdAt, updatedAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        targetId:
+          type: string
+          format: uuid
+        baselineId:
+          type: string
+          format: uuid
+        mode:
+          $ref: "#/components/schemas/ModelAuditMode"
+        enabled:
+          type: boolean
+        cronSpec:
+          type: string
+        lastRunId:
+          type: string
+          format: uuid
+        lastRisk:
+          $ref: "#/components/schemas/ModelAuditRiskLevel"
+        lastRunAt:
+          type: string
+          format: date-time
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+    ModelAuditMonitorRequest:
+      type: object
+      additionalProperties: false
+      required: [targetId, mode, enabled]
+      properties:
+        targetId:
+          type: string
+          format: uuid
+        baselineId:
+          type: string
+          format: uuid
+        mode:
+          $ref: "#/components/schemas/ModelAuditMode"
+        enabled:
+          type: boolean
+        cronSpec:
+          type: string
+          maxLength: 120
+    ModelAuditMonitorList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/ModelAuditMonitor"
     APIServiceRequest:
       type: object
       additionalProperties: false
@@ -6172,6 +6845,10 @@ components:
           $ref: "#/components/schemas/DecimalString"
         declaredMaxUsdAllowancePerIntent:
           $ref: "#/components/schemas/DecimalString"
+        quotaExpiresAt:
+          type: string
+          format: date-time
+          description: Required for metered USD quota services. Fixed expiration timestamp for the currently listed quota.
         minimumIntentCny:
           $ref: "#/components/schemas/DecimalString"
         maximumIntentCny:
@@ -6342,6 +7019,10 @@ components:
           $ref: "#/components/schemas/DecimalString"
         declaredMaxUsdAllowancePerIntent:
           $ref: "#/components/schemas/DecimalString"
+        quotaExpiresAt:
+          type: string
+          format: date-time
+          description: Fixed expiration timestamp for the currently listed metered quota.
         minimumIntentCny:
           $ref: "#/components/schemas/DecimalString"
         maximumIntentCny:
@@ -6456,6 +7137,10 @@ components:
           $ref: "#/components/schemas/DecimalString"
         declaredMaxUsdAllowancePerIntent:
           $ref: "#/components/schemas/DecimalString"
+        quotaExpiresAt:
+          type: string
+          format: date-time
+          description: Fixed expiration timestamp for the currently listed metered quota.
         minimumIntentCny:
           $ref: "#/components/schemas/DecimalString"
         maximumIntentCny:

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { useQueryClient } from '@tanstack/vue-query'
 import { ExternalLink, Info, MessageCircle } from 'lucide-vue-next'
@@ -7,14 +7,17 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import SourceBadges from '@/components/market/SourceBadges.vue'
-import { createCarpoolApplication, getCarpoolAccessArrangementLabel, getCarpoolApplyDisabledReason, isHighRiskSubscriptionCarpool } from '@/lib/api'
+import { createCarpoolApplication, getCarpoolAccessArrangementLabel, getCarpoolApplyDisabledReason, isHighRiskSubscriptionCarpool, type Carpool } from '@/lib/api'
+import { trackAnalytics } from '@/lib/analytics'
 import { fullCapacityTooltip, getPricingDisplay, getRemainingSeats } from '@/lib/pricing'
 import { formatMonthlyQuota, quotaFieldLabel } from '@/lib/quota'
+import { useDetailVisibleAnalytics } from '@/composables/useDetailVisibleAnalytics'
 import { useCarpool, useFavoriteStatus, useMyCarpoolApplications, useToggleFavoriteMutation } from '@/queries/useMarketQueries'
 import { toast } from 'vue-sonner'
 
 const route = useRoute()
 const queryClient = useQueryClient()
+const analyticsSourceRoute = () => String(route.name ?? 'unknown')
 const id = computed(() => String(route.params.id ?? ''))
 const { data: carpool, isLoading } = useCarpool(id)
 const { data: myApplications } = useMyCarpoolApplications({ sort: 'default_buyer' })
@@ -23,6 +26,7 @@ const toggleFavoriteMutation = useToggleFavoriteMutation()
 const applyDialogOpen = ref(false)
 const rulesAccepted = ref(false)
 const applyBusy = ref(false)
+const trackedCarpoolId = ref('')
 const pricing = computed(() => carpool.value ? getPricingDisplay(carpool.value) : null)
 const quotaText = computed(() => carpool.value ? formatMonthlyQuota(carpool.value) : '额度待补充')
 const quotaLabel = computed(() => carpool.value ? quotaFieldLabel(carpool.value) : '每月额度')
@@ -45,12 +49,37 @@ const occupiedPercent = computed(() => getSeatPercent(activeSeats.value, totalSe
 const reservedPercent = computed(() => getSeatPercent(reservedSeats.value, totalSeats.value))
 const availablePercent = computed(() => getSeatPercent(availableSeats.value, totalSeats.value))
 const applyStatusText = computed(() => applyDisabledReason.value || '可申请上车')
+const carpoolVisible = computed(() => Boolean(carpool.value?.id))
 const statusToneClass = computed(() => {
   if (!carpool.value) return 'border-border bg-muted/30 text-muted-foreground'
   if (!applyDisabledReason.value) return 'border-emerald-200 bg-emerald-50 text-emerald-700'
   if (carpool.value.status === '审核中' || carpool.value.accessArrangementMode === 'not_allowed' || (isHighRiskSubscriptionCarpool(carpool.value) && !carpool.value.riskAcknowledged)) return 'border-amber-200 bg-amber-50 text-amber-800'
   return 'border-border bg-muted/30 text-muted-foreground'
 })
+
+useDetailVisibleAnalytics({
+  enabled: carpoolVisible,
+  entityType: 'carpool',
+  sourceRoute: analyticsSourceRoute,
+})
+
+function carpoolAnalyticsProps(value: Carpool) {
+  return {
+    source_route: analyticsSourceRoute(),
+    product: value.product,
+    monthly_price_cny: value.monthly,
+    seats: value.maxMembers,
+    access_mode: value.accessArrangementMode,
+    risk_ack_required: Boolean(value.riskNoticeCode),
+    risk_notice: value.riskNoticeCode ?? 'none',
+  }
+}
+
+watch(carpool, value => {
+  if (!value || trackedCarpoolId.value === value.id) return
+  trackedCarpoolId.value = value.id
+  trackAnalytics('carpool_detail_view', carpoolAnalyticsProps(value))
+}, { immediate: true })
 
 function getSeatPercent(value: number, total: number) {
   if (!Number.isFinite(value) || !Number.isFinite(total) || total <= 0) return '0%'
@@ -61,6 +90,11 @@ function toggleFavorite() {
   if (!carpool.value) return
   toggleFavoriteMutation.mutate({ targetType: 'carpool', targetId: carpool.value.id }, {
     onSuccess(data) {
+      trackAnalytics('favorite_toggle', {
+        source_route: analyticsSourceRoute(),
+        entity_type: 'carpool',
+        action: data.favorited ? 'add' : 'remove',
+      })
       toast.success(data.favorited ? '已收藏该车源。' : '已取消收藏。')
     },
     onError(error) {
@@ -84,6 +118,7 @@ async function applyToJoin() {
     await queryClient.invalidateQueries({ queryKey: ['admin-section'] })
     await queryClient.invalidateQueries({ queryKey: ['carpool-notifications'] })
     applyDialogOpen.value = false
+    trackAnalytics('carpool_application_submit_success', carpoolAnalyticsProps(carpool.value))
     toast.success(`申请已提交，等待车主处理：${application.id}`)
   } catch (error) {
     toast.error(error instanceof Error ? error.message : '申请失败')

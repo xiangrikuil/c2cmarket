@@ -65,6 +65,7 @@ export type ApiServicePublishForm = {
   selectedModels: SelectedServiceModel[]
   imageCapability: ImageCapabilityConfig
   availableCreditUsd: number | null
+  quotaExpiresAt: string
   minimumPurchaseCny: number | null
   maximumPurchaseCny: number | null
   paymentWindowMinutes: number

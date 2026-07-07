@@ -20,6 +20,7 @@ const props = defineProps<{
 const title = computed(() => generatedTitle(props.form, props.catalogById))
 const merchantDisplayName = computed(() => props.form.merchantIdentityMode === 'store_alias' ? props.form.merchantDisplayName.trim() || '待填写商家展示名' : '公开个人身份')
 const selectedModels = computed(() => selectedCatalogItems(props.form, props.catalogById))
+const quotaExpiresAtLabel = computed(() => props.form.quotaExpiresAt ? props.form.quotaExpiresAt.replace('T', ' ') : '待填写')
 const paymentSummary = computed(() => {
   const labels = enabledPaymentOptions(props.form).map(option => paymentMethodLabels[option.paymentMethod])
   return labels.length ? `${labels.join(' / ')} · 固定 ${props.form.paymentWindowMinutes} 分钟` : '待配置'
@@ -74,7 +75,7 @@ const submittedPath = computed(() => apiServiceDetailPath(props.submittedId))
         <div><dt>模型大类</dt><dd>{{ providerCategoryLabels[form.providerCategory] }}</dd></div>
         <div><dt>模型</dt><dd>{{ selectedModels.map(item => item.displayName).join(' / ') || '待选择' }}</dd></div>
         <div><dt>¥{{ simplifiedApiQuotaRules.minimumPurchaseCny }} 约可购</dt><dd>{{ quotaForMinimumPurchase }}</dd></div>
-        <div><dt>默认规则</dt><dd>最低 ¥{{ simplifiedApiQuotaRules.minimumPurchaseCny }} / 最高 ¥{{ simplifiedApiQuotaRules.maximumPurchaseCny }} / {{ simplifiedApiQuotaRules.validityDays }} 天</dd></div>
+        <div><dt>有效至</dt><dd>{{ quotaExpiresAtLabel }}</dd></div>
         <div><dt>收款方式</dt><dd>{{ paymentSummary }}</dd></div>
         <div><dt>接入细节</dt><dd>提交意向后站外确认</dd></div>
         <div><dt>用量核对</dt><dd>商户说明，买家自行核对</dd></div>

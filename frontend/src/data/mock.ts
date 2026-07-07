@@ -583,6 +583,7 @@ export type ApiService = {
   warning?: string
   warranty: string
   refundPolicy: string
+  quotaExpiresAt?: string
   expiresAt: string
   completed30d: number
   reviewCount: number

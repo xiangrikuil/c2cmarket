@@ -110,6 +110,7 @@ func (s *Manager) Update(ctx context.Context, user auth.User, input UpdateServic
 		BillingMode:                      input.BillingMode,
 		DeclaredCNYPerUSDAllowance:       input.DeclaredCNYPerUSDAllowance,
 		DeclaredMaxUSDAllowancePerIntent: input.DeclaredMaxUSDAllowancePerIntent,
+		QuotaExpiresAt:                   input.QuotaExpiresAt,
 		MinimumIntentCNY:                 input.MinimumIntentCNY,
 		MaximumIntentCNY:                 input.MaximumIntentCNY,
 		UsageVisibility:                  input.UsageVisibility,
@@ -388,10 +389,11 @@ func (s *Manager) UpdateOrderSettings(ctx context.Context, user auth.User, input
 }
 
 func (s *Manager) buildFromInput(ctx context.Context, current Service, input CreateServiceInput) (Service, *domain.AppError) {
-	if err := validateCreateInput(input); err != nil {
+	now := s.now()
+	if err := validateCreateInput(input, now); err != nil {
 		return Service{}, err
 	}
-	now := s.now()
+	quotaExpiresAt, _ := parseQuotaExpiresAt(input.QuotaExpiresAt)
 	serviceID := current.ID
 	createdAt := current.CreatedAt
 	version := current.Version
@@ -419,6 +421,7 @@ func (s *Manager) buildFromInput(ctx context.Context, current Service, input Cre
 		BillingMode:                      strings.TrimSpace(input.BillingMode),
 		DeclaredCNYPerUSDAllowance:       strings.TrimSpace(input.DeclaredCNYPerUSDAllowance),
 		DeclaredMaxUSDAllowancePerIntent: strings.TrimSpace(input.DeclaredMaxUSDAllowancePerIntent),
+		QuotaExpiresAt:                   quotaExpiresAt,
 		MinimumIntentCNY:                 strings.TrimSpace(input.MinimumIntentCNY),
 		MaximumIntentCNY:                 strings.TrimSpace(input.MaximumIntentCNY),
 		UsageVisibility:                  strings.TrimSpace(input.UsageVisibility),
@@ -505,7 +508,7 @@ func (s *Manager) buildFromInput(ctx context.Context, current Service, input Cre
 	return service, nil
 }
 
-func validateCreateInput(input CreateServiceInput) *domain.AppError {
+func validateCreateInput(input CreateServiceInput, now time.Time) *domain.AppError {
 	if strings.TrimSpace(input.OwnerContactMethodID) == "" {
 		return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeContactMethodRequired, "Contact method required", "发布 API 服务必须选择商户联系方式。", "ownerContactMethodId", "required", "必须选择商户联系方式。")
 	}
@@ -552,7 +555,13 @@ func validateCreateInput(input CreateServiceInput) *domain.AppError {
 		if _, ok := parsePositiveDecimal(input.DeclaredCNYPerUSDAllowance); !ok {
 			return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "USD allowance price invalid", "美元额度售价格式不正确。", "declaredCnyPerUsdAllowance", "invalid", "美元额度售价必须为正数。")
 		}
+		if appErr := validateQuotaExpiresAt(input.QuotaExpiresAt, now, true); appErr != nil {
+			return appErr
+		}
 	case ServiceBillingModeManual, ServiceBillingModeFixedPackage:
+		if appErr := validateQuotaExpiresAt(input.QuotaExpiresAt, now, false); appErr != nil {
+			return appErr
+		}
 	default:
 		return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Billing mode invalid", "计费方式不支持。", "billingMode", "invalid", "计费方式不支持。")
 	}
@@ -642,6 +651,37 @@ func validateCreateInput(input CreateServiceInput) *domain.AppError {
 	return nil
 }
 
+func validateQuotaExpiresAt(value string, now time.Time, required bool) *domain.AppError {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		if !required {
+			return nil
+		}
+		return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Quota expiration required", "美元额度服务必须填写固定有效时间。", "quotaExpiresAt", "required", "必须填写有效至时间。")
+	}
+	expiresAt, ok := parseQuotaExpiresAt(trimmed)
+	if !ok {
+		return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Quota expiration invalid", "额度有效时间格式不正确。", "quotaExpiresAt", "invalid", "有效时间格式不正确。")
+	}
+	if !expiresAt.After(now) {
+		return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Quota expiration expired", "额度有效时间必须晚于当前时间。", "quotaExpiresAt", "expired", "有效时间必须晚于当前时间。")
+	}
+	return nil
+}
+
+func parseQuotaExpiresAt(value string) (*time.Time, bool) {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return nil, true
+	}
+	expiresAt, err := time.Parse(time.RFC3339Nano, trimmed)
+	if err != nil {
+		return nil, false
+	}
+	expiresAt = expiresAt.UTC()
+	return &expiresAt, true
+}
+
 func validateAdminActionInput(input ServiceAdminActionInput) *domain.AppError {
 	if strings.TrimSpace(input.ServiceID) == "" {
 		return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "API service required", "必须提供 API 服务。", "serviceId", "required", "必须提供 API 服务。")
@@ -692,13 +732,21 @@ func IsOrderableService(service Service) bool {
 }
 
 func WithOrderability(service Service) Service {
-	reasons := OrderableReasons(service)
+	return WithOrderabilityAt(service, time.Now())
+}
+
+func WithOrderabilityAt(service Service, now time.Time) Service {
+	reasons := OrderableReasonsAt(service, now)
 	service.IsOrderable = len(reasons) == 0
 	service.OrderableReasons = reasons
 	return service
 }
 
 func OrderableReasons(service Service) []string {
+	return OrderableReasonsAt(service, time.Now())
+}
+
+func OrderableReasonsAt(service Service, now time.Time) []string {
 	reasons := []string{}
 	if !service.AcceptingOrders {
 		reasons = append(reasons, "not_accepting_orders")
@@ -720,6 +768,13 @@ func OrderableReasons(service Service) []string {
 	}
 	if enabledPaymentOptionCount(service.PaymentOptions) == 0 {
 		reasons = append(reasons, "payment_method_required")
+	}
+	if service.BillingMode == ServiceBillingModeMetered {
+		if service.QuotaExpiresAt == nil {
+			reasons = append(reasons, "quota_expiration_required")
+		} else if !service.QuotaExpiresAt.After(now) {
+			reasons = append(reasons, "quota_expired")
+		}
 	}
 	return reasons
 }
