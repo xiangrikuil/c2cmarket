@@ -366,6 +366,7 @@ func createOrderableAPIService(t *testing.T, service *Service, owner User, owner
 		BillingMode:                      apimarket.ServiceBillingModeMetered,
 		DeclaredCNYPerUSDAllowance:       "0.8000",
 		DeclaredMaxUSDAllowancePerIntent: "20.000000",
+		QuotaExpiresAt:                   "2026-07-08T00:00:00Z",
 		MinimumIntentCNY:                 "10.00",
 		MaximumIntentCNY:                 "200.00",
 		UsageVisibility:                  "merchant_reported",

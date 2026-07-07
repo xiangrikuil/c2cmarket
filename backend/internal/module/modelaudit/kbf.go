@@ -41,24 +41,24 @@ type KBFSeedQuestion struct {
 }
 
 type KBFItemScore struct {
-	QuestionID            string
-	ParsedValue           string
-	MatchesClaimed        bool
-	ClaimedLikelihood     float64
-	ClosestCompetitor     string
-	CompetitorLikelihood  float64
-	LogLikelihoodRatio    float64
+	QuestionID              string
+	ParsedValue             string
+	MatchesClaimed          bool
+	ClaimedLikelihood       float64
+	ClosestCompetitor       string
+	CompetitorLikelihood    float64
+	LogLikelihoodRatio      float64
 	CorrectAgainstCanonical bool
-	FormatViolation      bool
-	Abstain              bool
+	FormatViolation         bool
+	Abstain                 bool
 }
 
 type MixedRoutingEstimate struct {
-	Suspected                  bool
-	EstimatedSubstitutionRate  float64
-	Confidence                 float64
-	CompetitorLikeSampleCount  int
-	TotalSampleCount           int
+	Suspected                 bool
+	EstimatedSubstitutionRate float64
+	Confidence                float64
+	CompetitorLikeSampleCount int
+	TotalSampleCount          int
 }
 
 var (
@@ -128,8 +128,8 @@ func ScoreKBFAnswers(baselines []KBFQuestionBaseline, answers []ParsedKBFAnswer)
 			ClosestCompetitor:    baseline.CompetitorName,
 			CompetitorLikelihood: competitor,
 			LogLikelihoodRatio:   llr,
-			FormatViolation:     answer.FormatViolation,
-			Abstain:             answer.Abstain,
+			FormatViolation:      answer.FormatViolation,
+			Abstain:              answer.Abstain,
 		})
 	}
 	if len(items) == 0 {
@@ -159,10 +159,10 @@ func ScoreKBFAnswers(baselines []KBFQuestionBaseline, answers []ParsedKBFAnswer)
 		Confidence: clamp01(float64(len(items)) / 40),
 		Score:      clamp01((1 - matchRate) + math.Max(0, -llrMean)/2),
 		Evidence: map[string]any{
-			"sample_count":        len(items),
-			"claimed_match_rate":  matchRate,
-			"kbf_llr_mean":        llrMean,
-			"mixed_routing_hint":  EstimateMixedRouting(items),
+			"sample_count":       len(items),
+			"claimed_match_rate": matchRate,
+			"kbf_llr_mean":       llrMean,
+			"mixed_routing_hint": EstimateMixedRouting(items),
 		},
 	}
 }

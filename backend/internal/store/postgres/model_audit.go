@@ -179,7 +179,7 @@ func (s *Store) CreateModelAuditBaseline(ctx context.Context, baseline modelaudi
 		  params_json, feature_json, sample_count, valid_from, valid_to, created_at
 	`, baseline.ID, baseline.BaselineName, nullUUID(baseline.SourceTargetID), baseline.Model, baseline.SourceType,
 		baseline.ProbeSetVersion, params, features, baseline.SampleCount, baseline.ValidFrom, baseline.ValidTo, baseline.CreatedAt)
-	baseline, err = scanModelAuditBaseline(row)
+	baseline, err := scanModelAuditBaseline(row)
 	if err != nil {
 		return modelaudit.Baseline{}, internalStoreError()
 	}

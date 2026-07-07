@@ -4,10 +4,10 @@ import "time"
 
 const (
 	RiskConsistent       RiskLevel = "consistent"
-	RiskSuspicious      RiskLevel = "suspicious"
-	RiskHigh            RiskLevel = "high_risk"
+	RiskSuspicious       RiskLevel = "suspicious"
+	RiskHigh             RiskLevel = "high_risk"
 	RiskInsufficientData RiskLevel = "insufficient_data"
-	RiskNotApplicable   RiskLevel = "not_applicable"
+	RiskNotApplicable    RiskLevel = "not_applicable"
 
 	AuditModeQuick     AuditMode = "quick"
 	AuditModeStandard  AuditMode = "standard"
@@ -94,7 +94,7 @@ type Run struct {
 	TargetID       string
 	TargetName     string
 	ClaimedModel   string
-	BaselineID      string
+	BaselineID     string
 	Status         RunStatus
 	Mode           AuditMode
 	RiskLevel      RiskLevel
@@ -111,31 +111,31 @@ type Run struct {
 }
 
 type RunInput struct {
-	TargetID              string
-	BaselineID            string
-	ClaimedModel          string
-	Mode                  AuditMode
-	EnableModelEquality   bool
-	EnableLogprobs        string
-	StorePromptText       bool
-	StoreResponseText     bool
-	ScheduledMonitorID    string
+	TargetID            string
+	BaselineID          string
+	ClaimedModel        string
+	Mode                AuditMode
+	EnableModelEquality bool
+	EnableLogprobs      string
+	StorePromptText     bool
+	StoreResponseText   bool
+	ScheduledMonitorID  string
 }
 
 type Sample struct {
-	ID                       string
-	RunID                    string
-	TargetID                 string
-	ProbeType                ProbeName
-	PromptID                 string
-	PromptHash               string
-	PromptText               string
-	ResponseText             string
-	ResponseHash             string
-	ParsedValue              string
-	RawJSON                  map[string]any
+	ID                        string
+	RunID                     string
+	TargetID                  string
+	ProbeType                 ProbeName
+	PromptID                  string
+	PromptHash                string
+	PromptText                string
+	ResponseText              string
+	ResponseHash              string
+	ParsedValue               string
+	RawJSON                   map[string]any
 	RequestParamsJSON         map[string]any
-	LatencyMS                int
+	LatencyMS                 int
 	FirstTokenLatencyMS       int
 	UsagePromptTokens         int
 	UsageCompletionTokens     int
@@ -143,15 +143,15 @@ type Sample struct {
 	EstimatedCompletionTokens int
 	ErrorMessage              string
 	SessionID                 string
-	CreatedAt                time.Time
+	CreatedAt                 time.Time
 }
 
 type ProbeScore struct {
-	Probe      ProbeName
-	Risk       RiskLevel
-	Confidence float64
-	Score      float64
-	Evidence   map[string]any
+	Probe      ProbeName      `json:"probe"`
+	Risk       RiskLevel      `json:"risk"`
+	Confidence float64        `json:"confidence"`
+	Score      float64        `json:"score"`
+	Evidence   map[string]any `json:"evidence"`
 }
 
 type AggregatedRisk struct {
@@ -161,17 +161,17 @@ type AggregatedRisk struct {
 }
 
 type Monitor struct {
-	ID           string
-	TargetID     string
-	BaselineID   string
-	Mode         AuditMode
-	Enabled      bool
-	CronSpec     string
-	LastRunID    string
-	LastRisk     RiskLevel
-	LastRunAt    *time.Time
-	CreatedAt    time.Time
-	UpdatedAt    time.Time
+	ID         string
+	TargetID   string
+	BaselineID string
+	Mode       AuditMode
+	Enabled    bool
+	CronSpec   string
+	LastRunID  string
+	LastRisk   RiskLevel
+	LastRunAt  *time.Time
+	CreatedAt  time.Time
+	UpdatedAt  time.Time
 }
 
 type MonitorInput struct {
