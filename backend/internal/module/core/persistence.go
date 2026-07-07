@@ -18,6 +18,7 @@ import (
 	"c2c-market/backend/internal/module/favorite"
 	"c2c-market/backend/internal/module/feedback"
 	"c2c-market/backend/internal/module/idempotency"
+	"c2c-market/backend/internal/module/modelaudit"
 	"c2c-market/backend/internal/module/notification"
 	"c2c-market/backend/internal/module/officialprice"
 	"c2c-market/backend/internal/module/profile"
@@ -62,6 +63,8 @@ type SearchRepository = search.Repository
 
 type ReportRepository = report.Repository
 
+type ModelAuditRepository = modelaudit.Repository
+
 type Persistence interface {
 	AuthRepository
 	IdempotencyRepository
@@ -81,6 +84,7 @@ type Persistence interface {
 	ReviewRepository
 	SearchRepository
 	ReportRepository
+	ModelAuditRepository
 }
 
 type Repositories struct {
@@ -102,6 +106,7 @@ type Repositories struct {
 	Review            ReviewRepository
 	Search            SearchRepository
 	Report            ReportRepository
+	ModelAudit        ModelAuditRepository
 }
 
 func RepositoriesFromPersistence(persistence Persistence) Repositories {
@@ -127,6 +132,7 @@ func RepositoriesFromPersistence(persistence Persistence) Repositories {
 		Review:            persistence,
 		Search:            persistence,
 		Report:            persistence,
+		ModelAudit:        persistence,
 	}
 }
 

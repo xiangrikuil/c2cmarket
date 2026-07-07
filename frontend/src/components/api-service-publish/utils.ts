@@ -1,4 +1,5 @@
 import type { ModelCatalogItem } from '@/lib/api'
+import { defaultQuotaExpiresAtInput } from '@/lib/apiQuotaExpiration'
 import {
   apiPaymentMethodLabels,
   createDefaultApiPaymentOptions,
@@ -66,7 +67,7 @@ export const simplifiedApiQuotaRules = {
 export const defaultPaymentWindowMinutes = defaultApiPaymentWindowMinutes
 export const paymentMethodLabels: Record<PublishPaymentMethod, string> = apiPaymentMethodLabels
 
-export const apiQuotaDefaultRuleText = `默认：最低意向 ¥${simplifiedApiQuotaRules.minimumPurchaseCny}，单笔最高 ¥${simplifiedApiQuotaRules.maximumPurchaseCny}，站外确认后 ${simplifiedApiQuotaRules.validityDays} 天有效。`
+export const apiQuotaDefaultRuleText = `默认：最低意向 ¥${simplifiedApiQuotaRules.minimumPurchaseCny}，单笔最高 ¥${simplifiedApiQuotaRules.maximumPurchaseCny}；额度有效至商户填写的固定时间。`
 
 export const apiQuotaBoundaryNotice = 'C2CMarket 仅提供信息撮合，不托管支付、不保存 API Key、不担保交付、不代赔。买家提交意向后，双方站外确认接入细节和售后处理。'
 
@@ -105,6 +106,7 @@ export function applySimplifiedApiQuotaDefaults(form: ApiServicePublishForm) {
   form.defaultMultiplier = sub2ApiPricingPolicy.textModelMultiplier
   form.minimumPurchaseCny = simplifiedApiQuotaRules.minimumPurchaseCny
   form.maximumPurchaseCny = simplifiedApiQuotaRules.maximumPurchaseCny
+  if (!form.quotaExpiresAt) form.quotaExpiresAt = defaultQuotaExpiresAtInput()
   form.validity = {
     mode: 'days',
     days: simplifiedApiQuotaRules.validityDays,

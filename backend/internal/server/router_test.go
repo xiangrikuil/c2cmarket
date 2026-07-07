@@ -3118,6 +3118,7 @@ func apiServicePayloadWithModelAndMultiplier(ownerContactID, modelCatalogID, mul
 		"billingMode":"metered_usd_quota",
 		"declaredCnyPerUsdAllowance":"0.8000",
 		"declaredMaxUsdAllowancePerIntent":"20.000000",
+		"quotaExpiresAt":"` + time.Now().Add(30*24*time.Hour).UTC().Format(time.RFC3339) + `",
 		"minimumIntentCny":"10.00",
 		"maximumIntentCny":"200.00",
 		"usageVisibility":"merchant_reported",

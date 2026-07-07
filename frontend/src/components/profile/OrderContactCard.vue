@@ -1,11 +1,13 @@
 <script setup lang="ts">
 import { computed } from 'vue'
+import { useRoute } from 'vue-router'
 import { AlertTriangle, CheckCircle2, Copy, Flag, MessageCircle } from 'lucide-vue-next'
 import { toast } from 'vue-sonner'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import { useCreateContactReportMutation } from '@/queries/useMarketQueries'
+import { trackAnalytics } from '@/lib/analytics'
 import type { ContactMethodType, OrderContactSnapshot, OrderContactSnapshotItem } from '@/lib/api'
 
 const props = defineProps<{
@@ -25,6 +27,8 @@ const emit = defineEmits<{
 }>()
 
 const reportMutation = useCreateContactReportMutation()
+const route = useRoute()
+const analyticsSourceRoute = () => String(route.name ?? 'unknown')
 const side = computed(() => props.side ?? 'seller')
 const contacts = computed(() => side.value === 'seller' ? props.snapshot.sellerContacts : props.snapshot.buyerContacts)
 const contextLabel = computed(() => props.contextLabel ?? (props.snapshot.contactWindowEndsAt ? `联系窗口截止 ${props.snapshot.contactWindowEndsAt}` : '当前记录无倒计时窗口'))
@@ -62,7 +66,14 @@ function reportContact(item: OrderContactSnapshotItem, reasonCode: 'contact_inva
     reasonCode,
     note: `${item.label} ${reasonCode}`,
   }, {
-    onSuccess: () => toast.success('联系方式问题已提交。'),
+    onSuccess: () => {
+      trackAnalytics('report_submit', {
+        source_route: analyticsSourceRoute(),
+        entity_type: props.snapshot.orderType,
+        reason_code: reasonCode,
+      })
+      toast.success('联系方式问题已提交。')
+    },
     onError: error => toast.error(error instanceof Error ? error.message : '提交失败'),
   })
 }

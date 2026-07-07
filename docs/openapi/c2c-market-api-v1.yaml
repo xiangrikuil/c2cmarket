@@ -6172,6 +6172,10 @@ components:
           $ref: "#/components/schemas/DecimalString"
         declaredMaxUsdAllowancePerIntent:
           $ref: "#/components/schemas/DecimalString"
+        quotaExpiresAt:
+          type: string
+          format: date-time
+          description: Required for metered USD quota services. Fixed expiration timestamp for the currently listed quota.
         minimumIntentCny:
           $ref: "#/components/schemas/DecimalString"
         maximumIntentCny:
@@ -6342,6 +6346,10 @@ components:
           $ref: "#/components/schemas/DecimalString"
         declaredMaxUsdAllowancePerIntent:
           $ref: "#/components/schemas/DecimalString"
+        quotaExpiresAt:
+          type: string
+          format: date-time
+          description: Fixed expiration timestamp for the currently listed metered quota.
         minimumIntentCny:
           $ref: "#/components/schemas/DecimalString"
         maximumIntentCny:
@@ -6456,6 +6464,10 @@ components:
           $ref: "#/components/schemas/DecimalString"
         declaredMaxUsdAllowancePerIntent:
           $ref: "#/components/schemas/DecimalString"
+        quotaExpiresAt:
+          type: string
+          format: date-time
+          description: Fixed expiration timestamp for the currently listed metered quota.
         minimumIntentCny:
           $ref: "#/components/schemas/DecimalString"
         maximumIntentCny:

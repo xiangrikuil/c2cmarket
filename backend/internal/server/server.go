@@ -22,6 +22,7 @@ import (
 	"c2c-market/backend/internal/module/favorite"
 	"c2c-market/backend/internal/module/feedback"
 	"c2c-market/backend/internal/module/idempotency"
+	"c2c-market/backend/internal/module/modelaudit"
 	"c2c-market/backend/internal/module/notification"
 	"c2c-market/backend/internal/module/officialprice"
 	"c2c-market/backend/internal/module/profile"
@@ -101,6 +102,22 @@ type Service interface {
 	CreateAPIModel(ctx context.Context, user auth.User, input catalog.APIModelInput) (catalog.APIModelCatalog, *domain.AppError)
 	UpdateAPIModel(ctx context.Context, user auth.User, modelID string, input catalog.APIModelInput) (catalog.APIModelCatalog, *domain.AppError)
 	SetAPIModelActive(ctx context.Context, user auth.User, modelID string, active bool) (catalog.APIModelCatalog, *domain.AppError)
+
+	AdminModelAuditTargets(ctx context.Context, user auth.User) ([]modelaudit.Target, *domain.AppError)
+	AdminModelAuditTarget(ctx context.Context, user auth.User, targetID string) (modelaudit.Target, *domain.AppError)
+	CreateModelAuditTarget(ctx context.Context, user auth.User, input modelaudit.TargetInput) (modelaudit.Target, *domain.AppError)
+	UpdateModelAuditTarget(ctx context.Context, user auth.User, targetID string, input modelaudit.TargetInput) (modelaudit.Target, *domain.AppError)
+	DeleteModelAuditTarget(ctx context.Context, user auth.User, targetID string) *domain.AppError
+	AdminModelAuditBaselines(ctx context.Context, user auth.User) ([]modelaudit.Baseline, *domain.AppError)
+	AdminModelAuditBaseline(ctx context.Context, user auth.User, baselineID string) (modelaudit.Baseline, *domain.AppError)
+	CreateModelAuditBaseline(ctx context.Context, user auth.User, input modelaudit.BaselineInput) (modelaudit.Baseline, *domain.AppError)
+	AdminModelAuditRuns(ctx context.Context, user auth.User) ([]modelaudit.Run, *domain.AppError)
+	AdminModelAuditRun(ctx context.Context, user auth.User, runID string) (modelaudit.Run, *domain.AppError)
+	CreateModelAuditRun(ctx context.Context, user auth.User, input modelaudit.RunInput) (modelaudit.Run, *domain.AppError)
+	CancelModelAuditRun(ctx context.Context, user auth.User, runID string) (modelaudit.Run, *domain.AppError)
+	AdminModelAuditReport(ctx context.Context, user auth.User, runID string) (modelaudit.AuditReport, *domain.AppError)
+	AdminModelAuditMonitors(ctx context.Context, user auth.User) ([]modelaudit.Monitor, *domain.AppError)
+	CreateModelAuditMonitor(ctx context.Context, user auth.User, input modelaudit.MonitorInput) (modelaudit.Monitor, *domain.AppError)
 
 	SubmitOfficialPriceLead(ctx context.Context, user auth.User, input officialprice.SubmitLeadInput) (officialprice.Lead, *domain.AppError)
 	MyOfficialPriceLeads(ctx context.Context, user auth.User) ([]officialprice.Lead, *domain.AppError)

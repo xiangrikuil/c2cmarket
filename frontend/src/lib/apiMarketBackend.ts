@@ -19,6 +19,7 @@ import type {
 } from '@/lib/api'
 import { backendMutation, backendRequest, ensureBackendSession } from '@/lib/backendClient'
 import { apiPaymentMethodRequiresQrCode, isApiPaymentMethod, normalizeQrCodeDataUrl } from '@/lib/apiPaymentSettings'
+import { beijingDateTimeInputToISOString, formatQuotaExpiresAtLabel } from '@/lib/apiQuotaExpiration'
 import { backendMyMerchantProfile, backendUpsertMerchantProfile } from '@/lib/profileBackend'
 
 type ListResponse<T> = { items: T[] }
@@ -73,6 +74,7 @@ type BackendAPIService = {
   billingMode: string
   declaredCnyPerUsdAllowance?: string
   declaredMaxUsdAllowancePerIntent?: string
+  quotaExpiresAt?: string
   minimumIntentCny: string
   maximumIntentCny?: string
   usageVisibility: string
@@ -257,7 +259,7 @@ export function mapBackendAPIService(service: BackendAPIService): ApiService {
     online,
     publiclyOrderable,
     lastOnlineConfirmedAt: service.updatedAt,
-    onlineExpiresAt: service.updatedAt,
+    onlineExpiresAt: service.quotaExpiresAt ?? service.updatedAt,
     expectedResponseMinutes: service.paymentWindowMinutes ?? 10,
     responseMedianMinutes: service.paymentWindowMinutes ?? 10,
     dailyOrderLimit: 10,
@@ -266,7 +268,8 @@ export function mapBackendAPIService(service: BackendAPIService): ApiService {
     warning: state === 'reviewing' ? '等待管理员审核' : online && !publiclyOrderable ? '待配置接单设置' : undefined,
     warranty: service.merchantSupportNote || '按商户备注站外协商，平台不担保、不代赔',
     refundPolicy: '最终金额和售后由双方站外确认，平台不处理支付或托管',
-    expiresAt: '按服务说明',
+    quotaExpiresAt: service.quotaExpiresAt,
+    expiresAt: formatQuotaExpiresAtLabel(service.quotaExpiresAt) || '按服务说明',
     completed30d: 0,
     reviewCount: 0,
     officialPricingVersion: 'backend',
@@ -622,6 +625,7 @@ function toBackendServiceRequest(payload: Record<string, unknown>) {
     billingMode: billing,
     declaredCnyPerUsdAllowance: String(payload.cnyPerUsdCredit ?? '1'),
     declaredMaxUsdAllowancePerIntent: String(payload.availableCreditUsd ?? '20'),
+    quotaExpiresAt: beijingDateTimeInputToISOString(String(payload.quotaExpiresAt ?? '')),
     minimumIntentCny: String(payload.minimumPurchaseCny ?? '20'),
     maximumIntentCny: String(payload.maximumPurchaseCny ?? '300'),
     usageVisibility: toBackendUsageVisibility(payload.usageVisibility),

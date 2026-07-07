@@ -20,6 +20,7 @@ import (
 	"c2c-market/backend/internal/module/favorite"
 	"c2c-market/backend/internal/module/feedback"
 	idempotencymodule "c2c-market/backend/internal/module/idempotency"
+	"c2c-market/backend/internal/module/modelaudit"
 	"c2c-market/backend/internal/module/notification"
 	"c2c-market/backend/internal/module/officialprice"
 	"c2c-market/backend/internal/module/profile"
@@ -118,6 +119,7 @@ type Service struct {
 	reviewService      *review.Service
 	searchService      *search.Service
 	reportService      *report.Service
+	modelAudit         *modelaudit.Service
 }
 
 func NewService() *Service {
@@ -168,6 +170,7 @@ func newServiceWithEmailSender(now func() time.Time, repositories Repositories, 
 	s.favoriteService = favorite.NewService(repositories.Favorite, s.idempotencyService, s, now)
 	s.reviewService = review.NewService(repositories.Review, s.idempotencyService, s, now)
 	s.searchService = search.NewService(repositories.Search, s)
+	s.modelAudit = modelaudit.NewService(repositories.ModelAudit, now)
 	return s
 }
 

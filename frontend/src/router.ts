@@ -35,6 +35,7 @@ const AdminAnnouncementsPage = () => import('@/pages/AdminAnnouncementsPage.vue'
 const AdminAnnouncementEditorPage = () => import('@/pages/AdminAnnouncementEditorPage.vue')
 const AdminProductPlansPage = () => import('@/pages/AdminProductPlansPage.vue')
 const AdminApiModelsPage = () => import('@/pages/AdminApiModelsPage.vue')
+const AdminModelAuditPage = () => import('@/pages/AdminModelAuditPage.vue')
 const AdminSectionPage = () => import('@/pages/AdminSectionPage.vue')
 const NotFoundPage = () => import('@/pages/NotFoundPage.vue')
 
@@ -104,6 +105,7 @@ export const router = createRouter({
     { path: '/admin/announcements/:id/edit', name: 'admin-announcement-edit', component: AdminAnnouncementEditorPage },
     { path: '/admin/product-plans', name: 'admin-product-plans', component: AdminProductPlansPage },
     { path: '/admin/api-models', name: 'admin-api-models', component: AdminApiModelsPage },
+    { path: '/admin/model-audit', name: 'admin-model-audit', component: AdminModelAuditPage },
     { path: '/admin/feedback', name: 'admin-feedback', component: AdminFeedbackPage },
     { path: '/admin/feedback/:id', name: 'admin-feedback-detail', component: AdminFeedbackPage },
     ...adminChildren.map(([path, title, description]) => ({

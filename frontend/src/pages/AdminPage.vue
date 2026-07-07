@@ -44,6 +44,7 @@ const overviewCards = computed(() => (data.value ?? []).map((card, index) => ({
         ['官网公开价', '/admin/official-prices'],
         ['套餐目录', '/admin/product-plans'],
         ['API 模型目录', '/admin/api-models'],
+        ['模型审计', '/admin/model-audit'],
         ['低价线索', '/admin/price-leads'],
         ['车源治理', '/admin/carpools'],
         ['求车管理', '/admin/demands'],

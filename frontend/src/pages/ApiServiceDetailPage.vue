@@ -11,12 +11,15 @@ import ModelPriceTable from '@/components/api-service-detail/ModelPriceTable.vue
 import ServiceRules from '@/components/api-service-detail/ServiceRules.vue'
 import { Button } from '@/components/ui/button'
 import { BackendProblemError } from '@/lib/backendClient'
-import { createApiPurchaseIntent, type ApiDeliveryMode, type ApiPurchaseIntent } from '@/lib/api'
+import { createApiPurchaseIntent, type ApiDeliveryMode, type ApiPurchaseIntent, type ApiService } from '@/lib/api'
+import { trackAnalytics } from '@/lib/analytics'
+import { useDetailVisibleAnalytics } from '@/composables/useDetailVisibleAnalytics'
 import { useApiService, useFavoriteStatus, useToggleFavoriteMutation } from '@/queries/useMarketQueries'
 
 const route = useRoute()
 const router = useRouter()
 const queryClient = useQueryClient()
+const analyticsSourceRoute = () => String(route.name ?? 'unknown')
 const id = computed(() => String(route.params.id ?? ''))
 const { data: service, isLoading, error: serviceError } = useApiService(id)
 const amount = ref(20)
@@ -24,16 +27,40 @@ const selectedDeliveryMode = ref<ApiDeliveryMode>('sub2api_panel_account')
 const { data: favoriteStatus } = useFavoriteStatus('api-service', id)
 const toggleFavoriteMutation = useToggleFavoriteMutation()
 const favorited = computed(() => Boolean(favoriteStatus.value))
+const trackedServiceId = ref('')
+const serviceVisible = computed(() => Boolean(service.value?.id))
 const serviceMissing = computed(() => serviceError.value instanceof BackendProblemError && serviceError.value.status === 404)
 const emptyTitle = computed(() => serviceMissing.value ? 'API 服务暂未公开' : '未找到 API 服务')
 const emptyDescription = computed(() => serviceMissing.value
   ? '该服务尚未配置接单设置、已下架，或当前不在公开 API 集市展示。'
   : '该服务不存在、已下架，或当前不可接单。')
 
+useDetailVisibleAnalytics({
+  enabled: serviceVisible,
+  entityType: 'api_service',
+  sourceRoute: analyticsSourceRoute,
+})
+
+function apiServiceAnalyticsProps(value: ApiService) {
+  return {
+    source_route: analyticsSourceRoute(),
+    models_text: value.models.join(' '),
+    billing_mode: value.billingMode,
+    delivery_mode: value.deliveryModes[0],
+    minimum_purchase_cny: value.minimumPurchaseCny,
+  }
+}
+
 watch(service, value => {
   if (!value) return
   amount.value = value.minimumPurchaseCny
   selectedDeliveryMode.value = value.deliveryModes.includes('sub2api_panel_account') ? 'sub2api_panel_account' : value.deliveryModes[0]
+}, { immediate: true })
+
+watch(service, value => {
+  if (!value || trackedServiceId.value === value.id) return
+  trackedServiceId.value = value.id
+  trackAnalytics('api_service_detail_view', apiServiceAnalyticsProps(value))
 }, { immediate: true })
 
 const createOrderMutation = useMutation({
@@ -55,6 +82,13 @@ const createOrderMutation = useMutation({
     queryClient.invalidateQueries({ queryKey: ['api-purchase-intents'] })
     queryClient.invalidateQueries({ queryKey: ['admin-section'] })
     queryClient.invalidateQueries({ queryKey: ['api-order-notifications'] })
+    if (service.value) {
+      trackAnalytics('api_purchase_intent_create_success', {
+        ...apiServiceAnalyticsProps(service.value),
+        delivery_mode: selectedDeliveryMode.value,
+        purchase_amount_cny: amount.value,
+      })
+    }
     toast.success('购买意向已提交，请在意向详情页查看商户联系方式并站外确认。')
     router.push(`/my/api-orders/${intent.id}`)
   },
@@ -67,6 +101,11 @@ function toggleFavorite() {
   if (!service.value) return
   toggleFavoriteMutation.mutate({ targetType: 'api-service', targetId: service.value.id }, {
     onSuccess(data) {
+      trackAnalytics('favorite_toggle', {
+        source_route: analyticsSourceRoute(),
+        entity_type: 'api_service',
+        action: data.favorited ? 'add' : 'remove',
+      })
       toast.success(data.favorited ? '已收藏该 API 服务。' : '已取消收藏。')
     },
     onError(error) {

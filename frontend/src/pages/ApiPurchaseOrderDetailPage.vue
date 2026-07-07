@@ -20,6 +20,7 @@ import {
   getApiStatusLabel,
   getApiUsageVisibilityLabel,
 } from '@/lib/api'
+import { trackAnalytics } from '@/lib/analytics'
 import {
   apiPaymentMethodLabels,
   apiPaymentMethodRequiresQrCode,
@@ -31,6 +32,7 @@ import { useApiPurchaseIntent, useApiPurchaseIntentEvents } from '@/queries/useM
 const route = useRoute()
 const router = useRouter()
 const queryClient = useQueryClient()
+const analyticsSourceRoute = () => String(route.name ?? 'unknown')
 const id = computed(() => String(route.params.id ?? ''))
 const { data: intent, isLoading } = useApiPurchaseIntent(id)
 const { data: events } = useApiPurchaseIntentEvents(id)
@@ -78,14 +80,21 @@ function requestManualIntervention() {
   if (!intent.value) return
   const description = window.prompt('请填写 4-1000 字脱敏说明。平台只记录处理状态和公开摘要，不追回付款、不托管、不担保、不裁决站外支付、不验真 API Key。')
   if (!description?.trim()) return
-  runAction(() => createManualInterventionReport({
-    targetType: 'api_purchase_intent',
-    targetId: intent.value!.id,
-    targetLabel: intent.value!.snapshot.serviceTitle,
-    reasonCode: 'api_quota_dispute',
-    title: '举报 / 申请人工介入：API 接入或额度说明争议',
-    description: description.trim(),
-  }), '已提交人工介入申请。')
+  runAction(async () => {
+    await createManualInterventionReport({
+      targetType: 'api_purchase_intent',
+      targetId: intent.value!.id,
+      targetLabel: intent.value!.snapshot.serviceTitle,
+      reasonCode: 'api_quota_dispute',
+      title: '举报 / 申请人工介入：API 接入或额度说明争议',
+      description: description.trim(),
+    })
+    trackAnalytics('report_submit', {
+      source_route: analyticsSourceRoute(),
+      entity_type: 'api_purchase_intent',
+      reason_code: 'api_quota_dispute',
+    })
+  }, '已提交人工介入申请。')
 }
 </script>
 

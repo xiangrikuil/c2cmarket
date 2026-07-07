@@ -4,10 +4,12 @@ import { VueQueryPlugin, QueryClient } from '@tanstack/vue-query'
 import App from './App.vue'
 import { router } from './router'
 import { initializeAppTheme } from './theme/appThemes'
+import { installUmamiScript } from './lib/umamiLoader'
 import 'vue-sonner/style.css'
 import './styles.css'
 
 initializeAppTheme()
+installUmamiScript()
 
 const queryClient = new QueryClient({
   defaultOptions: {

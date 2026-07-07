@@ -54,6 +54,17 @@ const quotaForFiftyCny = computed(() => formatUsdQuotaForCny(props.form.cnyPerUs
         </label>
       </div>
 
+      <label class="block space-y-2">
+        <span class="text-sm font-medium">额度有效至</span>
+        <Input
+          :model-value="form.quotaExpiresAt"
+          type="datetime-local"
+          @update:model-value="value => form.quotaExpiresAt = String(value)"
+        />
+        <p v-if="errors.quotaExpiresAt" class="text-xs text-destructive">{{ errors.quotaExpiresAt }}</p>
+        <p v-else class="text-xs text-muted-foreground">适合发布临近套餐重置前的剩余额度，买家按该时间判断可用窗口。</p>
+      </label>
+
       <div class="api-publish-compute-grid">
         <div class="api-publish-compute-box">
           <b>{{ quotaForTwentyCny }}</b>

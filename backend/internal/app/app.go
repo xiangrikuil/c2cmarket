@@ -78,6 +78,7 @@ func New(ctx context.Context, cfg config.Config) (*App, error) {
 			Review:            store,
 			Search:            store,
 			Report:            store,
+			ModelAudit:        store,
 		}, emailSender)
 	}
 	if strings.TrimSpace(cfg.BootstrapAdminPassword) != "" {

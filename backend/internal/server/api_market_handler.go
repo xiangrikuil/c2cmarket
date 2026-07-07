@@ -25,6 +25,7 @@ type apiServiceRequest struct {
 	BillingMode                      string                        `json:"billingMode"`
 	DeclaredCNYPerUSDAllowance       string                        `json:"declaredCnyPerUsdAllowance"`
 	DeclaredMaxUSDAllowancePerIntent string                        `json:"declaredMaxUsdAllowancePerIntent"`
+	QuotaExpiresAt                   string                        `json:"quotaExpiresAt"`
 	MinimumIntentCNY                 string                        `json:"minimumIntentCny"`
 	MaximumIntentCNY                 string                        `json:"maximumIntentCny"`
 	UsageVisibility                  string                        `json:"usageVisibility"`
@@ -83,6 +84,7 @@ type apiServiceResponse struct {
 	BillingMode                      string                            `json:"billingMode"`
 	DeclaredCNYPerUSDAllowance       string                            `json:"declaredCnyPerUsdAllowance,omitempty"`
 	DeclaredMaxUSDAllowancePerIntent string                            `json:"declaredMaxUsdAllowancePerIntent,omitempty"`
+	QuotaExpiresAt                   *string                           `json:"quotaExpiresAt,omitempty"`
 	MinimumIntentCNY                 string                            `json:"minimumIntentCny"`
 	MaximumIntentCNY                 string                            `json:"maximumIntentCny,omitempty"`
 	UsageVisibility                  string                            `json:"usageVisibility"`
@@ -120,6 +122,7 @@ type publicAPIServiceResponse struct {
 	BillingMode                      string                         `json:"billingMode"`
 	DeclaredCNYPerUSDAllowance       string                         `json:"declaredCnyPerUsdAllowance,omitempty"`
 	DeclaredMaxUSDAllowancePerIntent string                         `json:"declaredMaxUsdAllowancePerIntent,omitempty"`
+	QuotaExpiresAt                   *string                        `json:"quotaExpiresAt,omitempty"`
 	MinimumIntentCNY                 string                         `json:"minimumIntentCny"`
 	MaximumIntentCNY                 string                         `json:"maximumIntentCny,omitempty"`
 	UsageVisibility                  string                         `json:"usageVisibility"`
@@ -835,6 +838,7 @@ func toAppCreateAPIServiceInput(req apiServiceRequest) apimarket.CreateServiceIn
 		BillingMode:                      req.BillingMode,
 		DeclaredCNYPerUSDAllowance:       req.DeclaredCNYPerUSDAllowance,
 		DeclaredMaxUSDAllowancePerIntent: req.DeclaredMaxUSDAllowancePerIntent,
+		QuotaExpiresAt:                   req.QuotaExpiresAt,
 		MinimumIntentCNY:                 req.MinimumIntentCNY,
 		MaximumIntentCNY:                 req.MaximumIntentCNY,
 		UsageVisibility:                  req.UsageVisibility,
@@ -859,6 +863,7 @@ func toAppUpdateAPIServiceInput(req apiServiceRequest) apimarket.UpdateServiceIn
 		BillingMode:                      base.BillingMode,
 		DeclaredCNYPerUSDAllowance:       base.DeclaredCNYPerUSDAllowance,
 		DeclaredMaxUSDAllowancePerIntent: base.DeclaredMaxUSDAllowancePerIntent,
+		QuotaExpiresAt:                   base.QuotaExpiresAt,
 		MinimumIntentCNY:                 base.MinimumIntentCNY,
 		MaximumIntentCNY:                 base.MaximumIntentCNY,
 		UsageVisibility:                  base.UsageVisibility,
@@ -915,6 +920,7 @@ func toPublicAPIServiceResponse(service apimarket.Service) publicAPIServiceRespo
 		BillingMode:                      service.BillingMode,
 		DeclaredCNYPerUSDAllowance:       service.DeclaredCNYPerUSDAllowance,
 		DeclaredMaxUSDAllowancePerIntent: service.DeclaredMaxUSDAllowancePerIntent,
+		QuotaExpiresAt:                   formatOptionalTime(service.QuotaExpiresAt),
 		MinimumIntentCNY:                 service.MinimumIntentCNY,
 		MaximumIntentCNY:                 service.MaximumIntentCNY,
 		UsageVisibility:                  service.UsageVisibility,
@@ -954,6 +960,7 @@ func toAPIServiceResponse(service apimarket.Service) apiServiceResponse {
 		BillingMode:                      service.BillingMode,
 		DeclaredCNYPerUSDAllowance:       service.DeclaredCNYPerUSDAllowance,
 		DeclaredMaxUSDAllowancePerIntent: service.DeclaredMaxUSDAllowancePerIntent,
+		QuotaExpiresAt:                   formatOptionalTime(service.QuotaExpiresAt),
 		MinimumIntentCNY:                 service.MinimumIntentCNY,
 		MaximumIntentCNY:                 service.MaximumIntentCNY,
 		UsageVisibility:                  service.UsageVisibility,

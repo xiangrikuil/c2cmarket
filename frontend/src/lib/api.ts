@@ -72,6 +72,7 @@ import {
 } from '@/data/mock'
 import { getPricingDisplay } from '@/lib/pricing'
 import { defaultQuotaLabel, defaultQuotaPeriod, defaultQuotaUnit } from '@/lib/quota'
+import { beijingDateTimeInputToISOString, formatQuotaExpiresAtLabel } from '@/lib/apiQuotaExpiration'
 import { getMockPublicAPIModels } from '@/lib/apiModelCatalogBackend'
 import {
   cloneApiPaymentAccountSettings,
@@ -617,6 +618,7 @@ function normalizeApiServiceStore(services: ApiService[]) {
     return {
       ...normalized,
       publiclyOrderable: normalized.publiclyOrderable ?? normalized.online,
+      expiresAt: normalized.quotaExpiresAt ? formatQuotaExpiresAtLabel(normalized.quotaExpiresAt) || normalized.expiresAt : normalized.expiresAt,
     }
   })
 }
@@ -2579,6 +2581,7 @@ export async function submitApiService(payload: Record<string, unknown>) {
   const publiclyOrderable = isPublish && hasEnabledPayment
   const responseMinutes = numberValue(payload.paymentWindowMinutes, 10)
   const state: ApiServiceState = isPublish ? 'online' : 'offline'
+  const quotaExpiresAt = beijingDateTimeInputToISOString(String(payload.quotaExpiresAt ?? ''))
   const service: ApiService = {
     id,
     title: stringValue(payload.generatedTitle, models.length ? `${models[0]} API 服务` : '新 API 服务'),
@@ -2628,7 +2631,8 @@ export async function submitApiService(payload: Record<string, unknown>) {
     warning: publiclyOrderable ? undefined : isPublish ? '待配置接单设置' : '草稿尚未上线',
     warranty: (payload.warranty as { mode?: string, warrantyDays?: number | null } | undefined)?.mode === 'merchant_warranty' ? `商户承诺：${(payload.warranty as { warrantyDays?: number | null }).warrantyDays ?? 7} 天可用性处理，平台不担保、不代赔` : '按商户备注站外协商，平台不担保、不代赔',
     refundPolicy: stringValue((payload.warranty as { refundNote?: string } | undefined)?.refundNote, '按服务说明站外协商'),
-    expiresAt: payload.validity && (payload.validity as { mode?: string, days?: number | null }).mode === 'days' ? `${(payload.validity as { days?: number | null }).days ?? 30} 天` : '长期有效',
+    quotaExpiresAt: quotaExpiresAt || undefined,
+    expiresAt: formatQuotaExpiresAtLabel(quotaExpiresAt) || '按服务说明',
     completed30d: 0,
     reviewCount: 0,
     officialPricingVersion: '2026-06',
