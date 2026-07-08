@@ -99,7 +99,7 @@ const quotaLabel = computed(() => quotaFieldLabel(selectedProduct.value))
         <div class="flex justify-between gap-4 py-2"><dt class="text-muted-foreground">开通区</dt><dd class="font-semibold">{{ regionsByCode.get(form.regionCode)?.displayName || '待选择' }}</dd></div>
         <div class="flex justify-between gap-4 py-2"><dt class="text-muted-foreground">倍率</dt><dd class="font-semibold">{{ form.serviceMultiplier ?? '-' }}x</dd></div>
         <div class="flex justify-between gap-4 py-2"><dt class="text-muted-foreground">{{ quotaLabel }}</dt><dd class="font-semibold">{{ quotaText }}</dd></div>
-        <div class="flex justify-between gap-4 py-2"><dt class="text-muted-foreground">支付方式</dt><dd class="text-right font-semibold">{{ paymentText }}</dd></div>
+        <div class="flex justify-between gap-4 py-2"><dt class="text-muted-foreground">付款方式</dt><dd class="text-right font-semibold">{{ paymentText }}</dd></div>
         <div class="flex justify-between gap-4 py-2"><dt class="text-muted-foreground">访问安排</dt><dd class="text-right font-semibold">{{ form.accessArrangementNote || '待填写' }}</dd></div>
         <div class="flex justify-between gap-4 py-2"><dt class="text-muted-foreground">总名额</dt><dd class="font-semibold">{{ form.totalSeats }} 人车 · 已上车 {{ form.occupiedSeats }} 人</dd></div>
         <div class="flex justify-between gap-4 py-2"><dt class="text-muted-foreground">原帖状态</dt><dd class="font-semibold">{{ parsedTopic ? '已读取并绑定' : '待读取' }}</dd></div>

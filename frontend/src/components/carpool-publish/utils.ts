@@ -19,10 +19,10 @@ export const providerLabels: Record<CatalogProviderCode, string> = {
 }
 
 export const openingChannelLabels: Record<OpeningChannelCode, string> = {
-  web: 'Web',
+  web: 'Web 官网',
   ios_app_store: 'iOS App Store',
   google_play: 'Google Play',
-  team_seat: '团队 / Business 席位',
+  team_seat: 'Team / Business 席位',
   other: '其他',
 }
 
@@ -31,8 +31,9 @@ export const paymentMethodLabels: Record<PaymentMethodCode, string> = {
   virtual_card: '虚拟卡',
   apple_pay: 'Apple Pay',
   google_pay: 'Google Pay',
-  gift_card: '礼品卡',
-  local_payment: '本地支付',
+  app_store_gift_card: 'App Store 礼品卡',
+  google_play_gift_card: 'Google Play 礼品卡',
+  paypal: 'PayPal',
   other: '其他',
 }
 
@@ -189,7 +190,7 @@ export function buildLinuxDoPostText(
     `倍率：${form.serviceMultiplier ?? '-'}x`,
     `${quotaLabel}：${quotaText}`,
     `开通渠道：${openingChannel}`,
-    `支付方式：${paymentMethods}`,
+    `付款方式：${paymentMethods}`,
     `访问安排：${form.accessArrangementNote.trim() || '待确认'}`,
     `售后说明：${warrantyPostText(form.warranty)}`,
     '买家须知：',

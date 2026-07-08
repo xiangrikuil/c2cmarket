@@ -13,44 +13,59 @@ import PageTitle from '@/components/market/PageTitle.vue'
 import TablePagination from '@/components/market/TablePagination.vue'
 import { usePagination } from '@/composables/usePagination'
 import { containsSensitiveContent, firstError, isBlank, isLinuxDoTopicUrl, isPositiveNumber, type FieldErrors } from '@/lib/formValidation'
-import { canPublishProductPlan, getProductPlanBySlug, getProductPlanForName, productMatchesPlan, productPlanOptions } from '@/lib/productCategories'
-import { useDemands, useSubmitDemandMutation } from '@/queries/useMarketQueries'
+import { useCarpoolProductCatalog, useDemands, useSubmitDemandMutation } from '@/queries/useMarketQueries'
 import { toast } from 'vue-sonner'
 
 type Field = 'sourceUrl' | 'title' | 'maxPrice' | 'region' | 'note' | 'sensitive'
 
-const customProductValue = 'custom'
-const productOptions = productPlanOptions
-  .filter(canPublishProductPlan)
-  .map(item => ({ value: item.slug, label: item.label, note: item.note }))
-const filters = [
-  { label: '产品', items: ['全部', ...productOptions.map(item => item.label)], active: '全部' },
-  { label: '状态', items: ['全部', '匹配中', '待审核', '已匹配', '已关闭'], active: '全部' },
-]
+const { data: productCatalog, isLoading: productCatalogLoading, error: productCatalogError } = useCarpoolProductCatalog()
+const productOptions = computed(() => (productCatalog.value ?? [])
+  .filter(item => item.active && item.publishPolicy === 'allowed')
+  .map(item => ({
+    value: item.id,
+    label: item.displayName,
+    note: item.policyNote || item.description || '管理员维护的可发布套餐。',
+  })))
+const filters = computed(() => [
+  { label: '产品', items: ['全部', ...productOptions.value.map(item => item.label)], active: '全部' },
+  { label: '状态', items: ['全部', '匹配中'], active: '全部' },
+])
 
-const selected = ref(Object.fromEntries(filters.map(group => [group.label, group.active ?? group.items[0]])))
+const selected = ref({ 产品: '全部', 状态: '全部' })
 const { data } = useDemands()
 const submitMutation = useSubmitDemandMutation()
 const submittedId = ref('')
 const errors = reactive<FieldErrors<Field>>({})
 const form = reactive({
   sourceUrl: 'https://linux.do/t/topic/234567',
-  productSlug: 'chatgpt-business',
-  customProduct: '',
+  productId: '',
   maxPrice: '190',
   region: '美国区',
   ownerPreference: 'personal' as 'personal' | 'only-personal' | 'any',
   note: '希望通过官方 workspace 成员席位加入，优先个人车主，不接受共享主账号或密码。',
 })
 
-const selectedProductLabel = computed(() => {
-  if (form.productSlug === customProductValue) return form.customProduct.trim()
-  return getProductPlanBySlug(form.productSlug)?.label ?? ''
-})
+const selectedProduct = computed(() => productOptions.value.find(item => item.value === form.productId) ?? null)
+const selectedProductLabel = computed(() => selectedProduct.value?.label ?? '')
+
+function findProductOptionForName(productName: string) {
+  const normalizedName = productName.trim().toLowerCase()
+  if (!normalizedName) return null
+  return productOptions.value.find(item => normalizedName === item.label.toLowerCase())
+    ?? productOptions.value.find(item => normalizedName.includes(item.label.toLowerCase()) || item.label.toLowerCase().includes(normalizedName))
+    ?? null
+}
+
+function productMatchesOption(productName: string, optionLabel: string) {
+  const normalizedName = productName.trim().toLowerCase()
+  const normalizedLabel = optionLabel.trim().toLowerCase()
+  if (!normalizedName || !normalizedLabel) return false
+  return normalizedName === normalizedLabel || normalizedName.includes(normalizedLabel) || normalizedLabel.includes(normalizedName)
+}
 
 const rows = computed(() => (data.value ?? []).filter(row => {
   const productFilter = selected.value['产品']
-  return (productFilter === '全部' || productMatchesPlan(row.title.replace(/^求\s*/, ''), getProductPlanForName(productFilter)?.slug ?? productFilter) || row.title.includes(productFilter))
+  return (productFilter === '全部' || productMatchesOption(row.title.replace(/^求\s*/, ''), productFilter) || row.title.includes(productFilter))
     && (selected.value['状态'] === '全部' || row.status === selected.value['状态'])
 }))
 
@@ -60,7 +75,7 @@ const productDemandRanking = computed(() => {
   const counts = new Map<string, number>()
   for (const row of demandRows.value) {
     const normalizedTitle = row.title.replace(/^求\s*/, '')
-    const plan = getProductPlanForName(normalizedTitle)
+    const plan = findProductOptionForName(normalizedTitle)
     const label = plan?.label ?? normalizedTitle.split(/[（(·/]/)[0].trim()
     counts.set(label, (counts.get(label) ?? 0) + 1)
   }
@@ -88,7 +103,7 @@ function validate() {
   const next: FieldErrors<Field> = {}
   if (isBlank(form.sourceUrl)) next.sourceUrl = '请填写 linux.do 求车原帖。'
   else if (!isLinuxDoTopicUrl(form.sourceUrl)) next.sourceUrl = '原帖链接必须是 https://linux.do/t/*。'
-  if (isBlank(selectedProductLabel.value)) next.title = '请选择想要的产品，或填写自定义产品。'
+  if (isBlank(selectedProductLabel.value)) next.title = '请选择管理员维护的套餐。'
   if (!isPositiveNumber(form.maxPrice)) next.maxPrice = '请填写大于 0 的最高月费。'
   if (isBlank(form.region)) next.region = '请填写开通区或地区偏好。'
   if (containsSensitiveContent(Object.values(form).map(String))) next.sensitive = '请移除密码、API Key、token 或付款码等敏感内容。'
@@ -111,7 +126,7 @@ function submitDemand() {
   }, {
     onSuccess(data) {
       submittedId.value = data.id
-      toast.success('求车需求已进入需求大厅和管理台审核视图。')
+      toast.success('求车需求已发布到需求大厅。')
     },
     onError(error) {
       toast.error(error instanceof Error ? error.message : '提交失败')
@@ -133,7 +148,7 @@ function submitDemand() {
           </label>
           <label class="space-y-2">
             <span class="text-sm font-medium">想要产品</span>
-            <Select v-model="form.productSlug">
+            <Select v-model="form.productId">
               <SelectTrigger class="w-full">
                 <SelectValue placeholder="选择产品" />
               </SelectTrigger>
@@ -141,15 +156,11 @@ function submitDemand() {
                 <SelectItem v-for="item in productOptions" :key="item.value" :value="item.value">
                   {{ item.label }}
                 </SelectItem>
-                <SelectItem :value="customProductValue">其他 / 自定义</SelectItem>
               </SelectContent>
             </Select>
-            <Input
-              v-if="form.productSlug === customProductValue"
-              v-model="form.customProduct"
-              placeholder="输入产品名称，例如 Notion AI Plus"
-            />
-            <p v-else class="text-xs text-muted-foreground">{{ getProductPlanBySlug(form.productSlug)?.note }}</p>
+            <p v-if="productCatalogLoading" class="text-xs text-muted-foreground">正在读取管理员维护的套餐目录...</p>
+            <p v-else-if="productCatalogError" class="text-xs text-destructive">套餐目录读取失败，请稍后重试。</p>
+            <p v-else class="text-xs text-muted-foreground">{{ selectedProduct?.note ?? '请选择管理员维护的套餐。' }}</p>
             <p v-if="errors.title" class="text-xs text-destructive">{{ errors.title }}</p>
           </label>
           <label class="space-y-2">
@@ -180,8 +191,9 @@ function submitDemand() {
           </label>
         </div>
         <div v-if="submittedId" class="mt-5 rounded-md border border-border bg-accent p-3 text-sm">
-          已提交求车需求：
+          已发布求车需求：
           <RouterLink class="font-medium underline underline-offset-4" :to="`/demands/${submittedId}`">{{ submittedId }}</RouterLink>
+          <span class="ml-1 text-muted-foreground">可在当前需求大厅列表和详情页查看。</span>
         </div>
         <div class="mt-6 flex justify-end">
           <Button :disabled="submitMutation.isPending.value" @click="submitDemand">

@@ -1,4 +1,4 @@
-export type DemandStatus = '匹配中' | '已匹配' | '已关闭' | '待审核'
+export type DemandStatus = '匹配中' | '已匹配' | '已关闭' | '需处理'
 
 export type DemandRecord = {
   id: string

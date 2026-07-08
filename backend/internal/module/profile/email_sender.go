@@ -470,7 +470,7 @@ func (t *emailTemplates) renderAPIPurchaseIntent(data apiPurchaseIntentTemplateD
 }
 
 func verificationTextBody(code string, expiresAt time.Time) string {
-	return fmt.Sprintf("你的 C2CMarket 邮箱验证码是：%s\n\n验证码将在 %s 过期。若非本人操作，请忽略本邮件。", strings.TrimSpace(code), expiresAt.UTC().Format(time.RFC3339))
+	return fmt.Sprintf("你的 C2CMarket 邮箱验证码是：%s\n\n验证码 15 分钟内有效，将在 %s 过期。若非本人操作，请忽略本邮件。", strings.TrimSpace(code), expiresAt.UTC().Format(time.RFC3339))
 }
 
 func registrationTextBody(username, displayName string, registeredAt time.Time) string {
@@ -543,7 +543,7 @@ func emailSendFailedError() *domain.AppError {
 	return domain.NewError(http.StatusBadGateway, domain.CodeInternalError, "Email send failed", "邮件发送失败，请稍后重试。")
 }
 
-const verificationHTMLTemplate = `<p>你的 C2CMarket 邮箱验证码是：</p><p style="font-size:24px;font-weight:700;letter-spacing:4px">{{.Code}}</p><p>验证码将在 {{.ExpiresAt}} 过期。若非本人操作，请忽略本邮件。</p>`
+const verificationHTMLTemplate = `<p>你的 C2CMarket 邮箱验证码是：</p><p style="font-size:24px;font-weight:700;letter-spacing:4px">{{.Code}}</p><p>验证码 15 分钟内有效，将在 {{.ExpiresAt}} 过期。若非本人操作，请忽略本邮件。</p>`
 
 const registrationHTMLTemplate = `<p>你好，{{if .DisplayName}}{{.DisplayName}}{{else}}C2CMarket 用户{{end}}：</p><p>你的 C2CMarket 账号已注册成功。</p><p>注册时间：{{.RegisteredAt}}</p><p>若非本人操作，请忽略本邮件。</p>`
 

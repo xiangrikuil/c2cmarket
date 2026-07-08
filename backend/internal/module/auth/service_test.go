@@ -423,6 +423,35 @@ func TestLoginWithPasswordRequiresLinuxDoBinding(t *testing.T) {
 	}
 }
 
+func TestValidateNewPasswordRequiresLengthAndComposition(t *testing.T) {
+	tests := []struct {
+		name     string
+		password string
+		reason   string
+	}{
+		{name: "too short", password: "Aa1!", reason: "too_short"},
+		{name: "too long", password: "Password1!Password1!Password1!Long", reason: "too_long"},
+		{name: "missing digit", password: "Password!", reason: "composition_required"},
+		{name: "missing symbol", password: "Password1", reason: "composition_required"},
+		{name: "space is not a symbol", password: "Password1 ", reason: "composition_required"},
+		{name: "missing letter", password: "12345678!", reason: "composition_required"},
+		{name: "ascii letter required", password: "密码123456!", reason: "composition_required"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			appErr := validateNewPassword(tt.password)
+			if appErr == nil || len(appErr.FieldErrors) != 1 || appErr.FieldErrors[0].Code != tt.reason {
+				t.Fatalf("expected reason %s, got %v", tt.reason, appErr)
+			}
+		})
+	}
+
+	if appErr := validateNewPassword("Password1!"); appErr != nil {
+		t.Fatalf("expected valid password, got %v", appErr)
+	}
+}
+
 func TestSetPasswordCreatesCredentialWithoutCurrentPasswordForLinuxDoBoundUser(t *testing.T) {
 	repo := &fakeAuthRepository{
 		user: boundUserForTest(),
@@ -431,7 +460,7 @@ func TestSetPasswordCreatesCredentialWithoutCurrentPasswordForLinuxDoBoundUser(t
 
 	appErr := service.SetPassword(context.Background(), SetPasswordInput{
 		UserID:      "user-oauth",
-		NewPassword: "unit-test-password",
+		NewPassword: "unit-test-password-1!",
 	})
 	if appErr != nil {
 		t.Fatalf("set password: %v", appErr)
@@ -452,7 +481,7 @@ func TestSetPasswordRequiresLinuxDoBinding(t *testing.T) {
 
 	appErr := service.SetPassword(context.Background(), SetPasswordInput{
 		UserID:      "user-email",
-		NewPassword: "unit-test-password",
+		NewPassword: "unit-test-password-1!",
 	})
 	if appErr == nil || appErr.Code != domain.CodeLinuxDoBindingRequired {
 		t.Fatalf("expected linux.do binding required, got %v", appErr)
@@ -472,7 +501,7 @@ func TestSetPasswordRequiresCurrentPasswordWhenConfigured(t *testing.T) {
 
 	appErr := service.SetPassword(context.Background(), SetPasswordInput{
 		UserID:      "user-oauth",
-		NewPassword: "new-unit-test-password",
+		NewPassword: "new-unit-test-password-1!",
 	})
 	if appErr == nil || appErr.Code != domain.CodeValidationFailed {
 		t.Fatalf("expected current password validation error, got %v", appErr)
@@ -480,7 +509,7 @@ func TestSetPasswordRequiresCurrentPasswordWhenConfigured(t *testing.T) {
 	appErr = service.SetPassword(context.Background(), SetPasswordInput{
 		UserID:          "user-oauth",
 		CurrentPassword: "unit-test-password",
-		NewPassword:     "new-unit-test-password",
+		NewPassword:     "new-unit-test-password-1!",
 	})
 	if appErr != nil {
 		t.Fatalf("change password: %v", appErr)
@@ -500,7 +529,7 @@ func TestBootstrapAdminCreatesFirstAdminCredential(t *testing.T) {
 
 	result, appErr := service.BootstrapAdmin(context.Background(), BootstrapAdminInput{
 		Username: "Admin Root",
-		Password: "bootstrap-password",
+		Password: "bootstrap-password-1!",
 	})
 	if appErr != nil {
 		t.Fatalf("bootstrap admin: %v", appErr)
@@ -509,7 +538,7 @@ func TestBootstrapAdminCreatesFirstAdminCredential(t *testing.T) {
 		t.Fatalf("unexpected bootstrap result: %+v", result)
 	}
 
-	user, session, appErr := service.LoginWithPassword(context.Background(), "admin-root", "bootstrap-password")
+	user, session, appErr := service.LoginWithPassword(context.Background(), "admin-root", "bootstrap-password-1!")
 	if appErr != nil {
 		t.Fatalf("login with bootstrapped admin: %v", appErr)
 	}
@@ -523,14 +552,14 @@ func TestBootstrapAdminDoesNotOverwriteExistingAdminCredential(t *testing.T) {
 
 	first, appErr := service.BootstrapAdmin(context.Background(), BootstrapAdminInput{
 		Username: "admin",
-		Password: "first-bootstrap-password",
+		Password: "first-bootstrap-password-1!",
 	})
 	if appErr != nil || !first.Created {
 		t.Fatalf("first bootstrap admin result=%+v err=%v", first, appErr)
 	}
 	second, appErr := service.BootstrapAdmin(context.Background(), BootstrapAdminInput{
 		Username: "admin",
-		Password: "second-bootstrap-password",
+		Password: "second-bootstrap-password-2!",
 	})
 	if appErr != nil {
 		t.Fatalf("second bootstrap admin: %v", appErr)
@@ -539,10 +568,10 @@ func TestBootstrapAdminDoesNotOverwriteExistingAdminCredential(t *testing.T) {
 		t.Fatalf("second bootstrap must not overwrite existing admin credential: %+v", second)
 	}
 
-	if _, _, appErr := service.LoginWithPassword(context.Background(), "admin", "first-bootstrap-password"); appErr != nil {
+	if _, _, appErr := service.LoginWithPassword(context.Background(), "admin", "first-bootstrap-password-1!"); appErr != nil {
 		t.Fatalf("first bootstrap password should still work: %v", appErr)
 	}
-	if _, _, appErr := service.LoginWithPassword(context.Background(), "admin", "second-bootstrap-password"); appErr == nil || appErr.Code != domain.CodeInvalidCredentials {
+	if _, _, appErr := service.LoginWithPassword(context.Background(), "admin", "second-bootstrap-password-2!"); appErr == nil || appErr.Code != domain.CodeInvalidCredentials {
 		t.Fatalf("second bootstrap password must not work, got %v", appErr)
 	}
 }

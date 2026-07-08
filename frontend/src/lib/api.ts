@@ -206,6 +206,7 @@ import {
   type CreatePublicUserReportRequest,
 } from '@/lib/reportBackend'
 import { shouldUseRealBackend } from '@/lib/backendClient'
+import { getBackupPasswordValidationMessage } from '@/lib/passwordPolicy'
 import {
   closeDemand,
   getDemandById,
@@ -1045,7 +1046,7 @@ function buildCarpoolSnapshot(carpool: Carpool): CarpoolApplication['snapshot'] 
     quotaPeriod: carpool.quotaPeriod,
     priceLabel: pricing.primaryLabel,
     openingChannelName: carpool.openingMethod,
-    paymentMethodNames: carpool.openingMethod === 'Apple Store' ? ['Apple Pay'] : carpool.openingMethod === '本地卡' ? ['本地支付'] : ['站外协商'],
+    paymentMethodNames: carpool.openingMethod === 'Apple Store' ? ['Apple Pay'] : carpool.openingMethod === '本地卡' ? ['其他'] : ['站外协商'],
     warrantyText: carpool.warranty,
     rulesVersion: nowText(),
     rulesText: '按车源当前规则申请上车；平台只记录意向和状态，不托管支付或账号。',
@@ -1760,7 +1761,8 @@ export async function updateMyProfile(payload: UpdateMyProfileRequest) {
 export async function setBackupPassword(payload: SetBackupPasswordRequest) {
   if (shouldUseRealBackend()) return backendSetPassword(payload)
   await wait()
-  if (payload.newPassword.length < 8) throw new Error('密码至少 8 个字符')
+  const validationMessage = getBackupPasswordValidationMessage(payload.newPassword)
+  if (validationMessage) throw new Error(validationMessage)
   if (myUserProfileStore.passwordConfigured && !payload.currentPassword?.trim()) throw new Error('修改密码必须输入当前密码')
   myUserProfileStore = {
     ...myUserProfileStore,

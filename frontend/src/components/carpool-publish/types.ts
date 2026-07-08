@@ -12,8 +12,9 @@ export type PaymentMethodCode =
   | 'virtual_card'
   | 'apple_pay'
   | 'google_pay'
-  | 'gift_card'
-  | 'local_payment'
+  | 'app_store_gift_card'
+  | 'google_play_gift_card'
+  | 'paypal'
   | 'other'
 
 export type CarpoolWarrantyMode =

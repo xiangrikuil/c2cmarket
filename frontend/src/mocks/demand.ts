@@ -85,7 +85,7 @@ export function toggleMockDemandClosed(id: string) {
 export function updateMockDemandAdminStatus(id: string, status: string) {
   const target = demandStore.find(item => item.id === id)
   if (!target) return null
-  target.status = status === '已关闭' || status === '已下架' ? '已关闭' : status === '待复核' ? '待审核' : status === '已通过' || status === '已恢复' ? '匹配中' : target.status
+  target.status = status === '已关闭' || status === '已下架' ? '已关闭' : status === '待复核' ? '需处理' : status === '已通过' || status === '已恢复' ? '匹配中' : target.status
   target.updatedAt = nowMockText()
   persistDemandStore()
   return cloneMock(target)

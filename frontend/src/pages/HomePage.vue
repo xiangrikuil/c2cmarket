@@ -151,7 +151,7 @@ const stats = computed(() => {
     .filter(item => item.status === '已验证' && item.cny !== null)
     .map(item => item.cny as number)
   const availableCarpools = (data.value?.carpools ?? []).filter(item => item.status === '可上车').length
-  const openDemands = (data.value?.demands ?? []).filter(item => !['已关闭', '待审核'].includes(item.status)).length
+  const openDemands = (data.value?.demands ?? []).filter(item => !['已关闭', '需处理'].includes(item.status)).length
   const onlineApiServices = (data.value?.apiServices ?? []).filter(item => item.publiclyOrderable).length
 
   return [

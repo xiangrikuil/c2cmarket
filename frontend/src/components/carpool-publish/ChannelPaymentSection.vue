@@ -55,8 +55,8 @@ function stateLabelClass(key: string) {
 <template>
   <PublishSectionCard
     :index="3"
-    title="开通渠道与支付方式"
-    description="开通渠道和支付方式分开维护，Google Play 属于渠道，Google Pay 属于支付方式。"
+    title="开通渠道与付款方式"
+    description="开通渠道和付款方式分开维护，Google Play 属于渠道，Google Pay 属于付款方式。"
   >
     <div class="grid gap-5 md:grid-cols-2">
       <div id="carpool-task-openingChannel" class="space-y-2" :class="fieldShellClass('openingChannel')">
@@ -82,7 +82,7 @@ function stateLabelClass(key: string) {
 
       <div id="carpool-task-paymentMethods" class="space-y-2" :class="fieldShellClass('paymentMethods')">
         <div class="flex items-center justify-between gap-2 text-sm font-medium">
-          <span>支付方式 <span class="text-xs text-primary">至少一项</span></span>
+          <span>付款方式 <span class="text-xs text-primary">至少一项</span></span>
           <span v-if="stateLabel('paymentMethods')" class="rounded-full px-2 py-0.5 text-xs font-medium" :class="stateLabelClass('paymentMethods')">{{ stateLabel('paymentMethods') }}</span>
         </div>
         <div class="flex flex-wrap gap-2">

@@ -57,7 +57,7 @@ func (s *Service) Create(ctx context.Context, user auth.User, input CreateInput)
 		OwnerPreference:   normalizeOwnerPreference(input.OwnerPreference),
 		SourceURL:         strings.TrimSpace(input.SourceURL),
 		Note:              strings.TrimSpace(input.Note),
-		Status:            StatusPendingReview,
+		Status:            StatusActive,
 		CreatedAt:         now,
 		UpdatedAt:         now,
 		Version:           1,
@@ -275,7 +275,7 @@ func (s *Service) updateOwnerStatusMemory(input OwnerActionInput) (Demand, *doma
 		if item.Status != StatusClosed {
 			return Demand{}, invalidState("只有已关闭需求可以重新打开。")
 		}
-		item.Status = StatusPendingReview
+		item.Status = StatusActive
 		item.ClosedAt = nil
 	default:
 		return Demand{}, invalidState("需求操作不支持。")
@@ -318,7 +318,7 @@ func nextAdminStatus(current, action string) (string, *domain.AppError) {
 	switch action {
 	case "approve":
 		if current != StatusPendingReview && current != StatusChangesRequested {
-			return "", invalidState("只有待审核或需修改的需求可以审核通过。")
+			return "", invalidState("只有待处理或需修改的需求可以标记公开。")
 		}
 		return StatusActive, nil
 	case "request_changes":
@@ -342,7 +342,7 @@ func nextAdminStatus(current, action string) (string, *domain.AppError) {
 		}
 		return StatusActive, nil
 	default:
-		return "", invalidState("需求审核动作不支持。")
+		return "", invalidState("需求治理动作不支持。")
 	}
 }
 
@@ -382,10 +382,10 @@ func validateAdminAction(action, reason string) *domain.AppError {
 	case "approve", "restore":
 	case "request_changes", "reject", "take_down":
 		if strings.TrimSpace(reason) == "" {
-			return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Reason required", "该审核动作必须填写原因。", "reason", "required", "必须填写原因。")
+			return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Reason required", "该治理动作必须填写原因。", "reason", "required", "必须填写原因。")
 		}
 	default:
-		return invalidState("需求审核动作不支持。")
+		return invalidState("需求治理动作不支持。")
 	}
 	return nil
 }

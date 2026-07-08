@@ -309,8 +309,8 @@ const publishTasks = computed<PublishTask[]>(() => [
   },
   {
     key: 'paymentMethods',
-    label: '选择支付方式',
-    shortLabel: '支付方式',
+    label: '选择付款方式',
+    shortLabel: '付款方式',
     section: 'activationPayment',
     fieldId: publishTaskFieldIds.paymentMethods,
     description: '开通与付款方式',
@@ -576,7 +576,7 @@ function validate(requireComplete: boolean) {
   }
   if (form.totalSeats < 1 || form.totalSeats > 20 || form.occupiedSeats < 0 || form.occupiedSeats > form.totalSeats) next.seats = '名额必须满足总名额 1-20，且已上车人数不超过总名额。'
   if (!form.openingChannelCode) next.openingChannelCode = '请选择开通渠道。'
-  if (!form.paymentMethodCodes.length) next.paymentMethodCodes = '至少选择一种支付方式。'
+  if (!form.paymentMethodCodes.length) next.paymentMethodCodes = '至少选择一种付款方式。'
   if (!accessArrangementComplete(form, selectedProductForValidation.value)) {
     if (form.accessArrangementMode === 'not_allowed') next.accessArrangement = '共用账号、密码或登录态方案不能发布。'
     else if (hasForbiddenCredentialSharingText(form.accessArrangementNote)) next.accessArrangement = '安排说明不能包含共享主账号、密码、API Key、Session、Cookie、token 或登录态。'
@@ -683,7 +683,7 @@ const completeness = computed<CompletenessItem[]>(() => [
   form.serviceMultiplier && form.serviceMultiplier > 0 && form.monthlyQuotaAmount && form.monthlyQuotaAmount > 0 ? { label: '倍率和每月额度', status: 'done' } : { label: '倍率和每月额度', status: 'pending' },
   form.totalSeats >= 1 && form.totalSeats <= 20 && form.occupiedSeats >= 0 && form.occupiedSeats < form.totalSeats ? { label: '名额', status: 'done' } : { label: '名额', status: 'conflict' },
   form.openingChannelCode ? { label: '开通渠道', status: 'done' } : { label: '开通渠道', status: 'pending' },
-  form.paymentMethodCodes.length ? { label: '支付方式', status: 'done' } : { label: '支付方式', status: 'pending' },
+  form.paymentMethodCodes.length ? { label: '付款方式', status: 'done' } : { label: '付款方式', status: 'pending' },
   accessArrangementComplete(form, selectedProductForValidation.value) ? { label: '访问安排与边界确认', status: 'done' } : { label: '访问安排与边界确认', status: 'conflict' },
   warrantyComplete(form.warranty) ? { label: '车主承诺', status: 'done' } : { label: '车主承诺', status: 'pending' },
   form.rulesNote.trim() ? { label: '买家须知', status: 'done' } : { label: '买家须知', status: 'pending' },
@@ -748,7 +748,7 @@ const postText = computed(() => buildLinuxDoPostText(
 const copyDisabledReason = computed(() => {
   if (hasSensitiveText.value) return '请先移除账号密码、token、API Key、付款二维码、银行卡号等敏感凭据。'
   if (!canBuildLinuxDoPostText(form, regionsByCode.value, openingChannelsByCode.value, paymentMethodsByCode.value)) {
-    return '填写产品、地区、价格、名额、渠道、支付方式、访问安排、售后和买家须知后可生成发帖文案。'
+    return '填写产品、地区、价格、名额、渠道、付款方式、访问安排、售后和买家须知后可生成发帖文案。'
   }
   return ''
 })

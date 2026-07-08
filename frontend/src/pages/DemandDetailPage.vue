@@ -37,7 +37,7 @@ function toggleClosed() {
   <div v-if="isLoading" class="rounded-xl border border-border bg-card p-8 text-sm text-muted-foreground">正在加载求车需求...</div>
   <div v-else-if="!demand" class="rounded-xl border border-border bg-card p-8">
     <h1 class="text-xl font-semibold">未找到求车需求</h1>
-    <p class="mt-2 text-sm text-muted-foreground">该需求 ID 不存在，可能已关闭或尚未通过审核。</p>
+    <p class="mt-2 text-sm text-muted-foreground">该需求 ID 不存在，可能已关闭、已下架或链接输入有误。</p>
     <RouterLink to="/demands"><Button class="mt-5" variant="outline">返回需求大厅</Button></RouterLink>
   </div>
   <div v-else class="space-y-5">
@@ -91,12 +91,12 @@ function toggleClosed() {
 
       <Card class="p-5">
         <h2 class="text-lg font-semibold">提交人操作</h2>
-        <p class="mt-2 text-sm text-muted-foreground">提交人可以关闭或重新提交审核。关闭后仍保留记录，方便管理台和通知中心追踪。</p>
+        <p class="mt-2 text-sm text-muted-foreground">提交人可以关闭或重新打开需求。关闭后仍保留记录，方便管理台和通知中心追踪。</p>
         <Button class="mt-5 w-full" :variant="demand.status === '已关闭' ? 'default' : 'outline'" :disabled="closeMutation.isPending.value" @click="toggleClosed">
           {{ demand.status === '已关闭' ? '重新打开需求' : '关闭需求' }}
         </Button>
         <RouterLink to="/admin/demands">
-          <Button class="mt-3 w-full" variant="outline">查看管理台审核视图</Button>
+          <Button class="mt-3 w-full" variant="outline">查看管理台治理视图</Button>
         </RouterLink>
       </Card>
     </div>

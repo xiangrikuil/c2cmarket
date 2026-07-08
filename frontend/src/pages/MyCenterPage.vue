@@ -2,15 +2,13 @@
 import { computed, onUnmounted, reactive, ref, watch, watchEffect } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { toast } from 'vue-sonner'
-import { Bell, Car, CheckCircle2, ContactRound, CreditCard, Eye, ImageUp, KeyRound, Link2, LockKeyhole, LogIn, Mail, MailCheck, MessageCircle, RefreshCw, Save, ShieldCheck, ShoppingBag, Trash2, UserRound, UsersRound, X } from 'lucide-vue-next'
-import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
+import { Bell, Car, CheckCircle2, CircleAlert, ContactRound, CreditCard, Eye, ImageUp, KeyRound, Link2, LockKeyhole, LogIn, Mail, MailCheck, MessageCircle, RefreshCw, Save, ShieldCheck, ShoppingBag, Trash2, UserRound, UsersRound, X } from 'lucide-vue-next'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
-import { Stepper, StepperIndicator, StepperItem, StepperSeparator, StepperTitle, StepperTrigger } from '@/components/ui/stepper'
 import { Textarea } from '@/components/ui/textarea'
 import StatCard from '@/components/market/StatCard.vue'
 import SoftTable from '@/components/market/SoftTable.vue'
@@ -19,6 +17,7 @@ import { usePagination } from '@/composables/usePagination'
 import { getPricingDisplay, getRemainingSeats } from '@/lib/pricing'
 import { getApiMerchantDisplayName, getApiMerchantVisibilityLabel, getApiServicePublicDetailUrl, type ApiService, type AvatarMode, type ContactMethodType, type ContactUsageScope, type SaveContactMethodRequest, type UserContactMethod, type UserPrivacySettings } from '@/lib/api'
 import { ACCOUNT_RECOVERY_PATH, accountRecoveryRequirements, isAccountRecoveryComplete, sanitizeAccountRecoveryReturnTo } from '@/lib/accountRecovery'
+import { getBackupPasswordStrength, getBackupPasswordValidationMessage, getPasswordChecks } from '@/lib/passwordPolicy'
 import {
   apiPaymentMethods,
   apiPaymentMethodRequiresQrCode,
@@ -128,6 +127,7 @@ const passwordForm = reactive({
   newPassword: '',
   confirmPassword: '',
 })
+const confirmPasswordTouched = ref(false)
 
 const emailForm = reactive({
   email: '',
@@ -177,18 +177,15 @@ const accountRecoveryDialogOpen = ref(false)
 const dismissedAccountRecoveryDialogKey = ref('')
 const accountSetupDialogMode = ref<AccountSetupDialogMode>('required')
 const accountSetupActiveStep = ref<AccountSetupStep>('email')
-const emailVerificationExpiresAt = ref<number | null>(null)
+const emailVerificationResendAvailableAt = ref<number | null>(null)
 const emailVerificationNow = ref(Date.now())
+const emailVerificationDevCode = ref('')
+const emailVerificationDevCodeEmail = ref('')
 let emailVerificationTimer: number | null = null
 const accountRecoveryDialogKey = computed(() => {
   if (activeSection.value !== 'account' || accountRecoveryComplete.value) return ''
   const missingIds = accountRecoveryMissingItems.value.map(item => item.id).join(',')
   return `${accountRecoveryReturnTo.value ?? ''}:${missingIds}`
-})
-const accountSetupStepValue = computed(() => {
-  if (accountSetupActiveStep.value === 'password') return 2
-  if (accountSetupActiveStep.value === 'complete') return 3
-  return 1
 })
 const accountSetupSteps = computed(() => [
   {
@@ -230,18 +227,48 @@ const accountSecurityBenefits = [
     icon: Bell,
   },
 ] as const
-const emailVerificationRemainingSeconds = computed(() => {
-  if (!emailVerificationExpiresAt.value) return null
-  return Math.max(0, Math.ceil((emailVerificationExpiresAt.value - emailVerificationNow.value) / 1000))
+const emailVerificationCooldownSeconds = computed(() => {
+  if (!emailVerificationResendAvailableAt.value) return 0
+  return Math.max(0, Math.ceil((emailVerificationResendAvailableAt.value - emailVerificationNow.value) / 1000))
 })
-const emailVerificationHint = computed(() => {
-  const remaining = emailVerificationRemainingSeconds.value
-  if (remaining === null) return '验证码发送后请在 15 分钟内完成验证。'
-  if (remaining <= 0) return '验证码已过期，请重新发送。'
-  const minutes = Math.floor(remaining / 60)
-  const seconds = String(remaining % 60).padStart(2, '0')
-  return `验证码已发送，${minutes}:${seconds} 内有效。`
+const emailVerificationSendDisabled = computed(() => startEmailVerificationMutation.isPending.value || !emailForm.email.trim() || emailVerificationCooldownSeconds.value > 0)
+const emailVerificationButtonLabel = computed(() => {
+  if (startEmailVerificationMutation.isPending.value) return '发送中'
+  if (emailVerificationCooldownSeconds.value > 0) return `${emailVerificationCooldownSeconds.value} 秒后重发`
+  return '发送验证码'
 })
+const visibleEmailVerificationDevCode = computed(() => {
+  if (!emailVerificationDevCode.value) return ''
+  const currentEmail = emailForm.email.trim().toLowerCase()
+  if (!currentEmail || currentEmail !== emailVerificationDevCodeEmail.value) return ''
+  return emailVerificationDevCode.value
+})
+const passwordChecks = computed(() => getPasswordChecks(passwordForm.newPassword))
+const passwordPassedCount = computed(() => passwordChecks.value.filter(item => item.completed).length)
+const passwordRulesComplete = computed(() => passwordPassedCount.value === passwordChecks.value.length)
+const passwordStrength = computed(() => getBackupPasswordStrength(passwordForm.newPassword))
+const passwordStrengthSegmentClass = computed(() => {
+  if (passwordStrength.value.tone === 'success') return 'bg-success'
+  if (passwordStrength.value.tone === 'warning') return 'bg-warning'
+  if (passwordStrength.value.tone === 'danger') return 'bg-destructive'
+  return 'bg-border'
+})
+const passwordStrengthTextClass = computed(() => {
+  if (passwordStrength.value.tone === 'success') return 'text-success'
+  if (passwordStrength.value.tone === 'warning') return 'text-warning'
+  if (passwordStrength.value.tone === 'danger') return 'text-destructive'
+  return 'text-muted-foreground'
+})
+const confirmPasswordMismatch = computed(() => (
+  confirmPasswordTouched.value
+  && Boolean(passwordForm.confirmPassword)
+  && passwordForm.confirmPassword !== passwordForm.newPassword
+))
+const canSubmitAccountPassword = computed(() => (
+  passwordRulesComplete.value
+  && Boolean(passwordForm.confirmPassword)
+  && passwordForm.confirmPassword === passwordForm.newPassword
+))
 
 watch(accountRecoveryDialogKey, key => {
   if (!key || dismissedAccountRecoveryDialogKey.value === key) return
@@ -324,6 +351,7 @@ function defaultAccountSetupStep(mode: AccountSetupDialogMode): AccountSetupStep
 function openAccountSetupDialog(mode: AccountSetupDialogMode = 'required') {
   accountSetupDialogMode.value = mode
   accountSetupActiveStep.value = defaultAccountSetupStep(mode)
+  confirmPasswordTouched.value = false
   accountRecoveryDialogOpen.value = true
 }
 
@@ -389,14 +417,13 @@ function stopEmailVerificationTimer() {
   emailVerificationTimer = null
 }
 
-function startEmailVerificationTimer(expiresAt: string) {
-  const expiresAtTime = new Date(expiresAt).getTime()
-  emailVerificationExpiresAt.value = Number.isFinite(expiresAtTime) ? expiresAtTime : Date.now() + 15 * 60 * 1000
+function startEmailVerificationTimer() {
+  emailVerificationResendAvailableAt.value = Date.now() + 60 * 1000
   emailVerificationNow.value = Date.now()
   stopEmailVerificationTimer()
   emailVerificationTimer = window.setInterval(() => {
     emailVerificationNow.value = Date.now()
-    if (emailVerificationRemainingSeconds.value === 0) stopEmailVerificationTimer()
+    if (emailVerificationCooldownSeconds.value === 0) stopEmailVerificationTimer()
   }, 1000)
 }
 
@@ -423,12 +450,14 @@ function savePassword() {
     toast.warning('请输入当前密码。')
     return
   }
-  if (passwordForm.newPassword.length < 8 || passwordForm.newPassword.length > 32) {
-    toast.warning('密码需为 8-32 位字符。')
+  const passwordValidationMessage = getBackupPasswordValidationMessage(passwordForm.newPassword)
+  if (passwordValidationMessage) {
+    toast.warning(passwordValidationMessage)
     return
   }
   if (passwordForm.newPassword !== passwordForm.confirmPassword) {
-    toast.warning('两次输入的新密码不一致。')
+    confirmPasswordTouched.value = true
+    toast.warning('两次输入的密码不一致，请重新输入')
     return
   }
   setPasswordMutation.mutate({
@@ -439,6 +468,7 @@ function savePassword() {
       passwordForm.currentPassword = ''
       passwordForm.newPassword = ''
       passwordForm.confirmPassword = ''
+      confirmPasswordTouched.value = false
       accountSetupActiveStep.value = profile.value?.emailVerified ? 'complete' : 'email'
       toast.success('密码已更新。')
     },
@@ -453,12 +483,17 @@ function continueAfterAccountRecovery() {
 }
 
 function startEmailVerification() {
+  emailVerificationDevCode.value = ''
+  emailVerificationDevCodeEmail.value = ''
   startEmailVerificationMutation.mutate(emailForm.email, {
     onSuccess: challenge => {
+      const devCode = challenge.devCode?.trim() ?? ''
       emailForm.email = challenge.email
-      emailForm.code = ''
-      startEmailVerificationTimer(challenge.expiresAt)
-      toast.success('验证码已发送，请查看邮箱。')
+      emailForm.code = devCode
+      emailVerificationDevCode.value = devCode
+      emailVerificationDevCodeEmail.value = challenge.email.trim().toLowerCase()
+      startEmailVerificationTimer()
+      toast.success(devCode ? '开发验证码已填入。' : '验证码已发送，请查看邮箱。')
     },
     onError: error => toast.error(error instanceof Error ? error.message : '验证码发送失败。'),
   })
@@ -471,8 +506,10 @@ function confirmEmailVerification() {
   }, {
     onSuccess: updatedProfile => {
       emailForm.code = ''
+      emailVerificationDevCode.value = ''
+      emailVerificationDevCodeEmail.value = ''
       stopEmailVerificationTimer()
-      emailVerificationExpiresAt.value = null
+      emailVerificationResendAvailableAt.value = null
       accountSetupActiveStep.value = updatedProfile.passwordConfigured ? 'complete' : 'password'
       toast.success('邮箱已绑定。')
     },
@@ -554,8 +591,10 @@ function confirmContactEmailVerification() {
   }, {
     onSuccess: () => {
       emailForm.code = ''
+      emailVerificationDevCode.value = ''
+      emailVerificationDevCodeEmail.value = ''
       stopEmailVerificationTimer()
-      emailVerificationExpiresAt.value = null
+      emailVerificationResendAvailableAt.value = null
       saveVerifiedEmailContact()
     },
     onError: error => toast.error(error instanceof Error ? error.message : '邮箱绑定失败。'),
@@ -672,23 +711,20 @@ function goToLogin() {
   </Card>
   <div v-else class="space-y-5">
     <Dialog :open="accountRecoveryDialogOpen" @update:open="setAccountRecoveryDialogOpen">
-      <DialogContent class="account-security-dialog w-[calc(100vw-2rem)] gap-0 overflow-hidden p-0 sm:max-w-[860px]">
-        <div class="grid min-h-[560px] md:grid-cols-[300px_minmax(0,1fr)]">
+      <DialogContent class="account-security-dialog w-[calc(100vw-1rem)] gap-0 overflow-hidden p-0 sm:max-w-[860px]">
+        <div class="account-security-layout grid max-h-[calc(100dvh-1rem)] min-h-[560px] overflow-y-auto md:grid-cols-[300px_minmax(0,1fr)] md:overflow-hidden">
           <aside class="account-security-side flex flex-col p-6 sm:p-7">
             <div class="account-security-side-icon grid h-16 w-16 place-items-center rounded-2xl">
               <ShieldCheck class="h-8 w-8" />
             </div>
-            <div class="mt-6">
+            <div class="account-security-side-copy mt-6">
               <h2 class="text-2xl font-semibold tracking-tight">完善账号安全</h2>
               <p class="mt-3 text-sm leading-6 text-muted-foreground">
                 完成邮箱和密码设置后，可以使用更多账号功能。
               </p>
-              <p class="mt-3 rounded-md border border-primary/15 bg-card/70 px-3 py-2 text-xs leading-5 text-muted-foreground">
-                当前身份已完成认证，无需重新注册。
-              </p>
             </div>
 
-            <div class="mt-8 space-y-4">
+            <div class="account-security-benefits mt-8 space-y-4">
               <div v-for="item in accountSecurityBenefits" :key="item.title" class="flex gap-3">
                 <div class="account-security-benefit-icon grid h-10 w-10 shrink-0 place-items-center rounded-xl">
                   <component :is="item.icon" class="h-5 w-5" />
@@ -700,7 +736,7 @@ function goToLogin() {
               </div>
             </div>
 
-            <p class="mt-auto flex gap-2 pt-8 text-xs leading-5 text-muted-foreground">
+            <p class="account-security-side-foot mt-auto flex gap-2 pt-8 text-xs leading-5 text-muted-foreground">
               <ShieldCheck class="mt-0.5 h-4 w-4 shrink-0 text-success" />
               这些设置只用于站内账号通知、找回和登录。
             </p>
@@ -714,25 +750,45 @@ function goToLogin() {
               </DialogDescription>
             </DialogHeader>
 
-            <div class="flex-1 px-5 py-5 sm:px-6">
-              <Stepper :model-value="accountSetupStepValue" class="account-security-stepper" aria-label="账号安全步骤">
-                <StepperItem
+            <div class="account-security-body flex-1 px-5 py-5 sm:px-6">
+              <ol class="grid grid-cols-3" aria-label="账号安全步骤">
+                <li
                   v-for="(step, index) in accountSetupSteps"
                   :key="step.id"
-                  :step="step.step"
-                  :completed="step.completed && !step.active"
-                  class="account-security-step"
+                  class="relative min-w-0 text-center"
+                  :aria-current="step.active ? 'step' : undefined"
                 >
-                  <StepperTrigger as="div" class="account-security-step-trigger">
-                    <StepperIndicator class="account-security-step-dot">
-                      <CheckCircle2 v-if="step.completed" class="h-4 w-4" />
-                      <span v-else>{{ step.step }}</span>
-                    </StepperIndicator>
-                    <StepperTitle class="account-security-step-label">{{ step.label }}</StepperTitle>
-                  </StepperTrigger>
-                  <StepperSeparator v-if="index < accountSetupSteps.length - 1" class="account-security-step-separator" />
-                </StepperItem>
-              </Stepper>
+                  <span
+                    v-if="index > 0"
+                    class="absolute left-0 right-1/2 top-5 h-px bg-border"
+                    :class="step.completed ? 'bg-primary/45' : ''"
+                    aria-hidden="true"
+                  ></span>
+                  <span
+                    v-if="index < accountSetupSteps.length - 1"
+                    class="absolute left-1/2 right-0 top-5 h-px bg-border"
+                    :class="accountSetupSteps[index + 1]?.completed ? 'bg-primary/45' : ''"
+                    aria-hidden="true"
+                  ></span>
+                  <div
+                    class="relative z-10 mx-auto grid h-10 w-10 place-items-center rounded-full border bg-card text-sm font-semibold shadow-sm"
+                    :class="[
+                      step.active ? 'border-primary bg-primary text-primary-foreground' : '',
+                      step.completed && !step.active ? 'border-primary/20 bg-primary/10 text-primary' : '',
+                      !step.active && !step.completed ? 'border-border text-muted-foreground' : '',
+                    ]"
+                  >
+                    <CheckCircle2 v-if="step.completed && !step.active" class="h-4 w-4" />
+                    <span v-else>{{ step.step }}</span>
+                  </div>
+                  <div
+                    class="mt-2 truncate text-xs font-medium"
+                    :class="step.active ? 'text-primary' : 'text-muted-foreground'"
+                  >
+                    {{ step.label }}
+                  </div>
+                </li>
+              </ol>
 
               <section v-if="accountSetupActiveStep === 'email'" class="mt-7 space-y-5">
                 <div>
@@ -760,14 +816,16 @@ function goToLogin() {
                       </span>
                       <Button
                         variant="outline"
-                        class="h-11 shrink-0 sm:min-w-[120px]"
-                        :disabled="startEmailVerificationMutation.isPending.value || !emailForm.email.trim() || (emailVerificationRemainingSeconds !== null && emailVerificationRemainingSeconds > 0)"
+                        class="h-11 shrink-0 sm:min-w-[140px]"
+                        :disabled="emailVerificationSendDisabled"
                         @click="startEmailVerification"
                       >
-                        <MailCheck class="h-4 w-4" />{{ startEmailVerificationMutation.isPending.value ? '发送中' : '发送验证码' }}
+                        <MailCheck class="h-4 w-4" />{{ emailVerificationButtonLabel }}
                       </Button>
                     </span>
-                    <span class="block min-h-5 text-xs leading-5 text-muted-foreground">{{ emailVerificationHint }}</span>
+                    <span v-if="visibleEmailVerificationDevCode" class="block rounded-md border border-dashed border-amber-300 bg-amber-50 px-3 py-2 text-xs leading-5 text-amber-900">
+                      开发验证码：<span class="font-semibold tabular-nums">{{ visibleEmailVerificationDevCode }}</span>
+                    </span>
                   </label>
                 </div>
               </section>
@@ -780,8 +838,8 @@ function goToLogin() {
                   </p>
                 </div>
 
-                <div class="grid gap-4 sm:grid-cols-2">
-                  <label v-if="profile.passwordConfigured" class="block space-y-2 sm:col-span-2">
+                <div class="grid gap-4">
+                  <label v-if="profile.passwordConfigured" class="block space-y-2">
                     <span class="text-sm font-medium">当前密码</span>
                     <Input v-model="passwordForm.currentPassword" class="h-11" type="password" autocomplete="current-password" />
                   </label>
@@ -791,13 +849,75 @@ function goToLogin() {
                   </label>
                   <label class="block space-y-2">
                     <span class="text-sm font-medium">确认新密码</span>
-                    <Input v-model="passwordForm.confirmPassword" class="h-11" type="password" autocomplete="new-password" />
+                    <Input
+                      v-model="passwordForm.confirmPassword"
+                      class="h-11"
+                      :class="confirmPasswordMismatch ? 'border-destructive bg-[#FFF7F7] focus-visible:border-destructive focus-visible:ring-destructive/20' : ''"
+                      type="password"
+                      autocomplete="new-password"
+                      :aria-invalid="confirmPasswordMismatch ? 'true' : undefined"
+                      :aria-describedby="confirmPasswordMismatch ? 'account-confirm-password-error' : undefined"
+                      @blur="confirmPasswordTouched = true"
+                    />
+                    <span
+                      v-if="confirmPasswordMismatch"
+                      id="account-confirm-password-error"
+                      role="alert"
+                      class="flex items-center gap-1.5 text-xs font-medium text-destructive"
+                    >
+                      <CircleAlert class="h-3.5 w-3.5 shrink-0" />
+                      两次输入的密码不一致，请重新输入
+                    </span>
                   </label>
                 </div>
 
-                <p class="rounded-md border border-border bg-accent/50 px-3 py-2 text-xs leading-5 text-muted-foreground">
-                  8-32 位字符，建议包含数字和字母。
-                </p>
+                <div class="rounded-2xl border border-[#E2E8F0] bg-[#F8FAFC] p-4">
+                  <div class="flex items-start justify-between gap-3">
+                    <div class="min-w-0">
+                      <h4 class="text-sm font-semibold">密码要求</h4>
+                      <p class="mt-1 text-xs leading-5 text-muted-foreground">
+                        8–32 位，且包含字母、数字、特殊字符
+                      </p>
+                    </div>
+                    <span
+                      class="shrink-0 rounded-full border px-2.5 py-1 text-xs font-semibold"
+                      :class="passwordRulesComplete ? 'border-success/20 bg-success/10 text-success' : 'border-[#E2E8F0] bg-white text-muted-foreground'"
+                    >
+                      已满足 {{ passwordPassedCount }}/4
+                    </span>
+                  </div>
+                  <div class="mt-3 flex items-center gap-2">
+                    <span class="shrink-0 text-xs text-muted-foreground">强度</span>
+                    <div
+                      class="grid w-40 max-w-[45%] grid-cols-4 gap-1.5"
+                      role="progressbar"
+                      :aria-valuenow="passwordPassedCount"
+                      aria-valuemin="0"
+                      aria-valuemax="4"
+                      :aria-label="`密码强度：${passwordStrength.label}，已满足 ${passwordPassedCount}/4`"
+                    >
+                      <span
+                        v-for="index in 4"
+                        :key="index"
+                        class="h-1.5 rounded-full transition-colors"
+                        :class="index <= passwordPassedCount ? passwordStrengthSegmentClass : 'bg-border'"
+                      ></span>
+                    </div>
+                    <span class="text-xs font-semibold" :class="passwordStrengthTextClass">{{ passwordStrength.label }}</span>
+                  </div>
+                  <ul class="mt-3 grid gap-x-5 gap-y-2 text-xs leading-5 text-muted-foreground sm:grid-cols-2">
+                    <li
+                      v-for="item in passwordChecks"
+                      :key="item.id"
+                      class="flex items-center gap-2"
+                      :class="item.completed ? 'font-medium text-success' : ''"
+                    >
+                      <CheckCircle2 v-if="item.completed" class="h-3.5 w-3.5 shrink-0" />
+                      <span v-else class="h-3.5 w-3.5 shrink-0 rounded-full border border-[#CBD5E1] bg-white"></span>
+                      <span>{{ item.label }}</span>
+                    </li>
+                  </ul>
+                </div>
               </section>
 
               <section v-else class="mt-7 space-y-5 text-center">
@@ -822,13 +942,6 @@ function goToLogin() {
                 </dl>
               </section>
 
-              <Alert class="account-security-note mt-6">
-                <ShieldCheck class="h-4 w-4" />
-                <AlertTitle>为什么需要设置？</AlertTitle>
-                <AlertDescription class="text-xs leading-5">
-                  绑定邮箱并设置密码后，可继续使用站内账号登录，并接收必要的账号通知。
-                </AlertDescription>
-              </Alert>
             </div>
 
             <DialogFooter class="account-security-footer gap-2 border-t border-border px-5 py-4 sm:justify-end sm:px-6">
@@ -841,7 +954,7 @@ function goToLogin() {
               </Button>
               <Button
                 v-else-if="accountSetupActiveStep === 'password'"
-                :disabled="setPasswordMutation.isPending.value"
+                :disabled="setPasswordMutation.isPending.value || !canSubmitAccountPassword"
                 @click="savePassword"
               >
                 <LockKeyhole class="h-4 w-4" />{{ profile.passwordConfigured ? '保存密码' : '完成设置' }}
@@ -1058,10 +1171,13 @@ function goToLogin() {
             <span class="text-sm font-medium">邮箱地址</span>
             <Input v-model="emailForm.email" type="email" autocomplete="email" placeholder="name@example.com" />
           </label>
-          <Button class="lg:self-end" variant="outline" :disabled="emailBindingPending || !emailForm.email.trim()" @click="startEmailVerification"><MailCheck class="h-4 w-4" />发送验证码</Button>
+          <Button class="lg:self-end" variant="outline" :disabled="emailBindingPending || emailVerificationCooldownSeconds > 0 || !emailForm.email.trim()" @click="startEmailVerification"><MailCheck class="h-4 w-4" />{{ emailVerificationButtonLabel }}</Button>
           <label class="space-y-2">
             <span class="text-sm font-medium">验证码</span>
             <Input v-model="emailForm.code" inputmode="numeric" maxlength="6" placeholder="6 位验证码" />
+            <span v-if="visibleEmailVerificationDevCode" class="block rounded-md border border-dashed border-amber-300 bg-amber-50 px-3 py-2 text-xs leading-5 text-amber-900">
+              开发验证码：<span class="font-semibold tabular-nums">{{ visibleEmailVerificationDevCode }}</span>
+            </span>
           </label>
           <Button class="lg:self-end" :disabled="emailBindingPending || !emailForm.code.trim()" @click="confirmContactEmailVerification">验证并绑定邮箱</Button>
         </div>

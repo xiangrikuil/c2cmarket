@@ -91,6 +91,38 @@ func TestSMTPEmailSenderSendsRegistrationSuccess(t *testing.T) {
 	}
 }
 
+func TestSMTPEmailSenderVerificationCopyIncludesValidityWindow(t *testing.T) {
+	client := &fakeSMTPClient{}
+	sender, err := NewSMTPEmailSender(SMTPConfig{
+		Host:        "smtpdm.aliyun.com",
+		Port:        465,
+		Username:    "noreply@example.com",
+		Password:    "unit-test-password",
+		FromAddress: "noreply@example.com",
+		FromName:    "C2CMarket",
+	})
+	if err != nil {
+		t.Fatalf("new smtp sender: %v", err)
+	}
+	sender.dial = func(context.Context, string, string) (smtpClient, error) {
+		return client, nil
+	}
+
+	expiresAt := time.Date(2026, 6, 26, 1, 15, 0, 0, time.UTC)
+	appErr := sender.SendVerificationCode(context.Background(), "user@example.com", "123456", expiresAt)
+	if appErr != nil {
+		t.Fatalf("send verification code: %v", appErr)
+	}
+	decoded, err := io.ReadAll(quotedprintable.NewReader(strings.NewReader(client.data.String())))
+	if err != nil {
+		t.Fatalf("decode quoted-printable message: %v", err)
+	}
+	decodedMessage := string(decoded)
+	if !strings.Contains(decodedMessage, "123456") || !strings.Contains(decodedMessage, "15 分钟内有效") || !strings.Contains(decodedMessage, expiresAt.Format(time.RFC3339)) {
+		t.Fatalf("expected verification code, validity window, and expiry timestamp, got %s", decodedMessage)
+	}
+}
+
 func TestSMTPEmailSenderSendsCarpoolApplicationReminder(t *testing.T) {
 	client := &fakeSMTPClient{}
 	sender, err := NewSMTPEmailSender(SMTPConfig{

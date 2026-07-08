@@ -13,6 +13,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 
 	"c2c-market/backend/internal/domain"
 
@@ -601,10 +602,33 @@ func validateNewPassword(password string) *domain.AppError {
 	if len([]rune(password)) < 8 {
 		return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Password too short", "备用密码至少 8 个字符。", "newPassword", "too_short", "备用密码至少 8 个字符。")
 	}
-	if len([]rune(password)) > 128 {
-		return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Password too long", "备用密码最多 128 个字符。", "newPassword", "too_long", "备用密码最多 128 个字符。")
+	if len([]rune(password)) > 32 {
+		return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Password too long", "备用密码最多 32 个字符。", "newPassword", "too_long", "备用密码最多 32 个字符。")
+	}
+	hasLetter, hasDigit, hasSymbol := passwordComposition(password)
+	if !hasLetter || !hasDigit || !hasSymbol {
+		return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Password too weak", "备用密码需同时包含字母、数字和特殊字符。", "newPassword", "composition_required", "需同时包含字母、数字和特殊字符。")
 	}
 	return nil
+}
+
+func passwordComposition(password string) (bool, bool, bool) {
+	var hasLetter bool
+	var hasDigit bool
+	var hasSymbol bool
+	for _, r := range password {
+		isLetter := (r >= 'A' && r <= 'Z') || (r >= 'a' && r <= 'z')
+		isDigit := r >= '0' && r <= '9'
+		switch {
+		case isLetter:
+			hasLetter = true
+		case isDigit:
+			hasDigit = true
+		case !unicode.IsSpace(r):
+			hasSymbol = true
+		}
+	}
+	return hasLetter, hasDigit, hasSymbol
 }
 
 func requireLinuxDoBoundUser(user User) *domain.AppError {

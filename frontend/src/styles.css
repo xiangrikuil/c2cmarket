@@ -324,91 +324,6 @@ html[data-theme="neumorphic-cool"] .group:hover .group-hover\:text-teal-900 {
   background: color-mix(in oklab, var(--card) 94%, var(--accent));
 }
 
-.account-security-stepper {
-  display: flex;
-  gap: 0;
-}
-
-.account-security-step {
-  position: relative;
-  flex: 1 1 0;
-  min-width: 0;
-  color: var(--muted-foreground);
-}
-
-.account-security-step-trigger {
-  min-width: 0;
-  flex-direction: column;
-  align-items: center;
-  justify-content: flex-start;
-  gap: 8px;
-  text-align: center;
-  cursor: default;
-  outline: none;
-}
-
-.account-security-step-dot {
-  height: 34px;
-  width: 34px;
-  border: 1px solid color-mix(in oklab, var(--border) 88%, transparent);
-  border-radius: 999px;
-  background: var(--card);
-  color: var(--muted-foreground);
-  font-size: 13px;
-  font-weight: 700;
-  box-shadow: var(--shadow-xs);
-}
-
-.account-security-step-label {
-  max-width: 100%;
-  overflow-wrap: anywhere;
-  text-align: center;
-  font-size: 12px;
-  font-weight: 650;
-  line-height: 1.3;
-  white-space: normal;
-}
-
-.account-security-step[data-state="active"] {
-  color: var(--primary);
-}
-
-.account-security-step[data-state="active"] .account-security-step-dot {
-  border-color: var(--primary);
-  background: var(--primary);
-  color: var(--primary-foreground);
-  box-shadow: 0 10px 22px -16px color-mix(in oklab, var(--primary) 82%, black);
-}
-
-.account-security-step[data-state="completed"] {
-  color: var(--success);
-}
-
-.account-security-step[data-state="completed"] .account-security-step-dot {
-  border-color: color-mix(in oklab, var(--success) 32%, var(--border));
-  background: color-mix(in oklab, var(--success) 12%, var(--card));
-  color: var(--success);
-}
-
-.account-security-step-separator {
-  position: absolute;
-  left: calc(50% + 22px);
-  right: calc(-50% + 22px);
-  top: 17px;
-  height: 1px;
-  background: color-mix(in oklab, var(--border) 90%, transparent);
-}
-
-.account-security-step-separator[data-state="completed"] {
-  background: color-mix(in oklab, var(--success) 54%, var(--border));
-}
-
-.account-security-note {
-  border-color: color-mix(in oklab, var(--warning) 34%, var(--border));
-  background: color-mix(in oklab, var(--warning) 10%, var(--card));
-  color: color-mix(in oklab, var(--warning) 72%, var(--foreground));
-}
-
 html[data-theme="neumorphic-cool"] .account-security-dialog {
   border-color: transparent;
   border-radius: var(--radius-card);
@@ -422,8 +337,7 @@ html[data-theme="neumorphic-cool"] .account-security-side {
 }
 
 html[data-theme="neumorphic-cool"] .account-security-side-icon,
-html[data-theme="neumorphic-cool"] .account-security-benefit-icon,
-html[data-theme="neumorphic-cool"] .account-security-step-dot {
+html[data-theme="neumorphic-cool"] .account-security-benefit-icon {
   border-color: transparent;
   box-shadow: var(--surface-raised-sm);
 }
@@ -431,10 +345,6 @@ html[data-theme="neumorphic-cool"] .account-security-step-dot {
 html[data-theme="neumorphic-cool"] .account-security-header,
 html[data-theme="neumorphic-cool"] .account-security-footer {
   background: var(--card);
-}
-
-html[data-theme="neumorphic-cool"] .account-security-step[data-state="active"] .account-security-step-dot {
-  box-shadow: var(--surface-raised-sm);
 }
 
 html[data-theme="minimal-modern"] .account-security-dialog {
@@ -447,14 +357,67 @@ html[data-theme="minimal-modern"] .account-security-side {
   background: linear-gradient(180deg, color-mix(in oklab, var(--accent) 62%, var(--card)) 0%, var(--card) 100%);
 }
 
-html[data-theme="minimal-modern"] .account-security-step-dot {
-  box-shadow: none;
-}
-
 @media (max-width: 767px) {
   .account-security-side {
     border-right: 0;
     border-bottom: 1px solid color-mix(in oklab, var(--primary) 12%, var(--border));
+    background:
+      radial-gradient(circle at 84% 10%, color-mix(in oklab, var(--primary) 12%, transparent) 0 56px, transparent 58px),
+      linear-gradient(135deg, color-mix(in oklab, var(--signal-soft) 72%, var(--card)) 0%, var(--card) 100%);
+  }
+
+  .account-security-side {
+    padding: 18px 20px 14px;
+  }
+
+  .account-security-side-icon {
+    height: 44px;
+    width: 44px;
+    border-radius: 16px;
+  }
+
+  .account-security-side-icon svg {
+    height: 24px;
+    width: 24px;
+  }
+
+  .account-security-side-copy {
+    margin-top: 12px;
+  }
+
+  .account-security-side-copy h2 {
+    font-size: 22px;
+    line-height: 1.2;
+  }
+
+  .account-security-side-copy p {
+    margin-top: 8px;
+    line-height: 1.5;
+  }
+
+  .account-security-benefits,
+  .account-security-side-foot {
+    display: none;
+  }
+
+  .account-security-header {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+  }
+
+  .account-security-body {
+    padding: 18px 20px;
+  }
+
+  .account-security-footer {
+    padding: 14px 20px;
   }
 }
 

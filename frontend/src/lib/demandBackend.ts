@@ -84,9 +84,9 @@ function ownerPreferenceToFrontend(value: BackendDemand['ownerPreference']): Dem
 function statusLabel(value: BackendDemand['status']): DemandRecord['status'] {
   if (value === 'active') return '匹配中'
   if (value === 'closed' || value === 'taken_down') return '已关闭'
-  if (value === 'pending_review' || value === 'changes_requested') return '待审核'
+  if (value === 'pending_review' || value === 'changes_requested') return '需处理'
   if (value === 'rejected') return '已关闭'
-  return '待审核'
+  return '需处理'
 }
 
 function adminStatusLabel(value: BackendDemand['status']) {
@@ -194,7 +194,7 @@ function adminRow(item: BackendDemand): AdminRow {
     secondary: `最高 ¥${record.maxPrice}/月 · ${record.require}`,
     owner: `${item.publisherName || item.publisherUsername} · 真实后端`,
     status: adminStatusLabel(item.status),
-    risk: item.status === 'pending_review' ? '等待管理员审核' : item.reviewReason || '原帖已绑定',
+    risk: item.status === 'pending_review' ? '历史待处理记录' : item.reviewReason || '原帖已绑定',
     targetType: 'demand',
     backendKind: 'demand',
     backendVersion: item.version,
@@ -217,7 +217,7 @@ async function adminDemand(id: string) {
 async function runAdminDemandAction(row: AdminRow, action: 'approve' | 'request-changes' | 'reject' | 'take-down' | 'restore', reason: string) {
   const detail = await adminDemand(row.id)
   const updated = await backendMutation<BackendDemand>(`/api/v1/admin/demands/${encodeURIComponent(row.id)}/${action}`, {
-    reason: reason || '管理台审核操作',
+    reason: reason || '管理台治理操作',
   }, {
     idempotencyPrefix: `demand-admin-${action}`,
     ifMatch: detail.version,

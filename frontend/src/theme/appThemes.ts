@@ -2,9 +2,9 @@ export const APP_THEME_STORAGE_KEY = 'c2cmarket-theme'
 
 export const appThemes = [
   {
-    value: 'aqua-console',
-    label: '水色控制台',
-    swatch: 'oklch(0.704 0.123 182.5)',
+    value: 'minimal-modern',
+    label: '极简电蓝',
+    swatch: '#0052FF',
   },
   {
     value: 'neumorphic-cool',
@@ -12,15 +12,15 @@ export const appThemes = [
     swatch: '#E0E5EC',
   },
   {
-    value: 'minimal-modern',
-    label: '极简电蓝',
-    swatch: '#0052FF',
+    value: 'aqua-console',
+    label: '水色控制台',
+    swatch: 'oklch(0.704 0.123 182.5)',
   },
 ] as const
 
 export type AppTheme = typeof appThemes[number]['value']
 
-export const DEFAULT_APP_THEME: AppTheme = 'aqua-console'
+export const DEFAULT_APP_THEME: AppTheme = 'minimal-modern'
 
 export function isAppTheme(value: string | null): value is AppTheme {
   return appThemes.some(theme => theme.value === value)

@@ -1,0 +1,2 @@
+-- Irreversible data migration: demand posts now publish immediately.
+-- Existing rows converted to active should not be moved back to pending_review.

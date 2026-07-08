@@ -287,7 +287,7 @@ function submitReview() {
           <div><span class="text-muted-foreground">产品</span><div>{{ application.snapshot.productName }}</div></div>
           <div><span class="text-muted-foreground">开通区</span><div>{{ application.snapshot.regionName }}</div></div>
           <div><span class="text-muted-foreground">开通方式</span><div>{{ application.snapshot.openingChannelName }}</div></div>
-          <div><span class="text-muted-foreground">支付方式</span><div>{{ application.snapshot.paymentMethodNames.join(' / ') }}</div></div>
+          <div><span class="text-muted-foreground">付款方式</span><div>{{ application.snapshot.paymentMethodNames.join(' / ') }}</div></div>
           <div><span class="text-muted-foreground">车主承诺</span><div>{{ application.snapshot.warrantyText }} · 平台不担保、不代赔</div></div>
           <div><span class="text-muted-foreground">访问安排</span><div>{{ application.snapshot.accessArrangementNote ?? '成员邀请、费用分摊或站外访问安排，等待详情确认' }}</div></div>
           <div><span class="text-muted-foreground">规则版本</span><div>{{ application.snapshot.rulesVersion }}</div></div>

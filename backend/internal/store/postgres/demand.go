@@ -212,7 +212,7 @@ func (s *Store) updateDemandOwnerStatusInTx(ctx context.Context, tx pgx.Tx, inpu
 		if current.Status != demand.StatusClosed {
 			return demand.Demand{}, demandInvalidState("只有已关闭需求可以重新打开。")
 		}
-		next = demand.StatusPendingReview
+		next = demand.StatusActive
 		closedAt = nil
 	default:
 		return demand.Demand{}, demandInvalidState("需求操作不支持。")
@@ -272,7 +272,7 @@ func demandNextAdminStatus(current, action string) (string, *domain.AppError) {
 	switch action {
 	case "approve":
 		if current != demand.StatusPendingReview && current != demand.StatusChangesRequested {
-			return "", demandInvalidState("只有待审核或需修改的需求可以审核通过。")
+			return "", demandInvalidState("只有待处理或需修改的需求可以标记公开。")
 		}
 		return demand.StatusActive, nil
 	case "request_changes":
@@ -296,7 +296,7 @@ func demandNextAdminStatus(current, action string) (string, *domain.AppError) {
 		}
 		return demand.StatusActive, nil
 	default:
-		return "", demandInvalidState("需求审核动作不支持。")
+		return "", demandInvalidState("需求治理动作不支持。")
 	}
 }
 

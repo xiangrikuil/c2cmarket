@@ -360,7 +360,7 @@ export type AdminAuditLog = {
 
 export type ConfidenceLevel = 'high' | 'medium' | 'low'
 export type OpeningChannelCode = 'web' | 'ios_app_store' | 'google_play' | 'team_seat' | 'other'
-export type PaymentMethodCode = 'credit_card' | 'virtual_card' | 'apple_pay' | 'google_pay' | 'gift_card' | 'local_payment' | 'other'
+export type PaymentMethodCode = 'credit_card' | 'virtual_card' | 'apple_pay' | 'google_pay' | 'app_store_gift_card' | 'google_play_gift_card' | 'paypal' | 'other'
 export type CarpoolWarrantyMode = 'no_warranty' | 'remaining_days_compensation' | 'fixed_days_warranty'
 export type ProductPublishPolicy = 'allowed' | 'info_only' | 'blocked'
 export type ProductAccessMode = 'personal_account_cost_share' | 'provider_member_invitation' | 'owner_managed_access' | 'other_off_platform'
@@ -758,10 +758,10 @@ export const carpoolRegions: RegionOption[] = [
 ]
 
 export const carpoolOpeningChannels: OpeningChannelOption[] = [
-  { code: 'web', displayName: 'Web', active: true, sortOrder: 10 },
+  { code: 'web', displayName: 'Web 官网', active: true, sortOrder: 10 },
   { code: 'ios_app_store', displayName: 'iOS App Store', active: true, sortOrder: 20 },
   { code: 'google_play', displayName: 'Google Play', active: true, sortOrder: 30 },
-  { code: 'team_seat', displayName: '团队 / Business 席位', active: true, sortOrder: 40 },
+  { code: 'team_seat', displayName: 'Team / Business 席位', active: true, sortOrder: 40 },
   { code: 'other', displayName: '其他', active: true, sortOrder: 999 },
 ]
 
@@ -770,8 +770,9 @@ export const carpoolPaymentMethods: PaymentMethodOption[] = [
   { code: 'virtual_card', displayName: '虚拟卡', active: true, sortOrder: 20 },
   { code: 'apple_pay', displayName: 'Apple Pay', active: true, sortOrder: 30 },
   { code: 'google_pay', displayName: 'Google Pay', active: true, sortOrder: 40 },
-  { code: 'gift_card', displayName: '礼品卡', active: true, sortOrder: 50 },
-  { code: 'local_payment', displayName: '本地支付', active: true, sortOrder: 60 },
+  { code: 'app_store_gift_card', displayName: 'App Store 礼品卡', active: true, sortOrder: 50 },
+  { code: 'google_play_gift_card', displayName: 'Google Play 礼品卡', active: true, sortOrder: 60 },
+  { code: 'paypal', displayName: 'PayPal', active: true, sortOrder: 70 },
   { code: 'other', displayName: '其他', active: true, sortOrder: 999 },
 ]
 
@@ -951,7 +952,7 @@ const carpoolApplicationSnapshots: Record<string, CarpoolApplicationSnapshot> = 
     quotaUnit: 'USD',
     quotaPeriod: 'monthly',
     priceLabel: '固定月费',
-    openingChannelName: '团队成员席位',
+    openingChannelName: 'Team / Business 席位',
     paymentMethodNames: ['信用卡'],
     warrantyText: '售后协商',
     rulesVersion: '2026-06-19 11:10',
@@ -975,8 +976,8 @@ const carpoolApplicationSnapshots: Record<string, CarpoolApplicationSnapshot> = 
     quotaUnit: 'USD',
     quotaPeriod: 'monthly',
     priceLabel: '当前阶梯价',
-    openingChannelName: '本地卡',
-    paymentMethodNames: ['本地支付'],
+    openingChannelName: 'Web 官网',
+    paymentMethodNames: ['PayPal'],
     warrantyText: '车主承诺',
     rulesVersion: '2026-06-18 22:40',
     rulesText: '服务周期内保持席位，需提前一天确认续期。',
