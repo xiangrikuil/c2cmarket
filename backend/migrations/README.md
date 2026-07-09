@@ -52,6 +52,8 @@ versions:
 | `000040_carpool_listing_region` | persisted carpool listing opening region code and display name |
 | `000041_api_service_source_url` | optional linux.do source topic for API quota services |
 | `000042_carpool_distribution_admin_account` | public carpool distribution method and administrator-account availability signals |
+| `000043_remove_usdt_payment_method` | removes USDT from API service payment method options and order payment-method constraints |
+| `000044_api_order_delivery_credentials` | API order payment QR snapshots and encrypted in-platform delivery credential storage |
 
 The current runnable Go slice supports both in-memory tests and PostgreSQL runtime.
 When `DATABASE_URL` is configured, users, auth sessions, idempotency, product
