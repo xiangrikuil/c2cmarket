@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 5
-- **Last Active**: 2026-07-06
+- **Total Sessions**: 6
+- **Last Active**: 2026-07-09
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~204 | Active |
+| `journal-1.md` | ~238 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 6 | 2026-07-09 | API order delivery credential flow | `672554c` | `main` |
 | 5 | 2026-07-06 | OAuth account recovery setup | `95dff64` | `main` |
 | 4 | 2026-07-06 | Report dispute moderation v0.4.1 | `a27d8c7` | `main` |
 | 3 | 2026-07-06 | Complete maintenance hardening roadmap | `311fb1a`, `1192f4e` | `main` |

@@ -202,3 +202,37 @@ Forced frontend account recovery setup after linux.do OAuth: incomplete accounts
 ### Next Steps
 
 - None - task complete
+
+
+## Session 6: API order delivery credential flow
+
+**Date**: 2026-07-09
+**Task**: API order delivery credential flow
+**Package**: frontend
+**Branch**: `main`
+
+### Summary
+
+Committed and pushed marketplace updates, including API order payment QR snapshots and one-time station delivery credentials.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `672554c` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
