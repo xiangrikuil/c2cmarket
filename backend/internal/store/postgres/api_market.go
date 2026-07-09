@@ -20,6 +20,8 @@ import (
 	"time"
 )
 
+const apiServiceSupportedPaymentMethodsSQL = "'wechat', 'alipay'"
+
 func (s *Store) CreateAPIService(ctx context.Context, service apimarket.Service) *domain.AppError {
 	if s == nil || s.pool == nil {
 		return internalStoreError()
@@ -52,6 +54,7 @@ func (s *Store) ListPublicAPIServices(ctx context.Context, filter apimarket.Publ
 		    WHERE po.api_service_id = api_services.id
 		      AND po.enabled = true
 		      AND po.payment_method = $1
+		      AND po.payment_method IN (` + apiServiceSupportedPaymentMethodsSQL + `)
 		  )
 		`
 		args = []any{strings.TrimSpace(filter.PaymentMethod)}
@@ -86,7 +89,8 @@ func publicAPIServiceOrderablePredicate(alias string) string {
 		    FROM api_service_payment_options po
 		    WHERE po.api_service_id = %[1]s.id
 		      AND po.enabled = true
-		  )`, alias)
+		      AND po.payment_method IN (%[2]s)
+		  )`, alias, apiServiceSupportedPaymentMethodsSQL)
 }
 
 func (s *Store) ListAPIServicesByOwner(ctx context.Context, ownerUserID string, page domain.PageRequest) (domain.Page[apimarket.Service], *domain.AppError) {
@@ -483,7 +487,7 @@ const apiServiceColumns = `
 	id::text, owner_user_id::text, COALESCE(merchant_profile_id::text, ''), merchant_identity_mode,
 	COALESCE((SELECT mp.display_name FROM merchant_profiles mp WHERE mp.id = api_services.merchant_profile_id AND mp.owner_user_id = api_services.owner_user_id), ''),
 	COALESCE((SELECT mp.slug FROM merchant_profiles mp WHERE mp.id = api_services.merchant_profile_id AND mp.owner_user_id = api_services.owner_user_id), ''),
-	owner_contact_method_id::text, title, short_description, distribution_system, billing_mode,
+	owner_contact_method_id::text, title, short_description, COALESCE(source_url, ''), distribution_system, billing_mode,
 	COALESCE(declared_cny_per_usd_allowance::text, ''), COALESCE(declared_max_usd_allowance_per_intent::text, ''),
 	quota_expires_at,
 	minimum_intent_cny::text, COALESCE(maximum_intent_cny::text, ''), usage_visibility,
@@ -719,7 +723,8 @@ func (s *Store) loadAPIServiceChildren(ctx context.Context, q queryer, service *
 
 	paymentRows, err := queryRows(ctx, q, `
 		SELECT id::text, api_service_id::text, payment_method, enabled,
-		       payment_instructions, created_at, updated_at, version
+		       payment_instructions, COALESCE(payment_qr_code_data_url, ''),
+		       created_at, updated_at, version
 		FROM api_service_payment_options
 		WHERE api_service_id = $1
 		ORDER BY payment_method ASC
@@ -737,6 +742,7 @@ func (s *Store) loadAPIServiceChildren(ctx context.Context, q queryer, service *
 			&option.PaymentMethod,
 			&option.Enabled,
 			&option.PaymentInstructions,
+			&option.PaymentQRCodeDataURL,
 			&option.CreatedAt,
 			&option.UpdatedAt,
 			&option.Version,
@@ -880,7 +886,7 @@ func upsertAPIServiceInTx(ctx context.Context, tx pgx.Tx, service apimarket.Serv
 	_, err := tx.Exec(ctx, `
 		INSERT INTO api_services (
 			id, owner_user_id, merchant_profile_id, merchant_identity_mode, owner_contact_method_id,
-			title, short_description, distribution_system, billing_mode,
+			title, short_description, source_url, distribution_system, billing_mode,
 			declared_cny_per_usd_allowance, declared_max_usd_allowance_per_intent,
 			quota_expires_at,
 			minimum_intent_cny, maximum_intent_cny, usage_visibility,
@@ -892,15 +898,15 @@ func upsertAPIServiceInTx(ctx context.Context, tx pgx.Tx, service apimarket.Serv
 		)
 		VALUES (
 			$1, $2, $3, $4, $5,
-			$6, $7, $8, $9,
-			$10, $11,
-			$12,
-			$13, $14, $15,
-			$16, $17, $18,
-			$19, $20, $21,
-			$22, $23, $24,
-			$25, $26,
-			$27, $28, $29
+			$6, $7, $8, $9, $10,
+			$11, $12,
+			$13,
+			$14, $15, $16,
+			$17, $18, $19,
+			$20, $21, $22,
+			$23, $24, $25,
+			$26, $27,
+			$28, $29, $30
 		)
 		ON CONFLICT (id) DO UPDATE
 		SET merchant_profile_id = EXCLUDED.merchant_profile_id,
@@ -908,6 +914,7 @@ func upsertAPIServiceInTx(ctx context.Context, tx pgx.Tx, service apimarket.Serv
 		    owner_contact_method_id = EXCLUDED.owner_contact_method_id,
 		    title = EXCLUDED.title,
 		    short_description = EXCLUDED.short_description,
+		    source_url = EXCLUDED.source_url,
 		    distribution_system = EXCLUDED.distribution_system,
 		    billing_mode = EXCLUDED.billing_mode,
 		    declared_cny_per_usd_allowance = EXCLUDED.declared_cny_per_usd_allowance,
@@ -929,8 +936,8 @@ func upsertAPIServiceInTx(ctx context.Context, tx pgx.Tx, service apimarket.Serv
 		    payment_window_minutes = EXCLUDED.payment_window_minutes,
 		    updated_at = EXCLUDED.updated_at,
 		    version = EXCLUDED.version
-	`, service.ID, service.OwnerUserID, nullUUID(service.MerchantProfileID), service.MerchantIdentityMode, service.OwnerContactMethodID,
-		service.Title, service.ShortDescription, service.DistributionSystem, service.BillingMode,
+		`, service.ID, service.OwnerUserID, nullUUID(service.MerchantProfileID), service.MerchantIdentityMode, service.OwnerContactMethodID,
+		service.Title, service.ShortDescription, nullText(service.SourceURL), service.DistributionSystem, service.BillingMode,
 		nullNumeric(service.DeclaredCNYPerUSDAllowance), nullNumeric(service.DeclaredMaxUSDAllowancePerIntent),
 		service.QuotaExpiresAt,
 		service.MinimumIntentCNY, nullNumeric(service.MaximumIntentCNY), service.UsageVisibility,
@@ -1002,11 +1009,11 @@ func upsertAPIServiceInTx(ctx context.Context, tx pgx.Tx, service apimarket.Serv
 		_, err = tx.Exec(ctx, `
 			INSERT INTO api_service_payment_options (
 				id, api_service_id, payment_method, enabled, payment_instructions,
-				created_at, updated_at, version
+				payment_qr_code_data_url, created_at, updated_at, version
 			)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
 		`, option.ID, service.ID, option.PaymentMethod, option.Enabled, option.PaymentInstructions,
-			option.CreatedAt, option.UpdatedAt, option.Version)
+			nullText(option.PaymentQRCodeDataURL), option.CreatedAt, option.UpdatedAt, option.Version)
 		if err != nil {
 			return internalStoreError()
 		}
@@ -1055,11 +1062,11 @@ func updateAPIServiceOrderSettingsInTx(ctx context.Context, tx pgx.Tx, service a
 		_, err = tx.Exec(ctx, `
 			INSERT INTO api_service_payment_options (
 				id, api_service_id, payment_method, enabled, payment_instructions,
-				created_at, updated_at, version
+				payment_qr_code_data_url, created_at, updated_at, version
 			)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
 		`, option.ID, service.ID, option.PaymentMethod, option.Enabled, option.PaymentInstructions,
-			option.CreatedAt, option.UpdatedAt, option.Version)
+			nullText(option.PaymentQRCodeDataURL), option.CreatedAt, option.UpdatedAt, option.Version)
 		if err != nil {
 			return internalStoreError()
 		}
@@ -1149,12 +1156,19 @@ func insertAPIPurchaseIntentEventAndTargetNotification(ctx context.Context, tx p
 		)
 		VALUES ($1, $2, $3, $4, 'api_purchase_intent', $5, $6, $2, $7, $8, $9)
 		ON CONFLICT (user_id, dedupe_key) WHERE dedupe_key IS NOT NULL DO NOTHING
-	`, notifyUserID, eventType, title, body, intent.ID, "/api-intents/"+intent.ID, eventID,
+	`, notifyUserID, eventType, title, body, intent.ID, apiPurchaseIntentNotificationTargetURL(intent, notifyUserID), eventID,
 		"api_purchase_intent:"+intent.ID+":"+intent.Status+":"+notifyUserID, now)
 	if err != nil {
 		return internalStoreError()
 	}
 	return nil
+}
+
+func apiPurchaseIntentNotificationTargetURL(intent apiintent.Intent, notifyUserID string) string {
+	if notifyUserID == intent.OwnerUserID {
+		return "/merchant/api-orders/" + intent.ID
+	}
+	return "/my/api-orders/" + intent.ID
 }
 
 func insertAPIPurchaseIntentContactAccessLogInTx(ctx context.Context, tx pgx.Tx, intentID, viewerUserID, viewedSide, requestID string, now time.Time) *domain.AppError {
@@ -1419,11 +1433,17 @@ func storeValidateAPIServiceOrderSettings(input apimarket.UpdateOrderSettingsInp
 		seen[method] = true
 		if option.Enabled {
 			enabledCount++
-			if strings.TrimSpace(option.PaymentInstructions) == "" {
+			if storeRequiresPaymentQRCode(method) && strings.TrimSpace(option.PaymentQRCodeDataURL) == "" {
+				return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Payment QR code required", "启用微信或支付宝收款必须上传收款码。", field+".paymentQrCodeDataUrl", "required", "必须上传收款码。")
+			}
+			if !storeRequiresPaymentQRCode(method) && strings.TrimSpace(option.PaymentInstructions) == "" {
 				return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Payment instructions required", "启用收款方式必须填写收款说明。", field+".paymentInstructions", "required", "必须填写收款说明。")
 			}
 		}
 		if err := storeValidateOptionalNonSecretText(field+".paymentInstructions", option.PaymentInstructions); err != nil {
+			return err
+		}
+		if err := storeValidateOptionalPaymentQRCodeDataURL(field+".paymentQrCodeDataUrl", option.PaymentQRCodeDataURL); err != nil {
 			return err
 		}
 	}
@@ -1434,12 +1454,7 @@ func storeValidateAPIServiceOrderSettings(input apimarket.UpdateOrderSettingsInp
 }
 
 func storeIsSupportedPaymentMethod(method string) bool {
-	switch strings.TrimSpace(method) {
-	case apimarket.PaymentMethodWechat, apimarket.PaymentMethodAlipay, apimarket.PaymentMethodUSDT:
-		return true
-	default:
-		return false
-	}
+	return apimarket.IsSupportedPaymentMethod(method)
 }
 
 func storeBuildPaymentOptions(serviceID string, current []apimarket.PaymentOption, input []apimarket.PaymentOptionInput, now time.Time) []apimarket.PaymentOption {
@@ -1449,6 +1464,9 @@ func storeBuildPaymentOptions(serviceID string, current []apimarket.PaymentOptio
 	}
 	options := make([]apimarket.PaymentOption, 0, len(input))
 	for _, item := range input {
+		if !storeShouldPersistPaymentOption(item) {
+			continue
+		}
 		method := strings.TrimSpace(item.PaymentMethod)
 		option := byMethod[method]
 		if option.ID == "" {
@@ -1464,10 +1482,41 @@ func storeBuildPaymentOptions(serviceID string, current []apimarket.PaymentOptio
 		option.PaymentMethod = method
 		option.Enabled = item.Enabled
 		option.PaymentInstructions = strings.TrimSpace(item.PaymentInstructions)
+		option.PaymentQRCodeDataURL = strings.TrimSpace(item.PaymentQRCodeDataURL)
 		option.UpdatedAt = now
 		options = append(options, option)
 	}
 	return options
+}
+
+func storeShouldPersistPaymentOption(input apimarket.PaymentOptionInput) bool {
+	return input.Enabled || strings.TrimSpace(input.PaymentInstructions) != "" || strings.TrimSpace(input.PaymentQRCodeDataURL) != ""
+}
+
+func storeRequiresPaymentQRCode(method string) bool {
+	switch strings.TrimSpace(method) {
+	case apimarket.PaymentMethodWechat, apimarket.PaymentMethodAlipay:
+		return true
+	default:
+		return false
+	}
+}
+
+func storeValidateOptionalPaymentQRCodeDataURL(field, value string) *domain.AppError {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return nil
+	}
+	if len(value) > 2*1024*1024 {
+		return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "QR code too large", "收款码图片过大。", field, "too_large", "收款码图片过大。")
+	}
+	if strings.ContainsAny(value, "\x00\r\n\t") {
+		return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "QR code invalid", "收款码数据格式不正确。", field, "invalid", "收款码数据格式不正确。")
+	}
+	if !strings.HasPrefix(value, "data:image/") || !strings.Contains(value, ";base64,") {
+		return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "QR code invalid", "收款码必须是图片 data URL。", field, "invalid", "收款码必须是图片 data URL。")
+	}
+	return nil
 }
 
 func storeFindAPIServicePackage(service apimarket.Service, packageID string) (apimarket.ServicePackage, bool) {
@@ -1562,6 +1611,7 @@ func scanAPIService(row scanner, service *apimarket.Service) error {
 		&service.OwnerContactMethodID,
 		&service.Title,
 		&service.ShortDescription,
+		&service.SourceURL,
 		&service.DistributionSystem,
 		&service.BillingMode,
 		&service.DeclaredCNYPerUSDAllowance,

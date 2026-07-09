@@ -69,6 +69,26 @@ test('source route normalization removes known dynamic identifiers', () => {
     entity_type: 'public_user',
     reason_code: 'other',
   })
+
+  assert.deepEqual(sanitizeAnalyticsEvent('report_submit', {
+    target_type: 'api_purchase_intent',
+    reason_code: 'other',
+    source_route: '/merchant/api-orders/12049d7e-7088-4c99-80c6-e6cc0e8eeed1',
+  }), {
+    source_route: '/merchant/api-orders/:id',
+    entity_type: 'api_purchase_intent',
+    reason_code: 'other',
+  })
+
+  assert.deepEqual(sanitizeAnalyticsEvent('report_submit', {
+    target_type: 'api_purchase_intent',
+    reason_code: 'other',
+    source_route: '/api-intents/12049d7e-7088-4c99-80c6-e6cc0e8eeed1',
+  }), {
+    source_route: '/api-intents/:id',
+    entity_type: 'api_purchase_intent',
+    reason_code: 'other',
+  })
 })
 
 test('subscription carpool analytics use low-cardinality buckets and product categories', () => {

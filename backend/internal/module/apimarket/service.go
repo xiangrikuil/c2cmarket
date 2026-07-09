@@ -417,6 +417,7 @@ func (s *Manager) buildFromInput(ctx context.Context, current Service, input Cre
 		OwnerContactMethodID:             strings.TrimSpace(input.OwnerContactMethodID),
 		Title:                            strings.TrimSpace(input.Title),
 		ShortDescription:                 strings.TrimSpace(input.ShortDescription),
+		SourceURL:                        strings.TrimSpace(input.SourceURL),
 		DistributionSystem:               strings.TrimSpace(input.DistributionSystem),
 		BillingMode:                      strings.TrimSpace(input.BillingMode),
 		DeclaredCNYPerUSDAllowance:       strings.TrimSpace(input.DeclaredCNYPerUSDAllowance),
@@ -534,6 +535,9 @@ func validateCreateInput(input CreateServiceInput, now time.Time) *domain.AppErr
 		return err
 	}
 	if err := validateNonSecretText("shortDescription", input.ShortDescription); err != nil {
+		return err
+	}
+	if err := validateOptionalLinuxDoTopicURL(input.SourceURL); err != nil {
 		return err
 	}
 	if err := validateOptionalNonSecretText("publicAccessNote", input.PublicAccessNote); err != nil {
@@ -782,7 +786,7 @@ func OrderableReasonsAt(service Service, now time.Time) []string {
 func enabledPaymentOptionCount(options []PaymentOption) int {
 	count := 0
 	for _, option := range options {
-		if option.Enabled {
+		if option.Enabled && IsSupportedPaymentMethod(option.PaymentMethod) {
 			count++
 		}
 	}
@@ -794,8 +798,11 @@ func matchesPaymentMethod(service Service, paymentMethod string) bool {
 	if paymentMethod == "" {
 		return true
 	}
+	if !IsSupportedPaymentMethod(paymentMethod) {
+		return false
+	}
 	for _, option := range service.PaymentOptions {
-		if option.Enabled && option.PaymentMethod == paymentMethod {
+		if option.Enabled && IsSupportedPaymentMethod(option.PaymentMethod) && option.PaymentMethod == paymentMethod {
 			return true
 		}
 	}
@@ -919,7 +926,7 @@ func validatePublicServiceFilter(filter PublicServiceFilter) *domain.AppError {
 	if strings.TrimSpace(filter.PaymentMethod) == "" {
 		return nil
 	}
-	if !isSupportedPaymentMethod(filter.PaymentMethod) {
+	if !IsSupportedPaymentMethod(filter.PaymentMethod) {
 		return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Payment method invalid", "付款方式不支持。", "paymentMethod", "invalid", "付款方式不支持。")
 	}
 	return nil
@@ -937,7 +944,7 @@ func validateOrderSettingsInput(input UpdateOrderSettingsInput) *domain.AppError
 	for i, option := range input.PaymentOptions {
 		field := fmt.Sprintf("paymentOptions.%d", i)
 		method := strings.TrimSpace(option.PaymentMethod)
-		if !isSupportedPaymentMethod(method) {
+		if !IsSupportedPaymentMethod(method) {
 			return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Payment method invalid", "付款方式不支持。", field+".paymentMethod", "invalid", "付款方式不支持。")
 		}
 		if seen[method] {
@@ -946,11 +953,17 @@ func validateOrderSettingsInput(input UpdateOrderSettingsInput) *domain.AppError
 		seen[method] = true
 		if option.Enabled {
 			enabledCount++
-			if strings.TrimSpace(option.PaymentInstructions) == "" {
+			if requiresPaymentQRCode(method) && strings.TrimSpace(option.PaymentQRCodeDataURL) == "" {
+				return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Payment QR code required", "启用微信或支付宝收款必须上传收款码。", field+".paymentQrCodeDataUrl", "required", "必须上传收款码。")
+			}
+			if !requiresPaymentQRCode(method) && strings.TrimSpace(option.PaymentInstructions) == "" {
 				return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Payment instructions required", "启用收款方式必须填写收款说明。", field+".paymentInstructions", "required", "必须填写收款说明。")
 			}
 		}
 		if err := validateOptionalNonSecretText(field+".paymentInstructions", option.PaymentInstructions); err != nil {
+			return err
+		}
+		if err := validateOptionalPaymentQRCodeDataURL(field+".paymentQrCodeDataUrl", option.PaymentQRCodeDataURL); err != nil {
 			return err
 		}
 	}
@@ -960,9 +973,9 @@ func validateOrderSettingsInput(input UpdateOrderSettingsInput) *domain.AppError
 	return nil
 }
 
-func isSupportedPaymentMethod(method string) bool {
+func IsSupportedPaymentMethod(method string) bool {
 	switch strings.TrimSpace(method) {
-	case PaymentMethodWechat, PaymentMethodAlipay, PaymentMethodUSDT:
+	case PaymentMethodWechat, PaymentMethodAlipay:
 		return true
 	default:
 		return false
@@ -976,6 +989,9 @@ func buildPaymentOptions(serviceID string, current []PaymentOption, input []Paym
 	}
 	options := make([]PaymentOption, 0, len(input))
 	for _, item := range input {
+		if !shouldPersistPaymentOption(item) {
+			continue
+		}
 		method := strings.TrimSpace(item.PaymentMethod)
 		option := byMethod[method]
 		if option.ID == "" {
@@ -991,10 +1007,41 @@ func buildPaymentOptions(serviceID string, current []PaymentOption, input []Paym
 		option.PaymentMethod = method
 		option.Enabled = item.Enabled
 		option.PaymentInstructions = strings.TrimSpace(item.PaymentInstructions)
+		option.PaymentQRCodeDataURL = strings.TrimSpace(item.PaymentQRCodeDataURL)
 		option.UpdatedAt = now
 		options = append(options, option)
 	}
 	return options
+}
+
+func shouldPersistPaymentOption(input PaymentOptionInput) bool {
+	return input.Enabled || strings.TrimSpace(input.PaymentInstructions) != "" || strings.TrimSpace(input.PaymentQRCodeDataURL) != ""
+}
+
+func requiresPaymentQRCode(method string) bool {
+	switch strings.TrimSpace(method) {
+	case PaymentMethodWechat, PaymentMethodAlipay:
+		return true
+	default:
+		return false
+	}
+}
+
+func validateOptionalPaymentQRCodeDataURL(field, value string) *domain.AppError {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return nil
+	}
+	if len(value) > 2*1024*1024 {
+		return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "QR code too large", "收款码图片过大。", field, "too_large", "收款码图片过大。")
+	}
+	if strings.ContainsAny(value, "\x00\r\n\t") {
+		return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "QR code invalid", "收款码数据格式不正确。", field, "invalid", "收款码数据格式不正确。")
+	}
+	if !strings.HasPrefix(value, "data:image/") || !strings.Contains(value, ";base64,") {
+		return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "QR code invalid", "收款码必须是图片 data URL。", field, "invalid", "收款码必须是图片 data URL。")
+	}
+	return nil
 }
 
 func validateOptionalNonSecretText(field, value string) *domain.AppError {
@@ -1014,6 +1061,26 @@ func validateNonSecretText(field, value string) *domain.AppError {
 	}
 	if looksLikeSecret(value) {
 		return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeSecretContentDetected, "Secret content detected", "不能在平台填写、粘贴或上传任何凭据。", field, "secret_content", "不能包含 API Key、密码、Token、Session 或 Cookie。")
+	}
+	return nil
+}
+
+func validateOptionalLinuxDoTopicURL(value string) *domain.AppError {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return nil
+	}
+	if len(value) > 2048 {
+		return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeURLNotAllowed, "URL not allowed", "linux.do 原帖链接过长。", "sourceUrl", "too_long", "原帖链接过长。")
+	}
+	if strings.ContainsAny(value, "\x00\r\n\t") {
+		return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeURLNotAllowed, "URL not allowed", "linux.do 原帖链接包含非法字符。", "sourceUrl", "control_character", "原帖链接包含非法字符。")
+	}
+	if !strings.HasPrefix(value, "https://linux.do/t/") {
+		return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeURLNotAllowed, "URL not allowed", "linux.do 原帖链接必须是 https://linux.do/t/*。", "sourceUrl", "invalid", "必须填写 https://linux.do/t/* 原帖链接。")
+	}
+	if looksLikeSecret(value) {
+		return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeSecretContentDetected, "Secret content detected", "linux.do 原帖链接不能包含认证秘密。", "sourceUrl", "secret_content", "原帖链接不能包含 API Key、Token、Session 或 Cookie。")
 	}
 	return nil
 }

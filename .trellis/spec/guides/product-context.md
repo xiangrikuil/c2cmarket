@@ -12,7 +12,7 @@ External references:
 
 C2CMarket is an AI official price intelligence and community matching platform for linux.do users. It organizes official low-price intelligence, subscription carpool listings, demand posts, API service listings, intent records, fulfillment records, reviews, disputes, and admin review queues.
 
-The product is not a payment platform, escrow platform, account custody service, API proxy, or token delivery system.
+The product is not a payment platform, escrow platform, account custody service, API proxy, or generalized token delivery system.
 
 ## Hard Product Boundaries
 
@@ -20,12 +20,12 @@ The platform must not:
 
 - Process in-platform payments.
 - Provide escrow or guaranteed transaction custody.
-- Store third-party account passwords, plaintext native account passwords, API keys, Sub2API keys, session tokens, refresh tokens, or unredacted sensitive credentials.
+- Store third-party account passwords, plaintext native account passwords, API keys, Sub2API keys, session tokens, refresh tokens, or unredacted sensitive credentials, except for the API order one-time delivery credential boundary described below.
 - Automatically deliver tokens, accounts, or keys.
 - Proxy API traffic.
 - Present linux.do binding as linux.do official endorsement.
 - Encourage or facilitate third-party account credential sharing, API key transfer, or token/key resale.
-- Store or auto-deliver third-party passwords, API keys, Sub2API keys, sessions, cookies, refresh tokens, access tokens, MFA codes, recovery codes, or panel owner credentials.
+- Store or auto-deliver third-party passwords, API keys, Sub2API keys, sessions, cookies, refresh tokens, access tokens, MFA codes, recovery codes, or panel owner credentials, except that a seller may submit one buyer-specific, revocable API order delivery credential after payment is confirmed.
 
 Preferred wording:
 
@@ -40,8 +40,9 @@ Avoid wording:
 - `GPT token 交易`
 - `Token 买卖`
 - `自动 token 交付`
-- `手动交付`
-- `交付方式`
+- `自动发货`
+- `平台担保`
+- `主账号密码`
 
 For API quota service UI, prefer:
 
@@ -54,7 +55,14 @@ For API quota service UI, prefer:
 - `可售美元额度`
 - `意向额度上限`
 
-Rationale: API quota pages must not imply that C2CMarket delivers, stores, or transfers API keys, account tokens, endpoint secrets, or account credentials. When an API service is approved, online, and clear, the owner has pre-consented to receive compliant purchase intents; a successful API intent creation may immediately disclose the frozen merchant contact to that buyer. The frontend can display merchant-provided access/contact modes, but the product copy should frame them as matching and off-platform confirmation, not platform delivery. Subscription carpool contact windows remain separate and still use the carpool-specific reservation flow.
+Rationale: API quota public pages must not imply that C2CMarket delivers, stores, or transfers API keys, account tokens, endpoint secrets, or account credentials before an order exists. When an API service is approved, online, clear, and orderable, the owner has pre-consented to receive compliant purchase intents; a successful API intent creation may immediately disclose the frozen merchant contact to that buyer. After the buyer creates an API order, submits off-platform payment, and the seller confirms receipt, the seller may submit a one-time structured delivery credential for that order. That credential is limited to buyer-specific, revocable API Key + API Base URL or initial login account fields. It is not automatic delivery, escrow, platform verification, API proxying, or a general chat/file-transfer feature. Subscription carpool contact windows remain separate and still use the carpool-specific reservation flow.
+
+API order delivery credential wording:
+
+- Use `交付凭证`, `确认已交付`, `买家专属、可撤销的接入信息`, and `提交后不可修改`.
+- Do not use `自动发货`, `平台担保`, `平台验真`, `主账号密码`, `Cookie/Session/Token 交付`, or copy that implies C2CMarket tests the API.
+- The credential may be shown only in buyer/seller order detail and action responses. Public API service pages, lists, admin summaries, notifications, events, logs, and reports must not include raw API keys or passwords.
+- If a delivered key is wrong, rotated, or needs replacement, buyer and seller handle it through the displayed contact methods off-platform; V1 does not maintain station-internal credential edits or history.
 
 Sub2API quota vocabulary:
 

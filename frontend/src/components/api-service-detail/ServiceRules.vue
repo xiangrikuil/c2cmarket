@@ -15,8 +15,8 @@ defineProps<{
     </div>
     <dl class="grid gap-x-8 px-4 py-3 text-sm md:grid-cols-2">
       <div class="grid grid-cols-[96px_1fr] gap-4 border-b border-border py-3">
-        <dt class="text-muted-foreground">接入细节</dt>
-        <dd class="font-semibold">提交意向后与商户站外确认</dd>
+        <dt class="text-muted-foreground">接入类型</dt>
+        <dd class="font-semibold">{{ service.delivery }}</dd>
       </div>
       <div class="grid grid-cols-[96px_1fr] gap-4 border-b border-border py-3">
         <dt class="text-muted-foreground">用量核对</dt>

@@ -117,12 +117,19 @@ export function mapBackendDemand(item: BackendDemand): DemandRecord {
     createdAt: formatTime(item.createdAt),
     updatedAt: formatTime(item.updatedAt),
     backendKind: 'demand',
+    backendStatus: item.status,
     backendVersion: item.version,
   }
 }
 
 export async function backendDemands() {
   const response = await backendRequest<ListResponse<BackendDemand>>('/api/v1/demands')
+  return response.items.map(mapBackendDemand)
+}
+
+export async function backendMyDemands() {
+  await ensureBackendSession('buyer', false)
+  const response = await backendRequest<ListResponse<BackendDemand>>('/api/v1/me/demands')
   return response.items.map(mapBackendDemand)
 }
 

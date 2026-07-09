@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'vitest'
 import {
+  apiPaymentMethods,
   apiPaymentSettingsMissingReason,
   apiPaymentSettingsSummary,
   createEmptyApiPaymentAccountSettings,
@@ -14,6 +15,7 @@ test('normalizes and validates API payment account settings', () => {
 
   const empty = createEmptyApiPaymentAccountSettings()
   assert.equal(empty.paymentWindowMinutes, 10)
+  assert.deepEqual(apiPaymentMethods.map(option => option.value), ['wechat', 'alipay'])
   assert.equal(empty.paymentOptions.every(option => option.paymentQrCodeDataUrl === null), true)
   assert.equal(isApiPaymentAccountSettingsComplete(empty), false)
   assert.match(apiPaymentSettingsMissingReason(empty), /启用至少一种/)
@@ -36,14 +38,13 @@ test('normalizes and validates API payment account settings', () => {
   assert.equal(isApiPaymentAccountSettingsComplete(wechatWithQr), true)
   assert.match(apiPaymentSettingsSummary(wechatWithQr), /固定 10 分钟确认/)
 
-  const usdtWithoutInstructions = normalizeApiPaymentAccountSettings({
+  const legacyUSDT = normalizeApiPaymentAccountSettings({
     paymentOptions: [
       { paymentMethod: 'usdt', enabled: true, paymentInstructions: '', paymentQrCodeDataUrl: qrDataUrl },
     ],
   })
-  assert.equal(usdtWithoutInstructions.paymentOptions.find(option => option.paymentMethod === 'usdt')?.paymentQrCodeDataUrl, qrDataUrl)
-  assert.equal(isApiPaymentAccountSettingsComplete(usdtWithoutInstructions), false)
-  assert.match(apiPaymentSettingsMissingReason(usdtWithoutInstructions), /填写USDT收款说明/)
+  assert.deepEqual(legacyUSDT.paymentOptions.map(option => option.paymentMethod), ['wechat', 'alipay'])
+  assert.equal(isApiPaymentAccountSettingsComplete(legacyUSDT), false)
 
   const invalidQr = normalizeApiPaymentAccountSettings({
     paymentOptions: [

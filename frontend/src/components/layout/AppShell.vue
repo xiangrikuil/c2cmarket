@@ -100,6 +100,7 @@ const navGroups = computed(() => {
     title: '个人工作台',
     items: [
       { label: '我的中心', to: '/my', count: null, icon: UserRound },
+      { label: '我的需求', to: '/my/demands', count: null, icon: ScanSearch },
     ],
   }
   const merchantGroup = {
@@ -207,7 +208,7 @@ function closeMenu() {
         class="flex h-[60px] items-center border-b border-sidebar-border font-semibold tracking-tight"
         :class="sidebarCollapsed ? 'justify-center px-0' : 'gap-2.5 px-5'"
       >
-        <img src="/c2cmarket-logo-mark.svg?v=20260704-logo2" alt="C2CMarket" class="h-7 w-7 shrink-0" />
+        <img src="/c2cmarket-logo-mark.svg?v=20260708-electric-blue" alt="C2CMarket" class="h-7 w-7 shrink-0" />
         <span v-if="!sidebarCollapsed" class="min-w-0">
           <span class="block truncate text-[19px] font-bold leading-tight text-sidebar-foreground">C2CMarket</span>
         </span>
@@ -282,7 +283,7 @@ function closeMenu() {
     >
       <div class="flex h-[60px] items-center justify-between border-b border-border px-4">
         <RouterLink to="/" class="flex min-w-0 items-center gap-3 font-semibold tracking-tight" @click="closeMenu">
-          <img src="/c2cmarket-logo-mark.svg?v=20260704-logo2" alt="C2CMarket" class="h-8 w-8 shrink-0" />
+          <img src="/c2cmarket-logo-mark.svg?v=20260708-electric-blue" alt="C2CMarket" class="h-8 w-8 shrink-0" />
           <span class="min-w-0">
             <span class="block truncate text-[18px] font-bold leading-tight">C2CMarket</span>
           </span>
@@ -334,7 +335,7 @@ function closeMenu() {
             <Menu class="h-4 w-4" />
           </Button>
           <RouterLink to="/" class="flex items-center gap-2 font-semibold tracking-tight lg:hidden">
-            <img src="/c2cmarket-logo-mark.svg?v=20260704-logo2" alt="C2CMarket" class="h-8 w-8" />
+            <img src="/c2cmarket-logo-mark.svg?v=20260708-electric-blue" alt="C2CMarket" class="h-8 w-8" />
           </RouterLink>
           <div class="hidden min-w-0 shrink-0 md:block lg:w-[260px] 2xl:w-[338px]">
             <div class="truncate text-lg font-semibold text-foreground">{{ currentTitle }}</div>
@@ -354,7 +355,7 @@ function closeMenu() {
             </div>
           </div>
           <div class="flex-1" />
-          <DropdownMenu>
+          <DropdownMenu v-if="appThemes.length > 1">
             <DropdownMenuTrigger as-child>
               <Button variant="ghost" size="icon" aria-label="切换主题">
                 <Palette class="h-4 w-4" />

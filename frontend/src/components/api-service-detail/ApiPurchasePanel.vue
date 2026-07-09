@@ -50,7 +50,7 @@ function confirm() {
     <div class="flex items-center justify-between border-b border-border px-4 py-3">
       <div>
         <h2 class="text-base font-semibold">提交购买意向</h2>
-        <p class="mt-1 text-xs text-muted-foreground">最终金额、接入细节和用量核对由双方站外确认</p>
+        <p class="mt-1 text-xs text-muted-foreground">最终金额、API 细节和用量核对由双方站外确认</p>
       </div>
       <span class="inline-flex items-center gap-1 rounded-full border border-emerald-200 bg-emerald-50 px-2 py-1 text-xs text-emerald-700">
         <span class="h-1.5 w-1.5 rounded-full bg-emerald-500" />
@@ -65,11 +65,11 @@ function confirm() {
         <p v-if="amountError" class="text-xs text-destructive">{{ amountError }}</p>
       </div>
 
-      <PurchaseSummary :service="service" :amount="amount" :selected-delivery-mode="selectedDeliveryMode" />
+      <PurchaseSummary :service="service" :amount="amount" />
 
       <label class="flex items-start gap-2 text-xs text-muted-foreground">
         <input v-model="acknowledged" type="checkbox" class="mt-0.5 h-4 w-4 accent-primary" />
-        <span>我已阅读模型价格、接入说明、商户承诺和退款规则，并理解最终由双方站外确认；平台不担保、不代赔。</span>
+        <span>我已阅读模型价格、API 细节、商户承诺和退款规则，并理解最终由双方站外确认；平台不担保、不代赔。</span>
       </label>
 
       <Button class="w-full" :disabled="!canSubmit" @click="openConfirm">
@@ -84,7 +84,6 @@ function confirm() {
     :open="confirmOpen"
     :service="service"
     :amount="amount"
-    :selected-delivery-mode="selectedDeliveryMode"
     :submitting="submitting"
     @close="confirmOpen = false"
     @confirm="confirm"

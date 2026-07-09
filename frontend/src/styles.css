@@ -1850,10 +1850,38 @@ html[data-theme="minimal-modern"] .account-security-side {
   gap: 8px;
 }
 
-.api-publish-provider-grid {
-  display: grid;
+.api-publish-provider-segment {
+  display: inline-grid;
+  width: 100%;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 8px;
+  gap: 2px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: color-mix(in oklab, var(--muted) 46%, var(--card));
+  padding: 3px;
+}
+
+.api-publish-segment-button {
+  min-height: 34px;
+  border-radius: 6px;
+  color: var(--muted-foreground);
+  font-size: 13px;
+  font-weight: 650;
+  transition:
+    background 150ms ease,
+    color 150ms ease,
+    box-shadow 150ms ease;
+}
+
+.api-publish-segment-button:hover {
+  background: color-mix(in oklab, var(--accent) 50%, var(--card));
+  color: var(--foreground);
+}
+
+.api-publish-segment-button.is-active {
+  background: var(--card);
+  color: var(--primary);
+  box-shadow: 0 1px 5px rgb(15 23 42 / 0.08);
 }
 
 .api-publish-option-card {
@@ -1883,28 +1911,6 @@ html[data-theme="minimal-modern"] .account-security-side {
 .api-publish-option-card span + span {
   margin-top: 3px;
   line-height: 1.38;
-}
-
-.api-publish-delivery-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 8px;
-}
-
-.api-publish-delivery-card {
-  min-height: 94px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: color-mix(in oklab, var(--card) 94%, white);
-  padding: 10px;
-  text-align: left;
-}
-
-.api-publish-delivery-card.is-active {
-  border-color: var(--primary);
-  background: color-mix(in oklab, var(--primary) 11%, var(--card));
-  color: var(--primary);
-  box-shadow: 0 0 0 1px var(--primary) inset;
 }
 
 .api-publish-billing-grid {
@@ -1951,57 +1957,52 @@ html[data-theme="minimal-modern"] .account-security-side {
   line-height: 1.45;
 }
 
-.api-publish-compute-grid {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 8px;
-}
-
-.api-publish-compute-box {
-  border: 1px solid color-mix(in oklab, var(--border) 80%, transparent);
-  border-radius: 8px;
-  background: color-mix(in oklab, var(--muted) 42%, var(--card));
-  padding: 8px 10px;
-}
-
-.api-publish-compute-box b {
-  display: block;
-  font-size: 15px;
-  line-height: 1.2;
-}
-
-.api-publish-compute-box span {
-  display: block;
-  margin-top: 4px;
-  color: var(--muted-foreground);
-  font-size: 11px;
-}
-
 .api-publish-model-table {
   min-width: 760px;
 }
 
-.api-publish-model-card {
-  width: 100%;
+.api-publish-model-chip-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.api-publish-model-chip {
+  display: inline-flex;
+  min-height: 34px;
+  max-width: 100%;
+  align-items: center;
+  gap: 6px;
   border: 1px solid var(--border);
-  border-radius: 8px;
-  background: color-mix(in oklab, var(--card) 94%, white);
-  padding: 10px;
-  text-align: left;
+  border-radius: 999px;
+  background: color-mix(in oklab, var(--muted) 45%, var(--card));
+  padding: 6px 11px;
+  color: var(--foreground);
+  font-size: 12px;
+  font-weight: 620;
+  line-height: 1.2;
   transition:
     border-color 150ms ease,
     background 150ms ease,
+    color 150ms ease,
     box-shadow 150ms ease;
 }
 
-.api-publish-model-card:hover {
-  background: color-mix(in oklab, var(--accent) 42%, var(--card));
+.api-publish-model-chip:hover {
+  background: color-mix(in oklab, var(--accent) 48%, var(--card));
 }
 
-.api-publish-model-card.is-active {
+.api-publish-model-chip.is-active {
   border-color: var(--primary);
-  background: color-mix(in oklab, var(--primary) 11%, var(--card));
+  background: color-mix(in oklab, var(--primary) 12%, var(--card));
+  color: var(--primary);
   box-shadow: 0 0 0 1px var(--primary) inset;
+}
+
+.api-publish-model-chip span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .api-publish-model-table th {
@@ -2181,11 +2182,8 @@ html[data-theme="minimal-modern"] .account-security-side {
 
 @media (max-width: 820px) {
   .api-publish-option-grid,
-  .api-publish-provider-grid,
-  .api-publish-delivery-grid,
   .api-publish-billing-grid,
   .api-publish-payment-grid,
-  .api-publish-compute-grid,
   .api-publish-image-price-grid {
     grid-template-columns: 1fr;
   }

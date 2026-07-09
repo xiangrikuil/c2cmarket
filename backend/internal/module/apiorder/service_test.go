@@ -14,7 +14,7 @@ import (
 	"c2c-market/backend/internal/module/idempotency"
 )
 
-func TestSubmitDeliveryRejectsCredentialShapedContentAndAllowsSafetyCopy(t *testing.T) {
+func TestSubmitDeliveryAcceptsStructuredCredentialAndRejectsUnsafeFields(t *testing.T) {
 	now := time.Date(2026, 6, 27, 12, 0, 0, 0, time.UTC)
 	service := NewService(nil, nil, nil, nil, nil, func() time.Time { return now })
 	order := Order{
@@ -32,62 +32,70 @@ func TestSubmitDeliveryRejectsCredentialShapedContentAndAllowsSafetyCopy(t *test
 	}
 	service.orders[order.ID] = order
 
-	rejected := []string{
-		"Authorization: Bearer sk-test",
-		"X-API-Key: abcdef",
-		"apiKey: sk-test",
-		"OPENAI_API_KEY=sk-proj-test",
-		"ANTHROPIC_API_KEY=sk-ant-test",
-		"vless://example",
-		"clash://install-config",
-		"hysteria://example",
-		"hy2://example",
-		"tuic://example",
-		"sub://example",
-		"ssr://example",
-		"socks5://user:pass@example.com:1080",
-		"https://example.com/api/v1/client/subscribe?token=abc",
-		"https://example.com/sub?target=clash&url=xxx",
-		"https://example.com/sub?url=https%3A%2F%2Fvendor.example%2Fapi%2Fv1%2Fclient%2Fsubscribe%3Ftoken%3Dabc123",
-		"[订阅链接](https://example.com/sub?target=clash&url=xxx)",
-		`{"delivery":"https://example.com/api/v1/client/subscribe?token=abc"}`,
-		"abc.def.ghi",
-		"abcdefghijklmnopqrstuvwxyz0123456789ABCDEFGHIJ",
+	rejected := []DeliveryCredentialInput{
+		{
+			DeliveryKind: DeliveryKindAPIKeyEndpoint,
+			APIBaseURL:   "https://example.com/api/v1/client/subscribe?token=abc",
+			APIKey:       "sk-proj-test",
+		},
+		{
+			DeliveryKind: DeliveryKindAPIKeyEndpoint,
+			APIBaseURL:   "https://api.example.com/v1",
+			APIKey:       "cookie=abc",
+		},
+		{
+			DeliveryKind: DeliveryKindAPIKeyEndpoint,
+			APIBaseURL:   "https://api.example.com/v1",
+			APIKey:       "sk-proj-test",
+			Instructions: "Authorization: Bearer sk-test",
+		},
 	}
-	for i, note := range rejected {
-		_, appErr := service.SubmitDeliveryWithIdempotency(context.Background(), "seller-1", "api-order-submit-delivery", "reject-"+string(rune('a'+i)), note, ActionInput{
-			OrderID:         order.ID,
-			DeliveryNote:    note,
-			ExpectedVersion: 1,
-			RequestID:       "reject",
+	for i, credential := range rejected {
+		_, appErr := service.SubmitDeliveryWithIdempotency(context.Background(), "seller-1", "api-order-submit-delivery", "reject-"+string(rune('a'+i)), "hash-"+string(rune('a'+i)), ActionInput{
+			OrderID:            order.ID,
+			DeliveryCredential: credential,
+			ExpectedVersion:    1,
+			RequestID:          "reject",
 		}, testAPIOrderCompletion)
 		if appErr == nil || appErr.Code != domain.CodeSecretContentDetected {
-			t.Fatalf("expected %q to be rejected as secret content, got %v", note, appErr)
+			t.Fatalf("expected credential to be rejected as secret content, got %v", appErr)
 		}
 	}
 
-	allowed := []string{
-		"请通过已披露联系方式继续沟通。",
-		"请勿填写 token。",
-		"站外确认 cookie 不在平台保存。",
-		"不要在这里填写 API key。",
-		"平台不会保存 API key、token 或订阅链接。",
+	allowed := []DeliveryCredentialInput{
+		{
+			DeliveryKind: DeliveryKindAPIKeyEndpoint,
+			APIBaseURL:   "https://api.example.com/v1",
+			APIKey:       "sk-proj-test",
+			Instructions: "买家专属、可撤销；后续更换请站外联系。",
+		},
+		{
+			DeliveryKind:  DeliveryKindLoginAccount,
+			PanelLoginURL: "https://panel.example.com/login",
+			Username:      "buyer-demo",
+			Password:      "initial-password-123",
+			Instructions:  "首次登录后请按面板提示完成设置。",
+		},
 	}
-	for i, note := range allowed {
+	for i, credential := range allowed {
 		working := order
 		working.ID = "allowed-" + string(rune('a'+i))
 		service.orders[working.ID] = working
-		completion, appErr := service.SubmitDeliveryWithIdempotency(context.Background(), "seller-1", "api-order-submit-delivery", "allow-"+string(rune('a'+i)), note, ActionInput{
-			OrderID:         working.ID,
-			DeliveryNote:    note,
-			ExpectedVersion: 1,
-			RequestID:       "allow",
+		completion, appErr := service.SubmitDeliveryWithIdempotency(context.Background(), "seller-1", "api-order-submit-delivery", "allow-"+string(rune('a'+i)), "hash-allow-"+string(rune('a'+i)), ActionInput{
+			OrderID:            working.ID,
+			DeliveryCredential: credential,
+			ExpectedVersion:    1,
+			RequestID:          "allow",
 		}, testAPIOrderCompletion)
 		if appErr != nil {
-			t.Fatalf("expected %q to be allowed, got %v", note, appErr)
+			t.Fatalf("expected credential to be allowed, got %v", appErr)
 		}
 		if completion.Status != http.StatusOK {
-			t.Fatalf("unexpected completion for %q: %+v", note, completion)
+			t.Fatalf("unexpected completion for credential: %+v", completion)
+		}
+		stored := service.orders[working.ID]
+		if stored.DeliveryNote == "" || stored.DeliveryCredential == nil {
+			t.Fatalf("expected delivery summary and credential on order: %+v", stored)
 		}
 	}
 }
@@ -122,6 +130,40 @@ func TestCreateOrderForSameIntentReturnsDedicatedConflict(t *testing.T) {
 	}, testAPIOrderCompletion)
 	if appErr == nil || appErr.Status != http.StatusConflict || appErr.Code != domain.CodeAPIPurchaseIntentHasOrder {
 		t.Fatalf("expected dedicated order conflict, got %v", appErr)
+	}
+}
+
+func TestNewOrderRejectsLegacyUSDTPaymentOption(t *testing.T) {
+	now := time.Date(2026, 6, 27, 12, 0, 0, 0, time.UTC)
+	service := testOrderableService(now)
+	service.PaymentOptions = append(service.PaymentOptions, apimarket.PaymentOption{
+		ID:                  "payment-usdt",
+		PaymentMethod:       "usdt",
+		Enabled:             true,
+		PaymentInstructions: "TRC20 地址站外确认。",
+		CreatedAt:           now,
+		UpdatedAt:           now,
+		Version:             1,
+	})
+	intent := apiintent.Intent{
+		ID:                  "intent-1",
+		APIServiceID:        "service-1",
+		BuyerUserID:         "buyer-1",
+		OwnerUserID:         "seller-1",
+		Status:              apiintent.StatusOpen,
+		RequestedCNYAmount:  "16.00",
+		SelectedAccessMode:  "buyer_dedicated_sub_key",
+		BillingModeSnapshot: apimarket.ServiceBillingModeMetered,
+	}
+
+	_, appErr := NewOrder(CreateInput{
+		IntentID:      "intent-1",
+		BuyerUserID:   "buyer-1",
+		PaymentMethod: "usdt",
+		RequestID:     "create-1",
+	}, intent, service, now)
+	if appErr == nil || appErr.Status != http.StatusUnprocessableEntity || len(appErr.FieldErrors) != 1 || appErr.FieldErrors[0].Field != "paymentMethod" {
+		t.Fatalf("expected legacy USDT payment method to be rejected, got %v", appErr)
 	}
 }
 
@@ -162,13 +204,14 @@ func testOrderableService(now time.Time) apimarket.Service {
 		PublicationStatus:          apimarket.ServicePublicationStatusOnline,
 		ModerationStatus:           apimarket.ServiceModerationStatusClear,
 		PaymentOptions: []apimarket.PaymentOption{{
-			ID:                  "payment-1",
-			PaymentMethod:       apimarket.PaymentMethodWechat,
-			Enabled:             true,
-			PaymentInstructions: "站外确认付款说明。",
-			CreatedAt:           now,
-			UpdatedAt:           now,
-			Version:             1,
+			ID:                   "payment-1",
+			PaymentMethod:        apimarket.PaymentMethodWechat,
+			Enabled:              true,
+			PaymentInstructions:  "站外确认付款说明。",
+			PaymentQRCodeDataURL: "data:image/png;base64,ZmFrZS1xcg==",
+			CreatedAt:            now,
+			UpdatedAt:            now,
+			Version:              1,
 		}},
 		CreatedAt: now,
 		UpdatedAt: now,

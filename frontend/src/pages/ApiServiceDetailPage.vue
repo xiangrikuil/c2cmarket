@@ -11,7 +11,15 @@ import ModelPriceTable from '@/components/api-service-detail/ModelPriceTable.vue
 import ServiceRules from '@/components/api-service-detail/ServiceRules.vue'
 import { Button } from '@/components/ui/button'
 import { BackendProblemError } from '@/lib/backendClient'
-import { createApiPurchaseIntent, type ApiDeliveryMode, type ApiPurchaseIntent, type ApiService } from '@/lib/api'
+import {
+  createApiOrderFromIntent,
+  createApiPurchaseIntent,
+  getApiServiceDefaultPaymentMethod,
+  type ApiDeliveryMode,
+  type ApiOrder,
+  type ApiPurchaseIntent,
+  type ApiService,
+} from '@/lib/api'
 import { trackAnalytics } from '@/lib/analytics'
 import { useDetailVisibleAnalytics } from '@/composables/useDetailVisibleAnalytics'
 import { useApiService, useFavoriteStatus, useToggleFavoriteMutation } from '@/queries/useMarketQueries'
@@ -22,8 +30,8 @@ const queryClient = useQueryClient()
 const analyticsSourceRoute = () => String(route.name ?? 'unknown')
 const id = computed(() => String(route.params.id ?? ''))
 const { data: service, isLoading, error: serviceError } = useApiService(id)
-const amount = ref(20)
-const selectedDeliveryMode = ref<ApiDeliveryMode>('sub2api_panel_account')
+const amount = ref(10)
+const selectedDeliveryMode = ref<ApiDeliveryMode>('api_key_endpoint')
 const { data: favoriteStatus } = useFavoriteStatus('api-service', id)
 const toggleFavoriteMutation = useToggleFavoriteMutation()
 const favorited = computed(() => Boolean(favoriteStatus.value))
@@ -54,7 +62,7 @@ function apiServiceAnalyticsProps(value: ApiService) {
 watch(service, value => {
   if (!value) return
   amount.value = value.minimumPurchaseCny
-  selectedDeliveryMode.value = value.deliveryModes.includes('sub2api_panel_account') ? 'sub2api_panel_account' : value.deliveryModes[0]
+  selectedDeliveryMode.value = value.deliveryModes[0] ?? 'api_key_endpoint'
 }, { immediate: true })
 
 watch(service, value => {
@@ -66,20 +74,30 @@ watch(service, value => {
 const createOrderMutation = useMutation({
   mutationFn: async () => {
     if (!service.value) throw new Error('API 服务不存在。')
-    return createApiPurchaseIntent({
+    const paymentMethod = getApiServiceDefaultPaymentMethod(service.value)
+    if (!paymentMethod) throw new Error('商户尚未配置可用的微信或支付宝收款方式。')
+    const intent = await createApiPurchaseIntent({
       serviceId: service.value.id,
       purchaseAmountCny: amount.value,
       deliveryMode: selectedDeliveryMode.value,
       targetModel: service.value.models[0],
     })
+    const order = await createApiOrderFromIntent(intent.id, paymentMethod)
+    return { intent, order }
   },
-  onSuccess(intent) {
+  onSuccess(result) {
+    const { intent, order } = result
     queryClient.setQueriesData<ApiPurchaseIntent[]>({ queryKey: ['my-api-purchase-intents'] }, old => old ? [intent, ...old.filter(item => item.id !== intent.id)] : old)
     queryClient.setQueriesData<ApiPurchaseIntent[]>({ queryKey: ['merchant-api-purchase-intents'] }, old => old && old.some(item => item.merchantId === intent.merchantId) ? [intent, ...old.filter(item => item.id !== intent.id)] : old)
     queryClient.setQueriesData<ApiPurchaseIntent[]>({ queryKey: ['api-purchase-intents'] }, old => old ? [intent, ...old.filter(item => item.id !== intent.id)] : old)
+    queryClient.setQueriesData<ApiOrder[]>({ queryKey: ['my-api-orders'] }, old => old ? [order, ...old.filter(item => item.id !== order.id)] : old)
+    queryClient.setQueryData(['api-orders', 'buyer', order.id], order)
     queryClient.invalidateQueries({ queryKey: ['my-api-purchase-intents'] })
     queryClient.invalidateQueries({ queryKey: ['merchant-api-purchase-intents'] })
     queryClient.invalidateQueries({ queryKey: ['api-purchase-intents'] })
+    queryClient.invalidateQueries({ queryKey: ['my-api-orders'] })
+    queryClient.invalidateQueries({ queryKey: ['merchant-api-orders'] })
+    queryClient.invalidateQueries({ queryKey: ['api-orders'] })
     queryClient.invalidateQueries({ queryKey: ['admin-section'] })
     queryClient.invalidateQueries({ queryKey: ['api-order-notifications'] })
     if (service.value) {
@@ -89,8 +107,8 @@ const createOrderMutation = useMutation({
         purchase_amount_cny: amount.value,
       })
     }
-    toast.success('购买意向已提交，请在意向详情页查看商户联系方式并站外确认。')
-    router.push(`/my/api-orders/${intent.id}`)
+    toast.success('购买意向已提交，订单已创建，请查看收款资料后付款。')
+    router.push(`/my/api-orders/${order.id}`)
   },
   onError(error) {
     toast.error(error instanceof Error ? error.message : '提交购买意向失败。')

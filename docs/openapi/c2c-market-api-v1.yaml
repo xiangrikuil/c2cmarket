@@ -277,7 +277,7 @@ paths:
           description: Optional payment-method filter. Public lists return only currently orderable API services.
           schema:
             type: string
-            enum: [wechat, alipay, usdt]
+            enum: [wechat, alipay]
         - name: q
           in: query
           required: false
@@ -678,7 +678,7 @@ paths:
       tags: [APIMarket]
       security: []
       summary: List orderable public API services.
-      description: Returns API services that are approved, online, clear, accepting orders, have a valid 3-15 minute payment window, and have at least one enabled payment option. The platform does not process payment, proxy upstream calls, or store credentials.
+      description: Returns API services that are approved, online, clear, accepting orders, have a valid 3-15 minute payment window, and have at least one enabled payment option. Public service reads do not process payment, proxy upstream calls, expose payment QR codes, or store/deliver credentials.
       parameters:
         - $ref: "#/components/parameters/Limit"
         - $ref: "#/components/parameters/Cursor"
@@ -719,7 +719,7 @@ paths:
           csrfToken: []
       summary: Submit an API service purchase intent and view the merchant contact.
       description: |
-        Creates a non-payment purchase intent for off-platform confirmation. Only an orderable API service can receive new intents: approved, online, clear, accepting orders, valid payment window, and at least one enabled payment option. The owner has pre-consented to receive compliant intents and disclose the selected merchant contact to the successful buyer. The disclosure writes an API purchase intent contact access audit log with request ID and side metadata, without storing plaintext contact values. The platform does not store credentials, deliver keys, or proxy API traffic.
+        Creates a non-payment purchase intent for off-platform confirmation. Only an orderable API service can receive new intents: approved, online, clear, accepting orders, valid payment window, and at least one enabled payment option. The owner has pre-consented to receive compliant intents and disclose the selected merchant contact to the successful buyer. The disclosure writes an API purchase intent contact access audit log with request ID and side metadata, without storing plaintext contact values. Purchase-intent creation does not store credentials, deliver keys, or proxy API traffic.
       parameters:
         - $ref: "#/components/parameters/ResourceId"
         - $ref: "#/components/parameters/IdempotencyKey"
@@ -1717,7 +1717,7 @@ paths:
         - sessionCookie: []
           csrfToken: []
       summary: Create an API service order from an existing purchase intent.
-      description: Creates one explicit API order for the purchase intent. The request only selects a payment method; amount, currency, service title, counterparties, payment window, and private payment instructions are frozen server-side. The platform does not process payment, escrow funds, proxy API traffic, store credentials, or automatically deliver API keys. A purchase intent can create at most one API order; duplicate or concurrent order creation returns `409 API_PURCHASE_INTENT_HAS_ORDER`.
+      description: Creates one explicit API order for the purchase intent. The request only selects a payment method; amount, currency, service title, counterparties, payment window, private payment instructions, and payment QR snapshot are frozen server-side. The platform does not process payment, escrow funds, or proxy API traffic. A seller may later submit one buyer-specific delivery credential after payment is confirmed. A purchase intent can create at most one API order; duplicate or concurrent order creation returns `409 API_PURCHASE_INTENT_HAS_ORDER`.
       parameters:
         - $ref: "#/components/parameters/ResourceId"
         - $ref: "#/components/parameters/IdempotencyKey"
@@ -2936,7 +2936,7 @@ paths:
       security:
         - sessionCookie: []
           csrfToken: []
-      description: Seller submits a pure-text off-platform delivery prompt for what has been confirmed outside C2CMarket. The request must not include attachments, Authorization headers, API keys, passwords, tokens, JWTs, sessions, cookies, subscription links, proxy node links, account credentials, or other credential-like content.
+      description: Seller submits one structured API order delivery credential after manually confirming off-platform payment. Allowed shapes are buyer-specific, revocable API Key endpoint credentials or initial login credentials. The platform does not verify the API, proxy traffic, provide escrow, or support credential edits/history.
       parameters:
         - $ref: "#/components/parameters/ResourceId"
         - $ref: "#/components/parameters/IfMatch"
@@ -2949,7 +2949,7 @@ paths:
               $ref: "#/components/schemas/APIOrderDeliveryRequest"
       responses:
         "200":
-          description: Seller submitted a pure-text off-platform delivery prompt.
+          description: Seller submitted the one-time delivery credential.
           headers:
             Cache-Control:
               schema:
@@ -6960,6 +6960,10 @@ components:
         shortDescription:
           type: string
           maxLength: 500
+        sourceUrl:
+          type: string
+          format: uri
+          description: Optional linux.do topic URL used as a public trust signal. Empty is allowed; non-empty values must match https://linux.do/t/*.
         distributionSystem:
           type: string
           enum: [sub2api, new_api_proxy, other]
@@ -7067,17 +7071,20 @@ components:
     APIServicePaymentOptionInput:
       type: object
       additionalProperties: false
-      required: [paymentMethod, paymentInstructions]
+      required: [paymentMethod]
       properties:
         paymentMethod:
           type: string
-          enum: [wechat, alipay, usdt]
+          enum: [wechat, alipay]
         enabled:
           type: boolean
           default: true
         paymentInstructions:
           type: string
-          description: Private payment instructions shown only after an API order is created. Must not contain credentials or delivery secrets.
+          description: Optional private payment note shown only after an API order is created. Must not contain credentials or delivery secrets.
+        paymentQrCodeDataUrl:
+          type: string
+          description: Owner/admin-only WeChat or Alipay QR-code data URL. Enabled WeChat/Alipay options require this field; public API service reads must never expose it.
     APIServicePaymentOption:
       type: object
       additionalProperties: false
@@ -7088,12 +7095,15 @@ components:
           format: uuid
         paymentMethod:
           type: string
-          enum: [wechat, alipay, usdt]
+          enum: [wechat, alipay]
         enabled:
           type: boolean
         paymentInstructions:
           type: string
           description: Owner/admin view only. Public API service reads must never expose this value.
+        paymentQrCodeDataUrl:
+          type: string
+          description: Owner/admin view only. Public API service reads must never expose this value; API order payment-instruction reads return the frozen snapshot to the buyer.
         version:
           type: integer
     PublicAPIService:
@@ -7134,6 +7144,10 @@ components:
           type: string
         shortDescription:
           type: string
+        sourceUrl:
+          type: string
+          format: uri
+          description: Optional linux.do topic URL used as a public trust signal.
         distributionSystem:
           type: string
           enum: [sub2api, new_api_proxy, other]
@@ -7172,7 +7186,7 @@ components:
           description: Public labels for enabled payment methods. Does not include account numbers, wallet addresses, or private instructions.
           items:
             type: string
-            enum: [wechat, alipay, usdt]
+            enum: [wechat, alipay]
         isOrderable:
           type: boolean
           description: Server-derived current orderability.
@@ -7252,6 +7266,10 @@ components:
           type: string
         shortDescription:
           type: string
+        sourceUrl:
+          type: string
+          format: uri
+          description: Optional linux.do topic URL used as a public trust signal.
         distributionSystem:
           type: string
           enum: [sub2api, new_api_proxy, other]
@@ -7289,7 +7307,7 @@ components:
           type: array
           items:
             type: string
-            enum: [wechat, alipay, usdt]
+            enum: [wechat, alipay]
         paymentOptions:
           type: array
           description: Owner/admin-only payment options. Public API services expose only acceptedPaymentMethods labels.
@@ -7669,7 +7687,7 @@ components:
       properties:
         paymentMethod:
           type: string
-          enum: [wechat, alipay, usdt]
+          enum: [wechat, alipay]
           description: Selected payment method. The server freezes all pricing, party, window, and instruction snapshots.
     APIOrderPaymentRequest:
       type: object
@@ -7683,12 +7701,64 @@ components:
     APIOrderDeliveryRequest:
       type: object
       additionalProperties: false
-      required: [deliveryNote]
+      required: [deliveryKind]
       properties:
-        deliveryNote:
+        deliveryKind:
+          type: string
+          enum: [api_key_endpoint, login_account]
+        apiBaseUrl:
+          type: string
+          format: uri
+          maxLength: 1000
+          description: Required for `api_key_endpoint`; optional explanatory endpoint for `login_account`.
+        apiKey:
           type: string
           maxLength: 4000
-          description: Pure text off-platform delivery prompt. Must not contain Authorization headers, API keys, passwords, tokens, JWTs, sessions, cookies, account credentials, subscription links, proxy node links, or attachments.
+          description: Required for `api_key_endpoint`. Must be buyer-specific and revocable.
+        panelLoginUrl:
+          type: string
+          format: uri
+          maxLength: 1000
+          description: Required for `login_account`.
+        username:
+          type: string
+          maxLength: 1000
+          description: Required for `login_account`.
+        password:
+          type: string
+          maxLength: 4000
+          description: Required for `login_account`. Must be an initial buyer-specific password, not an owner/master account credential.
+        instructions:
+          type: string
+          maxLength: 4000
+          description: Optional usage note. Must not contain cookies, sessions, OAuth/access/refresh tokens, recovery codes, MFA codes, subscription links, proxy node links, query-string secrets, or owner/master credentials.
+    APIOrderDeliveryCredential:
+      type: object
+      additionalProperties: false
+      required: [deliveryKind, submittedAt]
+      properties:
+        deliveryKind:
+          type: string
+          enum: [api_key_endpoint, login_account]
+        apiBaseUrl:
+          type: string
+          format: uri
+        apiKey:
+          type: string
+          description: Buyer/seller detail and action responses only.
+        panelLoginUrl:
+          type: string
+          format: uri
+        username:
+          type: string
+        password:
+          type: string
+          description: Buyer/seller detail and action responses only.
+        instructions:
+          type: string
+        submittedAt:
+          type: string
+          format: date-time
     APIOrderReasonRequest:
       type: object
       additionalProperties: false
@@ -7700,7 +7770,7 @@ components:
     APIOrder:
       type: object
       additionalProperties: false
-      description: API service order. The order stores fulfillment status and off-platform action summaries only; C2CMarket does not process payments, provide escrow, proxy API calls, store credentials, or automatically deliver API keys.
+      description: API service order. C2CMarket does not process payments, provide escrow, proxy API calls, or automatically deliver API keys. After payment is confirmed, the seller may submit one structured buyer-specific delivery credential; buyer/seller detail and action responses may include it, while lists, admin summaries, public responses, events, notifications, and logs must not.
       required:
         - id
         - apiPurchaseIntentId
@@ -7765,7 +7835,7 @@ components:
           enum: [CNY, USDT]
         selectedPaymentMethod:
           type: string
-          enum: [wechat, alipay, usdt]
+          enum: [wechat, alipay]
         paymentWindowMinutesSnapshot:
           type: integer
           minimum: 3
@@ -7783,10 +7853,13 @@ components:
           format: date-time
         deliveryNote:
           type: string
-          description: Pure text off-platform delivery prompt only; Authorization headers, API keys, tokens, passwords, cookies, JWTs, subscription links, proxy node links, credentials, and attachments are rejected.
+          description: Generated non-sensitive delivery summary only. Raw API keys, passwords, tokens, cookies, sessions, subscription links, proxy node links, owner/master credentials, and attachments must never be stored here.
         deliverySubmittedAt:
           type: [string, "null"]
           format: date-time
+        deliveryCredential:
+          $ref: "#/components/schemas/APIOrderDeliveryCredential"
+          description: Included only in buyer/seller detail and action responses for participating users; omitted from list/admin/public responses.
         completedAt:
           type: [string, "null"]
           format: date-time
@@ -7813,10 +7886,13 @@ components:
           format: uuid
         paymentMethod:
           type: string
-          enum: [wechat, alipay, usdt]
+          enum: [wechat, alipay]
         paymentInstructions:
           type: string
           description: Private payment instructions for this order only. Responses must use Cache-Control private, no-store.
+        paymentQrCodeDataUrl:
+          type: string
+          description: Frozen WeChat/Alipay QR-code data URL for this order only. Responses must use Cache-Control private, no-store.
         paymentExpiresAt:
           type: string
           format: date-time
@@ -8311,7 +8387,7 @@ components:
     CreateCarpoolListingRequest:
       type: object
       additionalProperties: false
-      required: [productPlanId, ownerContactMethodId, cycleTerm, title, summary, accessArrangement, priceMonthlyCny, serviceMultiplier, monthlyQuotaAmount, buyerSeatCapacity, activeBuyerMembers]
+      required: [productPlanId, ownerContactMethodId, cycleTerm, title, summary, accessArrangement, distributionMethod, distributionMethodNote, providesAdminAccount, regionCode, regionName, priceMonthlyCny, serviceMultiplier, monthlyQuotaAmount, buyerSeatCapacity, activeBuyerMembers]
       properties:
         productPlanId:
           type: string
@@ -8332,6 +8408,25 @@ components:
           type: string
           description: Non-sensitive member/seat/off-platform access arrangement. Must not contain passwords, keys, tokens, sessions, cookies, or panel owner credentials.
           maxLength: 2000
+        distributionMethod:
+          type: string
+          enum: [sub2api, other]
+          description: Public listing distribution method. Describes whether the owner supports Sub2API-managed use or another off-platform arrangement.
+        distributionMethodNote:
+          type: string
+          description: Public non-sensitive distribution note. Required when distributionMethod is other. Must not contain account credentials, panel URLs, passwords, keys, tokens, sessions, cookies, or owner credentials.
+          maxLength: 500
+        providesAdminAccount:
+          type: boolean
+          description: Whether the listing owner declares that administrator account access is provided. This is a public signal only and does not store credentials.
+        regionCode:
+          type: string
+          description: Stable opening-region code selected by the owner. Custom region listings use `other`.
+          maxLength: 64
+        regionName:
+          type: string
+          description: Public opening-region display name. For custom regions this is the owner-provided region text.
+          maxLength: 64
         sourceUrl:
           type: string
           format: uri
@@ -8405,6 +8500,11 @@ components:
         - title
         - summary
         - accessArrangement
+        - distributionMethod
+        - distributionMethodNote
+        - providesAdminAccount
+        - regionCode
+        - regionName
         - priceMonthlyCny
         - serviceMultiplier
         - monthlyQuotaAmount
@@ -8441,6 +8541,17 @@ components:
         summary:
           type: string
         accessArrangement:
+          type: string
+        distributionMethod:
+          type: string
+          enum: [sub2api, other]
+        distributionMethodNote:
+          type: string
+        providesAdminAccount:
+          type: boolean
+        regionCode:
+          type: string
+        regionName:
           type: string
         sourceUrl:
           type: string

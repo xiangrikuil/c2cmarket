@@ -204,8 +204,8 @@ function minimumPurchaseLabel(value: MinimumPurchaseFilter) {
   return '不限'
 }
 
-function accessConfirmationLabel() {
-  return '提交意向后站外确认'
+function accessConfirmationLabel(row: ApiService) {
+  return row.delivery
 }
 
 function usageVerificationLabel() {
@@ -228,12 +228,12 @@ function imagePricingLabel(row: ApiService) {
 }
 
 function serviceSummary(row: ApiService) {
-  return `${accessConfirmationLabel()} · ${usageVerificationLabel()} · ${row.warranty}`
+  return `${row.delivery} · ${billingModeLabel(row.billingMode)} · ${row.warranty}`
 }
 
 function capabilityBadges(row: ApiService) {
   return [
-    '站外确认接入',
+    row.delivery,
     '买家自行核对用量',
     row.imagePricing.supported ? '支持生图' : '不支持生图',
     row.warranty.includes('补') || row.warranty.includes('承诺') || row.warranty.includes('24') ? '商户承诺' : '售后协商',
@@ -441,7 +441,7 @@ function merchantProfileUrl(row: ApiService) {
           </td>
           <td>
             <div class="grid gap-1">
-              <div class="text-sm font-medium">{{ accessConfirmationLabel() }}</div>
+              <div class="text-sm font-medium">{{ accessConfirmationLabel(row) }}</div>
               <div class="text-xs leading-5 text-muted-foreground">{{ usageVerificationLabel() }}</div>
             </div>
           </td>
@@ -573,7 +573,7 @@ function merchantProfileUrl(row: ApiService) {
           <td>{{ billingModeLabel(row.billingMode) }}</td>
           <td>
             <div class="grid gap-1">
-              <div class="text-sm font-medium">{{ accessConfirmationLabel() }}</div>
+              <div class="text-sm font-medium">{{ accessConfirmationLabel(row) }}</div>
               <div class="text-xs leading-5 text-muted-foreground">{{ usageVerificationLabel() }}</div>
             </div>
           </td>

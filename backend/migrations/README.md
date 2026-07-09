@@ -49,6 +49,9 @@ versions:
 | `000037_model_audit` | model audit targets, encrypted API key storage, baselines, runs, samples, probe scores, passive call features, and scheduled monitors |
 | `000038_api_service_quota_expires_at` | fixed expiration timestamp for metered API quota service listings |
 | `000039_demands_publish_immediately` | converts pending demand posts to active after demand posting stops requiring admin review |
+| `000040_carpool_listing_region` | persisted carpool listing opening region code and display name |
+| `000041_api_service_source_url` | optional linux.do source topic for API quota services |
+| `000042_carpool_distribution_admin_account` | public carpool distribution method and administrator-account availability signals |
 
 The current runnable Go slice supports both in-memory tests and PostgreSQL runtime.
 When `DATABASE_URL` is configured, users, auth sessions, idempotency, product

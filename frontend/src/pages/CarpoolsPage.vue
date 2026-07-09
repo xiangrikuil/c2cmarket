@@ -25,6 +25,7 @@ import {
   productMatchesPlan,
   type ProductCategoryKey,
 } from '@/lib/productCategories'
+import { adminAccountLabel, distributionMethodLabel } from '@/components/carpool-publish/utils'
 
 const filters = [
   { label: '开通区', items: ['全部', '菲律宾区', '日本区', '土耳其区', '香港区'], active: '全部' },
@@ -344,6 +345,10 @@ function ownerInitial(owner: string) {
         </td>
         <td>
           <div class="font-medium text-slate-900">{{ row.openingMethod }}</div>
+          <div class="mt-1 flex flex-wrap gap-1">
+            <Badge variant="capability">{{ distributionMethodLabel(row.distributionMethod) }}</Badge>
+            <Badge variant="capability">{{ adminAccountLabel(row.providesAdminAccount) }}</Badge>
+          </div>
           <div class="mt-1 text-xs text-muted-foreground">{{ row.region }} · {{ row.warranty }}</div>
           <div v-if="row.monthlyQuotaAmount" class="mt-1 text-xs text-muted-foreground">
             {{ formatMonthlyQuota(row) }}

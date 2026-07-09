@@ -11,7 +11,6 @@ import CarpoolRulesEditor from '@/components/carpool-publish/CarpoolRulesEditor.
 import CarpoolWarrantySelector from '@/components/carpool-publish/CarpoolWarrantySelector.vue'
 import ChannelPaymentSection from '@/components/carpool-publish/ChannelPaymentSection.vue'
 import LinuxDoTopicImport from '@/components/carpool-publish/LinuxDoTopicImport.vue'
-import PublishSectionCard from '@/components/carpool-publish/PublishSectionCard.vue'
 import SeatCapacityEditor from '@/components/carpool-publish/SeatCapacityEditor.vue'
 import type {
   CarpoolProductCatalogItem,
@@ -30,7 +29,9 @@ import {
   buildLinuxDoPostText,
   canBuildLinuxDoPostText,
   canPublishProduct,
+  distributionFieldsComplete,
   hasForbiddenCredentialSharingText,
+  regionDisplayName,
   requiresSubscriptionRiskAck,
   warrantyComplete,
 } from '@/components/carpool-publish/utils'
@@ -44,7 +45,6 @@ import {
   DialogTitle,
   DialogTrigger,
 } from '@/components/ui/dialog'
-import { Textarea } from '@/components/ui/textarea'
 import { shouldUseRealBackend, startOAuthLogin } from '@/lib/backendClient'
 import { containsSensitiveContent, firstError, isLinuxDoTopicUrl, type FieldErrors } from '@/lib/formValidation'
 import { parseLinuxDoTopic, submitCarpool } from '@/lib/api'
@@ -68,6 +68,7 @@ type Field =
   | 'seats'
   | 'openingChannelCode'
   | 'paymentMethodCodes'
+  | 'distribution'
   | 'accessArrangement'
   | 'warranty'
   | 'rulesNote'
@@ -101,6 +102,7 @@ const form = reactive<CarpoolPublishForm>({
   productId: '',
   customProductName: null,
   regionCode: '',
+  customRegionName: null,
   monthlyPriceCny: null,
   serviceMultiplier: 1,
   monthlyQuotaAmount: null,
@@ -108,6 +110,9 @@ const form = reactive<CarpoolPublishForm>({
   occupiedSeats: 3,
   openingChannelCode: '',
   paymentMethodCodes: [],
+  distributionMethod: '',
+  distributionMethodNote: '',
+  providesAdminAccount: null,
   accessArrangementMode: 'provider_member_invitation',
   accessArrangementNote: '通过官方团队或 Business workspace 邀请成员席位，买家使用自己的账号接受邀请。',
   riskAcknowledged: false,
@@ -131,6 +136,7 @@ const regionsByCode = computed(() => new Map(regionOptions.value.map(item => [it
 const openingChannelsByCode = computed(() => new Map(channelOptions.value.map(item => [item.code, item])))
 const paymentMethodsByCode = computed(() => new Map(paymentOptions.value.map(item => [item.code, item])))
 const selectedProductForValidation = computed(() => catalogById.value.get(form.productId) ?? null)
+const finalRegionName = computed(() => regionDisplayName(form, regionsByCode.value))
 const canAccessPublishForm = computed(() => Boolean(profile.value?.linuxDoBinding.bound))
 const profileErrorMessage = computed(() => {
   const error = profileQuery.error.value
@@ -229,6 +235,7 @@ const publishTaskFieldIds: Record<PublishTaskKey, string> = {
   monthlyQuota: 'carpool-task-monthlyQuota',
   openingChannel: 'carpool-task-openingChannel',
   paymentMethods: 'carpool-task-paymentMethods',
+  distribution: 'carpool-task-distribution',
   rulesNote: 'carpool-task-rulesNote',
   linuxDoImport: 'carpool-tool-linuxdo-import',
 }
@@ -241,17 +248,19 @@ function fieldErrorForTask(key: PublishTaskKey) {
   if (key === 'monthlyQuota') return errors.monthlyQuota ?? ''
   if (key === 'openingChannel') return errors.openingChannelCode ?? ''
   if (key === 'paymentMethods') return errors.paymentMethodCodes ?? ''
+  if (key === 'distribution') return errors.distribution ?? ''
   if (key === 'rulesNote') return errors.rulesNote ?? ''
   return ''
 }
 
 function taskComplete(key: PublishTaskKey) {
   if (key === 'product') return Boolean(form.productId && (form.productId !== 'other-custom' || form.customProductName?.trim()))
-  if (key === 'region') return Boolean(form.regionCode)
+  if (key === 'region') return Boolean(form.regionCode && finalRegionName.value)
   if (key === 'monthlyPrice') return Boolean(form.monthlyPriceCny && form.monthlyPriceCny > 0)
   if (key === 'monthlyQuota') return Boolean(form.monthlyQuotaAmount && form.monthlyQuotaAmount > 0)
   if (key === 'openingChannel') return Boolean(form.openingChannelCode)
-  if (key === 'paymentMethods') return Boolean(form.paymentMethodCodes.length)
+  if (key === 'paymentMethods') return form.paymentMethodCodes.length === 1
+  if (key === 'distribution') return distributionFieldsComplete(form)
   if (key === 'rulesNote') return Boolean(form.rulesNote.trim())
   return Boolean(form.linuxDoTopicUrl.trim())
 }
@@ -309,13 +318,23 @@ const publishTasks = computed<PublishTask[]>(() => [
   },
   {
     key: 'paymentMethods',
-    label: '选择付款方式',
+    label: '选择一种付款方式',
     shortLabel: '付款方式',
     section: 'activationPayment',
     fieldId: publishTaskFieldIds.paymentMethods,
     description: '开通与付款方式',
     complete: taskComplete('paymentMethods'),
     error: fieldErrorForTask('paymentMethods'),
+  },
+  {
+    key: 'distribution',
+    label: '确认分发方式',
+    shortLabel: '分发方式',
+    section: 'activationPayment',
+    fieldId: publishTaskFieldIds.distribution,
+    description: '分发方式与管理员账号',
+    complete: taskComplete('distribution'),
+    error: fieldErrorForTask('distribution'),
   },
   {
     key: 'rulesNote',
@@ -385,6 +404,7 @@ const basicFieldStates = computed<Partial<Record<string, PublishFieldState>>>(()
 const channelPaymentFieldStates = computed<Partial<Record<string, PublishFieldState>>>(() => ({
   openingChannel: stateForTask('openingChannel'),
   paymentMethods: stateForTask('paymentMethods'),
+  distribution: stateForTask('distribution'),
 }))
 
 const defaultItems = computed<PublishDefaultItem[]>(() => [
@@ -402,8 +422,8 @@ const defaultItems = computed<PublishDefaultItem[]>(() => [
   },
   {
     key: 'accessArrangement',
-    label: '访问安排已默认',
-    description: accessArrangementComplete(form, selectedProductForValidation.value) ? '可继续修改访问边界说明。' : '需要确认访问安排边界。',
+    label: '访问安排自动生成',
+    description: accessArrangementComplete(form, selectedProductForValidation.value) ? '将按所选套餐策略生成，不需要单独填写。' : '需要先完成风险边界确认。',
     status: stateForFullValidation('accessArrangement'),
   },
   {
@@ -414,28 +434,6 @@ const defaultItems = computed<PublishDefaultItem[]>(() => [
   },
 ])
 
-const sectionStatus = computed(() => {
-  const basicPending = publishTasks.value.filter(item => item.section === 'basic' && !item.complete).length
-  const activationPending = publishTasks.value.filter(item => item.section === 'activationPayment' && !item.complete).length
-  const rulesPending = publishTasks.value.filter(item => item.section === 'rules' && !item.complete).length
-  return {
-    basic: basicPending ? (hasTriedPublish.value ? 'error' : 'pendingRequired') as PublishFieldState : 'complete' as PublishFieldState,
-    seats: stateForFullValidation('seats'),
-    activationPayment: activationPending ? (hasTriedPublish.value ? 'error' : 'pendingRequired') as PublishFieldState : 'complete' as PublishFieldState,
-    accessArrangement: stateForFullValidation('accessArrangement'),
-    warranty: stateForFullValidation('warranty'),
-    rules: rulesPending ? (hasTriedPublish.value ? 'error' : 'pendingRequired') as PublishFieldState : 'complete' as PublishFieldState,
-  }
-})
-
-function sectionStatusLabel(status: PublishFieldState, pendingCount = 0) {
-  if (status === 'error') return pendingCount ? `待补 ${pendingCount} 项` : '需要处理'
-  if (status === 'pendingRequired') return pendingCount ? `待填写 ${pendingCount} 项` : '待填写'
-  if (status === 'defaulted') return '系统默认'
-  if (status === 'complete') return '已完成'
-  return ''
-}
-
 function taskFromErrorKey(key: Field): PublishTaskKey | null {
   if (key === 'product') return 'product'
   if (key === 'region') return 'region'
@@ -443,10 +441,11 @@ function taskFromErrorKey(key: Field): PublishTaskKey | null {
   if (key === 'monthlyQuota') return 'monthlyQuota'
   if (key === 'openingChannelCode') return 'openingChannel'
   if (key === 'paymentMethodCodes') return 'paymentMethods'
+  if (key === 'distribution') return 'distribution'
   if (key === 'rulesNote') return 'rulesNote'
   if (key === 'serviceMultiplier') return 'monthlyPrice'
   if (key === 'seats') return 'monthlyPrice'
-  if (key === 'accessArrangement') return 'rulesNote'
+  if (key === 'accessArrangement') return 'product'
   if (key === 'warranty') return 'rulesNote'
   if (key === 'sensitive') return 'rulesNote'
   return null
@@ -482,11 +481,16 @@ function applyParsedTopic(topic: ParsedLinuxDoTopic) {
   form.parsedTopicId = topic.topicId
   if (topic.detected.productId && !form.productId) form.productId = topic.detected.productId
   if (topic.detected.regionCode && !form.regionCode) form.regionCode = topic.detected.regionCode
+  if (topic.detected.regionCode === 'other' && topic.detected.regionText && !form.customRegionName) form.customRegionName = topic.detected.regionText
+  if (!topic.detected.regionCode && topic.detected.regionText && !form.regionCode) {
+    form.regionCode = 'other'
+    form.customRegionName = topic.detected.regionText
+  }
   if (topic.detected.monthlyPriceCny && !form.monthlyPriceCny) form.monthlyPriceCny = topic.detected.monthlyPriceCny
   if (topic.detected.totalSeats && form.totalSeats === 5) form.totalSeats = topic.detected.totalSeats
   if (topic.detected.occupiedSeats !== null && form.occupiedSeats === 3) form.occupiedSeats = Math.min(topic.detected.occupiedSeats, form.totalSeats)
   if (topic.detected.openingChannelId && !form.openingChannelCode) form.openingChannelCode = topic.detected.openingChannelId
-  if (topic.detected.paymentMethodIds.length && !form.paymentMethodCodes.length) form.paymentMethodCodes = topic.detected.paymentMethodIds
+  if (topic.detected.paymentMethodIds.length && !form.paymentMethodCodes.length) form.paymentMethodCodes = [topic.detected.paymentMethodIds[0]]
   if (topic.detected.warrantyMode) form.warranty.mode = topic.detected.warrantyMode
   const detectedProduct = topic.detected.productId ? catalogById.value.get(topic.detected.productId) : null
   if (detectedProduct) {
@@ -515,8 +519,14 @@ watch(() => [form.productId, form.customProductName], () => {
   if (taskComplete('product')) clearError('product')
 })
 
-watch(() => form.regionCode, () => {
+watch(() => form.regionCode, value => {
+  if (value !== 'other') form.customRegionName = null
   if (taskComplete('region')) clearError('region')
+})
+
+watch(() => form.customRegionName, () => {
+  if (taskComplete('region')) clearError('region')
+  if (!hasSensitiveText.value) clearError('sensitive')
 })
 
 watch(() => form.monthlyPriceCny, () => {
@@ -540,7 +550,13 @@ watch(() => form.openingChannelCode, () => {
 })
 
 watch(() => form.paymentMethodCodes.length, () => {
+  if (form.paymentMethodCodes.length > 1) form.paymentMethodCodes = form.paymentMethodCodes.slice(0, 1)
   if (taskComplete('paymentMethods')) clearError('paymentMethodCodes')
+})
+
+watch(() => [form.distributionMethod, form.distributionMethodNote, form.providesAdminAccount], () => {
+  if (taskComplete('distribution')) clearError('distribution')
+  if (!hasSensitiveText.value) clearError('sensitive')
 })
 
 watch(() => [form.accessArrangementMode, form.accessArrangementNote, form.riskAcknowledged, form.productId], () => {
@@ -569,6 +585,7 @@ function validate(requireComplete: boolean) {
       : '该产品当前不允许发布车源。'
   }
   if (!form.regionCode) next.region = '请选择开通区。'
+  else if (!finalRegionName.value) next.region = '请填写自定义开通区。'
   if (!Number.isFinite(form.monthlyPriceCny) || !form.monthlyPriceCny || form.monthlyPriceCny <= 0) next.monthlyPriceCny = '月费必须大于 0。'
   if (!Number.isFinite(form.serviceMultiplier) || !form.serviceMultiplier || form.serviceMultiplier <= 0) next.serviceMultiplier = '倍率必须大于 0。'
   if (!Number.isFinite(form.monthlyQuotaAmount) || !form.monthlyQuotaAmount || form.monthlyQuotaAmount <= 0) {
@@ -576,19 +593,33 @@ function validate(requireComplete: boolean) {
   }
   if (form.totalSeats < 1 || form.totalSeats > 20 || form.occupiedSeats < 0 || form.occupiedSeats > form.totalSeats) next.seats = '名额必须满足总名额 1-20，且已上车人数不超过总名额。'
   if (!form.openingChannelCode) next.openingChannelCode = '请选择开通渠道。'
-  if (!form.paymentMethodCodes.length) next.paymentMethodCodes = '至少选择一种付款方式。'
-  if (!accessArrangementComplete(form, selectedProductForValidation.value)) {
-    if (form.accessArrangementMode === 'not_allowed') next.accessArrangement = '共用账号、密码或登录态方案不能发布。'
-    else if (hasForbiddenCredentialSharingText(form.accessArrangementNote)) next.accessArrangement = '安排说明不能包含共享主账号、密码、API Key、Session、Cookie、token 或登录态。'
-    else if (requiresSubscriptionRiskAck(selectedProductForValidation.value, form) && !form.riskAcknowledged) next.accessArrangement = '请先确认该套餐的发布边界。'
-    else next.accessArrangement = '请填写成员邀请、个人订阅费用分摊或站外访问安排说明。'
+  if (form.paymentMethodCodes.length !== 1) next.paymentMethodCodes = '请选择一种付款方式。'
+  if (!form.distributionMethod) {
+    next.distribution = '请选择分发方式。'
+  } else if (form.distributionMethod === 'other' && !form.distributionMethodNote.trim()) {
+    next.distribution = '选择其他分发方式时必须填写说明。'
+  } else if (form.providesAdminAccount === null) {
+    next.distribution = '请选择是否提供管理员账号。'
+  } else if (hasForbiddenCredentialSharingText(form.distributionMethodNote)) {
+    next.distribution = '分发方式说明不能包含共享主账号、密码、API Key、Session、Cookie、token 或登录态。'
+  }
+  if (form.accessArrangementMode === 'not_allowed') {
+    next.accessArrangement = '共用账号、密码或登录态方案不能发布。'
+  } else if (hasForbiddenCredentialSharingText(form.accessArrangementNote)) {
+    next.accessArrangement = '安排说明不能包含共享主账号、密码、API Key、Session、Cookie、token 或登录态。'
+  } else if (requiresSubscriptionRiskAck(selectedProductForValidation.value, form) && !form.riskAcknowledged) {
+    next.accessArrangement = '请先确认该套餐的发布边界。'
+  } else if (form.productId && form.accessArrangementNote.trim().length < 8) {
+    next.accessArrangement = '系统未能生成访问安排，请重新选择产品。'
   }
   if (!warrantyComplete(form.warranty)) next.warranty = '请补全车主承诺规则。'
   if (!form.rulesNote.trim()) next.rulesNote = '请填写规则说明。'
   if (containsSensitiveContent([
     form.customProductName ?? '',
+    form.customRegionName ?? '',
     form.warranty.compensationMethod ?? '',
     form.warranty.exclusions ?? '',
+    form.distributionMethodNote,
     form.accessArrangementNote,
     form.rulesNote,
   ])) next.sensitive = '请移除账号密码、session token、refresh token、API Key、付款二维码、银行卡号或其他敏感凭据。'
@@ -601,6 +632,7 @@ function validate(requireComplete: boolean) {
     delete next.monthlyQuota
     delete next.openingChannelCode
     delete next.paymentMethodCodes
+    delete next.distribution
     delete next.accessArrangement
     delete next.warranty
     delete next.rulesNote
@@ -623,13 +655,17 @@ function toPayload(status: 'draft' | 'reviewing') {
     productId: form.productId,
     customProductName: form.customProductName,
     regionCode: form.regionCode,
+    customRegionName: form.regionCode === 'other' ? form.customRegionName?.trim() || null : null,
     monthlyPriceCny: form.monthlyPriceCny,
     serviceMultiplier: form.serviceMultiplier,
     monthlyQuotaAmount: form.monthlyQuotaAmount,
     totalSeats: form.totalSeats,
     occupiedSeats: form.occupiedSeats,
     openingChannelCode: form.openingChannelCode,
-    paymentMethodCodes: form.paymentMethodCodes,
+    paymentMethodCodes: form.paymentMethodCodes.slice(0, 1),
+    distributionMethod: form.distributionMethod,
+    distributionMethodNote: form.distributionMethodNote,
+    providesAdminAccount: form.providesAdminAccount,
     accessArrangementMode: form.accessArrangementMode,
     accessArrangementNote: form.accessArrangementNote,
     riskAcknowledged: form.riskAcknowledged,
@@ -678,13 +714,14 @@ async function submitReview() {
 
 const completeness = computed<CompletenessItem[]>(() => [
   form.productId && (form.productId !== 'other-custom' || form.customProductName?.trim()) ? { label: '产品', status: 'done' } : { label: '产品', status: 'pending' },
-  form.regionCode ? { label: '地区', status: 'done' } : { label: '地区', status: 'pending' },
+  taskComplete('region') ? { label: '地区', status: 'done' } : { label: '地区', status: 'pending' },
   form.monthlyPriceCny && form.monthlyPriceCny > 0 ? { label: '月费', status: 'done' } : { label: '月费', status: 'pending' },
   form.serviceMultiplier && form.serviceMultiplier > 0 && form.monthlyQuotaAmount && form.monthlyQuotaAmount > 0 ? { label: '倍率和每月额度', status: 'done' } : { label: '倍率和每月额度', status: 'pending' },
   form.totalSeats >= 1 && form.totalSeats <= 20 && form.occupiedSeats >= 0 && form.occupiedSeats < form.totalSeats ? { label: '名额', status: 'done' } : { label: '名额', status: 'conflict' },
   form.openingChannelCode ? { label: '开通渠道', status: 'done' } : { label: '开通渠道', status: 'pending' },
-  form.paymentMethodCodes.length ? { label: '付款方式', status: 'done' } : { label: '付款方式', status: 'pending' },
-  accessArrangementComplete(form, selectedProductForValidation.value) ? { label: '访问安排与边界确认', status: 'done' } : { label: '访问安排与边界确认', status: 'conflict' },
+  form.paymentMethodCodes.length === 1 ? { label: '付款方式', status: 'done' } : { label: '付款方式', status: 'pending' },
+  distributionFieldsComplete(form) ? { label: '分发方式', status: 'done' } : { label: '分发方式', status: 'pending' },
+  accessArrangementComplete(form, selectedProductForValidation.value) ? { label: '发布边界确认', status: 'done' } : { label: '发布边界确认', status: 'conflict' },
   warrantyComplete(form.warranty) ? { label: '车主承诺', status: 'done' } : { label: '车主承诺', status: 'pending' },
   form.rulesNote.trim() ? { label: '买家须知', status: 'done' } : { label: '买家须知', status: 'pending' },
 ])
@@ -728,8 +765,10 @@ const submittedMessage = computed(() => {
 
 const hasSensitiveText = computed(() => containsSensitiveContent([
   form.customProductName ?? '',
+  form.customRegionName ?? '',
   form.warranty.compensationMethod ?? '',
   form.warranty.exclusions ?? '',
+  form.distributionMethodNote,
   form.accessArrangementNote,
   form.rulesNote,
 ]))
@@ -748,7 +787,7 @@ const postText = computed(() => buildLinuxDoPostText(
 const copyDisabledReason = computed(() => {
   if (hasSensitiveText.value) return '请先移除账号密码、token、API Key、付款二维码、银行卡号等敏感凭据。'
   if (!canBuildLinuxDoPostText(form, regionsByCode.value, openingChannelsByCode.value, paymentMethodsByCode.value)) {
-    return '填写产品、地区、价格、名额、渠道、付款方式、访问安排、售后和买家须知后可生成发帖文案。'
+    return '填写产品、地区、价格、名额、渠道、付款方式、售后和买家须知后可生成发帖文案。'
   }
   return ''
 })
@@ -863,7 +902,7 @@ async function copyPostText() {
             <div class="text-sm font-medium">发布必填 {{ completedPublishTasks.length }} / {{ publishTasks.length }}</div>
             <p class="mt-1 text-xs text-muted-foreground">
               {{ pendingPublishTasks.length ? `还差 ${pendingPublishTasks.length} 项可提交审核` : '发布必填项已完成，可提交审核。' }}
-              <span class="ml-1">系统已默认 {{ defaultItems.filter(item => item.status === 'defaulted').length }} 项，可修改。</span>
+              <span class="ml-1">系统已自动处理 {{ defaultItems.filter(item => item.status === 'defaulted').length }} 项。</span>
             </p>
           </div>
           <div class="flex flex-wrap gap-2">
@@ -938,6 +977,19 @@ async function copyPostText() {
             :field-states="basicFieldStates"
             :highlighted-key="highlightedTaskKey ?? undefined"
           />
+          <Card
+            v-if="requiresSubscriptionRiskAck(selectedProductForValidation, form)"
+            class="border-warning/25 bg-warning/10 p-4 text-warning"
+            :class="errors.accessArrangement ? 'ring-2 ring-warning/50 ring-offset-2 ring-offset-background' : ''"
+          >
+            <label class="flex gap-3 text-sm leading-6">
+              <input v-model="form.riskAcknowledged" type="checkbox" class="mt-1 h-4 w-4 shrink-0 accent-current">
+              <span>
+                我确认已理解该套餐发布边界；平台不会填写、保存、交付或要求买家提供主账号、密码、API Key、Session、Cookie、token 或其他登录凭据。
+              </span>
+            </label>
+            <p v-if="errors.accessArrangement" class="mt-2 text-xs text-destructive">{{ errors.accessArrangement }}</p>
+          </Card>
           <SeatCapacityEditor :form="form" :errors="errors" />
           <ChannelPaymentSection
             :form="form"
@@ -947,59 +999,6 @@ async function copyPostText() {
             :field-states="channelPaymentFieldStates"
             :highlighted-key="highlightedTaskKey ?? undefined"
           />
-          <PublishSectionCard
-            :index="4"
-            title="访问安排与边界确认"
-            description="选择买家加入方式，并说明访问安排；不得共享主账号、密码或登录态。"
-            :status="sectionStatus.accessArrangement"
-            :status-label="sectionStatusLabel(sectionStatus.accessArrangement)"
-          >
-            <div class="space-y-4">
-              <div class="grid gap-2 md:grid-cols-2">
-                <button
-                  type="button"
-                  class="rounded-md border px-3 py-2 text-left text-sm font-medium transition"
-                  :class="form.accessArrangementMode === 'personal_account_cost_share' ? 'border-primary bg-primary/10 text-primary' : 'border-border bg-background hover:bg-muted'"
-                  @click="form.accessArrangementMode = 'personal_account_cost_share'"
-                >
-                  个人订阅费用分摊
-                  <span class="mt-1 block text-xs font-normal text-muted-foreground">说明费用分摊方式，不填写任何登录凭据</span>
-                </button>
-                <button
-                  type="button"
-                  class="rounded-md border px-3 py-2 text-left text-sm font-medium transition"
-                  :class="form.accessArrangementMode === 'provider_member_invitation' ? 'border-primary bg-primary/10 text-primary' : 'border-border bg-background hover:bg-muted'"
-                  @click="form.accessArrangementMode = 'provider_member_invitation'"
-                >
-                  成员邀请 / 团队席位
-                  <span class="mt-1 block text-xs font-normal text-muted-foreground">Business workspace、团队邀请或独立座位</span>
-                </button>
-                <button
-                  type="button"
-                  class="rounded-md border px-3 py-2 text-left text-sm font-medium transition"
-                  :class="form.accessArrangementMode === 'owner_managed_access' ? 'border-primary bg-primary/10 text-primary' : 'border-border bg-background hover:bg-muted'"
-                  @click="form.accessArrangementMode = 'owner_managed_access'"
-                >
-                  站外托管 / 中转
-                  <span class="mt-1 block text-xs font-normal text-muted-foreground">说明中转或托管边界，不在平台保存凭据</span>
-                </button>
-              </div>
-              <label class="block space-y-2">
-                <span class="text-sm font-medium">访问安排说明 <span class="text-xs text-primary">必填</span></span>
-                <Textarea
-                  v-model="form.accessArrangementNote"
-                  class="min-h-24"
-                  placeholder="例如：通过 ChatGPT Business workspace 邀请成员席位；或站外托管 / 中转安排由双方确认。平台不保存、不交付任何密码、管理员凭据、Session、Cookie 或 token。"
-                />
-              </label>
-              <label v-if="requiresSubscriptionRiskAck(selectedProductForValidation, form)" class="flex gap-2 rounded-md border border-warning/25 bg-warning/10 p-3 text-xs leading-5 text-warning">
-                <input v-model="form.riskAcknowledged" type="checkbox" class="mt-1 h-4 w-4 shrink-0 accent-current">
-                <span>我确认已按上述访问安排发布该套餐，不会在平台填写、粘贴或要求买家提供主账号、密码、API Key、Session、Cookie、token 或其他登录凭据。</span>
-              </label>
-              <p v-if="errors.accessArrangement" class="text-xs text-destructive">{{ errors.accessArrangement }}</p>
-              <p class="text-xs leading-5 text-muted-foreground">若流程需要共享主账号、密码、API Key、Session、Cookie、token 或登录态，则不能发布；不得在平台填写、粘贴或上传任何凭据。</p>
-            </div>
-          </PublishSectionCard>
           <CarpoolWarrantySelector :form="form" :errors="errors" />
           <CarpoolRulesEditor
             :form="form"

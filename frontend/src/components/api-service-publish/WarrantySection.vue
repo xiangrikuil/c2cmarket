@@ -16,7 +16,7 @@ const options: Array<{ value: WarrantyMode, title: string, description: string }
 ]
 
 const templates = [
-  '建议首次提交 ¥20 意向测试',
+  '建议首次提交 ¥10 意向测试',
   '提交意向后站外确认接入细节',
   '用量与余额由商户说明，买家自行核对',
   '高峰期响应可能变慢',

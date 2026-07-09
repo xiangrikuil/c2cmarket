@@ -15,6 +15,7 @@ const ApiServicePublishPage = () => import('@/pages/ApiServicePublishPage.vue')
 const SearchPage = () => import('@/pages/SearchPage.vue')
 const MyCenterPage = () => import('@/pages/MyCenterPage.vue')
 const MyCarpoolsPage = () => import('@/pages/MyCarpoolsPage.vue')
+const MyDemandsPage = () => import('@/pages/MyDemandsPage.vue')
 const MyRidesPage = () => import('@/pages/MyRidesPage.vue')
 const CarpoolApplicationDetailPage = () => import('@/pages/CarpoolApplicationDetailPage.vue')
 const MyApiOrdersPage = () => import('@/pages/MyApiOrdersPage.vue')
@@ -82,13 +83,16 @@ export const router = createRouter({
     { path: '/my/account', name: 'my-account', component: MyCenterPage },
     { path: '/my/privacy', name: 'my-privacy', component: MyCenterPage },
     { path: '/my/carpools', name: 'my-carpools', component: MyCarpoolsPage },
+    { path: '/my/demands', name: 'my-demands', component: MyDemandsPage },
     { path: '/my/rides', name: 'my-rides', component: MyRidesPage },
     { path: '/my/rides/:id', name: 'my-ride-detail', component: CarpoolApplicationDetailPage },
     { path: '/my/api-orders', name: 'my-api-orders', component: MyApiOrdersPage },
     { path: '/my/api-orders/:id', name: 'my-api-order-detail', component: ApiPurchaseOrderDetailPage },
+    { path: '/api-intents/:id', name: 'legacy-api-intent-detail', component: ApiPurchaseOrderDetailPage },
     { path: '/merchant/carpool-applications', name: 'merchant-carpool-applications', component: MerchantCarpoolApplicationsPage },
     { path: '/merchant/carpool-applications/:id', name: 'merchant-carpool-application-detail', component: CarpoolApplicationDetailPage },
     { path: '/merchant/api-orders', name: 'merchant-api-orders', component: MerchantApiOrdersPage },
+    { path: '/merchant/api-orders/:id', name: 'merchant-api-order-detail', component: ApiPurchaseOrderDetailPage },
     { path: '/my/favorites', name: 'my-favorites', component: MyFavoritesPage },
     { path: '/my/reviews', name: 'my-reviews', component: MyReviewsPage },
     { path: '/my/notifications', name: 'my-notifications', component: MyNotificationsPage },

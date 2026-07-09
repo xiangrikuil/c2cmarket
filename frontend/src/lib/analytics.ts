@@ -80,10 +80,12 @@ const normalizeKnownSourcePath = (path: string) => {
   if (first === 'carpools' && segments.length === 2 && !['new', 'detail'].includes(second)) return '/carpools/:id'
   if (first === 'demands' && segments.length === 2) return '/demands/:id'
   if (first === 'api-market' && segments.length === 2 && !['new', 'detail'].includes(second)) return '/api-market/:id'
+  if (first === 'api-intents' && segments.length === 2) return '/api-intents/:id'
   if (first === 'my' && second === 'rides' && segments.length === 3) return '/my/rides/:id'
   if (first === 'my' && second === 'api-orders' && segments.length === 3) return '/my/api-orders/:id'
   if (first === 'my' && second === 'feedback' && segments.length === 3) return '/my/feedback/:id'
   if (first === 'merchant' && second === 'carpool-applications' && segments.length === 3) return '/merchant/carpool-applications/:id'
+  if (first === 'merchant' && second === 'api-orders' && segments.length === 3) return '/merchant/api-orders/:id'
   if (first === 'admin' && second === 'feedback' && segments.length === 3) return '/admin/feedback/:id'
   if (first === 'admin' && second === 'announcements' && fourth === 'edit') return '/admin/announcements/:id/edit'
   return path

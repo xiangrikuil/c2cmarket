@@ -24,7 +24,13 @@ type apiOrderPaymentRequest struct {
 }
 
 type apiOrderDeliveryRequest struct {
-	DeliveryNote string `json:"deliveryNote"`
+	DeliveryKind  string `json:"deliveryKind"`
+	APIBaseURL    string `json:"apiBaseUrl"`
+	APIKey        string `json:"apiKey"`
+	PanelLoginURL string `json:"panelLoginUrl"`
+	Username      string `json:"username"`
+	Password      string `json:"password"`
+	Instructions  string `json:"instructions"`
 }
 
 type apiOrderReasonRequest struct {
@@ -32,43 +38,56 @@ type apiOrderReasonRequest struct {
 }
 
 type apiOrderResponse struct {
-	ID                           string  `json:"id"`
-	APIPurchaseIntentID          string  `json:"apiPurchaseIntentId"`
-	APIServiceID                 string  `json:"apiServiceId"`
-	BuyerUserID                  string  `json:"buyerUserId,omitempty"`
-	SellerUserID                 string  `json:"sellerUserId,omitempty"`
-	Status                       string  `json:"status"`
-	DisputeStatus                string  `json:"disputeStatus"`
-	DisputeCaseID                string  `json:"disputeCaseId,omitempty"`
-	ServiceTitleSnapshot         string  `json:"serviceTitleSnapshot"`
-	ServiceVersionSnapshot       int64   `json:"serviceVersionSnapshot"`
-	BillingModeSnapshot          string  `json:"billingModeSnapshot"`
-	SelectedPackageID            string  `json:"selectedPackageId,omitempty"`
-	SelectedPackageSnapshot      string  `json:"selectedPackageSnapshot,omitempty"`
-	QuoteVersionSnapshot         int64   `json:"quoteVersionSnapshot,omitempty"`
-	Amount                       string  `json:"amount"`
-	Currency                     string  `json:"currency"`
-	SelectedPaymentMethod        string  `json:"selectedPaymentMethod"`
-	PaymentWindowMinutesSnapshot int     `json:"paymentWindowMinutesSnapshot"`
-	PaymentExpiresAt             string  `json:"paymentExpiresAt"`
-	PaymentSummary               string  `json:"paymentSummary,omitempty"`
-	PaymentSubmittedAt           *string `json:"paymentSubmittedAt,omitempty"`
-	PaidConfirmedAt              *string `json:"paidConfirmedAt,omitempty"`
-	DeliveryNote                 string  `json:"deliveryNote,omitempty"`
-	DeliverySubmittedAt          *string `json:"deliverySubmittedAt,omitempty"`
-	CompletedAt                  *string `json:"completedAt,omitempty"`
-	CancelledAt                  *string `json:"cancelledAt,omitempty"`
-	CancelReason                 string  `json:"cancelReason,omitempty"`
-	Version                      int64   `json:"version"`
-	CreatedAt                    string  `json:"createdAt"`
-	UpdatedAt                    string  `json:"updatedAt"`
+	ID                           string                              `json:"id"`
+	APIPurchaseIntentID          string                              `json:"apiPurchaseIntentId"`
+	APIServiceID                 string                              `json:"apiServiceId"`
+	BuyerUserID                  string                              `json:"buyerUserId,omitempty"`
+	SellerUserID                 string                              `json:"sellerUserId,omitempty"`
+	Status                       string                              `json:"status"`
+	DisputeStatus                string                              `json:"disputeStatus"`
+	DisputeCaseID                string                              `json:"disputeCaseId,omitempty"`
+	ServiceTitleSnapshot         string                              `json:"serviceTitleSnapshot"`
+	ServiceVersionSnapshot       int64                               `json:"serviceVersionSnapshot"`
+	BillingModeSnapshot          string                              `json:"billingModeSnapshot"`
+	SelectedPackageID            string                              `json:"selectedPackageId,omitempty"`
+	SelectedPackageSnapshot      string                              `json:"selectedPackageSnapshot,omitempty"`
+	QuoteVersionSnapshot         int64                               `json:"quoteVersionSnapshot,omitempty"`
+	Amount                       string                              `json:"amount"`
+	Currency                     string                              `json:"currency"`
+	SelectedPaymentMethod        string                              `json:"selectedPaymentMethod"`
+	PaymentWindowMinutesSnapshot int                                 `json:"paymentWindowMinutesSnapshot"`
+	PaymentExpiresAt             string                              `json:"paymentExpiresAt"`
+	PaymentSummary               string                              `json:"paymentSummary,omitempty"`
+	PaymentSubmittedAt           *string                             `json:"paymentSubmittedAt,omitempty"`
+	PaidConfirmedAt              *string                             `json:"paidConfirmedAt,omitempty"`
+	DeliveryNote                 string                              `json:"deliveryNote,omitempty"`
+	DeliverySubmittedAt          *string                             `json:"deliverySubmittedAt,omitempty"`
+	DeliveryCredential           *apiOrderDeliveryCredentialResponse `json:"deliveryCredential,omitempty"`
+	CompletedAt                  *string                             `json:"completedAt,omitempty"`
+	CancelledAt                  *string                             `json:"cancelledAt,omitempty"`
+	CancelReason                 string                              `json:"cancelReason,omitempty"`
+	Version                      int64                               `json:"version"`
+	CreatedAt                    string                              `json:"createdAt"`
+	UpdatedAt                    string                              `json:"updatedAt"`
 }
 
 type apiOrderPaymentInstructionsResponse struct {
-	OrderID             string `json:"orderId"`
-	PaymentMethod       string `json:"paymentMethod"`
-	PaymentInstructions string `json:"paymentInstructions"`
-	PaymentExpiresAt    string `json:"paymentExpiresAt"`
+	OrderID              string `json:"orderId"`
+	PaymentMethod        string `json:"paymentMethod"`
+	PaymentInstructions  string `json:"paymentInstructions"`
+	PaymentQRCodeDataURL string `json:"paymentQrCodeDataUrl,omitempty"`
+	PaymentExpiresAt     string `json:"paymentExpiresAt"`
+}
+
+type apiOrderDeliveryCredentialResponse struct {
+	DeliveryKind  string `json:"deliveryKind"`
+	APIBaseURL    string `json:"apiBaseUrl,omitempty"`
+	APIKey        string `json:"apiKey,omitempty"`
+	PanelLoginURL string `json:"panelLoginUrl,omitempty"`
+	Username      string `json:"username,omitempty"`
+	Password      string `json:"password,omitempty"`
+	Instructions  string `json:"instructions,omitempty"`
+	SubmittedAt   string `json:"submittedAt"`
 }
 
 func (s *Server) handleCreateAPIOrder(w http.ResponseWriter, r *http.Request) {
@@ -97,7 +116,7 @@ func (s *Server) handleCreateAPIOrder(w http.ResponseWriter, r *http.Request) {
 			RequestID:     requestIDFrom(r),
 		},
 		func(order apiorder.Order) (idempotency.Completion, *domain.AppError) {
-			responseBody, marshalErr := json.Marshal(toAPIOrderResponse(order, false))
+			responseBody, marshalErr := json.Marshal(toAPIOrderResponse(order, false, false))
 			if marshalErr != nil {
 				return idempotency.Completion{}, domain.NewError(http.StatusInternalServerError, domain.CodeInternalError, "Internal error", "响应编码失败。")
 			}
@@ -149,7 +168,7 @@ func (s *Server) handleMyAPIOrder(w http.ResponseWriter, r *http.Request) {
 	}
 	setETag(w, order.Version)
 	w.Header().Set("Cache-Control", "private, no-store")
-	writeJSON(w, http.StatusOK, toAPIOrderResponse(order, false))
+	writeJSON(w, http.StatusOK, toAPIOrderResponse(order, false, true))
 }
 
 func (s *Server) handleReadAPIOrderPaymentInstructions(w http.ResponseWriter, r *http.Request) {
@@ -169,10 +188,11 @@ func (s *Server) handleReadAPIOrderPaymentInstructions(w http.ResponseWriter, r 
 	}
 	w.Header().Set("Cache-Control", "private, no-store")
 	writeJSON(w, http.StatusOK, apiOrderPaymentInstructionsResponse{
-		OrderID:             view.OrderID,
-		PaymentMethod:       view.PaymentMethod,
-		PaymentInstructions: view.PaymentInstructions,
-		PaymentExpiresAt:    view.PaymentExpiresAt.UTC().Format(time.RFC3339),
+		OrderID:              view.OrderID,
+		PaymentMethod:        view.PaymentMethod,
+		PaymentInstructions:  view.PaymentInstructions,
+		PaymentQRCodeDataURL: view.PaymentQRCodeDataURL,
+		PaymentExpiresAt:     view.PaymentExpiresAt.UTC().Format(time.RFC3339),
 	})
 }
 
@@ -255,7 +275,7 @@ func (s *Server) handleOwnerAPIOrder(w http.ResponseWriter, r *http.Request) {
 	}
 	setETag(w, order.Version)
 	w.Header().Set("Cache-Control", "private, no-store")
-	writeJSON(w, http.StatusOK, toAPIOrderResponse(order, true))
+	writeJSON(w, http.StatusOK, toAPIOrderResponse(order, true, true))
 }
 
 func (s *Server) handleConfirmAPIOrderPayment(w http.ResponseWriter, r *http.Request) {
@@ -305,7 +325,15 @@ func (s *Server) decodeAPIOrderAction(r *http.Request, action string) ([]byte, a
 		return body, apiorder.ActionInput{PaymentSummary: req.PaymentSummary}, appErr
 	case "submit-delivery":
 		body, req, appErr := decodeStrictJSON[apiOrderDeliveryRequest](r)
-		return body, apiorder.ActionInput{DeliveryNote: req.DeliveryNote}, appErr
+		return body, apiorder.ActionInput{DeliveryCredential: apiorder.DeliveryCredentialInput{
+			DeliveryKind:  req.DeliveryKind,
+			APIBaseURL:    req.APIBaseURL,
+			APIKey:        req.APIKey,
+			PanelLoginURL: req.PanelLoginURL,
+			Username:      req.Username,
+			Password:      req.Password,
+			Instructions:  req.Instructions,
+		}}, appErr
 	case "cancel", "dispute":
 		body, req, appErr := decodeStrictJSON[apiOrderReasonRequest](r)
 		return body, apiorder.ActionInput{Reason: req.Reason}, appErr
@@ -318,12 +346,12 @@ func (s *Server) decodeAPIOrderAction(r *http.Request, action string) ([]byte, a
 func toAPIOrderResponses(orders []apiorder.Order, ownerView bool) []apiOrderResponse {
 	items := make([]apiOrderResponse, 0, len(orders))
 	for _, order := range orders {
-		items = append(items, toAPIOrderResponse(order, ownerView))
+		items = append(items, toAPIOrderResponse(order, ownerView, false))
 	}
 	return items
 }
 
-func toAPIOrderResponse(order apiorder.Order, ownerView bool) apiOrderResponse {
+func toAPIOrderResponse(order apiorder.Order, ownerView bool, includeCredential bool) apiOrderResponse {
 	response := apiOrderResponse{
 		ID:                           order.ID,
 		APIPurchaseIntentID:          order.APIPurchaseIntentID,
@@ -359,12 +387,28 @@ func toAPIOrderResponse(order apiorder.Order, ownerView bool) apiOrderResponse {
 	} else {
 		response.SellerUserID = order.SellerUserID
 	}
+	if includeCredential && order.DeliveryCredential != nil {
+		response.DeliveryCredential = toAPIOrderDeliveryCredentialResponse(*order.DeliveryCredential)
+	}
 	return response
+}
+
+func toAPIOrderDeliveryCredentialResponse(credential apiorder.DeliveryCredential) *apiOrderDeliveryCredentialResponse {
+	return &apiOrderDeliveryCredentialResponse{
+		DeliveryKind:  credential.DeliveryKind,
+		APIBaseURL:    credential.APIBaseURL,
+		APIKey:        credential.APIKey,
+		PanelLoginURL: credential.PanelLoginURL,
+		Username:      credential.Username,
+		Password:      credential.Password,
+		Instructions:  credential.Instructions,
+		SubmittedAt:   credential.SubmittedAt.UTC().Format(time.RFC3339),
+	}
 }
 
 func apiOrderCompletionBuilder(ownerView bool) apiorder.CompletionBuilder {
 	return func(order apiorder.Order) (idempotency.Completion, *domain.AppError) {
-		responseBody, marshalErr := json.Marshal(toAPIOrderResponse(order, ownerView))
+		responseBody, marshalErr := json.Marshal(toAPIOrderResponse(order, ownerView, true))
 		if marshalErr != nil {
 			return idempotency.Completion{}, domain.NewError(http.StatusInternalServerError, domain.CodeInternalError, "Internal error", "响应编码失败。")
 		}

@@ -31,6 +31,9 @@ const (
 	MembershipStatusCompleted = "completed"
 	MembershipStatusLeft      = "left"
 	MembershipStatusRemoved   = "removed"
+
+	ListingDistributionMethodSub2API = "sub2api"
+	ListingDistributionMethodOther   = "other"
 )
 
 const (
@@ -45,35 +48,40 @@ type RiskAcknowledgement struct {
 }
 
 type Listing struct {
-	ID                   string
-	OwnerUserID          string
-	ProductPlanID        string
-	OwnerContactMethodID string
-	CycleTerm            *CycleTerm
-	Title                string
-	Summary              string
-	AccessArrangement    string
-	SourceURL            string
-	PriceMonthlyCNY      string
-	ServiceMultiplier    string
-	MonthlyQuotaAmount   string
-	QuotaLabel           string
-	QuotaUnit            string
-	QuotaPeriod          string
-	BuyerSeatCapacity    int
-	ActiveBuyerMembers   int
-	Status               string
-	ReviewedByAdminID    string
-	ReviewedAt           *time.Time
-	ReviewReason         string
-	PolicyVersion        int64
-	RiskNoticeCode       string
-	RiskAckRequired      bool
-	ReservedSeats        int
-	AvailableSeats       int
-	CreatedAt            time.Time
-	UpdatedAt            time.Time
-	Version              int64
+	ID                     string
+	OwnerUserID            string
+	ProductPlanID          string
+	OwnerContactMethodID   string
+	CycleTerm              *CycleTerm
+	Title                  string
+	Summary                string
+	AccessArrangement      string
+	DistributionMethod     string
+	DistributionMethodNote string
+	ProvidesAdminAccount   bool
+	RegionCode             string
+	RegionName             string
+	SourceURL              string
+	PriceMonthlyCNY        string
+	ServiceMultiplier      string
+	MonthlyQuotaAmount     string
+	QuotaLabel             string
+	QuotaUnit              string
+	QuotaPeriod            string
+	BuyerSeatCapacity      int
+	ActiveBuyerMembers     int
+	Status                 string
+	ReviewedByAdminID      string
+	ReviewedAt             *time.Time
+	ReviewReason           string
+	PolicyVersion          int64
+	RiskNoticeCode         string
+	RiskAckRequired        bool
+	ReservedSeats          int
+	AvailableSeats         int
+	CreatedAt              time.Time
+	UpdatedAt              time.Time
+	Version                int64
 }
 
 type CycleTerm struct {
@@ -142,20 +150,25 @@ type Membership struct {
 }
 
 type CreateListingInput struct {
-	OwnerUserID          string
-	ProductPlanID        string
-	OwnerContactMethodID string
-	CycleTerm            CycleTermInput
-	Title                string
-	Summary              string
-	AccessArrangement    string
-	SourceURL            string
-	PriceMonthlyCNY      string
-	ServiceMultiplier    string
-	MonthlyQuotaAmount   string
-	BuyerSeatCapacity    int
-	ActiveBuyerMembers   int
-	RiskAcknowledgement  *RiskAcknowledgement
+	OwnerUserID            string
+	ProductPlanID          string
+	OwnerContactMethodID   string
+	CycleTerm              CycleTermInput
+	Title                  string
+	Summary                string
+	AccessArrangement      string
+	DistributionMethod     string
+	DistributionMethodNote string
+	ProvidesAdminAccount   bool
+	RegionCode             string
+	RegionName             string
+	SourceURL              string
+	PriceMonthlyCNY        string
+	ServiceMultiplier      string
+	MonthlyQuotaAmount     string
+	BuyerSeatCapacity      int
+	ActiveBuyerMembers     int
+	RiskAcknowledgement    *RiskAcknowledgement
 }
 
 type PublishListingInput = CreateListingInput
@@ -179,23 +192,28 @@ type ReviewInput struct {
 }
 
 type UpdateListingInput struct {
-	ListingID            string
-	OwnerUserID          string
-	ProductPlanID        string
-	OwnerContactMethodID string
-	CycleTerm            CycleTermInput
-	Title                string
-	Summary              string
-	AccessArrangement    string
-	SourceURL            string
-	PriceMonthlyCNY      string
-	ServiceMultiplier    string
-	MonthlyQuotaAmount   string
-	BuyerSeatCapacity    int
-	ActiveBuyerMembers   int
-	RiskAcknowledgement  *RiskAcknowledgement
-	ExpectedVersion      int64
-	RequestID            string
+	ListingID              string
+	OwnerUserID            string
+	ProductPlanID          string
+	OwnerContactMethodID   string
+	CycleTerm              CycleTermInput
+	Title                  string
+	Summary                string
+	AccessArrangement      string
+	DistributionMethod     string
+	DistributionMethodNote string
+	ProvidesAdminAccount   bool
+	RegionCode             string
+	RegionName             string
+	SourceURL              string
+	PriceMonthlyCNY        string
+	ServiceMultiplier      string
+	MonthlyQuotaAmount     string
+	BuyerSeatCapacity      int
+	ActiveBuyerMembers     int
+	RiskAcknowledgement    *RiskAcknowledgement
+	ExpectedVersion        int64
+	RequestID              string
 }
 
 type SubmitListingReviewInput struct {

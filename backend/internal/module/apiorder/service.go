@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math/big"
 	"net/http"
+	"net/url"
 	"sort"
 	"strings"
 	"sync"
@@ -43,6 +44,7 @@ type Service struct {
 	disputes    DisputeCaseCreator
 	idempotency *idempotency.Service
 	orders      map[string]Order
+	credentials map[string]DeliveryCredential
 	events      []Event
 	accessLogs  []PaymentInstructionAccessLog
 }
@@ -62,6 +64,7 @@ func NewService(repo Repository, intentResolver BuyerIntentResolver, serviceReso
 		disputes:    disputeCreator,
 		idempotency: idempotencyService,
 		orders:      make(map[string]Order),
+		credentials: make(map[string]DeliveryCredential),
 	}
 }
 
@@ -82,6 +85,7 @@ func (s *Service) BuyerOrders(ctx context.Context, user auth.User) ([]Order, *do
 			continue
 		}
 		order = s.materializeTimeoutLocked(id)
+		order.DeliveryCredential = nil
 		orders = append(orders, order)
 	}
 	sort.Slice(orders, func(i, j int) bool {
@@ -115,7 +119,9 @@ func (s *Service) BuyerOrder(ctx context.Context, user auth.User, orderID string
 	if !ok || order.BuyerUserID != user.ID {
 		return Order{}, notFound()
 	}
-	return s.materializeTimeoutLocked(order.ID), nil
+	order = s.materializeTimeoutLocked(order.ID)
+	order = s.withCredentialLocked(order)
+	return order, nil
 }
 
 func (s *Service) ReadPaymentInstructions(ctx context.Context, user auth.User, orderID, requestID string) (PaymentInstructionsView, *domain.AppError) {
@@ -135,10 +141,11 @@ func (s *Service) ReadPaymentInstructions(ctx context.Context, user auth.User, o
 	s.appendAccessLogLocked(order.ID, user.ID, requestID)
 	s.appendEventLocked(order, user.ID, EventPaymentInstructionsRead, order.Status, order.Status, "", requestID)
 	return PaymentInstructionsView{
-		OrderID:             order.ID,
-		PaymentMethod:       order.SelectedPaymentMethod,
-		PaymentInstructions: order.PaymentInstructionsSnapshot,
-		PaymentExpiresAt:    order.PaymentExpiresAt,
+		OrderID:              order.ID,
+		PaymentMethod:        order.SelectedPaymentMethod,
+		PaymentInstructions:  order.PaymentInstructionsSnapshot,
+		PaymentQRCodeDataURL: order.PaymentQRCodeDataURLSnapshot,
+		PaymentExpiresAt:     order.PaymentExpiresAt,
 	}, nil
 }
 
@@ -154,6 +161,7 @@ func (s *Service) SellerOrders(ctx context.Context, user auth.User) ([]Order, *d
 			continue
 		}
 		order = s.materializeTimeoutLocked(id)
+		order.DeliveryCredential = nil
 		orders = append(orders, order)
 	}
 	sort.Slice(orders, func(i, j int) bool {
@@ -172,7 +180,9 @@ func (s *Service) SellerOrder(ctx context.Context, user auth.User, orderID strin
 	if !ok || order.SellerUserID != user.ID {
 		return Order{}, notFound()
 	}
-	return s.materializeTimeoutLocked(order.ID), nil
+	order = s.materializeTimeoutLocked(order.ID)
+	order = s.withCredentialLocked(order)
+	return order, nil
 }
 
 func (s *Service) SubmitPaymentWithIdempotency(ctx context.Context, userID, routeKey, key, requestHash string, input ActionInput, buildCompletion CompletionBuilder) (idempotency.Completion, *domain.AppError) {
@@ -217,6 +227,11 @@ func (s *Service) ConfirmPaymentWithIdempotency(ctx context.Context, userID, rou
 
 func (s *Service) SubmitDeliveryWithIdempotency(ctx context.Context, userID, routeKey, key, requestHash string, input ActionInput, buildCompletion CompletionBuilder) (idempotency.Completion, *domain.AppError) {
 	input.ActorUserID = userID
+	var appErr *domain.AppError
+	input, appErr = normalizeSubmitDeliveryInput(input)
+	if appErr != nil {
+		return idempotency.Completion{}, appErr
+	}
 	if err := validateActionInput(input, "submit_delivery"); err != nil {
 		return idempotency.Completion{}, err
 	}
@@ -353,6 +368,14 @@ func (s *Service) updateInMemory(ctx context.Context, input ActionInput, action 
 		return Order{}, domain.NewError(http.StatusConflict, domain.CodeInvalidStateTransition, "Invalid state transition", "当前订单状态不能执行该操作。")
 	}
 	from := order.Status
+	if action == "submit_delivery" {
+		if _, exists := s.credentials[order.ID]; exists {
+			return Order{}, domain.NewError(http.StatusConflict, domain.CodeInvalidStateTransition, "Invalid state transition", "交付信息已提交，不能再次修改。")
+		}
+		credential := newDeliveryCredential(order, input.DeliveryCredential, s.now())
+		s.credentials[order.ID] = credential
+		order.DeliveryCredential = &credential
+	}
 	if action == "open_dispute" {
 		caseID, appErr := s.registerDisputeCaseLocked(ctx, order, input)
 		if appErr != nil {
@@ -364,6 +387,13 @@ func (s *Service) updateInMemory(ctx context.Context, input ActionInput, action 
 	s.orders[order.ID] = order
 	s.appendEventLocked(order, input.ActorUserID, eventTypeForAction(action), from, order.Status, noteForAction(input, action), input.RequestID)
 	return order, nil
+}
+
+func (s *Service) withCredentialLocked(order Order) Order {
+	if credential, ok := s.credentials[order.ID]; ok {
+		order.DeliveryCredential = &credential
+	}
+	return order
 }
 
 func (s *Service) registerDisputeCaseLocked(ctx context.Context, order Order, input ActionInput) (string, *domain.AppError) {
@@ -448,7 +478,7 @@ func NewOrder(input CreateInput, intent apiintent.Intent, service apimarket.Serv
 	if !ok {
 		return Order{}, domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Payment method invalid", "选择的付款方式不可用。", "paymentMethod", "invalid", "选择的付款方式不可用。")
 	}
-	amount, currency, quoteVersion, appErr := resolveOrderAmount(intent, service, method)
+	amount, currency, quoteVersion, appErr := resolveOrderAmount(intent, service)
 	if appErr != nil {
 		return Order{}, appErr
 	}
@@ -472,6 +502,7 @@ func NewOrder(input CreateInput, intent apiintent.Intent, service apimarket.Serv
 		PaymentWindowMinutesSnapshot: service.PaymentWindowMinutes,
 		PaymentExpiresAt:             now.Add(time.Duration(service.PaymentWindowMinutes) * time.Minute),
 		PaymentInstructionsSnapshot:  option.PaymentInstructions,
+		PaymentQRCodeDataURLSnapshot: option.PaymentQRCodeDataURL,
 		CreatedAt:                    now,
 		UpdatedAt:                    now,
 		Version:                      1,
@@ -479,18 +510,18 @@ func NewOrder(input CreateInput, intent apiintent.Intent, service apimarket.Serv
 }
 
 func findPaymentOption(service apimarket.Service, method string) (apimarket.PaymentOption, bool) {
+	if !apimarket.IsSupportedPaymentMethod(method) {
+		return apimarket.PaymentOption{}, false
+	}
 	for _, option := range service.PaymentOptions {
-		if option.Enabled && option.PaymentMethod == method {
+		if option.Enabled && apimarket.IsSupportedPaymentMethod(option.PaymentMethod) && option.PaymentMethod == method {
 			return option, true
 		}
 	}
 	return apimarket.PaymentOption{}, false
 }
 
-func resolveOrderAmount(intent apiintent.Intent, service apimarket.Service, method string) (string, string, int64, *domain.AppError) {
-	if method == apimarket.PaymentMethodUSDT {
-		return "", "", 0, domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "USDT quote required", "USDT 下单必须先由商户给出固定 USDT 报价。", "paymentMethod", "quote_required", "USDT 下单必须先报价。")
-	}
+func resolveOrderAmount(intent apiintent.Intent, service apimarket.Service) (string, string, int64, *domain.AppError) {
 	switch service.BillingMode {
 	case apimarket.ServiceBillingModeFixedPackage:
 		pack, ok := findServicePackage(service, intent.SelectedPackageID)
@@ -528,10 +559,13 @@ func validateActionInput(input ActionInput, action string) *domain.AppError {
 		}
 		return validateNonSecretText("paymentSummary", input.PaymentSummary)
 	case "submit_delivery":
-		if strings.TrimSpace(input.DeliveryNote) == "" {
-			return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Off-platform delivery prompt required", "必须填写站外交付提示。", "deliveryNote", "required", "必须填写站外交付提示。")
+		if _, err := normalizeDeliveryCredentialInput(input.DeliveryCredential); err != nil {
+			return err
 		}
-		return validateNonSecretText("deliveryNote", input.DeliveryNote)
+		if strings.TrimSpace(input.DeliveryNote) == "" {
+			return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Delivery summary required", "交付摘要生成失败。", "deliveryNote", "required", "交付摘要生成失败。")
+		}
+		return nil
 	case "cancel":
 		if strings.TrimSpace(input.Reason) == "" {
 			return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Reason required", "必须填写取消原因。", "reason", "required", "必须填写取消原因。")
@@ -545,6 +579,211 @@ func validateActionInput(input ActionInput, action string) *domain.AppError {
 	default:
 		return nil
 	}
+}
+
+func normalizeSubmitDeliveryInput(input ActionInput) (ActionInput, *domain.AppError) {
+	credential, appErr := normalizeDeliveryCredentialInput(input.DeliveryCredential)
+	if appErr != nil {
+		return ActionInput{}, appErr
+	}
+	input.DeliveryCredential = credential
+	input.DeliveryNote = deliverySummary(credential.DeliveryKind)
+	return input, nil
+}
+
+func NormalizeDeliveryCredentialForStore(input DeliveryCredentialInput) (DeliveryCredentialInput, *domain.AppError) {
+	return normalizeDeliveryCredentialInput(input)
+}
+
+func normalizeDeliveryCredentialInput(input DeliveryCredentialInput) (DeliveryCredentialInput, *domain.AppError) {
+	normalized := DeliveryCredentialInput{
+		DeliveryKind:  strings.TrimSpace(input.DeliveryKind),
+		APIBaseURL:    strings.TrimSpace(input.APIBaseURL),
+		APIKey:        strings.TrimSpace(input.APIKey),
+		PanelLoginURL: strings.TrimSpace(input.PanelLoginURL),
+		Username:      strings.TrimSpace(input.Username),
+		Password:      strings.TrimSpace(input.Password),
+		Instructions:  strings.TrimSpace(input.Instructions),
+	}
+	switch normalized.DeliveryKind {
+	case DeliveryKindAPIKeyEndpoint:
+		if normalized.APIBaseURL == "" {
+			return DeliveryCredentialInput{}, deliveryFieldError("apiBaseUrl", "required", "必须填写 API Base URL。")
+		}
+		if normalized.APIKey == "" {
+			return DeliveryCredentialInput{}, deliveryFieldError("apiKey", "required", "必须填写买家专属、可撤销的 API Key。")
+		}
+		if normalized.PanelLoginURL != "" || normalized.Username != "" || normalized.Password != "" {
+			return DeliveryCredentialInput{}, deliveryFieldError("deliveryKind", "mixed_fields", "API Key 接入不能同时填写登录账号字段。")
+		}
+	case DeliveryKindLoginAccount:
+		if normalized.PanelLoginURL == "" {
+			return DeliveryCredentialInput{}, deliveryFieldError("panelLoginUrl", "required", "必须填写登录地址。")
+		}
+		if normalized.Username == "" {
+			return DeliveryCredentialInput{}, deliveryFieldError("username", "required", "必须填写用户名。")
+		}
+		if normalized.Password == "" {
+			return DeliveryCredentialInput{}, deliveryFieldError("password", "required", "必须填写初始密码。")
+		}
+		if normalized.APIKey != "" {
+			return DeliveryCredentialInput{}, deliveryFieldError("apiKey", "not_allowed", "登录账号交付不能填写 API Key。")
+		}
+	default:
+		return DeliveryCredentialInput{}, deliveryFieldError("deliveryKind", "invalid", "交付类型不支持。")
+	}
+	if appErr := validateDeliveryURL("apiBaseUrl", normalized.APIBaseURL, normalized.DeliveryKind == DeliveryKindAPIKeyEndpoint); appErr != nil {
+		return DeliveryCredentialInput{}, appErr
+	}
+	if appErr := validateDeliveryURL("panelLoginUrl", normalized.PanelLoginURL, normalized.DeliveryKind == DeliveryKindLoginAccount); appErr != nil {
+		return DeliveryCredentialInput{}, appErr
+	}
+	if appErr := validateDeliverySecretField("apiKey", normalized.APIKey); appErr != nil {
+		return DeliveryCredentialInput{}, appErr
+	}
+	if appErr := validateDeliveryTextField("username", normalized.Username, 1000, false); appErr != nil {
+		return DeliveryCredentialInput{}, appErr
+	}
+	if appErr := validateDeliverySecretField("password", normalized.Password); appErr != nil {
+		return DeliveryCredentialInput{}, appErr
+	}
+	if appErr := validateDeliveryTextField("instructions", normalized.Instructions, 4000, true); appErr != nil {
+		return DeliveryCredentialInput{}, appErr
+	}
+	return normalized, nil
+}
+
+func newDeliveryCredential(order Order, input DeliveryCredentialInput, now time.Time) DeliveryCredential {
+	return DeliveryCredential{
+		ID:            uuid.NewString(),
+		APIOrderID:    order.ID,
+		SellerUserID:  order.SellerUserID,
+		BuyerUserID:   order.BuyerUserID,
+		DeliveryKind:  input.DeliveryKind,
+		APIBaseURL:    input.APIBaseURL,
+		APIKey:        input.APIKey,
+		PanelLoginURL: input.PanelLoginURL,
+		Username:      input.Username,
+		Password:      input.Password,
+		Instructions:  input.Instructions,
+		SubmittedAt:   now,
+		CreatedAt:     now,
+	}
+}
+
+func deliverySummary(deliveryKind string) string {
+	switch deliveryKind {
+	case DeliveryKindAPIKeyEndpoint:
+		return "商户已提交买家专属、可撤销的 API Key 接入信息。"
+	case DeliveryKindLoginAccount:
+		return "商户已提交买家专属、可撤销的登录接入信息。"
+	default:
+		return "商户已提交买家专属、可撤销的接入信息。"
+	}
+}
+
+func DeliverySummary(deliveryKind string) string {
+	return deliverySummary(deliveryKind)
+}
+
+func deliveryFieldError(field, code, message string) *domain.AppError {
+	return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Delivery credential invalid", message, field, code, message)
+}
+
+func validateDeliveryURL(field, value string, required bool) *domain.AppError {
+	if value == "" {
+		if required {
+			return deliveryFieldError(field, "required", "必须填写 URL。")
+		}
+		return nil
+	}
+	if appErr := validateDeliveryTextField(field, value, 1000, false); appErr != nil {
+		return appErr
+	}
+	parsed, err := url.Parse(value)
+	if err != nil || parsed.Host == "" || (parsed.Scheme != "https" && parsed.Scheme != "http") {
+		return deliveryFieldError(field, "invalid", "URL 必须是 http:// 或 https:// 地址。")
+	}
+	if deliveryURLLooksUnsafe(parsed) {
+		return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeSecretContentDetected, "Secret content detected", "URL 不能包含 token、订阅链接或代理节点信息。", field, "secret_content", "URL 不能包含 token、订阅链接或代理节点信息。")
+	}
+	return nil
+}
+
+func deliveryURLLooksUnsafe(parsed *url.URL) bool {
+	if parsed == nil {
+		return false
+	}
+	path := strings.ToLower(parsed.EscapedPath())
+	if decodedPath, err := url.PathUnescape(parsed.EscapedPath()); err == nil {
+		path = strings.ToLower(decodedPath)
+	}
+	if strings.Contains(path, "client/subscribe") || strings.Contains(path, "/subscribe") || path == "/sub" || strings.HasSuffix(path, "/sub") {
+		return true
+	}
+	for key, values := range parsed.Query() {
+		lowerKey := strings.ToLower(key)
+		if strings.Contains(lowerKey, "token") ||
+			strings.Contains(lowerKey, "key") ||
+			strings.Contains(lowerKey, "secret") ||
+			strings.Contains(lowerKey, "session") ||
+			strings.Contains(lowerKey, "cookie") ||
+			strings.Contains(lowerKey, "authorization") ||
+			lowerKey == "auth" ||
+			lowerKey == "jwt" ||
+			strings.Contains(lowerKey, "subscribe") ||
+			lowerKey == "sub" {
+			return true
+		}
+		for _, value := range values {
+			lowerValue := strings.ToLower(value)
+			if strings.Contains(lowerValue, "clash") ||
+				strings.Contains(lowerValue, "vless://") ||
+				strings.Contains(lowerValue, "vmess://") ||
+				strings.Contains(lowerValue, "trojan://") ||
+				strings.Contains(lowerValue, "ss://") ||
+				strings.Contains(lowerValue, "ssr://") ||
+				strings.Contains(lowerValue, "socks://") ||
+				strings.Contains(lowerValue, "client/subscribe") ||
+				strings.Contains(lowerValue, "/subscribe") {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func validateDeliveryTextField(field, value string, maxLength int, rejectSecret bool) *domain.AppError {
+	if value == "" {
+		return nil
+	}
+	if len(value) > maxLength {
+		return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Text too long", "文本内容过长。", field, "too_long", "文本内容过长。")
+	}
+	if strings.ContainsAny(value, "\x00") {
+		return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Text invalid", "文本内容包含非法字符。", field, "control_character", "文本内容包含非法字符。")
+	}
+	if rejectSecret && domain.LooksLikeSecretContent(value) {
+		return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeSecretContentDetected, "Secret content detected", "说明中不能包含凭据、订阅链接或代理节点信息，请填入专用字段。", field, "secret_content", "说明中不能包含凭据、订阅链接或代理节点信息。")
+	}
+	return nil
+}
+
+func validateDeliverySecretField(field, value string) *domain.AppError {
+	if appErr := validateDeliveryTextField(field, value, 4000, false); appErr != nil {
+		return appErr
+	}
+	lower := strings.ToLower(value)
+	blocked := []string{
+		"authorization:", "bearer ", "access_token", "refresh_token", "session=", "cookie=", "mfa", "recovery",
+		"trojan://", "vmess://", "ss://", "ssr://", "socks://", "socks5://", "vless://", "clash://", "hysteria://", "hy2://", "tuic://", "sub://",
+	}
+	for _, marker := range blocked {
+		if strings.Contains(lower, marker) {
+			return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeSecretContentDetected, "Secret content detected", "只能提交买家专属、可撤销的 API Key 或初始密码。", field, "unsupported_secret", "不能提交 Cookie、Session、OAuth token、恢复码、订阅链接或代理节点。")
+		}
+	}
+	return nil
 }
 
 func canActorAccess(order Order, actorUserID, action string) bool {

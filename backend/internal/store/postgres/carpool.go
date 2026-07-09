@@ -70,20 +70,23 @@ func insertCarpoolListingInTx(ctx context.Context, tx pgx.Tx, listing carpool.Li
 	_, err := tx.Exec(ctx, `
 		INSERT INTO carpool_listings (
 			id, owner_user_id, product_plan_id, owner_contact_method_id, title, summary, access_arrangement,
-			source_url, price_monthly_cny, service_multiplier, monthly_quota_amount, quota_label, quota_unit, quota_period,
+			distribution_method, distribution_method_note, provides_admin_account,
+			region_code, region_name, source_url, price_monthly_cny, service_multiplier, monthly_quota_amount, quota_label, quota_unit, quota_period,
 			buyer_seat_capacity, active_buyer_members,
 			status, policy_version, risk_notice_code, risk_ack_required,
 			created_at, updated_at, version
 		)
 		VALUES (
 			$1, $2, $3, $4, $5, $6, $7,
-			$8, $9, $10, $11, $12, $13, $14,
-			$15, $16,
-			$17, $18, $19, $20,
-			$21, $22, $23
+			$8, $9, $10,
+			$11, $12, $13, $14, $15, $16, $17, $18, $19,
+			$20, $21,
+			$22, $23, $24, $25,
+			$26, $27, $28
 		)
 	`, listing.ID, listing.OwnerUserID, listing.ProductPlanID, listing.OwnerContactMethodID, listing.Title, listing.Summary, listing.AccessArrangement,
-		nullText(listing.SourceURL), listing.PriceMonthlyCNY, listing.ServiceMultiplier, listing.MonthlyQuotaAmount, listing.QuotaLabel, listing.QuotaUnit, listing.QuotaPeriod,
+		listing.DistributionMethod, listing.DistributionMethodNote, listing.ProvidesAdminAccount,
+		listing.RegionCode, listing.RegionName, nullText(listing.SourceURL), listing.PriceMonthlyCNY, listing.ServiceMultiplier, listing.MonthlyQuotaAmount, listing.QuotaLabel, listing.QuotaUnit, listing.QuotaPeriod,
 		listing.BuyerSeatCapacity, listing.ActiveBuyerMembers,
 		listing.Status, listing.PolicyVersion, nullText(listing.RiskNoticeCode), listing.RiskAckRequired,
 		listing.CreatedAt, listing.UpdatedAt, listing.Version)
@@ -306,6 +309,11 @@ func (s *Store) UpdateCarpoolListing(ctx context.Context, input carpool.UpdateLi
 	listing.Title = strings.TrimSpace(input.Title)
 	listing.Summary = strings.TrimSpace(input.Summary)
 	listing.AccessArrangement = strings.TrimSpace(input.AccessArrangement)
+	listing.DistributionMethod = strings.TrimSpace(input.DistributionMethod)
+	listing.DistributionMethodNote = strings.TrimSpace(input.DistributionMethodNote)
+	listing.ProvidesAdminAccount = input.ProvidesAdminAccount
+	listing.RegionCode = strings.TrimSpace(input.RegionCode)
+	listing.RegionName = strings.TrimSpace(input.RegionName)
 	listing.SourceURL = strings.TrimSpace(input.SourceURL)
 	listing.PriceMonthlyCNY = strings.TrimSpace(input.PriceMonthlyCNY)
 	listing.ServiceMultiplier = strings.TrimSpace(input.ServiceMultiplier)
@@ -327,22 +335,29 @@ func (s *Store) UpdateCarpoolListing(ctx context.Context, input carpool.UpdateLi
 		    title = $4,
 		    summary = $5,
 		    access_arrangement = $6,
-		    source_url = $7,
-		    price_monthly_cny = $8,
-		    service_multiplier = $9,
-		    monthly_quota_amount = $10,
-		    quota_label = $11,
-		    quota_unit = $12,
-		    quota_period = $13,
-		    buyer_seat_capacity = $14,
-		    active_buyer_members = $15,
-		    policy_version = $16,
-		    risk_notice_code = $17,
-		    risk_ack_required = $18,
-		    updated_at = $19,
-		    version = $20
+		    distribution_method = $7,
+		    distribution_method_note = $8,
+		    provides_admin_account = $9,
+		    region_code = $10,
+		    region_name = $11,
+		    source_url = $12,
+		    price_monthly_cny = $13,
+		    service_multiplier = $14,
+		    monthly_quota_amount = $15,
+		    quota_label = $16,
+		    quota_unit = $17,
+		    quota_period = $18,
+		    buyer_seat_capacity = $19,
+		    active_buyer_members = $20,
+		    policy_version = $21,
+		    risk_notice_code = $22,
+		    risk_ack_required = $23,
+		    updated_at = $24,
+		    version = $25
 		WHERE id = $1
 	`, listing.ID, listing.ProductPlanID, listing.OwnerContactMethodID, listing.Title, listing.Summary, listing.AccessArrangement,
+		listing.DistributionMethod, listing.DistributionMethodNote, listing.ProvidesAdminAccount,
+		listing.RegionCode, listing.RegionName,
 		nullText(listing.SourceURL), listing.PriceMonthlyCNY, listing.ServiceMultiplier, listing.MonthlyQuotaAmount, listing.QuotaLabel, listing.QuotaUnit, listing.QuotaPeriod,
 		listing.BuyerSeatCapacity, listing.ActiveBuyerMembers,
 		listing.PolicyVersion, nullText(listing.RiskNoticeCode), listing.RiskAckRequired, listing.UpdatedAt, listing.Version)
@@ -903,6 +918,8 @@ func (s *Store) EndCarpoolMembershipWithIdempotency(ctx context.Context, entry i
 
 const carpoolListingColumns = `
 	id::text, owner_user_id::text, product_plan_id::text, owner_contact_method_id::text, title, summary, access_arrangement,
+	distribution_method, distribution_method_note, provides_admin_account,
+	region_code, region_name,
 	COALESCE(cycle_term_id::text, ''), COALESCE(cycle_billing_period, ''), cycle_start_day, COALESCE(cycle_notice_days, 0),
 	COALESCE(cycle_exit_policy, ''), COALESCE(cycle_usage_rules, ''), COALESCE(cycle_version, 0),
 	COALESCE(cycle_created_at, created_at), COALESCE(cycle_updated_at, updated_at),
@@ -989,6 +1006,11 @@ func scanCarpoolListing(row scanner, listing *carpool.Listing) error {
 		&listing.Title,
 		&listing.Summary,
 		&listing.AccessArrangement,
+		&listing.DistributionMethod,
+		&listing.DistributionMethodNote,
+		&listing.ProvidesAdminAccount,
+		&listing.RegionCode,
+		&listing.RegionName,
 		&cycleTermID,
 		&cycleTerm.BillingPeriod,
 		&cycleTerm.CycleStartDay,

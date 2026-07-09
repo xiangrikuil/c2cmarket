@@ -6,7 +6,7 @@ import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import type { ApiServicePublishForm, CatalogById } from './types'
 import { apiServiceDetailPath } from './publishAssistant'
-import { apiQuotaBoundaryNotice, enabledPaymentOptions, generatedTitle, paymentMethodLabels, providerCategoryLabels, selectedCatalogItems, simplifiedApiQuotaRules } from './utils'
+import { apiQuotaBoundaryNotice, distributionLabels, enabledPaymentOptions, formatMultiplier, generatedTitle, paymentMethodLabels, providerCategoryLabels, selectedCatalogItems, simplifiedApiQuotaRules } from './utils'
 
 const props = defineProps<{
   form: ApiServicePublishForm
@@ -15,10 +15,11 @@ const props = defineProps<{
   risks: string[]
   quotaForMinimumPurchase: string
   submittedId: string
+  previewOnly?: boolean
 }>()
 
 const title = computed(() => generatedTitle(props.form, props.catalogById))
-const merchantDisplayName = computed(() => props.form.merchantIdentityMode === 'store_alias' ? props.form.merchantDisplayName.trim() || '待填写商家展示名' : '公开个人身份')
+const merchantDisplayName = computed(() => props.form.merchantIdentityMode === 'store_alias' ? props.form.merchantDisplayName.trim() || '待设置商家展示名' : '公开个人身份')
 const selectedModels = computed(() => selectedCatalogItems(props.form, props.catalogById))
 const quotaExpiresAtLabel = computed(() => props.form.quotaExpiresAt ? props.form.quotaExpiresAt.replace('T', ' ') : '待填写')
 const paymentSummary = computed(() => {
@@ -36,7 +37,7 @@ const submittedPath = computed(() => apiServiceDetailPath(props.submittedId))
 </script>
 
 <template>
-  <aside class="min-w-0 space-y-3 lg:sticky lg:top-16">
+  <aside :class="previewOnly ? 'min-w-0 space-y-3' : 'min-w-0 space-y-3 lg:sticky lg:top-16'">
     <div
       class="rounded-lg border px-3 py-2 text-xs leading-5"
       :class="conflictItems.length ? 'border-destructive/25 bg-destructive/5 text-destructive' : pendingItems.length ? 'border-warning/25 bg-warning/10 text-warning' : 'border-success/20 bg-success/5 text-success'"
@@ -77,7 +78,8 @@ const submittedPath = computed(() => apiServiceDetailPath(props.submittedId))
         <div><dt>¥{{ simplifiedApiQuotaRules.minimumPurchaseCny }} 约可购</dt><dd>{{ quotaForMinimumPurchase }}</dd></div>
         <div><dt>有效至</dt><dd>{{ quotaExpiresAtLabel }}</dd></div>
         <div><dt>收款方式</dt><dd>{{ paymentSummary }}</dd></div>
-        <div><dt>接入细节</dt><dd>提交意向后站外确认</dd></div>
+        <div><dt>接入类型</dt><dd>{{ distributionLabels[form.distributionSystem] }}</dd></div>
+        <div><dt>服务倍率</dt><dd>{{ form.distributionSystem === 'sub2api' ? '1.00x' : formatMultiplier(form.defaultMultiplier) }}</dd></div>
         <div><dt>用量核对</dt><dd>商户说明，买家自行核对</dd></div>
         <div><dt>平台边界</dt><dd>不担保、不代赔</dd></div>
       </dl>

@@ -21,6 +21,7 @@ type apiServiceRequest struct {
 	OwnerContactMethodID             string                        `json:"ownerContactMethodId"`
 	Title                            string                        `json:"title"`
 	ShortDescription                 string                        `json:"shortDescription"`
+	SourceURL                        string                        `json:"sourceUrl"`
 	DistributionSystem               string                        `json:"distributionSystem"`
 	BillingMode                      string                        `json:"billingMode"`
 	DeclaredCNYPerUSDAllowance       string                        `json:"declaredCnyPerUsdAllowance"`
@@ -44,9 +45,10 @@ type apiServiceOrderSettingsRequest struct {
 }
 
 type apiServicePaymentOptionRequest struct {
-	PaymentMethod       string `json:"paymentMethod"`
-	Enabled             *bool  `json:"enabled"`
-	PaymentInstructions string `json:"paymentInstructions"`
+	PaymentMethod        string `json:"paymentMethod"`
+	Enabled              *bool  `json:"enabled"`
+	PaymentInstructions  string `json:"paymentInstructions"`
+	PaymentQRCodeDataURL string `json:"paymentQrCodeDataUrl"`
 }
 
 type apiServiceAccessModeRequest struct {
@@ -80,6 +82,7 @@ type apiServiceResponse struct {
 	OwnerContactMethodID             string                            `json:"ownerContactMethodId,omitempty"`
 	Title                            string                            `json:"title"`
 	ShortDescription                 string                            `json:"shortDescription"`
+	SourceURL                        string                            `json:"sourceUrl,omitempty"`
 	DistributionSystem               string                            `json:"distributionSystem"`
 	BillingMode                      string                            `json:"billingMode"`
 	DeclaredCNYPerUSDAllowance       string                            `json:"declaredCnyPerUsdAllowance,omitempty"`
@@ -118,6 +121,7 @@ type publicAPIServiceResponse struct {
 	MerchantProfileSlug              string                         `json:"merchantProfileSlug,omitempty"`
 	Title                            string                         `json:"title"`
 	ShortDescription                 string                         `json:"shortDescription"`
+	SourceURL                        string                         `json:"sourceUrl,omitempty"`
 	DistributionSystem               string                         `json:"distributionSystem"`
 	BillingMode                      string                         `json:"billingMode"`
 	DeclaredCNYPerUSDAllowance       string                         `json:"declaredCnyPerUsdAllowance,omitempty"`
@@ -171,11 +175,12 @@ type apiServicePackageResponse struct {
 }
 
 type apiServicePaymentOptionResponse struct {
-	ID                  string `json:"id,omitempty"`
-	PaymentMethod       string `json:"paymentMethod"`
-	Enabled             bool   `json:"enabled"`
-	PaymentInstructions string `json:"paymentInstructions,omitempty"`
-	Version             int64  `json:"version,omitempty"`
+	ID                   string `json:"id,omitempty"`
+	PaymentMethod        string `json:"paymentMethod"`
+	Enabled              bool   `json:"enabled"`
+	PaymentInstructions  string `json:"paymentInstructions,omitempty"`
+	PaymentQRCodeDataURL string `json:"paymentQrCodeDataUrl,omitempty"`
+	Version              int64  `json:"version,omitempty"`
 }
 
 type createAPIPurchaseIntentRequest struct {
@@ -834,6 +839,7 @@ func toAppCreateAPIServiceInput(req apiServiceRequest) apimarket.CreateServiceIn
 		OwnerContactMethodID:             req.OwnerContactMethodID,
 		Title:                            req.Title,
 		ShortDescription:                 req.ShortDescription,
+		SourceURL:                        req.SourceURL,
 		DistributionSystem:               req.DistributionSystem,
 		BillingMode:                      req.BillingMode,
 		DeclaredCNYPerUSDAllowance:       req.DeclaredCNYPerUSDAllowance,
@@ -859,6 +865,7 @@ func toAppUpdateAPIServiceInput(req apiServiceRequest) apimarket.UpdateServiceIn
 		OwnerContactMethodID:             base.OwnerContactMethodID,
 		Title:                            base.Title,
 		ShortDescription:                 base.ShortDescription,
+		SourceURL:                        base.SourceURL,
 		DistributionSystem:               base.DistributionSystem,
 		BillingMode:                      base.BillingMode,
 		DeclaredCNYPerUSDAllowance:       base.DeclaredCNYPerUSDAllowance,
@@ -884,9 +891,10 @@ func toAppPaymentOptionInputs(requests []apiServicePaymentOptionRequest) []apima
 			enabled = *req.Enabled
 		}
 		items = append(items, apimarket.PaymentOptionInput{
-			PaymentMethod:       req.PaymentMethod,
-			Enabled:             enabled,
-			PaymentInstructions: req.PaymentInstructions,
+			PaymentMethod:        req.PaymentMethod,
+			Enabled:              enabled,
+			PaymentInstructions:  req.PaymentInstructions,
+			PaymentQRCodeDataURL: req.PaymentQRCodeDataURL,
 		})
 	}
 	return items
@@ -916,6 +924,7 @@ func toPublicAPIServiceResponse(service apimarket.Service) publicAPIServiceRespo
 		MerchantProfileSlug:              service.MerchantProfileSlug,
 		Title:                            service.Title,
 		ShortDescription:                 service.ShortDescription,
+		SourceURL:                        service.SourceURL,
 		DistributionSystem:               service.DistributionSystem,
 		BillingMode:                      service.BillingMode,
 		DeclaredCNYPerUSDAllowance:       service.DeclaredCNYPerUSDAllowance,
@@ -956,6 +965,7 @@ func toAPIServiceResponse(service apimarket.Service) apiServiceResponse {
 		OwnerContactMethodID:             service.OwnerContactMethodID,
 		Title:                            service.Title,
 		ShortDescription:                 service.ShortDescription,
+		SourceURL:                        service.SourceURL,
 		DistributionSystem:               service.DistributionSystem,
 		BillingMode:                      service.BillingMode,
 		DeclaredCNYPerUSDAllowance:       service.DeclaredCNYPerUSDAllowance,
@@ -1038,7 +1048,7 @@ func toAPIServicePackageResponses(packages []apimarket.ServicePackage) []apiServ
 func enabledPaymentMethods(options []apimarket.PaymentOption) []string {
 	items := []string{}
 	for _, option := range options {
-		if option.Enabled {
+		if option.Enabled && apimarket.IsSupportedPaymentMethod(option.PaymentMethod) {
 			items = append(items, option.PaymentMethod)
 		}
 	}
@@ -1048,6 +1058,9 @@ func enabledPaymentMethods(options []apimarket.PaymentOption) []string {
 func toAPIServicePaymentOptionResponses(options []apimarket.PaymentOption, includeInstructions bool) []apiServicePaymentOptionResponse {
 	items := make([]apiServicePaymentOptionResponse, 0, len(options))
 	for _, option := range options {
+		if !apimarket.IsSupportedPaymentMethod(option.PaymentMethod) {
+			continue
+		}
 		response := apiServicePaymentOptionResponse{
 			ID:            option.ID,
 			PaymentMethod: option.PaymentMethod,
@@ -1056,6 +1069,7 @@ func toAPIServicePaymentOptionResponses(options []apimarket.PaymentOption, inclu
 		}
 		if includeInstructions {
 			response.PaymentInstructions = option.PaymentInstructions
+			response.PaymentQRCodeDataURL = option.PaymentQRCodeDataURL
 		}
 		items = append(items, response)
 	}

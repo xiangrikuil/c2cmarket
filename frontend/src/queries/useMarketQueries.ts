@@ -5,6 +5,8 @@ import {
   createContactMethod,
   createContactReport,
   createPublicUserReport,
+  confirmApiOrderPayment,
+  createApiOrderFromIntent,
   confirmEmailVerification,
   deleteContactMethod,
   deleteCustomAvatar,
@@ -16,17 +18,20 @@ import {
   getApiPurchaseIntentEvents,
   getApiPaymentAccountSettings,
   getApiOrderNotifications,
+  getApiOrderById,
   getCarpoolApplicationById,
   getCarpoolApplicationContacts,
   getCarpoolApplicationEvents,
   getCarpoolNotifications,
   getMerchantApiPurchaseIntents,
+  getMerchantApiOrders,
   getMerchantCarpoolApplications,
   getMyContactMethods,
   getMyFeedbackTicket,
   getMyFeedbackTickets,
   getMyOfficialPriceLeads,
   getMyApiPurchaseIntents,
+  getMyApiOrders,
   getMyApiServices,
   getMyCarpools,
   getMyCarpoolApplications,
@@ -64,6 +69,8 @@ import {
   setBackupPassword,
   setDefaultContactMethod,
   startEmailVerification,
+  submitApiOrderDeliveryCredential,
+  submitApiOrderPayment,
   submitFeedback,
   submitReview,
   resumeApiService,
@@ -74,6 +81,9 @@ import {
   useLinuxDoAvatar,
   verifyContactMethod,
   type AdminSection,
+  type ApiOrderFilters,
+  type ApiPaymentOption,
+  type SubmitApiOrderDeliveryCredentialPayload,
   type ApiPaymentAccountSettings,
   type ApiPurchaseIntentFilters,
   type ApiServiceFilters,
@@ -97,6 +107,7 @@ import {
   closeDemand,
   getDemandById,
   getDemands,
+  getMyDemands,
   submitDemand,
   type SubmitDemandPayload,
 } from '@/features/demand/api'
@@ -214,6 +225,10 @@ export function useDemands() {
   return useQuery({ queryKey: ['demands'], queryFn: getDemands })
 }
 
+export function useMyDemands() {
+  return useQuery({ queryKey: ['my-demands'], queryFn: getMyDemands })
+}
+
 export function useDemand(id: Ref<string> | string) {
   return useQuery({
     queryKey: computed(() => ['demands', valueOf(id)]),
@@ -228,6 +243,7 @@ export function useSubmitDemandMutation() {
     onSuccess(data) {
       queryClient.setQueryData(['demands', data.id], data)
       queryClient.invalidateQueries({ queryKey: ['demands'] })
+      queryClient.invalidateQueries({ queryKey: ['my-demands'] })
       queryClient.invalidateQueries({ queryKey: ['home-market'] })
       queryClient.invalidateQueries({ queryKey: ['admin-section'] })
       queryClient.invalidateQueries({ queryKey: ['notifications'] })
@@ -242,6 +258,7 @@ export function useCloseDemandMutation() {
     onSuccess(data) {
       queryClient.setQueryData(['demands', data.id], data)
       queryClient.invalidateQueries({ queryKey: ['demands'] })
+      queryClient.invalidateQueries({ queryKey: ['my-demands'] })
       queryClient.invalidateQueries({ queryKey: ['home-market'] })
       queryClient.invalidateQueries({ queryKey: ['admin-section'] })
       queryClient.invalidateQueries({ queryKey: ['notifications'] })
@@ -557,6 +574,90 @@ export function useApiPurchaseIntentEvents(id: Ref<string> | string) {
   return useQuery({
     queryKey: computed(() => ['api-purchase-intent-events', valueOf(id)]),
     queryFn: () => getApiPurchaseIntentEvents(valueOf(id)),
+  })
+}
+
+export function useMyApiOrders(filters: Ref<ApiOrderFilters> | ApiOrderFilters = {}) {
+  return useQuery({
+    queryKey: computed(() => ['my-api-orders', valueOf(filters)]),
+    queryFn: () => getMyApiOrders(valueOf(filters)),
+    refetchOnMount: 'always',
+  })
+}
+
+export function useMerchantApiOrders(filters: Ref<ApiOrderFilters> | ApiOrderFilters = {}) {
+  return useQuery({
+    queryKey: computed(() => ['merchant-api-orders', valueOf(filters)]),
+    queryFn: () => getMerchantApiOrders(valueOf(filters)),
+    refetchOnMount: 'always',
+  })
+}
+
+export function useApiOrder(id: Ref<string> | string, perspective: Ref<'buyer' | 'merchant'> | 'buyer' | 'merchant' = 'buyer') {
+  return useQuery({
+    queryKey: computed(() => ['api-orders', valueOf(perspective), valueOf(id)]),
+    queryFn: () => getApiOrderById(valueOf(id), valueOf(perspective)),
+    enabled: computed(() => Boolean(valueOf(id))),
+    refetchOnMount: 'always',
+  })
+}
+
+function invalidateApiOrderQueries(queryClient: ReturnType<typeof useQueryClient>, id?: string) {
+  queryClient.invalidateQueries({ queryKey: ['my-api-orders'] })
+  queryClient.invalidateQueries({ queryKey: ['merchant-api-orders'] })
+  queryClient.invalidateQueries({ queryKey: ['api-orders'] })
+  queryClient.invalidateQueries({ queryKey: ['my-api-purchase-intents'] })
+  queryClient.invalidateQueries({ queryKey: ['merchant-api-purchase-intents'] })
+  queryClient.invalidateQueries({ queryKey: ['api-purchase-intents'] })
+  queryClient.invalidateQueries({ queryKey: ['admin-section'] })
+  queryClient.invalidateQueries({ queryKey: ['api-order-notifications'] })
+  if (id) {
+    queryClient.invalidateQueries({ queryKey: ['api-orders', 'buyer', id] })
+    queryClient.invalidateQueries({ queryKey: ['api-orders', 'merchant', id] })
+  }
+}
+
+export function useCreateApiOrderFromIntentMutation() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: ({ intentId, paymentMethod }: { intentId: string, paymentMethod: ApiPaymentOption['paymentMethod'] }) => createApiOrderFromIntent(intentId, paymentMethod),
+    onSuccess(data) {
+      queryClient.setQueryData(['api-orders', 'buyer', data.id], data)
+      invalidateApiOrderQueries(queryClient, data.id)
+    },
+  })
+}
+
+export function useSubmitApiOrderPaymentMutation() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, paymentSummary, version }: { id: string, paymentSummary: string, version: number }) => submitApiOrderPayment(id, paymentSummary, version),
+    onSuccess(data) {
+      queryClient.setQueryData(['api-orders', 'buyer', data.id], data)
+      invalidateApiOrderQueries(queryClient, data.id)
+    },
+  })
+}
+
+export function useConfirmApiOrderPaymentMutation() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, version }: { id: string, version: number }) => confirmApiOrderPayment(id, version),
+    onSuccess(data) {
+      queryClient.setQueryData(['api-orders', 'merchant', data.id], data)
+      invalidateApiOrderQueries(queryClient, data.id)
+    },
+  })
+}
+
+export function useSubmitApiOrderDeliveryCredentialMutation() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, payload, version }: { id: string, payload: SubmitApiOrderDeliveryCredentialPayload, version: number }) => submitApiOrderDeliveryCredential(id, payload, version),
+    onSuccess(data) {
+      queryClient.setQueryData(['api-orders', 'merchant', data.id], data)
+      invalidateApiOrderQueries(queryClient, data.id)
+    },
   })
 }
 

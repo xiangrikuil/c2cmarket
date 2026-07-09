@@ -1,4 +1,5 @@
 export type DemandStatus = '匹配中' | '已匹配' | '已关闭' | '需处理'
+export type BackendDemandStatus = 'pending_review' | 'active' | 'changes_requested' | 'rejected' | 'closed' | 'taken_down'
 
 export type DemandRecord = {
   id: string
@@ -16,6 +17,7 @@ export type DemandRecord = {
   createdAt: string
   updatedAt: string
   backendKind?: 'demand'
+  backendStatus?: BackendDemandStatus
   backendVersion?: number
 }
 

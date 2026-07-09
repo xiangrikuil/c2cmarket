@@ -1,6 +1,9 @@
 <script setup lang="ts">
 import type { CarpoolPublishForm, OpeningChannelOption, PaymentMethodCode, PaymentMethodOption, PublishFieldState } from './types'
+import type { AcceptableValue } from 'reka-ui'
 import PublishSectionCard from './PublishSectionCard.vue'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { Textarea } from '@/components/ui/textarea'
 
 const props = defineProps<{
   form: CarpoolPublishForm
@@ -11,12 +14,19 @@ const props = defineProps<{
   highlightedKey?: string
 }>()
 
-function togglePayment(code: PaymentMethodCode) {
-  if (props.form.paymentMethodCodes.includes(code)) {
-    props.form.paymentMethodCodes = props.form.paymentMethodCodes.filter(item => item !== code)
-  } else {
-    props.form.paymentMethodCodes = [...props.form.paymentMethodCodes, code]
-  }
+function selectPayment(code: PaymentMethodCode) {
+  props.form.paymentMethodCodes = [code]
+}
+
+function adminAccountSelectValue() {
+  if (props.form.providesAdminAccount === null) return ''
+  return props.form.providesAdminAccount ? 'true' : 'false'
+}
+
+function setAdminAccount(value: AcceptableValue) {
+  if (value === 'true') props.form.providesAdminAccount = true
+  else if (value === 'false') props.form.providesAdminAccount = false
+  else props.form.providesAdminAccount = null
 }
 
 function fieldState(key: string): PublishFieldState {
@@ -38,7 +48,7 @@ function fieldShellClass(key: string) {
 function stateLabel(key: string) {
   const state = fieldState(key)
   if (state === 'error') return '需要处理'
-  if (state === 'pendingRequired') return key === 'paymentMethods' ? '至少 1 个' : '待填写'
+  if (state === 'pendingRequired') return '待填写'
   if (state === 'complete') return '已完成'
   return ''
 }
@@ -82,7 +92,7 @@ function stateLabelClass(key: string) {
 
       <div id="carpool-task-paymentMethods" class="space-y-2" :class="fieldShellClass('paymentMethods')">
         <div class="flex items-center justify-between gap-2 text-sm font-medium">
-          <span>付款方式 <span class="text-xs text-primary">至少一项</span></span>
+          <span>付款方式 <span class="text-xs text-primary">必填</span></span>
           <span v-if="stateLabel('paymentMethods')" class="rounded-full px-2 py-0.5 text-xs font-medium" :class="stateLabelClass('paymentMethods')">{{ stateLabel('paymentMethods') }}</span>
         </div>
         <div class="flex flex-wrap gap-2">
@@ -90,16 +100,57 @@ function stateLabelClass(key: string) {
             v-for="method in paymentMethods"
             :key="method.code"
             type="button"
+            :aria-pressed="form.paymentMethodCodes.includes(method.code)"
             class="rounded-md border px-3 py-2 text-sm font-medium transition"
             :class="form.paymentMethodCodes.includes(method.code) ? 'border-primary bg-primary/10 text-primary' : 'border-border bg-background hover:bg-muted'"
-            @click="togglePayment(method.code)"
+            @click="selectPayment(method.code)"
           >
             {{ method.displayName }}
           </button>
         </div>
         <p v-if="errors.paymentMethodCodes" class="text-xs text-destructive">{{ errors.paymentMethodCodes }}</p>
-        <p v-else-if="fieldState('paymentMethods') === 'pendingRequired'" class="text-xs text-warning">至少选择一种站外付款方式。</p>
+        <p v-else-if="fieldState('paymentMethods') === 'pendingRequired'" class="text-xs text-warning">请选择一种站外付款方式。</p>
+        <p v-else class="text-xs text-muted-foreground">车源只保留一种付款方式，买家按该方式站外确认。</p>
       </div>
+    </div>
+
+    <div id="carpool-task-distribution" class="mt-5 space-y-3" :class="fieldShellClass('distribution')">
+      <div class="flex items-center justify-between gap-2 text-sm font-medium">
+        <span>分发方式与管理员账号 <span class="text-xs text-primary">必填</span></span>
+        <span v-if="stateLabel('distribution')" class="rounded-full px-2 py-0.5 text-xs font-medium" :class="stateLabelClass('distribution')">{{ stateLabel('distribution') }}</span>
+      </div>
+      <div class="grid gap-3 md:grid-cols-2">
+        <label class="space-y-2 text-sm">
+          <span class="font-medium">分发方式</span>
+          <Select v-model="form.distributionMethod">
+            <SelectTrigger class="w-full bg-background">
+              <SelectValue placeholder="选择分发方式" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="sub2api">Sub2API</SelectItem>
+              <SelectItem value="other">其他</SelectItem>
+            </SelectContent>
+          </Select>
+        </label>
+        <label class="space-y-2 text-sm">
+          <span class="font-medium">管理员账号</span>
+          <Select :model-value="adminAccountSelectValue()" @update:model-value="setAdminAccount">
+            <SelectTrigger class="w-full bg-background">
+              <SelectValue placeholder="选择是否提供" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="true">提供管理员账号</SelectItem>
+              <SelectItem value="false">不提供管理员账号</SelectItem>
+            </SelectContent>
+          </Select>
+        </label>
+      </div>
+      <label v-if="form.distributionMethod === 'other'" class="block space-y-2 text-sm">
+        <span class="font-medium">其他分发说明</span>
+        <Textarea v-model="form.distributionMethodNote" class="min-h-20 bg-background" placeholder="说明站外分发方式，不填写账号、密码、面板地址、API Key、Session、Cookie 或 token。" />
+      </label>
+      <p v-if="errors.distribution" class="text-xs text-destructive">{{ errors.distribution }}</p>
+      <p v-else class="text-xs text-muted-foreground">这里只展示公开信号；具体权限和使用细节请站外确认，平台不保存任何凭据。</p>
     </div>
   </PublishSectionCard>
 </template>

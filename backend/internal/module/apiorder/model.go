@@ -31,6 +31,9 @@ const (
 	EventCancelled               = "api_order.cancelled"
 	EventPaymentTimeoutCancelled = "api_order.payment_timeout_cancelled"
 	EventDisputeOpened           = "api_order.dispute_opened"
+
+	DeliveryKindAPIKeyEndpoint = "api_key_endpoint"
+	DeliveryKindLoginAccount   = "login_account"
 )
 
 type Order struct {
@@ -54,11 +57,13 @@ type Order struct {
 	PaymentWindowMinutesSnapshot int
 	PaymentExpiresAt             time.Time
 	PaymentInstructionsSnapshot  string
+	PaymentQRCodeDataURLSnapshot string
 	PaymentSummary               string
 	PaymentSubmittedAt           *time.Time
 	PaidConfirmedAt              *time.Time
 	DeliveryNote                 string
 	DeliverySubmittedAt          *time.Time
+	DeliveryCredential           *DeliveryCredential
 	CompletedAt                  *time.Time
 	CancelledAt                  *time.Time
 	CancelReason                 string
@@ -87,6 +92,22 @@ type PaymentInstructionAccessLog struct {
 	AccessedAt  time.Time
 }
 
+type DeliveryCredential struct {
+	ID            string
+	APIOrderID    string
+	SellerUserID  string
+	BuyerUserID   string
+	DeliveryKind  string
+	APIBaseURL    string
+	APIKey        string
+	PanelLoginURL string
+	Username      string
+	Password      string
+	Instructions  string
+	SubmittedAt   time.Time
+	CreatedAt     time.Time
+}
+
 type CreateInput struct {
 	IntentID      string
 	BuyerUserID   string
@@ -95,20 +116,32 @@ type CreateInput struct {
 }
 
 type ActionInput struct {
-	OrderID         string
-	ActorUserID     string
-	PaymentSummary  string
-	DeliveryNote    string
-	Reason          string
-	ExpectedVersion int64
-	RequestID       string
+	OrderID            string
+	ActorUserID        string
+	PaymentSummary     string
+	DeliveryNote       string
+	DeliveryCredential DeliveryCredentialInput
+	Reason             string
+	ExpectedVersion    int64
+	RequestID          string
+}
+
+type DeliveryCredentialInput struct {
+	DeliveryKind  string
+	APIBaseURL    string
+	APIKey        string
+	PanelLoginURL string
+	Username      string
+	Password      string
+	Instructions  string
 }
 
 type PaymentInstructionsView struct {
-	OrderID             string
-	PaymentMethod       string
-	PaymentInstructions string
-	PaymentExpiresAt    time.Time
+	OrderID              string
+	PaymentMethod        string
+	PaymentInstructions  string
+	PaymentQRCodeDataURL string
+	PaymentExpiresAt     time.Time
 }
 
 type DisputeCaseInput struct {

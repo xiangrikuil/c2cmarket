@@ -18,14 +18,14 @@ export const publishDistributionOptions = [
   {
     value: 'sub2api',
     title: 'Sub2API',
-    description: '文本模型倍率和生图倍率固定 1.00x。',
-    detail: '商户配置额度售价、模型、库存、有效期和交易承诺。',
+    description: '服务倍率固定 1.00x。',
+    detail: '适合发布标准美元额度。',
   },
   {
     value: 'other',
     title: '其他 API 接入',
-    description: '适用于 NewAPI、自建中转、固定套餐或手工核对额度。',
-    detail: '进入人工审核，接入细节由双方站外确认。',
+    description: '适用于 NewAPI 或自建中转。',
+    detail: '商户填写默认服务倍率。',
   },
 ] satisfies Array<{
   value: Exclude<DistributionSystem, 'new_api_proxy'>
@@ -59,7 +59,7 @@ export const sub2ApiPricingPolicy = {
 } as const
 
 export const simplifiedApiQuotaRules = {
-  minimumPurchaseCny: 20,
+  minimumPurchaseCny: 10,
   maximumPurchaseCny: 300,
   validityDays: 30,
 } as const
@@ -72,7 +72,6 @@ export const apiQuotaDefaultRuleText = `默认：最低意向 ¥${simplifiedApiQ
 export const apiQuotaBoundaryNotice = 'C2CMarket 仅提供信息撮合，不托管支付、不保存 API Key、不担保交付、不代赔。买家提交意向后，双方站外确认接入细节和售后处理。'
 
 export const merchantNoteTemplate = [
-  '接入方式：提交意向后站外确认接入细节。',
   '用量核对：用量由商户说明，买家自行核对。',
   '限速规则：请勿高并发压测或滥用。',
   '可用时间：高峰期可能响应变慢，部分模型可能临时维护。',
@@ -80,8 +79,7 @@ export const merchantNoteTemplate = [
 ].join('\n')
 
 export const merchantNoteQuickInserts = [
-  '建议首次提交 ¥20 意向测试',
-  '提交意向后站外确认接入细节',
+  '建议首次提交 ¥10 意向测试',
   '用量由商户说明，买家自行核对',
   '高峰期响应可能变慢',
   '部分模型可能临时维护',
@@ -98,12 +96,13 @@ export function enabledPaymentOptions(form: ApiServicePublishForm) {
 }
 
 export function applySimplifiedApiQuotaDefaults(form: ApiServicePublishForm) {
-  form.distributionSystem = 'sub2api'
-  form.distributionSystemNote = 'Sub2API 标准美元额度，接入细节由双方站外确认。'
+  if (!form.distributionSystem) form.distributionSystem = 'sub2api'
+  if (!form.distributionSystemNote && form.distributionSystem === 'sub2api') form.distributionSystemNote = 'Sub2API 标准美元额度，接入细节由双方站外确认。'
+  if (!form.distributionSystemNote && form.distributionSystem === 'other') form.distributionSystemNote = '其他 API 接入，额度与用量由商户站外说明。'
   form.billingMode = 'metered_credit'
   form.deliveryModes = ['api_key_endpoint']
   form.usageVisibility = 'merchant_confirmed'
-  form.defaultMultiplier = sub2ApiPricingPolicy.textModelMultiplier
+  if (form.distributionSystem === 'sub2api') form.defaultMultiplier = sub2ApiPricingPolicy.textModelMultiplier
   form.minimumPurchaseCny = simplifiedApiQuotaRules.minimumPurchaseCny
   form.maximumPurchaseCny = simplifiedApiQuotaRules.maximumPurchaseCny
   if (!form.quotaExpiresAt) form.quotaExpiresAt = defaultQuotaExpiresAtInput()

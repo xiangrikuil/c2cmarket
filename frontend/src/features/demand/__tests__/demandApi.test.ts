@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
-import { closeDemand, getDemandById, getDemands, submitDemand } from '../api'
+import { closeDemand, getDemandById, getDemands, getMyDemands, submitDemand } from '../api'
 
 function createSessionStorage(): Storage {
   const store = new Map<string, string>()
@@ -56,6 +56,9 @@ test('creates, reads, and closes demand records through the feature API mock pat
   const rows = await getDemands()
   expect(rows).toHaveLength(1)
   expect(rows[0]?.title).toBe('ChatGPT Business')
+
+  const myRows = await getMyDemands()
+  expect(myRows.map(item => item.id)).toContain(created.id)
 
   const detail = await getDemandById(created.id)
   expect(detail?.id).toBe(created.id)

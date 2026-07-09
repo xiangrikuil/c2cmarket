@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
 import { test } from 'vitest'
 import {
   apiQuotaBoundaryNotice,
@@ -19,7 +20,7 @@ test('applies simplified API quota publish defaults', () => {
     distributionSystemNote: 'NewAPI 自建中转',
     providerCategory: 'gpt',
     billingMode: 'fixed_package',
-    deliveryModes: ['sub2api_panel_account'],
+    deliveryModes: ['api_key_endpoint'],
     shortDescription: '旧短句',
     cnyPerUsdCredit: 0.8,
     manualBillingNote: '旧计费说明',
@@ -59,15 +60,16 @@ test('applies simplified API quota publish defaults', () => {
 
   applySimplifiedApiQuotaDefaults(form)
 
-  assert.equal(form.distributionSystem, 'sub2api')
+  assert.equal(form.distributionSystem, 'other')
+  assert.equal(form.distributionSystemNote, 'NewAPI 自建中转')
   assert.equal(form.billingMode, 'metered_credit')
   assert.deepEqual(form.deliveryModes, ['api_key_endpoint'])
   assert.equal(form.usageVisibility, 'merchant_confirmed')
-  assert.equal(form.defaultMultiplier, 1)
-  assert.equal(form.minimumPurchaseCny, 20)
+  assert.equal(form.defaultMultiplier, 2)
+  assert.equal(form.minimumPurchaseCny, 10)
   assert.equal(form.maximumPurchaseCny, 300)
   assert.equal(form.paymentWindowMinutes, 10)
-  assert.deepEqual(form.paymentOptions.map(item => item.paymentMethod), ['wechat', 'alipay', 'usdt'])
+  assert.deepEqual(form.paymentOptions.map(item => item.paymentMethod), ['wechat', 'alipay'])
   assert.equal(form.paymentOptions.some(item => item.enabled), false)
   assert.equal(form.paymentOptions.every(item => item.paymentQrCodeDataUrl === null), true)
   assert.equal(form.quotaExpiresAt, '2026-07-10T00:00')
@@ -76,9 +78,9 @@ test('applies simplified API quota publish defaults', () => {
   assert.equal(form.imageCapability.enabled, false)
   assert.deepEqual(form.packages, [])
   assert.equal(form.manualBillingNote, '')
-  assert.equal(generatedTitle(form, new Map()), 'GPT · API 美元额度')
+  assert.equal(generatedTitle(form, new Map()), 'GPT · 其他 API 接入 手工核对额度')
 
-  assert.match(merchantNoteTemplate, /接入方式：/)
+  assert.doesNotMatch(merchantNoteTemplate, new RegExp('接入' + '方式：'))
   assert.match(apiQuotaBoundaryNotice, /不托管支付/)
   assert.match(apiQuotaBoundaryNotice, /不保存 API Key/)
 })
@@ -87,4 +89,17 @@ test('converts Beijing quota expiration input to a backend timestamp', () => {
   assert.equal(beijingDateTimeInputToISOString('2026-07-10T00:00'), '2026-07-09T16:00:00.000Z')
   assert.equal(beijingDateTimeInputToISOString('  '), '')
   assert.equal(beijingDateTimeInputToISOString('invalid'), '')
+})
+
+test('locks API publish merchant display name to profile data', () => {
+  const pageSource = readFileSync(new URL('../../../pages/ApiServicePublishPage.vue', import.meta.url), 'utf8')
+
+  assert.match(pageSource, /useMyProfileQuery/)
+  assert.match(pageSource, /form\.merchantDisplayName = profileMerchantDisplayName\.value/)
+  assert.match(pageSource, /发布必填 \{\{ publishAssistant\.doneCount \}\} \/ \{\{ publishAssistant\.totalCount \}\}/)
+  assert.match(pageSource, /v-model:open="previewOpen"/)
+  assert.match(pageSource, /preview-only/)
+  assert.doesNotMatch(pageSource, /v-model="form\.merchantDisplayName"/)
+  assert.doesNotMatch(pageSource, /placeholder="例如：小葵 API"/)
+  assert.doesNotMatch(pageSource, /预览标题：/)
 })

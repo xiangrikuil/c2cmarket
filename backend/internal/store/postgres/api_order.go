@@ -132,10 +132,11 @@ func (s *Store) ReadAPIOrderPaymentInstructions(ctx context.Context, buyerUserID
 		return apiorder.PaymentInstructionsView{}, internalStoreError()
 	}
 	return apiorder.PaymentInstructionsView{
-		OrderID:             order.ID,
-		PaymentMethod:       order.SelectedPaymentMethod,
-		PaymentInstructions: order.PaymentInstructionsSnapshot,
-		PaymentExpiresAt:    order.PaymentExpiresAt,
+		OrderID:              order.ID,
+		PaymentMethod:        order.SelectedPaymentMethod,
+		PaymentInstructions:  order.PaymentInstructionsSnapshot,
+		PaymentQRCodeDataURL: order.PaymentQRCodeDataURLSnapshot,
+		PaymentExpiresAt:     order.PaymentExpiresAt,
 	}, nil
 }
 
@@ -229,10 +230,25 @@ func (s *Store) updateAPIOrderInTx(ctx context.Context, tx pgx.Tx, input apiorde
 	if !storeCanTransitionAPIOrder(order, action, now) {
 		return apiorder.Order{}, domain.NewError(http.StatusConflict, domain.CodeInvalidStateTransition, "Invalid state transition", "当前订单状态不能执行该操作。")
 	}
+	if action == "submit_delivery" {
+		credentialInput, appErr := apiorder.NormalizeDeliveryCredentialForStore(input.DeliveryCredential)
+		if appErr != nil {
+			return apiorder.Order{}, appErr
+		}
+		input.DeliveryCredential = credentialInput
+		input.DeliveryNote = apiorder.DeliverySummary(credentialInput.DeliveryKind)
+	}
 	if appErr := storeValidateAPIOrderActionInput(input, action); appErr != nil {
 		return apiorder.Order{}, appErr
 	}
 	from := order.Status
+	if action == "submit_delivery" {
+		credential, appErr := s.insertAPIOrderDeliveryCredentialInTx(ctx, tx, order, input.DeliveryCredential, now)
+		if appErr != nil {
+			return apiorder.Order{}, appErr
+		}
+		order.DeliveryCredential = &credential
+	}
 	if action == "open_dispute" {
 		dispute, appErr := openDisputeFromAPIOrderInTx(ctx, tx, order, input, now)
 		if appErr != nil {
@@ -249,6 +265,11 @@ func (s *Store) updateAPIOrderInTx(ctx context.Context, tx pgx.Tx, input apiorde
 	}
 	if appErr := insertAPIOrderEventInTx(ctx, tx, order, input.ActorUserID, storeAPIOrderEventType(action), from, order.Status, storeAPIOrderActionNote(input, action), input.RequestID, now); appErr != nil {
 		return apiorder.Order{}, appErr
+	}
+	if action != "submit_delivery" && order.DeliverySubmittedAt != nil {
+		if appErr := s.attachAPIOrderDeliveryCredential(ctx, tx, &order); appErr != nil {
+			return apiorder.Order{}, appErr
+		}
 	}
 	return order, nil
 }
@@ -319,7 +340,7 @@ const apiOrderColumns = `
 	COALESCE(selected_package_snapshot::text, ''), COALESCE(quote_version_snapshot, 0),
 	amount::text, currency, selected_payment_method,
 	payment_window_minutes_snapshot, payment_expires_at, payment_instructions_snapshot,
-	COALESCE(payment_summary, ''), payment_submitted_at, paid_confirmed_at,
+	COALESCE(payment_qr_code_data_url_snapshot, ''), COALESCE(payment_summary, ''), payment_submitted_at, paid_confirmed_at,
 	COALESCE(delivery_note, ''), delivery_submitted_at, completed_at,
 	cancelled_at, COALESCE(cancel_reason, ''), created_at, updated_at, version
 `
@@ -356,6 +377,11 @@ func (s *Store) getAPIOrder(ctx context.Context, q queryer, orderID string, forU
 	}
 	var order apiorder.Order
 	err := q.QueryRow(ctx, query, orderID).Scan(apiOrderScanTargets(&order)...)
+	if err == nil && !forUpdate {
+		if appErr := s.attachAPIOrderDeliveryCredential(ctx, q, &order); appErr != nil {
+			return apiorder.Order{}, errors.New(appErr.Detail)
+		}
+	}
 	return order, err
 }
 
@@ -381,6 +407,7 @@ func apiOrderScanTargets(order *apiorder.Order) []any {
 		&order.PaymentWindowMinutesSnapshot,
 		&order.PaymentExpiresAt,
 		&order.PaymentInstructionsSnapshot,
+		&order.PaymentQRCodeDataURLSnapshot,
 		&order.PaymentSummary,
 		&order.PaymentSubmittedAt,
 		&order.PaidConfirmedAt,
@@ -404,7 +431,7 @@ func newStoreAPIOrder(input apiorder.CreateInput, intent apiintent.Intent, servi
 	if !ok {
 		return apiorder.Order{}, domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Payment method invalid", "选择的付款方式不可用。", "paymentMethod", "invalid", "选择的付款方式不可用。")
 	}
-	amount, currency, appErr := storeResolveAPIOrderAmount(intent, service, method)
+	amount, currency, appErr := storeResolveAPIOrderAmount(intent, service)
 	if appErr != nil {
 		return apiorder.Order{}, appErr
 	}
@@ -427,6 +454,7 @@ func newStoreAPIOrder(input apiorder.CreateInput, intent apiintent.Intent, servi
 		PaymentWindowMinutesSnapshot: service.PaymentWindowMinutes,
 		PaymentExpiresAt:             now.Add(time.Duration(service.PaymentWindowMinutes) * time.Minute),
 		PaymentInstructionsSnapshot:  option.PaymentInstructions,
+		PaymentQRCodeDataURLSnapshot: option.PaymentQRCodeDataURL,
 		CreatedAt:                    now,
 		UpdatedAt:                    now,
 		Version:                      1,
@@ -441,7 +469,7 @@ func insertAPIOrderInTx(ctx context.Context, tx pgx.Tx, order apiorder.Order) *d
 			service_version_snapshot, billing_mode_snapshot, selected_package_id,
 			selected_package_snapshot, quote_version_snapshot, amount, currency,
 			selected_payment_method, payment_window_minutes_snapshot, payment_expires_at,
-			payment_instructions_snapshot, payment_summary, payment_submitted_at,
+			payment_instructions_snapshot, payment_qr_code_data_url_snapshot, payment_summary, payment_submitted_at,
 			paid_confirmed_at, delivery_note, delivery_submitted_at, completed_at,
 			cancelled_at, cancel_reason, created_at, updated_at, version
 		)
@@ -451,16 +479,16 @@ func insertAPIOrderInTx(ctx context.Context, tx pgx.Tx, order apiorder.Order) *d
 			$10, $11, $12,
 			$13, $14, $15, $16,
 			$17, $18, $19,
-			$20, $21, $22,
-			$23, $24, $25, $26,
-			$27, $28, $29, $30, $31
+			$20, $21, $22, $23,
+			$24, $25, $26, $27,
+			$28, $29, $30, $31, $32
 		)
 	`, order.ID, order.APIPurchaseIntentID, order.APIServiceID, order.BuyerUserID, order.SellerUserID,
 		order.Status, order.DisputeStatus, nullUUID(order.DisputeCaseID), order.ServiceTitleSnapshot,
 		order.ServiceVersionSnapshot, order.BillingModeSnapshot, nullUUID(order.SelectedPackageID),
 		nullJSON(order.SelectedPackageSnapshot), nullInt64(order.QuoteVersionSnapshot), order.Amount, order.Currency,
 		order.SelectedPaymentMethod, order.PaymentWindowMinutesSnapshot, order.PaymentExpiresAt,
-		order.PaymentInstructionsSnapshot, nullText(order.PaymentSummary), order.PaymentSubmittedAt,
+		order.PaymentInstructionsSnapshot, nullText(order.PaymentQRCodeDataURLSnapshot), nullText(order.PaymentSummary), order.PaymentSubmittedAt,
 		order.PaidConfirmedAt, nullText(order.DeliveryNote), order.DeliverySubmittedAt, order.CompletedAt,
 		order.CancelledAt, nullText(order.CancelReason), order.CreatedAt, order.UpdatedAt, order.Version)
 	if err != nil {
@@ -536,6 +564,144 @@ func insertAPIOrderPaymentInstructionAccessLogInTx(ctx context.Context, tx pgx.T
 	return nil
 }
 
+func (s *Store) insertAPIOrderDeliveryCredentialInTx(ctx context.Context, tx pgx.Tx, order apiorder.Order, input apiorder.DeliveryCredentialInput, now time.Time) (apiorder.DeliveryCredential, *domain.AppError) {
+	if s == nil || s.contactCodec == nil {
+		return apiorder.DeliveryCredential{}, internalStoreError()
+	}
+	credential := apiorder.DeliveryCredential{
+		ID:            uuid.NewString(),
+		APIOrderID:    order.ID,
+		SellerUserID:  order.SellerUserID,
+		BuyerUserID:   order.BuyerUserID,
+		DeliveryKind:  input.DeliveryKind,
+		APIBaseURL:    input.APIBaseURL,
+		APIKey:        input.APIKey,
+		PanelLoginURL: input.PanelLoginURL,
+		Username:      input.Username,
+		Password:      input.Password,
+		Instructions:  input.Instructions,
+		SubmittedAt:   now,
+		CreatedAt:     now,
+	}
+	var apiKeyCiphertext []byte
+	var apiKeyNonce []byte
+	var passwordCiphertext []byte
+	var passwordNonce []byte
+	keyVersion := s.contactCodec.encryptionKeyVersion
+	if credential.APIKey != "" {
+		encoded, err := s.contactCodec.encode(credential.APIKey)
+		if err != nil {
+			return apiorder.DeliveryCredential{}, internalStoreError()
+		}
+		apiKeyCiphertext = encoded.Ciphertext
+		apiKeyNonce = encoded.Nonce
+		keyVersion = encoded.EncryptionKeyVersion
+	}
+	if credential.Password != "" {
+		encoded, err := s.contactCodec.encode(credential.Password)
+		if err != nil {
+			return apiorder.DeliveryCredential{}, internalStoreError()
+		}
+		passwordCiphertext = encoded.Ciphertext
+		passwordNonce = encoded.Nonce
+		keyVersion = encoded.EncryptionKeyVersion
+	}
+	_, err := tx.Exec(ctx, `
+		INSERT INTO api_order_delivery_credentials (
+			id, api_order_id, seller_user_id, buyer_user_id, delivery_kind,
+			api_base_url, panel_login_url, username, instructions,
+			api_key_ciphertext, api_key_nonce, password_ciphertext, password_nonce,
+			secret_encryption_key_version, submitted_at, created_at
+		)
+		VALUES (
+			$1, $2, $3, $4, $5,
+			$6, $7, $8, $9,
+			$10, $11, $12, $13,
+			$14, $15, $16
+		)
+	`, credential.ID, credential.APIOrderID, credential.SellerUserID, credential.BuyerUserID, credential.DeliveryKind,
+		nullText(credential.APIBaseURL), nullText(credential.PanelLoginURL), nullText(credential.Username), nullText(credential.Instructions),
+		apiKeyCiphertext, apiKeyNonce, passwordCiphertext, passwordNonce, keyVersion, credential.SubmittedAt, credential.CreatedAt)
+	if err != nil {
+		if isUniqueViolationOnConstraint(err, "ux_api_order_delivery_credentials_order") {
+			return apiorder.DeliveryCredential{}, domain.NewError(http.StatusConflict, domain.CodeInvalidStateTransition, "Invalid state transition", "交付信息已提交，不能再次修改。")
+		}
+		return apiorder.DeliveryCredential{}, internalStoreError()
+	}
+	return credential, nil
+}
+
+func (s *Store) attachAPIOrderDeliveryCredential(ctx context.Context, q queryer, order *apiorder.Order) *domain.AppError {
+	if order == nil || order.DeliverySubmittedAt == nil {
+		return nil
+	}
+	credential, found, appErr := s.getAPIOrderDeliveryCredential(ctx, q, order.ID)
+	if appErr != nil {
+		return appErr
+	}
+	if found {
+		order.DeliveryCredential = &credential
+	}
+	return nil
+}
+
+func (s *Store) getAPIOrderDeliveryCredential(ctx context.Context, q queryer, orderID string) (apiorder.DeliveryCredential, bool, *domain.AppError) {
+	if s == nil || s.contactCodec == nil {
+		return apiorder.DeliveryCredential{}, false, internalStoreError()
+	}
+	var credential apiorder.DeliveryCredential
+	var apiKeyCiphertext []byte
+	var apiKeyNonce []byte
+	var passwordCiphertext []byte
+	var passwordNonce []byte
+	err := q.QueryRow(ctx, `
+		SELECT id::text, api_order_id::text, seller_user_id::text, buyer_user_id::text,
+		       delivery_kind, COALESCE(api_base_url, ''), COALESCE(panel_login_url, ''),
+		       COALESCE(username, ''), COALESCE(instructions, ''),
+		       api_key_ciphertext, api_key_nonce, password_ciphertext, password_nonce,
+		       submitted_at, created_at
+		FROM api_order_delivery_credentials
+		WHERE api_order_id = $1
+	`, orderID).Scan(
+		&credential.ID,
+		&credential.APIOrderID,
+		&credential.SellerUserID,
+		&credential.BuyerUserID,
+		&credential.DeliveryKind,
+		&credential.APIBaseURL,
+		&credential.PanelLoginURL,
+		&credential.Username,
+		&credential.Instructions,
+		&apiKeyCiphertext,
+		&apiKeyNonce,
+		&passwordCiphertext,
+		&passwordNonce,
+		&credential.SubmittedAt,
+		&credential.CreatedAt,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return apiorder.DeliveryCredential{}, false, nil
+	}
+	if err != nil {
+		return apiorder.DeliveryCredential{}, false, internalStoreError()
+	}
+	if len(apiKeyCiphertext) > 0 {
+		apiKey, err := s.contactCodec.decode(apiKeyCiphertext, apiKeyNonce)
+		if err != nil {
+			return apiorder.DeliveryCredential{}, false, internalStoreError()
+		}
+		credential.APIKey = apiKey
+	}
+	if len(passwordCiphertext) > 0 {
+		password, err := s.contactCodec.decode(passwordCiphertext, passwordNonce)
+		if err != nil {
+			return apiorder.DeliveryCredential{}, false, internalStoreError()
+		}
+		credential.Password = password
+	}
+	return credential, true, nil
+}
+
 func openDisputeFromAPIOrderInTx(ctx context.Context, tx pgx.Tx, order apiorder.Order, input apiorder.ActionInput, now time.Time) (report.DisputeCase, *domain.AppError) {
 	counterpartyID := order.SellerUserID
 	if input.ActorUserID == order.SellerUserID {
@@ -558,18 +724,18 @@ func openDisputeFromAPIOrderInTx(ctx context.Context, tx pgx.Tx, order apiorder.
 }
 
 func storeFindPaymentOption(service apimarket.Service, method string) (apimarket.PaymentOption, bool) {
+	if !apimarket.IsSupportedPaymentMethod(method) {
+		return apimarket.PaymentOption{}, false
+	}
 	for _, option := range service.PaymentOptions {
-		if option.Enabled && option.PaymentMethod == method {
+		if option.Enabled && apimarket.IsSupportedPaymentMethod(option.PaymentMethod) && option.PaymentMethod == method {
 			return option, true
 		}
 	}
 	return apimarket.PaymentOption{}, false
 }
 
-func storeResolveAPIOrderAmount(intent apiintent.Intent, service apimarket.Service, method string) (string, string, *domain.AppError) {
-	if method == apimarket.PaymentMethodUSDT {
-		return "", "", domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "USDT quote required", "USDT 下单必须先由商户给出固定 USDT 报价。", "paymentMethod", "quote_required", "USDT 下单必须先报价。")
-	}
+func storeResolveAPIOrderAmount(intent apiintent.Intent, service apimarket.Service) (string, string, *domain.AppError) {
 	switch service.BillingMode {
 	case apimarket.ServiceBillingModeFixedPackage:
 		pack, ok := storeFindAPIServicePackage(service, intent.SelectedPackageID)
@@ -626,10 +792,10 @@ func storeValidateAPIOrderActionInput(input apiorder.ActionInput, action string)
 		}
 		return storeValidateOptionalNonSecretText("paymentSummary", input.PaymentSummary)
 	case "submit_delivery":
-		if strings.TrimSpace(input.DeliveryNote) == "" {
-			return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Off-platform delivery prompt required", "必须填写站外交付提示。", "deliveryNote", "required", "必须填写站外交付提示。")
+		if _, err := apiorder.NormalizeDeliveryCredentialForStore(input.DeliveryCredential); err != nil {
+			return err
 		}
-		return storeValidateOptionalNonSecretText("deliveryNote", input.DeliveryNote)
+		return nil
 	case "cancel", "open_dispute":
 		if strings.TrimSpace(input.Reason) == "" {
 			return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Reason required", "必须填写原因。", "reason", "required", "必须填写原因。")
@@ -655,7 +821,7 @@ func storeApplyAPIOrderAction(order apiorder.Order, input apiorder.ActionInput, 
 		order.PaidConfirmedAt = &now
 	case "submit_delivery":
 		order.Status = apiorder.StatusDeliverySubmitted
-		order.DeliveryNote = strings.TrimSpace(input.DeliveryNote)
+		order.DeliveryNote = apiorder.DeliverySummary(input.DeliveryCredential.DeliveryKind)
 		order.DeliverySubmittedAt = &now
 	case "confirm_complete":
 		order.Status = apiorder.StatusCompleted
@@ -692,7 +858,7 @@ func storeAPIOrderActionNote(input apiorder.ActionInput, action string) string {
 	case "submit_payment":
 		return input.PaymentSummary
 	case "submit_delivery":
-		return input.DeliveryNote
+		return apiorder.DeliverySummary(input.DeliveryCredential.DeliveryKind)
 	case "cancel", "open_dispute":
 		return input.Reason
 	default:

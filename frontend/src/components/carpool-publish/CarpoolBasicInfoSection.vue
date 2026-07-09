@@ -91,8 +91,14 @@ function stateLabelClass(key: string) {
             <SelectItem v-for="region in regions" :key="region.code" :value="region.code">{{ region.displayName }}</SelectItem>
           </SelectContent>
         </Select>
+        <Input
+          v-if="form.regionCode === 'other'"
+          :model-value="form.customRegionName ?? ''"
+          placeholder="填写开通区，例如印度区、巴西区、欧洲区"
+          @update:model-value="value => form.customRegionName = value === '' ? null : String(value)"
+        />
         <p v-if="errors.region" class="text-xs text-destructive">{{ errors.region }}</p>
-        <p v-else-if="fieldState('region') === 'pendingRequired'" class="text-xs text-warning">请选择买家实际开通或使用的地区。</p>
+        <p v-else-if="fieldState('region') === 'pendingRequired'" class="text-xs text-warning">请选择或填写买家实际开通或使用的地区。</p>
       </label>
 
       <label id="carpool-task-monthlyPrice" class="space-y-2" :class="fieldShellClass('monthlyPrice')">
@@ -109,12 +115,6 @@ function stateLabelClass(key: string) {
         />
         <p v-if="errors.monthlyPriceCny" class="text-xs text-destructive">{{ errors.monthlyPriceCny }}</p>
         <p v-else class="text-xs" :class="fieldState('monthlyPrice') === 'pendingRequired' ? 'text-warning' : 'text-muted-foreground'">默认按人民币 / 月展示。</p>
-      </label>
-
-      <label class="space-y-2">
-        <span class="block text-sm font-medium">计费周期</span>
-        <Input model-value="月付" readonly />
-        <p class="text-xs text-muted-foreground">拼车列表默认使用月费比较。</p>
       </label>
 
       <label id="carpool-task-serviceMultiplier" class="space-y-2" :class="fieldShellClass('serviceMultiplier')">

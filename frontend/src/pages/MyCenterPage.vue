@@ -2,7 +2,7 @@
 import { computed, onUnmounted, reactive, ref, watch, watchEffect } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { toast } from 'vue-sonner'
-import { Bell, Car, CheckCircle2, CircleAlert, ContactRound, CreditCard, Eye, ImageUp, KeyRound, Link2, LockKeyhole, LogIn, Mail, MailCheck, MessageCircle, RefreshCw, Save, ShieldCheck, ShoppingBag, Trash2, UserRound, UsersRound, X } from 'lucide-vue-next'
+import { Bell, Car, CheckCircle2, CircleAlert, ContactRound, CreditCard, Eye, ImageUp, KeyRound, Link2, LockKeyhole, LogIn, Mail, MailCheck, MessageCircle, RefreshCw, Save, ScanSearch, ShieldCheck, ShoppingBag, Trash2, UserRound, UsersRound, X } from 'lucide-vue-next'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
@@ -42,6 +42,7 @@ import {
   useMyContactMethodsQuery,
   useMyApiServices,
   useMyCarpools,
+  useMyDemands,
   usePauseApiServiceMutation,
   useMyProfileQuery,
   usePublishApiServiceMutation,
@@ -64,6 +65,7 @@ const { data: contacts } = useMyContactMethodsQuery()
 const { data: apiPaymentSettings } = useApiPaymentAccountSettingsQuery()
 const { data: carpools } = useMyCarpools()
 const { data: apiServices } = useMyApiServices()
+const { data: demands } = useMyDemands()
 
 const updateProfileMutation = useUpdateMyProfileMutation()
 const deleteAvatarMutation = useDeleteCustomAvatarMutation()
@@ -318,6 +320,7 @@ watchEffect(() => {
 
 const carpoolRows = computed(() => carpools.value ?? [])
 const apiServiceRows = computed(() => apiServices.value ?? [])
+const demandRows = computed(() => demands.value ?? [])
 const carpoolPagination = usePagination(carpoolRows)
 const apiServicePagination = usePagination(apiServiceRows)
 const avatarText = computed(() => (profile.value?.displayName || profile.value?.username || '我').slice(0, 1).toUpperCase())
@@ -374,7 +377,7 @@ function apiPaymentMethodLabel(method: ApiPaymentMethod) {
 
 function apiPaymentInstructionsPlaceholder(method: ApiPaymentMethod) {
   if (apiPaymentMethodRequiresQrCode(method)) return '可选：填写收款码备注、核对口径或站外确认节奏。'
-  return '填写 USDT 网络、地址确认方式和站外核对说明。'
+  return '填写收款说明、核对口径或站外确认节奏。'
 }
 
 function handleApiPaymentQrUpload(event: Event, option: ApiPaymentOption) {
@@ -1012,8 +1015,9 @@ function goToLogin() {
     </nav>
 
     <section v-if="activeSection === 'overview'" class="space-y-5">
-      <div class="grid gap-3 md:grid-cols-4">
+      <div class="grid gap-3 md:grid-cols-2 lg:grid-cols-5">
         <RouterLink to="/my/carpools"><StatCard label="我的开车" :value="String(carpoolRows.length)" hint="仅展示当前用户车源" :icon="Car" accent /></RouterLink>
+        <RouterLink to="/my/demands"><StatCard label="我的求车" :value="String(demandRows.length)" hint="查看需求进度" :icon="ScanSearch" /></RouterLink>
         <RouterLink to="/my/rides"><StatCard label="我的上车" value="5" hint="1 个待完成" :icon="UsersRound" /></RouterLink>
         <RouterLink to="/my/api-orders"><StatCard label="API 意向" value="2" hint="1 个站外确认中" :icon="ShoppingBag" /></RouterLink>
         <RouterLink to="/my/contacts"><StatCard label="启用联系方式" :value="String(enabledContactCount)" hint="只在私有页和联系窗口内可见" :icon="ContactRound" /></RouterLink>

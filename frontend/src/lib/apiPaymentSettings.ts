@@ -1,4 +1,4 @@
-export type ApiPaymentMethod = 'wechat' | 'alipay' | 'usdt'
+export type ApiPaymentMethod = 'wechat' | 'alipay'
 
 export type ApiPaymentOption = {
   paymentMethod: ApiPaymentMethod
@@ -13,18 +13,24 @@ export type ApiPaymentAccountSettings = {
   updatedAt: string
 }
 
+type RawApiPaymentOption = Partial<Omit<ApiPaymentOption, 'paymentMethod'>> & {
+  paymentMethod?: string
+}
+
+type RawApiPaymentAccountSettings = Partial<Omit<ApiPaymentAccountSettings, 'paymentOptions'>> & {
+  paymentOptions?: RawApiPaymentOption[]
+}
+
 export const defaultApiPaymentWindowMinutes = 10
 
 export const apiPaymentMethodLabels: Record<ApiPaymentMethod, string> = {
   wechat: '微信',
   alipay: '支付宝',
-  usdt: 'USDT',
 }
 
 export const apiPaymentMethods = [
   { value: 'wechat', label: apiPaymentMethodLabels.wechat, hint: '提交意向后买家可查看微信收款码并站外确认。' },
   { value: 'alipay', label: apiPaymentMethodLabels.alipay, hint: '提交意向后买家可查看支付宝收款码并站外确认。' },
-  { value: 'usdt', label: apiPaymentMethodLabels.usdt, hint: '提交意向后站外确认网络和地址。' },
 ] satisfies Array<{ value: ApiPaymentMethod, label: string, hint: string }>
 
 export const apiPaymentQrCodeMethods: ApiPaymentMethod[] = ['wechat', 'alipay']
@@ -46,7 +52,7 @@ export function createEmptyApiPaymentAccountSettings(updatedAt = ''): ApiPayment
   }
 }
 
-export function normalizeApiPaymentAccountSettings(value: Partial<ApiPaymentAccountSettings> | null | undefined, updatedAt = ''): ApiPaymentAccountSettings {
+export function normalizeApiPaymentAccountSettings(value: RawApiPaymentAccountSettings | null | undefined, updatedAt = ''): ApiPaymentAccountSettings {
   const sourceOptions = Array.isArray(value?.paymentOptions) ? value.paymentOptions : []
   const byMethod = new Map(sourceOptions.map(option => [option.paymentMethod, option]))
   return {

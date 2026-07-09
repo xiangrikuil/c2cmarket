@@ -2,6 +2,11 @@ import type {
   AdminRow,
   ApiBillingMode,
   ApiDeliveryMode,
+  ApiOrder,
+  ApiOrderDeliveryCredential,
+  ApiOrderFilters,
+  ApiOrderPaymentInstructions,
+  ApiOrderStatus,
   ApiPurchaseIntent,
   ApiPurchaseIntentEvent,
   ApiPurchaseIntentFilters,
@@ -14,6 +19,7 @@ import type {
   ModelPriceRow,
   OtherApiMarketFilters,
   SaveContactMethodRequest,
+  SubmitApiOrderDeliveryCredentialPayload,
   Sub2ApiMarketFilters,
   UserContactMethod,
 } from '@/lib/api'
@@ -58,6 +64,7 @@ type BackendPaymentOption = {
   paymentMethod: string
   enabled: boolean
   paymentInstructions: string
+  paymentQrCodeDataUrl?: string
 }
 
 type BackendAPIService = {
@@ -70,6 +77,7 @@ type BackendAPIService = {
   ownerContactMethodId?: string
   title: string
   shortDescription: string
+  sourceUrl?: string
   distributionSystem: string
   billingMode: string
   declaredCnyPerUsdAllowance?: string
@@ -140,6 +148,53 @@ type BackendAPIPurchaseIntent = {
   updatedAt: string
 }
 
+type BackendAPIOrderDeliveryCredential = {
+  deliveryKind: string
+  apiBaseUrl?: string
+  apiKey?: string
+  panelLoginUrl?: string
+  username?: string
+  password?: string
+  instructions?: string
+  submittedAt: string
+}
+
+type BackendAPIOrder = {
+  id: string
+  apiPurchaseIntentId: string
+  apiServiceId: string
+  buyerUserId?: string
+  sellerUserId?: string
+  status: string
+  disputeStatus?: string
+  serviceTitleSnapshot: string
+  amount: string
+  currency: string
+  selectedPaymentMethod: string
+  paymentWindowMinutesSnapshot: number
+  paymentExpiresAt: string
+  paymentSummary?: string
+  paymentSubmittedAt?: string | null
+  paidConfirmedAt?: string | null
+  deliveryNote?: string
+  deliverySubmittedAt?: string | null
+  deliveryCredential?: BackendAPIOrderDeliveryCredential | null
+  completedAt?: string | null
+  cancelledAt?: string | null
+  cancelReason?: string
+  version: number
+  createdAt: string
+  updatedAt: string
+}
+
+type BackendAPIOrderPaymentInstructions = {
+  orderId: string
+  paymentMethod: string
+  paymentInstructions: string
+  paymentQrCodeDataUrl?: string
+  paymentExpiresAt: string
+}
+
 type BackendAPIModel = {
   id: string
   providerCategory: string
@@ -187,6 +242,8 @@ function usageVisibility(value: string): ApiUsageVisibility {
 }
 
 function serviceState(service: BackendAPIService): ApiService['state'] {
+  // 公开列表不返回审核/发布/治理状态，isOrderable 已是后端公开可接单契约。
+  if (service.isOrderable) return 'online'
   if (service.moderationStatus === 'removed' || service.publicationStatus === 'archived') return 'offline'
   if (service.moderationStatus === 'admin_suspended' || service.publicationStatus === 'owner_paused') return 'paused'
   if (service.reviewStatus === 'pending_review') return 'reviewing'
@@ -222,6 +279,7 @@ export function mapBackendAPIService(service: BackendAPIService): ApiService {
   return {
     id: service.id,
     title: service.title,
+    sourceUrl: service.sourceUrl ?? '',
     merchantId: service.merchantProfileId ?? service.ownerUserId ?? 'merchant',
     merchantUsername,
     merchant: displayName,
@@ -277,6 +335,7 @@ export function mapBackendAPIService(service: BackendAPIService): ApiService {
     merchantNote: service.merchantNote || service.publicAccessNote || service.shortDescription,
     modelPriceRows: modelPriceRows(service.models),
     contactChannels: [],
+    acceptedPaymentMethods: (service.acceptedPaymentMethods ?? []).filter(isApiPaymentMethod),
   }
 }
 
@@ -359,7 +418,9 @@ function contactToChannel(contact?: ContactDisclosure | null) {
   return [{ type: contact.type, label: contact.label, value: contact.value }]
 }
 
-function mapIntent(intent: BackendAPIPurchaseIntent): ApiPurchaseIntent {
+type ApiIntentViewerRole = 'buyer' | 'merchant'
+
+function mapIntent(intent: BackendAPIPurchaseIntent, viewerRole: ApiIntentViewerRole): ApiPurchaseIntent {
   const amount = numberFromDecimal(intent.requestedCnyAmount)
   const credit = numberFromDecimal(intent.requestedUsdAllowance)
   const mode = deliveryMode(intent.selectedAccessMode)
@@ -415,6 +476,8 @@ function mapIntent(intent: BackendAPIPurchaseIntent): ApiPurchaseIntent {
       note: '真实后端购买意向记录',
     },
     contactChannels: contactToChannel(intent.merchantContact),
+    buyerContactChannels: contactToChannel(intent.buyerContact),
+    viewerRole,
     createdAt: intent.createdAt,
     updatedAt: intent.updatedAt,
     buyerCancelledAt: intent.buyerCancelledAt ?? undefined,
@@ -437,19 +500,19 @@ function sortIntents(rows: ApiPurchaseIntent[], filters: ApiPurchaseIntentFilter
 
 export async function backendMyAPIIntents(filters: ApiPurchaseIntentFilters = {}) {
   const response = await backendRequest<ListResponse<BackendAPIPurchaseIntent>>('/api/v1/me/api-purchase-intents')
-  return sortIntents(response.items.map(mapIntent), filters)
+  return sortIntents(response.items.map(item => mapIntent(item, 'buyer')), filters)
 }
 
 export async function backendOwnerAPIIntents(filters: ApiPurchaseIntentFilters = {}) {
   const response = await backendRequest<ListResponse<BackendAPIPurchaseIntent>>('/api/v1/owner/api-purchase-intents')
-  return sortIntents(response.items.map(mapIntent), filters)
+  return sortIntents(response.items.map(item => mapIntent(item, 'merchant')), filters)
 }
 
 export async function backendAPIIntentById(id: string) {
   try {
-    return mapIntent(await backendRequest<BackendAPIPurchaseIntent>(`/api/v1/me/api-purchase-intents/${id}`))
+    return mapIntent(await backendRequest<BackendAPIPurchaseIntent>(`/api/v1/me/api-purchase-intents/${id}`), 'buyer')
   } catch {
-    return mapIntent(await backendRequest<BackendAPIPurchaseIntent>(`/api/v1/owner/api-purchase-intents/${id}`))
+    return mapIntent(await backendRequest<BackendAPIPurchaseIntent>(`/api/v1/owner/api-purchase-intents/${id}`), 'merchant')
   }
 }
 
@@ -515,7 +578,7 @@ export async function backendCreateAPIPurchaseIntent(payload: CreateApiPurchaseI
     selectedPackageId: '',
     buyerNote: payload.buyerNote ?? '',
   }, { idempotencyPrefix: 'api-intent' })
-  return mapIntent(response)
+  return mapIntent(response, 'buyer')
 }
 
 export async function backendCancelAPIIntent(intent: ApiPurchaseIntent, reason: string) {
@@ -523,7 +586,7 @@ export async function backendCancelAPIIntent(intent: ApiPurchaseIntent, reason: 
     idempotencyPrefix: 'api-intent-cancel',
     ifMatch: intent.version,
   })
-  return mapIntent(response)
+  return mapIntent(response, 'buyer')
 }
 
 export async function backendCancelAPIIntentById(id: string, reason: string) {
@@ -537,7 +600,7 @@ export async function backendMarkAPIIntentContacted(id: string) {
     idempotencyPrefix: 'api-intent-contacted',
     ifMatch: intent.version,
   })
-  return mapIntent(response)
+  return mapIntent(response, 'merchant')
 }
 
 export async function backendCloseAPIIntent(id: string, reason: string) {
@@ -546,7 +609,179 @@ export async function backendCloseAPIIntent(id: string, reason: string) {
     idempotencyPrefix: 'api-intent-close',
     ifMatch: intent.version,
   })
-  return mapIntent(response)
+  return mapIntent(response, 'merchant')
+}
+
+function apiOrderStatus(value: string): ApiOrderStatus {
+  if (
+    value === 'pending_payment'
+    || value === 'payment_submitted'
+    || value === 'paid_confirmed'
+    || value === 'delivery_submitted'
+    || value === 'completed'
+    || value === 'cancelled'
+  ) {
+    return value
+  }
+  throw new Error(`Unsupported API order status: ${value}`)
+}
+
+function apiOrderPaymentMethod(value: string): ApiOrderPaymentInstructions['paymentMethod'] {
+  if (isApiPaymentMethod(value)) return value
+  throw new Error(`Unsupported API order payment method: ${value}`)
+}
+
+function mapDeliveryCredential(value?: BackendAPIOrderDeliveryCredential | null): ApiOrderDeliveryCredential | undefined {
+  if (!value) return undefined
+  if (value.deliveryKind !== 'api_key_endpoint' && value.deliveryKind !== 'login_account') {
+    throw new Error(`Unsupported API order delivery kind: ${value.deliveryKind}`)
+  }
+  return {
+    deliveryKind: value.deliveryKind,
+    apiBaseUrl: value.apiBaseUrl,
+    apiKey: value.apiKey,
+    panelLoginUrl: value.panelLoginUrl,
+    username: value.username,
+    password: value.password,
+    instructions: value.instructions,
+    submittedAt: value.submittedAt,
+  }
+}
+
+function apiOrderSearchTerms(order: ApiOrder) {
+  return [order.id, order.apiPurchaseIntentId, order.serviceTitle, order.buyer, order.seller]
+}
+
+function filterAndSortOrders(rows: ApiOrder[], filters: ApiOrderFilters = {}, role: 'buyer' | 'merchant') {
+  const search = filters.search?.trim().toLowerCase()
+  const statuses = Array.isArray(filters.status) ? filters.status : filters.status ? [filters.status] : null
+  const now = Date.now()
+  const rangeMs = filters.dateRange === 'today' ? 24 * 60 * 60 * 1000 : filters.dateRange === '7d' ? 7 * 24 * 60 * 60 * 1000 : filters.dateRange === '30d' ? 30 * 24 * 60 * 60 * 1000 : null
+  const filtered = rows.filter(row => {
+    const createdAt = new Date(row.createdAt).getTime()
+    return (!filters.buyerId || row.buyerId === filters.buyerId)
+      && (!filters.sellerId || row.sellerId === filters.sellerId)
+      && (!statuses || statuses.includes(row.status))
+      && (!filters.serviceId || row.apiServiceId === filters.serviceId)
+      && (!rangeMs || now - createdAt <= rangeMs)
+      && (!search || apiOrderSearchTerms(row).some(value => value.toLowerCase().includes(search)))
+  })
+  const sort = filters.sort ?? 'updated_desc'
+  return filtered.sort((a, b) => {
+    if (sort === 'default_buyer' || sort === 'default_merchant') {
+      const buyerAction = (item: ApiOrder) => item.status === 'pending_payment' || item.status === 'delivery_submitted' || item.status === 'completed'
+      const merchantAction = (item: ApiOrder) => item.status === 'payment_submitted' || item.status === 'paid_confirmed'
+      const aAction = role === 'buyer' ? buyerAction(a) : merchantAction(a)
+      const bAction = role === 'buyer' ? buyerAction(b) : merchantAction(b)
+      return Number(bAction) - Number(aAction) || new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()
+    }
+    if (sort === 'created_desc') return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+    if (sort === 'amount_desc') return b.amount - a.amount
+    if (sort === 'amount_asc') return a.amount - b.amount
+    return new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()
+  })
+}
+
+async function mapBackendAPIOrder(order: BackendAPIOrder, viewerRole: 'buyer' | 'merchant'): Promise<ApiOrder> {
+  const intent = await backendAPIIntentById(order.apiPurchaseIntentId)
+  if (order.currency !== 'CNY') throw new Error(`Unsupported API order currency: ${order.currency}`)
+  return {
+    id: order.id,
+    apiPurchaseIntentId: order.apiPurchaseIntentId,
+    apiServiceId: order.apiServiceId,
+    buyerId: order.buyerUserId ?? intent.buyerId,
+    buyer: intent.buyer,
+    sellerId: order.sellerUserId ?? intent.merchantId,
+    seller: intent.snapshot.merchantDisplayName || intent.merchant,
+    status: apiOrderStatus(order.status),
+    disputeStatus: order.disputeStatus,
+    serviceTitle: order.serviceTitleSnapshot || intent.snapshot.serviceTitle,
+    amount: numberFromDecimal(order.amount),
+    currency: 'CNY',
+    selectedPaymentMethod: apiOrderPaymentMethod(order.selectedPaymentMethod),
+    paymentWindowMinutes: order.paymentWindowMinutesSnapshot,
+    paymentExpiresAt: order.paymentExpiresAt,
+    paymentSummary: order.paymentSummary,
+    paymentSubmittedAt: order.paymentSubmittedAt ?? undefined,
+    paidConfirmedAt: order.paidConfirmedAt ?? undefined,
+    deliveryNote: order.deliveryNote,
+    deliverySubmittedAt: order.deliverySubmittedAt ?? undefined,
+    deliveryCredential: mapDeliveryCredential(order.deliveryCredential),
+    completedAt: order.completedAt ?? undefined,
+    cancelledAt: order.cancelledAt ?? undefined,
+    cancelReason: order.cancelReason,
+    version: order.version,
+    intentSnapshot: intent.snapshot,
+    selectedDeliveryMode: intent.selectedDeliveryMode,
+    requestedUsdAllowance: intent.purchasedCredit,
+    merchantContactChannels: intent.contactChannels,
+    buyerContactChannels: intent.buyerContactChannels ?? [],
+    viewerRole,
+    createdAt: order.createdAt,
+    updatedAt: order.updatedAt,
+  }
+}
+
+export async function backendCreateAPIOrderFromIntent(intentId: string, paymentMethod: ApiOrderPaymentInstructions['paymentMethod']) {
+  const response = await backendMutation<BackendAPIOrder>(`/api/v1/me/api-purchase-intents/${intentId}/orders`, { paymentMethod }, {
+    idempotencyPrefix: 'api-order-create',
+  })
+  return mapBackendAPIOrder(response, 'buyer')
+}
+
+export async function backendMyAPIOrders(filters: ApiOrderFilters = {}) {
+  const response = await backendRequest<ListResponse<BackendAPIOrder>>('/api/v1/me/api-orders')
+  const orders = await Promise.all(response.items.map(item => mapBackendAPIOrder(item, 'buyer')))
+  return filterAndSortOrders(orders, filters, 'buyer')
+}
+
+export async function backendOwnerAPIOrders(filters: ApiOrderFilters = {}) {
+  const response = await backendRequest<ListResponse<BackendAPIOrder>>('/api/v1/owner/api-orders')
+  const orders = await Promise.all(response.items.map(item => mapBackendAPIOrder(item, 'merchant')))
+  return filterAndSortOrders(orders, filters, 'merchant')
+}
+
+export async function backendMyAPIOrder(id: string) {
+  return mapBackendAPIOrder(await backendRequest<BackendAPIOrder>(`/api/v1/me/api-orders/${id}`), 'buyer')
+}
+
+export async function backendOwnerAPIOrder(id: string) {
+  return mapBackendAPIOrder(await backendRequest<BackendAPIOrder>(`/api/v1/owner/api-orders/${id}`), 'merchant')
+}
+
+export async function backendReadAPIOrderPaymentInstructions(id: string): Promise<ApiOrderPaymentInstructions> {
+  const response = await backendMutation<BackendAPIOrderPaymentInstructions>(`/api/v1/me/api-orders/${id}/payment-instructions`, {})
+  return {
+    orderId: response.orderId,
+    paymentMethod: apiOrderPaymentMethod(response.paymentMethod),
+    paymentInstructions: response.paymentInstructions,
+    paymentQrCodeDataUrl: normalizeQrCodeDataUrl(response.paymentQrCodeDataUrl),
+    paymentExpiresAt: response.paymentExpiresAt,
+  }
+}
+
+export async function backendSubmitAPIOrderPayment(id: string, paymentSummary: string, version: number) {
+  const response = await backendMutation<BackendAPIOrder>(`/api/v1/me/api-orders/${id}/submit-payment`, { paymentSummary }, {
+    idempotencyPrefix: 'api-order-submit-payment',
+    ifMatch: version,
+  })
+  return mapBackendAPIOrder(response, 'buyer')
+}
+
+export async function backendConfirmAPIOrderPayment(id: string, version: number) {
+  const response = await backendMutation<BackendAPIOrder>(`/api/v1/owner/api-orders/${id}/confirm-payment`, {}, {
+    idempotencyPrefix: 'api-order-confirm-payment',
+    ifMatch: version,
+  })
+  return mapBackendAPIOrder(response, 'merchant')
+}
+
+export async function backendSubmitAPIOrderDeliveryCredential(id: string, payload: SubmitApiOrderDeliveryCredentialPayload, version: number) {
+  const response = await backendMutation<BackendAPIOrder>(`/api/v1/owner/api-orders/${id}/submit-delivery`, payload, {
+    idempotencyPrefix: 'api-order-submit-delivery',
+    ifMatch: version,
+  })
+  return mapBackendAPIOrder(response, 'merchant')
 }
 
 export async function backendSubmitAPIService(payload: Record<string, unknown>) {
@@ -621,12 +856,13 @@ function toBackendServiceRequest(payload: Record<string, unknown>) {
     ownerContactMethodId: String(payload.ownerContactMethodId ?? ''),
     title: String(payload.generatedTitle ?? 'API 服务'),
     shortDescription: String(payload.shortDescription ?? 'API 服务'),
+    sourceUrl: String(payload.sourceUrl ?? ''),
     distributionSystem,
     billingMode: billing,
     declaredCnyPerUsdAllowance: String(payload.cnyPerUsdCredit ?? '1'),
     declaredMaxUsdAllowancePerIntent: String(payload.availableCreditUsd ?? '20'),
     quotaExpiresAt: beijingDateTimeInputToISOString(String(payload.quotaExpiresAt ?? '')),
-    minimumIntentCny: String(payload.minimumPurchaseCny ?? '20'),
+    minimumIntentCny: String(payload.minimumPurchaseCny ?? '10'),
     maximumIntentCny: String(payload.maximumPurchaseCny ?? '300'),
     usageVisibility: toBackendUsageVisibility(payload.usageVisibility),
     publicAccessNote: String(payload.distributionSystemNote ?? ''),
@@ -659,16 +895,18 @@ function toBackendOrderSettingsRequest(payload: Record<string, unknown>) {
     paymentWindowMinutes: Number(payload.paymentWindowMinutes ?? 10),
     paymentOptions: paymentOptions.map(option => {
       const paymentMethod = String(option.paymentMethod ?? '')
+      const enabled = Boolean(option.enabled)
       const paymentInstructions = String(option.paymentInstructions ?? '').trim()
       const paymentQrCodeDataUrl = normalizeQrCodeDataUrl(option.paymentQrCodeDataUrl)
       return {
         paymentMethod,
-        enabled: Boolean(option.enabled),
-        paymentInstructions: paymentInstructions || (isApiPaymentMethod(paymentMethod) && apiPaymentMethodRequiresQrCode(paymentMethod) && paymentQrCodeDataUrl
+        enabled,
+        paymentInstructions: paymentInstructions || (enabled && isApiPaymentMethod(paymentMethod) && apiPaymentMethodRequiresQrCode(paymentMethod) && paymentQrCodeDataUrl
           ? '买家提交意向后查看收款码并站外确认。'
           : ''),
+        paymentQrCodeDataUrl: paymentQrCodeDataUrl ?? '',
       }
-    }),
+    }).filter(option => option.enabled || option.paymentInstructions),
   }
 }
 

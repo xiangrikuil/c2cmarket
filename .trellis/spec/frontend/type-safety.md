@@ -180,8 +180,8 @@ return { username: intent.snapshot.merchantUsername, ... }
 
 ### 1. Scope / Trigger
 
-- Trigger: API service pages create frontend-local purchase-intent records, not platform orders, in-platform payments, or credential delivery flows.
-- UI copy must not imply that C2CMarket processes payment, stores API keys, stores panel accounts, or automatically delivers credentials.
+- Trigger: API service public/detail pages create purchase-intent records before an API order exists.
+- UI copy must not imply that C2CMarket processes payment, stores API keys during the intent step, stores panel accounts during the intent step, or automatically delivers credentials.
 
 ### 2. Signatures
 
@@ -203,7 +203,7 @@ function createApiPurchaseIntent(payload: CreateApiPurchaseIntentPayload): Promi
   - `Sub2API 面板接入说明`
 - Successful API intent creation may immediately show the frozen merchant contact to that buyer; the owner may view the frozen buyer-selected contact from the owner detail.
 - API intent pages must not show a countdown, contact-window expiry, or owner-accept-before-contact step. Those concepts belong to carpool application contact sessions only.
-- The platform must never show, request, paste, upload, store, or automatically deliver API keys, endpoint secrets, panel passwords, tokens, sessions, recovery codes, or account credentials.
+- Purchase-intent and public API-service pages must never show, request, paste, upload, store, or automatically deliver API keys, endpoint secrets, panel passwords, tokens, sessions, recovery codes, or account credentials. The only frontend exception is the API order delivery credential flow described below, after buyer payment submission and seller payment confirmation.
 - Carpool detail copy must distinguish `成员席位 / 官方邀请 / 无需共享密码方案` from shared password, token, or session credential transfer.
 
 ### 4. Validation & Error Matrix
@@ -260,6 +260,101 @@ function createApiPurchaseIntent(payload: CreateApiPurchaseIntentPayload): Promi
 <dt>意向金额</dt>
 <option>API 请求地址接入说明</option>
 ```
+
+---
+
+## Scenario: API Order Payment And Delivery Credential Flow
+
+### 1. Scope / Trigger
+
+- Trigger: frontend work touching `/my/api-orders`, `/merchant/api-orders`, API order backend adapters, TanStack Query hooks, or API order detail/action pages.
+- Product flow: submit purchase intent -> create API order -> show frozen merchant/contact/payment materials -> buyer marks paid -> seller confirms off-platform receipt -> seller submits one structured delivery credential -> buyer/seller can view it long term in order detail.
+- Boundary: this is not platform payment, escrow, API verification, API proxying, automatic delivery, chat, file upload, refund, or a credential history/editor.
+
+### 2. Signatures
+
+```ts
+export type ApiOrderDeliveryKind = 'api_key_endpoint' | 'login_account'
+
+export type ApiOrderDeliveryCredential = {
+  deliveryKind: ApiOrderDeliveryKind
+  apiBaseUrl?: string
+  apiKey?: string
+  panelLoginUrl?: string
+  username?: string
+  password?: string
+  instructions?: string
+  submittedAt: string
+}
+
+export type ApiOrderPaymentInstructions = {
+  orderId: string
+  paymentMethod: 'wechat' | 'alipay'
+  paymentInstructions: string
+  paymentQrCodeDataUrl: string | null
+  paymentExpiresAt: string
+}
+```
+
+### 3. Contracts
+
+- API service detail may still create a purchase intent first, but once a payment method is selected it must create an API order and navigate to the order detail, not keep driving fulfillment from `ApiPurchaseIntent.status`.
+- Buyer order detail must display the frozen merchant display name, merchant contact snapshot, selected WeChat/Alipay payment method, private payment instructions, and QR-code snapshot from the explicit payment-instructions read endpoint.
+- Buyer action copy is `我已付款`; seller action copy is `确认已收款` followed by `确认已交付`.
+- Seller delivery form appears only for owner view when `status === 'paid_confirmed'` and no `deliveryCredential` exists.
+- Delivery form supports only `api_key_endpoint` and `login_account`. It must not expose a generic chat/message/file upload field, and it must not allow editing after submit.
+- Buyer/seller order detail may render `deliveryCredential` with copy buttons and long-term visibility. Lists, public API service pages, notifications, reports, admin summaries, and search rows must not render raw API keys or passwords.
+- UI wording should say `交付凭证`, `买家专属、可撤销`, and `提交后不可修改`; avoid `自动发货`, `平台担保`, `平台验真`, and `主账号密码`.
+- Real backend mode must call API order endpoints through `apiMarketBackend.ts` and must not catch failures to return mock orders.
+
+### 4. Validation & Error Matrix
+
+| Condition | Expected behavior |
+| --- | --- |
+| Payment instructions include `paymentQrCodeDataUrl` | Buyer detail renders the QR image inside the payment card. |
+| Buyer clicks `我已付款` | Mutation calls `POST /api/v1/me/api-orders/{id}/submit-payment`, invalidates buyer/merchant order queries, and shows waiting-for-seller state. |
+| Seller confirms receipt | Mutation calls `POST /api/v1/owner/api-orders/{id}/confirm-payment`, then the seller can open the delivery form. |
+| Seller submits `api_key_endpoint` | Payload includes `deliveryKind`, `apiBaseUrl`, `apiKey`, and optional `instructions`; the detail response shows the credential. |
+| Seller submits `login_account` | Payload includes `deliveryKind`, `panelLoginUrl`, `username`, `password`, and optional `instructions`; the detail response shows the credential. |
+| Order list receives a delivered order | It may show status and submitted time, but must not render raw `apiKey` or `password`. |
+
+### 5. Good/Base/Bad Cases
+
+- Good: buyer detail in `pending_payment` calls `readApiOrderPaymentInstructions()` and renders the frozen WeChat QR code plus merchant contact snapshot.
+- Good: seller detail in `paid_confirmed` submits `{ deliveryKind: 'api_key_endpoint', apiBaseUrl, apiKey, instructions }`, receives `deliveryCredential`, and the form becomes read-only.
+- Base: a delivered order list row shows `已交付` and `deliverySubmittedAt`, but no raw `apiKey` or `password` text.
+- Bad: a page derives API order fulfillment from `ApiPurchaseIntent.status`, or renders a generic `deliveryNote` textarea that can be edited after delivery.
+- Bad: a list, notification, search result, report row, or admin summary renders `order.deliveryCredential.apiKey` or `order.deliveryCredential.password`.
+
+### 6. Tests Required
+
+- Type check: `pnpm --dir frontend exec vue-tsc -b --pretty false`.
+- Real-mode build: `VITE_API_MODE=real pnpm --dir frontend exec vite build`.
+- Source scan for forbidden product wording outside the spec allowlist.
+- Adapter/review checks must verify `paymentQrCodeDataUrl` is mapped both in order-settings submit payloads and payment-instructions responses.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```vue
+<textarea v-model="deliveryNote" />
+<div v-for="order in orders">{{ order.deliveryCredential?.apiKey }}</div>
+```
+
+This treats delivery as an editable generic note and leaks raw credentials from a list view.
+
+#### Correct
+
+```vue
+<ApiOrderDeliveryForm
+  v-if="isMerchantView && order.status === 'paid_confirmed' && !order.deliveryCredential"
+  @submit="submitApiOrderDeliveryCredential(order.id, payload, order.version)"
+/>
+<span>{{ getApiOrderStatusLabel(order.status) }}</span>
+```
+
+The detail-only form submits a typed credential once; list rows render status helpers, not secret fields.
 
 ---
 

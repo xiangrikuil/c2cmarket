@@ -136,7 +136,7 @@ function submitDemand() {
 </script>
 <template>
   <div>
-    <PageTitle title="找车源 / 需求大厅" description="求车也需要绑定 linux.do 求车原帖。车主可按需求池开车，平台按条件匹配。" />
+    <PageTitle title="找车源 / 需求大厅" description="求车也需要绑定 linux.do 求车原帖。车主可按需求池开车，平台按条件匹配。" action-text="我的需求" action-to="/my/demands" />
     <div class="mb-6 grid gap-6 lg:grid-cols-[1fr_0.8fr]">
       <Card class="p-6">
         <h2 class="text-lg font-semibold">发布求车需求</h2>
@@ -193,7 +193,9 @@ function submitDemand() {
         <div v-if="submittedId" class="mt-5 rounded-md border border-border bg-accent p-3 text-sm">
           已发布求车需求：
           <RouterLink class="font-medium underline underline-offset-4" :to="`/demands/${submittedId}`">{{ submittedId }}</RouterLink>
-          <span class="ml-1 text-muted-foreground">可在当前需求大厅列表和详情页查看。</span>
+          <span class="ml-1 text-muted-foreground">可在当前需求大厅、详情页和</span>
+          <RouterLink class="ml-1 font-medium underline underline-offset-4" to="/my/demands">我的需求</RouterLink>
+          <span class="text-muted-foreground">查看。</span>
         </div>
         <div class="mt-6 flex justify-end">
           <Button :disabled="submitMutation.isPending.value" @click="submitDemand">

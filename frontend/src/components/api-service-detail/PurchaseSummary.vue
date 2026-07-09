@@ -1,11 +1,10 @@
 <script setup lang="ts">
-import type { ApiDeliveryMode, ApiService } from '@/lib/api'
+import type { ApiService } from '@/lib/api'
 import { formatCredit, formatCreditConversion, formatCny, formatMultiplier } from './utils'
 
 defineProps<{
   service: ApiService
   amount: number
-  selectedDeliveryMode: ApiDeliveryMode
 }>()
 </script>
 
@@ -26,10 +25,6 @@ defineProps<{
     <div class="flex justify-between gap-4 border-b border-border px-3 py-2.5">
       <dt class="text-muted-foreground">额度参考</dt>
       <dd class="font-semibold">{{ formatCreditConversion(service) }}</dd>
-    </div>
-    <div class="flex justify-between gap-4 border-b border-border px-3 py-2.5">
-      <dt class="text-muted-foreground">接入细节</dt>
-      <dd class="text-right font-semibold">提交意向后站外确认</dd>
     </div>
     <div class="flex justify-between gap-4 border-b border-border px-3 py-2.5">
       <dt class="text-muted-foreground">有效期</dt>

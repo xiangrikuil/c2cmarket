@@ -1,4 +1,4 @@
-import { backendCloseDemand, backendDemandById, backendDemands, backendSubmitDemand } from '@/lib/demandBackend'
+import { backendCloseDemand, backendDemandById, backendDemands, backendMyDemands, backendSubmitDemand } from '@/lib/demandBackend'
 import { shouldUseRealBackend } from '@/api/client'
 import type { DemandRecord, SubmitDemandPayload } from './types'
 
@@ -14,6 +14,13 @@ async function demandMocks() {
 
 export async function getDemands(): Promise<DemandRecord[]> {
   if (shouldUseRealBackend()) return backendDemands()
+  await waitForMock()
+  const { listMockDemands } = await demandMocks()
+  return listMockDemands()
+}
+
+export async function getMyDemands(): Promise<DemandRecord[]> {
+  if (shouldUseRealBackend()) return backendMyDemands()
   await waitForMock()
   const { listMockDemands } = await demandMocks()
   return listMockDemands()

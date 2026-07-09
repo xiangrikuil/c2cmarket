@@ -87,9 +87,8 @@ pnpm build
 
 ## 主题
 
-- 默认主题：极简电蓝 `src/theme/minimal-modern.css`
-- 可选主题：`src/theme/neumorphic-cool.css`
-- 可选主题：`src/theme/aqua-console.css`
+- 当前公开主题：极致电蓝 `src/theme/minimal-modern.css`
+- `src/theme/neumorphic-cool.css` 和 `src/theme/aqua-console.css` 暂时保留样式文件，但不在应用主题入口中展示。
 - 可粘贴到 tweakcn/shadcn 的 Aqua Console 变量块：`tweakcn-theme.css`
 - Aqua Console 主题 JSON：`tweakcn-theme.json`
 

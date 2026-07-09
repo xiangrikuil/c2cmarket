@@ -1,5 +1,6 @@
 import type {
   CarpoolProductCatalogItem,
+  CarpoolDistributionMethod,
   CarpoolPublishForm,
   CarpoolWarrantyConfig,
   CarpoolWarrantyMode,
@@ -37,6 +38,28 @@ export const paymentMethodLabels: Record<PaymentMethodCode, string> = {
   other: '其他',
 }
 
+export const distributionMethodLabels: Record<CarpoolDistributionMethod, string> = {
+  sub2api: 'Sub2API',
+  other: '其他分发',
+}
+
+export function distributionMethodLabel(value: CarpoolDistributionMethod | '' | undefined) {
+  if (!value) return '待选择'
+  return distributionMethodLabels[value]
+}
+
+export function adminAccountLabel(value: boolean | null | undefined) {
+  if (value === true) return '提供管理员'
+  if (value === false) return '不提供管理员'
+  return '待选择'
+}
+
+export function distributionFieldsComplete(form: Pick<CarpoolPublishForm, 'distributionMethod' | 'distributionMethodNote' | 'providesAdminAccount'>) {
+  if (!form.distributionMethod) return false
+  if (form.distributionMethod === 'other' && !form.distributionMethodNote.trim()) return false
+  return form.providesAdminAccount !== null
+}
+
 export const warrantyModeLabels: Record<CarpoolWarrantyMode, string> = {
   no_warranty: '不作补偿承诺',
   remaining_days_compensation: '车主按剩余天数补偿',
@@ -56,6 +79,10 @@ export function selectedProduct(form: CarpoolPublishForm, catalogById: Map<strin
 
 export function selectedRegion(form: CarpoolPublishForm, regionsByCode: Map<string, RegionOption>) {
   return regionsByCode.get(form.regionCode) ?? null
+}
+
+export function isCustomRegion(form: Pick<CarpoolPublishForm, 'regionCode'>) {
+  return form.regionCode === 'other'
 }
 
 export function productDisplayName(form: CarpoolPublishForm, catalogById: Map<string, CarpoolProductCatalogItem>) {
@@ -88,6 +115,7 @@ export function accessArrangementComplete(form: CarpoolPublishForm, product: Car
 }
 
 export function regionDisplayName(form: CarpoolPublishForm, regionsByCode: Map<string, RegionOption>) {
+  if (isCustomRegion(form)) return form.customRegionName?.trim() || ''
   return selectedRegion(form, regionsByCode)?.displayName || '待选择地区'
 }
 
@@ -142,14 +170,15 @@ export function canBuildLinuxDoPostText(
   return Boolean(
     form.productId
     && (form.productId !== 'other-custom' || form.customProductName?.trim())
-    && selectedRegion(form, regionsByCode)
+    && regionDisplayName(form, regionsByCode)
     && form.monthlyPriceCny
     && form.monthlyPriceCny > 0
     && form.totalSeats >= 1
     && form.occupiedSeats >= 0
     && form.occupiedSeats <= form.totalSeats
     && openingChannelDisplayName(form.openingChannelCode, channelsByCode)
-    && paymentMethodDisplayNames(form.paymentMethodCodes, methodsByCode).length
+    && paymentMethodDisplayNames(form.paymentMethodCodes, methodsByCode).length === 1
+    && distributionFieldsComplete(form)
     && form.accessArrangementMode !== 'not_allowed'
     && form.accessArrangementNote.trim().length >= 8
     && warrantyComplete(form.warranty)
@@ -170,6 +199,9 @@ export function buildLinuxDoPostText(
   const remaining = availableSeats(form)
   const openingChannel = openingChannelDisplayName(form.openingChannelCode, channelsByCode) || '待确认'
   const paymentMethods = paymentMethodDisplayNames(form.paymentMethodCodes, methodsByCode).join(' / ') || '待确认'
+  const distributionText = form.distributionMethod === 'other'
+    ? `${distributionMethodLabel(form.distributionMethod)}：${form.distributionMethodNote.trim() || '待确认'}`
+    : distributionMethodLabel(form.distributionMethod)
   const product = selectedProduct(form, catalogById)
   const quotaText = formatMonthlyQuota({
     amount: form.monthlyQuotaAmount,
@@ -191,6 +223,8 @@ export function buildLinuxDoPostText(
     `${quotaLabel}：${quotaText}`,
     `开通渠道：${openingChannel}`,
     `付款方式：${paymentMethods}`,
+    `分发方式：${distributionText}`,
+    `管理员账号：${adminAccountLabel(form.providesAdminAccount)}`,
     `访问安排：${form.accessArrangementNote.trim() || '待确认'}`,
     `售后说明：${warrantyPostText(form.warranty)}`,
     '买家须知：',

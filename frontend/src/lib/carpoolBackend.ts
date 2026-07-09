@@ -52,6 +52,11 @@ type BackendCarpoolListing = {
   title: string
   summary: string
   accessArrangement: string
+  distributionMethod: CarpoolWithMeta['distributionMethod']
+  distributionMethodNote: string
+  providesAdminAccount: boolean
+  regionCode: string
+  regionName: string
   sourceUrl?: string
   priceMonthlyCny: string
   serviceMultiplier: string
@@ -307,7 +312,7 @@ export async function mapBackendCarpoolListing(listing: BackendCarpoolListing): 
   return {
     id: listing.id,
     product: plan.displayName,
-    region: '其他',
+    region: listing.regionName,
     monthly,
     serviceMultiplier,
     monthlyQuotaAmount,
@@ -331,6 +336,9 @@ export async function mapBackendCarpoolListing(listing: BackendCarpoolListing): 
     sourcePostAccessible: Boolean(listing.sourceUrl),
     hasInfoConflict: false,
     hasUnresolvedDispute: false,
+    distributionMethod: listing.distributionMethod,
+    distributionMethodNote: listing.distributionMethodNote,
+    providesAdminAccount: listing.providesAdminAccount,
     accessArrangementMode: mapAccessMode(plan.accessMode),
     accessArrangementNote: listing.accessArrangement || plan.policyNote,
     riskNoticeCode: listing.riskNoticeCode || plan.riskNoticeCode,
@@ -414,7 +422,7 @@ async function mapApplication(application: BackendCarpoolApplication, perspectiv
     snapshot: {
       carpoolId: application.carpoolListingId,
       productName: application.listingTitleSnapshot || plan.displayName,
-      regionName: '其他',
+      regionName: listing?.regionName || '其他',
       monthlyPriceCny: monthly,
       serviceMultiplier: listing ? numberFromDecimal(listing.serviceMultiplier) : undefined,
       monthlyQuotaAmount: listing ? numberFromDecimal(listing.monthlyQuotaAmount) : undefined,
@@ -590,6 +598,7 @@ function riskAcknowledgement(plan: BackendProductPlan | undefined, payloadRiskNo
 
 function toListingRequest(payload: SaveCarpoolDraftPayload, ownerContactMethodId: string, plan: BackendProductPlan | undefined) {
   const monthly = payload.monthlyPriceCny ?? 0
+  const regionName = payload.customRegionName?.trim() || carpoolRegions.find(item => item.code === payload.regionCode)?.displayName || '其他'
   return {
     productPlanId: payload.productId,
     ownerContactMethodId,
@@ -603,6 +612,11 @@ function toListingRequest(payload: SaveCarpoolDraftPayload, ownerContactMethodId
     title: payload.customProductName?.trim() || plan?.displayName || '拼车车源',
     summary: payload.rulesNote,
     accessArrangement: payload.accessArrangementNote || '站外成员安排，平台不保存、不提供账号凭据。',
+    distributionMethod: payload.distributionMethod || 'other',
+    distributionMethodNote: payload.distributionMethodNote?.trim() || '站外分发方式待确认。',
+    providesAdminAccount: Boolean(payload.providesAdminAccount),
+    regionCode: payload.regionCode,
+    regionName,
     sourceUrl: payload.linuxDoTopicUrl,
     priceMonthlyCny: String(monthly),
     serviceMultiplier: String(payload.serviceMultiplier ?? 1),

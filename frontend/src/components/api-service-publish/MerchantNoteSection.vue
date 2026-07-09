@@ -19,13 +19,13 @@ const insertSnippet = (form: ApiServicePublishForm, value: string) => {
 <template>
   <Card class="api-publish-card">
     <div class="api-publish-card-header">
-      <h2>3. 备注信息</h2>
-      <p>说明接入方式、用量核对、限速规则、可用时间和售后口径。</p>
+      <h2>3. 备注与核对</h2>
+      <p>说明用量核对、限速规则、可用时间和售后口径。</p>
     </div>
 
     <div class="api-publish-card-body space-y-3">
       <div class="rounded-md border border-border bg-muted/45 px-3 py-2 text-xs leading-5 text-muted-foreground">
-        不要填写 API Key、token、密码、Session、Cookie、付款码或面板凭据；买家提交意向后，双方站外确认接入细节。
+        不要填写 API Key、token、密码、Session、Cookie、付款码或面板凭据；买家提交意向后，双方站外确认 API 细节。
       </div>
 
       <div class="space-y-2">
@@ -33,7 +33,7 @@ const insertSnippet = (form: ApiServicePublishForm, value: string) => {
           v-model="form.merchantNote"
           class="min-h-40"
           maxlength="800"
-          placeholder="请说明接入方式、用量核对、限速规则、可用时间和售后口径。"
+          placeholder="请说明用量核对、限速规则、可用时间和售后口径。"
         />
         <div class="flex items-center justify-between gap-3">
           <p v-if="errors.merchantNote" class="text-xs text-destructive">{{ errors.merchantNote }}</p>

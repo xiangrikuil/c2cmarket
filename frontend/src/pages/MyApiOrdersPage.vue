@@ -11,28 +11,28 @@ import TablePagination from '@/components/market/TablePagination.vue'
 import { usePagination } from '@/composables/usePagination'
 import {
   formatUsdQuota,
-  getApiIntentNextAction,
-  getApiMerchantDisplayName,
   getApiMerchantVisibilityLabel,
-  getApiStatusLabel,
+  getApiOrderNextAction,
+  getApiOrderStatusLabel,
 } from '@/lib/api'
-import { useMyApiPurchaseIntents } from '@/queries/useMarketQueries'
+import { useMyApiOrders } from '@/queries/useMarketQueries'
 
-const { data } = useMyApiPurchaseIntents({ sort: 'default_buyer' })
+const { data } = useMyApiOrders({ sort: 'default_buyer' })
 const activeTab = ref('全部')
 const keyword = ref('')
 const timeRange = ref<'all' | 'today' | '7d' | '30d'>('all')
 const sortMode = ref<'default' | 'updated' | 'created' | 'amount'>('default')
 
-const activeStatuses = ['open', 'contacted']
+const activeStatuses = ['pending_payment', 'payment_submitted', 'paid_confirmed']
+const deliveredStatuses = ['delivery_submitted', 'completed']
 
 const stats = computed(() => {
   const rows = data.value ?? []
   return [
-    { label: '进行中', value: rows.filter(item => activeStatuses.includes(item.status)).length },
-    { label: '已取消', value: rows.filter(item => item.status === 'buyer_cancelled').length },
-    { label: '商户关闭', value: rows.filter(item => item.status === 'owner_closed').length },
-    { label: '历史记录', value: rows.filter(item => ['buyer_cancelled', 'owner_closed'].includes(item.status)).length },
+    { label: '待付款', value: rows.filter(item => item.status === 'pending_payment').length },
+    { label: '待商户确认', value: rows.filter(item => item.status === 'payment_submitted').length },
+    { label: '待交付', value: rows.filter(item => item.status === 'paid_confirmed').length },
+    { label: '已交付', value: rows.filter(item => deliveredStatuses.includes(item.status)).length },
   ]
 })
 
@@ -43,21 +43,22 @@ const rows = computed(() => {
       const createdAt = new Date(item.createdAt).getTime()
       const rangeMs = timeRange.value === 'today' ? 24 * 60 * 60 * 1000 : timeRange.value === '7d' ? 7 * 24 * 60 * 60 * 1000 : timeRange.value === '30d' ? 30 * 24 * 60 * 60 * 1000 : null
       const tabMatched = activeTab.value === '全部'
-        || (activeTab.value === '进行中' && activeStatuses.includes(item.status))
-        || (activeTab.value === '已取消' && item.status === 'buyer_cancelled')
-        || (activeTab.value === '商户关闭' && item.status === 'owner_closed')
+        || (activeTab.value === '待付款' && item.status === 'pending_payment')
+        || (activeTab.value === '已付款' && item.status === 'payment_submitted')
+        || (activeTab.value === '待交付' && item.status === 'paid_confirmed')
+        || (activeTab.value === '已交付' && deliveredStatuses.includes(item.status))
+        || (activeTab.value === '已取消' && item.status === 'cancelled')
       return tabMatched
         && (!rangeMs || Date.now() - createdAt <= rangeMs)
-        && (!q || [item.id, item.snapshot.serviceTitle, getApiMerchantDisplayName(item)].some(value => value.toLowerCase().includes(q)))
+        && (!q || [item.id, item.serviceTitle, item.seller].some(value => value.toLowerCase().includes(q)))
     })
     .sort((a, b) => {
-      if (sortMode.value === 'amount') return b.purchaseAmountCny - a.purchaseAmountCny
+      if (sortMode.value === 'amount') return b.amount - a.amount
       if (sortMode.value === 'created') return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
       if (sortMode.value === 'updated') return new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()
       const aAction = activeStatuses.includes(a.status)
       const bAction = activeStatuses.includes(b.status)
       return Number(bAction) - Number(aAction)
-        || new Date(a.merchantResponseDeadline ?? '2999-01-01').getTime() - new Date(b.merchantResponseDeadline ?? '2999-01-01').getTime()
         || new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()
     })
 })
@@ -67,7 +68,7 @@ const pagination = usePagination(rows)
 
 <template>
   <div class="space-y-4">
-    <PageTitle title="我的 API 意向" description="查看购买意向、商户联系方式、站外确认状态和历史意向记录；最终金额与付款由双方站外确认。" action-text="继续找服务" action-to="/api-market" />
+    <PageTitle title="我的 API 订单" description="查看收款资料、付款状态、商户交付信息和历史订单；支付仍由双方站外完成。" action-text="继续找服务" action-to="/api-market" />
 
     <div class="grid gap-3 md:grid-cols-4">
       <div v-for="item in stats" :key="item.label" class="rounded-lg border border-border bg-card p-4">
@@ -76,10 +77,10 @@ const pagination = usePagination(rows)
       </div>
     </div>
 
-    <StatusTabs v-model="activeTab" :items="['全部', '进行中', '已取消', '商户关闭']" />
+    <StatusTabs v-model="activeTab" :items="['全部', '待付款', '已付款', '待交付', '已交付', '已取消']" />
 
     <div class="grid gap-2 md:grid-cols-[1fr_160px_180px]">
-      <Input v-model="keyword" placeholder="搜索意向编号、服务、商户" />
+      <Input v-model="keyword" placeholder="搜索订单编号、服务、商户" />
       <select v-model="timeRange" class="h-9 rounded-md border border-input bg-background px-3 text-sm">
         <option value="all">全部时间</option>
         <option value="today">今天</option>
@@ -94,22 +95,21 @@ const pagination = usePagination(rows)
       </select>
     </div>
 
-    <div v-if="rows.length === 0" class="rounded-xl border border-border bg-card p-8 text-center text-sm text-muted-foreground">当前筛选条件下暂无 API 意向记录。</div>
-    <SoftTable v-else :columns="['意向记录', '服务快照', '商户', '意向金额 / 额度上限', '接入细节', '状态', '下一步', '操作']">
+    <div v-if="rows.length === 0" class="rounded-xl border border-border bg-card p-8 text-center text-sm text-muted-foreground">当前筛选条件下暂无 API 订单。</div>
+    <SoftTable v-else :columns="['订单', '服务快照', '商户', '金额 / 额度上限', '状态', '下一步', '操作']">
       <tr v-for="item in pagination.paginatedRows.value" :key="item.id">
         <td><div class="font-medium">{{ item.id }}</div><div class="text-xs text-muted-foreground">{{ item.createdAt }}</div></td>
-        <td><div class="font-medium">{{ item.snapshot.serviceTitle }}</div><div class="text-xs text-muted-foreground">{{ item.snapshot.models.join(' / ') }}</div></td>
+        <td><div class="font-medium">{{ item.serviceTitle }}</div><div class="text-xs text-muted-foreground">{{ item.intentSnapshot.models.join(' / ') }}</div></td>
         <td>
-          <div>{{ getApiMerchantDisplayName(item) }} · 信任等级{{ item.snapshot.trustLevel }}</div>
-          <div class="text-xs text-muted-foreground">{{ getApiMerchantVisibilityLabel(item.snapshot) }}</div>
+          <div>{{ item.seller }} · 信任等级{{ item.intentSnapshot.trustLevel }}</div>
+          <div class="text-xs text-muted-foreground">{{ getApiMerchantVisibilityLabel(item.intentSnapshot) }}</div>
         </td>
-        <td><div class="font-semibold">¥{{ item.purchaseAmountCny }}</div><div class="text-xs text-muted-foreground">上限 {{ formatUsdQuota(item.purchasedCredit) }} · {{ item.snapshot.multiplier }}</div></td>
-        <td>提交意向后站外确认</td>
+        <td><div class="font-semibold">¥{{ item.amount }}</div><div class="text-xs text-muted-foreground">上限 {{ formatUsdQuota(item.requestedUsdAllowance) }} · {{ item.intentSnapshot.multiplier }}</div></td>
         <td>
-          <Badge :variant="activeStatuses.includes(item.status) ? 'default' : 'secondary'">{{ getApiStatusLabel(item.status) }}</Badge>
-          <div class="mt-1 text-xs text-muted-foreground">联系方式已按参与方权限展示</div>
+          <Badge :variant="activeStatuses.includes(item.status) ? 'default' : deliveredStatuses.includes(item.status) ? 'verified' : 'secondary'">{{ getApiOrderStatusLabel(item.status) }}</Badge>
+          <div class="mt-1 text-xs text-muted-foreground">付款和交付信息按参与方权限展示</div>
         </td>
-        <td class="text-xs text-muted-foreground">{{ getApiIntentNextAction(item, 'buyer') }}</td>
+        <td class="text-xs text-muted-foreground">{{ getApiOrderNextAction(item, 'buyer') }}</td>
         <td>
           <RouterLink :to="`/my/api-orders/${item.id}`"><Button size="sm">查看</Button></RouterLink>
         </td>

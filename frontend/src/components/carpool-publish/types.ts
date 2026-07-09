@@ -22,6 +22,10 @@ export type CarpoolWarrantyMode =
   | 'remaining_days_compensation'
   | 'fixed_days_warranty'
 
+export type CarpoolDistributionMethod =
+  | 'sub2api'
+  | 'other'
+
 export type CatalogProviderCode = 'openai' | 'anthropic' | 'other'
 export type CatalogCategoryCode = 'gpt' | 'claude' | 'cursor' | 'gemini' | 'perplexity' | 'other'
 export type ProductPublishPolicy = 'allowed' | 'info_only' | 'blocked'
@@ -96,6 +100,7 @@ export type CarpoolPublishForm = {
   productId: string
   customProductName: string | null
   regionCode: string
+  customRegionName: string | null
   monthlyPriceCny: number | null
   serviceMultiplier: number | null
   monthlyQuotaAmount: number | null
@@ -103,6 +108,9 @@ export type CarpoolPublishForm = {
   occupiedSeats: number
   openingChannelCode: OpeningChannelCode | ''
   paymentMethodCodes: PaymentMethodCode[]
+  distributionMethod: CarpoolDistributionMethod | ''
+  distributionMethodNote: string
+  providesAdminAccount: boolean | null
   accessArrangementMode: AccessArrangementMode
   accessArrangementNote: string
   riskAcknowledged: boolean
@@ -162,6 +170,7 @@ export type PublishTaskKey =
   | 'monthlyQuota'
   | 'openingChannel'
   | 'paymentMethods'
+  | 'distribution'
   | 'rulesNote'
   | 'linuxDoImport'
 

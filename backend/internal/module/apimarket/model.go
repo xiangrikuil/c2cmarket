@@ -25,7 +25,6 @@ const (
 
 	PaymentMethodWechat = "wechat"
 	PaymentMethodAlipay = "alipay"
-	PaymentMethodUSDT   = "usdt"
 )
 
 type Service struct {
@@ -38,6 +37,7 @@ type Service struct {
 	OwnerContactMethodID             string
 	Title                            string
 	ShortDescription                 string
+	SourceURL                        string
 	DistributionSystem               string
 	BillingMode                      string
 	DeclaredCNYPerUSDAllowance       string
@@ -106,14 +106,15 @@ type ServicePackage struct {
 }
 
 type PaymentOption struct {
-	ID                  string
-	APIServiceID        string
-	PaymentMethod       string
-	Enabled             bool
-	PaymentInstructions string
-	Version             int64
-	CreatedAt           time.Time
-	UpdatedAt           time.Time
+	ID                   string
+	APIServiceID         string
+	PaymentMethod        string
+	Enabled              bool
+	PaymentInstructions  string
+	PaymentQRCodeDataURL string
+	Version              int64
+	CreatedAt            time.Time
+	UpdatedAt            time.Time
 }
 
 type CreateServiceInput struct {
@@ -123,6 +124,7 @@ type CreateServiceInput struct {
 	OwnerContactMethodID             string
 	Title                            string
 	ShortDescription                 string
+	SourceURL                        string
 	DistributionSystem               string
 	BillingMode                      string
 	DeclaredCNYPerUSDAllowance       string
@@ -147,6 +149,7 @@ type UpdateServiceInput struct {
 	OwnerContactMethodID             string
 	Title                            string
 	ShortDescription                 string
+	SourceURL                        string
 	DistributionSystem               string
 	BillingMode                      string
 	DeclaredCNYPerUSDAllowance       string
@@ -217,7 +220,8 @@ type UpdateOrderSettingsInput struct {
 }
 
 type PaymentOptionInput struct {
-	PaymentMethod       string
-	Enabled             bool
-	PaymentInstructions string
+	PaymentMethod        string
+	Enabled              bool
+	PaymentInstructions  string
+	PaymentQRCodeDataURL string
 }

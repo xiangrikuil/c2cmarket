@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"c2c-market/backend/internal/domain"
 	"c2c-market/backend/internal/module/auth"
@@ -111,25 +112,30 @@ func newListing(ownerUserID string, input CreateListingInput, plan catalog.Produ
 			CreatedAt:     now,
 			UpdatedAt:     now,
 		},
-		Title:              strings.TrimSpace(input.Title),
-		Summary:            strings.TrimSpace(input.Summary),
-		AccessArrangement:  strings.TrimSpace(input.AccessArrangement),
-		SourceURL:          strings.TrimSpace(input.SourceURL),
-		PriceMonthlyCNY:    strings.TrimSpace(input.PriceMonthlyCNY),
-		ServiceMultiplier:  strings.TrimSpace(input.ServiceMultiplier),
-		MonthlyQuotaAmount: strings.TrimSpace(input.MonthlyQuotaAmount),
-		QuotaLabel:         strings.TrimSpace(plan.QuotaLabel),
-		QuotaUnit:          strings.TrimSpace(plan.QuotaUnit),
-		QuotaPeriod:        strings.TrimSpace(plan.QuotaPeriod),
-		BuyerSeatCapacity:  input.BuyerSeatCapacity,
-		ActiveBuyerMembers: input.ActiveBuyerMembers,
-		Status:             status,
-		PolicyVersion:      plan.PolicyVersion,
-		RiskNoticeCode:     plan.RiskNoticeCode,
-		RiskAckRequired:    plan.RiskAckRequired,
-		CreatedAt:          now,
-		UpdatedAt:          now,
-		Version:            1,
+		Title:                  strings.TrimSpace(input.Title),
+		Summary:                strings.TrimSpace(input.Summary),
+		AccessArrangement:      strings.TrimSpace(input.AccessArrangement),
+		DistributionMethod:     strings.TrimSpace(input.DistributionMethod),
+		DistributionMethodNote: strings.TrimSpace(input.DistributionMethodNote),
+		ProvidesAdminAccount:   input.ProvidesAdminAccount,
+		RegionCode:             strings.TrimSpace(input.RegionCode),
+		RegionName:             strings.TrimSpace(input.RegionName),
+		SourceURL:              strings.TrimSpace(input.SourceURL),
+		PriceMonthlyCNY:        strings.TrimSpace(input.PriceMonthlyCNY),
+		ServiceMultiplier:      strings.TrimSpace(input.ServiceMultiplier),
+		MonthlyQuotaAmount:     strings.TrimSpace(input.MonthlyQuotaAmount),
+		QuotaLabel:             strings.TrimSpace(plan.QuotaLabel),
+		QuotaUnit:              strings.TrimSpace(plan.QuotaUnit),
+		QuotaPeriod:            strings.TrimSpace(plan.QuotaPeriod),
+		BuyerSeatCapacity:      input.BuyerSeatCapacity,
+		ActiveBuyerMembers:     input.ActiveBuyerMembers,
+		Status:                 status,
+		PolicyVersion:          plan.PolicyVersion,
+		RiskNoticeCode:         plan.RiskNoticeCode,
+		RiskAckRequired:        plan.RiskAckRequired,
+		CreatedAt:              now,
+		UpdatedAt:              now,
+		Version:                1,
 	}
 	listing.ReservedSeats = 0
 	listing.AvailableSeats = listing.BuyerSeatCapacity - listing.ActiveBuyerMembers
@@ -180,20 +186,25 @@ func (s *Service) UpdateListing(ctx context.Context, user auth.User, input Updat
 		return Listing{}, appErr
 	}
 	if err := validateCreateListingInput(CreateListingInput{
-		OwnerUserID:          user.ID,
-		ProductPlanID:        input.ProductPlanID,
-		OwnerContactMethodID: input.OwnerContactMethodID,
-		CycleTerm:            input.CycleTerm,
-		Title:                input.Title,
-		Summary:              input.Summary,
-		AccessArrangement:    input.AccessArrangement,
-		SourceURL:            input.SourceURL,
-		PriceMonthlyCNY:      input.PriceMonthlyCNY,
-		ServiceMultiplier:    input.ServiceMultiplier,
-		MonthlyQuotaAmount:   input.MonthlyQuotaAmount,
-		BuyerSeatCapacity:    input.BuyerSeatCapacity,
-		ActiveBuyerMembers:   input.ActiveBuyerMembers,
-		RiskAcknowledgement:  input.RiskAcknowledgement,
+		OwnerUserID:            user.ID,
+		ProductPlanID:          input.ProductPlanID,
+		OwnerContactMethodID:   input.OwnerContactMethodID,
+		CycleTerm:              input.CycleTerm,
+		Title:                  input.Title,
+		Summary:                input.Summary,
+		AccessArrangement:      input.AccessArrangement,
+		DistributionMethod:     input.DistributionMethod,
+		DistributionMethodNote: input.DistributionMethodNote,
+		ProvidesAdminAccount:   input.ProvidesAdminAccount,
+		RegionCode:             input.RegionCode,
+		RegionName:             input.RegionName,
+		SourceURL:              input.SourceURL,
+		PriceMonthlyCNY:        input.PriceMonthlyCNY,
+		ServiceMultiplier:      input.ServiceMultiplier,
+		MonthlyQuotaAmount:     input.MonthlyQuotaAmount,
+		BuyerSeatCapacity:      input.BuyerSeatCapacity,
+		ActiveBuyerMembers:     input.ActiveBuyerMembers,
+		RiskAcknowledgement:    input.RiskAcknowledgement,
 	}, plan); err != nil {
 		return Listing{}, err
 	}
@@ -243,6 +254,11 @@ func (s *Service) UpdateListing(ctx context.Context, user auth.User, input Updat
 	listing.Title = strings.TrimSpace(input.Title)
 	listing.Summary = strings.TrimSpace(input.Summary)
 	listing.AccessArrangement = strings.TrimSpace(input.AccessArrangement)
+	listing.DistributionMethod = strings.TrimSpace(input.DistributionMethod)
+	listing.DistributionMethodNote = strings.TrimSpace(input.DistributionMethodNote)
+	listing.ProvidesAdminAccount = input.ProvidesAdminAccount
+	listing.RegionCode = strings.TrimSpace(input.RegionCode)
+	listing.RegionName = strings.TrimSpace(input.RegionName)
 	listing.SourceURL = strings.TrimSpace(input.SourceURL)
 	listing.PriceMonthlyCNY = strings.TrimSpace(input.PriceMonthlyCNY)
 	listing.ServiceMultiplier = strings.TrimSpace(input.ServiceMultiplier)
@@ -1211,11 +1227,45 @@ func validateCreateListingInput(input CreateListingInput, plan catalog.ProductPl
 	if strings.TrimSpace(input.Title) == "" {
 		return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Title required", "必须填写车源标题。", "title", "required", "必须填写车源标题。")
 	}
+	if err := validateListingText("title", input.Title, 120); err != nil {
+		return err
+	}
 	if strings.TrimSpace(input.Summary) == "" {
 		return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Summary required", "必须填写车源说明。", "summary", "required", "必须填写车源说明。")
 	}
+	if err := validateListingText("summary", input.Summary, 2000); err != nil {
+		return err
+	}
 	if strings.TrimSpace(input.AccessArrangement) == "" {
 		return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Access arrangement required", "必须说明席位或站外访问安排。", "accessArrangement", "required", "必须说明席位或站外访问安排。")
+	}
+	if err := validateListingText("accessArrangement", input.AccessArrangement, 2000); err != nil {
+		return err
+	}
+	method := strings.TrimSpace(input.DistributionMethod)
+	if method == "" {
+		return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Distribution method required", "必须选择分发方式。", "distributionMethod", "required", "必须选择分发方式。")
+	}
+	if method != ListingDistributionMethodSub2API && method != ListingDistributionMethodOther {
+		return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Distribution method invalid", "分发方式不正确。", "distributionMethod", "invalid", "分发方式只能选择 Sub2API 或其他。")
+	}
+	if strings.TrimSpace(input.DistributionMethodNote) == "" && method == ListingDistributionMethodOther {
+		return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Distribution note required", "选择其他分发方式时必须填写说明。", "distributionMethodNote", "required", "请填写其他分发方式说明。")
+	}
+	if err := validateListingText("distributionMethodNote", input.DistributionMethodNote, 500); err != nil {
+		return err
+	}
+	if strings.TrimSpace(input.RegionCode) == "" {
+		return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Region required", "必须填写开通区。", "regionCode", "required", "必须填写开通区。")
+	}
+	if err := validateListingText("regionCode", input.RegionCode, 64); err != nil {
+		return err
+	}
+	if strings.TrimSpace(input.RegionName) == "" {
+		return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Region name required", "必须填写开通区名称。", "regionName", "required", "必须填写开通区名称。")
+	}
+	if err := validateListingText("regionName", input.RegionName, 64); err != nil {
+		return err
 	}
 	if err := validateCycleTermInput(input.CycleTerm); err != nil {
 		return err
@@ -1242,6 +1292,17 @@ func validateCreateListingInput(input CreateListingInput, plan catalog.ProductPl
 	}
 	if err := validateRiskAcknowledgement(input.RiskAcknowledgement, plan); err != nil {
 		return err
+	}
+	return nil
+}
+
+func validateListingText(field, value string, maxRunes int) *domain.AppError {
+	value = strings.TrimSpace(value)
+	if utf8.RuneCountInString(value) > maxRunes {
+		return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Text too long", "文本内容过长。", field, "too_long", "文本内容过长。")
+	}
+	if strings.ContainsAny(value, "\x00") || domain.LooksLikeSecretContent(value) {
+		return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeSecretContentDetected, "Secret content detected", "不能在平台填写、粘贴或上传任何凭据。", field, "secret_content", "不能包含 API Key、密码、Token、Session 或 Cookie。")
 	}
 	return nil
 }

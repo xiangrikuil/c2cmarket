@@ -1,13 +1,12 @@
 <script setup lang="ts">
 import { Button } from '@/components/ui/button'
-import type { ApiDeliveryMode, ApiService } from '@/lib/api'
+import type { ApiService } from '@/lib/api'
 import { formatCredit, formatCny, formatMultiplier } from './utils'
 
 defineProps<{
   open: boolean
   service: ApiService
   amount: number
-  selectedDeliveryMode: ApiDeliveryMode
   submitting: boolean
 }>()
 
@@ -37,10 +36,6 @@ const emit = defineEmits<{
           <div class="flex justify-between gap-4">
             <dt class="text-muted-foreground">锁定倍率</dt>
             <dd class="font-semibold">{{ formatMultiplier(service.defaultMultiplier) }}</dd>
-          </div>
-          <div class="flex justify-between gap-4">
-            <dt class="text-muted-foreground">接入细节</dt>
-            <dd class="text-right font-semibold">提交意向后站外确认</dd>
           </div>
           <div class="flex justify-between gap-4">
             <dt class="text-muted-foreground">有效期</dt>

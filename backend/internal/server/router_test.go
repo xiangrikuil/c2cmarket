@@ -1035,12 +1035,28 @@ func TestCarpoolCreateReviewApplyAndAcceptFlow(t *testing.T) {
 	}
 	assertProblemCode(t, withoutAckResponse, "RISK_ACK_REQUIRED")
 
+	secretRegionBody := strings.Replace(carpoolPayloadWithRiskAck(ownerContact.ID), `"regionName":"印度区"`, `"regionName":"token=secret-region"`, 1)
+	secretRegion := newJSONRequest(http.MethodPost, "/api/v1/carpools", secretRegionBody)
+	addAuth(secretRegion, ownerSession, "carpool-secret-region")
+	secretRegionResponse := httptest.NewRecorder()
+	server.ServeHTTP(secretRegionResponse, secretRegion)
+	if secretRegionResponse.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("expected secret region validation failure, got %d body %s", secretRegionResponse.Code, secretRegionResponse.Body.String())
+	}
+	assertProblemCode(t, secretRegionResponse, "SECRET_CONTENT_DETECTED")
+
 	listing := createCarpool(t, server, ownerSession, ownerContact.ID, "carpool-create")
 	if listing.Status != app.CarpoolListingStatusDraft || listing.Version != 1 {
 		t.Fatalf("unexpected created listing: %+v", listing)
 	}
 	if listing.ServiceMultiplier != "1.3500" || listing.MonthlyQuotaAmount != "200.00" || listing.QuotaLabel != "额度" || listing.QuotaUnit != "USD" || listing.QuotaPeriod != "monthly" {
 		t.Fatalf("expected structured multiplier and quota fields, got %+v", listing)
+	}
+	if listing.RegionCode != "other" || listing.RegionName != "印度区" {
+		t.Fatalf("expected custom region fields, got %+v", listing)
+	}
+	if listing.DistributionMethod != "sub2api" || listing.DistributionMethodNote != "Sub2API 托管管理，具体方式站外确认。" || !listing.ProvidesAdminAccount {
+		t.Fatalf("expected distribution/admin account fields, got %+v", listing)
 	}
 	if listing.CycleTerm == nil || listing.CycleTerm.BillingPeriod != "monthly" || listing.CycleTerm.ExitPolicy == "" || listing.CycleTerm.UsageRules == "" {
 		t.Fatalf("expected listing cycle term in response, got %+v", listing.CycleTerm)
@@ -1210,7 +1226,27 @@ func TestCarpoolDirectPublishCreatesActiveListing(t *testing.T) {
 	if listing.Status != app.CarpoolListingStatusActive || listing.Version != 1 {
 		t.Fatalf("expected direct publish active listing v1, got %+v", listing)
 	}
+	if listing.DistributionMethod != "sub2api" || listing.DistributionMethodNote != "Sub2API 托管管理，具体方式站外确认。" || !listing.ProvidesAdminAccount {
+		t.Fatalf("expected direct publish distribution/admin account fields, got %+v", listing)
+	}
 	assertPublicCarpoolVisible(t, server, listing.ID, true)
+}
+
+func TestCarpoolOtherDistributionRequiresNote(t *testing.T) {
+	server := newTestServer(time.Now())
+	ownerSession := createLinuxDoSession(t, server, "distribution-note-owner")
+	ownerContact := createContactMethod(t, server, ownerSession, "telegram", "Distribution Note TG", "@distribution_note_owner")
+
+	body := strings.Replace(carpoolPayloadWithRiskAck(ownerContact.ID), `"distributionMethod":"sub2api"`, `"distributionMethod":"other"`, 1)
+	body = strings.Replace(body, `"distributionMethodNote":"Sub2API 托管管理，具体方式站外确认。",`, `"distributionMethodNote":"",`, 1)
+	request := newJSONRequest(http.MethodPost, "/api/v1/carpools/publish", body)
+	addAuth(request, ownerSession, "carpool-other-distribution-missing-note")
+	response := httptest.NewRecorder()
+	server.ServeHTTP(response, request)
+	if response.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("expected missing distribution note failure, got %d body %s", response.Code, response.Body.String())
+	}
+	assertProblemCode(t, response, "VALIDATION_FAILED")
 }
 
 func TestCarpoolDirectPublishRequiresLinuxDoBindingWithoutDraftResidue(t *testing.T) {
@@ -1305,11 +1341,21 @@ func TestAPIServiceCreateReviewPublishFlow(t *testing.T) {
 	}
 	assertProblemCode(t, badResponse, "VALIDATION_FAILED")
 
+	badSource := newJSONRequest(http.MethodPost, "/api/v1/owner/api-services", strings.Replace(apiServicePayload(ownerContact.ID, "1.0000"), "https://linux.do/t/api-service/123", "https://example.com/post?token=secret", 1))
+	addAuth(badSource, ownerSession, "api-service-bad-source")
+	badSourceResponse := httptest.NewRecorder()
+	server.ServeHTTP(badSourceResponse, badSource)
+	if badSourceResponse.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("expected source URL validation failure, got %d body %s", badSourceResponse.Code, badSourceResponse.Body.String())
+	}
+	assertProblemCode(t, badSourceResponse, "URL_NOT_ALLOWED")
+
 	service := createAPIService(t, server, ownerSession, ownerContact.ID, "api-service-create")
 	if service.ReviewStatus != app.APIServiceReviewStatusDraft ||
 		service.PublicationStatus != app.APIServicePublicationStatusOffline ||
 		service.ModerationStatus != app.APIServiceModerationStatusClear ||
-		service.Models[0].MerchantMultiplier != "1.0000" {
+		service.Models[0].MerchantMultiplier != "1.0000" ||
+		service.SourceURL != "https://linux.do/t/api-service/123" {
 		t.Fatalf("unexpected created API service: %+v", service)
 	}
 
@@ -1391,6 +1437,9 @@ func TestAPIServiceCreateReviewPublishFlow(t *testing.T) {
 		t.Fatalf("expected orderable public detail, got %d body %s", detailAfterSettingsResponse.Code, detailAfterSettingsResponse.Body.String())
 	}
 	assertPublicAPIServiceBody(t, detailAfterSettingsResponse.Body.String(), ownerContact.ID)
+	if !strings.Contains(detailAfterSettingsResponse.Body.String(), `"sourceUrl":"https://linux.do/t/api-service/123"`) {
+		t.Fatalf("expected public API service sourceUrl, got %s", detailAfterSettingsResponse.Body.String())
+	}
 	filtered := httptest.NewRequest(http.MethodGet, "/api/v1/api-services?paymentMethod=wechat", nil)
 	filteredResponse := httptest.NewRecorder()
 	server.ServeHTTP(filteredResponse, filtered)
@@ -1544,7 +1593,8 @@ func TestAPIServiceInstantOrderFlow(t *testing.T) {
 	if instructions.OrderID != order.ID ||
 		instructions.PaymentMethod != "wechat" ||
 		instructions.PaymentInstructions == "" ||
-		!strings.Contains(instructions.PaymentInstructions, "微信收款二维码") {
+		!strings.Contains(instructions.PaymentInstructions, "微信收款二维码") ||
+		instructions.PaymentQRCodeDataURL == "" {
 		t.Fatalf("unexpected payment instructions: %+v", instructions)
 	}
 
@@ -1593,46 +1643,48 @@ func TestAPIServiceInstantOrderFlow(t *testing.T) {
 		t.Fatalf("unexpected paid-confirmed order: %+v", confirmed)
 	}
 
-	rejectedDeliveryNotes := []string{
-		"Authorization: Bearer sk-test",
-		"X-API-Key: abcdef",
-		"apiKey: sk-test",
-		"OPENAI_API_KEY=sk-proj-test",
-		"ANTHROPIC_API_KEY=sk-ant-test",
-		"vless://example",
-		"clash://install-config",
-		"hysteria://example",
-		"hy2://example",
-		"tuic://example",
-		"sub://example",
-		"ssr://example",
-		"socks5://user:pass@example.com:1080",
-		"https://example.com/api/v1/client/subscribe?token=abc",
-		"https://example.com/sub?target=clash&url=xxx",
-		"https://example.com/sub?url=https%3A%2F%2Fvendor.example%2Fapi%2Fv1%2Fclient%2Fsubscribe%3Ftoken%3Dabc123",
-		"[订阅链接](https://example.com/sub?target=clash&url=xxx)",
-		`{"delivery":"https://example.com/api/v1/client/subscribe?token=abc"}`,
-		"abc.def.ghi",
+	rejectedDeliveryPayloads := []string{
+		`{"deliveryKind":"api_key_endpoint","apiBaseUrl":"https://example.com/api/v1/client/subscribe?token=abc","apiKey":"sk-proj-test"}`,
+		`{"deliveryKind":"api_key_endpoint","apiBaseUrl":"https://api.example.com/v1","apiKey":"cookie=abc"}`,
+		`{"deliveryKind":"api_key_endpoint","apiBaseUrl":"https://api.example.com/v1","apiKey":"sk-proj-test","instructions":"Authorization: Bearer sk-test"}`,
 	}
-	for index, note := range rejectedDeliveryNotes {
-		secretDelivery := newJSONRequest(http.MethodPost, "/api/v1/owner/api-orders/"+confirmed.ID+"/submit-delivery", `{"deliveryNote":`+strconv.Quote(note)+`}`)
+	for index, body := range rejectedDeliveryPayloads {
+		secretDelivery := newJSONRequest(http.MethodPost, "/api/v1/owner/api-orders/"+confirmed.ID+"/submit-delivery", body)
 		addAuth(secretDelivery, ownerSession, "api-order-secret-delivery-"+strconv.Itoa(index))
 		secretDelivery.Header.Set("If-Match", `"`+strconv.FormatInt(confirmed.Version, 10)+`"`)
 		secretDeliveryResponse := httptest.NewRecorder()
 		server.ServeHTTP(secretDeliveryResponse, secretDelivery)
 		if secretDeliveryResponse.Code != http.StatusUnprocessableEntity {
-			t.Fatalf("expected secret delivery validation failure for %q, got %d body %s", note, secretDeliveryResponse.Code, secretDeliveryResponse.Body.String())
+			t.Fatalf("expected secret delivery validation failure for %q, got %d body %s", body, secretDeliveryResponse.Code, secretDeliveryResponse.Body.String())
 		}
 		assertProblemCode(t, secretDeliveryResponse, "SECRET_CONTENT_DETECTED")
 	}
 
-	delivered := apiOrderAction(t, server, ownerSession, "owner", confirmed.ID, "submit-delivery", confirmed.Version, "api-order-submit-delivery", `{"deliveryNote":"已站外确认接入安排，买家可按商户说明完成后续操作。"}`)
-	if delivered.Status != "delivery_submitted" || delivered.DeliveryNote == "" || delivered.Version != 4 {
+	delivered := apiOrderAction(t, server, ownerSession, "owner", confirmed.ID, "submit-delivery", confirmed.Version, "api-order-submit-delivery", `{"deliveryKind":"api_key_endpoint","apiBaseUrl":"https://api.example.com/v1","apiKey":"sk-proj-test","instructions":"买家专属、可撤销；后续更换请站外联系。"}`)
+	if delivered.Status != "delivery_submitted" || delivered.DeliveryNote == "" || delivered.DeliveryCredential == nil || delivered.DeliveryCredential.APIKey != "sk-proj-test" || delivered.Version != 4 {
 		t.Fatalf("unexpected delivered order: %+v", delivered)
 	}
+	duplicateDelivery := newJSONRequest(http.MethodPost, "/api/v1/owner/api-orders/"+delivered.ID+"/submit-delivery", `{"deliveryKind":"api_key_endpoint","apiBaseUrl":"https://api.example.com/v1","apiKey":"sk-proj-other"}`)
+	addAuth(duplicateDelivery, ownerSession, "api-order-submit-delivery-duplicate")
+	duplicateDelivery.Header.Set("If-Match", `"`+strconv.FormatInt(delivered.Version, 10)+`"`)
+	duplicateDeliveryResponse := httptest.NewRecorder()
+	server.ServeHTTP(duplicateDeliveryResponse, duplicateDelivery)
+	if duplicateDeliveryResponse.Code != http.StatusConflict {
+		t.Fatalf("expected duplicate delivery conflict, got %d body %s", duplicateDeliveryResponse.Code, duplicateDeliveryResponse.Body.String())
+	}
+	assertProblemCode(t, duplicateDeliveryResponse, "INVALID_STATE_TRANSITION")
+
+	listAfterDelivery := listMyAPIOrders(t, server, buyerSession)
+	if len(listAfterDelivery.Items) == 0 || listAfterDelivery.Items[0].DeliveryCredential != nil {
+		t.Fatalf("buyer API order list must not expose delivery credential: %+v", listAfterDelivery.Items)
+	}
+
 	completed := apiOrderAction(t, server, buyerSession, "me", delivered.ID, "confirm-complete", delivered.Version, "api-order-confirm-complete", `{}`)
 	if completed.Status != "completed" || completed.CompletedAt == nil || completed.Version != 5 {
 		t.Fatalf("unexpected completed order: %+v", completed)
+	}
+	if completed.DeliveryCredential == nil || completed.DeliveryCredential.APIKey != "sk-proj-test" {
+		t.Fatalf("expected credential to remain visible on completed order detail: %+v", completed)
 	}
 
 	duplicateAfterCompleted := newJSONRequest(http.MethodPost, "/api/v1/me/api-purchase-intents/"+intent.ID+"/orders", `{"paymentMethod":"wechat"}`)
@@ -2196,16 +2248,21 @@ type createdMerchantProfile struct {
 }
 
 type createdCarpool struct {
-	ID                 string                    `json:"id"`
-	Status             string                    `json:"status"`
-	ServiceMultiplier  string                    `json:"serviceMultiplier"`
-	MonthlyQuotaAmount string                    `json:"monthlyQuotaAmount"`
-	QuotaLabel         string                    `json:"quotaLabel"`
-	QuotaUnit          string                    `json:"quotaUnit"`
-	QuotaPeriod        string                    `json:"quotaPeriod"`
-	AvailableSeats     int                       `json:"availableSeats"`
-	CycleTerm          *carpoolCycleTermResponse `json:"cycleTerm"`
-	Version            int64                     `json:"version"`
+	ID                     string                    `json:"id"`
+	Status                 string                    `json:"status"`
+	DistributionMethod     string                    `json:"distributionMethod"`
+	DistributionMethodNote string                    `json:"distributionMethodNote"`
+	ProvidesAdminAccount   bool                      `json:"providesAdminAccount"`
+	RegionCode             string                    `json:"regionCode"`
+	RegionName             string                    `json:"regionName"`
+	ServiceMultiplier      string                    `json:"serviceMultiplier"`
+	MonthlyQuotaAmount     string                    `json:"monthlyQuotaAmount"`
+	QuotaLabel             string                    `json:"quotaLabel"`
+	QuotaUnit              string                    `json:"quotaUnit"`
+	QuotaPeriod            string                    `json:"quotaPeriod"`
+	AvailableSeats         int                       `json:"availableSeats"`
+	CycleTerm              *carpoolCycleTermResponse `json:"cycleTerm"`
+	Version                int64                     `json:"version"`
 }
 
 type createdCarpoolApplication struct {
@@ -2236,6 +2293,7 @@ type createdCarpoolMembership struct {
 
 type createdAPIService struct {
 	ID                     string                    `json:"id"`
+	SourceURL              string                    `json:"sourceUrl"`
 	ReviewStatus           string                    `json:"reviewStatus"`
 	PublicationStatus      string                    `json:"publicationStatus"`
 	ModerationStatus       string                    `json:"moderationStatus"`
@@ -2280,26 +2338,38 @@ type createdAPIPurchaseIntent struct {
 }
 
 type createdAPIOrder struct {
-	ID                           string  `json:"id"`
-	APIPurchaseIntentID          string  `json:"apiPurchaseIntentId"`
-	APIServiceID                 string  `json:"apiServiceId"`
-	BuyerUserID                  string  `json:"buyerUserId"`
-	SellerUserID                 string  `json:"sellerUserId"`
-	Status                       string  `json:"status"`
-	DisputeStatus                string  `json:"disputeStatus"`
-	DisputeCaseID                string  `json:"disputeCaseId"`
-	ServiceTitleSnapshot         string  `json:"serviceTitleSnapshot"`
-	Amount                       string  `json:"amount"`
-	Currency                     string  `json:"currency"`
-	SelectedPaymentMethod        string  `json:"selectedPaymentMethod"`
-	PaymentWindowMinutesSnapshot int     `json:"paymentWindowMinutesSnapshot"`
-	PaymentExpiresAt             string  `json:"paymentExpiresAt"`
-	PaymentSummary               string  `json:"paymentSummary"`
-	PaidConfirmedAt              *string `json:"paidConfirmedAt"`
-	DeliveryNote                 string  `json:"deliveryNote"`
-	CompletedAt                  *string `json:"completedAt"`
-	CancelReason                 string  `json:"cancelReason"`
-	Version                      int64   `json:"version"`
+	ID                           string                             `json:"id"`
+	APIPurchaseIntentID          string                             `json:"apiPurchaseIntentId"`
+	APIServiceID                 string                             `json:"apiServiceId"`
+	BuyerUserID                  string                             `json:"buyerUserId"`
+	SellerUserID                 string                             `json:"sellerUserId"`
+	Status                       string                             `json:"status"`
+	DisputeStatus                string                             `json:"disputeStatus"`
+	DisputeCaseID                string                             `json:"disputeCaseId"`
+	ServiceTitleSnapshot         string                             `json:"serviceTitleSnapshot"`
+	Amount                       string                             `json:"amount"`
+	Currency                     string                             `json:"currency"`
+	SelectedPaymentMethod        string                             `json:"selectedPaymentMethod"`
+	PaymentWindowMinutesSnapshot int                                `json:"paymentWindowMinutesSnapshot"`
+	PaymentExpiresAt             string                             `json:"paymentExpiresAt"`
+	PaymentSummary               string                             `json:"paymentSummary"`
+	PaidConfirmedAt              *string                            `json:"paidConfirmedAt"`
+	DeliveryNote                 string                             `json:"deliveryNote"`
+	DeliveryCredential           *createdAPIOrderDeliveryCredential `json:"deliveryCredential"`
+	CompletedAt                  *string                            `json:"completedAt"`
+	CancelReason                 string                             `json:"cancelReason"`
+	Version                      int64                              `json:"version"`
+}
+
+type createdAPIOrderDeliveryCredential struct {
+	DeliveryKind  string `json:"deliveryKind"`
+	APIBaseURL    string `json:"apiBaseUrl"`
+	APIKey        string `json:"apiKey"`
+	PanelLoginURL string `json:"panelLoginUrl"`
+	Username      string `json:"username"`
+	Password      string `json:"password"`
+	Instructions  string `json:"instructions"`
+	SubmittedAt   string `json:"submittedAt"`
 }
 
 type createdDispute struct {
@@ -2322,10 +2392,11 @@ type createdDispute struct {
 }
 
 type apiOrderPaymentInstructions struct {
-	OrderID             string `json:"orderId"`
-	PaymentMethod       string `json:"paymentMethod"`
-	PaymentInstructions string `json:"paymentInstructions"`
-	PaymentExpiresAt    string `json:"paymentExpiresAt"`
+	OrderID              string `json:"orderId"`
+	PaymentMethod        string `json:"paymentMethod"`
+	PaymentInstructions  string `json:"paymentInstructions"`
+	PaymentQRCodeDataURL string `json:"paymentQrCodeDataUrl"`
+	PaymentExpiresAt     string `json:"paymentExpiresAt"`
 }
 
 type testContactItem struct {
@@ -2892,8 +2963,8 @@ func updateAPIServiceOrderSettings(t *testing.T, server http.Handler, session te
 		"acceptingOrders":` + boolString(accepting) + `,
 		"paymentWindowMinutes":10,
 		"paymentOptions":[
-			{"paymentMethod":"wechat","enabled":true,"paymentInstructions":"微信收款二维码请按商户站外确认展示，付款后填写付款摘要。"},
-			{"paymentMethod":"alipay","enabled":false,"paymentInstructions":"支付宝收款说明暂不启用。"}
+			{"paymentMethod":"wechat","enabled":true,"paymentInstructions":"微信收款二维码请按商户站外确认展示，付款后填写付款摘要。","paymentQrCodeDataUrl":"data:image/png;base64,ZmFrZS1xcg=="},
+			{"paymentMethod":"alipay","enabled":false,"paymentInstructions":""}
 		]
 	}`
 	request := newJSONRequest(http.MethodPatch, "/api/v1/owner/api-services/"+serviceID+"/order-settings", body)
@@ -2907,6 +2978,22 @@ func updateAPIServiceOrderSettings(t *testing.T, server http.Handler, session te
 	var payload createdAPIService
 	if err := json.NewDecoder(response.Body).Decode(&payload); err != nil {
 		t.Fatalf("decode API service order settings: %v", err)
+	}
+	return payload
+}
+
+func listMyAPIOrders(t *testing.T, server http.Handler, session testSession) listResponse[createdAPIOrder] {
+	t.Helper()
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/me/api-orders", nil)
+	addCookie(request, session.cookie)
+	response := httptest.NewRecorder()
+	server.ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("list my API orders status %d body %s", response.Code, response.Body.String())
+	}
+	var payload listResponse[createdAPIOrder]
+	if err := json.NewDecoder(response.Body).Decode(&payload); err != nil {
+		t.Fatalf("decode my API orders: %v", err)
 	}
 	return payload
 }
@@ -3170,6 +3257,11 @@ func carpoolPayload(ownerContactID string) string {
 		"title":"ChatGPT Pro 20x Web 费用分摊",
 		"summary":"车主说明每月账期、名额和站外联系安排。",
 		"accessArrangement":"费用分摊方案，不在平台填写或上传任何密码、API Key、Token、Cookie、Session 或面板主账号凭据。",
+		"distributionMethod":"sub2api",
+		"distributionMethodNote":"Sub2API 托管管理，具体方式站外确认。",
+		"providesAdminAccount":true,
+		"regionCode":"other",
+		"regionName":"印度区",
 		"sourceUrl":"https://linux.do/t/carpool/123",
 		"priceMonthlyCny":"68.00",
 		"serviceMultiplier":"1.3500",
@@ -3206,6 +3298,7 @@ func apiServicePayloadWithModelAndMultiplier(ownerContactID, modelCatalogID, mul
 		"ownerContactMethodId":"` + ownerContactID + `",
 		"title":"Sub2API 美元额度意向服务",
 		"shortDescription":"商户声明美元额度售价，双方站外确认具体安排。",
+		"sourceUrl":"https://linux.do/t/api-service/123",
 		"distributionSystem":"sub2api",
 		"billingMode":"metered_usd_quota",
 		"declaredCnyPerUsdAllowance":"0.8000",

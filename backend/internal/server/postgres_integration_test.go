@@ -147,6 +147,9 @@ func TestPostgresAPIServiceFlow(t *testing.T) {
 	if service.ReviewStatus != app.APIServiceReviewStatusDraft || service.Version != 1 {
 		t.Fatalf("unexpected postgres API service draft: %+v", service)
 	}
+	if service.SourceURL != "https://linux.do/t/api-service/123" {
+		t.Fatalf("expected postgres API service source URL round trip, got %+v", service)
+	}
 	assertAPIServiceChildren(t, databaseURL, service.ID, 1, 1, 0)
 
 	updated := updateAPIService(t, server, ownerSession, service.ID, service.Version, apiServicePayloadWithModel(ownerContact.ID, "00000000-0000-0000-0000-000000000a02"), "pg-api-update-"+suffix)
@@ -786,6 +789,12 @@ func TestPostgresCarpoolApplicationFlow(t *testing.T) {
 	}
 	if published.ServiceMultiplier != "1.3500" || published.MonthlyQuotaAmount != "200.00" || published.QuotaLabel != "额度" || published.QuotaUnit != "USD" || published.QuotaPeriod != "monthly" {
 		t.Fatalf("expected postgres multiplier and quota fields after publish, got %+v", published)
+	}
+	if published.RegionCode != "other" || published.RegionName != "印度区" {
+		t.Fatalf("expected postgres region fields after publish, got %+v", published)
+	}
+	if published.DistributionMethod != "sub2api" || published.DistributionMethodNote != "Sub2API 托管管理，具体方式站外确认。" || !published.ProvidesAdminAccount {
+		t.Fatalf("expected postgres distribution/admin account fields after publish, got %+v", published)
 	}
 
 	application := createCarpoolApplication(t, server, buyerSession, published.ID, buyerContact.ID, "pg-carpool-apply-"+suffix)

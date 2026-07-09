@@ -28,6 +28,7 @@ import {
   transactionRecords,
   type AvatarMode,
   type ApiBillingMode,
+  type ApiContactChannel,
   type ApiDeliveryMode,
   type ApiMerchantIdentityMode,
   type ApiPurchaseIntent,
@@ -118,19 +119,28 @@ import {
   backendAPIServiceById,
   backendAPIServices,
   backendAdminAPIServiceRows,
+  backendConfirmAPIOrderPayment,
+  backendCreateAPIOrderFromIntent,
   backendCancelAPIIntentById,
   backendCloseAPIIntent,
   backendCreateAPIPurchaseIntent,
   backendMarkAPIIntentContacted,
   backendModelCatalog,
+  backendMyAPIOrder,
+  backendMyAPIOrders,
   backendMyAPIIntents,
   backendOtherAPIServices,
+  backendOwnerAPIOrder,
+  backendOwnerAPIOrders,
   backendOwnerAPIIntents,
   backendOwnerAPIServices,
   backendPauseAPIService,
   backendPublishAPIService,
+  backendReadAPIOrderPaymentInstructions,
   backendRunAdminAPIServiceAction,
   backendResumeAPIService,
+  backendSubmitAPIOrderDeliveryCredential,
+  backendSubmitAPIOrderPayment,
   backendSub2APIServices,
   backendSubmitAPIService,
   backendUpdateAdminAPIServiceStatus,
@@ -398,6 +408,93 @@ export type CreatePublicProfileReportRequest = CreatePublicUserReportRequest
 export type TransactionTrendRange = '7d' | '30d' | '90d'
 export type { ApiPaymentAccountSettings, ApiPaymentMethod, ApiPaymentOption } from '@/lib/apiPaymentSettings'
 
+export type ApiOrderStatus =
+  | 'pending_payment'
+  | 'payment_submitted'
+  | 'paid_confirmed'
+  | 'delivery_submitted'
+  | 'completed'
+  | 'cancelled'
+
+export type ApiOrderDeliveryKind = 'api_key_endpoint' | 'login_account'
+
+export type ApiOrderDeliveryCredential = {
+  deliveryKind: ApiOrderDeliveryKind
+  apiBaseUrl?: string
+  apiKey?: string
+  panelLoginUrl?: string
+  username?: string
+  password?: string
+  instructions?: string
+  submittedAt: string
+}
+
+export type SubmitApiOrderDeliveryCredentialPayload = {
+  deliveryKind: ApiOrderDeliveryKind
+  apiBaseUrl?: string
+  apiKey?: string
+  panelLoginUrl?: string
+  username?: string
+  password?: string
+  instructions?: string
+}
+
+export type ApiOrderPaymentInstructions = {
+  orderId: string
+  paymentMethod: ApiPaymentOption['paymentMethod']
+  paymentInstructions: string
+  paymentQrCodeDataUrl: string | null
+  paymentExpiresAt: string
+}
+
+export type ApiOrder = {
+  id: string
+  apiPurchaseIntentId: string
+  apiServiceId: string
+  buyerId: string
+  buyer: string
+  sellerId: string
+  seller: string
+  status: ApiOrderStatus
+  disputeStatus?: string
+  serviceTitle: string
+  amount: number
+  currency: 'CNY'
+  selectedPaymentMethod: ApiPaymentOption['paymentMethod']
+  paymentWindowMinutes: number
+  paymentExpiresAt: string
+  paymentSummary?: string
+  paymentSubmittedAt?: string
+  paidConfirmedAt?: string
+  deliveryNote?: string
+  deliverySubmittedAt?: string
+  deliveryCredential?: ApiOrderDeliveryCredential
+  completedAt?: string
+  cancelledAt?: string
+  cancelReason?: string
+  version: number
+  intentSnapshot: ApiPurchaseIntent['snapshot']
+  selectedDeliveryMode: ApiDeliveryMode
+  requestedUsdAllowance: number
+  merchantContactChannels: ApiContactChannel[]
+  buyerContactChannels: ApiContactChannel[]
+  viewerRole?: 'buyer' | 'merchant'
+  createdAt: string
+  updatedAt: string
+}
+
+export type ApiOrderEvent = {
+  id: string
+  orderId: string
+  actorLabel: string
+  actorRole: 'buyer' | 'merchant' | 'system'
+  type: 'created' | 'payment_submitted' | 'payment_confirmed' | 'delivery_submitted' | 'completed' | 'cancelled'
+  fromStatus?: ApiOrderStatus
+  toStatus?: ApiOrderStatus
+  note?: string
+  createdAt: string
+}
+
 export type TransactionTrendSummary = {
   productId: string
   productName: string
@@ -440,6 +537,7 @@ export type SaveCarpoolDraftPayload = {
   productId: string
   customProductName: string | null
   regionCode: string
+  customRegionName: string | null
   monthlyPriceCny: number | null
   serviceMultiplier: number | null
   monthlyQuotaAmount: number | null
@@ -447,6 +545,9 @@ export type SaveCarpoolDraftPayload = {
   occupiedSeats: number
   openingChannelCode: string
   paymentMethodCodes: string[]
+  distributionMethod?: Carpool['distributionMethod'] | ''
+  distributionMethodNote?: string
+  providesAdminAccount?: boolean | null
   accessArrangementMode?: Carpool['accessArrangementMode']
   accessArrangementNote?: string
   riskAcknowledged?: boolean
@@ -471,6 +572,7 @@ const currentMerchantId = 'merchant-orbit'
 const currentMerchantName = 'orbit'
 const apiPurchaseIntentStorageKey = 'c2cmarket.apiPurchaseIntents.v2'
 const apiPurchaseIntentEventStorageKey = 'c2cmarket.apiPurchaseIntentEvents.v2'
+const apiOrderStorageKey = 'c2cmarket.apiOrders.v1'
 const carpoolApplicationStorageKey = 'c2cmarket.carpoolApplications.v1'
 const carpoolApplicationEventStorageKey = 'c2cmarket.carpoolApplicationEvents.v1'
 const adminAuditLogStorageKey = 'c2cmarket.adminAuditLogs.v1'
@@ -490,6 +592,7 @@ const apiContactVisibleStatuses: ApiPurchaseIntentStatus[] = ['open', 'contacted
 
 let apiPurchaseIntentStore = normalizeApiPurchaseIntentStore(readSessionStore(apiPurchaseIntentStorageKey, apiPurchaseIntents))
 let apiPurchaseIntentEventStore = normalizeApiPurchaseIntentEventStore(readSessionStore(apiPurchaseIntentEventStorageKey, apiPurchaseIntentEvents))
+let apiOrderStore = readSessionStore<ApiOrder[]>(apiOrderStorageKey, [])
 let carpoolApplicationStore = readSessionStore(carpoolApplicationStorageKey, carpoolApplications)
 let carpoolApplicationEventStore = readSessionStore(carpoolApplicationEventStorageKey, carpoolApplicationEvents)
 let adminAuditLogStore = readSessionStore(adminAuditLogStorageKey, adminAuditLogs)
@@ -573,14 +676,20 @@ function productPlanForCarpoolName(productName: string) {
 function normalizeCarpoolAccessArrangement(carpool: Carpool): Carpool {
   const legacy = carpool as Carpool & { seatEligibilityMode?: string, officialSeatMechanism?: string }
   const product = productPlanForCarpoolName(carpool.product)
-  if (carpool.accessArrangementMode && carpool.accessArrangementNote) return carpool
+  const normalized = {
+    ...carpool,
+    distributionMethod: carpool.distributionMethod ?? 'other',
+    distributionMethodNote: carpool.distributionMethodNote ?? '历史车源未声明分发方式，需站外确认。',
+    providesAdminAccount: carpool.providesAdminAccount ?? false,
+  }
+  if (carpool.accessArrangementMode && carpool.accessArrangementNote) return normalized
   const mode = legacy.seatEligibilityMode === 'official_member_seat'
     ? 'provider_member_invitation'
     : legacy.seatEligibilityMode === 'not_allowed'
       ? 'not_allowed'
       : product?.accessMode ?? 'owner_managed_access'
   return {
-    ...carpool,
+    ...normalized,
     accessArrangementMode: mode,
     accessArrangementNote: carpool.accessArrangementNote ?? legacy.officialSeatMechanism ?? '车主站外说明访问安排，平台不保存凭据。',
     riskAcknowledged: product?.riskAckRequired ? carpool.riskAcknowledged ?? true : carpool.riskAcknowledged,
@@ -651,6 +760,10 @@ export function getSupportedModelPriceRows(service: Pick<ApiService, 'models' | 
 function persistApiPurchaseStores() {
   window.sessionStorage.setItem(apiPurchaseIntentStorageKey, JSON.stringify(apiPurchaseIntentStore))
   window.sessionStorage.setItem(apiPurchaseIntentEventStorageKey, JSON.stringify(apiPurchaseIntentEventStore))
+}
+
+function persistApiOrderStore() {
+  window.sessionStorage.setItem(apiOrderStorageKey, JSON.stringify(apiOrderStore))
 }
 
 function persistCarpoolApplicationStores() {
@@ -824,6 +937,69 @@ export function apiIntentMerchantContactSnapshot(intent: ApiPurchaseIntent): Ord
   }
 }
 
+export function apiIntentBuyerContactSnapshot(intent: ApiPurchaseIntent): OrderContactSnapshot {
+  const canView = apiContactVisibleStatuses.includes(intent.status)
+  return {
+    id: `api-intent-buyer-contact-${intent.id}`,
+    orderType: 'api_order',
+    orderId: intent.id,
+    sellerContacts: [],
+    buyerContacts: canView ? (intent.buyerContactChannels ?? []).map(channel => ({
+      type: channel.type,
+      label: channel.label,
+      maskedValue: contactMaskedValue(channel.type, channel.value),
+      displayValue: channel.value,
+      verified: channel.type === 'linuxdo',
+      usageScope: 'buyer',
+      actionUrl: channel.type === 'linuxdo' ? `https://linux.do/u/${channel.value.replace(/^@/, '')}/messages/new` : undefined,
+    })) : [],
+    contactWindowEndsAt: null,
+    canView,
+    unavailableReason: canView ? null : '只有购买意向参与方可以查看冻结联系方式。',
+    createdAt: intent.updatedAt,
+  }
+}
+
+function contactChannelsToSnapshotItems(channels: ApiContactChannel[], usageScope: ContactUsageScope) {
+  return channels.map(channel => ({
+    type: channel.type,
+    label: channel.label,
+    maskedValue: contactMaskedValue(channel.type, channel.value),
+    displayValue: channel.value,
+    verified: channel.type === 'linuxdo',
+    usageScope,
+    actionUrl: channel.type === 'linuxdo' ? `https://linux.do/u/${channel.value.replace(/^@/, '')}/messages/new` : undefined,
+  }))
+}
+
+export function apiOrderMerchantContactSnapshot(order: ApiOrder): OrderContactSnapshot {
+  return {
+    id: `api-order-merchant-contact-${order.id}`,
+    orderType: 'api_order',
+    orderId: order.id,
+    sellerContacts: contactChannelsToSnapshotItems(order.merchantContactChannels, 'api_merchant'),
+    buyerContacts: [],
+    contactWindowEndsAt: null,
+    canView: true,
+    unavailableReason: null,
+    createdAt: order.updatedAt,
+  }
+}
+
+export function apiOrderBuyerContactSnapshot(order: ApiOrder): OrderContactSnapshot {
+  return {
+    id: `api-order-buyer-contact-${order.id}`,
+    orderType: 'api_order',
+    orderId: order.id,
+    sellerContacts: [],
+    buyerContacts: contactChannelsToSnapshotItems(order.buyerContactChannels, 'buyer'),
+    contactWindowEndsAt: null,
+    canView: true,
+    unavailableReason: null,
+    createdAt: order.updatedAt,
+  }
+}
+
 function defaultContactLabel(type: ContactMethodType) {
   const labels: Record<ContactMethodType, string> = {
     linuxdo: 'linux.do 私信',
@@ -903,12 +1079,29 @@ function normalizeMerchantDisplayName(payload: Record<string, unknown>) {
   }
 }
 
-export function getApiDeliveryModeLabel(mode: ApiDeliveryMode) {
-  return '站外确认接入细节'
+export function getApiDeliveryModeLabel(_mode: ApiDeliveryMode) {
+  return 'API 细节'
 }
 
 export function getApiDeliveryModeDescription(mode: ApiDeliveryMode) {
-  return '提交购买意向后，平台只向参与方展示商户联系方式和收款确认资料；接入细节由双方站外确认。平台不保存 API Key、token、账号密码、Session、Cookie 或面板凭据。'
+  return mode === 'sub2api_panel_account'
+    ? '买家提交购买意向后，双方站外确认 API 细节；平台不保存面板账号、密码、token 或登录态。'
+    : '买家提交购买意向后，双方站外确认 API 细节、限速和鉴权边界；平台不保存 API Key 或 endpoint 密钥。'
+}
+
+export function getApiDeliveryModesLabel(modes: ApiDeliveryMode[]) {
+  const labels = modes.length ? modes.map(getApiDeliveryModeLabel) : [getApiDeliveryModeLabel('api_key_endpoint')]
+  return [...new Set(labels)].join(' / ')
+}
+
+export function getApiServiceDefaultPaymentMethod(service: ApiService): ApiPaymentOption['paymentMethod'] | null {
+  const supported = service.acceptedPaymentMethods?.find(isApiPaymentMethod)
+  if (supported) return supported
+  return apiServicePaymentSnapshot(service.id).find(option => option.enabled && isApiPaymentOptionComplete(option))?.paymentMethod ?? null
+}
+
+export function getApiIntentDefaultPaymentMethod(intent: ApiPurchaseIntent): ApiPaymentOption['paymentMethod'] | null {
+  return intent.snapshot.paymentOptions?.find(option => option.enabled && isApiPaymentOptionComplete(option))?.paymentMethod ?? null
 }
 
 export function isApiServicePubliclyOrderable(service: Pick<ApiService, 'online' | 'publiclyOrderable'>) {
@@ -956,6 +1149,45 @@ export function getApiStatusLabel(status: ApiPurchaseIntentStatus) {
     owner_closed: '商户已关闭',
   }
   return labels[status]
+}
+
+export function getApiOrderStatusLabel(status: ApiOrderStatus) {
+  const labels: Record<ApiOrderStatus, string> = {
+    pending_payment: '待付款',
+    payment_submitted: '买家已付款',
+    paid_confirmed: '已确认收款',
+    delivery_submitted: '已交付',
+    completed: '已完成',
+    cancelled: '已取消',
+  }
+  return labels[status]
+}
+
+export function getApiOrderDeliveryKindLabel(kind: ApiOrderDeliveryKind) {
+  return kind === 'login_account' ? '登录账号接入' : 'API Key 接入'
+}
+
+export function getApiOrderNextAction(order: ApiOrder, role: 'buyer' | 'merchant') {
+  if (role === 'buyer') {
+    if (order.status === 'pending_payment') return '查看收款资料并付款'
+    if (order.status === 'payment_submitted') return '等待商户确认收款'
+    if (order.status === 'paid_confirmed') return '等待商户交付'
+    if (order.status === 'delivery_submitted' || order.status === 'completed') return '查看交付凭证'
+    if (order.status === 'cancelled') return '查看取消原因'
+  }
+  if (order.status === 'pending_payment') return '等待买家付款'
+  if (order.status === 'payment_submitted') return '确认已收款'
+  if (order.status === 'paid_confirmed') return '填写交付信息'
+  if (order.status === 'delivery_submitted' || order.status === 'completed') return '已交付'
+  return '查看详情'
+}
+
+export function isApiOrderBuyerActionRequired(order: ApiOrder) {
+  return order.status === 'pending_payment' || order.status === 'delivery_submitted' || order.status === 'completed'
+}
+
+export function isApiOrderMerchantActionRequired(order: ApiOrder) {
+  return order.status === 'payment_submitted' || order.status === 'paid_confirmed'
 }
 
 export function getCarpoolAccessArrangementLabel(mode: Carpool['accessArrangementMode']) {
@@ -1232,6 +1464,7 @@ function createSnapshot(service: ApiService): ApiPurchaseIntent['snapshot'] {
   return {
     serviceId: service.id,
     serviceTitle: service.title,
+    sourceUrl: service.sourceUrl,
     merchantId: service.merchantId,
     merchant: service.merchant,
     merchantUsername: service.merchantUsername,
@@ -1264,6 +1497,7 @@ function createSnapshot(service: ApiService): ApiPurchaseIntent['snapshot'] {
 function apiServicePublicSearchTerms(item: ApiService) {
   const terms = [item.id, item.title, getApiMerchantDisplayName(item), ...item.models]
   if (canOpenApiMerchantProfile(item)) terms.push(item.merchant, item.merchantUsername)
+  if (item.sourceUrl) terms.push(item.sourceUrl)
   return terms
 }
 
@@ -1347,6 +1581,16 @@ export type ApiPurchaseIntentFilters = {
   merchantId?: string
   status?: ApiPurchaseIntentStatus | ApiPurchaseIntentStatus[]
   deliveryMode?: ApiDeliveryMode
+  serviceId?: string
+  search?: string
+  dateRange?: 'all' | 'today' | '7d' | '30d'
+  sort?: 'default_buyer' | 'default_merchant' | 'updated_desc' | 'created_desc' | 'amount_desc' | 'amount_asc'
+}
+
+export type ApiOrderFilters = {
+  buyerId?: string
+  sellerId?: string
+  status?: ApiOrderStatus | ApiOrderStatus[]
   serviceId?: string
   search?: string
   dateRange?: 'all' | 'today' | '7d' | '30d'
@@ -1443,6 +1687,45 @@ function filterApiPurchaseIntents(filters: ApiPurchaseIntentFilters = {}) {
     if (sort === 'created_desc') return compareTimeDesc(a.createdAt, b.createdAt)
     if (sort === 'amount_desc') return b.purchaseAmountCny - a.purchaseAmountCny
     if (sort === 'amount_asc') return a.purchaseAmountCny - b.purchaseAmountCny
+    return compareTimeDesc(a.updatedAt, b.updatedAt)
+  })
+}
+
+function apiOrderSearchTerms(order: ApiOrder) {
+  return [order.id, order.apiPurchaseIntentId, order.serviceTitle, order.buyer, order.seller, getApiMerchantDisplayName({ merchant: order.seller, snapshot: order.intentSnapshot })]
+}
+
+function defaultApiOrderSortForRole(role: 'buyer' | 'merchant') {
+  return (a: ApiOrder, b: ApiOrder) => {
+    const aAction = role === 'buyer' ? isApiOrderBuyerActionRequired(a) : isApiOrderMerchantActionRequired(a)
+    const bAction = role === 'buyer' ? isApiOrderBuyerActionRequired(b) : isApiOrderMerchantActionRequired(b)
+    return Number(bAction) - Number(aAction)
+      || compareTimeDesc(a.updatedAt, b.updatedAt)
+  }
+}
+
+function filterApiOrders(filters: ApiOrderFilters = {}) {
+  const keyword = filters.search?.trim().toLowerCase()
+  const statuses = Array.isArray(filters.status) ? filters.status : filters.status ? [filters.status] : null
+  const now = Date.now()
+  const rangeMs = filters.dateRange === 'today' ? 24 * 60 * 60 * 1000 : filters.dateRange === '7d' ? 7 * 24 * 60 * 60 * 1000 : filters.dateRange === '30d' ? 30 * 24 * 60 * 60 * 1000 : null
+  const rows = apiOrderStore.filter(item => {
+    const createdAt = new Date(item.createdAt).getTime()
+    return (!filters.buyerId || item.buyerId === filters.buyerId)
+      && (!filters.sellerId || item.sellerId === filters.sellerId)
+      && (!statuses || statuses.includes(item.status))
+      && (!filters.serviceId || item.apiServiceId === filters.serviceId)
+      && (!rangeMs || now - createdAt <= rangeMs)
+      && (!keyword || apiOrderSearchTerms(item).some(value => value.toLowerCase().includes(keyword)))
+  })
+
+  const sort = filters.sort ?? 'updated_desc'
+  return rows.sort((a, b) => {
+    if (sort === 'default_buyer') return defaultApiOrderSortForRole('buyer')(a, b)
+    if (sort === 'default_merchant') return defaultApiOrderSortForRole('merchant')(a, b)
+    if (sort === 'created_desc') return compareTimeDesc(a.createdAt, b.createdAt)
+    if (sort === 'amount_desc') return b.amount - a.amount
+    if (sort === 'amount_asc') return a.amount - b.amount
     return compareTimeDesc(a.updatedAt, b.updatedAt)
   })
 }
@@ -2251,7 +2534,7 @@ export async function getAdminSectionRows(section: AdminSection): Promise<AdminR
     return withAdminRowLinks(filterApiPurchaseIntents({ sort: 'updated_desc' }).map(item => ({
       id: item.id,
       primary: `${item.snapshot.serviceTitle} 购买意向`,
-      secondary: `${item.id} · 意向金额 ¥${item.purchaseAmountCny} · ${getApiDeliveryModeLabel(item.selectedDeliveryMode)} · 联系方式按参与方详情展示`,
+      secondary: `${item.id} · 意向金额 ¥${item.purchaseAmountCny} · 联系方式按参与方详情展示`,
       owner: `${getApiMerchantDisplayName(item)} / 买家 ${item.buyer}`,
       status: getApiStatusLabel(item.status),
       risk: item.ownerCloseReason
@@ -2411,6 +2694,22 @@ function assertCarpoolAccessArrangement(payload: SaveCarpoolDraftPayload, produc
   if (hasCredentialSharingLanguage(note)) {
     throw new Error('访问安排不能包含共享主账号、密码、API Key、Session、Cookie、token 或登录态。')
   }
+  if (!payload.distributionMethod) {
+    throw new Error('请选择分发方式。')
+  }
+  if (payload.distributionMethod !== 'sub2api' && payload.distributionMethod !== 'other') {
+    throw new Error('分发方式只能选择 Sub2API 或其他。')
+  }
+  const distributionNote = payload.distributionMethodNote?.trim() ?? ''
+  if (payload.distributionMethod === 'other' && !distributionNote) {
+    throw new Error('选择其他分发方式时必须填写说明。')
+  }
+  if (distributionNote && hasCredentialSharingLanguage(distributionNote)) {
+    throw new Error('分发方式说明不能包含共享主账号、密码、API Key、Session、Cookie、token 或登录态。')
+  }
+  if (typeof payload.providesAdminAccount !== 'boolean') {
+    throw new Error('请选择是否提供管理员账号。')
+  }
   if (carpoolRequiresRiskAck(product, payload.riskNoticeCode) && !payload.riskAcknowledged) {
     throw new Error('请先确认该套餐的发布边界。')
   }
@@ -2504,6 +2803,7 @@ export async function submitCarpool(payload: SaveCarpoolDraftPayload) {
   await wait()
   const product = carpoolProductCatalog.find(item => item.id === payload.productId)
   const region = carpoolRegions.find(item => item.code === payload.regionCode)
+  const regionName = payload.customRegionName?.trim() || region?.displayName || '其他'
   const channel = carpoolOpeningChannels.find(item => item.code === payload.openingChannelCode)
   assertCarpoolAccessArrangement(payload, product)
   const id = `carpool-${Date.now()}`
@@ -2513,7 +2813,7 @@ export async function submitCarpool(payload: SaveCarpoolDraftPayload) {
   const carpool: Carpool = {
     id,
     product: product?.displayName ?? payload.customProductName?.trim() ?? '自定义产品',
-    region: region?.displayName ?? '其他',
+    region: regionName,
     monthly,
     serviceMultiplier,
     monthlyQuotaAmount,
@@ -2537,6 +2837,9 @@ export async function submitCarpool(payload: SaveCarpoolDraftPayload) {
     sourcePostAccessible: Boolean(payload.linuxDoTopicUrl),
     hasInfoConflict: false,
     hasUnresolvedDispute: false,
+    distributionMethod: payload.distributionMethod || 'other',
+    distributionMethodNote: payload.distributionMethodNote?.trim() || '站外分发方式待确认。',
+    providesAdminAccount: Boolean(payload.providesAdminAccount),
     accessArrangementMode: payload.accessArrangementMode ?? 'other_off_platform',
     accessArrangementNote: payload.accessArrangementNote?.trim() || '待管理员复核访问安排',
     riskAcknowledged: carpoolRequiresRiskAck(product, payload.riskNoticeCode) ? Boolean(payload.riskAcknowledged) : undefined,
@@ -2587,6 +2890,7 @@ export async function submitApiService(payload: Record<string, unknown>) {
   const service: ApiService = {
     id,
     title: stringValue(payload.generatedTitle, models.length ? `${models[0]} API 服务` : '新 API 服务'),
+    sourceUrl: stringValue(payload.sourceUrl, ''),
     merchantId: currentMerchantId,
     merchantUsername: currentMerchantName,
     merchant: currentMerchantName,
@@ -2599,14 +2903,14 @@ export async function submitApiService(payload: Record<string, unknown>) {
     rate: `${defaultMultiplier.toFixed(2)}x`,
     defaultMultiplier,
     creditPerCny: cnyPerUsdCredit > 0 ? Number((1 / cnyPerUsdCredit).toFixed(2)) : 1,
-    minimumPurchaseCny: numberValue(payload.minimumPurchaseCny, 20),
+    minimumPurchaseCny: numberValue(payload.minimumPurchaseCny, 10),
     maxBuy: numberValue(payload.maximumPurchaseCny, 300),
     balance: numberValue(payload.availableCreditUsd, 0),
     delivery: gateway,
     billingMode: billing,
     deliveryModes,
     usageVisibility: apiUsageVisibility(payload.usageVisibility),
-    panelBaseUrl: gateway === 'Sub2API' ? '提交意向后由商户站外确认面板接入说明' : null,
+    panelBaseUrl: gateway === 'Sub2API' ? '提交意向后由商户站外确认 API 细节' : null,
     imagePricing: {
       supported: Boolean((payload.imageCapability as { enabled?: boolean } | undefined)?.enabled),
       textToImage: Boolean((payload.imageCapability as { supportsTextToImage?: boolean } | undefined)?.supportsTextToImage),
@@ -2642,6 +2946,7 @@ export async function submitApiService(payload: Record<string, unknown>) {
     merchantNote: stringValue(payload.merchantNote, '建议首次小额测试。'),
     modelPriceRows: buildModelPriceRowsFromPayload(payload, defaultMultiplier, gateway === 'Sub2API'),
     contactChannels: [{ type: 'linuxdo', label: 'linux.do 私信', value: `@${currentMerchantName}` }],
+    acceptedPaymentMethods: normalizedPaymentOptions.filter(option => option.enabled).map(option => option.paymentMethod),
   }
   apiServicePaymentSnapshotStore[id] = normalizeApiPaymentAccountSettings({
     paymentWindowMinutes: responseMinutes,
@@ -3587,8 +3892,8 @@ export async function createApiPurchaseIntent(payload: CreateApiPurchaseIntentPa
   const service = apiServiceStore.find(item => item.id === payload.serviceId)
   if (!service) throw new Error(`API service not found: ${payload.serviceId}`)
   if (!isApiServicePubliclyOrderable(service) || service.state !== 'online') throw new Error('服务当前不可提交购买意向。')
-  if (!service.deliveryModes.includes(payload.deliveryMode)) throw new Error('选择的站外确认方式不属于该服务。')
-  if (service.delivery !== 'Sub2API' && payload.deliveryMode === 'sub2api_panel_account') throw new Error('当前服务不支持该站外确认方式。')
+  if (!service.deliveryModes.includes(payload.deliveryMode)) throw new Error('选择的 API 细节不属于该服务。')
+  if (service.delivery !== 'Sub2API' && payload.deliveryMode === 'sub2api_panel_account') throw new Error('当前服务不支持该 API 细节。')
   if (payload.purchaseAmountCny < service.minimumPurchaseCny) throw new Error(`最低意向金额为 ¥${service.minimumPurchaseCny}`)
   if (payload.purchaseAmountCny > service.maxBuy) throw new Error(`单笔最高意向金额为 ¥${service.maxBuy}`)
   if (payload.purchaseAmountCny > service.balance / service.creditPerCny) throw new Error('超过商户当前可售美元额度上限。')
@@ -3621,6 +3926,7 @@ export async function createApiPurchaseIntent(payload: CreateApiPurchaseIntentPa
       note: '购买意向已提交，商户联系方式和收款确认资料已向买家展示，商户可查看买家选择的联系方式',
     },
     contactChannels: service.contactChannels,
+    buyerContactChannels: [{ type: 'linuxdo', label: 'linux.do 私信', value: '@buyer' }],
     merchantResponseDeadline: service.online ? minutesFromNow(service.expectedResponseMinutes) : undefined,
     createdAt,
     updatedAt: createdAt,
@@ -3710,17 +4016,260 @@ export async function cancelApiPurchaseIntent(id: string, reason: string) {
   })
 }
 
+function findApiOrder(id: string) {
+  const order = apiOrderStore.find(item => item.id === id)
+  if (!order) throw new Error(`API order not found: ${id}`)
+  return order
+}
+
+function updateApiOrder(id: string, updater: (order: ApiOrder) => void) {
+  const order = findApiOrder(id)
+  updater(order)
+  order.updatedAt = nowText()
+  order.version += 1
+  persistApiOrderStore()
+  return clone(order)
+}
+
+function mockBuyerContactChannels(intent: ApiPurchaseIntent): ApiContactChannel[] {
+  return intent.buyerContactChannels?.length
+    ? intent.buyerContactChannels
+    : [{ type: 'linuxdo', label: 'linux.do 私信', value: '@buyer' }]
+}
+
+export async function createApiOrderFromIntent(intentId: string, paymentMethod: ApiPaymentOption['paymentMethod']) {
+  if (shouldUseRealBackend()) return backendCreateAPIOrderFromIntent(intentId, paymentMethod)
+  await wait()
+  const intent = findApiPurchaseIntent(intentId)
+  if (apiOrderStore.some(item => item.apiPurchaseIntentId === intentId)) {
+    throw new Error('该购买意向已经创建过订单。')
+  }
+  const option = intent.snapshot.paymentOptions?.find(item => item.paymentMethod === paymentMethod && item.enabled)
+  if (!option || !isApiPaymentOptionComplete(option)) {
+    throw new Error('选择的收款方式不可用，请联系商户更新收款设置。')
+  }
+  const createdAt = nowText()
+  const order: ApiOrder = {
+    id: `api-order-${Date.now()}`,
+    apiPurchaseIntentId: intent.id,
+    apiServiceId: intent.serviceId,
+    buyerId: intent.buyerId,
+    buyer: intent.buyer,
+    sellerId: intent.merchantId,
+    seller: getApiMerchantDisplayName(intent),
+    status: 'pending_payment',
+    disputeStatus: 'none',
+    serviceTitle: intent.snapshot.serviceTitle,
+    amount: intent.purchaseAmountCny,
+    currency: 'CNY',
+    selectedPaymentMethod: paymentMethod,
+    paymentWindowMinutes: 10,
+    paymentExpiresAt: minutesFromNow(10),
+    version: 1,
+    intentSnapshot: clone(intent.snapshot),
+    selectedDeliveryMode: intent.selectedDeliveryMode,
+    requestedUsdAllowance: intent.purchasedCredit,
+    merchantContactChannels: clone(intent.contactChannels),
+    buyerContactChannels: clone(mockBuyerContactChannels(intent)),
+    viewerRole: 'buyer',
+    createdAt,
+    updatedAt: createdAt,
+  }
+  apiOrderStore.unshift(order)
+  persistApiOrderStore()
+  return clone(order)
+}
+
+export async function getMyApiOrders(filters: ApiOrderFilters = {}) {
+  if (shouldUseRealBackend()) return backendMyAPIOrders(filters)
+  await wait()
+  return clone(filterApiOrders({ ...filters, buyerId: currentBuyerId }))
+}
+
+export async function getMerchantApiOrders(filters: ApiOrderFilters = {}) {
+  if (shouldUseRealBackend()) return backendOwnerAPIOrders(filters)
+  await wait()
+  return clone(filterApiOrders({ ...filters, sellerId: currentMerchantId }))
+}
+
+export async function getApiOrderById(id: string, perspective: 'buyer' | 'merchant' = 'buyer') {
+  if (shouldUseRealBackend()) {
+    return perspective === 'merchant' ? backendOwnerAPIOrder(id) : backendMyAPIOrder(id)
+  }
+  await wait()
+  const order = findApiOrder(id)
+  if (perspective === 'merchant' && order.sellerId !== currentMerchantId) throw new Error('无权查看该订单。')
+  if (perspective === 'buyer' && order.buyerId !== currentBuyerId) throw new Error('无权查看该订单。')
+  return clone({ ...order, viewerRole: perspective })
+}
+
+export async function readApiOrderPaymentInstructions(id: string) {
+  if (shouldUseRealBackend()) return backendReadAPIOrderPaymentInstructions(id)
+  await wait()
+  const order = findApiOrder(id)
+  const option = order.intentSnapshot.paymentOptions?.find(item => item.paymentMethod === order.selectedPaymentMethod)
+  return clone({
+    orderId: order.id,
+    paymentMethod: order.selectedPaymentMethod,
+    paymentInstructions: option?.paymentInstructions ?? '',
+    paymentQrCodeDataUrl: option?.paymentQrCodeDataUrl ?? null,
+    paymentExpiresAt: order.paymentExpiresAt,
+  } satisfies ApiOrderPaymentInstructions)
+}
+
+export async function submitApiOrderPayment(id: string, paymentSummary: string, version: number) {
+  if (shouldUseRealBackend()) return backendSubmitAPIOrderPayment(id, paymentSummary, version)
+  await wait()
+  return updateApiOrder(id, order => {
+    if (order.version !== version) throw new Error('订单已更新，请刷新后重试。')
+    if (order.status !== 'pending_payment') throw new Error('只有待付款订单可以标记已付款。')
+    order.status = 'payment_submitted'
+    order.paymentSummary = paymentSummary.trim()
+    order.paymentSubmittedAt = nowText()
+  })
+}
+
+export async function confirmApiOrderPayment(id: string, version: number) {
+  if (shouldUseRealBackend()) return backendConfirmAPIOrderPayment(id, version)
+  await wait()
+  return updateApiOrder(id, order => {
+    if (order.version !== version) throw new Error('订单已更新，请刷新后重试。')
+    if (order.status !== 'payment_submitted') throw new Error('只有买家已付款订单可以确认收款。')
+    order.status = 'paid_confirmed'
+    order.paidConfirmedAt = nowText()
+  })
+}
+
+function validateMockDeliveryCredential(payload: SubmitApiOrderDeliveryCredentialPayload) {
+  if (payload.deliveryKind === 'api_key_endpoint') {
+    if (!payload.apiBaseUrl?.trim()) throw new Error('请填写 API Base URL。')
+    if (!payload.apiKey?.trim()) throw new Error('请填写买家专属 API Key。')
+    return
+  }
+  if (payload.deliveryKind === 'login_account') {
+    if (!payload.panelLoginUrl?.trim()) throw new Error('请填写登录地址。')
+    if (!payload.username?.trim()) throw new Error('请填写用户名。')
+    if (!payload.password?.trim()) throw new Error('请填写初始密码。')
+    return
+  }
+  throw new Error('请选择交付凭证类型。')
+}
+
+export async function submitApiOrderDeliveryCredential(id: string, payload: SubmitApiOrderDeliveryCredentialPayload, version: number) {
+  if (shouldUseRealBackend()) return backendSubmitAPIOrderDeliveryCredential(id, payload, version)
+  await wait()
+  return updateApiOrder(id, order => {
+    if (order.version !== version) throw new Error('订单已更新，请刷新后重试。')
+    if (order.status !== 'paid_confirmed') throw new Error('只有确认收款后的订单可以交付。')
+    if (order.deliveryCredential) throw new Error('交付信息已提交，不能再次修改。')
+    validateMockDeliveryCredential(payload)
+    const submittedAt = nowText()
+    order.status = 'delivery_submitted'
+    order.deliverySubmittedAt = submittedAt
+    order.deliveryNote = payload.deliveryKind === 'login_account'
+      ? '商户已提交登录账号接入信息。'
+      : '商户已提交 API Key 接入信息。'
+    order.deliveryCredential = {
+      deliveryKind: payload.deliveryKind,
+      apiBaseUrl: payload.apiBaseUrl?.trim() || undefined,
+      apiKey: payload.apiKey?.trim() || undefined,
+      panelLoginUrl: payload.panelLoginUrl?.trim() || undefined,
+      username: payload.username?.trim() || undefined,
+      password: payload.password?.trim() || undefined,
+      instructions: payload.instructions?.trim() || undefined,
+      submittedAt,
+    }
+  })
+}
+
+export function getApiOrderEvents(order: ApiOrder): ApiOrderEvent[] {
+  const events: ApiOrderEvent[] = [{
+    id: `${order.id}-created`,
+    orderId: order.id,
+    actorLabel: order.buyer,
+    actorRole: 'buyer',
+    type: 'created',
+    toStatus: 'pending_payment',
+    createdAt: order.createdAt,
+  }]
+  if (order.paymentSubmittedAt) {
+    events.push({
+      id: `${order.id}-payment-submitted`,
+      orderId: order.id,
+      actorLabel: order.buyer,
+      actorRole: 'buyer',
+      type: 'payment_submitted',
+      fromStatus: 'pending_payment',
+      toStatus: 'payment_submitted',
+      note: order.paymentSummary,
+      createdAt: order.paymentSubmittedAt,
+    })
+  }
+  if (order.paidConfirmedAt) {
+    events.push({
+      id: `${order.id}-payment-confirmed`,
+      orderId: order.id,
+      actorLabel: order.seller,
+      actorRole: 'merchant',
+      type: 'payment_confirmed',
+      fromStatus: 'payment_submitted',
+      toStatus: 'paid_confirmed',
+      createdAt: order.paidConfirmedAt,
+    })
+  }
+  if (order.deliverySubmittedAt) {
+    events.push({
+      id: `${order.id}-delivery-submitted`,
+      orderId: order.id,
+      actorLabel: order.seller,
+      actorRole: 'merchant',
+      type: 'delivery_submitted',
+      fromStatus: 'paid_confirmed',
+      toStatus: 'delivery_submitted',
+      note: order.deliveryNote,
+      createdAt: order.deliverySubmittedAt,
+    })
+  }
+  if (order.completedAt) {
+    events.push({
+      id: `${order.id}-completed`,
+      orderId: order.id,
+      actorLabel: order.buyer,
+      actorRole: 'buyer',
+      type: 'completed',
+      fromStatus: 'delivery_submitted',
+      toStatus: 'completed',
+      createdAt: order.completedAt,
+    })
+  }
+  if (order.cancelledAt) {
+    events.push({
+      id: `${order.id}-cancelled`,
+      orderId: order.id,
+      actorLabel: '系统',
+      actorRole: 'system',
+      type: 'cancelled',
+      fromStatus: order.status,
+      toStatus: 'cancelled',
+      note: order.cancelReason,
+      createdAt: order.cancelledAt,
+    })
+  }
+  return events.sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime())
+}
+
 export async function getApiOrderNotifications(): Promise<ApiOrderNotification[]> {
   await wait()
-  const rows = apiPurchaseIntentStore
-    .filter(item => ['open', 'contacted', 'buyer_cancelled', 'owner_closed'].includes(item.status))
+  const rows = apiOrderStore
+    .filter(item => ['pending_payment', 'payment_submitted', 'paid_confirmed', 'delivery_submitted'].includes(item.status))
     .slice(0, 6)
     .map(item => ({
       id: `api-notice-${item.id}`,
-      title: getApiStatusLabel(item.status),
-      detail: `${item.snapshot.serviceTitle} · ${item.buyer} / ${item.merchant}`,
+      title: getApiOrderStatusLabel(item.status),
+      detail: `${item.serviceTitle} · ${item.buyer} / ${item.seller}`,
       time: item.updatedAt,
-      unread: item.status === 'open' || item.status === 'contacted',
+      unread: item.status === 'payment_submitted' || item.status === 'paid_confirmed',
+      to: item.sellerId === currentMerchantId ? `/merchant/api-orders/${item.id}` : `/my/api-orders/${item.id}`,
     }))
   return clone(markReadState(rows))
 }

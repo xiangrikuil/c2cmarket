@@ -220,6 +220,94 @@ If-Match: "<version>"                            # required for versioned admin 
 - Carpool public listing endpoints return `active` listings only. Owner/admin views may return non-public statuses.
 - `/owner/*` carpool endpoints are a resource perspective for the current authenticated user as listing owner, not a separate merchant account role. Do not branch permissions on an independent merchant role for these routes.
 
+## Scenario: Carpool Publish Region And Simplified Form Contract
+
+### 1. Scope / Trigger
+
+- Trigger: frontend publish-form, backend carpool listing DTO, OpenAPI, or PostgreSQL work touching carpool listing opening regions, payment method selection, billing-period presentation, or access-arrangement generation.
+- Product scope: owners pick one off-platform payment method, publish listings with a persisted opening-region display value, and do not manually fill the backend access-arrangement text from a standalone publish-page section.
+- Boundary: this contract does not add platform payments, escrow, credential custody, automatic delivery, or API proxy behavior.
+
+### 2. Signatures
+
+```text
+POST  /api/v1/carpools
+PATCH /api/v1/carpools/{id}
+GET   /api/v1/carpools
+GET   /api/v1/carpools/{id}
+GET   /api/v1/me/carpools
+
+Create/update JSON fields:
+  regionCode: string       # required, max 64; custom regions use "other"
+  regionName: string       # required, max 64; owner-facing display text
+  cycleTerm.billingPeriod: "monthly"
+  accessArrangement: string
+
+PostgreSQL:
+  carpool_listings.region_code text NOT NULL
+  carpool_listings.region_name text NOT NULL
+```
+
+### 3. Contracts
+
+- Frontend `SaveCarpoolDraftPayload.paymentMethodCodes` remains an array for facade compatibility, but publish UI, import normalization, validation, and submit mapping must keep exactly one payment method code.
+- Frontend custom region state is `regionCode="other"` plus `customRegionName`; the real backend adapter sends `regionCode` and the final trimmed `regionName`.
+- Backend create/update responses return `regionCode` and `regionName`. Public, owner, and admin listing reads must preserve these values without remapping custom regions to a fixed fallback.
+- The publish page must not expose a writable billing-period control. The backend request still writes `cycleTerm.billingPeriod="monthly"` so applicants can review monthly-cycle rules.
+- The publish page must not expose a standalone access-arrangement section. It derives `accessArrangement` from product `accessMode`; high-risk products still require the versioned risk acknowledgement before publish.
+- Public copy may display access-arrangement summaries, but must not ask for or imply sharing account passwords, API keys, sessions, cookies, tokens, or other login state.
+
+### 4. Validation & Error Matrix
+
+| Condition | HTTP / UI result | Stable code / field |
+| --- | --- | --- |
+| Missing `regionCode` | 422 | `VALIDATION_FAILED`, `regionCode` |
+| Missing `regionName` | 422 | `VALIDATION_FAILED`, `regionName` |
+| `regionCode` or `regionName` longer than 64 runes | 422 | `VALIDATION_FAILED`, field-specific |
+| Region/title/summary/access-arrangement contains credential-shaped text or NUL | 422 | `SECRET_CONTENT_DETECTED`, field-specific |
+| Frontend custom region selected with empty `customRegionName` | Block submit | `region` field error |
+| Frontend zero or multiple `paymentMethodCodes` | Block submit | `paymentMethodCodes` field error |
+| High-risk product without current risk acknowledgement | 422 / block submit | `RISK_ACK_REQUIRED` or `accessArrangement` field error |
+
+### 5. Good/Base/Bad Cases
+
+- Good: owner selects `regionCode="other"` with `customRegionName="印度区"`; preview, linux.do post text, create payload, PostgreSQL row, public listing, owner listing, and application snapshots display `印度区`.
+- Good: topic import detects multiple payment methods; the publish form keeps the first detected code and never presents a multi-select state.
+- Base: owner selects a common region such as `jp`; frontend sends that code and display name, backend persists both, and reads return the same pair.
+- Bad: custom region is empty, contains `token=...`, or UI submits two payment method codes.
+- Bad: frontend removes `cycleTerm` or sends a non-monthly billing period because the readonly field was removed from the UI.
+
+### 6. Tests Required
+
+- Frontend tests must assert custom region display and exactly-one payment method behavior in publish helpers.
+- Frontend type-check and real-backend build must cover the `SaveCarpoolDraftPayload` to backend request mapping.
+- Backend router tests must assert region fields round-trip and credential-shaped region text is rejected.
+- PostgreSQL integration tests must assert `region_code` and `region_name` survive publish/listing reads.
+- OpenAPI must list `regionCode` and `regionName` as required create fields and listing response fields.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```ts
+payload.paymentMethodCodes = ["credit_card", "paypal"]
+request.regionName = "其他"
+request.cycleTerm = undefined
+request.accessArrangement = form.freeTextAccessArrangement
+```
+
+This loses the owner's custom region, reintroduces multi-payment listings, and breaks the backend monthly-cycle/access-arrangement contract.
+
+#### Correct
+
+```ts
+payload.paymentMethodCodes = [selectedPaymentCode]
+request.regionCode = form.regionCode
+request.regionName = finalRegionName
+request.cycleTerm.billingPeriod = "monthly"
+request.accessArrangement = defaultAccessArrangementNote(selectedProduct)
+```
+
 ## Scenario: Carpool Cancel And Exit Lifecycle
 
 ### 1. Scope / Trigger
@@ -640,7 +728,7 @@ legacy pending_review -> admin approve/request-changes/reject
 - Public API service reads return only services where `reviewStatus=approved`, `publicationStatus=online`, and `moderationStatus=clear`. Public DTOs must not expose owner contact method IDs, owner user IDs, review/admin internals, moderation reasons, or merchant internal notes.
 - `distributionSystem=sub2api` fixes service model `merchantMultiplier` to `1.0000` in service validation and database constraints. Do not hard-code this only in frontend behavior.
 - API service rows and DTOs must not store or return passwords, API keys, Sub2API keys, sessions, cookies, third-party tokens, panel owner credentials, payment proofs, or platform verification artifacts.
-- API service orderability uses `acceptingOrders` as the owner-controlled willingness flag and `isOrderable` as the server-derived current predicate. First-release public API service list, detail, search, favorite validation/listing, and purchase-intent creation return only orderable services and support `paymentMethod=wechat|alipay|usdt` where applicable.
+- API service orderability uses `acceptingOrders` as the owner-controlled willingness flag and `isOrderable` as the server-derived current predicate. First-release public API service list, detail, search, favorite validation/listing, and purchase-intent creation return only orderable services and support `paymentMethod=wechat|alipay`.
 - API purchase intent creation is allowed only for public API services where `reviewStatus=approved`, `publicationStatus=online`, `moderationStatus=clear`, `acceptingOrders=true`, `paymentWindowMinutes` is between 3 and 15, and at least one payment option is enabled. An orderable online service is treated as the owner having pre-consented to receive compliant purchase intents and to disclose the service's selected merchant contact to the successful buyer.
 - API purchase intent creation freezes the service version, buyer contact method version, owner contact method version, pricing snapshot, requested CNY amount, requested USD allowance or selected package snapshot in one PostgreSQL transaction. It writes event/notification side effects and completes idempotency metadata in that same transaction, but must not create or reference API-specific `contact_sessions`.
 - API purchase intent amount fields are intent terms for off-platform confirmation only. They are not payable orders, reserved balance, platform-held credit, quota ledgers, or fulfillment records.
@@ -651,8 +739,9 @@ legacy pending_review -> admin approve/request-changes/reject
 - API orders are independent from API purchase intents. A buyer can create at most one API order from a purchase intent across all statuses, including cancelled, payment-timeout-cancelled, and completed orders. If the buyer wants to retry, they must create a new purchase intent. Duplicate or concurrent order creation, and cancel/close of an intent that already has an order, must return `409 API_PURCHASE_INTENT_HAS_ORDER`.
 - API order creation accepts only `paymentMethod`. Amount, currency, service title, package/quote snapshot, buyer/seller IDs, payment window, expiry time, and private payment instructions are all server-frozen.
 - API order states are `pending_payment -> payment_submitted -> paid_confirmed -> delivery_submitted -> completed`, with `pending_payment -> cancelled` for buyer cancellation or payment timeout. Disputes use `disputeStatus`, create or bind a `dispute_cases` row with `target_type='api_order'`, save `api_orders.dispute_case_id`, and must not overwrite the main fulfillment state.
-- API order responses that contain payment summaries, delivery notes, payment instructions, or other sensitive order context must set `Cache-Control: private, no-store`. Order create responses must not include `paymentInstructions`; `POST /me/api-orders/{id}/payment-instructions` is the explicit audited read endpoint.
-- API order seller delivery notes are user-facing off-platform delivery prompts. They are pure text only and must reject Authorization headers, API keys, passwords, tokens, JWTs, sessions, cookies, Sub2API keys, endpoint credentials, subscription links, proxy node links, account credentials, or attachment-like payloads with `SECRET_CONTENT_DETECTED`. Detection must cover common plain and wrapped paste shapes, including `vmess://`, `trojan://`, `ss://`, `ssr://`, `socks://`, `socks5://`, `vless://`, `clash://`, `hysteria://`, `hy2://`, `tuic://`, `sub://`, URL-encoded subscription links, nested URL query parameters, Markdown links, and JSON string values. Bare educational words such as `token`, `cookie`, or `API key` in safety copy must not be rejected by themselves.
+- API order responses that contain payment summaries, delivery notes, payment instructions, structured delivery credentials, or other sensitive order context must set `Cache-Control: private, no-store`. Order create responses must not include `paymentInstructions`; `POST /me/api-orders/{id}/payment-instructions` is the explicit audited read endpoint.
+- API order delivery is a narrow product-boundary exception: after `paid_confirmed`, the seller may submit exactly one structured `deliveryCredential` for that order. Allowed shapes are `api_key_endpoint` (`apiBaseUrl`, `apiKey`, optional `instructions`) and `login_account` (`panelLoginUrl`, `username`, `password`, optional `instructions`). `deliveryNote` remains a generated non-sensitive summary such as `商户已提交 API Key 接入信息。` and must not store the raw credential. Detail/action responses for the buyer and seller may include the credential; list/admin/public responses must not.
+- API order delivery credentials may contain only buyer-specific, revocable API keys or initial account passwords. They must reject cookies, sessions, OAuth/access/refresh tokens, recovery codes, MFA codes, provider master keys, owner/master account credentials, subscription links, proxy node links, encoded/nested subscription URLs, attachment payloads, and query-string secrets with `SECRET_CONTENT_DETECTED` or field-level `VALIDATION_FAILED`.
 - User announcement routes return only user-visible announcements plus the current user's receipt state. `seen`, `read`, and `dismiss` write receipt timestamps and must not mutate announcement content.
 - Announcement home-banner selection uses published, non-expired, home-channel announcements and receipt dismissal state. Dismissal hides only the banner for the current user; it must not archive or offline the announcement.
 - Admin announcement routes own draft/create/update/publish/offline/duplicate/audit flows. Offlining requires a non-empty reason and writes an audit log. Duplicating creates a new draft rather than editing the source.
@@ -664,7 +753,7 @@ legacy pending_review -> admin approve/request-changes/reject
 - Admin report/dispute/appeal actions require session, CSRF, `Idempotency-Key`, and `If-Match`.
 - `GET /api/v1/users/{username}/disputes` and public profile embedded disputes return only public-safe fields from `dispute_cases.public_summary/public_result`; they must not expose reporter IDs, admin IDs, raw report descriptions, appeal statements, contact values, internal notes, evidence, or admin reasons.
 - Contact session reads return full selected contact values only to participants before the deadline and must set `Cache-Control: no-store`.
-- Product boundary: do not add payment, escrow, wallet, platform guarantee, third-party credential custody, automatic credential delivery, or API proxying behavior to this backend.
+- Product boundary: do not add payment, escrow, wallet, platform guarantee, API proxying, generalized third-party credential custody, or automatic credential delivery behavior to this backend. The only credential-storage exception is the one-time API order `deliveryCredential` described above.
 
 ### 4. Validation & Error Matrix
 
@@ -705,7 +794,9 @@ legacy pending_review -> admin approve/request-changes/reject
 | Same API purchase intent already has any order | 409 | `API_PURCHASE_INTENT_HAS_ORDER` |
 | Unsupported API order payment method | 422 | `VALIDATION_FAILED` |
 | API order action in wrong state | 409 | `INVALID_STATE_TRANSITION` |
-| Credential-looking API order delivery/payment/reason text | 422 | `SECRET_CONTENT_DETECTED` |
+| Credential-looking API order payment/reason text | 422 | `SECRET_CONTENT_DETECTED` |
+| Forbidden API order delivery credential content such as cookies, sessions, OAuth tokens, recovery codes, subscriptions, proxy URLs, or owner/master credentials | 422 | `SECRET_CONTENT_DETECTED` or `VALIDATION_FAILED` |
+| Second API order delivery submission for the same order | 409 | `INVALID_STATE_TRANSITION` |
 
 ### 5. Good/Base/Bad Cases
 
@@ -728,12 +819,13 @@ legacy pending_review -> admin approve/request-changes/reject
 - Good: the service owner marks the API purchase intent as contacted, then closes it with a reason; each action requires `If-Match` and `Idempotency-Key`.
 - Good: service owner enables order settings only after the service is approved, online, clear, has a valid contact, has at least one enabled payment option, and has a 3-15 minute payment window; public list/search includes the service only when `isOrderable=true`.
 - Good: buyer creates an API order from a purchase intent with `{paymentMethod:"wechat"}`; the order freezes server-side amount, currency, payment window, selected payment method, and service snapshots, then the buyer reads payment instructions through the audited endpoint.
-- Good: buyer submits a payment summary, owner manually confirms off-platform payment, owner submits a pure-text note, and buyer confirms completion; each state-changing action requires `If-Match` and `Idempotency-Key`.
+- Good: buyer submits a payment summary, owner manually confirms off-platform payment, owner submits one structured API Key delivery credential, and buyer can later read that credential from buyer detail; each state-changing action requires `If-Match` and `Idempotency-Key`.
+- Good: owner submits a `login_account` delivery credential with `panelLoginUrl`, `username`, `password`, and instructions after payment is confirmed; order status becomes `delivery_submitted`, `deliveryNote` contains only a non-sensitive summary, and detail responses include the credential only for the buyer or seller.
 - Bad: a buyer submits an API purchase intent against a draft, paused, suspended, removed, or otherwise non-public API service; response is `404 OBJECT_NOT_FOUND`.
 - Bad: a buyer creates an API order before order settings make the service orderable; response is `409 INVALID_STATE_TRANSITION`.
 - Bad: a buyer creates another API order from the same purchase intent after cancellation, timeout, or completion; response is `409 API_PURCHASE_INTENT_HAS_ORDER`.
 - Bad: buyer cancels or owner closes a purchase intent that already has any API order; response is `409 API_PURCHASE_INTENT_HAS_ORDER`.
-- Bad: owner submits a delivery note containing `Authorization: Bearer`, `X-API-Key`, `apiKey:`, provider API key env names, JWTs, `token=`, `session=`, `cookie=`, subscription URLs, proxy node URLs, or similar secret markers; response is `422 SECRET_CONTENT_DETECTED`.
+- Bad: owner tries to submit delivery before `paid_confirmed`, repeat delivery after `delivery_submitted`, or submit delivery fields containing cookies, sessions, OAuth tokens, recovery codes, subscription URLs, proxy node URLs, owner/master account credentials, or query-string secrets; response is `409 INVALID_STATE_TRANSITION`, `422 SECRET_CONTENT_DETECTED`, or `422 VALIDATION_FAILED` as appropriate.
 - Bad: a service owner submits an API purchase intent against their own service; response is `409 INVALID_STATE_TRANSITION`.
 - Bad: a buyer uses a contact method owned by another user; response is `422 CONTACT_METHOD_NOT_OWNED`.
 - Good: a user updates profile privacy and public profile reads omit disabled optional stats plus all contact values.
@@ -772,7 +864,7 @@ Backend contract slices must include tests for:
 - API service database integrity constraints, including fixed Sub2API multiplier and owner-owned contact method selection.
 - API purchase intent create flow, idempotent replay without plaintext body cache, direct merchant contact disclosure with `Cache-Control: no-store`, buyer/owner/admin detail visibility, owner mark-contacted, buyer cancel, owner close, and completed idempotency metadata rows.
 - API purchase intent integrity constraints, including public service predicate rejection, owner self-intent rejection, buyer contact ownership rejection, owner contact availability, requested USD allowance cap rejection, active-intent uniqueness, and absence of API-specific contact-session columns or rows.
-- API order flow, including order settings validation, public orderable list/search filtering, payment method filtering, order create from purchase intent, no payment instructions in create response, audited payment-instruction read, buyer payment summary, owner manual payment confirmation, secret delivery rejection, pure-text delivery note, buyer completion, dispute case creation/binding, payment timeout materialization, and one-order-ever-per-intent uniqueness.
+- API order flow, including order settings validation, public orderable list/search filtering, payment method filtering, order create from purchase intent, no payment instructions in create response, audited payment-instruction read with QR-code snapshot, buyer payment summary, owner manual payment confirmation, one-time structured delivery credentials, buyer/seller detail credential visibility, list/admin/public credential non-leakage, forbidden credential-content rejection, duplicate delivery rejection, buyer completion, dispute case creation/binding, payment timeout materialization, and one-order-ever-per-intent uniqueness.
 - Profile/contact/merchant profile flow, including profile update, contact method list/update/verify/delete/default, public user profile privacy, public merchant profile boundary, and store-alias API service public DTO boundaries.
 - Announcement user/admin flow, including create/update/publish/offline/duplicate, user list/home/detail, receipt seen/read/dismiss, unread counts, audit logs, and route parity with OpenAPI.
 - Report/dispute/appeal flow, including contact/public-user report creation, admin report list/detail/actions, dispute open/request-info/resolve/close, public dispute list/profile stats, appeal create/list/admin approve/reject, idempotent replay, If-Match conflicts, and sanitized public DTO assertions.
