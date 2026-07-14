@@ -62,6 +62,28 @@ func (s *Manager) SetOrderExistenceChecker(checker OrderExistenceChecker) {
 	s.orders = checker
 }
 
+// MarkOrdered 将已生成订单的意向移出活动意向集合，后续履约由订单生命周期负责。
+func (s *Manager) MarkOrdered(intentID string) *domain.AppError {
+	if s.repo != nil {
+		return domain.NewError(http.StatusInternalServerError, domain.CodeInternalError, "Internal error", "持久化购买意向必须由订单仓储更新。")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	intent, ok := s.intents[strings.TrimSpace(intentID)]
+	if !ok {
+		return domain.NewError(http.StatusNotFound, domain.CodeObjectNotFound, "API purchase intent not found", "购买意向不存在。")
+	}
+	if intent.Status != StatusOpen && intent.Status != StatusContacted {
+		return domain.NewError(http.StatusConflict, domain.CodeInvalidStateTransition, "Invalid state transition", "当前购买意向状态不能生成订单。")
+	}
+	intent.Status = StatusOrdered
+	intent.UpdatedAt = s.now()
+	intent.Version++
+	s.intents[intent.ID] = intent
+	return nil
+}
+
 func (s *Manager) CreateWithIdempotency(ctx context.Context, userID, routeKey, key, requestHash string, input CreateIntentInput, buildCompletion CompletionBuilder) (Intent, idempotency.Completion, bool, *domain.AppError) {
 	key = strings.TrimSpace(key)
 	if err := idempotency.ValidateKey(key); err != nil {
@@ -392,21 +414,50 @@ func (s *Manager) createInMemory(input CreateIntentInput, service apimarket.Serv
 
 func (s *Manager) updateInMemory(input ActionInput, action string) (Intent, *domain.AppError) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
-
 	intent, ok := s.intents[strings.TrimSpace(input.IntentID)]
 	if !ok || !canActorAccess(intent, input.ActorUserID, action) {
+		s.mu.Unlock()
 		return Intent{}, domain.NewError(http.StatusNotFound, domain.CodeObjectNotFound, "API purchase intent not found", "购买意向不存在。")
 	}
 	now := s.now()
 	if input.ExpectedVersion > 0 && intent.Version != input.ExpectedVersion {
+		s.mu.Unlock()
 		return Intent{}, domain.NewError(http.StatusPreconditionFailed, domain.CodeVersionConflict, "Version conflict", "资源版本已变化，请刷新后重试。")
+	}
+	if (action == "cancel" || action == "close") && intent.Status == StatusOrdered {
+		s.mu.Unlock()
+		return Intent{}, domain.NewAPIPurchaseIntentHasOrderError()
+	}
+	if !canUpdateStatus(intent, action, now) {
+		s.mu.Unlock()
+		return Intent{}, domain.NewError(http.StatusConflict, domain.CodeInvalidStateTransition, "Invalid state transition", "当前购买意向状态不能执行该操作。")
+	}
+	if action != "cancel" && action != "close" {
+		intent = applyAction(intent, action, strings.TrimSpace(input.Reason), now)
+		s.intents[intent.ID] = intent
+		s.mu.Unlock()
+		return intent, nil
+	}
+	s.mu.Unlock()
+
+	if s.orders != nil && s.orders.HasOrderForIntent(intent.ID) {
+		return Intent{}, domain.NewAPIPurchaseIntentHasOrderError()
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	intent, ok = s.intents[strings.TrimSpace(input.IntentID)]
+	if !ok || !canActorAccess(intent, input.ActorUserID, action) {
+		return Intent{}, domain.NewError(http.StatusNotFound, domain.CodeObjectNotFound, "API purchase intent not found", "购买意向不存在。")
+	}
+	if input.ExpectedVersion > 0 && intent.Version != input.ExpectedVersion {
+		return Intent{}, domain.NewError(http.StatusPreconditionFailed, domain.CodeVersionConflict, "Version conflict", "资源版本已变化，请刷新后重试。")
+	}
+	if intent.Status == StatusOrdered {
+		return Intent{}, domain.NewAPIPurchaseIntentHasOrderError()
 	}
 	if !canUpdateStatus(intent, action, now) {
 		return Intent{}, domain.NewError(http.StatusConflict, domain.CodeInvalidStateTransition, "Invalid state transition", "当前购买意向状态不能执行该操作。")
-	}
-	if (action == "cancel" || action == "close") && s.orders != nil && s.orders.HasOrderForIntent(intent.ID) {
-		return Intent{}, domain.NewAPIPurchaseIntentHasOrderError()
 	}
 	intent = applyAction(intent, action, strings.TrimSpace(input.Reason), now)
 	s.intents[intent.ID] = intent

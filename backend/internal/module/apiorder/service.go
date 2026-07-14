@@ -27,6 +27,10 @@ type BuyerIntentResolver interface {
 	BuyerIntent(ctx context.Context, user auth.User, intentID, requestID string) (apiintent.Intent, *domain.AppError)
 }
 
+type OrderedIntentMarker interface {
+	MarkOrdered(intentID string) *domain.AppError
+}
+
 type PublicServiceResolver interface {
 	PublicService(ctx context.Context, serviceID string) (apimarket.Service, *domain.AppError)
 }
@@ -36,17 +40,18 @@ type DisputeCaseCreator interface {
 }
 
 type Service struct {
-	mu          sync.Mutex
-	now         func() time.Time
-	repo        Repository
-	intents     BuyerIntentResolver
-	services    PublicServiceResolver
-	disputes    DisputeCaseCreator
-	idempotency *idempotency.Service
-	orders      map[string]Order
-	credentials map[string]DeliveryCredential
-	events      []Event
-	accessLogs  []PaymentInstructionAccessLog
+	mu                  sync.Mutex
+	now                 func() time.Time
+	repo                Repository
+	intents             BuyerIntentResolver
+	services            PublicServiceResolver
+	disputes            DisputeCaseCreator
+	idempotency         *idempotency.Service
+	orders              map[string]Order
+	credentials         map[string]DeliveryCredential
+	availableAllowances map[string]*big.Rat
+	events              []Event
+	accessLogs          []PaymentInstructionAccessLog
 }
 
 func NewService(repo Repository, intentResolver BuyerIntentResolver, serviceResolver PublicServiceResolver, disputeCreator DisputeCaseCreator, idempotencyService *idempotency.Service, now func() time.Time) *Service {
@@ -57,14 +62,15 @@ func NewService(repo Repository, intentResolver BuyerIntentResolver, serviceReso
 		idempotencyService = idempotency.NewService(nil, now)
 	}
 	return &Service{
-		now:         now,
-		repo:        repo,
-		intents:     intentResolver,
-		services:    serviceResolver,
-		disputes:    disputeCreator,
-		idempotency: idempotencyService,
-		orders:      make(map[string]Order),
-		credentials: make(map[string]DeliveryCredential),
+		now:                 now,
+		repo:                repo,
+		intents:             intentResolver,
+		services:            serviceResolver,
+		disputes:            disputeCreator,
+		idempotency:         idempotencyService,
+		orders:              make(map[string]Order),
+		credentials:         make(map[string]DeliveryCredential),
+		availableAllowances: make(map[string]*big.Rat),
 	}
 }
 
@@ -170,6 +176,27 @@ func (s *Service) SellerOrders(ctx context.Context, user auth.User) ([]Order, *d
 	return orders, nil
 }
 
+func (s *Service) AdminOrders(ctx context.Context, user auth.User) ([]Order, *domain.AppError) {
+	if !user.IsAdmin {
+		return nil, domain.NewError(http.StatusForbidden, domain.CodePermissionDenied, "Permission denied", "需要管理员权限。")
+	}
+	if s.repo != nil {
+		return s.repo.ListAdminAPIOrders(ctx, s.now())
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	orders := make([]Order, 0, len(s.orders))
+	for id := range s.orders {
+		order := s.materializeTimeoutLocked(id)
+		order.DeliveryCredential = nil
+		orders = append(orders, order)
+	}
+	sort.Slice(orders, func(i, j int) bool {
+		return orders[i].UpdatedAt.After(orders[j].UpdatedAt)
+	})
+	return orders, nil
+}
+
 func (s *Service) SellerOrder(ctx context.Context, user auth.User, orderID string) (Order, *domain.AppError) {
 	if s.repo != nil {
 		return s.repo.GetAPIOrderForSeller(ctx, user.ID, orderID, s.now())
@@ -225,6 +252,14 @@ func (s *Service) ConfirmPaymentWithIdempotency(ctx context.Context, userID, rou
 	return s.createOrUpdateWithIdempotency(ctx, userID, routeKey, key, requestHash, CreateInput{}, input, buildCompletion, "confirm_payment")
 }
 
+func (s *Service) ReportPaymentIssueWithIdempotency(ctx context.Context, userID, routeKey, key, requestHash string, input ActionInput, buildCompletion CompletionBuilder) (idempotency.Completion, *domain.AppError) {
+	input.ActorUserID = userID
+	if err := validateActionInput(input, "report_payment_issue"); err != nil {
+		return idempotency.Completion{}, err
+	}
+	return s.createOrUpdateWithIdempotency(ctx, userID, routeKey, key, requestHash, CreateInput{}, input, buildCompletion, "report_payment_issue")
+}
+
 func (s *Service) SubmitDeliveryWithIdempotency(ctx context.Context, userID, routeKey, key, requestHash string, input ActionInput, buildCompletion CompletionBuilder) (idempotency.Completion, *domain.AppError) {
 	input.ActorUserID = userID
 	var appErr *domain.AppError
@@ -278,6 +313,8 @@ func (s *Service) createOrUpdateWithIdempotency(ctx context.Context, userID, rou
 			order, completion, appErr = s.repo.OpenAPIOrderDisputeWithIdempotency(ctx, *entry, actionInput, s.now(), buildCompletion)
 		case "confirm_payment":
 			order, completion, appErr = s.repo.ConfirmAPIOrderPaymentWithIdempotency(ctx, *entry, actionInput, s.now(), buildCompletion)
+		case "report_payment_issue":
+			order, completion, appErr = s.repo.ReportAPIOrderPaymentIssueWithIdempotency(ctx, *entry, actionInput, s.now(), buildCompletion)
 		case "submit_delivery":
 			order, completion, appErr = s.repo.SubmitAPIOrderDeliveryWithIdempotency(ctx, *entry, actionInput, s.now(), buildCompletion)
 		default:
@@ -317,7 +354,7 @@ func (s *Service) orderForReplay(ctx context.Context, userID, orderID, action st
 	switch action {
 	case "create", "submit_payment", "cancel", "confirm_complete", "open_dispute":
 		return s.BuyerOrder(ctx, auth.User{ID: userID}, orderID)
-	case "confirm_payment", "submit_delivery":
+	case "confirm_payment", "report_payment_issue", "submit_delivery":
 		return s.SellerOrder(ctx, auth.User{ID: userID}, orderID)
 	default:
 		return Order{}, notFound()
@@ -336,16 +373,28 @@ func (s *Service) createInMemory(ctx context.Context, input CreateInput) (Order,
 	if appErr != nil {
 		return Order{}, appErr
 	}
-	order, appErr := NewOrder(input, intent, service, s.now())
-	if appErr != nil {
-		return Order{}, appErr
-	}
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for _, existing := range s.orders {
 		if existing.APIPurchaseIntentID == intent.ID {
 			return Order{}, domain.NewAPIPurchaseIntentHasOrderError()
+		}
+	}
+	if intent.Status != apiintent.StatusOpen && intent.Status != apiintent.StatusContacted {
+		return Order{}, domain.NewError(http.StatusConflict, domain.CodeInvalidStateTransition, "Invalid state transition", "当前购买意向状态不能生成订单。")
+	}
+	order, appErr := NewOrder(input, intent, service, s.now())
+	if appErr != nil {
+		return Order{}, appErr
+	}
+	if appErr := s.reserveAllowanceLocked(order, service); appErr != nil {
+		return Order{}, appErr
+	}
+	if marker, ok := s.intents.(OrderedIntentMarker); ok {
+		if appErr := marker.MarkOrdered(intent.ID); appErr != nil {
+			s.releaseAllowanceLocked(order)
+			return Order{}, appErr
 		}
 	}
 	s.orders[order.ID] = order
@@ -368,6 +417,9 @@ func (s *Service) updateInMemory(ctx context.Context, input ActionInput, action 
 		return Order{}, domain.NewError(http.StatusConflict, domain.CodeInvalidStateTransition, "Invalid state transition", "当前订单状态不能执行该操作。")
 	}
 	from := order.Status
+	if action == "cancel" {
+		s.releaseAllowanceLocked(order)
+	}
 	if action == "submit_delivery" {
 		if _, exists := s.credentials[order.ID]; exists {
 			return Order{}, domain.NewError(http.StatusConflict, domain.CodeInvalidStateTransition, "Invalid state transition", "交付信息已提交，不能再次修改。")
@@ -424,9 +476,52 @@ func (s *Service) materializeTimeoutLocked(orderID string) Order {
 	order.CancelledAt = &now
 	order.UpdatedAt = now
 	order.Version++
+	s.releaseAllowanceLocked(order)
 	s.orders[orderID] = order
 	s.appendEventLocked(order, "", EventPaymentTimeoutCancelled, from, order.Status, "", "payment-timeout")
 	return order
+}
+
+func (s *Service) reserveAllowanceLocked(order Order, service apimarket.Service) *domain.AppError {
+	if order.BillingModeSnapshot != apimarket.ServiceBillingModeMetered {
+		return nil
+	}
+	requested, ok := parsePositiveDecimal(order.RequestedUSDAllowanceSnapshot)
+	if !ok {
+		return domain.NewError(http.StatusConflict, domain.CodeInvalidStateTransition, "USD allowance snapshot invalid", "订单美元额度快照不可用。")
+	}
+	available, exists := s.availableAllowances[order.APIServiceID]
+	if !exists {
+		availableText := strings.TrimSpace(service.AvailableUSDAllowance)
+		if availableText == "" {
+			availableText = strings.TrimSpace(service.DeclaredMaxUSDAllowancePerIntent)
+		}
+		var parsed bool
+		available, parsed = parseNonNegativeDecimal(availableText)
+		if !parsed {
+			return domain.NewError(http.StatusConflict, domain.CodeInvalidStateTransition, "USD allowance unavailable", "商户当前可售美元额度不可用。")
+		}
+	}
+	if available.Cmp(requested) < 0 {
+		return domain.NewError(http.StatusConflict, domain.CodeInvalidStateTransition, "USD allowance unavailable", "商户当前可售美元额度不足，请刷新后重试。")
+	}
+	s.availableAllowances[order.APIServiceID] = new(big.Rat).Sub(new(big.Rat).Set(available), requested)
+	return nil
+}
+
+func (s *Service) releaseAllowanceLocked(order Order) {
+	if order.BillingModeSnapshot != apimarket.ServiceBillingModeMetered {
+		return
+	}
+	requested, ok := parsePositiveDecimal(order.RequestedUSDAllowanceSnapshot)
+	if !ok {
+		return
+	}
+	available, exists := s.availableAllowances[order.APIServiceID]
+	if !exists {
+		available = new(big.Rat)
+	}
+	s.availableAllowances[order.APIServiceID] = new(big.Rat).Add(new(big.Rat).Set(available), requested)
 }
 
 func (s *Service) appendEventLocked(order Order, actorUserID, eventType, fromStatus, toStatus, note, requestID string) {
@@ -483,29 +578,32 @@ func NewOrder(input CreateInput, intent apiintent.Intent, service apimarket.Serv
 		return Order{}, appErr
 	}
 	return Order{
-		ID:                           uuid.NewString(),
-		APIPurchaseIntentID:          intent.ID,
-		APIServiceID:                 intent.APIServiceID,
-		BuyerUserID:                  input.BuyerUserID,
-		SellerUserID:                 intent.OwnerUserID,
-		Status:                       StatusPendingPayment,
-		DisputeStatus:                DisputeStatusNone,
-		ServiceTitleSnapshot:         service.Title,
-		ServiceVersionSnapshot:       service.Version,
-		BillingModeSnapshot:          service.BillingMode,
-		SelectedPackageID:            intent.SelectedPackageID,
-		SelectedPackageSnapshot:      intent.SelectedPackageSnapshot,
-		QuoteVersionSnapshot:         quoteVersion,
-		Amount:                       amount,
-		Currency:                     currency,
-		SelectedPaymentMethod:        method,
-		PaymentWindowMinutesSnapshot: service.PaymentWindowMinutes,
-		PaymentExpiresAt:             now.Add(time.Duration(service.PaymentWindowMinutes) * time.Minute),
-		PaymentInstructionsSnapshot:  option.PaymentInstructions,
-		PaymentQRCodeDataURLSnapshot: option.PaymentQRCodeDataURL,
-		CreatedAt:                    now,
-		UpdatedAt:                    now,
-		Version:                      1,
+		ID:                            uuid.NewString(),
+		APIPurchaseIntentID:           intent.ID,
+		APIServiceID:                  intent.APIServiceID,
+		BuyerUserID:                   input.BuyerUserID,
+		SellerUserID:                  intent.OwnerUserID,
+		Status:                        StatusPendingPayment,
+		DisputeStatus:                 DisputeStatusNone,
+		ServiceTitleSnapshot:          service.Title,
+		ServiceVersionSnapshot:        service.Version,
+		BillingModeSnapshot:           service.BillingMode,
+		SelectedPackageID:             intent.SelectedPackageID,
+		SelectedPackageSnapshot:       intent.SelectedPackageSnapshot,
+		QuoteVersionSnapshot:          quoteVersion,
+		RequestedUSDAllowanceSnapshot: decimalStringOptional(intent.RequestedUSDAllowance, 6),
+		CNYPerUSDAllowanceSnapshot:    decimalStringOptional(intent.DeclaredCNYPerUSDAllowanceSnapshot, 4),
+		PricingSnapshot:               intent.PricingSnapshot,
+		Amount:                        amount,
+		Currency:                      currency,
+		SelectedPaymentMethod:         method,
+		PaymentWindowMinutesSnapshot:  service.PaymentWindowMinutes,
+		PaymentExpiresAt:              now.Add(time.Duration(service.PaymentWindowMinutes) * time.Minute),
+		PaymentInstructionsSnapshot:   option.PaymentInstructions,
+		PaymentQRCodeDataURLSnapshot:  option.PaymentQRCodeDataURL,
+		CreatedAt:                     now,
+		UpdatedAt:                     now,
+		Version:                       1,
 	}, nil
 }
 
@@ -558,6 +656,11 @@ func validateActionInput(input ActionInput, action string) *domain.AppError {
 			return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Payment summary required", "必须填写付款摘要。", "paymentSummary", "required", "必须填写付款摘要。")
 		}
 		return validateNonSecretText("paymentSummary", input.PaymentSummary)
+	case "report_payment_issue":
+		if !IsPaymentIssueReason(input.PaymentIssueReason) {
+			return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Payment issue reason invalid", "请选择有效的付款问题。", "paymentIssueReason", "invalid", "请选择未到账、金额不符或备注不符。")
+		}
+		return validateNonSecretText("paymentIssueNote", input.PaymentIssueNote)
 	case "submit_delivery":
 		if _, err := normalizeDeliveryCredentialInput(input.DeliveryCredential); err != nil {
 			return err
@@ -611,7 +714,7 @@ func normalizeDeliveryCredentialInput(input DeliveryCredentialInput) (DeliveryCr
 			return DeliveryCredentialInput{}, deliveryFieldError("apiBaseUrl", "required", "必须填写 API Base URL。")
 		}
 		if normalized.APIKey == "" {
-			return DeliveryCredentialInput{}, deliveryFieldError("apiKey", "required", "必须填写买家专属、可撤销的 API Key。")
+			return DeliveryCredentialInput{}, deliveryFieldError("apiKey", "required", "必须填写买家专属的 API Key。")
 		}
 		if normalized.PanelLoginURL != "" || normalized.Username != "" || normalized.Password != "" {
 			return DeliveryCredentialInput{}, deliveryFieldError("deliveryKind", "mixed_fields", "API Key 接入不能同时填写登录账号字段。")
@@ -674,11 +777,11 @@ func newDeliveryCredential(order Order, input DeliveryCredentialInput, now time.
 func deliverySummary(deliveryKind string) string {
 	switch deliveryKind {
 	case DeliveryKindAPIKeyEndpoint:
-		return "商户已提交买家专属、可撤销的 API Key 接入信息。"
+		return "商户已提交买家专属的 API Key 接入信息；提交后不可修改。"
 	case DeliveryKindLoginAccount:
-		return "商户已提交买家专属、可撤销的登录接入信息。"
+		return "商户已提交买家专属的登录接入信息；提交后不可修改。"
 	default:
-		return "商户已提交买家专属、可撤销的接入信息。"
+		return "商户已提交买家专属的接入信息；提交后不可修改。"
 	}
 }
 
@@ -780,7 +883,7 @@ func validateDeliverySecretField(field, value string) *domain.AppError {
 	}
 	for _, marker := range blocked {
 		if strings.Contains(lower, marker) {
-			return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeSecretContentDetected, "Secret content detected", "只能提交买家专属、可撤销的 API Key 或初始密码。", field, "unsupported_secret", "不能提交 Cookie、Session、OAuth token、恢复码、订阅链接或代理节点。")
+			return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeSecretContentDetected, "Secret content detected", "只能提交买家专属的 API Key 或初始密码。", field, "unsupported_secret", "不能提交 Cookie、Session、OAuth token、恢复码、订阅链接或代理节点。")
 		}
 	}
 	return nil
@@ -790,7 +893,7 @@ func canActorAccess(order Order, actorUserID, action string) bool {
 	switch action {
 	case "submit_payment", "cancel", "confirm_complete":
 		return order.BuyerUserID == actorUserID
-	case "confirm_payment", "submit_delivery":
+	case "confirm_payment", "report_payment_issue", "submit_delivery":
 		return order.SellerUserID == actorUserID
 	case "open_dispute":
 		return order.BuyerUserID == actorUserID || order.SellerUserID == actorUserID
@@ -802,10 +905,12 @@ func canActorAccess(order Order, actorUserID, action string) bool {
 func canTransition(order Order, action string, now time.Time) bool {
 	switch action {
 	case "submit_payment":
-		return order.Status == StatusPendingPayment && now.Before(order.PaymentExpiresAt)
+		return (order.Status == StatusPendingPayment && now.Before(order.PaymentExpiresAt)) || order.Status == StatusPaymentIssue
 	case "cancel":
 		return order.Status == StatusPendingPayment
 	case "confirm_payment":
+		return order.Status == StatusPaymentSubmitted
+	case "report_payment_issue":
 		return order.Status == StatusPaymentSubmitted
 	case "submit_delivery":
 		return order.Status == StatusPaidConfirmed
@@ -824,9 +929,17 @@ func applyAction(order Order, input ActionInput, action string, now time.Time) O
 		order.Status = StatusPaymentSubmitted
 		order.PaymentSummary = strings.TrimSpace(input.PaymentSummary)
 		order.PaymentSubmittedAt = &now
+		order.PaymentIssueReason = ""
+		order.PaymentIssueNote = ""
+		order.PaymentIssueReportedAt = nil
+	case "report_payment_issue":
+		order.Status = StatusPaymentIssue
+		order.PaymentIssueReason = strings.TrimSpace(input.PaymentIssueReason)
+		order.PaymentIssueNote = strings.TrimSpace(input.PaymentIssueNote)
+		order.PaymentIssueReportedAt = &now
 	case "cancel":
 		order.Status = StatusCancelled
-		order.CancelReason = CancelReasonBuyer
+		order.CancelReason = strings.TrimSpace(input.Reason)
 		order.CancelledAt = &now
 	case "confirm_payment":
 		order.Status = StatusPaidConfirmed
@@ -854,6 +967,8 @@ func eventTypeForAction(action string) string {
 		return EventCancelled
 	case "confirm_payment":
 		return EventPaymentConfirmed
+	case "report_payment_issue":
+		return EventPaymentIssueReported
 	case "submit_delivery":
 		return EventDeliverySubmitted
 	case "confirm_complete":
@@ -871,11 +986,43 @@ func noteForAction(input ActionInput, action string) string {
 		return input.PaymentSummary
 	case "submit_delivery":
 		return input.DeliveryNote
+	case "report_payment_issue":
+		return PaymentIssueLabel(input.PaymentIssueReason) + paymentIssueNoteSuffix(input.PaymentIssueNote)
 	case "cancel", "open_dispute":
 		return input.Reason
 	default:
 		return ""
 	}
+}
+
+func IsPaymentIssueReason(value string) bool {
+	switch strings.TrimSpace(value) {
+	case PaymentIssueNotReceived, PaymentIssueAmountMismatch, PaymentIssueRemarkMismatch:
+		return true
+	default:
+		return false
+	}
+}
+
+func PaymentIssueLabel(value string) string {
+	switch strings.TrimSpace(value) {
+	case PaymentIssueNotReceived:
+		return "未到账"
+	case PaymentIssueAmountMismatch:
+		return "金额不符"
+	case PaymentIssueRemarkMismatch:
+		return "备注不符"
+	default:
+		return "付款信息待补充"
+	}
+}
+
+func paymentIssueNoteSuffix(note string) string {
+	note = strings.TrimSpace(note)
+	if note == "" {
+		return ""
+	}
+	return "：" + note
 }
 
 func notFound() *domain.AppError {
@@ -917,6 +1064,16 @@ func decimalStringOptional(value string, places int) string {
 	intPart := new(big.Int).Quo(quotient, scale)
 	fracPart := new(big.Int).Mod(quotient, scale)
 	return fmt.Sprintf("%s.%0*s", intPart.String(), places, fracPart.String())
+}
+
+func parsePositiveDecimal(value string) (*big.Rat, bool) {
+	rat, ok := new(big.Rat).SetString(strings.TrimSpace(value))
+	return rat, ok && rat.Sign() > 0
+}
+
+func parseNonNegativeDecimal(value string) (*big.Rat, bool) {
+	rat, ok := new(big.Rat).SetString(strings.TrimSpace(value))
+	return rat, ok && rat.Sign() >= 0
 }
 
 func OrderResponseBody(order Order, mapper func(Order) any) ([]byte, *domain.AppError) {

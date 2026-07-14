@@ -83,6 +83,7 @@ func publicAPIServiceOrderablePredicate(alias string) string {
 		  AND %[1]s.moderation_status = 'clear'
 		  AND %[1]s.accepting_orders = true
 		  AND %[1]s.payment_window_minutes BETWEEN 3 AND 15
+		  AND (%[1]s.billing_mode <> 'metered_usd_quota' OR %[1]s.available_usd_allowance > 0)
 		  AND (%[1]s.billing_mode <> 'metered_usd_quota' OR %[1]s.quota_expires_at > now())
 		  AND EXISTS (
 		    SELECT 1
@@ -489,6 +490,7 @@ const apiServiceColumns = `
 	COALESCE((SELECT mp.slug FROM merchant_profiles mp WHERE mp.id = api_services.merchant_profile_id AND mp.owner_user_id = api_services.owner_user_id), ''),
 	owner_contact_method_id::text, title, short_description, COALESCE(source_url, ''), distribution_system, billing_mode,
 	COALESCE(declared_cny_per_usd_allowance::text, ''), COALESCE(declared_max_usd_allowance_per_intent::text, ''),
+	COALESCE(available_usd_allowance::text, ''),
 	quota_expires_at,
 	minimum_intent_cny::text, COALESCE(maximum_intent_cny::text, ''), usage_visibility,
 	COALESCE(public_access_note, ''), COALESCE(merchant_note, ''), COALESCE(merchant_support_note, ''),
@@ -837,6 +839,9 @@ func (s *Store) updateAPIPurchaseIntentInTx(ctx context.Context, tx pgx.Tx, inpu
 	if input.ExpectedVersion > 0 && intent.Version != input.ExpectedVersion {
 		return apiintent.Intent{}, domain.NewError(http.StatusPreconditionFailed, domain.CodeVersionConflict, "Version conflict", "资源版本已变化，请刷新后重试。")
 	}
+	if (action == "cancel" || action == "close") && intent.Status == apiintent.StatusOrdered {
+		return apiintent.Intent{}, domain.NewAPIPurchaseIntentHasOrderError()
+	}
 	if !storeCanUpdateAPIPurchaseIntentStatus(intent, action, now) {
 		return apiintent.Intent{}, domain.NewError(http.StatusConflict, domain.CodeInvalidStateTransition, "Invalid state transition", "当前购买意向状态不能执行该操作。")
 	}
@@ -887,7 +892,7 @@ func upsertAPIServiceInTx(ctx context.Context, tx pgx.Tx, service apimarket.Serv
 		INSERT INTO api_services (
 			id, owner_user_id, merchant_profile_id, merchant_identity_mode, owner_contact_method_id,
 			title, short_description, source_url, distribution_system, billing_mode,
-			declared_cny_per_usd_allowance, declared_max_usd_allowance_per_intent,
+			declared_cny_per_usd_allowance, declared_max_usd_allowance_per_intent, available_usd_allowance,
 			quota_expires_at,
 			minimum_intent_cny, maximum_intent_cny, usage_visibility,
 			public_access_note, merchant_note, merchant_support_note,
@@ -899,14 +904,14 @@ func upsertAPIServiceInTx(ctx context.Context, tx pgx.Tx, service apimarket.Serv
 		VALUES (
 			$1, $2, $3, $4, $5,
 			$6, $7, $8, $9, $10,
-			$11, $12,
-			$13,
-			$14, $15, $16,
-			$17, $18, $19,
-			$20, $21, $22,
-			$23, $24, $25,
-			$26, $27,
-			$28, $29, $30
+			$11, $12, $13,
+			$14,
+			$15, $16, $17,
+			$18, $19, $20,
+			$21, $22, $23,
+			$24, $25, $26,
+			$27, $28,
+			$29, $30, $31
 		)
 		ON CONFLICT (id) DO UPDATE
 		SET merchant_profile_id = EXCLUDED.merchant_profile_id,
@@ -919,6 +924,7 @@ func upsertAPIServiceInTx(ctx context.Context, tx pgx.Tx, service apimarket.Serv
 		    billing_mode = EXCLUDED.billing_mode,
 		    declared_cny_per_usd_allowance = EXCLUDED.declared_cny_per_usd_allowance,
 		    declared_max_usd_allowance_per_intent = EXCLUDED.declared_max_usd_allowance_per_intent,
+		    available_usd_allowance = EXCLUDED.available_usd_allowance,
 		    quota_expires_at = EXCLUDED.quota_expires_at,
 		    minimum_intent_cny = EXCLUDED.minimum_intent_cny,
 		    maximum_intent_cny = EXCLUDED.maximum_intent_cny,
@@ -938,7 +944,7 @@ func upsertAPIServiceInTx(ctx context.Context, tx pgx.Tx, service apimarket.Serv
 		    version = EXCLUDED.version
 		`, service.ID, service.OwnerUserID, nullUUID(service.MerchantProfileID), service.MerchantIdentityMode, service.OwnerContactMethodID,
 		service.Title, service.ShortDescription, nullText(service.SourceURL), service.DistributionSystem, service.BillingMode,
-		nullNumeric(service.DeclaredCNYPerUSDAllowance), nullNumeric(service.DeclaredMaxUSDAllowancePerIntent),
+		nullNumeric(service.DeclaredCNYPerUSDAllowance), nullNumeric(service.DeclaredMaxUSDAllowancePerIntent), nullNumeric(service.AvailableUSDAllowance),
 		service.QuotaExpiresAt,
 		service.MinimumIntentCNY, nullNumeric(service.MaximumIntentCNY), service.UsageVisibility,
 		nullText(service.PublicAccessNote), nullText(service.MerchantNote), nullText(service.MerchantSupportNote),
@@ -1166,9 +1172,9 @@ func insertAPIPurchaseIntentEventAndTargetNotification(ctx context.Context, tx p
 
 func apiPurchaseIntentNotificationTargetURL(intent apiintent.Intent, notifyUserID string) string {
 	if notifyUserID == intent.OwnerUserID {
-		return "/merchant/api-orders/" + intent.ID
+		return "/merchant/api-orders"
 	}
-	return "/my/api-orders/" + intent.ID
+	return "/my/api-orders"
 }
 
 func insertAPIPurchaseIntentContactAccessLogInTx(ctx context.Context, tx pgx.Tx, intentID, viewerUserID, viewedSide, requestID string, now time.Time) *domain.AppError {
@@ -1616,6 +1622,7 @@ func scanAPIService(row scanner, service *apimarket.Service) error {
 		&service.BillingMode,
 		&service.DeclaredCNYPerUSDAllowance,
 		&service.DeclaredMaxUSDAllowancePerIntent,
+		&service.AvailableUSDAllowance,
 		&service.QuotaExpiresAt,
 		&service.MinimumIntentCNY,
 		&service.MaximumIntentCNY,

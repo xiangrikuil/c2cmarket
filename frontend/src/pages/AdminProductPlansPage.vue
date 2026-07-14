@@ -6,17 +6,19 @@ import {
   ChevronRight,
   FilePenLine,
   FolderPlus,
-  Layers3,
+  ImageIcon,
   Plus,
   RotateCcw,
   Save,
   ToggleLeft,
   ToggleRight,
+  Trash2,
+  Upload,
 } from 'lucide-vue-next'
 import { toast } from 'vue-sonner'
 import PageTitle from '@/components/market/PageTitle.vue'
 import StatusTabs from '@/components/market/StatusTabs.vue'
-import StatCard from '@/components/market/StatCard.vue'
+import CompactStats from '@/components/market/CompactStats.vue'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
@@ -37,6 +39,7 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { Textarea } from '@/components/ui/textarea'
+import { productCategoryIconAccept, readProductCategoryIcon, validateProductCategoryIconFile } from '@/lib/productCategoryIcon'
 import {
   applyCatalogBusinessStatus,
   catalogBusinessStatusOptions,
@@ -76,6 +79,7 @@ const isCategoryFormOpen = ref(false)
 const showAdvancedPlanFields = ref(false)
 const selectedBusinessStatus = ref<CatalogBusinessStatus>('publishable')
 const categoryFormMode = ref<CategoryFormMode>('create')
+const categoryIconInput = ref<HTMLInputElement | null>(null)
 const planForm = reactive<ProductPlanInput>({
   categoryId: '',
   providerCode: 'other',
@@ -99,6 +103,7 @@ const planForm = reactive<ProductPlanInput>({
 const categoryForm = reactive<ProductCategoryInput>({
   code: '',
   displayName: '',
+  iconDataUrl: '',
   sortOrder: 10,
   active: true,
 })
@@ -193,6 +198,7 @@ function emptyCategoryForm(): ProductCategoryInput {
   return {
     code: '',
     displayName: '',
+    iconDataUrl: '',
     sortOrder: nextCategorySortOrder(),
     active: true,
   }
@@ -260,6 +266,7 @@ function inputFromCategory(category: ProductCategory): ProductCategoryInput {
   return {
     code: category.code,
     displayName: category.displayName,
+    iconDataUrl: category.iconDataUrl,
     sortOrder: category.sortOrder,
     active: category.active,
   }
@@ -309,6 +316,27 @@ function resetCategoryForm() {
     return
   }
   fillCategoryForm(emptyCategoryForm())
+}
+
+async function selectCategoryIcon(event: Event) {
+  const input = event.target as HTMLInputElement
+  const file = input.files?.[0]
+  input.value = ''
+  if (!file) return
+  const validationError = validateProductCategoryIconFile(file)
+  if (validationError) {
+    toast.error(validationError)
+    return
+  }
+  try {
+    categoryForm.iconDataUrl = await readProductCategoryIcon(file)
+  } catch (error) {
+    toast.error(error instanceof Error ? error.message : '分类图标读取失败。')
+  }
+}
+
+function removeCategoryIcon() {
+  categoryForm.iconDataUrl = ''
 }
 
 async function refetchCatalog() {
@@ -382,6 +410,7 @@ async function savePlan() {
 }
 
 async function setCategoryActive(category: ProductCategory, active: boolean) {
+  if (!active && !window.confirm(`停用分类“${category.displayName}”会隐藏其公开套餐并阻止新发布，已有交易记录不受影响。确认继续？`)) return
   try {
     await activeCategoryMutation.mutateAsync({ id: category.id, active })
     toast.success(active ? '分类已启用。' : '分类已停用。')
@@ -391,6 +420,7 @@ async function setCategoryActive(category: ProductCategory, active: boolean) {
 }
 
 async function setPlanActive(plan: ProductPlan, active: boolean) {
+  if (!active && !window.confirm(`停用套餐“${plan.displayName}”会阻止新的车源发布并隐藏公开目录入口，已有申请继续使用快照。确认继续？`)) return
   try {
     await activePlanMutation.mutateAsync({ id: plan.id, active })
     toast.success(active ? '套餐已启用。' : '套餐已停用。')
@@ -462,12 +492,7 @@ function uniqueIds(ids: string[]) {
       description="按分类维护可发布套餐，主界面只保留业务状态和发布所需基础字段。"
     />
 
-    <div class="grid gap-3 md:grid-cols-4">
-      <StatCard label="全部分类" :value="categoryRows.length" :hint="`启用 ${activeCategoryCount}`" :icon="Layers3" />
-      <StatCard label="全部套餐" :value="rows.length" hint="含停用套餐" accent />
-      <StatCard label="启用套餐" :value="activePlanCount" :hint="`停用 ${inactivePlanCount}`" />
-      <StatCard label="限制展示" :value="restrictedPlanCount" hint="仅信息或禁止发布" />
-    </div>
+    <CompactStats :items="[{ label: '全部分类', value: categoryRows.length, hint: `启用 ${activeCategoryCount}` }, { label: '全部套餐', value: rows.length, hint: '含停用套餐' }, { label: '启用套餐', value: activePlanCount, hint: `停用 ${inactivePlanCount}` }, { label: '限制展示', value: restrictedPlanCount, hint: '仅信息或禁止发布' }]" :loading="isLoading" />
 
     <section class="space-y-4">
       <div class="flex flex-wrap items-center justify-between gap-3">
@@ -515,6 +540,10 @@ function uniqueIds(ids: string[]) {
             <button class="flex min-w-0 items-center gap-3 text-left" @click="toggleCategory(group.category.id)">
               <span class="grid h-8 w-8 shrink-0 place-items-center rounded-md border bg-background text-muted-foreground">
                 <component :is="isCategoryExpanded(group.category.id) ? ChevronDown : ChevronRight" class="h-4 w-4" />
+              </span>
+              <span class="grid h-9 w-9 shrink-0 place-items-center overflow-hidden rounded-lg border bg-background text-muted-foreground">
+                <img v-if="group.category.iconDataUrl" :src="group.category.iconDataUrl" :alt="`${group.category.displayName} 图标`" class="h-full w-full object-contain" />
+                <ImageIcon v-else class="h-4 w-4" />
               </span>
               <span class="min-w-0">
                 <span class="flex flex-wrap items-center gap-2">
@@ -635,6 +664,27 @@ function uniqueIds(ids: string[]) {
             <span class="text-sm font-medium">分类 code</span>
             <Input v-model="categoryForm.code" placeholder="gpt" />
           </label>
+          <div class="space-y-2">
+            <span class="text-sm font-medium">分类图标</span>
+            <div class="flex items-center gap-3 rounded-md border border-border bg-muted/20 p-3">
+              <span class="grid h-14 w-14 shrink-0 place-items-center overflow-hidden rounded-lg border bg-background text-muted-foreground">
+                <img v-if="categoryForm.iconDataUrl" :src="categoryForm.iconDataUrl" alt="分类图标预览" class="h-full w-full object-contain" />
+                <ImageIcon v-else class="h-5 w-5" />
+              </span>
+              <div class="min-w-0 flex-1">
+                <div class="flex flex-wrap gap-2">
+                  <Button type="button" size="sm" variant="outline" @click="categoryIconInput?.click()">
+                    <Upload class="h-4 w-4" />{{ categoryForm.iconDataUrl ? '替换图标' : '上传图标' }}
+                  </Button>
+                  <Button v-if="categoryForm.iconDataUrl" type="button" size="sm" variant="outline" @click="removeCategoryIcon">
+                    <Trash2 class="h-4 w-4" />移除
+                  </Button>
+                </div>
+                <p class="mt-2 text-xs text-muted-foreground">PNG / WebP，建议方形图片，最大 256 KB。</p>
+              </div>
+              <input ref="categoryIconInput" class="hidden" type="file" :accept="productCategoryIconAccept" @change="selectCategoryIcon" />
+            </div>
+          </div>
           <div class="grid gap-3 sm:grid-cols-2">
             <label class="space-y-2">
               <span class="text-sm font-medium">排序</span>

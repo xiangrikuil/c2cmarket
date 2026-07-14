@@ -57,44 +57,52 @@ type carpoolCycleTermResponse struct {
 }
 
 type carpoolListingResponse struct {
-	ID                     string                    `json:"id"`
-	OwnerUserID            string                    `json:"ownerUserId"`
-	ProductPlanID          string                    `json:"productPlanId"`
-	OwnerContactMethodID   string                    `json:"ownerContactMethodId,omitempty"`
-	CycleTerm              *carpoolCycleTermResponse `json:"cycleTerm,omitempty"`
-	Title                  string                    `json:"title"`
-	Summary                string                    `json:"summary"`
-	AccessArrangement      string                    `json:"accessArrangement"`
-	DistributionMethod     string                    `json:"distributionMethod"`
-	DistributionMethodNote string                    `json:"distributionMethodNote"`
-	ProvidesAdminAccount   bool                      `json:"providesAdminAccount"`
-	RegionCode             string                    `json:"regionCode"`
-	RegionName             string                    `json:"regionName"`
-	SourceURL              string                    `json:"sourceUrl,omitempty"`
-	PriceMonthlyCNY        string                    `json:"priceMonthlyCny"`
-	ServiceMultiplier      string                    `json:"serviceMultiplier"`
-	MonthlyQuotaAmount     string                    `json:"monthlyQuotaAmount"`
-	QuotaLabel             string                    `json:"quotaLabel"`
-	QuotaUnit              string                    `json:"quotaUnit"`
-	QuotaPeriod            string                    `json:"quotaPeriod"`
-	BuyerSeatCapacity      int                       `json:"buyerSeatCapacity"`
-	ActiveBuyerMembers     int                       `json:"activeBuyerMembers"`
-	ReservedSeats          int                       `json:"reservedSeats"`
-	AvailableSeats         int                       `json:"availableSeats"`
-	Status                 string                    `json:"status"`
-	ReviewReason           *string                   `json:"reviewReason,omitempty"`
-	ReviewedAt             *string                   `json:"reviewedAt,omitempty"`
-	PolicyVersion          int64                     `json:"policyVersion"`
-	RiskNoticeCode         string                    `json:"riskNoticeCode,omitempty"`
-	RiskAckRequired        bool                      `json:"riskAckRequired"`
-	Version                int64                     `json:"version"`
-	CreatedAt              string                    `json:"createdAt"`
-	UpdatedAt              string                    `json:"updatedAt"`
+	ID                     string                                `json:"id"`
+	OwnerUserID            string                                `json:"ownerUserId"`
+	ProductPlanID          string                                `json:"productPlanId"`
+	OwnerContactMethodID   string                                `json:"ownerContactMethodId,omitempty"`
+	CycleTerm              *carpoolCycleTermResponse             `json:"cycleTerm,omitempty"`
+	Title                  string                                `json:"title"`
+	Summary                string                                `json:"summary"`
+	AccessArrangement      string                                `json:"accessArrangement"`
+	DistributionMethod     string                                `json:"distributionMethod"`
+	DistributionMethodNote string                                `json:"distributionMethodNote"`
+	ProvidesAdminAccount   bool                                  `json:"providesAdminAccount"`
+	RegionCode             string                                `json:"regionCode"`
+	RegionName             string                                `json:"regionName"`
+	SourceURL              string                                `json:"sourceUrl,omitempty"`
+	PriceMonthlyCNY        string                                `json:"priceMonthlyCny"`
+	ServiceMultiplier      string                                `json:"serviceMultiplier"`
+	MonthlyQuotaAmount     string                                `json:"monthlyQuotaAmount"`
+	QuotaLabel             string                                `json:"quotaLabel"`
+	QuotaUnit              string                                `json:"quotaUnit"`
+	QuotaPeriod            string                                `json:"quotaPeriod"`
+	BuyerSeatCapacity      int                                   `json:"buyerSeatCapacity"`
+	ActiveBuyerMembers     int                                   `json:"activeBuyerMembers"`
+	ReservedSeats          int                                   `json:"reservedSeats"`
+	AvailableSeats         int                                   `json:"availableSeats"`
+	Status                 string                                `json:"status"`
+	ReviewReason           *string                               `json:"reviewReason,omitempty"`
+	ReviewedAt             *string                               `json:"reviewedAt,omitempty"`
+	PolicyVersion          int64                                 `json:"policyVersion"`
+	RiskNoticeCode         string                                `json:"riskNoticeCode,omitempty"`
+	RiskAckRequired        bool                                  `json:"riskAckRequired"`
+	Version                int64                                 `json:"version"`
+	CreatedAt              string                                `json:"createdAt"`
+	UpdatedAt              string                                `json:"updatedAt"`
+	ApplicationEligibility carpoolApplicationEligibilityResponse `json:"applicationEligibility"`
 }
 
 type createCarpoolApplicationRequest struct {
 	BuyerContactMethodID string                      `json:"buyerContactMethodId"`
 	RiskAcknowledgement  *riskAcknowledgementRequest `json:"riskAcknowledgement"`
+}
+
+type carpoolApplicationEligibilityResponse struct {
+	Code             string `json:"code"`
+	CanApply         bool   `json:"canApply"`
+	Reason           string `json:"reason"`
+	ResolutionAction string `json:"resolutionAction"`
 }
 
 type carpoolApplicationResponse struct {
@@ -319,6 +327,20 @@ func (s *Server) handlePublicCarpool(w http.ResponseWriter, r *http.Request) {
 	}
 	setETag(w, listing.Version)
 	writeJSON(w, http.StatusOK, toCarpoolListingResponse(listing))
+}
+
+func (s *Server) handleCarpoolApplicationEligibility(w http.ResponseWriter, r *http.Request) {
+	user, _, appErr := s.requireSession(r)
+	if appErr != nil {
+		writeProblem(w, r, appErr)
+		return
+	}
+	eligibility, appErr := s.carpools.CarpoolApplicationEligibility(r.Context(), user, chi.URLParam(r, "id"))
+	if appErr != nil {
+		writeProblem(w, r, appErr)
+		return
+	}
+	writeJSON(w, http.StatusOK, toCarpoolApplicationEligibilityResponse(eligibility))
 }
 
 func (s *Server) handleMyCarpools(w http.ResponseWriter, r *http.Request) {
@@ -1000,6 +1022,16 @@ func toCarpoolListingResponse(listing carpool.Listing) carpoolListingResponse {
 		Version:                listing.Version,
 		CreatedAt:              listing.CreatedAt.UTC().Format(time.RFC3339),
 		UpdatedAt:              listing.UpdatedAt.UTC().Format(time.RFC3339),
+		ApplicationEligibility: toCarpoolApplicationEligibilityResponse(carpool.EvaluatePublicListingEligibility(listing)),
+	}
+}
+
+func toCarpoolApplicationEligibilityResponse(eligibility carpool.ApplicationEligibility) carpoolApplicationEligibilityResponse {
+	return carpoolApplicationEligibilityResponse{
+		Code:             eligibility.Code,
+		CanApply:         eligibility.CanApply,
+		Reason:           eligibility.Reason,
+		ResolutionAction: eligibility.ResolutionAction,
 	}
 }
 

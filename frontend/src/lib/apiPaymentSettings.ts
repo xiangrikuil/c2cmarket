@@ -29,8 +29,8 @@ export const apiPaymentMethodLabels: Record<ApiPaymentMethod, string> = {
 }
 
 export const apiPaymentMethods = [
-  { value: 'wechat', label: apiPaymentMethodLabels.wechat, hint: '提交意向后买家可查看微信收款码并站外确认。' },
-  { value: 'alipay', label: apiPaymentMethodLabels.alipay, hint: '提交意向后买家可查看支付宝收款码并站外确认。' },
+  { value: 'wechat', label: apiPaymentMethodLabels.wechat, hint: '创建订单后买家可查看微信收款码并站外确认。' },
+  { value: 'alipay', label: apiPaymentMethodLabels.alipay, hint: '创建订单后买家可查看支付宝收款码并站外确认。' },
 ] satisfies Array<{ value: ApiPaymentMethod, label: string, hint: string }>
 
 export const apiPaymentQrCodeMethods: ApiPaymentMethod[] = ['wechat', 'alipay']
@@ -120,12 +120,12 @@ export function apiPaymentSettingsSummary(settings: Pick<ApiPaymentAccountSettin
 export function apiPaymentSettingsMissingReason(settings: Pick<ApiPaymentAccountSettings, 'paymentWindowMinutes' | 'paymentOptions'>) {
   if (!isApiPaymentWindowValid(settings.paymentWindowMinutes)) return `买家确认付款窗口固定为 ${defaultApiPaymentWindowMinutes} 分钟。`
   const enabled = enabledApiPaymentOptions(settings)
-  if (!enabled.length) return '请先在我的中心启用至少一种 API 收款方式。'
+  if (!enabled.length) return '请先在个人中心启用至少一种 API 收款方式。'
   const missing = enabled.find(option => !isApiPaymentOptionComplete(option))
   if (missing) {
     return apiPaymentMethodRequiresQrCode(missing.paymentMethod)
-      ? `请先在我的中心上传${apiPaymentMethodLabels[missing.paymentMethod]}收款码。`
-      : `请先在我的中心填写${apiPaymentMethodLabels[missing.paymentMethod]}收款说明。`
+      ? `请先在个人中心上传${apiPaymentMethodLabels[missing.paymentMethod]}收款码。`
+      : `请先在个人中心填写${apiPaymentMethodLabels[missing.paymentMethod]}收款说明。`
   }
   return ''
 }

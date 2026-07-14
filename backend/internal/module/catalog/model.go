@@ -6,6 +6,7 @@ type ProductCategory struct {
 	ID          string
 	Code        string
 	DisplayName string
+	IconDataURL string
 	SortOrder   int
 	Active      bool
 }
@@ -13,6 +14,7 @@ type ProductCategory struct {
 type ProductCategoryInput struct {
 	Code        string
 	DisplayName string
+	IconDataURL string
 	SortOrder   int
 	Active      bool
 }

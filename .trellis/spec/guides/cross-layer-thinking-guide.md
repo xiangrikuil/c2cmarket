@@ -325,3 +325,13 @@ state correctly, but several commands still re-parsed event payload fields with
 local casts. The fix was to make the core event layer own `ThreadChannelEvent`
 and `isThreadEvent`, make `reduceChannelMetadata` the only channel metadata
 projection, and make `reduceThreads` the only thread replay reducer.
+
+---
+
+## Database Constraints Must Not Be the User-Facing Validator
+
+Database constraints protect final integrity, but they do not replace service-layer business validation. If a prohibited relationship such as `buyer_user_id = owner_user_id` reaches PostgreSQL, the store may only be able to surface a generic persistence error.
+
+- Validate the business rule in the owning service before the repository write and return a stable Problem Details response.
+- When the public DTO includes both resource ownership and the current authenticated user identity, the frontend must compare stable IDs rather than display labels.
+- For a rule protected by both code and a database constraint, add a route regression and a PostgreSQL integration regression. The first verifies the product error; the second proves the write never reaches the constraint.

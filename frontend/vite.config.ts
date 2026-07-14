@@ -78,6 +78,8 @@ export default defineConfig(({ mode }) => {
       },
     },
     server: {
+      // 本机通过固定 Cloudflare Tunnel 域名预览时，仅允许项目正式域名访问开发服务器。
+      allowedHosts: ['c2cmarket.shop'],
       proxy: {
         // 仅代理真实后端 API，避免误拦截 /api-market 这类前端 history 路由。
         '^/api(?:/|\\?|$)': {

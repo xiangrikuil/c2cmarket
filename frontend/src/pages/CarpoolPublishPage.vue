@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, reactive, ref, watch } from 'vue'
 import { useMutation, useQueryClient } from '@tanstack/vue-query'
-import { RouterLink, useRoute } from 'vue-router'
+import { RouterLink, useRoute, useRouter } from 'vue-router'
 import { ChevronDown, ChevronUp, Eye, Loader2, LogIn, RefreshCw, Save, Send, ShieldCheck } from 'lucide-vue-next'
 import { toast } from 'vue-sonner'
 import CarpoolBasicInfoSection from '@/components/carpool-publish/CarpoolBasicInfoSection.vue'
@@ -57,6 +57,7 @@ import {
   useMyProfileQuery,
 } from '@/queries/useMarketQueries'
 import { quotaFieldLabel } from '@/lib/quota'
+import { useUnsavedChangesGuard } from '@/composables/useUnsavedChangesGuard'
 
 type Field =
   | 'linuxDoTopicUrl'
@@ -74,6 +75,9 @@ type Field =
   | 'rulesNote'
   | 'sensitive'
 
+const formDirty = ref(false)
+useUnsavedChangesGuard(formDirty, '车源内容尚未保存，确认离开当前页面？')
+
 const { data: productCatalog } = useCarpoolProductCatalog()
 const { data: regions } = useCarpoolRegions()
 const { data: openingChannels } = useCarpoolOpeningChannels()
@@ -82,6 +86,7 @@ const profileQuery = useMyProfileQuery()
 const profile = profileQuery.data
 const queryClient = useQueryClient()
 const route = useRoute()
+const router = useRouter()
 const analyticsSourceRoute = () => String(route.name ?? 'unknown')
 
 const parsedTopic = ref<ParsedLinuxDoTopic | null>(null)
@@ -169,6 +174,7 @@ const parseTopicMutation = useMutation({
 const saveDraftMutation = useMutation({
   mutationFn: () => submitCarpool(toPayload('draft')),
   async onSuccess(result) {
+    formDirty.value = false
     submittedId.value = String(result.id)
     await invalidateCarpoolPublishQueries()
     toast.success('车源草稿已保存。')
@@ -178,6 +184,7 @@ const saveDraftMutation = useMutation({
 const submitReviewMutation = useMutation({
   mutationFn: () => submitCarpool(toPayload('reviewing')),
   async onSuccess(result) {
+    formDirty.value = false
     submittedId.value = String(result.id)
     await invalidateCarpoolPublishQueries()
     trackAnalytics('carpool_publish_success', {
@@ -190,6 +197,7 @@ const submitReviewMutation = useMutation({
       risk_notice: form.riskNoticeCode ?? 'none',
     })
     toast.success('车源已提交。')
+    await router.replace('/my/carpools')
   },
 })
 
@@ -807,7 +815,7 @@ async function copyPostText() {
 </script>
 
 <template>
-  <div class="space-y-5" :class="canAccessPublishForm ? 'pb-[calc(96px+env(safe-area-inset-bottom))] sm:pb-0' : 'pb-0'">
+  <div class="space-y-5" :class="canAccessPublishForm ? 'pb-[calc(96px+env(safe-area-inset-bottom))] sm:pb-0' : 'pb-0'" @input="formDirty = true" @change="formDirty = true">
     <div class="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
       <div>
         <h1 class="text-2xl font-semibold md:text-3xl">导入 / 发布车源</h1>

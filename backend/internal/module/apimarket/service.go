@@ -110,6 +110,7 @@ func (s *Manager) Update(ctx context.Context, user auth.User, input UpdateServic
 		BillingMode:                      input.BillingMode,
 		DeclaredCNYPerUSDAllowance:       input.DeclaredCNYPerUSDAllowance,
 		DeclaredMaxUSDAllowancePerIntent: input.DeclaredMaxUSDAllowancePerIntent,
+		AvailableUSDAllowance:            input.AvailableUSDAllowance,
 		QuotaExpiresAt:                   input.QuotaExpiresAt,
 		MinimumIntentCNY:                 input.MinimumIntentCNY,
 		MaximumIntentCNY:                 input.MaximumIntentCNY,
@@ -390,6 +391,10 @@ func (s *Manager) UpdateOrderSettings(ctx context.Context, user auth.User, input
 
 func (s *Manager) buildFromInput(ctx context.Context, current Service, input CreateServiceInput) (Service, *domain.AppError) {
 	now := s.now()
+	if strings.TrimSpace(input.BillingMode) == ServiceBillingModeMetered && strings.TrimSpace(input.AvailableUSDAllowance) == "" {
+		// 兼容迁移期客户端：旧字段只提供单笔上限时，以该值初始化真实可售额度。
+		input.AvailableUSDAllowance = input.DeclaredMaxUSDAllowancePerIntent
+	}
 	if err := validateCreateInput(input, now); err != nil {
 		return Service{}, err
 	}
@@ -422,6 +427,7 @@ func (s *Manager) buildFromInput(ctx context.Context, current Service, input Cre
 		BillingMode:                      strings.TrimSpace(input.BillingMode),
 		DeclaredCNYPerUSDAllowance:       strings.TrimSpace(input.DeclaredCNYPerUSDAllowance),
 		DeclaredMaxUSDAllowancePerIntent: strings.TrimSpace(input.DeclaredMaxUSDAllowancePerIntent),
+		AvailableUSDAllowance:            strings.TrimSpace(input.AvailableUSDAllowance),
 		QuotaExpiresAt:                   quotaExpiresAt,
 		MinimumIntentCNY:                 strings.TrimSpace(input.MinimumIntentCNY),
 		MaximumIntentCNY:                 strings.TrimSpace(input.MaximumIntentCNY),
@@ -561,6 +567,9 @@ func validateCreateInput(input CreateServiceInput, now time.Time) *domain.AppErr
 		}
 		if appErr := validateQuotaExpiresAt(input.QuotaExpiresAt, now, true); appErr != nil {
 			return appErr
+		}
+		if available, ok := parseNonNegativeDecimal(input.AvailableUSDAllowance); !ok || available.Sign() < 0 {
+			return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Available USD allowance invalid", "可售美元额度格式不正确。", "availableUsdAllowance", "invalid", "可售美元额度必须是大于等于 0 的数字。")
 		}
 	case ServiceBillingModeManual, ServiceBillingModeFixedPackage:
 		if appErr := validateQuotaExpiresAt(input.QuotaExpiresAt, now, false); appErr != nil {
@@ -774,6 +783,13 @@ func OrderableReasonsAt(service Service, now time.Time) []string {
 		reasons = append(reasons, "payment_method_required")
 	}
 	if service.BillingMode == ServiceBillingModeMetered {
+		availableText := strings.TrimSpace(service.AvailableUSDAllowance)
+		if availableText == "" {
+			availableText = strings.TrimSpace(service.DeclaredMaxUSDAllowancePerIntent)
+		}
+		if available, ok := parseNonNegativeDecimal(availableText); !ok || available.Sign() == 0 {
+			reasons = append(reasons, "quota_sold_out")
+		}
 		if service.QuotaExpiresAt == nil {
 			reasons = append(reasons, "quota_expiration_required")
 		} else if !service.QuotaExpiresAt.After(now) {

@@ -111,6 +111,57 @@ func (s *Store) UserByID(ctx context.Context, userID string) (auth.User, *domain
 	return user, nil
 }
 
+func (s *Store) ListAdminUsers(ctx context.Context) ([]auth.AdminUser, *domain.AppError) {
+	if s == nil || s.pool == nil {
+		return nil, internalStoreError()
+	}
+
+	rows, err := s.pool.Query(ctx, `
+		SELECT u.id::text, u.username, u.display_name, u.account_status,
+		       EXISTS(SELECT 1 FROM user_permissions p WHERE p.user_id = u.id AND p.permission = 'admin') AS is_admin,
+		       l.linux_do_user_id, l.linux_do_username, l.trust_level, l.avatar_url, l.bound_at, l.last_synced_at,
+		       u.created_at, u.last_active_at
+		FROM users u
+		LEFT JOIN linux_do_bindings l ON l.user_id = u.id
+		ORDER BY u.created_at DESC, u.id DESC
+	`)
+	if err != nil {
+		return nil, internalStoreError()
+	}
+	defer rows.Close()
+
+	items := []auth.AdminUser{}
+	for rows.Next() {
+		var item auth.AdminUser
+		var binding authLinuxDoBindingScan
+		if err := rows.Scan(
+			&item.ID,
+			&item.Username,
+			&item.DisplayName,
+			&item.Status,
+			&item.IsAdmin,
+			&binding.userID,
+			&binding.username,
+			&binding.trustLevel,
+			&binding.avatarURL,
+			&binding.boundAt,
+			&binding.lastSyncedAt,
+			&item.CreatedAt,
+			&item.LastActiveAt,
+		); err != nil {
+			return nil, internalStoreError()
+		}
+		user := auth.User{}
+		applyAuthLinuxDoBinding(&user, binding)
+		item.LinuxDoBinding = user.LinuxDoBinding
+		items = append(items, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, internalStoreError()
+	}
+	return items, nil
+}
+
 func (s *Store) UpsertOAuthUser(ctx context.Context, profile auth.OAuthProfile, now time.Time) (auth.OAuthUserResult, *domain.AppError) {
 	if s == nil || s.pool == nil {
 		return auth.OAuthUserResult{}, internalStoreError()

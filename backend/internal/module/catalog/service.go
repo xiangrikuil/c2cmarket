@@ -2,6 +2,7 @@ package catalog
 
 import (
 	"context"
+	"encoding/base64"
 	"math/big"
 	"net/http"
 	"regexp"
@@ -165,6 +166,7 @@ func (s *Service) CreateProductCategory(ctx context.Context, user auth.User, inp
 		ID:          uuid.NewString(),
 		Code:        normalized.Code,
 		DisplayName: normalized.DisplayName,
+		IconDataURL: normalized.IconDataURL,
 		SortOrder:   normalized.SortOrder,
 		Active:      normalized.Active,
 	}
@@ -196,6 +198,7 @@ func (s *Service) UpdateProductCategory(ctx context.Context, user auth.User, cat
 	}
 	category.Code = normalized.Code
 	category.DisplayName = normalized.DisplayName
+	category.IconDataURL = normalized.IconDataURL
 	category.SortOrder = normalized.SortOrder
 	category.Active = normalized.Active
 	s.categories[category.ID] = category
@@ -839,6 +842,7 @@ func normalizeProductPlanInput(input ProductPlanInput) (ProductPlanInput, *domai
 func normalizeProductCategoryInput(input ProductCategoryInput) (ProductCategoryInput, *domain.AppError) {
 	input.Code = strings.ToLower(strings.TrimSpace(input.Code))
 	input.DisplayName = strings.TrimSpace(input.DisplayName)
+	input.IconDataURL = strings.TrimSpace(input.IconDataURL)
 
 	if !slugPattern.MatchString(input.Code) {
 		return ProductCategoryInput{}, fieldError(http.StatusUnprocessableEntity, "code", "分类 code 只允许小写字母、数字和短横线。")
@@ -846,7 +850,32 @@ func normalizeProductCategoryInput(input ProductCategoryInput) (ProductCategoryI
 	if utf8.RuneCountInString(input.DisplayName) < 1 || utf8.RuneCountInString(input.DisplayName) > 40 {
 		return ProductCategoryInput{}, fieldError(http.StatusUnprocessableEntity, "displayName", "分类展示名需为 1 至 40 个字符。")
 	}
+	if appErr := validateProductCategoryIconDataURL(input.IconDataURL); appErr != nil {
+		return ProductCategoryInput{}, appErr
+	}
 	return input, nil
+}
+
+func validateProductCategoryIconDataURL(value string) *domain.AppError {
+	if value == "" {
+		return nil
+	}
+	validPrefix := strings.HasPrefix(value, "data:image/png;base64,") || strings.HasPrefix(value, "data:image/webp;base64,")
+	if !validPrefix {
+		return fieldError(http.StatusUnprocessableEntity, "iconDataUrl", "分类图标只支持 PNG 或 WebP。")
+	}
+	_, encoded, ok := strings.Cut(value, ",")
+	if !ok {
+		return fieldError(http.StatusUnprocessableEntity, "iconDataUrl", "分类图标格式不正确。")
+	}
+	decoded, err := base64.StdEncoding.DecodeString(encoded)
+	if err != nil {
+		return fieldError(http.StatusUnprocessableEntity, "iconDataUrl", "分类图标格式不正确。")
+	}
+	if len(decoded) > 256*1024 {
+		return fieldError(http.StatusUnprocessableEntity, "iconDataUrl", "分类图标不能超过 256 KB。")
+	}
+	return nil
 }
 
 func normalizeAPIModelProviderInput(input APIModelProviderInput) (APIModelProviderInput, *domain.AppError) {

@@ -8,7 +8,7 @@ import PageTitle from '@/components/market/PageTitle.vue'
 import SoftTable from '@/components/market/SoftTable.vue'
 import StatusTabs from '@/components/market/StatusTabs.vue'
 import TablePagination from '@/components/market/TablePagination.vue'
-import StatCard from '@/components/market/StatCard.vue'
+import CompactStats from '@/components/market/CompactStats.vue'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
@@ -163,13 +163,7 @@ async function duplicateAnnouncement(item: Announcement) {
       action-to="/admin/announcements/new"
     />
 
-    <div class="grid gap-3 md:grid-cols-5">
-      <StatCard label="草稿" :value="statusCounts.draft" hint="尚未发布" />
-      <StatCard label="待发布" :value="statusCounts.scheduled" hint="发布时间在未来" />
-      <StatCard label="发布中" :value="statusCounts.published" hint="用户端可见" accent />
-      <StatCard label="已下线" :value="statusCounts.offline" hint="仅管理端可见" />
-      <StatCard label="已结束" :value="statusCounts.expired" hint="公告历史可见" />
-    </div>
+    <CompactStats :items="[{ label: '草稿', value: statusCounts.draft, hint: '尚未发布' }, { label: '待发布', value: statusCounts.scheduled, hint: '发布时间在未来' }, { label: '发布中', value: statusCounts.published, hint: '用户端可见' }, { label: '已下线', value: statusCounts.offline, hint: '仅管理端可见' }, { label: '已结束', value: statusCounts.expired, hint: '公告历史可见' }]" :loading="isLoading" />
 
     <Card v-if="offlineTarget" class="border-destructive/30 p-5">
       <div class="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">

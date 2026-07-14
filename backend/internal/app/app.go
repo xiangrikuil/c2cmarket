@@ -6,20 +6,27 @@ import (
 	"log"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"c2c-market/backend/internal/config"
 	core "c2c-market/backend/internal/module/core"
+	"c2c-market/backend/internal/module/navigationbadge"
 	"c2c-market/backend/internal/module/profile"
+	"c2c-market/backend/internal/realtime"
 	"c2c-market/backend/internal/server"
 	"c2c-market/backend/internal/store/postgres"
 )
 
 type App struct {
-	Config  config.Config
-	Store   *postgres.Store
-	Service *core.Service
-	Handler http.Handler
+	Config           config.Config
+	Store            *postgres.Store
+	Service          *core.Service
+	NavigationBadges *navigationbadge.Service
+	RealtimeHub      *realtime.Hub
+	RealtimeListener *realtime.PostgresListener
+	Handler          http.Handler
+	shutdownOnce     sync.Once
 }
 
 func New(ctx context.Context, cfg config.Config) (*App, error) {
@@ -102,10 +109,33 @@ func New(ctx context.Context, cfg config.Config) (*App, error) {
 			log.Printf("管理员 bootstrap 已跳过，已有管理员密码凭证 username=%s", username)
 		}
 	}
+	navigationBadges := navigationbadge.NewService(store, time.Now)
+	realtimeHub := realtime.NewHub()
+	var realtimeListener *realtime.PostgresListener
+	if cfg.DatabaseURL != "" {
+		realtimeListener, err = realtime.NewPostgresListener(cfg.DatabaseURL, realtimeHub, log.Default())
+		if err != nil {
+			realtimeHub.Close()
+			if store != nil {
+				store.Close()
+			}
+			return nil, fmt.Errorf("初始化 PostgreSQL 实时监听失败: %w", err)
+		}
+		if err := realtimeListener.Start(ctx); err != nil {
+			realtimeListener.Close()
+			realtimeHub.Close()
+			if store != nil {
+				store.Close()
+			}
+			return nil, fmt.Errorf("启动 PostgreSQL 实时监听失败: %w", err)
+		}
+	}
 
 	handler := server.NewServer(service, server.ServerOptions{
 		EnableDevAuth:      cfg.EnableDevAuth,
 		ReadinessChecker:   store,
+		NavigationBadges:   navigationBadges,
+		RealtimeHub:        realtimeHub,
 		AppEnv:             cfg.AppEnv,
 		AllowedOrigins:     cfg.AllowedOrigins,
 		TrustXForwardedFor: cfg.TrustXForwardedFor,
@@ -123,10 +153,13 @@ func New(ctx context.Context, cfg config.Config) (*App, error) {
 	})
 
 	return &App{
-		Config:  cfg,
-		Store:   store,
-		Service: service,
-		Handler: handler,
+		Config:           cfg,
+		Store:            store,
+		Service:          service,
+		NavigationBadges: navigationBadges,
+		RealtimeHub:      realtimeHub,
+		RealtimeListener: realtimeListener,
+		Handler:          handler,
 	}, nil
 }
 
@@ -148,9 +181,29 @@ func buildEmailSender(cfg config.Config) (profile.EmailSender, error) {
 	}
 }
 
-func (a *App) Close() {
-	if a == nil || a.Store == nil {
+func (a *App) BeginShutdown() {
+	if a == nil {
 		return
 	}
-	a.Store.Close()
+	a.shutdownOnce.Do(func() {
+		if a.RealtimeListener != nil {
+			a.RealtimeListener.Close()
+		}
+		if a.RealtimeHub != nil {
+			a.RealtimeHub.Close()
+		}
+	})
+}
+
+func (a *App) Close() {
+	if a == nil {
+		return
+	}
+	a.BeginShutdown()
+	if a.RealtimeListener != nil {
+		a.RealtimeListener.Wait()
+	}
+	if a.Store != nil {
+		a.Store.Close()
+	}
 }

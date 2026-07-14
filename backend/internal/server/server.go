@@ -23,12 +23,14 @@ import (
 	"c2c-market/backend/internal/module/feedback"
 	"c2c-market/backend/internal/module/idempotency"
 	"c2c-market/backend/internal/module/modelaudit"
+	"c2c-market/backend/internal/module/navigationbadge"
 	"c2c-market/backend/internal/module/notification"
 	"c2c-market/backend/internal/module/officialprice"
 	"c2c-market/backend/internal/module/profile"
 	"c2c-market/backend/internal/module/report"
 	"c2c-market/backend/internal/module/review"
 	"c2c-market/backend/internal/module/search"
+	"c2c-market/backend/internal/realtime"
 	"github.com/go-chi/chi/v5"
 	"net/http"
 )
@@ -42,6 +44,8 @@ const (
 type ServerOptions struct {
 	EnableDevAuth      bool
 	ReadinessChecker   health.Checker
+	NavigationBadges   NavigationBadgeService
+	RealtimeHub        *realtime.Hub
 	AppEnv             string
 	AllowedOrigins     []string
 	OAuth              OAuthOptions
@@ -60,12 +64,17 @@ type OAuthOptions struct {
 	Scopes       string
 }
 
+type NavigationBadgeService interface {
+	Get(ctx context.Context, user auth.User) (navigationbadge.Summary, *domain.AppError)
+}
+
 // Service is the legacy application facade for handlers that have not yet been
 // moved to domain-specific server dependencies.
 type Service interface {
 	CreateDevSession(ctx context.Context, username string, isAdmin bool) (auth.User, auth.Session, *domain.AppError)
 	LoginWithOAuthProfile(ctx context.Context, profile auth.OAuthProfile) (auth.User, auth.Session, *domain.AppError)
 	LoginWithPassword(ctx context.Context, username, password string) (auth.User, auth.Session, *domain.AppError)
+	AdminUsers(ctx context.Context, user auth.User) ([]auth.AdminUser, *domain.AppError)
 	StartEmailRegistration(ctx context.Context, input auth.EmailRegistrationStartInput) (auth.EmailRegistrationChallenge, *domain.AppError)
 	ConfirmEmailRegistration(ctx context.Context, input auth.EmailRegistrationConfirmInput) (auth.User, auth.Session, *domain.AppError)
 	SetPassword(ctx context.Context, input auth.SetPasswordInput) *domain.AppError
@@ -209,8 +218,10 @@ type Service interface {
 	ConfirmAPIOrderCompleteWithIdempotency(ctx context.Context, userID, routeKey, key, requestHash string, input apiorder.ActionInput, buildCompletion apiorder.CompletionBuilder) (idempotency.Completion, *domain.AppError)
 	OpenAPIOrderDisputeWithIdempotency(ctx context.Context, userID, routeKey, key, requestHash string, input apiorder.ActionInput, buildCompletion apiorder.CompletionBuilder) (idempotency.Completion, *domain.AppError)
 	OwnerAPIOrders(ctx context.Context, user auth.User) ([]apiorder.Order, *domain.AppError)
+	AdminAPIOrders(ctx context.Context, user auth.User) ([]apiorder.Order, *domain.AppError)
 	OwnerAPIOrder(ctx context.Context, user auth.User, orderID string) (apiorder.Order, *domain.AppError)
 	ConfirmAPIOrderPaymentWithIdempotency(ctx context.Context, userID, routeKey, key, requestHash string, input apiorder.ActionInput, buildCompletion apiorder.CompletionBuilder) (idempotency.Completion, *domain.AppError)
+	ReportAPIOrderPaymentIssueWithIdempotency(ctx context.Context, userID, routeKey, key, requestHash string, input apiorder.ActionInput, buildCompletion apiorder.CompletionBuilder) (idempotency.Completion, *domain.AppError)
 	SubmitAPIOrderDeliveryWithIdempotency(ctx context.Context, userID, routeKey, key, requestHash string, input apiorder.ActionInput, buildCompletion apiorder.CompletionBuilder) (idempotency.Completion, *domain.AppError)
 
 	CreateContactMethod(ctx context.Context, input contact.ContactMethodInput) (contact.ContactMethod, *domain.AppError)
@@ -262,6 +273,7 @@ type CarpoolService interface {
 	SubmitCarpoolListingForReview(ctx context.Context, user auth.User, input carpool.SubmitListingReviewInput) (carpool.Listing, *domain.AppError)
 	PublicCarpoolListings(ctx context.Context, page domain.PageRequest) (domain.Page[carpool.Listing], *domain.AppError)
 	PublicCarpoolListing(ctx context.Context, listingID string) (carpool.Listing, *domain.AppError)
+	CarpoolApplicationEligibility(ctx context.Context, user auth.User, listingID string) (carpool.ApplicationEligibility, *domain.AppError)
 	MyCarpoolListings(ctx context.Context, user auth.User) ([]carpool.Listing, *domain.AppError)
 	AdminCarpoolListings(ctx context.Context, user auth.User, page domain.PageRequest) (domain.Page[carpool.Listing], *domain.AppError)
 	AdminCarpoolListing(ctx context.Context, user auth.User, listingID string) (carpool.Listing, *domain.AppError)
@@ -295,6 +307,8 @@ type Server struct {
 	mux                  chi.Router
 	enableDevAuth        bool
 	readinessChecker     health.Checker
+	navigationBadges     NavigationBadgeService
+	realtimeHub          *realtime.Hub
 	oauth                OAuthOptions
 	cookieSecure         bool
 	allowedOrigins       []string
@@ -312,12 +326,22 @@ func NewServer(service ApplicationService, options ...ServerOptions) http.Handle
 	if option.AppEnv == "" {
 		option.AppEnv = config.EnvDevelopment
 	}
+	navigationBadges := option.NavigationBadges
+	if navigationBadges == nil {
+		navigationBadges = navigationbadge.NewService(nil, time.Now)
+	}
+	realtimeHub := option.RealtimeHub
+	if realtimeHub == nil {
+		realtimeHub = realtime.NewHub()
+	}
 	server := &Server{
 		app:                  service,
 		carpools:             service,
 		mux:                  chi.NewRouter(),
 		enableDevAuth:        option.EnableDevAuth,
 		readinessChecker:     option.ReadinessChecker,
+		navigationBadges:     navigationBadges,
+		realtimeHub:          realtimeHub,
 		oauth:                option.OAuth,
 		cookieSecure:         option.AppEnv == config.EnvProduction,
 		allowedOrigins:       append([]string(nil), option.AllowedOrigins...),

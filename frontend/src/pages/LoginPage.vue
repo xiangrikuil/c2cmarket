@@ -8,6 +8,7 @@ import {
   LockKeyhole,
   LogIn,
   Loader2,
+  Search,
   ShieldCheck,
   UserRound,
 } from 'lucide-vue-next'
@@ -40,8 +41,8 @@ const displayName = computed(() => session.value?.user.displayName ?? session.va
 const linuxDo = computed(() => session.value?.user.linuxDoBinding)
 const isAdmin = computed(() => session.value?.user.permissions.includes('admin') ?? false)
 const returnTo = computed(() => {
-  const value = typeof route.query.returnTo === 'string' ? route.query.returnTo : '/my'
-  return value.startsWith('/') && !value.startsWith('//') ? value : '/my'
+  const value = typeof route.query.returnTo === 'string' ? route.query.returnTo : '/'
+  return value.startsWith('/') && !value.startsWith('//') ? value : '/'
 })
 
 const linuxDoIconPaths = [
@@ -67,6 +68,7 @@ async function refreshSession() {
   loadingSession.value = true
   try {
     session.value = await getCurrentBackendSession()
+    if (session.value) await router.replace(returnTo.value)
   } catch {
     session.value = null
   } finally {
@@ -123,7 +125,13 @@ async function logout() {
 </script>
 
 <template>
-  <main class="login-page relative grid min-h-screen justify-items-center overflow-hidden px-5 pb-6 pt-8">
+  <main class="login-page relative grid min-h-screen justify-items-center overflow-hidden px-5 pb-6 pt-8 xl:grid-cols-[minmax(260px,1fr)_450px_minmax(260px,1fr)] xl:items-center xl:gap-12 xl:px-12">
+    <aside class="login-intro relative z-10 hidden max-w-[390px] justify-self-end xl:block">
+      <Badge variant="secondary">C2CMarket</Badge>
+      <h1 class="mt-5 text-5xl font-semibold leading-tight tracking-tight">连接供需，<br><span class="text-primary">高效撮合</span></h1>
+      <p class="mt-5 text-base leading-8 text-muted-foreground">浏览订阅拼车、API 服务、求车需求与官网公开价格，在同一套真实状态中完成发现和跟进。</p>
+      <div class="login-visual mt-8" aria-hidden="true"><div class="login-visual-window"><div /><div /><div /></div><div class="login-visual-orbit" /><div class="login-visual-badge"><ShieldCheck class="h-8 w-8" /></div></div>
+    </aside>
     <div class="relative z-10 flex w-full max-w-[450px] flex-col items-center">
       <section class="mb-5 flex flex-col items-center text-center">
         <div class="grid h-12 w-12 place-items-center rounded-xl bg-foreground text-background shadow-xl shadow-primary/20">
@@ -254,6 +262,11 @@ async function logout() {
 
       <p class="mt-4 text-xs text-muted-foreground">© 2026 C2CMarket. All rights reserved.</p>
     </div>
+    <aside class="login-benefits relative z-10 hidden max-w-[350px] justify-self-start space-y-6 xl:block">
+      <div class="login-benefit"><span><ShieldCheck class="h-5 w-5" /></span><div><h3>公开身份与留痕</h3><p>身份、申请和订单状态由平台统一记录。</p></div></div>
+      <div class="login-benefit"><span><Search class="h-5 w-5" /></span><div><h3>真实价格参考</h3><p>区分官网公开价格与市场撮合价格。</p></div></div>
+      <div class="login-benefit"><span><UserRound class="h-5 w-5" /></span><div><h3>清晰的下一步</h3><p>只展示当前角色和状态允许执行的操作。</p></div></div>
+    </aside>
   </main>
 </template>
 
@@ -266,5 +279,109 @@ async function logout() {
     linear-gradient(90deg, color-mix(in oklab, var(--primary) 7%, transparent) 1px, transparent 1px),
     color-mix(in oklab, var(--background) 96%, white);
   background-size: auto, auto, 42px 42px, 42px 42px, auto;
+}
+
+.login-intro h1 {
+  color: var(--foreground);
+}
+
+.login-visual {
+  position: relative;
+  width: 350px;
+  height: 210px;
+  border-radius: 32px;
+  background: radial-gradient(circle at 50% 60%, color-mix(in oklab, var(--primary) 16%, transparent), transparent 62%);
+}
+
+.login-visual-window {
+  position: absolute;
+  left: 54px;
+  top: 22px;
+  display: grid;
+  width: 240px;
+  height: 142px;
+  grid-template-columns: 1fr 1.6fr;
+  gap: 12px;
+  border: 1px solid color-mix(in oklab, var(--primary) 22%, var(--border));
+  border-radius: 18px;
+  background: rgb(255 255 255 / 0.72);
+  padding: 26px 18px 18px;
+  box-shadow: 0 28px 60px -36px color-mix(in oklab, var(--primary) 60%, #0f172a);
+  transform: perspective(500px) rotateY(8deg) rotateX(3deg);
+}
+
+.login-visual-window::before {
+  position: absolute;
+  inset: 12px auto auto 16px;
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  content: "";
+  background: var(--primary);
+  box-shadow: 12px 0 color-mix(in oklab, var(--primary) 48%, white), 24px 0 color-mix(in oklab, var(--primary) 24%, white);
+}
+
+.login-visual-window > div {
+  border-radius: 8px;
+  background: linear-gradient(145deg, color-mix(in oklab, var(--primary) 10%, white), white);
+}
+
+.login-visual-window > div:first-child {
+  grid-row: 1 / span 2;
+}
+
+.login-visual-orbit {
+  position: absolute;
+  inset: auto 28px 4px;
+  height: 48px;
+  border: 1px solid color-mix(in oklab, var(--primary) 20%, transparent);
+  border-radius: 50%;
+  transform: rotate(-5deg);
+}
+
+.login-visual-badge {
+  position: absolute;
+  right: 20px;
+  top: 38px;
+  display: grid;
+  width: 62px;
+  height: 62px;
+  place-items: center;
+  border: 1px solid rgb(255 255 255 / 0.7);
+  border-radius: 20px;
+  background: linear-gradient(145deg, #60a5fa, #2563eb);
+  color: white;
+  box-shadow: 0 18px 30px -18px rgb(30 64 175 / 0.78);
+}
+
+.login-benefit {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+}
+
+.login-benefit > span {
+  display: grid;
+  width: 46px;
+  height: 46px;
+  flex: 0 0 auto;
+  place-items: center;
+  border: 1px solid color-mix(in oklab, var(--primary) 14%, var(--border));
+  border-radius: 999px;
+  background: rgb(255 255 255 / 0.78);
+  color: var(--primary);
+  box-shadow: 0 12px 28px -24px rgb(30 64 175 / 0.5);
+}
+
+.login-benefit h3 {
+  font-size: 15px;
+  font-weight: 650;
+}
+
+.login-benefit p {
+  margin-top: 5px;
+  color: var(--muted-foreground);
+  font-size: 13px;
+  line-height: 1.7;
 }
 </style>

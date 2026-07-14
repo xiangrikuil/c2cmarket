@@ -8,6 +8,7 @@ const CarpoolsPage = () => import('@/pages/CarpoolsPage.vue')
 const CarpoolDetailPage = () => import('@/pages/CarpoolDetailPage.vue')
 const CarpoolPublishPage = () => import('@/pages/CarpoolPublishPage.vue')
 const DemandsPage = () => import('@/pages/DemandsPage.vue')
+const DemandPublishPage = () => import('@/pages/DemandPublishPage.vue')
 const DemandDetailPage = () => import('@/pages/DemandDetailPage.vue')
 const ApiMarketPage = () => import('@/pages/ApiMarketPage.vue')
 const ApiServiceDetailPage = () => import('@/pages/ApiServiceDetailPage.vue')
@@ -19,7 +20,10 @@ const MyDemandsPage = () => import('@/pages/MyDemandsPage.vue')
 const MyRidesPage = () => import('@/pages/MyRidesPage.vue')
 const CarpoolApplicationDetailPage = () => import('@/pages/CarpoolApplicationDetailPage.vue')
 const MyApiOrdersPage = () => import('@/pages/MyApiOrdersPage.vue')
+const MyApiServicesPage = () => import('@/pages/MyApiServicesPage.vue')
+const MyApiServiceDetailPage = () => import('@/pages/MyApiServiceDetailPage.vue')
 const ApiPurchaseOrderDetailPage = () => import('@/pages/ApiPurchaseOrderDetailPage.vue')
+const LegacyApiIntentRedirectPage = () => import('@/pages/LegacyApiIntentRedirectPage.vue')
 const MerchantApiOrdersPage = () => import('@/pages/MerchantApiOrdersPage.vue')
 const MerchantCarpoolApplicationsPage = () => import('@/pages/MerchantCarpoolApplicationsPage.vue')
 const MyFavoritesPage = () => import('@/pages/MyFavoritesPage.vue')
@@ -36,23 +40,18 @@ const AdminAnnouncementEditorPage = () => import('@/pages/AdminAnnouncementEdito
 const AdminProductPlansPage = () => import('@/pages/AdminProductPlansPage.vue')
 const AdminApiModelsPage = () => import('@/pages/AdminApiModelsPage.vue')
 const AdminModelAuditPage = () => import('@/pages/AdminModelAuditPage.vue')
+const AdminUsersPage = () => import('@/pages/AdminUsersPage.vue')
 const AdminSectionPage = () => import('@/pages/AdminSectionPage.vue')
 const NotFoundPage = () => import('@/pages/NotFoundPage.vue')
 
 const adminChildren = [
-  ['carpools', '车源治理', '处理公开车源下架恢复、遗留审核队列、价格、车主承诺、原帖绑定和纠纷状态。'],
+  ['carpools', '车源异常处理', '处理暂停、下架、待复核和遗留审核车源；公开在售车源直接在普通列表巡查。'],
   ['demands', '求车管理', '查看求车需求、关闭状态和 linux.do 求车原帖绑定。'],
-  ['api-merchants', 'API 商户审核', '审核商户资料、在线状态和可售额度资质。'],
-  ['api-services', 'API 服务审核', '审核模型价格、最低意向金额、交易说明和商户承诺规则。'],
-  ['trade-intents', '交易意向管理', '查看购买意向、参与方联系方式、完成和取消状态。'],
-  ['carpool-applications', '上车申请管理', '查看上车申请、席位预留、超时、确认和纠纷状态。'],
-  ['certifications', '认证 / 铭牌管理', '管理个人车主、可信新车主和 linux.do 绑定标识。'],
-  ['users', '用户管理', '查看账号状态、完成记录、责任取消、限制和封禁状态。'],
-  ['restrictions', '能力限制', '管理发布、申请、购买、评价和商户上线能力限制。'],
+  ['api-services', 'API 服务审核', '审核模型价格、最低订单金额、交易说明和商户承诺规则。'],
+  ['trade-intents', 'API 订单追踪', '查看 API 订单、参与方、金额快照、完成和取消状态。'],
   ['reports', '举报纠纷', '处理举报、纠纷和未解决记录。'],
   ['appeals', '申诉处理', '处理用户对限制、下架和封禁的申诉。'],
-  ['audit-logs', '审计日志', '查看管理员操作记录和关键字段变更。'],
-  ['logs', '操作日志', '查看系统和管理员操作记录。'],
+  ['logs', '审计日志', '查看系统与管理员操作记录。'],
 ] as const
 
 export const router = createRouter({
@@ -72,6 +71,7 @@ export const router = createRouter({
     { path: '/carpools/new', name: 'carpool-new', component: CarpoolPublishPage },
     { path: '/carpools/:id', name: 'carpool-detail', component: CarpoolDetailPage },
     { path: '/demands', name: 'demands', component: DemandsPage },
+    { path: '/demands/new', name: 'demand-new', component: DemandPublishPage },
     { path: '/demands/:id', name: 'demand-detail', component: DemandDetailPage },
     { path: '/api-market', name: 'api-market', component: ApiMarketPage },
     { path: '/api-market/detail', redirect: '/api-market/a1' },
@@ -88,7 +88,9 @@ export const router = createRouter({
     { path: '/my/rides/:id', name: 'my-ride-detail', component: CarpoolApplicationDetailPage },
     { path: '/my/api-orders', name: 'my-api-orders', component: MyApiOrdersPage },
     { path: '/my/api-orders/:id', name: 'my-api-order-detail', component: ApiPurchaseOrderDetailPage },
-    { path: '/api-intents/:id', name: 'legacy-api-intent-detail', component: ApiPurchaseOrderDetailPage },
+    { path: '/my/api-services', name: 'my-api-services', component: MyApiServicesPage },
+    { path: '/my/api-services/:id', name: 'my-api-service-detail', component: MyApiServiceDetailPage },
+    { path: '/api-intents/:id', name: 'legacy-api-intent-detail', component: LegacyApiIntentRedirectPage },
     { path: '/merchant/carpool-applications', name: 'merchant-carpool-applications', component: MerchantCarpoolApplicationsPage },
     { path: '/merchant/carpool-applications/:id', name: 'merchant-carpool-application-detail', component: CarpoolApplicationDetailPage },
     { path: '/merchant/api-orders', name: 'merchant-api-orders', component: MerchantApiOrdersPage },
@@ -111,6 +113,12 @@ export const router = createRouter({
     { path: '/admin/feedback/:id', name: 'admin-feedback-detail', component: AdminFeedbackPage },
     { path: '/admin/official-prices', name: 'admin-official-prices', component: OfficialPriceManagePage },
     { path: '/admin/price-leads', redirect: '/admin/official-prices' },
+    { path: '/admin/users', name: 'admin-users', component: AdminUsersPage },
+    { path: '/admin/restrictions', redirect: '/admin/users' },
+    { path: '/admin/api-merchants', redirect: '/admin/api-services' },
+    { path: '/admin/audit-logs', redirect: '/admin/logs' },
+    { path: '/admin/carpool-applications', redirect: '/admin/carpools' },
+    { path: '/admin/certifications', redirect: '/admin/users' },
     ...adminChildren.map(([path, title, description]) => ({
       path: `/admin/${path}`,
       name: `admin-${path}`,

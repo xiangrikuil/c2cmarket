@@ -11,6 +11,17 @@ type User struct {
 	LinuxDoBinding *LinuxDoBinding
 }
 
+type AdminUser struct {
+	ID             string
+	Username       string
+	DisplayName    string
+	IsAdmin        bool
+	Status         string
+	LinuxDoBinding *LinuxDoBinding
+	CreatedAt      time.Time
+	LastActiveAt   *time.Time
+}
+
 type Session struct {
 	ID        string
 	UserID    string

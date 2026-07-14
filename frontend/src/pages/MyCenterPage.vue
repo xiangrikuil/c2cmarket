@@ -2,20 +2,17 @@
 import { computed, onUnmounted, reactive, ref, watch, watchEffect } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { toast } from 'vue-sonner'
-import { Bell, Car, CheckCircle2, CircleAlert, ContactRound, CreditCard, Eye, ImageUp, KeyRound, Link2, LockKeyhole, LogIn, Mail, MailCheck, MessageCircle, RefreshCw, Save, ScanSearch, ShieldCheck, ShoppingBag, Trash2, UserRound, UsersRound, X } from 'lucide-vue-next'
+import { Bell, CarFront, CheckCircle2, ChevronRight, CircleAlert, Code2, CreditCard, Eye, Heart, ImageUp, KeyRound, Link2, LockKeyhole, LogIn, Mail, MailCheck, MessageCircle, RefreshCw, Save, ShieldCheck, Trash2, UserRound, X } from 'lucide-vue-next'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
+import { Checkbox } from '@/components/ui/checkbox'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Textarea } from '@/components/ui/textarea'
-import StatCard from '@/components/market/StatCard.vue'
-import SoftTable from '@/components/market/SoftTable.vue'
-import TablePagination from '@/components/market/TablePagination.vue'
-import { usePagination } from '@/composables/usePagination'
-import { getPricingDisplay, getRemainingSeats } from '@/lib/pricing'
-import { getApiMerchantDisplayName, getApiMerchantVisibilityLabel, getApiServicePublicDetailUrl, type ApiService, type AvatarMode, type ContactMethodType, type ContactUsageScope, type SaveContactMethodRequest, type UserContactMethod, type UserPrivacySettings } from '@/lib/api'
+import EmptyState from '@/components/market/EmptyState.vue'
+import { getApiOrderNextAction, getCarpoolApplicationNextAction, type AvatarMode, type ContactMethodType, type ContactUsageScope, type SaveContactMethodRequest, type UserContactMethod, type UserPrivacySettings } from '@/lib/api'
 import { ACCOUNT_RECOVERY_PATH, accountRecoveryRequirements, isAccountRecoveryComplete, sanitizeAccountRecoveryReturnTo } from '@/lib/accountRecovery'
 import { getBackupPasswordStrength, getBackupPasswordValidationMessage, getPasswordChecks } from '@/lib/passwordPolicy'
 import {
@@ -34,19 +31,17 @@ import {
 import { containsSensitiveContent } from '@/lib/formValidation'
 import {
   useApiPaymentAccountSettingsQuery,
-  useApiServices,
   useConfirmEmailVerificationMutation,
   useCreateContactMethodMutation,
   useDeleteContactMethodMutation,
   useDeleteCustomAvatarMutation,
   useMyContactMethodsQuery,
   useMyApiServices,
+  useMyApiOrders,
+  useMyCarpoolApplications,
   useMyCarpools,
   useMyDemands,
-  usePauseApiServiceMutation,
   useMyProfileQuery,
-  usePublishApiServiceMutation,
-  useResumeApiServiceMutation,
   useSetBackupPasswordMutation,
   useSetDefaultContactMethodMutation,
   useStartEmailVerificationMutation,
@@ -66,6 +61,8 @@ const { data: apiPaymentSettings } = useApiPaymentAccountSettingsQuery()
 const { data: carpools } = useMyCarpools()
 const { data: apiServices } = useMyApiServices()
 const { data: demands } = useMyDemands()
+const { data: rideApplications } = useMyCarpoolApplications({ sort: 'default_buyer' })
+const { data: apiOrders } = useMyApiOrders({ sort: 'default_buyer' })
 
 const updateProfileMutation = useUpdateMyProfileMutation()
 const deleteAvatarMutation = useDeleteCustomAvatarMutation()
@@ -79,15 +76,12 @@ const deleteContactMutation = useDeleteContactMethodMutation()
 const setDefaultContactMutation = useSetDefaultContactMethodMutation()
 const verifyContactMutation = useVerifyContactMethodMutation()
 const updateApiPaymentSettingsMutation = useUpdateApiPaymentAccountSettingsMutation()
-const publishApiServiceMutation = usePublishApiServiceMutation()
-const pauseApiServiceMutation = usePauseApiServiceMutation()
-const resumeApiServiceMutation = useResumeApiServiceMutation()
 const apiPaymentQrMaxBytes = 512 * 1024
 
 const sectionLinks = [
-  { label: '概览', to: '/my', key: 'overview' },
+  { label: '账户概览', to: '/my', key: 'overview' },
   { label: '个人资料', to: '/my/profile', key: 'profile' },
-  { label: '联系方式', to: '/my/contacts', key: 'contacts' },
+  { label: '联系方式与收款设置', to: '/my/contacts', key: 'contacts' },
   { label: '账号与认证', to: '/my/account', key: 'account' },
   { label: '隐私设置', to: '/my/privacy', key: 'privacy' },
   { label: '我的收藏', to: '/my/favorites', key: 'favorites' },
@@ -165,6 +159,24 @@ const defaultContactUsageScopes: ContactUsageScope[] = ['carpool_owner', 'api_me
 const wechatContact = computed(() => (contacts.value ?? []).find(item => item.type === 'wechat') ?? null)
 const emailContact = computed(() => (contacts.value ?? []).find(item => item.type === 'email') ?? null)
 const enabledContactCount = computed(() => [wechatContact.value, emailContact.value].filter(item => item?.enabled && (item.type !== 'email' || item.verified)).length)
+const pendingRideApplications = computed(() => (rideApplications.value ?? []).filter(item => ['accepted_reserved', 'joined_pending_confirmation', 'pending_completion'].includes(item.status)))
+const pendingApiOrders = computed(() => (apiOrders.value ?? []).filter(item => ['pending_payment', 'delivery_submitted'].includes(item.status)))
+const profileCompleteness = computed(() => {
+  if (!profile.value) return 0
+  const completed = [profile.value.displayName.trim(), profile.value.bio?.trim(), profile.value.linuxDoBinding.bound, accountRecoveryComplete.value, enabledContactCount.value > 0].filter(Boolean).length
+  return Math.round((completed / 5) * 100)
+})
+const overviewStats = computed(() => [
+  { label: '资料完整度', value: `${profileCompleteness.value}%`, hint: accountRecoveryComplete.value ? '账号恢复已配置' : '仍需完善账号恢复' },
+  { label: '需要我处理', value: pendingRideApplications.value.length + pendingApiOrders.value.length, hint: '上车申请与 API 订单' },
+  { label: '公开经营对象', value: (carpools.value?.length ?? 0) + (apiServices.value?.length ?? 0), hint: '车源与 API 服务' },
+  { label: '可用联系方式', value: enabledContactCount.value, hint: '仅私有联系窗口可见' },
+])
+const pendingTasks = computed(() => [
+  ...pendingRideApplications.value.map(item => ({ id: item.id, to: `/my/rides/${item.id}`, title: item.snapshot.productName, description: getCarpoolApplicationNextAction(item, 'buyer'), type: '上车申请' })),
+  ...pendingApiOrders.value.map(item => ({ id: item.id, to: `/my/api-orders/${item.id}`, title: item.serviceTitle, description: getApiOrderNextAction(item, 'buyer'), type: 'API 订单' })),
+])
+const hasMerchantObjects = computed(() => Boolean(carpools.value?.length || apiServices.value?.length))
 const wechatBound = computed(() => Boolean(wechatContact.value?.enabled && wechatContact.value.displayValue))
 const emailBound = computed(() => Boolean(emailContact.value?.enabled && emailContact.value.verified))
 const contactSaving = computed(() => createContactMutation.isPending.value || updateContactMutation.isPending.value)
@@ -321,8 +333,6 @@ watchEffect(() => {
 const carpoolRows = computed(() => carpools.value ?? [])
 const apiServiceRows = computed(() => apiServices.value ?? [])
 const demandRows = computed(() => demands.value ?? [])
-const carpoolPagination = usePagination(carpoolRows)
-const apiServicePagination = usePagination(apiServiceRows)
 const avatarText = computed(() => (profile.value?.displayName || profile.value?.username || '我').slice(0, 1).toUpperCase())
 const profileErrorMessage = computed(() => {
   const error = profileQuery.error.value
@@ -646,45 +656,6 @@ function setDefaultContact(contact: UserContactMethod) {
   })
 }
 
-function apiServiceStatusLabel(state: string, online: boolean) {
-  if (online) return '在线'
-  if (state === 'reviewing') return '审核中'
-  if (state === 'paused') return '暂停'
-  return '离线'
-}
-
-function apiServiceStatusVariant(state: string, online: boolean) {
-  if (online) return 'default'
-  if (state === 'reviewing') return 'secondary'
-  if (state === 'paused') return 'secondary'
-  return 'outline'
-}
-
-function apiServicePublicDetailUrl(item: ApiService) {
-  return getApiServicePublicDetailUrl(item)
-}
-
-function publishService(id: string) {
-  publishApiServiceMutation.mutate(id, {
-    onSuccess: () => toast.success('API 服务已上线。'),
-    onError: error => toast.error(error instanceof Error ? error.message : '上线失败。'),
-  })
-}
-
-function pauseService(id: string) {
-  pauseApiServiceMutation.mutate(id, {
-    onSuccess: () => toast.success('API 服务已暂停。'),
-    onError: error => toast.error(error instanceof Error ? error.message : '暂停失败。'),
-  })
-}
-
-function resumeService(id: string) {
-  resumeApiServiceMutation.mutate(id, {
-    onSuccess: () => toast.success('API 服务已恢复上线。'),
-    onError: error => toast.error(error instanceof Error ? error.message : '恢复失败。'),
-  })
-}
-
 function goToLogin() {
   router.push({ path: '/login', query: { returnTo: route.fullPath } })
 }
@@ -698,7 +669,7 @@ function goToLogin() {
         <LogIn class="h-5 w-5" />
       </div>
       <div class="min-w-0 flex-1">
-        <h1 class="text-lg font-semibold tracking-tight">请先登录后查看我的中心</h1>
+        <h1 class="text-lg font-semibold tracking-tight">请先登录后查看个人中心</h1>
         <p class="mt-2 text-sm leading-6 text-muted-foreground">
           {{ profileErrorMessage }}
         </p>
@@ -712,7 +683,7 @@ function goToLogin() {
       </div>
     </div>
   </Card>
-  <div v-else class="space-y-5">
+  <div v-else class="my-center-reference space-y-5">
     <Dialog :open="accountRecoveryDialogOpen" @update:open="setAccountRecoveryDialogOpen">
       <DialogContent class="account-security-dialog w-[calc(100vw-1rem)] gap-0 overflow-hidden p-0 sm:max-w-[860px]">
         <div class="account-security-layout grid max-h-[calc(100dvh-1rem)] min-h-[560px] overflow-y-auto md:grid-cols-[300px_minmax(0,1fr)] md:overflow-hidden">
@@ -749,7 +720,7 @@ function goToLogin() {
             <DialogHeader class="account-security-header px-5 py-5 pr-12 sm:px-6">
               <DialogTitle>{{ accountRecoveryComplete ? '账号设置' : '完善账号安全' }}</DialogTitle>
               <DialogDescription>
-                {{ accountRecoveryComplete ? '可以在这里更新邮箱或密码。' : '补全后即可访问我的中心其他页面和业务页。' }}
+                {{ accountRecoveryComplete ? '可以在这里更新邮箱或密码。' : '补全后即可访问个人中心其他页面和业务页。' }}
               </DialogDescription>
             </DialogHeader>
 
@@ -972,7 +943,17 @@ function goToLogin() {
       </DialogContent>
     </Dialog>
 
-    <Card class="p-5">
+    <header v-if="activeSection !== 'overview'" class="my-center-page-heading">
+      <div>
+        <p>个人中心 / {{ sectionLinks.find(item => item.key === activeSection)?.label }}</p>
+        <h1>{{ sectionLinks.find(item => item.key === activeSection)?.label }}</h1>
+        <p v-if="activeSection === 'contacts'" class="my-center-page-subtitle">完善联系方式与 API 收款信息，只向有效交易参与方展示必要资料。</p>
+      </div>
+      <Button variant="outline" @click="router.push(`/u/${profile.username}`)"><Eye class="h-4 w-4" />查看公开主页</Button>
+    </header>
+    <header v-else class="my-center-overview-heading"><h1>个人中心</h1><p>管理交易、发布内容与账户资料</p></header>
+
+    <Card v-if="activeSection === 'overview'" class="my-center-identity p-5">
       <div class="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
         <div class="flex min-w-0 gap-4">
           <div class="grid h-16 w-16 shrink-0 place-items-center overflow-hidden rounded-full bg-primary text-xl font-semibold text-primary-foreground">
@@ -995,84 +976,89 @@ function goToLogin() {
           <Button @click="router.push('/my/profile')"><UserRound class="h-4 w-4" />编辑个人资料</Button>
         </div>
       </div>
+      <dl class="my-center-identity-stats">
+        <div><dt>资料完整度</dt><dd>{{ profileCompleteness }}%</dd><small>{{ accountRecoveryComplete ? '账号恢复已配置' : '仍需完善账号恢复' }}</small></div>
+        <div><dt>待处理事项</dt><dd>{{ pendingTasks.length }}</dd><small>上车申请与 API 订单</small></div>
+        <div><dt>我发布的车源</dt><dd>{{ carpools?.length ?? 0 }}</dd><small>当前账号发布记录</small></div>
+        <div><dt>API 服务</dt><dd>{{ apiServices?.length ?? 0 }}</dd><small>当前账号服务记录</small></div>
+        <div><dt>联系方式</dt><dd>{{ enabledContactCount }}</dd><small>仅联系窗口可见</small></div>
+      </dl>
     </Card>
 
-    <nav class="flex gap-2 overflow-x-auto pb-1" aria-label="我的中心二级导航">
-      <RouterLink
-        v-for="item in sectionLinks"
-        :key="item.to"
-        :to="item.to"
-        class="shrink-0 rounded-md border px-3 py-2 text-sm transition"
-        :aria-disabled="isSectionLocked(item.to)"
-        :class="[
-          isSectionActive(item.to) ? 'border-primary bg-primary text-primary-foreground' : 'border-border bg-card text-muted-foreground hover:bg-accent hover:text-foreground',
-          isSectionLocked(item.to) ? 'cursor-help opacity-75' : '',
-        ]"
-        @click.capture="handleSectionLinkClick(item.to, $event)"
-      >
-        {{ item.label }}
-      </RouterLink>
-    </nav>
-
-    <section v-if="activeSection === 'overview'" class="space-y-5">
-      <div class="grid gap-3 md:grid-cols-2 lg:grid-cols-5">
-        <RouterLink to="/my/carpools"><StatCard label="我的开车" :value="String(carpoolRows.length)" hint="仅展示当前用户车源" :icon="Car" accent /></RouterLink>
-        <RouterLink to="/my/demands"><StatCard label="我的求车" :value="String(demandRows.length)" hint="查看需求进度" :icon="ScanSearch" /></RouterLink>
-        <RouterLink to="/my/rides"><StatCard label="我的上车" value="5" hint="1 个待完成" :icon="UsersRound" /></RouterLink>
-        <RouterLink to="/my/api-orders"><StatCard label="API 意向" value="2" hint="1 个站外确认中" :icon="ShoppingBag" /></RouterLink>
-        <RouterLink to="/my/contacts"><StatCard label="启用联系方式" :value="String(enabledContactCount)" hint="只在私有页和联系窗口内可见" :icon="ContactRound" /></RouterLink>
-      </div>
-
-      <div class="grid gap-5 lg:grid-cols-2">
-        <section class="space-y-3">
-          <h2 class="font-semibold">我的开车</h2>
-          <SoftTable :columns="['车源', '价格', '车位', '状态']">
-            <tr v-for="item in carpoolPagination.paginatedRows.value" :key="item.id">
-              <td>{{ item.product }}</td>
-              <td>{{ getPricingDisplay(item).primaryLabel }} ¥{{ getPricingDisplay(item).primaryPrice }}</td>
-              <td>剩余 {{ getRemainingSeats(item) }} 位</td>
-              <td><Badge>{{ item.status }}</Badge></td>
-            </tr>
-            <tr v-if="carpoolRows.length === 0"><td colspan="4" class="py-8 text-center text-sm text-muted-foreground">暂无当前用户车源。</td></tr>
-            <template #footer>
-              <TablePagination v-model:page="carpoolPagination.page.value" :page-count="carpoolPagination.pageCount.value" :total="carpoolPagination.total.value" :start-item="carpoolPagination.startItem.value" :end-item="carpoolPagination.endItem.value" />
-            </template>
-          </SoftTable>
+    <section v-if="activeSection === 'overview'" class="my-center-overview-layout">
+      <main class="min-w-0 space-y-5">
+        <section>
+          <div class="my-center-section-title"><div><h2>快捷入口</h2><p>常用交易、发布与账户设置</p></div></div>
+          <div class="my-center-quick-grid">
+            <RouterLink to="/my/rides"><span class="is-indigo"><CarFront /></span><div><strong>我的上车</strong><small>{{ rideApplications?.length ?? 0 }} 条申请记录</small></div><ChevronRight /></RouterLink>
+            <RouterLink to="/my/api-orders"><span class="is-cyan"><Code2 /></span><div><strong>API 订单</strong><small>{{ apiOrders?.length ?? 0 }} 笔订单记录</small></div><ChevronRight /></RouterLink>
+            <RouterLink to="/carpools/new"><span class="is-blue"><CarFront /></span><div><strong>发布车源</strong><small>创建新的拼车信息</small></div><ChevronRight /></RouterLink>
+            <RouterLink to="/api-market/new"><span class="is-emerald"><Code2 /></span><div><strong>发布 API 服务</strong><small>配置额度与接单信息</small></div><ChevronRight /></RouterLink>
+            <RouterLink to="/my/favorites"><span class="is-rose"><Heart /></span><div><strong>我的收藏</strong><small>查看收藏的市场信息</small></div><ChevronRight /></RouterLink>
+            <RouterLink to="/my/contacts"><span class="is-amber"><MessageCircle /></span><div><strong>联系方式</strong><small>{{ enabledContactCount }} 种方式可用</small></div><ChevronRight /></RouterLink>
+          </div>
         </section>
 
-        <section class="space-y-3">
-          <h2 class="font-semibold">API 服务</h2>
-          <SoftTable :columns="['服务', '对外商家名', '额度', '状态', '操作']">
-            <tr v-for="item in apiServicePagination.paginatedRows.value" :key="item.id">
-              <td>{{ item.title }}</td>
-              <td>
-                <div>{{ getApiMerchantDisplayName(item) }}</div>
-                <div class="text-xs text-muted-foreground">{{ getApiMerchantVisibilityLabel(item) }}</div>
-              </td>
-              <td>¥{{ item.balance }}</td>
-              <td><Badge :variant="apiServiceStatusVariant(item.state, item.online)">{{ apiServiceStatusLabel(item.state, item.online) }}</Badge></td>
-              <td>
-                <div class="flex flex-wrap gap-2">
-                  <Button v-if="item.state === 'offline'" size="sm" @click="publishService(item.id)">上线</Button>
-                  <Button v-if="item.online" size="sm" variant="outline" @click="pauseService(item.id)">暂停</Button>
-                  <Button v-if="item.state === 'paused'" size="sm" variant="outline" @click="resumeService(item.id)">恢复</Button>
-                  <RouterLink v-if="apiServicePublicDetailUrl(item)" :to="apiServicePublicDetailUrl(item)!"><Button size="sm" variant="outline">查看</Button></RouterLink>
-                  <Button v-else size="sm" variant="outline" disabled>待配置接单</Button>
-                </div>
-              </td>
-            </tr>
-            <tr v-if="apiServiceRows.length === 0"><td colspan="5" class="py-8 text-center text-sm text-muted-foreground">暂无当前用户 API 服务。</td></tr>
-            <template #footer>
-              <TablePagination v-model:page="apiServicePagination.page.value" :page-count="apiServicePagination.pageCount.value" :total="apiServicePagination.total.value" :start-item="apiServicePagination.startItem.value" :end-item="apiServicePagination.endItem.value" />
-            </template>
-          </SoftTable>
-        </section>
-      </div>
+        <div class="my-center-activity-grid"><Card class="my-center-tasks p-5">
+          <div class="my-center-section-title"><div><h2>最近动态</h2><p>优先展示需要你处理的交易状态</p></div></div>
+          <div v-if="pendingTasks.length" class="mt-4 divide-y divide-border">
+            <RouterLink v-for="task in pendingTasks" :key="task.id" :to="task.to" class="flex items-center justify-between gap-4 py-3 first:pt-0 last:pb-0">
+              <div class="min-w-0"><div class="text-xs text-muted-foreground">{{ task.type }}</div><div class="mt-1 truncate font-medium">{{ task.title }}</div><div class="mt-1 text-xs text-primary">{{ task.description }}</div></div><span aria-hidden="true">→</span>
+            </RouterLink>
+          </div>
+          <EmptyState v-else title="当前没有待处理交易" description="新申请、待付款或待验收订单会出现在这里。" />
+        </Card>
+          <Card class="p-5"><div class="my-center-section-title"><div><h2>我发布的内容</h2><p>车源、API 服务与求车需求</p></div></div><div class="my-center-object-counts"><RouterLink to="/my/carpools"><strong>{{ carpools?.length ?? 0 }}</strong><span>车源</span></RouterLink><RouterLink to="/my/api-services"><strong>{{ apiServices?.length ?? 0 }}</strong><span>API 服务</span></RouterLink><RouterLink to="/my/demands"><strong>{{ demands?.length ?? 0 }}</strong><span>求车需求</span></RouterLink></div><div class="mt-5 space-y-3 text-sm"><RouterLink to="/my/carpools" class="flex items-center justify-between rounded-lg border p-3"><span>管理已发布车源</span><ChevronRight class="h-4 w-4 text-muted-foreground" /></RouterLink><RouterLink to="/my/api-services" class="flex items-center justify-between rounded-lg border p-3"><span>管理 API 服务</span><ChevronRight class="h-4 w-4 text-muted-foreground" /></RouterLink></div></Card>
+        </div>
+
+        <Card v-if="!hasMerchantObjects" class="p-5">
+          <h2 class="font-semibold">开始经营</h2>
+          <p class="mt-2 text-sm text-muted-foreground">当前还没有公开车源或 API 服务；发布入口始终可用，发布后经营管理会自动出现在侧栏。</p>
+          <div class="mt-4 flex flex-wrap gap-2"><RouterLink to="/carpools/new"><Button>发布车源</Button></RouterLink><RouterLink to="/api-market/new"><Button variant="outline">发布 API 服务</Button></RouterLink></div>
+        </Card>
+      </main>
+      <aside class="my-center-overview-aside space-y-3">
+        <Card class="p-4">
+          <div class="flex items-center justify-between gap-3"><h2 class="font-semibold">账户完整度</h2><strong class="text-primary">{{ profileCompleteness }}%</strong></div>
+          <div class="mt-3 h-2 overflow-hidden rounded-full bg-muted"><div class="h-full rounded-full bg-primary transition-all" :style="{ width: `${profileCompleteness}%` }"></div></div>
+          <div class="mt-4 space-y-2 text-sm">
+            <div class="flex items-center justify-between"><span class="text-muted-foreground">Linux.do 绑定</span><Badge :variant="profile.linuxDoBinding.bound ? 'verified' : 'secondary'">{{ profile.linuxDoBinding.bound ? '已完成' : '待完成' }}</Badge></div>
+            <div class="flex items-center justify-between"><span class="text-muted-foreground">账号恢复</span><Badge :variant="accountRecoveryComplete ? 'verified' : 'secondary'">{{ accountRecoveryComplete ? '已配置' : '待配置' }}</Badge></div>
+            <div class="flex items-center justify-between"><span class="text-muted-foreground">可用联系方式</span><strong>{{ enabledContactCount }}</strong></div>
+          </div>
+          <Button class="mt-4 w-full" variant="outline" @click="router.push('/my/profile')">完善个人资料</Button>
+        </Card>
+        <Card class="p-4">
+          <h2 class="font-semibold">平台边界</h2>
+          <div class="mt-3 space-y-3 text-xs leading-5 text-muted-foreground"><p>平台记录交易状态与双方确认，不经手拼车费用，也不承诺担保交易。</p><p>完整联系方式只在有效联系窗口中向对应参与方展示。</p></div>
+        </Card>
+        <Card class="p-4">
+          <div class="flex gap-3"><ShieldCheck class="mt-0.5 h-5 w-5 shrink-0 text-primary" /><div><h2 class="font-semibold">账户提醒</h2><p class="mt-2 text-xs leading-5 text-muted-foreground">请保持邮箱与密码可用，以便认证入口异常时恢复账号。</p></div></div>
+        </Card>
+      </aside>
     </section>
 
-    <section v-else-if="activeSection === 'profile'" class="grid gap-5 xl:grid-cols-[1fr_360px]">
+    <section v-else-if="activeSection === 'profile'" class="my-center-settings-layout">
+      <aside class="my-center-settings-nav">
+        <Card class="p-2">
+          <RouterLink
+            v-for="item in sectionLinks"
+            :key="item.to"
+            :to="item.to"
+            :aria-disabled="isSectionLocked(item.to)"
+            :class="[isSectionActive(item.to) ? 'is-active' : '', isSectionLocked(item.to) ? 'opacity-65' : '']"
+            @click.capture="handleSectionLinkClick(item.to, $event)"
+          ><span>{{ item.label }}</span><ChevronRight class="h-4 w-4" /></RouterLink>
+        </Card>
+      </aside>
+
+      <main class="min-w-0">
       <Card class="p-5">
         <h2 class="font-semibold">个人资料设置</h2>
+        <div class="my-center-profile-avatar-row">
+          <div class="grid h-20 w-20 shrink-0 place-items-center overflow-hidden rounded-full bg-primary text-xl font-semibold text-primary-foreground"><img v-if="profile.avatarUrl" :src="profile.avatarUrl" alt="当前头像" class="h-full w-full object-cover" /><span v-else>{{ avatarText }}</span></div>
+          <div><strong class="block">{{ profile.displayName }}</strong><p class="mt-1 text-sm text-muted-foreground">@{{ profile.username }} · 头像可跟随 linux.do 或使用 HTTPS 图片</p></div>
+        </div>
         <div class="mt-5 grid gap-4 md:grid-cols-2">
           <label class="space-y-2"><span class="text-sm font-medium">显示名称</span><Input v-model="profileForm.displayName" /></label>
           <label class="space-y-2"><span class="text-sm font-medium">站内用户名</span><Input v-model="profileForm.username" /></label>
@@ -1093,8 +1079,9 @@ function goToLogin() {
         </div>
         <Button class="mt-5" :disabled="updateProfileMutation.isPending.value" @click="saveProfile"><Save class="h-4 w-4" />保存个人资料</Button>
       </Card>
+      </main>
 
-      <Card class="p-5">
+      <aside class="my-center-profile-aside space-y-4"><Card class="p-5">
         <h2 class="font-semibold">头像</h2>
         <div class="mt-4 space-y-3">
           <label class="flex items-center gap-2 text-sm"><input v-model="profileForm.avatarMode" type="radio" value="linuxdo" />跟随 linux.do 头像</label>
@@ -1111,10 +1098,15 @@ function goToLogin() {
           </div>
         </div>
       </Card>
+      <Card class="p-4"><div class="flex items-center justify-between"><h2 class="font-semibold">资料完整度</h2><strong class="text-primary">{{ profileCompleteness }}%</strong></div><div class="mt-3 h-2 overflow-hidden rounded-full bg-muted"><div class="h-full rounded-full bg-primary" :style="{ width: `${profileCompleteness}%` }"></div></div><p class="mt-3 text-xs leading-5 text-muted-foreground">显示名称、简介、身份绑定、恢复方式和联系方式共同组成完整度。</p></Card>
+      <Card class="p-4"><div class="flex gap-3"><ShieldCheck class="mt-0.5 h-5 w-5 shrink-0 text-primary" /><div><h2 class="font-semibold">公开信息说明</h2><p class="mt-2 text-xs leading-5 text-muted-foreground">公开主页展示名称、简介和你允许公开的交易信号，不会公开完整联系方式。</p></div></div></Card>
+      </aside>
     </section>
 
-    <section v-else-if="activeSection === 'contacts'" class="space-y-4">
-      <Card class="p-5">
+    <section v-else-if="activeSection === 'contacts'" class="my-center-contacts-layout">
+      <main class="contact-payment-main-grid min-w-0">
+      <div class="contact-payment-group-heading"><div><h2>联系方式</h2><p>当前真实支持微信和验证邮箱，买家只能在有效联系窗口查看。</p></div><Badge variant="secondary">已配置 {{ enabledContactCount }} / 2</Badge></div>
+      <Card class="contact-method-card p-5">
         <div class="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
           <div class="flex min-w-0 gap-4">
             <div class="grid h-12 w-12 shrink-0 place-items-center rounded-xl bg-primary/10 text-primary">
@@ -1123,7 +1115,7 @@ function goToLogin() {
             <div class="min-w-0">
               <div class="flex flex-wrap items-center gap-2">
                 <h2 class="text-lg font-semibold tracking-tight">微信</h2>
-                <Badge :variant="wechatBound ? 'verified' : 'secondary'">{{ wechatBound ? '已绑定' : '未绑定' }}</Badge>
+                <Badge :variant="wechatBound ? 'verified' : 'secondary'">{{ wechatBound ? '已填写' : '未填写' }}</Badge>
                 <Badge v-if="wechatContact?.isDefault" variant="secondary">默认联系方式</Badge>
               </div>
               <p class="mt-1 text-sm leading-6 text-muted-foreground">填写微信号后即可作为联系窗口方式，不做验证码验证。</p>
@@ -1146,7 +1138,7 @@ function goToLogin() {
         </div>
       </Card>
 
-      <Card class="p-5">
+      <Card class="contact-method-card p-5">
         <div class="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
           <div class="flex min-w-0 gap-4">
             <div class="grid h-12 w-12 shrink-0 place-items-center rounded-xl bg-sky-500/10 text-sky-700">
@@ -1155,7 +1147,7 @@ function goToLogin() {
             <div class="min-w-0">
               <div class="flex flex-wrap items-center gap-2">
                 <h2 class="text-lg font-semibold tracking-tight">邮箱</h2>
-                <Badge :variant="emailBound ? 'verified' : 'secondary'">{{ emailBound ? '已绑定' : '未绑定' }}</Badge>
+                <Badge :variant="emailBound ? 'verified' : 'secondary'">{{ emailBound ? '已验证' : '未验证' }}</Badge>
                 <Badge v-if="emailContact && !emailContact.verified" variant="secondary">待验证</Badge>
                 <Badge v-if="emailContact?.isDefault" variant="secondary">默认联系方式</Badge>
               </div>
@@ -1187,7 +1179,8 @@ function goToLogin() {
         </div>
       </Card>
 
-      <Card class="border-emerald-200 bg-emerald-50/40 p-4">
+      <div class="contact-payment-group-heading contact-payment-group-heading--payment"><div><h2>API 收款方式</h2><p>买家创建 API 订单后，使用服务发布时冻结的收款快照进行站外确认。</p></div><Badge :variant="apiPaymentComplete ? 'verified' : 'secondary'">{{ apiPaymentComplete ? '已配置' : '待配置' }}</Badge></div>
+      <Card class="api-payment-settings-card border-emerald-200 bg-emerald-50/40 p-4">
         <div class="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
           <div class="flex min-w-0 gap-4">
             <div class="grid h-10 w-10 shrink-0 place-items-center rounded-lg bg-emerald-500/10 text-emerald-700">
@@ -1215,15 +1208,15 @@ function goToLogin() {
             <span class="text-muted-foreground">固定 {{ defaultApiPaymentWindowMinutes }} 分钟</span>
           </div>
 
-          <div class="space-y-2">
+          <div class="contact-payment-options-grid">
             <div
               v-for="option in apiPaymentForm.paymentOptions"
               :key="option.paymentMethod"
-              class="grid gap-3 rounded-md border bg-white/80 p-3 lg:grid-cols-[minmax(170px,220px)_minmax(0,1fr)_auto]"
+              class="contact-payment-option-card grid gap-3 rounded-md border bg-white/80 p-3"
               :class="option.enabled ? 'border-primary/35' : 'border-border'"
             >
               <label class="flex cursor-pointer items-start gap-3 lg:items-center">
-                <input v-model="option.enabled" type="checkbox" class="mt-1 h-4 w-4 accent-primary" />
+                <Checkbox v-model="option.enabled" class="mt-1" />
                 <span class="min-w-0">
                   <strong class="block text-sm">{{ apiPaymentMethodLabel(option.paymentMethod) }}</strong>
                   <span class="mt-1 block text-xs leading-5 text-muted-foreground">
@@ -1270,7 +1263,7 @@ function goToLogin() {
               </div>
               <div v-else class="text-sm text-muted-foreground lg:self-center">未启用</div>
 
-              <Badge class="lg:self-center" :variant="option.enabled && apiPaymentOptionReady(option) ? 'verified' : 'secondary'">
+              <Badge class="justify-self-start" :variant="option.enabled && apiPaymentOptionReady(option) ? 'verified' : 'secondary'">
                 {{ option.enabled && apiPaymentOptionReady(option) ? '已就绪' : option.enabled ? '待补全' : '未启用' }}
               </Badge>
             </div>
@@ -1284,13 +1277,20 @@ function goToLogin() {
           {{ apiPaymentComplete ? 'API 发布页将直接读取这组设置，不需要每次重新填写。' : apiPaymentMissingReasonText }}
         </p>
         <p class="mt-2 rounded-md border border-border bg-accent/50 p-3 text-xs leading-5 text-muted-foreground">
-          收款资料只在买家提交购买意向后用于站外确认；不要填写付款码、银行卡号、API Key、token、账号密码、Cookie、Session 或面板凭据。
+          收款资料只在买家创建订单后用于站外确认；不要填写银行卡号、API Key、token、账号密码、Cookie、Session 或面板凭据。
         </p>
       </Card>
 
-      <p class="rounded-md border border-border bg-accent/50 p-3 text-xs leading-5 text-muted-foreground">
+      <p class="contact-payment-boundary rounded-md border border-border bg-accent/50 p-3 text-xs leading-5 text-muted-foreground">
         当前只开放微信和邮箱两种联系方式。联系方式只用于参与方之间的站外联系；公开主页、首页、车源列表和 API 市集不会展示完整联系方式。
       </p>
+      </main>
+      <aside class="my-center-contacts-aside space-y-4">
+        <Card class="p-4"><h2 class="font-semibold">配置完成度</h2><div class="contact-payment-completion"><div class="contact-payment-ring" :style="{ '--completion': `${Math.round(((enabledContactCount + (apiPaymentComplete ? 1 : 0)) / 3) * 100)}%` }"><span>{{ Math.round(((enabledContactCount + (apiPaymentComplete ? 1 : 0)) / 3) * 100) }}%</span></div><div><strong>{{ enabledContactCount + (apiPaymentComplete ? 1 : 0) }} / 3 项</strong><p>完成真实可用的联系与收款配置</p></div></div><div class="mt-4 space-y-3 text-sm"><div class="flex items-center justify-between"><span class="text-muted-foreground">微信</span><Badge :variant="wechatBound ? 'verified' : 'secondary'">{{ wechatBound ? '已填写' : '待填写' }}</Badge></div><div class="flex items-center justify-between"><span class="text-muted-foreground">验证邮箱</span><Badge :variant="emailBound ? 'verified' : 'secondary'">{{ emailBound ? '已验证' : '待验证' }}</Badge></div><div class="flex items-center justify-between"><span class="text-muted-foreground">API 收款</span><Badge :variant="apiPaymentComplete ? 'verified' : 'secondary'">{{ apiPaymentComplete ? '已配置' : '待配置' }}</Badge></div></div></Card>
+        <Card class="p-4"><div class="flex gap-3"><Eye class="mt-0.5 h-5 w-5 shrink-0 text-primary" /><div><h2 class="font-semibold">买家可见范围</h2><p class="mt-2 text-xs leading-5 text-muted-foreground">只有进入有效拼车联系窗口或创建 API 订单的对应参与方，才能看到交易所需资料。</p></div></div></Card>
+        <Card class="p-4"><div class="flex gap-3"><ShieldCheck class="mt-0.5 h-5 w-5 shrink-0 text-primary" /><div><h2 class="font-semibold">资料安全提醒</h2><p class="mt-2 text-xs leading-5 text-muted-foreground">不要在联系方式或付款说明中填写 API Key、token、账号密码、Cookie 或 Session。</p></div></div></Card>
+        <Card class="p-4"><h2 class="font-semibold">参与方看到的资料卡</h2><div class="contact-payment-preview mt-3"><div class="flex items-center gap-3"><span class="grid h-10 w-10 place-items-center rounded-full bg-primary text-sm font-semibold text-primary-foreground">{{ avatarText }}</span><div><strong>{{ profile.displayName }}</strong><small>有效交易参与方可见</small></div></div><div class="mt-4 grid grid-cols-2 gap-2"><span><MessageCircle />微信</span><span><Mail />邮箱</span><span class="col-span-2"><CreditCard />API 收款快照</span></div><p>微信：{{ wechatContact?.maskedValue ?? '未填写' }}<br />邮箱：{{ emailContact?.maskedValue ?? '未填写' }}</p></div></Card>
+      </aside>
     </section>
 
     <section v-else-if="activeSection === 'account'">

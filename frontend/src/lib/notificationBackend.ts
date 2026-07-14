@@ -30,7 +30,7 @@ type BackendNotificationUnreadCount = {
 }
 
 function mapNotificationType(type: string): UnifiedNotification['type'] {
-  if (type === '审核结果' || type === '上车申请' || type === 'API 意向' || type === '求车需求' || type === '问题反馈' || type === '管理操作' || type === '边界提醒') {
+  if (type === '审核结果' || type === '上车申请' || type === 'API 意向' || type === 'API 订单' || type === '求车需求' || type === '问题反馈' || type === '管理操作' || type === '边界提醒') {
     return type
   }
   return '管理操作'

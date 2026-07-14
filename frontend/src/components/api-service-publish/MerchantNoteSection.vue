@@ -25,7 +25,7 @@ const insertSnippet = (form: ApiServicePublishForm, value: string) => {
 
     <div class="api-publish-card-body space-y-3">
       <div class="rounded-md border border-border bg-muted/45 px-3 py-2 text-xs leading-5 text-muted-foreground">
-        不要填写 API Key、token、密码、Session、Cookie、付款码或面板凭据；买家提交意向后，双方站外确认 API 细节。
+        不要填写 API Key、token、密码、Session、Cookie、付款码或面板凭据；买家创建订单后，双方站外确认 API 细节。
       </div>
 
       <div class="space-y-2">

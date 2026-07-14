@@ -2,7 +2,7 @@
 
 Date: 2026-06-17
 Author: Codex
-Source: initial project PRD captured during Trellis bootstrap.
+Source: initial project PRD captured during Trellis bootstrap; marketplace UI positioning updated from the user-approved site-wide baseline on 2026-07-14.
 External references:
 - OpenAI Terms of Use: `https://openai.com/policies/terms-of-use/`
 - OpenAI Services Agreement: `https://openai.com/policies/services-agreement/`
@@ -10,7 +10,9 @@ External references:
 
 ## Positioning
 
-C2CMarket is an AI official price intelligence and community matching platform for linux.do users. It organizes official low-price intelligence, subscription carpool listings, demand posts, API service listings, intent records, fulfillment records, reviews, disputes, and admin review queues.
+C2CMarket is a C2C marketplace platform for linux.do users. Its primary product experience is browsing, comparing, publishing, and tracking subscription carpool seats, API services, demand posts, official price references, orders, and transaction records. AI products are marketplace categories, not the site's visual identity; product-facing UI must not resemble an AI model homepage, AI SaaS landing page, or technology campaign site.
+
+The authoritative visual and marketplace hierarchy contract lives in [`../frontend/marketplace-ui-guidelines.md`](../frontend/marketplace-ui-guidelines.md).
 
 The product is not a payment platform, escrow platform, account custody service, API proxy, or generalized token delivery system.
 
@@ -25,7 +27,7 @@ The platform must not:
 - Proxy API traffic.
 - Present linux.do binding as linux.do official endorsement.
 - Encourage or facilitate third-party account credential sharing, API key transfer, or token/key resale.
-- Store or auto-deliver third-party passwords, API keys, Sub2API keys, sessions, cookies, refresh tokens, access tokens, MFA codes, recovery codes, or panel owner credentials, except that a seller may submit one buyer-specific, revocable API order delivery credential after payment is confirmed.
+- Store or auto-deliver third-party passwords, API keys, Sub2API keys, sessions, cookies, refresh tokens, access tokens, MFA codes, recovery codes, or panel owner credentials, except that a seller may submit one buyer-specific API order delivery credential after payment is confirmed; the platform does not provide credential revocation.
 
 Preferred wording:
 
@@ -48,18 +50,20 @@ For API quota service UI, prefer:
 
 - `接入方式`
 - `站外确认`
-- `购买意向`
-- `提交购买意向并查看商户联系方式`
-- `商户已预先同意接收合规意向`
+- `创建订单并查看付款方式`
+- `订单金额`
+- `购买额度`
+- `商户已预先同意接收合规订单`
 - `美元额度售价`
 - `可售美元额度`
-- `意向额度上限`
+- `单笔购买额度上限`
 
-Rationale: API quota public pages must not imply that C2CMarket delivers, stores, or transfers API keys, account tokens, endpoint secrets, or account credentials before an order exists. When an API service is approved, online, clear, and orderable, the owner has pre-consented to receive compliant purchase intents; a successful API intent creation may immediately disclose the frozen merchant contact to that buyer. After the buyer creates an API order, submits off-platform payment, and the seller confirms receipt, the seller may submit a one-time structured delivery credential for that order. That credential is limited to buyer-specific, revocable API Key + API Base URL or initial login account fields. It is not automatic delivery, escrow, platform verification, API proxying, or a general chat/file-transfer feature. Subscription carpool contact windows remain separate and still use the carpool-specific reservation flow.
+Rationale: purchase intents remain internal tracking/audit records and may appear in API paths or storage, but user, merchant, and administrator UI use API orders as the primary business object. API quota public pages must not imply that C2CMarket delivers, stores, or transfers credentials before an order exists. When an API service is approved, online, clear, and orderable, the owner has pre-consented to receive compliant orders. After the buyer creates an API order, submits off-platform payment, and the seller confirms receipt, the seller may submit a one-time structured delivery credential for that order. That credential is limited to buyer-specific API Key + API Base URL or initial login account fields and is immutable after submission. It is not automatic delivery, escrow, platform verification, API proxying, platform-managed revocation, or a general chat/file-transfer feature. Subscription carpool contact windows remain separate and still use the carpool-specific reservation flow.
 
 API order delivery credential wording:
 
-- Use `交付凭证`, `确认已交付`, `买家专属、可撤销的接入信息`, and `提交后不可修改`.
+- Use `交付凭证`, `确认已交付`, `买家专属的接入信息`, and `提交后不可修改`; do not claim that delivery credentials can be revoked through the platform.
+- 参与方订单详情必须把 `买家付款 → 卖家确认收款 → 卖家交付 → 买家确认完成` 显示为连续流程，并在首屏提供当前参与方唯一的主操作；`delivery_submitted` 不能仅展示为“已交付”，买家必须能执行确认完成，卖家必须看到正在等待买家确认。
 - Do not use `自动发货`, `平台担保`, `平台验真`, `主账号密码`, `Cookie/Session/Token 交付`, or copy that implies C2CMarket tests the API.
 - The credential may be shown only in buyer/seller order detail and action responses. Public API service pages, lists, admin summaries, notifications, events, logs, and reports must not include raw API keys or passwords.
 - If a delivered key is wrong, rotated, or needs replacement, buyer and seller handle it through the displayed contact methods off-platform; V1 does not maintain station-internal credential edits or history.
@@ -68,7 +72,7 @@ Sub2API quota vocabulary:
 
 - Internal mock fields such as `creditPerCny`, `availableCreditUsd`, `balance`, and historical `purchasedCredit` represent the merchant-declared dollar-denominated quota cap that a buyer may request to purchase.
 - User-facing UI must not describe this as platform-issued `Credits`, platform balance, cashback, prepaid value, or anything the platform grants after payment.
-- Use copy such as `¥0.80 / $1`, `可售 $500 美元额度`, `本次意向额度上限 $20 美元额度`.
+- Use copy such as `¥0.80 / $1`, `可售 $500 美元额度`, `本次购买 $20 美元额度`.
 - Model price tables must only show models supported by the current service listing, not the whole platform model catalog.
 
 ## Subscription Carpool Product Classification

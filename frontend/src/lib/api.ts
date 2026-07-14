@@ -1,7 +1,7 @@
 import {
   adminCards,
   adminAuditLogs,
-  adminUserRiskProfiles,
+  adminDirectoryUsers,
   apiPurchaseIntentEvents,
   apiPurchaseIntents,
   apiServices,
@@ -39,9 +39,10 @@ import {
   type ApiServiceState,
   type ApiUsageVisibility,
   type AdminAuditLog,
-  type AdminUserRiskProfile,
   type Carpool,
   type CarpoolApplication,
+  type CarpoolApplicationEligibility,
+  type CarpoolApplicationEligibilityCode,
   type CarpoolApplicationEvent,
   type CarpoolApplicationEventType,
   type CarpoolApplicationReview,
@@ -72,6 +73,8 @@ import {
   type UserProfile,
 } from '@/data/mock'
 import { getPricingDisplay } from '@/lib/pricing'
+import { evaluateCarpoolApplicationEligibility, hasCredentialSharingLanguage } from '@/lib/carpoolEligibility'
+export { evaluateCarpoolApplicationEligibility } from '@/lib/carpoolEligibility'
 import { defaultQuotaLabel, defaultQuotaPeriod, defaultQuotaUnit } from '@/lib/quota'
 import { beijingDateTimeInputToISOString, formatQuotaExpiresAtLabel } from '@/lib/apiQuotaExpiration'
 import { getMockPublicAPIModels } from '@/lib/apiModelCatalogBackend'
@@ -91,6 +94,7 @@ import {
   backendCancelCarpoolApplication,
   backendBuyerConfirmCarpoolCompleted,
   backendBuyerConfirmCarpoolJoined,
+  backendCarpoolApplicationEligibility,
   backendCarpoolApplicationById,
   backendCarpoolApplicationContacts,
   backendCarpoolApplicationEvents,
@@ -116,9 +120,12 @@ import {
 import {
   backendAPIIntentById,
   backendAPIIntentEvents,
+  backendAdminAPIOrderRows,
   backendAPIServiceById,
   backendAPIServices,
   backendAdminAPIServiceRows,
+  backendCancelAPIOrder,
+  backendConfirmAPIOrderComplete,
   backendConfirmAPIOrderPayment,
   backendCreateAPIOrderFromIntent,
   backendCancelAPIIntentById,
@@ -133,10 +140,12 @@ import {
   backendOwnerAPIOrder,
   backendOwnerAPIOrders,
   backendOwnerAPIIntents,
+  backendOwnerAPIServiceById,
   backendOwnerAPIServices,
   backendPauseAPIService,
   backendPublishAPIService,
   backendReadAPIOrderPaymentInstructions,
+  backendReportAPIOrderPaymentIssue,
   backendRunAdminAPIServiceAction,
   backendResumeAPIService,
   backendSubmitAPIOrderDeliveryCredential,
@@ -205,6 +214,11 @@ import {
   backendNotifications,
 } from '@/lib/notificationBackend'
 import {
+  backendNavigationBadges,
+  type NavigationBadgeSummary,
+} from '@/lib/navigationBadgeBackend'
+import { getImportantAnnouncementUnreadCount } from '@/lib/announcementsApi'
+import {
   backendAdminAppealRows,
   backendAdminReportRows,
   backendCreateManualInterventionReport,
@@ -215,8 +229,10 @@ import {
   type CreateManualInterventionReportRequest,
   type CreatePublicUserReportRequest,
 } from '@/lib/reportBackend'
+import { backendAdminUserRows } from '@/lib/adminUserBackend'
 import { shouldUseRealBackend } from '@/lib/backendClient'
 import { getBackupPasswordValidationMessage } from '@/lib/passwordPolicy'
+import { compareDecimal, divideDecimal, normalizeDecimal, normalizeDecimalTrimmed } from '@/lib/decimal'
 import {
   closeDemand,
   getDemandById,
@@ -236,17 +252,12 @@ export type AdminSection =
   | 'price-leads'
   | 'carpools'
   | 'demands'
-  | 'api-merchants'
   | 'api-services'
   | 'trade-intents'
-  | 'carpool-applications'
-  | 'certifications'
   | 'users'
-  | 'restrictions'
   | 'feedback'
   | 'reports'
   | 'appeals'
-  | 'audit-logs'
   | 'logs'
 
 export type AdminRow = {
@@ -282,7 +293,7 @@ export type CarpoolNotification = {
 
 export type UnifiedNotification = {
   id: string
-  type: '审核结果' | '上车申请' | 'API 意向' | '求车需求' | '问题反馈' | '管理操作' | '边界提醒'
+  type: '审核结果' | '上车申请' | 'API 意向' | 'API 订单' | '求车需求' | '问题反馈' | '管理操作' | '边界提醒'
   title: string
   detail: string
   time: string
@@ -411,12 +422,14 @@ export type { ApiPaymentAccountSettings, ApiPaymentMethod, ApiPaymentOption } fr
 export type ApiOrderStatus =
   | 'pending_payment'
   | 'payment_submitted'
+  | 'payment_issue'
   | 'paid_confirmed'
   | 'delivery_submitted'
   | 'completed'
   | 'cancelled'
 
 export type ApiOrderDeliveryKind = 'api_key_endpoint' | 'login_account'
+export type ApiOrderPaymentIssueReason = 'not_received' | 'amount_mismatch' | 'remark_mismatch'
 
 export type ApiOrderDeliveryCredential = {
   deliveryKind: ApiOrderDeliveryKind
@@ -459,12 +472,16 @@ export type ApiOrder = {
   disputeStatus?: string
   serviceTitle: string
   amount: number
+  amountDecimal?: string
   currency: 'CNY'
   selectedPaymentMethod: ApiPaymentOption['paymentMethod']
   paymentWindowMinutes: number
   paymentExpiresAt: string
   paymentSummary?: string
   paymentSubmittedAt?: string
+  paymentIssueReason?: ApiOrderPaymentIssueReason
+  paymentIssueNote?: string
+  paymentIssueReportedAt?: string
   paidConfirmedAt?: string
   deliveryNote?: string
   deliverySubmittedAt?: string
@@ -476,6 +493,7 @@ export type ApiOrder = {
   intentSnapshot: ApiPurchaseIntent['snapshot']
   selectedDeliveryMode: ApiDeliveryMode
   requestedUsdAllowance: number
+  requestedUsdAllowanceDecimal?: string
   merchantContactChannels: ApiContactChannel[]
   buyerContactChannels: ApiContactChannel[]
   viewerRole?: 'buyer' | 'merchant'
@@ -488,7 +506,7 @@ export type ApiOrderEvent = {
   orderId: string
   actorLabel: string
   actorRole: 'buyer' | 'merchant' | 'system'
-  type: 'created' | 'payment_submitted' | 'payment_confirmed' | 'delivery_submitted' | 'completed' | 'cancelled'
+  type: 'created' | 'payment_submitted' | 'payment_issue_reported' | 'payment_confirmed' | 'delivery_submitted' | 'completed' | 'cancelled'
   fromStatus?: ApiOrderStatus
   toStatus?: ApiOrderStatus
   note?: string
@@ -512,6 +530,8 @@ export type { ModelCatalogItem }
 export type { ApiMerchantIdentityMode }
 export type {
   CarpoolProductCatalogItem,
+  CarpoolApplicationEligibility,
+  CarpoolApplicationEligibilityCode,
   OpeningChannelOption,
   ParsedLinuxDoTopic,
   PaymentMethodOption,
@@ -576,7 +596,6 @@ const apiOrderStorageKey = 'c2cmarket.apiOrders.v1'
 const carpoolApplicationStorageKey = 'c2cmarket.carpoolApplications.v1'
 const carpoolApplicationEventStorageKey = 'c2cmarket.carpoolApplicationEvents.v1'
 const adminAuditLogStorageKey = 'c2cmarket.adminAuditLogs.v1'
-const adminUserRiskProfileStorageKey = 'c2cmarket.adminUserRiskProfiles.v1'
 const officialPriceStorageKey = 'c2cmarket.officialPrices.v1'
 const carpoolStorageKey = 'c2cmarket.carpools.v1'
 const apiServiceStorageKey = 'c2cmarket.apiServices.v1'
@@ -588,7 +607,7 @@ const favoriteStorageKey = 'c2cmarket.favorites.v1'
 const sub2ApiFixedMultiplier = 1
 const carpoolApplyAllowedStatuses: Carpool['status'][] = ['可上车']
 const carpoolContactVisibleStatuses: CarpoolApplicationStatus[] = ['accepted_reserved', 'waiting_contact', 'contacted', 'joined_pending_confirmation', 'active', 'pending_completion', 'completed', 'disputed']
-const apiContactVisibleStatuses: ApiPurchaseIntentStatus[] = ['open', 'contacted', 'buyer_cancelled', 'owner_closed']
+const apiContactVisibleStatuses: ApiPurchaseIntentStatus[] = ['open', 'contacted', 'ordered', 'buyer_cancelled', 'owner_closed']
 
 let apiPurchaseIntentStore = normalizeApiPurchaseIntentStore(readSessionStore(apiPurchaseIntentStorageKey, apiPurchaseIntents))
 let apiPurchaseIntentEventStore = normalizeApiPurchaseIntentEventStore(readSessionStore(apiPurchaseIntentEventStorageKey, apiPurchaseIntentEvents))
@@ -596,7 +615,6 @@ let apiOrderStore = readSessionStore<ApiOrder[]>(apiOrderStorageKey, [])
 let carpoolApplicationStore = readSessionStore(carpoolApplicationStorageKey, carpoolApplications)
 let carpoolApplicationEventStore = readSessionStore(carpoolApplicationEventStorageKey, carpoolApplicationEvents)
 let adminAuditLogStore = readSessionStore(adminAuditLogStorageKey, adminAuditLogs)
-let adminUserRiskProfileStore = readSessionStore(adminUserRiskProfileStorageKey, adminUserRiskProfiles)
 let officialPriceStore = readSessionStore<OfficialPrice[]>(officialPriceStorageKey, officialPrices)
 let carpoolStore = normalizeCarpoolStore(readSessionStore<Carpool[]>(carpoolStorageKey, carpools))
 let apiServiceStore = normalizeApiServiceStore(readSessionStore<ApiService[]>(apiServiceStorageKey, apiServices))
@@ -773,7 +791,6 @@ function persistCarpoolApplicationStores() {
 
 function persistAdminStores() {
   window.sessionStorage.setItem(adminAuditLogStorageKey, JSON.stringify(adminAuditLogStore))
-  window.sessionStorage.setItem(adminUserRiskProfileStorageKey, JSON.stringify(adminUserRiskProfileStore))
 }
 
 function persistMarketStores() {
@@ -1085,8 +1102,8 @@ export function getApiDeliveryModeLabel(_mode: ApiDeliveryMode) {
 
 export function getApiDeliveryModeDescription(mode: ApiDeliveryMode) {
   return mode === 'sub2api_panel_account'
-    ? '买家提交购买意向后，双方站外确认 API 细节；平台不保存面板账号、密码、token 或登录态。'
-    : '买家提交购买意向后，双方站外确认 API 细节、限速和鉴权边界；平台不保存 API Key 或 endpoint 密钥。'
+    ? '买家创建订单后，双方站外确认 API 细节；平台不在公开页或列表展示面板账号、密码、token 或登录态。'
+    : '买家创建订单后，双方站外确认 API 细节、限速和鉴权边界；平台不在公开页或列表展示 API Key 或 endpoint 密钥。'
 }
 
 export function getApiDeliveryModesLabel(modes: ApiDeliveryMode[]) {
@@ -1126,6 +1143,7 @@ export function getReadableStatus(value: string | null | undefined) {
     accepted_reserved: '席位已预留',
     open: '意向已创建',
     contacted: '商户已记录联系',
+    ordered: '已生成订单',
     buyer_cancelled: '买家已取消',
     owner_closed: '商户已关闭',
   }
@@ -1145,6 +1163,7 @@ export function getApiStatusLabel(status: ApiPurchaseIntentStatus) {
   const labels: Record<ApiPurchaseIntentStatus, string> = {
     open: '意向已创建',
     contacted: '商户已记录联系',
+    ordered: '已生成订单',
     buyer_cancelled: '买家已取消',
     owner_closed: '商户已关闭',
   }
@@ -1155,6 +1174,7 @@ export function getApiOrderStatusLabel(status: ApiOrderStatus) {
   const labels: Record<ApiOrderStatus, string> = {
     pending_payment: '待付款',
     payment_submitted: '买家已付款',
+    payment_issue: '付款待补充',
     paid_confirmed: '已确认收款',
     delivery_submitted: '已交付',
     completed: '已完成',
@@ -1167,23 +1187,34 @@ export function getApiOrderDeliveryKindLabel(kind: ApiOrderDeliveryKind) {
   return kind === 'login_account' ? '登录账号接入' : 'API Key 接入'
 }
 
+export function getApiOrderPaymentIssueLabel(reason?: ApiOrderPaymentIssueReason) {
+  if (reason === 'not_received') return '未到账'
+  if (reason === 'amount_mismatch') return '金额不符'
+  if (reason === 'remark_mismatch') return '备注不符'
+  return '付款信息待补充'
+}
+
 export function getApiOrderNextAction(order: ApiOrder, role: 'buyer' | 'merchant') {
   if (role === 'buyer') {
     if (order.status === 'pending_payment') return '查看收款资料并付款'
     if (order.status === 'payment_submitted') return '等待商户确认收款'
+    if (order.status === 'payment_issue') return '补充付款信息并重新提交'
     if (order.status === 'paid_confirmed') return '等待商户交付'
-    if (order.status === 'delivery_submitted' || order.status === 'completed') return '查看交付凭证'
+    if (order.status === 'delivery_submitted') return '核对交付并确认完成'
+    if (order.status === 'completed') return '交易已完成'
     if (order.status === 'cancelled') return '查看取消原因'
   }
   if (order.status === 'pending_payment') return '等待买家付款'
   if (order.status === 'payment_submitted') return '确认已收款'
+  if (order.status === 'payment_issue') return '等待买家补充付款信息'
   if (order.status === 'paid_confirmed') return '填写交付信息'
-  if (order.status === 'delivery_submitted' || order.status === 'completed') return '已交付'
+  if (order.status === 'delivery_submitted') return '等待买家确认完成'
+  if (order.status === 'completed') return '交易已完成'
   return '查看详情'
 }
 
 export function isApiOrderBuyerActionRequired(order: ApiOrder) {
-  return order.status === 'pending_payment' || order.status === 'delivery_submitted' || order.status === 'completed'
+  return order.status === 'pending_payment' || order.status === 'payment_issue' || order.status === 'delivery_submitted'
 }
 
 export function isApiOrderMerchantActionRequired(order: ApiOrder) {
@@ -1211,7 +1242,7 @@ export function getCarpoolApplicationStatusLabel(status: CarpoolApplicationStatu
     contacted: '已联系车主',
     joined_pending_confirmation: '等待车主确认已上车',
     active: '服务中',
-    pending_completion: '等待双方确认本期完成',
+    pending_completion: '等待双方确认本次完成',
     completed: '已完成',
     rejected: '已拒绝',
     cancelled_by_buyer: '买家已取消',
@@ -1237,7 +1268,7 @@ export function getCarpoolApplicationNextAction(application: CarpoolApplication,
     if (application.status === 'contacted') return '确认已经上车'
     if (application.status === 'joined_pending_confirmation') return '等待车主确认'
     if (application.status === 'active') return '查看服务记录'
-    if (application.status === 'pending_completion') return '确认本期完成'
+    if (application.status === 'pending_completion') return '确认本次完成'
     if (application.status === 'completed' && !application.buyerReview) return '评价车主'
     if (application.status === 'disputed') return '查看纠纷'
     return '查看详情'
@@ -1247,7 +1278,7 @@ export function getCarpoolApplicationNextAction(application: CarpoolApplication,
   if (application.status === 'accepted_reserved' || application.status === 'waiting_contact') return '等待买家联系'
   if (application.status === 'contacted') return '确认用户已上车'
   if (application.status === 'joined_pending_confirmation') return '确认用户已上车'
-  if (application.status === 'pending_completion') return '确认本期完成'
+  if (application.status === 'pending_completion') return '确认本次完成'
   if (application.status === 'disputed') return '处理纠纷'
   return '查看详情'
 }
@@ -1312,19 +1343,9 @@ export function getCarpoolSeatSummary(carpool: Carpool): CarpoolSeatSummary {
   }
 }
 
-export function getCarpoolApplyDisabledReason(carpool: Carpool, seatSummary?: Pick<CarpoolSeatSummary, 'availableSeats'> | null, hasOngoingApplication = false) {
-  if (carpool.owner === currentBuyerName) return '不能申请自己的车源'
-  if (!carpoolApplyAllowedStatuses.includes(carpool.status)) return carpool.status === '已满' ? '车位已满' : '车源暂不可申请'
-  if (carpool.accessArrangementMode === 'not_allowed') return '访问安排不符合平台边界'
-  const note = carpool.accessArrangementNote?.trim() ?? ''
-  if (!note) return '缺少访问安排说明'
-  if (hasCredentialSharingLanguage(note)) return '访问安排包含共享凭据风险'
-  if (/chatgpt|openai/i.test(carpool.product) && !carpool.riskAcknowledged) return '需要先确认订阅拼车风险'
-  if (carpool.hasUnresolvedDispute) return '车源存在未解决纠纷'
-  if (hasOngoingApplication) return '已有进行中的申请'
-  const availableSeats = seatSummary?.availableSeats ?? getCarpoolSeatSummary(carpool).availableSeats
-  if (availableSeats < 1) return '车位已满'
-  return ''
+export function getCarpoolApplyDisabledReason(carpool: Carpool, seatSummary?: Pick<CarpoolSeatSummary, 'availableSeats'> | null, hasOngoingApplication = false, currentUserId = '', hasActiveMembership = false) {
+  const eligibility = evaluateCarpoolApplicationEligibility(carpool, seatSummary, hasOngoingApplication, currentUserId, hasActiveMembership)
+  return eligibility.canApply ? '' : eligibility.reason
 }
 
 function appendCarpoolApplicationEvent(event: Omit<CarpoolApplicationEvent, 'id' | 'createdAt'> & { createdAt?: string }) {
@@ -1407,6 +1428,7 @@ export function isMerchantActionRequired(intent: ApiPurchaseIntent) {
 export function getApiIntentNextAction(intent: ApiPurchaseIntent, role: 'buyer' | 'merchant') {
   if (role === 'buyer') {
     if (intent.status === 'open' || intent.status === 'contacted') return '查看商户联系方式'
+    if (intent.status === 'ordered') return '前往订单继续处理'
     if (intent.status === 'buyer_cancelled') return '查看取消原因'
     if (intent.status === 'owner_closed') return '查看商户关闭原因'
     return '查看详情'
@@ -1414,6 +1436,7 @@ export function getApiIntentNextAction(intent: ApiPurchaseIntent, role: 'buyer' 
 
   if (intent.status === 'open') return '记录已联系'
   if (intent.status === 'contacted') return '可关闭意向'
+  if (intent.status === 'ordered') return '订单已生成'
   return '查看详情'
 }
 
@@ -1560,6 +1583,7 @@ function adminTargetLink(row: AdminRow) {
   if (row.targetType === 'carpool') return `/carpools/${row.id}`
   if (row.targetType === 'demand') return `/demands/${row.id}`
   if (row.targetType === 'api-intent') return `/my/api-orders/${row.id}`
+  if (row.targetType === 'api-order') return null
   if (row.targetType === 'carpool-application') return `/merchant/carpool-applications/${row.id}`
   if (row.targetType === 'feedback-ticket') return `/admin/feedback/${row.id}`
   if (row.targetType === 'user') return `/u/${row.primary}`
@@ -1838,6 +1862,17 @@ export async function getCarpoolById(id: string) {
   return clone(carpool ? { ...carpool, seatSummary: getCarpoolSeatSummary(carpool) } : null)
 }
 
+export async function getCarpoolApplicationEligibility(id: string): Promise<CarpoolApplicationEligibility> {
+  if (shouldUseRealBackend()) return backendCarpoolApplicationEligibility(id)
+  await wait()
+  const carpool = carpoolStore.find(item => item.id === id)
+  if (!carpool) throw new Error('车源不存在。')
+  const related = carpoolApplicationStore.filter(item => item.carpoolId === id && item.applicantUserId === currentBuyerId)
+  const hasActiveMembership = related.some(item => ['active', 'pending_completion'].includes(item.status))
+  const hasOngoingApplication = related.some(item => !['completed', 'rejected', 'cancelled_by_buyer', 'cancelled_by_owner', 'expired'].includes(item.status))
+  return clone(evaluateCarpoolApplicationEligibility(carpool, getCarpoolSeatSummary(carpool), hasOngoingApplication, currentBuyerId, hasActiveMembership))
+}
+
 export async function getMyCarpools() {
   if (shouldUseRealBackend()) return backendOwnerCarpools()
   await wait()
@@ -2011,6 +2046,12 @@ export async function getMyApiServices() {
   if (shouldUseRealBackend()) return backendOwnerAPIServices()
   await wait()
   return clone(apiServiceStore.filter(item => item.merchantUsername === myUserProfileStore.username))
+}
+
+export async function getMyApiServiceById(id: string) {
+  if (shouldUseRealBackend()) return backendOwnerAPIServiceById(id)
+  await wait()
+  return clone(apiServiceStore.find(item => item.id === id && item.merchantUsername === myUserProfileStore.username) ?? null)
 }
 
 export async function getMyProfile() {
@@ -2424,10 +2465,31 @@ function getOfficialPriceReviewDetails(item: OfficialPrice): AdminRow['detailIte
   ]
 }
 
+function adminDirectoryRow(item: typeof adminDirectoryUsers[number]): AdminRow {
+  return {
+    id: item.id,
+    primary: item.username,
+    secondary: `${item.displayName} · ${item.linuxdoBound ? `已绑定 linux.do · 信任等级${item.trustLevel}` : '未绑定 linux.do'}`,
+    owner: item.isAdmin ? '管理员账号' : '普通账号',
+    status: item.accountStatus,
+    risk: `注册 ${item.createdAt} · 最近活跃 ${item.lastActiveAt}`,
+    targetType: 'user',
+    detailItems: [
+      { label: '显示名称', value: item.displayName },
+      { label: '账号状态', value: item.accountStatus },
+      { label: '账号角色', value: item.isAdmin ? '管理员' : '普通用户' },
+      { label: 'linux.do 绑定', value: item.linuxdoBound ? `已绑定，信任等级${item.trustLevel}` : '未绑定' },
+      { label: '注册时间', value: item.createdAt },
+      { label: '最近活跃', value: item.lastActiveAt },
+    ],
+    targetTo: `/u/${item.username}`,
+  }
+}
+
 export async function getAdminSectionRows(section: AdminSection): Promise<AdminRow[]> {
   await wait()
 
-  if (shouldUseRealBackend() && (section === 'api-merchants' || section === 'api-services')) {
+  if (shouldUseRealBackend() && section === 'api-services') {
     return backendAdminAPIServiceRows()
   }
 
@@ -2453,6 +2515,14 @@ export async function getAdminSectionRows(section: AdminSection): Promise<AdminR
 
   if (shouldUseRealBackend() && section === 'feedback') {
     return backendAdminFeedbackRows()
+  }
+
+  if (shouldUseRealBackend() && section === 'users') {
+    return backendAdminUserRows()
+  }
+
+  if (shouldUseRealBackend() && section === 'trade-intents') {
+    return backendAdminAPIOrderRows()
   }
 
   function apiServiceAdminTargetLink(item: ApiService) {
@@ -2509,7 +2579,7 @@ export async function getAdminSectionRows(section: AdminSection): Promise<AdminR
     })))
   }
 
-  if (section === 'api-merchants' || section === 'api-services') {
+  if (section === 'api-services') {
     return withAdminRowLinks(apiServiceStore.map(item => ({
       id: item.id,
       primary: item.title,
@@ -2519,11 +2589,11 @@ export async function getAdminSectionRows(section: AdminSection): Promise<AdminR
         : `${getApiMerchantDisplayName(item)} → ${item.merchantUsername} · 信任等级${item.trustLevel}`,
       status: item.online ? '在线' : '离线',
       risk: item.unresolvedDisputes ? `${item.unresolvedDisputes} 个未解决纠纷` : item.warranty,
-      targetType: section === 'api-services' ? 'api-service' : 'api-merchant',
+      targetType: 'api-service',
       targetTo: apiServiceAdminTargetLink(item),
       detailItems: [
         { label: '商户身份', value: item.merchantIdentityMode === 'store_alias' ? `店铺名展示，真实用户 ${item.merchantUsername}` : '公开主页展示' },
-        { label: '最低意向金额', value: `¥${item.minimumPurchaseCny}` },
+        { label: '最低订单金额', value: `¥${item.minimumPurchaseCny}` },
         { label: '用量核对', value: getApiUsageVisibilityLabel(item.usageVisibility) },
         { label: '有效期', value: item.expiresAt },
       ],
@@ -2531,44 +2601,19 @@ export async function getAdminSectionRows(section: AdminSection): Promise<AdminR
   }
 
   if (section === 'trade-intents') {
-    return withAdminRowLinks(filterApiPurchaseIntents({ sort: 'updated_desc' }).map(item => ({
+    return withAdminRowLinks(apiOrderStore.map(item => ({
       id: item.id,
-      primary: `${item.snapshot.serviceTitle} 购买意向`,
-      secondary: `${item.id} · 意向金额 ¥${item.purchaseAmountCny} · 联系方式按参与方详情展示`,
-      owner: `${getApiMerchantDisplayName(item)} / 买家 ${item.buyer}`,
-      status: getApiStatusLabel(item.status),
-      risk: item.ownerCloseReason
-        ? `商户关闭：${item.ownerCloseReason}`
-        : item.buyerCancelReason
-          ? `买家取消：${item.buyerCancelReason}`
-          : getApiUsageVisibilityLabel(item.snapshot.usageVisibility),
-      targetType: 'api-intent',
+      primary: `${item.serviceTitle} API 订单`,
+      secondary: `${item.id} · 订单金额 ¥${item.amountDecimal ?? item.amount}`,
+      owner: `${item.seller} / 买家 ${item.buyer}`,
+      status: getApiOrderStatusLabel(item.status),
+      risk: item.disputeStatus || item.cancelReason || `更新于 ${item.updatedAt}`,
+      targetType: 'api-order',
+      targetTo: null,
       detailItems: [
-        { label: '意向金额', value: `¥${item.purchaseAmountCny}` },
-        { label: '目标模型', value: item.targetModel },
-        { label: '联系方式', value: '仅参与方详情可见' },
-        { label: '最近更新', value: item.updatedAt },
-      ],
-    })))
-  }
-
-  if (section === 'carpool-applications') {
-    return withAdminRowLinks(filterCarpoolApplications({ sort: 'updated_desc' }).map(item => ({
-      id: item.id,
-      primary: `${item.snapshot.productName} 上车申请`,
-      secondary: `${item.snapshot.regionName} · ${item.snapshot.priceLabel} ¥${item.snapshot.monthlyPriceCny}/月 · ${item.seatsRequested} 席`,
-      owner: `${item.ownerUsername} / 申请人 ${item.applicantUsername}`,
-      status: getCarpoolApplicationStatusLabel(item.status),
-      risk: item.status === 'disputed'
-        ? item.disputeReason ?? '纠纷待处理'
-        : item.responsibility
-          ? `责任：${item.responsibility}`
-          : `更新 ${item.updatedAt}`,
-      targetType: 'carpool-application',
-      detailItems: [
-        { label: '申请席位', value: `${item.seatsRequested} 席` },
-        { label: '申请人信任等级', value: String(item.applicantStats.trustLevel) },
-        { label: '预留截止', value: item.reservedUntil ?? '无' },
+        { label: '订单金额', value: `¥${item.amountDecimal ?? item.amount}` },
+        { label: '购买额度', value: `${item.requestedUsdAllowanceDecimal ?? item.requestedUsdAllowance} 美元额度` },
+        { label: '交付凭证', value: item.deliverySubmittedAt ? '已提交（管理摘要不展示原始凭证）' : '尚未提交' },
         { label: '最近更新', value: item.updatedAt },
       ],
     })))
@@ -2578,50 +2623,15 @@ export async function getAdminSectionRows(section: AdminSection): Promise<AdminR
     return getAdminFeedbackRows()
   }
 
-  if (section === 'certifications') {
-    return withAdminRowLinks(carpoolStore.map(item => ({
-      id: `cert-${item.id}`,
-      primary: item.owner,
-      secondary: `${item.ownerType} · ${item.product}`,
-      owner: `linux.do 信任等级${item.trustLevel}`,
-      status: item.linuxdoBound ? '已绑定' : '待补充',
-      risk: item.ownerType,
-      targetType: 'certification',
-      detailItems: [
-        { label: '车源', value: item.product },
-        { label: '地区', value: item.region },
-        { label: '原帖状态', value: item.sourcePostAccessible ? '可访问' : '不可访问' },
-      ],
-    })))
-  }
-
-  if (section === 'users' || section === 'restrictions') {
-    return withAdminRowLinks(adminUserRiskProfileStore.map(item => ({
-      id: item.id,
-      primary: item.username,
-      secondary: `${item.identity} · ${item.linuxdoBound ? '已绑定 linux.do' : '未绑定 linux.do'} · 信任等级${item.trustLevel}`,
-      owner: `完成 拼车${item.carpoolCompletions} / API${item.apiCompletions}`,
-      status: item.accountStatus,
-      risk: item.restrictions.length
-        ? `${item.restrictions.join(' / ')} · 可限制资料修改或冻结联系方式`
-        : item.unresolvedDisputes
-          ? `${item.unresolvedDisputes} 个未解决纠纷 · 纠纷处理员按联系快照查看必要联系方式`
-          : '可下架头像、重置昵称/用户名、隐藏简介；普通审核员不查看完整联系方式',
-      targetType: 'user',
-      detailItems: [
-        { label: '账号状态', value: item.accountStatus },
-        { label: '限制项', value: item.restrictions.length ? item.restrictions.join(' / ') : '无' },
-        { label: '责任取消', value: `买家 ${item.buyerResponsibleCancellations} / 车主 ${item.ownerResponsibleCancellations}` },
-        { label: '最近活跃', value: item.lastActiveAt },
-      ],
-    })))
+  if (section === 'users') {
+    return withAdminRowLinks(adminDirectoryUsers.map(adminDirectoryRow))
   }
 
   if (section === 'reports') {
     return withAdminRowLinks([
-      { id: 'report-1', primary: 'API 意向未及时响应', secondary: '买家提交脱敏说明，商户待回应', owner: '买家 木舟 / 商户 小葵 API', status: '处理中', risk: '需 24h 内处理', targetType: 'report', detailItems: [{ label: '处理建议', value: '要求商户补充站外确认记录' }, { label: '敏感信息', value: '仅显示脱敏说明' }] },
+      { id: 'report-1', primary: 'API 订单未及时响应', secondary: '买家提交脱敏说明，商户待回应', owner: '买家 木舟 / 商户 小葵 API', status: '处理中', risk: '需 24h 内处理', targetType: 'report', detailItems: [{ label: '处理建议', value: '要求商户补充站外确认记录' }, { label: '敏感信息', value: '仅显示脱敏说明' }] },
       { id: 'report-2', primary: '车源剩余名额争议', secondary: '原帖信息与站内展示不一致', owner: '买家 青柠 / 车主 北风', status: '待复核', risk: '信息不一致', targetType: 'report', detailItems: [{ label: '处理建议', value: '核对原帖与站内剩余席位' }, { label: '敏感信息', value: '不展示联系方式' }] },
-      { id: 'report-contact-1', primary: '联系方式无效举报', secondary: '联系快照显示可复制，但买家反馈无法联系', owner: '买家 demo_user / 商户 小葵 API', status: '处理中', risk: '只允许纠纷处理员按意向记录查看必要快照', targetType: 'contact-report', detailItems: [{ label: '处理建议', value: '按联系快照检查必要联系方式' }, { label: '可见范围', value: '仅纠纷处理员' }] },
+      { id: 'report-contact-1', primary: '联系方式无效举报', secondary: '联系快照显示可复制，但买家反馈无法联系', owner: '买家 demo_user / 商户 小葵 API', status: '处理中', risk: '只允许纠纷处理员按订单记录查看必要快照', targetType: 'contact-report', detailItems: [{ label: '处理建议', value: '按联系快照检查必要联系方式' }, { label: '可见范围', value: '仅纠纷处理员' }] },
     ])
   }
 
@@ -2644,6 +2654,7 @@ export async function getAdminSectionRows(section: AdminSection): Promise<AdminR
       { label: '目标类型', value: item.targetType },
       { label: '目标 ID', value: item.targetId },
       { label: '操作时间', value: item.createdAt },
+      { label: '请求追踪', value: `trace-${item.id}` },
     ],
   })))
 }
@@ -2668,12 +2679,6 @@ function carpoolWarrantyLabel(payload: SaveCarpoolDraftPayload): Carpool['warran
   if (payload.warranty.mode === 'no_warranty') return '售后协商'
   if (payload.warranty.mode === 'fixed_days_warranty' || payload.warranty.mode === 'remaining_days_compensation') return '车主承诺'
   return '售后协商'
-}
-
-function hasCredentialSharingLanguage(value: string) {
-  const hasRiskyCredentialText = /(共享|共用|转交|借用).*(账号|密码|主账号|session|cookie|token|登录态)|主账号|主 key|主key|session|cookie|refresh token|api key/i.test(value)
-  const statesProhibition = /(不得|不能|不可|禁止|不允许|拒绝|避免|不保存|不交付|不提供|不会保存|不会交付|不会提供).{0,16}(共享|共用|转交|借用|填写|粘贴|上传|提供|交换|索要|账号|密码|主账号|session|cookie|token|登录态|api key)/i.test(value)
-  return hasRiskyCredentialText && !statesProhibition
 }
 
 function carpoolRequiresRiskAck(product: CarpoolProductCatalogItem | undefined, payloadRiskNoticeCode?: string | null) {
@@ -2910,7 +2915,7 @@ export async function submitApiService(payload: Record<string, unknown>) {
     billingMode: billing,
     deliveryModes,
     usageVisibility: apiUsageVisibility(payload.usageVisibility),
-    panelBaseUrl: gateway === 'Sub2API' ? '提交意向后由商户站外确认 API 细节' : null,
+    panelBaseUrl: gateway === 'Sub2API' ? '创建订单后由商户站外确认 API 细节' : null,
     imagePricing: {
       supported: Boolean((payload.imageCapability as { enabled?: boolean } | undefined)?.enabled),
       textToImage: Boolean((payload.imageCapability as { supportsTextToImage?: boolean } | undefined)?.supportsTextToImage),
@@ -3360,7 +3365,7 @@ async function buildUnifiedNotifications(): Promise<UnifiedNotification[]> {
     detail: `${item.targetLabel} · ${getReadableStatus(item.beforeStatus)} → ${getReadableStatus(item.afterStatus)}`,
     time: item.createdAt,
     unread: false,
-    to: '/admin/audit-logs',
+    to: '/admin/logs',
   }))
 
   const fixedRows: UnifiedNotification[] = [{
@@ -3381,6 +3386,75 @@ export async function getNotifications(): Promise<UnifiedNotification[]> {
   if (shouldUseRealBackend()) return backendNotifications()
   await wait()
   return clone(await buildUnifiedNotifications())
+}
+
+export async function getNavigationBadges(): Promise<NavigationBadgeSummary> {
+  if (shouldUseRealBackend()) return backendNavigationBadges()
+
+  const [notifications, importantAnnouncementUnread, reportRows, appealRows] = await Promise.all([
+    buildUnifiedNotifications(),
+    getImportantAnnouncementUnreadCount(),
+    getAdminSectionRows('reports'),
+    getAdminSectionRows('appeals'),
+  ])
+  const currentTime = Date.now()
+  const isPendingPaymentActive = (order: ApiOrder) => order.status === 'pending_payment'
+    && new Date(order.paymentExpiresAt).getTime() > currentTime
+  const reservedStatuses: CarpoolApplicationStatus[] = ['accepted_reserved', 'waiting_contact', 'contacted', 'joined_pending_confirmation']
+  const hasActiveReservation = (application: CarpoolApplication) => reservedStatuses.includes(application.status)
+    && Boolean(application.reservedUntil)
+    && new Date(application.reservedUntil!).getTime() > currentTime
+  const buyerCarpoolActions = carpoolApplicationStore.filter(item => item.applicantUserId === currentBuyerId)
+    .filter(item => (hasActiveReservation(item) && !item.buyerConfirmedJoinedAt)
+      || (['active', 'pending_completion'].includes(item.status) && Boolean(item.ownerConfirmedCompletedAt) && !item.buyerConfirmedCompletedAt))
+    .length
+  const merchantCarpoolActions = carpoolApplicationStore.filter(item => item.ownerUserId === currentOwnerId)
+    .filter(item => item.status === 'pending_owner'
+      || (hasActiveReservation(item) && Boolean(item.buyerConfirmedJoinedAt) && !item.ownerConfirmedJoinedAt)
+      || (['active', 'pending_completion'].includes(item.status) && Boolean(item.buyerConfirmedCompletedAt) && !item.ownerConfirmedCompletedAt))
+    .length
+
+  const summary: NavigationBadgeSummary = {
+    generatedAt: new Date(currentTime).toISOString(),
+    notificationUnread: notifications.filter(item => item.unread).length,
+    importantAnnouncementUnread,
+    feedbackUnread: feedbackTicketStore
+      .filter(item => item.submitterUserId === currentBuyerId || item.submitterUsername === myUserProfileStore.username)
+      .filter(feedbackUnread)
+      .length,
+    buyer: {
+      carpoolActions: buyerCarpoolActions,
+      apiOrderActions: apiOrderStore
+        .filter(item => item.buyerId === currentBuyerId)
+        .filter(item => isPendingPaymentActive(item) || item.status === 'payment_issue' || item.status === 'delivery_submitted')
+        .length,
+    },
+    merchant: {
+      carpoolActions: merchantCarpoolActions,
+      apiOrderActions: apiOrderStore
+        .filter(item => item.sellerId === currentMerchantId)
+        .filter(item => item.status === 'payment_submitted' || item.status === 'paid_confirmed')
+        .length,
+    },
+    admin: null,
+  }
+
+  if (myUserProfileStore.permissions.includes('admin')) {
+    const admin = {
+      officialPrices: officialPriceStore.filter(item => item.status === '待验证').length,
+      carpools: carpoolStore.filter(item => item.status === '审核中').length,
+      apiServices: apiServiceStore.filter(item => item.state === 'reviewing').length,
+      feedbackTickets: feedbackTicketStore.filter(item => item.status === 'submitted' || item.status === 'following_up').length,
+      reports: reportRows.filter(item => !item.status.includes('关闭') && !item.status.includes('需要补充')).length
+        + appealRows.filter(item => item.status === '申诉复核中').length,
+    }
+    summary.admin = {
+      ...admin,
+      total: admin.officialPrices + admin.carpools + admin.apiServices + admin.feedbackTickets + admin.reports,
+    }
+  }
+
+  return clone(summary)
 }
 
 export async function markNotificationRead(id: string) {
@@ -3463,7 +3537,7 @@ export async function getFavorites(): Promise<FavoriteListItem[]> {
       ...item,
       title: service.title,
       subtitle: `${getApiMerchantDisplayName(service)} · ${service.models.slice(0, 2).join(' / ')}`,
-      status: isApiServicePubliclyOrderable(service) ? '可提交意向' : service.online ? '待配置接单' : service.state === 'reviewing' ? '审核中' : '离线',
+      status: isApiServicePubliclyOrderable(service) ? '可创建订单' : service.online ? '待配置接单' : service.state === 'reviewing' ? '审核中' : '离线',
       to: getApiServicePublicDetailUrl(service) ?? '/api-market',
     }
   }).filter((item): item is FavoriteListItem => item !== null)
@@ -3494,7 +3568,7 @@ export async function searchMarket(keyword: string): Promise<SearchResult[]> {
   const apiResults = apiServiceStore
     .filter(isApiServicePubliclyOrderable)
     .filter(item => apiServicePublicSearchTerms(item).some(value => value.toLowerCase().includes(q)))
-    .map(item => ({ id: `api-${item.id}`, type: 'API 服务' as const, title: item.title, subtitle: `${getApiMerchantDisplayName(item)} · ${item.models.slice(0, 3).join(' / ')}`, badge: '可提交意向', to: `/api-market/${item.id}` }))
+    .map(item => ({ id: `api-${item.id}`, type: 'API 服务' as const, title: item.title, subtitle: `${getApiMerchantDisplayName(item)} · ${item.models.slice(0, 3).join(' / ')}`, badge: '可创建订单', to: `/api-market/${item.id}` }))
   const merchantResults = publicMerchantProfiles
     .filter(item => [item.username, item.displayName, item.identity, item.merchantId].some(value => value.toLowerCase().includes(q)))
     .map(item => ({
@@ -3586,11 +3660,12 @@ export async function createCarpoolApplication(carpoolId: string, payload: { rul
   if (!payload.rulesAccepted) throw new Error('请先确认已阅读车源规则和车主承诺说明')
   const carpool = carpoolStore.find(item => item.id === carpoolId)
   if (!carpool) throw new Error(`Carpool not found: ${carpoolId}`)
-  const duplicate = carpoolApplicationStore.find(item => item.carpoolId === carpoolId && item.applicantUserId === currentBuyerId && isOngoingCarpoolApplication(item.status))
-  if (duplicate) throw new Error('已有进行中的上车申请')
+  const related = carpoolApplicationStore.filter(item => item.carpoolId === carpoolId && item.applicantUserId === currentBuyerId)
+  const hasActiveMembership = related.some(item => ['active', 'pending_completion'].includes(item.status))
+  const hasOngoingApplication = related.some(item => isOngoingCarpoolApplication(item.status))
   const seatSummary = getCarpoolSeatSummary(carpool)
-  const disabledReason = getCarpoolApplyDisabledReason(carpool, seatSummary)
-  if (disabledReason) throw new Error(disabledReason)
+  const eligibility = evaluateCarpoolApplicationEligibility(carpool, seatSummary, hasOngoingApplication, currentBuyerId, hasActiveMembership)
+  if (!eligibility.canApply) throw new Error(eligibility.reason)
 
   const id = `ride-app-${Date.now()}`
   const createdAt = nowText()
@@ -3798,7 +3873,7 @@ export async function buyerConfirmCarpoolCompleted(id: string) {
       type: completed ? 'completed' : 'buyer_confirmed_completed',
       fromStatus,
       toStatus: application.status,
-      note: completed ? '双方确认完成。' : '买家确认本期完成。',
+      note: completed ? '双方确认完成。' : '买家确认本次完成。',
     })
   })
 }
@@ -3819,7 +3894,7 @@ export async function ownerConfirmCarpoolCompleted(id: string) {
       type: completed ? 'completed' : 'owner_confirmed_completed',
       fromStatus,
       toStatus: application.status,
-      note: completed ? '双方确认完成。' : '车主确认本期完成。',
+      note: completed ? '双方确认完成。' : '车主确认本次完成。',
     })
   })
 }
@@ -3891,12 +3966,16 @@ export async function createApiPurchaseIntent(payload: CreateApiPurchaseIntentPa
   await wait()
   const service = apiServiceStore.find(item => item.id === payload.serviceId)
   if (!service) throw new Error(`API service not found: ${payload.serviceId}`)
-  if (!isApiServicePubliclyOrderable(service) || service.state !== 'online') throw new Error('服务当前不可提交购买意向。')
+  if (!isApiServicePubliclyOrderable(service) || service.state !== 'online') throw new Error('服务当前不可创建订单。')
   if (!service.deliveryModes.includes(payload.deliveryMode)) throw new Error('选择的 API 细节不属于该服务。')
   if (service.delivery !== 'Sub2API' && payload.deliveryMode === 'sub2api_panel_account') throw new Error('当前服务不支持该 API 细节。')
-  if (payload.purchaseAmountCny < service.minimumPurchaseCny) throw new Error(`最低意向金额为 ¥${service.minimumPurchaseCny}`)
-  if (payload.purchaseAmountCny > service.maxBuy) throw new Error(`单笔最高意向金额为 ¥${service.maxBuy}`)
-  if (payload.purchaseAmountCny > service.balance / service.creditPerCny) throw new Error('超过商户当前可售美元额度上限。')
+  if (payload.purchaseAmountCny < service.minimumPurchaseCny) throw new Error(`最低订单金额为 ¥${service.minimumPurchaseCny}`)
+  if (payload.purchaseAmountCny > service.maxBuy) throw new Error(`单笔最高订单金额为 ¥${service.maxBuy}`)
+  const purchaseAmountCnyDecimal = normalizeDecimal(String(payload.purchaseAmountCny), 2)
+  const cnyPerUsdAllowance = service.cnyPerUsdAllowance || divideDecimal('1', String(service.creditPerCny), 4)
+  const purchasedCreditDecimal = normalizeDecimalTrimmed(divideDecimal(purchaseAmountCnyDecimal, cnyPerUsdAllowance, 6), 6)
+  const availableUsdAllowance = service.availableUsdAllowance || String(service.balance)
+  if (compareDecimal(purchasedCreditDecimal, availableUsdAllowance) > 0) throw new Error('超过商户当前可售美元额度。')
 
   const id = `api-intent-${Date.now()}`
   const createdAt = nowText()
@@ -3914,7 +3993,9 @@ export async function createApiPurchaseIntent(payload: CreateApiPurchaseIntentPa
     status: 'open',
     selectedDeliveryMode: payload.deliveryMode,
     purchaseAmountCny: payload.purchaseAmountCny,
-    purchasedCredit: Math.round(payload.purchaseAmountCny * service.creditPerCny),
+    purchasedCredit: Number(purchasedCreditDecimal),
+    purchaseAmountCnyDecimal,
+    purchasedCreditDecimal,
     targetModel: payload.targetModel,
     buyerNote: payload.buyerNote,
     snapshot,
@@ -4061,6 +4142,7 @@ export async function createApiOrderFromIntent(intentId: string, paymentMethod: 
     disputeStatus: 'none',
     serviceTitle: intent.snapshot.serviceTitle,
     amount: intent.purchaseAmountCny,
+    amountDecimal: intent.purchaseAmountCnyDecimal || normalizeDecimal(String(intent.purchaseAmountCny), 2),
     currency: 'CNY',
     selectedPaymentMethod: paymentMethod,
     paymentWindowMinutes: 10,
@@ -4069,6 +4151,7 @@ export async function createApiOrderFromIntent(intentId: string, paymentMethod: 
     intentSnapshot: clone(intent.snapshot),
     selectedDeliveryMode: intent.selectedDeliveryMode,
     requestedUsdAllowance: intent.purchasedCredit,
+    requestedUsdAllowanceDecimal: intent.purchasedCreditDecimal || normalizeDecimalTrimmed(String(intent.purchasedCredit), 6),
     merchantContactChannels: clone(intent.contactChannels),
     buyerContactChannels: clone(mockBuyerContactChannels(intent)),
     viewerRole: 'buyer',
@@ -4076,6 +4159,11 @@ export async function createApiOrderFromIntent(intentId: string, paymentMethod: 
     updatedAt: createdAt,
   }
   apiOrderStore.unshift(order)
+  intent.status = 'ordered'
+  intent.handoff.status = 'closed'
+  intent.handoff.note = '购买意向已生成订单，请前往订单页继续处理。'
+  intent.updatedAt = createdAt
+  persistApiPurchaseStores()
   persistApiOrderStore()
   return clone(order)
 }
@@ -4122,10 +4210,38 @@ export async function submitApiOrderPayment(id: string, paymentSummary: string, 
   await wait()
   return updateApiOrder(id, order => {
     if (order.version !== version) throw new Error('订单已更新，请刷新后重试。')
-    if (order.status !== 'pending_payment') throw new Error('只有待付款订单可以标记已付款。')
+    if (order.status !== 'pending_payment' && order.status !== 'payment_issue') throw new Error('当前订单不能重新提交付款信息。')
     order.status = 'payment_submitted'
     order.paymentSummary = paymentSummary.trim()
     order.paymentSubmittedAt = nowText()
+    order.paymentIssueReason = undefined
+    order.paymentIssueNote = undefined
+    order.paymentIssueReportedAt = undefined
+  })
+}
+
+export async function cancelApiOrder(id: string, reason: string, version: number) {
+  if (shouldUseRealBackend()) return backendCancelAPIOrder(id, reason, version)
+  await wait()
+  return updateApiOrder(id, order => {
+    if (order.version !== version) throw new Error('订单已更新，请刷新后重试。')
+    if (order.status !== 'pending_payment') throw new Error('只有尚未付款的订单可以取消。')
+    const trimmedReason = reason.trim()
+    if (!trimmedReason) throw new Error('请选择取消原因。')
+    order.status = 'cancelled'
+    order.cancelReason = trimmedReason
+    order.cancelledAt = nowText()
+  })
+}
+
+export async function confirmApiOrderComplete(id: string, version: number) {
+  if (shouldUseRealBackend()) return backendConfirmAPIOrderComplete(id, version)
+  await wait()
+  return updateApiOrder(id, order => {
+    if (order.version !== version) throw new Error('订单已更新，请刷新后重试。')
+    if (order.status !== 'delivery_submitted') throw new Error('只有商户已交付的订单可以确认完成。')
+    order.status = 'completed'
+    order.completedAt = nowText()
   })
 }
 
@@ -4137,6 +4253,19 @@ export async function confirmApiOrderPayment(id: string, version: number) {
     if (order.status !== 'payment_submitted') throw new Error('只有买家已付款订单可以确认收款。')
     order.status = 'paid_confirmed'
     order.paidConfirmedAt = nowText()
+  })
+}
+
+export async function reportApiOrderPaymentIssue(id: string, reason: ApiOrderPaymentIssueReason, note: string, version: number) {
+  if (shouldUseRealBackend()) return backendReportAPIOrderPaymentIssue(id, reason, note, version)
+  await wait()
+  return updateApiOrder(id, order => {
+    if (order.version !== version) throw new Error('订单已更新，请刷新后重试。')
+    if (order.status !== 'payment_submitted') throw new Error('只有待核对收款的订单可以报告付款问题。')
+    order.status = 'payment_issue'
+    order.paymentIssueReason = reason
+    order.paymentIssueNote = note.trim() || undefined
+    order.paymentIssueReportedAt = nowText()
   })
 }
 
@@ -4205,6 +4334,19 @@ export function getApiOrderEvents(order: ApiOrder): ApiOrderEvent[] {
       createdAt: order.paymentSubmittedAt,
     })
   }
+  if (order.paymentIssueReportedAt && order.paymentIssueReason) {
+    events.push({
+      id: `${order.id}-payment-issue-${order.paymentIssueReportedAt}`,
+      orderId: order.id,
+      actorLabel: order.seller,
+      actorRole: 'merchant',
+      type: 'payment_issue_reported',
+      fromStatus: 'payment_submitted',
+      toStatus: 'payment_issue',
+      note: `${getApiOrderPaymentIssueLabel(order.paymentIssueReason)}${order.paymentIssueNote ? `：${order.paymentIssueNote}` : ''}`,
+      createdAt: order.paymentIssueReportedAt,
+    })
+  }
   if (order.paidConfirmedAt) {
     events.push({
       id: `${order.id}-payment-confirmed`,
@@ -4261,14 +4403,14 @@ export function getApiOrderEvents(order: ApiOrder): ApiOrderEvent[] {
 export async function getApiOrderNotifications(): Promise<ApiOrderNotification[]> {
   await wait()
   const rows = apiOrderStore
-    .filter(item => ['pending_payment', 'payment_submitted', 'paid_confirmed', 'delivery_submitted'].includes(item.status))
+    .filter(item => ['pending_payment', 'payment_issue', 'payment_submitted', 'paid_confirmed', 'delivery_submitted'].includes(item.status))
     .slice(0, 6)
     .map(item => ({
       id: `api-notice-${item.id}`,
       title: getApiOrderStatusLabel(item.status),
       detail: `${item.serviceTitle} · ${item.buyer} / ${item.seller}`,
       time: item.updatedAt,
-      unread: item.status === 'payment_submitted' || item.status === 'paid_confirmed',
+      unread: item.status === 'payment_issue' || item.status === 'payment_submitted' || item.status === 'paid_confirmed',
       to: item.sellerId === currentMerchantId ? `/merchant/api-orders/${item.id}` : `/my/api-orders/${item.id}`,
     }))
   return clone(markReadState(rows))
@@ -4404,7 +4546,7 @@ export async function runAdminModerationAction(row: AdminRow, action: 'approve' 
   if (action === 'restore' && !restorableStatuses.some(status => row.status.includes(status))) {
     throw new Error('当前状态不需要恢复，不能执行恢复操作。')
   }
-  const downableStatuses = ['已验证', '已通过', '可上车', '在线', '匹配中', 'normal']
+  const downableStatuses = ['已验证', '已通过', '可上车', '已满', '在线', '匹配中', 'normal']
   if (action === 'take_down' && !downableStatuses.some(status => row.status.includes(status))) {
     throw new Error('当前状态不适合下架，请先复核。')
   }
@@ -4420,26 +4562,6 @@ export async function runAdminModerationAction(row: AdminRow, action: 'approve' 
   }
   const nextStatus = labels[action]
   await applyAdminStatusToTarget(row, nextStatus)
-
-  if (row.targetType === 'user') {
-    const target = adminUserRiskProfileStore.find(item => item.id === row.id)
-    if (target) {
-      target.accountStatus = action === 'warn'
-        ? 'warning'
-        : action === 'restrict'
-          ? 'partially_restricted'
-          : action === 'suspend'
-            ? 'temporarily_suspended'
-            : action === 'ban'
-              ? 'permanently_banned'
-              : action === 'restore'
-                ? 'normal'
-                : target.accountStatus
-      if (action === 'restrict' && !target.restrictions.includes('禁止申请上车')) target.restrictions.push('禁止申请上车')
-      if (action === 'restore') target.restrictions = []
-      persistAdminStores()
-    }
-  }
 
   appendAdminAuditLog({
     actorType: 'admin',

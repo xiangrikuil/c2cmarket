@@ -1,6 +1,7 @@
 import type {
   AdminRow,
   CarpoolApplicationEvent,
+  CarpoolApplicationEligibility,
   CarpoolApplicationWithMeta,
   CarpoolApplicationFilters,
   CarpoolProductCatalogItem,
@@ -77,6 +78,7 @@ type BackendCarpoolListing = {
   version: number
   createdAt: string
   updatedAt: string
+  applicationEligibility?: CarpoolApplicationEligibility
 }
 
 type BackendCycleTerm = {
@@ -116,6 +118,8 @@ type BackendCarpoolApplication = {
   createdAt: string
   updatedAt: string
 }
+
+type BackendCarpoolApplicationEligibility = CarpoolApplicationEligibility
 
 type BackendCarpoolMembership = {
   id: string
@@ -325,6 +329,7 @@ export async function mapBackendCarpoolListing(listing: BackendCarpoolListing): 
     currentConfirmedMembers: activeSeats,
     maxMembers: totalSeats,
     owner: ownerLabel(listing.ownerUserId),
+    ownerUserId: listing.ownerUserId,
     trustLevel: 4,
     ownerType: '个人车主',
     warranty: '车主承诺',
@@ -343,6 +348,7 @@ export async function mapBackendCarpoolListing(listing: BackendCarpoolListing): 
     accessArrangementNote: listing.accessArrangement || plan.policyNote,
     riskNoticeCode: listing.riskNoticeCode || plan.riskNoticeCode,
     riskAcknowledged: listing.riskAckRequired ? true : undefined,
+    applicationEligibility: listing.applicationEligibility,
     backendVersion: listing.version,
     backendStatus: listing.status,
     seatSummary: {
@@ -367,6 +373,11 @@ export async function backendGetCarpools() {
 export async function backendGetCarpoolById(id: string) {
   const listing = await backendRequest<BackendCarpoolListing>(`/api/v1/carpools/${id}`)
   return mapBackendCarpoolListing(listing)
+}
+
+export async function backendCarpoolApplicationEligibility(id: string) {
+  await ensureBackendSession('buyer', false)
+  return backendRequest<BackendCarpoolApplicationEligibility>(`/api/v1/carpools/${id}/eligibility`)
 }
 
 export async function backendOwnerCarpools() {

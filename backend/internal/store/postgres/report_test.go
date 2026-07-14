@@ -247,6 +247,30 @@ func TestReportMigrationKeepsAuditAndDuplicateContracts(t *testing.T) {
 	}
 }
 
+func TestReportSchemaUpgradeMigrationAlignsLegacyDatabases(t *testing.T) {
+	path := filepath.Join("..", "..", "..", "migrations", "000048_report_schema_upgrade.up.sql")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read upgrade migration: %v", err)
+	}
+	sql := string(data)
+	for _, required := range []string{
+		"ADD COLUMN canonical_target_type text",
+		"ADD COLUMN canonical_target_id text",
+		"ADD COLUMN target_snapshot_json jsonb",
+		"SET reason_code = 'other'",
+		"row_number() OVER",
+		"SET status = 'closed'",
+		"CREATE UNIQUE INDEX ux_reports_active_canonical_target",
+		"ADD COLUMN public_result_code text NOT NULL DEFAULT 'no_action'",
+		"CREATE TABLE moderation_audit_logs",
+	} {
+		if !strings.Contains(sql, required) {
+			t.Fatalf("upgrade migration missing required contract %q", required)
+		}
+	}
+}
+
 func TestEnsureNoActiveReportForCanonicalTarget(t *testing.T) {
 	queryer := fakeReportQueryer{
 		activeReports: map[string]string{

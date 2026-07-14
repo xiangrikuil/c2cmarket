@@ -229,7 +229,7 @@ watch(accountPaymentSettingsValue, settings => {
 
 Use global/session mock state only when multiple pages must observe the same record after a mutation. Examples:
 
-- API purchase intents shown in API detail, buyer list, merchant list, notifications, reviews, and admin views.
+- API orders shown in API detail, buyer list, merchant list, notifications, and admin tracking views. Purchase intents remain internal adapter state and must not become a parallel user-facing queue.
 - Carpool applications shown in carpool detail, my rides, owner applications, notifications, and admin views.
 - Published carpool/API service/price lead/demand records that must appear in both user and admin pages.
 - Feedback tickets shown in the avatar menu, feedback history, notification center, and admin feedback queue.
@@ -407,4 +407,233 @@ type BackendAPIService = {
   <Button>查看</Button>
 </RouterLink>
 <Button v-else disabled>待配置接单</Button>
+```
+
+## Scenario: Realtime Invalidation And Authoritative Navigation Badges
+
+### 1. Scope / Trigger
+
+- Trigger: frontend work touching `AppShell.vue`, notification read actions, API-order/carpool actions, administrator queues, navigation badges, or the authenticated realtime connection.
+- The UI must update while open without making a bell click or route navigation act as a refresh mechanism.
+
+### 2. Signatures
+
+```ts
+type NavigationBadgeSummary = {
+  generatedAt: string
+  notificationUnread: number
+  importantAnnouncementUnread: number
+  feedbackUnread: number
+  buyer: { carpoolActions: number; apiOrderActions: number }
+  merchant: { carpoolActions: number; apiOrderActions: number }
+  admin: null | {
+    total: number
+    officialPrices: number
+    carpools: number
+    apiServices: number
+    feedbackTickets: number
+    reports: number
+  }
+}
+
+useNavigationBadges(enabled)
+useRealtimeSync(enabled)
+```
+
+Named SSE events `ready` and `invalidate` carry `{ schemaVersion: 1, topics: ['all-live'] }`.
+
+### 3. Contracts
+
+- `AppShell.vue` mounts one `useEventSource` connection only when real-backend mode and an authenticated profile are present. Mock mode must not construct `EventSource`. Fatal `CLOSED` streams retry indefinitely with a bounded delay and reopen immediately when the browser returns online.
+- SSE events are invalidations only. They invalidate navigation badges, notifications, announcements, feedback, API orders/intents, carpool applications/details/contacts, and administrator query families; components never increment counts from an event.
+- `useNavigationBadges` refetches every 15 seconds only while visible and also refetches on mount, focus, and reconnect. When SSE is not open, the realtime composable performs the same broad 15-second reconciliation and reconciles immediately on visibility/network recovery.
+- AppShell reads buyer, merchant, feedback, notification, announcement, and administrator counts from `NavigationBadgeSummary`; it must not keep full order/application lists mounted only to count them.
+- Bell badge is `notificationUnread` only. Important-announcement unread count belongs on the platform-announcement entry. Opening the bell only opens its dropdown; `查看全部通知` is a separate link.
+- Mark-notification-read/read-all, announcement receipt, feedback, API-order, and carpool workflow mutations invalidate `navigation-badges` in addition to their normal query families. Direct page-level facade mutations follow the same rule, so the current actor never waits for fallback polling. Badge counts are never adjusted heuristically.
+- The strict envelope decoder may reject invalid payloads in tests, but the EventSource serializer boundary converts malformed/unsupported server events to `null`; bad data must not become an uncaught browser exception or mutate cache state.
+- Real backend failures remain visible; do not return mock badge data from `backendNavigationBadges()` on failure. Mock summary is derived from current mock stores and the same actionable-state semantics.
+
+### 4. Validation & Error Matrix
+
+| Condition | Expected behavior |
+| --- | --- |
+| No authenticated profile | Badge query disabled; no SSE connection |
+| Mock mode | Deterministic local summary; no SSE |
+| SSE open/reopen | Immediately invalidate all-live query families |
+| SSE closed/error | Visible-page 15-second reconciliation remains active |
+| Page hidden | Stop badge/background polling; reconcile when visible again |
+| Unknown/malformed realtime envelope | Do not mutate cached counts; REST polling remains authoritative |
+| EventSource enters terminal `CLOSED` | Reconnect after 3 seconds indefinitely; an `online` event may reopen immediately |
+| `admin=null` | Do not render administrator badge values |
+| Count is zero / above 99 | Hide zero; display `99+` above 99 |
+
+### 5. Good/Base/Bad Cases
+
+- Good: seller confirms payment in another browser; buyer receives `invalidate`, badge/order detail refetch, and sees the new state without touching the bell.
+- Base: SSE message is missed; the next focus, reconnect, or 15-second reconciliation reaches the same REST state.
+- Bad: admin carpool-application badge reuses the current user's owner queue count.
+- Bad: bell click routes immediately to the notification page or exists primarily to trigger a fetch.
+
+### 6. Tests Required
+
+- Envelope parser rejects unsupported version/topic and accepts `all-live`.
+- All-live invalidation list covers summary, notification, order, carpool, feedback, announcement, and admin prefixes.
+- Source/integration tests assert no hard-coded admin counts, undefined admin queues stay unbadged, bell has a separate full-center link, and AppShell no longer mounts full lists for counts.
+- Mutation tests assert notification/order/feedback/announcement success invalidates `navigation-badges`.
+- Full Vitest, Vue typecheck, and `VITE_API_MODE=real` production build.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```ts
+const count = orders.value.filter(order => order.status === 'open').length
+eventSource.onmessage = () => count++
+```
+
+#### Correct
+
+```ts
+const badges = useNavigationBadges(isAuthenticated)
+useRealtimeSync(isAuthenticated) // invalidates; REST recomputes
+```
+
+## Scenario: API Order Payment And Cancellation UI State
+
+### 1. Scope / Trigger
+
+- Trigger: frontend work touching `ApiPurchaseOrderDetailPage.vue`, API-order payment instructions, buyer cancellation, or merchant processing timers.
+
+### 2. Contracts
+
+- `paymentExpiresAt` is the authoritative buyer payment deadline. The page may update its display clock once per second, but it must not persist another buyer deadline.
+- After `payment_submitted`, the first-release merchant handling hint is derived as `paymentSubmittedAt + 10 minutes`. This derived time controls urgency and support copy only; it must not mutate the backend order or auto-cancel a potentially paid order.
+- Payment instructions use a centered Dialog. Marking payment requires a separate confirmation Dialog and must close the payment details before opening the confirmation focus trap.
+- Buyer cancellation is available only for `pending_payment`. The right-side cancellation Dialog requires a selected reason plus an explicit unpaid confirmation, then calls `cancelApiOrder(id, reason, version)`.
+- Cancellation reasons must include a readable responsibility label (`商家原因` or `个人原因`) in the persisted text. Do not block immediate unpaid cancellation on seller confirmation.
+- API-order mutations must update the actor detail cache and invalidate buyer, merchant, notification, navigation-badge, admin, and intent query families.
+- Contact issue micro-actions may be hidden on the API order page when a single customer-support entry is present, but `OrderContactCard` keeps them enabled by default for other consumers.
+
+### 3. Validation Matrix
+
+| Condition | Expected behavior |
+| --- | --- |
+| Pending payment with active deadline | Show countdown, payment details action, and cancellation action. |
+| Pending payment without QR material for a QR method | Show the missing-material state and disable payment confirmation. |
+| Buyer confirms payment | Close payment UI, hide cancellation, switch to merchant handling countdown. |
+| Merchant handling hint expires | Keep order state unchanged; show overdue copy and customer support. |
+| Buyer cancellation without reason or unpaid confirmation | Keep destructive submit disabled. |
+| Cancelled with `payment_timeout` | Render localized system-timeout copy, not the raw code. |
+
+### 4. Tests Required
+
+- Unit tests for countdown boundaries, merchant deadline derivation, cancellation reason formatting, and system reason labels.
+- Mock facade test for pending-only cancellation and reason persistence.
+- `pnpm --dir frontend exec vitest run`.
+- `pnpm --dir frontend exec vue-tsc -b --pretty false`.
+- `VITE_API_MODE=real pnpm --dir frontend exec vite build`.
+
+## Scenario: Decimal API Orders As The UI Source Of Truth
+
+### 1. Scope / Trigger
+
+- Trigger: API service purchase previews, API order lists/detail, amount sorting/totals, legacy intent routes, or administrator API transaction views.
+
+### 2. Signatures
+
+```ts
+ApiService.cnyPerUsdAllowance?: string
+ApiService.availableUsdAllowance?: string
+ApiService.maxUsdAllowancePerOrder?: string
+ApiOrder.amountDecimal?: string
+ApiOrder.requestedUsdAllowanceDecimal?: string
+```
+
+### 3. Contracts
+
+- UI/domain adapters preserve backend decimal strings. `decimal.js` helpers own division, multiplication, comparison, addition, normalization, and display formatting.
+- Purchase preview and submit derive allowance from the same CNY amount/rate strings. Display may trim trailing zeros; submitted and snapshot forms retain required scale.
+- Buyer, merchant, and admin screens use “API 订单” as the primary object. Purchase intents remain internal adapter/API state and historical `/api-intents/{id}` resolves to the linked order route.
+- The five visible responsibility steps are `创建订单 → 买家付款 → 商户确认收款 → 商户交付 → 买家验收`.
+- Admin order rows may state that delivery was submitted but must never map or serialize the raw `deliveryCredential`.
+
+### 4. Validation & Error Matrix
+
+| Condition | Expected behavior |
+| --- | --- |
+| `10.00 / 0.8000` | Preview/list/detail show `$12.50`, submit uses `12.500000` |
+| Sort or total decimal amounts | Use `compareDecimal` / `addDecimal`, never subtraction or numeric reduce |
+| Historical intent has linked buyer order | Replace route with `/my/api-orders/{orderId}` |
+| Historical intent has linked merchant order | Replace route with `/merchant/api-orders/{orderId}` |
+| No linked order is visible | Return to the order list without rendering an intent detail as an order |
+
+### 5. Good/Base/Bad Cases
+
+- Good: lists render `¥10.00` and `12.50 美元额度` from immutable order strings.
+- Base: a fixed-package order has no USD allowance and renders the package snapshot path.
+- Bad: `Math.round(amount * creditPerCny)`, `b.amount - a.amount`, or `reduce((sum, row) => sum + row.amount)` on money/quota fields.
+
+### 6. Tests Required
+
+- Decimal helper regression for `10 / 0.8 = 12.500000`, formatting, comparison, and addition.
+- Admin adapter regression proving a provided raw credential does not appear in the row JSON.
+- Full Vitest suite, `vue-tsc -b`, and `VITE_API_MODE=real vite build`.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```ts
+const allowance = Math.round(amount * creditPerCny)
+rows.sort((a, b) => b.amount - a.amount)
+```
+
+#### Correct
+
+```ts
+const allowance = divideDecimal(amount, cnyPerUsdAllowance, 6)
+rows.sort((a, b) => compareDecimal(b.amountDecimal!, a.amountDecimal!))
+```
+
+## Scenario: Carpool Eligibility Projection
+
+### 1. Scope / Trigger
+- Trigger: carpool list or detail CTA, seat labels, application mutations, or backend eligibility adapter changes.
+
+### 2. Signatures
+```ts
+type CarpoolApplicationEligibility = { code; canApply; reason; resolutionAction }
+getCarpoolApplicationEligibility(id): Promise<CarpoolApplicationEligibility>
+```
+
+### 3. Contracts
+- Real mode consumes the authenticated backend projection; mock mode uses `evaluateCarpoolApplicationEligibility` with the same codes and priority.
+- The detail page has one application CTA. Its status badge, disabled state, reason, and seat label all derive from the same projection.
+- Loading/error states are non-optimistic and cannot briefly show an enabled application action.
+
+### 4. Validation & Error Matrix
+| State | UI |
+| --- | --- |
+| `eligible` | One enabled `申请上车` action |
+| blocked code | Disabled `当前不可申请` plus exactly one reason |
+| query loading/error | Disabled neutral status; never optimistic apply |
+
+### 5. Good/Base/Bad Cases
+- Good: credential risk changes the badge, seat label, button, and reason together.
+- Base: eligible response shows one primary CTA.
+- Bad: a second computed property reconstructs risk/ownership/seat priority from raw listing fields.
+
+### 6. Tests Required
+- All eight codes, combined priority, and single-dialog-entry source regression.
+- Full Vitest suite, typecheck, and real API production build.
+
+### 7. Wrong vs Correct
+#### Wrong
+```ts
+const disabled = paused || risky || hasApplication || seats === 0
+```
+#### Correct
+```ts
+const disabled = !eligibility.canApply
+const reason = eligibility.reason
 ```

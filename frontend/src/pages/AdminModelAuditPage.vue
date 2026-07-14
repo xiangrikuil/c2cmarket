@@ -3,7 +3,7 @@ import { computed, reactive, ref, watch } from 'vue'
 import { AlertTriangle, ClipboardCopy, Download, FileText, Pencil, Play, Plus, RefreshCw, Save, ShieldAlert, TimerReset } from 'lucide-vue-next'
 import { toast } from 'vue-sonner'
 import PageTitle from '@/components/market/PageTitle.vue'
-import StatCard from '@/components/market/StatCard.vue'
+import CompactStats from '@/components/market/CompactStats.vue'
 import { Badge, type BadgeVariants } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
@@ -461,12 +461,7 @@ function evidenceText(evidence: Record<string, unknown>) {
       description="对第三方 OpenAI-compatible API 渠道生成统计风险信号，不承载平台代理、凭据交付或自动处罚。"
     />
 
-    <div class="grid gap-3 md:grid-cols-4">
-      <StatCard label="审计目标" :value="targets.length" :hint="`启用 ${activeTargets.length}`" />
-      <StatCard label="完成运行" :value="completedRuns.length" :hint="`高风险 ${highRiskCount}`" accent />
-      <StatCard label="可信基线" :value="baselines.length" hint="按探针版本管理" />
-      <StatCard label="巡检配置" :value="enabledMonitors" :hint="`全部 ${monitors.length}`" />
-    </div>
+    <CompactStats :items="[{ label: '审计目标', value: targets.length, hint: `启用 ${activeTargets.length}` }, { label: '完成运行', value: completedRuns.length, hint: `高风险 ${highRiskCount}` }, { label: '可信基线', value: baselines.length, hint: '按探针版本管理' }, { label: '巡检配置', value: enabledMonitors, hint: `全部 ${monitors.length}` }]" :loading="isLoading" />
 
     <Card v-if="hasError" class="border-destructive/30 p-5">
       <div class="flex flex-col gap-4 sm:flex-row sm:items-start">

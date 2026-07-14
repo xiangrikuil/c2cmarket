@@ -460,6 +460,13 @@ func (s *Service) CreateApplication(ctx context.Context, user auth.User, input C
 		if appErr != nil {
 			return Application{}, appErr
 		}
+		eligibility, appErr := s.applicationEligibilityWithListing(ctx, user, listing, plan)
+		if appErr != nil {
+			return Application{}, appErr
+		}
+		if !eligibility.CanApply {
+			return Application{}, eligibilityError(eligibility)
+		}
 		if err := validateCreateApplicationInput(input, listing, plan); err != nil {
 			return Application{}, err
 		}
@@ -483,27 +490,92 @@ func (s *Service) CreateApplication(ctx context.Context, user auth.User, input C
 	if appErr != nil {
 		return Application{}, appErr
 	}
+	eligibility := s.applicationEligibilityLocked(user, listing, plan)
+	if !eligibility.CanApply {
+		return Application{}, eligibilityError(eligibility)
+	}
 	if err := validateCreateApplicationInput(input, listing, plan); err != nil {
 		return Application{}, err
 	}
 	if _, _, ok := s.contact.VersionForOwner(input.BuyerContactMethodID, user.ID); !ok {
 		return Application{}, domain.NewError(http.StatusUnprocessableEntity, domain.CodeContactMethodNotOwned, "Contact method not owned", "买家联系方式不可用或不属于当前用户。")
 	}
-	for _, existing := range s.applications {
-		if existing.CarpoolListingID == listing.ID && existing.BuyerUserID == user.ID && isOngoingApplicationStatus(existing.Status) {
-			return Application{}, domain.NewError(http.StatusConflict, domain.CodeActiveApplicationExists, "Active application exists", "你已提交过该车源的进行中申请。")
-		}
-	}
-	for _, membership := range s.memberships {
-		if membership.CarpoolListingID == listing.ID && membership.BuyerUserID == user.ID && membership.Status == MembershipStatusActive {
-			return Application{}, domain.NewError(http.StatusConflict, domain.CodeActiveMembershipExists, "Active membership exists", "你已是该车源的成员。")
-		}
-	}
 	now := s.now()
 	application := newApplication(input, listing, now)
 	s.applications[application.ID] = application
 	s.appOrder = append(s.appOrder, application.ID)
 	return application, nil
+}
+
+func (s *Service) ApplicationEligibility(ctx context.Context, user auth.User, listingID string) (ApplicationEligibility, *domain.AppError) {
+	if s.repo != nil {
+		listing, appErr := s.repo.GetPublicCarpoolListing(ctx, listingID)
+		if appErr != nil {
+			return ApplicationEligibility{}, appErr
+		}
+		plan, appErr := s.productPlan(ctx, listing.ProductPlanID)
+		if appErr != nil {
+			return ApplicationEligibility{}, appErr
+		}
+		return s.applicationEligibilityWithListing(ctx, user, listing, plan)
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.expireReservationsLocked(s.now())
+	listing, ok := s.listings[strings.TrimSpace(listingID)]
+	if !ok || listing.Status != ListingStatusActive {
+		return ApplicationEligibility{}, domain.NewError(http.StatusNotFound, domain.CodeObjectNotFound, "Carpool listing not found", "车源不存在。")
+	}
+	listing = s.withSeatSummaryLocked(listing)
+	plan, appErr := s.productPlan(ctx, listing.ProductPlanID)
+	if appErr != nil {
+		return ApplicationEligibility{}, appErr
+	}
+	return s.applicationEligibilityLocked(user, listing, plan), nil
+}
+
+func (s *Service) applicationEligibilityWithListing(ctx context.Context, user auth.User, listing Listing, plan catalog.ProductPlan) (ApplicationEligibility, *domain.AppError) {
+	applications, appErr := s.repo.ListCarpoolApplicationsByBuyer(ctx, user.ID)
+	if appErr != nil {
+		return ApplicationEligibility{}, appErr
+	}
+	memberships, appErr := s.repo.ListCarpoolMembershipsByBuyer(ctx, user.ID)
+	if appErr != nil {
+		return ApplicationEligibility{}, appErr
+	}
+	hasApplication := false
+	for _, application := range applications {
+		if application.CarpoolListingID == listing.ID && isOngoingApplicationStatus(application.Status) {
+			hasApplication = true
+			break
+		}
+	}
+	hasMembership := false
+	for _, membership := range memberships {
+		if membership.CarpoolListingID == listing.ID && membership.Status == MembershipStatusActive {
+			hasMembership = true
+			break
+		}
+	}
+	return EvaluateApplicationEligibility(EligibilityContext{Listing: listing, Plan: plan, CurrentUserID: user.ID, HasOngoingApplication: hasApplication, HasActiveMembership: hasMembership}), nil
+}
+
+func (s *Service) applicationEligibilityLocked(user auth.User, listing Listing, plan catalog.ProductPlan) ApplicationEligibility {
+	hasApplication := false
+	for _, application := range s.applications {
+		if application.CarpoolListingID == listing.ID && application.BuyerUserID == user.ID && isOngoingApplicationStatus(application.Status) {
+			hasApplication = true
+			break
+		}
+	}
+	hasMembership := false
+	for _, membership := range s.memberships {
+		if membership.CarpoolListingID == listing.ID && membership.BuyerUserID == user.ID && membership.Status == MembershipStatusActive {
+			hasMembership = true
+			break
+		}
+	}
+	return EvaluateApplicationEligibility(EligibilityContext{Listing: listing, Plan: plan, CurrentUserID: user.ID, HasOngoingApplication: hasApplication, HasActiveMembership: hasMembership})
 }
 
 func (s *Service) MyApplications(ctx context.Context, user auth.User) ([]Application, *domain.AppError) {
@@ -1344,6 +1416,9 @@ func requireLinuxDoBindingForPublish(user auth.User) *domain.AppError {
 func validateCreateApplicationInput(input CreateApplicationInput, listing Listing, plan catalog.ProductPlan) *domain.AppError {
 	if strings.TrimSpace(input.ListingID) == "" {
 		return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Listing required", "必须选择车源。", "listingId", "required", "必须选择车源。")
+	}
+	if input.BuyerUserID == listing.OwnerUserID {
+		return domain.NewError(http.StatusConflict, domain.CodeInvalidStateTransition, "Cannot apply to own carpool", "不能申请自己的车源。")
 	}
 	if strings.TrimSpace(input.BuyerContactMethodID) == "" {
 		return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeContactMethodRequired, "Contact method required", "申请上车必须选择联系方式。", "buyerContactMethodId", "required", "必须选择联系方式。")

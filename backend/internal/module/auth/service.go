@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/mail"
 	"regexp"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -434,6 +435,35 @@ func (s *Service) GetSessionWithCSRF(ctx context.Context, sessionID, csrfToken s
 		return User{}, Session{}, domain.NewError(http.StatusForbidden, domain.CodeCSRFTokenInvalid, "CSRF token invalid", "CSRF token 无效或缺失。")
 	}
 	return user, session, nil
+}
+
+func (s *Service) AdminUsers(ctx context.Context, user User) ([]AdminUser, *domain.AppError) {
+	if !user.IsAdmin {
+		return nil, domain.NewError(http.StatusForbidden, domain.CodePermissionDenied, "Permission denied", "需要管理员权限。")
+	}
+	if s.repo != nil {
+		return s.repo.ListAdminUsers(ctx)
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	items := make([]AdminUser, 0, len(s.users))
+	for _, item := range s.users {
+		items = append(items, AdminUser{
+			ID:             item.ID,
+			Username:       item.Username,
+			DisplayName:    item.DisplayName,
+			IsAdmin:        item.IsAdmin,
+			Status:         item.Status,
+			LinuxDoBinding: item.LinuxDoBinding,
+			CreatedAt:      s.now(),
+		})
+	}
+	sort.Slice(items, func(i, j int) bool {
+		return items[i].Username < items[j].Username
+	})
+	return items, nil
 }
 
 func (s *Service) RefreshSessionCSRF(ctx context.Context, sessionID string) (string, *domain.AppError) {

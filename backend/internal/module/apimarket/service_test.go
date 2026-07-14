@@ -52,14 +52,15 @@ func TestOrderableReasonsIncludesExpiredQuota(t *testing.T) {
 	now := time.Date(2026, 7, 7, 12, 0, 0, 0, time.UTC)
 	expiredAt := now.Add(-time.Minute)
 	service := Service{
-		OwnerContactMethodID: "contact-1",
-		BillingMode:          ServiceBillingModeMetered,
-		QuotaExpiresAt:       &expiredAt,
-		AcceptingOrders:      true,
-		PaymentWindowMinutes: 10,
-		ReviewStatus:         ServiceReviewStatusApproved,
-		PublicationStatus:    ServicePublicationStatusOnline,
-		ModerationStatus:     ServiceModerationStatusClear,
+		OwnerContactMethodID:  "contact-1",
+		BillingMode:           ServiceBillingModeMetered,
+		AvailableUSDAllowance: "20.000000",
+		QuotaExpiresAt:        &expiredAt,
+		AcceptingOrders:       true,
+		PaymentWindowMinutes:  10,
+		ReviewStatus:          ServiceReviewStatusApproved,
+		PublicationStatus:     ServicePublicationStatusOnline,
+		ModerationStatus:      ServiceModerationStatusClear,
 		PaymentOptions: []PaymentOption{{
 			PaymentMethod: PaymentMethodWechat,
 			Enabled:       true,
@@ -126,14 +127,15 @@ func TestOrderableReasonsIgnoreLegacyUSDTPaymentOption(t *testing.T) {
 	now := time.Date(2026, 7, 7, 12, 0, 0, 0, time.UTC)
 	expiresAt := now.Add(time.Hour)
 	service := Service{
-		OwnerContactMethodID: "contact-1",
-		BillingMode:          ServiceBillingModeMetered,
-		QuotaExpiresAt:       &expiresAt,
-		AcceptingOrders:      true,
-		PaymentWindowMinutes: 10,
-		ReviewStatus:         ServiceReviewStatusApproved,
-		PublicationStatus:    ServicePublicationStatusOnline,
-		ModerationStatus:     ServiceModerationStatusClear,
+		OwnerContactMethodID:  "contact-1",
+		BillingMode:           ServiceBillingModeMetered,
+		AvailableUSDAllowance: "20.000000",
+		QuotaExpiresAt:        &expiresAt,
+		AcceptingOrders:       true,
+		PaymentWindowMinutes:  10,
+		ReviewStatus:          ServiceReviewStatusApproved,
+		PublicationStatus:     ServicePublicationStatusOnline,
+		ModerationStatus:      ServiceModerationStatusClear,
 		PaymentOptions: []PaymentOption{{
 			PaymentMethod: "usdt",
 			Enabled:       true,
@@ -156,6 +158,7 @@ func validMeteredCreateInput() CreateServiceInput {
 		BillingMode:                      ServiceBillingModeMetered,
 		DeclaredCNYPerUSDAllowance:       "0.8",
 		DeclaredMaxUSDAllowancePerIntent: "500",
+		AvailableUSDAllowance:            "500",
 		MinimumIntentCNY:                 "20",
 		MaximumIntentCNY:                 "300",
 		QuotaExpiresAt:                   "2026-07-08T00:00:00Z",

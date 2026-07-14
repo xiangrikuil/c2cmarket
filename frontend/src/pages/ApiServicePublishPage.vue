@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, reactive, ref, watch } from 'vue'
-import { RouterLink, useRoute } from 'vue-router'
+import { RouterLink, useRoute, useRouter } from 'vue-router'
 import { useMutation, useQueryClient } from '@tanstack/vue-query'
 import { ExternalLink, Eye, Send, ShieldCheck } from 'lucide-vue-next'
 import { toast } from 'vue-sonner'
@@ -13,7 +13,7 @@ import PriceInventorySection from '@/components/api-service-publish/PriceInvento
 import ProviderCategorySelector from '@/components/api-service-publish/ProviderCategorySelector.vue'
 import type { ApiProviderCategory, ApiServicePublishForm, DistributionSystem } from '@/components/api-service-publish/types'
 import { toggleSelectedModel } from '@/components/api-service-publish/modelSelection'
-import { apiPublishAssistantSummary, apiServiceDetailPath } from '@/components/api-service-publish/publishAssistant'
+import { apiPublishAssistantSummary } from '@/components/api-service-publish/publishAssistant'
 import {
   apiQuotaBoundaryNotice,
   applySimplifiedApiQuotaDefaults,
@@ -38,6 +38,7 @@ import { trackAnalytics } from '@/lib/analytics'
 import { beijingDateTimeInputToISOString, defaultQuotaExpiresAtInput } from '@/lib/apiQuotaExpiration'
 import { apiPaymentSettingsMissingReason, cloneApiPaymentAccountSettings, isApiPaymentAccountSettingsComplete, isApiPaymentOptionComplete, isApiPaymentWindowValid } from '@/lib/apiPaymentSettings'
 import { useApiPaymentAccountSettingsQuery, useModelCatalog, useMyProfileQuery } from '@/queries/useMarketQueries'
+import { useUnsavedChangesGuard } from '@/composables/useUnsavedChangesGuard'
 
 type Field =
   | 'merchantIdentity'
@@ -59,11 +60,13 @@ const { data: accountPaymentSettings, isLoading: paymentSettingsLoading } = useA
 const { data: myProfile, isLoading: profileLoading } = useMyProfileQuery()
 const queryClient = useQueryClient()
 const route = useRoute()
+const router = useRouter()
 const analyticsSourceRoute = () => String(route.name ?? 'unknown')
-const submittedId = ref('')
 const previewOpen = ref(false)
 const errors = reactive<FieldErrors<Field>>({})
 const pendingProviderCategory = ref<ApiProviderCategory | null>(null)
+const formDirty = ref(false)
+useUnsavedChangesGuard(formDirty, 'API 服务配置尚未发布，确认离开当前页面？')
 
 const form = reactive<ApiServicePublishForm>({
   merchantIdentityMode: 'store_alias',
@@ -120,7 +123,6 @@ const incompatibleSelectedModels = computed(() => selectedModels.value.filter(it
 const missingSelectedModels = computed(() => form.selectedModels.filter(item => item.enabled && !catalogById.value.has(item.modelId)))
 const pendingProviderCategoryLabel = computed(() => pendingProviderCategory.value ? providerCategoryLabels[pendingProviderCategory.value] : '')
 const quotaForMinimumPurchase = computed(() => formatUsdQuotaForCny(form.cnyPerUsdCredit, form.minimumPurchaseCny ?? 0))
-const submittedServicePath = computed(() => apiServiceDetailPath(submittedId.value))
 const enabledPayments = computed(() => enabledPaymentOptions(form))
 const paymentWindowValid = computed(() => isApiPaymentWindowValid(form.paymentWindowMinutes))
 const paymentSettingsComplete = computed(() => isApiPaymentAccountSettingsComplete(form))
@@ -136,7 +138,7 @@ const profileMerchantDisplayName = computed(() => profileDisplayName.value || pr
 const merchantDisplayNameStatus = computed(() => {
   if (profileLoading.value && !form.merchantDisplayName.trim()) return '正在读取个人资料显示名称...'
   if (form.merchantDisplayName.trim()) return '发布时会快照当前个人资料显示名称；单条 API 额度不单独改名。'
-  return '请先到我的中心设置显示名称。'
+  return '请先到个人中心设置显示名称。'
 })
 
 function syncMerchantDisplayNameSnapshot() {
@@ -196,10 +198,10 @@ function validate(requireComplete: boolean) {
   const merchantDisplayName = form.merchantDisplayName.trim()
   if (!['public_profile', 'store_alias'].includes(form.merchantIdentityMode)) next.merchantIdentity = '请选择对外展示身份。'
   if (form.merchantIdentityMode === 'store_alias') {
-    if (!merchantDisplayName) next.merchantDisplayName = profileLoading.value ? '正在读取个人资料显示名称。' : '请先到我的中心设置显示名称。'
-    else if (displayNameLength(merchantDisplayName) > 32) next.merchantDisplayName = '商家展示名最多 32 个字符，请到我的中心调整。'
-    else if (hasContactLikeText(merchantDisplayName)) next.merchantDisplayName = '商家展示名不能包含联系方式、链接或 linux.do 用户名，请到我的中心调整。'
-    else if (hasMisleadingMerchantName(merchantDisplayName)) next.merchantDisplayName = '商家展示名不能包含官方、担保、兜底等误导词，请到我的中心调整。'
+    if (!merchantDisplayName) next.merchantDisplayName = profileLoading.value ? '正在读取个人资料显示名称。' : '请先到个人中心设置显示名称。'
+    else if (displayNameLength(merchantDisplayName) > 32) next.merchantDisplayName = '商家展示名最多 32 个字符，请到个人中心调整。'
+    else if (hasContactLikeText(merchantDisplayName)) next.merchantDisplayName = '商家展示名不能包含联系方式、链接或 linux.do 用户名，请到个人中心调整。'
+    else if (hasMisleadingMerchantName(merchantDisplayName)) next.merchantDisplayName = '商家展示名不能包含官方、担保、兜底等误导词，请到个人中心调整。'
   }
   if (!['sub2api', 'other'].includes(form.distributionSystem)) next.distributionSystem = '请选择接入类型。'
   if (form.distributionSystem === 'other' && (!Number.isFinite(form.defaultMultiplier) || form.defaultMultiplier <= 0)) {
@@ -282,11 +284,11 @@ const publishBlockReason = computed(() => {
   const pendingItem = completeness.value.find(item => item.status !== 'done')
   if (pendingItem?.label === '收款方式') {
     if (!paymentWindowValid.value) return '买家确认付款窗口固定为 10 分钟。'
-    if (!accountPaymentSettingsComplete.value || !enabledPayments.value.length) return '先到我的中心配置 API 收款设置，发布后才会进入公开服务列表。'
-    return apiPaymentSettingsMissingReason(form) || '请到我的中心补全已启用收款方式。'
+    if (!accountPaymentSettingsComplete.value || !enabledPayments.value.length) return '先到个人中心配置 API 收款设置，发布后才会进入公开服务列表。'
+    return apiPaymentSettingsMissingReason(form) || '请到个人中心补全已启用收款方式。'
   }
   if (pendingItem?.label === '展示身份') {
-    return profileLoading.value ? '正在读取个人资料显示名称。' : '请先到我的中心设置显示名称。'
+    return profileLoading.value ? '正在读取个人资料显示名称。' : '请先到个人中心设置显示名称。'
   }
   if (pendingItem) return `请先补全：${pendingItem.label}。`
   return '请先补全发布配置。'
@@ -301,8 +303,8 @@ const publishMutation = useMutation({
       status: 'reviewing',
     })
   },
-  async onSuccess(result) {
-    submittedId.value = String(result.id)
+  async onSuccess() {
+    formDirty.value = false
     await invalidateApiServicePublishQueries()
     trackAnalytics('api_service_publish_success', {
       source_route: analyticsSourceRoute(),
@@ -311,7 +313,8 @@ const publishMutation = useMutation({
       delivery_mode: form.deliveryModes[0],
       minimum_purchase_cny: form.minimumPurchaseCny,
     })
-    toast.success('API 服务已发布并开启接单，已进入公开服务列表。')
+    toast.success('API 服务已发布并开启接单。')
+    await router.replace('/my/api-services')
   },
   onError(error) {
     toast.error(error instanceof Error ? error.message : 'API 服务发布失败，请检查配置后重试。')
@@ -403,11 +406,11 @@ function confirmProviderCategoryChange() {
 </script>
 
 <template>
-  <div class="api-publish-page space-y-4 pb-20 md:pb-0">
+  <div class="api-publish-page space-y-4 pb-20 md:pb-0" @input="formDirty = true" @change="formDirty = true">
     <div class="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
       <div>
         <h1 class="text-2xl font-semibold md:text-3xl">发布 API 额度</h1>
-        <p class="mt-2 max-w-3xl text-sm text-muted-foreground">快速发布可售额度；买家提交意向后，双方站外确认接入细节。</p>
+        <p class="mt-2 max-w-3xl text-sm text-muted-foreground">快速发布可售额度；买家创建订单后，双方站外确认接入细节。</p>
       </div>
       <div class="flex gap-2">
         <Button variant="outline" @click="preview"><Eye class="h-4 w-4" />预览</Button>
@@ -439,13 +442,6 @@ function confirmProviderCategoryChange() {
     <div v-if="errors.sensitive" class="rounded-lg border border-destructive/30 bg-destructive/5 px-4 py-3 text-sm text-destructive">
       {{ errors.sensitive }}
     </div>
-    <div v-if="submittedId" class="flex flex-col gap-3 rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800 md:flex-row md:items-center md:justify-between">
-      <span>API 服务已发布：{{ submittedId }}。可以打开详情检查前台展示效果。</span>
-      <RouterLink v-if="submittedServicePath" :to="submittedServicePath">
-        <Button size="sm">查看服务详情</Button>
-      </RouterLink>
-    </div>
-
     <div class="api-publish-layout grid min-w-0 gap-4 lg:items-start">
       <section class="min-w-0 space-y-3">
         <PriceInventorySection :form="form" :errors="errors" />
@@ -492,7 +488,6 @@ function confirmProviderCategoryChange() {
         :completeness="completeness"
         :risks="risks"
         :quota-for-minimum-purchase="quotaForMinimumPurchase"
-        :submitted-id="submittedId"
       />
     </div>
 
@@ -500,7 +495,7 @@ function confirmProviderCategoryChange() {
       <div class="grid gap-3 md:grid-cols-[minmax(0,1fr)_auto] md:items-center">
         <div class="space-y-3">
           <div class="font-semibold">展示身份</div>
-          <p class="text-sm text-muted-foreground">默认不公开社区身份，仅展示商家展示名；买家提交意向后再站外确认 API 细节。</p>
+          <p class="text-sm text-muted-foreground">默认不公开社区身份，仅展示商家展示名；买家创建订单后再站外确认 API 细节。</p>
           <label class="flex items-start gap-2 text-sm">
             <input
               type="checkbox"
@@ -568,7 +563,6 @@ function confirmProviderCategoryChange() {
           :completeness="completeness"
           :risks="risks"
           :quota-for-minimum-purchase="quotaForMinimumPurchase"
-          :submitted-id="submittedId"
           preview-only
         />
       </DialogContent>

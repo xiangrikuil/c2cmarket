@@ -8,12 +8,12 @@ const productCatalogCategoryAdminStorageKey = 'marketplace.admin.product-categor
 const productCatalogAdminStorageKey = 'marketplace.admin.product-plans'
 
 const categoryRows: ProductCategory[] = [
-  { id: '00000000-0000-0000-0000-000000000101', code: 'gpt', displayName: 'GPT', sortOrder: 10, active: true },
-  { id: '00000000-0000-0000-0000-000000000102', code: 'claude', displayName: 'Claude', sortOrder: 20, active: true },
-  { id: '00000000-0000-0000-0000-000000000103', code: 'cursor', displayName: 'Cursor', sortOrder: 30, active: true },
-  { id: '00000000-0000-0000-0000-000000000104', code: 'gemini', displayName: 'Gemini', sortOrder: 40, active: true },
-  { id: '00000000-0000-0000-0000-000000000105', code: 'perplexity', displayName: 'Perplexity', sortOrder: 50, active: true },
-  { id: '00000000-0000-0000-0000-000000000199', code: 'other', displayName: '其他', sortOrder: 999, active: true },
+  { id: '00000000-0000-0000-0000-000000000101', code: 'gpt', displayName: 'GPT', iconDataUrl: '', sortOrder: 10, active: true },
+  { id: '00000000-0000-0000-0000-000000000102', code: 'claude', displayName: 'Claude', iconDataUrl: '', sortOrder: 20, active: true },
+  { id: '00000000-0000-0000-0000-000000000103', code: 'cursor', displayName: 'Cursor', iconDataUrl: '', sortOrder: 30, active: true },
+  { id: '00000000-0000-0000-0000-000000000104', code: 'gemini', displayName: 'Gemini', iconDataUrl: '', sortOrder: 40, active: true },
+  { id: '00000000-0000-0000-0000-000000000105', code: 'perplexity', displayName: 'Perplexity', iconDataUrl: '', sortOrder: 50, active: true },
+  { id: '00000000-0000-0000-0000-000000000199', code: 'other', displayName: '其他', iconDataUrl: '', sortOrder: 999, active: true },
 ]
 
 function readMockProductCategories(): ProductCategory[] {
@@ -113,6 +113,7 @@ function normalizeCategoryInput(input: ProductCategoryInput): ProductCategoryInp
     ...input,
     code: input.code.trim().toLowerCase(),
     displayName: input.displayName.trim(),
+    iconDataUrl: input.iconDataUrl.trim(),
   }
 }
 
