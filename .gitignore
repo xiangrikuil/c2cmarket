@@ -12,6 +12,7 @@ output/
 .env.*
 !.env.example
 !.env.production.example
+!.env.staging.example
 !frontend/.env.development
 
 frontend/node_modules/

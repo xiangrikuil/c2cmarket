@@ -85,6 +85,7 @@ func TestLoadAllowsProductionWhenPersistentConfigIsComplete(t *testing.T) {
 	t.Setenv("OAUTH_TOKEN_URL", "https://linux.do/oauth/token")
 	t.Setenv("OAUTH_USERINFO_URL", "https://linux.do/api/user")
 	t.Setenv("OAUTH_REDIRECT_URL", "https://c2cmarket.local/api/v1/auth/oauth/callback")
+	t.Setenv("FRONTEND_ORIGIN", "https://c2cmarket.example/")
 	t.Setenv("CONTACT_ENCRYPTION_KEY", "production-encryption-key")
 	t.Setenv("CONTACT_FINGERPRINT_KEY", "production-fingerprint-key")
 	t.Setenv("CONTACT_KEY_VERSION", "prod-v1")
@@ -107,8 +108,46 @@ func TestLoadAllowsProductionWhenPersistentConfigIsComplete(t *testing.T) {
 	if len(cfg.AllowedOrigins) != 1 || cfg.AllowedOrigins[0] != "https://c2cmarket.example" {
 		t.Fatalf("unexpected allowed origins: %+v", cfg.AllowedOrigins)
 	}
+	if cfg.FrontendOrigin != "https://c2cmarket.example" {
+		t.Fatalf("unexpected frontend origin: %q", cfg.FrontendOrigin)
+	}
 	if cfg.EmailProvider != "aliyun_directmail" || cfg.SMTP.Host != "smtpdm.aliyun.com" || cfg.SMTP.Port != 465 || cfg.SMTP.FromAddress != "noreply@example.com" {
 		t.Fatalf("unexpected SMTP config: provider=%s smtp=%+v", cfg.EmailProvider, cfg.SMTP)
+	}
+}
+
+func TestNormalizeFrontendOrigin(t *testing.T) {
+	tests := []struct {
+		name         string
+		value        string
+		requireHTTPS bool
+		want         string
+		wantError    bool
+	}{
+		{name: "production HTTPS origin", value: "https://C2CMarket.Shop/", requireHTTPS: true, want: "https://c2cmarket.shop"},
+		{name: "development HTTP origin", value: "http://127.0.0.1:5173", want: "http://127.0.0.1:5173"},
+		{name: "production rejects HTTP", value: "http://c2cmarket.shop", requireHTTPS: true, wantError: true},
+		{name: "rejects path", value: "https://c2cmarket.shop/app", requireHTTPS: true, wantError: true},
+		{name: "rejects query", value: "https://c2cmarket.shop?preview=1", requireHTTPS: true, wantError: true},
+		{name: "rejects relative value", value: "c2cmarket.shop", requireHTTPS: true, wantError: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := normalizeFrontendOrigin(tt.value, tt.requireHTTPS)
+			if tt.wantError {
+				if err == nil {
+					t.Fatalf("expected %q to fail, got %q", tt.value, got)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("normalize origin: %v", err)
+			}
+			if got != tt.want {
+				t.Fatalf("expected %q, got %q", tt.want, got)
+			}
+		})
 	}
 }
 
@@ -164,7 +203,7 @@ func TestLoadRejectsProductionDirectMailNonImplicitTLSPort(t *testing.T) {
 	}
 }
 
-func TestLoadRejectsProductionMissingAllowedOrigins(t *testing.T) {
+func TestLoadRejectsProductionMissingFrontendOrigin(t *testing.T) {
 	t.Setenv("PORT", "")
 	t.Setenv("APP_ENV", EnvProduction)
 	t.Setenv("DATABASE_URL", "postgres://example")

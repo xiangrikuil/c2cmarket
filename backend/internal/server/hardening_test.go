@@ -71,6 +71,40 @@ func TestProductionOriginRejectsUnsafeBrowserRequest(t *testing.T) {
 	assertProblemCode(t, response, domain.CodeCSRFTokenInvalid)
 }
 
+func TestOAuthCallbackRedirectsToConfiguredFrontendOrigin(t *testing.T) {
+	tests := []struct {
+		name     string
+		returnTo string
+		want     string
+	}{
+		{name: "preserves safe frontend path", returnTo: "/market?tab=api", want: "https://staging.c2cmarket.shop/market?tab=api"},
+		{name: "rejects protocol relative target", returnTo: "//evil.example/path", want: "https://staging.c2cmarket.shop/"},
+		{name: "rejects absolute target", returnTo: "https://evil.example/path", want: "https://staging.c2cmarket.shop/"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			server := NewServer(app.NewService(), ServerOptions{
+				FrontendOrigin: "https://staging.c2cmarket.shop",
+				OAuth:          OAuthOptions{ProviderMode: "fake"},
+			})
+			state := "oauth-state"
+			request := httptest.NewRequest(http.MethodGet, "/api/v1/auth/oauth/callback?state="+state+"&code=test-user", nil)
+			request.AddCookie(&http.Cookie{Name: oauthStateCookieName, Value: state + "|" + tt.returnTo})
+			response := httptest.NewRecorder()
+
+			server.ServeHTTP(response, request)
+
+			if response.Code != http.StatusFound {
+				t.Fatalf("expected redirect, got %d body %s", response.Code, response.Body.String())
+			}
+			if location := response.Header().Get("Location"); location != tt.want {
+				t.Fatalf("expected redirect to %q, got %q", tt.want, location)
+			}
+		})
+	}
+}
+
 func TestRateLimitedEndpointReturnsProblem429(t *testing.T) {
 	server := &Server{
 		app:         app.NewService(),
