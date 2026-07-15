@@ -47,6 +47,7 @@ type ServerOptions struct {
 	NavigationBadges   NavigationBadgeService
 	RealtimeHub        *realtime.Hub
 	AppEnv             string
+	FrontendOrigin     string
 	AllowedOrigins     []string
 	OAuth              OAuthOptions
 	TrustXForwardedFor bool
@@ -310,6 +311,7 @@ type Server struct {
 	navigationBadges     NavigationBadgeService
 	realtimeHub          *realtime.Hub
 	oauth                OAuthOptions
+	frontendOrigin       string
 	cookieSecure         bool
 	allowedOrigins       []string
 	rateLimiter          *middleware.RateLimiter
@@ -343,6 +345,7 @@ func NewServer(service ApplicationService, options ...ServerOptions) http.Handle
 		navigationBadges:     navigationBadges,
 		realtimeHub:          realtimeHub,
 		oauth:                option.OAuth,
+		frontendOrigin:       option.FrontendOrigin,
 		cookieSecure:         option.AppEnv == config.EnvProduction,
 		allowedOrigins:       append([]string(nil), option.AllowedOrigins...),
 		rateLimiter:          middleware.NewRateLimiter(time.Minute),

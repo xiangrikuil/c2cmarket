@@ -202,7 +202,7 @@ If-Match: "<version>"                            # required for versioned admin 
 - `POST /api/v1/auth/dev-session` is a development entry only. It must be disabled outside development/test by `APP_ENV` / `ENABLE_DEV_AUTH` startup configuration.
 - First-release public registration/login is linux.do OAuth only. Native username/password is a backup login path for accounts with `linuxDoBinding.bound=true`, plus the explicit first-admin bootstrap account. `POST /api/v1/auth/password` and `POST /api/v1/auth/password/login` must reject unbound non-admin users with `403 LINUX_DO_BINDING_REQUIRED` before creating or changing credentials. Password credentials must be stored only as salted hashes; plaintext passwords must never be stored in PostgreSQL, logs, OpenAPI examples, or frontend state.
 - `POST /api/v1/auth/email-registration/start` and `POST /api/v1/auth/email-registration/confirm` are retained only as stable disabled compatibility endpoints. Both return `403 EMAIL_REGISTRATION_DISABLED` and must not send registration email, create challenges, create users, create sessions, or set session cookies. Login-bound `/me/email-verification/*` remains a profile/contact verification feature.
-- OAuth login is another real session entry. `GET /api/v1/auth/oauth/start?returnTo=/path` sets an HttpOnly OAuth state cookie and returns `{authorizationUrl}`. `GET /api/v1/auth/oauth/callback?code=...&state=...` must compare query state with the state cookie, exchange the code for a provider profile, upsert `users`, `auth_identities`, `linux_do_bindings`, create an `auth_sessions` row, set `c2c_session`, clear the state cookie, and redirect to the sanitized same-origin `returnTo`.
+- OAuth login is another real session entry. `GET /api/v1/auth/oauth/start?returnTo=/path` sets an HttpOnly OAuth state cookie and returns `{authorizationUrl}`. `GET /api/v1/auth/oauth/callback?code=...&state=...` must compare query state with the state cookie, exchange the code for a provider profile, upsert `users`, `auth_identities`, `linux_do_bindings`, create an `auth_sessions` row, set `c2c_session`, clear the state cookie, and redirect to the normalized `FRONTEND_ORIGIN` plus the sanitized relative `returnTo`. Production `FRONTEND_ORIGIN` must be an absolute HTTPS origin without credentials, path, query, or fragment.
 - OAuth provider mode can be `fake` only in development/test for smoke automation. Production must use `OAUTH_PROVIDER_MODE=oauth2` with `OAUTH_CLIENT_ID`, `OAUTH_CLIENT_SECRET`, `OAUTH_AUTHORIZE_URL`, `OAUTH_TOKEN_URL`, `OAUTH_USERINFO_URL`, and `OAUTH_REDIRECT_URL`.
 - OAuth token responses are request-time credentials only. Do not persist provider access tokens, refresh tokens, userinfo raw payloads, session cookies, or OAuth codes in database rows, logs, OpenAPI examples, or frontend state.
 - `GET /api/v1/auth/session` returns `user.permissions` and `user.linuxDoBinding`. Admin UI and backend admin routes must derive admin authority from the returned backend session/user permission source, not frontend-selected mock roles.
@@ -1538,7 +1538,7 @@ MAIL_FROM_NAME=C2CMarket
 - `cmd/api` must use explicit `http.Server` with `ReadHeaderTimeout=5s`, `ReadTimeout=15s`, `WriteTimeout=30s`, and `IdleTimeout=60s`. It must handle `SIGINT` and `SIGTERM`, call `Shutdown(ctx)` with a bounded timeout, treat `http.ErrServerClosed` as normal, and close the PostgreSQL pool during app cleanup.
 - Production cookies for `c2c_session` and OAuth state must use `Secure=true`, `HttpOnly=true`, and `SameSite=Lax`; clear cookies must use matching Path/Secure/SameSite values.
 - OAuth token exchange and userinfo requests must use a dedicated `http.Client{Timeout: 10 * time.Second}` or stricter equivalent and must limit JSON response reads to 1 MiB.
-- `ALLOWED_ORIGINS` / `FRONTEND_ORIGIN` is required in production. Cookie-authenticated CORS responses must echo an allowlisted origin and must not use `Access-Control-Allow-Origin: *`.
+- `FRONTEND_ORIGIN` is required in production and is always included in the CORS allowlist. `ALLOWED_ORIGINS` may add other explicit browser origins. Cookie-authenticated CORS responses must echo an allowlisted origin and must not use `Access-Control-Allow-Origin: *`.
 - Production unsafe browser methods with an `Origin` outside the allowlist return `403 CSRF_TOKEN_INVALID` before handler logic.
 - Production email uses Aliyun DirectMail SMTP over implicit TLS on port 465. Do not use Alibaba Cloud AccessKey or DirectMail API SDK for backend email. SMTP passwords are environment-only secrets and must not be printed in logs, wrapped into errors, or copied into docs beyond placeholder values.
 - Email registration uses `email_verification_codes.purpose='email_registration'`, stores only code hashes, creates the verified-email user and auth session in one PostgreSQL transaction, and sends the registration-success email only after commit. Username defaults to the sanitized email prefix and appends a short random suffix on conflict. Email-registered users must return `linuxDoBinding.bound=false` until a separate linux.do binding flow exists.
@@ -1556,7 +1556,7 @@ MAIL_FROM_NAME=C2CMarket
 
 | Condition | HTTP | Stable code |
 | --- | ---: | --- |
-| Production missing `ALLOWED_ORIGINS` and `FRONTEND_ORIGIN` | startup fail | n/a |
+| Production missing or invalid `FRONTEND_ORIGIN` | startup fail | n/a |
 | Production dev auth enabled | startup fail | n/a |
 | Production fake OAuth provider | startup fail | n/a |
 | Configured database migration version below expected version | 503 | readiness JSON with reason |
@@ -1583,7 +1583,7 @@ MAIL_FROM_NAME=C2CMarket
 
 ### 6. Tests Required
 
-- Config tests for production allowed-origin requirement and fake/dev-auth rejection.
+- Config tests for production frontend-origin validation and fake/dev-auth rejection.
 - Server tests for production cookie `Secure`, clear-cookie consistency, Origin rejection, strict JSON body rejection, rate-limit `429 RATE_LIMITED`, forged forwarding-header bypass prevention, trusted-proxy forwarding behavior, OAuth oversized response rejection, and pagination validation.
 - Readiness tests for configured current schema, configured behind schema, configured dirty schema, database query failure, and no-database local mode. Assertions must cover HTTP status plus `schemaVersion`, `schemaDirty`, `expectedSchemaVersion`, and reason where applicable.
 - Request logging tests must prove the log line includes method, path without query string, status, duration, and request ID, and omits request body and query string content.

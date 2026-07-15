@@ -252,7 +252,7 @@ func (s *Server) handleOAuthCallback(w http.ResponseWriter, r *http.Request) {
 	s.setSessionCookie(w, session)
 	s.clearOAuthStateCookie(w)
 	_ = user
-	http.Redirect(w, r, cleanReturnTo(returnTo), http.StatusFound)
+	http.Redirect(w, r, s.oauthRedirectTarget(returnTo), http.StatusFound)
 }
 
 func (s *Server) handleGetSession(w http.ResponseWriter, r *http.Request) {
@@ -565,6 +565,14 @@ func cleanReturnTo(value string) string {
 		return "/"
 	}
 	return value
+}
+
+func (s *Server) oauthRedirectTarget(returnTo string) string {
+	path := cleanReturnTo(returnTo)
+	if s.frontendOrigin == "" {
+		return path
+	}
+	return strings.TrimRight(s.frontendOrigin, "/") + path
 }
 
 func stringPtr(value string) *string {

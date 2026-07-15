@@ -137,6 +137,7 @@ func New(ctx context.Context, cfg config.Config) (*App, error) {
 		NavigationBadges:   navigationBadges,
 		RealtimeHub:        realtimeHub,
 		AppEnv:             cfg.AppEnv,
+		FrontendOrigin:     cfg.FrontendOrigin,
 		AllowedOrigins:     cfg.AllowedOrigins,
 		TrustXForwardedFor: cfg.TrustXForwardedFor,
 		TrustedProxies:     cfg.TrustedProxies,

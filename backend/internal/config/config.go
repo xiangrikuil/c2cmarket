@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"net/netip"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -19,6 +20,7 @@ type Config struct {
 	AppEnv                 string
 	DatabaseURL            string
 	EnableDevAuth          bool
+	FrontendOrigin         string
 	AllowedOrigins         []string
 	OAuthProviderMode      string
 	OAuthClientID          string
@@ -59,7 +61,8 @@ func Load() (Config, error) {
 		Port:                   strings.TrimSpace(os.Getenv("PORT")),
 		AppEnv:                 strings.ToLower(strings.TrimSpace(os.Getenv("APP_ENV"))),
 		DatabaseURL:            strings.TrimSpace(os.Getenv("DATABASE_URL")),
-		AllowedOrigins:         parseAllowedOrigins(os.Getenv("ALLOWED_ORIGINS"), os.Getenv("FRONTEND_ORIGIN")),
+		FrontendOrigin:         strings.TrimSpace(os.Getenv("FRONTEND_ORIGIN")),
+		AllowedOrigins:         parseAllowedOrigins(os.Getenv("ALLOWED_ORIGINS")),
 		OAuthProviderMode:      strings.ToLower(strings.TrimSpace(os.Getenv("OAUTH_PROVIDER_MODE"))),
 		OAuthClientID:          strings.TrimSpace(os.Getenv("OAUTH_CLIENT_ID")),
 		OAuthClientSecret:      strings.TrimSpace(os.Getenv("OAUTH_CLIENT_SECRET")),
@@ -88,6 +91,17 @@ func Load() (Config, error) {
 	}
 	if cfg.AppEnv == "" {
 		cfg.AppEnv = EnvDevelopment
+	}
+	if cfg.FrontendOrigin == "" && cfg.AppEnv != EnvProduction {
+		cfg.FrontendOrigin = "http://127.0.0.1:5173"
+	}
+	if cfg.FrontendOrigin != "" {
+		normalizedOrigin, err := normalizeFrontendOrigin(cfg.FrontendOrigin, cfg.AppEnv == EnvProduction)
+		if err != nil {
+			return Config{}, err
+		}
+		cfg.FrontendOrigin = normalizedOrigin
+		cfg.AllowedOrigins = parseAllowedOrigins(os.Getenv("ALLOWED_ORIGINS"), cfg.FrontendOrigin)
 	}
 	if cfg.OAuthProviderMode == "" {
 		cfg.OAuthProviderMode = "fake"
@@ -176,6 +190,9 @@ func Load() (Config, error) {
 		if cfg.OAuthClientID == "" || cfg.OAuthClientSecret == "" || cfg.OAuthAuthorizeURL == "" || cfg.OAuthTokenURL == "" || cfg.OAuthUserInfoURL == "" || cfg.OAuthRedirectURL == "" {
 			return Config{}, fmt.Errorf("OAuth provider configuration is required in production")
 		}
+		if cfg.FrontendOrigin == "" {
+			return Config{}, fmt.Errorf("FRONTEND_ORIGIN is required in production")
+		}
 		if len(cfg.AllowedOrigins) == 0 {
 			return Config{}, fmt.Errorf("ALLOWED_ORIGINS or FRONTEND_ORIGIN is required in production")
 		}
@@ -251,6 +268,26 @@ func parseBoolEnv(name, raw string, fallback bool) (bool, error) {
 
 func parseAllowedOrigins(values ...string) []string {
 	return parseCommaSeparated(values...)
+}
+
+func normalizeFrontendOrigin(value string, requireHTTPS bool) (string, error) {
+	parsed, err := url.Parse(strings.TrimSpace(value))
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" || parsed.Opaque != "" {
+		return "", fmt.Errorf("FRONTEND_ORIGIN must be an absolute HTTP(S) origin")
+	}
+	parsed.Scheme = strings.ToLower(parsed.Scheme)
+	if parsed.Scheme != "http" && parsed.Scheme != "https" {
+		return "", fmt.Errorf("FRONTEND_ORIGIN must use http or https")
+	}
+	if requireHTTPS && parsed.Scheme != "https" {
+		return "", fmt.Errorf("FRONTEND_ORIGIN must use https in production")
+	}
+	if parsed.User != nil || (parsed.Path != "" && parsed.Path != "/") || parsed.RawQuery != "" || parsed.Fragment != "" {
+		return "", fmt.Errorf("FRONTEND_ORIGIN must not include credentials, path, query, or fragment")
+	}
+	parsed.Host = strings.ToLower(parsed.Host)
+	parsed.Path = ""
+	return parsed.String(), nil
 }
 
 func parseCommaSeparated(values ...string) []string {

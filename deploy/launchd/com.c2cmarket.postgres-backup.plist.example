@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.c2cmarket.postgres-backup</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/zsh</string>
+    <string>/Users/CHANGE_ME/crypto/c2c-market/scripts/backup-production-postgres.sh</string>
+  </array>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+    <key>ENV_FILE</key>
+    <string>/Users/CHANGE_ME/crypto/c2c-market/.env.production</string>
+    <key>COMPOSE_PROJECT</key>
+    <string>c2c-prod</string>
+    <key>R2_REMOTE</key>
+    <string>c2cmarket-r2</string>
+    <key>R2_BUCKET</key>
+    <string>c2cmarket-backups</string>
+    <key>R2_PREFIX</key>
+    <string>postgres/production</string>
+  </dict>
+
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Hour</key>
+    <integer>3</integer>
+    <key>Minute</key>
+    <integer>30</integer>
+  </dict>
+
+  <key>RunAtLoad</key>
+  <true/>
+  <key>StandardOutPath</key>
+  <string>/Users/CHANGE_ME/Library/Logs/c2cmarket-postgres-backup.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/CHANGE_ME/Library/Logs/c2cmarket-postgres-backup-error.log</string>
+</dict>
+</plist>

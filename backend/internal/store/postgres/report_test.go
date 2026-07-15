@@ -255,18 +255,30 @@ func TestReportSchemaUpgradeMigrationAlignsLegacyDatabases(t *testing.T) {
 	}
 	sql := string(data)
 	for _, required := range []string{
-		"ADD COLUMN canonical_target_type text",
-		"ADD COLUMN canonical_target_id text",
-		"ADD COLUMN target_snapshot_json jsonb",
+		"ADD COLUMN IF NOT EXISTS canonical_target_type text",
+		"ADD COLUMN IF NOT EXISTS canonical_target_id text",
+		"ADD COLUMN IF NOT EXISTS target_snapshot_json jsonb",
 		"SET reason_code = 'other'",
 		"row_number() OVER",
 		"SET status = 'closed'",
-		"CREATE UNIQUE INDEX ux_reports_active_canonical_target",
-		"ADD COLUMN public_result_code text NOT NULL DEFAULT 'no_action'",
-		"CREATE TABLE moderation_audit_logs",
+		"CREATE UNIQUE INDEX IF NOT EXISTS ux_reports_active_canonical_target",
+		"ADD COLUMN IF NOT EXISTS public_result_code text NOT NULL DEFAULT 'no_action'",
+		"CREATE TABLE IF NOT EXISTS moderation_audit_logs",
 	} {
 		if !strings.Contains(sql, required) {
 			t.Fatalf("upgrade migration missing required contract %q", required)
+		}
+	}
+
+	downPath := filepath.Join("..", "..", "..", "migrations", "000048_report_schema_upgrade.down.sql")
+	downData, err := os.ReadFile(downPath)
+	if err != nil {
+		t.Fatalf("read upgrade down migration: %v", err)
+	}
+	downSQL := string(downData)
+	for _, forbidden := range []string{"DROP COLUMN", "DROP TABLE"} {
+		if strings.Contains(downSQL, forbidden) {
+			t.Fatalf("upgrade down migration must preserve baseline-owned objects, found %q", forbidden)
 		}
 	}
 }

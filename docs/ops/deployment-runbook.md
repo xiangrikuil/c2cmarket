@@ -1,6 +1,6 @@
 # C2CMarket Deployment Runbook
 
-日期：2026-06-23
+日期：2026-07-15
 执行者：Codex
 
 ## Scope
@@ -51,10 +51,10 @@ VITE_ENABLE_MOCK=false
 `OAUTH_PROVIDER_MODE=fake` is only for local automated smoke. `/api/v1/auth/dev-session` is only for development/test.
 `EMAIL_PROVIDER=development` is only for local development/test. It exposes `devCode` for automation and must not be used in production.
 
-`FRONTEND_ORIGIN` is the primary browser origin for cookie-authenticated requests.
-`ALLOWED_ORIGINS` can contain the same value or a comma-separated allowlist when
-multiple frontend origins are intentionally deployed. Production startup rejects
-an empty origin allowlist, and CORS must never use `*` with session cookies.
+`FRONTEND_ORIGIN` is the primary browser origin for cookie-authenticated requests
+and OAuth callback redirects. Production requires it to be an absolute HTTPS
+origin and automatically adds it to the CORS allowlist. `ALLOWED_ORIGINS` can add
+other explicit origins. CORS must never use `*` with session cookies.
 
 DirectMail settings:
 
@@ -87,67 +87,44 @@ include raw search terms, URL query strings, user IDs, contact values, report te
 linux.do identifiers, payment instructions, API keys, tokens, sessions, cookies, or
 panel credentials.
 
-## Local UI Preview Through Cloudflare Tunnel
+## Cloudflare Pages and Local Backends
 
-Use this path while the Vue UI is still being changed locally. It publishes the
-Vite development server and its existing `/api`, `/health`, and `/readyz` proxies
-through one HTTPS origin. The Mac, Vite process, backend, PostgreSQL, and
-`cloudflared` connector must remain running.
+The current release topology serves production and staging frontends from
+Cloudflare Pages and exposes two isolated local backend stacks through one
+Cloudflare Tunnel. Follow
+[`cloudflare-pages-local-backends.md`](./cloudflare-pages-local-backends.md) for
+the authoritative hostnames, Compose project names, Access policy, OAuth
+callbacks, Tunnel ingress, and R2 backup procedure.
 
-One-time Cloudflare setup:
-
-```bash
-cloudflared tunnel login
-cloudflared tunnel create c2cmarket-local
-cloudflared tunnel route dns c2cmarket-local c2cmarket.shop
-```
-
-Start the local processes:
-
-```bash
-PATH=/Users/lixinjian/.nvm/versions/node/v24.13.0/bin:$PATH \
-pnpm --dir frontend dev --host 127.0.0.1
-
-cloudflared tunnel --url http://127.0.0.1:5173 run c2cmarket-local
-```
-
-`frontend/vite.config.ts` explicitly allows `c2cmarket.shop`; do not replace this
-with a wildcard host allowance. Configure the linux.do application callback as:
-
-```text
-https://c2cmarket.shop/api/v1/auth/oauth/callback
-```
-
-For a real OAuth preview, copy the local ignored `.env.oauth.local` template values,
-replace both `REPLACE_WITH_ROTATED_*` placeholders after rotating any exposed secret,
-and recreate the backend with that env file. Never commit the filled local env file.
-This preview topology is not the production release topology below.
+The Tunnel must own only `api.c2cmarket.shop` and
+`api-staging.c2cmarket.shop`. Pages must own `c2cmarket.shop` and
+`staging.c2cmarket.shop`.
 
 ## First Deploy
 
 Validate Compose configuration:
 
 ```bash
-docker compose --env-file .env.production -f compose.yaml -f compose.prod.yaml config
+docker compose -p c2c-prod --env-file .env.production -f compose.yaml -f compose.prod.yaml config
 ```
 
 Start PostgreSQL:
 
 ```bash
-docker compose --env-file .env.production -f compose.yaml -f compose.prod.yaml up -d postgres
+docker compose -p c2c-prod --env-file .env.production -f compose.yaml -f compose.prod.yaml up -d postgres
 ```
 
 Run migrations:
 
 ```bash
-docker compose --env-file .env.production -f compose.yaml -f compose.prod.yaml --profile migrate run --rm migrate
+docker compose -p c2c-prod --env-file .env.production -f compose.yaml -f compose.prod.yaml --profile migrate run --rm migrate
 ```
 
 Build and start the backend:
 
 ```bash
-docker compose --env-file .env.production -f compose.yaml -f compose.prod.yaml --profile app build backend
-docker compose --env-file .env.production -f compose.yaml -f compose.prod.yaml --profile app up -d backend
+docker compose -p c2c-prod --env-file .env.production -f compose.yaml -f compose.prod.yaml --profile app build backend
+docker compose -p c2c-prod --env-file .env.production -f compose.yaml -f compose.prod.yaml --profile app up -d backend
 ```
 
 Check process health and database/migration readiness:
@@ -220,7 +197,7 @@ Build the frontend in real-backend mode:
 
 ```bash
 VITE_API_MODE=real \
-VITE_API_BASE_URL=https://CHANGE_ME_DOMAIN \
+VITE_API_BASE_URL=https://api.c2cmarket.shop \
 pnpm --dir frontend build
 ```
 
@@ -264,15 +241,15 @@ For real production OAuth, do not use fake OAuth smoke identities. Use health/re
    `scripts/package-source.sh`.
 2. Rebuild backend image:
    ```bash
-   docker compose --env-file .env.production -f compose.yaml -f compose.prod.yaml --profile app build backend
+   docker compose -p c2c-prod --env-file .env.production -f compose.yaml -f compose.prod.yaml --profile app build backend
    ```
 3. Run migrations:
    ```bash
-   docker compose --env-file .env.production -f compose.yaml -f compose.prod.yaml --profile migrate run --rm migrate
+   docker compose -p c2c-prod --env-file .env.production -f compose.yaml -f compose.prod.yaml --profile migrate run --rm migrate
    ```
 4. Restart backend:
    ```bash
-   docker compose --env-file .env.production -f compose.yaml -f compose.prod.yaml --profile app up -d backend
+   docker compose -p c2c-prod --env-file .env.production -f compose.yaml -f compose.prod.yaml --profile app up -d backend
    ```
 5. Check `/health` and `/readyz`.
 6. Confirm origin allowlist and cookie behavior from the deployed frontend origin.
@@ -284,7 +261,7 @@ For real production OAuth, do not use fake OAuth smoke identities. Use health/re
 If a backend image release fails before migrations:
 
 ```bash
-docker compose --env-file .env.production -f compose.yaml -f compose.prod.yaml --profile app up -d backend
+docker compose -p c2c-prod --env-file .env.production -f compose.yaml -f compose.prod.yaml --profile app up -d backend
 ```
 
 using the previous image/tag or previous source checkout.
