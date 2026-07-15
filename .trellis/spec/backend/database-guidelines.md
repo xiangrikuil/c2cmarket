@@ -123,6 +123,8 @@ The forward migration adds `reports.canonical_target_type`, `reports.canonical_t
 ### 3. Contracts
 
 - Never rewrite the SQL of a numbered migration after that version may have been applied. Add a new forward migration instead.
+- A compatibility migration must succeed against both the legacy schema it upgrades and a fresh database built from the current migration baseline. Use `IF NOT EXISTS` for objects that the current baseline may already own, and replace named constraints deterministically by dropping both legacy and target names before adding the target constraint.
+- If the current baseline already owns an object that a later compatibility migration conditionally creates, the compatibility down migration must not delete that baseline-owned object. Prefer an explicitly documented non-destructive down migration when object ownership cannot be distinguished safely.
 - Backfill canonical targets from legacy report fields without copying contact values, credentials, payment material, or raw evidence into `target_snapshot_json`.
 - Convert legacy `reason_code='invalid'` to `other` before replacing the report reason constraint.
 - Before creating `ux_reports_active_canonical_target`, archive every older active duplicate using deterministic `updated_at DESC, id DESC` ordering. Preserve the newest record as active and retain older rows as `closed`; do not delete report history.
@@ -147,6 +149,7 @@ The forward migration adds `reports.canonical_target_type`, `reports.canonical_t
 ### 6. Tests Required
 
 - Add a focused regression that asserts the forward migration contains all required report, dispute, audit, and duplicate-archival steps.
+- Apply the complete migration chain from an empty PostgreSQL volume through `ExpectedMigrationVersion`; testing only an already-upgraded database is insufficient for compatibility migrations.
 - Run `go test ./internal/store/postgres ./internal/database` and the complete backend suite when unrelated packages compile.
 - Run `VITE_API_MODE=real pnpm --dir frontend exec vue-tsc -b --pretty false` and `VITE_API_MODE=real pnpm --dir frontend exec vite build`.
 - Apply the migration to a local database and verify `schema_migrations.version`, required columns, list joins, and duplicate-active-report count.

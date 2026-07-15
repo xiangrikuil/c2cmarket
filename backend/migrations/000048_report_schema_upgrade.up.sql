@@ -3,9 +3,9 @@
 -- 执行者：Codex
 
 ALTER TABLE reports
-ADD COLUMN canonical_target_type text,
-ADD COLUMN canonical_target_id text,
-ADD COLUMN target_snapshot_json jsonb NOT NULL DEFAULT '{}'::jsonb;
+ADD COLUMN IF NOT EXISTS canonical_target_type text,
+ADD COLUMN IF NOT EXISTS canonical_target_id text,
+ADD COLUMN IF NOT EXISTS target_snapshot_json jsonb NOT NULL DEFAULT '{}'::jsonb;
 
 UPDATE reports
 SET canonical_target_type = target_type,
@@ -29,7 +29,11 @@ WHERE reason_code = 'invalid';
 ALTER TABLE reports
 DROP CONSTRAINT IF EXISTS reports_target_type_check,
 DROP CONSTRAINT IF EXISTS reports_reason_code_check,
-DROP CONSTRAINT IF EXISTS reports_status_check;
+DROP CONSTRAINT IF EXISTS reports_status_check,
+DROP CONSTRAINT IF EXISTS ck_reports_target_type,
+DROP CONSTRAINT IF EXISTS ck_reports_canonical_target_type,
+DROP CONSTRAINT IF EXISTS ck_reports_reason_code,
+DROP CONSTRAINT IF EXISTS ck_reports_status;
 
 WITH ranked_reports AS (
   SELECT id,
@@ -61,18 +65,20 @@ CHECK (reason_code IN ('unreachable', 'contact_invalid', 'impersonation', 'descr
 ADD CONSTRAINT ck_reports_status
 CHECK (status IN ('submitted', 'triaged', 'needs_info', 'rejected', 'dispute_opened', 'closed'));
 
-CREATE INDEX ix_reports_canonical_target
+CREATE INDEX IF NOT EXISTS ix_reports_canonical_target
 ON reports(canonical_target_type, canonical_target_id);
 
-CREATE UNIQUE INDEX ux_reports_active_canonical_target
+CREATE UNIQUE INDEX IF NOT EXISTS ux_reports_active_canonical_target
 ON reports(reporter_user_id, canonical_target_type, canonical_target_id)
 WHERE status IN ('submitted', 'triaged', 'needs_info', 'dispute_opened');
 
 ALTER TABLE dispute_cases
-ADD COLUMN public_result_code text NOT NULL DEFAULT 'no_action';
+ADD COLUMN IF NOT EXISTS public_result_code text NOT NULL DEFAULT 'no_action';
 
 ALTER TABLE dispute_cases
 DROP CONSTRAINT IF EXISTS dispute_cases_target_type_check,
+DROP CONSTRAINT IF EXISTS ck_dispute_cases_target_type,
+DROP CONSTRAINT IF EXISTS ck_dispute_cases_public_result_code,
 ADD CONSTRAINT ck_dispute_cases_target_type
 CHECK (target_type IN ('contact_snapshot', 'public_user', 'carpool_application', 'carpool_membership', 'api_purchase_intent', 'api_order')),
 ADD CONSTRAINT ck_dispute_cases_public_result_code
@@ -80,10 +86,11 @@ CHECK (public_result_code IN ('no_action', 'contact_invalid', 'impersonation_con
 
 ALTER TABLE appeals
 DROP CONSTRAINT IF EXISTS appeals_target_type_check,
+DROP CONSTRAINT IF EXISTS ck_appeals_target_type,
 ADD CONSTRAINT ck_appeals_target_type
 CHECK (target_type IN ('contact_snapshot', 'public_user', 'carpool_application', 'carpool_membership', 'api_purchase_intent', 'api_order'));
 
-CREATE TABLE moderation_audit_logs (
+CREATE TABLE IF NOT EXISTS moderation_audit_logs (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   actor_admin_id uuid NOT NULL REFERENCES users(id),
   action text NOT NULL CHECK (action IN ('triage', 'request_info', 'reject', 'open_dispute', 'close', 'resolve', 'approve')),
@@ -99,20 +106,20 @@ CREATE TABLE moderation_audit_logs (
   created_at timestamptz NOT NULL DEFAULT now()
 );
 
-CREATE INDEX ix_moderation_audit_logs_actor
+CREATE INDEX IF NOT EXISTS ix_moderation_audit_logs_actor
 ON moderation_audit_logs(actor_admin_id, created_at DESC);
 
-CREATE INDEX ix_moderation_audit_logs_object
+CREATE INDEX IF NOT EXISTS ix_moderation_audit_logs_object
 ON moderation_audit_logs(object_type, object_id, created_at DESC);
 
-CREATE INDEX ix_moderation_audit_logs_basis_report
+CREATE INDEX IF NOT EXISTS ix_moderation_audit_logs_basis_report
 ON moderation_audit_logs(basis_report_id, created_at DESC)
 WHERE basis_report_id IS NOT NULL;
 
-CREATE INDEX ix_moderation_audit_logs_basis_dispute_case
+CREATE INDEX IF NOT EXISTS ix_moderation_audit_logs_basis_dispute_case
 ON moderation_audit_logs(basis_dispute_case_id, created_at DESC)
 WHERE basis_dispute_case_id IS NOT NULL;
 
-CREATE INDEX ix_moderation_audit_logs_basis_appeal
+CREATE INDEX IF NOT EXISTS ix_moderation_audit_logs_basis_appeal
 ON moderation_audit_logs(basis_appeal_id, created_at DESC)
 WHERE basis_appeal_id IS NOT NULL;

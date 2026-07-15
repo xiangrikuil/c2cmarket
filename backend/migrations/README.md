@@ -162,6 +162,9 @@ before report canonical-target fields, dispute result codes, and moderation audi
 rows were added. It backfills non-sensitive report snapshots and canonical
 targets, archives earlier duplicate active reports before creating the canonical
 unique index, and then adds the missing constraints, indexes, and audit table.
+The upgrade is idempotent for fresh databases whose current Version 22 baseline
+already contains those objects. Its down migration is intentionally non-destructive
+because those objects are owned by the current Version 22 baseline.
 
 Version 49 separates a metered service's total available USD allowance from its
 per-order maximum. Creating an API order reserves allowance atomically and
