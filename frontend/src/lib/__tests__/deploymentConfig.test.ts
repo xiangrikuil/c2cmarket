@@ -27,4 +27,21 @@ describe('Cloudflare Worker deployment config', () => {
       not_found_handling: 'single-page-application',
     })
   })
+
+  it('keeps the local Cloudflare Tunnel on a persistent HTTP/2 launch service', () => {
+    const tunnelConfig = readFileSync(
+      new URL('../../../../deploy/cloudflared/config.yml.example', import.meta.url),
+      'utf8',
+    )
+    const launchAgent = readFileSync(
+      new URL('../../../../deploy/launchd/com.cloudflare.cloudflared.plist.example', import.meta.url),
+      'utf8',
+    )
+
+    expect(tunnelConfig).toMatch(/^protocol: http2$/m)
+    expect(launchAgent).toContain('<string>com.cloudflare.cloudflared</string>')
+    expect(launchAgent).toContain('<string>/Users/CHANGE_ME/.cloudflared/config.yml</string>')
+    expect(launchAgent).toMatch(/<key>KeepAlive<\/key>[\s\S]*?<key>SuccessfulExit<\/key>\s*<false\/>/)
+    expect(launchAgent).toMatch(/<key>RunAtLoad<\/key>\s*<true\/>/)
+  })
 })

@@ -89,19 +89,25 @@ mkdir -p ~/.cloudflared
 cp deploy/cloudflared/config.yml.example ~/.cloudflared/config.yml
 ```
 
-Replace the Tunnel UUID, macOS username, and credentials-file path, then validate and run:
+Replace the Tunnel UUID, macOS username, and credentials-file path, then validate and run. The example pins the edge transport to `http2` because this Mac's local network has shown QUIC connections timing out after a network transition while TCP port 7844 remains available:
 
 ```bash
 cloudflared tunnel ingress validate
-cloudflared tunnel run c2cmarket-local
+cloudflared tunnel --protocol http2 run c2cmarket-local
 ```
 
-For boot-time operation on a Mac that remains powered on, install `cloudflared` as a system service after the configuration works interactively:
+For login-time operation on a Mac that remains powered on, install the repository LaunchAgent after the configuration works interactively. Do not also enable `brew services cloudflared`: Homebrew's default service starts the binary without `tunnel run` and exits with status 1 for this named-tunnel setup.
 
 ```bash
-sudo cloudflared --config /Users/CHANGE_ME/.cloudflared/config.yml service install
-sudo launchctl list | grep cloudflared
+mkdir -p ~/Library/LaunchAgents ~/Library/Logs
+sed "s|/Users/CHANGE_ME|$HOME|g" deploy/launchd/com.cloudflare.cloudflared.plist.example > ~/Library/LaunchAgents/com.cloudflare.cloudflared.plist
+launchctl bootout gui/$(id -u)/com.cloudflare.cloudflared 2>/dev/null || true
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.cloudflare.cloudflared.plist
+launchctl kickstart -k gui/$(id -u)/com.cloudflare.cloudflared
+launchctl print gui/$(id -u)/com.cloudflare.cloudflared
 ```
+
+Cloudflare documents `auto`, `quic`, and `http2` as supported edge transports. When QUIC/UDP is unstable but TCP port 7844 works, forcing `http2` is the supported recovery path: <https://developers.cloudflare.com/tunnel/advanced/run-parameters/#protocol>.
 
 Confirm public routing:
 
@@ -207,9 +213,19 @@ Before a migration-bearing production release, run and verify the R2 backup. Rol
 
 1. Local `/health` and `/readyz` on ports 8080/8081.
 2. `docker compose ... ps` and backend/PostgreSQL logs for the correct project.
-3. `cloudflared tunnel ingress validate` and connector status.
+3. `cloudflared tunnel ingress validate` and connector status. A public HTTP `530` response means Cloudflare has no healthy connector; if the browser labels that response as CORS because the error page has no allow-origin header, repair the Tunnel before changing backend CORS.
 4. DNS: Pages owns frontend hosts; Tunnel owns API hosts.
 5. Access: authenticate both staging hosts and verify OPTIONS bypass on the API app.
 6. CORS: confirm each backend has exactly its matching frontend origin.
 7. OAuth: confirm client, secret, and callback all belong to the same environment.
 8. Backup: confirm local dump size, rclone remote, R2 object, and lifecycle rule.
+
+For a Tunnel `530`, inspect the persistent service and recent transport failures:
+
+```bash
+launchctl print gui/$(id -u)/com.cloudflare.cloudflared
+tail -n 100 ~/Library/Logs/com.cloudflare.cloudflared.err.log
+curl -i https://api.c2cmarket.shop/readyz
+```
+
+Repeated `QUIC stream: timeout: no recent network activity` or `Failed to dial a quic connection` messages, while the HTTP/2 connectivity pre-check passes, require `protocol: http2` in `~/.cloudflared/config.yml` followed by `launchctl kickstart -k gui/$(id -u)/com.cloudflare.cloudflared`. Cloudflare's current connectivity-precheck guidance is <https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/troubleshoot-tunnels/connectivity-prechecks/>.
