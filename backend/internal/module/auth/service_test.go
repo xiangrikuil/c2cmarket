@@ -13,6 +13,7 @@ type fakeAuthRepository struct {
 	user        User
 	credential  PasswordCredential
 	session     Session
+	adminUsers  []AdminUser
 
 	ensureUserCalls                  int
 	createEmailRegistrationCodeCalls int
@@ -48,6 +49,10 @@ func (f *fakeAuthRepository) UserByID(_ context.Context, userID string) (User, *
 		return f.credential.User, nil
 	}
 	return User{}, domain.NewError(401, domain.CodeSessionExpired, "Session required", "请先登录。")
+}
+
+func (f *fakeAuthRepository) ListAdminUsers(context.Context) ([]AdminUser, *domain.AppError) {
+	return f.adminUsers, nil
 }
 
 func (f *fakeAuthRepository) PasswordCredential(_ context.Context, username string) (PasswordCredential, *domain.AppError) {

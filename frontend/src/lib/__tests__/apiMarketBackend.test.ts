@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import { afterEach, test, vi } from 'vitest'
+import type { Carpool } from '../api'
 
 type ApiModule = typeof import('../api')
 type ApiMarketBackendModule = typeof import('../apiMarketBackend')
@@ -29,6 +30,7 @@ async function loadAPIMarketModules(): Promise<{ api: ApiModule, apiMarketBacken
     import('../api'),
     import('../apiMarketBackend'),
   ])
+  await vi.dynamicImportSettled()
   return { api, apiMarketBackend }
 }
 
@@ -87,4 +89,43 @@ test('maps public orderable API service responses as online services', async () 
   assert.equal(service.online, true)
   assert.equal(service.publiclyOrderable, true)
   assert.equal(api.isApiServicePubliclyOrderable(service), true)
+})
+
+test('disables applications to a backend carpool owned by the current user', async () => {
+  const { api } = await loadAPIMarketModules()
+  const carpool: Carpool = {
+    id: 'carpool-self-1',
+    product: 'ChatGPT Pro',
+    region: '印度区',
+    monthly: 260,
+    seats: '1/5',
+    pricingMode: 'fixed',
+    fixedMonthlyPrice: 260,
+    currentConfirmedMembers: 1,
+    maxMembers: 5,
+    owner: '用户 owner-1',
+    ownerUserId: 'owner-1',
+    trustLevel: 4,
+    ownerType: '个人车主',
+    warranty: '车主承诺',
+    openingMethod: '其他',
+    status: '可上车',
+    confirmedAt: '2026-07-11 13:00',
+    confirmedWithin48h: true,
+    linuxdoBound: true,
+    sourcePostAccessible: true,
+    hasInfoConflict: false,
+    hasUnresolvedDispute: false,
+    distributionMethod: 'other',
+    distributionMethodNote: '具体安排站外确认。',
+    providesAdminAccount: false,
+    accessArrangementMode: 'other_off_platform',
+    accessArrangementNote: '通过站外渠道确认成员安排。',
+    riskAcknowledged: true,
+  }
+
+  assert.equal(
+    api.getCarpoolApplyDisabledReason(carpool, { availableSeats: 4 }, false, 'owner-1'),
+    '不能申请自己的车源。',
+  )
 })

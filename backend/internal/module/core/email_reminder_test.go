@@ -377,9 +377,9 @@ func createOrderableAPIService(t *testing.T, service *Service, owner User, owner
 		UsageVisibility:                  "merchant_reported",
 		PublicAccessNote:                 "提交购买意向后直接查看商户联系方式，平台不保存任何调用凭据。",
 		MerchantNote:                     "仅后台可见，不展示给公开访客。",
-		MerchantSupportNote:              "仅支持买家专属、可撤销的子级访问安排。",
+		MerchantSupportNote:              "仅支持买家专属的子级访问安排。",
 		AccessModes: []APIServiceAccessModeInput{
-			{AccessMode: "buyer_dedicated_sub_key", PublicNote: "站外确认买家专属、可撤销的访问方式。"},
+			{AccessMode: "buyer_dedicated_sub_key", PublicNote: "站外确认买家专属的访问方式。"},
 		},
 		Models: []APIServiceModelInput{
 			{ModelCatalogID: "00000000-0000-0000-0000-000000000a01", MerchantMultiplier: "1.0000", Enabled: true},

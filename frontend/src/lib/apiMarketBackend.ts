@@ -6,6 +6,7 @@ import type {
   ApiOrderDeliveryCredential,
   ApiOrderFilters,
   ApiOrderPaymentInstructions,
+  ApiOrderPaymentIssueReason,
   ApiOrderStatus,
   ApiPurchaseIntent,
   ApiPurchaseIntentEvent,
@@ -27,6 +28,7 @@ import { backendMutation, backendRequest, ensureBackendSession } from '@/lib/bac
 import { apiPaymentMethodRequiresQrCode, isApiPaymentMethod, normalizeQrCodeDataUrl } from '@/lib/apiPaymentSettings'
 import { beijingDateTimeInputToISOString, formatQuotaExpiresAtLabel } from '@/lib/apiQuotaExpiration'
 import { backendMyMerchantProfile, backendUpsertMerchantProfile } from '@/lib/profileBackend'
+import { compareDecimal, divideDecimal, normalizeDecimal, normalizeDecimalTrimmed } from '@/lib/decimal'
 
 type ListResponse<T> = { items: T[] }
 
@@ -82,6 +84,7 @@ type BackendAPIService = {
   billingMode: string
   declaredCnyPerUsdAllowance?: string
   declaredMaxUsdAllowancePerIntent?: string
+  availableUsdAllowance?: string
   quotaExpiresAt?: string
   minimumIntentCny: string
   maximumIntentCny?: string
@@ -114,7 +117,7 @@ type ContactDisclosure = {
   maskedValue: string
 }
 
-type BackendAPIPurchaseIntent = {
+export type BackendAPIPurchaseIntent = {
   id: string
   apiServiceId: string
   buyerUserId?: string
@@ -159,7 +162,7 @@ type BackendAPIOrderDeliveryCredential = {
   submittedAt: string
 }
 
-type BackendAPIOrder = {
+export type BackendAPIOrder = {
   id: string
   apiPurchaseIntentId: string
   apiServiceId: string
@@ -169,12 +172,18 @@ type BackendAPIOrder = {
   disputeStatus?: string
   serviceTitleSnapshot: string
   amount: string
+  requestedUsdAllowanceSnapshot?: string
+  cnyPerUsdAllowanceSnapshot?: string
+  pricingSnapshot?: string
   currency: string
   selectedPaymentMethod: string
   paymentWindowMinutesSnapshot: number
   paymentExpiresAt: string
   paymentSummary?: string
   paymentSubmittedAt?: string | null
+  paymentIssueReason?: string
+  paymentIssueNote?: string
+  paymentIssueReportedAt?: string | null
   paidConfirmedAt?: string | null
   deliveryNote?: string
   deliverySubmittedAt?: string | null
@@ -278,7 +287,7 @@ export function mapBackendAPIService(service: BackendAPIService): ApiService {
   const publiclyOrderable = Boolean(service.isOrderable)
   return {
     id: service.id,
-    title: service.title,
+    title: service.title.replace(/意向服务/g, '服务').replace(/API 意向/g, 'API 订单'),
     sourceUrl: service.sourceUrl ?? '',
     merchantId: service.merchantProfileId ?? service.ownerUserId ?? 'merchant',
     merchantUsername,
@@ -292,6 +301,9 @@ export function mapBackendAPIService(service: BackendAPIService): ApiService {
     rate: `${numberFromDecimal(service.models[0]?.merchantMultiplier, 1).toFixed(2)}x`,
     defaultMultiplier: numberFromDecimal(service.models[0]?.merchantMultiplier, 1),
     creditPerCny,
+    cnyPerUsdAllowance: service.declaredCnyPerUsdAllowance || '1.0000',
+    availableUsdAllowance: service.availableUsdAllowance || service.declaredMaxUsdAllowancePerIntent || '0',
+    maxUsdAllowancePerOrder: service.declaredMaxUsdAllowancePerIntent || service.availableUsdAllowance || '0',
     minimumPurchaseCny: numberFromDecimal(service.minimumIntentCny, 1),
     maxBuy: numberFromDecimal(service.maximumIntentCny, 999999),
     balance: numberFromDecimal(service.declaredMaxUsdAllowancePerIntent, 0),
@@ -375,6 +387,12 @@ export async function backendOwnerAPIServices() {
   return response.items.map(mapBackendAPIService)
 }
 
+export async function backendOwnerAPIServiceById(id: string) {
+  await ensureBackendSession('merchant', false)
+  const service = await backendRequest<BackendAPIService>(`/api/v1/owner/api-services/${encodeURIComponent(id)}`)
+  return mapBackendAPIService(service)
+}
+
 function providerFromBackend(value: string): ModelCatalogItem['provider'] {
   const normalized = value.trim().toLowerCase()
   if (normalized === 'openai' || normalized === 'gpt') return 'openai'
@@ -437,6 +455,8 @@ function mapIntent(intent: BackendAPIPurchaseIntent, viewerRole: ApiIntentViewer
     selectedDeliveryMode: mode,
     purchaseAmountCny: amount,
     purchasedCredit: credit,
+    purchaseAmountCnyDecimal: intent.requestedCnyAmount,
+    purchasedCreditDecimal: intent.requestedUsdAllowance || '0',
     targetModel: intent.serviceTitleSnapshot,
     buyerNote: intent.buyerNote,
     snapshot: {
@@ -453,6 +473,7 @@ function mapIntent(intent: BackendAPIPurchaseIntent, viewerRole: ApiIntentViewer
       multiplier: '1.00x',
       defaultMultiplier: 1,
       creditPerCny: amount > 0 && credit > 0 ? Number((credit / amount).toFixed(4)) : 1,
+      cnyPerUsdAllowance: intent.declaredCnyPerUsdAllowanceSnapshot || '1.0000',
       warranty: '商户按服务说明站外处理，平台不担保、不代赔',
       refundPolicy: '最终金额和售后由双方站外确认',
       usageVisibility: 'none',
@@ -471,7 +492,7 @@ function mapIntent(intent: BackendAPIPurchaseIntent, viewerRole: ApiIntentViewer
     handoff: {
       intentId: intent.id,
       selectedDeliveryMode: mode,
-      status: intent.status === 'contacted' ? 'contacted' : ['buyer_cancelled', 'owner_closed'].includes(intent.status) ? 'closed' : 'not_started',
+      status: intent.status === 'contacted' ? 'contacted' : ['ordered', 'buyer_cancelled', 'owner_closed'].includes(intent.status) ? 'closed' : 'not_started',
       requiresFirstLoginPasswordReset: mode === 'sub2api_panel_account',
       note: '真实后端购买意向记录',
     },
@@ -506,6 +527,85 @@ export async function backendMyAPIIntents(filters: ApiPurchaseIntentFilters = {}
 export async function backendOwnerAPIIntents(filters: ApiPurchaseIntentFilters = {}) {
   const response = await backendRequest<ListResponse<BackendAPIPurchaseIntent>>('/api/v1/owner/api-purchase-intents')
   return sortIntents(response.items.map(item => mapIntent(item, 'merchant')), filters)
+}
+
+function adminIntentStatusLabel(value: BackendAPIPurchaseIntent['status']) {
+  const labels: Record<BackendAPIPurchaseIntent['status'], string> = {
+    open: '待处理',
+    contacted: '已联系',
+    ordered: '已下单',
+    buyer_cancelled: '买家已取消',
+    owner_closed: '商户已关闭',
+  }
+  return labels[value]
+}
+
+export function mapBackendAdminAPIIntent(item: BackendAPIPurchaseIntent): AdminRow {
+  return {
+    id: item.id,
+    primary: `${item.serviceTitleSnapshot} 购买意向`,
+    secondary: `${item.id} · 意向金额 ¥${numberFromDecimal(item.requestedCnyAmount)}`,
+    owner: `买家 ${item.buyerUserId?.slice(0, 8) ?? '未知'} / 商户 ${item.ownerUserId?.slice(0, 8) ?? '未知'}`,
+    status: adminIntentStatusLabel(item.status),
+    risk: item.ownerCloseReason || item.buyerCancelReason || `更新于 ${item.updatedAt}`,
+    targetType: 'api-intent',
+    backendKind: 'api-purchase-intent',
+    backendVersion: item.version,
+    detailItems: [
+      { label: '后端状态', value: item.status },
+      { label: '服务', value: item.serviceTitleSnapshot },
+      { label: '意向金额', value: `¥${numberFromDecimal(item.requestedCnyAmount)}` },
+      { label: '接入方式', value: item.selectedAccessMode },
+      { label: '最近更新', value: item.updatedAt },
+    ],
+  }
+}
+
+export async function backendAdminAPIIntentRows() {
+  await ensureBackendSession('admin', true)
+  const response = await backendRequest<ListResponse<BackendAPIPurchaseIntent>>('/api/v1/admin/api-purchase-intents')
+  return response.items.map(mapBackendAdminAPIIntent)
+}
+
+function adminOrderStatusLabel(value: string) {
+	const labels: Record<string, string> = {
+		pending_payment: '待买家付款',
+		payment_submitted: '待确认收款',
+		paid_confirmed: '待商户交付',
+		delivery_submitted: '待买家验收',
+		completed: '已完成',
+		cancelled: '已取消',
+	}
+	return labels[value] ?? value
+}
+
+export async function backendAdminAPIOrderRows(): Promise<AdminRow[]> {
+	await ensureBackendSession('admin', true)
+	const response = await backendRequest<ListResponse<BackendAPIOrder>>('/api/v1/admin/api-orders')
+	return response.items.map(mapBackendAdminAPIOrder)
+}
+
+export function mapBackendAdminAPIOrder(order: BackendAPIOrder): AdminRow {
+	return {
+		id: order.id,
+		primary: `${order.serviceTitleSnapshot} API 订单`,
+		secondary: `${order.id} · 订单金额 ¥${order.amount}`,
+		owner: `买家 ${order.buyerUserId?.slice(0, 8) ?? '未知'} / 商户 ${order.sellerUserId?.slice(0, 8) ?? '未知'}`,
+		status: adminOrderStatusLabel(order.status),
+		risk: order.disputeStatus || order.cancelReason || `更新于 ${order.updatedAt}`,
+		targetType: 'api-order',
+		backendKind: 'api-order',
+		backendVersion: order.version,
+		targetTo: null,
+		detailItems: [
+			{ label: '订单状态', value: order.status },
+			{ label: '订单金额', value: `¥${order.amount}` },
+			{ label: '购买额度', value: order.requestedUsdAllowanceSnapshot ? `${order.requestedUsdAllowanceSnapshot} 美元额度` : '不适用' },
+			{ label: '定价快照', value: order.cnyPerUsdAllowanceSnapshot ? `¥${order.cnyPerUsdAllowanceSnapshot} / $1` : '按套餐快照' },
+			{ label: '交付凭证', value: order.deliverySubmittedAt ? '已提交（管理摘要不展示原始凭证）' : '尚未提交' },
+			{ label: '最近更新', value: order.updatedAt },
+		],
+	}
 }
 
 export async function backendAPIIntentById(id: string) {
@@ -569,11 +669,15 @@ export async function backendCreateAPIPurchaseIntent(payload: CreateApiPurchaseI
     isDefault: true,
     enabled: true,
   })
-  const requestedUsdAllowance = payload.purchaseAmountCny * service.creditPerCny
+  const requestedCnyAmount = normalizeDecimal(String(payload.purchaseAmountCny), 2)
+  const requestedUsdAllowance = normalizeDecimalTrimmed(
+    divideDecimal(requestedCnyAmount, service.cnyPerUsdAllowance || '1', 6),
+    6,
+  )
   const response = await backendMutation<BackendAPIPurchaseIntent>(`/api/v1/api-services/${payload.serviceId}/purchase-intents`, {
     buyerContactMethodId: contact.id,
-    requestedCnyAmount: String(payload.purchaseAmountCny),
-    requestedUsdAllowance: requestedUsdAllowance.toFixed(6).replace(/\.?0+$/, ''),
+    requestedCnyAmount,
+    requestedUsdAllowance,
     selectedAccessMode: toBackendAccessMode(payload.deliveryMode),
     selectedPackageId: '',
     buyerNote: payload.buyerNote ?? '',
@@ -615,7 +719,8 @@ export async function backendCloseAPIIntent(id: string, reason: string) {
 function apiOrderStatus(value: string): ApiOrderStatus {
   if (
     value === 'pending_payment'
-    || value === 'payment_submitted'
+	    || value === 'payment_submitted'
+	    || value === 'payment_issue'
     || value === 'paid_confirmed'
     || value === 'delivery_submitted'
     || value === 'completed'
@@ -629,6 +734,12 @@ function apiOrderStatus(value: string): ApiOrderStatus {
 function apiOrderPaymentMethod(value: string): ApiOrderPaymentInstructions['paymentMethod'] {
   if (isApiPaymentMethod(value)) return value
   throw new Error(`Unsupported API order payment method: ${value}`)
+}
+
+function apiOrderPaymentIssueReason(value?: string): ApiOrderPaymentIssueReason | undefined {
+  if (value === 'not_received' || value === 'amount_mismatch' || value === 'remark_mismatch') return value
+  if (!value) return undefined
+  throw new Error(`Unsupported API order payment issue reason: ${value}`)
 }
 
 function mapDeliveryCredential(value?: BackendAPIOrderDeliveryCredential | null): ApiOrderDeliveryCredential | undefined {
@@ -669,15 +780,15 @@ function filterAndSortOrders(rows: ApiOrder[], filters: ApiOrderFilters = {}, ro
   const sort = filters.sort ?? 'updated_desc'
   return filtered.sort((a, b) => {
     if (sort === 'default_buyer' || sort === 'default_merchant') {
-      const buyerAction = (item: ApiOrder) => item.status === 'pending_payment' || item.status === 'delivery_submitted' || item.status === 'completed'
+	      const buyerAction = (item: ApiOrder) => item.status === 'pending_payment' || item.status === 'payment_issue' || item.status === 'delivery_submitted' || item.status === 'completed'
       const merchantAction = (item: ApiOrder) => item.status === 'payment_submitted' || item.status === 'paid_confirmed'
       const aAction = role === 'buyer' ? buyerAction(a) : merchantAction(a)
       const bAction = role === 'buyer' ? buyerAction(b) : merchantAction(b)
       return Number(bAction) - Number(aAction) || new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()
     }
     if (sort === 'created_desc') return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
-    if (sort === 'amount_desc') return b.amount - a.amount
-    if (sort === 'amount_asc') return a.amount - b.amount
+    if (sort === 'amount_desc') return compareDecimal(b.amountDecimal || String(b.amount), a.amountDecimal || String(a.amount))
+    if (sort === 'amount_asc') return compareDecimal(a.amountDecimal || String(a.amount), b.amountDecimal || String(b.amount))
     return new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()
   })
 }
@@ -697,12 +808,16 @@ async function mapBackendAPIOrder(order: BackendAPIOrder, viewerRole: 'buyer' | 
     disputeStatus: order.disputeStatus,
     serviceTitle: order.serviceTitleSnapshot || intent.snapshot.serviceTitle,
     amount: numberFromDecimal(order.amount),
+    amountDecimal: order.amount,
     currency: 'CNY',
     selectedPaymentMethod: apiOrderPaymentMethod(order.selectedPaymentMethod),
     paymentWindowMinutes: order.paymentWindowMinutesSnapshot,
     paymentExpiresAt: order.paymentExpiresAt,
     paymentSummary: order.paymentSummary,
     paymentSubmittedAt: order.paymentSubmittedAt ?? undefined,
+    paymentIssueReason: apiOrderPaymentIssueReason(order.paymentIssueReason),
+    paymentIssueNote: order.paymentIssueNote,
+    paymentIssueReportedAt: order.paymentIssueReportedAt ?? undefined,
     paidConfirmedAt: order.paidConfirmedAt ?? undefined,
     deliveryNote: order.deliveryNote,
     deliverySubmittedAt: order.deliverySubmittedAt ?? undefined,
@@ -713,7 +828,8 @@ async function mapBackendAPIOrder(order: BackendAPIOrder, viewerRole: 'buyer' | 
     version: order.version,
     intentSnapshot: intent.snapshot,
     selectedDeliveryMode: intent.selectedDeliveryMode,
-    requestedUsdAllowance: intent.purchasedCredit,
+    requestedUsdAllowance: numberFromDecimal(order.requestedUsdAllowanceSnapshot || intent.purchasedCreditDecimal),
+    requestedUsdAllowanceDecimal: order.requestedUsdAllowanceSnapshot || intent.purchasedCreditDecimal || String(intent.purchasedCredit),
     merchantContactChannels: intent.contactChannels,
     buyerContactChannels: intent.buyerContactChannels ?? [],
     viewerRole,
@@ -768,9 +884,33 @@ export async function backendSubmitAPIOrderPayment(id: string, paymentSummary: s
   return mapBackendAPIOrder(response, 'buyer')
 }
 
+export async function backendCancelAPIOrder(id: string, reason: string, version: number) {
+  const response = await backendMutation<BackendAPIOrder>(`/api/v1/me/api-orders/${id}/cancel`, { reason }, {
+    idempotencyPrefix: 'api-order-cancel',
+    ifMatch: version,
+  })
+  return mapBackendAPIOrder(response, 'buyer')
+}
+
+export async function backendConfirmAPIOrderComplete(id: string, version: number) {
+  const response = await backendMutation<BackendAPIOrder>(`/api/v1/me/api-orders/${id}/confirm-complete`, {}, {
+    idempotencyPrefix: 'api-order-confirm-complete',
+    ifMatch: version,
+  })
+  return mapBackendAPIOrder(response, 'buyer')
+}
+
 export async function backendConfirmAPIOrderPayment(id: string, version: number) {
   const response = await backendMutation<BackendAPIOrder>(`/api/v1/owner/api-orders/${id}/confirm-payment`, {}, {
     idempotencyPrefix: 'api-order-confirm-payment',
+    ifMatch: version,
+  })
+  return mapBackendAPIOrder(response, 'merchant')
+}
+
+export async function backendReportAPIOrderPaymentIssue(id: string, reason: ApiOrderPaymentIssueReason, note: string, version: number) {
+  const response = await backendMutation<BackendAPIOrder>(`/api/v1/owner/api-orders/${id}/report-payment-issue`, { reason, note }, {
+    idempotencyPrefix: 'api-order-report-payment-issue',
     ifMatch: version,
   })
   return mapBackendAPIOrder(response, 'merchant')
@@ -861,6 +1001,7 @@ function toBackendServiceRequest(payload: Record<string, unknown>) {
     billingMode: billing,
     declaredCnyPerUsdAllowance: String(payload.cnyPerUsdCredit ?? '1'),
     declaredMaxUsdAllowancePerIntent: String(payload.availableCreditUsd ?? '20'),
+    availableUsdAllowance: String(payload.availableCreditUsd ?? '20'),
     quotaExpiresAt: beijingDateTimeInputToISOString(String(payload.quotaExpiresAt ?? '')),
     minimumIntentCny: String(payload.minimumPurchaseCny ?? '10'),
     maximumIntentCny: String(payload.maximumPurchaseCny ?? '300'),
@@ -902,7 +1043,7 @@ function toBackendOrderSettingsRequest(payload: Record<string, unknown>) {
         paymentMethod,
         enabled,
         paymentInstructions: paymentInstructions || (enabled && isApiPaymentMethod(paymentMethod) && apiPaymentMethodRequiresQrCode(paymentMethod) && paymentQrCodeDataUrl
-          ? '买家提交意向后查看收款码并站外确认。'
+          ? '买家创建订单后查看收款码并站外确认。'
           : ''),
         paymentQrCodeDataUrl: paymentQrCodeDataUrl ?? '',
       }
@@ -965,7 +1106,7 @@ function serviceAdminRow(service: BackendAPIService): AdminRow {
       { label: '发布状态', value: service.publicationStatus ?? 'offline' },
       { label: '治理状态', value: service.moderationStatus ?? 'clear' },
       { label: '版本', value: String(service.version) },
-      { label: '最低意向金额', value: `¥${mapped.minimumPurchaseCny}` },
+      { label: '最低订单金额', value: `¥${mapped.minimumPurchaseCny}` },
       { label: '用量核对', value: service.usageVisibility },
     ],
     targetTo: mapped.publiclyOrderable ? `/api-market/${service.id}` : null,

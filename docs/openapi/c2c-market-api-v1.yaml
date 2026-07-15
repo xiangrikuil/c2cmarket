@@ -980,6 +980,25 @@ paths:
           $ref: "#/components/responses/Problem"
         "428":
           $ref: "#/components/responses/Problem"
+  /api/v1/carpools/{id}/eligibility:
+    get:
+      operationId: getCarpoolApplicationEligibility
+      tags: [Carpools]
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: "#/components/parameters/ResourceId"
+      responses:
+        "200":
+          description: Single authoritative application eligibility result for the current user and active listing.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CarpoolApplicationEligibility"
+        "401":
+          $ref: "#/components/responses/Problem"
+        "404":
+          $ref: "#/components/responses/Problem"
   /api/v1/carpools/{id}/submit-review:
     post:
       operationId: submitCarpoolReview
@@ -1979,6 +1998,45 @@ paths:
                 $ref: "#/components/schemas/NotificationList"
         "401":
           $ref: "#/components/responses/Problem"
+  /api/v1/me/navigation-badges:
+    get:
+      operationId: getMyNavigationBadges
+      tags: [Notifications]
+      summary: Read authoritative navigation badge counts for the current user.
+      description: Returns unread communication counts and current buyer, merchant, and optional administrator action queues. Counts are derived from durable backend state and are not browser-side counters.
+      responses:
+        "200":
+          description: Current navigation badge summary.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/NavigationBadgeSummary"
+        "401":
+          $ref: "#/components/responses/Problem"
+        "503":
+          $ref: "#/components/responses/Problem"
+  /api/v1/me/events:
+    get:
+      operationId: streamMyRealtimeEvents
+      tags: [Notifications]
+      summary: Stream authenticated realtime invalidation signals.
+      description: Sends named `ready` and `invalidate` SSE events with only the low-cardinality `all-live` topic. REST resources remain authoritative; the stream never carries contacts, payment material, order credentials, or user routing metadata.
+      responses:
+        "200":
+          description: "Server-Sent Events stream. The server sends `retry: 3000`, an initial `ready` event, `invalidate` events, and comment heartbeats."
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+              description: Always `no-cache, no-transform`.
+          content:
+            text/event-stream:
+              schema:
+                type: string
+        "401":
+          $ref: "#/components/responses/Problem"
+        "503":
+          $ref: "#/components/responses/Problem"
   /api/v1/me/notifications/unread-count:
     get:
       operationId: getMyNotificationUnreadCount
@@ -2929,6 +2987,46 @@ paths:
           $ref: "#/components/responses/Problem"
         "428":
           $ref: "#/components/responses/Problem"
+  /api/v1/owner/api-orders/{id}/report-payment-issue:
+    post:
+      operationId: reportOwnerAPIOrderPaymentIssue
+      tags: [OwnerAPIOrders]
+      security:
+        - sessionCookie: []
+          csrfToken: []
+      description: Seller reports that the off-platform payment was not received or does not match the order. The order waits for the buyer to supplement and resubmit payment information.
+      parameters:
+        - $ref: "#/components/parameters/ResourceId"
+        - $ref: "#/components/parameters/IfMatch"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/APIOrderPaymentIssueRequest"
+      responses:
+        "200":
+          description: Payment issue recorded; buyer action is now required.
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+            ETag:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/APIOrder"
+        "409":
+          $ref: "#/components/responses/Problem"
+        "412":
+          $ref: "#/components/responses/Problem"
+        "422":
+          $ref: "#/components/responses/Problem"
+        "428":
+          $ref: "#/components/responses/Problem"
   /api/v1/owner/api-orders/{id}/submit-delivery:
     post:
       operationId: submitOwnerAPIOrderDelivery
@@ -2936,7 +3034,7 @@ paths:
       security:
         - sessionCookie: []
           csrfToken: []
-      description: Seller submits one structured API order delivery credential after manually confirming off-platform payment. Allowed shapes are buyer-specific, revocable API Key endpoint credentials or initial login credentials. The platform does not verify the API, proxy traffic, provide escrow, or support credential edits/history.
+      description: Seller submits one structured API order delivery credential after manually confirming off-platform payment. Allowed shapes are a buyer-specific API Key endpoint credential or an initial login credential. The submitted credential is immutable in the platform. The platform does not verify the API, proxy traffic, provide escrow, or support credential edits/history.
       parameters:
         - $ref: "#/components/parameters/ResourceId"
         - $ref: "#/components/parameters/IfMatch"
@@ -3811,6 +3909,35 @@ paths:
         "403":
           $ref: "#/components/responses/Problem"
         "404":
+          $ref: "#/components/responses/Problem"
+  /api/v1/admin/api-orders:
+    get:
+      operationId: listAdminAPIOrders
+      tags: [APIOrders]
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
+      responses:
+        "200":
+          description: Administrator API order tracking list with decimal pricing snapshots and without contacts or raw delivery credentials.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/APIOrderList"
+        "403":
+          $ref: "#/components/responses/Problem"
+  /api/v1/admin/users:
+    get:
+      operationId: listAdminUsers
+      tags: [AdminUsers]
+      responses:
+        "200":
+          description: Full administrator account directory without credentials, contact values, or report content.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminUserList"
+        "403":
           $ref: "#/components/responses/Problem"
   /api/v1/admin/reports:
     get:
@@ -5661,6 +5788,62 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/Notification"
+    NavigationBadgeRoleSummary:
+      type: object
+      required: [carpoolActions, apiOrderActions]
+      properties:
+        carpoolActions:
+          type: integer
+          minimum: 0
+        apiOrderActions:
+          type: integer
+          minimum: 0
+    NavigationBadgeAdminSummary:
+      type: object
+      required: [total, officialPrices, carpools, apiServices, feedbackTickets, reports]
+      properties:
+        total:
+          type: integer
+          minimum: 0
+        officialPrices:
+          type: integer
+          minimum: 0
+        carpools:
+          type: integer
+          minimum: 0
+        apiServices:
+          type: integer
+          minimum: 0
+        feedbackTickets:
+          type: integer
+          minimum: 0
+        reports:
+          type: integer
+          minimum: 0
+    NavigationBadgeSummary:
+      type: object
+      required: [generatedAt, notificationUnread, importantAnnouncementUnread, feedbackUnread, buyer, merchant, admin]
+      properties:
+        generatedAt:
+          type: string
+          format: date-time
+        notificationUnread:
+          type: integer
+          minimum: 0
+        importantAnnouncementUnread:
+          type: integer
+          minimum: 0
+        feedbackUnread:
+          type: integer
+          minimum: 0
+        buyer:
+          $ref: "#/components/schemas/NavigationBadgeRoleSummary"
+        merchant:
+          $ref: "#/components/schemas/NavigationBadgeRoleSummary"
+        admin:
+          oneOf:
+            - $ref: "#/components/schemas/NavigationBadgeAdminSummary"
+            - type: "null"
     AnnouncementAudience:
       type: object
       required: [type]
@@ -6185,7 +6368,7 @@ components:
           $ref: "#/components/schemas/LinuxDoBinding"
     ProductCategory:
       type: object
-      required: [id, code, displayName, sortOrder, active]
+      required: [id, code, displayName, iconDataUrl, sortOrder, active]
       properties:
         id:
           type: string
@@ -6194,6 +6377,9 @@ components:
           type: string
         displayName:
           type: string
+        iconDataUrl:
+          type: string
+          description: Optional PNG or WebP data URL uploaded by an administrator.
         sortOrder:
           type: integer
         active:
@@ -6211,7 +6397,7 @@ components:
     ProductCategoryRequest:
       type: object
       additionalProperties: false
-      required: [code, displayName, active, sortOrder]
+      required: [code, displayName, iconDataUrl, active, sortOrder]
       properties:
         code:
           type: string
@@ -6220,6 +6406,10 @@ components:
           type: string
           minLength: 1
           maxLength: 40
+        iconDataUrl:
+          type: string
+          maxLength: 400000
+          description: Empty string removes the icon; otherwise PNG or WebP data URL.
         active:
           type: boolean
         sortOrder:
@@ -6974,6 +7164,9 @@ components:
           $ref: "#/components/schemas/DecimalString"
         declaredMaxUsdAllowancePerIntent:
           $ref: "#/components/schemas/DecimalString"
+        availableUsdAllowance:
+          $ref: "#/components/schemas/DecimalString"
+          description: Current service-wide USD allowance still available for new metered orders. This is distinct from the per-order cap.
         quotaExpiresAt:
           type: string
           format: date-time
@@ -7158,6 +7351,9 @@ components:
           $ref: "#/components/schemas/DecimalString"
         declaredMaxUsdAllowancePerIntent:
           $ref: "#/components/schemas/DecimalString"
+        availableUsdAllowance:
+          $ref: "#/components/schemas/DecimalString"
+          description: Current service-wide USD allowance available after pending-order reservations and completed sales.
         quotaExpiresAt:
           type: string
           format: date-time
@@ -7280,6 +7476,9 @@ components:
           $ref: "#/components/schemas/DecimalString"
         declaredMaxUsdAllowancePerIntent:
           $ref: "#/components/schemas/DecimalString"
+        availableUsdAllowance:
+          $ref: "#/components/schemas/DecimalString"
+          description: Current service-wide USD allowance available after pending-order reservations and completed sales.
         quotaExpiresAt:
           type: string
           format: date-time
@@ -7698,6 +7897,18 @@ components:
           type: string
           maxLength: 4000
           description: Buyer-entered off-platform payment summary. Screenshots, attachments, credentials, tokens, sessions, cookies, and API keys are not accepted.
+    APIOrderPaymentIssueRequest:
+      type: object
+      additionalProperties: false
+      required: [reason]
+      properties:
+        reason:
+          type: string
+          enum: [not_received, amount_mismatch, remark_mismatch]
+        note:
+          type: string
+          maxLength: 4000
+          description: Optional non-sensitive explanation for the buyer. Credentials, tokens, sessions, cookies, and API keys are not accepted.
     APIOrderDeliveryRequest:
       type: object
       additionalProperties: false
@@ -7714,7 +7925,7 @@ components:
         apiKey:
           type: string
           maxLength: 4000
-          description: Required for `api_key_endpoint`. Must be buyer-specific and revocable.
+          description: Required for `api_key_endpoint`. Must be buyer-specific. The submitted value cannot be edited in the platform.
         panelLoginUrl:
           type: string
           format: uri
@@ -7808,7 +8019,7 @@ components:
           description: Present on buyer-side views.
         status:
           type: string
-          enum: [pending_payment, payment_submitted, paid_confirmed, delivery_submitted, completed, cancelled]
+          enum: [pending_payment, payment_submitted, payment_issue, paid_confirmed, delivery_submitted, completed, cancelled]
         disputeStatus:
           type: string
           enum: [none, open, closed]
@@ -7828,6 +8039,13 @@ components:
           type: string
         quoteVersionSnapshot:
           type: integer
+        requestedUsdAllowanceSnapshot:
+          $ref: "#/components/schemas/DecimalString"
+        cnyPerUsdAllowanceSnapshot:
+          $ref: "#/components/schemas/DecimalString"
+        pricingSnapshot:
+          type: string
+          description: Frozen JSON pricing snapshot from the internal purchase-intent record.
         amount:
           $ref: "#/components/schemas/DecimalString"
         currency:
@@ -7846,6 +8064,14 @@ components:
         paymentSummary:
           type: string
         paymentSubmittedAt:
+          type: [string, "null"]
+          format: date-time
+        paymentIssueReason:
+          type: string
+          enum: [not_received, amount_mismatch, remark_mismatch]
+        paymentIssueNote:
+          type: string
+        paymentIssueReportedAt:
           type: [string, "null"]
           format: date-time
         paidConfirmedAt:
@@ -8489,6 +8715,21 @@ components:
             updatedAt:
               type: string
               format: date-time
+    CarpoolApplicationEligibility:
+      type: object
+      additionalProperties: false
+      required: [code, canApply, reason, resolutionAction]
+      properties:
+        code:
+          type: string
+          enum: [eligible, sold_out, paused, credential_risk, owner_action_required, already_applied, already_member, self_owned]
+        canApply:
+          type: boolean
+        reason:
+          type: string
+        resolutionAction:
+          type: string
+          enum: [apply, wait_for_owner_correction, browse_other_listings, manage_own_listing, view_application, view_membership]
     CarpoolListing:
       type: object
       required:
@@ -8515,6 +8756,7 @@ components:
         - activeBuyerMembers
         - reservedSeats
         - availableSeats
+        - applicationEligibility
         - status
         - policyVersion
         - riskAckRequired
@@ -8578,6 +8820,8 @@ components:
           type: integer
         availableSeats:
           type: integer
+        applicationEligibility:
+          $ref: "#/components/schemas/CarpoolApplicationEligibility"
         status:
           type: string
           enum: [draft, pending_review, changes_requested, active, paused, rejected, removed]
@@ -9073,6 +9317,42 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/Appeal"
+        nextCursor:
+          type: [string, "null"]
+    AdminUser:
+      type: object
+      required: [id, username, displayName, accountStatus, isAdmin, linuxDoBound, createdAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        username:
+          type: string
+        displayName:
+          type: string
+        accountStatus:
+          type: string
+          enum: [active, suspended, banned, archived]
+        isAdmin:
+          type: boolean
+        linuxDoBound:
+          type: boolean
+        trustLevel:
+          type: integer
+        createdAt:
+          type: string
+          format: date-time
+        lastActiveAt:
+          type: [string, "null"]
+          format: date-time
+    AdminUserList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/AdminUser"
         nextCursor:
           type: [string, "null"]
     AdminReportMutation:

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
 import {
   Bell,
@@ -44,92 +44,103 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
-import { useFeedbackUnreadCount, useMerchantApiPurchaseIntents, useMerchantCarpoolApplications, useMyApiPurchaseIntents, useMyCarpoolApplications, useMyProfileQuery, useNotifications } from '@/queries/useMarketQueries'
-import { useImportantAnnouncementUnreadCount } from '@/queries/useAnnouncementQueries'
+import { useMyApiServices, useMyCarpools, useMyProfileQuery, useNotifications } from '@/queries/useMarketQueries'
+import { useNavigationBadges } from '@/queries/useRealtimeQueries'
+import { useRealtimeSync } from '@/composables/useRealtimeSync'
 import { appThemes, applyAppTheme, getInitialAppTheme, isAppTheme } from '@/theme/appThemes'
 import { ACCOUNT_RECOVERY_PATH, isAccountRecoveryAllowedPath, isAccountRecoveryComplete } from '@/lib/accountRecovery'
+import { usePersistentSidebar } from '@/composables/usePersistentSidebar'
 
 const route = useRoute()
 const router = useRouter()
 const menuOpen = ref(false)
-const sidebarCollapsed = ref(false)
+const { sidebarCollapsed } = usePersistentSidebar('c2c-user-sidebar-collapsed')
 const searchText = ref('')
 const activeTheme = ref(getInitialAppTheme())
-const { data: myApiOrders } = useMyApiPurchaseIntents({ sort: 'default_buyer' })
-const { data: merchantApiOrders } = useMerchantApiPurchaseIntents({ sort: 'default_merchant' })
-const { data: myCarpoolApplications } = useMyCarpoolApplications({ sort: 'default_buyer' })
-const { data: merchantCarpoolApplications } = useMerchantCarpoolApplications({ sort: 'default_owner' })
 const { data: myProfile } = useMyProfileQuery()
 const { data: notifications } = useNotifications()
-const { data: feedbackUnreadCount } = useFeedbackUnreadCount()
-const { data: importantAnnouncementUnreadCount } = useImportantAnnouncementUnreadCount()
+const workspaceQueriesEnabled = computed(() => Boolean(myProfile.value))
+const { data: ownedCarpools } = useMyCarpools(workspaceQueriesEnabled)
+const { data: ownedApiServices } = useMyApiServices(workspaceQueriesEnabled)
+const { data: navigationBadges } = useNavigationBadges(computed(() => Boolean(myProfile.value)))
+useRealtimeSync(computed(() => Boolean(myProfile.value)))
 
-const buyerApiActionCount = computed(() => (myApiOrders.value ?? []).filter(item => ['open', 'contacted'].includes(item.status)).length)
-const merchantApiActionCount = computed(() => (merchantApiOrders.value ?? []).filter(item => item.status === 'open').length)
-const buyerCarpoolActionCount = computed(() => (myCarpoolApplications.value ?? []).filter(item => ['accepted_reserved', 'waiting_contact', 'contacted', 'pending_completion', 'disputed'].includes(item.status)).length)
-const ownerCarpoolActionCount = computed(() => (merchantCarpoolApplications.value ?? []).filter(item => ['pending_owner', 'joined_pending_confirmation', 'pending_completion', 'disputed'].includes(item.status)).length)
-const unreadBusinessCount = computed(() => (notifications.value ?? []).filter(item => item.unread).length)
-const unreadCount = computed(() => unreadBusinessCount.value + (importantAnnouncementUnreadCount.value ?? 0))
-const feedbackMenuUnreadCount = computed(() => feedbackUnreadCount.value ?? 0)
+const buyerApiActionCount = computed(() => navigationBadges.value?.buyer.apiOrderActions ?? 0)
+const merchantApiActionCount = computed(() => navigationBadges.value?.merchant.apiOrderActions ?? 0)
+const buyerCarpoolActionCount = computed(() => navigationBadges.value?.buyer.carpoolActions ?? 0)
+const ownerCarpoolActionCount = computed(() => navigationBadges.value?.merchant.carpoolActions ?? 0)
+const unreadBusinessCount = computed(() => navigationBadges.value?.notificationUnread ?? 0)
+const importantAnnouncementUnreadCount = computed(() => navigationBadges.value?.importantAnnouncementUnread ?? 0)
+const feedbackMenuUnreadCount = computed(() => navigationBadges.value?.feedbackUnread ?? 0)
 const currentUsername = computed(() => myProfile.value?.username ?? '')
 const currentDisplayName = computed(() => myProfile.value?.displayName ?? myProfile.value?.username ?? '未登录')
 const currentAvatarText = computed(() => currentDisplayName.value.slice(0, 1).toUpperCase())
 const canViewAdminNav = computed(() => myProfile.value?.permissions.includes('admin') ?? false)
 const announcementCenterTo = '/my/notifications?tab=announcements'
 const accountRecoveryRequired = computed(() => myProfile.value ? !isAccountRecoveryComplete(myProfile.value) : false)
+const hasMerchantWorkspace = computed(() => Boolean(
+  (ownedCarpools.value?.length ?? 0) > 0
+  || (ownedApiServices.value?.length ?? 0) > 0
+  || ownerCarpoolActionCount.value > 0
+  || merchantApiActionCount.value > 0,
+))
 
 const navGroups = computed(() => {
   const browseGroup = {
-    title: '浏览',
+    title: '发现市场',
     items: [
-      { label: '行情首页', to: '/', count: null, icon: Home },
-      { label: '官网价格', to: '/official-prices', count: null, icon: ShieldCheck },
+      { label: '首页', to: '/', count: null, icon: Home },
       { label: '订阅拼车', to: '/carpools', count: null, icon: UsersRound },
-      { label: 'API 集市', to: '/api-market', count: null, icon: Code2 },
-      { label: '找车源', to: '/demands', count: null, icon: ScanSearch },
+      { label: 'API 市场', to: '/api-market', count: null, icon: Code2 },
+      { label: '求车需求', to: '/demands', count: null, icon: ScanSearch },
+      { label: '官网价格', to: '/official-prices', count: null, icon: ShieldCheck },
     ],
   }
   const publishGroup = {
-    title: '发布',
+    title: '发布入口',
     items: [
       { label: '发布车源', to: '/carpools/new', count: null, icon: Car },
       { label: '发布 API 服务', to: '/api-market/new', count: null, icon: PackageSearch },
     ],
   }
   const userGroup = {
-    title: '个人工作台',
+    title: '我的交易',
     items: [
-      { label: '我的中心', to: '/my', count: null, icon: UserRound },
-      { label: '我的需求', to: '/my/demands', count: null, icon: ScanSearch },
+      { label: '我的上车', to: '/my/rides', count: buyerCarpoolActionCount.value, icon: UsersRound },
+      { label: '我的 API 订单', to: '/my/api-orders', count: buyerApiActionCount.value, icon: ShoppingBag },
+      { label: '收藏', to: '/my/favorites', count: null, icon: Star },
+      { label: '通知', to: '/my/notifications', count: unreadBusinessCount.value, icon: Bell },
     ],
   }
   const merchantGroup = {
-    title: '商户工作台',
+    title: '经营中心',
     items: [
-      { label: '商户中心', to: '/merchant/api-orders', count: null, icon: PackageSearch },
-      { label: '订单管理', to: '/merchant/carpool-applications', count: ownerCarpoolActionCount.value, icon: UserCog },
+      { label: '我的车源', to: '/my/carpools', count: null, icon: Car },
+      { label: '上车申请', to: '/merchant/carpool-applications', count: ownerCarpoolActionCount.value, icon: UserCog },
+      { label: '我的 API 服务', to: '/my/api-services', count: null, icon: Code2 },
+      { label: 'API 订单', to: '/merchant/api-orders', count: merchantApiActionCount.value, icon: PackageSearch },
     ],
   }
-  const adminGroup = {
-    title: '管理',
+  const accountGroup = {
+    title: '账户',
     items: [
-      { label: '管理台总览', to: '/admin', count: 12, icon: PackageSearch },
-      { label: '套餐目录', to: '/admin/product-plans', count: null, icon: PackageSearch },
-      { label: 'API 模型目录', to: '/admin/api-models', count: null, icon: Code2 },
-      { label: '官网价格维护', to: '/admin/official-prices', count: 4, icon: ShieldCheck },
-      { label: '车源治理', to: '/admin/carpools', count: 8, icon: Car },
-      { label: 'API 服务审核', to: '/admin/api-services', count: 3, icon: Code2 },
-      { label: '公告管理', to: '/admin/announcements', count: null, icon: Megaphone },
-      { label: '上车申请管理', to: '/admin/carpool-applications', count: ownerCarpoolActionCount.value, icon: UsersRound },
-      { label: '用户管理', to: '/admin/users', count: 6, icon: UserCog },
-      { label: '问题反馈', to: '/admin/feedback', count: null, icon: CircleHelp },
-      { label: '举报纠纷', to: '/admin/reports', count: 4, icon: Siren },
+      { label: '账户与资料', to: '/my', count: null, icon: UserRound },
+      { label: '我的求车', to: '/my/demands', count: null, icon: ScanSearch },
+      { label: '联系与收款', to: '/my/contacts', count: null, icon: MessageSquarePlus },
+      { label: '安全设置', to: '/my/account', count: null, icon: ShieldCheck },
+      { label: '反馈', to: '/my/feedback', count: feedbackMenuUnreadCount.value, icon: CircleHelp },
     ],
+  }
+  const adminEntryGroup = {
+    title: '管理',
+    items: [{ label: '进入管理台', to: '/admin', count: navigationBadges.value?.admin?.total ?? null, icon: UserCog }],
   }
 
-  return canViewAdminNav.value
-    ? [browseGroup, publishGroup, adminGroup, userGroup, merchantGroup]
-    : [browseGroup, publishGroup, userGroup, merchantGroup]
+  const groups = [browseGroup, userGroup, publishGroup]
+  if (hasMerchantWorkspace.value) groups.push(merchantGroup)
+  groups.push(accountGroup)
+  if (canViewAdminNav.value) groups.push(adminEntryGroup)
+  return groups
 })
 
 const topNotifications = computed(() => (notifications.value ?? []).slice(0, 4))
@@ -177,8 +188,9 @@ function runSearch() {
   menuOpen.value = false
 }
 
-function openNotifications() {
-  router.push('/my/notifications')
+function formatBadgeCount(value: number | null | undefined) {
+  const count = value ?? 0
+  return count > 99 ? '99+' : count
 }
 
 function logoutMock() {
@@ -195,12 +207,19 @@ function setActiveTheme(theme: unknown) {
 function closeMenu() {
   menuOpen.value = false
 }
+
+function onNavigationKeydown(event: KeyboardEvent) {
+  if (event.key === 'Escape') closeMenu()
+}
+
+onMounted(() => window.addEventListener('keydown', onNavigationKeydown))
+onBeforeUnmount(() => window.removeEventListener('keydown', onNavigationKeydown))
 </script>
 
 <template>
   <div
     class="min-h-screen bg-background lg:grid"
-    :style="{ gridTemplateColumns: sidebarCollapsed ? '64px minmax(0, 1fr)' : '222px minmax(0, 1fr)' }"
+    :style="{ gridTemplateColumns: sidebarCollapsed ? '64px minmax(0, 1fr)' : '208px minmax(0, 1fr)' }"
   >
     <aside class="sticky top-0 hidden h-screen overflow-hidden border-r border-sidebar-border bg-sidebar/95 text-sidebar-foreground backdrop-blur transition-[width] duration-200 lg:flex lg:flex-col">
       <RouterLink
@@ -238,7 +257,7 @@ function closeMenu() {
                 <component :is="item.icon" class="h-4 w-4 shrink-0" />
                 <span v-if="!sidebarCollapsed" class="truncate">{{ item.label }}</span>
               </span>
-              <Badge v-if="item.count && !sidebarCollapsed" variant="secondary" class="mr-2 h-5 px-1.5 text-[11px]">{{ item.count }}</Badge>
+              <Badge v-if="item.count && !sidebarCollapsed" variant="secondary" class="mr-2 h-5 px-1.5 text-[11px]">{{ formatBadgeCount(item.count) }}</Badge>
             </RouterLink>
           </div>
         </section>
@@ -253,6 +272,7 @@ function closeMenu() {
             <div class="font-medium text-sidebar-primary">平台公告</div>
             <div class="mt-1">查看公告与更新</div>
           </div>
+          <Badge v-if="importantAnnouncementUnreadCount" variant="secondary">{{ formatBadgeCount(importantAnnouncementUnreadCount) }}</Badge>
           <ChevronDown class="h-4 w-4 -rotate-90 text-sidebar-foreground/45" />
         </RouterLink>
         <Button
@@ -279,6 +299,8 @@ function closeMenu() {
     <div
       v-if="menuOpen"
       class="fixed inset-y-0 left-0 z-50 flex w-[min(336px,calc(100vw-48px))] flex-col border-r border-border bg-card shadow-xl lg:hidden"
+      role="dialog"
+      aria-modal="true"
       aria-label="移动端导航抽屉"
     >
       <div class="flex h-[60px] items-center justify-between border-b border-border px-4">
@@ -314,7 +336,7 @@ function closeMenu() {
                 <component :is="item.icon" class="h-4 w-4 shrink-0" />
                 <span class="truncate">{{ item.label }}</span>
               </span>
-              <Badge v-if="item.count" variant="secondary">{{ item.count }}</Badge>
+              <Badge v-if="item.count" variant="secondary">{{ formatBadgeCount(item.count) }}</Badge>
             </RouterLink>
           </div>
         </section>
@@ -324,7 +346,8 @@ function closeMenu() {
         class="border-t border-border p-4 text-xs leading-5 text-muted-foreground transition hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
         @click="closeMenu"
       >
-        平台公告 · 查看公告与更新
+        <span>平台公告 · 查看公告与更新</span>
+        <Badge v-if="importantAnnouncementUnreadCount" variant="secondary" class="ml-2">{{ formatBadgeCount(importantAnnouncementUnreadCount) }}</Badge>
       </RouterLink>
     </div>
 
@@ -374,9 +397,9 @@ function closeMenu() {
           </DropdownMenu>
           <DropdownMenu>
             <DropdownMenuTrigger as-child>
-              <Button variant="ghost" size="icon" class="relative text-muted-foreground" @click="openNotifications">
+              <Button variant="ghost" size="icon" class="relative text-muted-foreground">
                 <Bell class="h-4 w-4" />
-                <span v-if="unreadCount" class="absolute -right-0.5 -top-0.5 inline-flex h-4 min-w-[16px] items-center justify-center rounded-full bg-primary px-1 text-[10px] leading-none text-primary-foreground">{{ unreadCount }}</span>
+                <span v-if="unreadBusinessCount" class="absolute -right-0.5 -top-0.5 inline-flex h-4 min-w-[16px] items-center justify-center rounded-full bg-primary px-1 text-[10px] leading-none text-primary-foreground">{{ formatBadgeCount(unreadBusinessCount) }}</span>
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" class="w-80">
@@ -390,6 +413,10 @@ function closeMenu() {
               </DropdownMenuItem>
               <DropdownMenuItem v-if="topNotifications.length === 0" class="text-xs text-muted-foreground">
                 暂无通知
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem as-child>
+                <RouterLink to="/my/notifications" class="justify-center font-medium">查看全部通知</RouterLink>
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
@@ -455,7 +482,7 @@ function closeMenu() {
                     v-if="feedbackMenuUnreadCount"
                     class="inline-flex h-4 min-w-[16px] items-center justify-center rounded-full bg-primary px-1 text-[10px] leading-none text-primary-foreground"
                   >
-                    {{ feedbackMenuUnreadCount }}
+                    {{ formatBadgeCount(feedbackMenuUnreadCount) }}
                   </span>
                 </RouterLink>
               </DropdownMenuItem>

@@ -4,12 +4,14 @@ import { useRoute, useRouter } from 'vue-router'
 import { useMutation, useQueryClient } from '@tanstack/vue-query'
 import { toast } from 'vue-sonner'
 import ApiPurchasePanel from '@/components/api-service-detail/ApiPurchasePanel.vue'
+import ApiServiceDetailsTabs from '@/components/api-service-detail/ApiServiceDetailsTabs.vue'
 import ApiServiceHeader from '@/components/api-service-detail/ApiServiceHeader.vue'
 import ApiServiceSummary from '@/components/api-service-detail/ApiServiceSummary.vue'
-import MerchantNote from '@/components/api-service-detail/MerchantNote.vue'
-import ModelPriceTable from '@/components/api-service-detail/ModelPriceTable.vue'
-import ServiceRules from '@/components/api-service-detail/ServiceRules.vue'
 import { Button } from '@/components/ui/button'
+import EmptyState from '@/components/market/EmptyState.vue'
+import ErrorState from '@/components/market/ErrorState.vue'
+import SkeletonBlock from '@/components/market/SkeletonBlock.vue'
+import { Card } from '@/components/ui/card'
 import { BackendProblemError } from '@/lib/backendClient'
 import {
   createApiOrderFromIntent,
@@ -22,14 +24,15 @@ import {
 } from '@/lib/api'
 import { trackAnalytics } from '@/lib/analytics'
 import { useDetailVisibleAnalytics } from '@/composables/useDetailVisibleAnalytics'
-import { useApiService, useFavoriteStatus, useToggleFavoriteMutation } from '@/queries/useMarketQueries'
+import { useApiService, useFavoriteStatus, useMyApiServices, useToggleFavoriteMutation } from '@/queries/useMarketQueries'
 
 const route = useRoute()
 const router = useRouter()
 const queryClient = useQueryClient()
 const analyticsSourceRoute = () => String(route.name ?? 'unknown')
 const id = computed(() => String(route.params.id ?? ''))
-const { data: service, isLoading, error: serviceError } = useApiService(id)
+const { data: service, isLoading, error: serviceError, refetch: refetchService } = useApiService(id)
+const { data: ownedServices, isLoading: ownershipLoading } = useMyApiServices()
 const amount = ref(10)
 const selectedDeliveryMode = ref<ApiDeliveryMode>('api_key_endpoint')
 const { data: favoriteStatus } = useFavoriteStatus('api-service', id)
@@ -42,6 +45,8 @@ const emptyTitle = computed(() => serviceMissing.value ? 'API 服务暂未公开
 const emptyDescription = computed(() => serviceMissing.value
   ? '该服务尚未配置接单设置、已下架，或当前不在公开 API 集市展示。'
   : '该服务不存在、已下架，或当前不可接单。')
+const ownerPreview = computed(() => route.query.preview === 'owner')
+const isOwnedService = computed(() => Boolean(ownedServices.value?.some(item => item.id === id.value)))
 
 useDetailVisibleAnalytics({
   enabled: serviceVisible,
@@ -63,6 +68,11 @@ watch(service, value => {
   if (!value) return
   amount.value = value.minimumPurchaseCny
   selectedDeliveryMode.value = value.deliveryModes[0] ?? 'api_key_endpoint'
+}, { immediate: true })
+
+watch([isOwnedService, ownerPreview], ([owned, preview]) => {
+  if (!owned || preview) return
+  router.replace({ name: 'my-api-service-detail', params: { id: id.value } })
 }, { immediate: true })
 
 watch(service, value => {
@@ -100,6 +110,7 @@ const createOrderMutation = useMutation({
     queryClient.invalidateQueries({ queryKey: ['api-orders'] })
     queryClient.invalidateQueries({ queryKey: ['admin-section'] })
     queryClient.invalidateQueries({ queryKey: ['api-order-notifications'] })
+    queryClient.invalidateQueries({ queryKey: ['navigation-badges'] })
     if (service.value) {
       trackAnalytics('api_purchase_intent_create_success', {
         ...apiServiceAnalyticsProps(service.value),
@@ -107,11 +118,11 @@ const createOrderMutation = useMutation({
         purchase_amount_cny: amount.value,
       })
     }
-    toast.success('购买意向已提交，订单已创建，请查看收款资料后付款。')
+    toast.success('订单已创建，请查看付款方式并在倒计时内完成站外付款。')
     router.push(`/my/api-orders/${order.id}`)
   },
   onError(error) {
-    toast.error(error instanceof Error ? error.message : '提交购买意向失败。')
+    toast.error(error instanceof Error ? error.message : '创建订单失败。')
   },
 })
 
@@ -138,30 +149,40 @@ function createOrder() {
 </script>
 
 <template>
-  <div v-if="isLoading" class="rounded-xl border border-border bg-card p-8 text-sm text-muted-foreground">正在加载 API 服务详情...</div>
-  <div v-else-if="!service" class="rounded-xl border border-border bg-card p-8">
-    <h1 class="text-xl font-semibold">{{ emptyTitle }}</h1>
-    <p class="mt-2 text-sm text-muted-foreground">{{ emptyDescription }}</p>
-    <RouterLink to="/api-market"><Button class="mt-5" variant="outline">返回 API 集市</Button></RouterLink>
-  </div>
-  <div v-else class="space-y-4">
-    <ApiServiceHeader :service="service" :favorited="favorited" @toggle-favorite="toggleFavorite" />
-    <ApiServiceSummary :service="service" />
+  <SkeletonBlock v-if="isLoading" :lines="8" />
+  <ErrorState v-else-if="serviceError" description="API 服务详情暂时无法加载。" @retry="refetchService()" />
+  <EmptyState v-else-if="!service" :title="emptyTitle" :description="emptyDescription">
+    <template #action><RouterLink to="/api-market"><Button variant="outline">返回 API 市场</Button></RouterLink></template>
+  </EmptyState>
+  <div v-else class="api-service-detail-page space-y-4">
+    <ApiServiceHeader :service="service" />
 
-    <div class="grid min-w-0 gap-4 lg:grid-cols-[minmax(0,68fr)_minmax(320px,32fr)] lg:items-start">
-      <div class="min-w-0 space-y-4">
-        <ServiceRules :service="service" />
-        <MerchantNote :service="service" />
-        <ModelPriceTable :service="service" />
-      </div>
+    <div class="grid min-w-0 gap-4 lg:grid-cols-[minmax(0,65fr)_minmax(340px,35fr)] lg:items-start">
+      <ApiServiceSummary :service="service" />
+
+      <Card v-if="ownershipLoading" class="p-5 text-sm text-muted-foreground">
+        正在确认当前账号的服务视角...
+      </Card>
+
+      <Card v-else-if="isOwnedService" class="p-5">
+        <h2 class="font-semibold">卖家预览模式</h2>
+        <p class="mt-2 text-sm text-muted-foreground">这是买家看到的公开服务内容。卖家不能为自己的服务创建订单。</p>
+        <RouterLink :to="`/my/api-services/${service.id}`">
+          <Button class="mt-4 w-full">返回服务管理</Button>
+        </RouterLink>
+      </Card>
 
       <ApiPurchasePanel
+        v-else
         v-model:amount="amount"
-        v-model:selected-delivery-mode="selectedDeliveryMode"
         :service="service"
         :submitting="createOrderMutation.isPending.value"
+        :favorited="favorited"
+        @toggle-favorite="toggleFavorite"
         @confirm="createOrder"
       />
     </div>
+
+    <ApiServiceDetailsTabs :service="service" />
   </div>
 </template>

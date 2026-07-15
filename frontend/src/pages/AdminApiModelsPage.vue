@@ -3,7 +3,7 @@ import { computed, reactive, ref } from 'vue'
 import { AlertTriangle, Building2, FilePenLine, Plus, RotateCcw, Save, ToggleLeft, ToggleRight } from 'lucide-vue-next'
 import { toast } from 'vue-sonner'
 import PageTitle from '@/components/market/PageTitle.vue'
-import StatCard from '@/components/market/StatCard.vue'
+import CompactStats from '@/components/market/CompactStats.vue'
 import StatusTabs from '@/components/market/StatusTabs.vue'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -242,6 +242,7 @@ async function saveModel() {
 }
 
 async function setProviderActive(provider: AdminApiModelProvider, active: boolean) {
+  if (!active && !window.confirm(`停用提供商“${provider.displayName}”会使其关联模型无法用于新服务发布，已有订单仍使用快照。确认继续？`)) return
   try {
     await providerActiveMutation.mutateAsync({ id: provider.id, active })
     toast.success(active ? 'API 提供商已启用。' : 'API 提供商已停用。')
@@ -251,6 +252,7 @@ async function setProviderActive(provider: AdminApiModelProvider, active: boolea
 }
 
 async function setModelActive(model: AdminApiModel, active: boolean) {
+  if (!active && !window.confirm(`停用模型“${model.displayName}”会将其从新服务发布选择中移除，已有订单仍使用快照。确认继续？`)) return
   try {
     await modelActiveMutation.mutateAsync({ id: model.id, active })
     toast.success(active ? 'API 模型已启用。' : 'API 模型已停用。')
@@ -300,12 +302,7 @@ function capabilityText(model: AdminApiModel) {
       description="维护 API 提供商、具体模型、能力标签和官网公开价格版本。"
     />
 
-    <div class="grid gap-3 md:grid-cols-4">
-      <StatCard label="全部模型" :value="rows.length" hint="含停用模型" />
-      <StatCard label="可发布模型" :value="activeCount" :hint="`不可用 ${inactiveCount}`" accent />
-      <StatCard label="提供商" :value="providerCount" :hint="`启用 ${activeProviders.length}`" />
-      <StatCard label="当前筛选" :value="visibleRows.length" :hint="statusFilter" />
-    </div>
+    <CompactStats :items="[{ label: '全部模型', value: rows.length, hint: '含停用模型' }, { label: '可发布模型', value: activeCount, hint: `不可用 ${inactiveCount}` }, { label: '提供商', value: providerCount, hint: `启用 ${activeProviders.length}` }, { label: '当前筛选', value: visibleRows.length, hint: statusFilter }]" :loading="isLoading" />
 
     <section class="space-y-4">
       <div class="flex flex-wrap items-center justify-between gap-3">

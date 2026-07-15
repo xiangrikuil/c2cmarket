@@ -143,7 +143,7 @@ function targetTypeLabel(value: BackendReportTargetType) {
     public_user: '公开主页',
     carpool_application: '拼车申请',
     carpool_membership: '拼车成员关系',
-    api_purchase_intent: 'API 意向',
+    api_purchase_intent: 'API 订单',
     api_order: 'API 订单',
   }
   return labels[value]
@@ -369,13 +369,15 @@ export async function backendCreateAppeal(payload: CreateAppealRequest) {
 
 export async function backendAdminReportRows() {
   await ensureBackendSession('admin', true)
-  const [reports, disputes] = await Promise.all([
+  const [reports, disputes, appeals] = await Promise.all([
     backendRequest<ListResponse<BackendReport>>('/api/v1/admin/reports'),
     backendRequest<ListResponse<BackendDispute>>('/api/v1/admin/disputes'),
+    backendRequest<ListResponse<BackendAppeal>>('/api/v1/admin/appeals'),
   ])
   return [
     ...reports.items.map(mapReportRow),
     ...disputes.items.map(mapDisputeRow),
+    ...appeals.items.map(mapAppealRow),
   ]
 }
 

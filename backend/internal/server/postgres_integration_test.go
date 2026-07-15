@@ -33,6 +33,8 @@ func TestPostgresAdminOfficialPriceRecordFlow(t *testing.T) {
 		t.Fatalf("connect postgres: %v", err)
 	}
 	defer store.Close()
+	pool := openTestPool(t, databaseURL)
+	defer pool.Close()
 
 	server := NewServer(app.NewServiceWithPersistence(store))
 	adminSession := createSession(t, server, "pg-admin", true)
@@ -378,6 +380,84 @@ func TestPostgresAPIPurchaseIntentFlow(t *testing.T) {
 	pausedReplay := createAPIPurchaseIntent(t, server, buyerSession, published.ID, buyerContact.ID, "pg-api-intent-create-after-close-"+suffix)
 	if pausedReplay.ID != secondIntent.ID || pausedReplay.MerchantContact == nil || pausedReplay.MerchantContact.Value != secondIntent.MerchantContact.Value {
 		t.Fatalf("idempotent replay after service pause lost frozen contact: %+v", pausedReplay)
+	}
+}
+
+func TestPostgresAPIOrderReleasesPurchaseIntent(t *testing.T) {
+	databaseURL := os.Getenv("C2C_TEST_DATABASE_URL")
+	if databaseURL == "" {
+		t.Skip("C2C_TEST_DATABASE_URL is not set")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	store, err := postgres.Connect(ctx, databaseURL)
+	if err != nil {
+		t.Fatalf("connect postgres: %v", err)
+	}
+	defer store.Close()
+	pool := openTestPool(t, databaseURL)
+	defer pool.Close()
+
+	server := NewServer(app.NewServiceWithPersistence(store))
+	suffix := time.Now().Format("150405.000000000")
+	ownerSession := createLinuxDoSession(t, server, "pg-api-order-release-owner-"+suffix)
+	buyerSession := createSession(t, server, "pg-api-order-release-buyer-"+suffix, false)
+	ownerContact := createContactMethod(t, server, ownerSession, "telegram", "PG API Order Release Owner "+suffix, "@pg_api_order_release_owner_"+suffix)
+	buyerContact := createContactMethod(t, server, buyerSession, "telegram", "PG API Order Release Buyer "+suffix, "@pg_api_order_release_buyer_"+suffix)
+
+	service := createAPIService(t, server, ownerSession, ownerContact.ID, "pg-api-order-release-service-create-"+suffix)
+	submitted := ownerAPIServiceAction(t, server, ownerSession, service.ID, "submit-review", service.Version, "pg-api-order-release-service-submit-"+suffix)
+	published := ownerAPIServiceAction(t, server, ownerSession, submitted.ID, "publish", submitted.Version, "pg-api-order-release-service-publish-"+suffix)
+	orderable := updateAPIServiceOrderSettings(t, server, ownerSession, published.ID, published.Version, true, "pg-api-order-release-service-settings-"+suffix)
+
+	firstIntent := createAPIPurchaseIntent(t, server, buyerSession, orderable.ID, buyerContact.ID, "pg-api-order-release-intent-one-"+suffix)
+	firstOrder := createAPIOrder(t, server, buyerSession, firstIntent.ID, "wechat", "pg-api-order-release-order-one-"+suffix)
+	if firstOrder.RequestedUSDAllowanceSnapshot != "20.000000" || firstOrder.CNYPerUSDAllowanceSnapshot != "0.8000" || firstOrder.PricingSnapshot == "" {
+		t.Fatalf("expected frozen quota pricing on first order, got %+v", firstOrder)
+	}
+	var availableAfterFirst string
+	if err := pool.QueryRow(ctx, `SELECT available_usd_allowance::text FROM api_services WHERE id = $1`, orderable.ID).Scan(&availableAfterFirst); err != nil {
+		t.Fatalf("read available allowance after first order: %v", err)
+	}
+	if availableAfterFirst != "80.000000" {
+		t.Fatalf("expected 80.000000 allowance after first reservation, got %s", availableAfterFirst)
+	}
+	firstOrderedIntent := getAPIPurchaseIntent(t, server, buyerSession, "me", firstIntent.ID)
+	if firstOrderedIntent.Status != app.APIPurchaseIntentStatusOrdered || firstOrderedIntent.Version != firstIntent.Version+1 {
+		t.Fatalf("expected first order to release purchase intent, got %+v", firstOrderedIntent)
+	}
+
+	secondIntent := createAPIPurchaseIntent(t, server, buyerSession, orderable.ID, buyerContact.ID, "pg-api-order-release-intent-two-"+suffix)
+	if secondIntent.ID == firstIntent.ID || secondIntent.Status != app.APIPurchaseIntentStatusOpen {
+		t.Fatalf("expected a new active intent after first order, got first=%+v second=%+v", firstIntent, secondIntent)
+	}
+	secondOrder := createAPIOrder(t, server, buyerSession, secondIntent.ID, "wechat", "pg-api-order-release-order-two-"+suffix)
+	if firstOrder.ID == secondOrder.ID || secondOrder.APIPurchaseIntentID != secondIntent.ID {
+		t.Fatalf("expected a second order for the new intent, got first=%+v second=%+v", firstOrder, secondOrder)
+	}
+	secondOrderedIntent := getAPIPurchaseIntent(t, server, buyerSession, "me", secondIntent.ID)
+	if secondOrderedIntent.Status != app.APIPurchaseIntentStatusOrdered {
+		t.Fatalf("expected second order to release purchase intent, got %+v", secondOrderedIntent)
+	}
+	var availableAfterSecond string
+	if err := pool.QueryRow(ctx, `SELECT available_usd_allowance::text FROM api_services WHERE id = $1`, orderable.ID).Scan(&availableAfterSecond); err != nil {
+		t.Fatalf("read available allowance after second order: %v", err)
+	}
+	if availableAfterSecond != "60.000000" {
+		t.Fatalf("expected 60.000000 allowance after two reservations, got %s", availableAfterSecond)
+	}
+
+	cancelled := apiOrderAction(t, server, buyerSession, "me", secondOrder.ID, "cancel", secondOrder.Version, "pg-api-order-release-cancel-two-"+suffix, `{"reason":"取消未付款订单以验证额度释放。"}`)
+	if cancelled.Status != "cancelled" {
+		t.Fatalf("expected second order cancelled, got %+v", cancelled)
+	}
+	var availableAfterCancellation string
+	if err := pool.QueryRow(ctx, `SELECT available_usd_allowance::text FROM api_services WHERE id = $1`, orderable.ID).Scan(&availableAfterCancellation); err != nil {
+		t.Fatalf("read available allowance after cancellation: %v", err)
+	}
+	if availableAfterCancellation != "80.000000" {
+		t.Fatalf("expected 80.000000 allowance after cancellation release, got %s", availableAfterCancellation)
 	}
 }
 
@@ -796,6 +876,17 @@ func TestPostgresCarpoolApplicationFlow(t *testing.T) {
 	if published.DistributionMethod != "sub2api" || published.DistributionMethodNote != "Sub2API 托管管理，具体方式站外确认。" || !published.ProvidesAdminAccount {
 		t.Fatalf("expected postgres distribution/admin account fields after publish, got %+v", published)
 	}
+	selfApplicationRequest := newJSONRequest(http.MethodPost, "/api/v1/carpools/"+published.ID+"/applications", carpoolApplicationPayload(ownerContact.ID))
+	addAuth(selfApplicationRequest, ownerSession, "pg-carpool-apply-own-"+suffix)
+	selfApplicationResponse := httptest.NewRecorder()
+	server.ServeHTTP(selfApplicationResponse, selfApplicationRequest)
+	if selfApplicationResponse.Code != http.StatusConflict {
+		t.Fatalf("expected postgres own carpool application conflict, got %d body %s", selfApplicationResponse.Code, selfApplicationResponse.Body.String())
+	}
+	if !strings.Contains(selfApplicationResponse.Body.String(), "不能申请自己的车源") {
+		t.Fatalf("expected postgres own carpool application detail, got %s", selfApplicationResponse.Body.String())
+	}
+	assertProblemCode(t, selfApplicationResponse, "INVALID_STATE_TRANSITION")
 
 	application := createCarpoolApplication(t, server, buyerSession, published.ID, buyerContact.ID, "pg-carpool-apply-"+suffix)
 	assertCarpoolApplicationCreatedOwnerNotification(t, databaseURL, application.ID, ownerSession.userID, 1)

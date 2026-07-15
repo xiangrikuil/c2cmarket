@@ -268,7 +268,7 @@ function createApiPurchaseIntent(payload: CreateApiPurchaseIntentPayload): Promi
 ### 1. Scope / Trigger
 
 - Trigger: frontend work touching `/my/api-orders`, `/merchant/api-orders`, API order backend adapters, TanStack Query hooks, or API order detail/action pages.
-- Product flow: submit purchase intent -> create API order -> show frozen merchant/contact/payment materials -> buyer marks paid -> seller confirms off-platform receipt -> seller submits one structured delivery credential -> buyer/seller can view it long term in order detail.
+- Product flow: submit purchase intent -> create API order -> show frozen merchant/contact/payment materials -> buyer marks paid -> seller either confirms off-platform receipt or reports `未到账`/`金额不符`/`备注不符` -> buyer supplements and resubmits when needed -> seller confirms receipt -> seller submits one structured delivery credential -> buyer/seller can view it long term in order detail.
 - Boundary: this is not platform payment, escrow, API verification, API proxying, automatic delivery, chat, file upload, refund, or a credential history/editor.
 
 ### 2. Signatures
@@ -304,7 +304,7 @@ export type ApiOrderPaymentInstructions = {
 - Seller delivery form appears only for owner view when `status === 'paid_confirmed'` and no `deliveryCredential` exists.
 - Delivery form supports only `api_key_endpoint` and `login_account`. It must not expose a generic chat/message/file upload field, and it must not allow editing after submit.
 - Buyer/seller order detail may render `deliveryCredential` with copy buttons and long-term visibility. Lists, public API service pages, notifications, reports, admin summaries, and search rows must not render raw API keys or passwords.
-- UI wording should say `交付凭证`, `买家专属、可撤销`, and `提交后不可修改`; avoid `自动发货`, `平台担保`, `平台验真`, and `主账号密码`.
+- UI wording should say `交付凭证`, `买家专属`, and `提交后不可修改`; do not claim platform revocation support, and avoid `自动发货`, `平台担保`, `平台验真`, and `主账号密码`.
 - Real backend mode must call API order endpoints through `apiMarketBackend.ts` and must not catch failures to return mock orders.
 
 ### 4. Validation & Error Matrix
@@ -358,7 +358,7 @@ The detail-only form submits a typed credential once; list rows render status he
 
 ---
 
-## Scenario: Backend-Driven Navigation Permissions And Moderation Context
+## Scenario: Permission-Driven User/Admin Shells And Progressive Navigation
 
 ### 1. Scope / Trigger
 
@@ -386,13 +386,27 @@ export type AdminRow = {
   detailItems?: Array<{ label: string, value: string }>
   targetTo?: string | null
 }
+
+export function usePersistentSidebar(storageKey: string): {
+  sidebarCollapsed: Ref<boolean>
+}
+
+export function initialSidebarCollapsed(
+  storageValue: string | null,
+  viewportWidth: number,
+): boolean
 ```
 
 ### 3. Contracts
 
-- `AppShell` always shows browse, publish, personal workspace, and merchant workspace links for normal users.
+- `App.vue` selects exactly one layout: standalone routes render directly, `/admin/**` uses `AdminShell`, and all other authenticated pages use `AppShell`.
+- `AppShell` always shows browse, transaction, publish, and account entry points for normal users.
 - Merchant workspace links are normal user-permission links, not a separate account role.
-- Admin navigation is appended only when `getMyProfile()` / `useMyProfileQuery()` returns `permissions` containing `admin`.
+- Owner/merchant management links are progressive: show the management group only when the account owns a carpool/API service or has a real owner/merchant pending count. Publish entry points remain visible without ownership records.
+- When `getMyProfile()` / `useMyProfileQuery()` returns `permissions` containing `admin`, `AppShell` exposes one `进入管理台` link only; it must not append the administration directory.
+- `AdminShell` owns the grouped administration directory, global search, pending total, administrator identity, and a clear return-to-user-side action.
+- Both shells persist desktop collapse state independently. With no stored preference, widths below 1024 pixels default to collapsed.
+- Mobile navigation is a modal drawer with dialog semantics, a close action, Escape support, and enough width/scrolling to avoid obscuring navigation content.
 - The sidebar must not expose a manual `用户 / 管理员` or `用户 / 商户 / 管理` switch.
 - Navigating directly to `/merchant...` must remain in the normal `user` role because merchant workspaces belong to the same user permission class.
 - Admin negative actions (`take_down`, `restore`, `restrict`, `warn`, `suspend`, `ban`) require a reason and explicit second confirmation.
@@ -409,8 +423,12 @@ export type AdminRow = {
 
 | Condition | Expected behavior |
 | --- | --- |
-| Profile has no `admin` permission | User and merchant workspace navigation links are visible; admin navigation links are hidden |
-| Profile has `admin` permission | Admin navigation appears as an additional `管理` module below normal user/merchant modules |
+| Profile has no `admin` permission | User routes remain in `AppShell`; the management-console entry is hidden |
+| Profile has `admin` permission | `AppShell` shows one management-console entry; `/admin/**` switches to `AdminShell` |
+| Profile owns no listing and has no owner pending work | Management group stays hidden; publish links remain visible |
+| Profile owns a carpool or API service | Relevant owner/merchant links appear in the management group |
+| No stored collapse preference and viewport is below 1024px | Desktop shell initializes collapsed |
+| Mobile drawer is open and user presses Escape | Drawer closes and page content remains unobscured |
 | User opens `/merchant/api-orders` | Sidebar still shows personal plus merchant workspace groups |
 | Negative admin action without reason | Block action and show warning |
 | Negative admin action without second confirmation | Block action and show warning |
@@ -419,11 +437,14 @@ export type AdminRow = {
 
 ### 5. Good/Base/Bad Cases
 
-- Good: profile with `permissions: ['admin']` shows personal workspace, merchant workspace, and an appended management module.
-- Good: profile without `admin` permission shows personal workspace and merchant workspace only.
+- Good: profile with `permissions: ['admin']` sees one `进入管理台` entry in `AppShell`, then the complete grouped directory inside `AdminShell`.
+- Good: a first-time profile sees publish actions but no permanently empty management group.
+- Good: a carpool owner or API merchant sees only the relevant progressive management links.
 - Good: admin official-price panel shows `来源`, `历史价格`, `汇率时间`, `重复 offer`, `地区限制`, and `操作记录`.
 - Base: direct `/admin/price-leads` redirects to `/admin/official-prices` for compatibility.
 - Bad: ordinary user sidebar always lists `用户管理`, `低价线索审核`, and `举报纠纷`.
+- Bad: administration pages render inside the ordinary user shell.
+- Bad: hiding publish actions until the account already owns a listing.
 - Bad: ordinary user sidebar hides merchant workspace links behind a separate `商户` role switch.
 - Bad: sidebar has a manual `用户 / 管理员` role toggle.
 
@@ -434,9 +455,12 @@ export type AdminRow = {
 - Product-boundary scan for official-price and API-intent wording drift.
 - Browser/DOM smoke:
   - sidebar has no manual role switch,
-  - profile-driven admin permission appends the management module,
-  - user sidebar shows both personal workspace and merchant workspace links,
+  - profile-driven admin permission exposes exactly one management-console entry,
+  - `/admin/**` renders the independent admin layout,
+  - publish actions remain visible while owner/merchant groups are progressive,
   - `/merchant/...` keeps the user permission sidebar,
+  - persisted collapse preference overrides the viewport default,
+  - mobile drawers expose dialog semantics and close with Escape,
   - price-lead detail includes evidence/context fields,
   - negative action controls show reason and second confirmation.
 
@@ -447,14 +471,20 @@ export type AdminRow = {
 ```ts
 const navGroups = [
   userLinks,
-  adminLinks, // unconditional
+  adminLinks, // complete admin directory mixed into the user shell
 ]
 ```
 
 #### Correct
 
 ```ts
-return myProfile.value?.permissions.includes('admin')
-  ? [browseGroup, publishGroup, userGroup, merchantGroup, adminGroup]
-  : [browseGroup, publishGroup, userGroup, merchantGroup]
+const userShellGroups = [browseGroup, transactionGroup, publishGroup, accountGroup]
+if (hasOwnerObjectsOrPendingWork.value) userShellGroups.splice(3, 0, managementGroup)
+if (myProfile.value?.permissions.includes('admin')) userShellGroups.push(managementConsoleEntry)
+
+const layout = route.meta.standalone
+  ? null
+  : route.path.startsWith('/admin')
+    ? AdminShell
+    : AppShell
 ```

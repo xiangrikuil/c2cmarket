@@ -1,44 +1,61 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { useQueryClient } from '@tanstack/vue-query'
-import { ExternalLink, Info, MessageCircle } from 'lucide-vue-next'
+import { ExternalLink, Flag, Heart, Info, MapPin, MessageCircle, Share2, ShieldAlert, Sparkles } from 'lucide-vue-next'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
+import { Textarea } from '@/components/ui/textarea'
 import SourceBadges from '@/components/market/SourceBadges.vue'
-import { createCarpoolApplication, getCarpoolAccessArrangementLabel, getCarpoolApplyDisabledReason, isHighRiskSubscriptionCarpool, type Carpool } from '@/lib/api'
+import EmptyState from '@/components/market/EmptyState.vue'
+import ErrorState from '@/components/market/ErrorState.vue'
+import SkeletonBlock from '@/components/market/SkeletonBlock.vue'
+import { createCarpoolApplication, getCarpoolAccessArrangementLabel, isHighRiskSubscriptionCarpool, runAdminModerationAction, type Carpool } from '@/lib/api'
+import { createCarpoolModerationRow } from '@/lib/carpoolModeration'
 import { trackAnalytics } from '@/lib/analytics'
 import { fullCapacityTooltip, getPricingDisplay, getRemainingSeats } from '@/lib/pricing'
 import { formatMonthlyQuota, quotaFieldLabel } from '@/lib/quota'
 import { useDetailVisibleAnalytics } from '@/composables/useDetailVisibleAnalytics'
-import { useCarpool, useFavoriteStatus, useMyCarpoolApplications, useToggleFavoriteMutation } from '@/queries/useMarketQueries'
+import { useCarpool, useCarpoolApplicationEligibility, useFavoriteStatus, useMyProfileQuery, useToggleFavoriteMutation } from '@/queries/useMarketQueries'
 import { toast } from 'vue-sonner'
 
 const route = useRoute()
+const router = useRouter()
 const queryClient = useQueryClient()
 const analyticsSourceRoute = () => String(route.name ?? 'unknown')
 const id = computed(() => String(route.params.id ?? ''))
-const { data: carpool, isLoading } = useCarpool(id)
-const { data: myApplications } = useMyCarpoolApplications({ sort: 'default_buyer' })
+const { data: carpool, isLoading, error: carpoolError, refetch: refetchCarpool } = useCarpool(id)
+const { data: applicationEligibility, isLoading: eligibilityLoading, isError: eligibilityError } = useCarpoolApplicationEligibility(id)
+const { data: myProfile } = useMyProfileQuery()
 const { data: favoriteStatus } = useFavoriteStatus('carpool', id)
 const toggleFavoriteMutation = useToggleFavoriteMutation()
 const applyDialogOpen = ref(false)
 const rulesAccepted = ref(false)
 const applyBusy = ref(false)
 const trackedCarpoolId = ref('')
+const adminDialogOpen = ref(false)
+const adminAction = ref<AdminCarpoolAction>('take_down')
+const adminReason = ref('')
+const adminConfirmStep = ref<'reason' | 'confirm'>('reason')
+const adminActionBusy = ref(false)
 const pricing = computed(() => carpool.value ? getPricingDisplay(carpool.value) : null)
 const quotaText = computed(() => carpool.value ? formatMonthlyQuota(carpool.value) : '额度待补充')
 const quotaLabel = computed(() => carpool.value ? quotaFieldLabel(carpool.value) : '每月额度')
 const seatSummary = computed(() => carpool.value?.seatSummary ?? null)
 const favorited = computed(() => Boolean(favoriteStatus.value))
-const ongoingApplication = computed(() => (myApplications.value ?? []).find(item => {
-  return item.carpoolId === id.value && !['completed', 'rejected', 'cancelled_by_buyer', 'cancelled_by_owner', 'expired'].includes(item.status)
-}))
-
 const applyDisabledReason = computed(() => {
-  if (!carpool.value) return '车源不存在'
-  return getCarpoolApplyDisabledReason(carpool.value, seatSummary.value, Boolean(ongoingApplication.value))
+  if (eligibilityLoading.value) return '正在检查申请资格'
+  if (eligibilityError.value || !applicationEligibility.value) return '暂时无法确认申请资格'
+  return applicationEligibility.value.canApply ? '' : applicationEligibility.value.reason
 })
 
 const totalSeats = computed(() => seatSummary.value?.totalSeats ?? carpool.value?.maxMembers ?? 0)
@@ -48,12 +65,15 @@ const availableSeats = computed(() => seatSummary.value?.availableSeats ?? (carp
 const occupiedPercent = computed(() => getSeatPercent(activeSeats.value, totalSeats.value))
 const reservedPercent = computed(() => getSeatPercent(reservedSeats.value, totalSeats.value))
 const availablePercent = computed(() => getSeatPercent(availableSeats.value, totalSeats.value))
-const applyStatusText = computed(() => applyDisabledReason.value || '可申请上车')
+const applyStatusText = computed(() => applicationEligibility.value?.reason ?? applyDisabledReason.value)
+const seatAvailabilityLabel = computed(() => applicationEligibility.value?.canApply ? '可申请' : '剩余名额')
 const carpoolVisible = computed(() => Boolean(carpool.value?.id))
+const canModerateCarpool = computed(() => myProfile.value?.permissions.includes('admin') ?? false)
+const adminActionLabel = computed(() => adminAction.value === 'take_down' ? '下架车源' : '要求复核')
 const statusToneClass = computed(() => {
   if (!carpool.value) return 'border-border bg-muted/30 text-muted-foreground'
-  if (!applyDisabledReason.value) return 'border-emerald-200 bg-emerald-50 text-emerald-700'
-  if (carpool.value.status === '审核中' || carpool.value.accessArrangementMode === 'not_allowed' || (isHighRiskSubscriptionCarpool(carpool.value) && !carpool.value.riskAcknowledged)) return 'border-amber-200 bg-amber-50 text-amber-800'
+  if (applicationEligibility.value?.code === 'eligible') return 'border-emerald-200 bg-emerald-50 text-emerald-700'
+  if (applicationEligibility.value?.code === 'credential_risk' || applicationEligibility.value?.code === 'owner_action_required') return 'border-amber-200 bg-amber-50 text-amber-800'
   return 'border-border bg-muted/30 text-muted-foreground'
 })
 
@@ -62,6 +82,8 @@ useDetailVisibleAnalytics({
   entityType: 'carpool',
   sourceRoute: analyticsSourceRoute,
 })
+
+type AdminCarpoolAction = 'take_down' | 'request_changes'
 
 function carpoolAnalyticsProps(value: Carpool) {
   return {
@@ -103,6 +125,46 @@ function toggleFavorite() {
   })
 }
 
+function openAdminAction(action: AdminCarpoolAction) {
+  adminAction.value = action
+  adminReason.value = ''
+  adminConfirmStep.value = 'reason'
+  adminDialogOpen.value = true
+}
+
+function continueAdminAction() {
+  if (!adminReason.value.trim()) {
+    toast.warning('请先填写明确的操作原因。')
+    return
+  }
+  adminConfirmStep.value = 'confirm'
+}
+
+async function submitAdminAction() {
+  if (!carpool.value || !canModerateCarpool.value || adminConfirmStep.value !== 'confirm') return
+  adminActionBusy.value = true
+  try {
+    await runAdminModerationAction(
+      createCarpoolModerationRow(carpool.value),
+      adminAction.value,
+      adminReason.value.trim(),
+    )
+    await Promise.all([
+      queryClient.invalidateQueries({ queryKey: ['carpools'] }),
+      queryClient.invalidateQueries({ queryKey: ['admin-section'] }),
+      queryClient.invalidateQueries({ queryKey: ['admin-overview'] }),
+      queryClient.invalidateQueries({ queryKey: ['navigation-badges'] }),
+    ])
+    adminDialogOpen.value = false
+    toast.success(`${carpool.value.product} 已${adminAction.value === 'take_down' ? '下架' : '进入复核队列'}。`)
+    await router.push('/carpools')
+  } catch (error) {
+    toast.error(error instanceof Error ? error.message : '管理操作失败')
+  } finally {
+    adminActionBusy.value = false
+  }
+}
+
 async function applyToJoin() {
   if (!carpool.value) return
   if (!rulesAccepted.value) {
@@ -117,6 +179,7 @@ async function applyToJoin() {
     await queryClient.invalidateQueries({ queryKey: ['carpools'] })
     await queryClient.invalidateQueries({ queryKey: ['admin-section'] })
     await queryClient.invalidateQueries({ queryKey: ['carpool-notifications'] })
+    await queryClient.invalidateQueries({ queryKey: ['navigation-badges'] })
     applyDialogOpen.value = false
     trackAnalytics('carpool_application_submit_success', carpoolAnalyticsProps(carpool.value))
     toast.success(`申请已提交，等待车主处理：${application.id}`)
@@ -126,34 +189,34 @@ async function applyToJoin() {
     applyBusy.value = false
   }
 }
+
+async function shareCarpool() {
+  await navigator.clipboard.writeText(window.location.href)
+  toast.success('车源链接已复制。')
+}
 </script>
 
 <template>
-  <div v-if="isLoading" class="rounded-xl border border-border bg-card p-8 text-sm text-muted-foreground">正在加载车源详情...</div>
-  <div v-else-if="!carpool" class="rounded-xl border border-border bg-card p-8">
-    <h1 class="text-xl font-semibold">未找到车源</h1>
-    <p class="mt-2 text-sm text-muted-foreground">该车源 ID 不存在，可能已下架或暂不可见。</p>
-    <RouterLink to="/carpools"><Button class="mt-5" variant="outline">返回订阅拼车</Button></RouterLink>
-  </div>
-  <div v-else>
-    <div class="mb-5 flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
-      <div>
-        <div class="flex flex-wrap items-center gap-2">
-          <p class="text-sm text-muted-foreground">AI 分类 / {{ carpool.product }} / {{ carpool.region }}</p>
-          <Badge :variant="carpool.status === '可上车' ? 'default' : 'secondary'">{{ carpool.status }}</Badge>
+  <SkeletonBlock v-if="isLoading" :lines="8" />
+  <ErrorState v-else-if="carpoolError" description="车源详情暂时无法加载。" @retry="refetchCarpool()" />
+  <EmptyState v-else-if="!carpool" title="未找到车源" description="该车源可能已下架或暂不可见。"><template #action><RouterLink to="/carpools"><Button variant="outline">返回订阅拼车</Button></RouterLink></template></EmptyState>
+  <div v-else class="carpool-detail-page">
+    <div class="carpool-detail-heading mb-5 rounded-xl border px-5 py-5 md:px-6">
+      <div class="flex min-w-0 items-start gap-4">
+        <span class="carpool-detail-product-icon"><Sparkles class="h-7 w-7" /></span>
+        <div class="min-w-0">
+          <div class="flex flex-wrap items-center gap-2">
+            <p class="text-sm text-muted-foreground">订阅拼车 / {{ carpool.product }}</p>
+            <Badge :variant="carpool.status === '可上车' ? 'default' : 'secondary'">{{ carpool.status }}</Badge>
+            <Badge variant="outline"><MapPin class="h-3 w-3" />{{ carpool.region }}</Badge>
+          </div>
+          <h1 class="mt-2 text-3xl font-semibold tracking-tight">{{ carpool.product }} 拼车</h1>
+          <p class="mt-2 max-w-3xl text-sm leading-6 text-muted-foreground">月付展示，支持个人订阅费用分摊、成员邀请或其他站外安排；不允许共用密码、token、Session 或 Cookie。</p>
         </div>
-        <h1 class="mt-2 text-3xl font-semibold tracking-tight">{{ carpool.product }} 拼车</h1>
-        <p class="mt-2 max-w-3xl text-sm text-muted-foreground">月付展示，支持个人订阅费用分摊、成员邀请或其他站外安排；不允许共用密码、token、Session 或 Cookie。</p>
-      </div>
-      <div class="grid gap-2 sm:flex md:pt-1">
-        <Button class="w-full sm:w-auto" variant="outline" :disabled="toggleFavoriteMutation.isPending.value" @click="toggleFavorite">{{ favorited ? '已收藏' : '收藏' }}</Button>
-        <Button class="w-full sm:w-auto" :variant="applyDisabledReason ? 'secondary' : 'default'" :disabled="Boolean(applyDisabledReason)" @click="applyDialogOpen = true">
-          <MessageCircle class="h-4 w-4" />{{ applyDisabledReason || '申请上车' }}
-        </Button>
       </div>
     </div>
 
-    <Card class="overflow-hidden p-0">
+    <Card class="carpool-detail-primary overflow-hidden p-0">
       <div class="grid lg:grid-cols-[minmax(0,1fr)_380px]">
         <section class="p-5 lg:border-r lg:border-border lg:p-6">
           <div class="flex flex-wrap items-center gap-2">
@@ -207,11 +270,11 @@ async function applyToJoin() {
           </div>
         </section>
 
-        <aside class="border-t border-border p-5 lg:border-t-0 lg:p-6">
+        <aside class="carpool-detail-action border-t border-border p-5 lg:sticky lg:top-16 lg:self-start lg:border-t-0 lg:p-6">
           <div class="flex items-start justify-between gap-3">
             <div>
               <div class="text-sm text-muted-foreground">名额进度</div>
-              <div class="mt-2 text-3xl font-semibold">{{ availableSeats }} <span class="text-base font-medium text-muted-foreground">/ {{ totalSeats }} 可申请</span></div>
+              <div class="mt-2 text-3xl font-semibold">{{ availableSeats }} <span class="text-base font-medium text-muted-foreground">/ {{ totalSeats }} {{ seatAvailabilityLabel }}</span></div>
             </div>
             <span class="rounded-full border px-2.5 py-1 text-xs font-medium" :class="statusToneClass">{{ applyStatusText }}</span>
           </div>
@@ -225,12 +288,18 @@ async function applyToJoin() {
           <div class="mt-3 grid grid-cols-3 gap-2 text-center text-xs">
             <div class="rounded-md bg-muted/40 px-2 py-2"><div class="font-semibold">{{ activeSeats }}</div><div class="text-muted-foreground">已上车</div></div>
             <div class="rounded-md bg-muted/40 px-2 py-2"><div class="font-semibold">{{ reservedSeats }}</div><div class="text-muted-foreground">预留中</div></div>
-            <div class="rounded-md bg-muted/40 px-2 py-2"><div class="font-semibold">{{ availableSeats }}</div><div class="text-muted-foreground">可申请</div></div>
+            <div class="rounded-md bg-muted/40 px-2 py-2"><div class="font-semibold">{{ availableSeats }}</div><div class="text-muted-foreground">{{ seatAvailabilityLabel }}</div></div>
           </div>
           <Button class="mt-5 w-full" :variant="applyDisabledReason ? 'secondary' : 'default'" :disabled="Boolean(applyDisabledReason)" @click="applyDialogOpen = true">
-            <MessageCircle class="h-4 w-4" />{{ applyDisabledReason || '申请上车' }}
+            <MessageCircle class="h-4 w-4" />{{ applicationEligibility?.canApply ? '申请上车' : '当前不可申请' }}
           </Button>
+          <p v-if="applyDisabledReason" class="mt-2 text-sm text-muted-foreground">{{ applyDisabledReason }}</p>
           <p class="mt-3 text-xs leading-5 text-muted-foreground">车主接受前不占用正式名额；审核中、风险未确认或需要共享凭据的车源不可申请。</p>
+          <div class="mt-4 grid grid-cols-3 gap-2 border-t border-border pt-4">
+            <Button variant="outline" size="sm" :disabled="toggleFavoriteMutation.isPending.value" @click="toggleFavorite"><Heart class="h-3.5 w-3.5" :class="favorited ? 'fill-current' : ''" />收藏</Button>
+            <Button variant="outline" size="sm" @click="shareCarpool"><Share2 class="h-3.5 w-3.5" />分享</Button>
+            <RouterLink :to="{ path: '/my/feedback', query: { target: `carpool:${carpool.id}` } }"><Button class="w-full" variant="outline" size="sm"><Flag class="h-3.5 w-3.5" />举报</Button></RouterLink>
+          </div>
         </aside>
       </div>
     </Card>
@@ -241,6 +310,21 @@ async function applyToJoin() {
         <div>
           <p class="font-medium">该车源按月付展示，加入前请确认付款周期、剩余名额、退出规则和退款条件。</p>
           <p class="mt-1 text-sm text-muted-foreground">平台不托管支付、不保存账号或 Token，不鼓励共用账号、共用密码或转交会话凭据，也不担保车主承诺或代赔。</p>
+        </div>
+      </div>
+    </Card>
+    <Card v-if="canModerateCarpool" class="mt-4 border-amber-200 bg-amber-50/40 p-5">
+      <div class="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+        <div class="flex items-start gap-3">
+          <ShieldAlert class="mt-0.5 h-5 w-5 text-amber-700" />
+          <div>
+            <h2 class="font-semibold">管理员治理</h2>
+            <p class="mt-1 text-sm text-muted-foreground">巡查发现信息不准确或需要进一步核对时，可在这里下架车源或转入异常复核。</p>
+          </div>
+        </div>
+        <div class="flex flex-wrap gap-2">
+          <Button variant="outline" @click="openAdminAction('request_changes')">要求复核</Button>
+          <Button variant="destructive" @click="openAdminAction('take_down')">下架车源</Button>
         </div>
       </div>
     </Card>
@@ -336,7 +420,7 @@ async function applyToJoin() {
             <div><dt class="text-muted-foreground">月费快照</dt><dd>¥{{ pricing?.primaryPrice }}/月 · {{ pricing?.primaryLabel }}</dd></div>
             <div><dt class="text-muted-foreground">申请名额</dt><dd>1 人</dd></div>
             <div><dt class="text-muted-foreground">车主</dt><dd>{{ carpool.owner }} · 信任等级{{ carpool.trustLevel }}</dd></div>
-            <div><dt class="text-muted-foreground">可申请</dt><dd>{{ availableSeats }} / {{ totalSeats }} 位</dd></div>
+            <div><dt class="text-muted-foreground">{{ seatAvailabilityLabel }}</dt><dd>{{ availableSeats }} / {{ totalSeats }} 位</dd></div>
           </dl>
           <label class="flex items-start gap-2 rounded-md border border-border p-3">
             <input v-model="rulesAccepted" type="checkbox" class="mt-1 h-4 w-4 accent-primary" />
@@ -349,5 +433,34 @@ async function applyToJoin() {
         </div>
       </Card>
     </div>
+
+    <Dialog v-model:open="adminDialogOpen">
+      <DialogContent class="sm:max-w-lg">
+        <DialogHeader>
+          <DialogTitle>{{ adminConfirmStep === 'reason' ? adminActionLabel : `二次确认：${adminActionLabel}` }}</DialogTitle>
+          <DialogDescription v-if="adminConfirmStep === 'reason'">填写原因后进入二次确认。管理动作会保留在审计记录中。</DialogDescription>
+          <DialogDescription v-else>请再次核对车源、动作和原因。确认后将立即更新车源公开状态。</DialogDescription>
+        </DialogHeader>
+
+        <label v-if="adminConfirmStep === 'reason'" class="space-y-2">
+          <span class="text-sm font-medium">操作原因</span>
+          <Textarea v-model="adminReason" class="min-h-28" placeholder="说明巡查发现的问题或需要复核的内容。" />
+        </label>
+        <div v-else class="space-y-3 rounded-lg border border-border bg-muted/30 p-4 text-sm">
+          <div><span class="text-muted-foreground">车源：</span>{{ carpool.product }} · {{ carpool.region }}</div>
+          <div><span class="text-muted-foreground">动作：</span>{{ adminActionLabel }}</div>
+          <div><span class="text-muted-foreground">原因：</span>{{ adminReason }}</div>
+        </div>
+
+        <DialogFooter>
+          <Button v-if="adminConfirmStep === 'confirm'" variant="outline" :disabled="adminActionBusy" @click="adminConfirmStep = 'reason'">返回修改</Button>
+          <Button v-else variant="outline" :disabled="adminActionBusy" @click="adminDialogOpen = false">取消</Button>
+          <Button v-if="adminConfirmStep === 'reason'" @click="continueAdminAction">继续确认</Button>
+          <Button v-else :variant="adminAction === 'take_down' ? 'destructive' : 'default'" :disabled="adminActionBusy" @click="submitAdminAction">
+            {{ adminActionBusy ? '处理中...' : `确认${adminActionLabel}` }}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   </div>
 </template>

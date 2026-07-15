@@ -13,10 +13,10 @@ func TestAPIPurchaseIntentNotificationTargetURLUsesReceiverPerspective(t *testin
 		OwnerUserID: "owner-123",
 	}
 
-	if got := apiPurchaseIntentNotificationTargetURL(intent, intent.OwnerUserID); got != "/merchant/api-orders/intent-123" {
-		t.Fatalf("expected merchant API intent route, got %q", got)
+	if got := apiPurchaseIntentNotificationTargetURL(intent, intent.OwnerUserID); got != "/merchant/api-orders" {
+		t.Fatalf("expected merchant API order list route, got %q", got)
 	}
-	if got := apiPurchaseIntentNotificationTargetURL(intent, intent.BuyerUserID); got != "/my/api-orders/intent-123" {
-		t.Fatalf("expected buyer API intent route, got %q", got)
+	if got := apiPurchaseIntentNotificationTargetURL(intent, intent.BuyerUserID); got != "/my/api-orders" {
+		t.Fatalf("expected buyer API order list route, got %q", got)
 	}
 }

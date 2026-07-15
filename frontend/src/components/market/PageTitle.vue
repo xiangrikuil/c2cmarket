@@ -16,7 +16,8 @@ defineProps<{
       <h1 class="text-2xl font-semibold md:text-3xl">{{ title }}</h1>
       <p v-if="description" class="mt-2 max-w-3xl text-sm text-muted-foreground">{{ description }}</p>
     </div>
-    <RouterLink v-if="actionText && actionTo" :to="actionTo" class="w-full md:w-auto">
+    <div v-if="$slots.action" class="w-full md:w-auto"><slot name="action" /></div>
+    <RouterLink v-else-if="actionText && actionTo" :to="actionTo" class="w-full md:w-auto">
       <Button class="w-full md:w-auto">{{ actionText }}</Button>
     </RouterLink>
   </div>

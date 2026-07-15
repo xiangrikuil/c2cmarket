@@ -54,6 +54,12 @@ versions:
 | `000042_carpool_distribution_admin_account` | public carpool distribution method and administrator-account availability signals |
 | `000043_remove_usdt_payment_method` | removes USDT from API service payment method options and order payment-method constraints |
 | `000044_api_order_delivery_credentials` | API order payment QR snapshots and encrypted in-platform delivery credential storage |
+| `000045_product_category_icon` | optional admin-uploaded PNG/WebP category icon data URL |
+| `000046_realtime_invalidation` | commit-aware PostgreSQL notifications for user inbox changes and administrator work queues |
+| `000047_api_purchase_intent_ordered_status` | releases order-backed API purchase intents from the active-intent uniqueness constraint |
+| `000048_report_schema_upgrade` | upgrades earlier report/dispute schemas with canonical targets, result codes, deduplication, and moderation audit rows |
+| `000049_api_order_quota_inventory` | service-level metered quota inventory plus immutable quota, rate, and pricing snapshots on API orders |
+| `000050_api_order_payment_issue` | buyer-reported API order payment issues with merchant resolution tracking and notification hooks |
 
 The current runnable Go slice supports both in-memory tests and PostgreSQL runtime.
 When `DATABASE_URL` is configured, users, auth sessions, idempotency, product
@@ -150,6 +156,24 @@ reads come only from `dispute_cases.public_summary`, `public_result_code`, and
 `public_result`; they must not expose reporter IDs, admin IDs, contact values,
 internal notes, evidence descriptions, payment, refund, compensation, escrow,
 guarantee, fulfillment, or credential-delivery semantics.
+
+Version 48 upgrades databases that applied the earlier Version 22 definition
+before report canonical-target fields, dispute result codes, and moderation audit
+rows were added. It backfills non-sensitive report snapshots and canonical
+targets, archives earlier duplicate active reports before creating the canonical
+unique index, and then adds the missing constraints, indexes, and audit table.
+
+Version 49 separates a metered service's total available USD allowance from its
+per-order maximum. Creating an API order reserves allowance atomically and
+freezes the requested allowance, CNY exchange rate, and pricing JSON on the
+order. Cancelling or expiring an unpaid order releases the reservation; paid
+orders retain it through delivery and completion.
+
+Version 50 adds the `payment_issue` API-order state and structured mismatch
+reasons (`not_received`, `amount_mismatch`, `remark_mismatch`). A seller may
+report an issue only after the buyer submits payment information. The buyer can
+then supplement and resubmit that information, returning the order to
+`payment_submitted`; the existing quota reservation remains held throughout.
 
 ## Contact Retention And Destruction
 

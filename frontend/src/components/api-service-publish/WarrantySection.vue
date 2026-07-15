@@ -16,8 +16,8 @@ const options: Array<{ value: WarrantyMode, title: string, description: string }
 ]
 
 const templates = [
-  '建议首次提交 ¥10 意向测试',
-  '提交意向后站外确认接入细节',
+  '建议首次创建 ¥10 小额订单测试',
+  '创建订单后站外确认接入细节',
   '用量与余额由商户说明，买家自行核对',
   '高峰期响应可能变慢',
   '部分模型可能临时维护',
@@ -104,7 +104,7 @@ function insertTemplate(form: ApiServicePublishForm, value: string) {
           v-model="form.merchantNote"
           class="min-h-28"
           maxlength="800"
-          placeholder="请填写提交意向前需要确认的事项，例如请求地址、面板说明、限速规则、用量核对方式等。"
+          placeholder="请填写创建订单前需要确认的事项，例如请求地址、面板说明、限速规则、用量核对方式等。"
         />
         <div class="flex items-center justify-between gap-3">
           <p v-if="errors.merchantNote" class="text-xs text-destructive">{{ errors.merchantNote }}</p>

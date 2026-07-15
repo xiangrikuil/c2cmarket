@@ -41,8 +41,8 @@ function formatTime(value: string) {
 </script>
 
 <template>
-  <div class="space-y-5">
-    <PageTitle title="公告详情" description="平台公告与业务通知独立展示。" />
+  <div class="announcement-reference-page space-y-5">
+    <div class="announcement-reference-heading rounded-xl border px-5 py-4"><PageTitle title="公告详情" description="平台公告与业务通知独立展示。" /></div>
 
     <Card v-if="isLoading" class="p-6 text-sm text-muted-foreground">公告加载中...</Card>
 
@@ -57,8 +57,9 @@ function formatTime(value: string) {
       </div>
     </Card>
 
-    <article v-else class="space-y-4">
-      <Card class="p-5">
+    <article v-else class="announcement-reference-layout">
+      <main class="min-w-0 space-y-4">
+        <Card class="announcement-reference-summary p-5">
         <div class="flex flex-wrap items-center gap-2">
           <Badge variant="outline">{{ announcementCategoryLabels[announcement.category] }}</Badge>
           <Badge :variant="announcement.level === 'important' ? 'default' : 'secondary'">{{ announcementLevelLabels[announcement.level] }}</Badge>
@@ -71,9 +72,9 @@ function formatTime(value: string) {
           <span>更新时间：{{ updatedAt }}</span>
           <span>已读状态：已自动记录</span>
         </div>
-      </Card>
+        </Card>
 
-      <Card class="p-5">
+        <Card class="announcement-reference-content p-5">
         <AnnouncementDetailContent :content-markdown="announcement.contentMarkdown" />
         <div v-if="announcement.ctaLabel && announcement.ctaUrl" class="mt-6">
           <a v-if="ctaIsExternal" :href="announcement.ctaUrl" target="_blank" rel="noopener noreferrer">
@@ -89,12 +90,29 @@ function formatTime(value: string) {
             </Button>
           </RouterLink>
         </div>
-      </Card>
+        </Card>
 
-      <Button variant="outline" @click="router.push('/my/notifications?tab=announcements')">
-        <ArrowLeft class="h-4 w-4" />
-        返回公告列表
-      </Button>
+        <Button variant="outline" @click="router.push('/my/notifications?tab=announcements')">
+          <ArrowLeft class="h-4 w-4" />
+          返回公告列表
+        </Button>
+      </main>
+      <aside class="announcement-reference-aside space-y-3">
+        <Card class="p-4">
+          <h2 class="font-semibold">公告信息</h2>
+          <dl class="mt-3 grid gap-3 text-sm">
+            <div><dt class="text-xs text-muted-foreground">分类</dt><dd class="mt-1 font-medium">{{ announcementCategoryLabels[announcement.category] }}</dd></div>
+            <div><dt class="text-xs text-muted-foreground">级别</dt><dd class="mt-1 font-medium">{{ announcementLevelLabels[announcement.level] }}</dd></div>
+            <div><dt class="text-xs text-muted-foreground">发布时间</dt><dd class="mt-1 text-muted-foreground">{{ publishedAt }}</dd></div>
+            <div><dt class="text-xs text-muted-foreground">最近更新</dt><dd class="mt-1 text-muted-foreground">{{ updatedAt }}</dd></div>
+          </dl>
+        </Card>
+        <Card class="p-4">
+          <h2 class="font-semibold">阅读提示</h2>
+          <p class="mt-2 text-sm leading-6 text-muted-foreground">公告正文以当前页面为准。涉及具体订单或车源时，请回到对应详情页核对最新状态。</p>
+          <Button class="mt-3 w-full" variant="outline" @click="router.push('/my/notifications?tab=announcements')">查看全部公告</Button>
+        </Card>
+      </aside>
     </article>
   </div>
 </template>

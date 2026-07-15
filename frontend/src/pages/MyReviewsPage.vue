@@ -8,14 +8,18 @@ import PageTitle from '@/components/market/PageTitle.vue'
 import SoftTable from '@/components/market/SoftTable.vue'
 import StatusTabs from '@/components/market/StatusTabs.vue'
 import TablePagination from '@/components/market/TablePagination.vue'
+import EmptyState from '@/components/market/EmptyState.vue'
+import LocalTime from '@/components/market/LocalTime.vue'
+import ShortId from '@/components/market/ShortId.vue'
+import SkeletonTable from '@/components/market/SkeletonTable.vue'
 import { usePagination } from '@/composables/usePagination'
 import { useReviewCenterRows, useSubmitReviewMutation } from '@/queries/useMarketQueries'
 import type { ReviewCenterRow, SubmitReviewPayload } from '@/lib/api'
 import { toast } from 'vue-sonner'
 
-const activeStatus = ref('可评价')
+const activeStatus = ref('待评价')
 const selectedRow = ref<ReviewCenterRow | null>(null)
-const { data } = useReviewCenterRows()
+const { data, isLoading } = useReviewCenterRows()
 const submitReviewMutation = useSubmitReviewMutation()
 const form = reactive({
   rating: 5,
@@ -23,7 +27,12 @@ const form = reactive({
   note: '',
 })
 
-const rows = computed(() => (data.value ?? []).filter(item => activeStatus.value === '全部' || item.status === activeStatus.value))
+const rows = computed(() => (data.value ?? []).filter(item => {
+  if (activeStatus.value === '待评价') return item.status === '可评价'
+  if (activeStatus.value === '我发出的') return item.status === '已评价'
+  if (activeStatus.value === '我收到的') return false
+  return true
+}))
 const pagination = usePagination(rows)
 
 function openReview(row: ReviewCenterRow) {
@@ -58,10 +67,10 @@ function submitReview() {
 
 <template>
   <div class="space-y-5">
-    <PageTitle title="评价中心" description="仅已完成拼车记录可评价；API 购买意向不进入平台履约评价闭环。" />
-    <StatusTabs v-model="activeStatus" :items="['可评价', '已评价', '全部']" />
+    <PageTitle title="评价中心" description="仅已完成拼车记录可评价；API 订单暂不进入平台履约评价闭环。" />
+    <StatusTabs v-model="activeStatus" :items="['待评价', '我发出的', '我收到的', '全部']" />
     <Card class="p-4 text-sm leading-6 text-muted-foreground">
-      公开范围：评价默认展示在对应公开主页和相关记录中；API 购买意向不进入平台履约评价闭环。匿名规则：当前不支持匿名评价，提交前请勿写联系方式或敏感凭据。修改规则：已评价记录可再次编辑并覆盖原评价内容。
+      公开范围：评价默认展示在对应公开主页和相关记录中；API 订单暂不进入平台履约评价闭环。匿名规则：当前不支持匿名评价，提交前请勿写联系方式或敏感凭据。修改规则：已评价记录可再次编辑并覆盖原评价内容。
     </Card>
 
     <Card v-if="selectedRow" class="p-5">
@@ -95,11 +104,13 @@ function submitReview() {
       </div>
     </Card>
 
-    <SoftTable :columns="['对象', '对方', '状态', '体验标签', '操作']">
+    <SkeletonTable v-if="isLoading" :rows="5" :columns="5" />
+    <EmptyState v-else-if="rows.length === 0" :title="activeStatus === '我收到的' ? '暂无收到的公开评价' : '当前没有符合条件的评价记录'" description="只有关联交易完成且满足评价条件的记录才会显示。" />
+    <SoftTable v-else :columns="['对象', '对方', '状态', '体验标签', '操作']">
       <tr v-for="item in pagination.paginatedRows.value" :key="item.id">
         <td>
           <div class="font-medium">{{ item.target }}</div>
-          <div class="text-xs text-muted-foreground">拼车申请 · {{ item.createdAt }}</div>
+          <div class="text-xs text-muted-foreground">关联交易 <ShortId :value="item.sourceId" prefix="RIDE" /> · <LocalTime :value="item.createdAt" /></div>
         </td>
         <td>{{ item.counterparty }}</td>
         <td><Badge :variant="item.status === '可评价' ? 'default' : 'secondary'">{{ item.status }}</Badge></td>
@@ -109,9 +120,6 @@ function submitReview() {
             {{ item.status === '可评价' ? '去评价' : '查看 / 修改' }}
           </Button>
         </td>
-      </tr>
-      <tr v-if="rows.length === 0">
-        <td colspan="5" class="py-10 text-center text-sm text-muted-foreground">当前没有符合条件的评价记录。</td>
       </tr>
       <template #footer>
         <TablePagination

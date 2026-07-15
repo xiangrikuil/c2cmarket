@@ -42,6 +42,7 @@ type Service struct {
 	BillingMode                      string
 	DeclaredCNYPerUSDAllowance       string
 	DeclaredMaxUSDAllowancePerIntent string
+	AvailableUSDAllowance            string
 	QuotaExpiresAt                   *time.Time
 	MinimumIntentCNY                 string
 	MaximumIntentCNY                 string
@@ -129,6 +130,7 @@ type CreateServiceInput struct {
 	BillingMode                      string
 	DeclaredCNYPerUSDAllowance       string
 	DeclaredMaxUSDAllowancePerIntent string
+	AvailableUSDAllowance            string
 	QuotaExpiresAt                   string
 	MinimumIntentCNY                 string
 	MaximumIntentCNY                 string
@@ -154,6 +156,7 @@ type UpdateServiceInput struct {
 	BillingMode                      string
 	DeclaredCNYPerUSDAllowance       string
 	DeclaredMaxUSDAllowancePerIntent string
+	AvailableUSDAllowance            string
 	QuotaExpiresAt                   string
 	MinimumIntentCNY                 string
 	MaximumIntentCNY                 string

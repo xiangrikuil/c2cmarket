@@ -68,7 +68,7 @@ export function getPricingDisplay(carpool: Carpool): PricingDisplay {
       modeLabel: '固定月费',
       primaryLabel: '固定',
       primaryPrice: getCurrentPayablePrice(carpool),
-      note: '本期加入后不变',
+      note: '申请后价格快照不变',
       currentMembers,
       maxMembers,
       remainingSeats,

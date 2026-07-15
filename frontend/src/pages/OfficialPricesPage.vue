@@ -1,18 +1,19 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
-import { ExternalLink, Filter, X } from 'lucide-vue-next'
+import { CircleHelp, ExternalLink, Filter, Info, Package, Percent, RefreshCcw, X } from 'lucide-vue-next'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
-import PageTitle from '@/components/market/PageTitle.vue'
 import SoftTable from '@/components/market/SoftTable.vue'
 import TablePagination from '@/components/market/TablePagination.vue'
 import { usePagination } from '@/composables/usePagination'
 import { shouldUseRealBackend } from '@/lib/backendClient'
+import { getProductCategory } from '@/lib/productCategories'
+import { getProductCategoryIconSrc } from '@/lib/productCategoryIcon'
 import { useOfficialPrices } from '@/queries/useMarketQueries'
 import type { OfficialPrice } from '@/lib/api'
 
@@ -118,16 +119,7 @@ const rows = computed(() => {
 
 const pagination = usePagination(rows)
 
-const lowestVerified = computed(() => {
-  return [...(data.value ?? [])]
-    .filter(item => item.status === '已验证' && item.cny !== null)
-    .sort((a, b) => (a.cny ?? 0) - (b.cny ?? 0))[0]
-})
-
-const todayNewCount = computed(() => (data.value ?? []).filter(item => item.updatedAt.includes('今天') || item.updatedAt.includes('分钟')).length)
-const pendingCount = computed(() => shouldUseRealBackend() ? 0 : (data.value ?? []).filter(item => item.status === '待验证').length)
-const passedTodayCount = computed(() => (data.value ?? []).filter(item => item.status === '已验证' && (item.updatedAt.includes('今天') || item.updatedAt.includes('分钟'))).length)
-const contributorCount = computed(() => new Set((data.value ?? []).map(item => item.submitter)).size + 32)
+const contributorCount = computed(() => new Set((data.value ?? []).map(item => item.submitter)).size)
 
 const advancedCount = computed(() => [plan.value !== '全部', openingMethod.value !== '全部', source.value !== '全部', trust.value !== '不限'].filter(Boolean).length)
 
@@ -158,81 +150,45 @@ function clearAll() {
 function setStatus(value: StatusFilter) {
   status.value = value
 }
+
+const builtInProductIcons = new Map<string, string>()
+
+function productIconSrc(productName: string) {
+  return getProductCategoryIconSrc(getProductCategory(productName), builtInProductIcons)
+}
+
+function productToneClass(productName: string) {
+  return `official-price-product-icon--${getProductCategory(productName)}`
+}
+
+function sourceLabel(value: string) {
+  try {
+    return new URL(value).hostname
+  }
+  catch {
+    return value
+  }
+}
+
+function openPrice(event: MouseEvent | KeyboardEvent, id: string) {
+  if (event instanceof MouseEvent && (event.target as HTMLElement).closest('a,button,input')) return
+  router.push(`/official-prices/${id}`)
+}
 </script>
 
 <template>
-  <div>
-    <PageTitle title="官网公开价格对比" :description="pageDescription" />
+  <div class="official-price-page">
+    <div class="official-price-reference-heading mb-4"><div class="flex items-center gap-3"><h1>官网价格</h1><Badge class="bg-violet-600 text-white">官方</Badge></div><p>{{ pageDescription }}</p></div>
 
-    <div class="mb-4 grid gap-3 lg:grid-cols-[minmax(0,1.35fr)_minmax(220px,0.75fr)_minmax(220px,0.75fr)]">
-      <Card class="official-signal-card official-signal-primary min-w-0 p-3.5">
-        <div class="grid min-w-0 gap-2 md:grid-cols-[minmax(0,1fr)_minmax(180px,0.55fr)] md:divide-x md:divide-border">
-          <div class="min-w-0">
-            <div class="flex items-center gap-2 text-xs font-medium text-muted-foreground">
-              <span class="h-2 w-2 rounded-full bg-primary"></span>已验证参考低价
-            </div>
-            <div class="mt-2 text-[32px] font-semibold leading-none">¥{{ lowestVerified?.cny ?? '暂无' }}</div>
-            <div class="mt-1.5 break-words text-sm text-muted-foreground">
-              {{ lowestVerified?.product }} {{ lowestVerified?.plan }} · {{ lowestVerified?.region }} · {{ lowestVerified?.channel }}
-            </div>
-            <div class="mt-2 flex flex-wrap gap-1.5">
-              <Badge variant="verified">{{ lowestVerified?.status ?? '暂无记录' }}</Badge>
-              <Badge variant="trust">{{ lowestVerified?.originalPrice }}/月</Badge>
-              <Badge variant="trust">{{ lowestVerified?.updatedAt }}复核</Badge>
-            </div>
-          </div>
-          <div class="grid min-w-0 gap-1.5 pt-1 text-xs md:pl-3">
-            <div class="grid min-w-0 grid-cols-[auto_minmax(0,1fr)] gap-3">
-              <span class="text-muted-foreground">来源</span>
-              <span class="min-w-0 break-all text-right font-medium">{{ lowestVerified?.source ?? '管理员维护记录' }}</span>
-            </div>
-            <div class="grid min-w-0 grid-cols-[auto_minmax(0,1fr)] gap-3">
-              <span class="text-muted-foreground">维护人</span>
-              <span class="min-w-0 break-all text-right font-medium">{{ lowestVerified?.submitter ?? '-' }}</span>
-            </div>
-            <div class="grid min-w-0 grid-cols-[auto_minmax(0,1fr)] gap-3">
-              <span class="text-muted-foreground">记录等级</span>
-              <span class="min-w-0 break-all text-right font-medium">{{ lowestVerified?.submitterTrust ?? '-' }}</span>
-            </div>
-            <div class="grid min-w-0 grid-cols-[auto_minmax(0,1fr)] gap-3">
-              <span class="text-muted-foreground">记录状态</span>
-              <span class="min-w-0 break-all text-right font-medium">{{ lowestVerified?.isLowest ? '分组参考低价' : '已验证记录' }}</span>
-            </div>
-            <RouterLink v-if="lowestVerified" :to="`/official-prices/${lowestVerified.id}`" class="mt-1 text-sm font-semibold hover:text-primary">
-              查看价格详情 →
-            </RouterLink>
-          </div>
+    <div class="official-price-layout">
+      <main class="min-w-0">
+        <div class="official-price-category-tabs mb-4 flex flex-wrap gap-2">
+          <Button v-for="item in products" :key="item" :variant="product === item ? 'default' : 'outline'" @click="product = item">{{ item }}</Button>
         </div>
-      </Card>
 
-      <Card class="official-signal-card official-signal-warning p-3.5">
-        <div class="flex items-center gap-2 text-xs font-medium text-muted-foreground">
-          <span class="h-2 w-2 rounded-full bg-warning"></span>今日新增记录
-        </div>
-        <div class="mt-2 text-[30px] font-semibold leading-none">{{ todayNewCount }}</div>
-        <div class="mt-1.5 text-sm text-muted-foreground">{{ shouldUseRealBackend() ? '公开表仅展示审核通过记录' : `其中 ${pendingCount} 条正在等待管理员验证` }}</div>
-        <div class="mt-3 flex justify-between border-t border-border pt-2.5 text-sm">
-          <span class="text-muted-foreground">今日通过</span>
-          <span class="font-semibold">{{ passedTodayCount }} 条</span>
-        </div>
-      </Card>
-
-      <Card class="official-signal-card official-signal-success p-3.5">
-        <div class="flex items-center gap-2 text-xs font-medium text-muted-foreground">
-          <span class="h-2 w-2 rounded-full bg-success"></span>维护来源
-        </div>
-        <div class="mt-2 text-[30px] font-semibold leading-none">{{ contributorCount }}</div>
-        <div class="mt-1.5 text-sm text-muted-foreground">{{ shouldUseRealBackend() ? '按已验证公开记录统计' : '按有效价格线索和复核记录统计' }}</div>
-        <div class="mt-3 flex justify-between border-t border-border pt-2.5 text-sm">
-          <span class="text-muted-foreground">本周新增</span>
-          <span class="font-semibold">+5 条</span>
-        </div>
-      </Card>
-    </div>
-
-    <div class="c2c-filterbar mb-4 rounded-lg border border-border bg-card px-3 py-2">
-      <div class="grid gap-2 xl:grid-cols-[minmax(260px,1fr)_150px_150px_160px_auto_auto_160px]">
-        <Input v-model="q" name="official-price-search" class="h-8 bg-background text-sm" placeholder="搜索产品、地区、渠道或来源" />
+        <div class="official-price-filter c2c-filterbar mb-4 rounded-lg border border-border bg-card px-3 py-2">
+      <div class="official-price-filter-grid">
+        <Input v-model="q" name="official-price-search" class="official-price-search h-8 bg-background text-sm" placeholder="搜索产品、地区、渠道或来源" />
         <label class="grid gap-1">
           <span class="text-[11px] font-medium leading-none text-muted-foreground">产品</span>
           <Select v-model="product">
@@ -333,20 +289,19 @@ function setStatus(value: StatusFilter) {
       <div v-else class="mt-2 flex justify-end border-t border-border pt-2 text-xs text-muted-foreground">
         共 {{ rows.length }} 条价格记录
       </div>
-    </div>
+        </div>
 
-    <div v-if="rows.length === 0" class="rounded-xl border border-border bg-card p-8 text-center text-sm text-muted-foreground">
-      {{ shouldUseRealBackend() ? '当前筛选条件下暂无已验证官网公开价格记录。' : '当前筛选条件下暂无官网公开价格记录。' }}
-    </div>
-    <SoftTable v-else :columns="['产品', '地区 / 渠道', '官网公开价', '折合人民币', '状态', '来源', '维护人', '更新时间']">
-      <tr v-for="row in pagination.paginatedRows.value" :key="row.id">
-        <td><div class="font-medium">{{ row.product }} {{ row.plan }}</div><div class="text-xs text-muted-foreground">{{ row.openingMethod }}</div></td>
+        <div v-if="rows.length === 0" class="rounded-xl border border-border bg-card p-8 text-center text-sm text-muted-foreground">
+          {{ shouldUseRealBackend() ? '当前筛选条件下暂无已验证官网公开价格记录。' : '当前筛选条件下暂无官网公开价格记录。' }}
+        </div>
+        <SoftTable v-else class="official-price-table" :columns="['产品', '地区 / 渠道', '官网公开价', '折合人民币', '状态', '来源 / 维护', '更新时间']">
+      <tr v-for="row in pagination.paginatedRows.value" :key="row.id" class="cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" tabindex="0" @click="openPrice($event, row.id)" @keydown.enter="openPrice($event, row.id)">
+        <td><div class="flex items-center gap-3"><span class="official-price-product-icon" :class="productToneClass(row.product)"><img v-if="productIconSrc(row.product)" :src="productIconSrc(row.product)!" alt="" /><Package v-else class="h-4 w-4" /></span><div class="min-w-0"><div class="font-medium">{{ row.product }} {{ row.plan }}</div><div class="text-xs text-muted-foreground">{{ row.openingMethod }}</div></div></div></td>
         <td><div>{{ row.region }}</div><div class="text-xs text-muted-foreground">{{ row.channel }}</div></td>
         <td>{{ row.originalPrice }}</td>
-        <td class="font-semibold">¥{{ row.cny }}</td>
+        <td class="font-semibold">{{ row.cny === null ? '待换算' : `¥${row.cny}` }}</td>
         <td><Badge :variant="row.status === '已验证' ? 'default' : 'secondary'">{{ row.status }}</Badge></td>
-        <td><RouterLink :to="`/official-prices/${row.id}`"><Button variant="outline" size="sm"><ExternalLink class="h-4 w-4" />查看</Button></RouterLink></td>
-        <td><div>{{ row.submitter }}</div><div class="text-xs text-muted-foreground">记录等级{{ row.submitterTrust }}</div></td>
+        <td><RouterLink :to="`/official-prices/${row.id}`" class="inline-flex max-w-full items-center gap-1 truncate text-primary hover:underline"><ExternalLink class="h-3.5 w-3.5 shrink-0" /><span class="truncate">{{ sourceLabel(row.source) }}</span></RouterLink><div class="mt-1 truncate text-xs text-muted-foreground">{{ row.submitter }} · 记录等级 {{ row.submitterTrust }}</div></td>
         <td class="text-muted-foreground">{{ row.updatedAt }}</td>
       </tr>
       <template #footer>
@@ -358,6 +313,32 @@ function setStatus(value: StatusFilter) {
           :end-item="pagination.endItem.value"
         />
       </template>
-    </SoftTable>
+        </SoftTable>
+      </main>
+
+      <aside class="official-price-aside space-y-3">
+        <Card class="official-price-aside-primary p-4">
+          <div class="flex items-center gap-2 font-semibold"><Info class="h-4 w-4 text-violet-600" />价格说明</div>
+          <ul class="mt-3 space-y-2 text-sm leading-6 text-muted-foreground">
+            <li>展示产品官网公开价格，仅作为方案比较参考。</li>
+            <li>实际支付可能受地区、汇率、税费和渠道政策影响。</li>
+            <li>官网价不等于本站车源或 API 服务成交价。</li>
+          </ul>
+        </Card>
+        <Card class="p-4">
+          <div class="flex items-center gap-2 font-semibold"><Percent class="h-4 w-4 text-blue-600" />税费与汇率</div>
+          <p class="mt-2 text-sm leading-6 text-muted-foreground">折合人民币用于横向比较，结账时仍以官网页面显示的币种、税费与实时汇率为准。</p>
+        </Card>
+        <Card class="p-4">
+          <div class="flex items-center gap-2 font-semibold"><RefreshCcw class="h-4 w-4 text-emerald-600" />维护状态</div>
+          <dl class="mt-3 grid gap-2 text-sm"><div class="flex justify-between"><dt class="text-muted-foreground">公开记录</dt><dd class="font-semibold">{{ (data ?? []).length }}</dd></div><div class="flex justify-between"><dt class="text-muted-foreground">维护来源</dt><dd class="font-semibold">{{ contributorCount }}</dd></div><div class="flex justify-between"><dt class="text-muted-foreground">数据来源</dt><dd class="font-semibold text-emerald-700">产品官网</dd></div></dl>
+        </Card>
+        <Card class="official-price-help p-4">
+          <div class="flex items-center gap-2 font-semibold"><CircleHelp class="h-4 w-4 text-primary" />需要帮助选择？</div>
+          <p class="mt-2 text-sm leading-6 text-muted-foreground">先比较官网公开价，再结合车源开通方式和风险说明判断是否适合。</p>
+          <RouterLink to="/carpools" class="mt-3 block"><Button class="w-full" variant="outline">浏览订阅车源</Button></RouterLink>
+        </Card>
+      </aside>
+    </div>
   </div>
 </template>

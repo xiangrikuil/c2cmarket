@@ -30,7 +30,7 @@ defineProps<{
             <span class="grid w-14 place-items-center border-l border-border text-sm text-muted-foreground">元</span>
           </div>
           <p v-if="errors.cnyPerUsdCredit" class="text-xs text-destructive">{{ errors.cnyPerUsdCredit }}</p>
-          <p v-else class="text-xs text-muted-foreground">例如 ¥0.80 / $1，买家按意向金额估算可购额度。</p>
+          <p v-else class="text-xs text-muted-foreground">例如 ¥0.80 / $1，买家按订单金额估算可购额度。</p>
         </label>
 
         <label class="space-y-2">

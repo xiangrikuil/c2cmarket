@@ -67,9 +67,9 @@ export const simplifiedApiQuotaRules = {
 export const defaultPaymentWindowMinutes = defaultApiPaymentWindowMinutes
 export const paymentMethodLabels: Record<PublishPaymentMethod, string> = apiPaymentMethodLabels
 
-export const apiQuotaDefaultRuleText = `默认：最低意向 ¥${simplifiedApiQuotaRules.minimumPurchaseCny}，单笔最高 ¥${simplifiedApiQuotaRules.maximumPurchaseCny}；额度有效至商户填写的固定时间。`
+export const apiQuotaDefaultRuleText = `默认：最低订单 ¥${simplifiedApiQuotaRules.minimumPurchaseCny}，单笔最高 ¥${simplifiedApiQuotaRules.maximumPurchaseCny}；额度有效至商户填写的固定时间。`
 
-export const apiQuotaBoundaryNotice = 'C2CMarket 仅提供信息撮合，不托管支付、不保存 API Key、不担保交付、不代赔。买家提交意向后，双方站外确认接入细节和售后处理。'
+export const apiQuotaBoundaryNotice = 'C2CMarket 仅提供信息撮合，不托管支付、不保存 API Key、不担保交付、不代赔。买家创建订单后，双方站外确认接入细节和售后处理。'
 
 export const merchantNoteTemplate = [
   '用量核对：用量由商户说明，买家自行核对。',
@@ -79,7 +79,7 @@ export const merchantNoteTemplate = [
 ].join('\n')
 
 export const merchantNoteQuickInserts = [
-  '建议首次提交 ¥10 意向测试',
+  '建议首次创建 ¥10 小额订单测试',
   '用量由商户说明，买家自行核对',
   '高峰期响应可能变慢',
   '部分模型可能临时维护',

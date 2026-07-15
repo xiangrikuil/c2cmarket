@@ -11,6 +11,7 @@ type productCategoryResponse struct {
 	ID          string `json:"id"`
 	Code        string `json:"code"`
 	DisplayName string `json:"displayName"`
+	IconDataURL string `json:"iconDataUrl"`
 	SortOrder   int    `json:"sortOrder"`
 	Active      bool   `json:"active"`
 }
@@ -18,6 +19,7 @@ type productCategoryResponse struct {
 type productCategoryRequest struct {
 	Code        string `json:"code"`
 	DisplayName string `json:"displayName"`
+	IconDataURL string `json:"iconDataUrl"`
 	SortOrder   int    `json:"sortOrder"`
 	Active      bool   `json:"active"`
 }
@@ -535,6 +537,7 @@ func toProductCategoryResponse(category catalog.ProductCategory) productCategory
 		ID:          category.ID,
 		Code:        category.Code,
 		DisplayName: category.DisplayName,
+		IconDataURL: category.IconDataURL,
 		SortOrder:   category.SortOrder,
 		Active:      category.Active,
 	}
@@ -544,6 +547,7 @@ func productCategoryInputFromRequest(req productCategoryRequest) catalog.Product
 	return catalog.ProductCategoryInput{
 		Code:        req.Code,
 		DisplayName: req.DisplayName,
+		IconDataURL: req.IconDataURL,
 		SortOrder:   req.SortOrder,
 		Active:      req.Active,
 	}

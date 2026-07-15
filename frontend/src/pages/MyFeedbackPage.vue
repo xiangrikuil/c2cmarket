@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, reactive, ref, watch } from 'vue'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
-import { CheckCircle2, CircleAlert, Clock3, MessageSquarePlus, SendHorizonal } from 'lucide-vue-next'
+import { SendHorizonal } from 'lucide-vue-next'
 import { toast } from 'vue-sonner'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -10,6 +10,9 @@ import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 import PageTitle from '@/components/market/PageTitle.vue'
 import StatusTabs from '@/components/market/StatusTabs.vue'
+import CompactStats from '@/components/market/CompactStats.vue'
+import LocalTime from '@/components/market/LocalTime.vue'
+import ShortId from '@/components/market/ShortId.vue'
 import {
   getFeedbackImpactLabel,
   getFeedbackStatusLabel,
@@ -63,11 +66,17 @@ const visibleRows = computed(() => rows.value.filter(item => {
 }))
 
 const stats = computed(() => [
-  { label: '有新回复', value: unreadCount.value, icon: CircleAlert },
-  { label: '待处理', value: openCount.value, icon: Clock3 },
-  { label: '需要补充', value: needsInfoCount.value, icon: MessageSquarePlus },
-  { label: '已结束', value: closedCount.value, icon: CheckCircle2 },
+  { label: '有新回复', value: unreadCount.value },
+  { label: '待处理', value: openCount.value },
+  { label: '需要补充', value: needsInfoCount.value },
+  { label: '已结束', value: closedCount.value },
 ])
+
+function nextOwner(item: FeedbackTicket) {
+  if (item.status === 'needs_user_info') return '下一责任人：你'
+  if (['resolved', 'declined', 'closed'].includes(item.status)) return '处理已结束'
+  return '下一责任人：管理员'
+}
 
 watch(selectedTicket, item => {
   if (item?.unread && !markReadMutation.isPending.value) {
@@ -141,19 +150,7 @@ function statusVariant(item: FeedbackTicket) {
   <div class="space-y-5">
     <PageTitle title="我的反馈" description="提交页面问题、数据纠错和体验建议；举报、纠纷和申诉仍请使用对应入口。" />
 
-    <div class="grid gap-3 md:grid-cols-4">
-      <Card v-for="item in stats" :key="item.label" class="p-4">
-        <div class="flex items-center justify-between gap-3">
-          <div>
-            <div class="text-xs text-muted-foreground">{{ item.label }}</div>
-            <div class="mt-1 text-2xl font-semibold">{{ item.value }}</div>
-          </div>
-          <div class="grid h-9 w-9 place-items-center rounded-md bg-accent text-primary">
-            <component :is="item.icon" class="h-4 w-4" />
-          </div>
-        </div>
-      </Card>
-    </div>
+    <CompactStats :items="stats" />
 
     <div class="grid gap-5 xl:grid-cols-[minmax(0,0.95fr)_minmax(360px,0.75fr)]">
       <div class="space-y-4">
@@ -179,7 +176,7 @@ function statusVariant(item: FeedbackTicket) {
                 <Badge :variant="statusVariant(item)">{{ item.unread ? '有新回复' : getFeedbackStatusLabel(item.status) }}</Badge>
               </div>
               <div class="mt-2 text-sm text-muted-foreground">{{ getFeedbackTypeLabel(item.type) }} · {{ getFeedbackImpactLabel(item.impact) }} · {{ item.contextPageLabel }}</div>
-              <div class="mt-1 text-xs text-muted-foreground">{{ item.updatedAt }}</div>
+              <div class="mt-1 text-xs text-muted-foreground"><ShortId :value="item.id" prefix="FB" /> · {{ nextOwner(item) }} · <LocalTime :value="item.updatedAt" /></div>
             </RouterLink>
             <div v-if="visibleRows.length === 0" class="rounded-md border border-dashed border-border p-8 text-center text-sm text-muted-foreground">当前筛选下暂无反馈记录。</div>
           </div>
@@ -263,7 +260,7 @@ function statusVariant(item: FeedbackTicket) {
             </div>
             <div>
               <div class="text-xs text-muted-foreground">最近更新</div>
-              <div class="mt-1 font-medium">{{ selectedTicket.updatedAt }}</div>
+              <div class="mt-1 font-medium"><LocalTime :value="selectedTicket.updatedAt" /></div>
             </div>
           </div>
 
@@ -296,7 +293,7 @@ function statusVariant(item: FeedbackTicket) {
               <div v-for="event in selectedTicket.events ?? []" :key="event.id" class="rounded-md border border-border p-3">
                 <div class="flex flex-wrap items-center justify-between gap-2">
                   <span class="text-sm font-medium">{{ event.actorName }}</span>
-                  <span class="text-xs text-muted-foreground">{{ event.createdAt }}</span>
+                  <span class="text-xs text-muted-foreground"><LocalTime :value="event.createdAt" /></span>
                 </div>
                 <p class="mt-2 whitespace-pre-wrap text-sm leading-6 text-muted-foreground">{{ event.publicMessage }}</p>
               </div>

@@ -76,6 +76,61 @@ Baseline mapping:
 
 ---
 
+## Scenario: Carpool Self-Application Rejection
+
+### 1. Scope / Trigger
+
+- Trigger: `POST /api/v1/carpools/{id}/applications` receives a session user who owns the selected public listing.
+- The database preserves the final `buyer_user_id <> owner_user_id` integrity constraint, but the service must reject this business state before repository persistence.
+
+### 2. Signatures
+
+```text
+carpool.Service.CreateApplication(ctx, user, CreateApplicationInput)
+POST /api/v1/carpools/{id}/applications
+```
+
+### 3. Contracts
+
+- `CreateApplicationInput.BuyerUserID` is assigned from the authenticated session; it is never trusted from JSON.
+- `Listing.OwnerUserID` comes from the public-listing repository result.
+- The frontend listing DTO preserves `ownerUserId` and compares it with the authenticated profile ID before enabling the application action.
+
+### 4. Validation & Error Matrix
+
+| Condition | HTTP | Code | Detail |
+| --- | ---: | --- | --- |
+| `BuyerUserID == OwnerUserID` | 409 | `INVALID_STATE_TRANSITION` | `不能申请自己的车源。` |
+| Different user with valid application input | 201 | — | Create application normally |
+
+### 5. Good / Base / Bad Cases
+
+- Good: a different authenticated buyer creates an application and the normal application transaction runs.
+- Base: the frontend disables a listing owned by the current profile without submitting a mutation.
+- Bad: a direct API call attempts self-application; it receives Problem Details and must not reach the database check constraint.
+
+### 6. Tests Required
+
+- Router regression: owner request returns 409 with `INVALID_STATE_TRANSITION` and the Chinese detail.
+- PostgreSQL integration regression: the same owner request returns 409 before the application insert.
+- Frontend helper regression: a listing with matching `ownerUserId` is disabled for the current profile ID.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```text
+UI compares display names or omits ownerUserId → repository insert → generic persistence error
+```
+
+#### Correct
+
+```text
+UI compares stable user IDs → service returns typed conflict → repository is not called
+```
+
+---
+
 ## Common Mistakes
 
 - In Go, use `http.StatusUnprocessableEntity`; `http.Status422UnprocessableEntity` is not a standard-library constant.

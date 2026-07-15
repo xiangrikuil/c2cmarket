@@ -6,6 +6,7 @@ import { CheckCircle2, Eye, MoreHorizontal, ShieldAlert } from 'lucide-vue-next'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import {
   Dialog,
   DialogContent,
@@ -21,12 +22,17 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { Textarea } from '@/components/ui/textarea'
+import { Input } from '@/components/ui/input'
 import PageTitle from '@/components/market/PageTitle.vue'
 import SoftTable from '@/components/market/SoftTable.vue'
 import StatusTabs from '@/components/market/StatusTabs.vue'
 import TablePagination from '@/components/market/TablePagination.vue'
+import EmptyState from '@/components/market/EmptyState.vue'
+import SkeletonTable from '@/components/market/SkeletonTable.vue'
+import CompactStats from '@/components/market/CompactStats.vue'
 import { usePagination } from '@/composables/usePagination'
 import { runAdminModerationAction, updateAdminRowStatus, type AdminRow, type AdminSection } from '@/lib/api'
+import { isCarpoolExceptionStatus } from '@/lib/carpoolModeration'
 import { useAdminSectionRows } from '@/queries/useMarketQueries'
 import { toast } from 'vue-sonner'
 
@@ -36,9 +42,11 @@ const queryClient = useQueryClient()
 const title = computed(() => String(route.meta.title ?? '管理页面'))
 const description = computed(() => String(route.meta.description ?? '管理当前模块的数据、状态和审核记录。'))
 const section = computed(() => String(route.meta.section ?? 'official-prices') as AdminSection)
-const { data } = useAdminSectionRows(section)
+const { data, error, isFetching, isLoading, refetch } = useAdminSectionRows(section)
 const localRows = ref<AdminRow[]>([])
 const activeStatus = ref('全部')
+const keyword = ref('')
+const riskFilter = ref<'all' | 'high' | 'has_note'>('all')
 const reason = ref('')
 const confirmedRiskAction = ref(false)
 const actionBusy = ref('')
@@ -78,19 +86,48 @@ watch(drawerOpen, open => {
   }
 })
 
+const sectionRows = computed(() => section.value === 'carpools'
+  ? localRows.value.filter(row => isCarpoolExceptionStatus(row.status))
+  : localRows.value)
+
+function requiresAdminAction(row: AdminRow) {
+  if (section.value === 'reports') {
+    if (row.targetType === 'report') return ['待处理', '已分诊'].includes(row.status)
+    if (row.targetType === 'dispute') return row.status === '处理中'
+    if (row.targetType === 'appeal') return row.status === '申诉复核中'
+    return false
+  }
+  return !['已通过', '待复核', '已关闭'].includes(row.status)
+}
+
 const visibleRows = computed(() => {
-  if (activeStatus.value === '全部') return localRows.value
+  let rows = sectionRows.value
   if (activeStatus.value === '待处理') {
-    return localRows.value.filter(row => !['已通过', '待复核', '已关闭'].includes(row.status))
+    rows = rows.filter(requiresAdminAction)
+  } else if (activeStatus.value === '需复核') {
+    rows = rows.filter(row => row.status.includes('复核'))
+  } else if (activeStatus.value !== '全部') {
+    rows = rows.filter(row => row.status === activeStatus.value)
   }
-  if (activeStatus.value === '需复核') {
-    return localRows.value.filter(row => row.status.includes('复核'))
-  }
-  return localRows.value.filter(row => row.status === activeStatus.value)
+  const q = keyword.value.trim().toLowerCase()
+  if (q) rows = rows.filter(row => [row.id, row.primary, row.secondary, row.owner, row.status, row.risk, ...(row.detailItems ?? []).flatMap(item => [item.label, item.value])].join(' ').toLowerCase().includes(q))
+  if (riskFilter.value === 'high') rows = rows.filter(row => /高风险|纠纷|举报|封禁|异常|超时|未解决|危险/i.test(`${row.risk} ${row.status}`))
+  if (riskFilter.value === 'has_note') rows = rows.filter(row => Boolean(row.risk.trim()))
+  return rows
 })
 
-const pendingCount = computed(() => localRows.value.filter(row => !['已通过', '待复核', '已关闭'].includes(row.status)).length)
-const reviewCount = computed(() => localRows.value.filter(row => row.status.includes('复核')).length)
+const pendingCount = computed(() => sectionRows.value.filter(requiresAdminAction).length)
+const reviewCount = computed(() => sectionRows.value.filter(row => row.status.includes('复核')).length)
+const summaryStats = computed(() => [
+  { label: '待处理', value: pendingCount.value },
+  { label: '需复核', value: reviewCount.value },
+  { label: '本页记录', value: sectionRows.value.length },
+  { label: '当前筛选', value: visibleRows.value.length },
+])
+const errorMessage = computed(() => error.value instanceof Error ? error.value.message : '管理数据读取失败，请稍后重试。')
+const statusTabs = computed(() => section.value === 'carpools'
+  ? ['全部', '待处理', '需复核']
+  : ['全部', '待处理', '已通过', '需复核', '已关闭'])
 const pagination = usePagination(visibleRows)
 const selectedRow = computed(() => localRows.value.find(row => row.id === selectedRowId.value) ?? null)
 const drawerRow = computed(() => selectedRow.value)
@@ -100,15 +137,12 @@ const panelCopy = computed(() => {
   const map: Partial<Record<AdminSection, { title: string, description: string }>> = {
     'official-prices': { title: '官网价格维护', description: '维护地区、渠道、原币价格、折合人民币和来源记录，再决定通过、复核或下架。' },
     'price-leads': { title: '价格记录维护', description: '维护地区、渠道、原币价格、折合人民币和来源记录，再决定通过、复核或下架。' },
-    carpools: { title: '车源治理', description: '查看车主、席位资格、价格、车主承诺和原帖状态，支持下架、恢复和遗留审核队列处理。' },
+    carpools: { title: '车源异常处理', description: '这里只处理暂停、下架、待复核和遗留审核记录；公开车源日常巡查请直接前往车源列表。' },
     demands: { title: '求车管理', description: '查看预算、地区、车主偏好和原帖状态，支持关闭或恢复匹配。' },
-    'api-services': { title: 'API 服务审核', description: '核对模型价格、最低意向金额、交易说明和商户身份展示。' },
-    'api-merchants': { title: 'API 商户审核', description: '店铺名模式只在管理台展示真实用户映射，公开页继续隐藏。' },
-    'trade-intents': { title: '购买意向监控', description: '关注意向状态、商户响应、取消责任和纠纷标记；管理员不查看完整联系方式。' },
-    'carpool-applications': { title: '上车申请监控', description: '查看申请人、车主、席位、预留和当前状态，辅助纠纷判断。' },
+    'api-services': { title: 'API 服务审核', description: '核对模型价格、最低订单金额、交易说明和商户身份展示。' },
+    'trade-intents': { title: 'API 订单追踪', description: '查看 API 订单状态、参与方、金额快照、取消责任与纠纷标记；管理摘要不展示联系方式或原始交付凭证。' },
     reports: { title: '举报纠纷处理', description: '只展示脱敏上下文；必要联系方式仍限制在联系快照流程内。' },
     appeals: { title: '申诉处理', description: '结合关联记录和未解决纠纷判断是否恢复能力。' },
-    'audit-logs': { title: '审计日志', description: '只读查看管理动作、前后状态和原因。' },
     logs: { title: '审计日志', description: '只读查看管理动作、前后状态和原因。' },
   }
   return map[section.value] ?? { title: '管理处理', description: '查看当前对象上下文并执行管理动作。' }
@@ -197,7 +231,7 @@ function canTakeDown(row: AdminRow | null) {
   if (row.targetType === 'report') return ['待处理', '已分诊'].includes(row.status)
   if (row.targetType === 'dispute') return row.status !== '已关闭'
   if (row.targetType === 'appeal') return row.status === '申诉复核中'
-  return ['已验证', '已通过', '可上车', '在线', '匹配中', 'normal'].some(status => row.status.includes(status))
+  return ['已验证', '已通过', '可上车', '已满', '在线', '匹配中', 'normal'].some(status => row.status.includes(status))
 }
 
 function canApprove(row: AdminRow | null) {
@@ -354,21 +388,34 @@ async function confirmModerationAction() {
   }
 }
 
-const showDangerActions = computed(() => ['users', 'restrictions'].includes(section.value))
-const showContentActions = computed(() => !['logs', 'audit-logs'].includes(section.value))
+const showDangerActions = computed(() => false)
+const showContentActions = computed(() => !['logs', 'trade-intents'].includes(section.value))
 </script>
 
 <template>
   <div>
     <PageTitle :title="title" :description="description" />
-    <div class="mb-5 grid gap-3 md:grid-cols-4">
-      <Card class="p-4"><div class="text-sm text-muted-foreground">待处理</div><div class="mt-2 text-2xl font-semibold">{{ pendingCount }}</div></Card>
-      <Card class="p-4"><div class="text-sm text-muted-foreground">需复核</div><div class="mt-2 text-2xl font-semibold">{{ reviewCount }}</div></Card>
-      <Card class="p-4"><div class="text-sm text-muted-foreground">今日更新</div><div class="mt-2 text-2xl font-semibold">3</div></Card>
-      <Card class="p-4"><div class="text-sm text-muted-foreground">操作记录</div><div class="mt-2 text-2xl font-semibold">12</div></Card>
+    <CompactStats class="mb-5" :items="summaryStats" :loading="isLoading" />
+    <div v-if="section === 'carpools'" class="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border bg-muted/30 px-4 py-3 text-sm">
+      <span class="text-muted-foreground">公开在售车源不在这里重复展示，管理员可直接使用普通车源列表巡查。</span>
+      <Button size="sm" variant="outline" as-child><RouterLink to="/carpools">巡查公开车源</RouterLink></Button>
     </div>
-    <StatusTabs v-model="activeStatus" :items="['全部', '待处理', '已通过', '需复核', '已关闭']" />
-    <SoftTable :columns="['对象', '详情', '提交 / 关联人', '状态', '风险 / 备注', '操作']">
+    <div class="mb-4 grid gap-2 md:grid-cols-[minmax(0,1fr)_180px]">
+      <Input v-model="keyword" placeholder="搜索对象、管理员、动作、状态或请求追踪" />
+      <select v-model="riskFilter" class="h-9 rounded-md border border-input bg-background px-3 text-sm"><option value="all">全部风险</option><option value="high">仅高风险</option><option value="has_note">有风险/备注</option></select>
+    </div>
+    <StatusTabs v-model="activeStatus" :items="statusTabs" />
+    <SkeletonTable v-if="isLoading" :rows="6" :columns="6" />
+    <Alert v-else-if="error" variant="destructive" class="mb-4">
+      <ShieldAlert class="h-4 w-4" />
+      <AlertTitle>管理数据读取失败</AlertTitle>
+      <AlertDescription class="flex flex-wrap items-center justify-between gap-3">
+        <span>{{ errorMessage }}</span>
+        <Button size="sm" variant="outline" :disabled="isFetching" @click="refetch()">重新读取</Button>
+      </AlertDescription>
+    </Alert>
+    <EmptyState v-else-if="visibleRows.length === 0" title="当前筛选下暂无记录" description="调整状态筛选，或等待新的管理记录进入队列。" />
+    <SoftTable v-else :columns="['对象', '详情', '提交 / 关联人', '状态', '风险 / 备注', '操作']">
       <tr
         v-for="row in pagination.paginatedRows.value"
         :key="row.id"
@@ -420,9 +467,6 @@ const showContentActions = computed(() => !['logs', 'audit-logs'].includes(secti
             <span class="text-xs text-muted-foreground">只读记录</span>
           </div>
         </td>
-      </tr>
-      <tr v-if="visibleRows.length === 0">
-        <td colspan="6" class="py-10 text-center text-sm text-muted-foreground">当前筛选下暂无记录。</td>
       </tr>
       <template #footer>
         <TablePagination

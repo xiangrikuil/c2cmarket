@@ -8,6 +8,9 @@ import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import SoftTable from '@/components/market/SoftTable.vue'
 import StatusTabs from '@/components/market/StatusTabs.vue'
+import CompactStats from '@/components/market/CompactStats.vue'
+import EmptyState from '@/components/market/EmptyState.vue'
+import SkeletonBlock from '@/components/market/SkeletonBlock.vue'
 import { trackAnalytics } from '@/lib/analytics'
 import { getPricingDisplay, getRemainingSeats } from '@/lib/pricing'
 import { useCreatePublicUserReportMutation, usePublicUserProfileQuery } from '@/queries/useMarketQueries'
@@ -20,6 +23,13 @@ const { data, isLoading } = usePublicUserProfileQuery(username)
 const reportMutation = useCreatePublicUserReportMutation()
 const activeTab = ref('概览')
 const profile = computed(() => data.value?.profile)
+const hasPublicActivity = computed(() => Boolean(data.value && (
+  data.value.carpools.length
+  || data.value.services.length
+  || data.value.completions.length
+  || data.value.reviews.length
+  || data.value.disputes.length
+)))
 
 const completedTotal = computed(() => {
   if (!profile.value?.privacy.showCompletionStats) return null
@@ -30,6 +40,12 @@ const completionLabel = computed(() => {
   if (completedTotal.value === null) return '已隐藏'
   return completedTotal.value < 5 ? '记录较少' : `${completedTotal.value} 单`
 })
+const publicStats = computed(() => profile.value ? [
+  { label: '近 30 天完成', value: completionLabel.value, hint: completedTotal.value !== null && completedTotal.value < 5 ? '记录较少，不作为负面信号' : undefined },
+  { label: '响应中位', value: profile.value.stats.responseMedianMinutes === null ? '已隐藏' : `${profile.value.stats.responseMedianMinutes} 分钟` },
+  { label: '责任取消', value: profile.value.stats.buyerResponsibilityCancellationCount + profile.value.stats.sellerResponsibilityCancellationCount },
+  { label: '未解决纠纷', value: profile.value.stats.unresolvedDisputeCount },
+] : [])
 
 function serviceSummary(service: { deliveryModes: Array<'api_key_endpoint' | 'sub2api_panel_account'>, usageVisibility: string, warranty: string }) {
   const access = '接入细节站外确认'
@@ -62,14 +78,10 @@ function reportPublicProfile() {
 </script>
 
 <template>
-  <div v-if="isLoading" class="rounded-xl border border-border bg-card p-8 text-sm text-muted-foreground">正在加载用户主页...</div>
-  <div v-else-if="!data || !profile" class="rounded-xl border border-border bg-card p-8">
-    <h1 class="text-xl font-semibold">未找到用户</h1>
-    <p class="mt-2 text-sm text-muted-foreground">该公开主页不存在或暂不可见。</p>
-    <Button class="mt-5" variant="outline" @click="router.push('/api-market')">返回 API 集市</Button>
-  </div>
-  <div v-else class="space-y-4">
-    <Card class="p-5">
+  <SkeletonBlock v-if="isLoading" :lines="8" />
+  <EmptyState v-else-if="!data || !profile" title="未找到用户" description="该公开主页不存在或暂不可见。"><template #action><Button variant="outline" @click="router.push('/api-market')">返回 API 市场</Button></template></EmptyState>
+  <div v-else class="public-user-reference space-y-4">
+    <Card class="public-user-identity p-5">
       <div class="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
         <div class="flex min-w-0 gap-4">
           <div class="grid h-14 w-14 shrink-0 place-items-center overflow-hidden rounded-full bg-primary text-lg font-semibold text-primary-foreground">
@@ -101,21 +113,19 @@ function reportPublicProfile() {
       </div>
     </Card>
 
-    <div class="grid gap-3 md:grid-cols-4">
-      <Card class="p-4"><div class="text-xs text-muted-foreground">近30天完成</div><div class="mt-1 text-2xl font-semibold">{{ completionLabel }}</div><div v-if="completedTotal !== null && completedTotal < 5" class="text-xs text-muted-foreground">记录较少，不作为负面信号</div></Card>
-      <Card class="p-4"><div class="text-xs text-muted-foreground">响应中位时间</div><div class="mt-1 text-2xl font-semibold">{{ profile.stats.responseMedianMinutes === null ? '已隐藏' : `${profile.stats.responseMedianMinutes} 分钟` }}</div></Card>
-      <Card class="p-4"><div class="text-xs text-muted-foreground">责任取消</div><div class="mt-1 text-2xl font-semibold">{{ profile.stats.buyerResponsibilityCancellationCount + profile.stats.sellerResponsibilityCancellationCount }}</div></Card>
-      <Card class="p-4"><div class="text-xs text-muted-foreground">未解决纠纷</div><div class="mt-1 text-2xl font-semibold">{{ profile.stats.unresolvedDisputeCount }}</div></Card>
-    </div>
+    <div class="public-user-layout">
+      <main class="min-w-0 space-y-4">
+        <CompactStats :items="publicStats" />
 
-    <Card class="p-4 text-sm text-muted-foreground">
-      公开主页只展示公开资料、铭牌、脱敏统计和公开业务记录，不展示任何联系方式、登录或设备信息、意向敏感详情。
-    </Card>
+        <Card class="public-user-boundary p-4 text-sm text-muted-foreground">
+          公开主页只展示公开资料、铭牌、脱敏统计和公开业务记录，不展示任何联系方式、登录或设备信息、意向敏感详情。
+        </Card>
 
-    <StatusTabs v-model="activeTab" :items="['概览', '在售服务', '完成记录', '交易评价', '纠纷记录']" />
+        <StatusTabs v-model="activeTab" :items="['概览', '在售服务', '完成记录', '交易评价', '纠纷记录']" />
 
-    <div v-if="activeTab === '概览'" class="grid gap-4 lg:grid-cols-2">
-      <Card class="p-5">
+    <EmptyState v-if="activeTab === '概览' && !hasPublicActivity" title="暂无公开业务记录" description="该用户目前没有公开车源、API 服务、完成记录或评价。" />
+    <div v-else-if="activeTab === '概览'" class="grid gap-4 lg:grid-cols-2">
+      <Card class="public-user-carpools p-5">
         <h2 class="font-semibold">在售拼车车源</h2>
         <div class="mt-4 space-y-3">
           <div v-for="carpool in data.carpools" :key="carpool.id" class="flex items-center justify-between gap-3 border-b border-border pb-3 text-sm">
@@ -125,7 +135,7 @@ function reportPublicProfile() {
           <p v-if="data.carpools.length === 0" class="text-sm text-muted-foreground">暂无公开在售拼车车源。</p>
         </div>
       </Card>
-      <Card class="p-5">
+      <Card class="public-user-api p-5">
         <h2 class="font-semibold">在售 API 服务</h2>
         <div class="mt-4 space-y-3">
           <div v-for="service in data.services" :key="service.id" class="flex items-center justify-between gap-3 border-b border-border pb-3 text-sm">
@@ -175,7 +185,7 @@ function reportPublicProfile() {
       <tr v-if="data.reviews.length === 0"><td colspan="4" class="py-8 text-center text-sm text-muted-foreground">暂无交易评价。</td></tr>
     </SoftTable>
 
-    <SoftTable v-else :columns="['纠纷类型', '处理结果', '处理时间', '状态']">
+        <SoftTable v-else :columns="['纠纷类型', '处理结果', '处理时间', '状态']">
       <tr>
         <td colspan="4" class="bg-muted/40 text-sm text-muted-foreground">
           未解决 {{ profile.stats.unresolvedDisputeCount }} · 近90天已处理 {{ profile.stats.resolvedDisputeCountLast90Days === null ? '已隐藏' : profile.stats.resolvedDisputeCountLast90Days }}。公开信息已脱敏，不展示截图、联系方式或双方敏感信息。
@@ -187,6 +197,25 @@ function reportPublicProfile() {
         <td>{{ dispute.handledAt }}</td>
         <td><Badge :variant="dispute.unresolved ? 'destructive' : 'secondary'">{{ dispute.unresolved ? '未解决' : '已处理' }}</Badge></td>
       </tr>
-    </SoftTable>
+        </SoftTable>
+      </main>
+      <aside class="public-user-aside space-y-3">
+        <Card class="p-4">
+          <h2 class="font-semibold">公开信誉</h2>
+          <div class="mt-3 flex items-center justify-between text-sm"><span class="text-muted-foreground">信任等级</span><strong>{{ profile.trustLevel === null ? '未公开' : profile.trustLevel }}</strong></div>
+          <div class="mt-2 flex items-center justify-between text-sm"><span class="text-muted-foreground">近 30 天完成</span><strong>{{ completionLabel }}</strong></div>
+          <div class="mt-2 flex items-center justify-between text-sm"><span class="text-muted-foreground">未解决纠纷</span><strong>{{ profile.stats.unresolvedDisputeCount }}</strong></div>
+          <p class="mt-3 border-t border-border pt-3 text-xs leading-5 text-muted-foreground">统计仅用于辅助判断，记录较少不代表负面信誉。</p>
+        </Card>
+        <Card class="p-4">
+          <h2 class="font-semibold">联系与交易</h2>
+          <p class="mt-2 text-sm leading-6 text-muted-foreground">公开主页不展示联系方式。请从具体车源或 API 服务进入站内申请、订单与联系流程。</p>
+        </Card>
+        <Card class="p-4">
+          <h2 class="font-semibold">安全提示</h2>
+          <p class="mt-2 text-sm leading-6 text-muted-foreground">不要在公开说明中发送密码、API Key、token、session、cookie 或恢复码。</p>
+        </Card>
+      </aside>
+    </div>
   </div>
 </template>

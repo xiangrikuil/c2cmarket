@@ -1,12 +1,14 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
+import { RouterLink, useRoute, useRouter } from 'vue-router'
 import { Search } from 'lucide-vue-next'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import PageTitle from '@/components/market/PageTitle.vue'
+import EmptyState from '@/components/market/EmptyState.vue'
+import SkeletonTable from '@/components/market/SkeletonTable.vue'
 import { trackAnalytics } from '@/lib/analytics'
 import { useSearchMarket } from '@/queries/useMarketQueries'
 
@@ -65,9 +67,13 @@ function runSearch() {
       </div>
     </Card>
 
-    <div v-if="!keyword" class="rounded-xl border border-border bg-card p-8 text-center text-sm text-muted-foreground">输入关键词后展示聚合结果。</div>
-    <div v-else-if="isFetching" class="rounded-xl border border-border bg-card p-8 text-sm text-muted-foreground">正在搜索「{{ keyword }}」...</div>
-    <div v-else-if="(data ?? []).length === 0" class="rounded-xl border border-border bg-card p-8 text-center text-sm text-muted-foreground">没有找到与「{{ keyword }}」相关的结果。</div>
+    <EmptyState v-if="!keyword" title="搜索整个平台" description="可以搜索产品、地区、车主、商户、求车需求或公开用户。">
+      <template #action><div class="flex flex-wrap justify-center gap-2"><RouterLink to="/carpools"><Button variant="outline">热门拼车</Button></RouterLink><RouterLink to="/api-market"><Button variant="outline">API 市场</Button></RouterLink></div></template>
+    </EmptyState>
+    <SkeletonTable v-else-if="isFetching" :rows="4" :columns="3" />
+    <EmptyState v-else-if="(data ?? []).length === 0" title="没有匹配结果" :description="`没有找到与「${keyword}」相关的公开对象，可以换一个关键词或直接浏览市场。`">
+      <template #action><div class="flex flex-wrap justify-center gap-2"><RouterLink to="/carpools"><Button variant="outline">查看拼车</Button></RouterLink><RouterLink to="/api-market"><Button variant="outline">浏览 API 服务</Button></RouterLink></div></template>
+    </EmptyState>
 
     <div v-else class="space-y-5">
       <Card v-for="group in groupedResults" :key="group.type" class="p-0">

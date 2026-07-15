@@ -37,6 +37,12 @@ pnpm dlx shadcn-vue@latest add button badge card input select table dropdown-men
 
 Business components may compose official primitives, but they must not replace them.
 
+### Product identity icons
+
+- 公开车源与 API 服务的品牌图标必须复用 `productCategoryIcon.ts` 和套餐目录分类的 `iconDataUrl`，页面不得各自维护品牌图片映射。
+- API 服务标题可能只描述分发系统或额度类型，不能作为品牌的首要来源；应优先读取已选模型价格快照的提供商，再回退首个模型名称和标题。
+- 套餐目录未上传分类图标时可以使用项目内置品牌图标；仅在分类无法识别时显示通用业务图标。
+
 Allowed:
 
 - `frontend/src/components/market/SoftTable.vue` composing official `Card` and `Table` primitives.
@@ -161,3 +167,213 @@ Avoid:
 - Are product-specific styles outside generated shadcn-vue files?
 - Are toasts using official `sonner` instead of local store/host code?
 - Do filter/status controls expose selected state to the page when rows or cards depend on that state?
+
+## Scenario: Shared Transaction Presentation Components
+
+### 1. Scope / Trigger
+- Trigger: list/detail work that displays domain status, UUIDs, timestamps, summary metrics, loading, empty, or error state.
+
+### 2. Signatures
+```text
+StatusBadge(status, label?, tone?)
+ShortId(value, prefix?, copyable?)
+LocalTime(value, seconds?)
+CompactStats(items, loading?)
+SkeletonBlock / SkeletonTable / EmptyState / ErrorState
+```
+
+### 3. Contracts
+- Use semantic tones `brand|success|waiting|warning|risk|complete|neutral` backed by theme tokens.
+- Lists show `ShortId`; full IDs exist only in title/copy/audit contexts. ISO input is rendered through `LocalTime`.
+- Loading renders skeletons, not realistic zero metrics. Empty/error states explain the condition and expose a next action or retry.
+- Components remain in `components/market` and compose existing `components/ui`; do not create a second primitive system.
+
+### 4. Validation & Error Matrix
+| Input | Output |
+| --- | --- |
+| Invalid timestamp | `—` |
+| Unknown status | neutral tone |
+| Loading stats | skeleton values |
+| Copyable ID | accessible button copies full value |
+
+### 5. Good/Base/Bad Cases
+- Good: order list shows `API-8EEED1`, local time, one semantic status, and full-ID copy.
+- Base: zero is displayed only after a successful response proves the value is zero.
+- Bad: render UUID/ISO directly or show four zero cards while a query is pending.
+
+### 6. Tests Required
+- Unit tests for short ID, local time, and status mapping.
+- Source/component assertions for accessible copy, `aria-busy`, and `role=alert`.
+- Full Vitest, typecheck, and real-mode build.
+
+### 7. Wrong vs Correct
+#### Wrong
+```vue
+<div v-if="loading">0</div><span>{{ row.id }} {{ row.createdAt }}</span>
+```
+#### Correct
+```vue
+<SkeletonTable v-if="loading" />
+<ShortId v-else :value="row.id" copyable /> <LocalTime :value="row.createdAt" />
+```
+
+## Scenario: Public Market And Transaction Page Hierarchy
+
+### 1. Scope / Trigger
+
+- Trigger: work touching `/`, `/search`, `/login`, `/official-prices/**`, `/carpools/**`, `/demands/**`, `/api-market/**`, `/my/rides/**`, `/my/api-orders/**`, or `/u/:username`.
+- Public pages guide discovery and a single next action; they are not administrator dashboards.
+
+### 2. Signatures
+
+```ts
+useUnsavedChangesGuard(dirty: Ref<boolean>, message?: string): void
+openRow(event: MouseEvent | KeyboardEvent, id: string): void
+
+type PublicListState<T> = {
+  rows: T[]
+  isLoading: boolean
+  error: unknown
+}
+```
+
+### 3. Contracts
+
+- Homepage first view states the offline-payment/platform boundary and exposes the carpool and API market as the two primary destinations. Charts and administrator-style metric walls belong below discovery content or outside the homepage.
+- Market lists use a compact heading, small summary, common filters, collapsed advanced filters, and keyboard-accessible whole-row navigation. Row-local filled `查看` buttons are not the primary navigation pattern.
+- Market details use a main-information column and sticky action card. The action card renders at most one filled primary action from authoritative service eligibility/order state; favorite, share, report, cancel, and escalation stay secondary.
+- `/demands` is a demand list and `/demands/new` is the publish form. A carpool owner responds by selecting an existing public carpool, copying its public link, and opening the demand's linux.do source; later joining continues through the existing carpool-application flow.
+- Publish pages render one completeness/check contract, a buyer-facing preview, immediate numeric/risk validation, and `useUnsavedChangesGuard`. Programmatic initialization must not mark the form dirty; user input/change does.
+- Ride/API-order lists show short identifiers, local time, snapshots, status, next actor/action, and default action-needed ordering. Details show timeline/stepper and only the action allowed by current state.
+- Public profiles never expose contact details, order IDs, credentials, or private transaction data. If all public activity collections are empty, render one unified empty state.
+- The approved delivery exception remains: API-order detail may show the buyer-specific, one-time-submitted, immutable delivery credential only to order participants. The UI must not claim platform revocation support. Lists, search, public pages, notifications, reports, and admin summaries never render it.
+
+### 4. Validation & Error Matrix
+
+| Condition | Expected behavior |
+| --- | --- |
+| Market query loading | Skeleton; no realistic zero metrics |
+| Market query succeeds with no rows | One contextual empty state and next route |
+| Row receives Enter | Navigate to its public/detail route |
+| Row contains a nested link/button | Nested control handles the click; row handler does not double-navigate |
+| Eligibility/order state blocks action | Disabled/no primary action plus exactly one authoritative reason |
+| User edits publish form then navigates/reloads | Confirmation guard appears |
+| Already-authenticated user opens `/login` | Redirect to safe `returnTo` or `/` |
+| Public profile has no public activity | One unified empty state |
+
+### 5. Good/Base/Bad Cases
+
+- Good: API service detail shows price, available allowance, min/max amount, payment window, one `创建订单并查看付款方式` button, and secondary actions.
+- Good: demand detail sends an owner to `我的车源`, then copies the selected public carpool URL and opens the demand source post.
+- Base: non-orderable API rows remain visible only when the query intentionally includes them, are clearly disabled, and do not deep-link to a public 404.
+- Bad: homepage starts with a trend chart and four tall operational statistic cards.
+- Bad: a detail header, summary card, and sticky panel each repeat a different price, seat count, risk reason, or filled primary action.
+- Bad: demand publishing and demand discovery share one large page.
+
+### 6. Tests Required
+
+- Source/contract tests cover the homepage boundary, loading/empty components, row keyboard navigation, demand route split, sticky action copy, unsaved guard, short IDs/local times, and unified public-profile empty state.
+- Domain tests remain the authority for API-order state and carpool eligibility; page tests must not recreate their transition tables.
+- Run full Vitest, `vue-tsc`, real-API Vite build, and browser checks at 1440×900 plus mobile widths.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```vue
+<Button>查看</Button>
+<Button>申请</Button>
+<Button>立即联系</Button>
+```
+
+#### Correct
+
+```vue
+<tr tabindex="0" @click="openRow($event, row.id)" @keydown.enter="openRow($event, row.id)">…</tr>
+<Button :disabled="!eligibility.canApply">{{ eligibility.canApply ? '申请上车' : '当前不可申请' }}</Button>
+<p v-if="!eligibility.canApply">{{ eligibility.reason }}</p>
+```
+
+## Scenario: Task-Oriented Personal, Merchant, And Admin Workspaces
+
+### 1. Scope / Trigger
+
+- Trigger: work touching `/my/**`, `/merchant/**`, `/admin/**`, favorites, reviews, notifications, feedback, catalog maintenance, moderation, appeals, or audit logs.
+- Workspace pages prioritize records requiring the current actor; they do not duplicate the global sidebar as a card matrix.
+
+### 2. Signatures
+
+```ts
+type WorkspaceTask = {
+  id: string
+  to: string
+  title: string
+  description: string
+  type: string
+}
+
+type AdminTaskRow = AdminRow & {
+  section: AdminSection
+  sectionLabel: string
+}
+```
+
+### 3. Contracts
+
+- Personal overview uses authenticated profile, ride-application, API-order, owned-carpool, owned-API-service, and contact queries. Never hard-code counts. It shows identity/completeness, real pending work, compact summaries, and one enablement card when no merchant objects exist.
+- Owned-object lists use `PageTitle`, compact filters/summary, `SkeletonTable`, `EmptyState`, short IDs, local times, status, next action, and a creation route. Four tall zero cards are forbidden.
+- Service management states that price/allowance/model/payment edits affect new orders only; existing orders retain immutable snapshots. Do not invent reserved allowance when the backend does not expose it.
+- Owner/merchant queues default to action-needed ordering and summarize only pending, near-timeout, and dispute work. No batch execution of accept, reject, payment confirmation, delivery, restriction, or other high-risk transaction actions.
+- Favorites group carpool/API/official categories, show current availability, and allow removal when a target is unavailable. Reviews separate pending, sent, and received views and display the linked transaction. Notifications expose task/transaction/system categories, deep-link to the record, and map legacy internal `API 意向` wording to user-facing `API 订单`.
+- Feedback rows/details show status, type, latest response/time, timeline, and `下一责任人：你|管理员`.
+- Admin home reads real admin section queries and ranks task rows by risk. Full feature directories live in `AdminShell`; the homepage never renders a feature-button matrix or direct dangerous actions.
+- Generic admin lists use compact summaries, search/status/risk filters, skeleton/empty/error states, object context, and a detail drawer. Dangerous actions require a non-empty reason plus explicit second confirmation; the backend mutation writes audit context.
+- Audit logs are read-only and display actor, action, target, before/after state, reason, time, and request-trace context. Ordinary users cannot render the admin shell or routes.
+- Disabling a provider/model/category/plan confirms the affected new-publish surface and explicitly states that existing orders/applications keep their snapshots.
+
+### 4. Validation & Error Matrix
+
+| Condition | Expected behavior |
+| --- | --- |
+| Workspace query loading | Compact stats and table render skeletons, never plausible zeroes |
+| No owned object | One contextual empty/enablement state with create action |
+| Transaction needs current actor | Sorted before passive/history records and shows next action |
+| Favorite target unavailable | No public-detail action; removal remains available |
+| Feedback needs user info | `下一责任人：你` |
+| Admin danger action lacks reason | Block mutation and show warning |
+| Admin danger action lacks second confirmation | Block mutation and show warning |
+| Catalog entity is disabled | Confirm impact on new publishing; preserve existing snapshots |
+| Audit/log section | Read-only actions and structured detail context |
+
+### 5. Good/Base/Bad Cases
+
+- Good: `/my` derives pending count from ride applications and API orders and links directly to each record.
+- Good: `/admin` composes reports, carpool exceptions, service reviews, order tracking, and audit logs into a risk-ranked queue.
+- Base: a received-review tab may be empty when the backend has not returned received reviews; it must not synthesize anonymous review data.
+- Bad: personal overview displays literal `5` rides or `2` orders.
+- Bad: admin home renders 14 management links and a mock `强制下线` button.
+- Bad: list shows zero metric cards during loading or renders full UUID/ISO values.
+
+### 6. Tests Required
+
+- Source contracts assert no hard-coded personal counts, no admin feature matrix, real admin section queries, compact async states, category/next-owner copy, reason/confirmation guards, and catalog impact confirmation.
+- Existing backend/admin tests remain authoritative for permission and mutation behavior.
+- Run full Vitest, `vue-tsc`, real-mode build, and authenticated browser checks for ordinary, merchant, and admin identities.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```vue
+<StatCard label="我的订单" value="2" />
+<Button @click="forceOffline(row)">强制下线</Button>
+```
+
+#### Correct
+
+```vue
+<CompactStats :items="overviewStats" :loading="isLoading" />
+<Button @click="openModerationDrawer(row, 'take_down')">下架</Button>
+<Textarea v-model="reason" />
+<Checkbox v-model="confirmedRiskAction" />
+```

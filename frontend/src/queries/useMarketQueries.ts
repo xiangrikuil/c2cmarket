@@ -2,10 +2,13 @@ import { computed, type Ref } from 'vue'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/vue-query'
 import {
   addFeedbackSupplement,
+  cancelApiOrder,
   createContactMethod,
   createContactReport,
   createPublicUserReport,
+  confirmApiOrderComplete,
   confirmApiOrderPayment,
+  reportApiOrderPaymentIssue,
   createApiOrderFromIntent,
   confirmEmailVerification,
   deleteContactMethod,
@@ -20,6 +23,7 @@ import {
   getApiOrderNotifications,
   getApiOrderById,
   getCarpoolApplicationById,
+  getCarpoolApplicationEligibility,
   getCarpoolApplicationContacts,
   getCarpoolApplicationEvents,
   getCarpoolNotifications,
@@ -32,6 +36,7 @@ import {
   getMyOfficialPriceLeads,
   getMyApiPurchaseIntents,
   getMyApiOrders,
+  getMyApiServiceById,
   getMyApiServices,
   getMyCarpools,
   getMyCarpoolApplications,
@@ -82,6 +87,7 @@ import {
   verifyContactMethod,
   type AdminSection,
   type ApiOrderFilters,
+  type ApiOrderPaymentIssueReason,
   type ApiPaymentOption,
   type SubmitApiOrderDeliveryCredentialPayload,
   type ApiPaymentAccountSettings,
@@ -167,10 +173,19 @@ export function useCarpool(id: Ref<string> | string) {
   })
 }
 
-export function useMyCarpools() {
+export function useCarpoolApplicationEligibility(id: Ref<string> | string) {
+  return useQuery({
+    queryKey: computed(() => ['carpools', valueOf(id), 'eligibility']),
+    queryFn: () => getCarpoolApplicationEligibility(valueOf(id)),
+    retry: false,
+  })
+}
+
+export function useMyCarpools(enabled: Ref<boolean> | boolean = true) {
   return useQuery({
     queryKey: ['my-carpools'],
     queryFn: getMyCarpools,
+    enabled: computed(() => valueOf(enabled)),
     refetchOnMount: 'always',
   })
 }
@@ -233,6 +248,7 @@ export function useDemand(id: Ref<string> | string) {
   return useQuery({
     queryKey: computed(() => ['demands', valueOf(id)]),
     queryFn: () => getDemandById(valueOf(id)),
+    enabled: computed(() => Boolean(valueOf(id))),
   })
 }
 
@@ -309,11 +325,20 @@ export function useApiService(id: Ref<string> | string) {
   })
 }
 
-export function useMyApiServices() {
+export function useMyApiServices(enabled: Ref<boolean> | boolean = true) {
   return useQuery({
     queryKey: ['my-api-services'],
     queryFn: getMyApiServices,
+    enabled: computed(() => valueOf(enabled)),
     refetchOnMount: 'always',
+  })
+}
+
+export function useMyApiService(id: Ref<string> | string) {
+  return useQuery({
+    queryKey: computed(() => ['my-api-services', valueOf(id)]),
+    retry: false,
+    queryFn: () => getMyApiServiceById(valueOf(id)),
   })
 }
 
@@ -610,6 +635,8 @@ function invalidateApiOrderQueries(queryClient: ReturnType<typeof useQueryClient
   queryClient.invalidateQueries({ queryKey: ['merchant-api-purchase-intents'] })
   queryClient.invalidateQueries({ queryKey: ['api-purchase-intents'] })
   queryClient.invalidateQueries({ queryKey: ['admin-section'] })
+  queryClient.invalidateQueries({ queryKey: ['notifications'] })
+  queryClient.invalidateQueries({ queryKey: ['navigation-badges'] })
   queryClient.invalidateQueries({ queryKey: ['api-order-notifications'] })
   if (id) {
     queryClient.invalidateQueries({ queryKey: ['api-orders', 'buyer', id] })
@@ -639,10 +666,43 @@ export function useSubmitApiOrderPaymentMutation() {
   })
 }
 
+export function useCancelApiOrderMutation() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, reason, version }: { id: string, reason: string, version: number }) => cancelApiOrder(id, reason, version),
+    onSuccess(data) {
+      queryClient.setQueryData(['api-orders', 'buyer', data.id], data)
+      invalidateApiOrderQueries(queryClient, data.id)
+    },
+  })
+}
+
+export function useConfirmApiOrderCompleteMutation() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, version }: { id: string, version: number }) => confirmApiOrderComplete(id, version),
+    onSuccess(data) {
+      queryClient.setQueryData(['api-orders', 'buyer', data.id], data)
+      invalidateApiOrderQueries(queryClient, data.id)
+    },
+  })
+}
+
 export function useConfirmApiOrderPaymentMutation() {
   const queryClient = useQueryClient()
   return useMutation({
     mutationFn: ({ id, version }: { id: string, version: number }) => confirmApiOrderPayment(id, version),
+    onSuccess(data) {
+      queryClient.setQueryData(['api-orders', 'merchant', data.id], data)
+      invalidateApiOrderQueries(queryClient, data.id)
+    },
+  })
+}
+
+export function useReportApiOrderPaymentIssueMutation() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, reason, note, version }: { id: string, reason: ApiOrderPaymentIssueReason, note: string, version: number }) => reportApiOrderPaymentIssue(id, reason, note, version),
     onSuccess(data) {
       queryClient.setQueryData(['api-orders', 'merchant', data.id], data)
       invalidateApiOrderQueries(queryClient, data.id)
@@ -764,6 +824,7 @@ export function useSubmitFeedbackMutation() {
       queryClient.invalidateQueries({ queryKey: ['feedback'] })
       queryClient.invalidateQueries({ queryKey: ['feedback-unread-count'] })
       queryClient.invalidateQueries({ queryKey: ['notifications'] })
+      queryClient.invalidateQueries({ queryKey: ['navigation-badges'] })
       queryClient.invalidateQueries({ queryKey: ['admin-section'] })
     },
   })
@@ -778,6 +839,7 @@ export function useAddFeedbackSupplementMutation() {
       queryClient.invalidateQueries({ queryKey: ['feedback'] })
       queryClient.invalidateQueries({ queryKey: ['feedback-unread-count'] })
       queryClient.invalidateQueries({ queryKey: ['notifications'] })
+      queryClient.invalidateQueries({ queryKey: ['navigation-badges'] })
       queryClient.invalidateQueries({ queryKey: ['admin-feedback'] })
       queryClient.invalidateQueries({ queryKey: ['admin-section'] })
     },
@@ -793,6 +855,7 @@ export function useMarkFeedbackReadMutation() {
       queryClient.invalidateQueries({ queryKey: ['feedback'] })
       queryClient.invalidateQueries({ queryKey: ['feedback-unread-count'] })
       queryClient.invalidateQueries({ queryKey: ['notifications'] })
+      queryClient.invalidateQueries({ queryKey: ['navigation-badges'] })
       queryClient.invalidateQueries({ queryKey: ['admin-feedback'] })
       queryClient.invalidateQueries({ queryKey: ['admin-section'] })
     },
@@ -826,6 +889,7 @@ export function useHandleFeedbackTicketMutation() {
       queryClient.invalidateQueries({ queryKey: ['feedback'] })
       queryClient.invalidateQueries({ queryKey: ['feedback-unread-count'] })
       queryClient.invalidateQueries({ queryKey: ['notifications'] })
+      queryClient.invalidateQueries({ queryKey: ['navigation-badges'] })
       queryClient.invalidateQueries({ queryKey: ['admin-section'] })
     },
   })
@@ -837,6 +901,7 @@ export function useMarkNotificationReadMutation() {
     mutationFn: (id: string) => markNotificationRead(id),
     onSuccess() {
       queryClient.invalidateQueries({ queryKey: ['notifications'] })
+      queryClient.invalidateQueries({ queryKey: ['navigation-badges'] })
       queryClient.invalidateQueries({ queryKey: ['feedback'] })
       queryClient.invalidateQueries({ queryKey: ['feedback-unread-count'] })
       queryClient.invalidateQueries({ queryKey: ['api-order-notifications'] })
@@ -851,6 +916,7 @@ export function useMarkAllNotificationsReadMutation() {
     mutationFn: markAllNotificationsRead,
     onSuccess() {
       queryClient.invalidateQueries({ queryKey: ['notifications'] })
+      queryClient.invalidateQueries({ queryKey: ['navigation-badges'] })
       queryClient.invalidateQueries({ queryKey: ['feedback'] })
       queryClient.invalidateQueries({ queryKey: ['feedback-unread-count'] })
       queryClient.invalidateQueries({ queryKey: ['api-order-notifications'] })

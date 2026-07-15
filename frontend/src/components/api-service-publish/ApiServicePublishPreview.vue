@@ -1,11 +1,8 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { RouterLink } from 'vue-router'
 import { Badge } from '@/components/ui/badge'
-import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import type { ApiServicePublishForm, CatalogById } from './types'
-import { apiServiceDetailPath } from './publishAssistant'
 import { apiQuotaBoundaryNotice, distributionLabels, enabledPaymentOptions, formatMultiplier, generatedTitle, paymentMethodLabels, providerCategoryLabels, selectedCatalogItems, simplifiedApiQuotaRules } from './utils'
 
 const props = defineProps<{
@@ -14,7 +11,6 @@ const props = defineProps<{
   completeness: Array<{ label: string, status: 'done' | 'pending' | 'conflict' }>
   risks: string[]
   quotaForMinimumPurchase: string
-  submittedId: string
   previewOnly?: boolean
 }>()
 
@@ -33,7 +29,6 @@ const checkMessage = computed(() => {
   if (pendingItems.value.length) return `还差：${pendingItems.value.map(item => item.label).join('、')}`
   return '必填项已完成，可以发布'
 })
-const submittedPath = computed(() => apiServiceDetailPath(props.submittedId))
 </script>
 
 <template>
@@ -92,14 +87,6 @@ const submittedPath = computed(() => apiServiceDetailPath(props.submittedId))
       <div class="border-t border-border bg-muted/35 px-4 py-3 text-xs leading-5 text-muted-foreground">
         {{ apiQuotaBoundaryNotice }}
       </div>
-    </Card>
-
-    <Card v-if="submittedPath" class="api-publish-card !gap-3 !p-4">
-      <div class="text-sm font-semibold text-emerald-800">已发布</div>
-      <p class="text-xs leading-5 text-muted-foreground">可以打开服务详情检查前台展示效果。</p>
-      <RouterLink :to="submittedPath" class="block">
-        <Button size="sm" class="w-full">查看已发布服务</Button>
-      </RouterLink>
     </Card>
 
     <div v-if="risks.length" class="space-y-2">

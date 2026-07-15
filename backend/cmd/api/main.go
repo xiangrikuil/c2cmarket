@@ -42,10 +42,10 @@ func run(ctx context.Context) error {
 		WriteTimeout:      30 * time.Second,
 		IdleTimeout:       60 * time.Second,
 	}
-	return listenAndShutdown(ctx, server, 15*time.Second)
+	return listenAndShutdown(ctx, server, 15*time.Second, application.BeginShutdown)
 }
 
-func listenAndShutdown(ctx context.Context, server *http.Server, shutdownTimeout time.Duration) error {
+func listenAndShutdown(ctx context.Context, server *http.Server, shutdownTimeout time.Duration, beforeShutdown ...func()) error {
 	runCtx, stop := signal.NotifyContext(ctx, syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
@@ -63,6 +63,11 @@ func listenAndShutdown(ctx context.Context, server *http.Server, shutdownTimeout
 		return fmt.Errorf("监听失败: %w", err)
 	case <-runCtx.Done():
 		log.Printf("收到关闭信号，开始优雅关闭")
+	}
+	for _, hook := range beforeShutdown {
+		if hook != nil {
+			hook()
+		}
 	}
 
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)

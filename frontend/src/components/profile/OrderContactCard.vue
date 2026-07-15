@@ -20,6 +20,7 @@ const props = defineProps<{
   footerText?: string
   contactedLabel?: string
   showContactedAction?: boolean
+  showIssueActions?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -36,6 +37,7 @@ const visibleLabel = computed(() => props.visibleLabel ?? '联系窗口内可见
 const hiddenLabel = computed(() => props.hiddenLabel ?? '暂不可见')
 const footerText = computed(() => props.footerText ?? '联系方式来自联系快照；修改个人联系方式不会改变当前记录。')
 const showContactedAction = computed(() => props.showContactedAction ?? true)
+const showIssueActions = computed(() => props.showIssueActions ?? true)
 
 function displayValue(item: OrderContactSnapshotItem) {
   return props.snapshot.canView ? item.displayValue ?? item.maskedValue : item.maskedValue
@@ -113,12 +115,12 @@ function reportContact(item: OrderContactSnapshotItem, reasonCode: 'contact_inva
             <Button v-else size="sm" variant="outline" @click="copyContact(item)">
               <Copy class="h-4 w-4" />复制
             </Button>
-            <Button size="sm" variant="outline" @click="reportContact(item, 'contact_invalid')">
+            <Button v-if="showIssueActions" size="sm" variant="outline" @click="reportContact(item, 'contact_invalid')">
               <Flag class="h-4 w-4" />无效
             </Button>
           </div>
         </div>
-        <div class="mt-3 flex flex-wrap gap-2">
+        <div v-if="showIssueActions" class="mt-3 flex flex-wrap gap-2">
           <Button size="sm" variant="ghost" @click="reportContact(item, 'unreachable')">无法联系</Button>
           <Button size="sm" variant="ghost" @click="reportContact(item, 'impersonation')">疑似冒充</Button>
           <Button size="sm" variant="ghost" @click="reportContact(item, 'other')">举报</Button>

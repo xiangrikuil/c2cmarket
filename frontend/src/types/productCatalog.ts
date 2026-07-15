@@ -20,6 +20,7 @@ export type ProductCategory = {
   id: string
   code: ProductCategoryCode
   displayName: string
+  iconDataUrl: string
   sortOrder: number
   active: boolean
 }
@@ -27,6 +28,7 @@ export type ProductCategory = {
 export type ProductCategoryInput = {
   code: string
   displayName: string
+  iconDataUrl: string
   sortOrder: number
   active: boolean
 }

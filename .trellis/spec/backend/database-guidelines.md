@@ -103,6 +103,69 @@ The process-level PostgreSQL runtime foundation is wired through `pgx/v5/pgxpool
 - Backend readiness owns an explicit `ExpectedMigrationVersion` constant matching the latest migration number. When adding a new migration, update the constant and keep `/readyz` tests aligned so PostgreSQL readiness fails while `schema_migrations.version` is behind.
 - PostgreSQL 18 Docker images must mount persistent storage at `/var/lib/postgresql`, not `/var/lib/postgresql/data`, because the image stores versioned cluster data below that parent directory.
 
+## Scenario: Applied Report Schema Contract Upgrade
+
+### 1. Scope / Trigger
+
+- Trigger: a report/dispute contract gains persistent columns, constraints, indexes, or tables after its original numbered migration has already been applied in a local or deployed database.
+- The Version 22 report schema was applied before canonical report targets, non-sensitive snapshots, dispute result codes, and moderation audit rows were added. Version 48 is the forward upgrade for that state.
+
+### 2. Signatures
+
+```text
+backend/migrations/000048_report_schema_upgrade.up.sql
+backend/migrations/000048_report_schema_upgrade.down.sql
+database.ExpectedMigrationVersion = 48
+```
+
+The forward migration adds `reports.canonical_target_type`, `reports.canonical_target_id`, `reports.target_snapshot_json`, `dispute_cases.public_result_code`, `moderation_audit_logs`, and the canonical active-report index.
+
+### 3. Contracts
+
+- Never rewrite the SQL of a numbered migration after that version may have been applied. Add a new forward migration instead.
+- Backfill canonical targets from legacy report fields without copying contact values, credentials, payment material, or raw evidence into `target_snapshot_json`.
+- Convert legacy `reason_code='invalid'` to `other` before replacing the report reason constraint.
+- Before creating `ux_reports_active_canonical_target`, archive every older active duplicate using deterministic `updated_at DESC, id DESC` ordering. Preserve the newest record as active and retain older rows as `closed`; do not delete report history.
+- Update `ExpectedMigrationVersion` to the new migration number and apply the upgrade with the local Compose migrate service.
+
+### 4. Validation & Error Matrix
+
+| Condition | Expected behavior |
+| --- | --- |
+| Existing database lacks a column used by the report repository | Apply the next numbered forward migration; list endpoints must return rows after upgrade. |
+| Legacy report uses `invalid` reason code | Convert it to `other` before the new check constraint is added. |
+| Legacy active reports collide on a canonical target | Keep the deterministic newest row active and mark earlier records `closed` before the unique index is created. |
+| Migration version is behind the source contract | `/readyz` is degraded after `ExpectedMigrationVersion` is updated. |
+| Report list API fails | The frontend displays an explicit error and retry action; it must not render an empty-record state. |
+
+### 5. Good / Base / Bad Cases
+
+- Good: add `000048_report_schema_upgrade.*`, backfill safely, run `docker compose --profile migrate run --rm migrate`, and verify list joins return rows.
+- Base: a fresh database receives the complete Version 22 definition and then records Version 48 as a no-data forward upgrade.
+- Bad: edit `000022_reports_disputes_appeals.up.sql` and assume existing databases receive its new fields automatically.
+
+### 6. Tests Required
+
+- Add a focused regression that asserts the forward migration contains all required report, dispute, audit, and duplicate-archival steps.
+- Run `go test ./internal/store/postgres ./internal/database` and the complete backend suite when unrelated packages compile.
+- Run `VITE_API_MODE=real pnpm --dir frontend exec vue-tsc -b --pretty false` and `VITE_API_MODE=real pnpm --dir frontend exec vite build`.
+- Apply the migration to a local database and verify `schema_migrations.version`, required columns, list joins, and duplicate-active-report count.
+- Verify a failed admin list query renders an explicit error state rather than `当前筛选下暂无记录。`.
+
+### 7. Wrong vs Correct
+
+```sql
+-- Wrong: only fresh databases receive this column.
+-- Edit 000022_reports_disputes_appeals.up.sql
+ALTER TABLE reports ADD COLUMN canonical_target_id text NOT NULL;
+
+-- Correct: databases that already applied Version 22 receive a forward upgrade.
+-- 000048_report_schema_upgrade.up.sql
+ALTER TABLE reports ADD COLUMN canonical_target_id text;
+UPDATE reports SET canonical_target_id = target_id WHERE canonical_target_id IS NULL;
+ALTER TABLE reports ALTER COLUMN canonical_target_id SET NOT NULL;
+```
+
 ## Docker Runtime
 
 - Root `compose.yaml` owns local PostgreSQL and the backend image definition.

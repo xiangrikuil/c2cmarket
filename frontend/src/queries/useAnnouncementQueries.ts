@@ -201,6 +201,7 @@ function invalidateUserAnnouncementQueries(queryClient: ReturnType<typeof useQue
   queryClient.invalidateQueries({ queryKey: announcementQueryKeys.home })
   queryClient.invalidateQueries({ queryKey: announcementQueryKeys.unreadCount })
   queryClient.invalidateQueries({ queryKey: announcementQueryKeys.importantUnreadCount })
+  queryClient.invalidateQueries({ queryKey: ['navigation-badges'] })
 }
 
 function invalidateAllAnnouncementQueries(queryClient: ReturnType<typeof useQueryClient>) {

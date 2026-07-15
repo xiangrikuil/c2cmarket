@@ -148,6 +148,8 @@ func notificationTargetURL(item notification.Notification) string {
 		if item.SourceEventType == "api_purchase_intent.created" || item.SourceEventType == "api_purchase_intent.buyer_cancelled" {
 			return "/merchant/api-orders"
 		}
+		return "/my/api-orders"
+	case "api_order":
 		return "/my/api-orders/" + item.TargetID
 	case "carpool_application":
 		return "/my/rides/" + item.TargetID
@@ -165,7 +167,9 @@ func notificationTargetURL(item notification.Notification) string {
 func notificationCategory(item notification.Notification) string {
 	switch item.TargetType {
 	case "api_purchase_intent":
-		return "API 意向"
+		return "API 订单"
+	case "api_order":
+		return "API 订单"
 	case "carpool_application", "carpool_membership":
 		return "上车申请"
 	case "official_price_lead":

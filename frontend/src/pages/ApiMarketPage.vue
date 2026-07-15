@@ -1,20 +1,18 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
-import { Activity, CircleDollarSign, Clock, Code2, Filter, Search, ShieldCheck, ShoppingBag, Sparkles, Upload, UsersRound } from 'lucide-vue-next'
+import { Activity, CircleDollarSign, CircleHelp, Code2, Filter, Search, ShieldCheck, Sparkles, Upload } from 'lucide-vue-next'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { Card } from '@/components/ui/card'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
-import SoftTable from '@/components/market/SoftTable.vue'
 import TablePagination from '@/components/market/TablePagination.vue'
 import { usePagination } from '@/composables/usePagination'
 import {
-  canOpenApiMerchantProfile,
   getApiMerchantAvatarText,
   getApiMerchantDisplayName,
   getApiMerchantProfileUrl,
-  getApiMerchantVisibilityLabel,
   formatUsdQuota,
   type ApiBillingMode,
   type ApiService,
@@ -133,7 +131,7 @@ const sub2SignalStats = computed(() => {
   return [
     { label: '可浏览服务', value: `${rows.length}`, detail: `${onlineCount(rows)} 个在线`, tone: 'primary' },
     { label: '支持生图', value: `${rows.filter(row => row.imagePricing.supported).length}`, detail: '按商户声明展示', tone: 'success' },
-    { label: '最低意向', value: minimumIntentLabel(rows), detail: '提交意向起点', tone: 'warning' },
+    { label: '最低订单', value: minimumIntentLabel(rows), detail: '创建订单起点', tone: 'warning' },
     { label: '响应中位', value: responseMedianLabel(rows), detail: '在线商户参考', tone: 'info' },
   ]
 })
@@ -142,8 +140,8 @@ const otherSignalStats = computed(() => {
   const rows = otherRows.value
   return [
     { label: '可浏览服务', value: `${rows.length}`, detail: `${uniqueMerchantCount(rows)} 个商户`, tone: 'primary' },
-    { label: '在线服务', value: `${onlineCount(rows)}`, detail: '可提交购买意向', tone: 'success' },
-    { label: '最低意向', value: minimumIntentLabel(rows), detail: '不同系统单独比较', tone: 'warning' },
+    { label: '在线服务', value: `${onlineCount(rows)}`, detail: '可创建订单', tone: 'success' },
+    { label: '最低订单', value: minimumIntentLabel(rows), detail: '不同系统单独比较', tone: 'warning' },
     { label: '响应中位', value: responseMedianLabel(rows), detail: '在线商户参考', tone: 'info' },
   ]
 })
@@ -227,17 +225,10 @@ function imagePricingLabel(row: ApiService) {
   return prices.length ? prices.join(' / ') : '支持'
 }
 
-function serviceSummary(row: ApiService) {
-  return `${row.delivery} · ${billingModeLabel(row.billingMode)} · ${row.warranty}`
-}
-
-function capabilityBadges(row: ApiService) {
-  return [
-    row.delivery,
-    '买家自行核对用量',
-    row.imagePricing.supported ? '支持生图' : '不支持生图',
-    row.warranty.includes('补') || row.warranty.includes('承诺') || row.warranty.includes('24') ? '商户承诺' : '售后协商',
-  ]
+function warrantyDisplay(value: string) {
+  return value
+    .replace(/买家专属、可撤销的/g, '买家专属的')
+    .replace(/支持撤销/g, '支持站外协商更换')
 }
 
 function visibleBadges(items: string[]) {
@@ -247,7 +238,7 @@ function visibleBadges(items: string[]) {
 function statusLabel(row: Pick<ApiService, 'state' | 'online' | 'publiclyOrderable'>) {
   if (row.state === 'reviewing') return { text: '审核中', dot: 'bg-amber-500', textClass: 'text-amber-700' }
   if (row.state === 'paused') return { text: '暂停接单', dot: 'bg-red-500', textClass: 'text-red-700' }
-  if (row.publiclyOrderable) return { text: '可提交意向', dot: 'bg-emerald-500', textClass: 'text-emerald-700' }
+  if (row.publiclyOrderable) return { text: '可创建订单', dot: 'bg-emerald-500', textClass: 'text-emerald-700' }
   if (row.online) return { text: '待配置接单', dot: 'bg-amber-500', textClass: 'text-amber-700' }
   return { text: '离线', dot: 'bg-muted-foreground', textClass: 'text-muted-foreground' }
 }
@@ -255,11 +246,19 @@ function statusLabel(row: Pick<ApiService, 'state' | 'online' | 'publiclyOrderab
 function merchantProfileUrl(row: ApiService) {
   return getApiMerchantProfileUrl(row)
 }
+
+function openService(event: MouseEvent | KeyboardEvent, row: ApiService) {
+  if (!row.publiclyOrderable) return
+  if (event instanceof MouseEvent && (event.target as HTMLElement).closest('a,button,input,select')) return
+  router.push(`/api-market/${row.id}`)
+}
 </script>
 
 <template>
   <div class="api-market-page">
-    <section class="api-market-hero">
+    <div class="api-market-layout">
+      <main class="min-w-0 space-y-4">
+      <section class="api-market-hero">
       <div class="api-market-hero-main">
         <div class="api-market-kicker">
           <Code2 class="h-4 w-4" />
@@ -268,17 +267,11 @@ function merchantProfileUrl(row: ApiService) {
         </div>
         <div class="mt-3 flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
           <div class="min-w-0">
-            <h1 class="text-[32px] font-semibold leading-tight tracking-normal text-slate-950 md:text-[38px]">API 集市</h1>
-            <p class="mt-2 max-w-3xl text-sm leading-6 text-slate-600">
-              按服务来源分面板查看 API 服务；提交购买意向后直接查看商户联系方式，平台不保存 API Key、token、面板账号或密码。
+            <h1 class="text-[32px] font-semibold leading-tight tracking-normal md:text-[38px]">连接优质 API 服务，按需灵活接入</h1>
+            <p class="mt-2 max-w-3xl text-sm leading-6">
+              按服务来源分面板查看 API 服务；创建订单后按参与方权限查看交易资料，平台不在公开页、列表或管理摘要展示 API Key、token、面板账号或密码。
             </p>
           </div>
-          <RouterLink to="/api-market/new" class="w-full shrink-0 sm:w-auto">
-            <Button class="api-market-primary-action w-full sm:w-auto">
-              <Upload class="h-4 w-4" />
-              发布 API 服务
-            </Button>
-          </RouterLink>
         </div>
       </div>
 
@@ -294,9 +287,10 @@ function merchantProfileUrl(row: ApiService) {
           <small>{{ item.detail }}</small>
         </div>
       </div>
+      <div class="api-market-hero-art" aria-hidden="true"><span>API</span><i /><i /><i /></div>
     </section>
 
-    <section class="api-market-panel-switch">
+      <section class="api-market-panel-switch">
       <button
         type="button"
         class="api-market-panel-card"
@@ -325,7 +319,7 @@ function merchantProfileUrl(row: ApiService) {
       </button>
     </section>
 
-    <section v-if="activePanel === 'sub2api'" class="space-y-4">
+      <section v-if="activePanel === 'sub2api'" class="space-y-4">
       <div class="api-market-notice">
         <div class="api-market-notice-icon"><ShieldCheck class="h-4 w-4" /></div>
         <div class="min-w-0">
@@ -341,6 +335,10 @@ function merchantProfileUrl(row: ApiService) {
       </div>
 
       <div class="api-market-filterbar c2c-filterbar rounded-lg border border-border bg-card px-3 py-3">
+        <div class="api-market-source-tabs mb-3 flex flex-wrap gap-2 border-b border-border pb-3">
+          <Button size="sm" variant="default" @click="setPanel('sub2api')">Sub2API 标准额度</Button>
+          <Button size="sm" variant="outline" @click="setPanel('other')">其他 API 接入</Button>
+        </div>
         <div class="grid gap-2 xl:grid-cols-[minmax(220px,1fr)_120px_130px_110px_150px_auto_150px]">
           <label class="api-market-search-field">
             <Search class="h-4 w-4" />
@@ -386,7 +384,7 @@ function merchantProfileUrl(row: ApiService) {
                     <option value="none">不支持生图</option>
                   </select>
                 </label>
-                <label class="grid gap-1 text-xs text-muted-foreground">最低意向金额
+                <label class="grid gap-1 text-xs text-muted-foreground">最低订单金额
                   <select v-model="sub2MinimumPurchase" class="h-8 rounded-md border border-input bg-background px-2 text-xs text-foreground">
                     <option value="all">不限</option>
                     <option value="lte_20">≤ 20 元</option>
@@ -408,7 +406,7 @@ function merchantProfileUrl(row: ApiService) {
           <select v-model="sub2Sort" class="api-market-select">
             <option value="recommended">综合推荐</option>
             <option value="credit_price_asc">额度售价最低</option>
-            <option value="minimum_purchase_asc">最低意向金额</option>
+            <option value="minimum_purchase_asc">最低订单金额</option>
             <option value="response_fast">响应最快</option>
             <option value="recent">最近上架</option>
           </select>
@@ -426,65 +424,48 @@ function merchantProfileUrl(row: ApiService) {
       </div>
 
       <div v-if="sub2Rows.length === 0" class="rounded-xl border border-border bg-card p-8 text-center text-sm text-muted-foreground">当前筛选条件下暂无 Sub2API 标准额度服务。</div>
-      <SoftTable v-else :columns="['服务', '额度售价', '接入 / 核对', '生图价格', '商户承诺', '最低意向', '商户', '状态 / 响应', '操作']">
-        <tr v-for="row in sub2Pagination.paginatedRows.value" :key="row.id" class="api-market-table-row">
-          <td class="api-market-service-cell">
-            <div class="font-semibold text-slate-900">{{ row.title }}</div>
-            <div class="mt-2 flex flex-wrap gap-1">
-              <Badge v-for="m in visibleBadges(row.models).shown" :key="m" variant="model">{{ m }}</Badge>
-              <Badge v-if="visibleBadges(row.models).hidden" variant="model">+{{ visibleBadges(row.models).hidden }}</Badge>
+      <template v-else>
+        <div class="api-service-card-grid">
+          <Card
+            v-for="row in sub2Pagination.paginatedRows.value"
+            :key="row.id"
+            class="api-service-market-card"
+            :class="row.publiclyOrderable ? 'cursor-pointer' : 'cursor-not-allowed opacity-70'"
+            :tabindex="row.publiclyOrderable ? 0 : -1"
+            @click="openService($event, row)"
+            @keydown.enter="openService($event, row)"
+          >
+            <div class="api-service-card-head">
+              <span class="api-service-card-logo"><Code2 class="h-5 w-5" /></span>
+              <div class="min-w-0 flex-1">
+                <div class="flex flex-wrap items-center gap-2"><h2 class="truncate font-semibold text-slate-950">{{ row.title }}</h2><Badge variant="verified">标准额度</Badge></div>
+                <div class="mt-1 flex flex-wrap gap-1"><Badge v-for="m in visibleBadges(row.models).shown" :key="m" variant="model">{{ m }}</Badge><Badge v-if="visibleBadges(row.models).hidden" variant="model">+{{ visibleBadges(row.models).hidden }}</Badge></div>
+              </div>
+              <div class="shrink-0 text-right"><div class="api-service-card-price">{{ creditPriceLabel(row) }}</div><div class="mt-1 text-xs text-muted-foreground">可售 {{ formatUsdQuota(row.balance) }}</div></div>
             </div>
-          </td>
-          <td>
-            <div class="api-market-price">{{ creditPriceLabel(row) }}</div>
-            <div class="mt-1 text-xs text-muted-foreground">可售 {{ formatUsdQuota(row.balance) }}</div>
-          </td>
-          <td>
-            <div class="grid gap-1">
-              <div class="text-sm font-medium">{{ accessConfirmationLabel(row) }}</div>
-              <div class="text-xs leading-5 text-muted-foreground">{{ usageVerificationLabel() }}</div>
+            <dl class="api-service-card-metrics">
+              <div><dt>接入方式</dt><dd>{{ accessConfirmationLabel(row) }}</dd></div>
+              <div><dt>生图价格</dt><dd>{{ imagePricingLabel(row) }}</dd></div>
+              <div><dt>最低订单</dt><dd>¥{{ row.minimumPurchaseCny }} 起</dd></div>
+              <div><dt>响应参考</dt><dd>{{ row.publiclyOrderable ? `约 ${row.responseMedianMinutes} 分钟` : '暂不可接单' }}</dd></div>
+            </dl>
+            <p class="api-service-card-note">{{ usageVerificationLabel() }} · {{ warrantyDisplay(row.warranty) }}</p>
+            <div class="api-service-card-footer">
+              <component :is="merchantProfileUrl(row) ? RouterLink : 'div'" :to="merchantProfileUrl(row) || undefined" class="api-market-merchant">
+                <span class="api-market-avatar">{{ getApiMerchantAvatarText(row) }}</span>
+                <span class="min-w-0"><span class="block truncate text-sm font-medium">{{ getApiMerchantDisplayName(row) }}</span><span class="mt-0.5 flex flex-wrap gap-1"><Badge variant="identity">{{ merchantIdentity(row) }}</Badge><Badge variant="trust">信任等级{{ row.trustLevel }}</Badge></span></span>
+              </component>
+              <div class="text-right"><div class="flex items-center justify-end gap-1 text-sm" :class="statusLabel(row).textClass"><span class="h-2 w-2 rounded-full" :class="statusLabel(row).dot"></span>{{ statusLabel(row).text }}</div><div class="mt-1 text-xs font-medium text-primary">查看服务 →</div></div>
             </div>
-          </td>
-          <td>{{ imagePricingLabel(row) }}</td>
-          <td>{{ row.warranty }}</td>
-          <td><span class="api-market-minimum">¥{{ row.minimumPurchaseCny }} 起</span></td>
-          <td>
-            <component :is="merchantProfileUrl(row) ? RouterLink : 'div'" :to="merchantProfileUrl(row) || undefined" class="api-market-merchant">
-              <span class="api-market-avatar">{{ getApiMerchantAvatarText(row) }}</span>
-              <span class="min-w-0">
-                <span class="block font-medium">{{ getApiMerchantDisplayName(row) }}</span>
-                <span class="mt-0.5 flex flex-wrap gap-1">
-                  <Badge variant="identity">{{ merchantIdentity(row) }}</Badge>
-                  <Badge variant="trust">信任等级{{ row.trustLevel }}</Badge>
-                  <Badge v-if="!canOpenApiMerchantProfile(row)" variant="secondary">{{ getApiMerchantVisibilityLabel(row) }}</Badge>
-                </span>
-              </span>
-            </component>
-          </td>
-          <td>
-            <div class="flex items-center gap-1 text-sm" :class="statusLabel(row).textClass">
-              <span class="h-2 w-2 rounded-full" :class="statusLabel(row).dot"></span>{{ statusLabel(row).text }}
-            </div>
-            <div class="mt-1 flex items-center gap-1 text-xs text-muted-foreground"><Clock class="h-3 w-3" />{{ row.publiclyOrderable ? `响应约 ${row.responseMedianMinutes} 分钟` : row.warning ?? '暂不可接单' }}</div>
-          </td>
-          <td>
-            <RouterLink v-if="row.publiclyOrderable" :to="`/api-market/${row.id}`"><Button class="api-market-intent-button" size="sm"><ShoppingBag class="h-4 w-4" />提交意向</Button></RouterLink>
-            <Button v-else class="api-market-intent-button" size="sm" variant="outline" disabled><ShoppingBag class="h-4 w-4" />暂不可接单</Button>
-          </td>
-        </tr>
-        <template #footer>
-          <TablePagination
-            v-model:page="sub2Pagination.page.value"
-            :page-count="sub2Pagination.pageCount.value"
-            :total="sub2Pagination.total.value"
-            :start-item="sub2Pagination.startItem.value"
-            :end-item="sub2Pagination.endItem.value"
-          />
-        </template>
-      </SoftTable>
+          </Card>
+        </div>
+        <div class="mt-4 rounded-xl border border-border bg-card px-4 py-3">
+          <TablePagination v-model:page="sub2Pagination.page.value" :page-count="sub2Pagination.pageCount.value" :total="sub2Pagination.total.value" :start-item="sub2Pagination.startItem.value" :end-item="sub2Pagination.endItem.value" />
+        </div>
+      </template>
     </section>
 
-    <section v-else class="space-y-4">
+      <section v-else class="space-y-4">
       <div class="api-market-notice">
         <div class="api-market-notice-icon"><CircleDollarSign class="h-4 w-4" /></div>
         <div class="min-w-0">
@@ -498,6 +479,10 @@ function merchantProfileUrl(row: ApiService) {
       </div>
 
       <div class="api-market-filterbar c2c-filterbar rounded-lg border border-border bg-card px-3 py-3">
+        <div class="api-market-source-tabs mb-3 flex flex-wrap gap-2 border-b border-border pb-3">
+          <Button size="sm" variant="outline" @click="setPanel('sub2api')">Sub2API 标准额度</Button>
+          <Button size="sm" variant="default" @click="setPanel('other')">其他 API 接入</Button>
+        </div>
         <div class="grid gap-2 xl:grid-cols-[minmax(220px,1fr)_150px_150px_120px_auto_150px]">
           <label class="api-market-search-field">
             <Search class="h-4 w-4" />
@@ -532,7 +517,7 @@ function merchantProfileUrl(row: ApiService) {
             <PopoverContent align="end" class="w-[320px]">
               <div class="grid gap-3">
                 <div class="text-sm font-medium">其他 API 筛选</div>
-                <label class="grid gap-1 text-xs text-muted-foreground">最低意向金额
+                <label class="grid gap-1 text-xs text-muted-foreground">最低订单金额
                   <select v-model="otherMinimumPurchase" class="h-8 rounded-md border border-input bg-background px-2 text-xs text-foreground">
                     <option value="all">不限</option>
                     <option value="lte_20">≤ 20 元</option>
@@ -545,7 +530,7 @@ function merchantProfileUrl(row: ApiService) {
           </Popover>
           <select v-model="otherSort" class="api-market-select">
             <option value="recommended">综合推荐</option>
-            <option value="minimum_purchase_asc">最低意向金额</option>
+            <option value="minimum_purchase_asc">最低订单金额</option>
             <option value="response_fast">响应最快</option>
             <option value="recent">最近上架</option>
           </select>
@@ -563,56 +548,59 @@ function merchantProfileUrl(row: ApiService) {
       </div>
 
       <div v-if="otherRows.length === 0" class="rounded-xl border border-border bg-card p-8 text-center text-sm text-muted-foreground">当前筛选条件下暂无其他 API 接入服务。</div>
-      <SoftTable v-else :columns="['服务', '分发系统', '计费方式', '接入 / 核对', '商户承诺', '最低意向', '商户', '状态', '操作']">
-        <tr v-for="row in otherPagination.paginatedRows.value" :key="row.id" class="api-market-table-row">
-          <td class="api-market-service-cell">
-            <div class="font-semibold text-slate-900">{{ row.title }}</div>
-            <div class="mt-1 text-xs text-muted-foreground">{{ serviceSummary(row) }}</div>
-          </td>
-          <td>{{ row.delivery }}</td>
-          <td>{{ billingModeLabel(row.billingMode) }}</td>
-          <td>
-            <div class="grid gap-1">
-              <div class="text-sm font-medium">{{ accessConfirmationLabel(row) }}</div>
-              <div class="text-xs leading-5 text-muted-foreground">{{ usageVerificationLabel() }}</div>
+      <template v-else>
+        <div class="api-service-card-grid">
+          <Card
+            v-for="row in otherPagination.paginatedRows.value"
+            :key="row.id"
+            class="api-service-market-card"
+            :class="row.publiclyOrderable ? 'cursor-pointer' : 'cursor-not-allowed opacity-70'"
+            :tabindex="row.publiclyOrderable ? 0 : -1"
+            @click="openService($event, row)"
+            @keydown.enter="openService($event, row)"
+          >
+            <div class="api-service-card-head">
+              <span class="api-service-card-logo api-service-card-logo--other"><Activity class="h-5 w-5" /></span>
+              <div class="min-w-0 flex-1"><div class="flex flex-wrap items-center gap-2"><h2 class="truncate font-semibold text-slate-950">{{ row.title }}</h2><Badge variant="secondary">{{ row.delivery }}</Badge></div><p class="mt-1 truncate text-xs text-muted-foreground">{{ billingModeLabel(row.billingMode) }}</p></div>
+              <div class="shrink-0 text-right"><div class="api-service-card-price">¥{{ row.minimumPurchaseCny }} 起</div><div class="mt-1 text-xs text-muted-foreground">最低订单</div></div>
             </div>
-          </td>
-          <td>{{ row.warranty }}</td>
-          <td><span class="api-market-minimum">¥{{ row.minimumPurchaseCny }} 起</span></td>
-          <td>
-            <component :is="merchantProfileUrl(row) ? RouterLink : 'div'" :to="merchantProfileUrl(row) || undefined" class="api-market-merchant">
-              <span class="api-market-avatar">{{ getApiMerchantAvatarText(row) }}</span>
-              <span class="min-w-0">
-                <span class="block font-medium">{{ getApiMerchantDisplayName(row) }}</span>
-                <span class="mt-0.5 flex flex-wrap gap-1">
-                  <Badge variant="identity">{{ merchantIdentity(row) }}</Badge>
-                  <Badge variant="trust">信任等级{{ row.trustLevel }}</Badge>
-                  <Badge v-if="!canOpenApiMerchantProfile(row)" variant="secondary">{{ getApiMerchantVisibilityLabel(row) }}</Badge>
-                </span>
-              </span>
-            </component>
-          </td>
-          <td>
-            <div class="flex items-center gap-1 text-sm" :class="statusLabel(row).textClass">
-              <span class="h-2 w-2 rounded-full" :class="statusLabel(row).dot"></span>{{ statusLabel(row).text }}
+            <dl class="api-service-card-metrics">
+              <div><dt>分发系统</dt><dd>{{ row.delivery }}</dd></div>
+              <div><dt>计费方式</dt><dd>{{ billingModeLabel(row.billingMode) }}</dd></div>
+              <div><dt>接入核对</dt><dd>{{ accessConfirmationLabel(row) }}</dd></div>
+              <div><dt>响应参考</dt><dd>{{ row.publiclyOrderable ? `约 ${row.responseMedianMinutes} 分钟` : '暂不可接单' }}</dd></div>
+            </dl>
+            <p class="api-service-card-note">{{ usageVerificationLabel() }} · {{ warrantyDisplay(row.warranty) }}</p>
+            <div class="api-service-card-footer">
+              <component :is="merchantProfileUrl(row) ? RouterLink : 'div'" :to="merchantProfileUrl(row) || undefined" class="api-market-merchant"><span class="api-market-avatar">{{ getApiMerchantAvatarText(row) }}</span><span class="min-w-0"><span class="block truncate text-sm font-medium">{{ getApiMerchantDisplayName(row) }}</span><span class="mt-0.5 flex flex-wrap gap-1"><Badge variant="identity">{{ merchantIdentity(row) }}</Badge><Badge variant="trust">信任等级{{ row.trustLevel }}</Badge></span></span></component>
+              <div class="text-right"><div class="flex items-center justify-end gap-1 text-sm" :class="statusLabel(row).textClass"><span class="h-2 w-2 rounded-full" :class="statusLabel(row).dot"></span>{{ statusLabel(row).text }}</div><div class="mt-1 text-xs font-medium text-primary">查看服务 →</div></div>
             </div>
-            <div class="mt-1 flex items-center gap-1 text-xs text-muted-foreground"><Clock class="h-3 w-3" />{{ row.publiclyOrderable ? `响应约 ${row.responseMedianMinutes} 分钟` : row.warning ?? '暂不可接单' }}</div>
-          </td>
-          <td>
-            <RouterLink v-if="row.publiclyOrderable" :to="`/api-market/${row.id}`"><Button class="api-market-intent-button" size="sm"><ShoppingBag class="h-4 w-4" />提交意向</Button></RouterLink>
-            <Button v-else class="api-market-intent-button" size="sm" variant="outline" disabled><ShoppingBag class="h-4 w-4" />暂不可接单</Button>
-          </td>
-        </tr>
-        <template #footer>
-          <TablePagination
-            v-model:page="otherPagination.page.value"
-            :page-count="otherPagination.pageCount.value"
-            :total="otherPagination.total.value"
-            :start-item="otherPagination.startItem.value"
-            :end-item="otherPagination.endItem.value"
-          />
-        </template>
-      </SoftTable>
-    </section>
+          </Card>
+        </div>
+        <div class="mt-4 rounded-xl border border-border bg-card px-4 py-3"><TablePagination v-model:page="otherPagination.page.value" :page-count="otherPagination.pageCount.value" :total="otherPagination.total.value" :start-item="otherPagination.startItem.value" :end-item="otherPagination.endItem.value" /></div>
+      </template>
+      </section>
+      </main>
+
+      <aside class="api-market-aside space-y-3">
+        <Card class="api-market-check-card p-4">
+          <div class="flex items-center gap-2 font-semibold"><ShieldCheck class="h-4 w-4 text-cyan-700" />下单前确认</div>
+          <ul class="mt-3 space-y-2 text-sm leading-6 text-muted-foreground">
+            <li>• 比较额度售价、最低订单与商户履约记录</li>
+            <li>• 确认接入方式、用量核对和售后承诺</li>
+            <li>• 付款、Key 与账号资料仅按订单参与方权限展示</li>
+          </ul>
+        </Card>
+        <Card class="p-4">
+          <div class="flex items-center gap-2 font-semibold"><CircleHelp class="h-4 w-4 text-primary" />新手帮助</div>
+          <ul class="mt-3 space-y-2 text-sm leading-6 text-muted-foreground"><li>如何选择合适的 API 服务</li><li>计费方式与倍率说明</li><li>常见问题解答</li></ul>
+        </Card>
+        <Card class="p-4">
+          <div class="flex items-center gap-2 font-semibold"><CircleHelp class="h-4 w-4 text-primary" />交易说明</div>
+          <p class="mt-2 text-sm leading-6 text-muted-foreground">平台记录订单状态，不代收款、不托管额度，也不公开展示 API Key、token、面板账号或密码。</p>
+        </Card>
+        <RouterLink to="/api-market/new"><Button class="w-full" variant="outline"><Upload class="h-4 w-4" />发布 API 服务</Button></RouterLink>
+      </aside>
+    </div>
   </div>
 </template>

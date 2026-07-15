@@ -39,7 +39,7 @@ function optionSummary(option: ApiPaymentOption) {
   if (!option.enabled) return '未启用'
   if (apiPaymentMethodRequiresQrCode(option.paymentMethod)) {
     if (!option.paymentQrCodeDataUrl) return '未上传收款码'
-    return option.paymentInstructions.trim() || '已上传收款码，买家提交意向后可见'
+    return option.paymentInstructions.trim() || '已上传收款码，买家创建订单后可见'
   }
   return option.paymentInstructions.trim() || '未填写站外确认说明'
 }
@@ -51,7 +51,7 @@ function optionSummary(option: ApiPaymentOption) {
       <div class="flex flex-wrap items-start justify-between gap-3">
         <div>
           <h2>2. 收款与接单</h2>
-          <p>使用我的中心里的 API 收款设置；发布时会复制为本服务的接单快照。</p>
+          <p>使用个人中心里的 API 收款设置；发布时会复制为本服务的接单快照。</p>
         </div>
         <Badge :variant="complete ? 'verified' : 'secondary'">{{ complete ? '已配置' : '待配置' }}</Badge>
       </div>
@@ -66,7 +66,7 @@ function optionSummary(option: ApiPaymentOption) {
         <div class="min-w-0">
           <div class="font-medium">{{ loading ? '正在读取 API 收款设置...' : summary }}</div>
           <p class="mt-1 text-xs leading-5">
-            {{ complete ? '发布后买家可按该服务快照提交意向；之后修改我的中心不会静默改变已发布服务。' : missingReason }}
+            {{ complete ? '发布后买家可按该服务快照创建订单；之后修改个人中心不会静默改变已发布服务。' : missingReason }}
           </p>
         </div>
       </div>
@@ -86,10 +86,10 @@ function optionSummary(option: ApiPaymentOption) {
       </div>
 
       <div class="flex flex-col gap-2 rounded-md border border-border bg-muted/50 px-3 py-2 text-xs leading-5 text-muted-foreground sm:flex-row sm:items-center sm:justify-between">
-        <span>平台不托管支付；收款码只在买家提交意向后用于站外确认，不保存付款码、API Key、token、账号密码或面板凭据。</span>
+        <span>平台不托管支付；收款码只在买家创建订单后用于站外确认，不保存 API Key、token、账号密码或面板凭据。</span>
         <RouterLink to="/my/contacts" class="shrink-0">
           <Button size="sm" variant="outline">
-            去我的中心修改 <ExternalLink class="h-3.5 w-3.5" />
+            去个人中心修改 <ExternalLink class="h-3.5 w-3.5" />
           </Button>
         </RouterLink>
       </div>

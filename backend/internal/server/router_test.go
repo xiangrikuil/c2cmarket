@@ -197,6 +197,47 @@ func TestDevSessionAndCSRF(t *testing.T) {
 	assertProblemCode(t, response, "CSRF_TOKEN_INVALID")
 }
 
+func TestAdminUsersListsAllAccountsWithoutReportData(t *testing.T) {
+	server := newTestServer(time.Now())
+	adminSession := createSession(t, server, "admin-directory", true)
+	createSession(t, server, "member-directory", false)
+
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/admin/users", nil)
+	addCookie(request, adminSession.cookie)
+	response := httptest.NewRecorder()
+	server.ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("admin users status %d body %s", response.Code, response.Body.String())
+	}
+	var payload listResponse[adminUserResponse]
+	if err := json.NewDecoder(response.Body).Decode(&payload); err != nil {
+		t.Fatalf("decode admin users: %v", err)
+	}
+	var member *adminUserResponse
+	for index := range payload.Items {
+		if payload.Items[index].Username == "member-directory" {
+			member = &payload.Items[index]
+			break
+		}
+	}
+	if member == nil || member.AccountStatus != "active" || member.LinuxDoBound || member.CreatedAt == "" {
+		t.Fatalf("unexpected directory user: %#v", member)
+	}
+	if strings.Contains(response.Body.String(), "password") || strings.Contains(response.Body.String(), "reporter") {
+		t.Fatalf("admin user directory must not expose credentials or report records: %s", response.Body.String())
+	}
+
+	memberSession := createSession(t, server, "member-directory-reader", false)
+	request = httptest.NewRequest(http.MethodGet, "/api/v1/admin/users", nil)
+	addCookie(request, memberSession.cookie)
+	response = httptest.NewRecorder()
+	server.ServeHTTP(response, request)
+	if response.Code != http.StatusForbidden {
+		t.Fatalf("non-admin directory status %d body %s", response.Code, response.Body.String())
+	}
+	assertProblemCode(t, response, "PERMISSION_DENIED")
+}
+
 func TestEmailRegistrationDisabled(t *testing.T) {
 	server := newTestServer(time.Now())
 
@@ -787,6 +828,7 @@ func TestAdminProductCategoryCRUDAndPublicVisibility(t *testing.T) {
 	createCategoryRequest := newJSONRequest(http.MethodPost, "/api/v1/admin/product-categories", `{
 		"code":"vpn",
 		"displayName":"VPN",
+		"iconDataUrl":"data:image/png;base64,aGVsbG8=",
 		"sortOrder":60,
 		"active":true
 	}`)
@@ -800,8 +842,22 @@ func TestAdminProductCategoryCRUDAndPublicVisibility(t *testing.T) {
 	if err := json.NewDecoder(createCategoryResponse.Body).Decode(&category); err != nil {
 		t.Fatalf("decode created category: %v", err)
 	}
-	if category.Code != "vpn" || category.DisplayName != "VPN" || !category.Active {
+	if category.Code != "vpn" || category.DisplayName != "VPN" || category.IconDataURL != "data:image/png;base64,aGVsbG8=" || !category.Active {
 		t.Fatalf("unexpected created category: %+v", category)
+	}
+
+	invalidIconRequest := newJSONRequest(http.MethodPost, "/api/v1/admin/product-categories", `{
+		"code":"invalid-icon",
+		"displayName":"Invalid icon",
+		"iconDataUrl":"data:image/svg+xml;base64,PHN2Zz4=",
+		"sortOrder":61,
+		"active":true
+	}`)
+	addAuth(invalidIconRequest, adminSession, "product-category-invalid-icon")
+	invalidIconResponse := httptest.NewRecorder()
+	server.ServeHTTP(invalidIconResponse, invalidIconRequest)
+	if invalidIconResponse.Code != http.StatusUnprocessableEntity || !strings.Contains(invalidIconResponse.Body.String(), `"field":"iconDataUrl"`) {
+		t.Fatalf("expected invalid category icon field error, got %d body %s", invalidIconResponse.Code, invalidIconResponse.Body.String())
 	}
 
 	createPlanRequest := newJSONRequest(http.MethodPost, "/api/v1/admin/product-plans", productPlanPayloadWithCategoryID(category.ID, category.Code, "vpn-basic", "VPN Basic", "allowed", "normal", false))
@@ -1093,10 +1149,33 @@ func TestCarpoolCreateReviewApplyAndAcceptFlow(t *testing.T) {
 		t.Fatalf("unexpected restored listing: %+v", restored)
 	}
 	assertPublicCarpoolVisible(t, server, restored.ID, true)
+	ownerEligibility := getCarpoolEligibility(t, server, ownerSession, restored.ID)
+	if ownerEligibility.Code != "self_owned" || ownerEligibility.CanApply {
+		t.Fatalf("expected self-owned eligibility, got %+v", ownerEligibility)
+	}
+	buyerEligibility := getCarpoolEligibility(t, server, buyerSession, restored.ID)
+	if buyerEligibility.Code != "eligible" || !buyerEligibility.CanApply {
+		t.Fatalf("expected buyer eligibility, got %+v", buyerEligibility)
+	}
+	selfApplicationRequest := newJSONRequest(http.MethodPost, "/api/v1/carpools/"+restored.ID+"/applications", carpoolApplicationPayload(ownerContact.ID))
+	addAuth(selfApplicationRequest, ownerSession, "carpool-apply-own")
+	selfApplicationResponse := httptest.NewRecorder()
+	server.ServeHTTP(selfApplicationResponse, selfApplicationRequest)
+	if selfApplicationResponse.Code != http.StatusConflict {
+		t.Fatalf("expected own carpool application conflict, got %d body %s", selfApplicationResponse.Code, selfApplicationResponse.Body.String())
+	}
+	if !strings.Contains(selfApplicationResponse.Body.String(), "不能申请自己的车源") {
+		t.Fatalf("expected own carpool application detail, got %s", selfApplicationResponse.Body.String())
+	}
+	assertProblemCode(t, selfApplicationResponse, "INVALID_STATE_TRANSITION")
 
 	application := createCarpoolApplication(t, server, buyerSession, restored.ID, buyerContact.ID, "carpool-apply")
 	if application.Status != app.CarpoolApplicationStatusPendingOwner || application.Version != 1 {
 		t.Fatalf("unexpected application: %+v", application)
+	}
+	afterApplicationEligibility := getCarpoolEligibility(t, server, buyerSession, restored.ID)
+	if afterApplicationEligibility.Code != "already_applied" || afterApplicationEligibility.CanApply {
+		t.Fatalf("expected already-applied eligibility, got %+v", afterApplicationEligibility)
 	}
 
 	duplicate := newJSONRequest(http.MethodPost, "/api/v1/carpools/"+restored.ID+"/applications", carpoolApplicationPayload(buyerContact.ID))
@@ -1560,6 +1639,9 @@ func TestAPIServiceInstantOrderFlow(t *testing.T) {
 		order.SellerUserID != ownerSession.userID ||
 		order.BuyerUserID != "" ||
 		order.Amount != "16.00" ||
+		order.RequestedUSDAllowanceSnapshot != "20.000000" ||
+		order.CNYPerUSDAllowanceSnapshot != "0.8000" ||
+		order.PricingSnapshot == "" ||
 		order.Currency != "CNY" ||
 		order.SelectedPaymentMethod != "wechat" ||
 		order.PaymentWindowMinutesSnapshot != 10 ||
@@ -1568,10 +1650,14 @@ func TestAPIServiceInstantOrderFlow(t *testing.T) {
 		order.Version != 1 {
 		t.Fatalf("unexpected created API order: %+v", order)
 	}
+	orderedIntent := getAPIPurchaseIntent(t, server, buyerSession, "me", intent.ID)
+	if orderedIntent.Status != app.APIPurchaseIntentStatusOrdered || orderedIntent.Version != intent.Version+1 {
+		t.Fatalf("expected created order to release purchase intent, got %+v", orderedIntent)
+	}
 
 	cancelOrderedIntent := newJSONRequest(http.MethodPost, "/api/v1/me/api-purchase-intents/"+intent.ID+"/cancel", `{"reason":"已进入订单流程后不能再取消普通意向。"}`)
 	addAuth(cancelOrderedIntent, buyerSession, "api-order-intent-cancel-after-order")
-	cancelOrderedIntent.Header.Set("If-Match", `"`+strconv.FormatInt(intent.Version, 10)+`"`)
+	cancelOrderedIntent.Header.Set("If-Match", `"`+strconv.FormatInt(orderedIntent.Version, 10)+`"`)
 	cancelOrderedIntentResponse := httptest.NewRecorder()
 	server.ServeHTTP(cancelOrderedIntentResponse, cancelOrderedIntent)
 	if cancelOrderedIntentResponse.Code != http.StatusConflict {
@@ -1581,13 +1667,21 @@ func TestAPIServiceInstantOrderFlow(t *testing.T) {
 
 	closeOrderedIntent := newJSONRequest(http.MethodPost, "/api/v1/owner/api-purchase-intents/"+intent.ID+"/close", `{"reason":"已进入订单流程后不能再关闭普通意向。"}`)
 	addAuth(closeOrderedIntent, ownerSession, "api-order-intent-close-after-order")
-	closeOrderedIntent.Header.Set("If-Match", `"`+strconv.FormatInt(intent.Version, 10)+`"`)
+	closeOrderedIntent.Header.Set("If-Match", `"`+strconv.FormatInt(orderedIntent.Version, 10)+`"`)
 	closeOrderedIntentResponse := httptest.NewRecorder()
 	server.ServeHTTP(closeOrderedIntentResponse, closeOrderedIntent)
 	if closeOrderedIntentResponse.Code != http.StatusConflict {
 		t.Fatalf("expected ordered intent close conflict, got %d body %s", closeOrderedIntentResponse.Code, closeOrderedIntentResponse.Body.String())
 	}
 	assertProblemCode(t, closeOrderedIntentResponse, "API_PURCHASE_INTENT_HAS_ORDER")
+
+	cancelIntent := createAPIPurchaseIntent(t, server, buyerSession, orderable.ID, buyerContact.ID, "api-order-cancel-intent")
+	cancelOrder := createAPIOrder(t, server, buyerSession, cancelIntent.ID, "wechat", "api-order-cancel-create")
+	cancelReason := "个人原因｜我不再需要该服务｜补充说明：暂时不需要额度"
+	cancelledOrder := apiOrderAction(t, server, buyerSession, "me", cancelOrder.ID, "cancel", cancelOrder.Version, "api-order-cancel", `{"reason":"`+cancelReason+`"}`)
+	if cancelledOrder.Status != "cancelled" || cancelledOrder.CancelReason != cancelReason || cancelledOrder.CancelledAt == nil {
+		t.Fatalf("unexpected cancelled API order: %+v", cancelledOrder)
+	}
 
 	instructions := readAPIOrderPaymentInstructions(t, server, buyerSession, order.ID)
 	if instructions.OrderID != order.ID ||
@@ -1601,6 +1695,14 @@ func TestAPIServiceInstantOrderFlow(t *testing.T) {
 	paid := apiOrderAction(t, server, buyerSession, "me", order.ID, "submit-payment", order.Version, "api-order-submit-payment", `{"paymentSummary":"已按站外确认金额完成微信付款，尾号 1234。"}`)
 	if paid.Status != "payment_submitted" || paid.PaymentSummary == "" || paid.Version != 2 {
 		t.Fatalf("unexpected payment-submitted order: %+v", paid)
+	}
+	paymentIssue := apiOrderAction(t, server, ownerSession, "owner", paid.ID, "report-payment-issue", paid.Version, "api-order-report-payment-issue", `{"reason":"remark_mismatch","note":"收款记录中未找到订单备注。"}`)
+	if paymentIssue.Status != "payment_issue" || paymentIssue.PaymentIssueReason != "remark_mismatch" || paymentIssue.PaymentIssueNote == "" || paymentIssue.PaymentIssueReportedAt == nil {
+		t.Fatalf("unexpected payment-issue order: %+v", paymentIssue)
+	}
+	paid = apiOrderAction(t, server, buyerSession, "me", paymentIssue.ID, "submit-payment", paymentIssue.Version, "api-order-resubmit-payment", `{"paymentSummary":"已核对：微信付款 ¥16.00，尾号 1234，付款时间 12:00。"}`)
+	if paid.Status != "payment_submitted" || paid.PaymentIssueReason != "" || paid.PaymentIssueNote != "" || paid.PaymentIssueReportedAt != nil {
+		t.Fatalf("unexpected resubmitted payment order: %+v", paid)
 	}
 
 	disputeIntent := createAPIPurchaseIntent(t, server, buyerSession, orderable.ID, buyerContact.ID, "api-order-dispute-intent")
@@ -1639,7 +1741,7 @@ func TestAPIServiceInstantOrderFlow(t *testing.T) {
 	assertProblemCode(t, completeEarlyResponse, "INVALID_STATE_TRANSITION")
 
 	confirmed := apiOrderAction(t, server, ownerSession, "owner", paid.ID, "confirm-payment", paid.Version, "api-order-confirm-payment", `{}`)
-	if confirmed.Status != "paid_confirmed" || confirmed.PaidConfirmedAt == nil || confirmed.BuyerUserID != buyerSession.userID || confirmed.Version != 3 {
+	if confirmed.Status != "paid_confirmed" || confirmed.PaidConfirmedAt == nil || confirmed.BuyerUserID != buyerSession.userID || confirmed.Version != paid.Version+1 {
 		t.Fatalf("unexpected paid-confirmed order: %+v", confirmed)
 	}
 
@@ -1660,8 +1762,8 @@ func TestAPIServiceInstantOrderFlow(t *testing.T) {
 		assertProblemCode(t, secretDeliveryResponse, "SECRET_CONTENT_DETECTED")
 	}
 
-	delivered := apiOrderAction(t, server, ownerSession, "owner", confirmed.ID, "submit-delivery", confirmed.Version, "api-order-submit-delivery", `{"deliveryKind":"api_key_endpoint","apiBaseUrl":"https://api.example.com/v1","apiKey":"sk-proj-test","instructions":"买家专属、可撤销；后续更换请站外联系。"}`)
-	if delivered.Status != "delivery_submitted" || delivered.DeliveryNote == "" || delivered.DeliveryCredential == nil || delivered.DeliveryCredential.APIKey != "sk-proj-test" || delivered.Version != 4 {
+	delivered := apiOrderAction(t, server, ownerSession, "owner", confirmed.ID, "submit-delivery", confirmed.Version, "api-order-submit-delivery", `{"deliveryKind":"api_key_endpoint","apiBaseUrl":"https://api.example.com/v1","apiKey":"sk-proj-test","instructions":"买家专属；提交后不可修改，后续更换请站外联系。"}`)
+	if delivered.Status != "delivery_submitted" || delivered.DeliveryNote == "" || delivered.DeliveryCredential == nil || delivered.DeliveryCredential.APIKey != "sk-proj-test" || delivered.Version != confirmed.Version+1 {
 		t.Fatalf("unexpected delivered order: %+v", delivered)
 	}
 	duplicateDelivery := newJSONRequest(http.MethodPost, "/api/v1/owner/api-orders/"+delivered.ID+"/submit-delivery", `{"deliveryKind":"api_key_endpoint","apiBaseUrl":"https://api.example.com/v1","apiKey":"sk-proj-other"}`)
@@ -1678,9 +1780,23 @@ func TestAPIServiceInstantOrderFlow(t *testing.T) {
 	if len(listAfterDelivery.Items) == 0 || listAfterDelivery.Items[0].DeliveryCredential != nil {
 		t.Fatalf("buyer API order list must not expose delivery credential: %+v", listAfterDelivery.Items)
 	}
+	adminOrders := listAdminAPIOrders(t, server, adminSession)
+	adminFoundDelivered := false
+	for _, item := range adminOrders.Items {
+		if item.ID != delivered.ID {
+			continue
+		}
+		adminFoundDelivered = true
+		if item.DeliveryCredential != nil || item.RequestedUSDAllowanceSnapshot != "20.000000" || item.Amount != "16.00" {
+			t.Fatalf("admin API order summary must keep decimal snapshots without delivery credential: %+v", item)
+		}
+	}
+	if !adminFoundDelivered {
+		t.Fatalf("expected admin API order list to contain %s", delivered.ID)
+	}
 
 	completed := apiOrderAction(t, server, buyerSession, "me", delivered.ID, "confirm-complete", delivered.Version, "api-order-confirm-complete", `{}`)
-	if completed.Status != "completed" || completed.CompletedAt == nil || completed.Version != 5 {
+	if completed.Status != "completed" || completed.CompletedAt == nil || completed.Version != delivered.Version+1 {
 		t.Fatalf("unexpected completed order: %+v", completed)
 	}
 	if completed.DeliveryCredential == nil || completed.DeliveryCredential.APIKey != "sk-proj-test" {
@@ -2301,6 +2417,7 @@ type createdAPIService struct {
 	PaymentWindowMinutes   int                       `json:"paymentWindowMinutes"`
 	AcceptedPaymentMethods []string                  `json:"acceptedPaymentMethods"`
 	IsOrderable            bool                      `json:"isOrderable"`
+	AvailableUSDAllowance  string                    `json:"availableUsdAllowance"`
 	OrderableReasons       []string                  `json:"orderableReasons"`
 	Models                 []apiServiceModelResponse `json:"models"`
 	Version                int64                     `json:"version"`
@@ -2338,27 +2455,34 @@ type createdAPIPurchaseIntent struct {
 }
 
 type createdAPIOrder struct {
-	ID                           string                             `json:"id"`
-	APIPurchaseIntentID          string                             `json:"apiPurchaseIntentId"`
-	APIServiceID                 string                             `json:"apiServiceId"`
-	BuyerUserID                  string                             `json:"buyerUserId"`
-	SellerUserID                 string                             `json:"sellerUserId"`
-	Status                       string                             `json:"status"`
-	DisputeStatus                string                             `json:"disputeStatus"`
-	DisputeCaseID                string                             `json:"disputeCaseId"`
-	ServiceTitleSnapshot         string                             `json:"serviceTitleSnapshot"`
-	Amount                       string                             `json:"amount"`
-	Currency                     string                             `json:"currency"`
-	SelectedPaymentMethod        string                             `json:"selectedPaymentMethod"`
-	PaymentWindowMinutesSnapshot int                                `json:"paymentWindowMinutesSnapshot"`
-	PaymentExpiresAt             string                             `json:"paymentExpiresAt"`
-	PaymentSummary               string                             `json:"paymentSummary"`
-	PaidConfirmedAt              *string                            `json:"paidConfirmedAt"`
-	DeliveryNote                 string                             `json:"deliveryNote"`
-	DeliveryCredential           *createdAPIOrderDeliveryCredential `json:"deliveryCredential"`
-	CompletedAt                  *string                            `json:"completedAt"`
-	CancelReason                 string                             `json:"cancelReason"`
-	Version                      int64                              `json:"version"`
+	ID                            string                             `json:"id"`
+	APIPurchaseIntentID           string                             `json:"apiPurchaseIntentId"`
+	APIServiceID                  string                             `json:"apiServiceId"`
+	BuyerUserID                   string                             `json:"buyerUserId"`
+	SellerUserID                  string                             `json:"sellerUserId"`
+	Status                        string                             `json:"status"`
+	DisputeStatus                 string                             `json:"disputeStatus"`
+	DisputeCaseID                 string                             `json:"disputeCaseId"`
+	ServiceTitleSnapshot          string                             `json:"serviceTitleSnapshot"`
+	RequestedUSDAllowanceSnapshot string                             `json:"requestedUsdAllowanceSnapshot"`
+	CNYPerUSDAllowanceSnapshot    string                             `json:"cnyPerUsdAllowanceSnapshot"`
+	PricingSnapshot               string                             `json:"pricingSnapshot"`
+	Amount                        string                             `json:"amount"`
+	Currency                      string                             `json:"currency"`
+	SelectedPaymentMethod         string                             `json:"selectedPaymentMethod"`
+	PaymentWindowMinutesSnapshot  int                                `json:"paymentWindowMinutesSnapshot"`
+	PaymentExpiresAt              string                             `json:"paymentExpiresAt"`
+	PaymentSummary                string                             `json:"paymentSummary"`
+	PaymentIssueReason            string                             `json:"paymentIssueReason"`
+	PaymentIssueNote              string                             `json:"paymentIssueNote"`
+	PaymentIssueReportedAt        *string                            `json:"paymentIssueReportedAt"`
+	PaidConfirmedAt               *string                            `json:"paidConfirmedAt"`
+	DeliveryNote                  string                             `json:"deliveryNote"`
+	DeliveryCredential            *createdAPIOrderDeliveryCredential `json:"deliveryCredential"`
+	CompletedAt                   *string                            `json:"completedAt"`
+	CancelledAt                   *string                            `json:"cancelledAt"`
+	CancelReason                  string                             `json:"cancelReason"`
+	Version                       int64                              `json:"version"`
 }
 
 type createdAPIOrderDeliveryCredential struct {
@@ -2680,6 +2804,29 @@ func assertPublicCarpoolVisible(t *testing.T, server http.Handler, listingID str
 	}
 }
 
+type carpoolEligibilityPayload struct {
+	Code             string `json:"code"`
+	CanApply         bool   `json:"canApply"`
+	Reason           string `json:"reason"`
+	ResolutionAction string `json:"resolutionAction"`
+}
+
+func getCarpoolEligibility(t *testing.T, server http.Handler, session testSession, listingID string) carpoolEligibilityPayload {
+	t.Helper()
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/carpools/"+listingID+"/eligibility", nil)
+	addCookie(request, session.cookie)
+	response := httptest.NewRecorder()
+	server.ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("get carpool eligibility status %d body %s", response.Code, response.Body.String())
+	}
+	var payload carpoolEligibilityPayload
+	if err := json.NewDecoder(response.Body).Decode(&payload); err != nil {
+		t.Fatalf("decode carpool eligibility: %v", err)
+	}
+	return payload
+}
+
 func createCarpoolApplication(t *testing.T, server http.Handler, session testSession, listingID, buyerContactID, key string) createdCarpoolApplication {
 	t.Helper()
 	request := newJSONRequest(http.MethodPost, "/api/v1/carpools/"+listingID+"/applications", carpoolApplicationPayload(buyerContactID))
@@ -2998,6 +3145,22 @@ func listMyAPIOrders(t *testing.T, server http.Handler, session testSession) lis
 	return payload
 }
 
+func listAdminAPIOrders(t *testing.T, server http.Handler, session testSession) listResponse[createdAPIOrder] {
+	t.Helper()
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/admin/api-orders", nil)
+	addCookie(request, session.cookie)
+	response := httptest.NewRecorder()
+	server.ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("list admin API orders status %d body %s", response.Code, response.Body.String())
+	}
+	var payload listResponse[createdAPIOrder]
+	if err := json.NewDecoder(response.Body).Decode(&payload); err != nil {
+		t.Fatalf("decode admin API orders: %v", err)
+	}
+	return payload
+}
+
 func adminAPIServiceAction(t *testing.T, server http.Handler, session testSession, serviceID, action string, version int64, key string) createdAPIService {
 	t.Helper()
 	request := newJSONRequest(http.MethodPost, "/api/v1/admin/api-services/"+serviceID+"/"+action, `{"reason":"资料完整，接入说明符合平台边界。"}`)
@@ -3303,15 +3466,16 @@ func apiServicePayloadWithModelAndMultiplier(ownerContactID, modelCatalogID, mul
 		"billingMode":"metered_usd_quota",
 		"declaredCnyPerUsdAllowance":"0.8000",
 		"declaredMaxUsdAllowancePerIntent":"20.000000",
+		"availableUsdAllowance":"100.000000",
 		"quotaExpiresAt":"` + time.Now().Add(30*24*time.Hour).UTC().Format(time.RFC3339) + `",
 		"minimumIntentCny":"10.00",
 		"maximumIntentCny":"200.00",
 		"usageVisibility":"merchant_reported",
 		"publicAccessNote":"提交购买意向后直接查看商户联系方式，平台不保存任何调用凭据。",
 		"merchantNote":"仅后台可见，不展示给公开访客。",
-		"merchantSupportNote":"仅支持买家专属、可撤销的子级访问安排。",
+		"merchantSupportNote":"仅支持买家专属的子级访问安排。",
 		"accessModes":[
-			{"accessMode":"buyer_dedicated_sub_key","publicNote":"站外确认买家专属、可撤销的访问方式。"}
+			{"accessMode":"buyer_dedicated_sub_key","publicNote":"站外确认买家专属的访问方式。"}
 		],
 		"models":[
 			{"modelCatalogId":"` + modelCatalogID + `","merchantMultiplier":"` + multiplier + `"}

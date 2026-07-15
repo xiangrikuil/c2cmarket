@@ -11,6 +11,7 @@ import (
 const (
 	StatusOpen           = "open"
 	StatusContacted      = "contacted"
+	StatusOrdered        = "ordered"
 	StatusBuyerCancelled = "buyer_cancelled"
 	StatusOwnerClosed    = "owner_closed"
 )

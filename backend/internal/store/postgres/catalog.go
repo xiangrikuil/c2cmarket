@@ -16,7 +16,7 @@ func (s *Store) ListProductCategories(ctx context.Context) ([]catalog.ProductCat
 		return nil, internalStoreError()
 	}
 	rows, err := s.pool.Query(ctx, `
-		SELECT id::text, code, display_name, sort_order, active
+		SELECT id::text, code, display_name, icon_data_url, sort_order, active
 		FROM product_categories
 		WHERE active = true
 		ORDER BY sort_order ASC, display_name ASC
@@ -29,7 +29,7 @@ func (s *Store) ListProductCategories(ctx context.Context) ([]catalog.ProductCat
 	categories := []catalog.ProductCategory{}
 	for rows.Next() {
 		var category catalog.ProductCategory
-		if err := rows.Scan(&category.ID, &category.Code, &category.DisplayName, &category.SortOrder, &category.Active); err != nil {
+		if err := rows.Scan(&category.ID, &category.Code, &category.DisplayName, &category.IconDataURL, &category.SortOrder, &category.Active); err != nil {
 			return nil, internalStoreError()
 		}
 		categories = append(categories, category)
@@ -46,7 +46,7 @@ func (s *Store) GetProductCategory(ctx context.Context, categoryID string) (cata
 	}
 	var category catalog.ProductCategory
 	err := scanProductCategory(s.pool.QueryRow(ctx, `
-		SELECT id::text, code, display_name, sort_order, active
+		SELECT id::text, code, display_name, icon_data_url, sort_order, active
 		FROM product_categories
 		WHERE id = $1
 	`, categoryID), &category)
@@ -64,7 +64,7 @@ func (s *Store) AdminListProductCategories(ctx context.Context) ([]catalog.Produ
 		return nil, internalStoreError()
 	}
 	rows, err := s.pool.Query(ctx, `
-		SELECT id::text, code, display_name, sort_order, active
+		SELECT id::text, code, display_name, icon_data_url, sort_order, active
 		FROM product_categories
 		ORDER BY sort_order ASC, display_name ASC
 	`)
@@ -85,10 +85,10 @@ func (s *Store) AdminCreateProductCategory(ctx context.Context, input catalog.Pr
 	}
 	var category catalog.ProductCategory
 	err := scanProductCategory(s.pool.QueryRow(ctx, `
-		INSERT INTO product_categories (code, display_name, sort_order, active)
-		VALUES ($1, $2, $3, $4)
-		RETURNING id::text, code, display_name, sort_order, active
-	`, input.Form.Code, input.Form.DisplayName, input.Form.SortOrder, input.Form.Active), &category)
+		INSERT INTO product_categories (code, display_name, icon_data_url, sort_order, active)
+		VALUES ($1, $2, $3, $4, $5)
+		RETURNING id::text, code, display_name, icon_data_url, sort_order, active
+	`, input.Form.Code, input.Form.DisplayName, input.Form.IconDataURL, input.Form.SortOrder, input.Form.Active), &category)
 	if err != nil {
 		if isUniqueViolation(err) {
 			return catalog.ProductCategory{}, domain.NewFieldError(http.StatusConflict, domain.CodeValidationFailed, "Product category code unavailable", "分类 code 已被占用。", "code", "unavailable", "分类 code 已被占用。")
@@ -105,10 +105,10 @@ func (s *Store) AdminUpdateProductCategory(ctx context.Context, input catalog.Pr
 	var category catalog.ProductCategory
 	err := scanProductCategory(s.pool.QueryRow(ctx, `
 		UPDATE product_categories
-		SET code = $2, display_name = $3, sort_order = $4, active = $5
+		SET code = $2, display_name = $3, icon_data_url = $4, sort_order = $5, active = $6
 		WHERE id = $1
-		RETURNING id::text, code, display_name, sort_order, active
-	`, input.ID, input.Form.Code, input.Form.DisplayName, input.Form.SortOrder, input.Form.Active), &category)
+		RETURNING id::text, code, display_name, icon_data_url, sort_order, active
+	`, input.ID, input.Form.Code, input.Form.DisplayName, input.Form.IconDataURL, input.Form.SortOrder, input.Form.Active), &category)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return catalog.ProductCategory{}, productCategoryNotFound()
 	}
@@ -130,7 +130,7 @@ func (s *Store) AdminSetProductCategoryActive(ctx context.Context, input catalog
 		UPDATE product_categories
 		SET active = $2
 		WHERE id = $1
-		RETURNING id::text, code, display_name, sort_order, active
+		RETURNING id::text, code, display_name, icon_data_url, sort_order, active
 	`, input.ID, active), &category)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return catalog.ProductCategory{}, productCategoryNotFound()
@@ -798,6 +798,7 @@ func scanProductCategory(row scanner, category *catalog.ProductCategory) error {
 		&category.ID,
 		&category.Code,
 		&category.DisplayName,
+		&category.IconDataURL,
 		&category.SortOrder,
 		&category.Active,
 	)

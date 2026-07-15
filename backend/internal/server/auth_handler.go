@@ -76,6 +76,18 @@ type sessionLinuxDoBindingDTO struct {
 	AvatarURL       *string `json:"avatarUrl,omitempty"`
 }
 
+type adminUserResponse struct {
+	ID            string  `json:"id"`
+	Username      string  `json:"username"`
+	DisplayName   string  `json:"displayName"`
+	AccountStatus string  `json:"accountStatus"`
+	IsAdmin       bool    `json:"isAdmin"`
+	LinuxDoBound  bool    `json:"linuxDoBound"`
+	TrustLevel    *int    `json:"trustLevel,omitempty"`
+	CreatedAt     string  `json:"createdAt"`
+	LastActiveAt  *string `json:"lastActiveAt,omitempty"`
+}
+
 func (s *Server) handleDevSession(w http.ResponseWriter, r *http.Request) {
 	if !s.enableDevAuth {
 		writeProblem(w, r, domain.NewError(http.StatusNotFound, domain.CodeObjectNotFound, "Not found", "接口不存在。"))
@@ -100,6 +112,20 @@ func (s *Server) handleDevSession(w http.ResponseWriter, r *http.Request) {
 		CSRFToken: session.CSRFToken,
 		ExpiresAt: session.ExpiresAt.UTC().Format(time.RFC3339),
 	})
+}
+
+func (s *Server) handleAdminUsers(w http.ResponseWriter, r *http.Request) {
+	user, _, appErr := s.requireSession(r)
+	if appErr != nil {
+		writeProblem(w, r, appErr)
+		return
+	}
+	items, appErr := s.app.AdminUsers(r.Context(), user)
+	if appErr != nil {
+		writeProblem(w, r, appErr)
+		return
+	}
+	writeJSON(w, http.StatusOK, listResponse[adminUserResponse]{Items: toAdminUserResponses(items)})
 }
 
 func (s *Server) handlePasswordLogin(w http.ResponseWriter, r *http.Request) {
@@ -277,6 +303,30 @@ func toUserDTO(user auth.User) userDTO {
 		Permissions: permissions,
 		LinuxDo:     toLinuxDoBindingDTO(user.LinuxDoBinding),
 	}
+}
+
+func toAdminUserResponses(items []auth.AdminUser) []adminUserResponse {
+	result := make([]adminUserResponse, 0, len(items))
+	for _, item := range items {
+		linuxDoBound := item.LinuxDoBinding != nil && item.LinuxDoBinding.Bound
+		trustLevel := (*int)(nil)
+		if linuxDoBound {
+			value := item.LinuxDoBinding.TrustLevel
+			trustLevel = &value
+		}
+		result = append(result, adminUserResponse{
+			ID:            item.ID,
+			Username:      item.Username,
+			DisplayName:   item.DisplayName,
+			AccountStatus: item.Status,
+			IsAdmin:       item.IsAdmin,
+			LinuxDoBound:  linuxDoBound,
+			TrustLevel:    trustLevel,
+			CreatedAt:     item.CreatedAt.UTC().Format(time.RFC3339),
+			LastActiveAt:  formatOptionalTime(item.LastActiveAt),
+		})
+	}
+	return result
 }
 
 func toLinuxDoBindingDTO(binding *auth.LinuxDoBinding) sessionLinuxDoBindingDTO {

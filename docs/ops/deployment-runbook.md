@@ -87,6 +87,42 @@ include raw search terms, URL query strings, user IDs, contact values, report te
 linux.do identifiers, payment instructions, API keys, tokens, sessions, cookies, or
 panel credentials.
 
+## Local UI Preview Through Cloudflare Tunnel
+
+Use this path while the Vue UI is still being changed locally. It publishes the
+Vite development server and its existing `/api`, `/health`, and `/readyz` proxies
+through one HTTPS origin. The Mac, Vite process, backend, PostgreSQL, and
+`cloudflared` connector must remain running.
+
+One-time Cloudflare setup:
+
+```bash
+cloudflared tunnel login
+cloudflared tunnel create c2cmarket-local
+cloudflared tunnel route dns c2cmarket-local c2cmarket.shop
+```
+
+Start the local processes:
+
+```bash
+PATH=/Users/lixinjian/.nvm/versions/node/v24.13.0/bin:$PATH \
+pnpm --dir frontend dev --host 127.0.0.1
+
+cloudflared tunnel --url http://127.0.0.1:5173 run c2cmarket-local
+```
+
+`frontend/vite.config.ts` explicitly allows `c2cmarket.shop`; do not replace this
+with a wildcard host allowance. Configure the linux.do application callback as:
+
+```text
+https://c2cmarket.shop/api/v1/auth/oauth/callback
+```
+
+For a real OAuth preview, copy the local ignored `.env.oauth.local` template values,
+replace both `REPLACE_WITH_ROTATED_*` placeholders after rotating any exposed secret,
+and recreate the backend with that env file. Never commit the filled local env file.
+This preview topology is not the production release topology below.
+
 ## First Deploy
 
 Validate Compose configuration:

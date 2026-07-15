@@ -1,39 +1,45 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
+import { RouterLink } from 'vue-router'
+import { Flag, Heart, Share2 } from 'lucide-vue-next'
+import { toast } from 'vue-sonner'
 import { Card } from '@/components/ui/card'
+import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import type { ApiDeliveryMode, ApiService } from '@/lib/api'
+import { getApiMerchantAvatarText, getApiMerchantDisplayName, getApiMerchantProfileUrl, type ApiService } from '@/lib/api'
 import PurchaseAmountSelector from './PurchaseAmountSelector.vue'
 import PurchaseConfirmDialog from './PurchaseConfirmDialog.vue'
-import PurchaseSummary from './PurchaseSummary.vue'
+import { compareDecimal } from '@/lib/decimal'
+import { apiServiceAvailableUsdAllowance, estimateUsdAllowance, formatCredit } from './utils'
 
 const props = defineProps<{
   service: ApiService
   amount: number
-  selectedDeliveryMode: ApiDeliveryMode
   submitting: boolean
+  favorited: boolean
 }>()
 
 const emit = defineEmits<{
   'update:amount': [value: number]
-  'update:selectedDeliveryMode': [value: ApiDeliveryMode]
+  toggleFavorite: []
   confirm: []
 }>()
 
-const acknowledged = ref(false)
 const confirmOpen = ref(false)
+const merchantUrl = computed(() => getApiMerchantProfileUrl(props.service))
+const estimatedCredit = computed(() => estimateUsdAllowance(String(props.amount), props.service))
 
 const amountError = computed(() => {
   const decimalPattern = /^\d+(\.\d{1,2})?$/
   if (!Number.isFinite(props.amount) || props.amount <= 0) return '请输入有效金额。'
   if (!decimalPattern.test(String(props.amount))) return '自定义金额最多保留两位小数。'
-  if (props.amount < props.service.minimumPurchaseCny) return `最低意向金额为 ¥${props.service.minimumPurchaseCny}。`
-  if (props.amount > props.service.maxBuy) return `单笔最高意向金额为 ¥${props.service.maxBuy}。`
-  if (props.amount > props.service.balance / props.service.creditPerCny) return '超过商户当前可售美元额度上限。'
+  if (props.amount < props.service.minimumPurchaseCny) return `最低订单金额为 ¥${props.service.minimumPurchaseCny}。`
+  if (props.amount > props.service.maxBuy) return `单笔最高订单金额为 ¥${props.service.maxBuy}。`
+  if (compareDecimal(estimatedCredit.value, apiServiceAvailableUsdAllowance(props.service)) > 0) return '超过商户当前可售美元额度。'
   return ''
 })
 
-const canSubmit = computed(() => !amountError.value && acknowledged.value && props.service.publiclyOrderable && !props.submitting)
+const canSubmit = computed(() => !amountError.value && props.service.publiclyOrderable && !props.submitting)
 
 function openConfirm() {
   if (!canSubmit.value) return
@@ -43,40 +49,62 @@ function openConfirm() {
 function confirm() {
   emit('confirm')
 }
+
+async function shareService() {
+  await navigator.clipboard.writeText(window.location.href)
+  toast.success('服务链接已复制。')
+}
 </script>
 
 <template>
-  <Card class="min-w-0 gap-0 overflow-hidden py-0 shadow-sm lg:sticky lg:top-16">
-    <div class="flex items-center justify-between border-b border-border px-4 py-3">
-      <div>
-        <h2 class="text-base font-semibold">提交购买意向</h2>
-        <p class="mt-1 text-xs text-muted-foreground">最终金额、API 细节和用量核对由双方站外确认</p>
+  <Card class="api-service-purchase-panel min-w-0 gap-0 overflow-hidden py-0 shadow-sm lg:sticky lg:top-16">
+    <div class="p-5">
+      <div class="flex items-start justify-between gap-3">
+        <component :is="merchantUrl ? RouterLink : 'div'" :to="merchantUrl || undefined" class="flex min-w-0 items-center gap-3">
+          <span class="grid h-11 w-11 shrink-0 place-items-center rounded-full bg-primary text-sm font-semibold text-primary-foreground">
+            {{ getApiMerchantAvatarText(service) }}
+          </span>
+          <span class="min-w-0">
+            <span class="block truncate font-semibold">{{ getApiMerchantDisplayName(service) }}</span>
+            <span class="mt-1 flex flex-wrap items-center gap-1.5">
+              <Badge variant="trust">信任等级 {{ service.trustLevel }}</Badge>
+              <Badge variant="verified">已绑定 linux.do</Badge>
+            </span>
+          </span>
+        </component>
       </div>
-      <span class="inline-flex items-center gap-1 rounded-full border border-emerald-200 bg-emerald-50 px-2 py-1 text-xs text-emerald-700">
-        <span class="h-1.5 w-1.5 rounded-full bg-emerald-500" />
-        {{ service.publiclyOrderable ? '可提交意向' : '暂不可接单' }}
-      </span>
+      <div class="mt-4 flex items-center gap-2 border-b border-border pb-4 text-xs text-muted-foreground">
+        <span class="h-1.5 w-1.5 rounded-full bg-primary" />
+        近 30 天完成 {{ service.completed30d }} 单 · 响应中位 {{ service.responseMedianMinutes }} 分钟
+      </div>
     </div>
 
-    <div class="space-y-4 p-4">
+    <div class="space-y-4 border-t border-border p-5">
       <div class="space-y-2">
-        <div class="text-sm font-semibold">意向金额</div>
+        <div class="text-sm font-semibold">支付金额</div>
         <PurchaseAmountSelector :service="service" :model-value="amount" @update:model-value="value => emit('update:amount', value)" />
         <p v-if="amountError" class="text-xs text-destructive">{{ amountError }}</p>
       </div>
 
-      <PurchaseSummary :service="service" :amount="amount" />
+      <div class="rounded-lg border border-primary/15 bg-primary/5 p-4">
+        <div class="text-xs text-muted-foreground">预计获得</div>
+        <div class="mt-1 text-2xl font-semibold text-primary">{{ formatCredit(estimatedCredit) }}</div>
+      </div>
 
-      <label class="flex items-start gap-2 text-xs text-muted-foreground">
-        <input v-model="acknowledged" type="checkbox" class="mt-0.5 h-4 w-4 accent-primary" />
-        <span>我已阅读模型价格、API 细节、商户承诺和退款规则，并理解最终由双方站外确认；平台不担保、不代赔。</span>
-      </label>
+      <dl class="grid grid-cols-2 gap-3 text-xs">
+        <div><dt class="text-muted-foreground">订单金额</dt><dd class="mt-1 font-medium">¥{{ service.minimumPurchaseCny }}–¥{{ service.maxBuy }}</dd></div>
+        <div><dt class="text-muted-foreground">付款窗口</dt><dd class="mt-1 font-medium">{{ service.expectedResponseMinutes }} 分钟</dd></div>
+      </dl>
 
       <Button class="w-full" :disabled="!canSubmit" @click="openConfirm">
-        {{ submitting ? '提交中...' : '提交购买意向并查看商户联系方式' }}
+        {{ submitting ? '创建中...' : '创建订单并查看付款方式' }}
       </Button>
-      <p class="text-center text-xs text-muted-foreground">提交成功后立即展示商户联系方式；商户也可以查看你选择的联系方式。</p>
-      <p class="text-center text-xs font-medium text-destructive">站外仅允许买家专属、可撤销的子账号或子 Key；不得在平台填写、粘贴或上传主账号、主 Key、API Key、密码、token、Session、Cookie 或面板登录凭据。</p>
+      <p class="text-xs leading-5 text-muted-foreground">订单创建后展示本次冻结的站外收款方式；平台记录状态但不代收、不托管资金。</p>
+      <div class="grid grid-cols-3 gap-2">
+        <Button variant="outline" size="sm" @click="emit('toggleFavorite')"><Heart class="h-3.5 w-3.5" :class="favorited ? 'fill-current' : ''" />{{ favorited ? '已收藏' : '收藏' }}</Button>
+        <Button variant="outline" size="sm" @click="shareService"><Share2 class="h-3.5 w-3.5" />分享</Button>
+        <RouterLink :to="{ path: '/my/feedback', query: { target: `api-service:${service.id}` } }"><Button class="w-full" variant="outline" size="sm"><Flag class="h-3.5 w-3.5" />举报</Button></RouterLink>
+      </div>
     </div>
   </Card>
 

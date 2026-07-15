@@ -76,6 +76,12 @@ POST /api/v1/me/api-orders/{id}/submit-payment
 POST /api/v1/me/api-orders/{id}/cancel
 POST /api/v1/me/api-orders/{id}/confirm-complete
 POST /api/v1/me/api-orders/{id}/dispute
+GET  /api/v1/me/notifications
+GET  /api/v1/me/notifications/unread-count
+POST /api/v1/me/notifications/{id}/read
+POST /api/v1/me/notifications/read-all
+GET  /api/v1/me/navigation-badges
+GET  /api/v1/me/events
 GET  /api/v1/me/announcements/unread-count
 GET  /api/v1/me/announcements/important-unread-count
 POST /api/v1/me/announcements/{id}/seen
@@ -731,17 +737,18 @@ legacy pending_review -> admin approve/request-changes/reject
 - API service orderability uses `acceptingOrders` as the owner-controlled willingness flag and `isOrderable` as the server-derived current predicate. First-release public API service list, detail, search, favorite validation/listing, and purchase-intent creation return only orderable services and support `paymentMethod=wechat|alipay`.
 - API purchase intent creation is allowed only for public API services where `reviewStatus=approved`, `publicationStatus=online`, `moderationStatus=clear`, `acceptingOrders=true`, `paymentWindowMinutes` is between 3 and 15, and at least one payment option is enabled. An orderable online service is treated as the owner having pre-consented to receive compliant purchase intents and to disclose the service's selected merchant contact to the successful buyer.
 - API purchase intent creation freezes the service version, buyer contact method version, owner contact method version, pricing snapshot, requested CNY amount, requested USD allowance or selected package snapshot in one PostgreSQL transaction. It writes event/notification side effects and completes idempotency metadata in that same transaction, but must not create or reference API-specific `contact_sessions`.
-- API purchase intent amount fields are intent terms for off-platform confirmation only. They are not payable orders, reserved balance, platform-held credit, quota ledgers, or fulfillment records.
-- API purchase intent states are stored as `open`, `contacted`, `buyer_cancelled`, and `owner_closed`. Explicit transitions are buyer cancel `open|contacted -> buyer_cancelled`, owner mark contacted `open -> contacted`, and owner close `open|contacted -> owner_closed`.
+- API purchase intent amount fields are internal pre-order snapshots. They are not payable orders or platform-held credit; the linked API order owns fulfillment state and reserves service-level quota inventory.
+- API purchase intent states are stored as `open`, `contacted`, `ordered`, `buyer_cancelled`, and `owner_closed`. Explicit transitions are buyer cancel `open|contacted -> buyer_cancelled`, owner mark contacted `open -> contacted`, owner close `open|contacted -> owner_closed`, and API order create `open|contacted -> ordered`.
 - API purchase intent cancel and owner close require non-empty reasons; owner mark-contacted uses an empty JSON body and must not imply platform verification, payment, delivery, or fulfillment.
 - API purchase intent successful create and buyer detail responses include frozen `merchantContact.value` and must set `Cache-Control: no-store`. Owner detail responses include frozen `buyerContact.value` and must also use `Cache-Control: no-store`. Buyer/owner lists and admin endpoints must not expose plaintext contact values.
 - API purchase intent completed idempotency rows must store `resource_type='api_purchase_intent'` and `resource_id`, with `response_body_cache_allowed=false` for create responses that include `merchantContact.value`. Replay reconstructs the response from the frozen contact version instead of storing plaintext contact values in `idempotency_keys.response_body_json`.
-- API orders are independent from API purchase intents. A buyer can create at most one API order from a purchase intent across all statuses, including cancelled, payment-timeout-cancelled, and completed orders. If the buyer wants to retry, they must create a new purchase intent. Duplicate or concurrent order creation, and cancel/close of an intent that already has an order, must return `409 API_PURCHASE_INTENT_HAS_ORDER`.
+- API orders are the participant/admin-facing business object; purchase intents remain internal tracking/audit records. A buyer can create at most one API order from a purchase intent across all statuses, including cancelled, payment-timeout-cancelled, and completed orders. A successful order creation atomically changes that intent to `ordered`, reserves service-level quota, releases the `open|contacted` active-intent uniqueness slot for the same buyer/service, and lets the buyer create a new intent when another purchase is needed. Duplicate or concurrent order creation, and cancel/close of an intent that already has an order, must return `409 API_PURCHASE_INTENT_HAS_ORDER`.
 - API order creation accepts only `paymentMethod`. Amount, currency, service title, package/quote snapshot, buyer/seller IDs, payment window, expiry time, and private payment instructions are all server-frozen.
-- API order states are `pending_payment -> payment_submitted -> paid_confirmed -> delivery_submitted -> completed`, with `pending_payment -> cancelled` for buyer cancellation or payment timeout. Disputes use `disputeStatus`, create or bind a `dispute_cases` row with `target_type='api_order'`, save `api_orders.dispute_case_id`, and must not overwrite the main fulfillment state.
+- API order states are `pending_payment -> payment_submitted -> paid_confirmed -> delivery_submitted -> completed`, with `payment_submitted -> payment_issue -> payment_submitted` for seller-reported `not_received`, `amount_mismatch`, or `remark_mismatch`, and `pending_payment -> cancelled` for buyer cancellation or payment timeout. A payment issue keeps quota reserved and waits for the buyer to supplement the non-sensitive payment summary. Disputes use `disputeStatus`, create or bind a `dispute_cases` row with `target_type='api_order'`, save `api_orders.dispute_case_id`, and must not overwrite the main fulfillment state.
+- Buyer cancellation requires a non-empty user-facing reason and stores that reason in `cancelReason`; system timeout continues to store `payment_timeout`. A buyer can cancel only `pending_payment`, so cancellation is immediate and never waits for seller confirmation. Once payment is submitted, the cancel action must be rejected and the UI must route unresolved delays to support instead of auto-cancelling the order.
 - API order responses that contain payment summaries, delivery notes, payment instructions, structured delivery credentials, or other sensitive order context must set `Cache-Control: private, no-store`. Order create responses must not include `paymentInstructions`; `POST /me/api-orders/{id}/payment-instructions` is the explicit audited read endpoint.
 - API order delivery is a narrow product-boundary exception: after `paid_confirmed`, the seller may submit exactly one structured `deliveryCredential` for that order. Allowed shapes are `api_key_endpoint` (`apiBaseUrl`, `apiKey`, optional `instructions`) and `login_account` (`panelLoginUrl`, `username`, `password`, optional `instructions`). `deliveryNote` remains a generated non-sensitive summary such as `商户已提交 API Key 接入信息。` and must not store the raw credential. Detail/action responses for the buyer and seller may include the credential; list/admin/public responses must not.
-- API order delivery credentials may contain only buyer-specific, revocable API keys or initial account passwords. They must reject cookies, sessions, OAuth/access/refresh tokens, recovery codes, MFA codes, provider master keys, owner/master account credentials, subscription links, proxy node links, encoded/nested subscription URLs, attachment payloads, and query-string secrets with `SECRET_CONTENT_DETECTED` or field-level `VALIDATION_FAILED`.
+- API order delivery credentials may contain only buyer-specific API keys or initial account passwords and are immutable after submission; the platform must not claim revocation support. They must reject cookies, sessions, OAuth/access/refresh tokens, recovery codes, MFA codes, provider master keys, owner/master account credentials, subscription links, proxy node links, encoded/nested subscription URLs, attachment payloads, and query-string secrets with `SECRET_CONTENT_DETECTED` or field-level `VALIDATION_FAILED`.
 - User announcement routes return only user-visible announcements plus the current user's receipt state. `seen`, `read`, and `dismiss` write receipt timestamps and must not mutate announcement content.
 - Announcement home-banner selection uses published, non-expired, home-channel announcements and receipt dismissal state. Dismissal hides only the banner for the current user; it must not archive or offline the announcement.
 - Admin announcement routes own draft/create/update/publish/offline/duplicate/audit flows. Offlining requires a non-empty reason and writes an audit log. Duplicating creates a new draft rather than editing the source.
@@ -819,6 +826,7 @@ legacy pending_review -> admin approve/request-changes/reject
 - Good: the service owner marks the API purchase intent as contacted, then closes it with a reason; each action requires `If-Match` and `Idempotency-Key`.
 - Good: service owner enables order settings only after the service is approved, online, clear, has a valid contact, has at least one enabled payment option, and has a 3-15 minute payment window; public list/search includes the service only when `isOrderable=true`.
 - Good: buyer creates an API order from a purchase intent with `{paymentMethod:"wechat"}`; the order freezes server-side amount, currency, payment window, selected payment method, and service snapshots, then the buyer reads payment instructions through the audited endpoint.
+- Good: after the first order is created, its intent reads as `ordered`; the buyer can create a fresh intent and a second order for the same API service.
 - Good: buyer submits a payment summary, owner manually confirms off-platform payment, owner submits one structured API Key delivery credential, and buyer can later read that credential from buyer detail; each state-changing action requires `If-Match` and `Idempotency-Key`.
 - Good: owner submits a `login_account` delivery credential with `panelLoginUrl`, `username`, `password`, and instructions after payment is confirmed; order status becomes `delivery_submitted`, `deliveryNote` contains only a non-sensitive summary, and detail responses include the credential only for the buyer or seller.
 - Bad: a buyer submits an API purchase intent against a draft, paused, suspended, removed, or otherwise non-public API service; response is `404 OBJECT_NOT_FOUND`.
@@ -865,6 +873,7 @@ Backend contract slices must include tests for:
 - API purchase intent create flow, idempotent replay without plaintext body cache, direct merchant contact disclosure with `Cache-Control: no-store`, buyer/owner/admin detail visibility, owner mark-contacted, buyer cancel, owner close, and completed idempotency metadata rows.
 - API purchase intent integrity constraints, including public service predicate rejection, owner self-intent rejection, buyer contact ownership rejection, owner contact availability, requested USD allowance cap rejection, active-intent uniqueness, and absence of API-specific contact-session columns or rows.
 - API order flow, including order settings validation, public orderable list/search filtering, payment method filtering, order create from purchase intent, no payment instructions in create response, audited payment-instruction read with QR-code snapshot, buyer payment summary, owner manual payment confirmation, one-time structured delivery credentials, buyer/seller detail credential visibility, list/admin/public credential non-leakage, forbidden credential-content rejection, duplicate delivery rejection, buyer completion, dispute case creation/binding, payment timeout materialization, and one-order-ever-per-intent uniqueness.
+- PostgreSQL API order regression: first order changes its intent to `ordered`, the second intent for the same buyer/service is accepted, and both order rows remain independently addressable.
 - Profile/contact/merchant profile flow, including profile update, contact method list/update/verify/delete/default, public user profile privacy, public merchant profile boundary, and store-alias API service public DTO boundaries.
 - Announcement user/admin flow, including create/update/publish/offline/duplicate, user list/home/detail, receipt seen/read/dismiss, unread counts, audit logs, and route parity with OpenAPI.
 - Report/dispute/appeal flow, including contact/public-user report creation, admin report list/detail/actions, dispute open/request-info/resolve/close, public dispute list/profile stats, appeal create/list/admin approve/reject, idempotent replay, If-Match conflicts, and sanitized public DTO assertions.
@@ -1367,7 +1376,7 @@ upsertLinuxDoBinding(userID, profile)
 ### 1. Scope / Trigger
 
 - Trigger: authenticated business notification inbox work.
-- Scope: site inbox only. It reads durable rows already written to `notifications` by business transactions and updates `read_at`. It must not send external push, email, SMS, WebSocket, SSE, webhook, or ticketing messages.
+- Scope: site inbox reads durable rows already written to `notifications` by business transactions and updates `read_at`. These inbox read/update routes must not originate external push, email, SMS, webhook, or ticketing messages. The separate `/me/events` SSE route carries only cache-invalidation topics as defined in the realtime scenario below.
 
 ### 2. Signatures
 
@@ -1395,6 +1404,7 @@ X-CSRF-Token: <session CSRF token>    # POST read actions
 - `POST /me/notifications/read-all` updates only current-user unread rows and returns `{ count, items }`, where `count` is the number of rows changed in that call.
 - Announcement receipts remain under announcement routes. Do not mix announcement receipts into the business inbox.
 - Notification DTOs must not include contact values, passwords, API keys, tokens, sessions, cookies, recovery codes, or credential delivery material.
+- Realtime invalidation must not change the notification DTO or act as a durable receipt; clients always refetch this inbox after an invalidation.
 
 ### 4. Validation & Error Matrix
 
@@ -1759,4 +1769,329 @@ if accepted && verifiedEmail != "" {
 	sendBestEffortReminder(ctx, application)
 }
 return completion, nil
+```
+
+---
+
+## Scenario: Product Category Uploaded Icon Contract
+
+### 1. Scope / Trigger
+
+- Trigger: changes to product-category persistence, admin category forms, public category responses, or category icon rendering.
+- Category icons are small catalog metadata, not a general file-storage subsystem.
+
+### 2. Signatures
+
+```text
+product_categories.icon_data_url text NOT NULL DEFAULT ''
+
+ProductCategory / ProductCategoryRequest:
+  iconDataUrl: string
+```
+
+### 3. Contracts
+
+- Admin create/update accepts an empty string or a PNG/WebP Base64 data URL.
+- The frontend limits the original file to 256 KB and supports preview, replacement, and removal.
+- The catalog service validates the MIME prefix, Base64 payload, and decoded size again.
+- Public and admin category responses always include `iconDataUrl`; empty string means consumers use their built-in default icon.
+- PostgreSQL category reads must select and scan `icon_data_url` in the same position. Update both direct `rows.Scan(...)` sites and the shared `scanProductCategory(...)` helper whenever the category projection changes.
+
+### 4. Validation & Error Matrix
+
+| Condition | Result |
+| --- | --- |
+| Empty icon | Accepted; removes the uploaded icon |
+| PNG/WebP at or below 256 KB | Accepted |
+| SVG/JPEG/other MIME prefix | `422 VALIDATION_FAILED`, field `iconDataUrl` |
+| Invalid Base64 | `422 VALIDATION_FAILED`, field `iconDataUrl` |
+| Decoded payload above 256 KB | `422 VALIDATION_FAILED`, field `iconDataUrl` |
+
+### 5. Good/Base/Bad Cases
+
+- Good: admin uploads a 40 KB WebP, saves the category, and public category buttons render the returned data URL.
+- Base: legacy category has `iconDataUrl=""` and existing default icon rendering remains unchanged.
+- Bad: SQL selects `icon_data_url` but a direct `rows.Scan` still scans the old five-column projection, causing public category reads to return 500.
+
+### 6. Tests Required
+
+- Backend router regression: valid PNG round-trips and SVG is rejected on `iconDataUrl`.
+- Full backend `go test ./...` and a real PostgreSQL `GET /api/v1/product-categories` smoke after migration.
+- Frontend unit tests for MIME and size limits, plus typecheck and real-mode production build.
+- Admin browser smoke when an authenticated admin session is available.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```go
+rows.Scan(&category.ID, &category.Code, &category.DisplayName, &category.SortOrder, &category.Active)
+```
+
+#### Correct
+
+```go
+rows.Scan(&category.ID, &category.Code, &category.DisplayName, &category.IconDataURL, &category.SortOrder, &category.Active)
+```
+
+---
+
+## Scenario: Realtime Notification Invalidation And Navigation Badges
+
+### 1. Scope / Trigger
+
+- Trigger: backend work touching notification creation/read state, API-order lifecycle notifications, navigation badges, PostgreSQL realtime triggers, SSE delivery, request-writer middleware, or process shutdown.
+- The stream is an authenticated cache-invalidation channel. Durable notifications and REST reads remain the source of truth; this is not browser Web Push or a business-event payload API.
+
+### 2. Signatures
+
+```text
+GET /api/v1/me/navigation-badges
+GET /api/v1/me/events
+
+PostgreSQL channel: c2c_market_realtime
+Internal payloads:
+  {"v":1,"audience":"user","userId":"<uuid>"}
+  {"v":1,"audience":"admin"}
+  {"v":1,"audience":"all"}
+
+Client-visible named SSE events: ready | invalidate
+Client-visible data: {"schemaVersion":1,"topics":["all-live"]}
+```
+
+`GET /api/v1/me/navigation-badges` returns `generatedAt`, `notificationUnread`, `importantAnnouncementUnread`, `feedbackUnread`, `buyer`, `merchant`, and nullable `admin`. Buyer/merchant fields are `carpoolActions` and `apiOrderActions`; administrator fields are `total`, `officialPrices`, `carpools`, `apiServices`, `feedbackTickets`, and `reports`.
+
+### 3. Contracts
+
+- Navigation badges are scalar PostgreSQL projections, not counts of a paginated frontend list. Non-admin responses must set `admin=null`; `admin.total` is the server-computed sum of the five non-overlapping administrator queues.
+- Buyer API-order actions are non-expired `pending_payment`, `payment_issue`, and `delivery_submitted`. Seller actions are `payment_submitted` plus `paid_confirmed`.
+- Buyer carpool actions are an unexpired reserved application not yet confirmed by the buyer, plus an active membership where the owner confirmed completion and the buyer did not. Owner actions are `pending_owner`, a reserved application confirmed by the buyer but not the owner, plus an active membership where the buyer confirmed completion and the owner did not.
+- API-order transitions write `api_order_events`, a safe `domain_events` row, a deduplicated counterparty `notifications` row, and idempotency completion in one transaction. Notify on payment submit, buyer cancel, seller payment confirmation, delivery submit, buyer completion, counterparty dispute, and payment timeout. `api_order.created` does not notify again because purchase-intent creation already notified the seller.
+- Payment-timeout materialization uses its own committed transaction before a payment-read or action transaction that may return a version/state conflict. A rejected request must not roll back the already-due timeout state, event, or buyer notification.
+- API-order notification bodies/domain metadata must not contain payment summaries, instructions, QR data, contacts, reasons/evidence, delivery instructions, URLs, usernames, API keys, or passwords. Buyer targets use `/my/api-orders/{orderId}` and seller targets use `/merchant/api-orders/{orderId}`. Purchase-intent notifications target the matching list route, never an order-detail route built from an intent ID.
+- Migration triggers publish only routing metadata after commit. Notification insert/read changes are user-scoped; official-price lead, carpool listing, API service, feedback, report, dispute, and appeal mutations are admin-scoped.
+- One process-owned dedicated `pgx.Conn` performs `LISTEN`; browser connections subscribe to an in-process capacity-one coalescing Hub. Reconnect performs `LISTEN` again and publishes a broad wake because PostgreSQL notifications are not replayed.
+- SSE uses cookie session auth, `Content-Type: text/event-stream`, `Cache-Control: no-cache, no-transform`, `X-Accel-Buffering: no`, `retry: 3000`, initial `ready`, and comment heartbeats. It never serializes `userId` or business data. Clear the server-wide write timeout for the stream, then apply a bounded deadline to every individual event/heartbeat write so a slow client cannot retain a handler forever.
+- Every dedicated PostgreSQL connection attempt has a finite timeout before the 1-to-30-second reconnect backoff. Missing badge persistence returns `503`; it must never masquerade as a successful all-zero authoritative summary.
+- Request-writer middleware must implement `Unwrap()` so `http.ResponseController` can clear the 30-second write deadline and flush. Application shutdown closes the listener and Hub before `http.Server.Shutdown`, waits for the listener, then closes the store.
+
+### 4. Validation & Error Matrix
+
+| Condition | Result |
+| --- | --- |
+| Missing/expired session on either GET | `401 SESSION_EXPIRED` |
+| Non-admin summary request | `200`, `admin=null` |
+| Hub already shutting down | SSE returns `503 INTERNAL_ERROR` before opening |
+| Badge repository unavailable | Summary returns `503 INTERNAL_ERROR`, not all-zero success |
+| Invalid/unknown PostgreSQL payload field, version, audience, or padded user ID | Ignore signal, log only a sanitized parse error, keep listener alive |
+| Listener connection fails | Retry from 1 second up to 30 seconds; REST/polling remains usable |
+| Slow subscriber already has a wake pending | Coalesce the new wake without blocking a business transaction |
+| Notification insert fails during an API-order transition | Roll back order/event/idempotency changes |
+
+### 5. Good/Base/Bad Cases
+
+- Good: buyer marks an order paid; the same transaction writes a seller notification, PostgreSQL signals that seller, SSE sends `invalidate`, and the browser refetches the summary/order list.
+- Base: SSE disconnects during a mutation; reconnect sends `ready`, and the browser refetches authoritative REST state without replay IDs.
+- Bad: API-order notification embeds `paymentSummary`, delivery credential, raw dispute reason, or contact value.
+- Bad: one PostgreSQL connection is acquired per browser, or the frontend increments badge counts from event payloads.
+
+### 6. Tests Required
+
+- Pure API-order recipient/title/target matrix, including no notification for create and no secret-bearing copy.
+- Navigation-badge service tests for non-admin hiding, administrator total recomputation, and missing dependencies.
+- Hub routing/coalescing/close tests and strict PostgreSQL payload parser tests.
+- Listener reconnect/backoff/re-LISTEN wake/clean shutdown tests.
+- SSE authorization, headers, `ready`, user/admin `invalidate`, middleware flush, bounded writes, cancellation, and payload non-leakage tests.
+- A timeout regression proving a payment-entry/action conflict cannot roll back the committed timeout state, domain event, and notification.
+- PostgreSQL migration smoke must reach the expected migration version and prove both notification user triggers and administrator queue triggers wake an open stream.
+- Full `go test ./...`, OpenAPI route parity/YAML parse, and `git diff --check`.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```go
+// Sends private order state and ties browser correctness to a transient event.
+hub.Publish(userID, order)
+badgeCount++
+```
+
+#### Correct
+
+```go
+// Coalesced wake only; the browser refetches durable REST projections.
+hub.PublishUser(userID)
+// SSE data: {"schemaVersion":1,"topics":["all-live"]}
+```
+
+## Scenario: API Order Releases Its Purchase Intent
+
+### 1. Scope / Trigger
+
+- Trigger: API purchase-intent status, API order creation, or the `api_purchase_intents` PostgreSQL constraint changes.
+- Purpose: an order-backed intent must stop occupying the active `(buyer_user_id, api_service_id)` uniqueness slot, so a buyer can make a later purchase from the same service.
+
+### 2. Signatures
+
+```text
+POST /api/v1/me/api-purchase-intents/{intentId}/orders
+
+PostgreSQL:
+  api_purchase_intents.status: open | contacted | ordered | buyer_cancelled | owner_closed
+  ux_api_purchase_intents_active_buyer_service:
+    (buyer_user_id, api_service_id) WHERE status IN ('open', 'contacted')
+  ux_api_orders_intent:
+    api_orders(api_purchase_intent_id)
+```
+
+### 3. Contracts
+
+- Successful order creation must insert the order and update the locked intent from `open|contacted` to `ordered` in one transaction. If either write fails, neither change commits.
+- `ordered` is a terminal intent state: its fulfillment is represented only by the linked order. The intent cannot be cancelled, closed, or marked contacted.
+- Migration must backfill existing order-backed `open|contacted` rows to `ordered` before the new contract is used.
+- A new intent for the same buyer and service is valid once the previous intent is `ordered`; the old intent must still retain its order history and its one-order-only constraint.
+
+### 4. Validation & Error Matrix
+
+| Condition | HTTP / result | Stable code |
+| --- | --- | --- |
+| A second order is requested for the same intent | 409 | `API_PURCHASE_INTENT_HAS_ORDER` |
+| Cancel/close an `ordered` intent | 409 | `API_PURCHASE_INTENT_HAS_ORDER` |
+| Create order from cancelled/closed intent without an order | 409 | `INVALID_STATE_TRANSITION` |
+| Create a second open/contacted intent before an order exists | 409 | `ACTIVE_API_INTENT_EXISTS` |
+
+### 5. Good/Base/Bad Cases
+
+- Good: buyer creates intent A, creates order A, then creates intent B and order B for the same service; both orders remain visible.
+- Base: owner first marks intent A contacted; order A still changes it to `ordered` and retains `contacted_at` as history.
+- Bad: order creation inserts an order but leaves intent A as `open`; it permanently blocks subsequent purchases through the active-intent index.
+
+### 6. Tests Required
+
+- Unit test: in-memory order creation marks an active intent `ordered` and still rejects a second order for that same intent.
+- Router test: order creation returns normally, intent detail is `ordered`, and cancel/close retain `API_PURCHASE_INTENT_HAS_ORDER`.
+- PostgreSQL integration test: first order releases the active-intent slot, then a fresh intent and second order for the same buyer/service succeed.
+- Migration smoke/read-only query: no order-backed intent remains `open` or `contacted` after migration.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```text
+create order -> insert api_orders row -> leave api_purchase_intents.status=open
+```
+
+#### Correct
+
+```text
+single transaction -> insert api_orders row + update intent.status=ordered
+```
+
+## Scenario: API Order Decimal Inventory And Admin Tracking
+
+### 1. Scope / Trigger
+
+- Trigger: API service quota inventory, API order pricing snapshots, order creation/cancellation/timeout, decimal response fields, or administrator order tracking changes.
+
+### 2. Signatures
+
+```text
+api_services.available_usd_allowance numeric(18,6)
+api_orders.requested_usd_allowance_snapshot numeric(18,6)
+api_orders.cny_per_usd_allowance_snapshot numeric(12,4)
+api_orders.pricing_snapshot jsonb
+GET /api/v1/admin/api-orders -> APIOrderList
+```
+
+### 3. Contracts
+
+- `declaredMaxUsdAllowancePerIntent` is a per-order cap; `availableUsdAllowance` is the service-level remaining inventory. They are never interchangeable.
+- Decimal amount, rate, and allowance fields cross HTTP as canonical decimal strings. For `¥0.80 / $1`, an order amount of `¥10.00` freezes `12.500000` USD allowance; no layer may derive `$13` through binary floating-point rounding.
+- Creating a metered order atomically decrements `available_usd_allowance` only when sufficient inventory remains. Pending-payment buyer cancellation or payment timeout releases exactly the order snapshot allowance. Payment-submitted and later states do not release inventory through ordinary timeout handling.
+- `GET /admin/api-orders` returns order state and immutable decimal snapshots without contact values or `deliveryCredential`.
+
+### 4. Validation & Error Matrix
+
+| Condition | Result |
+| --- | --- |
+| Requested allowance exceeds available inventory | `409 INVALID_STATE_TRANSITION` with refresh/retry guidance |
+| Metered service has missing/negative available allowance | validation failure or non-orderable `quota_sold_out` |
+| Two concurrent reservations exceed shared inventory | exactly one succeeds; the other returns conflict |
+| Pending order cancellation | reservation is released in the same transaction |
+| Admin list caller is not admin | `403 PERMISSION_DENIED` |
+
+### 5. Good/Base/Bad Cases
+
+- Good: two buyers concurrently request `$12.50` from `$20.00`; one order is created and `$7.50` remains.
+- Base: a pending order reserves `$20.00`, buyer cancels, and inventory returns by exactly `$20.00`.
+- Bad: use the per-order maximum as a fake service balance, or convert decimal strings to `float64` before reservation/comparison.
+
+### 6. Tests Required
+
+- In-memory `-race` test proving concurrent reservations cannot oversell.
+- PostgreSQL integration assertions for reserve and pending-cancel release.
+- Router test for immutable decimal snapshots and admin list credential non-leakage.
+- Migration readiness at version 49, full `go test ./...`, and OpenAPI route/schema parity.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```text
+requestedUsd = round(Number(cnyAmount) / Number(rate))
+available = declaredMaxUsdAllowancePerIntent
+```
+
+#### Correct
+
+```text
+requestedUsd = decimalDivide("10.00", "0.8000") // "12.500000"
+UPDATE api_services SET available_usd_allowance = available_usd_allowance - requested
+WHERE id = service_id AND available_usd_allowance >= requested
+```
+
+## Scenario: Authoritative Carpool Application Eligibility
+
+### 1. Scope / Trigger
+- Trigger: carpool list/detail/application code changes eligibility, seat availability, risk boundaries, or personal relationship checks.
+
+### 2. Signatures
+```text
+GET /api/v1/carpools/{listingId}/eligibility -> CarpoolApplicationEligibility
+EvaluateApplicationEligibility(EligibilityContext) -> ApplicationEligibility
+```
+
+### 3. Contracts
+- Codes are `eligible`, `sold_out`, `paused`, `credential_risk`, `owner_action_required`, `already_applied`, `already_member`, and `self_owned`.
+- Priority is exactly `credential_risk → owner_action_required → paused → self_owned → already_member → already_applied → sold_out → eligible`.
+- Public list DTOs include a generic eligibility projection; authenticated detail reads include user relationships; application creation re-evaluates the same domain function before persistence.
+- Public visibility remains unchanged: paused/non-public listings still return 404 from public detail/eligibility routes. PostgreSQL constraints and transactional seat checks remain the concurrency authority.
+
+### 4. Validation & Error Matrix
+| Eligibility | Create result |
+| --- | --- |
+| `eligible` | Continue request/contact/risk validation and create |
+| `sold_out` | `409 SEAT_UNAVAILABLE` |
+| `already_applied` | `409 ACTIVE_APPLICATION_EXISTS` |
+| `already_member` | `409 ACTIVE_MEMBERSHIP_EXISTS` |
+| Other blocked codes | `409 INVALID_STATE_TRANSITION` |
+
+### 5. Good/Base/Bad Cases
+- Good: a listing with credential risk, an old application, and no seats returns only `credential_risk`.
+- Base: an active safe listing with one seat returns `eligible`.
+- Bad: UI and create handler independently order risk, ownership, application, and seat checks.
+
+### 6. Tests Required
+- Table test for every code and one combined priority case.
+- Router test for `eligible`, `self_owned`, and `already_applied` transitions.
+- Full Go suite and OpenAPI route/schema parity.
+
+### 7. Wrong vs Correct
+#### Wrong
+```text
+page: status says available; button: local risk check says blocked
+```
+#### Correct
+```text
+list/detail/create -> EvaluateApplicationEligibility -> one code/reason/action
 ```

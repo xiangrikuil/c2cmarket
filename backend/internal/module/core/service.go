@@ -84,6 +84,7 @@ const (
 
 	APIPurchaseIntentStatusOpen           = apiintent.StatusOpen
 	APIPurchaseIntentStatusContacted      = apiintent.StatusContacted
+	APIPurchaseIntentStatusOrdered        = apiintent.StatusOrdered
 	APIPurchaseIntentStatusBuyerCancelled = apiintent.StatusBuyerCancelled
 	APIPurchaseIntentStatusOwnerClosed    = apiintent.StatusOwnerClosed
 
@@ -208,6 +209,10 @@ func (s *Service) GetSession(ctx context.Context, sessionID string) (User, Sessi
 
 func (s *Service) GetSessionWithCSRF(ctx context.Context, sessionID, csrfToken string) (User, Session, *domain.AppError) {
 	return s.authService.GetSessionWithCSRF(ctx, sessionID, csrfToken)
+}
+
+func (s *Service) AdminUsers(ctx context.Context, user User) ([]authmodule.AdminUser, *domain.AppError) {
+	return s.authService.AdminUsers(ctx, user)
 }
 
 func (s *Service) RefreshSessionCSRF(ctx context.Context, sessionID string) (string, *domain.AppError) {
@@ -610,6 +615,10 @@ func (s *Service) OwnerAPIOrders(ctx context.Context, user User) ([]APIOrder, *d
 	return s.apiOrder.SellerOrders(ctx, user)
 }
 
+func (s *Service) AdminAPIOrders(ctx context.Context, user User) ([]APIOrder, *domain.AppError) {
+	return s.apiOrder.AdminOrders(ctx, user)
+}
+
 func (s *Service) OwnerAPIOrder(ctx context.Context, user User, orderID string) (APIOrder, *domain.AppError) {
 	return s.apiOrder.SellerOrder(ctx, user, orderID)
 }
@@ -632,6 +641,10 @@ func (s *Service) OpenAPIOrderDisputeWithIdempotency(ctx context.Context, userID
 
 func (s *Service) ConfirmAPIOrderPaymentWithIdempotency(ctx context.Context, userID, routeKey, key, requestHash string, input APIOrderActionInput, buildCompletion APIOrderCompletionBuilder) (IdempotencyCompletion, *domain.AppError) {
 	return s.apiOrder.ConfirmPaymentWithIdempotency(ctx, userID, routeKey, key, requestHash, input, buildCompletion)
+}
+
+func (s *Service) ReportAPIOrderPaymentIssueWithIdempotency(ctx context.Context, userID, routeKey, key, requestHash string, input APIOrderActionInput, buildCompletion APIOrderCompletionBuilder) (IdempotencyCompletion, *domain.AppError) {
+	return s.apiOrder.ReportPaymentIssueWithIdempotency(ctx, userID, routeKey, key, requestHash, input, buildCompletion)
 }
 
 func (s *Service) SubmitAPIOrderDeliveryWithIdempotency(ctx context.Context, userID, routeKey, key, requestHash string, input APIOrderActionInput, buildCompletion APIOrderCompletionBuilder) (IdempotencyCompletion, *domain.AppError) {
@@ -660,6 +673,10 @@ func (s *Service) PublicCarpoolListings(ctx context.Context, page domain.PageReq
 
 func (s *Service) PublicCarpoolListing(ctx context.Context, listingID string) (CarpoolListing, *domain.AppError) {
 	return s.carpoolService.PublicListing(ctx, listingID)
+}
+
+func (s *Service) CarpoolApplicationEligibility(ctx context.Context, user User, listingID string) (carpool.ApplicationEligibility, *domain.AppError) {
+	return s.carpoolService.ApplicationEligibility(ctx, user, listingID)
 }
 
 func (s *Service) MyCarpoolListings(ctx context.Context, user User) ([]CarpoolListing, *domain.AppError) {

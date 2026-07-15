@@ -43,6 +43,7 @@ export type Carpool = {
   settlementDeadline?: string
   pricingTiers?: PricingTier[]
   owner: string
+  ownerUserId?: string
   trustLevel: number
   ownerType: '个人车主' | '商户车源' | '可信新车主'
   warranty: '车主承诺' | '售后协商'
@@ -61,6 +62,24 @@ export type Carpool = {
   accessArrangementNote?: string
   riskNoticeCode?: string
   riskAcknowledged?: boolean
+  applicationEligibility?: CarpoolApplicationEligibility
+}
+
+export type CarpoolApplicationEligibilityCode =
+  | 'eligible'
+  | 'sold_out'
+  | 'paused'
+  | 'credential_risk'
+  | 'owner_action_required'
+  | 'already_applied'
+  | 'already_member'
+  | 'self_owned'
+
+export type CarpoolApplicationEligibility = {
+  code: CarpoolApplicationEligibilityCode
+  canApply: boolean
+  reason: string
+  resolutionAction: string
 }
 
 export type CarpoolAccessArrangementMode =
@@ -333,19 +352,15 @@ export type CreateContactReportRequest = {
   note: string
 }
 
-export type AdminUserRiskProfile = {
+export type AdminDirectoryUser = {
   id: string
   username: string
+  displayName: string
   linuxdoBound: boolean
   trustLevel: number
-  identity: '普通用户' | '个人车主' | 'API 商户' | '可信新车主'
-  accountStatus: UserAccountStatus
-  carpoolCompletions: number
-  apiCompletions: number
-  buyerResponsibleCancellations: number
-  ownerResponsibleCancellations: number
-  unresolvedDisputes: number
-  restrictions: string[]
+  isAdmin: boolean
+  accountStatus: '正常' | '已暂停' | '已封禁' | '已归档'
+  createdAt: string
   lastActiveAt: string
 }
 
@@ -490,6 +505,7 @@ export type ApiMerchantIdentityMode = 'public_profile' | 'store_alias'
 export type ApiPurchaseIntentStatus =
   | 'open'
   | 'contacted'
+  | 'ordered'
   | 'buyer_cancelled'
   | 'owner_closed'
 export type ApiActorRole = 'buyer' | 'merchant' | 'admin' | 'system'
@@ -553,6 +569,9 @@ export type ApiService = {
   rate: string
   defaultMultiplier: number
   creditPerCny: number
+  cnyPerUsdAllowance?: string
+  availableUsdAllowance?: string
+  maxUsdAllowancePerOrder?: string
   minimumPurchaseCny: number
   maxBuy: number
   balance: number
@@ -665,6 +684,7 @@ export type ApiPurchaseIntentSnapshot = {
   multiplier: string
   defaultMultiplier: number
   creditPerCny: number
+  cnyPerUsdAllowance?: string
   warranty: string
   refundPolicy: string
   usageVisibility: ApiUsageVisibility
@@ -710,6 +730,8 @@ export type ApiPurchaseIntent = {
   selectedDeliveryMode: ApiDeliveryMode
   purchaseAmountCny: number
   purchasedCredit: number
+  purchaseAmountCnyDecimal?: string
+  purchasedCreditDecimal?: string
   targetModel: string
   buyerNote?: string
   snapshot: ApiPurchaseIntentSnapshot
@@ -1184,13 +1206,13 @@ export const carpoolApplicationEvents: CarpoolApplicationEvent[] = [
   { id: 'ride-event-8', applicationId: 'ride-app-6', actorId: 'buyer-yuji', actorLabel: '雨季', actorRole: 'buyer', type: 'disputed', fromStatus: 'active', toStatus: 'disputed', note: '买家发起纠纷，等待管理员处理。', createdAt: '2026-06-18 15:30' },
 ]
 
-export const adminUserRiskProfiles: AdminUserRiskProfile[] = [
-  { id: 'buyer-demo-user', username: 'demo_user', linuxdoBound: true, trustLevel: 3, identity: '普通用户', accountStatus: 'normal', carpoolCompletions: 2, apiCompletions: 1, buyerResponsibleCancellations: 0, ownerResponsibleCancellations: 0, unresolvedDisputes: 0, restrictions: [], lastActiveAt: '刚刚' },
-  { id: 'owner-orbit', username: 'orbit', linuxdoBound: true, trustLevel: 3, identity: '个人车主', accountStatus: 'normal', carpoolCompletions: 12, apiCompletions: 8, buyerResponsibleCancellations: 0, ownerResponsibleCancellations: 1, unresolvedDisputes: 0, restrictions: [], lastActiveAt: '12 分钟前' },
-  { id: 'owner-qingning', username: '青柠', linuxdoBound: true, trustLevel: 3, identity: '个人车主', accountStatus: 'warning', carpoolCompletions: 9, apiCompletions: 0, buyerResponsibleCancellations: 0, ownerResponsibleCancellations: 0, unresolvedDisputes: 0, restrictions: ['低价线索需复核'], lastActiveAt: '35 分钟前' },
-  { id: 'buyer-yuji', username: '雨季', linuxdoBound: false, trustLevel: 1, identity: '普通用户', accountStatus: 'partially_restricted', carpoolCompletions: 0, apiCompletions: 0, buyerResponsibleCancellations: 1, ownerResponsibleCancellations: 0, unresolvedDisputes: 1, restrictions: ['禁止申请上车'], lastActiveAt: '昨天 18:20' },
-  { id: 'merchant-beifeng', username: 'beifeng-api', linuxdoBound: true, trustLevel: 2, identity: 'API 商户', accountStatus: 'temporarily_suspended', carpoolCompletions: 4, apiCompletions: 6, buyerResponsibleCancellations: 0, ownerResponsibleCancellations: 2, unresolvedDisputes: 1, restrictions: ['暂停商户资格', '禁止发布 API 服务'], lastActiveAt: '今天 09:40' },
-  { id: 'user-banned', username: '灰名单用户', linuxdoBound: false, trustLevel: 0, identity: '普通用户', accountStatus: 'permanently_banned', carpoolCompletions: 0, apiCompletions: 0, buyerResponsibleCancellations: 3, ownerResponsibleCancellations: 0, unresolvedDisputes: 2, restrictions: ['账号登录封禁'], lastActiveAt: '3 天前' },
+export const adminDirectoryUsers: AdminDirectoryUser[] = [
+  { id: 'buyer-demo-user', username: 'demo_user', displayName: 'demo_user', linuxdoBound: true, trustLevel: 3, isAdmin: false, accountStatus: '正常', createdAt: '2026-06-01 09:00', lastActiveAt: '刚刚' },
+  { id: 'owner-orbit', username: 'orbit', displayName: 'orbit', linuxdoBound: true, trustLevel: 3, isAdmin: false, accountStatus: '正常', createdAt: '2026-06-02 09:00', lastActiveAt: '12 分钟前' },
+  { id: 'owner-qingning', username: '青柠', displayName: '青柠', linuxdoBound: true, trustLevel: 3, isAdmin: false, accountStatus: '正常', createdAt: '2026-06-03 09:00', lastActiveAt: '35 分钟前' },
+  { id: 'buyer-yuji', username: '雨季', displayName: '雨季', linuxdoBound: false, trustLevel: 0, isAdmin: false, accountStatus: '已暂停', createdAt: '2026-06-04 09:00', lastActiveAt: '昨天 18:20' },
+  { id: 'merchant-beifeng', username: 'beifeng-api', displayName: 'beifeng-api', linuxdoBound: true, trustLevel: 2, isAdmin: false, accountStatus: '已暂停', createdAt: '2026-06-05 09:00', lastActiveAt: '今天 09:40' },
+  { id: 'user-banned', username: '灰名单用户', displayName: '灰名单用户', linuxdoBound: false, trustLevel: 0, isAdmin: false, accountStatus: '已封禁', createdAt: '2026-06-06 09:00', lastActiveAt: '3 天前' },
 ]
 
 export const adminAuditLogs: AdminAuditLog[] = [
@@ -1581,7 +1603,7 @@ export const apiServices: ApiService[] = [
     reviewCount: 9,
     officialPricingVersion: '2026-06',
     officialPricingUpdatedAt: '2026-06-18',
-    merchantNote: '建议首次提交 ¥20 意向测试。站外只允许确认买家专属、可撤销的子账号或子 Key；禁止共享主账号、主 Key、Session、Cookie 或第三方 Token。高峰期部分模型可能短时排队，维护状态会在商户面板公告。',
+    merchantNote: '建议首次提交 ¥20 意向测试。站外只允许确认买家专属的子账号或子 Key；禁止共享主账号、主 Key、Session、Cookie 或第三方 Token。高峰期部分模型可能短时排队，维护状态会在商户面板公告。',
     modelPriceRows: [
       {
         modelId: 'gpt-5-mini',
@@ -2357,7 +2379,7 @@ export const demands = [
 
 export const adminCards = [
   { label: '低价线索待审', value: 12, hint: '含 3 条疑似重复' },
-  { label: '车源治理待处理', value: 8, hint: '含下架恢复和高风险字段变更' },
+  { label: '车源异常待处理', value: 8, hint: '含下架恢复和高风险字段变更' },
   { label: '在线 API 商户', value: 6, hint: '1 个未响应预警' },
   { label: '未解决纠纷', value: 4, hint: '今日新增 1 条' },
 ]

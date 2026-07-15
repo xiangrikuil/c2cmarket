@@ -7,6 +7,12 @@ import PageTitle from '@/components/market/PageTitle.vue'
 import SoftTable from '@/components/market/SoftTable.vue'
 import StatusTabs from '@/components/market/StatusTabs.vue'
 import TablePagination from '@/components/market/TablePagination.vue'
+import CompactStats from '@/components/market/CompactStats.vue'
+import EmptyState from '@/components/market/EmptyState.vue'
+import ErrorState from '@/components/market/ErrorState.vue'
+import LocalTime from '@/components/market/LocalTime.vue'
+import ShortId from '@/components/market/ShortId.vue'
+import SkeletonTable from '@/components/market/SkeletonTable.vue'
 import { usePagination } from '@/composables/usePagination'
 import type { DemandRecord } from '@/features/demand/types'
 import { useCloseDemandMutation, useMyDemands } from '@/queries/useMarketQueries'
@@ -101,14 +107,9 @@ function toggleDemand(item: DemandRecord) {
 
 <template>
   <div class="space-y-4">
-    <PageTitle title="我的需求" description="查看自己发布的求车需求、公开状态和 linux.do 原帖绑定；关闭后可从这里重新打开。" action-text="继续找车源" action-to="/demands" />
+    <PageTitle title="我的求车" description="查看自己发布的求车信息、公开状态和 linux.do 原帖绑定；关闭后可从这里重新打开。" action-text="发布求车" action-to="/demands/new" />
 
-    <div class="grid gap-3 md:grid-cols-4">
-      <div v-for="item in stats" :key="item.label" class="rounded-lg border border-border bg-card p-4">
-        <div class="text-xs text-muted-foreground">{{ item.label }}</div>
-        <div class="mt-1 text-2xl font-semibold">{{ item.value }}</div>
-      </div>
-    </div>
+    <CompactStats :items="stats" :loading="isLoading" />
 
     <StatusTabs v-model="activeTab" :items="tabItems" />
 
@@ -121,15 +122,15 @@ function toggleDemand(item: DemandRecord) {
       </select>
     </div>
 
-    <div v-if="isLoading" class="rounded-xl border border-border bg-card p-8 text-center text-sm text-muted-foreground">正在加载我的需求...</div>
-    <div v-else-if="error" class="rounded-xl border border-border bg-card p-8 text-center text-sm text-destructive">我的需求加载失败，请稍后重试。</div>
-    <div v-else-if="rows.length === 0" class="rounded-xl border border-border bg-card p-8 text-center text-sm text-muted-foreground">当前筛选条件下暂无求车需求。</div>
+    <SkeletonTable v-if="isLoading" :rows="5" :columns="6" />
+    <ErrorState v-else-if="error" description="我的求车加载失败，请稍后重试。" />
+    <EmptyState v-else-if="rows.length === 0" title="当前筛选下暂无求车需求" description="可以调整筛选，或发布新的求车需求。"><template #action><RouterLink to="/demands/new"><Button>发布求车</Button></RouterLink></template></EmptyState>
 
     <SoftTable v-else :columns="['需求', '预算', '偏好', '状态', '更新时间', '操作']">
       <tr v-for="item in pagination.paginatedRows.value" :key="item.id">
         <td>
           <RouterLink :to="`/demands/${item.id}`" class="font-medium hover:underline">{{ item.title }}</RouterLink>
-          <div class="text-xs text-muted-foreground">{{ item.region }} · {{ item.linuxdoPost }}</div>
+          <div class="text-xs text-muted-foreground"><ShortId :value="item.id" prefix="DEMAND" /> · {{ item.region }} · {{ item.linuxdoPost }}</div>
         </td>
         <td>
           <div class="font-semibold">¥{{ item.maxPrice }}</div>
@@ -140,7 +141,7 @@ function toggleDemand(item: DemandRecord) {
           <Badge :variant="statusVariant(item)">{{ item.status }}</Badge>
           <div class="mt-1 text-xs text-muted-foreground">{{ statusHint(item) }}</div>
         </td>
-        <td class="text-muted-foreground">{{ item.updatedAt }}</td>
+        <td class="text-muted-foreground"><LocalTime :value="item.updatedAt" /></td>
         <td>
           <div class="flex flex-wrap gap-2">
             <RouterLink :to="`/demands/${item.id}`"><Button size="sm" variant="outline">查看</Button></RouterLink>

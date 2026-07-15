@@ -1,8 +1,7 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { ref, watch } from 'vue'
 import { Input } from '@/components/ui/input'
 import type { ApiService } from '@/lib/api'
-import { formatCny } from './utils'
 
 const props = defineProps<{
   service: ApiService
@@ -13,32 +12,16 @@ const emit = defineEmits<{
   'update:modelValue': [value: number]
 }>()
 
-const customValue = ref('')
-const selectedPreset = ref(String(props.modelValue))
-const presets = computed(() => [props.service.minimumPurchaseCny, 50, 100].filter((value, index, rows) => value <= props.service.maxBuy && rows.indexOf(value) === index))
+const inputValue = ref(String(props.modelValue))
 
 watch(() => props.modelValue, value => {
-  if (presets.value.includes(value)) {
-    selectedPreset.value = String(value)
-    customValue.value = ''
-  }
+  const parsedInput = Number(inputValue.value)
+  if ((inputValue.value === '' || !Number.isFinite(parsedInput)) && value === 0) return
+  if (parsedInput !== value) inputValue.value = String(value)
 })
 
-function selectPreset(value: number) {
-  selectedPreset.value = String(value)
-  customValue.value = ''
-  emit('update:modelValue', value)
-}
-
-function selectCustom() {
-  selectedPreset.value = 'custom'
-  const parsed = Number(customValue.value)
-  emit('update:modelValue', Number.isFinite(parsed) ? parsed : 0)
-}
-
-function updateCustom(value: string) {
-  customValue.value = value
-  selectedPreset.value = 'custom'
+function updateAmount(value: string) {
+  inputValue.value = value
   const parsed = Number(value)
   emit('update:modelValue', Number.isFinite(parsed) ? parsed : 0)
 }
@@ -46,32 +29,12 @@ function updateCustom(value: string) {
 
 <template>
   <div class="space-y-2">
-    <div class="grid grid-cols-4 gap-2">
-      <button
-        v-for="preset in presets"
-        :key="preset"
-        type="button"
-        class="h-10 rounded-md border px-2 text-sm font-semibold transition-colors"
-        :class="selectedPreset === String(preset) ? 'border-primary bg-primary/10 text-primary' : 'border-border bg-background hover:bg-muted'"
-        @click="selectPreset(preset)"
-      >
-        {{ formatCny(preset) }}
-      </button>
-      <button
-        type="button"
-        class="h-10 rounded-md border px-2 text-sm font-semibold transition-colors"
-        :class="selectedPreset === 'custom' ? 'border-primary bg-primary/10 text-primary' : 'border-border bg-background hover:bg-muted'"
-        @click="selectCustom"
-      >
-        自定义
-      </button>
-    </div>
     <Input
-      v-if="selectedPreset === 'custom'"
-      :model-value="customValue"
+      :model-value="inputValue"
       inputmode="decimal"
-      placeholder="输入意向金额"
-      @update:model-value="value => updateCustom(String(value))"
+      placeholder="请输入订单金额"
+      @update:model-value="value => updateAmount(String(value))"
     />
+    <p class="text-xs text-muted-foreground">可输入 ¥{{ service.minimumPurchaseCny }}–¥{{ service.maxBuy }}</p>
   </div>
 </template>
