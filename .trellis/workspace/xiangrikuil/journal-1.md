@@ -236,3 +236,72 @@ Committed and pushed marketplace updates, including API order payment QR snapsho
 ### Next Steps
 
 - None - task complete
+
+
+## Session 7: Cloudflare Pages pnpm workspace fix
+
+**Date**: 2026-07-15
+**Task**: Cloudflare Pages pnpm workspace fix
+**Package**: frontend
+**Branch**: `codex/complete-ui-business-consistency`
+
+### Summary
+
+Added an explicit pnpm root package and pinned Node 24.13.0; verified Cloudflare's pnpm 10.11.1 install, production build for https://c2cmarket.shop, and all 118 frontend tests.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `9f4039c` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
+
+
+## Session 8: Cloudflare deployment and marketplace consistency delivery
+
+**Date**: 2026-07-15
+**Task**: Cloudflare deployment and marketplace consistency delivery
+**Package**: frontend
+**Branch**: `codex/complete-ui-business-consistency`
+
+### Summary
+
+Fixed Cloudflare frontend build compatibility, committed the complete marketplace business consistency update, passed backend and frontend quality gates, rebased onto origin/main, and pushed the feature branch.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `39672e0` | (see git log) |
+| `82fc0e7` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
