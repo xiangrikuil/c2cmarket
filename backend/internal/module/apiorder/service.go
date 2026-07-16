@@ -40,18 +40,19 @@ type DisputeCaseCreator interface {
 }
 
 type Service struct {
-	mu                  sync.Mutex
-	now                 func() time.Time
-	repo                Repository
-	intents             BuyerIntentResolver
-	services            PublicServiceResolver
-	disputes            DisputeCaseCreator
-	idempotency         *idempotency.Service
-	orders              map[string]Order
-	credentials         map[string]DeliveryCredential
-	availableAllowances map[string]*big.Rat
-	events              []Event
-	accessLogs          []PaymentInstructionAccessLog
+	mu                    sync.Mutex
+	now                   func() time.Time
+	repo                  Repository
+	intents               BuyerIntentResolver
+	services              PublicServiceResolver
+	disputes              DisputeCaseCreator
+	idempotency           *idempotency.Service
+	orders                map[string]Order
+	credentials           map[string]DeliveryCredential
+	availableAllowances   map[string]*big.Rat
+	availablePackageStock map[string]int
+	events                []Event
+	accessLogs            []PaymentInstructionAccessLog
 }
 
 func NewService(repo Repository, intentResolver BuyerIntentResolver, serviceResolver PublicServiceResolver, disputeCreator DisputeCaseCreator, idempotencyService *idempotency.Service, now func() time.Time) *Service {
@@ -62,15 +63,16 @@ func NewService(repo Repository, intentResolver BuyerIntentResolver, serviceReso
 		idempotencyService = idempotency.NewService(nil, now)
 	}
 	return &Service{
-		now:                 now,
-		repo:                repo,
-		intents:             intentResolver,
-		services:            serviceResolver,
-		disputes:            disputeCreator,
-		idempotency:         idempotencyService,
-		orders:              make(map[string]Order),
-		credentials:         make(map[string]DeliveryCredential),
-		availableAllowances: make(map[string]*big.Rat),
+		now:                   now,
+		repo:                  repo,
+		intents:               intentResolver,
+		services:              serviceResolver,
+		disputes:              disputeCreator,
+		idempotency:           idempotencyService,
+		orders:                make(map[string]Order),
+		credentials:           make(map[string]DeliveryCredential),
+		availableAllowances:   make(map[string]*big.Rat),
+		availablePackageStock: make(map[string]int),
 	}
 }
 
@@ -388,12 +390,12 @@ func (s *Service) createInMemory(ctx context.Context, input CreateInput) (Order,
 	if appErr != nil {
 		return Order{}, appErr
 	}
-	if appErr := s.reserveAllowanceLocked(order, service); appErr != nil {
+	if appErr := s.reserveInventoryLocked(order, service); appErr != nil {
 		return Order{}, appErr
 	}
 	if marker, ok := s.intents.(OrderedIntentMarker); ok {
 		if appErr := marker.MarkOrdered(intent.ID); appErr != nil {
-			s.releaseAllowanceLocked(order)
+			s.releaseInventoryLocked(&order)
 			return Order{}, appErr
 		}
 	}
@@ -418,9 +420,14 @@ func (s *Service) updateInMemory(ctx context.Context, input ActionInput, action 
 	}
 	from := order.Status
 	if action == "cancel" {
-		s.releaseAllowanceLocked(order)
+		s.releaseInventoryLocked(&order)
 	}
 	if action == "submit_delivery" {
+		expiresAt, appErr := PackageExpiryFromSnapshot(order.SelectedPackageSnapshot, s.now())
+		if appErr != nil {
+			return Order{}, appErr
+		}
+		order.PackageExpiresAt = expiresAt
 		if _, exists := s.credentials[order.ID]; exists {
 			return Order{}, domain.NewError(http.StatusConflict, domain.CodeInvalidStateTransition, "Invalid state transition", "交付信息已提交，不能再次修改。")
 		}
@@ -476,13 +483,28 @@ func (s *Service) materializeTimeoutLocked(orderID string) Order {
 	order.CancelledAt = &now
 	order.UpdatedAt = now
 	order.Version++
-	s.releaseAllowanceLocked(order)
+	s.releaseInventoryLocked(&order)
 	s.orders[orderID] = order
 	s.appendEventLocked(order, "", EventPaymentTimeoutCancelled, from, order.Status, "", "payment-timeout")
 	return order
 }
 
-func (s *Service) reserveAllowanceLocked(order Order, service apimarket.Service) *domain.AppError {
+func (s *Service) reserveInventoryLocked(order Order, service apimarket.Service) *domain.AppError {
+	if order.BillingModeSnapshot == apimarket.ServiceBillingModeFixedPackage {
+		pack, ok := findServicePackage(service, order.SelectedPackageID)
+		if !ok || !pack.Enabled {
+			return domain.NewError(http.StatusConflict, domain.CodeInvalidStateTransition, "Package unavailable", "选择的套餐已不可用，请刷新后重试。")
+		}
+		available, exists := s.availablePackageStock[pack.ID]
+		if !exists {
+			available = pack.StockAvailable
+		}
+		if available <= 0 {
+			return domain.NewError(http.StatusConflict, domain.CodeInvalidStateTransition, "Package sold out", "套餐库存不足，请刷新后重试。")
+		}
+		s.availablePackageStock[pack.ID] = available - 1
+		return nil
+	}
 	if order.BillingModeSnapshot != apimarket.ServiceBillingModeMetered {
 		return nil
 	}
@@ -509,7 +531,18 @@ func (s *Service) reserveAllowanceLocked(order Order, service apimarket.Service)
 	return nil
 }
 
-func (s *Service) releaseAllowanceLocked(order Order) {
+func (s *Service) releaseInventoryLocked(order *Order) {
+	if order == nil {
+		return
+	}
+	if order.BillingModeSnapshot == apimarket.ServiceBillingModeFixedPackage {
+		if !order.PackageStockReserved || strings.TrimSpace(order.SelectedPackageID) == "" {
+			return
+		}
+		s.availablePackageStock[order.SelectedPackageID]++
+		order.PackageStockReserved = false
+		return
+	}
 	if order.BillingModeSnapshot != apimarket.ServiceBillingModeMetered {
 		return
 	}
@@ -594,6 +627,7 @@ func NewOrder(input CreateInput, intent apiintent.Intent, service apimarket.Serv
 		RequestedUSDAllowanceSnapshot: decimalStringOptional(intent.RequestedUSDAllowance, 6),
 		CNYPerUSDAllowanceSnapshot:    decimalStringOptional(intent.DeclaredCNYPerUSDAllowanceSnapshot, 4),
 		PricingSnapshot:               intent.PricingSnapshot,
+		PackageStockReserved:          service.BillingMode == apimarket.ServiceBillingModeFixedPackage,
 		Amount:                        amount,
 		Currency:                      currency,
 		SelectedPaymentMethod:         method,
@@ -623,7 +657,7 @@ func resolveOrderAmount(intent apiintent.Intent, service apimarket.Service) (str
 	switch service.BillingMode {
 	case apimarket.ServiceBillingModeFixedPackage:
 		pack, ok := findServicePackage(service, intent.SelectedPackageID)
-		if !ok || !pack.Enabled {
+		if !ok || !pack.Enabled || pack.StockAvailable <= 0 {
 			return "", "", 0, domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Package invalid", "选择的套餐不可用。", "selectedPackageId", "invalid", "选择的套餐不可用。")
 		}
 		return decimalStringOptional(pack.PriceCNY, 2), "CNY", 0, nil
@@ -644,6 +678,25 @@ func findServicePackage(service apimarket.Service, packageID string) (apimarket.
 		}
 	}
 	return apimarket.ServicePackage{}, false
+}
+
+func PackageExpiryFromSnapshot(snapshot string, deliverySubmittedAt time.Time) (*time.Time, *domain.AppError) {
+	if strings.TrimSpace(snapshot) == "" {
+		return nil, nil
+	}
+	var payload struct {
+		DurationDays *int `json:"durationDays"`
+	}
+	if err := json.Unmarshal([]byte(snapshot), &payload); err != nil || payload.DurationDays == nil {
+		return nil, domain.NewError(http.StatusConflict, domain.CodeInvalidStateTransition, "Package snapshot invalid", "套餐有效期快照不可用，暂时无法提交交付。")
+	}
+	switch *payload.DurationDays {
+	case 1, 3, 7, 30:
+		expiresAt := deliverySubmittedAt.AddDate(0, 0, *payload.DurationDays)
+		return &expiresAt, nil
+	default:
+		return nil, domain.NewError(http.StatusConflict, domain.CodeInvalidStateTransition, "Package snapshot invalid", "套餐有效期快照不可用，暂时无法提交交付。")
+	}
 }
 
 func validateActionInput(input ActionInput, action string) *domain.AppError {
@@ -944,6 +997,7 @@ func applyAction(order Order, input ActionInput, action string, now time.Time) O
 	case "confirm_payment":
 		order.Status = StatusPaidConfirmed
 		order.PaidConfirmedAt = &now
+		order.PackageStockReserved = false
 	case "submit_delivery":
 		order.Status = StatusDeliverySubmitted
 		order.DeliveryNote = strings.TrimSpace(input.DeliveryNote)

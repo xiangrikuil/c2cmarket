@@ -15,7 +15,7 @@ defineProps<{
   <Card class="api-publish-card">
     <div class="api-publish-card-header">
       <h2>5. GPT 图像生成</h2>
-      <p>仅在 Sub2API + GPT 时显示；倍率和价格由平台锁定。</p>
+      <p>仅在 Sub2API + GPT 时显示；默认倍率为 1，可按实际上游规则调整。</p>
     </div>
 
     <div class="api-publish-card-body space-y-3">
@@ -65,7 +65,7 @@ defineProps<{
         <div class="grid gap-3 md:grid-cols-2">
           <label class="space-y-2">
             <span class="text-sm font-medium">生图倍率</span>
-            <div class="rounded-md border border-border bg-muted/50 px-3 py-2 text-sm font-semibold">1.00x（平台锁定）</div>
+            <div class="rounded-md border border-border bg-muted/50 px-3 py-2 text-sm font-semibold">默认 1.00x</div>
           </label>
           <label class="space-y-2">
             <span class="text-sm font-medium">价格策略</span>

@@ -47,3 +47,13 @@ Fallbacks are allowed only when all of the following are true:
 - Are errors surfaced at the correct layer?
 - Would removing a fallback make a hidden bug visible? If yes, remove or redesign it.
 - Does this change reduce future maintenance cost instead of moving complexity elsewhere?
+
+## External Proxy Boundary Diagnosis
+
+When a browser reports an application-layer error for a request that crosses a CDN, Tunnel, reverse proxy, or access gateway, inspect the raw public response before changing application code:
+
+- Compare the local origin response with the public response using the same method and `Origin` header.
+- Treat Cloudflare HTTP `530` as a connector/Tunnel failure. Its generated error body does not carry the Go backend's CORS headers, so browsers may misleadingly report it as a CORS violation.
+- If the local backend returns the expected CORS headers but the public endpoint returns a gateway status, repair the proxy boundary first; do not broaden the backend allowlist.
+- Verify recovery without a temporary foreground process. Stop the diagnostic connector and prove the persistent service still serves health, readiness, credentialed GET, and OPTIONS requests.
+- For this project's Mac-hosted Tunnel, repeated QUIC inactivity timeouts with a passing TCP 7844 pre-check require the documented `http2` transport and LaunchAgent restart procedure.

@@ -2,7 +2,7 @@
 import { Card } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import type { ApiServicePublishForm, DistributionSystem } from './types'
-import { formatMultiplier, publishDistributionOptions } from './utils'
+import { publishDistributionOptions } from './utils'
 
 defineProps<{
   form: ApiServicePublishForm
@@ -19,7 +19,7 @@ const emit = defineEmits<{
   <Card class="api-publish-card">
     <div class="api-publish-card-header">
       <h2>接入类型与倍率</h2>
-      <p>选择 API 接入类型；Sub2API 固定倍率，其他 API 可自定义倍率。</p>
+      <p>倍率默认 1；如上游按 0.01 等倍率折算，请填写商家实际声明值。</p>
     </div>
 
     <div class="api-publish-card-body space-y-4">
@@ -42,12 +42,7 @@ const emit = defineEmits<{
         <p v-if="errors.distributionSystem" class="text-xs text-destructive">{{ errors.distributionSystem }}</p>
       </div>
 
-      <div v-if="form.distributionSystem === 'sub2api'" class="rounded-md border border-primary/20 bg-primary/5 px-3 py-2">
-        <div class="text-sm font-semibold text-primary">{{ formatMultiplier(1) }}</div>
-        <p class="mt-1 text-xs text-muted-foreground">Sub2API 服务倍率固定，按实际美元额度消耗说明。</p>
-      </div>
-
-      <div v-else class="space-y-2">
+      <div class="space-y-2">
         <label class="text-sm font-medium">默认服务倍率</label>
         <div class="flex max-w-xs overflow-hidden rounded-md border border-input bg-background">
           <Input
@@ -62,7 +57,7 @@ const emit = defineEmits<{
           <span class="grid w-12 place-items-center border-l border-border text-sm text-muted-foreground">x</span>
         </div>
         <p v-if="errors.defaultMultiplier" class="text-xs text-destructive">{{ errors.defaultMultiplier }}</p>
-        <p v-else class="text-xs text-muted-foreground">用于前台价格折算；提交后写入服务倍率快照。</p>
+        <p v-else class="text-xs text-muted-foreground">自建面板通常填 1；按美元面值缩放的中转可填 0.01。模型也可以单独覆盖。</p>
       </div>
 
     </div>

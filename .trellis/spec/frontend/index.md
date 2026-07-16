@@ -17,6 +17,7 @@ This directory contains the current project conventions for the Vue 3 + Vite fro
 | [Directory Structure](./directory-structure.md) | Module organization and file layout | Active |
 | [Component Guidelines](./component-guidelines.md) | Component patterns, props, composition | Active |
 | [Marketplace UI Guidelines](./marketplace-ui-guidelines.md) | Authoritative site-wide visual, layout, marketplace hierarchy, and browser acceptance contract | Active |
+| [Limited API Packages](../backend/api-limited-packages.md) | Cross-layer package publishing, cards, recommendation, ordering, and lifecycle contract | Active |
 | [Hook Guidelines](./hook-guidelines.md) | Custom hooks, data fetching patterns | Active |
 | [State Management](./state-management.md) | Local state, global state, server state | Active |
 | [Quality Guidelines](./quality-guidelines.md) | Code standards, forbidden patterns | Active |

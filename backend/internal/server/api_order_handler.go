@@ -60,6 +60,8 @@ type apiOrderResponse struct {
 	RequestedUSDAllowanceSnapshot string                              `json:"requestedUsdAllowanceSnapshot,omitempty"`
 	CNYPerUSDAllowanceSnapshot    string                              `json:"cnyPerUsdAllowanceSnapshot,omitempty"`
 	PricingSnapshot               string                              `json:"pricingSnapshot"`
+	PackageStockReserved          bool                                `json:"packageStockReserved"`
+	PackageExpiresAt              *string                             `json:"packageExpiresAt,omitempty"`
 	Amount                        string                              `json:"amount"`
 	Currency                      string                              `json:"currency"`
 	SelectedPaymentMethod         string                              `json:"selectedPaymentMethod"`
@@ -402,6 +404,8 @@ func toAPIOrderResponse(order apiorder.Order, ownerView bool, includeCredential 
 		RequestedUSDAllowanceSnapshot: order.RequestedUSDAllowanceSnapshot,
 		CNYPerUSDAllowanceSnapshot:    order.CNYPerUSDAllowanceSnapshot,
 		PricingSnapshot:               order.PricingSnapshot,
+		PackageStockReserved:          order.PackageStockReserved,
+		PackageExpiresAt:              formatOptionalTime(order.PackageExpiresAt),
 		Amount:                        order.Amount,
 		Currency:                      order.Currency,
 		SelectedPaymentMethod:         order.SelectedPaymentMethod,

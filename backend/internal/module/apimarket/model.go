@@ -62,6 +62,9 @@ type Service struct {
 	Models                           []ServiceModel
 	Packages                         []ServicePackage
 	PaymentOptions                   []PaymentOption
+	Completed30d                     int
+	UnresolvedDisputes               int
+	ResponseMedianMinutes            *float64
 	IsOrderable                      bool
 	OrderableReasons                 []string
 	CreatedAt                        time.Time
@@ -94,16 +97,29 @@ type ServiceModel struct {
 }
 
 type ServicePackage struct {
-	ID           string
-	APIServiceID string
-	Name         string
-	PriceCNY     string
-	DurationDays *int
-	Description  string
-	Enabled      bool
-	SortOrder    int
-	CreatedAt    time.Time
-	UpdatedAt    time.Time
+	ID             string
+	APIServiceID   string
+	Name           string
+	PriceCNY       string
+	PanelAllowance string
+	DurationDays   *int
+	StockTotal     int
+	StockAvailable int
+	Description    string
+	Enabled        bool
+	SortOrder      int
+	Models         []ServicePackageModel
+	CreatedAt      time.Time
+	UpdatedAt      time.Time
+}
+
+type ServicePackageModel struct {
+	ServiceModelID      string
+	ModelCatalogID      string
+	ModelPriceVersionID string
+	ModelNameSnapshot   string
+	ProviderSnapshot    string
+	MerchantMultiplier  string
 }
 
 type PaymentOption struct {
@@ -184,12 +200,16 @@ type ServiceModelInput struct {
 }
 
 type ServicePackageInput struct {
-	Name         string
-	PriceCNY     string
-	DurationDays *int
-	Description  string
-	Enabled      bool
-	SortOrder    int
+	ID              string
+	Name            string
+	PriceCNY        string
+	PanelAllowance  string
+	DurationDays    *int
+	StockTotal      int
+	Description     string
+	Enabled         bool
+	SortOrder       int
+	ModelCatalogIDs []string
 }
 
 type ServiceOwnerActionInput struct {

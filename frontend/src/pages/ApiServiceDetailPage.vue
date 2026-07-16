@@ -21,6 +21,7 @@ import {
   type ApiOrder,
   type ApiPurchaseIntent,
   type ApiService,
+  type ApiServicePackage,
 } from '@/lib/api'
 import { trackAnalytics } from '@/lib/analytics'
 import { useDetailVisibleAnalytics } from '@/composables/useDetailVisibleAnalytics'
@@ -34,6 +35,7 @@ const id = computed(() => String(route.params.id ?? ''))
 const { data: service, isLoading, error: serviceError, refetch: refetchService } = useApiService(id)
 const { data: ownedServices, isLoading: ownershipLoading } = useMyApiServices()
 const amount = ref(10)
+const selectedPackageId = ref('')
 const selectedDeliveryMode = ref<ApiDeliveryMode>('api_key_endpoint')
 const { data: favoriteStatus } = useFavoriteStatus('api-service', id)
 const toggleFavoriteMutation = useToggleFavoriteMutation()
@@ -47,6 +49,8 @@ const emptyDescription = computed(() => serviceMissing.value
   : '该服务不存在、已下架，或当前不可接单。')
 const ownerPreview = computed(() => route.query.preview === 'owner')
 const isOwnedService = computed(() => Boolean(ownedServices.value?.some(item => item.id === id.value)))
+const availablePackages = computed(() => (service.value?.packages ?? []).filter(item => item.enabled && item.stockAvailable > 0))
+const selectedPackage = computed<ApiServicePackage | null>(() => availablePackages.value.find(item => item.id === selectedPackageId.value) ?? null)
 
 useDetailVisibleAnalytics({
   enabled: serviceVisible,
@@ -64,11 +68,28 @@ function apiServiceAnalyticsProps(value: ApiService) {
   }
 }
 
-watch(service, value => {
+watch([service, () => route.query.package], ([value, packageQuery]) => {
   if (!value) return
-  amount.value = value.minimumPurchaseCny
   selectedDeliveryMode.value = value.deliveryModes[0] ?? 'api_key_endpoint'
+  if (value.billingMode === 'fixed_package') {
+    const requestedId = typeof packageQuery === 'string' ? packageQuery : ''
+    const requested = availablePackages.value.find(item => item.id === requestedId)
+    const nextPackage = requested ?? availablePackages.value[0]
+    selectedPackageId.value = nextPackage?.id ?? ''
+    amount.value = nextPackage?.priceCny ?? value.minimumPurchaseCny
+    return
+  }
+  selectedPackageId.value = ''
+  amount.value = value.minimumPurchaseCny
 }, { immediate: true })
+
+watch(selectedPackageId, value => {
+  if (service.value?.billingMode !== 'fixed_package' || !value) return
+  const item = availablePackages.value.find(row => row.id === value)
+  if (!item) return
+  amount.value = item.priceCny
+  if (route.query.package !== value) router.replace({ query: { ...route.query, package: value } })
+})
 
 watch([isOwnedService, ownerPreview], ([owned, preview]) => {
   if (!owned || preview) return
@@ -86,11 +107,13 @@ const createOrderMutation = useMutation({
     if (!service.value) throw new Error('API 服务不存在。')
     const paymentMethod = getApiServiceDefaultPaymentMethod(service.value)
     if (!paymentMethod) throw new Error('商户尚未配置可用的微信或支付宝收款方式。')
+    if (service.value.billingMode === 'fixed_package' && !selectedPackage.value) throw new Error('请选择有库存的限时流量包。')
     const intent = await createApiPurchaseIntent({
       serviceId: service.value.id,
       purchaseAmountCny: amount.value,
       deliveryMode: selectedDeliveryMode.value,
-      targetModel: service.value.models[0],
+      targetModel: selectedPackage.value?.models[0]?.modelName ?? service.value.models[0],
+      selectedPackageId: selectedPackage.value?.id,
     })
     const order = await createApiOrderFromIntent(intent.id, paymentMethod)
     return { intent, order }
@@ -175,6 +198,7 @@ function createOrder() {
       <ApiPurchasePanel
         v-else
         v-model:amount="amount"
+        v-model:selected-package-id="selectedPackageId"
         :service="service"
         :submitting="createOrderMutation.isPending.value"
         :favorited="favorited"
