@@ -92,3 +92,11 @@ For the mainland-China Mac deployment, browser authorization remains on
 `https://connect.linux.do/oauth2/authorize`, while server-side token and
 userinfo calls use linux.do's fallback host `connect.linuxdo.org`. Keep this
 split consistent in production, staging, and both checked-in env examples.
+
+After provider connectivity and client credentials pass, reproduce the
+userinfo response shape before changing proxy or endpoint configuration again.
+linux.do may return the user identifier as a JSON integer even though the
+application persists provider subjects as strings. Decode the external scalar
+as string-or-integer and normalize it before persistence; a Go struct field
+declared only as `string` turns a valid numeric identifier into an application
+502. Keep a focused regression test with the numeric response shape.

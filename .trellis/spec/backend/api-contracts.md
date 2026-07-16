@@ -1314,6 +1314,7 @@ Session user response includes:
 - `callback` must clear the state cookie after successful login.
 - The PostgreSQL auth repository must upsert `users`, `auth_identities`, and `linux_do_bindings` in one transaction before creating the session.
 - OAuth userinfo may include an optional `email`. Registration-success email is sent only when the OAuth upsert confirms a newly created user, the provider returned a valid email address, and the user transaction plus session persistence have succeeded. Missing/invalid email skips the registration email; send failure is logged without SMTP credentials and must not block login.
+- linux.do userinfo may encode `id`/`sub` as either a JSON string or an integer. Normalize both forms to the same decimal string before identity upsert; malformed non-scalar IDs remain provider-response failures. Operational diagnostics may log only the provider host, path, method, and status/failure category, never the authorization code, access token, query string, or raw response body.
 - Admin permission comes from `user_permissions(permission='admin')`; fake OAuth may grant admin only for local smoke identities that intentionally encode admin in the fake code.
 - Production startup must fail if `ENABLE_DEV_AUTH=true`, `OAUTH_PROVIDER_MODE=fake`, or required oauth2 endpoint/client values are missing.
 - Provider tokens are not part of the durable auth model and must not be written to PostgreSQL.
@@ -1350,6 +1351,7 @@ Session user response includes:
 
 - `cd backend && /opt/homebrew/bin/go test ./...` for config, route parity, and auth behavior.
 - Auth unit tests must assert Argon2id login success, legacy login plus rehash, wrong password no session/no rehash, Argon2id set-password writes, first-admin bootstrap creation, and bootstrap no-overwrite.
+- OAuth profile tests must cover linux.do userinfo with integer `id` and the existing string identifier form, and must assert both normalize to the stable string subject used by `auth_identities` and `linux_do_bindings`.
 - OpenAPI YAML parse to verify auth path/schema contract.
 - `scripts/auth-smoke.mjs` against PostgreSQL with `OAUTH_PROVIDER_MODE=fake` for start/callback/session/admin/logout.
 - Product-boundary scan for token persistence, plaintext password storage, linux.do official endorsement, platform custody, and automatic credential delivery wording.

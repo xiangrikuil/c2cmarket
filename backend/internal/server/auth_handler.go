@@ -9,7 +9,9 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"net/url"
 	"strings"
@@ -51,6 +53,31 @@ type setPasswordRequest struct {
 
 type oauthStartResponse struct {
 	AuthorizationURL string `json:"authorizationUrl"`
+}
+
+type oauthProviderID string
+
+func (id *oauthProviderID) UnmarshalJSON(data []byte) error {
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.UseNumber()
+	var value any
+	if err := decoder.Decode(&value); err != nil {
+		return err
+	}
+	switch typed := value.(type) {
+	case string:
+		*id = oauthProviderID(strings.TrimSpace(typed))
+	case json.Number:
+		if _, err := typed.Int64(); err != nil {
+			return fmt.Errorf("oauth provider numeric id must be an integer: %w", err)
+		}
+		*id = oauthProviderID(typed.String())
+	case nil:
+		*id = ""
+	default:
+		return fmt.Errorf("oauth provider id must be a string or number, got %T", value)
+	}
+	return nil
 }
 
 type sessionResponse struct {
@@ -457,23 +484,23 @@ func (s *Server) oauthProfile(ctx context.Context, code string) (auth.OAuthProfi
 	}
 	userRequest.Header.Set("Authorization", "Bearer "+token.AccessToken)
 	var info struct {
-		Subject           string `json:"sub"`
-		ID                string `json:"id"`
-		Username          string `json:"username"`
-		PreferredUsername string `json:"preferred_username"`
-		Login             string `json:"login"`
-		Name              string `json:"name"`
-		DisplayName       string `json:"display_name"`
-		Email             string `json:"email"`
-		AvatarURL         string `json:"avatar_url"`
-		Picture           string `json:"picture"`
-		TrustLevel        int    `json:"trust_level"`
-		TrustLevelCamel   int    `json:"trustLevel"`
+		Subject           oauthProviderID `json:"sub"`
+		ID                oauthProviderID `json:"id"`
+		Username          string          `json:"username"`
+		PreferredUsername string          `json:"preferred_username"`
+		Login             string          `json:"login"`
+		Name              string          `json:"name"`
+		DisplayName       string          `json:"display_name"`
+		Email             string          `json:"email"`
+		AvatarURL         string          `json:"avatar_url"`
+		Picture           string          `json:"picture"`
+		TrustLevel        int             `json:"trust_level"`
+		TrustLevelCamel   int             `json:"trustLevel"`
 	}
 	if appErr := s.fetchOAuthJSON(userRequest, &info); appErr != nil {
 		return auth.OAuthProfile{}, appErr
 	}
-	subject := firstNonEmpty(info.Subject, info.ID)
+	subject := firstNonEmpty(string(info.Subject), string(info.ID))
 	username := firstNonEmpty(info.Username, info.PreferredUsername, info.Login, subject)
 	displayName := firstNonEmpty(info.DisplayName, info.Name, username)
 	avatarURL := firstNonEmpty(info.AvatarURL, info.Picture)
@@ -523,20 +550,25 @@ func (s *Server) fetchOAuthJSON(request *http.Request, target any) *domain.AppEr
 	}
 	response, err := client.Do(request)
 	if err != nil {
+		log.Printf("oauth_provider_request_failed method=%s host=%s path=%s", request.Method, request.URL.Host, request.URL.Path)
 		return domain.NewError(http.StatusBadGateway, domain.CodeInternalError, "OAuth provider unavailable", "OAuth provider 请求失败。")
 	}
 	defer response.Body.Close()
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		log.Printf("oauth_provider_rejected_request method=%s host=%s path=%s status=%d", request.Method, request.URL.Host, request.URL.Path, response.StatusCode)
 		return domain.NewError(http.StatusBadGateway, domain.CodeInternalError, "OAuth provider rejected request", "OAuth provider 返回失败状态。")
 	}
 	body, err := io.ReadAll(io.LimitReader(response.Body, oauthMaxResponseBodyBytes+1))
 	if err != nil {
+		log.Printf("oauth_provider_response_read_failed method=%s host=%s path=%s", request.Method, request.URL.Host, request.URL.Path)
 		return domain.NewError(http.StatusBadGateway, domain.CodeInternalError, "OAuth provider invalid response", "OAuth provider 响应解析失败。")
 	}
 	if len(body) > oauthMaxResponseBodyBytes {
+		log.Printf("oauth_provider_response_too_large method=%s host=%s path=%s", request.Method, request.URL.Host, request.URL.Path)
 		return domain.NewError(http.StatusBadGateway, domain.CodeInternalError, "OAuth provider response too large", "OAuth provider 响应过大。")
 	}
 	if err := json.NewDecoder(bytes.NewReader(body)).Decode(target); err != nil {
+		log.Printf("oauth_provider_response_invalid_json method=%s host=%s path=%s", request.Method, request.URL.Host, request.URL.Path)
 		return domain.NewError(http.StatusBadGateway, domain.CodeInternalError, "OAuth provider invalid response", "OAuth provider 响应解析失败。")
 	}
 	return nil
