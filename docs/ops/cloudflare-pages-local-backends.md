@@ -151,6 +151,20 @@ https://api-staging.c2cmarket.shop/api/v1/auth/oauth/callback
 
 Store each client ID and client secret only in its local ignored env file. After the API exchanges the code and creates the API-domain session cookie, it redirects to the matching `FRONTEND_ORIGIN`. The `returnTo` value remains a relative frontend path and cannot switch the redirect to another host.
 
+For this mainland-China Mac-hosted deployment, keep the browser authorization
+endpoint on `connect.linux.do`, but use linux.do's server-side fallback domain
+for code exchange and userinfo in both ignored env files:
+
+```dotenv
+OAUTH_AUTHORIZE_URL=https://connect.linux.do/oauth2/authorize
+OAUTH_TOKEN_URL=https://connect.linuxdo.org/oauth2/token
+OAUTH_USERINFO_URL=https://connect.linuxdo.org/api/user
+```
+
+Test these endpoints from the backend's Docker network rather than only from
+the host. `/readyz` proves the database and migration contract; it does not
+prove outbound connectivity to the OAuth provider.
+
 ## 6. Protect staging with Cloudflare Access
 
 Create two self-hosted Access applications:

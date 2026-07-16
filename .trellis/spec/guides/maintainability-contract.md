@@ -71,3 +71,24 @@ a LaunchAgent, also load or kick-start the installed job and verify all of the
 following: the resolved program/arguments, `last exit code = 0`, no new stderr
 content, and the expected external side effect (for the production backup job,
 both the `.dump` and `.sha256` objects must exist in R2).
+
+## External OAuth Provider Boundary Diagnosis
+
+Do not classify every Cloudflare-branded `502` on an OAuth callback as a
+Tunnel failure. First correlate the timestamp with the backend access log. If
+the callback path reached the Go backend and the backend recorded status 502,
+the failing boundary is the backend-to-provider token or userinfo request, not
+Cloudflare-to-origin routing.
+
+Probe OAuth service endpoints from the same Docker network as the backend;
+host-only connectivity and `/readyz` do not prove that outbound provider calls
+work from the runtime network. Use a deliberately invalid authorization code
+with the configured client credentials and inspect only the provider error
+type: `invalid_grant` shows that the endpoint accepted the client credentials,
+while `invalid_client` indicates a client ID/secret mismatch. Never print or
+persist the credentials used by the probe.
+
+For the mainland-China Mac deployment, browser authorization remains on
+`https://connect.linux.do/oauth2/authorize`, while server-side token and
+userinfo calls use linux.do's fallback host `connect.linuxdo.org`. Keep this
+split consistent in production, staging, and both checked-in env examples.
