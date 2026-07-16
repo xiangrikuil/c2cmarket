@@ -26,15 +26,7 @@ func NewIntent(input CreateIntentInput, service apimarket.Service, buyerContact 
 		if !ok {
 			return Intent{}, domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Package invalid", "选择的套餐不可用。", "selectedPackageId", "invalid", "选择的套餐不可用。")
 		}
-		body, err := json.Marshal(map[string]any{
-			"id":           pack.ID,
-			"name":         pack.Name,
-			"priceCny":     pack.PriceCNY,
-			"durationDays": pack.DurationDays,
-			"description":  pack.Description,
-			"enabled":      pack.Enabled,
-			"sortOrder":    pack.SortOrder,
-		})
+		body, err := json.Marshal(packageSnapshot(pack))
 		if err != nil {
 			return Intent{}, domain.NewError(http.StatusInternalServerError, domain.CodeInternalError, "Internal error", "响应编码失败。")
 		}
@@ -100,14 +92,7 @@ func servicePricingSnapshotJSON(service apimarket.Service) (string, error) {
 		if !pack.Enabled {
 			continue
 		}
-		packages = append(packages, map[string]any{
-			"id":           pack.ID,
-			"name":         pack.Name,
-			"priceCny":     pack.PriceCNY,
-			"durationDays": pack.DurationDays,
-			"description":  pack.Description,
-			"sortOrder":    pack.SortOrder,
-		})
+		packages = append(packages, packageSnapshot(pack))
 	}
 	body, err := json.Marshal(map[string]any{
 		"models":   models,
@@ -117,6 +102,31 @@ func servicePricingSnapshotJSON(service apimarket.Service) (string, error) {
 		return "", err
 	}
 	return string(body), nil
+}
+
+func packageSnapshot(pack apimarket.ServicePackage) map[string]any {
+	models := make([]map[string]any, 0, len(pack.Models))
+	for _, model := range pack.Models {
+		models = append(models, map[string]any{
+			"serviceModelId":      model.ServiceModelID,
+			"modelCatalogId":      model.ModelCatalogID,
+			"modelPriceVersionId": model.ModelPriceVersionID,
+			"modelNameSnapshot":   model.ModelNameSnapshot,
+			"providerSnapshot":    model.ProviderSnapshot,
+			"merchantMultiplier":  model.MerchantMultiplier,
+		})
+	}
+	return map[string]any{
+		"id":             pack.ID,
+		"name":           pack.Name,
+		"priceCny":       pack.PriceCNY,
+		"panelAllowance": pack.PanelAllowance,
+		"durationDays":   pack.DurationDays,
+		"description":    pack.Description,
+		"enabled":        pack.Enabled,
+		"sortOrder":      pack.SortOrder,
+		"models":         models,
+	}
 }
 
 func findServicePackage(service apimarket.Service, packageID string) (apimarket.ServicePackage, bool) {

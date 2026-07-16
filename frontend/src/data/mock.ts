@@ -520,6 +520,45 @@ export type ApiModelMultiplier = {
   multiplier: string
 }
 
+export type ApiServicePackageModel = {
+  serviceModelId: string
+  modelCatalogId: string
+  modelPriceVersionId: string
+  modelName: string
+  provider: string
+  merchantMultiplier: number
+}
+
+export type ApiServicePackage = {
+  id: string
+  name: string
+  priceCny: number
+  panelAllowance: number
+  durationDays: 1 | 3 | 7 | 30
+  stockTotal: number
+  stockAvailable: number
+  description: string
+  enabled: boolean
+  sortOrder: number
+  models: ApiServicePackageModel[]
+}
+
+export type ApiServicePackageSnapshot = {
+  id: string
+  name: string
+  priceCny: number
+  panelAllowance: number
+  durationDays: 1 | 3 | 7 | 30
+  description: string
+  models: Array<{
+    serviceModelId: string
+    modelCatalogId: string
+    modelPriceVersionId: string
+    modelName: string
+    merchantMultiplier: number
+  }>
+}
+
 export type ModelPriceRow = {
   modelId: string
   modelName: string
@@ -616,6 +655,9 @@ export type ApiService = {
   officialPricingUpdatedAt: string
   merchantNote: string
   modelPriceRows: ModelPriceRow[]
+  packages?: ApiServicePackage[]
+  recommendationResponseMedianMinutes?: number | null
+  serviceUpdatedAt?: string
   contactChannels: ApiContactChannel[]
   acceptedPaymentMethods?: Array<'wechat' | 'alipay'>
 }
@@ -690,6 +732,8 @@ export type ApiPurchaseIntentSnapshot = {
   usageVisibility: ApiUsageVisibility
   supportedDeliveryModes: ApiDeliveryMode[]
   selectedDeliveryMode: ApiDeliveryMode
+  selectedPackageId?: string
+  selectedPackageSnapshot?: ApiServicePackageSnapshot
   minimumPurchaseCny: number
   panelBaseUrl: string | null
   apiBaseUrlVisibility: ApiVisibilityRule
@@ -728,6 +772,7 @@ export type ApiPurchaseIntent = {
   merchant: string
   status: ApiPurchaseIntentStatus
   selectedDeliveryMode: ApiDeliveryMode
+  selectedPackageId?: string
   purchaseAmountCny: number
   purchasedCredit: number
   purchaseAmountCnyDecimal?: string
@@ -1655,8 +1700,8 @@ export const apiServices: ApiService[] = [
     merchantDisplayName: '青柠',
     trustLevel: 3,
     merchantType: '可信新车主',
-    models: ['GPT mini', 'Gemini Flash'],
-    modelMultipliers: [{ model: 'GPT mini', multiplier: '0.50x' }, { model: 'Gemini Flash', multiplier: '0.45x' }],
+    models: ['GPT-5.5', 'Gemini Flash'],
+    modelMultipliers: [{ model: 'GPT-5.5', multiplier: '0.50x' }, { model: 'Gemini Flash', multiplier: '0.45x' }],
     rate: '0.45x',
     defaultMultiplier: 0.45,
     creditPerCny: 1,
@@ -1695,8 +1740,8 @@ export const apiServices: ApiService[] = [
     merchantNote: '适合轻量开发和测试用途。建议先小额确认响应速度和用量查看方式，批量使用前请先在意向记录中和商户确认当前剩余额度。',
     modelPriceRows: [
       {
-        modelId: 'gpt-mini',
-        modelName: 'GPT mini',
+        modelId: 'gpt-5-5',
+        modelName: 'GPT-5.5',
         provider: 'OpenAI',
         officialInputPricePerMillion: 0.15,
         officialCachedInputPricePerMillion: 0.015,
@@ -1717,6 +1762,39 @@ export const apiServices: ApiService[] = [
         actualInputPricePerMillion: 0.045,
         actualCachedInputPricePerMillion: 0.011,
         actualOutputPricePerMillion: 0.18,
+      },
+    ],
+    packages: [
+      {
+        id: 'a2-package-3d',
+        name: 'GPT-5.5 开发流量包',
+        priceCny: 9.9,
+        panelAllowance: 5,
+        durationDays: 3,
+        stockTotal: 12,
+        stockAvailable: 8,
+        description: '商户提交交付后开始计算 3 天有效期。',
+        enabled: true,
+        sortOrder: 0,
+        models: [
+          { serviceModelId: 'a2-gpt-5-5', modelCatalogId: 'gpt-5-5', modelPriceVersionId: 'gpt-5-5-2026-06', modelName: 'GPT-5.5', provider: 'OpenAI', merchantMultiplier: 0.5 },
+          { serviceModelId: 'a2-gemini-flash', modelCatalogId: 'gemini-flash', modelPriceVersionId: 'gemini-flash-2026-06', modelName: 'Gemini Flash', provider: 'Google', merchantMultiplier: 0.45 },
+        ],
+      },
+      {
+        id: 'a2-package-7d',
+        name: '轻量模型周包',
+        priceCny: 18.8,
+        panelAllowance: 12,
+        durationDays: 7,
+        stockTotal: 8,
+        stockAvailable: 5,
+        description: '商户提交交付后开始计算 7 天有效期。',
+        enabled: true,
+        sortOrder: 1,
+        models: [
+          { serviceModelId: 'a2-gpt-5-5', modelCatalogId: 'gpt-5-5', modelPriceVersionId: 'gpt-5-5-2026-06', modelName: 'GPT-5.5', provider: 'OpenAI', merchantMultiplier: 0.5 },
+        ],
       },
     ],
     contactChannels: [{ type: 'linuxdo', label: 'linux.do 私信', value: '@qingning' }],

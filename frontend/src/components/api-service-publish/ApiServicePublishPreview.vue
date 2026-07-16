@@ -17,6 +17,7 @@ const props = defineProps<{
 const title = computed(() => generatedTitle(props.form, props.catalogById))
 const merchantDisplayName = computed(() => props.form.merchantIdentityMode === 'store_alias' ? props.form.merchantDisplayName.trim() || '待设置商家展示名' : '公开个人身份')
 const selectedModels = computed(() => selectedCatalogItems(props.form, props.catalogById))
+const previewPackage = computed(() => props.form.billingMode === 'fixed_package' ? props.form.packages.find(item => item.enabled) ?? null : null)
 const quotaExpiresAtLabel = computed(() => props.form.quotaExpiresAt ? props.form.quotaExpiresAt.replace('T', ' ') : '待填写')
 const paymentSummary = computed(() => {
   const labels = enabledPaymentOptions(props.form).map(option => paymentMethodLabels[option.paymentMethod])
@@ -44,7 +45,7 @@ const checkMessage = computed(() => {
       <div class="p-4">
         <div class="flex items-center justify-between gap-3">
           <div class="text-xs text-muted-foreground">买家预览</div>
-          <Badge variant="model">API 额度</Badge>
+          <Badge variant="model">{{ form.billingMode === 'fixed_package' ? '限时流量包' : 'API 额度' }}</Badge>
         </div>
         <h2 class="mt-2 text-lg font-semibold leading-snug">{{ title }}</h2>
         <div class="mt-2 text-sm font-medium">{{ merchantDisplayName }}</div>
@@ -57,12 +58,12 @@ const checkMessage = computed(() => {
 
       <div class="grid gap-2 px-4 pb-4 sm:grid-cols-2 lg:grid-cols-1 xl:grid-cols-2">
         <div class="rounded-lg border border-border bg-muted/35 p-3">
-          <div class="text-xs text-muted-foreground">售价</div>
-          <div class="mt-1 text-lg font-semibold">¥{{ form.cnyPerUsdCredit ?? 0 }} / $1</div>
+          <div class="text-xs text-muted-foreground">{{ previewPackage ? '套餐价格' : '售价' }}</div>
+          <div class="mt-1 text-lg font-semibold">{{ previewPackage ? `¥${previewPackage.priceCny}` : `¥${form.cnyPerUsdCredit ?? 0} / $1` }}</div>
         </div>
         <div class="rounded-lg border border-border bg-muted/35 p-3">
-          <div class="text-xs text-muted-foreground">可售额度</div>
-          <div class="mt-1 text-lg font-semibold">${{ form.availableCreditUsd ?? 0 }}</div>
+          <div class="text-xs text-muted-foreground">{{ previewPackage ? '面板额度' : '可售额度' }}</div>
+          <div class="mt-1 text-lg font-semibold">{{ previewPackage ? previewPackage.panelAllowance : `$${form.availableCreditUsd ?? 0}` }}</div>
         </div>
       </div>
 
@@ -70,11 +71,14 @@ const checkMessage = computed(() => {
         <div><dt>展示身份</dt><dd>{{ form.merchantIdentityMode === 'store_alias' ? '商家展示名' : '公开个人身份' }}</dd></div>
         <div><dt>模型大类</dt><dd>{{ providerCategoryLabels[form.providerCategory] }}</dd></div>
         <div><dt>模型</dt><dd>{{ selectedModels.map(item => item.displayName).join(' / ') || '待选择' }}</dd></div>
-        <div><dt>¥{{ simplifiedApiQuotaRules.minimumPurchaseCny }} 约可购</dt><dd>{{ quotaForMinimumPurchase }}</dd></div>
-        <div><dt>有效至</dt><dd>{{ quotaExpiresAtLabel }}</dd></div>
+        <div v-if="!previewPackage"><dt>¥{{ simplifiedApiQuotaRules.minimumPurchaseCny }} 约可购</dt><dd>{{ quotaForMinimumPurchase }}</dd></div>
+        <div v-if="!previewPackage"><dt>有效至</dt><dd>{{ quotaExpiresAtLabel }}</dd></div>
+        <div v-if="previewPackage"><dt>套餐有效期</dt><dd>{{ previewPackage.durationDays }} 天，交付后开始</dd></div>
+        <div v-if="previewPackage"><dt>套餐库存</dt><dd>{{ previewPackage.stockTotal }} 份</dd></div>
+        <div v-if="previewPackage"><dt>套餐模型</dt><dd>{{ previewPackage.modelCatalogIds.map(id => catalogById.get(id)?.displayName ?? id).join(' / ') || '待选择' }}</dd></div>
         <div><dt>收款方式</dt><dd>{{ paymentSummary }}</dd></div>
         <div><dt>接入类型</dt><dd>{{ distributionLabels[form.distributionSystem] }}</dd></div>
-        <div><dt>服务倍率</dt><dd>{{ form.distributionSystem === 'sub2api' ? '1.00x' : formatMultiplier(form.defaultMultiplier) }}</dd></div>
+        <div><dt>默认服务倍率</dt><dd>{{ formatMultiplier(form.defaultMultiplier) }}</dd></div>
         <div><dt>用量核对</dt><dd>商户说明，买家自行核对</dd></div>
         <div><dt>平台边界</dt><dd>不担保、不代赔</dd></div>
       </dl>

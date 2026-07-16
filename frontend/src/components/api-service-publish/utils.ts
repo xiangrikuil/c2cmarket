@@ -18,8 +18,8 @@ export const publishDistributionOptions = [
   {
     value: 'sub2api',
     title: 'Sub2API',
-    description: '服务倍率固定 1.00x。',
-    detail: '适合发布标准美元额度。',
+    description: '默认倍率 1.00x，可按实际上游规则调整。',
+    detail: '支持美元额度或限时流量包。',
   },
   {
     value: 'other',
@@ -99,20 +99,20 @@ export function applySimplifiedApiQuotaDefaults(form: ApiServicePublishForm) {
   if (!form.distributionSystem) form.distributionSystem = 'sub2api'
   if (!form.distributionSystemNote && form.distributionSystem === 'sub2api') form.distributionSystemNote = 'Sub2API 标准美元额度，接入细节由双方站外确认。'
   if (!form.distributionSystemNote && form.distributionSystem === 'other') form.distributionSystemNote = '其他 API 接入，额度与用量由商户站外说明。'
-  form.billingMode = 'metered_credit'
   form.deliveryModes = ['api_key_endpoint']
-  form.usageVisibility = 'merchant_confirmed'
-  if (form.distributionSystem === 'sub2api') form.defaultMultiplier = sub2ApiPricingPolicy.textModelMultiplier
-  form.minimumPurchaseCny = simplifiedApiQuotaRules.minimumPurchaseCny
-  form.maximumPurchaseCny = simplifiedApiQuotaRules.maximumPurchaseCny
-  if (!form.quotaExpiresAt) form.quotaExpiresAt = defaultQuotaExpiresAtInput()
+  form.usageVisibility = form.billingMode === 'fixed_package' ? 'fixed_package_only' : 'merchant_confirmed'
+  if (!Number.isFinite(form.defaultMultiplier) || form.defaultMultiplier <= 0) form.defaultMultiplier = sub2ApiPricingPolicy.textModelMultiplier
+  if (form.billingMode === 'metered_credit') {
+    form.minimumPurchaseCny = simplifiedApiQuotaRules.minimumPurchaseCny
+    form.maximumPurchaseCny = simplifiedApiQuotaRules.maximumPurchaseCny
+    if (!form.quotaExpiresAt) form.quotaExpiresAt = defaultQuotaExpiresAtInput()
+  }
   form.validity = {
     mode: 'days',
     days: simplifiedApiQuotaRules.validityDays,
     startsAt: 'delivered_at',
   }
   form.manualBillingNote = ''
-  form.packages = []
   form.imageCapability = {
     enabled: false,
     supportsTextToImage: false,
@@ -186,8 +186,9 @@ export function selectedCatalogItems(form: ApiServicePublishForm, catalogById: C
 
 export function generatedTitle(form: ApiServicePublishForm, catalogById: CatalogById) {
   const providerSummary = providerCategoryLabels[form.providerCategory]
+  if (form.billingMode === 'fixed_package') return `${providerSummary} · API 限时套餐`
   if (form.distributionSystem === 'sub2api') return `${providerSummary} · API 美元额度`
-  return `${providerSummary} · 其他 API 接入 ${form.billingMode === 'fixed_package' ? '固定套餐' : '手工核对额度'}`
+  return `${providerSummary} · 其他 API 接入 手工核对额度`
 }
 
 export function warrantyLabel(warranty: WarrantyConfig) {

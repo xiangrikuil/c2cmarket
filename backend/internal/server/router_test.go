@@ -1411,14 +1411,10 @@ func TestAPIServiceCreateReviewPublishFlow(t *testing.T) {
 	ownerSession := createLinuxDoSession(t, server, "api-owner")
 	ownerContact := createContactMethod(t, server, ownerSession, "telegram", "API Owner TG", "@api_owner")
 
-	bad := newJSONRequest(http.MethodPost, "/api/v1/owner/api-services", apiServicePayload(ownerContact.ID, "1.2000"))
-	addAuth(bad, ownerSession, "api-service-bad-multiplier")
-	badResponse := httptest.NewRecorder()
-	server.ServeHTTP(badResponse, bad)
-	if badResponse.Code != http.StatusUnprocessableEntity {
-		t.Fatalf("expected Sub2API multiplier validation failure, got %d body %s", badResponse.Code, badResponse.Body.String())
+	customMultiplier := createAPIServiceWithPayload(t, server, ownerSession, apiServicePayload(ownerContact.ID, "1.2000"), "api-service-custom-multiplier")
+	if len(customMultiplier.Models) != 1 || customMultiplier.Models[0].MerchantMultiplier != "1.2000" {
+		t.Fatalf("expected custom Sub2API multiplier to round trip, got %+v", customMultiplier.Models)
 	}
-	assertProblemCode(t, badResponse, "VALIDATION_FAILED")
 
 	badSource := newJSONRequest(http.MethodPost, "/api/v1/owner/api-services", strings.Replace(apiServicePayload(ownerContact.ID, "1.0000"), "https://linux.do/t/api-service/123", "https://example.com/post?token=secret", 1))
 	addAuth(badSource, ownerSession, "api-service-bad-source")
