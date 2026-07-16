@@ -7,7 +7,7 @@
 
   <key>ProgramArguments</key>
   <array>
-    <string>/bin/zsh</string>
+    <string>/bin/bash</string>
     <string>/Users/CHANGE_ME/crypto/c2c-market/scripts/backup-production-postgres.sh</string>
   </array>
 

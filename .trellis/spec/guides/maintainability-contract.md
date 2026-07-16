@@ -57,3 +57,17 @@ When a browser reports an application-layer error for a request that crosses a C
 - If the local backend returns the expected CORS headers but the public endpoint returns a gateway status, repair the proxy boundary first; do not broaden the backend allowlist.
 - Verify recovery without a temporary foreground process. Stop the diagnostic connector and prove the persistent service still serves health, readiness, credentialed GET, and OPTIONS requests.
 - For this project's Mac-hosted Tunnel, repeated QUIC inactivity timeouts with a passing TCP 7844 pre-check require the documented `http2` transport and LaunchAgent restart procedure.
+
+## LaunchAgent Script Interpreter Contract
+
+When a LaunchAgent invokes a repository script through an explicit shell in
+`ProgramArguments`, that shell must match the script's syntax and shebang. In
+particular, invoke `scripts/backup-production-postgres.sh` with `/bin/bash`;
+running it as `/bin/zsh` leaves Bash-only variables such as `BASH_SOURCE`
+undefined even though the script itself declares a Bash shebang.
+
+`plutil -lint` validates only the plist structure. After installing or changing
+a LaunchAgent, also load or kick-start the installed job and verify all of the
+following: the resolved program/arguments, `last exit code = 0`, no new stderr
+content, and the expected external side effect (for the production backup job,
+both the `.dump` and `.sha256` objects must exist in R2).
