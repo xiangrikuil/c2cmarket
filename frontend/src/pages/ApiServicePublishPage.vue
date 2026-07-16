@@ -7,10 +7,12 @@ import { toast } from 'vue-sonner'
 import AccountPaymentSummarySection from '@/components/api-service-publish/AccountPaymentSummarySection.vue'
 import ApiAccessSourceSection from '@/components/api-service-publish/ApiAccessSourceSection.vue'
 import ApiServicePublishPreview from '@/components/api-service-publish/ApiServicePublishPreview.vue'
+import BillingModeSection from '@/components/api-service-publish/BillingModeSection.vue'
 import MerchantNoteSection from '@/components/api-service-publish/MerchantNoteSection.vue'
 import ModelMultiSelect from '@/components/api-service-publish/ModelMultiSelect.vue'
 import PriceInventorySection from '@/components/api-service-publish/PriceInventorySection.vue'
 import ProviderCategorySelector from '@/components/api-service-publish/ProviderCategorySelector.vue'
+import SelectedModelsPricingTable from '@/components/api-service-publish/SelectedModelsPricingTable.vue'
 import type { ApiProviderCategory, ApiServicePublishForm, DistributionSystem } from '@/components/api-service-publish/types'
 import { toggleSelectedModel } from '@/components/api-service-publish/modelSelection'
 import { apiPublishAssistantSummary } from '@/components/api-service-publish/publishAssistant'
@@ -50,6 +52,7 @@ type Field =
   | 'selectedModels'
   | 'availableCreditUsd'
   | 'quotaExpiresAt'
+  | 'packages'
   | 'paymentWindowMinutes'
   | 'paymentOptions'
   | 'merchantNote'
@@ -123,6 +126,7 @@ const incompatibleSelectedModels = computed(() => selectedModels.value.filter(it
 const missingSelectedModels = computed(() => form.selectedModels.filter(item => item.enabled && !catalogById.value.has(item.modelId)))
 const pendingProviderCategoryLabel = computed(() => pendingProviderCategory.value ? providerCategoryLabels[pendingProviderCategory.value] : '')
 const quotaForMinimumPurchase = computed(() => formatUsdQuotaForCny(form.cnyPerUsdCredit, form.minimumPurchaseCny ?? 0))
+const enabledPackages = computed(() => form.packages.filter(item => item.enabled))
 const enabledPayments = computed(() => enabledPaymentOptions(form))
 const paymentWindowValid = computed(() => isApiPaymentWindowValid(form.paymentWindowMinutes))
 const paymentSettingsComplete = computed(() => isApiPaymentAccountSettingsComplete(form))
@@ -148,6 +152,10 @@ function syncMerchantDisplayNameSnapshot() {
 function syncHiddenPublishFields() {
   syncMerchantDisplayNameSnapshot()
   applySimplifiedApiQuotaDefaults(form)
+  if (form.billingMode !== 'fixed_package') return
+  const prices = enabledPackages.value.map(item => item.priceCny).filter(value => Number.isFinite(value) && value > 0)
+  form.minimumPurchaseCny = prices.length ? Math.min(...prices) : null
+  form.maximumPurchaseCny = prices.length ? Math.max(...prices) : null
 }
 
 syncHiddenPublishFields()
@@ -174,6 +182,17 @@ watch(accountPaymentSettingsValue, settings => {
   form.paymentWindowMinutes = settings.paymentWindowMinutes
   form.paymentOptions = settings.paymentOptions.map(option => ({ ...option }))
 }, { immediate: true })
+
+watch(
+  () => form.selectedModels.filter(item => item.enabled).map(item => item.modelId).sort().join('|'),
+  () => {
+    const enabledModelIds = new Set(form.selectedModels.filter(item => item.enabled).map(item => item.modelId))
+    for (const item of form.packages) {
+      item.modelCatalogIds = item.modelCatalogIds.filter(id => enabledModelIds.has(id))
+    }
+  },
+  { immediate: true },
+)
 
 function setErrors(next: FieldErrors<Field>) {
   for (const key of Object.keys(errors) as Field[]) delete errors[key]
@@ -204,20 +223,42 @@ function validate(requireComplete: boolean) {
     else if (hasMisleadingMerchantName(merchantDisplayName)) next.merchantDisplayName = '商家展示名不能包含官方、担保、兜底等误导词，请到个人中心调整。'
   }
   if (!['sub2api', 'other'].includes(form.distributionSystem)) next.distributionSystem = '请选择接入类型。'
-  if (form.distributionSystem === 'other' && (!Number.isFinite(form.defaultMultiplier) || form.defaultMultiplier <= 0)) {
+  if (!Number.isFinite(form.defaultMultiplier) || form.defaultMultiplier <= 0) {
     next.defaultMultiplier = '默认服务倍率必须大于 0。'
   }
   if (!form.providerCategory) next.providerCategory = '请选择模型大类。'
-  if (!form.cnyPerUsdCredit || form.cnyPerUsdCredit < sub2ApiPricingPolicy.minimumCnyPerUsdCredit || form.cnyPerUsdCredit > sub2ApiPricingPolicy.maximumCnyPerUsdCredit) {
-    next.cnyPerUsdCredit = '每 $1 美元额度售价必须大于 0。'
+  if (form.billingMode === 'metered_credit') {
+    if (!form.cnyPerUsdCredit || form.cnyPerUsdCredit < sub2ApiPricingPolicy.minimumCnyPerUsdCredit || form.cnyPerUsdCredit > sub2ApiPricingPolicy.maximumCnyPerUsdCredit) {
+      next.cnyPerUsdCredit = '每 $1 美元额度售价必须大于 0。'
+    }
+    if (!form.availableCreditUsd || form.availableCreditUsd <= 0) next.availableCreditUsd = '可售美元额度必须大于 0。'
+    const quotaExpiresAtISO = beijingDateTimeInputToISOString(form.quotaExpiresAt)
+    if (!quotaExpiresAtISO) next.quotaExpiresAt = '请填写有效的额度有效至时间。'
+    else if (new Date(quotaExpiresAtISO).getTime() <= Date.now()) next.quotaExpiresAt = '额度有效至时间必须晚于当前时间。'
   }
-  if (!form.availableCreditUsd || form.availableCreditUsd <= 0) next.availableCreditUsd = '可售美元额度必须大于 0。'
-  const quotaExpiresAtISO = beijingDateTimeInputToISOString(form.quotaExpiresAt)
-  if (!quotaExpiresAtISO) next.quotaExpiresAt = '请填写有效的额度有效至时间。'
-  else if (new Date(quotaExpiresAtISO).getTime() <= Date.now()) next.quotaExpiresAt = '额度有效至时间必须晚于当前时间。'
   if (!form.selectedModels.some(item => item.enabled)) next.selectedModels = '至少选择一个模型。'
   if (missingSelectedModels.value.length) next.selectedModels = '已选模型不在当前后端模型目录中，请重新选择。'
   if (incompatibleSelectedModels.value.length) next.selectedModels = '已选模型必须全部属于当前模型大类。'
+  const invalidMultiplier = form.selectedModels.find(item => item.enabled && item.multiplierOverride !== null && (!Number.isFinite(item.multiplierOverride) || item.multiplierOverride <= 0))
+  if (invalidMultiplier) next.selectedModels = '模型单独倍率必须大于 0，留空则使用默认倍率。'
+  if (form.billingMode === 'fixed_package') {
+    const selectedModelIds = new Set(form.selectedModels.filter(item => item.enabled).map(item => item.modelId))
+    const packageIds = new Set<string>()
+    if (!enabledPackages.value.length) next.packages = '至少启用一个限时流量包。'
+    for (const [index, item] of form.packages.entries()) {
+      const label = `套餐 ${index + 1}`
+      if (!item.id || packageIds.has(item.id)) next.packages = `${label} 的标识重复，请删除后重新添加。`
+      packageIds.add(item.id)
+      if (!item.enabled) continue
+      if (!item.name.trim()) next.packages = `${label} 需要填写名称。`
+      else if (!Number.isFinite(item.priceCny) || item.priceCny <= 0) next.packages = `${label} 的价格必须大于 0。`
+      else if (!Number.isFinite(item.panelAllowance) || item.panelAllowance <= 0) next.packages = `${label} 的面板额度必须大于 0。`
+      else if (![1, 3, 7, 30].includes(item.durationDays)) next.packages = `${label} 的有效期只能选 1、3、7 或 30 天。`
+      else if (!Number.isInteger(item.stockTotal) || item.stockTotal < 0) next.packages = `${label} 的库存必须是大于等于 0 的整数。`
+      else if (!item.modelCatalogIds.length) next.packages = `${label} 至少选择一个支持模型。`
+      else if (item.modelCatalogIds.some(id => !selectedModelIds.has(id))) next.packages = `${label} 包含未在服务中启用的模型。`
+    }
+  }
   if (!paymentWindowValid.value) next.paymentWindowMinutes = '买家确认付款窗口固定为 10 分钟。'
   if (!enabledPayments.value.length) {
     next.paymentOptions = '请至少启用一种收款方式。'
@@ -237,12 +278,13 @@ function validate(requireComplete: boolean) {
     delete next.merchantIdentity
     if (form.merchantIdentityMode === 'public_profile' || form.merchantDisplayName.trim()) delete next.merchantDisplayName
     delete next.distributionSystem
-    if (form.distributionSystem === 'sub2api' || (Number.isFinite(form.defaultMultiplier) && form.defaultMultiplier > 0)) delete next.defaultMultiplier
+    if (Number.isFinite(form.defaultMultiplier) && form.defaultMultiplier > 0) delete next.defaultMultiplier
     delete next.providerCategory
     delete next.selectedModels
     delete next.availableCreditUsd
     delete next.quotaExpiresAt
     delete next.cnyPerUsdCredit
+    delete next.packages
     delete next.paymentWindowMinutes
     delete next.paymentOptions
     delete next.merchantNote
@@ -259,10 +301,18 @@ const completeness = computed(() => {
   return [
     form.merchantIdentityMode === 'public_profile' || form.merchantDisplayName.trim() ? done('展示身份') : pending('展示身份'),
     form.distributionSystem ? done('接入类型') : pending('接入类型'),
-    form.distributionSystem === 'sub2api' || (Number.isFinite(form.defaultMultiplier) && form.defaultMultiplier > 0) ? done('服务倍率') : pending('服务倍率'),
-    form.cnyPerUsdCredit && form.cnyPerUsdCredit > 0 ? done('额度售价') : pending('额度售价'),
-    form.availableCreditUsd && form.availableCreditUsd > 0 ? done('可售额度') : pending('可售额度'),
-    beijingDateTimeInputToISOString(form.quotaExpiresAt) ? done('有效时间') : pending('有效时间'),
+    Number.isFinite(form.defaultMultiplier) && form.defaultMultiplier > 0 ? done('服务倍率') : pending('服务倍率'),
+    form.billingMode === 'fixed_package'
+      ? enabledPackages.value.length && enabledPackages.value.every(item => item.name.trim() && item.priceCny > 0 && item.panelAllowance > 0 && [1, 3, 7, 30].includes(item.durationDays) && Number.isInteger(item.stockTotal) && item.stockTotal >= 0 && item.modelCatalogIds.length)
+        ? done('套餐配置')
+        : pending('套餐配置')
+      : form.cnyPerUsdCredit && form.cnyPerUsdCredit > 0 ? done('额度售价') : pending('额度售价'),
+    ...(form.billingMode === 'metered_credit'
+      ? [
+          form.availableCreditUsd && form.availableCreditUsd > 0 ? done('可售额度') : pending('可售额度'),
+          beijingDateTimeInputToISOString(form.quotaExpiresAt) ? done('有效时间') : pending('有效时间'),
+        ]
+      : []),
     accountPaymentSettingsComplete.value && paymentSettingsComplete.value ? done('收款方式') : pending('收款方式'),
     form.providerCategory ? done('模型大类') : pending('模型大类'),
     incompatibleSelectedModels.value.length ? conflict('具体模型') : form.selectedModels.some(item => item.enabled) ? done('具体模型') : pending('具体模型'),
@@ -335,13 +385,10 @@ function setStoreAliasVisibility(event: Event) {
 
 function setDistribution(value: DistributionSystem) {
   form.distributionSystem = value
-  form.billingMode = 'metered_credit'
-  form.usageVisibility = 'merchant_confirmed'
   form.deliveryModes = ['api_key_endpoint']
   if (value === 'sub2api') {
-    form.defaultMultiplier = sub2ApiPricingPolicy.textModelMultiplier
     if (!form.distributionSystemNote.trim() || form.distributionSystemNote.includes('其他 API')) {
-      form.distributionSystemNote = 'Sub2API 标准美元额度，接入细节由双方站外确认。'
+      form.distributionSystemNote = 'Sub2API 接入，额度和用量由双方站外确认。'
     }
     return
   }
@@ -357,6 +404,18 @@ function toggleModel(id: string) {
   const model = catalogById.value.get(id)
   if (!model || modelProviderCategory(model.provider) !== form.providerCategory) return
   form.selectedModels = toggleSelectedModel(form.selectedModels, id)
+}
+
+function removeModel(id: string) {
+  const selection = form.selectedModels.find(item => item.modelId === id)
+  if (selection) selection.enabled = false
+}
+
+function setModelMultiplier(id: string, rawValue: string) {
+  const selection = form.selectedModels.find(item => item.modelId === id)
+  if (!selection) return
+  const value = rawValue.trim()
+  selection.multiplierOverride = value === '' ? null : Number(value)
 }
 
 function publishService() {
@@ -444,7 +503,9 @@ function confirmProviderCategoryChange() {
     </div>
     <div class="api-publish-layout grid min-w-0 gap-4 lg:items-start">
       <section class="min-w-0 space-y-3">
-        <PriceInventorySection :form="form" :errors="errors" />
+        <BillingModeSection :form="form" :catalog-by-id="catalogById" :errors="errors" />
+
+        <PriceInventorySection v-if="form.billingMode === 'metered_credit'" :form="form" :errors="errors" />
 
         <AccountPaymentSummarySection
           :form="form"
@@ -475,7 +536,16 @@ function confirmProviderCategoryChange() {
               当前存在不属于所选模型大类的模型，请切换模型大类并确认清空，或手动移除冲突模型。
             </div>
             <div v-if="catalogLoading" class="rounded-lg border border-border bg-background p-4 text-sm text-muted-foreground">正在加载平台模型目录...</div>
-            <ModelMultiSelect v-else :form="form" :provider-category="form.providerCategory" :catalog="filteredCatalog" :errors="errors" @toggle-model="toggleModel" />
+            <template v-else>
+              <ModelMultiSelect :form="form" :provider-category="form.providerCategory" :catalog="filteredCatalog" :errors="errors" @toggle-model="toggleModel" />
+              <SelectedModelsPricingTable
+                class="mt-4"
+                :form="form"
+                :catalog-by-id="catalogById"
+                @remove-model="removeModel"
+                @set-multiplier="setModelMultiplier"
+              />
+            </template>
           </div>
         </Card>
 
@@ -491,42 +561,45 @@ function confirmProviderCategoryChange() {
       />
     </div>
 
-    <div class="sticky bottom-0 z-30 border-t border-border bg-background/95 p-3 shadow-lg backdrop-blur md:static md:rounded-xl md:border md:bg-card md:p-4 md:shadow-sm">
-      <div class="grid gap-3 md:grid-cols-[minmax(0,1fr)_auto] md:items-center">
-        <div class="space-y-3">
-          <div class="font-semibold">展示身份</div>
-          <p class="text-sm text-muted-foreground">默认不公开社区身份，仅展示商家展示名；买家创建订单后再站外确认 API 细节。</p>
-          <label class="flex items-start gap-2 text-sm">
-            <input
-              type="checkbox"
-              class="mt-0.5 h-4 w-4 accent-primary"
-              :checked="form.merchantIdentityMode === 'store_alias'"
-              @change="setStoreAliasVisibility"
-            />
-            <span>
-              不公开社区身份，仅展示商家展示名
-              <span class="mt-0.5 block text-xs text-muted-foreground">买家仍可看到已绑定 linux.do、信任等级、交易评价与纠纷记录。</span>
-            </span>
-          </label>
-          <div v-if="form.merchantIdentityMode === 'store_alias'" class="max-w-md rounded-md border border-border bg-muted/35 px-3 py-2">
-            <div class="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-              <div class="min-w-0">
-                <div class="text-xs font-medium text-muted-foreground">商家展示名</div>
-                <div class="mt-1 truncate text-sm font-semibold">{{ form.merchantDisplayName || (profileLoading ? '正在读取个人资料...' : '待设置显示名称') }}</div>
-              </div>
-              <RouterLink to="/my/profile" class="shrink-0">
-                <Button size="sm" variant="outline">
-                  去个人资料修改 <ExternalLink class="h-3.5 w-3.5" />
-                </Button>
-              </RouterLink>
+    <Card class="p-4">
+      <div class="space-y-3">
+        <div class="font-semibold">展示身份</div>
+        <p class="text-sm text-muted-foreground">默认不公开社区身份，仅展示商家展示名；买家创建订单后再站外确认 API 细节。</p>
+        <label class="flex items-start gap-2 text-sm">
+          <input
+            type="checkbox"
+            class="mt-0.5 h-4 w-4 accent-primary"
+            :checked="form.merchantIdentityMode === 'store_alias'"
+            @change="setStoreAliasVisibility"
+          />
+          <span>
+            不公开社区身份，仅展示商家展示名
+            <span class="mt-0.5 block text-xs text-muted-foreground">买家仍可看到已绑定 linux.do、信任等级、交易评价与纠纷记录。</span>
+          </span>
+        </label>
+        <div v-if="form.merchantIdentityMode === 'store_alias'" class="max-w-md rounded-md border border-border bg-muted/35 px-3 py-2">
+          <div class="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+            <div class="min-w-0">
+              <div class="text-xs font-medium text-muted-foreground">商家展示名</div>
+              <div class="mt-1 truncate text-sm font-semibold">{{ form.merchantDisplayName || (profileLoading ? '正在读取个人资料...' : '待设置显示名称') }}</div>
             </div>
-            <p v-if="errors.merchantDisplayName" class="text-xs text-destructive">{{ errors.merchantDisplayName }}</p>
-            <p v-else class="text-xs leading-5 text-muted-foreground">{{ merchantDisplayNameStatus }}</p>
+            <RouterLink to="/my/profile" class="shrink-0">
+              <Button size="sm" variant="outline">
+                去个人资料修改 <ExternalLink class="h-3.5 w-3.5" />
+              </Button>
+            </RouterLink>
           </div>
+          <p v-if="errors.merchantDisplayName" class="text-xs text-destructive">{{ errors.merchantDisplayName }}</p>
+          <p v-else class="text-xs leading-5 text-muted-foreground">{{ merchantDisplayNameStatus }}</p>
         </div>
-        <div class="grid gap-2 md:flex md:shrink-0">
-          <Button :disabled="publishMutation.isPending.value || !canSubmit" @click="publishService"><Send class="h-4 w-4" />{{ publishMutation.isPending.value ? '发布中' : !accountPaymentSettingsComplete ? '先配置账号收款' : !paymentSettingsComplete ? '先配置收款方式' : '发布 API 额度' }}</Button>
-          <p v-if="publishBlockReason" class="max-w-xs text-xs leading-5 text-warning md:text-right">{{ publishBlockReason }}</p>
+      </div>
+    </Card>
+
+    <div class="sticky bottom-0 z-30 border-t border-border bg-background/95 p-3 shadow-lg backdrop-blur md:static md:rounded-xl md:border md:bg-card md:p-4 md:shadow-sm">
+      <div class="grid gap-2 md:flex md:items-center md:justify-between">
+        <p v-if="publishBlockReason" class="text-xs leading-5 text-warning md:max-w-xl">{{ publishBlockReason }}</p>
+        <div class="md:ml-auto md:shrink-0">
+          <Button class="w-full md:w-auto" :disabled="publishMutation.isPending.value || !canSubmit" @click="publishService"><Send class="h-4 w-4" />{{ publishMutation.isPending.value ? '发布中' : !accountPaymentSettingsComplete ? '先配置账号收款' : !paymentSettingsComplete ? '先配置收款方式' : form.billingMode === 'fixed_package' ? '发布限时流量包' : '发布 API 额度' }}</Button>
         </div>
       </div>
     </div>

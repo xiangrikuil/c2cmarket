@@ -60,6 +60,8 @@ type Order struct {
 	RequestedUSDAllowanceSnapshot string
 	CNYPerUSDAllowanceSnapshot    string
 	PricingSnapshot               string
+	PackageStockReserved          bool
+	PackageExpiresAt              *time.Time
 	Amount                        string
 	Currency                      string
 	SelectedPaymentMethod         string

@@ -259,15 +259,22 @@ func TestPostgresAPIServiceIntegrityConstraints(t *testing.T) {
 	pool := openTestPool(t, databaseURL)
 	defer pool.Close()
 
-	_, err = pool.Exec(ctx, `
+	var customMultiplier string
+	err = pool.QueryRow(ctx, `
 		INSERT INTO api_service_models (
 			api_service_id, distribution_system, model_catalog_id, model_name_snapshot,
 			provider_snapshot, capabilities_snapshot, merchant_multiplier, enabled
 		)
 		VALUES ($1, 'sub2api', '00000000-0000-0000-0000-000000000a02',
 		        'GPT-4.1 mini', 'OpenAI', ARRAY['text'], 1.2000, true)
-	`, service.ID)
-	assertPostgresConstraintError(t, err, "Sub2API model multiplier must be fixed to 1")
+		RETURNING merchant_multiplier::text
+	`, service.ID).Scan(&customMultiplier)
+	if err != nil {
+		t.Fatalf("insert custom Sub2API model multiplier: %v", err)
+	}
+	if customMultiplier != "1.2000" {
+		t.Fatalf("expected custom Sub2API model multiplier 1.2000, got %s", customMultiplier)
+	}
 
 	_, err = pool.Exec(ctx, `
 		UPDATE api_services

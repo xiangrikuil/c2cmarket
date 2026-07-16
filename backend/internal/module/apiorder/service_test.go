@@ -315,6 +315,130 @@ func TestConcurrentMeteredOrdersCannotOversellAllowance(t *testing.T) {
 	}
 }
 
+func TestLimitedPackageStockLifecycleAndDeliveryExpiry(t *testing.T) {
+	now := time.Date(2026, 7, 16, 10, 0, 0, 0, time.UTC)
+	first := fixedPackageIntent("intent-package-cancel")
+	second := fixedPackageIntent("intent-package-paid")
+	intents := &testMultiIntentResolver{intents: map[string]apiintent.Intent{
+		first.ID:  first,
+		second.ID: second,
+	}}
+	serviceRecord := testFixedPackageService(now, 1)
+	service := NewService(nil, intents, &testPublicServiceResolver{service: serviceRecord}, nil, nil, func() time.Time { return now })
+
+	firstCompletion, appErr := service.CreateWithIdempotency(context.Background(), "buyer-1", "api-order-create", "package-create-cancel", "package-create-cancel-hash", CreateInput{
+		IntentID:      first.ID,
+		PaymentMethod: apimarket.PaymentMethodWechat,
+		RequestID:     "package-create-cancel",
+	}, testAPIOrderCompletion)
+	if appErr != nil {
+		t.Fatalf("create cancellable package order: %v", appErr)
+	}
+	if service.availablePackageStock["package-1"] != 0 || !service.orders[firstCompletion.ResourceID].PackageStockReserved {
+		t.Fatalf("expected package stock reservation, stock=%d order=%+v", service.availablePackageStock["package-1"], service.orders[firstCompletion.ResourceID])
+	}
+	firstOrder := service.orders[firstCompletion.ResourceID]
+	_, appErr = service.CancelWithIdempotency(context.Background(), "buyer-1", "api-order-cancel", "package-cancel", "package-cancel-hash", ActionInput{
+		OrderID:         firstOrder.ID,
+		Reason:          "尚未付款，取消订单。",
+		ExpectedVersion: firstOrder.Version,
+		RequestID:       "package-cancel",
+	}, testAPIOrderCompletion)
+	if appErr != nil {
+		t.Fatalf("cancel package order: %v", appErr)
+	}
+	if service.availablePackageStock["package-1"] != 1 || service.orders[firstOrder.ID].PackageStockReserved {
+		t.Fatalf("expected cancellation to release stock exactly once")
+	}
+
+	secondCompletion, appErr := service.CreateWithIdempotency(context.Background(), "buyer-1", "api-order-create", "package-create-paid", "package-create-paid-hash", CreateInput{
+		IntentID:      second.ID,
+		PaymentMethod: apimarket.PaymentMethodWechat,
+		RequestID:     "package-create-paid",
+	}, testAPIOrderCompletion)
+	if appErr != nil {
+		t.Fatalf("create paid package order: %v", appErr)
+	}
+	paidOrder := service.orders[secondCompletion.ResourceID]
+	_, appErr = service.SubmitPaymentWithIdempotency(context.Background(), "buyer-1", "api-order-submit-payment", "package-submit-payment", "package-submit-payment-hash", ActionInput{
+		OrderID:         paidOrder.ID,
+		PaymentSummary:  "已按订单金额付款。",
+		ExpectedVersion: paidOrder.Version,
+		RequestID:       "package-submit-payment",
+	}, testAPIOrderCompletion)
+	if appErr != nil {
+		t.Fatalf("submit package payment: %v", appErr)
+	}
+	paidOrder = service.orders[paidOrder.ID]
+	_, appErr = service.ConfirmPaymentWithIdempotency(context.Background(), "seller-1", "api-order-confirm-payment", "package-confirm-payment", "package-confirm-payment-hash", ActionInput{
+		OrderID:         paidOrder.ID,
+		ExpectedVersion: paidOrder.Version,
+		RequestID:       "package-confirm-payment",
+	}, testAPIOrderCompletion)
+	if appErr != nil {
+		t.Fatalf("confirm package payment: %v", appErr)
+	}
+	paidOrder = service.orders[paidOrder.ID]
+	if service.availablePackageStock["package-1"] != 0 || paidOrder.PackageStockReserved {
+		t.Fatalf("expected confirmed payment to consume stock permanently")
+	}
+	_, appErr = service.SubmitDeliveryWithIdempotency(context.Background(), "seller-1", "api-order-submit-delivery", "package-submit-delivery", "package-submit-delivery-hash", ActionInput{
+		OrderID:         paidOrder.ID,
+		ExpectedVersion: paidOrder.Version,
+		RequestID:       "package-submit-delivery",
+		DeliveryCredential: DeliveryCredentialInput{
+			DeliveryKind: DeliveryKindAPIKeyEndpoint,
+			APIBaseURL:   "https://api.example.com/v1",
+			APIKey:       "sk-package-test",
+		},
+	}, testAPIOrderCompletion)
+	if appErr != nil {
+		t.Fatalf("submit package delivery: %v", appErr)
+	}
+	delivered := service.orders[paidOrder.ID]
+	wantExpiry := now.AddDate(0, 0, 3)
+	if delivered.PackageExpiresAt == nil || !delivered.PackageExpiresAt.Equal(wantExpiry) {
+		t.Fatalf("expected delivery-based package expiry %s, got %v", wantExpiry, delivered.PackageExpiresAt)
+	}
+}
+
+func TestConcurrentLimitedPackageOrdersCannotReserveLastStockTwice(t *testing.T) {
+	now := time.Date(2026, 7, 16, 10, 0, 0, 0, time.UTC)
+	first := fixedPackageIntent("intent-package-concurrent-1")
+	second := fixedPackageIntent("intent-package-concurrent-2")
+	intents := &testMultiIntentResolver{intents: map[string]apiintent.Intent{first.ID: first, second.ID: second}}
+	service := NewService(nil, intents, &testPublicServiceResolver{service: testFixedPackageService(now, 1)}, nil, nil, func() time.Time { return now })
+
+	results := make(chan *domain.AppError, 2)
+	var wait sync.WaitGroup
+	for index, intentID := range []string{first.ID, second.ID} {
+		wait.Add(1)
+		go func(index int, intentID string) {
+			defer wait.Done()
+			_, appErr := service.CreateWithIdempotency(context.Background(), "buyer-1", "api-order-create", fmt.Sprintf("package-concurrent-%d", index), fmt.Sprintf("package-concurrent-hash-%d", index), CreateInput{
+				IntentID:      intentID,
+				PaymentMethod: apimarket.PaymentMethodWechat,
+				RequestID:     fmt.Sprintf("package-concurrent-%d", index),
+			}, testAPIOrderCompletion)
+			results <- appErr
+		}(index, intentID)
+	}
+	wait.Wait()
+	close(results)
+	successes := 0
+	conflicts := 0
+	for appErr := range results {
+		if appErr == nil {
+			successes++
+		} else if appErr.Status == http.StatusConflict {
+			conflicts++
+		}
+	}
+	if successes != 1 || conflicts != 1 || len(service.orders) != 1 || service.availablePackageStock["package-1"] != 0 {
+		t.Fatalf("expected one successful last-stock reservation, successes=%d conflicts=%d orders=%d stock=%d", successes, conflicts, len(service.orders), service.availablePackageStock["package-1"])
+	}
+}
+
 func TestNewOrderRejectsLegacyUSDTPaymentOption(t *testing.T) {
 	now := time.Date(2026, 6, 27, 12, 0, 0, 0, time.UTC)
 	service := testOrderableService(now)
@@ -438,6 +562,51 @@ func testOrderableService(now time.Time) apimarket.Service {
 		UpdatedAt: now,
 		Version:   1,
 	}
+}
+
+func fixedPackageIntent(id string) apiintent.Intent {
+	return apiintent.Intent{
+		ID:                      id,
+		APIServiceID:            "service-1",
+		BuyerUserID:             "buyer-1",
+		OwnerUserID:             "seller-1",
+		Status:                  apiintent.StatusOpen,
+		RequestedCNYAmount:      "9.90",
+		SelectedAccessMode:      "fixed_package_offsite",
+		SelectedPackageID:       "package-1",
+		SelectedPackageSnapshot: `{"id":"package-1","name":"3 天套餐","priceCny":"9.90","panelAllowance":"5.000000","durationDays":3,"models":[{"serviceModelId":"service-model-1","modelCatalogId":"model-1","modelPriceVersionId":"price-version-1","modelNameSnapshot":"GPT-5.6","merchantMultiplier":"0.0100"}]}`,
+		BillingModeSnapshot:     apimarket.ServiceBillingModeFixedPackage,
+	}
+}
+
+func testFixedPackageService(now time.Time, stock int) apimarket.Service {
+	duration := 3
+	service := testOrderableService(now)
+	service.BillingMode = apimarket.ServiceBillingModeFixedPackage
+	service.DeclaredCNYPerUSDAllowance = ""
+	service.DeclaredMaxUSDAllowancePerIntent = ""
+	service.AvailableUSDAllowance = ""
+	service.QuotaExpiresAt = nil
+	service.AccessModes = []apimarket.ServiceAccessMode{{AccessMode: "fixed_package_offsite"}}
+	service.Packages = []apimarket.ServicePackage{{
+		ID:             "package-1",
+		Name:           "3 天 GPT-5.6 套餐",
+		PriceCNY:       "9.90",
+		PanelAllowance: "5.000000",
+		DurationDays:   &duration,
+		StockTotal:     stock,
+		StockAvailable: stock,
+		Enabled:        true,
+		Models: []apimarket.ServicePackageModel{{
+			ServiceModelID:      "service-model-1",
+			ModelCatalogID:      "model-1",
+			ModelPriceVersionID: "price-version-1",
+			ModelNameSnapshot:   "GPT-5.6",
+			ProviderSnapshot:    "OpenAI",
+			MerchantMultiplier:  "0.0100",
+		}},
+	}}
+	return apimarket.WithOrderability(service)
 }
 
 func testAPIOrderCompletion(order Order) (idempotency.Completion, *domain.AppError) {

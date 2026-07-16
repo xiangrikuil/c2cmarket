@@ -880,6 +880,28 @@ html[data-theme="minimal-modern"] .account-security-side {
   box-shadow: 0 24px 44px -32px rgb(8 145 178 / 0.42);
 }
 
+.api-package-card {
+  min-height: 390px;
+  border-color: color-mix(in oklab, #2563eb 16%, var(--border));
+  background: linear-gradient(155deg, #ffffff 0%, #f8fbff 100%);
+  box-shadow: 0 16px 38px -34px rgb(30 64 175 / 0.48);
+  transition: transform 160ms ease, border-color 160ms ease, box-shadow 160ms ease;
+}
+
+.api-package-card:hover {
+  transform: translateY(-2px);
+  border-color: color-mix(in oklab, #2563eb 38%, var(--border));
+  box-shadow: 0 24px 44px -32px rgb(37 99 235 / 0.4);
+}
+
+.api-package-card-logo {
+  background: linear-gradient(145deg, #2563eb, #0891b2);
+}
+
+.api-package-card-metrics {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
 .api-service-card-head {
   display: flex;
   min-width: 0;

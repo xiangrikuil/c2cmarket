@@ -8,7 +8,9 @@ import { Input } from '@/components/ui/input'
 import { Card } from '@/components/ui/card'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import TablePagination from '@/components/market/TablePagination.vue'
+import ApiPackageCard from '@/components/api-market/ApiPackageCard.vue'
 import { usePagination } from '@/composables/usePagination'
+import { rankApiPackages } from '@/lib/apiPackageRecommendation'
 import {
   getApiMerchantAvatarText,
   getApiMerchantDisplayName,
@@ -22,10 +24,10 @@ import {
   type Sub2ApiMarketFilters,
   type Sub2ApiMarketSort,
 } from '@/lib/api'
-import { useOtherApiMarketQuery, useSub2ApiMarketQuery } from '@/queries/useMarketQueries'
+import { useApiServices, useOtherApiMarketQuery, useSub2ApiMarketQuery } from '@/queries/useMarketQueries'
 
 type MerchantFilter = 'all' | 'personal_first' | 'personal' | 'api'
-type Panel = 'sub2api' | 'other'
+type Panel = 'sub2api' | 'packages' | 'other'
 type OnlineFilter = 'all' | 'online' | 'offline'
 type ImageFilter = 'all' | 'supported' | 'none'
 type BillingFilter = 'all' | ApiBillingMode
@@ -34,7 +36,8 @@ type DistributionFilter = OtherApiMarketFilters['distributionSystem']
 const route = useRoute()
 const router = useRouter()
 
-const activePanel = ref<Panel>(route.query.panel === 'other' ? 'other' : 'sub2api')
+const routePanel = (value: unknown): Panel => value === 'packages' ? 'packages' : value === 'other' ? 'other' : 'sub2api'
+const activePanel = ref<Panel>(routePanel(route.query.panel))
 
 const sub2Search = ref('')
 const sub2Model = ref('全部')
@@ -52,11 +55,13 @@ const otherBilling = ref<BillingFilter>('all')
 const otherMinimumPurchase = ref<MinimumPurchaseFilter>('all')
 const otherOnline = ref<OnlineFilter>('all')
 const otherSort = ref<OtherApiMarketSort>('recommended')
+const packageModel = ref('')
+const packageDuration = ref('')
 
 watch(
   () => route.query.panel,
   value => {
-    const next = value === 'other' ? 'other' : 'sub2api'
+    const next = routePanel(value)
     activePanel.value = next
     if (value !== next) {
       router.replace({ query: { ...route.query, panel: next } })
@@ -106,14 +111,28 @@ const otherFilters = computed<OtherApiMarketFilters>(() => ({
 
 const { data: sub2Data } = useSub2ApiMarketQuery(sub2Filters)
 const { data: otherData } = useOtherApiMarketQuery(otherFilters)
+const { data: allServicesData } = useApiServices()
 
-const sub2Rows = computed(() => sub2Data.value ?? [])
-const otherRows = computed(() => otherData.value ?? [])
+const sub2Rows = computed(() => (sub2Data.value ?? []).filter(row => row.billingMode !== 'fixed_package'))
+const otherRows = computed(() => (otherData.value ?? []).filter(row => row.billingMode !== 'fixed_package'))
+const packageServices = computed(() => (allServicesData.value ?? []).filter(row => row.billingMode === 'fixed_package'))
+const packageModelOptions = computed(() => {
+  const options = new Map<string, string>()
+  for (const service of packageServices.value) {
+    for (const item of service.packages ?? []) {
+      if (!item.enabled || item.stockAvailable <= 0) continue
+      for (const model of item.models) options.set(model.modelCatalogId, model.modelName)
+    }
+  }
+  return [...options.entries()].map(([id, name]) => ({ id, name })).sort((left, right) => left.name.localeCompare(right.name))
+})
+const packageRows = computed(() => rankApiPackages(packageServices.value, packageModel.value, Number(packageDuration.value)))
+const packageReady = computed(() => Boolean(packageModel.value && packageDuration.value))
+const totalAvailablePackages = computed(() => packageServices.value.reduce((total, service) => total + (service.packages ?? []).filter(item => item.enabled && item.stockAvailable > 0).length, 0))
 const sub2Pagination = usePagination(sub2Rows)
 const otherPagination = usePagination(otherRows)
 
-const activeRows = computed(() => activePanel.value === 'sub2api' ? sub2Rows.value : otherRows.value)
-const activePanelLabel = computed(() => activePanel.value === 'sub2api' ? 'Sub2API 标准额度' : '其他 API 接入')
+const activePanelLabel = computed(() => activePanel.value === 'sub2api' ? 'Sub2API 美元额度' : activePanel.value === 'packages' ? '限时流量包' : '其他 API 接入')
 
 const sub2Chips = computed(() => {
   const chips: { label: string, reset: () => void }[] = []
@@ -146,7 +165,14 @@ const otherSignalStats = computed(() => {
   ]
 })
 
-const activeSignalStats = computed(() => activePanel.value === 'sub2api' ? sub2SignalStats.value : otherSignalStats.value)
+const packageSignalStats = computed(() => [
+  { label: '在售套餐', value: `${totalAvailablePackages.value}`, detail: `${packageServices.value.length} 个服务`, tone: 'primary' },
+  { label: '精确模型', value: `${packageModelOptions.value.length}`, detail: '先选择再推荐', tone: 'success' },
+  { label: '有效期', value: '1 / 3 / 7 / 30', detail: '交付后开始计算', tone: 'warning' },
+  { label: '当前结果', value: packageReady.value ? `${packageRows.value.length}` : '待选择', detail: '只保留综合推荐', tone: 'info' },
+])
+
+const activeSignalStats = computed(() => activePanel.value === 'sub2api' ? sub2SignalStats.value : activePanel.value === 'packages' ? packageSignalStats.value : otherSignalStats.value)
 
 function onlineCount(rows: ApiService[]) {
   return rows.filter(row => row.publiclyOrderable).length
@@ -235,6 +261,10 @@ function visibleBadges(items: string[]) {
   return { shown: items.slice(0, 3), hidden: Math.max(0, items.length - 3) }
 }
 
+function modelMultiplierBadges(row: ApiService) {
+  return row.modelMultipliers.map(item => `${item.model} · ${item.multiplier}`)
+}
+
 function statusLabel(row: Pick<ApiService, 'state' | 'online' | 'publiclyOrderable'>) {
   if (row.state === 'reviewing') return { text: '审核中', dot: 'bg-amber-500', textClass: 'text-amber-700' }
   if (row.state === 'paused') return { text: '暂停接单', dot: 'bg-red-500', textClass: 'text-red-700' }
@@ -294,6 +324,19 @@ function openService(event: MouseEvent | KeyboardEvent, row: ApiService) {
       <button
         type="button"
         class="api-market-panel-card"
+        :class="activePanel === 'packages' ? 'api-market-panel-card--active' : ''"
+        @click="setPanel('packages')"
+      >
+        <span class="api-market-panel-icon"><CircleDollarSign class="h-4 w-4" /></span>
+        <span class="min-w-0">
+          <span class="api-market-panel-title">限时流量包</span>
+          <span class="api-market-panel-desc">按精确模型和有效期比较综合性价比</span>
+        </span>
+        <Badge variant="trust">{{ totalAvailablePackages }} 个</Badge>
+      </button>
+      <button
+        type="button"
+        class="api-market-panel-card"
         :class="activePanel === 'sub2api' ? 'api-market-panel-card--active' : ''"
         @click="setPanel('sub2api')"
       >
@@ -325,18 +368,19 @@ function openService(event: MouseEvent | KeyboardEvent, row: ApiService) {
         <div class="min-w-0">
           <div class="flex flex-wrap items-center gap-2">
             <div class="font-semibold text-slate-950">Sub2API 默认优先</div>
-            <Badge variant="verified">固定 1.00x</Badge>
+            <Badge variant="verified">默认 1.00x</Badge>
             <Badge variant="secondary">可售美元额度</Badge>
           </div>
           <p class="mt-1 text-sm leading-6 text-muted-foreground">
-            文本与生图倍率固定 1.00x；买家主要比较美元额度售价、生图价格、商户承诺和履约记录。可售美元额度是商户声明的最大可购买额度参考，不由平台发放或托管；接入细节和用量核对由双方站外确认。
+            默认倍率为 1，商家可按实际上游规则填写 0.01 等倍率，并可为具体模型单独设置。买家主要比较美元额度售价、模型倍率、商户承诺和履约记录；接入细节和用量核对由双方站外确认。
           </p>
         </div>
       </div>
 
       <div class="api-market-filterbar c2c-filterbar rounded-lg border border-border bg-card px-3 py-3">
         <div class="api-market-source-tabs mb-3 flex flex-wrap gap-2 border-b border-border pb-3">
-          <Button size="sm" variant="default" @click="setPanel('sub2api')">Sub2API 标准额度</Button>
+          <Button size="sm" variant="default" @click="setPanel('sub2api')">Sub2API 美元额度</Button>
+          <Button size="sm" variant="outline" @click="setPanel('packages')">限时流量包</Button>
           <Button size="sm" variant="outline" @click="setPanel('other')">其他 API 接入</Button>
         </div>
         <div class="grid gap-2 xl:grid-cols-[minmax(220px,1fr)_120px_130px_110px_150px_auto_150px]">
@@ -439,7 +483,7 @@ function openService(event: MouseEvent | KeyboardEvent, row: ApiService) {
               <span class="api-service-card-logo"><Code2 class="h-5 w-5" /></span>
               <div class="min-w-0 flex-1">
                 <div class="flex flex-wrap items-center gap-2"><h2 class="truncate font-semibold text-slate-950">{{ row.title }}</h2><Badge variant="verified">标准额度</Badge></div>
-                <div class="mt-1 flex flex-wrap gap-1"><Badge v-for="m in visibleBadges(row.models).shown" :key="m" variant="model">{{ m }}</Badge><Badge v-if="visibleBadges(row.models).hidden" variant="model">+{{ visibleBadges(row.models).hidden }}</Badge></div>
+                <div class="mt-1 flex flex-wrap gap-1"><Badge v-for="m in visibleBadges(modelMultiplierBadges(row)).shown" :key="m" variant="model">{{ m }}</Badge><Badge v-if="visibleBadges(modelMultiplierBadges(row)).hidden" variant="model">+{{ visibleBadges(modelMultiplierBadges(row)).hidden }}</Badge></div>
               </div>
               <div class="shrink-0 text-right"><div class="api-service-card-price">{{ creditPriceLabel(row) }}</div><div class="mt-1 text-xs text-muted-foreground">可售 {{ formatUsdQuota(row.balance) }}</div></div>
             </div>
@@ -465,6 +509,45 @@ function openService(event: MouseEvent | KeyboardEvent, row: ApiService) {
       </template>
     </section>
 
+      <section v-else-if="activePanel === 'packages'" class="space-y-4">
+        <div class="api-market-filterbar rounded-lg border border-border bg-card px-3 py-3">
+          <div class="api-market-source-tabs mb-3 flex flex-wrap gap-2 border-b border-border pb-3">
+            <Button size="sm" variant="outline" @click="setPanel('sub2api')">Sub2API 美元额度</Button>
+            <Button size="sm" variant="default" @click="setPanel('packages')">限时流量包</Button>
+            <Button size="sm" variant="outline" @click="setPanel('other')">其他 API 接入</Button>
+          </div>
+          <div class="grid gap-3 md:grid-cols-2">
+            <label class="grid gap-1.5 text-xs font-medium text-muted-foreground">
+              精确模型
+              <select v-model="packageModel" class="api-market-select h-10">
+                <option value="">请选择模型</option>
+                <option v-for="model in packageModelOptions" :key="model.id" :value="model.id">{{ model.name }}</option>
+              </select>
+            </label>
+            <label class="grid gap-1.5 text-xs font-medium text-muted-foreground">
+              套餐有效期
+              <select v-model="packageDuration" class="api-market-select h-10">
+                <option value="">请选择有效期</option>
+                <option value="1">1 天</option>
+                <option value="3">3 天</option>
+                <option value="7">7 天</option>
+                <option value="30">30 天</option>
+              </select>
+            </label>
+          </div>
+          <p class="mt-3 border-t border-border pt-3 text-xs leading-5 text-muted-foreground">选择后按价值 60%、履约 25%、响应 10%、新鲜度 5% 计算综合推荐；倍率和价值成本按商家声明估算。</p>
+        </div>
+
+        <div v-if="!packageReady" class="rounded-lg border border-dashed border-border bg-card p-8 text-center">
+          <div class="text-sm font-semibold">先选择精确模型和有效期</div>
+          <p class="mt-2 text-xs text-muted-foreground">选择完成后才会展示可购买套餐和综合推荐顺序。</p>
+        </div>
+        <div v-else-if="packageRows.length === 0" class="rounded-lg border border-border bg-card p-8 text-center text-sm text-muted-foreground">当前模型和有效期下暂无有库存的套餐。</div>
+        <div v-else class="api-service-card-grid">
+          <ApiPackageCard v-for="(row, index) in packageRows" :key="row.package.id" :row="row" :rank="index + 1" />
+        </div>
+      </section>
+
       <section v-else class="space-y-4">
       <div class="api-market-notice">
         <div class="api-market-notice-icon"><CircleDollarSign class="h-4 w-4" /></div>
@@ -480,7 +563,8 @@ function openService(event: MouseEvent | KeyboardEvent, row: ApiService) {
 
       <div class="api-market-filterbar c2c-filterbar rounded-lg border border-border bg-card px-3 py-3">
         <div class="api-market-source-tabs mb-3 flex flex-wrap gap-2 border-b border-border pb-3">
-          <Button size="sm" variant="outline" @click="setPanel('sub2api')">Sub2API 标准额度</Button>
+          <Button size="sm" variant="outline" @click="setPanel('sub2api')">Sub2API 美元额度</Button>
+          <Button size="sm" variant="outline" @click="setPanel('packages')">限时流量包</Button>
           <Button size="sm" variant="default" @click="setPanel('other')">其他 API 接入</Button>
         </div>
         <div class="grid gap-2 xl:grid-cols-[minmax(220px,1fr)_150px_150px_120px_auto_150px]">
