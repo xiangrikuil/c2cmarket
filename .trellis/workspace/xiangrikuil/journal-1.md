@@ -305,3 +305,43 @@ Fixed Cloudflare frontend build compatibility, committed the complete marketplac
 ### Next Steps
 
 - None - task complete
+
+
+## Session 9: Staging marketplace consistency PR
+
+**Date**: 2026-07-17
+**Task**: Staging marketplace consistency PR
+**Package**: frontend
+**Branch**: `codex/staging-marketplace-consistency`
+
+### Summary
+
+Rebased the workspace onto current staging, preserved three pending fixes, verified backend/frontend and migrations, and committed all Git-visible changes for PR review.
+
+### Main Changes
+
+- Created `codex/staging-marketplace-consistency` from current `origin/staging` and preserved the three pending operational/OAuth fixes.
+- Committed the full marketplace identity, order, account-navigation, email, API/OpenAPI, migration, test, and Trellis spec changes as `ff8dba1`.
+- Documented migration 52 after verifying both an applied development database upgrade and an isolated empty-database migration chain.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `ff8dba1` | (see git log) |
+
+### Testing
+
+- [OK] `go test ./...`
+- [OK] Frontend Vitest: 40 files / 134 tests
+- [OK] Vue type-check and real-API production build
+- [OK] Applied database migration through Version 52 and isolated migration 1 through 52
+- [OK] `git diff --check`
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
