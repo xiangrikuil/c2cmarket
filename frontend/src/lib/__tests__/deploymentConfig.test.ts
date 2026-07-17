@@ -72,6 +72,10 @@ describe('Cloudflare Worker deployment config', () => {
       new URL('../../../../.github/workflows/release-backend.yml', import.meta.url),
       'utf8',
     )
+    const stagingJobStart = release.indexOf('  deploy-staging:')
+    const productionJobStart = release.indexOf('  deploy-production:')
+    const stagingJob = release.slice(stagingJobStart, productionJobStart)
+    const productionJob = release.slice(productionJobStart)
 
     expect(ci).toContain('branches: [staging, main]')
     expect(ci).toContain("if: github.event_name == 'push' && github.ref == 'refs/heads/staging'")
@@ -82,7 +86,15 @@ describe('Cloudflare Worker deployment config', () => {
     expect(release).toContain('ghcr.io/xiangrikuil/c2cmarket-backend')
     expect(release).toContain('${{ inputs.git_sha }}')
     expect(release).toContain('password: ${{ secrets.GITHUB_TOKEN }}')
-    expect(release).toContain('name: ${{ inputs.deploy_environment }}')
+    expect(stagingJobStart).toBeGreaterThan(-1)
+    expect(productionJobStart).toBeGreaterThan(stagingJobStart)
+    expect(stagingJob).toContain("if: inputs.deploy_environment == 'staging'")
+    expect(stagingJob).toContain('name: staging')
+    expect(stagingJob).toContain('steps: &deploy-backend-steps')
+    expect(productionJob).toContain("if: inputs.deploy_environment == 'production'")
+    expect(productionJob).toContain('name: production')
+    expect(productionJob).toContain('steps: *deploy-backend-steps')
+    expect(release).not.toContain('name: ${{ inputs.deploy_environment }}')
     expect(release).toContain('-o IdentitiesOnly=yes')
     expect(release).not.toContain('StrictHostKeyChecking=no')
     expect(release).not.toContain('root@')
