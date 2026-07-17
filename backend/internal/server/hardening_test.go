@@ -260,7 +260,7 @@ func TestOAuthProfileAcceptsNumericLinuxDoUserID(t *testing.T) {
 			if authorization := r.Header.Get("Authorization"); authorization != "Bearer provider-access-token" {
 				t.Fatalf("unexpected authorization header %q", authorization)
 			}
-			_, _ = w.Write([]byte(`{"id":12345,"username":"orbit","name":"Orbit","trust_level":3}`))
+			_, _ = w.Write([]byte(`{"id":12345,"username":"orbit","name":"Orbit","avatar_template":"https://linux.do/user_avatar/linux.do/orbit/{size}/42_2.png","trust_level":3}`))
 		default:
 			http.NotFound(w, r)
 		}
@@ -287,6 +287,10 @@ func TestOAuthProfileAcceptsNumericLinuxDoUserID(t *testing.T) {
 	}
 	if profile.Username != "orbit" || profile.DisplayName != "Orbit" || profile.TrustLevel != 3 {
 		t.Fatalf("unexpected oauth profile: %+v", profile)
+	}
+	wantAvatarURL := "https://linux.do/user_avatar/linux.do/orbit/288/42_2.png"
+	if profile.AvatarURL != wantAvatarURL || profile.LinuxDoAvatarURL != wantAvatarURL {
+		t.Fatalf("expected normalized linux.do avatar %q, got %+v", wantAvatarURL, profile)
 	}
 }
 

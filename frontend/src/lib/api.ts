@@ -145,6 +145,7 @@ import {
   backendOwnerAPIIntents,
   backendOwnerAPIServiceById,
   backendOwnerAPIServices,
+  backendOpenAPIOrderDispute,
   backendPauseAPIService,
   backendPublishAPIService,
   backendReadAPIOrderPaymentInstructions,
@@ -3845,7 +3846,7 @@ export async function markCarpoolApplicationContacted(id: string) {
       type: 'buyer_contacted',
       fromStatus,
       toStatus: 'contacted',
-      note: '买家已记录完成站外联系。',
+      note: '买家已记录与车主完成联系。',
     })
   })
 }
@@ -4304,6 +4305,21 @@ export async function confirmApiOrderComplete(id: string, version: number) {
     if (order.status !== 'delivery_submitted') throw new Error('只有商户已交付的订单可以确认完成。')
     order.status = 'completed'
     order.completedAt = nowText()
+  })
+}
+
+export async function openApiOrderDispute(id: string, reason: string, version: number, perspective: 'buyer' | 'merchant') {
+  if (shouldUseRealBackend()) return backendOpenAPIOrderDispute(id, reason, version, perspective)
+  await wait()
+  return updateApiOrder(id, order => {
+    if (order.version !== version) throw new Error('订单已更新，请刷新后重试。')
+    if (perspective === 'buyer' && order.buyerId !== currentBuyerId) throw new Error('无权操作该订单。')
+    if (perspective === 'merchant' && order.sellerId !== currentMerchantId) throw new Error('无权操作该订单。')
+    if (order.status === 'cancelled' || order.status === 'completed' || order.disputeStatus === 'open') {
+      throw new Error('当前订单不能再次申请平台介入。')
+    }
+    if (!reason.trim()) throw new Error('请填写订单问题说明。')
+    order.disputeStatus = 'open'
   })
 }
 

@@ -84,6 +84,7 @@ type apiServiceResponse struct {
 	MerchantIdentityMode             string                            `json:"merchantIdentityMode"`
 	MerchantDisplayName              string                            `json:"merchantDisplayName,omitempty"`
 	MerchantProfileSlug              string                            `json:"merchantProfileSlug,omitempty"`
+	MerchantAvatarURL                string                            `json:"merchantAvatarUrl,omitempty"`
 	OwnerContactMethodID             string                            `json:"ownerContactMethodId,omitempty"`
 	Title                            string                            `json:"title"`
 	ShortDescription                 string                            `json:"shortDescription"`
@@ -125,6 +126,7 @@ type publicAPIServiceResponse struct {
 	MerchantIdentityMode             string                         `json:"merchantIdentityMode"`
 	MerchantDisplayName              string                         `json:"merchantDisplayName,omitempty"`
 	MerchantProfileSlug              string                         `json:"merchantProfileSlug,omitempty"`
+	MerchantAvatarURL                string                         `json:"merchantAvatarUrl,omitempty"`
 	Title                            string                         `json:"title"`
 	ShortDescription                 string                         `json:"shortDescription"`
 	SourceURL                        string                         `json:"sourceUrl,omitempty"`
@@ -951,6 +953,7 @@ func toPublicAPIServiceResponse(service apimarket.Service) publicAPIServiceRespo
 		MerchantIdentityMode:             service.MerchantIdentityMode,
 		MerchantDisplayName:              service.MerchantDisplayName,
 		MerchantProfileSlug:              service.MerchantProfileSlug,
+		MerchantAvatarURL:                service.MerchantAvatarURL,
 		Title:                            service.Title,
 		ShortDescription:                 service.ShortDescription,
 		SourceURL:                        service.SourceURL,
@@ -995,6 +998,7 @@ func toAPIServiceResponse(service apimarket.Service) apiServiceResponse {
 		MerchantIdentityMode:             service.MerchantIdentityMode,
 		MerchantDisplayName:              service.MerchantDisplayName,
 		MerchantProfileSlug:              service.MerchantProfileSlug,
+		MerchantAvatarURL:                service.MerchantAvatarURL,
 		OwnerContactMethodID:             service.OwnerContactMethodID,
 		Title:                            service.Title,
 		ShortDescription:                 service.ShortDescription,

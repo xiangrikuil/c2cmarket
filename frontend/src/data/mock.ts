@@ -601,6 +601,7 @@ export type ApiService = {
   merchant: string
   merchantIdentityMode: ApiMerchantIdentityMode
   merchantDisplayName: string
+  merchantAvatarUrl?: string
   trustLevel: number
   merchantType: '个人车主' | '商户' | '可信新车主'
   models: string[]
@@ -665,6 +666,7 @@ export type ApiService = {
 export type PublicMerchantProfile = {
   username: string
   displayName: string
+  avatarUrl?: string | null
   avatarText: string
   merchantId: string
   identity: '个人商户' | '可信新商户' | 'API 商户'
@@ -1244,7 +1246,7 @@ export const carpoolApplicationEvents: CarpoolApplicationEvent[] = [
   { id: 'ride-event-1', applicationId: 'ride-app-1', actorId: 'buyer-zhichuan', actorLabel: '纸船', actorRole: 'buyer', type: 'application_created', toStatus: 'pending_owner', note: '买家提交上车申请，等待车主处理。', createdAt: '2026-06-19 16:18' },
   { id: 'ride-event-2', applicationId: 'ride-app-2', actorId: 'buyer-muzhou', actorLabel: '木舟', actorRole: 'buyer', type: 'application_created', toStatus: 'pending_owner', note: '买家提交上车申请。', createdAt: '2026-06-19 15:55' },
   { id: 'ride-event-3', applicationId: 'ride-app-2', actorId: 'owner-orbit', actorLabel: 'orbit', actorRole: 'owner', type: 'owner_accepted', fromStatus: 'pending_owner', toStatus: 'accepted_reserved', note: '车主接受申请，预留 1 席 30 分钟。', createdAt: '2026-06-19 16:35' },
-  { id: 'ride-event-4', applicationId: 'ride-app-3', actorId: 'buyer-demo-user', actorLabel: 'demo_user', actorRole: 'buyer', type: 'buyer_contacted', fromStatus: 'accepted_reserved', toStatus: 'contacted', note: '买家已记录完成站外联系。', createdAt: '2026-06-18 20:12' },
+  { id: 'ride-event-4', applicationId: 'ride-app-3', actorId: 'buyer-demo-user', actorLabel: 'demo_user', actorRole: 'buyer', type: 'buyer_contacted', fromStatus: 'accepted_reserved', toStatus: 'contacted', note: '买家已记录与车主完成联系。', createdAt: '2026-06-18 20:12' },
   { id: 'ride-event-5', applicationId: 'ride-app-3', actorId: 'system', actorLabel: '系统', actorRole: 'system', type: 'service_started', fromStatus: 'joined_pending_confirmation', toStatus: 'active', note: '双方确认后进入服务中。', createdAt: '2026-06-18 20:26' },
   { id: 'ride-event-6', applicationId: 'ride-app-4', actorId: 'system', actorLabel: '系统', actorRole: 'system', type: 'pending_completion', fromStatus: 'active', toStatus: 'pending_completion', note: '服务周期到期，等待双方确认完成。', createdAt: '2026-06-19 12:48' },
   { id: 'ride-event-7', applicationId: 'ride-app-5', actorId: 'system', actorLabel: '系统', actorRole: 'system', type: 'completed', fromStatus: 'pending_completion', toStatus: 'completed', note: '双方确认完成，评价可用。', createdAt: '2026-06-10 12:04' },

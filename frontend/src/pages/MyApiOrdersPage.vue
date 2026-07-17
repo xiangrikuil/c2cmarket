@@ -77,7 +77,7 @@ function openOrder(event: MouseEvent | KeyboardEvent, id: string) {
 
 <template>
   <div class="my-api-orders-reference space-y-4">
-    <div class="my-api-orders-heading rounded-xl border px-5 py-4"><PageTitle title="我的 API 订单" description="查看收款资料、付款状态、商户交付信息和历史订单；支付仍由双方站外完成。" action-text="继续找服务" action-to="/api-market" /></div>
+    <div class="my-api-orders-heading rounded-xl border px-5 py-4"><PageTitle title="我的 API 订单" description="查看收款资料、付款状态、商户交付信息和历史订单；付款由你与商户直接完成，平台不代收或托管资金。" action-text="继续找服务" action-to="/api-market" /></div>
 
     <div class="my-api-orders-layout">
       <main class="min-w-0 space-y-4">
@@ -117,7 +117,7 @@ function openOrder(event: MouseEvent | KeyboardEvent, id: string) {
         <Card class="p-4">
           <h2 class="font-semibold">订单处理顺序</h2>
           <ol class="mt-3 space-y-2 text-sm leading-6 text-muted-foreground">
-            <li>1. 查看商户收款资料并站外付款</li>
+            <li>1. 查看商户收款资料并完成付款</li>
             <li>2. 提交付款信息，异常时按提示补充</li>
             <li>3. 商户确认到账后提交交付</li>
             <li>4. 买家核对后完成或发起纠纷</li>
@@ -128,7 +128,7 @@ function openOrder(event: MouseEvent | KeyboardEvent, id: string) {
           <p class="mt-2 text-sm leading-6 text-muted-foreground">未到账、金额不符或备注不符时，订单会进入“待补充”。补充付款说明后重新等待商户核对。</p>
         </Card>
         <Card class="p-4 text-sm leading-6 text-muted-foreground">
-          平台不代收款，也不承诺站外付款可撤销；敏感交付资料仅对订单参与方按权限展示。
+          付款由你与商户直接完成，平台不代收或托管资金；敏感交付资料仅对订单参与方按权限展示。
         </Card>
       </aside>
     </div>

@@ -1,9 +1,36 @@
 package database
 
 import (
+	"path/filepath"
+	"strconv"
+	"strings"
 	"testing"
 	"time"
 )
+
+func TestExpectedMigrationVersionMatchesLatestMigration(t *testing.T) {
+	paths, err := filepath.Glob(filepath.Join("..", "..", "migrations", "*.up.sql"))
+	if err != nil {
+		t.Fatalf("list migrations: %v", err)
+	}
+	var latest int64
+	for _, path := range paths {
+		prefix, _, ok := strings.Cut(filepath.Base(path), "_")
+		if !ok {
+			continue
+		}
+		version, err := strconv.ParseInt(prefix, 10, 64)
+		if err == nil && version > latest {
+			latest = version
+		}
+	}
+	if latest == 0 {
+		t.Fatal("no numbered up migrations found")
+	}
+	if ExpectedMigrationVersion != latest {
+		t.Fatalf("expected migration version %d, latest migration is %d", ExpectedMigrationVersion, latest)
+	}
+}
 
 func TestMigrationReadinessFailsWhenVersionBehindExpected(t *testing.T) {
 	checkedAt := time.Date(2026, 7, 6, 12, 0, 0, 0, time.UTC)

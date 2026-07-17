@@ -90,6 +90,7 @@ type BackendAPIService = {
   merchantIdentityMode: string
   merchantDisplayName?: string
   merchantProfileSlug?: string
+  merchantAvatarUrl?: string
   ownerContactMethodId?: string
   title: string
   shortDescription: string
@@ -302,8 +303,8 @@ export function mapBackendAPIService(service: BackendAPIService): ApiService {
   const modes = deliveryModes(service.accessModes)
   const state = serviceState(service)
   const isStoreAlias = service.merchantIdentityMode === 'store_alias'
-  const displayName = isStoreAlias ? service.merchantDisplayName || 'API 商户' : '公开商户'
-  const merchantUsername = isStoreAlias ? service.merchantProfileSlug || service.merchantProfileId || 'merchant' : service.ownerUserId ?? 'merchant'
+  const displayName = service.merchantDisplayName || (isStoreAlias ? 'API 商户' : '公开商户')
+  const merchantUsername = service.merchantProfileSlug || (isStoreAlias ? service.merchantProfileId : service.ownerUserId) || 'merchant'
   const online = state === 'online'
   const publiclyOrderable = Boolean(service.isOrderable)
   return {
@@ -315,6 +316,7 @@ export function mapBackendAPIService(service: BackendAPIService): ApiService {
     merchant: displayName,
     merchantIdentityMode: isStoreAlias ? 'store_alias' : 'public_profile',
     merchantDisplayName: displayName,
+    merchantAvatarUrl: service.merchantAvatarUrl?.trim() || undefined,
     trustLevel: 4,
     merchantType: '商户',
     models: service.models.filter(item => item.enabled).map(item => item.modelNameSnapshot),
@@ -974,6 +976,19 @@ export async function backendConfirmAPIOrderComplete(id: string, version: number
     ifMatch: version,
   })
   return mapBackendAPIOrder(response, 'buyer')
+}
+
+export function apiOrderDisputePath(id: string, perspective: 'buyer' | 'merchant') {
+  const scope = perspective === 'merchant' ? 'owner' : 'me'
+  return `/api/v1/${scope}/api-orders/${encodeURIComponent(id)}/dispute`
+}
+
+export async function backendOpenAPIOrderDispute(id: string, reason: string, version: number, perspective: 'buyer' | 'merchant') {
+  const response = await backendMutation<BackendAPIOrder>(apiOrderDisputePath(id, perspective), { reason }, {
+    idempotencyPrefix: `api-order-${perspective}-dispute`,
+    ifMatch: version,
+  })
+  return mapBackendAPIOrder(response, perspective)
 }
 
 export async function backendConfirmAPIOrderPayment(id: string, version: number) {

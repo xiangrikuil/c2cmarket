@@ -20,6 +20,7 @@ This directory contains the current project conventions for the Vue 3 + Vite fro
 | [Limited API Packages](../backend/api-limited-packages.md) | Cross-layer package publishing, cards, recommendation, ordering, and lifecycle contract | Active |
 | [Hook Guidelines](./hook-guidelines.md) | Custom hooks, data fetching patterns | Active |
 | [State Management](./state-management.md) | Local state, global state, server state | Active |
+| [Identity And Session](../backend/identity-session.md) | Cross-layer account/API-market avatar, email time, and logout cache contract | Active |
 | [Quality Guidelines](./quality-guidelines.md) | Code standards, forbidden patterns | Active |
 | [Type Safety](./type-safety.md) | Type patterns, validation | Active |
 
@@ -34,10 +35,11 @@ Before editing frontend code, read:
 3. [Marketplace UI Guidelines](./marketplace-ui-guidelines.md) for any product-facing UI change
 4. [Hook Guidelines](./hook-guidelines.md)
 5. [State Management](./state-management.md)
-6. [Quality Guidelines](./quality-guidelines.md)
-7. [Type Safety](./type-safety.md)
-8. [C2CMarket Product Context](../guides/product-context.md)
-9. [Maintainability Contract](../guides/maintainability-contract.md)
+6. [Identity And Session](../backend/identity-session.md) for account-shell, merchant avatar, or logout work
+7. [Quality Guidelines](./quality-guidelines.md)
+8. [Type Safety](./type-safety.md)
+9. [C2CMarket Product Context](../guides/product-context.md)
+10. [Maintainability Contract](../guides/maintainability-contract.md)
 
 ## Quality Check
 

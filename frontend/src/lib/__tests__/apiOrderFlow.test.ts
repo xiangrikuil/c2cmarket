@@ -147,3 +147,20 @@ test('routes a payment mismatch back to the buyer and accepts a supplemented res
   assert.equal(resubmitted.paymentIssueNote, undefined)
   assert.equal(resubmitted.paymentIssueReportedAt, undefined)
 })
+
+test('lets both order participants request platform intervention once', async () => {
+  const buyerApi = await loadApiWithOrder('payment_submitted')
+  const order = orderWithStatus('payment_submitted')
+
+  const buyerDispute = await buyerApi.openApiOrderDispute(order.id, '付款后商户未继续处理。', order.version, 'buyer')
+  assert.equal(buyerDispute.disputeStatus, 'open')
+  assert.equal(buyerDispute.version, order.version + 1)
+  await assert.rejects(
+    buyerApi.openApiOrderDispute(order.id, '重复提交。', buyerDispute.version, 'buyer'),
+    /不能再次申请平台介入/,
+  )
+
+  const merchantApi = await loadApiWithOrder('payment_submitted')
+  const merchantDispute = await merchantApi.openApiOrderDispute(order.id, '收款记录与买家说明不一致。', order.version, 'merchant')
+  assert.equal(merchantDispute.disputeStatus, 'open')
+})

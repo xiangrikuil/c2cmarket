@@ -2,9 +2,23 @@ package postgres
 
 import (
 	"c2c-market/backend/internal/module/apimarket"
+	"strings"
 	"testing"
 	"time"
 )
+
+func TestAPIServiceColumnsProjectMerchantIdentityAvatar(t *testing.T) {
+	for _, fragment := range []string{
+		"merchant_identity_mode = 'store_alias'",
+		"SELECT mp.avatar_url FROM merchant_profiles",
+		"WHEN u.avatar_mode = 'custom_url'",
+		"LEFT JOIN linux_do_bindings l ON l.user_id = u.id",
+	} {
+		if !strings.Contains(apiServiceColumns, fragment) {
+			t.Fatalf("expected API service projection to contain %q", fragment)
+		}
+	}
+}
 
 func TestStoreBuildPaymentOptionsSkipsDisabledEmptyInstructions(t *testing.T) {
 	now := time.Date(2026, 7, 8, 12, 0, 0, 0, time.UTC)

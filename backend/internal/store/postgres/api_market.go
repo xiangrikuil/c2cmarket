@@ -501,8 +501,26 @@ func (s *Store) updateAPIPurchaseIntentWithIdempotency(ctx context.Context, entr
 
 const apiServiceColumns = `
 	id::text, owner_user_id::text, COALESCE(merchant_profile_id::text, ''), merchant_identity_mode,
-	COALESCE((SELECT mp.display_name FROM merchant_profiles mp WHERE mp.id = api_services.merchant_profile_id AND mp.owner_user_id = api_services.owner_user_id), ''),
-	COALESCE((SELECT mp.slug FROM merchant_profiles mp WHERE mp.id = api_services.merchant_profile_id AND mp.owner_user_id = api_services.owner_user_id), ''),
+	COALESCE(CASE WHEN merchant_identity_mode = 'store_alias'
+		THEN (SELECT mp.display_name FROM merchant_profiles mp WHERE mp.id = api_services.merchant_profile_id AND mp.owner_user_id = api_services.owner_user_id)
+		ELSE (SELECT u.display_name FROM users u WHERE u.id = api_services.owner_user_id)
+	END, ''),
+	COALESCE(CASE WHEN merchant_identity_mode = 'store_alias'
+		THEN (SELECT mp.slug FROM merchant_profiles mp WHERE mp.id = api_services.merchant_profile_id AND mp.owner_user_id = api_services.owner_user_id)
+		ELSE (SELECT u.username FROM users u WHERE u.id = api_services.owner_user_id)
+	END, ''),
+	COALESCE(CASE WHEN merchant_identity_mode = 'store_alias'
+		THEN (SELECT mp.avatar_url FROM merchant_profiles mp WHERE mp.id = api_services.merchant_profile_id AND mp.owner_user_id = api_services.owner_user_id)
+		ELSE (
+			SELECT CASE WHEN u.avatar_mode = 'custom_url'
+				THEN u.custom_avatar_url
+				ELSE COALESCE(l.avatar_url, u.avatar_url)
+			END
+			FROM users u
+			LEFT JOIN linux_do_bindings l ON l.user_id = u.id
+			WHERE u.id = api_services.owner_user_id
+		)
+	END, ''),
 	owner_contact_method_id::text, title, short_description, COALESCE(source_url, ''), distribution_system, billing_mode,
 	COALESCE(declared_cny_per_usd_allowance::text, ''), COALESCE(declared_max_usd_allowance_per_intent::text, ''),
 	COALESCE(available_usd_allowance::text, ''),
@@ -877,7 +895,7 @@ func (s *Store) createAPIPurchaseIntentInTx(ctx context.Context, tx pgx.Tx, inpu
 	if appErr := insertAPIPurchaseIntentInTx(ctx, tx, intent); appErr != nil {
 		return apiintent.Intent{}, appErr
 	}
-	if appErr := insertAPIPurchaseIntentEventAndTargetNotification(ctx, tx, intent, intent.BuyerUserID, intent.OwnerUserID, "api_purchase_intent.created", "收到新的购买意向", "买家已提交购买意向，请查看详情并站外联系。", input.RequestID, now); appErr != nil {
+	if appErr := insertAPIPurchaseIntentEventAndTargetNotification(ctx, tx, intent, intent.BuyerUserID, intent.OwnerUserID, "api_purchase_intent.created", "收到新的购买意向", "买家已提交购买意向，请查看详情并及时沟通。", input.RequestID, now); appErr != nil {
 		return apiintent.Intent{}, appErr
 	}
 	intent, appErr = s.withAPIPurchaseIntentMerchantContact(ctx, tx, intent)
@@ -1762,6 +1780,7 @@ func scanAPIService(row scanner, service *apimarket.Service) error {
 		&service.MerchantIdentityMode,
 		&service.MerchantDisplayName,
 		&service.MerchantProfileSlug,
+		&service.MerchantAvatarURL,
 		&service.OwnerContactMethodID,
 		&service.Title,
 		&service.ShortDescription,

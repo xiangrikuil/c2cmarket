@@ -493,6 +493,7 @@ func (s *Server) oauthProfile(ctx context.Context, code string) (auth.OAuthProfi
 		DisplayName       string          `json:"display_name"`
 		Email             string          `json:"email"`
 		AvatarURL         string          `json:"avatar_url"`
+		AvatarTemplate    string          `json:"avatar_template"`
 		Picture           string          `json:"picture"`
 		TrustLevel        int             `json:"trust_level"`
 		TrustLevelCamel   int             `json:"trustLevel"`
@@ -503,7 +504,7 @@ func (s *Server) oauthProfile(ctx context.Context, code string) (auth.OAuthProfi
 	subject := firstNonEmpty(string(info.Subject), string(info.ID))
 	username := firstNonEmpty(info.Username, info.PreferredUsername, info.Login, subject)
 	displayName := firstNonEmpty(info.DisplayName, info.Name, username)
-	avatarURL := firstNonEmpty(info.AvatarURL, info.Picture)
+	avatarURL := normalizeLinuxDoAvatarURL(firstNonEmpty(info.AvatarURL, info.Picture, info.AvatarTemplate))
 	trustLevel := info.TrustLevel
 	if trustLevel == 0 {
 		trustLevel = info.TrustLevelCamel
@@ -581,6 +582,10 @@ func firstNonEmpty(values ...string) string {
 		}
 	}
 	return ""
+}
+
+func normalizeLinuxDoAvatarURL(value string) string {
+	return strings.ReplaceAll(strings.TrimSpace(value), "{size}", "288")
 }
 
 func splitOAuthStateCookie(value string) (string, string) {

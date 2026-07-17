@@ -1717,6 +1717,7 @@ const contextLabel = 'API 服务详情'
 ```text
 profile.EmailSender.SendCarpoolApplicationAccepted(ctx, toEmail, listingTitle, applicationID, joinDeadline)
 profile.EmailSender.SendAPIPurchaseIntentCreated(ctx, toEmail, serviceTitle, intentID, buyerNote, createdAt)
+SMTPConfig.FrontendOrigin -> {FRONTEND_ORIGIN}/api-intents/{intentID}
 
 No new HTTP routes, OpenAPI schemas, database tables, environment keys, queues, or background workers.
 ```
@@ -1728,6 +1729,7 @@ No new HTTP routes, OpenAPI schemas, database tables, environment keys, queues, 
 - Email sending is best-effort: profile lookup or SMTP send failure is logged with resource IDs and actor IDs, must not include contact values, note bodies, SMTP credentials, cookies, tokens, or request bodies, and must not roll back or block the business operation.
 - Idempotency replay must not send duplicate reminder email. The module service should return both the business entity and an explicit `created` / `accepted` flag so the core facade can send only for a new side effect.
 - SMTP templates may include public/resource titles, resource IDs, RFC3339 timestamps, reservation deadline, and short buyer note summaries. Templates must use Go `html/template` for HTML escaping and keep text bodies credential-free.
+- API purchase-intent HTML and plain-text bodies must include the absolute environment-specific `{FRONTEND_ORIGIN}/api-intents/{intentID}` URL. The existing frontend compatibility route resolves the intent to the signed-in buyer or merchant order detail when an order exists.
 
 ### 4. Validation & Error Matrix
 
@@ -1951,6 +1953,7 @@ PostgreSQL:
 - Successful order creation must insert the order and update the locked intent from `open|contacted` to `ordered` in one transaction. If either write fails, neither change commits.
 - `ordered` is a terminal intent state: its fulfillment is represented only by the linked order. The intent cannot be cancelled, closed, or marked contacted.
 - Migration must backfill existing order-backed `open|contacted` rows to `ordered` before the new contract is used.
+- The forward migration must remove both the canonical intent state-shape constraint and any earlier PostgreSQL-generated duplicate such as `api_purchase_intents_check3` before adding the single canonical constraint that accepts `ordered`.
 - A new intent for the same buyer and service is valid once the previous intent is `ordered`; the old intent must still retain its order history and its one-order-only constraint.
 
 ### 4. Validation & Error Matrix
@@ -1973,6 +1976,7 @@ PostgreSQL:
 - Unit test: in-memory order creation marks an active intent `ordered` and still rejects a second order for that same intent.
 - Router test: order creation returns normally, intent detail is `ordered`, and cancel/close retain `API_PURCHASE_INTENT_HAS_ORDER`.
 - PostgreSQL integration test: first order releases the active-intent slot, then a fresh intent and second order for the same buyer/service succeed.
+- Constraint upgrade smoke: apply the forward migration to a schema that still contains `api_purchase_intents_check3`, verify the legacy constraint is gone, and prove an `open|contacted -> ordered` update succeeds.
 - Migration smoke/read-only query: no order-backed intent remains `open` or `contacted` after migration.
 
 ### 7. Wrong vs Correct
@@ -2096,4 +2100,79 @@ page: status says available; button: local risk check says blocked
 #### Correct
 ```text
 list/detail/create -> EvaluateApplicationEligibility -> one code/reason/action
+```
+
+## Scenario: API Order Email And Participant Dispute Entry
+
+### 1. Scope / Trigger
+
+- Trigger: API purchase-intent/order creation, merchant email reminders, API-order dispute routes, or buyer/merchant order-detail actions change.
+- Purpose: an order-style email must refer to a committed order, and both order participants must use the order dispute workflow instead of generic feedback.
+
+### 2. Signatures
+
+```text
+POST /api/v1/me/api-orders/{id}/dispute
+POST /api/v1/owner/api-orders/{id}/dispute
+
+CreateWithIdempotencyResult(...) -> (Order, idempotency.Completion, created bool, *domain.AppError)
+SendAPIOrderCreated(ctx, toEmail, serviceTitle, orderID, amount, currency, paymentExpiresAt, createdAt)
+```
+
+### 3. Contracts
+
+- Purchase-intent creation never sends the merchant an order-style email. Core sends `SendAPIOrderCreated` only after a new order commits and only when `created=true`.
+- An idempotency replay returns the existing order and completion with `created=false`; it must not send a duplicate email. Email failure is logged after the business commit and never changes a successful order response.
+- Merchant email delivery requires a non-empty verified profile email. The email includes a display-only `AO-<last-six>` reference, amount, Beijing payment deadline, full merchant order URL, and an explicit statement that order creation does not mean funds arrived.
+- Buyer and owner dispute endpoints both require session, CSRF, `If-Match`, `Idempotency-Key`, and a non-empty non-secret `reason`. Both call the same `open_dispute` domain transition; the main fulfillment status remains unchanged while `disputeStatus` becomes `open`.
+- Frontend real and mock adapters expose one `openApiOrderDispute(id, reason, version, perspective)` operation. Order detail displays `平台介入中` after success and must not route API-order problems to the generic feedback page.
+
+### 4. Validation & Error Matrix
+
+| Condition | Result |
+| --- | --- |
+| Purchase intent succeeds but order creation fails | No merchant order email |
+| New order for a verified merchant | One best-effort merchant order email |
+| Same idempotency key replays order creation | Same completion, no duplicate email |
+| Merchant email is missing or unverified | Order succeeds; email is skipped |
+| Email provider fails | Order succeeds; sanitized failure is logged |
+| Dispute reason is empty | `422 VALIDATION_FAILED` |
+| Caller is not the buyer or seller | Not found/permission response; no dispute change |
+| Order is cancelled, completed, or already disputed | `409 INVALID_STATE_TRANSITION` |
+| Stale `If-Match` | `412 PRECONDITION_FAILED` |
+
+### 5. Good/Base/Bad Cases
+
+- Good: order commits, the verified merchant receives one direct order link, and a retry with the same idempotency key sends nothing new.
+- Base: an unverified merchant still receives the durable in-app state but no email.
+- Good: either participant submits a concise order problem and sees `平台介入中` after the order query refreshes.
+- Bad: send an “API order” email from purchase-intent creation, use a full UUID as the primary display number, or send the user to `/my/feedback` for an API-order dispute.
+
+### 6. Tests Required
+
+- Core tests: purchase-intent-only sends zero emails; new order sends one; replay sends no duplicate; unverified email skips; provider failure does not block creation.
+- Email template tests: text and HTML contain `AO-<last-six>`, amount, Beijing deadline, full merchant URL, no-arrival warning, and system footer.
+- Router test: buyer and owner dispute routes both succeed, owner idempotency replay succeeds, and the administrator dispute queue contains the linked case.
+- Frontend tests: real path builder selects `me` versus `owner`; mock permits each participant exactly once; order-detail copy contains the in-place intervention state and no generic feedback route.
+- Full `go test ./...`, frontend Vitest/type/build, OpenAPI route parity, product-boundary scan, and `git diff --check`.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```go
+intent, completion, created := createIntent(...)
+if created {
+    email.SendAPIPurchaseIntentCreated(...)
+}
+```
+
+#### Correct
+
+```go
+order, completion, created := createOrder(...)
+if created {
+    email.SendAPIOrderCreated(...)
+}
+// Idempotency replay returns created=false.
 ```

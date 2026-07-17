@@ -170,12 +170,13 @@ func buildEmailSender(cfg config.Config) (profile.EmailSender, error) {
 		return profile.NewDevelopmentEmailSender(), nil
 	case "aliyun_directmail":
 		return profile.NewSMTPEmailSender(profile.SMTPConfig{
-			Host:        cfg.SMTP.Host,
-			Port:        cfg.SMTP.Port,
-			Username:    cfg.SMTP.Username,
-			Password:    cfg.SMTP.Password,
-			FromAddress: cfg.SMTP.FromAddress,
-			FromName:    cfg.SMTP.FromName,
+			Host:           cfg.SMTP.Host,
+			Port:           cfg.SMTP.Port,
+			Username:       cfg.SMTP.Username,
+			Password:       cfg.SMTP.Password,
+			FromAddress:    cfg.SMTP.FromAddress,
+			FromName:       cfg.SMTP.FromName,
+			FrontendOrigin: cfg.FrontendOrigin,
 		})
 	default:
 		return nil, fmt.Errorf("unsupported EMAIL_PROVIDER %q", cfg.EmailProvider)

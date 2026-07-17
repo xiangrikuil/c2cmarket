@@ -323,6 +323,12 @@ func (s *Server) handleSubmitAPIOrderDelivery(w http.ResponseWriter, r *http.Req
 	})
 }
 
+func (s *Server) handleOwnerOpenAPIOrderDispute(w http.ResponseWriter, r *http.Request) {
+	s.handleOwnerAPIOrderAction(w, r, "dispute", func(ctx context.Context, user auth.User, routeKey, key string, body []byte, input apiorder.ActionInput) (idempotency.Completion, *domain.AppError) {
+		return s.app.OpenAPIOrderDisputeWithIdempotency(ctx, user.ID, routeKey, key, requestHash(http.MethodPost, routeKey+":"+input.OrderID, body), input, apiOrderCompletionBuilder(true))
+	})
+}
+
 func (s *Server) handleOwnerAPIOrderAction(w http.ResponseWriter, r *http.Request, action string, run func(context.Context, auth.User, string, string, []byte, apiorder.ActionInput) (idempotency.Completion, *domain.AppError)) {
 	user, _, appErr := s.requireSessionAndCSRF(r)
 	if appErr != nil {

@@ -77,8 +77,13 @@ func NewService(repo Repository, intentResolver BuyerIntentResolver, serviceReso
 }
 
 func (s *Service) CreateWithIdempotency(ctx context.Context, userID, routeKey, key, requestHash string, input CreateInput, buildCompletion CompletionBuilder) (idempotency.Completion, *domain.AppError) {
+	_, completion, _, appErr := s.CreateWithIdempotencyResult(ctx, userID, routeKey, key, requestHash, input, buildCompletion)
+	return completion, appErr
+}
+
+func (s *Service) CreateWithIdempotencyResult(ctx context.Context, userID, routeKey, key, requestHash string, input CreateInput, buildCompletion CompletionBuilder) (Order, idempotency.Completion, bool, *domain.AppError) {
 	input.BuyerUserID = userID
-	return s.createOrUpdateWithIdempotency(ctx, userID, routeKey, key, requestHash, input, ActionInput{}, buildCompletion, "create")
+	return s.createOrUpdateWithIdempotencyResult(ctx, userID, routeKey, key, requestHash, input, ActionInput{}, buildCompletion, "create")
 }
 
 func (s *Service) BuyerOrders(ctx context.Context, user auth.User) ([]Order, *domain.AppError) {
@@ -276,27 +281,33 @@ func (s *Service) SubmitDeliveryWithIdempotency(ctx context.Context, userID, rou
 }
 
 func (s *Service) createOrUpdateWithIdempotency(ctx context.Context, userID, routeKey, key, requestHash string, createInput CreateInput, actionInput ActionInput, buildCompletion CompletionBuilder, action string) (idempotency.Completion, *domain.AppError) {
+	_, completion, _, appErr := s.createOrUpdateWithIdempotencyResult(ctx, userID, routeKey, key, requestHash, createInput, actionInput, buildCompletion, action)
+	return completion, appErr
+}
+
+func (s *Service) createOrUpdateWithIdempotencyResult(ctx context.Context, userID, routeKey, key, requestHash string, createInput CreateInput, actionInput ActionInput, buildCompletion CompletionBuilder, action string) (Order, idempotency.Completion, bool, *domain.AppError) {
 	key = strings.TrimSpace(key)
 	if err := idempotency.ValidateKey(key); err != nil {
-		return idempotency.Completion{}, err
+		return Order{}, idempotency.Completion{}, false, err
 	}
 	if buildCompletion == nil {
-		return idempotency.Completion{}, domain.NewError(http.StatusInternalServerError, domain.CodeInternalError, "Internal error", "响应编码失败。")
+		return Order{}, idempotency.Completion{}, false, domain.NewError(http.StatusInternalServerError, domain.CodeInternalError, "Internal error", "响应编码失败。")
 	}
 
 	entry, appErr := s.idempotency.Begin(ctx, userID, routeKey, key, requestHash)
 	if appErr != nil {
-		return idempotency.Completion{}, appErr
+		return Order{}, idempotency.Completion{}, false, appErr
 	}
 	if entry.State == "completed" {
 		if entry.ResourceType == resourceType && entry.ResourceID != "" {
 			order, replayErr := s.orderForReplay(ctx, userID, entry.ResourceID, action)
 			if replayErr != nil {
-				return idempotency.Completion{}, replayErr
+				return Order{}, idempotency.Completion{}, false, replayErr
 			}
-			return buildCompletion(order)
+			completion, completionErr := buildCompletion(order)
+			return order, completion, false, completionErr
 		}
-		return idempotency.CompletionFromEntry(entry), nil
+		return Order{}, idempotency.CompletionFromEntry(entry), false, nil
 	}
 
 	if s.repo != nil {
@@ -322,12 +333,11 @@ func (s *Service) createOrUpdateWithIdempotency(ctx context.Context, userID, rou
 		default:
 			appErr = domain.NewError(http.StatusInternalServerError, domain.CodeInternalError, "Internal error", "未知订单动作。")
 		}
-		_ = order
 		if appErr != nil {
 			s.idempotency.Cancel(ctx, entry)
-			return idempotency.Completion{}, appErr
+			return Order{}, idempotency.Completion{}, false, appErr
 		}
-		return completion, nil
+		return order, completion, action == "create", nil
 	}
 
 	var order Order
@@ -338,24 +348,33 @@ func (s *Service) createOrUpdateWithIdempotency(ctx context.Context, userID, rou
 	}
 	if appErr != nil {
 		s.idempotency.Cancel(ctx, entry)
-		return idempotency.Completion{}, appErr
+		return Order{}, idempotency.Completion{}, false, appErr
 	}
 	completion, appErr := buildCompletion(order)
 	if appErr != nil {
 		s.idempotency.Cancel(ctx, entry)
-		return idempotency.Completion{}, appErr
+		return Order{}, idempotency.Completion{}, false, appErr
 	}
 	if appErr := s.idempotency.Complete(ctx, entry, completion.Status, completion.ContentType, completion.Body, completion.ResourceType, completion.ResourceID); appErr != nil {
 		s.idempotency.Cancel(ctx, entry)
-		return idempotency.Completion{}, appErr
+		return Order{}, idempotency.Completion{}, false, appErr
 	}
-	return completion, nil
+	return order, completion, action == "create", nil
 }
 
 func (s *Service) orderForReplay(ctx context.Context, userID, orderID, action string) (Order, *domain.AppError) {
 	switch action {
-	case "create", "submit_payment", "cancel", "confirm_complete", "open_dispute":
+	case "create", "submit_payment", "cancel", "confirm_complete":
 		return s.BuyerOrder(ctx, auth.User{ID: userID}, orderID)
+	case "open_dispute":
+		order, appErr := s.BuyerOrder(ctx, auth.User{ID: userID}, orderID)
+		if appErr == nil {
+			return order, nil
+		}
+		if appErr.Status != http.StatusNotFound {
+			return Order{}, appErr
+		}
+		return s.SellerOrder(ctx, auth.User{ID: userID}, orderID)
 	case "confirm_payment", "report_payment_issue", "submit_delivery":
 		return s.SellerOrder(ctx, auth.User{ID: userID}, orderID)
 	default:

@@ -46,6 +46,7 @@ function backendPublicAPIService(overrides: Record<string, unknown> = {}) {
     merchantIdentityMode: 'store_alias',
     merchantDisplayName: '小葵 API',
     merchantProfileSlug: 'xiaokui-api',
+    merchantAvatarUrl: 'https://cdn.example.com/xiaokui-api.webp',
     title: 'GPT · API 美元额度',
     shortDescription: '建议首次小额测试',
     sourceUrl: 'https://linux.do/t/api-quota-sub2api/123456',
@@ -88,7 +89,29 @@ test('maps public orderable API service responses as online services', async () 
   assert.equal(service.state, 'online')
   assert.equal(service.online, true)
   assert.equal(service.publiclyOrderable, true)
+  assert.equal(service.merchantAvatarUrl, 'https://cdn.example.com/xiaokui-api.webp')
   assert.equal(api.isApiServicePubliclyOrderable(service), true)
+})
+
+test('maps public-profile merchant identity and avatar from the backend projection', async () => {
+  const { apiMarketBackend } = await loadAPIMarketModules()
+  const service = apiMarketBackend.mapBackendAPIService(backendPublicAPIService({
+    merchantIdentityMode: 'public_profile',
+    merchantDisplayName: 'Profile Owner',
+    merchantProfileSlug: 'profile-owner',
+    merchantAvatarUrl: 'https://cdn.example.com/profile-owner.png',
+  }))
+
+  assert.equal(service.merchantDisplayName, 'Profile Owner')
+  assert.equal(service.merchantUsername, 'profile-owner')
+  assert.equal(service.merchantAvatarUrl, 'https://cdn.example.com/profile-owner.png')
+})
+
+test('builds buyer and merchant API order dispute paths', async () => {
+  const { apiMarketBackend } = await loadAPIMarketModules()
+
+  assert.equal(apiMarketBackend.apiOrderDisputePath('order/with space', 'buyer'), '/api/v1/me/api-orders/order%2Fwith%20space/dispute')
+  assert.equal(apiMarketBackend.apiOrderDisputePath('order-123', 'merchant'), '/api/v1/owner/api-orders/order-123/dispute')
 })
 
 test('disables applications to a backend carpool owned by the current user', async () => {

@@ -78,15 +78,17 @@ const verifyContactMutation = useVerifyContactMethodMutation()
 const updateApiPaymentSettingsMutation = useUpdateApiPaymentAccountSettingsMutation()
 const apiPaymentQrMaxBytes = 512 * 1024
 
-const sectionLinks = [
-  { label: '账户概览', to: '/my', key: 'overview' },
+const accountSettingLinks = [
   { label: '个人资料', to: '/my/profile', key: 'profile' },
-  { label: '联系方式与收款设置', to: '/my/contacts', key: 'contacts' },
-  { label: '账号与认证', to: '/my/account', key: 'account' },
-  { label: '隐私设置', to: '/my/privacy', key: 'privacy' },
-  { label: '我的收藏', to: '/my/favorites', key: 'favorites' },
-  { label: '通知设置', to: '/my/notifications', key: 'notifications' },
+  { label: '联系与收款', to: '/my/contacts', key: 'contacts' },
+  { label: '安全与认证', to: '/my/account', key: 'account' },
 ] as const
+
+const sectionLabels = {
+  privacy: '隐私设置',
+  favorites: '我的收藏',
+  notifications: '通知设置',
+} as const
 
 type AccountSetupDialogMode = 'required' | 'password' | 'email'
 type AccountSetupStep = 'email' | 'password' | 'complete'
@@ -106,6 +108,12 @@ const activeSection = computed(() => {
   if (route.path === '/my/favorites') return 'favorites'
   if (route.path === '/my/notifications') return 'notifications'
   return 'overview'
+})
+const isAccountSettingsSection = computed(() => accountSettingLinks.some(item => item.key === activeSection.value))
+const currentSectionLabel = computed(() => {
+  if (isAccountSettingsSection.value) return '账户设置'
+  if (activeSection.value in sectionLabels) return sectionLabels[activeSection.value as keyof typeof sectionLabels]
+  return '个人中心'
 })
 
 const profileForm = reactive({
@@ -386,8 +394,8 @@ function apiPaymentMethodLabel(method: ApiPaymentMethod) {
 }
 
 function apiPaymentInstructionsPlaceholder(method: ApiPaymentMethod) {
-  if (apiPaymentMethodRequiresQrCode(method)) return '可选：填写收款码备注、核对口径或站外确认节奏。'
-  return '填写收款说明、核对口径或站外确认节奏。'
+  if (apiPaymentMethodRequiresQrCode(method)) return '可选：填写收款码备注、核对说明或沟通节奏。'
+  return '填写收款说明、核对说明或沟通节奏。'
 }
 
 function handleApiPaymentQrUpload(event: Event, option: ApiPaymentOption) {
@@ -662,7 +670,7 @@ function goToLogin() {
 </script>
 
 <template>
-  <div v-if="profileQuery.isPending.value" class="rounded-xl border border-border bg-card p-8 text-sm text-muted-foreground">正在加载个人资料...</div>
+  <div v-if="profileQuery.isPending.value" class="rounded-xl border border-border bg-card p-8 text-sm text-muted-foreground">正在加载个人资料…</div>
   <Card v-else-if="profileQuery.isError.value || !profile" class="mx-auto max-w-2xl p-6">
     <div class="flex flex-col gap-4 sm:flex-row sm:items-start">
       <div class="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-primary/10 text-primary">
@@ -945,13 +953,27 @@ function goToLogin() {
 
     <header v-if="activeSection !== 'overview'" class="my-center-page-heading">
       <div>
-        <p>个人中心 / {{ sectionLinks.find(item => item.key === activeSection)?.label }}</p>
-        <h1>{{ sectionLinks.find(item => item.key === activeSection)?.label }}</h1>
-        <p v-if="activeSection === 'contacts'" class="my-center-page-subtitle">完善联系方式与 API 收款信息，只向有效交易参与方展示必要资料。</p>
+        <p>个人中心 / {{ currentSectionLabel }}</p>
+        <h1>{{ currentSectionLabel }}</h1>
+        <p v-if="isAccountSettingsSection" class="my-center-page-subtitle">统一管理个人资料、交易联系方式、收款信息与账号安全。</p>
       </div>
       <Button variant="outline" @click="router.push(`/u/${profile.username}`)"><Eye class="h-4 w-4" />查看公开主页</Button>
     </header>
     <header v-else class="my-center-overview-heading"><h1>个人中心</h1><p>管理交易、发布内容与账户资料</p></header>
+
+    <nav v-if="isAccountSettingsSection" class="my-center-settings-tabs" aria-label="账户设置">
+      <RouterLink
+        v-for="item in accountSettingLinks"
+        :key="item.to"
+        :to="item.to"
+        :aria-current="isSectionActive(item.to) ? 'page' : undefined"
+        :aria-disabled="isSectionLocked(item.to)"
+        :class="[isSectionActive(item.to) ? 'is-active' : '', isSectionLocked(item.to) ? 'is-locked' : '']"
+        @click.capture="handleSectionLinkClick(item.to, $event)"
+      >
+        {{ item.label }}
+      </RouterLink>
+    </nav>
 
     <Card v-if="activeSection === 'overview'" class="my-center-identity p-5">
       <div class="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
@@ -1039,19 +1061,6 @@ function goToLogin() {
     </section>
 
     <section v-else-if="activeSection === 'profile'" class="my-center-settings-layout">
-      <aside class="my-center-settings-nav">
-        <Card class="p-2">
-          <RouterLink
-            v-for="item in sectionLinks"
-            :key="item.to"
-            :to="item.to"
-            :aria-disabled="isSectionLocked(item.to)"
-            :class="[isSectionActive(item.to) ? 'is-active' : '', isSectionLocked(item.to) ? 'opacity-65' : '']"
-            @click.capture="handleSectionLinkClick(item.to, $event)"
-          ><span>{{ item.label }}</span><ChevronRight class="h-4 w-4" /></RouterLink>
-        </Card>
-      </aside>
-
       <main class="min-w-0">
       <Card class="p-5">
         <h2 class="font-semibold">个人资料设置</h2>
@@ -1179,7 +1188,7 @@ function goToLogin() {
         </div>
       </Card>
 
-      <div class="contact-payment-group-heading contact-payment-group-heading--payment"><div><h2>API 收款方式</h2><p>买家创建 API 订单后，使用服务发布时冻结的收款快照进行站外确认。</p></div><Badge :variant="apiPaymentComplete ? 'verified' : 'secondary'">{{ apiPaymentComplete ? '已配置' : '待配置' }}</Badge></div>
+      <div class="contact-payment-group-heading contact-payment-group-heading--payment"><div><h2>API 收款方式</h2><p>买家创建 API 订单后，使用下单时锁定的收款信息完成付款。</p></div><Badge :variant="apiPaymentComplete ? 'verified' : 'secondary'">{{ apiPaymentComplete ? '已配置' : '待配置' }}</Badge></div>
       <Card class="api-payment-settings-card border-emerald-200 bg-emerald-50/40 p-4">
         <div class="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
           <div class="flex min-w-0 gap-4">
@@ -1277,12 +1286,12 @@ function goToLogin() {
           {{ apiPaymentComplete ? 'API 发布页将直接读取这组设置，不需要每次重新填写。' : apiPaymentMissingReasonText }}
         </p>
         <p class="mt-2 rounded-md border border-border bg-accent/50 p-3 text-xs leading-5 text-muted-foreground">
-          收款资料只在买家创建订单后用于站外确认；不要填写银行卡号、API Key、token、账号密码、Cookie、Session 或面板凭据。
+          收款资料只在买家创建订单后用于付款；不要填写银行卡号、API Key、token、账号密码、Cookie、Session 或面板凭据。
         </p>
       </Card>
 
       <p class="contact-payment-boundary rounded-md border border-border bg-accent/50 p-3 text-xs leading-5 text-muted-foreground">
-        当前只开放微信和邮箱两种联系方式。联系方式只用于参与方之间的站外联系；公开主页、首页、车源列表和 API 市集不会展示完整联系方式。
+        当前只开放微信和邮箱两种联系方式。联系方式只用于订单参与方之间沟通；公开主页、首页、车源列表和 API 市集不会展示完整联系方式。
       </p>
       </main>
       <aside class="my-center-contacts-aside space-y-4">

@@ -61,6 +61,7 @@ versions:
 | `000049_api_order_quota_inventory` | service-level metered quota inventory plus immutable quota, rate, and pricing snapshots on API orders |
 | `000050_api_order_payment_issue` | buyer-reported API order payment issues with merchant resolution tracking and notification hooks |
 | `000051_api_limited_packages` | stable limited-package allowance, stock, model associations, order reservations, and delivery-based expiry |
+| `000052_api_purchase_intent_ordered_constraint_cleanup` | removes legacy duplicate intent-status checks so ordered intents remain valid on upgraded databases |
 
 The current runnable Go slice supports both in-memory tests and PostgreSQL runtime.
 When `DATABASE_URL` is configured, users, auth sessions, idempotency, product
@@ -187,6 +188,13 @@ Unpaid cancellation or timeout releases the unit; payment confirmation consumes
 it. Fixed-package orders freeze a delivery-based expiry timestamp. This version
 also removes the historical Sub2API fixed-`1.0000` model-multiplier constraint;
 `1.0000` remains the default rather than a forced value.
+
+Version 52 repairs databases that still retain an earlier anonymous
+`api_purchase_intents` status constraint alongside the canonical named
+constraint. It drops both legacy and canonical variants, then recreates one
+named constraint that accepts the order-backed `ordered` state. The down
+migration is intentionally non-destructive because restoring the anonymous
+constraint would reintroduce the production failure this migration removes.
 
 ## Contact Retention And Destruction
 
