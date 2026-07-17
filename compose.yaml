@@ -35,6 +35,7 @@ services:
     restart: "no"
 
   backend:
+    image: ${BACKEND_IMAGE:-c2cmarket-backend:local}
     build:
       context: ./backend
     profiles:

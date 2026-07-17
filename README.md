@@ -116,6 +116,8 @@ docker compose --profile app build backend
 docker compose --profile app up -d backend
 ```
 
+Compose 同时支持 CI 发布的 GHCR 镜像；本地仍使用 `c2cmarket-backend:local`，VPS release 通过 `BACKEND_IMAGE=ghcr.io/xiangrikuil/c2cmarket-backend:<git-sha>` 拉取已测试镜像并以 `--no-build` 启动。PR 合并到 `staging` 后自动发布测试后端，`staging` 合并到 `main` 后经 GitHub production environment 审批、生产 R2 备份再发布正式后端。
+
 生产模拟部署使用独立 env 模板和 Compose 覆盖：
 
 ```bash

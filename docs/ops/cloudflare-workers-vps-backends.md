@@ -48,25 +48,29 @@ MAIL_FROM_NAME=C2CMarket Staging
 
 `172.16.0.0/12` 只用于信任 Docker bridge 上由宿主 Caddy 转发的 `X-Forwarded-For`。8080/8081 必须保持 loopback-only，Compose network 不得加入不受信任的 HTTP 客户端容器。
 
-## 3. 启动两套隔离栈
+## 3. 两套隔离栈的手工恢复入口
 
-Production：
+正常发布必须使用第 9 节的 GitHub/GHCR 流程；VPS 不保留 Git 工作树，也不现场 build。只有排障或回滚已有 release 时才手工调用同一部署脚本。
 
-```bash
-docker compose -p c2c-prod --env-file /opt/c2cmarket/shared/.env.production -f compose.yaml -f compose.prod.yaml up -d postgres
-docker compose -p c2c-prod --env-file /opt/c2cmarket/shared/.env.production -f compose.yaml -f compose.prod.yaml --profile migrate run --rm migrate
-docker compose -p c2c-prod --env-file /opt/c2cmarket/shared/.env.production -f compose.yaml -f compose.prod.yaml --profile app up -d --build backend
-```
-
-Staging：
+Production 已有 release：
 
 ```bash
-docker compose -p c2c-staging --env-file /opt/c2cmarket/shared/.env.staging -f compose.yaml -f compose.prod.yaml up -d postgres
-docker compose -p c2c-staging --env-file /opt/c2cmarket/shared/.env.staging -f compose.yaml -f compose.prod.yaml --profile migrate run --rm migrate
-docker compose -p c2c-staging --env-file /opt/c2cmarket/shared/.env.staging -f compose.yaml -f compose.prod.yaml --profile app up -d --build backend
+SHA=<40-character-git-sha>
+/opt/c2cmarket/releases/production/${SHA}/scripts/deploy-vps-backend.sh \
+  production \
+  ghcr.io/xiangrikuil/c2cmarket-backend:${SHA}
 ```
 
-不得省略 `-p`；project name 是容器、网络和 named volume 隔离边界。验证：
+Staging 已有 release：
+
+```bash
+SHA=<40-character-git-sha>
+/opt/c2cmarket/releases/staging/${SHA}/scripts/deploy-vps-backend.sh \
+  staging \
+  ghcr.io/xiangrikuil/c2cmarket-backend:${SHA}
+```
+
+脚本固定使用 `c2c-prod` / `c2c-staging`，project name 是容器、网络和 named volume 隔离边界。验证：
 
 ```bash
 curl -fsS http://127.0.0.1:8080/health
@@ -153,16 +157,116 @@ systemctl list-timers c2cmarket-postgres-backup.timer --no-pager
 
 首次执行必须同时确认本地 dump、checksum、R2 对象和 `last exit code = 0`。每月至少把一个 R2 dump 恢复到隔离临时数据库，并核对 schema 与关键行数。
 
-## 8. 常规发布顺序
+## 8. GitHub、GHCR 与 VPS 一次性准备
 
-1. 对 production 执行并验证 R2 备份。
-2. 在 staging 构建、migration、启动并验证真实 OAuth/邮件与核心流程。
-3. 构建 production backend。
-4. 运行 production migration；禁止自动执行破坏性 down migration。
-5. 启动 production backend。
-6. 检查 loopback 与公开 `/health`、`/readyz`，确认 schema version、dirty=false、CORS 与 TLS。
+### 8.1 独立部署身份与目录
 
-## 9. 排障顺序
+GitHub Actions 不得复用个人 `root` 私钥。先通过 VPS console 或已验证的个人 SSH 会话创建独立 `deploy` 用户：
+
+```bash
+adduser --disabled-password --gecos '' deploy
+usermod -aG docker deploy
+install -d -o deploy -g deploy -m 0750 /opt/c2cmarket
+install -d -o deploy -g deploy -m 0750 /opt/c2cmarket/shared
+install -d -o deploy -g deploy -m 0750 /opt/c2cmarket/releases
+install -d -o deploy -g deploy -m 0750 /opt/c2cmarket/releases/production
+install -d -o deploy -g deploy -m 0750 /opt/c2cmarket/releases/staging
+```
+
+`docker` group 具备等同宿主高权限的容器控制能力；独立用户的目的在于与个人登录密钥隔离、单独撤销和审计，而不是把 Docker 变成低权限操作。
+
+在本地生成专用 key。由于 `deploy` 用户没有密码，首次公钥安装要使用你已经验证过的个人 root key，之后 GitHub 只使用 deploy key：
+
+```bash
+ssh-keygen -t ed25519 -f ~/.ssh/c2cmarket_github_actions -C github-actions-c2cmarket
+scp -o IdentitiesOnly=yes -i ~/.ssh/id_ed25519 \
+  ~/.ssh/c2cmarket_github_actions.pub \
+  root@192.236.230.132:/tmp/c2cmarket_github_actions.pub
+ssh -o IdentitiesOnly=yes -i ~/.ssh/id_ed25519 root@192.236.230.132
+install -d -o deploy -g deploy -m 0700 /home/deploy/.ssh
+install -o deploy -g deploy -m 0600 \
+  /tmp/c2cmarket_github_actions.pub \
+  /home/deploy/.ssh/authorized_keys
+rm -f /tmp/c2cmarket_github_actions.pub
+exit
+ssh -o IdentitiesOnly=yes -i ~/.ssh/c2cmarket_github_actions deploy@192.236.230.132
+```
+
+在本地把两套真实 env 临时传给 `deploy`，再安装到共享目录；不能提交 Git：
+
+```bash
+scp -o IdentitiesOnly=yes -i ~/.ssh/c2cmarket_github_actions \
+  .env.production .env.staging \
+  deploy@192.236.230.132:/tmp/
+ssh -o IdentitiesOnly=yes -i ~/.ssh/c2cmarket_github_actions deploy@192.236.230.132
+install -m 0600 /tmp/.env.production /opt/c2cmarket/shared/.env.production
+install -m 0600 /tmp/.env.staging /opt/c2cmarket/shared/.env.staging
+rm -f /tmp/.env.production /tmp/.env.staging
+```
+
+如果 `/opt/c2cmarket/current` 已经是普通目录，启用自动部署前先把它移动为一个版本目录，再创建 symlink；installer 会拒绝覆盖普通目录。生产备份 systemd 继续通过 `/opt/c2cmarket/current` 读取当前成功发布包。
+
+### 8.2 GHCR 只读登录
+
+GitHub Actions 使用仓库 `GITHUB_TOKEN` 发布 private package `ghcr.io/xiangrikuil/c2cmarket-backend`。VPS 的 `deploy` 用户创建一个 classic PAT，只授予 `read:packages`，然后在 `deploy` 用户的 SSH 会话中执行一次：
+
+```bash
+read -rsp 'GHCR read token: ' GHCR_READ_TOKEN
+printf '%s' "${GHCR_READ_TOKEN}" | docker login ghcr.io --username xiangrikuil --password-stdin
+unset GHCR_READ_TOKEN
+```
+
+不得把 token 写进仓库、env 文件或 shell history。确认 `deploy` 用户能运行 `docker info`，并确保 `/home/deploy/.config/rclone/rclone.conf` 已配置且权限为 0600。
+
+### 8.3 GitHub environments
+
+在 GitHub `Settings → Environments` 创建 `staging` 和 `production`。两者配置同名 secrets：
+
+```text
+VPS_HOST=192.236.230.132
+VPS_USER=deploy
+VPS_SSH_PRIVATE_KEY=<c2cmarket_github_actions private key>
+VPS_SSH_KNOWN_HOSTS=<verified known_hosts line>
+```
+
+`production` 必须配置 required reviewer；`staging` 不配置审批。可以用 `ssh-keyscan -H 192.236.230.132` 生成候选 known-hosts 行，但必须通过 VPS console 上的 `/etc/ssh/ssh_host_ed25519_key.pub` 或服务商控制台独立核对 fingerprint 后再保存为 `VPS_SSH_KNOWN_HOSTS`。workflow 不允许 `StrictHostKeyChecking=no`。
+
+## 9. 自动发布顺序
+
+`.github/workflows/ci.yml` 是唯一测试门禁：所有 PR 运行测试；`staging` / `main` push 在测试成功后调用 reusable `.github/workflows/release-backend.yml`。
+
+1. feature branch 提 PR 到 `staging`，CI 通过后合并。
+2. staging push 构建 `ghcr.io/xiangrikuil/c2cmarket-backend:<git-sha>`，上传精简发布包并自动部署 `c2c-staging` / 8081。
+3. installer 只在 migration、backend 启动和 `/health`、`/readyz` 全部成功后更新 `/opt/c2cmarket/staging-current`。
+4. 完成 staging 真实 OAuth、邮件、CORS 与核心流程验证，再由 `staging` 提 PR 到 `main`。
+5. main CI 通过后发布同一 commit SHA 镜像；production environment 等待 reviewer 确认。
+6. production deploy 先执行并上传 R2 dump，再 pull 镜像、运行 migration、以 `--no-build` 更新 `c2c-prod` / 8080。
+7. 所有检查成功后更新 `/opt/c2cmarket/current`，随后检查公开 TLS、CORS 与真实登录。
+
+release 目录为：
+
+```text
+/opt/c2cmarket/releases/staging/<git-sha>
+/opt/c2cmarket/releases/production/<git-sha>
+```
+
+部署失败会保留上传包和 release 目录用于诊断，但不会切换 current symlink。migration 已成功时不自动执行 down migration。
+
+### 9.1 应用版本回滚
+
+选择上一成功 SHA，在对应 release 目录重新执行部署脚本：
+
+```bash
+OLD_SHA=<40-character-git-sha>
+/opt/c2cmarket/releases/production/${OLD_SHA}/scripts/deploy-vps-backend.sh \
+  production \
+  ghcr.io/xiangrikuil/c2cmarket-backend:${OLD_SHA}
+ln -sfn /opt/c2cmarket/releases/production/${OLD_SHA} /opt/c2cmarket/current
+```
+
+此操作只回滚应用镜像和 current link，不回退数据库 schema。若新 release 已运行 migration，必须先检查 migration 向后兼容性和 R2 备份，禁止自动执行破坏性 down。
+
+## 10. 排障顺序
 
 1. `curl` 检查 8080/8081 loopback health/readiness。
 2. 检查对应 Compose project 的容器与日志。
@@ -171,6 +275,7 @@ systemctl list-timers c2cmarket-postgres-backup.timer --no-pager
 5. 检查 proxied A 记录是否仍指向 `192.236.230.132`。
 6. 检查 UFW Cloudflare allowlist。
 7. 检查 staging Access/OPTIONS bypass、后端 CORS 与 OAuth 环境归属。
-8. 检查 systemd backup、rclone remote、R2 对象与 lifecycle。
+8. 检查 GitHub environment 审批/secrets、GHCR package 权限和 `deploy` 用户的 Docker 登录。
+9. 检查 `/opt/c2cmarket/releases`、current symlink、systemd backup、rclone remote、R2 对象与 lifecycle。
 
 Cloudflare `502`/`523`/`525`/`526` 分别从 Caddy upstream、源站可达性与源站 TLS 边界排查，不得先放宽 Go CORS allowlist。

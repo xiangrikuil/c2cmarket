@@ -3,7 +3,10 @@ name: ci
 on:
   pull_request:
   push:
-    branches: [main]
+    branches: [staging, main]
+
+permissions:
+  contents: read
 
 jobs:
   backend:
@@ -20,6 +23,7 @@ jobs:
         working-directory: backend
       - run: node scripts/check-openapi-routes.mjs
       - run: node scripts/check-migrations-doc.mjs
+      - run: bash scripts/test-vps-release.sh
 
   frontend:
     runs-on: ubuntu-latest
@@ -43,3 +47,35 @@ jobs:
           VITE_API_MODE: real
       - run: pnpm test
         working-directory: frontend
+
+  release-staging:
+    name: release staging backend
+    if: github.event_name == 'push' && github.ref == 'refs/heads/staging'
+    needs: [backend, frontend]
+    uses: ./.github/workflows/release-backend.yml
+    with:
+      deploy_environment: staging
+      release_tag: staging
+      git_sha: ${{ github.sha }}
+    permissions:
+      contents: read
+      packages: write
+    concurrency:
+      group: backend-release-staging
+      cancel-in-progress: false
+
+  release-production:
+    name: release production backend
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [backend, frontend]
+    uses: ./.github/workflows/release-backend.yml
+    with:
+      deploy_environment: production
+      release_tag: production
+      git_sha: ${{ github.sha }}
+    permissions:
+      contents: read
+      packages: write
+    concurrency:
+      group: backend-release-production
+      cancel-in-progress: false
