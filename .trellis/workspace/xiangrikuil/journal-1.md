@@ -345,3 +345,37 @@ Rebased the workspace onto current staging, preserved three pending fixes, verif
 ### Next Steps
 
 - None - task complete
+
+
+## Session 10: VPS 直连生产与 Staging 迁移
+
+**Date**: 2026-07-17
+**Task**: VPS 直连生产与 Staging 迁移
+**Package**: frontend
+**Branch**: `codex/staging-marketplace-consistency`
+
+### Summary
+
+将 production/staging 后端与 PostgreSQL 迁移到 RackNerd VPS；启用 Caddy Cloudflare Full strict 直连、loopback 容器端口、R2 systemd 每日备份，并停用 Mac mini 后端、Tunnel 与旧备份任务。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `c95e91b` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
