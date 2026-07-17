@@ -53,23 +53,24 @@ jobs:
           cache-from: type=gha,scope=backend-${{ inputs.release_tag }}
           cache-to: type=gha,mode=max,scope=backend-${{ inputs.release_tag }}
 
-  deploy:
-    name: deploy ${{ inputs.deploy_environment }} backend
+  deploy-staging:
+    name: deploy staging backend
+    if: inputs.deploy_environment == 'staging'
     needs: publish
     runs-on: ubuntu-latest
     permissions:
       contents: read
     environment:
-      name: ${{ inputs.deploy_environment }}
+      name: staging
     env:
-      DEPLOY_ENVIRONMENT: ${{ inputs.deploy_environment }}
+      DEPLOY_ENVIRONMENT: staging
       GIT_SHA: ${{ inputs.git_sha }}
       IMAGE_REF: ghcr.io/xiangrikuil/c2cmarket-backend:${{ inputs.git_sha }}
       VPS_HOST: ${{ secrets.VPS_HOST }}
       VPS_USER: ${{ secrets.VPS_USER }}
       VPS_SSH_PRIVATE_KEY: ${{ secrets.VPS_SSH_PRIVATE_KEY }}
       VPS_SSH_KNOWN_HOSTS: ${{ secrets.VPS_SSH_KNOWN_HOSTS }}
-    steps:
+    steps: &deploy-backend-steps
       - uses: actions/checkout@v4
         with:
           ref: ${{ inputs.git_sha }}
@@ -135,3 +136,22 @@ jobs:
             "${IMAGE_REF}" \
             "/tmp/${ARCHIVE_NAME}" \
             <scripts/install-vps-release.sh
+
+  deploy-production:
+    name: deploy production backend
+    if: inputs.deploy_environment == 'production'
+    needs: publish
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    environment:
+      name: production
+    env:
+      DEPLOY_ENVIRONMENT: production
+      GIT_SHA: ${{ inputs.git_sha }}
+      IMAGE_REF: ghcr.io/xiangrikuil/c2cmarket-backend:${{ inputs.git_sha }}
+      VPS_HOST: ${{ secrets.VPS_HOST }}
+      VPS_USER: ${{ secrets.VPS_USER }}
+      VPS_SSH_PRIVATE_KEY: ${{ secrets.VPS_SSH_PRIVATE_KEY }}
+      VPS_SSH_KNOWN_HOSTS: ${{ secrets.VPS_SSH_KNOWN_HOSTS }}
+    steps: *deploy-backend-steps

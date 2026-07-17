@@ -57,6 +57,11 @@ arbitrary Compose project, env path, or port:
 - GitHub environment secrets are `VPS_HOST`, `VPS_USER`,
   `VPS_SSH_PRIVATE_KEY`, and `VPS_SSH_KNOWN_HOSTS`. `production` owns the
   required-reviewer gate.
+- The reusable workflow selects deployment through separate jobs whose
+  environment names are the literal values `staging` and `production`.
+  Reusable-workflow inputs must not dynamically resolve `environment.name`,
+  because that path can omit environment secrets even when GitHub records the
+  deployment against the expected environment.
 - The release archive contains `compose.yaml`, `compose.prod.yaml`,
   `backend/migrations`, and the install, deploy, and production-backup scripts.
   The VPS does not run `git pull` or build application source.
@@ -114,7 +119,32 @@ claim success by changing the current link.
 
 ### 7. Wrong vs Correct
 
-#### Wrong
+#### Wrong: resolve the protected environment from a reusable-workflow input
+
+```yaml
+environment:
+  name: ${{ inputs.deploy_environment }}
+```
+
+#### Correct: select a literal environment in each deployment job
+
+```yaml
+deploy-staging:
+  if: inputs.deploy_environment == 'staging'
+  environment:
+    name: staging
+
+deploy-production:
+  if: inputs.deploy_environment == 'production'
+  environment:
+    name: production
+```
+
+The jobs may share their step sequence through a YAML anchor, but the
+environment names and job conditions remain explicit and independently
+testable.
+
+#### Wrong: rebuild or claim success before readiness
 
 ```bash
 docker compose up -d --build backend
@@ -124,7 +154,7 @@ ln -sfn /opt/c2cmarket/releases/production/new /opt/c2cmarket/current
 This rebuilds unverified source on the VPS and changes the success pointer
 without proving backup, migration, health, or readiness.
 
-#### Correct
+#### Correct: deploy the immutable image before changing the current link
 
 ```bash
 scripts/deploy-vps-backend.sh \
