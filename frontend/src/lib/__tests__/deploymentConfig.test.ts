@@ -28,20 +28,39 @@ describe('Cloudflare Worker deployment config', () => {
     })
   })
 
-  it('keeps the local Cloudflare Tunnel on a persistent HTTP/2 launch service', () => {
-    const tunnelConfig = readFileSync(
-      new URL('../../../../deploy/cloudflared/config.yml.example', import.meta.url),
+  it('keeps production backends loopback-only behind the VPS Caddy origin', () => {
+    const composeOverride = readFileSync(
+      new URL('../../../../compose.prod.yaml', import.meta.url),
       'utf8',
     )
-    const launchAgent = readFileSync(
-      new URL('../../../../deploy/launchd/com.cloudflare.cloudflared.plist.example', import.meta.url),
+    const caddyfile = readFileSync(
+      new URL('../../../../deploy/caddy/Caddyfile.example', import.meta.url),
       'utf8',
     )
 
-    expect(tunnelConfig).toMatch(/^protocol: http2$/m)
-    expect(launchAgent).toContain('<string>com.cloudflare.cloudflared</string>')
-    expect(launchAgent).toContain('<string>/Users/CHANGE_ME/.cloudflared/config.yml</string>')
-    expect(launchAgent).toMatch(/<key>KeepAlive<\/key>[\s\S]*?<key>SuccessfulExit<\/key>\s*<false\/>/)
-    expect(launchAgent).toMatch(/<key>RunAtLoad<\/key>\s*<true\/>/)
+    expect(composeOverride).toContain('ports: !override')
+    expect(composeOverride).toContain('127.0.0.1:${BACKEND_PORT:-8080}:${BACKEND_PORT:-8080}')
+    expect(caddyfile).toContain('client_ip_headers CF-Connecting-IP X-Forwarded-For')
+    expect(caddyfile).not.toContain('tls /etc/caddy/certs/')
+    expect(caddyfile).toContain('reverse_proxy 127.0.0.1:8080')
+    expect(caddyfile).toContain('reverse_proxy 127.0.0.1:8081')
+  })
+
+  it('schedules Linux production backups with the isolated production project', () => {
+    const service = readFileSync(
+      new URL('../../../../deploy/systemd/c2cmarket-postgres-backup.service.example', import.meta.url),
+      'utf8',
+    )
+    const timer = readFileSync(
+      new URL('../../../../deploy/systemd/c2cmarket-postgres-backup.timer.example', import.meta.url),
+      'utf8',
+    )
+
+    expect(service).toContain('Environment=COMPOSE_PROJECT=c2c-prod')
+    expect(service).toContain('Environment=ENV_FILE=/opt/c2cmarket/shared/.env.production')
+    expect(service).toContain('Environment=BACKUP_DIR=/var/lib/c2cmarket/backups/production')
+    expect(service).toContain('ExecStart=/bin/bash /opt/c2cmarket/current/scripts/backup-production-postgres.sh')
+    expect(timer).toContain('OnCalendar=*-*-* 03:30:00 Asia/Shanghai')
+    expect(timer).toContain('Persistent=true')
   })
 })

@@ -1,0 +1,27 @@
+[Unit]
+Description=C2CMarket production PostgreSQL backup to R2
+Requires=docker.service
+After=docker.service network-online.target
+Wants=network-online.target
+ConditionPathExists=/opt/c2cmarket/current/scripts/backup-production-postgres.sh
+ConditionPathExists=/opt/c2cmarket/shared/.env.production
+ConditionPathExists=/home/deploy/.config/rclone/rclone.conf
+
+[Service]
+Type=oneshot
+User=deploy
+Group=deploy
+SupplementaryGroups=docker
+WorkingDirectory=/opt/c2cmarket/current
+Environment=HOME=/home/deploy
+Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+Environment=ENV_FILE=/opt/c2cmarket/shared/.env.production
+Environment=COMPOSE_PROJECT=c2c-prod
+Environment=BACKUP_DIR=/var/lib/c2cmarket/backups/production
+Environment=R2_REMOTE=c2cmarket-r2
+Environment=R2_BUCKET=c2cmarket-backups
+Environment=R2_PREFIX=postgres/production
+StateDirectory=c2cmarket
+StateDirectoryMode=0750
+UMask=0077
+ExecStart=/bin/bash /opt/c2cmarket/current/scripts/backup-production-postgres.sh

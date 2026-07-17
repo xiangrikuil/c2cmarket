@@ -1,0 +1,10 @@
+[Unit]
+Description=Run C2CMarket production PostgreSQL backup daily
+
+[Timer]
+OnCalendar=*-*-* 03:30:00 Asia/Shanghai
+Persistent=true
+Unit=c2cmarket-postgres-backup.service
+
+[Install]
+WantedBy=timers.target

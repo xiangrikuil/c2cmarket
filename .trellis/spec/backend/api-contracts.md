@@ -1619,6 +1619,92 @@ oauthClient := &http.Client{Timeout: 10 * time.Second}
 log.Printf("method=%s path=%s status=%d duration=%s request_id=%s", method, urlPath, status, duration, requestID)
 ```
 
+## Scenario: VPS Direct-Origin Runtime Contract
+
+### 1. Scope / Trigger
+
+- Trigger: changing production/staging hosting, Compose exposure, proxy trust, Cloudflare DNS/TLS, database restore, or the production backup service.
+- Scope: both API origins run on the RackNerd VPS; the Cloudflare Workers frontends remain separate and the Mac mini is not a runtime fallback.
+
+### 2. Signatures
+
+```text
+api.c2cmarket.shop         A 192.236.230.132 (proxied) -> Caddy -> 127.0.0.1:8080
+api-staging.c2cmarket.shop A 192.236.230.132 (proxied) -> Caddy -> 127.0.0.1:8081
+
+docker compose -p c2c-prod    --env-file /opt/c2cmarket/shared/.env.production -f compose.yaml -f compose.prod.yaml ...
+docker compose -p c2c-staging --env-file /opt/c2cmarket/shared/.env.staging    -f compose.yaml -f compose.prod.yaml ...
+
+GET /health
+GET /readyz
+OPTIONS /api/v1/<route>
+
+systemctl start c2cmarket-postgres-backup.service
+systemctl enable --now c2cmarket-postgres-backup.timer
+```
+
+### 3. Contracts
+
+- Caddy owns 80/443, automatically obtains and renews publicly trusted certificates, and Cloudflare runs `Full (strict)`.
+- UFW allows 80/443 only from current Cloudflare IPv4/IPv6 ranges. Backend ports bind only to `127.0.0.1`; PostgreSQL publishes no host port.
+- Caddy trusts only official Cloudflare ranges for `CF-Connecting-IP`. Both backends set `TRUST_X_FORWARDED_FOR=true` and `TRUSTED_PROXIES=172.16.0.0/12` so only the Docker bridge peer can supply the forwarded client address.
+- Production and staging use project names `c2c-prod` and `c2c-staging`, distinct env files, networks, passwords, encryption keys, and named volumes. Both databases must match `ExpectedMigrationVersion` with `dirty=false`.
+- `/opt/c2cmarket/current` points to an immutable release and both env files are `0600 deploy:deploy`. The VPS does not run `cloudflared`.
+- The backup oneshot runs as `deploy` with Docker group access, stores local files under `/var/lib/c2cmarket/backups/production`, uploads dump plus checksum to `c2cmarket-r2:c2cmarket-backups/postgres/production/`, and is scheduled daily at 03:30 Asia/Shanghai.
+
+### 4. Validation & Error Matrix
+
+| Condition | Expected signal |
+| --- | --- |
+| Caddy/UFW/origin is unreachable | Cloudflare `521`; loopback backend may still be healthy |
+| Caddy cannot reach the selected backend | Cloudflare/Caddy `502`; check the matching Compose project |
+| Origin TLS handshake or certificate validation fails | Cloudflare `525`/`526`; inspect Caddy certificate state and Full (strict) |
+| Stale Tunnel route remains | Cloudflare `530`; verify the proxied A record, never restart Mac Tunnel |
+| Database behind/dirty/unreachable | `/readyz` returns `503` with schema/database reason |
+| Public preflight uses wrong environment origin | No matching `Access-Control-Allow-Origin`; do not broaden to wildcard |
+| Backup dump/upload fails | oneshot fails and retains local artifacts; timer remains observable in systemd |
+
+### 5. Good/Base/Bad Cases
+
+- Good: after a VPS reboot, Caddy and four containers recover automatically; public production/staging readiness both report the expected schema and each preflight echoes only its own frontend origin.
+- Base: loopback health is green while DNS propagation is pending; keep diagnosing the edge/origin boundary without changing Go CORS.
+- Bad: publish 8080/8081 or 5432 publicly, trust arbitrary forwarding headers, share a Compose project/volume, run `cloudflared` on the VPS, or restart the retired Mac backend as an undocumented fallback.
+
+### 6. Tests Required
+
+- Expand both Compose environments and assert `host_ip: 127.0.0.1`, ports 8080/8081, and no PostgreSQL host publish.
+- Validate the Caddyfile and assert both hostname-to-loopback mappings plus Cloudflare trusted proxy ranges.
+- Reboot acceptance: Docker, Caddy, UFW active; four containers running/healthy; no failed systemd units.
+- Public smoke: both `/health` and `/readyz` return 200/schema current; production/staging OPTIONS return 204 with the matching explicit origin.
+- Data migration assertion: expected user counts, schema version, and `dirty=false` in each restored database.
+- Backup assertion: systemd unit verification, manual exit 0, local dump/checksum validation, R2 object existence, and enabled timer next run.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```yaml
+ports:
+  - "8080:8080"
+```
+
+```text
+api.c2cmarket.shop CNAME <tunnel-id>.cfargotunnel.com
+TRUSTED_PROXIES=0.0.0.0/0
+```
+
+#### Correct
+
+```yaml
+ports: !override
+  - "127.0.0.1:${BACKEND_PORT:-8080}:${BACKEND_PORT:-8080}"
+```
+
+```text
+api.c2cmarket.shop A 192.236.230.132 (proxied)
+TRUSTED_PROXIES=172.16.0.0/12
+```
+
 ## Scenario: Feedback Ticket Loop Contract
 
 ### 1. Scope / Trigger

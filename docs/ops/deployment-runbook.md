@@ -87,18 +87,18 @@ include raw search terms, URL query strings, user IDs, contact values, report te
 linux.do identifiers, payment instructions, API keys, tokens, sessions, cookies, or
 panel credentials.
 
-## Cloudflare Pages and Local Backends
+## Cloudflare Workers and VPS Backends
 
 The current release topology serves production and staging frontends from
-Cloudflare Pages and exposes two isolated local backend stacks through one
-Cloudflare Tunnel. Follow
-[`cloudflare-pages-local-backends.md`](./cloudflare-pages-local-backends.md) for
-the authoritative hostnames, Compose project names, Access policy, OAuth
-callbacks, Tunnel ingress, and R2 backup procedure.
+Cloudflare Workers Static Assets and runs two isolated backend stacks on the
+RackNerd VPS. Cloudflare proxied A records reach Caddy with Full (strict) TLS;
+Caddy routes the API hostnames to loopback-only ports 8080 and 8081. Follow
+[`cloudflare-workers-vps-backends.md`](./cloudflare-workers-vps-backends.md) for
+the authoritative hostnames, Compose project names, Caddy/automatic-TLS contract,
+Access policy, OAuth callbacks, and systemd R2 backup procedure.
 
-The Tunnel must own only `api.c2cmarket.shop` and
-`api-staging.c2cmarket.shop`. Pages must own `c2cmarket.shop` and
-`staging.c2cmarket.shop`.
+The VPS owns only the two API origins. The production and staging Workers keep
+`c2cmarket.shop` and `staging.c2cmarket.shop`.
 
 ## First Deploy
 
@@ -135,7 +135,7 @@ curl -fsS http://127.0.0.1:${BACKEND_PORT:-8080}/readyz
 ```
 
 `/readyz` must report PostgreSQL readiness and `schemaDirty=false`.
-The expected schema version in the current backend is `38`.
+The expected schema version in the current backend is `52`.
 
 ## Backend Hardening Checks
 

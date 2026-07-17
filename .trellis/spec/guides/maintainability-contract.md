@@ -53,24 +53,26 @@ Fallbacks are allowed only when all of the following are true:
 When a browser reports an application-layer error for a request that crosses a CDN, Tunnel, reverse proxy, or access gateway, inspect the raw public response before changing application code:
 
 - Compare the local origin response with the public response using the same method and `Origin` header.
-- Treat Cloudflare HTTP `530` as a connector/Tunnel failure. Its generated error body does not carry the Go backend's CORS headers, so browsers may misleadingly report it as a CORS violation.
+- Treat Cloudflare HTTP `530` on either API hostname as stale Tunnel/DNS configuration. The active route is a proxied A record to the VPS and must not be repaired by restarting Mac `cloudflared`.
 - If the local backend returns the expected CORS headers but the public endpoint returns a gateway status, repair the proxy boundary first; do not broaden the backend allowlist.
-- Verify recovery without a temporary foreground process. Stop the diagnostic connector and prove the persistent service still serves health, readiness, credentialed GET, and OPTIONS requests.
-- For this project's Mac-hosted Tunnel, repeated QUIC inactivity timeouts with a passing TCP 7844 pre-check require the documented `http2` transport and LaunchAgent restart procedure.
+- Diagnose the active boundary in order: Cloudflare proxied A record → VPS UFW/Caddy TLS → loopback backend → PostgreSQL readiness. Cloudflare `521` means the origin is unreachable, `502` usually means the Caddy upstream failed, and `525`/`526` point to source TLS.
+- Verify recovery from the persistent VPS services. Reboot the VPS and prove Caddy plus both Compose projects still serve health, readiness, credentialed GET, and OPTIONS requests; do not use a temporary foreground connector.
 
-## LaunchAgent Script Interpreter Contract
+## Linux Backup Service Contract
 
-When a LaunchAgent invokes a repository script through an explicit shell in
-`ProgramArguments`, that shell must match the script's syntax and shebang. In
-particular, invoke `scripts/backup-production-postgres.sh` with `/bin/bash`;
-running it as `/bin/zsh` leaves Bash-only variables such as `BASH_SOURCE`
-undefined even though the script itself declares a Bash shebang.
+The active production backup job is
+`c2cmarket-postgres-backup.service` on the VPS. It runs
+`scripts/backup-production-postgres.sh` through `/bin/bash` as `deploy`, adds
+the `docker` supplementary group, reads
+`/opt/c2cmarket/shared/.env.production`, and writes local state below
+`/var/lib/c2cmarket/backups/production` before uploading to R2. The paired
+timer runs daily at 03:30 Asia/Shanghai with `Persistent=true`.
 
-`plutil -lint` validates only the plist structure. After installing or changing
-a LaunchAgent, also load or kick-start the installed job and verify all of the
-following: the resolved program/arguments, `last exit code = 0`, no new stderr
-content, and the expected external side effect (for the production backup job,
-both the `.dump` and `.sha256` objects must exist in R2).
+`systemd-analyze verify` validates only unit structure. After installing or
+changing the units, manually start the service in an authorized operations
+context and verify exit status 0, a non-empty custom-format dump, a matching
+`.sha256`, both R2 objects, and the timer's next run. Do not re-enable the
+retired Mac LaunchAgent.
 
 ## External OAuth Provider Boundary Diagnosis
 
