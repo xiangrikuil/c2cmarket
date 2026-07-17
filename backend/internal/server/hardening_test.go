@@ -250,6 +250,71 @@ func TestFetchOAuthJSONRejectsOversizedBody(t *testing.T) {
 	}
 }
 
+func TestOAuthProfileAcceptsNumericLinuxDoUserID(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/oauth2/token":
+			_, _ = w.Write([]byte(`{"access_token":"provider-access-token","token_type":"Bearer"}`))
+		case "/api/user":
+			if authorization := r.Header.Get("Authorization"); authorization != "Bearer provider-access-token" {
+				t.Fatalf("unexpected authorization header %q", authorization)
+			}
+			_, _ = w.Write([]byte(`{"id":12345,"username":"orbit","name":"Orbit","avatar_template":"https://linux.do/user_avatar/linux.do/orbit/{size}/42_2.png","trust_level":3}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer upstream.Close()
+
+	server := &Server{
+		oauth: OAuthOptions{
+			ProviderMode: "oauth2",
+			ClientID:     "client-id",
+			ClientSecret: "client-secret",
+			TokenURL:     upstream.URL + "/oauth2/token",
+			UserInfoURL:  upstream.URL + "/api/user",
+			RedirectURL:  "https://api.example.com/api/v1/auth/oauth/callback",
+		},
+		oauthHTTPClient: upstream.Client(),
+	}
+	profile, appErr := server.oauthProfile(context.Background(), "authorization-code")
+	if appErr != nil {
+		t.Fatalf("oauth profile: %v", appErr)
+	}
+	if profile.Subject != "12345" || profile.LinuxDoUserID != "12345" {
+		t.Fatalf("unexpected oauth subject: %+v", profile)
+	}
+	if profile.Username != "orbit" || profile.DisplayName != "Orbit" || profile.TrustLevel != 3 {
+		t.Fatalf("unexpected oauth profile: %+v", profile)
+	}
+	wantAvatarURL := "https://linux.do/user_avatar/linux.do/orbit/288/42_2.png"
+	if profile.AvatarURL != wantAvatarURL || profile.LinuxDoAvatarURL != wantAvatarURL {
+		t.Fatalf("expected normalized linux.do avatar %q, got %+v", wantAvatarURL, profile)
+	}
+}
+
+func TestOAuthProviderIDAcceptsStringAndIntegerJSON(t *testing.T) {
+	for _, testCase := range []struct {
+		name string
+		json string
+		want string
+	}{
+		{name: "string", json: `"12345"`, want: "12345"},
+		{name: "integer", json: `12345`, want: "12345"},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			var id oauthProviderID
+			if err := json.Unmarshal([]byte(testCase.json), &id); err != nil {
+				t.Fatalf("unmarshal oauth provider id: %v", err)
+			}
+			if string(id) != testCase.want {
+				t.Fatalf("expected %q, got %q", testCase.want, id)
+			}
+		})
+	}
+}
+
 func TestPaginateSliceUsesOpaqueCursorAndValidatesInput(t *testing.T) {
 	request := httptest.NewRequest(http.MethodGet, "/api/v1/search?limit=2", nil)
 	page, appErr := paginateSlice(request, []int{1, 2, 3})

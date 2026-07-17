@@ -3063,6 +3063,46 @@ paths:
           $ref: "#/components/responses/Problem"
         "428":
           $ref: "#/components/responses/Problem"
+  /api/v1/owner/api-orders/{id}/dispute:
+    post:
+      operationId: openOwnerAPIOrderDispute
+      tags: [OwnerAPIOrders]
+      security:
+        - sessionCookie: []
+          csrfToken: []
+      description: Allows the API service owner to open the same admin dispute workflow available to the buyer. The order fulfillment status remains unchanged, and the platform does not process refunds, compensation, escrow, or payment.
+      parameters:
+        - $ref: "#/components/parameters/ResourceId"
+        - $ref: "#/components/parameters/IfMatch"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/APIOrderReasonRequest"
+      responses:
+        "200":
+          description: API order dispute case opened by the service owner and linked to the order.
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+            ETag:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/APIOrder"
+        "409":
+          $ref: "#/components/responses/Problem"
+        "412":
+          $ref: "#/components/responses/Problem"
+        "422":
+          $ref: "#/components/responses/Problem"
+        "428":
+          $ref: "#/components/responses/Problem"
   /api/v1/admin/official-price-leads:
     get:
       operationId: listAdminOfficialPriceLeads

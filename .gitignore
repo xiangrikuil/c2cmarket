@@ -4,6 +4,11 @@ node_modules/
 dist/
 coverage/
 docs/
+!docs/
+docs/*
+!docs/ops/
+docs/ops/*
+!docs/ops/cloudflare-workers-vps-backends.md
 output/
 *.log
 *.zip

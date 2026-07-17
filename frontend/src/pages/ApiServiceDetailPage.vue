@@ -141,7 +141,7 @@ const createOrderMutation = useMutation({
         purchase_amount_cny: amount.value,
       })
     }
-    toast.success('订单已创建，请查看付款方式并在倒计时内完成站外付款。')
+    toast.success('订单已创建，请查看商户收款方式并在倒计时内完成付款。')
     router.push(`/my/api-orders/${order.id}`)
   },
   onError(error) {
@@ -184,12 +184,12 @@ function createOrder() {
       <ApiServiceSummary :service="service" />
 
       <Card v-if="ownershipLoading" class="p-5 text-sm text-muted-foreground">
-        正在确认当前账号的服务视角...
+        正在确认当前账号的服务视角…
       </Card>
 
       <Card v-else-if="isOwnedService" class="p-5">
-        <h2 class="font-semibold">卖家预览模式</h2>
-        <p class="mt-2 text-sm text-muted-foreground">这是买家看到的公开服务内容。卖家不能为自己的服务创建订单。</p>
+        <h2 class="font-semibold">商户预览模式</h2>
+        <p class="mt-2 text-sm text-muted-foreground">这是买家看到的公开服务内容。商户不能为自己的服务创建订单。</p>
         <RouterLink :to="`/my/api-services/${service.id}`">
           <Button class="mt-4 w-full">返回服务管理</Button>
         </RouterLink>

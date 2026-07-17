@@ -45,6 +45,8 @@ test('resolves API service icons from the selected model provider instead of the
 
 test('wires category icons through admin upload and public category rendering', () => {
   const adminSource = readFileSync(new URL('../../pages/AdminProductPlansPage.vue', import.meta.url), 'utf8')
+  const apiMarketSource = readFileSync(new URL('../../pages/ApiMarketPage.vue', import.meta.url), 'utf8')
+  const apiPackageCardSource = readFileSync(new URL('../../components/api-market/ApiPackageCard.vue', import.meta.url), 'utf8')
   const carpoolSource = readFileSync(new URL('../../pages/CarpoolsPage.vue', import.meta.url), 'utf8')
   const homeSource = readFileSync(new URL('../../pages/HomePage.vue', import.meta.url), 'utf8')
   const backendSource = readFileSync(new URL('../productCatalogBackend.ts', import.meta.url), 'utf8')
@@ -57,5 +59,9 @@ test('wires category icons through admin upload and public category rendering', 
   assert.match(carpoolSource, /getCatalogProductIconSrc/)
   assert.match(homeSource, /useProductCategories/)
   assert.match(homeSource, /getApiServiceProductIconSrc/)
+  assert.match(apiMarketSource, /useProductCategories/)
+  assert.match(apiMarketSource, /getApiServiceProductIconSrc/)
+  assert.match(apiMarketSource, /getProductIconSrc/)
+  assert.match(apiPackageCardSource, /productIconSrc/)
   assert.match(backendSource, /iconDataUrl: input\.iconDataUrl\.trim\(\)/)
 })

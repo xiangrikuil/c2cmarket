@@ -46,7 +46,7 @@ function confirm() {
             <dd class="text-right font-semibold">{{ selectedPackage.name }} · {{ selectedPackage.durationDays }} 天</dd>
           </div>
           <div v-if="!selectedPackage" class="flex justify-between gap-4">
-            <dt class="text-muted-foreground">冻结美元额度</dt>
+            <dt class="text-muted-foreground">锁定美元额度</dt>
             <dd class="font-semibold">{{ formatCredit(estimateUsdAllowance(String(amount), service)) }}</dd>
           </div>
           <div v-else class="flex justify-between gap-4">
@@ -63,17 +63,17 @@ function confirm() {
           </div>
           <div v-else class="flex justify-between gap-4">
             <dt class="text-muted-foreground">有效期起点</dt>
-            <dd class="text-right font-semibold">商家提交交付后开始</dd>
+            <dd class="text-right font-semibold">商户提交交付后开始</dd>
           </div>
         </dl>
         <label class="mx-4 mb-4 flex items-start gap-2 rounded-md border border-border bg-muted/40 p-3 text-sm leading-5">
           <input v-model="acknowledged" type="checkbox" class="mt-0.5 h-4 w-4 shrink-0 accent-primary" />
-          <span>我已核对订单金额与{{ selectedPackage ? '套餐模型、倍率和库存' : '额度' }}；创建后将冻结快照并启动付款倒计时，付款仍在线下完成。</span>
+          <span>我已核对订单金额与{{ selectedPackage ? '套餐模型、倍率和库存' : '额度' }}；创建后将锁定下单信息并启动付款倒计时。付款由我与商户直接完成，平台不代收或托管资金。</span>
         </label>
         <div class="flex justify-end gap-2 border-t border-border p-4">
           <Button variant="outline" :disabled="submitting" @click="emit('close')">取消</Button>
           <Button :disabled="submitting || !acknowledged" @click="confirm">
-            {{ submitting ? '创建中...' : '确认创建订单' }}
+            {{ submitting ? '创建中…' : '确认创建订单' }}
           </Button>
         </div>
       </div>

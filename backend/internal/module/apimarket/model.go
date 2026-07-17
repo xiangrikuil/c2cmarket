@@ -34,6 +34,7 @@ type Service struct {
 	MerchantIdentityMode             string
 	MerchantDisplayName              string
 	MerchantProfileSlug              string
+	MerchantAvatarURL                string
 	OwnerContactMethodID             string
 	Title                            string
 	ShortDescription                 string

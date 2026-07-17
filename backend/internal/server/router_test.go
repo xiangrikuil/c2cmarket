@@ -1708,6 +1708,18 @@ func TestAPIServiceInstantOrderFlow(t *testing.T) {
 	if disputed.Status != "payment_submitted" || disputed.DisputeStatus != "open" || disputed.DisputeCaseID == "" || disputed.Version != 3 {
 		t.Fatalf("unexpected disputed API order: %+v", disputed)
 	}
+
+	merchantDisputeIntent := createAPIPurchaseIntent(t, server, buyerSession, orderable.ID, buyerContact.ID, "api-order-merchant-dispute-intent")
+	merchantDisputeOrder := createAPIOrder(t, server, buyerSession, merchantDisputeIntent.ID, "wechat", "api-order-merchant-dispute-create")
+	merchantDisputePaid := apiOrderAction(t, server, buyerSession, "me", merchantDisputeOrder.ID, "submit-payment", merchantDisputeOrder.Version, "api-order-merchant-dispute-submit-payment", `{"paymentSummary":"已付款，等待商户核对。"}`)
+	merchantDisputed := apiOrderAction(t, server, ownerSession, "owner", merchantDisputePaid.ID, "dispute", merchantDisputePaid.Version, "api-order-merchant-open-dispute", `{"reason":"收款记录与买家提交的信息不一致，需要平台协助核对。"}`)
+	if merchantDisputed.DisputeStatus != "open" || merchantDisputed.DisputeCaseID == "" || merchantDisputed.BuyerUserID != buyerSession.userID {
+		t.Fatalf("unexpected merchant-opened API order dispute: %+v", merchantDisputed)
+	}
+	merchantDisputeReplay := apiOrderAction(t, server, ownerSession, "owner", merchantDisputePaid.ID, "dispute", merchantDisputePaid.Version, "api-order-merchant-open-dispute", `{"reason":"收款记录与买家提交的信息不一致，需要平台协助核对。"}`)
+	if merchantDisputeReplay.DisputeCaseID != merchantDisputed.DisputeCaseID || merchantDisputeReplay.Version != merchantDisputed.Version {
+		t.Fatalf("expected idempotent merchant dispute replay, got %+v and %+v", merchantDisputed, merchantDisputeReplay)
+	}
 	adminDisputes := listAdminDisputes(t, server, adminSession)
 	foundDispute := false
 	for _, item := range adminDisputes.Items {
@@ -2071,7 +2083,8 @@ func TestProfileContactAndMerchantProfileFlow(t *testing.T) {
 		"bio":"只公开必要业务资料。",
 		"regionCode":"cn",
 		"timezone":"Asia/Shanghai",
-		"avatarMode":"linuxdo",
+		"avatarMode":"custom_url",
+		"avatarUrl":"https://cdn.example.com/profile-owner.webp",
 		"privacy":{
 			"showCreatedAt":true,
 			"showLastActiveAt":false,
@@ -2143,7 +2156,7 @@ func TestProfileContactAndMerchantProfileFlow(t *testing.T) {
 	upsertMerchant := newJSONRequest(http.MethodPost, "/api/v1/me/merchant-profile", `{
 		"slug":"profile-store",
 		"displayName":"Profile Store",
-		"avatarUrl":""
+		"avatarUrl":"https://cdn.example.com/profile-store.png"
 	}`)
 	addAuth(upsertMerchant, session, "")
 	upsertMerchantResponse := httptest.NewRecorder()
@@ -2183,7 +2196,7 @@ func TestProfileContactAndMerchantProfileFlow(t *testing.T) {
 	if strings.Contains(publicMerchantBody, session.userID) || strings.Contains(publicMerchantBody, "updated-profile@example.com") {
 		t.Fatalf("public merchant profile leaked owner/contact data: %s", publicMerchantBody)
 	}
-	if !strings.Contains(publicMerchantBody, `"username":"profile-store"`) {
+	if !strings.Contains(publicMerchantBody, `"username":"profile-store"`) || !strings.Contains(publicMerchantBody, `"avatarUrl":"https://cdn.example.com/profile-store.png"`) {
 		t.Fatalf("expected public merchant slug as username field, got %s", publicMerchantBody)
 	}
 
@@ -2199,11 +2212,26 @@ func TestProfileContactAndMerchantProfileFlow(t *testing.T) {
 		t.Fatalf("public API service status %d body %s", publicServiceResponse.Code, publicServiceResponse.Body.String())
 	}
 	publicServiceBody := publicServiceResponse.Body.String()
-	if !strings.Contains(publicServiceBody, `"merchantDisplayName":"Profile Store"`) || !strings.Contains(publicServiceBody, `"merchantProfileSlug":"profile-store"`) {
+	if !strings.Contains(publicServiceBody, `"merchantDisplayName":"Profile Store"`) || !strings.Contains(publicServiceBody, `"merchantProfileSlug":"profile-store"`) || !strings.Contains(publicServiceBody, `"merchantAvatarUrl":"https://cdn.example.com/profile-store.png"`) {
 		t.Fatalf("expected public API service to expose store alias, got %s", publicServiceBody)
 	}
 	if strings.Contains(publicServiceBody, session.userID) || strings.Contains(publicServiceBody, second.ID) || strings.Contains(publicServiceBody, "updated-profile@example.com") {
 		t.Fatalf("public API service leaked owner/contact data: %s", publicServiceBody)
+	}
+
+	publicIdentityService := createAPIServiceWithPayload(t, server, session, apiServicePayload(second.ID, "1.0000"), "profile-public-api-service")
+	publicIdentitySubmitted := ownerAPIServiceAction(t, server, session, publicIdentityService.ID, "submit-review", publicIdentityService.Version, "profile-public-api-submit")
+	publicIdentityOnline := ownerAPIServiceAction(t, server, session, publicIdentityService.ID, "publish", publicIdentitySubmitted.Version, "profile-public-api-publish")
+	publicIdentityOrderable := updateAPIServiceOrderSettings(t, server, session, publicIdentityOnline.ID, publicIdentityOnline.Version, true, "profile-public-api-settings")
+	publicIdentityRequest := httptest.NewRequest(http.MethodGet, "/api/v1/api-services/"+publicIdentityOrderable.ID, nil)
+	publicIdentityResponse := httptest.NewRecorder()
+	server.ServeHTTP(publicIdentityResponse, publicIdentityRequest)
+	if publicIdentityResponse.Code != http.StatusOK {
+		t.Fatalf("public identity API service status %d body %s", publicIdentityResponse.Code, publicIdentityResponse.Body.String())
+	}
+	publicIdentityBody := publicIdentityResponse.Body.String()
+	if !strings.Contains(publicIdentityBody, `"merchantDisplayName":"Profile Owner"`) || !strings.Contains(publicIdentityBody, `"merchantProfileSlug":"profile-owner"`) || !strings.Contains(publicIdentityBody, `"merchantAvatarUrl":"https://cdn.example.com/profile-owner.webp"`) {
+		t.Fatalf("expected public API service to expose public profile identity and avatar, got %s", publicIdentityBody)
 	}
 }
 

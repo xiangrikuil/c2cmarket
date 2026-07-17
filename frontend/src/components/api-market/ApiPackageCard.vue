@@ -3,12 +3,15 @@ import { RouterLink } from 'vue-router'
 import { Gauge, PackageOpen } from 'lucide-vue-next'
 import { Badge } from '@/components/ui/badge'
 import { Card } from '@/components/ui/card'
-import { getApiMerchantAvatarText, getApiMerchantDisplayName } from '@/lib/api'
+import ApiMerchantAvatar from '@/components/api-market/ApiMerchantAvatar.vue'
+import ApiMerchantBadges from '@/components/api-market/ApiMerchantBadges.vue'
+import { getApiMerchantDisplayName } from '@/lib/api'
 import type { ApiPackageRecommendation } from '@/lib/apiPackageRecommendation'
 
 const props = defineProps<{
   row: ApiPackageRecommendation
   rank: number
+  productIconSrc: string | null
 }>()
 
 const formatNumber = (value: number, digits = 2) => value.toFixed(digits).replace(/\.?0+$/, '')
@@ -21,7 +24,10 @@ const hiddenModelCount = Math.max(0, props.row.package.models.length - visibleMo
   <RouterLink :to="{ path: `/api-market/${row.service.id}`, query: { package: row.package.id } }" class="block min-w-0">
     <Card class="api-package-card h-full min-w-0 overflow-hidden p-0">
       <div class="flex min-w-0 items-start gap-3 p-4 pb-3">
-        <span class="api-service-card-logo api-package-card-logo"><PackageOpen class="h-5 w-5" /></span>
+        <span class="api-service-card-logo api-package-card-logo">
+          <img v-if="productIconSrc" :src="productIconSrc" :alt="`${row.service.title} 图标`" />
+          <PackageOpen v-else class="h-5 w-5" />
+        </span>
         <div class="min-w-0 flex-1">
           <div class="flex flex-wrap items-center gap-2">
             <h2 class="truncate font-semibold text-slate-950">{{ row.package.name }}</h2>
@@ -38,6 +44,7 @@ const hiddenModelCount = Math.max(0, props.row.package.models.length - visibleMo
 
       <div class="flex min-h-8 flex-wrap gap-1.5 px-4 pb-3">
         <Badge v-for="model in visibleModels" :key="model.serviceModelId" variant="model">
+          <img v-if="productIconSrc" :src="productIconSrc" alt="" class="api-model-badge-icon" />
           {{ model.modelName }} · {{ formatNumber(model.merchantMultiplier, 4) }}x
         </Badge>
         <Badge v-if="hiddenModelCount" variant="model">+{{ hiddenModelCount }}</Badge>
@@ -63,9 +70,12 @@ const hiddenModelCount = Math.max(0, props.row.package.models.length - visibleMo
 
       <div class="api-service-card-footer">
         <div class="api-market-merchant">
-          <span class="api-market-avatar">{{ getApiMerchantAvatarText(row.service) }}</span>
+          <ApiMerchantAvatar :service="row.service" class="api-market-avatar" />
           <span class="min-w-0">
-            <span class="block truncate text-sm font-medium">{{ getApiMerchantDisplayName(row.service) }}</span>
+            <span class="flex flex-wrap items-center gap-1.5">
+              <span class="truncate text-sm font-medium">{{ getApiMerchantDisplayName(row.service) }}</span>
+              <ApiMerchantBadges :service="row.service" />
+            </span>
             <span class="mt-0.5 block text-xs text-muted-foreground">信任等级 {{ row.service.trustLevel }} · 近 30 天完成 {{ row.service.completed30d }} 单</span>
           </span>
         </div>

@@ -7,6 +7,8 @@ services:
     profiles:
       - app
     restart: always
+    ports: !override
+      - "127.0.0.1:${BACKEND_PORT:-8080}:${BACKEND_PORT:-8080}"
     environment:
       APP_ENV: production
       ENABLE_DEV_AUTH: "false"

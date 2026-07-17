@@ -127,3 +127,39 @@ test('refreshes session and retries mutation after stale CSRF token', async () =
   assert.equal(firstMutationHeaders.get('X-CSRF-Token'), 'stale-token')
   assert.equal(retryMutationHeaders.get('X-CSRF-Token'), 'fresh-token')
 })
+
+test('logout revokes the backend session and clears the cached session', async () => {
+  const fetchMock = vi.fn()
+  vi.stubGlobal('fetch', fetchMock)
+  const firstSession = {
+    csrfToken: 'csrf-before-logout',
+    expiresAt: '2999-01-01T00:00:00Z',
+    user: {
+      id: 'user-1',
+      username: 'orbit',
+      displayName: 'Orbit',
+      isAdmin: false,
+      permissions: [],
+      linuxDoBinding: { bound: true },
+    },
+  }
+  const nextSession = {
+    ...firstSession,
+    csrfToken: 'csrf-after-login',
+  }
+  fetchMock
+    .mockResolvedValueOnce(jsonResponse(firstSession))
+    .mockResolvedValueOnce(new Response(null, { status: 204 }))
+    .mockResolvedValueOnce(jsonResponse(nextSession))
+
+  const client = await loadBackendClient({ VITE_API_MODE: 'real' })
+  assert.deepEqual(await client.getCurrentBackendSession(), firstSession)
+  await client.logoutBackendSession()
+  assert.deepEqual(await client.getCurrentBackendSession(), nextSession)
+
+  assert.equal(fetchMock.mock.calls.length, 3)
+  assert.equal(fetchMock.mock.calls[1]?.[0], '/api/v1/auth/logout')
+  const logoutHeaders = new Headers((fetchMock.mock.calls[1]?.[1] as RequestInit).headers)
+  assert.equal(logoutHeaders.get('X-CSRF-Token'), 'csrf-before-logout')
+  assert.equal(fetchMock.mock.calls[2]?.[0], '/api/v1/auth/session')
+})

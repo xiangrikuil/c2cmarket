@@ -67,6 +67,7 @@ import {
   markAllNotificationsRead,
   markFeedbackRead,
   markNotificationRead,
+  openApiOrderDispute,
   pauseApiService,
   publishApiService,
   searchMarket,
@@ -683,6 +684,17 @@ export function useConfirmApiOrderCompleteMutation() {
     mutationFn: ({ id, version }: { id: string, version: number }) => confirmApiOrderComplete(id, version),
     onSuccess(data) {
       queryClient.setQueryData(['api-orders', 'buyer', data.id], data)
+      invalidateApiOrderQueries(queryClient, data.id)
+    },
+  })
+}
+
+export function useOpenApiOrderDisputeMutation() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, reason, version, perspective }: { id: string, reason: string, version: number, perspective: 'buyer' | 'merchant' }) => openApiOrderDispute(id, reason, version, perspective),
+    onSuccess(data, variables) {
+      queryClient.setQueryData(['api-orders', variables.perspective, data.id], data)
       invalidateApiOrderQueries(queryClient, data.id)
     },
   })

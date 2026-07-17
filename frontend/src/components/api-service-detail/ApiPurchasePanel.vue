@@ -7,7 +7,8 @@ import { Card } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
-import { getApiMerchantAvatarText, getApiMerchantDisplayName, getApiMerchantProfileUrl, type ApiService } from '@/lib/api'
+import ApiMerchantAvatar from '@/components/api-market/ApiMerchantAvatar.vue'
+import { getApiMerchantDisplayName, getApiMerchantProfileUrl, type ApiService } from '@/lib/api'
 import PurchaseAmountSelector from './PurchaseAmountSelector.vue'
 import PurchaseConfirmDialog from './PurchaseConfirmDialog.vue'
 import { compareDecimal } from '@/lib/decimal'
@@ -72,9 +73,7 @@ async function shareService() {
     <div class="p-5">
       <div class="flex items-start justify-between gap-3">
         <component :is="merchantUrl ? RouterLink : 'div'" :to="merchantUrl || undefined" class="flex min-w-0 items-center gap-3">
-          <span class="grid h-11 w-11 shrink-0 place-items-center rounded-full bg-primary text-sm font-semibold text-primary-foreground">
-            {{ getApiMerchantAvatarText(service) }}
-          </span>
+          <ApiMerchantAvatar :service="service" class="grid h-11 w-11 shrink-0 place-items-center rounded-full bg-primary text-sm font-semibold text-primary-foreground" />
           <span class="min-w-0">
             <span class="block truncate font-semibold">{{ getApiMerchantDisplayName(service) }}</span>
             <span class="mt-1 flex flex-wrap items-center gap-1.5">
@@ -123,9 +122,9 @@ async function shareService() {
       </dl>
 
       <Button class="w-full" :disabled="!canSubmit" @click="openConfirm">
-        {{ submitting ? '创建中...' : '创建订单并查看付款方式' }}
+        {{ submitting ? '创建中…' : '创建订单并查看付款方式' }}
       </Button>
-      <p class="text-xs leading-5 text-muted-foreground">{{ selectedPackage ? '有效期从商家提交交付时开始计算。' : '订单创建后展示本次冻结的站外收款方式；平台记录状态但不代收、不托管资金。' }}</p>
+      <p class="text-xs leading-5 text-muted-foreground">{{ selectedPackage ? '有效期从商户提交交付时开始计算。' : '订单创建后展示下单时锁定的商户收款方式；平台记录状态但不代收、不托管资金。' }}</p>
       <div class="grid grid-cols-3 gap-2">
         <Button variant="outline" size="sm" @click="emit('toggleFavorite')"><Heart class="h-3.5 w-3.5" :class="favorited ? 'fill-current' : ''" />{{ favorited ? '已收藏' : '收藏' }}</Button>
         <Button variant="outline" size="sm" @click="shareService"><Share2 class="h-3.5 w-3.5" />分享</Button>

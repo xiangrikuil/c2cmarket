@@ -91,7 +91,7 @@ newStockAvailable = oldStockAvailable + newStockTotal - oldStockTotal
 
 #### Public Response And Recommendation
 
-`PublicAPIService` exposes `packages`, `completed30d`, `unresolvedDisputes`, `responseMedianMinutes`, and `updatedAt`.
+`PublicAPIService` exposes `packages`, merchant identity fields (`merchantDisplayName`, `merchantProfileSlug`, `merchantAvatarUrl`), `completed30d`, `unresolvedDisputes`, `responseMedianMinutes`, and `updatedAt`.
 
 ```text
 APIServicePackage:
@@ -126,6 +126,7 @@ score       = 0.60 * value + 0.25 * fulfillment + 0.10 * response + 0.05 * fresh
 
 - Sort by descending score, lower declared unit cost, higher available stock, newer service update, then package ID.
 - Cards use two columns on desktop and one on mobile, maintain stable dimensions, and show no more than three model chips plus `+N`.
+- Package cards consume the same `merchantAvatarUrl` projection as other API-market cards. They render an image when present and the merchant/store-name initial only when absent.
 - Opening a card navigates to `/api-market/{serviceId}?package={packageId}`. Detail preselects that valid package and fixes the intent/order amount to its CNY price.
 
 #### Inventory, Snapshots, And Expiry
@@ -193,6 +194,7 @@ packageExpiresAt = deliverySubmittedAt + durationDays calendar days
 - PostgreSQL integration: reservation/update/release occurs in the order transaction and cannot oversell under competing writes.
 - OpenAPI/router checks: publish/public response fields, snapshot/order lifecycle fields, route parity, and strict YAML parsing.
 - Frontend unit tests: adapter mapping, mock lifecycle parity, exact model/duration filtering, all score components, deterministic tie breakers, and sold-out exclusion.
+- Merchant projection tests: both `public_profile` and `store_alias` preserve their correct avatar boundary through storage, API response, frontend adapter, and shared card component.
 - Frontend gates: `vue-tsc`, Vitest, real-backend production build, plus desktop/mobile browser checks for package cards, query preselection, fixed order amount, publish controls, and viewport overflow.
 - Metered-quota regression tests must continue passing after every package change.
 

@@ -4,7 +4,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ENV_FILE="${ENV_FILE:-${ROOT_DIR}/.env.production}"
 COMPOSE_PROJECT="${COMPOSE_PROJECT:-c2c-prod}"
-BACKUP_DIR="${BACKUP_DIR:-${HOME}/Library/Application Support/C2CMarket/backups/production}"
+BACKUP_DIR="${BACKUP_DIR:-${XDG_STATE_HOME:-${HOME}/.local/state}/c2cmarket/backups/production}"
 R2_REMOTE="${R2_REMOTE:-c2cmarket-r2}"
 R2_BUCKET="${R2_BUCKET:-c2cmarket-backups}"
 R2_PREFIX="${R2_PREFIX:-postgres/production}"

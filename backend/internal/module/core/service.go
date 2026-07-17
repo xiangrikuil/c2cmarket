@@ -512,50 +512,41 @@ func (s *Service) withAPIMerchantProfiles(ctx context.Context, services []APISer
 }
 
 func (s *Service) withAPIMerchantProfile(ctx context.Context, service APIService) (APIService, *domain.AppError) {
-	if service.MerchantIdentityMode != "store_alias" || service.MerchantProfileID == "" {
-		return service, nil
-	}
 	if service.MerchantDisplayName != "" && service.MerchantProfileSlug != "" {
 		return service, nil
 	}
-	merchant, appErr := s.profileService.MyMerchantProfile(ctx, User{ID: service.OwnerUserID})
+	if service.MerchantIdentityMode == "store_alias" {
+		if service.MerchantProfileID == "" {
+			return service, nil
+		}
+		merchant, appErr := s.profileService.MyMerchantProfile(ctx, User{ID: service.OwnerUserID})
+		if appErr != nil {
+			return APIService{}, appErr
+		}
+		if merchant.ID != service.MerchantProfileID {
+			return APIService{}, domain.NewError(http.StatusConflict, domain.CodeValidationFailed, "Merchant profile mismatch", "API 服务关联的商户资料不可用。")
+		}
+		service.MerchantDisplayName = merchant.DisplayName
+		service.MerchantProfileSlug = merchant.Slug
+		service.MerchantAvatarURL = merchant.AvatarURL
+		return service, nil
+	}
+	owner, appErr := s.profileService.MyProfile(ctx, User{ID: service.OwnerUserID})
 	if appErr != nil {
 		return APIService{}, appErr
 	}
-	if merchant.ID != service.MerchantProfileID {
-		return APIService{}, domain.NewError(http.StatusConflict, domain.CodeValidationFailed, "Merchant profile mismatch", "API 服务关联的商户资料不可用。")
-	}
-	service.MerchantDisplayName = merchant.DisplayName
-	service.MerchantProfileSlug = merchant.Slug
+	service.MerchantDisplayName = owner.DisplayName
+	service.MerchantProfileSlug = owner.Username
+	service.MerchantAvatarURL = owner.AvatarURL
 	return service, nil
 }
 
 func (s *Service) CreateAPIPurchaseIntentWithIdempotency(ctx context.Context, userID, routeKey, key, requestHash string, input CreateAPIPurchaseIntentInput, buildCompletion APIPurchaseIntentCompletionBuilder) (IdempotencyCompletion, *domain.AppError) {
-	intent, completion, created, appErr := s.apiIntent.CreateWithIdempotency(ctx, userID, routeKey, key, requestHash, input, buildCompletion)
+	_, completion, _, appErr := s.apiIntent.CreateWithIdempotency(ctx, userID, routeKey, key, requestHash, input, buildCompletion)
 	if appErr != nil {
 		return IdempotencyCompletion{}, appErr
 	}
-	if created {
-		s.sendAPIPurchaseIntentEmailIfNeeded(ctx, intent)
-	}
 	return completion, nil
-}
-
-func (s *Service) sendAPIPurchaseIntentEmailIfNeeded(ctx context.Context, intent APIPurchaseIntent) {
-	if s == nil || s.emailSender == nil || s.profileService == nil {
-		return
-	}
-	ownerProfile, appErr := s.profileService.MyProfile(ctx, User{ID: intent.OwnerUserID})
-	if appErr != nil {
-		log.Printf("API 购买意向邮件跳过：读取商户资料失败 intent_id=%s owner_user_id=%s code=%s title=%s", intent.ID, intent.OwnerUserID, appErr.Code, appErr.Title)
-		return
-	}
-	if strings.TrimSpace(ownerProfile.Email) == "" || ownerProfile.EmailVerifiedAt == nil {
-		return
-	}
-	if appErr := s.emailSender.SendAPIPurchaseIntentCreated(ctx, ownerProfile.Email, intent.ServiceTitleSnapshot, intent.ID, intent.BuyerNote, intent.CreatedAt); appErr != nil {
-		log.Printf("API 购买意向邮件发送失败 intent_id=%s owner_user_id=%s code=%s title=%s", intent.ID, intent.OwnerUserID, appErr.Code, appErr.Title)
-	}
 }
 
 func (s *Service) MyAPIPurchaseIntents(ctx context.Context, user User) ([]APIPurchaseIntent, *domain.AppError) {
@@ -596,7 +587,31 @@ func (s *Service) CloseAPIPurchaseIntentWithIdempotency(ctx context.Context, use
 
 func (s *Service) CreateAPIOrderWithIdempotency(ctx context.Context, userID, routeKey, key, requestHash string, input APIOrderActionInput, createInput CreateAPIOrderInput, buildCompletion APIOrderCompletionBuilder) (IdempotencyCompletion, *domain.AppError) {
 	_ = input
-	return s.apiOrder.CreateWithIdempotency(ctx, userID, routeKey, key, requestHash, createInput, buildCompletion)
+	order, completion, created, appErr := s.apiOrder.CreateWithIdempotencyResult(ctx, userID, routeKey, key, requestHash, createInput, buildCompletion)
+	if appErr != nil {
+		return IdempotencyCompletion{}, appErr
+	}
+	if created {
+		s.sendAPIOrderEmailIfNeeded(ctx, order)
+	}
+	return completion, nil
+}
+
+func (s *Service) sendAPIOrderEmailIfNeeded(ctx context.Context, order APIOrder) {
+	if s == nil || s.emailSender == nil || s.profileService == nil {
+		return
+	}
+	ownerProfile, appErr := s.profileService.MyProfile(ctx, User{ID: order.SellerUserID})
+	if appErr != nil {
+		log.Printf("API 订单邮件跳过：读取商户资料失败 order_id=%s seller_user_id=%s code=%s title=%s", order.ID, order.SellerUserID, appErr.Code, appErr.Title)
+		return
+	}
+	if strings.TrimSpace(ownerProfile.Email) == "" || ownerProfile.EmailVerifiedAt == nil {
+		return
+	}
+	if appErr := s.emailSender.SendAPIOrderCreated(ctx, ownerProfile.Email, order.ServiceTitleSnapshot, order.ID, order.Amount, order.Currency, order.PaymentExpiresAt, order.CreatedAt); appErr != nil {
+		log.Printf("API 订单邮件发送失败 order_id=%s seller_user_id=%s code=%s title=%s", order.ID, order.SellerUserID, appErr.Code, appErr.Title)
+	}
 }
 
 func (s *Service) MyAPIOrders(ctx context.Context, user User) ([]APIOrder, *domain.AppError) {

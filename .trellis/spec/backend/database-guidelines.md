@@ -101,6 +101,8 @@ The process-level PostgreSQL runtime foundation is wired through `pgx/v5/pgxpool
 - Local Docker PostgreSQL uses the root `compose.yaml` `migrate` one-shot service. Run `docker compose --profile migrate run --rm migrate` after PostgreSQL is healthy.
 - Do not rely on `/docker-entrypoint-initdb.d/` for application schema upgrades; it only runs for empty database volumes.
 - Backend readiness owns an explicit `ExpectedMigrationVersion` constant matching the latest migration number. When adding a new migration, update the constant and keep `/readyz` tests aligned so PostgreSQL readiness fails while `schema_migrations.version` is behind.
+- Before replacing a `CHECK` constraint on a table that already exists in deployed databases, inspect `pg_constraint` with `pg_get_constraintdef` and account for both canonical names and PostgreSQL-generated legacy names. A forward migration must drop every obsolete duplicate before adding the single canonical named constraint; replacing only the newest named constraint can leave an older anonymous constraint active and make otherwise valid state transitions fail at runtime.
+- Constraint-changing migrations require both upgrade-path verification against an already-applied schema and a complete empty-database migration-chain smoke. Source-text assertions alone cannot prove that no duplicate legacy constraint remains active.
 - PostgreSQL 18 Docker images must mount persistent storage at `/var/lib/postgresql`, not `/var/lib/postgresql/data`, because the image stores versioned cluster data below that parent directory.
 
 ## Scenario: Applied Report Schema Contract Upgrade

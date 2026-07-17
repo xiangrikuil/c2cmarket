@@ -114,7 +114,7 @@ async function runAction(item: ApiOrder, action: () => Promise<unknown>, message
 
 <template>
   <div class="space-y-4">
-    <PageTitle title="API 订单" description="处理买家付款确认和一次性站内交付；交付信息提交后不可修改，后续问题通过联系方式站外沟通。" />
+    <PageTitle title="API 订单" description="处理买家付款确认和一次性站内交付；交付信息提交后不可修改，后续问题可通过订单联系方式沟通。" />
 
     <CompactStats :items="stats" :loading="isLoading" />
 
@@ -141,7 +141,7 @@ async function runAction(item: ApiOrder, action: () => Promise<unknown>, message
 
     <ErrorState v-if="error" description="商户 API 订单暂时无法加载。" @retry="refetch()" />
     <SkeletonTable v-else-if="isLoading" :columns="6" />
-    <EmptyState v-else-if="rows.length === 0" title="暂无待处理订单" description="当前筛选条件下没有 API 订单；新订单到达后会在这里显示。" />
+    <EmptyState v-else-if="rows.length === 0" title="当前筛选下暂无订单" description="调整筛选条件后再试；新订单到达后会在这里显示。" />
     <SoftTable v-else :columns="['订单', '买家 / 服务', '订单金额 / 购买额度', '状态', '更新', '操作']">
       <tr v-for="item in pagination.paginatedRows.value" :key="item.id">
         <td><div class="font-medium"><ShortId :value="item.id" prefix="API" copyable /></div><div class="text-xs text-muted-foreground"><LocalTime :value="item.createdAt" /></div></td>
