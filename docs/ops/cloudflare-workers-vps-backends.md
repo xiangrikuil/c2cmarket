@@ -233,7 +233,7 @@ VPS_SSH_KNOWN_HOSTS=<verified known_hosts line>
 
 ## 9. 自动发布顺序
 
-`.github/workflows/ci.yml` 是唯一测试门禁：所有 PR 运行测试；`staging` / `main` push 在测试成功后调用 reusable `.github/workflows/release-backend.yml`。
+`.github/workflows/ci.yml` 是唯一测试门禁：所有 PR 运行测试；`staging` / `main` push 在测试成功后调用 reusable `.github/workflows/release-backend.yml` 发布 GHCR 镜像，再由 `ci.yml` 中直接绑定 `staging` / `production` environment 的 job 完成 VPS 部署。Environment secrets 不跨 reusable workflow 边界读取。
 
 1. feature branch 提 PR 到 `staging`，CI 通过后合并。
 2. staging push 构建 `ghcr.io/xiangrikuil/c2cmarket-backend:<git-sha>`，上传精简发布包并自动部署 `c2c-staging` / 8081。

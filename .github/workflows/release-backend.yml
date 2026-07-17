@@ -1,12 +1,8 @@
-name: release-backend
+name: publish-backend
 
 on:
   workflow_call:
     inputs:
-      deploy_environment:
-        description: GitHub environment and VPS deployment target
-        required: true
-        type: string
       release_tag:
         description: Readable GHCR alias for the environment
         required: true
@@ -52,106 +48,3 @@ jobs:
             org.opencontainers.image.revision=${{ inputs.git_sha }}
           cache-from: type=gha,scope=backend-${{ inputs.release_tag }}
           cache-to: type=gha,mode=max,scope=backend-${{ inputs.release_tag }}
-
-  deploy-staging:
-    name: deploy staging backend
-    if: inputs.deploy_environment == 'staging'
-    needs: publish
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-    environment:
-      name: staging
-    env:
-      DEPLOY_ENVIRONMENT: staging
-      GIT_SHA: ${{ inputs.git_sha }}
-      IMAGE_REF: ghcr.io/xiangrikuil/c2cmarket-backend:${{ inputs.git_sha }}
-      VPS_HOST: ${{ secrets.VPS_HOST }}
-      VPS_USER: ${{ secrets.VPS_USER }}
-      VPS_SSH_PRIVATE_KEY: ${{ secrets.VPS_SSH_PRIVATE_KEY }}
-      VPS_SSH_KNOWN_HOSTS: ${{ secrets.VPS_SSH_KNOWN_HOSTS }}
-    steps: &deploy-backend-steps
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ inputs.git_sha }}
-
-      - name: Create release archive
-        id: archive
-        shell: bash
-        run: |
-          set -euo pipefail
-          archive_name="c2cmarket-release-${DEPLOY_ENVIRONMENT}-${GIT_SHA}.tar.gz"
-          archive_path="${RUNNER_TEMP}/${archive_name}"
-          tar -czf "${archive_path}" \
-            compose.yaml \
-            compose.prod.yaml \
-            backend/migrations \
-            scripts/backup-production-postgres.sh \
-            scripts/deploy-vps-backend.sh \
-            scripts/install-vps-release.sh
-          echo "name=${archive_name}" >>"${GITHUB_OUTPUT}"
-          echo "path=${archive_path}" >>"${GITHUB_OUTPUT}"
-
-      - name: Configure deployment SSH identity
-        shell: bash
-        run: |
-          set -euo pipefail
-          test -n "${VPS_HOST}"
-          test -n "${VPS_USER}"
-          test -n "${VPS_SSH_PRIVATE_KEY}"
-          test -n "${VPS_SSH_KNOWN_HOSTS}"
-          install -m 700 -d "${HOME}/.ssh"
-          printf '%s\n' "${VPS_SSH_PRIVATE_KEY}" >"${HOME}/.ssh/c2cmarket_deploy"
-          printf '%s\n' "${VPS_SSH_KNOWN_HOSTS}" >"${HOME}/.ssh/known_hosts"
-          chmod 600 "${HOME}/.ssh/c2cmarket_deploy" "${HOME}/.ssh/known_hosts"
-
-      - name: Upload release archive
-        shell: bash
-        env:
-          ARCHIVE_NAME: ${{ steps.archive.outputs.name }}
-          ARCHIVE_PATH: ${{ steps.archive.outputs.path }}
-        run: |
-          set -euo pipefail
-          scp \
-            -i "${HOME}/.ssh/c2cmarket_deploy" \
-            -o BatchMode=yes \
-            -o IdentitiesOnly=yes \
-            "${ARCHIVE_PATH}" \
-            "${VPS_USER}@${VPS_HOST}:/tmp/${ARCHIVE_NAME}"
-
-      - name: Install and deploy release
-        shell: bash
-        env:
-          ARCHIVE_NAME: ${{ steps.archive.outputs.name }}
-        run: |
-          set -euo pipefail
-          ssh \
-            -i "${HOME}/.ssh/c2cmarket_deploy" \
-            -o BatchMode=yes \
-            -o IdentitiesOnly=yes \
-            "${VPS_USER}@${VPS_HOST}" \
-            /bin/bash -s -- \
-            "${DEPLOY_ENVIRONMENT}" \
-            "${GIT_SHA}" \
-            "${IMAGE_REF}" \
-            "/tmp/${ARCHIVE_NAME}" \
-            <scripts/install-vps-release.sh
-
-  deploy-production:
-    name: deploy production backend
-    if: inputs.deploy_environment == 'production'
-    needs: publish
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-    environment:
-      name: production
-    env:
-      DEPLOY_ENVIRONMENT: production
-      GIT_SHA: ${{ inputs.git_sha }}
-      IMAGE_REF: ghcr.io/xiangrikuil/c2cmarket-backend:${{ inputs.git_sha }}
-      VPS_HOST: ${{ secrets.VPS_HOST }}
-      VPS_USER: ${{ secrets.VPS_USER }}
-      VPS_SSH_PRIVATE_KEY: ${{ secrets.VPS_SSH_PRIVATE_KEY }}
-      VPS_SSH_KNOWN_HOSTS: ${{ secrets.VPS_SSH_KNOWN_HOSTS }}
-    steps: *deploy-backend-steps
