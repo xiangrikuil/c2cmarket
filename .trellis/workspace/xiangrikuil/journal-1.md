@@ -183,7 +183,11 @@ Forced frontend account recovery setup after linux.do OAuth: incomplete accounts
 
 ### Main Changes
 
-(Add details)
+- Added staging/main CI release gates and a reusable GHCR build/deploy workflow.
+- Added immutable SHA image deployment, fixed 8080/8081 environment mapping,
+  production backup-before-migration, health checks, and versioned current links.
+- Added release regression tests, VPS/GitHub setup documentation, and the
+  backend deployment contract.
 
 ### Git Commits
 
@@ -371,6 +375,44 @@ Rebased the workspace onto current staging, preserved three pending fixes, verif
 ### Testing
 
 - [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
+
+
+## Session 11: GHCR backend CI/CD
+
+**Date**: 2026-07-18
+**Task**: GHCR backend CI/CD
+**Package**: frontend
+**Branch**: `codex/staging-marketplace-consistency`
+
+### Summary
+
+Added tested GHCR image publishing and environment-gated staging/production VPS deployment with immutable SHA tags, backup-before-migration, health checks, versioned releases, regression tests, and operations documentation.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `75e0339` | `ci: deploy backend from ghcr` |
+
+### Testing
+
+- [OK] Release shell syntax and smoke tests passed.
+- [OK] Both workflow files parsed as YAML and production/staging Compose
+  configurations expanded successfully.
+- [OK] Local backend Docker build, complete Go tests, OpenAPI/migration checks,
+  frontend typecheck/build, and 137 frontend tests passed.
 
 ### Status
 

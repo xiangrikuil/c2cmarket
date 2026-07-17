@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 10
-- **Last Active**: 2026-07-17
+- **Total Sessions**: 11
+- **Last Active**: 2026-07-18
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~381 | Active |
+| `journal-1.md` | ~415 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 11 | 2026-07-18 | GHCR backend CI/CD | `75e0339` | `codex/staging-marketplace-consistency` |
 | 10 | 2026-07-17 | VPS 直连生产与 Staging 迁移 | `c95e91b` | `codex/staging-marketplace-consistency` |
 | 9 | 2026-07-17 | Staging marketplace consistency PR | `ff8dba1` | `codex/staging-marketplace-consistency` |
 | 8 | 2026-07-15 | Cloudflare deployment and marketplace consistency delivery | `39672e0`, `82fc0e7` | `codex/complete-ui-business-consistency` |
