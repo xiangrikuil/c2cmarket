@@ -66,38 +66,54 @@ describe('Cloudflare Worker deployment config', () => {
     expect(timer).toContain('Persistent=true')
   })
 
-  it('releases only tested staging and main pushes through the reusable backend workflow', () => {
+  it('publishes tested images through a reusable workflow and deploys from direct environment jobs', () => {
     const ci = readFileSync(new URL('../../../../.github/workflows/ci.yml', import.meta.url), 'utf8')
     const release = readFileSync(
       new URL('../../../../.github/workflows/release-backend.yml', import.meta.url),
       'utf8',
     )
-    const stagingJobStart = release.indexOf('  deploy-staging:')
-    const productionJobStart = release.indexOf('  deploy-production:')
-    const stagingJob = release.slice(stagingJobStart, productionJobStart)
-    const productionJob = release.slice(productionJobStart)
+    const stagingJobStart = ci.indexOf('  deploy-staging:')
+    const productionPublishStart = ci.indexOf('  publish-production:')
+    const productionJobStart = ci.indexOf('  deploy-production:')
+    const stagingJob = ci.slice(stagingJobStart, productionPublishStart)
+    const productionJob = ci.slice(productionJobStart)
+    const environmentSecrets = [
+      'VPS_HOST',
+      'VPS_USER',
+      'VPS_SSH_PRIVATE_KEY',
+      'VPS_SSH_KNOWN_HOSTS',
+    ]
 
     expect(ci).toContain('branches: [staging, main]')
     expect(ci).toContain("if: github.event_name == 'push' && github.ref == 'refs/heads/staging'")
     expect(ci).toContain("if: github.event_name == 'push' && github.ref == 'refs/heads/main'")
     expect(ci).toContain('needs: [backend, frontend]')
     expect(ci).toContain('uses: ./.github/workflows/release-backend.yml')
+    expect(ci).toContain('name: publish staging backend')
+    expect(ci).toContain('name: publish production backend')
     expect(release).toContain('workflow_call:')
     expect(release).toContain('ghcr.io/xiangrikuil/c2cmarket-backend')
     expect(release).toContain('${{ inputs.git_sha }}')
     expect(release).toContain('password: ${{ secrets.GITHUB_TOKEN }}')
     expect(stagingJobStart).toBeGreaterThan(-1)
+    expect(productionPublishStart).toBeGreaterThan(stagingJobStart)
     expect(productionJobStart).toBeGreaterThan(stagingJobStart)
-    expect(stagingJob).toContain("if: inputs.deploy_environment == 'staging'")
-    expect(stagingJob).toContain('name: staging')
+    expect(stagingJob).toContain('needs: publish-staging')
+    expect(stagingJob).toContain('environment:\n      name: staging')
     expect(stagingJob).toContain('steps: &deploy-backend-steps')
-    expect(productionJob).toContain("if: inputs.deploy_environment == 'production'")
-    expect(productionJob).toContain('name: production')
+    expect(productionJob).toContain('needs: publish-production')
+    expect(productionJob).toContain('environment:\n      name: production')
     expect(productionJob).toContain('steps: *deploy-backend-steps')
-    expect(release).not.toContain('name: ${{ inputs.deploy_environment }}')
-    expect(release).toContain('-o IdentitiesOnly=yes')
-    expect(release).not.toContain('StrictHostKeyChecking=no')
-    expect(release).not.toContain('root@')
+    for (const secret of environmentSecrets) {
+      expect(stagingJob).toContain(`${secret}: \${{ secrets.${secret} }}`)
+      expect(productionJob).toContain(`${secret}: \${{ secrets.${secret} }}`)
+      expect(release).not.toContain(secret)
+    }
+    expect(ci).toContain('-o IdentitiesOnly=yes')
+    expect(ci).not.toContain('StrictHostKeyChecking=no')
+    expect(ci).not.toContain('root@')
+    expect(release).not.toContain('deploy_environment')
+    expect(release).not.toContain('environment:')
   })
 
   it('keeps production backup, migration, image pull, and current-link installation explicit', () => {

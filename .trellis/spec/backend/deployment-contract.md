@@ -2,7 +2,7 @@
 
 > Executable CI, GHCR, and VPS release requirements for the backend.
 
-Date: 2026-07-17
+Date: 2026-07-18
 
 Executor: Codex
 
@@ -20,10 +20,9 @@ to run it on the VPS.
 
 ### 2. Signatures
 
-The reusable workflow accepts exactly these inputs:
+The reusable image-publishing workflow accepts exactly these inputs:
 
 ```text
-deploy_environment: "staging" | "production"
 release_tag: "staging" | "production"
 git_sha: 40 lowercase hexadecimal Git commit characters
 ```
@@ -57,11 +56,11 @@ arbitrary Compose project, env path, or port:
 - GitHub environment secrets are `VPS_HOST`, `VPS_USER`,
   `VPS_SSH_PRIVATE_KEY`, and `VPS_SSH_KNOWN_HOSTS`. `production` owns the
   required-reviewer gate.
-- The reusable workflow selects deployment through separate jobs whose
-  environment names are the literal values `staging` and `production`.
-  Reusable-workflow inputs must not dynamically resolve `environment.name`,
-  because that path can omit environment secrets even when GitHub records the
-  deployment against the expected environment.
+- The reusable workflow only publishes the GHCR image. The top-level
+  `.github/workflows/ci.yml` owns separate deployment jobs whose environment
+  names are the literal values `staging` and `production`; those direct jobs
+  read the environment-scoped SSH secrets. Deployment jobs and environment
+  secrets must not cross a `workflow_call` boundary.
 - The release archive contains `compose.yaml`, `compose.prod.yaml`,
   `backend/migrations`, and the install, deploy, and production-backup scripts.
   The VPS does not run `git pull` or build application source.
@@ -87,6 +86,7 @@ arbitrary Compose project, env path, or port:
 | Health or readiness exhausts retries | Print Compose status and exit non-zero |
 | Current path exists as a regular file/directory | Refuse to overwrite it with a symlink |
 | SSH identity or verified known-hosts data is missing | Fail in the runner before SCP |
+| Deployment job is moved into a reusable workflow | Reject in tests; environment secrets must be read by direct `ci.yml` jobs |
 
 Database migrations are never automatically rolled down. A failed release may
 leave its version directory and uploaded archive for diagnosis, but it must not
@@ -107,6 +107,9 @@ claim success by changing the current link.
 
 - Parse both workflow files as YAML and run an Actions-aware linter when one is
   already available in the trusted local toolchain.
+- Assert that `release-backend.yml` contains no VPS secrets or environment
+  binding, while `ci.yml` contains literal staging and production deployment
+  jobs that reference all four environment secrets.
 - Run `bash -n` for the installer, deployment, backup, and release tests.
 - Run `scripts/test-vps-release.sh` and assert fixed ports, staging backup
   exclusion, production backup-before-migration, `--no-build`, error
@@ -119,30 +122,43 @@ claim success by changing the current link.
 
 ### 7. Wrong vs Correct
 
-#### Wrong: resolve the protected environment from a reusable-workflow input
+#### Wrong: read environment secrets inside a reusable workflow
 
 ```yaml
-environment:
-  name: ${{ inputs.deploy_environment }}
+on: workflow_call
+
+jobs:
+  deploy-staging:
+    environment:
+      name: staging
+    env:
+      VPS_HOST: ${{ secrets.VPS_HOST }}
 ```
 
-#### Correct: select a literal environment in each deployment job
+GitHub may create a deployment record for `staging` while resolving these
+environment secrets to empty values. A literal environment name inside the
+called workflow does not repair the caller/callee secret boundary.
+
+#### Correct: publish through reuse and deploy from the top-level workflow
 
 ```yaml
+publish-staging:
+  uses: ./.github/workflows/release-backend.yml
+  with:
+    release_tag: staging
+    git_sha: ${{ github.sha }}
+
 deploy-staging:
-  if: inputs.deploy_environment == 'staging'
+  needs: publish-staging
   environment:
     name: staging
-
-deploy-production:
-  if: inputs.deploy_environment == 'production'
-  environment:
-    name: production
+  env:
+    VPS_HOST: ${{ secrets.VPS_HOST }}
 ```
 
-The jobs may share their step sequence through a YAML anchor, but the
-environment names and job conditions remain explicit and independently
-testable.
+The top-level staging and production jobs may share their step sequence through
+a YAML anchor, but their environment names, secret references, conditions, and
+concurrency groups remain explicit and independently testable.
 
 #### Wrong: rebuild or claim success before readiness
 
