@@ -1,168 +1,164 @@
-# C2C Market
+<p align="center">
+  <img src="./frontend/public/c2cmarket-logo-mark.svg" alt="C2CMarket" width="88" height="88">
+</p>
 
-日期：2026-06-23
-执行者：Codex
+<h1 align="center">C2CMarket</h1>
 
-C2C Market 是一个前后端分离项目：
+<p align="center">
+  面向 linux.do 社区的订阅拼车、API 服务、求车需求与官网价格信息撮合平台。
+</p>
 
-- `frontend/`：Vue 3 + Vite + TypeScript 前端
-- `backend/`：Go HTTP 后端
-- `docs/`：OpenAPI 与部署运维文档
-- `scripts/`：本地 smoke 验证脚本
+<p align="center">
+  <a href="./README.md">简体中文</a> · <a href="./README_EN.md">English</a>
+</p>
 
-## 当前完成范围
+<p align="center">
+  <a href="https://github.com/xiangrikuil/c2cmarket/actions/workflows/ci.yml"><img src="https://github.com/xiangrikuil/c2cmarket/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="./LICENSE"><img src="https://img.shields.io/badge/license-MIT-green.svg" alt="MIT License"></a>
+  <img src="https://img.shields.io/badge/Go-1.26-00ADD8?logo=go&logoColor=white" alt="Go 1.26">
+  <img src="https://img.shields.io/badge/Vue-3-42b883?logo=vuedotjs&logoColor=white" alt="Vue 3">
+</p>
 
-当前本地真实业务闭环已经覆盖：
+> [!IMPORTANT]
+> C2CMarket 仍在积极开发中，接口、数据库迁移和部署配置可能发生变化。部署到生产环境前，请完整检查配置、业务规则和当地适用要求。
 
-- API 集市：模型目录、服务发布、送审、admin 审核、商户上线/暂停/恢复、买家购买意向、买家/商户双方联系方式读取。
-- 拼车：已绑定 linux.do 的车主直接发布公开车源、admin 下架/恢复治理、遗留审核队列处理、公开列表/详情、买家申请、owner 接受/拒绝、30 分钟联系窗口、双方确认上车、membership 完成/退出/移除；每人每月额度的名称、单位和周期由套餐目录配置。
-- 个人资料与联系方式：我的资料、联系方式管理、公开用户页、商户资料、store alias API 服务展示。
-- 公告：用户端列表/banner/详情、已见/已读/关闭、未读数、admin 创建/编辑/发布/下线/复制/审计。
-- 官网价格情报：公开价格列表/详情、管理员维护官网价格记录、新增/编辑/下架、折合人民币排序、首页行情引用真实价格记录；普通用户不再提交低价线索。
-- 需求池 / 求车：需求发布、公开列表/详情、我的需求、关闭/重开、admin 审核通过/要求修改/拒绝/下架/恢复、首页与搜索 facade 真实读取。
-- 收藏：车源和 API 服务收藏状态、收藏、取消收藏、我的收藏列表，真实模式走 Go 后端和 PostgreSQL favorites 表。
-- 评价中心：已完成拼车 membership 的买家评价车主、评价中心查看/修改、公开用户主页展示，真实模式走 Go 后端和 PostgreSQL carpool_reviews 表。
-- 举报 / 纠纷 / 申诉：联系方式举报、公开用户举报、admin 举报处理、纠纷打开/处理、用户申诉、admin 申诉处理和公开主页脱敏纠纷摘要，真实模式走 Go 后端和 PostgreSQL reports/dispute_cases/appeals 表。
-- 统一通知中心：站内业务通知列表、未读数、单条已读、全部已读，真实模式走 Go 后端和 PostgreSQL notifications 表；公告 receipt 仍由公告模块独立负责。
-- 全局搜索：公开官方价格、车源、求车、API 服务、公开用户和公开身份 API 商户搜索，真实模式走 Go 后端和 PostgreSQL public predicates；store alias 只作为 API 服务结果展示公开店铺名，不反查隐藏用户。
-- 真实登录 / 权限：后端提供站内用户名密码登录、OAuth start/callback、真实 session、linux.do 绑定摘要和权限返回；本地 smoke 使用 fake OAuth provider，生产必须使用 `OAUTH_PROVIDER_MODE=oauth2` 并禁止 dev auth；前端真实模式不再自动调用 `/auth/dev-session` 切换身份。
-- 邮箱发送：开发/测试环境使用 development sender 并返回邮箱验证码 `devCode` 便于本地自动化；生产环境使用阿里云 DirectMail SMTP，需配置 465 TLS SMTP 账号后才允许启动。OAuth 注册成功邮件仅在 provider 返回有效邮箱且本次创建新用户后发送，发送失败不阻断注册。
-- 部署运维与 hardening：生产 env 模板、生产 Compose 覆盖、部署 runbook、后端 Docker build、migration/readyz 流程和全量 smoke runner 已补齐；后端入口已配置 HTTP server timeout、生产 cookie `Secure`、OAuth 请求 timeout/响应大小限制、CORS/Origin allowlist、基础限流、安全响应头、分页契约、幂等 processing 过期恢复、API purchase intent 联系方式访问审计和搜索 trigram indexes。
+## 项目简介
 
-当前路线图内业务化模块已完成本地真实闭环和部署运维准备。公告 PostgreSQL update 遗留 bug 已修复；PostgreSQL 路径下 `scripts/announcement-smoke.mjs` 已覆盖 admin 创建、编辑、发布、下线、复制、审计和用户 receipt 流程。
+C2CMarket 是一个前后端分离的社区信息撮合平台。它帮助用户浏览、发布和管理订阅拼车、API 服务、求车需求及官网价格记录，并提供订单跟踪、通知、评价、举报和管理后台等完整业务模块。
 
-## 产品边界
+平台专注于信息展示、意向撮合、站外联系和信誉记录，不处理站内支付，不提供托管或履约担保，也不代理上游 API 流量。
 
-C2CMarket 是信息发布、价格情报与社区撮合平台，不是支付、托管、账号托管或 API 代理平台。
+## 主要功能
 
-平台允许用户发布和参与包括 ChatGPT Plus、ChatGPT Pro、ChatGPT Business 在内的订阅费用分摊或拼车信息。此类活动不是 OpenAI 或其他服务提供商提供、授权或担保的官方服务，可能受到服务提供商账号、成员、访问权限或使用规则限制，并可能造成账号限制、成员移除、工作区停用、封号、额度提前耗尽、聊天记录或个人数据暴露、费用损失及服务中断。用户应自行核对适用规则，在充分知情后自愿参与并自行承担风险。
+- **订阅拼车**：车源发布、申请、联系窗口、上车确认、完成、退出和车主管理。
+- **API 服务市场**：服务发布、审核、上下架、订单、付款确认和买卖双方履约状态跟踪。
+- **求车需求**：发布、审核、公开展示、关闭与重新开放需求。
+- **官网价格**：维护和展示公开可验证的官方价格参考记录。
+- **社区信誉**：公开资料、收藏、评价、举报、纠纷与申诉。
+- **通知中心**：公告、业务通知、未读状态和邮件提醒。
+- **运营后台**：用户、商品目录、车源、API 服务、订单、公告、反馈和审计管理。
+- **统一搜索**：检索公开车源、API 服务、需求、价格记录和用户资料。
 
-平台不处理站内支付，不提供履约担保，不保存、展示、传递或托管第三方账号密码、API Key、Token、Cookie、Session、验证码、恢复码、面板主账号凭据等认证材料，也不代理上游 API 流量。站内账号密码只允许以不可逆哈希形式保存，不能保存明文密码。
+## 技术栈
 
-## 本地开发依赖
+| 层级 | 技术 |
+| --- | --- |
+| 前端 | Vue 3、TypeScript、Vite 8、Vue Router、Pinia、TanStack Query、Tailwind CSS |
+| 后端 | Go 1.26、chi、pgx |
+| 数据库 | PostgreSQL 18、版本化 SQL migrations |
+| 基础设施 | Docker Compose、Cloudflare Pages/Tunnel、GitHub Actions |
+| 集成 | linux.do OAuth 2.0、阿里云 DirectMail SMTP、可选 Umami |
 
-- Go 1.26（后端 `backend/go.mod` 和 Dockerfile 均以 1.26 为准）
+## 项目结构
+
+```text
+.
+├── frontend/              Vue 单页应用
+├── backend/               Go HTTP API
+│   ├── cmd/api/           服务入口
+│   ├── internal/          业务模块与基础设施
+│   └── migrations/        PostgreSQL migrations
+├── docs/openapi/          OpenAPI 契约
+├── docs/ops/              部署与运维文档
+├── scripts/               契约检查与 smoke 脚本
+├── compose.yaml           本地开发服务
+└── compose.prod.yaml      生产部署覆盖配置
+```
+
+## 快速开始
+
+### 环境要求
+
+- Docker 和 Docker Compose
 - Node.js `>=24.11 <25`
 - pnpm `>=10 <11`
-- Docker Compose（用于本地 PostgreSQL 18 和 migration）
-- PostgreSQL 18（本地默认通过 `postgres:18-alpine` Compose 服务启动）
+- Go 1.26（仅在不使用 Docker 运行后端时需要）
 
-## 前端
-
-```bash
-cd frontend
-pnpm install --frozen-lockfile
-pnpm dev
-```
-
-## 后端
+### 1. 获取代码与配置
 
 ```bash
-cd backend
-go run ./cmd/api
+git clone https://github.com/xiangrikuil/c2cmarket.git
+cd c2cmarket
+cp .env.example .env
 ```
 
-默认监听 `:8080`，健康检查接口：
+`.env.example` 仅包含本地开发默认值。不要把真实凭据提交到仓库。
+
+### 2. 启动数据库并执行迁移
+
+```bash
+docker compose up -d postgres
+docker compose --profile migrate run --rm migrate
+```
+
+### 3. 启动后端
+
+```bash
+docker compose --profile app up -d --build backend
+```
+
+后端默认监听 `http://127.0.0.1:8080`：
 
 ```text
 GET /health
 GET /readyz
 ```
 
-生产环境必须配置允许的前端来源，推荐同时设置：
-
-```text
-FRONTEND_ORIGIN=https://app.example.com
-ALLOWED_ORIGINS=https://app.example.com
-```
-
-`ALLOWED_ORIGINS` 可用英文逗号配置多个 origin。后端 cookie 认证不会在 CORS 中使用 `*`，生产状态变更请求会校验 `Origin` 是否在 allowlist 内。本地 development/test 在未配置时默认允许 `127.0.0.1` / `localhost` 的 Vite 开发和预览端口。
-
-后端列表接口的统一分页参数为 `limit` / `cursor`，默认 `limit=20`，最大 `100`，响应统一包含 `items` 和可空 `nextCursor`。当前 cursor 是不透明 base64url offset cursor，调用方只能透传，不应解析内部结构。
-
-生产邮件发送使用阿里云 DirectMail SMTP，不使用 AccessKey 或阿里云 API SDK。当前 `.env.production.example` 已预留 `EMAIL_PROVIDER=aliyun_directmail`、`SMTP_HOST`、`SMTP_PORT=465`、`SMTP_USERNAME`、`SMTP_PASSWORD`、`MAIL_FROM_ADDRESS` 和 `MAIL_FROM_NAME`；填入阿里云 DirectMail 控制台生成的 SMTP 账号和密码即可。生产环境缺少这些字段会启动失败，避免验证码或注册成功邮件在没有真实邮件发送能力时静默成功。
-
-## Docker / PostgreSQL
-
-本地开发数据库使用 Docker Compose：
-
-```bash
-cp .env.example .env
-docker compose up -d postgres
-docker compose --profile migrate run --rm migrate
-docker compose ps
-```
-
-默认连接信息：
-
-```text
-postgres://c2c_market:c2c_market_dev_password@localhost:5432/c2c_market?sslmode=disable
-```
-
-PostgreSQL migration 通过 Compose 的一次性 `migrate` 服务执行，SQL 位于 `backend/migrations/`。
-
-如果需要重新初始化数据库和重新执行 migration：
-
-```bash
-docker compose down -v
-docker compose up -d postgres
-docker compose --profile migrate run --rm migrate
-```
-
-后端服务镜像已经可以构建：
-
-```bash
-docker compose --profile app build backend
-docker compose --profile app up -d backend
-```
-
-生产模拟部署使用独立 env 模板和 Compose 覆盖：
-
-```bash
-cp .env.production.example .env.production
-docker compose --env-file .env.production -f compose.yaml -f compose.prod.yaml config
-docker compose --env-file .env.production -f compose.yaml -f compose.prod.yaml --profile migrate run --rm migrate
-docker compose --env-file .env.production -f compose.yaml -f compose.prod.yaml --profile app build backend
-docker compose --env-file .env.production -f compose.yaml -f compose.prod.yaml --profile app up -d backend
-```
-
-完整部署、发布、readyz、smoke 和回滚流程见 [docs/ops/deployment-runbook.md](docs/ops/deployment-runbook.md)。
-
-注意：当前 Go 后端入口为 `backend/cmd/api`，`internal/app` 负责依赖组装，`internal/server` 负责 HTTP 路由。业务包已按模块拆分：`auth`、`idempotency`、`contact`、`catalog`、`officialprice`、`carpool`、`apimarket`、`apiintent`、`profile`、`announcement`、`demand`、`favorite`、`review`、`report`、`notification`、`search` 均已拥有各自 service 与 repository contract；`internal/module/core` 只保留兼容方法名并委托到模块服务。
-
-配置 `DATABASE_URL` 后，后端会把 users、auth sessions、user password credential hashes、idempotency、official price leads/records、contact methods、contact sessions、contact access logs、API purchase intent contact access logs、carpool listings/applications/memberships、API services、API purchase intents、profile/merchant profile、announcements、demands、favorites、carpool reviews、reports、dispute cases、appeals、dispute events 和 notifications 写入 PostgreSQL，并从这些公开可见业务表聚合全局搜索。官网价格由管理员直接维护；新增、编辑和下架会在事务内写入兼容 lead、price record、domain event、admin audit log、notification 和幂等结果，公开列表只返回 active 记录，普通用户 `POST /api/v1/official-price-leads` 已禁用。联系方式完整值使用本地配置的 AES-GCM key 加密落库，并用 HMAC fingerprint 做不可逆指纹；拼车联系方式只在有效联系窗口内向参与方解密返回。拼车发布要求车主账号已绑定 linux.do，发布时复查产品 `publish_policy` 和车主联系方式后直接进入 `active`，admin 可对公开车源下架/恢复，遗留 `pending_review` 仍支持人工 approve/request-changes/reject。API 服务当前采用早期自动通过策略：owner 提交审核时若已绑定 linux.do 且商户联系方式有效，会进入 `review_status=approved`、`publication_status=offline`，仍必须手动 publish 后才公开；人工审核状态枚举和 admin approve/request-changes/reject 路由保留。API purchase intent 创建会在同一事务内写入意向、冻结双方联系方式版本、写入事件/通知、记录买家查看商户联系方式的审计日志，并直接向成功创建意向的买家返回冻结商户联系方式；买家详情和 owner 详情读取联系方式也会写入不含明文的访问日志。幂等记录只保存资源标识，不缓存完整联系方式明文；未过期 `processing` 仍返回处理中，过期 `processing` 可由同请求 hash 接管重试，并在启动时清理保守过期记录。需求池只保存求车上下文、预算、地区、偏好、来源链接和审核状态，不处理支付、托管、担保或凭据交付。收藏只保存当前用户对公开车源或公开 API 服务的个人标记，不改变目标资源状态。评价只允许已完成拼车 membership 的买家评价车主，不改变成员关系、支付、托管、担保或凭据交付状态。举报/纠纷/申诉只记录脱敏问题描述、人工处理状态和公开摘要，不处理支付、退款、赔付、托管、担保或凭据交付。统一通知中心只读取和更新当前用户站内业务通知的 `read_at`，不会把业务通知外发为短信、Webhook 或真实推送；邮箱验证码和注册成功邮件由 profile/auth 模块通过 development sender 或阿里云 DirectMail SMTP 发送。全局搜索只返回公开可见摘要，不返回联系方式、隐藏 store alias owner、admin 内部字段或凭据材料；PostgreSQL 上通过 `pg_trgm` GIN 索引优化公开搜索字段。`GET /readyz` 会检查数据库和 migration 状态。
-
-## 验证
+### 4. 启动前端
 
 ```bash
 pnpm --dir frontend install --frozen-lockfile
+pnpm --dir frontend dev
+```
+
+打开 `http://127.0.0.1:5173`。开发服务器会把 `/api`、`/health` 和 `/readyz` 转发到本地后端。
+
+停止本地服务：
+
+```bash
+docker compose --profile app down
+```
+
+## 本地验证
+
+提交 Pull Request 前请运行：
+
+```bash
+cd backend && go test ./...
+cd ..
 pnpm --dir frontend typecheck
 VITE_API_MODE=real pnpm --dir frontend build
 pnpm --dir frontend test
-cd backend && go test ./...
+node scripts/check-openapi-routes.mjs
+node scripts/check-migrations-doc.mjs
 ```
 
-前端生产构建必须使用真实后端配置，并且会拒绝 `VITE_ENABLE_MOCK=true`。
-
-当前真实业务 smoke 脚本：
+需要验证完整业务流程时，可在后端运行后执行：
 
 ```bash
-API_BASE_URL=http://127.0.0.1:18080 node scripts/api-market-smoke.mjs
-API_BASE_URL=http://127.0.0.1:18080 node scripts/carpool-smoke.mjs
-API_BASE_URL=http://127.0.0.1:18080 node scripts/profile-smoke.mjs
-API_BASE_URL=http://127.0.0.1:18080 node scripts/announcement-smoke.mjs
-API_BASE_URL=http://127.0.0.1:18080 node scripts/official-price-smoke.mjs
-API_BASE_URL=http://127.0.0.1:18080 node scripts/demand-smoke.mjs
-API_BASE_URL=http://127.0.0.1:18080 node scripts/favorites-smoke.mjs
-API_BASE_URL=http://127.0.0.1:18080 node scripts/review-smoke.mjs
-API_BASE_URL=http://127.0.0.1:18080 node scripts/reports-smoke.mjs
-API_BASE_URL=http://127.0.0.1:18080 node scripts/notification-smoke.mjs
-API_BASE_URL=http://127.0.0.1:18080 node scripts/search-smoke.mjs
-API_BASE_URL=http://127.0.0.1:18080 node scripts/auth-smoke.mjs
+API_BASE_URL=http://127.0.0.1:8080 node scripts/run-smokes.mjs
 ```
 
-也可以串行运行当前全部 smoke：
+## 配置与部署
 
-```bash
-API_BASE_URL=http://127.0.0.1:18080 node scripts/run-smokes.mjs
-```
+- 本地配置模板：[`.env.example`](./.env.example)
+- 生产配置模板：[`.env.production.example`](./.env.production.example)
+- Staging 配置模板：[`.env.staging.example`](./.env.staging.example)
+- API 契约：[`docs/openapi/c2c-market-api-v1.yaml`](./docs/openapi/c2c-market-api-v1.yaml)
+- 部署手册：[`docs/ops/deployment-runbook.md`](./docs/ops/deployment-runbook.md)
+
+生产环境必须使用真实 OAuth、独立的加密密钥、HTTPS 前端来源、PostgreSQL 和有效 SMTP 配置。请勿直接复用示例文件中的本地默认值。
+
+## 产品边界与免责声明
+
+C2CMarket 不是支付、托管、账号托管、履约担保或 API 代理平台。平台不应保存或传递第三方账号密码、Cookie、Session、验证码、恢复码或面板主账号凭据。
+
+第三方订阅的费用分摊、成员邀请和使用方式可能受到对应服务提供商条款限制，并可能带来账号限制、服务中断、隐私暴露或费用损失。项目与 linux.do、OpenAI 及其他第三方服务提供商不存在官方隶属、授权或担保关系。使用者应自行核对适用条款并承担相关风险。
+
+## 参与贡献
+
+欢迎提交 Issue 和 Pull Request。开始前请阅读 [贡献指南](./CONTRIBUTING.md)，并尽量让每个变更保持范围清晰、可独立验证。
+
+## 许可证
+
+本项目基于 [MIT License](./LICENSE) 开源。

@@ -1,8 +1,5 @@
 # Cloudflare Pages with Local Production and Staging Backends
 
-Date: 2026-07-15
-Operator: Codex
-
 ## Target topology
 
 | Environment | Frontend | Backend | Local port | Compose project | Database |

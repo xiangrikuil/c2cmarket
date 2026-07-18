@@ -1,8 +1,5 @@
 # C2CMarket Deployment Runbook
 
-日期：2026-07-15
-执行者：Codex
-
 ## Scope
 
 This runbook covers the current deployable shape of C2CMarket: Go backend, PostgreSQL, SQL migrations, Vue static frontend build, OAuth login, Alibaba Cloud DirectMail email verification, health/readiness checks, and local smoke validation.
