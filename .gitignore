@@ -5,6 +5,9 @@ dist/
 coverage/
 docs/
 output/
+.nuxt/
+.output/
+.wrangler/
 *.log
 *.zip
 
