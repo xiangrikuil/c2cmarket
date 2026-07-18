@@ -277,9 +277,15 @@ export const sanitizeAnalyticsEvent = (eventName: AnalyticsEventName, props: Raw
   }
 }
 
-const analyticsEnabled = () => import.meta.env.VITE_UMAMI_ENABLED === 'true'
+let analyticsEnabled = false
+let analyticsDebugEnabled = false
 
-const debugEnabled = () => import.meta.env.VITE_UMAMI_DEBUG === 'true'
+const runtimeBoolean = (value: unknown) => value === true || value === 'true'
+
+export const setAnalyticsRuntimeConfig = (config: { enabled?: unknown, debug?: unknown }) => {
+  analyticsEnabled = runtimeBoolean(config.enabled)
+  analyticsDebugEnabled = runtimeBoolean(config.debug)
+}
 
 const getUmamiTracker = () => {
   if (typeof window === 'undefined') return null
@@ -288,13 +294,13 @@ const getUmamiTracker = () => {
 }
 
 export const trackAnalytics = (eventName: AnalyticsEventName, props: RawProperties = {}) => {
-  if (!analyticsEnabled()) return
+  if (!analyticsEnabled) return
   const tracker = getUmamiTracker()
   if (!tracker) return
   const sanitized = sanitizeAnalyticsEvent(eventName, props)
   try {
     tracker(eventName, sanitized)
   } catch (error) {
-    if (debugEnabled()) console.debug('[analytics] track failed', error)
+    if (analyticsDebugEnabled) console.debug('[analytics] track failed', error)
   }
 }

@@ -53,9 +53,8 @@ export class BackendProblemError extends Error {
   }
 }
 
-const apiMode = import.meta.env.VITE_API_MODE
-const configuredBaseURL = import.meta.env.VITE_API_BASE_URL
-const explicitRealMode = apiMode === 'real'
+let runtimeApiMode = ''
+let runtimeBaseURL = ''
 const SESSION_REFRESH_GRACE_MS = 60_000
 const SESSION_INVALIDATION_CODES = new Set([
   'CSRF_TOKEN_INVALID',
@@ -69,11 +68,16 @@ let sessionRequest: Promise<BackendSession> | null = null
 const pendingGetRequests = new Map<string, Promise<unknown>>()
 
 export function shouldUseRealBackend() {
-  return explicitRealMode || Boolean(configuredBaseURL)
+  return runtimeApiMode === 'real'
 }
 
 export function backendBaseURL() {
-  return configuredBaseURL ? configuredBaseURL.replace(/\/$/, '') : ''
+  return runtimeBaseURL.replace(/\/$/, '')
+}
+
+export function setBackendRuntimeConfig(config: { apiMode?: string, apiBaseUrl?: string }) {
+  runtimeApiMode = config.apiMode?.trim() ?? ''
+  runtimeBaseURL = config.apiBaseUrl?.trim() ?? ''
 }
 
 export function setBackendCSRFToken(token: string | null) {

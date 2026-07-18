@@ -8,16 +8,37 @@ import { Card } from '@/components/ui/card'
 import EmptyState from '@/components/market/EmptyState.vue'
 import SkeletonBlock from '@/components/market/SkeletonBlock.vue'
 import { useOfficialPrice, useOfficialPrices } from '@/queries/useMarketQueries'
+import { markMissingQueryAsNotFoundOnServer, prefetchQueriesOnServer } from '@/queries/prefetchQueriesOnServer'
 import { getProductCategory } from '@/lib/productCategories'
 import { getProductCategoryIconSrc } from '@/lib/productCategoryIcon'
+import { useEntitySeo } from '@/composables/useEntitySeo'
 
 const route = useRoute()
 const id = computed(() => String(route.params.id ?? ''))
-const { data: price, isLoading } = useOfficialPrice(id)
-const { data: allPrices } = useOfficialPrices()
+const officialPriceQuery = useOfficialPrice(id)
+const officialPricesQuery = useOfficialPrices()
+const { data: price, isLoading } = officialPriceQuery
+const { data: allPrices } = officialPricesQuery
+prefetchQueriesOnServer(officialPriceQuery, officialPricesQuery)
+markMissingQueryAsNotFoundOnServer(officialPriceQuery, () => Boolean(price.value))
 const builtInProductIcons = new Map<string, string>()
 const productIconSrc = computed(() => price.value ? getProductCategoryIconSrc(getProductCategory(price.value.product), builtInProductIcons) : null)
 const relatedPrices = computed(() => price.value ? (allPrices.value ?? []).filter(item => item.id !== price.value!.id && item.product === price.value!.product).slice(0, 3) : [])
+useEntitySeo({
+  indexable: computed(() => Boolean(price.value)),
+  title: computed(() => price.value ? `${price.value.product} ${price.value.plan} 官网价格｜C2CMarket` : '官网价格详情｜C2CMarket'),
+  description: computed(() => price.value ? `${price.value.product} ${price.value.plan} 在${price.value.region}、${price.value.channel}的公开官网价格与更新时间。` : '查看公开官网价格详情。'),
+  schema: computed(() => price.value ? {
+    '@type': 'Product',
+    name: `${price.value.product} ${price.value.plan}`,
+    offers: {
+      '@type': 'Offer',
+      priceCurrency: 'CNY',
+      price: price.value.cny,
+      url: price.value.source,
+    },
+  } : null),
+})
 
 function openSource(url: string) {
   if (/^https?:\/\//.test(url)) window.open(url, '_blank', 'noopener,noreferrer')

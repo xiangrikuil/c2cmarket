@@ -4,10 +4,12 @@ import { describe, expect, it } from 'vitest'
 type WranglerConfig = {
   name?: string
   keep_vars?: boolean
+  main?: string
+  compatibility_flags?: string[]
   assets?: {
     directory?: string
-    not_found_handling?: string
   }
+  vars?: Record<string, string>
 }
 
 describe('Cloudflare Worker deployment config', () => {
@@ -16,16 +18,21 @@ describe('Cloudflare Worker deployment config', () => {
     ['staging', '../../../../wrangler.staging.jsonc', 'c2cmarket-staging'],
   ] as const
 
-  it.each(environments)('serves %s Vue navigation routes through the SPA fallback', (_, path, name) => {
+  it.each(environments)('serves %s Nuxt SSR through the Cloudflare Worker output', (environment, path, name) => {
     const source = readFileSync(new URL(path, import.meta.url), 'utf8')
     const config = JSON.parse(source) as WranglerConfig
 
     expect(config.name).toBe(name)
     expect(config.keep_vars).toBe(true)
+    expect(config.main).toBe('./frontend/.output/server/index.mjs')
+    expect(config.compatibility_flags).toContain('nodejs_compat')
     expect(config.assets).toEqual({
-      directory: './frontend/dist',
-      not_found_handling: 'single-page-application',
+      directory: './frontend/.output/public',
     })
+    expect(config.vars?.NUXT_PUBLIC_API_MODE).toBe('real')
+    expect(config.vars?.NUXT_PUBLIC_SITE_URL).toBe(environment === 'production'
+      ? 'https://c2cmarket.shop'
+      : 'https://staging.c2cmarket.shop')
   })
 
   it('keeps production backends loopback-only behind the VPS Caddy origin', () => {

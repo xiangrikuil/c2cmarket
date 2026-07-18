@@ -5,7 +5,7 @@ import type { DemandRecord, SubmitDemandPayload } from './types'
 const mockDelayMs = 120
 
 async function waitForMock() {
-  await new Promise(resolve => window.setTimeout(resolve, mockDelayMs))
+  await new Promise(resolve => setTimeout(resolve, mockDelayMs))
 }
 
 async function demandMocks() {

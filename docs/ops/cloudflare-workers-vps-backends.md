@@ -1,6 +1,6 @@
 # Cloudflare Workers with VPS Production and Staging Backends
 
-日期：2026-07-17
+日期：2026-07-18
 执行者：Codex
 
 ## 1. 当前拓扑
@@ -10,7 +10,7 @@
 | Production | `https://c2cmarket.shop` | `https://api.c2cmarket.shop` | `127.0.0.1:8080` | `c2c-prod` | 独立 production volume |
 | Staging | `https://staging.c2cmarket.shop` | `https://api-staging.c2cmarket.shop` | `127.0.0.1:8081` | `c2c-staging` | 独立 staging volume |
 
-两个前端由 Cloudflare Workers Static Assets 托管。两个 API hostname 使用 Cloudflare proxied A 记录指向 VPS `192.236.230.132`。VPS Caddy 自动申请和续期公开受信 TLS 证书，接收 Full (strict) HTTPS 后按 hostname 转发到对应 loopback backend。VPS 不运行 Cloudflare Tunnel。
+两个前端由 Nuxt 4/Nitro Cloudflare Workers 提供 SSR，并由同一 Worker 绑定静态资源。两个 API hostname 使用 Cloudflare proxied A 记录指向 VPS `192.236.230.132`。VPS Caddy 自动申请和续期公开受信 TLS 证书，接收 Full (strict) HTTPS 后按 hostname 转发到对应 loopback backend。VPS 不运行 Cloudflare Tunnel。
 
 PostgreSQL 仅存在于各自 Compose network，不发布宿主端口。production override 将 backend host publish 固定为 `127.0.0.1`，公网只能经过 Cloudflare 与 Caddy 到达 API。
 
@@ -111,6 +111,34 @@ Proxy status: Proxied
 ```
 
 不要把前端 hostname 指向 VPS。`c2cmarket.shop` 与 `staging.c2cmarket.shop` 继续归各自 Worker 所有。
+
+### 5.1 Nuxt Worker 构建与发布
+
+前端不再是 assets-only SPA。production 和 staging 配置分别使用
+`wrangler.jsonc` 与 `wrangler.staging.jsonc`，共同指向：
+
+```text
+main = frontend/.output/server/index.mjs
+assets.directory = frontend/.output/public
+compatibility_flags = ["nodejs_compat"]
+```
+
+先构建一次，再用对应配置检查或发布：
+
+```bash
+NUXT_PUBLIC_API_MODE=real \
+NUXT_PUBLIC_SITE_URL=https://c2cmarket.shop \
+NUXT_PUBLIC_API_BASE_URL=https://api.c2cmarket.shop \
+NUXT_API_BASE_URL=https://api.c2cmarket.shop \
+pnpm --dir frontend build
+
+pnpm --dir frontend exec wrangler deploy --dry-run --config ../wrangler.jsonc
+pnpm --dir frontend exec wrangler deploy --config ../wrangler.jsonc
+```
+
+Staging 发布使用 `wrangler.staging.jsonc`。两个配置内的 Nuxt runtime vars
+必须与各自站点和 API hostname 一致。生产公开页可以被抓取；staging、
+preview 和 `workers.dev` 的 `/robots.txt` 必须全站禁止抓取。
 
 Staging 的两个 Access application 保持不变：
 

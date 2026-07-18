@@ -186,7 +186,7 @@ type RecommendableApiService = {
 
 1. 运行相关单元/组件测试，确保筛选、状态和操作逻辑未改变。
 2. 运行 `pnpm --dir frontend exec vue-tsc -b --pretty false`。
-3. 运行 `pnpm --dir frontend exec vite build`，真实 API 模式要求沿用任务约定。
+3. 使用必需的 Nuxt runtime API 变量运行 `pnpm --dir frontend build`。
 4. 使用真实浏览器验证桌面端，基准视口为 `1440×900`。
 5. 首页和本次改动的代表页面必须留存截图并检查：市场感、信息层级、真实字段、主操作、横向溢出。
 6. 涉及响应式布局时补充移动端检查；但设计和验收优先保证桌面端。

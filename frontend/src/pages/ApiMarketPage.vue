@@ -28,6 +28,7 @@ import {
 } from '@/lib/api'
 import { useApiServices, useOtherApiMarketQuery, useSub2ApiMarketQuery } from '@/queries/useMarketQueries'
 import { useProductCategories } from '@/queries/useProductCatalogQueries'
+import { prefetchQueriesOnServer } from '@/queries/prefetchQueriesOnServer'
 
 type MerchantFilter = 'all' | 'personal_first' | 'personal' | 'api'
 type Panel = 'sub2api' | 'packages' | 'other'
@@ -112,10 +113,15 @@ const otherFilters = computed<OtherApiMarketFilters>(() => ({
   sort: otherSort.value,
 }))
 
-const { data: sub2Data } = useSub2ApiMarketQuery(sub2Filters)
-const { data: otherData } = useOtherApiMarketQuery(otherFilters)
-const { data: allServicesData } = useApiServices()
-const { data: catalogCategories } = useProductCategories()
+const sub2MarketQuery = useSub2ApiMarketQuery(sub2Filters)
+const otherMarketQuery = useOtherApiMarketQuery(otherFilters)
+const allServicesQuery = useApiServices()
+const productCategoriesQuery = useProductCategories()
+const { data: sub2Data } = sub2MarketQuery
+const { data: otherData } = otherMarketQuery
+const { data: allServicesData } = allServicesQuery
+const { data: catalogCategories } = productCategoriesQuery
+prefetchQueriesOnServer(sub2MarketQuery, otherMarketQuery, allServicesQuery, productCategoriesQuery)
 
 const categoryIconByCode = computed(() => new Map((catalogCategories.value ?? []).map(category => [category.code, category.iconDataUrl])))
 

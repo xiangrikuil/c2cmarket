@@ -14,12 +14,14 @@ import SkeletonBlock from '@/components/market/SkeletonBlock.vue'
 import { trackAnalytics } from '@/lib/analytics'
 import { getPricingDisplay, getRemainingSeats } from '@/lib/pricing'
 import { useCreatePublicUserReportMutation, usePublicUserProfileQuery } from '@/queries/useMarketQueries'
+import { useEntitySeo } from '@/composables/useEntitySeo'
 
 const route = useRoute()
 const router = useRouter()
 const analyticsSourceRoute = () => String(route.name ?? 'unknown')
 const username = computed(() => String(route.params.username ?? ''))
-const { data, isLoading } = usePublicUserProfileQuery(username)
+const publicUserQuery = usePublicUserProfileQuery(username)
+const { data, isLoading } = publicUserQuery
 const reportMutation = useCreatePublicUserReportMutation()
 const activeTab = ref('概览')
 const profile = computed(() => data.value?.profile)
@@ -39,6 +41,20 @@ const completedTotal = computed(() => {
 const completionLabel = computed(() => {
   if (completedTotal.value === null) return '已隐藏'
   return completedTotal.value < 5 ? '记录较少' : `${completedTotal.value} 单`
+})
+useEntitySeo({
+  indexable: false,
+  title: computed(() => profile.value ? `${profile.value.displayName}（@${profile.value.username}）｜C2CMarket` : '用户公开主页｜C2CMarket'),
+  description: computed(() => profile.value ? `查看 ${profile.value.displayName} 的公开资料、脱敏信誉统计与公开业务记录。` : '查看用户公开资料与业务记录。'),
+  schema: computed(() => profile.value ? {
+    '@type': 'ProfilePage',
+    mainEntity: {
+      '@type': 'Person',
+      name: profile.value.displayName,
+      alternateName: `@${profile.value.username}`,
+      image: profile.value.avatarUrl || undefined,
+    },
+  } : null),
 })
 const publicStats = computed(() => profile.value ? [
   { label: '近 30 天完成', value: completionLabel.value, hint: completedTotal.value !== null && completedTotal.value < 5 ? '记录较少，不作为负面信号' : undefined },

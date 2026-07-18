@@ -26,18 +26,23 @@ import {
 import { trackAnalytics } from '@/lib/analytics'
 import { useDetailVisibleAnalytics } from '@/composables/useDetailVisibleAnalytics'
 import { useApiService, useFavoriteStatus, useMyApiServices, useToggleFavoriteMutation } from '@/queries/useMarketQueries'
+import { markMissingQueryAsNotFoundOnServer, prefetchQueriesOnServer } from '@/queries/prefetchQueriesOnServer'
+import { useEntitySeo } from '@/composables/useEntitySeo'
 
 const route = useRoute()
 const router = useRouter()
 const queryClient = useQueryClient()
 const analyticsSourceRoute = () => String(route.name ?? 'unknown')
 const id = computed(() => String(route.params.id ?? ''))
-const { data: service, isLoading, error: serviceError, refetch: refetchService } = useApiService(id)
-const { data: ownedServices, isLoading: ownershipLoading } = useMyApiServices()
+const apiServiceQuery = useApiService(id)
+const { data: service, isLoading, error: serviceError, refetch: refetchService } = apiServiceQuery
+prefetchQueriesOnServer(apiServiceQuery)
+markMissingQueryAsNotFoundOnServer(apiServiceQuery, () => Boolean(service.value))
+const { data: ownedServices, isLoading: ownershipLoading } = useMyApiServices(import.meta.client)
 const amount = ref(10)
 const selectedPackageId = ref('')
 const selectedDeliveryMode = ref<ApiDeliveryMode>('api_key_endpoint')
-const { data: favoriteStatus } = useFavoriteStatus('api-service', id)
+const { data: favoriteStatus } = useFavoriteStatus('api-service', id, import.meta.client)
 const toggleFavoriteMutation = useToggleFavoriteMutation()
 const favorited = computed(() => Boolean(favoriteStatus.value))
 const trackedServiceId = ref('')
@@ -51,6 +56,23 @@ const ownerPreview = computed(() => route.query.preview === 'owner')
 const isOwnedService = computed(() => Boolean(ownedServices.value?.some(item => item.id === id.value)))
 const availablePackages = computed(() => (service.value?.packages ?? []).filter(item => item.enabled && item.stockAvailable > 0))
 const selectedPackage = computed<ApiServicePackage | null>(() => availablePackages.value.find(item => item.id === selectedPackageId.value) ?? null)
+
+useEntitySeo({
+  indexable: computed(() => Boolean(service.value)),
+  title: computed(() => service.value ? `${service.value.title}｜API 服务｜C2CMarket` : 'API 服务详情｜C2CMarket'),
+  description: computed(() => service.value ? `${service.value.title}，支持 ${service.value.models.join('、')}，最低 ¥${service.value.minimumPurchaseCny} 起，查看交付方式与商户说明。` : '查看公开 API 服务详情。'),
+  schema: computed(() => service.value ? {
+    '@type': 'Service',
+    name: service.value.title,
+    serviceType: 'API Service',
+    offers: {
+      '@type': 'Offer',
+      priceCurrency: 'CNY',
+      price: service.value.minimumPurchaseCny,
+      availability: service.value.publiclyOrderable ? 'https://schema.org/InStock' : 'https://schema.org/OutOfStock',
+    },
+  } : null),
+})
 
 useDetailVisibleAnalytics({
   enabled: serviceVisible,

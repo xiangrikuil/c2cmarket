@@ -72,7 +72,7 @@ describe('个人与经营中心导航', () => {
     expect(myApiServiceDetailSource).toContain('useMyApiService(id)')
     expect(myApiServiceDetailSource).toContain('以买家视角预览')
     expect(myApiServiceDetailSource).toContain('查看 API 订单')
-    expect(publicApiServiceDetailSource).toContain('useMyApiServices()')
+    expect(publicApiServiceDetailSource).toContain('useMyApiServices(import.meta.client)')
     expect(publicApiServiceDetailSource).toContain("name: 'my-api-service-detail'")
     expect(publicApiServiceDetailSource).toContain('商户不能为自己的服务创建订单')
     expect(apiSource).toContain('getMyApiServiceById')

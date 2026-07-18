@@ -591,7 +591,7 @@ export type SaveCarpoolDraftPayload = {
   status: CarpoolDraftStatus
 }
 
-const wait = () => new Promise(resolve => window.setTimeout(resolve, 80))
+const wait = () => new Promise(resolve => setTimeout(resolve, 80))
 const currentBuyerId = 'buyer-demo-user'
 const currentBuyerName = 'demo_user'
 const currentOwnerId = 'owner-orbit'
@@ -647,6 +647,7 @@ function isLinuxDoTopicUrl(value: string) {
 }
 
 function readSessionStore<T>(key: string, seed: T): T {
+  if (typeof window === 'undefined') return clone(seed)
   const stored = window.sessionStorage.getItem(key)
   if (!stored) return clone(seed)
   const parsed = JSON.parse(stored) as T
@@ -657,6 +658,7 @@ function readSessionStore<T>(key: string, seed: T): T {
 }
 
 function readLocalStore<T>(key: string, seed: T): T {
+  if (typeof window === 'undefined') return clone(seed)
   const stored = window.localStorage.getItem(key)
   if (!stored) return clone(seed)
   return JSON.parse(stored) as T
@@ -766,24 +768,29 @@ export function getSupportedModelPriceRows(service: Pick<ApiService, 'models' | 
 }
 
 function persistApiPurchaseStores() {
+  if (typeof window === 'undefined') return
   window.sessionStorage.setItem(apiPurchaseIntentStorageKey, JSON.stringify(apiPurchaseIntentStore))
   window.sessionStorage.setItem(apiPurchaseIntentEventStorageKey, JSON.stringify(apiPurchaseIntentEventStore))
 }
 
 function persistApiOrderStore() {
+  if (typeof window === 'undefined') return
   window.sessionStorage.setItem(apiOrderStorageKey, JSON.stringify(apiOrderStore))
 }
 
 function persistCarpoolApplicationStores() {
+  if (typeof window === 'undefined') return
   window.sessionStorage.setItem(carpoolApplicationStorageKey, JSON.stringify(carpoolApplicationStore))
   window.sessionStorage.setItem(carpoolApplicationEventStorageKey, JSON.stringify(carpoolApplicationEventStore))
 }
 
 function persistAdminStores() {
+  if (typeof window === 'undefined') return
   window.sessionStorage.setItem(adminAuditLogStorageKey, JSON.stringify(adminAuditLogStore))
 }
 
 function persistMarketStores() {
+  if (typeof window === 'undefined') return
   window.sessionStorage.setItem(officialPriceStorageKey, JSON.stringify(officialPriceStore))
   window.sessionStorage.setItem(carpoolStorageKey, JSON.stringify(carpoolStore))
   window.sessionStorage.setItem(apiServiceStorageKey, JSON.stringify(apiServiceStore))
@@ -791,18 +798,22 @@ function persistMarketStores() {
 }
 
 function persistApiPaymentAccountSettings() {
+  if (typeof window === 'undefined') return
   window.localStorage.setItem(apiPaymentAccountSettingsStorageKey, JSON.stringify(apiPaymentAccountSettingsStore))
 }
 
 function persistFeedbackTickets() {
+  if (typeof window === 'undefined') return
   window.sessionStorage.setItem(feedbackStorageKey, JSON.stringify(feedbackTicketStore))
 }
 
 function persistNotificationReadState() {
+  if (typeof window === 'undefined') return
   window.sessionStorage.setItem(notificationReadStorageKey, JSON.stringify(notificationReadStore))
 }
 
 function persistFavorites() {
+  if (typeof window === 'undefined') return
   window.sessionStorage.setItem(favoriteStorageKey, JSON.stringify(favoriteStore))
 }
 
@@ -1357,7 +1368,7 @@ function appendAdminAuditLog(log: Omit<AdminAuditLog, 'id' | 'createdAt'> & { cr
 }
 
 function registerMockDemandAuditListener() {
-  if (shouldUseRealBackend()) return
+  if (typeof window === 'undefined' || shouldUseRealBackend()) return
   void import('@/mocks/demand').then(({ setMockDemandCreatedListener }) => {
     setMockDemandCreatedListener(demand => {
       appendAdminAuditLog({

@@ -15,6 +15,7 @@ import { shouldUseRealBackend } from '@/lib/backendClient'
 import { getProductCategory } from '@/lib/productCategories'
 import { getProductCategoryIconSrc } from '@/lib/productCategoryIcon'
 import { useOfficialPrices } from '@/queries/useMarketQueries'
+import { prefetchQueriesOnServer } from '@/queries/prefetchQueriesOnServer'
 import type { OfficialPrice } from '@/lib/api'
 
 type StatusFilter = '全部' | OfficialPrice['status']
@@ -22,7 +23,9 @@ type SortMode = 'updated_desc' | 'cny_asc' | 'trust_desc' | 'verified_recent' | 
 
 const route = useRoute()
 const router = useRouter()
-const { data } = useOfficialPrices()
+const officialPricesQuery = useOfficialPrices()
+const { data } = officialPricesQuery
+prefetchQueriesOnServer(officialPricesQuery)
 
 const q = ref(typeof route.query.q === 'string' ? route.query.q : '')
 const product = ref(typeof route.query.product === 'string' ? route.query.product : '全部')

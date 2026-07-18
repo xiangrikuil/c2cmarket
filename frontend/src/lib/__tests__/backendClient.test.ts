@@ -17,18 +17,15 @@ function problemResponse(body: unknown, status: number) {
   })
 }
 
-async function loadBackendClient(env: Record<string, string> = {}): Promise<BackendClientModule> {
+async function loadBackendClient(config: { apiMode?: string, apiBaseUrl?: string } = {}): Promise<BackendClientModule> {
   vi.resetModules()
-  vi.unstubAllEnvs()
-  for (const [key, value] of Object.entries(env)) {
-    vi.stubEnv(key, value)
-  }
-  return import('../backendClient')
+  const client = await import('../backendClient')
+  client.setBackendRuntimeConfig(config)
+  return client
 }
 
 afterEach(() => {
   vi.unstubAllGlobals()
-  vi.unstubAllEnvs()
   vi.restoreAllMocks()
   vi.resetModules()
 })
@@ -42,7 +39,7 @@ test('real backend mode surfaces expired sessions without dev-session fallback',
     detail: '请先登录后继续操作。',
   }, 401))
 
-  const client = await loadBackendClient({ VITE_API_MODE: 'real' })
+  const client = await loadBackendClient({ apiMode: 'real' })
 
   await assert.rejects(
     () => client.ensureBackendSession('orbit'),
@@ -68,7 +65,7 @@ test('decodes Problem Details into BackendProblemError', async () => {
     requestId: 'req_test',
   }, 422))
 
-  const client = await loadBackendClient({ VITE_API_BASE_URL: 'https://api.example.test/' })
+  const client = await loadBackendClient({ apiMode: 'real', apiBaseUrl: 'https://api.example.test/' })
 
   await assert.rejects(
     () => client.backendRequest('/api/v1/search?q=x'),
@@ -111,7 +108,7 @@ test('refreshes session and retries mutation after stale CSRF token', async () =
     }))
     .mockResolvedValueOnce(jsonResponse({ ok: true }))
 
-  const client = await loadBackendClient({ VITE_API_MODE: 'real' })
+  const client = await loadBackendClient({ apiMode: 'real' })
   client.setBackendCSRFToken('stale-token')
 
   const result = await client.backendMutation<{ ok: boolean }>('/api/v1/example', { name: 'demo' })
@@ -152,7 +149,7 @@ test('logout revokes the backend session and clears the cached session', async (
     .mockResolvedValueOnce(new Response(null, { status: 204 }))
     .mockResolvedValueOnce(jsonResponse(nextSession))
 
-  const client = await loadBackendClient({ VITE_API_MODE: 'real' })
+  const client = await loadBackendClient({ apiMode: 'real' })
   assert.deepEqual(await client.getCurrentBackendSession(), firstSession)
   await client.logoutBackendSession()
   assert.deepEqual(await client.getCurrentBackendSession(), nextSession)

@@ -3,6 +3,7 @@ node_modules/
 .pnpm-store/
 dist/
 coverage/
+.wrangler/
 docs/
 !docs/
 docs/*
@@ -22,6 +23,8 @@ output/
 
 frontend/node_modules/
 frontend/dist/
+frontend/.nuxt/
+frontend/.output/
 
 backend/bin/
 backend/*.test
