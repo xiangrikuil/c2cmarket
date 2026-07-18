@@ -25,7 +25,7 @@ build/deployment configuration.
 - Public SSR runtime keys: `NUXT_PUBLIC_SITE_URL`,
   `NUXT_PUBLIC_API_BASE_URL`, and `NUXT_PUBLIC_API_MODE=real`.
 - Server-only API origin: `NUXT_API_BASE_URL`.
-- Production builds must reject explicit mock mode.
+- Production builds require complete public/server API configuration and must reject any mode other than explicit `real`.
 - Public market pages may prefetch anonymous queries only. Session, favorite,
   eligibility, notification, owner, merchant, and admin queries remain client-only.
 - Public market detail absence returns HTTP 404 and `noindex`; non-404 upstream
@@ -45,7 +45,7 @@ build/deployment configuration.
 | Production hostname | Public robots rules and canonical sitemap URL |
 | Staging, preview, or `workers.dev` | `robots.txt` returns `Disallow: /` |
 | Sitemap cursor repeats or exceeds 100 pages | Sitemap source fails visibly |
-| `VITE_ENABLE_MOCK=true` in production | Build fails |
+| Any required Nuxt API variable is missing in production | Build fails |
 
 ### 5. Good / Base / Bad Cases
 

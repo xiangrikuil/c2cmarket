@@ -204,7 +204,7 @@ contact values. Responses that include full contact values must keep
 Build the frontend in real-backend mode:
 
 ```bash
-VITE_API_MODE=real \
+NUXT_PUBLIC_API_MODE=real \
 NUXT_PUBLIC_SITE_URL=https://c2cmarket.shop \
 NUXT_PUBLIC_API_BASE_URL=https://api.c2cmarket.shop \
 NUXT_API_BASE_URL=https://api.c2cmarket.shop \

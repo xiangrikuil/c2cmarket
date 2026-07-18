@@ -53,9 +53,6 @@ export class BackendProblemError extends Error {
   }
 }
 
-const apiMode = import.meta.env.VITE_API_MODE
-const configuredBaseURL = import.meta.env.VITE_API_BASE_URL
-const explicitRealMode = apiMode === 'real'
 let runtimeApiMode = ''
 let runtimeBaseURL = ''
 const SESSION_REFRESH_GRACE_MS = 60_000
@@ -71,12 +68,11 @@ let sessionRequest: Promise<BackendSession> | null = null
 const pendingGetRequests = new Map<string, Promise<unknown>>()
 
 export function shouldUseRealBackend() {
-  return explicitRealMode || runtimeApiMode === 'real' || Boolean(configuredBaseURL)
+  return runtimeApiMode === 'real'
 }
 
 export function backendBaseURL() {
-  const baseURL = runtimeBaseURL || configuredBaseURL || ''
-  return baseURL.replace(/\/$/, '')
+  return runtimeBaseURL.replace(/\/$/, '')
 }
 
 export function setBackendRuntimeConfig(config: { apiMode?: string, apiBaseUrl?: string }) {

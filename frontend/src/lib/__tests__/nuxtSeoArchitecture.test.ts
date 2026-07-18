@@ -51,4 +51,22 @@ describe('Nuxt hybrid rendering and SEO architecture', () => {
     expect(plugin).toContain('hydrate(queryClient, vueQueryState.value)')
     expect(home).toContain('prefetchQueriesOnServer(homeMarketQuery, productCategoriesQuery)')
   })
+
+  it('uses only Nuxt runtime variables in current frontend deployment surfaces', () => {
+    const config = readFileSync(new URL('../../../nuxt.config.ts', import.meta.url), 'utf8')
+    const currentDeploymentFiles = [
+      '../../../../.github/workflows/ci.yml',
+      '../../../../.env.example',
+      '../../../../.env.production.example',
+      '../../../../.env.staging.example',
+    ].map(path => readFileSync(new URL(path, import.meta.url), 'utf8'))
+
+    expect(config).not.toMatch(/\bVITE_[A-Z0-9_]+\b/)
+    expect(currentDeploymentFiles.join('\n')).not.toMatch(/\bVITE_[A-Z0-9_]+\b/)
+    expect(config).toContain("apiMode = process.env.NUXT_PUBLIC_API_MODE ?? ''")
+    expect(config).toContain("process.argv.includes('build')")
+    expect(config).toContain('!publicApiBaseURL')
+    expect(config).toContain('!process.env.NUXT_API_BASE_URL')
+    expect(config).toContain('NUXT_DEV_API_PROXY_TARGET')
+  })
 })

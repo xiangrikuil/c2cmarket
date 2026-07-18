@@ -139,12 +139,16 @@ docker compose --env-file .env.production -f compose.yaml -f compose.prod.yaml -
 ```bash
 pnpm --dir frontend install --frozen-lockfile
 pnpm --dir frontend typecheck
-VITE_API_MODE=real pnpm --dir frontend build
+NUXT_PUBLIC_API_MODE=real \
+NUXT_PUBLIC_SITE_URL=https://c2cmarket.shop \
+NUXT_PUBLIC_API_BASE_URL=https://api.c2cmarket.shop \
+NUXT_API_BASE_URL=https://api.c2cmarket.shop \
+pnpm --dir frontend build
 pnpm --dir frontend test
 cd backend && go test ./...
 ```
 
-前端生产构建必须使用真实后端配置，并且会拒绝 `VITE_ENABLE_MOCK=true`。
+前端生产构建必须同时配置 real 模式、公开 API 地址和服务端 API 地址；缺少任一项都会失败。
 
 当前真实业务 smoke 脚本：
 

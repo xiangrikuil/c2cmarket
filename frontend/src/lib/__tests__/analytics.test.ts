@@ -5,11 +5,12 @@ import {
   bucketSeats,
   bucketVisibleSeconds,
   sanitizeAnalyticsEvent,
+  setAnalyticsRuntimeConfig,
   trackAnalytics,
 } from '../analytics'
 
 afterEach(() => {
-  vi.unstubAllEnvs()
+  setAnalyticsRuntimeConfig({})
   vi.unstubAllGlobals()
   vi.restoreAllMocks()
 })
@@ -152,7 +153,7 @@ test('trackAnalytics is a safe no-op unless analytics is enabled and Umami is lo
   trackAnalytics('search_submit', { has_query: true, result_count: 1 })
   assert.equal(track.mock.calls.length, 0)
 
-  vi.stubEnv('VITE_UMAMI_ENABLED', 'true')
+  setAnalyticsRuntimeConfig({ enabled: true })
   trackAnalytics('search_submit', {
     has_query: true,
     result_count: 1,

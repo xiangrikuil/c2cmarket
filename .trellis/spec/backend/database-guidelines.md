@@ -153,7 +153,7 @@ The forward migration adds `reports.canonical_target_type`, `reports.canonical_t
 - Add a focused regression that asserts the forward migration contains all required report, dispute, audit, and duplicate-archival steps.
 - Apply the complete migration chain from an empty PostgreSQL volume through `ExpectedMigrationVersion`; testing only an already-upgraded database is insufficient for compatibility migrations.
 - Run `go test ./internal/store/postgres ./internal/database` and the complete backend suite when unrelated packages compile.
-- Run `VITE_API_MODE=real pnpm --dir frontend exec vue-tsc -b --pretty false` and `VITE_API_MODE=real pnpm --dir frontend exec vite build`.
+- Run `pnpm --dir frontend typecheck` and the real-mode `pnpm --dir frontend build` with all required Nuxt runtime API variables.
 - Apply the migration to a local database and verify `schema_migrations.version`, required columns, list joins, and duplicate-active-report count.
 - Verify a failed admin list query renders an explicit error state rather than `当前筛选下暂无记录。`.
 

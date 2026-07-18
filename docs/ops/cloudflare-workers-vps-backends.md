@@ -126,7 +126,7 @@ compatibility_flags = ["nodejs_compat"]
 先构建一次，再用对应配置检查或发布：
 
 ```bash
-VITE_API_MODE=real \
+NUXT_PUBLIC_API_MODE=real \
 NUXT_PUBLIC_SITE_URL=https://c2cmarket.shop \
 NUXT_PUBLIC_API_BASE_URL=https://api.c2cmarket.shop \
 NUXT_API_BASE_URL=https://api.c2cmarket.shop \

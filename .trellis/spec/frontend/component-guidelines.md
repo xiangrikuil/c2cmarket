@@ -274,7 +274,7 @@ type PublicListState<T> = {
 
 - Source/contract tests cover the homepage boundary, loading/empty components, row keyboard navigation, demand route split, sticky action copy, unsaved guard, short IDs/local times, and unified public-profile empty state.
 - Domain tests remain the authority for API-order state and carpool eligibility; page tests must not recreate their transition tables.
-- Run full Vitest, `vue-tsc`, real-API Vite build, and browser checks at 1440×900 plus mobile widths.
+- Run full Vitest, Nuxt typecheck, real-API Nuxt build, and browser checks at 1440×900 plus mobile widths.
 
 ### 7. Wrong vs Correct
 

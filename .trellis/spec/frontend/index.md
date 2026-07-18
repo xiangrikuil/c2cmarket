@@ -49,7 +49,7 @@ Frontend changes must run local type/build verification:
 
 ```bash
 pnpm --dir frontend typecheck
-VITE_API_MODE=real \
+NUXT_PUBLIC_API_MODE=real \
 NUXT_PUBLIC_SITE_URL=https://c2cmarket.shop \
 NUXT_PUBLIC_API_BASE_URL=https://api.c2cmarket.shop \
 NUXT_API_BASE_URL=https://api.c2cmarket.shop \

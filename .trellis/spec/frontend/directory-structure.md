@@ -6,7 +6,7 @@
 
 ## Overview
 
-C2CMarket frontend is a Vue 3 + Vite + TypeScript app. Route pages live under `src/pages`, reusable business UI lives under `src/components`, official shadcn-vue primitives live under `src/components/ui`, and data access is intentionally funneled through `src/lib` plus TanStack Query hooks in `src/queries`.
+C2CMarket frontend is a Nuxt 4 + Vue 3 + TypeScript application with hybrid SSR/CSR rendering. Route pages live under `src/pages`, reusable business UI lives under `src/components`, official shadcn-vue primitives live under `src/components/ui`, and data access is intentionally funneled through `src/lib` plus TanStack Query hooks in `src/queries`.
 
 Do not let pages import raw seed arrays for primary business reads. Pages should call query hooks, and query hooks should call facade/API functions.
 
@@ -18,7 +18,6 @@ Do not let pages import raw seed arrays for primary business reads. Pages should
 frontend/
 ├── src/
 │   ├── App.vue
-│   ├── main.ts
 │   ├── router.ts
 │   ├── pages/                 # route-level views
 │   ├── components/
@@ -37,10 +36,15 @@ frontend/
 │   ├── types/                 # shared domain types
 │   ├── stores/                # Pinia app/session state only
 │   ├── composables/           # reusable Vue composables
+│   ├── middleware/            # Nuxt route middleware
+│   ├── plugins/               # Nuxt runtime integrations
+│   ├── seo/                   # route metadata and indexability policy
 │   └── theme/                 # theme-level styling helpers
+├── server/                    # Nitro server routes, sitemap, and robots handlers
 ├── components.json            # shadcn-vue config
+├── nuxt.config.ts
 ├── package.json
-└── vite.config.ts
+└── vitest.config.ts
 ```
 
 ---
