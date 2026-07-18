@@ -5,7 +5,7 @@
 
 C2C Market 是一个前后端分离项目：
 
-- `frontend/`：Vue 3 + Vite + TypeScript 前端
+- `frontend/`：Nuxt 4 + Vue 3 + TypeScript 混合渲染前端
 - `backend/`：Go HTTP 后端
 - `docs/`：OpenAPI 与部署运维文档
 - `scripts/`：本地 smoke 验证脚本
@@ -76,7 +76,7 @@ FRONTEND_ORIGIN=https://app.example.com
 ALLOWED_ORIGINS=https://app.example.com
 ```
 
-`ALLOWED_ORIGINS` 可用英文逗号配置多个 origin。后端 cookie 认证不会在 CORS 中使用 `*`，生产状态变更请求会校验 `Origin` 是否在 allowlist 内。本地 development/test 在未配置时默认允许 `127.0.0.1` / `localhost` 的 Vite 开发和预览端口。
+`ALLOWED_ORIGINS` 可用英文逗号配置多个 origin。后端 cookie 认证不会在 CORS 中使用 `*`，生产状态变更请求会校验 `Origin` 是否在 allowlist 内。本地 development/test 应允许 `127.0.0.1` / `localhost` 的 Nuxt 开发端口（默认 `3000`）。
 
 后端列表接口的统一分页参数为 `limit` / `cursor`，默认 `limit=20`，最大 `100`，响应统一包含 `items` 和可空 `nextCursor`。当前 cursor 是不透明 base64url offset cursor，调用方只能透传，不应解析内部结构。
 

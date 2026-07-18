@@ -26,6 +26,8 @@ import { fullCapacityTooltip, getPricingDisplay, getRemainingSeats } from '@/lib
 import { formatMonthlyQuota, quotaFieldLabel } from '@/lib/quota'
 import { useDetailVisibleAnalytics } from '@/composables/useDetailVisibleAnalytics'
 import { useCarpool, useCarpoolApplicationEligibility, useFavoriteStatus, useMyProfileQuery, useToggleFavoriteMutation } from '@/queries/useMarketQueries'
+import { markMissingQueryAsNotFoundOnServer, prefetchQueriesOnServer } from '@/queries/prefetchQueriesOnServer'
+import { useEntitySeo } from '@/composables/useEntitySeo'
 import { toast } from 'vue-sonner'
 
 const route = useRoute()
@@ -33,10 +35,13 @@ const router = useRouter()
 const queryClient = useQueryClient()
 const analyticsSourceRoute = () => String(route.name ?? 'unknown')
 const id = computed(() => String(route.params.id ?? ''))
-const { data: carpool, isLoading, error: carpoolError, refetch: refetchCarpool } = useCarpool(id)
-const { data: applicationEligibility, isLoading: eligibilityLoading, isError: eligibilityError } = useCarpoolApplicationEligibility(id)
-const { data: myProfile } = useMyProfileQuery()
-const { data: favoriteStatus } = useFavoriteStatus('carpool', id)
+const carpoolQuery = useCarpool(id)
+const { data: carpool, isLoading, error: carpoolError, refetch: refetchCarpool } = carpoolQuery
+prefetchQueriesOnServer(carpoolQuery)
+markMissingQueryAsNotFoundOnServer(carpoolQuery, () => Boolean(carpool.value))
+const { data: applicationEligibility, isLoading: eligibilityLoading, isError: eligibilityError } = useCarpoolApplicationEligibility(id, import.meta.client)
+const { data: myProfile } = useMyProfileQuery(import.meta.client)
+const { data: favoriteStatus } = useFavoriteStatus('carpool', id, import.meta.client)
 const toggleFavoriteMutation = useToggleFavoriteMutation()
 const applyDialogOpen = ref(false)
 const rulesAccepted = ref(false)
@@ -75,6 +80,23 @@ const statusToneClass = computed(() => {
   if (applicationEligibility.value?.code === 'eligible') return 'border-emerald-200 bg-emerald-50 text-emerald-700'
   if (applicationEligibility.value?.code === 'credential_risk' || applicationEligibility.value?.code === 'owner_action_required') return 'border-amber-200 bg-amber-50 text-amber-800'
   return 'border-border bg-muted/30 text-muted-foreground'
+})
+
+useEntitySeo({
+  indexable: computed(() => Boolean(carpool.value)),
+  title: computed(() => carpool.value ? `${carpool.value.product} 拼车｜C2CMarket` : '订阅拼车详情｜C2CMarket'),
+  description: computed(() => carpool.value ? `${carpool.value.product}，${carpool.value.region}，月费 ¥${getPricingDisplay(carpool.value).primaryPrice}，查看剩余席位、访问安排与风险提示。` : '查看订阅拼车详情。'),
+  schema: computed(() => carpool.value ? {
+    '@type': 'Service',
+    name: `${carpool.value.product} 拼车`,
+    areaServed: carpool.value.region,
+    offers: {
+      '@type': 'Offer',
+      priceCurrency: 'CNY',
+      price: getPricingDisplay(carpool.value).primaryPrice,
+      availability: availableSeats.value > 0 ? 'https://schema.org/InStock' : 'https://schema.org/OutOfStock',
+    },
+  } : null),
 })
 
 useDetailVisibleAnalytics({

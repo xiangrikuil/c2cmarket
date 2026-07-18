@@ -174,10 +174,11 @@ export function useCarpool(id: Ref<string> | string) {
   })
 }
 
-export function useCarpoolApplicationEligibility(id: Ref<string> | string) {
+export function useCarpoolApplicationEligibility(id: Ref<string> | string, enabled: Ref<boolean> | boolean = true) {
   return useQuery({
     queryKey: computed(() => ['carpools', valueOf(id), 'eligibility']),
     queryFn: () => getCarpoolApplicationEligibility(valueOf(id)),
+    enabled: computed(() => valueOf(enabled) && Boolean(valueOf(id))),
     retry: false,
   })
 }
@@ -363,10 +364,11 @@ export function orderContactsQueryKey(kind: 'carpool-application' | 'api-order',
   return ['order-contacts', kind, id] as const
 }
 
-export function useMyProfileQuery() {
+export function useMyProfileQuery(enabled: Ref<boolean> | boolean = true) {
   return useQuery({
     queryKey: myProfileQueryKey(),
     queryFn: getMyProfile,
+    enabled: computed(() => valueOf(enabled)),
     retry: false,
     staleTime: 30_000,
     refetchOnWindowFocus: false,
@@ -794,10 +796,11 @@ export function useCarpoolNotifications() {
   })
 }
 
-export function useNotifications() {
+export function useNotifications(enabled: Ref<boolean> | boolean = true) {
   return useQuery({
     queryKey: ['notifications'],
     queryFn: getNotifications,
+    enabled: computed(() => valueOf(enabled)),
     refetchOnMount: 'always',
   })
 }
@@ -945,11 +948,11 @@ export function useFavorites() {
   })
 }
 
-export function useFavoriteStatus(targetType: Ref<FavoriteTargetType> | FavoriteTargetType, targetId: Ref<string> | string) {
+export function useFavoriteStatus(targetType: Ref<FavoriteTargetType> | FavoriteTargetType, targetId: Ref<string> | string, enabled: Ref<boolean> | boolean = true) {
   return useQuery({
     queryKey: computed(() => ['favorites', 'status', valueOf(targetType), valueOf(targetId)]),
     queryFn: () => isFavorite(valueOf(targetType), valueOf(targetId)),
-    enabled: computed(() => Boolean(valueOf(targetId))),
+    enabled: computed(() => valueOf(enabled) && Boolean(valueOf(targetId))),
   })
 }
 

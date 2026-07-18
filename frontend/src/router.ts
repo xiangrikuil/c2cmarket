@@ -1,4 +1,4 @@
-import { createRouter, createWebHistory } from 'vue-router'
+import type { RouteRecordRaw } from 'vue-router'
 
 const HomePage = () => import('@/pages/HomePage.vue')
 const OfficialPricesPage = () => import('@/pages/OfficialPricesPage.vue')
@@ -54,9 +54,7 @@ const adminChildren = [
   ['logs', '审计日志', '查看系统与管理员操作记录。'],
 ] as const
 
-export const router = createRouter({
-  history: createWebHistory(),
-  routes: [
+export const routes: RouteRecordRaw[] = [
     { path: '/', name: 'home', component: HomePage },
     { path: '/search', name: 'search', component: SearchPage },
     { path: '/login', name: 'login', component: LoginPage, meta: { standalone: true } },
@@ -126,5 +124,4 @@ export const router = createRouter({
       meta: { title, description, section: path },
     })),
     { path: '/:pathMatch(.*)*', name: 'not-found', component: NotFoundPage },
-  ],
-})
+]

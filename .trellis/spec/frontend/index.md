@@ -6,7 +6,7 @@
 
 ## Overview
 
-This directory contains the current project conventions for the Vue 3 + Vite frontend. The specs describe actual patterns already used in `frontend/src`, especially the API facade, backend adapters, TanStack Query hooks, shadcn-vue primitives, and product-boundary copy rules.
+This directory contains the current project conventions for the Nuxt 4 + Vue 3 frontend. The specs describe actual patterns already used in `frontend/src`, especially hybrid rendering, the API facade, backend adapters, TanStack Query hooks, shadcn-vue primitives, and product-boundary copy rules.
 
 ---
 
@@ -23,6 +23,7 @@ This directory contains the current project conventions for the Vue 3 + Vite fro
 | [Identity And Session](../backend/identity-session.md) | Cross-layer account/API-market avatar, email time, and logout cache contract | Active |
 | [Quality Guidelines](./quality-guidelines.md) | Code standards, forbidden patterns | Active |
 | [Type Safety](./type-safety.md) | Type patterns, validation | Active |
+| [Nuxt SSR and Cloudflare Worker](./nuxt-ssr-deployment.md) | Hybrid rendering, SEO, sitemap, runtime env, and Worker deployment contracts | Active |
 
 ---
 
@@ -40,14 +41,19 @@ Before editing frontend code, read:
 8. [Type Safety](./type-safety.md)
 9. [C2CMarket Product Context](../guides/product-context.md)
 10. [Maintainability Contract](../guides/maintainability-contract.md)
+11. [Nuxt SSR and Cloudflare Worker](./nuxt-ssr-deployment.md) for rendering, SEO, sitemap, or deployment work
 
 ## Quality Check
 
 Frontend changes must run local type/build verification:
 
 ```bash
-pnpm --dir frontend exec vue-tsc -b --pretty false
-pnpm --dir frontend exec vite build
+pnpm --dir frontend typecheck
+VITE_API_MODE=real \
+NUXT_PUBLIC_SITE_URL=https://c2cmarket.shop \
+NUXT_PUBLIC_API_BASE_URL=https://api.c2cmarket.shop \
+NUXT_API_BASE_URL=https://api.c2cmarket.shop \
+pnpm --dir frontend build
 ```
 
 For product-facing changes, also scan for product-boundary wording and verify real backend mode does not silently fall back to mock success data.

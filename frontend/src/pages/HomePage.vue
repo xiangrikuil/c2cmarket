@@ -12,9 +12,13 @@ import { getApiMerchantDisplayName } from '@/lib/api'
 import { getApiServiceProductIconSrc, getProductIconSrc } from '@/lib/productCategoryIcon'
 import { useHomeMarket } from '@/queries/useMarketQueries'
 import { useProductCategories } from '@/queries/useProductCatalogQueries'
+import { prefetchQueriesOnServer } from '@/queries/prefetchQueriesOnServer'
 
-const { data, isLoading } = useHomeMarket()
-const { data: catalogCategories } = useProductCategories()
+const homeMarketQuery = useHomeMarket()
+const productCategoriesQuery = useProductCategories()
+const { data, isLoading } = homeMarketQuery
+const { data: catalogCategories } = productCategoriesQuery
+prefetchQueriesOnServer(homeMarketQuery, productCategoriesQuery)
 
 const availableCarpools = computed(() => (data.value?.carpools ?? [])
   .filter(item => item.status === '可上车')

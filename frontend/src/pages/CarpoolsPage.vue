@@ -13,6 +13,7 @@ import { usePagination } from '@/composables/usePagination'
 import { getProductCategoryIconSrc, getProductIconSrc as getCatalogProductIconSrc } from '@/lib/productCategoryIcon'
 import { useCarpools, useMyProfileQuery } from '@/queries/useMarketQueries'
 import { useProductCategories } from '@/queries/useProductCatalogQueries'
+import { prefetchQueriesOnServer } from '@/queries/prefetchQueriesOnServer'
 import { compareByTradablePrice, getPricingDisplay } from '@/lib/pricing'
 import { formatMonthlyQuota } from '@/lib/quota'
 import {
@@ -41,9 +42,12 @@ const filters = [
 const route = useRoute()
 const router = useRouter()
 const selected = ref(Object.fromEntries(filters.map(group => [group.label, group.active ?? group.items[0]])))
-const { data } = useCarpools()
-const { data: myProfile } = useMyProfileQuery()
-const { data: catalogCategories } = useProductCategories()
+const carpoolsQuery = useCarpools()
+const productCategoriesQuery = useProductCategories()
+const { data } = carpoolsQuery
+const { data: myProfile } = useMyProfileQuery(import.meta.client)
+const { data: catalogCategories } = productCategoriesQuery
+prefetchQueriesOnServer(carpoolsQuery, productCategoriesQuery)
 const canModerateCarpools = computed(() => myProfile.value?.permissions.includes('admin') ?? false)
 const categoryIconByCode = computed(() => new Map((catalogCategories.value ?? []).map(category => [category.code, category.iconDataUrl])))
 const selectedCategory = ref<ProductCategoryKey>(normalizeProductCategory(route.query.category))
