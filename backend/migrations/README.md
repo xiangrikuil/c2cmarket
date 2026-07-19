@@ -1,8 +1,5 @@
 # Backend Migrations
 
-日期：2026-06-21
-执行者：Codex
-
 This directory contains PostgreSQL-oriented SQL contract files for C2CMarket.
 
 The first backend contract baseline is split into focused `golang-migrate`

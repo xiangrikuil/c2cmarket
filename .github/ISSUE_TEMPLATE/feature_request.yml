@@ -1,0 +1,43 @@
+name: 功能建议
+description: 提议新的功能、流程或改进方向
+title: "[Feature] "
+labels:
+  - enhancement
+body:
+  - type: markdown
+    attributes:
+      value: |
+        请先说明要解决的问题。涉及第三方订阅、付款或凭据的建议必须遵守项目的产品边界。
+  - type: textarea
+    id: problem
+    attributes:
+      label: 要解决的问题
+      description: 描述当前用户遇到的具体问题，而不是只描述功能名称。
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: 建议方案
+      description: 描述预期交互、业务规则和成功标准。
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: 可选方案
+      description: 说明考虑过的替代方案或暂时的解决方式。
+  - type: textarea
+    id: context
+    attributes:
+      label: 补充信息
+      description: 可提供界面草图、相关 Issue 或外部资料链接。
+  - type: checkboxes
+    id: boundaries
+    attributes:
+      label: 产品边界
+      options:
+        - label: 该建议不要求平台处理支付、提供托管或履约担保。
+          required: true
+        - label: 该建议不要求存储或传递第三方账号密码、Token、Cookie 或 Session。
+          required: true

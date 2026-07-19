@@ -11,6 +11,9 @@ docs/*
 docs/ops/*
 !docs/ops/cloudflare-workers-vps-backends.md
 output/
+.nuxt/
+.output/
+.wrangler/
 *.log
 *.zip
 
