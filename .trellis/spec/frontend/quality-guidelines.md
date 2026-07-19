@@ -16,7 +16,7 @@ All frontend changes must follow [Maintainability Contract](../guides/maintainab
 
 - Broad `try/catch` blocks that replace failed requests with silent empty lists, fake success, or mock production data.
 - Component-level fallback data that hides API, parsing, routing, or store failures.
-- Production builds that can silently fall back to mock/demo data when `VITE_API_MODE=real` or `VITE_API_BASE_URL` is missing.
+- Production builds that can silently fall back to mock/demo data when required Nuxt runtime API configuration is missing.
 - Multiple nested compatibility branches for data shapes that the backend does not officially return.
 - "Just in case" props, defaults, or watchers that are not required by current behavior.
 - Large components mixing page layout, API calls, data transformation, and mutation logic.
@@ -28,9 +28,8 @@ All frontend changes must follow [Maintainability Contract](../guides/maintainab
 - Keep page components focused on composition and workflow.
 - Put reusable request logic in query/composable modules instead of duplicating it in pages.
 - Surface failed operations through an explicit UI state or error path.
-- Production Vite builds must fail during config loading unless a real backend is configured through `VITE_API_MODE=real` or `VITE_API_BASE_URL`; development may still use mock/demo mode intentionally.
-- Production Vite builds must also reject explicit `VITE_ENABLE_MOCK=true` so a local/demo override cannot be shipped.
-- Vite dev-server backend proxies must match API paths narrowly. Use `/api/` or an equivalent anchored matcher for backend API routes; do not use a broad `/api` proxy key because it also captures SPA routes such as `/api-market/new`.
+- Production Nuxt builds must fail during config loading unless `NUXT_PUBLIC_API_MODE=real`, `NUXT_PUBLIC_API_BASE_URL`, and `NUXT_API_BASE_URL` are all configured; development may still use mock/demo mode intentionally.
+- Nuxt development backend proxies must match API paths narrowly. Use `/api/` or an equivalent anchored matcher for backend API routes; do not use a broad `/api` proxy key because it also captures application routes such as `/api-market/new`.
 - Prefer typed data contracts over optional chains spread across components.
 - Remove obsolete UI states, feature flags, and compatibility branches when replacing behavior.
 
@@ -41,7 +40,15 @@ All frontend changes must follow [Maintainability Contract](../guides/maintainab
 - Test the normal user path for every feature.
 - Test only required fallback paths; do not create tests that preserve speculative behavior.
 - When a fallback is necessary, assert that the failure is visible and does not masquerade as success.
-- When changing Vite proxy config or adding a route that starts with an API-like prefix, smoke direct deep links with `curl http://localhost:<port>/<route>` and verify they return `text/html`, while real backend paths such as `/api/v1/...` still return JSON through the proxy.
+- When changing the Nuxt development proxy or adding a route that starts with an API-like prefix, smoke direct deep links with `curl http://localhost:<port>/<route>` and verify they return `text/html`, while real backend paths such as `/api/v1/...` still return JSON through the proxy.
+
+## Legacy Compatibility Disclosure
+
+- Runtime aliases, fallback branches, and transitional data shapes must not be retained silently.
+- Before retaining compatibility code, Codex must explicitly tell the user the exact alias or branch, its current consumer, the removal risk, and either a removal timeline or the concrete reason it must remain.
+- Remove compatibility code by default when no supported deployed consumer exists. Do not infer a supported consumer from historical documentation alone.
+- Tests and source scans must reject pre-Nuxt public runtime-variable aliases in current source, CI, environment templates, operational documentation, and active specs.
+- Nuxt's supported Vite builder integration, Vitest, and their required dependencies are normal toolchain usage, not legacy compatibility code.
 
 ---
 
@@ -77,7 +84,7 @@ CI must install pnpm 10 and Node 24.11 before running frontend checks.
 - `frontend/package.json` dependencies and devDependencies must not use `latest`.
 - Replace `latest` with explicit ranges from the current lockfile/resolved version unless a task explicitly approves a dependency upgrade.
 - Keep `frontend/pnpm-lock.yaml` importer specifiers aligned with `package.json`.
-- Frontend production build verification must set `VITE_API_MODE=real` or `VITE_API_BASE_URL`; do not relax the Vite config guard to make a bare build pass.
+- Frontend production build verification must set all three Nuxt API variables documented above; do not relax the Nuxt config guard to make a bare build pass.
 - README/frontend setup docs must mention pnpm, not npm, for this project.
 
 ### 4. Validation & Error Matrix
@@ -87,7 +94,7 @@ CI must install pnpm 10 and Node 24.11 before running frontend checks.
 | `package.json` contains `latest` | Reject the change before commit. |
 | Lockfile importer specifier differs from `package.json` | `pnpm install --frozen-lockfile` fails; update the lockfile without upgrading packages. |
 | Node or pnpm is outside `engines` | Local install/checks may fail fast; use the supported toolchain. |
-| Production build omits real backend mode | Vite config fails the build instead of producing a mock-backed artifact. |
+| Production build omits any required Nuxt API variable | Nuxt config fails the build instead of producing a mock-backed artifact. |
 
 ### 5. Good/Base/Bad Cases
 
@@ -99,9 +106,10 @@ CI must install pnpm 10 and Node 24.11 before running frontend checks.
 
 - `pnpm --dir frontend install --frozen-lockfile` with Node `>=24.11 <25` and pnpm `>=10 <11`.
 - `pnpm --dir frontend typecheck`.
-- `VITE_API_MODE=real pnpm --dir frontend build`.
+- Real-mode Nuxt build with `NUXT_PUBLIC_API_MODE`, `NUXT_PUBLIC_API_BASE_URL`, and `NUXT_API_BASE_URL` configured.
 - `pnpm --dir frontend test`.
 - Source scan: `rg -n '"latest"|specifier: latest' frontend/package.json frontend/pnpm-lock.yaml` must find no matches.
+- Compatibility scan: `rg -n 'V[I]TE_[A-Z0-9_]+' frontend .github README.md frontend/README.md docs/ops .env.example .env.production.example .env.staging.example .trellis/spec` must find no matches.
 
 ### 7. Wrong vs Correct
 

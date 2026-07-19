@@ -43,17 +43,17 @@ The platform focuses on discovery, matching, off-platform communication, and rep
 
 | Layer | Technology |
 | --- | --- |
-| Frontend | Vue 3, TypeScript, Vite 8, Vue Router, Pinia, TanStack Query, Tailwind CSS |
+| Frontend | Nuxt 4, Vue 3, TypeScript, Pinia, TanStack Query, Tailwind CSS |
 | Backend | Go 1.26, chi, pgx |
 | Database | PostgreSQL 18, versioned SQL migrations |
-| Infrastructure | Docker Compose, Cloudflare Pages/Tunnel, GitHub Actions |
+| Infrastructure | Docker Compose, Cloudflare Workers, VPS/Caddy, GHCR, GitHub Actions |
 | Integrations | linux.do OAuth 2.0, Alibaba Cloud DirectMail SMTP, optional Umami |
 
 ## Repository layout
 
 ```text
 .
-├── frontend/              Vue single-page application
+├── frontend/              Nuxt 4 hybrid-rendered application
 ├── backend/               Go HTTP API
 │   ├── cmd/api/           Service entry point
 │   ├── internal/          Domain modules and infrastructure
@@ -111,7 +111,7 @@ pnpm --dir frontend install --frozen-lockfile
 pnpm --dir frontend dev
 ```
 
-Open `http://127.0.0.1:5173`. The development server proxies `/api`, `/health`, and `/readyz` to the local backend.
+Open `http://127.0.0.1:3000`. The Nuxt development server uses runtime configuration to reach the local backend.
 
 Stop the local services with:
 
@@ -127,11 +127,17 @@ Run these checks before opening a pull request:
 cd backend && go test ./...
 cd ..
 pnpm --dir frontend typecheck
-VITE_API_MODE=real pnpm --dir frontend build
+NUXT_PUBLIC_API_MODE=real \
+NUXT_PUBLIC_SITE_URL=https://c2cmarket.shop \
+NUXT_PUBLIC_API_BASE_URL=https://api.c2cmarket.shop \
+NUXT_API_BASE_URL=https://api.c2cmarket.shop \
+pnpm --dir frontend build
 pnpm --dir frontend test
 node scripts/check-openapi-routes.mjs
 node scripts/check-migrations-doc.mjs
 ```
+
+Production frontend builds require real mode plus both the public and server-side API URLs.
 
 With the backend running, execute the end-to-end smoke suite when the change affects business workflows:
 
@@ -146,6 +152,7 @@ API_BASE_URL=http://127.0.0.1:8080 node scripts/run-smokes.mjs
 - Staging configuration: [`.env.staging.example`](./.env.staging.example)
 - API contract: [`docs/openapi/c2c-market-api-v1.yaml`](./docs/openapi/c2c-market-api-v1.yaml)
 - Deployment guide: [`docs/ops/deployment-runbook.md`](./docs/ops/deployment-runbook.md)
+- Workers/VPS deployment: [`docs/ops/cloudflare-workers-vps-backends.md`](./docs/ops/cloudflare-workers-vps-backends.md)
 
 Production requires real OAuth, independent encryption keys, an HTTPS frontend origin, PostgreSQL, and valid SMTP configuration. Do not reuse development defaults from the example files.
 

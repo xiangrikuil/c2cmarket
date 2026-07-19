@@ -65,12 +65,16 @@ type apiServiceModelRequest struct {
 }
 
 type apiServicePackageRequest struct {
-	Name         string `json:"name"`
-	PriceCNY     string `json:"priceCny"`
-	DurationDays *int   `json:"durationDays"`
-	Description  string `json:"description"`
-	Enabled      *bool  `json:"enabled"`
-	SortOrder    int    `json:"sortOrder"`
+	ID              string   `json:"id"`
+	Name            string   `json:"name"`
+	PriceCNY        string   `json:"priceCny"`
+	PanelAllowance  string   `json:"panelAllowance"`
+	DurationDays    *int     `json:"durationDays"`
+	StockTotal      int      `json:"stockTotal"`
+	Description     string   `json:"description"`
+	Enabled         *bool    `json:"enabled"`
+	SortOrder       int      `json:"sortOrder"`
+	ModelCatalogIDs []string `json:"modelCatalogIds"`
 }
 
 type apiServiceResponse struct {
@@ -80,6 +84,7 @@ type apiServiceResponse struct {
 	MerchantIdentityMode             string                            `json:"merchantIdentityMode"`
 	MerchantDisplayName              string                            `json:"merchantDisplayName,omitempty"`
 	MerchantProfileSlug              string                            `json:"merchantProfileSlug,omitempty"`
+	MerchantAvatarURL                string                            `json:"merchantAvatarUrl,omitempty"`
 	OwnerContactMethodID             string                            `json:"ownerContactMethodId,omitempty"`
 	Title                            string                            `json:"title"`
 	ShortDescription                 string                            `json:"shortDescription"`
@@ -121,6 +126,7 @@ type publicAPIServiceResponse struct {
 	MerchantIdentityMode             string                         `json:"merchantIdentityMode"`
 	MerchantDisplayName              string                         `json:"merchantDisplayName,omitempty"`
 	MerchantProfileSlug              string                         `json:"merchantProfileSlug,omitempty"`
+	MerchantAvatarURL                string                         `json:"merchantAvatarUrl,omitempty"`
 	Title                            string                         `json:"title"`
 	ShortDescription                 string                         `json:"shortDescription"`
 	SourceURL                        string                         `json:"sourceUrl,omitempty"`
@@ -143,6 +149,9 @@ type publicAPIServiceResponse struct {
 	AccessModes                      []apiServiceAccessModeResponse `json:"accessModes"`
 	Models                           []apiServiceModelResponse      `json:"models"`
 	Packages                         []apiServicePackageResponse    `json:"packages"`
+	Completed30d                     int                            `json:"completed30d"`
+	UnresolvedDisputes               int                            `json:"unresolvedDisputes"`
+	ResponseMedianMinutes            *float64                       `json:"responseMedianMinutes"`
 	Version                          int64                          `json:"version"`
 	CreatedAt                        string                         `json:"createdAt"`
 	UpdatedAt                        string                         `json:"updatedAt"`
@@ -168,13 +177,26 @@ type apiServiceModelResponse struct {
 }
 
 type apiServicePackageResponse struct {
-	ID           string `json:"id"`
-	Name         string `json:"name"`
-	PriceCNY     string `json:"priceCny"`
-	DurationDays *int   `json:"durationDays,omitempty"`
-	Description  string `json:"description"`
-	Enabled      bool   `json:"enabled"`
-	SortOrder    int    `json:"sortOrder"`
+	ID             string                           `json:"id"`
+	Name           string                           `json:"name"`
+	PriceCNY       string                           `json:"priceCny"`
+	PanelAllowance string                           `json:"panelAllowance"`
+	DurationDays   *int                             `json:"durationDays,omitempty"`
+	StockTotal     int                              `json:"stockTotal"`
+	StockAvailable int                              `json:"stockAvailable"`
+	Description    string                           `json:"description"`
+	Enabled        bool                             `json:"enabled"`
+	SortOrder      int                              `json:"sortOrder"`
+	Models         []apiServicePackageModelResponse `json:"models"`
+}
+
+type apiServicePackageModelResponse struct {
+	ServiceModelID      string `json:"serviceModelId"`
+	ModelCatalogID      string `json:"modelCatalogId"`
+	ModelPriceVersionID string `json:"modelPriceVersionId,omitempty"`
+	ModelNameSnapshot   string `json:"modelNameSnapshot"`
+	ProviderSnapshot    string `json:"providerSnapshot"`
+	MerchantMultiplier  string `json:"merchantMultiplier"`
 }
 
 type apiServicePaymentOptionResponse struct {
@@ -828,12 +850,16 @@ func toAppCreateAPIServiceInput(req apiServiceRequest) apimarket.CreateServiceIn
 			enabled = *pack.Enabled
 		}
 		packages = append(packages, apimarket.ServicePackageInput{
-			Name:         pack.Name,
-			PriceCNY:     pack.PriceCNY,
-			DurationDays: pack.DurationDays,
-			Description:  pack.Description,
-			Enabled:      enabled,
-			SortOrder:    pack.SortOrder,
+			ID:              pack.ID,
+			Name:            pack.Name,
+			PriceCNY:        pack.PriceCNY,
+			PanelAllowance:  pack.PanelAllowance,
+			DurationDays:    pack.DurationDays,
+			StockTotal:      pack.StockTotal,
+			Description:     pack.Description,
+			Enabled:         enabled,
+			SortOrder:       pack.SortOrder,
+			ModelCatalogIDs: append([]string(nil), pack.ModelCatalogIDs...),
 		})
 	}
 	return apimarket.CreateServiceInput{
@@ -927,6 +953,7 @@ func toPublicAPIServiceResponse(service apimarket.Service) publicAPIServiceRespo
 		MerchantIdentityMode:             service.MerchantIdentityMode,
 		MerchantDisplayName:              service.MerchantDisplayName,
 		MerchantProfileSlug:              service.MerchantProfileSlug,
+		MerchantAvatarURL:                service.MerchantAvatarURL,
 		Title:                            service.Title,
 		ShortDescription:                 service.ShortDescription,
 		SourceURL:                        service.SourceURL,
@@ -949,6 +976,9 @@ func toPublicAPIServiceResponse(service apimarket.Service) publicAPIServiceRespo
 		AccessModes:                      toAPIServiceAccessModeResponses(service.AccessModes),
 		Models:                           toAPIServiceModelResponses(service.Models),
 		Packages:                         toAPIServicePackageResponses(service.Packages),
+		Completed30d:                     service.Completed30d,
+		UnresolvedDisputes:               service.UnresolvedDisputes,
+		ResponseMedianMinutes:            service.ResponseMedianMinutes,
 		Version:                          service.Version,
 		CreatedAt:                        service.CreatedAt.UTC().Format(time.RFC3339),
 		UpdatedAt:                        service.UpdatedAt.UTC().Format(time.RFC3339),
@@ -968,6 +998,7 @@ func toAPIServiceResponse(service apimarket.Service) apiServiceResponse {
 		MerchantIdentityMode:             service.MerchantIdentityMode,
 		MerchantDisplayName:              service.MerchantDisplayName,
 		MerchantProfileSlug:              service.MerchantProfileSlug,
+		MerchantAvatarURL:                service.MerchantAvatarURL,
 		OwnerContactMethodID:             service.OwnerContactMethodID,
 		Title:                            service.Title,
 		ShortDescription:                 service.ShortDescription,
@@ -1039,14 +1070,29 @@ func toAPIServiceModelResponses(models []apimarket.ServiceModel) []apiServiceMod
 func toAPIServicePackageResponses(packages []apimarket.ServicePackage) []apiServicePackageResponse {
 	items := make([]apiServicePackageResponse, 0, len(packages))
 	for _, pack := range packages {
+		models := make([]apiServicePackageModelResponse, 0, len(pack.Models))
+		for _, model := range pack.Models {
+			models = append(models, apiServicePackageModelResponse{
+				ServiceModelID:      model.ServiceModelID,
+				ModelCatalogID:      model.ModelCatalogID,
+				ModelPriceVersionID: model.ModelPriceVersionID,
+				ModelNameSnapshot:   model.ModelNameSnapshot,
+				ProviderSnapshot:    model.ProviderSnapshot,
+				MerchantMultiplier:  model.MerchantMultiplier,
+			})
+		}
 		items = append(items, apiServicePackageResponse{
-			ID:           pack.ID,
-			Name:         pack.Name,
-			PriceCNY:     pack.PriceCNY,
-			DurationDays: pack.DurationDays,
-			Description:  pack.Description,
-			Enabled:      pack.Enabled,
-			SortOrder:    pack.SortOrder,
+			ID:             pack.ID,
+			Name:           pack.Name,
+			PriceCNY:       pack.PriceCNY,
+			PanelAllowance: pack.PanelAllowance,
+			DurationDays:   pack.DurationDays,
+			StockTotal:     pack.StockTotal,
+			StockAvailable: pack.StockAvailable,
+			Description:    pack.Description,
+			Enabled:        pack.Enabled,
+			SortOrder:      pack.SortOrder,
+			Models:         models,
 		})
 	}
 	return items

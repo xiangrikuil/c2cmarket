@@ -33,7 +33,7 @@ function removeFavorite(item: FavoriteListItem) {
 <template>
   <div class="space-y-5">
     <PageTitle title="我的收藏" description="统一展示已收藏的车源和 API 服务，并同步当前公开状态。" />
-    <StatusTabs v-model="activeCategory" :items="['全部', '拼车', 'API 服务', '官网套餐']" />
+    <StatusTabs v-model="activeCategory" :items="['全部', '拼车', 'API 服务']" />
 
     <SkeletonTable v-if="isLoading" :rows="4" :columns="2" />
     <EmptyState v-else-if="rows.length === 0" title="当前分类暂无收藏" description="可在车源详情或 API 服务详情中点击收藏。" />

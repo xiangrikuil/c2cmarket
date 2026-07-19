@@ -520,6 +520,45 @@ export type ApiModelMultiplier = {
   multiplier: string
 }
 
+export type ApiServicePackageModel = {
+  serviceModelId: string
+  modelCatalogId: string
+  modelPriceVersionId: string
+  modelName: string
+  provider: string
+  merchantMultiplier: number
+}
+
+export type ApiServicePackage = {
+  id: string
+  name: string
+  priceCny: number
+  panelAllowance: number
+  durationDays: 1 | 3 | 7 | 30
+  stockTotal: number
+  stockAvailable: number
+  description: string
+  enabled: boolean
+  sortOrder: number
+  models: ApiServicePackageModel[]
+}
+
+export type ApiServicePackageSnapshot = {
+  id: string
+  name: string
+  priceCny: number
+  panelAllowance: number
+  durationDays: 1 | 3 | 7 | 30
+  description: string
+  models: Array<{
+    serviceModelId: string
+    modelCatalogId: string
+    modelPriceVersionId: string
+    modelName: string
+    merchantMultiplier: number
+  }>
+}
+
 export type ModelPriceRow = {
   modelId: string
   modelName: string
@@ -562,6 +601,7 @@ export type ApiService = {
   merchant: string
   merchantIdentityMode: ApiMerchantIdentityMode
   merchantDisplayName: string
+  merchantAvatarUrl?: string
   trustLevel: number
   merchantType: '个人车主' | '商户' | '可信新车主'
   models: string[]
@@ -616,6 +656,9 @@ export type ApiService = {
   officialPricingUpdatedAt: string
   merchantNote: string
   modelPriceRows: ModelPriceRow[]
+  packages?: ApiServicePackage[]
+  recommendationResponseMedianMinutes?: number | null
+  serviceUpdatedAt?: string
   contactChannels: ApiContactChannel[]
   acceptedPaymentMethods?: Array<'wechat' | 'alipay'>
 }
@@ -623,6 +666,7 @@ export type ApiService = {
 export type PublicMerchantProfile = {
   username: string
   displayName: string
+  avatarUrl?: string | null
   avatarText: string
   merchantId: string
   identity: '个人商户' | '可信新商户' | 'API 商户'
@@ -690,6 +734,8 @@ export type ApiPurchaseIntentSnapshot = {
   usageVisibility: ApiUsageVisibility
   supportedDeliveryModes: ApiDeliveryMode[]
   selectedDeliveryMode: ApiDeliveryMode
+  selectedPackageId?: string
+  selectedPackageSnapshot?: ApiServicePackageSnapshot
   minimumPurchaseCny: number
   panelBaseUrl: string | null
   apiBaseUrlVisibility: ApiVisibilityRule
@@ -728,6 +774,7 @@ export type ApiPurchaseIntent = {
   merchant: string
   status: ApiPurchaseIntentStatus
   selectedDeliveryMode: ApiDeliveryMode
+  selectedPackageId?: string
   purchaseAmountCny: number
   purchasedCredit: number
   purchaseAmountCnyDecimal?: string
@@ -1199,7 +1246,7 @@ export const carpoolApplicationEvents: CarpoolApplicationEvent[] = [
   { id: 'ride-event-1', applicationId: 'ride-app-1', actorId: 'buyer-zhichuan', actorLabel: '纸船', actorRole: 'buyer', type: 'application_created', toStatus: 'pending_owner', note: '买家提交上车申请，等待车主处理。', createdAt: '2026-06-19 16:18' },
   { id: 'ride-event-2', applicationId: 'ride-app-2', actorId: 'buyer-muzhou', actorLabel: '木舟', actorRole: 'buyer', type: 'application_created', toStatus: 'pending_owner', note: '买家提交上车申请。', createdAt: '2026-06-19 15:55' },
   { id: 'ride-event-3', applicationId: 'ride-app-2', actorId: 'owner-orbit', actorLabel: 'orbit', actorRole: 'owner', type: 'owner_accepted', fromStatus: 'pending_owner', toStatus: 'accepted_reserved', note: '车主接受申请，预留 1 席 30 分钟。', createdAt: '2026-06-19 16:35' },
-  { id: 'ride-event-4', applicationId: 'ride-app-3', actorId: 'buyer-demo-user', actorLabel: 'demo_user', actorRole: 'buyer', type: 'buyer_contacted', fromStatus: 'accepted_reserved', toStatus: 'contacted', note: '买家已记录完成站外联系。', createdAt: '2026-06-18 20:12' },
+  { id: 'ride-event-4', applicationId: 'ride-app-3', actorId: 'buyer-demo-user', actorLabel: 'demo_user', actorRole: 'buyer', type: 'buyer_contacted', fromStatus: 'accepted_reserved', toStatus: 'contacted', note: '买家已记录与车主完成联系。', createdAt: '2026-06-18 20:12' },
   { id: 'ride-event-5', applicationId: 'ride-app-3', actorId: 'system', actorLabel: '系统', actorRole: 'system', type: 'service_started', fromStatus: 'joined_pending_confirmation', toStatus: 'active', note: '双方确认后进入服务中。', createdAt: '2026-06-18 20:26' },
   { id: 'ride-event-6', applicationId: 'ride-app-4', actorId: 'system', actorLabel: '系统', actorRole: 'system', type: 'pending_completion', fromStatus: 'active', toStatus: 'pending_completion', note: '服务周期到期，等待双方确认完成。', createdAt: '2026-06-19 12:48' },
   { id: 'ride-event-7', applicationId: 'ride-app-5', actorId: 'system', actorLabel: '系统', actorRole: 'system', type: 'completed', fromStatus: 'pending_completion', toStatus: 'completed', note: '双方确认完成，评价可用。', createdAt: '2026-06-10 12:04' },
@@ -1655,8 +1702,8 @@ export const apiServices: ApiService[] = [
     merchantDisplayName: '青柠',
     trustLevel: 3,
     merchantType: '可信新车主',
-    models: ['GPT mini', 'Gemini Flash'],
-    modelMultipliers: [{ model: 'GPT mini', multiplier: '0.50x' }, { model: 'Gemini Flash', multiplier: '0.45x' }],
+    models: ['GPT-5.5', 'Gemini Flash'],
+    modelMultipliers: [{ model: 'GPT-5.5', multiplier: '0.50x' }, { model: 'Gemini Flash', multiplier: '0.45x' }],
     rate: '0.45x',
     defaultMultiplier: 0.45,
     creditPerCny: 1,
@@ -1695,8 +1742,8 @@ export const apiServices: ApiService[] = [
     merchantNote: '适合轻量开发和测试用途。建议先小额确认响应速度和用量查看方式，批量使用前请先在意向记录中和商户确认当前剩余额度。',
     modelPriceRows: [
       {
-        modelId: 'gpt-mini',
-        modelName: 'GPT mini',
+        modelId: 'gpt-5-5',
+        modelName: 'GPT-5.5',
         provider: 'OpenAI',
         officialInputPricePerMillion: 0.15,
         officialCachedInputPricePerMillion: 0.015,
@@ -1717,6 +1764,39 @@ export const apiServices: ApiService[] = [
         actualInputPricePerMillion: 0.045,
         actualCachedInputPricePerMillion: 0.011,
         actualOutputPricePerMillion: 0.18,
+      },
+    ],
+    packages: [
+      {
+        id: 'a2-package-3d',
+        name: 'GPT-5.5 开发流量包',
+        priceCny: 9.9,
+        panelAllowance: 5,
+        durationDays: 3,
+        stockTotal: 12,
+        stockAvailable: 8,
+        description: '商户提交交付后开始计算 3 天有效期。',
+        enabled: true,
+        sortOrder: 0,
+        models: [
+          { serviceModelId: 'a2-gpt-5-5', modelCatalogId: 'gpt-5-5', modelPriceVersionId: 'gpt-5-5-2026-06', modelName: 'GPT-5.5', provider: 'OpenAI', merchantMultiplier: 0.5 },
+          { serviceModelId: 'a2-gemini-flash', modelCatalogId: 'gemini-flash', modelPriceVersionId: 'gemini-flash-2026-06', modelName: 'Gemini Flash', provider: 'Google', merchantMultiplier: 0.45 },
+        ],
+      },
+      {
+        id: 'a2-package-7d',
+        name: '轻量模型周包',
+        priceCny: 18.8,
+        panelAllowance: 12,
+        durationDays: 7,
+        stockTotal: 8,
+        stockAvailable: 5,
+        description: '商户提交交付后开始计算 7 天有效期。',
+        enabled: true,
+        sortOrder: 1,
+        models: [
+          { serviceModelId: 'a2-gpt-5-5', modelCatalogId: 'gpt-5-5', modelPriceVersionId: 'gpt-5-5-2026-06', modelName: 'GPT-5.5', provider: 'OpenAI', merchantMultiplier: 0.5 },
+        ],
       },
     ],
     contactChannels: [{ type: 'linuxdo', label: 'linux.do 私信', value: '@qingning' }],

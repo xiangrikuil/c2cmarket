@@ -91,7 +91,7 @@ function rejectApplication(item: CarpoolApplication) {
 
 <template>
   <div>
-    <PageTitle title="上车申请" description="车主处理申请、席位预留、站外联系、上车确认和完成状态。" />
+    <PageTitle title="上车申请" description="车主处理申请、席位预留、联系沟通、上车确认和完成状态。" />
     <CompactStats class="mb-5" :items="stats" :loading="isLoading" />
 
     <StatusTabs v-model="activeStatus" :items="['待处理', '待联系', '服务中', '待完成', '已完成', '已拒绝取消', '纠纷']" />

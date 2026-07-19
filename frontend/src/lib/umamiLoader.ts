@@ -1,4 +1,10 @@
-type PublicEnv = Record<string, unknown>
+export type UmamiRuntimeConfig = {
+  enabled?: unknown
+  scriptUrl?: unknown
+  websiteId?: unknown
+  domains?: unknown
+  hostUrl?: unknown
+}
 
 export type UmamiScriptConfig = {
   scriptUrl: string
@@ -9,20 +15,24 @@ export type UmamiScriptConfig = {
 
 const scriptId = 'c2cmarket-umami-script'
 
-const envString = (env: PublicEnv, key: string) => {
-  const value = env[key]
+const configString = (value: unknown) => {
   return typeof value === 'string' ? value.trim() : ''
 }
 
-export const buildUmamiScriptConfig = (env: PublicEnv = import.meta.env): UmamiScriptConfig | null => {
-  if (envString(env, 'VITE_UMAMI_ENABLED') !== 'true') return null
+const configBoolean = (value: unknown) => {
+  if (typeof value === 'boolean') return value
+  return configString(value) === 'true'
+}
 
-  const scriptUrl = envString(env, 'VITE_UMAMI_SCRIPT_URL')
-  const websiteId = envString(env, 'VITE_UMAMI_WEBSITE_ID')
+export const buildUmamiScriptConfig = (runtimeConfig: UmamiRuntimeConfig): UmamiScriptConfig | null => {
+  if (!configBoolean(runtimeConfig.enabled)) return null
+
+  const scriptUrl = configString(runtimeConfig.scriptUrl)
+  const websiteId = configString(runtimeConfig.websiteId)
   if (!scriptUrl || !websiteId) return null
 
-  const domains = envString(env, 'VITE_UMAMI_DOMAINS')
-  const hostUrl = envString(env, 'VITE_UMAMI_HOST_URL')
+  const domains = configString(runtimeConfig.domains)
+  const hostUrl = configString(runtimeConfig.hostUrl)
   return {
     scriptUrl,
     websiteId,
@@ -31,8 +41,10 @@ export const buildUmamiScriptConfig = (env: PublicEnv = import.meta.env): UmamiS
   }
 }
 
-export const installUmamiScript = (doc: Document | null = typeof document === 'undefined' ? null : document) => {
-  const config = buildUmamiScriptConfig()
+export const installUmamiScript = (
+  config: UmamiScriptConfig | null,
+  doc: Document | null = typeof document === 'undefined' ? null : document,
+) => {
   if (!config || !doc?.head) return false
   if (doc.getElementById(scriptId)) return true
 

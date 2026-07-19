@@ -120,7 +120,7 @@ async function runAction(action: () => Promise<unknown>, message: string) {
 
 function markContacted() {
   if (!application.value) return
-  runAction(() => markCarpoolApplicationContacted(application.value!.id), '已记录完成站外联系。')
+  runAction(() => markCarpoolApplicationContacted(application.value!.id), '已记录与车主完成联系。')
 }
 
 function markContactedFromCard() {
@@ -217,7 +217,7 @@ function submitReview() {
 </script>
 
 <template>
-  <div v-if="isLoading" class="rounded-xl border border-border bg-card p-8 text-sm text-muted-foreground">正在加载上车申请...</div>
+  <div v-if="isLoading" class="rounded-xl border border-border bg-card p-8 text-sm text-muted-foreground">正在加载上车申请…</div>
   <div v-else-if="!application" class="rounded-xl border border-border bg-card p-8">
     <h1 class="text-xl font-semibold">未找到上车申请</h1>
     <p class="mt-2 text-sm text-muted-foreground">该申请不存在或暂不可见。</p>
@@ -225,7 +225,7 @@ function submitReview() {
   </div>
   <div v-else class="ride-order-detail-reference space-y-5">
     <header class="ride-order-detail-heading">
-      <div class="text-xs text-muted-foreground">我的交易　/　我的上车　/　订单详情</div>
+      <div class="text-xs text-muted-foreground">我的交易　/　我的上车　/　上车申请详情</div>
       <div class="mt-3 flex items-start gap-4">
         <span class="ride-order-product-icon"><img v-if="productIconSrc" :src="productIconSrc" alt="" /><CarFront v-else /></span>
         <div class="min-w-0"><div class="flex flex-wrap items-center gap-2"><h1>{{ application.snapshot.productName }}</h1><Badge>{{ getCarpoolApplicationStatusLabel(application.status) }}</Badge><Badge variant="secondary">{{ ownerMode ? '车主视角' : '买家视角' }}</Badge></div><p>{{ application.snapshot.regionName }} · 申请与规则均使用创建时快照，不随车源后续编辑变化。</p><div class="mt-2 flex flex-wrap items-center gap-2 text-xs text-muted-foreground"><ShortId :value="application.id" prefix="RIDE" copyable /><span>更新于 <LocalTime :value="application.updatedAt" /></span></div></div>

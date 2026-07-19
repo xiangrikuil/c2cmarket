@@ -3,7 +3,13 @@ node_modules/
 .pnpm-store/
 dist/
 coverage/
+.wrangler/
 docs/
+!docs/
+docs/*
+!docs/ops/
+docs/ops/*
+!docs/ops/cloudflare-workers-vps-backends.md
 output/
 .nuxt/
 .output/
@@ -20,6 +26,8 @@ output/
 
 frontend/node_modules/
 frontend/dist/
+frontend/.nuxt/
+frontend/.output/
 
 backend/bin/
 backend/*.test

@@ -106,6 +106,7 @@ func (s *Manager) Update(ctx context.Context, user auth.User, input UpdateServic
 		OwnerContactMethodID:             input.OwnerContactMethodID,
 		Title:                            input.Title,
 		ShortDescription:                 input.ShortDescription,
+		SourceURL:                        input.SourceURL,
 		DistributionSystem:               input.DistributionSystem,
 		BillingMode:                      input.BillingMode,
 		DeclaredCNYPerUSDAllowance:       input.DeclaredCNYPerUSDAllowance,
@@ -391,6 +392,7 @@ func (s *Manager) UpdateOrderSettings(ctx context.Context, user auth.User, input
 
 func (s *Manager) buildFromInput(ctx context.Context, current Service, input CreateServiceInput) (Service, *domain.AppError) {
 	now := s.now()
+	isCreating := current.ID == ""
 	if strings.TrimSpace(input.BillingMode) == ServiceBillingModeMetered && strings.TrimSpace(input.AvailableUSDAllowance) == "" {
 		// 兼容迁移期客户端：旧字段只提供单笔上限时，以该值初始化真实可售额度。
 		input.AvailableUSDAllowance = input.DeclaredMaxUSDAllowancePerIntent
@@ -461,6 +463,11 @@ func (s *Manager) buildFromInput(ctx context.Context, current Service, input Cre
 			PublicNote:   strings.TrimSpace(modeInput.PublicNote),
 		})
 	}
+	currentModels := make(map[string]ServiceModel, len(current.Models))
+	for _, model := range current.Models {
+		currentModels[model.ModelCatalogID] = model
+	}
+	retainedModelIDs := make(map[string]bool, len(input.Models))
 	for _, modelInput := range input.Models {
 		if s.catalog == nil {
 			return Service{}, domain.NewError(http.StatusInternalServerError, domain.CodeInternalError, "Internal error", "API 模型目录不可用。")
@@ -470,15 +477,22 @@ func (s *Manager) buildFromInput(ctx context.Context, current Service, input Cre
 			return Service{}, appErr
 		}
 		multiplier := strings.TrimSpace(modelInput.MerchantMultiplier)
-		if service.DistributionSystem == ServiceDistributionSub2API || multiplier == "" {
+		if multiplier == "" {
 			multiplier = "1.0000"
 		}
 		priceVersionID := strings.TrimSpace(modelInput.ModelPriceVersionID)
 		if priceVersionID == "" {
 			priceVersionID = model.CurrentPriceVersionID
 		}
+		modelID := uuid.NewString()
+		modelCreatedAt := now
+		if existing, ok := currentModels[model.ID]; ok {
+			modelID = existing.ID
+			modelCreatedAt = existing.CreatedAt
+		}
+		retainedModelIDs[model.ID] = true
 		service.Models = append(service.Models, ServiceModel{
-			ID:                                  uuid.NewString(),
+			ID:                                  modelID,
 			APIServiceID:                        service.ID,
 			DistributionSystem:                  service.DistributionSystem,
 			ModelCatalogID:                      model.ID,
@@ -491,23 +505,72 @@ func (s *Manager) buildFromInput(ctx context.Context, current Service, input Cre
 			EffectiveCachedInputPricePerMillion: multiplyDecimalText(model.CachedInputPricePerMillion, multiplier, 6),
 			EffectiveOutputPricePerMillion:      multiplyDecimalText(model.OutputPricePerMillion, multiplier, 6),
 			Enabled:                             modelInput.Enabled,
-			CreatedAt:                           now,
+			CreatedAt:                           modelCreatedAt,
 			UpdatedAt:                           now,
 		})
 	}
+	for _, existing := range current.Models {
+		if retainedModelIDs[existing.ModelCatalogID] {
+			continue
+		}
+		existing.Enabled = false
+		existing.UpdatedAt = now
+		service.Models = append(service.Models, existing)
+	}
+	packageModels := make(map[string]ServiceModel, len(service.Models))
+	for _, model := range service.Models {
+		if model.Enabled {
+			packageModels[model.ModelCatalogID] = model
+		}
+	}
+	currentPackages := make(map[string]ServicePackage, len(current.Packages))
+	for _, pack := range current.Packages {
+		currentPackages[pack.ID] = pack
+	}
+	retainedPackageIDs := make(map[string]bool, len(input.Packages))
 	for _, packageInput := range input.Packages {
-		service.Packages = append(service.Packages, ServicePackage{
-			ID:           uuid.NewString(),
-			APIServiceID: service.ID,
-			Name:         strings.TrimSpace(packageInput.Name),
-			PriceCNY:     strings.TrimSpace(packageInput.PriceCNY),
-			DurationDays: packageInput.DurationDays,
-			Description:  strings.TrimSpace(packageInput.Description),
-			Enabled:      packageInput.Enabled,
-			SortOrder:    packageInput.SortOrder,
-			CreatedAt:    now,
-			UpdatedAt:    now,
-		})
+		pack := ServicePackage{
+			ID:             uuid.NewString(),
+			APIServiceID:   service.ID,
+			Name:           strings.TrimSpace(packageInput.Name),
+			PriceCNY:       strings.TrimSpace(packageInput.PriceCNY),
+			PanelAllowance: strings.TrimSpace(packageInput.PanelAllowance),
+			DurationDays:   packageInput.DurationDays,
+			StockTotal:     packageInput.StockTotal,
+			StockAvailable: packageInput.StockTotal,
+			Description:    strings.TrimSpace(packageInput.Description),
+			Enabled:        packageInput.Enabled,
+			SortOrder:      packageInput.SortOrder,
+			CreatedAt:      now,
+			UpdatedAt:      now,
+		}
+		if packageID := strings.TrimSpace(packageInput.ID); !isCreating && packageID != "" {
+			existing, ok := currentPackages[packageID]
+			if !ok {
+				return Service{}, domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Package invalid", "套餐不属于当前 API 服务。", "packages", "invalid_id", "套餐不属于当前 API 服务。")
+			}
+			available := existing.StockAvailable + packageInput.StockTotal - existing.StockTotal
+			if available < 0 {
+				return Service{}, domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Package stock invalid", "套餐总库存不能低于已预占或已售数量。", "packages", "stock_below_committed", "套餐总库存不能低于已预占或已售数量。")
+			}
+			pack.ID = existing.ID
+			pack.StockAvailable = available
+			pack.CreatedAt = existing.CreatedAt
+		}
+		retainedPackageIDs[pack.ID] = true
+		for _, modelCatalogID := range packageInput.ModelCatalogIDs {
+			model := packageModels[strings.TrimSpace(modelCatalogID)]
+			pack.Models = append(pack.Models, servicePackageModelFromServiceModel(model))
+		}
+		service.Packages = append(service.Packages, pack)
+	}
+	for _, existing := range current.Packages {
+		if retainedPackageIDs[existing.ID] {
+			continue
+		}
+		existing.Enabled = false
+		existing.UpdatedAt = now
+		service.Packages = append(service.Packages, existing)
 	}
 	if service.BillingMode != ServiceBillingModeMetered {
 		service.DeclaredCNYPerUSDAllowance = ""
@@ -624,6 +687,7 @@ func validateCreateInput(input CreateServiceInput, now time.Time) *domain.AppErr
 	} else if len(input.Models) == 0 {
 		return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Model required", "该计费方式必须选择支持模型。", "models", "required", "必须选择支持模型。")
 	}
+	seenModels := map[string]bool{}
 	for i, model := range input.Models {
 		field := fmt.Sprintf("models.%d", i)
 		if strings.TrimSpace(model.ModelCatalogID) == "" {
@@ -636,10 +700,21 @@ func validateCreateInput(input CreateServiceInput, now time.Time) *domain.AppErr
 		if _, ok := parsePositiveDecimal(multiplier); !ok {
 			return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Model multiplier invalid", "模型倍率格式不正确。", field+".merchantMultiplier", "invalid", "模型倍率必须为正数。")
 		}
-		if input.DistributionSystem == ServiceDistributionSub2API && multiplier != "1.0000" && multiplier != "1" {
-			return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Sub2API multiplier fixed", "Sub2API 模型倍率固定为 1。", field+".merchantMultiplier", "fixed_one", "Sub2API 模型倍率固定为 1。")
+		if seenModels[strings.TrimSpace(model.ModelCatalogID)] {
+			return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Model duplicated", "支持模型不能重复。", field+".modelCatalogId", "duplicate", "支持模型不能重复。")
+		}
+		seenModels[strings.TrimSpace(model.ModelCatalogID)] = true
+	}
+	if input.BillingMode == ServiceBillingModeFixedPackage && len(input.Models) == 0 {
+		return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Model required", "限时套餐必须选择支持模型。", "models", "required", "必须选择支持模型。")
+	}
+	enabledModels := map[string]bool{}
+	for _, model := range input.Models {
+		if model.Enabled {
+			enabledModels[strings.TrimSpace(model.ModelCatalogID)] = true
 		}
 	}
+	seenPackageIDs := map[string]bool{}
 	for i, pack := range input.Packages {
 		field := fmt.Sprintf("packages.%d", i)
 		if strings.TrimSpace(pack.Name) == "" {
@@ -648,8 +723,35 @@ func validateCreateInput(input CreateServiceInput, now time.Time) *domain.AppErr
 		if _, ok := parsePositiveDecimal(pack.PriceCNY); !ok {
 			return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Package price invalid", "套餐价格格式不正确。", field+".priceCny", "invalid", "套餐价格必须为正数。")
 		}
-		if pack.DurationDays != nil && *pack.DurationDays <= 0 {
-			return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Package duration invalid", "套餐有效天数必须大于 0。", field+".durationDays", "invalid", "套餐有效天数必须大于 0。")
+		if packID := strings.TrimSpace(pack.ID); packID != "" {
+			if seenPackageIDs[packID] {
+				return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Package duplicated", "套餐不能重复。", field+".id", "duplicate", "套餐不能重复。")
+			}
+			seenPackageIDs[packID] = true
+		}
+		if _, ok := parsePositiveDecimal(pack.PanelAllowance); !ok {
+			return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Package allowance invalid", "面板额度格式不正确。", field+".panelAllowance", "invalid", "面板额度必须为正数。")
+		}
+		if pack.DurationDays == nil || !isLimitedPackageDuration(*pack.DurationDays) {
+			return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Package duration invalid", "套餐有效期只能选择 1、3、7 或 30 天。", field+".durationDays", "invalid", "套餐有效期只能选择 1、3、7 或 30 天。")
+		}
+		if pack.StockTotal < 0 {
+			return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Package stock invalid", "套餐库存不能小于 0。", field+".stockTotal", "invalid", "套餐库存不能小于 0。")
+		}
+		if len(pack.ModelCatalogIDs) == 0 {
+			return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Package models required", "每个套餐至少选择一个支持模型。", field+".modelCatalogIds", "required", "每个套餐至少选择一个支持模型。")
+		}
+		seenPackageModels := map[string]bool{}
+		for modelIndex, modelCatalogID := range pack.ModelCatalogIDs {
+			modelCatalogID = strings.TrimSpace(modelCatalogID)
+			modelField := fmt.Sprintf("%s.modelCatalogIds.%d", field, modelIndex)
+			if !enabledModels[modelCatalogID] {
+				return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Package model invalid", "套餐模型必须来自当前服务已启用的模型。", modelField, "invalid", "套餐模型必须来自当前服务已启用的模型。")
+			}
+			if seenPackageModels[modelCatalogID] {
+				return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Package model duplicated", "套餐模型不能重复。", modelField, "duplicate", "套餐模型不能重复。")
+			}
+			seenPackageModels[modelCatalogID] = true
 		}
 		if strings.TrimSpace(pack.Description) == "" {
 			return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Package description required", "套餐说明不能为空。", field+".description", "required", "套餐说明不能为空。")
@@ -662,6 +764,26 @@ func validateCreateInput(input CreateServiceInput, now time.Time) *domain.AppErr
 		}
 	}
 	return nil
+}
+
+func isLimitedPackageDuration(days int) bool {
+	switch days {
+	case 1, 3, 7, 30:
+		return true
+	default:
+		return false
+	}
+}
+
+func servicePackageModelFromServiceModel(model ServiceModel) ServicePackageModel {
+	return ServicePackageModel{
+		ServiceModelID:      model.ID,
+		ModelCatalogID:      model.ModelCatalogID,
+		ModelPriceVersionID: model.ModelPriceVersionID,
+		ModelNameSnapshot:   model.ModelNameSnapshot,
+		ProviderSnapshot:    model.ProviderSnapshot,
+		MerchantMultiplier:  model.MerchantMultiplier,
+	}
 }
 
 func validateQuotaExpiresAt(value string, now time.Time, required bool) *domain.AppError {
@@ -794,6 +916,17 @@ func OrderableReasonsAt(service Service, now time.Time) []string {
 			reasons = append(reasons, "quota_expiration_required")
 		} else if !service.QuotaExpiresAt.After(now) {
 			reasons = append(reasons, "quota_expired")
+		}
+	} else if service.BillingMode == ServiceBillingModeFixedPackage {
+		available := false
+		for _, pack := range service.Packages {
+			if pack.Enabled && pack.StockAvailable > 0 && len(pack.Models) > 0 {
+				available = true
+				break
+			}
+		}
+		if !available {
+			reasons = append(reasons, "package_sold_out")
 		}
 	}
 	return reasons

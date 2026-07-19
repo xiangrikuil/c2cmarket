@@ -14,9 +14,9 @@ type emailReminderFakeSender struct {
 	verificationCodes []string
 	carpoolCreated    []sentCarpoolCreatedEmail
 	carpoolAccepted   []sentCarpoolAcceptedEmail
-	apiIntentCreated  []sentAPIPurchaseIntentEmail
+	apiOrderCreated   []sentAPIOrderEmail
 	failCarpoolAccept bool
-	failAPIIntent     bool
+	failAPIOrder      bool
 }
 
 type sentCarpoolCreatedEmail struct {
@@ -32,11 +32,13 @@ type sentCarpoolAcceptedEmail struct {
 	joinDeadline  *time.Time
 }
 
-type sentAPIPurchaseIntentEmail struct {
-	to           string
-	serviceTitle string
-	intentID     string
-	buyerNote    string
+type sentAPIOrderEmail struct {
+	to               string
+	serviceTitle     string
+	orderID          string
+	amount           string
+	currency         string
+	paymentExpiresAt time.Time
 }
 
 func (f *emailReminderFakeSender) SendVerificationCode(_ context.Context, toEmail, code string, _ time.Time) *domain.AppError {
@@ -75,14 +77,16 @@ func (f *emailReminderFakeSender) SendCarpoolApplicationAccepted(_ context.Conte
 	return nil
 }
 
-func (f *emailReminderFakeSender) SendAPIPurchaseIntentCreated(_ context.Context, toEmail, serviceTitle, intentID, buyerNote string, _ time.Time) *domain.AppError {
-	f.apiIntentCreated = append(f.apiIntentCreated, sentAPIPurchaseIntentEmail{
-		to:           toEmail,
-		serviceTitle: serviceTitle,
-		intentID:     intentID,
-		buyerNote:    buyerNote,
+func (f *emailReminderFakeSender) SendAPIOrderCreated(_ context.Context, toEmail, serviceTitle, orderID, amount, currency string, paymentExpiresAt, _ time.Time) *domain.AppError {
+	f.apiOrderCreated = append(f.apiOrderCreated, sentAPIOrderEmail{
+		to:               toEmail,
+		serviceTitle:     serviceTitle,
+		orderID:          orderID,
+		amount:           amount,
+		currency:         currency,
+		paymentExpiresAt: paymentExpiresAt,
 	})
-	if f.failAPIIntent {
+	if f.failAPIOrder {
 		return domain.NewError(http.StatusBadGateway, domain.CodeInternalError, "Email send failed", "邮件发送失败。")
 	}
 	return nil
@@ -155,7 +159,7 @@ func TestCarpoolAcceptanceEmailSkipsUnverifiedBuyer(t *testing.T) {
 	}
 }
 
-func TestAPIPurchaseIntentEmailSentToVerifiedMerchantOnce(t *testing.T) {
+func TestAPIOrderEmailSentToVerifiedMerchantOnce(t *testing.T) {
 	ctx := context.Background()
 	service, sender := newEmailReminderTestService()
 	owner := testBoundUser("owner-api-email", "owner-api-email")
@@ -166,7 +170,7 @@ func TestAPIPurchaseIntentEmailSentToVerifiedMerchantOnce(t *testing.T) {
 	buyerContact := createTestContactMethod(t, service, buyer.ID, "telegram", "Buyer TG", "@buyer_api_email")
 	apiService := createOrderableAPIService(t, service, owner, ownerContact.ID)
 
-	_, appErr := service.CreateAPIPurchaseIntentWithIdempotency(ctx, buyer.ID, "api-intent-email", "intent-key", "intent-hash", CreateAPIPurchaseIntentInput{
+	intentCompletion, appErr := service.CreateAPIPurchaseIntentWithIdempotency(ctx, buyer.ID, "api-intent-email", "intent-key", "intent-hash", CreateAPIPurchaseIntentInput{
 		APIServiceID:          apiService.ID,
 		BuyerContactMethodID:  buyerContact.ID,
 		RequestedCNYAmount:    "16.00",
@@ -178,32 +182,40 @@ func TestAPIPurchaseIntentEmailSentToVerifiedMerchantOnce(t *testing.T) {
 	if appErr != nil {
 		t.Fatalf("create API purchase intent: %v", appErr)
 	}
-	if len(sender.apiIntentCreated) != 1 {
-		t.Fatalf("expected one merchant API intent email, got %+v", sender.apiIntentCreated)
-	}
-	sent := sender.apiIntentCreated[0]
-	if sent.to != "merchant-api@example.com" || sent.serviceTitle != apiService.Title || sent.intentID == "" || sent.buyerNote != "希望站外确认 20 美元额度。" {
-		t.Fatalf("unexpected merchant API intent email: %+v", sent)
+	if len(sender.apiOrderCreated) != 0 {
+		t.Fatalf("purchase intent must not send an order email, got %+v", sender.apiOrderCreated)
 	}
 
-	_, appErr = service.CreateAPIPurchaseIntentWithIdempotency(ctx, buyer.ID, "api-intent-email", "intent-key", "intent-hash", CreateAPIPurchaseIntentInput{
-		APIServiceID:          apiService.ID,
-		BuyerContactMethodID:  buyerContact.ID,
-		RequestedCNYAmount:    "16.00",
-		RequestedUSDAllowance: "20.000000",
-		SelectedAccessMode:    "buyer_dedicated_sub_key",
-		BuyerNote:             "希望站外确认 20 美元额度。",
-		RequestID:             "intent-request",
-	}, testAPIPurchaseIntentCompletion)
+	orderCompletion, appErr := service.CreateAPIOrderWithIdempotency(ctx, buyer.ID, "api-order-email", "order-key", "order-hash", APIOrderActionInput{}, CreateAPIOrderInput{
+		IntentID:      string(intentCompletion.Body),
+		PaymentMethod: apimarket.PaymentMethodWechat,
+		RequestID:     "order-request",
+	}, testAPIOrderCompletion)
 	if appErr != nil {
-		t.Fatalf("replay API purchase intent: %v", appErr)
+		t.Fatalf("create API order: %v", appErr)
 	}
-	if len(sender.apiIntentCreated) != 1 {
-		t.Fatalf("idempotent replay must not send duplicate merchant email, got %+v", sender.apiIntentCreated)
+	if len(sender.apiOrderCreated) != 1 {
+		t.Fatalf("expected one merchant API order email, got %+v", sender.apiOrderCreated)
+	}
+	sent := sender.apiOrderCreated[0]
+	if sent.to != "merchant-api@example.com" || sent.serviceTitle != apiService.Title || sent.orderID == "" || sent.amount != "16.00" || sent.currency != "CNY" || sent.paymentExpiresAt.IsZero() {
+		t.Fatalf("unexpected merchant API order email: %+v", sent)
+	}
+
+	_, appErr = service.CreateAPIOrderWithIdempotency(ctx, buyer.ID, "api-order-email", "order-key", "order-hash", APIOrderActionInput{}, CreateAPIOrderInput{
+		IntentID:      string(intentCompletion.Body),
+		PaymentMethod: apimarket.PaymentMethodWechat,
+		RequestID:     "order-request",
+	}, testAPIOrderCompletion)
+	if appErr != nil {
+		t.Fatalf("replay API order: %v", appErr)
+	}
+	if len(sender.apiOrderCreated) != 1 {
+		t.Fatalf("idempotent replay must not send duplicate merchant email, got %+v; completion=%+v", sender.apiOrderCreated, orderCompletion)
 	}
 }
 
-func TestAPIPurchaseIntentEmailSkipsUnverifiedMerchant(t *testing.T) {
+func TestAPIOrderEmailSkipsUnverifiedMerchant(t *testing.T) {
 	ctx := context.Background()
 	service, sender := newEmailReminderTestService()
 	owner := testBoundUser("owner-api-unverified", "owner-api-unverified")
@@ -213,7 +225,7 @@ func TestAPIPurchaseIntentEmailSkipsUnverifiedMerchant(t *testing.T) {
 	buyerContact := createTestContactMethod(t, service, buyer.ID, "telegram", "Buyer TG", "@buyer_api_unverified")
 	apiService := createOrderableAPIService(t, service, owner, ownerContact.ID)
 
-	_, appErr := service.CreateAPIPurchaseIntentWithIdempotency(ctx, buyer.ID, "api-intent-unverified", "intent-key", "intent-hash", CreateAPIPurchaseIntentInput{
+	intentCompletion, appErr := service.CreateAPIPurchaseIntentWithIdempotency(ctx, buyer.ID, "api-intent-unverified", "intent-key", "intent-hash", CreateAPIPurchaseIntentInput{
 		APIServiceID:          apiService.ID,
 		BuyerContactMethodID:  buyerContact.ID,
 		RequestedCNYAmount:    "16.00",
@@ -225,8 +237,15 @@ func TestAPIPurchaseIntentEmailSkipsUnverifiedMerchant(t *testing.T) {
 	if appErr != nil {
 		t.Fatalf("create API purchase intent: %v", appErr)
 	}
-	if len(sender.apiIntentCreated) != 0 {
-		t.Fatalf("unverified merchant email must be skipped, got %+v", sender.apiIntentCreated)
+	if _, appErr := service.CreateAPIOrderWithIdempotency(ctx, buyer.ID, "api-order-unverified", "order-key", "order-hash", APIOrderActionInput{}, CreateAPIOrderInput{
+		IntentID:      string(intentCompletion.Body),
+		PaymentMethod: apimarket.PaymentMethodWechat,
+		RequestID:     "order-request",
+	}, testAPIOrderCompletion); appErr != nil {
+		t.Fatalf("create API order: %v", appErr)
+	}
+	if len(sender.apiOrderCreated) != 0 {
+		t.Fatalf("unverified merchant email must be skipped, got %+v", sender.apiOrderCreated)
 	}
 }
 
@@ -234,7 +253,7 @@ func TestEmailReminderFailuresDoNotBlockBusinessOperations(t *testing.T) {
 	ctx := context.Background()
 	service, sender := newEmailReminderTestService()
 	sender.failCarpoolAccept = true
-	sender.failAPIIntent = true
+	sender.failAPIOrder = true
 
 	owner := testBoundUser("owner-email-failure", "owner-email-failure")
 	buyer := testUser("buyer-email-failure", "buyer-email-failure")
@@ -253,7 +272,7 @@ func TestEmailReminderFailuresDoNotBlockBusinessOperations(t *testing.T) {
 	}
 
 	apiService := createOrderableAPIService(t, service, owner, ownerContact.ID)
-	if _, appErr := service.CreateAPIPurchaseIntentWithIdempotency(ctx, buyer.ID, "api-intent-email-failure", "intent-key", "intent-hash", CreateAPIPurchaseIntentInput{
+	intentCompletion, appErr := service.CreateAPIPurchaseIntentWithIdempotency(ctx, buyer.ID, "api-intent-email-failure", "intent-key", "intent-hash", CreateAPIPurchaseIntentInput{
 		APIServiceID:          apiService.ID,
 		BuyerContactMethodID:  buyerContact.ID,
 		RequestedCNYAmount:    "16.00",
@@ -261,11 +280,19 @@ func TestEmailReminderFailuresDoNotBlockBusinessOperations(t *testing.T) {
 		SelectedAccessMode:    "buyer_dedicated_sub_key",
 		BuyerNote:             "希望站外确认 20 美元额度。",
 		RequestID:             "intent-request",
-	}, testAPIPurchaseIntentCompletion); appErr != nil {
+	}, testAPIPurchaseIntentCompletion)
+	if appErr != nil {
 		t.Fatalf("email failure must not block API purchase intent: %v", appErr)
 	}
-	if len(sender.carpoolAccepted) != 1 || len(sender.apiIntentCreated) != 1 {
-		t.Fatalf("expected failed email attempts to be recorded, got carpool=%+v api=%+v", sender.carpoolAccepted, sender.apiIntentCreated)
+	if _, appErr := service.CreateAPIOrderWithIdempotency(ctx, buyer.ID, "api-order-email-failure", "order-key", "order-hash", APIOrderActionInput{}, CreateAPIOrderInput{
+		IntentID:      string(intentCompletion.Body),
+		PaymentMethod: apimarket.PaymentMethodWechat,
+		RequestID:     "order-request",
+	}, testAPIOrderCompletion); appErr != nil {
+		t.Fatalf("email failure must not block API order creation: %v", appErr)
+	}
+	if len(sender.carpoolAccepted) != 1 || len(sender.apiOrderCreated) != 1 {
+		t.Fatalf("expected failed email attempts to be recorded, got carpool=%+v api=%+v", sender.carpoolAccepted, sender.apiOrderCreated)
 	}
 }
 
@@ -437,5 +464,15 @@ func testAPIPurchaseIntentCompletion(intent APIPurchaseIntent) (IdempotencyCompl
 		Body:         []byte(intent.ID),
 		ResourceType: "api_purchase_intent",
 		ResourceID:   intent.ID,
+	}, nil
+}
+
+func testAPIOrderCompletion(order APIOrder) (IdempotencyCompletion, *domain.AppError) {
+	return IdempotencyCompletion{
+		Status:       http.StatusCreated,
+		ContentType:  "application/json; charset=utf-8",
+		Body:         []byte(order.ID),
+		ResourceType: "api_order",
+		ResourceID:   order.ID,
 	}, nil
 }

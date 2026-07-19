@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
+import { useQueryClient } from '@tanstack/vue-query'
 import {
   Bell,
   ChevronDown,
@@ -13,7 +14,6 @@ import {
   LogOut,
   Megaphone,
   Menu,
-  MessageSquarePlus,
   PackageSearch,
   Palette,
   PanelLeftClose,
@@ -50,15 +50,18 @@ import { useRealtimeSync } from '@/composables/useRealtimeSync'
 import { appThemes, applyAppTheme, getInitialAppTheme, isAppTheme } from '@/theme/appThemes'
 import { ACCOUNT_RECOVERY_PATH, isAccountRecoveryAllowedPath, isAccountRecoveryComplete } from '@/lib/accountRecovery'
 import { usePersistentSidebar } from '@/composables/usePersistentSidebar'
+import { logoutBackendSession } from '@/lib/backendClient'
 
 const route = useRoute()
 const router = useRouter()
+const queryClient = useQueryClient()
 const menuOpen = ref(false)
+const logoutLoading = ref(false)
 const { sidebarCollapsed } = usePersistentSidebar('c2c-user-sidebar-collapsed')
 const searchText = ref('')
 const activeTheme = ref(getInitialAppTheme())
-const { data: myProfile } = useMyProfileQuery()
-const { data: notifications } = useNotifications()
+const { data: myProfile } = useMyProfileQuery(import.meta.client)
+const { data: notifications } = useNotifications(import.meta.client)
 const workspaceQueriesEnabled = computed(() => Boolean(myProfile.value))
 const { data: ownedCarpools } = useMyCarpools(workspaceQueriesEnabled)
 const { data: ownedApiServices } = useMyApiServices(workspaceQueriesEnabled)
@@ -74,9 +77,11 @@ const importantAnnouncementUnreadCount = computed(() => navigationBadges.value?.
 const feedbackMenuUnreadCount = computed(() => navigationBadges.value?.feedbackUnread ?? 0)
 const currentUsername = computed(() => myProfile.value?.username ?? '')
 const currentDisplayName = computed(() => myProfile.value?.displayName ?? myProfile.value?.username ?? '未登录')
+const currentAvatarURL = computed(() => myProfile.value?.avatarUrl ?? '')
 const currentAvatarText = computed(() => currentDisplayName.value.slice(0, 1).toUpperCase())
 const canViewAdminNav = computed(() => myProfile.value?.permissions.includes('admin') ?? false)
 const announcementCenterTo = '/my/notifications?tab=announcements'
+const accountSettingsPaths = ['/my/profile', '/my/contacts', '/my/account'] as const
 const accountRecoveryRequired = computed(() => myProfile.value ? !isAccountRecoveryComplete(myProfile.value) : false)
 const hasMerchantWorkspace = computed(() => Boolean(
   (ownedCarpools.value?.length ?? 0) > 0
@@ -124,10 +129,8 @@ const navGroups = computed(() => {
   const accountGroup = {
     title: '账户',
     items: [
-      { label: '账户与资料', to: '/my', count: null, icon: UserRound },
+      { label: '账户设置', to: '/my/profile', count: null, icon: UserRound },
       { label: '我的求车', to: '/my/demands', count: null, icon: ScanSearch },
-      { label: '联系与收款', to: '/my/contacts', count: null, icon: MessageSquarePlus },
-      { label: '安全设置', to: '/my/account', count: null, icon: ShieldCheck },
       { label: '反馈', to: '/my/feedback', count: feedbackMenuUnreadCount.value, icon: CircleHelp },
     ],
   }
@@ -160,6 +163,7 @@ function isActive(to: string) {
 
 function matchesRoute(to: string) {
   if (to === '/') return route.path === '/'
+  if (to === '/my/profile') return accountSettingsPaths.includes(route.path as typeof accountSettingsPaths[number])
   return route.path === to || route.path.startsWith(`${to}/`)
 }
 
@@ -193,9 +197,19 @@ function formatBadgeCount(value: number | null | undefined) {
   return count > 99 ? '99+' : count
 }
 
-function logoutMock() {
-  toast('已退出登录。')
-  router.push('/login')
+async function logout() {
+  if (logoutLoading.value) return
+  logoutLoading.value = true
+  try {
+    await logoutBackendSession()
+    queryClient.clear()
+    toast.success('已退出登录。')
+    await router.replace('/login')
+  } catch (error) {
+    toast.error(error instanceof Error ? error.message : '退出登录失败')
+  } finally {
+    logoutLoading.value = false
+  }
 }
 
 function setActiveTheme(theme: unknown) {
@@ -449,7 +463,10 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onNavigationKeydown)
           <DropdownMenu v-else>
             <DropdownMenuTrigger as-child>
               <Button variant="ghost" size="sm" class="hidden gap-2 text-foreground md:inline-flex">
-                <span class="grid h-7 w-7 place-items-center rounded-full bg-secondary text-[12px] text-secondary-foreground">{{ currentAvatarText }}</span>
+                <span class="grid h-7 w-7 place-items-center overflow-hidden rounded-full bg-secondary text-[12px] text-secondary-foreground">
+                  <img v-if="currentAvatarURL" :src="currentAvatarURL" alt="" class="h-full w-full object-cover" />
+                  <span v-else>{{ currentAvatarText }}</span>
+                </span>
                 <span class="font-semibold">{{ currentDisplayName }}</span>
                 <ChevronDown class="h-4 w-4" />
               </Button>
@@ -463,13 +480,13 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onNavigationKeydown)
                 </RouterLink>
               </DropdownMenuItem>
               <DropdownMenuItem as-child>
-                <RouterLink to="/my/profile" class="flex items-center gap-2">
-                  <UserRound class="h-4 w-4" />个人资料
+                <RouterLink to="/my" class="flex items-center gap-2">
+                  <UserRound class="h-4 w-4" />个人中心
                 </RouterLink>
               </DropdownMenuItem>
               <DropdownMenuItem as-child>
-                <RouterLink to="/my/contacts" class="flex items-center gap-2">
-                  <MessageSquarePlus class="h-4 w-4" />联系方式
+                <RouterLink to="/my/profile" class="flex items-center gap-2">
+                  <ShieldCheck class="h-4 w-4" />账户设置
                 </RouterLink>
               </DropdownMenuItem>
               <DropdownMenuItem as-child>
@@ -487,18 +504,13 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onNavigationKeydown)
                 </RouterLink>
               </DropdownMenuItem>
               <DropdownMenuItem as-child>
-                <RouterLink to="/my/account" class="flex items-center gap-2">
-                  <ShieldCheck class="h-4 w-4" />账号与认证
-                </RouterLink>
-              </DropdownMenuItem>
-              <DropdownMenuItem as-child>
                 <RouterLink :to="{ path: '/login', query: { returnTo: route.fullPath } }" class="flex items-center gap-2">
                   <LogIn class="h-4 w-4" />登录 / 绑定
                 </RouterLink>
               </DropdownMenuItem>
               <DropdownMenuSeparator />
-              <DropdownMenuItem @click="logoutMock">
-                <LogOut class="h-4 w-4" />退出登录
+              <DropdownMenuItem :disabled="logoutLoading" @click="logout">
+                <LogOut class="h-4 w-4" />{{ logoutLoading ? '正在退出…' : '退出登录' }}
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>

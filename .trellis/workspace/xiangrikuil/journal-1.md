@@ -183,7 +183,11 @@ Forced frontend account recovery setup after linux.do OAuth: incomplete accounts
 
 ### Main Changes
 
-(Add details)
+- Added staging/main CI release gates and a reusable GHCR build/deploy workflow.
+- Added immutable SHA image deployment, fixed 8080/8081 environment mapping,
+  production backup-before-migration, health checks, and versioned current links.
+- Added release regression tests, VPS/GitHub setup documentation, and the
+  backend deployment contract.
 
 ### Git Commits
 
@@ -228,6 +232,187 @@ Committed and pushed marketplace updates, including API order payment QR snapsho
 ### Testing
 
 - [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
+
+
+## Session 7: Cloudflare Pages pnpm workspace fix
+
+**Date**: 2026-07-15
+**Task**: Cloudflare Pages pnpm workspace fix
+**Package**: frontend
+**Branch**: `codex/complete-ui-business-consistency`
+
+### Summary
+
+Added an explicit pnpm root package and pinned Node 24.13.0; verified Cloudflare's pnpm 10.11.1 install, production build for https://c2cmarket.shop, and all 118 frontend tests.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `9f4039c` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
+
+
+## Session 8: Cloudflare deployment and marketplace consistency delivery
+
+**Date**: 2026-07-15
+**Task**: Cloudflare deployment and marketplace consistency delivery
+**Package**: frontend
+**Branch**: `codex/complete-ui-business-consistency`
+
+### Summary
+
+Fixed Cloudflare frontend build compatibility, committed the complete marketplace business consistency update, passed backend and frontend quality gates, rebased onto origin/main, and pushed the feature branch.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `39672e0` | (see git log) |
+| `82fc0e7` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
+
+
+## Session 9: Staging marketplace consistency PR
+
+**Date**: 2026-07-17
+**Task**: Staging marketplace consistency PR
+**Package**: frontend
+**Branch**: `codex/staging-marketplace-consistency`
+
+### Summary
+
+Rebased the workspace onto current staging, preserved three pending fixes, verified backend/frontend and migrations, and committed all Git-visible changes for PR review.
+
+### Main Changes
+
+- Created `codex/staging-marketplace-consistency` from current `origin/staging` and preserved the three pending operational/OAuth fixes.
+- Committed the full marketplace identity, order, account-navigation, email, API/OpenAPI, migration, test, and Trellis spec changes as `ff8dba1`.
+- Documented migration 52 after verifying both an applied development database upgrade and an isolated empty-database migration chain.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `ff8dba1` | (see git log) |
+
+### Testing
+
+- [OK] `go test ./...`
+- [OK] Frontend Vitest: 40 files / 134 tests
+- [OK] Vue type-check and real-API production build
+- [OK] Applied database migration through Version 52 and isolated migration 1 through 52
+- [OK] `git diff --check`
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
+
+
+## Session 10: VPS 直连生产与 Staging 迁移
+
+**Date**: 2026-07-17
+**Task**: VPS 直连生产与 Staging 迁移
+**Package**: frontend
+**Branch**: `codex/staging-marketplace-consistency`
+
+### Summary
+
+将 production/staging 后端与 PostgreSQL 迁移到 RackNerd VPS；启用 Caddy Cloudflare Full strict 直连、loopback 容器端口、R2 systemd 每日备份，并停用 Mac mini 后端、Tunnel 与旧备份任务。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `c95e91b` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
+
+
+## Session 11: GHCR backend CI/CD
+
+**Date**: 2026-07-18
+**Task**: GHCR backend CI/CD
+**Package**: frontend
+**Branch**: `codex/staging-marketplace-consistency`
+
+### Summary
+
+Added tested GHCR image publishing and environment-gated staging/production VPS deployment with immutable SHA tags, backup-before-migration, health checks, versioned releases, regression tests, and operations documentation.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `75e0339` | `ci: deploy backend from ghcr` |
+
+### Testing
+
+- [OK] Release shell syntax and smoke tests passed.
+- [OK] Both workflow files parsed as YAML and production/staging Compose
+  configurations expanded successfully.
+- [OK] Local backend Docker build, complete Go tests, OpenAPI/migration checks,
+  frontend typecheck/build, and 137 frontend tests passed.
 
 ### Status
 

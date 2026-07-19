@@ -12,6 +12,7 @@ import type {
   ApiPurchaseIntentEvent,
   ApiPurchaseIntentFilters,
   ApiService,
+  ApiServicePackageSnapshot,
   ApiServiceFilters,
   ApiUsageVisibility,
   ContactMethodType,
@@ -55,10 +56,23 @@ type BackendServicePackage = {
   id?: string
   name: string
   priceCny: string
+  panelAllowance: string
   durationDays?: number
+  stockTotal: number
+  stockAvailable: number
   description: string
   enabled: boolean
   sortOrder: number
+  models: BackendServicePackageModel[]
+}
+
+type BackendServicePackageModel = {
+  serviceModelId: string
+  modelCatalogId: string
+  modelPriceVersionId?: string
+  modelNameSnapshot: string
+  providerSnapshot: string
+  merchantMultiplier: string
 }
 
 type BackendPaymentOption = {
@@ -76,6 +90,7 @@ type BackendAPIService = {
   merchantIdentityMode: string
   merchantDisplayName?: string
   merchantProfileSlug?: string
+  merchantAvatarUrl?: string
   ownerContactMethodId?: string
   title: string
   shortDescription: string
@@ -104,6 +119,9 @@ type BackendAPIService = {
   accessModes: BackendAccessMode[]
   models: BackendServiceModel[]
   packages: BackendServicePackage[]
+  completed30d?: number
+  unresolvedDisputes?: number
+  responseMedianMinutes?: number | null
   version: number
   createdAt: string
   updatedAt: string
@@ -171,6 +189,10 @@ export type BackendAPIOrder = {
   status: string
   disputeStatus?: string
   serviceTitleSnapshot: string
+  selectedPackageId?: string
+  selectedPackageSnapshot?: string
+  packageStockReserved?: boolean
+  packageExpiresAt?: string | null
   amount: string
   requestedUsdAllowanceSnapshot?: string
   cnyPerUsdAllowanceSnapshot?: string
@@ -281,8 +303,8 @@ export function mapBackendAPIService(service: BackendAPIService): ApiService {
   const modes = deliveryModes(service.accessModes)
   const state = serviceState(service)
   const isStoreAlias = service.merchantIdentityMode === 'store_alias'
-  const displayName = isStoreAlias ? service.merchantDisplayName || 'API 商户' : '公开商户'
-  const merchantUsername = isStoreAlias ? service.merchantProfileSlug || service.merchantProfileId || 'merchant' : service.ownerUserId ?? 'merchant'
+  const displayName = service.merchantDisplayName || (isStoreAlias ? 'API 商户' : '公开商户')
+  const merchantUsername = service.merchantProfileSlug || (isStoreAlias ? service.merchantProfileId : service.ownerUserId) || 'merchant'
   const online = state === 'online'
   const publiclyOrderable = Boolean(service.isOrderable)
   return {
@@ -294,6 +316,7 @@ export function mapBackendAPIService(service: BackendAPIService): ApiService {
     merchant: displayName,
     merchantIdentityMode: isStoreAlias ? 'store_alias' : 'public_profile',
     merchantDisplayName: displayName,
+    merchantAvatarUrl: service.merchantAvatarUrl?.trim() || undefined,
     trustLevel: 4,
     merchantType: '商户',
     models: service.models.filter(item => item.enabled).map(item => item.modelNameSnapshot),
@@ -331,21 +354,43 @@ export function mapBackendAPIService(service: BackendAPIService): ApiService {
     lastOnlineConfirmedAt: service.updatedAt,
     onlineExpiresAt: service.quotaExpiresAt ?? service.updatedAt,
     expectedResponseMinutes: service.paymentWindowMinutes ?? 10,
-    responseMedianMinutes: service.paymentWindowMinutes ?? 10,
+    responseMedianMinutes: service.responseMedianMinutes ?? service.paymentWindowMinutes ?? 10,
     dailyOrderLimit: 10,
     todayOrderCount: 0,
-    unresolvedDisputes: 0,
+    unresolvedDisputes: service.unresolvedDisputes ?? 0,
     warning: state === 'reviewing' ? '等待管理员审核' : online && !publiclyOrderable ? '待配置接单设置' : undefined,
     warranty: service.merchantSupportNote || '按商户备注站外协商，平台不担保、不代赔',
     refundPolicy: '最终金额和售后由双方站外确认，平台不处理支付或托管',
     quotaExpiresAt: service.quotaExpiresAt,
     expiresAt: formatQuotaExpiresAtLabel(service.quotaExpiresAt) || '按服务说明',
-    completed30d: 0,
+    completed30d: service.completed30d ?? 0,
     reviewCount: 0,
     officialPricingVersion: 'backend',
     officialPricingUpdatedAt: service.updatedAt,
     merchantNote: service.merchantNote || service.publicAccessNote || service.shortDescription,
     modelPriceRows: modelPriceRows(service.models),
+    packages: (service.packages ?? []).map(item => ({
+      id: item.id ?? '',
+      name: item.name,
+      priceCny: numberFromDecimal(item.priceCny),
+      panelAllowance: numberFromDecimal(item.panelAllowance),
+      durationDays: item.durationDays as 1 | 3 | 7 | 30,
+      stockTotal: item.stockTotal,
+      stockAvailable: item.stockAvailable,
+      description: item.description,
+      enabled: item.enabled,
+      sortOrder: item.sortOrder,
+      models: (item.models ?? []).map(model => ({
+        serviceModelId: model.serviceModelId,
+        modelCatalogId: model.modelCatalogId,
+        modelPriceVersionId: model.modelPriceVersionId ?? '',
+        modelName: model.modelNameSnapshot,
+        provider: model.providerSnapshot,
+        merchantMultiplier: numberFromDecimal(model.merchantMultiplier, 1),
+      })),
+    })),
+    recommendationResponseMedianMinutes: service.responseMedianMinutes ?? null,
+    serviceUpdatedAt: service.updatedAt,
     contactChannels: [],
     acceptedPaymentMethods: (service.acceptedPaymentMethods ?? []).filter(isApiPaymentMethod),
   }
@@ -438,6 +483,33 @@ function contactToChannel(contact?: ContactDisclosure | null) {
 
 type ApiIntentViewerRole = 'buyer' | 'merchant'
 
+function parsePackageSnapshot(value?: string): ApiServicePackageSnapshot | undefined {
+  if (!value) return undefined
+  try {
+    const source = JSON.parse(value) as Record<string, unknown>
+    const durationDays = Number(source.durationDays)
+    if (![1, 3, 7, 30].includes(durationDays)) return undefined
+    const rawModels = Array.isArray(source.models) ? source.models as Array<Record<string, unknown>> : []
+    return {
+      id: String(source.id ?? ''),
+      name: String(source.name ?? ''),
+      priceCny: numberFromDecimal(String(source.priceCny ?? '0')),
+      panelAllowance: numberFromDecimal(String(source.panelAllowance ?? '0')),
+      durationDays: durationDays as 1 | 3 | 7 | 30,
+      description: String(source.description ?? ''),
+      models: rawModels.map(model => ({
+        serviceModelId: String(model.serviceModelId ?? ''),
+        modelCatalogId: String(model.modelCatalogId ?? ''),
+        modelPriceVersionId: String(model.modelPriceVersionId ?? ''),
+        modelName: String(model.modelNameSnapshot ?? model.modelName ?? ''),
+        merchantMultiplier: numberFromDecimal(String(model.merchantMultiplier ?? '1')),
+      })),
+    }
+  } catch {
+    return undefined
+  }
+}
+
 function mapIntent(intent: BackendAPIPurchaseIntent, viewerRole: ApiIntentViewerRole): ApiPurchaseIntent {
   const amount = numberFromDecimal(intent.requestedCnyAmount)
   const credit = numberFromDecimal(intent.requestedUsdAllowance)
@@ -453,6 +525,7 @@ function mapIntent(intent: BackendAPIPurchaseIntent, viewerRole: ApiIntentViewer
     merchant: merchantName,
     status: intent.status,
     selectedDeliveryMode: mode,
+    selectedPackageId: intent.selectedPackageId,
     purchaseAmountCny: amount,
     purchasedCredit: credit,
     purchaseAmountCnyDecimal: intent.requestedCnyAmount,
@@ -479,6 +552,8 @@ function mapIntent(intent: BackendAPIPurchaseIntent, viewerRole: ApiIntentViewer
       usageVisibility: 'none',
       supportedDeliveryModes: [mode],
       selectedDeliveryMode: mode,
+      selectedPackageId: intent.selectedPackageId,
+      selectedPackageSnapshot: parsePackageSnapshot(intent.selectedPackageSnapshot),
       minimumPurchaseCny: numberFromDecimal(intent.minimumIntentCnySnapshot, 1),
       panelBaseUrl: null,
       apiBaseUrlVisibility: 'after_intent',
@@ -670,16 +745,15 @@ export async function backendCreateAPIPurchaseIntent(payload: CreateApiPurchaseI
     enabled: true,
   })
   const requestedCnyAmount = normalizeDecimal(String(payload.purchaseAmountCny), 2)
-  const requestedUsdAllowance = normalizeDecimalTrimmed(
-    divideDecimal(requestedCnyAmount, service.cnyPerUsdAllowance || '1', 6),
-    6,
-  )
+  const requestedUsdAllowance = service.billingMode === 'fixed_package'
+    ? ''
+    : normalizeDecimalTrimmed(divideDecimal(requestedCnyAmount, service.cnyPerUsdAllowance || '1', 6), 6)
   const response = await backendMutation<BackendAPIPurchaseIntent>(`/api/v1/api-services/${payload.serviceId}/purchase-intents`, {
     buyerContactMethodId: contact.id,
     requestedCnyAmount,
     requestedUsdAllowance,
-    selectedAccessMode: toBackendAccessMode(payload.deliveryMode),
-    selectedPackageId: '',
+    selectedAccessMode: service.billingMode === 'fixed_package' ? 'fixed_package_offsite' : toBackendAccessMode(payload.deliveryMode),
+    selectedPackageId: payload.selectedPackageId ?? '',
     buyerNote: payload.buyerNote ?? '',
   }, { idempotencyPrefix: 'api-intent' })
   return mapIntent(response, 'buyer')
@@ -828,6 +902,10 @@ async function mapBackendAPIOrder(order: BackendAPIOrder, viewerRole: 'buyer' | 
     version: order.version,
     intentSnapshot: intent.snapshot,
     selectedDeliveryMode: intent.selectedDeliveryMode,
+    selectedPackageId: order.selectedPackageId ?? intent.selectedPackageId,
+    packageSnapshot: parsePackageSnapshot(order.selectedPackageSnapshot) ?? intent.snapshot.selectedPackageSnapshot,
+    packageStockReserved: order.packageStockReserved,
+    packageExpiresAt: order.packageExpiresAt ?? undefined,
     requestedUsdAllowance: numberFromDecimal(order.requestedUsdAllowanceSnapshot || intent.purchasedCreditDecimal),
     requestedUsdAllowanceDecimal: order.requestedUsdAllowanceSnapshot || intent.purchasedCreditDecimal || String(intent.purchasedCredit),
     merchantContactChannels: intent.contactChannels,
@@ -898,6 +976,19 @@ export async function backendConfirmAPIOrderComplete(id: string, version: number
     ifMatch: version,
   })
   return mapBackendAPIOrder(response, 'buyer')
+}
+
+export function apiOrderDisputePath(id: string, perspective: 'buyer' | 'merchant') {
+  const scope = perspective === 'merchant' ? 'owner' : 'me'
+  return `/api/v1/${scope}/api-orders/${encodeURIComponent(id)}/dispute`
+}
+
+export async function backendOpenAPIOrderDispute(id: string, reason: string, version: number, perspective: 'buyer' | 'merchant') {
+  const response = await backendMutation<BackendAPIOrder>(apiOrderDisputePath(id, perspective), { reason }, {
+    idempotencyPrefix: `api-order-${perspective}-dispute`,
+    ifMatch: version,
+  })
+  return mapBackendAPIOrder(response, perspective)
 }
 
 export async function backendConfirmAPIOrderPayment(id: string, version: number) {
@@ -989,7 +1080,9 @@ function toBackendServiceRequest(payload: Record<string, unknown>) {
   const billing = payload.billingMode === 'fixed_package' ? 'fixed_package' : payload.billingMode === 'manual_credit' ? 'manual_usage_check' : 'metered_usd_quota'
   const modes = Array.isArray(payload.deliveryModes) ? payload.deliveryModes as string[] : ['api_key_endpoint']
   const selectedModels = Array.isArray(payload.selectedModels) ? payload.selectedModels as Array<{ modelId?: string, multiplierOverride?: number | null, enabled?: boolean }> : []
-  const packages = Array.isArray(payload.packages) ? payload.packages as Array<{ name?: string, priceCny?: number, durationDays?: number | null, description?: string }> : []
+  const packages = Array.isArray(payload.packages) ? payload.packages as Array<{ id?: string, name?: string, priceCny?: number, panelAllowance?: number, durationDays?: number, stockTotal?: number, description?: string, enabled?: boolean, modelCatalogIds?: string[] }> : []
+
+  const fixedPackage = billing === 'fixed_package'
   return {
     merchantProfileId: String(payload.merchantProfileId ?? ''),
     merchantIdentityMode: String(payload.merchantIdentityMode ?? 'public_profile'),
@@ -999,30 +1092,36 @@ function toBackendServiceRequest(payload: Record<string, unknown>) {
     sourceUrl: String(payload.sourceUrl ?? ''),
     distributionSystem,
     billingMode: billing,
-    declaredCnyPerUsdAllowance: String(payload.cnyPerUsdCredit ?? '1'),
-    declaredMaxUsdAllowancePerIntent: String(payload.availableCreditUsd ?? '20'),
-    availableUsdAllowance: String(payload.availableCreditUsd ?? '20'),
-    quotaExpiresAt: beijingDateTimeInputToISOString(String(payload.quotaExpiresAt ?? '')),
+    declaredCnyPerUsdAllowance: fixedPackage ? '' : String(payload.cnyPerUsdCredit ?? '1'),
+    declaredMaxUsdAllowancePerIntent: fixedPackage ? '' : String(payload.availableCreditUsd ?? '20'),
+    availableUsdAllowance: fixedPackage ? '' : String(payload.availableCreditUsd ?? '20'),
+    quotaExpiresAt: fixedPackage ? '' : beijingDateTimeInputToISOString(String(payload.quotaExpiresAt ?? '')),
     minimumIntentCny: String(payload.minimumPurchaseCny ?? '10'),
     maximumIntentCny: String(payload.maximumPurchaseCny ?? '300'),
     usageVisibility: toBackendUsageVisibility(payload.usageVisibility),
     publicAccessNote: String(payload.distributionSystemNote ?? ''),
     merchantNote: String(payload.merchantNote ?? ''),
     merchantSupportNote: '平台不担保、不代赔；双方站外确认。',
-    accessModes: modes.map(accessMode => ({ accessMode: toBackendAccessMode(accessMode), publicNote: '仅展示接入说明，不展示凭据。' })),
+    accessModes: fixedPackage
+      ? [{ accessMode: 'fixed_package_offsite', publicNote: '交付后开始计算套餐有效期，具体接入信息按订单权限展示。' }]
+      : modes.map(accessMode => ({ accessMode: toBackendAccessMode(accessMode), publicNote: '仅展示接入说明，不展示凭据。' })),
     models: selectedModels.filter(item => item.enabled !== false).map(item => ({
       modelCatalogId: item.modelId ?? '',
       modelPriceVersionId: '',
-      merchantMultiplier: String(distributionSystem === 'sub2api' ? '1.0000' : item.multiplierOverride ?? payload.defaultMultiplier ?? '1.0000'),
+      merchantMultiplier: String(item.multiplierOverride ?? payload.defaultMultiplier ?? '1.0000'),
       enabled: true,
     })),
     packages: packages.map((item, index) => ({
+      id: item.id || undefined,
       name: item.name ?? `套餐 ${index + 1}`,
       priceCny: String(item.priceCny ?? 20),
-      durationDays: item.durationDays ?? undefined,
+      panelAllowance: String(item.panelAllowance ?? 1),
+      durationDays: item.durationDays,
+      stockTotal: item.stockTotal ?? 0,
       description: item.description ?? '',
-      enabled: true,
+      enabled: item.enabled !== false,
       sortOrder: index,
+      modelCatalogIds: item.modelCatalogIds ?? [],
     })),
   }
 }

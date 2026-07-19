@@ -9,15 +9,31 @@ import PageTitle from '@/components/market/PageTitle.vue'
 import EmptyState from '@/components/market/EmptyState.vue'
 import SkeletonBlock from '@/components/market/SkeletonBlock.vue'
 import { useDemand } from '@/queries/useMarketQueries'
+import { markMissingQueryAsNotFoundOnServer, prefetchQueriesOnServer } from '@/queries/prefetchQueriesOnServer'
+import { useEntitySeo } from '@/composables/useEntitySeo'
 
 const route = useRoute()
 const id = computed(() => String(route.params.id ?? ''))
-const { data: demand, isLoading } = useDemand(id)
+const demandQuery = useDemand(id)
+const { data: demand, isLoading } = demandQuery
+prefetchQueriesOnServer(demandQuery)
+markMissingQueryAsNotFoundOnServer(demandQuery, () => Boolean(demand.value))
 const ownerPreferenceLabel = computed(() => {
   if (!demand.value) return '—'
   if (demand.value.ownerPreference === 'only-personal' || demand.value.ownerPreference === 'only_personal') return '只看个人车主'
   if (demand.value.ownerPreference === 'any') return '不限车主类型'
   return '个人车主优先'
+})
+useEntitySeo({
+  indexable: computed(() => Boolean(demand.value)),
+  title: computed(() => demand.value ? `${demand.value.title}｜求车需求｜C2CMarket` : '求车需求详情｜C2CMarket'),
+  description: computed(() => demand.value ? `${demand.value.region}求车需求，预算上限 ¥${demand.value.maxPrice}/月，${ownerPreferenceLabel.value}。` : '查看公开求车需求详情。'),
+  schema: computed(() => demand.value ? {
+    '@type': 'Demand',
+    name: demand.value.title,
+    description: demand.value.note || demand.value.require,
+    areaServed: demand.value.region,
+  } : null),
 })
 </script>
 

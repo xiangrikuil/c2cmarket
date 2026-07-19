@@ -57,6 +57,8 @@ versions:
 | `000048_report_schema_upgrade` | upgrades earlier report/dispute schemas with canonical targets, result codes, deduplication, and moderation audit rows |
 | `000049_api_order_quota_inventory` | service-level metered quota inventory plus immutable quota, rate, and pricing snapshots on API orders |
 | `000050_api_order_payment_issue` | buyer-reported API order payment issues with merchant resolution tracking and notification hooks |
+| `000051_api_limited_packages` | stable limited-package allowance, stock, model associations, order reservations, and delivery-based expiry |
+| `000052_api_purchase_intent_ordered_constraint_cleanup` | removes legacy duplicate intent-status checks so ordered intents remain valid on upgraded databases |
 
 The current runnable Go slice supports both in-memory tests and PostgreSQL runtime.
 When `DATABASE_URL` is configured, users, auth sessions, idempotency, product
@@ -98,9 +100,10 @@ snapshots, merchant-declared pricing, and fixed package descriptions. Public API
 service reads are limited to `review_status='approved'`,
 `publication_status='online'`, and `moderation_status='clear'`; public responses
 do not include owner contact method IDs, review internals, or merchant internal
-notes. `distribution_system='sub2api'` service models must keep
-`merchant_multiplier=1.0000` at both service-validation and database CHECK
-levels.
+notes. Version 13 initially constrained `distribution_system='sub2api'` service
+models to `merchant_multiplier=1.0000`. Version 51 removes that constraint: the
+default remains `1.0000`, while merchants may declare any positive multiplier
+that reflects their actual upstream conversion.
 
 API purchase intents are version 14 plus the direct-contact cleanup in version
 15 and contract hardening in version 16. Creating an intent for a public API service creates the intent row, freezes
@@ -174,6 +177,21 @@ reasons (`not_received`, `amount_mismatch`, `remark_mismatch`). A seller may
 report an issue only after the buyer submits payment information. The buyer can
 then supplement and resubmit that information, returning the order to
 `payment_submitted`; the existing quota reservation remains held throughout.
+
+Version 51 turns fixed API packages into limited-duration inventory. Packages
+store panel allowance and total/available stock, reference a subset of stable
+service-model rows, and reserve one unit atomically when an order is created.
+Unpaid cancellation or timeout releases the unit; payment confirmation consumes
+it. Fixed-package orders freeze a delivery-based expiry timestamp. This version
+also removes the historical Sub2API fixed-`1.0000` model-multiplier constraint;
+`1.0000` remains the default rather than a forced value.
+
+Version 52 repairs databases that still retain an earlier anonymous
+`api_purchase_intents` status constraint alongside the canonical named
+constraint. It drops both legacy and canonical variants, then recreates one
+named constraint that accepts the order-backed `ordered` state. The down
+migration is intentionally non-destructive because restoring the anonymous
+constraint would reintroduce the production failure this migration removes.
 
 ## Contact Retention And Destruction
 

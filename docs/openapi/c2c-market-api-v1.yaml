@@ -2248,10 +2248,6 @@ paths:
           $ref: "#/components/responses/Problem"
         "404":
           $ref: "#/components/responses/Problem"
-        "401":
-          $ref: "#/components/responses/Problem"
-        "403":
-          $ref: "#/components/responses/Problem"
   /api/v1/me/announcements/unread-count:
     get:
       operationId: getAnnouncementUnreadCount
@@ -3048,6 +3044,46 @@ paths:
       responses:
         "200":
           description: Seller submitted the one-time delivery credential.
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+            ETag:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/APIOrder"
+        "409":
+          $ref: "#/components/responses/Problem"
+        "412":
+          $ref: "#/components/responses/Problem"
+        "422":
+          $ref: "#/components/responses/Problem"
+        "428":
+          $ref: "#/components/responses/Problem"
+  /api/v1/owner/api-orders/{id}/dispute:
+    post:
+      operationId: openOwnerAPIOrderDispute
+      tags: [OwnerAPIOrders]
+      security:
+        - sessionCookie: []
+          csrfToken: []
+      description: Allows the API service owner to open the same admin dispute workflow available to the buyer. The order fulfillment status remains unchanged, and the platform does not process refunds, compensation, escrow, or payment.
+      parameters:
+        - $ref: "#/components/parameters/ResourceId"
+        - $ref: "#/components/parameters/IfMatch"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/APIOrderReasonRequest"
+      responses:
+        "200":
+          description: API order dispute case opened by the service owner and linked to the order.
           headers:
             Cache-Control:
               schema:
@@ -7229,15 +7265,24 @@ components:
     APIServicePackageInput:
       type: object
       additionalProperties: false
-      required: [name, priceCny, description]
+      required: [name, priceCny, panelAllowance, durationDays, stockTotal, description, modelCatalogIds]
       properties:
+        id:
+          type: string
+          format: uuid
+          description: Stable package ID accepted only when updating a package that already belongs to this service. Creation ignores client-supplied IDs.
         name:
           type: string
         priceCny:
           $ref: "#/components/schemas/DecimalString"
+        panelAllowance:
+          $ref: "#/components/schemas/DecimalString"
         durationDays:
           type: integer
-          minimum: 1
+          enum: [1, 3, 7, 30]
+        stockTotal:
+          type: integer
+          minimum: 0
         description:
           type: string
         enabled:
@@ -7245,6 +7290,13 @@ components:
           default: true
         sortOrder:
           type: integer
+        modelCatalogIds:
+          type: array
+          minItems: 1
+          uniqueItems: true
+          items:
+            type: string
+            format: uuid
     APIServiceOrderSettingsRequest:
       type: object
       additionalProperties: false
@@ -7403,6 +7455,17 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/APIServicePackage"
+        completed30d:
+          type: integer
+          minimum: 0
+          description: Completed API orders in the previous 30 days.
+        unresolvedDisputes:
+          type: integer
+          minimum: 0
+        responseMedianMinutes:
+          type: [number, "null"]
+          minimum: 0
+          description: Median minutes to the first seller response event. Null means there is not enough history.
         version:
           type: integer
         createdAt:
@@ -7596,7 +7659,7 @@ components:
           type: boolean
     APIServicePackage:
       type: object
-      required: [id, name, priceCny, description, enabled, sortOrder]
+      required: [id, name, priceCny, panelAllowance, stockTotal, stockAvailable, description, enabled, sortOrder, models]
       properties:
         id:
           type: string
@@ -7605,14 +7668,46 @@ components:
           type: string
         priceCny:
           $ref: "#/components/schemas/DecimalString"
+        panelAllowance:
+          $ref: "#/components/schemas/DecimalString"
         durationDays:
           type: [integer, "null"]
+          enum: [1, 3, 7, 30, null]
+        stockTotal:
+          type: integer
+          minimum: 0
+        stockAvailable:
+          type: integer
+          minimum: 0
         description:
           type: string
         enabled:
           type: boolean
         sortOrder:
           type: integer
+        models:
+          type: array
+          items:
+            $ref: "#/components/schemas/APIServicePackageModel"
+    APIServicePackageModel:
+      type: object
+      required: [serviceModelId, modelCatalogId, modelNameSnapshot, providerSnapshot, merchantMultiplier]
+      properties:
+        serviceModelId:
+          type: string
+          format: uuid
+        modelCatalogId:
+          type: string
+          format: uuid
+        modelPriceVersionId:
+          type: string
+          format: uuid
+        modelNameSnapshot:
+          type: string
+        providerSnapshot:
+          type: string
+        merchantMultiplier:
+          $ref: "#/components/schemas/DecimalString"
     APIServiceList:
       type: object
       required: [items]
@@ -7707,6 +7802,7 @@ components:
           format: uuid
         selectedPackageSnapshot:
           type: string
+          description: Immutable JSON snapshot containing the package, exact models, merchant multipliers, and model price version IDs.
         serviceVersionSnapshot:
           type: integer
         serviceTitleSnapshot:
@@ -8037,6 +8133,14 @@ components:
           format: uuid
         selectedPackageSnapshot:
           type: string
+          description: Immutable JSON snapshot containing the package, exact models, merchant multipliers, and model price version IDs.
+        packageStockReserved:
+          type: boolean
+          description: Internal lifecycle marker. True only while an unpaid fixed-package order still owns its reserved unit.
+        packageExpiresAt:
+          type: [string, "null"]
+          format: date-time
+          description: Set when the seller submits delivery, calculated from the frozen package duration.
         quoteVersionSnapshot:
           type: integer
         requestedUsdAllowanceSnapshot:

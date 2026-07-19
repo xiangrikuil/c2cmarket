@@ -150,22 +150,23 @@ type publicMerchantProfileResponse struct {
 }
 
 type publicMerchantProfileDTO struct {
-	Username                         string `json:"username"`
-	DisplayName                      string `json:"displayName"`
-	AvatarText                       string `json:"avatarText"`
-	MerchantID                       string `json:"merchantId"`
-	Identity                         string `json:"identity"`
-	TrustLevel                       int    `json:"trustLevel"`
-	LinuxDoBound                     bool   `json:"linuxdoBound"`
-	OriginalPostBound                bool   `json:"originalPostBound"`
-	JoinedAt                         string `json:"joinedAt"`
-	LastActiveAt                     string `json:"lastActiveAt"`
-	LinuxDoURL                       string `json:"linuxdoUrl"`
-	Completed30d                     int    `json:"completed30d"`
-	ResponseMedianMinutes            int    `json:"responseMedianMinutes"`
-	MerchantResponsibleCancellations int    `json:"merchantResponsibleCancellations"`
-	UnresolvedDisputes               int    `json:"unresolvedDisputes"`
-	HandledDisputes90d               int    `json:"handledDisputes90d"`
+	Username                         string  `json:"username"`
+	DisplayName                      string  `json:"displayName"`
+	AvatarURL                        *string `json:"avatarUrl"`
+	AvatarText                       string  `json:"avatarText"`
+	MerchantID                       string  `json:"merchantId"`
+	Identity                         string  `json:"identity"`
+	TrustLevel                       int     `json:"trustLevel"`
+	LinuxDoBound                     bool    `json:"linuxdoBound"`
+	OriginalPostBound                bool    `json:"originalPostBound"`
+	JoinedAt                         string  `json:"joinedAt"`
+	LastActiveAt                     string  `json:"lastActiveAt"`
+	LinuxDoURL                       string  `json:"linuxdoUrl"`
+	Completed30d                     int     `json:"completed30d"`
+	ResponseMedianMinutes            int     `json:"responseMedianMinutes"`
+	MerchantResponsibleCancellations int     `json:"merchantResponsibleCancellations"`
+	UnresolvedDisputes               int     `json:"unresolvedDisputes"`
+	HandledDisputes90d               int     `json:"handledDisputes90d"`
 }
 
 func (s *Server) handleMyProfile(w http.ResponseWriter, r *http.Request) {
@@ -423,6 +424,7 @@ func toPublicMerchantProfileDTO(value profile.PublicMerchantProfile) publicMerch
 	return publicMerchantProfileDTO{
 		Username:                         value.Slug,
 		DisplayName:                      value.DisplayName,
+		AvatarURL:                        stringPtrOrNil(value.AvatarURL),
 		AvatarText:                       value.AvatarText,
 		MerchantID:                       value.ID,
 		Identity:                         value.Identity,

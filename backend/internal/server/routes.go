@@ -142,6 +142,7 @@ func (s *Server) routes() {
 		r.Post("/owner/api-orders/{id}/confirm-payment", s.handleConfirmAPIOrderPayment)
 		r.Post("/owner/api-orders/{id}/report-payment-issue", s.handleReportAPIOrderPaymentIssue)
 		r.Post("/owner/api-orders/{id}/submit-delivery", s.handleSubmitAPIOrderDelivery)
+		r.Post("/owner/api-orders/{id}/dispute", s.handleOwnerOpenAPIOrderDispute)
 
 		r.Get("/admin/official-price-leads", s.handleAdminOfficialPriceLeads)
 		r.Get("/admin/official-price-leads/{id}", s.handleAdminOfficialPriceLead)

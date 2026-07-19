@@ -106,7 +106,7 @@ function sanitizeAccountRecoveryReturnTo(value: unknown): string | null
 
 - Unit tests for completion, outstanding requirements, allowed paths, and return target sanitization.
 - Type check: `pnpm --dir frontend exec vue-tsc -b --pretty false`.
-- Production build: `VITE_API_MODE=real pnpm --dir frontend exec vite build`.
+- Production build: real-mode `pnpm --dir frontend build` with the required Nuxt runtime API variables.
 - Browser smoke when available:
   - incomplete account opens a business route and reaches `/my/account`;
   - public allowed route is not redirected;
@@ -198,9 +198,9 @@ submitApiService({
 ### 6. Tests Required
 
 - `pnpm --dir frontend exec vue-tsc -b --pretty false`.
-- Real-mode build: `VITE_API_MODE=real pnpm --dir frontend exec vite build`.
+- Real-mode build: `pnpm --dir frontend build` with the required Nuxt runtime API variables.
 - Source scan product-boundary copy around the touched publish/My Center files for payment custody, credentials, API keys, tokens, cookies, sessions, payment codes, and escrow wording.
-- Browser or curl smoke must verify `/api-market/new` direct deep link renders the SPA and does not get swallowed by the Vite `/api/` proxy.
+- Browser or curl smoke must verify `/api-market/new` direct deep link renders the application and does not get swallowed by the Nuxt development `/api/` proxy.
 
 ### 7. Wrong vs Correct
 
@@ -306,7 +306,7 @@ POST /api/v1/owner/api-services/{id}/publish
 ### 6. Tests Required
 
 - `pnpm --dir frontend exec vue-tsc -b --pretty false`.
-- Real-mode build: `VITE_API_MODE=real pnpm --dir frontend exec vite build`.
+- Real-mode build: `pnpm --dir frontend build` with the required Nuxt runtime API variables.
 - Source scan on `ApiServicePublishPage.vue` for removed copy: `提交审核`, `保存草稿`, `等待管理员审核`, `仍需手动上线`.
 - Backend full tests when the real adapter sequence depends on existing owner action contracts: `cd backend && go test ./...`.
 
@@ -386,7 +386,7 @@ type BackendAPIService = {
 ### 6. Tests Required
 
 - `pnpm --dir frontend exec vue-tsc -b --pretty false`.
-- Real-mode build: `VITE_API_MODE=real pnpm --dir frontend exec vite build`.
+- Real-mode build: `pnpm --dir frontend build` with the required Nuxt runtime API variables.
 - Backend route tests or full suite to preserve the existing public 404-before-order-settings contract: `cd backend && go test ./...`.
 - Source scan for public detail links around API services when changing owner/admin/search/favorite surfaces.
 
@@ -480,7 +480,7 @@ Named SSE events `ready` and `invalidate` carry `{ schemaVersion: 1, topics: ['a
 - All-live invalidation list covers summary, notification, order, carpool, feedback, announcement, and admin prefixes.
 - Source/integration tests assert no hard-coded admin counts, undefined admin queues stay unbadged, bell has a separate full-center link, and AppShell no longer mounts full lists for counts.
 - Mutation tests assert notification/order/feedback/announcement success invalidates `navigation-badges`.
-- Full Vitest, Vue typecheck, and `VITE_API_MODE=real` production build.
+- Full Vitest, Nuxt typecheck, and real-mode Nuxt production build.
 
 ### 7. Wrong vs Correct
 
@@ -531,7 +531,7 @@ useRealtimeSync(isAuthenticated) // invalidates; REST recomputes
 - Mock facade test for pending-only cancellation and reason persistence.
 - `pnpm --dir frontend exec vitest run`.
 - `pnpm --dir frontend exec vue-tsc -b --pretty false`.
-- `VITE_API_MODE=real pnpm --dir frontend exec vite build`.
+- Real-mode `pnpm --dir frontend build` with the required Nuxt runtime API variables.
 
 ## Scenario: Decimal API Orders As The UI Source Of Truth
 
@@ -577,7 +577,7 @@ ApiOrder.requestedUsdAllowanceDecimal?: string
 
 - Decimal helper regression for `10 / 0.8 = 12.500000`, formatting, comparison, and addition.
 - Admin adapter regression proving a provided raw credential does not appear in the row JSON.
-- Full Vitest suite, `vue-tsc -b`, and `VITE_API_MODE=real vite build`.
+- Full Vitest suite, Nuxt typecheck, and real-mode Nuxt production build.
 
 ### 7. Wrong vs Correct
 

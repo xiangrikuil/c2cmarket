@@ -1,16 +1,20 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
-import { Activity, CircleDollarSign, CircleHelp, Code2, Filter, Search, ShieldCheck, Sparkles, Upload } from 'lucide-vue-next'
+import { Activity, CircleDollarSign, CircleHelp, Code2, Filter, Image, Link2, Search, ShieldCheck, ShoppingBag, Sparkles, Timer, Upload } from 'lucide-vue-next'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Card } from '@/components/ui/card'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import TablePagination from '@/components/market/TablePagination.vue'
+import ApiPackageCard from '@/components/api-market/ApiPackageCard.vue'
+import ApiMerchantAvatar from '@/components/api-market/ApiMerchantAvatar.vue'
+import ApiMerchantBadges from '@/components/api-market/ApiMerchantBadges.vue'
 import { usePagination } from '@/composables/usePagination'
+import { rankApiPackages } from '@/lib/apiPackageRecommendation'
+import { getApiServiceProductIconSrc, getProductIconSrc } from '@/lib/productCategoryIcon'
 import {
-  getApiMerchantAvatarText,
   getApiMerchantDisplayName,
   getApiMerchantProfileUrl,
   formatUsdQuota,
@@ -22,10 +26,12 @@ import {
   type Sub2ApiMarketFilters,
   type Sub2ApiMarketSort,
 } from '@/lib/api'
-import { useOtherApiMarketQuery, useSub2ApiMarketQuery } from '@/queries/useMarketQueries'
+import { useApiServices, useOtherApiMarketQuery, useSub2ApiMarketQuery } from '@/queries/useMarketQueries'
+import { useProductCategories } from '@/queries/useProductCatalogQueries'
+import { prefetchQueriesOnServer } from '@/queries/prefetchQueriesOnServer'
 
 type MerchantFilter = 'all' | 'personal_first' | 'personal' | 'api'
-type Panel = 'sub2api' | 'other'
+type Panel = 'sub2api' | 'packages' | 'other'
 type OnlineFilter = 'all' | 'online' | 'offline'
 type ImageFilter = 'all' | 'supported' | 'none'
 type BillingFilter = 'all' | ApiBillingMode
@@ -34,7 +40,8 @@ type DistributionFilter = OtherApiMarketFilters['distributionSystem']
 const route = useRoute()
 const router = useRouter()
 
-const activePanel = ref<Panel>(route.query.panel === 'other' ? 'other' : 'sub2api')
+const routePanel = (value: unknown): Panel => value === 'packages' ? 'packages' : value === 'other' ? 'other' : 'sub2api'
+const activePanel = ref<Panel>(routePanel(route.query.panel))
 
 const sub2Search = ref('')
 const sub2Model = ref('全部')
@@ -52,11 +59,13 @@ const otherBilling = ref<BillingFilter>('all')
 const otherMinimumPurchase = ref<MinimumPurchaseFilter>('all')
 const otherOnline = ref<OnlineFilter>('all')
 const otherSort = ref<OtherApiMarketSort>('recommended')
+const packageModel = ref('')
+const packageDuration = ref('')
 
 watch(
   () => route.query.panel,
   value => {
-    const next = value === 'other' ? 'other' : 'sub2api'
+    const next = routePanel(value)
     activePanel.value = next
     if (value !== next) {
       router.replace({ query: { ...route.query, panel: next } })
@@ -104,16 +113,38 @@ const otherFilters = computed<OtherApiMarketFilters>(() => ({
   sort: otherSort.value,
 }))
 
-const { data: sub2Data } = useSub2ApiMarketQuery(sub2Filters)
-const { data: otherData } = useOtherApiMarketQuery(otherFilters)
+const sub2MarketQuery = useSub2ApiMarketQuery(sub2Filters)
+const otherMarketQuery = useOtherApiMarketQuery(otherFilters)
+const allServicesQuery = useApiServices()
+const productCategoriesQuery = useProductCategories()
+const { data: sub2Data } = sub2MarketQuery
+const { data: otherData } = otherMarketQuery
+const { data: allServicesData } = allServicesQuery
+const { data: catalogCategories } = productCategoriesQuery
+prefetchQueriesOnServer(sub2MarketQuery, otherMarketQuery, allServicesQuery, productCategoriesQuery)
 
-const sub2Rows = computed(() => sub2Data.value ?? [])
-const otherRows = computed(() => otherData.value ?? [])
+const categoryIconByCode = computed(() => new Map((catalogCategories.value ?? []).map(category => [category.code, category.iconDataUrl])))
+
+const sub2Rows = computed(() => (sub2Data.value ?? []).filter(row => row.billingMode !== 'fixed_package'))
+const otherRows = computed(() => (otherData.value ?? []).filter(row => row.billingMode !== 'fixed_package'))
+const packageServices = computed(() => (allServicesData.value ?? []).filter(row => row.billingMode === 'fixed_package'))
+const packageModelOptions = computed(() => {
+  const options = new Map<string, string>()
+  for (const service of packageServices.value) {
+    for (const item of service.packages ?? []) {
+      if (!item.enabled || item.stockAvailable <= 0) continue
+      for (const model of item.models) options.set(model.modelCatalogId, model.modelName)
+    }
+  }
+  return [...options.entries()].map(([id, name]) => ({ id, name })).sort((left, right) => left.name.localeCompare(right.name))
+})
+const packageRows = computed(() => rankApiPackages(packageServices.value, packageModel.value, Number(packageDuration.value)))
+const packageReady = computed(() => Boolean(packageModel.value && packageDuration.value))
+const totalAvailablePackages = computed(() => packageServices.value.reduce((total, service) => total + (service.packages ?? []).filter(item => item.enabled && item.stockAvailable > 0).length, 0))
 const sub2Pagination = usePagination(sub2Rows)
 const otherPagination = usePagination(otherRows)
 
-const activeRows = computed(() => activePanel.value === 'sub2api' ? sub2Rows.value : otherRows.value)
-const activePanelLabel = computed(() => activePanel.value === 'sub2api' ? 'Sub2API 标准额度' : '其他 API 接入')
+const activePanelLabel = computed(() => activePanel.value === 'sub2api' ? 'Sub2API 美元额度' : activePanel.value === 'packages' ? '限时流量包' : '其他 API 接入')
 
 const sub2Chips = computed(() => {
   const chips: { label: string, reset: () => void }[] = []
@@ -146,7 +177,14 @@ const otherSignalStats = computed(() => {
   ]
 })
 
-const activeSignalStats = computed(() => activePanel.value === 'sub2api' ? sub2SignalStats.value : otherSignalStats.value)
+const packageSignalStats = computed(() => [
+  { label: '在售套餐', value: `${totalAvailablePackages.value}`, detail: `${packageServices.value.length} 个服务`, tone: 'primary' },
+  { label: '精确模型', value: `${packageModelOptions.value.length}`, detail: '先选择再推荐', tone: 'success' },
+  { label: '有效期', value: '1 / 3 / 7 / 30', detail: '交付后开始计算', tone: 'warning' },
+  { label: '当前结果', value: packageReady.value ? `${packageRows.value.length}` : '待选择', detail: '只保留综合推荐', tone: 'info' },
+])
+
+const activeSignalStats = computed(() => activePanel.value === 'sub2api' ? sub2SignalStats.value : activePanel.value === 'packages' ? packageSignalStats.value : otherSignalStats.value)
 
 function onlineCount(rows: ApiService[]) {
   return rows.filter(row => row.publiclyOrderable).length
@@ -215,14 +253,22 @@ function creditPriceLabel(row: ApiService) {
   return `¥${cnyPerUsdCredit.toFixed(2).replace(/\.?0+$/, '')} / $1`
 }
 
-function imagePricingLabel(row: ApiService) {
+function referenceMultiplierLabel(row: ApiService) {
+  const multiplier = row.creditPerCny > 0 ? 1 / row.creditPerCny : 0
+  return `${multiplier.toFixed(2)}x`
+}
+
+function imageCapabilityLabel(row: ApiService) {
   if (!row.imagePricing.supported) return '不支持'
-  const prices = [
-    row.imagePricing.oneKPriceUsd ? `1K $${row.imagePricing.oneKPriceUsd}` : '',
-    row.imagePricing.twoKPriceUsd ? `2K $${row.imagePricing.twoKPriceUsd}` : '',
-    row.imagePricing.fourKPriceUsd ? `4K $${row.imagePricing.fourKPriceUsd}` : '',
+  const capabilities = [
+    row.imagePricing.textToImage ? '文生图' : '',
+    row.imagePricing.imageToImage ? '图生图' : '',
   ].filter(Boolean)
-  return prices.length ? prices.join(' / ') : '支持'
+  return capabilities.length ? capabilities.join(' / ') : '支持'
+}
+
+function apiServiceIconSrc(row: ApiService) {
+  return getApiServiceProductIconSrc(row, categoryIconByCode.value)
 }
 
 function warrantyDisplay(value: string) {
@@ -231,8 +277,15 @@ function warrantyDisplay(value: string) {
     .replace(/支持撤销/g, '支持站外协商更换')
 }
 
-function visibleBadges(items: string[]) {
+function visibleBadges<T>(items: T[]) {
   return { shown: items.slice(0, 3), hidden: Math.max(0, items.length - 3) }
+}
+
+function modelMultiplierBadges(row: ApiService) {
+  return row.modelMultipliers.map(item => ({
+    label: `${item.model} · ${item.multiplier}`,
+    iconSrc: getProductIconSrc(item.model, categoryIconByCode.value),
+  }))
 }
 
 function statusLabel(row: Pick<ApiService, 'state' | 'online' | 'publiclyOrderable'>) {
@@ -294,6 +347,19 @@ function openService(event: MouseEvent | KeyboardEvent, row: ApiService) {
       <button
         type="button"
         class="api-market-panel-card"
+        :class="activePanel === 'packages' ? 'api-market-panel-card--active' : ''"
+        @click="setPanel('packages')"
+      >
+        <span class="api-market-panel-icon"><CircleDollarSign class="h-4 w-4" /></span>
+        <span class="min-w-0">
+          <span class="api-market-panel-title">限时流量包</span>
+          <span class="api-market-panel-desc">按精确模型和有效期比较综合性价比</span>
+        </span>
+        <Badge variant="trust">{{ totalAvailablePackages }} 个</Badge>
+      </button>
+      <button
+        type="button"
+        class="api-market-panel-card"
         :class="activePanel === 'sub2api' ? 'api-market-panel-card--active' : ''"
         @click="setPanel('sub2api')"
       >
@@ -325,18 +391,19 @@ function openService(event: MouseEvent | KeyboardEvent, row: ApiService) {
         <div class="min-w-0">
           <div class="flex flex-wrap items-center gap-2">
             <div class="font-semibold text-slate-950">Sub2API 默认优先</div>
-            <Badge variant="verified">固定 1.00x</Badge>
+            <Badge variant="verified">默认 1.00x</Badge>
             <Badge variant="secondary">可售美元额度</Badge>
           </div>
           <p class="mt-1 text-sm leading-6 text-muted-foreground">
-            文本与生图倍率固定 1.00x；买家主要比较美元额度售价、生图价格、商户承诺和履约记录。可售美元额度是商户声明的最大可购买额度参考，不由平台发放或托管；接入细节和用量核对由双方站外确认。
+            默认倍率为 1，商家可按实际上游规则填写 0.01 等倍率，并可为具体模型单独设置。买家主要比较美元额度售价、模型倍率、商户承诺和履约记录；接入细节和用量核对由双方站外确认。
           </p>
         </div>
       </div>
 
       <div class="api-market-filterbar c2c-filterbar rounded-lg border border-border bg-card px-3 py-3">
         <div class="api-market-source-tabs mb-3 flex flex-wrap gap-2 border-b border-border pb-3">
-          <Button size="sm" variant="default" @click="setPanel('sub2api')">Sub2API 标准额度</Button>
+          <Button size="sm" variant="default" @click="setPanel('sub2api')">Sub2API 美元额度</Button>
+          <Button size="sm" variant="outline" @click="setPanel('packages')">限时流量包</Button>
           <Button size="sm" variant="outline" @click="setPanel('other')">其他 API 接入</Button>
         </div>
         <div class="grid gap-2 xl:grid-cols-[minmax(220px,1fr)_120px_130px_110px_150px_auto_150px]">
@@ -425,7 +492,7 @@ function openService(event: MouseEvent | KeyboardEvent, row: ApiService) {
 
       <div v-if="sub2Rows.length === 0" class="rounded-xl border border-border bg-card p-8 text-center text-sm text-muted-foreground">当前筛选条件下暂无 Sub2API 标准额度服务。</div>
       <template v-else>
-        <div class="api-service-card-grid">
+        <div class="api-service-card-grid api-service-card-grid--wide">
           <Card
             v-for="row in sub2Pagination.paginatedRows.value"
             :key="row.id"
@@ -436,24 +503,27 @@ function openService(event: MouseEvent | KeyboardEvent, row: ApiService) {
             @keydown.enter="openService($event, row)"
           >
             <div class="api-service-card-head">
-              <span class="api-service-card-logo"><Code2 class="h-5 w-5" /></span>
+              <span class="api-service-card-logo">
+                <img v-if="apiServiceIconSrc(row)" :src="apiServiceIconSrc(row)!" :alt="`${row.title} 图标`" />
+                <Code2 v-else class="h-5 w-5" />
+              </span>
               <div class="min-w-0 flex-1">
-                <div class="flex flex-wrap items-center gap-2"><h2 class="truncate font-semibold text-slate-950">{{ row.title }}</h2><Badge variant="verified">标准额度</Badge></div>
-                <div class="mt-1 flex flex-wrap gap-1"><Badge v-for="m in visibleBadges(row.models).shown" :key="m" variant="model">{{ m }}</Badge><Badge v-if="visibleBadges(row.models).hidden" variant="model">+{{ visibleBadges(row.models).hidden }}</Badge></div>
+                <div class="flex flex-wrap items-center gap-2"><h2 class="truncate font-semibold text-slate-950">{{ row.title }}</h2><Badge variant="verified">标准额度</Badge><Badge variant="secondary">{{ billingModeLabel(row.billingMode) }}</Badge></div>
+                <div class="mt-1.5 flex flex-wrap gap-1.5"><Badge v-for="m in visibleBadges(modelMultiplierBadges(row)).shown" :key="m.label" variant="model"><img v-if="m.iconSrc" :src="m.iconSrc" alt="" class="api-model-badge-icon" />{{ m.label }}</Badge><Badge v-if="visibleBadges(modelMultiplierBadges(row)).hidden" variant="model">+{{ visibleBadges(modelMultiplierBadges(row)).hidden }}</Badge></div>
               </div>
-              <div class="shrink-0 text-right"><div class="api-service-card-price">{{ creditPriceLabel(row) }}</div><div class="mt-1 text-xs text-muted-foreground">可售 {{ formatUsdQuota(row.balance) }}</div></div>
+              <div class="api-service-card-price-block shrink-0 text-right"><div class="api-service-card-price">{{ creditPriceLabel(row) }} 额度</div><div class="api-service-card-multiplier">参考倍率 {{ referenceMultiplierLabel(row) }}</div><div class="api-service-card-stock">可售 {{ formatUsdQuota(row.balance) }}</div></div>
             </div>
-            <dl class="api-service-card-metrics">
-              <div><dt>接入方式</dt><dd>{{ accessConfirmationLabel(row) }}</dd></div>
-              <div><dt>生图价格</dt><dd>{{ imagePricingLabel(row) }}</dd></div>
-              <div><dt>最低订单</dt><dd>¥{{ row.minimumPurchaseCny }} 起</dd></div>
-              <div><dt>响应参考</dt><dd>{{ row.publiclyOrderable ? `约 ${row.responseMedianMinutes} 分钟` : '暂不可接单' }}</dd></div>
+            <dl class="api-service-card-metrics api-service-card-metrics--icon">
+              <div><dt><span class="api-service-card-metric-icon"><Link2 /></span><span>接入方式</span></dt><dd>{{ accessConfirmationLabel(row) }}</dd></div>
+              <div><dt><span class="api-service-card-metric-icon api-service-card-metric-icon--image"><Image /></span><span>生图能力</span></dt><dd>{{ imageCapabilityLabel(row) }}</dd></div>
+              <div><dt><span class="api-service-card-metric-icon api-service-card-metric-icon--order"><ShoppingBag /></span><span>最低订单</span></dt><dd>¥{{ row.minimumPurchaseCny }} 起</dd></div>
+              <div><dt><span class="api-service-card-metric-icon api-service-card-metric-icon--response"><Timer /></span><span>响应参考</span></dt><dd>{{ row.publiclyOrderable ? `约 ${row.responseMedianMinutes} 分钟` : '暂不可接单' }}</dd></div>
             </dl>
             <p class="api-service-card-note">{{ usageVerificationLabel() }} · {{ warrantyDisplay(row.warranty) }}</p>
             <div class="api-service-card-footer">
               <component :is="merchantProfileUrl(row) ? RouterLink : 'div'" :to="merchantProfileUrl(row) || undefined" class="api-market-merchant">
-                <span class="api-market-avatar">{{ getApiMerchantAvatarText(row) }}</span>
-                <span class="min-w-0"><span class="block truncate text-sm font-medium">{{ getApiMerchantDisplayName(row) }}</span><span class="mt-0.5 flex flex-wrap gap-1"><Badge variant="identity">{{ merchantIdentity(row) }}</Badge><Badge variant="trust">信任等级{{ row.trustLevel }}</Badge></span></span>
+                <ApiMerchantAvatar :service="row" class="api-market-avatar" />
+                <span class="min-w-0"><span class="flex flex-wrap items-center gap-1.5"><span class="truncate text-sm font-medium">{{ getApiMerchantDisplayName(row) }}</span><ApiMerchantBadges :service="row" /></span><span class="mt-1 flex flex-wrap gap-1"><Badge variant="identity">{{ merchantIdentity(row) }}</Badge><Badge variant="trust">信任等级{{ row.trustLevel }}</Badge><Badge variant="secondary">近 30 天 {{ row.completed30d }} 单</Badge></span></span>
               </component>
               <div class="text-right"><div class="flex items-center justify-end gap-1 text-sm" :class="statusLabel(row).textClass"><span class="h-2 w-2 rounded-full" :class="statusLabel(row).dot"></span>{{ statusLabel(row).text }}</div><div class="mt-1 text-xs font-medium text-primary">查看服务 →</div></div>
             </div>
@@ -464,6 +534,45 @@ function openService(event: MouseEvent | KeyboardEvent, row: ApiService) {
         </div>
       </template>
     </section>
+
+      <section v-else-if="activePanel === 'packages'" class="space-y-4">
+        <div class="api-market-filterbar rounded-lg border border-border bg-card px-3 py-3">
+          <div class="api-market-source-tabs mb-3 flex flex-wrap gap-2 border-b border-border pb-3">
+            <Button size="sm" variant="outline" @click="setPanel('sub2api')">Sub2API 美元额度</Button>
+            <Button size="sm" variant="default" @click="setPanel('packages')">限时流量包</Button>
+            <Button size="sm" variant="outline" @click="setPanel('other')">其他 API 接入</Button>
+          </div>
+          <div class="grid gap-3 md:grid-cols-2">
+            <label class="grid gap-1.5 text-xs font-medium text-muted-foreground">
+              精确模型
+              <select v-model="packageModel" class="api-market-select h-10">
+                <option value="">请选择模型</option>
+                <option v-for="model in packageModelOptions" :key="model.id" :value="model.id">{{ model.name }}</option>
+              </select>
+            </label>
+            <label class="grid gap-1.5 text-xs font-medium text-muted-foreground">
+              套餐有效期
+              <select v-model="packageDuration" class="api-market-select h-10">
+                <option value="">请选择有效期</option>
+                <option value="1">1 天</option>
+                <option value="3">3 天</option>
+                <option value="7">7 天</option>
+                <option value="30">30 天</option>
+              </select>
+            </label>
+          </div>
+          <p class="mt-3 border-t border-border pt-3 text-xs leading-5 text-muted-foreground">选择后按价值 60%、履约 25%、响应 10%、新鲜度 5% 计算综合推荐；倍率和价值成本按商家声明估算。</p>
+        </div>
+
+        <div v-if="!packageReady" class="rounded-lg border border-dashed border-border bg-card p-8 text-center">
+          <div class="text-sm font-semibold">先选择精确模型和有效期</div>
+          <p class="mt-2 text-xs text-muted-foreground">选择完成后才会展示可购买套餐和综合推荐顺序。</p>
+        </div>
+        <div v-else-if="packageRows.length === 0" class="rounded-lg border border-border bg-card p-8 text-center text-sm text-muted-foreground">当前模型和有效期下暂无有库存的套餐。</div>
+        <div v-else class="api-service-card-grid">
+          <ApiPackageCard v-for="(row, index) in packageRows" :key="row.package.id" :row="row" :rank="index + 1" :product-icon-src="apiServiceIconSrc(row.service)" />
+        </div>
+      </section>
 
       <section v-else class="space-y-4">
       <div class="api-market-notice">
@@ -480,7 +589,8 @@ function openService(event: MouseEvent | KeyboardEvent, row: ApiService) {
 
       <div class="api-market-filterbar c2c-filterbar rounded-lg border border-border bg-card px-3 py-3">
         <div class="api-market-source-tabs mb-3 flex flex-wrap gap-2 border-b border-border pb-3">
-          <Button size="sm" variant="outline" @click="setPanel('sub2api')">Sub2API 标准额度</Button>
+          <Button size="sm" variant="outline" @click="setPanel('sub2api')">Sub2API 美元额度</Button>
+          <Button size="sm" variant="outline" @click="setPanel('packages')">限时流量包</Button>
           <Button size="sm" variant="default" @click="setPanel('other')">其他 API 接入</Button>
         </div>
         <div class="grid gap-2 xl:grid-cols-[minmax(220px,1fr)_150px_150px_120px_auto_150px]">
@@ -560,7 +670,10 @@ function openService(event: MouseEvent | KeyboardEvent, row: ApiService) {
             @keydown.enter="openService($event, row)"
           >
             <div class="api-service-card-head">
-              <span class="api-service-card-logo api-service-card-logo--other"><Activity class="h-5 w-5" /></span>
+              <span class="api-service-card-logo api-service-card-logo--other">
+                <img v-if="apiServiceIconSrc(row)" :src="apiServiceIconSrc(row)!" :alt="`${row.title} 图标`" />
+                <Activity v-else class="h-5 w-5" />
+              </span>
               <div class="min-w-0 flex-1"><div class="flex flex-wrap items-center gap-2"><h2 class="truncate font-semibold text-slate-950">{{ row.title }}</h2><Badge variant="secondary">{{ row.delivery }}</Badge></div><p class="mt-1 truncate text-xs text-muted-foreground">{{ billingModeLabel(row.billingMode) }}</p></div>
               <div class="shrink-0 text-right"><div class="api-service-card-price">¥{{ row.minimumPurchaseCny }} 起</div><div class="mt-1 text-xs text-muted-foreground">最低订单</div></div>
             </div>
@@ -572,7 +685,7 @@ function openService(event: MouseEvent | KeyboardEvent, row: ApiService) {
             </dl>
             <p class="api-service-card-note">{{ usageVerificationLabel() }} · {{ warrantyDisplay(row.warranty) }}</p>
             <div class="api-service-card-footer">
-              <component :is="merchantProfileUrl(row) ? RouterLink : 'div'" :to="merchantProfileUrl(row) || undefined" class="api-market-merchant"><span class="api-market-avatar">{{ getApiMerchantAvatarText(row) }}</span><span class="min-w-0"><span class="block truncate text-sm font-medium">{{ getApiMerchantDisplayName(row) }}</span><span class="mt-0.5 flex flex-wrap gap-1"><Badge variant="identity">{{ merchantIdentity(row) }}</Badge><Badge variant="trust">信任等级{{ row.trustLevel }}</Badge></span></span></component>
+              <component :is="merchantProfileUrl(row) ? RouterLink : 'div'" :to="merchantProfileUrl(row) || undefined" class="api-market-merchant"><ApiMerchantAvatar :service="row" class="api-market-avatar" /><span class="min-w-0"><span class="flex flex-wrap items-center gap-1.5"><span class="truncate text-sm font-medium">{{ getApiMerchantDisplayName(row) }}</span><ApiMerchantBadges :service="row" /></span><span class="mt-1 flex flex-wrap gap-1"><Badge variant="identity">{{ merchantIdentity(row) }}</Badge><Badge variant="trust">信任等级{{ row.trustLevel }}</Badge></span></span></component>
               <div class="text-right"><div class="flex items-center justify-end gap-1 text-sm" :class="statusLabel(row).textClass"><span class="h-2 w-2 rounded-full" :class="statusLabel(row).dot"></span>{{ statusLabel(row).text }}</div><div class="mt-1 text-xs font-medium text-primary">查看服务 →</div></div>
             </div>
           </Card>

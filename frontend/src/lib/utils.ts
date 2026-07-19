@@ -11,5 +11,5 @@ export function money(value: number | string, prefix = '¥') {
 }
 
 export function wait<T>(data: T, ms = 160): Promise<T> {
-  return new Promise(resolve => window.setTimeout(() => resolve(data), ms))
+  return new Promise(resolve => setTimeout(() => resolve(data), ms))
 }

@@ -29,9 +29,12 @@ export type ApiServicePackage = {
   id: string
   name: string
   priceCny: number
-  durationDays: number | null
+  panelAllowance: number
+  durationDays: 1 | 3 | 7 | 30
+  stockTotal: number
   description: string
-  inventory: number | null
+  enabled: boolean
+  modelCatalogIds: string[]
 }
 
 export type ApiServicePaymentOption = {

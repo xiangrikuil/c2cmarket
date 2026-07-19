@@ -73,7 +73,7 @@ getApiMerchantVisibilityLabel(source)
 ### 6. Tests Required
 
 - Type check: `pnpm --dir frontend exec vue-tsc -b --pretty false`.
-- Production build: `pnpm --dir frontend exec vite build`.
+- Production build: real-mode `pnpm --dir frontend build` with the required Nuxt runtime API variables.
 - Source scans must verify no misleading official/guarantee wording is introduced.
 - Source scans must verify public page/component code uses helper functions for API merchant identity instead of direct profile links.
 
@@ -151,7 +151,7 @@ function buildPublicReviewFromApiIntent(intent: ApiPurchaseIntent): PublicReview
 ### 6. Tests Required
 
 - Type check: `pnpm --dir frontend exec vue-tsc -b --pretty false`.
-- Production build: `pnpm --dir frontend exec vite build`.
+- Production build: real-mode `pnpm --dir frontend build` with the required Nuxt runtime API variables.
 - Source scan for product-boundary wording.
 - Source scan for store-alias leakage patterns such as direct `/u/${service.merchantUsername}` in public pages/components.
 - Browser or SPA route smoke for `/search?q=<merchant>` and a public profile with derived reviews when browser tooling is available.
@@ -228,7 +228,7 @@ function createApiPurchaseIntent(payload: CreateApiPurchaseIntentPayload): Promi
 ### 6. Tests Required
 
 - Type check: `pnpm --dir frontend exec vue-tsc -b --pretty false`.
-- Production build: `pnpm --dir frontend exec vite build`.
+- Production build: real-mode `pnpm --dir frontend build` with the required Nuxt runtime API variables.
 - Product-boundary source scan for:
   - `购买后自动展示`
   - `购买后提供面板`
@@ -329,7 +329,7 @@ export type ApiOrderPaymentInstructions = {
 ### 6. Tests Required
 
 - Type check: `pnpm --dir frontend exec vue-tsc -b --pretty false`.
-- Real-mode build: `VITE_API_MODE=real pnpm --dir frontend exec vite build`.
+- Real-mode build: `pnpm --dir frontend build` with the required Nuxt runtime API variables.
 - Source scan for forbidden product wording outside the spec allowlist.
 - Adapter/review checks must verify `paymentQrCodeDataUrl` is mapped both in order-settings submit payloads and payment-instructions responses.
 
@@ -451,7 +451,7 @@ export function initialSidebarCollapsed(
 ### 6. Tests Required
 
 - Type check: `pnpm --dir frontend exec vue-tsc -b --pretty false`.
-- Production build: `pnpm --dir frontend exec vite build`.
+- Production build: real-mode `pnpm --dir frontend build` with the required Nuxt runtime API variables.
 - Product-boundary scan for official-price and API-intent wording drift.
 - Browser/DOM smoke:
   - sidebar has no manual role switch,

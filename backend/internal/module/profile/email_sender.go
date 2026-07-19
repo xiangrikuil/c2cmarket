@@ -15,6 +15,7 @@ import (
 	"net/http"
 	"net/mail"
 	"net/smtp"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -27,7 +28,7 @@ type EmailSender interface {
 	SendRegistrationSuccess(ctx context.Context, toEmail, username, displayName string, registeredAt time.Time) *domain.AppError
 	SendCarpoolApplicationCreated(ctx context.Context, toEmail, listingTitle, applicationID string, createdAt time.Time) *domain.AppError
 	SendCarpoolApplicationAccepted(ctx context.Context, toEmail, listingTitle, applicationID string, joinDeadline *time.Time) *domain.AppError
-	SendAPIPurchaseIntentCreated(ctx context.Context, toEmail, serviceTitle, intentID, buyerNote string, createdAt time.Time) *domain.AppError
+	SendAPIOrderCreated(ctx context.Context, toEmail, serviceTitle, orderID, amount, currency string, paymentExpiresAt, createdAt time.Time) *domain.AppError
 	ExposeDevCode() bool
 }
 
@@ -53,7 +54,7 @@ func (DevelopmentEmailSender) SendCarpoolApplicationAccepted(context.Context, st
 	return nil
 }
 
-func (DevelopmentEmailSender) SendAPIPurchaseIntentCreated(context.Context, string, string, string, string, time.Time) *domain.AppError {
+func (DevelopmentEmailSender) SendAPIOrderCreated(context.Context, string, string, string, string, string, time.Time, time.Time) *domain.AppError {
 	return nil
 }
 
@@ -62,12 +63,13 @@ func (DevelopmentEmailSender) ExposeDevCode() bool {
 }
 
 type SMTPConfig struct {
-	Host        string
-	Port        int
-	Username    string
-	Password    string
-	FromAddress string
-	FromName    string
+	Host           string
+	Port           int
+	Username       string
+	Password       string
+	FromAddress    string
+	FromName       string
+	FrontendOrigin string
 }
 
 type smtpClient interface {
@@ -82,15 +84,18 @@ type smtpClient interface {
 type smtpDialer func(ctx context.Context, host, address string) (smtpClient, error)
 
 type SMTPEmailSender struct {
-	host        string
-	port        int
-	username    string
-	password    string
-	fromAddress string
-	fromName    string
-	templates   *emailTemplates
-	dial        smtpDialer
+	host           string
+	port           int
+	username       string
+	password       string
+	fromAddress    string
+	fromName       string
+	frontendOrigin string
+	templates      *emailTemplates
+	dial           smtpDialer
 }
+
+var beijingEmailLocation = time.FixedZone("UTC+8", 8*60*60)
 
 func NewSMTPEmailSender(cfg SMTPConfig) (*SMTPEmailSender, error) {
 	cfg.Host = strings.TrimSpace(cfg.Host)
@@ -98,6 +103,7 @@ func NewSMTPEmailSender(cfg SMTPConfig) (*SMTPEmailSender, error) {
 	cfg.Password = strings.TrimSpace(cfg.Password)
 	cfg.FromAddress = strings.TrimSpace(cfg.FromAddress)
 	cfg.FromName = strings.TrimSpace(cfg.FromName)
+	cfg.FrontendOrigin = strings.TrimRight(strings.TrimSpace(cfg.FrontendOrigin), "/")
 	if cfg.Port == 0 {
 		cfg.Port = 465
 	}
@@ -110,6 +116,9 @@ func NewSMTPEmailSender(cfg SMTPConfig) (*SMTPEmailSender, error) {
 	if cfg.Host == "" || cfg.Username == "" || cfg.Password == "" {
 		return nil, fmt.Errorf("SMTP 配置不完整")
 	}
+	if cfg.FrontendOrigin == "" {
+		return nil, fmt.Errorf("FRONTEND_ORIGIN 配置不完整")
+	}
 	if cfg.Port != 465 {
 		return nil, fmt.Errorf("SMTP_PORT 必须为 465")
 	}
@@ -121,14 +130,15 @@ func NewSMTPEmailSender(cfg SMTPConfig) (*SMTPEmailSender, error) {
 		return nil, err
 	}
 	return &SMTPEmailSender{
-		host:        cfg.Host,
-		port:        cfg.Port,
-		username:    cfg.Username,
-		password:    cfg.Password,
-		fromAddress: cfg.FromAddress,
-		fromName:    cfg.FromName,
-		templates:   templates,
-		dial:        dialImplicitTLSSMTP,
+		host:           cfg.Host,
+		port:           cfg.Port,
+		username:       cfg.Username,
+		password:       cfg.Password,
+		fromAddress:    cfg.FromAddress,
+		fromName:       cfg.FromName,
+		frontendOrigin: cfg.FrontendOrigin,
+		templates:      templates,
+		dial:           dialImplicitTLSSMTP,
 	}, nil
 }
 
@@ -137,8 +147,7 @@ func (s *SMTPEmailSender) SendVerificationCode(ctx context.Context, toEmail, cod
 		return emailUnavailableError()
 	}
 	htmlBody, err := s.templates.renderVerification(verificationTemplateData{
-		Code:      strings.TrimSpace(code),
-		ExpiresAt: expiresAt.UTC().Format(time.RFC3339),
+		Code: strings.TrimSpace(code),
 	})
 	if err != nil {
 		return emailUnavailableError()
@@ -162,7 +171,8 @@ func (s *SMTPEmailSender) SendRegistrationSuccess(ctx context.Context, toEmail, 
 	htmlBody, err := s.templates.renderRegistration(registrationTemplateData{
 		DisplayName:  name,
 		Username:     strings.TrimSpace(username),
-		RegisteredAt: registeredAt.UTC().Format(time.RFC3339),
+		RegisteredAt: formatEmailTime(registeredAt),
+		ProfileURL:   s.frontendOrigin + "/my",
 	})
 	if err != nil {
 		return emailUnavailableError()
@@ -170,7 +180,7 @@ func (s *SMTPEmailSender) SendRegistrationSuccess(ctx context.Context, toEmail, 
 	return s.send(ctx, emailMessage{
 		To:       toEmail,
 		Subject:  "C2CMarket 注册成功",
-		TextBody: registrationTextBody(username, displayName, registeredAt),
+		TextBody: registrationTextBody(username, displayName, registeredAt, s.frontendOrigin+"/my"),
 		HTMLBody: htmlBody,
 	})
 }
@@ -184,10 +194,12 @@ func (s *SMTPEmailSender) SendCarpoolApplicationCreated(ctx context.Context, toE
 		title = "你的车源"
 	}
 	applicationID = strings.TrimSpace(applicationID)
+	detailURL := s.frontendOrigin + "/merchant/carpool-applications/" + url.PathEscape(applicationID)
 	htmlBody, err := s.templates.renderCarpoolApplication(carpoolApplicationTemplateData{
 		ListingTitle:  title,
-		ApplicationID: applicationID,
-		CreatedAt:     createdAt.UTC().Format(time.RFC3339),
+		ApplicationID: emailReferenceID(applicationID, "CA"),
+		CreatedAt:     formatEmailTime(createdAt),
+		DetailURL:     detailURL,
 	})
 	if err != nil {
 		return emailUnavailableError()
@@ -195,7 +207,7 @@ func (s *SMTPEmailSender) SendCarpoolApplicationCreated(ctx context.Context, toE
 	return s.send(ctx, emailMessage{
 		To:       toEmail,
 		Subject:  "C2CMarket 收到新的上车申请",
-		TextBody: carpoolApplicationTextBody(title, applicationID, createdAt),
+		TextBody: carpoolApplicationTextBody(title, emailReferenceID(applicationID, "CA"), createdAt, detailURL),
 		HTMLBody: htmlBody,
 	})
 }
@@ -210,10 +222,12 @@ func (s *SMTPEmailSender) SendCarpoolApplicationAccepted(ctx context.Context, to
 	}
 	applicationID = strings.TrimSpace(applicationID)
 	deadline := formatOptionalEmailTime(joinDeadline)
+	detailURL := s.frontendOrigin + "/my/rides/" + url.PathEscape(applicationID)
 	htmlBody, err := s.templates.renderCarpoolAcceptance(carpoolAcceptanceTemplateData{
 		ListingTitle:  title,
-		ApplicationID: applicationID,
+		ApplicationID: emailReferenceID(applicationID, "CA"),
 		JoinDeadline:  deadline,
+		DetailURL:     detailURL,
 	})
 	if err != nil {
 		return emailUnavailableError()
@@ -221,12 +235,12 @@ func (s *SMTPEmailSender) SendCarpoolApplicationAccepted(ctx context.Context, to
 	return s.send(ctx, emailMessage{
 		To:       toEmail,
 		Subject:  "C2CMarket 上车申请已被接受",
-		TextBody: carpoolAcceptanceTextBody(title, applicationID, deadline),
+		TextBody: carpoolAcceptanceTextBody(title, emailReferenceID(applicationID, "CA"), deadline, detailURL),
 		HTMLBody: htmlBody,
 	})
 }
 
-func (s *SMTPEmailSender) SendAPIPurchaseIntentCreated(ctx context.Context, toEmail, serviceTitle, intentID, buyerNote string, createdAt time.Time) *domain.AppError {
+func (s *SMTPEmailSender) SendAPIOrderCreated(ctx context.Context, toEmail, serviceTitle, orderID, amount, currency string, paymentExpiresAt, createdAt time.Time) *domain.AppError {
 	if s == nil {
 		return emailUnavailableError()
 	}
@@ -234,21 +248,23 @@ func (s *SMTPEmailSender) SendAPIPurchaseIntentCreated(ctx context.Context, toEm
 	if title == "" {
 		title = "你的 API 服务"
 	}
-	intentID = strings.TrimSpace(intentID)
-	note := emailSnippet(buyerNote, 120)
-	htmlBody, err := s.templates.renderAPIPurchaseIntent(apiPurchaseIntentTemplateData{
-		ServiceTitle: title,
-		IntentID:     intentID,
-		BuyerNote:    note,
-		CreatedAt:    createdAt.UTC().Format(time.RFC3339),
+	orderID = strings.TrimSpace(orderID)
+	detailURL := s.frontendOrigin + "/merchant/api-orders/" + url.PathEscape(orderID)
+	htmlBody, err := s.templates.renderAPIOrder(apiOrderTemplateData{
+		ServiceTitle:     title,
+		OrderID:          emailReferenceID(orderID, "AO"),
+		Amount:           formatEmailAmount(amount, currency),
+		PaymentExpiresAt: formatEmailTime(paymentExpiresAt),
+		CreatedAt:        formatEmailTime(createdAt),
+		DetailURL:        detailURL,
 	})
 	if err != nil {
 		return emailUnavailableError()
 	}
 	return s.send(ctx, emailMessage{
 		To:       toEmail,
-		Subject:  "C2CMarket 收到新的 API 购买意向",
-		TextBody: apiPurchaseIntentTextBody(title, intentID, note, createdAt),
+		Subject:  "你有一笔新的 API 订单｜C2CMarket",
+		TextBody: apiOrderTextBody(title, emailReferenceID(orderID, "AO"), formatEmailAmount(amount, currency), paymentExpiresAt, createdAt, detailURL),
 		HTMLBody: htmlBody,
 	})
 }
@@ -376,7 +392,7 @@ type emailTemplates struct {
 	registration       *template.Template
 	carpoolApplication *template.Template
 	carpoolAcceptance  *template.Template
-	apiPurchaseIntent  *template.Template
+	apiOrder           *template.Template
 }
 
 func newEmailTemplates() (*emailTemplates, error) {
@@ -396,7 +412,7 @@ func newEmailTemplates() (*emailTemplates, error) {
 	if err != nil {
 		return nil, err
 	}
-	apiPurchaseIntent, err := template.New("api_purchase_intent").Parse(apiPurchaseIntentHTMLTemplate)
+	apiOrder, err := template.New("api_order").Parse(apiOrderHTMLTemplate)
 	if err != nil {
 		return nil, err
 	}
@@ -405,38 +421,42 @@ func newEmailTemplates() (*emailTemplates, error) {
 		registration:       registration,
 		carpoolApplication: carpoolApplication,
 		carpoolAcceptance:  carpoolAcceptance,
-		apiPurchaseIntent:  apiPurchaseIntent,
+		apiOrder:           apiOrder,
 	}, nil
 }
 
 type verificationTemplateData struct {
-	Code      string
-	ExpiresAt string
+	Code string
 }
 
 type registrationTemplateData struct {
 	DisplayName  string
 	Username     string
 	RegisteredAt string
+	ProfileURL   string
 }
 
 type carpoolApplicationTemplateData struct {
 	ListingTitle  string
 	ApplicationID string
 	CreatedAt     string
+	DetailURL     string
 }
 
 type carpoolAcceptanceTemplateData struct {
 	ListingTitle  string
 	ApplicationID string
 	JoinDeadline  string
+	DetailURL     string
 }
 
-type apiPurchaseIntentTemplateData struct {
-	ServiceTitle string
-	IntentID     string
-	BuyerNote    string
-	CreatedAt    string
+type apiOrderTemplateData struct {
+	ServiceTitle     string
+	OrderID          string
+	Amount           string
+	PaymentExpiresAt string
+	CreatedAt        string
+	DetailURL        string
 }
 
 func (t *emailTemplates) renderVerification(data verificationTemplateData) (string, error) {
@@ -463,17 +483,17 @@ func (t *emailTemplates) renderCarpoolAcceptance(data carpoolAcceptanceTemplateD
 	return buf.String(), err
 }
 
-func (t *emailTemplates) renderAPIPurchaseIntent(data apiPurchaseIntentTemplateData) (string, error) {
+func (t *emailTemplates) renderAPIOrder(data apiOrderTemplateData) (string, error) {
 	var buf bytes.Buffer
-	err := t.apiPurchaseIntent.Execute(&buf, data)
+	err := t.apiOrder.Execute(&buf, data)
 	return buf.String(), err
 }
 
-func verificationTextBody(code string, expiresAt time.Time) string {
-	return fmt.Sprintf("你的 C2CMarket 邮箱验证码是：%s\n\n验证码 15 分钟内有效，将在 %s 过期。若非本人操作，请忽略本邮件。", strings.TrimSpace(code), expiresAt.UTC().Format(time.RFC3339))
+func verificationTextBody(code string, _ time.Time) string {
+	return fmt.Sprintf("你正在进行 C2CMarket 邮箱验证，本次验证码为：\n\n%s\n\n验证码在 15 分钟内有效，请勿将验证码告知他人。C2CMarket 工作人员不会向你索要验证码。\n\n若非本人操作，请忽略本邮件。%s", strings.TrimSpace(code), systemEmailFooterText)
 }
 
-func registrationTextBody(username, displayName string, registeredAt time.Time) string {
+func registrationTextBody(username, displayName string, registeredAt time.Time, profileURL string) string {
 	name := strings.TrimSpace(displayName)
 	if name == "" {
 		name = strings.TrimSpace(username)
@@ -481,18 +501,22 @@ func registrationTextBody(username, displayName string, registeredAt time.Time) 
 	if name == "" {
 		name = "C2CMarket 用户"
 	}
-	return fmt.Sprintf("你好，%s：\n\n你的 C2CMarket 账号已注册成功。\n注册时间：%s\n\n若非本人操作，请忽略本邮件。", name, registeredAt.UTC().Format(time.RFC3339))
+	usernameLine := ""
+	if strings.TrimSpace(username) != "" {
+		usernameLine = "\n账号：@" + strings.TrimSpace(username)
+	}
+	return fmt.Sprintf("你好，%s：\n\n你的 C2CMarket 账号已注册成功。%s\n注册时间：%s\n\n你现在可以前往个人中心，完善资料与常用联系方式。\n个人中心：%s\n\n若非本人操作，请及时检查账号状态。%s", name, usernameLine, formatEmailTime(registeredAt), strings.TrimSpace(profileURL), systemEmailFooterText)
 }
 
-func carpoolApplicationTextBody(listingTitle, applicationID string, createdAt time.Time) string {
+func carpoolApplicationTextBody(listingTitle, applicationID string, createdAt time.Time, detailURL string) string {
 	title := strings.TrimSpace(listingTitle)
 	if title == "" {
 		title = "你的车源"
 	}
-	return fmt.Sprintf("你的车源「%s」收到新的上车申请。\n申请 ID：%s\n提交时间：%s\n\n请登录 C2CMarket，在商户工作台的订单管理中查看申请详情。", title, strings.TrimSpace(applicationID), createdAt.UTC().Format(time.RFC3339))
+	return fmt.Sprintf("你的车源「%s」收到一条新的上车申请。\n申请编号：%s\n提交时间：%s\n\n请前往经营中心 → 上车申请，查看申请详情并及时处理。\n查看上车申请：%s\n\n上车申请仅表示买家希望加入，接受后才会进入确认上车阶段。%s", title, strings.TrimSpace(applicationID), formatEmailTime(createdAt), strings.TrimSpace(detailURL), systemEmailFooterText)
 }
 
-func carpoolAcceptanceTextBody(listingTitle, applicationID, joinDeadline string) string {
+func carpoolAcceptanceTextBody(listingTitle, applicationID, joinDeadline, detailURL string) string {
 	title := strings.TrimSpace(listingTitle)
 	if title == "" {
 		title = "你的上车申请"
@@ -501,38 +525,59 @@ func carpoolAcceptanceTextBody(listingTitle, applicationID, joinDeadline string)
 	if strings.TrimSpace(joinDeadline) != "" {
 		deadlineLine = "\n确认截止时间：" + strings.TrimSpace(joinDeadline)
 	}
-	return fmt.Sprintf("你的上车申请「%s」已被车主接受。\n申请 ID：%s%s\n\n请登录 C2CMarket 查看联系方式，并在联系窗口内确认加入。", title, strings.TrimSpace(applicationID), deadlineLine)
+	return fmt.Sprintf("你的上车申请「%s」已被车主接受。\n申请编号：%s%s\n\n请查看车主联系方式，并在截止时间前完成“确认上车”。\n查看申请详情：%s%s", title, strings.TrimSpace(applicationID), deadlineLine, strings.TrimSpace(detailURL), systemEmailFooterText)
 }
 
-func apiPurchaseIntentTextBody(serviceTitle, intentID, buyerNote string, createdAt time.Time) string {
+func apiOrderTextBody(serviceTitle, orderID, amount string, paymentExpiresAt, createdAt time.Time, detailURL string) string {
 	title := strings.TrimSpace(serviceTitle)
 	if title == "" {
 		title = "你的 API 服务"
 	}
-	noteLine := ""
-	if strings.TrimSpace(buyerNote) != "" {
-		noteLine = "\n买家备注：" + strings.TrimSpace(buyerNote)
+	return fmt.Sprintf("你的 API 服务「%s」产生一笔新订单。\n订单状态：待买家付款\n订单编号：%s\n订单金额：%s\n创建时间：%s\n付款截止时间：%s\n\n请打开订单详情，等待买家付款，并在收款账户实际到账后确认收款。\n查看订单：%s\n\n温馨提示：订单已创建不代表款项已到账，请以你的收款账户实际到账为准。%s", title, strings.TrimSpace(orderID), strings.TrimSpace(amount), formatEmailTime(createdAt), formatEmailTime(paymentExpiresAt), strings.TrimSpace(detailURL), systemEmailFooterText)
+}
+
+func emailReferenceID(value, prefix string) string {
+	var compact strings.Builder
+	for _, char := range strings.TrimSpace(value) {
+		if char >= 'a' && char <= 'z' || char >= 'A' && char <= 'Z' || char >= '0' && char <= '9' {
+			compact.WriteRune(char)
+		}
 	}
-	return fmt.Sprintf("你的 API 服务「%s」收到新的购买意向。\n意向 ID：%s\n提交时间：%s%s\n\n请登录 C2CMarket，在商户工作台查看详情并站外联系。", title, strings.TrimSpace(intentID), createdAt.UTC().Format(time.RFC3339), noteLine)
+	suffix := compact.String()
+	if len(suffix) > 6 {
+		suffix = suffix[len(suffix)-6:]
+	}
+	if suffix == "" {
+		suffix = strings.TrimSpace(value)
+		if len(suffix) > 6 {
+			suffix = suffix[len(suffix)-6:]
+		}
+	}
+	suffix = strings.ToUpper(suffix)
+	if strings.TrimSpace(prefix) == "" {
+		return suffix
+	}
+	return strings.ToUpper(strings.TrimSpace(prefix)) + "-" + suffix
+}
+
+func formatEmailAmount(amount, currency string) string {
+	amount = strings.TrimSpace(amount)
+	currency = strings.ToUpper(strings.TrimSpace(currency))
+	if currency == "CNY" || currency == "" {
+		return "¥" + amount
+	}
+	return amount + " " + currency
+}
+
+func formatEmailTime(value time.Time) string {
+	return value.In(beijingEmailLocation).Format("2006-01-02 15:04:05") + "（北京时间）"
 }
 
 func formatOptionalEmailTime(value *time.Time) string {
 	if value == nil || value.IsZero() {
 		return ""
 	}
-	return value.UTC().Format(time.RFC3339)
-}
-
-func emailSnippet(value string, maxRunes int) string {
-	value = strings.Join(strings.Fields(strings.TrimSpace(value)), " ")
-	if value == "" || maxRunes <= 0 {
-		return ""
-	}
-	runes := []rune(value)
-	if len(runes) <= maxRunes {
-		return value
-	}
-	return string(runes[:maxRunes]) + "..."
+	return formatEmailTime(*value)
 }
 
 func emailUnavailableError() *domain.AppError {
@@ -543,12 +588,16 @@ func emailSendFailedError() *domain.AppError {
 	return domain.NewError(http.StatusBadGateway, domain.CodeInternalError, "Email send failed", "邮件发送失败，请稍后重试。")
 }
 
-const verificationHTMLTemplate = `<p>你的 C2CMarket 邮箱验证码是：</p><p style="font-size:24px;font-weight:700;letter-spacing:4px">{{.Code}}</p><p>验证码 15 分钟内有效，将在 {{.ExpiresAt}} 过期。若非本人操作，请忽略本邮件。</p>`
+const systemEmailFooterText = "\n\n此邮件由系统自动发送，请勿直接回复。"
 
-const registrationHTMLTemplate = `<p>你好，{{if .DisplayName}}{{.DisplayName}}{{else}}C2CMarket 用户{{end}}：</p><p>你的 C2CMarket 账号已注册成功。</p><p>注册时间：{{.RegisteredAt}}</p><p>若非本人操作，请忽略本邮件。</p>`
+const systemEmailFooterHTML = `<p style="margin-top:24px;color:#64748b;font-size:12px">此邮件由系统自动发送，请勿直接回复。</p>`
 
-const carpoolApplicationHTMLTemplate = `<p>你的车源「{{.ListingTitle}}」收到新的上车申请。</p><p>申请 ID：{{.ApplicationID}}</p><p>提交时间：{{.CreatedAt}}</p><p>请登录 C2CMarket，在商户工作台的订单管理中查看申请详情。</p>`
+const verificationHTMLTemplate = `<p>你正在进行 C2CMarket 邮箱验证，本次验证码为：</p><p style="font-size:24px;font-weight:700;letter-spacing:4px">{{.Code}}</p><p>验证码在 <strong>15 分钟内有效</strong>，请勿将验证码告知他人。C2CMarket 工作人员不会向你索要验证码。</p><p>若非本人操作，请忽略本邮件。</p>` + systemEmailFooterHTML
 
-const carpoolAcceptanceHTMLTemplate = `<p>你的上车申请「{{.ListingTitle}}」已被车主接受。</p><p>申请 ID：{{.ApplicationID}}</p>{{if .JoinDeadline}}<p>确认截止时间：{{.JoinDeadline}}</p>{{end}}<p>请登录 C2CMarket 查看联系方式，并在联系窗口内确认加入。</p>`
+const registrationHTMLTemplate = `<p>你好，{{if .DisplayName}}{{.DisplayName}}{{else}}C2CMarket 用户{{end}}：</p><p>你的 C2CMarket 账号已注册成功。</p>{{if .Username}}<p>账号：@{{.Username}}</p>{{end}}<p>注册时间：{{.RegisteredAt}}</p><p>你现在可以前往个人中心，完善资料与常用联系方式。</p><p><a href="{{.ProfileURL}}" style="display:inline-block;padding:10px 18px;border-radius:6px;background:#2563eb;color:#ffffff;text-decoration:none;">前往个人中心</a></p><p>若非本人操作，请及时检查账号状态。</p>` + systemEmailFooterHTML
 
-const apiPurchaseIntentHTMLTemplate = `<p>你的 API 服务「{{.ServiceTitle}}」收到新的购买意向。</p><p>意向 ID：{{.IntentID}}</p><p>提交时间：{{.CreatedAt}}</p>{{if .BuyerNote}}<p>买家备注：{{.BuyerNote}}</p>{{end}}<p>请登录 C2CMarket，在商户工作台查看详情并站外联系。</p>`
+const carpoolApplicationHTMLTemplate = `<p>你的车源「{{.ListingTitle}}」收到一条新的上车申请。</p><p>申请编号：{{.ApplicationID}}</p><p>提交时间：{{.CreatedAt}}</p><p>请前往经营中心 → 上车申请，查看申请详情并及时处理。</p><p><a href="{{.DetailURL}}" style="display:inline-block;padding:10px 18px;border-radius:6px;background:#2563eb;color:#ffffff;text-decoration:none;">查看上车申请</a></p><p>上车申请仅表示买家希望加入，接受后才会进入确认上车阶段。</p>` + systemEmailFooterHTML
+
+const carpoolAcceptanceHTMLTemplate = `<p>你的上车申请「{{.ListingTitle}}」已被车主接受。</p><p>申请编号：{{.ApplicationID}}</p>{{if .JoinDeadline}}<p>确认截止时间：{{.JoinDeadline}}</p>{{end}}<p>请查看车主联系方式，并在截止时间前完成“确认上车”。</p><p><a href="{{.DetailURL}}" style="display:inline-block;padding:10px 18px;border-radius:6px;background:#2563eb;color:#ffffff;text-decoration:none;">查看申请详情</a></p>` + systemEmailFooterHTML
+
+const apiOrderHTMLTemplate = `<p>你的 API 服务「{{.ServiceTitle}}」产生一笔新订单。</p><p>订单状态：<strong>待买家付款</strong></p><p>订单编号：{{.OrderID}}</p><p>订单金额：{{.Amount}}</p><p>创建时间：{{.CreatedAt}}</p><p>付款截止时间：{{.PaymentExpiresAt}}</p><p>请打开订单详情，等待买家付款，并在收款账户实际到账后确认收款。</p><p><a href="{{.DetailURL}}" style="display:inline-block;padding:10px 18px;border-radius:6px;background:#2563eb;color:#ffffff;text-decoration:none;">查看 API 订单</a></p><p><strong>温馨提示：</strong>订单已创建不代表款项已到账，请以你的收款账户实际到账为准。</p>` + systemEmailFooterHTML

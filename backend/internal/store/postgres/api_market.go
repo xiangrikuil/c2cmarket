@@ -85,6 +85,17 @@ func publicAPIServiceOrderablePredicate(alias string) string {
 		  AND %[1]s.payment_window_minutes BETWEEN 3 AND 15
 		  AND (%[1]s.billing_mode <> 'metered_usd_quota' OR %[1]s.available_usd_allowance > 0)
 		  AND (%[1]s.billing_mode <> 'metered_usd_quota' OR %[1]s.quota_expires_at > now())
+		  AND (%[1]s.billing_mode <> 'fixed_package' OR EXISTS (
+		    SELECT 1
+		    FROM api_service_packages package_row
+		    WHERE package_row.api_service_id = %[1]s.id
+		      AND package_row.enabled = true
+		      AND package_row.stock_available > 0
+		      AND EXISTS (
+		        SELECT 1 FROM api_service_package_models package_model
+		        WHERE package_model.api_service_package_id = package_row.id
+		      )
+		  ))
 		  AND EXISTS (
 		    SELECT 1
 		    FROM api_service_payment_options po
@@ -156,6 +167,10 @@ func (s *Store) UpdateAPIService(ctx context.Context, input apimarket.UpdateServ
 	service.PaymentOptions = current.PaymentOptions
 	if appErr := upsertAPIServiceInTx(ctx, tx, service); appErr != nil {
 		return apimarket.Service{}, appErr
+	}
+	service, err = s.getAPIService(ctx, tx, service.ID, false)
+	if err != nil {
+		return apimarket.Service{}, internalStoreError()
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return apimarket.Service{}, internalStoreError()
@@ -486,8 +501,26 @@ func (s *Store) updateAPIPurchaseIntentWithIdempotency(ctx context.Context, entr
 
 const apiServiceColumns = `
 	id::text, owner_user_id::text, COALESCE(merchant_profile_id::text, ''), merchant_identity_mode,
-	COALESCE((SELECT mp.display_name FROM merchant_profiles mp WHERE mp.id = api_services.merchant_profile_id AND mp.owner_user_id = api_services.owner_user_id), ''),
-	COALESCE((SELECT mp.slug FROM merchant_profiles mp WHERE mp.id = api_services.merchant_profile_id AND mp.owner_user_id = api_services.owner_user_id), ''),
+	COALESCE(CASE WHEN merchant_identity_mode = 'store_alias'
+		THEN (SELECT mp.display_name FROM merchant_profiles mp WHERE mp.id = api_services.merchant_profile_id AND mp.owner_user_id = api_services.owner_user_id)
+		ELSE (SELECT u.display_name FROM users u WHERE u.id = api_services.owner_user_id)
+	END, ''),
+	COALESCE(CASE WHEN merchant_identity_mode = 'store_alias'
+		THEN (SELECT mp.slug FROM merchant_profiles mp WHERE mp.id = api_services.merchant_profile_id AND mp.owner_user_id = api_services.owner_user_id)
+		ELSE (SELECT u.username FROM users u WHERE u.id = api_services.owner_user_id)
+	END, ''),
+	COALESCE(CASE WHEN merchant_identity_mode = 'store_alias'
+		THEN (SELECT mp.avatar_url FROM merchant_profiles mp WHERE mp.id = api_services.merchant_profile_id AND mp.owner_user_id = api_services.owner_user_id)
+		ELSE (
+			SELECT CASE WHEN u.avatar_mode = 'custom_url'
+				THEN u.custom_avatar_url
+				ELSE COALESCE(l.avatar_url, u.avatar_url)
+			END
+			FROM users u
+			LEFT JOIN linux_do_bindings l ON l.user_id = u.id
+			WHERE u.id = api_services.owner_user_id
+		)
+	END, ''),
 	owner_contact_method_id::text, title, short_description, COALESCE(source_url, ''), distribution_system, billing_mode,
 	COALESCE(declared_cny_per_usd_allowance::text, ''), COALESCE(declared_max_usd_allowance_per_intent::text, ''),
 	COALESCE(available_usd_allowance::text, ''),
@@ -690,8 +723,9 @@ func (s *Store) loadAPIServiceChildren(ctx context.Context, q queryer, service *
 	}
 
 	packageRows, err := queryRows(ctx, q, `
-		SELECT id::text, api_service_id::text, name, price_cny::text, duration_days,
-		       description, enabled, sort_order, created_at, updated_at
+		SELECT id::text, api_service_id::text, name, price_cny::text, panel_allowance::text,
+		       duration_days, stock_total, stock_available, description, enabled, sort_order,
+		       created_at, updated_at
 		FROM api_service_packages
 		WHERE api_service_id = $1
 		ORDER BY sort_order ASC, created_at ASC
@@ -708,7 +742,10 @@ func (s *Store) loadAPIServiceChildren(ctx context.Context, q queryer, service *
 			&pack.APIServiceID,
 			&pack.Name,
 			&pack.PriceCNY,
+			&pack.PanelAllowance,
 			&pack.DurationDays,
+			&pack.StockTotal,
+			&pack.StockAvailable,
 			&pack.Description,
 			&pack.Enabled,
 			&pack.SortOrder,
@@ -721,6 +758,49 @@ func (s *Store) loadAPIServiceChildren(ctx context.Context, q queryer, service *
 	}
 	if err := packageRows.Err(); err != nil {
 		return internalStoreError()
+	}
+	packageByID := make(map[string]*apimarket.ServicePackage, len(service.Packages))
+	for i := range service.Packages {
+		packageByID[service.Packages[i].ID] = &service.Packages[i]
+	}
+	packageModelRows, err := queryRows(ctx, q, `
+		SELECT relation.api_service_package_id::text, model.id::text,
+		       model.model_catalog_id::text, COALESCE(model.model_price_version_id::text, ''),
+		       model.model_name_snapshot, model.provider_snapshot, model.merchant_multiplier::text
+		FROM api_service_package_models relation
+		JOIN api_service_models model
+		  ON model.api_service_id = relation.api_service_id
+		 AND model.id = relation.api_service_model_id
+		WHERE relation.api_service_id = $1
+		ORDER BY relation.created_at ASC, model.created_at ASC
+	`, service.ID)
+	if err != nil {
+		return internalStoreError()
+	}
+	defer packageModelRows.Close()
+	for packageModelRows.Next() {
+		var packageID string
+		var model apimarket.ServicePackageModel
+		if err := packageModelRows.Scan(
+			&packageID,
+			&model.ServiceModelID,
+			&model.ModelCatalogID,
+			&model.ModelPriceVersionID,
+			&model.ModelNameSnapshot,
+			&model.ProviderSnapshot,
+			&model.MerchantMultiplier,
+		); err != nil {
+			return internalStoreError()
+		}
+		if pack := packageByID[packageID]; pack != nil {
+			pack.Models = append(pack.Models, model)
+		}
+	}
+	if err := packageModelRows.Err(); err != nil {
+		return internalStoreError()
+	}
+	if err := loadAPIServiceRecommendationStats(ctx, q, service); err != nil {
+		return err
 	}
 
 	paymentRows, err := queryRows(ctx, q, `
@@ -815,7 +895,7 @@ func (s *Store) createAPIPurchaseIntentInTx(ctx context.Context, tx pgx.Tx, inpu
 	if appErr := insertAPIPurchaseIntentInTx(ctx, tx, intent); appErr != nil {
 		return apiintent.Intent{}, appErr
 	}
-	if appErr := insertAPIPurchaseIntentEventAndTargetNotification(ctx, tx, intent, intent.BuyerUserID, intent.OwnerUserID, "api_purchase_intent.created", "收到新的购买意向", "买家已提交购买意向，请查看详情并站外联系。", input.RequestID, now); appErr != nil {
+	if appErr := insertAPIPurchaseIntentEventAndTargetNotification(ctx, tx, intent, intent.BuyerUserID, intent.OwnerUserID, "api_purchase_intent.created", "收到新的购买意向", "买家已提交购买意向，请查看详情并及时沟通。", input.RequestID, now); appErr != nil {
 		return apiintent.Intent{}, appErr
 	}
 	intent, appErr = s.withAPIPurchaseIntentMerchantContact(ctx, tx, intent)
@@ -958,12 +1038,6 @@ func upsertAPIServiceInTx(ctx context.Context, tx pgx.Tx, service apimarket.Serv
 	if _, err := tx.Exec(ctx, `DELETE FROM api_service_access_modes WHERE api_service_id = $1`, service.ID); err != nil {
 		return internalStoreError()
 	}
-	if _, err := tx.Exec(ctx, `DELETE FROM api_service_models WHERE api_service_id = $1`, service.ID); err != nil {
-		return internalStoreError()
-	}
-	if _, err := tx.Exec(ctx, `DELETE FROM api_service_packages WHERE api_service_id = $1`, service.ID); err != nil {
-		return internalStoreError()
-	}
 	if _, err := tx.Exec(ctx, `DELETE FROM api_service_payment_options WHERE api_service_id = $1`, service.ID); err != nil {
 		return internalStoreError()
 	}
@@ -984,12 +1058,25 @@ func upsertAPIServiceInTx(ctx context.Context, tx pgx.Tx, service apimarket.Serv
 				effective_input_price_per_million, effective_cached_input_price_per_million,
 				effective_output_price_per_million, enabled, created_at, updated_at
 			)
-			VALUES (
+				VALUES (
 				$1, $2, $3, $4, $5,
 				$6, $7, $8, $9,
 				$10, $11,
 				$12, $13, $14, $15
-			)
+				)
+				ON CONFLICT (id) DO UPDATE
+				SET distribution_system = EXCLUDED.distribution_system,
+				    model_catalog_id = EXCLUDED.model_catalog_id,
+				    model_price_version_id = EXCLUDED.model_price_version_id,
+				    model_name_snapshot = EXCLUDED.model_name_snapshot,
+				    provider_snapshot = EXCLUDED.provider_snapshot,
+				    capabilities_snapshot = EXCLUDED.capabilities_snapshot,
+				    merchant_multiplier = EXCLUDED.merchant_multiplier,
+				    effective_input_price_per_million = EXCLUDED.effective_input_price_per_million,
+				    effective_cached_input_price_per_million = EXCLUDED.effective_cached_input_price_per_million,
+				    effective_output_price_per_million = EXCLUDED.effective_output_price_per_million,
+				    enabled = EXCLUDED.enabled,
+				    updated_at = EXCLUDED.updated_at
 		`, model.ID, service.ID, service.DistributionSystem, model.ModelCatalogID, nullUUID(model.ModelPriceVersionID),
 			model.ModelNameSnapshot, model.ProviderSnapshot, model.CapabilitiesSnapshot, model.MerchantMultiplier,
 			nullNumeric(model.EffectiveInputPricePerMillion), nullNumeric(model.EffectiveCachedInputPricePerMillion),
@@ -999,16 +1086,51 @@ func upsertAPIServiceInTx(ctx context.Context, tx pgx.Tx, service apimarket.Serv
 		}
 	}
 	for _, pack := range service.Packages {
-		_, err = tx.Exec(ctx, `
+		commandTag, execErr := tx.Exec(ctx, `
 			INSERT INTO api_service_packages (
-				id, api_service_id, name, price_cny, duration_days, description,
-				enabled, sort_order, created_at, updated_at
-			)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-		`, pack.ID, service.ID, pack.Name, pack.PriceCNY, pack.DurationDays, pack.Description,
-			pack.Enabled, pack.SortOrder, pack.CreatedAt, pack.UpdatedAt)
-		if err != nil {
+					id, api_service_id, name, price_cny, panel_allowance, duration_days,
+					stock_total, stock_available, description, enabled, sort_order,
+					created_at, updated_at
+				)
+				VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+				ON CONFLICT (id) DO UPDATE
+				SET name = EXCLUDED.name,
+				    price_cny = EXCLUDED.price_cny,
+				    panel_allowance = EXCLUDED.panel_allowance,
+				    duration_days = EXCLUDED.duration_days,
+				    stock_available = api_service_packages.stock_available
+				      + EXCLUDED.stock_total - api_service_packages.stock_total,
+				    stock_total = EXCLUDED.stock_total,
+				    description = EXCLUDED.description,
+				    enabled = EXCLUDED.enabled,
+				    sort_order = EXCLUDED.sort_order,
+				    updated_at = EXCLUDED.updated_at
+				WHERE api_service_packages.api_service_id = EXCLUDED.api_service_id
+				  AND api_service_packages.stock_available
+				      + EXCLUDED.stock_total - api_service_packages.stock_total >= 0
+			`, pack.ID, service.ID, pack.Name, pack.PriceCNY, pack.PanelAllowance, pack.DurationDays,
+			pack.StockTotal, pack.StockAvailable, pack.Description, pack.Enabled, pack.SortOrder,
+			pack.CreatedAt, pack.UpdatedAt)
+		if execErr != nil {
 			return internalStoreError()
+		}
+		if commandTag.RowsAffected() != 1 {
+			return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Package stock invalid", "套餐总库存不能低于已预占或已售数量。", "packages", "stock_below_committed", "套餐总库存不能低于已预占或已售数量。")
+		}
+	}
+	if _, err := tx.Exec(ctx, `DELETE FROM api_service_package_models WHERE api_service_id = $1`, service.ID); err != nil {
+		return internalStoreError()
+	}
+	for _, pack := range service.Packages {
+		for _, model := range pack.Models {
+			if _, err := tx.Exec(ctx, `
+				INSERT INTO api_service_package_models (
+					api_service_package_id, api_service_model_id, api_service_id, created_at
+				)
+				VALUES ($1, $2, $3, $4)
+			`, pack.ID, model.ServiceModelID, service.ID, service.UpdatedAt); err != nil {
+				return internalStoreError()
+			}
 		}
 	}
 	for _, option := range service.PaymentOptions {
@@ -1023,6 +1145,50 @@ func upsertAPIServiceInTx(ctx context.Context, tx pgx.Tx, service apimarket.Serv
 		if err != nil {
 			return internalStoreError()
 		}
+	}
+	return nil
+}
+
+func loadAPIServiceRecommendationStats(ctx context.Context, q queryer, service *apimarket.Service) *domain.AppError {
+	var responseMedian float64
+	err := q.QueryRow(ctx, `
+		WITH order_responses AS (
+			SELECT orders.id,
+			       orders.status,
+			       orders.dispute_status,
+			       orders.completed_at,
+			       orders.created_at,
+			       MIN(events.created_at) FILTER (
+			         WHERE events.event_type IN (
+			           'api_order.payment_confirmed',
+			           'api_order.payment_issue_reported',
+			           'api_order.delivery_submitted'
+			         )
+			       ) AS first_seller_response_at
+			FROM api_orders orders
+			LEFT JOIN api_order_events events ON events.api_order_id = orders.id
+			WHERE orders.api_service_id = $1
+			GROUP BY orders.id
+		)
+		SELECT COUNT(*) FILTER (
+		         WHERE status = 'completed' AND completed_at >= now() - interval '30 days'
+		       )::int,
+		       COUNT(*) FILTER (WHERE dispute_status = 'open')::int,
+		       COALESCE(
+		         percentile_cont(0.5) WITHIN GROUP (
+		           ORDER BY EXTRACT(EPOCH FROM (first_seller_response_at - created_at)) / 60.0
+		         ) FILTER (WHERE first_seller_response_at IS NOT NULL),
+		         -1
+		       )::double precision
+		FROM order_responses
+	`, service.ID).Scan(&service.Completed30d, &service.UnresolvedDisputes, &responseMedian)
+	if err != nil {
+		return internalStoreError()
+	}
+	if responseMedian >= 0 {
+		service.ResponseMedianMinutes = &responseMedian
+	} else {
+		service.ResponseMedianMinutes = nil
 	}
 	return nil
 }
@@ -1614,6 +1780,7 @@ func scanAPIService(row scanner, service *apimarket.Service) error {
 		&service.MerchantIdentityMode,
 		&service.MerchantDisplayName,
 		&service.MerchantProfileSlug,
+		&service.MerchantAvatarURL,
 		&service.OwnerContactMethodID,
 		&service.Title,
 		&service.ShortDescription,

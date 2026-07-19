@@ -14,11 +14,16 @@ import EmptyState from '@/components/market/EmptyState.vue'
 import SkeletonTable from '@/components/market/SkeletonTable.vue'
 import { usePagination } from '@/composables/usePagination'
 import { useCarpoolProductCatalog, useCarpools, useDemands } from '@/queries/useMarketQueries'
+import { prefetchQueriesOnServer } from '@/queries/prefetchQueriesOnServer'
 
 const router = useRouter()
-const { data: productCatalog } = useCarpoolProductCatalog()
-const { data: carpools } = useCarpools()
-const { data, isLoading } = useDemands()
+const productCatalogQuery = useCarpoolProductCatalog()
+const carpoolsQuery = useCarpools()
+const demandsQuery = useDemands()
+const { data: productCatalog } = productCatalogQuery
+const { data: carpools } = carpoolsQuery
+const { data, isLoading } = demandsQuery
+prefetchQueriesOnServer(productCatalogQuery, carpoolsQuery, demandsQuery)
 const query = ref('')
 const selected = ref({ 产品: '全部', 状态: '全部' })
 

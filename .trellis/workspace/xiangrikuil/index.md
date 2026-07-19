@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 6
-- **Last Active**: 2026-07-09
+- **Total Sessions**: 11
+- **Last Active**: 2026-07-18
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~238 | Active |
+| `journal-1.md` | ~415 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,11 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 11 | 2026-07-18 | GHCR backend CI/CD | `75e0339` | `codex/staging-marketplace-consistency` |
+| 10 | 2026-07-17 | VPS 直连生产与 Staging 迁移 | `c95e91b` | `codex/staging-marketplace-consistency` |
+| 9 | 2026-07-17 | Staging marketplace consistency PR | `ff8dba1` | `codex/staging-marketplace-consistency` |
+| 8 | 2026-07-15 | Cloudflare deployment and marketplace consistency delivery | `39672e0`, `82fc0e7` | `codex/complete-ui-business-consistency` |
+| 7 | 2026-07-15 | Cloudflare Pages pnpm workspace fix | `9f4039c` | `codex/complete-ui-business-consistency` |
 | 6 | 2026-07-09 | API order delivery credential flow | `672554c` | `main` |
 | 5 | 2026-07-06 | OAuth account recovery setup | `95dff64` | `main` |
 | 4 | 2026-07-06 | Report dispute moderation v0.4.1 | `a27d8c7` | `main` |
