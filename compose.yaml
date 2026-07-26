@@ -35,8 +35,13 @@ services:
     restart: "no"
 
   backend:
+    image: ${BACKEND_IMAGE:-c2cmarket-backend:local}
     build:
       context: ./backend
+      args:
+        APP_VERSION: ${APP_VERSION:-development}
+        GIT_COMMIT: ${GIT_COMMIT:-unknown}
+        BUILD_TIME: ${BUILD_TIME:-1970-01-01T00:00:00Z}
     profiles:
       - app
     restart: unless-stopped

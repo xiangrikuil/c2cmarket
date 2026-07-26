@@ -1,0 +1,6 @@
+/output export-ignore
+/.codex export-ignore
+/.trellis/tasks export-ignore
+/.trellis/workspace export-ignore
+/verification.md export-ignore
+/frontend/.env.development export-ignore

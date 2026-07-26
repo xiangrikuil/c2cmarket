@@ -9,6 +9,7 @@ import (
 func (s *Server) routes() {
 	s.mux.Get("/health", s.handleHealth)
 	s.mux.Get("/readyz", s.handleReadiness)
+	s.mux.Get("/version", s.handleVersion)
 
 	s.mux.Route("/api/v1", func(r chi.Router) {
 		if s.enableDevAuth {

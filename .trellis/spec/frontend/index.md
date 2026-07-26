@@ -23,6 +23,7 @@ This directory contains the current project conventions for the Vue 3 + Vite fro
 | [State Management](./state-management.md) | Local state, global state, server state | Active |
 | [Quality Guidelines](./quality-guidelines.md) | Code standards, forbidden patterns | Active |
 | [Type Safety](./type-safety.md) | Type patterns, validation | Active |
+| [Reproducible Release And Contract Drift](../backend/release-contract.md) | OpenAPI generator configuration and generated type drift contract | Active |
 
 ---
 
@@ -39,8 +40,9 @@ Before editing frontend code, read:
 7. [State Management](./state-management.md)
 8. [Quality Guidelines](./quality-guidelines.md)
 9. [Type Safety](./type-safety.md)
-10. [C2CMarket Product Context](../guides/product-context.md)
-11. [Maintainability Contract](../guides/maintainability-contract.md)
+10. [Reproducible Release And Contract Drift](../backend/release-contract.md) when touching OpenAPI or generated API types
+11. [C2CMarket Product Context](../guides/product-context.md)
+12. [Maintainability Contract](../guides/maintainability-contract.md)
 
 ## Quality Check
 

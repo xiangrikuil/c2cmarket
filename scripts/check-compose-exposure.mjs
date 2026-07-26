@@ -10,6 +10,8 @@ const variants = [
     name: 'development',
     args: ['--env-file', '.env.example', '-f', 'compose.yaml'],
     requirePrivatePostgres: false,
+    requireImageOnly: false,
+    expectedImage: 'c2cmarket-backend:local',
   },
   {
     name: 'production',
@@ -22,6 +24,8 @@ const variants = [
       'compose.prod.yaml',
     ],
     requirePrivatePostgres: true,
+    requireImageOnly: true,
+    expectedImage: 'c2cmarket-backend:CHANGE_ME_RELEASE_VERSION',
   },
   {
     name: 'staging',
@@ -34,6 +38,8 @@ const variants = [
       'compose.prod.yaml',
     ],
     requirePrivatePostgres: true,
+    requireImageOnly: true,
+    expectedImage: 'c2cmarket-backend:CHANGE_ME_STAGING_RELEASE_VERSION',
   },
 ]
 
@@ -76,6 +82,19 @@ for (const variant of variants) {
         `${variant.name}: backend port ${port.published ?? port.target} binds ${port.host_ip || 'all interfaces'}`,
       )
     }
+  }
+
+  const backend = config.services?.backend
+  if (backend?.image !== variant.expectedImage) {
+    failures.push(
+      `${variant.name}: backend image is ${backend?.image || 'missing'}, want ${variant.expectedImage}`,
+    )
+  }
+  if (variant.requireImageOnly && backend?.build) {
+    failures.push(`${variant.name}: backend must not retain a working-tree build context`)
+  }
+  if (!variant.requireImageOnly && !backend?.build) {
+    failures.push(`${variant.name}: development backend must retain its local build context`)
   }
 
   if (variant.requirePrivatePostgres) {

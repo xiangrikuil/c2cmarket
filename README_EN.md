@@ -102,6 +102,7 @@ The backend listens on `http://127.0.0.1:8080` by default:
 ```text
 GET /health
 GET /readyz
+GET /version
 ```
 
 ### 4. Start the frontend
@@ -130,7 +131,9 @@ pnpm --dir frontend typecheck
 VITE_API_MODE=real pnpm --dir frontend build
 pnpm --dir frontend test
 node scripts/check-openapi-routes.mjs
+node scripts/check-openapi-types.mjs
 node scripts/check-migrations-doc.mjs
+node scripts/check-compose-exposure.mjs
 ```
 
 With the backend running, execute the end-to-end smoke suite when the change affects business workflows:
@@ -148,6 +151,10 @@ API_BASE_URL=http://127.0.0.1:8080 node scripts/run-smokes.mjs
 - Deployment guide: [`docs/ops/deployment-runbook.md`](./docs/ops/deployment-runbook.md)
 
 Production requires real OAuth, independent encryption keys, an HTTPS frontend origin, PostgreSQL, and valid SMTP configuration. Do not reuse development defaults from the example files.
+Build production backend images from a fixed commit in a clean worktree with
+`scripts/build-backend-image.sh <git-ref> <version> <image>`, then set that
+exact image as `BACKEND_IMAGE`. Production Compose never builds from the
+current worktree.
 
 ## Product boundaries and disclaimer
 

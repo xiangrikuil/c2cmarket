@@ -103,6 +103,7 @@ docker compose --profile app up -d --build backend
 ```text
 GET /health
 GET /readyz
+GET /version
 ```
 
 ### 4. 启动前端
@@ -131,7 +132,9 @@ pnpm --dir frontend typecheck
 VITE_API_MODE=real pnpm --dir frontend build
 pnpm --dir frontend test
 node scripts/check-openapi-routes.mjs
+node scripts/check-openapi-types.mjs
 node scripts/check-migrations-doc.mjs
+node scripts/check-compose-exposure.mjs
 ```
 
 需要验证完整业务流程时，可在后端运行后执行：
@@ -149,6 +152,9 @@ API_BASE_URL=http://127.0.0.1:8080 node scripts/run-smokes.mjs
 - 部署手册：[`docs/ops/deployment-runbook.md`](./docs/ops/deployment-runbook.md)
 
 生产环境必须使用真实 OAuth、独立的加密密钥、HTTPS 前端来源、PostgreSQL 和有效 SMTP 配置。请勿直接复用示例文件中的本地默认值。
+生产后端镜像必须从干净工作区中的固定 commit 构建，脚本用法为
+`scripts/build-backend-image.sh <git-ref> <version> <image>`。把同一 image
+写入 `BACKEND_IMAGE`；生产 Compose 不会从当前工作区构建镜像。
 
 ## 产品边界与免责声明
 

@@ -47,10 +47,16 @@ docker compose --profile app up -d backend
 
 ```bash
 cp .env.production.example .env.production
+scripts/build-backend-image.sh HEAD 0.1.0 c2cmarket-backend:0.1.0
+# 将 .env.production 中的 BACKEND_IMAGE 改为 c2cmarket-backend:0.1.0
 docker compose --env-file .env.production -f compose.yaml -f compose.prod.yaml config
-docker compose --env-file .env.production -f compose.yaml -f compose.prod.yaml --profile app build backend
-docker compose --env-file .env.production -f compose.yaml -f compose.prod.yaml --profile app up -d backend
+docker compose --env-file .env.production -f compose.yaml -f compose.prod.yaml --profile app up --no-build -d backend
+curl -fsS http://127.0.0.1:8080/version
 ```
+
+release build 脚本要求工作区无 staged、unstaged 或未跟踪改动，并只使用
+`HEAD` 解析出的 commit archive 作为 Docker context。生产 Compose 要求
+`BACKEND_IMAGE`，不会从当前工作区执行 build。
 
 完整部署和回滚流程见 `../docs/ops/deployment-runbook.md`。
 
@@ -122,6 +128,7 @@ C2C_TEST_DATABASE_URL='postgres://c2c_market:c2c_market_dev_password@127.0.0.1:5
 契约文件：
 
 - OpenAPI: `../docs/openapi/c2c-market-api-v1.yaml`
+- Generated OpenAPI types: `../frontend/src/api/generated/openapi/`
 - PostgreSQL migrations: `migrations/*.up.sql` / `migrations/*.down.sql`
 
 当前可运行切片的用户、OAuth 身份绑定、会话、linux.do 绑定摘要、幂等、产品目录、官网价格记录维护、公开价格读取、联系窗口、拼车车源、账期/退出/使用规则、上车申请、确认加入、成员关系、完成确认、买家退出、车主移除、API 服务发布审核、API 购买意向、API order 付款/交付、个人资料、联系方式、公开主页、商户资料、公告、需求池、收藏、评价、举报、纠纷、申诉、通知中心和全局搜索均已接 PostgreSQL。管理员新增、编辑和下架官网价格记录会在同一个 PostgreSQL transaction 中写入兼容 lead、price record、domain event、admin audit log、notification 以及 completed idempotency response cache；公开价格列表和详情只返回 active 记录。拼车车主接受申请会在同一个 PostgreSQL transaction 中锁申请/车源、创建 30 分钟联系窗口、冻结双方联系方式版本、写 domain event、通知和 completed idempotency response cache；应用层会在成功接受后向已验证邮箱的买家发送 best-effort 邮件提醒。API 购买意向创建会在同一个 transaction 中锁 public API service、冻结买家和商户联系方式版本、写 intent/event/notification、写 buyer 查看 merchant 联系方式访问日志，并完成只含资源标识的幂等记录；成功响应直接返回冻结商户联系方式且设置 `Cache-Control: no-store`，应用层会在成功创建后向已验证邮箱的商户发送 best-effort 邮件提醒。买家详情读取 merchant 联系方式、owner 详情读取 buyer 联系方式也会写入 `api_purchase_intent_contact_access_logs`，字段仅包括 intent、viewer、被查看侧、request id 和访问时间，不记录联系方式明文。API order 创建、买家提交付款、商户确认收款、商户一次性交付凭证、买家确认完成、纠纷登记和付款超时都围绕 `api_orders` 状态机执行；交付凭证明文只在参与方详情/action 响应返回，并使用 `Cache-Control: private, no-store`。需求池创建直接公开，关闭、重开和 admin 下架/恢复动作复用 session、CSRF、Idempotency-Key、If-Match 和 ETag，不包含支付、托管、担保或凭据交付流程。收藏 `PUT` 复用 session、CSRF 和 Idempotency-Key，只允许公开可见车源或 API 服务作为目标；收藏和取消收藏不改变目标资源状态。评价通过统一交易路由复用 session、CSRF 和 Idempotency-Key，只允许已完成拼车 membership 或 API order 的买卖双方在 14 天内各评价一次；`POST` 创建 sealed 评价，公开前 `PUT` 可修改，双方提交或截止时公开并冻结。公开评价可由管理员使用 `If-Match` 执行留痕移除，但冻结内容不能改写。举报创建、纠纷处理和申诉处理复用 session、CSRF、Idempotency-Key、If-Match 和 ETag；公开纠纷摘要只返回脱敏 summary/result，不暴露 reporter、admin、联系方式、内部备注或原始证据。通知中心只提供当前用户业务通知 list、unread count、read one 和 read all；公告 receipt 是 per-user 状态，不改变公告源内容，也不和业务通知 inbox 混用。公告 PostgreSQL admin update 已修复，`announcement-smoke.mjs` 在 PostgreSQL 路径覆盖创建、编辑、发布、下线、复制、审计和 receipt 版本失效。搜索只读公开可见摘要，不新增数据库表；migration `000024` 启用 `pg_trgm` 并为高频公开搜索字段加 GIN trigram index。migration 是数据库契约基线，后续任务继续补齐部署运维。

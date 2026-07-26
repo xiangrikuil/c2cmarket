@@ -4,6 +4,8 @@ services:
     ports: !reset []
 
   backend:
+    build: !reset null
+    image: ${BACKEND_IMAGE:?BACKEND_IMAGE is required}
     profiles:
       - app
     restart: always

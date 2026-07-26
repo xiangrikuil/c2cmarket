@@ -25,6 +25,7 @@ This directory contains guidelines for backend development. Fill in each file wi
 | [Quality Guidelines](./quality-guidelines.md) | Code standards, forbidden patterns | Active |
 | [Logging Guidelines](./logging-guidelines.md) | Structured logging and secret handling rules | Active |
 | [Safe Outbound HTTP](./outbound-http.md) | Public HTTPS validation, DNS rebinding defense, bounded clients, and secret-safe errors | Active |
+| [Reproducible Release And Contract Drift](./release-contract.md) | Fixed-commit archives/images, build metadata, image-only production Compose, and generated OpenAPI types | Active |
 
 ---
 
@@ -45,8 +46,9 @@ Before editing backend code, read:
 9. [Quality Guidelines](./quality-guidelines.md)
 10. [Logging Guidelines](./logging-guidelines.md)
 11. [Safe Outbound HTTP](./outbound-http.md) when adding or changing outbound HTTP requests whose destination is stored, configured, or otherwise variable
-12. [C2CMarket Product Context](../guides/product-context.md)
-13. [Maintainability Contract](../guides/maintainability-contract.md)
+12. [Reproducible Release And Contract Drift](./release-contract.md) when touching source packaging, Docker/Compose releases, build metadata, `/version`, OpenAPI, or generated API types
+13. [C2CMarket Product Context](../guides/product-context.md)
+14. [Maintainability Contract](../guides/maintainability-contract.md)
 
 ## Quality Check
 

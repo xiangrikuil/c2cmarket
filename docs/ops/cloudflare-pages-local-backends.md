@@ -24,6 +24,7 @@ FRONTEND_ORIGIN=https://c2cmarket.shop
 ALLOWED_ORIGINS=https://c2cmarket.shop
 OAUTH_REDIRECT_URL=https://api.c2cmarket.shop/api/v1/auth/oauth/callback
 BACKEND_PORT=8080
+BACKEND_IMAGE=c2cmarket-backend:<release-version>
 TRUST_X_FORWARDED_FOR=true
 TRUSTED_PROXIES=<observed immediate peer IP or smallest CIDR>
 
@@ -32,12 +33,13 @@ FRONTEND_ORIGIN=https://staging.c2cmarket.shop
 ALLOWED_ORIGINS=https://staging.c2cmarket.shop
 OAUTH_REDIRECT_URL=https://api-staging.c2cmarket.shop/api/v1/auth/oauth/callback
 BACKEND_PORT=8081
+BACKEND_IMAGE=c2cmarket-backend:<release-version>
 MAIL_FROM_NAME=C2CMarket Staging
 TRUST_X_FORWARDED_FOR=true
 TRUSTED_PROXIES=<observed immediate peer IP or smallest CIDR>
 ```
 
-Both backends deliberately run with `APP_ENV=production`, real OAuth, DirectMail, secure cookies, and development authentication disabled. `.env.production` and `.env.staging` are ignored by Git. If the immediate peer is not known yet, temporarily set `TRUST_X_FORWARDED_FOR=false` and leave `TRUSTED_PROXIES` empty; after the observation in step 3, replace them with the final values shown above before routine startup.
+Both backends deliberately run with `APP_ENV=production`, real OAuth, DirectMail, secure cookies, and development authentication disabled. `.env.production` and `.env.staging` are ignored by Git. Build the backend image from a fixed commit in a clean worktree with `scripts/build-backend-image.sh <git-ref> <version> <image>`, then set the exact resulting image as `BACKEND_IMAGE` in both files. If the immediate peer is not known yet, temporarily set `TRUST_X_FORWARDED_FOR=false` and leave `TRUSTED_PROXIES` empty; after the observation in step 3, replace them with the final values shown above before routine startup.
 
 ## 2. Start the two isolated backend stacks
 
@@ -46,7 +48,7 @@ Production:
 ```bash
 docker compose -p c2c-prod --env-file .env.production -f compose.yaml -f compose.prod.yaml up -d postgres
 docker compose -p c2c-prod --env-file .env.production -f compose.yaml -f compose.prod.yaml --profile migrate run --rm migrate
-docker compose -p c2c-prod --env-file .env.production -f compose.yaml -f compose.prod.yaml --profile app up -d --build backend
+docker compose -p c2c-prod --env-file .env.production -f compose.yaml -f compose.prod.yaml --profile app up --no-build -d backend
 ```
 
 Staging:
@@ -54,7 +56,7 @@ Staging:
 ```bash
 docker compose -p c2c-staging --env-file .env.staging -f compose.yaml -f compose.prod.yaml up -d postgres
 docker compose -p c2c-staging --env-file .env.staging -f compose.yaml -f compose.prod.yaml --profile migrate run --rm migrate
-docker compose -p c2c-staging --env-file .env.staging -f compose.yaml -f compose.prod.yaml --profile app up -d --build backend
+docker compose -p c2c-staging --env-file .env.staging -f compose.yaml -f compose.prod.yaml --profile app up --no-build -d backend
 ```
 
 On a first deploy where the immediate peer is still unknown, run the database
@@ -72,8 +74,10 @@ Verify locally:
 ```bash
 curl -fsS http://127.0.0.1:8080/health
 curl -fsS http://127.0.0.1:8080/readyz
+curl -fsS http://127.0.0.1:8080/version
 curl -fsS http://127.0.0.1:8081/health
 curl -fsS http://127.0.0.1:8081/readyz
+curl -fsS http://127.0.0.1:8081/version
 docker compose -p c2c-prod --env-file .env.production -f compose.yaml -f compose.prod.yaml ps
 docker compose -p c2c-staging --env-file .env.staging -f compose.yaml -f compose.prod.yaml ps
 ```
@@ -224,19 +228,34 @@ Replace every `/Users/CHANGE_ME` path before loading the job. Inspect `~/Library
 
 ## 8. Release and rollback
 
-For a regular backend release, rebuild and migrate staging first, validate OAuth and core flows, then repeat against production. A backend restart may cause the accepted 1–3 minute maintenance window.
+For a regular backend release, build one fixed-commit image from a clean
+worktree, set staging `BACKEND_IMAGE`, migrate and validate staging, then set
+production `BACKEND_IMAGE` to the same tested image and repeat. A backend
+restart may cause the accepted 1–3 minute maintenance window.
 
 ```bash
-docker compose -p c2c-staging --env-file .env.staging -f compose.yaml -f compose.prod.yaml --profile app build backend
+RELEASE_REF=v0.1.0
+RELEASE_VERSION=0.1.0
+RELEASE_IMAGE=c2cmarket-backend:0.1.0
+scripts/package-source.sh "${RELEASE_REF}"
+scripts/build-backend-image.sh \
+  "${RELEASE_REF}" "${RELEASE_VERSION}" "${RELEASE_IMAGE}"
+# Set BACKEND_IMAGE in .env.staging to ${RELEASE_IMAGE}.
 docker compose -p c2c-staging --env-file .env.staging -f compose.yaml -f compose.prod.yaml --profile migrate run --rm migrate
-docker compose -p c2c-staging --env-file .env.staging -f compose.yaml -f compose.prod.yaml --profile app up -d backend
+docker compose -p c2c-staging --env-file .env.staging -f compose.yaml -f compose.prod.yaml --profile app up --no-build -d backend
+curl -fsS http://127.0.0.1:8081/version
 
-docker compose -p c2c-prod --env-file .env.production -f compose.yaml -f compose.prod.yaml --profile app build backend
+# After staging validation, set BACKEND_IMAGE in .env.production to ${RELEASE_IMAGE}.
 docker compose -p c2c-prod --env-file .env.production -f compose.yaml -f compose.prod.yaml --profile migrate run --rm migrate
-docker compose -p c2c-prod --env-file .env.production -f compose.yaml -f compose.prod.yaml --profile app up -d backend
+docker compose -p c2c-prod --env-file .env.production -f compose.yaml -f compose.prod.yaml --profile app up --no-build -d backend
+curl -fsS http://127.0.0.1:8080/version
 ```
 
-Before a migration-bearing production release, run and verify the R2 backup. Roll back application source/image independently for each Compose project. Review migration down scripts before any database rollback.
+Before a migration-bearing production release, run and verify the R2 backup.
+Compare `/version` with the image OCI labels before promotion. Roll back by
+restoring the previous immutable `BACKEND_IMAGE` independently for each Compose
+project and running `up --no-build`; review migration down scripts before any
+database rollback.
 
 ## 9. Troubleshooting order
 
