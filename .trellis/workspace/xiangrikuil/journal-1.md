@@ -511,3 +511,44 @@ Added HMAC email challenges, finite idempotency generations, migration 63, and b
 ### Next Steps
 
 - None - task complete
+
+
+## Session 14: 完成上线前安全加固与发布门禁
+
+**Date**: 2026-07-27
+**Task**: 完成上线前安全加固与发布门禁
+**Package**: frontend
+**Branch**: `codex/prelaunch-identity-hardening`
+
+### Summary
+
+完成运行时加固、受保护指标、生产响应头、精确 SHA CI 与安全扫描、运维文档、规范同步、DOMPurify 补丁升级、P2 可行性结论和本地全量发布验证。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `68b6344` | (see git log) |
+| `8038a23` | (see git log) |
+| `74c3f41` | (see git log) |
+| `32e91d4` | (see git log) |
+| `1d60853` | (see git log) |
+| `36e37a8` | (see git log) |
+| `e9f83a5` | (see git log) |
+| `c942c6a` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
