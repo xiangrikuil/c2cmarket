@@ -357,3 +357,42 @@ Updated OAuth smoke behavior, synchronized identity and bootstrap contracts, doc
 ### Next Steps
 
 - Continue the parent prelaunch hardening task with outbound SSRF protection.
+
+
+## Session 10: Harden model audit outbound HTTP
+
+**Date**: 2026-07-26
+**Task**: Harden model audit outbound HTTP
+**Package**: backend
+**Branch**: `codex/prelaunch-identity-hardening`
+
+### Summary
+
+Added public-HTTPS target validation, DNS rebinding-safe IP-bound dialing, redirect/time/body limits, modelaudit wiring, deterministic tests, deployment configuration, and executable backend specs.
+
+### Main Changes
+
+- Added `internal/platform/outboundhttp` with strict public HTTPS URL validation, exact host allowlisting, special-address rejection, connection-time DNS revalidation, and IP-bound dialing.
+- Routed model audit target create/update and provider Chat/ListModels through the same policy and shared client.
+- Added redirect, timeout, response-size, and error-sanitization boundaries plus deterministic resolver/dialer/TLS tests.
+- Wired `MODEL_AUDIT_ALLOWED_HOSTS` through config, app, Compose, environment templates, deployment docs, and an executable backend spec.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `2b8776d` | (see git log) |
+
+### Testing
+
+- [OK] Focused and race tests for `outboundhttp` and `modelaudit`.
+- [OK] Full backend `go test -count=1 ./...` and `go vet ./...`.
+- [OK] `gofmt`, OpenAPI route, migration docs, production Compose, and diff checks.
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- Continue prelaunch hardening with production ingress and trusted client IP handling.
