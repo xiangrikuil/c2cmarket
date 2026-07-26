@@ -7,7 +7,6 @@ function source(path: string) {
 
 const myCenter = source('../../pages/MyCenterPage.vue')
 const myCarpools = source('../../pages/MyCarpoolsPage.vue')
-const myDemands = source('../../pages/MyDemandsPage.vue')
 const myApiServices = source('../../pages/MyApiServicesPage.vue')
 const myApiServiceDetail = source('../../pages/MyApiServiceDetailPage.vue')
 const apiServiceOwnerMetrics = source('../../components/api-service-owner/ApiServiceOwnerMetrics.vue')
@@ -59,7 +58,7 @@ describe('个人、经营与管理工作区一致性', () => {
     expect(personalCenterDashboard).toContain('<PendingActivityPanel')
     expect(personalCenterDashboard).toContain('<PublishedContentSection')
     expect(personalCenterDashboard).toContain('<AccountCompletenessCard')
-    expect(personalCenterDashboard).toContain('发布求车需求')
+    expect(personalCenterDashboard).not.toContain('求车')
     expect(personalCenterDashboard).toContain('帮助与规则')
     expect(profileOverviewCard).toContain('信任等级暂无数据')
     expect(pendingActivityPanel).toContain('部分待办暂时无法加载')
@@ -93,7 +92,7 @@ describe('个人、经营与管理工作区一致性', () => {
   })
 
   it('我的对象列表统一短编号、本地时间和异步空状态', () => {
-    for (const page of [myCarpools, myDemands, myApiServices]) {
+    for (const page of [myCarpools, myApiServices]) {
       expect(page).toContain('<ShortId')
       expect(page).toContain('<LocalTime')
       expect(page).toContain('<EmptyState')

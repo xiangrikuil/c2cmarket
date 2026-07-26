@@ -10,7 +10,7 @@ External references:
 
 ## Positioning
 
-C2CMarket is a C2C marketplace platform for linux.do users. Its primary product experience is browsing, comparing, publishing, and tracking subscription carpool seats, API services, demand posts, official price references, orders, and transaction records. AI products are marketplace categories, not the site's visual identity; product-facing UI must not resemble an AI model homepage, AI SaaS landing page, or technology campaign site.
+C2CMarket is a C2C marketplace platform for linux.do users. Its primary product experience is browsing, comparing, publishing, and tracking subscription carpool seats, API services, official price references, orders, and transaction records. AI products are marketplace categories, not the site's visual identity; product-facing UI must not resemble an AI model homepage, AI SaaS landing page, or technology campaign site.
 
 The authoritative visual and marketplace hierarchy contract lives in [`../frontend/marketplace-ui-guidelines.md`](../frontend/marketplace-ui-guidelines.md).
 
@@ -127,7 +127,6 @@ Backend direction:
 
 - Official low-price intelligence.
 - Subscription carpool listings.
-- Demand posts.
 - API service listings.
 - Intent and fulfillment records.
 - Reviews.

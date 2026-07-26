@@ -17,7 +17,6 @@ import (
 	"c2c-market/backend/internal/module/carpool"
 	"c2c-market/backend/internal/module/catalog"
 	contactmodule "c2c-market/backend/internal/module/contact"
-	"c2c-market/backend/internal/module/demand"
 	"c2c-market/backend/internal/module/favorite"
 	"c2c-market/backend/internal/module/feedback"
 	idempotencymodule "c2c-market/backend/internal/module/idempotency"
@@ -90,13 +89,6 @@ const (
 	APIPurchaseIntentStatusOrdered        = apiintent.StatusOrdered
 	APIPurchaseIntentStatusBuyerCancelled = apiintent.StatusBuyerCancelled
 	APIPurchaseIntentStatusOwnerClosed    = apiintent.StatusOwnerClosed
-
-	DemandStatusPendingReview    = demand.StatusPendingReview
-	DemandStatusActive           = demand.StatusActive
-	DemandStatusChangesRequested = demand.StatusChangesRequested
-	DemandStatusRejected         = demand.StatusRejected
-	DemandStatusClosed           = demand.StatusClosed
-	DemandStatusTakenDown        = demand.StatusTakenDown
 )
 
 // Service is a legacy compatibility facade that wires domain services together
@@ -118,7 +110,6 @@ type Service struct {
 	contactService     *contactmodule.Service
 	profileService     *profile.Service
 	emailSender        profile.EmailSender
-	demandService      *demand.Service
 	feedbackService    *feedback.Service
 	favoriteService    *favorite.Service
 	reviewService      *review.Service
@@ -188,7 +179,6 @@ func newServiceWithOptions(now func() time.Time, repositories Repositories, emai
 	s.apiOrder = apiorder.NewService(repositories.APIOrder, s.apiIntent, s.apiMarket, s.reportService, s.idempotencyService, now)
 	s.apiQuota = apiquota.NewManager(repositories.APIQuota, now)
 	s.apiIntent.SetOrderExistenceChecker(s.apiOrder)
-	s.demandService = demand.NewService(repositories.Demand, s.idempotencyService, now)
 	s.feedbackService = feedback.NewService(repositories.Feedback, s.notification, s.idempotencyService, now)
 	s.favoriteService = favorite.NewService(repositories.Favorite, s.idempotencyService, s, now)
 	s.reviewService = review.NewService(repositories.Review, s.idempotencyService, s, s.reputationService, now)
@@ -1313,48 +1303,8 @@ func (s *Service) MarkAllNotificationsRead(ctx context.Context, user User) (noti
 	return s.notification.MarkAllRead(ctx, user.ID)
 }
 
-func (s *Service) CreateDemand(ctx context.Context, user User, input CreateDemandInput) (Demand, *domain.AppError) {
-	return s.demandService.Create(ctx, user, input)
-}
-
-func (s *Service) PublicDemands(ctx context.Context) ([]Demand, *domain.AppError) {
-	return s.demandService.PublicDemands(ctx)
-}
-
 func (s *Service) SearchMarket(ctx context.Context, keyword string) ([]search.Result, *domain.AppError) {
 	return s.searchService.Search(ctx, keyword)
-}
-
-func (s *Service) PublicDemand(ctx context.Context, demandID string) (Demand, *domain.AppError) {
-	return s.demandService.PublicDemand(ctx, demandID)
-}
-
-func (s *Service) MyDemands(ctx context.Context, user User) ([]Demand, *domain.AppError) {
-	return s.demandService.MyDemands(ctx, user)
-}
-
-func (s *Service) MyDemand(ctx context.Context, user User, demandID string) (Demand, *domain.AppError) {
-	return s.demandService.MyDemand(ctx, user, demandID)
-}
-
-func (s *Service) AdminDemands(ctx context.Context, user User) ([]Demand, *domain.AppError) {
-	return s.demandService.AdminDemands(ctx, user)
-}
-
-func (s *Service) AdminDemand(ctx context.Context, user User, demandID string) (Demand, *domain.AppError) {
-	return s.demandService.AdminDemand(ctx, user, demandID)
-}
-
-func (s *Service) CloseDemandWithIdempotency(ctx context.Context, userID, routeKey, key, requestHash string, input DemandOwnerActionInput, buildCompletion DemandCompletionBuilder) (IdempotencyCompletion, *domain.AppError) {
-	return s.demandService.CloseWithIdempotency(ctx, userID, routeKey, key, requestHash, input, buildCompletion)
-}
-
-func (s *Service) ReopenDemandWithIdempotency(ctx context.Context, userID, routeKey, key, requestHash string, input DemandOwnerActionInput, buildCompletion DemandCompletionBuilder) (IdempotencyCompletion, *domain.AppError) {
-	return s.demandService.ReopenWithIdempotency(ctx, userID, routeKey, key, requestHash, input, buildCompletion)
-}
-
-func (s *Service) AdminDemandActionWithIdempotency(ctx context.Context, userID, routeKey, key, requestHash string, input DemandAdminActionInput, buildCompletion DemandCompletionBuilder) (IdempotencyCompletion, *domain.AppError) {
-	return s.demandService.AdminActionWithIdempotency(ctx, userID, routeKey, key, requestHash, input, buildCompletion)
 }
 
 func (s *Service) CreateFeedbackTicketWithIdempotency(ctx context.Context, user User, routeKey, key, requestHash string, input CreateFeedbackInput, buildCompletion FeedbackCompletionBuilder) (IdempotencyCompletion, *domain.AppError) {

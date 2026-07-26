@@ -4,7 +4,6 @@ import {
   CarFront,
   CircleAlert,
   Code2,
-  FilePlus2,
   Heart,
   MessageCircle,
   Scale,
@@ -82,15 +81,12 @@ function contactsSummary() {
               <h2 class="font-semibold">快速发布</h2>
               <p class="mt-1 text-xs text-muted-foreground">创建新的交易内容</p>
             </div>
-            <div class="grid gap-2 sm:grid-cols-3 lg:grid-cols-1">
+            <div class="grid gap-2 sm:grid-cols-2 lg:grid-cols-1">
               <Button as-child size="lg" class="h-auto min-h-12 justify-start px-4">
                 <RouterLink to="/carpools/new"><CarFront class="h-4 w-4" />发布车源</RouterLink>
               </Button>
               <Button as-child size="lg" variant="outline" class="h-auto min-h-12 justify-start px-4">
                 <RouterLink to="/api-market/new"><Code2 class="h-4 w-4" />发布 API 服务</RouterLink>
-              </Button>
-              <Button as-child size="lg" variant="outline" class="h-auto min-h-12 justify-start px-4">
-                <RouterLink to="/demands/new"><FilePlus2 class="h-4 w-4" />发布求车需求</RouterLink>
               </Button>
             </div>
           </div>

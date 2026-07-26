@@ -1,5 +1,4 @@
 import { describe, expect, it, vi } from 'vitest'
-import type { DemandRecord } from '@/features/demand/types'
 import type { ApiOrder, ApiService, Carpool, CarpoolApplication, UserProfile } from '@/lib/api'
 
 function createStorage(): Storage {
@@ -135,20 +134,11 @@ describe('个人中心发布内容投影', () => {
         online: false,
         lastOnlineConfirmedAt: '2026-07-26T10:00:00+08:00',
       } as ApiService],
-      demands: [{
-        id: 'demand-1',
-        title: '求 ChatGPT Team 年付位置',
-        maxPrice: 120,
-        region: '不限',
-        require: '个人车主优先',
-        status: '匹配中',
-        updatedAt: '2026-07-25 10:00',
-      } as DemandRecord],
     })
 
-    expect(content.map(item => item.key)).toEqual(['api-service:api-1', 'demand:demand-1', 'carpool:carpool-1'])
+    expect(content.map(item => item.key)).toEqual(['api-service:api-1', 'carpool:carpool-1'])
     expect(content[0]).toMatchObject({ status: '已暂停', manageTo: '/my/api-services/api-1' })
-    expect(countActivePublishedContent(content)).toBe(2)
+    expect(countActivePublishedContent(content)).toBe(1)
   })
 
   it('无效时间排到有效时间之后', () => {

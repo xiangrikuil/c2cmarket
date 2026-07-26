@@ -138,7 +138,6 @@ const panelCopy = computed(() => {
     'official-prices': { title: '官网价格维护', description: '维护地区、渠道、原币价格、折合人民币和来源记录，再决定通过、复核或下架。' },
     'price-leads': { title: '价格记录维护', description: '维护地区、渠道、原币价格、折合人民币和来源记录，再决定通过、复核或下架。' },
     carpools: { title: '车源异常处理', description: '这里只处理暂停、下架、待复核和遗留审核记录；公开车源日常巡查请直接前往车源列表。' },
-    demands: { title: '求车管理', description: '查看预算、地区、车主偏好和原帖状态，支持关闭或恢复匹配。' },
     'api-services': { title: 'API 服务审核', description: '核对模型价格、最低订单金额、交易说明和商户身份展示。' },
     'trade-intents': { title: 'API 订单追踪', description: '查看 API 订单状态、参与方、金额快照、取消责任与纠纷标记；管理摘要不展示联系方式或原始交付凭证。' },
     reports: { title: '举报纠纷处理', description: '只展示脱敏上下文；必要联系方式仍限制在联系快照流程内。' },

@@ -1,4 +1,3 @@
-import type { DemandRecord } from '@/features/demand/types'
 import {
   getApiOrderNextAction,
   getApiOrderStatusLabel,
@@ -38,7 +37,7 @@ export type PersonalCenterMetric = {
   available: boolean
 }
 
-export type PublishedContentKind = 'all' | 'carpool' | 'api-service' | 'demand'
+export type PublishedContentKind = 'all' | 'carpool' | 'api-service'
 
 export type PublishedContentItem = {
   key: string
@@ -87,7 +86,6 @@ export type BuildPendingTasksInput = {
 export type BuildPublishedContentInput = {
   carpools: Carpool[]
   apiServices: ApiService[]
-  demands: DemandRecord[]
 }
 
 export type BuildAccountCompletenessInput = {
@@ -191,18 +189,6 @@ export function buildPublishedContent(input: BuildPublishedContentInput) {
       updatedAt: item.lastOnlineConfirmedAt,
       manageTo: `/my/api-services/${item.id}`,
       active: item.online,
-    })),
-    ...input.demands.map(item => ({
-      key: `demand:${item.id}`,
-      id: item.id,
-      kind: 'demand' as const,
-      kindLabel: '求车需求',
-      title: item.title,
-      summary: `预算 ¥${item.maxPrice}/月 · ${item.region} · ${item.require}`,
-      status: item.status,
-      updatedAt: item.updatedAt,
-      manageTo: '/my/demands',
-      active: item.status === '匹配中',
     })),
   ]
 

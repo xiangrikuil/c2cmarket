@@ -37,7 +37,6 @@ const navGroups = computed(() => [
   ] },
   { title: '交易与用户', items: [
     { label: 'API 订单追踪', to: '/admin/trade-intents', icon: FileText, count: null },
-    { label: '求车管理', to: '/admin/demands', icon: Search, count: null },
     { label: '用户目录', to: '/admin/users', icon: Users, count: null },
   ] },
   { title: '内容与系统', items: [

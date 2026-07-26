@@ -7,9 +7,6 @@ const OfficialPriceManagePage = () => import('@/pages/OfficialPriceManagePage.vu
 const CarpoolsPage = () => import('@/pages/CarpoolsPage.vue')
 const CarpoolDetailPage = () => import('@/pages/CarpoolDetailPage.vue')
 const CarpoolPublishPage = () => import('@/pages/CarpoolPublishPage.vue')
-const DemandsPage = () => import('@/pages/DemandsPage.vue')
-const DemandPublishPage = () => import('@/pages/DemandPublishPage.vue')
-const DemandDetailPage = () => import('@/pages/DemandDetailPage.vue')
 const ApiMarketPage = () => import('@/pages/ApiMarketPage.vue')
 const ApiQuotaRushPublishPage = () => import('@/pages/ApiQuotaRushPublishPage.vue')
 const ApiServiceDetailPage = () => import('@/pages/ApiServiceDetailPage.vue')
@@ -17,7 +14,6 @@ const ApiServicePublishPage = () => import('@/pages/ApiServicePublishPage.vue')
 const SearchPage = () => import('@/pages/SearchPage.vue')
 const MyCenterPage = () => import('@/pages/MyCenterPage.vue')
 const MyCarpoolsPage = () => import('@/pages/MyCarpoolsPage.vue')
-const MyDemandsPage = () => import('@/pages/MyDemandsPage.vue')
 const MyRidesPage = () => import('@/pages/MyRidesPage.vue')
 const CarpoolApplicationDetailPage = () => import('@/pages/CarpoolApplicationDetailPage.vue')
 const MyApiOrdersPage = () => import('@/pages/MyApiOrdersPage.vue')
@@ -48,7 +44,6 @@ const NotFoundPage = () => import('@/pages/NotFoundPage.vue')
 
 const adminChildren = [
   ['carpools', '车源异常处理', '处理暂停、下架、待复核和遗留审核车源；公开在售车源直接在普通列表巡查。'],
-  ['demands', '求车管理', '查看求车需求、关闭状态和 linux.do 求车原帖绑定。'],
   ['api-services', 'API 服务审核', '审核模型价格、最低订单金额、交易说明和商户承诺规则。'],
   ['trade-intents', 'API 订单追踪', '查看 API 订单、参与方、金额快照、完成和取消状态。'],
   ['reports', '举报纠纷', '处理举报、纠纷和未解决记录。'],
@@ -72,9 +67,6 @@ export const router = createRouter({
     { path: '/carpools/detail', redirect: '/carpools/c1' },
     { path: '/carpools/new', name: 'carpool-new', component: CarpoolPublishPage },
     { path: '/carpools/:id', name: 'carpool-detail', component: CarpoolDetailPage },
-    { path: '/demands', name: 'demands', component: DemandsPage },
-    { path: '/demands/new', name: 'demand-new', component: DemandPublishPage },
-    { path: '/demands/:id', name: 'demand-detail', component: DemandDetailPage },
     { path: '/api-market', name: 'api-market', component: ApiMarketPage },
     { path: '/api-market/quota/new', name: 'api-quota-rush-new', component: ApiQuotaRushPublishPage },
     { path: '/api-market/detail', redirect: '/api-market/a1' },
@@ -86,7 +78,6 @@ export const router = createRouter({
     { path: '/my/account', name: 'my-account', component: MyCenterPage },
     { path: '/my/privacy', name: 'my-privacy', component: MyCenterPage },
     { path: '/my/carpools', name: 'my-carpools', component: MyCarpoolsPage },
-    { path: '/my/demands', name: 'my-demands', component: MyDemandsPage },
     { path: '/my/rides', name: 'my-rides', component: MyRidesPage },
     { path: '/my/rides/:id', name: 'my-ride-detail', component: CarpoolApplicationDetailPage },
     { path: '/my/api-orders', name: 'my-api-orders', component: MyApiOrdersPage },

@@ -15,7 +15,6 @@ import (
 	"c2c-market/backend/internal/module/carpool"
 	"c2c-market/backend/internal/module/catalog"
 	"c2c-market/backend/internal/module/contact"
-	"c2c-market/backend/internal/module/demand"
 	"c2c-market/backend/internal/module/favorite"
 	"c2c-market/backend/internal/module/feedback"
 	"c2c-market/backend/internal/module/idempotency"
@@ -55,8 +54,6 @@ type ContactRepository = contact.Repository
 
 type ProfileRepository = profile.Repository
 
-type DemandRepository = demand.Repository
-
 type FeedbackRepository = feedback.Repository
 
 type FavoriteRepository = favorite.Repository
@@ -85,7 +82,6 @@ type Persistence interface {
 	CarpoolRepository
 	ContactRepository
 	ProfileRepository
-	DemandRepository
 	FeedbackRepository
 	FavoriteRepository
 	ReviewRepository
@@ -109,7 +105,6 @@ type Repositories struct {
 	Carpool           CarpoolRepository
 	Contact           ContactRepository
 	Profile           ProfileRepository
-	Demand            DemandRepository
 	Feedback          FeedbackRepository
 	Favorite          FavoriteRepository
 	Review            ReviewRepository
@@ -137,7 +132,6 @@ func RepositoriesFromPersistence(persistence Persistence) Repositories {
 		Carpool:           persistence,
 		Contact:           persistence,
 		Profile:           persistence,
-		Demand:            persistence,
 		Feedback:          persistence,
 		Favorite:          persistence,
 		Review:            persistence,

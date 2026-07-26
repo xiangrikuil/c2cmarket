@@ -217,11 +217,6 @@ import {
   backendUpdateOfficialPriceAdminStatus,
 } from '@/lib/officialPriceBackend'
 import {
-  backendAdminDemandRows,
-  backendRunAdminDemandAction,
-  backendUpdateAdminDemandStatus,
-} from '@/lib/demandBackend'
-import {
   backendFavoriteStatus,
   backendFavorites,
   backendToggleFavorite,
@@ -266,25 +261,10 @@ import { backendAdminUserRows } from '@/lib/adminUserBackend'
 import { shouldUseRealBackend } from '@/lib/backendClient'
 import { getBackupPasswordValidationMessage } from '@/lib/passwordPolicy'
 import { compareDecimal, divideDecimal, normalizeDecimal, normalizeDecimalTrimmed } from '@/lib/decimal'
-import {
-  closeDemand,
-  getDemandById,
-  getDemands,
-  submitDemand,
-} from '@/features/demand/api'
-
-export {
-  closeDemand,
-  getDemandById,
-  getDemands,
-  submitDemand,
-}
-export type { DemandRecord, DemandStatus, SubmitDemandPayload } from '@/features/demand/api'
 export type AdminSection =
   | 'official-prices'
   | 'price-leads'
   | 'carpools'
-  | 'demands'
   | 'api-services'
   | 'trade-intents'
   | 'users'
@@ -326,7 +306,7 @@ export type CarpoolNotification = {
 
 export type UnifiedNotification = {
   id: string
-  type: '审核结果' | '上车申请' | 'API 意向' | 'API 订单' | '求车需求' | '问题反馈' | '管理操作' | '边界提醒'
+  type: '审核结果' | '上车申请' | 'API 意向' | 'API 订单' | '问题反馈' | '管理操作' | '边界提醒'
   title: string
   detail: string
   time: string
@@ -352,7 +332,7 @@ export type FavoriteListItem = FavoriteRecord & {
 
 export type SearchResult = {
   id: string
-  type: '官方价格' | '车源' | '求车' | 'API 服务' | '用户' | '商户'
+  type: '官方价格' | '车源' | 'API 服务' | '用户' | '商户'
   title: string
   subtitle: string
   badge: string
@@ -1573,27 +1553,6 @@ function appendAdminAuditLog(log: Omit<AdminAuditLog, 'id' | 'createdAt'> & { cr
   persistAdminStores()
 }
 
-function registerMockDemandAuditListener() {
-  if (shouldUseRealBackend()) return
-  void import('@/mocks/demand').then(({ setMockDemandCreatedListener }) => {
-    setMockDemandCreatedListener(demand => {
-      appendAdminAuditLog({
-        actorType: 'system',
-        actorLabel: currentBuyerName,
-        action: '提交求车需求',
-        targetType: 'demand',
-        targetId: demand.id,
-        targetLabel: demand.title,
-        beforeStatus: null,
-        afterStatus: demand.status,
-        reason: demand.note || '用户提交求车需求',
-      })
-    })
-  })
-}
-
-registerMockDemandAuditListener()
-
 function findCarpoolApplication(id: string) {
   const application = carpoolApplicationStore.find(item => item.id === id)
   if (!application) throw new Error(`Carpool application not found: ${id}`)
@@ -1788,7 +1747,6 @@ function publicReviewsForProfile(username: string) {
 function adminTargetLink(row: AdminRow) {
   if (row.targetType === 'official-price') return `/official-prices/${row.id}`
   if (row.targetType === 'carpool') return `/carpools/${row.id}`
-  if (row.targetType === 'demand') return `/demands/${row.id}`
   if (row.targetType === 'api-intent') return `/my/api-orders/${row.id}`
   if (row.targetType === 'api-order') return null
   if (row.targetType === 'carpool-application') return `/merchant/carpool-applications/${row.id}`
@@ -1993,18 +1951,16 @@ function filterCarpoolApplications(filters: CarpoolApplicationFilters = {}) {
 
 export async function getHomeMarket() {
   if (shouldUseRealBackend()) {
-    const [officialPrices, carpools, apiServices, demands] = await Promise.all([
+    const [officialPrices, carpools, apiServices] = await Promise.all([
       backendOfficialPrices(),
       backendGetCarpools(),
       backendAPIServices({ online: true }),
-      getDemands(),
     ])
 
-    return clone({ categoryRows, officialPrices, carpools, apiServices: apiServices.filter(isApiServicePubliclyOrderable), demands, productTrends, transactionRecords, apiPurchaseIntents: apiPurchaseIntentStore })
+    return clone({ categoryRows, officialPrices, carpools, apiServices: apiServices.filter(isApiServicePubliclyOrderable), productTrends, transactionRecords, apiPurchaseIntents: apiPurchaseIntentStore })
   }
   await wait()
-  const demands = await getDemands()
-  return clone({ categoryRows, officialPrices: officialPriceStore, carpools: carpoolStore, apiServices: apiServiceStore.filter(isApiServicePubliclyOrderable), demands, productTrends, transactionRecords, apiPurchaseIntents: apiPurchaseIntentStore })
+  return clone({ categoryRows, officialPrices: officialPriceStore, carpools: carpoolStore, apiServices: apiServiceStore.filter(isApiServicePubliclyOrderable), productTrends, transactionRecords, apiPurchaseIntents: apiPurchaseIntentStore })
 }
 
 export async function getTransactionTrendSummary(productId: string, range: TransactionTrendRange): Promise<TransactionTrendSummary | null> {
@@ -3165,10 +3121,6 @@ export async function getAdminSectionRows(section: AdminSection): Promise<AdminR
     return backendAdminOfficialPriceRows()
   }
 
-  if (shouldUseRealBackend() && section === 'demands') {
-    return backendAdminDemandRows()
-  }
-
   if (shouldUseRealBackend() && section === 'reports') {
     return backendAdminReportRows()
   }
@@ -3220,25 +3172,6 @@ export async function getAdminSectionRows(section: AdminSection): Promise<AdminR
         { label: '开通方式', value: item.openingMethod },
         { label: '商户承诺', value: item.warranty },
         { label: '最近确认', value: item.confirmedAt },
-      ],
-    })))
-  }
-
-  if (section === 'demands') {
-    const demands = await getDemands()
-    return withAdminRowLinks(demands.map(item => ({
-      id: item.id,
-      primary: item.title,
-      secondary: `最高 ¥${item.maxPrice}/月 · ${item.require}`,
-      owner: `${item.poster} · ${item.trustLevel === null ? '信任等级暂无数据' : `信任等级${item.trustLevel}`}`,
-      status: item.status,
-      risk: item.linuxdoPost,
-      targetType: 'demand',
-      detailItems: [
-        { label: '预算', value: `¥${item.maxPrice}/月` },
-        { label: '地区', value: item.region },
-        { label: '车主偏好', value: item.ownerPreference === 'only-personal' ? '只看个人车主' : item.ownerPreference === 'personal' ? '优先个人车主' : '不限' },
-        { label: '更新时间', value: item.updatedAt },
       ],
     })))
   }
@@ -3999,20 +3932,6 @@ async function buildUnifiedNotifications(): Promise<UnifiedNotification[]> {
       to: `/official-prices/${item.id}`,
     }))
 
-  const demands = await getDemands()
-  const demandRows: UnifiedNotification[] = demands
-    .filter(item => item.poster === currentBuyerName || item.status === '匹配中')
-    .slice(0, 6)
-    .map(item => ({
-      id: `demand-notice-${item.id}`,
-      type: '求车需求',
-      title: item.status === '匹配中' ? '求车需求匹配中' : '求车需求状态更新',
-      detail: `${item.title} · 预算 ¥${item.maxPrice}/月`,
-      time: item.updatedAt,
-      unread: item.status === '匹配中',
-      to: `/demands/${item.id}`,
-    }))
-
   const feedbackRows: UnifiedNotification[] = feedbackTicketStore
     .filter(item => item.submitterUserId === currentBuyerId || item.submitterUsername === myUserProfileStore.username)
     .filter(item => item.latestAdminUpdateAt)
@@ -4049,7 +3968,7 @@ async function buildUnifiedNotifications(): Promise<UnifiedNotification[]> {
     to: '/my/notifications',
   }]
 
-  return markReadState([...carpoolRows, ...apiRows, ...officialRows, ...demandRows, ...feedbackRows, ...adminRows, ...fixedRows]
+  return markReadState([...carpoolRows, ...apiRows, ...officialRows, ...feedbackRows, ...adminRows, ...fixedRows]
     .sort((a, b) => compareTimeDesc(a.time, b.time)))
 }
 
@@ -4226,16 +4145,12 @@ export async function searchMarket(keyword: string): Promise<SearchResult[]> {
   await wait()
   const q = keyword.trim().toLowerCase()
   if (!q) return []
-  const demandRows = await getDemands()
   const officialResults = officialPriceStore
     .filter(item => [item.product, item.plan, item.region, item.channel, item.submitter].some(value => value.toLowerCase().includes(q)))
     .map(item => ({ id: `official-${item.id}`, type: '官方价格' as const, title: `${item.product} ${item.plan}`, subtitle: `${item.region} · ${item.originalPrice} · ${item.status}`, badge: item.status, to: `/official-prices/${item.id}` }))
   const carpoolResults = carpoolStore
     .filter(item => [item.product, item.region, item.owner].some(value => value.toLowerCase().includes(q)))
     .map(item => ({ id: `carpool-${item.id}`, type: '车源' as const, title: item.product, subtitle: `${item.region} · ${item.owner} · ${getPricingDisplay(item).primaryLabel} ¥${getPricingDisplay(item).primaryPrice}/月`, badge: item.status, to: `/carpools/${item.id}` }))
-  const demandResults = demandRows
-    .filter(item => [item.title, item.require, item.poster, item.region].some(value => value.toLowerCase().includes(q)))
-    .map(item => ({ id: `demand-${item.id}`, type: '求车' as const, title: item.title, subtitle: `${item.region} · 预算 ¥${item.maxPrice}/月 · ${item.poster}`, badge: item.status, to: `/demands/${item.id}` }))
   const apiResults = apiServiceStore
     .filter(isApiServicePubliclyOrderable)
     .filter(item => apiServicePublicSearchTerms(item).some(value => value.toLowerCase().includes(q)))
@@ -4263,7 +4178,7 @@ export async function searchMarket(keyword: string): Promise<SearchResult[]> {
         to: `/u/${item.username}`,
       }
     })
-  return clone([...officialResults, ...carpoolResults, ...demandResults, ...apiResults, ...merchantResults, ...userResults])
+  return clone([...officialResults, ...carpoolResults, ...apiResults, ...merchantResults, ...userResults])
 }
 
 export async function getReviewCenterRows(): Promise<ReviewCenterData> {
@@ -5418,9 +5333,6 @@ export async function updateAdminRowStatus(row: AdminRow, status: string, reason
   if (shouldUseRealBackend() && row.targetType === 'official-price') {
     return backendUpdateOfficialPriceAdminStatus(row, status, reason)
   }
-  if (shouldUseRealBackend() && row.targetType === 'demand') {
-    return backendUpdateAdminDemandStatus(row, status, reason)
-  }
   if (shouldUseRealBackend() && (row.targetType === 'report' || row.targetType === 'dispute' || row.targetType === 'appeal')) {
     return backendUpdateReportAdminStatus(row, status, reason)
   }
@@ -5466,10 +5378,6 @@ async function applyAdminStatusToTarget(row: AdminRow, status: string) {
       persistMarketStores()
     }
   }
-  if (row.targetType === 'demand') {
-    const { updateMockDemandAdminStatus } = await import('@/mocks/demand')
-    updateMockDemandAdminStatus(row.id, status)
-  }
   if (row.targetType === 'api-service' || row.targetType === 'api-merchant') {
     const target = apiServiceStore.find(item => item.id === row.id)
     if (target) {
@@ -5503,9 +5411,6 @@ export async function runAdminModerationAction(row: AdminRow, action: 'approve' 
   }
   if (shouldUseRealBackend() && row.targetType === 'official-price') {
     return backendRunOfficialPriceAdminAction(row, action, reason)
-  }
-  if (shouldUseRealBackend() && row.targetType === 'demand') {
-    return backendRunAdminDemandAction(row, action, reason)
   }
   if (shouldUseRealBackend() && (row.targetType === 'report' || row.targetType === 'dispute' || row.targetType === 'appeal')) {
     return backendRunReportAdminAction(row, action, reason)

@@ -110,7 +110,7 @@ getApiMerchantVisibilityLabel(source)
 
 ```ts
 export type SearchResult = {
-  type: '官方价格' | '车源' | '求车' | 'API 服务' | '用户' | '商户'
+  type: '官方价格' | '车源' | 'API 服务' | '用户' | '商户'
   title: string
   subtitle: string
   badge: string

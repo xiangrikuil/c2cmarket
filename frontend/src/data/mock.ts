@@ -909,11 +909,11 @@ export type ApiPurchaseIntentEvent = {
 }
 
 export const categoryRows = [
-  { product: 'ChatGPT Plus', detail: '个人订阅费用分摊 / 高风险需确认', verifiedLowest: 108, leadLowest: 18, carpoolCount: 6, demandCount: 88 },
-  { product: 'ChatGPT Business', detail: 'workspace 成员邀请 / 风险需确认', verifiedLowest: 188, leadLowest: 92, carpoolCount: 18, demandCount: 35 },
-  { product: 'ChatGPT Pro 20x Web', detail: '个人订阅费用分摊 / 高风险需确认', verifiedLowest: 988, leadLowest: 56, carpoolCount: 5, demandCount: 72 },
-  { product: 'Claude Max 5x', detail: '5x / 20x 订阅', verifiedLowest: 724, leadLowest: 47, carpoolCount: 14, demandCount: 29 },
-  { product: 'Cursor Pro', detail: '团队席位 / 独立座位', verifiedLowest: 154, leadLowest: 36, carpoolCount: 18, demandCount: 24 },
+  { product: 'ChatGPT Plus', detail: '个人订阅费用分摊 / 高风险需确认', verifiedLowest: 108, leadLowest: 18, carpoolCount: 6 },
+  { product: 'ChatGPT Business', detail: 'workspace 成员邀请 / 风险需确认', verifiedLowest: 188, leadLowest: 92, carpoolCount: 18 },
+  { product: 'ChatGPT Pro 20x Web', detail: '个人订阅费用分摊 / 高风险需确认', verifiedLowest: 988, leadLowest: 56, carpoolCount: 5 },
+  { product: 'Claude Max 5x', detail: '5x / 20x 订阅', verifiedLowest: 724, leadLowest: 47, carpoolCount: 14 },
+  { product: 'Cursor Pro', detail: '团队席位 / 独立座位', verifiedLowest: 154, leadLowest: 36, carpoolCount: 18 },
 ]
 
 export const carpoolProductCatalog: CarpoolProductCatalogItem[] = [
@@ -2733,11 +2733,6 @@ export const orderContactSnapshots: OrderContactSnapshot[] = [
     unavailableReason: null,
     createdAt: '2026-06-18 20:12',
   },
-]
-
-export const demands = [
-  { id: 'd1', title: '求 ChatGPT Business 成员席位', maxPrice: 190, require: '个人车主 / 官方成员席位 / 原帖已绑', poster: '木木', trustLevel: 3, linuxdoPost: '已绑定求车帖', status: '匹配中' },
-  { id: 'd2', title: '求 Claude Max 5x 香港区', maxPrice: 90, require: '近期确认 / 可候补', poster: '纸船', trustLevel: 2, linuxdoPost: '已绑定求车帖', status: '匹配中' },
 ]
 
 export const adminCards = [

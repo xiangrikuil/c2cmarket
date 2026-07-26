@@ -130,14 +130,6 @@ import {
   type UpdateMyProfileRequest,
   type UserProfile,
 } from '@/lib/api'
-import {
-  closeDemand,
-  getDemandById,
-  getDemands,
-  getMyDemands,
-  submitDemand,
-  type SubmitDemandPayload,
-} from '@/features/demand/api'
 
 function valueOf<T>(value: Ref<T> | T): T {
   return typeof value === 'object' && value !== null && 'value' in value ? value.value : value
@@ -255,52 +247,6 @@ export function useCarpoolOpeningChannels() {
 
 export function useCarpoolPaymentMethods() {
   return useQuery({ queryKey: ['carpool-payment-methods', 'active'], queryFn: getCarpoolPaymentMethods })
-}
-
-export function useDemands() {
-  return useQuery({ queryKey: ['demands'], queryFn: getDemands })
-}
-
-export function useMyDemands() {
-  return useQuery({ queryKey: ['my-demands'], queryFn: getMyDemands })
-}
-
-export function useDemand(id: Ref<string> | string) {
-  return useQuery({
-    queryKey: computed(() => ['demands', valueOf(id)]),
-    queryFn: () => getDemandById(valueOf(id)),
-    enabled: computed(() => Boolean(valueOf(id))),
-  })
-}
-
-export function useSubmitDemandMutation() {
-  const queryClient = useQueryClient()
-  return useMutation({
-    mutationFn: (payload: SubmitDemandPayload) => submitDemand(payload),
-    onSuccess(data) {
-      queryClient.setQueryData(['demands', data.id], data)
-      queryClient.invalidateQueries({ queryKey: ['demands'] })
-      queryClient.invalidateQueries({ queryKey: ['my-demands'] })
-      queryClient.invalidateQueries({ queryKey: ['home-market'] })
-      queryClient.invalidateQueries({ queryKey: ['admin-section'] })
-      queryClient.invalidateQueries({ queryKey: ['notifications'] })
-    },
-  })
-}
-
-export function useCloseDemandMutation() {
-  const queryClient = useQueryClient()
-  return useMutation({
-    mutationFn: (id: string) => closeDemand(id),
-    onSuccess(data) {
-      queryClient.setQueryData(['demands', data.id], data)
-      queryClient.invalidateQueries({ queryKey: ['demands'] })
-      queryClient.invalidateQueries({ queryKey: ['my-demands'] })
-      queryClient.invalidateQueries({ queryKey: ['home-market'] })
-      queryClient.invalidateQueries({ queryKey: ['admin-section'] })
-      queryClient.invalidateQueries({ queryKey: ['notifications'] })
-    },
-  })
 }
 
 export function useModelCatalog() {

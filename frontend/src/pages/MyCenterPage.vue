@@ -54,7 +54,6 @@ import {
   useMyApiOrders,
   useMyCarpoolApplications,
   useMyCarpools,
-  useMyDemands,
   useMyProfileQuery,
   useSetBackupPasswordMutation,
   useSetDefaultContactMethodMutation,
@@ -78,8 +77,6 @@ const carpoolsQuery = useMyCarpools()
 const carpools = carpoolsQuery.data
 const apiServicesQuery = useMyApiServices()
 const apiServices = apiServicesQuery.data
-const demandsQuery = useMyDemands()
-const demands = demandsQuery.data
 const buyerRideApplicationsQuery = useMyCarpoolApplications({ sort: 'default_buyer' })
 const rideApplications = buyerRideApplicationsQuery.data
 const ownerRideApplicationsQuery = useMerchantCarpoolApplications({ sort: 'default_owner' })
@@ -211,22 +208,18 @@ const dashboardTasksUnavailable = computed(() => (
 const dashboardPublishedItems = computed(() => buildPublishedContent({
   carpools: carpools.value ?? [],
   apiServices: apiServices.value ?? [],
-  demands: demands.value ?? [],
 }))
 const dashboardPublishedLoading = computed(() => (
   carpoolsQuery.isPending.value
   || apiServicesQuery.isPending.value
-  || demandsQuery.isPending.value
 ))
 const dashboardPublishedError = computed(() => (
   carpoolsQuery.isError.value
   || apiServicesQuery.isError.value
-  || demandsQuery.isError.value
 ))
 const dashboardPublishedUnavailable = computed(() => (
   carpoolsQuery.isError.value && carpools.value === undefined
   && apiServicesQuery.isError.value && apiServices.value === undefined
-  && demandsQuery.isError.value && demands.value === undefined
 ))
 const hasApiServices = computed(() => (apiServices.value?.length ?? 0) > 0)
 const savedApiPaymentComplete = computed(() => (
@@ -269,7 +262,7 @@ const dashboardMetrics = computed<PersonalCenterMetric[]>(() => [
     id: 'published',
     label: '发布中',
     value: countActivePublishedContent(dashboardPublishedItems.value),
-    hint: '车源、服务与求车',
+    hint: '车源与服务',
     loading: dashboardPublishedLoading.value,
     available: !dashboardPublishedLoading.value && !dashboardPublishedError.value,
   },
@@ -852,7 +845,6 @@ async function retryDashboardPublished() {
   await Promise.allSettled([
     carpoolsQuery.refetch(),
     apiServicesQuery.refetch(),
-    demandsQuery.refetch(),
   ])
 }
 

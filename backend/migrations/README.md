@@ -71,6 +71,7 @@ versions:
 | `000062_auth_identity_bootstrap_hardening` | immutable first-admin bootstrap provenance for create-only, fail-closed initialization |
 | `000063_verification_data_lifecycle` | keyed email verification challenges, bounded idempotency records, and lifecycle-maintenance indexes |
 | `000064_contact_cipher_aad` | explicit legacy/AAD cipher formats for versioned contact, audit, order, and quota secrets |
+| `000065_remove_demands` | removes the prelaunch demand-post table, its indexes, and demand idempotency residue |
 
 The current runnable Go slice supports both in-memory tests and PostgreSQL runtime.
 When `DATABASE_URL` is configured, users, auth sessions, idempotency, product
@@ -80,7 +81,7 @@ join confirmations, memberships, completion confirmations, API model catalog
 reads, API service publishing/review/moderation reads and writes, API
 purchase-intent creation/lifecycle reads and writes, native username/password
 login credentials, profile privacy fields,
-merchant profile public reads, announcements, demands, favorites, unified
+merchant profile public reads, announcements, favorites, unified
 transaction reviews, reports, dispute cases, appeals, dispute events, and
 API purchase-intent contact access logs are backed by PostgreSQL.
 
@@ -137,11 +138,12 @@ merchant contact; buyer detail records merchant-contact reads; owner detail
 records buyer-contact reads.
 
 Version 24 enables PostgreSQL `pg_trgm` and adds GIN trigram indexes over public
-search text expressions for API services/models, carpool listings, demands,
+search text expressions for API services/models, carpool listings, the historical demand table,
 product-plan text used by official price search, public users/linux.do
 usernames, merchant profiles, and API model catalog rows. These indexes are
-performance support only; they do not change search visibility predicates or
-response DTOs. Use `scripts/explain-search.sql` from the repository root to
+performance support only; the demand index is removed with the table in Version
+65. They do not change search visibility predicates or response DTOs. Use
+`scripts/explain-search.sql` from the repository root to
 verify that global search predicates keep matching the expression indexes.
 
 Version 36 realigns the merchant-profile trigram index to `lower(display_name)`
@@ -247,6 +249,10 @@ unreferenced domain events in bounded batches; it expires ended contact
 windows without deleting contact history, access logs, administrator audits,
 or dispute audits. The down migration cannot restore invalidated challenges or
 response bodies truncated above 64 KiB.
+
+Version 65 removes the prelaunch demand-post table after clearing demand
+idempotency resource references. Its down migration recreates only the empty
+historical table and indexes; deleted development data is not recoverable.
 
 ## Contact Retention And Destruction
 

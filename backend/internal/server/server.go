@@ -19,7 +19,6 @@ import (
 	"c2c-market/backend/internal/module/carpool"
 	"c2c-market/backend/internal/module/catalog"
 	"c2c-market/backend/internal/module/contact"
-	"c2c-market/backend/internal/module/demand"
 	"c2c-market/backend/internal/module/favorite"
 	"c2c-market/backend/internal/module/feedback"
 	"c2c-market/backend/internal/module/idempotency"
@@ -151,17 +150,7 @@ type Service interface {
 	PublicOfficialPriceRecords(ctx context.Context) ([]officialprice.Record, *domain.AppError)
 	PublicOfficialPriceRecord(ctx context.Context, recordID string) (officialprice.Record, *domain.AppError)
 
-	CreateDemand(ctx context.Context, user auth.User, input demand.CreateInput) (demand.Demand, *domain.AppError)
-	PublicDemands(ctx context.Context) ([]demand.Demand, *domain.AppError)
-	PublicDemand(ctx context.Context, demandID string) (demand.Demand, *domain.AppError)
 	SearchMarket(ctx context.Context, keyword string) ([]search.Result, *domain.AppError)
-	MyDemands(ctx context.Context, user auth.User) ([]demand.Demand, *domain.AppError)
-	MyDemand(ctx context.Context, user auth.User, demandID string) (demand.Demand, *domain.AppError)
-	AdminDemands(ctx context.Context, user auth.User) ([]demand.Demand, *domain.AppError)
-	AdminDemand(ctx context.Context, user auth.User, demandID string) (demand.Demand, *domain.AppError)
-	CloseDemandWithIdempotency(ctx context.Context, userID, routeKey, key, requestHash string, input demand.OwnerActionInput, buildCompletion demand.CompletionBuilder) (idempotency.Completion, *domain.AppError)
-	ReopenDemandWithIdempotency(ctx context.Context, userID, routeKey, key, requestHash string, input demand.OwnerActionInput, buildCompletion demand.CompletionBuilder) (idempotency.Completion, *domain.AppError)
-	AdminDemandActionWithIdempotency(ctx context.Context, userID, routeKey, key, requestHash string, input demand.AdminActionInput, buildCompletion demand.CompletionBuilder) (idempotency.Completion, *domain.AppError)
 	CreateFeedbackTicketWithIdempotency(ctx context.Context, user auth.User, routeKey, key, requestHash string, input feedback.CreateInput, buildCompletion feedback.CompletionBuilder) (idempotency.Completion, *domain.AppError)
 	MyFeedbackTickets(ctx context.Context, user auth.User, page domain.PageRequest) (domain.Page[feedback.Ticket], *domain.AppError)
 	MyFeedbackTicket(ctx context.Context, user auth.User, id string) (feedback.Ticket, *domain.AppError)

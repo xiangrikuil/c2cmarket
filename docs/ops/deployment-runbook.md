@@ -350,7 +350,7 @@ API_BASE_URL=http://127.0.0.1:8080 \
 node scripts/run-smokes.mjs
 ```
 
-The runner is intentionally serial and stops on first failure. It covers auth, official price, API market, carpool, profile, announcements, demands, favorites, reviews, reports, notifications, and search.
+The runner is intentionally serial and stops on first failure. It covers auth, official price, API market, carpool, profile, announcements, favorites, reviews, reports, notifications, and search.
 
 For real production OAuth, do not use fake OAuth smoke identities. Use health/readiness checks plus a controlled login with the real provider and run only smoke scripts that are safe for the target environment and seeded data policy.
 

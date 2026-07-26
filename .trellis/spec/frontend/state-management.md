@@ -231,7 +231,7 @@ Use global/session mock state only when multiple pages must observe the same rec
 
 - API orders shown in API detail, buyer list, merchant list, notifications, and admin tracking views. Purchase intents remain internal adapter state and must not become a parallel user-facing queue.
 - Carpool applications shown in carpool detail, my rides, owner applications, notifications, and admin views.
-- Published carpool/API service/price lead/demand records that must appear in both user and admin pages.
+- Published carpool, API service, and price records that must appear in both user and admin pages.
 - Feedback tickets shown in the avatar menu, feedback history, notification center, and admin feedback queue.
 - Backend session and permission state shown in the login/account shell should be refreshed from `getCurrentBackendSession()` instead of mirrored as a mutable role selector in global state.
 - Product catalog plans shown in low-price submit and carpool publish flows after admin plan mutations.

@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { useRoute } from 'vue-router'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import PageTitle from '@/components/market/PageTitle.vue'
@@ -13,15 +12,12 @@ import ShortId from '@/components/market/ShortId.vue'
 import SourceAuthorVerificationBadge from '@/components/market/SourceAuthorVerificationBadge.vue'
 import SkeletonTable from '@/components/market/SkeletonTable.vue'
 import { usePagination } from '@/composables/usePagination'
-import { useDemand, useMerchantCarpoolApplications, useMyCarpools } from '@/queries/useMarketQueries'
+import { useMerchantCarpoolApplications, useMyCarpools } from '@/queries/useMarketQueries'
 import { getPricingDisplay, getRemainingSeats } from '@/lib/pricing'
 import { formatMonthlyQuota } from '@/lib/quota'
 import { toast } from 'vue-sonner'
 
 const { data: carpools, isLoading } = useMyCarpools()
-const route = useRoute()
-const responseDemandId = computed(() => typeof route.query.respondTo === 'string' ? route.query.respondTo : '')
-const { data: responseDemand } = useDemand(responseDemandId)
 const { data: applications } = useMerchantCarpoolApplications({ sort: 'default_owner' })
 const rows = computed(() => carpools.value ?? [])
 const pagination = usePagination(rows)
@@ -35,22 +31,11 @@ function applicationCounts(carpoolId: string) {
   }
 }
 
-async function respondWithCarpool(carpoolId: string) {
-  if (!responseDemand.value) return
-  const carpoolUrl = `${window.location.origin}/carpools/${carpoolId}`
-  await navigator.clipboard.writeText(carpoolUrl)
-  window.open(responseDemand.value.sourceUrl, '_blank', 'noopener,noreferrer')
-  toast.success('车源链接已复制，并已打开求车原帖；请在原帖中完成回应。')
-}
 </script>
 
 <template>
   <div>
     <PageTitle title="我的车源" description="管理组队进行中、服务中、历史车队和编辑记录。" action-text="发布车源" action-to="/carpools/new" />
-    <div v-if="responseDemand" class="mb-4 rounded-xl border border-primary/20 bg-primary/5 p-4 text-sm">
-      <div class="font-semibold">选择车源回应「{{ responseDemand.title }}」</div>
-      <p class="mt-1 text-muted-foreground">点击“用此车源回应”会复制公开车源链接并打开对方的 linux.do 原帖；后续申请仍复用现有上车流程。</p>
-    </div>
     <StatusTabs :items="['组队进行中', '服务中', '历史车队', '编辑记录']" />
     <SkeletonTable v-if="isLoading" :rows="5" :columns="7" />
     <EmptyState v-else-if="rows.length === 0" title="暂未发布车源" description="发布后可在这里管理名额、申请和公开状态。"><template #action><RouterLink to="/carpools/new"><Button>发布车源</Button></RouterLink></template></EmptyState>
@@ -78,7 +63,6 @@ async function respondWithCarpool(carpoolId: string) {
         <td class="text-muted-foreground"><LocalTime :value="item.confirmedAt" /></td>
         <td>
           <div class="flex flex-wrap gap-2">
-            <Button v-if="responseDemand" size="sm" @click="respondWithCarpool(item.id)">用此车源回应</Button>
             <RouterLink to="/merchant/carpool-applications"><Button size="sm">处理申请</Button></RouterLink>
             <Button size="sm" variant="outline" @click="toast(`正在编辑 ${item.product} 车源。`)">编辑</Button>
           </div>

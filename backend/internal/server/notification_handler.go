@@ -176,8 +176,6 @@ func notificationCategory(item notification.Notification) string {
 		return "审核结果"
 	case "feedback_ticket":
 		return "问题反馈"
-	case "demand":
-		return "求车需求"
 	default:
 		if item.Type != "" {
 			return item.Type

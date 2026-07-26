@@ -412,7 +412,7 @@ The application history remains auditable while access permission is revoked.
 ### 1. Scope / Trigger
 
 - Trigger: backend, OpenAPI, frontend adapter, admin UI, or PostgreSQL work touching global `product_plans`, product catalog dropdowns, carpool publish policy, or official-price submit product/plan selection.
-- Product contract: the admin catalog is the global option source for low-price lead submission, carpool publishing, and demand filters. User-entered custom plan text remains allowed at the submission boundary and is not automatically promoted into `product_plans`.
+- Product contract: the admin catalog is the global option source for official-price maintenance and carpool publishing. User-entered custom plan text remains allowed at the submission boundary and is not automatically promoted into `product_plans`.
 
 ### 2. Signatures
 
@@ -1427,7 +1427,7 @@ X-CSRF-Token: <session CSRF token>    # POST read actions
 
 - `GET /me/notifications` returns `{ items, nextCursor }` ordered by `createdAt DESC`.
 - Notification response fields are `id`, `type`, `title`, `detail`, `targetType`, `targetId`, `to`, `unread`, `readAt`, `createdAt`, and `time`.
-- `type` is a frontend-facing business category such as `API 意向`, `上车申请`, `审核结果`, `求车需求`, or `管理操作`; raw event names stay behind the HTTP boundary.
+- `type` is a frontend-facing business category such as `API 订单`, `上车申请`, `审核结果`, or `管理操作`; raw event names stay behind the HTTP boundary.
 - `unread` is derived from `read_at IS NULL`.
 - `POST /me/notifications/{id}/read` updates only the current user's notification and returns 404 when the row is absent or belongs to another user.
 - `POST /me/notifications/read-all` updates only current-user unread rows and returns `{ count, items }`, where `count` is the number of rows changed in that call.
@@ -1456,7 +1456,7 @@ X-CSRF-Token: <session CSRF token>    # POST read actions
 ### 1. Scope / Trigger
 
 - Trigger: global search endpoint, backend aggregation, or frontend `/search` real-mode work.
-- Scope: public-safe search only. It aggregates existing public official price records, active carpool listings, active demands, public API services, active users, and public-profile API merchants.
+- Scope: public-safe search only. It aggregates existing public official price records, active carpool listings, public API services, active users, and public-profile API merchants.
 
 ### 2. Signatures
 
@@ -1471,8 +1471,8 @@ The endpoint is read-only and public. It does not require session, CSRF, `If-Mat
 - Empty or whitespace-only `q` returns `{ items: [] }`.
 - `q` is normalized by trimming/collapsing whitespace and must not exceed 80 characters.
 - Response fields are `id`, `type`, `title`, `subtitle`, `badge`, and `to`.
-- `type` is one of `官方价格`, `车源`, `求车`, `API 服务`, `用户`, or `商户`.
-- Search must reuse existing public predicates: active official price records, active carpool listings, active demands, approved/online/clear API services, active users, and public-profile API merchants only.
+- `type` is one of `官方价格`, `车源`, `API 服务`, `用户`, or `商户`.
+- Search must reuse existing public predicates: active official price records, active carpool listings, approved/online/clear API services, active users, and public-profile API merchants only.
 - Store-alias API services may appear as `API 服务` results using the public merchant display name, but search must not expose the hidden owner username or create a separate `商户` result for the store alias.
 - Search results must not contain contact values, contact method IDs, owner user IDs for store aliases, admin fields, review/moderation reasons, raw report/dispute text, credentials, payment, escrow, guarantee, or fulfillment material.
 
@@ -1488,7 +1488,7 @@ The endpoint is read-only and public. It does not require session, CSRF, `If-Mat
 
 - OpenAPI must include `GET /api/v1/search` and schemas.
 - Backend tests must keep route/OpenAPI parity green.
-- Smoke must create or reuse public business records and verify official price, carpool, demand, API service, public user, public-profile merchant, empty keyword, and too-long keyword behavior.
+- Smoke must create or reuse public business records and verify official price, carpool, API service, public user, public-profile merchant, empty keyword, and too-long keyword behavior.
 - Frontend real mode must call `searchBackend.ts` from the existing `api.ts` facade and must not catch real backend failures to return mock search rows.
 
 ## Scenario: Backend Production Hardening
@@ -1506,7 +1506,6 @@ GET  /api/v1/auth/oauth/callback
 GET  /api/v1/search?limit=20&cursor=<opaque>
 GET  /api/v1/api-services?limit=20&cursor=<opaque>
 GET  /api/v1/carpools?limit=20&cursor=<opaque>
-GET  /api/v1/demands?limit=20&cursor=<opaque>
 GET  /api/v1/official-prices?limit=20&cursor=<opaque>
 GET  /api/v1/me/notifications?limit=20&cursor=<opaque>
 GET  /api/v1/me/favorites?limit=20&cursor=<opaque>
@@ -1520,7 +1519,6 @@ GET  /api/v1/owner/carpool-memberships?limit=20&cursor=<opaque>
 GET  /api/v1/admin/api-services?limit=20&cursor=<opaque>
 GET  /api/v1/admin/api-purchase-intents?limit=20&cursor=<opaque>
 GET  /api/v1/admin/carpools?limit=20&cursor=<opaque>
-GET  /api/v1/admin/demands?limit=20&cursor=<opaque>
 GET  /api/v1/admin/reports?limit=20&cursor=<opaque>
 GET  /api/v1/admin/disputes?limit=20&cursor=<opaque>
 GET  /api/v1/admin/appeals?limit=20&cursor=<opaque>
@@ -2140,4 +2138,82 @@ page: status says available; button: local risk check says blocked
 #### Correct
 ```text
 list/detail/create -> EvaluateApplicationEligibility -> one code/reason/action
+```
+
+## Scenario: Prelaunch Domain Removal And Contract Erasure
+
+### 1. Scope / Trigger
+
+- Trigger: removing a business domain before the first production launch when the product owner confirms there are no production users, records, or public compatibility obligations.
+- Current decision: the demand domain is removed; subscription carpool keeps only owner-published listings and buyer applications.
+
+### 2. Signatures
+
+```text
+Frontend:
+  /demands*
+  /my/demands
+  /admin/demands
+  -> existing NotFound route
+
+Backend:
+  /api/v1/demands*
+  /api/v1/me/demands*
+  /api/v1/admin/demands*
+  -> standard unregistered-route 404
+
+Database:
+  000065_remove_demands.up.sql
+  000065_remove_demands.down.sql
+  ExpectedMigrationVersion = 65
+```
+
+### 3. Contracts
+
+- Remove the domain as one release unit across frontend routes/pages/state, backend service/routes/storage, OpenAPI, generated clients, search, notifications, smoke tests, and current documentation.
+- Do not add redirects, `410` compatibility handlers, feature flags, empty adapters, or hidden navigation for an unlaunched domain.
+- Historical migrations remain immutable. A new forward migration removes idempotency rows that reference the domain before dropping its table.
+- The down migration restores only the empty schema and indexes needed for structural rollback. It must not claim to recover deleted domain rows.
+- Current product/spec documentation must describe only active capabilities; dated audit reports and historical screenshots remain historical evidence.
+
+### 4. Validation & Error Matrix
+
+| Condition | Required result |
+| --- | --- |
+| Browser opens an old demand URL | Existing NotFound page; no redirect or demand shell |
+| Client calls an old demand API | Standard route-level 404 |
+| Database applies migration 65 | `demands` is absent and schema is `65`, `dirty=false` |
+| Database rolls migration 65 down | Empty `demands` schema/indexes are recreated; no rows are restored |
+| Active OpenAPI/generated types still expose Demand | Contract drift check fails |
+| Active source/docs still treat demand as a product capability | Residual scan or source-contract test fails |
+
+### 5. Good/Base/Bad Cases
+
+- Good: migration 65 removes the table, runtime/API/UI references disappear together, and old URLs use the shared NotFound path.
+- Base: a developer rolls migration 65 down locally and gets an empty compatibility schema for code rollback.
+- Bad: hide the navigation while retaining routes, handlers, generated types, search branches, or a stale database table.
+
+### 6. Tests Required
+
+- Full Go suite plus a focused migration source test for up ordering and down no-data-restoration behavior.
+- OpenAPI generation and drift check; generated frontend types must contain no Demand operation or schema.
+- Full frontend tests, typecheck, and real-mode build with negative route/navigation assertions.
+- PostgreSQL migration 1-to-latest integration: assert version 65, `dirty=false`, and `to_regclass('public.demands') IS NULL`.
+- Real backend smoke suite and explicit old-API 404 checks.
+- Browser checks at 1440x900 and 390x844 for homepage/navigation/search/workspaces and all old demand URLs.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```text
+hide demand links -> keep API/table/generated types "for later"
+```
+
+#### Correct
+
+```text
+remove UI + API + service + storage + OpenAPI + generated types + current docs
+-> add forward schema-removal migration
+-> verify old URLs/APIs return standard 404
 ```

@@ -24,13 +24,11 @@ const tabs: Array<{ value: PublishedContentKind, label: string }> = [
   { value: 'all', label: '全部' },
   { value: 'carpool', label: '车源' },
   { value: 'api-service', label: 'API 服务' },
-  { value: 'demand', label: '求车需求' },
 ]
 const counts = computed(() => ({
   all: props.items.length,
   carpool: props.items.filter(item => item.kind === 'carpool').length,
   'api-service': props.items.filter(item => item.kind === 'api-service').length,
-  demand: props.items.filter(item => item.kind === 'demand').length,
 }))
 const filteredItems = computed(() => props.items
   .filter(item => activeKind.value === 'all' || item.kind === activeKind.value)
@@ -38,7 +36,6 @@ const filteredItems = computed(() => props.items
 const emptyAction = computed(() => {
   if (activeKind.value === 'carpool') return { label: '发布车源', to: '/carpools/new' }
   if (activeKind.value === 'api-service') return { label: '发布 API 服务', to: '/api-market/new' }
-  if (activeKind.value === 'demand') return { label: '发布求车需求', to: '/demands/new' }
   return { label: '发布车源', to: '/carpools/new' }
 })
 
@@ -54,12 +51,11 @@ function kindIcon(kind: PublishedContentItem['kind']) {
     <header class="flex flex-wrap items-start justify-between gap-3">
       <div>
         <h2 class="font-semibold">我发布的内容</h2>
-        <p class="mt-1 text-xs text-muted-foreground">最近更新的车源、API 服务与求车需求</p>
+        <p class="mt-1 text-xs text-muted-foreground">最近更新的车源与 API 服务</p>
       </div>
       <div class="flex flex-wrap gap-2 text-xs">
         <RouterLink to="/my/carpools" class="text-primary hover:underline">全部车源</RouterLink>
         <RouterLink to="/my/api-services" class="text-primary hover:underline">全部服务</RouterLink>
-        <RouterLink to="/my/demands" class="text-primary hover:underline">全部求车</RouterLink>
       </div>
     </header>
 

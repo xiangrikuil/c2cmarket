@@ -19,7 +19,6 @@ import {
   Palette,
   PanelLeftClose,
   PanelLeftOpen,
-  ScanSearch,
   Search,
   ShieldCheck,
   ShoppingBag,
@@ -93,7 +92,6 @@ const navGroups = computed(() => {
       { label: '首页', to: '/', count: null, icon: Home },
       { label: '订阅拼车', to: '/carpools', count: null, icon: UsersRound },
       { label: 'API 市场', to: '/api-market', count: null, icon: Code2 },
-      { label: '求车需求', to: '/demands', count: null, icon: ScanSearch },
       { label: '官网价格', to: '/official-prices', count: null, icon: ShieldCheck },
     ],
   }
@@ -126,7 +124,6 @@ const navGroups = computed(() => {
     title: '账户',
     items: [
       { label: '个人中心', to: '/my', count: null, icon: UserRound },
-      { label: '我的求车', to: '/my/demands', count: null, icon: ScanSearch },
       { label: '联系与收款', to: '/my/contacts', count: null, icon: MessageSquarePlus },
       { label: '信誉与成长', to: '/my/reputation', count: null, icon: BadgeCheck },
       { label: '安全设置', to: '/my/account', count: null, icon: ShieldCheck },

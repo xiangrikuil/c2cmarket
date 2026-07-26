@@ -3,7 +3,7 @@
 中文名：C2C 市集
 英文名：C2CMarket
 
-定位：AI 官网价格情报、订阅拼车、求车需求和 API 额度撮合平台。
+定位：AI 官网价格情报、订阅拼车和 API 额度撮合平台。
 
 ## 技术栈
 
@@ -78,7 +78,6 @@ pnpm build
 /admin/official-prices    管理员维护官网价格记录
 /carpools                 订阅拼车列表
 /carpools/c1              车源详情
-/demands                  找车源 / 求车需求
 /api-market               API 额度市集
 /api-market/a1            API 额度详情
 /my                       我的中心
