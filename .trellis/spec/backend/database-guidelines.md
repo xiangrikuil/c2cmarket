@@ -189,7 +189,8 @@ backend/migrations/000053_auth_session_renewal.{up,down}.sql
 backend/migrations/000054_api_quota_offers.{up,down}.sql
 ...
 backend/migrations/000061_source_author_verification.{up,down}.sql
-database.ExpectedMigrationVersion = 61
+backend/migrations/000062_auth_identity_bootstrap_hardening.{up,down}.sql
+database.ExpectedMigrationVersion = 62
 ```
 
 Standard execution remains:
@@ -210,16 +211,16 @@ docker compose --profile migrate run --rm migrate
 
 | Condition | Expected behavior |
 | --- | --- |
-| Database Version 53 contains published 51/52 schema but lacks new quota tables | Run standard migration 54 onward and finish at `61, dirty=false`. |
-| Fresh database | Run the complete chain 1 through 61 without gaps or duplicate versions. |
+| Database Version 53 contains published 51/52 schema but lacks new quota tables | Run standard migration 54 onward and finish at `62, dirty=false`. |
+| Fresh database | Run the complete chain 1 through 62 without gaps or duplicate versions. |
 | Existing Sub2API service model has `merchant_multiplier <> 1.0000` | Version 54 fails explicitly while restoring the check; do not rewrite business data silently. |
 | Migration fails and marks a temporary clone dirty | Delete and recreate only that named clone from the untouched source database before retrying. |
 | Repository latest file and `ExpectedMigrationVersion` differ | `scripts/check-migrations-doc.mjs` fails. |
 
 ### 5. Good / Base / Bad Cases
 
-- Good: preserve published 51/52/53, renumber unpublished files to 54-61, verify a fresh 1→61 database and a cloned 53→61 database.
-- Base: migrate the clone 61→53→61; the old package schema and stable business-row hashes remain unchanged.
+- Good: preserve published 51/52/53, renumber unpublished files to 54-61, add new work at 62, and verify a fresh 1→62 database plus a cloned 53→62 database.
+- Base: migrate the clone 62→53→62; the old package schema and stable business-row hashes remain unchanged.
 - Bad: replace Version 51 with unrelated SQL, see `schema_migrations=53`, and assume the replacement SQL already ran.
 
 ### 6. Tests Required

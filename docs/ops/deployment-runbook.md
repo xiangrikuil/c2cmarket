@@ -28,6 +28,7 @@ Replace every `CHANGE_ME` value before production use:
 - `CONTACT_ENCRYPTION_KEY`
 - `CONTACT_FINGERPRINT_KEY`
 - `CONTACT_KEY_VERSION`
+- `C2C_BOOTSTRAP_ADMIN_USERNAME` and `C2C_BOOTSTRAP_ADMIN_PASSWORD` for an empty-database first deploy only
 - `SMTP_USERNAME`
 - `SMTP_PASSWORD`
 - `MAIL_FROM_ADDRESS`
@@ -47,6 +48,13 @@ VITE_ENABLE_MOCK=false
 
 `OAUTH_PROVIDER_MODE=fake` is only for local automated smoke. `/api/v1/auth/dev-session` is only for development/test.
 `EMAIL_PROVIDER=development` is only for local development/test. It exposes `devCode` for automation and must not be used in production.
+
+Administrator Bootstrap is create-only:
+
+- For an empty database with no administrator, set both Bootstrap variables for the first backend start. After the administrator is created, clear both variables and restart the backend.
+- For an existing database that already has an administrator, clear both variables before starting a release containing migration 62. Existing administrators predate the `initial-admin-v1` marker and are intentionally not claimed or modified automatically.
+- Never leave only `C2C_BOOTSTRAP_ADMIN_USERNAME` configured; startup rejects a username without a password.
+- Do not create the marker manually or use Bootstrap to promote an existing normal or OAuth user.
 
 `FRONTEND_ORIGIN` is the primary browser origin for cookie-authenticated requests
 and OAuth callback redirects. Production requires it to be an absolute HTTPS
@@ -117,6 +125,10 @@ Run migrations:
 docker compose -p c2c-prod --env-file .env.production -f compose.yaml -f compose.prod.yaml --profile migrate run --rm migrate
 ```
 
+Before starting the backend, apply the Bootstrap rule above. A new empty
+installation may keep the one-time values for its first start. An upgraded
+installation with an existing administrator must have both values empty.
+
 Build and start the backend:
 
 ```bash
@@ -132,7 +144,11 @@ curl -fsS http://127.0.0.1:${BACKEND_PORT:-8080}/readyz
 ```
 
 `/readyz` must report PostgreSQL readiness and `schemaDirty=false`.
-The expected schema version in the current backend is `38`.
+The expected schema version in the current backend is `62`.
+
+After a successful empty-database Bootstrap, clear both Bootstrap variables,
+recreate the backend container, and verify `/readyz` again. Keeping the secret
+configured is unnecessary even though a proven marker rerun is idempotent.
 
 ## Backend Hardening Checks
 

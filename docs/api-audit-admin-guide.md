@@ -83,6 +83,6 @@
 ## Verification Checklist
 
 - `backend/migrations/000037_model_audit.up.sql` 和 down 文件匹配。
-- `/readyz` expected schema version 为 `37`。
+- `/readyz` expected schema version 为当前仓库目标版本 `62`。
 - 前端 mock mode 和 real-backend mode 都通过同一 facade。
 - 搜索变更，确认没有 API Key 明文、token、session、cookie 或绝对审计结论。

@@ -1335,13 +1335,13 @@ Session user response includes:
 - New or changed native passwords must write `password_algorithm='argon2id_v1'`. `sha256_salted_v1` is legacy verification-only; a successful legacy login must rehash the credential to `argon2id_v1` before session creation completes.
 - Native password login and set-password must require `linuxDoBinding.bound=true` for non-admin users. Admin users may use native password login without linux.do binding only to support the explicit first-admin bootstrap path.
 - First-admin bootstrap is environment-driven at process startup. If `C2C_BOOTSTRAP_ADMIN_PASSWORD` is empty, bootstrap is skipped. If password is present and username is empty, username defaults to `admin`. If username is present without password, config loading must fail.
-- Bootstrap must create or promote the requested user, grant `user_permissions(permission='admin')`, and write an Argon2id password credential only when no admin password credential exists. Re-running bootstrap after an admin password credential exists must not overwrite credentials.
+- Bootstrap is create-only and records `admin_bootstrap_runs.bootstrap_key='initial-admin-v1'`. With no marker, any existing administrator or occupied target username returns `ADMIN_BOOTSTRAP_CONFLICT` without mutation. A matching marker rerun verifies the active user, admin permission, and password credential without updating any field; damaged marked state returns `ADMIN_BOOTSTRAP_INCONSISTENT`.
 - `email-registration/start` and `email-registration/confirm` are disabled first-release compatibility endpoints. They return `403 EMAIL_REGISTRATION_DISABLED` and must not create accounts or sessions.
 - `start` must store only state plus same-origin `returnTo` in the state cookie. External URLs, protocol-relative URLs, and empty values normalize to `/`.
 - `callback` must clear the state cookie after successful login.
-- The PostgreSQL auth repository must upsert `users`, `auth_identities`, and `linux_do_bindings` in one transaction before creating the session.
+- The PostgreSQL auth repository must query `(provider, provider_subject)` first. Existing identities retain their original `user_id` and local username. First login creates a new user, identity, and provider binding in one transaction; username collisions select a deterministic alternative instead of reusing the conflicting row.
 - OAuth userinfo may include an optional `email`. Registration-success email is sent only when the OAuth upsert confirms a newly created user, the provider returned a valid email address, and the user transaction plus session persistence have succeeded. Missing/invalid email skips the registration email; send failure is logged without SMTP credentials and must not block login.
-- Admin permission comes from `user_permissions(permission='admin')`; fake OAuth may grant admin only for local smoke identities that intentionally encode admin in the fake code.
+- Admin permission comes only from `user_permissions(permission='admin')`; OAuth profile data, including fake OAuth usernames, never grants it. Development smoke that needs an administrator uses `/auth/dev-session` with `ENABLE_DEV_AUTH=true`.
 - Production startup must fail if `ENABLE_DEV_AUTH=true`, `OAUTH_PROVIDER_MODE=fake`, or required oauth2 endpoint/client values are missing.
 - Provider tokens are not part of the durable auth model and must not be written to PostgreSQL.
 
@@ -1353,7 +1353,9 @@ Session user response includes:
 | Native password set/login for non-admin user without linux.do binding | 403 | `LINUX_DO_BINDING_REQUIRED` |
 | Legacy `sha256_salted_v1` password login succeeds | 200 plus credential rehash | n/a |
 | Bootstrap username set without bootstrap password | startup failure | n/a |
-| Bootstrap rerun after admin credential exists | no-op, no overwrite | n/a |
+| Bootstrap target occupied or unproven admin exists | 409 | `ADMIN_BOOTSTRAP_CONFLICT` |
+| Bootstrap marker exists but linked state is damaged | 500 | `ADMIN_BOOTSTRAP_INCONSISTENT` |
+| Proven Bootstrap rerun | no-op, no overwrite | n/a |
 | Email registration start/confirm | 403 | `EMAIL_REGISTRATION_DISABLED` |
 | Missing state cookie or state query | 403 | `CSRF_TOKEN_INVALID` |
 | State mismatch | 403 | `CSRF_TOKEN_INVALID` |
@@ -1367,18 +1369,18 @@ Session user response includes:
 
 - Good: linux.do-bound native user login returns the normal session response, while an incorrect password returns `401 INVALID_CREDENTIALS` and creates no session.
 - Good: a legacy `sha256_salted_v1` credential logs in once and is persisted back as `argon2id_v1`; the same wrong password does not create a session or rehash.
-- Good: first startup with `C2C_BOOTSTRAP_ADMIN_USERNAME=admin` and `C2C_BOOTSTRAP_ADMIN_PASSWORD=<secret>` creates or promotes admin and writes an Argon2id credential; the second startup skips without changing the existing credential.
+- Good: first empty-database startup with `C2C_BOOTSTRAP_ADMIN_USERNAME=admin` and `C2C_BOOTSTRAP_ADMIN_PASSWORD=<secret>` creates a new admin, Argon2id credential, and `initial-admin-v1` marker; a proven rerun leaves the credential unchanged.
 - Good: email registration start/confirm return `EMAIL_REGISTRATION_DISABLED` and do not set `c2c_session`.
-- Good: fake provider smoke logs in `fake-auth-user-*`, session shows `linuxDoBinding.bound=true`, admin route returns `403` for non-admin, and `fake-auth-admin-*` receives `permissions:["admin"]`.
+- Good: fake provider smoke logs in both `fake-auth-user-*` and `fake-auth-admin-*`; both remain non-admin and receive `403` from admin routes. A separate development-only dev session verifies the admin route.
 - Base: existing smoke scripts may call `/auth/dev-session` only when `APP_ENV=development|test` and `ENABLE_DEV_AUTH=true`.
-- Bad: real frontend mode silently calls `/auth/dev-session` to switch from buyer to admin, exposes email registration as a public sign-up path, lets an unbound non-admin user use backup password, writes new `sha256_salted_v1` credentials, overwrites an existing admin password during bootstrap, or backend stores OAuth access tokens in `auth_identities`.
+- Bad: real frontend mode silently calls `/auth/dev-session` to switch from buyer to admin, OAuth profile data grants admin, Bootstrap promotes an existing user or overwrites a password, email registration becomes a public sign-up path, an unbound non-admin user uses backup password, new writes use `sha256_salted_v1`, or backend stores OAuth access tokens in `auth_identities`.
 
 ### 6. Tests Required
 
 - `cd backend && /opt/homebrew/bin/go test ./...` for config, route parity, and auth behavior.
-- Auth unit tests must assert Argon2id login success, legacy login plus rehash, wrong password no session/no rehash, Argon2id set-password writes, first-admin bootstrap creation, and bootstrap no-overwrite.
+- Auth unit tests must assert Argon2id login success, legacy login plus rehash, wrong password no session/no rehash, Argon2id set-password writes, identity ownership/collision isolation, first-admin Bootstrap creation, conflict handling, provenance validation, and no-overwrite reruns.
 - OpenAPI YAML parse to verify auth path/schema contract.
-- `scripts/auth-smoke.mjs` against PostgreSQL with `OAUTH_PROVIDER_MODE=fake` for start/callback/session/admin/logout.
+- `scripts/auth-smoke.mjs` against PostgreSQL with `OAUTH_PROVIDER_MODE=fake` and development auth enabled for OAuth start/callback/session, fake admin-like denial, dev-admin route access, and logout.
 - Product-boundary scan for token persistence, plaintext password storage, linux.do official endorsement, platform custody, and automatic credential delivery wording.
 
 ### 7. Wrong vs Correct
