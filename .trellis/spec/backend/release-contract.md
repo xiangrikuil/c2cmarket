@@ -43,6 +43,9 @@ node scripts/check-openapi-types.mjs
 - Source packages use `git archive` from the resolved commit and `gzip -n`.
   They write a SHA-256 sidecar and exclude local history, generated output,
   caches, dependencies, and every `.env*` except the three root examples.
+- Portable `mktemp` templates end with `XXXXXX`. A suffix after the placeholder
+  can become a literal filename on BSD/macOS and makes concurrent packaging
+  collide.
 - Release Docker context comes only from the resolved commit archive.
   `APP_VERSION`, the full commit, and the commit time are injected with Go
   ldflags and repeated in OCI version, revision, and created labels.
@@ -67,6 +70,7 @@ node scripts/check-openapi-types.mjs
 | Archive name is not a `.tar.gz` basename | Packaging exits non-zero |
 | Final archive name already exists | Packaging exits non-zero without overwriting it |
 | Archive contains a forbidden path or environment file | Packaging exits non-zero without a final archive |
+| Two packages run concurrently with distinct final names | Both use distinct temporary files and succeed |
 | Version contains unsupported characters or image is empty | Image build exits non-zero |
 | Production/staging omits `BACKEND_IMAGE` | Compose configuration exits non-zero |
 | Production/staging retains a backend build context | Compose exposure check exits non-zero |
@@ -101,8 +105,8 @@ scripts/build-backend-image.sh HEAD 0.0.0-test c2cmarket-backend:release-check
 
 Assertions:
 
-- Two archives of the same commit have the same SHA-256 and contain no
-  forbidden path.
+- Two concurrent archives of the same commit both succeed, have the same
+  SHA-256, and contain no forbidden path.
 - Dirty-tree failures leave no named archive.
 - `/version` fields match the injected metadata and
   `database.ExpectedMigrationVersion`.

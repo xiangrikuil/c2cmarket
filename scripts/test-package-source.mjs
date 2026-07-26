@@ -13,7 +13,7 @@ import {
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { spawnSync } from 'node:child_process'
+import { spawn, spawnSync } from 'node:child_process'
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const testRoot = mkdtempSync(join(tmpdir(), 'c2cmarket-package-test-'))
@@ -30,8 +30,41 @@ const run = (command, args, options = {}) =>
     ...options,
   })
 
+const runAsync = (command, args) =>
+  new Promise(resolveResult => {
+    const child = spawn(command, args, {
+      cwd: testRoot,
+      env: {
+        ...process.env,
+        GIT_AUTHOR_DATE: '2026-01-01T00:00:00Z',
+        GIT_COMMITTER_DATE: '2026-01-01T00:00:00Z',
+      },
+    })
+    let stdout = ''
+    let stderr = ''
+    child.stdout.on('data', chunk => {
+      stdout += chunk
+    })
+    child.stderr.on('data', chunk => {
+      stderr += chunk
+    })
+    child.on('close', status => {
+      resolveResult({ status, stderr, stdout })
+    })
+  })
+
 const mustRun = (command, args) => {
   const result = run(command, args)
+  if (result.status !== 0) {
+    throw new Error(
+      `${command} ${args.join(' ')} failed:\n${result.stdout}\n${result.stderr}`,
+    )
+  }
+  return result
+}
+
+const mustRunAsync = async (command, args) => {
+  const result = await runAsync(command, args)
   if (result.status !== 0) {
     throw new Error(
       `${command} ${args.join(' ')} failed:\n${result.stdout}\n${result.stderr}`,
@@ -80,8 +113,10 @@ try {
   mustRun('git', ['add', '--force', '.'])
   mustRun('git', ['commit', '--quiet', '-m', 'fixture'])
 
-  mustRun('bash', ['scripts/package-source.sh', 'HEAD', 'first.tar.gz'])
-  mustRun('bash', ['scripts/package-source.sh', 'HEAD', 'second.tar.gz'])
+  await Promise.all([
+    mustRunAsync('bash', ['scripts/package-source.sh', 'HEAD', 'first.tar.gz']),
+    mustRunAsync('bash', ['scripts/package-source.sh', 'HEAD', 'second.tar.gz']),
+  ])
 
   const firstArchive = join(testRoot, 'output', 'first.tar.gz')
   const secondArchive = join(testRoot, 'output', 'second.tar.gz')

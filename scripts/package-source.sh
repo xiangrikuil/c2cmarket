@@ -39,7 +39,7 @@ mkdir -p "${OUT_DIR}"
 ARCHIVE_PATH="${OUT_DIR}/${ARCHIVE_NAME}"
 [[ ! -e "${ARCHIVE_PATH}" ]] || fail "archive already exists: ${ARCHIVE_PATH}"
 
-TEMP_ARCHIVE="$(mktemp "${OUT_DIR}/.c2cmarket-source.XXXXXX.tar.gz")"
+TEMP_ARCHIVE="$(mktemp "${OUT_DIR}/.c2cmarket-source.tar.gz.XXXXXX")"
 CONTENTS_FILE="$(mktemp "${TMPDIR:-/tmp}/c2cmarket-source-contents.XXXXXX")"
 cleanup() {
   rm -f "${TEMP_ARCHIVE}" "${CONTENTS_FILE}"
