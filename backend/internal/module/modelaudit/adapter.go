@@ -4,11 +4,19 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
-	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
+
+	"c2c-market/backend/internal/platform/outboundhttp"
+)
+
+const (
+	chatResponseLimit   = 4 * 1024 * 1024
+	modelsResponseLimit = 2 * 1024 * 1024
 )
 
 type AuditChatMessage struct {
@@ -69,10 +77,25 @@ type OpenAICompatibleAdapter struct {
 }
 
 func NewOpenAICompatibleAdapter(baseURL, apiKey string) *OpenAICompatibleAdapter {
+	policy, err := outboundhttp.NewPolicy(nil)
+	if err != nil {
+		panic(err)
+	}
+	return newOpenAICompatibleAdapter(baseURL, apiKey, outboundhttp.NewClient(policy))
+}
+
+func newOpenAICompatibleAdapter(baseURL, apiKey string, client *http.Client) *OpenAICompatibleAdapter {
+	if client == nil {
+		policy, err := outboundhttp.NewPolicy(nil)
+		if err != nil {
+			panic(err)
+		}
+		client = outboundhttp.NewClient(policy)
+	}
 	return &OpenAICompatibleAdapter{
 		baseURL: strings.TrimRight(strings.TrimSpace(baseURL), "/"),
 		apiKey:  strings.TrimSpace(apiKey),
-		client:  &http.Client{Timeout: 30 * time.Second},
+		client:  client,
 	}
 }
 
@@ -87,13 +110,17 @@ func (a *OpenAICompatibleAdapter) Chat(ctx context.Context, request AuditChatReq
 	request.Stream = false
 	body, err := json.Marshal(request)
 	if err != nil {
-		return AuditChatResponse{}, err
+		return AuditChatResponse{}, fmt.Errorf("provider request encoding failed")
 	}
 	callCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	httpReq, err := http.NewRequestWithContext(callCtx, http.MethodPost, a.baseURL+"/chat/completions", bytes.NewReader(body))
+	endpoint, err := url.JoinPath(a.baseURL, "chat/completions")
 	if err != nil {
-		return AuditChatResponse{}, err
+		return AuditChatResponse{}, fmt.Errorf("provider endpoint is invalid")
+	}
+	httpReq, err := http.NewRequestWithContext(callCtx, http.MethodPost, endpoint, bytes.NewReader(body))
+	if err != nil {
+		return AuditChatResponse{}, fmt.Errorf("provider endpoint is invalid")
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
 	if a.apiKey != "" {
@@ -103,19 +130,19 @@ func (a *OpenAICompatibleAdapter) Chat(ctx context.Context, request AuditChatReq
 	resp, err := a.client.Do(httpReq)
 	latency := int(time.Since(start).Milliseconds())
 	if err != nil {
-		return AuditChatResponse{}, err
+		return AuditChatResponse{}, sanitizeProviderRequestError(err)
 	}
 	defer resp.Body.Close()
-	rawBody, err := io.ReadAll(io.LimitReader(resp.Body, 4*1024*1024))
+	rawBody, err := outboundhttp.ReadBody(resp.Body, chatResponseLimit)
 	if err != nil {
-		return AuditChatResponse{}, err
+		return AuditChatResponse{}, sanitizeProviderBodyError(err)
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return AuditChatResponse{}, fmt.Errorf("provider returned status %d", resp.StatusCode)
 	}
 	var parsed openAIChatCompletionResponse
 	if err := json.Unmarshal(rawBody, &parsed); err != nil {
-		return AuditChatResponse{}, err
+		return AuditChatResponse{}, fmt.Errorf("provider response is invalid")
 	}
 	raw := map[string]any{}
 	_ = json.Unmarshal(rawBody, &raw)
@@ -150,28 +177,36 @@ func (a *OpenAICompatibleAdapter) ListModels(ctx context.Context) ([]string, err
 	if a == nil || a.baseURL == "" {
 		return nil, fmt.Errorf("provider adapter is not configured")
 	}
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, a.baseURL+"/models", nil)
+	endpoint, err := url.JoinPath(a.baseURL, "models")
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("provider endpoint is invalid")
+	}
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	if err != nil {
+		return nil, fmt.Errorf("provider endpoint is invalid")
 	}
 	if a.apiKey != "" {
 		httpReq.Header.Set("Authorization", "Bearer "+a.apiKey)
 	}
 	resp, err := a.client.Do(httpReq)
 	if err != nil {
-		return nil, err
+		return nil, sanitizeProviderRequestError(err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return nil, fmt.Errorf("models endpoint returned status %d", resp.StatusCode)
+	}
+	rawBody, err := outboundhttp.ReadBody(resp.Body, modelsResponseLimit)
+	if err != nil {
+		return nil, sanitizeProviderBodyError(err)
 	}
 	var parsed struct {
 		Data []struct {
 			ID string `json:"id"`
 		} `json:"data"`
 	}
-	if err := json.NewDecoder(io.LimitReader(resp.Body, 2*1024*1024)).Decode(&parsed); err != nil {
-		return nil, err
+	if err := json.Unmarshal(rawBody, &parsed); err != nil {
+		return nil, fmt.Errorf("models response is invalid")
 	}
 	models := make([]string, 0, len(parsed.Data))
 	for _, item := range parsed.Data {
@@ -184,6 +219,26 @@ func (a *OpenAICompatibleAdapter) ListModels(ctx context.Context) ([]string, err
 
 func (a *OpenAICompatibleAdapter) SupportsLogprobs(ctx context.Context) bool {
 	return true
+}
+
+func sanitizeProviderRequestError(err error) error {
+	switch {
+	case errors.Is(err, outboundhttp.ErrRedirectNotAllowed):
+		return fmt.Errorf("provider redirect is not allowed: %w", outboundhttp.ErrRedirectNotAllowed)
+	case errors.Is(err, context.DeadlineExceeded):
+		return fmt.Errorf("provider request timed out: %w", context.DeadlineExceeded)
+	case errors.Is(err, context.Canceled):
+		return fmt.Errorf("provider request canceled: %w", context.Canceled)
+	default:
+		return fmt.Errorf("provider request failed")
+	}
+}
+
+func sanitizeProviderBodyError(err error) error {
+	if errors.Is(err, outboundhttp.ErrResponseTooLarge) {
+		return fmt.Errorf("provider response is too large: %w", outboundhttp.ErrResponseTooLarge)
+	}
+	return fmt.Errorf("provider response read failed")
 }
 
 type openAIChatCompletionResponse struct {

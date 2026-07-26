@@ -61,6 +61,19 @@ and OAuth callback redirects. Production requires it to be an absolute HTTPS
 origin and automatically adds it to the CORS allowlist. `ALLOWED_ORIGINS` can add
 other explicit origins. CORS must never use `*` with session cookies.
 
+Model audit outbound access is fail closed:
+
+- Targets must use absolute public HTTPS base URLs without credentials, query
+  strings, or fragments.
+- The backend validates every DNS answer when a target is saved and resolves it
+  again before each new connection. Any private, loopback, link-local, metadata,
+  special-use, or mixed public/private result rejects the target.
+- `MODEL_AUDIT_ALLOWED_HOSTS` is an optional comma-separated list of exact DNS
+  hosts or IP literals. Wildcards and ports are invalid. An empty value permits
+  any host that passes the public-address policy.
+- Configure an explicit list when production audits use a known provider set.
+  Existing saved targets are not rewritten; unsafe targets fail when next used.
+
 DirectMail settings:
 
 ```text

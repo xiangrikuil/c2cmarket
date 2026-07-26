@@ -81,6 +81,7 @@ PostgreSQL migration 通过 Compose 的一次性 `migrate` 服务执行，migrat
 ## HTTP 边界 Hardening
 
 - CORS/Origin：`FRONTEND_ORIGIN` 是生产必填的主前端 origin，并自动加入 allowlist；`ALLOWED_ORIGINS` 可用英文逗号追加其他明确 origin。cookie 认证响应不会使用 wildcard origin；生产状态变更请求会拒绝不在 allowlist 内的浏览器 `Origin`。
+- 模型审计安全出站：target 只接受公网 HTTPS Base URL，保存和实际连接都会解析并拒绝私网、loopback、link-local、metadata、特殊用途及混合 DNS 结果；连接只拨已验证 IP，禁止重定向，并限制连接、TLS、响应头、总请求时间及响应体大小。`MODEL_AUDIT_ALLOWED_HOSTS` 使用英文逗号配置精确 host，不支持 wildcard；空值表示允许任意通过公网地址检查的 HTTPS host。
 - 安全响应头：后端统一设置 `X-Content-Type-Options: nosniff` 和 `Referrer-Policy: strict-origin-when-cross-origin`；`APP_ENV=production` 时设置 `Strict-Transport-Security: max-age=31536000; includeSubDomains`。CSP 由前端静态站点或反向代理按页面资产策略配置。
 - 限流：当前为进程内 1 分钟窗口，按 route group、IP 和登录 userID 分开计数。OAuth、search、API purchase intent 创建、额度包直达订单、联系方式读取、举报/申诉创建和 dev contact/session 入口超限返回 `429`，Problem Details `code=RATE_LIMITED`。额度包购买使用每用户 12 次、每 IP 3000 次的独立预算，避免共享出口误伤；限流只用于减压，库存正确性仍完全由 PostgreSQL 保证。
 - 分页：主要列表接口支持 `limit` / `cursor`，默认 `20`、最大 `100`，响应为 `{ "items": [], "nextCursor": "..." }`。当前 cursor 是 opaque base64url offset cursor，调用方只应透传。

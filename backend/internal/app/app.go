@@ -13,6 +13,7 @@ import (
 	core "c2c-market/backend/internal/module/core"
 	"c2c-market/backend/internal/module/navigationbadge"
 	"c2c-market/backend/internal/module/profile"
+	"c2c-market/backend/internal/platform/outboundhttp"
 	"c2c-market/backend/internal/realtime"
 	"c2c-market/backend/internal/server"
 	"c2c-market/backend/internal/store/postgres"
@@ -30,6 +31,11 @@ type App struct {
 }
 
 func New(ctx context.Context, cfg config.Config) (*App, error) {
+	modelAuditPolicy, err := outboundhttp.NewPolicy(cfg.ModelAuditAllowedHosts)
+	if err != nil {
+		return nil, fmt.Errorf("初始化模型审计安全出站策略失败: %w", err)
+	}
+
 	var store *postgres.Store
 	if cfg.DatabaseURL != "" {
 		connectCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
@@ -68,6 +74,7 @@ func New(ctx context.Context, cfg config.Config) (*App, error) {
 	if store != nil {
 		service = core.NewServiceWithRepositoriesAndEmailSender(core.RepositoriesFromPersistence(store), emailSender)
 	}
+	service.ConfigureModelAuditOutbound(modelAuditPolicy)
 	if strings.TrimSpace(cfg.BootstrapAdminPassword) != "" {
 		result, appErr := service.BootstrapAdmin(ctx, core.BootstrapAdminInput{
 			Username: cfg.BootstrapAdminUsername,

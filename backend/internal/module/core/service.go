@@ -29,6 +29,7 @@ import (
 	"c2c-market/backend/internal/module/reputation"
 	"c2c-market/backend/internal/module/review"
 	"c2c-market/backend/internal/module/search"
+	"c2c-market/backend/internal/platform/outboundhttp"
 )
 
 const (
@@ -180,6 +181,13 @@ func newServiceWithEmailSender(now func() time.Time, repositories Repositories, 
 	s.searchService = search.NewService(repositories.Search, s)
 	s.modelAudit = modelaudit.NewService(repositories.ModelAudit, now)
 	return s
+}
+
+func (s *Service) ConfigureModelAuditOutbound(policy *outboundhttp.Policy) {
+	if s == nil || s.modelAudit == nil {
+		return
+	}
+	s.modelAudit.SetOutboundPolicy(policy)
 }
 
 func (s *Service) CreateDevSession(ctx context.Context, username string, isAdmin bool) (User, Session, *domain.AppError) {

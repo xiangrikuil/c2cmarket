@@ -26,6 +26,21 @@ func TestLoadDefaultsToDevelopmentDevAuth(t *testing.T) {
 	}
 }
 
+func TestLoadParsesModelAuditAllowedHosts(t *testing.T) {
+	t.Setenv("APP_ENV", EnvDevelopment)
+	t.Setenv("MODEL_AUDIT_ALLOWED_HOSTS", "api.openai.com, relay.example.com,api.openai.com")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+	if len(cfg.ModelAuditAllowedHosts) != 2 ||
+		cfg.ModelAuditAllowedHosts[0] != "api.openai.com" ||
+		cfg.ModelAuditAllowedHosts[1] != "relay.example.com" {
+		t.Fatalf("unexpected model audit allowlist: %v", cfg.ModelAuditAllowedHosts)
+	}
+}
+
 func TestLoadRejectsProductionWithoutDatabase(t *testing.T) {
 	t.Setenv("PORT", "")
 	t.Setenv("APP_ENV", EnvProduction)

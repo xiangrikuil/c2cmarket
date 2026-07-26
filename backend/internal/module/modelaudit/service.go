@@ -6,7 +6,6 @@ import (
 	"encoding/hex"
 	"fmt"
 	"net/http"
-	"net/url"
 	"sort"
 	"strings"
 	"sync"
@@ -14,6 +13,7 @@ import (
 
 	"c2c-market/backend/internal/domain"
 	"c2c-market/backend/internal/module/auth"
+	"c2c-market/backend/internal/platform/outboundhttp"
 
 	"github.com/google/uuid"
 )
@@ -25,6 +25,7 @@ type Service struct {
 	now            func() time.Time
 	repo           Repository
 	adapterFactory ChatAdapterFactory
+	outboundPolicy *outboundhttp.Policy
 	targets        map[string]Target
 	targetSecrets  map[string]string
 	targetOrder    []string
@@ -53,10 +54,23 @@ func NewService(repo Repository, now func() time.Time) *Service {
 		probeScores:   map[string][]ProbeScore{},
 		monitors:      map[string]Monitor{},
 	}
-	service.adapterFactory = func(target Target, apiKey string) ProviderAdapter {
-		return NewOpenAICompatibleAdapter(target.BaseURL, apiKey)
+	policy, err := outboundhttp.NewPolicy(nil)
+	if err != nil {
+		panic(err)
 	}
+	service.SetOutboundPolicy(policy)
 	return service
+}
+
+func (s *Service) SetOutboundPolicy(policy *outboundhttp.Policy) {
+	if policy == nil {
+		return
+	}
+	client := outboundhttp.NewClient(policy)
+	s.outboundPolicy = policy
+	s.adapterFactory = func(target Target, apiKey string) ProviderAdapter {
+		return newOpenAICompatibleAdapter(target.BaseURL, apiKey, client)
+	}
 }
 
 func (s *Service) SetAdapterFactory(factory ChatAdapterFactory) {
@@ -102,7 +116,7 @@ func (s *Service) CreateTarget(ctx context.Context, user auth.User, input Target
 	if appErr := requireAdmin(user); appErr != nil {
 		return Target{}, appErr
 	}
-	target, appErr := s.buildTarget(Target{}, input, true)
+	target, appErr := s.buildTarget(ctx, Target{}, input, true)
 	if appErr != nil {
 		return Target{}, appErr
 	}
@@ -125,7 +139,7 @@ func (s *Service) UpdateTarget(ctx context.Context, user auth.User, targetID str
 	if appErr != nil {
 		return Target{}, appErr
 	}
-	target, appErr := s.buildTarget(current, input, false)
+	target, appErr := s.buildTarget(ctx, current, input, false)
 	if appErr != nil {
 		return Target{}, appErr
 	}
@@ -593,15 +607,17 @@ func (s *Service) runBillingLatencyProbe(ctx context.Context, run Run, adapter P
 	return ProbeScore{Probe: ProbeBillingLatency, Risk: RiskConsistent, Confidence: 0.4, Score: 0.05, Evidence: evidence}
 }
 
-func (s *Service) buildTarget(current Target, input TargetInput, requireAPIKey bool) (Target, *domain.AppError) {
+func (s *Service) buildTarget(ctx context.Context, current Target, input TargetInput, requireAPIKey bool) (Target, *domain.AppError) {
 	name := strings.TrimSpace(input.Name)
 	if name == "" {
 		return Target{}, validation("name", "required", "必须填写审计目标名称。")
 	}
-	baseURL := strings.TrimSpace(input.BaseURL)
-	parsedURL, err := url.Parse(baseURL)
-	if err != nil || parsedURL.Scheme == "" || parsedURL.Host == "" {
-		return Target{}, validation("baseUrl", "invalid", "必须填写有效 API Base URL。")
+	if s.outboundPolicy == nil {
+		return Target{}, validation("baseUrl", "invalid", "API Base URL 不符合安全出站策略。")
+	}
+	baseURL, err := s.outboundPolicy.ValidateURL(ctx, input.BaseURL)
+	if err != nil {
+		return Target{}, validation("baseUrl", "invalid", "API Base URL 不符合安全出站策略。")
 	}
 	claimedModel := strings.TrimSpace(input.ClaimedModel)
 	if claimedModel == "" {
@@ -617,7 +633,7 @@ func (s *Service) buildTarget(current Target, input TargetInput, requireAPIKey b
 		target.CreatedAt = now
 	}
 	target.Name = name
-	target.BaseURL = strings.TrimRight(baseURL, "/")
+	target.BaseURL = baseURL
 	target.ProviderType = strings.TrimSpace(input.ProviderType)
 	if target.ProviderType == "" {
 		target.ProviderType = "openai_compatible"

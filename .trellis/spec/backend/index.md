@@ -24,6 +24,7 @@ This directory contains guidelines for backend development. Fill in each file wi
 | [Error Handling](./error-handling.md) | Problem Details and domain error handling | Active |
 | [Quality Guidelines](./quality-guidelines.md) | Code standards, forbidden patterns | Active |
 | [Logging Guidelines](./logging-guidelines.md) | Structured logging and secret handling rules | Active |
+| [Safe Outbound HTTP](./outbound-http.md) | Public HTTPS validation, DNS rebinding defense, bounded clients, and secret-safe errors | Active |
 
 ---
 
@@ -43,8 +44,9 @@ Before editing backend code, read:
 8. [Error Handling](./error-handling.md)
 9. [Quality Guidelines](./quality-guidelines.md)
 10. [Logging Guidelines](./logging-guidelines.md)
-11. [C2CMarket Product Context](../guides/product-context.md)
-12. [Maintainability Contract](../guides/maintainability-contract.md)
+11. [Safe Outbound HTTP](./outbound-http.md) when adding or changing outbound HTTP requests whose destination is stored, configured, or otherwise variable
+12. [C2CMarket Product Context](../guides/product-context.md)
+13. [Maintainability Contract](../guides/maintainability-contract.md)
 
 ## Quality Check
 

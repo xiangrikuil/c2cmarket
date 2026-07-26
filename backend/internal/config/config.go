@@ -37,6 +37,7 @@ type Config struct {
 	BootstrapAdminPassword string
 	TrustXForwardedFor     bool
 	TrustedProxies         []string
+	ModelAuditAllowedHosts []string
 	EmailProvider          string
 	SMTP                   SMTPConfig
 }
@@ -77,6 +78,7 @@ func Load() (Config, error) {
 		BootstrapAdminUsername: strings.TrimSpace(os.Getenv("C2C_BOOTSTRAP_ADMIN_USERNAME")),
 		BootstrapAdminPassword: strings.TrimSpace(os.Getenv("C2C_BOOTSTRAP_ADMIN_PASSWORD")),
 		TrustedProxies:         parseCommaSeparated(os.Getenv("TRUSTED_PROXIES")),
+		ModelAuditAllowedHosts: parseCommaSeparated(os.Getenv("MODEL_AUDIT_ALLOWED_HOSTS")),
 		EmailProvider:          strings.ToLower(strings.TrimSpace(os.Getenv("EMAIL_PROVIDER"))),
 		SMTP: SMTPConfig{
 			Host:        strings.TrimSpace(os.Getenv("SMTP_HOST")),

@@ -79,6 +79,8 @@
 - 默认不保存真实用户 prompt 或 response。
 - canary prompt 和 response 文本也默认不保存，只保留 hash 和结构化字段。
 - `CONTACT_ENCRYPTION_KEY`、`CONTACT_FINGERPRINT_KEY` 和 `CONTACT_KEY_VERSION` 同时保护联系方式与模型审计目标密钥；生产环境必须使用 32 字节以上的不同强密钥。
+- target 只允许公网 HTTPS Base URL。保存和实际拨号都会检查全部 DNS 结果，私网、loopback、link-local、metadata、特殊用途和公网/私网混合结果都会被拒绝；请求不跟随重定向。
+- `MODEL_AUDIT_ALLOWED_HOSTS` 可用英文逗号配置精确 provider host，不支持 wildcard。空值仅表示不限制 provider host，公网地址检查仍然生效。
 
 ## Verification Checklist
 
