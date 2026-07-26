@@ -229,7 +229,11 @@ Committed and pushed marketplace updates, including API order payment QR snapsho
 
 ### Main Changes
 
-(Add details)
+- Removed demand pages, routes, frontend adapters, mock state, query hooks, navigation, search, notifications, and personal/admin aggregation.
+- Removed the Go demand domain, HTTP handlers, PostgreSQL repository, core facade wiring, and search/notification branches.
+- Removed Demand from OpenAPI and regenerated frontend types.
+- Added migration 65 to remove demand idempotency rows and the `demands` table; rollback recreates only an empty schema.
+- Updated current product, API, database, frontend, deployment, and architecture documentation.
 
 ### Git Commits
 
@@ -544,6 +548,44 @@ Added HMAC email challenges, finite idempotency generations, migration 63, and b
 ### Testing
 
 - [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
+
+
+## Session 15: Remove prelaunch demand module
+
+**Date**: 2026-07-27
+**Task**: Remove prelaunch demand module
+**Package**: frontend
+**Branch**: `codex/remove-demand-module`
+
+### Summary
+
+Removed the unlaunched demand module across frontend, backend, OpenAPI, search, notifications, database migration 65, smoke tests, and current product documentation; verified PostgreSQL, full tests, smokes, and desktop/mobile browser behavior.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `399bf78` | feat: remove prelaunch demand module |
+
+### Testing
+
+- [OK] Full Go suite; 47 frontend files / 187 tests; Vue typecheck; real-mode production build.
+- [OK] OpenAPI generation/drift and migration documentation checks.
+- [OK] PostgreSQL 18 migration/integration gate at version 65 with `demands` absent and `dirty=false`.
+- [OK] Eleven real-backend smoke groups and explicit old-demand API 404 checks.
+- [OK] Desktop 1440x900 and mobile 390x844 browser QA with no demand entry, overflow, overlap, or console error.
 
 ### Status
 

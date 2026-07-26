@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 14
+- **Total Sessions**: 15
 - **Last Active**: 2026-07-27
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~554 | Active |
+| `journal-1.md` | ~596 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 15 | 2026-07-27 | Remove prelaunch demand module | `399bf78` | `codex/remove-demand-module` |
 | 14 | 2026-07-27 | 完成上线前安全加固与发布门禁 | `68b6344`, `8038a23`, `74c3f41`, `32e91d4`, `1d60853`, `36e37a8`, `e9f83a5`, `c942c6a` | `codex/prelaunch-identity-hardening` |
 | 13 | 2026-07-26 | Verification and data lifecycle hardening | `4839f7a` | `codex/prelaunch-identity-hardening` |
 | 12 | 2026-07-26 | Reproducible release and build metadata | `e2a251f`, `fe66d07` | `codex/prelaunch-identity-hardening` |
