@@ -25,6 +25,7 @@ Replace every `CHANGE_ME` value before production use:
 - `OAUTH_REDIRECT_URL`
 - `FRONTEND_ORIGIN`
 - `ALLOWED_ORIGINS`
+- `TRUSTED_PROXIES` after observing the backend container's immediate Tunnel peer
 - `CONTACT_ENCRYPTION_KEY`
 - `CONTACT_FINGERPRINT_KEY`
 - `CONTACT_KEY_VERSION`
@@ -73,6 +74,40 @@ Model audit outbound access is fail closed:
   any host that passes the public-address policy.
 - Configure an explicit list when production audits use a known provider set.
   Existing saved targets are not rewritten; unsafe targets fail when next used.
+
+Client IP forwarding is also fail closed:
+
+- The Compose backend port is published only on host loopback. Do not add a
+  second public backend mapping for health checks or Tunnel traffic.
+- Production and staging use `TRUST_X_FORWARDED_FOR=true` only after
+  `TRUSTED_PROXIES` contains the smallest exact IP or CIDR for the backend
+  container's immediate peer.
+- A host-managed `cloudflared` process can appear inside the backend container
+  as a Docker bridge gateway. Cloudflare public edge ranges are not the
+  immediate peer and must not be copied into `TRUSTED_PROXIES`.
+- The backend prefers a valid `CF-Connecting-IP`, otherwise strips trusted XFF
+  hops from right to left, then falls back to `X-Real-IP` and the direct peer.
+  Untrusted peers cannot influence the resolved address.
+
+For the first observation, temporarily override proxy-header trust, send one
+request through the public Tunnel with a recognizable request ID, and inspect
+the normalized direct peer:
+
+```bash
+TRUST_X_FORWARDED_FOR=false TRUSTED_PROXIES= \
+  docker compose -p c2c-prod --env-file .env.production \
+  -f compose.yaml -f compose.prod.yaml --profile app up -d --build backend
+curl -fsS -H 'X-Request-Id: ingress-peer-observation-prod' \
+  https://api.c2cmarket.shop/health
+docker compose -p c2c-prod --env-file .env.production \
+  -f compose.yaml -f compose.prod.yaml logs --since 5m backend \
+  | grep 'request_id=ingress-peer-observation-prod'
+```
+
+Set `TRUSTED_PROXIES` in `.env.production` to the resulting `client_ip` as an
+exact address (`/32` for IPv4 or `/128` for IPv6 is also valid), restore
+`TRUST_X_FORWARDED_FOR=true`, and recreate the backend. Repeat independently
+for staging; do not assume both Compose networks use the same gateway.
 
 DirectMail settings:
 

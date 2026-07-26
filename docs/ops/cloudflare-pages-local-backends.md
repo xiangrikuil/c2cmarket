@@ -24,6 +24,8 @@ FRONTEND_ORIGIN=https://c2cmarket.shop
 ALLOWED_ORIGINS=https://c2cmarket.shop
 OAUTH_REDIRECT_URL=https://api.c2cmarket.shop/api/v1/auth/oauth/callback
 BACKEND_PORT=8080
+TRUST_X_FORWARDED_FOR=true
+TRUSTED_PROXIES=<observed immediate peer IP or smallest CIDR>
 
 # .env.staging
 FRONTEND_ORIGIN=https://staging.c2cmarket.shop
@@ -31,9 +33,11 @@ ALLOWED_ORIGINS=https://staging.c2cmarket.shop
 OAUTH_REDIRECT_URL=https://api-staging.c2cmarket.shop/api/v1/auth/oauth/callback
 BACKEND_PORT=8081
 MAIL_FROM_NAME=C2CMarket Staging
+TRUST_X_FORWARDED_FOR=true
+TRUSTED_PROXIES=<observed immediate peer IP or smallest CIDR>
 ```
 
-Both backends deliberately run with `APP_ENV=production`, real OAuth, DirectMail, secure cookies, and development authentication disabled. `.env.production` and `.env.staging` are ignored by Git.
+Both backends deliberately run with `APP_ENV=production`, real OAuth, DirectMail, secure cookies, and development authentication disabled. `.env.production` and `.env.staging` are ignored by Git. If the immediate peer is not known yet, temporarily set `TRUST_X_FORWARDED_FOR=false` and leave `TRUSTED_PROXIES` empty; after the observation in step 3, replace them with the final values shown above before routine startup.
 
 ## 2. Start the two isolated backend stacks
 
@@ -53,7 +57,15 @@ docker compose -p c2c-staging --env-file .env.staging -f compose.yaml -f compose
 docker compose -p c2c-staging --env-file .env.staging -f compose.yaml -f compose.prod.yaml --profile app up -d --build backend
 ```
 
+On a first deploy where the immediate peer is still unknown, run the database
+and migration commands above but use the temporary backend command in step 3
+instead of the final backend `up` command.
+
 The Compose project name scopes container names, networks, and the `c2c_postgres_data` volume. Never run either stack without its `-p` value. The staging stack starts from a fresh database unless its `c2c-staging_c2c_postgres_data` volume already exists.
+
+The backend host ports are bound to `127.0.0.1`; they are available to local
+health checks and the host-managed Tunnel but not directly from another
+machine.
 
 Verify locally:
 
@@ -100,7 +112,33 @@ sudo cloudflared --config /Users/CHANGE_ME/.cloudflared/config.yml service insta
 sudo launchctl list | grep cloudflared
 ```
 
-Confirm public routing:
+Before trusting forwarding headers, identify the immediate peer seen by each
+backend container. A host-managed Tunnel commonly reaches a published Docker
+port through a bridge gateway; that address is deployment-specific and is not
+a Cloudflare public edge IP.
+
+For production, temporarily start with proxy-header trust disabled, make one
+public request, and inspect its direct `client_ip`:
+
+```bash
+TRUST_X_FORWARDED_FOR=false TRUSTED_PROXIES= \
+  docker compose -p c2c-prod --env-file .env.production \
+  -f compose.yaml -f compose.prod.yaml --profile app up -d --force-recreate backend
+curl -fsS -H 'X-Request-Id: ingress-peer-observation-prod' \
+  https://api.c2cmarket.shop/health
+docker compose -p c2c-prod --env-file .env.production \
+  -f compose.yaml -f compose.prod.yaml logs --since 5m backend \
+  | grep 'request_id=ingress-peer-observation-prod'
+```
+
+Put the logged `client_ip` into production `TRUSTED_PROXIES` as an exact IP
+(`/32` or `/128` is also valid), restore `TRUST_X_FORWARDED_FOR=true`, and
+recreate the backend. Repeat with the `c2c-staging` project and staging API
+hostname. Use the smallest independently observed address or CIDR for each
+stack; never trust all Docker networks or Cloudflare edge ranges.
+
+Confirm public routing after both backends use their final trusted-proxy
+configuration:
 
 ```bash
 curl -fsS https://api.c2cmarket.shop/health

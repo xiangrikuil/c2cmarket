@@ -3,7 +3,6 @@ package server
 import (
 	"context"
 	"log"
-	"net/netip"
 	"time"
 
 	"c2c-market/backend/internal/config"
@@ -344,23 +343,22 @@ type ApplicationService interface {
 }
 
 type Server struct {
-	app                  Service
-	carpools             CarpoolService
-	apiQuotas            APIQuotaService
-	reputation           ReputationGovernanceService
-	mux                  chi.Router
-	enableDevAuth        bool
-	readinessChecker     health.Checker
-	navigationBadges     NavigationBadgeService
-	realtimeHub          *realtime.Hub
-	oauth                OAuthOptions
-	frontendOrigin       string
-	cookieSecure         bool
-	allowedOrigins       []string
-	rateLimiter          *middleware.RateLimiter
-	oauthHTTPClient      *http.Client
-	trustXForwardedFor   bool
-	trustedProxyPrefixes []netip.Prefix
+	app              Service
+	carpools         CarpoolService
+	apiQuotas        APIQuotaService
+	reputation       ReputationGovernanceService
+	mux              chi.Router
+	enableDevAuth    bool
+	readinessChecker health.Checker
+	navigationBadges NavigationBadgeService
+	realtimeHub      *realtime.Hub
+	oauth            OAuthOptions
+	frontendOrigin   string
+	cookieSecure     bool
+	allowedOrigins   []string
+	rateLimiter      *middleware.RateLimiter
+	oauthHTTPClient  *http.Client
+	clientIPResolver middleware.ClientIPResolver
 }
 
 func NewServer(service ApplicationService, options ...ServerOptions) http.Handler {
@@ -380,34 +378,36 @@ func NewServer(service ApplicationService, options ...ServerOptions) http.Handle
 		realtimeHub = realtime.NewHub()
 	}
 	server := &Server{
-		app:                  service,
-		carpools:             service,
-		apiQuotas:            service,
-		reputation:           service,
-		mux:                  chi.NewRouter(),
-		enableDevAuth:        option.EnableDevAuth,
-		readinessChecker:     option.ReadinessChecker,
-		navigationBadges:     navigationBadges,
-		realtimeHub:          realtimeHub,
-		oauth:                option.OAuth,
-		frontendOrigin:       option.FrontendOrigin,
-		cookieSecure:         option.AppEnv == config.EnvProduction,
-		allowedOrigins:       append([]string(nil), option.AllowedOrigins...),
-		rateLimiter:          middleware.NewRateLimiter(time.Minute),
-		oauthHTTPClient:      &http.Client{Timeout: 10 * time.Second},
-		trustXForwardedFor:   option.TrustXForwardedFor,
-		trustedProxyPrefixes: trustedProxyPrefixes(option.TrustedProxies),
+		app:              service,
+		carpools:         service,
+		apiQuotas:        service,
+		reputation:       service,
+		mux:              chi.NewRouter(),
+		enableDevAuth:    option.EnableDevAuth,
+		readinessChecker: option.ReadinessChecker,
+		navigationBadges: navigationBadges,
+		realtimeHub:      realtimeHub,
+		oauth:            option.OAuth,
+		frontendOrigin:   option.FrontendOrigin,
+		cookieSecure:     option.AppEnv == config.EnvProduction,
+		allowedOrigins:   append([]string(nil), option.AllowedOrigins...),
+		rateLimiter:      middleware.NewRateLimiter(time.Minute),
+		oauthHTTPClient:  &http.Client{Timeout: 10 * time.Second},
+		clientIPResolver: middleware.NewClientIPResolver(option.TrustXForwardedFor, option.TrustedProxies),
 	}
 	server.routes()
 	return middleware.WithRequestID(
-		middleware.WithRequestLogging(
-			log.Default(),
-			middleware.WithSecurityHeaders(
-				middleware.WithCORSAndOrigin(server.mux, middleware.CORSOptions{
-					AllowedOrigins: server.allowedOrigins,
-					Production:     option.AppEnv == config.EnvProduction,
-				}),
-				middleware.SecurityHeadersOptions{HSTS: option.AppEnv == config.EnvProduction},
+		middleware.WithClientIP(
+			server.clientIPResolver,
+			middleware.WithRequestLogging(
+				log.Default(),
+				middleware.WithSecurityHeaders(
+					middleware.WithCORSAndOrigin(server.mux, middleware.CORSOptions{
+						AllowedOrigins: server.allowedOrigins,
+						Production:     option.AppEnv == config.EnvProduction,
+					}),
+					middleware.SecurityHeadersOptions{HSTS: option.AppEnv == config.EnvProduction},
+				),
 			),
 		),
 	)

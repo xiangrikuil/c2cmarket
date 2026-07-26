@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"net/netip"
 	"strings"
 	"testing"
 	"time"
@@ -107,13 +106,16 @@ func TestOAuthCallbackRedirectsToConfiguredFrontendOrigin(t *testing.T) {
 
 func TestRateLimitedEndpointReturnsProblem429(t *testing.T) {
 	server := &Server{
-		app:         app.NewService(),
-		rateLimiter: middleware.NewRateLimiter(time.Minute),
+		app:              app.NewService(),
+		rateLimiter:      middleware.NewRateLimiter(time.Minute),
+		clientIPResolver: middleware.NewClientIPResolver(false, nil),
 	}
 	handler := server.limitHandler("test_rate_limit", 1, func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
 	})
-	wrapped := middleware.WithRequestID(http.HandlerFunc(handler))
+	wrapped := middleware.WithRequestID(
+		middleware.WithClientIP(server.clientIPResolver, http.HandlerFunc(handler)),
+	)
 	for i := 0; i < 2; i++ {
 		request := httptest.NewRequest(http.MethodGet, "/test-rate-limit", nil)
 		response := httptest.NewRecorder()
@@ -206,13 +208,16 @@ func TestJSONRequestBodyStrictParsingFailures(t *testing.T) {
 
 func TestRateLimitIgnoresForgedForwardingHeadersByDefault(t *testing.T) {
 	server := &Server{
-		app:         app.NewService(),
-		rateLimiter: middleware.NewRateLimiter(time.Minute),
+		app:              app.NewService(),
+		rateLimiter:      middleware.NewRateLimiter(time.Minute),
+		clientIPResolver: middleware.NewClientIPResolver(false, nil),
 	}
 	handler := server.limitHandler("test_forged_xff", 1, func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
 	})
-	wrapped := middleware.WithRequestID(http.HandlerFunc(handler))
+	wrapped := middleware.WithRequestID(
+		middleware.WithClientIP(server.clientIPResolver, http.HandlerFunc(handler)),
+	)
 
 	for i, forwardedFor := range []string{"198.51.100.10", "198.51.100.11"} {
 		request := httptest.NewRequest(http.MethodGet, "/test-forged-xff", nil)
@@ -236,15 +241,16 @@ func TestRateLimitIgnoresForgedForwardingHeadersByDefault(t *testing.T) {
 
 func TestTrustedProxyForwardingHeadersAffectRateLimitOnlyForTrustedPeer(t *testing.T) {
 	server := &Server{
-		app:                  app.NewService(),
-		rateLimiter:          middleware.NewRateLimiter(time.Minute),
-		trustXForwardedFor:   true,
-		trustedProxyPrefixes: mustTrustedProxyPrefixes(t, "10.0.0.0/24"),
+		app:              app.NewService(),
+		rateLimiter:      middleware.NewRateLimiter(time.Minute),
+		clientIPResolver: middleware.NewClientIPResolver(true, []string{"10.0.0.0/24"}),
 	}
 	handler := server.limitHandler("test_trusted_xff", 1, func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
 	})
-	wrapped := middleware.WithRequestID(http.HandlerFunc(handler))
+	wrapped := middleware.WithRequestID(
+		middleware.WithClientIP(server.clientIPResolver, http.HandlerFunc(handler)),
+	)
 
 	for _, forwardedFor := range []string{"198.51.100.10", "198.51.100.11"} {
 		request := httptest.NewRequest(http.MethodGet, "/test-trusted-xff", nil)
@@ -349,13 +355,4 @@ func findCookie(t *testing.T, cookies []*http.Cookie, name string) *http.Cookie 
 	}
 	t.Fatalf("cookie %s not found in %+v", name, cookies)
 	return nil
-}
-
-func mustTrustedProxyPrefixes(t *testing.T, values ...string) []netip.Prefix {
-	t.Helper()
-	prefixes := trustedProxyPrefixes(values)
-	if len(prefixes) != len(values) {
-		t.Fatalf("expected all trusted proxy prefixes to parse: values=%+v prefixes=%+v", values, prefixes)
-	}
-	return prefixes
 }

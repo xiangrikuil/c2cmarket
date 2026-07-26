@@ -97,7 +97,8 @@ docker compose --profile migrate run --rm migrate
 docker compose --profile app up -d --build backend
 ```
 
-后端默认监听 `http://127.0.0.1:8080`：
+后端宿主机端口只绑定 loopback，默认监听 `http://127.0.0.1:8080`，不会在
+宿主机公网接口直接暴露：
 
 ```text
 GET /health

@@ -42,12 +42,13 @@ func WithRequestLogging(logger *log.Logger, next http.Handler) http.Handler {
 			status = http.StatusOK
 		}
 		logger.Printf(
-			"method=%s path=%s status=%d duration=%s request_id=%s",
+			"method=%s path=%s status=%d duration=%s request_id=%s client_ip=%s",
 			r.Method,
 			r.URL.Path,
 			status,
 			time.Since(startedAt).Round(time.Microsecond),
 			RequestIDFromRequest(r),
+			ClientIPFromRequest(r),
 		)
 	})
 }
