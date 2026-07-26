@@ -15,7 +15,7 @@
 <p align="center">
   <a href="https://github.com/xiangrikuil/c2cmarket/actions/workflows/ci.yml"><img src="https://github.com/xiangrikuil/c2cmarket/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <a href="./LICENSE"><img src="https://img.shields.io/badge/license-MIT-green.svg" alt="MIT License"></a>
-  <img src="https://img.shields.io/badge/Go-1.26-00ADD8?logo=go&logoColor=white" alt="Go 1.26">
+  <img src="https://img.shields.io/badge/Go-1.26.5-00ADD8?logo=go&logoColor=white" alt="Go 1.26.5">
   <img src="https://img.shields.io/badge/Vue-3-42b883?logo=vuedotjs&logoColor=white" alt="Vue 3">
 </p>
 
@@ -44,7 +44,7 @@ C2CMarket 是一个前后端分离的社区信息撮合平台。它帮助用户�
 | 层级 | 技术 |
 | --- | --- |
 | 前端 | Vue 3、TypeScript、Vite 8、Vue Router、Pinia、TanStack Query、Tailwind CSS |
-| 后端 | Go 1.26、chi、pgx |
+| 后端 | Go 1.26.5、chi、pgx |
 | 数据库 | PostgreSQL 18、版本化 SQL migrations |
 | 基础设施 | Docker Compose、Cloudflare Pages/Tunnel、GitHub Actions |
 | 集成 | linux.do OAuth 2.0、阿里云 DirectMail SMTP、可选 Umami |
@@ -72,7 +72,7 @@ C2CMarket 是一个前后端分离的社区信息撮合平台。它帮助用户�
 - Docker 和 Docker Compose
 - Node.js `>=24.11 <25`
 - pnpm `>=10 <11`
-- Go 1.26（仅在不使用 Docker 运行后端时需要）
+- Go 1.26.5（仅在不使用 Docker 运行后端时需要）
 
 ### 1. 获取代码与配置
 

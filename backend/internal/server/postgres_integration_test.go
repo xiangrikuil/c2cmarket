@@ -172,6 +172,9 @@ func TestPostgresAPIServiceFlow(t *testing.T) {
 	if published.PublicationStatus != app.APIServicePublicationStatusOnline || published.ModerationStatus != app.APIServiceModerationStatusClear {
 		t.Fatalf("unexpected published API service: %+v", published)
 	}
+	assertPublicAPIServiceVisible(t, server, published.ID, ownerContact.ID, false)
+	assertAPIServicePublicPredicateCount(t, databaseURL, published.ID, 0)
+	published = updateAPIServiceOrderSettings(t, server, ownerSession, published.ID, published.Version, true, "pg-api-order-settings-"+suffix)
 	assertPublicAPIServiceVisible(t, server, published.ID, ownerContact.ID, true)
 	assertAPIServicePublicPredicateCount(t, databaseURL, published.ID, 1)
 
@@ -303,6 +306,7 @@ func TestPostgresAPIPurchaseIntentFlow(t *testing.T) {
 	service := createAPIService(t, server, ownerSession, ownerContact.ID, "pg-api-intent-service-create-"+suffix)
 	submitted := ownerAPIServiceAction(t, server, ownerSession, service.ID, "submit-review", service.Version, "pg-api-intent-service-submit-"+suffix)
 	published := ownerAPIServiceAction(t, server, ownerSession, submitted.ID, "publish", submitted.Version, "pg-api-intent-service-publish-"+suffix)
+	published = updateAPIServiceOrderSettings(t, server, ownerSession, published.ID, published.Version, true, "pg-api-intent-service-settings-"+suffix)
 
 	first := createAPIPurchaseIntent(t, server, buyerSession, published.ID, buyerContact.ID, "pg-api-intent-create-"+suffix)
 	second := createAPIPurchaseIntent(t, server, buyerSession, published.ID, buyerContact.ID, "pg-api-intent-create-"+suffix)
@@ -496,6 +500,7 @@ func TestPostgresAPIPurchaseIntentIntegrityConstraints(t *testing.T) {
 
 	submitted := ownerAPIServiceAction(t, server, ownerSession, service.ID, "submit-review", service.Version, "pg-api-intent-integrity-submit-"+suffix)
 	published := ownerAPIServiceAction(t, server, ownerSession, submitted.ID, "publish", submitted.Version, "pg-api-intent-integrity-publish-"+suffix)
+	published = updateAPIServiceOrderSettings(t, server, ownerSession, published.ID, published.Version, true, "pg-api-intent-integrity-settings-"+suffix)
 
 	selfIntent := newJSONRequest(http.MethodPost, "/api/v1/api-services/"+published.ID+"/purchase-intents", apiPurchaseIntentPayload(ownerContact.ID))
 	addAuth(selfIntent, ownerSession, "pg-api-intent-self-"+suffix)
@@ -1225,6 +1230,17 @@ func assertAPIServicePublicPredicateCount(t *testing.T, databaseURL, serviceID s
 		  AND review_status = 'approved'
 		  AND publication_status = 'online'
 		  AND moderation_status = 'clear'
+		  AND accepting_orders = true
+		  AND payment_window_minutes BETWEEN 3 AND 15
+		  AND (billing_mode <> 'metered_usd_quota' OR available_usd_allowance > 0)
+		  AND (billing_mode <> 'metered_usd_quota' OR quota_expires_at > now())
+		  AND EXISTS (
+		    SELECT 1
+		    FROM api_service_payment_options
+		    WHERE api_service_id = api_services.id
+		      AND enabled = true
+		      AND payment_method IN ('wechat', 'alipay')
+		  )
 	`, serviceID).Scan(&count); err != nil {
 		t.Fatalf("count public API service predicate: %v", err)
 	}
@@ -1581,7 +1597,7 @@ func assertOfficialPriceRecordIdempotencyCache(t *testing.T, databaseURL, adminU
 	if status != "completed" || !completed {
 		t.Fatalf("expected completed idempotency cache, got status=%q completed=%v", status, completed)
 	}
-	if responseStatus != http.StatusOK || contentType != "application/json; charset=utf-8" {
+	if responseStatus != http.StatusCreated || contentType != "application/json; charset=utf-8" {
 		t.Fatalf("unexpected cached response metadata: status=%d contentType=%q", responseStatus, contentType)
 	}
 	if resourceType != "official_price_record" || resourceID != recordID {

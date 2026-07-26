@@ -1,4 +1,4 @@
-FROM golang:1.26-alpine AS build
+FROM golang:1.26.5-alpine@sha256:0178a641fbb4858c5f1b48e34bdaabe0350a330a1b1149aabd498d0699ff5fb2 AS build
 
 ARG APP_VERSION=development
 ARG GIT_COMMIT=unknown
@@ -21,7 +21,7 @@ RUN test -n "${APP_VERSION}" \
     -o /out/c2c-market-backend \
     ./cmd/api
 
-FROM alpine:3.22
+FROM alpine:3.22@sha256:14358309a308569c32bdc37e2e0e9694be33a9d99e68afb0f5ff33cc1f695dce
 
 ARG APP_VERSION=development
 ARG GIT_COMMIT=unknown

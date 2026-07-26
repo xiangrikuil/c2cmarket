@@ -7,6 +7,12 @@
     "node": ">=24.11 <25",
     "pnpm": ">=10 <11"
   },
+  "pnpm": {
+    "overrides": {
+      "js-yaml": "4.3.0",
+      "postcss": "8.5.18"
+    }
+  },
   "scripts": {
     "dev": "vite --host 0.0.0.0",
     "build": "vue-tsc -b && vite build",
