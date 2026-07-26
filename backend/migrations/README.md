@@ -68,6 +68,7 @@ versions:
 | `000059_transaction_reviews` | completed carpool/API bidirectional sealed reviews, publication freeze, append-only revisions, and legacy review migration |
 | `000060_reputation_engine` | rebuildable role/scope reputation snapshots, append-only history, and fact-driven invalidation |
 | `000061_source_author_verification` | resource-level source-author verification, append-only audit events, and reputation invalidation |
+| `000062_auth_identity_bootstrap_hardening` | immutable first-admin bootstrap provenance for create-only, fail-closed initialization |
 
 The current runnable Go slice supports both in-memory tests and PostgreSQL runtime.
 When `DATABASE_URL` is configured, users, auth sessions, idempotency, product
@@ -229,6 +230,11 @@ and API services. Each resource keeps one versioned verification record with
 every administrator change appends an immutable audit event. Verification and
 source-resource changes invalidate the seller's reputation snapshots so
 mismatches and time-based expiry are reflected in subsequent reads.
+
+Version 62 adds immutable provenance for the one supported first-admin bootstrap
+run. Runtime bootstrap is create-only: a proven matching rerun returns without
+changing credentials, while occupied usernames, foreign administrators, and
+inconsistent provenance fail closed.
 
 ## Contact Retention And Destruction
 

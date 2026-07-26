@@ -42,6 +42,8 @@ type Service struct {
 	users                       map[string]User
 	usersByUsername             map[string]string
 	usersByVerifiedEmail        map[string]string
+	oauthUserIDs                map[string]string
+	adminBootstrapRuns          map[string]adminBootstrapRun
 	sessions                    map[string]Session
 	emailRegistrationCodes      map[string]emailRegistrationChallenge
 	passwordCredentialsByUserID map[string]PasswordCredential
@@ -75,13 +77,12 @@ func NewServiceWithRegistrationEmailSender(repo Repository, now func() time.Time
 		users:                       make(map[string]User),
 		usersByUsername:             make(map[string]string),
 		usersByVerifiedEmail:        make(map[string]string),
+		oauthUserIDs:                make(map[string]string),
+		adminBootstrapRuns:          make(map[string]adminBootstrapRun),
 		sessions:                    make(map[string]Session),
 		emailRegistrationCodes:      make(map[string]emailRegistrationChallenge),
 		passwordCredentialsByUserID: make(map[string]PasswordCredential),
 	}
-	service.ensureUserLocked("admin", true)
-	service.ensureUserLocked("buyer", false)
-	service.ensureUserLocked("seller", false)
 	return service
 }
 
@@ -120,10 +121,11 @@ func (s *Service) CreateDevSession(ctx context.Context, username string, isAdmin
 }
 
 func (s *Service) LoginWithOAuthProfile(ctx context.Context, profile OAuthProfile) (User, Session, *domain.AppError) {
-	profile.Provider = strings.TrimSpace(profile.Provider)
-	profile.Subject = strings.TrimSpace(profile.Subject)
-	profile.Username = normalizeUsername(profile.Username)
-	if profile.Provider == "" || profile.Subject == "" || profile.Username == "" {
+	profile.Provider = CanonicalOAuthProvider(profile.Provider)
+	profile.Subject = CanonicalOAuthSubject(profile.Subject)
+	rawUsername := strings.TrimSpace(profile.Username)
+	profile.Username = OAuthUsernameCandidate(profile.Username, profile.Provider, profile.Subject, 0)
+	if profile.Provider == "" || profile.Subject == "" || rawUsername == "" {
 		return User{}, Session{}, domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Invalid OAuth profile", "OAuth 用户资料不完整。", "profile", "required", "OAuth 用户资料不完整。")
 	}
 	if profile.DisplayName == "" {
@@ -145,21 +147,47 @@ func (s *Service) LoginWithOAuthProfile(ctx context.Context, profile OAuthProfil
 		created = result.Created
 	} else {
 		s.mu.Lock()
-		_, existed := s.usersByUsername[profile.Username]
-		user = s.ensureUserLocked(profile.Username, profile.GrantAdmin)
-		created = !existed
-		user.DisplayName = strings.TrimSpace(profile.DisplayName)
-		if profile.GrantAdmin {
-			user.IsAdmin = true
+		identityKey := OAuthIdentityKey(profile.Provider, profile.Subject)
+		userID := s.oauthUserIDs[identityKey]
+		if userID != "" {
+			user = s.users[userID]
+		} else {
+			for attempt := 0; ; attempt++ {
+				candidate := OAuthUsernameCandidate(profile.Username, profile.Provider, profile.Subject, attempt)
+				if s.usersByUsername[candidate] != "" {
+					continue
+				}
+				user = User{
+					ID:          uuid.NewString(),
+					Username:    candidate,
+					DisplayName: candidate,
+					Status:      "active",
+				}
+				s.users[user.ID] = user
+				s.usersByUsername[candidate] = user.ID
+				s.oauthUserIDs[identityKey] = user.ID
+				created = true
+				break
+			}
 		}
-		user.LinuxDoBinding = &LinuxDoBinding{
-			Bound:           true,
-			LinuxDoUserID:   valueOrDefault(profile.LinuxDoUserID, profile.Subject),
-			LinuxDoUsername: valueOrDefault(profile.LinuxDoUsername, profile.Username),
-			TrustLevel:      profile.TrustLevel,
-			AvatarURL:       valueOrDefault(profile.LinuxDoAvatarURL, profile.AvatarURL),
-			BoundAt:         now,
-			LastSyncedAt:    now,
+		user.DisplayName = strings.TrimSpace(profile.DisplayName)
+		if user.DisplayName == "" {
+			user.DisplayName = user.Username
+		}
+		if IsLinuxDoProvider(profile.Provider) {
+			boundAt := now
+			if user.LinuxDoBinding != nil && !user.LinuxDoBinding.BoundAt.IsZero() {
+				boundAt = user.LinuxDoBinding.BoundAt
+			}
+			user.LinuxDoBinding = &LinuxDoBinding{
+				Bound:           true,
+				LinuxDoUserID:   valueOrDefault(profile.LinuxDoUserID, profile.Subject),
+				LinuxDoUsername: valueOrDefault(profile.LinuxDoUsername, profile.Username),
+				TrustLevel:      profile.TrustLevel,
+				AvatarURL:       valueOrDefault(profile.LinuxDoAvatarURL, profile.AvatarURL),
+				BoundAt:         boundAt,
+				LastSyncedAt:    now,
+			}
 		}
 		s.users[user.ID] = user
 		s.mu.Unlock()
@@ -290,12 +318,45 @@ func (s *Service) BootstrapAdmin(ctx context.Context, input BootstrapAdminInput)
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.hasAdminPasswordCredentialLocked() {
-		return BootstrapAdminResult{}, nil
+	if run, ok := s.adminBootstrapRuns[InitialAdminBootstrapKey]; ok {
+		user := s.users[run.UserID]
+		credential := s.passwordCredentialsByUserID[run.UserID]
+		if user.ID == "" ||
+			run.Username != user.Username ||
+			user.Status != "active" ||
+			!user.IsAdmin ||
+			s.usersByUsername[run.Username] != run.UserID ||
+			credential.User.ID != user.ID {
+			return BootstrapAdminResult{}, AdminBootstrapInconsistentError()
+		}
+		if username != run.Username {
+			return BootstrapAdminResult{}, AdminBootstrapConflictError()
+		}
+		return BootstrapAdminResult{User: user}, nil
 	}
-	user := s.ensureUserLocked(username, true)
+	for _, user := range s.users {
+		if user.IsAdmin {
+			return BootstrapAdminResult{}, AdminBootstrapConflictError()
+		}
+	}
+	if s.usersByUsername[username] != "" {
+		return BootstrapAdminResult{}, AdminBootstrapConflictError()
+	}
+	user := User{
+		ID:          uuid.NewString(),
+		Username:    username,
+		DisplayName: username,
+		IsAdmin:     true,
+		Status:      "active",
+	}
+	s.users[user.ID] = user
+	s.usersByUsername[user.Username] = user.ID
 	credential.User = user
 	s.passwordCredentialsByUserID[user.ID] = credential
+	s.adminBootstrapRuns[InitialAdminBootstrapKey] = adminBootstrapRun{
+		UserID:   user.ID,
+		Username: user.Username,
+	}
 	return BootstrapAdminResult{User: user, Created: true}, nil
 }
 
@@ -556,19 +617,6 @@ func (s *Service) rehashPasswordCredential(ctx context.Context, credential Passw
 	}
 	s.passwordCredentialsByUserID[credential.User.ID] = next
 	return nil
-}
-
-func (s *Service) hasAdminPasswordCredentialLocked() bool {
-	for userID, credential := range s.passwordCredentialsByUserID {
-		if credential.User.ID == "" {
-			continue
-		}
-		user := s.users[userID]
-		if user.IsAdmin {
-			return true
-		}
-	}
-	return false
 }
 
 func (s *Service) ensureUserLocked(username string, isAdmin bool) User {

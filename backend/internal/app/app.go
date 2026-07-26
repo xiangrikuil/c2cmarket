@@ -84,9 +84,9 @@ func New(ctx context.Context, cfg config.Config) (*App, error) {
 			username = "admin"
 		}
 		if result.Created {
-			log.Printf("管理员 bootstrap 已完成 username=%s", result.User.Username)
+			log.Printf("管理员 bootstrap 已完成 user_id=%s username=%s", result.User.ID, result.User.Username)
 		} else {
-			log.Printf("管理员 bootstrap 已跳过，已有管理员密码凭证 username=%s", username)
+			log.Printf("管理员 bootstrap 来源已确认 user_id=%s username=%s", result.User.ID, username)
 		}
 	}
 	navigationBadges := navigationbadge.NewService(store, time.Now)

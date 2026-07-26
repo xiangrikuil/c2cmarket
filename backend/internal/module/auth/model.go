@@ -51,7 +51,6 @@ type OAuthProfile struct {
 	Email            string
 	AvatarURL        string
 	TrustLevel       int
-	GrantAdmin       bool
 	LinuxDoUserID    string
 	LinuxDoUsername  string
 	LinuxDoAvatarURL string

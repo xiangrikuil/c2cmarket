@@ -44,6 +44,8 @@ const (
 	CodeActiveApplicationExists         = "ACTIVE_APPLICATION_EXISTS"
 	CodeActiveAPIIntentExists           = "ACTIVE_API_INTENT_EXISTS"
 	CodeActiveReportExists              = "ACTIVE_REPORT_EXISTS"
+	CodeAdminBootstrapConflict          = "ADMIN_BOOTSTRAP_CONFLICT"
+	CodeAdminBootstrapInconsistent      = "ADMIN_BOOTSTRAP_INCONSISTENT"
 	CodeAPIPurchaseIntentHasOrder       = "API_PURCHASE_INTENT_HAS_ORDER"
 	CodeAPIQuotaBatchExpired            = "API_QUOTA_BATCH_EXPIRED"
 	CodeAPIQuotaBuyerRoundLimit         = "API_QUOTA_BUYER_ROUND_LIMIT"

@@ -504,7 +504,6 @@ func (s *Server) oauthProfile(ctx context.Context, code string) (auth.OAuthProfi
 
 func fakeOAuthProfile(code string) auth.OAuthProfile {
 	username := strings.TrimSpace(strings.ToLower(code))
-	grantAdmin := strings.Contains(username, "admin")
 	username = strings.TrimPrefix(username, "fake-")
 	if username == "" {
 		username = "oauth-user"
@@ -516,7 +515,6 @@ func fakeOAuthProfile(code string) auth.OAuthProfile {
 		DisplayName:      username,
 		Email:            username + "@example.test",
 		TrustLevel:       3,
-		GrantAdmin:       grantAdmin,
 		LinuxDoUserID:    "fake-" + username,
 		LinuxDoUsername:  username,
 		LinuxDoAvatarURL: "",

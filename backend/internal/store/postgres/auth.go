@@ -167,102 +167,112 @@ func (s *Store) UpsertOAuthUser(ctx context.Context, profile auth.OAuthProfile, 
 	if s == nil || s.pool == nil {
 		return auth.OAuthUserResult{}, internalStoreError()
 	}
-	username := strings.TrimSpace(strings.ToLower(profile.Username))
-	if username == "" || strings.TrimSpace(profile.Provider) == "" || strings.TrimSpace(profile.Subject) == "" {
+	provider := auth.CanonicalOAuthProvider(profile.Provider)
+	subject := auth.CanonicalOAuthSubject(profile.Subject)
+	username := auth.OAuthUsernameCandidate(profile.Username, provider, subject, 0)
+	if strings.TrimSpace(profile.Username) == "" || provider == "" || subject == "" {
 		return auth.OAuthUserResult{}, domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Invalid OAuth profile", "OAuth 用户资料不完整。", "profile", "required", "OAuth 用户资料不完整。")
 	}
 	displayName := strings.TrimSpace(profile.DisplayName)
 	if displayName == "" {
 		displayName = username
 	}
-	linuxDoUserID := strings.TrimSpace(profile.LinuxDoUserID)
-	if linuxDoUserID == "" {
-		linuxDoUserID = strings.TrimSpace(profile.Subject)
-	}
-	linuxDoUsername := strings.TrimSpace(profile.LinuxDoUsername)
-	if linuxDoUsername == "" {
-		linuxDoUsername = username
-	}
-	trustLevel := profile.TrustLevel
-	if trustLevel <= 0 {
-		trustLevel = 1
-	}
-
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return auth.OAuthUserResult{}, internalStoreError()
 	}
 	defer rollback(ctx, tx)
 
-	var user auth.User
-	var inserted bool
-	err = tx.QueryRow(ctx, `
-		INSERT INTO users (username, display_name, avatar_url, account_status, created_at, updated_at, last_active_at)
-		VALUES ($1, $2, NULLIF($3, ''), 'active', $4, $4, $4)
-		ON CONFLICT (username) DO UPDATE
-		SET display_name = EXCLUDED.display_name,
-		    avatar_url = COALESCE(EXCLUDED.avatar_url, users.avatar_url),
-		    last_active_at = EXCLUDED.last_active_at,
-		    updated_at = EXCLUDED.updated_at
-		RETURNING id::text, username, display_name, account_status, (xmax = 0) AS inserted
-	`, username, displayName, strings.TrimSpace(profile.AvatarURL), now).Scan(&user.ID, &user.Username, &user.DisplayName, &user.Status, &inserted)
+	user, identityExists, err := oauthUserByIdentity(ctx, tx, provider, subject, true)
 	if err != nil {
 		return auth.OAuthUserResult{}, internalStoreError()
 	}
+	if identityExists {
+		err = tx.QueryRow(ctx, `
+			UPDATE users
+			SET display_name = $2,
+			    avatar_url = COALESCE(NULLIF($3, ''), avatar_url),
+			    last_active_at = $4,
+			    updated_at = $4
+			WHERE id = $1
+			RETURNING display_name, account_status
+		`, user.ID, displayName, strings.TrimSpace(profile.AvatarURL), now).Scan(&user.DisplayName, &user.Status)
+		if err != nil {
+			return auth.OAuthUserResult{}, internalStoreError()
+		}
+		if _, err = tx.Exec(ctx, `
+			UPDATE auth_identities
+			SET last_login_at = $3
+			WHERE provider = $1 AND provider_subject = $2
+		`, provider, subject, now); err != nil {
+			return auth.OAuthUserResult{}, internalStoreError()
+		}
+		if auth.IsLinuxDoProvider(provider) {
+			user.LinuxDoBinding, err = syncLinuxDoBinding(ctx, tx, user.ID, profile, now)
+			if err != nil {
+				return auth.OAuthUserResult{}, internalStoreError()
+			}
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return auth.OAuthUserResult{}, internalStoreError()
+		}
+		return auth.OAuthUserResult{User: user}, nil
+	}
 
-	_, err = tx.Exec(ctx, `
+	var createdUser auth.User
+	for attempt := 0; ; attempt++ {
+		candidate := auth.OAuthUsernameCandidate(username, provider, subject, attempt)
+		err = tx.QueryRow(ctx, `
+			INSERT INTO users (username, display_name, avatar_url, account_status, created_at, updated_at, last_active_at)
+			VALUES ($1, $2, NULLIF($3, ''), 'active', $4, $4, $4)
+			ON CONFLICT (username) DO NOTHING
+			RETURNING id::text, username, display_name, account_status
+		`, candidate, displayName, strings.TrimSpace(profile.AvatarURL), now).Scan(
+			&createdUser.ID,
+			&createdUser.Username,
+			&createdUser.DisplayName,
+			&createdUser.Status,
+		)
+		if errors.Is(err, pgx.ErrNoRows) {
+			continue
+		}
+		if err != nil {
+			return auth.OAuthUserResult{}, internalStoreError()
+		}
+		break
+	}
+
+	var identityID string
+	err = tx.QueryRow(ctx, `
 		INSERT INTO auth_identities (user_id, provider, provider_subject, created_at, last_login_at)
 		VALUES ($1, $2, $3, $4, $4)
-		ON CONFLICT (provider, provider_subject) DO UPDATE
-		SET user_id = EXCLUDED.user_id,
-		    last_login_at = EXCLUDED.last_login_at
-	`, user.ID, strings.TrimSpace(profile.Provider), strings.TrimSpace(profile.Subject), now)
+		ON CONFLICT (provider, provider_subject) DO NOTHING
+		RETURNING id::text
+	`, createdUser.ID, provider, subject, now).Scan(&identityID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		if rollbackErr := tx.Rollback(ctx); rollbackErr != nil && !errors.Is(rollbackErr, pgx.ErrTxClosed) {
+			return auth.OAuthUserResult{}, internalStoreError()
+		}
+		winner, found, reloadErr := oauthUserByIdentity(ctx, s.pool, provider, subject, false)
+		if reloadErr != nil || !found {
+			return auth.OAuthUserResult{}, internalStoreError()
+		}
+		return auth.OAuthUserResult{User: winner}, nil
+	}
 	if err != nil {
 		return auth.OAuthUserResult{}, internalStoreError()
 	}
 
-	_, err = tx.Exec(ctx, `
-		INSERT INTO linux_do_bindings (user_id, linux_do_user_id, linux_do_username, trust_level, avatar_url, bound_at, last_synced_at)
-		VALUES ($1, $2, $3, $4, NULLIF($5, ''), $6, $6)
-		ON CONFLICT (user_id) DO UPDATE
-		SET linux_do_user_id = EXCLUDED.linux_do_user_id,
-		    linux_do_username = EXCLUDED.linux_do_username,
-		    trust_level = EXCLUDED.trust_level,
-		    avatar_url = COALESCE(EXCLUDED.avatar_url, linux_do_bindings.avatar_url),
-		    last_synced_at = EXCLUDED.last_synced_at
-	`, user.ID, linuxDoUserID, linuxDoUsername, trustLevel, strings.TrimSpace(profile.LinuxDoAvatarURL), now)
-	if err != nil {
-		return auth.OAuthUserResult{}, internalStoreError()
-	}
-
-	if profile.GrantAdmin {
-		_, err = tx.Exec(ctx, `
-			INSERT INTO user_permissions (user_id, permission)
-			VALUES ($1, 'admin')
-			ON CONFLICT DO NOTHING
-		`, user.ID)
+	if auth.IsLinuxDoProvider(provider) {
+		createdUser.LinuxDoBinding, err = syncLinuxDoBinding(ctx, tx, createdUser.ID, profile, now)
 		if err != nil {
 			return auth.OAuthUserResult{}, internalStoreError()
 		}
 	}
-	user.IsAdmin, err = hasAdminPermission(ctx, tx, user.ID)
-	if err != nil {
-		return auth.OAuthUserResult{}, internalStoreError()
-	}
-	user.LinuxDoBinding = &auth.LinuxDoBinding{
-		Bound:           true,
-		LinuxDoUserID:   linuxDoUserID,
-		LinuxDoUsername: linuxDoUsername,
-		TrustLevel:      trustLevel,
-		AvatarURL:       strings.TrimSpace(profile.LinuxDoAvatarURL),
-		BoundAt:         now,
-		LastSyncedAt:    now,
-	}
-
 	if err := tx.Commit(ctx); err != nil {
 		return auth.OAuthUserResult{}, internalStoreError()
 	}
-	return auth.OAuthUserResult{User: user, Created: inserted}, nil
+	return auth.OAuthUserResult{User: createdUser, Created: true}, nil
 }
 
 func (s *Store) BootstrapAdminPassword(ctx context.Context, credential auth.PasswordCredential, now time.Time) (auth.BootstrapAdminResult, *domain.AppError) {
@@ -280,24 +290,72 @@ func (s *Store) BootstrapAdminPassword(ctx context.Context, credential auth.Pass
 	}
 	defer rollback(ctx, tx)
 
-	if _, err = tx.Exec(ctx, `LOCK TABLE user_permissions, user_password_credentials IN SHARE ROW EXCLUSIVE MODE`); err != nil {
+	if _, err = tx.Exec(ctx, `
+		LOCK TABLE admin_bootstrap_runs, users, user_permissions, user_password_credentials
+		IN SHARE ROW EXCLUSIVE MODE
+	`); err != nil {
 		return auth.BootstrapAdminResult{}, internalStoreError()
 	}
 
-	var adminCredentialExists bool
+	var existing auth.User
+	var usernameSnapshot string
+	var hasAdmin, hasCredential bool
 	err = tx.QueryRow(ctx, `
-		SELECT EXISTS(
-			SELECT 1
-			FROM user_permissions p
-			JOIN user_password_credentials c ON c.user_id = p.user_id
-			WHERE p.permission = 'admin'
-		)
-	`).Scan(&adminCredentialExists)
-	if err != nil {
+		SELECT u.id::text,
+		       u.username,
+		       u.display_name,
+		       u.account_status,
+		       r.username_snapshot,
+		       EXISTS(
+		         SELECT 1 FROM user_permissions p
+		         WHERE p.user_id = u.id AND p.permission = 'admin'
+		       ),
+		       EXISTS(
+		         SELECT 1 FROM user_password_credentials c
+		         WHERE c.user_id = u.id
+		       )
+		FROM admin_bootstrap_runs r
+		JOIN users u ON u.id = r.user_id
+		WHERE r.bootstrap_key = $1
+	`, auth.InitialAdminBootstrapKey).Scan(
+		&existing.ID,
+		&existing.Username,
+		&existing.DisplayName,
+		&existing.Status,
+		&usernameSnapshot,
+		&hasAdmin,
+		&hasCredential,
+	)
+	if err == nil {
+		if usernameSnapshot != existing.Username ||
+			existing.Status != "active" ||
+			!hasAdmin ||
+			!hasCredential {
+			return auth.BootstrapAdminResult{}, auth.AdminBootstrapInconsistentError()
+		}
+		if username != usernameSnapshot {
+			return auth.BootstrapAdminResult{}, auth.AdminBootstrapConflictError()
+		}
+		existing.IsAdmin = true
+		return auth.BootstrapAdminResult{User: existing}, nil
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
 		return auth.BootstrapAdminResult{}, internalStoreError()
 	}
-	if adminCredentialExists {
-		return auth.BootstrapAdminResult{}, nil
+
+	var adminExists, usernameExists bool
+	if err = tx.QueryRow(ctx, `
+		SELECT EXISTS(
+		         SELECT 1 FROM user_permissions WHERE permission = 'admin'
+		       ),
+		       EXISTS(
+		         SELECT 1 FROM users WHERE username = $1
+		       )
+	`, username).Scan(&adminExists, &usernameExists); err != nil {
+		return auth.BootstrapAdminResult{}, internalStoreError()
+	}
+	if adminExists || usernameExists {
+		return auth.BootstrapAdminResult{}, auth.AdminBootstrapConflictError()
 	}
 
 	displayName := strings.TrimSpace(credential.User.DisplayName)
@@ -308,18 +366,18 @@ func (s *Store) BootstrapAdminPassword(ctx context.Context, credential auth.Pass
 	err = tx.QueryRow(ctx, `
 		INSERT INTO users (username, display_name, account_status, created_at, updated_at)
 		VALUES ($1, $2, 'active', $3, $3)
-		ON CONFLICT (username) DO UPDATE
-		SET display_name = COALESCE(NULLIF(users.display_name, ''), EXCLUDED.display_name)
 		RETURNING id::text, username, display_name, account_status
 	`, username, displayName, now).Scan(&user.ID, &user.Username, &user.DisplayName, &user.Status)
 	if err != nil {
+		if isUniqueViolation(err) {
+			return auth.BootstrapAdminResult{}, auth.AdminBootstrapConflictError()
+		}
 		return auth.BootstrapAdminResult{}, internalStoreError()
 	}
 
 	_, err = tx.Exec(ctx, `
 		INSERT INTO user_permissions (user_id, permission)
 		VALUES ($1, 'admin')
-		ON CONFLICT DO NOTHING
 	`, user.ID)
 	if err != nil {
 		return auth.BootstrapAdminResult{}, internalStoreError()
@@ -328,13 +386,19 @@ func (s *Store) BootstrapAdminPassword(ctx context.Context, credential auth.Pass
 	_, err = tx.Exec(ctx, `
 		INSERT INTO user_password_credentials (user_id, password_algorithm, password_salt, password_hash, created_at, password_updated_at)
 		VALUES ($1, $2, $3, $4, $5, $5)
-		ON CONFLICT (user_id) DO UPDATE
-		SET password_algorithm = EXCLUDED.password_algorithm,
-		    password_salt = EXCLUDED.password_salt,
-		    password_hash = EXCLUDED.password_hash,
-		    password_updated_at = EXCLUDED.password_updated_at
 	`, user.ID, strings.TrimSpace(credential.Algorithm), strings.TrimSpace(credential.Salt), strings.TrimSpace(credential.Hash), now)
 	if err != nil {
+		return auth.BootstrapAdminResult{}, internalStoreError()
+	}
+
+	_, err = tx.Exec(ctx, `
+		INSERT INTO admin_bootstrap_runs (bootstrap_key, user_id, username_snapshot, created_at)
+		VALUES ($1, $2, $3, $4)
+	`, auth.InitialAdminBootstrapKey, user.ID, user.Username, now)
+	if err != nil {
+		if isUniqueViolation(err) {
+			return auth.BootstrapAdminResult{}, auth.AdminBootstrapConflictError()
+		}
 		return auth.BootstrapAdminResult{}, internalStoreError()
 	}
 
@@ -343,6 +407,112 @@ func (s *Store) BootstrapAdminPassword(ctx context.Context, credential auth.Pass
 	}
 	user.IsAdmin = true
 	return auth.BootstrapAdminResult{User: user, Created: true}, nil
+}
+
+func oauthUserByIdentity(ctx context.Context, q queryer, provider, subject string, lock bool) (auth.User, bool, error) {
+	lockClause := ""
+	if lock {
+		lockClause = " FOR UPDATE OF i, u"
+	}
+	var user auth.User
+	var binding authLinuxDoBindingScan
+	err := q.QueryRow(ctx, `
+		SELECT u.id::text,
+		       u.username,
+		       u.display_name,
+		       u.account_status,
+		       EXISTS(
+		         SELECT 1 FROM user_permissions p
+		         WHERE p.user_id = u.id AND p.permission = 'admin'
+		       ) AS is_admin,
+		       l.linux_do_user_id,
+		       l.linux_do_username,
+		       l.trust_level,
+		       l.avatar_url,
+		       l.bound_at,
+		       l.last_synced_at
+		FROM auth_identities i
+		JOIN users u ON u.id = i.user_id
+		LEFT JOIN linux_do_bindings l ON l.user_id = u.id
+		WHERE i.provider = $1 AND i.provider_subject = $2
+	`+lockClause, provider, subject).Scan(
+		&user.ID,
+		&user.Username,
+		&user.DisplayName,
+		&user.Status,
+		&user.IsAdmin,
+		&binding.userID,
+		&binding.username,
+		&binding.trustLevel,
+		&binding.avatarURL,
+		&binding.boundAt,
+		&binding.lastSyncedAt,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return auth.User{}, false, nil
+	}
+	if err != nil {
+		return auth.User{}, false, err
+	}
+	applyAuthLinuxDoBinding(&user, binding)
+	return user, true, nil
+}
+
+func syncLinuxDoBinding(ctx context.Context, q queryer, userID string, profile auth.OAuthProfile, now time.Time) (*auth.LinuxDoBinding, error) {
+	linuxDoUserID := strings.TrimSpace(profile.LinuxDoUserID)
+	if linuxDoUserID == "" {
+		linuxDoUserID = auth.CanonicalOAuthSubject(profile.Subject)
+	}
+	linuxDoUsername := strings.TrimSpace(profile.LinuxDoUsername)
+	if linuxDoUsername == "" {
+		linuxDoUsername = auth.OAuthUsernameCandidate(profile.Username, profile.Provider, profile.Subject, 0)
+	}
+	trustLevel := profile.TrustLevel
+	if trustLevel <= 0 {
+		trustLevel = 1
+	}
+	avatarURL := strings.TrimSpace(profile.LinuxDoAvatarURL)
+	if avatarURL == "" {
+		avatarURL = strings.TrimSpace(profile.AvatarURL)
+	}
+
+	var binding auth.LinuxDoBinding
+	binding.Bound = true
+	err := q.QueryRow(ctx, `
+		INSERT INTO linux_do_bindings (
+		  user_id,
+		  linux_do_user_id,
+		  linux_do_username,
+		  trust_level,
+		  avatar_url,
+		  bound_at,
+		  last_synced_at
+		)
+		VALUES ($1, $2, $3, $4, NULLIF($5, ''), $6, $6)
+		ON CONFLICT (user_id) DO UPDATE
+		SET linux_do_user_id = EXCLUDED.linux_do_user_id,
+		    linux_do_username = EXCLUDED.linux_do_username,
+		    trust_level = EXCLUDED.trust_level,
+		    avatar_url = COALESCE(EXCLUDED.avatar_url, linux_do_bindings.avatar_url),
+		    last_synced_at = EXCLUDED.last_synced_at
+		RETURNING linux_do_user_id,
+		          linux_do_username,
+		          trust_level,
+		          COALESCE(avatar_url, ''),
+		          bound_at,
+		          last_synced_at
+	`, userID, linuxDoUserID, linuxDoUsername, trustLevel, avatarURL, now).Scan(
+		&binding.LinuxDoUserID,
+		&binding.LinuxDoUsername,
+		&binding.TrustLevel,
+		&binding.AvatarURL,
+		&binding.BoundAt,
+		&binding.LastSyncedAt,
+	)
+	if err != nil {
+		return nil, err
+	}
+	return &binding, nil
 }
 
 func (s *Store) PasswordCredential(ctx context.Context, username string) (auth.PasswordCredential, *domain.AppError) {

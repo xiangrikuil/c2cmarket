@@ -16,6 +16,7 @@ This directory contains guidelines for backend development. Fill in each file wi
 |-------|-------------|--------|
 | [Directory Structure](./directory-structure.md) | Module organization and file layout | Active |
 | [API Contracts](./api-contracts.md) | HTTP, session, CSRF, idempotency, and slice contracts | Active |
+| [OAuth Identity And Administrator Bootstrap](./auth-identity.md) | Immutable provider identity ownership and proven create-only administrator bootstrap | Active |
 | [Authentication Session Renewal](./auth-sessions.md) | Seven-day idle expiry, renewal throttling, cookie sync, and absolute expiry | Active |
 | [Limited API Quota Offers](./api-quota-offers.md) | Fixed quota inventory, rounds, orders, credentials, and concurrency | Active |
 | [Reputation Facts](./reputation.md) | Truthful transaction facts, role/scope aggregation, and exclusions | Active |
@@ -34,15 +35,16 @@ Before editing backend code, read:
 
 1. [Directory Structure](./directory-structure.md)
 2. [API Contracts](./api-contracts.md)
-3. [Authentication Session Renewal](./auth-sessions.md) when touching session creation, validation, cookies, revocation, or expiry
-4. [Limited API Quota Offers](./api-quota-offers.md) when touching quota batches, offers, rounds, orders, inventory, or credential delivery
-5. [Reputation Facts](./reputation.md) when touching reputation facts, exclusions, scoring inputs, or public reputation DTOs
-6. [Database Guidelines](./database-guidelines.md)
-7. [Error Handling](./error-handling.md)
-8. [Quality Guidelines](./quality-guidelines.md)
-9. [Logging Guidelines](./logging-guidelines.md)
-10. [C2CMarket Product Context](../guides/product-context.md)
-11. [Maintainability Contract](../guides/maintainability-contract.md)
+3. [OAuth Identity And Administrator Bootstrap](./auth-identity.md) when touching OAuth identity ownership, provider bindings, OAuth permissions, or first-admin bootstrap
+4. [Authentication Session Renewal](./auth-sessions.md) when touching session creation, validation, cookies, revocation, or expiry
+5. [Limited API Quota Offers](./api-quota-offers.md) when touching quota batches, offers, rounds, orders, inventory, or credential delivery
+6. [Reputation Facts](./reputation.md) when touching reputation facts, exclusions, scoring inputs, or public reputation DTOs
+7. [Database Guidelines](./database-guidelines.md)
+8. [Error Handling](./error-handling.md)
+9. [Quality Guidelines](./quality-guidelines.md)
+10. [Logging Guidelines](./logging-guidelines.md)
+11. [C2CMarket Product Context](../guides/product-context.md)
+12. [Maintainability Contract](../guides/maintainability-contract.md)
 
 ## Quality Check
 
