@@ -24,6 +24,7 @@ This directory contains the current project conventions for the Vue 3 + Vite fro
 | [Quality Guidelines](./quality-guidelines.md) | Code standards, forbidden patterns | Active |
 | [Type Safety](./type-safety.md) | Type patterns, validation | Active |
 | [Reproducible Release And Contract Drift](../backend/release-contract.md) | OpenAPI generator configuration and generated type drift contract | Active |
+| [Runtime Security And Observability](../backend/runtime-operations.md) | Cloudflare Pages response-header and API-origin policy contract | Active |
 
 ---
 
@@ -41,8 +42,9 @@ Before editing frontend code, read:
 8. [Quality Guidelines](./quality-guidelines.md)
 9. [Type Safety](./type-safety.md)
 10. [Reproducible Release And Contract Drift](../backend/release-contract.md) when touching OpenAPI or generated API types
-11. [C2CMarket Product Context](../guides/product-context.md)
-12. [Maintainability Contract](../guides/maintainability-contract.md)
+11. [Runtime Security And Observability](../backend/runtime-operations.md) when touching `frontend/public/_headers`, frontend asset origins, or API connection origins
+12. [C2CMarket Product Context](../guides/product-context.md)
+13. [Maintainability Contract](../guides/maintainability-contract.md)
 
 ## Quality Check
 

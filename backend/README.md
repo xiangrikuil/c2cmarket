@@ -88,8 +88,9 @@ PostgreSQL migration 通过 Compose 的一次性 `migrate` 服务执行，migrat
 
 - CORS/Origin：`FRONTEND_ORIGIN` 是生产必填的主前端 origin，并自动加入 allowlist；`ALLOWED_ORIGINS` 可用英文逗号追加其他明确 origin。cookie 认证响应不会使用 wildcard origin；生产状态变更请求会拒绝不在 allowlist 内的浏览器 `Origin`。
 - 模型审计安全出站：target 只接受公网 HTTPS Base URL，保存和实际连接都会解析并拒绝私网、loopback、link-local、metadata、特殊用途及混合 DNS 结果；连接只拨已验证 IP，禁止重定向，并限制连接、TLS、响应头、总请求时间及响应体大小。`MODEL_AUDIT_ALLOWED_HOSTS` 使用英文逗号配置精确 host，不支持 wildcard；空值表示允许任意通过公网地址检查的 HTTPS host。
-- 安全响应头：后端统一设置 `X-Content-Type-Options: nosniff` 和 `Referrer-Policy: strict-origin-when-cross-origin`；`APP_ENV=production` 时设置 `Strict-Transport-Security: max-age=31536000; includeSubDomains`。CSP 由前端静态站点或反向代理按页面资产策略配置。
-- 限流：当前为进程内 1 分钟窗口，按 route group、IP 和登录 userID 分开计数。OAuth、search、API purchase intent 创建、额度包直达订单、联系方式读取、举报/申诉创建和 dev contact/session 入口超限返回 `429`，Problem Details `code=RATE_LIMITED`。额度包购买使用每用户 12 次、每 IP 3000 次的独立预算，避免共享出口误伤；限流只用于减压，库存正确性仍完全由 PostgreSQL 保证。
+- 安全响应头：后端统一设置 deny-by-default API CSP、`Permissions-Policy`、`X-Frame-Options: DENY`、`X-Content-Type-Options: nosniff` 和 `Referrer-Policy: strict-origin-when-cross-origin`；`APP_ENV=production` 时设置 `Strict-Transport-Security: max-age=31536000; includeSubDomains`。前端静态站点通过 `frontend/public/_headers` 使用独立的页面 CSP。
+- Metrics：`GET /metrics` 输出 Prometheus/OpenMetrics 指标。生产环境强制使用至少 32 字节的独立 `METRICS_BEARER_TOKEN`，请求需携带 `Authorization: Bearer <token>`；无效凭据返回 `401 METRICS_AUTH_REQUIRED`。该路由应仅通过受限的运维入口访问。
+- 限流：当前为有最大 key 数的进程内 1 分钟窗口，按 route group、IP 和登录 userID 分开计数并定期清理。OAuth、search、API purchase intent 创建、额度包直达订单、联系方式读取、举报/申诉创建和 dev contact/session 入口超限返回 `429`，Problem Details `code=RATE_LIMITED` 和整数 `Retry-After`。额度包购买使用每用户 12 次、每 IP 3000 次的独立预算，避免共享出口误伤；限流只用于减压，库存正确性仍完全由 PostgreSQL 保证。
 - 分页：主要列表接口支持 `limit` / `cursor`，默认 `20`、最大 `100`，响应为 `{ "items": [], "nextCursor": "..." }`。当前 cursor 是 opaque base64url offset cursor，调用方只应透传。
 - 幂等：`processing`、`failed`、`completed` 分别保留 15 分钟、1 小时、7 天；completed 同请求 replay 返回缓存或资源重建结果，超过 64 KiB 且无法重建的响应返回 `IDEMPOTENCY_RESULT_NOT_REPLAYABLE`，不会再次执行 mutation；同 key 不同 request hash 在记录到期前返回 `IDEMPOTENCY_KEY_REUSED`，到期后可由新请求接管。
 - 数据维护：配置 PostgreSQL 时，应用立即执行并按 `MAINTENANCE_INTERVAL` 周期运行有限批次。多实例通过 advisory transaction lock 互斥；Session、验证码、幂等、通知和无引用领域事件按配置保留，结束的联系窗口只改为 `expired`，不会删除联系方式密文、联系访问记录、管理员或纠纷审计。

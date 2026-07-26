@@ -106,13 +106,17 @@ go vet ./...
 test -z "$(gofmt -l .)"
 ```
 
-- PostgreSQL integration must apply migration 63 to a dedicated local database
-  and assert HMAC storage, five-attempt lockout, one concurrent confirmation,
-  failed/completed expiry, body truncation, stale-generation rejection,
-  advisory-lock skip, bounded batches, notification-before-event deletion, and
-  preservation of contact/admin/moderation audit history.
-- Migration checks must assert version 63, the failed-state constraints, the
-  one-active-challenge index, and lifecycle indexes.
+- PostgreSQL integration must apply the complete migration chain through
+  `database.ExpectedMigrationVersion` to a dedicated empty database and assert
+  the migration 63 contracts: HMAC storage, five-attempt lockout, one
+  concurrent confirmation, failed/completed expiry, body truncation,
+  stale-generation rejection, advisory-lock skip, bounded batches,
+  notification-before-event deletion, and preservation of
+  contact/admin/moderation audit history.
+- Migration checks must assert the current `database.ExpectedMigrationVersion`,
+  plus the migration 63 failed-state constraints, one-active-challenge index,
+  and lifecycle indexes. Do not freeze the repository-wide latest-version
+  assertion at 63 when later migrations are added.
 
 ### 7. Wrong vs Correct
 

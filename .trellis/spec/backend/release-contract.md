@@ -31,7 +31,7 @@ node scripts/check-openapi-types.mjs
   "version": "0.1.0",
   "gitCommit": "<full resolved commit>",
   "buildTime": "<RFC3339 commit time>",
-  "expectedMigrationVersion": 63
+  "expectedMigrationVersion": 64
 }
 ```
 
@@ -138,4 +138,137 @@ docker compose \
   -f compose.prod.yaml \
   --profile app up --no-build -d backend
 curl -fsS http://127.0.0.1:8080/version
+```
+
+## Scenario: Exact-SHA CI Release Gate
+
+### 1. Scope / Trigger
+
+- Trigger: changing `.github/workflows/ci.yml`, toolchain versions, dependency
+  scans, Docker/SBOM jobs, production environment examples, or the set of
+  checks required before a release.
+- The workflow is a release contract. A green subset is not evidence that an
+  exact commit is releasable.
+
+### 2. Signatures
+
+```text
+.github/workflows/ci.yml
+jobs.release-gate.needs
+bash scripts/ci-postgres-integration.sh
+node scripts/check-security-headers.mjs
+node scripts/check-compose-exposure.mjs
+```
+
+Required release jobs:
+
+```text
+backend
+backend-race
+contracts
+postgres-integration
+frontend
+secret-scan
+filesystem-scan
+image
+release-gate
+```
+
+### 3. Contracts
+
+- The workflow uses repository-read permission by default and pins third-party
+  actions by full commit SHA. Scanner and generator versions are explicit.
+- Go comes from `backend/go.mod`; Node and pnpm match the supported frontend
+  toolchain. Frontend installation is frozen and the production-like build
+  uses `VITE_API_MODE=real`.
+- Backend format, vet, tests, race, and `govulncheck` are independent evidence.
+  PostgreSQL 18 integration migrates three empty databases through
+  `database.ExpectedMigrationVersion` with `dirty=false`.
+- Contract checks cover routes, generated OpenAPI files, migrations, security
+  headers, Compose exposure, commit-only source packaging, and whitespace.
+- Gitleaks scans full Git history. Trivy scans both the repository filesystem
+  and the exact-commit backend image for HIGH/CRITICAL findings. Syft produces
+  a non-empty SPDX JSON SBOM for that image.
+- The image job requires a clean checkout whose `HEAD` equals `GITHUB_SHA`,
+  then calls `scripts/build-backend-image.sh` with that SHA. Production and
+  staging consume a prebuilt `BACKEND_IMAGE`; they never build from a deployment
+  checkout.
+- `release-gate` uses `if: always()`, depends on every required job, and fails
+  unless every dependency result is `success`. It rechecks the exact SHA and
+  clean checkout.
+- CI and local gates must not print real environment files or secret values.
+  Tests use repository examples and explicit test-only values.
+
+### 4. Validation & Error Matrix
+
+| Condition | Required result |
+| --- | --- |
+| Required job fails, is cancelled, or is skipped | `release-gate` fails |
+| Workflow action is tag-only or unpinned | Static review/actionlint blocks the change |
+| Checkout SHA differs from `GITHUB_SHA` | Image and final release checks fail |
+| Checkout has tracked or untracked release input | Image/release clean-source check fails |
+| PostgreSQL migration is dirty or not current | Integration gate fails |
+| OpenAPI generated snapshot differs | Contracts job fails |
+| High/critical filesystem or image finding exists | Trivy job fails |
+| Gitleaks detects a non-allowlisted secret | Secret-scan job fails |
+| SBOM is missing or empty | Image job fails |
+| Production Compose retains `build` or public PostgreSQL | Compose guard fails |
+
+### 5. Good / Base / Bad Cases
+
+- Good: all eight prerequisite jobs succeed for one full SHA, the image labels
+  and SBOM identify that SHA, and `release-gate` succeeds.
+- Base: a pull request runs the same gates without publishing or deploying.
+- Bad: treating a green unit-test job as release approval while image scan or
+  PostgreSQL integration was skipped.
+- Bad: rebuilding on the server from a mutable branch after CI scanned a
+  different image.
+
+### 6. Tests Required
+
+```bash
+actionlint .github/workflows/ci.yml
+bash scripts/ci-postgres-integration.sh
+cd backend && go test -count=1 ./...
+cd backend && go test -race -count=1 ./...
+cd frontend && pnpm install --frozen-lockfile
+cd frontend && pnpm typecheck && pnpm test
+cd frontend && VITE_API_MODE=real pnpm build
+node scripts/check-openapi-routes.mjs
+node scripts/check-openapi-types.mjs
+node scripts/check-migrations-doc.mjs
+node scripts/check-security-headers.mjs
+node scripts/check-compose-exposure.mjs
+node scripts/test-package-source.mjs
+```
+
+Local release evidence additionally scans Git history, the filesystem, and the
+exact-commit image, then generates and parses a non-empty SPDX JSON SBOM.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```yaml
+release-gate:
+  needs: [backend]
+```
+
+This approves a commit without frontend, integration, secret, filesystem, image,
+or SBOM evidence.
+
+#### Correct
+
+```yaml
+release-gate:
+  if: ${{ always() }}
+  needs:
+    - backend
+    - backend-race
+    - contracts
+    - postgres-integration
+    - frontend
+    - secret-scan
+    - filesystem-scan
+    - image
 ```
