@@ -150,6 +150,10 @@ API_BASE_URL=http://127.0.0.1:8080 node scripts/run-smokes.mjs
 - Staging 配置模板：[`.env.staging.example`](./.env.staging.example)
 - API 契约：[`docs/openapi/c2c-market-api-v1.yaml`](./docs/openapi/c2c-market-api-v1.yaml)
 - 部署手册：[`docs/ops/deployment-runbook.md`](./docs/ops/deployment-runbook.md)
+- 安全运维：[`docs/security.md`](./docs/security.md)
+- 生产运维：[`docs/operations.md`](./docs/operations.md)
+- 备份恢复：[`docs/backup-restore.md`](./docs/backup-restore.md)
+- 发布检查：[`docs/release-checklist.md`](./docs/release-checklist.md)
 
 生产环境必须使用真实 OAuth、独立的加密密钥、HTTPS 前端来源、PostgreSQL 和有效 SMTP 配置。请勿直接复用示例文件中的本地默认值。
 生产后端镜像必须从干净工作区中的固定 commit 构建，脚本用法为

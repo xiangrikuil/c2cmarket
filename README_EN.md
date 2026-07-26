@@ -149,6 +149,10 @@ API_BASE_URL=http://127.0.0.1:8080 node scripts/run-smokes.mjs
 - Staging configuration: [`.env.staging.example`](./.env.staging.example)
 - API contract: [`docs/openapi/c2c-market-api-v1.yaml`](./docs/openapi/c2c-market-api-v1.yaml)
 - Deployment guide: [`docs/ops/deployment-runbook.md`](./docs/ops/deployment-runbook.md)
+- Security operations: [`docs/security.md`](./docs/security.md)
+- Production operations: [`docs/operations.md`](./docs/operations.md)
+- Backup and restore: [`docs/backup-restore.md`](./docs/backup-restore.md)
+- Release checklist: [`docs/release-checklist.md`](./docs/release-checklist.md)
 
 Production requires real OAuth, independent encryption keys, an HTTPS frontend origin, PostgreSQL, and valid SMTP configuration. Do not reuse development defaults from the example files.
 Build production backend images from a fixed commit in a clean worktree with
