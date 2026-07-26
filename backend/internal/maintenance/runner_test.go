@@ -86,6 +86,26 @@ func TestRunnerRejectsInvalidPolicy(t *testing.T) {
 	}
 }
 
+func TestRunnerStatsTrackRunOutcomes(t *testing.T) {
+	repo := &fakeRepository{failFirst: true}
+	runner := newTestRunner(t, repo, time.Hour)
+
+	runner.execute(context.Background())
+	runner.execute(context.Background())
+	repo.mu.Lock()
+	repo.skip = true
+	repo.mu.Unlock()
+	runner.execute(context.Background())
+
+	stats := runner.Stats()
+	if stats.FailureTotal != 1 || stats.SuccessTotal != 1 || stats.SkippedTotal != 1 {
+		t.Fatalf("unexpected maintenance stats: %+v", stats)
+	}
+	if stats.LastDurationSeconds < 0 {
+		t.Fatalf("invalid maintenance duration: %+v", stats)
+	}
+}
+
 func newTestRunner(t *testing.T, repo Repository, interval time.Duration) *Runner {
 	t.Helper()
 	runner, err := NewRunner(repo, Config{
@@ -110,6 +130,7 @@ type fakeRepository struct {
 	calls     chan struct{}
 	failFirst bool
 	block     bool
+	skip      bool
 	count     int
 }
 
@@ -117,6 +138,7 @@ func (f *fakeRepository) RunDataLifecycle(ctx context.Context, _ time.Time, _ in
 	f.mu.Lock()
 	f.count++
 	count := f.count
+	skip := f.skip
 	f.mu.Unlock()
 	if f.calls != nil {
 		select {
@@ -130,6 +152,9 @@ func (f *fakeRepository) RunDataLifecycle(ctx context.Context, _ time.Time, _ in
 	}
 	if f.failFirst && count == 1 {
 		return Result{}, domain.NewError(500, domain.CodeInternalError, "Internal error", "维护任务失败。")
+	}
+	if skip {
+		return Result{LockAcquired: false}, nil
 	}
 	return Result{LockAcquired: true}, nil
 }

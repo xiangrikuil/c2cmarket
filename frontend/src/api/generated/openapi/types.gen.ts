@@ -2898,6 +2898,31 @@ export type GetVersionResponses = {
 
 export type GetVersionResponse = GetVersionResponses[keyof GetVersionResponses];
 
+export type GetMetricsData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/metrics';
+};
+
+export type GetMetricsErrors = {
+    /**
+     * Problem Details error.
+     */
+    401: ProblemDetails;
+};
+
+export type GetMetricsError = GetMetricsErrors[keyof GetMetricsErrors];
+
+export type GetMetricsResponses = {
+    /**
+     * Prometheus text exposition.
+     */
+    200: string;
+};
+
+export type GetMetricsResponse = GetMetricsResponses[keyof GetMetricsResponses];
+
 export type CreateDevSessionData = {
     body: {
         username?: string;

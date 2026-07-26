@@ -2,6 +2,7 @@ package postgres
 
 import (
 	"context"
+	"time"
 
 	"c2c-market/backend/internal/database"
 	"c2c-market/backend/internal/health"
@@ -82,4 +83,20 @@ func (s *Store) DatabasePoolStats() database.PoolStats {
 		return database.PoolStats{}
 	}
 	return database.SnapshotPoolStats(s.pool)
+}
+
+func (s *Store) SlowActiveQueryCount(ctx context.Context, threshold time.Duration) (int64, error) {
+	if s == nil || s.pool == nil {
+		return 0, nil
+	}
+	var count int64
+	err := s.pool.QueryRow(ctx, `
+		SELECT count(*)
+		FROM pg_stat_activity
+		WHERE datname = current_database()
+		  AND pid <> pg_backend_pid()
+		  AND state = 'active'
+		  AND query_start < clock_timestamp() - ($1 * interval '1 millisecond')
+	`, threshold.Milliseconds()).Scan(&count)
+	return count, err
 }

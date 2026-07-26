@@ -15,6 +15,7 @@ import (
 	core "c2c-market/backend/internal/module/core"
 	"c2c-market/backend/internal/module/navigationbadge"
 	"c2c-market/backend/internal/module/profile"
+	"c2c-market/backend/internal/observability"
 	"c2c-market/backend/internal/platform/outboundhttp"
 	"c2c-market/backend/internal/realtime"
 	"c2c-market/backend/internal/server"
@@ -30,6 +31,7 @@ type App struct {
 	RealtimeListener *realtime.PostgresListener
 	Maintenance      *maintenance.Runner
 	RateLimiter      *middleware.RateLimiter
+	Metrics          *observability.Metrics
 	Handler          http.Handler
 	shutdownOnce     sync.Once
 }
@@ -145,6 +147,15 @@ func New(ctx context.Context, cfg config.Config) (*App, error) {
 
 	rateLimiter := middleware.NewRateLimiter(time.Minute)
 	rateLimiter.Start(ctx)
+	runtimeMetrics := observability.New(observability.Sources{
+		Database:         store,
+		RateLimiter:      rateLimiter,
+		Maintenance:      maintenanceRunner,
+		OutboundPolicy:   modelAuditPolicy,
+		RealtimeHub:      realtimeHub,
+		RealtimeListener: realtimeListener,
+		SlowQueryAfter:   cfg.DatabaseSlowQueryAfter,
+	})
 	handler := server.NewServer(service, server.ServerOptions{
 		EnableDevAuth:      cfg.EnableDevAuth,
 		ReadinessChecker:   store,
@@ -156,6 +167,8 @@ func New(ctx context.Context, cfg config.Config) (*App, error) {
 		TrustXForwardedFor: cfg.TrustXForwardedFor,
 		TrustedProxies:     cfg.TrustedProxies,
 		RateLimiter:        rateLimiter,
+		Metrics:            runtimeMetrics,
+		MetricsBearerToken: cfg.MetricsBearerToken,
 		OAuth: server.OAuthOptions{
 			ProviderMode: cfg.OAuthProviderMode,
 			ClientID:     cfg.OAuthClientID,
@@ -177,6 +190,7 @@ func New(ctx context.Context, cfg config.Config) (*App, error) {
 		RealtimeListener: realtimeListener,
 		Maintenance:      maintenanceRunner,
 		RateLimiter:      rateLimiter,
+		Metrics:          runtimeMetrics,
 		Handler:          handler,
 	}, nil
 }

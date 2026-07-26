@@ -7,9 +7,13 @@ import (
 )
 
 func (s *Server) routes() {
+	if s.metrics != nil {
+		s.mux.Use(s.metrics.Instrument)
+	}
 	s.mux.Get("/health", s.handleHealth)
 	s.mux.Get("/readyz", s.handleReadiness)
 	s.mux.Get("/version", s.handleVersion)
+	s.mux.Get("/metrics", s.handleMetrics)
 
 	s.mux.Route("/api/v1", func(r chi.Router) {
 		if s.enableDevAuth {

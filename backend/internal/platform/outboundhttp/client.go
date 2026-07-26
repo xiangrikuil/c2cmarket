@@ -62,6 +62,7 @@ func NewClient(policy *Policy, options ...ClientOption) *http.Client {
 		},
 		Timeout: settings.timeout,
 		CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
+			policy.RecordRedirectRejection()
 			return ErrRedirectNotAllowed
 		},
 	}
@@ -77,6 +78,7 @@ func (t *validatingTransport) RoundTrip(request *http.Request) (*http.Response, 
 		return nil, ErrInvalidTarget
 	}
 	if err := t.policy.validateRequestURL(request.URL); err != nil {
+		t.policy.recordRejection(err)
 		return nil, err
 	}
 	return t.transport.RoundTrip(request)

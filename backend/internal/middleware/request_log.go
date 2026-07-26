@@ -1,8 +1,10 @@
 package middleware
 
 import (
+	"encoding/json"
 	"log"
 	"net/http"
+	"sync"
 	"time"
 )
 
@@ -33,6 +35,7 @@ func WithRequestLogging(logger *log.Logger, next http.Handler) http.Handler {
 	if logger == nil {
 		logger = log.Default()
 	}
+	var writeMu sync.Mutex
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		startedAt := time.Now()
 		recorder := &statusRecorder{ResponseWriter: w}
@@ -41,14 +44,27 @@ func WithRequestLogging(logger *log.Logger, next http.Handler) http.Handler {
 		if status == 0 {
 			status = http.StatusOK
 		}
-		logger.Printf(
-			"method=%s path=%s status=%d duration=%s request_id=%s client_ip=%s",
-			r.Method,
-			r.URL.Path,
-			status,
-			time.Since(startedAt).Round(time.Microsecond),
-			RequestIDFromRequest(r),
-			ClientIPFromRequest(r),
-		)
+		entry, err := json.Marshal(struct {
+			Event      string  `json:"event"`
+			Method     string  `json:"method"`
+			Path       string  `json:"path"`
+			Status     int     `json:"status"`
+			DurationMS float64 `json:"duration_ms"`
+			RequestID  string  `json:"request_id"`
+			ClientIP   string  `json:"client_ip"`
+		}{
+			Event:      "http_request",
+			Method:     r.Method,
+			Path:       r.URL.Path,
+			Status:     status,
+			DurationMS: float64(time.Since(startedAt).Microseconds()) / 1000,
+			RequestID:  RequestIDFromRequest(r),
+			ClientIP:   ClientIPFromRequest(r),
+		})
+		if err == nil {
+			writeMu.Lock()
+			_, _ = logger.Writer().Write(append(entry, '\n'))
+			writeMu.Unlock()
+		}
 	})
 }

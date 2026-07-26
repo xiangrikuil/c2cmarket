@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync/atomic"
 )
 
 var (
@@ -65,6 +66,23 @@ type Policy struct {
 	dialer          Dialer
 	allowedHosts    map[string]struct{}
 	maxDialAttempts int
+	stats           policyStats
+}
+
+type PolicyStats struct {
+	InvalidTargetTotal    uint64
+	HostNotAllowedTotal   uint64
+	ResolutionFailedTotal uint64
+	UnsafeAddressTotal    uint64
+	RedirectRejectedTotal uint64
+}
+
+type policyStats struct {
+	invalidTarget    atomic.Uint64
+	hostNotAllowed   atomic.Uint64
+	resolutionFailed atomic.Uint64
+	unsafeAddress    atomic.Uint64
+	redirectRejected atomic.Uint64
 }
 
 type PolicyOption func(*Policy)
@@ -108,9 +126,11 @@ func NewPolicy(allowedHosts []string, options ...PolicyOption) (*Policy, error) 
 func (p *Policy) ValidateURL(ctx context.Context, raw string) (string, error) {
 	normalized, host, err := p.normalizeURL(raw)
 	if err != nil {
+		p.recordRejection(err)
 		return "", err
 	}
 	if _, err := p.resolve(ctx, host); err != nil {
+		p.recordRejection(err)
 		return "", err
 	}
 	return normalized, nil
@@ -231,10 +251,12 @@ func (p *Policy) dialContext(ctx context.Context, network, address string) (net.
 		return nil, ErrDialFailed
 	}
 	if err := p.validateAllowedHost(host); err != nil {
+		p.recordRejection(err)
 		return nil, err
 	}
 	addresses, err := p.resolve(ctx, host)
 	if err != nil {
+		p.recordRejection(err)
 		return nil, err
 	}
 	if p.dialer == nil {
@@ -255,6 +277,41 @@ func (p *Policy) dialContext(ctx context.Context, network, address string) (net.
 		}
 	}
 	return nil, ErrDialFailed
+}
+
+func (p *Policy) Stats() PolicyStats {
+	if p == nil {
+		return PolicyStats{}
+	}
+	return PolicyStats{
+		InvalidTargetTotal:    p.stats.invalidTarget.Load(),
+		HostNotAllowedTotal:   p.stats.hostNotAllowed.Load(),
+		ResolutionFailedTotal: p.stats.resolutionFailed.Load(),
+		UnsafeAddressTotal:    p.stats.unsafeAddress.Load(),
+		RedirectRejectedTotal: p.stats.redirectRejected.Load(),
+	}
+}
+
+func (p *Policy) RecordRedirectRejection() {
+	if p != nil {
+		p.stats.redirectRejected.Add(1)
+	}
+}
+
+func (p *Policy) recordRejection(err error) {
+	if p == nil || err == nil {
+		return
+	}
+	switch {
+	case errors.Is(err, ErrHostNotAllowed):
+		p.stats.hostNotAllowed.Add(1)
+	case errors.Is(err, ErrUnsafeAddress):
+		p.stats.unsafeAddress.Add(1)
+	case errors.Is(err, ErrResolutionFailed):
+		p.stats.resolutionFailed.Add(1)
+	case errors.Is(err, ErrInvalidTarget):
+		p.stats.invalidTarget.Add(1)
+	}
 }
 
 func normalizeHost(value string) (string, error) {

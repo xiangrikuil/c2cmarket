@@ -24,6 +24,7 @@ type Config struct {
 	AppEnv                  string
 	DatabaseURL             string
 	Database                database.PostgresOptions
+	DatabaseSlowQueryAfter  time.Duration
 	EnableDevAuth           bool
 	FrontendOrigin          string
 	AllowedOrigins          []string
@@ -49,6 +50,7 @@ type Config struct {
 	EmailProvider           string
 	SMTP                    SMTPConfig
 	Maintenance             MaintenanceConfig
+	MetricsBearerToken      string
 }
 
 type SMTPConfig struct {
@@ -83,6 +85,7 @@ const (
 	defaultReadNotificationRetention   = 90 * 24 * time.Hour
 	defaultUnreadNotificationRetention = 365 * 24 * time.Hour
 	defaultDomainEventRetention        = 365 * 24 * time.Hour
+	defaultDatabaseSlowQueryAfter      = time.Second
 )
 
 func Load() (Config, error) {
@@ -90,6 +93,7 @@ func Load() (Config, error) {
 		Port:                    strings.TrimSpace(os.Getenv("PORT")),
 		AppEnv:                  strings.ToLower(strings.TrimSpace(os.Getenv("APP_ENV"))),
 		DatabaseURL:             strings.TrimSpace(os.Getenv("DATABASE_URL")),
+		MetricsBearerToken:      strings.TrimSpace(os.Getenv("METRICS_BEARER_TOKEN")),
 		FrontendOrigin:          strings.TrimSpace(os.Getenv("FRONTEND_ORIGIN")),
 		AllowedOrigins:          parseAllowedOrigins(os.Getenv("ALLOWED_ORIGINS")),
 		OAuthProviderMode:       strings.ToLower(strings.TrimSpace(os.Getenv("OAUTH_PROVIDER_MODE"))),
@@ -121,6 +125,17 @@ func Load() (Config, error) {
 	cfg.Database, err = loadPostgresOptions()
 	if err != nil {
 		return Config{}, err
+	}
+	cfg.DatabaseSlowQueryAfter, err = parseDurationEnv(
+		"DB_SLOW_QUERY_THRESHOLD",
+		os.Getenv("DB_SLOW_QUERY_THRESHOLD"),
+		defaultDatabaseSlowQueryAfter,
+	)
+	if err != nil {
+		return Config{}, err
+	}
+	if cfg.DatabaseSlowQueryAfter < 100*time.Millisecond || cfg.DatabaseSlowQueryAfter > 5*time.Minute {
+		return Config{}, fmt.Errorf("DB_SLOW_QUERY_THRESHOLD must be between 100ms and 5m")
 	}
 	cfg.ContactEncryptionKeys, err = parseSecretKeyring("CONTACT_ENCRYPTION_KEYRING", os.Getenv("CONTACT_ENCRYPTION_KEYRING"))
 	if err != nil {
@@ -288,6 +303,9 @@ func Load() (Config, error) {
 		}
 		if len([]byte(cfg.EmailVerificationPepper)) < 32 {
 			return Config{}, fmt.Errorf("EMAIL_VERIFICATION_PEPPER must be at least 32 bytes in production")
+		}
+		if len([]byte(cfg.MetricsBearerToken)) < 32 {
+			return Config{}, fmt.Errorf("METRICS_BEARER_TOKEN must be at least 32 bytes in production")
 		}
 		if cfg.EmailProvider != "aliyun_directmail" {
 			return Config{}, fmt.Errorf("EMAIL_PROVIDER=aliyun_directmail is required in production")

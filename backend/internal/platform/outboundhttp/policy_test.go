@@ -129,6 +129,34 @@ func TestValidateURLNormalizesPublicTargetAndEnforcesAllowlist(t *testing.T) {
 	}
 }
 
+func TestPolicyStatsCountFixedRejectionReasons(t *testing.T) {
+	resolver := staticResolver{addresses: map[string][]netip.Addr{
+		"private.example": {netip.MustParseAddr("10.0.0.1")},
+	}}
+	policy, err := NewPolicy(
+		[]string{"private.example", "missing.example"},
+		WithResolver(resolver),
+	)
+	if err != nil {
+		t.Fatalf("NewPolicy() error: %v", err)
+	}
+
+	_, _ = policy.ValidateURL(context.Background(), "http://private.example")
+	_, _ = policy.ValidateURL(context.Background(), "https://other.example")
+	_, _ = policy.ValidateURL(context.Background(), "https://private.example")
+	_, _ = policy.ValidateURL(context.Background(), "https://missing.example")
+	policy.RecordRedirectRejection()
+
+	stats := policy.Stats()
+	if stats.InvalidTargetTotal != 1 ||
+		stats.HostNotAllowedTotal != 1 ||
+		stats.UnsafeAddressTotal != 1 ||
+		stats.ResolutionFailedTotal != 1 ||
+		stats.RedirectRejectedTotal != 1 {
+		t.Fatalf("unexpected policy stats: %+v", stats)
+	}
+}
+
 func TestDialContextUsesOnlyValidatedIPsAndCapsAttempts(t *testing.T) {
 	resolver := staticResolver{addresses: map[string][]netip.Addr{
 		"api.example.com": {

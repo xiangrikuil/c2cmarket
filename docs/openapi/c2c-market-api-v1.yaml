@@ -59,6 +59,22 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/VersionResponse"
+  /metrics:
+    get:
+      operationId: getMetrics
+      tags: [System]
+      security:
+        - metricsBearer: []
+      summary: Return Prometheus metrics for an authenticated monitoring collector.
+      responses:
+        "200":
+          description: Prometheus text exposition.
+          content:
+            text/plain:
+              schema:
+                type: string
+        "401":
+          $ref: "#/components/responses/Problem"
   /api/v1/auth/dev-session:
     post:
       x-dev-only: true
@@ -6542,6 +6558,9 @@ components:
       type: apiKey
       in: header
       name: X-CSRF-Token
+    metricsBearer:
+      type: http
+      scheme: bearer
   parameters:
     IdempotencyKey:
       name: Idempotency-Key

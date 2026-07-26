@@ -43,6 +43,9 @@ func TestLoadDefaultsToDevelopmentDevAuth(t *testing.T) {
 	if cfg.Database != database.DefaultPostgresOptions() {
 		t.Fatalf("unexpected database defaults: %+v", cfg.Database)
 	}
+	if cfg.DatabaseSlowQueryAfter != time.Second {
+		t.Fatalf("unexpected slow query threshold: %s", cfg.DatabaseSlowQueryAfter)
+	}
 }
 
 func TestLoadParsesDatabaseOptions(t *testing.T) {
@@ -55,6 +58,7 @@ func TestLoadParsesDatabaseOptions(t *testing.T) {
 	t.Setenv("DB_STATEMENT_TIMEOUT", "20s")
 	t.Setenv("DB_LOCK_TIMEOUT", "3s")
 	t.Setenv("DB_IDLE_IN_TRANSACTION_SESSION_TIMEOUT", "45s")
+	t.Setenv("DB_SLOW_QUERY_THRESHOLD", "1500ms")
 
 	cfg, err := Load()
 	if err != nil {
@@ -72,6 +76,9 @@ func TestLoadParsesDatabaseOptions(t *testing.T) {
 	}
 	if cfg.Database != expected {
 		t.Fatalf("unexpected database options: %+v", cfg.Database)
+	}
+	if cfg.DatabaseSlowQueryAfter != 1500*time.Millisecond {
+		t.Fatalf("unexpected slow query threshold: %s", cfg.DatabaseSlowQueryAfter)
 	}
 }
 
@@ -229,6 +236,7 @@ func TestLoadAllowsProductionWhenPersistentConfigIsComplete(t *testing.T) {
 	t.Setenv("SMTP_PASSWORD", "smtp-password")
 	t.Setenv("MAIL_FROM_ADDRESS", "noreply@example.com")
 	t.Setenv("MAIL_FROM_NAME", "C2CMarket")
+	t.Setenv("METRICS_BEARER_TOKEN", "test-only-metrics-token-at-least-32-bytes")
 
 	cfg, err := Load()
 	if err != nil {
@@ -245,6 +253,10 @@ func TestLoadAllowsProductionWhenPersistentConfigIsComplete(t *testing.T) {
 	}
 	if cfg.EmailProvider != "aliyun_directmail" || cfg.SMTP.Host != "smtpdm.aliyun.com" || cfg.SMTP.Port != 465 || cfg.SMTP.FromAddress != "noreply@example.com" {
 		t.Fatalf("unexpected SMTP config: provider=%s smtp=%+v", cfg.EmailProvider, cfg.SMTP)
+	}
+	t.Setenv("METRICS_BEARER_TOKEN", "too-short")
+	if _, err := Load(); err == nil || !strings.Contains(err.Error(), "METRICS_BEARER_TOKEN") {
+		t.Fatalf("expected short production metrics token to fail, got %v", err)
 	}
 }
 

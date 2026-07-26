@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"log"
+	"strings"
 	"time"
 
 	"c2c-market/backend/internal/config"
@@ -31,6 +32,7 @@ import (
 	"c2c-market/backend/internal/module/reputation"
 	"c2c-market/backend/internal/module/review"
 	"c2c-market/backend/internal/module/search"
+	"c2c-market/backend/internal/observability"
 	"c2c-market/backend/internal/realtime"
 	"github.com/go-chi/chi/v5"
 	"net/http"
@@ -54,6 +56,8 @@ type ServerOptions struct {
 	TrustXForwardedFor bool
 	TrustedProxies     []string
 	RateLimiter        *middleware.RateLimiter
+	Metrics            *observability.Metrics
+	MetricsBearerToken string
 }
 
 type OAuthOptions struct {
@@ -360,6 +364,9 @@ type Server struct {
 	rateLimiter      *middleware.RateLimiter
 	oauthHTTPClient  *http.Client
 	clientIPResolver middleware.ClientIPResolver
+	metrics          *observability.Metrics
+	metricsToken     string
+	metricsAuth      bool
 }
 
 func NewServer(service ApplicationService, options ...ServerOptions) http.Handler {
@@ -382,6 +389,10 @@ func NewServer(service ApplicationService, options ...ServerOptions) http.Handle
 	if rateLimiter == nil {
 		rateLimiter = middleware.NewRateLimiter(time.Minute)
 	}
+	metrics := option.Metrics
+	if metrics == nil {
+		metrics = observability.New(observability.Sources{RateLimiter: rateLimiter})
+	}
 	server := &Server{
 		app:              service,
 		carpools:         service,
@@ -399,6 +410,9 @@ func NewServer(service ApplicationService, options ...ServerOptions) http.Handle
 		rateLimiter:      rateLimiter,
 		oauthHTTPClient:  &http.Client{Timeout: 10 * time.Second},
 		clientIPResolver: middleware.NewClientIPResolver(option.TrustXForwardedFor, option.TrustedProxies),
+		metrics:          metrics,
+		metricsToken:     strings.TrimSpace(option.MetricsBearerToken),
+		metricsAuth:      option.AppEnv == config.EnvProduction || strings.TrimSpace(option.MetricsBearerToken) != "",
 	}
 	server.routes()
 	return middleware.WithRequestID(

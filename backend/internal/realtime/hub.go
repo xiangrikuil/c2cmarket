@@ -14,9 +14,17 @@ var (
 // Hub 向已认证会话分发低基数失效唤醒信号。
 // 每个订阅通道容量为一，因为一次唤醒就会触发完整的权威 REST 数据校准。
 type Hub struct {
-	mu          sync.Mutex
-	subscribers map[*subscriber]struct{}
-	closed      bool
+	mu               sync.Mutex
+	subscribers      map[*subscriber]struct{}
+	closed           bool
+	connectionsTotal uint64
+	disconnectsTotal uint64
+}
+
+type HubStats struct {
+	ActiveConnections int
+	ConnectionsTotal  uint64
+	DisconnectsTotal  uint64
 }
 
 type subscriber struct {
@@ -54,6 +62,7 @@ func (h *Hub) Subscribe(userID string, admin bool) (*Subscription, error) {
 		return nil, ErrHubClosed
 	}
 	h.subscribers[entry] = struct{}{}
+	h.connectionsTotal++
 	h.mu.Unlock()
 
 	return &Subscription{
@@ -122,6 +131,7 @@ func (h *Hub) Close() {
 	h.closed = true
 	for entry := range h.subscribers {
 		delete(h.subscribers, entry)
+		h.disconnectsTotal++
 		close(entry.wakeup)
 	}
 }
@@ -159,5 +169,19 @@ func (h *Hub) unsubscribe(entry *subscriber) {
 		return
 	}
 	delete(h.subscribers, entry)
+	h.disconnectsTotal++
 	close(entry.wakeup)
+}
+
+func (h *Hub) Stats() HubStats {
+	if h == nil {
+		return HubStats{}
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return HubStats{
+		ActiveConnections: len(h.subscribers),
+		ConnectionsTotal:  h.connectionsTotal,
+		DisconnectsTotal:  h.disconnectsTotal,
+	}
 }

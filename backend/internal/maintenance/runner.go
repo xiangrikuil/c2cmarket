@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"c2c-market/backend/internal/domain"
@@ -29,6 +30,21 @@ type Runner struct {
 	closeOnce sync.Once
 	cancel    context.CancelFunc
 	wait      sync.WaitGroup
+	stats     runnerStats
+}
+
+type Stats struct {
+	SuccessTotal        uint64
+	FailureTotal        uint64
+	SkippedTotal        uint64
+	LastDurationSeconds float64
+}
+
+type runnerStats struct {
+	successTotal atomic.Uint64
+	failureTotal atomic.Uint64
+	skippedTotal atomic.Uint64
+	lastDuration atomic.Int64
 }
 
 func NewRunner(repo Repository, config Config, now func() time.Time, logger Logger) (*Runner, error) {
@@ -121,16 +137,21 @@ func (r *Runner) loop(ctx context.Context) {
 func (r *Runner) execute(ctx context.Context) {
 	startedAt := r.now()
 	result, appErr := r.RunOnce(ctx)
+	duration := r.now().Sub(startedAt)
+	r.stats.lastDuration.Store(duration.Nanoseconds())
 	if appErr != nil {
-		r.logger.Printf("数据维护任务失败 duration=%s error=%s", r.now().Sub(startedAt), appErr.Code)
+		r.stats.failureTotal.Add(1)
+		r.logger.Printf("数据维护任务失败 duration=%s error=%s", duration, appErr.Code)
 		return
 	}
 	if !result.LockAcquired {
+		r.stats.skippedTotal.Add(1)
 		return
 	}
+	r.stats.successTotal.Add(1)
 	r.logger.Printf(
 		"数据维护任务完成 duration=%s sessions=%d verification_codes=%d idempotency=%d contact_sessions=%d notifications=%d domain_events=%d",
-		r.now().Sub(startedAt),
+		duration,
 		result.SessionsDeleted,
 		result.VerificationCodesDeleted,
 		result.IdempotencyEntriesDeleted,
@@ -138,4 +159,16 @@ func (r *Runner) execute(ctx context.Context) {
 		result.NotificationsDeleted,
 		result.DomainEventsDeleted,
 	)
+}
+
+func (r *Runner) Stats() Stats {
+	if r == nil {
+		return Stats{}
+	}
+	return Stats{
+		SuccessTotal:        r.stats.successTotal.Load(),
+		FailureTotal:        r.stats.failureTotal.Load(),
+		SkippedTotal:        r.stats.skippedTotal.Load(),
+		LastDurationSeconds: time.Duration(r.stats.lastDuration.Load()).Seconds(),
+	}
 }
