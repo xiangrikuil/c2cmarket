@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 10
+- **Total Sessions**: 11
 - **Last Active**: 2026-07-26
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~393 | Active |
+| `journal-1.md` | ~444 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 11 | 2026-07-26 | Production ingress and trusted client IP hardening | `b2d8b05` | `codex/prelaunch-identity-hardening` |
 | 10 | 2026-07-26 | Harden model audit outbound HTTP | `2b8776d` | `codex/prelaunch-identity-hardening` |
 | 9 | 2026-07-26 | Auth hardening release contract alignment | `6454905` | `codex/prelaunch-identity-hardening` |
 | 8 | 2026-07-26 | OAuth identity and administrator bootstrap hardening | `49b99b5` | `codex/prelaunch-identity-hardening` |

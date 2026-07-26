@@ -89,7 +89,7 @@ Split carpool handlers from the legacy server.Service facade, documented core.Se
 
 **Date**: 2026-07-06
 **Task**: Complete maintenance hardening roadmap
-**Package**: frontend
+**Package**: backend / infrastructure
 **Branch**: `main`
 
 ### Summary
@@ -183,7 +183,15 @@ Forced frontend account recovery setup after linux.do OAuth: incomplete accounts
 
 ### Main Changes
 
-(Add details)
+- Added one request-scoped client IP resolver with direct-peer normalization,
+  trusted immediate-peer gating, CF header priority, and right-to-left XFF
+  stripping.
+- Reused the same context value in request logs and rate-limit keys; raw
+  forwarding headers are never logged.
+- Bound the Compose backend published port to host loopback and added a
+  three-environment exposure guard.
+- Updated env templates, README, deployment/Tunnel runbooks, and the backend
+  production hardening code-spec.
 
 ### Git Commits
 
@@ -193,7 +201,10 @@ Forced frontend account recovery setup after linux.do OAuth: incomplete accounts
 
 ### Testing
 
-- [OK] (Add test results)
+- [OK] Focused middleware/server/config tests
+- [OK] Complete backend Go suite
+- [OK] Middleware/server race tests and `go vet`
+- [OK] Go formatting, Compose exposure, OpenAPI, migration, and diff guards
 
 ### Status
 
@@ -201,7 +212,8 @@ Forced frontend account recovery setup after linux.do OAuth: incomplete accounts
 
 ### Next Steps
 
-- None - task complete
+- Continue the parent prelaunch task with reproducible release/build-version
+  tracking, followed by verification-code lifecycle and runtime hardening.
 
 
 ## Session 6: API order delivery credential flow
@@ -396,3 +408,37 @@ Added public-HTTPS target validation, DNS rebinding-safe IP-bound dialing, redir
 ### Next Steps
 
 - Continue prelaunch hardening with production ingress and trusted client IP handling.
+
+
+## Session 11: Production ingress and trusted client IP hardening
+
+**Date**: 2026-07-26
+**Task**: Production ingress and trusted client IP hardening
+**Package**: frontend
+**Branch**: `codex/prelaunch-identity-hardening`
+
+### Summary
+
+Bound backend ports to loopback, centralized trusted client IP resolution for logs and rate limits, added Compose exposure guards, and documented Tunnel peer observation.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `b2d8b05` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
