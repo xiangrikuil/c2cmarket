@@ -313,3 +313,47 @@ Implemented immutable OAuth identity ownership, create-only proven administrator
 ### Next Steps
 
 - None - task complete
+
+
+## Session 9: Auth hardening release contract alignment
+
+**Date**: 2026-07-26
+**Task**: Auth hardening release contract alignment
+**Package**: backend
+**Branch**: `codex/prelaunch-identity-hardening`
+**Executor**: Codex
+
+### Summary
+
+Updated OAuth smoke behavior, synchronized identity and bootstrap contracts, documented migration 62 upgrade handling, and verified the release-facing authentication path.
+
+### Main Changes
+
+- Updated auth smoke so admin-like OAuth usernames remain non-admin.
+- Used the development-only session route for admin smoke coverage.
+- Synchronized OAuth and Bootstrap contracts across specs and README files.
+- Documented migration 62 and existing-administrator upgrade handling.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `6454905` | (see git log) |
+
+### Testing
+
+- [OK] `node --check scripts/auth-smoke.mjs`
+- [OK] Local HTTP auth smoke against an isolated in-memory backend
+- [OK] `go test -count=1 ./...`
+- [OK] `go vet ./...`
+- [OK] `gofmt -l .`
+- [OK] `go test -race -count=1 ./internal/module/auth`
+- [OK] OpenAPI route guard and migration guard
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- Continue the parent prelaunch hardening task with outbound SSRF protection.

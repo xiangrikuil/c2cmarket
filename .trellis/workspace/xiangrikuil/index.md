@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 8
+- **Total Sessions**: 9
 - **Last Active**: 2026-07-26
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~306 | Active |
+| `journal-1.md` | ~349 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 9 | 2026-07-26 | Auth hardening release contract alignment | `6454905` | `codex/prelaunch-identity-hardening` |
 | 8 | 2026-07-26 | OAuth identity and administrator bootstrap hardening | `49b99b5` | `codex/prelaunch-identity-hardening` |
 | 7 | 2026-07-24 | 修订信誉系统实现任务书 | `0f14ad7` | `docs/open-source-readme` |
 | 6 | 2026-07-09 | API order delivery credential flow | `672554c` | `main` |
