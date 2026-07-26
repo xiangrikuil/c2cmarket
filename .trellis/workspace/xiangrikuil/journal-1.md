@@ -477,3 +477,37 @@ Added fixed-commit source archives and backend image builds, runtime build metad
 ### Next Steps
 
 - None - task complete
+
+
+## Session 13: Verification and data lifecycle hardening
+
+**Date**: 2026-07-26
+**Task**: Verification and data lifecycle hardening
+**Package**: frontend
+**Branch**: `codex/prelaunch-identity-hardening`
+
+### Summary
+
+Added HMAC email challenges, finite idempotency generations, migration 63, and bounded PostgreSQL lifecycle maintenance with integration coverage.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `4839f7a` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
