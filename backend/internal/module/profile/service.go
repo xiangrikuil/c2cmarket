@@ -276,17 +276,14 @@ func (s *Service) PublicMerchantProfile(ctx context.Context, slug string) (Publi
 	}
 	merchant := s.merchantByOwner[ownerID]
 	return PublicMerchantProfile{
-		ID:                merchant.ID,
-		Slug:              merchant.Slug,
-		DisplayName:       merchant.DisplayName,
-		AvatarURL:         merchant.AvatarURL,
-		AvatarText:        avatarText(merchant.DisplayName),
-		Identity:          "API 商户",
-		TrustLevel:        3,
-		LinuxDoBound:      true,
-		OriginalPostBound: false,
-		JoinedAt:          merchant.CreatedAt,
-		LastActiveAt:      nil,
+		ID:          merchant.ID,
+		OwnerUserID: merchant.OwnerUserID,
+		Slug:        merchant.Slug,
+		DisplayName: merchant.DisplayName,
+		AvatarURL:   merchant.AvatarURL,
+		AvatarText:  avatarText(merchant.DisplayName),
+		Identity:    "API 商户",
+		JoinedAt:    merchant.CreatedAt,
 	}, nil
 }
 
@@ -407,12 +404,7 @@ func toPublicUserProfile(profile UserProfile) PublicUserProfile {
 		CreatedAt:       createdAt,
 		LastActiveAt:    lastActiveAt,
 		Privacy:         profile.Privacy,
-		Stats: PublicStats{
-			BuyerResponsibilityCancellationCount:  0,
-			SellerResponsibilityCancellationCount: 0,
-			UnresolvedDisputeCount:                0,
-		},
-		Badges: badges,
+		Badges:          badges,
 	}
 }
 

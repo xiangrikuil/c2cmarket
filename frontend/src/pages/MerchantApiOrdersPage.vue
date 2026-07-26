@@ -4,6 +4,7 @@ import { RouterLink } from 'vue-router'
 import { useQueryClient } from '@tanstack/vue-query'
 import { CheckCircle2, KeyRound } from 'lucide-vue-next'
 import { toast } from 'vue-sonner'
+import ApiPaymentMethodIcon from '@/components/api-payment/ApiPaymentMethodIcon.vue'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import PageTitle from '@/components/market/PageTitle.vue'
@@ -25,6 +26,7 @@ import {
   getApiOrderStatusLabel,
   type ApiOrder,
 } from '@/lib/api'
+import { apiPaymentMethodLabels } from '@/lib/apiPaymentSettings'
 import { addDecimal, compareDecimal, formatDecimal } from '@/lib/decimal'
 import { useMerchantApiOrders } from '@/queries/useMarketQueries'
 
@@ -149,7 +151,13 @@ async function runAction(item: ApiOrder, action: () => Promise<unknown>, message
           <div class="font-medium">{{ item.buyer }}</div>
           <div class="text-xs text-muted-foreground">{{ item.serviceTitle }} · {{ item.seller }} · {{ getApiMerchantVisibilityLabel(item.intentSnapshot) }}</div>
         </td>
-        <td><div class="font-semibold">¥{{ formatDecimal(item.amountDecimal ?? String(item.amount), 2, 2) }}</div><div class="text-xs text-muted-foreground">{{ formatDecimal(item.requestedUsdAllowanceDecimal ?? String(item.requestedUsdAllowance), 2, 6) }} 美元额度</div></td>
+        <td>
+          <div class="font-semibold">¥{{ formatDecimal(item.amountDecimal ?? String(item.amount), 2, 2) }}</div>
+          <div class="mt-1 inline-flex items-center gap-1.5 text-xs text-muted-foreground">
+            <ApiPaymentMethodIcon :method="item.selectedPaymentMethod" size="sm" />
+            {{ apiPaymentMethodLabels[item.selectedPaymentMethod] }} · {{ formatDecimal(item.requestedUsdAllowanceDecimal ?? String(item.requestedUsdAllowance), 2, 6) }} 美元额度
+          </div>
+        </td>
         <td><StatusBadge :status="item.status" :label="getApiOrderStatusLabel(item.status)" /></td>
         <td class="text-xs text-muted-foreground"><LocalTime :value="item.updatedAt" /></td>
         <td>

@@ -16,6 +16,7 @@ import (
 	app "c2c-market/backend/internal/module/core"
 	"c2c-market/backend/internal/store/postgres"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -615,6 +616,7 @@ func TestPostgresContactSessionFlow(t *testing.T) {
 
 	server := NewServer(app.NewServiceWithPersistence(store))
 	suffix := time.Now().Format("150405.000000000")
+	adminSession := createSession(t, server, "pg-contact-admin-"+suffix, true)
 	buyerSession := createSession(t, server, "pg-contact-buyer-"+suffix, false)
 	sellerSession := createSession(t, server, "pg-contact-seller-"+suffix, false)
 	buyerContact := createContactMethod(t, server, buyerSession, "telegram", "Buyer PG TG "+suffix, "@pg_buyer_"+suffix)
@@ -624,7 +626,7 @@ func TestPostgresContactSessionFlow(t *testing.T) {
 		"sellerUsername":"pg-contact-seller-`+suffix+`",
 		"buyerContactMethodId":"`+buyerContact.ID+`",
 		"sellerContactMethodId":"`+sellerContact.ID+`",
-		"durationSeconds":1
+		"durationSeconds":2
 	}`)
 	addAuth(request, buyerSession, "pg-contact-session-"+suffix)
 	response := httptest.NewRecorder()
@@ -655,7 +657,59 @@ func TestPostgresContactSessionFlow(t *testing.T) {
 	}
 	assertContactCiphertextDoesNotContain(t, databaseURL, "@pg_seller_"+suffix)
 
-	time.Sleep(1100 * time.Millisecond)
+	pool := openTestPool(t, databaseURL)
+	defer pool.Close()
+	restrictionID := uuid.NewString()
+	restrictedAt := time.Now().UTC()
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO user_restrictions (
+		  id, user_id, restriction_type, reason, starts_at, created_by_admin_id, created_at,
+		  role_scope, action_code, reason_code, public_reason, updated_at, version
+		)
+		VALUES ($1, $2, 'contact_view_test', 'PostgreSQL 联系窗口限制测试', $3, $4, $3,
+		        'buyer', 'contact_view', 'integration_contact_view', '纠纷处理中暂不可查看联系方式。', $3, 1)
+	`, restrictionID, buyerSession.userID, restrictedAt, adminSession.userID); err != nil {
+		t.Fatalf("insert contact-view restriction: %v", err)
+	}
+	restricted := httptest.NewRequest(http.MethodGet, "/api/v1/contact-sessions/"+created.ID+"/contacts", nil)
+	addCookie(restricted, buyerSession.cookie)
+	restrictedResponse := httptest.NewRecorder()
+	server.ServeHTTP(restrictedResponse, restricted)
+	if restrictedResponse.Code != http.StatusForbidden {
+		t.Fatalf("expected restricted contact status %d, got %d body %s", http.StatusForbidden, restrictedResponse.Code, restrictedResponse.Body.String())
+	}
+	assertProblemCode(t, restrictedResponse, domain.CodeReputationActionRestricted)
+	if strings.Contains(restrictedResponse.Body.String(), "@pg_seller_"+suffix) {
+		t.Fatal("restricted contact response must not include full contact value")
+	}
+	if count := storeAccessLogCount(t, store, created.ID); count != 1 {
+		t.Fatalf("restricted read must not append access log, got %d", count)
+	}
+
+	revokedAt := time.Now().UTC()
+	if _, err := pool.Exec(ctx, `
+		UPDATE user_restrictions
+		SET revoked_at = $2,
+		    revoked_by_admin_id = $3,
+		    revocation_reason = '集成测试撤销',
+		    updated_at = $2,
+		    version = version + 1
+		WHERE id = $1
+	`, restrictionID, revokedAt, adminSession.userID); err != nil {
+		t.Fatalf("revoke contact-view restriction: %v", err)
+	}
+	restored := httptest.NewRequest(http.MethodGet, "/api/v1/contact-sessions/"+created.ID+"/contacts", nil)
+	addCookie(restored, buyerSession.cookie)
+	restoredResponse := httptest.NewRecorder()
+	server.ServeHTTP(restoredResponse, restored)
+	if restoredResponse.Code != http.StatusOK {
+		t.Fatalf("expected restored contact status %d, got %d body %s", http.StatusOK, restoredResponse.Code, restoredResponse.Body.String())
+	}
+	if count := storeAccessLogCount(t, store, created.ID); count != 2 {
+		t.Fatalf("restored read must append access log, got %d", count)
+	}
+
+	time.Sleep(2100 * time.Millisecond)
 	expired := httptest.NewRequest(http.MethodGet, "/api/v1/contact-sessions/"+created.ID+"/contacts", nil)
 	addCookie(expired, buyerSession.cookie)
 	expiredResponse := httptest.NewRecorder()

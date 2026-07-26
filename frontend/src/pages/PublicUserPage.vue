@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { AlertTriangle, ExternalLink, Flag, ShoppingBag, UsersRound } from 'lucide-vue-next'
+import { ExternalLink, Flag, ShoppingBag, UsersRound } from 'lucide-vue-next'
 import { toast } from 'vue-sonner'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -10,19 +10,30 @@ import SoftTable from '@/components/market/SoftTable.vue'
 import StatusTabs from '@/components/market/StatusTabs.vue'
 import CompactStats from '@/components/market/CompactStats.vue'
 import EmptyState from '@/components/market/EmptyState.vue'
+import ErrorState from '@/components/market/ErrorState.vue'
 import SkeletonBlock from '@/components/market/SkeletonBlock.vue'
+import ReputationSummaryCard from '@/components/reputation/ReputationSummaryCard.vue'
 import { trackAnalytics } from '@/lib/analytics'
 import { getPricingDisplay, getRemainingSeats } from '@/lib/pricing'
 import { useCreatePublicUserReportMutation, usePublicUserProfileQuery } from '@/queries/useMarketQueries'
+import { snapshotToSummary } from '@/lib/reputationPresentation'
 
 const route = useRoute()
 const router = useRouter()
 const analyticsSourceRoute = () => String(route.name ?? 'unknown')
 const username = computed(() => String(route.params.username ?? ''))
-const { data, isLoading } = usePublicUserProfileQuery(username)
+const { data, isLoading, error, refetch } = usePublicUserProfileQuery(username)
 const reportMutation = useCreatePublicUserReportMutation()
 const activeTab = ref('概览')
 const profile = computed(() => data.value?.profile)
+const buyerReputation = computed(() => {
+  const snapshot = data.value?.reputations.find(item => item.role === 'buyer' && item.scope === 'overall')
+  return snapshot ? snapshotToSummary(snapshot) : null
+})
+const sellerReputation = computed(() => {
+  const snapshot = data.value?.reputations.find(item => item.role === 'seller' && item.scope === 'overall')
+  return snapshot ? snapshotToSummary(snapshot) : null
+})
 const hasPublicActivity = computed(() => Boolean(data.value && (
   data.value.carpools.length
   || data.value.services.length
@@ -33,18 +44,33 @@ const hasPublicActivity = computed(() => Boolean(data.value && (
 
 const completedTotal = computed(() => {
   if (!profile.value?.privacy.showCompletionStats) return null
-  return (profile.value.stats.completedCarpoolsLast30Days ?? 0) + (profile.value.stats.completedApiOrdersLast30Days ?? 0)
+  const values = [
+    profile.value.stats.completedCarpoolsLast90Days,
+    profile.value.stats.completedApiOrdersLast90Days,
+  ]
+  if (values.every(value => value === null)) return null
+  return values.reduce<number>((total, value) => total + (value ?? 0), 0)
 })
 
 const completionLabel = computed(() => {
-  if (completedTotal.value === null) return '已隐藏'
+  if (!profile.value?.privacy.showCompletionStats) return '已隐藏'
+  if (completedTotal.value === null) return '暂无数据'
   return completedTotal.value < 5 ? '记录较少' : `${completedTotal.value} 单`
 })
+const responsibilityCancellationTotal = computed(() => {
+  if (!profile.value) return null
+  const values = [
+    profile.value.stats.buyerResponsibilityCancellationCount,
+    profile.value.stats.sellerResponsibilityCancellationCount,
+  ]
+  if (values.every(value => value === null)) return null
+  return values.reduce<number>((total, value) => total + (value ?? 0), 0)
+})
 const publicStats = computed(() => profile.value ? [
-  { label: '近 30 天完成', value: completionLabel.value, hint: completedTotal.value !== null && completedTotal.value < 5 ? '记录较少，不作为负面信号' : undefined },
-  { label: '响应中位', value: profile.value.stats.responseMedianMinutes === null ? '已隐藏' : `${profile.value.stats.responseMedianMinutes} 分钟` },
-  { label: '责任取消', value: profile.value.stats.buyerResponsibilityCancellationCount + profile.value.stats.sellerResponsibilityCancellationCount },
-  { label: '未解决纠纷', value: profile.value.stats.unresolvedDisputeCount },
+  { label: '近 90 天完成', value: completionLabel.value, hint: completedTotal.value !== null && completedTotal.value < 5 ? '记录较少，不作为负面信号' : undefined },
+  { label: '响应中位', value: profile.value.stats.responseMedianMinutes === null ? profile.value.privacy.showResponseMedian ? '暂无数据' : '已隐藏' : `${profile.value.stats.responseMedianMinutes} 分钟` },
+  { label: '责任取消', value: responsibilityCancellationTotal.value ?? '暂无数据' },
+  { label: '未解决纠纷', value: profile.value.stats.unresolvedDisputeCount ?? '暂无数据' },
 ] : [])
 
 function serviceSummary(service: { deliveryModes: Array<'api_key_endpoint' | 'sub2api_panel_account'>, usageVisibility: string, warranty: string }) {
@@ -79,6 +105,12 @@ function reportPublicProfile() {
 
 <template>
   <SkeletonBlock v-if="isLoading" :lines="8" />
+  <ErrorState
+    v-else-if="error"
+    title="公开主页加载失败"
+    description="当前无法读取用户资料与真实信誉信息。"
+    @retry="refetch()"
+  />
   <EmptyState v-else-if="!data || !profile" title="未找到用户" description="该公开主页不存在或暂不可见。"><template #action><Button variant="outline" @click="router.push('/api-market')">返回 API 市场</Button></template></EmptyState>
   <div v-else class="public-user-reference space-y-4">
     <Card class="public-user-identity p-5">
@@ -91,7 +123,6 @@ function reportPublicProfile() {
           <div class="min-w-0">
             <div class="flex flex-wrap items-center gap-2">
               <h1 class="text-2xl font-semibold">{{ profile.displayName }}</h1>
-              <Badge v-if="profile.trustLevel !== null" variant="trust">信任等级{{ profile.trustLevel }}</Badge>
               <Badge v-for="badge in profile.badges" :key="badge.id" variant="secondary">{{ badge.label }}</Badge>
             </div>
             <div class="mt-2 text-sm text-muted-foreground">
@@ -107,9 +138,6 @@ function reportPublicProfile() {
             </div>
           </div>
         </div>
-        <div v-if="profile.stats.unresolvedDisputeCount" class="rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive">
-          <AlertTriangle class="mr-1 inline h-4 w-4" />存在未解决纠纷，相关服务由系统控制接单状态。
-        </div>
       </div>
     </Card>
 
@@ -118,7 +146,7 @@ function reportPublicProfile() {
         <CompactStats :items="publicStats" />
 
         <Card class="public-user-boundary p-4 text-sm text-muted-foreground">
-          公开主页只展示公开资料、铭牌、脱敏统计和公开业务记录，不展示任何联系方式、登录或设备信息、意向敏感详情。
+          公开主页只展示公共最小信誉、公开资料、铭牌、脱敏统计和公开业务记录；详细记录受隐私设置控制，不展示任何联系方式、登录或设备信息、意向敏感详情。
         </Card>
 
         <StatusTabs v-model="activeTab" :items="['概览', '在售服务', '完成记录', '交易评价', '纠纷记录']" />
@@ -188,7 +216,7 @@ function reportPublicProfile() {
         <SoftTable v-else :columns="['纠纷类型', '处理结果', '处理时间', '状态']">
       <tr>
         <td colspan="4" class="bg-muted/40 text-sm text-muted-foreground">
-          未解决 {{ profile.stats.unresolvedDisputeCount }} · 近90天已处理 {{ profile.stats.resolvedDisputeCountLast90Days === null ? '已隐藏' : profile.stats.resolvedDisputeCountLast90Days }}。公开信息已脱敏，不展示截图、联系方式或双方敏感信息。
+          未解决 {{ profile.stats.unresolvedDisputeCount ?? '暂无数据' }} · 近90天已处理 {{ profile.stats.resolvedDisputeCountLast90Days === null ? '已隐藏或暂无数据' : profile.stats.resolvedDisputeCountLast90Days }}。公开信息已脱敏，不展示截图、联系方式或双方敏感信息。
         </td>
       </tr>
       <tr v-for="dispute in data.disputes" :key="dispute.id">
@@ -200,13 +228,8 @@ function reportPublicProfile() {
         </SoftTable>
       </main>
       <aside class="public-user-aside space-y-3">
-        <Card class="p-4">
-          <h2 class="font-semibold">公开信誉</h2>
-          <div class="mt-3 flex items-center justify-between text-sm"><span class="text-muted-foreground">信任等级</span><strong>{{ profile.trustLevel === null ? '未公开' : profile.trustLevel }}</strong></div>
-          <div class="mt-2 flex items-center justify-between text-sm"><span class="text-muted-foreground">近 30 天完成</span><strong>{{ completionLabel }}</strong></div>
-          <div class="mt-2 flex items-center justify-between text-sm"><span class="text-muted-foreground">未解决纠纷</span><strong>{{ profile.stats.unresolvedDisputeCount }}</strong></div>
-          <p class="mt-3 border-t border-border pt-3 text-xs leading-5 text-muted-foreground">统计仅用于辅助判断，记录较少不代表负面信誉。</p>
-        </Card>
+        <ReputationSummaryCard :summary="sellerReputation" compact />
+        <ReputationSummaryCard :summary="buyerReputation" compact />
         <Card class="p-4">
           <h2 class="font-semibold">联系与交易</h2>
           <p class="mt-2 text-sm leading-6 text-muted-foreground">公开主页不展示联系方式。请从具体车源或 API 服务进入站内申请、订单与联系流程。</p>

@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"c2c-market/backend/internal/module/profile"
+	"c2c-market/backend/internal/module/reputation"
 
 	"github.com/go-chi/chi/v5"
 )
@@ -87,12 +88,13 @@ type confirmEmailVerificationRequest struct {
 }
 
 type publicUserProfileResponse struct {
-	Profile     publicUserProfileDTO    `json:"profile"`
-	Carpools    []any                   `json:"carpools"`
-	Services    []any                   `json:"services"`
-	Completions []any                   `json:"completions"`
-	Reviews     []any                   `json:"reviews"`
-	Disputes    []publicDisputeResponse `json:"disputes"`
+	Profile     publicUserProfileDTO            `json:"profile"`
+	Reputations []reputation.ReputationSnapshot `json:"reputations"`
+	Carpools    []any                           `json:"carpools"`
+	Services    []any                           `json:"services"`
+	Completions []any                           `json:"completions"`
+	Reviews     []any                           `json:"reviews"`
+	Disputes    []publicDisputeResponse         `json:"disputes"`
 }
 
 type publicUserProfileDTO struct {
@@ -114,13 +116,16 @@ type publicUserProfileDTO struct {
 }
 
 type publicStatsDTO struct {
-	CompletedCarpoolsLast30Days           *int `json:"completedCarpoolsLast30Days"`
-	CompletedAPIOrdersLast30Days          *int `json:"completedApiOrdersLast30Days"`
-	ResponseMedianMinutes                 *int `json:"responseMedianMinutes"`
-	BuyerResponsibilityCancellationCount  int  `json:"buyerResponsibilityCancellationCount"`
-	SellerResponsibilityCancellationCount int  `json:"sellerResponsibilityCancellationCount"`
-	UnresolvedDisputeCount                int  `json:"unresolvedDisputeCount"`
-	ResolvedDisputeCountLast90Days        *int `json:"resolvedDisputeCountLast90Days"`
+	CompletedCarpools                      *int `json:"completedCarpools"`
+	CompletedAPIOrders                     *int `json:"completedApiOrders"`
+	CompletedCarpoolsLast90Days            *int `json:"completedCarpoolsLast90Days"`
+	CompletedAPIOrdersLast90Days           *int `json:"completedApiOrdersLast90Days"`
+	ResponseMedianMinutes                  *int `json:"responseMedianMinutes"`
+	BuyerResponsibilityCancellationCount   *int `json:"buyerResponsibilityCancellationCount"`
+	SellerResponsibilityCancellationCount  *int `json:"sellerResponsibilityCancellationCount"`
+	UnknownResponsibilityCancellationCount *int `json:"unknownResponsibilityCancellationCount"`
+	UnresolvedDisputeCount                 *int `json:"unresolvedDisputeCount"`
+	ResolvedDisputeCountLast90Days         *int `json:"resolvedDisputeCountLast90Days"`
 }
 
 type merchantProfileRequest struct {
@@ -150,26 +155,26 @@ type publicMerchantProfileResponse struct {
 }
 
 type publicMerchantProfileDTO struct {
-	Username                         string `json:"username"`
-	DisplayName                      string `json:"displayName"`
-	AvatarText                       string `json:"avatarText"`
-	MerchantID                       string `json:"merchantId"`
-	Identity                         string `json:"identity"`
-	TrustLevel                       int    `json:"trustLevel"`
-	LinuxDoBound                     bool   `json:"linuxdoBound"`
-	OriginalPostBound                bool   `json:"originalPostBound"`
-	JoinedAt                         string `json:"joinedAt"`
-	LastActiveAt                     string `json:"lastActiveAt"`
-	LinuxDoURL                       string `json:"linuxdoUrl"`
-	Completed30d                     int    `json:"completed30d"`
-	ResponseMedianMinutes            int    `json:"responseMedianMinutes"`
-	MerchantResponsibleCancellations int    `json:"merchantResponsibleCancellations"`
-	UnresolvedDisputes               int    `json:"unresolvedDisputes"`
-	HandledDisputes90d               int    `json:"handledDisputes90d"`
+	Username                         string  `json:"username"`
+	DisplayName                      string  `json:"displayName"`
+	AvatarText                       string  `json:"avatarText"`
+	MerchantID                       string  `json:"merchantId"`
+	Identity                         string  `json:"identity"`
+	TrustLevel                       *int    `json:"trustLevel"`
+	LinuxDoBound                     *bool   `json:"linuxdoBound"`
+	OriginalPostBound                *bool   `json:"originalPostBound"`
+	JoinedAt                         string  `json:"joinedAt"`
+	LastActiveAt                     *string `json:"lastActiveAt"`
+	LinuxDoURL                       *string `json:"linuxdoUrl"`
+	CompletedLast90Days              *int    `json:"completedLast90Days"`
+	ResponseMedianMinutes            *int    `json:"responseMedianMinutes"`
+	MerchantResponsibleCancellations *int    `json:"merchantResponsibleCancellations"`
+	UnresolvedDisputes               *int    `json:"unresolvedDisputes"`
+	HandledDisputesLast90Days        *int    `json:"handledDisputesLast90Days"`
 }
 
 func (s *Server) handleMyProfile(w http.ResponseWriter, r *http.Request) {
-	user, _, appErr := s.requireSession(r)
+	user, _, appErr := s.requireSession(w, r)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
@@ -183,7 +188,7 @@ func (s *Server) handleMyProfile(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleUpdateMyProfile(w http.ResponseWriter, r *http.Request) {
-	user, _, appErr := s.requireSessionAndCSRF(r)
+	user, _, appErr := s.requireSessionAndCSRF(w, r)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
@@ -211,7 +216,7 @@ func (s *Server) handleUpdateMyProfile(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleStartEmailVerification(w http.ResponseWriter, r *http.Request) {
-	user, _, appErr := s.requireSessionAndCSRF(r)
+	user, _, appErr := s.requireSessionAndCSRF(w, r)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
@@ -234,7 +239,7 @@ func (s *Server) handleStartEmailVerification(w http.ResponseWriter, r *http.Req
 }
 
 func (s *Server) handleConfirmEmailVerification(w http.ResponseWriter, r *http.Request) {
-	user, _, appErr := s.requireSessionAndCSRF(r)
+	user, _, appErr := s.requireSessionAndCSRF(w, r)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
@@ -267,8 +272,17 @@ func (s *Server) handlePublicUserProfile(w http.ResponseWriter, r *http.Request)
 		writeProblem(w, r, appErr)
 		return
 	}
+	var reputations []reputation.ReputationSnapshot
+	if s.reputation.ReputationAvailable() {
+		reputations, appErr = s.reputation.PublicUserReputation(r.Context(), username, reputation.ScopeOverall)
+		if appErr != nil {
+			writeProblem(w, r, appErr)
+			return
+		}
+	}
 	writeJSON(w, http.StatusOK, publicUserProfileResponse{
 		Profile:     toPublicUserProfileDTO(publicProfile),
+		Reputations: reputations,
 		Carpools:    []any{},
 		Services:    []any{},
 		Completions: []any{},
@@ -278,7 +292,7 @@ func (s *Server) handlePublicUserProfile(w http.ResponseWriter, r *http.Request)
 }
 
 func (s *Server) handleMyMerchantProfile(w http.ResponseWriter, r *http.Request) {
-	user, _, appErr := s.requireSession(r)
+	user, _, appErr := s.requireSession(w, r)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
@@ -292,7 +306,7 @@ func (s *Server) handleMyMerchantProfile(w http.ResponseWriter, r *http.Request)
 }
 
 func (s *Server) handleUpsertMyMerchantProfile(w http.ResponseWriter, r *http.Request) {
-	user, _, appErr := s.requireSessionAndCSRF(r)
+	user, _, appErr := s.requireSessionAndCSRF(w, r)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
@@ -385,13 +399,16 @@ func toPublicUserProfileDTO(value profile.PublicUserProfile) publicUserProfileDT
 		CreatedAt:       formatOptionalTime(value.CreatedAt),
 		LastActiveAt:    formatOptionalTime(value.LastActiveAt),
 		Stats: publicStatsDTO{
-			CompletedCarpoolsLast30Days:           value.Stats.CompletedCarpoolsLast30Days,
-			CompletedAPIOrdersLast30Days:          value.Stats.CompletedAPIIntentsLast30Days,
-			ResponseMedianMinutes:                 value.Stats.ResponseMedianMinutes,
-			BuyerResponsibilityCancellationCount:  value.Stats.BuyerResponsibilityCancellationCount,
-			SellerResponsibilityCancellationCount: value.Stats.SellerResponsibilityCancellationCount,
-			UnresolvedDisputeCount:                value.Stats.UnresolvedDisputeCount,
-			ResolvedDisputeCountLast90Days:        value.Stats.ResolvedDisputeCountLast90Days,
+			CompletedCarpools:                      value.Stats.CompletedCarpools,
+			CompletedAPIOrders:                     value.Stats.CompletedAPIOrders,
+			CompletedCarpoolsLast90Days:            value.Stats.CompletedCarpoolsLast90Days,
+			CompletedAPIOrdersLast90Days:           value.Stats.CompletedAPIOrdersLast90Days,
+			ResponseMedianMinutes:                  value.Stats.ResponseMedianMinutes,
+			BuyerResponsibilityCancellationCount:   value.Stats.BuyerResponsibilityCancellationCount,
+			SellerResponsibilityCancellationCount:  value.Stats.SellerResponsibilityCancellationCount,
+			UnknownResponsibilityCancellationCount: value.Stats.UnknownResponsibilityCancellationCount,
+			UnresolvedDisputeCount:                 value.Stats.UnresolvedDisputeCount,
+			ResolvedDisputeCountLast90Days:         value.Stats.ResolvedDisputeCountLast90Days,
 		},
 		Privacy: toPrivacyDTO(value.Privacy),
 	}
@@ -416,10 +433,6 @@ func toMerchantProfileResponse(value profile.MerchantProfile, includeOwner bool)
 }
 
 func toPublicMerchantProfileDTO(value profile.PublicMerchantProfile) publicMerchantProfileDTO {
-	lastActive := ""
-	if value.LastActiveAt != nil {
-		lastActive = value.LastActiveAt.UTC().Format(time.RFC3339)
-	}
 	return publicMerchantProfileDTO{
 		Username:                         value.Slug,
 		DisplayName:                      value.DisplayName,
@@ -430,13 +443,13 @@ func toPublicMerchantProfileDTO(value profile.PublicMerchantProfile) publicMerch
 		LinuxDoBound:                     value.LinuxDoBound,
 		OriginalPostBound:                value.OriginalPostBound,
 		JoinedAt:                         value.JoinedAt.UTC().Format(time.RFC3339),
-		LastActiveAt:                     lastActive,
-		LinuxDoURL:                       "",
-		Completed30d:                     value.Completed30d,
+		LastActiveAt:                     formatOptionalTime(value.LastActiveAt),
+		LinuxDoURL:                       nil,
+		CompletedLast90Days:              value.CompletedLast90Days,
 		ResponseMedianMinutes:            value.ResponseMedianMinutes,
 		MerchantResponsibleCancellations: value.MerchantResponsibleCancellations,
 		UnresolvedDisputes:               value.UnresolvedDisputes,
-		HandledDisputes90d:               value.HandledDisputes90d,
+		HandledDisputesLast90Days:        value.HandledDisputesLast90Days,
 	}
 }
 

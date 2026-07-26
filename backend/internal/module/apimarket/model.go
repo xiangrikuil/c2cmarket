@@ -1,6 +1,10 @@
 package apimarket
 
-import "time"
+import (
+	"time"
+
+	"c2c-market/backend/internal/module/reputation"
+)
 
 const (
 	ServiceReviewStatusDraft            = "draft"
@@ -50,6 +54,9 @@ type Service struct {
 	PublicAccessNote                 string
 	MerchantNote                     string
 	MerchantSupportNote              string
+	DeclaredTTFTBand                 string
+	RecommendedConcurrency           int
+	PerformanceConfirmedAt           *time.Time
 	AcceptingOrders                  bool
 	PaymentWindowMinutes             int
 	ReviewStatus                     string
@@ -67,6 +74,8 @@ type Service struct {
 	CreatedAt                        time.Time
 	UpdatedAt                        time.Time
 	Version                          int64
+	SellerReputation                 *reputation.ReputationSnapshot
+	SourceAuthorVerification         reputation.SourceAuthorResourceSummary
 }
 
 type ServiceAccessMode struct {
@@ -138,6 +147,9 @@ type CreateServiceInput struct {
 	PublicAccessNote                 string
 	MerchantNote                     string
 	MerchantSupportNote              string
+	DeclaredTTFTBand                 string
+	RecommendedConcurrency           int
+	PerformanceConfirmedAt           string
 	AccessModes                      []ServiceAccessModeInput
 	Models                           []ServiceModelInput
 	Packages                         []ServicePackageInput
@@ -164,6 +176,9 @@ type UpdateServiceInput struct {
 	PublicAccessNote                 string
 	MerchantNote                     string
 	MerchantSupportNote              string
+	DeclaredTTFTBand                 string
+	RecommendedConcurrency           int
+	PerformanceConfirmedAt           string
 	AccessModes                      []ServiceAccessModeInput
 	Models                           []ServiceModelInput
 	Packages                         []ServicePackageInput

@@ -6,6 +6,7 @@ const routerSource = readFileSync(new URL('../../router.ts', import.meta.url), '
 const myCenterSource = readFileSync(new URL('../../pages/MyCenterPage.vue', import.meta.url), 'utf8')
 const myApiServicesSource = readFileSync(new URL('../../pages/MyApiServicesPage.vue', import.meta.url), 'utf8')
 const myApiServiceDetailSource = readFileSync(new URL('../../pages/MyApiServiceDetailPage.vue', import.meta.url), 'utf8')
+const apiServiceOwnerHeaderSource = readFileSync(new URL('../../components/api-service-owner/ApiServiceOwnerHeader.vue', import.meta.url), 'utf8')
 const publicApiServiceDetailSource = readFileSync(new URL('../../pages/ApiServiceDetailPage.vue', import.meta.url), 'utf8')
 const apiSource = readFileSync(new URL('../api.ts', import.meta.url), 'utf8')
 const apiMarketBackendSource = readFileSync(new URL('../apiMarketBackend.ts', import.meta.url), 'utf8')
@@ -24,12 +25,13 @@ describe('个人与经营中心导航', () => {
     expect(appShellSource).toContain("{ label: '我的 API 服务', to: '/my/api-services'")
     expect(appShellSource).toContain("{ label: 'API 订单', to: '/merchant/api-orders'")
     expect(appShellSource).toContain("title: '账户'")
+    expect(appShellSource).toContain("{ label: '个人中心', to: '/my'")
     expect(appShellSource).toContain("{ label: '进入管理台', to: '/admin'")
     expect(appShellSource).toContain('if (hasMerchantWorkspace.value) groups.push(merchantGroup)')
   })
 
   it('不再暴露职责模糊的旧菜单名称', () => {
-    for (const label of ['我的中心', '我的需求', '商户中心', '订单管理', '个人工作台', '商户工作台']) {
+    for (const label of ['账户与资料', '我的中心', '我的需求', '商户中心', '订单管理', '个人工作台', '商户工作台']) {
       expect(appShellSource).not.toContain(`label: '${label}'`)
     }
   })
@@ -39,22 +41,24 @@ describe('个人与经营中心导航', () => {
     expect(routerSource).toContain("path: '/my/api-services/:id'")
     expect(routerSource).toContain("import('@/pages/MyApiServicesPage.vue')")
     expect(routerSource).toContain("import('@/pages/MyApiServiceDetailPage.vue')")
-    expect(myApiServicesSource).toContain('title="我的 API 服务"')
+    expect(myApiServicesSource).toContain(":title=\"quotaPublishIntent ? '选择 API 服务' : '我的 API 服务'\"")
     expect(myApiServicesSource).toContain('useMyApiServices()')
     expect(myApiServicesSource).toContain('usePublishApiServiceMutation()')
     expect(myApiServicesSource).toContain('usePauseApiServiceMutation()')
     expect(myApiServicesSource).toContain('useResumeApiServiceMutation()')
     expect(myCenterSource).not.toContain('<SoftTable')
-    expect(myCenterSource).toContain('hasMerchantObjects')
+    expect(myCenterSource).not.toContain('hasMerchantObjects')
+    expect(myCenterSource).toContain('<PersonalCenterDashboard')
     expect(myCenterSource).toContain('发布 API 服务')
   })
 
   it('将卖家管理详情与买家公开购买页分离', () => {
-    expect(myApiServicesSource).toContain('`/my/api-services/${item.id}`')
+    expect(myApiServicesSource).toContain('`/my/api-services/${item.id}#quota-offers`')
     expect(myApiServicesSource).toContain('?preview=owner')
     expect(myApiServiceDetailSource).toContain('useMyApiService(id)')
-    expect(myApiServiceDetailSource).toContain('以买家视角预览')
-    expect(myApiServiceDetailSource).toContain('查看 API 订单')
+    expect(myApiServiceDetailSource).toContain('<ApiServiceOwnerHeader')
+    expect(apiServiceOwnerHeaderSource).toContain('买家视角预览')
+    expect(apiServiceOwnerHeaderSource).toContain('查看 API 订单')
     expect(publicApiServiceDetailSource).toContain('useMyApiServices()')
     expect(publicApiServiceDetailSource).toContain("name: 'my-api-service-detail'")
     expect(publicApiServiceDetailSource).toContain('卖家不能为自己的服务创建订单')

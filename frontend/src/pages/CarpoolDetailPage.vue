@@ -16,9 +16,11 @@ import {
 } from '@/components/ui/dialog'
 import { Textarea } from '@/components/ui/textarea'
 import SourceBadges from '@/components/market/SourceBadges.vue'
+import SourceAuthorVerificationBadge from '@/components/market/SourceAuthorVerificationBadge.vue'
 import EmptyState from '@/components/market/EmptyState.vue'
 import ErrorState from '@/components/market/ErrorState.vue'
 import SkeletonBlock from '@/components/market/SkeletonBlock.vue'
+import ReputationSummaryCard from '@/components/reputation/ReputationSummaryCard.vue'
 import { createCarpoolApplication, getCarpoolAccessArrangementLabel, isHighRiskSubscriptionCarpool, runAdminModerationAction, type Carpool } from '@/lib/api'
 import { createCarpoolModerationRow } from '@/lib/carpoolModeration'
 import { trackAnalytics } from '@/lib/analytics'
@@ -123,6 +125,14 @@ function toggleFavorite() {
       toast.error(error instanceof Error ? error.message : '操作失败')
     },
   })
+}
+
+function openSourcePost() {
+  if (!carpool.value?.sourceUrl) {
+    toast('当前车源未提供可打开的原帖链接。')
+    return
+  }
+  window.open(carpool.value.sourceUrl, '_blank', 'noopener,noreferrer')
 }
 
 function openAdminAction(action: AdminCarpoolAction) {
@@ -368,11 +378,13 @@ async function shareCarpool() {
         <h2 class="text-lg font-semibold">车主信息</h2>
         <div class="mt-6 space-y-4 text-sm">
           <div class="flex justify-between"><span class="text-muted-foreground">车主</span><span>linux.do @{{ carpool.owner }}</span></div>
-          <div class="flex justify-between"><span class="text-muted-foreground">信任</span><span>信任等级{{ carpool.trustLevel }}</span></div>
           <div class="flex justify-between"><span class="text-muted-foreground">车主类型</span><span>{{ carpool.ownerType }}</span></div>
-          <div class="flex justify-between"><span class="text-muted-foreground">原帖</span><Badge :variant="carpool.linuxdoBound ? 'default' : 'secondary'">{{ carpool.linuxdoBound ? '已绑定' : '待绑定' }}</Badge></div>
-          <SourceBadges :badges="[carpool.linuxdoBound ? '原帖已绑定' : '待绑定原帖', '近期确认', getCarpoolAccessArrangementLabel(carpool.accessArrangementMode), isHighRiskSubscriptionCarpool(carpool) ? '风险已确认' : '普通风险']" />
-          <Button class="w-full" variant="outline" @click="toast('当前车源暂未提供可打开的原帖链接。')"><ExternalLink class="h-4 w-4" />打开原帖</Button>
+          <div class="flex justify-between gap-3"><span class="text-muted-foreground">原帖作者</span><SourceAuthorVerificationBadge :verification="carpool.sourceAuthorVerification" /></div>
+          <SourceBadges :badges="['近期确认', getCarpoolAccessArrangementLabel(carpool.accessArrangementMode), isHighRiskSubscriptionCarpool(carpool) ? '风险已确认' : '普通风险']" />
+          <div class="border-t border-border pt-4">
+            <ReputationSummaryCard :summary="carpool.sellerReputation" compact :framed="false" />
+          </div>
+          <Button class="w-full" variant="outline" :disabled="!carpool.sourceUrl" @click="openSourcePost"><ExternalLink class="h-4 w-4" />{{ carpool.sourceUrl ? '打开原帖' : '未提供原帖' }}</Button>
         </div>
       </Card>
     </div>
@@ -419,9 +431,12 @@ async function shareCarpool() {
             <div><dt class="text-muted-foreground">开通区</dt><dd>{{ carpool.region }}</dd></div>
             <div><dt class="text-muted-foreground">月费快照</dt><dd>¥{{ pricing?.primaryPrice }}/月 · {{ pricing?.primaryLabel }}</dd></div>
             <div><dt class="text-muted-foreground">申请名额</dt><dd>1 人</dd></div>
-            <div><dt class="text-muted-foreground">车主</dt><dd>{{ carpool.owner }} · 信任等级{{ carpool.trustLevel }}</dd></div>
+            <div><dt class="text-muted-foreground">车主</dt><dd>{{ carpool.owner }}</dd></div>
             <div><dt class="text-muted-foreground">{{ seatAvailabilityLabel }}</dt><dd>{{ availableSeats }} / {{ totalSeats }} 位</dd></div>
           </dl>
+          <div class="border-t border-border pt-4">
+            <ReputationSummaryCard :summary="carpool.sellerReputation" compact :framed="false" />
+          </div>
           <label class="flex items-start gap-2 rounded-md border border-border p-3">
             <input v-model="rulesAccepted" type="checkbox" class="mt-1 h-4 w-4 accent-primary" />
             <span>我理解平台只记录上车意向和状态，不托管支付、不保存账号或 token、不担保或代赔；如需要共享密码、Session、Cookie 或 token，应放弃申请。</span>

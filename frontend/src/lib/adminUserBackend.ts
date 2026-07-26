@@ -15,6 +15,7 @@ export type BackendAdminUser = {
   trustLevel?: number
   createdAt: string
   lastActiveAt?: string | null
+  version: number
 }
 
 function formatTime(value: string | undefined | null) {
@@ -42,7 +43,9 @@ function accountStatusLabel(value: BackendAdminUser['accountStatus']) {
 }
 
 export function mapBackendAdminUser(item: BackendAdminUser): AdminRow {
-  const trust = item.linuxDoBound ? `已绑定 linux.do · 信任等级${item.trustLevel ?? 0}` : '未绑定 linux.do'
+  const trust = item.linuxDoBound
+    ? `已绑定 linux.do · ${item.trustLevel === null ? '信任等级暂无数据' : `信任等级${item.trustLevel}`}`
+    : '未绑定 linux.do'
   return {
     id: item.id,
     primary: item.username,
@@ -52,11 +55,12 @@ export function mapBackendAdminUser(item: BackendAdminUser): AdminRow {
     risk: `注册 ${formatTime(item.createdAt)} · 最近活跃 ${formatTime(item.lastActiveAt)}`,
     targetType: 'user',
     backendKind: 'admin-user',
+    backendVersion: item.version,
     detailItems: [
       { label: '显示名称', value: item.displayName },
       { label: '账号状态', value: accountStatusLabel(item.accountStatus) },
       { label: '账号角色', value: item.isAdmin ? '管理员' : '普通用户' },
-      { label: 'linux.do 绑定', value: item.linuxDoBound ? `已绑定，信任等级${item.trustLevel ?? 0}` : '未绑定' },
+      { label: 'linux.do 绑定', value: item.linuxDoBound ? `已绑定，${item.trustLevel === null ? '信任等级暂无数据' : `信任等级${item.trustLevel}`}` : '未绑定' },
       { label: '注册时间', value: formatTime(item.createdAt) },
       { label: '最近活跃', value: formatTime(item.lastActiveAt) },
     ],

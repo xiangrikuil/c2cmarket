@@ -488,19 +488,66 @@ const apiServiceColumns = `
 	id::text, owner_user_id::text, COALESCE(merchant_profile_id::text, ''), merchant_identity_mode,
 	COALESCE((SELECT mp.display_name FROM merchant_profiles mp WHERE mp.id = api_services.merchant_profile_id AND mp.owner_user_id = api_services.owner_user_id), ''),
 	COALESCE((SELECT mp.slug FROM merchant_profiles mp WHERE mp.id = api_services.merchant_profile_id AND mp.owner_user_id = api_services.owner_user_id), ''),
-	owner_contact_method_id::text, title, short_description, COALESCE(source_url, ''), distribution_system, billing_mode,
+	owner_contact_method_id::text, title, short_description, COALESCE(source_url, ''),
+	COALESCE((
+	  SELECT CASE
+	    WHEN verification.source_url IS DISTINCT FROM api_services.source_url
+	      OR verification.expected_external_user_id IS DISTINCT FROM COALESCE((
+	        SELECT binding.linux_do_user_id
+	        FROM linux_do_bindings binding
+	        WHERE binding.user_id = api_services.owner_user_id
+	      ), '')
+	    THEN 'pending'
+	    WHEN verification.status = 'verified'
+	      AND verification.expires_at IS NOT NULL
+	      AND verification.expires_at <= now()
+	    THEN 'expired'
+	    ELSE verification.status
+	  END
+	  FROM source_author_verifications verification
+	  WHERE verification.resource_type = 'api_service'
+	    AND verification.resource_id = api_services.id
+	), 'not_submitted'),
+	(
+	  SELECT verification.verified_at
+	  FROM source_author_verifications verification
+	  WHERE verification.resource_type = 'api_service'
+	    AND verification.resource_id = api_services.id
+	    AND verification.source_url = api_services.source_url
+	    AND verification.expected_external_user_id = COALESCE((
+	      SELECT binding.linux_do_user_id
+	      FROM linux_do_bindings binding
+	      WHERE binding.user_id = api_services.owner_user_id
+	    ), '')
+	    AND verification.status = 'verified'
+	),
+	(
+	  SELECT verification.expires_at
+	  FROM source_author_verifications verification
+	  WHERE verification.resource_type = 'api_service'
+	    AND verification.resource_id = api_services.id
+	    AND verification.source_url = api_services.source_url
+	    AND verification.expected_external_user_id = COALESCE((
+	      SELECT binding.linux_do_user_id
+	      FROM linux_do_bindings binding
+	      WHERE binding.user_id = api_services.owner_user_id
+	    ), '')
+	    AND verification.status = 'verified'
+	),
+	distribution_system, billing_mode,
 	COALESCE(declared_cny_per_usd_allowance::text, ''), COALESCE(declared_max_usd_allowance_per_intent::text, ''),
 	COALESCE(available_usd_allowance::text, ''),
 	quota_expires_at,
 	minimum_intent_cny::text, COALESCE(maximum_intent_cny::text, ''), usage_visibility,
 	COALESCE(public_access_note, ''), COALESCE(merchant_note, ''), COALESCE(merchant_support_note, ''),
+	COALESCE(declared_ttft_band, ''), COALESCE(recommended_concurrency, 0), performance_confirmed_at,
 	accepting_orders, payment_window_minutes,
 	review_status, publication_status, moderation_status, COALESCE(approved_by_admin_id::text, ''),
 	approved_at, COALESCE(moderation_reason, ''), created_at, updated_at, version
 `
 
 const apiPurchaseIntentColumns = `
-	id::text, api_service_id::text, api_service_owner_user_id::text, buyer_user_id::text,
+	id::text, purchase_kind, api_service_id::text, api_service_owner_user_id::text, buyer_user_id::text,
 	owner_user_id::text, buyer_contact_method_id::text, buyer_contact_method_version_id::text,
 	owner_contact_method_id::text, owner_contact_method_version_id::text, status,
 	requested_cny_amount::text, COALESCE(requested_usd_allowance::text, ''),
@@ -512,6 +559,9 @@ const apiPurchaseIntentColumns = `
 	COALESCE(declared_max_usd_allowance_per_intent_snapshot::text, ''),
 	minimum_intent_cny_snapshot::text, COALESCE(maximum_intent_cny_snapshot::text, ''),
 	pricing_snapshot::text, COALESCE(buyer_note, ''),
+	COALESCE(api_quota_batch_id::text, ''), COALESCE(api_quota_offer_id::text, ''),
+	COALESCE(api_quota_sale_round_id::text, ''), COALESCE(api_quota_allocation_id::text, ''),
+	COALESCE(api_quota_inventory_unit_id::text, ''), COALESCE(quota_offer_snapshot::text, ''),
 	contacted_at, buyer_cancelled_at, COALESCE(buyer_cancel_reason, ''),
 	owner_closed_at, COALESCE(owner_close_reason, ''),
 	created_at, updated_at, version
@@ -896,6 +946,7 @@ func upsertAPIServiceInTx(ctx context.Context, tx pgx.Tx, service apimarket.Serv
 			quota_expires_at,
 			minimum_intent_cny, maximum_intent_cny, usage_visibility,
 			public_access_note, merchant_note, merchant_support_note,
+			declared_ttft_band, recommended_concurrency, performance_confirmed_at,
 			review_status, publication_status, moderation_status,
 			approved_by_admin_id, approved_at, moderation_reason,
 			accepting_orders, payment_window_minutes,
@@ -910,8 +961,9 @@ func upsertAPIServiceInTx(ctx context.Context, tx pgx.Tx, service apimarket.Serv
 			$18, $19, $20,
 			$21, $22, $23,
 			$24, $25, $26,
-			$27, $28,
-			$29, $30, $31
+			$27, $28, $29,
+			$30, $31,
+			$32, $33, $34
 		)
 		ON CONFLICT (id) DO UPDATE
 		SET merchant_profile_id = EXCLUDED.merchant_profile_id,
@@ -932,6 +984,9 @@ func upsertAPIServiceInTx(ctx context.Context, tx pgx.Tx, service apimarket.Serv
 		    public_access_note = EXCLUDED.public_access_note,
 		    merchant_note = EXCLUDED.merchant_note,
 		    merchant_support_note = EXCLUDED.merchant_support_note,
+		    declared_ttft_band = EXCLUDED.declared_ttft_band,
+		    recommended_concurrency = EXCLUDED.recommended_concurrency,
+		    performance_confirmed_at = EXCLUDED.performance_confirmed_at,
 		    review_status = EXCLUDED.review_status,
 		    publication_status = EXCLUDED.publication_status,
 		    moderation_status = EXCLUDED.moderation_status,
@@ -948,6 +1003,7 @@ func upsertAPIServiceInTx(ctx context.Context, tx pgx.Tx, service apimarket.Serv
 		service.QuotaExpiresAt,
 		service.MinimumIntentCNY, nullNumeric(service.MaximumIntentCNY), service.UsageVisibility,
 		nullText(service.PublicAccessNote), nullText(service.MerchantNote), nullText(service.MerchantSupportNote),
+		nullText(service.DeclaredTTFTBand), nullInt(service.RecommendedConcurrency), service.PerformanceConfirmedAt,
 		service.ReviewStatus, service.PublicationStatus, service.ModerationStatus,
 		nullUUID(service.ApprovedByAdminID), service.ApprovedAt, nullText(service.ModerationReason),
 		service.AcceptingOrders, service.PaymentWindowMinutes,
@@ -1618,6 +1674,9 @@ func scanAPIService(row scanner, service *apimarket.Service) error {
 		&service.Title,
 		&service.ShortDescription,
 		&service.SourceURL,
+		&service.SourceAuthorVerification.Status,
+		&service.SourceAuthorVerification.VerifiedAt,
+		&service.SourceAuthorVerification.ExpiresAt,
 		&service.DistributionSystem,
 		&service.BillingMode,
 		&service.DeclaredCNYPerUSDAllowance,
@@ -1630,6 +1689,9 @@ func scanAPIService(row scanner, service *apimarket.Service) error {
 		&service.PublicAccessNote,
 		&service.MerchantNote,
 		&service.MerchantSupportNote,
+		&service.DeclaredTTFTBand,
+		&service.RecommendedConcurrency,
+		&service.PerformanceConfirmedAt,
 		&service.AcceptingOrders,
 		&service.PaymentWindowMinutes,
 		&service.ReviewStatus,
@@ -1662,6 +1724,7 @@ func scanAPIPurchaseIntents(rows pgx.Rows) ([]apiintent.Intent, *domain.AppError
 func scanAPIPurchaseIntent(row scanner, intent *apiintent.Intent) error {
 	return row.Scan(
 		&intent.ID,
+		&intent.PurchaseKind,
 		&intent.APIServiceID,
 		&intent.APIServiceOwnerUserID,
 		&intent.BuyerUserID,
@@ -1690,6 +1753,12 @@ func scanAPIPurchaseIntent(row scanner, intent *apiintent.Intent) error {
 		&intent.MaximumIntentCNYSnapshot,
 		&intent.PricingSnapshot,
 		&intent.BuyerNote,
+		&intent.APIQuotaBatchID,
+		&intent.APIQuotaOfferID,
+		&intent.APIQuotaSaleRoundID,
+		&intent.APIQuotaAllocationID,
+		&intent.APIQuotaInventoryUnitID,
+		&intent.QuotaOfferSnapshot,
 		&intent.ContactedAt,
 		&intent.BuyerCancelledAt,
 		&intent.BuyerCancelReason,

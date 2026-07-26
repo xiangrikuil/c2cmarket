@@ -36,15 +36,21 @@ const filteredModels = computed(() => {
     })
     .sort((a, b) => Number(selectedIds.value.has(b.id)) - Number(selectedIds.value.has(a.id)) || a.displayName.localeCompare(b.displayName))
 })
-const collapsedLimit = 12
+const collapsedLimit = 6
 const visibleModels = computed(() => expanded.value || keyword.value.trim() ? filteredModels.value : filteredModels.value.slice(0, collapsedLimit))
 const hiddenCount = computed(() => Math.max(filteredModels.value.length - visibleModels.value.length, 0))
 const listClass = computed(() => expanded.value ? 'max-h-64 overflow-y-auto' : '')
 </script>
 
 <template>
-  <div class="rounded-lg border border-border bg-background">
-    <div class="space-y-2 border-b border-border p-3">
+  <div
+    class="rounded-lg border border-border bg-background"
+    role="group"
+    :aria-invalid="Boolean(errors.selectedModels)"
+    :aria-describedby="errors.selectedModels ? 'api-publish-selected-models-error' : undefined"
+    :tabindex="errors.selectedModels ? -1 : undefined"
+  >
+    <div class="space-y-2 border-b border-border p-2.5">
       <div class="grid gap-2 md:grid-cols-[minmax(0,1fr)_auto] md:items-center">
         <Input v-model="keyword" :placeholder="`搜索 ${providerCategoryLabels[providerCategory]} 模型`" />
         <Badge variant="model">{{ selectedModelNames.length }} 个模型</Badge>
@@ -52,9 +58,9 @@ const listClass = computed(() => expanded.value ? 'max-h-64 overflow-y-auto' : '
       <div class="flex flex-wrap items-center justify-between gap-2 rounded-md border border-border bg-muted/45 px-3 py-2">
         <span class="text-xs font-medium" :class="selectedModelNames.length ? 'text-foreground' : 'text-muted-foreground'">{{ selectedSummary }}</span>
       </div>
-      <p v-if="errors.selectedModels" class="mt-2 text-xs text-destructive">{{ errors.selectedModels }}</p>
+      <p v-if="errors.selectedModels" id="api-publish-selected-models-error" class="mt-2 text-xs text-destructive">{{ errors.selectedModels }}</p>
     </div>
-    <div class="p-3">
+    <div class="p-2.5">
       <div v-if="!filteredModels.length" class="text-sm text-muted-foreground">当前模型大类没有可添加的模型。</div>
       <div v-else class="api-publish-model-chip-list" :class="listClass">
         <button

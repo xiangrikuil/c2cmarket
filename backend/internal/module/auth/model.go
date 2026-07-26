@@ -20,14 +20,17 @@ type AdminUser struct {
 	LinuxDoBinding *LinuxDoBinding
 	CreatedAt      time.Time
 	LastActiveAt   *time.Time
+	Version        int64
 }
 
 type Session struct {
-	ID        string
-	UserID    string
-	CSRFToken string
-	ExpiresAt time.Time
-	RevokedAt *time.Time
+	ID                string
+	UserID            string
+	CSRFToken         string
+	ExpiresAt         time.Time
+	RenewedAt         time.Time
+	AbsoluteExpiresAt time.Time
+	RevokedAt         *time.Time
 }
 
 type LinuxDoBinding struct {

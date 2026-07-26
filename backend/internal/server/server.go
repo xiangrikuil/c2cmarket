@@ -14,6 +14,7 @@ import (
 	"c2c-market/backend/internal/module/apiintent"
 	"c2c-market/backend/internal/module/apimarket"
 	"c2c-market/backend/internal/module/apiorder"
+	"c2c-market/backend/internal/module/apiquota"
 	"c2c-market/backend/internal/module/auth"
 	"c2c-market/backend/internal/module/carpool"
 	"c2c-market/backend/internal/module/catalog"
@@ -28,6 +29,7 @@ import (
 	"c2c-market/backend/internal/module/officialprice"
 	"c2c-market/backend/internal/module/profile"
 	"c2c-market/backend/internal/module/report"
+	"c2c-market/backend/internal/module/reputation"
 	"c2c-market/backend/internal/module/review"
 	"c2c-market/backend/internal/module/search"
 	"c2c-market/backend/internal/realtime"
@@ -81,6 +83,7 @@ type Service interface {
 	SetPassword(ctx context.Context, input auth.SetPasswordInput) *domain.AppError
 	GetSession(ctx context.Context, sessionID string) (auth.User, auth.Session, *domain.AppError)
 	GetSessionWithCSRF(ctx context.Context, sessionID, csrfToken string) (auth.User, auth.Session, *domain.AppError)
+	RenewSession(ctx context.Context, sessionID string) (auth.Session, bool, *domain.AppError)
 	RefreshSessionCSRF(ctx context.Context, sessionID string) (string, *domain.AppError)
 	Logout(ctx context.Context, sessionID string)
 	BeginIdempotency(ctx context.Context, userID, routeKey, key, requestHash string) (*idempotency.Entry, *domain.AppError)
@@ -169,7 +172,9 @@ type Service interface {
 	CreateFavoriteWithIdempotency(ctx context.Context, userID, routeKey, key, requestHash, targetType, targetID string, buildCompletion favorite.CompletionBuilder) (idempotency.Completion, *domain.AppError)
 	DeleteFavorite(ctx context.Context, user auth.User, targetType, targetID string) (favorite.MutationResult, *domain.AppError)
 	ListMyReviewCenterRows(ctx context.Context, user auth.User) ([]review.ReviewCenterRow, *domain.AppError)
+	SubmitTransactionReviewWithIdempotency(ctx context.Context, userID, routeKey, key, requestHash string, input review.SubmitReviewInput, buildCompletion review.CompletionBuilder) (idempotency.Completion, *domain.AppError)
 	SubmitCarpoolMembershipReviewWithIdempotency(ctx context.Context, userID, routeKey, key, requestHash string, input review.SubmitReviewInput, buildCompletion review.CompletionBuilder) (idempotency.Completion, *domain.AppError)
+	AdminRemoveTransactionReviewWithIdempotency(ctx context.Context, user auth.User, routeKey, key, requestHash string, input review.RemoveReviewInput, buildCompletion review.CompletionBuilder) (idempotency.Completion, *domain.AppError)
 	PublicUserReviews(ctx context.Context, username string) ([]review.PublicReview, *domain.AppError)
 	CreateReportWithIdempotency(ctx context.Context, user auth.User, routeKey, key, requestHash string, input report.CreateReportInput, buildCompletion report.ReportCompletionBuilder) (idempotency.Completion, *domain.AppError)
 	MyReports(ctx context.Context, user auth.User) ([]report.Report, *domain.AppError)
@@ -295,16 +300,54 @@ type CarpoolService interface {
 	EndCarpoolMembershipWithIdempotency(ctx context.Context, userID, routeKey, key, requestHash string, input carpool.EndMembershipInput, buildCompletion carpool.MembershipCompletionBuilder) (idempotency.Completion, *domain.AppError)
 }
 
+type APIQuotaService interface {
+	PublicAPIQuotaOffers(ctx context.Context, filter apiquota.PublicOfferFilter, page domain.PageRequest) (domain.Page[apiquota.OfferCard], *domain.AppError)
+	APIQuotaSystemSaleSlots() []apiquota.SystemSaleSlot
+	PublicAPIQuotaOffer(ctx context.Context, offerID string) (apiquota.OfferCard, *domain.AppError)
+	OwnerAPIQuotaBatches(ctx context.Context, user auth.User, apiServiceID string, page domain.PageRequest) (domain.Page[apiquota.Batch], *domain.AppError)
+	CreateAPIQuotaBatch(ctx context.Context, user auth.User, input apiquota.CreateBatchInput) (apiquota.Batch, *domain.AppError)
+	OwnerAPIQuotaOffers(ctx context.Context, user auth.User, batchID string) ([]apiquota.Offer, *domain.AppError)
+	CreateAPIQuotaOffer(ctx context.Context, user auth.User, input apiquota.CreateOfferInput) (apiquota.Offer, *domain.AppError)
+	OwnerAPIQuotaRounds(ctx context.Context, user auth.User, batchID string) ([]apiquota.SaleRound, *domain.AppError)
+	CreateAPIQuotaRound(ctx context.Context, user auth.User, input apiquota.CreateRoundInput) (apiquota.SaleRound, *domain.AppError)
+	PublishAPIQuotaBatch(ctx context.Context, user auth.User, input apiquota.BatchActionInput) (apiquota.Batch, *domain.AppError)
+	UpdateAPIQuotaBatchStatus(ctx context.Context, user auth.User, input apiquota.BatchActionInput, action string) (apiquota.Batch, *domain.AppError)
+	CreateAPIQuotaOrderWithIdempotency(ctx context.Context, userID, routeKey, key, requestHash string, input apiquota.CreateOrderInput, buildCompletion apiorder.CompletionBuilder) (idempotency.Completion, *domain.AppError)
+	ImportAPIQuotaCredentials(ctx context.Context, user auth.User, input apiquota.CredentialImportInput) (apiquota.CredentialImportResult, *domain.AppError)
+	APIQuotaCredentialSummary(ctx context.Context, user auth.User, offerID string) (apiquota.CredentialSummary, *domain.AppError)
+	CreateAPIQuotaRushOfferWithIdempotency(ctx context.Context, user auth.User, routeKey, key, requestHash string, input apiquota.CreateRushOfferInput, buildCompletion apiquota.RushOfferCompletionBuilder) (idempotency.Completion, *domain.AppError)
+}
+
+type ReputationGovernanceService interface {
+	ReputationAvailable() bool
+	ReputationRules() reputation.RuleSet
+	PublicUserReputation(ctx context.Context, username, scope string) ([]reputation.ReputationSnapshot, *domain.AppError)
+	MyReputation(ctx context.Context, user auth.User) ([]reputation.ReputationSnapshot, *domain.AppError)
+	AdminUserReputation(ctx context.Context, user auth.User, userID string, historyLimit int) (reputation.AdminReputationAudit, *domain.AppError)
+	AdminRecalculateUserReputation(ctx context.Context, user auth.User, userID string) (reputation.RecalculationResult, *domain.AppError)
+	AdminRecalculateAllReputation(ctx context.Context, user auth.User) (reputation.RecalculationResult, *domain.AppError)
+	AdminSourceAuthorVerification(ctx context.Context, user auth.User, resourceType, resourceID string) (reputation.SourceAuthorVerificationAudit, *domain.AppError)
+	AdminUpdateSourceAuthorVerification(ctx context.Context, user auth.User, input reputation.UpdateSourceAuthorVerificationInput) (reputation.SourceAuthorVerificationAudit, *domain.AppError)
+	AdminCreateDisputeOutcomeWithIdempotency(ctx context.Context, user auth.User, routeKey, key, requestHash string, input reputation.CreateOutcomeInput, buildCompletion reputation.GovernanceCompletionBuilder) (idempotency.Completion, *domain.AppError)
+	AdminCreateUserRestrictionWithIdempotency(ctx context.Context, user auth.User, routeKey, key, requestHash string, input reputation.CreateRestrictionInput, buildCompletion reputation.GovernanceCompletionBuilder) (idempotency.Completion, *domain.AppError)
+	AdminRevokeUserRestrictionWithIdempotency(ctx context.Context, user auth.User, routeKey, key, requestHash string, input reputation.RevokeRestrictionInput, buildCompletion reputation.GovernanceCompletionBuilder) (idempotency.Completion, *domain.AppError)
+	CheckReputationActionAllowed(ctx context.Context, userID, role, action string) *domain.AppError
+}
+
 // ApplicationService is the constructor aggregate while handlers migrate from
 // the legacy facade to domain-specific service boundaries.
 type ApplicationService interface {
 	Service
 	CarpoolService
+	APIQuotaService
+	ReputationGovernanceService
 }
 
 type Server struct {
 	app                  Service
 	carpools             CarpoolService
+	apiQuotas            APIQuotaService
+	reputation           ReputationGovernanceService
 	mux                  chi.Router
 	enableDevAuth        bool
 	readinessChecker     health.Checker
@@ -339,6 +382,8 @@ func NewServer(service ApplicationService, options ...ServerOptions) http.Handle
 	server := &Server{
 		app:                  service,
 		carpools:             service,
+		apiQuotas:            service,
+		reputation:           service,
 		mux:                  chi.NewRouter(),
 		enableDevAuth:        option.EnableDevAuth,
 		readinessChecker:     option.ReadinessChecker,

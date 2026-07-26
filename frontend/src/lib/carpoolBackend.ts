@@ -17,6 +17,8 @@ import { backendMutation, backendRequest, ensureBackendSession } from '@/lib/bac
 import { backendCreateContactMethod } from '@/lib/apiMarketBackend'
 import { carpoolOpeningChannels, carpoolPaymentMethods, carpoolRegions } from '@/data/mock'
 import { defaultQuotaLabel, defaultQuotaPeriod, defaultQuotaUnit } from '@/lib/quota'
+import { mapBackendReputationSummary } from '@/lib/reputationBackend'
+import type { ReputationSummary } from '@/types/reputation'
 
 type ListResponse<T> = { items: T[] }
 
@@ -59,6 +61,12 @@ type BackendCarpoolListing = {
   regionCode: string
   regionName: string
   sourceUrl?: string
+  sourceAuthorVerification: {
+    status: 'not_submitted' | 'pending' | 'verified' | 'mismatch' | 'expired'
+    verifiedAt?: string
+    expiresAt?: string
+  }
+  sellerReputation?: ReputationSummary | null
   priceMonthlyCny: string
   serviceMultiplier: string
   monthlyQuotaAmount: string
@@ -117,6 +125,7 @@ type BackendCarpoolApplication = {
   version: number
   createdAt: string
   updatedAt: string
+  buyerReputation?: ReputationSummary | null
 }
 
 type BackendCarpoolApplicationEligibility = CarpoolApplicationEligibility
@@ -330,17 +339,19 @@ export async function mapBackendCarpoolListing(listing: BackendCarpoolListing): 
     maxMembers: totalSeats,
     owner: ownerLabel(listing.ownerUserId),
     ownerUserId: listing.ownerUserId,
-    trustLevel: 4,
+    trustLevel: null,
+    sellerReputation: mapBackendReputationSummary(listing.sellerReputation),
     ownerType: '个人车主',
     warranty: '车主承诺',
     openingMethod: openingMethodFromAccessMode(plan.accessMode),
     status: listingStatus(listing.status, availableSeats),
     confirmedAt: formatTime(listing.updatedAt),
     confirmedWithin48h: true,
-    linuxdoBound: Boolean(listing.sourceUrl),
-    sourcePostAccessible: Boolean(listing.sourceUrl),
+    linuxdoBound: null,
+    sourceUrl: listing.sourceUrl,
+    sourceAuthorVerification: listing.sourceAuthorVerification,
     hasInfoConflict: false,
-    hasUnresolvedDispute: false,
+    hasUnresolvedDispute: listing.sellerReputation ? listing.sellerReputation.unresolvedDisputes > 0 : null,
     distributionMethod: listing.distributionMethod,
     distributionMethodNote: listing.distributionMethodNote,
     providesAdminAccount: listing.providesAdminAccount,
@@ -420,12 +431,22 @@ async function mapApplication(application: BackendCarpoolApplication, perspectiv
   const ownerUsername = ownerLabel(application.ownerUserId)
   const buyerUsername = application.buyerUserId ? `买家 ${application.buyerUserId.slice(0, 8)}` : '买家'
   const status = applicationStatus(application, membership)
+  const buyerReputation = mapBackendReputationSummary(application.buyerReputation)
+  const ownerReputation = mapBackendReputationSummary(listing?.sellerReputation)
   return {
     id: application.id,
     carpoolId: application.carpoolListingId,
     applicantUserId: application.buyerUserId,
     applicantUsername: buyerUsername,
-    applicantStats: { linuxdoBound: true, trustLevel: 3, completed30d: 0, buyerResponsibleCancellations: 0, ownerResponsibleCancellations: 0, unresolvedDisputes: 0 },
+    applicantStats: {
+      linuxdoBound: null,
+      trustLevel: null,
+      completed30d: buyerReputation?.completedCount ?? null,
+      buyerResponsibleCancellations: null,
+      ownerResponsibleCancellations: null,
+      unresolvedDisputes: buyerReputation?.unresolvedDisputes ?? null,
+    },
+    buyerReputation,
     ownerUserId: application.ownerUserId,
     ownerUsername,
     status,
@@ -448,7 +469,8 @@ async function mapApplication(application: BackendCarpoolApplication, perspectiv
       rulesText: listing?.cycleTerm?.usageRules || listing?.cycleTerm?.exitPolicy || '规则以车源发布时说明为准，平台不托管支付、不保存凭据。',
       ownerUserId: application.ownerUserId,
       ownerUsername,
-      ownerTrustLevel: 4,
+      ownerTrustLevel: null,
+      ownerReputation,
       ownerType: '个人车主',
       sourceTopicUrl: listing?.sourceUrl || '',
       accessArrangementMode: mapAccessMode(plan.accessMode),

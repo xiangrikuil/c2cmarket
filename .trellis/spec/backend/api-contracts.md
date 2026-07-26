@@ -92,6 +92,8 @@ GET  /api/v1/me/favorites/{targetType}/{targetId}
 PUT  /api/v1/me/favorites/{targetType}/{targetId}
 DELETE /api/v1/me/favorites/{targetType}/{targetId}
 GET  /api/v1/me/reviews
+POST /api/v1/me/transactions/{type}/{id}/review
+PUT  /api/v1/me/transactions/{type}/{id}/review
 PUT  /api/v1/me/reviews/carpool-memberships/{membershipId}
 GET  /api/v1/users/{username}/reviews
 POST /api/v1/reports
@@ -151,6 +153,7 @@ POST /api/v1/admin/api-services/{id}/reject
 POST /api/v1/admin/api-services/{id}/suspend
 POST /api/v1/admin/api-services/{id}/restore
 POST /api/v1/admin/api-services/{id}/remove
+POST /api/v1/admin/reviews/{id}/remove
 GET  /api/v1/admin/api-purchase-intents
 GET  /api/v1/admin/api-purchase-intents/{id}
 GET  /api/v1/admin/announcements
@@ -732,7 +735,7 @@ legacy pending_review -> admin approve/request-changes/reject
 - API service creation and update store service root fields, access modes, supported model snapshots, and package rows. API service owner create/action POST endpoints require `Idempotency-Key`; update and state-changing owner/admin actions require `If-Match`.
 - API service review state is `draft -> pending_review -> approved|changes_requested|rejected`; owner publication state is `offline -> online -> owner_paused -> online` plus `online|owner_paused -> offline/changes_requested` for revision; admin moderation is `clear -> admin_suspended -> clear` or `clear|admin_suspended -> removed`.
 - Public API service reads return only services where `reviewStatus=approved`, `publicationStatus=online`, and `moderationStatus=clear`. Public DTOs must not expose owner contact method IDs, owner user IDs, review/admin internals, moderation reasons, or merchant internal notes.
-- `distributionSystem=sub2api` fixes service model `merchantMultiplier` to `1.0000` in service validation and database constraints. Do not hard-code this only in frontend behavior.
+- `distributionSystem=sub2api` fixes the legacy API service model `merchantMultiplier` to `1.0000` in service validation and database constraints. Limited quota offers own a separate positive `modelMultiplier` that defaults to `1.0000` but may declare another value for every distribution system; see `api-quota-offers.md`.
 - API service rows and DTOs must not store or return passwords, API keys, Sub2API keys, sessions, cookies, third-party tokens, panel owner credentials, payment proofs, or platform verification artifacts.
 - API service orderability uses `acceptingOrders` as the owner-controlled willingness flag and `isOrderable` as the server-derived current predicate. First-release public API service list, detail, search, favorite validation/listing, and purchase-intent creation return only orderable services and support `paymentMethod=wechat|alipay`.
 - API purchase intent creation is allowed only for public API services where `reviewStatus=approved`, `publicationStatus=online`, `moderationStatus=clear`, `acceptingOrders=true`, `paymentWindowMinutes` is between 3 and 15, and at least one payment option is enabled. An orderable online service is treated as the owner having pre-consented to receive compliant purchase intents and to disclose the service's selected merchant contact to the successful buyer.
@@ -747,7 +750,7 @@ legacy pending_review -> admin approve/request-changes/reject
 - API order states are `pending_payment -> payment_submitted -> paid_confirmed -> delivery_submitted -> completed`, with `payment_submitted -> payment_issue -> payment_submitted` for seller-reported `not_received`, `amount_mismatch`, or `remark_mismatch`, and `pending_payment -> cancelled` for buyer cancellation or payment timeout. A payment issue keeps quota reserved and waits for the buyer to supplement the non-sensitive payment summary. Disputes use `disputeStatus`, create or bind a `dispute_cases` row with `target_type='api_order'`, save `api_orders.dispute_case_id`, and must not overwrite the main fulfillment state.
 - Buyer cancellation requires a non-empty user-facing reason and stores that reason in `cancelReason`; system timeout continues to store `payment_timeout`. A buyer can cancel only `pending_payment`, so cancellation is immediate and never waits for seller confirmation. Once payment is submitted, the cancel action must be rejected and the UI must route unresolved delays to support instead of auto-cancelling the order.
 - API order responses that contain payment summaries, delivery notes, payment instructions, structured delivery credentials, or other sensitive order context must set `Cache-Control: private, no-store`. Order create responses must not include `paymentInstructions`; `POST /me/api-orders/{id}/payment-instructions` is the explicit audited read endpoint.
-- API order delivery is a narrow product-boundary exception: after `paid_confirmed`, the seller may submit exactly one structured `deliveryCredential` for that order. Allowed shapes are `api_key_endpoint` (`apiBaseUrl`, `apiKey`, optional `instructions`) and `login_account` (`panelLoginUrl`, `username`, `password`, optional `instructions`). `deliveryNote` remains a generated non-sensitive summary such as `商户已提交 API Key 接入信息。` and must not store the raw credential. Detail/action responses for the buyer and seller may include the credential; list/admin/public responses must not.
+- API order delivery is a narrow product-boundary exception with two modes. Manual delivery lets the seller submit exactly one structured `deliveryCredential` after `paid_confirmed`. Limited-offer pre-import delivery stores encrypted buyer-specific inventory before sale, reserves one row with the order, and copies it into the order credential only when the seller confirms receipt; no earlier response may expose it. Allowed shapes are `api_key_endpoint` (`apiBaseUrl`, `apiKey`, optional `instructions`) and `login_account` (`panelLoginUrl`, `username`, `password`, optional `instructions`). `deliveryNote` remains a generated non-sensitive summary such as `商户已提交 API Key 接入信息。` and must not store the raw credential. Detail/action responses for the buyer and seller may include the delivered credential; list/admin/public responses must not.
 - API order delivery credentials may contain only buyer-specific API keys or initial account passwords and are immutable after submission; the platform must not claim revocation support. They must reject cookies, sessions, OAuth/access/refresh tokens, recovery codes, MFA codes, provider master keys, owner/master account credentials, subscription links, proxy node links, encoded/nested subscription URLs, attachment payloads, and query-string secrets with `SECRET_CONTENT_DETECTED` or field-level `VALIDATION_FAILED`.
 - User announcement routes return only user-visible announcements plus the current user's receipt state. `seen`, `read`, and `dismiss` write receipt timestamps and must not mutate announcement content.
 - Announcement home-banner selection uses published, non-expired, home-channel announcements and receipt dismissal state. Dismissal hides only the banner for the current user; it must not archive or offline the announcement.
@@ -1152,101 +1155,125 @@ if (shouldUseRealBackend()) return backendFavorites()
 
 ### 1. Scope / Trigger
 
-- Trigger: cross-layer API and database contract for completed carpool membership reviews.
-- Scope: the first durable review source is only `carpool_membership`. A review is a buyer-to-owner public experience note after both sides complete a membership. It does not change membership state, create a dispute, create a refund, guarantee service quality, or deliver credentials.
+- Trigger: backend, OpenAPI, PostgreSQL, or frontend work that lists, creates, edits, publishes, removes, or displays transaction reviews.
+- Scope: completed `carpool_membership` and `api_order` transactions support one buyer-to-seller review and one seller-to-buyer review. Reviews are verified experience notes; they do not change transaction state, decide disputes, issue refunds, guarantee service quality, or deliver credentials.
 
 ### 2. Signatures
 
 ```text
 GET /api/v1/me/reviews
+POST /api/v1/me/transactions/{type}/{id}/review
+PUT /api/v1/me/transactions/{type}/{id}/review
 PUT /api/v1/me/reviews/carpool-memberships/{membershipId}
 GET /api/v1/users/{username}/reviews
+POST /api/v1/admin/reviews/{id}/remove
+
+type:
+  carpool_membership | api_order
+
+direction:
+  pending | sent | received
+
+visibility:
+  none | sealed | published | removed
 ```
 
 Required headers:
 
 ```text
-Cookie: c2c_session=<opaque session id>       # /me routes
-X-CSRF-Token: <session CSRF token>            # PUT
-Idempotency-Key: <opaque key>                 # PUT
+Cookie: c2c_session=<opaque session id>       # /me and admin routes
+X-CSRF-Token: <session CSRF token>            # every mutation
+Idempotency-Key: <opaque key>                 # every mutation
+If-Match: "<version>"                         # admin remove
 ```
 
 ### 3. Contracts
 
-- Durable source type is `carpool_membership`; frontend `sourceType='carpool'` may be adapter-only compatibility but must not be persisted.
-- `GET /me/reviews` returns `{ items: ReviewCenterRow[] }` for completed memberships where the current user is buyer.
-- Review center row fields are `id`, `sourceType`, `sourceId`, `target`, `counterpartyUsername`, `counterpartyName`, `status`, `rating`, `tags`, `note`, `createdAt`, and `updatedAt`.
-- Row `status` is `reviewable` when no review exists and `reviewed` after a review exists.
-- `PUT /me/reviews/carpool-memberships/{membershipId}` accepts `{ rating, tags, note }` and returns a `ReviewCenterRow`.
-- `rating` is integer `1..5`. `tags` are trimmed, de-duplicated, max 5 items, max 16 characters each. `note` is required and max 600 characters.
-- Repeated PUT for the same `(source_type, source_id, reviewer_user_id)` updates the existing review instead of creating another public record.
-- `GET /users/{username}/reviews` returns `{ items: PublicReview[] }` for reviews where the public user is the reviewee.
-- Public review fields are `id`, `username`, `date`, `serviceType`, `rating`, `tags`, `note`, and `verified`.
-- Public profile review reads must not expose reviewer user IDs, contact values, contact method IDs, private membership internals, or admin fields.
+- A review source is a platform-confirmed completed `carpool_membership` or `api_order`. Purchase intents, applications, payment submission, and delivery submission are not completed review sources.
+- Only the transaction buyer and seller can review each other. The review window is `[completedAt, completedAt + 14 days)` and an active reputation transaction exclusion makes the transaction ineligible.
+- There is at most one review per `(transaction_type, transaction_id, reviewer_user_id)`. `POST` creates it; `PUT` edits the same review only while it is still sealed and before the deadline. A duplicate create and an edit without an existing sealed review fail explicitly.
+- The first submitted review is `sealed`. Its author can still read and edit their own content, but the counterparty receives only sealed metadata. `rating`, `tags`, and `note` are `null`/empty until publication and must not leak through review-center, public-profile, logs, errors, or idempotency responses.
+- When the second participant submits, both reviews become `published` and receive `visibleAt` and `frozenAt` in the same PostgreSQL transaction. Public content is immutable after that transition.
+- When the 14-day deadline elapses with only one review, an authenticated review-center read or public-profile review read materializes that review as published and frozen at the deadline. Correctness must not depend on a background scheduler. Submission and edit remain forbidden at or after the deadline.
+- `GET /me/reviews` returns `{ items, presetTags }`. Items cover both transaction types and both roles, with `direction=pending|sent|received`, `status=reviewable|expired|sealed|published|removed`, explicit `visibility`, `canCreate`, `canEdit`, counterparty-submission state, transaction timestamps, and version.
+- `rating` is integer `1..5`. Tags are trimmed, de-duplicated, selected only from the backend-provided preset list, limited to 5 items and 16 characters each. `note` is required, limited to 600 characters, and rejects credential- or contact-shaped content.
+- `GET /users/{username}/reviews` returns only published, non-removed reviews for non-excluded transactions where that user is the reviewee. Public fields include transaction type and both role directions, but omit user IDs, contact values, private transaction internals, removal reasons, and administrator fields.
+- `POST /admin/reviews/{id}/remove` requires administrator permission, CSRF, idempotency, and `If-Match`. It may transition only a published review to `removed`; it increments the version and appends a removal revision without rewriting frozen rating, tags, or note.
+- `transaction_review_revisions` is append-only and records create, pre-publication edit, publication, migration, and removal events. Business mutations and their idempotency completion are committed together.
+- The retained carpool-membership `PUT` route writes through the unified service for compatibility. New clients use the generic `POST` create and `PUT` edit routes.
 
 ### 4. Validation & Error Matrix
 
 | Condition | HTTP | Stable code |
 | --- | ---: | --- |
 | Missing/expired session on `/me` routes | 401 | `SESSION_EXPIRED` |
-| Missing or wrong CSRF token on PUT | 403 | `CSRF_TOKEN_INVALID` |
-| Missing PUT idempotency key | 400 | `VALIDATION_FAILED` |
-| Same PUT idempotency key, different request body | 409 | `IDEMPOTENCY_KEY_REUSED` |
-| Membership not found for the buyer | 404 | `OBJECT_NOT_FOUND` |
-| Membership exists but is not completed | 409 | `INVALID_STATE_TRANSITION` |
-| Reviewer is not membership buyer | 403 or 409 | `PERMISSION_DENIED` or `INVALID_STATE_TRANSITION` |
+| Missing or wrong CSRF token on a mutation | 403 | `CSRF_TOKEN_INVALID` |
+| Missing mutation idempotency key | 400 | `VALIDATION_FAILED` |
+| Same idempotency key, different request body | 409 | `IDEMPOTENCY_KEY_REUSED` |
+| Unsupported transaction type or malformed UUID | 422 | `VALIDATION_FAILED` |
+| Transaction missing or current user is not a participant | 404 | `OBJECT_NOT_FOUND` |
+| Transaction is not completed or is actively excluded | 409 | `INVALID_STATE_TRANSITION` |
+| Create after an existing review | 409 | `INVALID_STATE_TRANSITION` |
+| Edit without an existing review | 404 | `OBJECT_NOT_FOUND` |
+| Review deadline elapsed or review is published/removed/frozen | 409 | `INVALID_STATE_TRANSITION` |
 | Rating outside `1..5` | 422 | `VALIDATION_FAILED` |
-| Empty or too-long note | 422 | `VALIDATION_FAILED` |
-| Tags/note contain credential-looking content | 422 | `SECRET_CONTENT_DETECTED` |
+| Unknown/more than 5/too-long tags | 422 | `VALIDATION_FAILED` |
+| Empty or more than 600-character note | 422 | `VALIDATION_FAILED` |
+| Note contains contact- or credential-looking content | 422 | `SECRET_CONTENT_DETECTED` |
+| Non-admin review removal | 403 | `PERMISSION_DENIED` |
+| Admin removal without `If-Match` | 428 | `PRECONDITION_REQUIRED` |
+| Admin removal with stale version | 412 | `VERSION_CONFLICT` |
+| Admin removal targets a non-published review | 409 | `INVALID_STATE_TRANSITION` |
 
 ### 5. Good/Base/Bad Cases
 
-- Good: buyer and owner complete a carpool membership; buyer sees one `reviewable` row, submits a 5-star review, then public owner profile shows that review.
-- Base: buyer repeats PUT for the same membership with a new note; the same logical review updates and public profile reflects the latest note.
-- Base: replay the exact same idempotency key and request body; response is stable and no duplicate review is created.
-- Bad: buyer tries to review an active, left, removed, or pending membership; response is `409 INVALID_STATE_TRANSITION` or not found for unauthorized readers.
-- Bad: API purchase intent is used as a review source; it must not enter this route until there is an explicit platform-confirmed completed source model.
-- Bad: note includes passwords, API keys, tokens, sessions, cookies, or recovery codes; response is `422 SECRET_CONTENT_DETECTED`.
+- Good: an API-order buyer submits first and the seller sees only a sealed received row; the seller then submits and both reviews become public and frozen atomically.
+- Good: a carpool owner submits once, edits while sealed, and the revision history retains both versions. The buyer never sees either content version before publication.
+- Base: one participant submits and the deadline elapses. The next eligible read publishes the review at the deadline, while a late create/edit returns a conflict.
+- Base: replay the exact same idempotency key and body. The response is stable and no duplicate review or revision is created.
+- Bad: accept an API purchase intent as a source, let a non-participant review, expose a sealed rating in a public response, or let an administrator rewrite published content.
+- Bad: submit arbitrary free-form tags or put contact details, passwords, API keys, tokens, sessions, cookies, or recovery codes in the note.
 
 ### 6. Tests Required
 
-- OpenAPI must include all three review routes and schemas: `ReviewCenterRow`, `ReviewCenterRowList`, `SubmitReviewRequest`, `PublicReview`, and `PublicReviewList`.
-- Backend tests or smoke must cover completed membership reviewable row, review submission, public profile display, repeated update, and idempotent replay.
-- PostgreSQL migration must enforce completed membership and buyer/owner actor consistency through constraints or a constraint trigger.
-- Frontend typecheck must prove real mode `getReviewCenterRows()`, `submitReview()`, and public profile reviews use the backend adapter without silent mock fallback.
-- Product boundary scan must show no payment, escrow, guarantee, compensation, credential-storage, or credential-delivery semantics added by reviews.
+- Migration verification must apply the complete chain through Version 57 and prove legacy `carpool_reviews` preserve ID, rating, tags, note, timestamps, and a `migrated` revision.
+- PostgreSQL integration must cover carpool/API, buyer/seller directions, sealed non-disclosure, second-submit atomic publication, deadline publication, late-submit rejection, active exclusion, append-only revisions, and audited administrator removal.
+- Router tests must cover generic create/edit, idempotent replay, sealed response redaction, publication/freeze, edit-after-publication rejection, and administrator `If-Match`.
+- OpenAPI must include generic create/edit, retained compatibility, public review, and administrator removal routes plus their schemas and parameters.
+- Frontend tests must prove real-mode adapters preserve sealed nulls, use backend preset tags, choose `POST` for create and `PUT` for edit, and never fall back to mock data after a real failure.
+- Run full Go tests and vet, frontend Vitest/typecheck/real-mode build, OpenAPI parsing, route parity, migration documentation checks, `git diff --check`, and desktop/mobile browser acceptance.
 
 ### 7. Wrong vs Correct
 
 #### Wrong
 
 ```go
-// Lets any source ID become a public review.
-INSERT INTO carpool_reviews (source_id, reviewer_user_id, reviewee_user_id, rating, note)
-VALUES ($1, $2, $3, $4, $5)
+// Publishes the first review immediately and lets the counterparty read it.
+item.Status = "published"
+item.VisibleAt = time.Now()
 ```
 
 #### Correct
 
 ```go
-// Lock and verify the completed membership before upsert.
-membership, appErr := lockCompletedCarpoolMembershipForReview(ctx, tx, input)
-if appErr != nil {
-    return appErr
+// Keep the first review sealed; publish both only after the paired row is locked.
+counterparty, found := lockCounterpartyTransactionReview(ctx, tx, item)
+if found && counterparty.Status == review.StatusSealed {
+    publishBothInTheSameTransaction(item, counterparty)
 }
 ```
 
 #### Wrong
 
 ```typescript
-// Hides real backend failures behind mock reviews.
-try { return backendReviewCenterRows() } catch { return mockReviewRows() }
+// Treats missing sealed content as a zero-star review.
+rating: row.rating ?? 0
 ```
 
 #### Correct
 
 ```typescript
-if (shouldUseRealBackend()) return backendReviewCenterRows()
+rating: row.rating ?? null
 ```
 
 ## Scenario: Real Native/OAuth Login And Session Permissions

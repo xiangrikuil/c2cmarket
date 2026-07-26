@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 
 function source(path: string) {
@@ -10,6 +10,8 @@ const myCarpools = source('../../pages/MyCarpoolsPage.vue')
 const myDemands = source('../../pages/MyDemandsPage.vue')
 const myApiServices = source('../../pages/MyApiServicesPage.vue')
 const myApiServiceDetail = source('../../pages/MyApiServiceDetailPage.vue')
+const apiServiceOwnerMetrics = source('../../components/api-service-owner/ApiServiceOwnerMetrics.vue')
+const apiServiceOwnerOverview = source('../../components/api-service-owner/ApiServiceOwnerOverview.vue')
 const merchantCarpools = source('../../pages/MerchantCarpoolApplicationsPage.vue')
 const merchantOrders = source('../../pages/MerchantApiOrdersPage.vue')
 const favorites = source('../../pages/MyFavoritesPage.vue')
@@ -22,25 +24,69 @@ const announcementEditor = source('../../components/announcements/AnnouncementEd
 const productPlans = source('../../pages/AdminProductPlansPage.vue')
 const apiModels = source('../../pages/AdminApiModelsPage.vue')
 const api = source('../api.ts')
+const contactMethodCard = optionalSource('../../components/contact-payment/ContactMethodCard.vue')
+const paymentMethodCard = optionalSource('../../components/contact-payment/PaymentMethodCard.vue')
+const configurationProgressCard = optionalSource('../../components/contact-payment/ConfigurationProgressCard.vue')
+const buyerPreviewDrawer = optionalSource('../../components/contact-payment/BuyerPreviewDrawer.vue')
+const personalCenterDashboard = source('../../components/personal-center/PersonalCenterDashboard.vue')
+const profileOverviewCard = source('../../components/personal-center/ProfileOverviewCard.vue')
+const pendingActivityPanel = source('../../components/personal-center/PendingActivityPanel.vue')
+const publishedContentSection = source('../../components/personal-center/PublishedContentSection.vue')
+const accountCompletenessCard = source('../../components/personal-center/AccountCompletenessCard.vue')
+
+function optionalSource(path: string) {
+  const url = new URL(path, import.meta.url)
+  return existsSync(url) ? readFileSync(url, 'utf8') : ''
+}
 
 describe('个人、经营与管理工作区一致性', () => {
   it('个人中心使用真实查询构建待办而不是入口矩阵或硬编码指标', () => {
     expect(myCenter).toContain('useMyCarpoolApplications')
+    expect(myCenter).toContain('useMerchantCarpoolApplications')
     expect(myCenter).toContain('useMyApiOrders')
-    expect(myCenter).toContain('需要你处理')
-    expect(myCenter).toContain('my-center-identity-stats')
-    expect(myCenter).toContain('my-center-quick-grid')
+    expect(myCenter).toContain('useMerchantApiOrders')
+    expect(myCenter).toContain('buildPendingTasks')
+    expect(myCenter).toContain('<PersonalCenterDashboard')
+    expect(myCenter).toContain('Promise.allSettled')
+    expect(myCenter).not.toContain('my-center-identity-stats')
+    expect(myCenter).not.toContain('my-center-quick-grid')
     expect(myCenter).not.toContain('value="5" hint="1 个待完成"')
     expect(myCenter).not.toContain('value="2" hint="1 个待处理"')
     expect(myCenter).not.toContain('<StatCard')
   })
 
+  it('个人中心模块展示真实内容、局部失败与可执行完整度', () => {
+    expect(personalCenterDashboard).toContain('<PendingActivityPanel')
+    expect(personalCenterDashboard).toContain('<PublishedContentSection')
+    expect(personalCenterDashboard).toContain('<AccountCompletenessCard')
+    expect(personalCenterDashboard).toContain('发布求车需求')
+    expect(personalCenterDashboard).toContain('帮助与规则')
+    expect(profileOverviewCard).toContain('信任等级暂无数据')
+    expect(pendingActivityPanel).toContain('部分待办暂时无法加载')
+    expect(pendingActivityPanel).toContain('<ErrorState')
+    expect(pendingActivityPanel).toContain('tasks.slice(0, 6)')
+    expect(publishedContentSection).toContain('<Tabs')
+    expect(publishedContentSection).toContain('<ErrorState')
+    expect(publishedContentSection).toContain('filteredItems')
+    expect(publishedContentSection).toContain(':aria-label="`管理 ${item.title}`"')
+    expect(accountCompletenessCard).toContain('role="progressbar"')
+    expect(accountCompletenessCard).toContain(':aria-valuenow="completeness.percentage"')
+    expect(accountCompletenessCard).toContain('重新加载')
+  })
+
   it('联系与收款按真实能力分组，并使用统一表单组件', () => {
-    expect(myCenter).toContain('contact-payment-main-grid')
+    expect(myCenter).toContain('<ContactMethodCard')
+    expect(myCenter).toContain('<PaymentMethodCard')
+    expect(myCenter).toContain('<ConfigurationProgressCard')
+    expect(myCenter).toContain('<BuyerPreviewDrawer')
     expect(myCenter).toContain('联系方式与收款设置')
     expect(myCenter).toContain('当前真实支持微信和验证邮箱')
-    expect(myCenter).toContain('API 收款方式')
-    expect(myCenter).toContain('<Checkbox v-model="option.enabled"')
+    expect(myCenter).toContain('API 收款设置')
+    expect(contactMethodCard).toContain('<Card')
+    expect(paymentMethodCard).toContain('<Checkbox')
+    expect(paymentMethodCard).toContain('启用配置')
+    expect(configurationProgressCard).toContain('配置完成度')
+    expect(buyerPreviewDrawer).toContain('不会出现在公开主页')
     expect(myCenter).toContain("wechatBound ? '已填写' : '未填写'")
     expect(myCenter).toContain("emailBound ? '已验证' : '未验证'")
     expect(myCenter).not.toContain('支持撤销')
@@ -53,8 +99,10 @@ describe('个人、经营与管理工作区一致性', () => {
       expect(page).toContain('<EmptyState')
       expect(page).toContain('<SkeletonTable')
     }
-    expect(myApiServiceDetail).toContain('已有订单继续使用创建时冻结')
-    expect(myApiServiceDetail).toContain('<CompactStats')
+    expect(myApiServiceDetail).toContain('<ApiServiceOwnerMetrics')
+    expect(myApiServiceDetail).toContain('<ApiServiceOwnerOverview')
+    expect(apiServiceOwnerOverview).toContain('已有订单继续使用创建时冻结')
+    expect(apiServiceOwnerMetrics).toContain('核心经营指标')
   })
 
   it('经营队列默认突出待处理、临近超时和下一动作', () => {
@@ -72,6 +120,10 @@ describe('个人、经营与管理工作区一致性', () => {
     expect(favorites).toContain('当前不可用')
     expect(reviews).toContain("['待评价', '我发出的', '我收到的', '全部']")
     expect(reviews).toContain('关联交易')
+    expect(reviews).toContain('评价窗口已截止，不能再提交')
+    expect(reviews).toContain('评价已被管理员移除')
+    expect(reviews).toContain('对方已提交评价，内容将在你提交评价或截止时间到达后显示')
+    expect(reviews).toContain('[&_table]:min-w-[760px]')
     expect(notifications).toContain("type NotificationTab = 'todo' | 'transactions' | 'system'")
     expect(notifications).toContain("type === 'API 意向' ? 'API 订单'")
     expect(feedback).toContain('下一责任人：你')

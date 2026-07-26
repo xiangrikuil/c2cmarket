@@ -2,6 +2,7 @@
 import { computed } from 'vue'
 import { RouterLink } from 'vue-router'
 import { CreditCard, ExternalLink } from 'lucide-vue-next'
+import ApiPaymentMethodIcon from '@/components/api-payment/ApiPaymentMethodIcon.vue'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
@@ -49,9 +50,14 @@ function optionSummary(option: ApiPaymentOption) {
   <Card class="api-publish-card">
     <div class="api-publish-card-header">
       <div class="flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <h2>2. 收款与接单</h2>
-          <p>使用个人中心里的 API 收款设置；发布时会复制为本服务的接单快照。</p>
+        <div class="flex items-start gap-2">
+          <span class="grid h-7 w-7 shrink-0 place-items-center rounded-md bg-cyan-50 text-cyan-600">
+            <CreditCard class="h-4 w-4" />
+          </span>
+          <div>
+            <h2>收款与接单</h2>
+            <p>使用个人中心设置，发布时复制为服务快照。</p>
+          </div>
         </div>
         <Badge :variant="complete ? 'verified' : 'secondary'">{{ complete ? '已配置' : '待配置' }}</Badge>
       </div>
@@ -59,34 +65,37 @@ function optionSummary(option: ApiPaymentOption) {
 
     <div class="api-publish-card-body space-y-3">
       <div
-        class="flex gap-3 rounded-md border px-3 py-3 text-sm leading-6"
+        class="flex gap-2 rounded-md border px-3 py-2 text-xs leading-5"
         :class="complete ? 'border-success/20 bg-success/5 text-success' : 'border-warning/25 bg-warning/10 text-warning'"
       >
-        <CreditCard class="mt-1 h-4 w-4 shrink-0" />
+        <CreditCard class="mt-0.5 h-4 w-4 shrink-0" />
         <div class="min-w-0">
           <div class="font-medium">{{ loading ? '正在读取 API 收款设置...' : summary }}</div>
-          <p class="mt-1 text-xs leading-5">
+          <p class="mt-0.5 leading-5">
             {{ complete ? '发布后买家可按该服务快照创建订单；之后修改个人中心不会静默改变已发布服务。' : missingReason }}
           </p>
         </div>
       </div>
 
       <div class="grid gap-2 sm:grid-cols-3">
-        <div v-for="option in settings.paymentOptions" :key="option.paymentMethod" class="rounded-md border border-border bg-muted/35 p-3">
+        <div v-for="option in settings.paymentOptions" :key="option.paymentMethod" class="rounded-md border border-border bg-muted/35 p-2.5">
           <div class="flex items-center justify-between gap-2">
-            <span class="text-sm font-semibold">{{ apiPaymentMethodLabels[option.paymentMethod] }}</span>
+            <span class="flex min-w-0 items-center gap-2">
+              <ApiPaymentMethodIcon :method="option.paymentMethod" size="md" />
+              <span class="truncate text-sm font-semibold">{{ apiPaymentMethodLabels[option.paymentMethod] }}</span>
+            </span>
             <Badge :variant="option.enabled && isApiPaymentOptionComplete(option) ? 'verified' : 'secondary'">
               {{ optionStatus(option) }}
             </Badge>
           </div>
-          <p class="mt-2 line-clamp-2 text-xs leading-5 text-muted-foreground">
+          <p class="mt-1 line-clamp-1 text-[11px] leading-4 text-muted-foreground">
             {{ optionSummary(option) }}
           </p>
         </div>
       </div>
 
-      <div class="flex flex-col gap-2 rounded-md border border-border bg-muted/50 px-3 py-2 text-xs leading-5 text-muted-foreground sm:flex-row sm:items-center sm:justify-between">
-        <span>平台不托管支付；收款码只在买家创建订单后用于站外确认，不保存 API Key、token、账号密码或面板凭据。</span>
+      <div class="flex flex-col gap-2 rounded-md border border-border bg-muted/50 px-3 py-2 text-[11px] leading-5 text-muted-foreground sm:flex-row sm:items-center sm:justify-between">
+        <span>平台不托管支付；收款信息只在订单后用于站外确认。</span>
         <RouterLink to="/my/contacts" class="shrink-0">
           <Button size="sm" variant="outline">
             去个人中心修改 <ExternalLink class="h-3.5 w-3.5" />
@@ -94,9 +103,7 @@ function optionSummary(option: ApiPaymentOption) {
         </RouterLink>
       </div>
 
-      <p v-if="enabledOptions.length" class="text-xs text-muted-foreground">
-        本次发布将快照 {{ enabledOptions.length }} 种收款方式，买家确认付款窗口固定 {{ form.paymentWindowMinutes }} 分钟。
-      </p>
+      <p v-if="enabledOptions.length" class="text-[11px] text-muted-foreground">已就绪 {{ enabledOptions.length }} 种收款方式 · 付款窗口 {{ form.paymentWindowMinutes }} 分钟</p>
     </div>
   </Card>
 </template>

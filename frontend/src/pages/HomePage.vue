@@ -1,39 +1,94 @@
 <script setup lang="ts">
-import { computed } from 'vue'
-import { RouterLink } from 'vue-router'
-import { ArrowRight, CheckCircle2, CircleHelp, Code2, FileSearch, Search, ShieldCheck, UsersRound, Zap } from 'lucide-vue-next'
+import { computed, ref } from 'vue'
+import { RouterLink, useRouter } from 'vue-router'
+import { ArrowRight, Car, ChevronRight, Code2, FileChartColumnIncreasing, Search, ShieldCheck, UsersRound } from 'lucide-vue-next'
 import { Badge } from '@/components/ui/badge'
-import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
-import SkeletonBlock from '@/components/market/SkeletonBlock.vue'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
+import EmptyState from '@/components/market/EmptyState.vue'
+import ErrorState from '@/components/market/ErrorState.vue'
+import SkeletonTable from '@/components/market/SkeletonTable.vue'
 import { formatCnyPerUsdQuota, formatModelSummary } from '@/components/api-service-detail/utils'
-import { getPricingDisplay } from '@/lib/pricing'
-import { getApiMerchantDisplayName } from '@/lib/api'
+import { getApiMerchantDisplayName, isApiServicePubliclyOrderable } from '@/lib/api'
+import { getCurrentPayablePrice, getRemainingSeats, isCurrentTradable } from '@/lib/pricing'
 import { getApiServiceProductIconSrc, getProductIconSrc } from '@/lib/productCategoryIcon'
 import { useHomeMarket } from '@/queries/useMarketQueries'
 import { useProductCategories } from '@/queries/useProductCatalogQueries'
 
-const { data, isLoading } = useHomeMarket()
+const homeMarketTabs = ['carpools', 'api-services', 'demands'] as const
+type HomeMarketTab = typeof homeMarketTabs[number]
+
+const homeMarketTabStorageKey = 'c2cmarket.home-market-tab.v1'
+
+function isHomeMarketTab(value: string | null): value is HomeMarketTab {
+  return homeMarketTabs.some(tab => tab === value)
+}
+
+function getInitialHomeMarketTab(): HomeMarketTab {
+  if (typeof window === 'undefined') return 'carpools'
+  const stored = window.localStorage.getItem(homeMarketTabStorageKey)
+  return isHomeMarketTab(stored) ? stored : 'carpools'
+}
+
+const router = useRouter()
+const activeMarketTab = ref<HomeMarketTab>(getInitialHomeMarketTab())
+const { data, isLoading, isError, refetch } = useHomeMarket()
 const { data: catalogCategories } = useProductCategories()
 
-const availableCarpools = computed(() => (data.value?.carpools ?? [])
-  .filter(item => item.status === '可上车')
-  .slice(0, 4))
-const availableApiServices = computed(() => (data.value?.apiServices ?? [])
-  .filter(item => item.publiclyOrderable)
-  .slice(0, 4))
-const verifiedPrices = computed(() => (data.value?.officialPrices ?? [])
-  .filter(item => item.status === '已验证' && item.cny !== null)
-  .slice(0, 5))
-const openDemandCount = computed(() => (data.value?.demands ?? []).filter(item => item.status === '匹配中').length)
+const tradableCarpools = computed(() => (data.value?.carpools ?? [])
+  .filter(item => isCurrentTradable(item) && item.applicationEligibility?.canApply !== false))
+const orderableApiServices = computed(() => (data.value?.apiServices ?? [])
+  .filter(isApiServicePubliclyOrderable))
+const openDemands = computed(() => (data.value?.demands ?? [])
+  .filter(item => item.status === '匹配中'))
+const verifiedPriceRecords = computed(() => (data.value?.officialPrices ?? [])
+  .filter(item => item.status === '已验证' && item.cny !== null))
+const hasMarketData = computed(() => data.value !== undefined)
+
+const carpoolPreview = computed(() => tradableCarpools.value.slice(0, 4))
+const apiServicePreview = computed(() => orderableApiServices.value.slice(0, 4))
+const demandPreview = computed(() => openDemands.value.slice(0, 4))
+
 const stats = computed(() => [
-  { label: '可上车席位', value: availableCarpools.value.length, hint: '当前公开可申请', icon: UsersRound },
-  { label: '可购买 API', value: availableApiServices.value.length, hint: '当前可创建订单', icon: Code2 },
-  { label: '求车需求', value: openDemandCount.value, hint: '等待车主回应', icon: Search },
-  { label: '已验证官网价', value: verifiedPrices.value.length, hint: '仅作价格参考', icon: ShieldCheck },
+  { label: '可申请车源', value: tradableCarpools.value.length, hint: '当前公开可申请', icon: Car, tone: 'carpool' },
+  { label: '可购买 API', value: orderableApiServices.value.length, hint: '当前可创建订单', icon: Code2, tone: 'api' },
+  { label: '求车需求', value: openDemands.value.length, hint: '正在等待车主回应', icon: Search, tone: 'demand' },
+  { label: '官网价格记录', value: verifiedPriceRecords.value.length, hint: '已验证参考价', icon: FileChartColumnIncreasing, tone: 'price' },
 ])
 
+const marketTabMeta: Record<HomeMarketTab, { to: string, emptyTitle: string, emptyDescription: string }> = {
+  carpools: {
+    to: '/carpools',
+    emptyTitle: '暂无可申请车源',
+    emptyDescription: '可以前往求车大厅发布需求，等待合适车主回应。',
+  },
+  'api-services': {
+    to: '/api-market',
+    emptyTitle: '暂无可购买 API 服务',
+    emptyDescription: '当前没有符合公开下单条件的 API 服务。',
+  },
+  demands: {
+    to: '/demands',
+    emptyTitle: '暂无匹配中的求车需求',
+    emptyDescription: '可以发布新需求，或稍后再查看市场。',
+  },
+}
+
+const activeMarketMeta = computed(() => marketTabMeta[activeMarketTab.value])
 const categoryIconByCode = computed(() => new Map((catalogCategories.value ?? []).map(category => [category.code, category.iconDataUrl])))
+
+function setActiveMarketTab(value: string | number) {
+  const normalized = String(value)
+  if (!isHomeMarketTab(normalized)) return
+  activeMarketTab.value = normalized
+  if (typeof window !== 'undefined') window.localStorage.setItem(homeMarketTabStorageKey, normalized)
+}
+
+function openMarketRecord(event: MouseEvent | KeyboardEvent, to: string) {
+  if (event instanceof MouseEvent && (event.target as HTMLElement).closest('a,button')) return
+  router.push(to)
+}
 
 function productIconSrc(product: string) {
   return getProductIconSrc(product, categoryIconByCode.value)
@@ -45,108 +100,167 @@ function apiServiceIconSrc(service: NonNullable<typeof data.value>['apiServices'
 </script>
 
 <template>
-  <div class="home-reference">
-    <div class="home-reference-layout">
-      <main class="home-reference-main min-w-0 space-y-5">
-        <section class="home-reference-hero overflow-hidden rounded-2xl border px-6 py-7 md:px-8 md:py-5">
-      <div class="grid gap-6 lg:grid-cols-[minmax(0,1fr)_340px] lg:items-center">
-        <div class="home-hero-copy">
-          <Badge class="home-hero-badge">AI 服务撮合与风险治理</Badge>
-          <h1 class="mt-3 max-w-3xl text-3xl font-semibold tracking-tight md:text-[34px]">欢迎来到 C2CMarket</h1>
-          <p class="mt-2 max-w-2xl text-sm leading-6">在这里浏览订阅拼车、API 市场、求车需求和官网价格；平台提供信息撮合与风险治理，不代收、不托管资金。</p>
+  <div class="home-market-page space-y-5">
+    <section class="home-market-overview" aria-labelledby="home-market-title">
+      <div class="home-market-overview-copy">
+        <Badge class="home-market-kicker" variant="secondary">市场概览</Badge>
+        <h1 id="home-market-title">发现车源、API 服务与求车需求</h1>
+        <p>平台仅提供信息撮合与交易记录，不代收、不托管资金。</p>
+        <RouterLink to="/my/notifications?tab=announcements" class="home-market-rules-link">
+          查看平台公告<ArrowRight aria-hidden="true" />
+        </RouterLink>
+      </div>
+
+      <div class="home-market-stats" :aria-busy="isLoading">
+        <div v-for="item in stats" :key="item.label" class="home-market-stat">
+          <span :class="['home-market-stat-icon', `is-${item.tone}`]" aria-hidden="true">
+            <component :is="item.icon" />
+          </span>
+          <dl>
+            <dt>{{ item.label }}</dt>
+            <dd v-if="hasMarketData">{{ item.value }}</dd>
+            <dd v-else-if="isLoading"><span class="home-market-count-skeleton" /></dd>
+            <dd v-else aria-label="数据暂不可用">—</dd>
+            <small>{{ item.hint }}</small>
+          </dl>
         </div>
-        <div class="home-hero-visual" aria-hidden="true">
-          <div class="home-hero-grid-lines" />
-          <div class="home-hero-chart"><span /><span /><span /><span /></div>
-          <div class="home-hero-platform home-hero-platform-back" />
-          <div class="home-hero-platform home-hero-platform-front" />
-          <div class="home-hero-shield">
-            <ShieldCheck class="h-20 w-20" :stroke-width="1.6" />
+      </div>
+    </section>
+
+    <section class="home-market-entries" aria-label="市场入口">
+      <RouterLink to="/carpools" class="home-entry-card is-carpool">
+        <span class="home-entry-icon" aria-hidden="true"><UsersRound /></span>
+        <span class="home-entry-copy"><strong>订阅拼车</strong><small>比较月费、访问安排与剩余名额</small></span>
+        <span class="home-entry-meta"><span v-if="hasMarketData">{{ tradableCarpools.length }} 个车源可申请</span><span v-else-if="isLoading" class="home-market-count-skeleton" /><span v-else>数据暂不可用</span><ChevronRight aria-hidden="true" /></span>
+      </RouterLink>
+      <RouterLink to="/api-market" class="home-entry-card is-api">
+        <span class="home-entry-icon" aria-hidden="true"><Code2 /></span>
+        <span class="home-entry-copy"><strong>API 服务</strong><small>比较额度售价、最低订单与接入说明</small></span>
+        <span class="home-entry-meta"><span v-if="hasMarketData">{{ orderableApiServices.length }} 个服务可购买</span><span v-else-if="isLoading" class="home-market-count-skeleton" /><span v-else>数据暂不可用</span><ChevronRight aria-hidden="true" /></span>
+      </RouterLink>
+      <RouterLink to="/demands" class="home-entry-card is-demand">
+        <span class="home-entry-icon" aria-hidden="true"><Search /></span>
+        <span class="home-entry-copy"><strong>求车需求</strong><small>浏览或发布按套餐、预算和地区的需求</small></span>
+        <span class="home-entry-meta"><span v-if="hasMarketData">{{ openDemands.length }} 条需求匹配中</span><span v-else-if="isLoading" class="home-market-count-skeleton" /><span v-else>数据暂不可用</span><ChevronRight aria-hidden="true" /></span>
+      </RouterLink>
+      <RouterLink to="/official-prices" class="home-entry-card is-price">
+        <span class="home-entry-icon" aria-hidden="true"><FileChartColumnIncreasing /></span>
+        <span class="home-entry-copy"><strong>官网价格</strong><small>查看已维护的官网公开价与更新时间</small></span>
+        <span class="home-entry-meta"><span v-if="hasMarketData">{{ verifiedPriceRecords.length }} 条已验证记录</span><span v-else-if="isLoading" class="home-market-count-skeleton" /><span v-else>数据暂不可用</span><ChevronRight aria-hidden="true" /></span>
+      </RouterLink>
+    </section>
+
+    <Tabs :model-value="activeMarketTab" @update:model-value="setActiveMarketTab">
+      <Card class="home-latest-market overflow-hidden p-0">
+        <div class="home-latest-header">
+          <div>
+            <h2>最新可交易内容</h2>
+            <p>仅展示当前可申请、可购买或正在匹配的公开记录</p>
           </div>
-          <span class="home-hero-cube home-hero-cube-one" />
-          <span class="home-hero-cube home-hero-cube-two" />
-          <span class="home-hero-cube home-hero-cube-three" />
+          <RouterLink :to="activeMarketMeta.to" class="home-latest-all">查看全部<ChevronRight aria-hidden="true" /></RouterLink>
         </div>
-      </div>
-      <div class="home-hero-stats">
-        <div v-for="item in stats" :key="item.label"><span><component :is="item.icon" /></span><dl><dt>{{ item.label }}</dt><dd>{{ item.value }}</dd><small>{{ item.hint }}</small></dl></div>
-      </div>
-        </section>
 
-        <section class="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-      <RouterLink to="/carpools" class="home-module-card home-module-carpool group rounded-xl border bg-card p-4 transition hover:-translate-y-0.5 hover:shadow-md">
-        <div class="home-module-copy"><span class="home-module-icon grid h-10 w-10 place-items-center rounded-xl"><UsersRound class="h-5 w-5" /></span><div><h2>订阅拼车</h2><p>浏览共享订阅席位，比较月费、访问安排与剩余名额。</p></div></div>
-        <span class="home-module-action">去浏览<ArrowRight /></span>
-      </RouterLink>
-      <RouterLink to="/api-market" class="home-module-card home-module-api group rounded-xl border bg-card p-4 transition hover:-translate-y-0.5 hover:shadow-md">
-        <div class="home-module-copy"><span class="home-module-icon grid h-10 w-10 place-items-center rounded-xl"><Code2 class="h-5 w-5" /></span><div><h2>API 服务</h2><p>发现公开 API 服务，比较额度售价、最低订单与接入说明。</p></div></div>
-        <span class="home-module-action">去浏览<ArrowRight /></span>
-      </RouterLink>
-      <RouterLink to="/demands" class="home-module-card home-module-demand group rounded-xl border bg-card p-4 transition hover:-translate-y-0.5 hover:shadow-md">
-        <div class="home-module-copy"><span class="home-module-icon grid h-10 w-10 place-items-center rounded-xl"><Search class="h-5 w-5" /></span><div><h2>求车需求</h2><p>发布或查看求车需求，按套餐、预算和地区匹配车源。</p></div></div>
-        <span class="home-module-action">去查看<ArrowRight /></span>
-      </RouterLink>
-      <RouterLink to="/official-prices" class="home-module-card home-module-price group rounded-xl border bg-card p-4 transition hover:-translate-y-0.5 hover:shadow-md">
-        <div class="home-module-copy"><span class="home-module-icon grid h-10 w-10 place-items-center rounded-xl"><ShieldCheck class="h-5 w-5" /></span><div><h2>官网价格</h2><p>查看公开官网价格与更新时间，作为市场选择参考。</p></div></div>
-        <span class="home-module-action">去查看<ArrowRight /></span>
-      </RouterLink>
-        </section>
+        <div class="home-latest-tabs-wrap">
+          <TabsList class="home-latest-tabs">
+            <TabsTrigger value="carpools">可申请车源</TabsTrigger>
+            <TabsTrigger value="api-services">可购买 API 服务</TabsTrigger>
+            <TabsTrigger value="demands">求车需求</TabsTrigger>
+          </TabsList>
+        </div>
 
-        <SkeletonBlock v-if="isLoading" :lines="8" />
+        <div v-if="isLoading" class="home-latest-state"><SkeletonTable :rows="4" :columns="5" /></div>
+        <div v-else-if="isError" class="home-latest-state"><ErrorState title="首页市场内容加载失败" @retry="refetch()" /></div>
         <template v-else>
-          <section class="grid gap-5 xl:grid-cols-2">
-        <Card class="p-0">
-          <div class="flex items-center justify-between border-b border-border px-5 py-4"><div><h2 class="font-semibold">当前可申请车源</h2><p class="mt-1 text-xs text-muted-foreground">优先展示真实、公开且仍有名额的车源</p></div><RouterLink to="/carpools" class="text-sm text-primary">查看全部</RouterLink></div>
-          <div v-if="availableCarpools.length" class="divide-y divide-border">
-            <RouterLink v-for="item in availableCarpools" :key="item.id" :to="`/carpools/${item.id}`" class="flex items-center justify-between gap-4 px-5 py-4 transition hover:bg-accent/60">
-              <div class="flex min-w-0 items-center gap-3"><span class="home-record-icon"><img v-if="productIconSrc(item.product)" :src="productIconSrc(item.product)!" alt="" /></span><div class="min-w-0"><div class="truncate font-medium">{{ item.product }}</div><div class="mt-1 text-xs text-muted-foreground">{{ item.owner }} · {{ item.region }} · {{ item.openingMethod }}</div></div></div>
-              <div class="shrink-0 text-right"><div class="font-semibold">¥{{ getPricingDisplay(item).primaryPrice }}/月</div><div class="mt-1 text-xs text-primary">可申请 {{ Math.max(item.maxMembers - item.currentConfirmedMembers, 0) }} 位</div></div>
-            </RouterLink>
-          </div>
-          <div v-else class="p-6 text-sm text-muted-foreground">暂时没有可申请车源，可前往求车大厅发布需求。</div>
-        </Card>
+          <TabsContent value="carpools" class="mt-0">
+            <EmptyState v-if="carpoolPreview.length === 0" :title="marketTabMeta.carpools.emptyTitle" :description="marketTabMeta.carpools.emptyDescription">
+              <template #action><RouterLink to="/demands/new" class="home-empty-link">发布求车需求</RouterLink></template>
+            </EmptyState>
+            <template v-else>
+              <div class="home-latest-table-wrap">
+                <Table class="home-latest-table">
+                  <TableHeader><TableRow><TableHead>车源</TableHead><TableHead>地区 / 接入</TableHead><TableHead>车主</TableHead><TableHead>月费</TableHead><TableHead>状态</TableHead></TableRow></TableHeader>
+                  <TableBody>
+                    <TableRow v-for="item in carpoolPreview" :key="item.id" class="home-latest-row" tabindex="0" @click="openMarketRecord($event, `/carpools/${item.id}`)" @keydown.enter="openMarketRecord($event, `/carpools/${item.id}`)">
+                      <TableCell><div class="home-record-primary"><span class="home-record-icon"><img v-if="productIconSrc(item.product)" :src="productIconSrc(item.product)!" alt="" /></span><strong>{{ item.product }}</strong></div></TableCell>
+                      <TableCell><strong>{{ item.region }}</strong><small>{{ item.openingMethod }}</small></TableCell>
+                      <TableCell><strong>{{ item.owner }}</strong><small>{{ item.ownerType }} · {{ item.trustLevel === null ? '信任等级暂无数据' : `信任等级 ${item.trustLevel}` }}</small></TableCell>
+                      <TableCell><strong>¥{{ getCurrentPayablePrice(item) }}/月</strong><small>{{ item.pricingMode === 'fixed' ? '固定月费' : '人数变化时价格可调整' }}</small></TableCell>
+                      <TableCell><div class="home-record-status"><Badge class="home-status-available" variant="secondary">可申请 {{ getRemainingSeats(item) }} 位</Badge><ChevronRight aria-hidden="true" /></div></TableCell>
+                    </TableRow>
+                  </TableBody>
+                </Table>
+              </div>
+              <div class="home-latest-mobile-list">
+                <RouterLink v-for="item in carpoolPreview" :key="item.id" :to="`/carpools/${item.id}`" class="home-mobile-record">
+                  <span class="home-record-icon"><img v-if="productIconSrc(item.product)" :src="productIconSrc(item.product)!" alt="" /></span>
+                  <span class="home-mobile-record-copy"><strong>{{ item.product }}</strong><small>{{ item.region }} · {{ item.owner }} · ¥{{ getCurrentPayablePrice(item) }}/月</small></span>
+                  <span class="home-mobile-record-status">可申请 {{ getRemainingSeats(item) }} 位</span><ChevronRight aria-hidden="true" />
+                </RouterLink>
+              </div>
+            </template>
+          </TabsContent>
 
-        <Card class="p-0">
-          <div class="flex items-center justify-between border-b border-border px-5 py-4"><div><h2 class="font-semibold">当前可购买 API 服务</h2><p class="mt-1 text-xs text-muted-foreground">仅展示可创建订单的公开服务</p></div><RouterLink to="/api-market" class="text-sm text-primary">查看全部</RouterLink></div>
-          <div v-if="availableApiServices.length" class="divide-y divide-border">
-            <RouterLink v-for="item in availableApiServices" :key="item.id" :to="`/api-market/${item.id}`" class="flex items-center justify-between gap-4 px-5 py-4 transition hover:bg-accent/60">
-              <div class="flex min-w-0 items-center gap-3"><span class="home-record-icon home-record-icon-api"><img v-if="apiServiceIconSrc(item)" :src="apiServiceIconSrc(item)!" :alt="`${formatModelSummary(item.models)} 品牌图标`" /><Code2 v-else class="h-4 w-4" /></span><div class="min-w-0"><div class="truncate font-medium">{{ item.title }}</div><div class="mt-1 text-xs text-muted-foreground">{{ getApiMerchantDisplayName(item) }} · {{ formatModelSummary(item.models) }}</div></div></div>
-              <div class="shrink-0 text-right"><div class="font-semibold">{{ formatCnyPerUsdQuota(item) }}</div><div class="mt-1 text-xs text-muted-foreground">¥{{ item.minimumPurchaseCny }} 起</div></div>
-            </RouterLink>
-          </div>
-          <div v-else class="p-6 text-sm text-muted-foreground">暂时没有可购买 API 服务，请稍后再看。</div>
-        </Card>
-          </section>
+          <TabsContent value="api-services" class="mt-0">
+            <EmptyState v-if="apiServicePreview.length === 0" :title="marketTabMeta['api-services'].emptyTitle" :description="marketTabMeta['api-services'].emptyDescription">
+              <template #action><RouterLink to="/api-market" class="home-empty-link">前往 API 市场</RouterLink></template>
+            </EmptyState>
+            <template v-else>
+              <div class="home-latest-table-wrap">
+                <Table class="home-latest-table">
+                  <TableHeader><TableRow><TableHead>服务名称</TableHead><TableHead>模型 / 平台</TableHead><TableHead>卖家</TableHead><TableHead>价格</TableHead><TableHead>状态</TableHead></TableRow></TableHeader>
+                  <TableBody>
+                    <TableRow v-for="item in apiServicePreview" :key="item.id" class="home-latest-row" tabindex="0" @click="openMarketRecord($event, `/api-market/${item.id}`)" @keydown.enter="openMarketRecord($event, `/api-market/${item.id}`)">
+                      <TableCell><div class="home-record-primary"><span class="home-record-icon is-api"><img v-if="apiServiceIconSrc(item)" :src="apiServiceIconSrc(item)!" :alt="`${formatModelSummary(item.models)} 品牌图标`" /><Code2 v-else aria-hidden="true" /></span><strong>{{ item.title }}</strong></div></TableCell>
+                      <TableCell><strong>{{ formatModelSummary(item.models) }}</strong><small>{{ item.delivery }} · {{ item.billingMode }}</small></TableCell>
+                      <TableCell><strong>{{ getApiMerchantDisplayName(item) }}</strong><small>{{ item.merchantType }} · {{ item.trustLevel === null ? '信任等级暂无数据' : `信任等级 ${item.trustLevel}` }}</small></TableCell>
+                      <TableCell><strong>{{ formatCnyPerUsdQuota(item) }}</strong><small>¥{{ item.minimumPurchaseCny }} 起</small></TableCell>
+                      <TableCell><div class="home-record-status"><Badge class="home-status-available" variant="secondary">可创建订单</Badge><ChevronRight aria-hidden="true" /></div></TableCell>
+                    </TableRow>
+                  </TableBody>
+                </Table>
+              </div>
+              <div class="home-latest-mobile-list">
+                <RouterLink v-for="item in apiServicePreview" :key="item.id" :to="`/api-market/${item.id}`" class="home-mobile-record">
+                  <span class="home-record-icon is-api"><img v-if="apiServiceIconSrc(item)" :src="apiServiceIconSrc(item)!" :alt="`${formatModelSummary(item.models)} 品牌图标`" /><Code2 v-else aria-hidden="true" /></span>
+                  <span class="home-mobile-record-copy"><strong>{{ item.title }}</strong><small>{{ getApiMerchantDisplayName(item) }} · {{ formatCnyPerUsdQuota(item) }}</small></span>
+                  <span class="home-mobile-record-status">可购买</span><ChevronRight aria-hidden="true" />
+                </RouterLink>
+              </div>
+            </template>
+          </TabsContent>
+
+          <TabsContent value="demands" class="mt-0">
+            <EmptyState v-if="demandPreview.length === 0" :title="marketTabMeta.demands.emptyTitle" :description="marketTabMeta.demands.emptyDescription">
+              <template #action><RouterLink to="/demands/new" class="home-empty-link">发布求车需求</RouterLink></template>
+            </EmptyState>
+            <template v-else>
+              <div class="home-latest-table-wrap">
+                <Table class="home-latest-table">
+                  <TableHeader><TableRow><TableHead>需求</TableHead><TableHead>地区</TableHead><TableHead>发布者</TableHead><TableHead>预算</TableHead><TableHead>状态</TableHead></TableRow></TableHeader>
+                  <TableBody>
+                    <TableRow v-for="item in demandPreview" :key="item.id" class="home-latest-row" tabindex="0" @click="openMarketRecord($event, `/demands/${item.id}`)" @keydown.enter="openMarketRecord($event, `/demands/${item.id}`)">
+                      <TableCell><div class="home-record-primary"><span class="home-record-icon is-demand"><Search aria-hidden="true" /></span><span><strong>{{ item.title }}</strong><small>{{ item.require }}</small></span></div></TableCell>
+                      <TableCell><strong>{{ item.region }}</strong><small>{{ item.ownerPreference === 'any' ? '不限车主类型' : '优先个人车主' }}</small></TableCell>
+                      <TableCell><strong>{{ item.poster }}</strong><small>{{ item.trustLevel === null ? '信任等级暂无数据' : `信任等级 ${item.trustLevel}` }}</small></TableCell>
+                      <TableCell><strong>¥{{ item.maxPrice }}/月</strong><small>最高预算</small></TableCell>
+                      <TableCell><div class="home-record-status"><Badge class="home-status-matching" variant="secondary">{{ item.status }}</Badge><ChevronRight aria-hidden="true" /></div></TableCell>
+                    </TableRow>
+                  </TableBody>
+                </Table>
+              </div>
+              <div class="home-latest-mobile-list">
+                <RouterLink v-for="item in demandPreview" :key="item.id" :to="`/demands/${item.id}`" class="home-mobile-record">
+                  <span class="home-record-icon is-demand"><Search aria-hidden="true" /></span>
+                  <span class="home-mobile-record-copy"><strong>{{ item.title }}</strong><small>{{ item.region }} · {{ item.poster }} · ¥{{ item.maxPrice }}/月</small></span>
+                  <span class="home-mobile-record-status is-demand">{{ item.status }}</span><ChevronRight aria-hidden="true" />
+                </RouterLink>
+              </div>
+            </template>
+          </TabsContent>
         </template>
-      </main>
 
-      <aside class="home-reference-aside space-y-4">
-        <Card class="home-quick-card p-4">
-          <div class="flex items-center gap-2 font-semibold"><span class="home-aside-title-icon"><Zap class="h-4 w-4" /></span>快速开始</div>
-          <div class="mt-4 grid gap-2">
-            <RouterLink to="/carpools" class="home-quick-link"><span class="home-quick-icon home-quick-icon--carpool"><UsersRound class="h-4 w-4" /></span><span><strong>浏览订阅拼车</strong><small>比较月费与剩余名额</small></span><ArrowRight class="h-4 w-4" /></RouterLink>
-            <RouterLink to="/api-market" class="home-quick-link"><span class="home-quick-icon home-quick-icon--api"><Code2 class="h-4 w-4" /></span><span><strong>浏览 API 服务</strong><small>比较额度售价与接入说明</small></span><ArrowRight class="h-4 w-4" /></RouterLink>
-            <RouterLink to="/demands/new" class="home-quick-link"><span class="home-quick-icon home-quick-icon--demand"><Search class="h-4 w-4" /></span><span><strong>发布求车需求</strong><small>等待合适车主回应</small></span><ArrowRight class="h-4 w-4" /></RouterLink>
-            <RouterLink to="/official-prices" class="home-quick-link"><span class="home-quick-icon home-quick-icon--price"><FileSearch class="h-4 w-4" /></span><span><strong>查看官网价格</strong><small>核对公开价格记录</small></span><ArrowRight class="h-4 w-4" /></RouterLink>
-          </div>
-        </Card>
-
-        <Card class="home-boundary-card p-4">
-          <div class="flex items-center gap-2 font-semibold"><span class="home-aside-title-icon"><ShieldCheck class="h-4 w-4" /></span>平台边界</div>
-          <div class="mt-4 space-y-3 text-sm">
-            <div class="flex gap-2"><CheckCircle2 class="mt-0.5 h-4 w-4 shrink-0 text-emerald-600" /><span>公开车源与服务记录可追溯</span></div>
-            <div class="flex gap-2"><CheckCircle2 class="mt-0.5 h-4 w-4 shrink-0 text-emerald-600" /><span>申请、订单与纠纷状态站内留痕</span></div>
-            <div class="flex gap-2"><CheckCircle2 class="mt-0.5 h-4 w-4 shrink-0 text-emerald-600" /><span>平台不代收、不托管资金</span></div>
-          </div>
-        </Card>
-
-        <Card class="p-4">
-          <div class="flex items-center gap-2 font-semibold"><CircleHelp class="h-4 w-4 text-primary" />帮助入口</div>
-          <p class="mt-2 text-sm leading-6 text-muted-foreground">不确定应该选择拼车还是 API 服务？先查看平台边界和具体详情。</p>
-          <RouterLink to="/search"><Button class="mt-4 w-full" variant="outline">打开全局搜索</Button></RouterLink>
-        </Card>
-      </aside>
-    </div>
-
+        <div class="home-market-boundary"><ShieldCheck aria-hidden="true" /><span><strong>平台提示：</strong>请先核对卖家资料、计费方式与可用窗口，再进行线下交易。</span></div>
+      </Card>
+    </Tabs>
   </div>
 </template>

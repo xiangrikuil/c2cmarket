@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { afterEach, test, vi } from 'vitest'
 import type { Carpool } from '../api'
+import { apiQuotaOffers } from '../../data/mock'
 
 type ApiModule = typeof import('../api')
 type ApiMarketBackendModule = typeof import('../apiMarketBackend')
@@ -49,6 +50,9 @@ function backendPublicAPIService(overrides: Record<string, unknown> = {}) {
     title: 'GPT · API 美元额度',
     shortDescription: '建议首次小额测试',
     sourceUrl: 'https://linux.do/t/api-quota-sub2api/123456',
+    sourceAuthorVerification: {
+      status: 'pending',
+    },
     distributionSystem: 'sub2api',
     billingMode: 'metered_usd_quota',
     declaredCnyPerUsdAllowance: '0.8000',
@@ -89,6 +93,38 @@ test('maps public orderable API service responses as online services', async () 
   assert.equal(service.online, true)
   assert.equal(service.publiclyOrderable, true)
   assert.equal(api.isApiServicePubliclyOrderable(service), true)
+  assert.equal(service.trustLevel, null)
+  assert.equal(service.completed30d, null)
+  assert.equal(service.reviewCount, null)
+  assert.equal(service.unresolvedDisputes, null)
+  assert.equal(service.sourceAuthorVerification?.status, 'pending')
+})
+
+test('maps API source-author verification independently from source URL presence', async () => {
+  const { apiMarketBackend } = await loadAPIMarketModules()
+  const service = apiMarketBackend.mapBackendAPIService(backendPublicAPIService({
+    sourceUrl: 'https://linux.do/t/api-quota-sub2api/123456',
+    sourceAuthorVerification: {
+      status: 'mismatch',
+    },
+  }))
+
+  assert.equal(service.sourceUrl, 'https://linux.do/t/api-quota-sub2api/123456')
+  assert.equal(service.sourceAuthorVerification?.status, 'mismatch')
+})
+
+test('maps public quota offer fields without deriving TTFT from payment windows', async () => {
+  const { apiMarketBackend } = await loadAPIMarketModules()
+  const source = structuredClone(apiQuotaOffers[1]!)
+  const mapped = apiMarketBackend.mapBackendPublicAPIQuotaOffer(source)
+
+  assert.equal(mapped.id, source.id)
+  assert.equal(mapped.usdAllowance, '100.000000')
+  assert.equal(mapped.priceCny, '8.80')
+  assert.equal(mapped.modelMultiplier, '1.0000')
+  assert.equal(mapped.declaredTtftBand, 'under_1s')
+  assert.equal(mapped.recommendedConcurrency, 5)
+  assert.equal(mapped.nextRound?.id, source.nextRound?.id)
 })
 
 test('disables applications to a backend carpool owned by the current user', async () => {
@@ -113,7 +149,7 @@ test('disables applications to a backend carpool owned by the current user', asy
     confirmedAt: '2026-07-11 13:00',
     confirmedWithin48h: true,
     linuxdoBound: true,
-    sourcePostAccessible: true,
+    sourceAuthorVerification: { status: 'verified' },
     hasInfoConflict: false,
     hasUnresolvedDispute: false,
     distributionMethod: 'other',

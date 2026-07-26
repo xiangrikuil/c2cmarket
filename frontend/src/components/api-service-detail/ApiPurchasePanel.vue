@@ -3,10 +3,13 @@ import { computed, ref } from 'vue'
 import { RouterLink } from 'vue-router'
 import { Flag, Heart, Share2 } from 'lucide-vue-next'
 import { toast } from 'vue-sonner'
+import ApiPaymentMethodIcon from '@/components/api-payment/ApiPaymentMethodIcon.vue'
+import SourceAuthorVerificationBadge from '@/components/market/SourceAuthorVerificationBadge.vue'
+import ReputationSummaryCard from '@/components/reputation/ReputationSummaryCard.vue'
 import { Card } from '@/components/ui/card'
-import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { getApiMerchantAvatarText, getApiMerchantDisplayName, getApiMerchantProfileUrl, type ApiService } from '@/lib/api'
+import { getApiMerchantAvatarText, getApiMerchantDisplayName, getApiMerchantProfileUrl, getApiTTFTBandLabel, type ApiService } from '@/lib/api'
+import { apiPaymentMethodLabels } from '@/lib/apiPaymentSettings'
 import PurchaseAmountSelector from './PurchaseAmountSelector.vue'
 import PurchaseConfirmDialog from './PurchaseConfirmDialog.vue'
 import { compareDecimal } from '@/lib/decimal'
@@ -28,6 +31,11 @@ const emit = defineEmits<{
 const confirmOpen = ref(false)
 const merchantUrl = computed(() => getApiMerchantProfileUrl(props.service))
 const estimatedCredit = computed(() => estimateUsdAllowance(String(props.amount), props.service))
+const acceptedPaymentMethods = computed(() => props.service.acceptedPaymentMethods ?? [])
+const showSourceAuthorVerification = computed(() => {
+  const status = props.service.sourceAuthorVerification?.status
+  return status === 'verified' || status === 'mismatch'
+})
 
 const amountError = computed(() => {
   const decimalPattern = /^\d+(\.\d{1,2})?$/
@@ -66,16 +74,18 @@ async function shareService() {
           </span>
           <span class="min-w-0">
             <span class="block truncate font-semibold">{{ getApiMerchantDisplayName(service) }}</span>
-            <span class="mt-1 flex flex-wrap items-center gap-1.5">
-              <Badge variant="trust">信任等级 {{ service.trustLevel }}</Badge>
-              <Badge variant="verified">已绑定 linux.do</Badge>
+            <span v-if="showSourceAuthorVerification" class="mt-1 flex flex-wrap items-center gap-1.5">
+              <SourceAuthorVerificationBadge :verification="service.sourceAuthorVerification" />
             </span>
           </span>
         </component>
       </div>
-      <div class="mt-4 flex items-center gap-2 border-b border-border pb-4 text-xs text-muted-foreground">
+      <div class="mt-4 border-t border-border pt-4">
+        <ReputationSummaryCard :summary="service.sellerReputation" compact :framed="false" />
+      </div>
+      <div class="mt-4 flex items-center gap-2 border-t border-border pt-4 text-xs text-muted-foreground">
         <span class="h-1.5 w-1.5 rounded-full bg-primary" />
-        近 30 天完成 {{ service.completed30d }} 单 · 响应中位 {{ service.responseMedianMinutes }} 分钟
+        首字响应 {{ getApiTTFTBandLabel(service.declaredTtftBand) }} · 商户自报，平台未测速
       </div>
     </div>
 
@@ -95,6 +105,16 @@ async function shareService() {
         <div><dt class="text-muted-foreground">订单金额</dt><dd class="mt-1 font-medium">¥{{ service.minimumPurchaseCny }}–¥{{ service.maxBuy }}</dd></div>
         <div><dt class="text-muted-foreground">付款窗口</dt><dd class="mt-1 font-medium">{{ service.expectedResponseMinutes }} 分钟</dd></div>
       </dl>
+
+      <div v-if="acceptedPaymentMethods.length" class="flex flex-wrap items-center justify-between gap-2 rounded-md border border-border bg-muted/30 px-3 py-2">
+        <span class="text-xs text-muted-foreground">支持付款</span>
+        <span class="flex flex-wrap items-center justify-end gap-2">
+          <span v-for="method in acceptedPaymentMethods" :key="method" class="inline-flex items-center gap-1.5 text-xs font-medium">
+            <ApiPaymentMethodIcon :method="method" size="sm" />
+            {{ apiPaymentMethodLabels[method] }}
+          </span>
+        </span>
+      </div>
 
       <Button class="w-full" :disabled="!canSubmit" @click="openConfirm">
         {{ submitting ? '创建中...' : '创建订单并查看付款方式' }}

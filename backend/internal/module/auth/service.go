@@ -29,6 +29,9 @@ const (
 	argon2idV1Iterations            uint32 = 3
 	argon2idV1Parallelism           uint8  = 1
 	argon2idV1KeyLength             uint32 = 32
+	SessionIdleLifetime                    = 7 * 24 * time.Hour
+	SessionRenewalInterval                 = 24 * time.Hour
+	SessionAbsoluteLifetime                = 30 * 24 * time.Hour
 )
 
 type Service struct {
@@ -94,13 +97,8 @@ func (s *Service) CreateDevSession(ctx context.Context, username string, isAdmin
 		if appErr != nil {
 			return User{}, Session{}, appErr
 		}
-		session := Session{
-			ID:        newSecret("sess"),
-			UserID:    user.ID,
-			CSRFToken: newSecret("csrf"),
-			ExpiresAt: now.Add(24 * time.Hour),
-		}
-		if appErr := s.repo.CreateSession(ctx, user.ID, hashOpaqueToken(session.ID), hashOpaqueToken(session.CSRFToken), session.ExpiresAt, now); appErr != nil {
+		session := newSession(user.ID, now)
+		if appErr := s.persistSession(ctx, session, now); appErr != nil {
 			return User{}, Session{}, appErr
 		}
 		return user, session, nil
@@ -116,12 +114,7 @@ func (s *Service) CreateDevSession(ctx context.Context, username string, isAdmin
 	}
 
 	now := s.now()
-	session := Session{
-		ID:        newSecret("sess"),
-		UserID:    user.ID,
-		CSRFToken: newSecret("csrf"),
-		ExpiresAt: now.Add(24 * time.Hour),
-	}
+	session := newSession(user.ID, now)
 	s.sessions[session.ID] = session
 	return user, session, nil
 }
@@ -171,14 +164,12 @@ func (s *Service) LoginWithOAuthProfile(ctx context.Context, profile OAuthProfil
 		s.users[user.ID] = user
 		s.mu.Unlock()
 	}
-	session := Session{
-		ID:        newSecret("sess"),
-		UserID:    user.ID,
-		CSRFToken: newSecret("csrf"),
-		ExpiresAt: now.Add(24 * time.Hour),
+	if user.Status != "active" {
+		return User{}, Session{}, domain.NewError(http.StatusForbidden, domain.CodeAccountRestricted, "Account restricted", "当前账号不可执行该操作。")
 	}
+	session := newSession(user.ID, now)
 	if s.repo != nil {
-		if appErr := s.repo.CreateSession(ctx, user.ID, hashOpaqueToken(session.ID), hashOpaqueToken(session.CSRFToken), session.ExpiresAt, now); appErr != nil {
+		if appErr := s.persistSession(ctx, session, now); appErr != nil {
 			return User{}, Session{}, appErr
 		}
 	} else {
@@ -258,14 +249,9 @@ func (s *Service) LoginWithPassword(ctx context.Context, username, password stri
 			return User{}, Session{}, appErr
 		}
 	}
-	session := Session{
-		ID:        newSecret("sess"),
-		UserID:    credential.User.ID,
-		CSRFToken: newSecret("csrf"),
-		ExpiresAt: now.Add(24 * time.Hour),
-	}
+	session := newSession(credential.User.ID, now)
 	if s.repo != nil {
-		if appErr := s.repo.CreateSession(ctx, credential.User.ID, hashOpaqueToken(session.ID), hashOpaqueToken(session.CSRFToken), session.ExpiresAt, now); appErr != nil {
+		if appErr := s.persistSession(ctx, session, now); appErr != nil {
 			return User{}, Session{}, appErr
 		}
 	} else {
@@ -413,7 +399,8 @@ func (s *Service) GetSession(ctx context.Context, sessionID string) (User, Sessi
 	if session.RevokedAt != nil {
 		return User{}, Session{}, domain.NewError(http.StatusUnauthorized, domain.CodeSessionRevoked, "Session revoked", "当前会话已退出。")
 	}
-	if !s.now().Before(session.ExpiresAt) {
+	now := s.now()
+	if !now.Before(session.ExpiresAt) || !now.Before(session.AbsoluteExpiresAt) {
 		return User{}, Session{}, domain.NewError(http.StatusUnauthorized, domain.CodeSessionExpired, "Session expired", "当前会话已过期。")
 	}
 	user, ok := s.users[session.UserID]
@@ -421,6 +408,36 @@ func (s *Service) GetSession(ctx context.Context, sessionID string) (User, Sessi
 		return User{}, Session{}, domain.NewError(http.StatusForbidden, domain.CodeAccountRestricted, "Account restricted", "当前账号不可执行该操作。")
 	}
 	return user, session, nil
+}
+
+func (s *Service) RenewSession(ctx context.Context, sessionID string) (Session, bool, *domain.AppError) {
+	now := s.now()
+	targetExpiresAt := now.Add(SessionIdleLifetime)
+	renewBefore := now.Add(-SessionRenewalInterval)
+	if s.repo != nil {
+		expiresAt, renewed, appErr := s.repo.RenewSession(ctx, hashOpaqueToken(sessionID), now, targetExpiresAt, renewBefore)
+		if appErr != nil || !renewed {
+			return Session{}, renewed, appErr
+		}
+		return Session{ID: sessionID, ExpiresAt: expiresAt, RenewedAt: now}, true, nil
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	session, ok := s.sessions[sessionID]
+	if !ok || session.RevokedAt != nil || !now.Before(session.ExpiresAt) || !now.Before(session.AbsoluteExpiresAt) {
+		return Session{}, false, nil
+	}
+	if session.RenewedAt.After(renewBefore) {
+		return Session{}, false, nil
+	}
+	if targetExpiresAt.After(session.AbsoluteExpiresAt) {
+		targetExpiresAt = session.AbsoluteExpiresAt
+	}
+	session.RenewedAt = now
+	session.ExpiresAt = targetExpiresAt
+	s.sessions[sessionID] = session
+	return session, true, nil
 }
 
 func (s *Service) GetSessionWithCSRF(ctx context.Context, sessionID, csrfToken string) (User, Session, *domain.AppError) {
@@ -458,6 +475,7 @@ func (s *Service) AdminUsers(ctx context.Context, user User) ([]AdminUser, *doma
 			Status:         item.Status,
 			LinuxDoBinding: item.LinuxDoBinding,
 			CreatedAt:      s.now(),
+			Version:        1,
 		})
 	}
 	sort.Slice(items, func(i, j int) bool {
@@ -501,6 +519,29 @@ func (s *Service) Logout(ctx context.Context, sessionID string) {
 	now := s.now()
 	session.RevokedAt = &now
 	s.sessions[sessionID] = session
+}
+
+func newSession(userID string, now time.Time) Session {
+	return Session{
+		ID:                newSecret("sess"),
+		UserID:            userID,
+		CSRFToken:         newSecret("csrf"),
+		ExpiresAt:         now.Add(SessionIdleLifetime),
+		RenewedAt:         now,
+		AbsoluteExpiresAt: now.Add(SessionAbsoluteLifetime),
+	}
+}
+
+func (s *Service) persistSession(ctx context.Context, session Session, now time.Time) *domain.AppError {
+	return s.repo.CreateSession(
+		ctx,
+		session.UserID,
+		hashOpaqueToken(session.ID),
+		hashOpaqueToken(session.CSRFToken),
+		session.ExpiresAt,
+		session.AbsoluteExpiresAt,
+		now,
+	)
 }
 
 func (s *Service) rehashPasswordCredential(ctx context.Context, credential PasswordCredential, password string, now time.Time) *domain.AppError {

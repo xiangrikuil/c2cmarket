@@ -110,7 +110,7 @@ function openDemand(event: MouseEvent | KeyboardEvent, id: string) {
             <td class="font-semibold">¥{{ row.maxPrice }}/月</td>
             <td>{{ row.region }}</td>
             <td>{{ ownerPreferenceLabel(row.ownerPreference) }}</td>
-            <td>{{ row.poster }}<div class="mt-1 text-xs text-muted-foreground">信任等级 {{ row.trustLevel }}</div></td>
+            <td>{{ row.poster }}<div class="mt-1 text-xs text-muted-foreground">{{ row.trustLevel === null ? '信任等级暂无数据' : `信任等级 ${row.trustLevel}` }}</div></td>
             <td><Badge variant="secondary">{{ row.status }}</Badge></td>
             <td class="text-muted-foreground">{{ row.updatedAt }}</td>
           </tr>

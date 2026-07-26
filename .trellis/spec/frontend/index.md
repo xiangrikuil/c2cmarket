@@ -17,6 +17,8 @@ This directory contains the current project conventions for the Vue 3 + Vite fro
 | [Directory Structure](./directory-structure.md) | Module organization and file layout | Active |
 | [Component Guidelines](./component-guidelines.md) | Component patterns, props, composition | Active |
 | [Marketplace UI Guidelines](./marketplace-ui-guidelines.md) | Authoritative site-wide visual, layout, marketplace hierarchy, and browser acceptance contract | Active |
+| [Limited API Quota Offers](./api-quota-offers.md) | Quota market, purchase, owner management, adapters, and responsive behavior | Active |
+| [Reputation Presentation](./reputation.md) | Nullable real facts and public reputation wording | Active |
 | [Hook Guidelines](./hook-guidelines.md) | Custom hooks, data fetching patterns | Active |
 | [State Management](./state-management.md) | Local state, global state, server state | Active |
 | [Quality Guidelines](./quality-guidelines.md) | Code standards, forbidden patterns | Active |
@@ -31,12 +33,14 @@ Before editing frontend code, read:
 1. [Directory Structure](./directory-structure.md)
 2. [Component Guidelines](./component-guidelines.md)
 3. [Marketplace UI Guidelines](./marketplace-ui-guidelines.md) for any product-facing UI change
-4. [Hook Guidelines](./hook-guidelines.md)
-5. [State Management](./state-management.md)
-6. [Quality Guidelines](./quality-guidelines.md)
-7. [Type Safety](./type-safety.md)
-8. [C2CMarket Product Context](../guides/product-context.md)
-9. [Maintainability Contract](../guides/maintainability-contract.md)
+4. [Limited API Quota Offers](./api-quota-offers.md) when touching quota market, purchase, owner management, adapters, or mock flows
+5. [Reputation Presentation](./reputation.md) when touching trust, completion, review, cancellation, or dispute facts
+6. [Hook Guidelines](./hook-guidelines.md)
+7. [State Management](./state-management.md)
+8. [Quality Guidelines](./quality-guidelines.md)
+9. [Type Safety](./type-safety.md)
+10. [C2CMarket Product Context](../guides/product-context.md)
+11. [Maintainability Contract](../guides/maintainability-contract.md)
 
 ## Quality Check
 

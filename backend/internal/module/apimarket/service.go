@@ -118,6 +118,9 @@ func (s *Manager) Update(ctx context.Context, user auth.User, input UpdateServic
 		PublicAccessNote:                 input.PublicAccessNote,
 		MerchantNote:                     input.MerchantNote,
 		MerchantSupportNote:              input.MerchantSupportNote,
+		DeclaredTTFTBand:                 input.DeclaredTTFTBand,
+		RecommendedConcurrency:           input.RecommendedConcurrency,
+		PerformanceConfirmedAt:           input.PerformanceConfirmedAt,
 		AccessModes:                      input.AccessModes,
 		Models:                           input.Models,
 		Packages:                         input.Packages,
@@ -399,6 +402,7 @@ func (s *Manager) buildFromInput(ctx context.Context, current Service, input Cre
 		return Service{}, err
 	}
 	quotaExpiresAt, _ := parseQuotaExpiresAt(input.QuotaExpiresAt)
+	performanceConfirmedAt, _ := parsePerformanceConfirmedAt(input.PerformanceConfirmedAt)
 	serviceID := current.ID
 	createdAt := current.CreatedAt
 	version := current.Version
@@ -435,6 +439,9 @@ func (s *Manager) buildFromInput(ctx context.Context, current Service, input Cre
 		PublicAccessNote:                 strings.TrimSpace(input.PublicAccessNote),
 		MerchantNote:                     strings.TrimSpace(input.MerchantNote),
 		MerchantSupportNote:              strings.TrimSpace(input.MerchantSupportNote),
+		DeclaredTTFTBand:                 strings.TrimSpace(input.DeclaredTTFTBand),
+		RecommendedConcurrency:           input.RecommendedConcurrency,
+		PerformanceConfirmedAt:           performanceConfirmedAt,
 		AcceptingOrders:                  current.AcceptingOrders,
 		PaymentWindowMinutes:             current.PaymentWindowMinutes,
 		ReviewStatus:                     reviewStatus,
@@ -554,6 +561,9 @@ func validateCreateInput(input CreateServiceInput, now time.Time) *domain.AppErr
 	}
 	if err := validateOptionalNonSecretText("merchantSupportNote", input.MerchantSupportNote); err != nil {
 		return err
+	}
+	if appErr := validatePerformanceDeclaration(input, now); appErr != nil {
+		return appErr
 	}
 	switch strings.TrimSpace(input.DistributionSystem) {
 	case ServiceDistributionSub2API, "new_api_proxy", "other":
@@ -693,6 +703,40 @@ func parseQuotaExpiresAt(value string) (*time.Time, bool) {
 	}
 	expiresAt = expiresAt.UTC()
 	return &expiresAt, true
+}
+
+func validatePerformanceDeclaration(input CreateServiceInput, now time.Time) *domain.AppError {
+	band := strings.TrimSpace(input.DeclaredTTFTBand)
+	confirmedAt := strings.TrimSpace(input.PerformanceConfirmedAt)
+	if band == "" && input.RecommendedConcurrency == 0 && confirmedAt == "" {
+		return nil
+	}
+	switch band {
+	case "under_1s", "1_to_3s", "3_to_5s", "5_to_10s", "over_10s":
+	default:
+		return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "TTFT band invalid", "首字响应区间无效。", "declaredTtftBand", "invalid", "请选择有效的首字响应区间。")
+	}
+	if input.RecommendedConcurrency < 1 {
+		return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Concurrency invalid", "建议并发必须大于 0。", "recommendedConcurrency", "invalid", "建议并发必须大于 0。")
+	}
+	parsed, ok := parsePerformanceConfirmedAt(confirmedAt)
+	if !ok || parsed == nil || parsed.After(now.Add(time.Minute)) {
+		return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Performance confirmation invalid", "服务体验最近确认时间无效。", "performanceConfirmedAt", "invalid", "最近确认时间必须是有效且不晚于当前时间的时间。")
+	}
+	return nil
+}
+
+func parsePerformanceConfirmedAt(value string) (*time.Time, bool) {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return nil, true
+	}
+	confirmedAt, err := time.Parse(time.RFC3339Nano, trimmed)
+	if err != nil {
+		return nil, false
+	}
+	confirmedAt = confirmedAt.UTC()
+	return &confirmedAt, true
 }
 
 func validateAdminActionInput(input ServiceAdminActionInput) *domain.AppError {

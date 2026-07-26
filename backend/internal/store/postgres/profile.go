@@ -261,31 +261,38 @@ func (s *Store) GetPublicMerchantProfile(ctx context.Context, slug string, now t
 	if s == nil || s.pool == nil {
 		return profile.PublicMerchantProfile{}, internalStoreError()
 	}
-	merchant, err := scanMerchantProfile(ctx, s.pool, `
-		SELECT id::text, owner_user_id::text, slug, display_name, COALESCE(avatar_url, ''),
-		       status, created_at, updated_at, version
-		FROM merchant_profiles
-		WHERE slug = $1 AND status = 'active'
-	`, strings.TrimSpace(strings.ToLower(slug)))
+	var value profile.PublicMerchantProfile
+	err := s.pool.QueryRow(ctx, `
+		SELECT merchant.id::text, merchant.owner_user_id::text, merchant.slug, merchant.display_name,
+		       COALESCE(merchant.avatar_url, ''), merchant.created_at, users.last_active_at,
+		       (binding.id IS NOT NULL) AS linux_do_bound,
+		       CASE WHEN binding.id IS NOT NULL THEN binding.trust_level ELSE NULL END
+		FROM merchant_profiles merchant
+		JOIN users ON users.id = merchant.owner_user_id
+		LEFT JOIN linux_do_bindings binding ON binding.user_id = merchant.owner_user_id
+		WHERE merchant.slug = $1
+		  AND merchant.status = 'active'
+		  AND users.account_status = 'active'
+	`, strings.TrimSpace(strings.ToLower(slug))).Scan(
+		&value.ID,
+		&value.OwnerUserID,
+		&value.Slug,
+		&value.DisplayName,
+		&value.AvatarURL,
+		&value.JoinedAt,
+		&value.LastActiveAt,
+		&value.LinuxDoBound,
+		&value.TrustLevel,
+	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return profile.PublicMerchantProfile{}, domain.NewError(http.StatusNotFound, domain.CodeObjectNotFound, "Merchant profile not found", "商户公开主页不存在。")
 	}
 	if err != nil {
 		return profile.PublicMerchantProfile{}, internalStoreError()
 	}
-	return profile.PublicMerchantProfile{
-		ID:                merchant.ID,
-		Slug:              merchant.Slug,
-		DisplayName:       merchant.DisplayName,
-		AvatarURL:         merchant.AvatarURL,
-		AvatarText:        firstAvatarText(merchant.DisplayName),
-		Identity:          "API 商户",
-		TrustLevel:        3,
-		LinuxDoBound:      true,
-		OriginalPostBound: false,
-		JoinedAt:          merchant.CreatedAt,
-		LastActiveAt:      nil,
-	}, nil
+	value.AvatarText = firstAvatarText(value.DisplayName)
+	value.Identity = "API 商户"
+	return value, nil
 }
 
 func scanUserProfile(ctx context.Context, q queryer, sql string, args ...any) (profile.UserProfile, error) {
@@ -378,11 +385,6 @@ func profilePublicFromUser(value profile.UserProfile) profile.PublicUserProfile 
 		LastActiveAt:    lastActiveAt,
 		Privacy:         value.Privacy,
 		Badges:          badges,
-		Stats: profile.PublicStats{
-			BuyerResponsibilityCancellationCount:  0,
-			SellerResponsibilityCancellationCount: 0,
-			UnresolvedDisputeCount:                0,
-		},
 	}
 }
 

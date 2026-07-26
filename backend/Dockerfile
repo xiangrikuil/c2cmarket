@@ -8,7 +8,9 @@ RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/c2c-mar
 
 FROM alpine:3.22
 
-RUN addgroup -S c2c && adduser -S c2c -G c2c
+RUN apk add --no-cache tzdata \
+    && addgroup -S c2c \
+    && adduser -S c2c -G c2c
 WORKDIR /app
 COPY --from=build /out/c2c-market-backend /app/c2c-market-backend
 

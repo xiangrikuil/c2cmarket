@@ -1,13 +1,16 @@
 package postgres
 
 import (
-	"c2c-market/backend/internal/domain"
-	"c2c-market/backend/internal/module/contact"
 	"context"
 	"errors"
-	"github.com/jackc/pgx/v5"
 	"net/http"
 	"time"
+
+	"c2c-market/backend/internal/domain"
+	"c2c-market/backend/internal/module/contact"
+	"c2c-market/backend/internal/module/reputation"
+
+	"github.com/jackc/pgx/v5"
 )
 
 func (s *Store) CreateContactMethod(ctx context.Context, input contact.ContactMethodInput, method contact.ContactMethod, version contact.ContactMethodVersion) *domain.AppError {
@@ -409,6 +412,32 @@ func (s *Store) ReadContactSession(ctx context.Context, sessionID, viewerUserID,
 		EndsAt:    endsAt,
 		Items:     items,
 	}, nil
+}
+
+func (s *Store) ContactSessionViewerRole(ctx context.Context, sessionID, viewerUserID string) (string, *domain.AppError) {
+	if s == nil || s.pool == nil {
+		return "", internalStoreError()
+	}
+	var buyerUserID, sellerUserID string
+	err := s.pool.QueryRow(ctx, `
+		SELECT buyer_user_id::text, seller_user_id::text
+		FROM contact_sessions
+		WHERE id = $1
+	`, sessionID).Scan(&buyerUserID, &sellerUserID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", domain.NewError(http.StatusNotFound, domain.CodeObjectNotFound, "Contact session not found", "联系窗口不存在。")
+	}
+	if err != nil {
+		return "", internalStoreError()
+	}
+	switch viewerUserID {
+	case buyerUserID:
+		return reputation.RoleBuyer, nil
+	case sellerUserID:
+		return reputation.RoleSeller, nil
+	default:
+		return "", domain.NewError(http.StatusForbidden, domain.CodeContactAccessForbidden, "Contact access forbidden", "你不是该联系窗口参与方。")
+	}
 }
 
 func (s *Store) ContactAccessLogCount(ctx context.Context, sessionID string) (int, *domain.AppError) {

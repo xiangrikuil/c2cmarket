@@ -34,7 +34,7 @@ type notificationReadAllDTO struct {
 }
 
 func (s *Server) handleMyNotifications(w http.ResponseWriter, r *http.Request) {
-	user, _, appErr := s.requireSession(r)
+	user, _, appErr := s.requireSession(w, r)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
@@ -56,7 +56,7 @@ func (s *Server) handleMyNotifications(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleNotificationUnreadCount(w http.ResponseWriter, r *http.Request) {
-	user, _, appErr := s.requireSession(r)
+	user, _, appErr := s.requireSession(w, r)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
@@ -70,7 +70,7 @@ func (s *Server) handleNotificationUnreadCount(w http.ResponseWriter, r *http.Re
 }
 
 func (s *Server) handleMarkNotificationRead(w http.ResponseWriter, r *http.Request) {
-	user, _, appErr := s.requireSessionAndCSRF(r)
+	user, _, appErr := s.requireSessionAndCSRF(w, r)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
@@ -88,7 +88,7 @@ func (s *Server) handleMarkNotificationRead(w http.ResponseWriter, r *http.Reque
 }
 
 func (s *Server) handleMarkAllNotificationsRead(w http.ResponseWriter, r *http.Request) {
-	user, _, appErr := s.requireSessionAndCSRF(r)
+	user, _, appErr := s.requireSessionAndCSRF(w, r)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return

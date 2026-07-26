@@ -18,6 +18,7 @@ const (
 
 type Intent struct {
 	ID                                       string
+	PurchaseKind                             string
 	APIServiceID                             string
 	APIServiceOwnerUserID                    string
 	BuyerUserID                              string
@@ -45,6 +46,12 @@ type Intent struct {
 	MinimumIntentCNYSnapshot                 string
 	MaximumIntentCNYSnapshot                 string
 	PricingSnapshot                          string
+	APIQuotaBatchID                          string
+	APIQuotaOfferID                          string
+	APIQuotaSaleRoundID                      string
+	APIQuotaAllocationID                     string
+	APIQuotaInventoryUnitID                  string
+	QuotaOfferSnapshot                       string
 	BuyerNote                                string
 	ContactedAt                              *time.Time
 	BuyerCancelledAt                         *time.Time

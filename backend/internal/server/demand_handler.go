@@ -63,7 +63,7 @@ func (s *Server) handleDemand(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleCreateDemand(w http.ResponseWriter, r *http.Request) {
-	user, _, appErr := s.requireSessionAndCSRF(r)
+	user, _, appErr := s.requireSessionAndCSRF(w, r)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
@@ -90,7 +90,7 @@ func (s *Server) handleCreateDemand(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleMyDemands(w http.ResponseWriter, r *http.Request) {
-	user, _, appErr := s.requireSession(r)
+	user, _, appErr := s.requireSession(w, r)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
@@ -104,7 +104,7 @@ func (s *Server) handleMyDemands(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleMyDemand(w http.ResponseWriter, r *http.Request) {
-	user, _, appErr := s.requireSession(r)
+	user, _, appErr := s.requireSession(w, r)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
@@ -127,7 +127,7 @@ func (s *Server) handleReopenDemand(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleOwnerDemandAction(w http.ResponseWriter, r *http.Request, action string) {
-	user, _, appErr := s.requireSessionAndCSRF(r)
+	user, _, appErr := s.requireSessionAndCSRF(w, r)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
@@ -164,7 +164,7 @@ func (s *Server) handleOwnerDemandAction(w http.ResponseWriter, r *http.Request,
 }
 
 func (s *Server) handleAdminDemands(w http.ResponseWriter, r *http.Request) {
-	user, _, appErr := s.requireSession(r)
+	user, _, appErr := s.requireSession(w, r)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
@@ -178,7 +178,7 @@ func (s *Server) handleAdminDemands(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleAdminDemand(w http.ResponseWriter, r *http.Request) {
-	user, _, appErr := s.requireSession(r)
+	user, _, appErr := s.requireSession(w, r)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
@@ -213,7 +213,7 @@ func (s *Server) handleRestoreDemand(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleAdminDemandAction(w http.ResponseWriter, r *http.Request, action string) {
-	user, _, appErr := s.requireSessionAndCSRF(r)
+	user, _, appErr := s.requireSessionAndCSRF(w, r)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return

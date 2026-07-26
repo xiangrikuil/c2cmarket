@@ -16,6 +16,7 @@ import (
 	"testing"
 	"time"
 
+	"c2c-market/backend/internal/domain"
 	"c2c-market/backend/internal/health"
 	app "c2c-market/backend/internal/module/core"
 
@@ -236,6 +237,81 @@ func TestAdminUsersListsAllAccountsWithoutReportData(t *testing.T) {
 		t.Fatalf("non-admin directory status %d body %s", response.Code, response.Body.String())
 	}
 	assertProblemCode(t, response, "PERMISSION_DENIED")
+}
+
+func TestReputationGovernanceRestrictionRouteRequiresAdminAndIfMatch(t *testing.T) {
+	server := newTestServer(time.Date(2026, 7, 24, 8, 0, 0, 0, time.UTC))
+	adminSession := createSession(t, server, "reputation-route-admin", true)
+	targetSession := createSession(t, server, "reputation-route-target", false)
+	body := `{
+		"restrictionType":"contact_review_hold",
+		"roleScope":"buyer",
+		"actionCode":"contact_view",
+		"reasonCode":"dispute_review",
+		"publicReason":"纠纷处理中暂不可查看联系方式。",
+		"internalReason":"管理员正在复核关联纠纷。"
+	}`
+	path := "/api/v1/admin/users/" + targetSession.userID + "/reputation-restrictions"
+
+	nonAdmin := newJSONRequest(http.MethodPost, path, body)
+	addAuth(nonAdmin, targetSession, "reputation-route-non-admin")
+	nonAdmin.Header.Set("If-Match", `"1"`)
+	nonAdminResponse := httptest.NewRecorder()
+	server.ServeHTTP(nonAdminResponse, nonAdmin)
+	if nonAdminResponse.Code != http.StatusForbidden {
+		t.Fatalf("expected non-admin forbidden, got %d body %s", nonAdminResponse.Code, nonAdminResponse.Body.String())
+	}
+	assertProblemCode(t, nonAdminResponse, domain.CodePermissionDenied)
+
+	missingIfMatch := newJSONRequest(http.MethodPost, path, body)
+	addAuth(missingIfMatch, adminSession, "reputation-route-missing-if-match")
+	missingIfMatchResponse := httptest.NewRecorder()
+	server.ServeHTTP(missingIfMatchResponse, missingIfMatch)
+	if missingIfMatchResponse.Code != http.StatusPreconditionRequired {
+		t.Fatalf("expected missing If-Match status %d, got %d body %s", http.StatusPreconditionRequired, missingIfMatchResponse.Code, missingIfMatchResponse.Body.String())
+	}
+	assertProblemCode(t, missingIfMatchResponse, domain.CodePreconditionRequired)
+
+	create := newJSONRequest(http.MethodPost, path, body)
+	addAuth(create, adminSession, "reputation-route-create")
+	create.Header.Set("If-Match", `"1"`)
+	createResponse := httptest.NewRecorder()
+	server.ServeHTTP(createResponse, create)
+	if createResponse.Code != http.StatusCreated {
+		t.Fatalf("create reputation restriction status %d body %s", createResponse.Code, createResponse.Body.String())
+	}
+	if createResponse.Header().Get("ETag") != `"2"` {
+		t.Fatalf("expected updated user ETag, got %q", createResponse.Header().Get("ETag"))
+	}
+	var payload reputationGovernanceMutationResponse
+	if err := json.NewDecoder(createResponse.Body).Decode(&payload); err != nil {
+		t.Fatalf("decode reputation restriction: %v", err)
+	}
+	if payload.Restriction == nil ||
+		payload.Restriction.UserID != targetSession.userID ||
+		payload.Restriction.RoleScope != "buyer" ||
+		payload.Restriction.ActionCode != "contact_view" {
+		t.Fatalf("unexpected reputation restriction response: %#v", payload.Restriction)
+	}
+
+	replay := newJSONRequest(http.MethodPost, path, body)
+	addAuth(replay, adminSession, "reputation-route-create")
+	replay.Header.Set("If-Match", `"1"`)
+	replayResponse := httptest.NewRecorder()
+	server.ServeHTTP(replayResponse, replay)
+	if replayResponse.Code != http.StatusCreated {
+		t.Fatalf("expected idempotent governance replay, got status %d body %s", replayResponse.Code, replayResponse.Body.String())
+	}
+	if replayResponse.Header().Get("ETag") != createResponse.Header().Get("ETag") {
+		t.Fatalf("expected replay ETag %q, got %q", createResponse.Header().Get("ETag"), replayResponse.Header().Get("ETag"))
+	}
+	var replayPayload reputationGovernanceMutationResponse
+	if err := json.NewDecoder(replayResponse.Body).Decode(&replayPayload); err != nil {
+		t.Fatalf("decode reputation restriction replay: %v", err)
+	}
+	if replayPayload.Restriction == nil || replayPayload.Restriction.ID != payload.Restriction.ID {
+		t.Fatalf("expected idempotent restriction ID %q, got %#v", payload.Restriction.ID, replayPayload.Restriction)
+	}
 }
 
 func TestEmailRegistrationDisabled(t *testing.T) {
@@ -1233,6 +1309,136 @@ func TestCarpoolCreateReviewApplyAndAcceptFlow(t *testing.T) {
 	}
 }
 
+func TestTransactionReviewRoutesSealPublishAndAdminRemove(t *testing.T) {
+	server := newTestServer(time.Date(2026, 7, 24, 8, 0, 0, 0, time.UTC))
+	ownerSession := createLinuxDoSession(t, server, "review-route-owner")
+	buyerSession := createSession(t, server, "review-route-buyer", false)
+	adminSession := createSession(t, server, "review-route-admin", true)
+	ownerContact := createContactMethod(t, server, ownerSession, "telegram", "Review Owner TG", "@review_route_owner")
+	buyerContact := createContactMethod(t, server, buyerSession, "telegram", "Review Buyer TG", "@review_route_buyer")
+
+	listing := createCarpool(t, server, ownerSession, ownerContact.ID, "review-route-carpool-create")
+	published := submitCarpoolReview(t, server, ownerSession, listing.ID, listing.Version, "review-route-carpool-publish")
+	application := createCarpoolApplication(t, server, buyerSession, published.ID, buyerContact.ID, "review-route-carpool-apply")
+	accepted := acceptCarpoolApplication(t, server, ownerSession, application.ID, application.Version, "review-route-carpool-accept")
+	buyerConfirmed := confirmCarpoolJoin(t, server, buyerSession, "me", accepted.ID, accepted.Version, "review-route-buyer-join")
+	joined := confirmCarpoolJoin(t, server, ownerSession, "owner", accepted.ID, buyerConfirmed.Version, "review-route-owner-join")
+	membership := firstCarpoolMembership(t, server, buyerSession, "me", joined.ID)
+	buyerCompleted := confirmCarpoolMembershipComplete(t, server, buyerSession, "me", membership.ID, membership.Version, "review-route-buyer-complete")
+	completed := confirmCarpoolMembershipComplete(t, server, ownerSession, "owner", membership.ID, buyerCompleted.Version, "review-route-owner-complete")
+	if completed.Status != app.CarpoolMembershipStatusCompleted {
+		t.Fatalf("expected completed membership before review, got %+v", completed)
+	}
+
+	buyerCenter := listTransactionReviewsHTTP(t, server, buyerSession)
+	if len(buyerCenter.PresetTags) == 0 {
+		t.Fatal("review center must return server-owned preset tags")
+	}
+	pending := findReviewDTO(t, buyerCenter.Items, "pending", membership.ID)
+	if !pending.CanCreate || pending.Rating != nil || pending.Note != nil {
+		t.Fatalf("unexpected pending review row: %+v", pending)
+	}
+
+	buyerReview := submitTransactionReviewHTTP(
+		t,
+		server,
+		buyerSession,
+		http.MethodPost,
+		"carpool_membership",
+		membership.ID,
+		`{"rating":5,"tags":["沟通顺畅","规则清晰"],"note":"卖家沟通及时，规则说明清楚。"}`,
+		"review-route-buyer-create",
+		http.StatusCreated,
+	)
+	if buyerReview.Visibility != "sealed" || buyerReview.Rating == nil || *buyerReview.Rating != 5 || buyerReview.Note == nil {
+		t.Fatalf("unexpected buyer sealed review response: %+v", buyerReview)
+	}
+	replayedBuyerReview := submitTransactionReviewHTTP(
+		t,
+		server,
+		buyerSession,
+		http.MethodPost,
+		"carpool_membership",
+		membership.ID,
+		`{"rating":5,"tags":["沟通顺畅","规则清晰"],"note":"卖家沟通及时，规则说明清楚。"}`,
+		"review-route-buyer-create",
+		http.StatusCreated,
+	)
+	if replayedBuyerReview.ID != buyerReview.ID || replayedBuyerReview.Version != buyerReview.Version {
+		t.Fatalf("review create replay changed response: first=%+v replay=%+v", buyerReview, replayedBuyerReview)
+	}
+
+	ownerCenter := listTransactionReviewsHTTP(t, server, ownerSession)
+	sealedReceived := findReviewDTO(t, ownerCenter.Items, "received", membership.ID)
+	if sealedReceived.Visibility != "sealed" || sealedReceived.Rating != nil || sealedReceived.Note != nil || len(sealedReceived.Tags) != 0 {
+		t.Fatalf("sealed review leaked through HTTP response: %+v", sealedReceived)
+	}
+
+	ownerReview := submitTransactionReviewHTTP(
+		t,
+		server,
+		ownerSession,
+		http.MethodPost,
+		"carpool_membership",
+		membership.ID,
+		`{"rating":4,"tags":["付款及时"],"note":"买家付款和确认都很及时。"}`,
+		"review-route-owner-create",
+		http.StatusCreated,
+	)
+	if ownerReview.Visibility != "published" || ownerReview.FrozenAt == nil {
+		t.Fatalf("second review did not publish and freeze pair: %+v", ownerReview)
+	}
+	buyerPublished := findReviewDTO(t, listTransactionReviewsHTTP(t, server, buyerSession).Items, "sent", membership.ID)
+	if buyerPublished.Visibility != "published" || buyerPublished.FrozenAt == nil || buyerPublished.Rating == nil || *buyerPublished.Rating != 5 {
+		t.Fatalf("buyer review did not become published: %+v", buyerPublished)
+	}
+
+	editRequest := newJSONRequest(
+		http.MethodPut,
+		"/api/v1/me/transactions/carpool_membership/"+membership.ID+"/review",
+		`{"rating":1,"tags":["响应较慢"],"note":"公开后不应允许修改。"}`,
+	)
+	addAuth(editRequest, buyerSession, "review-route-buyer-edit-frozen")
+	editResponse := httptest.NewRecorder()
+	server.ServeHTTP(editResponse, editRequest)
+	if editResponse.Code != http.StatusConflict {
+		t.Fatalf("expected frozen review conflict, got %d body %s", editResponse.Code, editResponse.Body.String())
+	}
+	assertProblemCode(t, editResponse, "INVALID_STATE_TRANSITION")
+
+	removeWithoutVersion := newJSONRequest(
+		http.MethodPost,
+		"/api/v1/admin/reviews/"+buyerPublished.ID+"/remove",
+		`{"reason":"管理员确认该评价需要移除。"}`,
+	)
+	addAuth(removeWithoutVersion, adminSession, "review-route-remove-missing-version")
+	removeWithoutVersionResponse := httptest.NewRecorder()
+	server.ServeHTTP(removeWithoutVersionResponse, removeWithoutVersion)
+	if removeWithoutVersionResponse.Code != http.StatusPreconditionRequired {
+		t.Fatalf("expected missing If-Match failure, got %d body %s", removeWithoutVersionResponse.Code, removeWithoutVersionResponse.Body.String())
+	}
+
+	removeRequest := newJSONRequest(
+		http.MethodPost,
+		"/api/v1/admin/reviews/"+buyerPublished.ID+"/remove",
+		`{"reason":"管理员确认该评价需要移除。"}`,
+	)
+	addAuth(removeRequest, adminSession, "review-route-remove")
+	removeRequest.Header.Set("If-Match", `"`+strconv.FormatInt(buyerPublished.Version, 10)+`"`)
+	removeResponse := httptest.NewRecorder()
+	server.ServeHTTP(removeResponse, removeRequest)
+	if removeResponse.Code != http.StatusOK {
+		t.Fatalf("remove review status %d body %s", removeResponse.Code, removeResponse.Body.String())
+	}
+	if got := removeResponse.Header().Get("ETag"); got != `"`+strconv.FormatInt(buyerPublished.Version+1, 10)+`"` {
+		t.Fatalf("unexpected removed review ETag %q", got)
+	}
+	removedReceived := findReviewDTO(t, listTransactionReviewsHTTP(t, server, ownerSession).Items, "received", membership.ID)
+	if removedReceived.Visibility != "removed" || removedReceived.Rating != nil || removedReceived.Note != nil || len(removedReceived.Tags) != 0 {
+		t.Fatalf("removed review content remained visible: %+v", removedReceived)
+	}
+}
+
 func TestCarpoolApplicationCancelAndWithdrawLifecycle(t *testing.T) {
 	server := newTestServer(time.Now())
 	ownerSession := createLinuxDoSession(t, server, "cancel-owner")
@@ -2176,6 +2382,16 @@ func TestProfileContactAndMerchantProfileFlow(t *testing.T) {
 	if !strings.Contains(publicUserBody, `"lastActiveAt":null`) {
 		t.Fatalf("expected privacy setting to hide lastActiveAt, got %s", publicUserBody)
 	}
+	for _, expected := range []string{
+		`"completedCarpools":null`,
+		`"completedApiOrders":null`,
+		`"buyerResponsibilityCancellationCount":null`,
+		`"unresolvedDisputeCount":null`,
+	} {
+		if !strings.Contains(publicUserBody, expected) {
+			t.Fatalf("public user profile must keep unavailable reputation data null, missing %s in %s", expected, publicUserBody)
+		}
+	}
 
 	publicMerchant := httptest.NewRequest(http.MethodGet, "/api/v1/merchant-profiles/profile-store", nil)
 	publicMerchantResponse := httptest.NewRecorder()
@@ -2189,6 +2405,16 @@ func TestProfileContactAndMerchantProfileFlow(t *testing.T) {
 	}
 	if !strings.Contains(publicMerchantBody, `"username":"profile-store"`) {
 		t.Fatalf("expected public merchant slug as username field, got %s", publicMerchantBody)
+	}
+	for _, expected := range []string{
+		`"trustLevel":null`,
+		`"completedLast90Days":null`,
+		`"merchantResponsibleCancellations":null`,
+		`"unresolvedDisputes":null`,
+	} {
+		if !strings.Contains(publicMerchantBody, expected) {
+			t.Fatalf("public merchant profile must keep unavailable reputation data null, missing %s in %s", expected, publicMerchantBody)
+		}
 	}
 
 	apiService := createAPIServiceWithPayload(t, server, session, strings.Replace(apiServicePayload(second.ID, "1.0000"), `"merchantIdentityMode":"public_profile"`, `"merchantProfileId":"`+merchant.ID+`","merchantIdentityMode":"store_alias"`, 1), "profile-store-api-service")
@@ -2418,6 +2644,9 @@ type createdAPIService struct {
 	AcceptedPaymentMethods []string                  `json:"acceptedPaymentMethods"`
 	IsOrderable            bool                      `json:"isOrderable"`
 	AvailableUSDAllowance  string                    `json:"availableUsdAllowance"`
+	DeclaredTTFTBand       string                    `json:"declaredTtftBand"`
+	RecommendedConcurrency int                       `json:"recommendedConcurrency"`
+	PerformanceConfirmedAt *string                   `json:"performanceConfirmedAt"`
 	OrderableReasons       []string                  `json:"orderableReasons"`
 	Models                 []apiServiceModelResponse `json:"models"`
 	Version                int64                     `json:"version"`
@@ -3569,6 +3798,59 @@ func productPlanPayloadWithCategoryID(categoryID, categoryCode, slug, displayNam
 		"allowCustomVariant":true,
 		"sortOrder":120
 	}`
+}
+
+func listTransactionReviewsHTTP(t *testing.T, server http.Handler, session testSession) reviewCenterResponse {
+	t.Helper()
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/me/reviews", nil)
+	addCookie(request, session.cookie)
+	response := httptest.NewRecorder()
+	server.ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("list transaction reviews status %d body %s", response.Code, response.Body.String())
+	}
+	var payload reviewCenterResponse
+	if err := json.NewDecoder(response.Body).Decode(&payload); err != nil {
+		t.Fatalf("decode transaction reviews: %v", err)
+	}
+	return payload
+}
+
+func submitTransactionReviewHTTP(
+	t *testing.T,
+	server http.Handler,
+	session testSession,
+	method string,
+	transactionType string,
+	transactionID string,
+	body string,
+	key string,
+	expectedStatus int,
+) reviewCenterRowDTO {
+	t.Helper()
+	request := newJSONRequest(method, "/api/v1/me/transactions/"+transactionType+"/"+transactionID+"/review", body)
+	addAuth(request, session, key)
+	response := httptest.NewRecorder()
+	server.ServeHTTP(response, request)
+	if response.Code != expectedStatus {
+		t.Fatalf("submit transaction review status %d body %s", response.Code, response.Body.String())
+	}
+	var payload reviewCenterRowDTO
+	if err := json.NewDecoder(response.Body).Decode(&payload); err != nil {
+		t.Fatalf("decode transaction review: %v", err)
+	}
+	return payload
+}
+
+func findReviewDTO(t *testing.T, items []reviewCenterRowDTO, direction, transactionID string) reviewCenterRowDTO {
+	t.Helper()
+	for _, item := range items {
+		if item.Direction == direction && item.TransactionID == transactionID {
+			return item
+		}
+	}
+	t.Fatalf("review row not found: direction=%s transaction=%s items=%+v", direction, transactionID, items)
+	return reviewCenterRowDTO{}
 }
 
 func newJSONRequest(method, path, body string) *http.Request {

@@ -11,7 +11,7 @@ import (
 	"strings"
 )
 
-func (s *Server) requireSessionAndCSRF(r *http.Request) (auth.User, auth.Session, *domain.AppError) {
+func (s *Server) requireSessionAndCSRF(w http.ResponseWriter, r *http.Request) (auth.User, auth.Session, *domain.AppError) {
 	sessionToken, ok := middleware.SessionToken(r)
 	if !ok {
 		return auth.User{}, auth.Session{}, domain.NewError(http.StatusUnauthorized, domain.CodeSessionExpired, "Session required", "请先登录。")
@@ -20,15 +20,61 @@ func (s *Server) requireSessionAndCSRF(r *http.Request) (auth.User, auth.Session
 	if csrfToken == "" {
 		return auth.User{}, auth.Session{}, domain.NewError(http.StatusForbidden, domain.CodeCSRFTokenInvalid, "CSRF token invalid", "CSRF token 无效或缺失。")
 	}
-	return s.app.GetSessionWithCSRF(r.Context(), sessionToken, csrfToken)
+	user, session, appErr := s.app.GetSessionWithCSRF(r.Context(), sessionToken, csrfToken)
+	return s.renewAuthenticatedSession(w, r, sessionToken, user, session, appErr)
 }
 
-func (s *Server) requireSession(r *http.Request) (auth.User, auth.Session, *domain.AppError) {
+func (s *Server) requireSession(w http.ResponseWriter, r *http.Request) (auth.User, auth.Session, *domain.AppError) {
 	sessionToken, ok := middleware.SessionToken(r)
 	if !ok {
 		return auth.User{}, auth.Session{}, domain.NewError(http.StatusUnauthorized, domain.CodeSessionExpired, "Session required", "请先登录。")
 	}
-	return s.app.GetSession(r.Context(), sessionToken)
+	user, session, appErr := s.app.GetSession(r.Context(), sessionToken)
+	return s.renewAuthenticatedSession(w, r, sessionToken, user, session, appErr)
+}
+
+func (s *Server) renewAuthenticatedSession(w http.ResponseWriter, r *http.Request, sessionToken string, user auth.User, session auth.Session, appErr *domain.AppError) (auth.User, auth.Session, *domain.AppError) {
+	if appErr != nil || !shouldRenewSessionForRequest(r) {
+		return user, session, appErr
+	}
+	renewedSession, renewed, appErr := s.app.RenewSession(r.Context(), sessionToken)
+	if appErr != nil {
+		return auth.User{}, auth.Session{}, appErr
+	}
+	if renewed {
+		s.setSessionCookie(w, renewedSession)
+		session.ExpiresAt = renewedSession.ExpiresAt
+		session.RenewedAt = renewedSession.RenewedAt
+	}
+	return user, session, nil
+}
+
+func shouldRenewSessionForRequest(r *http.Request) bool {
+	if r == nil || r.Method == http.MethodOptions {
+		return false
+	}
+	switch r.URL.Path {
+	case "/health",
+		"/readyz",
+		"/api/v1/auth/dev-session",
+		"/api/v1/auth/password/login",
+		"/api/v1/auth/email-registration/start",
+		"/api/v1/auth/email-registration/confirm",
+		"/api/v1/auth/oauth/start",
+		"/api/v1/auth/oauth/callback",
+		"/api/v1/auth/session",
+		"/api/v1/auth/session/renew",
+		"/api/v1/auth/logout",
+		"/api/v1/me/events",
+		"/api/v1/me/navigation-badges",
+		"/api/v1/me/feedback-tickets/unread-count",
+		"/api/v1/me/notifications/unread-count",
+		"/api/v1/me/announcements/unread-count",
+		"/api/v1/me/announcements/important-unread-count":
+		return false
+	default:
+		return !strings.HasPrefix(r.URL.Path, "/assets/")
+	}
 }
 
 func (s *Server) withIdempotency(w http.ResponseWriter, r *http.Request, userID, routeKey string, body []byte, run func() (int, any, string, string, *domain.AppError)) {
@@ -70,8 +116,12 @@ func (s *Server) withIdempotency(w http.ResponseWriter, r *http.Request, userID,
 }
 
 func (s *Server) limitHandler(routeGroup string, limit int, next http.HandlerFunc) http.HandlerFunc {
+	return s.limitHandlerByActor(routeGroup, limit, limit, next)
+}
+
+func (s *Server) limitHandlerByActor(routeGroup string, ipLimit, userLimit int, next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if appErr := s.checkRateLimit(r, routeGroup, limit); appErr != nil {
+		if appErr := s.checkRateLimitByActor(r, routeGroup, ipLimit, userLimit); appErr != nil {
 			writeProblem(w, r, appErr)
 			return
 		}
@@ -80,17 +130,26 @@ func (s *Server) limitHandler(routeGroup string, limit int, next http.HandlerFun
 }
 
 func (s *Server) checkRateLimit(r *http.Request, routeGroup string, limit int) *domain.AppError {
-	if s.rateLimiter == nil || limit <= 0 {
+	return s.checkRateLimitByActor(r, routeGroup, limit, limit)
+}
+
+func (s *Server) checkRateLimitByActor(r *http.Request, routeGroup string, ipLimit, userLimit int) *domain.AppError {
+	if s.rateLimiter == nil {
 		return nil
 	}
-	keys := []string{"ip:" + routeGroup + ":" + s.clientIP(r)}
+	type limitKey struct {
+		value string
+		limit int
+	}
+	keys := make([]limitKey, 0, 2)
 	if sessionToken, ok := middleware.SessionToken(r); ok {
 		if user, _, appErr := s.app.GetSession(r.Context(), sessionToken); appErr == nil && strings.TrimSpace(user.ID) != "" {
-			keys = append(keys, "user:"+routeGroup+":"+user.ID)
+			keys = append(keys, limitKey{value: "user:" + routeGroup + ":" + user.ID, limit: userLimit})
 		}
 	}
+	keys = append(keys, limitKey{value: "ip:" + routeGroup + ":" + s.clientIP(r), limit: ipLimit})
 	for _, key := range keys {
-		decision := s.rateLimiter.Allow(key, limit)
+		decision := s.rateLimiter.Allow(key.value, key.limit)
 		if !decision.Allowed {
 			return domain.NewError(http.StatusTooManyRequests, domain.CodeRateLimited, "Rate limited", "请求过于频繁，请稍后再试。")
 		}

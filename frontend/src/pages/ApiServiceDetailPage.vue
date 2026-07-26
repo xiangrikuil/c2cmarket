@@ -23,8 +23,10 @@ import {
   type ApiService,
 } from '@/lib/api'
 import { trackAnalytics } from '@/lib/analytics'
+import { getApiServiceProductIconSrc } from '@/lib/productCategoryIcon'
 import { useDetailVisibleAnalytics } from '@/composables/useDetailVisibleAnalytics'
 import { useApiService, useFavoriteStatus, useMyApiServices, useToggleFavoriteMutation } from '@/queries/useMarketQueries'
+import { useProductCategories } from '@/queries/useProductCatalogQueries'
 
 const route = useRoute()
 const router = useRouter()
@@ -32,6 +34,7 @@ const queryClient = useQueryClient()
 const analyticsSourceRoute = () => String(route.name ?? 'unknown')
 const id = computed(() => String(route.params.id ?? ''))
 const { data: service, isLoading, error: serviceError, refetch: refetchService } = useApiService(id)
+const { data: catalogCategories } = useProductCategories()
 const { data: ownedServices, isLoading: ownershipLoading } = useMyApiServices()
 const amount = ref(10)
 const selectedDeliveryMode = ref<ApiDeliveryMode>('api_key_endpoint')
@@ -47,6 +50,8 @@ const emptyDescription = computed(() => serviceMissing.value
   : '该服务不存在、已下架，或当前不可接单。')
 const ownerPreview = computed(() => route.query.preview === 'owner')
 const isOwnedService = computed(() => Boolean(ownedServices.value?.some(item => item.id === id.value)))
+const categoryIconByCode = computed(() => new Map((catalogCategories.value ?? []).map(category => [category.code, category.iconDataUrl])))
+const serviceIconSrc = computed(() => service.value ? getApiServiceProductIconSrc(service.value, categoryIconByCode.value) : null)
 
 useDetailVisibleAnalytics({
   enabled: serviceVisible,
@@ -155,7 +160,7 @@ function createOrder() {
     <template #action><RouterLink to="/api-market"><Button variant="outline">返回 API 市场</Button></RouterLink></template>
   </EmptyState>
   <div v-else class="api-service-detail-page space-y-4">
-    <ApiServiceHeader :service="service" />
+    <ApiServiceHeader :service="service" :icon-src="serviceIconSrc" />
 
     <div class="grid min-w-0 gap-4 lg:grid-cols-[minmax(0,65fr)_minmax(340px,35fr)] lg:items-start">
       <ApiServiceSummary :service="service" />

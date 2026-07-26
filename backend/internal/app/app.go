@@ -66,27 +66,7 @@ func New(ctx context.Context, cfg config.Config) (*App, error) {
 	}
 	service := core.NewServiceWithRepositoriesAndEmailSender(core.Repositories{}, emailSender)
 	if store != nil {
-		service = core.NewServiceWithRepositoriesAndEmailSender(core.Repositories{
-			Auth:              store,
-			Idempotency:       store,
-			OfficialPrice:     store,
-			Catalog:           store,
-			APIService:        store,
-			APIPurchaseIntent: store,
-			APIOrder:          store,
-			Announcement:      store,
-			Notification:      store,
-			Carpool:           store,
-			Contact:           store,
-			Profile:           store,
-			Demand:            store,
-			Feedback:          store,
-			Favorite:          store,
-			Review:            store,
-			Search:            store,
-			Report:            store,
-			ModelAudit:        store,
-		}, emailSender)
+		service = core.NewServiceWithRepositoriesAndEmailSender(core.RepositoriesFromPersistence(store), emailSender)
 	}
 	if strings.TrimSpace(cfg.BootstrapAdminPassword) != "" {
 		result, appErr := service.BootstrapAdmin(ctx, core.BootstrapAdminInput{

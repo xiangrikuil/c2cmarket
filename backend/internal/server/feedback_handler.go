@@ -80,7 +80,7 @@ type feedbackUnreadCountResponse struct {
 }
 
 func (s *Server) handleCreateFeedbackTicket(w http.ResponseWriter, r *http.Request) {
-	user, _, appErr := s.requireSessionAndCSRF(r)
+	user, _, appErr := s.requireSessionAndCSRF(w, r)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
@@ -111,7 +111,7 @@ func (s *Server) handleCreateFeedbackTicket(w http.ResponseWriter, r *http.Reque
 }
 
 func (s *Server) handleMyFeedbackTickets(w http.ResponseWriter, r *http.Request) {
-	user, _, appErr := s.requireSession(r)
+	user, _, appErr := s.requireSession(w, r)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
@@ -133,7 +133,7 @@ func (s *Server) handleMyFeedbackTickets(w http.ResponseWriter, r *http.Request)
 }
 
 func (s *Server) handleMyFeedbackUnreadCount(w http.ResponseWriter, r *http.Request) {
-	user, _, appErr := s.requireSession(r)
+	user, _, appErr := s.requireSession(w, r)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
@@ -147,7 +147,7 @@ func (s *Server) handleMyFeedbackUnreadCount(w http.ResponseWriter, r *http.Requ
 }
 
 func (s *Server) handleMyFeedbackTicket(w http.ResponseWriter, r *http.Request) {
-	user, _, appErr := s.requireSession(r)
+	user, _, appErr := s.requireSession(w, r)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
@@ -162,7 +162,7 @@ func (s *Server) handleMyFeedbackTicket(w http.ResponseWriter, r *http.Request) 
 }
 
 func (s *Server) handleAddFeedbackSupplement(w http.ResponseWriter, r *http.Request) {
-	user, _, appErr := s.requireSessionAndCSRF(r)
+	user, _, appErr := s.requireSessionAndCSRF(w, r)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
@@ -187,7 +187,7 @@ func (s *Server) handleAddFeedbackSupplement(w http.ResponseWriter, r *http.Requ
 }
 
 func (s *Server) handleMarkFeedbackRead(w http.ResponseWriter, r *http.Request) {
-	user, _, appErr := s.requireSessionAndCSRF(r)
+	user, _, appErr := s.requireSessionAndCSRF(w, r)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
@@ -206,7 +206,7 @@ func (s *Server) handleMarkFeedbackRead(w http.ResponseWriter, r *http.Request) 
 }
 
 func (s *Server) handleAdminFeedbackTickets(w http.ResponseWriter, r *http.Request) {
-	user, _, appErr := s.requireSession(r)
+	user, _, appErr := s.requireSession(w, r)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
@@ -220,7 +220,7 @@ func (s *Server) handleAdminFeedbackTickets(w http.ResponseWriter, r *http.Reque
 }
 
 func (s *Server) handleAdminFeedbackTicket(w http.ResponseWriter, r *http.Request) {
-	user, _, appErr := s.requireSession(r)
+	user, _, appErr := s.requireSession(w, r)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
@@ -235,7 +235,7 @@ func (s *Server) handleAdminFeedbackTicket(w http.ResponseWriter, r *http.Reques
 }
 
 func (s *Server) handleAdminFeedbackHandle(w http.ResponseWriter, r *http.Request) {
-	user, _, appErr := s.requireSessionAndCSRF(r)
+	user, _, appErr := s.requireSessionAndCSRF(w, r)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return

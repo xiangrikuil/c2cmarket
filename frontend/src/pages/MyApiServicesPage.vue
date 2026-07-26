@@ -1,5 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
+import { useRoute } from 'vue-router'
+import { PackagePlus } from 'lucide-vue-next'
 import { toast } from 'vue-sonner'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -18,19 +20,26 @@ import {
   getApiServicePublicDetailUrl,
   type ApiService,
 } from '@/lib/api'
+import { getApiServiceProductIconSrc } from '@/lib/productCategoryIcon'
 import {
   useMyApiServices,
   usePauseApiServiceMutation,
   usePublishApiServiceMutation,
   useResumeApiServiceMutation,
 } from '@/queries/useMarketQueries'
+import { useProductCategories } from '@/queries/useProductCatalogQueries'
 
 const { data: apiServices, isLoading } = useMyApiServices()
+const { data: catalogCategories } = useProductCategories()
+const route = useRoute()
 const publishMutation = usePublishApiServiceMutation()
 const pauseMutation = usePauseApiServiceMutation()
 const resumeMutation = useResumeApiServiceMutation()
 const rows = computed(() => apiServices.value ?? [])
+const quotaPublishIntent = computed(() => route.query.intent === 'quota')
+const publishServiceRoute = computed(() => quotaPublishIntent.value ? '/api-market/quota/new' : '/api-market/new')
 const pagination = usePagination(rows)
+const categoryIconByCode = computed(() => new Map((catalogCategories.value ?? []).map(category => [category.code, category.iconDataUrl])))
 
 const stats = computed(() => [
   { label: '全部服务', value: rows.value.length },
@@ -50,6 +59,10 @@ function statusVariant(item: ApiService) {
   if (item.online) return 'default'
   if (item.state === 'reviewing' || item.state === 'paused') return 'secondary'
   return 'outline'
+}
+
+function serviceIconSrc(item: ApiService) {
+  return getApiServiceProductIconSrc(item, categoryIconByCode.value)
 }
 
 function publishService(id: string) {
@@ -77,22 +90,30 @@ function resumeService(id: string) {
 <template>
   <div class="space-y-4">
     <PageTitle
-      title="我的 API 服务"
-      description="管理自己发布的 API 服务、公开状态、展示身份和可售额度。"
-      action-text="发布 API 服务"
-      action-to="/api-market/new"
+      :title="quotaPublishIntent ? '选择 API 服务' : '我的 API 服务'"
+      :description="quotaPublishIntent ? '限时额度包需要关联一个 API 服务。选择服务后会直接进入额度包发布区。' : '管理自己发布的 API 服务、公开状态、展示身份和限时额度包。'"
+      :action-text="quotaPublishIntent ? '发布 API 服务并继续' : '发布 API 服务'"
+      :action-to="publishServiceRoute"
     />
 
     <CompactStats :items="stats" :loading="isLoading" />
 
     <SkeletonTable v-if="isLoading" :rows="5" :columns="5" />
-    <EmptyState v-else-if="rows.length === 0" title="暂未发布 API 服务" description="发布后可在这里管理价格、额度、付款规则和接单状态。"><template #action><RouterLink to="/api-market/new"><Button>发布 API 服务</Button></RouterLink></template></EmptyState>
+    <EmptyState v-else-if="rows.length === 0" title="先发布一个 API 服务" description="限时额度包需要关联 API 服务，以复用接入方式、收款规则和卖家资料。"><template #action><RouterLink :to="publishServiceRoute"><Button>{{ quotaPublishIntent ? '发布 API 服务并继续' : '发布 API 服务' }}</Button></RouterLink></template></EmptyState>
 
     <SoftTable v-else :columns="['服务', '对外商家名', '可售额度', '状态', '操作']">
       <tr v-for="item in pagination.paginatedRows.value" :key="item.id">
         <td>
-          <div class="font-medium">{{ item.title }}</div>
-          <div class="text-xs text-muted-foreground"><ShortId :value="item.id" prefix="API-SVC" /> · {{ item.delivery }}</div>
+          <div class="flex min-w-0 items-center gap-2.5">
+            <span class="grid h-9 w-9 shrink-0 place-items-center rounded-md border border-border bg-white">
+              <img v-if="serviceIconSrc(item)" :src="serviceIconSrc(item) ?? undefined" alt="" class="h-5 w-5 object-contain" />
+              <PackagePlus v-else class="h-4 w-4 text-muted-foreground" />
+            </span>
+            <div class="min-w-0">
+              <div class="truncate font-medium">{{ item.title }}</div>
+              <div class="text-xs text-muted-foreground"><ShortId :value="item.id" prefix="API-SVC" /> · {{ item.delivery }}</div>
+            </div>
+          </div>
         </td>
         <td>
           <div>{{ getApiMerchantDisplayName(item) }}</div>
@@ -105,8 +126,8 @@ function resumeService(id: string) {
             <Button v-if="item.state === 'offline'" size="sm" @click="publishService(item.id)">上线</Button>
             <Button v-if="item.online" size="sm" variant="outline" @click="pauseService(item.id)">暂停</Button>
             <Button v-if="item.state === 'paused'" size="sm" variant="outline" @click="resumeService(item.id)">恢复</Button>
-            <RouterLink :to="`/my/api-services/${item.id}`">
-              <Button size="sm" variant="outline">管理</Button>
+            <RouterLink :to="quotaPublishIntent ? `/api-market/quota/new?serviceId=${item.id}` : `/my/api-services/${item.id}#quota-offers`">
+              <Button size="sm" class="gap-2"><PackagePlus class="h-4 w-4" />{{ quotaPublishIntent ? '选择并发布额度包' : '高级管理' }}</Button>
             </RouterLink>
             <RouterLink v-if="getApiServicePublicDetailUrl(item)" :to="`${getApiServicePublicDetailUrl(item)}?preview=owner`">
               <Button size="sm" variant="outline">公开预览</Button>

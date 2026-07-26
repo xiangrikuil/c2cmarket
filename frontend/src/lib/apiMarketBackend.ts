@@ -8,6 +8,16 @@ import type {
   ApiOrderPaymentInstructions,
   ApiOrderPaymentIssueReason,
   ApiOrderStatus,
+  ApiQuotaBatch,
+  ApiQuotaCredentialSummary,
+  ApiQuotaOffer,
+  ApiQuotaOfferFilters,
+  ApiQuotaOrderSnapshot,
+  ApiQuotaRound,
+  ApiQuotaSaleMode,
+  ApiQuotaRushOfferPublication,
+  ApiQuotaSystemSaleSlotList,
+  ApiTTFTBand,
   ApiPurchaseIntent,
   ApiPurchaseIntentEvent,
   ApiPurchaseIntentFilters,
@@ -15,20 +25,28 @@ import type {
   ApiServiceFilters,
   ApiUsageVisibility,
   ContactMethodType,
+  CreateApiQuotaBatchPayload,
+  CreateApiQuotaOfferPayload,
+  CreateApiQuotaOrderPayload,
+  CreateApiQuotaRushOfferPayload,
+  CreateApiQuotaRoundPayload,
   CreateApiPurchaseIntentPayload,
   ModelCatalogItem,
   ModelPriceRow,
   OtherApiMarketFilters,
+  PublicApiQuotaOffer,
   SaveContactMethodRequest,
   SubmitApiOrderDeliveryCredentialPayload,
   Sub2ApiMarketFilters,
   UserContactMethod,
 } from '@/lib/api'
-import { backendMutation, backendRequest, ensureBackendSession } from '@/lib/backendClient'
+import { backendFormDataMutation, backendMutation, backendRequest, ensureBackendSession } from '@/lib/backendClient'
 import { apiPaymentMethodRequiresQrCode, isApiPaymentMethod, normalizeQrCodeDataUrl } from '@/lib/apiPaymentSettings'
 import { beijingDateTimeInputToISOString, formatQuotaExpiresAtLabel } from '@/lib/apiQuotaExpiration'
 import { backendMyMerchantProfile, backendUpsertMerchantProfile } from '@/lib/profileBackend'
 import { compareDecimal, divideDecimal, normalizeDecimal, normalizeDecimalTrimmed } from '@/lib/decimal'
+import { mapBackendReputationSummary } from '@/lib/reputationBackend'
+import type { ReputationSummary } from '@/types/reputation'
 
 type ListResponse<T> = { items: T[] }
 
@@ -80,12 +98,21 @@ type BackendAPIService = {
   title: string
   shortDescription: string
   sourceUrl?: string
+  sourceAuthorVerification: {
+    status: 'not_submitted' | 'pending' | 'verified' | 'mismatch' | 'expired'
+    verifiedAt?: string
+    expiresAt?: string
+  }
+  sellerReputation?: ReputationSummary | null
   distributionSystem: string
   billingMode: string
   declaredCnyPerUsdAllowance?: string
   declaredMaxUsdAllowancePerIntent?: string
   availableUsdAllowance?: string
   quotaExpiresAt?: string
+  declaredTtftBand?: string
+  recommendedConcurrency?: number
+  performanceConfirmedAt?: string
   minimumIntentCny: string
   maximumIntentCny?: string
   usageVisibility: string
@@ -164,10 +191,13 @@ type BackendAPIOrderDeliveryCredential = {
 
 export type BackendAPIOrder = {
   id: string
+  purchaseKind: string
   apiPurchaseIntentId: string
   apiServiceId: string
   buyerUserId?: string
   sellerUserId?: string
+  buyerReputation?: ReputationSummary | null
+  sellerReputation?: ReputationSummary | null
   status: string
   disputeStatus?: string
   serviceTitleSnapshot: string
@@ -175,6 +205,26 @@ export type BackendAPIOrder = {
   requestedUsdAllowanceSnapshot?: string
   cnyPerUsdAllowanceSnapshot?: string
   pricingSnapshot?: string
+  apiQuotaBatchId?: string
+  apiQuotaOfferId?: string
+  apiQuotaSaleRoundId?: string
+  quotaOfferNameSnapshot?: string
+  quotaUsdAllowanceSnapshot?: string
+  quotaPriceCnySnapshot?: string
+  quotaCnyPerUsdSnapshot?: string
+  quotaModelMultiplierSnapshot?: string
+  quotaSaleCutoffAtSnapshot?: string
+  quotaExpiresAtSnapshot?: string
+  quotaSaleModeSnapshot?: string
+  quotaRoundStartsAtSnapshot?: string
+  quotaRoundEndsAtSnapshot?: string
+  quotaDistributionSystemSnapshot?: string
+  quotaTtftBandSnapshot?: string
+  quotaRecommendedConcurrencySnapshot?: number
+  quotaPerformanceConfirmedAtSnapshot?: string
+  quotaPerformanceUnverifiedSnapshot?: boolean
+  quotaDeliveryEtaMinutesSnapshot?: number
+  quotaDeliveryModeSnapshot?: string
   currency: string
   selectedPaymentMethod: string
   paymentWindowMinutesSnapshot: number
@@ -220,6 +270,21 @@ function numberFromDecimal(value: string | undefined, fallback = 0) {
   if (!value) return fallback
   const parsed = Number(value)
   return Number.isFinite(parsed) ? parsed : fallback
+}
+
+function apiTTFTBand(value?: string): ApiTTFTBand | undefined {
+  if (value === 'under_1s' || value === '1_to_3s' || value === '3_to_5s' || value === '5_to_10s' || value === 'over_10s') return value
+  if (!value) return undefined
+  throw new Error(`Unsupported API TTFT band: ${value}`)
+}
+
+function ttftApproxMinutes(value?: ApiTTFTBand) {
+  if (value === 'under_1s') return 1 / 120
+  if (value === '1_to_3s') return 2 / 60
+  if (value === '3_to_5s') return 4 / 60
+  if (value === '5_to_10s') return 7.5 / 60
+  if (value === 'over_10s') return 11 / 60
+  return 0
 }
 
 function deliveryMode(value: string): ApiDeliveryMode {
@@ -285,16 +350,20 @@ export function mapBackendAPIService(service: BackendAPIService): ApiService {
   const merchantUsername = isStoreAlias ? service.merchantProfileSlug || service.merchantProfileId || 'merchant' : service.ownerUserId ?? 'merchant'
   const online = state === 'online'
   const publiclyOrderable = Boolean(service.isOrderable)
+  const declaredTtftBand = apiTTFTBand(service.declaredTtftBand)
+  const sellerReputation = mapBackendReputationSummary(service.sellerReputation)
   return {
     id: service.id,
     title: service.title.replace(/意向服务/g, '服务').replace(/API 意向/g, 'API 订单'),
     sourceUrl: service.sourceUrl ?? '',
+    sourceAuthorVerification: service.sourceAuthorVerification,
+    sellerReputation,
     merchantId: service.merchantProfileId ?? service.ownerUserId ?? 'merchant',
     merchantUsername,
     merchant: displayName,
     merchantIdentityMode: isStoreAlias ? 'store_alias' : 'public_profile',
     merchantDisplayName: displayName,
-    trustLevel: 4,
+    trustLevel: null,
     merchantType: '商户',
     models: service.models.filter(item => item.enabled).map(item => item.modelNameSnapshot),
     modelMultipliers: service.models.filter(item => item.enabled).map(item => ({ model: item.modelNameSnapshot, multiplier: `${numberFromDecimal(item.merchantMultiplier, 1).toFixed(2)}x` })),
@@ -330,18 +399,21 @@ export function mapBackendAPIService(service: BackendAPIService): ApiService {
     publiclyOrderable,
     lastOnlineConfirmedAt: service.updatedAt,
     onlineExpiresAt: service.quotaExpiresAt ?? service.updatedAt,
+    declaredTtftBand,
+    recommendedConcurrency: service.recommendedConcurrency,
+    performanceConfirmedAt: service.performanceConfirmedAt,
     expectedResponseMinutes: service.paymentWindowMinutes ?? 10,
-    responseMedianMinutes: service.paymentWindowMinutes ?? 10,
+    responseMedianMinutes: ttftApproxMinutes(declaredTtftBand),
     dailyOrderLimit: 10,
     todayOrderCount: 0,
-    unresolvedDisputes: 0,
+    unresolvedDisputes: sellerReputation?.unresolvedDisputes ?? null,
     warning: state === 'reviewing' ? '等待管理员审核' : online && !publiclyOrderable ? '待配置接单设置' : undefined,
     warranty: service.merchantSupportNote || '按商户备注站外协商，平台不担保、不代赔',
     refundPolicy: '最终金额和售后由双方站外确认，平台不处理支付或托管',
     quotaExpiresAt: service.quotaExpiresAt,
     expiresAt: formatQuotaExpiresAtLabel(service.quotaExpiresAt) || '按服务说明',
-    completed30d: 0,
-    reviewCount: 0,
+    completed30d: sellerReputation?.completedCount ?? null,
+    reviewCount: sellerReputation?.verifiedReviewCount ?? null,
     officialPricingVersion: 'backend',
     officialPricingUpdatedAt: service.updatedAt,
     merchantNote: service.merchantNote || service.publicAccessNote || service.shortDescription,
@@ -358,6 +430,238 @@ function filterServices(rows: ApiService[], filters: ApiServiceFilters | Sub2Api
     if ('deliveryMode' in filters && filters.deliveryMode && !row.deliveryModes.includes(filters.deliveryMode)) return false
     if ('online' in filters && filters.online !== undefined && row.publiclyOrderable !== filters.online) return false
     return true
+  })
+}
+
+function mapAPIQuotaAllocation(item: ApiQuotaRound['allocations'][number]): ApiQuotaRound['allocations'][number] {
+  return {
+    id: item.id,
+    offerId: item.offerId,
+    saleRoundId: item.saleRoundId,
+    saleMode: item.saleMode,
+    copyLimit: item.copyLimit,
+    availableCopies: item.availableCopies,
+    reservedCopies: item.reservedCopies,
+    consumedCopies: item.consumedCopies,
+    allocatedUsdAllowance: item.allocatedUsdAllowance,
+    returnedUsdAllowance: item.returnedUsdAllowance,
+    status: item.status,
+  }
+}
+
+function mapAPIQuotaRound(item: ApiQuotaRound): ApiQuotaRound {
+  return {
+    id: item.id,
+    batchId: item.batchId,
+    systemSlotKey: item.systemSlotKey,
+    name: item.name,
+    startsAt: item.startsAt,
+    endsAt: item.endsAt,
+    status: item.status,
+    allocations: item.allocations.map(mapAPIQuotaAllocation),
+    version: item.version,
+  }
+}
+
+function mapAPIQuotaOffer(item: ApiQuotaOffer): ApiQuotaOffer {
+  return {
+    id: item.id,
+    batchId: item.batchId,
+    apiServiceId: item.apiServiceId,
+    distributionSystem: item.distributionSystem,
+    name: item.name,
+    usdAllowance: item.usdAllowance,
+    priceCny: item.priceCny,
+    cnyPerUsd: item.cnyPerUsd,
+    modelMultiplier: item.modelMultiplier,
+    deliveryMode: item.deliveryMode,
+    deliveryEtaMinutes: item.deliveryEtaMinutes,
+    saleMode: item.saleMode,
+    status: item.status,
+    sortOrder: item.sortOrder,
+    publishedAt: item.publishedAt,
+    version: item.version,
+  }
+}
+
+export function mapBackendPublicAPIQuotaOffer(item: PublicApiQuotaOffer): PublicApiQuotaOffer {
+  return {
+    ...mapAPIQuotaOffer(item),
+    batchStatus: item.batchStatus,
+    serviceTitle: item.serviceTitle,
+    sellerDisplayName: item.sellerDisplayName,
+    sellerIdentityType: item.sellerIdentityType,
+    sellerLinuxDoBound: item.sellerLinuxDoBound,
+    declaredTtftBand: item.declaredTtftBand,
+    recommendedConcurrency: item.recommendedConcurrency,
+    performanceConfirmedAt: item.performanceConfirmedAt,
+    performanceDisclaimer: item.performanceDisclaimer,
+    saleCutoffAt: item.saleCutoffAt,
+    expiresAt: item.expiresAt,
+    currentRound: item.currentRound ? mapAPIQuotaRound(item.currentRound) : undefined,
+    nextRound: item.nextRound ? mapAPIQuotaRound(item.nextRound) : undefined,
+    availableCopies: item.availableCopies,
+    credentialAvailableCopies: item.credentialAvailableCopies,
+    isOrderable: item.isOrderable,
+    orderabilityCode: item.orderabilityCode,
+    orderabilityReason: item.orderabilityReason,
+  }
+}
+
+function mapAPIQuotaBatch(item: ApiQuotaBatch): ApiQuotaBatch {
+  return {
+    id: item.id,
+    apiServiceId: item.apiServiceId,
+    sourceType: item.sourceType,
+    sourceLabel: item.sourceLabel,
+    status: item.status,
+    declaredTotalUsdAllowance: item.declaredTotalUsdAllowance,
+    unallocatedUsdAllowance: item.unallocatedUsdAllowance,
+    saleCutoffAt: item.saleCutoffAt,
+    expiresAt: item.expiresAt,
+    sourceConfirmedAt: item.sourceConfirmedAt,
+    publishedAt: item.publishedAt,
+    version: item.version,
+  }
+}
+
+function quotaOfferQuery(filters: ApiQuotaOfferFilters) {
+  const params = new URLSearchParams()
+  if (filters.distributionSystem && filters.distributionSystem !== 'all') params.set('distributionSystem', filters.distributionSystem)
+  if (filters.oneMultiplier) params.set('oneMultiplier', 'true')
+  if (filters.onlyOrderable) params.set('onlyOrderable', 'true')
+  if (filters.slotKey) params.set('slotKey', filters.slotKey)
+  const query = params.toString()
+  return query ? `?${query}` : ''
+}
+
+export async function backendPublicAPIQuotaOffers(filters: ApiQuotaOfferFilters = {}) {
+  const response = await backendRequest<ListResponse<PublicApiQuotaOffer>>(`/api/v1/api-quota-offers${quotaOfferQuery(filters)}`)
+  return response.items.map(mapBackendPublicAPIQuotaOffer)
+}
+
+export async function backendAPIQuotaSaleSlots() {
+  return backendRequest<ApiQuotaSystemSaleSlotList>('/api/v1/api-quota-sale-slots')
+}
+
+export async function backendPublicAPIQuotaOffer(id: string) {
+  return mapBackendPublicAPIQuotaOffer(await backendRequest<PublicApiQuotaOffer>(`/api/v1/api-quota-offers/${id}`))
+}
+
+export async function backendCreateAPIQuotaOrder(payload: CreateApiQuotaOrderPayload) {
+  await ensureBackendSession('buyer', false)
+  const service = await backendAPIServiceById((await backendPublicAPIQuotaOffer(payload.offerId)).apiServiceId)
+  const paymentMethod = service.acceptedPaymentMethods?.[0]
+  const selectedAccessMode = service.deliveryModes[0]
+  if (!paymentMethod) throw new Error('商户尚未配置可用的微信或支付宝收款方式。')
+  if (!selectedAccessMode) throw new Error('商户尚未配置可用接入方式。')
+  const contact = await backendCreateContactMethod({
+    type: 'linuxdo',
+    label: 'linux.do 私信',
+    displayValue: '@buyer',
+    usageScopes: ['buyer'],
+    isDefault: true,
+    enabled: true,
+  })
+  const response = await backendMutation<BackendAPIOrder>(`/api/v1/api-quota-offers/${payload.offerId}/orders`, {
+    ...(payload.saleRoundId ? { saleRoundId: payload.saleRoundId } : {}),
+    buyerContactMethodId: contact.id,
+    selectedAccessMode: toBackendAccessMode(selectedAccessMode),
+    paymentMethod,
+    buyerNote: '',
+  }, { idempotencyPrefix: 'api-quota-order-create' })
+  return mapBackendAPIOrder(response, 'buyer')
+}
+
+export async function backendOwnerAPIQuotaBatches(apiServiceId: string) {
+  const response = await backendRequest<ListResponse<ApiQuotaBatch>>(`/api/v1/owner/api-services/${apiServiceId}/quota-batches`)
+  return response.items.map(mapAPIQuotaBatch)
+}
+
+export async function backendCreateAPIQuotaBatch(payload: CreateApiQuotaBatchPayload) {
+  const response = await backendMutation<ApiQuotaBatch>(`/api/v1/owner/api-services/${payload.apiServiceId}/quota-batches`, {
+    sourceType: payload.sourceType,
+    sourceLabel: payload.sourceLabel ?? '',
+    declaredTotalUsdAllowance: payload.declaredTotalUsdAllowance,
+    saleCutoffAt: payload.saleCutoffAt,
+    expiresAt: payload.expiresAt,
+    sourceConfirmedAt: payload.sourceConfirmedAt,
+  }, { idempotencyPrefix: 'api-quota-batch-create' })
+  return mapAPIQuotaBatch(response)
+}
+
+export async function backendOwnerAPIQuotaOffers(batchId: string) {
+  const response = await backendRequest<ApiQuotaOffer[]>(`/api/v1/owner/api-quota-batches/${batchId}/offers`)
+  return response.map(mapAPIQuotaOffer)
+}
+
+export async function backendCreateAPIQuotaOffer(payload: CreateApiQuotaOfferPayload) {
+  const response = await backendMutation<ApiQuotaOffer>(`/api/v1/owner/api-quota-batches/${payload.batchId}/offers`, {
+    name: payload.name,
+    usdAllowance: payload.usdAllowance,
+    priceCny: payload.priceCny,
+    modelMultiplier: payload.modelMultiplier,
+    deliveryMode: payload.deliveryMode,
+    deliveryEtaMinutes: payload.deliveryEtaMinutes,
+    saleMode: payload.saleMode,
+    continuousCopies: payload.continuousCopies,
+    sortOrder: payload.sortOrder,
+  }, { idempotencyPrefix: 'api-quota-offer-create' })
+  return mapAPIQuotaOffer(response)
+}
+
+export async function backendCreateAPIQuotaRushOffer(payload: CreateApiQuotaRushOfferPayload) {
+  const form = new FormData()
+  const { apiServiceId, file, ...request } = payload
+  form.set('payload', JSON.stringify(request))
+  if (file) form.set('file', file)
+  const response = await backendFormDataMutation<ApiQuotaRushOfferPublication>(
+    `/api/v1/owner/api-services/${apiServiceId}/quota-rush-offers`,
+    form,
+    { idempotencyPrefix: 'api-quota-rush-offer-create' },
+  )
+  return {
+    batch: mapAPIQuotaBatch(response.batch),
+    offer: mapAPIQuotaOffer(response.offer),
+    round: mapAPIQuotaRound(response.round),
+    credentialImported: response.credentialImported,
+    credentialSummary: response.credentialSummary,
+  }
+}
+
+export async function backendOwnerAPIQuotaRounds(batchId: string) {
+  const response = await backendRequest<ApiQuotaRound[]>(`/api/v1/owner/api-quota-batches/${batchId}/rounds`)
+  return response.map(mapAPIQuotaRound)
+}
+
+export async function backendCreateAPIQuotaRound(payload: CreateApiQuotaRoundPayload) {
+  const response = await backendMutation<ApiQuotaRound>(`/api/v1/owner/api-quota-batches/${payload.batchId}/rounds`, {
+    name: payload.name,
+    startsAt: payload.startsAt,
+    endsAt: payload.endsAt,
+    offers: payload.offers,
+  }, { idempotencyPrefix: 'api-quota-round-create' })
+  return mapAPIQuotaRound(response)
+}
+
+export async function backendAPIQuotaBatchAction(batchId: string, action: 'publish' | 'pause' | 'resume' | 'archive', version: number) {
+  const response = await backendMutation<ApiQuotaBatch>(`/api/v1/owner/api-quota-batches/${batchId}/${action}`, {}, {
+    idempotencyPrefix: `api-quota-batch-${action}`,
+    ifMatch: version,
+  })
+  return mapAPIQuotaBatch(response)
+}
+
+export async function backendAPIQuotaCredentialSummary(offerId: string) {
+  return backendRequest<ApiQuotaCredentialSummary>(`/api/v1/owner/api-quota-offers/${offerId}/credentials/summary`)
+}
+
+export async function backendImportAPIQuotaCredentials(offerId: string, deliveryKind: ApiOrderDeliveryCredential['deliveryKind'], file: File) {
+  const form = new FormData()
+  form.set('deliveryKind', deliveryKind)
+  form.set('file', file)
+  return backendFormDataMutation<{ imported: number, summary: ApiQuotaCredentialSummary }>(`/api/v1/owner/api-quota-offers/${offerId}/credentials/import`, form, {
+    idempotencyPrefix: 'api-quota-credential-import',
   })
 }
 
@@ -467,7 +771,7 @@ function mapIntent(intent: BackendAPIPurchaseIntent, viewerRole: ApiIntentViewer
       merchantUsername: intent.ownerUserId ?? 'merchant',
       merchantIdentityMode: 'store_alias',
       merchantDisplayName: merchantName,
-      trustLevel: 4,
+      trustLevel: null,
       merchantType: '商户',
       models: [intent.serviceTitleSnapshot],
       multiplier: '1.00x',
@@ -731,6 +1035,67 @@ function apiOrderStatus(value: string): ApiOrderStatus {
   throw new Error(`Unsupported API order status: ${value}`)
 }
 
+function apiOrderPurchaseKind(value: string): ApiOrder['purchaseKind'] {
+  if (value === 'api_service' || value === 'limited_quota_offer') return value
+  throw new Error(`Unsupported API order purchase kind: ${value}`)
+}
+
+function apiQuotaSaleMode(value?: string): ApiQuotaSaleMode {
+  if (value === 'continuous' || value === 'scheduled') return value
+  throw new Error(`Unsupported API quota sale mode: ${value}`)
+}
+
+function mapAPIQuotaOrderSnapshot(order: BackendAPIOrder): ApiQuotaOrderSnapshot | undefined {
+  if (order.purchaseKind !== 'limited_quota_offer') return undefined
+  const ttftBand = apiTTFTBand(order.quotaTtftBandSnapshot)
+  if (
+    !order.apiQuotaBatchId
+    || !order.apiQuotaOfferId
+    || !order.quotaOfferNameSnapshot
+    || !order.quotaUsdAllowanceSnapshot
+    || !order.quotaPriceCnySnapshot
+    || !order.quotaCnyPerUsdSnapshot
+    || !order.quotaModelMultiplierSnapshot
+    || !order.quotaSaleCutoffAtSnapshot
+    || !order.quotaExpiresAtSnapshot
+    || !order.quotaDistributionSystemSnapshot
+    || !ttftBand
+    || !order.quotaRecommendedConcurrencySnapshot
+    || !order.quotaDeliveryEtaMinutesSnapshot
+    || !order.quotaDeliveryModeSnapshot
+  ) {
+    throw new Error(`Incomplete API quota order snapshot: ${order.id}`)
+  }
+  if (order.quotaDistributionSystemSnapshot !== 'sub2api' && order.quotaDistributionSystemSnapshot !== 'new_api_proxy' && order.quotaDistributionSystemSnapshot !== 'other') {
+    throw new Error(`Unsupported API quota distribution system: ${order.quotaDistributionSystemSnapshot}`)
+  }
+  if (order.quotaDeliveryModeSnapshot !== 'manual' && order.quotaDeliveryModeSnapshot !== 'preimported') {
+    throw new Error(`Unsupported API quota delivery mode: ${order.quotaDeliveryModeSnapshot}`)
+  }
+  return {
+    batchId: order.apiQuotaBatchId,
+    offerId: order.apiQuotaOfferId,
+    saleRoundId: order.apiQuotaSaleRoundId,
+    offerName: order.quotaOfferNameSnapshot,
+    usdAllowance: order.quotaUsdAllowanceSnapshot,
+    priceCny: order.quotaPriceCnySnapshot,
+    cnyPerUsd: order.quotaCnyPerUsdSnapshot,
+    modelMultiplier: order.quotaModelMultiplierSnapshot,
+    saleCutoffAt: order.quotaSaleCutoffAtSnapshot,
+    expiresAt: order.quotaExpiresAtSnapshot,
+    saleMode: apiQuotaSaleMode(order.quotaSaleModeSnapshot),
+    roundStartsAt: order.quotaRoundStartsAtSnapshot,
+    roundEndsAt: order.quotaRoundEndsAtSnapshot,
+    distributionSystem: order.quotaDistributionSystemSnapshot,
+    ttftBand,
+    recommendedConcurrency: order.quotaRecommendedConcurrencySnapshot,
+    performanceConfirmedAt: order.quotaPerformanceConfirmedAtSnapshot,
+    performanceUnverified: order.quotaPerformanceUnverifiedSnapshot === true,
+    deliveryEtaMinutes: order.quotaDeliveryEtaMinutesSnapshot,
+    deliveryMode: order.quotaDeliveryModeSnapshot,
+  }
+}
+
 function apiOrderPaymentMethod(value: string): ApiOrderPaymentInstructions['paymentMethod'] {
   if (isApiPaymentMethod(value)) return value
   throw new Error(`Unsupported API order payment method: ${value}`)
@@ -798,12 +1163,15 @@ async function mapBackendAPIOrder(order: BackendAPIOrder, viewerRole: 'buyer' | 
   if (order.currency !== 'CNY') throw new Error(`Unsupported API order currency: ${order.currency}`)
   return {
     id: order.id,
+    purchaseKind: apiOrderPurchaseKind(order.purchaseKind),
     apiPurchaseIntentId: order.apiPurchaseIntentId,
     apiServiceId: order.apiServiceId,
     buyerId: order.buyerUserId ?? intent.buyerId,
     buyer: intent.buyer,
     sellerId: order.sellerUserId ?? intent.merchantId,
     seller: intent.snapshot.merchantDisplayName || intent.merchant,
+    buyerReputation: mapBackendReputationSummary(order.buyerReputation),
+    sellerReputation: mapBackendReputationSummary(order.sellerReputation),
     status: apiOrderStatus(order.status),
     disputeStatus: order.disputeStatus,
     serviceTitle: order.serviceTitleSnapshot || intent.snapshot.serviceTitle,
@@ -830,6 +1198,7 @@ async function mapBackendAPIOrder(order: BackendAPIOrder, viewerRole: 'buyer' | 
     selectedDeliveryMode: intent.selectedDeliveryMode,
     requestedUsdAllowance: numberFromDecimal(order.requestedUsdAllowanceSnapshot || intent.purchasedCreditDecimal),
     requestedUsdAllowanceDecimal: order.requestedUsdAllowanceSnapshot || intent.purchasedCreditDecimal || String(intent.purchasedCredit),
+    quotaSnapshot: mapAPIQuotaOrderSnapshot(order),
     merchantContactChannels: intent.contactChannels,
     buyerContactChannels: intent.buyerContactChannels ?? [],
     viewerRole,
@@ -1009,6 +1378,9 @@ function toBackendServiceRequest(payload: Record<string, unknown>) {
     publicAccessNote: String(payload.distributionSystemNote ?? ''),
     merchantNote: String(payload.merchantNote ?? ''),
     merchantSupportNote: '平台不担保、不代赔；双方站外确认。',
+    declaredTtftBand: String(payload.declaredTtftBand ?? ''),
+    recommendedConcurrency: Number(payload.recommendedConcurrency ?? 0),
+    performanceConfirmedAt: beijingDateTimeInputToISOString(String(payload.performanceConfirmedAt ?? '')),
     accessModes: modes.map(accessMode => ({ accessMode: toBackendAccessMode(accessMode), publicNote: '仅展示接入说明，不展示凭据。' })),
     models: selectedModels.filter(item => item.enabled !== false).map(item => ({
       modelCatalogId: item.modelId ?? '',

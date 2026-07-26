@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 6
-- **Last Active**: 2026-07-09
+- **Total Sessions**: 7
+- **Last Active**: 2026-07-24
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~238 | Active |
+| `journal-1.md` | ~272 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 7 | 2026-07-24 | 修订信誉系统实现任务书 | `0f14ad7` | `docs/open-source-readme` |
 | 6 | 2026-07-09 | API order delivery credential flow | `672554c` | `main` |
 | 5 | 2026-07-06 | OAuth account recovery setup | `95dff64` | `main` |
 | 4 | 2026-07-06 | Report dispute moderation v0.4.1 | `a27d8c7` | `main` |

@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'vitest'
 import {
+  apiPaymentMethodIconSrc,
   apiPaymentMethods,
   apiPaymentSettingsMissingReason,
   apiPaymentSettingsSummary,
@@ -16,6 +17,10 @@ test('normalizes and validates API payment account settings', () => {
   const empty = createEmptyApiPaymentAccountSettings()
   assert.equal(empty.paymentWindowMinutes, 10)
   assert.deepEqual(apiPaymentMethods.map(option => option.value), ['wechat', 'alipay'])
+  assert.deepEqual(apiPaymentMethodIconSrc, {
+    wechat: '/wechat-mark.svg',
+    alipay: '/alipay-mark.svg',
+  })
   assert.equal(empty.paymentOptions.every(option => option.paymentQrCodeDataUrl === null), true)
   assert.equal(isApiPaymentAccountSettingsComplete(empty), false)
   assert.match(apiPaymentSettingsMissingReason(empty), /启用至少一种/)

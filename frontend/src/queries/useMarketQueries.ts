@@ -3,6 +3,11 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/vue-query'
 import {
   addFeedbackSupplement,
   cancelApiOrder,
+  createApiQuotaBatch,
+  createApiQuotaOffer,
+  createApiQuotaOrder,
+  createApiQuotaRushOffer,
+  createApiQuotaRound,
   createContactMethod,
   createContactReport,
   createPublicUserReport,
@@ -22,6 +27,10 @@ import {
   getApiPaymentAccountSettings,
   getApiOrderNotifications,
   getApiOrderById,
+  getApiQuotaCredentialSummary,
+  getApiQuotaOfferById,
+  getApiQuotaOffers,
+  getApiQuotaSaleSlots,
   getCarpoolApplicationById,
   getCarpoolApplicationEligibility,
   getCarpoolApplicationContacts,
@@ -38,6 +47,9 @@ import {
   getMyApiOrders,
   getMyApiServiceById,
   getMyApiServices,
+  getOwnerApiQuotaBatches,
+  getOwnerApiQuotaOffers,
+  getOwnerApiQuotaRounds,
   getMyCarpools,
   getMyCarpoolApplications,
   getMyProfile,
@@ -67,6 +79,7 @@ import {
   markAllNotificationsRead,
   markFeedbackRead,
   markNotificationRead,
+  importApiQuotaCredentials,
   pauseApiService,
   publishApiService,
   searchMarket,
@@ -81,6 +94,7 @@ import {
   resumeApiService,
   updateContactMethod,
   updateApiPaymentAccountSettings,
+  updateApiQuotaBatchStatus,
   updateMyProfile,
   toggleFavorite,
   useLinuxDoAvatar,
@@ -88,11 +102,18 @@ import {
   type AdminSection,
   type ApiOrderFilters,
   type ApiOrderPaymentIssueReason,
+  type ApiOrderDeliveryKind,
+  type ApiQuotaOfferFilters,
   type ApiPaymentOption,
   type SubmitApiOrderDeliveryCredentialPayload,
   type ApiPaymentAccountSettings,
   type ApiPurchaseIntentFilters,
   type ApiServiceFilters,
+  type CreateApiQuotaBatchPayload,
+  type CreateApiQuotaOfferPayload,
+  type CreateApiQuotaOrderPayload,
+  type CreateApiQuotaRushOfferPayload,
+  type CreateApiQuotaRoundPayload,
   type FavoriteTargetType,
   type FeedbackAdminHandlePayload,
   type FeedbackSupplementPayload,
@@ -325,6 +346,43 @@ export function useApiService(id: Ref<string> | string) {
   })
 }
 
+export function useApiQuotaOffers(filters: Ref<ApiQuotaOfferFilters> | ApiQuotaOfferFilters = {}) {
+  return useQuery({
+    queryKey: computed(() => ['api-quota-offers', valueOf(filters)]),
+    queryFn: () => getApiQuotaOffers(valueOf(filters)),
+    placeholderData: previousData => previousData,
+  })
+}
+
+export function useApiQuotaSaleSlots() {
+  return useQuery({
+    queryKey: ['api-quota-sale-slots'],
+    queryFn: getApiQuotaSaleSlots,
+    refetchOnMount: 'always',
+  })
+}
+
+export function useApiQuotaOffer(id: Ref<string> | string) {
+  return useQuery({
+    queryKey: computed(() => ['api-quota-offers', valueOf(id)]),
+    queryFn: () => getApiQuotaOfferById(valueOf(id)),
+    enabled: computed(() => Boolean(valueOf(id))),
+    retry: false,
+  })
+}
+
+export function useCreateApiQuotaOrderMutation() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (payload: CreateApiQuotaOrderPayload) => createApiQuotaOrder(payload),
+    onSuccess(data) {
+      queryClient.setQueryData(['api-orders', 'buyer', data.id], data)
+      queryClient.invalidateQueries({ queryKey: ['api-quota-offers'] })
+      invalidateApiOrderQueries(queryClient, data.id)
+    },
+  })
+}
+
 export function useMyApiServices(enabled: Ref<boolean> | boolean = true) {
   return useQuery({
     queryKey: ['my-api-services'],
@@ -339,6 +397,110 @@ export function useMyApiService(id: Ref<string> | string) {
     queryKey: computed(() => ['my-api-services', valueOf(id)]),
     retry: false,
     queryFn: () => getMyApiServiceById(valueOf(id)),
+  })
+}
+
+export function useOwnerApiQuotaBatches(apiServiceId: Ref<string> | string) {
+  return useQuery({
+    queryKey: computed(() => ['owner-api-quota-batches', valueOf(apiServiceId)]),
+    queryFn: () => getOwnerApiQuotaBatches(valueOf(apiServiceId)),
+    enabled: computed(() => Boolean(valueOf(apiServiceId))),
+    refetchOnMount: 'always',
+  })
+}
+
+export function useOwnerApiQuotaOffers(batchId: Ref<string> | string) {
+  return useQuery({
+    queryKey: computed(() => ['owner-api-quota-offers', valueOf(batchId)]),
+    queryFn: () => getOwnerApiQuotaOffers(valueOf(batchId)),
+    enabled: computed(() => Boolean(valueOf(batchId))),
+  })
+}
+
+export function useOwnerApiQuotaRounds(batchId: Ref<string> | string) {
+  return useQuery({
+    queryKey: computed(() => ['owner-api-quota-rounds', valueOf(batchId)]),
+    queryFn: () => getOwnerApiQuotaRounds(valueOf(batchId)),
+    enabled: computed(() => Boolean(valueOf(batchId))),
+  })
+}
+
+export function useApiQuotaCredentialSummary(offerId: Ref<string> | string) {
+  return useQuery({
+    queryKey: computed(() => ['api-quota-credential-summary', valueOf(offerId)]),
+    queryFn: () => getApiQuotaCredentialSummary(valueOf(offerId)),
+    enabled: computed(() => Boolean(valueOf(offerId))),
+  })
+}
+
+function invalidateApiQuotaOwnerQueries(queryClient: ReturnType<typeof useQueryClient>) {
+  queryClient.invalidateQueries({ queryKey: ['owner-api-quota-batches'] })
+  queryClient.invalidateQueries({ queryKey: ['owner-api-quota-offers'] })
+  queryClient.invalidateQueries({ queryKey: ['owner-api-quota-rounds'] })
+  queryClient.invalidateQueries({ queryKey: ['api-quota-credential-summary'] })
+  queryClient.invalidateQueries({ queryKey: ['api-quota-offers'] })
+  queryClient.invalidateQueries({ queryKey: ['api-quota-sale-slots'] })
+  queryClient.invalidateQueries({ queryKey: ['my-api-services'] })
+}
+
+export function useCreateApiQuotaBatchMutation() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (payload: CreateApiQuotaBatchPayload) => createApiQuotaBatch(payload),
+    onSuccess() {
+      invalidateApiQuotaOwnerQueries(queryClient)
+    },
+  })
+}
+
+export function useCreateApiQuotaOfferMutation() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (payload: CreateApiQuotaOfferPayload) => createApiQuotaOffer(payload),
+    onSuccess() {
+      invalidateApiQuotaOwnerQueries(queryClient)
+    },
+  })
+}
+
+export function useCreateApiQuotaRushOfferMutation() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (payload: CreateApiQuotaRushOfferPayload) => createApiQuotaRushOffer(payload),
+    onSuccess() {
+      invalidateApiQuotaOwnerQueries(queryClient)
+      queryClient.invalidateQueries({ queryKey: ['api-services'] })
+    },
+  })
+}
+
+export function useCreateApiQuotaRoundMutation() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (payload: CreateApiQuotaRoundPayload) => createApiQuotaRound(payload),
+    onSuccess() {
+      invalidateApiQuotaOwnerQueries(queryClient)
+    },
+  })
+}
+
+export function useApiQuotaBatchActionMutation() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: ({ batchId, action, version }: { batchId: string, action: 'publish' | 'pause' | 'resume' | 'archive', version: number }) => updateApiQuotaBatchStatus(batchId, action, version),
+    onSuccess() {
+      invalidateApiQuotaOwnerQueries(queryClient)
+    },
+  })
+}
+
+export function useImportApiQuotaCredentialsMutation() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: ({ offerId, deliveryKind, file }: { offerId: string, deliveryKind: ApiOrderDeliveryKind, file: File }) => importApiQuotaCredentials(offerId, deliveryKind, file),
+    onSuccess() {
+      invalidateApiQuotaOwnerQueries(queryClient)
+    },
   })
 }
 
@@ -976,6 +1138,9 @@ export function useSubmitReviewMutation() {
       queryClient.invalidateQueries({ queryKey: ['review-center'] })
       queryClient.invalidateQueries({ queryKey: ['my-carpool-applications'] })
       queryClient.invalidateQueries({ queryKey: ['merchant-carpool-applications'] })
+      queryClient.invalidateQueries({ queryKey: ['my-api-orders'] })
+      queryClient.invalidateQueries({ queryKey: ['merchant-api-orders'] })
+      queryClient.invalidateQueries({ queryKey: ['api-orders'] })
       queryClient.invalidateQueries({ queryKey: ['my-api-purchase-intents'] })
       queryClient.invalidateQueries({ queryKey: ['merchant-api-purchase-intents'] })
       queryClient.invalidateQueries({ queryKey: ['public-user-profile'] })

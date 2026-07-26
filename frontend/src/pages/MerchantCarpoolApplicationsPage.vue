@@ -101,11 +101,11 @@ function rejectApplication(item: CarpoolApplication) {
       <tr v-for="item in pagination.paginatedRows.value" :key="item.id">
         <td>
           <RouterLink :to="`/u/${item.applicantUsername}`" class="font-medium hover:underline">{{ item.applicantUsername }}</RouterLink>
-          <div class="text-xs text-muted-foreground">{{ item.applicantStats.linuxdoBound ? '已绑定 linux.do' : '未绑定 linux.do' }} · 信任等级{{ item.applicantStats.trustLevel }}</div>
+          <div class="text-xs text-muted-foreground">{{ item.applicantStats.linuxdoBound === true ? '已绑定 linux.do' : item.applicantStats.linuxdoBound === false ? '未绑定 linux.do' : 'linux.do 绑定暂无数据' }} · {{ item.applicantStats.trustLevel === null ? '信任等级暂无数据' : `信任等级${item.applicantStats.trustLevel}` }}</div>
         </td>
         <td><div class="font-medium">{{ item.snapshot.productName }}</div><div class="text-xs text-muted-foreground"><ShortId :value="item.id" prefix="RIDE" /> · {{ item.snapshot.regionName }}</div></td>
         <td class="font-semibold">{{ item.snapshot.priceLabel }} ¥{{ item.snapshot.monthlyPriceCny }}</td>
-        <td class="text-xs text-muted-foreground">近30天完成 {{ item.applicantStats.completed30d }} · 买家责任取消 {{ item.applicantStats.buyerResponsibleCancellations }} · 纠纷 {{ item.applicantStats.unresolvedDisputes }}</td>
+        <td class="text-xs text-muted-foreground">近期完成 {{ item.applicantStats.completed30d ?? '暂无数据' }} · 买家责任取消 {{ item.applicantStats.buyerResponsibleCancellations ?? '暂无数据' }} · 纠纷 {{ item.applicantStats.unresolvedDisputes ?? '暂无数据' }}</td>
         <td><Badge :variant="item.status === 'pending_owner' ? 'default' : 'secondary'">{{ getCarpoolApplicationStatusLabel(item.status) }}</Badge></td>
         <td class="text-muted-foreground"><LocalTime :value="item.createdAt" /></td>
         <td>

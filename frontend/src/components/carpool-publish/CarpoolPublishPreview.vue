@@ -82,7 +82,7 @@ const adminAccountText = computed(() => adminAccountLabel(props.form.providesAdm
     <Card class="relative overflow-hidden p-5 shadow-sm before:absolute before:inset-x-0 before:top-0 before:h-[3px] before:bg-primary">
       <div class="text-xs text-muted-foreground">车源预览</div>
       <h2 class="mt-2 text-lg font-semibold leading-snug">{{ previewTitle(form, catalogById, regionsByCode) }}</h2>
-      <p class="mt-1 text-xs text-muted-foreground">个人车主 · 信任等级3 · {{ parsedTopic ? '原帖已绑定' : '原帖待读取' }}</p>
+      <p class="mt-1 text-xs text-muted-foreground">个人车主 · 信任等级3 · {{ parsedTopic ? '原帖链接已读取，作者待核验' : '原帖待读取' }}</p>
 
       <div class="mt-4 flex items-end justify-between gap-3">
         <div class="text-3xl font-bold tracking-tight">¥{{ form.monthlyPriceCny ?? '-' }}<span class="text-sm font-semibold">/月</span></div>
@@ -112,7 +112,7 @@ const adminAccountText = computed(() => adminAccountLabel(props.form.providesAdm
         <div class="flex justify-between gap-4 py-2"><dt class="text-muted-foreground">管理员账号</dt><dd class="text-right font-semibold">{{ adminAccountText }}</dd></div>
         <div class="flex justify-between gap-4 py-2"><dt class="text-muted-foreground">访问安排</dt><dd class="text-right font-semibold">{{ form.accessArrangementNote || '待填写' }}</dd></div>
         <div class="flex justify-between gap-4 py-2"><dt class="text-muted-foreground">总名额</dt><dd class="font-semibold">{{ form.totalSeats }} 人车 · 已上车 {{ form.occupiedSeats }} 人</dd></div>
-        <div class="flex justify-between gap-4 py-2"><dt class="text-muted-foreground">原帖状态</dt><dd class="font-semibold">{{ parsedTopic ? '已读取并绑定' : '待读取' }}</dd></div>
+        <div class="flex justify-between gap-4 py-2"><dt class="text-muted-foreground">原帖状态</dt><dd class="text-right font-semibold">{{ parsedTopic ? '链接已读取，作者待管理员核验' : '待读取' }}</dd></div>
       </dl>
     </Card>
 

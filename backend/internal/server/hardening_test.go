@@ -31,7 +31,7 @@ func TestProductionSessionCookieIsSecureAndLogoutClearsWithSameAttributes(t *tes
 		t.Fatalf("dev session status %d body %s", response.Code, response.Body.String())
 	}
 	sessionCookie := findCookie(t, response.Result().Cookies(), sessionCookieName)
-	if !sessionCookie.Secure || !sessionCookie.HttpOnly || sessionCookie.SameSite != http.SameSiteLaxMode {
+	if !sessionCookie.Secure || !sessionCookie.HttpOnly || sessionCookie.SameSite != http.SameSiteLaxMode || sessionCookie.MaxAge != 7*24*60*60 {
 		t.Fatalf("unexpected production session cookie: %+v", sessionCookie)
 	}
 	var payload sessionResponse
@@ -127,6 +127,53 @@ func TestRateLimitedEndpointReturnsProblem429(t *testing.T) {
 			}
 			assertProblemCode(t, response, domain.CodeRateLimited)
 		}
+	}
+}
+
+func TestRateLimitSeparatesAuthenticatedUserAndSharedIPBudgets(t *testing.T) {
+	service := app.NewService()
+	server := &Server{
+		app:         service,
+		rateLimiter: middleware.NewRateLimiter(time.Minute),
+	}
+	_, firstSession, appErr := service.CreateDevSession(context.Background(), "rate-user-one", false)
+	if appErr != nil {
+		t.Fatalf("create first session: %v", appErr)
+	}
+	_, secondSession, appErr := service.CreateDevSession(context.Background(), "rate-user-two", false)
+	if appErr != nil {
+		t.Fatalf("create second session: %v", appErr)
+	}
+	_, thirdSession, appErr := service.CreateDevSession(context.Background(), "rate-user-three", false)
+	if appErr != nil {
+		t.Fatalf("create third session: %v", appErr)
+	}
+	handler := server.limitHandlerByActor("test_actor_rate_limit", 2, 1, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	})
+	wrapped := middleware.WithRequestID(http.HandlerFunc(handler))
+
+	request := func(sessionID, remoteAddr string) *httptest.ResponseRecorder {
+		t.Helper()
+		r := httptest.NewRequest(http.MethodPost, "/test-actor-rate-limit", nil)
+		r.RemoteAddr = remoteAddr
+		r.AddCookie(&http.Cookie{Name: sessionCookieName, Value: sessionID})
+		response := httptest.NewRecorder()
+		wrapped.ServeHTTP(response, r)
+		return response
+	}
+
+	if response := request(firstSession.ID, "203.0.113.10:4001"); response.Code != http.StatusNoContent {
+		t.Fatalf("first buyer expected success, got %d body %s", response.Code, response.Body.String())
+	}
+	if response := request(firstSession.ID, "203.0.113.11:4002"); response.Code != http.StatusTooManyRequests {
+		t.Fatalf("same buyer must hit user limit across IPs, got %d body %s", response.Code, response.Body.String())
+	}
+	if response := request(secondSession.ID, "203.0.113.10:4003"); response.Code != http.StatusNoContent {
+		t.Fatalf("second buyer on shared IP expected success, got %d body %s", response.Code, response.Body.String())
+	}
+	if response := request(thirdSession.ID, "203.0.113.10:4004"); response.Code != http.StatusTooManyRequests {
+		t.Fatalf("shared IP must eventually hit its independent limit, got %d body %s", response.Code, response.Body.String())
 	}
 }
 

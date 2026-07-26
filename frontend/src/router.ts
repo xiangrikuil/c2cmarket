@@ -11,6 +11,7 @@ const DemandsPage = () => import('@/pages/DemandsPage.vue')
 const DemandPublishPage = () => import('@/pages/DemandPublishPage.vue')
 const DemandDetailPage = () => import('@/pages/DemandDetailPage.vue')
 const ApiMarketPage = () => import('@/pages/ApiMarketPage.vue')
+const ApiQuotaRushPublishPage = () => import('@/pages/ApiQuotaRushPublishPage.vue')
 const ApiServiceDetailPage = () => import('@/pages/ApiServiceDetailPage.vue')
 const ApiServicePublishPage = () => import('@/pages/ApiServicePublishPage.vue')
 const SearchPage = () => import('@/pages/SearchPage.vue')
@@ -28,6 +29,7 @@ const MerchantApiOrdersPage = () => import('@/pages/MerchantApiOrdersPage.vue')
 const MerchantCarpoolApplicationsPage = () => import('@/pages/MerchantCarpoolApplicationsPage.vue')
 const MyFavoritesPage = () => import('@/pages/MyFavoritesPage.vue')
 const MyReviewsPage = () => import('@/pages/MyReviewsPage.vue')
+const MyReputationPage = () => import('@/pages/MyReputationPage.vue')
 const MyNotificationsPage = () => import('@/pages/MyNotificationsPage.vue')
 const MyFeedbackPage = () => import('@/pages/MyFeedbackPage.vue')
 const AnnouncementDetailPage = () => import('@/pages/AnnouncementDetailPage.vue')
@@ -74,6 +76,7 @@ export const router = createRouter({
     { path: '/demands/new', name: 'demand-new', component: DemandPublishPage },
     { path: '/demands/:id', name: 'demand-detail', component: DemandDetailPage },
     { path: '/api-market', name: 'api-market', component: ApiMarketPage },
+    { path: '/api-market/quota/new', name: 'api-quota-rush-new', component: ApiQuotaRushPublishPage },
     { path: '/api-market/detail', redirect: '/api-market/a1' },
     { path: '/api-market/new', name: 'api-new', component: ApiServicePublishPage },
     { path: '/api-market/:id', name: 'api-detail', component: ApiServiceDetailPage },
@@ -97,6 +100,7 @@ export const router = createRouter({
     { path: '/merchant/api-orders/:id', name: 'merchant-api-order-detail', component: ApiPurchaseOrderDetailPage },
     { path: '/my/favorites', name: 'my-favorites', component: MyFavoritesPage },
     { path: '/my/reviews', name: 'my-reviews', component: MyReviewsPage },
+    { path: '/my/reputation', alias: '/me/reputation', name: 'my-reputation', component: MyReputationPage },
     { path: '/my/notifications', name: 'my-notifications', component: MyNotificationsPage },
     { path: '/my/feedback', name: 'my-feedback', component: MyFeedbackPage },
     { path: '/my/feedback/:id', name: 'my-feedback-detail', component: MyFeedbackPage },

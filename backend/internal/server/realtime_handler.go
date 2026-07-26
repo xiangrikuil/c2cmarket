@@ -17,7 +17,7 @@ const (
 var realtimeClientPayload = `{"schemaVersion":1,"topics":["all-live"]}`
 
 func (s *Server) handleMyEvents(w http.ResponseWriter, r *http.Request) {
-	user, _, appErr := s.requireSession(r)
+	user, _, appErr := s.requireSession(w, r)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return

@@ -87,18 +87,20 @@ func (f *fakeAuthRepository) CreateEmailRegistrationCode(context.Context, EmailR
 	return domain.NewError(500, domain.CodeInternalError, "not implemented", "not implemented")
 }
 
-func (f *fakeAuthRepository) ConfirmEmailRegistration(context.Context, EmailRegistrationConfirmInput, string, string, string, time.Time, time.Time) (User, *domain.AppError) {
+func (f *fakeAuthRepository) ConfirmEmailRegistration(context.Context, EmailRegistrationConfirmInput, string, string, string, time.Time, time.Time, time.Time) (User, *domain.AppError) {
 	f.confirmEmailRegistrationCalls++
 	return User{}, domain.NewError(500, domain.CodeInternalError, "not implemented", "not implemented")
 }
 
-func (f *fakeAuthRepository) CreateSession(_ context.Context, userID, sessionTokenHash, csrfTokenHash string, expiresAt, _ time.Time) *domain.AppError {
+func (f *fakeAuthRepository) CreateSession(_ context.Context, userID, sessionTokenHash, csrfTokenHash string, expiresAt, absoluteExpiresAt, now time.Time) *domain.AppError {
 	f.createSessionCalls++
 	f.session = Session{
-		ID:        sessionTokenHash,
-		UserID:    userID,
-		CSRFToken: csrfTokenHash,
-		ExpiresAt: expiresAt,
+		ID:                sessionTokenHash,
+		UserID:            userID,
+		CSRFToken:         csrfTokenHash,
+		ExpiresAt:         expiresAt,
+		RenewedAt:         now,
+		AbsoluteExpiresAt: absoluteExpiresAt,
 	}
 	return nil
 }
@@ -109,6 +111,10 @@ func (f *fakeAuthRepository) GetSession(context.Context, string, time.Time) (Use
 
 func (f *fakeAuthRepository) GetSessionWithCSRF(context.Context, string, string, time.Time) (User, Session, *domain.AppError) {
 	return User{}, Session{}, domain.NewError(500, domain.CodeInternalError, "not implemented", "not implemented")
+}
+
+func (f *fakeAuthRepository) RenewSession(context.Context, string, time.Time, time.Time, time.Time) (time.Time, bool, *domain.AppError) {
+	return time.Time{}, false, nil
 }
 
 func (f *fakeAuthRepository) RefreshSessionCSRF(context.Context, string, string, time.Time) *domain.AppError {
@@ -160,10 +166,11 @@ func legacyCredentialForTest(user User, password string) PasswordCredential {
 }
 
 func TestLoginWithArgon2idPasswordCreatesSession(t *testing.T) {
+	now := time.Date(2026, 6, 23, 12, 0, 0, 0, time.UTC)
 	repo := &fakeAuthRepository{
 		credential: argon2idCredentialForTest(boundAdminUserForTest(), "unit-test-password"),
 	}
-	service := NewService(repo, func() time.Time { return time.Date(2026, 6, 23, 12, 0, 0, 0, time.UTC) })
+	service := NewService(repo, func() time.Time { return now })
 
 	user, session, appErr := service.LoginWithPassword(context.Background(), "admin", "unit-test-password")
 	if appErr != nil {
@@ -177,6 +184,79 @@ func TestLoginWithArgon2idPasswordCreatesSession(t *testing.T) {
 	}
 	if repo.session.ID == "" || repo.session.CSRFToken == "" {
 		t.Fatalf("expected persisted hashed session")
+	}
+	if !session.ExpiresAt.Equal(now.Add(SessionIdleLifetime)) || !session.AbsoluteExpiresAt.Equal(now.Add(SessionAbsoluteLifetime)) || !session.RenewedAt.Equal(now) {
+		t.Fatalf("unexpected session lifetime: %+v", session)
+	}
+}
+
+func TestSessionRenewalIsThrottledAndCappedByAbsoluteExpiry(t *testing.T) {
+	current := time.Date(2026, 7, 21, 0, 0, 0, 0, time.UTC)
+	service := NewService(nil, func() time.Time { return current })
+	_, session, appErr := service.CreateDevSession(context.Background(), "renewal-user", false)
+	if appErr != nil {
+		t.Fatalf("create session: %v", appErr)
+	}
+	if !session.ExpiresAt.Equal(current.Add(SessionIdleLifetime)) || !session.AbsoluteExpiresAt.Equal(current.Add(SessionAbsoluteLifetime)) {
+		t.Fatalf("unexpected initial session: %+v", session)
+	}
+
+	current = current.Add(SessionRenewalInterval - time.Second)
+	if _, renewed, appErr := service.RenewSession(context.Background(), session.ID); appErr != nil || renewed {
+		t.Fatalf("session must not renew before interval: renewed=%v err=%v", renewed, appErr)
+	}
+
+	current = current.Add(time.Second)
+	renewedSession, renewed, appErr := service.RenewSession(context.Background(), session.ID)
+	if appErr != nil || !renewed {
+		t.Fatalf("renew session: renewed=%v err=%v", renewed, appErr)
+	}
+	if !renewedSession.ExpiresAt.Equal(current.Add(SessionIdleLifetime)) {
+		t.Fatalf("unexpected renewed expiry: %+v", renewedSession)
+	}
+	if _, renewed, appErr := service.RenewSession(context.Background(), session.ID); appErr != nil || renewed {
+		t.Fatalf("session must not renew twice in one interval: renewed=%v err=%v", renewed, appErr)
+	}
+
+	for day := 2; day <= 29; day++ {
+		current = time.Date(2026, 7, 21, 0, 0, 0, 0, time.UTC).Add(time.Duration(day) * 24 * time.Hour)
+		renewedSession, renewed, appErr = service.RenewSession(context.Background(), session.ID)
+		if appErr != nil || !renewed {
+			t.Fatalf("renew day %d: renewed=%v err=%v", day, renewed, appErr)
+		}
+	}
+	wantAbsoluteExpiry := time.Date(2026, 7, 21, 0, 0, 0, 0, time.UTC).Add(SessionAbsoluteLifetime)
+	if !renewedSession.ExpiresAt.Equal(wantAbsoluteExpiry) {
+		t.Fatalf("renewal must stop at absolute expiry: got %s want %s", renewedSession.ExpiresAt, wantAbsoluteExpiry)
+	}
+
+	current = wantAbsoluteExpiry
+	if _, _, appErr := service.GetSession(context.Background(), session.ID); appErr == nil || appErr.Code != domain.CodeSessionExpired {
+		t.Fatalf("absolute expiry must invalidate session, got %v", appErr)
+	}
+}
+
+func TestRevokedOrExpiredSessionCannotRenew(t *testing.T) {
+	current := time.Date(2026, 7, 21, 0, 0, 0, 0, time.UTC)
+	service := NewService(nil, func() time.Time { return current })
+	_, revokedSession, appErr := service.CreateDevSession(context.Background(), "revoked-user", false)
+	if appErr != nil {
+		t.Fatalf("create revoked session fixture: %v", appErr)
+	}
+	service.Logout(context.Background(), revokedSession.ID)
+	current = current.Add(SessionRenewalInterval)
+	if _, renewed, appErr := service.RenewSession(context.Background(), revokedSession.ID); appErr != nil || renewed {
+		t.Fatalf("revoked session must not renew: renewed=%v err=%v", renewed, appErr)
+	}
+
+	current = time.Date(2026, 7, 21, 0, 0, 0, 0, time.UTC)
+	_, expiredSession, appErr := service.CreateDevSession(context.Background(), "expired-user", false)
+	if appErr != nil {
+		t.Fatalf("create expired session fixture: %v", appErr)
+	}
+	current = current.Add(SessionIdleLifetime)
+	if _, renewed, appErr := service.RenewSession(context.Background(), expiredSession.ID); appErr != nil || renewed {
+		t.Fatalf("expired session must not renew: renewed=%v err=%v", renewed, appErr)
 	}
 }
 
@@ -390,6 +470,37 @@ func TestLoginWithOAuthProfileDoesNotFailWhenRegistrationEmailFails(t *testing.T
 	}
 	if user.ID == "" || session.ID == "" || sender.calls != 1 {
 		t.Fatalf("unexpected login result user=%+v session=%+v sender=%+v", user, session, sender)
+	}
+}
+
+func TestLoginWithOAuthProfileRejectsInactiveUserBeforeSessionCreation(t *testing.T) {
+	t.Parallel()
+
+	repo := &fakeAuthRepository{
+		oauthResult: OAuthUserResult{
+			User: User{
+				ID:          "user-suspended",
+				Username:    "suspended-user",
+				DisplayName: "Suspended User",
+				Status:      "suspended",
+			},
+		},
+	}
+	service := NewService(repo, time.Now)
+
+	_, _, appErr := service.LoginWithOAuthProfile(context.Background(), OAuthProfile{
+		Provider: "linuxdo",
+		Subject:  "linuxdo-suspended",
+		Username: "suspended-user",
+	})
+	if appErr == nil || appErr.Code != domain.CodeAccountRestricted {
+		t.Fatalf("expected account restriction, got %#v", appErr)
+	}
+	if repo.createSessionCalls != 0 {
+		t.Fatalf("inactive OAuth user must not create session, got %d calls", repo.createSessionCalls)
+	}
+	if repo.session.ID != "" {
+		t.Fatalf("inactive OAuth user must not persist session: %#v", repo.session)
 	}
 }
 

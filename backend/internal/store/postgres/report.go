@@ -11,6 +11,7 @@ import (
 	"c2c-market/backend/internal/domain"
 	"c2c-market/backend/internal/module/idempotency"
 	"c2c-market/backend/internal/module/report"
+	"c2c-market/backend/internal/module/reputation"
 
 	"github.com/jackc/pgx/v5"
 )
@@ -303,7 +304,7 @@ func (s *Store) ListPublicUserDisputes(ctx context.Context, username string) ([]
 		       COALESCE(d.resolved_at, d.closed_at, d.updated_at) AS handled_at,
 		       d.status IN ('open', 'waiting_info') AS unresolved
 		FROM dispute_cases d
-		JOIN users u ON u.id = d.primary_user_id OR u.id = d.counterparty_user_id
+		JOIN users u ON u.id = d.subject_user_id
 		WHERE u.username = $1
 		  AND u.account_status = 'active'
 		ORDER BY handled_at DESC
@@ -339,7 +340,7 @@ func (s *Store) PublicUserDisputeStats(ctx context.Context, username string, now
 		      AND COALESCE(d.resolved_at, d.closed_at, d.updated_at) >= $2
 		  )::int
 		FROM dispute_cases d
-		JOIN users u ON u.id = d.primary_user_id OR u.id = d.counterparty_user_id
+		JOIN users u ON u.id = d.subject_user_id
 		WHERE u.username = $1
 		  AND u.account_status = 'active'
 	`, strings.TrimSpace(strings.ToLower(username)), now.AddDate(0, 0, -90)).Scan(&stats.UnresolvedCount, &stats.ResolvedLast90Days); err != nil {
@@ -548,7 +549,107 @@ func updateAppealAdminInTx(ctx context.Context, tx pgx.Tx, input report.AdminAct
 	if appErr := insertAppealModerationAuditLog(ctx, tx, input, current, item, now); appErr != nil {
 		return report.MutationResult{}, appErr
 	}
+	if input.Action == "approve" {
+		if appErr := reverseReputationOutcomeForApprovedAppeal(ctx, tx, item, input, now); appErr != nil {
+			return report.MutationResult{}, appErr
+		}
+	}
 	return report.MutationResult{Appeal: &item}, nil
+}
+
+func reverseReputationOutcomeForApprovedAppeal(ctx context.Context, tx pgx.Tx, appeal report.Appeal, input report.AdminActionInput, now time.Time) *domain.AppError {
+	disputeID := strings.TrimSpace(appeal.DisputeID)
+	if disputeID == "" && strings.TrimSpace(appeal.ReportID) != "" {
+		if err := tx.QueryRow(ctx, `
+			SELECT COALESCE(dispute_case_id::text, '')
+			FROM reports
+			WHERE id = $1
+		`, appeal.ReportID).Scan(&disputeID); err != nil && !errors.Is(err, pgx.ErrNoRows) {
+			return internalStoreError()
+		}
+	}
+	if disputeID == "" {
+		return nil
+	}
+
+	beforeOutcome, err := scanDisputeOutcome(tx.QueryRow(ctx, `
+		SELECT `+disputeOutcomeReturningColumns+`
+		FROM dispute_reputation_outcomes
+		WHERE dispute_case_id = $1
+		  AND status = 'active'
+		FOR UPDATE
+	`, disputeID))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return internalStoreError()
+	}
+	reversalReason := nonEmpty(input.Reason, "申诉批准，反转关联信誉裁定。")
+	afterOutcome, err := scanDisputeOutcome(tx.QueryRow(ctx, `
+		UPDATE dispute_reputation_outcomes
+		SET status = 'reversed',
+		    reversed_at = $2,
+		    reversed_by_admin_id = $3,
+		    reversal_appeal_id = $4,
+		    reversal_reason = $5,
+		    updated_at = $2,
+		    version = version + 1
+		WHERE id = $1
+		RETURNING `+disputeOutcomeReturningColumns+`
+	`, beforeOutcome.ID, now, input.AdminUserID, appeal.ID, reversalReason))
+	if err != nil {
+		return internalStoreError()
+	}
+	if appErr := insertReputationGovernanceEvent(ctx, tx, "outcome", afterOutcome.ID, "outcome_reversed", input.AdminUserID, beforeOutcome, afterOutcome, reversalReason, input.RequestID, now); appErr != nil {
+		return appErr
+	}
+
+	rows, err := tx.Query(ctx, `
+		SELECT `+userRestrictionColumns+`
+		FROM user_restrictions
+		WHERE source_dispute_outcome_id = $1
+		  AND revoked_at IS NULL
+		ORDER BY id
+		FOR UPDATE
+	`, afterOutcome.ID)
+	if err != nil {
+		return internalStoreError()
+	}
+	restrictions := []reputation.UserRestriction{}
+	for rows.Next() {
+		beforeRestriction, scanErr := scanUserRestriction(rows)
+		if scanErr != nil {
+			rows.Close()
+			return internalStoreError()
+		}
+		restrictions = append(restrictions, beforeRestriction)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return internalStoreError()
+	}
+	rows.Close()
+
+	for _, beforeRestriction := range restrictions {
+		afterRestriction, err := scanUserRestriction(tx.QueryRow(ctx, `
+			UPDATE user_restrictions
+			SET revoked_at = $2,
+			    revoked_by_admin_id = $3,
+			    revocation_reason = $4,
+			    updated_at = $2,
+			    version = version + 1
+			WHERE id = $1
+			RETURNING `+userRestrictionReturningColumns+`
+		`, beforeRestriction.ID, now, input.AdminUserID, reversalReason))
+		if err != nil {
+			return internalStoreError()
+		}
+		if appErr := insertReputationGovernanceEvent(ctx, tx, "restriction", afterRestriction.ID, "restriction_revoked", input.AdminUserID, beforeRestriction, afterRestriction, reversalReason, input.RequestID, now); appErr != nil {
+			return appErr
+		}
+	}
+	return nil
 }
 
 func updateDisputeAdminInTx(ctx context.Context, tx pgx.Tx, input report.AdminActionInput, now time.Time) (report.MutationResult, *domain.AppError) {
@@ -661,10 +762,11 @@ func openDisputeFromReport(ctx context.Context, tx pgx.Tx, source report.Report,
 	item, err := scanDispute(ctx, tx, `
 		INSERT INTO dispute_cases (
 			report_id, target_type, target_id, target_label, primary_user_id, counterparty_user_id,
+			subject_user_id,
 			status, public_summary, public_result_code, public_result, admin_reason, opened_by_admin_id, opened_at,
 			created_at, updated_at, version
 		)
-		VALUES ($1, $2, $3, $4, $5, $6, 'open', $7, $8, $9, $10, $11, $12, $12, $12, 1)
+		VALUES ($1, $2, $3, $4, $5, $6, $6, 'open', $7, $8, $9, $10, $11, $12, $12, $12, 1)
 		RETURNING `+disputeReturningColumns+`
 	`, source.ID, nonEmpty(source.CanonicalTargetType, source.TargetType), nonEmpty(source.CanonicalTargetID, source.TargetID), source.TargetLabel, source.ReporterUserID, counterpartyID,
 		strings.TrimSpace(input.PublicSummary), nonEmpty(input.PublicResultCode, report.PublicResultNoAction),
@@ -1080,6 +1182,7 @@ func disputeAuditPayload(item report.DisputeCase) map[string]any {
 		"version":          item.Version,
 		"targetType":       item.TargetType,
 		"targetId":         item.TargetID,
+		"subjectUserId":    item.SubjectUserID,
 		"publicSummary":    item.PublicSummary,
 		"publicResultCode": item.PublicResultCode,
 		"publicResult":     item.PublicResult,
@@ -1180,6 +1283,9 @@ func scanDisputeRow(row scanner) (report.DisputeCase, error) {
 		&item.CounterpartyUserID,
 		&item.CounterpartyUsername,
 		&item.CounterpartyName,
+		&item.SubjectUserID,
+		&item.SubjectUsername,
+		&item.SubjectName,
 		&item.Status,
 		&item.PublicSummary,
 		&item.PublicResultCode,
@@ -1365,7 +1471,8 @@ const disputeSelectSQL = `
 	SELECT ` + disputeColumns + `
 	FROM dispute_cases d
 	JOIN users primary_user ON primary_user.id = d.primary_user_id
-	LEFT JOIN users counterparty_user ON counterparty_user.id = d.counterparty_user_id`
+	LEFT JOIN users counterparty_user ON counterparty_user.id = d.counterparty_user_id
+	LEFT JOIN users subject_user ON subject_user.id = d.subject_user_id`
 
 const disputeColumns = `
 	d.id::text,
@@ -1379,6 +1486,9 @@ const disputeColumns = `
 	COALESCE(d.counterparty_user_id::text, ''),
 	COALESCE(counterparty_user.username, ''),
 	COALESCE(counterparty_user.display_name, ''),
+	COALESCE(d.subject_user_id::text, ''),
+	COALESCE(subject_user.username, ''),
+	COALESCE(subject_user.display_name, ''),
 	d.status,
 	d.public_summary,
 	d.public_result_code,
@@ -1404,6 +1514,9 @@ const disputeReturningColumns = `
 	COALESCE(dispute_cases.counterparty_user_id::text, ''),
 	COALESCE((SELECT username FROM users WHERE users.id = dispute_cases.counterparty_user_id), ''),
 	COALESCE((SELECT display_name FROM users WHERE users.id = dispute_cases.counterparty_user_id), ''),
+	COALESCE(dispute_cases.subject_user_id::text, ''),
+	COALESCE((SELECT username FROM users WHERE users.id = dispute_cases.subject_user_id), ''),
+	COALESCE((SELECT display_name FROM users WHERE users.id = dispute_cases.subject_user_id), ''),
 	dispute_cases.status,
 	dispute_cases.public_summary,
 	dispute_cases.public_result_code,

@@ -193,6 +193,8 @@ type ReviewCenterRow = review.ReviewCenterRow
 
 type SubmitReviewInput = review.SubmitReviewInput
 
+type RemoveReviewInput = review.RemoveReviewInput
+
 type PublicReview = review.PublicReview
 
 type ReviewCompletionBuilder = review.CompletionBuilder

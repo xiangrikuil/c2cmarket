@@ -10,6 +10,7 @@ import TablePagination from '@/components/market/TablePagination.vue'
 import EmptyState from '@/components/market/EmptyState.vue'
 import LocalTime from '@/components/market/LocalTime.vue'
 import ShortId from '@/components/market/ShortId.vue'
+import SourceAuthorVerificationBadge from '@/components/market/SourceAuthorVerificationBadge.vue'
 import SkeletonTable from '@/components/market/SkeletonTable.vue'
 import { usePagination } from '@/composables/usePagination'
 import { useDemand, useMerchantCarpoolApplications, useMyCarpools } from '@/queries/useMarketQueries'
@@ -55,7 +56,14 @@ async function respondWithCarpool(carpoolId: string) {
     <EmptyState v-else-if="rows.length === 0" title="暂未发布车源" description="发布后可在这里管理名额、申请和公开状态。"><template #action><RouterLink to="/carpools/new"><Button>发布车源</Button></RouterLink></template></EmptyState>
     <SoftTable v-else :columns="['车源', '价格', '车位', '申请', '状态', '最后确认', '操作']">
       <tr v-for="item in pagination.paginatedRows.value" :key="item.id">
-        <td><div class="font-medium">{{ item.product }}</div><div class="text-xs text-muted-foreground"><ShortId :value="item.id" prefix="CAR" /> · {{ item.region }} · linux.do 原帖已绑定</div></td>
+        <td>
+          <div class="font-medium">{{ item.product }}</div>
+          <div class="mt-1 flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
+            <ShortId :value="item.id" prefix="CAR" />
+            <span>· {{ item.region }}</span>
+            <SourceAuthorVerificationBadge :verification="item.sourceAuthorVerification" />
+          </div>
+        </td>
         <td>
           <div class="font-semibold">{{ getPricingDisplay(item).primaryLabel }} ¥{{ getPricingDisplay(item).primaryPrice }}</div>
           <div class="mt-1 text-xs text-muted-foreground">

@@ -1,6 +1,8 @@
 package server
 
 import (
+	"net/http"
+
 	"github.com/go-chi/chi/v5"
 )
 
@@ -33,6 +35,7 @@ func (s *Server) routes() {
 		r.Post("/me/merchant-profile", s.handleUpsertMyMerchantProfile)
 		r.Patch("/me/merchant-profile", s.handleUpsertMyMerchantProfile)
 		r.Get("/users/{username}/public-profile", s.handlePublicUserProfile)
+		r.Get("/users/{username}/reputation", s.handlePublicUserReputation)
 		r.Get("/users/{username}/reviews", s.handlePublicUserReviews)
 		r.Get("/users/{username}/disputes", s.handlePublicUserDisputes)
 		r.Get("/merchant-profiles/{slug}", s.handlePublicMerchantProfile)
@@ -49,6 +52,10 @@ func (s *Server) routes() {
 		r.Get("/api-services", s.handlePublicAPIServices)
 		r.Get("/api-services/{id}", s.handlePublicAPIService)
 		r.Post("/api-services/{id}/purchase-intents", s.limitHandler("api_purchase_intent_create", 20, s.handleCreateAPIPurchaseIntent))
+		r.Get("/api-quota-sale-slots", s.handleAPIQuotaSystemSaleSlots)
+		r.Get("/api-quota-offers", s.handlePublicAPIQuotaOffers)
+		r.Get("/api-quota-offers/{id}", s.handlePublicAPIQuotaOffer)
+		r.Post("/api-quota-offers/{id}/orders", s.limitHandlerByActor("api_quota_order_create", 3000, 12, s.handleCreateAPIQuotaOrder))
 		r.Get("/official-prices", s.handleOfficialPrices)
 		r.Get("/official-prices/{id}", s.handleOfficialPrice)
 		r.Get("/demands", s.handleDemands)
@@ -80,6 +87,9 @@ func (s *Server) routes() {
 		r.Put("/me/favorites/{targetType}/{targetId}", s.handleCreateFavorite)
 		r.Delete("/me/favorites/{targetType}/{targetId}", s.handleDeleteFavorite)
 		r.Get("/me/reviews", s.handleMyReviewCenter)
+		r.Get("/me/reputation", s.handleMyReputation)
+		r.Post("/me/transactions/{type}/{id}/review", s.handleCreateTransactionReview)
+		r.Put("/me/transactions/{type}/{id}/review", s.handleEditTransactionReview)
 		r.Put("/me/reviews/carpool-memberships/{membershipId}", s.handleSubmitCarpoolMembershipReview)
 		r.Post("/reports", s.limitHandler("report_create", 10, s.handleCreateReport))
 		r.Get("/me/reports", s.handleMyReports)
@@ -133,6 +143,27 @@ func (s *Server) routes() {
 		r.Post("/owner/api-services/{id}/resume", s.handleResumeAPIService)
 		r.Post("/owner/api-services/{id}/start-revision", s.handleStartAPIServiceRevision)
 		r.Patch("/owner/api-services/{id}/order-settings", s.handleUpdateAPIServiceOrderSettings)
+		r.Get("/owner/api-services/{id}/quota-batches", s.handleOwnerAPIQuotaBatches)
+		r.Post("/owner/api-services/{id}/quota-batches", s.handleCreateAPIQuotaBatch)
+		r.Post("/owner/api-services/{id}/quota-rush-offers", s.handleCreateAPIQuotaRushOffer)
+		r.Get("/owner/api-quota-batches/{id}/offers", s.handleOwnerAPIQuotaOffers)
+		r.Post("/owner/api-quota-batches/{id}/offers", s.handleCreateAPIQuotaOffer)
+		r.Get("/owner/api-quota-batches/{id}/rounds", s.handleOwnerAPIQuotaRounds)
+		r.Post("/owner/api-quota-batches/{id}/rounds", s.handleCreateAPIQuotaRound)
+		r.Post("/owner/api-quota-batches/{id}/publish", func(w http.ResponseWriter, r *http.Request) {
+			s.handleAPIQuotaBatchAction(w, r, "publish")
+		})
+		r.Post("/owner/api-quota-batches/{id}/pause", func(w http.ResponseWriter, r *http.Request) {
+			s.handleAPIQuotaBatchAction(w, r, "pause")
+		})
+		r.Post("/owner/api-quota-batches/{id}/resume", func(w http.ResponseWriter, r *http.Request) {
+			s.handleAPIQuotaBatchAction(w, r, "resume")
+		})
+		r.Post("/owner/api-quota-batches/{id}/archive", func(w http.ResponseWriter, r *http.Request) {
+			s.handleAPIQuotaBatchAction(w, r, "archive")
+		})
+		r.Post("/owner/api-quota-offers/{id}/credentials/import", s.handleImportAPIQuotaCredentials)
+		r.Get("/owner/api-quota-offers/{id}/credentials/summary", s.handleAPIQuotaCredentialSummary)
 		r.Get("/owner/api-purchase-intents", s.handleOwnerAPIPurchaseIntents)
 		r.Get("/owner/api-purchase-intents/{id}", s.limitHandler("api_purchase_intent_contact_read", 60, s.handleOwnerAPIPurchaseIntent))
 		r.Post("/owner/api-purchase-intents/{id}/mark-contacted", s.handleMarkAPIPurchaseIntentContacted)
@@ -221,6 +252,7 @@ func (s *Server) routes() {
 		r.Get("/admin/model-audit/runs/{id}/report", s.handleAdminModelAuditReport)
 		r.Get("/admin/model-audit/scheduled-monitors", s.handleAdminModelAuditMonitors)
 		r.Post("/admin/model-audit/scheduled-monitors", s.handleCreateModelAuditMonitor)
+		r.Post("/admin/reviews/{id}/remove", s.handleRemoveTransactionReview)
 		r.Get("/admin/reports", s.handleAdminReports)
 		r.Get("/admin/reports/{id}", s.handleAdminReport)
 		r.Post("/admin/reports/{id}/triage", s.handleTriageReport)
@@ -233,6 +265,14 @@ func (s *Server) routes() {
 		r.Post("/admin/disputes/{id}/request-info", s.handleRequestDisputeInfo)
 		r.Post("/admin/disputes/{id}/resolve", s.handleResolveDispute)
 		r.Post("/admin/disputes/{id}/close", s.handleCloseDispute)
+		r.Post("/admin/disputes/{id}/reputation-outcome", s.handleCreateDisputeReputationOutcome)
+		r.Post("/admin/users/{id}/reputation-restrictions", s.handleCreateUserReputationRestriction)
+		r.Get("/admin/users/{id}/reputation", s.handleAdminUserReputation)
+		r.Post("/admin/users/{id}/reputation/recalculate", s.handleAdminRecalculateUserReputation)
+		r.Post("/admin/reputation/recalculate", s.handleAdminRecalculateAllReputation)
+		r.Get("/admin/source-author-verifications/{resourceType}/{resourceId}", s.handleAdminSourceAuthorVerification)
+		r.Put("/admin/source-author-verifications/{resourceType}/{resourceId}", s.handleAdminUpdateSourceAuthorVerification)
+		r.Post("/admin/reputation-restrictions/{id}/revoke", s.handleRevokeUserReputationRestriction)
 		r.Get("/admin/appeals", s.handleAdminAppeals)
 		r.Get("/admin/appeals/{id}", s.handleAdminAppeal)
 		r.Post("/admin/appeals/{id}/approve", s.handleApproveAppeal)
@@ -252,5 +292,6 @@ func (s *Server) routes() {
 		r.Post("/contact-methods/{id}/set-default", s.handleSetDefaultContactMethod)
 		r.Post("/contact-methods/{id}/verify", s.handleVerifyContactMethod)
 		r.Get("/contact-sessions/{id}/contacts", s.limitHandler("contact_read", 60, s.handleReadContactSession))
+		r.Get("/reputation/rules", s.handleReputationRules)
 	})
 }

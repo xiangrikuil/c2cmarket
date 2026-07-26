@@ -11,14 +11,20 @@ import (
 	"time"
 
 	"c2c-market/backend/internal/domain"
+	"c2c-market/backend/internal/module/reputation"
 
 	"github.com/google/uuid"
 )
+
+type ActionChecker interface {
+	CheckActionAllowed(ctx context.Context, userID, role, action string) *domain.AppError
+}
 
 type Service struct {
 	mu               sync.Mutex
 	now              func() time.Time
 	repo             Repository
+	actionChecker    ActionChecker
 	methods          map[string]ContactMethod
 	versions         map[string]ContactMethodVersion
 	sessions         map[string]ContactSession
@@ -39,6 +45,10 @@ func NewService(repo Repository, now func() time.Time) *Service {
 		accessLogs:       make(map[string]ContactAccessLog),
 		methodsByUserKey: make(map[string]string),
 	}
+}
+
+func (s *Service) SetActionChecker(checker ActionChecker) {
+	s.actionChecker = checker
 }
 
 func (s *Service) CreateMethod(ctx context.Context, input ContactMethodInput) (ContactMethod, *domain.AppError) {
@@ -218,6 +228,13 @@ func (s *Service) CreateSession(ctx context.Context, input CreateContactSessionI
 
 func (s *Service) ReadSession(ctx context.Context, sessionID, viewerUserID, requestID string) (ContactSessionView, *domain.AppError) {
 	if s.repo != nil {
+		role, appErr := s.repo.ContactSessionViewerRole(ctx, sessionID, viewerUserID)
+		if appErr != nil {
+			return ContactSessionView{}, appErr
+		}
+		if appErr := s.checkContactViewAllowed(ctx, viewerUserID, role); appErr != nil {
+			return ContactSessionView{}, appErr
+		}
 		return s.repo.ReadContactSession(ctx, sessionID, viewerUserID, requestID, s.now())
 	}
 
@@ -233,6 +250,13 @@ func (s *Service) ReadSession(ctx context.Context, sessionID, viewerUserID, requ
 	}
 	if viewerUserID != session.BuyerUserID && viewerUserID != session.SellerUserID {
 		return ContactSessionView{}, domain.NewError(http.StatusForbidden, domain.CodeContactAccessForbidden, "Contact access forbidden", "你不是该联系窗口参与方。")
+	}
+	role := reputation.RoleSeller
+	if viewerUserID == session.BuyerUserID {
+		role = reputation.RoleBuyer
+	}
+	if appErr := s.checkContactViewAllowed(ctx, viewerUserID, role); appErr != nil {
+		return ContactSessionView{}, appErr
 	}
 
 	buyerVersion := s.versions[session.BuyerVersionID]
@@ -273,6 +297,13 @@ func (s *Service) ReadSession(ctx context.Context, sessionID, viewerUserID, requ
 			},
 		},
 	}, nil
+}
+
+func (s *Service) checkContactViewAllowed(ctx context.Context, userID, role string) *domain.AppError {
+	if s.actionChecker == nil {
+		return nil
+	}
+	return s.actionChecker.CheckActionAllowed(ctx, userID, role, reputation.ActionContactView)
 }
 
 func (s *Service) AccessLogCount(ctx context.Context, sessionID string) int {

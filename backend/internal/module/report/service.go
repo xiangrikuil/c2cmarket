@@ -414,6 +414,7 @@ func (s *Service) RegisterAPIOrderDispute(ctx context.Context, input apiorder.Di
 		TargetLabel:        nonEmpty(input.ServiceTitle, "API 订单"),
 		PrimaryUserID:      strings.TrimSpace(input.ActorUserID),
 		CounterpartyUserID: strings.TrimSpace(counterpartyID),
+		SubjectUserID:      strings.TrimSpace(counterpartyID),
 		Status:             DisputeStatusOpen,
 		PublicSummary:      "API 订单纠纷",
 		PublicResultCode:   PublicResultNoAction,

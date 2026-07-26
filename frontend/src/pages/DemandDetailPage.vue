@@ -41,7 +41,7 @@ const ownerPreferenceLabel = computed(() => {
           <dl class="mt-7 grid gap-4 text-sm sm:grid-cols-2">
             <div class="border-t border-border pt-3"><dt class="text-muted-foreground">地区偏好</dt><dd class="mt-1 font-medium">{{ demand.region }}</dd></div>
             <div class="border-t border-border pt-3"><dt class="text-muted-foreground">车主偏好</dt><dd class="mt-1 font-medium">{{ ownerPreferenceLabel }}</dd></div>
-            <div class="border-t border-border pt-3"><dt class="text-muted-foreground">发布者</dt><dd class="mt-1 font-medium">{{ demand.poster }} · 信任等级 {{ demand.trustLevel }}</dd></div>
+            <div class="border-t border-border pt-3"><dt class="text-muted-foreground">发布者</dt><dd class="mt-1 font-medium">{{ demand.poster }} · {{ demand.trustLevel === null ? '信任等级暂无数据' : `信任等级 ${demand.trustLevel}` }}</dd></div>
             <div class="border-t border-border pt-3"><dt class="text-muted-foreground">最近更新</dt><dd class="mt-1 font-medium">{{ demand.updatedAt }}</dd></div>
           </dl>
         </Card>

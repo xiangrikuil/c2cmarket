@@ -86,6 +86,7 @@ type adminUserResponse struct {
 	TrustLevel    *int    `json:"trustLevel,omitempty"`
 	CreatedAt     string  `json:"createdAt"`
 	LastActiveAt  *string `json:"lastActiveAt,omitempty"`
+	Version       int64   `json:"version"`
 }
 
 func (s *Server) handleDevSession(w http.ResponseWriter, r *http.Request) {
@@ -115,7 +116,7 @@ func (s *Server) handleDevSession(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleAdminUsers(w http.ResponseWriter, r *http.Request) {
-	user, _, appErr := s.requireSession(r)
+	user, _, appErr := s.requireSession(w, r)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
@@ -190,7 +191,7 @@ func (s *Server) handleConfirmEmailRegistration(w http.ResponseWriter, r *http.R
 }
 
 func (s *Server) handleSetPassword(w http.ResponseWriter, r *http.Request) {
-	user, _, appErr := s.requireSessionAndCSRF(r)
+	user, _, appErr := s.requireSessionAndCSRF(w, r)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
@@ -261,7 +262,7 @@ func (s *Server) handleGetSession(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, r, domain.NewError(http.StatusUnauthorized, domain.CodeSessionExpired, "Session required", "请先登录。"))
 		return
 	}
-	user, session, appErr := s.requireSession(r)
+	user, session, appErr := s.requireSession(w, r)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
@@ -280,7 +281,7 @@ func (s *Server) handleGetSession(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
-	_, session, appErr := s.requireSessionAndCSRF(r)
+	_, session, appErr := s.requireSessionAndCSRF(w, r)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
@@ -324,6 +325,7 @@ func toAdminUserResponses(items []auth.AdminUser) []adminUserResponse {
 			TrustLevel:    trustLevel,
 			CreatedAt:     item.CreatedAt.UTC().Format(time.RFC3339),
 			LastActiveAt:  formatOptionalTime(item.LastActiveAt),
+			Version:       item.Version,
 		})
 	}
 	return result
@@ -343,6 +345,10 @@ func toLinuxDoBindingDTO(binding *auth.LinuxDoBinding) sessionLinuxDoBindingDTO 
 }
 
 func (s *Server) setSessionCookie(w http.ResponseWriter, session auth.Session) {
+	maxAge := 0
+	if !session.RenewedAt.IsZero() && session.ExpiresAt.After(session.RenewedAt) {
+		maxAge = int(session.ExpiresAt.Sub(session.RenewedAt) / time.Second)
+	}
 	http.SetCookie(w, &http.Cookie{
 		Name:     sessionCookieName,
 		Value:    session.ID,
@@ -351,6 +357,7 @@ func (s *Server) setSessionCookie(w http.ResponseWriter, session auth.Session) {
 		Secure:   s.cookieSecure,
 		SameSite: http.SameSiteLaxMode,
 		Expires:  session.ExpiresAt,
+		MaxAge:   maxAge,
 	})
 }
 

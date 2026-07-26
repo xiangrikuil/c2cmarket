@@ -3,6 +3,7 @@ package server
 import (
 	"encoding/json"
 	"net/http"
+	"strconv"
 	"time"
 
 	"c2c-market/backend/internal/domain"
@@ -13,18 +14,38 @@ import (
 )
 
 type reviewCenterRowDTO struct {
-	ID                   string   `json:"id"`
-	SourceType           string   `json:"sourceType"`
-	SourceID             string   `json:"sourceId"`
-	Target               string   `json:"target"`
-	CounterpartyUsername string   `json:"counterpartyUsername"`
-	CounterpartyName     string   `json:"counterpartyName"`
-	Status               string   `json:"status"`
-	Rating               int      `json:"rating"`
-	Tags                 []string `json:"tags"`
-	Note                 string   `json:"note"`
-	CreatedAt            string   `json:"createdAt"`
-	UpdatedAt            string   `json:"updatedAt"`
+	ID                    string   `json:"id"`
+	TransactionType       string   `json:"transactionType"`
+	TransactionID         string   `json:"transactionId"`
+	SourceType            string   `json:"sourceType"`
+	SourceID              string   `json:"sourceId"`
+	Direction             string   `json:"direction"`
+	Target                string   `json:"target"`
+	CounterpartyUsername  string   `json:"counterpartyUsername"`
+	CounterpartyName      string   `json:"counterpartyName"`
+	ReviewerRole          string   `json:"reviewerRole"`
+	RevieweeRole          string   `json:"revieweeRole"`
+	Status                string   `json:"status"`
+	Visibility            string   `json:"visibility"`
+	CounterpartySubmitted bool     `json:"counterpartySubmitted"`
+	CanCreate             bool     `json:"canCreate"`
+	CanEdit               bool     `json:"canEdit"`
+	Rating                *int     `json:"rating"`
+	Tags                  []string `json:"tags"`
+	Note                  *string  `json:"note"`
+	CompletedAt           string   `json:"completedAt"`
+	ReviewDeadlineAt      string   `json:"reviewDeadlineAt"`
+	SubmittedAt           *string  `json:"submittedAt"`
+	VisibleAt             *string  `json:"visibleAt"`
+	FrozenAt              *string  `json:"frozenAt"`
+	CreatedAt             string   `json:"createdAt"`
+	UpdatedAt             string   `json:"updatedAt"`
+	Version               int64    `json:"version"`
+}
+
+type reviewCenterResponse struct {
+	Items      []reviewCenterRowDTO `json:"items"`
+	PresetTags []string             `json:"presetTags"`
 }
 
 type submitReviewRequest struct {
@@ -33,19 +54,26 @@ type submitReviewRequest struct {
 	Note   string   `json:"note"`
 }
 
+type removeReviewRequest struct {
+	Reason string `json:"reason"`
+}
+
 type publicReviewDTO struct {
-	ID          string   `json:"id"`
-	Username    string   `json:"username"`
-	Date        string   `json:"date"`
-	ServiceType string   `json:"serviceType"`
-	Rating      int      `json:"rating"`
-	Tags        []string `json:"tags"`
-	Note        string   `json:"note"`
-	Verified    bool     `json:"verified"`
+	ID              string   `json:"id"`
+	Username        string   `json:"username"`
+	Date            string   `json:"date"`
+	ServiceType     string   `json:"serviceType"`
+	TransactionType string   `json:"transactionType"`
+	ReviewerRole    string   `json:"reviewerRole"`
+	RevieweeRole    string   `json:"revieweeRole"`
+	Rating          int      `json:"rating"`
+	Tags            []string `json:"tags"`
+	Note            string   `json:"note"`
+	Verified        bool     `json:"verified"`
 }
 
 func (s *Server) handleMyReviewCenter(w http.ResponseWriter, r *http.Request) {
-	user, _, appErr := s.requireSession(r)
+	user, _, appErr := s.requireSession(w, r)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
@@ -55,11 +83,59 @@ func (s *Server) handleMyReviewCenter(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, r, appErr)
 		return
 	}
-	writeJSON(w, http.StatusOK, listResponse[reviewCenterRowDTO]{Items: toReviewCenterRowDTOs(rows)})
+	writeJSON(w, http.StatusOK, reviewCenterResponse{
+		Items:      toReviewCenterRowDTOs(rows),
+		PresetTags: append([]string{}, review.PresetTags...),
+	})
+}
+
+func (s *Server) handleCreateTransactionReview(w http.ResponseWriter, r *http.Request) {
+	s.handleSaveTransactionReview(w, r, review.OperationCreate, http.StatusCreated)
+}
+
+func (s *Server) handleEditTransactionReview(w http.ResponseWriter, r *http.Request) {
+	s.handleSaveTransactionReview(w, r, review.OperationEdit, http.StatusOK)
+}
+
+func (s *Server) handleSaveTransactionReview(w http.ResponseWriter, r *http.Request, operation string, responseStatus int) {
+	user, _, appErr := s.requireSessionAndCSRF(w, r)
+	if appErr != nil {
+		writeProblem(w, r, appErr)
+		return
+	}
+	body, req, appErr := decodeStrictJSON[submitReviewRequest](r)
+	if appErr != nil {
+		writeProblem(w, r, appErr)
+		return
+	}
+	transactionType := chi.URLParam(r, "type")
+	transactionID := chi.URLParam(r, "id")
+	routeKey := r.Method + " /api/v1/me/transactions/{type}/{id}/review:" + transactionType + ":" + transactionID
+	completion, appErr := s.app.SubmitTransactionReviewWithIdempotency(
+		r.Context(),
+		user.ID,
+		routeKey,
+		r.Header.Get("Idempotency-Key"),
+		requestHash(r.Method, routeKey, body),
+		review.SubmitReviewInput{
+			TransactionType: transactionType,
+			TransactionID:   transactionID,
+			Operation:       operation,
+			Rating:          req.Rating,
+			Tags:            req.Tags,
+			Note:            req.Note,
+		},
+		reviewMutationCompletionBuilder(responseStatus),
+	)
+	if appErr != nil {
+		writeProblem(w, r, appErr)
+		return
+	}
+	writeIdempotencyCompletion(w, completion)
 }
 
 func (s *Server) handleSubmitCarpoolMembershipReview(w http.ResponseWriter, r *http.Request) {
-	user, _, appErr := s.requireSessionAndCSRF(r)
+	user, _, appErr := s.requireSessionAndCSRF(w, r)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
@@ -78,30 +154,58 @@ func (s *Server) handleSubmitCarpoolMembershipReview(w http.ResponseWriter, r *h
 		r.Header.Get("Idempotency-Key"),
 		requestHash(r.Method, routeKey, body),
 		review.SubmitReviewInput{
-			SourceType: review.SourceCarpoolMembership,
-			SourceID:   membershipID,
-			Rating:     req.Rating,
-			Tags:       req.Tags,
-			Note:       req.Note,
+			TransactionType: review.TransactionCarpoolMembership,
+			TransactionID:   membershipID,
+			Operation:       review.OperationLegacyUpsert,
+			Rating:          req.Rating,
+			Tags:            req.Tags,
+			Note:            req.Note,
 		},
-		func(result review.MutationResult) (idempotency.Completion, *domain.AppError) {
-			responseBody, marshalErr := json.Marshal(toReviewCenterRowDTO(result.Row))
-			if marshalErr != nil {
-				return idempotency.Completion{}, domain.NewError(http.StatusInternalServerError, domain.CodeInternalError, "Internal error", "响应编码失败。")
-			}
-			return idempotency.Completion{
-				Status:       http.StatusOK,
-				ContentType:  "application/json; charset=utf-8",
-				Body:         responseBody,
-				ResourceType: "review",
-				ResourceID:   result.Row.ID,
-			}, nil
-		},
+		reviewMutationCompletionBuilder(http.StatusOK),
 	)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
 	}
+	writeIdempotencyCompletion(w, completion)
+}
+
+func (s *Server) handleRemoveTransactionReview(w http.ResponseWriter, r *http.Request) {
+	user, _, appErr := s.requireSessionAndCSRF(w, r)
+	if appErr != nil {
+		writeProblem(w, r, appErr)
+		return
+	}
+	body, req, appErr := decodeStrictJSON[removeReviewRequest](r)
+	if appErr != nil {
+		writeProblem(w, r, appErr)
+		return
+	}
+	version, appErr := requireIfMatchVersion(r)
+	if appErr != nil {
+		writeProblem(w, r, appErr)
+		return
+	}
+	reviewID := chi.URLParam(r, "id")
+	routeKey := "POST /api/v1/admin/reviews/{id}/remove:" + reviewID
+	completion, appErr := s.app.AdminRemoveTransactionReviewWithIdempotency(
+		r.Context(),
+		user,
+		routeKey,
+		r.Header.Get("Idempotency-Key"),
+		requestHash(r.Method, routeKey, body),
+		review.RemoveReviewInput{
+			ReviewID:        reviewID,
+			ExpectedVersion: version,
+			Reason:          req.Reason,
+		},
+		reviewMutationCompletionBuilder(http.StatusOK),
+	)
+	if appErr != nil {
+		writeProblem(w, r, appErr)
+		return
+	}
+	w.Header().Set("ETag", `"`+strconv.FormatInt(version+1, 10)+`"`)
 	writeIdempotencyCompletion(w, completion)
 }
 
@@ -114,6 +218,22 @@ func (s *Server) handlePublicUserReviews(w http.ResponseWriter, r *http.Request)
 	writeJSON(w, http.StatusOK, listResponse[publicReviewDTO]{Items: toPublicReviewDTOs(items)})
 }
 
+func reviewMutationCompletionBuilder(status int) review.CompletionBuilder {
+	return func(result review.MutationResult) (idempotency.Completion, *domain.AppError) {
+		responseBody, err := json.Marshal(toReviewCenterRowDTO(result.Row))
+		if err != nil {
+			return idempotency.Completion{}, domain.NewError(http.StatusInternalServerError, domain.CodeInternalError, "Internal error", "响应编码失败。")
+		}
+		return idempotency.Completion{
+			Status:       status,
+			ContentType:  "application/json; charset=utf-8",
+			Body:         responseBody,
+			ResourceType: "review",
+			ResourceID:   result.Row.ID,
+		}, nil
+	}
+}
+
 func toReviewCenterRowDTOs(rows []review.ReviewCenterRow) []reviewCenterRowDTO {
 	items := make([]reviewCenterRowDTO, 0, len(rows))
 	for _, row := range rows {
@@ -123,39 +243,74 @@ func toReviewCenterRowDTOs(rows []review.ReviewCenterRow) []reviewCenterRowDTO {
 }
 
 func toReviewCenterRowDTO(row review.ReviewCenterRow) reviewCenterRowDTO {
-	return reviewCenterRowDTO{
-		ID:                   row.ID,
-		SourceType:           row.SourceType,
-		SourceID:             row.SourceID,
-		Target:               row.Target,
-		CounterpartyUsername: row.CounterpartyUsername,
-		CounterpartyName:     row.CounterpartyName,
-		Status:               row.Status,
-		Rating:               row.Rating,
-		Tags:                 append([]string{}, row.Tags...),
-		Note:                 row.Note,
-		CreatedAt:            row.CreatedAt.UTC().Format(time.RFC3339),
-		UpdatedAt:            row.UpdatedAt.UTC().Format(time.RFC3339),
+	item := reviewCenterRowDTO{
+		ID:                    row.ID,
+		TransactionType:       row.TransactionType,
+		TransactionID:         row.TransactionID,
+		SourceType:            row.TransactionType,
+		SourceID:              row.TransactionID,
+		Direction:             row.Direction,
+		Target:                row.Target,
+		CounterpartyUsername:  row.CounterpartyUsername,
+		CounterpartyName:      row.CounterpartyName,
+		ReviewerRole:          row.ReviewerRole,
+		RevieweeRole:          row.RevieweeRole,
+		Status:                row.Status,
+		Visibility:            row.Visibility,
+		CounterpartySubmitted: row.CounterpartySubmitted,
+		CanCreate:             row.CanCreate,
+		CanEdit:               row.CanEdit,
+		Tags:                  []string{},
+		CompletedAt:           formatReviewTime(row.CompletedAt),
+		ReviewDeadlineAt:      formatReviewTime(row.ReviewDeadlineAt),
+		SubmittedAt:           formatOptionalReviewTime(row.SubmittedAt),
+		VisibleAt:             formatOptionalReviewTime(row.VisibleAt),
+		FrozenAt:              formatOptionalReviewTime(row.FrozenAt),
+		CreatedAt:             formatReviewTime(row.CreatedAt),
+		UpdatedAt:             formatReviewTime(row.UpdatedAt),
+		Version:               row.Version,
 	}
+	if row.ContentVisible {
+		rating := row.Rating
+		note := row.Note
+		item.Rating = &rating
+		item.Tags = append([]string{}, row.Tags...)
+		item.Note = &note
+	}
+	return item
 }
 
 func toPublicReviewDTOs(items []review.PublicReview) []publicReviewDTO {
 	result := make([]publicReviewDTO, 0, len(items))
 	for _, item := range items {
-		result = append(result, toPublicReviewDTO(item))
+		result = append(result, publicReviewDTO{
+			ID:              item.ID,
+			Username:        item.ReviewerUsername,
+			Date:            item.Date.UTC().Format("2006-01-02"),
+			ServiceType:     item.ServiceType,
+			TransactionType: item.TransactionType,
+			ReviewerRole:    item.ReviewerRole,
+			RevieweeRole:    item.RevieweeRole,
+			Rating:          item.Rating,
+			Tags:            append([]string{}, item.Tags...),
+			Note:            item.Note,
+			Verified:        item.Verified,
+		})
 	}
 	return result
 }
 
-func toPublicReviewDTO(item review.PublicReview) publicReviewDTO {
-	return publicReviewDTO{
-		ID:          item.ID,
-		Username:    item.Username,
-		Date:        item.Date.UTC().Format("2006-01-02"),
-		ServiceType: item.ServiceType,
-		Rating:      item.Rating,
-		Tags:        append([]string{}, item.Tags...),
-		Note:        item.Note,
-		Verified:    item.Verified,
+func formatReviewTime(value time.Time) string {
+	if value.IsZero() {
+		return ""
 	}
+	return value.UTC().Format(time.RFC3339)
+}
+
+func formatOptionalReviewTime(value *time.Time) *string {
+	if value == nil || value.IsZero() {
+		return nil
+	}
+	formatted := value.UTC().Format(time.RFC3339)
+	return &formatted
 }

@@ -76,6 +76,9 @@ type disputeResponse struct {
 	CounterpartyUserID   string  `json:"counterpartyUserId,omitempty"`
 	CounterpartyUsername string  `json:"counterpartyUsername"`
 	CounterpartyName     string  `json:"counterpartyName"`
+	SubjectUserID        string  `json:"subjectUserId,omitempty"`
+	SubjectUsername      string  `json:"subjectUsername,omitempty"`
+	SubjectName          string  `json:"subjectName,omitempty"`
 	Status               string  `json:"status"`
 	PublicSummary        string  `json:"publicSummary"`
 	PublicResultCode     string  `json:"publicResultCode"`
@@ -126,7 +129,7 @@ type adminMutationResponse struct {
 }
 
 func (s *Server) handleCreateReport(w http.ResponseWriter, r *http.Request) {
-	user, _, appErr := s.requireSessionAndCSRF(r)
+	user, _, appErr := s.requireSessionAndCSRF(w, r)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
@@ -161,7 +164,7 @@ func (s *Server) handleCreateReport(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleMyReports(w http.ResponseWriter, r *http.Request) {
-	user, _, appErr := s.requireSession(r)
+	user, _, appErr := s.requireSession(w, r)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
@@ -175,7 +178,7 @@ func (s *Server) handleMyReports(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleCreateAppeal(w http.ResponseWriter, r *http.Request) {
-	user, _, appErr := s.requireSessionAndCSRF(r)
+	user, _, appErr := s.requireSessionAndCSRF(w, r)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
@@ -210,7 +213,7 @@ func (s *Server) handleCreateAppeal(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleMyAppeals(w http.ResponseWriter, r *http.Request) {
-	user, _, appErr := s.requireSession(r)
+	user, _, appErr := s.requireSession(w, r)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
@@ -233,7 +236,7 @@ func (s *Server) handlePublicUserDisputes(w http.ResponseWriter, r *http.Request
 }
 
 func (s *Server) handleAdminReports(w http.ResponseWriter, r *http.Request) {
-	user, _, appErr := s.requireSession(r)
+	user, _, appErr := s.requireSession(w, r)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
@@ -255,7 +258,7 @@ func (s *Server) handleAdminReports(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleAdminReport(w http.ResponseWriter, r *http.Request) {
-	user, _, appErr := s.requireSession(r)
+	user, _, appErr := s.requireSession(w, r)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
@@ -290,7 +293,7 @@ func (s *Server) handleCloseReport(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleAdminReportAction(w http.ResponseWriter, r *http.Request, action string) {
-	user, _, appErr := s.requireSessionAndCSRF(r)
+	user, _, appErr := s.requireSessionAndCSRF(w, r)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
@@ -325,7 +328,7 @@ func (s *Server) handleAdminReportAction(w http.ResponseWriter, r *http.Request,
 }
 
 func (s *Server) handleAdminDisputes(w http.ResponseWriter, r *http.Request) {
-	user, _, appErr := s.requireSession(r)
+	user, _, appErr := s.requireSession(w, r)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
@@ -339,7 +342,7 @@ func (s *Server) handleAdminDisputes(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleAdminDispute(w http.ResponseWriter, r *http.Request) {
-	user, _, appErr := s.requireSession(r)
+	user, _, appErr := s.requireSession(w, r)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
@@ -366,7 +369,7 @@ func (s *Server) handleCloseDispute(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleAdminDisputeAction(w http.ResponseWriter, r *http.Request, action string) {
-	user, _, appErr := s.requireSessionAndCSRF(r)
+	user, _, appErr := s.requireSessionAndCSRF(w, r)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
@@ -401,7 +404,7 @@ func (s *Server) handleAdminDisputeAction(w http.ResponseWriter, r *http.Request
 }
 
 func (s *Server) handleAdminAppeals(w http.ResponseWriter, r *http.Request) {
-	user, _, appErr := s.requireSession(r)
+	user, _, appErr := s.requireSession(w, r)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
@@ -415,7 +418,7 @@ func (s *Server) handleAdminAppeals(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleAdminAppeal(w http.ResponseWriter, r *http.Request) {
-	user, _, appErr := s.requireSession(r)
+	user, _, appErr := s.requireSession(w, r)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
@@ -438,7 +441,7 @@ func (s *Server) handleRejectAppeal(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleAdminAppealAction(w http.ResponseWriter, r *http.Request, action string) {
-	user, _, appErr := s.requireSessionAndCSRF(r)
+	user, _, appErr := s.requireSessionAndCSRF(w, r)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
@@ -594,6 +597,8 @@ func toDisputeResponse(item report.DisputeCase, includeAdmin bool) disputeRespon
 		PrimaryDisplayName:   item.PrimaryDisplayName,
 		CounterpartyUsername: item.CounterpartyUsername,
 		CounterpartyName:     item.CounterpartyName,
+		SubjectUsername:      item.SubjectUsername,
+		SubjectName:          item.SubjectName,
 		Status:               item.Status,
 		PublicSummary:        item.PublicSummary,
 		PublicResultCode:     item.PublicResultCode,
@@ -608,6 +613,7 @@ func toDisputeResponse(item report.DisputeCase, includeAdmin bool) disputeRespon
 	if includeAdmin {
 		response.PrimaryUserID = item.PrimaryUserID
 		response.CounterpartyUserID = item.CounterpartyUserID
+		response.SubjectUserID = item.SubjectUserID
 		response.AdminReason = item.AdminReason
 		response.OpenedByAdminID = item.OpenedByAdminID
 	}

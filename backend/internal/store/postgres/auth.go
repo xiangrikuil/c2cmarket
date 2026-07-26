@@ -120,7 +120,7 @@ func (s *Store) ListAdminUsers(ctx context.Context) ([]auth.AdminUser, *domain.A
 		SELECT u.id::text, u.username, u.display_name, u.account_status,
 		       EXISTS(SELECT 1 FROM user_permissions p WHERE p.user_id = u.id AND p.permission = 'admin') AS is_admin,
 		       l.linux_do_user_id, l.linux_do_username, l.trust_level, l.avatar_url, l.bound_at, l.last_synced_at,
-		       u.created_at, u.last_active_at
+		       u.created_at, u.last_active_at, u.version
 		FROM users u
 		LEFT JOIN linux_do_bindings l ON l.user_id = u.id
 		ORDER BY u.created_at DESC, u.id DESC
@@ -148,6 +148,7 @@ func (s *Store) ListAdminUsers(ctx context.Context) ([]auth.AdminUser, *domain.A
 			&binding.lastSyncedAt,
 			&item.CreatedAt,
 			&item.LastActiveAt,
+			&item.Version,
 		); err != nil {
 			return nil, internalStoreError()
 		}
@@ -485,7 +486,7 @@ func (s *Store) CreateEmailRegistrationCode(ctx context.Context, input auth.Emai
 	return nil
 }
 
-func (s *Store) ConfirmEmailRegistration(ctx context.Context, input auth.EmailRegistrationConfirmInput, codeHash, sessionTokenHash, csrfTokenHash string, sessionExpiresAt, now time.Time) (auth.User, *domain.AppError) {
+func (s *Store) ConfirmEmailRegistration(ctx context.Context, input auth.EmailRegistrationConfirmInput, codeHash, sessionTokenHash, csrfTokenHash string, sessionExpiresAt, sessionAbsoluteExpiresAt, now time.Time) (auth.User, *domain.AppError) {
 	if s == nil || s.pool == nil {
 		return auth.User{}, internalStoreError()
 	}
@@ -559,9 +560,12 @@ func (s *Store) ConfirmEmailRegistration(ctx context.Context, input auth.EmailRe
 		return auth.User{}, internalStoreError()
 	}
 	_, err = tx.Exec(ctx, `
-		INSERT INTO auth_sessions (user_id, session_token_hash, csrf_token_hash, expires_at, created_at, last_seen_at)
-		VALUES ($1, $2, $3, $4, $5, $5)
-	`, user.ID, strings.TrimSpace(sessionTokenHash), strings.TrimSpace(csrfTokenHash), sessionExpiresAt, now)
+		INSERT INTO auth_sessions (
+			user_id, session_token_hash, csrf_token_hash, expires_at,
+			renewed_at, absolute_expires_at, created_at, updated_at, last_seen_at
+		)
+		VALUES ($1, $2, $3, $4, $6, $5, $6, $6, $6)
+	`, user.ID, strings.TrimSpace(sessionTokenHash), strings.TrimSpace(csrfTokenHash), sessionExpiresAt, sessionAbsoluteExpiresAt, now)
 	if err != nil {
 		return auth.User{}, internalStoreError()
 	}
@@ -571,14 +575,17 @@ func (s *Store) ConfirmEmailRegistration(ctx context.Context, input auth.EmailRe
 	return user, nil
 }
 
-func (s *Store) CreateSession(ctx context.Context, userID, sessionTokenHash, csrfTokenHash string, expiresAt, now time.Time) *domain.AppError {
+func (s *Store) CreateSession(ctx context.Context, userID, sessionTokenHash, csrfTokenHash string, expiresAt, absoluteExpiresAt, now time.Time) *domain.AppError {
 	if s == nil || s.pool == nil {
 		return internalStoreError()
 	}
 	_, err := s.pool.Exec(ctx, `
-		INSERT INTO auth_sessions (user_id, session_token_hash, csrf_token_hash, expires_at, created_at, last_seen_at)
-		VALUES ($1, $2, $3, $4, $5, $5)
-	`, userID, sessionTokenHash, csrfTokenHash, expiresAt, now)
+		INSERT INTO auth_sessions (
+			user_id, session_token_hash, csrf_token_hash, expires_at,
+			renewed_at, absolute_expires_at, created_at, updated_at, last_seen_at
+		)
+		VALUES ($1, $2, $3, $4, $6, $5, $6, $6, $6)
+	`, userID, sessionTokenHash, csrfTokenHash, expiresAt, absoluteExpiresAt, now)
 	if err != nil {
 		return internalStoreError()
 	}
@@ -593,13 +600,40 @@ func (s *Store) GetSessionWithCSRF(ctx context.Context, sessionTokenHash, csrfTo
 	return s.getSession(ctx, sessionTokenHash, csrfTokenHash, true, now)
 }
 
+func (s *Store) RenewSession(ctx context.Context, sessionTokenHash string, now, targetExpiresAt, renewBefore time.Time) (time.Time, bool, *domain.AppError) {
+	if s == nil || s.pool == nil {
+		return time.Time{}, false, internalStoreError()
+	}
+	var expiresAt time.Time
+	err := s.pool.QueryRow(ctx, `
+		UPDATE auth_sessions
+		SET renewed_at = $2,
+		    expires_at = LEAST($3, absolute_expires_at),
+		    updated_at = $2,
+		    last_seen_at = $2
+		WHERE session_token_hash = $1
+		  AND revoked_at IS NULL
+		  AND expires_at > $2
+		  AND absolute_expires_at > $2
+		  AND renewed_at <= $4
+		RETURNING expires_at
+	`, sessionTokenHash, now, targetExpiresAt, renewBefore).Scan(&expiresAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return time.Time{}, false, nil
+	}
+	if err != nil {
+		return time.Time{}, false, internalStoreError()
+	}
+	return expiresAt, true, nil
+}
+
 func (s *Store) RefreshSessionCSRF(ctx context.Context, sessionTokenHash, csrfTokenHash string, now time.Time) *domain.AppError {
 	if s == nil || s.pool == nil {
 		return internalStoreError()
 	}
 	_, err := s.pool.Exec(ctx, `
 		UPDATE auth_sessions
-		SET csrf_token_hash = $2, last_seen_at = $3
+		SET csrf_token_hash = $2, last_seen_at = $3, updated_at = $3
 		WHERE session_token_hash = $1
 	`, sessionTokenHash, csrfTokenHash, now)
 	if err != nil {
@@ -614,7 +648,7 @@ func (s *Store) RevokeSession(ctx context.Context, sessionTokenHash string, revo
 	}
 	_, err := s.pool.Exec(ctx, `
 		UPDATE auth_sessions
-		SET revoked_at = $2
+		SET revoked_at = $2, updated_at = $2
 		WHERE session_token_hash = $1
 	`, sessionTokenHash, revokedAt)
 	if err != nil {
@@ -630,7 +664,7 @@ func (s *Store) getSession(ctx context.Context, sessionTokenHash, csrfTokenHash 
 	query := `
 		SELECT u.id::text, u.username, u.display_name, u.account_status,
 		       EXISTS(SELECT 1 FROM user_permissions p WHERE p.user_id = u.id AND p.permission = 'admin') AS is_admin,
-		       s.session_token_hash, s.user_id::text, s.expires_at, s.revoked_at,
+		       s.session_token_hash, s.user_id::text, s.expires_at, s.renewed_at, s.absolute_expires_at, s.revoked_at,
 		       l.linux_do_user_id, l.linux_do_username, l.trust_level, l.avatar_url, l.bound_at, l.last_synced_at
 		FROM auth_sessions s
 		JOIN users u ON u.id = s.user_id
@@ -655,6 +689,8 @@ func (s *Store) getSession(ctx context.Context, sessionTokenHash, csrfTokenHash 
 		&session.ID,
 		&session.UserID,
 		&session.ExpiresAt,
+		&session.RenewedAt,
+		&session.AbsoluteExpiresAt,
 		&session.RevokedAt,
 		&binding.userID,
 		&binding.username,
@@ -675,14 +711,13 @@ func (s *Store) getSession(ctx context.Context, sessionTokenHash, csrfTokenHash 
 	if session.RevokedAt != nil {
 		return auth.User{}, auth.Session{}, domain.NewError(http.StatusUnauthorized, domain.CodeSessionRevoked, "Session revoked", "当前会话已退出。")
 	}
-	if !now.Before(session.ExpiresAt) {
+	if !now.Before(session.ExpiresAt) || !now.Before(session.AbsoluteExpiresAt) {
 		return auth.User{}, auth.Session{}, domain.NewError(http.StatusUnauthorized, domain.CodeSessionExpired, "Session expired", "当前会话已过期。")
 	}
 	if user.Status != "active" {
 		return auth.User{}, auth.Session{}, domain.NewError(http.StatusForbidden, domain.CodeAccountRestricted, "Account restricted", "当前账号不可执行该操作。")
 	}
 	applyAuthLinuxDoBinding(&user, binding)
-	_, _ = s.pool.Exec(ctx, `UPDATE auth_sessions SET last_seen_at = $2 WHERE session_token_hash = $1`, sessionTokenHash, now)
 	return user, session, nil
 }
 

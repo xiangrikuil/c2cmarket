@@ -10,6 +10,7 @@ import (
 	"c2c-market/backend/internal/module/apiintent"
 	"c2c-market/backend/internal/module/apimarket"
 	"c2c-market/backend/internal/module/apiorder"
+	"c2c-market/backend/internal/module/apiquota"
 	"c2c-market/backend/internal/module/auth"
 	"c2c-market/backend/internal/module/carpool"
 	"c2c-market/backend/internal/module/catalog"
@@ -23,6 +24,7 @@ import (
 	"c2c-market/backend/internal/module/officialprice"
 	"c2c-market/backend/internal/module/profile"
 	"c2c-market/backend/internal/module/report"
+	"c2c-market/backend/internal/module/reputation"
 	"c2c-market/backend/internal/module/review"
 	"c2c-market/backend/internal/module/search"
 )
@@ -40,6 +42,8 @@ type APIServiceRepository = apimarket.Repository
 type APIPurchaseIntentRepository = apiintent.Repository
 
 type APIOrderRepository = apiorder.Repository
+
+type APIQuotaRepository = apiquota.Repository
 
 type AnnouncementRepository = announcement.Repository
 
@@ -63,6 +67,8 @@ type SearchRepository = search.Repository
 
 type ReportRepository = report.Repository
 
+type ReputationRepository = reputation.Repository
+
 type ModelAuditRepository = modelaudit.Repository
 
 type Persistence interface {
@@ -73,6 +79,7 @@ type Persistence interface {
 	APIServiceRepository
 	APIPurchaseIntentRepository
 	APIOrderRepository
+	APIQuotaRepository
 	AnnouncementRepository
 	NotificationRepository
 	CarpoolRepository
@@ -84,6 +91,7 @@ type Persistence interface {
 	ReviewRepository
 	SearchRepository
 	ReportRepository
+	ReputationRepository
 	ModelAuditRepository
 }
 
@@ -95,6 +103,7 @@ type Repositories struct {
 	APIService        APIServiceRepository
 	APIPurchaseIntent APIPurchaseIntentRepository
 	APIOrder          APIOrderRepository
+	APIQuota          APIQuotaRepository
 	Announcement      AnnouncementRepository
 	Notification      NotificationRepository
 	Carpool           CarpoolRepository
@@ -106,6 +115,7 @@ type Repositories struct {
 	Review            ReviewRepository
 	Search            SearchRepository
 	Report            ReportRepository
+	Reputation        ReputationRepository
 	ModelAudit        ModelAuditRepository
 }
 
@@ -121,6 +131,7 @@ func RepositoriesFromPersistence(persistence Persistence) Repositories {
 		APIService:        persistence,
 		APIPurchaseIntent: persistence,
 		APIOrder:          persistence,
+		APIQuota:          persistence,
 		Announcement:      persistence,
 		Notification:      persistence,
 		Carpool:           persistence,
@@ -132,6 +143,7 @@ func RepositoriesFromPersistence(persistence Persistence) Repositories {
 		Review:            persistence,
 		Search:            persistence,
 		Report:            persistence,
+		Reputation:        persistence,
 		ModelAudit:        persistence,
 	}
 }

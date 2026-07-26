@@ -3,6 +3,7 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
 import {
   Bell,
+  BadgeCheck,
   ChevronDown,
   CircleHelp,
   Code2,
@@ -124,9 +125,10 @@ const navGroups = computed(() => {
   const accountGroup = {
     title: '账户',
     items: [
-      { label: '账户与资料', to: '/my', count: null, icon: UserRound },
+      { label: '个人中心', to: '/my', count: null, icon: UserRound },
       { label: '我的求车', to: '/my/demands', count: null, icon: ScanSearch },
       { label: '联系与收款', to: '/my/contacts', count: null, icon: MessageSquarePlus },
+      { label: '信誉与成长', to: '/my/reputation', count: null, icon: BadgeCheck },
       { label: '安全设置', to: '/my/account', count: null, icon: ShieldCheck },
       { label: '反馈', to: '/my/feedback', count: feedbackMenuUnreadCount.value, icon: CircleHelp },
     ],

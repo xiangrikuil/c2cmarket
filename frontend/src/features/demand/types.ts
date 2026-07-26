@@ -7,7 +7,7 @@ export type DemandRecord = {
   maxPrice: number
   require: string
   poster: string
-  trustLevel: number
+  trustLevel: number | null
   linuxdoPost: string
   status: DemandStatus
   region: string

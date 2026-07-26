@@ -236,3 +236,37 @@ Committed and pushed marketplace updates, including API order payment QR snapsho
 ### Next Steps
 
 - None - task complete
+
+
+## Session 7: 修订信誉系统实现任务书
+
+**Date**: 2026-07-24
+**Task**: 修订信誉系统实现任务书
+**Package**: frontend
+**Branch**: `docs/open-source-readme`
+
+### Summary
+
+重构信誉系统母 PRD 为六个可验收子任务，修复双盲评价、纠纷责任、限制语义、时间失效、隐私和原帖验证规则，并同步覆盖 Downloads 原文件。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `0f14ad7` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

@@ -5,9 +5,13 @@ import (
 
 	"c2c-market/backend/internal/domain"
 	"c2c-market/backend/internal/module/idempotency"
+	"c2c-market/backend/internal/module/reputation"
 )
 
 const (
+	PurchaseKindAPIService        = "api_service"
+	PurchaseKindLimitedQuotaOffer = "limited_quota_offer"
+
 	StatusPendingPayment    = "pending_payment"
 	StatusPaymentSubmitted  = "payment_submitted"
 	StatusPaymentIssue      = "payment_issue"
@@ -44,6 +48,7 @@ const (
 
 type Order struct {
 	ID                            string
+	PurchaseKind                  string
 	APIPurchaseIntentID           string
 	APIServiceID                  string
 	BuyerUserID                   string
@@ -60,6 +65,30 @@ type Order struct {
 	RequestedUSDAllowanceSnapshot string
 	CNYPerUSDAllowanceSnapshot    string
 	PricingSnapshot               string
+	APIQuotaBatchID               string
+	APIQuotaOfferID               string
+	APIQuotaSaleRoundID           string
+	APIQuotaAllocationID          string
+	APIQuotaInventoryUnitID       string
+	APIQuotaCredentialID          string
+	QuotaOfferSnapshot            string
+	QuotaOfferNameSnapshot        string
+	QuotaUSDAllowanceSnapshot     string
+	QuotaPriceCNYSnapshot         string
+	QuotaCNYPerUSDSnapshot        string
+	QuotaModelMultiplierSnapshot  string
+	QuotaSaleCutoffAtSnapshot     *time.Time
+	QuotaExpiresAtSnapshot        *time.Time
+	QuotaSaleModeSnapshot         string
+	QuotaRoundStartsAtSnapshot    *time.Time
+	QuotaRoundEndsAtSnapshot      *time.Time
+	QuotaDistributionSnapshot     string
+	QuotaTTFTBandSnapshot         string
+	QuotaRecommendedConcurrency   int
+	QuotaPerformanceConfirmedAt   *time.Time
+	QuotaPerformanceUnverified    bool
+	QuotaDeliveryETAMinutes       int
+	QuotaDeliveryMode             string
 	Amount                        string
 	Currency                      string
 	SelectedPaymentMethod         string
@@ -82,6 +111,8 @@ type Order struct {
 	CreatedAt                     time.Time
 	UpdatedAt                     time.Time
 	Version                       int64
+	BuyerReputation               *reputation.ReputationSnapshot
+	SellerReputation              *reputation.ReputationSnapshot
 }
 
 type Event struct {
