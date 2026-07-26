@@ -442,3 +442,38 @@ Bound backend ports to loopback, centralized trusted client IP resolution for lo
 ### Next Steps
 
 - None - task complete
+
+
+## Session 12: Reproducible release and build metadata
+
+**Date**: 2026-07-26
+**Task**: Reproducible release and build metadata
+**Package**: frontend
+**Branch**: `codex/prelaunch-identity-hardening`
+
+### Summary
+
+Added fixed-commit source archives and backend image builds, runtime build metadata, image-only production Compose, generated OpenAPI type drift checks, release runbooks, and a macOS-safe concurrent packaging regression.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `e2a251f` | (see git log) |
+| `fe66d07` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
