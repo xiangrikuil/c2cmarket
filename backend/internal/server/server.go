@@ -53,6 +53,7 @@ type ServerOptions struct {
 	OAuth              OAuthOptions
 	TrustXForwardedFor bool
 	TrustedProxies     []string
+	RateLimiter        *middleware.RateLimiter
 }
 
 type OAuthOptions struct {
@@ -377,6 +378,10 @@ func NewServer(service ApplicationService, options ...ServerOptions) http.Handle
 	if realtimeHub == nil {
 		realtimeHub = realtime.NewHub()
 	}
+	rateLimiter := option.RateLimiter
+	if rateLimiter == nil {
+		rateLimiter = middleware.NewRateLimiter(time.Minute)
+	}
 	server := &Server{
 		app:              service,
 		carpools:         service,
@@ -391,7 +396,7 @@ func NewServer(service ApplicationService, options ...ServerOptions) http.Handle
 		frontendOrigin:   option.FrontendOrigin,
 		cookieSecure:     option.AppEnv == config.EnvProduction,
 		allowedOrigins:   append([]string(nil), option.AllowedOrigins...),
-		rateLimiter:      middleware.NewRateLimiter(time.Minute),
+		rateLimiter:      rateLimiter,
 		oauthHTTPClient:  &http.Client{Timeout: 10 * time.Second},
 		clientIPResolver: middleware.NewClientIPResolver(option.TrustXForwardedFor, option.TrustedProxies),
 	}

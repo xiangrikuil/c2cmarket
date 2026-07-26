@@ -127,9 +127,57 @@ func TestRateLimitedEndpointReturnsProblem429(t *testing.T) {
 			if response.Code != http.StatusTooManyRequests {
 				t.Fatalf("expected 429, got %d body %s", response.Code, response.Body.String())
 			}
+			if retryAfter := response.Header().Get("Retry-After"); retryAfter != "60" {
+				t.Fatalf("expected Retry-After 60, got %q", retryAfter)
+			}
 			assertProblemCode(t, response, domain.CodeRateLimited)
 		}
 	}
+}
+
+func TestRateLimitUsesNormalizedTargetDimensionAcrossIPs(t *testing.T) {
+	server := &Server{
+		app:              app.NewService(),
+		rateLimiter:      middleware.NewRateLimiter(time.Minute),
+		clientIPResolver: middleware.NewClientIPResolver(false, nil),
+	}
+	policy := rateLimitPolicy{
+		Group:       "test_email_target",
+		IPLimit:     100,
+		UserLimit:   100,
+		TargetLimit: 1,
+	}
+	handler := server.limitPolicy(policy, func(w http.ResponseWriter, r *http.Request) {
+		if !server.allowTarget(w, r, policy, "email", r.Header.Get("X-Test-Email")) {
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	})
+	wrapped := middleware.WithRequestID(
+		middleware.WithClientIP(server.clientIPResolver, http.HandlerFunc(handler)),
+	)
+
+	first := httptest.NewRequest(http.MethodPost, "/test-email-target", nil)
+	first.RemoteAddr = "203.0.113.10:4001"
+	first.Header.Set("X-Test-Email", " Person@Example.com ")
+	firstResponse := httptest.NewRecorder()
+	wrapped.ServeHTTP(firstResponse, first)
+	if firstResponse.Code != http.StatusNoContent {
+		t.Fatalf("first target request expected no content, got %d body %s", firstResponse.Code, firstResponse.Body.String())
+	}
+
+	second := httptest.NewRequest(http.MethodPost, "/test-email-target", nil)
+	second.RemoteAddr = "203.0.113.11:4002"
+	second.Header.Set("X-Test-Email", "person@example.com")
+	secondResponse := httptest.NewRecorder()
+	wrapped.ServeHTTP(secondResponse, second)
+	if secondResponse.Code != http.StatusTooManyRequests {
+		t.Fatalf("same normalized target must be limited across IPs, got %d body %s", secondResponse.Code, secondResponse.Body.String())
+	}
+	if retryAfter := secondResponse.Header().Get("Retry-After"); retryAfter != "60" {
+		t.Fatalf("expected Retry-After 60, got %q", retryAfter)
+	}
+	assertProblemCode(t, secondResponse, domain.CodeRateLimited)
 }
 
 func TestRateLimitSeparatesAuthenticatedUserAndSharedIPBudgets(t *testing.T) {

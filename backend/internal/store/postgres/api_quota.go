@@ -1003,7 +1003,12 @@ func (s *Store) insertAPIQuotaCredentialRowsInTx(ctx context.Context, tx pgx.Tx,
 		if row.DeliveryKind == apiorder.DeliveryKindLoginAccount {
 			secret = row.Password
 		}
-		encoded, encodeErr := s.contactCodec.encode(secret)
+		credentialID := uuid.NewString()
+		fieldType := contactFieldQuotaAPIKey
+		if row.DeliveryKind == apiorder.DeliveryKindLoginAccount {
+			fieldType = contactFieldQuotaPassword
+		}
+		encoded, encodeErr := s.contactCodec.encode(secret, credentialID, fieldType)
 		if encodeErr != nil {
 			return internalStoreError()
 		}
@@ -1021,19 +1026,19 @@ func (s *Store) insertAPIQuotaCredentialRowsInTx(ctx context.Context, tx pgx.Tx,
 				id, api_quota_offer_id, seller_user_id, delivery_kind,
 				api_base_url, panel_login_url, username, instructions,
 				api_key_ciphertext, api_key_nonce, password_ciphertext, password_nonce,
-				secret_encryption_key_version, secret_fingerprint,
+				secret_encryption_key_version, secret_encryption_format, secret_fingerprint,
 				created_at, updated_at
 			) VALUES (
 				$1, $2, $3, $4,
 				$5, $6, $7, $8,
 				$9, $10, $11, $12,
-				$13, decode($14, 'hex'),
-				$15, $15
+				$13, $14, decode($15, 'hex'),
+				$16, $16
 			)
-		`, uuid.NewString(), offerID, ownerUserID, row.DeliveryKind,
+		`, credentialID, offerID, ownerUserID, row.DeliveryKind,
 			nullText(row.APIBaseURL), nullText(row.PanelLoginURL), nullText(row.Username), nullText(row.Instructions),
 			apiKeyCiphertext, apiKeyNonce, passwordCiphertext, passwordNonce,
-			encoded.EncryptionKeyVersion, fingerprint, now)
+			encoded.EncryptionKeyVersion, encoded.CipherFormat, fingerprint, now)
 		if err != nil {
 			if isUniqueViolationOnConstraint(err, "ux_api_quota_credentials_seller_fingerprint") {
 				return domain.NewFieldError(http.StatusConflict, domain.CodeInvalidStateTransition, "Credential already imported", "CSV 中存在卖家已经导入的凭据，本次导入未保存任何行。", "file", "duplicate", "CSV 中存在卖家已经导入的凭据，本次导入未保存任何行。")

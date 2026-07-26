@@ -156,6 +156,9 @@ func (s *Server) handleStartEmailRegistration(w http.ResponseWriter, r *http.Req
 		writeProblem(w, r, appErr)
 		return
 	}
+	if !s.allowTarget(w, r, emailRegistrationStartRateLimit, "email", req.Email) {
+		return
+	}
 	challenge, appErr := s.app.StartEmailRegistration(r.Context(), auth.EmailRegistrationStartInput{Email: req.Email})
 	if appErr != nil {
 		writeProblem(w, r, appErr)
@@ -172,6 +175,9 @@ func (s *Server) handleConfirmEmailRegistration(w http.ResponseWriter, r *http.R
 	req, appErr := decodeStrictJSONOnly[emailRegistrationConfirmRequest](r)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
+		return
+	}
+	if !s.allowTarget(w, r, emailRegistrationConfirmRateLimit, "email", req.Email) {
 		return
 	}
 	user, session, appErr := s.app.ConfirmEmailRegistration(r.Context(), auth.EmailRegistrationConfirmInput{

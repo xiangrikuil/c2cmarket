@@ -1275,18 +1275,20 @@ func (s *Store) readFrozenContactVersion(ctx context.Context, q queryer, version
 	}
 	var item contact.ContactItemView
 	var ciphertext, nonce []byte
+	var keyVersion, cipherFormat string
 	err := q.QueryRow(ctx, `
-		SELECT v.value_ciphertext, v.value_nonce, v.masked_value
+		SELECT v.value_ciphertext, v.value_nonce, v.encryption_key_version,
+		       v.encryption_format, v.masked_value
 		FROM contact_method_versions v
 		WHERE v.id = $1 AND v.contact_method_id = $2 AND v.owner_user_id = $3
-	`, versionID, methodID, ownerID).Scan(&ciphertext, &nonce, &item.MaskedValue)
+	`, versionID, methodID, ownerID).Scan(&ciphertext, &nonce, &keyVersion, &cipherFormat, &item.MaskedValue)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return contact.ContactItemView{}, domain.NewError(http.StatusConflict, domain.CodeMerchantContactUnavailable, "Contact unavailable", "冻结联系方式不可用。")
 	}
 	if err != nil {
 		return contact.ContactItemView{}, internalStoreError()
 	}
-	value, err := s.contactCodec.decode(ciphertext, nonce)
+	value, err := s.contactCodec.decode(ciphertext, nonce, keyVersion, cipherFormat, versionID, contactFieldMethodValue)
 	if err != nil {
 		return contact.ContactItemView{}, internalStoreError()
 	}

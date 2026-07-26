@@ -226,6 +226,9 @@ func (s *Server) handleStartEmailVerification(w http.ResponseWriter, r *http.Req
 		writeProblem(w, r, appErr)
 		return
 	}
+	if !s.allowTarget(w, r, emailVerificationStartRateLimit, "email", req.Email) {
+		return
+	}
 	challenge, appErr := s.app.StartEmailVerification(r.Context(), user, profile.EmailVerificationStartInput{Email: req.Email})
 	if appErr != nil {
 		writeProblem(w, r, appErr)
@@ -247,6 +250,9 @@ func (s *Server) handleConfirmEmailVerification(w http.ResponseWriter, r *http.R
 	req, appErr := decodeStrictJSONOnly[confirmEmailVerificationRequest](r)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
+		return
+	}
+	if !s.allowTarget(w, r, emailVerificationConfirmRateLimit, "email", req.Email) {
 		return
 	}
 	updated, appErr := s.app.ConfirmEmailVerification(r.Context(), user, profile.EmailVerificationConfirmInput{

@@ -1,6 +1,9 @@
 package database
 
 import (
+	"context"
+	"os"
+	"strings"
 	"testing"
 	"time"
 )
@@ -46,5 +49,50 @@ func TestMigrationReadinessPassesAtExpectedVersion(t *testing.T) {
 
 	if !status.OK {
 		t.Fatalf("expected current migration version to be ready: %+v", status)
+	}
+}
+
+func TestOpenPostgresWithOptionsAppliesPoolAndSessionTimeouts(t *testing.T) {
+	databaseURL := strings.TrimSpace(os.Getenv("C2C_TEST_DATABASE_URL"))
+	if databaseURL == "" {
+		t.Skip("C2C_TEST_DATABASE_URL is not configured")
+	}
+
+	options := DefaultPostgresOptions()
+	options.MaxConns = 7
+	options.MinConns = 0
+	options.StatementTimeout = 12 * time.Second
+	options.LockTimeout = 4 * time.Second
+	options.IdleInTransactionSessionTimeout = 45 * time.Second
+
+	pool, err := OpenPostgresWithOptions(context.Background(), databaseURL, options)
+	if err != nil {
+		t.Fatalf("open PostgreSQL with options: %v", err)
+	}
+	defer pool.Close()
+
+	stats := SnapshotPoolStats(pool)
+	if stats.MaxConns != options.MaxConns {
+		t.Fatalf("expected max pool size %d, got %d", options.MaxConns, stats.MaxConns)
+	}
+
+	var statementMatches, lockMatches, idleTransactionMatches bool
+	err = pool.QueryRow(context.Background(), `
+		SELECT
+			current_setting('statement_timeout')::interval = $1::interval,
+			current_setting('lock_timeout')::interval = $2::interval,
+			current_setting('idle_in_transaction_session_timeout')::interval = $3::interval
+	`, postgresDuration(options.StatementTimeout), postgresDuration(options.LockTimeout), postgresDuration(options.IdleInTransactionSessionTimeout)).
+		Scan(&statementMatches, &lockMatches, &idleTransactionMatches)
+	if err != nil {
+		t.Fatalf("read PostgreSQL session timeouts: %v", err)
+	}
+	if !statementMatches || !lockMatches || !idleTransactionMatches {
+		t.Fatalf(
+			"session timeouts were not applied: statement=%t lock=%t idle_transaction=%t",
+			statementMatches,
+			lockMatches,
+			idleTransactionMatches,
+		)
 	}
 }

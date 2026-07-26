@@ -17,7 +17,7 @@ func (s *Store) CreateContactMethod(ctx context.Context, input contact.ContactMe
 	if s == nil || s.pool == nil || s.contactCodec == nil {
 		return internalStoreError()
 	}
-	encoded, err := s.contactCodec.encode(input.Value)
+	encoded, err := s.contactCodec.encode(input.Value, version.ID, contactFieldMethodValue)
 	if err != nil {
 		return internalStoreError()
 	}
@@ -41,11 +41,13 @@ func (s *Store) CreateContactMethod(ctx context.Context, input contact.ContactMe
 	_, err = tx.Exec(ctx, `
 		INSERT INTO contact_method_versions (
 			id, contact_method_id, owner_user_id, value_ciphertext, value_nonce,
-			masked_value, value_fingerprint, encryption_key_version, fingerprint_key_version, created_at
+			masked_value, value_fingerprint, encryption_key_version, fingerprint_key_version,
+			encryption_format, created_at
 		)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
 	`, version.ID, version.ContactMethodID, version.OwnerUserID, encoded.Ciphertext, encoded.Nonce,
-		version.MaskedValue, encoded.Fingerprint, encoded.EncryptionKeyVersion, encoded.FingerprintKeyVersion, version.CreatedAt)
+		version.MaskedValue, encoded.Fingerprint, encoded.EncryptionKeyVersion, encoded.FingerprintKeyVersion,
+		encoded.CipherFormat, version.CreatedAt)
 	if err != nil {
 		return internalStoreError()
 	}
@@ -88,7 +90,8 @@ func (s *Store) ListContactMethods(ctx context.Context, userID string) ([]contac
 	}
 	rows, err := s.pool.Query(ctx, `
 		SELECT m.id::text, m.user_id::text, m.type, m.label, COALESCE(v.masked_value, ''),
-		       v.value_ciphertext, v.value_nonce, m.enabled, m.is_default, m.verified_at,
+		       v.value_ciphertext, v.value_nonce, COALESCE(v.encryption_key_version, ''),
+		       COALESCE(v.encryption_format, ''), m.enabled, m.is_default, m.verified_at,
 		       COALESCE(m.current_version_id::text, ''), m.created_at, m.updated_at, m.version
 		FROM contact_methods m
 		LEFT JOIN contact_method_versions v ON v.id = m.current_version_id
@@ -106,7 +109,7 @@ func (s *Store) UpdateContactMethod(ctx context.Context, input contact.UpdateCon
 	if s == nil || s.pool == nil || s.contactCodec == nil {
 		return contact.ContactMethod{}, internalStoreError()
 	}
-	encoded, err := s.contactCodec.encode(input.Value)
+	encoded, err := s.contactCodec.encode(input.Value, version.ID, contactFieldMethodValue)
 	if err != nil {
 		return contact.ContactMethod{}, internalStoreError()
 	}
@@ -160,11 +163,13 @@ func (s *Store) UpdateContactMethod(ctx context.Context, input contact.UpdateCon
 	_, err = tx.Exec(ctx, `
 		INSERT INTO contact_method_versions (
 			id, contact_method_id, owner_user_id, value_ciphertext, value_nonce,
-			masked_value, value_fingerprint, encryption_key_version, fingerprint_key_version, created_at
+			masked_value, value_fingerprint, encryption_key_version, fingerprint_key_version,
+			encryption_format, created_at
 		)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
 	`, version.ID, version.ContactMethodID, version.OwnerUserID, encoded.Ciphertext, encoded.Nonce,
-		version.MaskedValue, encoded.Fingerprint, encoded.EncryptionKeyVersion, encoded.FingerprintKeyVersion, version.CreatedAt)
+		version.MaskedValue, encoded.Fingerprint, encoded.EncryptionKeyVersion, encoded.FingerprintKeyVersion,
+		encoded.CipherFormat, version.CreatedAt)
 	if err != nil {
 		return contact.ContactMethod{}, internalStoreError()
 	}
@@ -367,7 +372,9 @@ func (s *Store) ReadContactSession(ctx context.Context, sessionID, viewerUserID,
 	}
 
 	rows, err := tx.Query(ctx, `
-		SELECT i.side, i.subject_user_id::text, m.type, m.label, v.value_ciphertext, v.value_nonce, v.masked_value
+		SELECT i.side, i.subject_user_id::text, m.type, m.label, v.id::text,
+		       v.value_ciphertext, v.value_nonce, v.encryption_key_version, v.encryption_format,
+		       v.masked_value
 		FROM contact_session_items i
 		JOIN contact_method_versions v ON v.id = i.contact_method_version_id
 		JOIN contact_methods m ON m.id = v.contact_method_id
@@ -383,10 +390,12 @@ func (s *Store) ReadContactSession(ctx context.Context, sessionID, viewerUserID,
 	for rows.Next() {
 		var item contact.ContactItemView
 		var ciphertext, nonce []byte
-		if err := rows.Scan(&item.Side, &item.SubjectID, &item.Type, &item.Label, &ciphertext, &nonce, &item.MaskedValue); err != nil {
+		var recordID, keyVersion, cipherFormat string
+		if err := rows.Scan(&item.Side, &item.SubjectID, &item.Type, &item.Label, &recordID,
+			&ciphertext, &nonce, &keyVersion, &cipherFormat, &item.MaskedValue); err != nil {
 			return contact.ContactSessionView{}, internalStoreError()
 		}
-		value, err := s.contactCodec.decode(ciphertext, nonce)
+		value, err := s.contactCodec.decode(ciphertext, nonce, keyVersion, cipherFormat, recordID, contactFieldMethodValue)
 		if err != nil {
 			return contact.ContactSessionView{}, internalStoreError()
 		}
@@ -534,9 +543,11 @@ func getContactMethod(ctx context.Context, q queryer, userID, methodID string) (
 func (s *Store) getContactMethodWithValue(ctx context.Context, q queryer, userID, methodID string) (contact.ContactMethod, *domain.AppError) {
 	var method contact.ContactMethod
 	var ciphertext, nonce []byte
+	var keyVersion, cipherFormat string
 	err := q.QueryRow(ctx, `
 		SELECT m.id::text, m.user_id::text, m.type, m.label, COALESCE(v.masked_value, ''),
-		       v.value_ciphertext, v.value_nonce, m.enabled, m.is_default, m.verified_at,
+		       v.value_ciphertext, v.value_nonce, COALESCE(v.encryption_key_version, ''),
+		       COALESCE(v.encryption_format, ''), m.enabled, m.is_default, m.verified_at,
 		       COALESCE(m.current_version_id::text, ''), m.created_at, m.updated_at, m.version
 		FROM contact_methods m
 		LEFT JOIN contact_method_versions v ON v.id = m.current_version_id
@@ -549,6 +560,8 @@ func (s *Store) getContactMethodWithValue(ctx context.Context, q queryer, userID
 		&method.MaskedValue,
 		&ciphertext,
 		&nonce,
+		&keyVersion,
+		&cipherFormat,
 		&method.Enabled,
 		&method.IsDefault,
 		&method.VerifiedAt,
@@ -564,7 +577,7 @@ func (s *Store) getContactMethodWithValue(ctx context.Context, q queryer, userID
 		return contact.ContactMethod{}, internalStoreError()
 	}
 	if len(ciphertext) > 0 {
-		value, err := s.contactCodec.decode(ciphertext, nonce)
+		value, err := s.contactCodec.decode(ciphertext, nonce, keyVersion, cipherFormat, method.CurrentVersionID, contactFieldMethodValue)
 		if err != nil {
 			return contact.ContactMethod{}, internalStoreError()
 		}
@@ -606,6 +619,7 @@ func (s *Store) scanContactMethodsWithValues(rows pgx.Rows) ([]contact.ContactMe
 	for rows.Next() {
 		var method contact.ContactMethod
 		var ciphertext, nonce []byte
+		var keyVersion, cipherFormat string
 		if err := rows.Scan(
 			&method.ID,
 			&method.UserID,
@@ -614,6 +628,8 @@ func (s *Store) scanContactMethodsWithValues(rows pgx.Rows) ([]contact.ContactMe
 			&method.MaskedValue,
 			&ciphertext,
 			&nonce,
+			&keyVersion,
+			&cipherFormat,
 			&method.Enabled,
 			&method.IsDefault,
 			&method.VerifiedAt,
@@ -625,7 +641,7 @@ func (s *Store) scanContactMethodsWithValues(rows pgx.Rows) ([]contact.ContactMe
 			return nil, internalStoreError()
 		}
 		if len(ciphertext) > 0 {
-			value, err := s.contactCodec.decode(ciphertext, nonce)
+			value, err := s.contactCodec.decode(ciphertext, nonce, keyVersion, cipherFormat, method.CurrentVersionID, contactFieldMethodValue)
 			if err != nil {
 				return nil, internalStoreError()
 			}

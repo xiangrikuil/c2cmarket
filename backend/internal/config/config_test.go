@@ -4,6 +4,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"c2c-market/backend/internal/database"
 )
 
 func TestLoadDefaultsToDevelopmentDevAuth(t *testing.T) {
@@ -14,6 +16,7 @@ func TestLoadDefaultsToDevelopmentDevAuth(t *testing.T) {
 	t.Setenv("EMAIL_VERIFICATION_PEPPER", "")
 	t.Setenv("MAINTENANCE_INTERVAL", "")
 	t.Setenv("MAINTENANCE_BATCH_SIZE", "")
+	clearDatabaseOptionEnv(t)
 
 	cfg, err := Load()
 	if err != nil {
@@ -37,6 +40,49 @@ func TestLoadDefaultsToDevelopmentDevAuth(t *testing.T) {
 	if cfg.Maintenance.Interval != 15*time.Minute || cfg.Maintenance.BatchSize != 500 {
 		t.Fatalf("unexpected maintenance defaults: %+v", cfg.Maintenance)
 	}
+	if cfg.Database != database.DefaultPostgresOptions() {
+		t.Fatalf("unexpected database defaults: %+v", cfg.Database)
+	}
+}
+
+func TestLoadParsesDatabaseOptions(t *testing.T) {
+	t.Setenv("APP_ENV", EnvDevelopment)
+	t.Setenv("DB_MAX_CONNS", "40")
+	t.Setenv("DB_MIN_CONNS", "4")
+	t.Setenv("DB_MAX_CONN_LIFETIME", "2h")
+	t.Setenv("DB_MAX_CONN_IDLE_TIME", "10m")
+	t.Setenv("DB_HEALTH_CHECK_PERIOD", "30s")
+	t.Setenv("DB_STATEMENT_TIMEOUT", "20s")
+	t.Setenv("DB_LOCK_TIMEOUT", "3s")
+	t.Setenv("DB_IDLE_IN_TRANSACTION_SESSION_TIMEOUT", "45s")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("load database options: %v", err)
+	}
+	expected := database.PostgresOptions{
+		MaxConns:                        40,
+		MinConns:                        4,
+		MaxConnLifetime:                 2 * time.Hour,
+		MaxConnIdleTime:                 10 * time.Minute,
+		HealthCheckPeriod:               30 * time.Second,
+		StatementTimeout:                20 * time.Second,
+		LockTimeout:                     3 * time.Second,
+		IdleInTransactionSessionTimeout: 45 * time.Second,
+	}
+	if cfg.Database != expected {
+		t.Fatalf("unexpected database options: %+v", cfg.Database)
+	}
+}
+
+func TestLoadRejectsInvalidDatabaseOptions(t *testing.T) {
+	t.Setenv("APP_ENV", EnvDevelopment)
+	t.Setenv("DB_MAX_CONNS", "4")
+	t.Setenv("DB_MIN_CONNS", "5")
+
+	if _, err := Load(); err == nil || !strings.Contains(err.Error(), "database pool configuration is invalid") {
+		t.Fatalf("expected invalid database options error, got %v", err)
+	}
 }
 
 func TestLoadParsesModelAuditAllowedHosts(t *testing.T) {
@@ -51,6 +97,63 @@ func TestLoadParsesModelAuditAllowedHosts(t *testing.T) {
 		cfg.ModelAuditAllowedHosts[0] != "api.openai.com" ||
 		cfg.ModelAuditAllowedHosts[1] != "relay.example.com" {
 		t.Fatalf("unexpected model audit allowlist: %v", cfg.ModelAuditAllowedHosts)
+	}
+}
+
+func TestLoadParsesContactKeyringsAndSelectsCurrentVersion(t *testing.T) {
+	t.Setenv("APP_ENV", EnvDevelopment)
+	t.Setenv("CONTACT_KEY_VERSION", "v2")
+	t.Setenv("CONTACT_ENCRYPTION_KEY", "")
+	t.Setenv("CONTACT_FINGERPRINT_KEY", "")
+	t.Setenv("CONTACT_ENCRYPTION_KEYRING", `{"v1":"test-encryption-v1","v2":"test-encryption-v2"}`)
+	t.Setenv("CONTACT_FINGERPRINT_KEYRING", `{"v1":"test-fingerprint-v1","v2":"test-fingerprint-v2"}`)
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("load keyring config: %v", err)
+	}
+	if cfg.ContactEncryptionKeys["v1"] != "test-encryption-v1" ||
+		cfg.ContactEncryptionKeys["v2"] != "test-encryption-v2" ||
+		cfg.ContactFingerprintKeys["v2"] != "test-fingerprint-v2" {
+		t.Fatal("unexpected contact keyring entries")
+	}
+}
+
+func TestLoadRejectsContactKeyringWithoutCurrentVersion(t *testing.T) {
+	t.Setenv("APP_ENV", EnvDevelopment)
+	t.Setenv("CONTACT_KEY_VERSION", "v2")
+	t.Setenv("CONTACT_ENCRYPTION_KEY", "")
+	t.Setenv("CONTACT_FINGERPRINT_KEY", "")
+	t.Setenv("CONTACT_ENCRYPTION_KEYRING", `{"v1":"test-encryption-v1"}`)
+	t.Setenv("CONTACT_FINGERPRINT_KEYRING", `{"v1":"test-fingerprint-v1"}`)
+
+	if _, err := Load(); err == nil || !strings.Contains(err.Error(), "CONTACT_KEY_VERSION") {
+		t.Fatalf("expected missing current keyring version error, got %v", err)
+	}
+}
+
+func TestLoadRejectsMalformedContactKeyring(t *testing.T) {
+	t.Setenv("APP_ENV", EnvDevelopment)
+	t.Setenv("CONTACT_ENCRYPTION_KEYRING", "not-json")
+
+	if _, err := Load(); err == nil || !strings.Contains(err.Error(), "CONTACT_ENCRYPTION_KEYRING") {
+		t.Fatalf("expected malformed keyring error, got %v", err)
+	}
+}
+
+func clearDatabaseOptionEnv(t *testing.T) {
+	t.Helper()
+	for _, name := range []string{
+		"DB_MAX_CONNS",
+		"DB_MIN_CONNS",
+		"DB_MAX_CONN_LIFETIME",
+		"DB_MAX_CONN_IDLE_TIME",
+		"DB_HEALTH_CHECK_PERIOD",
+		"DB_STATEMENT_TIMEOUT",
+		"DB_LOCK_TIMEOUT",
+		"DB_IDLE_IN_TRANSACTION_SESSION_TIMEOUT",
+	} {
+		t.Setenv(name, "")
 	}
 }
 

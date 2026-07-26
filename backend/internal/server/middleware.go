@@ -5,9 +5,12 @@ import (
 	"c2c-market/backend/internal/middleware"
 	"c2c-market/backend/internal/module/auth"
 	"c2c-market/backend/internal/module/idempotency"
+	"crypto/sha256"
 	"encoding/json"
 	"net/http"
+	"strconv"
 	"strings"
+	"time"
 )
 
 func (s *Server) requireSessionAndCSRF(w http.ResponseWriter, r *http.Request) (auth.User, auth.Session, *domain.AppError) {
@@ -118,21 +121,21 @@ func (s *Server) limitHandler(routeGroup string, limit int, next http.HandlerFun
 
 func (s *Server) limitHandlerByActor(routeGroup string, ipLimit, userLimit int, next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if appErr := s.checkRateLimitByActor(r, routeGroup, ipLimit, userLimit); appErr != nil {
-			writeProblem(w, r, appErr)
+		if retryAfter, appErr := s.checkRateLimitByActor(r, routeGroup, ipLimit, userLimit); appErr != nil {
+			writeRateLimitProblem(w, r, retryAfter, appErr)
 			return
 		}
 		next(w, r)
 	}
 }
 
-func (s *Server) checkRateLimit(r *http.Request, routeGroup string, limit int) *domain.AppError {
+func (s *Server) checkRateLimit(r *http.Request, routeGroup string, limit int) (time.Duration, *domain.AppError) {
 	return s.checkRateLimitByActor(r, routeGroup, limit, limit)
 }
 
-func (s *Server) checkRateLimitByActor(r *http.Request, routeGroup string, ipLimit, userLimit int) *domain.AppError {
+func (s *Server) checkRateLimitByActor(r *http.Request, routeGroup string, ipLimit, userLimit int) (time.Duration, *domain.AppError) {
 	if s.rateLimiter == nil {
-		return nil
+		return 0, nil
 	}
 	type limitKey struct {
 		value string
@@ -148,8 +151,37 @@ func (s *Server) checkRateLimitByActor(r *http.Request, routeGroup string, ipLim
 	for _, key := range keys {
 		decision := s.rateLimiter.Allow(key.value, key.limit)
 		if !decision.Allowed {
-			return domain.NewError(http.StatusTooManyRequests, domain.CodeRateLimited, "Rate limited", "请求过于频繁，请稍后再试。")
+			return decision.RetryAfter, rateLimitedError()
 		}
 	}
-	return nil
+	return 0, nil
+}
+
+func (s *Server) checkTargetRateLimit(routeGroup, targetType, target string, limit int) (time.Duration, *domain.AppError) {
+	target = strings.ToLower(strings.TrimSpace(target))
+	if s.rateLimiter == nil || target == "" || limit <= 0 {
+		return 0, nil
+	}
+	digest := sha256.Sum256([]byte(target))
+	key := "target:" + routeGroup + ":" + targetType + ":" + string(digest[:])
+	decision := s.rateLimiter.Allow(key, limit)
+	if decision.Allowed {
+		return 0, nil
+	}
+	return decision.RetryAfter, rateLimitedError()
+}
+
+func rateLimitedError() *domain.AppError {
+	return domain.NewError(http.StatusTooManyRequests, domain.CodeRateLimited, "Rate limited", "请求过于频繁，请稍后再试。")
+}
+
+func writeRateLimitProblem(w http.ResponseWriter, r *http.Request, retryAfter time.Duration, appErr *domain.AppError) {
+	if retryAfter > 0 {
+		seconds := int64((retryAfter + time.Second - 1) / time.Second)
+		if seconds < 1 {
+			seconds = 1
+		}
+		w.Header().Set("Retry-After", strconv.FormatInt(seconds, 10))
+	}
+	writeProblem(w, r, appErr)
 }

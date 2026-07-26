@@ -311,7 +311,7 @@ func (s *Store) updateAPIOrderInTx(ctx context.Context, tx pgx.Tx, input apiorde
 	autoDeliveryKind := ""
 	if action == "confirm_payment" && order.PurchaseKind == apiorder.PurchaseKindLimitedQuotaOffer && order.QuotaDeliveryMode == apiquota.DeliveryModePreimported {
 		var deliveryErr *domain.AppError
-		autoDeliveryKind, deliveryErr = deliverPreimportedAPIQuotaCredentialInTx(ctx, tx, order, now)
+		autoDeliveryKind, deliveryErr = s.deliverPreimportedAPIQuotaCredentialInTx(ctx, tx, order, now)
 		if deliveryErr != nil {
 			return apiorder.Order{}, deliveryErr
 		}
@@ -593,24 +593,24 @@ func consumeAPIQuotaInventoryInTx(ctx context.Context, tx pgx.Tx, order apiorder
 	return nil
 }
 
-func deliverPreimportedAPIQuotaCredentialInTx(ctx context.Context, tx pgx.Tx, order apiorder.Order, now time.Time) (string, *domain.AppError) {
-	if order.APIQuotaCredentialID == "" {
+func (s *Store) deliverPreimportedAPIQuotaCredentialInTx(ctx context.Context, tx pgx.Tx, order apiorder.Order, now time.Time) (string, *domain.AppError) {
+	if s == nil || s.contactCodec == nil || order.APIQuotaCredentialID == "" {
 		return "", domain.NewError(http.StatusConflict, domain.CodeAPIQuotaCredentialUnavailable, "Credential inventory unavailable", "订单预留的交付凭据不可用。")
 	}
-	var deliveryKind, apiBaseURL, panelLoginURL, username, instructions, keyVersion string
+	var deliveryKind, apiBaseURL, panelLoginURL, username, instructions, keyVersion, cipherFormat string
 	var apiKeyCiphertext, apiKeyNonce, passwordCiphertext, passwordNonce []byte
 	err := tx.QueryRow(ctx, `
 		SELECT delivery_kind, COALESCE(api_base_url, ''), COALESCE(panel_login_url, ''),
 		       COALESCE(username, ''), COALESCE(instructions, ''),
 		       api_key_ciphertext, api_key_nonce, password_ciphertext, password_nonce,
-		       secret_encryption_key_version
+		       secret_encryption_key_version, secret_encryption_format
 		FROM api_quota_credentials
 		WHERE id = $1 AND api_quota_offer_id = $2 AND seller_user_id = $3
 		  AND reserved_order_id = $4 AND status = 'reserved'
 		FOR UPDATE
 	`, order.APIQuotaCredentialID, order.APIQuotaOfferID, order.SellerUserID, order.ID).Scan(
 		&deliveryKind, &apiBaseURL, &panelLoginURL, &username, &instructions,
-		&apiKeyCiphertext, &apiKeyNonce, &passwordCiphertext, &passwordNonce, &keyVersion,
+		&apiKeyCiphertext, &apiKeyNonce, &passwordCiphertext, &passwordNonce, &keyVersion, &cipherFormat,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return "", domain.NewError(http.StatusConflict, domain.CodeAPIQuotaCredentialUnavailable, "Credential inventory unavailable", "订单预留的交付凭据不可用。")
@@ -618,21 +618,56 @@ func deliverPreimportedAPIQuotaCredentialInTx(ctx context.Context, tx pgx.Tx, or
 	if err != nil {
 		return "", internalStoreError()
 	}
+	credentialID := uuid.NewString()
+	var encoded encodedContactValue
+	switch deliveryKind {
+	case apiorder.DeliveryKindAPIKeyEndpoint:
+		plaintext, decodeErr := s.contactCodec.decode(
+			apiKeyCiphertext, apiKeyNonce, keyVersion, cipherFormat,
+			order.APIQuotaCredentialID, contactFieldQuotaAPIKey,
+		)
+		if decodeErr != nil {
+			return "", internalStoreError()
+		}
+		encoded, err = s.contactCodec.encode(plaintext, credentialID, contactFieldOrderAPIKey)
+		if err != nil {
+			return "", internalStoreError()
+		}
+		apiKeyCiphertext = encoded.Ciphertext
+		apiKeyNonce = encoded.Nonce
+	case apiorder.DeliveryKindLoginAccount:
+		plaintext, decodeErr := s.contactCodec.decode(
+			passwordCiphertext, passwordNonce, keyVersion, cipherFormat,
+			order.APIQuotaCredentialID, contactFieldQuotaPassword,
+		)
+		if decodeErr != nil {
+			return "", internalStoreError()
+		}
+		encoded, err = s.contactCodec.encode(plaintext, credentialID, contactFieldOrderPassword)
+		if err != nil {
+			return "", internalStoreError()
+		}
+		passwordCiphertext = encoded.Ciphertext
+		passwordNonce = encoded.Nonce
+	default:
+		return "", internalStoreError()
+	}
 	_, err = tx.Exec(ctx, `
 		INSERT INTO api_order_delivery_credentials (
 			id, api_order_id, seller_user_id, buyer_user_id, delivery_kind,
 			api_base_url, panel_login_url, username, instructions,
 			api_key_ciphertext, api_key_nonce, password_ciphertext, password_nonce,
-			secret_encryption_key_version, submitted_at, created_at
+			secret_encryption_key_version, secret_encryption_format, submitted_at, created_at
 		) VALUES (
 			$1, $2, $3, $4, $5,
 			$6, $7, $8, $9,
 			$10, $11, $12, $13,
-			$14, $15, $15
+			$14, $15, $16, $16
 		)
-	`, uuid.NewString(), order.ID, order.SellerUserID, order.BuyerUserID, deliveryKind,
+	`, credentialID, order.ID, order.SellerUserID, order.BuyerUserID, deliveryKind,
 		nullText(apiBaseURL), nullText(panelLoginURL), nullText(username), nullText(instructions),
-		apiKeyCiphertext, apiKeyNonce, passwordCiphertext, passwordNonce, keyVersion, now)
+		apiKeyCiphertext, apiKeyNonce, passwordCiphertext, passwordNonce,
+		encoded.EncryptionKeyVersion, encoded.CipherFormat, now)
 	if err != nil {
 		return "", internalStoreError()
 	}
@@ -963,40 +998,44 @@ func (s *Store) insertAPIOrderDeliveryCredentialInTx(ctx context.Context, tx pgx
 	var passwordCiphertext []byte
 	var passwordNonce []byte
 	keyVersion := s.contactCodec.encryptionKeyVersion
+	cipherFormat := contactCipherFormatAADV1
 	if credential.APIKey != "" {
-		encoded, err := s.contactCodec.encode(credential.APIKey)
+		encoded, err := s.contactCodec.encode(credential.APIKey, credential.ID, contactFieldOrderAPIKey)
 		if err != nil {
 			return apiorder.DeliveryCredential{}, internalStoreError()
 		}
 		apiKeyCiphertext = encoded.Ciphertext
 		apiKeyNonce = encoded.Nonce
 		keyVersion = encoded.EncryptionKeyVersion
+		cipherFormat = encoded.CipherFormat
 	}
 	if credential.Password != "" {
-		encoded, err := s.contactCodec.encode(credential.Password)
+		encoded, err := s.contactCodec.encode(credential.Password, credential.ID, contactFieldOrderPassword)
 		if err != nil {
 			return apiorder.DeliveryCredential{}, internalStoreError()
 		}
 		passwordCiphertext = encoded.Ciphertext
 		passwordNonce = encoded.Nonce
 		keyVersion = encoded.EncryptionKeyVersion
+		cipherFormat = encoded.CipherFormat
 	}
 	_, err := tx.Exec(ctx, `
 		INSERT INTO api_order_delivery_credentials (
 			id, api_order_id, seller_user_id, buyer_user_id, delivery_kind,
 			api_base_url, panel_login_url, username, instructions,
 			api_key_ciphertext, api_key_nonce, password_ciphertext, password_nonce,
-			secret_encryption_key_version, submitted_at, created_at
+			secret_encryption_key_version, secret_encryption_format, submitted_at, created_at
 		)
 		VALUES (
 			$1, $2, $3, $4, $5,
 			$6, $7, $8, $9,
 			$10, $11, $12, $13,
-			$14, $15, $16
+			$14, $15, $16, $17
 		)
 	`, credential.ID, credential.APIOrderID, credential.SellerUserID, credential.BuyerUserID, credential.DeliveryKind,
 		nullText(credential.APIBaseURL), nullText(credential.PanelLoginURL), nullText(credential.Username), nullText(credential.Instructions),
-		apiKeyCiphertext, apiKeyNonce, passwordCiphertext, passwordNonce, keyVersion, credential.SubmittedAt, credential.CreatedAt)
+		apiKeyCiphertext, apiKeyNonce, passwordCiphertext, passwordNonce, keyVersion, cipherFormat,
+		credential.SubmittedAt, credential.CreatedAt)
 	if err != nil {
 		if isUniqueViolationOnConstraint(err, "ux_api_order_delivery_credentials_order") {
 			return apiorder.DeliveryCredential{}, domain.NewError(http.StatusConflict, domain.CodeInvalidStateTransition, "Invalid state transition", "交付信息已提交，不能再次修改。")
@@ -1029,12 +1068,13 @@ func (s *Store) getAPIOrderDeliveryCredential(ctx context.Context, q queryer, or
 	var apiKeyNonce []byte
 	var passwordCiphertext []byte
 	var passwordNonce []byte
+	var keyVersion, cipherFormat string
 	err := q.QueryRow(ctx, `
 		SELECT id::text, api_order_id::text, seller_user_id::text, buyer_user_id::text,
 		       delivery_kind, COALESCE(api_base_url, ''), COALESCE(panel_login_url, ''),
 		       COALESCE(username, ''), COALESCE(instructions, ''),
 		       api_key_ciphertext, api_key_nonce, password_ciphertext, password_nonce,
-		       submitted_at, created_at
+		       secret_encryption_key_version, secret_encryption_format, submitted_at, created_at
 		FROM api_order_delivery_credentials
 		WHERE api_order_id = $1
 	`, orderID).Scan(
@@ -1051,6 +1091,8 @@ func (s *Store) getAPIOrderDeliveryCredential(ctx context.Context, q queryer, or
 		&apiKeyNonce,
 		&passwordCiphertext,
 		&passwordNonce,
+		&keyVersion,
+		&cipherFormat,
 		&credential.SubmittedAt,
 		&credential.CreatedAt,
 	)
@@ -1061,14 +1103,14 @@ func (s *Store) getAPIOrderDeliveryCredential(ctx context.Context, q queryer, or
 		return apiorder.DeliveryCredential{}, false, internalStoreError()
 	}
 	if len(apiKeyCiphertext) > 0 {
-		apiKey, err := s.contactCodec.decode(apiKeyCiphertext, apiKeyNonce)
+		apiKey, err := s.contactCodec.decode(apiKeyCiphertext, apiKeyNonce, keyVersion, cipherFormat, credential.ID, contactFieldOrderAPIKey)
 		if err != nil {
 			return apiorder.DeliveryCredential{}, false, internalStoreError()
 		}
 		credential.APIKey = apiKey
 	}
 	if len(passwordCiphertext) > 0 {
-		password, err := s.contactCodec.decode(passwordCiphertext, passwordNonce)
+		password, err := s.contactCodec.decode(passwordCiphertext, passwordNonce, keyVersion, cipherFormat, credential.ID, contactFieldOrderPassword)
 		if err != nil {
 			return apiorder.DeliveryCredential{}, false, internalStoreError()
 		}

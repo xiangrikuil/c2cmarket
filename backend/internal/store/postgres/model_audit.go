@@ -19,24 +19,24 @@ func (s *Store) CreateModelAuditTarget(ctx context.Context, target modelaudit.Ta
 	if s == nil || s.pool == nil || s.contactCodec == nil {
 		return modelaudit.Target{}, internalStoreError()
 	}
-	encoded, err := s.contactCodec.encode(apiKey)
-	if err != nil {
-		return modelaudit.Target{}, internalStoreError()
-	}
 	if target.ID == "" {
 		target.ID = uuid.NewString()
+	}
+	encoded, err := s.contactCodec.encode(apiKey, target.ID, contactFieldModelAPIKey)
+	if err != nil {
+		return modelaudit.Target{}, internalStoreError()
 	}
 	row := s.pool.QueryRow(ctx, `
 		INSERT INTO model_audit_targets (
 		  id, name, base_url, provider_type, api_key_ciphertext, api_key_nonce,
-		  api_key_fingerprint, api_key_key_version, claimed_model, enabled,
+		  api_key_fingerprint, api_key_key_version, api_key_encryption_format, claimed_model, enabled,
 		  api_service_id, api_service_model_id, created_at, updated_at
 		)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
 		RETURNING id, name, base_url, provider_type, claimed_model, enabled,
 		  api_service_id, api_service_model_id, last_risk_level, last_run_id, created_at, updated_at
 	`, target.ID, target.Name, target.BaseURL, target.ProviderType, encoded.Ciphertext, encoded.Nonce, encoded.Fingerprint,
-		encoded.EncryptionKeyVersion, target.ClaimedModel, target.Enabled, nullUUID(target.APIServiceID), nullUUID(target.APIServiceModelID),
+		encoded.EncryptionKeyVersion, encoded.CipherFormat, target.ClaimedModel, target.Enabled, nullUUID(target.APIServiceID), nullUUID(target.APIServiceModelID),
 		target.CreatedAt, target.UpdatedAt)
 	target, err = scanModelAuditTarget(row)
 	if err != nil {
@@ -88,20 +88,21 @@ func (s *Store) GetModelAuditTarget(ctx context.Context, targetID string) (model
 
 func (s *Store) GetModelAuditTargetSecret(ctx context.Context, targetID string) (modelaudit.Target, string, *domain.AppError) {
 	var ciphertext, nonce []byte
+	var keyVersion, cipherFormat string
 	target, err := scanModelAuditTargetSecret(s.pool.QueryRow(ctx, `
 		SELECT id, name, base_url, provider_type, claimed_model, enabled,
 		  api_service_id, api_service_model_id, last_risk_level, last_run_id, created_at, updated_at,
-		  api_key_ciphertext, api_key_nonce
+		  api_key_ciphertext, api_key_nonce, api_key_key_version, api_key_encryption_format
 		FROM model_audit_targets
 		WHERE id = $1
-	`, targetID), &ciphertext, &nonce)
+	`, targetID), &ciphertext, &nonce, &keyVersion, &cipherFormat)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return modelaudit.Target{}, "", domain.NewError(http.StatusNotFound, domain.CodeObjectNotFound, "Model audit target not found", "审计目标不存在。")
 	}
 	if err != nil {
 		return modelaudit.Target{}, "", internalStoreError()
 	}
-	apiKey, err := s.contactCodec.decode(ciphertext, nonce)
+	apiKey, err := s.contactCodec.decode(ciphertext, nonce, keyVersion, cipherFormat, targetID, contactFieldModelAPIKey)
 	if err != nil {
 		return modelaudit.Target{}, "", internalStoreError()
 	}
@@ -110,20 +111,21 @@ func (s *Store) GetModelAuditTargetSecret(ctx context.Context, targetID string) 
 
 func (s *Store) UpdateModelAuditTarget(ctx context.Context, target modelaudit.Target, apiKey *string) (modelaudit.Target, *domain.AppError) {
 	if apiKey != nil {
-		encoded, err := s.contactCodec.encode(*apiKey)
+		encoded, err := s.contactCodec.encode(*apiKey, target.ID, contactFieldModelAPIKey)
 		if err != nil {
 			return modelaudit.Target{}, internalStoreError()
 		}
 		row := s.pool.QueryRow(ctx, `
 			UPDATE model_audit_targets
 			SET name=$2, base_url=$3, provider_type=$4, api_key_ciphertext=$5, api_key_nonce=$6,
-			    api_key_fingerprint=$7, api_key_key_version=$8, claimed_model=$9, enabled=$10,
-			    api_service_id=$11, api_service_model_id=$12, updated_at=$13
+			    api_key_fingerprint=$7, api_key_key_version=$8, api_key_encryption_format=$9,
+			    claimed_model=$10, enabled=$11, api_service_id=$12, api_service_model_id=$13,
+			    updated_at=$14
 			WHERE id=$1
 			RETURNING id, name, base_url, provider_type, claimed_model, enabled,
 			  api_service_id, api_service_model_id, last_risk_level, last_run_id, created_at, updated_at
 		`, target.ID, target.Name, target.BaseURL, target.ProviderType, encoded.Ciphertext, encoded.Nonce, encoded.Fingerprint,
-			encoded.EncryptionKeyVersion, target.ClaimedModel, target.Enabled, nullUUID(target.APIServiceID), nullUUID(target.APIServiceModelID),
+			encoded.EncryptionKeyVersion, encoded.CipherFormat, target.ClaimedModel, target.Enabled, nullUUID(target.APIServiceID), nullUUID(target.APIServiceModelID),
 			target.UpdatedAt)
 		target, err = scanModelAuditTarget(row)
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -467,13 +469,13 @@ func scanModelAuditTarget(row scanner) (modelaudit.Target, error) {
 	return target, err
 }
 
-func scanModelAuditTargetSecret(row scanner, ciphertext, nonce *[]byte) (modelaudit.Target, error) {
+func scanModelAuditTargetSecret(row scanner, ciphertext, nonce *[]byte, keyVersion, cipherFormat *string) (modelaudit.Target, error) {
 	var target modelaudit.Target
 	var apiServiceID, apiServiceModelID, lastRisk, lastRunID sql.NullString
 	err := row.Scan(
 		&target.ID, &target.Name, &target.BaseURL, &target.ProviderType, &target.ClaimedModel, &target.Enabled,
 		&apiServiceID, &apiServiceModelID, &lastRisk, &lastRunID, &target.CreatedAt, &target.UpdatedAt,
-		ciphertext, nonce,
+		ciphertext, nonce, keyVersion, cipherFormat,
 	)
 	target.APIServiceID = applyNullString(apiServiceID)
 	target.APIServiceModelID = applyNullString(apiServiceModelID)

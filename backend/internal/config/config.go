@@ -1,6 +1,7 @@
 package config
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/netip"
 	"net/url"
@@ -8,6 +9,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"c2c-market/backend/internal/database"
 )
 
 const (
@@ -20,6 +23,7 @@ type Config struct {
 	Port                    string
 	AppEnv                  string
 	DatabaseURL             string
+	Database                database.PostgresOptions
 	EnableDevAuth           bool
 	FrontendOrigin          string
 	AllowedOrigins          []string
@@ -34,6 +38,8 @@ type Config struct {
 	ContactEncryptionKey    string
 	ContactFingerprintKey   string
 	ContactKeyVersion       string
+	ContactEncryptionKeys   map[string]string
+	ContactFingerprintKeys  map[string]string
 	BootstrapAdminUsername  string
 	BootstrapAdminPassword  string
 	TrustXForwardedFor      bool
@@ -112,6 +118,18 @@ func Load() (Config, error) {
 		},
 	}
 	var err error
+	cfg.Database, err = loadPostgresOptions()
+	if err != nil {
+		return Config{}, err
+	}
+	cfg.ContactEncryptionKeys, err = parseSecretKeyring("CONTACT_ENCRYPTION_KEYRING", os.Getenv("CONTACT_ENCRYPTION_KEYRING"))
+	if err != nil {
+		return Config{}, err
+	}
+	cfg.ContactFingerprintKeys, err = parseSecretKeyring("CONTACT_FINGERPRINT_KEYRING", os.Getenv("CONTACT_FINGERPRINT_KEYRING"))
+	if err != nil {
+		return Config{}, err
+	}
 	cfg.Maintenance.Interval, err = parseDurationEnv("MAINTENANCE_INTERVAL", os.Getenv("MAINTENANCE_INTERVAL"), defaultMaintenanceInterval)
 	if err != nil {
 		return Config{}, err
@@ -259,11 +277,11 @@ func Load() (Config, error) {
 		if len(cfg.AllowedOrigins) == 0 {
 			return Config{}, fmt.Errorf("ALLOWED_ORIGINS or FRONTEND_ORIGIN is required in production")
 		}
-		if cfg.ContactEncryptionKey == "" {
-			return Config{}, fmt.Errorf("CONTACT_ENCRYPTION_KEY is required in production")
+		if cfg.ContactEncryptionKey == "" && len(cfg.ContactEncryptionKeys) == 0 {
+			return Config{}, fmt.Errorf("CONTACT_ENCRYPTION_KEY or CONTACT_ENCRYPTION_KEYRING is required in production")
 		}
-		if cfg.ContactFingerprintKey == "" {
-			return Config{}, fmt.Errorf("CONTACT_FINGERPRINT_KEY is required in production")
+		if cfg.ContactFingerprintKey == "" && len(cfg.ContactFingerprintKeys) == 0 {
+			return Config{}, fmt.Errorf("CONTACT_FINGERPRINT_KEY or CONTACT_FINGERPRINT_KEYRING is required in production")
 		}
 		if cfg.ContactKeyVersion == "" {
 			return Config{}, fmt.Errorf("CONTACT_KEY_VERSION is required in production")
@@ -284,20 +302,154 @@ func Load() (Config, error) {
 		}
 	}
 
-	if cfg.ContactEncryptionKey == "" {
+	if cfg.ContactEncryptionKey == "" && len(cfg.ContactEncryptionKeys) == 0 {
 		cfg.ContactEncryptionKey = localContactEncryptionKey
 	}
-	if cfg.ContactFingerprintKey == "" {
+	if cfg.ContactFingerprintKey == "" && len(cfg.ContactFingerprintKeys) == 0 {
 		cfg.ContactFingerprintKey = localContactFingerprintKey
 	}
 	if cfg.ContactKeyVersion == "" {
 		cfg.ContactKeyVersion = localContactKeyVersion
+	}
+	if cfg.ContactEncryptionKeys == nil {
+		cfg.ContactEncryptionKeys = map[string]string{}
+	}
+	if _, exists := cfg.ContactEncryptionKeys[cfg.ContactKeyVersion]; !exists && cfg.ContactEncryptionKey != "" {
+		cfg.ContactEncryptionKeys[cfg.ContactKeyVersion] = cfg.ContactEncryptionKey
+	}
+	if cfg.ContactFingerprintKeys == nil {
+		cfg.ContactFingerprintKeys = map[string]string{}
+	}
+	if _, exists := cfg.ContactFingerprintKeys[cfg.ContactKeyVersion]; !exists && cfg.ContactFingerprintKey != "" {
+		cfg.ContactFingerprintKeys[cfg.ContactKeyVersion] = cfg.ContactFingerprintKey
+	}
+	if strings.TrimSpace(cfg.ContactEncryptionKeys[cfg.ContactKeyVersion]) == "" {
+		return Config{}, fmt.Errorf("CONTACT_ENCRYPTION_KEYRING must contain CONTACT_KEY_VERSION")
+	}
+	if strings.TrimSpace(cfg.ContactFingerprintKeys[cfg.ContactKeyVersion]) == "" {
+		return Config{}, fmt.Errorf("CONTACT_FINGERPRINT_KEYRING must contain CONTACT_KEY_VERSION")
 	}
 	if cfg.EmailVerificationPepper == "" {
 		cfg.EmailVerificationPepper = localEmailVerificationPepper
 	}
 
 	return cfg, nil
+}
+
+func loadPostgresOptions() (database.PostgresOptions, error) {
+	options := database.DefaultPostgresOptions()
+	maxConns, err := parseIntEnv("DB_MAX_CONNS", os.Getenv("DB_MAX_CONNS"), int(options.MaxConns))
+	if err != nil {
+		return database.PostgresOptions{}, err
+	}
+	minConns, err := parseIntEnv("DB_MIN_CONNS", os.Getenv("DB_MIN_CONNS"), int(options.MinConns))
+	if err != nil {
+		return database.PostgresOptions{}, err
+	}
+	options.MaxConns = int32(maxConns)
+	options.MinConns = int32(minConns)
+	options.MaxConnLifetime, err = parseDurationEnv("DB_MAX_CONN_LIFETIME", os.Getenv("DB_MAX_CONN_LIFETIME"), options.MaxConnLifetime)
+	if err != nil {
+		return database.PostgresOptions{}, err
+	}
+	options.MaxConnIdleTime, err = parseDurationEnv("DB_MAX_CONN_IDLE_TIME", os.Getenv("DB_MAX_CONN_IDLE_TIME"), options.MaxConnIdleTime)
+	if err != nil {
+		return database.PostgresOptions{}, err
+	}
+	options.HealthCheckPeriod, err = parseDurationEnv("DB_HEALTH_CHECK_PERIOD", os.Getenv("DB_HEALTH_CHECK_PERIOD"), options.HealthCheckPeriod)
+	if err != nil {
+		return database.PostgresOptions{}, err
+	}
+	options.StatementTimeout, err = parseDurationEnv("DB_STATEMENT_TIMEOUT", os.Getenv("DB_STATEMENT_TIMEOUT"), options.StatementTimeout)
+	if err != nil {
+		return database.PostgresOptions{}, err
+	}
+	options.LockTimeout, err = parseDurationEnv("DB_LOCK_TIMEOUT", os.Getenv("DB_LOCK_TIMEOUT"), options.LockTimeout)
+	if err != nil {
+		return database.PostgresOptions{}, err
+	}
+	options.IdleInTransactionSessionTimeout, err = parseDurationEnv(
+		"DB_IDLE_IN_TRANSACTION_SESSION_TIMEOUT",
+		os.Getenv("DB_IDLE_IN_TRANSACTION_SESSION_TIMEOUT"),
+		options.IdleInTransactionSessionTimeout,
+	)
+	if err != nil {
+		return database.PostgresOptions{}, err
+	}
+	if err := options.Validate(); err != nil {
+		return database.PostgresOptions{}, fmt.Errorf("database pool configuration is invalid: %w", err)
+	}
+	return options, nil
+}
+
+func LoadContactReencrypt() (Config, error) {
+	cfg := Config{
+		DatabaseURL:           strings.TrimSpace(os.Getenv("DATABASE_URL")),
+		ContactEncryptionKey:  strings.TrimSpace(os.Getenv("CONTACT_ENCRYPTION_KEY")),
+		ContactFingerprintKey: strings.TrimSpace(os.Getenv("CONTACT_FINGERPRINT_KEY")),
+		ContactKeyVersion:     strings.TrimSpace(os.Getenv("CONTACT_KEY_VERSION")),
+	}
+	var err error
+	cfg.Database, err = loadPostgresOptions()
+	if err != nil {
+		return Config{}, err
+	}
+	cfg.ContactEncryptionKeys, err = parseSecretKeyring("CONTACT_ENCRYPTION_KEYRING", os.Getenv("CONTACT_ENCRYPTION_KEYRING"))
+	if err != nil {
+		return Config{}, err
+	}
+	cfg.ContactFingerprintKeys, err = parseSecretKeyring("CONTACT_FINGERPRINT_KEYRING", os.Getenv("CONTACT_FINGERPRINT_KEYRING"))
+	if err != nil {
+		return Config{}, err
+	}
+	if cfg.DatabaseURL == "" {
+		return Config{}, fmt.Errorf("DATABASE_URL is required")
+	}
+	if cfg.ContactKeyVersion == "" {
+		return Config{}, fmt.Errorf("CONTACT_KEY_VERSION is required")
+	}
+	if cfg.ContactEncryptionKeys == nil {
+		cfg.ContactEncryptionKeys = map[string]string{}
+	}
+	if _, exists := cfg.ContactEncryptionKeys[cfg.ContactKeyVersion]; !exists && cfg.ContactEncryptionKey != "" {
+		cfg.ContactEncryptionKeys[cfg.ContactKeyVersion] = cfg.ContactEncryptionKey
+	}
+	if cfg.ContactFingerprintKeys == nil {
+		cfg.ContactFingerprintKeys = map[string]string{}
+	}
+	if _, exists := cfg.ContactFingerprintKeys[cfg.ContactKeyVersion]; !exists && cfg.ContactFingerprintKey != "" {
+		cfg.ContactFingerprintKeys[cfg.ContactKeyVersion] = cfg.ContactFingerprintKey
+	}
+	if strings.TrimSpace(cfg.ContactEncryptionKeys[cfg.ContactKeyVersion]) == "" {
+		return Config{}, fmt.Errorf("CONTACT_ENCRYPTION_KEYRING must contain CONTACT_KEY_VERSION")
+	}
+	if strings.TrimSpace(cfg.ContactFingerprintKeys[cfg.ContactKeyVersion]) == "" {
+		return Config{}, fmt.Errorf("CONTACT_FINGERPRINT_KEYRING must contain CONTACT_KEY_VERSION")
+	}
+	return cfg, nil
+}
+
+func parseSecretKeyring(name, raw string) (map[string]string, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil, nil
+	}
+	var keyring map[string]string
+	if err := json.Unmarshal([]byte(raw), &keyring); err != nil {
+		return nil, fmt.Errorf("%s must be a JSON object of version-to-key entries", name)
+	}
+	if len(keyring) == 0 {
+		return nil, fmt.Errorf("%s must not be empty", name)
+	}
+	normalized := make(map[string]string, len(keyring))
+	for version, key := range keyring {
+		version = strings.TrimSpace(version)
+		if version == "" || len(version) > 128 || strings.TrimSpace(key) == "" {
+			return nil, fmt.Errorf("%s contains an invalid version or empty key", name)
+		}
+		normalized[version] = key
+	}
+	return normalized, nil
 }
 
 func validateSMTPConfig(cfg SMTPConfig) error {

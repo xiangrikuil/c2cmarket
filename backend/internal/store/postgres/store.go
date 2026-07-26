@@ -20,11 +20,31 @@ func Connect(ctx context.Context, databaseURL string) (*Store, error) {
 		FingerprintKey:        "c2cmarket-local-contact-fingerprint-key-v1",
 		EncryptionKeyVersion:  "local-dev-v1",
 		FingerprintKeyVersion: "local-dev-v1",
+		EncryptionKeys: map[string]string{
+			"local-dev-v1": "c2cmarket-local-contact-encryption-key-v1",
+		},
+		FingerprintKeys: map[string]string{
+			"local-dev-v1": "c2cmarket-local-contact-fingerprint-key-v1",
+		},
 	})
 }
 
 func ConnectWithContactCrypto(ctx context.Context, databaseURL string, contactCrypto ContactCryptoConfig) (*Store, error) {
-	pool, err := database.OpenPostgres(ctx, databaseURL)
+	return ConnectWithContactCryptoAndOptions(
+		ctx,
+		databaseURL,
+		contactCrypto,
+		database.DefaultPostgresOptions(),
+	)
+}
+
+func ConnectWithContactCryptoAndOptions(
+	ctx context.Context,
+	databaseURL string,
+	contactCrypto ContactCryptoConfig,
+	databaseOptions database.PostgresOptions,
+) (*Store, error) {
+	pool, err := database.OpenPostgresWithOptions(ctx, databaseURL, databaseOptions)
 	if err != nil {
 		return nil, err
 	}
@@ -48,4 +68,18 @@ func (s *Store) Readiness(ctx context.Context) health.Status {
 		return database.PostgresReadiness(ctx, nil)
 	}
 	return database.PostgresReadiness(ctx, s.pool)
+}
+
+func (s *Store) ContactCryptoStats() ContactCryptoStats {
+	if s == nil || s.contactCodec == nil {
+		return ContactCryptoStats{}
+	}
+	return s.contactCodec.stats()
+}
+
+func (s *Store) DatabasePoolStats() database.PoolStats {
+	if s == nil {
+		return database.PoolStats{}
+	}
+	return database.SnapshotPoolStats(s.pool)
 }

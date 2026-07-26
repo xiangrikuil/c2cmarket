@@ -11,6 +11,7 @@ import (
 
 	"c2c-market/backend/internal/config"
 	"c2c-market/backend/internal/maintenance"
+	"c2c-market/backend/internal/middleware"
 	core "c2c-market/backend/internal/module/core"
 	"c2c-market/backend/internal/module/navigationbadge"
 	"c2c-market/backend/internal/module/profile"
@@ -28,6 +29,7 @@ type App struct {
 	RealtimeHub      *realtime.Hub
 	RealtimeListener *realtime.PostgresListener
 	Maintenance      *maintenance.Runner
+	RateLimiter      *middleware.RateLimiter
 	Handler          http.Handler
 	shutdownOnce     sync.Once
 }
@@ -43,12 +45,19 @@ func New(ctx context.Context, cfg config.Config) (*App, error) {
 		connectCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 		defer cancel()
 
-		connectedStore, err := postgres.ConnectWithContactCrypto(connectCtx, cfg.DatabaseURL, postgres.ContactCryptoConfig{
-			EncryptionKey:         cfg.ContactEncryptionKey,
-			FingerprintKey:        cfg.ContactFingerprintKey,
-			EncryptionKeyVersion:  cfg.ContactKeyVersion,
-			FingerprintKeyVersion: cfg.ContactKeyVersion,
-		})
+		connectedStore, err := postgres.ConnectWithContactCryptoAndOptions(
+			connectCtx,
+			cfg.DatabaseURL,
+			postgres.ContactCryptoConfig{
+				EncryptionKey:         cfg.ContactEncryptionKey,
+				FingerprintKey:        cfg.ContactFingerprintKey,
+				EncryptionKeyVersion:  cfg.ContactKeyVersion,
+				FingerprintKeyVersion: cfg.ContactKeyVersion,
+				EncryptionKeys:        cfg.ContactEncryptionKeys,
+				FingerprintKeys:       cfg.ContactFingerprintKeys,
+			},
+			cfg.Database,
+		)
 		if err != nil {
 			return nil, err
 		}
@@ -134,6 +143,8 @@ func New(ctx context.Context, cfg config.Config) (*App, error) {
 		maintenanceRunner.Start()
 	}
 
+	rateLimiter := middleware.NewRateLimiter(time.Minute)
+	rateLimiter.Start(ctx)
 	handler := server.NewServer(service, server.ServerOptions{
 		EnableDevAuth:      cfg.EnableDevAuth,
 		ReadinessChecker:   store,
@@ -144,6 +155,7 @@ func New(ctx context.Context, cfg config.Config) (*App, error) {
 		AllowedOrigins:     cfg.AllowedOrigins,
 		TrustXForwardedFor: cfg.TrustXForwardedFor,
 		TrustedProxies:     cfg.TrustedProxies,
+		RateLimiter:        rateLimiter,
 		OAuth: server.OAuthOptions{
 			ProviderMode: cfg.OAuthProviderMode,
 			ClientID:     cfg.OAuthClientID,
@@ -164,6 +176,7 @@ func New(ctx context.Context, cfg config.Config) (*App, error) {
 		RealtimeHub:      realtimeHub,
 		RealtimeListener: realtimeListener,
 		Maintenance:      maintenanceRunner,
+		RateLimiter:      rateLimiter,
 		Handler:          handler,
 	}, nil
 }
@@ -199,6 +212,9 @@ func (a *App) BeginShutdown() {
 		}
 		if a.Maintenance != nil {
 			a.Maintenance.Close()
+		}
+		if a.RateLimiter != nil {
+			a.RateLimiter.Close()
 		}
 	})
 }
