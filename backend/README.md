@@ -66,7 +66,7 @@ PostgreSQL 默认连接串：
 postgres://c2c_market:c2c_market_dev_password@localhost:5432/c2c_market?sslmode=disable
 ```
 
-PostgreSQL migration 通过 Compose 的一次性 `migrate` 服务执行，migration SQL 位于 `migrations/`；当前期望版本为 `62`。服务进程会在配置 `DATABASE_URL` 时创建 PostgreSQL 连接池，并通过 `/readyz` 暴露数据库和 migration readiness。当前 users、auth sessions、user password credential hashes、idempotency、product catalog reads、official price leads/records、contact methods、contact sessions、contact access logs、API purchase intent contact access logs、carpool listings、carpool cycle terms、carpool applications、join confirmations、memberships、completion confirmations、API services、API quota batches/offers/rounds/inventory/credentials、API purchase intents、API orders、API order events、API order payment-instruction access logs、API order delivery credentials、profile/merchant profile、announcements、demands、favorites、reviews、reports、dispute cases、dispute reputation outcomes、user restrictions、reputation governance events、reputation snapshots/history、source author verifications/audit events、appeals、dispute events 和 notifications 已接 PostgreSQL，搜索从这些公开可见业务表读取摘要结果。
+PostgreSQL migration 通过 Compose 的一次性 `migrate` 服务执行，migration SQL 位于 `migrations/`；当前期望版本为 `63`。服务进程会在配置 `DATABASE_URL` 时创建 PostgreSQL 连接池，并通过 `/readyz` 暴露数据库和 migration readiness。当前 users、auth sessions、user password credential hashes、idempotency、product catalog reads、official price leads/records、contact methods、contact sessions、contact access logs、API purchase intent contact access logs、carpool listings、carpool cycle terms、carpool applications、join confirmations、memberships、completion confirmations、API services、API quota batches/offers/rounds/inventory/credentials、API purchase intents、API orders、API order events、API order payment-instruction access logs、API order delivery credentials、profile/merchant profile、announcements、demands、favorites、reviews、reports、dispute cases、dispute reputation outcomes、user restrictions、reputation governance events、reputation snapshots/history、source author verifications/audit events、appeals、dispute events 和 notifications 已接 PostgreSQL，搜索从这些公开可见业务表读取摘要结果。
 
 限时 API 额度包是 API 市场内独立于 Sub2API 自由金额购买的商品类型。额度来自卖家站外控制的中转系统，平台只保存“卖家声明可售美元额度”的站内销售约束，不提供、充值或验证上游余额。批次最晚在绝对失效时间前 1 小时停止新订单；全天包使用 10 分钟付款窗口，定时放量包使用 5 分钟。发布事务先划拨完整计划额度并生成独立库存行，抢购事务通过 PostgreSQL `FOR UPDATE SKIP LOCKED` 领取库存，以 `(round, buyer)` 唯一 claim 保证同一买家同轮跨规格限购 1 份。限时订单冻结固定 USD 额度、CNY 总价、有效售价、模型倍率、停售/失效时间和商户自报 TTFT/建议并发；公开文案必须保留“商户自报，平台未测速”。
 
@@ -82,7 +82,7 @@ PostgreSQL migration 通过 Compose 的一次性 `migrate` 服务执行，migrat
 
 登录 session 初始空闲有效期为 7 天。通过认证的普通业务访问距离 `renewed_at` 满 24 小时后，PostgreSQL 使用带过期、撤销和绝对期限条件的原子更新续期至 `min(当前时间+7天, absolute_expires_at)`，并仅在实际更新成功时同步发送 Cookie。静态资源、健康检查、`OPTIONS`、认证入口、logout、SSE 和后台计数轮询不触发续期；连续登录最长 30 天，之后必须重新登录。
 
-开发认证入口默认只在 `APP_ENV=development` 或 `APP_ENV=test` 时开启。生产环境必须配置 `DATABASE_URL`、绝对 HTTPS `FRONTEND_ORIGIN`、`CONTACT_ENCRYPTION_KEY`、`CONTACT_FINGERPRINT_KEY`、`CONTACT_KEY_VERSION`、OAuth provider 配置和阿里云 DirectMail SMTP 配置，且不能启用 `ENABLE_DEV_AUTH=true`。生产邮箱验证码、注册成功和业务提醒邮件使用 `EMAIL_PROVIDER=aliyun_directmail`，需要 `SMTP_HOST`、`SMTP_PORT=465`、`SMTP_USERNAME`、`SMTP_PASSWORD`、`MAIL_FROM_ADDRESS`、`MAIL_FROM_NAME`，生产发信地址必须由部署环境显式配置。生产 session/OAuth cookie 使用 `HttpOnly=true`、`Secure=true`、`SameSite=Lax`；logout 和 OAuth state 清理 cookie 使用相同 Path/Secure/SameSite 组合。OAuth callback 会把清理后的相对 `returnTo` 拼接到 `FRONTEND_ORIGIN`，用于前后端分域部署后的安全回跳。
+开发认证入口默认只在 `APP_ENV=development` 或 `APP_ENV=test` 时开启。生产环境必须配置 `DATABASE_URL`、绝对 HTTPS `FRONTEND_ORIGIN`、`CONTACT_ENCRYPTION_KEY`、`CONTACT_FINGERPRINT_KEY`、`CONTACT_KEY_VERSION`、至少 32 字节的 `EMAIL_VERIFICATION_PEPPER`、OAuth provider 配置和阿里云 DirectMail SMTP 配置，且不能启用 `ENABLE_DEV_AUTH=true`。生产邮箱验证码、注册成功和业务提醒邮件使用 `EMAIL_PROVIDER=aliyun_directmail`，需要 `SMTP_HOST`、`SMTP_PORT=465`、`SMTP_USERNAME`、`SMTP_PASSWORD`、`MAIL_FROM_ADDRESS`、`MAIL_FROM_NAME`，生产发信地址必须由部署环境显式配置。生产 session/OAuth cookie 使用 `HttpOnly=true`、`Secure=true`、`SameSite=Lax`；logout 和 OAuth state 清理 cookie 使用相同 Path/Secure/SameSite 组合。OAuth callback 会把清理后的相对 `returnTo` 拼接到 `FRONTEND_ORIGIN`，用于前后端分域部署后的安全回跳。
 
 ## HTTP 边界 Hardening
 
@@ -91,7 +91,8 @@ PostgreSQL migration 通过 Compose 的一次性 `migrate` 服务执行，migrat
 - 安全响应头：后端统一设置 `X-Content-Type-Options: nosniff` 和 `Referrer-Policy: strict-origin-when-cross-origin`；`APP_ENV=production` 时设置 `Strict-Transport-Security: max-age=31536000; includeSubDomains`。CSP 由前端静态站点或反向代理按页面资产策略配置。
 - 限流：当前为进程内 1 分钟窗口，按 route group、IP 和登录 userID 分开计数。OAuth、search、API purchase intent 创建、额度包直达订单、联系方式读取、举报/申诉创建和 dev contact/session 入口超限返回 `429`，Problem Details `code=RATE_LIMITED`。额度包购买使用每用户 12 次、每 IP 3000 次的独立预算，避免共享出口误伤；限流只用于减压，库存正确性仍完全由 PostgreSQL 保证。
 - 分页：主要列表接口支持 `limit` / `cursor`，默认 `20`、最大 `100`，响应为 `{ "items": [], "nextCursor": "..." }`。当前 cursor 是 opaque base64url offset cursor，调用方只应透传。
-- 幂等：completed 同请求 replay 保持返回缓存或资源重建结果；同 key 不同 request hash 返回 `IDEMPOTENCY_KEY_REUSED`；未过期 `processing` 返回 `IDEMPOTENCY_IN_PROGRESS`；同请求 hash 且已过期的 `processing` 可被接管重试。应用启动时会清理保守过期的 processing 记录。
+- 幂等：`processing`、`failed`、`completed` 分别保留 15 分钟、1 小时、7 天；completed 同请求 replay 返回缓存或资源重建结果，超过 64 KiB 且无法重建的响应返回 `IDEMPOTENCY_RESULT_NOT_REPLAYABLE`，不会再次执行 mutation；同 key 不同 request hash 在记录到期前返回 `IDEMPOTENCY_KEY_REUSED`，到期后可由新请求接管。
+- 数据维护：配置 PostgreSQL 时，应用立即执行并按 `MAINTENANCE_INTERVAL` 周期运行有限批次。多实例通过 advisory transaction lock 互斥；Session、验证码、幂等、通知和无引用领域事件按配置保留，结束的联系窗口只改为 `expired`，不会删除联系方式密文、联系访问记录、管理员或纠纷审计。
 
 ## 验证
 

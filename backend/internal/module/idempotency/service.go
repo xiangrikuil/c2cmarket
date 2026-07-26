@@ -42,7 +42,7 @@ func (s *Service) Begin(ctx context.Context, userID, routeKey, key, requestHash 
 			RequestHash: requestHash,
 			State:       "processing",
 			CreatedAt:   now,
-			ExpiresAt:   now.Add(24 * time.Hour),
+			ExpiresAt:   now.Add(ProcessingLifetime),
 		})
 	}
 
@@ -52,40 +52,31 @@ func (s *Service) Begin(ctx context.Context, userID, routeKey, key, requestHash 
 	mapKey := entryMapKey(userID, routeKey, key)
 	entry, ok := s.entries[mapKey]
 	if ok {
-		if entry.RequestHash != requestHash {
-			return nil, domain.NewError(http.StatusConflict, domain.CodeIdempotencyKeyReused, "Idempotency key reused", "同一个 Idempotency-Key 不能用于不同请求。")
-		}
-		if entry.State == "completed" {
-			return &entry, nil
-		}
 		now := s.now()
-		if now.After(entry.ExpiresAt) {
-			entry.RequestHash = requestHash
-			entry.State = "processing"
-			entry.Status = 0
-			entry.ContentType = ""
-			entry.Body = nil
-			entry.ResourceType = ""
-			entry.ResourceID = ""
-			entry.CompletedAt = nil
-			entry.CreatedAt = now
-			entry.ExpiresAt = now.Add(24 * time.Hour)
+		if !now.Before(entry.ExpiresAt) {
+			entry = newProcessingEntry(userID, routeKey, key, requestHash, now)
 			s.entries[mapKey] = entry
 			return &entry, nil
 		}
-		return nil, domain.NewError(http.StatusConflict, domain.CodeIdempotencyInProgress, "Idempotency request in progress", "相同幂等请求仍在处理中。")
+		if entry.RequestHash != requestHash {
+			return nil, domain.NewError(http.StatusConflict, domain.CodeIdempotencyKeyReused, "Idempotency key reused", "同一个 Idempotency-Key 不能用于不同请求。")
+		}
+		switch entry.State {
+		case "completed":
+			return &entry, nil
+		case "failed":
+			entry = newProcessingEntry(userID, routeKey, key, requestHash, now)
+			s.entries[mapKey] = entry
+			return &entry, nil
+		case "processing":
+			return nil, domain.NewError(http.StatusConflict, domain.CodeIdempotencyInProgress, "Idempotency request in progress", "相同幂等请求仍在处理中。")
+		default:
+			return nil, domain.NewError(http.StatusInternalServerError, domain.CodeInternalError, "Internal error", "幂等记录状态无效。")
+		}
 	}
 
 	now := s.now()
-	entry = Entry{
-		UserID:      userID,
-		RouteKey:    routeKey,
-		Key:         key,
-		RequestHash: requestHash,
-		State:       "processing",
-		CreatedAt:   now,
-		ExpiresAt:   now.Add(24 * time.Hour),
-	}
+	entry = newProcessingEntry(userID, routeKey, key, requestHash, now)
 	s.entries[mapKey] = entry
 	return &entry, nil
 }
@@ -94,8 +85,9 @@ func (s *Service) Complete(ctx context.Context, entry *Entry, status int, conten
 	if entry == nil {
 		return nil
 	}
+	completion := boundedCompletion(status, contentType, body, resourceType, resourceID)
 	if s.repo != nil {
-		return s.repo.CompleteIdempotency(ctx, entry, status, contentType, body, resourceType, resourceID, s.now())
+		return s.repo.CompleteIdempotency(ctx, entry, completion, s.now())
 	}
 
 	s.mu.Lock()
@@ -106,14 +98,19 @@ func (s *Service) Complete(ctx context.Context, entry *Entry, status int, conten
 	if !ok {
 		return nil
 	}
+	if !sameGeneration(current, *entry) {
+		return domain.NewError(http.StatusConflict, domain.CodeIdempotencyInProgress, "Idempotency request superseded", "该幂等请求已被新的执行接管。")
+	}
 	now := s.now()
 	current.State = "completed"
-	current.Status = status
-	current.ContentType = contentType
-	current.Body = append([]byte(nil), body...)
-	current.ResourceType = resourceType
-	current.ResourceID = resourceID
+	current.Status = completion.Status
+	current.ContentType = completion.ContentType
+	current.Body = append([]byte(nil), completion.Body...)
+	current.BodyCacheAllowed = !completion.SkipBodyCache
+	current.ResourceType = completion.ResourceType
+	current.ResourceID = completion.ResourceID
 	current.CompletedAt = &now
+	current.ExpiresAt = now.Add(CompletedRetention)
 	s.entries[mapKey] = current
 	return nil
 }
@@ -122,8 +119,9 @@ func (s *Service) Cancel(ctx context.Context, entry *Entry) {
 	if entry == nil {
 		return
 	}
+	failedAt := s.now()
 	if s.repo != nil {
-		_ = s.repo.CancelIdempotency(ctx, entry)
+		_ = s.repo.CancelIdempotency(ctx, entry, failedAt)
 		return
 	}
 
@@ -132,15 +130,33 @@ func (s *Service) Cancel(ctx context.Context, entry *Entry) {
 
 	mapKey := entryMapKey(entry.UserID, entry.RouteKey, entry.Key)
 	current, ok := s.entries[mapKey]
-	if !ok || current.State != "processing" {
+	if !ok || current.State != "processing" || !sameGeneration(current, *entry) {
 		return
 	}
-	delete(s.entries, mapKey)
+	current.State = "failed"
+	current.Status = 0
+	current.ContentType = ""
+	current.Body = nil
+	current.BodyCacheAllowed = false
+	current.ResourceType = ""
+	current.ResourceID = ""
+	current.CompletedAt = &failedAt
+	current.ExpiresAt = failedAt.Add(FailedRetention)
+	s.entries[mapKey] = current
 }
 
 func CompletionFromEntry(entry *Entry) Completion {
 	if entry == nil {
 		return Completion{}
+	}
+	if entry.State == "completed" && !entry.BodyCacheAllowed {
+		return Completion{
+			Status:       http.StatusConflict,
+			ContentType:  "application/problem+json",
+			Body:         []byte(`{"type":"about:blank","title":"Idempotency result not replayable","status":409,"code":"IDEMPOTENCY_RESULT_NOT_REPLAYABLE","detail":"该请求已处理，但原响应未缓存；请重新读取目标资源。"}`),
+			ResourceType: entry.ResourceType,
+			ResourceID:   entry.ResourceID,
+		}
 	}
 	return Completion{
 		Status:       entry.Status,
@@ -149,6 +165,39 @@ func CompletionFromEntry(entry *Entry) Completion {
 		ResourceType: entry.ResourceType,
 		ResourceID:   entry.ResourceID,
 	}
+}
+
+func newProcessingEntry(userID, routeKey, key, requestHash string, now time.Time) Entry {
+	return Entry{
+		UserID:      userID,
+		RouteKey:    routeKey,
+		Key:         key,
+		RequestHash: requestHash,
+		State:       "processing",
+		CreatedAt:   now,
+		ExpiresAt:   now.Add(ProcessingLifetime),
+	}
+}
+
+func sameGeneration(current, entry Entry) bool {
+	return current.State == "processing" &&
+		current.RequestHash == entry.RequestHash &&
+		current.CreatedAt.Equal(entry.CreatedAt)
+}
+
+func boundedCompletion(status int, contentType string, body []byte, resourceType, resourceID string) Completion {
+	completion := Completion{
+		Status:       status,
+		ContentType:  contentType,
+		ResourceType: resourceType,
+		ResourceID:   resourceID,
+	}
+	if len(body) > MaxCachedResponseBodySize {
+		completion.SkipBodyCache = true
+		return completion
+	}
+	completion.Body = append([]byte(nil), body...)
+	return completion
 }
 
 func ValidateKey(key string) *domain.AppError {

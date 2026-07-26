@@ -18,6 +18,7 @@ This directory contains guidelines for backend development. Fill in each file wi
 | [API Contracts](./api-contracts.md) | HTTP, session, CSRF, idempotency, and slice contracts | Active |
 | [OAuth Identity And Administrator Bootstrap](./auth-identity.md) | Immutable provider identity ownership and proven create-only administrator bootstrap | Active |
 | [Authentication Session Renewal](./auth-sessions.md) | Seven-day idle expiry, renewal throttling, cookie sync, and absolute expiry | Active |
+| [Verification And Data Lifecycle](./verification-data-lifecycle.md) | HMAC email challenges, finite idempotency, and bounded PostgreSQL retention | Active |
 | [Limited API Quota Offers](./api-quota-offers.md) | Fixed quota inventory, rounds, orders, credentials, and concurrency | Active |
 | [Reputation Facts](./reputation.md) | Truthful transaction facts, role/scope aggregation, and exclusions | Active |
 | [Database Guidelines](./database-guidelines.md) | PostgreSQL migration patterns and schema conventions | Active |
@@ -39,16 +40,17 @@ Before editing backend code, read:
 2. [API Contracts](./api-contracts.md)
 3. [OAuth Identity And Administrator Bootstrap](./auth-identity.md) when touching OAuth identity ownership, provider bindings, OAuth permissions, or first-admin bootstrap
 4. [Authentication Session Renewal](./auth-sessions.md) when touching session creation, validation, cookies, revocation, or expiry
-5. [Limited API Quota Offers](./api-quota-offers.md) when touching quota batches, offers, rounds, orders, inventory, or credential delivery
-6. [Reputation Facts](./reputation.md) when touching reputation facts, exclusions, scoring inputs, or public reputation DTOs
-7. [Database Guidelines](./database-guidelines.md)
-8. [Error Handling](./error-handling.md)
-9. [Quality Guidelines](./quality-guidelines.md)
-10. [Logging Guidelines](./logging-guidelines.md)
-11. [Safe Outbound HTTP](./outbound-http.md) when adding or changing outbound HTTP requests whose destination is stored, configured, or otherwise variable
-12. [Reproducible Release And Contract Drift](./release-contract.md) when touching source packaging, Docker/Compose releases, build metadata, `/version`, OpenAPI, or generated API types
-13. [C2CMarket Product Context](../guides/product-context.md)
-14. [Maintainability Contract](../guides/maintainability-contract.md)
+5. [Verification And Data Lifecycle](./verification-data-lifecycle.md) when touching email challenges, idempotency expiry/replay, retention SQL, or maintenance runners
+6. [Limited API Quota Offers](./api-quota-offers.md) when touching quota batches, offers, rounds, orders, inventory, or credential delivery
+7. [Reputation Facts](./reputation.md) when touching reputation facts, exclusions, scoring inputs, or public reputation DTOs
+8. [Database Guidelines](./database-guidelines.md)
+9. [Error Handling](./error-handling.md)
+10. [Quality Guidelines](./quality-guidelines.md)
+11. [Logging Guidelines](./logging-guidelines.md)
+12. [Safe Outbound HTTP](./outbound-http.md) when adding or changing outbound HTTP requests whose destination is stored, configured, or otherwise variable
+13. [Reproducible Release And Contract Drift](./release-contract.md) when touching source packaging, Docker/Compose releases, build metadata, `/version`, OpenAPI, or generated API types
+14. [C2CMarket Product Context](../guides/product-context.md)
+15. [Maintainability Contract](../guides/maintainability-contract.md)
 
 ## Quality Check
 

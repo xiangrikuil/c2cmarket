@@ -2,6 +2,7 @@ package postgres
 
 import (
 	"context"
+	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -79,8 +80,25 @@ func (s *Store) CreateEmailVerificationCode(ctx context.Context, input profile.E
 	if s == nil || s.pool == nil {
 		return internalStoreError()
 	}
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return internalStoreError()
+	}
+	defer rollback(ctx, tx)
+
+	var lockedUserID string
+	err = tx.QueryRow(ctx, `
+		SELECT id::text
+		FROM users
+		WHERE id = $1
+		FOR UPDATE
+	`, input.UserID).Scan(&lockedUserID)
+	if err != nil {
+		return internalStoreError()
+	}
+
 	var exists bool
-	err := s.pool.QueryRow(ctx, `
+	err = tx.QueryRow(ctx, `
 		SELECT EXISTS(
 			SELECT 1
 			FROM users
@@ -95,11 +113,24 @@ func (s *Store) CreateEmailVerificationCode(ctx context.Context, input profile.E
 	if exists {
 		return domain.NewFieldError(http.StatusConflict, domain.CodeValidationFailed, "Email unavailable", "该邮箱已绑定其他账号。", "email", "unavailable", "该邮箱已绑定其他账号。")
 	}
-	_, err = s.pool.Exec(ctx, `
+	_, err = tx.Exec(ctx, `
+		UPDATE email_verification_codes
+		SET consumed_at = $2
+		WHERE user_id = $1
+		  AND purpose = 'bind_email'
+		  AND consumed_at IS NULL
+	`, input.UserID, now)
+	if err != nil {
+		return internalStoreError()
+	}
+	_, err = tx.Exec(ctx, `
 		INSERT INTO email_verification_codes (user_id, email, purpose, code_hash, expires_at, created_at)
 		VALUES ($1, lower($2), 'bind_email', $3, $4, $5)
 	`, input.UserID, strings.TrimSpace(input.Email), strings.TrimSpace(codeHash), expiresAt, now)
 	if err != nil {
+		return internalStoreError()
+	}
+	if err := tx.Commit(ctx); err != nil {
 		return internalStoreError()
 	}
 	return nil
@@ -116,24 +147,55 @@ func (s *Store) ConfirmEmailVerificationCode(ctx context.Context, input profile.
 	defer rollback(ctx, tx)
 
 	var codeID string
+	var storedHash string
+	var expiresAt time.Time
+	var attemptCount int
 	err = tx.QueryRow(ctx, `
-		SELECT id::text
+		SELECT id::text, code_hash, expires_at, attempt_count
 		FROM email_verification_codes
 		WHERE user_id = $1
 		  AND email = lower($2)
 		  AND purpose = 'bind_email'
-		  AND code_hash = $3
 		  AND consumed_at IS NULL
-		  AND expires_at > $4
 		ORDER BY created_at DESC
 		LIMIT 1
 		FOR UPDATE
-	`, input.UserID, strings.TrimSpace(input.Email), strings.TrimSpace(codeHash), now).Scan(&codeID)
+	`, input.UserID, strings.TrimSpace(input.Email)).Scan(&codeID, &storedHash, &expiresAt, &attemptCount)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return profile.UserProfile{}, domain.NewError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Code invalid", "验证码无效或已过期。")
+		return profile.UserProfile{}, invalidEmailVerificationStoreError()
 	}
 	if err != nil {
 		return profile.UserProfile{}, internalStoreError()
+	}
+	if !now.Before(expiresAt) || attemptCount >= profile.EmailVerificationMaxAttempts {
+		if _, err := tx.Exec(ctx, `
+			UPDATE email_verification_codes
+			SET consumed_at = COALESCE(consumed_at, $2)
+			WHERE id = $1
+		`, codeID, now); err != nil {
+			return profile.UserProfile{}, internalStoreError()
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return profile.UserProfile{}, internalStoreError()
+		}
+		return profile.UserProfile{}, invalidEmailVerificationStoreError()
+	}
+	if subtle.ConstantTimeCompare([]byte(storedHash), []byte(strings.TrimSpace(codeHash))) != 1 {
+		if _, err := tx.Exec(ctx, `
+			UPDATE email_verification_codes
+			SET attempt_count = attempt_count + 1,
+			    consumed_at = CASE
+			      WHEN attempt_count + 1 >= $3 THEN $2
+			      ELSE consumed_at
+			    END
+			WHERE id = $1
+		`, codeID, now, profile.EmailVerificationMaxAttempts); err != nil {
+			return profile.UserProfile{}, internalStoreError()
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return profile.UserProfile{}, internalStoreError()
+		}
+		return profile.UserProfile{}, invalidEmailVerificationStoreError()
 	}
 
 	var exists bool
@@ -179,6 +241,10 @@ func (s *Store) ConfirmEmailVerificationCode(ctx context.Context, input profile.
 		return profile.UserProfile{}, internalStoreError()
 	}
 	return s.GetUserProfile(ctx, input.UserID, now)
+}
+
+func invalidEmailVerificationStoreError() *domain.AppError {
+	return domain.NewError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Code invalid", "验证码无效或已过期。")
 }
 
 func (s *Store) GetPublicUserProfile(ctx context.Context, username string, now time.Time) (profile.PublicUserProfile, *domain.AppError) {

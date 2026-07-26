@@ -4,6 +4,7 @@ import (
 	"c2c-market/backend/internal/domain"
 	"c2c-market/backend/internal/middleware"
 	"c2c-market/backend/internal/module/auth"
+	"c2c-market/backend/internal/module/idempotency"
 	"encoding/json"
 	"net/http"
 	"strings"
@@ -84,9 +85,7 @@ func (s *Server) withIdempotency(w http.ResponseWriter, r *http.Request, userID,
 		return
 	}
 	if entry.State == "completed" {
-		w.Header().Set("Content-Type", entry.ContentType)
-		w.WriteHeader(entry.Status)
-		_, _ = w.Write(entry.Body)
+		writeIdempotencyCompletion(w, idempotency.CompletionFromEntry(entry))
 		return
 	}
 

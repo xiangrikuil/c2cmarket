@@ -1,12 +1,19 @@
 package config
 
-import "testing"
+import (
+	"strings"
+	"testing"
+	"time"
+)
 
 func TestLoadDefaultsToDevelopmentDevAuth(t *testing.T) {
 	t.Setenv("PORT", "")
 	t.Setenv("APP_ENV", "")
 	t.Setenv("DATABASE_URL", "")
 	t.Setenv("ENABLE_DEV_AUTH", "")
+	t.Setenv("EMAIL_VERIFICATION_PEPPER", "")
+	t.Setenv("MAINTENANCE_INTERVAL", "")
+	t.Setenv("MAINTENANCE_BATCH_SIZE", "")
 
 	cfg, err := Load()
 	if err != nil {
@@ -23,6 +30,12 @@ func TestLoadDefaultsToDevelopmentDevAuth(t *testing.T) {
 	}
 	if cfg.ContactEncryptionKey == "" || cfg.ContactFingerprintKey == "" || cfg.ContactKeyVersion == "" {
 		t.Fatalf("expected local contact crypto defaults")
+	}
+	if cfg.EmailVerificationPepper != localEmailVerificationPepper {
+		t.Fatalf("expected explicit local verification pepper")
+	}
+	if cfg.Maintenance.Interval != 15*time.Minute || cfg.Maintenance.BatchSize != 500 {
+		t.Fatalf("unexpected maintenance defaults: %+v", cfg.Maintenance)
 	}
 }
 
@@ -104,6 +117,7 @@ func TestLoadAllowsProductionWhenPersistentConfigIsComplete(t *testing.T) {
 	t.Setenv("CONTACT_ENCRYPTION_KEY", "production-encryption-key")
 	t.Setenv("CONTACT_FINGERPRINT_KEY", "production-fingerprint-key")
 	t.Setenv("CONTACT_KEY_VERSION", "prod-v1")
+	t.Setenv("EMAIL_VERIFICATION_PEPPER", "production-email-verification-pepper-value")
 	t.Setenv("ALLOWED_ORIGINS", "https://c2cmarket.example")
 	t.Setenv("EMAIL_PROVIDER", "aliyun_directmail")
 	t.Setenv("SMTP_HOST", "smtpdm.aliyun.com")
@@ -128,6 +142,49 @@ func TestLoadAllowsProductionWhenPersistentConfigIsComplete(t *testing.T) {
 	}
 	if cfg.EmailProvider != "aliyun_directmail" || cfg.SMTP.Host != "smtpdm.aliyun.com" || cfg.SMTP.Port != 465 || cfg.SMTP.FromAddress != "noreply@example.com" {
 		t.Fatalf("unexpected SMTP config: provider=%s smtp=%+v", cfg.EmailProvider, cfg.SMTP)
+	}
+}
+
+func TestLoadRejectsProductionMissingEmailVerificationPepper(t *testing.T) {
+	t.Setenv("APP_ENV", EnvProduction)
+	t.Setenv("DATABASE_URL", "postgres://example")
+	t.Setenv("ENABLE_DEV_AUTH", "false")
+	t.Setenv("OAUTH_PROVIDER_MODE", "oauth2")
+	t.Setenv("OAUTH_CLIENT_ID", "client-id")
+	t.Setenv("OAUTH_CLIENT_SECRET", "client-secret")
+	t.Setenv("OAUTH_AUTHORIZE_URL", "https://linux.do/oauth/authorize")
+	t.Setenv("OAUTH_TOKEN_URL", "https://linux.do/oauth/token")
+	t.Setenv("OAUTH_USERINFO_URL", "https://linux.do/api/user")
+	t.Setenv("OAUTH_REDIRECT_URL", "https://c2cmarket.example/api/v1/auth/oauth/callback")
+	t.Setenv("FRONTEND_ORIGIN", "https://c2cmarket.example")
+	t.Setenv("CONTACT_ENCRYPTION_KEY", "production-encryption-key")
+	t.Setenv("CONTACT_FINGERPRINT_KEY", "production-fingerprint-key")
+	t.Setenv("CONTACT_KEY_VERSION", "prod-v1")
+	t.Setenv("EMAIL_VERIFICATION_PEPPER", "")
+
+	if _, err := Load(); err == nil || !strings.Contains(err.Error(), "EMAIL_VERIFICATION_PEPPER") {
+		t.Fatalf("expected production verification pepper failure, got %v", err)
+	}
+}
+
+func TestLoadValidatesMaintenanceBounds(t *testing.T) {
+	t.Setenv("APP_ENV", EnvDevelopment)
+	t.Setenv("MAINTENANCE_INTERVAL", "30s")
+	if _, err := Load(); err == nil {
+		t.Fatal("expected too-short maintenance interval to fail")
+	}
+
+	t.Setenv("MAINTENANCE_INTERVAL", "15m")
+	t.Setenv("MAINTENANCE_BATCH_SIZE", "5001")
+	if _, err := Load(); err == nil {
+		t.Fatal("expected oversized maintenance batch to fail")
+	}
+
+	t.Setenv("MAINTENANCE_BATCH_SIZE", "500")
+	t.Setenv("READ_NOTIFICATION_RETENTION", "365h")
+	t.Setenv("UNREAD_NOTIFICATION_RETENTION", "24h")
+	if _, err := Load(); err == nil {
+		t.Fatal("expected unread retention shorter than read retention to fail")
 	}
 }
 

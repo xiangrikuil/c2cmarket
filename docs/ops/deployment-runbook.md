@@ -29,6 +29,7 @@ Replace every `CHANGE_ME` value before production use:
 - `CONTACT_ENCRYPTION_KEY`
 - `CONTACT_FINGERPRINT_KEY`
 - `CONTACT_KEY_VERSION`
+- `EMAIL_VERIFICATION_PEPPER` with at least 32 bytes and a value distinct from the contact keys
 - `C2C_BOOTSTRAP_ADMIN_USERNAME` and `C2C_BOOTSTRAP_ADMIN_PASSWORD` for an empty-database first deploy only
 - `SMTP_USERNAME`
 - `SMTP_PASSWORD`
@@ -43,6 +44,7 @@ APP_ENV=production
 ENABLE_DEV_AUTH=false
 OAUTH_PROVIDER_MODE=oauth2
 EMAIL_PROVIDER=aliyun_directmail
+EMAIL_VERIFICATION_PEPPER=<distinct 32-byte minimum secret>
 VITE_API_MODE=real
 VITE_ENABLE_MOCK=false
 ```
@@ -213,9 +215,9 @@ curl -fsS http://127.0.0.1:${BACKEND_PORT:-8080}/version
 ```
 
 `/readyz` must report PostgreSQL readiness and `schemaDirty=false`.
-The expected schema version in the current backend is `62`.
+The expected schema version in the current backend is `63`.
 `/version` must report the release version, full resolved Git commit, commit
-time, and `expectedMigrationVersion=62`; the first three values must match the
+time, and `expectedMigrationVersion=63`; the first three values must match the
 image labels inspected above.
 
 After a successful empty-database Bootstrap, clear both Bootstrap variables,
@@ -264,11 +266,20 @@ Main list endpoints support `limit` and opaque `cursor`; default page size is
 20 and max page size is 100. Clients should persist and pass `nextCursor` without
 parsing it.
 
-Idempotency processing rows can be retried when the row has expired and the
-request hash matches. Same-key different-body requests still return
-`IDEMPOTENCY_KEY_REUSED`; non-expired processing rows still return
-`IDEMPOTENCY_IN_PROGRESS`. Startup performs a conservative cleanup of stale
-processing rows older than the configured expiry window.
+Idempotency processing, failed, and completed rows expire after fifteen
+minutes, one hour, and seven days. A key can be reused after its row expires.
+Responses larger than 64 KiB are not cached; resource-backed responses are
+rebuilt, while a generic result that cannot be rebuilt returns
+`IDEMPOTENCY_RESULT_NOT_REPLAYABLE` without repeating the mutation.
+
+The PostgreSQL lifecycle runner executes immediately and then every
+`MAINTENANCE_INTERVAL` (default `15m`). Each data type processes at most
+`MAINTENANCE_BATCH_SIZE` rows per run under one advisory transaction lock.
+Defaults retain terminal sessions for 7 days, consumed/expired verification
+challenges for 24 hours, read notifications for 90 days, and unread
+notifications plus unreferenced domain events for 365 days. Ended contact
+windows are marked `expired`; contact ciphertext/history, contact access logs,
+administrator audits, and dispute audits are not deleted.
 
 API purchase intent direct-contact disclosure writes
 `api_purchase_intent_contact_access_logs` rows with intent ID, viewer user ID,
@@ -357,6 +368,11 @@ docker compose -p c2c-prod --env-file .env.production -f compose.yaml -f compose
 after restoring the previous immutable image reference in `BACKEND_IMAGE`.
 
 If migrations have already run, inspect `backend/migrations/*.down.sql` before rollback. Do not run destructive down migrations against production data without a database backup and explicit operator approval.
+
+Migration 63 invalidates legacy bind-email challenges and may discard cached
+idempotency response bodies larger than 64 KiB. Its down migration cannot
+restore those values, so clients must request a new verification code after
+rollback and operators must not treat the down migration as data restoration.
 
 ## Troubleshooting
 

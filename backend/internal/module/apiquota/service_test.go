@@ -418,6 +418,7 @@ func (f *fakeRepository) CreateSystemRushOfferWithIdempotency(_ context.Context,
 		entry.Status = completion.Status
 		entry.ContentType = completion.ContentType
 		entry.Body = append([]byte(nil), completion.Body...)
+		entry.BodyCacheAllowed = !completion.SkipBodyCache
 		entry.ResourceType = completion.ResourceType
 		entry.ResourceID = completion.ResourceID
 		entry.CompletedAt = &now
@@ -434,26 +435,23 @@ func (f *fakeRepository) BeginIdempotency(_ context.Context, entry idempotency.E
 	return f.idempotencyEntry, nil
 }
 
-func (f *fakeRepository) CompleteIdempotency(_ context.Context, entry *idempotency.Entry, status int, contentType string, body []byte, resourceType, resourceID string, completedAt time.Time) *domain.AppError {
+func (f *fakeRepository) CompleteIdempotency(_ context.Context, entry *idempotency.Entry, completion idempotency.Completion, completedAt time.Time) *domain.AppError {
 	entry.State = "completed"
-	entry.Status = status
-	entry.ContentType = contentType
-	entry.Body = append([]byte(nil), body...)
-	entry.ResourceType = resourceType
-	entry.ResourceID = resourceID
+	entry.Status = completion.Status
+	entry.ContentType = completion.ContentType
+	entry.Body = append([]byte(nil), completion.Body...)
+	entry.BodyCacheAllowed = !completion.SkipBodyCache
+	entry.ResourceType = completion.ResourceType
+	entry.ResourceID = completion.ResourceID
 	entry.CompletedAt = &completedAt
 	f.idempotencyEntry = entry
 	return nil
 }
 
-func (f *fakeRepository) CancelIdempotency(_ context.Context, entry *idempotency.Entry) *domain.AppError {
-	if f.idempotencyEntry == entry {
-		f.idempotencyEntry = nil
-	}
-	return nil
-}
-
-func (f *fakeRepository) CleanupExpiredIdempotency(_ context.Context, _ time.Time) *domain.AppError {
+func (f *fakeRepository) CancelIdempotency(_ context.Context, entry *idempotency.Entry, failedAt time.Time) *domain.AppError {
+	entry.State = "failed"
+	entry.CompletedAt = &failedAt
+	entry.ExpiresAt = failedAt.Add(idempotency.FailedRetention)
 	return nil
 }
 

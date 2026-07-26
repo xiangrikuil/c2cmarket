@@ -69,6 +69,7 @@ versions:
 | `000060_reputation_engine` | rebuildable role/scope reputation snapshots, append-only history, and fact-driven invalidation |
 | `000061_source_author_verification` | resource-level source-author verification, append-only audit events, and reputation invalidation |
 | `000062_auth_identity_bootstrap_hardening` | immutable first-admin bootstrap provenance for create-only, fail-closed initialization |
+| `000063_verification_data_lifecycle` | keyed email verification challenges, bounded idempotency records, and lifecycle-maintenance indexes |
 
 The current runnable Go slice supports both in-memory tests and PostgreSQL runtime.
 When `DATABASE_URL` is configured, users, auth sessions, idempotency, product
@@ -235,6 +236,16 @@ Version 62 adds immutable provenance for the one supported first-admin bootstrap
 run. Runtime bootstrap is create-only: a proven matching rerun returns without
 changing credentials, while occupied usernames, foreign administrators, and
 inconsistent provenance fail closed.
+
+Version 63 invalidates legacy unkeyed bind-email challenges and enforces one
+active challenge per user. It adds the `failed` idempotency state, finite
+processing/completed/failed retention, and indexes used by the bounded
+PostgreSQL lifecycle runner. The runner deletes terminal sessions, terminal
+verification challenges, expired idempotency rows, aged notifications, and
+unreferenced domain events in bounded batches; it expires ended contact
+windows without deleting contact history, access logs, administrator audits,
+or dispute audits. The down migration cannot restore invalidated challenges or
+response bodies truncated above 64 KiB.
 
 ## Contact Retention And Destruction
 

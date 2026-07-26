@@ -87,7 +87,7 @@ func TestReviewDeadlinePublishesExistingReviewAndRejectsLateSubmission(t *testin
 	transaction := testReviewTransaction(TransactionAPIOrder, now.Add(-time.Hour))
 	service := NewService(nil, nil, staticTransactionResolver{transactions: []Transaction{transaction}}, nil, func() time.Time { return current })
 
-	initialCompletion, appErr := service.SubmitWithIdempotency(context.Background(), transaction.BuyerUserID, "api-create", "api-key", "api-hash", SubmitReviewInput{
+	_, appErr := service.SubmitWithIdempotency(context.Background(), transaction.BuyerUserID, "api-create", "api-key", "api-hash", SubmitReviewInput{
 		TransactionType: transaction.Type,
 		TransactionID:   transaction.ID,
 		Operation:       OperationCreate,
@@ -109,7 +109,7 @@ func TestReviewDeadlinePublishesExistingReviewAndRejectsLateSubmission(t *testin
 		t.Fatalf("deadline did not publish and freeze review: %+v", received)
 	}
 
-	replayedCompletion, appErr := service.SubmitWithIdempotency(context.Background(), transaction.BuyerUserID, "api-create", "api-key", "api-hash", SubmitReviewInput{
+	_, appErr = service.SubmitWithIdempotency(context.Background(), transaction.BuyerUserID, "api-create", "api-key", "api-hash", SubmitReviewInput{
 		TransactionType: transaction.Type,
 		TransactionID:   transaction.ID,
 		Operation:       OperationCreate,
@@ -117,13 +117,8 @@ func TestReviewDeadlinePublishesExistingReviewAndRejectsLateSubmission(t *testin
 		Tags:            []string{"交付清晰"},
 		Note:            "交付说明清晰，确认过程顺畅。",
 	}, testReviewCompletion)
-	if appErr != nil {
-		t.Fatalf("completed review replay after deadline failed: %v", appErr)
-	}
-	if replayedCompletion.Status != initialCompletion.Status ||
-		replayedCompletion.ResourceID != initialCompletion.ResourceID ||
-		string(replayedCompletion.Body) != string(initialCompletion.Body) {
-		t.Fatalf("completed review replay changed after deadline: initial=%+v replay=%+v", initialCompletion, replayedCompletion)
+	if appErr == nil || appErr.Code != domain.CodeInvalidStateTransition {
+		t.Fatalf("expected expired idempotency replay to respect review deadline, got %#v", appErr)
 	}
 
 	_, appErr = service.SubmitWithIdempotency(context.Background(), transaction.SellerUserID, "api-late", "api-late-key", "api-late-hash", SubmitReviewInput{

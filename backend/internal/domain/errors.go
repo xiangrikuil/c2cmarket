@@ -65,6 +65,7 @@ const (
 	CodeFieldNotAllowed                 = "FIELD_NOT_ALLOWED"
 	CodeIdempotencyInProgress           = "IDEMPOTENCY_IN_PROGRESS"
 	CodeIdempotencyKeyReused            = "IDEMPOTENCY_KEY_REUSED"
+	CodeIdempotencyResultNotReplayable  = "IDEMPOTENCY_RESULT_NOT_REPLAYABLE"
 	CodeInternalError                   = "INTERNAL_ERROR"
 	CodeInvalidStateTransition          = "INVALID_STATE_TRANSITION"
 	CodeLinuxDoBindingRequired          = "LINUX_DO_BINDING_REQUIRED"

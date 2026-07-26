@@ -128,6 +128,10 @@ type Service struct {
 	modelAudit         *modelaudit.Service
 }
 
+type ServiceOptions struct {
+	EmailVerificationPepper string
+}
+
 func NewService() *Service {
 	return NewServiceWithClock(time.Now)
 }
@@ -144,6 +148,10 @@ func NewServiceWithRepositoriesAndEmailSender(repositories Repositories, emailSe
 	return newServiceWithEmailSender(time.Now, repositories, emailSender)
 }
 
+func NewServiceWithRepositoriesEmailSenderAndOptions(repositories Repositories, emailSender profile.EmailSender, options ServiceOptions) *Service {
+	return newServiceWithOptions(time.Now, repositories, emailSender, options)
+}
+
 func NewServiceWithClock(now func() time.Time) *Service {
 	return newService(now, Repositories{})
 }
@@ -153,6 +161,10 @@ func newService(now func() time.Time, repositories Repositories) *Service {
 }
 
 func newServiceWithEmailSender(now func() time.Time, repositories Repositories, emailSender profile.EmailSender) *Service {
+	return newServiceWithOptions(now, repositories, emailSender, ServiceOptions{})
+}
+
+func newServiceWithOptions(now func() time.Time, repositories Repositories, emailSender profile.EmailSender, options ServiceOptions) *Service {
 	s := &Service{
 		authService:        authmodule.NewServiceWithRegistrationEmailSender(repositories.Auth, now, emailSender),
 		idempotencyService: idempotencymodule.NewService(repositories.Idempotency, now),
@@ -160,9 +172,11 @@ func newServiceWithEmailSender(now func() time.Time, repositories Repositories, 
 		announcement:       announcement.NewService(repositories.Announcement, now),
 		notification:       notification.NewService(repositories.Notification, now),
 		contactService:     contactmodule.NewService(repositories.Contact, now),
-		profileService:     profile.NewServiceWithEmailSender(repositories.Profile, now, emailSender),
-		emailSender:        emailSender,
-		now:                now,
+		profileService: profile.NewServiceWithOptions(repositories.Profile, now, emailSender, profile.ServiceOptions{
+			EmailVerificationPepper: options.EmailVerificationPepper,
+		}),
+		emailSender: emailSender,
+		now:         now,
 	}
 	s.reputationService = reputation.NewService(repositories.Reputation, now, s.idempotencyService)
 	s.contactService.SetActionChecker(s.reputationService)

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"c2c-market/backend/internal/config"
+	"c2c-market/backend/internal/maintenance"
 	core "c2c-market/backend/internal/module/core"
 	"c2c-market/backend/internal/module/navigationbadge"
 	"c2c-market/backend/internal/module/profile"
@@ -26,6 +27,7 @@ type App struct {
 	NavigationBadges *navigationbadge.Service
 	RealtimeHub      *realtime.Hub
 	RealtimeListener *realtime.PostgresListener
+	Maintenance      *maintenance.Runner
 	Handler          http.Handler
 	shutdownOnce     sync.Once
 }
@@ -52,13 +54,6 @@ func New(ctx context.Context, cfg config.Config) (*App, error) {
 		}
 		store = connectedStore
 		log.Printf("PostgreSQL 已连接")
-		cleanupCtx, cleanupCancel := context.WithTimeout(ctx, 5*time.Second)
-		if appErr := store.CleanupExpiredIdempotency(cleanupCtx, time.Now().Add(-24*time.Hour)); appErr != nil {
-			cleanupCancel()
-			store.Close()
-			return nil, fmt.Errorf("清理过期幂等记录失败: %w", appErr)
-		}
-		cleanupCancel()
 	} else {
 		log.Printf("未配置 DATABASE_URL，当前仅启用内存运行切片")
 	}
@@ -70,9 +65,10 @@ func New(ctx context.Context, cfg config.Config) (*App, error) {
 		}
 		return nil, err
 	}
-	service := core.NewServiceWithRepositoriesAndEmailSender(core.Repositories{}, emailSender)
+	serviceOptions := core.ServiceOptions{EmailVerificationPepper: cfg.EmailVerificationPepper}
+	service := core.NewServiceWithRepositoriesEmailSenderAndOptions(core.Repositories{}, emailSender, serviceOptions)
 	if store != nil {
-		service = core.NewServiceWithRepositoriesAndEmailSender(core.RepositoriesFromPersistence(store), emailSender)
+		service = core.NewServiceWithRepositoriesEmailSenderAndOptions(core.RepositoriesFromPersistence(store), emailSender, serviceOptions)
 	}
 	service.ConfigureModelAuditOutbound(modelAuditPolicy)
 	if strings.TrimSpace(cfg.BootstrapAdminPassword) != "" {
@@ -99,6 +95,7 @@ func New(ctx context.Context, cfg config.Config) (*App, error) {
 	navigationBadges := navigationbadge.NewService(store, time.Now)
 	realtimeHub := realtime.NewHub()
 	var realtimeListener *realtime.PostgresListener
+	var maintenanceRunner *maintenance.Runner
 	if cfg.DatabaseURL != "" {
 		realtimeListener, err = realtime.NewPostgresListener(cfg.DatabaseURL, realtimeHub, log.Default())
 		if err != nil {
@@ -116,6 +113,25 @@ func New(ctx context.Context, cfg config.Config) (*App, error) {
 			}
 			return nil, fmt.Errorf("启动 PostgreSQL 实时监听失败: %w", err)
 		}
+		maintenanceRunner, err = maintenance.NewRunner(store, maintenance.Config{
+			Interval:  cfg.Maintenance.Interval,
+			BatchSize: cfg.Maintenance.BatchSize,
+			Policy: maintenance.Policy{
+				SessionRetention:            cfg.Maintenance.SessionRetention,
+				EmailVerificationRetention:  cfg.Maintenance.EmailVerificationRetention,
+				ReadNotificationRetention:   cfg.Maintenance.ReadNotificationRetention,
+				UnreadNotificationRetention: cfg.Maintenance.UnreadNotificationRetention,
+				DomainEventRetention:        cfg.Maintenance.DomainEventRetention,
+			},
+		}, time.Now, log.Default())
+		if err != nil {
+			realtimeListener.Close()
+			realtimeListener.Wait()
+			realtimeHub.Close()
+			store.Close()
+			return nil, fmt.Errorf("初始化数据维护任务失败: %w", err)
+		}
+		maintenanceRunner.Start()
 	}
 
 	handler := server.NewServer(service, server.ServerOptions{
@@ -147,6 +163,7 @@ func New(ctx context.Context, cfg config.Config) (*App, error) {
 		NavigationBadges: navigationBadges,
 		RealtimeHub:      realtimeHub,
 		RealtimeListener: realtimeListener,
+		Maintenance:      maintenanceRunner,
 		Handler:          handler,
 	}, nil
 }
@@ -179,6 +196,9 @@ func (a *App) BeginShutdown() {
 		}
 		if a.RealtimeHub != nil {
 			a.RealtimeHub.Close()
+		}
+		if a.Maintenance != nil {
+			a.Maintenance.Close()
 		}
 	})
 }
