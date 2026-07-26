@@ -270,3 +270,46 @@ Committed and pushed marketplace updates, including API order payment QR snapsho
 ### Next Steps
 
 - None - task complete
+
+
+## Session 8: OAuth identity and administrator bootstrap hardening
+
+**Date**: 2026-07-26
+**Task**: OAuth identity and administrator bootstrap hardening
+**Package**: frontend
+**Branch**: `codex/prelaunch-identity-hardening`
+**Executor**: Codex
+
+### Summary
+
+Implemented immutable OAuth identity ownership, create-only proven administrator bootstrap, migration 62, regression coverage, and backend identity contract documentation.
+
+### Main Changes
+
+- Made OAuth identity ownership immutable by provider and subject.
+- Added collision-safe first-login handling and concurrent identity creation.
+- Reworked administrator bootstrap as create-only with a fixed proof marker.
+- Added migration 62, regression tests, and the backend identity contract.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `49b99b5` | (see git log) |
+
+### Testing
+
+- [OK] `go test -count=1 ./...`
+- [OK] `go vet ./...`
+- [OK] `gofmt -l .`
+- [OK] `go test -race -count=1 ./internal/module/auth`
+- [OK] OpenAPI route guard and migration guard
+- [OK] PostgreSQL OAuth concurrency and bootstrap integration scenarios
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
