@@ -11,7 +11,6 @@ const staticRoutes = [
   '/',
   '/official-prices',
   '/carpools',
-  '/demands',
   '/api-market',
 ]
 
@@ -38,10 +37,9 @@ function addPublicDetail(entries: Map<string, SitemapEntry>, prefix: string, ite
 export default defineEventHandler(async (event) => {
   const config = useRuntimeConfig(event)
   const apiBaseUrl = String(config.apiBaseUrl ?? '').replace(/\/$/, '')
-  const [officialPrices, carpools, demands, apiServices] = await Promise.all([
+  const [officialPrices, carpools, apiServices] = await Promise.all([
     fetchPublicItems(apiBaseUrl, '/api/v1/official-prices'),
     fetchPublicItems(apiBaseUrl, '/api/v1/carpools'),
-    fetchPublicItems(apiBaseUrl, '/api/v1/demands'),
     fetchPublicItems(apiBaseUrl, '/api/v1/api-services'),
   ])
 
@@ -51,9 +49,6 @@ export default defineEventHandler(async (event) => {
   }
   for (const item of carpools) {
     addPublicDetail(entries, '/carpools', item)
-  }
-  for (const item of demands) {
-    addPublicDetail(entries, '/demands', item)
   }
   for (const item of apiServices) {
     addPublicDetail(entries, '/api-market', item)

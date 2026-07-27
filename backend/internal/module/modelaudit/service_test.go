@@ -2,10 +2,12 @@ package modelaudit
 
 import (
 	"context"
+	"net/netip"
 	"testing"
 	"time"
 
 	"c2c-market/backend/internal/module/auth"
+	"c2c-market/backend/internal/platform/outboundhttp"
 )
 
 type recordingChatAdapter struct {
@@ -106,10 +108,78 @@ func newTestModelAuditService(t *testing.T, adapter ProviderAdapter) *Service {
 	t.Helper()
 	now := time.Date(2026, 7, 7, 12, 0, 0, 0, time.UTC)
 	service := NewService(nil, func() time.Time { return now })
+	policy, err := outboundhttp.NewPolicy(nil, outboundhttp.WithResolver(modelAuditTestResolver{
+		"relay.example.test": {netip.MustParseAddr("93.184.216.34")},
+	}))
+	if err != nil {
+		t.Fatalf("create outbound policy: %v", err)
+	}
+	service.SetOutboundPolicy(policy)
 	service.SetAdapterFactory(func(Target, string) ProviderAdapter {
 		return adapter
 	})
 	return service
+}
+
+type modelAuditTestResolver map[string][]netip.Addr
+
+func (r modelAuditTestResolver) LookupNetIP(_ context.Context, _ string, host string) ([]netip.Addr, error) {
+	return append([]netip.Addr(nil), r[host]...), nil
+}
+
+func TestTargetCreateAndUpdateEnforceOutboundPolicy(t *testing.T) {
+	service := NewService(nil, time.Now)
+	policy, err := outboundhttp.NewPolicy([]string{"public.example.test", "private.example.test"}, outboundhttp.WithResolver(modelAuditTestResolver{
+		"public.example.test":  {netip.MustParseAddr("93.184.216.34")},
+		"private.example.test": {netip.MustParseAddr("10.0.0.5")},
+	}))
+	if err != nil {
+		t.Fatalf("create outbound policy: %v", err)
+	}
+	service.SetOutboundPolicy(policy)
+
+	rejectedTargets := []string{
+		"http://public.example.test/v1",
+		"https://user:secret@public.example.test/v1",
+		"https://public.example.test/v1?debug=1",
+		"https://public.example.test/v1#fragment",
+		"https://other.example.test/v1",
+		"https://private.example.test/v1",
+	}
+	for _, baseURL := range rejectedTargets {
+		_, appErr := service.CreateTarget(context.Background(), testAdminUser(), TargetInput{
+			Name:         "Rejected target",
+			BaseURL:      baseURL,
+			ClaimedModel: "gpt-example",
+			APIKey:       "sk-test",
+		})
+		if appErr == nil {
+			t.Fatalf("CreateTarget accepted unsafe target %q", baseURL)
+		}
+	}
+
+	target, appErr := service.CreateTarget(context.Background(), testAdminUser(), TargetInput{
+		Name:         "Public target",
+		BaseURL:      "https://PUBLIC.EXAMPLE.TEST./v1/",
+		ClaimedModel: "gpt-example",
+		APIKey:       "sk-test",
+	})
+	if appErr != nil {
+		t.Fatalf("CreateTarget returned error: %+v", appErr)
+	}
+	if target.BaseURL != "https://public.example.test/v1" {
+		t.Fatalf("target URL was not normalized: %q", target.BaseURL)
+	}
+
+	_, appErr = service.UpdateTarget(context.Background(), testAdminUser(), target.ID, TargetInput{
+		Name:         target.Name,
+		BaseURL:      "https://private.example.test/v1",
+		ClaimedModel: target.ClaimedModel,
+		Enabled:      true,
+	})
+	if appErr == nil {
+		t.Fatal("UpdateTarget accepted a private DNS target")
+	}
 }
 
 func createTestModelAuditTarget(t *testing.T, service *Service, claimedModel string) Target {

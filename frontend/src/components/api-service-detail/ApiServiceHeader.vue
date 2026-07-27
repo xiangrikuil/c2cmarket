@@ -5,13 +5,17 @@ import type { ApiService } from '@/lib/api'
 
 defineProps<{
   service: ApiService
+  iconSrc?: string | null
 }>()
 </script>
 
 <template>
   <section class="api-service-detail-header min-w-0 rounded-xl border px-5 py-5 md:px-6">
     <div class="flex min-w-0 items-start gap-4">
-      <span class="api-service-detail-logo"><Code2 class="h-7 w-7" /></span>
+      <span class="api-service-detail-logo">
+        <img v-if="iconSrc" :src="iconSrc" alt="" class="h-7 w-7 object-contain" />
+        <Code2 v-else class="h-7 w-7" />
+      </span>
       <div class="min-w-0">
         <div class="mb-2 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
           <span>API 服务</span>

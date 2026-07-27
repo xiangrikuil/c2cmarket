@@ -57,8 +57,22 @@ versions:
 | `000048_report_schema_upgrade` | upgrades earlier report/dispute schemas with canonical targets, result codes, deduplication, and moderation audit rows |
 | `000049_api_order_quota_inventory` | service-level metered quota inventory plus immutable quota, rate, and pricing snapshots on API orders |
 | `000050_api_order_payment_issue` | buyer-reported API order payment issues with merchant resolution tracking and notification hooks |
-| `000051_api_limited_packages` | stable limited-package allowance, stock, model associations, order reservations, and delivery-based expiry |
-| `000052_api_purchase_intent_ordered_constraint_cleanup` | removes legacy duplicate intent-status checks so ordered intents remain valid on upgraded databases |
+| `000051_api_limited_packages` | stable limited-package inventory, package/model associations, and order expiry snapshots |
+| `000052_api_purchase_intent_ordered_constraint_cleanup` | removes the legacy anonymous intent constraint and preserves the ordered intent state |
+| `000053_auth_session_renewal` | seven-day idle sessions, twenty-four-hour renewal throttling, and thirty-day absolute expiry |
+| `000054_api_quota_offers` | seller-declared API quota batches, fixed USD offers, scheduled inventory units, round claims, and immutable order snapshots |
+| `000055_api_quota_credentials` | encrypted pre-imported buyer-specific credential inventory for limited quota offers |
+| `000056_api_quota_system_slots` | nullable fixed Beijing sale-slot keys for simplified scheduled quota publication |
+| `000057_reputation_transaction_exclusions` | reversible transaction exclusions with append-only administrator audit events |
+| `000058_reputation_governance` | explicit dispute subjects, reversible reputation outcomes, role/action restrictions, and append-only governance audit events |
+| `000059_transaction_reviews` | completed carpool/API bidirectional sealed reviews, publication freeze, append-only revisions, and legacy review migration |
+| `000060_reputation_engine` | rebuildable role/scope reputation snapshots, append-only history, and fact-driven invalidation |
+| `000061_source_author_verification` | resource-level source-author verification, append-only audit events, and reputation invalidation |
+| `000062_auth_identity_bootstrap_hardening` | immutable first-admin bootstrap provenance for create-only, fail-closed initialization |
+| `000063_verification_data_lifecycle` | keyed email verification challenges, bounded idempotency records, and lifecycle-maintenance indexes |
+| `000064_contact_cipher_aad` | explicit legacy/AAD cipher formats for versioned contact, audit, order, and quota secrets |
+| `000065_remove_demands` | removes the prelaunch demand-post table, its indexes, and demand idempotency residue |
+| `000066_api_service_multiplier_reconciliation` | removes historical fixed-one Sub2API service-model constraints so the positive merchant-declared multiplier contract is consistent |
 
 The current runnable Go slice supports both in-memory tests and PostgreSQL runtime.
 When `DATABASE_URL` is configured, users, auth sessions, idempotency, product
@@ -68,8 +82,8 @@ join confirmations, memberships, completion confirmations, API model catalog
 reads, API service publishing/review/moderation reads and writes, API
 purchase-intent creation/lifecycle reads and writes, native username/password
 login credentials, profile privacy fields,
-merchant profile public reads, announcements, demands, favorites, completed
-carpool membership reviews, reports, dispute cases, appeals, dispute events, and
+merchant profile public reads, announcements, favorites, unified
+transaction reviews, reports, dispute cases, appeals, dispute events, and
 API purchase-intent contact access logs are backed by PostgreSQL.
 
 Official price approval is the baseline multi-row transaction: the runtime writes
@@ -126,11 +140,12 @@ merchant contact; buyer detail records merchant-contact reads; owner detail
 records buyer-contact reads.
 
 Version 24 enables PostgreSQL `pg_trgm` and adds GIN trigram indexes over public
-search text expressions for API services/models, carpool listings, demands,
+search text expressions for API services/models, carpool listings, the historical demand table,
 product-plan text used by official price search, public users/linux.do
 usernames, merchant profiles, and API model catalog rows. These indexes are
-performance support only; they do not change search visibility predicates or
-response DTOs. Use `scripts/explain-search.sql` from the repository root to
+performance support only; the demand index is removed with the table in Version
+65. They do not change search visibility predicates or response DTOs. Use
+`scripts/explain-search.sql` from the repository root to
 verify that global search predicates keep matching the expression indexes.
 
 Version 36 realigns the merchant-profile trigram index to `lower(display_name)`
@@ -192,6 +207,77 @@ constraint. It drops both legacy and canonical variants, then recreates one
 named constraint that accepts the order-backed `ordered` state. The down
 migration is intentionally non-destructive because restoring the anonymous
 constraint would reintroduce the production failure this migration removes.
+
+Version 54 adds seller-declared quota batches and fixed USD quota offers without
+changing the existing Sub2API free-amount purchase path. Scheduled sales allocate
+one durable inventory row per copy, and `(sale_round_id, buyer_user_id)` claims
+enforce the cross-offer one-copy limit. Quota-offer orders freeze price, allowance,
+multiplier, cutoff, expiration, performance declaration, and delivery-mode fields.
+At this historical step, the database enforces the one-hour hard sale cutoff and
+restores the fixed `1.0000` Sub2API service-model constraint. Version 66 removes
+that obsolete constraint while preserving the positive multiplier contract.
+
+Version 55 adds encrypted pre-imported credential inventory for quota offers.
+Rows use the existing one-time delivery shapes, keyed fingerprints, explicit
+available/reserved/delivered/retired states, and one current reservation per
+order. Raw API keys and passwords are never stored in plaintext and do not
+belong in public, list, notification, event, log, or idempotency payloads.
+
+Version 53 adds throttled sliding renewal for login sessions. New sessions have
+a seven-day idle expiry and a thirty-day absolute expiry. Authenticated requests
+may renew at most once every twenty-four hours through a conditional PostgreSQL
+update; revoked, idle-expired, and absolute-expired sessions are never extended.
+
+Version 59 replaces new `carpool_reviews` writes with `transaction_reviews` and
+`transaction_review_revisions`. Completed carpool memberships and completed API
+orders support one buyer-to-seller and one seller-to-buyer review within fourteen
+days. The first review remains sealed; the paired submission publishes and
+freezes both rows atomically, while an eligible read materializes a lone expired
+review at its deadline. Published content is immutable, administrator removal
+changes only audited removal state, and active reputation exclusions suppress
+eligibility/public reads. Existing `carpool_reviews` are copied without changing
+their IDs, content, or timestamps and receive one `migrated` revision.
+
+Version 60 adds the rebuildable `user_reputation_states` cache and append-only
+`user_reputation_history`. Snapshots are keyed by user, buyer/seller role, and
+overall/carpool/API scope. They retain the `reputation-v1` rule version, source
+fact timestamp, dirty marker, and next time-driven recalculation boundary.
+Database triggers invalidate existing snapshots when transaction participants,
+reviews and their platform prior, disputes, outcomes, restrictions, exclusions,
+or linux.do bindings change.
+
+Version 61 adds resource-level source-author verification for carpool listings
+and API services. Each resource keeps one versioned verification record with
+`not_submitted`, `pending`, `verified`, `mismatch`, or `expired` status, while
+every administrator change appends an immutable audit event. Verification and
+source-resource changes invalidate the seller's reputation snapshots so
+mismatches and time-based expiry are reflected in subsequent reads.
+
+Version 62 adds immutable provenance for the one supported first-admin bootstrap
+run. Runtime bootstrap is create-only: a proven matching rerun returns without
+changing credentials, while occupied usernames, foreign administrators, and
+inconsistent provenance fail closed.
+
+Version 63 invalidates legacy unkeyed bind-email challenges and enforces one
+active challenge per user. It adds the `failed` idempotency state, finite
+processing/completed/failed retention, and indexes used by the bounded
+PostgreSQL lifecycle runner. The runner deletes terminal sessions, terminal
+verification challenges, expired idempotency rows, aged notifications, and
+unreferenced domain events in bounded batches; it expires ended contact
+windows without deleting contact history, access logs, administrator audits,
+or dispute audits. The down migration cannot restore invalidated challenges or
+response bodies truncated above 64 KiB.
+
+Version 65 removes the prelaunch demand-post table after clearing demand
+idempotency resource references. Its down migration recreates only the empty
+historical table and indexes; deleted development data is not recoverable.
+
+Version 66 removes the canonical or legacy anonymous checks that forced
+Sub2API service-model multipliers to `1.0000`. Version 54 remains immutable as
+historical migration state; the new forward migration makes existing and fresh
+databases converge on the current positive merchant-declared multiplier
+contract without rewriting business data. Rolling Version 66 down can fail
+explicitly when non-`1.0000` Sub2API model rows already exist.
 
 ## Contact Retention And Destruction
 

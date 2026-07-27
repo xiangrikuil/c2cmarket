@@ -78,7 +78,6 @@ const normalizeKnownSourcePath = (path: string) => {
   if (first === 'announcements' && segments.length === 2) return '/announcements/:slug'
   if (first === 'official-prices' && segments.length === 2 && !['submit', 'manage', 'detail'].includes(second)) return '/official-prices/:id'
   if (first === 'carpools' && segments.length === 2 && !['new', 'detail'].includes(second)) return '/carpools/:id'
-  if (first === 'demands' && segments.length === 2) return '/demands/:id'
   if (first === 'api-market' && segments.length === 2 && !['new', 'detail'].includes(second)) return '/api-market/:id'
   if (first === 'api-intents' && segments.length === 2) return '/api-intents/:id'
   if (first === 'my' && second === 'rides' && segments.length === 3) return '/my/rides/:id'

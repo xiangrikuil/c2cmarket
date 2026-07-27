@@ -43,6 +43,7 @@ test('account recovery allows only setup and public explanation paths before com
 
 test('account recovery return target stays internal and skips allowed setup pages', () => {
   assert.equal(sanitizeAccountRecoveryReturnTo('/carpools/new?source=nav'), '/carpools/new?source=nav')
+  assert.equal(sanitizeAccountRecoveryReturnTo('/my/api-services?intent=quota'), '/my/api-services?intent=quota')
   assert.equal(sanitizeAccountRecoveryReturnTo('/my/account'), null)
   assert.equal(sanitizeAccountRecoveryReturnTo('/u/orbit'), null)
   assert.equal(sanitizeAccountRecoveryReturnTo('https://example.test/carpools'), null)

@@ -1,9 +1,10 @@
-import type { ApiMerchantIdentityMode, ModelCatalogItem } from '@/lib/api'
+import type { ApiMerchantIdentityMode, ApiTTFTBand, ModelCatalogItem } from '@/lib/api'
 import type { ApiPaymentMethod } from '@/lib/apiPaymentSettings'
 
 export type DistributionSystem = 'sub2api' | 'new_api_proxy' | 'other'
 export type ApiProviderCategory = 'gpt' | 'claude' | 'other'
 export type BillingMode = 'metered_credit' | 'manual_credit' | 'fixed_package'
+export type SellingMode = 'free' | 'limited'
 export type PublishDeliveryMode = 'api_key_endpoint' | 'sub2api_panel_account'
 export type PublishPaymentMethod = ApiPaymentMethod
 export type UsageVisibility = 'panel_realtime' | 'panel_balance_only' | 'merchant_confirmed' | 'fixed_package_only' | 'not_available'
@@ -73,6 +74,9 @@ export type ApiServicePublishForm = {
   maximumPurchaseCny: number | null
   paymentWindowMinutes: number
   paymentOptions: ApiServicePaymentOption[]
+  declaredTtftBand: ApiTTFTBand
+  recommendedConcurrency: number
+  performanceConfirmedAt: string
   packages: ApiServicePackage[]
   validity: {
     mode: ValidityMode

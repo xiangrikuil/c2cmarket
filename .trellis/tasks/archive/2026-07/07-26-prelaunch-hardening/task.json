@@ -1,0 +1,33 @@
+{
+  "id": "prelaunch-hardening",
+  "name": "prelaunch-hardening",
+  "title": "上线前安全加固与维护改造",
+  "description": "",
+  "status": "completed",
+  "dev_type": null,
+  "scope": "cross-layer",
+  "package": "frontend",
+  "priority": "P2",
+  "creator": "xiangrikuil",
+  "assignee": "xiangrikuil",
+  "createdAt": "2026-07-26",
+  "completedAt": "2026-07-27",
+  "branch": null,
+  "base_branch": "docs/open-source-readme",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [
+    "07-26-prelaunch-identity-hardening",
+    "07-26-auth-release-alignment",
+    "07-26-outbound-ssrf-hardening",
+    "07-26-production-ingress-client-ip",
+    "07-26-reproducible-release-buildinfo",
+    "07-26-verification-data-lifecycle"
+  ],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {}
+}

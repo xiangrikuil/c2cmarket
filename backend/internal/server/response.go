@@ -2,6 +2,7 @@ package server
 
 import (
 	"c2c-market/backend/internal/module/idempotency"
+	"c2c-market/backend/internal/observability"
 	httpresponse "c2c-market/backend/internal/response"
 	"net/http"
 	"strings"
@@ -38,5 +39,6 @@ func setETag(w http.ResponseWriter, version int64) {
 }
 
 func writeProblem(w http.ResponseWriter, r *http.Request, err error) {
+	observability.RecordProblem(r.Context(), err)
 	httpresponse.WriteProblem(w, r, err, requestIDFrom(r))
 }

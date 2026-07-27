@@ -258,6 +258,24 @@ export async function backendMutation<T>(path: string, body: unknown, options: {
   }
 }
 
+export async function backendFormDataMutation<T>(path: string, body: FormData, options: {
+  idempotencyPrefix?: string
+  ifMatch?: number | string
+} = {}) {
+  const request = () => backendRequest<T>(path, {
+    method: 'POST',
+    headers: backendMutationHeaders(options),
+    body,
+  })
+  try {
+    return await request()
+  } catch (error) {
+    if (!isCSRFTokenInvalidError(error)) throw error
+    await getCurrentBackendSession({ forceRefresh: true })
+    return request()
+  }
+}
+
 export async function ensureBackendSession(username = 'orbit', admin = false) {
   try {
     const current = await getCurrentBackendSession()

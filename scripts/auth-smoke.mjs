@@ -1,4 +1,5 @@
 const baseURL = process.env.API_BASE_URL || 'http://127.0.0.1:8080'
+const frontendOrigin = process.env.FRONTEND_ORIGIN || 'http://127.0.0.1:5173'
 
 function assert(condition, message) {
   if (!condition) throw new Error(message)
@@ -52,7 +53,8 @@ async function oauthLogin(code, jar) {
   })
   storeCookies(jar, callbackResponse)
   assert(callbackResponse.status === 302, 'callback should redirect after login')
-  assert(callbackResponse.headers.get('location') === '/my', 'callback should redirect to returnTo')
+  const expectedRedirect = new URL('/my', frontendOrigin).toString()
+  assert(callbackResponse.headers.get('location') === expectedRedirect, 'callback should redirect to the configured frontend returnTo')
   const session = await request('/api/v1/auth/session', {}, jar)
   assert(session.user.username === code.replace(/^fake-/, '').toLowerCase(), 'session username should match fake code')
   assert(session.user.linuxDoBinding?.bound === true, 'session should include linux.do binding')
@@ -60,8 +62,20 @@ async function oauthLogin(code, jar) {
   return session
 }
 
+async function devAdminSession(username, jar) {
+  const session = await request('/api/v1/auth/dev-session', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ username, admin: true }),
+  }, jar)
+  assert(session.user.permissions.includes('admin'), 'dev admin session should include admin permission')
+  assert(session.csrfToken, 'dev admin session should include csrfToken')
+  return session
+}
+
 async function main() {
   const userJar = {}
+  const adminLikeOAuthJar = {}
   const adminJar = {}
 
   const userSession = await oauthLogin(`fake-auth-user-${Date.now()}`, userJar)
@@ -70,9 +84,13 @@ async function main() {
   const denied = await request('/api/v1/admin/announcements', { expectedStatus: 403 }, userJar)
   assert(denied.code === 'PERMISSION_DENIED', 'regular user should be denied admin route')
 
-  const adminSession = await oauthLogin(`fake-auth-admin-${Date.now()}`, adminJar)
-  assert(adminSession.user.permissions.includes('admin'), 'admin fake OAuth user should include admin permission')
+  const adminLikeOAuthSession = await oauthLogin(`fake-auth-admin-${Date.now()}`, adminLikeOAuthJar)
+  assert(!adminLikeOAuthSession.user.permissions.includes('admin'), 'OAuth username must not grant admin permission')
 
+  const adminLikeDenied = await request('/api/v1/admin/announcements', { expectedStatus: 403 }, adminLikeOAuthJar)
+  assert(adminLikeDenied.code === 'PERMISSION_DENIED', 'admin-like OAuth username should be denied admin route')
+
+  const adminSession = await devAdminSession(`auth-smoke-dev-admin-${Date.now()}`, adminJar)
   const adminAnnouncements = await request('/api/v1/admin/announcements', {}, adminJar)
   assert(Array.isArray(adminAnnouncements.items), 'admin should read announcement list')
 
@@ -87,6 +105,7 @@ async function main() {
   console.log(JSON.stringify({
     ok: true,
     user: userSession.user.username,
+    adminLikeOAuthUser: adminLikeOAuthSession.user.username,
     admin: adminSession.user.username,
     adminPermissions: adminSession.user.permissions,
   }, null, 2))

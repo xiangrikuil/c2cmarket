@@ -57,40 +57,42 @@ type carpoolCycleTermResponse struct {
 }
 
 type carpoolListingResponse struct {
-	ID                     string                                `json:"id"`
-	OwnerUserID            string                                `json:"ownerUserId"`
-	ProductPlanID          string                                `json:"productPlanId"`
-	OwnerContactMethodID   string                                `json:"ownerContactMethodId,omitempty"`
-	CycleTerm              *carpoolCycleTermResponse             `json:"cycleTerm,omitempty"`
-	Title                  string                                `json:"title"`
-	Summary                string                                `json:"summary"`
-	AccessArrangement      string                                `json:"accessArrangement"`
-	DistributionMethod     string                                `json:"distributionMethod"`
-	DistributionMethodNote string                                `json:"distributionMethodNote"`
-	ProvidesAdminAccount   bool                                  `json:"providesAdminAccount"`
-	RegionCode             string                                `json:"regionCode"`
-	RegionName             string                                `json:"regionName"`
-	SourceURL              string                                `json:"sourceUrl,omitempty"`
-	PriceMonthlyCNY        string                                `json:"priceMonthlyCny"`
-	ServiceMultiplier      string                                `json:"serviceMultiplier"`
-	MonthlyQuotaAmount     string                                `json:"monthlyQuotaAmount"`
-	QuotaLabel             string                                `json:"quotaLabel"`
-	QuotaUnit              string                                `json:"quotaUnit"`
-	QuotaPeriod            string                                `json:"quotaPeriod"`
-	BuyerSeatCapacity      int                                   `json:"buyerSeatCapacity"`
-	ActiveBuyerMembers     int                                   `json:"activeBuyerMembers"`
-	ReservedSeats          int                                   `json:"reservedSeats"`
-	AvailableSeats         int                                   `json:"availableSeats"`
-	Status                 string                                `json:"status"`
-	ReviewReason           *string                               `json:"reviewReason,omitempty"`
-	ReviewedAt             *string                               `json:"reviewedAt,omitempty"`
-	PolicyVersion          int64                                 `json:"policyVersion"`
-	RiskNoticeCode         string                                `json:"riskNoticeCode,omitempty"`
-	RiskAckRequired        bool                                  `json:"riskAckRequired"`
-	Version                int64                                 `json:"version"`
-	CreatedAt              string                                `json:"createdAt"`
-	UpdatedAt              string                                `json:"updatedAt"`
-	ApplicationEligibility carpoolApplicationEligibilityResponse `json:"applicationEligibility"`
+	ID                       string                                `json:"id"`
+	OwnerUserID              string                                `json:"ownerUserId"`
+	ProductPlanID            string                                `json:"productPlanId"`
+	OwnerContactMethodID     string                                `json:"ownerContactMethodId,omitempty"`
+	CycleTerm                *carpoolCycleTermResponse             `json:"cycleTerm,omitempty"`
+	Title                    string                                `json:"title"`
+	Summary                  string                                `json:"summary"`
+	AccessArrangement        string                                `json:"accessArrangement"`
+	DistributionMethod       string                                `json:"distributionMethod"`
+	DistributionMethodNote   string                                `json:"distributionMethodNote"`
+	ProvidesAdminAccount     bool                                  `json:"providesAdminAccount"`
+	RegionCode               string                                `json:"regionCode"`
+	RegionName               string                                `json:"regionName"`
+	SourceURL                string                                `json:"sourceUrl,omitempty"`
+	PriceMonthlyCNY          string                                `json:"priceMonthlyCny"`
+	ServiceMultiplier        string                                `json:"serviceMultiplier"`
+	MonthlyQuotaAmount       string                                `json:"monthlyQuotaAmount"`
+	QuotaLabel               string                                `json:"quotaLabel"`
+	QuotaUnit                string                                `json:"quotaUnit"`
+	QuotaPeriod              string                                `json:"quotaPeriod"`
+	BuyerSeatCapacity        int                                   `json:"buyerSeatCapacity"`
+	ActiveBuyerMembers       int                                   `json:"activeBuyerMembers"`
+	ReservedSeats            int                                   `json:"reservedSeats"`
+	AvailableSeats           int                                   `json:"availableSeats"`
+	Status                   string                                `json:"status"`
+	ReviewReason             *string                               `json:"reviewReason,omitempty"`
+	ReviewedAt               *string                               `json:"reviewedAt,omitempty"`
+	PolicyVersion            int64                                 `json:"policyVersion"`
+	RiskNoticeCode           string                                `json:"riskNoticeCode,omitempty"`
+	RiskAckRequired          bool                                  `json:"riskAckRequired"`
+	Version                  int64                                 `json:"version"`
+	CreatedAt                string                                `json:"createdAt"`
+	UpdatedAt                string                                `json:"updatedAt"`
+	ApplicationEligibility   carpoolApplicationEligibilityResponse `json:"applicationEligibility"`
+	SellerReputation         *reputationSummaryResponse            `json:"sellerReputation"`
+	SourceAuthorVerification sourceAuthorResourceSummaryResponse   `json:"sourceAuthorVerification"`
 }
 
 type createCarpoolApplicationRequest struct {
@@ -106,29 +108,30 @@ type carpoolApplicationEligibilityResponse struct {
 }
 
 type carpoolApplicationResponse struct {
-	ID                       string  `json:"id"`
-	CarpoolListingID         string  `json:"carpoolListingId"`
-	BuyerUserID              string  `json:"buyerUserId"`
-	OwnerUserID              string  `json:"ownerUserId"`
-	ProductPlanID            string  `json:"productPlanId"`
-	BuyerContactMethodID     string  `json:"buyerContactMethodId"`
-	Status                   string  `json:"status"`
-	SeatCount                int     `json:"seatCount"`
-	ListingTitleSnapshot     string  `json:"listingTitleSnapshot"`
-	PriceMonthlyCNY          string  `json:"priceMonthlyCny"`
-	PolicyVersionSnapshot    int64   `json:"policyVersionSnapshot"`
-	RiskNoticeCode           string  `json:"riskNoticeCode,omitempty"`
-	ContactSessionID         string  `json:"contactSessionId,omitempty"`
-	ReservationExpiresAt     *string `json:"reservationExpiresAt,omitempty"`
-	JoinConfirmationDeadline *string `json:"joinConfirmationDeadline,omitempty"`
-	BuyerConfirmedAt         *string `json:"buyerConfirmedAt,omitempty"`
-	OwnerConfirmedAt         *string `json:"ownerConfirmedAt,omitempty"`
-	JoinedAt                 *string `json:"joinedAt,omitempty"`
-	DecisionReason           *string `json:"decisionReason,omitempty"`
-	DecidedAt                *string `json:"decidedAt,omitempty"`
-	Version                  int64   `json:"version"`
-	CreatedAt                string  `json:"createdAt"`
-	UpdatedAt                string  `json:"updatedAt"`
+	ID                       string                     `json:"id"`
+	CarpoolListingID         string                     `json:"carpoolListingId"`
+	BuyerUserID              string                     `json:"buyerUserId"`
+	OwnerUserID              string                     `json:"ownerUserId"`
+	ProductPlanID            string                     `json:"productPlanId"`
+	BuyerContactMethodID     string                     `json:"buyerContactMethodId"`
+	Status                   string                     `json:"status"`
+	SeatCount                int                        `json:"seatCount"`
+	ListingTitleSnapshot     string                     `json:"listingTitleSnapshot"`
+	PriceMonthlyCNY          string                     `json:"priceMonthlyCny"`
+	PolicyVersionSnapshot    int64                      `json:"policyVersionSnapshot"`
+	RiskNoticeCode           string                     `json:"riskNoticeCode,omitempty"`
+	ContactSessionID         string                     `json:"contactSessionId,omitempty"`
+	ReservationExpiresAt     *string                    `json:"reservationExpiresAt,omitempty"`
+	JoinConfirmationDeadline *string                    `json:"joinConfirmationDeadline,omitempty"`
+	BuyerConfirmedAt         *string                    `json:"buyerConfirmedAt,omitempty"`
+	OwnerConfirmedAt         *string                    `json:"ownerConfirmedAt,omitempty"`
+	JoinedAt                 *string                    `json:"joinedAt,omitempty"`
+	DecisionReason           *string                    `json:"decisionReason,omitempty"`
+	DecidedAt                *string                    `json:"decidedAt,omitempty"`
+	Version                  int64                      `json:"version"`
+	CreatedAt                string                     `json:"createdAt"`
+	UpdatedAt                string                     `json:"updatedAt"`
+	BuyerReputation          *reputationSummaryResponse `json:"buyerReputation"`
 }
 
 type carpoolMembershipResponse struct {
@@ -157,7 +160,7 @@ type carpoolMembershipResponse struct {
 }
 
 func (s *Server) handleCreateCarpool(w http.ResponseWriter, r *http.Request) {
-	user, _, appErr := s.requireSessionAndCSRF(r)
+	user, _, appErr := s.requireSessionAndCSRF(w, r)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
@@ -179,7 +182,7 @@ func (s *Server) handleCreateCarpool(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handlePublishCarpool(w http.ResponseWriter, r *http.Request) {
-	user, _, appErr := s.requireSessionAndCSRF(r)
+	user, _, appErr := s.requireSessionAndCSRF(w, r)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
@@ -201,7 +204,7 @@ func (s *Server) handlePublishCarpool(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleUpdateCarpool(w http.ResponseWriter, r *http.Request) {
-	user, _, appErr := s.requireSessionAndCSRF(r)
+	user, _, appErr := s.requireSessionAndCSRF(w, r)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
@@ -271,7 +274,7 @@ func toAppCreateCarpoolInput(req createCarpoolRequest) carpool.CreateListingInpu
 }
 
 func (s *Server) handleSubmitCarpoolReview(w http.ResponseWriter, r *http.Request) {
-	user, _, appErr := s.requireSessionAndCSRF(r)
+	user, _, appErr := s.requireSessionAndCSRF(w, r)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
@@ -330,7 +333,7 @@ func (s *Server) handlePublicCarpool(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleCarpoolApplicationEligibility(w http.ResponseWriter, r *http.Request) {
-	user, _, appErr := s.requireSession(r)
+	user, _, appErr := s.requireSession(w, r)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
@@ -344,7 +347,7 @@ func (s *Server) handleCarpoolApplicationEligibility(w http.ResponseWriter, r *h
 }
 
 func (s *Server) handleMyCarpools(w http.ResponseWriter, r *http.Request) {
-	user, _, appErr := s.requireSession(r)
+	user, _, appErr := s.requireSession(w, r)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
@@ -358,7 +361,7 @@ func (s *Server) handleMyCarpools(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleAdminCarpools(w http.ResponseWriter, r *http.Request) {
-	user, _, appErr := s.requireSession(r)
+	user, _, appErr := s.requireSession(w, r)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
@@ -380,7 +383,7 @@ func (s *Server) handleAdminCarpools(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleAdminCarpool(w http.ResponseWriter, r *http.Request) {
-	user, _, appErr := s.requireSession(r)
+	user, _, appErr := s.requireSession(w, r)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
@@ -415,7 +418,7 @@ func (s *Server) handleRestoreCarpool(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleCarpoolReviewStatus(w http.ResponseWriter, r *http.Request, action, status string) {
-	user, _, appErr := s.requireSessionAndCSRF(r)
+	user, _, appErr := s.requireSessionAndCSRF(w, r)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
@@ -450,7 +453,7 @@ func (s *Server) handleCarpoolReviewStatus(w http.ResponseWriter, r *http.Reques
 }
 
 func (s *Server) handleCreateCarpoolApplication(w http.ResponseWriter, r *http.Request) {
-	user, _, appErr := s.requireSessionAndCSRF(r)
+	user, _, appErr := s.requireSessionAndCSRF(w, r)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
@@ -477,7 +480,7 @@ func (s *Server) handleCreateCarpoolApplication(w http.ResponseWriter, r *http.R
 }
 
 func (s *Server) handleMyCarpoolApplications(w http.ResponseWriter, r *http.Request) {
-	user, _, appErr := s.requireSession(r)
+	user, _, appErr := s.requireSession(w, r)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
@@ -491,7 +494,7 @@ func (s *Server) handleMyCarpoolApplications(w http.ResponseWriter, r *http.Requ
 }
 
 func (s *Server) handleMyCarpoolApplication(w http.ResponseWriter, r *http.Request) {
-	user, _, appErr := s.requireSession(r)
+	user, _, appErr := s.requireSession(w, r)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
@@ -510,7 +513,7 @@ func (s *Server) handleBuyerConfirmCarpoolJoin(w http.ResponseWriter, r *http.Re
 }
 
 func (s *Server) handleCancelCarpoolApplication(w http.ResponseWriter, r *http.Request) {
-	user, _, appErr := s.requireSessionAndCSRF(r)
+	user, _, appErr := s.requireSessionAndCSRF(w, r)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
@@ -569,7 +572,7 @@ func (s *Server) handleBuyerLeaveCarpoolMembership(w http.ResponseWriter, r *htt
 }
 
 func (s *Server) handleMyCarpoolMemberships(w http.ResponseWriter, r *http.Request) {
-	user, _, appErr := s.requireSession(r)
+	user, _, appErr := s.requireSession(w, r)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
@@ -582,7 +585,7 @@ func (s *Server) handleMyCarpoolMemberships(w http.ResponseWriter, r *http.Reque
 	writePaginatedJSON(w, r, toCarpoolMembershipResponses(memberships))
 }
 func (s *Server) handleOwnerCarpoolApplications(w http.ResponseWriter, r *http.Request) {
-	user, _, appErr := s.requireSession(r)
+	user, _, appErr := s.requireSession(w, r)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
@@ -596,7 +599,7 @@ func (s *Server) handleOwnerCarpoolApplications(w http.ResponseWriter, r *http.R
 }
 
 func (s *Server) handleOwnerCarpoolApplication(w http.ResponseWriter, r *http.Request) {
-	user, _, appErr := s.requireSession(r)
+	user, _, appErr := s.requireSession(w, r)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
@@ -611,7 +614,7 @@ func (s *Server) handleOwnerCarpoolApplication(w http.ResponseWriter, r *http.Re
 }
 
 func (s *Server) handleAcceptCarpoolApplication(w http.ResponseWriter, r *http.Request) {
-	user, _, appErr := s.requireSessionAndCSRF(r)
+	user, _, appErr := s.requireSessionAndCSRF(w, r)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
@@ -661,7 +664,7 @@ func (s *Server) handleAcceptCarpoolApplication(w http.ResponseWriter, r *http.R
 }
 
 func (s *Server) handleRejectCarpoolApplication(w http.ResponseWriter, r *http.Request) {
-	user, _, appErr := s.requireSessionAndCSRF(r)
+	user, _, appErr := s.requireSessionAndCSRF(w, r)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
@@ -695,7 +698,7 @@ func (s *Server) handleRejectCarpoolApplication(w http.ResponseWriter, r *http.R
 }
 
 func (s *Server) handleWithdrawCarpoolAcceptance(w http.ResponseWriter, r *http.Request) {
-	user, _, appErr := s.requireSessionAndCSRF(r)
+	user, _, appErr := s.requireSessionAndCSRF(w, r)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
@@ -758,7 +761,7 @@ func (s *Server) handleOwnerRemoveCarpoolMembership(w http.ResponseWriter, r *ht
 }
 
 func (s *Server) handleOwnerCarpoolMemberships(w http.ResponseWriter, r *http.Request) {
-	user, _, appErr := s.requireSession(r)
+	user, _, appErr := s.requireSession(w, r)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
@@ -771,7 +774,7 @@ func (s *Server) handleOwnerCarpoolMemberships(w http.ResponseWriter, r *http.Re
 	writePaginatedJSON(w, r, toCarpoolMembershipResponses(memberships))
 }
 func (s *Server) handleConfirmCarpoolJoin(w http.ResponseWriter, r *http.Request, actorRole string) {
-	user, _, appErr := s.requireSessionAndCSRF(r)
+	user, _, appErr := s.requireSessionAndCSRF(w, r)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
@@ -826,7 +829,7 @@ func (s *Server) handleConfirmCarpoolJoin(w http.ResponseWriter, r *http.Request
 }
 
 func (s *Server) handleConfirmCarpoolMembershipComplete(w http.ResponseWriter, r *http.Request, actorRole string) {
-	user, _, appErr := s.requireSessionAndCSRF(r)
+	user, _, appErr := s.requireSessionAndCSRF(w, r)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
@@ -881,7 +884,7 @@ func (s *Server) handleConfirmCarpoolMembershipComplete(w http.ResponseWriter, r
 }
 
 func (s *Server) handleEndCarpoolMembership(w http.ResponseWriter, r *http.Request, actorRole, targetStatus string) {
-	user, _, appErr := s.requireSessionAndCSRF(r)
+	user, _, appErr := s.requireSessionAndCSRF(w, r)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
@@ -989,40 +992,42 @@ func toCarpoolListingResponse(listing carpool.Listing) carpoolListingResponse {
 		}
 	}
 	return carpoolListingResponse{
-		ID:                     listing.ID,
-		OwnerUserID:            listing.OwnerUserID,
-		ProductPlanID:          listing.ProductPlanID,
-		OwnerContactMethodID:   listing.OwnerContactMethodID,
-		CycleTerm:              cycleTerm,
-		Title:                  listing.Title,
-		Summary:                listing.Summary,
-		AccessArrangement:      listing.AccessArrangement,
-		DistributionMethod:     listing.DistributionMethod,
-		DistributionMethodNote: listing.DistributionMethodNote,
-		ProvidesAdminAccount:   listing.ProvidesAdminAccount,
-		RegionCode:             listing.RegionCode,
-		RegionName:             listing.RegionName,
-		SourceURL:              listing.SourceURL,
-		PriceMonthlyCNY:        listing.PriceMonthlyCNY,
-		ServiceMultiplier:      listing.ServiceMultiplier,
-		MonthlyQuotaAmount:     listing.MonthlyQuotaAmount,
-		QuotaLabel:             listing.QuotaLabel,
-		QuotaUnit:              listing.QuotaUnit,
-		QuotaPeriod:            listing.QuotaPeriod,
-		BuyerSeatCapacity:      listing.BuyerSeatCapacity,
-		ActiveBuyerMembers:     listing.ActiveBuyerMembers,
-		ReservedSeats:          listing.ReservedSeats,
-		AvailableSeats:         listing.AvailableSeats,
-		Status:                 listing.Status,
-		ReviewReason:           reviewReason,
-		ReviewedAt:             reviewedAt,
-		PolicyVersion:          listing.PolicyVersion,
-		RiskNoticeCode:         listing.RiskNoticeCode,
-		RiskAckRequired:        listing.RiskAckRequired,
-		Version:                listing.Version,
-		CreatedAt:              listing.CreatedAt.UTC().Format(time.RFC3339),
-		UpdatedAt:              listing.UpdatedAt.UTC().Format(time.RFC3339),
-		ApplicationEligibility: toCarpoolApplicationEligibilityResponse(carpool.EvaluatePublicListingEligibility(listing)),
+		ID:                       listing.ID,
+		OwnerUserID:              listing.OwnerUserID,
+		ProductPlanID:            listing.ProductPlanID,
+		OwnerContactMethodID:     listing.OwnerContactMethodID,
+		CycleTerm:                cycleTerm,
+		Title:                    listing.Title,
+		Summary:                  listing.Summary,
+		AccessArrangement:        listing.AccessArrangement,
+		DistributionMethod:       listing.DistributionMethod,
+		DistributionMethodNote:   listing.DistributionMethodNote,
+		ProvidesAdminAccount:     listing.ProvidesAdminAccount,
+		RegionCode:               listing.RegionCode,
+		RegionName:               listing.RegionName,
+		SourceURL:                listing.SourceURL,
+		PriceMonthlyCNY:          listing.PriceMonthlyCNY,
+		ServiceMultiplier:        listing.ServiceMultiplier,
+		MonthlyQuotaAmount:       listing.MonthlyQuotaAmount,
+		QuotaLabel:               listing.QuotaLabel,
+		QuotaUnit:                listing.QuotaUnit,
+		QuotaPeriod:              listing.QuotaPeriod,
+		BuyerSeatCapacity:        listing.BuyerSeatCapacity,
+		ActiveBuyerMembers:       listing.ActiveBuyerMembers,
+		ReservedSeats:            listing.ReservedSeats,
+		AvailableSeats:           listing.AvailableSeats,
+		Status:                   listing.Status,
+		ReviewReason:             reviewReason,
+		ReviewedAt:               reviewedAt,
+		PolicyVersion:            listing.PolicyVersion,
+		RiskNoticeCode:           listing.RiskNoticeCode,
+		RiskAckRequired:          listing.RiskAckRequired,
+		Version:                  listing.Version,
+		CreatedAt:                listing.CreatedAt.UTC().Format(time.RFC3339),
+		UpdatedAt:                listing.UpdatedAt.UTC().Format(time.RFC3339),
+		ApplicationEligibility:   toCarpoolApplicationEligibilityResponse(carpool.EvaluatePublicListingEligibility(listing)),
+		SellerReputation:         toReputationSummary(listing.SellerReputation),
+		SourceAuthorVerification: toSourceAuthorResourceSummaryResponse(listing.SourceAuthorVerification),
 	}
 }
 
@@ -1102,6 +1107,7 @@ func toCarpoolApplicationResponse(application carpool.Application) carpoolApplic
 		Version:                  application.Version,
 		CreatedAt:                application.CreatedAt.UTC().Format(time.RFC3339),
 		UpdatedAt:                application.UpdatedAt.UTC().Format(time.RFC3339),
+		BuyerReputation:          toReputationSummary(application.BuyerReputation),
 	}
 }
 

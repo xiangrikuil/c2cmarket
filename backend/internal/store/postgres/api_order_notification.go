@@ -125,7 +125,7 @@ func insertAPIOrderDomainEventAndNotificationInTx(ctx context.Context, tx pgx.Tx
 	if !ok || strings.TrimSpace(spec.RecipientUserID) == "" {
 		return nil
 	}
-	dedupeKey := "api_order:" + order.ID + ":v" + strconv.FormatInt(order.Version, 10) + ":" + spec.RecipientUserID
+	dedupeKey := "api_order:" + order.ID + ":v" + strconv.FormatInt(order.Version, 10) + ":" + eventType + ":" + spec.RecipientUserID
 	if _, err := tx.Exec(ctx, `
 		INSERT INTO notifications (
 			user_id, type, title, body, target_type, target_id, target_url,

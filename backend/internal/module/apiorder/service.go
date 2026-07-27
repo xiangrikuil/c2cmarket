@@ -617,7 +617,7 @@ func NewOrder(input CreateInput, intent apiintent.Intent, service apimarket.Serv
 	if strings.TrimSpace(input.IntentID) == "" {
 		return Order{}, domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "API purchase intent required", "必须提供购买意向。", "intentId", "required", "必须提供购买意向。")
 	}
-	if !apimarket.IsOrderableService(service) {
+	if !apimarket.WithOrderabilityAt(service, now).IsOrderable {
 		return Order{}, domain.NewError(http.StatusConflict, domain.CodeInvalidStateTransition, "Service not orderable", "当前 API 服务不可下单。")
 	}
 	method := strings.TrimSpace(input.PaymentMethod)

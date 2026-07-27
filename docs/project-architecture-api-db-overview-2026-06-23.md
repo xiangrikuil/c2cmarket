@@ -6,7 +6,7 @@
 
 ## 1. 结论摘要
 
-当前项目已经从前端 Mock 原型推进到“Go 后端 + PostgreSQL + Vue 前端真实模式”的本地真实闭环阶段。核心业务已经覆盖官方价格、拼车、API 服务/购买意向、个人资料/联系方式、公告、需求池、收藏、评价、举报/纠纷/申诉、通知和搜索。
+当前项目已经从前端 Mock 原型推进到“Go 后端 + PostgreSQL + Vue 前端真实模式”的本地真实闭环阶段。核心业务已经覆盖官方价格、拼车、API 服务/购买意向、个人资料/联系方式、公告、收藏、评价、举报/纠纷/申诉、通知和搜索。
 
 后端结构已经接近推荐的 Go 项目形态：`backend/cmd/api` 是入口，`backend/internal/app` 负责装配，`backend/internal/server` 负责 HTTP 路由和 handler，`backend/internal/module/<domain>` 按业务域放 model/service/repository contract，`backend/internal/store/postgres` 放 PostgreSQL 实现。
 
@@ -16,7 +16,7 @@
 
 ### 2026-07-06 维护更新
 
-- 当前最新 PostgreSQL migration 是 `000036_search_trigram_alignment`，后端 `ExpectedMigrationVersion=36`，`/readyz` 会在数据库 schema 低于该版本时降级。
+- 当前最新 PostgreSQL migration 是 `000065_remove_demands`，后端 `ExpectedMigrationVersion=65`，`/readyz` 会在数据库 schema 低于该版本时降级。
 - 密码写入已升级到 `argon2id_v1`，旧 `sha256_salted_v1` 只保留登录校验和成功后 rehash；首个 admin 通过显式 bootstrap 环境变量创建，不再由 migration 固定密码种子创建。
 - 前端生产构建必须显式配置真实后端：`VITE_API_MODE=real` 或 `VITE_API_BASE_URL`；`VITE_ENABLE_MOCK=true` 在 production build 中会失败。Mock/demo 仍保留为本地开发路径，真实模式不得静默 fallback 到 mock 成功数据。
 - 后端 service 迁移策略已经明确：`internal/module/<domain>` 拥有业务 service/repository contract，`internal/module/core` 只作为兼容 facade 委托，不再作为新增业务能力的膨胀入口。
@@ -107,7 +107,6 @@ frontend/
 | `backend/internal/module/apiintent` | API 购买意向、冻结买卖双方联系方式版本、意向生命周期。 |
 | `backend/internal/module/profile` | 我的资料、公开用户资料、商户资料、公开 slug/store alias。 |
 | `backend/internal/module/announcement` | 公告、用户 receipt、公告管理端审计。 |
-| `backend/internal/module/demand` | 求车/需求池发布、关闭/重开、管理审核。 |
 | `backend/internal/module/favorite` | 当前用户对公开车源和 API 服务的收藏标记。 |
 | `backend/internal/module/review` | 已完成拼车 membership 的买家评价车主。 |
 | `backend/internal/module/report` | 举报、纠纷、申诉、公开脱敏纠纷摘要。 |
@@ -151,7 +150,6 @@ if (shouldUseRealBackend()) return backendXxx(...)
 | `frontend/src/lib/carpoolBackend.ts` | 拼车车源、申请、联系窗口、membership 生命周期、admin 拼车审核。 |
 | `frontend/src/lib/profileBackend.ts` | 我的资料、联系方式、公开用户页、商户资料。 |
 | `frontend/src/lib/officialPriceBackend.ts` | 官方价格、低价线索、admin 审核。 |
-| `frontend/src/lib/demandBackend.ts` | 需求池公开/我的/admin。 |
 | `frontend/src/lib/favoriteBackend.ts` | 收藏列表、收藏状态、收藏/取消。 |
 | `frontend/src/lib/reviewBackend.ts` | 评价中心、公开评价。 |
 | `frontend/src/lib/reportBackend.ts` | 举报、纠纷、申诉。 |
@@ -165,7 +163,7 @@ if (shouldUseRealBackend()) return backendXxx(...)
 
 - `frontend/src/data/mock.ts` 仍存在，包含大量 seed 数据和前端类型。
 - `frontend/src/data/announcements.mock.ts` 仍存在。
-- `frontend/src/lib/api.ts` 仍保留 `sessionStorage` store，例如 API purchase intent、carpool application、admin audit、official price、carpool、API service、demand、notification read、favorite 等本地状态。
+- `frontend/src/lib/api.ts` 仍保留 `sessionStorage` store，例如 API purchase intent、carpool application、admin audit、official price、carpool、API service、notification read、favorite 等本地状态。
 - `frontend/src/lib/announcementsApi.ts` 在非真实模式下也使用 `sessionStorage`。
 - `frontend/src/pages/LoginPage.vue` 是当前 `/login` 页面，支持站内用户名密码登录和 linux.do OAuth 登录。
 - `frontend/src/router.ts` 中 `/auth/mock` 仍 redirect 到 `/login`，用于兼容早期本地演示入口。
@@ -197,7 +195,7 @@ if (shouldUseRealBackend()) return backendXxx(...)
 | `000016_api_intent_contract_hardening` | API intent 接入方式、联系类型/标签快照、联系版本身份约束、状态时间戳约束。 |
 | `000017_profile_public_contact` | 用户公开资料字段、公开 username 索引、商户公开 slug 索引。 |
 | `000018_announcements` | 公告、用户 receipt、admin 公告审计。 |
-| `000019_demands` | 求车/需求池发布、发布者/admin 生命周期、公开 active 索引。 |
+| `000019_demands` | 历史需求池表、发布者/admin 生命周期和公开 active 索引；运行时能力已由 `000065_remove_demands` 删除。 |
 | `000020_favorites` | 当前用户收藏公开车源和公开 API 服务。 |
 | `000021_reviews` | 已完成拼车 membership 的买家对车主公开评价。 |
 | `000022_reports_disputes_appeals` | 举报、纠纷、申诉、追加式 dispute events。 |
@@ -215,6 +213,7 @@ if (shouldUseRealBackend()) return backendXxx(...)
 | `000034_api_model_provider_catalog` | 可管理 API model provider 与 provider-backed model catalog。 |
 | `000035_password_argon2_admin_bootstrap` | Argon2id 密码算法和固定 admin seed 清理。 |
 | `000036_search_trigram_alignment` | 商户资料搜索 trigram expression 对齐到 display-name-only 公开搜索。 |
+| `000065_remove_demands` | 上线前删除历史需求池表、相关索引和 demand 幂等资源残留。 |
 
 ### 5.2 全部核心表清单
 
@@ -255,7 +254,6 @@ contact_method_versions
 contact_methods
 contact_session_items
 contact_sessions
-demands
 dispute_cases
 dispute_events
 domain_events
@@ -295,7 +293,6 @@ users
 | API 服务市场 | `api_model_catalog`、`api_model_price_versions`、`api_services`、`api_service_access_modes`、`api_service_models`、`api_service_packages` |
 | API 购买意向 | `api_purchase_intents`、`api_purchase_intent_contact_access_logs` |
 | 公告 | `announcements`、`announcement_receipts`、`announcement_audit_logs` |
-| 需求池 | `demands` |
 | 收藏 | `favorites` |
 | 评价 | `carpool_reviews` |
 | 举报 / 纠纷 / 申诉 | `reports`、`dispute_cases`、`appeals`、`dispute_events` |
@@ -396,26 +393,7 @@ POST /api/v1/admin/official-price-leads/{id}/reject
 POST /api/v1/admin/official-price-leads/{id}/request-changes
 ```
 
-### 7.8 Demands
-
-```text
-GET  /api/v1/demands
-POST /api/v1/demands
-GET  /api/v1/demands/{id}
-GET  /api/v1/me/demands
-GET  /api/v1/me/demands/{id}
-POST /api/v1/me/demands/{id}/close
-POST /api/v1/me/demands/{id}/reopen
-GET  /api/v1/admin/demands
-GET  /api/v1/admin/demands/{id}
-POST /api/v1/admin/demands/{id}/approve
-POST /api/v1/admin/demands/{id}/request-changes
-POST /api/v1/admin/demands/{id}/reject
-POST /api/v1/admin/demands/{id}/take-down
-POST /api/v1/admin/demands/{id}/restore
-```
-
-### 7.9 Favorites
+### 7.8 Favorites
 
 ```text
 GET    /api/v1/me/favorites
@@ -424,7 +402,7 @@ PUT    /api/v1/me/favorites/{targetType}/{targetId}
 DELETE /api/v1/me/favorites/{targetType}/{targetId}
 ```
 
-### 7.10 Reviews
+### 7.9 Reviews
 
 ```text
 GET /api/v1/me/reviews
@@ -432,7 +410,7 @@ PUT /api/v1/me/reviews/carpool-memberships/{membershipId}
 GET /api/v1/users/{username}/reviews
 ```
 
-### 7.11 Reports / Disputes / Appeals
+### 7.10 Reports / Disputes / Appeals
 
 ```text
 POST /api/v1/reports
@@ -456,7 +434,7 @@ POST /api/v1/admin/appeals/{id}/approve
 POST /api/v1/admin/appeals/{id}/reject
 ```
 
-### 7.12 Notifications
+### 7.11 Notifications
 
 ```text
 GET  /api/v1/me/notifications
@@ -465,7 +443,7 @@ POST /api/v1/me/notifications/{id}/read
 POST /api/v1/me/notifications/read-all
 ```
 
-### 7.13 Carpool
+### 7.12 Carpool
 
 ```text
 GET   /api/v1/carpools
@@ -498,7 +476,7 @@ POST  /api/v1/admin/carpools/{id}/pause
 POST  /api/v1/admin/carpools/{id}/restore
 ```
 
-### 7.14 API Market / API Purchase Intents
+### 7.13 API Market / API Purchase Intents
 
 ```text
 GET   /api/v1/api-services
@@ -532,7 +510,7 @@ GET   /api/v1/admin/api-purchase-intents
 GET   /api/v1/admin/api-purchase-intents/{id}
 ```
 
-### 7.15 Dev Contact Sessions
+### 7.14 Dev Contact Sessions
 
 ```text
 POST /api/v1/dev/contact-sessions          # development/test only
@@ -651,12 +629,11 @@ VERSION_CONFLICT
 - 个人资料与联系方式：我的资料、联系方式管理、公开用户页、商户资料、store alias API 服务展示。
 - 公告：用户端列表/banner/详情、已见/已读/关闭、未读数、admin 创建/编辑/发布/下线/复制/审计。
 - 官方低价/价格情报：公开价格列表/详情、提交低价线索、我的线索、admin 审核通过/复核/拒绝、首页行情引用真实价格记录。
-- 需求池：需求发布、公开列表/详情、我的需求、关闭/重开、admin 审核通过/要求修改/拒绝/下架/恢复。
 - 收藏：车源和 API 服务收藏状态、收藏、取消收藏、我的收藏列表。
 - 评价中心：已完成拼车 membership 的买家评价车主、评价中心查看/修改、公开用户主页展示。
 - 举报/纠纷/申诉：联系方式举报、公开用户举报、admin 举报处理、纠纷打开/处理、用户申诉、admin 申诉处理和公开主页脱敏纠纷摘要。
 - 通知中心：业务通知列表、未读数、单条已读、全部已读。
-- 全局搜索：公开官方价格、车源、求车、API 服务、公开用户和公开身份 API 商户搜索，PostgreSQL 已补 `pg_trgm` 搜索索引。
+- 全局搜索：公开官方价格、车源、API 服务、公开用户和公开身份 API 商户搜索，PostgreSQL 已补 `pg_trgm` 搜索索引。
 - 登录/权限：站内用户名密码登录、OAuth start/callback、真实 session、linux.do 绑定摘要、权限返回；本地 smoke 使用 fake OAuth provider。
 - 部署准备：生产 env 模板、生产 Compose 覆盖、部署 runbook、后端 Docker build、migration/readyz 流程、全量 smoke runner 和后端上线前 hardening。
 
@@ -669,7 +646,6 @@ api-market-smoke.mjs
 carpool-smoke.mjs
 profile-smoke.mjs
 announcement-smoke.mjs
-demand-smoke.mjs
 favorites-smoke.mjs
 review-smoke.mjs
 reports-smoke.mjs

@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"net/netip"
 	"strings"
 	"testing"
 	"time"
@@ -31,7 +30,7 @@ func TestProductionSessionCookieIsSecureAndLogoutClearsWithSameAttributes(t *tes
 		t.Fatalf("dev session status %d body %s", response.Code, response.Body.String())
 	}
 	sessionCookie := findCookie(t, response.Result().Cookies(), sessionCookieName)
-	if !sessionCookie.Secure || !sessionCookie.HttpOnly || sessionCookie.SameSite != http.SameSiteLaxMode {
+	if !sessionCookie.Secure || !sessionCookie.HttpOnly || sessionCookie.SameSite != http.SameSiteLaxMode || sessionCookie.MaxAge != 7*24*60*60 {
 		t.Fatalf("unexpected production session cookie: %+v", sessionCookie)
 	}
 	var payload sessionResponse
@@ -107,13 +106,16 @@ func TestOAuthCallbackRedirectsToConfiguredFrontendOrigin(t *testing.T) {
 
 func TestRateLimitedEndpointReturnsProblem429(t *testing.T) {
 	server := &Server{
-		app:         app.NewService(),
-		rateLimiter: middleware.NewRateLimiter(time.Minute),
+		app:              app.NewService(),
+		rateLimiter:      middleware.NewRateLimiter(time.Minute),
+		clientIPResolver: middleware.NewClientIPResolver(false, nil),
 	}
 	handler := server.limitHandler("test_rate_limit", 1, func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
 	})
-	wrapped := middleware.WithRequestID(http.HandlerFunc(handler))
+	wrapped := middleware.WithRequestID(
+		middleware.WithClientIP(server.clientIPResolver, http.HandlerFunc(handler)),
+	)
 	for i := 0; i < 2; i++ {
 		request := httptest.NewRequest(http.MethodGet, "/test-rate-limit", nil)
 		response := httptest.NewRecorder()
@@ -125,8 +127,103 @@ func TestRateLimitedEndpointReturnsProblem429(t *testing.T) {
 			if response.Code != http.StatusTooManyRequests {
 				t.Fatalf("expected 429, got %d body %s", response.Code, response.Body.String())
 			}
+			if retryAfter := response.Header().Get("Retry-After"); retryAfter != "60" {
+				t.Fatalf("expected Retry-After 60, got %q", retryAfter)
+			}
 			assertProblemCode(t, response, domain.CodeRateLimited)
 		}
+	}
+}
+
+func TestRateLimitUsesNormalizedTargetDimensionAcrossIPs(t *testing.T) {
+	server := &Server{
+		app:              app.NewService(),
+		rateLimiter:      middleware.NewRateLimiter(time.Minute),
+		clientIPResolver: middleware.NewClientIPResolver(false, nil),
+	}
+	policy := rateLimitPolicy{
+		Group:       "test_email_target",
+		IPLimit:     100,
+		UserLimit:   100,
+		TargetLimit: 1,
+	}
+	handler := server.limitPolicy(policy, func(w http.ResponseWriter, r *http.Request) {
+		if !server.allowTarget(w, r, policy, "email", r.Header.Get("X-Test-Email")) {
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	})
+	wrapped := middleware.WithRequestID(
+		middleware.WithClientIP(server.clientIPResolver, http.HandlerFunc(handler)),
+	)
+
+	first := httptest.NewRequest(http.MethodPost, "/test-email-target", nil)
+	first.RemoteAddr = "203.0.113.10:4001"
+	first.Header.Set("X-Test-Email", " Person@Example.com ")
+	firstResponse := httptest.NewRecorder()
+	wrapped.ServeHTTP(firstResponse, first)
+	if firstResponse.Code != http.StatusNoContent {
+		t.Fatalf("first target request expected no content, got %d body %s", firstResponse.Code, firstResponse.Body.String())
+	}
+
+	second := httptest.NewRequest(http.MethodPost, "/test-email-target", nil)
+	second.RemoteAddr = "203.0.113.11:4002"
+	second.Header.Set("X-Test-Email", "person@example.com")
+	secondResponse := httptest.NewRecorder()
+	wrapped.ServeHTTP(secondResponse, second)
+	if secondResponse.Code != http.StatusTooManyRequests {
+		t.Fatalf("same normalized target must be limited across IPs, got %d body %s", secondResponse.Code, secondResponse.Body.String())
+	}
+	if retryAfter := secondResponse.Header().Get("Retry-After"); retryAfter != "60" {
+		t.Fatalf("expected Retry-After 60, got %q", retryAfter)
+	}
+	assertProblemCode(t, secondResponse, domain.CodeRateLimited)
+}
+
+func TestRateLimitSeparatesAuthenticatedUserAndSharedIPBudgets(t *testing.T) {
+	service := app.NewService()
+	server := &Server{
+		app:         service,
+		rateLimiter: middleware.NewRateLimiter(time.Minute),
+	}
+	_, firstSession, appErr := service.CreateDevSession(context.Background(), "rate-user-one", false)
+	if appErr != nil {
+		t.Fatalf("create first session: %v", appErr)
+	}
+	_, secondSession, appErr := service.CreateDevSession(context.Background(), "rate-user-two", false)
+	if appErr != nil {
+		t.Fatalf("create second session: %v", appErr)
+	}
+	_, thirdSession, appErr := service.CreateDevSession(context.Background(), "rate-user-three", false)
+	if appErr != nil {
+		t.Fatalf("create third session: %v", appErr)
+	}
+	handler := server.limitHandlerByActor("test_actor_rate_limit", 2, 1, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	})
+	wrapped := middleware.WithRequestID(http.HandlerFunc(handler))
+
+	request := func(sessionID, remoteAddr string) *httptest.ResponseRecorder {
+		t.Helper()
+		r := httptest.NewRequest(http.MethodPost, "/test-actor-rate-limit", nil)
+		r.RemoteAddr = remoteAddr
+		r.AddCookie(&http.Cookie{Name: sessionCookieName, Value: sessionID})
+		response := httptest.NewRecorder()
+		wrapped.ServeHTTP(response, r)
+		return response
+	}
+
+	if response := request(firstSession.ID, "203.0.113.10:4001"); response.Code != http.StatusNoContent {
+		t.Fatalf("first buyer expected success, got %d body %s", response.Code, response.Body.String())
+	}
+	if response := request(firstSession.ID, "203.0.113.11:4002"); response.Code != http.StatusTooManyRequests {
+		t.Fatalf("same buyer must hit user limit across IPs, got %d body %s", response.Code, response.Body.String())
+	}
+	if response := request(secondSession.ID, "203.0.113.10:4003"); response.Code != http.StatusNoContent {
+		t.Fatalf("second buyer on shared IP expected success, got %d body %s", response.Code, response.Body.String())
+	}
+	if response := request(thirdSession.ID, "203.0.113.10:4004"); response.Code != http.StatusTooManyRequests {
+		t.Fatalf("shared IP must eventually hit its independent limit, got %d body %s", response.Code, response.Body.String())
 	}
 }
 
@@ -159,13 +256,16 @@ func TestJSONRequestBodyStrictParsingFailures(t *testing.T) {
 
 func TestRateLimitIgnoresForgedForwardingHeadersByDefault(t *testing.T) {
 	server := &Server{
-		app:         app.NewService(),
-		rateLimiter: middleware.NewRateLimiter(time.Minute),
+		app:              app.NewService(),
+		rateLimiter:      middleware.NewRateLimiter(time.Minute),
+		clientIPResolver: middleware.NewClientIPResolver(false, nil),
 	}
 	handler := server.limitHandler("test_forged_xff", 1, func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
 	})
-	wrapped := middleware.WithRequestID(http.HandlerFunc(handler))
+	wrapped := middleware.WithRequestID(
+		middleware.WithClientIP(server.clientIPResolver, http.HandlerFunc(handler)),
+	)
 
 	for i, forwardedFor := range []string{"198.51.100.10", "198.51.100.11"} {
 		request := httptest.NewRequest(http.MethodGet, "/test-forged-xff", nil)
@@ -189,15 +289,16 @@ func TestRateLimitIgnoresForgedForwardingHeadersByDefault(t *testing.T) {
 
 func TestTrustedProxyForwardingHeadersAffectRateLimitOnlyForTrustedPeer(t *testing.T) {
 	server := &Server{
-		app:                  app.NewService(),
-		rateLimiter:          middleware.NewRateLimiter(time.Minute),
-		trustXForwardedFor:   true,
-		trustedProxyPrefixes: mustTrustedProxyPrefixes(t, "10.0.0.0/24"),
+		app:              app.NewService(),
+		rateLimiter:      middleware.NewRateLimiter(time.Minute),
+		clientIPResolver: middleware.NewClientIPResolver(true, []string{"10.0.0.0/24"}),
 	}
 	handler := server.limitHandler("test_trusted_xff", 1, func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
 	})
-	wrapped := middleware.WithRequestID(http.HandlerFunc(handler))
+	wrapped := middleware.WithRequestID(
+		middleware.WithClientIP(server.clientIPResolver, http.HandlerFunc(handler)),
+	)
 
 	for _, forwardedFor := range []string{"198.51.100.10", "198.51.100.11"} {
 		request := httptest.NewRequest(http.MethodGet, "/test-trusted-xff", nil)
@@ -367,13 +468,4 @@ func findCookie(t *testing.T, cookies []*http.Cookie, name string) *http.Cookie 
 	}
 	t.Fatalf("cookie %s not found in %+v", name, cookies)
 	return nil
-}
-
-func mustTrustedProxyPrefixes(t *testing.T, values ...string) []netip.Prefix {
-	t.Helper()
-	prefixes := trustedProxyPrefixes(values)
-	if len(prefixes) != len(values) {
-		t.Fatalf("expected all trusted proxy prefixes to parse: values=%+v prefixes=%+v", values, prefixes)
-	}
-	return prefixes
 }

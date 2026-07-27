@@ -8,7 +8,6 @@ const privatePaths = [
   '/api-intents/',
   '/announcements/',
   '/carpools/new',
-  '/demands/new',
   '/api-market/new',
 ]
 

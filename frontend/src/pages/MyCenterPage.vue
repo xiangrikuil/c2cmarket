@@ -2,22 +2,25 @@
 import { computed, onUnmounted, reactive, ref, watch, watchEffect } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { toast } from 'vue-sonner'
-import { Bell, CarFront, CheckCircle2, ChevronRight, CircleAlert, Code2, CreditCard, Eye, Heart, ImageUp, KeyRound, Link2, LockKeyhole, LogIn, Mail, MailCheck, MessageCircle, RefreshCw, Save, ShieldCheck, Trash2, UserRound, X } from 'lucide-vue-next'
+import { Bell, CheckCircle2, ChevronRight, CircleAlert, Eye, KeyRound, Link2, LockKeyhole, LogIn, Mail, MailCheck, MessageCircle, RefreshCw, Save, ShieldCheck, Star, Trash2 } from 'lucide-vue-next'
+import BuyerPreviewDrawer from '@/components/contact-payment/BuyerPreviewDrawer.vue'
+import ConfigurationProgressCard from '@/components/contact-payment/ConfigurationProgressCard.vue'
+import ContactMethodCard from '@/components/contact-payment/ContactMethodCard.vue'
+import PaymentMethodCard from '@/components/contact-payment/PaymentMethodCard.vue'
+import PersonalCenterDashboard from '@/components/personal-center/PersonalCenterDashboard.vue'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
-import { Checkbox } from '@/components/ui/checkbox'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Textarea } from '@/components/ui/textarea'
-import EmptyState from '@/components/market/EmptyState.vue'
-import { getApiOrderNextAction, getCarpoolApplicationNextAction, type AvatarMode, type ContactMethodType, type ContactUsageScope, type SaveContactMethodRequest, type UserContactMethod, type UserPrivacySettings } from '@/lib/api'
+import { useUnsavedChangesGuard } from '@/composables/useUnsavedChangesGuard'
+import { type AvatarMode, type ContactMethodType, type ContactUsageScope, type SaveContactMethodRequest, type UserContactMethod, type UserPrivacySettings } from '@/lib/api'
 import { ACCOUNT_RECOVERY_PATH, accountRecoveryRequirements, isAccountRecoveryComplete, sanitizeAccountRecoveryReturnTo } from '@/lib/accountRecovery'
 import { getBackupPasswordStrength, getBackupPasswordValidationMessage, getPasswordChecks } from '@/lib/passwordPolicy'
 import {
-  apiPaymentMethods,
-  apiPaymentMethodRequiresQrCode,
+  apiPaymentMethodLabels,
   apiPaymentSettingsMissingReason,
   apiPaymentSettingsSummary,
   createDefaultApiPaymentOptions,
@@ -30,17 +33,27 @@ import {
 } from '@/lib/apiPaymentSettings'
 import { containsSensitiveContent } from '@/lib/formValidation'
 import {
+  buildAccountCompleteness,
+  buildPendingTasks,
+  buildPublishedContent,
+  countActivePublishedContent,
+  getPrimaryAccountAlert,
+  uniqueRelatedApiOrderCount,
+  type PersonalCenterMetric,
+} from '@/lib/personalCenterDashboard'
+import {
   useApiPaymentAccountSettingsQuery,
   useConfirmEmailVerificationMutation,
   useCreateContactMethodMutation,
   useDeleteContactMethodMutation,
   useDeleteCustomAvatarMutation,
+  useMerchantApiOrders,
+  useMerchantCarpoolApplications,
   useMyContactMethodsQuery,
   useMyApiServices,
   useMyApiOrders,
   useMyCarpoolApplications,
   useMyCarpools,
-  useMyDemands,
   useMyProfileQuery,
   useSetBackupPasswordMutation,
   useSetDefaultContactMethodMutation,
@@ -56,13 +69,22 @@ const route = useRoute()
 const router = useRouter()
 const profileQuery = useMyProfileQuery()
 const profile = profileQuery.data
-const { data: contacts } = useMyContactMethodsQuery()
-const { data: apiPaymentSettings } = useApiPaymentAccountSettingsQuery()
-const { data: carpools } = useMyCarpools()
-const { data: apiServices } = useMyApiServices()
-const { data: demands } = useMyDemands()
-const { data: rideApplications } = useMyCarpoolApplications({ sort: 'default_buyer' })
-const { data: apiOrders } = useMyApiOrders({ sort: 'default_buyer' })
+const contactsQuery = useMyContactMethodsQuery()
+const contacts = contactsQuery.data
+const apiPaymentSettingsQuery = useApiPaymentAccountSettingsQuery()
+const apiPaymentSettings = apiPaymentSettingsQuery.data
+const carpoolsQuery = useMyCarpools()
+const carpools = carpoolsQuery.data
+const apiServicesQuery = useMyApiServices()
+const apiServices = apiServicesQuery.data
+const buyerRideApplicationsQuery = useMyCarpoolApplications({ sort: 'default_buyer' })
+const rideApplications = buyerRideApplicationsQuery.data
+const ownerRideApplicationsQuery = useMerchantCarpoolApplications({ sort: 'default_owner' })
+const ownerRideApplications = ownerRideApplicationsQuery.data
+const buyerApiOrdersQuery = useMyApiOrders({ sort: 'default_buyer' })
+const apiOrders = buyerApiOrdersQuery.data
+const merchantApiOrdersQuery = useMerchantApiOrders({ sort: 'default_merchant' })
+const merchantApiOrders = merchantApiOrdersQuery.data
 
 const updateProfileMutation = useUpdateMyProfileMutation()
 const deleteAvatarMutation = useDeleteCustomAvatarMutation()
@@ -78,17 +100,15 @@ const verifyContactMutation = useVerifyContactMethodMutation()
 const updateApiPaymentSettingsMutation = useUpdateApiPaymentAccountSettingsMutation()
 const apiPaymentQrMaxBytes = 512 * 1024
 
-const accountSettingLinks = [
+const sectionLinks = [
+  { label: '账户概览', to: '/my', key: 'overview' },
   { label: '个人资料', to: '/my/profile', key: 'profile' },
-  { label: '联系与收款', to: '/my/contacts', key: 'contacts' },
-  { label: '安全与认证', to: '/my/account', key: 'account' },
+  { label: '联系方式与收款设置', to: '/my/contacts', key: 'contacts' },
+  { label: '账号与认证', to: '/my/account', key: 'account' },
+  { label: '隐私设置', to: '/my/privacy', key: 'privacy' },
+  { label: '我的收藏', to: '/my/favorites', key: 'favorites' },
+  { label: '通知设置', to: '/my/notifications', key: 'notifications' },
 ] as const
-
-const sectionLabels = {
-  privacy: '隐私设置',
-  favorites: '我的收藏',
-  notifications: '通知设置',
-} as const
 
 type AccountSetupDialogMode = 'required' | 'password' | 'email'
 type AccountSetupStep = 'email' | 'password' | 'complete'
@@ -108,12 +128,6 @@ const activeSection = computed(() => {
   if (route.path === '/my/favorites') return 'favorites'
   if (route.path === '/my/notifications') return 'notifications'
   return 'overview'
-})
-const isAccountSettingsSection = computed(() => accountSettingLinks.some(item => item.key === activeSection.value))
-const currentSectionLabel = computed(() => {
-  if (isAccountSettingsSection.value) return '账户设置'
-  if (activeSection.value in sectionLabels) return sectionLabels[activeSection.value as keyof typeof sectionLabels]
-  return '个人中心'
 })
 
 const profileForm = reactive({
@@ -167,24 +181,109 @@ const defaultContactUsageScopes: ContactUsageScope[] = ['carpool_owner', 'api_me
 const wechatContact = computed(() => (contacts.value ?? []).find(item => item.type === 'wechat') ?? null)
 const emailContact = computed(() => (contacts.value ?? []).find(item => item.type === 'email') ?? null)
 const enabledContactCount = computed(() => [wechatContact.value, emailContact.value].filter(item => item?.enabled && (item.type !== 'email' || item.verified)).length)
-const pendingRideApplications = computed(() => (rideApplications.value ?? []).filter(item => ['accepted_reserved', 'joined_pending_confirmation', 'pending_completion'].includes(item.status)))
-const pendingApiOrders = computed(() => (apiOrders.value ?? []).filter(item => ['pending_payment', 'delivery_submitted'].includes(item.status)))
-const profileCompleteness = computed(() => {
-  if (!profile.value) return 0
-  const completed = [profile.value.displayName.trim(), profile.value.bio?.trim(), profile.value.linuxDoBinding.bound, accountRecoveryComplete.value, enabledContactCount.value > 0].filter(Boolean).length
-  return Math.round((completed / 5) * 100)
+const dashboardPendingTasks = computed(() => buildPendingTasks({
+  buyerCarpoolApplications: rideApplications.value ?? [],
+  ownerCarpoolApplications: ownerRideApplications.value ?? [],
+  buyerApiOrders: apiOrders.value ?? [],
+  merchantApiOrders: merchantApiOrders.value ?? [],
+}))
+const dashboardTasksLoading = computed(() => (
+  buyerRideApplicationsQuery.isPending.value
+  || ownerRideApplicationsQuery.isPending.value
+  || buyerApiOrdersQuery.isPending.value
+  || merchantApiOrdersQuery.isPending.value
+))
+const dashboardTasksError = computed(() => (
+  buyerRideApplicationsQuery.isError.value
+  || ownerRideApplicationsQuery.isError.value
+  || buyerApiOrdersQuery.isError.value
+  || merchantApiOrdersQuery.isError.value
+))
+const dashboardTasksUnavailable = computed(() => (
+  buyerRideApplicationsQuery.isError.value && rideApplications.value === undefined
+  && ownerRideApplicationsQuery.isError.value && ownerRideApplications.value === undefined
+  && buyerApiOrdersQuery.isError.value && apiOrders.value === undefined
+  && merchantApiOrdersQuery.isError.value && merchantApiOrders.value === undefined
+))
+const dashboardPublishedItems = computed(() => buildPublishedContent({
+  carpools: carpools.value ?? [],
+  apiServices: apiServices.value ?? [],
+}))
+const dashboardPublishedLoading = computed(() => (
+  carpoolsQuery.isPending.value
+  || apiServicesQuery.isPending.value
+))
+const dashboardPublishedError = computed(() => (
+  carpoolsQuery.isError.value
+  || apiServicesQuery.isError.value
+))
+const dashboardPublishedUnavailable = computed(() => (
+  carpoolsQuery.isError.value && carpools.value === undefined
+  && apiServicesQuery.isError.value && apiServices.value === undefined
+))
+const hasApiServices = computed(() => (apiServices.value?.length ?? 0) > 0)
+const savedApiPaymentComplete = computed(() => (
+  Boolean(apiPaymentSettings.value && isApiPaymentAccountSettingsComplete(apiPaymentSettings.value))
+))
+const dashboardCompletenessLoading = computed(() => (
+  contactsQuery.isPending.value
+  || apiServicesQuery.isPending.value
+  || (hasApiServices.value && apiPaymentSettingsQuery.isPending.value)
+))
+const dashboardCompletenessError = computed(() => (
+  contactsQuery.isError.value
+  || apiServicesQuery.isError.value
+  || (hasApiServices.value && apiPaymentSettingsQuery.isError.value)
+))
+const dashboardCompleteness = computed(() => {
+  if (!profile.value || dashboardCompletenessLoading.value || dashboardCompletenessError.value) return null
+  return buildAccountCompleteness({
+    profile: profile.value,
+    enabledContactCount: enabledContactCount.value,
+    hasApiServices: hasApiServices.value,
+    apiPaymentComplete: savedApiPaymentComplete.value,
+  })
 })
-const overviewStats = computed(() => [
-  { label: '资料完整度', value: `${profileCompleteness.value}%`, hint: accountRecoveryComplete.value ? '账号恢复已配置' : '仍需完善账号恢复' },
-  { label: '需要我处理', value: pendingRideApplications.value.length + pendingApiOrders.value.length, hint: '上车申请与 API 订单' },
-  { label: '公开经营对象', value: (carpools.value?.length ?? 0) + (apiServices.value?.length ?? 0), hint: '车源与 API 服务' },
-  { label: '可用联系方式', value: enabledContactCount.value, hint: '仅私有联系窗口可见' },
+const dashboardAccountAlert = computed(() => dashboardCompleteness.value
+  ? getPrimaryAccountAlert(dashboardCompleteness.value)
+  : null)
+const dashboardApiOrdersLoading = computed(() => buyerApiOrdersQuery.isPending.value || merchantApiOrdersQuery.isPending.value)
+const dashboardApiOrdersError = computed(() => buyerApiOrdersQuery.isError.value || merchantApiOrdersQuery.isError.value)
+const dashboardMetrics = computed<PersonalCenterMetric[]>(() => [
+  {
+    id: 'pending',
+    label: '待处理',
+    value: dashboardPendingTasks.value.length,
+    hint: '买家与商户队列',
+    loading: dashboardTasksLoading.value,
+    available: !dashboardTasksLoading.value && !dashboardTasksError.value,
+  },
+  {
+    id: 'published',
+    label: '发布中',
+    value: countActivePublishedContent(dashboardPublishedItems.value),
+    hint: '车源与服务',
+    loading: dashboardPublishedLoading.value,
+    available: !dashboardPublishedLoading.value && !dashboardPublishedError.value,
+  },
+  {
+    id: 'api-orders',
+    label: 'API 订单',
+    value: uniqueRelatedApiOrderCount(apiOrders.value ?? [], merchantApiOrders.value ?? []),
+    hint: '买家与商户相关订单',
+    loading: dashboardApiOrdersLoading.value,
+    available: !dashboardApiOrdersLoading.value && !dashboardApiOrdersError.value,
+  },
+  {
+    id: 'completeness',
+    label: '资料待完善',
+    value: dashboardCompleteness.value?.missingCount ?? 0,
+    hint: dashboardCompleteness.value?.missingCount ? '项账户任务' : '资料已完成',
+    loading: dashboardCompletenessLoading.value,
+    available: Boolean(dashboardCompleteness.value),
+  },
 ])
-const pendingTasks = computed(() => [
-  ...pendingRideApplications.value.map(item => ({ id: item.id, to: `/my/rides/${item.id}`, title: item.snapshot.productName, description: getCarpoolApplicationNextAction(item, 'buyer'), type: '上车申请' })),
-  ...pendingApiOrders.value.map(item => ({ id: item.id, to: `/my/api-orders/${item.id}`, title: item.serviceTitle, description: getApiOrderNextAction(item, 'buyer'), type: 'API 订单' })),
-])
-const hasMerchantObjects = computed(() => Boolean(carpools.value?.length || apiServices.value?.length))
+const profileCompleteness = computed(() => dashboardCompleteness.value?.percentage ?? null)
 const wechatBound = computed(() => Boolean(wechatContact.value?.enabled && wechatContact.value.displayValue))
 const emailBound = computed(() => Boolean(emailContact.value?.enabled && emailContact.value.verified))
 const contactSaving = computed(() => createContactMutation.isPending.value || updateContactMutation.isPending.value)
@@ -192,9 +291,46 @@ const emailBindingPending = computed(() => contactSaving.value || startEmailVeri
 const apiPaymentComplete = computed(() => isApiPaymentAccountSettingsComplete(apiPaymentForm))
 const apiPaymentMissingReasonText = computed(() => apiPaymentSettingsMissingReason(apiPaymentForm))
 const apiPaymentSummaryText = computed(() => apiPaymentSettingsSummary(apiPaymentForm))
+const wechatContactDirty = computed(() => (
+  wechatForm.displayValue.trim() !== (wechatContact.value?.displayValue ?? '').trim()
+))
+const emailContactDirty = computed(() => (
+  emailForm.email.trim().toLowerCase() !== (emailContact.value?.displayValue ?? profile.value?.email ?? '').trim().toLowerCase()
+  || Boolean(emailForm.code.trim())
+))
+const apiPaymentSettingsDirty = computed(() => (
+  apiPaymentSettingsSignature(apiPaymentForm)
+  !== apiPaymentSettingsSignature(apiPaymentSettings.value ?? {
+    paymentWindowMinutes: defaultApiPaymentWindowMinutes,
+    paymentOptions: createDefaultApiPaymentOptions(),
+  })
+))
+const hasContactDraftChanges = computed(() => (
+  wechatContactDirty.value || emailContactDirty.value || apiPaymentSettingsDirty.value
+))
+const contactSettingsDirty = computed(() => activeSection.value === 'contacts' && hasContactDraftChanges.value)
+const completedContactSettingsCount = computed(() => (
+  Number(wechatBound.value) + Number(emailBound.value) + Number(apiPaymentComplete.value)
+))
+const savedApiPaymentOptions = computed(() => (
+  (apiPaymentSettings.value?.paymentOptions ?? []).filter(option => option.enabled && isApiPaymentOptionComplete(option))
+))
+const buyerPreviewOpen = ref(false)
+const pendingApiPaymentQrRemoval = ref<ApiPaymentMethod | null>(null)
+useUnsavedChangesGuard(contactSettingsDirty, '联系方式与收款设置尚未保存，确认离开当前页面？')
 const accountRecoveryMissingItems = computed(() => profile.value ? accountRecoveryRequirements(profile.value).filter(item => !item.completed) : [])
 const accountRecoveryComplete = computed(() => profile.value ? isAccountRecoveryComplete(profile.value) : false)
 const accountRecoveryReturnTo = computed(() => sanitizeAccountRecoveryReturnTo(route.query.returnTo))
+const quotaPublishRecovery = computed(() => accountRecoveryReturnTo.value === '/api-market/quota/new' || accountRecoveryReturnTo.value === '/my/api-services?intent=quota')
+const accountRecoveryDialogTitle = computed(() => {
+  if (accountRecoveryComplete.value) return quotaPublishRecovery.value ? '账号设置完成' : '账号设置'
+  return quotaPublishRecovery.value ? '发布限时额度包前先完成账号设置' : '完善账号安全'
+})
+const accountRecoveryDialogDescription = computed(() => {
+  if (accountRecoveryComplete.value) return quotaPublishRecovery.value ? '继续选择 API 服务并发布限时额度包。' : '可以在这里更新邮箱或密码。'
+  return quotaPublishRecovery.value ? '完成邮箱验证和密码设置后，会继续进入限时额度包发布流程。' : '补全后即可访问个人中心其他页面和业务页。'
+})
+const accountRecoveryContinueLabel = computed(() => quotaPublishRecovery.value ? '继续发布限时额度包' : '继续访问原页面')
 const accountRecoveryDialogOpen = ref(false)
 const dismissedAccountRecoveryDialogKey = ref('')
 const accountSetupDialogMode = ref<AccountSetupDialogMode>('required')
@@ -338,9 +474,6 @@ watchEffect(() => {
   }
 })
 
-const carpoolRows = computed(() => carpools.value ?? [])
-const apiServiceRows = computed(() => apiServices.value ?? [])
-const demandRows = computed(() => demands.value ?? [])
 const avatarText = computed(() => (profile.value?.displayName || profile.value?.username || '我').slice(0, 1).toUpperCase())
 const profileErrorMessage = computed(() => {
   const error = profileQuery.error.value
@@ -390,12 +523,19 @@ function scopeLabels(scopes: ContactUsageScope[]) {
 }
 
 function apiPaymentMethodLabel(method: ApiPaymentMethod) {
-  return apiPaymentMethods.find(item => item.value === method)?.label ?? method
+  return apiPaymentMethodLabels[method]
 }
 
-function apiPaymentInstructionsPlaceholder(method: ApiPaymentMethod) {
-  if (apiPaymentMethodRequiresQrCode(method)) return '可选：填写收款码备注、核对说明或沟通节奏。'
-  return '填写收款说明、核对说明或沟通节奏。'
+function apiPaymentSettingsSignature(settings: Pick<ApiPaymentAccountSettings, 'paymentWindowMinutes' | 'paymentOptions'>) {
+  return JSON.stringify({
+    paymentWindowMinutes: settings.paymentWindowMinutes,
+    paymentOptions: settings.paymentOptions.map(option => ({
+      paymentMethod: option.paymentMethod,
+      enabled: option.enabled,
+      paymentInstructions: option.paymentInstructions.trim(),
+      paymentQrCodeDataUrl: option.paymentQrCodeDataUrl,
+    })),
+  })
 }
 
 function handleApiPaymentQrUpload(event: Event, option: ApiPaymentOption) {
@@ -424,12 +564,40 @@ function handleApiPaymentQrUpload(event: Event, option: ApiPaymentOption) {
   reader.readAsDataURL(file)
 }
 
-function removeApiPaymentQr(option: ApiPaymentOption) {
-  option.paymentQrCodeDataUrl = null
+function setApiPaymentOptionEnabled(option: ApiPaymentOption, enabled: boolean) {
+  option.enabled = enabled
 }
 
-function apiPaymentOptionReady(option: ApiPaymentOption) {
-  return isApiPaymentOptionComplete(option)
+function apiPaymentOptionDirty(option: ApiPaymentOption) {
+  const savedOption = apiPaymentSettings.value?.paymentOptions.find(item => item.paymentMethod === option.paymentMethod)
+  return apiPaymentSettingsSignature({
+    paymentWindowMinutes: defaultApiPaymentWindowMinutes,
+    paymentOptions: [option],
+  }) !== apiPaymentSettingsSignature({
+    paymentWindowMinutes: defaultApiPaymentWindowMinutes,
+    paymentOptions: [savedOption ?? {
+      paymentMethod: option.paymentMethod,
+      enabled: false,
+      paymentInstructions: '',
+      paymentQrCodeDataUrl: null,
+    }],
+  })
+}
+
+function setApiPaymentOptionInstructions(option: ApiPaymentOption, instructions: string) {
+  option.paymentInstructions = instructions
+}
+
+function requestApiPaymentQrRemoval(option: ApiPaymentOption) {
+  pendingApiPaymentQrRemoval.value = option.paymentMethod
+}
+
+function confirmApiPaymentQrRemoval() {
+  const paymentMethod = pendingApiPaymentQrRemoval.value
+  if (!paymentMethod) return
+  const option = apiPaymentForm.paymentOptions.find(item => item.paymentMethod === paymentMethod)
+  if (option) option.paymentQrCodeDataUrl = null
+  pendingApiPaymentQrRemoval.value = null
 }
 
 function stopEmailVerificationTimer() {
@@ -664,13 +832,37 @@ function setDefaultContact(contact: UserContactMethod) {
   })
 }
 
+async function retryDashboardTasks() {
+  await Promise.allSettled([
+    buyerRideApplicationsQuery.refetch(),
+    ownerRideApplicationsQuery.refetch(),
+    buyerApiOrdersQuery.refetch(),
+    merchantApiOrdersQuery.refetch(),
+  ])
+}
+
+async function retryDashboardPublished() {
+  await Promise.allSettled([
+    carpoolsQuery.refetch(),
+    apiServicesQuery.refetch(),
+  ])
+}
+
+async function retryDashboardCompleteness() {
+  await Promise.allSettled([
+    contactsQuery.refetch(),
+    apiServicesQuery.refetch(),
+    apiPaymentSettingsQuery.refetch(),
+  ])
+}
+
 function goToLogin() {
   router.push({ path: '/login', query: { returnTo: route.fullPath } })
 }
 </script>
 
 <template>
-  <div v-if="profileQuery.isPending.value" class="rounded-xl border border-border bg-card p-8 text-sm text-muted-foreground">正在加载个人资料…</div>
+  <div v-if="profileQuery.isPending.value" class="rounded-xl border border-border bg-card p-8 text-sm text-muted-foreground">正在加载个人资料...</div>
   <Card v-else-if="profileQuery.isError.value || !profile" class="mx-auto max-w-2xl p-6">
     <div class="flex flex-col gap-4 sm:flex-row sm:items-start">
       <div class="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-primary/10 text-primary">
@@ -700,9 +892,9 @@ function goToLogin() {
               <ShieldCheck class="h-8 w-8" />
             </div>
             <div class="account-security-side-copy mt-6">
-              <h2 class="text-2xl font-semibold tracking-tight">完善账号安全</h2>
+              <h2 class="text-2xl font-semibold tracking-tight">{{ quotaPublishRecovery ? '发布限时额度包' : '完善账号安全' }}</h2>
               <p class="mt-3 text-sm leading-6 text-muted-foreground">
-                完成邮箱和密码设置后，可以使用更多账号功能。
+                {{ quotaPublishRecovery ? '先完成邮箱和密码设置，之后会回到额度包发布流程。' : '完成邮箱和密码设置后，可以使用更多账号功能。' }}
               </p>
             </div>
 
@@ -726,9 +918,9 @@ function goToLogin() {
 
           <div class="flex min-w-0 flex-col">
             <DialogHeader class="account-security-header px-5 py-5 pr-12 sm:px-6">
-              <DialogTitle>{{ accountRecoveryComplete ? '账号设置' : '完善账号安全' }}</DialogTitle>
+              <DialogTitle>{{ accountRecoveryDialogTitle }}</DialogTitle>
               <DialogDescription>
-                {{ accountRecoveryComplete ? '可以在这里更新邮箱或密码。' : '补全后即可访问个人中心其他页面和业务页。' }}
+                {{ accountRecoveryDialogDescription }}
               </DialogDescription>
             </DialogHeader>
 
@@ -909,7 +1101,7 @@ function goToLogin() {
                 <div>
                   <h3 class="text-lg font-semibold">账号安全设置完成</h3>
                   <p class="mt-2 text-sm leading-6 text-muted-foreground">
-                    现在可以继续访问原页面，或留在账号页检查其他设置。
+                    {{ quotaPublishRecovery ? '现在可以继续选择 API 服务并发布限时额度包。' : '现在可以继续访问原页面，或留在账号页检查其他设置。' }}
                   </p>
                 </div>
                 <dl class="grid gap-3 rounded-lg border border-border bg-card/70 p-4 text-left text-sm sm:grid-cols-2">
@@ -942,7 +1134,7 @@ function goToLogin() {
                 <LockKeyhole class="h-4 w-4" />{{ profile.passwordConfigured ? '保存密码' : '完成设置' }}
               </Button>
               <Button v-else-if="accountRecoveryReturnTo" :disabled="!accountRecoveryComplete" @click="continueAfterAccountRecovery">
-                继续访问原页面
+                {{ accountRecoveryContinueLabel }}
               </Button>
               <Button v-else @click="setAccountRecoveryDialogOpen(false)">进入个人中心</Button>
             </DialogFooter>
@@ -951,116 +1143,89 @@ function goToLogin() {
       </DialogContent>
     </Dialog>
 
+    <BuyerPreviewDrawer
+      :open="buyerPreviewOpen"
+      :display-name="profile.displayName"
+      :avatar-text="avatarText"
+      :avatar-url="profile.avatarUrl"
+      :saved-wechat="wechatContact?.enabled ? wechatContact.displayValue : ''"
+      :saved-email="emailContact?.enabled && emailContact.verified ? emailContact.displayValue : ''"
+      :saved-payment-options="savedApiPaymentOptions"
+      :has-unsaved-changes="hasContactDraftChanges"
+      @update:open="buyerPreviewOpen = $event"
+    />
+
+    <Dialog
+      :open="pendingApiPaymentQrRemoval !== null"
+      @update:open="open => { if (!open) pendingApiPaymentQrRemoval = null }"
+    >
+      <DialogContent class="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>删除收款码？</DialogTitle>
+          <DialogDescription>
+            将从{{ pendingApiPaymentQrRemoval ? apiPaymentMethodLabel(pendingApiPaymentQrRemoval) : '' }}配置草稿中移除图片。删除后需保存 API 收款设置才会生效。
+          </DialogDescription>
+        </DialogHeader>
+        <DialogFooter>
+          <Button variant="outline" @click="pendingApiPaymentQrRemoval = null">取消</Button>
+          <Button variant="destructive" @click="confirmApiPaymentQrRemoval">删除收款码</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+
     <header v-if="activeSection !== 'overview'" class="my-center-page-heading">
       <div>
-        <p>个人中心 / {{ currentSectionLabel }}</p>
-        <h1>{{ currentSectionLabel }}</h1>
-        <p v-if="isAccountSettingsSection" class="my-center-page-subtitle">统一管理个人资料、交易联系方式、收款信息与账号安全。</p>
+        <p>个人中心 / {{ sectionLinks.find(item => item.key === activeSection)?.label }}</p>
+        <h1>{{ sectionLinks.find(item => item.key === activeSection)?.label }}</h1>
+        <p v-if="activeSection === 'contacts'" class="my-center-page-subtitle">完善联系方式与 API 收款信息，只向有效交易参与方展示必要资料。</p>
       </div>
-      <Button variant="outline" @click="router.push(`/u/${profile.username}`)"><Eye class="h-4 w-4" />查看公开主页</Button>
+      <Button v-if="activeSection === 'contacts'" variant="outline" @click="buyerPreviewOpen = true">
+        <Eye class="h-4 w-4" />预览买家看到的信息
+      </Button>
+      <Button v-else variant="outline" @click="router.push(`/u/${profile.username}`)"><Eye class="h-4 w-4" />查看公开主页</Button>
     </header>
     <header v-else class="my-center-overview-heading"><h1>个人中心</h1><p>管理交易、发布内容与账户资料</p></header>
 
-    <nav v-if="isAccountSettingsSection" class="my-center-settings-tabs" aria-label="账户设置">
-      <RouterLink
-        v-for="item in accountSettingLinks"
-        :key="item.to"
-        :to="item.to"
-        :aria-current="isSectionActive(item.to) ? 'page' : undefined"
-        :aria-disabled="isSectionLocked(item.to)"
-        :class="[isSectionActive(item.to) ? 'is-active' : '', isSectionLocked(item.to) ? 'is-locked' : '']"
-        @click.capture="handleSectionLinkClick(item.to, $event)"
-      >
-        {{ item.label }}
-      </RouterLink>
-    </nav>
-
-    <Card v-if="activeSection === 'overview'" class="my-center-identity p-5">
-      <div class="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-        <div class="flex min-w-0 gap-4">
-          <div class="grid h-16 w-16 shrink-0 place-items-center overflow-hidden rounded-full bg-primary text-xl font-semibold text-primary-foreground">
-            <img v-if="profile.avatarUrl" :src="profile.avatarUrl" alt="当前头像" class="h-full w-full object-cover" />
-            <span v-else>{{ avatarText }}</span>
-          </div>
-          <div class="min-w-0">
-            <div class="flex flex-wrap items-center gap-2">
-              <h1 class="text-2xl font-semibold tracking-tight">{{ profile.displayName }}</h1>
-              <Badge v-for="badge in profile.badges" :key="badge.id" :variant="badge.type === 'system' ? 'default' : 'secondary'">{{ badge.label }}</Badge>
-            </div>
-            <p class="mt-1 text-sm text-muted-foreground">
-              @{{ profile.username }} · linux.do @{{ profile.linuxDoBinding.linuxDoUsername }} · 信任等级{{ profile.linuxDoBinding.trustLevel }}
-            </p>
-            <p class="mt-2 max-w-3xl text-sm text-muted-foreground">{{ profile.bio }}</p>
-          </div>
-        </div>
-        <div class="flex flex-wrap gap-2">
-          <Button variant="outline" @click="router.push(`/u/${profile.username}`)"><Eye class="h-4 w-4" />查看公开主页</Button>
-          <Button @click="router.push('/my/profile')"><UserRound class="h-4 w-4" />编辑个人资料</Button>
-        </div>
-      </div>
-      <dl class="my-center-identity-stats">
-        <div><dt>资料完整度</dt><dd>{{ profileCompleteness }}%</dd><small>{{ accountRecoveryComplete ? '账号恢复已配置' : '仍需完善账号恢复' }}</small></div>
-        <div><dt>待处理事项</dt><dd>{{ pendingTasks.length }}</dd><small>上车申请与 API 订单</small></div>
-        <div><dt>我发布的车源</dt><dd>{{ carpools?.length ?? 0 }}</dd><small>当前账号发布记录</small></div>
-        <div><dt>API 服务</dt><dd>{{ apiServices?.length ?? 0 }}</dd><small>当前账号服务记录</small></div>
-        <div><dt>联系方式</dt><dd>{{ enabledContactCount }}</dd><small>仅联系窗口可见</small></div>
-      </dl>
-    </Card>
-
-    <section v-if="activeSection === 'overview'" class="my-center-overview-layout">
-      <main class="min-w-0 space-y-5">
-        <section>
-          <div class="my-center-section-title"><div><h2>快捷入口</h2><p>常用交易、发布与账户设置</p></div></div>
-          <div class="my-center-quick-grid">
-            <RouterLink to="/my/rides"><span class="is-indigo"><CarFront /></span><div><strong>我的上车</strong><small>{{ rideApplications?.length ?? 0 }} 条申请记录</small></div><ChevronRight /></RouterLink>
-            <RouterLink to="/my/api-orders"><span class="is-cyan"><Code2 /></span><div><strong>API 订单</strong><small>{{ apiOrders?.length ?? 0 }} 笔订单记录</small></div><ChevronRight /></RouterLink>
-            <RouterLink to="/carpools/new"><span class="is-blue"><CarFront /></span><div><strong>发布车源</strong><small>创建新的拼车信息</small></div><ChevronRight /></RouterLink>
-            <RouterLink to="/api-market/new"><span class="is-emerald"><Code2 /></span><div><strong>发布 API 服务</strong><small>配置额度与接单信息</small></div><ChevronRight /></RouterLink>
-            <RouterLink to="/my/favorites"><span class="is-rose"><Heart /></span><div><strong>我的收藏</strong><small>查看收藏的市场信息</small></div><ChevronRight /></RouterLink>
-            <RouterLink to="/my/contacts"><span class="is-amber"><MessageCircle /></span><div><strong>联系方式</strong><small>{{ enabledContactCount }} 种方式可用</small></div><ChevronRight /></RouterLink>
-          </div>
-        </section>
-
-        <div class="my-center-activity-grid"><Card class="my-center-tasks p-5">
-          <div class="my-center-section-title"><div><h2>最近动态</h2><p>优先展示需要你处理的交易状态</p></div></div>
-          <div v-if="pendingTasks.length" class="mt-4 divide-y divide-border">
-            <RouterLink v-for="task in pendingTasks" :key="task.id" :to="task.to" class="flex items-center justify-between gap-4 py-3 first:pt-0 last:pb-0">
-              <div class="min-w-0"><div class="text-xs text-muted-foreground">{{ task.type }}</div><div class="mt-1 truncate font-medium">{{ task.title }}</div><div class="mt-1 text-xs text-primary">{{ task.description }}</div></div><span aria-hidden="true">→</span>
-            </RouterLink>
-          </div>
-          <EmptyState v-else title="当前没有待处理交易" description="新申请、待付款或待验收订单会出现在这里。" />
-        </Card>
-          <Card class="p-5"><div class="my-center-section-title"><div><h2>我发布的内容</h2><p>车源、API 服务与求车需求</p></div></div><div class="my-center-object-counts"><RouterLink to="/my/carpools"><strong>{{ carpools?.length ?? 0 }}</strong><span>车源</span></RouterLink><RouterLink to="/my/api-services"><strong>{{ apiServices?.length ?? 0 }}</strong><span>API 服务</span></RouterLink><RouterLink to="/my/demands"><strong>{{ demands?.length ?? 0 }}</strong><span>求车需求</span></RouterLink></div><div class="mt-5 space-y-3 text-sm"><RouterLink to="/my/carpools" class="flex items-center justify-between rounded-lg border p-3"><span>管理已发布车源</span><ChevronRight class="h-4 w-4 text-muted-foreground" /></RouterLink><RouterLink to="/my/api-services" class="flex items-center justify-between rounded-lg border p-3"><span>管理 API 服务</span><ChevronRight class="h-4 w-4 text-muted-foreground" /></RouterLink></div></Card>
-        </div>
-
-        <Card v-if="!hasMerchantObjects" class="p-5">
-          <h2 class="font-semibold">开始经营</h2>
-          <p class="mt-2 text-sm text-muted-foreground">当前还没有公开车源或 API 服务；发布入口始终可用，发布后经营管理会自动出现在侧栏。</p>
-          <div class="mt-4 flex flex-wrap gap-2"><RouterLink to="/carpools/new"><Button>发布车源</Button></RouterLink><RouterLink to="/api-market/new"><Button variant="outline">发布 API 服务</Button></RouterLink></div>
-        </Card>
-      </main>
-      <aside class="my-center-overview-aside space-y-3">
-        <Card class="p-4">
-          <div class="flex items-center justify-between gap-3"><h2 class="font-semibold">账户完整度</h2><strong class="text-primary">{{ profileCompleteness }}%</strong></div>
-          <div class="mt-3 h-2 overflow-hidden rounded-full bg-muted"><div class="h-full rounded-full bg-primary transition-all" :style="{ width: `${profileCompleteness}%` }"></div></div>
-          <div class="mt-4 space-y-2 text-sm">
-            <div class="flex items-center justify-between"><span class="text-muted-foreground">Linux.do 绑定</span><Badge :variant="profile.linuxDoBinding.bound ? 'verified' : 'secondary'">{{ profile.linuxDoBinding.bound ? '已完成' : '待完成' }}</Badge></div>
-            <div class="flex items-center justify-between"><span class="text-muted-foreground">账号恢复</span><Badge :variant="accountRecoveryComplete ? 'verified' : 'secondary'">{{ accountRecoveryComplete ? '已配置' : '待配置' }}</Badge></div>
-            <div class="flex items-center justify-between"><span class="text-muted-foreground">可用联系方式</span><strong>{{ enabledContactCount }}</strong></div>
-          </div>
-          <Button class="mt-4 w-full" variant="outline" @click="router.push('/my/profile')">完善个人资料</Button>
-        </Card>
-        <Card class="p-4">
-          <h2 class="font-semibold">平台边界</h2>
-          <div class="mt-3 space-y-3 text-xs leading-5 text-muted-foreground"><p>平台记录交易状态与双方确认，不经手拼车费用，也不承诺担保交易。</p><p>完整联系方式只在有效联系窗口中向对应参与方展示。</p></div>
-        </Card>
-        <Card class="p-4">
-          <div class="flex gap-3"><ShieldCheck class="mt-0.5 h-5 w-5 shrink-0 text-primary" /><div><h2 class="font-semibold">账户提醒</h2><p class="mt-2 text-xs leading-5 text-muted-foreground">请保持邮箱与密码可用，以便认证入口异常时恢复账号。</p></div></div>
-        </Card>
-      </aside>
-    </section>
+    <PersonalCenterDashboard
+      v-if="activeSection === 'overview'"
+      :profile="profile"
+      :metrics="dashboardMetrics"
+      :pending-tasks="dashboardPendingTasks"
+      :published-items="dashboardPublishedItems"
+      :completeness="dashboardCompleteness"
+      :account-alert="dashboardAccountAlert"
+      :tasks-loading="dashboardTasksLoading"
+      :tasks-error="dashboardTasksError"
+      :tasks-unavailable="dashboardTasksUnavailable"
+      :published-loading="dashboardPublishedLoading"
+      :published-error="dashboardPublishedError"
+      :published-unavailable="dashboardPublishedUnavailable"
+      :completeness-loading="dashboardCompletenessLoading"
+      :completeness-error="dashboardCompletenessError"
+      :enabled-contact-count="enabledContactCount"
+      :contacts-loading="contactsQuery.isPending.value"
+      :contacts-error="contactsQuery.isError.value"
+      :buyer-ride-count="buyerRideApplicationsQuery.isSuccess.value ? (rideApplications?.length ?? 0) : null"
+      :related-api-order-count="dashboardApiOrdersError || dashboardApiOrdersLoading ? null : uniqueRelatedApiOrderCount(apiOrders ?? [], merchantApiOrders ?? [])"
+      @retry-tasks="retryDashboardTasks"
+      @retry-published="retryDashboardPublished"
+      @retry-completeness="retryDashboardCompleteness"
+    />
 
     <section v-else-if="activeSection === 'profile'" class="my-center-settings-layout">
+      <aside class="my-center-settings-nav">
+        <Card class="p-2">
+          <RouterLink
+            v-for="item in sectionLinks"
+            :key="item.to"
+            :to="item.to"
+            :aria-disabled="isSectionLocked(item.to)"
+            :class="[isSectionActive(item.to) ? 'is-active' : '', isSectionLocked(item.to) ? 'opacity-65' : '']"
+            @click.capture="handleSectionLinkClick(item.to, $event)"
+          ><span>{{ item.label }}</span><ChevronRight class="h-4 w-4" /></RouterLink>
+        </Card>
+      </aside>
+
       <main class="min-w-0">
       <Card class="p-5">
         <h2 class="font-semibold">个人资料设置</h2>
@@ -1107,199 +1272,193 @@ function goToLogin() {
           </div>
         </div>
       </Card>
-      <Card class="p-4"><div class="flex items-center justify-between"><h2 class="font-semibold">资料完整度</h2><strong class="text-primary">{{ profileCompleteness }}%</strong></div><div class="mt-3 h-2 overflow-hidden rounded-full bg-muted"><div class="h-full rounded-full bg-primary" :style="{ width: `${profileCompleteness}%` }"></div></div><p class="mt-3 text-xs leading-5 text-muted-foreground">显示名称、简介、身份绑定、恢复方式和联系方式共同组成完整度。</p></Card>
+      <Card class="p-4"><div class="flex items-center justify-between gap-3"><h2 class="font-semibold">资料完整度</h2><strong class="text-primary">{{ profileCompleteness === null ? '暂不可用' : `${profileCompleteness}%` }}</strong></div><div class="mt-3 h-2 overflow-hidden rounded-full bg-muted" role="progressbar" aria-label="资料完整度" aria-valuemin="0" aria-valuemax="100" :aria-valuenow="profileCompleteness ?? undefined"><div class="h-full rounded-full bg-primary" :style="{ width: `${profileCompleteness ?? 0}%` }"></div></div><p class="mt-3 text-xs leading-5 text-muted-foreground">显示名称、简介、身份绑定、恢复方式和联系方式共同组成完整度；发布 API 服务后还会检查收款设置。</p></Card>
       <Card class="p-4"><div class="flex gap-3"><ShieldCheck class="mt-0.5 h-5 w-5 shrink-0 text-primary" /><div><h2 class="font-semibold">公开信息说明</h2><p class="mt-2 text-xs leading-5 text-muted-foreground">公开主页展示名称、简介和你允许公开的交易信号，不会公开完整联系方式。</p></div></div></Card>
       </aside>
     </section>
 
     <section v-else-if="activeSection === 'contacts'" class="my-center-contacts-layout">
+      <aside class="my-center-contacts-aside">
+        <ConfigurationProgressCard
+          :completed-count="completedContactSettingsCount"
+          :wechat-complete="wechatBound"
+          :email-complete="emailBound"
+          :payment-complete="apiPaymentComplete"
+          @preview="buyerPreviewOpen = true"
+        />
+      </aside>
+
       <main class="contact-payment-main-grid min-w-0">
-      <div class="contact-payment-group-heading"><div><h2>联系方式</h2><p>当前真实支持微信和验证邮箱，买家只能在有效联系窗口查看。</p></div><Badge variant="secondary">已配置 {{ enabledContactCount }} / 2</Badge></div>
-      <Card class="contact-method-card p-5">
-        <div class="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-          <div class="flex min-w-0 gap-4">
-            <div class="grid h-12 w-12 shrink-0 place-items-center rounded-xl bg-primary/10 text-primary">
-              <MessageCircle class="h-5 w-5" />
-            </div>
-            <div class="min-w-0">
-              <div class="flex flex-wrap items-center gap-2">
-                <h2 class="text-lg font-semibold tracking-tight">微信</h2>
-                <Badge :variant="wechatBound ? 'verified' : 'secondary'">{{ wechatBound ? '已填写' : '未填写' }}</Badge>
-                <Badge v-if="wechatContact?.isDefault" variant="secondary">默认联系方式</Badge>
-              </div>
-              <p class="mt-1 text-sm leading-6 text-muted-foreground">填写微信号后即可作为联系窗口方式，不做验证码验证。</p>
-              <p v-if="wechatContact" class="mt-2 text-sm text-muted-foreground">
-                当前：{{ wechatContact.maskedValue }} · 适用：{{ scopeLabels(wechatContact.usageScopes) }}
-              </p>
-            </div>
+        <div class="contact-payment-group-heading">
+          <div>
+            <h2>联系方式</h2>
+            <p>当前真实支持微信和验证邮箱，买家只能在有效联系窗口查看。</p>
           </div>
-          <div v-if="wechatContact" class="flex flex-wrap gap-2">
-            <Button v-if="!wechatContact.isDefault" size="sm" variant="outline" :disabled="setDefaultContactMutation.isPending.value" @click="setDefaultContact(wechatContact)">设为默认</Button>
-            <Button size="sm" variant="outline" :disabled="deleteContactMutation.isPending.value" @click="removeContact(wechatContact)"><Trash2 class="h-4 w-4" />解除绑定</Button>
-          </div>
-        </div>
-        <div class="mt-5 grid gap-3 lg:grid-cols-[minmax(0,1fr)_160px]">
-          <label class="space-y-2">
-            <span class="text-sm font-medium">微信号</span>
-            <Input v-model="wechatForm.displayValue" autocomplete="off" placeholder="例如 c2c_orbit" />
-          </label>
-          <Button class="lg:self-end" :disabled="contactSaving || !wechatForm.displayValue.trim()" @click="saveWechatContact"><Save class="h-4 w-4" />保存微信</Button>
-        </div>
-      </Card>
-
-      <Card class="contact-method-card p-5">
-        <div class="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-          <div class="flex min-w-0 gap-4">
-            <div class="grid h-12 w-12 shrink-0 place-items-center rounded-xl bg-sky-500/10 text-sky-700">
-              <Mail class="h-5 w-5" />
-            </div>
-            <div class="min-w-0">
-              <div class="flex flex-wrap items-center gap-2">
-                <h2 class="text-lg font-semibold tracking-tight">邮箱</h2>
-                <Badge :variant="emailBound ? 'verified' : 'secondary'">{{ emailBound ? '已验证' : '未验证' }}</Badge>
-                <Badge v-if="emailContact && !emailContact.verified" variant="secondary">待验证</Badge>
-                <Badge v-if="emailContact?.isDefault" variant="secondary">默认联系方式</Badge>
-              </div>
-              <p class="mt-1 text-sm leading-6 text-muted-foreground">邮箱必须通过验证码后才会启用为联系方式。</p>
-              <p v-if="emailContact" class="mt-2 text-sm text-muted-foreground">
-                当前：{{ emailContact.maskedValue }} · 适用：{{ scopeLabels(emailContact.usageScopes) }}
-              </p>
-            </div>
-          </div>
-          <div v-if="emailContact" class="flex flex-wrap gap-2">
-            <Button v-if="emailBound && !emailContact.isDefault" size="sm" variant="outline" :disabled="setDefaultContactMutation.isPending.value" @click="setDefaultContact(emailContact)">设为默认</Button>
-            <Button size="sm" variant="outline" :disabled="deleteContactMutation.isPending.value" @click="removeContact(emailContact)"><Trash2 class="h-4 w-4" />解除绑定</Button>
-          </div>
-        </div>
-        <div class="mt-5 grid gap-3 lg:grid-cols-[minmax(0,1fr)_160px]">
-          <label class="space-y-2">
-            <span class="text-sm font-medium">邮箱地址</span>
-            <Input v-model="emailForm.email" type="email" autocomplete="email" placeholder="name@example.com" />
-          </label>
-          <Button class="lg:self-end" variant="outline" :disabled="emailBindingPending || emailVerificationCooldownSeconds > 0 || !emailForm.email.trim()" @click="startEmailVerification"><MailCheck class="h-4 w-4" />{{ emailVerificationButtonLabel }}</Button>
-          <label class="space-y-2">
-            <span class="text-sm font-medium">验证码</span>
-            <Input v-model="emailForm.code" inputmode="numeric" maxlength="6" placeholder="6 位验证码" />
-            <span v-if="visibleEmailVerificationDevCode" class="block rounded-md border border-dashed border-amber-300 bg-amber-50 px-3 py-2 text-xs leading-5 text-amber-900">
-              开发验证码：<span class="font-semibold tabular-nums">{{ visibleEmailVerificationDevCode }}</span>
-            </span>
-          </label>
-          <Button class="lg:self-end" :disabled="emailBindingPending || !emailForm.code.trim()" @click="confirmContactEmailVerification">验证并绑定邮箱</Button>
-        </div>
-      </Card>
-
-      <div class="contact-payment-group-heading contact-payment-group-heading--payment"><div><h2>API 收款方式</h2><p>买家创建 API 订单后，使用下单时锁定的收款信息完成付款。</p></div><Badge :variant="apiPaymentComplete ? 'verified' : 'secondary'">{{ apiPaymentComplete ? '已配置' : '待配置' }}</Badge></div>
-      <Card class="api-payment-settings-card border-emerald-200 bg-emerald-50/40 p-4">
-        <div class="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-          <div class="flex min-w-0 gap-4">
-            <div class="grid h-10 w-10 shrink-0 place-items-center rounded-lg bg-emerald-500/10 text-emerald-700">
-              <CreditCard class="h-5 w-5" />
-            </div>
-            <div class="min-w-0">
-              <div class="flex flex-wrap items-center gap-2">
-                <h2 class="text-lg font-semibold tracking-tight">API 收款设置</h2>
-                <Badge :variant="apiPaymentComplete ? 'verified' : 'secondary'">{{ apiPaymentComplete ? '已配置' : '待配置' }}</Badge>
-              </div>
-              <p class="mt-1 text-sm leading-6 text-muted-foreground">
-                发布 API 额度时默认使用这里的收款资料，并在发布时复制为该服务的接单快照。
-              </p>
-              <p class="mt-2 text-sm text-muted-foreground">{{ apiPaymentSummaryText }}</p>
-            </div>
-          </div>
-          <Button :disabled="updateApiPaymentSettingsMutation.isPending.value" @click="saveApiPaymentSettings">
-            <Save class="h-4 w-4" />保存 API 收款设置
-          </Button>
+          <Badge variant="secondary">已配置 {{ enabledContactCount }} / 2</Badge>
         </div>
 
-        <div class="mt-4 space-y-3">
-          <div class="flex flex-col gap-2 rounded-md border border-emerald-200 bg-white/70 px-3 py-2 text-sm sm:flex-row sm:items-center sm:justify-between">
+        <ContactMethodCard
+          title="微信"
+          description="填写微信号后即可作为联系窗口方式，不做验证码验证。"
+          :status-label="wechatBound ? '已填写' : '未填写'"
+          :status-variant="wechatBound ? 'verified' : 'secondary'"
+          :dirty="wechatContactDirty"
+          :is-default="wechatContact?.isDefault"
+          :current-summary="wechatContact ? `当前：${wechatContact.maskedValue} · 适用：${scopeLabels(wechatContact.usageScopes)}` : ''"
+        >
+          <template #icon><MessageCircle class="h-5 w-5" /></template>
+          <template v-if="wechatContact" #actions>
+            <Button
+              v-if="!wechatContact.isDefault"
+              size="icon"
+              variant="outline"
+              :disabled="setDefaultContactMutation.isPending.value"
+              aria-label="将微信设为默认联系方式"
+              title="设为默认"
+              @click="setDefaultContact(wechatContact)"
+            >
+              <Star class="h-4 w-4" />
+            </Button>
+            <Button
+              size="icon"
+              variant="outline"
+              :disabled="deleteContactMutation.isPending.value"
+              aria-label="解除微信绑定"
+              title="解除绑定"
+              @click="removeContact(wechatContact)"
+            >
+              <Trash2 class="h-4 w-4" />
+            </Button>
+          </template>
+          <div class="grid gap-3 sm:grid-cols-[minmax(0,1fr)_auto]">
+            <label class="space-y-2">
+              <span class="text-sm font-medium">微信号</span>
+              <Input v-model="wechatForm.displayValue" autocomplete="off" placeholder="例如 c2c_orbit" />
+            </label>
+            <Button
+              class="sm:self-end"
+              :disabled="contactSaving || !wechatForm.displayValue.trim() || !wechatContactDirty"
+              @click="saveWechatContact"
+            >
+              <Save class="h-4 w-4" />保存微信
+            </Button>
+          </div>
+        </ContactMethodCard>
+
+        <ContactMethodCard
+          title="邮箱"
+          description="邮箱必须通过验证码后才会启用为联系方式。"
+          :status-label="emailBound ? '已验证' : '未验证'"
+          :status-variant="emailBound ? 'verified' : 'secondary'"
+          :dirty="emailContactDirty"
+          :is-default="emailContact?.isDefault"
+          :current-summary="emailContact ? `当前：${emailContact.maskedValue} · 适用：${scopeLabels(emailContact.usageScopes)}` : ''"
+        >
+          <template #icon><Mail class="h-5 w-5" /></template>
+          <template v-if="emailContact" #actions>
+            <Button
+              v-if="emailBound && !emailContact.isDefault"
+              size="icon"
+              variant="outline"
+              :disabled="setDefaultContactMutation.isPending.value"
+              aria-label="将邮箱设为默认联系方式"
+              title="设为默认"
+              @click="setDefaultContact(emailContact)"
+            >
+              <Star class="h-4 w-4" />
+            </Button>
+            <Button
+              size="icon"
+              variant="outline"
+              :disabled="deleteContactMutation.isPending.value"
+              aria-label="解除邮箱绑定"
+              title="解除绑定"
+              @click="removeContact(emailContact)"
+            >
+              <Trash2 class="h-4 w-4" />
+            </Button>
+          </template>
+          <div class="grid gap-3 sm:grid-cols-[minmax(0,1fr)_auto]">
+            <label class="space-y-2">
+              <span class="text-sm font-medium">邮箱地址</span>
+              <Input v-model="emailForm.email" type="email" autocomplete="email" placeholder="name@example.com" />
+            </label>
+            <Button
+              class="sm:self-end"
+              variant="outline"
+              :disabled="emailBindingPending || emailVerificationCooldownSeconds > 0 || !emailForm.email.trim()"
+              @click="startEmailVerification"
+            >
+              <MailCheck class="h-4 w-4" />{{ emailVerificationButtonLabel }}
+            </Button>
+            <label class="space-y-2">
+              <span class="text-sm font-medium">验证码</span>
+              <Input v-model="emailForm.code" inputmode="numeric" maxlength="6" placeholder="6 位验证码" />
+              <span v-if="visibleEmailVerificationDevCode" class="block rounded-md border border-dashed border-warning/35 bg-warning/10 px-3 py-2 text-xs leading-5 text-warning">
+                开发验证码：<span class="font-semibold tabular-nums">{{ visibleEmailVerificationDevCode }}</span>
+              </span>
+            </label>
+            <Button
+              class="sm:self-end"
+              :disabled="emailBindingPending || !emailForm.code.trim()"
+              @click="confirmContactEmailVerification"
+            >
+              验证并绑定邮箱
+            </Button>
+          </div>
+        </ContactMethodCard>
+
+        <section class="contact-payment-settings">
+          <div class="contact-payment-settings__header">
+            <div class="min-w-0">
+              <div class="flex flex-wrap items-center gap-2">
+                <h2>API 收款设置</h2>
+                <Badge :variant="apiPaymentComplete ? 'verified' : 'secondary'">
+                  {{ apiPaymentComplete ? '已配置' : '待配置' }}
+                </Badge>
+                <Badge v-if="apiPaymentSettingsDirty" variant="secondary">有未保存更改</Badge>
+              </div>
+              <p>发布 API 额度时读取这里的资料，并复制为服务接单快照。</p>
+              <p class="mt-1">{{ apiPaymentSummaryText }}</p>
+            </div>
+            <Button
+              :disabled="updateApiPaymentSettingsMutation.isPending.value || !apiPaymentSettingsDirty"
+              @click="saveApiPaymentSettings"
+            >
+              <Save class="h-4 w-4" />保存 API 收款设置
+            </Button>
+          </div>
+
+          <div class="contact-payment-window">
             <span class="font-medium">买家确认付款窗口</span>
             <span class="text-muted-foreground">固定 {{ defaultApiPaymentWindowMinutes }} 分钟</span>
           </div>
 
           <div class="contact-payment-options-grid">
-            <div
+            <PaymentMethodCard
               v-for="option in apiPaymentForm.paymentOptions"
               :key="option.paymentMethod"
-              class="contact-payment-option-card grid gap-3 rounded-md border bg-white/80 p-3"
-              :class="option.enabled ? 'border-primary/35' : 'border-border'"
-            >
-              <label class="flex cursor-pointer items-start gap-3 lg:items-center">
-                <Checkbox v-model="option.enabled" class="mt-1" />
-                <span class="min-w-0">
-                  <strong class="block text-sm">{{ apiPaymentMethodLabel(option.paymentMethod) }}</strong>
-                  <span class="mt-1 block text-xs leading-5 text-muted-foreground">
-                    {{ apiPaymentMethods.find(item => item.value === option.paymentMethod)?.hint }}
-                  </span>
-                </span>
-              </label>
-
-              <div v-if="option.enabled" class="min-w-0">
-                <div v-if="apiPaymentMethodRequiresQrCode(option.paymentMethod)" class="flex flex-col gap-3 sm:flex-row sm:items-center">
-                  <div class="grid h-20 w-20 shrink-0 place-items-center overflow-hidden rounded-md border border-border bg-muted/40">
-                    <img v-if="option.paymentQrCodeDataUrl" :src="option.paymentQrCodeDataUrl" :alt="`${apiPaymentMethodLabel(option.paymentMethod)}收款码`" class="h-full w-full object-cover" />
-                    <ImageUp v-else class="h-5 w-5 text-muted-foreground" />
-                  </div>
-                  <div class="min-w-0 flex-1 space-y-2">
-                    <div class="flex flex-wrap gap-2">
-                      <input
-                        :id="`api-payment-qr-${option.paymentMethod}`"
-                        class="sr-only"
-                        type="file"
-                        accept="image/png,image/jpeg,image/webp"
-                        @change="handleApiPaymentQrUpload($event, option)"
-                      />
-                      <label
-                        :for="`api-payment-qr-${option.paymentMethod}`"
-                        class="inline-flex h-9 cursor-pointer items-center justify-center gap-2 rounded-md border border-input bg-background px-3 text-sm font-medium shadow-xs hover:bg-accent hover:text-accent-foreground"
-                      >
-                        <ImageUp class="h-4 w-4" />{{ option.paymentQrCodeDataUrl ? '替换收款码' : '上传收款码' }}
-                      </label>
-                      <Button v-if="option.paymentQrCodeDataUrl" type="button" size="sm" variant="outline" @click="removeApiPaymentQr(option)">
-                        <X class="h-4 w-4" />移除
-                      </Button>
-                    </div>
-                    <p class="text-xs leading-5 text-muted-foreground">支持 PNG、JPG、WebP，最多 512KB。</p>
-                  </div>
-                </div>
-
-                <Textarea
-                  v-model="option.paymentInstructions"
-                  class="mt-3 min-h-16 text-sm"
-                  maxlength="160"
-                  :placeholder="apiPaymentInstructionsPlaceholder(option.paymentMethod)"
-                />
-              </div>
-              <div v-else class="text-sm text-muted-foreground lg:self-center">未启用</div>
-
-              <Badge class="justify-self-start" :variant="option.enabled && apiPaymentOptionReady(option) ? 'verified' : 'secondary'">
-                {{ option.enabled && apiPaymentOptionReady(option) ? '已就绪' : option.enabled ? '待补全' : '未启用' }}
-              </Badge>
-            </div>
+              :option="option"
+              :dirty="apiPaymentOptionDirty(option)"
+              :disabled="updateApiPaymentSettingsMutation.isPending.value"
+              @update:enabled="setApiPaymentOptionEnabled(option, $event)"
+              @update:instructions="setApiPaymentOptionInstructions(option, $event)"
+              @upload="handleApiPaymentQrUpload($event, option)"
+              @request-remove-qr="requestApiPaymentQrRemoval(option)"
+            />
           </div>
-        </div>
 
-        <p
-          class="mt-4 rounded-md border px-3 py-2 text-xs leading-5"
-          :class="apiPaymentComplete ? 'border-success/20 bg-success/5 text-success' : 'border-warning/25 bg-warning/10 text-warning'"
-        >
-          {{ apiPaymentComplete ? 'API 发布页将直接读取这组设置，不需要每次重新填写。' : apiPaymentMissingReasonText }}
-        </p>
-        <p class="mt-2 rounded-md border border-border bg-accent/50 p-3 text-xs leading-5 text-muted-foreground">
-          收款资料只在买家创建订单后用于付款；不要填写银行卡号、API Key、token、账号密码、Cookie、Session 或面板凭据。
-        </p>
-      </Card>
-
-      <p class="contact-payment-boundary rounded-md border border-border bg-accent/50 p-3 text-xs leading-5 text-muted-foreground">
-        当前只开放微信和邮箱两种联系方式。联系方式只用于订单参与方之间沟通；公开主页、首页、车源列表和 API 市集不会展示完整联系方式。
-      </p>
+          <p
+            class="contact-payment-status"
+            :class="apiPaymentComplete ? 'is-complete' : 'is-incomplete'"
+          >
+            {{ apiPaymentComplete ? 'API 发布页将直接读取这组设置，不需要每次重新填写。' : apiPaymentMissingReasonText }}
+          </p>
+          <p class="text-xs leading-5 text-muted-foreground">
+            收款资料只在买家创建订单后用于站外确认。请勿填写银行卡号、API Key、token、账号密码、Cookie、Session 或面板凭据。
+          </p>
+        </section>
       </main>
-      <aside class="my-center-contacts-aside space-y-4">
-        <Card class="p-4"><h2 class="font-semibold">配置完成度</h2><div class="contact-payment-completion"><div class="contact-payment-ring" :style="{ '--completion': `${Math.round(((enabledContactCount + (apiPaymentComplete ? 1 : 0)) / 3) * 100)}%` }"><span>{{ Math.round(((enabledContactCount + (apiPaymentComplete ? 1 : 0)) / 3) * 100) }}%</span></div><div><strong>{{ enabledContactCount + (apiPaymentComplete ? 1 : 0) }} / 3 项</strong><p>完成真实可用的联系与收款配置</p></div></div><div class="mt-4 space-y-3 text-sm"><div class="flex items-center justify-between"><span class="text-muted-foreground">微信</span><Badge :variant="wechatBound ? 'verified' : 'secondary'">{{ wechatBound ? '已填写' : '待填写' }}</Badge></div><div class="flex items-center justify-between"><span class="text-muted-foreground">验证邮箱</span><Badge :variant="emailBound ? 'verified' : 'secondary'">{{ emailBound ? '已验证' : '待验证' }}</Badge></div><div class="flex items-center justify-between"><span class="text-muted-foreground">API 收款</span><Badge :variant="apiPaymentComplete ? 'verified' : 'secondary'">{{ apiPaymentComplete ? '已配置' : '待配置' }}</Badge></div></div></Card>
-        <Card class="p-4"><div class="flex gap-3"><Eye class="mt-0.5 h-5 w-5 shrink-0 text-primary" /><div><h2 class="font-semibold">买家可见范围</h2><p class="mt-2 text-xs leading-5 text-muted-foreground">只有进入有效拼车联系窗口或创建 API 订单的对应参与方，才能看到交易所需资料。</p></div></div></Card>
-        <Card class="p-4"><div class="flex gap-3"><ShieldCheck class="mt-0.5 h-5 w-5 shrink-0 text-primary" /><div><h2 class="font-semibold">资料安全提醒</h2><p class="mt-2 text-xs leading-5 text-muted-foreground">不要在联系方式或付款说明中填写 API Key、token、账号密码、Cookie 或 Session。</p></div></div></Card>
-        <Card class="p-4"><h2 class="font-semibold">参与方看到的资料卡</h2><div class="contact-payment-preview mt-3"><div class="flex items-center gap-3"><span class="grid h-10 w-10 place-items-center rounded-full bg-primary text-sm font-semibold text-primary-foreground">{{ avatarText }}</span><div><strong>{{ profile.displayName }}</strong><small>有效交易参与方可见</small></div></div><div class="mt-4 grid grid-cols-2 gap-2"><span><MessageCircle />微信</span><span><Mail />邮箱</span><span class="col-span-2"><CreditCard />API 收款快照</span></div><p>微信：{{ wechatContact?.maskedValue ?? '未填写' }}<br />邮箱：{{ emailContact?.maskedValue ?? '未填写' }}</p></div></Card>
-      </aside>
     </section>
 
     <section v-else-if="activeSection === 'account'">
@@ -1319,7 +1478,7 @@ function goToLogin() {
             <Button v-else variant="outline" @click="openAccountSetupDialog('password')"><LockKeyhole class="h-4 w-4" />修改密码</Button>
             <Button v-if="!profile.emailVerified" variant="outline" @click="openAccountSetupDialog('email')"><MailCheck class="h-4 w-4" />绑定邮箱</Button>
             <Button v-else variant="outline" @click="openAccountSetupDialog('email')"><MailCheck class="h-4 w-4" />更新邮箱</Button>
-            <Button v-if="accountRecoveryComplete && accountRecoveryReturnTo" @click="continueAfterAccountRecovery">继续访问原页面</Button>
+            <Button v-if="accountRecoveryComplete && accountRecoveryReturnTo" @click="continueAfterAccountRecovery">{{ accountRecoveryContinueLabel }}</Button>
           </div>
         </div>
 
@@ -1364,7 +1523,7 @@ function goToLogin() {
         <div class="mt-4 space-y-3">
           <label class="flex items-center justify-between gap-4 text-sm"><span>展示最近活跃时间</span><input v-model="privacyForm.showLastActiveAt" type="checkbox" /></label>
           <label class="flex items-center justify-between gap-4 text-sm"><span>展示加入时间</span><input v-model="privacyForm.showCreatedAt" type="checkbox" /></label>
-          <label class="flex items-center justify-between gap-4 text-sm"><span>展示近 30 天完成数量</span><input v-model="privacyForm.showCompletionStats" type="checkbox" /></label>
+          <label class="flex items-center justify-between gap-4 text-sm"><span>展示近期完成数量</span><input v-model="privacyForm.showCompletionStats" type="checkbox" /></label>
           <label class="flex items-center justify-between gap-4 text-sm"><span>展示响应中位时间</span><input v-model="privacyForm.showResponseMedian" type="checkbox" /></label>
           <label class="flex items-center justify-between gap-4 text-sm"><span>展示已处理纠纷摘要</span><input v-model="privacyForm.showResolvedDisputeSummary" type="checkbox" /></label>
           <label class="flex items-center justify-between gap-4 text-sm"><span>允许他人从公开主页举报</span><input v-model="privacyForm.allowPublicProfileReport" type="checkbox" /></label>
@@ -1374,7 +1533,8 @@ function goToLogin() {
       <Card class="p-5">
         <h2 class="font-semibold">不能关闭的公开信号</h2>
         <div class="mt-4 space-y-3 text-sm text-muted-foreground">
-          <p>账号处罚状态、严重未解决纠纷提示、系统认证铭牌和已绑定 linux.do 状态始终会在必要位置展示。</p>
+          <p>买家/卖家的公共最小信誉摘要、账号处罚状态、严重未解决纠纷提示、系统认证铭牌和已绑定 linux.do 状态始终会在必要位置展示。</p>
+          <p>上方开关只控制资料统计和详细记录，不会把公共信誉摘要改成零，也不会隐藏有效限制或风险状态。</p>
           <p>隐私设置不影响有效意向参与者查看必要联系方式。</p>
           <p>公开主页不会展示微信、邮箱、登录邮箱、手机号、IP、设备信息或意向敏感详情。</p>
         </div>

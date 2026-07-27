@@ -15,6 +15,7 @@ type Repository interface {
 	SetDefaultContactMethod(ctx context.Context, userID, methodID string) (ContactMethod, *domain.AppError)
 	VerifyContactMethod(ctx context.Context, userID, methodID string, verifiedAt time.Time) (ContactMethod, *domain.AppError)
 	CreateContactSession(ctx context.Context, input CreateContactSessionInput, session ContactSession, now time.Time) (ContactSession, *domain.AppError)
+	ContactSessionViewerRole(ctx context.Context, sessionID, viewerUserID string) (string, *domain.AppError)
 	ReadContactSession(ctx context.Context, sessionID, viewerUserID, requestID string, now time.Time) (ContactSessionView, *domain.AppError)
 	ContactAccessLogCount(ctx context.Context, sessionID string) (int, *domain.AppError)
 }

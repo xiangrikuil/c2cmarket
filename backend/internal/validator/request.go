@@ -91,13 +91,21 @@ func ParseRequiredTime(value, field string) (time.Time, *domain.AppError) {
 }
 
 func RequireIfMatchVersion(r *http.Request) (int64, *domain.AppError) {
+	return requireIfMatchVersion(r, false)
+}
+
+func RequireIfMatchVersionAllowZero(r *http.Request) (int64, *domain.AppError) {
+	return requireIfMatchVersion(r, true)
+}
+
+func requireIfMatchVersion(r *http.Request, allowZero bool) (int64, *domain.AppError) {
 	match := strings.TrimSpace(r.Header.Get("If-Match"))
 	if match == "" {
 		return 0, domain.NewError(http.StatusPreconditionRequired, domain.CodePreconditionRequired, "Precondition required", "审核动作必须提供 If-Match 资源版本。")
 	}
 	match = strings.Trim(match, `"`)
 	value, err := strconv.ParseInt(match, 10, 64)
-	if err != nil || value <= 0 {
+	if err != nil || value < 0 || (!allowZero && value == 0) {
 		return 0, domain.NewFieldError(http.StatusPreconditionRequired, domain.CodePreconditionRequired, "Precondition required", "If-Match 资源版本格式不正确。", "If-Match", "invalid", "If-Match 必须是正整数版本。")
 	}
 	return value, nil

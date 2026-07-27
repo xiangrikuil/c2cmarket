@@ -82,7 +82,7 @@ type announcementAuditLogDTO struct {
 }
 
 func (s *Server) handleAnnouncements(w http.ResponseWriter, r *http.Request) {
-	user, _, appErr := s.requireSession(r)
+	user, _, appErr := s.requireSession(w, r)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
@@ -96,7 +96,7 @@ func (s *Server) handleAnnouncements(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleActiveAnnouncements(w http.ResponseWriter, r *http.Request) {
-	user, _, appErr := s.requireSession(r)
+	user, _, appErr := s.requireSession(w, r)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
@@ -110,7 +110,7 @@ func (s *Server) handleActiveAnnouncements(w http.ResponseWriter, r *http.Reques
 }
 
 func (s *Server) handleHomeAnnouncement(w http.ResponseWriter, r *http.Request) {
-	user, _, appErr := s.requireSession(r)
+	user, _, appErr := s.requireSession(w, r)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
@@ -128,7 +128,7 @@ func (s *Server) handleHomeAnnouncement(w http.ResponseWriter, r *http.Request) 
 }
 
 func (s *Server) handleAnnouncementDetail(w http.ResponseWriter, r *http.Request) {
-	user, _, appErr := s.requireSession(r)
+	user, _, appErr := s.requireSession(w, r)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
@@ -150,7 +150,7 @@ func (s *Server) handleImportantAnnouncementUnreadCount(w http.ResponseWriter, r
 }
 
 func (s *Server) handleAnnouncementCount(w http.ResponseWriter, r *http.Request, importantOnly bool) {
-	user, _, appErr := s.requireSession(r)
+	user, _, appErr := s.requireSession(w, r)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
@@ -176,7 +176,7 @@ func (s *Server) handleDismissAnnouncement(w http.ResponseWriter, r *http.Reques
 }
 
 func (s *Server) handleAnnouncementReceipt(w http.ResponseWriter, r *http.Request, action string) {
-	user, _, appErr := s.requireSessionAndCSRF(r)
+	user, _, appErr := s.requireSessionAndCSRF(w, r)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
@@ -198,7 +198,7 @@ func (s *Server) handleAnnouncementReceipt(w http.ResponseWriter, r *http.Reques
 }
 
 func (s *Server) handleAdminAnnouncements(w http.ResponseWriter, r *http.Request) {
-	user, _, appErr := s.requireSession(r)
+	user, _, appErr := s.requireSession(w, r)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
@@ -212,7 +212,7 @@ func (s *Server) handleAdminAnnouncements(w http.ResponseWriter, r *http.Request
 }
 
 func (s *Server) handleAdminAnnouncement(w http.ResponseWriter, r *http.Request) {
-	user, _, appErr := s.requireSession(r)
+	user, _, appErr := s.requireSession(w, r)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
@@ -226,7 +226,7 @@ func (s *Server) handleAdminAnnouncement(w http.ResponseWriter, r *http.Request)
 }
 
 func (s *Server) handleCreateAnnouncement(w http.ResponseWriter, r *http.Request) {
-	user, _, appErr := s.requireSessionAndCSRF(r)
+	user, _, appErr := s.requireSessionAndCSRF(w, r)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
@@ -250,7 +250,7 @@ func (s *Server) handleCreateAnnouncement(w http.ResponseWriter, r *http.Request
 }
 
 func (s *Server) handleUpdateAnnouncement(w http.ResponseWriter, r *http.Request) {
-	user, _, appErr := s.requireSessionAndCSRF(r)
+	user, _, appErr := s.requireSessionAndCSRF(w, r)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
@@ -274,7 +274,7 @@ func (s *Server) handleUpdateAnnouncement(w http.ResponseWriter, r *http.Request
 }
 
 func (s *Server) handlePublishAnnouncement(w http.ResponseWriter, r *http.Request) {
-	user, _, appErr := s.requireSessionAndCSRF(r)
+	user, _, appErr := s.requireSessionAndCSRF(w, r)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
@@ -288,7 +288,7 @@ func (s *Server) handlePublishAnnouncement(w http.ResponseWriter, r *http.Reques
 }
 
 func (s *Server) handleOfflineAnnouncement(w http.ResponseWriter, r *http.Request) {
-	user, _, appErr := s.requireSessionAndCSRF(r)
+	user, _, appErr := s.requireSessionAndCSRF(w, r)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
@@ -307,7 +307,7 @@ func (s *Server) handleOfflineAnnouncement(w http.ResponseWriter, r *http.Reques
 }
 
 func (s *Server) handleDuplicateAnnouncement(w http.ResponseWriter, r *http.Request) {
-	user, _, appErr := s.requireSessionAndCSRF(r)
+	user, _, appErr := s.requireSessionAndCSRF(w, r)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
@@ -321,7 +321,7 @@ func (s *Server) handleDuplicateAnnouncement(w http.ResponseWriter, r *http.Requ
 }
 
 func (s *Server) handleAnnouncementAuditLogs(w http.ResponseWriter, r *http.Request) {
-	user, _, appErr := s.requireSession(r)
+	user, _, appErr := s.requireSession(w, r)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return

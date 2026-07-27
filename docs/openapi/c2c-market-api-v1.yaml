@@ -6,8 +6,10 @@ info:
   description: |
     This contract covers the first executable backend slice. C2CMarket is a price intelligence
     and community matching platform. It does not process payments, escrow funds, store third-party
-    credentials, store plaintext native passwords, auto-deliver keys/accounts, or proxy upstream API
-    traffic. Native C2CMarket account passwords are stored only as salted hashes.
+    general-purpose credentials, store plaintext native passwords, process payments, or proxy upstream
+    API traffic. Sellers may optionally pre-import encrypted buyer-specific API quota credentials; they
+    remain unavailable to buyers until the seller explicitly confirms off-platform payment. Native
+    C2CMarket account passwords are stored only as salted hashes.
 servers:
   - url: http://localhost:8080
 security:
@@ -44,6 +46,35 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ReadinessResponse"
+  /version:
+    get:
+      operationId: getVersion
+      tags: [System]
+      security: []
+      summary: Return non-sensitive release and migration metadata.
+      responses:
+        "200":
+          description: Build identity for the running backend.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VersionResponse"
+  /metrics:
+    get:
+      operationId: getMetrics
+      tags: [System]
+      security:
+        - metricsBearer: []
+      summary: Return Prometheus metrics for an authenticated monitoring collector.
+      responses:
+        "200":
+          description: Prometheus text exposition.
+          content:
+            text/plain:
+              schema:
+                type: string
+        "401":
+          $ref: "#/components/responses/Problem"
   /api/v1/auth/dev-session:
     post:
       x-dev-only: true
@@ -81,6 +112,7 @@ paths:
     get:
       operationId: getSession
       tags: [Auth]
+      description: Returns the server-authoritative session expiry and rotates the CSRF token. This endpoint does not count as user activity for sliding renewal.
       responses:
         "200":
           description: Current session.
@@ -267,7 +299,7 @@ paths:
       tags: [Search]
       security: []
       summary: Search public market resources.
-      description: Aggregates only public-safe official price records, active carpools, active demands, public API services, public users, and public-profile merchants. It does not expose contact values, credentials, hidden store-alias owner mappings, payment, escrow, guarantee, or fulfillment data.
+      description: Aggregates only public-safe official price records, active carpools, public API services, public users, and public-profile merchants. It does not expose contact values, credentials, hidden store-alias owner mappings, payment, escrow, guarantee, or fulfillment data.
       parameters:
         - $ref: "#/components/parameters/Limit"
         - $ref: "#/components/parameters/Cursor"
@@ -325,6 +357,20 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/MyProfile"
+  /api/v1/me/reputation:
+    get:
+      operationId: getMyReputation
+      tags: [Reputation]
+      summary: Get all buyer/seller and overall/carpool/API reputation snapshots.
+      responses:
+        "200":
+          description: Six current versioned reputation snapshots.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MyReputationResponse"
+        "401":
+          $ref: "#/components/responses/Problem"
   /api/v1/me/email-verification/start:
     post:
       operationId: startEmailVerification
@@ -467,13 +513,56 @@ paths:
                 $ref: "#/components/schemas/PublicUserProfileBundle"
         "404":
           $ref: "#/components/responses/Problem"
+  /api/v1/users/{username}/reputation:
+    get:
+      operationId: getPublicUserReputation
+      tags: [Reputation]
+      security: []
+      summary: Get public buyer and seller reputation for one business scope.
+      parameters:
+        - name: username
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: scope
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [overall, carpool, api]
+            default: overall
+      responses:
+        "200":
+          description: Current buyer and seller snapshots for the selected scope.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReputationScopeResponse"
+        "404":
+          $ref: "#/components/responses/Problem"
+        "422":
+          $ref: "#/components/responses/Problem"
+  /api/v1/reputation/rules:
+    get:
+      operationId: getReputationRules
+      tags: [Reputation]
+      security: []
+      summary: Get the server-authoritative versioned reputation rule set.
+      responses:
+        "200":
+          description: Current rule thresholds used by every reputation surface.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReputationRulesResponse"
   /api/v1/users/{username}/reviews:
     get:
       operationId: listPublicUserReviews
       tags: [Reviews]
       security: []
       summary: List verified public reviews for a user.
-      description: Returns reviews written by buyers after completed carpool memberships. API purchase intents are not included because they have no platform-confirmed completion state.
+      description: Returns published, non-removed reviews from completed carpool memberships and API orders. Sealed and reputation-excluded transaction reviews are never exposed.
       parameters:
         - name: username
           in: path
@@ -755,6 +844,128 @@ paths:
           $ref: "#/components/responses/Problem"
         "429":
           $ref: "#/components/responses/RateLimited"
+  /api/v1/api-quota-sale-slots:
+    get:
+      operationId: listAPIQuotaSystemSaleSlots
+      tags: [APIMarket]
+      security: []
+      summary: List the platform's fixed API quota sale slots.
+      description: Returns 09:00, 13:00, and 20:00 Asia/Shanghai slots for seven Beijing calendar days. The server owns slot dates, registration cutoff, sale window, and current state.
+      responses:
+        "200":
+          description: Fixed sale slots and the authoritative server time used for countdown display.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/APIQuotaSystemSaleSlotList"
+  /api/v1/api-quota-offers:
+    get:
+      operationId: listPublicAPIQuotaOffers
+      tags: [APIMarket]
+      security: []
+      summary: List limited API quota offers.
+      description: Lists seller-declared fixed USD allowance offers. C2CMarket does not issue or verify the upstream allowance and does not proxy API traffic.
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
+        - name: distributionSystem
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [sub2api, new_api_proxy, other]
+        - name: oneMultiplier
+          in: query
+          required: false
+          schema:
+            type: boolean
+        - name: onlyOrderable
+          in: query
+          required: false
+          schema:
+            type: boolean
+        - name: slotKey
+          in: query
+          required: false
+          description: Stable Beijing slot key returned by `/api/v1/api-quota-sale-slots`.
+          schema:
+            type: string
+            pattern: '^\d{4}-\d{2}-\d{2}@(09|13|20):00$'
+      responses:
+        "200":
+          description: Limited API quota offer cards with server-derived orderability.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PublicAPIQuotaOfferList"
+        "422":
+          $ref: "#/components/responses/Problem"
+  /api/v1/api-quota-offers/{id}:
+    get:
+      operationId: getPublicAPIQuotaOffer
+      tags: [APIMarket]
+      security: []
+      parameters:
+        - $ref: "#/components/parameters/ResourceId"
+      responses:
+        "200":
+          description: Limited API quota offer detail.
+          headers:
+            ETag:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PublicAPIQuotaOffer"
+        "404":
+          $ref: "#/components/responses/Problem"
+  /api/v1/api-quota-offers/{id}/orders:
+    post:
+      operationId: createAPIQuotaOrder
+      tags: [APIOrders]
+      security:
+        - sessionCookie: []
+          csrfToken: []
+      summary: Create an order for one fixed limited API quota offer.
+      description: Price, USD allowance, multiplier, expiry, service experience declaration, delivery mode, and payment window are read and frozen by the server. Scheduled offers require the active saleRoundId and use a five-minute payment window; continuous offers use ten minutes.
+      parameters:
+        - $ref: "#/components/parameters/ResourceId"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateAPIQuotaOrderRequest"
+      responses:
+        "201":
+          description: Limited quota order created atomically with inventory, round claim, and optional credential reservation.
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+                const: private, no-store
+            Location:
+              schema:
+                type: string
+            ETag:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/APIOrder"
+        "409":
+          description: Offer not started, round ended, sold out, buyer round limit reached, credential unavailable, or batch expired. Inspect the stable Problem Details code.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetails"
+        "422":
+          $ref: "#/components/responses/Problem"
+        "429":
+          $ref: "#/components/responses/RateLimited"
   /api/v1/official-prices:
     get:
       operationId: listOfficialPrices
@@ -786,69 +997,6 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/OfficialPriceRecord"
-        "404":
-          $ref: "#/components/responses/Problem"
-  /api/v1/demands:
-    get:
-      operationId: listDemands
-      tags: [Demands]
-      security: []
-      summary: List active demand posts.
-      parameters:
-        - $ref: "#/components/parameters/Limit"
-        - $ref: "#/components/parameters/Cursor"
-      responses:
-        "200":
-          description: Active public demand posts.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/DemandList"
-    post:
-      operationId: createDemand
-      tags: [Demands]
-      security:
-        - sessionCookie: []
-          csrfToken: []
-      parameters:
-        - $ref: "#/components/parameters/IdempotencyKey"
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/CreateDemandRequest"
-      responses:
-        "201":
-          description: Demand submitted for admin review.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Demand"
-        "400":
-          $ref: "#/components/responses/Problem"
-        "409":
-          $ref: "#/components/responses/Problem"
-        "422":
-          $ref: "#/components/responses/Problem"
-  /api/v1/demands/{id}:
-    get:
-      operationId: getDemand
-      tags: [Demands]
-      security: []
-      parameters:
-        - $ref: "#/components/parameters/ResourceId"
-      responses:
-        "200":
-          description: Active demand detail.
-          headers:
-            ETag:
-              schema:
-                type: string
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Demand"
         "404":
           $ref: "#/components/responses/Problem"
   /api/v1/carpools:
@@ -1122,107 +1270,6 @@ paths:
           $ref: "#/components/responses/Problem"
         "404":
           $ref: "#/components/responses/Problem"
-  /api/v1/me/demands:
-    get:
-      operationId: listMyDemands
-      tags: [Demands]
-      parameters:
-        - $ref: "#/components/parameters/Limit"
-        - $ref: "#/components/parameters/Cursor"
-      responses:
-        "200":
-          description: Current user's demand posts across review states.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/DemandList"
-  /api/v1/me/demands/{id}:
-    get:
-      operationId: getMyDemand
-      tags: [Demands]
-      parameters:
-        - $ref: "#/components/parameters/ResourceId"
-      responses:
-        "200":
-          description: Current user's demand detail with review result.
-          headers:
-            ETag:
-              schema:
-                type: string
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Demand"
-        "404":
-          $ref: "#/components/responses/Problem"
-  /api/v1/me/demands/{id}/close:
-    post:
-      operationId: closeMyDemand
-      tags: [Demands]
-      security:
-        - sessionCookie: []
-          csrfToken: []
-      parameters:
-        - $ref: "#/components/parameters/ResourceId"
-        - $ref: "#/components/parameters/IfMatch"
-        - $ref: "#/components/parameters/IdempotencyKey"
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/EmptyRequest"
-      responses:
-        "200":
-          description: Demand closed by its publisher.
-          headers:
-            ETag:
-              schema:
-                type: string
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Demand"
-        "409":
-          $ref: "#/components/responses/Problem"
-        "412":
-          $ref: "#/components/responses/Problem"
-        "428":
-          $ref: "#/components/responses/Problem"
-  /api/v1/me/demands/{id}/reopen:
-    post:
-      operationId: reopenMyDemand
-      tags: [Demands]
-      security:
-        - sessionCookie: []
-          csrfToken: []
-      parameters:
-        - $ref: "#/components/parameters/ResourceId"
-        - $ref: "#/components/parameters/IfMatch"
-        - $ref: "#/components/parameters/IdempotencyKey"
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/EmptyRequest"
-      responses:
-        "200":
-          description: Closed demand reopened into review.
-          headers:
-            ETag:
-              schema:
-                type: string
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Demand"
-        "409":
-          $ref: "#/components/responses/Problem"
-        "412":
-          $ref: "#/components/responses/Problem"
-        "428":
-          $ref: "#/components/responses/Problem"
   /api/v1/me/favorites:
     get:
       operationId: listMyFavorites
@@ -1324,12 +1371,83 @@ paths:
       tags: [Reviews]
       responses:
         "200":
-          description: Current buyer's completed carpool memberships and review state.
+          description: Reviewable transactions plus sent and received reviews for both buyer and seller roles.
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ReviewCenterRowList"
         "401":
+          $ref: "#/components/responses/Problem"
+  /api/v1/me/transactions/{type}/{id}/review:
+    post:
+      operationId: createTransactionReview
+      tags: [Reviews]
+      security:
+        - sessionCookie: []
+          csrfToken: []
+      summary: Create a sealed review for a completed transaction.
+      description: The first review remains sealed. When both participants submit, both reviews become published and frozen in the same transaction.
+      parameters:
+        - $ref: "#/components/parameters/ReviewTransactionType"
+        - $ref: "#/components/parameters/ResourceId"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SubmitReviewRequest"
+      responses:
+        "201":
+          description: Created sealed or immediately published review.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReviewCenterRow"
+        "401":
+          $ref: "#/components/responses/Problem"
+        "403":
+          $ref: "#/components/responses/Problem"
+        "404":
+          $ref: "#/components/responses/Problem"
+        "409":
+          $ref: "#/components/responses/Problem"
+        "422":
+          $ref: "#/components/responses/Problem"
+    put:
+      operationId: editTransactionReview
+      tags: [Reviews]
+      security:
+        - sessionCookie: []
+          csrfToken: []
+      summary: Edit an existing sealed review before its deadline.
+      description: Published, removed, expired, or otherwise frozen reviews cannot be edited by ordinary users.
+      parameters:
+        - $ref: "#/components/parameters/ReviewTransactionType"
+        - $ref: "#/components/parameters/ResourceId"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SubmitReviewRequest"
+      responses:
+        "200":
+          description: Updated sealed review.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReviewCenterRow"
+        "401":
+          $ref: "#/components/responses/Problem"
+        "403":
+          $ref: "#/components/responses/Problem"
+        "404":
+          $ref: "#/components/responses/Problem"
+        "409":
+          $ref: "#/components/responses/Problem"
+        "422":
           $ref: "#/components/responses/Problem"
   /api/v1/me/reviews/carpool-memberships/{membershipId}:
     put:
@@ -1338,8 +1456,8 @@ paths:
       security:
         - sessionCookie: []
           csrfToken: []
-      summary: Submit or update a buyer review for a completed carpool membership.
-      description: Only the membership buyer can review the membership owner, and only after the membership is completed. Repeating the same membership review updates rating, tags, and note.
+      summary: Retained compatibility route for a carpool buyer review.
+      description: Writes through the unified transaction review service. New clients use the generic transaction review route.
       parameters:
         - name: membershipId
           in: path
@@ -1723,7 +1841,7 @@ paths:
           content:
             application/problem+json:
               schema:
-                $ref: "#/components/schemas/Problem"
+                $ref: "#/components/schemas/ProblemDetails"
         "412":
           $ref: "#/components/responses/Problem"
         "428":
@@ -1769,7 +1887,7 @@ paths:
           content:
             application/problem+json:
               schema:
-                $ref: "#/components/schemas/Problem"
+                $ref: "#/components/schemas/ProblemDetails"
         "422":
           $ref: "#/components/responses/Problem"
   /api/v1/me/api-orders:
@@ -1880,7 +1998,7 @@ paths:
           content:
             application/problem+json:
               schema:
-                $ref: "#/components/schemas/Problem"
+                $ref: "#/components/schemas/ProblemDetails"
         "412":
           $ref: "#/components/responses/Problem"
         "422":
@@ -2814,6 +2932,368 @@ paths:
           $ref: "#/components/responses/Problem"
         "428":
           $ref: "#/components/responses/Problem"
+  /api/v1/owner/api-services/{id}/quota-batches:
+    get:
+      operationId: listOwnerAPIQuotaBatches
+      tags: [OwnerAPIQuota]
+      parameters:
+        - $ref: "#/components/parameters/ResourceId"
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
+      responses:
+        "200":
+          description: Quota batches owned by the current user for the selected API service.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/APIQuotaBatchList"
+        "404":
+          $ref: "#/components/responses/Problem"
+    post:
+      operationId: createOwnerAPIQuotaBatch
+      tags: [OwnerAPIQuota]
+      security:
+        - sessionCookie: []
+          csrfToken: []
+      parameters:
+        - $ref: "#/components/parameters/ResourceId"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/APIQuotaBatchRequest"
+      responses:
+        "201":
+          description: Draft seller-declared quota batch created.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/APIQuotaBatch"
+        "422":
+          $ref: "#/components/responses/Problem"
+  /api/v1/owner/api-services/{id}/quota-rush-offers:
+    post:
+      operationId: createOwnerAPIQuotaRushOffer
+      tags: [OwnerAPIQuota]
+      security:
+        - sessionCookie: []
+          csrfToken: []
+      summary: Publish one fixed-slot limited quota offer atomically.
+      description: Creates and publishes one batch, one scheduled offer, one system sale round, one allocation, authoritative inventory, and optional encrypted credential inventory in one transaction. Raw credential values are never returned.
+      parameters:
+        - $ref: "#/components/parameters/ResourceId"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [payload]
+              properties:
+                payload:
+                  $ref: "#/components/schemas/APIQuotaRushOfferRequest"
+                file:
+                  type: string
+                  format: binary
+                  description: Required only for preimported delivery. Strict UTF-8 CSV, at most 5 MiB and 5000 rows.
+            encoding:
+              payload:
+                contentType: application/json
+      responses:
+        "201":
+          description: The complete limited quota offer publication committed atomically.
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+                const: private, no-store
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/APIQuotaRushOfferResponse"
+        "409":
+          $ref: "#/components/responses/Problem"
+        "413":
+          $ref: "#/components/responses/Problem"
+        "422":
+          $ref: "#/components/responses/Problem"
+  /api/v1/owner/api-quota-batches/{id}/offers:
+    get:
+      operationId: listOwnerAPIQuotaOffers
+      tags: [OwnerAPIQuota]
+      parameters:
+        - $ref: "#/components/parameters/ResourceId"
+      responses:
+        "200":
+          description: Fixed quota offer specifications in the selected batch.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/APIQuotaOffer"
+        "404":
+          $ref: "#/components/responses/Problem"
+    post:
+      operationId: createOwnerAPIQuotaOffer
+      tags: [OwnerAPIQuota]
+      security:
+        - sessionCookie: []
+          csrfToken: []
+      parameters:
+        - $ref: "#/components/parameters/ResourceId"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/APIQuotaOfferRequest"
+      responses:
+        "201":
+          description: Draft fixed quota offer created.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/APIQuotaOffer"
+        "409":
+          $ref: "#/components/responses/Problem"
+        "422":
+          $ref: "#/components/responses/Problem"
+  /api/v1/owner/api-quota-batches/{id}/rounds:
+    get:
+      operationId: listOwnerAPIQuotaRounds
+      tags: [OwnerAPIQuota]
+      parameters:
+        - $ref: "#/components/parameters/ResourceId"
+      responses:
+        "200":
+          description: Finite scheduled sale rounds in the selected batch.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/APIQuotaRound"
+        "404":
+          $ref: "#/components/responses/Problem"
+    post:
+      operationId: createOwnerAPIQuotaRound
+      tags: [OwnerAPIQuota]
+      security:
+        - sessionCookie: []
+          csrfToken: []
+      parameters:
+        - $ref: "#/components/parameters/ResourceId"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/APIQuotaRoundRequest"
+      responses:
+        "201":
+          description: Scheduled sale round created.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/APIQuotaRound"
+        "409":
+          $ref: "#/components/responses/Problem"
+        "422":
+          $ref: "#/components/responses/Problem"
+  /api/v1/owner/api-quota-batches/{id}/publish:
+    post:
+      operationId: publishOwnerAPIQuotaBatch
+      tags: [OwnerAPIQuota]
+      security:
+        - sessionCookie: []
+          csrfToken: []
+      parameters:
+        - $ref: "#/components/parameters/ResourceId"
+        - $ref: "#/components/parameters/IfMatch"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/EmptyRequest"
+      responses:
+        "200":
+          description: Batch published after the server allocates all USD allowance and creates authoritative inventory units.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/APIQuotaBatch"
+        "409":
+          $ref: "#/components/responses/Problem"
+        "412":
+          $ref: "#/components/responses/Problem"
+        "422":
+          $ref: "#/components/responses/Problem"
+        "428":
+          $ref: "#/components/responses/Problem"
+  /api/v1/owner/api-quota-batches/{id}/pause:
+    post:
+      operationId: pauseOwnerAPIQuotaBatch
+      tags: [OwnerAPIQuota]
+      security:
+        - sessionCookie: []
+          csrfToken: []
+      parameters:
+        - $ref: "#/components/parameters/ResourceId"
+        - $ref: "#/components/parameters/IfMatch"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/EmptyRequest"
+      responses:
+        "200":
+          description: Published batch paused without modifying historical orders.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/APIQuotaBatch"
+        "409":
+          $ref: "#/components/responses/Problem"
+        "412":
+          $ref: "#/components/responses/Problem"
+        "428":
+          $ref: "#/components/responses/Problem"
+  /api/v1/owner/api-quota-batches/{id}/resume:
+    post:
+      operationId: resumeOwnerAPIQuotaBatch
+      tags: [OwnerAPIQuota]
+      security:
+        - sessionCookie: []
+          csrfToken: []
+      parameters:
+        - $ref: "#/components/parameters/ResourceId"
+        - $ref: "#/components/parameters/IfMatch"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/EmptyRequest"
+      responses:
+        "200":
+          description: Paused batch resumed while its hard sale cutoff remains valid.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/APIQuotaBatch"
+        "409":
+          $ref: "#/components/responses/Problem"
+        "412":
+          $ref: "#/components/responses/Problem"
+        "428":
+          $ref: "#/components/responses/Problem"
+  /api/v1/owner/api-quota-batches/{id}/archive:
+    post:
+      operationId: archiveOwnerAPIQuotaBatch
+      tags: [OwnerAPIQuota]
+      security:
+        - sessionCookie: []
+          csrfToken: []
+      parameters:
+        - $ref: "#/components/parameters/ResourceId"
+        - $ref: "#/components/parameters/IfMatch"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/EmptyRequest"
+      responses:
+        "200":
+          description: Batch archived and removed from new sales without modifying historical orders.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/APIQuotaBatch"
+        "409":
+          $ref: "#/components/responses/Problem"
+        "412":
+          $ref: "#/components/responses/Problem"
+        "428":
+          $ref: "#/components/responses/Problem"
+  /api/v1/owner/api-quota-offers/{id}/credentials/import:
+    post:
+      operationId: importOwnerAPIQuotaCredentials
+      tags: [OwnerAPIQuota]
+      security:
+        - sessionCookie: []
+          csrfToken: []
+      description: Imports one strict CSV template into encrypted buyer-specific credential inventory. The response contains counts only and never echoes a key or password.
+      parameters:
+        - $ref: "#/components/parameters/ResourceId"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [deliveryKind, file]
+              properties:
+                deliveryKind:
+                  type: string
+                  enum: [api_key_endpoint, login_account]
+                file:
+                  type: string
+                  format: binary
+                  description: Strict UTF-8 CSV, at most 5 MiB and 5000 rows.
+      responses:
+        "201":
+          description: Credential rows imported atomically.
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+                const: private, no-store
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/APIQuotaCredentialImportResponse"
+        "409":
+          $ref: "#/components/responses/Problem"
+        "413":
+          $ref: "#/components/responses/Problem"
+        "422":
+          $ref: "#/components/responses/Problem"
+  /api/v1/owner/api-quota-offers/{id}/credentials/summary:
+    get:
+      operationId: getOwnerAPIQuotaCredentialSummary
+      tags: [OwnerAPIQuota]
+      parameters:
+        - $ref: "#/components/parameters/ResourceId"
+      responses:
+        "200":
+          description: Credential inventory counts without raw credential values.
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+                const: private, no-store
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/APIQuotaCredentialSummary"
+        "404":
+          $ref: "#/components/responses/Problem"
   /api/v1/owner/api-purchase-intents:
     get:
       operationId: listOwnerAPIPurchaseIntents
@@ -3352,193 +3832,6 @@ paths:
           $ref: "#/components/responses/Problem"
         "428":
           $ref: "#/components/responses/Problem"
-  /api/v1/admin/demands:
-    get:
-      operationId: listAdminDemands
-      tags: [AdminDemands]
-      parameters:
-        - $ref: "#/components/parameters/Limit"
-        - $ref: "#/components/parameters/Cursor"
-      responses:
-        "200":
-          description: Admin demand review queue.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/DemandList"
-        "403":
-          $ref: "#/components/responses/Problem"
-  /api/v1/admin/demands/{id}:
-    get:
-      operationId: getAdminDemand
-      tags: [AdminDemands]
-      parameters:
-        - $ref: "#/components/parameters/ResourceId"
-      responses:
-        "200":
-          description: Admin demand detail with review fields.
-          headers:
-            ETag:
-              schema:
-                type: string
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Demand"
-        "403":
-          $ref: "#/components/responses/Problem"
-        "404":
-          $ref: "#/components/responses/Problem"
-  /api/v1/admin/demands/{id}/approve:
-    post:
-      operationId: approveDemand
-      tags: [AdminDemands]
-      security:
-        - sessionCookie: []
-          csrfToken: []
-      parameters:
-        - $ref: "#/components/parameters/ResourceId"
-        - $ref: "#/components/parameters/IfMatch"
-        - $ref: "#/components/parameters/IdempotencyKey"
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/ReviewActionRequest"
-      responses:
-        "200":
-          description: Demand approved and made public.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Demand"
-        "409":
-          $ref: "#/components/responses/Problem"
-        "412":
-          $ref: "#/components/responses/Problem"
-        "428":
-          $ref: "#/components/responses/Problem"
-  /api/v1/admin/demands/{id}/request-changes:
-    post:
-      operationId: requestDemandChanges
-      tags: [AdminDemands]
-      security:
-        - sessionCookie: []
-          csrfToken: []
-      parameters:
-        - $ref: "#/components/parameters/ResourceId"
-        - $ref: "#/components/parameters/IfMatch"
-        - $ref: "#/components/parameters/IdempotencyKey"
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/ReviewActionRequest"
-      responses:
-        "200":
-          description: Demand marked as changes requested.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Demand"
-        "409":
-          $ref: "#/components/responses/Problem"
-        "412":
-          $ref: "#/components/responses/Problem"
-        "428":
-          $ref: "#/components/responses/Problem"
-  /api/v1/admin/demands/{id}/reject:
-    post:
-      operationId: rejectDemand
-      tags: [AdminDemands]
-      security:
-        - sessionCookie: []
-          csrfToken: []
-      parameters:
-        - $ref: "#/components/parameters/ResourceId"
-        - $ref: "#/components/parameters/IfMatch"
-        - $ref: "#/components/parameters/IdempotencyKey"
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/ReviewActionRequest"
-      responses:
-        "200":
-          description: Demand rejected.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Demand"
-        "409":
-          $ref: "#/components/responses/Problem"
-        "412":
-          $ref: "#/components/responses/Problem"
-        "428":
-          $ref: "#/components/responses/Problem"
-  /api/v1/admin/demands/{id}/take-down:
-    post:
-      operationId: takeDownDemand
-      tags: [AdminDemands]
-      security:
-        - sessionCookie: []
-          csrfToken: []
-      parameters:
-        - $ref: "#/components/parameters/ResourceId"
-        - $ref: "#/components/parameters/IfMatch"
-        - $ref: "#/components/parameters/IdempotencyKey"
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/ReviewActionRequest"
-      responses:
-        "200":
-          description: Active demand taken down by admin.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Demand"
-        "409":
-          $ref: "#/components/responses/Problem"
-        "412":
-          $ref: "#/components/responses/Problem"
-        "428":
-          $ref: "#/components/responses/Problem"
-  /api/v1/admin/demands/{id}/restore:
-    post:
-      operationId: restoreDemand
-      tags: [AdminDemands]
-      security:
-        - sessionCookie: []
-          csrfToken: []
-      parameters:
-        - $ref: "#/components/parameters/ResourceId"
-        - $ref: "#/components/parameters/IfMatch"
-        - $ref: "#/components/parameters/IdempotencyKey"
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/ReviewActionRequest"
-      responses:
-        "200":
-          description: Taken-down demand restored to public active state.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Demand"
-        "409":
-          $ref: "#/components/responses/Problem"
-        "412":
-          $ref: "#/components/responses/Problem"
-        "428":
-          $ref: "#/components/responses/Problem"
   /api/v1/admin/carpools:
     get:
       operationId: listAdminCarpools
@@ -3908,6 +4201,47 @@ paths:
               schema:
                 $ref: "#/components/schemas/APIService"
         "409":
+          $ref: "#/components/responses/Problem"
+  /api/v1/admin/reviews/{id}/remove:
+    post:
+      operationId: removeTransactionReview
+      tags: [Reviews]
+      security:
+        - sessionCookie: []
+          csrfToken: []
+      summary: Remove a published review without rewriting its content.
+      parameters:
+        - $ref: "#/components/parameters/ResourceId"
+        - $ref: "#/components/parameters/IfMatch"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RemoveReviewRequest"
+      responses:
+        "200":
+          description: Review removal state with its incremented version.
+          headers:
+            ETag:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReviewCenterRow"
+        "401":
+          $ref: "#/components/responses/Problem"
+        "403":
+          $ref: "#/components/responses/Problem"
+        "404":
+          $ref: "#/components/responses/Problem"
+        "409":
+          $ref: "#/components/responses/Problem"
+        "412":
+          $ref: "#/components/responses/Problem"
+        "428":
           $ref: "#/components/responses/Problem"
   /api/v1/admin/api-purchase-intents:
     get:
@@ -4395,6 +4729,260 @@ paths:
         "409":
           $ref: "#/components/responses/Problem"
         "412":
+          $ref: "#/components/responses/Problem"
+        "428":
+          $ref: "#/components/responses/Problem"
+  /api/v1/admin/disputes/{id}/reputation-outcome:
+    post:
+      operationId: createDisputeReputationOutcome
+      tags: [AdminReports]
+      security:
+        - sessionCookie: []
+          csrfToken: []
+      parameters:
+        - $ref: "#/components/parameters/ResourceId"
+        - $ref: "#/components/parameters/IfMatch"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateDisputeReputationOutcomeRequest"
+      responses:
+        "201":
+          description: Versioned reputation outcome created for a resolved dispute.
+          headers:
+            ETag:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReputationGovernanceMutation"
+        "403":
+          $ref: "#/components/responses/Problem"
+        "404":
+          $ref: "#/components/responses/Problem"
+        "409":
+          $ref: "#/components/responses/Problem"
+        "412":
+          $ref: "#/components/responses/Problem"
+        "422":
+          $ref: "#/components/responses/Problem"
+        "428":
+          $ref: "#/components/responses/Problem"
+  /api/v1/admin/users/{id}/reputation-restrictions:
+    post:
+      operationId: createUserReputationRestriction
+      tags: [AdminReports]
+      security:
+        - sessionCookie: []
+          csrfToken: []
+      parameters:
+        - $ref: "#/components/parameters/ResourceId"
+        - $ref: "#/components/parameters/IfMatch"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateUserReputationRestrictionRequest"
+      responses:
+        "201":
+          description: Role and action scoped restriction created.
+          headers:
+            ETag:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReputationGovernanceMutation"
+        "403":
+          $ref: "#/components/responses/Problem"
+        "404":
+          $ref: "#/components/responses/Problem"
+        "409":
+          $ref: "#/components/responses/Problem"
+        "412":
+          $ref: "#/components/responses/Problem"
+        "422":
+          $ref: "#/components/responses/Problem"
+        "428":
+          $ref: "#/components/responses/Problem"
+  /api/v1/admin/users/{id}/reputation:
+    get:
+      operationId: getAdminUserReputation
+      tags: [Reputation]
+      summary: Get all current reputation snapshots and recent state history for one user.
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: "#/components/parameters/ResourceId"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: Administrator reputation audit view.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminReputationAudit"
+        "403":
+          $ref: "#/components/responses/Problem"
+        "404":
+          $ref: "#/components/responses/Problem"
+        "422":
+          $ref: "#/components/responses/Problem"
+  /api/v1/admin/users/{id}/reputation/recalculate:
+    post:
+      operationId: recalculateUserReputation
+      tags: [Reputation]
+      summary: Rebuild all six derived reputation snapshots for one user.
+      security:
+        - sessionCookie: []
+          csrfToken: []
+      parameters:
+        - $ref: "#/components/parameters/ResourceId"
+      responses:
+        "200":
+          description: User reputation rebuild result.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReputationRecalculationResult"
+        "403":
+          $ref: "#/components/responses/Problem"
+        "404":
+          $ref: "#/components/responses/Problem"
+  /api/v1/admin/reputation/recalculate:
+    post:
+      operationId: recalculateAllReputation
+      tags: [Reputation]
+      summary: Rebuild derived reputation snapshots for every current user in bounded batches.
+      security:
+        - sessionCookie: []
+          csrfToken: []
+      responses:
+        "200":
+          description: Full reputation rebuild result.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReputationRecalculationResult"
+        "403":
+          $ref: "#/components/responses/Problem"
+  /api/v1/admin/source-author-verifications/{resourceType}/{resourceId}:
+    parameters:
+      - name: resourceType
+        in: path
+        required: true
+        schema:
+          type: string
+          enum: [carpool, api_service]
+      - name: resourceId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    get:
+      operationId: getAdminSourceAuthorVerification
+      tags: [Reputation]
+      summary: Get the current effective resource-level source-author verification and append-only audit history.
+      security:
+        - sessionCookie: []
+      responses:
+        "200":
+          description: Current verification state and audit events. A resource without a verification row returns version 0 and ETag "0".
+          headers:
+            ETag:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SourceAuthorVerificationAudit"
+        "403":
+          $ref: "#/components/responses/Problem"
+        "404":
+          $ref: "#/components/responses/Problem"
+        "422":
+          $ref: "#/components/responses/Problem"
+    put:
+      operationId: updateAdminSourceAuthorVerification
+      tags: [Reputation]
+      summary: Create or replace the versioned manual source-author verification decision.
+      security:
+        - sessionCookie: []
+          csrfToken: []
+      parameters:
+        - $ref: "#/components/parameters/IfMatchAllowZero"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateSourceAuthorVerificationRequest"
+      responses:
+        "200":
+          description: Updated verification and complete append-only audit history.
+          headers:
+            ETag:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SourceAuthorVerificationAudit"
+        "403":
+          $ref: "#/components/responses/Problem"
+        "404":
+          $ref: "#/components/responses/Problem"
+        "412":
+          $ref: "#/components/responses/Problem"
+        "422":
+          $ref: "#/components/responses/Problem"
+        "428":
+          $ref: "#/components/responses/Problem"
+  /api/v1/admin/reputation-restrictions/{id}/revoke:
+    post:
+      operationId: revokeUserReputationRestriction
+      tags: [AdminReports]
+      security:
+        - sessionCookie: []
+          csrfToken: []
+      parameters:
+        - $ref: "#/components/parameters/ResourceId"
+        - $ref: "#/components/parameters/IfMatch"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RevokeUserReputationRestrictionRequest"
+      responses:
+        "200":
+          description: Restriction revoked while preserving its audit history.
+          headers:
+            ETag:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReputationGovernanceMutation"
+        "403":
+          $ref: "#/components/responses/Problem"
+        "404":
+          $ref: "#/components/responses/Problem"
+        "409":
+          $ref: "#/components/responses/Problem"
+        "412":
+          $ref: "#/components/responses/Problem"
+        "422":
           $ref: "#/components/responses/Problem"
         "428":
           $ref: "#/components/responses/Problem"
@@ -5659,6 +6247,9 @@ components:
       type: apiKey
       in: header
       name: X-CSRF-Token
+    metricsBearer:
+      type: http
+      scheme: bearer
   parameters:
     IdempotencyKey:
       name: Idempotency-Key
@@ -5675,6 +6266,21 @@ components:
       schema:
         type: string
         pattern: '^"?[1-9][0-9]*"?$'
+    IfMatchAllowZero:
+      name: If-Match
+      in: header
+      required: true
+      description: Use `"0"` when creating the first source-author verification record; otherwise use the current ETag version.
+      schema:
+        type: string
+        pattern: '^"?(0|[1-9][0-9]*)"?$'
+    ReviewTransactionType:
+      name: type
+      in: path
+      required: true
+      schema:
+        type: string
+        enum: [carpool_membership, api_order]
     ResourceId:
       name: id
       in: path
@@ -5751,7 +6357,7 @@ components:
           type: string
         type:
           type: string
-          enum: [官方价格, 车源, 求车, API 服务, 用户, 商户]
+          enum: [官方价格, 车源, API 服务, 用户, 商户]
         title:
           type: string
         subtitle:
@@ -6136,6 +6742,7 @@ components:
         expiresAt:
           type: string
           format: date-time
+          description: Server-authoritative idle expiry. Active sessions may be renewed at most once every 24 hours, up to 30 days from login.
         devCode:
           type: string
           description: Present only in development/test local automation responses.
@@ -6216,13 +6823,778 @@ components:
           format: date-time
         version:
           type: integer
+    ReputationRulesResponse:
+      type: object
+      required: [rules]
+      properties:
+        rules:
+          $ref: "#/components/schemas/ReputationRuleSet"
+    ReputationRuleSet:
+      type: object
+      additionalProperties: false
+      required:
+        - version
+        - minimumNormalCompletions
+        - minimumReliableCompletions
+        - minimumHighTrustCompletions
+        - minimumRecentHighTrustCompletions
+        - minimumHighTrustReviews
+        - minimumReliableCompletionRate
+        - maximumReliableFaultCancelRate
+        - minimumHighTrustWeightedRating
+        - reliableContinuityDays
+        - bayesianPriorWeight
+        - platformPriorMinimumReviews
+        - neutralPlatformAverage
+        - cautionRecentFaultCount
+        - cautionFaultCancelRate
+      properties:
+        version:
+          type: string
+          const: reputation-v1
+        minimumNormalCompletions:
+          type: integer
+          minimum: 0
+        minimumReliableCompletions:
+          type: integer
+          minimum: 0
+        minimumHighTrustCompletions:
+          type: integer
+          minimum: 0
+        minimumRecentHighTrustCompletions:
+          type: integer
+          minimum: 0
+        minimumHighTrustReviews:
+          type: integer
+          minimum: 0
+        minimumReliableCompletionRate:
+          type: number
+          minimum: 0
+          maximum: 1
+        maximumReliableFaultCancelRate:
+          type: number
+          minimum: 0
+          maximum: 1
+        minimumHighTrustWeightedRating:
+          type: number
+          minimum: 1
+          maximum: 5
+        reliableContinuityDays:
+          type: integer
+          minimum: 0
+        bayesianPriorWeight:
+          type: integer
+          minimum: 0
+        platformPriorMinimumReviews:
+          type: integer
+          minimum: 0
+        neutralPlatformAverage:
+          type: number
+          minimum: 1
+          maximum: 5
+        cautionRecentFaultCount:
+          type: integer
+          minimum: 0
+        cautionFaultCancelRate:
+          type: number
+          minimum: 0
+          maximum: 1
+    ReputationScopeResponse:
+      type: object
+      required: [userId, scope, reputations]
+      properties:
+        userId:
+          type: string
+          format: uuid
+        scope:
+          type: string
+          enum: [overall, carpool, api]
+        reputations:
+          type: array
+          minItems: 2
+          maxItems: 2
+          items:
+            $ref: "#/components/schemas/ReputationSnapshot"
+    MyReputationResponse:
+      type: object
+      required: [ruleVersion, items]
+      properties:
+        ruleVersion:
+          type: string
+        items:
+          type: array
+          minItems: 6
+          maxItems: 6
+          items:
+            $ref: "#/components/schemas/ReputationSnapshot"
+    AdminReputationAudit:
+      type: object
+      additionalProperties: false
+      required: [userId, ruleVersion, items, history, restrictions, outcomes, appeals, sourceAuthorVerifications]
+      properties:
+        userId:
+          type: string
+          format: uuid
+        ruleVersion:
+          type: string
+        items:
+          type: array
+          minItems: 6
+          maxItems: 6
+          items:
+            $ref: "#/components/schemas/ReputationSnapshot"
+        history:
+          type: array
+          maxItems: 100
+          items:
+            $ref: "#/components/schemas/ReputationHistory"
+        restrictions:
+          type: array
+          maxItems: 100
+          items:
+            $ref: "#/components/schemas/UserReputationRestriction"
+        outcomes:
+          type: array
+          maxItems: 100
+          items:
+            $ref: "#/components/schemas/DisputeReputationOutcome"
+        appeals:
+          type: array
+          maxItems: 100
+          items:
+            $ref: "#/components/schemas/ReputationAppealAudit"
+        sourceAuthorVerifications:
+          type: array
+          maxItems: 100
+          items:
+            $ref: "#/components/schemas/SourceAuthorVerificationAudit"
+    ReputationAppealAudit:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - appellantUserId
+        - targetType
+        - targetId
+        - title
+        - statement
+        - status
+        - adminReason
+        - handledAt
+        - createdAt
+        - updatedAt
+        - version
+      properties:
+        id:
+          type: string
+          format: uuid
+        appellantUserId:
+          type: string
+          format: uuid
+        reportId:
+          type: string
+          format: uuid
+        disputeId:
+          type: string
+          format: uuid
+        targetType:
+          type: string
+        targetId:
+          type: string
+        title:
+          type: string
+        statement:
+          type: string
+        status:
+          type: string
+          enum: [submitted, approved, rejected]
+        adminReason:
+          type: string
+        handledByAdminId:
+          type: string
+          format: uuid
+        handledAt:
+          type: [string, "null"]
+          format: date-time
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+        version:
+          type: integer
+    ReputationHistory:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - userId
+        - role
+        - scope
+        - fromTier
+        - toTier
+        - fromState
+        - toState
+        - ruleVersion
+        - reasonSnapshot
+        - createdAt
+      properties:
+        id:
+          type: string
+          format: uuid
+        userId:
+          type: string
+          format: uuid
+        role:
+          type: string
+          enum: [buyer, seller]
+        scope:
+          type: string
+          enum: [overall, carpool, api]
+        fromTier:
+          type: [string, "null"]
+          enum: [insufficient, normal, reliable, high_trust, null]
+        toTier:
+          type: string
+          enum: [insufficient, normal, reliable, high_trust]
+        fromState:
+          type: [string, "null"]
+          enum: [active, caution, restricted, null]
+        toState:
+          type: string
+          enum: [active, caution, restricted]
+        ruleVersion:
+          type: string
+        reasonSnapshot:
+          type: object
+          additionalProperties: true
+        createdAt:
+          type: string
+          format: date-time
+    SourceAuthorVerificationStatus:
+      type: string
+      enum: [not_submitted, pending, verified, mismatch, expired]
+    SourceAuthorAggregateState:
+      type: string
+      enum: [not_applicable, no_sources, pending, partial, verified, mismatch]
+    SourceAuthorStatusCounts:
+      type: object
+      additionalProperties: false
+      required: [total, notSubmitted, pending, verified, mismatch, expired]
+      properties:
+        total:
+          type: integer
+          minimum: 0
+        notSubmitted:
+          type: integer
+          minimum: 0
+        pending:
+          type: integer
+          minimum: 0
+        verified:
+          type: integer
+          minimum: 0
+        mismatch:
+          type: integer
+          minimum: 0
+        expired:
+          type: integer
+          minimum: 0
+    SourceAuthorAggregate:
+      type: object
+      additionalProperties: false
+      required: [state, counts]
+      properties:
+        state:
+          $ref: "#/components/schemas/SourceAuthorAggregateState"
+        counts:
+          $ref: "#/components/schemas/SourceAuthorStatusCounts"
+    SourceAuthorResourceSummary:
+      type: object
+      additionalProperties: false
+      required: [status]
+      properties:
+        status:
+          $ref: "#/components/schemas/SourceAuthorVerificationStatus"
+        verifiedAt:
+          type: string
+          format: date-time
+        expiresAt:
+          type: string
+          format: date-time
+    SourceAuthorVerification:
+      type: object
+      additionalProperties: false
+      required:
+        - resourceType
+        - resourceId
+        - ownerUserId
+        - sourceUrl
+        - expectedExternalUserId
+        - status
+        - version
+      properties:
+        id:
+          type: string
+          format: uuid
+        resourceType:
+          type: string
+          enum: [carpool, api_service]
+        resourceId:
+          type: string
+          format: uuid
+        ownerUserId:
+          type: string
+          format: uuid
+        sourceUrl:
+          type: string
+          format: uri
+        expectedExternalUserId:
+          type: string
+        actualExternalUserId:
+          type: string
+        status:
+          $ref: "#/components/schemas/SourceAuthorVerificationStatus"
+        verificationMethod:
+          type: string
+        verifiedByAdminId:
+          type: string
+          format: uuid
+        verifiedAt:
+          type: string
+          format: date-time
+        expiresAt:
+          type: string
+          format: date-time
+        failureReason:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+        version:
+          type: integer
+          minimum: 0
+    SourceAuthorVerificationEvent:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - verificationId
+        - resourceType
+        - resourceId
+        - action
+        - toStatus
+        - sourceUrl
+        - expectedExternalUserId
+        - verifiedByAdminId
+        - version
+        - createdAt
+      properties:
+        id:
+          type: string
+          format: uuid
+        verificationId:
+          type: string
+          format: uuid
+        resourceType:
+          type: string
+          enum: [carpool, api_service]
+        resourceId:
+          type: string
+          format: uuid
+        action:
+          type: string
+          enum: [created, updated]
+        fromStatus:
+          anyOf:
+            - $ref: "#/components/schemas/SourceAuthorVerificationStatus"
+            - type: "null"
+        toStatus:
+          $ref: "#/components/schemas/SourceAuthorVerificationStatus"
+        sourceUrl:
+          type: string
+          format: uri
+        expectedExternalUserId:
+          type: string
+        actualExternalUserId:
+          type: string
+        verificationMethod:
+          type: string
+        verifiedByAdminId:
+          type: string
+          format: uuid
+        verifiedAt:
+          type: string
+          format: date-time
+        expiresAt:
+          type: string
+          format: date-time
+        failureReason:
+          type: string
+        version:
+          type: integer
+          minimum: 1
+        createdAt:
+          type: string
+          format: date-time
+    SourceAuthorVerificationAudit:
+      type: object
+      additionalProperties: false
+      required: [verification, events]
+      properties:
+        verification:
+          $ref: "#/components/schemas/SourceAuthorVerification"
+        events:
+          type: array
+          items:
+            $ref: "#/components/schemas/SourceAuthorVerificationEvent"
+    UpdateSourceAuthorVerificationRequest:
+      type: object
+      additionalProperties: false
+      required: [status, actualExternalUserId, verificationMethod, failureReason]
+      properties:
+        status:
+          $ref: "#/components/schemas/SourceAuthorVerificationStatus"
+        actualExternalUserId:
+          type: string
+          maxLength: 128
+        verificationMethod:
+          type: string
+          maxLength: 64
+        expiresAt:
+          type: [string, "null"]
+          format: date-time
+        failureReason:
+          type: string
+          maxLength: 1000
+    ReputationSnapshot:
+      type: object
+      additionalProperties: false
+      required:
+        - userId
+        - role
+        - scope
+        - tier
+        - state
+        - confidence
+        - ruleVersion
+        - metrics
+        - warnings
+        - badges
+        - progress
+        - tierEnteredAt
+        - reliableSince
+        - stateEnteredAt
+        - calculatedAt
+        - sourceDataUpdatedAt
+        - nextRecalculationAt
+      properties:
+        userId:
+          type: string
+          format: uuid
+        role:
+          type: string
+          enum: [buyer, seller]
+        scope:
+          type: string
+          enum: [overall, carpool, api]
+        tier:
+          type: string
+          enum: [insufficient, normal, reliable, high_trust]
+        state:
+          type: string
+          enum: [active, caution, restricted]
+        confidence:
+          type: string
+          enum: [low, medium, high]
+        ruleVersion:
+          type: string
+        metrics:
+          $ref: "#/components/schemas/ReputationMetrics"
+        warnings:
+          type: array
+          items:
+            type: string
+        badges:
+          type: array
+          maxItems: 2
+          items:
+            type: string
+        progress:
+          type: array
+          items:
+            $ref: "#/components/schemas/ReputationProgressItem"
+        tierEnteredAt:
+          type: string
+          format: date-time
+        reliableSince:
+          type: [string, "null"]
+          format: date-time
+        stateEnteredAt:
+          type: string
+          format: date-time
+        calculatedAt:
+          type: string
+          format: date-time
+        sourceDataUpdatedAt:
+          type: [string, "null"]
+          format: date-time
+        nextRecalculationAt:
+          type: [string, "null"]
+          format: date-time
+    ReputationMetrics:
+      type: object
+      additionalProperties: false
+      required:
+        - completedCount
+        - completedCountLast90Days
+        - roleResponsibilityCancellationCount
+        - unknownResponsibilityCancellationCount
+        - roleControllableTerminalCount
+        - roleCompletionRate
+        - roleFaultCancelRate
+        - verifiedReviewCount
+        - rawAverageRating
+        - weightedRating
+        - ratingDistribution
+        - recentReviewCount90Days
+        - commonPositiveTags
+        - commonNegativeTags
+        - confirmedFaultDisputeCount365Days
+        - confirmedMajorFaultDisputeCount365Days
+        - unresolvedDisputeCount
+        - activeRestrictionCount
+        - sourceAuthorVerification
+      properties:
+        completedCount:
+          type: integer
+          minimum: 0
+        completedCountLast90Days:
+          type: integer
+          minimum: 0
+        roleResponsibilityCancellationCount:
+          type: integer
+          minimum: 0
+        unknownResponsibilityCancellationCount:
+          type: integer
+          minimum: 0
+        roleControllableTerminalCount:
+          type: integer
+          minimum: 0
+        roleCompletionRate:
+          type: [number, "null"]
+          minimum: 0
+          maximum: 1
+        roleFaultCancelRate:
+          type: [number, "null"]
+          minimum: 0
+          maximum: 1
+        verifiedReviewCount:
+          type: integer
+          minimum: 0
+        rawAverageRating:
+          type: [number, "null"]
+          minimum: 1
+          maximum: 5
+        weightedRating:
+          type: [number, "null"]
+          minimum: 1
+          maximum: 5
+        ratingDistribution:
+          $ref: "#/components/schemas/ReputationRatingDistribution"
+        recentReviewCount90Days:
+          type: integer
+          minimum: 0
+        commonPositiveTags:
+          type: array
+          maxItems: 5
+          items:
+            $ref: "#/components/schemas/ReputationTagCount"
+        commonNegativeTags:
+          type: array
+          maxItems: 5
+          items:
+            $ref: "#/components/schemas/ReputationTagCount"
+        confirmedFaultDisputeCount365Days:
+          type: integer
+          minimum: 0
+        confirmedMajorFaultDisputeCount365Days:
+          type: integer
+          minimum: 0
+        unresolvedDisputeCount:
+          type: integer
+          minimum: 0
+        activeRestrictionCount:
+          type: integer
+          minimum: 0
+        sourceAuthorVerification:
+          $ref: "#/components/schemas/SourceAuthorAggregate"
+    ReputationRatingDistribution:
+      type: object
+      additionalProperties: false
+      required: ["1", "2", "3", "4", "5"]
+      properties:
+        "1":
+          type: integer
+          minimum: 0
+        "2":
+          type: integer
+          minimum: 0
+        "3":
+          type: integer
+          minimum: 0
+        "4":
+          type: integer
+          minimum: 0
+        "5":
+          type: integer
+          minimum: 0
+    ReputationTagCount:
+      type: object
+      additionalProperties: false
+      required: [tag, count]
+      properties:
+        tag:
+          type: string
+        count:
+          type: integer
+          minimum: 1
+    ReputationProgressItem:
+      type: object
+      additionalProperties: false
+      required:
+        - code
+        - label
+        - status
+        - currentValue
+        - requiredValue
+        - remainingValue
+        - actionLabel
+        - actionUrl
+      properties:
+        code:
+          type: string
+        label:
+          type: string
+        status:
+          type: string
+          enum: [met, not_met, blocked, unavailable]
+        currentValue:
+          type: [number, "null"]
+        requiredValue:
+          type: [number, "null"]
+        remainingValue:
+          type: [number, "null"]
+          minimum: 0
+        actionLabel:
+          type: [string, "null"]
+        actionUrl:
+          type: [string, "null"]
+    ReputationRecalculationResult:
+      type: object
+      additionalProperties: false
+      required: [requestedUsers, rebuiltStates, completedAt]
+      properties:
+        requestedUsers:
+          type: integer
+          minimum: 0
+        rebuiltStates:
+          type: integer
+          minimum: 0
+        completedAt:
+          type: string
+          format: date-time
+    ReputationSummary:
+      type: object
+      additionalProperties: false
+      required:
+        - role
+        - scope
+        - tier
+        - state
+        - confidence
+        - ruleVersion
+        - completedCount
+        - roleFaultCancelRate
+        - hasUnknownCancellation
+        - unresolvedDisputes
+        - activeRestrictions
+        - verifiedReviewCount
+        - weightedRating
+        - sourceAuthorVerification
+        - warnings
+        - badges
+        - calculatedAt
+      properties:
+        role:
+          type: string
+          enum: [buyer, seller]
+        scope:
+          type: string
+          enum: [overall, carpool, api]
+        tier:
+          type: string
+          enum: [insufficient, normal, reliable, high_trust]
+        state:
+          type: string
+          enum: [active, caution, restricted]
+        confidence:
+          type: string
+          enum: [low, medium, high]
+        ruleVersion:
+          type: string
+        completedCount:
+          type: integer
+          minimum: 0
+        roleFaultCancelRate:
+          type: [number, "null"]
+          minimum: 0
+          maximum: 1
+        hasUnknownCancellation:
+          type: boolean
+        unresolvedDisputes:
+          type: integer
+          minimum: 0
+        activeRestrictions:
+          type: integer
+          minimum: 0
+        verifiedReviewCount:
+          type: integer
+          minimum: 0
+        weightedRating:
+          type: [number, "null"]
+          minimum: 1
+          maximum: 5
+        sourceAuthorVerification:
+          $ref: "#/components/schemas/SourceAuthorAggregate"
+        warnings:
+          type: array
+          items:
+            type: string
+        badges:
+          type: array
+          maxItems: 2
+          items:
+            type: string
+        calculatedAt:
+          type: string
+          format: date-time
     PublicUserProfileBundle:
       type: object
-      required: [profile, carpools, services, completions, reviews, disputes]
+      required: [profile, reputations, carpools, services, completions, reviews, disputes]
       properties:
         profile:
-          type: object
-          description: Public profile fields only; no contact values or hidden owner mappings.
+          $ref: "#/components/schemas/PublicUserProfile"
+        reputations:
+          type: [array, "null"]
+          minItems: 2
+          maxItems: 2
+          items:
+            $ref: "#/components/schemas/ReputationSnapshot"
         carpools:
           type: array
           items: {}
@@ -6239,6 +7611,106 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/PublicDispute"
+    PublicUserProfile:
+      type: object
+      description: Public profile fields only; unavailable reputation facts are null and never replaced with demo values.
+      required:
+        - id
+        - username
+        - displayName
+        - bio
+        - avatarUrl
+        - avatarText
+        - linuxDoBound
+        - linuxDoUsername
+        - trustLevel
+        - badges
+        - accountStatus
+        - createdAt
+        - lastActiveAt
+        - stats
+        - privacy
+      properties:
+        id:
+          type: string
+          format: uuid
+        username:
+          type: string
+        displayName:
+          type: string
+        bio:
+          type: [string, "null"]
+        avatarUrl:
+          type: [string, "null"]
+        avatarText:
+          type: string
+        linuxDoBound:
+          type: boolean
+        linuxDoUsername:
+          type: [string, "null"]
+        trustLevel:
+          type: [integer, "null"]
+        badges:
+          type: array
+          items:
+            type: string
+        accountStatus:
+          type: string
+        createdAt:
+          type: [string, "null"]
+          format: date-time
+        lastActiveAt:
+          type: [string, "null"]
+          format: date-time
+        stats:
+          $ref: "#/components/schemas/PublicReputationStats"
+        privacy:
+          $ref: "#/components/schemas/PrivacySettings"
+    PublicReputationStats:
+      type: object
+      description: Counts are zero only after a successful real aggregation; unavailable or hidden values are null.
+      required:
+        - completedCarpools
+        - completedApiOrders
+        - completedCarpoolsLast90Days
+        - completedApiOrdersLast90Days
+        - responseMedianMinutes
+        - buyerResponsibilityCancellationCount
+        - sellerResponsibilityCancellationCount
+        - unknownResponsibilityCancellationCount
+        - unresolvedDisputeCount
+        - resolvedDisputeCountLast90Days
+      properties:
+        completedCarpools:
+          type: [integer, "null"]
+          minimum: 0
+        completedApiOrders:
+          type: [integer, "null"]
+          minimum: 0
+        completedCarpoolsLast90Days:
+          type: [integer, "null"]
+          minimum: 0
+        completedApiOrdersLast90Days:
+          type: [integer, "null"]
+          minimum: 0
+        responseMedianMinutes:
+          type: [integer, "null"]
+          minimum: 0
+        buyerResponsibilityCancellationCount:
+          type: [integer, "null"]
+          minimum: 0
+        sellerResponsibilityCancellationCount:
+          type: [integer, "null"]
+          minimum: 0
+        unknownResponsibilityCancellationCount:
+          type: [integer, "null"]
+          minimum: 0
+        unresolvedDisputeCount:
+          type: [integer, "null"]
+          minimum: 0
+        resolvedDisputeCountLast90Days:
+          type: [integer, "null"]
+          minimum: 0
     MerchantProfileRequest:
       type: object
       additionalProperties: false
@@ -6282,8 +7754,7 @@ components:
       required: [profile, services, completions, reviews, disputes]
       properties:
         profile:
-          type: object
-          description: Public merchant fields only; no owner user id or contact values.
+          $ref: "#/components/schemas/PublicMerchantProfile"
         services:
           type: array
           items: {}
@@ -6296,6 +7767,67 @@ components:
         disputes:
           type: array
           items: {}
+    PublicMerchantProfile:
+      type: object
+      description: Public merchant fields only; no owner user id or contact values. Unavailable reputation facts are null.
+      required:
+        - username
+        - displayName
+        - avatarText
+        - merchantId
+        - identity
+        - trustLevel
+        - linuxdoBound
+        - originalPostBound
+        - joinedAt
+        - lastActiveAt
+        - linuxdoUrl
+        - completedLast90Days
+        - responseMedianMinutes
+        - merchantResponsibleCancellations
+        - unresolvedDisputes
+        - handledDisputesLast90Days
+      properties:
+        username:
+          type: string
+        displayName:
+          type: string
+        avatarText:
+          type: string
+        merchantId:
+          type: string
+          format: uuid
+        identity:
+          type: string
+        trustLevel:
+          type: [integer, "null"]
+        linuxdoBound:
+          type: [boolean, "null"]
+        originalPostBound:
+          type: [boolean, "null"]
+        joinedAt:
+          type: string
+          format: date-time
+        lastActiveAt:
+          type: [string, "null"]
+          format: date-time
+        linuxdoUrl:
+          type: [string, "null"]
+        completedLast90Days:
+          type: [integer, "null"]
+          minimum: 0
+        responseMedianMinutes:
+          type: [integer, "null"]
+          minimum: 0
+        merchantResponsibleCancellations:
+          type: [integer, "null"]
+          minimum: 0
+        unresolvedDisputes:
+          type: [integer, "null"]
+          minimum: 0
+        handledDisputesLast90Days:
+          type: [integer, "null"]
+          minimum: 0
     HealthResponse:
       type: object
       required: [status, service]
@@ -6305,6 +7837,26 @@ components:
           const: ok
         service:
           type: string
+    VersionResponse:
+      type: object
+      additionalProperties: false
+      required: [service, version, gitCommit, buildTime, expectedMigrationVersion]
+      properties:
+        service:
+          type: string
+          const: c2c-market-backend
+        version:
+          type: string
+          minLength: 1
+        gitCommit:
+          type: string
+          minLength: 1
+        buildTime:
+          type: string
+          minLength: 1
+        expectedMigrationVersion:
+          type: integer
+          minimum: 1
     ReadinessResponse:
       type: object
       required: [status, database, checkedAt]
@@ -7223,6 +8775,18 @@ components:
         merchantSupportNote:
           type: string
           description: Non-sensitive support note. Platform does not guarantee availability or compensation.
+        declaredTtftBand:
+          type: string
+          enum: [under_1s, 1_to_3s, 3_to_5s, 5_to_10s, over_10s]
+          description: Merchant-declared time-to-first-token band. C2CMarket does not measure or verify it.
+        recommendedConcurrency:
+          type: integer
+          minimum: 1
+          description: Merchant-declared recommended concurrent request count.
+        performanceConfirmedAt:
+          type: string
+          format: date-time
+          description: Time when the merchant most recently confirmed the declaration. All three performance fields must be supplied together or all omitted.
         accessModes:
           type: array
           minItems: 1
@@ -7369,6 +8933,8 @@ components:
         - accessModes
         - models
         - packages
+        - sellerReputation
+        - sourceAuthorVerification
         - version
         - createdAt
         - updatedAt
@@ -7422,6 +8988,16 @@ components:
         merchantSupportNote:
           type: string
           description: Merchant-provided non-sensitive support promise. C2CMarket does not guarantee availability, compensation, or payout.
+        declaredTtftBand:
+          type: string
+          enum: [under_1s, 1_to_3s, 3_to_5s, 5_to_10s, over_10s]
+          description: Merchant-declared TTFT band; the platform has not measured it.
+        recommendedConcurrency:
+          type: integer
+          minimum: 1
+        performanceConfirmedAt:
+          type: string
+          format: date-time
         acceptingOrders:
           type: boolean
           description: Owner's manual accepting-orders flag. This is not sufficient by itself; clients must use isOrderable for order creation.
@@ -7466,6 +9042,12 @@ components:
           type: [number, "null"]
           minimum: 0
           description: Median minutes to the first seller response event. Null means there is not enough history.
+        sellerReputation:
+          anyOf:
+            - $ref: "#/components/schemas/ReputationSummary"
+            - type: "null"
+        sourceAuthorVerification:
+          $ref: "#/components/schemas/SourceAuthorResourceSummary"
         version:
           type: integer
         createdAt:
@@ -7497,6 +9079,8 @@ components:
         - accessModes
         - models
         - packages
+        - sellerReputation
+        - sourceAuthorVerification
         - version
         - createdAt
         - updatedAt
@@ -7559,6 +9143,16 @@ components:
           type: string
         merchantSupportNote:
           type: string
+        declaredTtftBand:
+          type: string
+          enum: [under_1s, 1_to_3s, 3_to_5s, 5_to_10s, over_10s]
+          description: Merchant-declared TTFT band; the platform has not measured it.
+        recommendedConcurrency:
+          type: integer
+          minimum: 1
+        performanceConfirmedAt:
+          type: string
+          format: date-time
         acceptingOrders:
           type: boolean
         paymentWindowMinutes:
@@ -7610,6 +9204,12 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/APIServicePackage"
+        sellerReputation:
+          anyOf:
+            - $ref: "#/components/schemas/ReputationSummary"
+            - type: "null"
+        sourceAuthorVerification:
+          $ref: "#/components/schemas/SourceAuthorResourceSummary"
         version:
           type: integer
         createdAt:
@@ -7728,6 +9328,467 @@ components:
             $ref: "#/components/schemas/PublicAPIService"
         nextCursor:
           type: [string, "null"]
+    APIQuotaBatchRequest:
+      type: object
+      additionalProperties: false
+      required: [sourceType, declaredTotalUsdAllowance, saleCutoffAt, expiresAt, sourceConfirmedAt]
+      properties:
+        sourceType:
+          type: string
+          enum: [sub2api, new_api_proxy, self_hosted, other]
+        sourceLabel:
+          type: string
+          description: Required only when sourceType is other; must remain empty otherwise.
+        declaredTotalUsdAllowance:
+          $ref: "#/components/schemas/DecimalString"
+        saleCutoffAt:
+          type: string
+          format: date-time
+          description: Must be no later than one hour before expiresAt.
+        expiresAt:
+          type: string
+          format: date-time
+        sourceConfirmedAt:
+          type: string
+          format: date-time
+    APIQuotaBatch:
+      type: object
+      additionalProperties: false
+      required: [id, apiServiceId, sourceType, status, declaredTotalUsdAllowance, unallocatedUsdAllowance, saleCutoffAt, expiresAt, sourceConfirmedAt, version]
+      properties:
+        id:
+          type: string
+          format: uuid
+        apiServiceId:
+          type: string
+          format: uuid
+        sourceType:
+          type: string
+          enum: [sub2api, new_api_proxy, self_hosted, other]
+        sourceLabel:
+          type: string
+        status:
+          type: string
+          enum: [draft, published, paused, archived]
+        declaredTotalUsdAllowance:
+          $ref: "#/components/schemas/DecimalString"
+        unallocatedUsdAllowance:
+          $ref: "#/components/schemas/DecimalString"
+        saleCutoffAt:
+          type: string
+          format: date-time
+        expiresAt:
+          type: string
+          format: date-time
+        sourceConfirmedAt:
+          type: string
+          format: date-time
+        publishedAt:
+          type: string
+          format: date-time
+        version:
+          type: integer
+          minimum: 1
+    APIQuotaBatchList:
+      type: object
+      additionalProperties: false
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/APIQuotaBatch"
+        nextCursor:
+          type: [string, "null"]
+    APIQuotaOfferRequest:
+      type: object
+      additionalProperties: false
+      required: [name, usdAllowance, priceCny, modelMultiplier, deliveryMode, deliveryEtaMinutes, saleMode, continuousCopies, sortOrder]
+      properties:
+        name:
+          type: string
+        usdAllowance:
+          $ref: "#/components/schemas/DecimalString"
+        priceCny:
+          $ref: "#/components/schemas/DecimalString"
+        modelMultiplier:
+          $ref: "#/components/schemas/DecimalString"
+          description: Positive multiplier fixed on the offer after publication. New offers default to 1.0000, but every distribution system may declare another multiplier.
+        deliveryMode:
+          type: string
+          enum: [manual, preimported]
+        deliveryEtaMinutes:
+          type: integer
+          minimum: 1
+          maximum: 10
+        saleMode:
+          type: string
+          enum: [continuous, scheduled]
+        continuousCopies:
+          type: integer
+          minimum: 0
+          description: Must be positive for continuous offers and zero for scheduled offers.
+        sortOrder:
+          type: integer
+    APIQuotaOfferFields:
+      type: object
+      required: [id, batchId, apiServiceId, distributionSystem, name, usdAllowance, priceCny, cnyPerUsd, modelMultiplier, deliveryMode, deliveryEtaMinutes, saleMode, status, sortOrder, version]
+      properties:
+        id:
+          type: string
+          format: uuid
+        batchId:
+          type: string
+          format: uuid
+        apiServiceId:
+          type: string
+          format: uuid
+        distributionSystem:
+          type: string
+          enum: [sub2api, new_api_proxy, other]
+        name:
+          type: string
+        usdAllowance:
+          $ref: "#/components/schemas/DecimalString"
+        priceCny:
+          $ref: "#/components/schemas/DecimalString"
+        cnyPerUsd:
+          $ref: "#/components/schemas/DecimalString"
+        modelMultiplier:
+          $ref: "#/components/schemas/DecimalString"
+        deliveryMode:
+          type: string
+          enum: [manual, preimported]
+        deliveryEtaMinutes:
+          type: integer
+          minimum: 1
+          maximum: 10
+        saleMode:
+          type: string
+          enum: [continuous, scheduled]
+        status:
+          type: string
+          enum: [draft, published, paused, archived]
+        sortOrder:
+          type: integer
+        publishedAt:
+          type: string
+          format: date-time
+        version:
+          type: integer
+          minimum: 1
+    APIQuotaOffer:
+      allOf:
+        - $ref: "#/components/schemas/APIQuotaOfferFields"
+      unevaluatedProperties: false
+    APIQuotaRoundOfferRequest:
+      type: object
+      additionalProperties: false
+      required: [offerId, copies]
+      properties:
+        offerId:
+          type: string
+          format: uuid
+        copies:
+          type: integer
+          minimum: 1
+    APIQuotaRoundRequest:
+      type: object
+      additionalProperties: false
+      required: [name, startsAt, endsAt, offers]
+      properties:
+        name:
+          type: string
+        startsAt:
+          type: string
+          format: date-time
+        endsAt:
+          type: string
+          format: date-time
+        offers:
+          type: array
+          minItems: 1
+          items:
+            $ref: "#/components/schemas/APIQuotaRoundOfferRequest"
+    APIQuotaAllocation:
+      type: object
+      additionalProperties: false
+      required: [id, offerId, saleMode, copyLimit, availableCopies, reservedCopies, consumedCopies, allocatedUsdAllowance, returnedUsdAllowance, status]
+      properties:
+        id:
+          type: string
+          format: uuid
+        offerId:
+          type: string
+          format: uuid
+        saleRoundId:
+          type: string
+          format: uuid
+        saleMode:
+          type: string
+          enum: [continuous, scheduled]
+        copyLimit:
+          type: integer
+          minimum: 1
+        availableCopies:
+          type: integer
+          minimum: 0
+        reservedCopies:
+          type: integer
+          minimum: 0
+        consumedCopies:
+          type: integer
+          minimum: 0
+        allocatedUsdAllowance:
+          $ref: "#/components/schemas/DecimalString"
+        returnedUsdAllowance:
+          $ref: "#/components/schemas/DecimalString"
+        status:
+          type: string
+          enum: [planned, active, closed, cancelled]
+    APIQuotaRound:
+      type: object
+      additionalProperties: false
+      required: [id, batchId, name, startsAt, endsAt, status, allocations, version]
+      properties:
+        id:
+          type: string
+          format: uuid
+        batchId:
+          type: string
+          format: uuid
+        systemSlotKey:
+          type: string
+          pattern: '^\d{4}-\d{2}-\d{2}@(09|13|20):00$'
+          description: Present only for platform fixed-slot rounds. Historical custom rounds omit it.
+        name:
+          type: string
+        startsAt:
+          type: string
+          format: date-time
+        endsAt:
+          type: string
+          format: date-time
+        status:
+          type: string
+          enum: [scheduled, closed, cancelled]
+        allocations:
+          type: array
+          items:
+            $ref: "#/components/schemas/APIQuotaAllocation"
+        version:
+          type: integer
+          minimum: 1
+    APIQuotaSystemSaleSlot:
+      type: object
+      additionalProperties: false
+      required: [key, startsAt, endsAt, registrationClosesAt, state]
+      properties:
+        key:
+          type: string
+          pattern: '^\d{4}-\d{2}-\d{2}@(09|13|20):00$'
+        startsAt:
+          type: string
+          format: date-time
+        endsAt:
+          type: string
+          format: date-time
+        registrationClosesAt:
+          type: string
+          format: date-time
+        state:
+          type: string
+          enum: [registration_open, registration_closed, active, ended]
+    APIQuotaSystemSaleSlotList:
+      type: object
+      additionalProperties: false
+      required: [serverNow, items]
+      properties:
+        serverNow:
+          type: string
+          format: date-time
+        items:
+          type: array
+          minItems: 21
+          maxItems: 21
+          items:
+            $ref: "#/components/schemas/APIQuotaSystemSaleSlot"
+    APIQuotaRushOfferRequest:
+      type: object
+      additionalProperties: false
+      required: [sourceType, name, usdAllowance, priceCny, modelMultiplier, copies, deliveryMode, deliveryEtaMinutes, slotKey, expiresAt, sourceConfirmedAt]
+      properties:
+        sourceType:
+          type: string
+          enum: [sub2api, new_api_proxy, self_hosted, other]
+        sourceLabel:
+          type: string
+          description: Required only when sourceType is other; must remain empty otherwise.
+        name:
+          type: string
+        usdAllowance:
+          $ref: "#/components/schemas/DecimalString"
+        priceCny:
+          $ref: "#/components/schemas/DecimalString"
+        modelMultiplier:
+          $ref: "#/components/schemas/DecimalString"
+        copies:
+          type: integer
+          minimum: 1
+          maximum: 5000
+        deliveryMode:
+          type: string
+          enum: [manual, preimported]
+        deliveryEtaMinutes:
+          type: integer
+          minimum: 1
+          maximum: 10
+        slotKey:
+          type: string
+          pattern: '^\d{4}-\d{2}-\d{2}@(09|13|20):00$'
+        expiresAt:
+          type: string
+          format: date-time
+          description: Must be at least one hour after the selected slot ends.
+        sourceConfirmedAt:
+          type: string
+          format: date-time
+        deliveryKind:
+          type: string
+          enum: [api_key_endpoint, login_account]
+          description: Required only for preimported delivery.
+    APIQuotaRushOfferResponse:
+      type: object
+      additionalProperties: false
+      required: [batch, offer, round, credentialImported, credentialSummary]
+      properties:
+        batch:
+          $ref: "#/components/schemas/APIQuotaBatch"
+        offer:
+          $ref: "#/components/schemas/APIQuotaOffer"
+        round:
+          $ref: "#/components/schemas/APIQuotaRound"
+        credentialImported:
+          type: integer
+          minimum: 0
+        credentialSummary:
+          $ref: "#/components/schemas/APIQuotaCredentialSummary"
+    PublicAPIQuotaOffer:
+      allOf:
+        - $ref: "#/components/schemas/APIQuotaOfferFields"
+        - type: object
+          required: [batchStatus, serviceTitle, sellerDisplayName, sellerIdentityType, sellerLinuxDoBound, declaredTtftBand, recommendedConcurrency, performanceDisclaimer, saleCutoffAt, expiresAt, availableCopies, credentialAvailableCopies, isOrderable, orderabilityCode, orderabilityReason]
+          properties:
+            batchStatus:
+              type: string
+              enum: [published, paused]
+            serviceTitle:
+              type: string
+            sellerDisplayName:
+              type: string
+            sellerIdentityType:
+              type: string
+              enum: [individual, merchant]
+            sellerLinuxDoBound:
+              type: boolean
+            declaredTtftBand:
+              type: string
+              enum: [under_1s, 1_to_3s, 3_to_5s, 5_to_10s, over_10s]
+            recommendedConcurrency:
+              type: integer
+              minimum: 1
+            performanceConfirmedAt:
+              type: string
+              format: date-time
+            performanceDisclaimer:
+              type: string
+              const: 商户自报，平台未测速
+            saleCutoffAt:
+              type: string
+              format: date-time
+            expiresAt:
+              type: string
+              format: date-time
+            currentRound:
+              $ref: "#/components/schemas/APIQuotaRound"
+            nextRound:
+              $ref: "#/components/schemas/APIQuotaRound"
+            availableCopies:
+              type: integer
+              minimum: 0
+            credentialAvailableCopies:
+              type: integer
+              minimum: 0
+            isOrderable:
+              type: boolean
+            orderabilityCode:
+              type: string
+              enum: [orderable, service_unavailable, batch_paused, offer_paused, not_started, round_ended, sold_out, credential_unavailable, batch_expired]
+            orderabilityReason:
+              type: string
+      unevaluatedProperties: false
+    PublicAPIQuotaOfferList:
+      type: object
+      additionalProperties: false
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/PublicAPIQuotaOffer"
+        nextCursor:
+          type: [string, "null"]
+    APIQuotaCredentialSummary:
+      type: object
+      additionalProperties: false
+      required: [offerId, available, reserved, delivered, retired]
+      properties:
+        offerId:
+          type: string
+          format: uuid
+        available:
+          type: integer
+          minimum: 0
+        reserved:
+          type: integer
+          minimum: 0
+        delivered:
+          type: integer
+          minimum: 0
+        retired:
+          type: integer
+          minimum: 0
+    APIQuotaCredentialImportResponse:
+      type: object
+      additionalProperties: false
+      required: [imported, summary]
+      properties:
+        imported:
+          type: integer
+          minimum: 1
+        summary:
+          $ref: "#/components/schemas/APIQuotaCredentialSummary"
+    CreateAPIQuotaOrderRequest:
+      type: object
+      additionalProperties: false
+      required: [buyerContactMethodId, selectedAccessMode, paymentMethod]
+      properties:
+        saleRoundId:
+          type: string
+          format: uuid
+          description: Required for scheduled offers and omitted for continuous offers.
+        buyerContactMethodId:
+          type: string
+          format: uuid
+        selectedAccessMode:
+          type: string
+        paymentMethod:
+          type: string
+          enum: [wechat, alipay]
+        buyerNote:
+          type: string
+          maxLength: 4000
+          description: Optional non-sensitive note. Credentials, API keys, passwords, tokens, sessions, and cookies are rejected.
     CreateAPIPurchaseIntentRequest:
       type: object
       additionalProperties: false
@@ -8077,11 +10138,14 @@ components:
     APIOrder:
       type: object
       additionalProperties: false
-      description: API service order. C2CMarket does not process payments, provide escrow, proxy API calls, or automatically deliver API keys. After payment is confirmed, the seller may submit one structured buyer-specific delivery credential; buyer/seller detail and action responses may include it, while lists, admin summaries, public responses, events, notifications, and logs must not.
+      description: API service order for either a free-amount API service purchase or a limited fixed quota offer. C2CMarket does not process payments, provide escrow, or proxy API calls. After the seller explicitly confirms off-platform payment, the seller may submit one buyer-specific credential or a previously encrypted buyer-specific credential may be bound to the order. Buyer/seller detail and action responses may include it; lists, admin summaries, public responses, events, notifications, and logs must not.
       required:
         - id
+        - purchaseKind
         - apiPurchaseIntentId
         - apiServiceId
+        - buyerReputation
+        - sellerReputation
         - status
         - disputeStatus
         - serviceTitleSnapshot
@@ -8099,6 +10163,9 @@ components:
         id:
           type: string
           format: uuid
+        purchaseKind:
+          type: string
+          enum: [api_service, limited_quota_offer]
         apiPurchaseIntentId:
           type: string
           format: uuid
@@ -8113,6 +10180,14 @@ components:
           type: string
           format: uuid
           description: Present on buyer-side views.
+        buyerReputation:
+          oneOf:
+            - $ref: "#/components/schemas/ReputationSummary"
+            - type: "null"
+        sellerReputation:
+          oneOf:
+            - $ref: "#/components/schemas/ReputationSummary"
+            - type: "null"
         status:
           type: string
           enum: [pending_payment, payment_submitted, payment_issue, paid_confirmed, delivery_submitted, completed, cancelled]
@@ -8150,6 +10225,62 @@ components:
         pricingSnapshot:
           type: string
           description: Frozen JSON pricing snapshot from the internal purchase-intent record.
+        apiQuotaBatchId:
+          type: string
+          format: uuid
+        apiQuotaOfferId:
+          type: string
+          format: uuid
+        apiQuotaSaleRoundId:
+          type: string
+          format: uuid
+        quotaOfferNameSnapshot:
+          type: string
+        quotaUsdAllowanceSnapshot:
+          $ref: "#/components/schemas/DecimalString"
+        quotaPriceCnySnapshot:
+          $ref: "#/components/schemas/DecimalString"
+        quotaCnyPerUsdSnapshot:
+          $ref: "#/components/schemas/DecimalString"
+        quotaModelMultiplierSnapshot:
+          $ref: "#/components/schemas/DecimalString"
+        quotaSaleCutoffAtSnapshot:
+          type: string
+          format: date-time
+        quotaExpiresAtSnapshot:
+          type: string
+          format: date-time
+        quotaSaleModeSnapshot:
+          type: string
+          enum: [continuous, scheduled]
+        quotaRoundStartsAtSnapshot:
+          type: string
+          format: date-time
+        quotaRoundEndsAtSnapshot:
+          type: string
+          format: date-time
+        quotaDistributionSystemSnapshot:
+          type: string
+          enum: [sub2api, new_api_proxy, other]
+        quotaTtftBandSnapshot:
+          type: string
+          enum: [under_1s, 1_to_3s, 3_to_5s, 5_to_10s, over_10s]
+        quotaRecommendedConcurrencySnapshot:
+          type: integer
+          minimum: 1
+        quotaPerformanceConfirmedAtSnapshot:
+          type: string
+          format: date-time
+        quotaPerformanceUnverifiedSnapshot:
+          type: boolean
+          description: True when the performance declaration was merchant-reported and not measured by C2CMarket.
+        quotaDeliveryEtaMinutesSnapshot:
+          type: integer
+          minimum: 1
+          maximum: 10
+        quotaDeliveryModeSnapshot:
+          type: string
+          enum: [manual, preimported]
         amount:
           $ref: "#/components/schemas/DecimalString"
         currency:
@@ -8607,104 +10738,6 @@ components:
             $ref: "#/components/schemas/OfficialPriceRecord"
         nextCursor:
           type: [string, "null"]
-    CreateDemandRequest:
-      type: object
-      additionalProperties: false
-      required: [title, maxPriceCny, regionCode, ownerPreference, sourceUrl]
-      properties:
-        title:
-          type: string
-          minLength: 2
-          maxLength: 80
-        maxPriceCny:
-          $ref: "#/components/schemas/DecimalString"
-        regionCode:
-          type: string
-          maxLength: 64
-        ownerPreference:
-          type: string
-          enum: [personal, only_personal, any]
-        sourceUrl:
-          type: string
-          format: uri
-          pattern: '^https://linux\.do/t/'
-        note:
-          type: string
-          maxLength: 1000
-    Demand:
-      type: object
-      required:
-        - id
-        - publisherUsername
-        - publisherName
-        - title
-        - maxPriceCny
-        - regionCode
-        - ownerPreference
-        - sourceUrl
-        - note
-        - status
-        - createdAt
-        - updatedAt
-        - version
-      properties:
-        id:
-          type: string
-          format: uuid
-        publisherUserId:
-          type: string
-          format: uuid
-          description: Present only on owner/admin views.
-        publisherUsername:
-          type: string
-        publisherName:
-          type: string
-        title:
-          type: string
-        maxPriceCny:
-          $ref: "#/components/schemas/DecimalString"
-        regionCode:
-          type: string
-        ownerPreference:
-          type: string
-          enum: [personal, only_personal, any]
-        sourceUrl:
-          type: string
-        note:
-          type: string
-          description: Non-sensitive matching context only. It must not contain passwords, API keys, tokens, sessions, cookies, payment proof, or credential transfer material.
-        status:
-          type: string
-          enum: [pending_review, active, changes_requested, rejected, closed, taken_down]
-        reviewReason:
-          type: string
-        reviewedByAdminId:
-          type: string
-          format: uuid
-        reviewedAt:
-          type: string
-          format: date-time
-        closedAt:
-          type: string
-          format: date-time
-        createdAt:
-          type: string
-          format: date-time
-        updatedAt:
-          type: string
-          format: date-time
-        version:
-          type: integer
-    DemandList:
-      type: object
-      required: [items]
-      properties:
-        items:
-          type: array
-          items:
-            $ref: "#/components/schemas/Demand"
-        nextCursor:
-          type: [string, "null"]
     RiskAcknowledgement:
       type: object
       additionalProperties: false
@@ -8861,6 +10894,8 @@ components:
         - reservedSeats
         - availableSeats
         - applicationEligibility
+        - sellerReputation
+        - sourceAuthorVerification
         - status
         - policyVersion
         - riskAckRequired
@@ -8926,6 +10961,12 @@ components:
           type: integer
         applicationEligibility:
           $ref: "#/components/schemas/CarpoolApplicationEligibility"
+        sellerReputation:
+          anyOf:
+            - $ref: "#/components/schemas/ReputationSummary"
+            - type: "null"
+        sourceAuthorVerification:
+          $ref: "#/components/schemas/SourceAuthorResourceSummary"
         status:
           type: string
           enum: [draft, pending_review, changes_requested, active, paused, rejected, removed]
@@ -9000,29 +11041,81 @@ components:
           $ref: "#/components/schemas/Favorite"
     ReviewCenterRow:
       type: object
-      required: [id, sourceType, sourceId, target, counterpartyUsername, counterpartyName, status, rating, tags, note, createdAt, updatedAt]
+      required:
+        - id
+        - transactionType
+        - transactionId
+        - sourceType
+        - sourceId
+        - direction
+        - target
+        - counterpartyUsername
+        - counterpartyName
+        - reviewerRole
+        - revieweeRole
+        - status
+        - visibility
+        - counterpartySubmitted
+        - canCreate
+        - canEdit
+        - rating
+        - tags
+        - note
+        - completedAt
+        - reviewDeadlineAt
+        - submittedAt
+        - visibleAt
+        - frozenAt
+        - createdAt
+        - updatedAt
+        - version
       properties:
         id:
           type: string
+        transactionType:
+          type: string
+          enum: [carpool_membership, api_order]
+        transactionId:
+          type: string
+          format: uuid
         sourceType:
           type: string
-          const: carpool_membership
+          enum: [carpool_membership, api_order]
         sourceId:
           type: string
           format: uuid
+        direction:
+          type: string
+          enum: [pending, sent, received]
         target:
           type: string
         counterpartyUsername:
           type: string
         counterpartyName:
           type: string
+        reviewerRole:
+          type: string
+          enum: [buyer, seller]
+        revieweeRole:
+          type: string
+          enum: [buyer, seller]
         status:
           type: string
-          enum: [reviewable, reviewed]
+          enum: [reviewable, expired, sealed, published, removed]
+        visibility:
+          type: string
+          enum: [none, sealed, published, removed]
+        counterpartySubmitted:
+          type: boolean
+        canCreate:
+          type: boolean
+        canEdit:
+          type: boolean
         rating:
-          type: integer
-          minimum: 0
+          type: [integer, "null"]
+          minimum: 1
           maximum: 5
+          description: Null when received sealed content or removed content is hidden.
         tags:
           type: array
           maxItems: 5
@@ -9030,23 +11123,45 @@ components:
             type: string
             maxLength: 16
         note:
+          type: [string, "null"]
+          description: Null when received sealed content or removed content is hidden.
+        completedAt:
           type: string
+          format: date-time
+        reviewDeadlineAt:
+          type: string
+          format: date-time
+        submittedAt:
+          type: [string, "null"]
+          format: date-time
+        visibleAt:
+          type: [string, "null"]
+          format: date-time
+        frozenAt:
+          type: [string, "null"]
+          format: date-time
         createdAt:
           type: string
           format: date-time
         updatedAt:
           type: string
           format: date-time
+        version:
+          type: integer
+          format: int64
     ReviewCenterRowList:
       type: object
-      required: [items]
+      required: [items, presetTags]
       properties:
         items:
           type: array
           items:
             $ref: "#/components/schemas/ReviewCenterRow"
-        nextCursor:
-          type: [string, "null"]
+        presetTags:
+          type: array
+          items:
+            type: string
+            maxLength: 16
     SubmitReviewRequest:
       type: object
       additionalProperties: false
@@ -9067,9 +11182,18 @@ components:
           minLength: 1
           maxLength: 600
           description: Must not contain contact values, passwords, API keys, tokens, sessions, cookies, or recovery codes.
+    RemoveReviewRequest:
+      type: object
+      additionalProperties: false
+      required: [reason]
+      properties:
+        reason:
+          type: string
+          minLength: 1
+          maxLength: 500
     PublicReview:
       type: object
-      required: [id, username, date, serviceType, rating, tags, note, verified]
+      required: [id, username, date, serviceType, transactionType, reviewerRole, revieweeRole, rating, tags, note, verified]
       properties:
         id:
           type: string
@@ -9081,6 +11205,15 @@ components:
           format: date
         serviceType:
           type: string
+        transactionType:
+          type: string
+          enum: [carpool_membership, api_order]
+        reviewerRole:
+          type: string
+          enum: [buyer, seller]
+        revieweeRole:
+          type: string
+          enum: [buyer, seller]
         rating:
           type: integer
           minimum: 1
@@ -9307,6 +11440,192 @@ components:
             $ref: "#/components/schemas/DisputeCase"
         nextCursor:
           type: [string, "null"]
+    CreateDisputeReputationOutcomeRequest:
+      type: object
+      additionalProperties: false
+      required: [subjectUserId, responsibility, severity, roleScope, reasonCode, publicReason, internalReason]
+      properties:
+        subjectUserId:
+          type: string
+          format: uuid
+        responsibility:
+          type: string
+          enum: [responsible, shared, not_responsible, undetermined]
+        severity:
+          type: string
+          enum: [none, low, medium, high, critical]
+        roleScope:
+          type: string
+          enum: [buyer, seller, all]
+        reasonCode:
+          type: string
+          pattern: "^[a-z][a-z0-9_]{1,63}$"
+        publicReason:
+          type: string
+          minLength: 1
+        internalReason:
+          type: string
+          minLength: 1
+    CreateUserReputationRestrictionRequest:
+      type: object
+      additionalProperties: false
+      required: [restrictionType, roleScope, actionCode, reasonCode, publicReason, internalReason]
+      properties:
+        restrictionType:
+          type: string
+        roleScope:
+          type: string
+          enum: [buyer, seller, all]
+        actionCode:
+          type: string
+          enum: [carpool_publish, carpool_apply, carpool_accept, api_service_publish, api_order_create, contact_view, review_submit, all]
+        reasonCode:
+          type: string
+          pattern: "^[a-z][a-z0-9_]{1,63}$"
+        publicReason:
+          type: string
+          minLength: 1
+        internalReason:
+          type: string
+          minLength: 1
+        startsAt:
+          type: string
+          format: date-time
+        endsAt:
+          type: [string, "null"]
+          format: date-time
+        sourceDisputeOutcomeId:
+          type: string
+          format: uuid
+    RevokeUserReputationRestrictionRequest:
+      type: object
+      additionalProperties: false
+      required: [reason]
+      properties:
+        reason:
+          type: string
+          minLength: 1
+    DisputeReputationOutcome:
+      type: object
+      required: [id, disputeCaseId, subjectUserId, responsibility, severity, roleScope, status, reasonCode, publicReason, internalReason, decidedByAdminId, decidedAt, createdAt, updatedAt, version, disputeVersion]
+      properties:
+        id:
+          type: string
+          format: uuid
+        disputeCaseId:
+          type: string
+          format: uuid
+        subjectUserId:
+          type: string
+          format: uuid
+        responsibility:
+          type: string
+          enum: [responsible, shared, not_responsible, undetermined]
+        severity:
+          type: string
+          enum: [none, low, medium, high, critical]
+        roleScope:
+          type: string
+          enum: [buyer, seller, all]
+        status:
+          type: string
+          enum: [active, reversed]
+        reasonCode:
+          type: string
+        publicReason:
+          type: string
+        internalReason:
+          type: string
+          description: Admin response only.
+        decidedByAdminId:
+          type: string
+          format: uuid
+        decidedAt:
+          type: string
+          format: date-time
+        reversedAt:
+          type: [string, "null"]
+          format: date-time
+        reversedByAdminId:
+          type: string
+          format: uuid
+        reversalAppealId:
+          type: string
+          format: uuid
+        reversalReason:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+        version:
+          type: integer
+        disputeVersion:
+          type: integer
+    UserReputationRestriction:
+      type: object
+      required: [id, userId, restrictionType, roleScope, actionCode, reasonCode, publicReason, internalReason, startsAt, createdByAdminId, createdAt, updatedAt, version]
+      properties:
+        id:
+          type: string
+          format: uuid
+        userId:
+          type: string
+          format: uuid
+        restrictionType:
+          type: string
+        roleScope:
+          type: string
+          enum: [buyer, seller, all]
+        actionCode:
+          type: string
+          enum: [carpool_publish, carpool_apply, carpool_accept, api_service_publish, api_order_create, contact_view, review_submit, all]
+        reasonCode:
+          type: string
+        publicReason:
+          type: string
+        internalReason:
+          type: string
+          description: Admin response only.
+        startsAt:
+          type: string
+          format: date-time
+        endsAt:
+          type: [string, "null"]
+          format: date-time
+        sourceDisputeOutcomeId:
+          type: string
+          format: uuid
+        createdByAdminId:
+          type: string
+          format: uuid
+        revokedAt:
+          type: [string, "null"]
+          format: date-time
+        revokedByAdminId:
+          type: string
+          format: uuid
+        revocationReason:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+        version:
+          type: integer
+        userVersion:
+          type: integer
+    ReputationGovernanceMutation:
+      type: object
+      properties:
+        outcome:
+          $ref: "#/components/schemas/DisputeReputationOutcome"
+        restriction:
+          $ref: "#/components/schemas/UserReputationRestriction"
     PublicDispute:
       type: object
       required: [id, username, type, result, handledAt, unresolved]
@@ -9425,7 +11744,7 @@ components:
           type: [string, "null"]
     AdminUser:
       type: object
-      required: [id, username, displayName, accountStatus, isAdmin, linuxDoBound, createdAt]
+      required: [id, username, displayName, accountStatus, isAdmin, linuxDoBound, createdAt, version]
       properties:
         id:
           type: string
@@ -9449,6 +11768,8 @@ components:
         lastActiveAt:
           type: [string, "null"]
           format: date-time
+        version:
+          type: integer
     AdminUserList:
       type: object
       required: [items]
@@ -9684,6 +12005,7 @@ components:
         - listingTitleSnapshot
         - priceMonthlyCny
         - policyVersionSnapshot
+        - buyerReputation
         - version
         - createdAt
         - updatedAt
@@ -9718,6 +12040,10 @@ components:
           $ref: "#/components/schemas/DecimalString"
         policyVersionSnapshot:
           type: integer
+        buyerReputation:
+          anyOf:
+            - $ref: "#/components/schemas/ReputationSummary"
+            - type: "null"
         riskNoticeCode:
           type: string
         contactSessionId:

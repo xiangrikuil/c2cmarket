@@ -129,7 +129,7 @@ async function logout() {
     <aside class="login-intro relative z-10 hidden max-w-[390px] justify-self-end xl:block">
       <Badge variant="secondary">C2CMarket</Badge>
       <h1 class="mt-5 text-5xl font-semibold leading-tight tracking-tight">连接供需，<br><span class="text-primary">高效撮合</span></h1>
-      <p class="mt-5 text-base leading-8 text-muted-foreground">浏览订阅拼车、API 服务、求车需求与官网公开价格，在同一套真实状态中完成发现和跟进。</p>
+      <p class="mt-5 text-base leading-8 text-muted-foreground">浏览订阅拼车、API 服务与官网公开价格，在同一套真实状态中完成发现和跟进。</p>
       <div class="login-visual mt-8" aria-hidden="true"><div class="login-visual-window"><div /><div /><div /></div><div class="login-visual-orbit" /><div class="login-visual-badge"><ShieldCheck class="h-8 w-8" /></div></div>
     </aside>
     <div class="relative z-10 flex w-full max-w-[450px] flex-col items-center">

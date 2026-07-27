@@ -3,10 +3,10 @@
 中文名：C2C 市集
 英文名：C2CMarket
 
-更新日期：2026-07-18
+更新日期：2026-07-27
 执行者：Codex
 
-定位：AI 官网价格情报、订阅拼车、求车需求和 API 额度撮合平台。
+定位：AI 官网价格情报、订阅拼车和 API 额度撮合平台。
 
 ## 技术栈
 
@@ -43,7 +43,7 @@ NUXT_DEV_API_PROXY_TARGET=http://127.0.0.1:18090 pnpm dev
 
 ## 渲染与索引策略
 
-- 首页、官网价格、拼车、求车和 API 市集的公开列表/详情使用 SSR + 短时 SWR，首个 HTTP HTML 直接包含业务正文。
+- 首页、官网价格、拼车和 API 市集的公开列表/详情使用 SSR + 短时 SWR，首个 HTTP HTML 直接包含业务正文。
 - 搜索、登录、发布、账户、商户、管理、兼容跳转、公告和公开用户页保持 CSR，并输出 `noindex`。
 - 公开详情不存在或已不可见时，服务端响应返回真实 HTTP 404。
 - `/sitemap.xml` 从公开 API 动态发现可索引详情，`/robots.txt` 按生产/staging hostname 控制抓取。
@@ -99,7 +99,6 @@ pnpm build
 /admin/official-prices    管理员维护官网价格记录
 /carpools                 订阅拼车列表
 /carpools/c1              车源详情
-/demands                  找车源 / 求车需求
 /api-market               API 额度市集
 /api-market/a1            API 额度详情
 /my                       我的中心

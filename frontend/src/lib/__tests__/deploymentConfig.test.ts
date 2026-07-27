@@ -79,11 +79,26 @@ describe('Cloudflare Worker deployment config', () => {
       new URL('../../../../.github/workflows/release-backend.yml', import.meta.url),
       'utf8',
     )
+    const releaseGateStart = ci.indexOf('  release-gate:')
+    const stagingPublishStart = ci.indexOf('  publish-staging:')
     const stagingJobStart = ci.indexOf('  deploy-staging:')
     const productionPublishStart = ci.indexOf('  publish-production:')
     const productionJobStart = ci.indexOf('  deploy-production:')
+    const releaseGateJob = ci.slice(releaseGateStart, stagingPublishStart)
+    const stagingPublishJob = ci.slice(stagingPublishStart, stagingJobStart)
+    const productionPublishJob = ci.slice(productionPublishStart, productionJobStart)
     const stagingJob = ci.slice(stagingJobStart, productionPublishStart)
     const productionJob = ci.slice(productionJobStart)
+    const releasePrerequisiteJobs = [
+      'backend',
+      'backend-race',
+      'contracts',
+      'postgres-integration',
+      'frontend',
+      'secret-scan',
+      'filesystem-scan',
+      'image',
+    ]
     const environmentSecrets = [
       'VPS_HOST',
       'VPS_USER',
@@ -94,7 +109,6 @@ describe('Cloudflare Worker deployment config', () => {
     expect(ci).toContain('branches: [staging, main]')
     expect(ci).toContain("if: github.event_name == 'push' && github.ref == 'refs/heads/staging'")
     expect(ci).toContain("if: github.event_name == 'push' && github.ref == 'refs/heads/main'")
-    expect(ci).toContain('needs: [backend, frontend]')
     expect(ci).toContain('uses: ./.github/workflows/release-backend.yml')
     expect(ci).toContain('name: publish staging backend')
     expect(ci).toContain('name: publish production backend')
@@ -102,9 +116,17 @@ describe('Cloudflare Worker deployment config', () => {
     expect(release).toContain('ghcr.io/xiangrikuil/c2cmarket-backend')
     expect(release).toContain('${{ inputs.git_sha }}')
     expect(release).toContain('password: ${{ secrets.GITHUB_TOKEN }}')
+    expect(releaseGateStart).toBeGreaterThan(-1)
+    expect(stagingPublishStart).toBeGreaterThan(releaseGateStart)
     expect(stagingJobStart).toBeGreaterThan(-1)
     expect(productionPublishStart).toBeGreaterThan(stagingJobStart)
     expect(productionJobStart).toBeGreaterThan(stagingJobStart)
+    expect(releaseGateJob).toContain('if: ${{ always() }}')
+    for (const job of releasePrerequisiteJobs) {
+      expect(releaseGateJob).toContain(`      - ${job}`)
+    }
+    expect(stagingPublishJob).toContain('needs: release-gate')
+    expect(productionPublishJob).toContain('needs: release-gate')
     expect(stagingJob).toContain('needs: publish-staging')
     expect(stagingJob).toContain('environment:\n      name: staging')
     expect(stagingJob).toContain('steps: &deploy-backend-steps')

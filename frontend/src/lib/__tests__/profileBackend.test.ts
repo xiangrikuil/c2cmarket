@@ -91,3 +91,64 @@ test('backend profile mapper normalizes nullable array fields', async () => {
   assert.equal(fetchMock.mock.calls[0]?.[0], '/api/v1/auth/session')
   assert.equal(fetchMock.mock.calls[1]?.[0], '/api/v1/me/profile')
 })
+
+test('public profile adapter preserves unavailable reputation facts as null', async () => {
+  const fetchMock = vi.fn((input: RequestInfo | URL) => {
+    const url = String(input)
+    if (url.endsWith('/reviews')) {
+      return Promise.resolve(jsonResponse({ items: [] }))
+    }
+    return Promise.resolve(jsonResponse({
+      profile: {
+        id: '11111111-1111-4111-8111-111111111111',
+        username: 'truthful',
+        displayName: 'Truthful',
+        bio: null,
+        avatarUrl: null,
+        avatarText: 'T',
+        linuxDoBound: false,
+        linuxDoUsername: null,
+        trustLevel: null,
+        badges: [],
+        accountStatus: 'normal',
+        createdAt: null,
+        lastActiveAt: null,
+        stats: {
+          completedCarpools: null,
+          completedApiOrders: null,
+          completedCarpoolsLast90Days: null,
+          completedApiOrdersLast90Days: null,
+          responseMedianMinutes: null,
+          buyerResponsibilityCancellationCount: null,
+          sellerResponsibilityCancellationCount: null,
+          unknownResponsibilityCancellationCount: null,
+          unresolvedDisputeCount: null,
+          resolvedDisputeCountLast90Days: null,
+        },
+        privacy: {
+          showCreatedAt: true,
+          showLastActiveAt: true,
+          showCompletionStats: true,
+          showResponseMedian: true,
+          showResolvedDisputeSummary: true,
+          allowPublicProfileReport: true,
+        },
+      },
+      carpools: [],
+      services: [],
+      completions: [],
+      reviews: [],
+      disputes: [],
+    }))
+  })
+  vi.stubGlobal('fetch', fetchMock)
+
+  const { backendPublicUserProfile } = await loadProfileBackend({ apiMode: 'real' })
+  const result = await backendPublicUserProfile('truthful')
+
+  assert.deepEqual(result.reputations, [])
+  assert.equal(result.profile.trustLevel, null)
+  assert.equal(result.profile.stats.completedCarpoolsLast90Days, null)
+  assert.equal(result.profile.stats.buyerResponsibilityCancellationCount, null)
+  assert.equal(result.profile.stats.unresolvedDisputeCount, null)
+})

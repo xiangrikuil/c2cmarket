@@ -5,6 +5,7 @@ import { Badge } from '@/components/ui/badge'
 import { Card } from '@/components/ui/card'
 import ApiMerchantAvatar from '@/components/api-market/ApiMerchantAvatar.vue'
 import ApiMerchantBadges from '@/components/api-market/ApiMerchantBadges.vue'
+import ReputationInlineSummary from '@/components/reputation/ReputationInlineSummary.vue'
 import { getApiMerchantDisplayName } from '@/lib/api'
 import type { ApiPackageRecommendation } from '@/lib/apiPackageRecommendation'
 
@@ -68,6 +69,13 @@ const hiddenModelCount = Math.max(0, props.row.package.models.length - visibleMo
         <p class="mt-2 text-[11px] text-muted-foreground">价值成本按商家声明估算，越低越划算。</p>
       </div>
 
+      <div class="border-b border-border px-4 py-3">
+        <ReputationInlineSummary
+          :summary="row.service.sellerReputation"
+          :compact="row.service.sellerReputation?.state === 'active'"
+        />
+      </div>
+
       <div class="api-service-card-footer">
         <div class="api-market-merchant">
           <ApiMerchantAvatar :service="row.service" class="api-market-avatar" />
@@ -76,7 +84,9 @@ const hiddenModelCount = Math.max(0, props.row.package.models.length - visibleMo
               <span class="truncate text-sm font-medium">{{ getApiMerchantDisplayName(row.service) }}</span>
               <ApiMerchantBadges :service="row.service" />
             </span>
-            <span class="mt-0.5 block text-xs text-muted-foreground">信任等级 {{ row.service.trustLevel }} · 近 30 天完成 {{ row.service.completed30d }} 单</span>
+            <span class="mt-0.5 block text-xs text-muted-foreground">
+              近期完成 {{ row.service.completed30d === null ? '暂无数据' : `${row.service.completed30d} 单` }}
+            </span>
           </span>
         </div>
         <span class="shrink-0 text-xs font-medium text-primary">查看套餐 →</span>

@@ -7,6 +7,7 @@ import (
 	"log"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -55,6 +56,19 @@ type PostgresListener struct {
 	closed      bool
 	cancel      context.CancelFunc
 	done        chan struct{}
+	stats       listenerStats
+}
+
+type ListenerStats struct {
+	FailuresTotal       uint64
+	InvalidPayloadTotal uint64
+	CloseFailuresTotal  uint64
+}
+
+type listenerStats struct {
+	failuresTotal       atomic.Uint64
+	invalidPayloadTotal atomic.Uint64
+	closeFailuresTotal  atomic.Uint64
 }
 
 func NewPostgresListener(databaseURL string, hub *Hub, logger *log.Logger) (*PostgresListener, error) {
@@ -159,6 +173,7 @@ func (l *PostgresListener) run(ctx context.Context) {
 		if err == nil {
 			return
 		}
+		l.stats.failuresTotal.Add(1)
 		if healthy {
 			retryDelay = initialRetryDelay
 		}
@@ -208,6 +223,7 @@ func (l *PostgresListener) listenOnce(ctx context.Context) (bool, error) {
 
 		invalidation, err := parseNotificationPayload(notification.Payload)
 		if err != nil {
+			l.stats.invalidPayloadTotal.Add(1)
 			l.logger.Printf("realtime postgres listener ignored invalid routing payload: %v", err)
 			continue
 		}
@@ -219,7 +235,19 @@ func (l *PostgresListener) closeConnection(conn listenConnection) {
 	ctx, cancel := context.WithTimeout(context.Background(), connectionCloseTimeout)
 	defer cancel()
 	if err := conn.Close(ctx); err != nil {
+		l.stats.closeFailuresTotal.Add(1)
 		l.logger.Printf("realtime postgres listener connection close failed")
+	}
+}
+
+func (l *PostgresListener) Stats() ListenerStats {
+	if l == nil {
+		return ListenerStats{}
+	}
+	return ListenerStats{
+		FailuresTotal:       l.stats.failuresTotal.Load(),
+		InvalidPayloadTotal: l.stats.invalidPayloadTotal.Load(),
+		CloseFailuresTotal:  l.stats.closeFailuresTotal.Load(),
 	}
 }
 

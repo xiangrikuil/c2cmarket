@@ -86,6 +86,9 @@ type DisputeCase struct {
 	CounterpartyUserID   string
 	CounterpartyUsername string
 	CounterpartyName     string
+	SubjectUserID        string
+	SubjectUsername      string
+	SubjectName          string
 	Status               string
 	PublicSummary        string
 	PublicResultCode     string

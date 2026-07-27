@@ -102,4 +102,16 @@ describe('rankApiPackages', () => {
     expect(rows[0].responseScore).toBe(50)
     expect(rows[0].fulfillmentScore).toBe(50)
   })
+
+  it.each([
+    { completed30d: null },
+    { unresolvedDisputes: null },
+    { completed30d: null, unresolvedDisputes: null },
+  ])('uses a neutral fulfillment score when reputation facts are unavailable: %o', (overrides) => {
+    const rows = rankApiPackages([
+      service('unknown-fulfillment', packageRow(), overrides),
+    ], 'model-1', 3, new Date('2026-07-16T00:00:00Z'))
+
+    expect(rows[0].fulfillmentScore).toBe(50)
+  })
 })

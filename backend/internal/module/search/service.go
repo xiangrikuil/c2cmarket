@@ -10,7 +10,6 @@ import (
 	"c2c-market/backend/internal/domain"
 	"c2c-market/backend/internal/module/apimarket"
 	"c2c-market/backend/internal/module/carpool"
-	"c2c-market/backend/internal/module/demand"
 	"c2c-market/backend/internal/module/officialprice"
 )
 
@@ -22,7 +21,6 @@ const (
 type PublicReader interface {
 	PublicOfficialPriceRecords(ctx context.Context) ([]officialprice.Record, *domain.AppError)
 	PublicCarpoolListings(ctx context.Context, page domain.PageRequest) (domain.Page[carpool.Listing], *domain.AppError)
-	PublicDemands(ctx context.Context) ([]demand.Demand, *domain.AppError)
 	PublicAPIServices(ctx context.Context, filter apimarket.PublicServiceFilter) ([]apimarket.Service, *domain.AppError)
 }
 
@@ -41,10 +39,9 @@ func NewService(repo Repository, reader PublicReader) *Service {
 		typeOrder: map[string]int{
 			TypeOfficialPrice: 0,
 			TypeCarpool:       1,
-			TypeDemand:        2,
-			TypeAPIService:    3,
-			TypeUser:          4,
-			TypeMerchant:      5,
+			TypeAPIService:    2,
+			TypeUser:          3,
+			TypeMerchant:      4,
 		},
 	}
 }
@@ -126,25 +123,6 @@ func (s *Service) searchInMemory(ctx context.Context, keyword string) ([]Result,
 			break
 		}
 		carpoolCursor = *carpoolPage.NextCursor
-	}
-
-	demands, appErr := s.reader.PublicDemands(ctx)
-	if appErr != nil {
-		return nil, appErr
-	}
-	for _, item := range demands {
-		if !matches(q, item.Title, item.RegionCode, item.OwnerPreference, item.PublisherUsername, item.PublisherName) {
-			continue
-		}
-		results = append(results, Result{
-			ID:       "demand-" + item.ID,
-			Type:     TypeDemand,
-			Title:    item.Title,
-			Subtitle: item.RegionCode + " · 预算 ¥" + item.MaxPriceCNY + "/月 · " + item.PublisherName,
-			Badge:    item.Status,
-			To:       "/demands/" + item.ID,
-			RankTime: item.UpdatedAt,
-		})
 	}
 
 	services, appErr := s.reader.PublicAPIServices(ctx, apimarket.PublicServiceFilter{})

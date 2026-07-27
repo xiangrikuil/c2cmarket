@@ -62,33 +62,33 @@ type modelAuditBaselineResponse struct {
 }
 
 type modelAuditRunRequest struct {
-	TargetID            string          `json:"targetId"`
-	BaselineID          string          `json:"baselineId"`
-	ClaimedModel        string          `json:"claimedModel"`
+	TargetID            string               `json:"targetId"`
+	BaselineID          string               `json:"baselineId"`
+	ClaimedModel        string               `json:"claimedModel"`
 	Mode                modelaudit.AuditMode `json:"mode"`
-	EnableModelEquality bool            `json:"enableModelEquality"`
-	EnableLogprobs      string          `json:"enableLogprobs"`
-	StorePromptText     bool            `json:"storePromptText"`
-	StoreResponseText   bool            `json:"storeResponseText"`
-	ScheduledMonitorID  string          `json:"scheduledMonitorId"`
+	EnableModelEquality bool                 `json:"enableModelEquality"`
+	EnableLogprobs      string               `json:"enableLogprobs"`
+	StorePromptText     bool                 `json:"storePromptText"`
+	StoreResponseText   bool                 `json:"storeResponseText"`
+	ScheduledMonitorID  string               `json:"scheduledMonitorId"`
 }
 
 type modelAuditRunResponse struct {
-	ID             string               `json:"id"`
-	TargetID       string               `json:"targetId"`
-	TargetName     string               `json:"targetName"`
-	ClaimedModel   string               `json:"claimedModel"`
-	BaselineID      string               `json:"baselineId,omitempty"`
-	Status         modelaudit.RunStatus  `json:"status"`
-	Mode           modelaudit.AuditMode  `json:"mode"`
-	RiskLevel      modelaudit.RiskLevel  `json:"riskLevel,omitempty"`
-	Confidence     float64              `json:"confidence"`
-	OverallScore   float64              `json:"overallScore"`
-	ErrorMessage   string               `json:"errorMessage,omitempty"`
-	ProbeScores    []modelaudit.ProbeScore `json:"probeScores,omitempty"`
-	StartedAt      *string              `json:"startedAt,omitempty"`
-	FinishedAt     *string              `json:"finishedAt,omitempty"`
-	CreatedAt      string               `json:"createdAt"`
+	ID           string                  `json:"id"`
+	TargetID     string                  `json:"targetId"`
+	TargetName   string                  `json:"targetName"`
+	ClaimedModel string                  `json:"claimedModel"`
+	BaselineID   string                  `json:"baselineId,omitempty"`
+	Status       modelaudit.RunStatus    `json:"status"`
+	Mode         modelaudit.AuditMode    `json:"mode"`
+	RiskLevel    modelaudit.RiskLevel    `json:"riskLevel,omitempty"`
+	Confidence   float64                 `json:"confidence"`
+	OverallScore float64                 `json:"overallScore"`
+	ErrorMessage string                  `json:"errorMessage,omitempty"`
+	ProbeScores  []modelaudit.ProbeScore `json:"probeScores,omitempty"`
+	StartedAt    *string                 `json:"startedAt,omitempty"`
+	FinishedAt   *string                 `json:"finishedAt,omitempty"`
+	CreatedAt    string                  `json:"createdAt"`
 }
 
 type modelAuditMonitorRequest struct {
@@ -114,7 +114,7 @@ type modelAuditMonitorResponse struct {
 }
 
 func (s *Server) handleAdminModelAuditTargets(w http.ResponseWriter, r *http.Request) {
-	user, _, appErr := s.requireSession(r)
+	user, _, appErr := s.requireSession(w, r)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
@@ -128,7 +128,7 @@ func (s *Server) handleAdminModelAuditTargets(w http.ResponseWriter, r *http.Req
 }
 
 func (s *Server) handleAdminModelAuditTarget(w http.ResponseWriter, r *http.Request) {
-	user, _, appErr := s.requireSession(r)
+	user, _, appErr := s.requireSession(w, r)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
@@ -142,7 +142,7 @@ func (s *Server) handleAdminModelAuditTarget(w http.ResponseWriter, r *http.Requ
 }
 
 func (s *Server) handleCreateModelAuditTarget(w http.ResponseWriter, r *http.Request) {
-	user, _, appErr := s.requireSessionAndCSRF(r)
+	user, _, appErr := s.requireSessionAndCSRF(w, r)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
@@ -161,7 +161,7 @@ func (s *Server) handleCreateModelAuditTarget(w http.ResponseWriter, r *http.Req
 }
 
 func (s *Server) handleUpdateModelAuditTarget(w http.ResponseWriter, r *http.Request) {
-	user, _, appErr := s.requireSessionAndCSRF(r)
+	user, _, appErr := s.requireSessionAndCSRF(w, r)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
@@ -180,7 +180,7 @@ func (s *Server) handleUpdateModelAuditTarget(w http.ResponseWriter, r *http.Req
 }
 
 func (s *Server) handleDeleteModelAuditTarget(w http.ResponseWriter, r *http.Request) {
-	user, _, appErr := s.requireSessionAndCSRF(r)
+	user, _, appErr := s.requireSessionAndCSRF(w, r)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
@@ -193,7 +193,7 @@ func (s *Server) handleDeleteModelAuditTarget(w http.ResponseWriter, r *http.Req
 }
 
 func (s *Server) handleAdminModelAuditBaselines(w http.ResponseWriter, r *http.Request) {
-	user, _, appErr := s.requireSession(r)
+	user, _, appErr := s.requireSession(w, r)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
@@ -207,7 +207,7 @@ func (s *Server) handleAdminModelAuditBaselines(w http.ResponseWriter, r *http.R
 }
 
 func (s *Server) handleAdminModelAuditBaseline(w http.ResponseWriter, r *http.Request) {
-	user, _, appErr := s.requireSession(r)
+	user, _, appErr := s.requireSession(w, r)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
@@ -221,7 +221,7 @@ func (s *Server) handleAdminModelAuditBaseline(w http.ResponseWriter, r *http.Re
 }
 
 func (s *Server) handleCreateModelAuditBaseline(w http.ResponseWriter, r *http.Request) {
-	user, _, appErr := s.requireSessionAndCSRF(r)
+	user, _, appErr := s.requireSessionAndCSRF(w, r)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
@@ -240,7 +240,7 @@ func (s *Server) handleCreateModelAuditBaseline(w http.ResponseWriter, r *http.R
 }
 
 func (s *Server) handleAdminModelAuditRuns(w http.ResponseWriter, r *http.Request) {
-	user, _, appErr := s.requireSession(r)
+	user, _, appErr := s.requireSession(w, r)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
@@ -254,7 +254,7 @@ func (s *Server) handleAdminModelAuditRuns(w http.ResponseWriter, r *http.Reques
 }
 
 func (s *Server) handleAdminModelAuditRun(w http.ResponseWriter, r *http.Request) {
-	user, _, appErr := s.requireSession(r)
+	user, _, appErr := s.requireSession(w, r)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
@@ -268,7 +268,7 @@ func (s *Server) handleAdminModelAuditRun(w http.ResponseWriter, r *http.Request
 }
 
 func (s *Server) handleCreateModelAuditRun(w http.ResponseWriter, r *http.Request) {
-	user, _, appErr := s.requireSessionAndCSRF(r)
+	user, _, appErr := s.requireSessionAndCSRF(w, r)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
@@ -287,7 +287,7 @@ func (s *Server) handleCreateModelAuditRun(w http.ResponseWriter, r *http.Reques
 }
 
 func (s *Server) handleCancelModelAuditRun(w http.ResponseWriter, r *http.Request) {
-	user, _, appErr := s.requireSessionAndCSRF(r)
+	user, _, appErr := s.requireSessionAndCSRF(w, r)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
@@ -301,7 +301,7 @@ func (s *Server) handleCancelModelAuditRun(w http.ResponseWriter, r *http.Reques
 }
 
 func (s *Server) handleAdminModelAuditReport(w http.ResponseWriter, r *http.Request) {
-	user, _, appErr := s.requireSession(r)
+	user, _, appErr := s.requireSession(w, r)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
@@ -315,7 +315,7 @@ func (s *Server) handleAdminModelAuditReport(w http.ResponseWriter, r *http.Requ
 }
 
 func (s *Server) handleAdminModelAuditMonitors(w http.ResponseWriter, r *http.Request) {
-	user, _, appErr := s.requireSession(r)
+	user, _, appErr := s.requireSession(w, r)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
@@ -329,7 +329,7 @@ func (s *Server) handleAdminModelAuditMonitors(w http.ResponseWriter, r *http.Re
 }
 
 func (s *Server) handleCreateModelAuditMonitor(w http.ResponseWriter, r *http.Request) {
-	user, _, appErr := s.requireSessionAndCSRF(r)
+	user, _, appErr := s.requireSessionAndCSRF(w, r)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
@@ -469,7 +469,7 @@ func toModelAuditRunResponse(run modelaudit.Run) modelAuditRunResponse {
 		TargetID:     run.TargetID,
 		TargetName:   run.TargetName,
 		ClaimedModel: run.ClaimedModel,
-		BaselineID:    run.BaselineID,
+		BaselineID:   run.BaselineID,
 		Status:       run.Status,
 		Mode:         run.Mode,
 		RiskLevel:    run.RiskLevel,

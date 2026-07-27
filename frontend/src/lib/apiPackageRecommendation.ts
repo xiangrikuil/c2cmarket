@@ -17,6 +17,7 @@ type RecommendationCandidate = Omit<ApiPackageRecommendation, 'score' | 'valueSc
 const finiteOr = (value: number, fallback: number) => Number.isFinite(value) ? value : fallback
 
 const fulfillmentScore = (service: ApiService) => {
+  if (service.completed30d === null || service.unresolvedDisputes === null) return 50
   const completed = Math.max(0, service.completed30d)
   const disputes = Math.max(0, service.unresolvedDisputes)
   return 100 * (completed + 2) / (completed + disputes + 4)

@@ -20,6 +20,14 @@ describe('getApiMerchantBadges', () => {
     expect(getApiMerchantBadges(merchant({ unresolvedDisputes: 1 })).map(item => item.label)).toEqual(['快速响应'])
   })
 
+  it.each([
+    { trustLevel: null },
+    { completed30d: null },
+    { unresolvedDisputes: null },
+  ])('does not grant quality from unavailable reputation facts: %o', (overrides) => {
+    expect(getApiMerchantBadges(merchant(overrides)).map(item => item.label)).toEqual(['快速响应'])
+  })
+
   it('does not infer fast response when response history is explicitly unavailable', () => {
     expect(getApiMerchantBadges(merchant({ recommendationResponseMedianMinutes: null })).map(item => item.label)).toEqual(['优质商家'])
   })

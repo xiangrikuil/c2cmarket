@@ -10,8 +10,9 @@ test('keeps merchant trust signals in the purchase card only', () => {
   const header = componentSource('ApiServiceHeader')
   const panel = componentSource('ApiPurchasePanel')
 
-  assert.doesNotMatch(header, /近 30 天完成|响应中位|getApiMerchantDisplayName/)
-  assert.match(panel, /近 30 天完成.*响应中位/)
+  assert.doesNotMatch(header, /近期完成|首字响应|getApiMerchantDisplayName/)
+  assert.match(panel, /ReputationSummaryCard/)
+  assert.match(panel, /首字响应.*商户自报，平台未测速/)
   assert.match(panel, /getApiMerchantDisplayName/)
 })
 

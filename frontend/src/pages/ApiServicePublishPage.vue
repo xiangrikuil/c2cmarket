@@ -1,23 +1,28 @@
 <script setup lang="ts">
-import { computed, reactive, ref, watch } from 'vue'
-import { RouterLink, useRoute, useRouter } from 'vue-router'
+import { computed, nextTick, reactive, ref, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { useMutation, useQueryClient } from '@tanstack/vue-query'
-import { ExternalLink, Eye, Send, ShieldCheck } from 'lucide-vue-next'
+import { ArrowLeft, ArrowRight, Bot, Eye, Info, PackageCheck, Send } from 'lucide-vue-next'
 import { toast } from 'vue-sonner'
 import AccountPaymentSummarySection from '@/components/api-service-publish/AccountPaymentSummarySection.vue'
 import ApiAccessSourceSection from '@/components/api-service-publish/ApiAccessSourceSection.vue'
 import ApiServicePublishPreview from '@/components/api-service-publish/ApiServicePublishPreview.vue'
 import BillingModeSection from '@/components/api-service-publish/BillingModeSection.vue'
+import MerchantIdentitySection from '@/components/api-service-publish/MerchantIdentitySection.vue'
 import MerchantNoteSection from '@/components/api-service-publish/MerchantNoteSection.vue'
 import ModelMultiSelect from '@/components/api-service-publish/ModelMultiSelect.vue'
 import PriceInventorySection from '@/components/api-service-publish/PriceInventorySection.vue'
 import ProviderCategorySelector from '@/components/api-service-publish/ProviderCategorySelector.vue'
 import SelectedModelsPricingTable from '@/components/api-service-publish/SelectedModelsPricingTable.vue'
-import type { ApiProviderCategory, ApiServicePublishForm, DistributionSystem } from '@/components/api-service-publish/types'
+import PublishStepSection from '@/components/api-service-publish/PublishStepSection.vue'
+import PublishWorkflowStepper from '@/components/api-service-publish/PublishWorkflowStepper.vue'
+import ResponsivePublishPreview from '@/components/api-service-publish/ResponsivePublishPreview.vue'
+import SellingModeSelector from '@/components/api-service-publish/SellingModeSelector.vue'
+import type { ApiProviderCategory, ApiServicePublishForm, DistributionSystem, SellingMode } from '@/components/api-service-publish/types'
 import { toggleSelectedModel } from '@/components/api-service-publish/modelSelection'
 import { apiPublishAssistantSummary } from '@/components/api-service-publish/publishAssistant'
+import { completePublishStep, firstErrorStep, publishStepStatus } from '@/components/api-service-publish/publishWorkflow'
 import {
-  apiQuotaBoundaryNotice,
   applySimplifiedApiQuotaDefaults,
   createDefaultPaymentOptions,
   defaultPaymentWindowMinutes,
@@ -26,6 +31,7 @@ import {
   generatedTitle,
   merchantNoteTemplate,
   modelProviderCategory,
+  paymentMethodLabels,
   providerCategoryLabels,
   selectedCatalogItems,
   sub2ApiPricingPolicy,
@@ -33,11 +39,10 @@ import {
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { containsSensitiveContent, firstError, type FieldErrors } from '@/lib/formValidation'
 import { submitApiService } from '@/lib/api'
 import { trackAnalytics } from '@/lib/analytics'
-import { beijingDateTimeInputToISOString, defaultQuotaExpiresAtInput } from '@/lib/apiQuotaExpiration'
+import { beijingDateTimeInputToISOString, defaultQuotaExpiresAtInput, formatBeijingDateTimeInput } from '@/lib/apiQuotaExpiration'
 import { apiPaymentSettingsMissingReason, cloneApiPaymentAccountSettings, isApiPaymentAccountSettingsComplete, isApiPaymentOptionComplete, isApiPaymentWindowValid } from '@/lib/apiPaymentSettings'
 import { useApiPaymentAccountSettingsQuery, useModelCatalog, useMyProfileQuery } from '@/queries/useMarketQueries'
 import { useUnsavedChangesGuard } from '@/composables/useUnsavedChangesGuard'
@@ -55,8 +60,11 @@ type Field =
   | 'packages'
   | 'paymentWindowMinutes'
   | 'paymentOptions'
+  | 'performance'
   | 'merchantNote'
   | 'sensitive'
+
+type ApiServicePublishStep = 1 | 2 | 3 | 4
 
 const { data: modelCatalog, isLoading: catalogLoading } = useModelCatalog()
 const { data: accountPaymentSettings, isLoading: paymentSettingsLoading } = useApiPaymentAccountSettingsQuery()
@@ -65,6 +73,23 @@ const queryClient = useQueryClient()
 const route = useRoute()
 const router = useRouter()
 const analyticsSourceRoute = () => String(route.name ?? 'unknown')
+const sellingMode = ref<SellingMode>(route.query.after === 'quota' ? 'limited' : 'free')
+const isLimitedQuotaMode = computed(() => sellingMode.value === 'limited')
+const currentStep = ref<ApiServicePublishStep>(route.query.after === 'quota' ? 2 : 1)
+const completedSteps = ref<ApiServicePublishStep[]>(route.query.after === 'quota' ? [1] : [])
+const publishSteps = computed(() => isLimitedQuotaMode.value
+  ? [
+      { title: '选择销售方式', description: '限时额度包' },
+      { title: '配置基础服务', description: '接入、模型与体验' },
+      { title: '设置额度包', description: '定价、倍率与放量' },
+      { title: '确认发布', description: '核对库存与交付' },
+    ]
+  : [
+      { title: '选择销售方式', description: '方式、售价与额度' },
+      { title: '设置接入与模型', description: '接入、模型与倍率' },
+      { title: '交易与服务', description: '收款、说明与身份' },
+      { title: '确认发布', description: '公开服务并接单' },
+    ])
 const previewOpen = ref(false)
 const errors = reactive<FieldErrors<Field>>({})
 const pendingProviderCategory = ref<ApiProviderCategory | null>(null)
@@ -100,6 +125,9 @@ const form = reactive<ApiServicePublishForm>({
   maximumPurchaseCny: 300,
   paymentWindowMinutes: defaultPaymentWindowMinutes,
   paymentOptions: createDefaultPaymentOptions(),
+  declaredTtftBand: '1_to_3s',
+  recommendedConcurrency: 1,
+  performanceConfirmedAt: formatBeijingDateTimeInput(new Date()),
   packages: [],
   validity: {
     mode: 'days',
@@ -117,6 +145,7 @@ const form = reactive<ApiServicePublishForm>({
   },
   merchantNote: merchantNoteTemplate,
 })
+const isFixedPackageMode = computed(() => !isLimitedQuotaMode.value && form.billingMode === 'fixed_package')
 
 const catalog = computed(() => modelCatalog.value ?? [])
 const filteredCatalog = computed(() => catalog.value.filter(item => modelProviderCategory(item.provider) === form.providerCategory))
@@ -144,9 +173,12 @@ const merchantDisplayNameStatus = computed(() => {
   if (form.merchantDisplayName.trim()) return '发布时会快照当前个人资料显示名称；单条 API 额度不单独改名。'
   return '请先到个人中心设置显示名称。'
 })
-
 function syncMerchantDisplayNameSnapshot() {
   form.merchantDisplayName = profileMerchantDisplayName.value
+}
+
+function setStoreAliasVisible(value: boolean) {
+  form.merchantIdentityMode = value ? 'store_alias' : 'public_profile'
 }
 
 function syncHiddenPublishFields() {
@@ -211,7 +243,47 @@ function displayNameLength(value: string) {
   return Array.from(value.trim()).length
 }
 
-function validate(requireComplete: boolean) {
+const freeFieldSteps: Record<Field, ApiServicePublishStep> = {
+  merchantIdentity: 3,
+  merchantDisplayName: 3,
+  distributionSystem: 2,
+  defaultMultiplier: 2,
+  providerCategory: 2,
+  cnyPerUsdCredit: 1,
+  selectedModels: 2,
+  availableCreditUsd: 1,
+  quotaExpiresAt: 1,
+  packages: 1,
+  paymentWindowMinutes: 3,
+  paymentOptions: 3,
+  performance: 3,
+  merchantNote: 3,
+  sensitive: 3,
+}
+
+const limitedFieldSteps: Record<Field, ApiServicePublishStep> = {
+  merchantIdentity: 2,
+  merchantDisplayName: 2,
+  distributionSystem: 2,
+  defaultMultiplier: 2,
+  providerCategory: 2,
+  cnyPerUsdCredit: 2,
+  selectedModels: 2,
+  availableCreditUsd: 2,
+  quotaExpiresAt: 2,
+  packages: 2,
+  paymentWindowMinutes: 2,
+  paymentOptions: 2,
+  performance: 2,
+  merchantNote: 2,
+  sensitive: 2,
+}
+
+function currentFieldSteps() {
+  return isLimitedQuotaMode.value ? limitedFieldSteps : freeFieldSteps
+}
+
+function collectValidationErrors() {
   syncHiddenPublishFields()
   const next: FieldErrors<Field> = {}
   const merchantDisplayName = form.merchantDisplayName.trim()
@@ -266,6 +338,9 @@ function validate(requireComplete: boolean) {
     const missingOption = enabledPayments.value.find(option => !isApiPaymentOptionComplete(option))
     if (missingOption) next.paymentOptions = apiPaymentSettingsMissingReason(form)
   }
+  if (!form.declaredTtftBand || form.recommendedConcurrency < 1 || !beijingDateTimeInputToISOString(form.performanceConfirmedAt)) {
+    next.performance = '请完整填写首字响应区间、建议并发和最近确认时间。'
+  }
   if (!form.merchantNote.trim()) next.merchantNote = '请填写备注信息。'
   if (form.merchantNote.length > 800) next.merchantNote = '备注信息最多 800 字。'
   if (containsSensitiveContent([
@@ -274,22 +349,20 @@ function validate(requireComplete: boolean) {
     ...form.paymentOptions.map(option => option.paymentInstructions),
   ])) next.sensitive = '请移除 API Key、Sub2API key、endpoint 密钥、token、Session、Cookie、密码、付款码或面板凭据。'
 
-  if (!requireComplete) {
-    delete next.merchantIdentity
-    if (form.merchantIdentityMode === 'public_profile' || form.merchantDisplayName.trim()) delete next.merchantDisplayName
-    delete next.distributionSystem
-    if (Number.isFinite(form.defaultMultiplier) && form.defaultMultiplier > 0) delete next.defaultMultiplier
-    delete next.providerCategory
-    delete next.selectedModels
-    delete next.availableCreditUsd
-    delete next.quotaExpiresAt
-    delete next.cnyPerUsdCredit
-    delete next.packages
-    delete next.paymentWindowMinutes
-    delete next.paymentOptions
-    delete next.merchantNote
-  }
+  return next
+}
 
+function validateStep(step: ApiServicePublishStep) {
+  const fieldSteps = currentFieldSteps()
+  const next = Object.fromEntries(
+    Object.entries(collectValidationErrors()).filter(([field]) => fieldSteps[field as Field] === step),
+  ) as FieldErrors<Field>
+  setErrors(next)
+  return Object.keys(next).length === 0
+}
+
+function validateAll() {
+  const next = collectValidationErrors()
   setErrors(next)
   return Object.keys(next).length === 0
 }
@@ -298,32 +371,40 @@ const completeness = computed(() => {
   const conflict = (label: string) => ({ label, status: 'conflict' as const })
   const done = (label: string) => ({ label, status: 'done' as const })
   const pending = (label: string) => ({ label, status: 'pending' as const })
-  return [
+  const items: Array<{ label: string, status: 'done' | 'pending' | 'conflict' }> = [
     form.merchantIdentityMode === 'public_profile' || form.merchantDisplayName.trim() ? done('展示身份') : pending('展示身份'),
     form.distributionSystem ? done('接入类型') : pending('接入类型'),
-    Number.isFinite(form.defaultMultiplier) && form.defaultMultiplier > 0 ? done('服务倍率') : pending('服务倍率'),
-    form.billingMode === 'fixed_package'
-      ? enabledPackages.value.length && enabledPackages.value.every(item => item.name.trim() && item.priceCny > 0 && item.panelAllowance > 0 && [1, 3, 7, 30].includes(item.durationDays) && Number.isInteger(item.stockTotal) && item.stockTotal >= 0 && item.modelCatalogIds.length)
+    form.distributionSystem === 'sub2api' || (Number.isFinite(form.defaultMultiplier) && form.defaultMultiplier > 0) ? done('服务倍率') : pending('服务倍率'),
+  ]
+  if (!isLimitedQuotaMode.value) {
+    if (form.billingMode === 'fixed_package') {
+      items.push(enabledPackages.value.length && enabledPackages.value.every(item => item.name.trim() && item.priceCny > 0 && item.panelAllowance > 0 && [1, 3, 7, 30].includes(item.durationDays) && Number.isInteger(item.stockTotal) && item.stockTotal >= 0 && item.modelCatalogIds.length)
         ? done('套餐配置')
-        : pending('套餐配置')
-      : form.cnyPerUsdCredit && form.cnyPerUsdCredit > 0 ? done('额度售价') : pending('额度售价'),
-    ...(form.billingMode === 'metered_credit'
-      ? [
-          form.availableCreditUsd && form.availableCreditUsd > 0 ? done('可售额度') : pending('可售额度'),
-          beijingDateTimeInputToISOString(form.quotaExpiresAt) ? done('有效时间') : pending('有效时间'),
-        ]
-      : []),
+        : pending('套餐配置'))
+    } else {
+      items.push(
+        form.cnyPerUsdCredit && form.cnyPerUsdCredit > 0 ? done('额度售价') : pending('额度售价'),
+        form.availableCreditUsd && form.availableCreditUsd > 0 ? done('可售额度') : pending('可售额度'),
+        beijingDateTimeInputToISOString(form.quotaExpiresAt) ? done('有效时间') : pending('有效时间'),
+      )
+    }
+  }
+  items.push(
     accountPaymentSettingsComplete.value && paymentSettingsComplete.value ? done('收款方式') : pending('收款方式'),
+    form.declaredTtftBand && form.recommendedConcurrency > 0 && beijingDateTimeInputToISOString(form.performanceConfirmedAt) ? done('服务体验声明') : pending('服务体验声明'),
     form.providerCategory ? done('模型大类') : pending('模型大类'),
     incompatibleSelectedModels.value.length ? conflict('具体模型') : form.selectedModels.some(item => item.enabled) ? done('具体模型') : pending('具体模型'),
     form.merchantNote.trim() ? done('备注信息') : pending('备注信息'),
-  ]
+  )
+  return items
 })
 const publishAssistant = computed(() => apiPublishAssistantSummary(completeness.value))
 
 const risks = computed(() => {
   const rows: string[] = []
-  rows.push('API 细节和用量核对由双方站外确认，平台不保存凭据，也不提供实时校验。')
+  rows.push(isLimitedQuotaMode.value
+    ? '额度、总价、模型倍率、库存和失效时间将在下一步设置；当前页面只保存关联的基础服务。'
+    : 'API 细节和用量核对由双方站外确认，平台不保存凭据，也不提供实时校验。')
   if (incompatibleSelectedModels.value.length) rows.push('当前存在不属于所选模型大类的模型，需清空后才能提交。')
   return rows
 })
@@ -343,6 +424,44 @@ const publishBlockReason = computed(() => {
   if (pendingItem) return `请先补全：${pendingItem.label}。`
   return '请先补全发布配置。'
 })
+const selectedModelSummary = computed(() => selectedModels.value.map(item => item.displayName).join(' / ') || '待选择模型')
+const paymentSummary = computed(() => {
+  const labels = enabledPayments.value.map(option => paymentMethodLabels[option.paymentMethod])
+  return labels.length ? `${labels.join(' / ')} · ${form.paymentWindowMinutes} 分钟确认` : '收款方式待配置'
+})
+const stepOneSummary = computed(() => {
+  if (isLimitedQuotaMode.value) return '限时额度包 · 当前先配置可复用基础服务'
+  if (isFixedPackageMode.value) {
+    const totalStock = enabledPackages.value.reduce((sum, item) => sum + item.stockTotal, 0)
+    return `限时流量包 · ${enabledPackages.value.length} 个套餐 · 总库存 ${totalStock}`
+  }
+  const expiry = form.quotaExpiresAt ? form.quotaExpiresAt.slice(0, 10).replaceAll('-', '/') : '待填写有效期'
+  return `自由额度 · ¥${form.cnyPerUsdCredit ?? 0} / $1 · 可售 $${form.availableCreditUsd ?? 0} · 有效至 ${expiry}`
+})
+const stepTwoSummary = computed(() => {
+  const multiplier = form.distributionSystem === 'sub2api' ? '1.00x' : `${form.defaultMultiplier.toFixed(2)}x`
+  return `${form.distributionSystem === 'sub2api' ? 'Sub2API' : '其他 API 接入'} · ${providerCategoryLabels[form.providerCategory]} · ${selectedModelSummary.value} · ${multiplier}`
+})
+const stepThreeSummary = computed(() => `${paymentSummary.value} · ${form.merchantIdentityMode === 'store_alias' ? '商家展示名' : '公开个人身份'}`)
+const primaryActionLabel = computed(() => {
+  if (publishMutation.isPending.value) return '处理中'
+  if (isLimitedQuotaMode.value) {
+    return currentStep.value === 1 ? '继续：配置基础服务' : '保存基础服务，下一步设置额度包'
+  }
+  if (currentStep.value === 1) return '继续：设置接入与模型'
+  if (currentStep.value === 2) return '继续：交易与服务'
+  if (currentStep.value === 3) return '检查并预览'
+  return isFixedPackageMode.value ? '发布限时流量包' : '发布自由额度服务'
+})
+const actionHeading = computed(() => {
+  if (isLimitedQuotaMode.value) return currentStep.value === 1 ? '下一步：配置基础服务' : '下一步：设置额度包'
+  return publishSteps.value[currentStep.value - 1]?.title ?? '发布 API 额度'
+})
+const actionBlockReason = computed(() => {
+  if (isLimitedQuotaMode.value && currentStep.value === 2) return publishBlockReason.value
+  if (!isLimitedQuotaMode.value && currentStep.value === 4) return publishBlockReason.value
+  return ''
+})
 
 const publishMutation = useMutation({
   mutationFn: () => {
@@ -353,7 +472,7 @@ const publishMutation = useMutation({
       status: 'reviewing',
     })
   },
-  async onSuccess() {
+  async onSuccess(service) {
     formDirty.value = false
     await invalidateApiServicePublishQueries()
     trackAnalytics('api_service_publish_success', {
@@ -363,8 +482,15 @@ const publishMutation = useMutation({
       delivery_mode: form.deliveryModes[0],
       minimum_purchase_cny: form.minimumPurchaseCny,
     })
-    toast.success('API 服务已发布并开启接单。')
-    await router.replace('/my/api-services')
+    toast.success(isLimitedQuotaMode.value
+      ? '基础服务已保存，继续设置额度包。'
+      : isFixedPackageMode.value
+        ? '限时流量包已发布并开启接单。'
+        : '自由额度服务已发布并开启接单。')
+    const destination = isLimitedQuotaMode.value
+      ? `/api-market/quota/new?serviceId=${service.id}`
+      : '/my/api-services'
+    await router.replace(destination)
   },
   onError(error) {
     toast.error(error instanceof Error ? error.message : 'API 服务发布失败，请检查配置后重试。')
@@ -379,8 +505,12 @@ async function invalidateApiServicePublishQueries() {
   await queryClient.invalidateQueries({ queryKey: ['notifications'] })
 }
 
-function setStoreAliasVisibility(event: Event) {
-  form.merchantIdentityMode = event.target instanceof HTMLInputElement && event.target.checked ? 'store_alias' : 'public_profile'
+function setSellingMode(value: SellingMode) {
+  sellingMode.value = value
+  form.billingMode = 'metered_credit'
+  currentStep.value = 1
+  completedSteps.value = []
+  setErrors({})
 }
 
 function setDistribution(value: DistributionSystem) {
@@ -418,9 +548,70 @@ function setModelMultiplier(id: string, rawValue: string) {
   selection.multiplierOverride = value === '' ? null : Number(value)
 }
 
+async function focusStep(step: ApiServicePublishStep) {
+  await nextTick()
+  const section = document.getElementById(`publish-step-${step}`)
+  section?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  const target = section?.querySelector<HTMLElement>('[aria-invalid="true"]')
+    ?? section?.querySelector<HTMLElement>('input, textarea, button, [tabindex="0"]')
+    ?? section?.querySelector<HTMLElement>('[data-publish-step-heading]')
+  target?.focus({ preventScroll: true })
+}
+
+function selectStep(step: number) {
+  if (step < 1 || step > 4) return
+  const target = step as ApiServicePublishStep
+  if (target !== currentStep.value && !completedSteps.value.includes(target)) return
+  currentStep.value = target
+  setErrors({})
+  void focusStep(target)
+}
+
+function completeCurrentStep() {
+  if (!validateStep(currentStep.value)) {
+    toast.warning(firstError(errors) ?? '请先完成当前步骤。')
+    void focusStep(currentStep.value)
+    return false
+  }
+  completedSteps.value = completePublishStep(completedSteps.value, currentStep.value) as ApiServicePublishStep[]
+  return true
+}
+
+function continueWorkflow() {
+  if (!completeCurrentStep()) return
+  if (isLimitedQuotaMode.value && currentStep.value === 2) {
+    publishService()
+    return
+  }
+  if (currentStep.value < 4) {
+    currentStep.value = (currentStep.value + 1) as ApiServicePublishStep
+    void focusStep(currentStep.value)
+  }
+}
+
+function goBack() {
+  if (currentStep.value === 1) return
+  currentStep.value = (currentStep.value - 1) as ApiServicePublishStep
+  setErrors({})
+  void focusStep(currentStep.value)
+}
+
+function runPrimaryAction() {
+  if (!isLimitedQuotaMode.value && currentStep.value === 4) {
+    publishService()
+    return
+  }
+  continueWorkflow()
+}
+
 function publishService() {
   syncHiddenPublishFields()
-  if (!validate(true)) {
+  if (!validateAll()) {
+    const errorStep = firstErrorStep(errors, currentFieldSteps()) as ApiServicePublishStep | undefined
+    if (errorStep) {
+      currentStep.value = errorStep
+      void focusStep(errorStep)
+    }
     toast.warning(firstError(errors) ?? '请先补全发布配置。')
     return
   }
@@ -429,6 +620,10 @@ function publishService() {
 
 function preview() {
   syncHiddenPublishFields()
+  if (window.matchMedia('(min-width: 1241px)').matches) {
+    document.querySelector<HTMLElement>('.api-publish-responsive-preview')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    return
+  }
   previewOpen.value = true
 }
 
@@ -465,141 +660,153 @@ function confirmProviderCategoryChange() {
 </script>
 
 <template>
-  <div class="api-publish-page space-y-4 pb-20 md:pb-0" @input="formDirty = true" @change="formDirty = true">
-    <div class="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
+  <div class="api-publish-page space-y-4 pb-20" @input="formDirty = true" @change="formDirty = true">
+    <div class="flex flex-col gap-2 md:flex-row md:items-start md:justify-between">
       <div>
-        <h1 class="text-2xl font-semibold md:text-3xl">发布 API 额度</h1>
-        <p class="mt-2 max-w-3xl text-sm text-muted-foreground">快速发布可售额度；买家创建订单后，双方站外确认接入细节。</p>
+        <h1 class="text-xl font-semibold">发布 API 额度</h1>
+        <p class="mt-1 max-w-3xl text-xs leading-5 text-muted-foreground sm:text-sm">
+          {{ isLimitedQuotaMode
+            ? '先配置可复用的 API 基础服务，下一步再设置额度包规格、价格、库存和放量时间。'
+            : isFixedPackageMode
+              ? '买家选择固定价格的限时流量包，订单保留套餐价格、额度、模型和有效期快照。'
+              : '买家自定购买金额，系统按你的美元额度售价创建订单。' }}
+        </p>
       </div>
       <div class="flex gap-2">
         <Button variant="outline" @click="preview"><Eye class="h-4 w-4" />预览</Button>
       </div>
     </div>
 
-    <div class="flex gap-3 rounded-lg border border-primary/20 bg-primary/5 px-4 py-3 text-sm leading-6 text-foreground">
-      <ShieldCheck class="mt-0.5 h-4 w-4 shrink-0 text-primary" />
-      <span>{{ apiQuotaBoundaryNotice }}</span>
-    </div>
+    <PublishWorkflowStepper
+      :steps="publishSteps"
+      :current-step="currentStep"
+      :completed-steps="completedSteps"
+      @select="selectStep"
+    />
 
-    <div class="rounded-lg border border-border bg-card p-4 shadow-sm">
-      <div class="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
-        <div>
-          <div class="text-sm font-medium">发布必填 {{ publishAssistant.doneCount }} / {{ publishAssistant.totalCount }}</div>
-          <p class="mt-1 text-xs leading-5 text-muted-foreground">{{ publishAssistant.topPendingText }}</p>
-        </div>
-        <div class="flex flex-wrap gap-2">
-          <span class="rounded-full border border-warning/25 bg-warning/10 px-3 py-1 text-xs font-medium text-warning">待补 {{ publishAssistant.pendingCount }}</span>
-          <span v-if="publishAssistant.conflictCount" class="rounded-full border border-destructive/25 bg-destructive/10 px-3 py-1 text-xs font-medium text-destructive">冲突 {{ publishAssistant.conflictCount }}</span>
-          <span class="rounded-full border border-success/25 bg-success/10 px-3 py-1 text-xs font-medium text-success">已完成 {{ publishAssistant.doneCount }}</span>
-        </div>
-      </div>
-      <div class="mt-3 h-2 overflow-hidden rounded-full bg-muted">
-        <div class="h-full rounded-full bg-primary" :style="{ width: `${publishAssistant.progressPercent}%` }" />
-      </div>
-    </div>
-
-    <div v-if="errors.sensitive" class="rounded-lg border border-destructive/30 bg-destructive/5 px-4 py-3 text-sm text-destructive">
-      {{ errors.sensitive }}
-    </div>
-    <div class="api-publish-layout grid min-w-0 gap-4 lg:items-start">
-      <section class="min-w-0 space-y-3">
-        <BillingModeSection :form="form" :catalog-by-id="catalogById" :errors="errors" />
-
-        <PriceInventorySection v-if="form.billingMode === 'metered_credit'" :form="form" :errors="errors" />
-
-        <AccountPaymentSummarySection
-          :form="form"
-          :settings="accountPaymentSettingsValue"
-          :loading="paymentSettingsLoading"
-        />
-
-        <ApiAccessSourceSection :form="form" :errors="errors" @set-distribution="setDistribution" @set-default-multiplier="setDefaultMultiplier" />
-
-        <ProviderCategorySelector
-          :model-value="form.providerCategory"
-          :selected-count="selectedModels.length"
-          @update:model-value="requestProviderCategory"
-        />
-
-        <Card class="api-publish-card">
-          <div class="api-publish-card-header">
-            <div class="flex flex-wrap items-start justify-between gap-3">
-              <div>
-                <h2>具体模型</h2>
-                <p>搜索并勾选要出售的模型；所选模型按实际消耗额度计算。</p>
+    <div class="api-publish-layout grid min-w-0 gap-3 lg:items-start">
+      <section class="api-publish-editor min-w-0 space-y-3">
+        <PublishStepSection
+          :step="1"
+          title="选择销售方式"
+          description="选择自由额度或限时额度包，并填写当前方式所需的价格与额度。"
+          :status="publishStepStatus(1, currentStep, completedSteps)"
+          :summary="stepOneSummary"
+          @edit="selectStep"
+        >
+          <div class="space-y-3">
+            <SellingModeSelector :model-value="sellingMode" @update:model-value="setSellingMode" />
+            <div class="flex gap-2 rounded-md border border-primary/15 bg-primary/5 px-3 py-2 text-xs leading-5 text-foreground">
+              <Info class="mt-0.5 h-3.5 w-3.5 shrink-0 text-primary" />
+              <div class="min-w-0">
+                <span class="font-semibold">买家流程：</span>
+                <span>{{ isLimitedQuotaMode || isFixedPackageMode ? '选择额度包 → 创建订单 → 站外付款 → 卖家确认收款 → 获取交付凭证' : '填写购买金额 → 创建订单 → 站外付款 → 卖家确认收款 → 获取交付凭证' }}</span>
+                <span class="ml-2 text-muted-foreground">平台记录订单，不代收款。</span>
               </div>
-              <Badge variant="model">{{ selectedModels.length }} 个模型</Badge>
+            </div>
+            <div v-if="isLimitedQuotaMode" class="flex gap-2 rounded-md border border-orange-200 bg-orange-50/60 px-3 py-2 text-xs leading-5 text-orange-950">
+              <PackageCheck class="mt-0.5 h-4 w-4 shrink-0 text-orange-600" />
+              <div><span class="font-semibold">下一步设置额度包：</span><span class="text-orange-900/75">美元额度、总价、倍率、库存、放量和失效时间。</span></div>
+            </div>
+            <div v-else class="space-y-3">
+              <BillingModeSection :form="form" :catalog-by-id="catalogById" :errors="errors" />
+              <PriceInventorySection v-if="form.billingMode === 'metered_credit'" :form="form" :errors="errors" />
             </div>
           </div>
-          <div class="api-publish-card-body">
-            <div v-if="incompatibleSelectedModels.length" class="mb-4 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
-              当前存在不属于所选模型大类的模型，请切换模型大类并确认清空，或手动移除冲突模型。
-            </div>
-            <div v-if="catalogLoading" class="rounded-lg border border-border bg-background p-4 text-sm text-muted-foreground">正在加载平台模型目录...</div>
-            <template v-else>
-              <ModelMultiSelect :form="form" :provider-category="form.providerCategory" :catalog="filteredCatalog" :errors="errors" @toggle-model="toggleModel" />
-              <SelectedModelsPricingTable
-                class="mt-4"
-                :form="form"
-                :catalog-by-id="catalogById"
-                @remove-model="removeModel"
-                @set-multiplier="setModelMultiplier"
-              />
+        </PublishStepSection>
+
+        <PublishStepSection
+          :step="2"
+          :title="isLimitedQuotaMode ? '配置基础服务' : '设置接入与模型'"
+          :description="isLimitedQuotaMode ? '配置额度包需要复用的接入、模型、收款和展示信息。' : '告诉买家支持哪些接入方式和模型。'"
+          :status="publishStepStatus(2, currentStep, completedSteps)"
+          :summary="stepTwoSummary"
+          @edit="selectStep"
+        >
+          <div class="space-y-3">
+            <ApiAccessSourceSection :form="form" :errors="errors" :selling-mode="sellingMode" @set-distribution="setDistribution" @set-default-multiplier="setDefaultMultiplier" />
+            <AccountPaymentSummarySection v-if="isLimitedQuotaMode" :form="form" :settings="accountPaymentSettingsValue" :loading="paymentSettingsLoading" />
+            <ProviderCategorySelector :model-value="form.providerCategory" :selected-count="selectedModels.length" @update:model-value="requestProviderCategory" />
+            <Card class="api-publish-card">
+              <div class="api-publish-card-header">
+                <div class="flex flex-wrap items-start justify-between gap-3">
+                  <div class="flex items-start gap-2">
+                    <span class="grid h-7 w-7 shrink-0 place-items-center rounded-md bg-blue-50 text-blue-600"><Bot class="h-4 w-4" /></span>
+                    <div><h2>具体模型</h2><p>搜索并勾选要出售的模型。</p></div>
+                  </div>
+                  <Badge variant="model">{{ selectedModels.length }} 个模型</Badge>
+                </div>
+              </div>
+              <div class="api-publish-card-body">
+                <div v-if="incompatibleSelectedModels.length" class="mb-4 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">当前存在不属于所选模型大类的模型，请切换模型大类并确认清空，或手动移除冲突模型。</div>
+                <div v-if="catalogLoading" class="rounded-md border border-border bg-background p-4 text-sm text-muted-foreground">正在加载平台模型目录...</div>
+                <ModelMultiSelect v-else :form="form" :provider-category="form.providerCategory" :catalog="filteredCatalog" :errors="errors" @toggle-model="toggleModel" />
+                <SelectedModelsPricingTable
+                  v-if="!isLimitedQuotaMode && !catalogLoading"
+                  class="mt-4"
+                  :form="form"
+                  :catalog-by-id="catalogById"
+                  @remove-model="removeModel"
+                  @set-multiplier="setModelMultiplier"
+                />
+              </div>
+            </Card>
+            <template v-if="isLimitedQuotaMode">
+              <MerchantNoteSection :form="form" :errors="errors" />
+              <MerchantIdentitySection :form="form" :profile-loading="profileLoading" :display-name-status="merchantDisplayNameStatus" :error="errors.merchantDisplayName" @set-store-alias-visible="setStoreAliasVisible" />
             </template>
           </div>
-        </Card>
+        </PublishStepSection>
 
-        <MerchantNoteSection :form="form" :errors="errors" />
+        <PublishStepSection
+          :step="3"
+          :title="isLimitedQuotaMode ? '设置额度包' : '交易与服务'"
+          :description="isLimitedQuotaMode ? '基础服务保存后，在下一页设置价格、库存与场次。' : '核对收款、服务说明和买家看到的卖家名称。'"
+          :status="publishStepStatus(3, currentStep, completedSteps)"
+          :summary="isLimitedQuotaMode ? '待保存基础服务后继续' : stepThreeSummary"
+          @edit="selectStep"
+        >
+          <div v-if="!isLimitedQuotaMode" class="space-y-3">
+            <div v-if="errors.sensitive" class="rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs text-destructive" role="alert">{{ errors.sensitive }}</div>
+            <AccountPaymentSummarySection :form="form" :settings="accountPaymentSettingsValue" :loading="paymentSettingsLoading" />
+            <MerchantNoteSection :form="form" :errors="errors" />
+            <MerchantIdentitySection :form="form" :profile-loading="profileLoading" :display-name-status="merchantDisplayNameStatus" :error="errors.merchantDisplayName" @set-store-alias-visible="setStoreAliasVisible" />
+          </div>
+        </PublishStepSection>
+
+        <PublishStepSection
+          :step="4"
+          title="确认发布"
+          :description="isLimitedQuotaMode ? '在额度包页面核对库存、场次与交付后发布。' : isFixedPackageMode ? '核对套餐价格、额度、库存、模型和有效期后发布。' : '核对所有公开信息并发布自由额度服务。'"
+          :status="publishStepStatus(4, currentStep, completedSteps)"
+          :summary="isLimitedQuotaMode ? '待设置额度包' : '发布前完整核对'"
+          @edit="selectStep"
+        >
+          <div v-if="!isLimitedQuotaMode" class="api-publish-confirm-list">
+            <div><span>销售方式与定价</span><strong>{{ stepOneSummary }}</strong></div>
+            <div><span>接入与模型</span><strong>{{ stepTwoSummary }}</strong></div>
+            <div><span>交易与服务</span><strong>{{ stepThreeSummary }}</strong></div>
+            <p class="text-xs leading-5 text-muted-foreground">发布后买家可按当前快照创建订单；平台记录订单，不代收款，也不保存 API Key。</p>
+          </div>
+        </PublishStepSection>
       </section>
 
-      <ApiServicePublishPreview
-        :form="form"
-        :catalog-by-id="catalogById"
-        :completeness="completeness"
-        :risks="risks"
-        :quota-for-minimum-purchase="quotaForMinimumPurchase"
-      />
+      <ResponsivePublishPreview v-model:open="previewOpen" :title="isLimitedQuotaMode ? '限时额度包基础服务预览' : isFixedPackageMode ? '限时流量包预览' : '自由额度预览'" :description="isLimitedQuotaMode ? '额度包价格、库存和时间将在下一步设置。' : '根据当前表单实时生成。'">
+        <ApiServicePublishPreview :form="form" :catalog-by-id="catalogById" :completeness="completeness" :risks="risks" :quota-for-minimum-purchase="quotaForMinimumPurchase" :selling-mode="sellingMode" :preview-only="currentStep === 4" />
+      </ResponsivePublishPreview>
     </div>
 
-    <Card class="p-4">
-      <div class="space-y-3">
-        <div class="font-semibold">展示身份</div>
-        <p class="text-sm text-muted-foreground">默认不公开社区身份，仅展示商家展示名；买家创建订单后再站外确认 API 细节。</p>
-        <label class="flex items-start gap-2 text-sm">
-          <input
-            type="checkbox"
-            class="mt-0.5 h-4 w-4 accent-primary"
-            :checked="form.merchantIdentityMode === 'store_alias'"
-            @change="setStoreAliasVisibility"
-          />
-          <span>
-            不公开社区身份，仅展示商家展示名
-            <span class="mt-0.5 block text-xs text-muted-foreground">买家仍可看到已绑定 linux.do、信任等级、交易评价与纠纷记录。</span>
-          </span>
-        </label>
-        <div v-if="form.merchantIdentityMode === 'store_alias'" class="max-w-md rounded-md border border-border bg-muted/35 px-3 py-2">
-          <div class="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-            <div class="min-w-0">
-              <div class="text-xs font-medium text-muted-foreground">商家展示名</div>
-              <div class="mt-1 truncate text-sm font-semibold">{{ form.merchantDisplayName || (profileLoading ? '正在读取个人资料...' : '待设置显示名称') }}</div>
-            </div>
-            <RouterLink to="/my/profile" class="shrink-0">
-              <Button size="sm" variant="outline">
-                去个人资料修改 <ExternalLink class="h-3.5 w-3.5" />
-              </Button>
-            </RouterLink>
-          </div>
-          <p v-if="errors.merchantDisplayName" class="text-xs text-destructive">{{ errors.merchantDisplayName }}</p>
-          <p v-else class="text-xs leading-5 text-muted-foreground">{{ merchantDisplayNameStatus }}</p>
-        </div>
-      </div>
-    </Card>
-
-    <div class="sticky bottom-0 z-30 border-t border-border bg-background/95 p-3 shadow-lg backdrop-blur md:static md:rounded-xl md:border md:bg-card md:p-4 md:shadow-sm">
-      <div class="grid gap-2 md:flex md:items-center md:justify-between">
-        <p v-if="publishBlockReason" class="text-xs leading-5 text-warning md:max-w-xl">{{ publishBlockReason }}</p>
-        <div class="md:ml-auto md:shrink-0">
-          <Button class="w-full md:w-auto" :disabled="publishMutation.isPending.value || !canSubmit" @click="publishService"><Send class="h-4 w-4" />{{ publishMutation.isPending.value ? '发布中' : !accountPaymentSettingsComplete ? '先配置账号收款' : !paymentSettingsComplete ? '先配置收款方式' : form.billingMode === 'fixed_package' ? '发布限时流量包' : '发布 API 额度' }}</Button>
+    <div class="sticky bottom-0 z-30 -mx-4 border-t border-border bg-background/95 px-4 py-2.5 shadow-lg backdrop-blur md:mx-0 md:rounded-lg md:border md:bg-card/95">
+      <div class="grid gap-2 md:grid-cols-[minmax(0,1fr)_auto] md:items-center">
+        <div class="hidden md:block"><div class="font-semibold">{{ actionHeading }}</div><p class="text-xs text-muted-foreground">发布必填 {{ publishAssistant.doneCount }} / {{ publishAssistant.totalCount }} · {{ publishAssistant.topPendingText }}</p></div>
+        <div class="grid gap-1.5 md:flex md:shrink-0 md:items-center md:gap-3">
+          <Button v-if="currentStep > 1" variant="outline" :disabled="publishMutation.isPending.value" @click="goBack"><ArrowLeft class="h-4 w-4" />上一步</Button>
+          <Button :disabled="publishMutation.isPending.value" @click="runPrimaryAction">
+            <Send v-if="!isLimitedQuotaMode && currentStep === 4" class="h-4 w-4" />
+            <ArrowRight v-else class="h-4 w-4" />
+            {{ primaryActionLabel }}
+          </Button>
+          <p v-if="actionBlockReason" class="line-clamp-2 max-w-sm text-xs leading-5 text-warning md:text-right">{{ actionBlockReason }}</p>
         </div>
       </div>
     </div>
@@ -623,22 +830,5 @@ function confirmProviderCategoryChange() {
         </div>
       </Card>
     </div>
-
-    <Dialog v-model:open="previewOpen">
-      <DialogContent class="max-h-[90dvh] overflow-y-auto sm:max-w-xl">
-        <DialogHeader>
-          <DialogTitle>API 额度预览</DialogTitle>
-          <DialogDescription>发布前确认买家将看到的核心信息。</DialogDescription>
-        </DialogHeader>
-        <ApiServicePublishPreview
-          :form="form"
-          :catalog-by-id="catalogById"
-          :completeness="completeness"
-          :risks="risks"
-          :quota-for-minimum-purchase="quotaForMinimumPurchase"
-          preview-only
-        />
-      </DialogContent>
-    </Dialog>
   </div>
 </template>
