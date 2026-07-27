@@ -53,7 +53,8 @@ command -v "${GO_BIN}" >/dev/null 2>&1 ||
 ready=false
 for _ in $(seq 1 60); do
   if "${DOCKER_BIN}" exec "${postgres_container}" \
-    pg_isready --quiet --username "${POSTGRES_USER}" --dbname postgres; then
+    pg_isready --quiet --host 127.0.0.1 \
+      --username "${POSTGRES_USER}" --dbname postgres; then
     ready=true
     break
   fi

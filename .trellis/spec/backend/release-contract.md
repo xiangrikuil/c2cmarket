@@ -156,6 +156,7 @@ curl -fsS http://127.0.0.1:8080/version
 .github/workflows/ci.yml
 jobs.release-gate.needs
 bash scripts/ci-postgres-integration.sh
+docker exec <postgres-container> pg_isready --host 127.0.0.1
 node scripts/check-security-headers.mjs
 node scripts/check-compose-exposure.mjs
 ```
@@ -185,6 +186,11 @@ release-gate
   PostgreSQL 18 integration migrates three empty databases through
   `database.ExpectedMigrationVersion` with `dirty=false` and verifies the
   Version 65→66 legacy-constraint upgrade path in a fourth isolated database.
+- PostgreSQL integration readiness must probe `127.0.0.1` from inside the
+  container. The official PostgreSQL image starts a temporary Unix-socket-only
+  initialization server before restarting into the final TCP server; a
+  socket-default `pg_isready` success is not evidence that migration commands
+  can safely begin.
 - Contract checks cover routes, generated OpenAPI files, migrations, security
   headers, Compose exposure, commit-only source packaging, and whitespace.
 - Gitleaks scans full Git history. Trivy scans both the repository filesystem
@@ -208,6 +214,7 @@ release-gate
 | Workflow action is tag-only or unpinned | Static review/actionlint blocks the change |
 | Checkout SHA differs from `GITHUB_SHA` | Image and final release checks fail |
 | Checkout has tracked or untracked release input | Image/release clean-source check fails |
+| `pg_isready` observes only the temporary initialization Unix socket | Keep retrying; migration and database creation may start only after the loopback TCP probe succeeds. |
 | PostgreSQL migration is dirty or not current | Integration gate fails |
 | OpenAPI generated snapshot differs | Contracts job fails |
 | High/critical filesystem or image finding exists | Trivy job fails |
@@ -217,9 +224,12 @@ release-gate
 
 ### 5. Good / Base / Bad Cases
 
-- Good: all eight prerequisite jobs succeed for one full SHA, the image labels
-  and SBOM identify that SHA, and `release-gate` succeeds.
+- Good: all eight prerequisite jobs succeed for one full SHA, PostgreSQL
+  readiness proves the final loopback TCP service is accepting connections,
+  the image labels and SBOM identify that SHA, and `release-gate` succeeds.
 - Base: a pull request runs the same gates without publishing or deploying.
+- Bad: `pg_isready` omits `--host`, reports the initialization socket ready,
+  and `createdb` races the PostgreSQL entrypoint restart.
 - Bad: treating a green unit-test job as release approval while image scan or
   PostgreSQL integration was skipped.
 - Bad: rebuilding on the server from a mutable branch after CI scanned a
@@ -246,6 +256,11 @@ node scripts/check-security-headers.mjs
 node scripts/check-compose-exposure.mjs
 node scripts/test-package-source.mjs
 ```
+
+The PostgreSQL gate must pass from both cold and warm image starts, migrate all
+empty databases to `ExpectedMigrationVersion` with `dirty=false`, and verify
+the supported Version 65→66 path. Its readiness command must contain
+`--host 127.0.0.1`.
 
 Local release evidence additionally scans Git history, the filesystem, and the
 exact-commit image, then generates and parses a non-empty SPDX JSON SBOM.
@@ -276,4 +291,19 @@ release-gate:
     - secret-scan
     - filesystem-scan
     - image
+```
+
+#### Wrong: probe the entrypoint's temporary Unix socket
+
+```bash
+docker exec "${postgres_container}" \
+  pg_isready --quiet --username "${POSTGRES_USER}" --dbname postgres
+```
+
+#### Correct: wait for the final loopback TCP server
+
+```bash
+docker exec "${postgres_container}" \
+  pg_isready --quiet --host 127.0.0.1 \
+    --username "${POSTGRES_USER}" --dbname postgres
 ```
