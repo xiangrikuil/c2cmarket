@@ -99,7 +99,7 @@ const highlightedTaskKey = ref<string | null>(null)
 const errors = reactive<FieldErrors<Field>>({})
 const publishReturnTo = '/carpools/new'
 const publishLoginRoute = { path: '/login', query: { returnTo: publishReturnTo } }
-let highlightTimer: ReturnType<typeof window.setTimeout> | null = null
+let highlightTimer: ReturnType<typeof setTimeout> | null = null
 
 const form = reactive<CarpoolPublishForm>({
   linuxDoTopicUrl: '',
@@ -469,8 +469,8 @@ async function jumpToTask(key: PublishTaskKey | string) {
   const focusable = target.querySelector<HTMLElement>('input, textarea, button, [tabindex]:not([tabindex="-1"])')
   focusable?.focus({ preventScroll: true })
   highlightedTaskKey.value = key
-  if (highlightTimer) window.clearTimeout(highlightTimer)
-  highlightTimer = window.setTimeout(() => {
+  if (highlightTimer) clearTimeout(highlightTimer)
+  highlightTimer = setTimeout(() => {
     highlightedTaskKey.value = null
   }, 1200)
 }

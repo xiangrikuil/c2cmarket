@@ -65,6 +65,8 @@ type Order struct {
 	RequestedUSDAllowanceSnapshot string
 	CNYPerUSDAllowanceSnapshot    string
 	PricingSnapshot               string
+	PackageStockReserved          bool
+	PackageExpiresAt              *time.Time
 	APIQuotaBatchID               string
 	APIQuotaOfferID               string
 	APIQuotaSaleRoundID           string

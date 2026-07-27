@@ -41,6 +41,7 @@ const title = computed(() => isLimitedQuotaMode.value
   : generatedTitle(props.form, props.catalogById))
 const merchantDisplayName = computed(() => props.form.merchantIdentityMode === 'store_alias' ? props.form.merchantDisplayName.trim() || '待设置商家展示名' : '公开个人身份')
 const selectedModels = computed(() => selectedCatalogItems(props.form, props.catalogById))
+const previewPackage = computed(() => props.form.billingMode === 'fixed_package' ? props.form.packages.find(item => item.enabled) ?? null : null)
 const quotaExpiresAtLabel = computed(() => props.form.quotaExpiresAt ? props.form.quotaExpiresAt.replace('T', ' ') : '待填写')
 const paymentSummary = computed(() => {
   const labels = enabledPaymentOptions(props.form).map(option => paymentMethodLabels[option.paymentMethod])
@@ -114,18 +115,20 @@ const buyerFlow = [
       </div>
     </div>
 
-    <Card class="api-publish-preview-card overflow-hidden p-0 shadow-sm" :class="isLimitedQuotaMode ? 'is-limited' : 'is-free'">
+    <Card class="api-publish-preview-card overflow-hidden p-0 shadow-sm" :class="isLimitedQuotaMode || previewPackage ? 'is-limited' : 'is-free'">
       <div
         class="border-b p-3"
-        :class="isLimitedQuotaMode ? 'border-orange-200 bg-orange-50/70' : 'border-emerald-200 bg-emerald-50/70'"
+        :class="isLimitedQuotaMode || previewPackage ? 'border-orange-200 bg-orange-50/70' : 'border-emerald-200 bg-emerald-50/70'"
       >
         <div class="flex items-center justify-between gap-3">
-          <div class="flex items-center gap-2 text-xs font-medium" :class="isLimitedQuotaMode ? 'text-orange-800' : 'text-emerald-800'">
-            <TimerReset v-if="isLimitedQuotaMode" class="h-4 w-4" />
+          <div class="flex items-center gap-2 text-xs font-medium" :class="isLimitedQuotaMode || previewPackage ? 'text-orange-800' : 'text-emerald-800'">
+            <TimerReset v-if="isLimitedQuotaMode || previewPackage" class="h-4 w-4" />
             <PackageOpen v-else class="h-4 w-4" />
             买家看到的内容
           </div>
-          <Badge :variant="isLimitedQuotaMode ? 'status' : 'trust'">{{ isLimitedQuotaMode ? '限时额度包' : '自由额度' }}</Badge>
+          <Badge :variant="isLimitedQuotaMode ? 'status' : previewPackage ? 'model' : 'trust'">
+            {{ isLimitedQuotaMode ? '限时额度包' : previewPackage ? '限时流量包' : '自由额度' }}
+          </Badge>
         </div>
         <div class="mt-2 flex items-center gap-2">
           <span v-if="providerIconSrc" class="grid h-8 w-8 shrink-0 place-items-center rounded-md border border-border bg-white">
@@ -141,7 +144,29 @@ const buyerFlow = [
         </div>
       </div>
 
-      <div v-if="isLimitedQuotaMode" class="border-b border-orange-100 px-3 py-2.5">
+      <template v-if="previewPackage">
+        <div class="grid gap-2 px-3 py-3 sm:grid-cols-2 lg:grid-cols-1 xl:grid-cols-2">
+          <div class="rounded-md border border-orange-200 bg-orange-50/55 p-2.5">
+            <div class="text-xs text-orange-800">套餐价格</div>
+            <div class="mt-1 text-lg font-semibold text-orange-950">¥{{ previewPackage.priceCny }}</div>
+          </div>
+          <div class="rounded-md border border-border bg-muted/35 p-2.5">
+            <div class="text-xs text-muted-foreground">面板额度</div>
+            <div class="mt-1 text-lg font-semibold">{{ previewPackage.panelAllowance }}</div>
+          </div>
+        </div>
+
+        <dl class="api-publish-preview-list px-3 pb-3 text-xs">
+          <div><dt>套餐有效期</dt><dd>{{ previewPackage.durationDays }} 天，交付后开始</dd></div>
+          <div><dt>套餐库存</dt><dd>{{ previewPackage.stockTotal }} 份</dd></div>
+          <div><dt>套餐模型</dt><dd>{{ previewPackage.modelCatalogIds.map(id => catalogById.get(id)?.displayName ?? id).join(' / ') || '待选择' }}</dd></div>
+          <div><dt>收款方式</dt><dd>{{ paymentSummary }}</dd></div>
+          <div><dt>接入类型</dt><dd>{{ distributionLabels[form.distributionSystem] }}</dd></div>
+          <div><dt>平台边界</dt><dd>不担保、不代赔</dd></div>
+        </dl>
+      </template>
+
+      <div v-else-if="isLimitedQuotaMode" class="border-b border-orange-100 px-3 py-2.5">
         <div class="flex gap-2 rounded-md bg-orange-50 p-2.5 text-orange-950">
           <PackageOpen class="mt-0.5 h-4 w-4 shrink-0 text-orange-600" />
           <div>
@@ -151,29 +176,31 @@ const buyerFlow = [
         </div>
       </div>
 
-      <div v-else class="grid gap-2 px-3 py-3 sm:grid-cols-2 lg:grid-cols-1 xl:grid-cols-2">
-        <div class="rounded-md border border-emerald-200 bg-emerald-50/55 p-2.5">
-          <div class="text-xs text-emerald-800">美元额度售价</div>
-          <div class="mt-1 text-lg font-semibold text-emerald-950">¥{{ form.cnyPerUsdCredit ?? 0 }} / $1</div>
+      <template v-else>
+        <div class="grid gap-2 px-3 py-3 sm:grid-cols-2 lg:grid-cols-1 xl:grid-cols-2">
+          <div class="rounded-md border border-emerald-200 bg-emerald-50/55 p-2.5">
+            <div class="text-xs text-emerald-800">美元额度售价</div>
+            <div class="mt-1 text-lg font-semibold text-emerald-950">¥{{ form.cnyPerUsdCredit ?? 0 }} / $1</div>
+          </div>
+          <div class="rounded-md border border-border bg-muted/35 p-2.5">
+            <div class="text-xs text-muted-foreground">可售额度</div>
+            <div class="mt-1 text-lg font-semibold">${{ form.availableCreditUsd ?? 0 }}</div>
+          </div>
         </div>
-        <div class="rounded-md border border-border bg-muted/35 p-2.5">
-          <div class="text-xs text-muted-foreground">可售额度</div>
-          <div class="mt-1 text-lg font-semibold">${{ form.availableCreditUsd ?? 0 }}</div>
-        </div>
-      </div>
 
-      <dl class="api-publish-preview-list px-3 pb-3 text-xs">
-        <div v-for="row in previewRows" :key="row.label">
-          <dt><component :is="row.icon" class="h-3.5 w-3.5" />{{ row.label }}</dt>
-          <dd v-if="row.label === '收款方式'" class="inline-flex items-center justify-end gap-1.5">
-            <span v-if="paymentMethods.length" class="inline-flex -space-x-1">
-              <ApiPaymentMethodIcon v-for="method in paymentMethods" :key="method" :method="method" size="sm" />
-            </span>
-            <span>{{ row.value }}</span>
-          </dd>
-          <dd v-else>{{ row.value }}</dd>
-        </div>
-      </dl>
+        <dl class="api-publish-preview-list px-3 pb-3 text-xs">
+          <div v-for="row in previewRows" :key="row.label">
+            <dt><component :is="row.icon" class="h-3.5 w-3.5" />{{ row.label }}</dt>
+            <dd v-if="row.label === '收款方式'" class="inline-flex items-center justify-end gap-1.5">
+              <span v-if="paymentMethods.length" class="inline-flex -space-x-1">
+                <ApiPaymentMethodIcon v-for="method in paymentMethods" :key="method" :method="method" size="sm" />
+              </span>
+              <span>{{ row.value }}</span>
+            </dd>
+            <dd v-else>{{ row.value }}</dd>
+          </div>
+        </dl>
+      </template>
 
       <div v-if="previewOnly" class="border-t border-border px-3 py-2.5">
         <div class="text-[11px] font-medium text-muted-foreground">服务说明</div>

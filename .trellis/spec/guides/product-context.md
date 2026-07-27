@@ -110,8 +110,8 @@ ChatGPT Plus / Pro 当前初始策略为 `publish_policy=allowed`、`access_mode
 
 Frontend first:
 
-- Vue 3 + Vite + TypeScript.
-- Vue Router.
+- Nuxt 4 + Vue 3 + TypeScript hybrid rendering.
+- Nuxt pages backed by the shared Vue Router route contract.
 - Pinia for auth/UI state.
 - TanStack Query for mock API wrappers.
 - Tailwind CSS and shadcn-vue-style components.

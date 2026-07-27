@@ -2,7 +2,7 @@
 
 ## Scope
 
-This runbook covers the current deployable shape of C2CMarket: Go backend, PostgreSQL, SQL migrations, Vue static frontend build, OAuth login, Alibaba Cloud DirectMail email verification, health/readiness checks, and local smoke validation.
+This runbook covers the current deployable shape of C2CMarket: Go backend, PostgreSQL, SQL migrations, Nuxt 4/Nitro Cloudflare Worker frontend, OAuth login, Alibaba Cloud DirectMail email verification, health/readiness checks, and local smoke validation.
 
 C2CMarket does not deploy payment, escrow, guarantee, credential custody, API proxying, external push, SMS, webhook, or automatic credential delivery services. Production email is limited to profile email verification through Alibaba Cloud DirectMail.
 
@@ -25,7 +25,7 @@ Replace every `CHANGE_ME` value before production use:
 - `OAUTH_REDIRECT_URL`
 - `FRONTEND_ORIGIN`
 - `ALLOWED_ORIGINS`
-- `TRUSTED_PROXIES` after observing the backend container's immediate Tunnel peer
+- `TRUSTED_PROXIES` after observing the backend container's immediate Caddy/Docker bridge peer
 - `CONTACT_ENCRYPTION_KEY`
 - `CONTACT_FINGERPRINT_KEY`
 - `CONTACT_KEY_VERSION`
@@ -40,8 +40,11 @@ Replace every `CHANGE_ME` value before production use:
 - `SMTP_USERNAME`
 - `SMTP_PASSWORD`
 - `MAIL_FROM_ADDRESS`
-- `VITE_API_BASE_URL`
-- Optional Umami tracker fields: `VITE_UMAMI_ENABLED`, `VITE_UMAMI_SCRIPT_URL`, `VITE_UMAMI_WEBSITE_ID`, `VITE_UMAMI_DOMAINS`, `VITE_UMAMI_HOST_URL`
+- `NUXT_PUBLIC_API_MODE`
+- `NUXT_PUBLIC_SITE_URL`
+- `NUXT_PUBLIC_API_BASE_URL`
+- `NUXT_API_BASE_URL`
+- Optional Umami tracker fields: `NUXT_PUBLIC_UMAMI_ENABLED`, `NUXT_PUBLIC_UMAMI_SCRIPT_URL`, `NUXT_PUBLIC_UMAMI_WEBSITE_ID`, `NUXT_PUBLIC_UMAMI_DOMAINS`, `NUXT_PUBLIC_UMAMI_HOST_URL`
 
 Production must keep:
 
@@ -51,8 +54,7 @@ ENABLE_DEV_AUTH=false
 OAUTH_PROVIDER_MODE=oauth2
 EMAIL_PROVIDER=aliyun_directmail
 EMAIL_VERIFICATION_PEPPER=<distinct 32-byte minimum secret>
-VITE_API_MODE=real
-VITE_ENABLE_MOCK=false
+NUXT_PUBLIC_API_MODE=real
 ```
 
 `OAUTH_PROVIDER_MODE=fake` is only for local automated smoke. `/api/v1/auth/dev-session` is only for development/test.
@@ -133,14 +135,14 @@ If the Aliyun DirectMail SMTP account or sender address is not ready yet, keep t
 Optional Umami analytics:
 
 ```text
-VITE_UMAMI_ENABLED=true
-VITE_UMAMI_SCRIPT_URL=https://<umami-origin>/script.js
-VITE_UMAMI_WEBSITE_ID=<website-id>
-VITE_UMAMI_DOMAINS=<frontend-domain>
-VITE_UMAMI_HOST_URL=https://<umami-origin>
+NUXT_PUBLIC_UMAMI_ENABLED=true
+NUXT_PUBLIC_UMAMI_SCRIPT_URL=https://<umami-origin>/script.js
+NUXT_PUBLIC_UMAMI_WEBSITE_ID=<website-id>
+NUXT_PUBLIC_UMAMI_DOMAINS=<frontend-domain>
+NUXT_PUBLIC_UMAMI_HOST_URL=https://<umami-origin>
 ```
 
-Only public tracker configuration belongs in `VITE_*`. Do not expose Umami API keys,
+Only public tracker configuration belongs in `NUXT_PUBLIC_*`. Do not expose Umami API keys,
 admin credentials, share URLs, report URLs, or dashboard-only URLs to the frontend.
 The frontend custom events intentionally send low-cardinality product, price bucket,
 seat bucket, result bucket, entity type, and reason-code fields only. They must not
@@ -148,18 +150,19 @@ include raw search terms, URL query strings, user IDs, contact values, report te
 linux.do identifiers, payment instructions, API keys, tokens, sessions, cookies, or
 panel credentials.
 
-## Cloudflare Pages and Local Backends
+## Cloudflare Workers and VPS Backends
 
 The current release topology serves production and staging frontends from
-Cloudflare Pages and exposes two isolated local backend stacks through one
-Cloudflare Tunnel. Follow
-[`cloudflare-pages-local-backends.md`](./cloudflare-pages-local-backends.md) for
-the authoritative hostnames, Compose project names, Access policy, OAuth
-callbacks, Tunnel ingress, and R2 backup procedure.
+Nuxt/Nitro Cloudflare Workers, with static assets bound to the same Workers,
+and runs two isolated backend stacks on the RackNerd VPS. Cloudflare proxied A
+records reach Caddy with Full (strict) TLS;
+Caddy routes the API hostnames to loopback-only ports 8080 and 8081. Follow
+[`cloudflare-workers-vps-backends.md`](./cloudflare-workers-vps-backends.md) for
+the authoritative hostnames, Compose project names, Caddy/automatic-TLS contract,
+Access policy, OAuth callbacks, and systemd R2 backup procedure.
 
-The Tunnel must own only `api.c2cmarket.shop` and
-`api-staging.c2cmarket.shop`. Pages must own `c2cmarket.shop` and
-`staging.c2cmarket.shop`.
+The VPS owns only the two API origins. The production and staging Workers keep
+`c2cmarket.shop` and `staging.c2cmarket.shop`.
 
 ## Build Release Artifacts
 
@@ -182,7 +185,11 @@ The source command writes a deterministic archive plus `.sha256` under
 sets OCI version, revision, and created labels. Set `BACKEND_IMAGE` in the
 target environment file to exactly `${RELEASE_IMAGE}` before running Compose.
 
-## First Deploy
+## Local or Manual First-Deploy Validation
+
+The commands in this section validate immutable release artifacts before GHCR
+automation is enabled. The normal VPS path does not keep a Git checkout or
+build source; use the branch-driven release under **Regular Release**.
 
 Validate Compose configuration:
 
@@ -221,9 +228,9 @@ curl -fsS http://127.0.0.1:${BACKEND_PORT:-8080}/version
 ```
 
 `/readyz` must report PostgreSQL readiness and `schemaDirty=false`.
-The expected schema version in the current backend is `64`.
+The expected schema version in the current backend is `65`.
 `/version` must report the release version, full resolved Git commit, commit
-time, and `expectedMigrationVersion=64`; the first three values must match the
+time, and `expectedMigrationVersion=65`; the first three values must match the
 image labels inspected above.
 
 After a successful empty-database Bootstrap, clear both Bootstrap variables,
@@ -257,11 +264,12 @@ Referrer-Policy: strict-origin-when-cross-origin
 Strict-Transport-Security: max-age=31536000; includeSubDomains   # production only
 ```
 
-The API policy denies browser content loading. Cloudflare Pages applies the SPA
-policy from `frontend/public/_headers`, including explicit production/staging
-API `connect-src` values. `style-src 'unsafe-inline'` is currently limited to
-Vue runtime style bindings; scripts do not allow `unsafe-eval` or wildcard/HTTP
-sources. Run `node scripts/check-security-headers.mjs` for every policy change.
+The API policy denies browser content loading. The Cloudflare Workers frontend
+applies the policy from `frontend/public/_headers`, including explicit
+production/staging API `connect-src` values. `style-src 'unsafe-inline'` is
+currently limited to Vue runtime style bindings; scripts do not allow
+`unsafe-eval` or wildcard/HTTP sources. Run
+`node scripts/check-security-headers.mjs` for every policy change.
 
 OAuth token exchange and userinfo requests use a dedicated 10-second HTTP client
 timeout and a 1 MiB response-body read limit. Do not log OAuth client secrets,
@@ -313,14 +321,37 @@ contact values. Responses that include full contact values must keep
 Build the frontend in real-backend mode:
 
 ```bash
-VITE_API_MODE=real \
-VITE_API_BASE_URL=https://api.c2cmarket.shop \
+NUXT_PUBLIC_API_MODE=real \
+NUXT_PUBLIC_SITE_URL=https://c2cmarket.shop \
+NUXT_PUBLIC_API_BASE_URL=https://api.c2cmarket.shop \
+NUXT_API_BASE_URL=https://api.c2cmarket.shop \
 pnpm --dir frontend build
 ```
 
-Deploy `frontend/dist/` with a static file server or CDN. The SPA should route all frontend paths to `index.html`; API requests should go to the Go backend origin configured by `VITE_API_BASE_URL`.
-Production builds intentionally fail when `VITE_ENABLE_MOCK=true`, and must not
-ship a mock/demo fallback.
+The build uses Nitro's `cloudflare_module` preset and must produce
+`frontend/.output/server/index.mjs` and
+`frontend/.output/public`. Validate both Worker configurations before publishing:
+
+```bash
+pnpm --dir frontend exec wrangler deploy --dry-run --config ../wrangler.jsonc
+pnpm --dir frontend exec wrangler deploy --dry-run --config ../wrangler.staging.jsonc
+```
+
+Publish production or staging from the repository root with the matching
+Wrangler config. Both configs run the Nitro server entry and bind `.output/public`
+as Worker assets; there is no `dist/` deployment or `index.html` SPA fallback:
+
+```bash
+pnpm --dir frontend exec wrangler deploy --config ../wrangler.jsonc
+pnpm --dir frontend exec wrangler deploy --config ../wrangler.staging.jsonc
+```
+
+After publishing, verify public SSR HTML, a private route's `X-Robots-Tag`, a
+missing public detail's HTTP 404, `/sitemap.xml`, and `/robots.txt` on the target
+hostname. Production robots allow public market crawling; staging and
+`workers.dev` must return `Disallow: /`.
+Production builds require `NUXT_PUBLIC_API_MODE=real` and must not ship a
+mock/demo fallback.
 
 When Umami is enabled, verify the browser loads the configured tracker script and
 that custom events appear in Umami Events. Network checks should show requests to
@@ -356,45 +387,47 @@ For real production OAuth, do not use fake OAuth smoke identities. Use health/re
 
 ## Regular Release
 
-1. Require the GitHub Actions `release-gate` for the exact release SHA, then
-   create and validate the pre-migration backup described in
-   [`../backup-restore.md`](../backup-restore.md).
-2. From a clean worktree, resolve the release ref and build the source archive
-   and backend image with the commands in **Build Release Artifacts**.
-3. Record the source checksum, image digest/OCI labels, Trivy results, and SBOM.
-4. Set the target `.env.production` `BACKEND_IMAGE` to the exact new image and
-   verify the expanded Compose configuration has no backend `build` section:
-   ```bash
-   docker compose -p c2c-prod --env-file .env.production -f compose.yaml -f compose.prod.yaml config
-   ```
-5. Run migrations:
-   ```bash
-   docker compose -p c2c-prod --env-file .env.production -f compose.yaml -f compose.prod.yaml --profile migrate run --rm migrate
-   ```
-6. Restart backend:
-   ```bash
-   docker compose -p c2c-prod --env-file .env.production -f compose.yaml -f compose.prod.yaml --profile app up --no-build -d backend
-   ```
-7. Check `/health`, `/readyz`, `/version`, authenticated `/metrics`, and image
-   OCI labels. The version,
-   full Git SHA, build time, and expected migration version must match the
-   release inputs and current migration contract.
-8. Confirm origin allowlist, response headers, and cookie behavior from the
-   deployed frontend origin.
-9. Build and publish `frontend/dist/` from the same release SHA.
-10. Run smoke validation in a development/test environment that mirrors
-    production data shape and observe the dashboards/alerts in
-    [`../release-checklist.md`](../release-checklist.md).
+The normal backend release is branch-driven:
+
+1. Open a feature PR into `staging`; the `ci` workflow runs backend, race,
+   PostgreSQL, contract, migration-documentation, release-script, frontend
+   type/build/test, secret/filesystem scan, image scan, SBOM, and exact-SHA
+   release gates.
+2. Merging `staging` publishes the exact tested commit to
+   `ghcr.io/xiangrikuil/c2cmarket-backend:<git-sha>` and deploys it to
+   `c2c-staging` / port 8081 through the GitHub `staging` environment.
+3. Validate staging OAuth, email, CORS, health/readiness, and safe core flows.
+4. Open the `staging` to `main` PR. After merge and CI, the immutable production
+   image is published; the GitHub `production` environment waits for reviewer
+   approval.
+5. Production deployment uploads a PostgreSQL backup to R2 before migrations,
+   then pulls the GHCR image, applies migrations, starts the backend with
+   `--no-build`, and verifies `/health` and `/readyz` before changing
+   `/opt/c2cmarket/current`.
+6. Cloudflare Workers Builds independently publishes the frontend for its
+   configured `staging` or `main` branch.
+
+Record the source checksum, image digest/OCI labels, Trivy results, and SBOM
+for the release SHA. After deployment, verify `/health`, `/readyz`, `/version`,
+authenticated `/metrics`, origin allowlists, response headers, and cookie
+behavior from the deployed frontend origin.
+
+The authoritative first-time GitHub/VPS setup, secret names, release directory
+layout, and manual recovery commands are in
+[`cloudflare-workers-vps-backends.md`](./cloudflare-workers-vps-backends.md).
 
 ## Rollback
 
-If a backend image release fails before migrations:
+To roll back only the application version, select the previous successful
+40-character Git SHA and run the deployment script from its release directory:
 
 ```bash
-docker compose -p c2c-prod --env-file .env.production -f compose.yaml -f compose.prod.yaml --profile app up --no-build -d backend
+OLD_SHA=<40-character-git-sha>
+/opt/c2cmarket/releases/production/${OLD_SHA}/scripts/deploy-vps-backend.sh \
+  production \
+  ghcr.io/xiangrikuil/c2cmarket-backend:${OLD_SHA}
+ln -sfn /opt/c2cmarket/releases/production/${OLD_SHA} /opt/c2cmarket/current
 ```
-
-after restoring the previous immutable image reference in `BACKEND_IMAGE`.
 
 If migrations have already run, inspect `backend/migrations/*.down.sql` before rollback. Do not run destructive down migrations against production data without a database backup and explicit operator approval.
 
@@ -408,6 +441,9 @@ no-AAD rows from `aad_v1`. After any contact re-encryption apply batch, do not
 drop this metadata or old keyring entries during rollback. Prefer running the
 previous application against the forward schema when compatible; do not
 automatically execute down migrations.
+
+Migration 65 removes the prelaunch demand schema. Its down migration recreates
+empty tables and indexes only; it cannot restore deleted demand rows.
 
 ## Troubleshooting
 

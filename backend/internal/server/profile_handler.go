@@ -157,6 +157,7 @@ type publicMerchantProfileResponse struct {
 type publicMerchantProfileDTO struct {
 	Username                         string  `json:"username"`
 	DisplayName                      string  `json:"displayName"`
+	AvatarURL                        *string `json:"avatarUrl"`
 	AvatarText                       string  `json:"avatarText"`
 	MerchantID                       string  `json:"merchantId"`
 	Identity                         string  `json:"identity"`
@@ -442,6 +443,7 @@ func toPublicMerchantProfileDTO(value profile.PublicMerchantProfile) publicMerch
 	return publicMerchantProfileDTO{
 		Username:                         value.Slug,
 		DisplayName:                      value.DisplayName,
+		AvatarURL:                        stringPtrOrNil(value.AvatarURL),
 		AvatarText:                       value.AvatarText,
 		MerchantID:                       value.ID,
 		Identity:                         value.Identity,

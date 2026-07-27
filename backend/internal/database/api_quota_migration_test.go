@@ -120,9 +120,56 @@ func TestAPIQuotaDependentMigrationsExist(t *testing.T) {
 		"000060_reputation_engine.down.sql",
 		"000061_source_author_verification.up.sql",
 		"000061_source_author_verification.down.sql",
+		"000062_auth_identity_bootstrap_hardening.up.sql",
+		"000062_auth_identity_bootstrap_hardening.down.sql",
+		"000063_verification_data_lifecycle.up.sql",
+		"000063_verification_data_lifecycle.down.sql",
+		"000064_contact_cipher_aad.up.sql",
+		"000064_contact_cipher_aad.down.sql",
+		"000065_remove_demands.up.sql",
+		"000065_remove_demands.down.sql",
+		"000066_api_service_multiplier_reconciliation.up.sql",
+		"000066_api_service_multiplier_reconciliation.down.sql",
 	} {
 		if _, err := os.Stat(filepath.Join("..", "..", "migrations", name)); err != nil {
 			t.Fatalf("migration file %s is unavailable: %v", name, err)
+		}
+	}
+}
+
+func TestAPIServiceMultiplierReconciliationIsAdditive(t *testing.T) {
+	t.Parallel()
+
+	upSQL := readMigrationForTest(t, "000066_api_service_multiplier_reconciliation.up.sql")
+	for _, required := range []string{
+		"pg_get_constraintdef(oid)",
+		"conname = 'ck_api_service_models_sub2api_multiplier'",
+		"merchant_multiplier[[:space:]]*=",
+		"([^0-9.]|$)",
+		"~*",
+		"ALTER TABLE api_service_models DROP CONSTRAINT",
+	} {
+		if !strings.Contains(upSQL, required) {
+			t.Fatalf("multiplier reconciliation migration missing %q", required)
+		}
+	}
+	for _, forbidden := range []string{
+		"UPDATE api_service_models",
+		"DELETE FROM api_service_models",
+		"ILIKE '%merchant_multiplier = 1%'",
+	} {
+		if strings.Contains(upSQL, forbidden) {
+			t.Fatalf("multiplier reconciliation must not rewrite business rows with %q", forbidden)
+		}
+	}
+
+	downSQL := readMigrationForTest(t, "000066_api_service_multiplier_reconciliation.down.sql")
+	for _, required := range []string{
+		"ADD CONSTRAINT ck_api_service_models_sub2api_multiplier",
+		"CHECK (distribution_system <> 'sub2api' OR merchant_multiplier = 1.0000)",
+	} {
+		if !strings.Contains(downSQL, required) {
+			t.Fatalf("multiplier reconciliation rollback missing %q", required)
 		}
 	}
 }

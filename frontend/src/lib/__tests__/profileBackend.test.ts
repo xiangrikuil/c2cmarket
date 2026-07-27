@@ -10,18 +10,15 @@ function jsonResponse(body: unknown, status = 200) {
   })
 }
 
-async function loadProfileBackend(env: Record<string, string> = {}): Promise<ProfileBackendModule> {
+async function loadProfileBackend(config: { apiMode?: string, apiBaseUrl?: string } = {}): Promise<ProfileBackendModule> {
   vi.resetModules()
-  vi.unstubAllEnvs()
-  for (const [key, value] of Object.entries(env)) {
-    vi.stubEnv(key, value)
-  }
+  const client = await import('../backendClient')
+  client.setBackendRuntimeConfig(config)
   return import('../profileBackend')
 }
 
 afterEach(() => {
   vi.unstubAllGlobals()
-  vi.unstubAllEnvs()
   vi.restoreAllMocks()
   vi.resetModules()
 })
@@ -86,7 +83,7 @@ test('backend profile mapper normalizes nullable array fields', async () => {
       lastActiveAt: null,
     }))
 
-  const { backendMyProfile } = await loadProfileBackend({ VITE_API_MODE: 'real' })
+  const { backendMyProfile } = await loadProfileBackend({ apiMode: 'real' })
   const profile = await backendMyProfile()
 
   assert.deepEqual(profile.badges, [])
@@ -146,7 +143,7 @@ test('public profile adapter preserves unavailable reputation facts as null', as
   })
   vi.stubGlobal('fetch', fetchMock)
 
-  const { backendPublicUserProfile } = await loadProfileBackend({ VITE_API_MODE: 'real' })
+  const { backendPublicUserProfile } = await loadProfileBackend({ apiMode: 'real' })
   const result = await backendPublicUserProfile('truthful')
 
   assert.deepEqual(result.reputations, [])

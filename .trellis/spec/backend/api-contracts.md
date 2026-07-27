@@ -735,7 +735,7 @@ legacy pending_review -> admin approve/request-changes/reject
 - API service creation and update store service root fields, access modes, supported model snapshots, and package rows. API service owner create/action POST endpoints require `Idempotency-Key`; update and state-changing owner/admin actions require `If-Match`.
 - API service review state is `draft -> pending_review -> approved|changes_requested|rejected`; owner publication state is `offline -> online -> owner_paused -> online` plus `online|owner_paused -> offline/changes_requested` for revision; admin moderation is `clear -> admin_suspended -> clear` or `clear|admin_suspended -> removed`.
 - Public API service reads return only services where `reviewStatus=approved`, `publicationStatus=online`, and `moderationStatus=clear`. Public DTOs must not expose owner contact method IDs, owner user IDs, review/admin internals, moderation reasons, or merchant internal notes.
-- `distributionSystem=sub2api` fixes the legacy API service model `merchantMultiplier` to `1.0000` in service validation and database constraints. Limited quota offers own a separate positive `modelMultiplier` that defaults to `1.0000` but may declare another value for every distribution system; see `api-quota-offers.md`.
+- API service model `merchantMultiplier` is a positive merchant declaration for every `distributionSystem`; an omitted value defaults to `1.0000`, but Sub2API does not force that value. Limited quota offers own a separate positive `modelMultiplier` with the same default-only meaning; see `api-quota-offers.md`.
 - API service rows and DTOs must not store or return passwords, API keys, Sub2API keys, sessions, cookies, third-party tokens, panel owner credentials, payment proofs, or platform verification artifacts.
 - API service orderability uses `acceptingOrders` as the owner-controlled willingness flag and `isOrderable` as the server-derived current predicate. First-release public API service list, detail, search, favorite validation/listing, and purchase-intent creation return only orderable services and support `paymentMethod=wechat|alipay`.
 - API purchase intent creation is allowed only for public API services where `reviewStatus=approved`, `publicationStatus=online`, `moderationStatus=clear`, `acceptingOrders=true`, `paymentWindowMinutes` is between 3 and 15, and at least one payment option is enabled. An orderable online service is treated as the owner having pre-consented to receive compliant purchase intents and to disclose the service's selected merchant contact to the successful buyer.
@@ -872,7 +872,7 @@ Backend contract slices must include tests for:
 - Carpool buyer/owner completion confirmation, idempotent replay, completed membership, buyer leave, owner remove, and listing cache decrement.
 - API service owner create/submit/approve/publish/pause/resume/suspend/restore/remove flow, including public visibility changes.
 - API service public DTO boundary, including absence of owner contact method IDs, owner user IDs, review internals, and merchant internal notes.
-- API service database integrity constraints, including fixed Sub2API multiplier and owner-owned contact method selection.
+- API service database integrity constraints, including positive merchant-declared model multipliers and owner-owned contact method selection.
 - API purchase intent create flow, idempotent replay without plaintext body cache, direct merchant contact disclosure with `Cache-Control: no-store`, buyer/owner/admin detail visibility, owner mark-contacted, buyer cancel, owner close, and completed idempotency metadata rows.
 - API purchase intent integrity constraints, including public service predicate rejection, owner self-intent rejection, buyer contact ownership rejection, owner contact availability, requested USD allowance cap rejection, active-intent uniqueness, and absence of API-specific contact-session columns or rows.
 - API order flow, including order settings validation, public orderable list/search filtering, payment method filtering, order create from purchase intent, no payment instructions in create response, audited payment-instruction read with QR-code snapshot, buyer payment summary, owner manual payment confirmation, one-time structured delivery credentials, buyer/seller detail credential visibility, list/admin/public credential non-leakage, forbidden credential-content rejection, duplicate delivery rejection, buyer completion, dispute case creation/binding, payment timeout materialization, and one-order-ever-per-intent uniqueness.
@@ -1341,6 +1341,7 @@ Session user response includes:
 - `callback` must clear the state cookie after successful login.
 - The PostgreSQL auth repository must query `(provider, provider_subject)` first. Existing identities retain their original `user_id` and local username. First login creates a new user, identity, and provider binding in one transaction; username collisions select a deterministic alternative instead of reusing the conflicting row.
 - OAuth userinfo may include an optional `email`. Registration-success email is sent only when the OAuth upsert confirms a newly created user, the provider returned a valid email address, and the user transaction plus session persistence have succeeded. Missing/invalid email skips the registration email; send failure is logged without SMTP credentials and must not block login.
+- linux.do userinfo may encode `id`/`sub` as either a JSON string or an integer. Normalize both forms to the same decimal string before identity upsert; malformed non-scalar IDs remain provider-response failures. Operational diagnostics may log only the provider host, path, method, and status/failure category, never the authorization code, access token, query string, or raw response body.
 - Admin permission comes only from `user_permissions(permission='admin')`; OAuth profile data, including fake OAuth usernames, never grants it. Development smoke that needs an administrator uses `/auth/dev-session` with `ENABLE_DEV_AUTH=true`.
 - Production startup must fail if `ENABLE_DEV_AUTH=true`, `OAUTH_PROVIDER_MODE=fake`, or required oauth2 endpoint/client values are missing.
 - Provider tokens are not part of the durable auth model and must not be written to PostgreSQL.
@@ -1379,6 +1380,7 @@ Session user response includes:
 
 - `cd backend && /opt/homebrew/bin/go test ./...` for config, route parity, and auth behavior.
 - Auth unit tests must assert Argon2id login success, legacy login plus rehash, wrong password no session/no rehash, Argon2id set-password writes, identity ownership/collision isolation, first-admin Bootstrap creation, conflict handling, provenance validation, and no-overwrite reruns.
+- OAuth profile tests must cover linux.do userinfo with integer `id` and the existing string identifier form, and must assert both normalize to the stable string subject used by `auth_identities` and `linux_do_bindings`.
 - OpenAPI YAML parse to verify auth path/schema contract.
 - `scripts/auth-smoke.mjs` against PostgreSQL with `OAUTH_PROVIDER_MODE=fake` and development auth enabled for OAuth start/callback/session, fake admin-like denial, dev-admin route access, and logout.
 - Product-boundary scan for token persistence, plaintext password storage, linux.do official endorsement, platform custody, and automatic credential delivery wording.
@@ -1661,6 +1663,92 @@ handler := middleware.WithRequestID(
 clientIP := middleware.ClientIPFromRequest(r)
 ```
 
+## Scenario: VPS Direct-Origin Runtime Contract
+
+### 1. Scope / Trigger
+
+- Trigger: changing production/staging hosting, Compose exposure, proxy trust, Cloudflare DNS/TLS, database restore, or the production backup service.
+- Scope: both API origins run on the RackNerd VPS; the Cloudflare Workers frontends remain separate and the Mac mini is not a runtime fallback.
+
+### 2. Signatures
+
+```text
+api.c2cmarket.shop         A 192.236.230.132 (proxied) -> Caddy -> 127.0.0.1:8080
+api-staging.c2cmarket.shop A 192.236.230.132 (proxied) -> Caddy -> 127.0.0.1:8081
+
+docker compose -p c2c-prod    --env-file /opt/c2cmarket/shared/.env.production -f compose.yaml -f compose.prod.yaml ...
+docker compose -p c2c-staging --env-file /opt/c2cmarket/shared/.env.staging    -f compose.yaml -f compose.prod.yaml ...
+
+GET /health
+GET /readyz
+OPTIONS /api/v1/<route>
+
+systemctl start c2cmarket-postgres-backup.service
+systemctl enable --now c2cmarket-postgres-backup.timer
+```
+
+### 3. Contracts
+
+- Caddy owns 80/443, automatically obtains and renews publicly trusted certificates, and Cloudflare runs `Full (strict)`.
+- UFW allows 80/443 only from current Cloudflare IPv4/IPv6 ranges. Backend ports bind only to `127.0.0.1`; PostgreSQL publishes no host port.
+- Caddy trusts only official Cloudflare ranges for `CF-Connecting-IP`. Both backends set `TRUST_X_FORWARDED_FOR=true` and `TRUSTED_PROXIES=172.16.0.0/12` so only the Docker bridge peer can supply the forwarded client address.
+- Production and staging use project names `c2c-prod` and `c2c-staging`, distinct env files, networks, passwords, encryption keys, and named volumes. Both databases must match `ExpectedMigrationVersion` with `dirty=false`.
+- `/opt/c2cmarket/current` points to an immutable release and both env files are `0600 deploy:deploy`. The VPS does not run `cloudflared`.
+- The backup oneshot runs as `deploy` with Docker group access, stores local files under `/var/lib/c2cmarket/backups/production`, uploads dump plus checksum to `c2cmarket-r2:c2cmarket-backups/postgres/production/`, and is scheduled daily at 03:30 Asia/Shanghai.
+
+### 4. Validation & Error Matrix
+
+| Condition | Expected signal |
+| --- | --- |
+| Caddy/UFW/origin is unreachable | Cloudflare `521`; loopback backend may still be healthy |
+| Caddy cannot reach the selected backend | Cloudflare/Caddy `502`; check the matching Compose project |
+| Origin TLS handshake or certificate validation fails | Cloudflare `525`/`526`; inspect Caddy certificate state and Full (strict) |
+| Stale Tunnel route remains | Cloudflare `530`; verify the proxied A record, never restart Mac Tunnel |
+| Database behind/dirty/unreachable | `/readyz` returns `503` with schema/database reason |
+| Public preflight uses wrong environment origin | No matching `Access-Control-Allow-Origin`; do not broaden to wildcard |
+| Backup dump/upload fails | oneshot fails and retains local artifacts; timer remains observable in systemd |
+
+### 5. Good/Base/Bad Cases
+
+- Good: after a VPS reboot, Caddy and four containers recover automatically; public production/staging readiness both report the expected schema and each preflight echoes only its own frontend origin.
+- Base: loopback health is green while DNS propagation is pending; keep diagnosing the edge/origin boundary without changing Go CORS.
+- Bad: publish 8080/8081 or 5432 publicly, trust arbitrary forwarding headers, share a Compose project/volume, run `cloudflared` on the VPS, or restart the retired Mac backend as an undocumented fallback.
+
+### 6. Tests Required
+
+- Expand both Compose environments and assert `host_ip: 127.0.0.1`, ports 8080/8081, and no PostgreSQL host publish.
+- Validate the Caddyfile and assert both hostname-to-loopback mappings plus Cloudflare trusted proxy ranges.
+- Reboot acceptance: Docker, Caddy, UFW active; four containers running/healthy; no failed systemd units.
+- Public smoke: both `/health` and `/readyz` return 200/schema current; production/staging OPTIONS return 204 with the matching explicit origin.
+- Data migration assertion: expected user counts, schema version, and `dirty=false` in each restored database.
+- Backup assertion: systemd unit verification, manual exit 0, local dump/checksum validation, R2 object existence, and enabled timer next run.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```yaml
+ports:
+  - "8080:8080"
+```
+
+```text
+api.c2cmarket.shop CNAME <tunnel-id>.cfargotunnel.com
+TRUSTED_PROXIES=0.0.0.0/0
+```
+
+#### Correct
+
+```yaml
+ports: !override
+  - "127.0.0.1:${BACKEND_PORT:-8080}:${BACKEND_PORT:-8080}"
+```
+
+```text
+api.c2cmarket.shop A 192.236.230.132 (proxied)
+TRUSTED_PROXIES=172.16.0.0/12
+```
+
 ## Scenario: Feedback Ticket Loop Contract
 
 ### 1. Scope / Trigger
@@ -1759,6 +1847,7 @@ const contextLabel = 'API 服务详情'
 ```text
 profile.EmailSender.SendCarpoolApplicationAccepted(ctx, toEmail, listingTitle, applicationID, joinDeadline)
 profile.EmailSender.SendAPIPurchaseIntentCreated(ctx, toEmail, serviceTitle, intentID, buyerNote, createdAt)
+SMTPConfig.FrontendOrigin -> {FRONTEND_ORIGIN}/api-intents/{intentID}
 
 No new HTTP routes, OpenAPI schemas, database tables, environment keys, queues, or background workers.
 ```
@@ -1770,6 +1859,7 @@ No new HTTP routes, OpenAPI schemas, database tables, environment keys, queues, 
 - Email sending is best-effort: profile lookup or SMTP send failure is logged with resource IDs and actor IDs, must not include contact values, note bodies, SMTP credentials, cookies, tokens, or request bodies, and must not roll back or block the business operation.
 - Idempotency replay must not send duplicate reminder email. The module service should return both the business entity and an explicit `created` / `accepted` flag so the core facade can send only for a new side effect.
 - SMTP templates may include public/resource titles, resource IDs, RFC3339 timestamps, reservation deadline, and short buyer note summaries. Templates must use Go `html/template` for HTML escaping and keep text bodies credential-free.
+- API purchase-intent HTML and plain-text bodies must include the absolute environment-specific `{FRONTEND_ORIGIN}/api-intents/{intentID}` URL. The existing frontend compatibility route resolves the intent to the signed-in buyer or merchant order detail when an order exists.
 
 ### 4. Validation & Error Matrix
 
@@ -1993,6 +2083,7 @@ PostgreSQL:
 - Successful order creation must insert the order and update the locked intent from `open|contacted` to `ordered` in one transaction. If either write fails, neither change commits.
 - `ordered` is a terminal intent state: its fulfillment is represented only by the linked order. The intent cannot be cancelled, closed, or marked contacted.
 - Migration must backfill existing order-backed `open|contacted` rows to `ordered` before the new contract is used.
+- The forward migration must remove both the canonical intent state-shape constraint and any earlier PostgreSQL-generated duplicate such as `api_purchase_intents_check3` before adding the single canonical constraint that accepts `ordered`.
 - A new intent for the same buyer and service is valid once the previous intent is `ordered`; the old intent must still retain its order history and its one-order-only constraint.
 
 ### 4. Validation & Error Matrix
@@ -2015,6 +2106,7 @@ PostgreSQL:
 - Unit test: in-memory order creation marks an active intent `ordered` and still rejects a second order for that same intent.
 - Router test: order creation returns normally, intent detail is `ordered`, and cancel/close retain `API_PURCHASE_INTENT_HAS_ORDER`.
 - PostgreSQL integration test: first order releases the active-intent slot, then a fresh intent and second order for the same buyer/service succeed.
+- Constraint upgrade smoke: apply the forward migration to a schema that still contains `api_purchase_intents_check3`, verify the legacy constraint is gone, and prove an `open|contacted -> ordered` update succeeds.
 - Migration smoke/read-only query: no order-backed intent remains `open` or `contacted` after migration.
 
 ### 7. Wrong vs Correct
@@ -2140,6 +2232,81 @@ page: status says available; button: local risk check says blocked
 list/detail/create -> EvaluateApplicationEligibility -> one code/reason/action
 ```
 
+## Scenario: API Order Email And Participant Dispute Entry
+
+### 1. Scope / Trigger
+
+- Trigger: API purchase-intent/order creation, merchant email reminders, API-order dispute routes, or buyer/merchant order-detail actions change.
+- Purpose: an order-style email must refer to a committed order, and both order participants must use the order dispute workflow instead of generic feedback.
+
+### 2. Signatures
+
+```text
+POST /api/v1/me/api-orders/{id}/dispute
+POST /api/v1/owner/api-orders/{id}/dispute
+
+CreateWithIdempotencyResult(...) -> (Order, idempotency.Completion, created bool, *domain.AppError)
+SendAPIOrderCreated(ctx, toEmail, serviceTitle, orderID, amount, currency, paymentExpiresAt, createdAt)
+```
+
+### 3. Contracts
+
+- Purchase-intent creation never sends the merchant an order-style email. Core sends `SendAPIOrderCreated` only after a new order commits and only when `created=true`.
+- An idempotency replay returns the existing order and completion with `created=false`; it must not send a duplicate email. Email failure is logged after the business commit and never changes a successful order response.
+- Merchant email delivery requires a non-empty verified profile email. The email includes a display-only `AO-<last-six>` reference, amount, Beijing payment deadline, full merchant order URL, and an explicit statement that order creation does not mean funds arrived.
+- Buyer and owner dispute endpoints both require session, CSRF, `If-Match`, `Idempotency-Key`, and a non-empty non-secret `reason`. Both call the same `open_dispute` domain transition; the main fulfillment status remains unchanged while `disputeStatus` becomes `open`.
+- Frontend real and mock adapters expose one `openApiOrderDispute(id, reason, version, perspective)` operation. Order detail displays `平台介入中` after success and must not route API-order problems to the generic feedback page.
+
+### 4. Validation & Error Matrix
+
+| Condition | Result |
+| --- | --- |
+| Purchase intent succeeds but order creation fails | No merchant order email |
+| New order for a verified merchant | One best-effort merchant order email |
+| Same idempotency key replays order creation | Same completion, no duplicate email |
+| Merchant email is missing or unverified | Order succeeds; email is skipped |
+| Email provider fails | Order succeeds; sanitized failure is logged |
+| Dispute reason is empty | `422 VALIDATION_FAILED` |
+| Caller is not the buyer or seller | Not found/permission response; no dispute change |
+| Order is cancelled, completed, or already disputed | `409 INVALID_STATE_TRANSITION` |
+| Stale `If-Match` | `412 PRECONDITION_FAILED` |
+
+### 5. Good/Base/Bad Cases
+
+- Good: order commits, the verified merchant receives one direct order link, and a retry with the same idempotency key sends nothing new.
+- Base: an unverified merchant still receives the durable in-app state but no email.
+- Good: either participant submits a concise order problem and sees `平台介入中` after the order query refreshes.
+- Bad: send an “API order” email from purchase-intent creation, use a full UUID as the primary display number, or send the user to `/my/feedback` for an API-order dispute.
+
+### 6. Tests Required
+
+- Core tests: purchase-intent-only sends zero emails; new order sends one; replay sends no duplicate; unverified email skips; provider failure does not block creation.
+- Email template tests: text and HTML contain `AO-<last-six>`, amount, Beijing deadline, full merchant URL, no-arrival warning, and system footer.
+- Router test: buyer and owner dispute routes both succeed, owner idempotency replay succeeds, and the administrator dispute queue contains the linked case.
+- Frontend tests: real path builder selects `me` versus `owner`; mock permits each participant exactly once; order-detail copy contains the in-place intervention state and no generic feedback route.
+- Full `go test ./...`, frontend Vitest/type/build, OpenAPI route parity, product-boundary scan, and `git diff --check`.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```go
+intent, completion, created := createIntent(...)
+if created {
+    email.SendAPIPurchaseIntentCreated(...)
+}
+```
+
+#### Correct
+
+```go
+order, completion, created := createOrder(...)
+if created {
+    email.SendAPIOrderCreated(...)
+}
+// Idempotency replay returns created=false.
+```
+
 ## Scenario: Prelaunch Domain Removal And Contract Erasure
 
 ### 1. Scope / Trigger
@@ -2165,7 +2332,7 @@ Backend:
 Database:
   000065_remove_demands.up.sql
   000065_remove_demands.down.sql
-  ExpectedMigrationVersion = 65
+  ExpectedMigrationVersion = 66
 ```
 
 ### 3. Contracts
@@ -2182,14 +2349,14 @@ Database:
 | --- | --- |
 | Browser opens an old demand URL | Existing NotFound page; no redirect or demand shell |
 | Client calls an old demand API | Standard route-level 404 |
-| Database applies migration 65 | `demands` is absent and schema is `65`, `dirty=false` |
+| Database applies migration 65 while upgrading through the current chain | `demands` is absent; the full chain continues through schema `66`, `dirty=false` |
 | Database rolls migration 65 down | Empty `demands` schema/indexes are recreated; no rows are restored |
 | Active OpenAPI/generated types still expose Demand | Contract drift check fails |
 | Active source/docs still treat demand as a product capability | Residual scan or source-contract test fails |
 
 ### 5. Good/Base/Bad Cases
 
-- Good: migration 65 removes the table, runtime/API/UI references disappear together, and old URLs use the shared NotFound path.
+- Good: migration 65 removes the table, migration 66 completes the current schema chain, runtime/API/UI references disappear together, and old URLs use the shared NotFound path.
 - Base: a developer rolls migration 65 down locally and gets an empty compatibility schema for code rollback.
 - Bad: hide the navigation while retaining routes, handlers, generated types, search branches, or a stale database table.
 
@@ -2198,7 +2365,7 @@ Database:
 - Full Go suite plus a focused migration source test for up ordering and down no-data-restoration behavior.
 - OpenAPI generation and drift check; generated frontend types must contain no Demand operation or schema.
 - Full frontend tests, typecheck, and real-mode build with negative route/navigation assertions.
-- PostgreSQL migration 1-to-latest integration: assert version 65, `dirty=false`, and `to_regclass('public.demands') IS NULL`.
+- PostgreSQL migration 1-to-latest integration: assert version 66, `dirty=false`, and `to_regclass('public.demands') IS NULL`.
 - Real backend smoke suite and explicit old-API 404 checks.
 - Browser checks at 1440x900 and 390x844 for homepage/navigation/search/workspaces and all old demand URLs.
 

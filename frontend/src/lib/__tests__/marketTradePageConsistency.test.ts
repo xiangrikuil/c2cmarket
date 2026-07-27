@@ -21,6 +21,7 @@ const orders = source('../../pages/MyApiOrdersPage.vue')
 const orderDetail = source('../../pages/ApiPurchaseOrderDetailPage.vue')
 const publicUser = source('../../pages/PublicUserPage.vue')
 const router = source('../../router.ts')
+const routeSeo = source('../../seo/routeSeo.ts')
 
 describe('公开市场与交易页面一致性', () => {
   it('让首页成为市场入口而不是运营看板', () => {
@@ -43,6 +44,8 @@ describe('公开市场与交易页面一致性', () => {
     expect(router).not.toContain("path: '/demands")
     expect(router).not.toContain("path: '/my/demands")
     expect(router).not.toContain("['demands'")
+    expect(routeSeo).not.toContain('/demands')
+    expect(routeSeo).not.toContain('求车需求')
     expect(home).not.toContain('home-reference-aside')
     expect(home).not.toContain('home-hero-visual')
     expect(home).not.toContain('home-module-action')

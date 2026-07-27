@@ -58,8 +58,8 @@ function backendReviewRow(overrides: Record<string, unknown> = {}) {
 
 async function loadReviewBackend(): Promise<ReviewBackendModule> {
   vi.resetModules()
-  vi.unstubAllEnvs()
-  vi.stubEnv('VITE_API_MODE', 'real')
+  const client = await import('../backendClient')
+  client.setBackendRuntimeConfig({ apiMode: 'real' })
   return import('../reviewBackend')
 }
 

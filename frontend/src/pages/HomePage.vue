@@ -15,6 +15,7 @@ import { getCurrentPayablePrice, getRemainingSeats, isCurrentTradable } from '@/
 import { getApiServiceProductIconSrc, getProductIconSrc } from '@/lib/productCategoryIcon'
 import { useHomeMarket } from '@/queries/useMarketQueries'
 import { useProductCategories } from '@/queries/useProductCatalogQueries'
+import { prefetchQueriesOnServer } from '@/queries/prefetchQueriesOnServer'
 
 const homeMarketTabs = ['carpools', 'api-services'] as const
 type HomeMarketTab = typeof homeMarketTabs[number]
@@ -33,8 +34,11 @@ function getInitialHomeMarketTab(): HomeMarketTab {
 
 const router = useRouter()
 const activeMarketTab = ref<HomeMarketTab>(getInitialHomeMarketTab())
-const { data, isLoading, isError, refetch } = useHomeMarket()
-const { data: catalogCategories } = useProductCategories()
+const homeMarketQuery = useHomeMarket()
+const productCategoriesQuery = useProductCategories()
+const { data, isLoading, isError, refetch } = homeMarketQuery
+const { data: catalogCategories } = productCategoriesQuery
+prefetchQueriesOnServer(homeMarketQuery, productCategoriesQuery)
 
 const tradableCarpools = computed(() => (data.value?.carpools ?? [])
   .filter(item => isCurrentTradable(item) && item.applicationEligibility?.canApply !== false))

@@ -6,6 +6,7 @@ import { toast } from 'vue-sonner'
 import EmptyState from '@/components/market/EmptyState.vue'
 import ErrorState from '@/components/market/ErrorState.vue'
 import SkeletonBlock from '@/components/market/SkeletonBlock.vue'
+import ApiPackageCard from '@/components/api-market/ApiPackageCard.vue'
 import ReputationInlineSummary from '@/components/reputation/ReputationInlineSummary.vue'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
@@ -35,6 +36,7 @@ import {
   withApiMarketViewQuery,
   type ApiMarketView,
 } from '@/lib/apiQuotaOfferUi'
+import { rankApiPackages } from '@/lib/apiPackageRecommendation'
 import { formatDecimal } from '@/lib/decimal'
 import {
   getProductCategory,
@@ -44,6 +46,7 @@ import {
 import { getApiServiceProductCategory, getApiServiceProductIconSrc, getProductIconSrc } from '@/lib/productCategoryIcon'
 import { useApiQuotaOffers, useApiQuotaSaleSlots, useApiServices, useCreateApiQuotaOrderMutation } from '@/queries/useMarketQueries'
 import { useProductCategories } from '@/queries/useProductCatalogQueries'
+import { prefetchQueriesOnServer } from '@/queries/prefetchQueriesOnServer'
 
 type AvailabilityFilter = 'all' | 'available'
 
@@ -54,6 +57,8 @@ const quotaSearch = ref('')
 const distributionSystem = ref<ApiQuotaDistributionSystem | 'all'>('all')
 const availability = ref<AvailabilityFilter>('all')
 const oneMultiplier = ref(false)
+const packageModel = ref('')
+const packageDuration = ref('')
 const now = ref(Date.now())
 const serverClockOffset = ref(0)
 const selectedSlotKey = ref('')
@@ -84,8 +89,10 @@ const slotQuery = useApiQuotaSaleSlots()
 const rushFilters = computed<ApiQuotaOfferFilters>(() => ({ slotKey: selectedSlotKey.value }))
 const rushQuery = useApiQuotaOffers(rushFilters)
 const freeServicesQuery = useApiServices({ online: true })
-const { data: catalogCategories } = useProductCategories()
+const productCategoriesQuery = useProductCategories()
+const { data: catalogCategories } = productCategoriesQuery
 const createOrderMutation = useCreateApiQuotaOrderMutation()
+prefetchQueriesOnServer(quotaQuery, slotQuery, freeServicesQuery, productCategoriesQuery)
 const categoryIconByCode = computed(() => new Map((catalogCategories.value ?? []).map(category => [category.code, category.iconDataUrl])))
 
 const quotaRows = computed(() => {
@@ -95,7 +102,22 @@ const quotaRows = computed(() => {
   return rows.filter(item => [item.name, item.serviceTitle, item.sellerDisplayName, getApiQuotaDistributionLabel(item.distributionSystem)]
     .some(value => value.toLowerCase().includes(keyword)))
 })
-const freeServices = computed(() => freeServicesQuery.data.value ?? [])
+const freeServices = computed(() => (freeServicesQuery.data.value ?? []).filter(service => service.billingMode !== 'fixed_package'))
+const packageServices = computed(() => (freeServicesQuery.data.value ?? []).filter(service => service.billingMode === 'fixed_package'))
+const packageModelOptions = computed(() => {
+  const options = new Map<string, string>()
+  for (const service of packageServices.value) {
+    for (const item of service.packages ?? []) {
+      if (!item.enabled || item.stockAvailable <= 0) continue
+      for (const model of item.models) options.set(model.modelCatalogId, model.modelName)
+    }
+  }
+  return [...options.entries()]
+    .map(([id, name]) => ({ id, name }))
+    .sort((left, right) => left.name.localeCompare(right.name))
+})
+const packageRows = computed(() => rankApiPackages(packageServices.value, packageModel.value, Number(packageDuration.value)))
+const packageReady = computed(() => Boolean(packageModel.value && packageDuration.value))
 const firstSlotDate = computed(() => slotQuery.data.value?.items[0]?.key.slice(0, 10) ?? '')
 const displayedSlotDate = computed(() => {
   const items = slotQuery.data.value?.items ?? []
@@ -284,8 +306,9 @@ onBeforeUnmount(() => {
     </header>
 
     <Tabs :model-value="activeView" @update:model-value="setView">
-      <TabsList class="grid h-10 w-full max-w-md grid-cols-2">
+      <TabsList class="grid h-10 w-full max-w-xl grid-cols-3">
         <TabsTrigger value="limited">限时额度包</TabsTrigger>
+        <TabsTrigger value="packages">限时流量包</TabsTrigger>
         <TabsTrigger value="free">自由额度</TabsTrigger>
       </TabsList>
 
@@ -501,6 +524,52 @@ onBeforeUnmount(() => {
             </div>
           </Card>
         </div>
+      </TabsContent>
+
+      <TabsContent value="packages" class="mt-4 space-y-4">
+        <Alert>
+          <PackageOpen />
+          <AlertTitle>限时流量包</AlertTitle>
+          <AlertDescription>固定价格购买商户声明的面板额度，套餐有效期从商户提交交付时开始计算。先按精确模型和有效期筛选，再比较综合推荐结果。</AlertDescription>
+        </Alert>
+        <ErrorState v-if="freeServicesQuery.error.value" description="限时流量包暂时无法加载。" @retry="freeServicesQuery.refetch()" />
+        <SkeletonBlock v-else-if="freeServicesQuery.isLoading.value" :lines="6" />
+        <template v-else>
+          <div class="grid gap-3 border-y border-border py-3 md:grid-cols-2">
+            <label class="grid gap-1.5 text-xs font-medium text-muted-foreground">
+              精确模型
+              <Select v-model="packageModel">
+                <SelectTrigger><SelectValue placeholder="请选择模型" /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem v-for="model in packageModelOptions" :key="model.id" :value="model.id">{{ model.name }}</SelectItem>
+                </SelectContent>
+              </Select>
+            </label>
+            <label class="grid gap-1.5 text-xs font-medium text-muted-foreground">
+              套餐有效期
+              <Select v-model="packageDuration">
+                <SelectTrigger><SelectValue placeholder="请选择有效期" /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="1">1 天</SelectItem>
+                  <SelectItem value="3">3 天</SelectItem>
+                  <SelectItem value="7">7 天</SelectItem>
+                  <SelectItem value="30">30 天</SelectItem>
+                </SelectContent>
+              </Select>
+            </label>
+          </div>
+          <EmptyState v-if="!packageReady" title="先选择精确模型和有效期" description="选择完成后才会展示可购买套餐和综合推荐顺序。" />
+          <EmptyState v-else-if="packageRows.length === 0" title="暂无匹配的限时流量包" description="当前模型和有效期下没有可购买库存。" />
+          <div v-else class="api-service-card-grid">
+            <ApiPackageCard
+              v-for="(row, index) in packageRows"
+              :key="row.package.id"
+              :row="row"
+              :rank="index + 1"
+              :product-icon-src="freeServiceIconSrc(row.service)"
+            />
+          </div>
+        </template>
       </TabsContent>
 
       <TabsContent value="free" class="mt-4 space-y-4">

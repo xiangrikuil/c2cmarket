@@ -17,11 +17,13 @@ export function isAppTheme(value: string | null): value is AppTheme {
 }
 
 export function getInitialAppTheme(): AppTheme {
+  if (typeof window === 'undefined') return DEFAULT_APP_THEME
   const storedTheme = window.localStorage.getItem(APP_THEME_STORAGE_KEY)
   return isAppTheme(storedTheme) ? storedTheme : DEFAULT_APP_THEME
 }
 
 export function applyAppTheme(theme: AppTheme) {
+  if (typeof document === 'undefined' || typeof window === 'undefined') return
   document.documentElement.dataset.theme = theme
   window.localStorage.setItem(APP_THEME_STORAGE_KEY, theme)
 }

@@ -571,7 +571,7 @@ func validateCreateInput(input CreateIntentInput, service apimarket.Service) *do
 			return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Package required", "固定套餐服务必须选择套餐。", "selectedPackageId", "required", "必须选择套餐。")
 		}
 		pack, ok := findServicePackage(service, input.SelectedPackageID)
-		if !ok || !pack.Enabled {
+		if !ok || !pack.Enabled || pack.StockAvailable <= 0 || len(pack.Models) == 0 {
 			return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Package invalid", "选择的套餐不可用。", "selectedPackageId", "invalid", "选择的套餐不可用。")
 		}
 		packPrice, ok := parsePositiveDecimal(pack.PriceCNY)

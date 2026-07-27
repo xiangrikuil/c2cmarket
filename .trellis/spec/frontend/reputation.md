@@ -58,7 +58,7 @@ Public profile reputation fields follow the same nullable contract. A future uni
 - Adapter tests must assert unavailable real-backend facts map to `null`.
 - Component/source tests must assert `暂无数据` behavior and neutral `近期完成` wording.
 - Scan real adapters for fixed trust/completion/review/dispute literals.
-- Run the complete Vitest suite, Vue typecheck, and `VITE_API_MODE=real` production build.
+- Run the complete Vitest suite, Nuxt typecheck, and a production build with `NUXT_PUBLIC_API_MODE=real`, `NUXT_PUBLIC_API_BASE_URL`, and `NUXT_API_BASE_URL`.
 
 ### 7. Wrong vs Correct
 
@@ -237,7 +237,7 @@ Carpool listings and API services expose the summary as
 - Helper tests cover every label, verified-only truth, missing-summary normalization, and stable status ranking.
 - Carpool and API adapter tests pass a non-empty source URL with `pending`/`mismatch` and assert the backend status survives unchanged.
 - Source/component tests cover all five shared labels, prove only `verified` receives verified styling, assert the API market omission/detail allowlist, and keep carpool rendering unchanged.
-- Run full Vitest, Vue typecheck, and `VITE_API_MODE=real` production build.
+- Run full Vitest, Nuxt typecheck, and a production build with `NUXT_PUBLIC_API_MODE=real`, `NUXT_PUBLIC_API_BASE_URL`, and `NUXT_API_BASE_URL`.
 - Scan production frontend code for URL-to-verification boolean inference.
 
 ### 7. Wrong vs Correct

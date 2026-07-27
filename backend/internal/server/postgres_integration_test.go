@@ -156,9 +156,23 @@ func TestPostgresAPIServiceFlow(t *testing.T) {
 	assertAPIServiceChildren(t, databaseURL, service.ID, 1, 1, 0)
 
 	updated := updateAPIService(t, server, ownerSession, service.ID, service.Version, apiServicePayloadWithModel(ownerContact.ID, "00000000-0000-0000-0000-000000000a02"), "pg-api-update-"+suffix)
-	if updated.Version != 2 || len(updated.Models) != 1 || updated.Models[0].ModelCatalogID != "00000000-0000-0000-0000-000000000a02" {
+	if updated.Version != 2 || len(updated.Models) != 2 {
 		t.Fatalf("unexpected updated API service: %+v", updated)
 	}
+	var activeModel, retiredModel *apiServiceModelResponse
+	for index := range updated.Models {
+		model := &updated.Models[index]
+		switch model.ModelCatalogID {
+		case "00000000-0000-0000-0000-000000000a02":
+			activeModel = model
+		case "00000000-0000-0000-0000-000000000a01":
+			retiredModel = model
+		}
+	}
+	if activeModel == nil || !activeModel.Enabled || retiredModel == nil || retiredModel.Enabled {
+		t.Fatalf("expected replacement model active and historical model disabled, got %+v", updated.Models)
+	}
+	assertAPIServiceChildren(t, databaseURL, service.ID, 1, 2, 0)
 
 	submitted := ownerAPIServiceAction(t, server, ownerSession, updated.ID, "submit-review", updated.Version, "pg-api-submit-"+suffix)
 	if submitted.ReviewStatus != app.APIServiceReviewStatusApproved || submitted.PublicationStatus != app.APIServicePublicationStatusOffline {
@@ -263,15 +277,22 @@ func TestPostgresAPIServiceIntegrityConstraints(t *testing.T) {
 	pool := openTestPool(t, databaseURL)
 	defer pool.Close()
 
-	_, err = pool.Exec(ctx, `
+	var customMultiplier string
+	err = pool.QueryRow(ctx, `
 		INSERT INTO api_service_models (
 			api_service_id, distribution_system, model_catalog_id, model_name_snapshot,
 			provider_snapshot, capabilities_snapshot, merchant_multiplier, enabled
 		)
 		VALUES ($1, 'sub2api', '00000000-0000-0000-0000-000000000a02',
 		        'GPT-4.1 mini', 'OpenAI', ARRAY['text'], 1.2000, true)
-	`, service.ID)
-	assertPostgresConstraintError(t, err, "Sub2API model multiplier must be fixed to 1")
+		RETURNING merchant_multiplier::text
+	`, service.ID).Scan(&customMultiplier)
+	if err != nil {
+		t.Fatalf("insert custom Sub2API model multiplier: %v", err)
+	}
+	if customMultiplier != "1.2000" {
+		t.Fatalf("expected custom Sub2API model multiplier 1.2000, got %s", customMultiplier)
+	}
 
 	_, err = pool.Exec(ctx, `
 		UPDATE api_services

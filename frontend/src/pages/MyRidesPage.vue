@@ -78,7 +78,7 @@ function openApplication(event: MouseEvent | KeyboardEvent, id: string) {
 
 <template>
   <div class="my-rides-reference space-y-4">
-    <div class="my-rides-heading rounded-xl border px-5 py-4"><PageTitle title="我的上车" description="查看上车申请、席位预留、站外联系、服务中、待完成和评价状态。" action-text="继续找车源" action-to="/carpools" /></div>
+    <div class="my-rides-heading rounded-xl border px-5 py-4"><PageTitle title="我的上车" description="查看上车申请、席位预留、联系沟通、服务中、待完成和评价状态。" action-text="继续找车源" action-to="/carpools" /></div>
     <div class="my-rides-reference-stats">
       <div><span><PlayCircle /></span><dl><dt>需要我处理</dt><dd>{{ stats[0]?.value ?? 0 }}</dd><small>继续确认当前步骤</small></dl></div>
       <div><span><Clock3 /></span><dl><dt>等待车主</dt><dd>{{ stats[1]?.value ?? 0 }}</dd><small>等待车主处理</small></dl></div>

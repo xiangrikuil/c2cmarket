@@ -16,13 +16,15 @@ import ReputationSummaryCard from '@/components/reputation/ReputationSummaryCard
 import { trackAnalytics } from '@/lib/analytics'
 import { getPricingDisplay, getRemainingSeats } from '@/lib/pricing'
 import { useCreatePublicUserReportMutation, usePublicUserProfileQuery } from '@/queries/useMarketQueries'
+import { useEntitySeo } from '@/composables/useEntitySeo'
 import { snapshotToSummary } from '@/lib/reputationPresentation'
 
 const route = useRoute()
 const router = useRouter()
 const analyticsSourceRoute = () => String(route.name ?? 'unknown')
 const username = computed(() => String(route.params.username ?? ''))
-const { data, isLoading, error, refetch } = usePublicUserProfileQuery(username)
+const publicUserQuery = usePublicUserProfileQuery(username)
+const { data, isLoading, error, refetch } = publicUserQuery
 const reportMutation = useCreatePublicUserReportMutation()
 const activeTab = ref('概览')
 const profile = computed(() => data.value?.profile)
@@ -57,6 +59,22 @@ const completionLabel = computed(() => {
   if (completedTotal.value === null) return '暂无数据'
   return completedTotal.value < 5 ? '记录较少' : `${completedTotal.value} 单`
 })
+
+useEntitySeo({
+  indexable: false,
+  title: computed(() => profile.value ? `${profile.value.displayName}（@${profile.value.username}）｜C2CMarket` : '用户公开主页｜C2CMarket'),
+  description: computed(() => profile.value ? `查看 ${profile.value.displayName} 的公开资料、脱敏信誉统计与公开业务记录。` : '查看用户公开资料与业务记录。'),
+  schema: computed(() => profile.value ? {
+    '@type': 'ProfilePage',
+    mainEntity: {
+      '@type': 'Person',
+      name: profile.value.displayName,
+      alternateName: `@${profile.value.username}`,
+      image: profile.value.avatarUrl || undefined,
+    },
+  } : null),
+})
+
 const responsibilityCancellationTotal = computed(() => {
   if (!profile.value) return null
   const values = [

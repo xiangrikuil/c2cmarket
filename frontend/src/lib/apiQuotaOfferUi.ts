@@ -1,10 +1,11 @@
 import { BackendProblemError } from '@/lib/backendClient'
 import type { PublicApiQuotaOffer } from '@/lib/api'
 
-export type ApiMarketView = 'limited' | 'free'
+export type ApiMarketView = 'limited' | 'packages' | 'free'
 
 export function apiMarketViewFromQuery(value: unknown): ApiMarketView {
-  return value === 'free' ? 'free' : 'limited'
+  if (value === 'free' || value === 'packages') return value
+  return 'limited'
 }
 
 export function withApiMarketViewQuery<T extends Record<string, unknown>>(query: T, view: ApiMarketView) {

@@ -63,6 +63,8 @@ type apiOrderResponse struct {
 	RequestedUSDAllowanceSnapshot string                              `json:"requestedUsdAllowanceSnapshot,omitempty"`
 	CNYPerUSDAllowanceSnapshot    string                              `json:"cnyPerUsdAllowanceSnapshot,omitempty"`
 	PricingSnapshot               string                              `json:"pricingSnapshot"`
+	PackageStockReserved          bool                                `json:"packageStockReserved"`
+	PackageExpiresAt              *string                             `json:"packageExpiresAt,omitempty"`
 	APIQuotaBatchID               string                              `json:"apiQuotaBatchId,omitempty"`
 	APIQuotaOfferID               string                              `json:"apiQuotaOfferId,omitempty"`
 	APIQuotaSaleRoundID           string                              `json:"apiQuotaSaleRoundId,omitempty"`
@@ -327,6 +329,12 @@ func (s *Server) handleSubmitAPIOrderDelivery(w http.ResponseWriter, r *http.Req
 	})
 }
 
+func (s *Server) handleOwnerOpenAPIOrderDispute(w http.ResponseWriter, r *http.Request) {
+	s.handleOwnerAPIOrderAction(w, r, "dispute", func(ctx context.Context, user auth.User, routeKey, key string, body []byte, input apiorder.ActionInput) (idempotency.Completion, *domain.AppError) {
+		return s.app.OpenAPIOrderDisputeWithIdempotency(ctx, user.ID, routeKey, key, requestHash(http.MethodPost, routeKey+":"+input.OrderID, body), input, apiOrderCompletionBuilder(true))
+	})
+}
+
 func (s *Server) handleOwnerAPIOrderAction(w http.ResponseWriter, r *http.Request, action string, run func(context.Context, auth.User, string, string, []byte, apiorder.ActionInput) (idempotency.Completion, *domain.AppError)) {
 	user, _, appErr := s.requireSessionAndCSRF(w, r)
 	if appErr != nil {
@@ -411,6 +419,8 @@ func toAPIOrderResponse(order apiorder.Order, ownerView bool, includeCredential 
 		RequestedUSDAllowanceSnapshot: order.RequestedUSDAllowanceSnapshot,
 		CNYPerUSDAllowanceSnapshot:    order.CNYPerUSDAllowanceSnapshot,
 		PricingSnapshot:               order.PricingSnapshot,
+		PackageStockReserved:          order.PackageStockReserved,
+		PackageExpiresAt:              formatOptionalTime(order.PackageExpiresAt),
 		APIQuotaBatchID:               order.APIQuotaBatchID,
 		APIQuotaOfferID:               order.APIQuotaOfferID,
 		APIQuotaSaleRoundID:           order.APIQuotaSaleRoundID,

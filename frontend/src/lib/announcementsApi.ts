@@ -36,7 +36,7 @@ const currentAdminName = '演示管理员'
 let announcementStore = readSessionStore<Announcement[]>(announcementStorageKey, announcementSeeds)
 let announcementAuditLogStore = readSessionStore<AnnouncementAuditLog[]>(announcementAuditStorageKey, announcementAuditLogSeeds)
 
-const wait = () => new Promise(resolve => window.setTimeout(resolve, 80))
+const wait = () => new Promise(resolve => setTimeout(resolve, 80))
 
 type ListResponse<T> = { items: T[] }
 type CountResponse = { count: number }

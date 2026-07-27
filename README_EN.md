@@ -5,7 +5,7 @@
 <h1 align="center">C2CMarket</h1>
 
 <p align="center">
-  A community marketplace for subscription carpools, API services, demand posts, and official price references.
+  A community marketplace for subscription carpools, API services, and official price references.
 </p>
 
 <p align="center">
@@ -24,7 +24,7 @@
 
 ## Overview
 
-C2CMarket is a decoupled web application for community-driven listings and transaction coordination. It helps users publish, discover, and manage subscription carpools, API services, demand posts, and official price records. It also includes order tracking, notifications, reviews, reports, and an administration console.
+C2CMarket is a decoupled web application for community-driven listings and transaction coordination. It helps users publish, discover, and manage subscription carpools, API services, and official price records. It also includes order tracking, notifications, reviews, reports, and an administration console.
 
 The platform focuses on discovery, matching, off-platform communication, and reputation records. It does not process in-platform payments, provide escrow or fulfillment guarantees, or proxy upstream API traffic.
 
@@ -32,28 +32,27 @@ The platform focuses on discovery, matching, off-platform communication, and rep
 
 - **Subscription carpools**: listings, applications, contact windows, join confirmation, completion, exit, and owner management.
 - **API service marketplace**: publishing, review, availability, orders, payment confirmation, and fulfillment status tracking.
-- **Demand posts**: publishing, moderation, public discovery, closing, and reopening.
 - **Official prices**: maintained reference records for publicly available official pricing.
 - **Community reputation**: public profiles, favorites, reviews, reports, disputes, and appeals.
 - **Notification center**: announcements, business notifications, unread state, and email reminders.
 - **Administration**: users, product catalog, listings, services, orders, announcements, feedback, and audit records.
-- **Unified search**: public carpools, API services, demand posts, price records, and profiles.
+- **Unified search**: public carpools, API services, price records, and profiles.
 
 ## Technology
 
 | Layer | Technology |
 | --- | --- |
-| Frontend | Vue 3, TypeScript, Vite 8, Vue Router, Pinia, TanStack Query, Tailwind CSS |
+| Frontend | Nuxt 4, Vue 3, TypeScript, Pinia, TanStack Query, Tailwind CSS |
 | Backend | Go 1.26.5, chi, pgx |
 | Database | PostgreSQL 18, versioned SQL migrations |
-| Infrastructure | Docker Compose, Cloudflare Pages/Tunnel, GitHub Actions |
+| Infrastructure | Docker Compose, Cloudflare Workers, VPS/Caddy, GHCR, GitHub Actions |
 | Integrations | linux.do OAuth 2.0, Alibaba Cloud DirectMail SMTP, optional Umami |
 
 ## Repository layout
 
 ```text
 .
-├── frontend/              Vue single-page application
+├── frontend/              Nuxt 4 hybrid-rendered application
 ├── backend/               Go HTTP API
 │   ├── cmd/api/           Service entry point
 │   ├── internal/          Domain modules and infrastructure
@@ -112,7 +111,7 @@ pnpm --dir frontend install --frozen-lockfile
 pnpm --dir frontend dev
 ```
 
-Open `http://127.0.0.1:5173`. The development server proxies `/api`, `/health`, and `/readyz` to the local backend.
+Open `http://127.0.0.1:3000`. The Nuxt development server uses runtime configuration to reach the local backend.
 
 Stop the local services with:
 
@@ -128,13 +127,19 @@ Run these checks before opening a pull request:
 cd backend && go test ./...
 cd ..
 pnpm --dir frontend typecheck
-VITE_API_MODE=real pnpm --dir frontend build
+NUXT_PUBLIC_API_MODE=real \
+NUXT_PUBLIC_SITE_URL=https://c2cmarket.shop \
+NUXT_PUBLIC_API_BASE_URL=https://api.c2cmarket.shop \
+NUXT_API_BASE_URL=https://api.c2cmarket.shop \
+pnpm --dir frontend build
 pnpm --dir frontend test
 node scripts/check-openapi-routes.mjs
 node scripts/check-openapi-types.mjs
 node scripts/check-migrations-doc.mjs
 node scripts/check-compose-exposure.mjs
 ```
+
+Production frontend builds require real mode plus both the public and server-side API URLs.
 
 With the backend running, execute the end-to-end smoke suite when the change affects business workflows:
 
@@ -149,6 +154,7 @@ API_BASE_URL=http://127.0.0.1:8080 node scripts/run-smokes.mjs
 - Staging configuration: [`.env.staging.example`](./.env.staging.example)
 - API contract: [`docs/openapi/c2c-market-api-v1.yaml`](./docs/openapi/c2c-market-api-v1.yaml)
 - Deployment guide: [`docs/ops/deployment-runbook.md`](./docs/ops/deployment-runbook.md)
+- Workers/VPS deployment: [`docs/ops/cloudflare-workers-vps-backends.md`](./docs/ops/cloudflare-workers-vps-backends.md)
 - Security operations: [`docs/security.md`](./docs/security.md)
 - Production operations: [`docs/operations.md`](./docs/operations.md)
 - Backup and restore: [`docs/backup-restore.md`](./docs/backup-restore.md)

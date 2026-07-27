@@ -74,6 +74,8 @@ describe('个人、经营与管理工作区一致性', () => {
   })
 
   it('联系与收款按真实能力分组，并使用统一表单组件', () => {
+    expect(myCenter).toContain('contact-payment-main-grid')
+    expect(myCenter).toContain("{ label: '联系方式与收款设置', to: '/my/contacts'")
     expect(myCenter).toContain('<ContactMethodCard')
     expect(myCenter).toContain('<PaymentMethodCard')
     expect(myCenter).toContain('<ConfigurationProgressCard')
@@ -111,11 +113,13 @@ describe('个人、经营与管理工作区一致性', () => {
     expect(merchantOrders).toContain("sort: 'default_merchant'")
     expect(merchantOrders).toContain('待确认收款')
     expect(merchantOrders).toContain('待交付')
-    expect(merchantOrders).toContain('站外')
+    expect(merchantOrders).toContain('订单联系方式')
+    expect(merchantOrders).not.toContain('通过联系方式站外沟通')
   })
 
   it('收藏、评价、通知和反馈表达当前可用性与责任人', () => {
-    expect(favorites).toContain("['全部', '拼车', 'API 服务', '官网套餐']")
+    expect(favorites).toContain("['全部', '拼车', 'API 服务']")
+    expect(favorites).not.toContain('官网套餐')
     expect(favorites).toContain('当前不可用')
     expect(reviews).toContain("['待评价', '我发出的', '我收到的', '全部']")
     expect(reviews).toContain('关联交易')

@@ -123,7 +123,7 @@ URL contract:
 - Progressive publish tests cover active/completed/pending state, visitable-step rules, first-error step mapping, completed summaries, sticky primary action, and the shared responsive preview boundary.
 - Market-card source regressions assert both limited variants and the free-amount variant use `quota-offer-card`, `data-category`, shared product-category inference, the six static CSS selectors, full-width brand buttons, the centered `1640px` free grid with flexible `330px` minimum tracks, `342px` normal card height, compact active reputation, and no unsupported `自动交付` / `安全可靠` / `平台担保` wording.
 - Free-amount market cards omit source-author verification entirely. API service detail hides `not_submitted`, `pending`, and `expired`, and displays the badge only for `verified` or `mismatch`; the backend field remains unchanged.
-- Type/build: `pnpm --dir frontend typecheck` and `VITE_API_MODE=real pnpm --dir frontend build`.
+- Type/build: `pnpm --dir frontend typecheck`, then run `pnpm --dir frontend build` with `NUXT_PUBLIC_API_MODE=real`, `NUXT_PUBLIC_API_BASE_URL`, and `NUXT_API_BASE_URL`.
 - Browser: `1920x1080`, `1440x900`, and `390x844` for free-market cards; assert first-row counts of four, three, and one respectively, normal card dimensions of approximately `398x342`, `383x342`, and `347x342`, `scrollHeight <= clientHeight`, four metric columns, `40px` purchase buttons, no page-level horizontal overflow, and no console warnings/errors. At `1920x1080`, the centered grid is `1640px` wide and must not create a fifth column. The broader `1440x900` and `390x844` suite still covers the compact publish first viewport, limited cards, purchase dialog, owner batch/offer/round/CSV sections, and quota order detail.
 
 ### 7. Wrong vs Correct
@@ -228,7 +228,7 @@ createApiQuotaOrder({ offerId, saleRoundId })
 ### 6. Tests Required
 
 - Vitest: default/active/tomorrow session selection, dynamic heading, server clock offset, boundary refetch, one-click purchase, pending deduplication, Problem Details mapping, wizard prerequisites, conditional CSV, immediate default expiry, and copy-field allowlist.
-- Type/build: `pnpm --dir frontend exec vue-tsc -b --pretty false` and `VITE_API_MODE=real pnpm --dir frontend exec vite build`.
+- Type/build: `pnpm --dir frontend typecheck`, then run `pnpm --dir frontend build` with `NUXT_PUBLIC_API_MODE=real`, `NUXT_PUBLIC_API_BASE_URL`, and `NUXT_API_BASE_URL`.
 - Browser: `1440x900` and `390x844`; assert three tabs, fixed countdown/button dimensions, enabled valid publication, conditional CSV, no application console errors, and no page-level horizontal overflow.
 
 ### 7. Wrong vs Correct

@@ -9,7 +9,6 @@ import { capabilityLabel, formatActualPrice, formatMultiplier, formatPrice } fro
 const props = defineProps<{
   form: ApiServicePublishForm
   catalogById: CatalogById
-  sub2ApiLocked: boolean
 }>()
 
 const emit = defineEmits<{
@@ -62,23 +61,21 @@ function effectiveMultiplier(row: { multiplierOverride: number | null }) {
             {{ formatPrice(row.model.officialOutputPricePerMillion) }}
           </td>
           <td class="px-3 py-3">
-            <template v-if="sub2ApiLocked">
-              <div class="font-semibold text-primary">1.00x</div>
-              <div class="mt-1 text-[11px] text-muted-foreground">平台锁定</div>
-            </template>
-            <template v-else>
-              <Input
-                class="h-8 w-24"
-                :model-value="row.selection.multiplierOverride === null ? formatMultiplier(form.defaultMultiplier) : formatMultiplier(row.selection.multiplierOverride)"
-                @update:model-value="value => emit('setMultiplier', row.model.id, String(value))"
-              />
-              <div class="mt-1 text-[11px] text-muted-foreground">留空则使用默认倍率</div>
-            </template>
+            <Input
+              class="h-8 w-24"
+              :model-value="row.selection.multiplierOverride === null ? '' : row.selection.multiplierOverride"
+              :placeholder="formatMultiplier(form.defaultMultiplier)"
+              min="0.0001"
+              step="0.01"
+              type="number"
+              @update:model-value="value => emit('setMultiplier', row.model.id, String(value))"
+            />
+            <div class="mt-1 text-[11px] text-muted-foreground">留空使用默认 {{ formatMultiplier(form.defaultMultiplier) }}</div>
           </td>
           <td class="px-3 py-3 text-xs font-semibold">
-            {{ formatActualPrice(row.model.officialInputPricePerMillion, sub2ApiLocked ? 1 : effectiveMultiplier(row.selection)) }} /
-            {{ formatActualPrice(row.model.officialCachedInputPricePerMillion, sub2ApiLocked ? 1 : effectiveMultiplier(row.selection)) }} /
-            {{ formatActualPrice(row.model.officialOutputPricePerMillion, sub2ApiLocked ? 1 : effectiveMultiplier(row.selection)) }}
+            {{ formatActualPrice(row.model.officialInputPricePerMillion, effectiveMultiplier(row.selection)) }} /
+            {{ formatActualPrice(row.model.officialCachedInputPricePerMillion, effectiveMultiplier(row.selection)) }} /
+            {{ formatActualPrice(row.model.officialOutputPricePerMillion, effectiveMultiplier(row.selection)) }}
           </td>
           <td class="px-3 py-3 text-right">
             <button type="button" class="text-sm text-muted-foreground hover:text-destructive" @click="emit('removeModel', row.model.id)">移除</button>

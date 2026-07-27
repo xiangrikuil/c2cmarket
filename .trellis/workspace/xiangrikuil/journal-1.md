@@ -253,8 +253,193 @@ Committed and pushed marketplace updates, including API order payment QR snapsho
 
 - None - task complete
 
+## Session 7: Cloudflare Pages pnpm workspace fix
 
-## Session 7: 修订信誉系统实现任务书
+**Date**: 2026-07-15
+**Task**: Cloudflare Pages pnpm workspace fix
+**Package**: frontend
+**Branch**: `codex/complete-ui-business-consistency`
+
+### Summary
+
+Added an explicit pnpm root package and pinned Node 24.13.0; verified Cloudflare's pnpm 10.11.1 install, production build for https://c2cmarket.shop, and all 118 frontend tests.
+
+### Main Changes
+
+- Merged the demand-removal branch into the current `origin/staging` baseline while preserving the Nuxt 4 and Cloudflare Worker architecture.
+- Reconciled API service multiplier history through migration 66 without rewriting immutable migration 54 or valid business values.
+- Removed remaining demand-module routes, SEO references, smoke coverage, OpenAPI entries, and current documentation references.
+- Added the branch-baseline rule requiring new work to start from the latest `origin/staging` or `origin/main`.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `9f4039c` | (see git log) |
+
+### Testing
+
+- [OK] Go formatting, vet, unit tests, race tests, and PostgreSQL migration integration checks.
+- [OK] Frontend frozen install, 220 Vitest tests, Nuxt typecheck, real-backend build, and Wrangler dry-runs.
+- [OK] OpenAPI, migration documentation, deployment, package, conflict-marker, and removed-module residual guards.
+- [WARN] Optional local binaries `actionlint`, `govulncheck`, `gitleaks`, `trivy`, and `syft` were unavailable and were not reported as executed.
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
+
+
+## Session 8: Cloudflare deployment and marketplace consistency delivery
+
+**Date**: 2026-07-15
+**Task**: Cloudflare deployment and marketplace consistency delivery
+**Package**: frontend
+**Branch**: `codex/complete-ui-business-consistency`
+
+### Summary
+
+Fixed Cloudflare frontend build compatibility, committed the complete marketplace business consistency update, passed backend and frontend quality gates, rebased onto origin/main, and pushed the feature branch.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `39672e0` | (see git log) |
+| `82fc0e7` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
+
+
+## Session 9: Staging marketplace consistency PR
+
+**Date**: 2026-07-17
+**Task**: Staging marketplace consistency PR
+**Package**: frontend
+**Branch**: `codex/staging-marketplace-consistency`
+
+### Summary
+
+Rebased the workspace onto current staging, preserved three pending fixes, verified backend/frontend and migrations, and committed all Git-visible changes for PR review.
+
+### Main Changes
+
+- Created `codex/staging-marketplace-consistency` from current `origin/staging` and preserved the three pending operational/OAuth fixes.
+- Committed the full marketplace identity, order, account-navigation, email, API/OpenAPI, migration, test, and Trellis spec changes as `ff8dba1`.
+- Documented migration 52 after verifying both an applied development database upgrade and an isolated empty-database migration chain.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `ff8dba1` | (see git log) |
+
+### Testing
+
+- [OK] `go test ./...`
+- [OK] Frontend Vitest: 40 files / 134 tests
+- [OK] Vue type-check and real-API production build
+- [OK] Applied database migration through Version 52 and isolated migration 1 through 52
+- [OK] `git diff --check`
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
+
+
+## Session 10: VPS 直连生产与 Staging 迁移
+
+**Date**: 2026-07-17
+**Task**: VPS 直连生产与 Staging 迁移
+**Package**: frontend
+**Branch**: `codex/staging-marketplace-consistency`
+
+### Summary
+
+将 production/staging 后端与 PostgreSQL 迁移到 RackNerd VPS；启用 Caddy Cloudflare Full strict 直连、loopback 容器端口、R2 systemd 每日备份，并停用 Mac mini 后端、Tunnel 与旧备份任务。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `c95e91b` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
+
+
+## Session 11: GHCR backend CI/CD
+
+**Date**: 2026-07-18
+**Task**: GHCR backend CI/CD
+**Package**: frontend
+**Branch**: `codex/staging-marketplace-consistency`
+
+### Summary
+
+Added tested GHCR image publishing and environment-gated staging/production VPS deployment with immutable SHA tags, backup-before-migration, health checks, versioned releases, regression tests, and operations documentation.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `75e0339` | `ci: deploy backend from ghcr` |
+
+### Testing
+
+- [OK] Release shell syntax and smoke tests passed.
+- [OK] Both workflow files parsed as YAML and production/staging Compose
+  configurations expanded successfully.
+- [OK] Local backend Docker build, complete Go tests, OpenAPI/migration checks,
+  frontend typecheck/build, and 137 frontend tests passed.
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
+
+## Session 12: 修订信誉系统实现任务书
 
 **Date**: 2026-07-24
 **Task**: 修订信誉系统实现任务书
@@ -288,7 +473,7 @@ Committed and pushed marketplace updates, including API order payment QR snapsho
 - None - task complete
 
 
-## Session 8: OAuth identity and administrator bootstrap hardening
+## Session 13: OAuth identity and administrator bootstrap hardening
 
 **Date**: 2026-07-26
 **Task**: OAuth identity and administrator bootstrap hardening
@@ -331,7 +516,7 @@ Implemented immutable OAuth identity ownership, create-only proven administrator
 - None - task complete
 
 
-## Session 9: Auth hardening release contract alignment
+## Session 14: Auth hardening release contract alignment
 
 **Date**: 2026-07-26
 **Task**: Auth hardening release contract alignment
@@ -375,7 +560,7 @@ Updated OAuth smoke behavior, synchronized identity and bootstrap contracts, doc
 - Continue the parent prelaunch hardening task with outbound SSRF protection.
 
 
-## Session 10: Harden model audit outbound HTTP
+## Session 15: Harden model audit outbound HTTP
 
 **Date**: 2026-07-26
 **Task**: Harden model audit outbound HTTP
@@ -414,7 +599,7 @@ Added public-HTTPS target validation, DNS rebinding-safe IP-bound dialing, redir
 - Continue prelaunch hardening with production ingress and trusted client IP handling.
 
 
-## Session 11: Production ingress and trusted client IP hardening
+## Session 16: Production ingress and trusted client IP hardening
 
 **Date**: 2026-07-26
 **Task**: Production ingress and trusted client IP hardening
@@ -448,7 +633,7 @@ Bound backend ports to loopback, centralized trusted client IP resolution for lo
 - None - task complete
 
 
-## Session 12: Reproducible release and build metadata
+## Session 17: Reproducible release and build metadata
 
 **Date**: 2026-07-26
 **Task**: Reproducible release and build metadata
@@ -483,7 +668,7 @@ Added fixed-commit source archives and backend image builds, runtime build metad
 - None - task complete
 
 
-## Session 13: Verification and data lifecycle hardening
+## Session 18: Verification and data lifecycle hardening
 
 **Date**: 2026-07-26
 **Task**: Verification and data lifecycle hardening
@@ -517,7 +702,7 @@ Added HMAC email challenges, finite idempotency generations, migration 63, and b
 - None - task complete
 
 
-## Session 14: 完成上线前安全加固与发布门禁
+## Session 19: 完成上线前安全加固与发布门禁
 
 **Date**: 2026-07-27
 **Task**: 完成上线前安全加固与发布门禁
@@ -558,7 +743,7 @@ Added HMAC email challenges, finite idempotency generations, migration 63, and b
 - None - task complete
 
 
-## Session 15: Remove prelaunch demand module
+## Session 20: Remove prelaunch demand module
 
 **Date**: 2026-07-27
 **Task**: Remove prelaunch demand module
@@ -586,6 +771,40 @@ Removed the unlaunched demand module across frontend, backend, OpenAPI, search, 
 - [OK] PostgreSQL 18 migration/integration gate at version 65 with `demands` absent and `dirty=false`.
 - [OK] Eleven real-backend smoke groups and explicit old-demand API 404 checks.
 - [OK] Desktop 1440x900 and mobile 390x844 browser QA with no demand entry, overflow, overlap, or console error.
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
+
+
+## Session 21: Merge demand removal into staging
+
+**Date**: 2026-07-27
+**Task**: Merge demand removal into staging
+**Package**: frontend
+**Branch**: `codex/merge-demand-removal-staging`
+
+### Summary
+
+Merged demand removal and prelaunch hardening into current staging, reconciled migration 66, and passed local full-scope verification.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `db9742f196bf762d5ffa0e2f3a26810fe9cc9ca7` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
 
 ### Status
 

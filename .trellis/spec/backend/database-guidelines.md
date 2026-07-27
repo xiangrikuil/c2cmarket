@@ -47,8 +47,8 @@ The process-level PostgreSQL runtime foundation is wired through `pgx/v5/pgxpool
 - API market service publishing uses `api_model_catalog`, `api_model_price_versions`, `api_services`, `api_service_access_modes`, `api_service_models`, `api_service_packages`, `api_services.accepting_orders`, `api_services.payment_window_minutes`, and `api_service_payment_options`. API purchase intents live in migration `000014_api_market_purchase_intents` and must stay separate from the service publishing migration.
 - API service public visibility is database-readable from the shared orderable predicate: `review_status='approved'`, `publication_status='online'`, `moderation_status='clear'`, `accepting_orders=true`, `payment_window_minutes BETWEEN 3 AND 15`, and at least one enabled row in `api_service_payment_options`. Use the same predicate for public list/detail, search API-service and merchant projections, favorite target validation/listing, and purchase-intent creation.
 - `api_services.owner_contact_method_id` must reference a contact method owned by the same `owner_user_id`; `merchant_profile_id` must reference a merchant profile owned by the same user when store alias mode is used.
-- `api_service_models.distribution_system` duplicates the parent service distribution system through a composite foreign key so PostgreSQL can enforce `distribution_system <> 'sub2api' OR merchant_multiplier = 1.0000`.
-- API service service-layer validation and database constraints both enforce the fixed Sub2API multiplier for the legacy service/free-amount contract. `api_quota_offers.model_multiplier` is a separate positive per-offer declaration and must not inherit that fixed-one constraint.
+- `api_service_models.distribution_system` duplicates the parent service distribution system through a composite foreign key so model rows remain consistent with their parent service.
+- `api_service_models.merchant_multiplier` is a positive merchant declaration for every distribution system. Service validation and the database positive-value constraint must accept any positive decimal; `1.0000` is the default, not a forced Sub2API value. `api_quota_offers.model_multiplier` is a separate positive per-offer declaration with the same default-only meaning.
 - API service tables store non-sensitive descriptions, access-mode notes, model snapshots, merchant-declared pricing, package descriptions, private payment instructions, and owner/admin-only payment QR-code data URLs. Public reads may expose payment method labels but must not expose payment instructions, QR-code data, account numbers, wallet addresses, or payment-note text. API service tables must not store credential values, endpoint secrets, panel login materials, payment proof, or platform verification snapshots.
 - `api_purchase_intents` stores immutable non-sensitive snapshots of the API service, requested amount fields, frozen buyer/owner contact method version IDs, and lifecycle timestamps. It must not store credential values, endpoint secrets, panel login materials, payment proof, quota ledger entries, platform verification snapshots, or plaintext contact values.
 - API purchase intents must not create or reference `contact_sessions`; that table remains for carpool and development contact-window flows.
@@ -105,6 +105,8 @@ The process-level PostgreSQL runtime foundation is wired through `pgx/v5/pgxpool
 - Local Docker PostgreSQL uses the root `compose.yaml` `migrate` one-shot service. Run `docker compose --profile migrate run --rm migrate` after PostgreSQL is healthy.
 - Do not rely on `/docker-entrypoint-initdb.d/` for application schema upgrades; it only runs for empty database volumes.
 - Backend readiness owns an explicit `ExpectedMigrationVersion` constant matching the latest migration number. When adding a new migration, update the constant and keep `/readyz` tests aligned so PostgreSQL readiness fails while `schema_migrations.version` is behind.
+- Before replacing a `CHECK` constraint on a table that already exists in deployed databases, inspect `pg_constraint` with `pg_get_constraintdef` and account for both canonical names and PostgreSQL-generated legacy names. A forward migration must drop every obsolete duplicate before adding the single canonical named constraint; replacing only the newest named constraint can leave an older anonymous constraint active and make otherwise valid state transitions fail at runtime.
+- Constraint-changing migrations require both upgrade-path verification against an already-applied schema and a complete empty-database migration-chain smoke. Source-text assertions alone cannot prove that no duplicate legacy constraint remains active.
 - PostgreSQL 18 Docker images must mount persistent storage at `/var/lib/postgresql`, not `/var/lib/postgresql/data`, because the image stores versioned cluster data below that parent directory.
 
 ## Scenario: Applied Report Schema Contract Upgrade
@@ -155,7 +157,7 @@ The forward migration adds `reports.canonical_target_type`, `reports.canonical_t
 - Add a focused regression that asserts the forward migration contains all required report, dispute, audit, and duplicate-archival steps.
 - Apply the complete migration chain from an empty PostgreSQL volume through `ExpectedMigrationVersion`; testing only an already-upgraded database is insufficient for compatibility migrations.
 - Run `go test ./internal/store/postgres ./internal/database` and the complete backend suite when unrelated packages compile.
-- Run `VITE_API_MODE=real pnpm --dir frontend exec vue-tsc -b --pretty false` and `VITE_API_MODE=real pnpm --dir frontend exec vite build`.
+- Run `pnpm --dir frontend typecheck` and the real-mode `pnpm --dir frontend build` with all required Nuxt runtime API variables.
 - Apply the migration to a local database and verify `schema_migrations.version`, required columns, list joins, and duplicate-active-report count.
 - Verify a failed admin list query renders an explicit error state rather than `当前筛选下暂无记录。`.
 
@@ -190,7 +192,11 @@ backend/migrations/000054_api_quota_offers.{up,down}.sql
 ...
 backend/migrations/000061_source_author_verification.{up,down}.sql
 backend/migrations/000062_auth_identity_bootstrap_hardening.{up,down}.sql
-database.ExpectedMigrationVersion = 62
+backend/migrations/000063_verification_data_lifecycle.{up,down}.sql
+backend/migrations/000064_contact_cipher_aad.{up,down}.sql
+backend/migrations/000065_remove_demands.{up,down}.sql
+backend/migrations/000066_api_service_multiplier_reconciliation.{up,down}.sql
+database.ExpectedMigrationVersion = 66
 ```
 
 Standard execution remains:
@@ -203,7 +209,7 @@ docker compose --profile migrate run --rm migrate
 
 - A migration version that has appeared on an integrated branch or has been applied to a persistent database is immutable. Never reuse its number for different SQL.
 - When unpublished migrations collide with published history, restore the published files and renumber every unpublished migration in dependency order. Do not edit `schema_migrations`, use `force`, or require a custom repair runner.
-- A forward migration may restore a contract removed by historical SQL when the current product still requires it. Version 54 restores `ck_api_service_models_sub2api_multiplier` without constraining the separate `api_quota_offers.model_multiplier`.
+- Version 54 historically restored `ck_api_service_models_sub2api_multiplier` without constraining the separate `api_quota_offers.model_multiplier`. That fixed-one service-model rule is not the current product contract: immutable Version 54 remains in history, and forward Version 66 removes the canonical or anonymous constraint.
 - `ExpectedMigrationVersion`, the migration README, filename-based tests, task contracts, and release documentation must move with the renumbered files.
 - Existing databases are tested through an explicitly named clone. Do not use the default development or production database for destructive down/up verification.
 
@@ -211,16 +217,17 @@ docker compose --profile migrate run --rm migrate
 
 | Condition | Expected behavior |
 | --- | --- |
-| Database Version 53 contains published 51/52 schema but lacks new quota tables | Run standard migration 54 onward and finish at `62, dirty=false`. |
-| Fresh database | Run the complete chain 1 through 62 without gaps or duplicate versions. |
-| Existing Sub2API service model has `merchant_multiplier <> 1.0000` | Version 54 fails explicitly while restoring the check; do not rewrite business data silently. |
+| Database Version 53 contains published 51/52 schema, has no rows that violate historical Version 54, and lacks new quota tables | Run standard migration 54 onward and finish at `66, dirty=false`; Version 66 removes the historical fixed-one constraint. |
+| Fresh database | Run the complete chain 1 through 66 without gaps or duplicate versions; the Version 54 constraint is an intermediate state removed by Version 66. |
+| Database Version 53 already has a Sub2API service model with `merchant_multiplier <> 1.0000` | Version 54 fails before Version 66 can run. Stop on an explicitly named clone; do not force the migration version or rewrite business data silently. |
+| Database Version 54-65 still has the fixed-one constraint | Version 66 drops every matching canonical or anonymous constraint and preserves business rows. |
 | Migration fails and marks a temporary clone dirty | Delete and recreate only that named clone from the untouched source database before retrying. |
 | Repository latest file and `ExpectedMigrationVersion` differ | `scripts/check-migrations-doc.mjs` fails. |
 
 ### 5. Good / Base / Bad Cases
 
-- Good: preserve published 51/52/53, renumber unpublished files to 54-61, add new work at 62, and verify a fresh 1→62 database plus a cloned 53→62 database.
-- Base: migrate the clone 62→53→62; the old package schema and stable business-row hashes remain unchanged.
+- Good: preserve published 51/52/53, renumber unpublished files to 54-61, add later work through 66, and verify a fresh 1→66 database plus supported cloned upgrade paths.
+- Base: migrate a compatible clone 53→66; the old package schema and stable business-row hashes remain unchanged, and the fixed-one constraint is absent at Version 66.
 - Bad: replace Version 51 with unrelated SQL, see `schema_migrations=53`, and assume the replacement SQL already ran.
 
 ### 6. Tests Required
@@ -246,6 +253,66 @@ Correct:
   keep 000053_auth_session_renewal
   move unpublished api_quota_offers to 000054 and preserve dependency order
   prove both 1→latest and existing-version→latest paths
+```
+
+## Scenario: API Service Multiplier Reconciliation
+
+### 1. Scope / Trigger
+
+- Trigger: immutable Version 54 restores a fixed `1.0000` Sub2API service-model check, while the current API service contract accepts any positive merchant-declared multiplier.
+- Version 66 reconciles fresh and already-upgraded databases without editing published migration files or rewriting business rows.
+
+### 2. Signatures
+
+```text
+backend/migrations/000066_api_service_multiplier_reconciliation.up.sql
+backend/migrations/000066_api_service_multiplier_reconciliation.down.sql
+database.ExpectedMigrationVersion = 66
+api_service_models.merchant_multiplier numeric(8,4) NOT NULL DEFAULT 1.0000 CHECK (merchant_multiplier > 0)
+```
+
+### 3. Contracts
+
+- The up migration inspects `pg_constraint` for `api_service_models` checks and drops both `ck_api_service_models_sub2api_multiplier` and legacy anonymous checks whose normalized definition fixes `merchant_multiplier` to one.
+- The migration must not update, delete, or otherwise normalize business rows.
+- Service validation accepts every positive decimal multiplier for every distribution system and defaults an omitted value to `1.0000`.
+- The down migration restores the historical fixed-one constraint and may fail atomically when non-`1.0000` Sub2API rows exist; rollback must never coerce those declarations.
+
+### 4. Validation & Error Matrix
+
+| Condition | Expected behavior |
+| --- | --- |
+| Version 65 database has the canonical fixed-one constraint | Version 66 drops it and finishes at `66, dirty=false`. |
+| Database has a matching anonymous fixed-one check | Version 66 discovers and drops it through `pg_get_constraintdef`. |
+| Merchant declares a positive non-`1.0000` multiplier after Version 66 | Service validation and PostgreSQL both accept and preserve the normalized value. |
+| Merchant declares zero, a negative value, or invalid decimal text | Service validation returns `422 VALIDATION_FAILED`; the database positive-value check remains the integrity backstop. |
+| Version 66 down runs with non-`1.0000` Sub2API rows | Constraint creation fails; rows must not be rewritten to make rollback succeed. |
+
+### 5. Good / Base / Bad Cases
+
+- Good: keep Version 54 immutable, add Version 66, migrate a named clone, and verify custom positive multipliers round-trip.
+- Base: a service omits `merchantMultiplier`; runtime stores the default `1.0000`.
+- Bad: edit Version 54, force `schema_migrations`, or update existing multipliers to `1.0000` to hide the contract conflict.
+
+### 6. Tests Required
+
+- Source tests assert Version 66 finds canonical and anonymous fixed-one checks, drops constraints dynamically, and contains no `UPDATE` or `DELETE` of `api_service_models`.
+- Apply the complete empty-database chain through Version 66 and assert `schema_migrations` is `66, dirty=false`.
+- Apply Version 66 to a Version 65 clone and assert no matching fixed-one check remains.
+- Run API service route and PostgreSQL integration regressions that create or update a Sub2API model with a positive non-`1.0000` multiplier and read the exact normalized value back.
+- Run `node scripts/check-migrations-doc.mjs`, database contract tests, full Go tests, `go vet ./...`, and `git diff --check`.
+
+### 7. Wrong vs Correct
+
+```sql
+-- Wrong: rewrite an immutable historical migration or coerce merchant data.
+UPDATE api_service_models
+SET merchant_multiplier = 1.0000
+WHERE distribution_system = 'sub2api';
+
+-- Correct: reconcile the obsolete constraint in a new forward migration.
+ALTER TABLE api_service_models
+DROP CONSTRAINT ck_api_service_models_sub2api_multiplier;
 ```
 
 ## Docker Runtime

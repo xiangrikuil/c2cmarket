@@ -9,7 +9,7 @@ Author: Codex
 
 - Trigger: changes to limited API quota batches, offers, sale rounds, inventory units, quota orders, pre-imported delivery credentials, public offer projections, or their OpenAPI routes.
 - This contract is separate from the legacy Sub2API free-amount purchase path. Both reuse `api_services` and `api_orders`, but only limited offers use `purchase_kind='limited_quota_offer'` and authoritative inventory units.
-- Primary owners: `internal/module/apiquota`, `internal/store/postgres/api_quota.go`, `internal/server/api_quota_handler.go`, migrations `000051` and `000052`, and `docs/openapi/c2c-market-api-v1.yaml`.
+- Primary owners: `internal/module/apiquota`, `internal/store/postgres/api_quota.go`, `internal/server/api_quota_handler.go`, migrations `000054`, `000055`, and `000056`, and `docs/openapi/c2c-market-api-v1.yaml`.
 
 ### 2. Signatures
 
@@ -44,7 +44,7 @@ api_quota_credentials
 
 - A batch is the seller-declared external USD allowance source. An offer is the buyer-visible fixed USD/CNY product. A sale round limits scheduled copies. Do not collapse these objects into `api_services` or legacy `api_service_packages`.
 - `sale_cutoff_at <= expires_at - interval '1 hour'`. No new order may be created at or after either boundary.
-- `model_multiplier` must be positive and defaults to `1.0000`, but it is independent of seller identity and distribution system. Sub2API limited offers may declare another positive multiplier. Legacy Sub2API free-amount services retain their existing fixed-one rule.
+- `model_multiplier` must be positive and defaults to `1.0000`, but it is independent of seller identity and distribution system. Sub2API limited offers and regular API services may declare another positive multiplier; neither contract treats `1.0000` as forced.
 - Publishing locks the batch, validates all planned USD and credential capacity, reserves the full planned USD allowance, creates one inventory row per copy, and activates allocations in one transaction.
 - Purchase claims one available inventory row with `FOR UPDATE SKIP LOCKED`. A scheduled purchase also inserts the unique `(sale_round_id, buyer_user_id)` claim. The intent, order, snapshots, inventory/credential reservation, events, notifications, and completed idempotency record commit together.
 - Scheduled orders freeze a five-minute payment window. Continuous limited offers and legacy free-amount orders freeze ten minutes.

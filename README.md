@@ -36,23 +36,23 @@ C2CMarket 是一个前后端分离的社区信息撮合平台。它帮助用户�
 - **社区信誉**：公开资料、收藏、评价、举报、纠纷与申诉。
 - **通知中心**：公告、业务通知、未读状态和邮件提醒。
 - **运营后台**：用户、商品目录、车源、API 服务、订单、公告、反馈和审计管理。
-- **统一搜索**：检索公开车源、API 服务、需求、价格记录和用户资料。
+- **统一搜索**：检索公开车源、API 服务、价格记录和用户资料。
 
 ## 技术栈
 
 | 层级 | 技术 |
 | --- | --- |
-| 前端 | Vue 3、TypeScript、Vite 8、Vue Router、Pinia、TanStack Query、Tailwind CSS |
+| 前端 | Nuxt 4、Vue 3、TypeScript、Pinia、TanStack Query、Tailwind CSS |
 | 后端 | Go 1.26.5、chi、pgx |
 | 数据库 | PostgreSQL 18、版本化 SQL migrations |
-| 基础设施 | Docker Compose、Cloudflare Pages/Tunnel、GitHub Actions |
+| 基础设施 | Docker Compose、Cloudflare Workers、VPS/Caddy、GHCR、GitHub Actions |
 | 集成 | linux.do OAuth 2.0、阿里云 DirectMail SMTP、可选 Umami |
 
 ## 项目结构
 
 ```text
 .
-├── frontend/              Vue 单页应用
+├── frontend/              Nuxt 4 混合渲染应用
 ├── backend/               Go HTTP API
 │   ├── cmd/api/           服务入口
 │   ├── internal/          业务模块与基础设施
@@ -112,7 +112,7 @@ pnpm --dir frontend install --frozen-lockfile
 pnpm --dir frontend dev
 ```
 
-打开 `http://127.0.0.1:5173`。开发服务器会把 `/api`、`/health` 和 `/readyz` 转发到本地后端。
+打开 `http://127.0.0.1:3000`。Nuxt 开发服务器通过运行时配置访问本地后端。
 
 停止本地服务：
 
@@ -128,13 +128,19 @@ docker compose --profile app down
 cd backend && go test ./...
 cd ..
 pnpm --dir frontend typecheck
-VITE_API_MODE=real pnpm --dir frontend build
+NUXT_PUBLIC_API_MODE=real \
+NUXT_PUBLIC_SITE_URL=https://c2cmarket.shop \
+NUXT_PUBLIC_API_BASE_URL=https://api.c2cmarket.shop \
+NUXT_API_BASE_URL=https://api.c2cmarket.shop \
+pnpm --dir frontend build
 pnpm --dir frontend test
 node scripts/check-openapi-routes.mjs
 node scripts/check-openapi-types.mjs
 node scripts/check-migrations-doc.mjs
 node scripts/check-compose-exposure.mjs
 ```
+
+前端生产构建必须同时配置 real 模式、公开 API 地址和服务端 API 地址；缺少任一项都会失败。
 
 需要验证完整业务流程时，可在后端运行后执行：
 
@@ -149,6 +155,7 @@ API_BASE_URL=http://127.0.0.1:8080 node scripts/run-smokes.mjs
 - Staging 配置模板：[`.env.staging.example`](./.env.staging.example)
 - API 契约：[`docs/openapi/c2c-market-api-v1.yaml`](./docs/openapi/c2c-market-api-v1.yaml)
 - 部署手册：[`docs/ops/deployment-runbook.md`](./docs/ops/deployment-runbook.md)
+- Workers/VPS 部署说明：[`docs/ops/cloudflare-workers-vps-backends.md`](./docs/ops/cloudflare-workers-vps-backends.md)
 - 安全运维：[`docs/security.md`](./docs/security.md)
 - 生产运维：[`docs/operations.md`](./docs/operations.md)
 - 备份恢复：[`docs/backup-restore.md`](./docs/backup-restore.md)

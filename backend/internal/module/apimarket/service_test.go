@@ -1,9 +1,21 @@
 package apimarket
 
 import (
+	"context"
 	"testing"
 	"time"
+
+	"c2c-market/backend/internal/domain"
+	"c2c-market/backend/internal/module/catalog"
 )
+
+type staticAPIModelResolver struct {
+	models map[string]catalog.APIModelCatalog
+}
+
+func (r staticAPIModelResolver) APIModel(_ context.Context, modelID string) (catalog.APIModelCatalog, *domain.AppError) {
+	return r.models[modelID], nil
+}
 
 func TestValidateCreateInputRequiresFutureQuotaExpirationForMeteredServices(t *testing.T) {
 	now := time.Date(2026, 7, 7, 12, 0, 0, 0, time.UTC)
@@ -148,6 +160,68 @@ func TestOrderableReasonsIgnoreLegacyUSDTPaymentOption(t *testing.T) {
 	}
 }
 
+func TestLimitedPackageBuildIgnoresCreateIDAndRetainsUpdateIDs(t *testing.T) {
+	now := time.Date(2026, 7, 16, 8, 0, 0, 0, time.UTC)
+	resolver := staticAPIModelResolver{models: map[string]catalog.APIModelCatalog{
+		"model-1": {
+			ID:                         "model-1",
+			DisplayName:                "GPT-5.6",
+			Provider:                   "OpenAI",
+			Capabilities:               []string{"text"},
+			CurrentPriceVersionID:      "price-version-1",
+			InputPricePerMillion:       "1.000000",
+			CachedInputPricePerMillion: "0.100000",
+			OutputPricePerMillion:      "8.000000",
+		},
+	}}
+	manager := NewManager(nil, resolver, nil, func() time.Time { return now })
+	input := validLimitedPackageCreateInput()
+	input.Packages[0].ID = "client-supplied-id"
+
+	created, appErr := manager.buildFromInput(context.Background(), Service{}, input)
+	if appErr != nil {
+		t.Fatalf("build limited package service: %v", appErr)
+	}
+	if created.Packages[0].ID == "client-supplied-id" || created.Packages[0].ID == "" {
+		t.Fatalf("expected a server-generated package id, got %q", created.Packages[0].ID)
+	}
+	if created.Models[0].MerchantMultiplier != "0.0100" || created.Packages[0].Models[0].ModelNameSnapshot != "GPT-5.6" {
+		t.Fatalf("expected exact model snapshot and declared multiplier, got %+v", created.Packages[0].Models)
+	}
+
+	packageID := created.Packages[0].ID
+	modelID := created.Models[0].ID
+	created.Packages[0].StockAvailable = 2
+	input.Packages[0].ID = packageID
+	input.Packages[0].StockTotal = 6
+	updated, appErr := manager.buildFromInput(context.Background(), created, input)
+	if appErr != nil {
+		t.Fatalf("update limited package service: %v", appErr)
+	}
+	if updated.Packages[0].ID != packageID || updated.Models[0].ID != modelID {
+		t.Fatalf("expected stable package/model ids, got package=%q model=%q", updated.Packages[0].ID, updated.Models[0].ID)
+	}
+	if updated.Packages[0].StockAvailable != 3 {
+		t.Fatalf("expected available stock to preserve committed units, got %d", updated.Packages[0].StockAvailable)
+	}
+}
+
+func TestValidateLimitedPackageRejectsUnsupportedDurationAndModelSubset(t *testing.T) {
+	now := time.Date(2026, 7, 16, 8, 0, 0, 0, time.UTC)
+	input := validLimitedPackageCreateInput()
+	unsupported := 5
+	input.Packages[0].DurationDays = &unsupported
+	if err := validateCreateInput(input, now); err == nil || err.FieldErrors[0].Field != "packages.0.durationDays" {
+		t.Fatalf("expected unsupported duration error, got %+v", err)
+	}
+
+	input = validLimitedPackageCreateInput()
+	input.Packages[0].ModelCatalogIDs = []string{"model-not-enabled"}
+	if err := validateCreateInput(input, now); err == nil || err.FieldErrors[0].Field != "packages.0.modelCatalogIds.0" {
+		t.Fatalf("expected package model subset error, got %+v", err)
+	}
+}
+
 func validMeteredCreateInput() CreateServiceInput {
 	return CreateServiceInput{
 		OwnerContactMethodID:             "contact-1",
@@ -170,6 +244,39 @@ func validMeteredCreateInput() CreateServiceInput {
 			ModelCatalogID:     "model-1",
 			MerchantMultiplier: "1.0000",
 			Enabled:            true,
+		}},
+	}
+}
+
+func validLimitedPackageCreateInput() CreateServiceInput {
+	duration := 3
+	return CreateServiceInput{
+		OwnerContactMethodID: "contact-1",
+		MerchantIdentityMode: "public_profile",
+		Title:                "GPT 限时套餐",
+		ShortDescription:     "按固定价格购买限时面板额度。",
+		DistributionSystem:   ServiceDistributionSub2API,
+		BillingMode:          ServiceBillingModeFixedPackage,
+		MinimumIntentCNY:     "9.90",
+		MaximumIntentCNY:     "9.90",
+		UsageVisibility:      "fixed_package_only",
+		AccessModes: []ServiceAccessModeInput{{
+			AccessMode: "fixed_package_offsite",
+		}},
+		Models: []ServiceModelInput{{
+			ModelCatalogID:     "model-1",
+			MerchantMultiplier: "0.01",
+			Enabled:            true,
+		}},
+		Packages: []ServicePackageInput{{
+			Name:            "3 天 GPT-5.6 套餐",
+			PriceCNY:        "9.90",
+			PanelAllowance:  "5.000000",
+			DurationDays:    &duration,
+			StockTotal:      5,
+			Description:     "交付后 3 天内有效。",
+			Enabled:         true,
+			ModelCatalogIDs: []string{"model-1"},
 		}},
 	}
 }

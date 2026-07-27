@@ -1063,12 +1063,19 @@ export type ApiServiceModelInput = {
 };
 
 export type ApiServicePackageInput = {
+    /**
+     * Stable package ID accepted only when updating a package that already belongs to this service. Creation ignores client-supplied IDs.
+     */
+    id?: string;
     name: string;
     priceCny: DecimalString;
-    durationDays?: number;
+    panelAllowance: DecimalString;
+    durationDays: 1 | 3 | 7 | 30;
+    stockTotal: number;
     description: string;
     enabled?: boolean;
     sortOrder?: number;
+    modelCatalogIds: Array<string>;
 };
 
 export type ApiServiceOrderSettingsRequest = {
@@ -1171,6 +1178,15 @@ export type PublicApiService = {
     accessModes: Array<ApiServiceAccessMode>;
     models: Array<ApiServiceModel>;
     packages: Array<ApiServicePackage>;
+    /**
+     * Completed API orders in the previous 30 days.
+     */
+    completed30d?: number;
+    unresolvedDisputes?: number;
+    /**
+     * Median minutes to the first seller response event. Null means there is not enough history.
+     */
+    responseMedianMinutes?: number | null;
     sellerReputation: ReputationSummary | null;
     sourceAuthorVerification: SourceAuthorResourceSummary;
     version: number;
@@ -1270,10 +1286,23 @@ export type ApiServicePackage = {
     id: string;
     name: string;
     priceCny: DecimalString;
-    durationDays?: number | null;
+    panelAllowance: DecimalString;
+    durationDays?: 1 | 3 | 7 | 30 | null;
+    stockTotal: number;
+    stockAvailable: number;
     description: string;
     enabled: boolean;
     sortOrder: number;
+    models: Array<ApiServicePackageModel>;
+};
+
+export type ApiServicePackageModel = {
+    serviceModelId: string;
+    modelCatalogId: string;
+    modelPriceVersionId?: string;
+    modelNameSnapshot: string;
+    providerSnapshot: string;
+    merchantMultiplier: DecimalString;
 };
 
 export type ApiServiceList = {
@@ -1549,6 +1578,9 @@ export type ApiPurchaseIntentCore = {
     requestedUsdAllowance?: DecimalString;
     selectedAccessMode: string;
     selectedPackageId?: string;
+    /**
+     * Immutable JSON snapshot containing the package, exact models, merchant multipliers, and model price version IDs.
+     */
     selectedPackageSnapshot?: string;
     serviceVersionSnapshot: number;
     serviceTitleSnapshot: string;
@@ -1740,7 +1772,18 @@ export type ApiOrder = {
     serviceVersionSnapshot: number;
     billingModeSnapshot: string;
     selectedPackageId?: string;
+    /**
+     * Immutable JSON snapshot containing the package, exact models, merchant multipliers, and model price version IDs.
+     */
     selectedPackageSnapshot?: string;
+    /**
+     * Internal lifecycle marker. True only while an unpaid fixed-package order still owns its reserved unit.
+     */
+    packageStockReserved?: boolean;
+    /**
+     * Set when the seller submits delivery, calculated from the frozen package duration.
+     */
+    packageExpiresAt?: string | null;
     quoteVersionSnapshot?: number;
     requestedUsdAllowanceSnapshot?: DecimalString;
     cnyPerUsdAllowanceSnapshot?: DecimalString;
@@ -7291,6 +7334,49 @@ export type SubmitOwnerApiOrderDeliveryResponses = {
 };
 
 export type SubmitOwnerApiOrderDeliveryResponse = SubmitOwnerApiOrderDeliveryResponses[keyof SubmitOwnerApiOrderDeliveryResponses];
+
+export type OpenOwnerApiOrderDisputeData = {
+    body: ApiOrderReasonRequest;
+    headers: {
+        'If-Match': string;
+        'Idempotency-Key': string;
+    };
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/api/v1/owner/api-orders/{id}/dispute';
+};
+
+export type OpenOwnerApiOrderDisputeErrors = {
+    /**
+     * Problem Details error.
+     */
+    409: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    412: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    422: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    428: ProblemDetails;
+};
+
+export type OpenOwnerApiOrderDisputeError = OpenOwnerApiOrderDisputeErrors[keyof OpenOwnerApiOrderDisputeErrors];
+
+export type OpenOwnerApiOrderDisputeResponses = {
+    /**
+     * API order dispute case opened by the service owner and linked to the order.
+     */
+    200: ApiOrder;
+};
+
+export type OpenOwnerApiOrderDisputeResponse = OpenOwnerApiOrderDisputeResponses[keyof OpenOwnerApiOrderDisputeResponses];
 
 export type ListAdminOfficialPriceLeadsData = {
     body?: never;

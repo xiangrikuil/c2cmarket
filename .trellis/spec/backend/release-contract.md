@@ -31,7 +31,7 @@ node scripts/check-openapi-types.mjs
   "version": "0.1.0",
   "gitCommit": "<full resolved commit>",
   "buildTime": "<RFC3339 commit time>",
-  "expectedMigrationVersion": 64
+  "expectedMigrationVersion": 66
 }
 ```
 
@@ -180,10 +180,11 @@ release-gate
   actions by full commit SHA. Scanner and generator versions are explicit.
 - Go comes from `backend/go.mod`; Node and pnpm match the supported frontend
   toolchain. Frontend installation is frozen and the production-like build
-  uses `VITE_API_MODE=real`.
+  uses `NUXT_PUBLIC_API_MODE=real` with both public and server API base URLs.
 - Backend format, vet, tests, race, and `govulncheck` are independent evidence.
   PostgreSQL 18 integration migrates three empty databases through
-  `database.ExpectedMigrationVersion` with `dirty=false`.
+  `database.ExpectedMigrationVersion` with `dirty=false` and verifies the
+  Version 65→66 legacy-constraint upgrade path in a fourth isolated database.
 - Contract checks cover routes, generated OpenAPI files, migrations, security
   headers, Compose exposure, commit-only source packaging, and whitespace.
 - Gitleaks scans full Git history. Trivy scans both the repository filesystem
@@ -233,7 +234,11 @@ cd backend && go test -count=1 ./...
 cd backend && go test -race -count=1 ./...
 cd frontend && pnpm install --frozen-lockfile
 cd frontend && pnpm typecheck && pnpm test
-cd frontend && VITE_API_MODE=real pnpm build
+cd frontend && \
+  NUXT_PUBLIC_API_MODE=real \
+  NUXT_PUBLIC_API_BASE_URL=https://api.c2cmarket.shop \
+  NUXT_API_BASE_URL=https://api.c2cmarket.shop \
+  pnpm build
 node scripts/check-openapi-routes.mjs
 node scripts/check-openapi-types.mjs
 node scripts/check-migrations-doc.mjs

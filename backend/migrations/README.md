@@ -72,6 +72,7 @@ versions:
 | `000063_verification_data_lifecycle` | keyed email verification challenges, bounded idempotency records, and lifecycle-maintenance indexes |
 | `000064_contact_cipher_aad` | explicit legacy/AAD cipher formats for versioned contact, audit, order, and quota secrets |
 | `000065_remove_demands` | removes the prelaunch demand-post table, its indexes, and demand idempotency residue |
+| `000066_api_service_multiplier_reconciliation` | removes historical fixed-one Sub2API service-model constraints so the positive merchant-declared multiplier contract is consistent |
 
 The current runnable Go slice supports both in-memory tests and PostgreSQL runtime.
 When `DATABASE_URL` is configured, users, auth sessions, idempotency, product
@@ -113,9 +114,10 @@ snapshots, merchant-declared pricing, and fixed package descriptions. Public API
 service reads are limited to `review_status='approved'`,
 `publication_status='online'`, and `moderation_status='clear'`; public responses
 do not include owner contact method IDs, review internals, or merchant internal
-notes. `distribution_system='sub2api'` service models must keep
-`merchant_multiplier=1.0000` at both service-validation and database CHECK
-levels.
+notes. Version 13 initially constrained `distribution_system='sub2api'` service
+models to `merchant_multiplier=1.0000`. Version 51 removes that constraint: the
+default remains `1.0000`, while merchants may declare any positive multiplier
+that reflects their actual upstream conversion.
 
 API purchase intents are version 14 plus the direct-contact cleanup in version
 15 and contract hardening in version 16. Creating an intent for a public API service creates the intent row, freezes
@@ -191,13 +193,29 @@ report an issue only after the buyer submits payment information. The buyer can
 then supplement and resubmit that information, returning the order to
 `payment_submitted`; the existing quota reservation remains held throughout.
 
+Version 51 turns fixed API packages into limited-duration inventory. Packages
+store panel allowance and total/available stock, reference a subset of stable
+service-model rows, and reserve one unit atomically when an order is created.
+Unpaid cancellation or timeout releases the unit; payment confirmation consumes
+it. Fixed-package orders freeze a delivery-based expiry timestamp. This version
+also removes the historical Sub2API fixed-`1.0000` model-multiplier constraint;
+`1.0000` remains the default rather than a forced value.
+
+Version 52 repairs databases that still retain an earlier anonymous
+`api_purchase_intents` status constraint alongside the canonical named
+constraint. It drops both legacy and canonical variants, then recreates one
+named constraint that accepts the order-backed `ordered` state. The down
+migration is intentionally non-destructive because restoring the anonymous
+constraint would reintroduce the production failure this migration removes.
+
 Version 54 adds seller-declared quota batches and fixed USD quota offers without
 changing the existing Sub2API free-amount purchase path. Scheduled sales allocate
 one durable inventory row per copy, and `(sale_round_id, buyer_user_id)` claims
 enforce the cross-offer one-copy limit. Quota-offer orders freeze price, allowance,
 multiplier, cutoff, expiration, performance declaration, and delivery-mode fields.
-The database enforces the one-hour hard sale cutoff and the fixed `1.0000`
-Sub2API multiplier.
+At this historical step, the database enforces the one-hour hard sale cutoff and
+restores the fixed `1.0000` Sub2API service-model constraint. Version 66 removes
+that obsolete constraint while preserving the positive multiplier contract.
 
 Version 55 adds encrypted pre-imported credential inventory for quota offers.
 Rows use the existing one-time delivery shapes, keyed fingerprints, explicit
@@ -253,6 +271,13 @@ response bodies truncated above 64 KiB.
 Version 65 removes the prelaunch demand-post table after clearing demand
 idempotency resource references. Its down migration recreates only the empty
 historical table and indexes; deleted development data is not recoverable.
+
+Version 66 removes the canonical or legacy anonymous checks that forced
+Sub2API service-model multipliers to `1.0000`. Version 54 remains immutable as
+historical migration state; the new forward migration makes existing and fresh
+databases converge on the current positive merchant-declared multiplier
+contract without rewriting business data. Rolling Version 66 down can fail
+explicitly when non-`1.0000` Sub2API model rows already exist.
 
 ## Contact Retention And Destruction
 

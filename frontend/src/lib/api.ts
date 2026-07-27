@@ -50,6 +50,9 @@ import {
   type ApiQuotaSystemSaleSlot,
   type ApiQuotaSystemSaleSlotList,
   type ApiService,
+  type ApiServicePackage,
+  type ApiServicePackageModel,
+  type ApiServicePackageSnapshot,
   type ApiServiceState,
   type ApiTTFTBand,
   type ApiUsageVisibility,
@@ -172,6 +175,7 @@ import {
   backendOwnerAPIIntents,
   backendOwnerAPIServiceById,
   backendOwnerAPIServices,
+  backendOpenAPIOrderDispute,
   backendPauseAPIService,
   backendPublishAPIService,
   backendPublicAPIQuotaOffer,
@@ -553,6 +557,10 @@ export type ApiOrder = {
   version: number
   intentSnapshot: ApiPurchaseIntent['snapshot']
   selectedDeliveryMode: ApiDeliveryMode
+  selectedPackageId?: string
+  packageSnapshot?: ApiServicePackageSnapshot
+  packageStockReserved?: boolean
+  packageExpiresAt?: string
   requestedUsdAllowance: number
   requestedUsdAllowanceDecimal?: string
   quotaSnapshot?: ApiQuotaOrderSnapshot
@@ -714,7 +722,7 @@ export type SaveCarpoolDraftPayload = {
   status: CarpoolDraftStatus
 }
 
-const wait = () => new Promise(resolve => window.setTimeout(resolve, 80))
+const wait = () => new Promise(resolve => setTimeout(resolve, 80))
 const currentBuyerId = 'buyer-demo-user'
 const currentBuyerName = 'demo_user'
 const currentOwnerId = 'owner-orbit'
@@ -739,7 +747,6 @@ const apiPaymentAccountSettingsStorageKey = 'c2cmarket.apiPaymentAccountSettings
 const feedbackStorageKey = 'c2cmarket.feedbackTickets.v1'
 const notificationReadStorageKey = 'c2cmarket.notificationReadState.v1'
 const favoriteStorageKey = 'c2cmarket.favorites.v1'
-const sub2ApiFixedMultiplier = 1
 const carpoolApplyAllowedStatuses: Carpool['status'][] = ['可上车']
 const carpoolContactVisibleStatuses: CarpoolApplicationStatus[] = ['accepted_reserved', 'waiting_contact', 'contacted', 'joined_pending_confirmation', 'active', 'pending_completion', 'completed', 'disputed']
 const apiContactVisibleStatuses: ApiPurchaseIntentStatus[] = ['open', 'contacted', 'ordered', 'buyer_cancelled', 'owner_closed']
@@ -779,6 +786,7 @@ function isLinuxDoTopicUrl(value: string) {
 }
 
 function readSessionStore<T>(key: string, seed: T): T {
+  if (typeof window === 'undefined') return clone(seed)
   const stored = window.sessionStorage.getItem(key)
   if (!stored) return clone(seed)
   const parsed = JSON.parse(stored) as T
@@ -789,6 +797,7 @@ function readSessionStore<T>(key: string, seed: T): T {
 }
 
 function readLocalStore<T>(key: string, seed: T): T {
+  if (typeof window === 'undefined') return clone(seed)
   const stored = window.localStorage.getItem(key)
   if (!stored) return clone(seed)
   return JSON.parse(stored) as T
@@ -865,25 +874,8 @@ function normalizeCarpoolStore(carpools: Carpool[]): Carpool[] {
   return carpools.map(normalizeCarpoolAccessArrangement)
 }
 
-function applyMultiplierToModelPriceRows(rows: ApiService['modelPriceRows'], multiplier: number): ApiService['modelPriceRows'] {
-  return rows.map(row => ({
-    ...row,
-    merchantMultiplier: multiplier,
-    actualInputPricePerMillion: multiplier === 1 ? row.officialInputPricePerMillion : Number((row.officialInputPricePerMillion * multiplier).toFixed(3)),
-    actualCachedInputPricePerMillion: row.officialCachedInputPricePerMillion === null ? null : multiplier === 1 ? row.officialCachedInputPricePerMillion : Number((row.officialCachedInputPricePerMillion * multiplier).toFixed(3)),
-    actualOutputPricePerMillion: multiplier === 1 ? row.officialOutputPricePerMillion : Number((row.officialOutputPricePerMillion * multiplier).toFixed(3)),
-  }))
-}
-
 function normalizeSub2ApiService(service: ApiService): ApiService {
-  if (service.delivery !== 'Sub2API') return service
-  return {
-    ...service,
-    modelMultipliers: service.modelMultipliers.map(row => ({ ...row, multiplier: `${sub2ApiFixedMultiplier.toFixed(2)}x` })),
-    rate: `${sub2ApiFixedMultiplier.toFixed(2)}x`,
-    defaultMultiplier: sub2ApiFixedMultiplier,
-    modelPriceRows: applyMultiplierToModelPriceRows(service.modelPriceRows, sub2ApiFixedMultiplier),
-  }
+  return service
 }
 
 function normalizeApiServiceStore(services: ApiService[]) {
@@ -954,11 +946,13 @@ export function getSupportedModelPriceRows(service: Pick<ApiService, 'models' | 
 }
 
 function persistApiPurchaseStores() {
+  if (typeof window === 'undefined') return
   window.sessionStorage.setItem(apiPurchaseIntentStorageKey, JSON.stringify(apiPurchaseIntentStore))
   window.sessionStorage.setItem(apiPurchaseIntentEventStorageKey, JSON.stringify(apiPurchaseIntentEventStore))
 }
 
 function persistApiOrderStore() {
+  if (typeof window === 'undefined') return
   window.sessionStorage.setItem(apiOrderStorageKey, JSON.stringify(apiOrderStore))
 }
 
@@ -970,15 +964,18 @@ function persistApiQuotaStores() {
 }
 
 function persistCarpoolApplicationStores() {
+  if (typeof window === 'undefined') return
   window.sessionStorage.setItem(carpoolApplicationStorageKey, JSON.stringify(carpoolApplicationStore))
   window.sessionStorage.setItem(carpoolApplicationEventStorageKey, JSON.stringify(carpoolApplicationEventStore))
 }
 
 function persistAdminStores() {
+  if (typeof window === 'undefined') return
   window.sessionStorage.setItem(adminAuditLogStorageKey, JSON.stringify(adminAuditLogStore))
 }
 
 function persistMarketStores() {
+  if (typeof window === 'undefined') return
   window.sessionStorage.setItem(officialPriceStorageKey, JSON.stringify(officialPriceStore))
   window.sessionStorage.setItem(carpoolStorageKey, JSON.stringify(carpoolStore))
   window.sessionStorage.setItem(apiServiceStorageKey, JSON.stringify(apiServiceStore))
@@ -986,18 +983,22 @@ function persistMarketStores() {
 }
 
 function persistApiPaymentAccountSettings() {
+  if (typeof window === 'undefined') return
   window.localStorage.setItem(apiPaymentAccountSettingsStorageKey, JSON.stringify(apiPaymentAccountSettingsStore))
 }
 
 function persistFeedbackTickets() {
+  if (typeof window === 'undefined') return
   window.sessionStorage.setItem(feedbackStorageKey, JSON.stringify(feedbackTicketStore))
 }
 
 function persistNotificationReadState() {
+  if (typeof window === 'undefined') return
   window.sessionStorage.setItem(notificationReadStorageKey, JSON.stringify(notificationReadStore))
 }
 
 function persistFavorites() {
+  if (typeof window === 'undefined') return
   window.sessionStorage.setItem(favoriteStorageKey, JSON.stringify(favoriteStore))
 }
 
@@ -1026,6 +1027,12 @@ function minutesFromNow(minutes: number) {
 
 function compareTimeDesc(a: string, b: string) {
   return new Date(b).getTime() - new Date(a).getTime()
+}
+
+function compareNullableNumberAsc(a: number | null, b: number | null) {
+  if (a === null) return b === null ? 0 : 1
+  if (b === null) return -1
+  return a - b
 }
 
 function deadlineTime(value?: string) {
@@ -1683,6 +1690,24 @@ function createSnapshot(service: ApiService): ApiPurchaseIntent['snapshot'] {
   }
 }
 
+function createPackageSnapshot(item: ApiServicePackage): ApiServicePackageSnapshot {
+  return {
+    id: item.id,
+    name: item.name,
+    priceCny: item.priceCny,
+    panelAllowance: item.panelAllowance,
+    durationDays: item.durationDays,
+    description: item.description,
+    models: item.models.map(model => ({
+      serviceModelId: model.serviceModelId,
+      modelCatalogId: model.modelCatalogId,
+      modelPriceVersionId: model.modelPriceVersionId,
+      modelName: model.modelName,
+      merchantMultiplier: model.merchantMultiplier,
+    })),
+  }
+}
+
 function apiServicePublicSearchTerms(item: ApiService) {
   const terms = [item.id, item.title, getApiMerchantDisplayName(item), ...item.models]
   if (canOpenApiMerchantProfile(item)) terms.push(item.merchant, item.merchantUsername)
@@ -1838,6 +1863,7 @@ export type CreateApiPurchaseIntentPayload = {
   purchaseAmountCny: number
   deliveryMode: ApiDeliveryMode
   targetModel: string
+  selectedPackageId?: string
   buyerNote?: string
 }
 
@@ -2106,13 +2132,13 @@ function filterApiServices(filters: ApiServiceFilters = {}) {
         && (!keyword || apiServicePublicSearchTerms(item).some(value => value.toLowerCase().includes(keyword)))
     })
     .sort((a, b) => {
-      if (filters.sort === 'multiplier_asc') return a.defaultMultiplier - b.defaultMultiplier || a.responseMedianMinutes - b.responseMedianMinutes
-      if (filters.sort === 'response_fast') return a.responseMedianMinutes - b.responseMedianMinutes || a.defaultMultiplier - b.defaultMultiplier
+      if (filters.sort === 'multiplier_asc') return a.defaultMultiplier - b.defaultMultiplier || compareNullableNumberAsc(a.responseMedianMinutes, b.responseMedianMinutes)
+      if (filters.sort === 'response_fast') return compareNullableNumberAsc(a.responseMedianMinutes, b.responseMedianMinutes) || a.defaultMultiplier - b.defaultMultiplier
       if (filters.sort === 'recent') return compareTimeDesc(a.lastOnlineConfirmedAt, b.lastOnlineConfirmedAt)
       const aPersonal = a.merchantType !== '商户'
       const bPersonal = b.merchantType !== '商户'
       return Number(isApiServicePubliclyOrderable(b)) - Number(isApiServicePubliclyOrderable(a))
-        || a.responseMedianMinutes - b.responseMedianMinutes
+        || compareNullableNumberAsc(a.responseMedianMinutes, b.responseMedianMinutes)
         || Number(bPersonal) - Number(aPersonal)
         || Number(a.unresolvedDisputes === 0) - Number(b.unresolvedDisputes === 0)
         || Number(b.deliveryModes.length) - Number(a.deliveryModes.length)
@@ -2146,13 +2172,13 @@ function filterSub2ApiMarketServices(filters: Sub2ApiMarketFilters = {}) {
     })
     .sort((a, b) => {
       if (filters.sort === 'credit_price_asc') return apiCreditPriceCny(a) - apiCreditPriceCny(b) || a.minimumPurchaseCny - b.minimumPurchaseCny
-      if (filters.sort === 'minimum_purchase_asc') return a.minimumPurchaseCny - b.minimumPurchaseCny || a.responseMedianMinutes - b.responseMedianMinutes
-      if (filters.sort === 'panel_supported') return Number(b.deliveryModes.includes('sub2api_panel_account')) - Number(a.deliveryModes.includes('sub2api_panel_account')) || a.responseMedianMinutes - b.responseMedianMinutes
-      if (filters.sort === 'response_fast') return a.responseMedianMinutes - b.responseMedianMinutes || a.minimumPurchaseCny - b.minimumPurchaseCny
+      if (filters.sort === 'minimum_purchase_asc') return a.minimumPurchaseCny - b.minimumPurchaseCny || compareNullableNumberAsc(a.responseMedianMinutes, b.responseMedianMinutes)
+      if (filters.sort === 'panel_supported') return Number(b.deliveryModes.includes('sub2api_panel_account')) - Number(a.deliveryModes.includes('sub2api_panel_account')) || compareNullableNumberAsc(a.responseMedianMinutes, b.responseMedianMinutes)
+      if (filters.sort === 'response_fast') return compareNullableNumberAsc(a.responseMedianMinutes, b.responseMedianMinutes) || a.minimumPurchaseCny - b.minimumPurchaseCny
       if (filters.sort === 'recent') return compareTimeDesc(a.lastOnlineConfirmedAt, b.lastOnlineConfirmedAt)
       return Number(isApiServicePubliclyOrderable(b)) - Number(isApiServicePubliclyOrderable(a))
         || apiCreditPriceCny(a) - apiCreditPriceCny(b)
-        || a.responseMedianMinutes - b.responseMedianMinutes
+        || compareNullableNumberAsc(a.responseMedianMinutes, b.responseMedianMinutes)
         || Number(b.deliveryModes.includes('sub2api_panel_account')) - Number(a.deliveryModes.includes('sub2api_panel_account'))
         || compareTimeDesc(a.lastOnlineConfirmedAt, b.lastOnlineConfirmedAt)
     })
@@ -2171,11 +2197,11 @@ function filterOtherApiMarketServices(filters: OtherApiMarketFilters = {}) {
         && (filters.online === undefined || isApiServicePubliclyOrderable(item) === filters.online)
     })
     .sort((a, b) => {
-      if (filters.sort === 'minimum_purchase_asc') return a.minimumPurchaseCny - b.minimumPurchaseCny || a.responseMedianMinutes - b.responseMedianMinutes
-      if (filters.sort === 'response_fast') return a.responseMedianMinutes - b.responseMedianMinutes || a.minimumPurchaseCny - b.minimumPurchaseCny
+      if (filters.sort === 'minimum_purchase_asc') return a.minimumPurchaseCny - b.minimumPurchaseCny || compareNullableNumberAsc(a.responseMedianMinutes, b.responseMedianMinutes)
+      if (filters.sort === 'response_fast') return compareNullableNumberAsc(a.responseMedianMinutes, b.responseMedianMinutes) || a.minimumPurchaseCny - b.minimumPurchaseCny
       if (filters.sort === 'recent') return compareTimeDesc(a.lastOnlineConfirmedAt, b.lastOnlineConfirmedAt)
       return Number(isApiServicePubliclyOrderable(b)) - Number(isApiServicePubliclyOrderable(a))
-        || a.responseMedianMinutes - b.responseMedianMinutes
+        || compareNullableNumberAsc(a.responseMedianMinutes, b.responseMedianMinutes)
         || a.minimumPurchaseCny - b.minimumPurchaseCny
         || compareTimeDesc(a.lastOnlineConfirmedAt, b.lastOnlineConfirmedAt)
     })
@@ -3472,9 +3498,9 @@ export async function submitApiService(payload: Record<string, unknown>) {
   const id = `api-${Date.now()}`
   const normalized = normalizeMerchantDisplayName(payload)
   const gateway = apiGatewayFromDistribution(payload.distributionSystem)
-  const defaultMultiplier = gateway === 'Sub2API' ? sub2ApiFixedMultiplier : numberValue(payload.defaultMultiplier, 1)
+  const defaultMultiplier = numberValue(payload.defaultMultiplier, 1)
   const cnyPerUsdCredit = numberValue(payload.cnyPerUsdCredit, 1)
-  const selectedModels = Array.isArray(payload.selectedModels) ? payload.selectedModels as Array<{ modelId?: string, enabled?: boolean }> : []
+  const selectedModels = Array.isArray(payload.selectedModels) ? payload.selectedModels as Array<{ modelId?: string, multiplierOverride?: number | null, enabled?: boolean }> : []
   const models = selectedModels
     .filter(item => item.enabled !== false)
     .map(item => modelCatalog.find(model => model.id === item.modelId)?.displayName ?? item.modelId ?? '自定义模型')
@@ -3482,6 +3508,9 @@ export async function submitApiService(payload: Record<string, unknown>) {
   const merchantIdentityMode = apiMerchantIdentityMode(normalized.merchantIdentityMode)
   const deliveryModes = apiDeliveryModes(payload.deliveryModes)
   const billing = apiBillingMode(payload.billingMode)
+  const rawPackages = Array.isArray(payload.packages)
+    ? payload.packages as Array<{ id?: string, name?: string, priceCny?: number, panelAllowance?: number, durationDays?: number, stockTotal?: number, description?: string, enabled?: boolean, modelCatalogIds?: string[] }>
+    : []
   const isPublish = payload.status === 'reviewing'
   const paymentOptions = Array.isArray(payload.paymentOptions)
     ? payload.paymentOptions as Array<{ paymentMethod?: string, enabled?: boolean, paymentInstructions?: string, paymentQrCodeDataUrl?: string | null }>
@@ -3553,7 +3582,33 @@ export async function submitApiService(payload: Record<string, unknown>) {
     officialPricingVersion: '2026-06',
     officialPricingUpdatedAt: nowText(),
     merchantNote: stringValue(payload.merchantNote, '建议首次小额测试。'),
-    modelPriceRows: buildModelPriceRowsFromPayload(payload, defaultMultiplier, gateway === 'Sub2API'),
+    modelPriceRows: buildModelPriceRowsFromPayload(payload, defaultMultiplier),
+    packages: rawPackages.map((item, index) => ({
+      id: item.id || `package-${Date.now()}-${index}`,
+      name: item.name || `套餐 ${index + 1}`,
+      priceCny: numberValue(item.priceCny, 0),
+      panelAllowance: numberValue(item.panelAllowance, 0),
+      durationDays: (item.durationDays ?? 1) as 1 | 3 | 7 | 30,
+      stockTotal: numberValue(item.stockTotal, 0),
+      stockAvailable: numberValue(item.stockTotal, 0),
+      description: item.description || '',
+      enabled: item.enabled !== false,
+      sortOrder: index,
+      models: (item.modelCatalogIds ?? []).map(modelId => {
+        const selected = selectedModels.find(row => row.modelId === modelId)
+        const model = modelCatalog.find(row => row.id === modelId)
+        return {
+          serviceModelId: `service-${modelId}`,
+          modelCatalogId: modelId,
+          modelPriceVersionId: '',
+          modelName: model?.displayName ?? modelId,
+          provider: model?.provider ?? 'other',
+          merchantMultiplier: selected?.multiplierOverride ?? defaultMultiplier,
+        }
+      }),
+    })),
+    recommendationResponseMedianMinutes: null,
+    serviceUpdatedAt: nowText(),
     contactChannels: [{ type: 'linuxdo', label: 'linux.do 私信', value: `@${currentMerchantName}` }],
     acceptedPaymentMethods: normalizedPaymentOptions.filter(option => option.enabled).map(option => option.paymentMethod),
   }
@@ -4500,7 +4555,7 @@ export async function markCarpoolApplicationContacted(id: string) {
       type: 'buyer_contacted',
       fromStatus,
       toStatus: 'contacted',
-      note: '买家已记录完成站外联系。',
+      note: '买家已记录与车主完成联系。',
     })
   })
 }
@@ -4669,19 +4724,24 @@ export async function createApiPurchaseIntent(payload: CreateApiPurchaseIntentPa
   if (!isApiServicePubliclyOrderable(service) || service.state !== 'online') throw new Error('服务当前不可创建订单。')
   if (!service.deliveryModes.includes(payload.deliveryMode)) throw new Error('选择的 API 细节不属于该服务。')
   if (service.delivery !== 'Sub2API' && payload.deliveryMode === 'sub2api_panel_account') throw new Error('当前服务不支持该 API 细节。')
-  if (payload.purchaseAmountCny < service.minimumPurchaseCny) throw new Error(`最低订单金额为 ¥${service.minimumPurchaseCny}`)
-  if (payload.purchaseAmountCny > service.maxBuy) throw new Error(`单笔最高订单金额为 ¥${service.maxBuy}`)
+  const selectedPackage = payload.selectedPackageId ? service.packages?.find(item => item.id === payload.selectedPackageId && item.enabled) : undefined
+  if (service.billingMode === 'fixed_package' && (!selectedPackage || selectedPackage.stockAvailable <= 0)) throw new Error('选择的套餐已售罄或不可用。')
+  if (selectedPackage && payload.purchaseAmountCny !== selectedPackage.priceCny) throw new Error('订单金额必须与所选套餐价格一致。')
+  if (!selectedPackage && payload.purchaseAmountCny < service.minimumPurchaseCny) throw new Error(`最低订单金额为 ¥${service.minimumPurchaseCny}`)
+  if (!selectedPackage && payload.purchaseAmountCny > service.maxBuy) throw new Error(`单笔最高订单金额为 ¥${service.maxBuy}`)
   const purchaseAmountCnyDecimal = normalizeDecimal(String(payload.purchaseAmountCny), 2)
   const cnyPerUsdAllowance = service.cnyPerUsdAllowance || divideDecimal('1', String(service.creditPerCny), 4)
-  const purchasedCreditDecimal = normalizeDecimalTrimmed(divideDecimal(purchaseAmountCnyDecimal, cnyPerUsdAllowance, 6), 6)
+  const purchasedCreditDecimal = selectedPackage ? '0' : normalizeDecimalTrimmed(divideDecimal(purchaseAmountCnyDecimal, cnyPerUsdAllowance, 6), 6)
   const availableUsdAllowance = service.availableUsdAllowance || String(service.balance)
-  if (compareDecimal(purchasedCreditDecimal, availableUsdAllowance) > 0) throw new Error('超过商户当前可售美元额度。')
+  if (!selectedPackage && compareDecimal(purchasedCreditDecimal, availableUsdAllowance) > 0) throw new Error('超过商户当前可售美元额度。')
 
   const id = `api-intent-${Date.now()}`
   const createdAt = nowText()
   const snapshot: ApiPurchaseIntent['snapshot'] = {
     ...createSnapshot(service),
     selectedDeliveryMode: payload.deliveryMode,
+    selectedPackageId: selectedPackage?.id,
+    selectedPackageSnapshot: selectedPackage ? createPackageSnapshot(selectedPackage) : undefined,
   }
   const intent: ApiPurchaseIntent = {
     id,
@@ -4692,6 +4752,7 @@ export async function createApiPurchaseIntent(payload: CreateApiPurchaseIntentPa
     merchant: getApiMerchantDisplayName(service),
     status: 'open',
     selectedDeliveryMode: payload.deliveryMode,
+    selectedPackageId: selectedPackage?.id,
     purchaseAmountCny: payload.purchaseAmountCny,
     purchasedCredit: Number(purchasedCreditDecimal),
     purchaseAmountCnyDecimal,
@@ -4829,6 +4890,14 @@ export async function createApiOrderFromIntent(intentId: string, paymentMethod: 
   if (!option || !isApiPaymentOptionComplete(option)) {
     throw new Error('选择的收款方式不可用，请联系商户更新收款设置。')
   }
+  const service = apiServiceStore.find(item => item.id === intent.serviceId)
+  const selectedPackage = intent.selectedPackageId
+    ? service?.packages?.find(item => item.id === intent.selectedPackageId && item.enabled)
+    : undefined
+  if (intent.selectedPackageId && (!selectedPackage || selectedPackage.stockAvailable <= 0)) {
+    throw new Error('选择的套餐已售罄或不可用。')
+  }
+  if (selectedPackage) selectedPackage.stockAvailable -= 1
   const createdAt = nowText()
   const order: ApiOrder = {
     id: `api-order-${Date.now()}`,
@@ -4851,6 +4920,9 @@ export async function createApiOrderFromIntent(intentId: string, paymentMethod: 
     version: 1,
     intentSnapshot: clone(intent.snapshot),
     selectedDeliveryMode: intent.selectedDeliveryMode,
+    selectedPackageId: selectedPackage?.id,
+    packageSnapshot: selectedPackage ? createPackageSnapshot(selectedPackage) : undefined,
+    packageStockReserved: Boolean(selectedPackage),
     requestedUsdAllowance: intent.purchasedCredit,
     requestedUsdAllowanceDecimal: intent.purchasedCreditDecimal || normalizeDecimalTrimmed(String(intent.purchasedCredit), 6),
     merchantContactChannels: clone(intent.contactChannels),
@@ -4866,6 +4938,7 @@ export async function createApiOrderFromIntent(intentId: string, paymentMethod: 
   intent.updatedAt = createdAt
   persistApiPurchaseStores()
   persistApiOrderStore()
+  if (selectedPackage) persistMarketStores()
   return clone(order)
 }
 
@@ -5069,6 +5142,13 @@ export async function cancelApiOrder(id: string, reason: string, version: number
     order.status = 'cancelled'
     order.cancelReason = trimmedReason
     order.cancelledAt = nowText()
+    if (order.packageStockReserved && order.selectedPackageId) {
+      const service = apiServiceStore.find(item => item.id === order.apiServiceId)
+      const selectedPackage = service?.packages?.find(item => item.id === order.selectedPackageId)
+      if (selectedPackage) selectedPackage.stockAvailable = Math.min(selectedPackage.stockTotal, selectedPackage.stockAvailable + 1)
+      order.packageStockReserved = false
+      persistMarketStores()
+    }
   })
   if (updated.purchaseKind === 'limited_quota_offer' && updated.quotaSnapshot) {
     const offer = apiQuotaOfferStore.find(item => item.id === updated.quotaSnapshot!.offerId)
@@ -5100,6 +5180,21 @@ export async function confirmApiOrderComplete(id: string, version: number) {
   })
 }
 
+export async function openApiOrderDispute(id: string, reason: string, version: number, perspective: 'buyer' | 'merchant') {
+  if (shouldUseRealBackend()) return backendOpenAPIOrderDispute(id, reason, version, perspective)
+  await wait()
+  return updateApiOrder(id, order => {
+    if (order.version !== version) throw new Error('订单已更新，请刷新后重试。')
+    if (perspective === 'buyer' && order.buyerId !== currentBuyerId) throw new Error('无权操作该订单。')
+    if (perspective === 'merchant' && order.sellerId !== currentMerchantId) throw new Error('无权操作该订单。')
+    if (order.status === 'cancelled' || order.status === 'completed' || order.disputeStatus === 'open') {
+      throw new Error('当前订单不能再次申请平台介入。')
+    }
+    if (!reason.trim()) throw new Error('请填写订单问题说明。')
+    order.disputeStatus = 'open'
+  })
+}
+
 export async function confirmApiOrderPayment(id: string, version: number) {
   if (shouldUseRealBackend()) return backendConfirmAPIOrderPayment(id, version)
   await wait()
@@ -5109,6 +5204,7 @@ export async function confirmApiOrderPayment(id: string, version: number) {
     if (order.status !== 'payment_submitted') throw new Error('只有买家已付款订单可以确认收款。')
     const confirmedAt = nowText()
     order.paidConfirmedAt = confirmedAt
+    order.packageStockReserved = false
     if (order.purchaseKind !== 'limited_quota_offer' || order.quotaSnapshot?.deliveryMode !== 'preimported') {
       order.status = 'paid_confirmed'
       return
@@ -5182,6 +5278,10 @@ export async function submitApiOrderDeliveryCredential(id: string, payload: Subm
     const submittedAt = nowText()
     order.status = 'delivery_submitted'
     order.deliverySubmittedAt = submittedAt
+    if (order.packageSnapshot) {
+      const expiresAt = new Date(new Date(submittedAt).getTime() + order.packageSnapshot.durationDays * 86_400_000)
+      order.packageExpiresAt = expiresAt.toISOString()
+    }
     order.deliveryNote = payload.deliveryKind === 'login_account'
       ? '商户已提交登录账号接入信息。'
       : '商户已提交 API Key 接入信息。'
@@ -5472,6 +5572,9 @@ export type {
   ApiQuotaSystemSaleSlot,
   ApiQuotaSystemSaleSlotList,
   ApiService,
+  ApiServicePackage,
+  ApiServicePackageModel,
+  ApiServicePackageSnapshot,
   ApiServiceState,
   ApiTTFTBand,
   ApiUsageVisibility,

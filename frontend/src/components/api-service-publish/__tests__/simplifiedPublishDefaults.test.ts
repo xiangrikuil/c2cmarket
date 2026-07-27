@@ -40,7 +40,17 @@ test('applies simplified API quota publish defaults', () => {
     maximumPurchaseCny: null,
     paymentWindowMinutes: defaultPaymentWindowMinutes,
     paymentOptions: createDefaultPaymentOptions(),
-    packages: [{ id: 'pkg', name: '旧套餐', priceCny: 50, durationDays: 30, description: '旧套餐', inventory: 1 }],
+    packages: [{
+      id: 'pkg',
+      name: '旧套餐',
+      priceCny: 50,
+      panelAllowance: 20,
+      durationDays: 30,
+      stockTotal: 1,
+      description: '旧套餐',
+      enabled: true,
+      modelCatalogIds: ['gpt-5-mini'],
+    }],
     validity: {
       mode: 'permanent',
       days: null,
@@ -62,12 +72,12 @@ test('applies simplified API quota publish defaults', () => {
 
   assert.equal(form.distributionSystem, 'other')
   assert.equal(form.distributionSystemNote, 'NewAPI 自建中转')
-  assert.equal(form.billingMode, 'metered_credit')
+  assert.equal(form.billingMode, 'fixed_package')
   assert.deepEqual(form.deliveryModes, ['api_key_endpoint'])
-  assert.equal(form.usageVisibility, 'merchant_confirmed')
+  assert.equal(form.usageVisibility, 'fixed_package_only')
   assert.equal(form.defaultMultiplier, 2)
-  assert.equal(form.minimumPurchaseCny, 10)
-  assert.equal(form.maximumPurchaseCny, 300)
+  assert.equal(form.minimumPurchaseCny, null)
+  assert.equal(form.maximumPurchaseCny, null)
   assert.equal(form.paymentWindowMinutes, 10)
   assert.deepEqual(form.paymentOptions.map(item => item.paymentMethod), ['wechat', 'alipay'])
   assert.equal(form.paymentOptions.some(item => item.enabled), false)
@@ -76,9 +86,10 @@ test('applies simplified API quota publish defaults', () => {
   assert.equal(form.warranty.mode, 'no_warranty')
   assert.equal(form.warranty.warrantyDays, null)
   assert.equal(form.imageCapability.enabled, false)
-  assert.deepEqual(form.packages, [])
+  assert.equal(form.packages[0].id, 'pkg')
+  assert.deepEqual(form.packages[0].modelCatalogIds, ['gpt-5-mini'])
   assert.equal(form.manualBillingNote, '')
-  assert.equal(generatedTitle(form, new Map()), 'GPT · 其他 API 接入 手工核对额度')
+  assert.equal(generatedTitle(form, new Map()), 'GPT · API 限时套餐')
 
   assert.doesNotMatch(merchantNoteTemplate, new RegExp('接入' + '方式：'))
   assert.match(apiQuotaBoundaryNotice, /不托管支付/)
