@@ -813,3 +813,45 @@ Merged demand removal and prelaunch hardening into current staging, reconciled m
 ### Next Steps
 
 - None - task complete
+
+
+## Session 22: Fix PR 15 CI gates
+
+**Date**: 2026-07-27
+**Task**: Fix PR 15 CI gates
+**Package**: frontend
+**Branch**: `codex/remove-demand-module`
+
+### Summary
+
+Repaired clean Nuxt preparation, vulnerable frontend dependencies, PostgreSQL TCP readiness, and demand SEO merge leftovers; completed full local release validation.
+
+### Main Changes
+
+- Added Nuxt preparation to clean frozen installs and upgraded the patched
+  frontend dependency graph.
+- Changed PostgreSQL 18 readiness to probe the final loopback TCP server.
+- Removed merged demand SEO/runtime residuals and added a regression guard.
+- Captured both contracts in frontend and backend Trellis specifications.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `a4ab77063fb01338f4be155fa73a9d8b618aaff5` | `fix: restore PR 15 CI gates` |
+
+### Testing
+
+- [OK] Frontend tests, typecheck, real build, audit, and both Wrangler dry-runs.
+- [OK] Go format, vet, full tests, race tests, and Govulncheck.
+- [OK] PostgreSQL 18 migration/integration, OpenAPI, migration, security,
+  Compose, package, and VPS release contracts.
+- [OK] Actionlint, Gitleaks, Trivy filesystem/image, and Syft SPDX SBOM.
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
