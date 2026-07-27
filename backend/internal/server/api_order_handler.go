@@ -44,10 +44,13 @@ type apiOrderPaymentIssueRequest struct {
 
 type apiOrderResponse struct {
 	ID                            string                              `json:"id"`
+	PurchaseKind                  string                              `json:"purchaseKind"`
 	APIPurchaseIntentID           string                              `json:"apiPurchaseIntentId"`
 	APIServiceID                  string                              `json:"apiServiceId"`
 	BuyerUserID                   string                              `json:"buyerUserId,omitempty"`
 	SellerUserID                  string                              `json:"sellerUserId,omitempty"`
+	BuyerReputation               *reputationSummaryResponse          `json:"buyerReputation"`
+	SellerReputation              *reputationSummaryResponse          `json:"sellerReputation"`
 	Status                        string                              `json:"status"`
 	DisputeStatus                 string                              `json:"disputeStatus"`
 	DisputeCaseID                 string                              `json:"disputeCaseId,omitempty"`
@@ -62,6 +65,26 @@ type apiOrderResponse struct {
 	PricingSnapshot               string                              `json:"pricingSnapshot"`
 	PackageStockReserved          bool                                `json:"packageStockReserved"`
 	PackageExpiresAt              *string                             `json:"packageExpiresAt,omitempty"`
+	APIQuotaBatchID               string                              `json:"apiQuotaBatchId,omitempty"`
+	APIQuotaOfferID               string                              `json:"apiQuotaOfferId,omitempty"`
+	APIQuotaSaleRoundID           string                              `json:"apiQuotaSaleRoundId,omitempty"`
+	QuotaOfferNameSnapshot        string                              `json:"quotaOfferNameSnapshot,omitempty"`
+	QuotaUSDAllowanceSnapshot     string                              `json:"quotaUsdAllowanceSnapshot,omitempty"`
+	QuotaPriceCNYSnapshot         string                              `json:"quotaPriceCnySnapshot,omitempty"`
+	QuotaCNYPerUSDSnapshot        string                              `json:"quotaCnyPerUsdSnapshot,omitempty"`
+	QuotaModelMultiplierSnapshot  string                              `json:"quotaModelMultiplierSnapshot,omitempty"`
+	QuotaSaleCutoffAtSnapshot     *string                             `json:"quotaSaleCutoffAtSnapshot,omitempty"`
+	QuotaExpiresAtSnapshot        *string                             `json:"quotaExpiresAtSnapshot,omitempty"`
+	QuotaSaleModeSnapshot         string                              `json:"quotaSaleModeSnapshot,omitempty"`
+	QuotaRoundStartsAtSnapshot    *string                             `json:"quotaRoundStartsAtSnapshot,omitempty"`
+	QuotaRoundEndsAtSnapshot      *string                             `json:"quotaRoundEndsAtSnapshot,omitempty"`
+	QuotaDistributionSnapshot     string                              `json:"quotaDistributionSystemSnapshot,omitempty"`
+	QuotaTTFTBandSnapshot         string                              `json:"quotaTtftBandSnapshot,omitempty"`
+	QuotaRecommendedConcurrency   int                                 `json:"quotaRecommendedConcurrencySnapshot,omitempty"`
+	QuotaPerformanceConfirmedAt   *string                             `json:"quotaPerformanceConfirmedAtSnapshot,omitempty"`
+	QuotaPerformanceUnverified    bool                                `json:"quotaPerformanceUnverifiedSnapshot,omitempty"`
+	QuotaDeliveryETAMinutes       int                                 `json:"quotaDeliveryEtaMinutesSnapshot,omitempty"`
+	QuotaDeliveryMode             string                              `json:"quotaDeliveryModeSnapshot,omitempty"`
 	Amount                        string                              `json:"amount"`
 	Currency                      string                              `json:"currency"`
 	SelectedPaymentMethod         string                              `json:"selectedPaymentMethod"`
@@ -104,7 +127,7 @@ type apiOrderDeliveryCredentialResponse struct {
 }
 
 func (s *Server) handleCreateAPIOrder(w http.ResponseWriter, r *http.Request) {
-	user, _, appErr := s.requireSessionAndCSRF(r)
+	user, _, appErr := s.requireSessionAndCSRF(w, r)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
@@ -128,24 +151,7 @@ func (s *Server) handleCreateAPIOrder(w http.ResponseWriter, r *http.Request) {
 			PaymentMethod: req.PaymentMethod,
 			RequestID:     requestIDFrom(r),
 		},
-		func(order apiorder.Order) (idempotency.Completion, *domain.AppError) {
-			responseBody, marshalErr := json.Marshal(toAPIOrderResponse(order, false, false))
-			if marshalErr != nil {
-				return idempotency.Completion{}, domain.NewError(http.StatusInternalServerError, domain.CodeInternalError, "Internal error", "响应编码失败。")
-			}
-			return idempotency.Completion{
-				Status:        http.StatusCreated,
-				ContentType:   "application/json; charset=utf-8",
-				Body:          responseBody,
-				SkipBodyCache: true,
-				ResourceType:  "api_order",
-				ResourceID:    order.ID,
-				Headers: map[string]string{
-					"ETag":     `"` + strconv.FormatInt(order.Version, 10) + `"`,
-					"Location": "/api/v1/me/api-orders/" + order.ID,
-				},
-			}, nil
-		},
+		apiOrderCreateCompletionBuilder(false),
 	)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
@@ -155,7 +161,7 @@ func (s *Server) handleCreateAPIOrder(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleMyAPIOrders(w http.ResponseWriter, r *http.Request) {
-	user, _, appErr := s.requireSession(r)
+	user, _, appErr := s.requireSession(w, r)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
@@ -169,7 +175,7 @@ func (s *Server) handleMyAPIOrders(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleAdminAPIOrders(w http.ResponseWriter, r *http.Request) {
-	user, _, appErr := s.requireSession(r)
+	user, _, appErr := s.requireSession(w, r)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
@@ -183,7 +189,7 @@ func (s *Server) handleAdminAPIOrders(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleMyAPIOrder(w http.ResponseWriter, r *http.Request) {
-	user, _, appErr := s.requireSession(r)
+	user, _, appErr := s.requireSession(w, r)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
@@ -199,7 +205,7 @@ func (s *Server) handleMyAPIOrder(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleReadAPIOrderPaymentInstructions(w http.ResponseWriter, r *http.Request) {
-	user, _, appErr := s.requireSessionAndCSRF(r)
+	user, _, appErr := s.requireSessionAndCSRF(w, r)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
@@ -248,7 +254,7 @@ func (s *Server) handleOpenAPIOrderDispute(w http.ResponseWriter, r *http.Reques
 }
 
 func (s *Server) handleBuyerAPIOrderAction(w http.ResponseWriter, r *http.Request, action string, run func(context.Context, auth.User, string, string, []byte, apiorder.ActionInput) (idempotency.Completion, *domain.AppError)) {
-	user, _, appErr := s.requireSessionAndCSRF(r)
+	user, _, appErr := s.requireSessionAndCSRF(w, r)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
@@ -276,7 +282,7 @@ func (s *Server) handleBuyerAPIOrderAction(w http.ResponseWriter, r *http.Reques
 }
 
 func (s *Server) handleOwnerAPIOrders(w http.ResponseWriter, r *http.Request) {
-	user, _, appErr := s.requireSession(r)
+	user, _, appErr := s.requireSession(w, r)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
@@ -290,7 +296,7 @@ func (s *Server) handleOwnerAPIOrders(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleOwnerAPIOrder(w http.ResponseWriter, r *http.Request) {
-	user, _, appErr := s.requireSession(r)
+	user, _, appErr := s.requireSession(w, r)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
@@ -330,7 +336,7 @@ func (s *Server) handleOwnerOpenAPIOrderDispute(w http.ResponseWriter, r *http.R
 }
 
 func (s *Server) handleOwnerAPIOrderAction(w http.ResponseWriter, r *http.Request, action string, run func(context.Context, auth.User, string, string, []byte, apiorder.ActionInput) (idempotency.Completion, *domain.AppError)) {
-	user, _, appErr := s.requireSessionAndCSRF(r)
+	user, _, appErr := s.requireSessionAndCSRF(w, r)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
@@ -396,8 +402,11 @@ func toAPIOrderResponses(orders []apiorder.Order, ownerView bool) []apiOrderResp
 func toAPIOrderResponse(order apiorder.Order, ownerView bool, includeCredential bool) apiOrderResponse {
 	response := apiOrderResponse{
 		ID:                            order.ID,
+		PurchaseKind:                  order.PurchaseKind,
 		APIPurchaseIntentID:           order.APIPurchaseIntentID,
 		APIServiceID:                  order.APIServiceID,
+		BuyerReputation:               toReputationSummary(order.BuyerReputation),
+		SellerReputation:              toReputationSummary(order.SellerReputation),
 		Status:                        order.Status,
 		DisputeStatus:                 order.DisputeStatus,
 		DisputeCaseID:                 order.DisputeCaseID,
@@ -412,6 +421,26 @@ func toAPIOrderResponse(order apiorder.Order, ownerView bool, includeCredential 
 		PricingSnapshot:               order.PricingSnapshot,
 		PackageStockReserved:          order.PackageStockReserved,
 		PackageExpiresAt:              formatOptionalTime(order.PackageExpiresAt),
+		APIQuotaBatchID:               order.APIQuotaBatchID,
+		APIQuotaOfferID:               order.APIQuotaOfferID,
+		APIQuotaSaleRoundID:           order.APIQuotaSaleRoundID,
+		QuotaOfferNameSnapshot:        order.QuotaOfferNameSnapshot,
+		QuotaUSDAllowanceSnapshot:     order.QuotaUSDAllowanceSnapshot,
+		QuotaPriceCNYSnapshot:         order.QuotaPriceCNYSnapshot,
+		QuotaCNYPerUSDSnapshot:        order.QuotaCNYPerUSDSnapshot,
+		QuotaModelMultiplierSnapshot:  order.QuotaModelMultiplierSnapshot,
+		QuotaSaleCutoffAtSnapshot:     formatOptionalTime(order.QuotaSaleCutoffAtSnapshot),
+		QuotaExpiresAtSnapshot:        formatOptionalTime(order.QuotaExpiresAtSnapshot),
+		QuotaSaleModeSnapshot:         order.QuotaSaleModeSnapshot,
+		QuotaRoundStartsAtSnapshot:    formatOptionalTime(order.QuotaRoundStartsAtSnapshot),
+		QuotaRoundEndsAtSnapshot:      formatOptionalTime(order.QuotaRoundEndsAtSnapshot),
+		QuotaDistributionSnapshot:     order.QuotaDistributionSnapshot,
+		QuotaTTFTBandSnapshot:         order.QuotaTTFTBandSnapshot,
+		QuotaRecommendedConcurrency:   order.QuotaRecommendedConcurrency,
+		QuotaPerformanceConfirmedAt:   formatOptionalTime(order.QuotaPerformanceConfirmedAt),
+		QuotaPerformanceUnverified:    order.QuotaPerformanceUnverified,
+		QuotaDeliveryETAMinutes:       order.QuotaDeliveryETAMinutes,
+		QuotaDeliveryMode:             order.QuotaDeliveryMode,
 		Amount:                        order.Amount,
 		Currency:                      order.Currency,
 		SelectedPaymentMethod:         order.SelectedPaymentMethod,
@@ -471,6 +500,27 @@ func apiOrderCompletionBuilder(ownerView bool) apiorder.CompletionBuilder {
 			ResourceID:    order.ID,
 			Headers: map[string]string{
 				"ETag": `"` + strconv.FormatInt(order.Version, 10) + `"`,
+			},
+		}, nil
+	}
+}
+
+func apiOrderCreateCompletionBuilder(ownerView bool) apiorder.CompletionBuilder {
+	return func(order apiorder.Order) (idempotency.Completion, *domain.AppError) {
+		responseBody, marshalErr := json.Marshal(toAPIOrderResponse(order, ownerView, true))
+		if marshalErr != nil {
+			return idempotency.Completion{}, domain.NewError(http.StatusInternalServerError, domain.CodeInternalError, "Internal error", "响应编码失败。")
+		}
+		return idempotency.Completion{
+			Status:        http.StatusCreated,
+			ContentType:   "application/json; charset=utf-8",
+			Body:          responseBody,
+			SkipBodyCache: true,
+			ResourceType:  "api_order",
+			ResourceID:    order.ID,
+			Headers: map[string]string{
+				"ETag":     `"` + strconv.FormatInt(order.Version, 10) + `"`,
+				"Location": "/api/v1/me/api-orders/" + order.ID,
 			},
 		}, nil
 	}

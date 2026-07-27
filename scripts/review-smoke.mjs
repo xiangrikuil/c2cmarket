@@ -114,6 +114,11 @@ async function createCompletedMembership(owner, buyer) {
       title: `Review Smoke Carpool ${Date.now()}`,
       summary: '评价 smoke 车源',
       accessArrangement: '费用分摊或成员邀请方案，平台不保存、不交付任何凭据。',
+      distributionMethod: 'sub2api',
+      distributionMethodNote: 'Sub2API 托管管理，具体方式站外确认。',
+      providesAdminAccount: true,
+      regionCode: 'other',
+      regionName: 'Smoke 测试区',
       sourceUrl: 'https://linux.do/t/review-carpool-smoke/123',
       priceMonthlyCny: '68.00',
       serviceMultiplier: '1.3500',
@@ -226,22 +231,22 @@ async function main() {
     idempotencyPrefix: 'review-smoke-put-first',
     body: {
       rating: 5,
-      tags: ['沟通清楚', '规则明确'],
+      tags: ['沟通顺畅', '规则清晰'],
       note: '车主说明清楚，拼车规则透明，服务稳定。',
     },
   }, buyer)
-  assert(firstReview.status === 'reviewed', 'submitted review should be reviewed')
+  assert(firstReview.status === 'sealed', 'first submitted review should remain sealed')
+  assert(firstReview.visibility === 'sealed', 'first submitted review should not be public')
   assert(firstReview.rating === 5, 'submitted review rating mismatch')
 
   const afterRows = await request('/api/v1/me/reviews', {}, buyer)
   const after = afterRows.items.find(item => item.sourceId === membership.id)
-  assert(after?.status === 'reviewed', 'review center should show reviewed status')
+  assert(after?.status === 'sealed', 'review center should show sealed status')
   assert(after.note.includes('服务稳定'), 'review center should keep note')
 
   const publicReviews = await request('/api/v1/users/review-smoke-owner/reviews')
   const publicReview = publicReviews.items.find(item => item.id === firstReview.id)
-  assert(publicReview?.verified === true, 'public review should be verified')
-  assert(publicReview.note.includes('服务稳定'), 'public review should include submitted note')
+  assert(publicReview === undefined, 'sealed review must not appear publicly')
 
   const publicProfile = await request('/api/v1/users/review-smoke-owner/public-profile')
   assert(!JSON.stringify(publicProfile).includes('@review_smoke_owner'), 'public profile must not leak owner contact')
@@ -251,12 +256,24 @@ async function main() {
     idempotencyPrefix: 'review-smoke-put-update',
     body: {
       rating: 4,
-      tags: ['响应及时', '规则明确'],
+      tags: ['响应及时', '规则清晰'],
       note: '修改后的评价：沟通响应及时，账期规则明确。',
     },
   }, buyer)
   assert(updatedReview.id === firstReview.id, 'review update should keep the same review id')
   assert(updatedReview.rating === 4, 'updated review rating mismatch')
+  assert(updatedReview.visibility === 'sealed', 'updated review should remain sealed until the counterparty submits')
+
+  const ownerReview = await request(`/api/v1/me/reviews/carpool-memberships/${membership.id}`, {
+    method: 'PUT',
+    idempotencyPrefix: 'review-smoke-put-owner',
+    body: {
+      rating: 5,
+      tags: ['付款及时', '确认及时'],
+      note: '买家付款和确认都很及时。',
+    },
+  }, owner)
+  assert(ownerReview.visibility === 'published', 'counterparty review should publish both reviews')
 
   const updatedPublicReviews = await request('/api/v1/users/review-smoke-owner/reviews')
   const updatedPublicReview = updatedPublicReviews.items.find(item => item.id === firstReview.id)

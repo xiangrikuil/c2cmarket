@@ -2,8 +2,9 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useQuery, useQueryClient } from '@tanstack/vue-query'
-import { CheckCircle2, ChevronDown, Clock3, Copy, Headphones, KeyRound, QrCode, ShieldAlert, WalletCards, XCircle } from 'lucide-vue-next'
+import { CheckCircle2, ChevronDown, Clock3, Copy, Headphones, KeyRound, QrCode, ShieldAlert, Star, WalletCards, XCircle } from 'lucide-vue-next'
 import { toast } from 'vue-sonner'
+import ApiPaymentMethodIcon from '@/components/api-payment/ApiPaymentMethodIcon.vue'
 import OrderContactCard from '@/components/profile/OrderContactCard.vue'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
@@ -21,6 +22,7 @@ import ErrorState from '@/components/market/ErrorState.vue'
 import ShortId from '@/components/market/ShortId.vue'
 import SkeletonBlock from '@/components/market/SkeletonBlock.vue'
 import StatusBadge from '@/components/market/StatusBadge.vue'
+import ReputationSummaryCard from '@/components/reputation/ReputationSummaryCard.vue'
 import {
   apiOrderBuyerContactSnapshot,
   apiOrderMerchantContactSnapshot,
@@ -28,6 +30,10 @@ import {
   getApiOrderEvents,
   getApiOrderPaymentIssueLabel,
   getApiOrderStatusLabel,
+  getApiQuotaDeliveryModeLabel,
+  getApiQuotaDistributionLabel,
+  getApiQuotaSaleModeLabel,
+  getApiTTFTBandLabel,
   getApiUsageVisibilityLabel,
   readApiOrderPaymentInstructions,
   type ApiOrderDeliveryKind,
@@ -115,6 +121,15 @@ const canOpenDispute = computed(() => Boolean(
   && order.value.status !== 'completed'
   && order.value.disputeStatus !== 'open',
 ))
+const canOpenReviewCenter = computed(() => order.value?.status === 'completed')
+const counterpartyReputation = computed(() => {
+  if (!order.value) return null
+  return isMerchantView.value ? order.value.buyerReputation : order.value.sellerReputation
+})
+const counterpartyName = computed(() => {
+  if (!order.value) return ''
+  return isMerchantView.value ? order.value.buyer : order.value.seller
+})
 const merchantContactSnapshot = computed(() => !isMerchantView.value && order.value ? apiOrderMerchantContactSnapshot(order.value) : null)
 const buyerContactSnapshot = computed(() => isMerchantView.value && order.value ? apiOrderBuyerContactSnapshot(order.value) : null)
 const events = computed(() => order.value ? getApiOrderEvents(order.value) : [])
@@ -310,6 +325,17 @@ async function confirmComplete() {
   }
 }
 
+function openReviewCenter() {
+  if (!order.value) return
+  router.push({
+    path: '/my/reviews',
+    query: {
+      transactionType: 'api_order',
+      transactionId: order.value.id,
+    },
+  })
+}
+
 function scrollToDeliveryForm() {
   document.getElementById('api-order-delivery-form')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
 }
@@ -391,6 +417,7 @@ onBeforeUnmount(() => {
         <div class="flex flex-wrap items-center gap-2">
           <h1 class="text-2xl font-semibold tracking-tight">{{ order.serviceTitle }}</h1>
           <StatusBadge :status="order.status" :label="getApiOrderStatusLabel(order.status)" />
+          <Badge v-if="order.purchaseKind === 'limited_quota_offer'" variant="capability">限时额度包</Badge>
         </div>
         <p class="mt-2 text-sm text-muted-foreground">订单号：<ShortId :value="order.id" prefix="API" copyable /></p>
       </div>
@@ -421,6 +448,16 @@ onBeforeUnmount(() => {
       <AlertDescription>该订单问题已经提交，请等待平台处理；无需重复提交。</AlertDescription>
     </Alert>
 
+    <section class="rounded-lg border border-border bg-card p-4" aria-labelledby="api-order-counterparty-reputation">
+      <div class="mb-4">
+        <h2 id="api-order-counterparty-reputation" class="font-semibold">交易对手信誉</h2>
+        <p class="mt-1 text-sm text-muted-foreground">
+          {{ counterpartyName }} · {{ isMerchantView ? '买家信誉' : '卖家信誉' }}
+        </p>
+      </div>
+      <ReputationSummaryCard :summary="counterpartyReputation" compact :framed="false" />
+    </section>
+
     <Card class="overflow-hidden border-border/80">
       <div class="grid gap-0 md:grid-cols-[0.8fr_1fr_1.15fr_auto]">
         <div class="border-b border-border p-5 md:border-b-0 md:border-r">
@@ -430,7 +467,7 @@ onBeforeUnmount(() => {
         </div>
         <div class="border-b border-border p-5 md:border-b-0 md:border-r">
           <div class="text-xs text-muted-foreground">付款方式</div>
-          <div class="mt-2 flex items-center gap-2 font-semibold"><WalletCards class="h-5 w-5 text-primary" />{{ apiPaymentMethodLabels[order.selectedPaymentMethod] }}</div>
+          <div class="mt-2 flex items-center gap-2 font-semibold"><ApiPaymentMethodIcon :method="order.selectedPaymentMethod" size="md" />{{ apiPaymentMethodLabels[order.selectedPaymentMethod] }}</div>
           <div class="mt-2 text-xs text-muted-foreground">付款由你与商户直接完成，平台不代收或托管资金</div>
         </div>
         <div class="border-b border-border p-5 text-center md:border-b-0 md:border-r">
@@ -466,6 +503,9 @@ onBeforeUnmount(() => {
           </Button>
           <Button v-else-if="canConfirmComplete" size="lg" :disabled="actionBusy" @click="confirmComplete">
             <CheckCircle2 class="h-4 w-4" />确认完成交易
+          </Button>
+          <Button v-else-if="canOpenReviewCenter" size="lg" :disabled="actionBusy" @click="openReviewCenter">
+            <Star class="h-4 w-4" />{{ isMerchantView ? '评价买家' : '评价卖家' }}
           </Button>
           <p class="text-center text-xs leading-5 text-muted-foreground">{{ currentActionDescription }}</p>
         </div>
@@ -505,9 +545,25 @@ onBeforeUnmount(() => {
             <ChevronDown class="h-4 w-4 transition-transform" :class="orderDetailsOpen ? 'rotate-180' : ''" />
           </CollapsibleTrigger>
           <CollapsibleContent>
-            <div class="mt-5 grid gap-4 text-sm sm:grid-cols-2">
+            <div v-if="order.quotaSnapshot" class="mt-5 grid gap-4 text-sm sm:grid-cols-2">
+              <div><span class="text-muted-foreground">额度包</span><div>{{ order.quotaSnapshot.offerName }}</div></div>
+              <div><span class="text-muted-foreground">固定额度 / 总价</span><div>${{ formatDecimal(order.quotaSnapshot.usdAllowance, 0, 6) }} / ¥{{ formatDecimal(order.quotaSnapshot.priceCny, 2, 2) }}</div></div>
+              <div><span class="text-muted-foreground">有效售价</span><div>¥{{ formatDecimal(order.quotaSnapshot.cnyPerUsd, 3, 6) }} / $1</div></div>
+              <div><span class="text-muted-foreground">模型倍率</span><div>{{ Number(order.quotaSnapshot.modelMultiplier).toFixed(2) }}x</div></div>
+              <div><span class="text-muted-foreground">销售方式</span><div>{{ getApiQuotaSaleModeLabel(order.quotaSnapshot.saleMode) }}</div></div>
+              <div><span class="text-muted-foreground">接入系统</span><div>{{ getApiQuotaDistributionLabel(order.quotaSnapshot.distributionSystem) }}</div></div>
+              <div><span class="text-muted-foreground">最晚下单</span><div>{{ formatOrderDateTime(order.quotaSnapshot.saleCutoffAt) }}</div></div>
+              <div><span class="text-muted-foreground">额度失效</span><div>{{ formatOrderDateTime(order.quotaSnapshot.expiresAt) }}</div></div>
+              <div v-if="order.quotaSnapshot.roundStartsAt"><span class="text-muted-foreground">购买轮次</span><div>{{ formatOrderDateTime(order.quotaSnapshot.roundStartsAt) }} - {{ formatOrderDateTime(order.quotaSnapshot.roundEndsAt) }}</div></div>
+              <div><span class="text-muted-foreground">首字响应</span><div>{{ getApiTTFTBandLabel(order.quotaSnapshot.ttftBand) }} · 商户自报，平台未测速</div></div>
+              <div><span class="text-muted-foreground">建议并发</span><div>{{ order.quotaSnapshot.recommendedConcurrency }}</div></div>
+              <div><span class="text-muted-foreground">预计交付</span><div>{{ getApiQuotaDeliveryModeLabel(order.quotaSnapshot.deliveryMode) }} · ≤ {{ order.quotaSnapshot.deliveryEtaMinutes }} 分钟</div></div>
+              <div v-if="order.quotaSnapshot.performanceConfirmedAt"><span class="text-muted-foreground">体验确认时间</span><div>{{ formatOrderDateTime(order.quotaSnapshot.performanceConfirmedAt) }}</div></div>
+              <div><span class="text-muted-foreground">付款截止</span><div>{{ formatOrderDateTime(order.paymentExpiresAt) }}</div></div>
+            </div>
+            <div v-else class="mt-5 grid gap-4 text-sm sm:grid-cols-2">
               <div><span class="text-muted-foreground">服务</span><div>{{ order.serviceTitle }}</div></div>
-              <div><span class="text-muted-foreground">商户</span><div>{{ order.seller }} · 信任等级{{ order.intentSnapshot.trustLevel }}</div></div>
+              <div><span class="text-muted-foreground">商户</span><div>{{ order.seller }}</div></div>
               <div><span class="text-muted-foreground">模型</span><div>{{ order.intentSnapshot.models.join(' / ') }}</div></div>
               <div><span class="text-muted-foreground">倍率快照</span><div>{{ order.intentSnapshot.multiplier }}</div></div>
               <div><span class="text-muted-foreground">用量核对</span><div>{{ getApiUsageVisibilityLabel(order.intentSnapshot.usageVisibility) }}</div></div>
@@ -667,8 +723,11 @@ onBeforeUnmount(() => {
     <Dialog v-model:open="paymentDialogOpen">
       <DialogContent class="max-h-[92dvh] overflow-y-auto sm:max-w-[520px]">
         <DialogHeader>
-          <DialogTitle>{{ apiPaymentMethodLabels[order.selectedPaymentMethod] }}{{ apiPaymentMethodRequiresQrCode(order.selectedPaymentMethod) ? '收款码' : '付款信息' }}</DialogTitle>
-          <DialogDescription>请核对订单金额和收款方，再使用对应应用扫码完成付款。</DialogDescription>
+          <DialogTitle class="flex items-center gap-2">
+            <ApiPaymentMethodIcon :method="order.selectedPaymentMethod" size="md" />
+            {{ apiPaymentMethodLabels[order.selectedPaymentMethod] }}{{ apiPaymentMethodRequiresQrCode(order.selectedPaymentMethod) ? '收款码' : '付款信息' }}
+          </DialogTitle>
+          <DialogDescription>请核对订单金额和收款方，再使用对应应用完成站外付款。</DialogDescription>
         </DialogHeader>
 
         <div v-if="paymentInstructionsQuery.isLoading.value" class="rounded-lg border border-border p-8 text-center text-sm text-muted-foreground">正在读取收款资料…</div>

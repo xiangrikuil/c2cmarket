@@ -7,7 +7,6 @@ const smokeScripts = [
   'carpool-smoke.mjs',
   'profile-smoke.mjs',
   'announcement-smoke.mjs',
-  'demand-smoke.mjs',
   'favorites-smoke.mjs',
   'review-smoke.mjs',
   'reports-smoke.mjs',

@@ -89,7 +89,7 @@ Split carpool handlers from the legacy server.Service facade, documented core.Se
 
 **Date**: 2026-07-06
 **Task**: Complete maintenance hardening roadmap
-**Package**: frontend
+**Package**: backend / infrastructure
 **Branch**: `main`
 
 ### Summary
@@ -183,11 +183,15 @@ Forced frontend account recovery setup after linux.do OAuth: incomplete accounts
 
 ### Main Changes
 
-- Added staging/main CI release gates and a reusable GHCR build/deploy workflow.
-- Added immutable SHA image deployment, fixed 8080/8081 environment mapping,
-  production backup-before-migration, health checks, and versioned current links.
-- Added release regression tests, VPS/GitHub setup documentation, and the
-  backend deployment contract.
+- Added one request-scoped client IP resolver with direct-peer normalization,
+  trusted immediate-peer gating, CF header priority, and right-to-left XFF
+  stripping.
+- Reused the same context value in request logs and rate-limit keys; raw
+  forwarding headers are never logged.
+- Bound the Compose backend published port to host loopback and added a
+  three-environment exposure guard.
+- Updated env templates, README, deployment/Tunnel runbooks, and the backend
+  production hardening code-spec.
 
 ### Git Commits
 
@@ -197,7 +201,10 @@ Forced frontend account recovery setup after linux.do OAuth: incomplete accounts
 
 ### Testing
 
-- [OK] (Add test results)
+- [OK] Focused middleware/server/config tests
+- [OK] Complete backend Go suite
+- [OK] Middleware/server race tests and `go vet`
+- [OK] Go formatting, Compose exposure, OpenAPI, migration, and diff guards
 
 ### Status
 
@@ -205,7 +212,8 @@ Forced frontend account recovery setup after linux.do OAuth: incomplete accounts
 
 ### Next Steps
 
-- None - task complete
+- Continue the parent prelaunch task with reproducible release/build-version
+  tracking, followed by verification-code lifecycle and runtime hardening.
 
 
 ## Session 6: API order delivery credential flow
@@ -221,7 +229,11 @@ Committed and pushed marketplace updates, including API order payment QR snapsho
 
 ### Main Changes
 
-(Add details)
+- Removed demand pages, routes, frontend adapters, mock state, query hooks, navigation, search, notifications, and personal/admin aggregation.
+- Removed the Go demand domain, HTTP handlers, PostgreSQL repository, core facade wiring, and search/notification branches.
+- Removed Demand from OpenAPI and regenerated frontend types.
+- Added migration 65 to remove demand idempotency rows and the `demands` table; rollback recreates only an empty schema.
+- Updated current product, API, database, frontend, deployment, and architecture documentation.
 
 ### Git Commits
 
@@ -240,7 +252,6 @@ Committed and pushed marketplace updates, including API order payment QR snapsho
 ### Next Steps
 
 - None - task complete
-
 
 ## Session 7: Cloudflare Pages pnpm workspace fix
 
@@ -413,6 +424,347 @@ Added tested GHCR image publishing and environment-gated staging/production VPS 
   configurations expanded successfully.
 - [OK] Local backend Docker build, complete Go tests, OpenAPI/migration checks,
   frontend typecheck/build, and 137 frontend tests passed.
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
+
+## Session 12: 修订信誉系统实现任务书
+
+**Date**: 2026-07-24
+**Task**: 修订信誉系统实现任务书
+**Package**: frontend
+**Branch**: `docs/open-source-readme`
+
+### Summary
+
+重构信誉系统母 PRD 为六个可验收子任务，修复双盲评价、纠纷责任、限制语义、时间失效、隐私和原帖验证规则，并同步覆盖 Downloads 原文件。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `0f14ad7` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
+
+
+## Session 13: OAuth identity and administrator bootstrap hardening
+
+**Date**: 2026-07-26
+**Task**: OAuth identity and administrator bootstrap hardening
+**Package**: frontend
+**Branch**: `codex/prelaunch-identity-hardening`
+**Executor**: Codex
+
+### Summary
+
+Implemented immutable OAuth identity ownership, create-only proven administrator bootstrap, migration 62, regression coverage, and backend identity contract documentation.
+
+### Main Changes
+
+- Made OAuth identity ownership immutable by provider and subject.
+- Added collision-safe first-login handling and concurrent identity creation.
+- Reworked administrator bootstrap as create-only with a fixed proof marker.
+- Added migration 62, regression tests, and the backend identity contract.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `49b99b5` | (see git log) |
+
+### Testing
+
+- [OK] `go test -count=1 ./...`
+- [OK] `go vet ./...`
+- [OK] `gofmt -l .`
+- [OK] `go test -race -count=1 ./internal/module/auth`
+- [OK] OpenAPI route guard and migration guard
+- [OK] PostgreSQL OAuth concurrency and bootstrap integration scenarios
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
+
+
+## Session 14: Auth hardening release contract alignment
+
+**Date**: 2026-07-26
+**Task**: Auth hardening release contract alignment
+**Package**: backend
+**Branch**: `codex/prelaunch-identity-hardening`
+**Executor**: Codex
+
+### Summary
+
+Updated OAuth smoke behavior, synchronized identity and bootstrap contracts, documented migration 62 upgrade handling, and verified the release-facing authentication path.
+
+### Main Changes
+
+- Updated auth smoke so admin-like OAuth usernames remain non-admin.
+- Used the development-only session route for admin smoke coverage.
+- Synchronized OAuth and Bootstrap contracts across specs and README files.
+- Documented migration 62 and existing-administrator upgrade handling.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `6454905` | (see git log) |
+
+### Testing
+
+- [OK] `node --check scripts/auth-smoke.mjs`
+- [OK] Local HTTP auth smoke against an isolated in-memory backend
+- [OK] `go test -count=1 ./...`
+- [OK] `go vet ./...`
+- [OK] `gofmt -l .`
+- [OK] `go test -race -count=1 ./internal/module/auth`
+- [OK] OpenAPI route guard and migration guard
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- Continue the parent prelaunch hardening task with outbound SSRF protection.
+
+
+## Session 15: Harden model audit outbound HTTP
+
+**Date**: 2026-07-26
+**Task**: Harden model audit outbound HTTP
+**Package**: backend
+**Branch**: `codex/prelaunch-identity-hardening`
+
+### Summary
+
+Added public-HTTPS target validation, DNS rebinding-safe IP-bound dialing, redirect/time/body limits, modelaudit wiring, deterministic tests, deployment configuration, and executable backend specs.
+
+### Main Changes
+
+- Added `internal/platform/outboundhttp` with strict public HTTPS URL validation, exact host allowlisting, special-address rejection, connection-time DNS revalidation, and IP-bound dialing.
+- Routed model audit target create/update and provider Chat/ListModels through the same policy and shared client.
+- Added redirect, timeout, response-size, and error-sanitization boundaries plus deterministic resolver/dialer/TLS tests.
+- Wired `MODEL_AUDIT_ALLOWED_HOSTS` through config, app, Compose, environment templates, deployment docs, and an executable backend spec.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `2b8776d` | (see git log) |
+
+### Testing
+
+- [OK] Focused and race tests for `outboundhttp` and `modelaudit`.
+- [OK] Full backend `go test -count=1 ./...` and `go vet ./...`.
+- [OK] `gofmt`, OpenAPI route, migration docs, production Compose, and diff checks.
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- Continue prelaunch hardening with production ingress and trusted client IP handling.
+
+
+## Session 16: Production ingress and trusted client IP hardening
+
+**Date**: 2026-07-26
+**Task**: Production ingress and trusted client IP hardening
+**Package**: frontend
+**Branch**: `codex/prelaunch-identity-hardening`
+
+### Summary
+
+Bound backend ports to loopback, centralized trusted client IP resolution for logs and rate limits, added Compose exposure guards, and documented Tunnel peer observation.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `b2d8b05` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
+
+
+## Session 17: Reproducible release and build metadata
+
+**Date**: 2026-07-26
+**Task**: Reproducible release and build metadata
+**Package**: frontend
+**Branch**: `codex/prelaunch-identity-hardening`
+
+### Summary
+
+Added fixed-commit source archives and backend image builds, runtime build metadata, image-only production Compose, generated OpenAPI type drift checks, release runbooks, and a macOS-safe concurrent packaging regression.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `e2a251f` | (see git log) |
+| `fe66d07` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
+
+
+## Session 18: Verification and data lifecycle hardening
+
+**Date**: 2026-07-26
+**Task**: Verification and data lifecycle hardening
+**Package**: frontend
+**Branch**: `codex/prelaunch-identity-hardening`
+
+### Summary
+
+Added HMAC email challenges, finite idempotency generations, migration 63, and bounded PostgreSQL lifecycle maintenance with integration coverage.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `4839f7a` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
+
+
+## Session 19: 完成上线前安全加固与发布门禁
+
+**Date**: 2026-07-27
+**Task**: 完成上线前安全加固与发布门禁
+**Package**: frontend
+**Branch**: `codex/prelaunch-identity-hardening`
+
+### Summary
+
+完成运行时加固、受保护指标、生产响应头、精确 SHA CI 与安全扫描、运维文档、规范同步、DOMPurify 补丁升级、P2 可行性结论和本地全量发布验证。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `68b6344` | (see git log) |
+| `8038a23` | (see git log) |
+| `74c3f41` | (see git log) |
+| `32e91d4` | (see git log) |
+| `1d60853` | (see git log) |
+| `36e37a8` | (see git log) |
+| `e9f83a5` | (see git log) |
+| `c942c6a` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
+
+
+## Session 20: Remove prelaunch demand module
+
+**Date**: 2026-07-27
+**Task**: Remove prelaunch demand module
+**Package**: frontend
+**Branch**: `codex/remove-demand-module`
+
+### Summary
+
+Removed the unlaunched demand module across frontend, backend, OpenAPI, search, notifications, database migration 65, smoke tests, and current product documentation; verified PostgreSQL, full tests, smokes, and desktop/mobile browser behavior.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `399bf78` | feat: remove prelaunch demand module |
+
+### Testing
+
+- [OK] Full Go suite; 47 frontend files / 187 tests; Vue typecheck; real-mode production build.
+- [OK] OpenAPI generation/drift and migration documentation checks.
+- [OK] PostgreSQL 18 migration/integration gate at version 65 with `demands` absent and `dirty=false`.
+- [OK] Eleven real-backend smoke groups and explicit old-demand API 404 checks.
+- [OK] Desktop 1440x900 and mobile 390x844 browser QA with no demand entry, overflow, overlap, or console error.
 
 ### Status
 

@@ -141,7 +141,7 @@ func (s *Server) handleProductCategories(w http.ResponseWriter, r *http.Request)
 }
 
 func (s *Server) handleAdminProductCategories(w http.ResponseWriter, r *http.Request) {
-	user, _, appErr := s.requireSession(r)
+	user, _, appErr := s.requireSession(w, r)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
@@ -159,7 +159,7 @@ func (s *Server) handleAdminProductCategories(w http.ResponseWriter, r *http.Req
 }
 
 func (s *Server) handleAdminProductCategory(w http.ResponseWriter, r *http.Request) {
-	user, _, appErr := s.requireSession(r)
+	user, _, appErr := s.requireSession(w, r)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
@@ -173,7 +173,7 @@ func (s *Server) handleAdminProductCategory(w http.ResponseWriter, r *http.Reque
 }
 
 func (s *Server) handleCreateProductCategory(w http.ResponseWriter, r *http.Request) {
-	user, _, appErr := s.requireSessionAndCSRF(r)
+	user, _, appErr := s.requireSessionAndCSRF(w, r)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
@@ -192,7 +192,7 @@ func (s *Server) handleCreateProductCategory(w http.ResponseWriter, r *http.Requ
 }
 
 func (s *Server) handleUpdateProductCategory(w http.ResponseWriter, r *http.Request) {
-	user, _, appErr := s.requireSessionAndCSRF(r)
+	user, _, appErr := s.requireSessionAndCSRF(w, r)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
@@ -219,7 +219,7 @@ func (s *Server) handleDeactivateProductCategory(w http.ResponseWriter, r *http.
 }
 
 func (s *Server) handleSetProductCategoryActive(w http.ResponseWriter, r *http.Request, active bool) {
-	user, _, appErr := s.requireSessionAndCSRF(r)
+	user, _, appErr := s.requireSessionAndCSRF(w, r)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
@@ -251,7 +251,7 @@ func (s *Server) handleProductPlan(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleAdminProductPlans(w http.ResponseWriter, r *http.Request) {
-	user, _, appErr := s.requireSession(r)
+	user, _, appErr := s.requireSession(w, r)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
@@ -265,7 +265,7 @@ func (s *Server) handleAdminProductPlans(w http.ResponseWriter, r *http.Request)
 }
 
 func (s *Server) handleAdminProductPlan(w http.ResponseWriter, r *http.Request) {
-	user, _, appErr := s.requireSession(r)
+	user, _, appErr := s.requireSession(w, r)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
@@ -279,7 +279,7 @@ func (s *Server) handleAdminProductPlan(w http.ResponseWriter, r *http.Request) 
 }
 
 func (s *Server) handleCreateProductPlan(w http.ResponseWriter, r *http.Request) {
-	user, _, appErr := s.requireSessionAndCSRF(r)
+	user, _, appErr := s.requireSessionAndCSRF(w, r)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
@@ -298,7 +298,7 @@ func (s *Server) handleCreateProductPlan(w http.ResponseWriter, r *http.Request)
 }
 
 func (s *Server) handleUpdateProductPlan(w http.ResponseWriter, r *http.Request) {
-	user, _, appErr := s.requireSessionAndCSRF(r)
+	user, _, appErr := s.requireSessionAndCSRF(w, r)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
@@ -325,7 +325,7 @@ func (s *Server) handleDeactivateProductPlan(w http.ResponseWriter, r *http.Requ
 }
 
 func (s *Server) handleSetProductPlanActive(w http.ResponseWriter, r *http.Request, active bool) {
-	user, _, appErr := s.requireSessionAndCSRF(r)
+	user, _, appErr := s.requireSessionAndCSRF(w, r)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
@@ -357,7 +357,7 @@ func (s *Server) handleAPIModel(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleAdminAPIModelProviders(w http.ResponseWriter, r *http.Request) {
-	user, _, appErr := s.requireSession(r)
+	user, _, appErr := s.requireSession(w, r)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
@@ -371,7 +371,7 @@ func (s *Server) handleAdminAPIModelProviders(w http.ResponseWriter, r *http.Req
 }
 
 func (s *Server) handleAdminAPIModelProvider(w http.ResponseWriter, r *http.Request) {
-	user, _, appErr := s.requireSession(r)
+	user, _, appErr := s.requireSession(w, r)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
@@ -385,7 +385,7 @@ func (s *Server) handleAdminAPIModelProvider(w http.ResponseWriter, r *http.Requ
 }
 
 func (s *Server) handleCreateAPIModelProvider(w http.ResponseWriter, r *http.Request) {
-	user, _, appErr := s.requireSessionAndCSRF(r)
+	user, _, appErr := s.requireSessionAndCSRF(w, r)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
@@ -404,7 +404,7 @@ func (s *Server) handleCreateAPIModelProvider(w http.ResponseWriter, r *http.Req
 }
 
 func (s *Server) handleUpdateAPIModelProvider(w http.ResponseWriter, r *http.Request) {
-	user, _, appErr := s.requireSessionAndCSRF(r)
+	user, _, appErr := s.requireSessionAndCSRF(w, r)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
@@ -431,7 +431,7 @@ func (s *Server) handleDeactivateAPIModelProvider(w http.ResponseWriter, r *http
 }
 
 func (s *Server) handleSetAPIModelProviderActive(w http.ResponseWriter, r *http.Request, active bool) {
-	user, _, appErr := s.requireSessionAndCSRF(r)
+	user, _, appErr := s.requireSessionAndCSRF(w, r)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
@@ -445,7 +445,7 @@ func (s *Server) handleSetAPIModelProviderActive(w http.ResponseWriter, r *http.
 }
 
 func (s *Server) handleAdminAPIModels(w http.ResponseWriter, r *http.Request) {
-	user, _, appErr := s.requireSession(r)
+	user, _, appErr := s.requireSession(w, r)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
@@ -459,7 +459,7 @@ func (s *Server) handleAdminAPIModels(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleAdminAPIModel(w http.ResponseWriter, r *http.Request) {
-	user, _, appErr := s.requireSession(r)
+	user, _, appErr := s.requireSession(w, r)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
@@ -473,7 +473,7 @@ func (s *Server) handleAdminAPIModel(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleCreateAPIModel(w http.ResponseWriter, r *http.Request) {
-	user, _, appErr := s.requireSessionAndCSRF(r)
+	user, _, appErr := s.requireSessionAndCSRF(w, r)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
@@ -492,7 +492,7 @@ func (s *Server) handleCreateAPIModel(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleUpdateAPIModel(w http.ResponseWriter, r *http.Request) {
-	user, _, appErr := s.requireSessionAndCSRF(r)
+	user, _, appErr := s.requireSessionAndCSRF(w, r)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
@@ -519,7 +519,7 @@ func (s *Server) handleDeactivateAPIModel(w http.ResponseWriter, r *http.Request
 }
 
 func (s *Server) handleSetAPIModelActive(w http.ResponseWriter, r *http.Request, active bool) {
-	user, _, appErr := s.requireSessionAndCSRF(r)
+	user, _, appErr := s.requireSessionAndCSRF(w, r)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return

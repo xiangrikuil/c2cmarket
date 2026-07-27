@@ -92,6 +92,8 @@ GET  /api/v1/me/favorites/{targetType}/{targetId}
 PUT  /api/v1/me/favorites/{targetType}/{targetId}
 DELETE /api/v1/me/favorites/{targetType}/{targetId}
 GET  /api/v1/me/reviews
+POST /api/v1/me/transactions/{type}/{id}/review
+PUT  /api/v1/me/transactions/{type}/{id}/review
 PUT  /api/v1/me/reviews/carpool-memberships/{membershipId}
 GET  /api/v1/users/{username}/reviews
 POST /api/v1/reports
@@ -151,6 +153,7 @@ POST /api/v1/admin/api-services/{id}/reject
 POST /api/v1/admin/api-services/{id}/suspend
 POST /api/v1/admin/api-services/{id}/restore
 POST /api/v1/admin/api-services/{id}/remove
+POST /api/v1/admin/reviews/{id}/remove
 GET  /api/v1/admin/api-purchase-intents
 GET  /api/v1/admin/api-purchase-intents/{id}
 GET  /api/v1/admin/announcements
@@ -409,7 +412,7 @@ The application history remains auditable while access permission is revoked.
 ### 1. Scope / Trigger
 
 - Trigger: backend, OpenAPI, frontend adapter, admin UI, or PostgreSQL work touching global `product_plans`, product catalog dropdowns, carpool publish policy, or official-price submit product/plan selection.
-- Product contract: the admin catalog is the global option source for low-price lead submission, carpool publishing, and demand filters. User-entered custom plan text remains allowed at the submission boundary and is not automatically promoted into `product_plans`.
+- Product contract: the admin catalog is the global option source for official-price maintenance and carpool publishing. User-entered custom plan text remains allowed at the submission boundary and is not automatically promoted into `product_plans`.
 
 ### 2. Signatures
 
@@ -732,7 +735,7 @@ legacy pending_review -> admin approve/request-changes/reject
 - API service creation and update store service root fields, access modes, supported model snapshots, and package rows. API service owner create/action POST endpoints require `Idempotency-Key`; update and state-changing owner/admin actions require `If-Match`.
 - API service review state is `draft -> pending_review -> approved|changes_requested|rejected`; owner publication state is `offline -> online -> owner_paused -> online` plus `online|owner_paused -> offline/changes_requested` for revision; admin moderation is `clear -> admin_suspended -> clear` or `clear|admin_suspended -> removed`.
 - Public API service reads return only services where `reviewStatus=approved`, `publicationStatus=online`, and `moderationStatus=clear`. Public DTOs must not expose owner contact method IDs, owner user IDs, review/admin internals, moderation reasons, or merchant internal notes.
-- `distributionSystem=sub2api` fixes service model `merchantMultiplier` to `1.0000` in service validation and database constraints. Do not hard-code this only in frontend behavior.
+- API service model `merchantMultiplier` is a positive merchant declaration for every `distributionSystem`; an omitted value defaults to `1.0000`, but Sub2API does not force that value. Limited quota offers own a separate positive `modelMultiplier` with the same default-only meaning; see `api-quota-offers.md`.
 - API service rows and DTOs must not store or return passwords, API keys, Sub2API keys, sessions, cookies, third-party tokens, panel owner credentials, payment proofs, or platform verification artifacts.
 - API service orderability uses `acceptingOrders` as the owner-controlled willingness flag and `isOrderable` as the server-derived current predicate. First-release public API service list, detail, search, favorite validation/listing, and purchase-intent creation return only orderable services and support `paymentMethod=wechat|alipay`.
 - API purchase intent creation is allowed only for public API services where `reviewStatus=approved`, `publicationStatus=online`, `moderationStatus=clear`, `acceptingOrders=true`, `paymentWindowMinutes` is between 3 and 15, and at least one payment option is enabled. An orderable online service is treated as the owner having pre-consented to receive compliant purchase intents and to disclose the service's selected merchant contact to the successful buyer.
@@ -747,7 +750,7 @@ legacy pending_review -> admin approve/request-changes/reject
 - API order states are `pending_payment -> payment_submitted -> paid_confirmed -> delivery_submitted -> completed`, with `payment_submitted -> payment_issue -> payment_submitted` for seller-reported `not_received`, `amount_mismatch`, or `remark_mismatch`, and `pending_payment -> cancelled` for buyer cancellation or payment timeout. A payment issue keeps quota reserved and waits for the buyer to supplement the non-sensitive payment summary. Disputes use `disputeStatus`, create or bind a `dispute_cases` row with `target_type='api_order'`, save `api_orders.dispute_case_id`, and must not overwrite the main fulfillment state.
 - Buyer cancellation requires a non-empty user-facing reason and stores that reason in `cancelReason`; system timeout continues to store `payment_timeout`. A buyer can cancel only `pending_payment`, so cancellation is immediate and never waits for seller confirmation. Once payment is submitted, the cancel action must be rejected and the UI must route unresolved delays to support instead of auto-cancelling the order.
 - API order responses that contain payment summaries, delivery notes, payment instructions, structured delivery credentials, or other sensitive order context must set `Cache-Control: private, no-store`. Order create responses must not include `paymentInstructions`; `POST /me/api-orders/{id}/payment-instructions` is the explicit audited read endpoint.
-- API order delivery is a narrow product-boundary exception: after `paid_confirmed`, the seller may submit exactly one structured `deliveryCredential` for that order. Allowed shapes are `api_key_endpoint` (`apiBaseUrl`, `apiKey`, optional `instructions`) and `login_account` (`panelLoginUrl`, `username`, `password`, optional `instructions`). `deliveryNote` remains a generated non-sensitive summary such as `商户已提交 API Key 接入信息。` and must not store the raw credential. Detail/action responses for the buyer and seller may include the credential; list/admin/public responses must not.
+- API order delivery is a narrow product-boundary exception with two modes. Manual delivery lets the seller submit exactly one structured `deliveryCredential` after `paid_confirmed`. Limited-offer pre-import delivery stores encrypted buyer-specific inventory before sale, reserves one row with the order, and copies it into the order credential only when the seller confirms receipt; no earlier response may expose it. Allowed shapes are `api_key_endpoint` (`apiBaseUrl`, `apiKey`, optional `instructions`) and `login_account` (`panelLoginUrl`, `username`, `password`, optional `instructions`). `deliveryNote` remains a generated non-sensitive summary such as `商户已提交 API Key 接入信息。` and must not store the raw credential. Detail/action responses for the buyer and seller may include the delivered credential; list/admin/public responses must not.
 - API order delivery credentials may contain only buyer-specific API keys or initial account passwords and are immutable after submission; the platform must not claim revocation support. They must reject cookies, sessions, OAuth/access/refresh tokens, recovery codes, MFA codes, provider master keys, owner/master account credentials, subscription links, proxy node links, encoded/nested subscription URLs, attachment payloads, and query-string secrets with `SECRET_CONTENT_DETECTED` or field-level `VALIDATION_FAILED`.
 - User announcement routes return only user-visible announcements plus the current user's receipt state. `seen`, `read`, and `dismiss` write receipt timestamps and must not mutate announcement content.
 - Announcement home-banner selection uses published, non-expired, home-channel announcements and receipt dismissal state. Dismissal hides only the banner for the current user; it must not archive or offline the announcement.
@@ -869,7 +872,7 @@ Backend contract slices must include tests for:
 - Carpool buyer/owner completion confirmation, idempotent replay, completed membership, buyer leave, owner remove, and listing cache decrement.
 - API service owner create/submit/approve/publish/pause/resume/suspend/restore/remove flow, including public visibility changes.
 - API service public DTO boundary, including absence of owner contact method IDs, owner user IDs, review internals, and merchant internal notes.
-- API service database integrity constraints, including fixed Sub2API multiplier and owner-owned contact method selection.
+- API service database integrity constraints, including positive merchant-declared model multipliers and owner-owned contact method selection.
 - API purchase intent create flow, idempotent replay without plaintext body cache, direct merchant contact disclosure with `Cache-Control: no-store`, buyer/owner/admin detail visibility, owner mark-contacted, buyer cancel, owner close, and completed idempotency metadata rows.
 - API purchase intent integrity constraints, including public service predicate rejection, owner self-intent rejection, buyer contact ownership rejection, owner contact availability, requested USD allowance cap rejection, active-intent uniqueness, and absence of API-specific contact-session columns or rows.
 - API order flow, including order settings validation, public orderable list/search filtering, payment method filtering, order create from purchase intent, no payment instructions in create response, audited payment-instruction read with QR-code snapshot, buyer payment summary, owner manual payment confirmation, one-time structured delivery credentials, buyer/seller detail credential visibility, list/admin/public credential non-leakage, forbidden credential-content rejection, duplicate delivery rejection, buyer completion, dispute case creation/binding, payment timeout materialization, and one-order-ever-per-intent uniqueness.
@@ -1152,101 +1155,125 @@ if (shouldUseRealBackend()) return backendFavorites()
 
 ### 1. Scope / Trigger
 
-- Trigger: cross-layer API and database contract for completed carpool membership reviews.
-- Scope: the first durable review source is only `carpool_membership`. A review is a buyer-to-owner public experience note after both sides complete a membership. It does not change membership state, create a dispute, create a refund, guarantee service quality, or deliver credentials.
+- Trigger: backend, OpenAPI, PostgreSQL, or frontend work that lists, creates, edits, publishes, removes, or displays transaction reviews.
+- Scope: completed `carpool_membership` and `api_order` transactions support one buyer-to-seller review and one seller-to-buyer review. Reviews are verified experience notes; they do not change transaction state, decide disputes, issue refunds, guarantee service quality, or deliver credentials.
 
 ### 2. Signatures
 
 ```text
 GET /api/v1/me/reviews
+POST /api/v1/me/transactions/{type}/{id}/review
+PUT /api/v1/me/transactions/{type}/{id}/review
 PUT /api/v1/me/reviews/carpool-memberships/{membershipId}
 GET /api/v1/users/{username}/reviews
+POST /api/v1/admin/reviews/{id}/remove
+
+type:
+  carpool_membership | api_order
+
+direction:
+  pending | sent | received
+
+visibility:
+  none | sealed | published | removed
 ```
 
 Required headers:
 
 ```text
-Cookie: c2c_session=<opaque session id>       # /me routes
-X-CSRF-Token: <session CSRF token>            # PUT
-Idempotency-Key: <opaque key>                 # PUT
+Cookie: c2c_session=<opaque session id>       # /me and admin routes
+X-CSRF-Token: <session CSRF token>            # every mutation
+Idempotency-Key: <opaque key>                 # every mutation
+If-Match: "<version>"                         # admin remove
 ```
 
 ### 3. Contracts
 
-- Durable source type is `carpool_membership`; frontend `sourceType='carpool'` may be adapter-only compatibility but must not be persisted.
-- `GET /me/reviews` returns `{ items: ReviewCenterRow[] }` for completed memberships where the current user is buyer.
-- Review center row fields are `id`, `sourceType`, `sourceId`, `target`, `counterpartyUsername`, `counterpartyName`, `status`, `rating`, `tags`, `note`, `createdAt`, and `updatedAt`.
-- Row `status` is `reviewable` when no review exists and `reviewed` after a review exists.
-- `PUT /me/reviews/carpool-memberships/{membershipId}` accepts `{ rating, tags, note }` and returns a `ReviewCenterRow`.
-- `rating` is integer `1..5`. `tags` are trimmed, de-duplicated, max 5 items, max 16 characters each. `note` is required and max 600 characters.
-- Repeated PUT for the same `(source_type, source_id, reviewer_user_id)` updates the existing review instead of creating another public record.
-- `GET /users/{username}/reviews` returns `{ items: PublicReview[] }` for reviews where the public user is the reviewee.
-- Public review fields are `id`, `username`, `date`, `serviceType`, `rating`, `tags`, `note`, and `verified`.
-- Public profile review reads must not expose reviewer user IDs, contact values, contact method IDs, private membership internals, or admin fields.
+- A review source is a platform-confirmed completed `carpool_membership` or `api_order`. Purchase intents, applications, payment submission, and delivery submission are not completed review sources.
+- Only the transaction buyer and seller can review each other. The review window is `[completedAt, completedAt + 14 days)` and an active reputation transaction exclusion makes the transaction ineligible.
+- There is at most one review per `(transaction_type, transaction_id, reviewer_user_id)`. `POST` creates it; `PUT` edits the same review only while it is still sealed and before the deadline. A duplicate create and an edit without an existing sealed review fail explicitly.
+- The first submitted review is `sealed`. Its author can still read and edit their own content, but the counterparty receives only sealed metadata. `rating`, `tags`, and `note` are `null`/empty until publication and must not leak through review-center, public-profile, logs, errors, or idempotency responses.
+- When the second participant submits, both reviews become `published` and receive `visibleAt` and `frozenAt` in the same PostgreSQL transaction. Public content is immutable after that transition.
+- When the 14-day deadline elapses with only one review, an authenticated review-center read or public-profile review read materializes that review as published and frozen at the deadline. Correctness must not depend on a background scheduler. Submission and edit remain forbidden at or after the deadline.
+- `GET /me/reviews` returns `{ items, presetTags }`. Items cover both transaction types and both roles, with `direction=pending|sent|received`, `status=reviewable|expired|sealed|published|removed`, explicit `visibility`, `canCreate`, `canEdit`, counterparty-submission state, transaction timestamps, and version.
+- `rating` is integer `1..5`. Tags are trimmed, de-duplicated, selected only from the backend-provided preset list, limited to 5 items and 16 characters each. `note` is required, limited to 600 characters, and rejects credential- or contact-shaped content.
+- `GET /users/{username}/reviews` returns only published, non-removed reviews for non-excluded transactions where that user is the reviewee. Public fields include transaction type and both role directions, but omit user IDs, contact values, private transaction internals, removal reasons, and administrator fields.
+- `POST /admin/reviews/{id}/remove` requires administrator permission, CSRF, idempotency, and `If-Match`. It may transition only a published review to `removed`; it increments the version and appends a removal revision without rewriting frozen rating, tags, or note.
+- `transaction_review_revisions` is append-only and records create, pre-publication edit, publication, migration, and removal events. Business mutations and their idempotency completion are committed together.
+- The retained carpool-membership `PUT` route writes through the unified service for compatibility. New clients use the generic `POST` create and `PUT` edit routes.
 
 ### 4. Validation & Error Matrix
 
 | Condition | HTTP | Stable code |
 | --- | ---: | --- |
 | Missing/expired session on `/me` routes | 401 | `SESSION_EXPIRED` |
-| Missing or wrong CSRF token on PUT | 403 | `CSRF_TOKEN_INVALID` |
-| Missing PUT idempotency key | 400 | `VALIDATION_FAILED` |
-| Same PUT idempotency key, different request body | 409 | `IDEMPOTENCY_KEY_REUSED` |
-| Membership not found for the buyer | 404 | `OBJECT_NOT_FOUND` |
-| Membership exists but is not completed | 409 | `INVALID_STATE_TRANSITION` |
-| Reviewer is not membership buyer | 403 or 409 | `PERMISSION_DENIED` or `INVALID_STATE_TRANSITION` |
+| Missing or wrong CSRF token on a mutation | 403 | `CSRF_TOKEN_INVALID` |
+| Missing mutation idempotency key | 400 | `VALIDATION_FAILED` |
+| Same idempotency key, different request body | 409 | `IDEMPOTENCY_KEY_REUSED` |
+| Unsupported transaction type or malformed UUID | 422 | `VALIDATION_FAILED` |
+| Transaction missing or current user is not a participant | 404 | `OBJECT_NOT_FOUND` |
+| Transaction is not completed or is actively excluded | 409 | `INVALID_STATE_TRANSITION` |
+| Create after an existing review | 409 | `INVALID_STATE_TRANSITION` |
+| Edit without an existing review | 404 | `OBJECT_NOT_FOUND` |
+| Review deadline elapsed or review is published/removed/frozen | 409 | `INVALID_STATE_TRANSITION` |
 | Rating outside `1..5` | 422 | `VALIDATION_FAILED` |
-| Empty or too-long note | 422 | `VALIDATION_FAILED` |
-| Tags/note contain credential-looking content | 422 | `SECRET_CONTENT_DETECTED` |
+| Unknown/more than 5/too-long tags | 422 | `VALIDATION_FAILED` |
+| Empty or more than 600-character note | 422 | `VALIDATION_FAILED` |
+| Note contains contact- or credential-looking content | 422 | `SECRET_CONTENT_DETECTED` |
+| Non-admin review removal | 403 | `PERMISSION_DENIED` |
+| Admin removal without `If-Match` | 428 | `PRECONDITION_REQUIRED` |
+| Admin removal with stale version | 412 | `VERSION_CONFLICT` |
+| Admin removal targets a non-published review | 409 | `INVALID_STATE_TRANSITION` |
 
 ### 5. Good/Base/Bad Cases
 
-- Good: buyer and owner complete a carpool membership; buyer sees one `reviewable` row, submits a 5-star review, then public owner profile shows that review.
-- Base: buyer repeats PUT for the same membership with a new note; the same logical review updates and public profile reflects the latest note.
-- Base: replay the exact same idempotency key and request body; response is stable and no duplicate review is created.
-- Bad: buyer tries to review an active, left, removed, or pending membership; response is `409 INVALID_STATE_TRANSITION` or not found for unauthorized readers.
-- Bad: API purchase intent is used as a review source; it must not enter this route until there is an explicit platform-confirmed completed source model.
-- Bad: note includes passwords, API keys, tokens, sessions, cookies, or recovery codes; response is `422 SECRET_CONTENT_DETECTED`.
+- Good: an API-order buyer submits first and the seller sees only a sealed received row; the seller then submits and both reviews become public and frozen atomically.
+- Good: a carpool owner submits once, edits while sealed, and the revision history retains both versions. The buyer never sees either content version before publication.
+- Base: one participant submits and the deadline elapses. The next eligible read publishes the review at the deadline, while a late create/edit returns a conflict.
+- Base: replay the exact same idempotency key and body. The response is stable and no duplicate review or revision is created.
+- Bad: accept an API purchase intent as a source, let a non-participant review, expose a sealed rating in a public response, or let an administrator rewrite published content.
+- Bad: submit arbitrary free-form tags or put contact details, passwords, API keys, tokens, sessions, cookies, or recovery codes in the note.
 
 ### 6. Tests Required
 
-- OpenAPI must include all three review routes and schemas: `ReviewCenterRow`, `ReviewCenterRowList`, `SubmitReviewRequest`, `PublicReview`, and `PublicReviewList`.
-- Backend tests or smoke must cover completed membership reviewable row, review submission, public profile display, repeated update, and idempotent replay.
-- PostgreSQL migration must enforce completed membership and buyer/owner actor consistency through constraints or a constraint trigger.
-- Frontend typecheck must prove real mode `getReviewCenterRows()`, `submitReview()`, and public profile reviews use the backend adapter without silent mock fallback.
-- Product boundary scan must show no payment, escrow, guarantee, compensation, credential-storage, or credential-delivery semantics added by reviews.
+- Migration verification must apply the complete chain through Version 57 and prove legacy `carpool_reviews` preserve ID, rating, tags, note, timestamps, and a `migrated` revision.
+- PostgreSQL integration must cover carpool/API, buyer/seller directions, sealed non-disclosure, second-submit atomic publication, deadline publication, late-submit rejection, active exclusion, append-only revisions, and audited administrator removal.
+- Router tests must cover generic create/edit, idempotent replay, sealed response redaction, publication/freeze, edit-after-publication rejection, and administrator `If-Match`.
+- OpenAPI must include generic create/edit, retained compatibility, public review, and administrator removal routes plus their schemas and parameters.
+- Frontend tests must prove real-mode adapters preserve sealed nulls, use backend preset tags, choose `POST` for create and `PUT` for edit, and never fall back to mock data after a real failure.
+- Run full Go tests and vet, frontend Vitest/typecheck/real-mode build, OpenAPI parsing, route parity, migration documentation checks, `git diff --check`, and desktop/mobile browser acceptance.
 
 ### 7. Wrong vs Correct
 
 #### Wrong
 
 ```go
-// Lets any source ID become a public review.
-INSERT INTO carpool_reviews (source_id, reviewer_user_id, reviewee_user_id, rating, note)
-VALUES ($1, $2, $3, $4, $5)
+// Publishes the first review immediately and lets the counterparty read it.
+item.Status = "published"
+item.VisibleAt = time.Now()
 ```
 
 #### Correct
 
 ```go
-// Lock and verify the completed membership before upsert.
-membership, appErr := lockCompletedCarpoolMembershipForReview(ctx, tx, input)
-if appErr != nil {
-    return appErr
+// Keep the first review sealed; publish both only after the paired row is locked.
+counterparty, found := lockCounterpartyTransactionReview(ctx, tx, item)
+if found && counterparty.Status == review.StatusSealed {
+    publishBothInTheSameTransaction(item, counterparty)
 }
 ```
 
 #### Wrong
 
 ```typescript
-// Hides real backend failures behind mock reviews.
-try { return backendReviewCenterRows() } catch { return mockReviewRows() }
+// Treats missing sealed content as a zero-star review.
+rating: row.rating ?? 0
 ```
 
 #### Correct
 
 ```typescript
-if (shouldUseRealBackend()) return backendReviewCenterRows()
+rating: row.rating ?? null
 ```
 
 ## Scenario: Real Native/OAuth Login And Session Permissions
@@ -1308,14 +1335,14 @@ Session user response includes:
 - New or changed native passwords must write `password_algorithm='argon2id_v1'`. `sha256_salted_v1` is legacy verification-only; a successful legacy login must rehash the credential to `argon2id_v1` before session creation completes.
 - Native password login and set-password must require `linuxDoBinding.bound=true` for non-admin users. Admin users may use native password login without linux.do binding only to support the explicit first-admin bootstrap path.
 - First-admin bootstrap is environment-driven at process startup. If `C2C_BOOTSTRAP_ADMIN_PASSWORD` is empty, bootstrap is skipped. If password is present and username is empty, username defaults to `admin`. If username is present without password, config loading must fail.
-- Bootstrap must create or promote the requested user, grant `user_permissions(permission='admin')`, and write an Argon2id password credential only when no admin password credential exists. Re-running bootstrap after an admin password credential exists must not overwrite credentials.
+- Bootstrap is create-only and records `admin_bootstrap_runs.bootstrap_key='initial-admin-v1'`. With no marker, any existing administrator or occupied target username returns `ADMIN_BOOTSTRAP_CONFLICT` without mutation. A matching marker rerun verifies the active user, admin permission, and password credential without updating any field; damaged marked state returns `ADMIN_BOOTSTRAP_INCONSISTENT`.
 - `email-registration/start` and `email-registration/confirm` are disabled first-release compatibility endpoints. They return `403 EMAIL_REGISTRATION_DISABLED` and must not create accounts or sessions.
 - `start` must store only state plus same-origin `returnTo` in the state cookie. External URLs, protocol-relative URLs, and empty values normalize to `/`.
 - `callback` must clear the state cookie after successful login.
-- The PostgreSQL auth repository must upsert `users`, `auth_identities`, and `linux_do_bindings` in one transaction before creating the session.
+- The PostgreSQL auth repository must query `(provider, provider_subject)` first. Existing identities retain their original `user_id` and local username. First login creates a new user, identity, and provider binding in one transaction; username collisions select a deterministic alternative instead of reusing the conflicting row.
 - OAuth userinfo may include an optional `email`. Registration-success email is sent only when the OAuth upsert confirms a newly created user, the provider returned a valid email address, and the user transaction plus session persistence have succeeded. Missing/invalid email skips the registration email; send failure is logged without SMTP credentials and must not block login.
 - linux.do userinfo may encode `id`/`sub` as either a JSON string or an integer. Normalize both forms to the same decimal string before identity upsert; malformed non-scalar IDs remain provider-response failures. Operational diagnostics may log only the provider host, path, method, and status/failure category, never the authorization code, access token, query string, or raw response body.
-- Admin permission comes from `user_permissions(permission='admin')`; fake OAuth may grant admin only for local smoke identities that intentionally encode admin in the fake code.
+- Admin permission comes only from `user_permissions(permission='admin')`; OAuth profile data, including fake OAuth usernames, never grants it. Development smoke that needs an administrator uses `/auth/dev-session` with `ENABLE_DEV_AUTH=true`.
 - Production startup must fail if `ENABLE_DEV_AUTH=true`, `OAUTH_PROVIDER_MODE=fake`, or required oauth2 endpoint/client values are missing.
 - Provider tokens are not part of the durable auth model and must not be written to PostgreSQL.
 
@@ -1327,7 +1354,9 @@ Session user response includes:
 | Native password set/login for non-admin user without linux.do binding | 403 | `LINUX_DO_BINDING_REQUIRED` |
 | Legacy `sha256_salted_v1` password login succeeds | 200 plus credential rehash | n/a |
 | Bootstrap username set without bootstrap password | startup failure | n/a |
-| Bootstrap rerun after admin credential exists | no-op, no overwrite | n/a |
+| Bootstrap target occupied or unproven admin exists | 409 | `ADMIN_BOOTSTRAP_CONFLICT` |
+| Bootstrap marker exists but linked state is damaged | 500 | `ADMIN_BOOTSTRAP_INCONSISTENT` |
+| Proven Bootstrap rerun | no-op, no overwrite | n/a |
 | Email registration start/confirm | 403 | `EMAIL_REGISTRATION_DISABLED` |
 | Missing state cookie or state query | 403 | `CSRF_TOKEN_INVALID` |
 | State mismatch | 403 | `CSRF_TOKEN_INVALID` |
@@ -1341,19 +1370,19 @@ Session user response includes:
 
 - Good: linux.do-bound native user login returns the normal session response, while an incorrect password returns `401 INVALID_CREDENTIALS` and creates no session.
 - Good: a legacy `sha256_salted_v1` credential logs in once and is persisted back as `argon2id_v1`; the same wrong password does not create a session or rehash.
-- Good: first startup with `C2C_BOOTSTRAP_ADMIN_USERNAME=admin` and `C2C_BOOTSTRAP_ADMIN_PASSWORD=<secret>` creates or promotes admin and writes an Argon2id credential; the second startup skips without changing the existing credential.
+- Good: first empty-database startup with `C2C_BOOTSTRAP_ADMIN_USERNAME=admin` and `C2C_BOOTSTRAP_ADMIN_PASSWORD=<secret>` creates a new admin, Argon2id credential, and `initial-admin-v1` marker; a proven rerun leaves the credential unchanged.
 - Good: email registration start/confirm return `EMAIL_REGISTRATION_DISABLED` and do not set `c2c_session`.
-- Good: fake provider smoke logs in `fake-auth-user-*`, session shows `linuxDoBinding.bound=true`, admin route returns `403` for non-admin, and `fake-auth-admin-*` receives `permissions:["admin"]`.
+- Good: fake provider smoke logs in both `fake-auth-user-*` and `fake-auth-admin-*`; both remain non-admin and receive `403` from admin routes. A separate development-only dev session verifies the admin route.
 - Base: existing smoke scripts may call `/auth/dev-session` only when `APP_ENV=development|test` and `ENABLE_DEV_AUTH=true`.
-- Bad: real frontend mode silently calls `/auth/dev-session` to switch from buyer to admin, exposes email registration as a public sign-up path, lets an unbound non-admin user use backup password, writes new `sha256_salted_v1` credentials, overwrites an existing admin password during bootstrap, or backend stores OAuth access tokens in `auth_identities`.
+- Bad: real frontend mode silently calls `/auth/dev-session` to switch from buyer to admin, OAuth profile data grants admin, Bootstrap promotes an existing user or overwrites a password, email registration becomes a public sign-up path, an unbound non-admin user uses backup password, new writes use `sha256_salted_v1`, or backend stores OAuth access tokens in `auth_identities`.
 
 ### 6. Tests Required
 
 - `cd backend && /opt/homebrew/bin/go test ./...` for config, route parity, and auth behavior.
-- Auth unit tests must assert Argon2id login success, legacy login plus rehash, wrong password no session/no rehash, Argon2id set-password writes, first-admin bootstrap creation, and bootstrap no-overwrite.
+- Auth unit tests must assert Argon2id login success, legacy login plus rehash, wrong password no session/no rehash, Argon2id set-password writes, identity ownership/collision isolation, first-admin Bootstrap creation, conflict handling, provenance validation, and no-overwrite reruns.
 - OAuth profile tests must cover linux.do userinfo with integer `id` and the existing string identifier form, and must assert both normalize to the stable string subject used by `auth_identities` and `linux_do_bindings`.
 - OpenAPI YAML parse to verify auth path/schema contract.
-- `scripts/auth-smoke.mjs` against PostgreSQL with `OAUTH_PROVIDER_MODE=fake` for start/callback/session/admin/logout.
+- `scripts/auth-smoke.mjs` against PostgreSQL with `OAUTH_PROVIDER_MODE=fake` and development auth enabled for OAuth start/callback/session, fake admin-like denial, dev-admin route access, and logout.
 - Product-boundary scan for token persistence, plaintext password storage, linux.do official endorsement, platform custody, and automatic credential delivery wording.
 
 ### 7. Wrong vs Correct
@@ -1400,7 +1429,7 @@ X-CSRF-Token: <session CSRF token>    # POST read actions
 
 - `GET /me/notifications` returns `{ items, nextCursor }` ordered by `createdAt DESC`.
 - Notification response fields are `id`, `type`, `title`, `detail`, `targetType`, `targetId`, `to`, `unread`, `readAt`, `createdAt`, and `time`.
-- `type` is a frontend-facing business category such as `API 意向`, `上车申请`, `审核结果`, `求车需求`, or `管理操作`; raw event names stay behind the HTTP boundary.
+- `type` is a frontend-facing business category such as `API 订单`, `上车申请`, `审核结果`, or `管理操作`; raw event names stay behind the HTTP boundary.
 - `unread` is derived from `read_at IS NULL`.
 - `POST /me/notifications/{id}/read` updates only the current user's notification and returns 404 when the row is absent or belongs to another user.
 - `POST /me/notifications/read-all` updates only current-user unread rows and returns `{ count, items }`, where `count` is the number of rows changed in that call.
@@ -1429,7 +1458,7 @@ X-CSRF-Token: <session CSRF token>    # POST read actions
 ### 1. Scope / Trigger
 
 - Trigger: global search endpoint, backend aggregation, or frontend `/search` real-mode work.
-- Scope: public-safe search only. It aggregates existing public official price records, active carpool listings, active demands, public API services, active users, and public-profile API merchants.
+- Scope: public-safe search only. It aggregates existing public official price records, active carpool listings, public API services, active users, and public-profile API merchants.
 
 ### 2. Signatures
 
@@ -1444,8 +1473,8 @@ The endpoint is read-only and public. It does not require session, CSRF, `If-Mat
 - Empty or whitespace-only `q` returns `{ items: [] }`.
 - `q` is normalized by trimming/collapsing whitespace and must not exceed 80 characters.
 - Response fields are `id`, `type`, `title`, `subtitle`, `badge`, and `to`.
-- `type` is one of `官方价格`, `车源`, `求车`, `API 服务`, `用户`, or `商户`.
-- Search must reuse existing public predicates: active official price records, active carpool listings, active demands, approved/online/clear API services, active users, and public-profile API merchants only.
+- `type` is one of `官方价格`, `车源`, `API 服务`, `用户`, or `商户`.
+- Search must reuse existing public predicates: active official price records, active carpool listings, approved/online/clear API services, active users, and public-profile API merchants only.
 - Store-alias API services may appear as `API 服务` results using the public merchant display name, but search must not expose the hidden owner username or create a separate `商户` result for the store alias.
 - Search results must not contain contact values, contact method IDs, owner user IDs for store aliases, admin fields, review/moderation reasons, raw report/dispute text, credentials, payment, escrow, guarantee, or fulfillment material.
 
@@ -1461,7 +1490,7 @@ The endpoint is read-only and public. It does not require session, CSRF, `If-Mat
 
 - OpenAPI must include `GET /api/v1/search` and schemas.
 - Backend tests must keep route/OpenAPI parity green.
-- Smoke must create or reuse public business records and verify official price, carpool, demand, API service, public user, public-profile merchant, empty keyword, and too-long keyword behavior.
+- Smoke must create or reuse public business records and verify official price, carpool, API service, public user, public-profile merchant, empty keyword, and too-long keyword behavior.
 - Frontend real mode must call `searchBackend.ts` from the existing `api.ts` facade and must not catch real backend failures to return mock search rows.
 
 ## Scenario: Backend Production Hardening
@@ -1479,7 +1508,6 @@ GET  /api/v1/auth/oauth/callback
 GET  /api/v1/search?limit=20&cursor=<opaque>
 GET  /api/v1/api-services?limit=20&cursor=<opaque>
 GET  /api/v1/carpools?limit=20&cursor=<opaque>
-GET  /api/v1/demands?limit=20&cursor=<opaque>
 GET  /api/v1/official-prices?limit=20&cursor=<opaque>
 GET  /api/v1/me/notifications?limit=20&cursor=<opaque>
 GET  /api/v1/me/favorites?limit=20&cursor=<opaque>
@@ -1493,7 +1521,6 @@ GET  /api/v1/owner/carpool-memberships?limit=20&cursor=<opaque>
 GET  /api/v1/admin/api-services?limit=20&cursor=<opaque>
 GET  /api/v1/admin/api-purchase-intents?limit=20&cursor=<opaque>
 GET  /api/v1/admin/carpools?limit=20&cursor=<opaque>
-GET  /api/v1/admin/demands?limit=20&cursor=<opaque>
 GET  /api/v1/admin/reports?limit=20&cursor=<opaque>
 GET  /api/v1/admin/disputes?limit=20&cursor=<opaque>
 GET  /api/v1/admin/appeals?limit=20&cursor=<opaque>
@@ -1514,8 +1541,8 @@ APP_ENV=production
 DATABASE_URL=<postgres URL>
 FRONTEND_ORIGIN=https://app.example.com
 ALLOWED_ORIGINS=https://app.example.com[,https://admin.example.com]
-TRUST_X_FORWARDED_FOR=false
-TRUSTED_PROXIES=<comma-separated proxy IP/CIDR list, required only when forwarding trust is enabled>
+TRUST_X_FORWARDED_FOR=<false by default; true only behind an observed trusted proxy>
+TRUSTED_PROXIES=<comma-separated immediate-peer IP/CIDR list, required when forwarding trust is enabled>
 OAUTH_PROVIDER_MODE=oauth2
 OAUTH_CLIENT_ID=<id>
 OAUTH_CLIENT_SECRET=<secret>
@@ -1545,9 +1572,13 @@ MAIL_FROM_NAME=C2CMarket
 - Production email uses Aliyun DirectMail SMTP over implicit TLS on port 465. Do not use Alibaba Cloud AccessKey or DirectMail API SDK for backend email. SMTP passwords are environment-only secrets and must not be printed in logs, wrapped into errors, or copied into docs beyond placeholder values.
 - Email registration uses `email_verification_codes.purpose='email_registration'`, stores only code hashes, creates the verified-email user and auth session in one PostgreSQL transaction, and sends the registration-success email only after commit. Username defaults to the sanitized email prefix and appends a short random suffix on conflict. Email-registered users must return `linuxDoBinding.bound=false` until a separate linux.do binding flow exists.
 - Security headers must include `X-Content-Type-Options: nosniff` and `Referrer-Policy: strict-origin-when-cross-origin`; production also sets HSTS. CSP remains a frontend/reverse-proxy concern unless the Go API starts serving pages.
-- Request logging must include method, path without query string, status, duration, and request ID. It must not log request bodies, query strings, cookies, CSRF tokens, contact values, passwords, or bearer/API tokens.
+- Request logging must include method, path without query string, status, duration, request ID, and the normalized request-scoped client IP. It must not log forwarding-header values, request bodies, query strings, cookies, CSRF tokens, contact values, passwords, or bearer/API tokens.
 - JSON request helpers must reject empty bodies, malformed JSON, unknown fields, bodies over 1 MiB, and trailing JSON values with stable Problem Details. Helpers that only own `request.Body` must use `io.LimitReader`, not `http.MaxBytesReader(nil)`.
-- Rate-limit client IP keys must not trust `X-Forwarded-For` or `X-Real-IP` by default. `TRUST_X_FORWARDED_FOR=true` may read forwarding headers only when the immediate `RemoteAddr` belongs to a configured `TRUSTED_PROXIES` IP/CIDR entry; missing or invalid forwarding headers fall back to the direct peer address.
+- The request boundary must resolve client IP once with `middleware.ClientIPResolver`, store it through `WithClientIP`, and expose it through `ClientIPFromContext` / `ClientIPFromRequest`. Request logging, rate limiting, and future audit handlers must consume that context value instead of parsing transport fields independently.
+- Client IP candidates must parse as canonical `netip.Addr`, reject zone IDs, and call `Unmap`; an invalid direct `RemoteAddr` becomes the stable value `unknown`. Raw malformed values must never enter logs or rate-limit keys.
+- Forwarding headers are disabled by default. With `TRUST_X_FORWARDED_FOR=true`, headers are eligible only when the immediate direct peer matches `TRUSTED_PROXIES`. A valid single-value `CF-Connecting-IP` has priority; otherwise XFF is parsed completely and trusted proxy hops are stripped right to left until the nearest non-trusted address; then `X-Real-IP` and the direct peer are fallbacks. Any malformed XFF item invalidates the complete XFF value, and a forged far-left item cannot override the nearest non-trusted hop.
+- The production middleware order is `WithRequestID -> WithClientIP -> WithRequestLogging -> security/CORS/router`, so the logger and handlers observe the same value.
+- Compose must publish the backend as `127.0.0.1:${BACKEND_PORT}:${BACKEND_PORT}` in development, production, and staging. Production/staging PostgreSQL must not publish a host port. A host-managed Tunnel may appear as a Docker bridge gateway inside the backend container; deployments must observe that immediate peer and configure the smallest exact IP/CIDR rather than trusting Cloudflare edge ranges or all Docker networks.
 - Rate limits return HTTP `429`, Problem Details `code=RATE_LIMITED`, and `Retry-After` when available.
 - Pagination `limit` defaults to 20, maxes at 100, and invalid values return `422 VALIDATION_FAILED`. `cursor` is opaque; clients must only pass through `nextCursor` and must not depend on whether a route currently uses offset or keyset internals.
 - List responses using pagination return `{ "items": [...], "nextCursor": "..." }` with `nextCursor` omitted/null when there are no more results.
@@ -1568,6 +1599,10 @@ MAIL_FROM_NAME=C2CMarket
 | JSON body larger than 1 MiB | 413 | `VALIDATION_FAILED` |
 | `TRUST_X_FORWARDED_FOR=true` without `TRUSTED_PROXIES` | startup fail | n/a |
 | Invalid `TRUSTED_PROXIES` IP/CIDR entry | startup fail | n/a |
+| Invalid direct `RemoteAddr` | continue with client IP `unknown` | n/a |
+| Forwarding headers from a non-trusted immediate peer | ignore headers and use direct peer | n/a |
+| Invalid or multi-value `CF-Connecting-IP` | fall through to XFF / `X-Real-IP` / direct peer | n/a |
+| XFF containing any invalid item | reject the complete XFF value and continue fallbacks | n/a |
 | Rate limit exceeded | 429 | `RATE_LIMITED` |
 | Invalid `limit` or `cursor` | 422 | `VALIDATION_FAILED` |
 | OAuth state missing/mismatched | 403 | `CSRF_TOKEN_INVALID` |
@@ -1577,7 +1612,7 @@ MAIL_FROM_NAME=C2CMarket
 ### 5. Good/Base/Bad Cases
 
 - Good: production config with `FRONTEND_ORIGIN=https://app.example.com` starts, sets secure session cookies, rejects `Origin: https://evil.example` mutations, rejects malformed/trailing JSON, ignores forged forwarding headers by default, and returns 429 for repeated protected requests.
-- Good: a deployment behind a known reverse proxy sets `TRUST_X_FORWARDED_FOR=true` and `TRUSTED_PROXIES=10.0.0.0/24`; only requests from that proxy range use the first valid `X-Forwarded-For` address for rate limiting.
+- Good: a deployment observes immediate peer `10.0.0.9`, sets `TRUST_X_FORWARDED_FOR=true` and `TRUSTED_PROXIES=10.0.0.9/32`, and resolves `X-Forwarded-For: 192.0.2.200, 198.51.100.20, 10.0.0.8` to nearest non-trusted hop `198.51.100.20` for both logs and rate limiting.
 - Good: a configured PostgreSQL deployment whose `schema_migrations.version` equals `ExpectedMigrationVersion` returns `/readyz` 200 with `schemaVersion`, `schemaDirty=false`, and `expectedSchemaVersion`.
 - Base: development/test without explicit origins defaults to local Vite origins and keeps cookies non-secure for HTTP local testing.
 - Base: no-database local mode returns `/readyz` 200 with `database=not_configured`.
@@ -1587,8 +1622,10 @@ MAIL_FROM_NAME=C2CMarket
 
 - Config tests for production frontend-origin validation and fake/dev-auth rejection.
 - Server tests for production cookie `Secure`, clear-cookie consistency, Origin rejection, strict JSON body rejection, rate-limit `429 RATE_LIMITED`, forged forwarding-header bypass prevention, trusted-proxy forwarding behavior, OAuth oversized response rejection, and pagination validation.
+- Client IP unit tests must cover default/direct behavior, untrusted peers, single-value CF priority, invalid CF fallback, right-to-left XFF stripping with a forged far-left value, invalid XFF rejection, `X-Real-IP` fallback, IPv4-mapped IPv6 normalization, zone rejection, malformed `RemoteAddr=unknown`, and one context value shared by accessors.
 - Readiness tests for configured current schema, configured behind schema, configured dirty schema, database query failure, and no-database local mode. Assertions must cover HTTP status plus `schemaVersion`, `schemaDirty`, `expectedSchemaVersion`, and reason where applicable.
-- Request logging tests must prove the log line includes method, path without query string, status, duration, and request ID, and omits request body and query string content.
+- Request logging tests must prove the log line includes method, path without query string, status, duration, request ID, and normalized client IP, and omits request body, query string content, and raw forwarding-header values.
+- `scripts/check-compose-exposure.mjs` must expand development, production, and staging Compose variants; assert every backend published port has `host_ip=127.0.0.1`; and assert production/staging PostgreSQL have no published port.
 - Idempotency tests for completed replay, different request hash reuse conflict, non-expired processing conflict, and expired processing retry.
 - PostgreSQL integration or smoke assertion that API purchase intent direct contact disclosure writes merchant-side and buyer-side access logs.
 - OpenAPI route parity, YAML parse, and docs update for pagination params and `429 RATE_LIMITED`.
@@ -1602,6 +1639,7 @@ http.ListenAndServe(addr, handler)
 http.DefaultClient.Do(oauthRequest)
 w.Header().Set("Access-Control-Allow-Origin", "*")
 log.Printf("request=%s", rawBody)
+clientIP := r.Header.Get("X-Forwarded-For")
 ```
 
 #### Correct
@@ -1616,7 +1654,13 @@ server := &http.Server{
     IdleTimeout:       60 * time.Second,
 }
 oauthClient := &http.Client{Timeout: 10 * time.Second}
-log.Printf("method=%s path=%s status=%d duration=%s request_id=%s", method, urlPath, status, duration, requestID)
+handler := middleware.WithRequestID(
+    middleware.WithClientIP(
+        resolver,
+        middleware.WithRequestLogging(logger, router),
+    ),
+)
+clientIP := middleware.ClientIPFromRequest(r)
 ```
 
 ## Scenario: VPS Direct-Origin Runtime Contract
@@ -2261,4 +2305,82 @@ if created {
     email.SendAPIOrderCreated(...)
 }
 // Idempotency replay returns created=false.
+```
+
+## Scenario: Prelaunch Domain Removal And Contract Erasure
+
+### 1. Scope / Trigger
+
+- Trigger: removing a business domain before the first production launch when the product owner confirms there are no production users, records, or public compatibility obligations.
+- Current decision: the demand domain is removed; subscription carpool keeps only owner-published listings and buyer applications.
+
+### 2. Signatures
+
+```text
+Frontend:
+  /demands*
+  /my/demands
+  /admin/demands
+  -> existing NotFound route
+
+Backend:
+  /api/v1/demands*
+  /api/v1/me/demands*
+  /api/v1/admin/demands*
+  -> standard unregistered-route 404
+
+Database:
+  000065_remove_demands.up.sql
+  000065_remove_demands.down.sql
+  ExpectedMigrationVersion = 66
+```
+
+### 3. Contracts
+
+- Remove the domain as one release unit across frontend routes/pages/state, backend service/routes/storage, OpenAPI, generated clients, search, notifications, smoke tests, and current documentation.
+- Do not add redirects, `410` compatibility handlers, feature flags, empty adapters, or hidden navigation for an unlaunched domain.
+- Historical migrations remain immutable. A new forward migration removes idempotency rows that reference the domain before dropping its table.
+- The down migration restores only the empty schema and indexes needed for structural rollback. It must not claim to recover deleted domain rows.
+- Current product/spec documentation must describe only active capabilities; dated audit reports and historical screenshots remain historical evidence.
+
+### 4. Validation & Error Matrix
+
+| Condition | Required result |
+| --- | --- |
+| Browser opens an old demand URL | Existing NotFound page; no redirect or demand shell |
+| Client calls an old demand API | Standard route-level 404 |
+| Database applies migration 65 while upgrading through the current chain | `demands` is absent; the full chain continues through schema `66`, `dirty=false` |
+| Database rolls migration 65 down | Empty `demands` schema/indexes are recreated; no rows are restored |
+| Active OpenAPI/generated types still expose Demand | Contract drift check fails |
+| Active source/docs still treat demand as a product capability | Residual scan or source-contract test fails |
+
+### 5. Good/Base/Bad Cases
+
+- Good: migration 65 removes the table, migration 66 completes the current schema chain, runtime/API/UI references disappear together, and old URLs use the shared NotFound path.
+- Base: a developer rolls migration 65 down locally and gets an empty compatibility schema for code rollback.
+- Bad: hide the navigation while retaining routes, handlers, generated types, search branches, or a stale database table.
+
+### 6. Tests Required
+
+- Full Go suite plus a focused migration source test for up ordering and down no-data-restoration behavior.
+- OpenAPI generation and drift check; generated frontend types must contain no Demand operation or schema.
+- Full frontend tests, typecheck, and real-mode build with negative route/navigation assertions.
+- PostgreSQL migration 1-to-latest integration: assert version 66, `dirty=false`, and `to_regclass('public.demands') IS NULL`.
+- Real backend smoke suite and explicit old-API 404 checks.
+- Browser checks at 1440x900 and 390x844 for homepage/navigation/search/workspaces and all old demand URLs.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```text
+hide demand links -> keep API/table/generated types "for later"
+```
+
+#### Correct
+
+```text
+remove UI + API + service + storage + OpenAPI + generated types + current docs
+-> add forward schema-removal migration
+-> verify old URLs/APIs return standard 404
 ```

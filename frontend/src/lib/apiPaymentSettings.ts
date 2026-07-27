@@ -28,6 +28,11 @@ export const apiPaymentMethodLabels: Record<ApiPaymentMethod, string> = {
   alipay: '支付宝',
 }
 
+export const apiPaymentMethodIconSrc: Record<ApiPaymentMethod, string> = {
+  wechat: '/wechat-mark.svg',
+  alipay: '/alipay-mark.svg',
+}
+
 export const apiPaymentMethods = [
   { value: 'wechat', label: apiPaymentMethodLabels.wechat, hint: '创建订单后买家可查看微信收款码并站外确认。' },
   { value: 'alipay', label: apiPaymentMethodLabels.alipay, hint: '创建订单后买家可查看支付宝收款码并站外确认。' },

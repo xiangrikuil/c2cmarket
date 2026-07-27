@@ -1,21 +1,27 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
-import { Eye, Search, UsersRound } from 'lucide-vue-next'
+import { Eye, Search, ShieldCheck, UsersRound } from 'lucide-vue-next'
+import ErrorState from '@/components/market/ErrorState.vue'
 import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
+import SkeletonTable from '@/components/market/SkeletonTable.vue'
 import PageTitle from '@/components/market/PageTitle.vue'
 import SoftTable from '@/components/market/SoftTable.vue'
 import StatusTabs from '@/components/market/StatusTabs.vue'
 import TablePagination from '@/components/market/TablePagination.vue'
+import AdminReputationAuditPanel from '@/components/reputation/AdminReputationAuditPanel.vue'
 import { usePagination } from '@/composables/usePagination'
 import { useAdminSectionRows } from '@/queries/useMarketQueries'
 
-const { data } = useAdminSectionRows('users')
+const { data, isLoading, error, refetch } = useAdminSectionRows('users')
 const keyword = ref('')
 const activeStatus = ref('全部')
+const selectedUserId = ref('')
 
 const rows = computed(() => data.value ?? [])
+const selectedRow = computed(() => rows.value.find(row => row.id === selectedUserId.value) ?? null)
 const statusTabs = ['全部', '正常', '已暂停', '已封禁', '已归档']
 const visibleRows = computed(() => {
   const normalizedKeyword = keyword.value.trim().toLowerCase()
@@ -60,7 +66,21 @@ const linuxDoBoundCount = computed(() => rows.value.filter(row => row.secondary.
       </div>
     </div>
 
-    <SoftTable :columns="['账号', '资料与绑定', '角色', '账号状态', '注册 / 活跃', '操作']">
+    <AdminReputationAuditPanel
+      v-if="selectedRow"
+      :user-id="selectedRow.id"
+      :username="selectedRow.primary"
+      :user-version="selectedRow.backendVersion"
+    />
+
+    <SkeletonTable v-if="isLoading" :rows="6" :columns="6" />
+    <ErrorState
+      v-else-if="error"
+      title="用户目录加载失败"
+      description="当前无法读取管理员用户目录。"
+      @retry="refetch()"
+    />
+    <SoftTable v-else :columns="['账号', '资料与绑定', '角色', '账号状态', '注册 / 活跃', '操作']">
       <tr v-for="row in pagination.paginatedRows.value" :key="row.id">
         <td class="font-medium">{{ row.primary }}</td>
         <td class="text-muted-foreground">{{ row.secondary }}</td>
@@ -68,9 +88,14 @@ const linuxDoBoundCount = computed(() => rows.value.filter(row => row.secondary.
         <td><Badge :variant="row.status === '正常' ? 'default' : 'secondary'">{{ row.status }}</Badge></td>
         <td>{{ row.risk }}</td>
         <td>
-          <RouterLink v-if="row.targetTo" :to="row.targetTo" class="inline-flex">
-            <Badge variant="outline" class="gap-1"><Eye class="h-3.5 w-3.5" />公开主页</Badge>
-          </RouterLink>
+          <div class="flex flex-wrap gap-2">
+            <Button size="sm" :variant="selectedUserId === row.id ? 'secondary' : 'outline'" @click="selectedUserId = selectedUserId === row.id ? '' : row.id">
+              <ShieldCheck class="h-3.5 w-3.5" />信誉审计
+            </Button>
+            <Button v-if="row.targetTo" as-child size="sm" variant="ghost">
+              <RouterLink :to="row.targetTo"><Eye class="h-3.5 w-3.5" />公开主页</RouterLink>
+            </Button>
+          </div>
         </td>
       </tr>
       <tr v-if="visibleRows.length === 0">

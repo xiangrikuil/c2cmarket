@@ -58,16 +58,16 @@ function runSearch() {
 
 <template>
   <div class="space-y-5">
-    <PageTitle title="全局搜索" description="聚合官网公开价格、车源、求车、API 服务和公开用户；只展示当前公开可见的业务结果。" />
+    <PageTitle title="全局搜索" description="聚合官网公开价格、车源、API 服务和公开用户；只展示当前公开可见的业务结果。" />
 
     <Card class="p-5">
       <div class="flex gap-2">
-        <Input v-model="draft" placeholder="搜索产品、地区、车主、商户或求车关键词" @keyup.enter="runSearch" />
+        <Input v-model="draft" placeholder="搜索产品、地区、车主、商户或用户" @keyup.enter="runSearch" />
         <Button @click="runSearch"><Search class="h-4 w-4" />搜索</Button>
       </div>
     </Card>
 
-    <EmptyState v-if="!keyword" title="搜索整个平台" description="可以搜索产品、地区、车主、商户、求车需求或公开用户。">
+    <EmptyState v-if="!keyword" title="搜索整个平台" description="可以搜索产品、地区、车主、商户或公开用户。">
       <template #action><div class="flex flex-wrap justify-center gap-2"><RouterLink to="/carpools"><Button variant="outline">热门拼车</Button></RouterLink><RouterLink to="/api-market"><Button variant="outline">API 市场</Button></RouterLink></div></template>
     </EmptyState>
     <SkeletonTable v-else-if="isFetching" :rows="4" :columns="3" />

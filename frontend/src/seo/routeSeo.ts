@@ -6,7 +6,7 @@ export type RouteSeo = {
   indexable: boolean
 }
 
-const defaultDescription = '浏览订阅拼车、API 服务、求车需求与官网价格；C2CMarket 提供信息撮合和风险治理，不代收、不托管资金。'
+const defaultDescription = '浏览订阅拼车、API 服务与官网价格；C2CMarket 提供信息撮合和风险治理，不代收、不托管资金。'
 
 const staticSeo: Record<string, Omit<RouteSeo, 'indexable'>> = {
   '/': {
@@ -20,10 +20,6 @@ const staticSeo: Record<string, Omit<RouteSeo, 'indexable'>> = {
   '/carpools': {
     title: '订阅拼车市场｜C2CMarket',
     description: '浏览公开订阅拼车车源，比较月费、地区、访问安排、车主信誉与剩余席位。',
-  },
-  '/demands': {
-    title: '求车需求大厅｜C2CMarket',
-    description: '浏览公开求车需求，按套餐、预算、地区与车主偏好匹配已有车源。',
   },
   '/api-market': {
     title: 'API 服务市场｜C2CMarket',
@@ -45,7 +41,6 @@ const privatePrefixes = [
 
 const privateExactPaths = new Set([
   '/carpools/new',
-  '/demands/new',
   '/api-market/new',
 ])
 
@@ -73,9 +68,6 @@ export function resolveRouteSeo(route: RouteLocationNormalizedLoaded): RouteSeo 
   if (path.startsWith('/carpools/')) {
     return { title: '订阅拼车详情｜C2CMarket', description: '查看车源月费、席位、访问安排、车主信誉与风险提示。', indexable }
   }
-  if (path.startsWith('/demands/')) {
-    return { title: '求车需求详情｜C2CMarket', description: '查看公开求车需求的预算、地区、车主偏好与回应方式。', indexable }
-  }
   if (path.startsWith('/api-market/')) {
     return { title: 'API 服务详情｜C2CMarket', description: '查看 API 服务模型、售价、最低订单、交付方式与商户说明。', indexable }
   }
@@ -95,7 +87,6 @@ export function breadcrumbItems(route: RouteLocationNormalizedLoaded, siteUrl: s
   const labels: Record<string, string> = {
     'official-prices': '官网价格',
     carpools: '订阅拼车',
-    demands: '求车需求',
     'api-market': 'API 市场',
     u: '用户主页',
   }

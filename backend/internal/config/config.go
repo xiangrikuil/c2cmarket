@@ -1,12 +1,16 @@
 package config
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/netip"
 	"net/url"
 	"os"
 	"strconv"
 	"strings"
+	"time"
+
+	"c2c-market/backend/internal/database"
 )
 
 const (
@@ -16,29 +20,37 @@ const (
 )
 
 type Config struct {
-	Port                   string
-	AppEnv                 string
-	DatabaseURL            string
-	EnableDevAuth          bool
-	FrontendOrigin         string
-	AllowedOrigins         []string
-	OAuthProviderMode      string
-	OAuthClientID          string
-	OAuthClientSecret      string
-	OAuthAuthorizeURL      string
-	OAuthTokenURL          string
-	OAuthUserInfoURL       string
-	OAuthRedirectURL       string
-	OAuthScopes            string
-	ContactEncryptionKey   string
-	ContactFingerprintKey  string
-	ContactKeyVersion      string
-	BootstrapAdminUsername string
-	BootstrapAdminPassword string
-	TrustXForwardedFor     bool
-	TrustedProxies         []string
-	EmailProvider          string
-	SMTP                   SMTPConfig
+	Port                    string
+	AppEnv                  string
+	DatabaseURL             string
+	Database                database.PostgresOptions
+	DatabaseSlowQueryAfter  time.Duration
+	EnableDevAuth           bool
+	FrontendOrigin          string
+	AllowedOrigins          []string
+	OAuthProviderMode       string
+	OAuthClientID           string
+	OAuthClientSecret       string
+	OAuthAuthorizeURL       string
+	OAuthTokenURL           string
+	OAuthUserInfoURL        string
+	OAuthRedirectURL        string
+	OAuthScopes             string
+	ContactEncryptionKey    string
+	ContactFingerprintKey   string
+	ContactKeyVersion       string
+	ContactEncryptionKeys   map[string]string
+	ContactFingerprintKeys  map[string]string
+	BootstrapAdminUsername  string
+	BootstrapAdminPassword  string
+	TrustXForwardedFor      bool
+	TrustedProxies          []string
+	ModelAuditAllowedHosts  []string
+	EmailVerificationPepper string
+	EmailProvider           string
+	SMTP                    SMTPConfig
+	Maintenance             MaintenanceConfig
+	MetricsBearerToken      string
 }
 
 type SMTPConfig struct {
@@ -50,34 +62,57 @@ type SMTPConfig struct {
 	FromName    string
 }
 
+type MaintenanceConfig struct {
+	Interval                    time.Duration
+	BatchSize                   int
+	SessionRetention            time.Duration
+	EmailVerificationRetention  time.Duration
+	ReadNotificationRetention   time.Duration
+	UnreadNotificationRetention time.Duration
+	DomainEventRetention        time.Duration
+}
+
 const (
-	localContactEncryptionKey  = "c2cmarket-local-contact-encryption-key-v1"
-	localContactFingerprintKey = "c2cmarket-local-contact-fingerprint-key-v1"
-	localContactKeyVersion     = "local-dev-v1"
+	localContactEncryptionKey    = "c2cmarket-local-contact-encryption-key-v1"
+	localContactFingerprintKey   = "c2cmarket-local-contact-fingerprint-key-v1"
+	localContactKeyVersion       = "local-dev-v1"
+	localEmailVerificationPepper = "c2cmarket-local-email-verification-pepper-v1"
+
+	defaultMaintenanceInterval         = 15 * time.Minute
+	defaultMaintenanceBatchSize        = 500
+	defaultSessionRetention            = 7 * 24 * time.Hour
+	defaultEmailVerificationRetention  = 24 * time.Hour
+	defaultReadNotificationRetention   = 90 * 24 * time.Hour
+	defaultUnreadNotificationRetention = 365 * 24 * time.Hour
+	defaultDomainEventRetention        = 365 * 24 * time.Hour
+	defaultDatabaseSlowQueryAfter      = time.Second
 )
 
 func Load() (Config, error) {
 	cfg := Config{
-		Port:                   strings.TrimSpace(os.Getenv("PORT")),
-		AppEnv:                 strings.ToLower(strings.TrimSpace(os.Getenv("APP_ENV"))),
-		DatabaseURL:            strings.TrimSpace(os.Getenv("DATABASE_URL")),
-		FrontendOrigin:         strings.TrimSpace(os.Getenv("FRONTEND_ORIGIN")),
-		AllowedOrigins:         parseAllowedOrigins(os.Getenv("ALLOWED_ORIGINS")),
-		OAuthProviderMode:      strings.ToLower(strings.TrimSpace(os.Getenv("OAUTH_PROVIDER_MODE"))),
-		OAuthClientID:          strings.TrimSpace(os.Getenv("OAUTH_CLIENT_ID")),
-		OAuthClientSecret:      strings.TrimSpace(os.Getenv("OAUTH_CLIENT_SECRET")),
-		OAuthAuthorizeURL:      strings.TrimSpace(os.Getenv("OAUTH_AUTHORIZE_URL")),
-		OAuthTokenURL:          strings.TrimSpace(os.Getenv("OAUTH_TOKEN_URL")),
-		OAuthUserInfoURL:       strings.TrimSpace(os.Getenv("OAUTH_USERINFO_URL")),
-		OAuthRedirectURL:       strings.TrimSpace(os.Getenv("OAUTH_REDIRECT_URL")),
-		OAuthScopes:            strings.TrimSpace(os.Getenv("OAUTH_SCOPES")),
-		ContactEncryptionKey:   strings.TrimSpace(os.Getenv("CONTACT_ENCRYPTION_KEY")),
-		ContactFingerprintKey:  strings.TrimSpace(os.Getenv("CONTACT_FINGERPRINT_KEY")),
-		ContactKeyVersion:      strings.TrimSpace(os.Getenv("CONTACT_KEY_VERSION")),
-		BootstrapAdminUsername: strings.TrimSpace(os.Getenv("C2C_BOOTSTRAP_ADMIN_USERNAME")),
-		BootstrapAdminPassword: strings.TrimSpace(os.Getenv("C2C_BOOTSTRAP_ADMIN_PASSWORD")),
-		TrustedProxies:         parseCommaSeparated(os.Getenv("TRUSTED_PROXIES")),
-		EmailProvider:          strings.ToLower(strings.TrimSpace(os.Getenv("EMAIL_PROVIDER"))),
+		Port:                    strings.TrimSpace(os.Getenv("PORT")),
+		AppEnv:                  strings.ToLower(strings.TrimSpace(os.Getenv("APP_ENV"))),
+		DatabaseURL:             strings.TrimSpace(os.Getenv("DATABASE_URL")),
+		MetricsBearerToken:      strings.TrimSpace(os.Getenv("METRICS_BEARER_TOKEN")),
+		FrontendOrigin:          strings.TrimSpace(os.Getenv("FRONTEND_ORIGIN")),
+		AllowedOrigins:          parseAllowedOrigins(os.Getenv("ALLOWED_ORIGINS")),
+		OAuthProviderMode:       strings.ToLower(strings.TrimSpace(os.Getenv("OAUTH_PROVIDER_MODE"))),
+		OAuthClientID:           strings.TrimSpace(os.Getenv("OAUTH_CLIENT_ID")),
+		OAuthClientSecret:       strings.TrimSpace(os.Getenv("OAUTH_CLIENT_SECRET")),
+		OAuthAuthorizeURL:       strings.TrimSpace(os.Getenv("OAUTH_AUTHORIZE_URL")),
+		OAuthTokenURL:           strings.TrimSpace(os.Getenv("OAUTH_TOKEN_URL")),
+		OAuthUserInfoURL:        strings.TrimSpace(os.Getenv("OAUTH_USERINFO_URL")),
+		OAuthRedirectURL:        strings.TrimSpace(os.Getenv("OAUTH_REDIRECT_URL")),
+		OAuthScopes:             strings.TrimSpace(os.Getenv("OAUTH_SCOPES")),
+		ContactEncryptionKey:    strings.TrimSpace(os.Getenv("CONTACT_ENCRYPTION_KEY")),
+		ContactFingerprintKey:   strings.TrimSpace(os.Getenv("CONTACT_FINGERPRINT_KEY")),
+		ContactKeyVersion:       strings.TrimSpace(os.Getenv("CONTACT_KEY_VERSION")),
+		BootstrapAdminUsername:  strings.TrimSpace(os.Getenv("C2C_BOOTSTRAP_ADMIN_USERNAME")),
+		BootstrapAdminPassword:  strings.TrimSpace(os.Getenv("C2C_BOOTSTRAP_ADMIN_PASSWORD")),
+		TrustedProxies:          parseCommaSeparated(os.Getenv("TRUSTED_PROXIES")),
+		ModelAuditAllowedHosts:  parseCommaSeparated(os.Getenv("MODEL_AUDIT_ALLOWED_HOSTS")),
+		EmailVerificationPepper: strings.TrimSpace(os.Getenv("EMAIL_VERIFICATION_PEPPER")),
+		EmailProvider:           strings.ToLower(strings.TrimSpace(os.Getenv("EMAIL_PROVIDER"))),
 		SMTP: SMTPConfig{
 			Host:        strings.TrimSpace(os.Getenv("SMTP_HOST")),
 			Username:    strings.TrimSpace(os.Getenv("SMTP_USERNAME")),
@@ -85,6 +120,67 @@ func Load() (Config, error) {
 			FromAddress: strings.TrimSpace(os.Getenv("MAIL_FROM_ADDRESS")),
 			FromName:    strings.TrimSpace(os.Getenv("MAIL_FROM_NAME")),
 		},
+	}
+	var err error
+	cfg.Database, err = loadPostgresOptions()
+	if err != nil {
+		return Config{}, err
+	}
+	cfg.DatabaseSlowQueryAfter, err = parseDurationEnv(
+		"DB_SLOW_QUERY_THRESHOLD",
+		os.Getenv("DB_SLOW_QUERY_THRESHOLD"),
+		defaultDatabaseSlowQueryAfter,
+	)
+	if err != nil {
+		return Config{}, err
+	}
+	if cfg.DatabaseSlowQueryAfter < 100*time.Millisecond || cfg.DatabaseSlowQueryAfter > 5*time.Minute {
+		return Config{}, fmt.Errorf("DB_SLOW_QUERY_THRESHOLD must be between 100ms and 5m")
+	}
+	cfg.ContactEncryptionKeys, err = parseSecretKeyring("CONTACT_ENCRYPTION_KEYRING", os.Getenv("CONTACT_ENCRYPTION_KEYRING"))
+	if err != nil {
+		return Config{}, err
+	}
+	cfg.ContactFingerprintKeys, err = parseSecretKeyring("CONTACT_FINGERPRINT_KEYRING", os.Getenv("CONTACT_FINGERPRINT_KEYRING"))
+	if err != nil {
+		return Config{}, err
+	}
+	cfg.Maintenance.Interval, err = parseDurationEnv("MAINTENANCE_INTERVAL", os.Getenv("MAINTENANCE_INTERVAL"), defaultMaintenanceInterval)
+	if err != nil {
+		return Config{}, err
+	}
+	if cfg.Maintenance.Interval < time.Minute || cfg.Maintenance.Interval > 24*time.Hour {
+		return Config{}, fmt.Errorf("MAINTENANCE_INTERVAL must be between 1m and 24h")
+	}
+	cfg.Maintenance.BatchSize, err = parseIntEnv("MAINTENANCE_BATCH_SIZE", os.Getenv("MAINTENANCE_BATCH_SIZE"), defaultMaintenanceBatchSize)
+	if err != nil {
+		return Config{}, err
+	}
+	if cfg.Maintenance.BatchSize < 1 || cfg.Maintenance.BatchSize > 5000 {
+		return Config{}, fmt.Errorf("MAINTENANCE_BATCH_SIZE must be between 1 and 5000")
+	}
+	cfg.Maintenance.SessionRetention, err = parseDurationEnv("SESSION_RETENTION", os.Getenv("SESSION_RETENTION"), defaultSessionRetention)
+	if err != nil {
+		return Config{}, err
+	}
+	cfg.Maintenance.EmailVerificationRetention, err = parseDurationEnv("EMAIL_VERIFICATION_RETENTION", os.Getenv("EMAIL_VERIFICATION_RETENTION"), defaultEmailVerificationRetention)
+	if err != nil {
+		return Config{}, err
+	}
+	cfg.Maintenance.ReadNotificationRetention, err = parseDurationEnv("READ_NOTIFICATION_RETENTION", os.Getenv("READ_NOTIFICATION_RETENTION"), defaultReadNotificationRetention)
+	if err != nil {
+		return Config{}, err
+	}
+	cfg.Maintenance.UnreadNotificationRetention, err = parseDurationEnv("UNREAD_NOTIFICATION_RETENTION", os.Getenv("UNREAD_NOTIFICATION_RETENTION"), defaultUnreadNotificationRetention)
+	if err != nil {
+		return Config{}, err
+	}
+	cfg.Maintenance.DomainEventRetention, err = parseDurationEnv("DOMAIN_EVENT_RETENTION", os.Getenv("DOMAIN_EVENT_RETENTION"), defaultDomainEventRetention)
+	if err != nil {
+		return Config{}, err
+	}
+	if cfg.Maintenance.UnreadNotificationRetention < cfg.Maintenance.ReadNotificationRetention {
+		return Config{}, fmt.Errorf("UNREAD_NOTIFICATION_RETENTION must not be shorter than READ_NOTIFICATION_RETENTION")
 	}
 	if cfg.Port == "" {
 		cfg.Port = "8080"
@@ -196,14 +292,20 @@ func Load() (Config, error) {
 		if len(cfg.AllowedOrigins) == 0 {
 			return Config{}, fmt.Errorf("ALLOWED_ORIGINS or FRONTEND_ORIGIN is required in production")
 		}
-		if cfg.ContactEncryptionKey == "" {
-			return Config{}, fmt.Errorf("CONTACT_ENCRYPTION_KEY is required in production")
+		if cfg.ContactEncryptionKey == "" && len(cfg.ContactEncryptionKeys) == 0 {
+			return Config{}, fmt.Errorf("CONTACT_ENCRYPTION_KEY or CONTACT_ENCRYPTION_KEYRING is required in production")
 		}
-		if cfg.ContactFingerprintKey == "" {
-			return Config{}, fmt.Errorf("CONTACT_FINGERPRINT_KEY is required in production")
+		if cfg.ContactFingerprintKey == "" && len(cfg.ContactFingerprintKeys) == 0 {
+			return Config{}, fmt.Errorf("CONTACT_FINGERPRINT_KEY or CONTACT_FINGERPRINT_KEYRING is required in production")
 		}
 		if cfg.ContactKeyVersion == "" {
 			return Config{}, fmt.Errorf("CONTACT_KEY_VERSION is required in production")
+		}
+		if len([]byte(cfg.EmailVerificationPepper)) < 32 {
+			return Config{}, fmt.Errorf("EMAIL_VERIFICATION_PEPPER must be at least 32 bytes in production")
+		}
+		if len([]byte(cfg.MetricsBearerToken)) < 32 {
+			return Config{}, fmt.Errorf("METRICS_BEARER_TOKEN must be at least 32 bytes in production")
 		}
 		if cfg.EmailProvider != "aliyun_directmail" {
 			return Config{}, fmt.Errorf("EMAIL_PROVIDER=aliyun_directmail is required in production")
@@ -218,17 +320,154 @@ func Load() (Config, error) {
 		}
 	}
 
-	if cfg.ContactEncryptionKey == "" {
+	if cfg.ContactEncryptionKey == "" && len(cfg.ContactEncryptionKeys) == 0 {
 		cfg.ContactEncryptionKey = localContactEncryptionKey
 	}
-	if cfg.ContactFingerprintKey == "" {
+	if cfg.ContactFingerprintKey == "" && len(cfg.ContactFingerprintKeys) == 0 {
 		cfg.ContactFingerprintKey = localContactFingerprintKey
 	}
 	if cfg.ContactKeyVersion == "" {
 		cfg.ContactKeyVersion = localContactKeyVersion
 	}
+	if cfg.ContactEncryptionKeys == nil {
+		cfg.ContactEncryptionKeys = map[string]string{}
+	}
+	if _, exists := cfg.ContactEncryptionKeys[cfg.ContactKeyVersion]; !exists && cfg.ContactEncryptionKey != "" {
+		cfg.ContactEncryptionKeys[cfg.ContactKeyVersion] = cfg.ContactEncryptionKey
+	}
+	if cfg.ContactFingerprintKeys == nil {
+		cfg.ContactFingerprintKeys = map[string]string{}
+	}
+	if _, exists := cfg.ContactFingerprintKeys[cfg.ContactKeyVersion]; !exists && cfg.ContactFingerprintKey != "" {
+		cfg.ContactFingerprintKeys[cfg.ContactKeyVersion] = cfg.ContactFingerprintKey
+	}
+	if strings.TrimSpace(cfg.ContactEncryptionKeys[cfg.ContactKeyVersion]) == "" {
+		return Config{}, fmt.Errorf("CONTACT_ENCRYPTION_KEYRING must contain CONTACT_KEY_VERSION")
+	}
+	if strings.TrimSpace(cfg.ContactFingerprintKeys[cfg.ContactKeyVersion]) == "" {
+		return Config{}, fmt.Errorf("CONTACT_FINGERPRINT_KEYRING must contain CONTACT_KEY_VERSION")
+	}
+	if cfg.EmailVerificationPepper == "" {
+		cfg.EmailVerificationPepper = localEmailVerificationPepper
+	}
 
 	return cfg, nil
+}
+
+func loadPostgresOptions() (database.PostgresOptions, error) {
+	options := database.DefaultPostgresOptions()
+	maxConns, err := parseIntEnv("DB_MAX_CONNS", os.Getenv("DB_MAX_CONNS"), int(options.MaxConns))
+	if err != nil {
+		return database.PostgresOptions{}, err
+	}
+	minConns, err := parseIntEnv("DB_MIN_CONNS", os.Getenv("DB_MIN_CONNS"), int(options.MinConns))
+	if err != nil {
+		return database.PostgresOptions{}, err
+	}
+	options.MaxConns = int32(maxConns)
+	options.MinConns = int32(minConns)
+	options.MaxConnLifetime, err = parseDurationEnv("DB_MAX_CONN_LIFETIME", os.Getenv("DB_MAX_CONN_LIFETIME"), options.MaxConnLifetime)
+	if err != nil {
+		return database.PostgresOptions{}, err
+	}
+	options.MaxConnIdleTime, err = parseDurationEnv("DB_MAX_CONN_IDLE_TIME", os.Getenv("DB_MAX_CONN_IDLE_TIME"), options.MaxConnIdleTime)
+	if err != nil {
+		return database.PostgresOptions{}, err
+	}
+	options.HealthCheckPeriod, err = parseDurationEnv("DB_HEALTH_CHECK_PERIOD", os.Getenv("DB_HEALTH_CHECK_PERIOD"), options.HealthCheckPeriod)
+	if err != nil {
+		return database.PostgresOptions{}, err
+	}
+	options.StatementTimeout, err = parseDurationEnv("DB_STATEMENT_TIMEOUT", os.Getenv("DB_STATEMENT_TIMEOUT"), options.StatementTimeout)
+	if err != nil {
+		return database.PostgresOptions{}, err
+	}
+	options.LockTimeout, err = parseDurationEnv("DB_LOCK_TIMEOUT", os.Getenv("DB_LOCK_TIMEOUT"), options.LockTimeout)
+	if err != nil {
+		return database.PostgresOptions{}, err
+	}
+	options.IdleInTransactionSessionTimeout, err = parseDurationEnv(
+		"DB_IDLE_IN_TRANSACTION_SESSION_TIMEOUT",
+		os.Getenv("DB_IDLE_IN_TRANSACTION_SESSION_TIMEOUT"),
+		options.IdleInTransactionSessionTimeout,
+	)
+	if err != nil {
+		return database.PostgresOptions{}, err
+	}
+	if err := options.Validate(); err != nil {
+		return database.PostgresOptions{}, fmt.Errorf("database pool configuration is invalid: %w", err)
+	}
+	return options, nil
+}
+
+func LoadContactReencrypt() (Config, error) {
+	cfg := Config{
+		DatabaseURL:           strings.TrimSpace(os.Getenv("DATABASE_URL")),
+		ContactEncryptionKey:  strings.TrimSpace(os.Getenv("CONTACT_ENCRYPTION_KEY")),
+		ContactFingerprintKey: strings.TrimSpace(os.Getenv("CONTACT_FINGERPRINT_KEY")),
+		ContactKeyVersion:     strings.TrimSpace(os.Getenv("CONTACT_KEY_VERSION")),
+	}
+	var err error
+	cfg.Database, err = loadPostgresOptions()
+	if err != nil {
+		return Config{}, err
+	}
+	cfg.ContactEncryptionKeys, err = parseSecretKeyring("CONTACT_ENCRYPTION_KEYRING", os.Getenv("CONTACT_ENCRYPTION_KEYRING"))
+	if err != nil {
+		return Config{}, err
+	}
+	cfg.ContactFingerprintKeys, err = parseSecretKeyring("CONTACT_FINGERPRINT_KEYRING", os.Getenv("CONTACT_FINGERPRINT_KEYRING"))
+	if err != nil {
+		return Config{}, err
+	}
+	if cfg.DatabaseURL == "" {
+		return Config{}, fmt.Errorf("DATABASE_URL is required")
+	}
+	if cfg.ContactKeyVersion == "" {
+		return Config{}, fmt.Errorf("CONTACT_KEY_VERSION is required")
+	}
+	if cfg.ContactEncryptionKeys == nil {
+		cfg.ContactEncryptionKeys = map[string]string{}
+	}
+	if _, exists := cfg.ContactEncryptionKeys[cfg.ContactKeyVersion]; !exists && cfg.ContactEncryptionKey != "" {
+		cfg.ContactEncryptionKeys[cfg.ContactKeyVersion] = cfg.ContactEncryptionKey
+	}
+	if cfg.ContactFingerprintKeys == nil {
+		cfg.ContactFingerprintKeys = map[string]string{}
+	}
+	if _, exists := cfg.ContactFingerprintKeys[cfg.ContactKeyVersion]; !exists && cfg.ContactFingerprintKey != "" {
+		cfg.ContactFingerprintKeys[cfg.ContactKeyVersion] = cfg.ContactFingerprintKey
+	}
+	if strings.TrimSpace(cfg.ContactEncryptionKeys[cfg.ContactKeyVersion]) == "" {
+		return Config{}, fmt.Errorf("CONTACT_ENCRYPTION_KEYRING must contain CONTACT_KEY_VERSION")
+	}
+	if strings.TrimSpace(cfg.ContactFingerprintKeys[cfg.ContactKeyVersion]) == "" {
+		return Config{}, fmt.Errorf("CONTACT_FINGERPRINT_KEYRING must contain CONTACT_KEY_VERSION")
+	}
+	return cfg, nil
+}
+
+func parseSecretKeyring(name, raw string) (map[string]string, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil, nil
+	}
+	var keyring map[string]string
+	if err := json.Unmarshal([]byte(raw), &keyring); err != nil {
+		return nil, fmt.Errorf("%s must be a JSON object of version-to-key entries", name)
+	}
+	if len(keyring) == 0 {
+		return nil, fmt.Errorf("%s must not be empty", name)
+	}
+	normalized := make(map[string]string, len(keyring))
+	for version, key := range keyring {
+		version = strings.TrimSpace(version)
+		if version == "" || len(version) > 128 || strings.TrimSpace(key) == "" {
+			return nil, fmt.Errorf("%s contains an invalid version or empty key", name)
+		}
+		normalized[version] = key
+	}
+	return normalized, nil
 }
 
 func validateSMTPConfig(cfg SMTPConfig) error {
@@ -264,6 +503,30 @@ func parseBoolEnv(name, raw string, fallback bool) (bool, error) {
 	default:
 		return false, fmt.Errorf("%s must be true or false", name)
 	}
+}
+
+func parseDurationEnv(name, raw string, fallback time.Duration) (time.Duration, error) {
+	value := strings.TrimSpace(raw)
+	if value == "" {
+		return fallback, nil
+	}
+	parsed, err := time.ParseDuration(value)
+	if err != nil || parsed <= 0 {
+		return 0, fmt.Errorf("%s must be a positive Go duration", name)
+	}
+	return parsed, nil
+}
+
+func parseIntEnv(name, raw string, fallback int) (int, error) {
+	value := strings.TrimSpace(raw)
+	if value == "" {
+		return fallback, nil
+	}
+	parsed, err := strconv.Atoi(value)
+	if err != nil {
+		return 0, fmt.Errorf("%s must be an integer", name)
+	}
+	return parsed, nil
 }
 
 func parseAllowedOrigins(values ...string) []string {

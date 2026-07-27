@@ -9,7 +9,6 @@ import (
 	"c2c-market/backend/internal/module/carpool"
 	"c2c-market/backend/internal/module/catalog"
 	"c2c-market/backend/internal/module/contact"
-	"c2c-market/backend/internal/module/demand"
 	"c2c-market/backend/internal/module/feedback"
 	"c2c-market/backend/internal/module/idempotency"
 	"c2c-market/backend/internal/module/modelaudit"
@@ -193,6 +192,8 @@ type ReviewCenterRow = review.ReviewCenterRow
 
 type SubmitReviewInput = review.SubmitReviewInput
 
+type RemoveReviewInput = review.RemoveReviewInput
+
 type PublicReview = review.PublicReview
 
 type ReviewCompletionBuilder = review.CompletionBuilder
@@ -224,16 +225,6 @@ type AnnouncementFormInput = announcement.FormInput
 type AnnouncementAuditLog = announcement.AuditLog
 
 type AnnouncementReceipt = announcement.Receipt
-
-type Demand = demand.Demand
-
-type CreateDemandInput = demand.CreateInput
-
-type DemandOwnerActionInput = demand.OwnerActionInput
-
-type DemandAdminActionInput = demand.AdminActionInput
-
-type DemandCompletionBuilder = demand.CompletionBuilder
 
 type FeedbackTicket = feedback.Ticket
 

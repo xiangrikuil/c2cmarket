@@ -2,6 +2,7 @@
 import { computed, ref } from 'vue'
 import { RouterLink, useRouter } from 'vue-router'
 import { ArrowRight, CalendarClock, Code2, WalletCards } from 'lucide-vue-next'
+import ApiPaymentMethodIcon from '@/components/api-payment/ApiPaymentMethodIcon.vue'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
@@ -21,10 +22,14 @@ import {
   getApiOrderNextAction,
   getApiOrderStatusLabel,
 } from '@/lib/api'
+import { apiPaymentMethodLabels } from '@/lib/apiPaymentSettings'
 import { compareDecimal, formatDecimal } from '@/lib/decimal'
+import { getApiServiceProductIconSrc } from '@/lib/productCategoryIcon'
 import { useMyApiOrders } from '@/queries/useMarketQueries'
+import { useProductCategories } from '@/queries/useProductCatalogQueries'
 
 const { data, isLoading, error, refetch } = useMyApiOrders({ sort: 'default_buyer' })
+const { data: catalogCategories } = useProductCategories()
 const router = useRouter()
 const activeTab = ref('全部')
 const keyword = ref('')
@@ -64,6 +69,15 @@ const rows = computed(() => {
 
 const pagination = usePagination(rows)
 const totalAmount = computed(() => (data.value ?? []).reduce((sum, item) => sum + Number(item.amountDecimal ?? item.amount), 0))
+const categoryIconByCode = computed(() => new Map((catalogCategories.value ?? []).map(category => [category.code, category.iconDataUrl])))
+
+function orderProductIconSrc(item: (typeof rows.value)[number]) {
+  return getApiServiceProductIconSrc({
+    title: item.serviceTitle,
+    models: item.intentSnapshot.models,
+    modelPriceRows: item.intentSnapshot.modelPrices,
+  }, categoryIconByCode.value)
+}
 
 function sellerInitial(value: string) {
   return value.trim().slice(0, 1).toUpperCase() || '商'
@@ -97,11 +111,18 @@ function openOrder(event: MouseEvent | KeyboardEvent, id: string) {
         <div v-else class="my-transaction-list">
           <Card v-for="item in pagination.paginatedRows.value" :key="item.id" class="my-transaction-row my-api-order-row" tabindex="0" @click="openOrder($event, item.id)" @keydown.enter="openOrder($event, item.id)">
             <div class="my-transaction-product">
-              <span class="my-transaction-icon my-transaction-icon--api"><Code2 class="h-5 w-5" /></span>
+              <span class="my-transaction-icon my-transaction-icon--api">
+                <img v-if="orderProductIconSrc(item)" :src="orderProductIconSrc(item) ?? undefined" alt="" />
+                <Code2 v-else class="h-5 w-5" />
+              </span>
               <div class="min-w-0"><div class="truncate font-semibold text-slate-950">{{ item.serviceTitle }}</div><div class="mt-1 flex items-center gap-1.5 truncate text-xs text-muted-foreground"><ShortId :value="item.id" prefix="API" copyable /> · {{ item.intentSnapshot.models.join(' / ') }}</div></div>
             </div>
-            <div class="my-transaction-metric"><small>支付金额</small><strong>¥{{ formatDecimal(item.amountDecimal ?? String(item.amount), 2, 2) }}</strong><em>{{ formatDecimal(item.requestedUsdAllowanceDecimal ?? String(item.requestedUsdAllowance), 2, 6) }} 美元额度 · {{ item.intentSnapshot.multiplier }}</em></div>
-            <div class="my-transaction-owner"><span>{{ sellerInitial(item.seller) }}</span><div><small>商户</small><strong>{{ item.seller }}</strong><em>信任等级 {{ item.intentSnapshot.trustLevel }} · {{ getApiMerchantVisibilityLabel(item.intentSnapshot) }}</em></div></div>
+            <div class="my-transaction-metric">
+              <small>支付金额</small>
+              <strong>¥{{ formatDecimal(item.amountDecimal ?? String(item.amount), 2, 2) }}</strong>
+              <em><ApiPaymentMethodIcon :method="item.selectedPaymentMethod" size="sm" />{{ apiPaymentMethodLabels[item.selectedPaymentMethod] }} · {{ formatDecimal(item.requestedUsdAllowanceDecimal ?? String(item.requestedUsdAllowance), 2, 6) }} 美元额度 · {{ item.intentSnapshot.multiplier }}</em>
+            </div>
+            <div class="my-transaction-owner"><span>{{ sellerInitial(item.seller) }}</span><div><small>商户</small><strong>{{ item.seller }}</strong><em>{{ item.intentSnapshot.trustLevel === null ? '信任等级暂无数据' : `信任等级 ${item.intentSnapshot.trustLevel}` }} · {{ getApiMerchantVisibilityLabel(item.intentSnapshot) }}</em></div></div>
             <div class="my-transaction-metric"><small>创建时间</small><strong class="inline-flex items-center gap-1.5"><CalendarClock class="h-3.5 w-3.5 text-muted-foreground" /><LocalTime :value="item.createdAt" /></strong><em>付款和交付信息按参与方权限展示</em></div>
             <div class="my-transaction-state"><StatusBadge :status="item.status" :label="getApiOrderStatusLabel(item.status)" /><span>{{ getApiOrderNextAction(item, 'buyer') }}</span></div>
             <ArrowRight class="my-transaction-arrow" />

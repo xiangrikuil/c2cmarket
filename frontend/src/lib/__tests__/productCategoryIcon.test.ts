@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { test } from 'vitest'
 import {
+  getApiServiceProductCategory,
   getApiServiceProductIconSrc,
   getProductCategoryIconSrc,
   getProductIconSrc,
@@ -31,11 +32,13 @@ test('resolves uploaded and fallback category icons consistently', () => {
 test('resolves API service icons from the selected model provider instead of the generic title', () => {
   const categoryIcons = new Map([['gpt', 'data:image/png;base64,套餐目录GPT图标']])
 
-  assert.equal(getApiServiceProductIconSrc({
+  const openAiService = {
     title: 'Sub2API 美元额度服务',
     models: ['GPT-4.1'],
     modelPriceRows: [{ provider: 'OpenAI' }],
-  }, categoryIcons), 'data:image/png;base64,套餐目录GPT图标')
+  }
+  assert.equal(getApiServiceProductCategory(openAiService), 'gpt')
+  assert.equal(getApiServiceProductIconSrc(openAiService, categoryIcons), 'data:image/png;base64,套餐目录GPT图标')
   assert.equal(getApiServiceProductIconSrc({
     title: '美元额度服务',
     models: ['Claude Sonnet'],

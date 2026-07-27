@@ -17,9 +17,10 @@ type requestIDContextKey struct{}
 func WithRequestID(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requestID := strings.TrimSpace(r.Header.Get(RequestIDHeader))
-		if requestID == "" {
+		if !validRequestID(requestID) {
 			requestID = NewRequestID()
 		}
+		r.Header.Set(RequestIDHeader, requestID)
 		w.Header().Set(RequestIDHeader, requestID)
 		next.ServeHTTP(w, r.WithContext(WithRequestIDContext(r.Context(), requestID)))
 	})
@@ -35,10 +36,17 @@ func RequestIDFromContext(ctx context.Context) string {
 }
 
 func RequestIDFromRequest(r *http.Request) string {
-	if value := strings.TrimSpace(r.Header.Get(RequestIDHeader)); value != "" {
+	if r == nil {
+		return ""
+	}
+	if value := strings.TrimSpace(RequestIDFromContext(r.Context())); value != "" {
 		return value
 	}
-	return strings.TrimSpace(RequestIDFromContext(r.Context()))
+	value := strings.TrimSpace(r.Header.Get(RequestIDHeader))
+	if validRequestID(value) {
+		return value
+	}
+	return ""
 }
 
 func NewRequestID() string {
@@ -47,4 +55,20 @@ func NewRequestID() string {
 		return "req_fallback"
 	}
 	return "req_" + hex.EncodeToString(buf[:])
+}
+
+func validRequestID(value string) bool {
+	if value == "" || len(value) > 128 {
+		return false
+	}
+	for _, char := range value {
+		if (char >= 'a' && char <= 'z') ||
+			(char >= 'A' && char <= 'Z') ||
+			(char >= '0' && char <= '9') ||
+			char == '-' || char == '_' || char == '.' || char == ':' {
+			continue
+		}
+		return false
+	}
+	return true
 }

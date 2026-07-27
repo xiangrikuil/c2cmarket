@@ -1,5 +1,5 @@
 import type { PublicReviewRecord } from '@/data/mock'
-import type { ReviewCenterRow, SubmitReviewPayload } from '@/lib/api'
+import type { ReviewCenterData, ReviewCenterRow, SubmitReviewPayload } from '@/lib/api'
 import { backendMutation, backendRequest, ensureBackendSession } from '@/lib/backendClient'
 
 type ListResponse<T> = {
@@ -7,21 +7,37 @@ type ListResponse<T> = {
   nextCursor?: string | null
 }
 
-type BackendReviewCenterStatus = 'reviewable' | 'reviewed'
-
 type BackendReviewCenterRow = {
   id: string
-  sourceType: 'carpool_membership'
-  sourceId: string
+  transactionType: 'carpool_membership' | 'api_order'
+  transactionId: string
+  direction: 'pending' | 'sent' | 'received'
   target: string
   counterpartyUsername: string
   counterpartyName: string
-  status: BackendReviewCenterStatus
-  rating: number
+  reviewerRole: 'buyer' | 'seller'
+  revieweeRole: 'buyer' | 'seller'
+  status: 'reviewable' | 'expired' | 'sealed' | 'published' | 'removed'
+  visibility: 'none' | 'sealed' | 'published' | 'removed'
+  counterpartySubmitted: boolean
+  canCreate: boolean
+  canEdit: boolean
+  rating: number | null
   tags: string[]
-  note: string
+  note: string | null
+  completedAt: string
+  reviewDeadlineAt: string
+  submittedAt: string | null
+  visibleAt: string | null
+  frozenAt: string | null
   createdAt: string
   updatedAt: string
+  version: number
+}
+
+type BackendReviewCenterResponse = {
+  items: BackendReviewCenterRow[]
+  presetTags: string[]
 }
 
 type BackendPublicReview = {
@@ -35,22 +51,33 @@ type BackendPublicReview = {
   verified: boolean
 }
 
-function mapReviewStatus(status: BackendReviewCenterStatus): ReviewCenterRow['status'] {
-  return status === 'reviewed' ? '已评价' : '可评价'
-}
-
 function mapReviewCenterRow(row: BackendReviewCenterRow): ReviewCenterRow {
   return {
     id: row.id,
-    sourceType: 'carpool',
-    sourceId: row.sourceId,
+    transactionType: row.transactionType,
+    transactionId: row.transactionId,
+    direction: row.direction,
     target: row.target,
     counterparty: row.counterpartyName || row.counterpartyUsername,
-    status: mapReviewStatus(row.status),
-    rating: row.rating,
-    tags: row.tags,
+    counterpartyUsername: row.counterpartyUsername,
+    reviewerRole: row.reviewerRole,
+    revieweeRole: row.revieweeRole,
+    status: row.status,
+    visibility: row.visibility,
+    counterpartySubmitted: row.counterpartySubmitted,
+    canCreate: row.canCreate,
+    canEdit: row.canEdit,
+    rating: row.rating ?? null,
+    tags: Array.isArray(row.tags) ? row.tags : [],
     note: row.note,
-    createdAt: row.updatedAt || row.createdAt,
+    completedAt: row.completedAt,
+    reviewDeadlineAt: row.reviewDeadlineAt,
+    submittedAt: row.submittedAt,
+    visibleAt: row.visibleAt,
+    frozenAt: row.frozenAt,
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+    version: row.version,
   }
 }
 
@@ -67,27 +94,27 @@ function mapPublicReview(row: BackendPublicReview): PublicReviewRecord {
   }
 }
 
-export async function backendReviewCenterRows(): Promise<ReviewCenterRow[]> {
+export async function backendReviewCenterRows(): Promise<ReviewCenterData> {
   await ensureBackendSession('buyer', false)
-  const response = await backendRequest<ListResponse<BackendReviewCenterRow>>('/api/v1/me/reviews')
-  return response.items.map(mapReviewCenterRow)
+  const response = await backendRequest<BackendReviewCenterResponse>('/api/v1/me/reviews')
+  return {
+    items: response.items.map(mapReviewCenterRow),
+    presetTags: Array.isArray(response.presetTags) ? response.presetTags : [],
+  }
 }
 
 export async function backendSubmitReview(payload: SubmitReviewPayload): Promise<ReviewCenterRow> {
   await ensureBackendSession('buyer', false)
-  if (payload.sourceType !== 'carpool') {
-    throw new Error('当前仅支持拼车成员关系评价。')
-  }
   const response = await backendMutation<BackendReviewCenterRow>(
-    `/api/v1/me/reviews/carpool-memberships/${encodeURIComponent(payload.sourceId)}`,
+    `/api/v1/me/transactions/${encodeURIComponent(payload.transactionType)}/${encodeURIComponent(payload.transactionId)}/review`,
     {
       rating: payload.rating,
       tags: payload.tags,
       note: payload.note,
     },
     {
-      method: 'PUT',
-      idempotencyPrefix: 'review-put',
+      method: payload.operation === 'edit' ? 'PUT' : 'POST',
+      idempotencyPrefix: `review-${payload.operation}-${payload.transactionType}`,
     },
   )
   return mapReviewCenterRow(response)

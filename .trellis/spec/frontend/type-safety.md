@@ -102,15 +102,15 @@ getApiMerchantVisibilityLabel(source)
 
 ### 1. Scope / Trigger
 
-- Trigger: review center submissions are stored on source records, and public profile/search surfaces derive display rows from those source records.
-- Public profile review lists must reflect newly submitted reviews without copying static arrays.
+- Trigger: public profile reviews or search results are mapped from backend responses into frontend display records.
+- Real public review lists must reflect only backend-published transaction reviews and must never mix them with static or locally derived rows.
 - Store-alias API merchant identity must not leak through dynamic review aggregation or search result subtitles.
 
 ### 2. Signatures
 
 ```ts
 export type SearchResult = {
-  type: '官方价格' | '车源' | '求车' | 'API 服务' | '用户' | '商户'
+  type: '官方价格' | '车源' | 'API 服务' | '用户' | '商户'
   title: string
   subtitle: string
   badge: string
@@ -118,16 +118,17 @@ export type SearchResult = {
 }
 
 function publicReviewsForProfile(username: string): PublicReviewRecord[]
-function buildPublicReviewFromCarpoolApplication(application: CarpoolApplication): PublicReviewRecord | null
-function buildPublicReviewFromApiIntent(intent: ApiPurchaseIntent): PublicReviewRecord | null
+function backendPublicUserReviews(username: string): Promise<PublicReviewRecord[]>
+function backendSearchMarket(query: string): Promise<SearchResult[]>
 ```
 
 ### 3. Contracts
 
-- Static `publicReviewRecords` are seed data only; public profile APIs must also derive reviews from completed `carpoolApplicationStore` and `apiPurchaseIntentStore`.
-- Carpool application reviews can be public when the application is `completed` and has `buyerReview`; the reviewed username is `ownerUsername`.
-- API purchase intent reviews can be public only when the intent is `completed`, has `review`, and `snapshot.merchantIdentityMode === 'public_profile'`.
-- API purchase intent reviews for `store_alias` merchants must return `null`; public profile aggregation must not reveal the backing `merchantUsername`.
+- In real backend mode, `GET /api/v1/users/{username}/reviews` is the only public-review source. The adapter maps returned published reviews and must not merge `publicReviewRecords`, carpool application state, purchase intents, or API-order stores.
+- A missing `rating` is not a zero-star review. Received sealed rows exist only in the authenticated review center and never enter `PublicReviewRecord`.
+- Static `publicReviewRecords` and local source-derived rows are mock-mode data only. They must remain isolated from real public-profile requests.
+- Public review DTOs preserve backend `verified`, rating, tags, note, date, and service type. Transaction type and buyer/seller role fields may be added to the frontend record only through an explicit shared type update; consumers must not infer them from titles.
+- Store-alias API merchants must not gain a public user link through a review or search mapping. Backend public-review identity policy remains authoritative.
 - Mock `searchMarket()` must include `publicMerchantProfiles` as `type: '商户'` results in addition to user profiles.
 - Real `searchMarket()` must call `searchBackend.ts` and map backend rows to the same `SearchResult` union without silently falling back to mock data.
 - Store-alias API service search may return an `API 服务` result with the public merchant display name, but must not return a separate `商户` result or `/u/:merchantUsername` link that reveals the hidden owner.
@@ -136,42 +137,43 @@ function buildPublicReviewFromApiIntent(intent: ApiPurchaseIntent): PublicReview
 
 | Condition | Expected behavior |
 | --- | --- |
-| Completed carpool application with buyer review | Public profile for the owner includes a verified review row |
-| Completed API intent with review and public profile merchant | Public profile for that merchant includes a verified review row |
-| Completed API intent with review and store alias merchant | No public review row is generated |
+| Backend returns a published verified review | Public profile renders the mapped review |
+| Backend omits a sealed/removed/excluded review | Frontend does not reconstruct it |
+| Real public-review request fails | Visible error; no static/local fallback |
+| Review-center row has `rating=null` | Preserve `null`; do not map to zero |
 | Search keyword matches merchant username/display name/identity | Search returns a `商户` result |
 | Search keyword matches store alias display name through API service | Search may return the API service, but must not expose hidden merchant username or a public user link |
 
 ### 5. Good/Base/Bad Cases
 
-- Good: `qingning` API order review appears on `/u/qingning` because the merchant identity mode is `public_profile`.
-- Base: seed review rows continue to render alongside derived rows.
-- Bad: a `store_alias` order for `小葵 API` creates a public review row under `/u/orbit`.
+- Good: a published API-order seller-to-buyer review returned by the backend appears on the buyer's public profile with the backend rating and verified flag.
+- Base: mock mode continues to render its explicit seed reviews without affecting real mode.
+- Bad: concatenate backend reviews with `publicReviewRecords`, derive a sealed review from a completed order, or create `/u/orbit` from a store-alias service owner.
 
 ### 6. Tests Required
 
 - Type check: `pnpm --dir frontend exec vue-tsc -b --pretty false`.
 - Production build: real-mode `pnpm --dir frontend build` with the required Nuxt runtime API variables.
+- Adapter test: real public-review reads call the backend and do not fall back to mock/local rows.
 - Source scan for product-boundary wording.
 - Source scan for store-alias leakage patterns such as direct `/u/${service.merchantUsername}` in public pages/components.
-- Browser or SPA route smoke for `/search?q=<merchant>` and a public profile with derived reviews when browser tooling is available.
+- Browser or SPA route smoke for `/search?q=<merchant>` and a public profile with backend reviews when browser tooling is available.
 
 ### 7. Wrong vs Correct
 
 #### Wrong
 
 ```ts
-if (intent.status === 'completed' && intent.review) {
-  return { username: intent.snapshot.merchantUsername, ... }
-}
+return [...await backendPublicUserReviews(username), ...publicReviewRecords]
 ```
 
 #### Correct
 
 ```ts
-if (intent.status !== 'completed' || !intent.review) return null
-if (intent.snapshot.merchantIdentityMode === 'store_alias') return null
-return { username: intent.snapshot.merchantUsername, ... }
+if (shouldUseRealBackend()) {
+  return backendPublicUserReviews(username)
+}
+return publicReviewsForProfile(username)
 ```
 
 ---

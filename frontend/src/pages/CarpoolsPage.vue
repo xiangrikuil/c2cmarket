@@ -8,6 +8,8 @@ import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import FilterBar from '@/components/market/FilterBar.vue'
 import SoftTable from '@/components/market/SoftTable.vue'
 import SourceBadges from '@/components/market/SourceBadges.vue'
+import SourceAuthorVerificationBadge from '@/components/market/SourceAuthorVerificationBadge.vue'
+import ReputationInlineSummary from '@/components/reputation/ReputationInlineSummary.vue'
 import TablePagination from '@/components/market/TablePagination.vue'
 import { usePagination } from '@/composables/usePagination'
 import { getProductCategoryIconSrc, getProductIconSrc as getCatalogProductIconSrc } from '@/lib/productCategoryIcon'
@@ -30,6 +32,7 @@ import {
   type ProductCategoryKey,
 } from '@/lib/productCategories'
 import { adminAccountLabel, distributionMethodLabel } from '@/components/carpool-publish/utils'
+import { sourceAuthorVerificationRank } from '@/lib/sourceAuthorVerification'
 
 const filters = [
   { label: '开通区', items: ['全部', '菲律宾区', '日本区', '土耳其区', '香港区'], active: '全部' },
@@ -100,8 +103,7 @@ const rows = computed(() => {
     if (selected.value['排序'] === '最低月费') return compareByTradablePrice(a, b)
     if (selected.value['排序'] === '最近确认') return a.confirmedAt.localeCompare(b.confirmedAt)
     if (selected.value['排序'] === '剩余名额') return availableSeatsForList(b) - availableSeatsForList(a)
-    return Number(b.linuxdoBound) - Number(a.linuxdoBound)
-      || b.trustLevel - a.trustLevel
+    return sourceAuthorVerificationRank(b.sourceAuthorVerification) - sourceAuthorVerificationRank(a.sourceAuthorVerification)
       || Number(a.ownerType !== '商户车源') - Number(b.ownerType !== '商户车源')
       || compareByTradablePrice(a, b)
   })
@@ -110,7 +112,7 @@ const rows = computed(() => {
 const pagination = usePagination(rows)
 
 const availableCount = computed(() => rows.value.filter(row => listStatusForCarpool(row) === '可上车').length)
-const linuxdoBoundCount = computed(() => rows.value.filter(row => row.linuxdoBound).length)
+const verifiedSourceAuthorCount = computed(() => rows.value.filter(row => row.sourceAuthorVerification?.status === 'verified').length)
 const boundaryConfirmationCount = computed(() => rows.value.filter(row => isHighRiskGptCarpoolPlan(row.product)).length)
 const selectedCategoryLabel = computed(() => getProductCategoryLabel(selectedCategory.value))
 const activeFilterCount = computed(() => {
@@ -123,12 +125,11 @@ const categoryNotice = computed(() => {
   if (selectedCategory.value === 'gpt') {
     return 'GPT 分类会包含 Business、Plus、Pro 5x Web、Pro 20x Web；部分套餐申请前需要确认发布和使用边界。'
   }
-  return '筛选结果优先展示原帖已绑定、近期确认、无未解决纠纷的车源；加入前请查看车源详情与站外确认要求。'
+  return '筛选结果优先展示原帖作者已验证、近期确认、无未解决纠纷的车源；加入前请查看车源详情与站外确认要求。'
 })
 
-function carpoolSourceBadges(row: { linuxdoBound: boolean, monthlyQuotaAmount?: number, quotaLabel?: string, quotaUnit?: string, quotaPeriod?: string }) {
+function carpoolSourceBadges(row: { monthlyQuotaAmount?: number, quotaLabel?: string, quotaUnit?: string, quotaPeriod?: string }) {
   const badges: string[] = []
-  if (row.linuxdoBound) badges.push('原帖已绑定')
   if (row.monthlyQuotaAmount) badges.push(formatMonthlyQuota(row))
   return badges
 }
@@ -234,11 +235,11 @@ function openCarpool(event: MouseEvent | KeyboardEvent, id: string) {
         <div class="carpool-reference-heading">
           <div class="text-xs text-muted-foreground">发现市场　/　订阅拼车</div>
           <h1>订阅拼车</h1>
-          <p>月付订阅的共享席位，默认无押金。请仔细确认账号类型、原帖绑定情况与一次申请的联系和确认流程。</p>
+          <p>月付订阅的共享席位，默认无押金。请仔细确认账号类型、原帖作者核验状态与一次申请的联系和确认流程。</p>
         </div>
         <div class="carpool-reference-stats">
           <div><span><UsersRound /></span><dl><dt>可上车</dt><dd>{{ availableCount }}</dd><small>可立即加入</small></dl></div>
-          <div><span><ShieldCheck /></span><dl><dt>原帖已绑定</dt><dd>{{ linuxdoBoundCount }}</dd><small>来源可追溯</small></dl></div>
+          <div><span><ShieldCheck /></span><dl><dt>原帖作者已验证</dt><dd>{{ verifiedSourceAuthorCount }}</dd><small>身份关系已核验</small></dl></div>
           <div><span><MessageCircle /></span><dl><dt>边界确认</dt><dd>{{ boundaryConfirmationCount }}</dd><small>已明确规则</small></dl></div>
           <div><span><SlidersHorizontal /></span><dl><dt>当前筛选</dt><dd>{{ activeFilterCount }}</dd><small>已应用筛选</small></dl></div>
         </div>
@@ -246,7 +247,7 @@ function openCarpool(event: MouseEvent | KeyboardEvent, id: string) {
       <aside class="carpool-reference-note">
         <div class="flex items-center gap-2 font-semibold text-primary"><ShieldCheck class="h-5 w-5" />关于当前筛选</div>
         <p>{{ categoryNotice }}</p>
-        <div class="mt-3 text-xs font-semibold text-primary">推荐优先选择原帖已绑定的车源。</div>
+        <div class="mt-3 text-xs font-semibold text-primary">推荐优先选择原帖作者已验证的车源。</div>
       </aside>
     </section>
 
@@ -333,11 +334,13 @@ function openCarpool(event: MouseEvent | KeyboardEvent, id: string) {
             <div class="min-w-0">
               <div class="truncate font-semibold text-slate-900">{{ row.product }}</div>
               <div class="mt-1 text-xs text-muted-foreground">{{ row.region }}</div>
-              <SourceBadges
-                v-if="carpoolSourceBadges(row).length"
-                class="mt-2"
-                :badges="carpoolSourceBadges(row)"
-              />
+              <div class="mt-2 flex flex-wrap gap-1">
+                <SourceAuthorVerificationBadge :verification="row.sourceAuthorVerification" />
+                <SourceBadges
+                  v-if="carpoolSourceBadges(row).length"
+                  :badges="carpoolSourceBadges(row)"
+                />
+              </div>
             </div>
           </div>
         </td>
@@ -370,7 +373,8 @@ function openCarpool(event: MouseEvent | KeyboardEvent, id: string) {
             <span class="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-slate-100 text-xs font-semibold text-slate-600">{{ ownerInitial(row.owner) }}</span>
             <div class="min-w-0">
               <div class="truncate font-medium text-slate-900">{{ row.owner }}</div>
-              <SourceBadges class="mt-1" :trust="row.trustLevel" :owner-type="row.ownerType" />
+              <Badge class="mt-1" variant="secondary">{{ row.ownerType }}</Badge>
+              <ReputationInlineSummary class="mt-2" :summary="row.sellerReputation" />
             </div>
           </div>
         </td>

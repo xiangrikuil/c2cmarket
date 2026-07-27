@@ -4,6 +4,7 @@
 
 日期：2026-06-17
 执行者：Codex
+更新日期：2026-07-27
 
 ---
 
@@ -29,6 +30,23 @@ Code should be explicit about the real business path. Do not bury the main logic
 
 ---
 
+## Git Branch Baseline Contract
+
+- Run `git fetch origin --prune` immediately before creating a feature or
+  integration branch.
+- Choose the branch's intended merge target first. Create the new branch from
+  the fetched `origin/staging` or `origin/main` ref, never from a stale local
+  tracking branch or an unrelated feature branch.
+- Record the exact remote baseline SHA in the task design or implementation
+  notes and verify the new branch starts at that SHA before editing.
+- When an already-published branch falls behind its target, merge the updated
+  target into an integration branch by default. Rebase or force-push only when
+  the user explicitly approves rewriting the published history.
+- Before handoff, verify the final history contains both the recorded baseline
+  and the intended feature commits.
+
+---
+
 ## Acceptable Fallbacks
 
 Fallbacks are allowed only when all of the following are true:
@@ -47,6 +65,8 @@ Fallbacks are allowed only when all of the following are true:
 - Are errors surfaced at the correct layer?
 - Would removing a fallback make a hidden bug visible? If yes, remove or redesign it.
 - Does this change reduce future maintenance cost instead of moving complexity elsewhere?
+- Was the branch created from a freshly fetched remote target, with its baseline
+  SHA recorded and verified?
 
 ## External Proxy Boundary Diagnosis
 

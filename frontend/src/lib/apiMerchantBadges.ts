@@ -32,7 +32,9 @@ export function getApiMerchantBadges(service: ApiMerchantBadgeSource): ApiMercha
   const badges: ApiMerchantBadge[] = []
 
   if (
-    service.trustLevel >= 3
+    service.trustLevel !== null
+    && service.trustLevel >= 3
+    && service.completed30d !== null
     && service.completed30d >= qualityCompleted30dMinimum
     && service.unresolvedDisputes === 0
   ) {

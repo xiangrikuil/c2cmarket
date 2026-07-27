@@ -923,7 +923,53 @@ const carpoolListingColumns = `
 	COALESCE(cycle_term_id::text, ''), COALESCE(cycle_billing_period, ''), cycle_start_day, COALESCE(cycle_notice_days, 0),
 	COALESCE(cycle_exit_policy, ''), COALESCE(cycle_usage_rules, ''), COALESCE(cycle_version, 0),
 	COALESCE(cycle_created_at, created_at), COALESCE(cycle_updated_at, updated_at),
-	COALESCE(source_url, ''), price_monthly_cny::text, service_multiplier::text,
+	COALESCE(source_url, ''),
+	COALESCE((
+	  SELECT CASE
+	    WHEN verification.source_url IS DISTINCT FROM listing_view.source_url
+	      OR verification.expected_external_user_id IS DISTINCT FROM COALESCE((
+	        SELECT binding.linux_do_user_id
+	        FROM linux_do_bindings binding
+	        WHERE binding.user_id = listing_view.owner_user_id
+	      ), '')
+	    THEN 'pending'
+	    WHEN verification.status = 'verified'
+	      AND verification.expires_at IS NOT NULL
+	      AND verification.expires_at <= now()
+	    THEN 'expired'
+	    ELSE verification.status
+	  END
+	  FROM source_author_verifications verification
+	  WHERE verification.resource_type = 'carpool'
+	    AND verification.resource_id = listing_view.id
+	), 'not_submitted'),
+	(
+	  SELECT verification.verified_at
+	  FROM source_author_verifications verification
+	  WHERE verification.resource_type = 'carpool'
+	    AND verification.resource_id = listing_view.id
+	    AND verification.source_url = listing_view.source_url
+	    AND verification.expected_external_user_id = COALESCE((
+	      SELECT binding.linux_do_user_id
+	      FROM linux_do_bindings binding
+	      WHERE binding.user_id = listing_view.owner_user_id
+	    ), '')
+	    AND verification.status = 'verified'
+	),
+	(
+	  SELECT verification.expires_at
+	  FROM source_author_verifications verification
+	  WHERE verification.resource_type = 'carpool'
+	    AND verification.resource_id = listing_view.id
+	    AND verification.source_url = listing_view.source_url
+	    AND verification.expected_external_user_id = COALESCE((
+	      SELECT binding.linux_do_user_id
+	      FROM linux_do_bindings binding
+	      WHERE binding.user_id = listing_view.owner_user_id
+	    ), '')
+	    AND verification.status = 'verified'
+	),
+	price_monthly_cny::text, service_multiplier::text,
 	monthly_quota_amount::text, quota_label, quota_unit, quota_period, buyer_seat_capacity, active_buyer_members,
 	status, COALESCE(reviewed_by_admin_id::text, ''), reviewed_at, COALESCE(review_reason, ''),
 	policy_version, COALESCE(risk_notice_code, ''), risk_ack_required, reserved_seats::int,
@@ -1021,6 +1067,9 @@ func scanCarpoolListing(row scanner, listing *carpool.Listing) error {
 		&cycleTerm.CreatedAt,
 		&cycleTerm.UpdatedAt,
 		&listing.SourceURL,
+		&listing.SourceAuthorVerification.Status,
+		&listing.SourceAuthorVerification.VerifiedAt,
+		&listing.SourceAuthorVerification.ExpiresAt,
 		&listing.PriceMonthlyCNY,
 		&listing.ServiceMultiplier,
 		&listing.MonthlyQuotaAmount,

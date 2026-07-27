@@ -5,7 +5,7 @@
 <h1 align="center">C2CMarket</h1>
 
 <p align="center">
-  面向 linux.do 社区的订阅拼车、API 服务、求车需求与官网价格信息撮合平台。
+  面向 linux.do 社区的订阅拼车、API 服务与官网价格信息撮合平台。
 </p>
 
 <p align="center">
@@ -15,7 +15,7 @@
 <p align="center">
   <a href="https://github.com/xiangrikuil/c2cmarket/actions/workflows/ci.yml"><img src="https://github.com/xiangrikuil/c2cmarket/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <a href="./LICENSE"><img src="https://img.shields.io/badge/license-MIT-green.svg" alt="MIT License"></a>
-  <img src="https://img.shields.io/badge/Go-1.26-00ADD8?logo=go&logoColor=white" alt="Go 1.26">
+  <img src="https://img.shields.io/badge/Go-1.26.5-00ADD8?logo=go&logoColor=white" alt="Go 1.26.5">
   <img src="https://img.shields.io/badge/Vue-3-42b883?logo=vuedotjs&logoColor=white" alt="Vue 3">
 </p>
 
@@ -24,7 +24,7 @@
 
 ## 项目简介
 
-C2CMarket 是一个前后端分离的社区信息撮合平台。它帮助用户浏览、发布和管理订阅拼车、API 服务、求车需求及官网价格记录，并提供订单跟踪、通知、评价、举报和管理后台等完整业务模块。
+C2CMarket 是一个前后端分离的社区信息撮合平台。它帮助用户浏览、发布和管理订阅拼车、API 服务及官网价格记录，并提供订单跟踪、通知、评价、举报和管理后台等完整业务模块。
 
 平台专注于信息展示、意向撮合、站外联系和信誉记录，不处理站内支付，不提供托管或履约担保，也不代理上游 API 流量。
 
@@ -32,19 +32,18 @@ C2CMarket 是一个前后端分离的社区信息撮合平台。它帮助用户�
 
 - **订阅拼车**：车源发布、申请、联系窗口、上车确认、完成、退出和车主管理。
 - **API 服务市场**：服务发布、审核、上下架、订单、付款确认和买卖双方履约状态跟踪。
-- **求车需求**：发布、审核、公开展示、关闭与重新开放需求。
 - **官网价格**：维护和展示公开可验证的官方价格参考记录。
 - **社区信誉**：公开资料、收藏、评价、举报、纠纷与申诉。
 - **通知中心**：公告、业务通知、未读状态和邮件提醒。
 - **运营后台**：用户、商品目录、车源、API 服务、订单、公告、反馈和审计管理。
-- **统一搜索**：检索公开车源、API 服务、需求、价格记录和用户资料。
+- **统一搜索**：检索公开车源、API 服务、价格记录和用户资料。
 
 ## 技术栈
 
 | 层级 | 技术 |
 | --- | --- |
 | 前端 | Nuxt 4、Vue 3、TypeScript、Pinia、TanStack Query、Tailwind CSS |
-| 后端 | Go 1.26、chi、pgx |
+| 后端 | Go 1.26.5、chi、pgx |
 | 数据库 | PostgreSQL 18、版本化 SQL migrations |
 | 基础设施 | Docker Compose、Cloudflare Workers、VPS/Caddy、GHCR、GitHub Actions |
 | 集成 | linux.do OAuth 2.0、阿里云 DirectMail SMTP、可选 Umami |
@@ -72,7 +71,7 @@ C2CMarket 是一个前后端分离的社区信息撮合平台。它帮助用户�
 - Docker 和 Docker Compose
 - Node.js `>=24.11 <25`
 - pnpm `>=10 <11`
-- Go 1.26（仅在不使用 Docker 运行后端时需要）
+- Go 1.26.5（仅在不使用 Docker 运行后端时需要）
 
 ### 1. 获取代码与配置
 
@@ -97,11 +96,13 @@ docker compose --profile migrate run --rm migrate
 docker compose --profile app up -d --build backend
 ```
 
-后端默认监听 `http://127.0.0.1:8080`：
+后端宿主机端口只绑定 loopback，默认监听 `http://127.0.0.1:8080`，不会在
+宿主机公网接口直接暴露：
 
 ```text
 GET /health
 GET /readyz
+GET /version
 ```
 
 ### 4. 启动前端
@@ -134,7 +135,9 @@ NUXT_API_BASE_URL=https://api.c2cmarket.shop \
 pnpm --dir frontend build
 pnpm --dir frontend test
 node scripts/check-openapi-routes.mjs
+node scripts/check-openapi-types.mjs
 node scripts/check-migrations-doc.mjs
+node scripts/check-compose-exposure.mjs
 ```
 
 前端生产构建必须同时配置 real 模式、公开 API 地址和服务端 API 地址；缺少任一项都会失败。
@@ -153,12 +156,19 @@ API_BASE_URL=http://127.0.0.1:8080 node scripts/run-smokes.mjs
 - API 契约：[`docs/openapi/c2c-market-api-v1.yaml`](./docs/openapi/c2c-market-api-v1.yaml)
 - 部署手册：[`docs/ops/deployment-runbook.md`](./docs/ops/deployment-runbook.md)
 - Workers/VPS 部署说明：[`docs/ops/cloudflare-workers-vps-backends.md`](./docs/ops/cloudflare-workers-vps-backends.md)
+- 安全运维：[`docs/security.md`](./docs/security.md)
+- 生产运维：[`docs/operations.md`](./docs/operations.md)
+- 备份恢复：[`docs/backup-restore.md`](./docs/backup-restore.md)
+- 发布检查：[`docs/release-checklist.md`](./docs/release-checklist.md)
 
 生产环境必须使用真实 OAuth、独立的加密密钥、HTTPS 前端来源、PostgreSQL 和有效 SMTP 配置。请勿直接复用示例文件中的本地默认值。
+生产后端镜像必须从干净工作区中的固定 commit 构建，脚本用法为
+`scripts/build-backend-image.sh <git-ref> <version> <image>`。把同一 image
+写入 `BACKEND_IMAGE`；生产 Compose 不会从当前工作区构建镜像。
 
 ## 产品边界与免责声明
 
-C2CMarket 不是支付、托管、账号托管、履约担保或 API 代理平台。平台不应保存或传递第三方账号密码、Cookie、Session、验证码、恢复码或面板主账号凭据。
+C2CMarket 不是支付、托管、账号托管、履约担保或 API 代理平台。平台不得保存或传递 Cookie、Session、验证码、恢复码、共享账号或面板主账号凭据；API 订单只允许在独立加密边界内保存买家专属的一次性交付凭证，且必须在卖家确认站外收款后才可向订单参与方展示。
 
 第三方订阅的费用分摊、成员邀请和使用方式可能受到对应服务提供商条款限制，并可能带来账号限制、服务中断、隐私暴露或费用损失。项目与 linux.do、OpenAI 及其他第三方服务提供商不存在官方隶属、授权或担保关系。使用者应自行核对适用条款并承担相关风险。
 

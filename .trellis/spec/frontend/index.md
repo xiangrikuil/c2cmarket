@@ -18,12 +18,16 @@ This directory contains the current project conventions for the Nuxt 4 + Vue 3 f
 | [Component Guidelines](./component-guidelines.md) | Component patterns, props, composition | Active |
 | [Marketplace UI Guidelines](./marketplace-ui-guidelines.md) | Authoritative site-wide visual, layout, marketplace hierarchy, and browser acceptance contract | Active |
 | [Limited API Packages](../backend/api-limited-packages.md) | Cross-layer package publishing, cards, recommendation, ordering, and lifecycle contract | Active |
+| [Limited API Quota Offers](./api-quota-offers.md) | Quota market, purchase, owner management, adapters, and responsive behavior | Active |
+| [Reputation Presentation](./reputation.md) | Nullable real facts and public reputation wording | Active |
 | [Hook Guidelines](./hook-guidelines.md) | Custom hooks, data fetching patterns | Active |
 | [State Management](./state-management.md) | Local state, global state, server state | Active |
 | [Identity And Session](../backend/identity-session.md) | Cross-layer account/API-market avatar, email time, and logout cache contract | Active |
 | [Quality Guidelines](./quality-guidelines.md) | Code standards, forbidden patterns | Active |
 | [Type Safety](./type-safety.md) | Type patterns, validation | Active |
 | [Nuxt SSR and Cloudflare Worker](./nuxt-ssr-deployment.md) | Hybrid rendering, SEO, sitemap, runtime env, and Worker deployment contracts | Active |
+| [Reproducible Release And Contract Drift](../backend/release-contract.md) | OpenAPI generator configuration and generated type drift contract | Active |
+| [Runtime Security And Observability](../backend/runtime-operations.md) | Cloudflare Worker response-header and API-origin policy contract | Active |
 
 ---
 
@@ -34,14 +38,19 @@ Before editing frontend code, read:
 1. [Directory Structure](./directory-structure.md)
 2. [Component Guidelines](./component-guidelines.md)
 3. [Marketplace UI Guidelines](./marketplace-ui-guidelines.md) for any product-facing UI change
-4. [Hook Guidelines](./hook-guidelines.md)
-5. [State Management](./state-management.md)
-6. [Identity And Session](../backend/identity-session.md) for account-shell, merchant avatar, or logout work
-7. [Quality Guidelines](./quality-guidelines.md)
-8. [Type Safety](./type-safety.md)
-9. [C2CMarket Product Context](../guides/product-context.md)
-10. [Maintainability Contract](../guides/maintainability-contract.md)
-11. [Nuxt SSR and Cloudflare Worker](./nuxt-ssr-deployment.md) for rendering, SEO, sitemap, or deployment work
+4. [Limited API Packages](../backend/api-limited-packages.md) when touching fixed package publishing, cards, recommendation, ordering, or expiry
+5. [Limited API Quota Offers](./api-quota-offers.md) when touching quota market, purchase, owner management, adapters, or mock flows
+6. [Reputation Presentation](./reputation.md) when touching trust, completion, review, cancellation, or dispute facts
+7. [Hook Guidelines](./hook-guidelines.md)
+8. [State Management](./state-management.md)
+9. [Identity And Session](../backend/identity-session.md) for account-shell, merchant avatar, or logout work
+10. [Quality Guidelines](./quality-guidelines.md)
+11. [Type Safety](./type-safety.md)
+12. [Nuxt SSR and Cloudflare Worker](./nuxt-ssr-deployment.md) for rendering, SEO, sitemap, or deployment work
+13. [Reproducible Release And Contract Drift](../backend/release-contract.md) when touching OpenAPI or generated API types
+14. [Runtime Security And Observability](../backend/runtime-operations.md) when touching `frontend/public/_headers`, frontend asset origins, or API connection origins
+15. [C2CMarket Product Context](../guides/product-context.md)
+16. [Maintainability Contract](../guides/maintainability-contract.md)
 
 ## Quality Check
 

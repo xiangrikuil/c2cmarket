@@ -2,6 +2,7 @@ package profile
 
 import (
 	"context"
+	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
@@ -30,6 +31,7 @@ type Service struct {
 	merchantBySlug  map[string]string
 	emailCodes      map[string]emailChallenge
 	emailSender     EmailSender
+	emailPepper     []byte
 }
 
 type emailChallenge struct {
@@ -37,19 +39,40 @@ type emailChallenge struct {
 	Email     string
 	CodeHash  string
 	ExpiresAt time.Time
+	Attempts  int
 	Consumed  bool
 }
+
+type ServiceOptions struct {
+	EmailVerificationPepper string
+}
+
+const (
+	EmailVerificationLifetime    = 15 * time.Minute
+	EmailVerificationMaxAttempts = 5
+	localEmailVerificationPepper = "c2cmarket-local-email-verification-pepper-v1"
+)
 
 func NewService(repo Repository, now func() time.Time) *Service {
 	return NewServiceWithEmailSender(repo, now, NewDevelopmentEmailSender())
 }
 
 func NewServiceWithEmailSender(repo Repository, now func() time.Time, emailSender EmailSender) *Service {
+	return NewServiceWithOptions(repo, now, emailSender, ServiceOptions{
+		EmailVerificationPepper: localEmailVerificationPepper,
+	})
+}
+
+func NewServiceWithOptions(repo Repository, now func() time.Time, emailSender EmailSender, options ServiceOptions) *Service {
 	if now == nil {
 		now = time.Now
 	}
 	if emailSender == nil {
 		emailSender = NewDevelopmentEmailSender()
+	}
+	pepper := strings.TrimSpace(options.EmailVerificationPepper)
+	if pepper == "" {
+		pepper = localEmailVerificationPepper
 	}
 	return &Service{
 		now:             now,
@@ -60,6 +83,7 @@ func NewServiceWithEmailSender(repo Repository, now func() time.Time, emailSende
 		merchantBySlug:  make(map[string]string),
 		emailCodes:      make(map[string]emailChallenge),
 		emailSender:     emailSender,
+		emailPepper:     []byte(pepper),
 	}
 }
 
@@ -121,8 +145,8 @@ func (s *Service) StartEmailVerification(ctx context.Context, user auth.User, in
 	}
 	now := s.now()
 	code := newEmailVerificationCode()
-	expiresAt := now.Add(15 * time.Minute)
-	codeHash := emailCodeHash(user.ID, input.Email, code)
+	expiresAt := now.Add(EmailVerificationLifetime)
+	codeHash := emailCodeHash(s.emailPepper, user.ID, input.Email, code)
 	if s.repo != nil {
 		if appErr := s.repo.CreateEmailVerificationCode(ctx, input, codeHash, expiresAt, now); appErr != nil {
 			return EmailVerificationChallenge{}, appErr
@@ -140,7 +164,7 @@ func (s *Service) StartEmailVerification(ctx context.Context, user auth.User, in
 			return EmailVerificationChallenge{}, domain.NewFieldError(http.StatusConflict, domain.CodeValidationFailed, "Email unavailable", "该邮箱已绑定其他账号。", "email", "unavailable", "该邮箱已绑定其他账号。")
 		}
 	}
-	s.emailCodes[emailChallengeKey(user.ID, input.Email)] = emailChallenge{
+	s.emailCodes[emailChallengeKey(user.ID)] = emailChallenge{
 		UserID:    user.ID,
 		Email:     input.Email,
 		CodeHash:  codeHash,
@@ -162,16 +186,31 @@ func (s *Service) ConfirmEmailVerification(ctx context.Context, user auth.User, 
 	if !emailCodePattern.MatchString(input.Code) {
 		return UserProfile{}, domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Code invalid", "验证码格式不正确。", "code", "invalid", "验证码格式不正确。")
 	}
-	codeHash := emailCodeHash(user.ID, input.Email, input.Code)
+	codeHash := emailCodeHash(s.emailPepper, user.ID, input.Email, input.Code)
 	if s.repo != nil {
 		return s.repo.ConfirmEmailVerificationCode(ctx, input, codeHash, s.now())
 	}
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	challenge, ok := s.emailCodes[emailChallengeKey(user.ID, input.Email)]
-	if !ok || challenge.Consumed || challenge.CodeHash != codeHash || !s.now().Before(challenge.ExpiresAt) {
+	challengeKey := emailChallengeKey(user.ID)
+	challenge, ok := s.emailCodes[challengeKey]
+	now := s.now()
+	if !ok || challenge.Consumed || challenge.Email != input.Email {
 		return UserProfile{}, domain.NewError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Code invalid", "验证码无效或已过期。")
+	}
+	if !now.Before(challenge.ExpiresAt) || challenge.Attempts >= EmailVerificationMaxAttempts {
+		challenge.Consumed = true
+		s.emailCodes[challengeKey] = challenge
+		return UserProfile{}, invalidEmailVerificationCodeError()
+	}
+	if !hmac.Equal([]byte(challenge.CodeHash), []byte(codeHash)) {
+		challenge.Attempts++
+		if challenge.Attempts >= EmailVerificationMaxAttempts {
+			challenge.Consumed = true
+		}
+		s.emailCodes[challengeKey] = challenge
+		return UserProfile{}, invalidEmailVerificationCodeError()
 	}
 	for _, existing := range s.profiles {
 		if existing.ID != user.ID && existing.Email == input.Email && existing.EmailVerifiedAt != nil {
@@ -179,13 +218,12 @@ func (s *Service) ConfirmEmailVerification(ctx context.Context, user auth.User, 
 		}
 	}
 	profile := s.ensureProfileLocked(user)
-	now := s.now()
 	profile.Email = input.Email
 	profile.EmailVerifiedAt = &now
 	profile.UpdatedAt = now
 	profile.Version++
 	challenge.Consumed = true
-	s.emailCodes[emailChallengeKey(user.ID, input.Email)] = challenge
+	s.emailCodes[challengeKey] = challenge
 	s.profiles[user.ID] = profile
 	return profile, nil
 }
@@ -276,17 +314,14 @@ func (s *Service) PublicMerchantProfile(ctx context.Context, slug string) (Publi
 	}
 	merchant := s.merchantByOwner[ownerID]
 	return PublicMerchantProfile{
-		ID:                merchant.ID,
-		Slug:              merchant.Slug,
-		DisplayName:       merchant.DisplayName,
-		AvatarURL:         merchant.AvatarURL,
-		AvatarText:        avatarText(merchant.DisplayName),
-		Identity:          "API 商户",
-		TrustLevel:        3,
-		LinuxDoBound:      true,
-		OriginalPostBound: false,
-		JoinedAt:          merchant.CreatedAt,
-		LastActiveAt:      nil,
+		ID:          merchant.ID,
+		OwnerUserID: merchant.OwnerUserID,
+		Slug:        merchant.Slug,
+		DisplayName: merchant.DisplayName,
+		AvatarURL:   merchant.AvatarURL,
+		AvatarText:  avatarText(merchant.DisplayName),
+		Identity:    "API 商户",
+		JoinedAt:    merchant.CreatedAt,
 	}, nil
 }
 
@@ -407,12 +442,7 @@ func toPublicUserProfile(profile UserProfile) PublicUserProfile {
 		CreatedAt:       createdAt,
 		LastActiveAt:    lastActiveAt,
 		Privacy:         profile.Privacy,
-		Stats: PublicStats{
-			BuyerResponsibilityCancellationCount:  0,
-			SellerResponsibilityCancellationCount: 0,
-			UnresolvedDisputeCount:                0,
-		},
-		Badges: badges,
+		Badges:          badges,
 	}
 }
 
@@ -494,13 +524,18 @@ func leftPadCode(value int, width int) string {
 	return text
 }
 
-func emailCodeHash(userID, email, code string) string {
-	sum := sha256.Sum256([]byte(strings.TrimSpace(userID) + ":" + normalizeEmail(email) + ":" + strings.TrimSpace(code)))
-	return hex.EncodeToString(sum[:])
+func emailCodeHash(pepper []byte, userID, email, code string) string {
+	mac := hmac.New(sha256.New, pepper)
+	_, _ = mac.Write([]byte(strings.TrimSpace(userID) + ":" + normalizeEmail(email) + ":" + strings.TrimSpace(code)))
+	return hex.EncodeToString(mac.Sum(nil))
 }
 
-func emailChallengeKey(userID, email string) string {
-	return strings.TrimSpace(userID) + ":" + normalizeEmail(email)
+func emailChallengeKey(userID string) string {
+	return strings.TrimSpace(userID)
+}
+
+func invalidEmailVerificationCodeError() *domain.AppError {
+	return domain.NewError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Code invalid", "验证码无效或已过期。")
 }
 
 func normalizeUsername(value string) string {

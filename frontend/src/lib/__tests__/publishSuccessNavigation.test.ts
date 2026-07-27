@@ -9,7 +9,10 @@ describe('发布完成后的导航', () => {
     expect(carpoolPublishSource).toContain("router.replace('/my/carpools')")
   })
 
-  it('将 API 服务发布者带到自己的服务列表', () => {
-    expect(apiServicePublishSource).toContain("router.replace('/my/api-services')")
+  it('普通发布返回服务列表，额度包流程续接固定场次向导', () => {
+    expect(apiServicePublishSource).toContain("route.query.after === 'quota'")
+    expect(apiServicePublishSource).toContain('`/api-market/quota/new?serviceId=${service.id}`')
+    expect(apiServicePublishSource).toContain(": '/my/api-services'")
+    expect(apiServicePublishSource).toContain('router.replace(destination)')
   })
 })

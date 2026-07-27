@@ -2,6 +2,8 @@ package auth
 
 import (
 	"context"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -87,18 +89,20 @@ func (f *fakeAuthRepository) CreateEmailRegistrationCode(context.Context, EmailR
 	return domain.NewError(500, domain.CodeInternalError, "not implemented", "not implemented")
 }
 
-func (f *fakeAuthRepository) ConfirmEmailRegistration(context.Context, EmailRegistrationConfirmInput, string, string, string, time.Time, time.Time) (User, *domain.AppError) {
+func (f *fakeAuthRepository) ConfirmEmailRegistration(context.Context, EmailRegistrationConfirmInput, string, string, string, time.Time, time.Time, time.Time) (User, *domain.AppError) {
 	f.confirmEmailRegistrationCalls++
 	return User{}, domain.NewError(500, domain.CodeInternalError, "not implemented", "not implemented")
 }
 
-func (f *fakeAuthRepository) CreateSession(_ context.Context, userID, sessionTokenHash, csrfTokenHash string, expiresAt, _ time.Time) *domain.AppError {
+func (f *fakeAuthRepository) CreateSession(_ context.Context, userID, sessionTokenHash, csrfTokenHash string, expiresAt, absoluteExpiresAt, now time.Time) *domain.AppError {
 	f.createSessionCalls++
 	f.session = Session{
-		ID:        sessionTokenHash,
-		UserID:    userID,
-		CSRFToken: csrfTokenHash,
-		ExpiresAt: expiresAt,
+		ID:                sessionTokenHash,
+		UserID:            userID,
+		CSRFToken:         csrfTokenHash,
+		ExpiresAt:         expiresAt,
+		RenewedAt:         now,
+		AbsoluteExpiresAt: absoluteExpiresAt,
 	}
 	return nil
 }
@@ -109,6 +113,10 @@ func (f *fakeAuthRepository) GetSession(context.Context, string, time.Time) (Use
 
 func (f *fakeAuthRepository) GetSessionWithCSRF(context.Context, string, string, time.Time) (User, Session, *domain.AppError) {
 	return User{}, Session{}, domain.NewError(500, domain.CodeInternalError, "not implemented", "not implemented")
+}
+
+func (f *fakeAuthRepository) RenewSession(context.Context, string, time.Time, time.Time, time.Time) (time.Time, bool, *domain.AppError) {
+	return time.Time{}, false, nil
 }
 
 func (f *fakeAuthRepository) RefreshSessionCSRF(context.Context, string, string, time.Time) *domain.AppError {
@@ -160,10 +168,11 @@ func legacyCredentialForTest(user User, password string) PasswordCredential {
 }
 
 func TestLoginWithArgon2idPasswordCreatesSession(t *testing.T) {
+	now := time.Date(2026, 6, 23, 12, 0, 0, 0, time.UTC)
 	repo := &fakeAuthRepository{
 		credential: argon2idCredentialForTest(boundAdminUserForTest(), "unit-test-password"),
 	}
-	service := NewService(repo, func() time.Time { return time.Date(2026, 6, 23, 12, 0, 0, 0, time.UTC) })
+	service := NewService(repo, func() time.Time { return now })
 
 	user, session, appErr := service.LoginWithPassword(context.Background(), "admin", "unit-test-password")
 	if appErr != nil {
@@ -177,6 +186,79 @@ func TestLoginWithArgon2idPasswordCreatesSession(t *testing.T) {
 	}
 	if repo.session.ID == "" || repo.session.CSRFToken == "" {
 		t.Fatalf("expected persisted hashed session")
+	}
+	if !session.ExpiresAt.Equal(now.Add(SessionIdleLifetime)) || !session.AbsoluteExpiresAt.Equal(now.Add(SessionAbsoluteLifetime)) || !session.RenewedAt.Equal(now) {
+		t.Fatalf("unexpected session lifetime: %+v", session)
+	}
+}
+
+func TestSessionRenewalIsThrottledAndCappedByAbsoluteExpiry(t *testing.T) {
+	current := time.Date(2026, 7, 21, 0, 0, 0, 0, time.UTC)
+	service := NewService(nil, func() time.Time { return current })
+	_, session, appErr := service.CreateDevSession(context.Background(), "renewal-user", false)
+	if appErr != nil {
+		t.Fatalf("create session: %v", appErr)
+	}
+	if !session.ExpiresAt.Equal(current.Add(SessionIdleLifetime)) || !session.AbsoluteExpiresAt.Equal(current.Add(SessionAbsoluteLifetime)) {
+		t.Fatalf("unexpected initial session: %+v", session)
+	}
+
+	current = current.Add(SessionRenewalInterval - time.Second)
+	if _, renewed, appErr := service.RenewSession(context.Background(), session.ID); appErr != nil || renewed {
+		t.Fatalf("session must not renew before interval: renewed=%v err=%v", renewed, appErr)
+	}
+
+	current = current.Add(time.Second)
+	renewedSession, renewed, appErr := service.RenewSession(context.Background(), session.ID)
+	if appErr != nil || !renewed {
+		t.Fatalf("renew session: renewed=%v err=%v", renewed, appErr)
+	}
+	if !renewedSession.ExpiresAt.Equal(current.Add(SessionIdleLifetime)) {
+		t.Fatalf("unexpected renewed expiry: %+v", renewedSession)
+	}
+	if _, renewed, appErr := service.RenewSession(context.Background(), session.ID); appErr != nil || renewed {
+		t.Fatalf("session must not renew twice in one interval: renewed=%v err=%v", renewed, appErr)
+	}
+
+	for day := 2; day <= 29; day++ {
+		current = time.Date(2026, 7, 21, 0, 0, 0, 0, time.UTC).Add(time.Duration(day) * 24 * time.Hour)
+		renewedSession, renewed, appErr = service.RenewSession(context.Background(), session.ID)
+		if appErr != nil || !renewed {
+			t.Fatalf("renew day %d: renewed=%v err=%v", day, renewed, appErr)
+		}
+	}
+	wantAbsoluteExpiry := time.Date(2026, 7, 21, 0, 0, 0, 0, time.UTC).Add(SessionAbsoluteLifetime)
+	if !renewedSession.ExpiresAt.Equal(wantAbsoluteExpiry) {
+		t.Fatalf("renewal must stop at absolute expiry: got %s want %s", renewedSession.ExpiresAt, wantAbsoluteExpiry)
+	}
+
+	current = wantAbsoluteExpiry
+	if _, _, appErr := service.GetSession(context.Background(), session.ID); appErr == nil || appErr.Code != domain.CodeSessionExpired {
+		t.Fatalf("absolute expiry must invalidate session, got %v", appErr)
+	}
+}
+
+func TestRevokedOrExpiredSessionCannotRenew(t *testing.T) {
+	current := time.Date(2026, 7, 21, 0, 0, 0, 0, time.UTC)
+	service := NewService(nil, func() time.Time { return current })
+	_, revokedSession, appErr := service.CreateDevSession(context.Background(), "revoked-user", false)
+	if appErr != nil {
+		t.Fatalf("create revoked session fixture: %v", appErr)
+	}
+	service.Logout(context.Background(), revokedSession.ID)
+	current = current.Add(SessionRenewalInterval)
+	if _, renewed, appErr := service.RenewSession(context.Background(), revokedSession.ID); appErr != nil || renewed {
+		t.Fatalf("revoked session must not renew: renewed=%v err=%v", renewed, appErr)
+	}
+
+	current = time.Date(2026, 7, 21, 0, 0, 0, 0, time.UTC)
+	_, expiredSession, appErr := service.CreateDevSession(context.Background(), "expired-user", false)
+	if appErr != nil {
+		t.Fatalf("create expired session fixture: %v", appErr)
+	}
+	current = current.Add(SessionIdleLifetime)
+	if _, renewed, appErr := service.RenewSession(context.Background(), expiredSession.ID); appErr != nil || renewed {
+		t.Fatalf("expired session must not renew: renewed=%v err=%v", renewed, appErr)
 	}
 }
 
@@ -393,6 +475,37 @@ func TestLoginWithOAuthProfileDoesNotFailWhenRegistrationEmailFails(t *testing.T
 	}
 }
 
+func TestLoginWithOAuthProfileRejectsInactiveUserBeforeSessionCreation(t *testing.T) {
+	t.Parallel()
+
+	repo := &fakeAuthRepository{
+		oauthResult: OAuthUserResult{
+			User: User{
+				ID:          "user-suspended",
+				Username:    "suspended-user",
+				DisplayName: "Suspended User",
+				Status:      "suspended",
+			},
+		},
+	}
+	service := NewService(repo, time.Now)
+
+	_, _, appErr := service.LoginWithOAuthProfile(context.Background(), OAuthProfile{
+		Provider: "linuxdo",
+		Subject:  "linuxdo-suspended",
+		Username: "suspended-user",
+	})
+	if appErr == nil || appErr.Code != domain.CodeAccountRestricted {
+		t.Fatalf("expected account restriction, got %#v", appErr)
+	}
+	if repo.createSessionCalls != 0 {
+		t.Fatalf("inactive OAuth user must not create session, got %d calls", repo.createSessionCalls)
+	}
+	if repo.session.ID != "" {
+		t.Fatalf("inactive OAuth user must not persist session: %#v", repo.session)
+	}
+}
+
 func TestLoginWithPasswordRejectsInvalidPassword(t *testing.T) {
 	repo := &fakeAuthRepository{
 		credential: argon2idCredentialForTest(boundAdminUserForTest(), "unit-test-password"),
@@ -578,5 +691,266 @@ func TestBootstrapAdminDoesNotOverwriteExistingAdminCredential(t *testing.T) {
 	}
 	if _, _, appErr := service.LoginWithPassword(context.Background(), "admin", "second-bootstrap-password-2!"); appErr == nil || appErr.Code != domain.CodeInvalidCredentials {
 		t.Fatalf("second bootstrap password must not work, got %v", appErr)
+	}
+}
+
+func TestOAuthIdentityOwnershipSurvivesProviderUsernameChange(t *testing.T) {
+	service := NewService(nil, time.Now)
+
+	first, _, appErr := service.LoginWithOAuthProfile(context.Background(), OAuthProfile{
+		Provider:    "linux_do",
+		Subject:     "identity-rename-1",
+		Username:    "first-handle",
+		DisplayName: "First Name",
+	})
+	if appErr != nil {
+		t.Fatalf("first OAuth login: %v", appErr)
+	}
+	second, _, appErr := service.LoginWithOAuthProfile(context.Background(), OAuthProfile{
+		Provider:    "linux_do",
+		Subject:     "identity-rename-1",
+		Username:    "renamed-handle",
+		DisplayName: "Renamed User",
+	})
+	if appErr != nil {
+		t.Fatalf("second OAuth login: %v", appErr)
+	}
+
+	if second.ID != first.ID {
+		t.Fatalf("provider username change must keep identity owner: first=%s second=%s", first.ID, second.ID)
+	}
+	if second.Username != first.Username {
+		t.Fatalf("provider username change must preserve local username: first=%q second=%q", first.Username, second.Username)
+	}
+	if second.DisplayName != "Renamed User" {
+		t.Fatalf("expected refreshed display name, got %q", second.DisplayName)
+	}
+}
+
+func TestOAuthFirstLoginDoesNotReuseConflictingLocalUsers(t *testing.T) {
+	service := NewService(nil, time.Now)
+	ordinary, _, appErr := service.CreateDevSession(context.Background(), "shared-handle", false)
+	if appErr != nil {
+		t.Fatalf("create ordinary user: %v", appErr)
+	}
+	admin, _, appErr := service.CreateDevSession(context.Background(), "admin-handle", true)
+	if appErr != nil {
+		t.Fatalf("create admin user: %v", appErr)
+	}
+
+	oauthOrdinaryCollision, _, appErr := service.LoginWithOAuthProfile(context.Background(), OAuthProfile{
+		Provider: "linux_do",
+		Subject:  "identity-collision-ordinary",
+		Username: ordinary.Username,
+	})
+	if appErr != nil {
+		t.Fatalf("OAuth ordinary collision login: %v", appErr)
+	}
+	if oauthOrdinaryCollision.ID == ordinary.ID || oauthOrdinaryCollision.Username == ordinary.Username {
+		t.Fatalf("OAuth login must create an independent handle on ordinary-user collision: ordinary=%+v oauth=%+v", ordinary, oauthOrdinaryCollision)
+	}
+
+	oauthAdminCollision, _, appErr := service.LoginWithOAuthProfile(context.Background(), OAuthProfile{
+		Provider: "linux_do",
+		Subject:  "identity-collision-admin",
+		Username: admin.Username,
+	})
+	if appErr != nil {
+		t.Fatalf("OAuth admin collision login: %v", appErr)
+	}
+	if oauthAdminCollision.ID == admin.ID || oauthAdminCollision.Username == admin.Username {
+		t.Fatalf("OAuth login must create an independent handle on admin collision: admin=%+v oauth=%+v", admin, oauthAdminCollision)
+	}
+	if oauthAdminCollision.IsAdmin {
+		t.Fatalf("normal OAuth login must never grant admin permission: %+v", oauthAdminCollision)
+	}
+}
+
+func TestOAuthIdentityIsScopedByProviderAndSubject(t *testing.T) {
+	service := NewService(nil, time.Now)
+
+	linuxDo, _, appErr := service.LoginWithOAuthProfile(context.Background(), OAuthProfile{
+		Provider: " Linux_Do ",
+		Subject:  "shared-subject",
+		Username: "provider-shared",
+	})
+	if appErr != nil {
+		t.Fatalf("linux.do OAuth login: %v", appErr)
+	}
+	linuxDoAgain, _, appErr := service.LoginWithOAuthProfile(context.Background(), OAuthProfile{
+		Provider: "linux_do",
+		Subject:  "shared-subject",
+		Username: "provider-renamed",
+	})
+	if appErr != nil {
+		t.Fatalf("normalized linux.do OAuth login: %v", appErr)
+	}
+	github, _, appErr := service.LoginWithOAuthProfile(context.Background(), OAuthProfile{
+		Provider: "github",
+		Subject:  "shared-subject",
+		Username: "provider-shared",
+	})
+	if appErr != nil {
+		t.Fatalf("GitHub OAuth login: %v", appErr)
+	}
+
+	if linuxDoAgain.ID != linuxDo.ID {
+		t.Fatalf("normalized provider key must resolve the existing identity: first=%s second=%s", linuxDo.ID, linuxDoAgain.ID)
+	}
+	if github.ID == linuxDo.ID {
+		t.Fatalf("same subject from different providers must create different users: linux_do=%s github=%s", linuxDo.ID, github.ID)
+	}
+	if github.LinuxDoBinding != nil {
+		t.Fatalf("non-linux.do identity must not receive linux.do binding: %+v", github.LinuxDoBinding)
+	}
+}
+
+func TestOAuthConcurrentFirstLoginReturnsOneInMemoryUser(t *testing.T) {
+	service := NewService(nil, time.Now)
+	var waitGroup sync.WaitGroup
+	userIDs := make(chan string, 16)
+	failures := make(chan string, 16)
+
+	for range 16 {
+		waitGroup.Add(1)
+		go func() {
+			defer waitGroup.Done()
+			user, _, appErr := service.LoginWithOAuthProfile(context.Background(), OAuthProfile{
+				Provider: "linux_do",
+				Subject:  "concurrent-subject",
+				Username: "concurrent-user",
+			})
+			if appErr != nil {
+				failures <- appErr.Error()
+				return
+			}
+			userIDs <- user.ID
+		}()
+	}
+	waitGroup.Wait()
+	close(userIDs)
+	close(failures)
+
+	for failure := range failures {
+		t.Fatalf("concurrent OAuth login failed: %s", failure)
+	}
+	var winningUserID string
+	for userID := range userIDs {
+		if winningUserID == "" {
+			winningUserID = userID
+		}
+		if userID != winningUserID {
+			t.Fatalf("concurrent OAuth logins returned different users: first=%s next=%s", winningUserID, userID)
+		}
+	}
+	if len(service.oauthUserIDs) != 1 || len(service.users) != 1 {
+		t.Fatalf("concurrent OAuth login created extra state: identities=%d users=%d", len(service.oauthUserIDs), len(service.users))
+	}
+}
+
+func TestOAuthUsernameCandidatesAreStableAndBounded(t *testing.T) {
+	base := OAuthUsernameCandidate(" A Very Long Provider Username !!! ", "linux_do", "subject-1", 0)
+	firstCollision := OAuthUsernameCandidate(base, "linux_do", "subject-1", 1)
+	repeatedCollision := OAuthUsernameCandidate(base, "linux_do", "subject-1", 1)
+	nextCollision := OAuthUsernameCandidate(base, "linux_do", "subject-1", 2)
+
+	for _, candidate := range []string{base, firstCollision, nextCollision} {
+		if len(candidate) > maxUsernameLength || !usernamePattern.MatchString(candidate) {
+			t.Fatalf("invalid OAuth username candidate %q", candidate)
+		}
+	}
+	if firstCollision != repeatedCollision {
+		t.Fatalf("stable collision candidate changed: first=%q repeated=%q", firstCollision, repeatedCollision)
+	}
+	if firstCollision == nextCollision || !strings.Contains(firstCollision, "-") {
+		t.Fatalf("collision attempts must be distinct and suffixed: first=%q next=%q", firstCollision, nextCollision)
+	}
+}
+
+func TestBootstrapAdminFailsClosedOnUnprovenExistingState(t *testing.T) {
+	tests := []struct {
+		name    string
+		prepare func(*Service)
+	}{
+		{
+			name: "occupied ordinary username",
+			prepare: func(service *Service) {
+				if _, _, appErr := service.CreateDevSession(context.Background(), "bootstrap-target", false); appErr != nil {
+					t.Fatalf("create ordinary fixture: %v", appErr)
+				}
+			},
+		},
+		{
+			name: "foreign administrator",
+			prepare: func(service *Service) {
+				if _, _, appErr := service.CreateDevSession(context.Background(), "foreign-admin", true); appErr != nil {
+					t.Fatalf("create admin fixture: %v", appErr)
+				}
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			service := NewService(nil, time.Now)
+			tt.prepare(service)
+
+			result, appErr := service.BootstrapAdmin(context.Background(), BootstrapAdminInput{
+				Username: "bootstrap-target",
+				Password: "bootstrap-password-1!",
+			})
+			if appErr == nil || appErr.Code != domain.CodeAdminBootstrapConflict {
+				t.Fatalf("expected bootstrap conflict, result=%+v err=%v", result, appErr)
+			}
+		})
+	}
+}
+
+func TestBootstrapAdminRequiresMatchingProvenanceOnRerun(t *testing.T) {
+	service := NewService(nil, time.Now)
+	first, appErr := service.BootstrapAdmin(context.Background(), BootstrapAdminInput{
+		Username: "bootstrap-root",
+		Password: "first-bootstrap-password-1!",
+	})
+	if appErr != nil || !first.Created {
+		t.Fatalf("first bootstrap result=%+v err=%v", first, appErr)
+	}
+
+	second, appErr := service.BootstrapAdmin(context.Background(), BootstrapAdminInput{
+		Username: "different-root",
+		Password: "second-bootstrap-password-2!",
+	})
+	if appErr == nil || appErr.Code != domain.CodeAdminBootstrapConflict {
+		t.Fatalf("expected bootstrap configuration conflict, result=%+v err=%v", second, appErr)
+	}
+
+	if _, _, appErr := service.LoginWithPassword(context.Background(), "bootstrap-root", "first-bootstrap-password-1!"); appErr != nil {
+		t.Fatalf("proven bootstrap password should remain valid: %v", appErr)
+	}
+	if _, _, appErr := service.LoginWithPassword(context.Background(), "different-root", "second-bootstrap-password-2!"); appErr == nil || appErr.Code != domain.CodeInvalidCredentials {
+		t.Fatalf("conflicting bootstrap must not create or update credentials, got %v", appErr)
+	}
+}
+
+func TestBootstrapAdminFailsClosedWhenProvenanceStateIsDamaged(t *testing.T) {
+	service := NewService(nil, time.Now)
+	first, appErr := service.BootstrapAdmin(context.Background(), BootstrapAdminInput{
+		Username: "bootstrap-root",
+		Password: "first-bootstrap-password-1!",
+	})
+	if appErr != nil || !first.Created {
+		t.Fatalf("first bootstrap result=%+v err=%v", first, appErr)
+	}
+
+	user := service.users[first.User.ID]
+	user.IsAdmin = false
+	service.users[first.User.ID] = user
+
+	result, appErr := service.BootstrapAdmin(context.Background(), BootstrapAdminInput{
+		Username: "bootstrap-root",
+		Password: "first-bootstrap-password-1!",
+	})
+	if appErr == nil || appErr.Code != domain.CodeAdminBootstrapInconsistent {
+		t.Fatalf("expected inconsistent bootstrap state, result=%+v err=%v", result, appErr)
 	}
 }

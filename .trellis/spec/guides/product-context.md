@@ -10,7 +10,7 @@ External references:
 
 ## Positioning
 
-C2CMarket is a C2C marketplace platform for linux.do users. Its primary product experience is browsing, comparing, publishing, and tracking subscription carpool seats, API services, demand posts, official price references, orders, and transaction records. AI products are marketplace categories, not the site's visual identity; product-facing UI must not resemble an AI model homepage, AI SaaS landing page, or technology campaign site.
+C2CMarket is a C2C marketplace platform for linux.do users. Its primary product experience is browsing, comparing, publishing, and tracking subscription carpool seats, API services, official price references, orders, and transaction records. AI products are marketplace categories, not the site's visual identity; product-facing UI must not resemble an AI model homepage, AI SaaS landing page, or technology campaign site.
 
 The authoritative visual and marketplace hierarchy contract lives in [`../frontend/marketplace-ui-guidelines.md`](../frontend/marketplace-ui-guidelines.md).
 
@@ -22,12 +22,12 @@ The platform must not:
 
 - Process in-platform payments.
 - Provide escrow or guaranteed transaction custody.
-- Store third-party account passwords, plaintext native account passwords, API keys, Sub2API keys, session tokens, refresh tokens, or unredacted sensitive credentials, except for the API order one-time delivery credential boundary described below.
-- Automatically deliver tokens, accounts, or keys.
+- Store third-party account passwords, plaintext native account passwords, API keys, Sub2API keys, session tokens, refresh tokens, or unredacted sensitive credentials, except for encrypted buyer-specific API order delivery credentials and their pre-import inventory described below.
+- Disclose or allocate tokens, accounts, or keys to a buyer before the seller confirms off-platform payment.
 - Proxy API traffic.
 - Present linux.do binding as linux.do official endorsement.
 - Encourage or facilitate third-party account credential sharing, API key transfer, or token/key resale.
-- Store or auto-deliver third-party passwords, API keys, Sub2API keys, sessions, cookies, refresh tokens, access tokens, MFA codes, recovery codes, or panel owner credentials, except that a seller may submit one buyer-specific API order delivery credential after payment is confirmed; the platform does not provide credential revocation.
+- Store or deliver sessions, cookies, refresh/access tokens, MFA/recovery codes, shared/master accounts, or panel owner credentials. The only exception is one buyer-specific API order credential, submitted manually after payment confirmation or encrypted in pre-import inventory and released only by the seller's confirmation action; the platform does not provide credential revocation.
 
 Preferred wording:
 
@@ -58,7 +58,7 @@ For API quota service UI, prefer:
 - `可售美元额度`
 - `单笔购买额度上限`
 
-Rationale: purchase intents remain internal tracking/audit records and may appear in API paths or storage, but user, merchant, and administrator UI use API orders as the primary business object. API quota public pages must not imply that C2CMarket delivers, stores, or transfers credentials before an order exists. When an API service is approved, online, clear, and orderable, the owner has pre-consented to receive compliant orders. After the buyer creates an API order, submits off-platform payment, and the seller confirms receipt, the seller may submit a one-time structured delivery credential for that order. That credential is limited to buyer-specific API Key + API Base URL or initial login account fields and is immutable after submission. It is not automatic delivery, escrow, platform verification, API proxying, platform-managed revocation, or a general chat/file-transfer feature. Subscription carpool contact windows remain separate and still use the carpool-specific reservation flow.
+Rationale: purchase intents remain internal tracking/audit records and may appear in API paths or storage, but user, merchant, and administrator UI use API orders as the primary business object. API quota public pages must not expose credentials before seller-confirmed payment. When an API service is approved, online, clear, and orderable, the owner has pre-consented to receive compliant orders. A seller may submit one buyer-specific structured credential after payment confirmation, or pre-import encrypted buyer-specific inventory that is reserved with the order and released only when the seller confirms receipt. The credential is limited to buyer-specific API Key + API Base URL or initial login account fields and is immutable after delivery. This is not escrow, platform verification, API proxying, platform-managed revocation, shared-account delivery, or a general chat/file-transfer feature. Subscription carpool contact windows remain separate and still use the carpool-specific reservation flow.
 
 API order delivery credential wording:
 
@@ -127,7 +127,6 @@ Backend direction:
 
 - Official low-price intelligence.
 - Subscription carpool listings.
-- Demand posts.
 - API service listings.
 - Intent and fulfillment records.
 - Reviews.

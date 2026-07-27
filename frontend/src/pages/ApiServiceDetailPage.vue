@@ -24,10 +24,12 @@ import {
   type ApiServicePackage,
 } from '@/lib/api'
 import { trackAnalytics } from '@/lib/analytics'
+import { getApiServiceProductIconSrc } from '@/lib/productCategoryIcon'
 import { useDetailVisibleAnalytics } from '@/composables/useDetailVisibleAnalytics'
 import { useApiService, useFavoriteStatus, useMyApiServices, useToggleFavoriteMutation } from '@/queries/useMarketQueries'
 import { markMissingQueryAsNotFoundOnServer, prefetchQueriesOnServer } from '@/queries/prefetchQueriesOnServer'
 import { useEntitySeo } from '@/composables/useEntitySeo'
+import { useProductCategories } from '@/queries/useProductCatalogQueries'
 
 const route = useRoute()
 const router = useRouter()
@@ -35,8 +37,10 @@ const queryClient = useQueryClient()
 const analyticsSourceRoute = () => String(route.name ?? 'unknown')
 const id = computed(() => String(route.params.id ?? ''))
 const apiServiceQuery = useApiService(id)
+const productCategoriesQuery = useProductCategories()
 const { data: service, isLoading, error: serviceError, refetch: refetchService } = apiServiceQuery
-prefetchQueriesOnServer(apiServiceQuery)
+const { data: catalogCategories } = productCategoriesQuery
+prefetchQueriesOnServer(apiServiceQuery, productCategoriesQuery)
 markMissingQueryAsNotFoundOnServer(apiServiceQuery, () => Boolean(service.value))
 const { data: ownedServices, isLoading: ownershipLoading } = useMyApiServices(import.meta.client)
 const amount = ref(10)
@@ -56,6 +60,8 @@ const ownerPreview = computed(() => route.query.preview === 'owner')
 const isOwnedService = computed(() => Boolean(ownedServices.value?.some(item => item.id === id.value)))
 const availablePackages = computed(() => (service.value?.packages ?? []).filter(item => item.enabled && item.stockAvailable > 0))
 const selectedPackage = computed<ApiServicePackage | null>(() => availablePackages.value.find(item => item.id === selectedPackageId.value) ?? null)
+const categoryIconByCode = computed(() => new Map((catalogCategories.value ?? []).map(category => [category.code, category.iconDataUrl])))
+const serviceIconSrc = computed(() => service.value ? getApiServiceProductIconSrc(service.value, categoryIconByCode.value) : null)
 
 useEntitySeo({
   indexable: computed(() => Boolean(service.value)),
@@ -200,7 +206,7 @@ function createOrder() {
     <template #action><RouterLink to="/api-market"><Button variant="outline">返回 API 市场</Button></RouterLink></template>
   </EmptyState>
   <div v-else class="api-service-detail-page space-y-4">
-    <ApiServiceHeader :service="service" />
+    <ApiServiceHeader :service="service" :icon-src="serviceIconSrc" />
 
     <div class="grid min-w-0 gap-4 lg:grid-cols-[minmax(0,65fr)_minmax(340px,35fr)] lg:items-start">
       <ApiServiceSummary :service="service" />

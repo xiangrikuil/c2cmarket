@@ -32,13 +32,13 @@ func TestRiskAggregatorReturnsInsufficientDataForLowConfidence(t *testing.T) {
 
 func TestReportBuilderIncludesEvidenceAndCaveat(t *testing.T) {
 	report := BuildAuditReport(AuditReportInput{
-		RunID:            "run-1",
-		TargetID:         "target-1",
-		TargetName:       "Example Relay",
-		ClaimedModel:     "gpt-example",
-		Mode:             AuditModeStandard,
-		OverallRisk:      RiskSuspicious,
-		OverallScore:     0.42,
+		RunID:             "run-1",
+		TargetID:          "target-1",
+		TargetName:        "Example Relay",
+		ClaimedModel:      "gpt-example",
+		Mode:              AuditModeStandard,
+		OverallRisk:       RiskSuspicious,
+		OverallScore:      0.42,
 		OverallConfidence: 0.78,
 		ProbeScores: []ProbeScore{{
 			Probe:      ProbeRandomFingerprint,

@@ -18,8 +18,8 @@ export const publishDistributionOptions = [
   {
     value: 'sub2api',
     title: 'Sub2API',
-    description: '默认倍率 1.00x，可按实际上游规则调整。',
-    detail: '支持美元额度或限时流量包。',
+    description: '基础服务默认 1.00x。',
+    detail: '限时额度包可在下一步独立设置倍率。',
   },
   {
     value: 'other',

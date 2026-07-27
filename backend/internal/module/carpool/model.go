@@ -5,6 +5,7 @@ import (
 
 	"c2c-market/backend/internal/domain"
 	"c2c-market/backend/internal/module/idempotency"
+	"c2c-market/backend/internal/module/reputation"
 )
 
 const (
@@ -48,40 +49,42 @@ type RiskAcknowledgement struct {
 }
 
 type Listing struct {
-	ID                     string
-	OwnerUserID            string
-	ProductPlanID          string
-	OwnerContactMethodID   string
-	CycleTerm              *CycleTerm
-	Title                  string
-	Summary                string
-	AccessArrangement      string
-	DistributionMethod     string
-	DistributionMethodNote string
-	ProvidesAdminAccount   bool
-	RegionCode             string
-	RegionName             string
-	SourceURL              string
-	PriceMonthlyCNY        string
-	ServiceMultiplier      string
-	MonthlyQuotaAmount     string
-	QuotaLabel             string
-	QuotaUnit              string
-	QuotaPeriod            string
-	BuyerSeatCapacity      int
-	ActiveBuyerMembers     int
-	Status                 string
-	ReviewedByAdminID      string
-	ReviewedAt             *time.Time
-	ReviewReason           string
-	PolicyVersion          int64
-	RiskNoticeCode         string
-	RiskAckRequired        bool
-	ReservedSeats          int
-	AvailableSeats         int
-	CreatedAt              time.Time
-	UpdatedAt              time.Time
-	Version                int64
+	ID                       string
+	OwnerUserID              string
+	ProductPlanID            string
+	OwnerContactMethodID     string
+	CycleTerm                *CycleTerm
+	Title                    string
+	Summary                  string
+	AccessArrangement        string
+	DistributionMethod       string
+	DistributionMethodNote   string
+	ProvidesAdminAccount     bool
+	RegionCode               string
+	RegionName               string
+	SourceURL                string
+	PriceMonthlyCNY          string
+	ServiceMultiplier        string
+	MonthlyQuotaAmount       string
+	QuotaLabel               string
+	QuotaUnit                string
+	QuotaPeriod              string
+	BuyerSeatCapacity        int
+	ActiveBuyerMembers       int
+	Status                   string
+	ReviewedByAdminID        string
+	ReviewedAt               *time.Time
+	ReviewReason             string
+	PolicyVersion            int64
+	RiskNoticeCode           string
+	RiskAckRequired          bool
+	ReservedSeats            int
+	AvailableSeats           int
+	CreatedAt                time.Time
+	UpdatedAt                time.Time
+	Version                  int64
+	SellerReputation         *reputation.ReputationSnapshot
+	SourceAuthorVerification reputation.SourceAuthorResourceSummary
 }
 
 type CycleTerm struct {
@@ -122,6 +125,7 @@ type Application struct {
 	CreatedAt                time.Time
 	UpdatedAt                time.Time
 	Version                  int64
+	BuyerReputation          *reputation.ReputationSnapshot
 }
 
 type Membership struct {

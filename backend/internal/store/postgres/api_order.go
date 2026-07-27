@@ -11,6 +11,7 @@ import (
 	"c2c-market/backend/internal/module/apiintent"
 	"c2c-market/backend/internal/module/apimarket"
 	"c2c-market/backend/internal/module/apiorder"
+	"c2c-market/backend/internal/module/apiquota"
 	"c2c-market/backend/internal/module/idempotency"
 	"c2c-market/backend/internal/module/report"
 
@@ -290,7 +291,7 @@ func (s *Store) updateAPIOrderInTx(ctx context.Context, tx pgx.Tx, input apiorde
 	}
 	from := order.Status
 	if action == "cancel" {
-		if appErr := releaseAPIOrderInventoryInTx(ctx, tx, order, now); appErr != nil {
+		if appErr := releaseAPIOrderReservationInTx(ctx, tx, order, now); appErr != nil {
 			return apiorder.Order{}, appErr
 		}
 		order.PackageStockReserved = false
@@ -312,16 +313,53 @@ func (s *Store) updateAPIOrderInTx(ctx context.Context, tx pgx.Tx, input apiorde
 			return apiorder.Order{}, appErr
 		}
 	}
+	if action == "confirm_payment" && order.PurchaseKind == apiorder.PurchaseKindLimitedQuotaOffer {
+		if appErr := consumeAPIQuotaInventoryInTx(ctx, tx, order, now); appErr != nil {
+			return apiorder.Order{}, appErr
+		}
+	}
 	order = storeApplyAPIOrderAction(order, input, action, now)
+	autoDeliveryKind := ""
+	if action == "confirm_payment" && order.PurchaseKind == apiorder.PurchaseKindLimitedQuotaOffer && order.QuotaDeliveryMode == apiquota.DeliveryModePreimported {
+		var deliveryErr *domain.AppError
+		autoDeliveryKind, deliveryErr = s.deliverPreimportedAPIQuotaCredentialInTx(ctx, tx, order, now)
+		if deliveryErr != nil {
+			return apiorder.Order{}, deliveryErr
+		}
+		order.Status = apiorder.StatusDeliverySubmitted
+		order.DeliveryNote = apiorder.DeliverySummary(autoDeliveryKind)
+		order.DeliverySubmittedAt = &now
+		order.Version++
+	}
 	if appErr := updateAPIOrderInTx(ctx, tx, order); appErr != nil {
 		return apiorder.Order{}, appErr
 	}
-	eventType := storeAPIOrderEventType(action)
-	if appErr := insertAPIOrderEventInTx(ctx, tx, order, input.ActorUserID, eventType, from, order.Status, storeAPIOrderActionNote(input, action), input.RequestID, now); appErr != nil {
-		return apiorder.Order{}, appErr
-	}
-	if appErr := insertAPIOrderDomainEventAndNotificationInTx(ctx, tx, order, input.ActorUserID, eventType, input.RequestID, now); appErr != nil {
-		return apiorder.Order{}, appErr
+	if autoDeliveryKind != "" {
+		confirmedOrder := order
+		confirmedOrder.Version--
+		confirmedOrder.Status = apiorder.StatusPaidConfirmed
+		confirmedOrder.DeliveryNote = ""
+		confirmedOrder.DeliverySubmittedAt = nil
+		if appErr := insertAPIOrderEventInTx(ctx, tx, confirmedOrder, input.ActorUserID, apiorder.EventPaymentConfirmed, from, apiorder.StatusPaidConfirmed, "", input.RequestID, now); appErr != nil {
+			return apiorder.Order{}, appErr
+		}
+		if appErr := insertAPIOrderDomainEventAndNotificationInTx(ctx, tx, confirmedOrder, input.ActorUserID, apiorder.EventPaymentConfirmed, input.RequestID, now); appErr != nil {
+			return apiorder.Order{}, appErr
+		}
+		if appErr := insertAPIOrderEventInTx(ctx, tx, order, input.ActorUserID, apiorder.EventDeliverySubmitted, apiorder.StatusPaidConfirmed, apiorder.StatusDeliverySubmitted, apiorder.DeliverySummary(autoDeliveryKind), input.RequestID, now); appErr != nil {
+			return apiorder.Order{}, appErr
+		}
+		if appErr := insertAPIOrderDomainEventAndNotificationInTx(ctx, tx, order, input.ActorUserID, apiorder.EventDeliverySubmitted, input.RequestID, now); appErr != nil {
+			return apiorder.Order{}, appErr
+		}
+	} else {
+		eventType := storeAPIOrderEventType(action)
+		if appErr := insertAPIOrderEventInTx(ctx, tx, order, input.ActorUserID, eventType, from, order.Status, storeAPIOrderActionNote(input, action), input.RequestID, now); appErr != nil {
+			return apiorder.Order{}, appErr
+		}
+		if appErr := insertAPIOrderDomainEventAndNotificationInTx(ctx, tx, order, input.ActorUserID, eventType, input.RequestID, now); appErr != nil {
+			return apiorder.Order{}, appErr
+		}
 	}
 	if action != "submit_delivery" && order.DeliverySubmittedAt != nil {
 		if appErr := s.attachAPIOrderDeliveryCredential(ctx, tx, &order); appErr != nil {
@@ -395,7 +433,7 @@ func (s *Store) materializeExpiredAPIOrderInTx(ctx context.Context, tx pgx.Tx, o
 	if order.Status != apiorder.StatusPendingPayment || order.PaymentExpiresAt.After(now) {
 		return nil
 	}
-	if appErr := releaseAPIOrderInventoryInTx(ctx, tx, order, now); appErr != nil {
+	if appErr := releaseAPIOrderReservationInTx(ctx, tx, order, now); appErr != nil {
 		return appErr
 	}
 	order.Status = apiorder.StatusCancelled
@@ -452,7 +490,10 @@ func reserveAPIOrderInventoryInTx(ctx context.Context, tx pgx.Tx, order apiorder
 	return nil
 }
 
-func releaseAPIOrderInventoryInTx(ctx context.Context, tx pgx.Tx, order apiorder.Order, now time.Time) *domain.AppError {
+func releaseAPIOrderReservationInTx(ctx context.Context, tx pgx.Tx, order apiorder.Order, now time.Time) *domain.AppError {
+	if order.PurchaseKind == apiorder.PurchaseKindLimitedQuotaOffer {
+		return releaseAPIQuotaReservationInTx(ctx, tx, order, now)
+	}
 	if order.BillingModeSnapshot == apimarket.ServiceBillingModeFixedPackage {
 		if !order.PackageStockReserved || strings.TrimSpace(order.SelectedPackageID) == "" {
 			return nil
@@ -492,15 +533,219 @@ func releaseAPIOrderInventoryInTx(ctx context.Context, tx pgx.Tx, order apiorder
 	return nil
 }
 
+func releaseAPIQuotaReservationInTx(ctx context.Context, tx pgx.Tx, order apiorder.Order, now time.Time) *domain.AppError {
+	if order.APIQuotaInventoryUnitID == "" || order.APIQuotaAllocationID == "" || order.APIQuotaBatchID == "" {
+		return internalStoreError()
+	}
+
+	var unitStatus, allocationStatus, saleMode, batchStatus, offerStatus, roundStatus, usdAllowance string
+	var saleCutoffAt, expiresAt time.Time
+	var roundStartsAt, roundEndsAt *time.Time
+	err := tx.QueryRow(ctx, `
+		SELECT u.status, u.usd_allowance::text, a.status, a.sale_mode,
+		       b.status, o.status, b.sale_cutoff_at, b.expires_at,
+		       COALESCE(r.status, ''), r.starts_at, r.ends_at
+		FROM api_quota_inventory_units u
+		JOIN api_quota_allocations a ON a.id = u.allocation_id AND a.batch_id = u.batch_id AND a.offer_id = u.offer_id
+		JOIN api_quota_batches b ON b.id = u.batch_id
+		JOIN api_quota_offers o ON o.id = u.offer_id AND o.batch_id = u.batch_id
+		LEFT JOIN api_quota_sale_rounds r ON r.id = a.sale_round_id
+		WHERE u.id = $1 AND u.reserved_order_id = $2
+		FOR UPDATE OF u
+	`, order.APIQuotaInventoryUnitID, order.ID).Scan(
+		&unitStatus, &usdAllowance, &allocationStatus, &saleMode,
+		&batchStatus, &offerStatus, &saleCutoffAt, &expiresAt,
+		&roundStatus, &roundStartsAt, &roundEndsAt,
+	)
+	if err != nil || unitStatus != "reserved" {
+		return internalStoreError()
+	}
+
+	reusable := allocationStatus == "active" &&
+		(batchStatus == apiquota.BatchStatusPublished || batchStatus == apiquota.BatchStatusPaused) &&
+		(offerStatus == apiquota.OfferStatusPublished || offerStatus == apiquota.OfferStatusPaused) &&
+		now.Before(saleCutoffAt) && now.Before(expiresAt)
+	if saleMode == apiquota.SaleModeScheduled {
+		reusable = reusable && roundStatus == apiquota.RoundStatusScheduled && roundStartsAt != nil && roundEndsAt != nil &&
+			!now.Before(*roundStartsAt) && now.Before(*roundEndsAt)
+	}
+
+	nextStatus := "available"
+	var retiredAt any
+	if !reusable {
+		nextStatus = "retired"
+		retiredAt = now
+	}
+	command, err := tx.Exec(ctx, `
+		UPDATE api_quota_inventory_units
+		SET status = $3, reserved_order_id = NULL, reserved_at = NULL,
+		    retired_at = $4, updated_at = $5
+		WHERE id = $1 AND reserved_order_id = $2 AND status = 'reserved'
+	`, order.APIQuotaInventoryUnitID, order.ID, nextStatus, retiredAt, now)
+	if err != nil || command.RowsAffected() != 1 {
+		return internalStoreError()
+	}
+
+	if !reusable {
+		command, err = tx.Exec(ctx, `
+			UPDATE api_quota_allocations
+			SET returned_usd_allowance = returned_usd_allowance + $2::numeric,
+			    updated_at = $3
+			WHERE id = $1
+			  AND returned_usd_allowance + $2::numeric <= allocated_usd_allowance
+		`, order.APIQuotaAllocationID, usdAllowance, now)
+		if err != nil || command.RowsAffected() != 1 {
+			return internalStoreError()
+		}
+		command, err = tx.Exec(ctx, `
+			UPDATE api_quota_batches
+			SET unallocated_usd_allowance = unallocated_usd_allowance + $2::numeric,
+			    updated_at = $3, version = version + 1
+			WHERE id = $1
+			  AND unallocated_usd_allowance + $2::numeric <= declared_total_usd_allowance
+		`, order.APIQuotaBatchID, usdAllowance, now)
+		if err != nil || command.RowsAffected() != 1 {
+			return internalStoreError()
+		}
+	}
+
+	if order.APIQuotaCredentialID != "" {
+		command, err = tx.Exec(ctx, `
+			UPDATE api_quota_credentials
+			SET status = 'available', reserved_order_id = NULL, reserved_at = NULL, updated_at = $3
+			WHERE id = $1 AND reserved_order_id = $2 AND status = 'reserved'
+		`, order.APIQuotaCredentialID, order.ID, now)
+		if err != nil || command.RowsAffected() != 1 {
+			return internalStoreError()
+		}
+	}
+	return nil
+}
+
+func consumeAPIQuotaInventoryInTx(ctx context.Context, tx pgx.Tx, order apiorder.Order, now time.Time) *domain.AppError {
+	if order.APIQuotaInventoryUnitID == "" {
+		return internalStoreError()
+	}
+	command, err := tx.Exec(ctx, `
+		UPDATE api_quota_inventory_units
+		SET status = 'consumed', consumed_at = $3, updated_at = $3
+		WHERE id = $1 AND reserved_order_id = $2 AND status = 'reserved'
+	`, order.APIQuotaInventoryUnitID, order.ID, now)
+	if err != nil || command.RowsAffected() != 1 {
+		return internalStoreError()
+	}
+	return nil
+}
+
+func (s *Store) deliverPreimportedAPIQuotaCredentialInTx(ctx context.Context, tx pgx.Tx, order apiorder.Order, now time.Time) (string, *domain.AppError) {
+	if s == nil || s.contactCodec == nil || order.APIQuotaCredentialID == "" {
+		return "", domain.NewError(http.StatusConflict, domain.CodeAPIQuotaCredentialUnavailable, "Credential inventory unavailable", "订单预留的交付凭据不可用。")
+	}
+	var deliveryKind, apiBaseURL, panelLoginURL, username, instructions, keyVersion, cipherFormat string
+	var apiKeyCiphertext, apiKeyNonce, passwordCiphertext, passwordNonce []byte
+	err := tx.QueryRow(ctx, `
+		SELECT delivery_kind, COALESCE(api_base_url, ''), COALESCE(panel_login_url, ''),
+		       COALESCE(username, ''), COALESCE(instructions, ''),
+		       api_key_ciphertext, api_key_nonce, password_ciphertext, password_nonce,
+		       secret_encryption_key_version, secret_encryption_format
+		FROM api_quota_credentials
+		WHERE id = $1 AND api_quota_offer_id = $2 AND seller_user_id = $3
+		  AND reserved_order_id = $4 AND status = 'reserved'
+		FOR UPDATE
+	`, order.APIQuotaCredentialID, order.APIQuotaOfferID, order.SellerUserID, order.ID).Scan(
+		&deliveryKind, &apiBaseURL, &panelLoginURL, &username, &instructions,
+		&apiKeyCiphertext, &apiKeyNonce, &passwordCiphertext, &passwordNonce, &keyVersion, &cipherFormat,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", domain.NewError(http.StatusConflict, domain.CodeAPIQuotaCredentialUnavailable, "Credential inventory unavailable", "订单预留的交付凭据不可用。")
+	}
+	if err != nil {
+		return "", internalStoreError()
+	}
+	credentialID := uuid.NewString()
+	var encoded encodedContactValue
+	switch deliveryKind {
+	case apiorder.DeliveryKindAPIKeyEndpoint:
+		plaintext, decodeErr := s.contactCodec.decode(
+			apiKeyCiphertext, apiKeyNonce, keyVersion, cipherFormat,
+			order.APIQuotaCredentialID, contactFieldQuotaAPIKey,
+		)
+		if decodeErr != nil {
+			return "", internalStoreError()
+		}
+		encoded, err = s.contactCodec.encode(plaintext, credentialID, contactFieldOrderAPIKey)
+		if err != nil {
+			return "", internalStoreError()
+		}
+		apiKeyCiphertext = encoded.Ciphertext
+		apiKeyNonce = encoded.Nonce
+	case apiorder.DeliveryKindLoginAccount:
+		plaintext, decodeErr := s.contactCodec.decode(
+			passwordCiphertext, passwordNonce, keyVersion, cipherFormat,
+			order.APIQuotaCredentialID, contactFieldQuotaPassword,
+		)
+		if decodeErr != nil {
+			return "", internalStoreError()
+		}
+		encoded, err = s.contactCodec.encode(plaintext, credentialID, contactFieldOrderPassword)
+		if err != nil {
+			return "", internalStoreError()
+		}
+		passwordCiphertext = encoded.Ciphertext
+		passwordNonce = encoded.Nonce
+	default:
+		return "", internalStoreError()
+	}
+	_, err = tx.Exec(ctx, `
+		INSERT INTO api_order_delivery_credentials (
+			id, api_order_id, seller_user_id, buyer_user_id, delivery_kind,
+			api_base_url, panel_login_url, username, instructions,
+			api_key_ciphertext, api_key_nonce, password_ciphertext, password_nonce,
+			secret_encryption_key_version, secret_encryption_format, submitted_at, created_at
+		) VALUES (
+			$1, $2, $3, $4, $5,
+			$6, $7, $8, $9,
+			$10, $11, $12, $13,
+			$14, $15, $16, $16
+		)
+	`, credentialID, order.ID, order.SellerUserID, order.BuyerUserID, deliveryKind,
+		nullText(apiBaseURL), nullText(panelLoginURL), nullText(username), nullText(instructions),
+		apiKeyCiphertext, apiKeyNonce, passwordCiphertext, passwordNonce,
+		encoded.EncryptionKeyVersion, encoded.CipherFormat, now)
+	if err != nil {
+		return "", internalStoreError()
+	}
+	command, err := tx.Exec(ctx, `
+		UPDATE api_quota_credentials
+		SET status = 'delivered', delivered_at = $3, updated_at = $3
+		WHERE id = $1 AND reserved_order_id = $2 AND status = 'reserved'
+	`, order.APIQuotaCredentialID, order.ID, now)
+	if err != nil || command.RowsAffected() != 1 {
+		return "", internalStoreError()
+	}
+	return deliveryKind, nil
+}
+
 const apiOrderColumns = `
-	id::text, api_purchase_intent_id::text, api_service_id::text,
+	id::text, purchase_kind, api_purchase_intent_id::text, api_service_id::text,
 	buyer_user_id::text, seller_user_id::text, status, dispute_status,
 	COALESCE(dispute_case_id::text, ''), service_title_snapshot,
 	service_version_snapshot, billing_mode_snapshot, COALESCE(selected_package_id::text, ''),
-		COALESCE(selected_package_snapshot::text, ''), COALESCE(quote_version_snapshot, 0),
-		COALESCE(requested_usd_allowance_snapshot::text, ''), COALESCE(cny_per_usd_allowance_snapshot::text, ''), pricing_snapshot::text,
-		package_stock_reserved, package_expires_at,
-		amount::text, currency, selected_payment_method,
+	COALESCE(selected_package_snapshot::text, ''), COALESCE(quote_version_snapshot, 0),
+	COALESCE(requested_usd_allowance_snapshot::text, ''), COALESCE(cny_per_usd_allowance_snapshot::text, ''), pricing_snapshot::text,
+	package_stock_reserved, package_expires_at,
+	COALESCE(api_quota_batch_id::text, ''), COALESCE(api_quota_offer_id::text, ''),
+	COALESCE(api_quota_sale_round_id::text, ''), COALESCE(api_quota_allocation_id::text, ''),
+	COALESCE(api_quota_inventory_unit_id::text, ''), COALESCE(api_quota_credential_id::text, ''),
+	COALESCE(quota_offer_snapshot::text, ''), COALESCE(quota_offer_name_snapshot, ''),
+	COALESCE(quota_usd_allowance_snapshot::text, ''), COALESCE(quota_price_cny_snapshot::text, ''),
+	COALESCE(quota_cny_per_usd_snapshot::text, ''), COALESCE(quota_model_multiplier_snapshot::text, ''),
+	quota_sale_cutoff_at_snapshot, quota_expires_at_snapshot, COALESCE(quota_sale_mode_snapshot, ''),
+	quota_round_starts_at_snapshot, quota_round_ends_at_snapshot, COALESCE(quota_distribution_system_snapshot, ''),
+	COALESCE(quota_ttft_band_snapshot, ''), COALESCE(quota_recommended_concurrency_snapshot, 0),
+	quota_performance_confirmed_at_snapshot, COALESCE(quota_performance_unverified_snapshot, false),
+	COALESCE(quota_delivery_eta_minutes_snapshot, 0), COALESCE(quota_delivery_mode_snapshot, ''),
+	amount::text, currency, selected_payment_method,
 	payment_window_minutes_snapshot, payment_expires_at, payment_instructions_snapshot,
 		COALESCE(payment_qr_code_data_url_snapshot, ''), COALESCE(payment_summary, ''), payment_submitted_at,
 		COALESCE(payment_issue_reason, ''), COALESCE(payment_issue_note, ''), payment_issue_reported_at, paid_confirmed_at,
@@ -551,6 +796,7 @@ func (s *Store) getAPIOrder(ctx context.Context, q queryer, orderID string, forU
 func apiOrderScanTargets(order *apiorder.Order) []any {
 	return []any{
 		&order.ID,
+		&order.PurchaseKind,
 		&order.APIPurchaseIntentID,
 		&order.APIServiceID,
 		&order.BuyerUserID,
@@ -569,6 +815,30 @@ func apiOrderScanTargets(order *apiorder.Order) []any {
 		&order.PricingSnapshot,
 		&order.PackageStockReserved,
 		&order.PackageExpiresAt,
+		&order.APIQuotaBatchID,
+		&order.APIQuotaOfferID,
+		&order.APIQuotaSaleRoundID,
+		&order.APIQuotaAllocationID,
+		&order.APIQuotaInventoryUnitID,
+		&order.APIQuotaCredentialID,
+		&order.QuotaOfferSnapshot,
+		&order.QuotaOfferNameSnapshot,
+		&order.QuotaUSDAllowanceSnapshot,
+		&order.QuotaPriceCNYSnapshot,
+		&order.QuotaCNYPerUSDSnapshot,
+		&order.QuotaModelMultiplierSnapshot,
+		&order.QuotaSaleCutoffAtSnapshot,
+		&order.QuotaExpiresAtSnapshot,
+		&order.QuotaSaleModeSnapshot,
+		&order.QuotaRoundStartsAtSnapshot,
+		&order.QuotaRoundEndsAtSnapshot,
+		&order.QuotaDistributionSnapshot,
+		&order.QuotaTTFTBandSnapshot,
+		&order.QuotaRecommendedConcurrency,
+		&order.QuotaPerformanceConfirmedAt,
+		&order.QuotaPerformanceUnverified,
+		&order.QuotaDeliveryETAMinutes,
+		&order.QuotaDeliveryMode,
 		&order.Amount,
 		&order.Currency,
 		&order.SelectedPaymentMethod,
@@ -594,7 +864,7 @@ func apiOrderScanTargets(order *apiorder.Order) []any {
 }
 
 func newStoreAPIOrder(input apiorder.CreateInput, intent apiintent.Intent, service apimarket.Service, now time.Time) (apiorder.Order, *domain.AppError) {
-	if !apimarket.IsOrderableService(service) {
+	if !apimarket.WithOrderabilityAt(service, now).IsOrderable {
 		return apiorder.Order{}, domain.NewError(http.StatusConflict, domain.CodeInvalidStateTransition, "Service not orderable", "当前 API 服务不可下单。")
 	}
 	method := strings.TrimSpace(input.PaymentMethod)
@@ -782,40 +1052,44 @@ func (s *Store) insertAPIOrderDeliveryCredentialInTx(ctx context.Context, tx pgx
 	var passwordCiphertext []byte
 	var passwordNonce []byte
 	keyVersion := s.contactCodec.encryptionKeyVersion
+	cipherFormat := contactCipherFormatAADV1
 	if credential.APIKey != "" {
-		encoded, err := s.contactCodec.encode(credential.APIKey)
+		encoded, err := s.contactCodec.encode(credential.APIKey, credential.ID, contactFieldOrderAPIKey)
 		if err != nil {
 			return apiorder.DeliveryCredential{}, internalStoreError()
 		}
 		apiKeyCiphertext = encoded.Ciphertext
 		apiKeyNonce = encoded.Nonce
 		keyVersion = encoded.EncryptionKeyVersion
+		cipherFormat = encoded.CipherFormat
 	}
 	if credential.Password != "" {
-		encoded, err := s.contactCodec.encode(credential.Password)
+		encoded, err := s.contactCodec.encode(credential.Password, credential.ID, contactFieldOrderPassword)
 		if err != nil {
 			return apiorder.DeliveryCredential{}, internalStoreError()
 		}
 		passwordCiphertext = encoded.Ciphertext
 		passwordNonce = encoded.Nonce
 		keyVersion = encoded.EncryptionKeyVersion
+		cipherFormat = encoded.CipherFormat
 	}
 	_, err := tx.Exec(ctx, `
 		INSERT INTO api_order_delivery_credentials (
 			id, api_order_id, seller_user_id, buyer_user_id, delivery_kind,
 			api_base_url, panel_login_url, username, instructions,
 			api_key_ciphertext, api_key_nonce, password_ciphertext, password_nonce,
-			secret_encryption_key_version, submitted_at, created_at
+			secret_encryption_key_version, secret_encryption_format, submitted_at, created_at
 		)
 		VALUES (
 			$1, $2, $3, $4, $5,
 			$6, $7, $8, $9,
 			$10, $11, $12, $13,
-			$14, $15, $16
+			$14, $15, $16, $17
 		)
 	`, credential.ID, credential.APIOrderID, credential.SellerUserID, credential.BuyerUserID, credential.DeliveryKind,
 		nullText(credential.APIBaseURL), nullText(credential.PanelLoginURL), nullText(credential.Username), nullText(credential.Instructions),
-		apiKeyCiphertext, apiKeyNonce, passwordCiphertext, passwordNonce, keyVersion, credential.SubmittedAt, credential.CreatedAt)
+		apiKeyCiphertext, apiKeyNonce, passwordCiphertext, passwordNonce, keyVersion, cipherFormat,
+		credential.SubmittedAt, credential.CreatedAt)
 	if err != nil {
 		if isUniqueViolationOnConstraint(err, "ux_api_order_delivery_credentials_order") {
 			return apiorder.DeliveryCredential{}, domain.NewError(http.StatusConflict, domain.CodeInvalidStateTransition, "Invalid state transition", "交付信息已提交，不能再次修改。")
@@ -848,12 +1122,13 @@ func (s *Store) getAPIOrderDeliveryCredential(ctx context.Context, q queryer, or
 	var apiKeyNonce []byte
 	var passwordCiphertext []byte
 	var passwordNonce []byte
+	var keyVersion, cipherFormat string
 	err := q.QueryRow(ctx, `
 		SELECT id::text, api_order_id::text, seller_user_id::text, buyer_user_id::text,
 		       delivery_kind, COALESCE(api_base_url, ''), COALESCE(panel_login_url, ''),
 		       COALESCE(username, ''), COALESCE(instructions, ''),
 		       api_key_ciphertext, api_key_nonce, password_ciphertext, password_nonce,
-		       submitted_at, created_at
+		       secret_encryption_key_version, secret_encryption_format, submitted_at, created_at
 		FROM api_order_delivery_credentials
 		WHERE api_order_id = $1
 	`, orderID).Scan(
@@ -870,6 +1145,8 @@ func (s *Store) getAPIOrderDeliveryCredential(ctx context.Context, q queryer, or
 		&apiKeyNonce,
 		&passwordCiphertext,
 		&passwordNonce,
+		&keyVersion,
+		&cipherFormat,
 		&credential.SubmittedAt,
 		&credential.CreatedAt,
 	)
@@ -880,14 +1157,14 @@ func (s *Store) getAPIOrderDeliveryCredential(ctx context.Context, q queryer, or
 		return apiorder.DeliveryCredential{}, false, internalStoreError()
 	}
 	if len(apiKeyCiphertext) > 0 {
-		apiKey, err := s.contactCodec.decode(apiKeyCiphertext, apiKeyNonce)
+		apiKey, err := s.contactCodec.decode(apiKeyCiphertext, apiKeyNonce, keyVersion, cipherFormat, credential.ID, contactFieldOrderAPIKey)
 		if err != nil {
 			return apiorder.DeliveryCredential{}, false, internalStoreError()
 		}
 		credential.APIKey = apiKey
 	}
 	if len(passwordCiphertext) > 0 {
-		password, err := s.contactCodec.decode(passwordCiphertext, passwordNonce)
+		password, err := s.contactCodec.decode(passwordCiphertext, passwordNonce, keyVersion, cipherFormat, credential.ID, contactFieldOrderPassword)
 		if err != nil {
 			return apiorder.DeliveryCredential{}, false, internalStoreError()
 		}
@@ -904,10 +1181,11 @@ func openDisputeFromAPIOrderInTx(ctx context.Context, tx pgx.Tx, order apiorder.
 	item, err := scanDispute(ctx, tx, `
 		INSERT INTO dispute_cases (
 			report_id, target_type, target_id, target_label, primary_user_id, counterparty_user_id,
+			subject_user_id,
 			status, public_summary, public_result_code, public_result, admin_reason, opened_by_admin_id, opened_at,
 			created_at, updated_at, version
 		)
-		VALUES (NULL, $1, $2, $3, $4, $5, 'open', $6, $7, $8, $9, $10, $11, $11, $11, 1)
+		VALUES (NULL, $1, $2, $3, $4, $5, $5, 'open', $6, $7, $8, $9, $10, $11, $11, $11, 1)
 		RETURNING `+disputeReturningColumns+`
 	`, report.TargetAPIOrder, order.ID, strings.TrimSpace(order.ServiceTitleSnapshot), input.ActorUserID, counterpartyID,
 		"API 订单纠纷", report.PublicResultNoAction, "已进入人工处理中", strings.TrimSpace(input.Reason), input.ActorUserID, now)

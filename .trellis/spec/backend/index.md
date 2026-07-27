@@ -18,11 +18,19 @@ This directory contains guidelines for backend development. Fill in each file wi
 | [API Contracts](./api-contracts.md) | HTTP, session, CSRF, idempotency, and slice contracts | Active |
 | [Identity And Session](./identity-session.md) | linux.do/account/API-market avatar projection, email time presentation, and logout cache consistency | Active |
 | [Limited API Packages](./api-limited-packages.md) | Cross-layer publishing, recommendation, snapshot, inventory, and expiry contract | Active |
+| [OAuth Identity And Administrator Bootstrap](./auth-identity.md) | Immutable provider identity ownership and proven create-only administrator bootstrap | Active |
+| [Authentication Session Renewal](./auth-sessions.md) | Seven-day idle expiry, renewal throttling, cookie sync, and absolute expiry | Active |
+| [Verification And Data Lifecycle](./verification-data-lifecycle.md) | HMAC email challenges, finite idempotency, and bounded PostgreSQL retention | Active |
+| [Limited API Quota Offers](./api-quota-offers.md) | Fixed quota inventory, rounds, orders, credentials, and concurrency | Active |
+| [Reputation Facts](./reputation.md) | Truthful transaction facts, role/scope aggregation, and exclusions | Active |
 | [Database Guidelines](./database-guidelines.md) | PostgreSQL migration patterns and schema conventions | Active |
 | [Deployment Contract](./deployment-contract.md) | CI, GHCR, VPS release, backup, and environment isolation requirements | Active |
 | [Error Handling](./error-handling.md) | Problem Details and domain error handling | Active |
 | [Quality Guidelines](./quality-guidelines.md) | Code standards, forbidden patterns | Active |
 | [Logging Guidelines](./logging-guidelines.md) | Structured logging and secret handling rules | Active |
+| [Safe Outbound HTTP](./outbound-http.md) | Public HTTPS validation, DNS rebinding defense, bounded clients, and secret-safe errors | Active |
+| [Reproducible Release And Contract Drift](./release-contract.md) | Fixed-commit archives/images, build metadata, image-only production Compose, and generated OpenAPI types | Active |
+| [Runtime Security And Observability](./runtime-operations.md) | API/Pages response headers, protected metrics, bounded labels, and operator-route exposure | Active |
 
 ---
 
@@ -35,13 +43,22 @@ Before editing backend code, read:
 1. [Directory Structure](./directory-structure.md)
 2. [API Contracts](./api-contracts.md)
 3. [Identity And Session](./identity-session.md) for OAuth, profile identity, email time, or logout work
-4. [Database Guidelines](./database-guidelines.md)
-5. [Deployment Contract](./deployment-contract.md) for CI/CD, images, Compose release, backup, or VPS work
-6. [Error Handling](./error-handling.md)
-7. [Quality Guidelines](./quality-guidelines.md)
-8. [Logging Guidelines](./logging-guidelines.md)
-9. [C2CMarket Product Context](../guides/product-context.md)
-10. [Maintainability Contract](../guides/maintainability-contract.md)
+4. [OAuth Identity And Administrator Bootstrap](./auth-identity.md) when touching OAuth identity ownership, provider bindings, OAuth permissions, or first-admin bootstrap
+5. [Authentication Session Renewal](./auth-sessions.md) when touching session creation, validation, cookies, revocation, or expiry
+6. [Verification And Data Lifecycle](./verification-data-lifecycle.md) when touching email challenges, idempotency expiry/replay, retention SQL, or maintenance runners
+7. [Limited API Packages](./api-limited-packages.md) when touching fixed packages, package inventory, order snapshots, or expiry
+8. [Limited API Quota Offers](./api-quota-offers.md) when touching quota batches, offers, rounds, orders, inventory, or credential delivery
+9. [Reputation Facts](./reputation.md) when touching reputation facts, exclusions, scoring inputs, or public reputation DTOs
+10. [Database Guidelines](./database-guidelines.md)
+11. [Deployment Contract](./deployment-contract.md) for CI/CD, images, Compose release, backup, or VPS work
+12. [Error Handling](./error-handling.md)
+13. [Quality Guidelines](./quality-guidelines.md)
+14. [Logging Guidelines](./logging-guidelines.md)
+15. [Safe Outbound HTTP](./outbound-http.md) when adding or changing outbound HTTP requests whose destination is stored, configured, or otherwise variable
+16. [Reproducible Release And Contract Drift](./release-contract.md) when touching source packaging, Docker/Compose releases, build metadata, `/version`, OpenAPI, or generated API types
+17. [Runtime Security And Observability](./runtime-operations.md) when touching response headers, `frontend/public/_headers`, `/metrics`, observability labels, or operator-route exposure
+18. [C2CMarket Product Context](../guides/product-context.md)
+19. [Maintainability Contract](../guides/maintainability-contract.md)
 
 ## Quality Check
 
