@@ -266,7 +266,10 @@ Added an explicit pnpm root package and pinned Node 24.13.0; verified Cloudflare
 
 ### Main Changes
 
-(Add details)
+- Merged the demand-removal branch into the current `origin/staging` baseline while preserving the Nuxt 4 and Cloudflare Worker architecture.
+- Reconciled API service multiplier history through migration 66 without rewriting immutable migration 54 or valid business values.
+- Removed remaining demand-module routes, SEO references, smoke coverage, OpenAPI entries, and current documentation references.
+- Added the branch-baseline rule requiring new work to start from the latest `origin/staging` or `origin/main`.
 
 ### Git Commits
 
@@ -276,7 +279,10 @@ Added an explicit pnpm root package and pinned Node 24.13.0; verified Cloudflare
 
 ### Testing
 
-- [OK] (Add test results)
+- [OK] Go formatting, vet, unit tests, race tests, and PostgreSQL migration integration checks.
+- [OK] Frontend frozen install, 220 Vitest tests, Nuxt typecheck, real-backend build, and Wrangler dry-runs.
+- [OK] OpenAPI, migration documentation, deployment, package, conflict-marker, and removed-module residual guards.
+- [WARN] Optional local binaries `actionlint`, `govulncheck`, `gitleaks`, `trivy`, and `syft` were unavailable and were not reported as executed.
 
 ### Status
 
@@ -765,6 +771,40 @@ Removed the unlaunched demand module across frontend, backend, OpenAPI, search, 
 - [OK] PostgreSQL 18 migration/integration gate at version 65 with `demands` absent and `dirty=false`.
 - [OK] Eleven real-backend smoke groups and explicit old-demand API 404 checks.
 - [OK] Desktop 1440x900 and mobile 390x844 browser QA with no demand entry, overflow, overlap, or console error.
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
+
+
+## Session 21: Merge demand removal into staging
+
+**Date**: 2026-07-27
+**Task**: Merge demand removal into staging
+**Package**: frontend
+**Branch**: `codex/merge-demand-removal-staging`
+
+### Summary
+
+Merged demand removal and prelaunch hardening into current staging, reconciled migration 66, and passed local full-scope verification.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `db9742f196bf762d5ffa0e2f3a26810fe9cc9ca7` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
 
 ### Status
 
