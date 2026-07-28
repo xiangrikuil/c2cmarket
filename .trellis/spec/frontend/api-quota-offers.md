@@ -1,7 +1,7 @@
 # Limited API Quota Offer Frontend Contract
 
 Date: 2026-07-19
-Updated: 2026-07-25
+Updated: 2026-07-29
 Author: Codex
 
 ## Scenario: Quota Offer Market, Purchase, And Owner Management
@@ -35,6 +35,10 @@ URL contract:
 /api-market?view=free       -> legacy free-amount tab
 /my/api-services?intent=quota -> choose an existing service specifically for quota publishing
 /my/account?returnTo=/my/api-services?intent=quota -> complete required account setup without losing the quota workflow
+/api-market/new           -> choose a publish mode
+/api-market/new?mode=free -> publish free-amount credit
+/api-market/new?mode=package -> publish fixed credit packages
+/api-market/new?mode=limited -> create the prerequisite service for limited quota
 /api-market/new?after=quota -> create the prerequisite service and continue to its quota manager
 /my/api-services/{id}       -> owner quota manager under the existing service
 /my/api-orders/{id}         -> frozen quota order detail
@@ -47,14 +51,17 @@ URL contract:
 - The account-recovery guard preserves the complete `returnTo=/my/api-services?intent=quota` target. `MyCenterPage` names the blocked action and exposes `继续发布限时额度包` after setup instead of a generic profile-page continuation.
 - `MyApiServicesPage` is the seller selection step: quota intent changes the heading to `选择 API 服务`; existing rows expose `选择并发布额度包` and deep-link to `/my/api-services/{id}#quota-offers`. When no service exists, the empty state explains the prerequisite and links to `/api-market/new?after=quota`.
 - `ApiServicePublishPage` reads `after=quota`. Successful prerequisite creation routes to `/my/api-services/{newServiceId}#quota-offers`; ordinary service publishing still returns to `/my/api-services`.
-- `ApiServicePublishPage` exposes peer `自由额度` and `限时额度包` tabs. `after=quota` selects `限时额度包`; ordinary publishing selects `自由额度`. Switching the tab changes the current publish workflow and post-submit destination without changing the backend service payload contract.
+- Generic `ApiServicePublishPage` entry renders only three peer choices: `自由额度`, `固定额度包`, and `限时额度包`. It must not default a mode or render the editor/preview before the seller chooses.
+- The publish-mode URL is authoritative: `mode=free`, `mode=package`, and `mode=limited` restore their matching editor. Invalid modes return to the chooser. Legacy `after=quota` maps to `limited`; contextual `发布限时额度包` actions still enter the existing limited workflow directly.
+- Free mode maps to `metered_credit`; package mode maps to `fixed_package`; limited mode continues through the prerequisite base-service flow. The fixed-package editor is a peer mode surface and must not be nested under another billing-mode radio group.
 - The limited workflow must say that the current page creates the prerequisite base service. Fixed USD allowance, total CNY, offer multiplier, inventory, continuous/scheduled sale mode, absolute expiry, cutoff, and delivery inventory are configured in the next `#quota-offers` step; the preview must not invent those values early.
-- The publish stepper reflects the real workflow. Limited publishing uses `选择销售方式 → 配置基础服务 → 设置额度包 → 确认发布`; its primary action is `保存基础服务，下一步设置额度包`. Ordinary publishing uses `发布自由额度服务`.
+- The publish stepper reflects the real workflow. Limited publishing treats its selected mode as complete and starts at `配置基础服务`; its primary action is `保存基础服务，下一步设置额度包`. Free and package publishing start with their mode-specific price/package configuration and use `发布自由额度服务` or `发布固定额度包`.
 - The publish stepper uses the shared shadcn-vue `StepperSeparator`, but the page must provide an explicit non-zero horizontal height because the shared separator does not size itself. Completed segments use the primary color and incomplete segments use the border color.
 - API quota publish pages use one progressive interaction contract: explicit current/completed step state, exactly one expanded step, real summaries for completed steps, compact pending rows, and revisitable completed steps. Continue validates only the current step; final publication validates the complete form and returns focus to the first error-owning step without rebuilding form state.
 - Desktop publish pages render one sticky buyer-preview instance beside the active step flow. Below `1241px`, the desktop preview is not rendered and the same preview content opens through the shared Dialog surface; do not maintain simultaneous desktop/mobile preview trees or a second preview DTO.
-- The publish page first viewport uses a compact marketplace hierarchy: page title and compact stepper remain full width; immediately below the stepper the page enters its form/preview grid. The left column begins with two icon-led selling-mode choices and one buyer-flow strip before the form fields, while the buyer preview begins at the same vertical position in the right column. Do not place separate boundary, completeness, or explanatory cards before this grid; completeness stays as one compact line beside the current step, and boundary copy stays in the flow/preview surfaces.
-- The selling-mode choices preserve the approved green `自由额度` and orange `限时额度包` contrast. Form sections use small semantic Lucide icons, and the buyer preview uses icon-led comparison rows. Icons reinforce field scanning but do not replace labels.
+- The generic publish first viewport is a dedicated, centered chooser capped at `max-w-5xl`: three restrained cards on desktop and one column on mobile. It contains no stepper, form, preview, or sticky publication action. After selection, the page enters the existing compact stepper and form/preview grid.
+- Mode choices preserve the approved green `自由额度`, blue `固定额度包`, and orange `限时额度包` contrast. Form sections use small semantic Lucide icons, and the buyer preview uses icon-led comparison rows. Icons reinforce field scanning but do not replace labels.
+- Returning through `更换销售模式` removes `mode` and legacy `after` while preserving unrelated query keys. When the current form is dirty, the page confirms before returning because a same-route query change is not covered by the route-leave guard.
 - The primary publish/continue action remains visible in a concise sticky bottom bar on desktop and mobile. At `1440x900`, `.api-publish-layout` should begin no lower than `460px`; at `390x844`, it should begin no lower than `680px`. The sticky action must remain fully inside the viewport without covering its own validation reason.
 - The limited buyer flow is `选择额度包 → 创建订单 → 站外付款 → 卖家确认收款 → 获取交付凭证`, with `平台记录订单，不代收款`. Do not use `自动发货`, `平台担保`, `资金安全`, `安全可靠`, or `获取 API Key`.
 - Mobile publish pages keep identity configuration in normal document flow. Only the concise primary action bar may stick to the bottom; a multi-field configuration panel must not cover the viewport.
@@ -94,7 +101,10 @@ URL contract:
 | Account setup incomplete | Redirect with the full quota `returnTo`, explain why setup is required, then resume the same workflow |
 | Seller has no API service | Show the prerequisite-service explanation and one `发布 API 服务并继续` action with `after=quota` |
 | `/api-market/new?after=quota` | Select limited mode, hide free-amount price/inventory inputs, and show the base-service continuation action |
-| `/api-market/new` | Select free mode, show the free-amount price/inventory inputs, and preserve normal list navigation |
+| `/api-market/new` or invalid `mode` | Show only the three-mode chooser with no default selection |
+| `/api-market/new?mode=free` | Show free-amount price/inventory inputs and preserve normal list navigation |
+| `/api-market/new?mode=package` | Show one initialized fixed package and no nested billing-mode selector |
+| `/api-market/new?mode=limited` | Show the base-service continuation workflow |
 
 ### 5. Good / Base / Bad Cases
 
@@ -107,7 +117,7 @@ URL contract:
 - Base: a continuous `$50 / ¥5` offer confirms ten-minute payment and no round ID.
 - Base: an unrecognized provider renders as `其他` with a neutral card and all real quota fields intact.
 - Base: a seller with no API service sees why a service is required and continues to the existing service publish form.
-- Base: an ordinary API service publish without `after=quota` still returns to the normal service list.
+- Base: an ordinary API service publish chooses free or fixed-package mode, refreshes the deep link without losing mode, and returns to the normal service list after publication.
 - Bad: the purchase dialog contains editable amount or multiplier fields.
 - Bad: the public market only says `发布 API 服务`, leaving sellers to infer where quota offers are created.
 - Bad: the account guard redirects to `/my/account` with `returnTo=/my/api-services`, because that loses the quota-specific selection and continuation copy.
@@ -119,12 +129,12 @@ URL contract:
 ### 6. Tests Required
 
 - Vitest: default tab/query, `intent=quota` entry, account-recovery `returnTo` preservation, `after=quota` post-publish navigation, quota-section anchor, countdown boundaries, fixed amount, five/ten-minute windows, Problem Details mapping, cross-offer round limit, cancellation release, CSV non-persistence, auto-delivery, editable non-one Sub2API multiplier, real adapter fields, and realtime invalidation.
-- Publish-page regression tests also cover mode defaults, corrected labels, mode-specific primary actions, limited preview fields, buyer-flow copy, and forbidden wording absence.
+- Publish-page regression tests cover the null/default chooser, all three current query modes, legacy `after=quota`, invalid mode handling, corrected labels, removal of the nested billing choice, mode-specific primary actions, limited preview fields, buyer-flow copy, and forbidden wording absence.
 - Progressive publish tests cover active/completed/pending state, visitable-step rules, first-error step mapping, completed summaries, sticky primary action, and the shared responsive preview boundary.
 - Market-card source regressions assert both limited variants and the free-amount variant use `quota-offer-card`, `data-category`, shared product-category inference, the six static CSS selectors, full-width brand buttons, the centered `1640px` free grid with flexible `330px` minimum tracks, `342px` normal card height, compact active reputation, and no unsupported `自动交付` / `安全可靠` / `平台担保` wording.
 - Free-amount market cards omit source-author verification entirely. API service detail hides `not_submitted`, `pending`, and `expired`, and displays the badge only for `verified` or `mismatch`; the backend field remains unchanged.
 - Type/build: `pnpm --dir frontend typecheck`, then run `pnpm --dir frontend build` with `NUXT_PUBLIC_API_MODE=real`, `NUXT_PUBLIC_API_BASE_URL`, and `NUXT_API_BASE_URL`.
-- Browser: `1920x1080`, `1440x900`, and `390x844` for free-market cards; assert first-row counts of four, three, and one respectively, normal card dimensions of approximately `398x342`, `383x342`, and `347x342`, `scrollHeight <= clientHeight`, four metric columns, `40px` purchase buttons, no page-level horizontal overflow, and no console warnings/errors. At `1920x1080`, the centered grid is `1640px` wide and must not create a fifth column. The broader `1440x900` and `390x844` suite still covers the compact publish first viewport, limited cards, purchase dialog, owner batch/offer/round/CSV sections, and quota order detail.
+- Browser: `1920x1080`, `1440x900`, and `390x844` for free-market cards; assert first-row counts of four, three, and one respectively, normal card dimensions of approximately `398x342`, `383x342`, and `347x342`, `scrollHeight <= clientHeight`, four metric columns, `40px` purchase buttons, no page-level horizontal overflow, and no console warnings/errors. At `1920x1080`, the centered grid is `1640px` wide and must not create a fifth column. At `1440x900` and `390x844`, the generic publish chooser must show exactly three modes, no editor/preview, and no page-level horizontal overflow; all three mode deep links and legacy `after=quota` remain covered by the broader publish suite.
 
 ### 7. Wrong vs Correct
 

@@ -10,7 +10,7 @@ describe('发布完成后的导航', () => {
   })
 
   it('普通发布返回服务列表，额度包流程续接固定场次向导', () => {
-    expect(apiServicePublishSource).toContain("route.query.after === 'quota'")
+    expect(apiServicePublishSource).toContain('apiPublishModeFromQuery(route.query.mode, route.query.after)')
     expect(apiServicePublishSource).toContain('`/api-market/quota/new?serviceId=${service.id}`')
     expect(apiServicePublishSource).toContain(": '/my/api-services'")
     expect(apiServicePublishSource).toContain('router.replace(destination)')

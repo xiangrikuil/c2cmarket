@@ -30,7 +30,7 @@ const emit = defineEmits<{
         </span>
         <div>
           <h2>接入类型与默认倍率</h2>
-          <p>{{ isLimitedQuotaMode ? '额度包倍率在下一步独立设置，默认 1.00x。' : isFixedPackageMode ? '设置限时流量包服务的默认倍率。' : '设置自由额度服务的默认倍率。' }}</p>
+          <p>{{ isLimitedQuotaMode ? '额度包倍率在下一步独立设置，默认 1.00x。' : isFixedPackageMode ? '设置固定额度包服务的默认倍率。' : '设置自由额度服务的默认倍率。' }}</p>
         </div>
       </div>
     </div>
@@ -59,7 +59,7 @@ const emit = defineEmits<{
 
       <div v-if="form.distributionSystem === 'sub2api'" class="rounded-md border border-primary/20 bg-primary/5 px-3 py-1.5">
         <div class="text-sm font-semibold text-primary">{{ formatMultiplier(1) }}</div>
-        <p class="mt-1 text-xs text-muted-foreground">{{ isLimitedQuotaMode ? '这是基础服务默认值；下一步可为每个额度包填写真实模型倍率。' : isFixedPackageMode ? 'Sub2API 限时流量包按 1.00x 默认倍率展示。' : 'Sub2API 自由额度服务按 1.00x 默认倍率展示。' }}</p>
+        <p class="mt-1 text-xs text-muted-foreground">{{ isLimitedQuotaMode ? '这是基础服务默认值；下一步可为每个额度包填写真实模型倍率。' : isFixedPackageMode ? 'Sub2API 固定额度包按 1.00x 默认倍率展示。' : 'Sub2API 自由额度服务按 1.00x 默认倍率展示。' }}</p>
       </div>
 
       <div v-else class="space-y-2">
