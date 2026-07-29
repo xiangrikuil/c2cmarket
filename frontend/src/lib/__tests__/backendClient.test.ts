@@ -54,6 +54,25 @@ test('real backend mode surfaces expired sessions without dev-session fallback',
   assert.equal(fetchMock.mock.calls[0]?.[0], '/api/v1/auth/session')
 })
 
+test('runtime backend mode requires an explicit supported value', async () => {
+  vi.resetModules()
+  const client = await import('../backendClient')
+
+  assert.throws(
+    () => client.setBackendRuntimeConfig({}),
+    /NUXT_PUBLIC_API_MODE must be explicitly set to "real" or "mock"/,
+  )
+  assert.throws(
+    () => client.setBackendRuntimeConfig({ apiMode: 'development' }),
+    /NUXT_PUBLIC_API_MODE must be explicitly set to "real" or "mock"/,
+  )
+
+  client.setBackendRuntimeConfig({ apiMode: 'mock' })
+  assert.equal(client.shouldUseRealBackend(), false)
+  client.setBackendRuntimeConfig({ apiMode: 'real' })
+  assert.equal(client.shouldUseRealBackend(), true)
+})
+
 test('decodes Problem Details into BackendProblemError', async () => {
   const fetchMock = vi.fn()
   vi.stubGlobal('fetch', fetchMock)

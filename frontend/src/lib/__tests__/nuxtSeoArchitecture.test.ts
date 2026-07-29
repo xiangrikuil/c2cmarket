@@ -54,6 +54,10 @@ describe('Nuxt hybrid rendering and SEO architecture', () => {
 
   it('uses only Nuxt runtime variables in current frontend deployment surfaces', () => {
     const config = readFileSync(new URL('../../../nuxt.config.ts', import.meta.url), 'utf8')
+    const packageJson = JSON.parse(
+      readFileSync(new URL('../../../package.json', import.meta.url), 'utf8'),
+    ) as { scripts: Record<string, string> }
+    const developmentEnv = readFileSync(new URL('../../../.env.development', import.meta.url), 'utf8')
     const currentDeploymentFiles = [
       '../../../../.github/workflows/ci.yml',
       '../../../../.env.example',
@@ -63,10 +67,15 @@ describe('Nuxt hybrid rendering and SEO architecture', () => {
 
     expect(config).not.toMatch(/\bVITE_[A-Z0-9_]+\b/)
     expect(currentDeploymentFiles.join('\n')).not.toMatch(/\bVITE_[A-Z0-9_]+\b/)
-    expect(config).toContain("apiMode = process.env.NUXT_PUBLIC_API_MODE ?? ''")
+    expect(config).toContain('apiMode = requireApiMode(process.env.NUXT_PUBLIC_API_MODE)')
     expect(config).toContain("process.argv.includes('build')")
     expect(config).toContain('!publicApiBaseURL')
     expect(config).toContain('!process.env.NUXT_API_BASE_URL')
     expect(config).toContain('NUXT_DEV_API_PROXY_TARGET')
+    expect(packageJson.scripts.dev).toContain('--port 5173 --dotenv .env.development')
+    expect(packageJson.scripts['dev:mock']).toContain('NUXT_PUBLIC_API_MODE=mock')
+    expect(packageJson.scripts['dev:mock']).toContain('--dotenv .env.development')
+    expect(developmentEnv).toMatch(/^NUXT_PUBLIC_API_MODE=real$/m)
+    expect(developmentEnv).toMatch(/^NUXT_DEV_API_PROXY_TARGET=http:\/\/127\.0\.0\.1:8080$/m)
   })
 })

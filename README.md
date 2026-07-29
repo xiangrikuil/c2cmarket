@@ -112,7 +112,7 @@ pnpm --dir frontend install --frozen-lockfile
 pnpm --dir frontend dev
 ```
 
-打开 `http://127.0.0.1:3000`。Nuxt 开发服务器通过运行时配置访问本地后端。
+打开 `http://127.0.0.1:5173`。默认开发命令显式加载 `frontend/.env.development`，以真实 API 模式通过 Nuxt 同源代理访问 `http://127.0.0.1:8080`。纯前端演示必须显式运行 `pnpm --dir frontend dev:mock`；Mock 数据不会写入 PostgreSQL。
 
 停止本地服务：
 

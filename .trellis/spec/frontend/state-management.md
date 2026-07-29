@@ -128,6 +128,114 @@ if (!isAccountRecoveryComplete(profile) && !isAccountRecoveryAllowedPath(route.p
 }
 ```
 
+## Scenario: Development API Mode And Account Recovery Persistence
+
+### 1. Scope / Trigger
+
+- Trigger: changes to Nuxt development commands, dotenv loading, runtime API
+  mode, the local frontend/backend ports, or account recovery persistence.
+- Account recovery state is an identity-domain record, not a page preference.
+  Real-mode development must use the same backend and PostgreSQL ownership as
+  staging and production.
+
+### 2. Signatures
+
+```ts
+type ApiMode = 'real' | 'mock'
+
+function requireApiMode(value: unknown): ApiMode
+function setBackendRuntimeConfig(config: {
+  apiMode?: string
+  apiBaseUrl?: string
+}): void
+function shouldUseRealBackend(): boolean
+```
+
+```text
+pnpm --dir frontend dev       -> real, http://127.0.0.1:5173
+pnpm --dir frontend dev:mock  -> mock, http://127.0.0.1:5173
+
+NUXT_PUBLIC_API_MODE=real|mock
+NUXT_PUBLIC_SITE_URL=http://127.0.0.1:5173
+NUXT_DEV_API_PROXY_TARGET=http://127.0.0.1:8080
+```
+
+### 3. Contracts
+
+| Level | Change | Appropriate use | Limitation |
+| --- | --- | --- | --- |
+| Minimum immediate repair | Start Nuxt with `NUXT_PUBLIC_API_MODE=real`, or explicitly load the tracked development dotenv file | Unblock the current local session while backend and PostgreSQL are already running | Depends on the exact start command and does not prevent a later silent fallback |
+| Minimum repository repair | Make the default `dev` script load the real-mode development dotenv file and document the command | Small, reviewable correction for the confirmed startup bug | Still needs a contract test to keep the command and runtime mode aligned |
+| Long-term repair | Default development to validated `real` mode, provide a separate explicit Mock command, fail fast on missing/invalid mode, and test persistence across a profile refetch/page refresh | Normal ongoing development | Slightly more configuration and test work, but removes ambiguous runtime behavior |
+
+- The long-term repair is the default when the backend contract and database
+  persistence already exist.
+- The default `dev` command must explicitly load `frontend/.env.development`.
+  Do not assume Nuxt loads `.env.development` without `--dotenv`.
+- Browser API calls use the same-origin `/api` path. Nuxt proxies it to the
+  backend on `127.0.0.1:8080`; a public API base URL is not required locally.
+- `real` and `mock` are the only valid modes. Missing or invalid mode fails
+  during config loading and must not select Mock.
+- Mock is available only through `dev:mock`. Its state is demo data and is not
+  a persistence acceptance environment.
+- Do not add `localStorage`, `sessionStorage`, or Pinia persistence for
+  `email`, `emailVerified`, `emailVerifiedAt`, or `passwordConfigured` in real
+  mode. Refresh must read those fields from `GET /api/v1/me/profile`.
+- Backend unavailability in real mode remains a visible request failure.
+
+### 4. Validation & Error Matrix
+
+| Condition | Expected behavior |
+| --- | --- |
+| `NUXT_PUBLIC_API_MODE` is missing or unknown | Nuxt config and runtime config initialization fail with an explicit mode error |
+| Default `dev` starts | Runtime payload contains `apiMode:"real"` and listens on `5173` |
+| `dev:mock` starts | Runtime payload contains `apiMode:"mock"` and does not claim database persistence |
+| Backend on `8080` is unavailable in real mode | API request fails visibly; no Mock record is returned |
+| Email/password setup completes in real mode | PostgreSQL-backed profile returns `emailVerified=true` and `passwordConfigured=true` after refetch and frontend restart |
+
+### 5. Good / Base / Bad Cases
+
+- Good: `pnpm --dir frontend dev` loads the tracked development dotenv file,
+  proxies `/api` to `8080`, and a refreshed account page reads completed state
+  from the backend profile.
+- Base: a developer intentionally runs `dev:mock` for a standalone UI demo and
+  accepts that a reload may restore Mock seed state.
+- Bad: an empty mode silently executes `api.ts` Mock mutations, or the frontend
+  stores recovery fields in browser storage to hide that no database write
+  occurred.
+
+### 6. Tests Required
+
+- Unit-test `requireApiMode()` with `real`, `mock`, blank, missing, and unknown
+  values.
+- Assert the default and Mock package commands load the expected mode and use
+  port `5173`.
+- Adapter regression: set password, confirm email, discard the frontend query
+  cache, fetch `GET /api/v1/me/profile` again, and verify both completion
+  fields.
+- Runtime smoke: read the Nuxt payload for both start commands and assert
+  `apiMode`; in real mode, proxy `/readyz` and confirm database readiness.
+- Database smoke: complete account recovery through a linux.do-bound fake OAuth
+  user, restart the frontend, and read the completed profile again.
+- Run full Vitest, Nuxt typecheck, real-mode production build, relevant backend
+  tests, source-package test, and `git diff --check`.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```ts
+const apiMode = process.env.NUXT_PUBLIC_API_MODE ?? ''
+const useMock = apiMode !== 'real'
+```
+
+#### Correct
+
+```ts
+const apiMode = requireApiMode(process.env.NUXT_PUBLIC_API_MODE)
+const useRealBackend = apiMode === 'real'
+```
+
 ## Scenario: API Service Account Payment Settings Share One Editor And Snapshot Into Publish Payload
 
 ### 1. Scope / Trigger

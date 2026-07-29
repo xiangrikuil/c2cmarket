@@ -1,3 +1,5 @@
+import { requireApiMode, type ApiMode } from '@/lib/apiMode'
+
 type ProblemDetails = {
   title?: string
   status?: number
@@ -53,7 +55,7 @@ export class BackendProblemError extends Error {
   }
 }
 
-let runtimeApiMode = ''
+let runtimeApiMode: ApiMode | null = null
 let runtimeBaseURL = ''
 const SESSION_REFRESH_GRACE_MS = 60_000
 const SESSION_INVALIDATION_CODES = new Set([
@@ -68,6 +70,10 @@ let sessionRequest: Promise<BackendSession> | null = null
 const pendingGetRequests = new Map<string, Promise<unknown>>()
 
 export function shouldUseRealBackend() {
+  if (runtimeApiMode === null) {
+    if (import.meta.env.MODE === 'test') return false
+    throw new Error('Backend runtime config has not initialized NUXT_PUBLIC_API_MODE.')
+  }
   return runtimeApiMode === 'real'
 }
 
@@ -76,7 +82,7 @@ export function backendBaseURL() {
 }
 
 export function setBackendRuntimeConfig(config: { apiMode?: string, apiBaseUrl?: string }) {
-  runtimeApiMode = config.apiMode?.trim() ?? ''
+  runtimeApiMode = requireApiMode(config.apiMode)
   runtimeBaseURL = config.apiBaseUrl?.trim() ?? ''
 }
 
