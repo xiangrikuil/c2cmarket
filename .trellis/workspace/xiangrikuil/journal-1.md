@@ -855,3 +855,46 @@ Repaired clean Nuxt preparation, vulnerable frontend dependencies, PostgreSQL TC
 ### Next Steps
 
 - None - task complete
+
+
+## Session 23: Inline API payment settings in publish flows
+
+**Date**: 2026-07-29
+**Task**: Inline API payment settings in publish flows
+**Package**: frontend
+**Branch**: `codex/api-publish-three-modes`
+
+### Summary
+
+Extracted one shared account payment editor, opened it inline from free, fixed-package, and limited API publishing, preserved isolated drafts and publish snapshots, updated the query cache contract, and completed full responsive local verification.
+
+### Main Changes
+
+- Extracted account payment draft, validation, QR, removal confirmation, and
+  mutation lifecycle into a shared editor used by My Center and publish flows.
+- Replaced the publish summary route link with an inline dialog in free,
+  fixed-package, and limited API publication.
+- Preserved isolated drafts, dirty-close confirmation, query cache updates,
+  and publish-time payment snapshots; synchronized the frontend code spec.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `9c339a2` | `feat: edit API payment settings in publish flow` |
+
+### Testing
+
+- [OK] Focused Vitest: 4 files / 31 tests.
+- [OK] Full Vitest: 53 files / 226 tests; Nuxt typecheck.
+- [OK] Real-backend Nuxt production build and `git diff --check`.
+- [OK] Desktop `1440x900` and mobile `390x844` browser QA across all three
+  publish modes.
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

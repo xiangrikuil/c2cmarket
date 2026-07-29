@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 22
-- **Last Active**: 2026-07-27
+- **Total Sessions**: 23
+- **Last Active**: 2026-07-29
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~849 | Active |
+| `journal-1.md` | ~900 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 23 | 2026-07-29 | Inline API payment settings in publish flows | `9c339a2` | `codex/api-publish-three-modes` |
 | 22 | 2026-07-27 | Fix PR 15 CI gates | `a4ab77063fb01338f4be155fa73a9d8b618aaff5` | `codex/remove-demand-module` |
 | 21 | 2026-07-27 | Merge demand removal into staging | `db9742f196bf762d5ffa0e2f3a26810fe9cc9ca7` | `codex/merge-demand-removal-staging` |
 | 20 | 2026-07-27 | Remove prelaunch demand module | `399bf78` | `codex/remove-demand-module` |
