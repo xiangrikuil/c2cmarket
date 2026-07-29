@@ -966,3 +966,37 @@ Made real backend mode explicit for default Nuxt development on port 5173, added
 ### Next Steps
 
 - None - task complete
+
+
+## Session 26: 未登录隐藏私有导航
+
+**Date**: 2026-07-29
+**Task**: 未登录隐藏私有导航
+**Package**: frontend
+**Branch**: `codex/unified-auth-route-guard`
+
+### Summary
+
+匿名与认证未解析状态只展示公共导航；隐藏私有分组、通知和公告中心，并保留带安全回跳的登录后发布入口。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `9fb4457` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
