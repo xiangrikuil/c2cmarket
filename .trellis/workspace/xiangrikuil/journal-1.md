@@ -932,3 +932,37 @@ Made real backend mode explicit for default Nuxt development on port 5173, added
 ### Next Steps
 
 - None - task complete
+
+
+## Session 25: 统一登录访问控制与会话回跳
+
+**Date**: 2026-07-29
+**Task**: 统一登录访问控制与会话回跳
+**Package**: frontend
+**Branch**: `codex/unified-auth-route-guard`
+
+### Summary
+
+为发布、订单、个人中心、商户和管理页面建立统一登录守卫与安全回跳；修复会话失效、公开页匿名探测及限时额度发布错误状态，并完成自动化与浏览器验证。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `9a15a8d` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

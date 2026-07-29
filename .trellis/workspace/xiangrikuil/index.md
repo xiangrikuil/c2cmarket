@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 24
+- **Total Sessions**: 25
 - **Last Active**: 2026-07-29
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~934 | Active |
+| `journal-1.md` | ~968 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 25 | 2026-07-29 | 统一登录访问控制与会话回跳 | `9a15a8d` | `codex/unified-auth-route-guard` |
 | 24 | 2026-07-29 | Persist development account recovery through real backend | `44895f2` | `codex/api-publish-three-modes` |
 | 23 | 2026-07-29 | Inline API payment settings in publish flows | `9c339a2` | `codex/api-publish-three-modes` |
 | 22 | 2026-07-27 | Fix PR 15 CI gates | `a4ab77063fb01338f4be155fa73a9d8b618aaff5` | `codex/remove-demand-module` |
