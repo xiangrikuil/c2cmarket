@@ -52,6 +52,7 @@ import { appThemes, applyAppTheme, getInitialAppTheme, isAppTheme } from '@/them
 import { ACCOUNT_RECOVERY_PATH, isAccountRecoveryAllowedPath, isAccountRecoveryComplete } from '@/lib/accountRecovery'
 import { usePersistentSidebar } from '@/composables/usePersistentSidebar'
 import { logoutBackendSession } from '@/lib/backendClient'
+import { loginRoute } from '@/lib/authNavigation'
 
 const route = useRoute()
 const router = useRouter()
@@ -61,8 +62,11 @@ const logoutLoading = ref(false)
 const { sidebarCollapsed } = usePersistentSidebar('c2c-user-sidebar-collapsed')
 const searchText = ref('')
 const activeTheme = ref(getInitialAppTheme())
-const { data: myProfile } = useMyProfileQuery(import.meta.client)
-const { data: notifications } = useNotifications(import.meta.client)
+const { data: myProfile, isPending: profilePending } = useMyProfileQuery(import.meta.client)
+const isAuthenticated = computed(() => Boolean(myProfile.value))
+const authResolved = computed(() => import.meta.client && !profilePending.value)
+const showLoginAction = computed(() => authResolved.value && !isAuthenticated.value)
+const { data: notifications } = useNotifications(isAuthenticated)
 const workspaceQueriesEnabled = computed(() => Boolean(myProfile.value))
 const { data: ownedCarpools } = useMyCarpools(workspaceQueriesEnabled)
 const { data: ownedApiServices } = useMyApiServices(workspaceQueriesEnabled)
@@ -83,6 +87,9 @@ const currentAvatarText = computed(() => currentDisplayName.value.slice(0, 1).to
 const canViewAdminNav = computed(() => myProfile.value?.permissions.includes('admin') ?? false)
 const announcementCenterTo = '/my/notifications?tab=announcements'
 const accountSettingsPaths = ['/my/profile', '/my/contacts', '/my/account'] as const
+const currentLoginTo = computed(() => loginRoute(route.fullPath))
+const anonymousCarpoolPublishTo = loginRoute('/carpools/new')
+const anonymousApiPublishTo = loginRoute('/api-market/new')
 const accountRecoveryRequired = computed(() => myProfile.value ? !isAccountRecoveryComplete(myProfile.value) : false)
 const hasMerchantWorkspace = computed(() => Boolean(
   (ownedCarpools.value?.length ?? 0) > 0
@@ -140,6 +147,8 @@ const navGroups = computed(() => {
     title: '管理',
     items: [{ label: '进入管理台', to: '/admin', count: navigationBadges.value?.admin?.total ?? null, icon: UserCog }],
   }
+
+  if (!isAuthenticated.value) return [browseGroup]
 
   const groups = [browseGroup, userGroup, publishGroup]
   if (hasMerchantWorkspace.value) groups.push(merchantGroup)
@@ -280,7 +289,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onNavigationKeydown)
       </nav>
       <div class="border-t border-sidebar-border p-2">
         <RouterLink
-          v-if="!sidebarCollapsed"
+          v-if="isAuthenticated && !sidebarCollapsed"
           :to="announcementCenterTo"
           class="mb-3 flex items-center justify-between rounded-md border border-sidebar-border bg-sidebar-accent/45 px-3 py-3 text-xs leading-5 text-sidebar-foreground/75 shadow-sm transition hover:border-sidebar-primary/30 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
         >
@@ -358,6 +367,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onNavigationKeydown)
         </section>
       </nav>
       <RouterLink
+        v-if="isAuthenticated"
         :to="announcementCenterTo"
         class="border-t border-border p-4 text-xs leading-5 text-muted-foreground transition hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
         @click="closeMenu"
@@ -365,6 +375,23 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onNavigationKeydown)
         <span>平台公告 · 查看公告与更新</span>
         <Badge v-if="importantAnnouncementUnreadCount" variant="secondary" class="ml-2">{{ formatBadgeCount(importantAnnouncementUnreadCount) }}</Badge>
       </RouterLink>
+      <div v-else-if="showLoginAction" class="grid gap-2 border-t border-border p-4">
+        <Button as-child class="w-full">
+          <RouterLink :to="currentLoginTo" @click="closeMenu">
+            <LogIn class="h-4 w-4" />登录
+          </RouterLink>
+        </Button>
+        <Button as-child variant="outline" class="w-full">
+          <RouterLink :to="anonymousCarpoolPublishTo" @click="closeMenu">
+            <Car class="h-4 w-4" />登录后发布车源
+          </RouterLink>
+        </Button>
+        <Button as-child variant="outline" class="w-full">
+          <RouterLink :to="anonymousApiPublishTo" @click="closeMenu">
+            <Code2 class="h-4 w-4" />登录后发布 API 服务
+          </RouterLink>
+        </Button>
+      </div>
     </div>
 
     <div class="min-w-0">
@@ -411,7 +438,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onNavigationKeydown)
               </DropdownMenuRadioGroup>
             </DropdownMenuContent>
           </DropdownMenu>
-          <DropdownMenu>
+          <DropdownMenu v-if="isAuthenticated">
             <DropdownMenuTrigger as-child>
               <Button variant="ghost" size="icon" class="relative text-muted-foreground">
                 <Bell class="h-4 w-4" />
@@ -436,7 +463,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onNavigationKeydown)
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
-          <DropdownMenu>
+          <DropdownMenu v-if="isAuthenticated">
             <DropdownMenuTrigger as-child>
               <Button size="sm" class="hidden md:inline-flex">
                 发布
@@ -456,13 +483,33 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onNavigationKeydown)
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
-          <RouterLink v-if="!myProfile" :to="{ path: '/login', query: { returnTo: route.fullPath } }" class="hidden md:inline-flex">
+          <DropdownMenu v-else-if="authResolved">
+            <DropdownMenuTrigger as-child>
+              <Button size="sm" class="hidden md:inline-flex">
+                登录后发布
+                <ChevronDown class="h-4 w-4" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" class="w-52">
+              <DropdownMenuItem as-child>
+                <RouterLink :to="anonymousCarpoolPublishTo" class="flex items-center gap-2">
+                  <Upload class="h-4 w-4" />登录后发布车源
+                </RouterLink>
+              </DropdownMenuItem>
+              <DropdownMenuItem as-child>
+                <RouterLink :to="anonymousApiPublishTo" class="flex items-center gap-2">
+                  <Code2 class="h-4 w-4" />登录后发布 API 服务
+                </RouterLink>
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+          <RouterLink v-if="showLoginAction" :to="currentLoginTo" class="hidden md:inline-flex">
             <Button variant="outline" size="sm">
               <LogIn class="h-4 w-4" />
               登录
             </Button>
           </RouterLink>
-          <DropdownMenu v-else>
+          <DropdownMenu v-else-if="isAuthenticated">
             <DropdownMenuTrigger as-child>
               <Button variant="ghost" size="sm" class="hidden gap-2 text-foreground md:inline-flex">
                 <span class="grid h-7 w-7 place-items-center overflow-hidden rounded-full bg-secondary text-[12px] text-secondary-foreground">

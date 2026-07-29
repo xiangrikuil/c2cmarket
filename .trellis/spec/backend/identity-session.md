@@ -156,6 +156,9 @@ function subscribeToBackendSessionInvalidation(
 
 - Protected user routes declare `meta.auth = 'user'`; every `/admin/**` record, including redirect records, declares `meta.auth = 'admin'`. Public market, announcement-detail, and public-profile routes have no auth metadata.
 - The client global route middleware checks the backend session before mounting a protected page. Missing, expired, or revoked sessions replace navigation with `/login?returnTo=<to.fullPath>`; authenticated non-admin users attempting admin routes are replaced to `/`.
+- `AppShell` derives authenticated navigation from `useMyProfileQuery`; it must not maintain a second mutable login flag. Before profile resolution and for anonymous visitors, desktop and mobile navigation expose only public browse groups.
+- Anonymous shells hide transaction, account, merchant, admin, notification, and private announcement-center entries. A publish affordance may remain only when it is explicitly labeled as login-required and links to login with the intended publish route as `returnTo`.
+- Profile-dependent queries such as notifications, navigation badges, owned objects, and realtime synchronization stay disabled until an authenticated profile exists. Loading must not flash private menus or anonymous login controls.
 - `normalizeReturnTo` accepts only same-origin paths beginning with one `/`, preserves path/query/hash, and rejects absolute, protocol-relative, blank, and backslash-normalized external targets.
 - `SESSION_EXPIRED` and `SESSION_REVOKED` clear the session/CSRF cache. They notify the global redirect subscriber only when a valid session had previously been cached. An anonymous public-page profile probe must remain anonymous and must not redirect.
 - `CSRF_TOKEN_INVALID` clears stale session/CSRF data and follows the existing refresh-and-retry path; it never emits a login redirect.
@@ -167,6 +170,9 @@ function subscribeToBackendSessionInvalidation(
 | Condition | Expected behavior |
 | --- | --- |
 | Anonymous user opens a protected user/admin route | Replace to login with the complete original path, query, and hash. |
+| Profile query is unresolved | Show public browse navigation only; do not flash private menus, login, notification, or publish controls. |
+| Profile query confirms an anonymous visitor | Keep public browse navigation; show login plus explicitly login-required publish actions; keep private queries disabled. |
+| Profile query returns an authenticated user | Restore transaction, publish, account, notification, and eligible merchant/admin navigation. |
 | Authenticated non-admin opens `/admin/**` | Replace to `/`; never mount admin content. |
 | Anonymous user opens a public route and optional profile query returns `SESSION_EXPIRED` | Stay on the public route; no global invalidation notification. |
 | Cached authenticated session receives `SESSION_EXPIRED` or `SESSION_REVOKED` | Clear session and QueryClient data; issue one coalesced login redirect. |
@@ -178,7 +184,9 @@ function subscribeToBackendSessionInvalidation(
 
 - Good: `/api-market/quota/new?serviceId=id#payment` redirects to login and returns to the exact target after authentication.
 - Good: an anonymous visitor can browse `/api-market`, `/announcements/:slug`, and `/u/:username` even though the shell probes optional profile data.
+- Good: the anonymous shell shows `登录后发布`, whose menu targets `/login?returnTo=/carpools/new` and `/login?returnTo=/api-market/new`, while private sidebar groups and the notification bell remain absent.
 - Base: an already authenticated normal user opens `/admin/users` and returns to `/`.
+- Bad: the shell renders all private links and relies on the route guard only after the anonymous visitor clicks them.
 - Bad: every `401` from an optional public-page query emits a login redirect.
 - Bad: a CSRF retry redirects to login, or a network failure is converted to “请先登录”.
 
@@ -186,6 +194,7 @@ function subscribeToBackendSessionInvalidation(
 
 - Unit-test internal return targets, path/query/hash preservation, and external/protocol-relative/backslash-normalized rejection.
 - Route-contract test every `/admin/**` record plus all `/my/**`, `/merchant/**`, publish, and legacy order routes; assert public routes remain unclassified.
+- Shell regression test anonymous/loading/authenticated group composition, private control visibility, profile-gated queries, and login-required publish targets. Desktop and mobile must consume the same navigation group source.
 - Session-client tests must distinguish cached-session expiry, anonymous session probes, CSRF invalidation, unsubscribe behavior, and preserved network errors.
 - Coordinator test concurrent invalidations and assert exactly one redirect.
 - Browser-test anonymous direct navigation to protected routes and anonymous access to public market, announcement, and profile routes.
@@ -207,4 +216,11 @@ if (error.status === 401) {
 const hadCachedSession = cachedSession !== null
 if (isSessionCacheInvalidationError(error)) clearBackendSessionCache()
 if (hadCachedSession && isLoginRequiredError(error)) notifySessionInvalidated(error)
+```
+
+```ts
+const isAuthenticated = computed(() => Boolean(myProfile.value))
+if (!isAuthenticated.value) return [browseGroup]
+
+const groups = [browseGroup, transactionGroup, publishGroup, accountGroup]
 ```
