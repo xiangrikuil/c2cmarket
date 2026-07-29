@@ -5,6 +5,7 @@ import {
   apiPaymentMethods,
   apiPaymentSettingsMissingReason,
   apiPaymentSettingsSummary,
+  cloneApiPaymentAccountSettings,
   createEmptyApiPaymentAccountSettings,
   defaultApiPaymentWindowMinutes,
   isApiPaymentAccountSettingsComplete,
@@ -24,6 +25,7 @@ test('normalizes and validates API payment account settings', () => {
   assert.equal(empty.paymentOptions.every(option => option.paymentQrCodeDataUrl === null), true)
   assert.equal(isApiPaymentAccountSettingsComplete(empty), false)
   assert.match(apiPaymentSettingsMissingReason(empty), /启用至少一种/)
+  assert.doesNotMatch(apiPaymentSettingsMissingReason(empty), /个人中心/)
 
   const wechatWithoutQr = normalizeApiPaymentAccountSettings({
     paymentWindowMinutes: 15,
@@ -34,6 +36,7 @@ test('normalizes and validates API payment account settings', () => {
   assert.equal(wechatWithoutQr.paymentWindowMinutes, defaultApiPaymentWindowMinutes)
   assert.equal(isApiPaymentAccountSettingsComplete(wechatWithoutQr), false)
   assert.match(apiPaymentSettingsMissingReason(wechatWithoutQr), /上传微信收款码/)
+  assert.doesNotMatch(apiPaymentSettingsMissingReason(wechatWithoutQr), /个人中心/)
 
   const wechatWithQr = normalizeApiPaymentAccountSettings({
     paymentOptions: [
@@ -57,4 +60,10 @@ test('normalizes and validates API payment account settings', () => {
     ],
   })
   assert.equal(invalidQr.paymentOptions.find(option => option.paymentMethod === 'alipay')?.paymentQrCodeDataUrl, null)
+
+  const isolatedDraft = cloneApiPaymentAccountSettings(wechatWithQr)
+  isolatedDraft.paymentOptions[0]!.enabled = false
+  isolatedDraft.paymentOptions[0]!.paymentQrCodeDataUrl = null
+  assert.equal(wechatWithQr.paymentOptions[0]!.enabled, true)
+  assert.equal(wechatWithQr.paymentOptions[0]!.paymentQrCodeDataUrl, qrDataUrl)
 })

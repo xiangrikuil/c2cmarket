@@ -3,10 +3,10 @@ import { computed, onUnmounted, reactive, ref, watch, watchEffect } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { toast } from 'vue-sonner'
 import { Bell, CheckCircle2, ChevronRight, CircleAlert, Eye, KeyRound, Link2, LockKeyhole, LogIn, Mail, MailCheck, MessageCircle, RefreshCw, Save, ShieldCheck, Star, Trash2 } from 'lucide-vue-next'
+import ApiPaymentSettingsEditor from '@/components/contact-payment/ApiPaymentSettingsEditor.vue'
 import BuyerPreviewDrawer from '@/components/contact-payment/BuyerPreviewDrawer.vue'
 import ConfigurationProgressCard from '@/components/contact-payment/ConfigurationProgressCard.vue'
 import ContactMethodCard from '@/components/contact-payment/ContactMethodCard.vue'
-import PaymentMethodCard from '@/components/contact-payment/PaymentMethodCard.vue'
 import PersonalCenterDashboard from '@/components/personal-center/PersonalCenterDashboard.vue'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -20,18 +20,10 @@ import { type AvatarMode, type ContactMethodType, type ContactUsageScope, type S
 import { ACCOUNT_RECOVERY_PATH, accountRecoveryRequirements, isAccountRecoveryComplete, sanitizeAccountRecoveryReturnTo } from '@/lib/accountRecovery'
 import { getBackupPasswordStrength, getBackupPasswordValidationMessage, getPasswordChecks } from '@/lib/passwordPolicy'
 import {
-  apiPaymentMethodLabels,
-  apiPaymentSettingsMissingReason,
-  apiPaymentSettingsSummary,
-  createDefaultApiPaymentOptions,
-  defaultApiPaymentWindowMinutes,
+  createEmptyApiPaymentAccountSettings,
   isApiPaymentAccountSettingsComplete,
   isApiPaymentOptionComplete,
-  type ApiPaymentAccountSettings,
-  type ApiPaymentMethod,
-  type ApiPaymentOption,
 } from '@/lib/apiPaymentSettings'
-import { containsSensitiveContent } from '@/lib/formValidation'
 import {
   buildAccountCompleteness,
   buildPendingTasks,
@@ -58,7 +50,6 @@ import {
   useSetBackupPasswordMutation,
   useSetDefaultContactMethodMutation,
   useStartEmailVerificationMutation,
-  useUpdateApiPaymentAccountSettingsMutation,
   useUpdateContactMethodMutation,
   useUpdateMyProfileMutation,
   useUseLinuxDoAvatarMutation,
@@ -97,8 +88,6 @@ const updateContactMutation = useUpdateContactMethodMutation()
 const deleteContactMutation = useDeleteContactMethodMutation()
 const setDefaultContactMutation = useSetDefaultContactMethodMutation()
 const verifyContactMutation = useVerifyContactMethodMutation()
-const updateApiPaymentSettingsMutation = useUpdateApiPaymentAccountSettingsMutation()
-const apiPaymentQrMaxBytes = 512 * 1024
 
 const sectionLinks = [
   { label: '账户概览', to: '/my', key: 'overview' },
@@ -168,12 +157,6 @@ const wechatForm = reactive({
 const loadedContactDraftKeys = reactive({
   wechat: '',
   email: '',
-  apiPayment: '',
-})
-
-const apiPaymentForm = reactive<Omit<ApiPaymentAccountSettings, 'updatedAt'>>({
-  paymentWindowMinutes: defaultApiPaymentWindowMinutes,
-  paymentOptions: createDefaultApiPaymentOptions(),
 })
 
 const defaultContactUsageScopes: ContactUsageScope[] = ['carpool_owner', 'api_merchant', 'buyer', 'dispute']
@@ -224,6 +207,9 @@ const dashboardPublishedUnavailable = computed(() => (
 const hasApiServices = computed(() => (apiServices.value?.length ?? 0) > 0)
 const savedApiPaymentComplete = computed(() => (
   Boolean(apiPaymentSettings.value && isApiPaymentAccountSettingsComplete(apiPaymentSettings.value))
+))
+const apiPaymentSettingsValue = computed(() => (
+  apiPaymentSettings.value ?? createEmptyApiPaymentAccountSettings()
 ))
 const dashboardCompletenessLoading = computed(() => (
   contactsQuery.isPending.value
@@ -288,9 +274,7 @@ const wechatBound = computed(() => Boolean(wechatContact.value?.enabled && wecha
 const emailBound = computed(() => Boolean(emailContact.value?.enabled && emailContact.value.verified))
 const contactSaving = computed(() => createContactMutation.isPending.value || updateContactMutation.isPending.value)
 const emailBindingPending = computed(() => contactSaving.value || startEmailVerificationMutation.isPending.value || confirmEmailVerificationMutation.isPending.value || verifyContactMutation.isPending.value)
-const apiPaymentComplete = computed(() => isApiPaymentAccountSettingsComplete(apiPaymentForm))
-const apiPaymentMissingReasonText = computed(() => apiPaymentSettingsMissingReason(apiPaymentForm))
-const apiPaymentSummaryText = computed(() => apiPaymentSettingsSummary(apiPaymentForm))
+const apiPaymentEditorDirty = ref(false)
 const wechatContactDirty = computed(() => (
   wechatForm.displayValue.trim() !== (wechatContact.value?.displayValue ?? '').trim()
 ))
@@ -298,25 +282,17 @@ const emailContactDirty = computed(() => (
   emailForm.email.trim().toLowerCase() !== (emailContact.value?.displayValue ?? profile.value?.email ?? '').trim().toLowerCase()
   || Boolean(emailForm.code.trim())
 ))
-const apiPaymentSettingsDirty = computed(() => (
-  apiPaymentSettingsSignature(apiPaymentForm)
-  !== apiPaymentSettingsSignature(apiPaymentSettings.value ?? {
-    paymentWindowMinutes: defaultApiPaymentWindowMinutes,
-    paymentOptions: createDefaultApiPaymentOptions(),
-  })
-))
 const hasContactDraftChanges = computed(() => (
-  wechatContactDirty.value || emailContactDirty.value || apiPaymentSettingsDirty.value
+  wechatContactDirty.value || emailContactDirty.value || apiPaymentEditorDirty.value
 ))
 const contactSettingsDirty = computed(() => activeSection.value === 'contacts' && hasContactDraftChanges.value)
 const completedContactSettingsCount = computed(() => (
-  Number(wechatBound.value) + Number(emailBound.value) + Number(apiPaymentComplete.value)
+  Number(wechatBound.value) + Number(emailBound.value) + Number(savedApiPaymentComplete.value)
 ))
 const savedApiPaymentOptions = computed(() => (
   (apiPaymentSettings.value?.paymentOptions ?? []).filter(option => option.enabled && isApiPaymentOptionComplete(option))
 ))
 const buyerPreviewOpen = ref(false)
-const pendingApiPaymentQrRemoval = ref<ApiPaymentMethod | null>(null)
 useUnsavedChangesGuard(contactSettingsDirty, '联系方式与收款设置尚未保存，确认离开当前页面？')
 const accountRecoveryMissingItems = computed(() => profile.value ? accountRecoveryRequirements(profile.value).filter(item => !item.completed) : [])
 const accountRecoveryComplete = computed(() => profile.value ? isAccountRecoveryComplete(profile.value) : false)
@@ -465,13 +441,6 @@ watchEffect(() => {
     loadedContactDraftKeys.email = emailDraftKey
   }
 
-  const payment = apiPaymentSettings.value
-  const paymentDraftKey = payment?.updatedAt || 'empty'
-  if (payment && loadedContactDraftKeys.apiPayment !== paymentDraftKey) {
-    apiPaymentForm.paymentWindowMinutes = payment.paymentWindowMinutes
-    apiPaymentForm.paymentOptions = payment.paymentOptions.map(option => ({ ...option }))
-    loadedContactDraftKeys.apiPayment = paymentDraftKey
-  }
 })
 
 const avatarText = computed(() => (profile.value?.displayName || profile.value?.username || '我').slice(0, 1).toUpperCase())
@@ -520,84 +489,6 @@ function setAccountRecoveryDialogOpen(open: boolean) {
 
 function scopeLabels(scopes: ContactUsageScope[]) {
   return scopes.map(scope => usageScopeOptions.find(item => item.value === scope)?.label ?? scope).join('、')
-}
-
-function apiPaymentMethodLabel(method: ApiPaymentMethod) {
-  return apiPaymentMethodLabels[method]
-}
-
-function apiPaymentSettingsSignature(settings: Pick<ApiPaymentAccountSettings, 'paymentWindowMinutes' | 'paymentOptions'>) {
-  return JSON.stringify({
-    paymentWindowMinutes: settings.paymentWindowMinutes,
-    paymentOptions: settings.paymentOptions.map(option => ({
-      paymentMethod: option.paymentMethod,
-      enabled: option.enabled,
-      paymentInstructions: option.paymentInstructions.trim(),
-      paymentQrCodeDataUrl: option.paymentQrCodeDataUrl,
-    })),
-  })
-}
-
-function handleApiPaymentQrUpload(event: Event, option: ApiPaymentOption) {
-  const input = event.target
-  if (!(input instanceof HTMLInputElement)) return
-  const file = input.files?.[0]
-  input.value = ''
-  if (!file) return
-  if (!['image/png', 'image/jpeg', 'image/webp'].includes(file.type)) {
-    toast.warning('请上传 PNG、JPG 或 WebP 格式的收款码图片。')
-    return
-  }
-  if (file.size > apiPaymentQrMaxBytes) {
-    toast.warning('收款码图片不能超过 512KB。')
-    return
-  }
-  const reader = new FileReader()
-  reader.onload = () => {
-    if (typeof reader.result !== 'string') {
-      toast.error('收款码读取失败，请重新选择图片。')
-      return
-    }
-    option.paymentQrCodeDataUrl = reader.result
-  }
-  reader.onerror = () => toast.error('收款码读取失败，请重新选择图片。')
-  reader.readAsDataURL(file)
-}
-
-function setApiPaymentOptionEnabled(option: ApiPaymentOption, enabled: boolean) {
-  option.enabled = enabled
-}
-
-function apiPaymentOptionDirty(option: ApiPaymentOption) {
-  const savedOption = apiPaymentSettings.value?.paymentOptions.find(item => item.paymentMethod === option.paymentMethod)
-  return apiPaymentSettingsSignature({
-    paymentWindowMinutes: defaultApiPaymentWindowMinutes,
-    paymentOptions: [option],
-  }) !== apiPaymentSettingsSignature({
-    paymentWindowMinutes: defaultApiPaymentWindowMinutes,
-    paymentOptions: [savedOption ?? {
-      paymentMethod: option.paymentMethod,
-      enabled: false,
-      paymentInstructions: '',
-      paymentQrCodeDataUrl: null,
-    }],
-  })
-}
-
-function setApiPaymentOptionInstructions(option: ApiPaymentOption, instructions: string) {
-  option.paymentInstructions = instructions
-}
-
-function requestApiPaymentQrRemoval(option: ApiPaymentOption) {
-  pendingApiPaymentQrRemoval.value = option.paymentMethod
-}
-
-function confirmApiPaymentQrRemoval() {
-  const paymentMethod = pendingApiPaymentQrRemoval.value
-  if (!paymentMethod) return
-  const option = apiPaymentForm.paymentOptions.find(item => item.paymentMethod === paymentMethod)
-  if (option) option.paymentQrCodeDataUrl = null
-  pendingApiPaymentQrRemoval.value = null
 }
 
 function stopEmailVerificationTimer() {
@@ -801,27 +692,6 @@ function removeContact(contact: UserContactMethod) {
       toast.success('联系方式已解除绑定。')
     },
     onError: error => toast.error(error instanceof Error ? error.message : '删除失败'),
-  })
-}
-
-function saveApiPaymentSettings() {
-  if (!apiPaymentComplete.value) {
-    toast.warning(apiPaymentMissingReasonText.value || '请先补全 API 收款设置。')
-    return
-  }
-  if (containsSensitiveContent(apiPaymentForm.paymentOptions.map(option => option.paymentInstructions))) {
-    toast.warning('收款说明不能包含 API Key、token、密码、Session、Cookie、付款码或面板凭据。')
-    return
-  }
-  updateApiPaymentSettingsMutation.mutate({
-    paymentWindowMinutes: defaultApiPaymentWindowMinutes,
-    paymentOptions: apiPaymentForm.paymentOptions.map(option => ({
-      ...option,
-      paymentInstructions: option.paymentInstructions.trim(),
-    })),
-  }, {
-    onSuccess: () => toast.success('API 收款设置已保存。'),
-    onError: error => toast.error(error instanceof Error ? error.message : 'API 收款设置保存失败。'),
   })
 }
 
@@ -1155,24 +1025,6 @@ function goToLogin() {
       @update:open="buyerPreviewOpen = $event"
     />
 
-    <Dialog
-      :open="pendingApiPaymentQrRemoval !== null"
-      @update:open="open => { if (!open) pendingApiPaymentQrRemoval = null }"
-    >
-      <DialogContent class="sm:max-w-md">
-        <DialogHeader>
-          <DialogTitle>删除收款码？</DialogTitle>
-          <DialogDescription>
-            将从{{ pendingApiPaymentQrRemoval ? apiPaymentMethodLabel(pendingApiPaymentQrRemoval) : '' }}配置草稿中移除图片。删除后需保存 API 收款设置才会生效。
-          </DialogDescription>
-        </DialogHeader>
-        <DialogFooter>
-          <Button variant="outline" @click="pendingApiPaymentQrRemoval = null">取消</Button>
-          <Button variant="destructive" @click="confirmApiPaymentQrRemoval">删除收款码</Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
-
     <header v-if="activeSection !== 'overview'" class="my-center-page-heading">
       <div>
         <p>个人中心 / {{ sectionLinks.find(item => item.key === activeSection)?.label }}</p>
@@ -1283,7 +1135,7 @@ function goToLogin() {
           :completed-count="completedContactSettingsCount"
           :wechat-complete="wechatBound"
           :email-complete="emailBound"
-          :payment-complete="apiPaymentComplete"
+          :payment-complete="savedApiPaymentComplete"
           @preview="buyerPreviewOpen = true"
         />
       </aside>
@@ -1408,56 +1260,10 @@ function goToLogin() {
           </div>
         </ContactMethodCard>
 
-        <section class="contact-payment-settings">
-          <div class="contact-payment-settings__header">
-            <div class="min-w-0">
-              <div class="flex flex-wrap items-center gap-2">
-                <h2>API 收款设置</h2>
-                <Badge :variant="apiPaymentComplete ? 'verified' : 'secondary'">
-                  {{ apiPaymentComplete ? '已配置' : '待配置' }}
-                </Badge>
-                <Badge v-if="apiPaymentSettingsDirty" variant="secondary">有未保存更改</Badge>
-              </div>
-              <p>发布 API 额度时读取这里的资料，并复制为服务接单快照。</p>
-              <p class="mt-1">{{ apiPaymentSummaryText }}</p>
-            </div>
-            <Button
-              :disabled="updateApiPaymentSettingsMutation.isPending.value || !apiPaymentSettingsDirty"
-              @click="saveApiPaymentSettings"
-            >
-              <Save class="h-4 w-4" />保存 API 收款设置
-            </Button>
-          </div>
-
-          <div class="contact-payment-window">
-            <span class="font-medium">买家确认付款窗口</span>
-            <span class="text-muted-foreground">固定 {{ defaultApiPaymentWindowMinutes }} 分钟</span>
-          </div>
-
-          <div class="contact-payment-options-grid">
-            <PaymentMethodCard
-              v-for="option in apiPaymentForm.paymentOptions"
-              :key="option.paymentMethod"
-              :option="option"
-              :dirty="apiPaymentOptionDirty(option)"
-              :disabled="updateApiPaymentSettingsMutation.isPending.value"
-              @update:enabled="setApiPaymentOptionEnabled(option, $event)"
-              @update:instructions="setApiPaymentOptionInstructions(option, $event)"
-              @upload="handleApiPaymentQrUpload($event, option)"
-              @request-remove-qr="requestApiPaymentQrRemoval(option)"
-            />
-          </div>
-
-          <p
-            class="contact-payment-status"
-            :class="apiPaymentComplete ? 'is-complete' : 'is-incomplete'"
-          >
-            {{ apiPaymentComplete ? 'API 发布页将直接读取这组设置，不需要每次重新填写。' : apiPaymentMissingReasonText }}
-          </p>
-          <p class="text-xs leading-5 text-muted-foreground">
-            收款资料只在买家创建订单后用于站外确认。请勿填写银行卡号、API Key、token、账号密码、Cookie、Session 或面板凭据。
-          </p>
-        </section>
+        <ApiPaymentSettingsEditor
+          :settings="apiPaymentSettingsValue"
+          @dirty-change="apiPaymentEditorDirty = $event"
+        />
       </main>
     </section>
 

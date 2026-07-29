@@ -17,6 +17,7 @@ import {
 } from 'lucide-vue-next'
 import { toast } from 'vue-sonner'
 import AccountPaymentSummarySection from '@/components/api-service-publish/AccountPaymentSummarySection.vue'
+import ApiPaymentSettingsDialog from '@/components/contact-payment/ApiPaymentSettingsDialog.vue'
 import ApiAccessSourceSection from '@/components/api-service-publish/ApiAccessSourceSection.vue'
 import MerchantNoteSection from '@/components/api-service-publish/MerchantNoteSection.vue'
 import ModelMultiSelect from '@/components/api-service-publish/ModelMultiSelect.vue'
@@ -88,6 +89,7 @@ const queryClient = useQueryClient()
 const step = ref(1)
 const completedSteps = ref<number[]>([])
 const previewOpen = ref(false)
+const paymentSettingsDialogOpen = ref(false)
 const formDirty = ref(false)
 useUnsavedChangesGuard(formDirty, '限时额度包配置尚未发布，确认离开当前页面？')
 const serviceMode = ref<ServiceMode>('existing')
@@ -317,7 +319,7 @@ function validateBaseService() {
   for (const key of Object.keys(baseErrors)) delete baseErrors[key]
   if (!baseForm.merchantDisplayName.trim()) baseErrors.merchantDisplayName = '请先设置个人资料显示名称。'
   if (!baseForm.selectedModels.some(item => item.enabled)) baseErrors.selectedModels = '至少选择一个模型。'
-  if (!isApiPaymentAccountSettingsComplete(accountSettingsValue.value)) baseErrors.paymentOptions = '请先到个人中心完成 API 收款设置。'
+  if (!isApiPaymentAccountSettingsComplete(accountSettingsValue.value)) baseErrors.paymentOptions = '请先完成 API 收款设置。'
   if (!baseForm.merchantNote.trim()) baseErrors.merchantNote = '请填写服务备注。'
   serviceError.value = Object.values(baseErrors)[0] ?? ''
   return !serviceError.value
@@ -536,7 +538,12 @@ function preview() {
             <div v-else class="space-y-3">
               <Alert><Server /><AlertTitle>只创建限时包依赖的基础服务</AlertTitle><AlertDescription>这里复用现有接入、模型、收款和体验字段；额度价格、份数与失效时间在下一步设置。</AlertDescription></Alert>
               <ApiAccessSourceSection :form="baseForm" :errors="baseErrors" selling-mode="limited" @set-distribution="setDistribution" @set-default-multiplier="setDefaultMultiplier" />
-              <AccountPaymentSummarySection :form="baseForm" :settings="accountSettingsValue" :loading="paymentSettingsLoading" />
+              <AccountPaymentSummarySection
+                :form="baseForm"
+                :settings="accountSettingsValue"
+                :loading="paymentSettingsLoading"
+                @edit="paymentSettingsDialogOpen = true"
+              />
               <ProviderCategorySelector :model-value="baseForm.providerCategory" :selected-count="selectedModels.length" @update:model-value="setProviderCategory" />
               <Card class="api-publish-card"><div class="api-publish-card-header"><div class="flex items-start gap-2"><Bot class="mt-0.5 h-4 w-4 text-primary" /><div><h2>具体模型</h2><p>选择这个基础服务支持的模型。</p></div></div></div><div class="api-publish-card-body"><div v-if="catalogLoading" class="text-sm text-muted-foreground">正在加载模型目录...</div><ModelMultiSelect v-else :form="baseForm" :provider-category="baseForm.providerCategory" :catalog="filteredCatalog" :errors="baseErrors" @toggle-model="toggleModel" /></div></Card>
               <MerchantNoteSection :form="baseForm" :errors="baseErrors" />
@@ -616,5 +623,10 @@ function preview() {
         </div>
       </div>
     </div>
+
+    <ApiPaymentSettingsDialog
+      v-model:open="paymentSettingsDialogOpen"
+      :settings="accountSettingsValue"
+    />
   </div>
 </template>

@@ -5,6 +5,7 @@ import { useMutation, useQueryClient } from '@tanstack/vue-query'
 import { ArrowLeft, ArrowRight, Bot, Eye, Info, PackageCheck, Send } from 'lucide-vue-next'
 import { toast } from 'vue-sonner'
 import AccountPaymentSummarySection from '@/components/api-service-publish/AccountPaymentSummarySection.vue'
+import ApiPaymentSettingsDialog from '@/components/contact-payment/ApiPaymentSettingsDialog.vue'
 import ApiAccessSourceSection from '@/components/api-service-publish/ApiAccessSourceSection.vue'
 import ApiServicePublishPreview from '@/components/api-service-publish/ApiServicePublishPreview.vue'
 import FixedPackageSection from '@/components/api-service-publish/FixedPackageSection.vue'
@@ -97,6 +98,7 @@ const publishSteps = computed(() => isLimitedQuotaMode.value
       { title: '确认发布', description: '公开服务并接单' },
     ])
 const previewOpen = ref(false)
+const paymentSettingsDialogOpen = ref(false)
 const errors = reactive<FieldErrors<Field>>({})
 const pendingProviderCategory = ref<ApiProviderCategory | null>(null)
 const formDirty = ref(false)
@@ -440,8 +442,8 @@ const publishBlockReason = computed(() => {
   const pendingItem = completeness.value.find(item => item.status !== 'done')
   if (pendingItem?.label === '收款方式') {
     if (!paymentWindowValid.value) return '买家确认付款窗口固定为 10 分钟。'
-    if (!accountPaymentSettingsComplete.value || !enabledPayments.value.length) return '先到个人中心配置 API 收款设置，发布后才会进入公开服务列表。'
-    return apiPaymentSettingsMissingReason(form) || '请到个人中心补全已启用收款方式。'
+    if (!accountPaymentSettingsComplete.value || !enabledPayments.value.length) return '请先配置 API 收款设置，发布后才会进入公开服务列表。'
+    return apiPaymentSettingsMissingReason(form) || '请补全已启用的收款方式。'
   }
   if (pendingItem?.label === '展示身份') {
     return profileLoading.value ? '正在读取个人资料显示名称。' : '请先到个人中心设置显示名称。'
@@ -762,7 +764,13 @@ function confirmProviderCategoryChange() {
         >
           <div class="space-y-3">
             <ApiAccessSourceSection :form="form" :errors="errors" :selling-mode="editorSellingMode" @set-distribution="setDistribution" @set-default-multiplier="setDefaultMultiplier" />
-            <AccountPaymentSummarySection v-if="isLimitedQuotaMode" :form="form" :settings="accountPaymentSettingsValue" :loading="paymentSettingsLoading" />
+            <AccountPaymentSummarySection
+              v-if="isLimitedQuotaMode"
+              :form="form"
+              :settings="accountPaymentSettingsValue"
+              :loading="paymentSettingsLoading"
+              @edit="paymentSettingsDialogOpen = true"
+            />
             <ProviderCategorySelector :model-value="form.providerCategory" :selected-count="selectedModels.length" @update:model-value="requestProviderCategory" />
             <Card class="api-publish-card">
               <div class="api-publish-card-header">
@@ -805,7 +813,12 @@ function confirmProviderCategoryChange() {
         >
           <div v-if="!isLimitedQuotaMode" class="space-y-3">
             <div v-if="errors.sensitive" class="rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs text-destructive" role="alert">{{ errors.sensitive }}</div>
-            <AccountPaymentSummarySection :form="form" :settings="accountPaymentSettingsValue" :loading="paymentSettingsLoading" />
+            <AccountPaymentSummarySection
+              :form="form"
+              :settings="accountPaymentSettingsValue"
+              :loading="paymentSettingsLoading"
+              @edit="paymentSettingsDialogOpen = true"
+            />
             <MerchantNoteSection :form="form" :errors="errors" />
             <MerchantIdentitySection :form="form" :profile-loading="profileLoading" :display-name-status="merchantDisplayNameStatus" :error="errors.merchantDisplayName" @set-store-alias-visible="setStoreAliasVisible" />
           </div>
@@ -868,5 +881,10 @@ function confirmProviderCategoryChange() {
         </Card>
       </div>
     </template>
+
+    <ApiPaymentSettingsDialog
+      v-model:open="paymentSettingsDialogOpen"
+      :settings="accountPaymentSettingsValue"
+    />
   </div>
 </template>
