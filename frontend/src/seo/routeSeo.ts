@@ -42,6 +42,7 @@ const privatePrefixes = [
 const privateExactPaths = new Set([
   '/carpools/new',
   '/api-market/new',
+  '/api-market/quota/new',
 ])
 
 export function resolveRouteSeo(route: RouteLocationNormalizedLoaded): RouteSeo {

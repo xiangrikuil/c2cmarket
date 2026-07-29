@@ -128,6 +128,8 @@ test('refreshes session and retries mutation after stale CSRF token', async () =
     .mockResolvedValueOnce(jsonResponse({ ok: true }))
 
   const client = await loadBackendClient({ apiMode: 'real' })
+  const invalidationHandler = vi.fn()
+  client.subscribeToBackendSessionInvalidation(invalidationHandler)
   client.setBackendCSRFToken('stale-token')
 
   const result = await client.backendMutation<{ ok: boolean }>('/api/v1/example', { name: 'demo' })
@@ -142,6 +144,104 @@ test('refreshes session and retries mutation after stale CSRF token', async () =
   const retryMutationHeaders = new Headers((fetchMock.mock.calls[2]?.[1] as RequestInit).headers)
   assert.equal(firstMutationHeaders.get('X-CSRF-Token'), 'stale-token')
   assert.equal(retryMutationHeaders.get('X-CSRF-Token'), 'fresh-token')
+  assert.equal(invalidationHandler.mock.calls.length, 0)
+})
+
+for (const code of ['SESSION_EXPIRED', 'SESSION_REVOKED']) {
+  test(`notifies session invalidation subscribers for ${code}`, async () => {
+    const fetchMock = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
+    fetchMock
+      .mockResolvedValueOnce(jsonResponse({
+        csrfToken: 'active-token',
+        expiresAt: '2999-01-01T00:00:00Z',
+        user: {
+          id: 'user-1',
+          username: 'orbit',
+          displayName: 'Orbit',
+          isAdmin: false,
+          permissions: [],
+          linuxDoBinding: { bound: false },
+        },
+      }))
+      .mockResolvedValueOnce(problemResponse({
+        status: 401,
+        code,
+        detail: '请重新登录。',
+      }, 401))
+
+    const client = await loadBackendClient({ apiMode: 'real' })
+    const invalidationHandler = vi.fn()
+    client.subscribeToBackendSessionInvalidation(invalidationHandler)
+
+    await client.getCurrentBackendSession()
+    await assert.rejects(() => client.backendRequest('/api/v1/private'))
+
+    assert.equal(invalidationHandler.mock.calls.length, 1)
+    assert.equal(invalidationHandler.mock.calls[0]?.[0].code, code)
+  })
+}
+
+test('does not notify an unsubscribed session invalidation handler', async () => {
+  const fetchMock = vi.fn()
+  vi.stubGlobal('fetch', fetchMock)
+  fetchMock
+    .mockResolvedValueOnce(jsonResponse({
+      csrfToken: 'active-token',
+      expiresAt: '2999-01-01T00:00:00Z',
+      user: {
+        id: 'user-1',
+        username: 'orbit',
+        displayName: 'Orbit',
+        isAdmin: false,
+        permissions: [],
+        linuxDoBinding: { bound: false },
+      },
+    }))
+    .mockResolvedValueOnce(problemResponse({
+      status: 401,
+      code: 'SESSION_EXPIRED',
+      detail: '请重新登录。',
+    }, 401))
+
+  const client = await loadBackendClient({ apiMode: 'real' })
+  const invalidationHandler = vi.fn()
+  const unsubscribe = client.subscribeToBackendSessionInvalidation(invalidationHandler)
+  await client.getCurrentBackendSession()
+  unsubscribe()
+
+  await assert.rejects(() => client.backendRequest('/api/v1/private'))
+
+  assert.equal(invalidationHandler.mock.calls.length, 0)
+})
+
+test('does not treat an anonymous public-page session probe as session invalidation', async () => {
+  const fetchMock = vi.fn()
+  vi.stubGlobal('fetch', fetchMock)
+  fetchMock.mockResolvedValueOnce(problemResponse({
+    status: 401,
+    code: 'SESSION_EXPIRED',
+    detail: '请先登录。',
+  }, 401))
+
+  const client = await loadBackendClient({ apiMode: 'real' })
+  const invalidationHandler = vi.fn()
+  client.subscribeToBackendSessionInvalidation(invalidationHandler)
+
+  await assert.rejects(() => client.getCurrentBackendSession())
+
+  assert.equal(invalidationHandler.mock.calls.length, 0)
+})
+
+test('real backend mode preserves network errors during session checks', async () => {
+  const fetchMock = vi.fn().mockRejectedValue(new TypeError('network unavailable'))
+  vi.stubGlobal('fetch', fetchMock)
+  const client = await loadBackendClient({ apiMode: 'real' })
+
+  await assert.rejects(
+    () => client.ensureBackendSession('orbit'),
+    error => error instanceof TypeError && error.message === 'network unavailable',
+  )
 })
 
 test('logout revokes the backend session and clears the cached session', async () => {

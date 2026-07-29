@@ -71,6 +71,7 @@ import {
   isApiPaymentAccountSettingsComplete,
 } from '@/lib/apiPaymentSettings'
 import { formatDecimal } from '@/lib/decimal'
+import { backendErrorMessage } from '@/lib/backendClient'
 import {
   useApiPaymentAccountSettingsQuery,
   useApiQuotaSaleSlots,
@@ -108,7 +109,14 @@ const publishSteps = [
 const myServicesQuery = useMyApiServices()
 const slotQuery = useApiQuotaSaleSlots()
 const { data: modelCatalog, isLoading: catalogLoading } = useModelCatalog()
-const { data: myProfile } = useMyProfileQuery()
+const {
+  data: myProfile,
+  isLoading: profileLoading,
+  isError: profileIsError,
+  isSuccess: profileIsSuccess,
+  error: profileError,
+  refetch: refetchProfile,
+} = useMyProfileQuery()
 const { data: accountPaymentSettings, isLoading: paymentSettingsLoading } = useApiPaymentAccountSettingsQuery()
 const createRushMutation = useCreateApiQuotaRushOfferMutation()
 const isCopyDraft = route.query.copy === '1'
@@ -121,14 +129,26 @@ function copiedQueryValue(key: string) {
 const eligibleServices = computed(() => (myServicesQuery.data.value ?? []).filter(service =>
   service.state === 'online' && service.online && service.publiclyOrderable,
 ))
+const requestedServiceId = computed(() => typeof route.query.serviceId === 'string' ? route.query.serviceId : '')
 const selectedService = computed(() => eligibleServices.value.find(service => service.id === selectedServiceId.value))
+const requestedServiceUnavailable = computed(() =>
+  Boolean(requestedServiceId.value)
+  && myServicesQuery.isSuccess.value
+  && !eligibleServices.value.some(service => service.id === requestedServiceId.value),
+)
 const openSlots = computed(() => (slotQuery.data.value?.items ?? []).filter(slot => slot.state === 'registration_open'))
 const selectedSlot = computed(() => openSlots.value.find(slot => slot.key === rush.slotKey))
 
-watch(eligibleServices, rows => {
-  const requestedServiceId = typeof route.query.serviceId === 'string' ? route.query.serviceId : ''
-  if (!selectedServiceId.value && rows.some(service => service.id === requestedServiceId)) selectedServiceId.value = requestedServiceId
-  if (!selectedServiceId.value && rows[0]) selectedServiceId.value = rows[0].id
+watch([eligibleServices, requestedServiceId, () => myServicesQuery.isSuccess.value], ([rows, requestedId, loaded]) => {
+  if (!loaded) return
+  if (requestedId) {
+    selectedServiceId.value = rows.some(service => service.id === requestedId) ? requestedId : ''
+    serviceMode.value = 'existing'
+    return
+  }
+  if (!rows.some(service => service.id === selectedServiceId.value)) {
+    selectedServiceId.value = rows[0]?.id ?? ''
+  }
   if (!rows.length) serviceMode.value = 'create'
 }, { immediate: true })
 
@@ -185,6 +205,9 @@ const selectedModels = computed(() => selectedCatalogItems(baseForm, catalogById
 const accountSettingsValue = computed(() => accountPaymentSettings.value
   ? cloneApiPaymentAccountSettings(accountPaymentSettings.value)
   : { paymentWindowMinutes: defaultPaymentWindowMinutes, paymentOptions: createDefaultPaymentOptions(), updatedAt: '' })
+const profileErrorMessage = computed(() =>
+  backendErrorMessage(profileError.value, '个人资料暂时无法加载，请稍后重试。'),
+)
 
 watch(() => myProfile.value, profile => {
   baseForm.merchantDisplayName = profile?.displayName.trim() || profile?.username.trim() || ''
@@ -271,10 +294,17 @@ const selectedSlotLabel = computed(() => selectedSlot.value
 const primaryActionLabel = computed(() => {
   if (createBaseServiceMutation.isPending.value) return '创建中...'
   if (createRushMutation.isPending.value) return '发布中...'
+  if (step.value === 1 && serviceMode.value === 'create' && profileLoading.value) return '正在加载个人资料...'
+  if (step.value === 1 && serviceMode.value === 'create' && profileIsError.value) return '请先重新加载个人资料'
   if (step.value === 1) return serviceMode.value === 'create' ? '创建服务并继续' : '继续设置限时包'
   if (step.value === 2) return '继续：选择场次'
   return '确认发布'
 })
+const primaryActionDisabled = computed(() =>
+  createBaseServiceMutation.isPending.value
+  || createRushMutation.isPending.value
+  || (step.value === 1 && serviceMode.value === 'create' && (profileLoading.value || profileIsError.value)),
+)
 
 const createBaseServiceMutation = useMutation({
   mutationFn: () => submitApiService({
@@ -317,6 +347,14 @@ function toggleModel(id: string) {
 
 function validateBaseService() {
   for (const key of Object.keys(baseErrors)) delete baseErrors[key]
+  if (profileLoading.value) {
+    serviceError.value = '个人资料正在加载，请稍后再继续。'
+    return false
+  }
+  if (profileIsError.value || !profileIsSuccess.value) {
+    serviceError.value = profileErrorMessage.value
+    return false
+  }
   if (!baseForm.merchantDisplayName.trim()) baseErrors.merchantDisplayName = '请先设置个人资料显示名称。'
   if (!baseForm.selectedModels.some(item => item.enabled)) baseErrors.selectedModels = '至少选择一个模型。'
   if (!isApiPaymentAccountSettingsComplete(accountSettingsValue.value)) baseErrors.paymentOptions = '请先完成 API 收款设置。'
@@ -527,6 +565,16 @@ function preview() {
             <template v-if="serviceMode === 'existing'">
               <ErrorState v-if="myServicesQuery.error.value" description="API 服务暂时无法加载。" @retry="myServicesQuery.refetch()" />
               <SkeletonBlock v-else-if="myServicesQuery.isLoading.value" :lines="5" />
+              <Alert v-else-if="requestedServiceUnavailable" variant="destructive">
+                <Server />
+                <AlertTitle>指定的 API 服务不可用</AlertTitle>
+                <AlertDescription>
+                  该服务不存在、未上线或当前不可接单。请返回服务列表重新选择，不会自动改用其他服务。
+                  <div class="mt-3">
+                    <Button type="button" size="sm" variant="outline" @click="router.push({ path: '/my/api-services', query: { intent: 'quota' } })">重新选择 API 服务</Button>
+                  </div>
+                </AlertDescription>
+              </Alert>
               <EmptyState v-else-if="eligibleServices.length === 0" title="暂无可用的 API 服务" description="请在当前向导创建基础服务，完成后会直接进入限时包设置。" />
               <RadioGroup v-else v-model="selectedServiceId" class="grid gap-3 md:grid-cols-2">
                 <label v-for="service in eligibleServices" :key="service.id" class="flex cursor-pointer gap-3 rounded-md border border-border p-4 hover:border-primary/50 has-[[data-state=checked]]:border-primary has-[[data-state=checked]]:bg-primary/5">
@@ -536,17 +584,21 @@ function preview() {
               </RadioGroup>
             </template>
             <div v-else class="space-y-3">
-              <Alert><Server /><AlertTitle>只创建限时包依赖的基础服务</AlertTitle><AlertDescription>这里复用现有接入、模型、收款和体验字段；额度价格、份数与失效时间在下一步设置。</AlertDescription></Alert>
-              <ApiAccessSourceSection :form="baseForm" :errors="baseErrors" selling-mode="limited" @set-distribution="setDistribution" @set-default-multiplier="setDefaultMultiplier" />
-              <AccountPaymentSummarySection
-                :form="baseForm"
-                :settings="accountSettingsValue"
-                :loading="paymentSettingsLoading"
-                @edit="paymentSettingsDialogOpen = true"
-              />
-              <ProviderCategorySelector :model-value="baseForm.providerCategory" :selected-count="selectedModels.length" @update:model-value="setProviderCategory" />
-              <Card class="api-publish-card"><div class="api-publish-card-header"><div class="flex items-start gap-2"><Bot class="mt-0.5 h-4 w-4 text-primary" /><div><h2>具体模型</h2><p>选择这个基础服务支持的模型。</p></div></div></div><div class="api-publish-card-body"><div v-if="catalogLoading" class="text-sm text-muted-foreground">正在加载模型目录...</div><ModelMultiSelect v-else :form="baseForm" :provider-category="baseForm.providerCategory" :catalog="filteredCatalog" :errors="baseErrors" @toggle-model="toggleModel" /></div></Card>
-              <MerchantNoteSection :form="baseForm" :errors="baseErrors" />
+              <ErrorState v-if="profileIsError" title="个人资料加载失败" :description="profileErrorMessage" @retry="refetchProfile()" />
+              <SkeletonBlock v-else-if="profileLoading" :lines="6" />
+              <template v-else>
+                <Alert><Server /><AlertTitle>只创建限时包依赖的基础服务</AlertTitle><AlertDescription>这里复用现有接入、模型、收款和体验字段；额度价格、份数与失效时间在下一步设置。</AlertDescription></Alert>
+                <ApiAccessSourceSection :form="baseForm" :errors="baseErrors" selling-mode="limited" @set-distribution="setDistribution" @set-default-multiplier="setDefaultMultiplier" />
+                <AccountPaymentSummarySection
+                  :form="baseForm"
+                  :settings="accountSettingsValue"
+                  :loading="paymentSettingsLoading"
+                  @edit="paymentSettingsDialogOpen = true"
+                />
+                <ProviderCategorySelector :model-value="baseForm.providerCategory" :selected-count="selectedModels.length" @update:model-value="setProviderCategory" />
+                <Card class="api-publish-card"><div class="api-publish-card-header"><div class="flex items-start gap-2"><Bot class="mt-0.5 h-4 w-4 text-primary" /><div><h2>具体模型</h2><p>选择这个基础服务支持的模型。</p></div></div></div><div class="api-publish-card-body"><div v-if="catalogLoading" class="text-sm text-muted-foreground">正在加载模型目录...</div><ModelMultiSelect v-else :form="baseForm" :provider-category="baseForm.providerCategory" :catalog="filteredCatalog" :errors="baseErrors" @toggle-model="toggleModel" /></div></Card>
+                <MerchantNoteSection :form="baseForm" :errors="baseErrors" />
+              </template>
             </div>
             <p v-if="serviceError" class="text-sm text-destructive" role="alert">{{ serviceError }}</p>
           </div>
@@ -619,7 +671,7 @@ function preview() {
         <div class="hidden sm:block"><div class="font-semibold">{{ publishSteps[step - 1]?.title }}</div><p class="text-xs text-muted-foreground">第 {{ step }} / 3 步 · 已填写内容会在返回修改时保留</p></div>
         <div class="grid gap-2 sm:flex sm:items-center">
           <Button v-if="step > 1" variant="outline" :disabled="createBaseServiceMutation.isPending.value || createRushMutation.isPending.value" @click="goBack"><ArrowLeft class="h-4 w-4" />上一步</Button>
-          <Button :disabled="createBaseServiceMutation.isPending.value || createRushMutation.isPending.value" @click="runPrimaryAction"><Send v-if="step === 3" class="h-4 w-4" /><ArrowRight v-else class="h-4 w-4" />{{ primaryActionLabel }}</Button>
+          <Button :disabled="primaryActionDisabled" @click="runPrimaryAction"><Send v-if="step === 3" class="h-4 w-4" /><ArrowRight v-else class="h-4 w-4" />{{ primaryActionLabel }}</Button>
         </div>
       </div>
     </div>

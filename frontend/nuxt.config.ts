@@ -90,6 +90,7 @@ export default defineNuxtConfig({
       '/api-intents/**',
       '/carpools/new',
       '/api-market/new',
+      '/api-market/quota/new',
       '/announcements/**',
       '/u/**',
     ],
@@ -113,6 +114,7 @@ export default defineNuxtConfig({
     '/api-intents/**': privateRouteRule,
     '/carpools/new': privateRouteRule,
     '/api-market/new': privateRouteRule,
+    '/api-market/quota/new': privateRouteRule,
   },
   nitro: {
     preset: 'cloudflare_module',

@@ -208,6 +208,15 @@ describe('API 额度包市场视图', () => {
     assert.match(quotaRushPublishPageSource, /watch\(selectedSlot,[\s\S]*?\}, \{ immediate: true \}\)/)
   })
 
+  test('限时额度发布页区分资料失败并严格匹配显式服务 ID', () => {
+    assert.match(quotaRushPublishPageSource, /isLoading: profileLoading[\s\S]*?isError: profileIsError[\s\S]*?isSuccess: profileIsSuccess[\s\S]*?error: profileError[\s\S]*?refetch: refetchProfile/)
+    assert.match(quotaRushPublishPageSource, /profileIsError\.value \|\| !profileIsSuccess\.value/)
+    assert.match(quotaRushPublishPageSource, /个人资料加载失败/)
+    assert.match(quotaRushPublishPageSource, /requestedServiceUnavailable/)
+    assert.match(quotaRushPublishPageSource, /if \(requestedId\) \{[\s\S]*?selectedServiceId\.value = rows\.some[\s\S]*?serviceMode\.value = 'existing'[\s\S]*?return/)
+    assert.match(quotaRushPublishPageSource, /不会自动改用其他服务/)
+  })
+
   test('倒计时覆盖未开始、当前轮、持续销售和结束边界', () => {
     const base = structuredClone(apiQuotaOffers[0]!)
     const now = Date.parse('2026-07-19T01:00:00.000Z')
