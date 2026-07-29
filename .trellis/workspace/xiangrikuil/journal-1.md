@@ -898,3 +898,37 @@ Extracted one shared account payment editor, opened it inline from free, fixed-p
 ### Next Steps
 
 - None - task complete
+
+
+## Session 24: Persist development account recovery through real backend
+
+**Date**: 2026-07-29
+**Task**: Persist development account recovery through real backend
+**Package**: frontend
+**Branch**: `codex/api-publish-three-modes`
+
+### Summary
+
+Made real backend mode explicit for default Nuxt development on port 5173, added explicit Mock mode and fail-fast API mode validation, aligned local origin/proxy docs, added recovery refetch regressions, and verified password/email persistence through PostgreSQL across a frontend restart.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `44895f2` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
