@@ -24,6 +24,7 @@ import {
   startOAuthLogin,
   type BackendSession,
 } from '@/lib/backendClient'
+import { normalizeReturnTo } from '@/lib/authNavigation'
 
 const route = useRoute()
 const router = useRouter()
@@ -40,10 +41,7 @@ const loggedIn = computed(() => Boolean(session.value))
 const displayName = computed(() => session.value?.user.displayName ?? session.value?.user.username ?? '未登录')
 const linuxDo = computed(() => session.value?.user.linuxDoBinding)
 const isAdmin = computed(() => session.value?.user.permissions.includes('admin') ?? false)
-const returnTo = computed(() => {
-  const value = typeof route.query.returnTo === 'string' ? route.query.returnTo : '/'
-  return value.startsWith('/') && !value.startsWith('//') ? value : '/'
-})
+const returnTo = computed(() => normalizeReturnTo(route.query.returnTo))
 
 const linuxDoIconPaths = [
   {

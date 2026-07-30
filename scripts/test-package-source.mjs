@@ -101,7 +101,7 @@ try {
   writeFileSync(join(testRoot, '.env.example'), 'SAFE_EXAMPLE=true\n')
   writeFileSync(join(testRoot, '.env.production.example'), 'SAFE_EXAMPLE=true\n')
   writeFileSync(join(testRoot, '.env.staging.example'), 'SAFE_EXAMPLE=true\n')
-  writeFileSync(join(testRoot, 'frontend', '.env.development'), 'VITE_API_MODE=real\n')
+  writeFileSync(join(testRoot, 'frontend', '.env.development'), 'NUXT_PUBLIC_API_MODE=real\n')
   writeFileSync(join(testRoot, 'output', 'tracked-assets', 'asset.bin'), 'generated\n')
   writeFileSync(join(testRoot, '.codex', 'context.json'), '{}\n')
   writeFileSync(join(testRoot, '.trellis', 'tasks', 'fixture', 'prd.md'), 'task\n')

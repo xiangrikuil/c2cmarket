@@ -2,8 +2,9 @@ import tailwindcss from '@tailwindcss/vite'
 import { defineNuxtConfig } from 'nuxt/config'
 import { resolve } from 'node:path'
 import { routes } from './src/router'
+import { requireApiMode } from './src/lib/apiMode'
 
-const apiMode = process.env.NUXT_PUBLIC_API_MODE ?? ''
+const apiMode = requireApiMode(process.env.NUXT_PUBLIC_API_MODE)
 const publicApiBaseURL = process.env.NUXT_PUBLIC_API_BASE_URL ?? ''
 const devApiProxyTarget = process.env.NUXT_DEV_API_PROXY_TARGET ?? 'http://127.0.0.1:8080'
 const serverApiBaseURL = process.env.NUXT_API_BASE_URL
@@ -89,6 +90,7 @@ export default defineNuxtConfig({
       '/api-intents/**',
       '/carpools/new',
       '/api-market/new',
+      '/api-market/quota/new',
       '/announcements/**',
       '/u/**',
     ],
@@ -112,6 +114,7 @@ export default defineNuxtConfig({
     '/api-intents/**': privateRouteRule,
     '/carpools/new': privateRouteRule,
     '/api-market/new': privateRouteRule,
+    '/api-market/quota/new': privateRouteRule,
   },
   nitro: {
     preset: 'cloudflare_module',

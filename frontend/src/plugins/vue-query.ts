@@ -1,4 +1,4 @@
-import { defineNuxtPlugin, useState } from '#app'
+import { defineNuxtPlugin, useRouter, useState } from '#app'
 import {
   QueryClient,
   VueQueryPlugin,
@@ -6,6 +6,8 @@ import {
   hydrate,
   type DehydratedState,
 } from '@tanstack/vue-query'
+import { createLoginRedirectCoordinator } from '@/lib/authNavigation'
+import { subscribeToBackendSessionInvalidation } from '@/lib/backendClient'
 
 export default defineNuxtPlugin((nuxtApp) => {
   const vueQueryState = useState<DehydratedState | null>('vue-query', () => null)
@@ -28,6 +30,18 @@ export default defineNuxtPlugin((nuxtApp) => {
   }
 
   if (import.meta.client) {
+    const router = useRouter()
+    const redirectToLogin = createLoginRedirectCoordinator(async (location) => {
+      queryClient.clear()
+      await router.replace(location)
+    })
+    const unsubscribe = subscribeToBackendSessionInvalidation(() => {
+      if (router.currentRoute.value.path === '/login') return
+      void redirectToLogin(router.currentRoute.value.fullPath)
+    })
+    nuxtApp.vueApp.onUnmount(unsubscribe)
+    import.meta.hot?.dispose(unsubscribe)
+
     nuxtApp.hooks.hook('app:created', () => {
       if (vueQueryState.value) hydrate(queryClient, vueQueryState.value)
     })

@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { RouterLink } from 'vue-router'
-import { CreditCard, ExternalLink } from 'lucide-vue-next'
+import { CreditCard, Settings2 } from 'lucide-vue-next'
 import ApiPaymentMethodIcon from '@/components/api-payment/ApiPaymentMethodIcon.vue'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -23,6 +22,10 @@ const props = defineProps<{
   form: ApiServicePublishForm
   settings: ApiPaymentAccountSettings
   loading: boolean
+}>()
+
+const emit = defineEmits<{
+  edit: []
 }>()
 
 const enabledOptions = computed(() => enabledApiPaymentOptions(props.settings))
@@ -56,7 +59,7 @@ function optionSummary(option: ApiPaymentOption) {
           </span>
           <div>
             <h2>收款与接单</h2>
-            <p>使用个人中心设置，发布时复制为服务快照。</p>
+            <p>使用账户级收款设置，发布时复制为服务快照。</p>
           </div>
         </div>
         <Badge :variant="complete ? 'verified' : 'secondary'">{{ complete ? '已配置' : '待配置' }}</Badge>
@@ -96,11 +99,15 @@ function optionSummary(option: ApiPaymentOption) {
 
       <div class="flex flex-col gap-2 rounded-md border border-border bg-muted/50 px-3 py-2 text-[11px] leading-5 text-muted-foreground sm:flex-row sm:items-center sm:justify-between">
         <span>平台不托管支付；收款信息只在订单后用于站外确认。</span>
-        <RouterLink to="/my/contacts" class="shrink-0">
-          <Button size="sm" variant="outline">
-            去个人中心修改 <ExternalLink class="h-3.5 w-3.5" />
-          </Button>
-        </RouterLink>
+        <Button
+          class="shrink-0"
+          size="sm"
+          variant="outline"
+          :disabled="loading"
+          @click="emit('edit')"
+        >
+          <Settings2 class="h-3.5 w-3.5" />修改收款设置
+        </Button>
       </div>
 
       <p v-if="enabledOptions.length" class="text-[11px] text-muted-foreground">已就绪 {{ enabledOptions.length }} 种收款方式 · 付款窗口 {{ form.paymentWindowMinutes }} 分钟</p>

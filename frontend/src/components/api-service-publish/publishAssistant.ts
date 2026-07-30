@@ -1,3 +1,5 @@
+import type { SellingMode } from './types'
+
 export type ApiPublishCompletenessStatus = 'done' | 'pending' | 'conflict'
 
 export type ApiPublishCompletenessItem = {
@@ -31,3 +33,15 @@ export const apiPublishAssistantSummary = (items: ApiPublishCompletenessItem[]) 
 }
 
 export const apiServiceDetailPath = (id: string) => id ? `/api-market/${id}` : ''
+
+const firstQueryValue = (value: unknown) => Array.isArray(value) ? value[0] : value
+
+export const apiPublishModeFromQuery = (mode: unknown, after: unknown): SellingMode | null => {
+  const normalizedMode = firstQueryValue(mode)
+  if (mode !== undefined && mode !== null) {
+    return normalizedMode === 'free' || normalizedMode === 'package' || normalizedMode === 'limited'
+      ? normalizedMode
+      : null
+  }
+  return firstQueryValue(after) === 'quota' ? 'limited' : null
+}

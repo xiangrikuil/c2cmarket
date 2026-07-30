@@ -855,3 +855,148 @@ Repaired clean Nuxt preparation, vulnerable frontend dependencies, PostgreSQL TC
 ### Next Steps
 
 - None - task complete
+
+
+## Session 23: Inline API payment settings in publish flows
+
+**Date**: 2026-07-29
+**Task**: Inline API payment settings in publish flows
+**Package**: frontend
+**Branch**: `codex/api-publish-three-modes`
+
+### Summary
+
+Extracted one shared account payment editor, opened it inline from free, fixed-package, and limited API publishing, preserved isolated drafts and publish snapshots, updated the query cache contract, and completed full responsive local verification.
+
+### Main Changes
+
+- Extracted account payment draft, validation, QR, removal confirmation, and
+  mutation lifecycle into a shared editor used by My Center and publish flows.
+- Replaced the publish summary route link with an inline dialog in free,
+  fixed-package, and limited API publication.
+- Preserved isolated drafts, dirty-close confirmation, query cache updates,
+  and publish-time payment snapshots; synchronized the frontend code spec.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `9c339a2` | `feat: edit API payment settings in publish flow` |
+
+### Testing
+
+- [OK] Focused Vitest: 4 files / 31 tests.
+- [OK] Full Vitest: 53 files / 226 tests; Nuxt typecheck.
+- [OK] Real-backend Nuxt production build and `git diff --check`.
+- [OK] Desktop `1440x900` and mobile `390x844` browser QA across all three
+  publish modes.
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
+
+
+## Session 24: Persist development account recovery through real backend
+
+**Date**: 2026-07-29
+**Task**: Persist development account recovery through real backend
+**Package**: frontend
+**Branch**: `codex/api-publish-three-modes`
+
+### Summary
+
+Made real backend mode explicit for default Nuxt development on port 5173, added explicit Mock mode and fail-fast API mode validation, aligned local origin/proxy docs, added recovery refetch regressions, and verified password/email persistence through PostgreSQL across a frontend restart.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `44895f2` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
+
+
+## Session 25: 统一登录访问控制与会话回跳
+
+**Date**: 2026-07-29
+**Task**: 统一登录访问控制与会话回跳
+**Package**: frontend
+**Branch**: `codex/unified-auth-route-guard`
+
+### Summary
+
+为发布、订单、个人中心、商户和管理页面建立统一登录守卫与安全回跳；修复会话失效、公开页匿名探测及限时额度发布错误状态，并完成自动化与浏览器验证。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `9a15a8d` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
+
+
+## Session 26: 未登录隐藏私有导航
+
+**Date**: 2026-07-29
+**Task**: 未登录隐藏私有导航
+**Package**: frontend
+**Branch**: `codex/unified-auth-route-guard`
+
+### Summary
+
+匿名与认证未解析状态只展示公共导航；隐藏私有分组、通知和公告中心，并保留带安全回跳的登录后发布入口。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `9fb4457` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

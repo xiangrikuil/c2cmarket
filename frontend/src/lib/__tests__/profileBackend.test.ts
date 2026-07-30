@@ -10,6 +10,53 @@ function jsonResponse(body: unknown, status = 200) {
   })
 }
 
+function backendProfile(overrides: Record<string, unknown> = {}) {
+  return {
+    id: 'user-1',
+    username: 'orbit',
+    displayName: 'Orbit',
+    bio: null,
+    avatarUrl: null,
+    customAvatarUrl: null,
+    email: null,
+    emailVerified: false,
+    emailVerifiedAt: null,
+    passwordConfigured: false,
+    regionCode: null,
+    timezone: null,
+    avatarMode: 'linuxdo',
+    accountStatus: 'normal',
+    permissions: [],
+    linuxDoBinding: {
+      bound: true,
+      linuxDoUserId: '1024',
+      linuxDoUsername: 'orbit',
+      linuxDoAvatarUrl: null,
+      trustLevel: 3,
+      lastSyncedAt: null,
+    },
+    badges: null,
+    restrictions: null,
+    usernameChangePolicy: {
+      canChange: true,
+      nextAvailableAt: null,
+    },
+    privacy: {
+      showCreatedAt: true,
+      showLastActiveAt: true,
+      showCompletedCarpoolCount: true,
+      showCompletedApiIntentCount: true,
+      showResponseMedian: true,
+      showResolvedDisputeSummary: true,
+      allowPublicProfileReport: true,
+    },
+    createdAt: '2026-07-07T00:00:00Z',
+    updatedAt: '2026-07-07T00:00:00Z',
+    lastActiveAt: null,
+    ...overrides,
+  }
+}
+
 async function loadProfileBackend(config: { apiMode?: string, apiBaseUrl?: string } = {}): Promise<ProfileBackendModule> {
   vi.resetModules()
   const client = await import('../backendClient')
@@ -39,49 +86,7 @@ test('backend profile mapper normalizes nullable array fields', async () => {
         linuxDoBinding: { bound: true, linuxDoUsername: 'orbit', trustLevel: 3 },
       },
     }))
-    .mockResolvedValueOnce(jsonResponse({
-      id: 'user-1',
-      username: 'orbit',
-      displayName: 'Orbit',
-      bio: null,
-      avatarUrl: null,
-      customAvatarUrl: null,
-      email: null,
-      emailVerified: false,
-      emailVerifiedAt: null,
-      passwordConfigured: false,
-      regionCode: null,
-      timezone: null,
-      avatarMode: 'linuxdo',
-      accountStatus: 'normal',
-      permissions: [],
-      linuxDoBinding: {
-        bound: true,
-        linuxDoUserId: '1024',
-        linuxDoUsername: 'orbit',
-        linuxDoAvatarUrl: null,
-        trustLevel: 3,
-        lastSyncedAt: null,
-      },
-      badges: null,
-      restrictions: null,
-      usernameChangePolicy: {
-        canChange: true,
-        nextAvailableAt: null,
-      },
-      privacy: {
-        showCreatedAt: true,
-        showLastActiveAt: true,
-        showCompletedCarpoolCount: true,
-        showCompletedApiIntentCount: true,
-        showResponseMedian: true,
-        showResolvedDisputeSummary: true,
-        allowPublicProfileReport: true,
-      },
-      createdAt: '2026-07-07T00:00:00Z',
-      updatedAt: '2026-07-07T00:00:00Z',
-      lastActiveAt: null,
-    }))
+    .mockResolvedValueOnce(jsonResponse(backendProfile()))
 
   const { backendMyProfile } = await loadProfileBackend({ apiMode: 'real' })
   const profile = await backendMyProfile()
@@ -90,6 +95,73 @@ test('backend profile mapper normalizes nullable array fields', async () => {
   assert.deepEqual(profile.restrictions, [])
   assert.equal(fetchMock.mock.calls[0]?.[0], '/api/v1/auth/session')
   assert.equal(fetchMock.mock.calls[1]?.[0], '/api/v1/me/profile')
+})
+
+test('account recovery remains complete after the profile is fetched again', async () => {
+  const completedProfile = backendProfile({
+    email: 'orbit@example.com',
+    emailVerified: true,
+    emailVerifiedAt: '2026-07-29T06:00:00Z',
+    passwordConfigured: true,
+    updatedAt: '2026-07-29T06:00:00Z',
+  })
+  const fetchMock = vi.fn()
+    .mockResolvedValueOnce(new Response(null, { status: 204 }))
+    .mockResolvedValueOnce(jsonResponse({
+      email: 'orbit@example.com',
+      expiresAt: '2026-07-29T06:15:00Z',
+      devCode: '123456',
+    }))
+    .mockResolvedValueOnce(jsonResponse(completedProfile))
+    .mockResolvedValueOnce(jsonResponse({
+      csrfToken: 'csrf-profile',
+      expiresAt: '2999-01-01T00:00:00Z',
+      user: {
+        id: 'user-1',
+        username: 'orbit',
+        displayName: 'Orbit',
+        isAdmin: false,
+        permissions: [],
+        linuxDoBinding: { bound: true },
+      },
+    }))
+    .mockResolvedValueOnce(jsonResponse(completedProfile))
+  vi.stubGlobal('fetch', fetchMock)
+
+  vi.resetModules()
+  const client = await import('../backendClient')
+  client.setBackendRuntimeConfig({ apiMode: 'real' })
+  client.setBackendCSRFToken('csrf-profile')
+  const {
+    backendConfirmEmailVerification,
+    backendMyProfile,
+    backendSetPassword,
+    backendStartEmailVerification,
+  } = await import('../profileBackend')
+
+  await backendSetPassword({ newPassword: 'backup-password-1' })
+  await backendStartEmailVerification('orbit@example.com')
+  const confirmed = await backendConfirmEmailVerification({
+    email: 'orbit@example.com',
+    code: '123456',
+  })
+  const refreshed = await backendMyProfile()
+
+  assert.equal(confirmed.emailVerified, true)
+  assert.equal(confirmed.passwordConfigured, true)
+  assert.equal(refreshed.email, 'orbit@example.com')
+  assert.equal(refreshed.emailVerified, true)
+  assert.equal(refreshed.passwordConfigured, true)
+  assert.deepEqual(
+    fetchMock.mock.calls.map(call => call[0]),
+    [
+      '/api/v1/auth/password',
+      '/api/v1/me/email-verification/start',
+      '/api/v1/me/email-verification/confirm',
+      '/api/v1/auth/session',
+      '/api/v1/me/profile',
+    ],
+  )
 })
 
 test('public profile adapter preserves unavailable reputation facts as null', async () => {

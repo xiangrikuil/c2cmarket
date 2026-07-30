@@ -30,14 +30,22 @@ pnpm dev
 打开：
 
 ```text
-http://localhost:3000
+http://127.0.0.1:5173
 ```
 
-开发模式默认读取 `frontend/.env.development`，使用真实 API 模式，并通过 Nuxt 的开发代理把 `/api`、`/health`、`/readyz` 转发到 `http://127.0.0.1:8080`。如需换后端地址：
+默认 `dev` 命令会显式加载 `frontend/.env.development`，使用真实 API 模式，并通过 Nuxt 的开发代理把 `/api`、`/health`、`/readyz` 转发到 `http://127.0.0.1:8080`。缺少或写错 `NUXT_PUBLIC_API_MODE` 时启动会直接失败，不会静默回退到 Mock。如需换后端地址：
 
 ```bash
 NUXT_DEV_API_PROXY_TARGET=http://127.0.0.1:18090 pnpm dev
 ```
+
+只有纯前端演示时才显式启动 Mock：
+
+```bash
+pnpm dev:mock
+```
+
+Mock 数据不写入 PostgreSQL，不能作为账号、订单或交易持久化的验收环境。
 
 本地初始管理员账号来自 migration `000025_native_admin_login`，用户名为 `admin`。初始密码只在交付记录中提供，不写入仓库文档。
 

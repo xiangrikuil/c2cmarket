@@ -16,11 +16,12 @@
     }
   },
   "scripts": {
-    "dev": "nuxt dev --host 0.0.0.0",
+    "dev": "nuxt dev --host 0.0.0.0 --port 5173 --dotenv .env.development",
+    "dev:mock": "NUXT_PUBLIC_API_MODE=mock nuxt dev --host 0.0.0.0 --port 5173 --dotenv .env.development",
     "build": "nuxt build",
-    "postinstall": "nuxt prepare",
+    "postinstall": "nuxt prepare --dotenv .env.development",
     "preview": "nuxt preview --host 0.0.0.0",
-    "typecheck": "nuxt typecheck",
+    "typecheck": "nuxt typecheck --dotenv .env.development",
     "test": "vitest run",
     "openapi:generate": "openapi-ts --file openapi-ts.config.mjs --no-log-file",
     "openapi:check": "node ../scripts/check-openapi-types.mjs"

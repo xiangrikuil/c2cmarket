@@ -128,17 +128,125 @@ if (!isAccountRecoveryComplete(profile) && !isAccountRecoveryAllowedPath(route.p
 }
 ```
 
-## Scenario: API Service Account Payment Defaults Snapshot Into Publish Payload
+## Scenario: Development API Mode And Account Recovery Persistence
 
 ### 1. Scope / Trigger
 
-- Trigger: frontend work touching API service payment settings, `ApiServicePublishPage.vue`, My Center contact/workspace settings, or `submitApiService()` payload construction.
+- Trigger: changes to Nuxt development commands, dotenv loading, runtime API
+  mode, the local frontend/backend ports, or account recovery persistence.
+- Account recovery state is an identity-domain record, not a page preference.
+  Real-mode development must use the same backend and PostgreSQL ownership as
+  staging and production.
+
+### 2. Signatures
+
+```ts
+type ApiMode = 'real' | 'mock'
+
+function requireApiMode(value: unknown): ApiMode
+function setBackendRuntimeConfig(config: {
+  apiMode?: string
+  apiBaseUrl?: string
+}): void
+function shouldUseRealBackend(): boolean
+```
+
+```text
+pnpm --dir frontend dev       -> real, http://127.0.0.1:5173
+pnpm --dir frontend dev:mock  -> mock, http://127.0.0.1:5173
+
+NUXT_PUBLIC_API_MODE=real|mock
+NUXT_PUBLIC_SITE_URL=http://127.0.0.1:5173
+NUXT_DEV_API_PROXY_TARGET=http://127.0.0.1:8080
+```
+
+### 3. Contracts
+
+| Level | Change | Appropriate use | Limitation |
+| --- | --- | --- | --- |
+| Minimum immediate repair | Start Nuxt with `NUXT_PUBLIC_API_MODE=real`, or explicitly load the tracked development dotenv file | Unblock the current local session while backend and PostgreSQL are already running | Depends on the exact start command and does not prevent a later silent fallback |
+| Minimum repository repair | Make the default `dev` script load the real-mode development dotenv file and document the command | Small, reviewable correction for the confirmed startup bug | Still needs a contract test to keep the command and runtime mode aligned |
+| Long-term repair | Default development to validated `real` mode, provide a separate explicit Mock command, fail fast on missing/invalid mode, and test persistence across a profile refetch/page refresh | Normal ongoing development | Slightly more configuration and test work, but removes ambiguous runtime behavior |
+
+- The long-term repair is the default when the backend contract and database
+  persistence already exist.
+- The default `dev` command must explicitly load `frontend/.env.development`.
+  Do not assume Nuxt loads `.env.development` without `--dotenv`.
+- Browser API calls use the same-origin `/api` path. Nuxt proxies it to the
+  backend on `127.0.0.1:8080`; a public API base URL is not required locally.
+- `real` and `mock` are the only valid modes. Missing or invalid mode fails
+  during config loading and must not select Mock.
+- Mock is available only through `dev:mock`. Its state is demo data and is not
+  a persistence acceptance environment.
+- Do not add `localStorage`, `sessionStorage`, or Pinia persistence for
+  `email`, `emailVerified`, `emailVerifiedAt`, or `passwordConfigured` in real
+  mode. Refresh must read those fields from `GET /api/v1/me/profile`.
+- Backend unavailability in real mode remains a visible request failure.
+
+### 4. Validation & Error Matrix
+
+| Condition | Expected behavior |
+| --- | --- |
+| `NUXT_PUBLIC_API_MODE` is missing or unknown | Nuxt config and runtime config initialization fail with an explicit mode error |
+| Default `dev` starts | Runtime payload contains `apiMode:"real"` and listens on `5173` |
+| `dev:mock` starts | Runtime payload contains `apiMode:"mock"` and does not claim database persistence |
+| Backend on `8080` is unavailable in real mode | API request fails visibly; no Mock record is returned |
+| Email/password setup completes in real mode | PostgreSQL-backed profile returns `emailVerified=true` and `passwordConfigured=true` after refetch and frontend restart |
+
+### 5. Good / Base / Bad Cases
+
+- Good: `pnpm --dir frontend dev` loads the tracked development dotenv file,
+  proxies `/api` to `8080`, and a refreshed account page reads completed state
+  from the backend profile.
+- Base: a developer intentionally runs `dev:mock` for a standalone UI demo and
+  accepts that a reload may restore Mock seed state.
+- Bad: an empty mode silently executes `api.ts` Mock mutations, or the frontend
+  stores recovery fields in browser storage to hide that no database write
+  occurred.
+
+### 6. Tests Required
+
+- Unit-test `requireApiMode()` with `real`, `mock`, blank, missing, and unknown
+  values.
+- Assert the default and Mock package commands load the expected mode and use
+  port `5173`.
+- Adapter regression: set password, confirm email, discard the frontend query
+  cache, fetch `GET /api/v1/me/profile` again, and verify both completion
+  fields.
+- Runtime smoke: read the Nuxt payload for both start commands and assert
+  `apiMode`; in real mode, proxy `/readyz` and confirm database readiness.
+- Database smoke: complete account recovery through a linux.do-bound fake OAuth
+  user, restart the frontend, and read the completed profile again.
+- Run full Vitest, Nuxt typecheck, real-mode production build, relevant backend
+  tests, source-package test, and `git diff --check`.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```ts
+const apiMode = process.env.NUXT_PUBLIC_API_MODE ?? ''
+const useMock = apiMode !== 'real'
+```
+
+#### Correct
+
+```ts
+const apiMode = requireApiMode(process.env.NUXT_PUBLIC_API_MODE)
+const useRealBackend = apiMode === 'real'
+```
+
+## Scenario: API Service Account Payment Settings Share One Editor And Snapshot Into Publish Payload
+
+### 1. Scope / Trigger
+
+- Trigger: frontend work touching API service payment settings, `ApiPaymentSettingsEditor.vue`, `ApiPaymentSettingsDialog.vue`, `ApiServicePublishPage.vue`, quota-rush publishing, My Center contact/workspace settings, or `submitApiService()` payload construction.
 - The platform is a matching surface, not a payment processor. Account-level settings may describe off-platform confirmation instructions only.
 
 ### 2. Signatures
 
 ```ts
-type ApiPaymentMethod = 'wechat' | 'alipay' | 'usdt'
+type ApiPaymentMethod = 'wechat' | 'alipay'
 
 type ApiPaymentAccountSettings = {
   paymentWindowMinutes: number
@@ -153,6 +261,15 @@ type ApiPaymentAccountSettings = {
 
 getApiPaymentAccountSettings(): Promise<ApiPaymentAccountSettings>
 updateApiPaymentAccountSettings(payload: Omit<ApiPaymentAccountSettings, 'updatedAt'>): Promise<ApiPaymentAccountSettings>
+
+type ApiPaymentSettingsEditorEmits = {
+  cancel: []
+  'dirty-change': [dirty: boolean]
+  saved: [settings: ApiPaymentAccountSettings]
+}
+
+useApiPaymentAccountSettingsQuery()
+useUpdateApiPaymentAccountSettingsMutation()
 ```
 
 Publish payload fields remain service-level:
@@ -167,12 +284,19 @@ submitApiService({
 
 ### 3. Contracts
 
-- My Center owns editing API payment defaults.
+- My Center and API publish surfaces must compose the same `ApiPaymentSettingsEditor`; do not keep a second page-local payment form.
+- A publish summary emits an `edit` command. The owning publish page renders one `ApiPaymentSettingsDialog` and must not navigate to `/my/contacts` for this action.
+- Every dialog opening starts from a deep clone of the latest saved query data. Draft edits remain component-local and must not mutate the summary, query cache, or publish snapshot before save succeeds.
 - The buyer payment confirmation window is fixed at 10 minutes; do not restore a 3-15 minute editor.
 - WeChat Pay and Alipay settings are complete when a QR-code data URL is present. Their text instructions are optional operational notes.
-- USDT settings are complete when off-platform network/address confirmation instructions are present. USDT does not use the QR-code field.
+- WeChat Pay and Alipay are the only supported account payment methods. Normalization must discard legacy or unknown methods such as `usdt`.
 - Do not add real-name identity fields to API payment settings.
-- The API service publish page must render a summary of those defaults, not a full payment editor.
+- The API service publish page renders a compact summary and opens the shared editor in a dialog; the full editor must not be duplicated inside the form section.
+- Mutation success must write the returned settings into `apiPaymentAccountSettingsQueryKey()`. The existing publish-page watcher then clones query data into `form.paymentWindowMinutes` and `form.paymentOptions`; do not add a second snapshot-update path.
+- Successful dialog save closes the dialog and shows success feedback. Failed save keeps the dialog and draft open.
+- Closing a dirty dialog through Cancel, close button, overlay, or Escape requires discard confirmation. Continuing keeps the draft; discarding leaves saved settings and the publish form unchanged.
+- QR removal changes only the draft after a dedicated confirmation and takes effect only after saving.
+- My Center must feed the shared editor's dirty state into its existing page-level unsaved-changes guard.
 - Publishing must copy the current account defaults into `paymentWindowMinutes` and `paymentOptions` so every service stores a publish-time snapshot.
 - Updating My Center later must not silently change already-published services.
 - Frontend workspace persistence may use a local facade store until a real account-level backend endpoint exists, but service publish must still submit the existing service-level backend order-settings payload.
@@ -182,24 +306,33 @@ submitApiService({
 
 | Condition | Expected behavior |
 | --- | --- |
-| `paymentWindowMinutes !== 10` | My Center save blocks; publish page remains blocked. |
-| No enabled payment method | My Center shows a missing-settings reason; publish CTA says to configure account payment settings. |
-| Enabled WeChat Pay / Alipay lacks a QR code | My Center save blocks and publish remains incomplete. |
-| Enabled USDT has blank instructions | My Center save blocks and publish remains incomplete. |
+| `paymentWindowMinutes !== 10` | Shared editor save blocks; publish page remains blocked. |
+| No enabled payment method | Shared editor shows a missing-settings reason; publish CTA says to configure account payment settings. |
+| Enabled WeChat Pay / Alipay lacks a QR code | Shared editor save blocks and publish remains incomplete. |
+| Legacy or unknown payment method is loaded | Normalization drops it; only WeChat Pay and Alipay remain. |
 | Instructions include API keys, tokens, passwords, cookies, sessions, payment codes, bank-card numbers, or panel credentials | Save/publish validation rejects the content with visible boundary copy. |
-| Account settings complete | Publish page copies settings into the hidden service snapshot fields and preview shows method labels plus confirmation window. |
+| Dirty dialog close is requested | Show discard confirmation; continuing preserves the draft and discarding preserves saved/query state. |
+| Account update succeeds | Query cache updates, the existing watcher refreshes the publish snapshot, the dialog closes, and success feedback appears. |
+| Account update fails | Query cache and publish snapshot remain unchanged; the dialog stays open with its draft. |
+| Account settings are complete | Publish page copies settings into the hidden service snapshot fields and preview shows method labels plus confirmation window. |
 
 ### 5. Good/Base/Bad Cases
 
-- Good: merchant uploads a WeChat Pay QR code once in My Center; `/api-market/new` shows `微信 · 固定 10 分钟确认`; submit still includes service-level `paymentOptions`.
-- Base: no account settings exist; publish page shows a read-only summary with a link to `/my/contacts` and disables submission.
-- Bad: every API service publish form asks the merchant to retype payment instructions, or a service stores a live reference to mutable account settings.
+- Good: a merchant opens the publish summary dialog, saves an Alipay QR code, immediately sees `支付宝 · 固定 10 分钟确认`, and submit still includes service-level `paymentOptions`.
+- Base: no account settings exist; publish remains blocked, but `修改收款设置` opens an isolated inline dialog without changing the route, mode, step, or other form fields.
+- Bad: the summary links to `/my/contacts`, publish and My Center maintain separate editors, draft edits mutate the publish snapshot before save, or a service stores a live reference to mutable account settings.
 
 ### 6. Tests Required
 
+- Unit tests must cover normalization to WeChat Pay/Alipay only, completeness, QR data-URL validation, fixed 10-minute normalization, and cloned draft isolation.
+- Component/source regressions must prove My Center and publish reuse the shared editor, publish owns one dialog, the summary emits `edit`, and the publish summary has no `RouterLink` or `/my/contacts`.
+- Dialog regressions must cover fresh sessions, dirty close, continue editing, discard, successful/failed save lifecycle, QR upload validation, and confirmed QR removal.
+- Query tests must assert mutation success updates `apiPaymentAccountSettingsQueryKey()` and the existing publish watcher copies that data into the service snapshot.
+- `pnpm --dir frontend test`.
 - `pnpm --dir frontend exec vue-tsc -b --pretty false`.
 - Real-mode build: `pnpm --dir frontend build` with the required Nuxt runtime API variables.
 - Source scan product-boundary copy around the touched publish/My Center files for payment custody, credentials, API keys, tokens, cookies, sessions, payment codes, and escrow wording.
+- Browser smoke at `1440x900` and `390x844` must verify free, fixed-package, and limited modes open the dialog without route changes; dirty close/discard works; save updates the summary; mobile content scrolls with a reachable save action and no horizontal overflow.
 - Browser or curl smoke must verify `/api-market/new` direct deep link renders the application and does not get swallowed by the Nuxt development `/api/` proxy.
 
 ### 7. Wrong vs Correct
@@ -207,13 +340,22 @@ submitApiService({
 #### Wrong
 
 ```vue
+<RouterLink to="/my/contacts">配置 API 收款设置</RouterLink>
 <PaymentSettingsSection :form="form" />
 ```
 
 #### Correct
 
 ```vue
-<AccountPaymentSummarySection :form="form" :settings="accountPaymentSettingsValue" />
+<AccountPaymentSummarySection
+  :form="form"
+  :settings="accountPaymentSettingsValue"
+  @edit="paymentSettingsDialogOpen = true"
+/>
+<ApiPaymentSettingsDialog
+  v-model:open="paymentSettingsDialogOpen"
+  :settings="accountPaymentSettingsValue"
+/>
 ```
 
 ```ts

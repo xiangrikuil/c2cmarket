@@ -125,12 +125,12 @@ export function apiPaymentSettingsSummary(settings: Pick<ApiPaymentAccountSettin
 export function apiPaymentSettingsMissingReason(settings: Pick<ApiPaymentAccountSettings, 'paymentWindowMinutes' | 'paymentOptions'>) {
   if (!isApiPaymentWindowValid(settings.paymentWindowMinutes)) return `买家确认付款窗口固定为 ${defaultApiPaymentWindowMinutes} 分钟。`
   const enabled = enabledApiPaymentOptions(settings)
-  if (!enabled.length) return '请先在个人中心启用至少一种 API 收款方式。'
+  if (!enabled.length) return '请先启用至少一种 API 收款方式。'
   const missing = enabled.find(option => !isApiPaymentOptionComplete(option))
   if (missing) {
     return apiPaymentMethodRequiresQrCode(missing.paymentMethod)
-      ? `请先在个人中心上传${apiPaymentMethodLabels[missing.paymentMethod]}收款码。`
-      : `请先在个人中心填写${apiPaymentMethodLabels[missing.paymentMethod]}收款说明。`
+      ? `请先上传${apiPaymentMethodLabels[missing.paymentMethod]}收款码。`
+      : `请先填写${apiPaymentMethodLabels[missing.paymentMethod]}收款说明。`
   }
   return ''
 }

@@ -1,3 +1,5 @@
+import { requireApiMode, type ApiMode } from '@/lib/apiMode'
+
 type ProblemDetails = {
   title?: string
   status?: number
@@ -53,11 +55,15 @@ export class BackendProblemError extends Error {
   }
 }
 
-let runtimeApiMode = ''
+let runtimeApiMode: ApiMode | null = null
 let runtimeBaseURL = ''
 const SESSION_REFRESH_GRACE_MS = 60_000
-const SESSION_INVALIDATION_CODES = new Set([
+const SESSION_CACHE_INVALIDATION_CODES = new Set([
   'CSRF_TOKEN_INVALID',
+  'SESSION_EXPIRED',
+  'SESSION_REVOKED',
+])
+const SESSION_LOGIN_REQUIRED_CODES = new Set([
   'SESSION_EXPIRED',
   'SESSION_REVOKED',
 ])
@@ -66,8 +72,13 @@ let csrfToken: string | null = null
 let cachedSession: BackendSession | null = null
 let sessionRequest: Promise<BackendSession> | null = null
 const pendingGetRequests = new Map<string, Promise<unknown>>()
+const sessionInvalidationHandlers = new Set<(error: BackendProblemError) => void>()
 
 export function shouldUseRealBackend() {
+  if (runtimeApiMode === null) {
+    if (import.meta.env.MODE === 'test') return false
+    throw new Error('Backend runtime config has not initialized NUXT_PUBLIC_API_MODE.')
+  }
   return runtimeApiMode === 'real'
 }
 
@@ -76,7 +87,7 @@ export function backendBaseURL() {
 }
 
 export function setBackendRuntimeConfig(config: { apiMode?: string, apiBaseUrl?: string }) {
-  runtimeApiMode = config.apiMode?.trim() ?? ''
+  runtimeApiMode = requireApiMode(config.apiMode)
   runtimeBaseURL = config.apiBaseUrl?.trim() ?? ''
 }
 
@@ -106,17 +117,29 @@ function hasUsableCachedSession(now = Date.now()) {
   return Number.isFinite(expiresAt) && expiresAt > now + SESSION_REFRESH_GRACE_MS
 }
 
-function isSessionInvalidationError(error: unknown) {
-  return error instanceof BackendProblemError && SESSION_INVALIDATION_CODES.has(error.code)
+function isSessionCacheInvalidationError(error: unknown) {
+  return error instanceof BackendProblemError && SESSION_CACHE_INVALIDATION_CODES.has(error.code)
 }
 
 function isCSRFTokenInvalidError(error: unknown) {
   return error instanceof BackendProblemError && error.code === 'CSRF_TOKEN_INVALID'
 }
 
-function clearBackendSessionCacheOnAuthError(error: unknown) {
-  if (isSessionInvalidationError(error)) {
-    clearBackendSessionCache()
+function clearBackendSessionCacheOnAuthError(error: unknown, notifySessionInvalidation = true) {
+  if (!(error instanceof BackendProblemError)) return
+  const hadCachedSession = cachedSession !== null
+  if (isSessionCacheInvalidationError(error)) clearBackendSessionCache()
+  if (notifySessionInvalidation && hadCachedSession && SESSION_LOGIN_REQUIRED_CODES.has(error.code)) {
+    for (const handler of sessionInvalidationHandlers) {
+      handler(error)
+    }
+  }
+}
+
+export function subscribeToBackendSessionInvalidation(handler: (error: BackendProblemError) => void) {
+  sessionInvalidationHandlers.add(handler)
+  return () => {
+    sessionInvalidationHandlers.delete(handler)
   }
 }
 
@@ -133,7 +156,10 @@ function coalesceKey(path: string, init: RequestInit) {
   return `${backendBaseURL()}${path}|${headers.get('accept') ?? ''}`
 }
 
-export async function getCurrentBackendSession(options: { forceRefresh?: boolean } = {}) {
+export async function getCurrentBackendSession(options: {
+  forceRefresh?: boolean
+  notifySessionInvalidation?: boolean
+} = {}) {
   if (!options.forceRefresh && hasUsableCachedSession()) {
     return cachedSession!
   }
@@ -141,7 +167,9 @@ export async function getCurrentBackendSession(options: { forceRefresh?: boolean
     return sessionRequest
   }
 
-  sessionRequest = backendRequest<BackendSession>('/api/v1/auth/session')
+  sessionRequest = backendRequest<BackendSession>('/api/v1/auth/session', {}, {
+    notifySessionInvalidation: options.notifySessionInvalidation,
+  })
     .then(cacheBackendSession)
     .catch(error => {
       clearBackendSessionCache()
@@ -198,7 +226,11 @@ async function decodeResponse<T>(response: Response): Promise<T> {
   return data as T
 }
 
-export async function backendRequest<T>(path: string, init: RequestInit = {}) {
+export async function backendRequest<T>(
+  path: string,
+  init: RequestInit = {},
+  options: { notifySessionInvalidation?: boolean } = {},
+) {
   const requestInit = {
     ...init,
     credentials: 'include' as const,
@@ -224,7 +256,7 @@ export async function backendRequest<T>(path: string, init: RequestInit = {}) {
     const response = await fetch(`${backendBaseURL()}${path}`, requestInit)
     return await decodeResponse<T>(response)
   } catch (error) {
-    clearBackendSessionCacheOnAuthError(error)
+    clearBackendSessionCacheOnAuthError(error, options.notifySessionInvalidation !== false)
     throw error
   }
 }
@@ -276,9 +308,15 @@ export async function backendFormDataMutation<T>(path: string, body: FormData, o
   }
 }
 
-export async function ensureBackendSession(username = 'orbit', admin = false) {
+export async function ensureBackendSession(
+  username = 'orbit',
+  admin = false,
+  options: { notifySessionInvalidation?: boolean } = {},
+) {
   try {
-    const current = await getCurrentBackendSession()
+    const current = await getCurrentBackendSession({
+      notifySessionInvalidation: options.notifySessionInvalidation,
+    })
     if (shouldUseRealBackend()) {
       if (!admin || current.user.isAdmin) return current
       throw new BackendProblemError({
@@ -292,17 +330,7 @@ export async function ensureBackendSession(username = 'orbit', admin = false) {
       return current
     }
   } catch (error) {
-    if (shouldUseRealBackend() && error instanceof BackendProblemError) {
-      throw error
-    }
-    if (shouldUseRealBackend()) {
-      throw new BackendProblemError({
-        title: 'Session required',
-        status: 401,
-        code: 'SESSION_EXPIRED',
-        detail: '请先登录后继续操作。',
-      }, 401)
-    }
+    if (shouldUseRealBackend()) throw error
   }
   const created = await backendJSON<BackendSession>('/api/v1/auth/dev-session', { username, admin })
   return cacheBackendSession(created)
@@ -323,17 +351,7 @@ export async function requireBackendSession() {
   try {
     return await getCurrentBackendSession()
   } catch (error) {
-    if (shouldUseRealBackend() && error instanceof BackendProblemError) {
-      throw error
-    }
-    if (shouldUseRealBackend()) {
-      throw new BackendProblemError({
-        title: 'Session required',
-        status: 401,
-        code: 'SESSION_EXPIRED',
-        detail: '请先登录后继续操作。',
-      }, 401)
-    }
+    if (shouldUseRealBackend()) throw error
     return ensureBackendSession()
   }
 }

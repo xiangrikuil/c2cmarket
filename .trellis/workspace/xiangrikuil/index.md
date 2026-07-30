@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 22
-- **Last Active**: 2026-07-27
+- **Total Sessions**: 26
+- **Last Active**: 2026-07-29
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~849 | Active |
+| `journal-1.md` | ~1002 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,10 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 26 | 2026-07-29 | 未登录隐藏私有导航 | `9fb4457` | `codex/unified-auth-route-guard` |
+| 25 | 2026-07-29 | 统一登录访问控制与会话回跳 | `9a15a8d` | `codex/unified-auth-route-guard` |
+| 24 | 2026-07-29 | Persist development account recovery through real backend | `44895f2` | `codex/api-publish-three-modes` |
+| 23 | 2026-07-29 | Inline API payment settings in publish flows | `9c339a2` | `codex/api-publish-three-modes` |
 | 22 | 2026-07-27 | Fix PR 15 CI gates | `a4ab77063fb01338f4be155fa73a9d8b618aaff5` | `codex/remove-demand-module` |
 | 21 | 2026-07-27 | Merge demand removal into staging | `db9742f196bf762d5ffa0e2f3a26810fe9cc9ca7` | `codex/merge-demand-removal-staging` |
 | 20 | 2026-07-27 | Remove prelaunch demand module | `399bf78` | `codex/remove-demand-module` |

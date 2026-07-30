@@ -127,7 +127,7 @@ const buyerFlow = [
             买家看到的内容
           </div>
           <Badge :variant="isLimitedQuotaMode ? 'status' : previewPackage ? 'model' : 'trust'">
-            {{ isLimitedQuotaMode ? '限时额度包' : previewPackage ? '限时流量包' : '自由额度' }}
+            {{ isLimitedQuotaMode ? '限时额度包' : previewPackage ? '固定额度包' : '自由额度' }}
           </Badge>
         </div>
         <div class="mt-2 flex items-center gap-2">

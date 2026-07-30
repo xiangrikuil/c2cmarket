@@ -33,6 +33,26 @@ describe('个人与经营中心导航', () => {
     expect(appShellSource).toContain('if (hasMerchantWorkspace.value) groups.push(merchantGroup)')
   })
 
+  it('匿名访问只展示公共导航并保留明确的登录发布入口', () => {
+    expect(appShellSource).toContain('const isAuthenticated = computed(() => Boolean(myProfile.value))')
+    expect(appShellSource).toContain('const authResolved = computed(() => import.meta.client && !profilePending.value)')
+    expect(appShellSource).toContain('const showLoginAction = computed(() => authResolved.value && !isAuthenticated.value)')
+    expect(appShellSource).toContain('useNotifications(isAuthenticated)')
+    expect(appShellSource).toContain('if (!isAuthenticated.value) return [browseGroup]')
+    expect(appShellSource).toContain('const groups = [browseGroup, userGroup, publishGroup]')
+    expect(appShellSource).toContain('v-if="isAuthenticated && !sidebarCollapsed"')
+    expect(appShellSource).toContain('v-if="showLoginAction"')
+    expect(appShellSource).toContain('v-else-if="isAuthenticated"')
+    expect(appShellSource).toContain('登录后发布')
+    expect(appShellSource).toContain('const currentLoginTo = computed(() => loginRoute(route.fullPath))')
+    expect(appShellSource).toContain('v-else-if="showLoginAction" class="grid gap-2 border-t border-border p-4"')
+    expect(appShellSource).toContain(':to="currentLoginTo" @click="closeMenu"')
+    expect(appShellSource).toContain("const anonymousCarpoolPublishTo = loginRoute('/carpools/new')")
+    expect(appShellSource).toContain("const anonymousApiPublishTo = loginRoute('/api-market/new')")
+    expect(appShellSource).toContain(':to="anonymousCarpoolPublishTo"')
+    expect(appShellSource).toContain(':to="anonymousApiPublishTo"')
+  })
+
   it('将账户设置合并为共享页签并保留深链接', () => {
     expect(myCenterSource).toContain('const sectionLinks = [')
     expect(myCenterSource).toContain("{ label: '账户概览', to: '/my'")
