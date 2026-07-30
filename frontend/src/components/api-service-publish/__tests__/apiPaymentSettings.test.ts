@@ -46,6 +46,15 @@ test('normalizes and validates API payment account settings', () => {
   assert.equal(isApiPaymentAccountSettingsComplete(wechatWithQr), true)
   assert.match(apiPaymentSettingsSummary(wechatWithQr), /固定 10 分钟确认/)
 
+  const legacyBothEnabled = normalizeApiPaymentAccountSettings({
+    paymentOptions: [
+      { paymentMethod: 'alipay', enabled: true, paymentInstructions: '', paymentQrCodeDataUrl: qrDataUrl },
+      { paymentMethod: 'wechat', enabled: true, paymentInstructions: '', paymentQrCodeDataUrl: qrDataUrl },
+    ],
+  })
+  assert.deepEqual(legacyBothEnabled.paymentOptions.map(option => option.enabled), [false, true])
+  assert.equal(isApiPaymentAccountSettingsComplete(legacyBothEnabled), true)
+
   const legacyUSDT = normalizeApiPaymentAccountSettings({
     paymentOptions: [
       { paymentMethod: 'usdt', enabled: true, paymentInstructions: '', paymentQrCodeDataUrl: qrDataUrl },

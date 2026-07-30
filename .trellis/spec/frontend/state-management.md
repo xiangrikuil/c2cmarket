@@ -262,6 +262,9 @@ type ApiPaymentAccountSettings = {
 getApiPaymentAccountSettings(): Promise<ApiPaymentAccountSettings>
 updateApiPaymentAccountSettings(payload: Omit<ApiPaymentAccountSettings, 'updatedAt'>): Promise<ApiPaymentAccountSettings>
 
+GET /api/v1/me/api-payment-settings
+PUT /api/v1/me/api-payment-settings
+
 type ApiPaymentSettingsEditorEmits = {
   cancel: []
   'dirty-change': [dirty: boolean]
@@ -290,16 +293,19 @@ submitApiService({
 - The buyer payment confirmation window is fixed at 10 minutes; do not restore a 3-15 minute editor.
 - WeChat Pay and Alipay settings are complete when a QR-code data URL is present. Their text instructions are optional operational notes.
 - WeChat Pay and Alipay are the only supported account payment methods. Normalization must discard legacy or unknown methods such as `usdt`.
+- The editor uses one `RadioGroup`: choosing WeChat Pay disables Alipay and choosing Alipay disables WeChat Pay. Inactive QR-code and instruction data remain in the draft and saved account record for later switching.
+- Completeness requires exactly one enabled, complete method. Normalization of legacy Mock data with multiple enabled methods keeps only the first supported enabled method deterministically.
 - Do not add real-name identity fields to API payment settings.
-- The API service publish page renders a compact summary and opens the shared editor in a dialog; the full editor must not be duplicated inside the form section.
+- API service and quota-rush publish pages render one compact row for the active method and open the shared editor in a dialog; they must not render cards for every supported method or duplicate the full editor inside the form section.
+- In real mode the facade must call the authenticated backend endpoints. It must not read, write, or fall back to `localStorage` after a backend failure. Mock mode may keep the existing local facade store.
 - Mutation success must write the returned settings into `apiPaymentAccountSettingsQueryKey()`. The existing publish-page watcher then clones query data into `form.paymentWindowMinutes` and `form.paymentOptions`; do not add a second snapshot-update path.
 - Successful dialog save closes the dialog and shows success feedback. Failed save keeps the dialog and draft open.
 - Closing a dirty dialog through Cancel, close button, overlay, or Escape requires discard confirmation. Continuing keeps the draft; discarding leaves saved settings and the publish form unchanged.
+- Entering quota-rush new-service mode with a successfully loaded but incomplete account setting opens the shared dialog once. Dismissing it preserves the service and quota drafts; the next continue attempt opens it again.
 - QR removal changes only the draft after a dedicated confirmation and takes effect only after saving.
 - My Center must feed the shared editor's dirty state into its existing page-level unsaved-changes guard.
-- Publishing must copy the current account defaults into `paymentWindowMinutes` and `paymentOptions` so every service stores a publish-time snapshot.
-- Updating My Center later must not silently change already-published services.
-- Frontend workspace persistence may use a local facade store until a real account-level backend endpoint exists, but service publish must still submit the existing service-level backend order-settings payload.
+- Publishing copies the current account defaults into `paymentWindowMinutes` and `paymentOptions` so every new service stores a publish-time snapshot. Order creation then copies that service snapshot into the order.
+- Updating account settings later must not silently change already-published services; changing a service must not rewrite existing orders.
 - Public API service list/detail responses must not expose raw payment instructions or QR-code material. A purchase-intent detail may show the frozen snapshot to participants only.
 
 ### 4. Validation & Error Matrix
@@ -308,26 +314,31 @@ submitApiService({
 | --- | --- |
 | `paymentWindowMinutes !== 10` | Shared editor save blocks; publish page remains blocked. |
 | No enabled payment method | Shared editor shows a missing-settings reason; publish CTA says to configure account payment settings. |
+| Both methods are enabled in a draft | Completeness fails and save requires one selected method. |
 | Enabled WeChat Pay / Alipay lacks a QR code | Shared editor save blocks and publish remains incomplete. |
-| Legacy or unknown payment method is loaded | Normalization drops it; only WeChat Pay and Alipay remain. |
+| Legacy or unknown payment method is loaded | Normalization drops it; only WeChat Pay and Alipay remain, with at most one enabled. |
 | Instructions include API keys, tokens, passwords, cookies, sessions, payment codes, bank-card numbers, or panel credentials | Save/publish validation rejects the content with visible boundary copy. |
 | Dirty dialog close is requested | Show discard confirmation; continuing preserves the draft and discarding preserves saved/query state. |
 | Account update succeeds | Query cache updates, the existing watcher refreshes the publish snapshot, the dialog closes, and success feedback appears. |
 | Account update fails | Query cache and publish snapshot remain unchanged; the dialog stays open with its draft. |
+| Real-mode account read fails | Show the request error; do not return Mock or browser-local settings as success. |
+| Quota new-service continue runs without a complete setting | Keep every publish field, open the shared dialog, and remain on the same step and route. |
 | Account settings are complete | Publish page copies settings into the hidden service snapshot fields and preview shows method labels plus confirmation window. |
 
 ### 5. Good/Base/Bad Cases
 
-- Good: a merchant opens the publish summary dialog, saves an Alipay QR code, immediately sees `支付宝 · 固定 10 分钟确认`, and submit still includes service-level `paymentOptions`.
-- Base: no account settings exist; publish remains blocked, but `修改收款设置` opens an isolated inline dialog without changing the route, mode, step, or other form fields.
-- Bad: the summary links to `/my/contacts`, publish and My Center maintain separate editors, draft edits mutate the publish snapshot before save, or a service stores a live reference to mutable account settings.
+- Good: a merchant opens the publish summary dialog, selects Alipay, saves its QR code, immediately sees one `支付宝 · 固定 10 分钟确认` row, and submit still includes service-level `paymentOptions`.
+- Base: no account settings exist; quota new-service mode opens an isolated inline dialog without changing the route, step, service form, or quota form.
+- Bad: both methods remain enabled, the summary renders one card per method, real mode reads `localStorage`, the summary links to `/my/contacts`, or a service stores a live reference to mutable account settings.
 
 ### 6. Tests Required
 
-- Unit tests must cover normalization to WeChat Pay/Alipay only, completeness, QR data-URL validation, fixed 10-minute normalization, and cloned draft isolation.
-- Component/source regressions must prove My Center and publish reuse the shared editor, publish owns one dialog, the summary emits `edit`, and the publish summary has no `RouterLink` or `/my/contacts`.
+- Unit tests must cover normalization to WeChat Pay/Alipay only, legacy dual-enabled normalization to one method, exactly-one completeness, QR data-URL validation, fixed 10-minute normalization, and cloned draft isolation.
+- Backend-adapter tests must assert GET/PUT paths, session/CSRF behavior, response normalization, and no real-mode Mock fallback.
+- Component/source regressions must prove My Center and publish reuse the shared editor, the editor uses radio semantics, publish owns one dialog, the summary renders only the enabled method, and the publish summary has no `RouterLink` or `/my/contacts`.
 - Dialog regressions must cover fresh sessions, dirty close, continue editing, discard, successful/failed save lifecycle, QR upload validation, and confirmed QR removal.
 - Query tests must assert mutation success updates `apiPaymentAccountSettingsQueryKey()` and the existing publish watcher copies that data into the service snapshot.
+- Quota publish regressions must assert missing settings open the dialog on new-service entry and again on continue, while the service/quota form objects remain intact.
 - `pnpm --dir frontend test`.
 - `pnpm --dir frontend exec vue-tsc -b --pretty false`.
 - Real-mode build: `pnpm --dir frontend build` with the required Nuxt runtime API variables.

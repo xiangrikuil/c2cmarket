@@ -72,6 +72,17 @@ describe('API 额度包市场视图', () => {
     assert.doesNotMatch(quotaRushPublishPageSource, /copiedQueryValue\('(copies|slotKey|expiresAt)'\)/)
   })
 
+  test('限时包先显示紧凑服务列表并把新建服务降为次要动作', () => {
+    assert.match(quotaRushPublishPageSource, /选择要发布额度的 API 服务/)
+    assert.match(quotaRushPublishPageSource, /我的 API 服务/)
+    assert.match(quotaRushPublishPageSource, /新建 API 服务/)
+    assert.match(quotaRushPublishPageSource, /返回选择服务/)
+    assert.match(quotaRushPublishPageSource, /当前服务/)
+    assert.match(quotaRushPublishPageSource, /服务编号 \{\{ serviceShortId\(service\.id\) \}\}/)
+    assert.match(quotaRushPublishPageSource, /max-h-72/)
+    assert.doesNotMatch(quotaRushPublishPageSource, /<Tabs v-model="serviceMode"|选择已有服务|创建基础服务/)
+  })
+
   test('发布页先选择三种同级销售模式', () => {
     assert.match(apiServicePublishPageSource, /apiPublishModeFromQuery\(route\.query\.mode, route\.query\.after\)/)
     assert.match(sellingModeSelectorSource, /value: 'free'[\s\S]*?title: '自由额度'/)
@@ -123,7 +134,7 @@ describe('API 额度包市场视图', () => {
     assert.match(wechatMarkSource, /fill="#07C160"[\s\S]*?<title>WeChat<\/title>/)
     assert.match(alipayMarkSource, /fill="#1677FF"[\s\S]*?<title>Alipay<\/title>/)
     assert.match(apiPaymentMethodIconSource, /apiPaymentMethodIconSrc\[method\]/)
-    assert.match(accountPaymentSummarySource, /<ApiPaymentMethodIcon :method="option\.paymentMethod"/)
+    assert.match(accountPaymentSummarySource, /<ApiPaymentMethodIcon :method="enabledOption\.paymentMethod"/)
     assert.match(myCenterPageSource, /<ApiPaymentSettingsEditor/)
     assert.match(paymentSettingsEditorSource, /<PaymentMethodCard/)
     assert.match(paymentMethodCardSource, /<ApiPaymentMethodIcon :method="option\.paymentMethod"/)
@@ -152,8 +163,13 @@ describe('API 额度包市场视图', () => {
     assert.match(paymentSettingsDialogSource, /discardConfirmationOpen[\s\S]*?放弃未保存的修改/)
     assert.match(paymentSettingsDialogSource, /handleSaved[\s\S]*?emit\('update:open', false\)/)
     assert.match(paymentSettingsEditorSource, /useUpdateApiPaymentAccountSettingsMutation/)
+    assert.match(paymentSettingsEditorSource, /<RadioGroup v-model="selectedPaymentMethod"/)
+    assert.doesNotMatch(paymentMethodCardSource, /<Checkbox/)
     assert.match(paymentSettingsEditorSource, /containsSensitiveContent/)
     assert.match(apiServicePublishPageSource, /watch\(accountPaymentSettingsValue,[\s\S]*?form\.paymentOptions = settings\.paymentOptions\.map/)
+    assert.match(quotaRushPublishPageSource, /accountSettingsComplete[\s\S]*?paymentSettingsDialogOpen\.value = true/)
+    assert.match(quotaRushPublishPageSource, /baseErrors\.paymentOptions = '请先设置收款方式。'[\s\S]*?paymentSettingsDialogOpen\.value = true/)
+    assert.match(quotaRushPublishPageSource, /@saved="handlePaymentSettingsSaved"/)
   })
 
   test('限时与自由额度卡按产品分类复用弱主题并保留统一购买操作', () => {

@@ -196,7 +196,8 @@ backend/migrations/000063_verification_data_lifecycle.{up,down}.sql
 backend/migrations/000064_contact_cipher_aad.{up,down}.sql
 backend/migrations/000065_remove_demands.{up,down}.sql
 backend/migrations/000066_api_service_multiplier_reconciliation.{up,down}.sql
-database.ExpectedMigrationVersion = 66
+backend/migrations/000067_api_account_payment_settings.{up,down}.sql
+database.ExpectedMigrationVersion = 67
 ```
 
 Standard execution remains:
@@ -217,8 +218,8 @@ docker compose --profile migrate run --rm migrate
 
 | Condition | Expected behavior |
 | --- | --- |
-| Database Version 53 contains published 51/52 schema, has no rows that violate historical Version 54, and lacks new quota tables | Run standard migration 54 onward and finish at `66, dirty=false`; Version 66 removes the historical fixed-one constraint. |
-| Fresh database | Run the complete chain 1 through 66 without gaps or duplicate versions; the Version 54 constraint is an intermediate state removed by Version 66. |
+| Database Version 53 contains published 51/52 schema, has no rows that violate historical Version 54, and lacks new quota tables | Run standard migration 54 onward and finish at `67, dirty=false`; Version 66 removes the historical fixed-one constraint. |
+| Fresh database | Run the complete chain 1 through 67 without gaps or duplicate versions; the Version 54 constraint is an intermediate state removed by Version 66. |
 | Database Version 53 already has a Sub2API service model with `merchant_multiplier <> 1.0000` | Version 54 fails before Version 66 can run. Stop on an explicitly named clone; do not force the migration version or rewrite business data silently. |
 | Database Version 54-65 still has the fixed-one constraint | Version 66 drops every matching canonical or anonymous constraint and preserves business rows. |
 | Migration fails and marks a temporary clone dirty | Delete and recreate only that named clone from the untouched source database before retrying. |
@@ -226,8 +227,8 @@ docker compose --profile migrate run --rm migrate
 
 ### 5. Good / Base / Bad Cases
 
-- Good: preserve published 51/52/53, renumber unpublished files to 54-61, add later work through 66, and verify a fresh 1→66 database plus supported cloned upgrade paths.
-- Base: migrate a compatible clone 53→66; the old package schema and stable business-row hashes remain unchanged, and the fixed-one constraint is absent at Version 66.
+- Good: preserve published 51/52/53, renumber unpublished files to 54-61, add later work through 67, and verify a fresh 1→67 database plus supported cloned upgrade paths.
+- Base: migrate a compatible clone 53→67; the old package schema and stable business-row hashes remain unchanged, and the fixed-one constraint is absent at Version 66.
 - Bad: replace Version 51 with unrelated SQL, see `schema_migrations=53`, and assume the replacement SQL already ran.
 
 ### 6. Tests Required
@@ -267,7 +268,7 @@ Correct:
 ```text
 backend/migrations/000066_api_service_multiplier_reconciliation.up.sql
 backend/migrations/000066_api_service_multiplier_reconciliation.down.sql
-database.ExpectedMigrationVersion = 66
+database.ExpectedMigrationVersion = 67
 api_service_models.merchant_multiplier numeric(8,4) NOT NULL DEFAULT 1.0000 CHECK (merchant_multiplier > 0)
 ```
 
@@ -282,7 +283,7 @@ api_service_models.merchant_multiplier numeric(8,4) NOT NULL DEFAULT 1.0000 CHEC
 
 | Condition | Expected behavior |
 | --- | --- |
-| Version 65 database has the canonical fixed-one constraint | Version 66 drops it and finishes at `66, dirty=false`. |
+| Version 65 database has the canonical fixed-one constraint | Version 66 drops it; the current chain continues through `67, dirty=false`. |
 | Database has a matching anonymous fixed-one check | Version 66 discovers and drops it through `pg_get_constraintdef`. |
 | Merchant declares a positive non-`1.0000` multiplier after Version 66 | Service validation and PostgreSQL both accept and preserve the normalized value. |
 | Merchant declares zero, a negative value, or invalid decimal text | Service validation returns `422 VALIDATION_FAILED`; the database positive-value check remains the integrity backstop. |
@@ -297,7 +298,7 @@ api_service_models.merchant_multiplier numeric(8,4) NOT NULL DEFAULT 1.0000 CHEC
 ### 6. Tests Required
 
 - Source tests assert Version 66 finds canonical and anonymous fixed-one checks, drops constraints dynamically, and contains no `UPDATE` or `DELETE` of `api_service_models`.
-- Apply the complete empty-database chain through Version 66 and assert `schema_migrations` is `66, dirty=false`.
+- Apply the complete empty-database chain through Version 67 and assert `schema_migrations` is `67, dirty=false`.
 - Apply Version 66 to a Version 65 clone and assert no matching fixed-one check remains.
 - Run API service route and PostgreSQL integration regressions that create or update a Sub2API model with a positive non-`1.0000` multiplier and read the exact normalized value back.
 - Run `node scripts/check-migrations-doc.mjs`, database contract tests, full Go tests, `go vet ./...`, and `git diff --check`.
@@ -313,6 +314,80 @@ WHERE distribution_system = 'sub2api';
 -- Correct: reconcile the obsolete constraint in a new forward migration.
 ALTER TABLE api_service_models
 DROP CONSTRAINT ck_api_service_models_sub2api_multiplier;
+```
+
+## Scenario: Account API Payment Settings And Single-Method Constraints
+
+### 1. Scope / Trigger
+
+- Trigger: account API payment persistence, service payment snapshots, account-to-service backfill, or changes to enabled WeChat Pay/Alipay constraints.
+
+### 2. Signatures
+
+```text
+backend/migrations/000067_api_account_payment_settings.up.sql
+backend/migrations/000067_api_account_payment_settings.down.sql
+database.ExpectedMigrationVersion = 67
+
+api_payment_account_options:
+  PRIMARY KEY (user_id, payment_method)
+  payment_method IN ('wechat', 'alipay')
+  UNIQUE (user_id) WHERE enabled = true
+
+api_service_payment_options:
+  UNIQUE (api_service_id)
+  WHERE enabled = true AND payment_method IN ('wechat', 'alipay')
+```
+
+### 3. Contracts
+
+- Version 67 first normalizes legacy service rows to at most one enabled supported method per service, then creates the service partial unique index.
+- The account table stores both supported methods when they contain retained data, but at most one may be enabled per user.
+- Account updates replace the user's rows in one transaction. A rejected method switch rolls back to the previous complete setting.
+- Backfill chooses the owner's most recently updated valid enabled service option. Rows without a non-empty QR-code data URL are not backfilled because they cannot satisfy the new account payload check.
+- The migration does not rewrite existing order snapshots or point services/orders at mutable account rows.
+- Down removes only the account table and the new service uniqueness index. It does not rewrite service/order snapshots.
+
+### 4. Validation & Error Matrix
+
+| Condition | Expected behavior |
+| --- | --- |
+| Legacy service has two enabled methods | Keep the deterministic newest row enabled and disable the other before index creation |
+| Legacy enabled service row lacks QR data | Do not backfill it into the account table |
+| Account inserts a second enabled method | Partial unique index rejects the write |
+| Enabled account row has null/blank QR data | Check constraint rejects the write |
+| Account transaction fails during method switch | Previous account rows remain unchanged |
+| Version 67 down runs | Account table and service partial unique index are removed; service/order snapshot rows remain |
+
+### 5. Good / Base / Bad Cases
+
+- Good: an owner with one valid enabled WeChat service snapshot receives one WeChat account default; switching to Alipay preserves inactive WeChat data and older service/order snapshots.
+- Base: an owner without a valid service payment row starts with no account rows and configures one method later.
+- Bad: backfill an enabled blank QR row, allow both methods enabled, update orders during migration, or delete service payment snapshots on rollback.
+
+### 6. Tests Required
+
+- Migration source tests assert deterministic service cleanup, both partial unique indexes, valid-only backfill, account constraints, and non-destructive down behavior.
+- PostgreSQL integration tests switch enabled methods, retain inactive data, attempt a dual-enabled write, and verify transaction rollback.
+- Empty-database migration chain must finish at `67, dirty=false`.
+- Existing database upgrade must verify one enabled service option per service and one enabled account option per user.
+- Run `node scripts/check-migrations-doc.mjs`, `go test ./internal/database ./internal/store/postgres`, `go test ./...`, and `git diff --check`.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```sql
+UPDATE api_orders
+SET payment_method_snapshot = account.payment_method;
+```
+
+#### Correct
+
+```sql
+CREATE UNIQUE INDEX ux_api_payment_account_options_one_enabled
+ON api_payment_account_options(user_id)
+WHERE enabled = true;
 ```
 
 ## Docker Runtime

@@ -6,6 +6,7 @@ import PaymentMethodCard from '@/components/contact-payment/PaymentMethodCard.vu
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import { RadioGroup } from '@/components/ui/radio-group'
 import {
   apiPaymentMethodLabels,
   apiPaymentSettingsMissingReason,
@@ -58,6 +59,13 @@ const complete = computed(() => isApiPaymentAccountSettingsComplete(form))
 const missingReason = computed(() => apiPaymentSettingsMissingReason(form))
 const summary = computed(() => apiPaymentSettingsSummary(form))
 const dirty = computed(() => settingsSignature(form) !== settingsSignature(savedSnapshot.value))
+const selectedPaymentMethod = computed<ApiPaymentMethod | ''>({
+  get: () => form.paymentOptions.find(option => option.enabled)?.paymentMethod ?? '',
+  set: value => {
+    if (!value) return
+    selectPaymentMethod(value)
+  },
+})
 
 watch(dirty, value => emit('dirty-change', value), { immediate: true })
 
@@ -91,6 +99,12 @@ function optionDirty(option: ApiPaymentOption) {
       paymentQrCodeDataUrl: null,
     }],
   })
+}
+
+function selectPaymentMethod(paymentMethod: ApiPaymentMethod) {
+  for (const option of form.paymentOptions) {
+    option.enabled = option.paymentMethod === paymentMethod
+  }
 }
 
 function handleQrUpload(event: Event, option: ApiPaymentOption) {
@@ -190,19 +204,19 @@ function save() {
       <span class="text-muted-foreground">固定 {{ defaultApiPaymentWindowMinutes }} 分钟</span>
     </div>
 
-    <div class="contact-payment-options-grid">
+    <RadioGroup v-model="selectedPaymentMethod" class="contact-payment-options-grid">
       <PaymentMethodCard
         v-for="option in form.paymentOptions"
         :key="option.paymentMethod"
         :option="option"
         :dirty="optionDirty(option)"
         :disabled="updateMutation.isPending.value"
-        @update:enabled="option.enabled = $event"
+        @select="selectPaymentMethod(option.paymentMethod)"
         @update:instructions="option.paymentInstructions = $event"
         @upload="handleQrUpload($event, option)"
         @request-remove-qr="pendingQrRemoval = option.paymentMethod"
       />
-    </div>
+    </RadioGroup>
 
     <p
       class="contact-payment-status"

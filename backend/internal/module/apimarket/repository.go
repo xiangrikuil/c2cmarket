@@ -9,6 +9,8 @@ import (
 )
 
 type Repository interface {
+	GetAPIAccountPaymentSettings(ctx context.Context, userID string) (AccountPaymentSettings, *domain.AppError)
+	UpdateAPIAccountPaymentSettings(ctx context.Context, input UpdateAccountPaymentSettingsInput, now time.Time) (AccountPaymentSettings, *domain.AppError)
 	CreateAPIService(ctx context.Context, service Service) *domain.AppError
 	ListPublicAPIServices(ctx context.Context, filter PublicServiceFilter) ([]Service, *domain.AppError)
 	GetPublicAPIService(ctx context.Context, serviceID string) (Service, *domain.AppError)

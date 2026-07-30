@@ -74,6 +74,11 @@ type NavigationBadgeService interface {
 	Get(ctx context.Context, user auth.User) (navigationbadge.Summary, *domain.AppError)
 }
 
+type APIPaymentSettingsService interface {
+	GetAPIAccountPaymentSettings(ctx context.Context, user auth.User) (apimarket.AccountPaymentSettings, *domain.AppError)
+	UpdateAPIAccountPaymentSettings(ctx context.Context, user auth.User, input apimarket.UpdateAccountPaymentSettingsInput) (apimarket.AccountPaymentSettings, *domain.AppError)
+}
+
 // Service is the legacy application facade for handlers that have not yet been
 // moved to domain-specific server dependencies.
 type Service interface {
@@ -333,6 +338,7 @@ type ApplicationService interface {
 	Service
 	CarpoolService
 	APIQuotaService
+	APIPaymentSettingsService
 	ReputationGovernanceService
 }
 
@@ -340,6 +346,7 @@ type Server struct {
 	app              Service
 	carpools         CarpoolService
 	apiQuotas        APIQuotaService
+	apiPayment       APIPaymentSettingsService
 	reputation       ReputationGovernanceService
 	mux              chi.Router
 	enableDevAuth    bool
@@ -386,6 +393,7 @@ func NewServer(service ApplicationService, options ...ServerOptions) http.Handle
 		app:              service,
 		carpools:         service,
 		apiQuotas:        service,
+		apiPayment:       service,
 		reputation:       service,
 		mux:              chi.NewRouter(),
 		enableDevAuth:    option.EnableDevAuth,
