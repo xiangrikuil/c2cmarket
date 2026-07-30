@@ -30,6 +30,8 @@ func (s *Server) routes() {
 		r.Post("/auth/logout", s.handleLogout)
 		r.Get("/search", s.limitHandler("search", 60, s.handleSearch))
 		r.Get("/me/profile", s.handleMyProfile)
+		r.Get("/me/api-payment-settings", s.handleMyAPIAccountPaymentSettings)
+		r.Put("/me/api-payment-settings", s.handleUpdateMyAPIAccountPaymentSettings)
 		r.Get("/me/navigation-badges", s.handleNavigationBadges)
 		r.Get("/me/events", s.handleMyEvents)
 		r.Patch("/me/profile", s.handleUpdateMyProfile)

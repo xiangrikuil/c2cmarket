@@ -60,13 +60,18 @@ export function createEmptyApiPaymentAccountSettings(updatedAt = ''): ApiPayment
 export function normalizeApiPaymentAccountSettings(value: RawApiPaymentAccountSettings | null | undefined, updatedAt = ''): ApiPaymentAccountSettings {
   const sourceOptions = Array.isArray(value?.paymentOptions) ? value.paymentOptions : []
   const byMethod = new Map(sourceOptions.map(option => [option.paymentMethod, option]))
+  const enabledMethod = sourceOptions.find(option =>
+    typeof option.paymentMethod === 'string'
+    && isApiPaymentMethod(option.paymentMethod)
+    && option.enabled,
+  )?.paymentMethod
   return {
     paymentWindowMinutes: defaultApiPaymentWindowMinutes,
     paymentOptions: apiPaymentMethods.map(method => {
       const option = byMethod.get(method.value)
       return {
         paymentMethod: method.value,
-        enabled: Boolean(option?.enabled),
+        enabled: method.value === enabledMethod,
         paymentInstructions: String(option?.paymentInstructions ?? ''),
         paymentQrCodeDataUrl: normalizeQrCodeDataUrl(option?.paymentQrCodeDataUrl),
       }
@@ -113,7 +118,7 @@ export function isApiPaymentWindowValid(value: number) {
 export function isApiPaymentAccountSettingsComplete(settings: Pick<ApiPaymentAccountSettings, 'paymentWindowMinutes' | 'paymentOptions'>) {
   const enabled = enabledApiPaymentOptions(settings)
   return isApiPaymentWindowValid(settings.paymentWindowMinutes)
-    && enabled.length > 0
+    && enabled.length === 1
     && enabled.every(isApiPaymentOptionComplete)
 }
 
@@ -126,6 +131,7 @@ export function apiPaymentSettingsMissingReason(settings: Pick<ApiPaymentAccount
   if (!isApiPaymentWindowValid(settings.paymentWindowMinutes)) return `买家确认付款窗口固定为 ${defaultApiPaymentWindowMinutes} 分钟。`
   const enabled = enabledApiPaymentOptions(settings)
   if (!enabled.length) return '请先启用至少一种 API 收款方式。'
+  if (enabled.length > 1) return '微信支付和支付宝只能选择一种。'
   const missing = enabled.find(option => !isApiPaymentOptionComplete(option))
   if (missing) {
     return apiPaymentMethodRequiresQrCode(missing.paymentMethod)

@@ -22,13 +22,14 @@ type APIModelResolver interface {
 }
 
 type Manager struct {
-	mu           sync.Mutex
-	now          func() time.Time
-	repo         Repository
-	catalog      APIModelResolver
-	contact      *contact.Service
-	services     map[string]Service
-	serviceOrder []string
+	mu                     sync.Mutex
+	now                    func() time.Time
+	repo                   Repository
+	catalog                APIModelResolver
+	contact                *contact.Service
+	services               map[string]Service
+	serviceOrder           []string
+	accountPaymentSettings map[string]AccountPaymentSettings
 }
 
 func NewManager(repo Repository, catalogResolver APIModelResolver, contactService *contact.Service, now func() time.Time) *Manager {
@@ -39,11 +40,12 @@ func NewManager(repo Repository, catalogResolver APIModelResolver, contactServic
 		contactService = contact.NewService(nil, now)
 	}
 	return &Manager{
-		now:      now,
-		repo:     repo,
-		catalog:  catalogResolver,
-		contact:  contactService,
-		services: make(map[string]Service),
+		now:                    now,
+		repo:                   repo,
+		catalog:                catalogResolver,
+		contact:                contactService,
+		services:               make(map[string]Service),
+		accountPaymentSettings: make(map[string]AccountPaymentSettings),
 	}
 }
 
@@ -1129,36 +1131,9 @@ func validateOrderSettingsInput(input UpdateOrderSettingsInput) *domain.AppError
 	if input.PaymentWindowMinutes < 3 || input.PaymentWindowMinutes > 15 {
 		return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Payment window invalid", "付款窗口必须在 3 到 15 分钟之间。", "paymentWindowMinutes", "range", "付款窗口必须在 3 到 15 分钟之间。")
 	}
-	if len(input.PaymentOptions) == 0 {
-		return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Payment option required", "至少配置一种收款方式。", "paymentOptions", "required", "至少配置一种收款方式。")
-	}
-	seen := map[string]bool{}
-	enabledCount := 0
-	for i, option := range input.PaymentOptions {
-		field := fmt.Sprintf("paymentOptions.%d", i)
-		method := strings.TrimSpace(option.PaymentMethod)
-		if !IsSupportedPaymentMethod(method) {
-			return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Payment method invalid", "付款方式不支持。", field+".paymentMethod", "invalid", "付款方式不支持。")
-		}
-		if seen[method] {
-			return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Payment method duplicated", "付款方式不能重复。", field+".paymentMethod", "duplicate", "付款方式不能重复。")
-		}
-		seen[method] = true
-		if option.Enabled {
-			enabledCount++
-			if requiresPaymentQRCode(method) && strings.TrimSpace(option.PaymentQRCodeDataURL) == "" {
-				return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Payment QR code required", "启用微信或支付宝收款必须上传收款码。", field+".paymentQrCodeDataUrl", "required", "必须上传收款码。")
-			}
-			if !requiresPaymentQRCode(method) && strings.TrimSpace(option.PaymentInstructions) == "" {
-				return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Payment instructions required", "启用收款方式必须填写收款说明。", field+".paymentInstructions", "required", "必须填写收款说明。")
-			}
-		}
-		if err := validateOptionalNonSecretText(field+".paymentInstructions", option.PaymentInstructions); err != nil {
-			return err
-		}
-		if err := validateOptionalPaymentQRCodeDataURL(field+".paymentQrCodeDataUrl", option.PaymentQRCodeDataURL); err != nil {
-			return err
-		}
+	enabledCount, appErr := validatePaymentOptionInputs(input.PaymentOptions)
+	if appErr != nil {
+		return appErr
 	}
 	if input.AcceptingOrders && enabledCount == 0 {
 		return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Payment method required", "开启接单前至少启用一种收款方式。", "paymentOptions", "required", "至少启用一种收款方式。")

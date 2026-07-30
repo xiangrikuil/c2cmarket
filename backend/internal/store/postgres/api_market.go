@@ -1677,6 +1677,9 @@ func storeValidateAPIServiceOrderSettings(input apimarket.UpdateOrderSettingsInp
 			return err
 		}
 	}
+	if enabledCount > 1 {
+		return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Multiple payment methods enabled", "微信支付和支付宝只能启用一种。", "paymentOptions", "single_enabled", "只能启用一种收款方式。")
+	}
 	if input.AcceptingOrders && enabledCount == 0 {
 		return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Payment method required", "开启接单前至少启用一种收款方式。", "paymentOptions", "required", "至少启用一种收款方式。")
 	}

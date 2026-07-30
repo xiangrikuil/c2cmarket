@@ -130,9 +130,43 @@ func TestAPIQuotaDependentMigrationsExist(t *testing.T) {
 		"000065_remove_demands.down.sql",
 		"000066_api_service_multiplier_reconciliation.up.sql",
 		"000066_api_service_multiplier_reconciliation.down.sql",
+		"000067_api_account_payment_settings.up.sql",
+		"000067_api_account_payment_settings.down.sql",
 	} {
 		if _, err := os.Stat(filepath.Join("..", "..", "migrations", name)); err != nil {
 			t.Fatalf("migration file %s is unavailable: %v", name, err)
+		}
+	}
+}
+
+func TestAPIAccountPaymentSettingsMigrationKeepsOneEnabledMethod(t *testing.T) {
+	t.Parallel()
+
+	upSQL := readMigrationForTest(t, "000067_api_account_payment_settings.up.sql")
+	for _, required := range []string{
+		"CREATE TABLE api_payment_account_options",
+		"PRIMARY KEY (user_id, payment_method)",
+		"ux_api_payment_account_options_one_enabled",
+		"WHERE enabled = true",
+		"ux_api_service_payment_options_one_enabled",
+		"row_number() OVER",
+		"ranked_enabled.enabled_rank > 1",
+		"ranked_owner_options",
+		"option_row.payment_qr_code_data_url IS NOT NULL",
+		"trim(option_row.payment_qr_code_data_url) <> ''",
+	} {
+		if !strings.Contains(upSQL, required) {
+			t.Fatalf("account payment settings migration missing %q", required)
+		}
+	}
+
+	downSQL := readMigrationForTest(t, "000067_api_account_payment_settings.down.sql")
+	for _, required := range []string{
+		"DROP TABLE IF EXISTS api_payment_account_options",
+		"DROP INDEX IF EXISTS ux_api_service_payment_options_one_enabled",
+	} {
+		if !strings.Contains(downSQL, required) {
+			t.Fatalf("account payment settings rollback missing %q", required)
 		}
 	}
 }

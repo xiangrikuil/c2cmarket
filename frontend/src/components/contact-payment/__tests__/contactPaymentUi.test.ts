@@ -39,12 +39,16 @@ describe('联系方式与收款设置 UI', () => {
     expect(myCenter).not.toContain('function saveApiPaymentSettings')
   })
 
-  it('未启用的支付方式保持单行，启用后才展示编辑内容', () => {
+  it('微信和支付宝使用互斥单选，未选项仍保留已有资料', () => {
+    expect(paymentSettingsEditor).toContain('<RadioGroup')
+    expect(paymentSettingsEditor).toContain('selectPaymentMethod')
     expect(paymentMethodCard).toContain('v-if="!option.enabled"')
-    expect(paymentMethodCard).toContain('启用配置')
+    expect(paymentMethodCard).toContain('<RadioGroupItem')
+    expect(paymentMethodCard).toContain('选择')
     expect(paymentMethodCard).toContain('v-else')
     expect(paymentMethodCard).toContain('paymentQrCodeDataUrl')
     expect(paymentMethodCard).toContain('request-remove-qr')
+    expect(paymentMethodCard).not.toContain('<Checkbox')
   })
 
   it('显示未保存状态并在离开页面前保护草稿', () => {
@@ -103,6 +107,8 @@ describe('联系方式与收款设置 UI', () => {
     expect(publishPage.match(/<ApiPaymentSettingsDialog/g)).toHaveLength(1)
     expect(publishPage).toContain('v-model:open="paymentSettingsDialogOpen"')
     expect(publishPage).toContain('@edit="paymentSettingsDialogOpen = true"')
+    expect(paymentSummary.match(/v-for="option in settings\.paymentOptions"/g)).toBeNull()
+    expect(paymentSummary).toContain('enabledOption')
   })
 
   it('只保留一个完成度卡并通过弹窗预览已保存资料', () => {

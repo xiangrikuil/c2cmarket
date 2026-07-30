@@ -29,6 +29,8 @@ const (
 
 	PaymentMethodWechat = "wechat"
 	PaymentMethodAlipay = "alipay"
+
+	DefaultPaymentWindowMinutes = 10
 )
 
 type Service struct {
@@ -263,4 +265,17 @@ type PaymentOptionInput struct {
 	Enabled              bool
 	PaymentInstructions  string
 	PaymentQRCodeDataURL string
+}
+
+type AccountPaymentSettings struct {
+	UserID               string
+	PaymentWindowMinutes int
+	PaymentOptions       []PaymentOptionInput
+	UpdatedAt            time.Time
+}
+
+type UpdateAccountPaymentSettingsInput struct {
+	UserID               string
+	PaymentWindowMinutes int
+	PaymentOptions       []PaymentOptionInput
 }

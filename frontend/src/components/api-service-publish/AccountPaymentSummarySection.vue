@@ -7,13 +7,10 @@ import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import {
   apiPaymentMethodLabels,
-  apiPaymentMethodRequiresQrCode,
   apiPaymentSettingsMissingReason,
   apiPaymentSettingsSummary,
   enabledApiPaymentOptions,
   isApiPaymentAccountSettingsComplete,
-  isApiPaymentOptionComplete,
-  type ApiPaymentOption,
   type ApiPaymentAccountSettings,
 } from '@/lib/apiPaymentSettings'
 import type { ApiServicePublishForm } from './types'
@@ -32,21 +29,7 @@ const enabledOptions = computed(() => enabledApiPaymentOptions(props.settings))
 const complete = computed(() => isApiPaymentAccountSettingsComplete(props.settings))
 const missingReason = computed(() => apiPaymentSettingsMissingReason(props.settings))
 const summary = computed(() => apiPaymentSettingsSummary(props.settings))
-
-function optionStatus(option: ApiPaymentOption) {
-  if (!option.enabled) return '未启用'
-  if (isApiPaymentOptionComplete(option)) return '已就绪'
-  return apiPaymentMethodRequiresQrCode(option.paymentMethod) ? '缺收款码' : '缺说明'
-}
-
-function optionSummary(option: ApiPaymentOption) {
-  if (!option.enabled) return '未启用'
-  if (apiPaymentMethodRequiresQrCode(option.paymentMethod)) {
-    if (!option.paymentQrCodeDataUrl) return '未上传收款码'
-    return option.paymentInstructions.trim() || '已上传收款码，买家创建订单后可见'
-  }
-  return option.paymentInstructions.trim() || '未填写站外确认说明'
-}
+const enabledOption = computed(() => enabledOptions.value[0] ?? null)
 </script>
 
 <template>
@@ -80,21 +63,21 @@ function optionSummary(option: ApiPaymentOption) {
         </div>
       </div>
 
-      <div class="grid gap-2 sm:grid-cols-3">
-        <div v-for="option in settings.paymentOptions" :key="option.paymentMethod" class="rounded-md border border-border bg-muted/35 p-2.5">
-          <div class="flex items-center justify-between gap-2">
-            <span class="flex min-w-0 items-center gap-2">
-              <ApiPaymentMethodIcon :method="option.paymentMethod" size="md" />
-              <span class="truncate text-sm font-semibold">{{ apiPaymentMethodLabels[option.paymentMethod] }}</span>
-            </span>
-            <Badge :variant="option.enabled && isApiPaymentOptionComplete(option) ? 'verified' : 'secondary'">
-              {{ optionStatus(option) }}
-            </Badge>
+      <div class="flex flex-col gap-2 rounded-md border border-border bg-muted/35 px-3 py-2.5 sm:flex-row sm:items-center sm:justify-between">
+        <div v-if="enabledOption" class="flex min-w-0 items-center gap-2.5">
+          <ApiPaymentMethodIcon :method="enabledOption.paymentMethod" size="md" />
+          <div class="min-w-0">
+            <div class="flex flex-wrap items-center gap-2">
+              <span class="text-sm font-semibold">{{ apiPaymentMethodLabels[enabledOption.paymentMethod] }}</span>
+              <Badge variant="verified">当前收款方式</Badge>
+            </div>
+            <p class="mt-0.5 truncate text-xs text-muted-foreground">
+              {{ enabledOption.paymentInstructions.trim() || '已上传收款码，买家创建订单后可见' }}
+            </p>
           </div>
-          <p class="mt-1 line-clamp-1 text-[11px] leading-4 text-muted-foreground">
-            {{ optionSummary(option) }}
-          </p>
         </div>
+        <span v-else class="text-sm text-muted-foreground">尚未选择收款方式</span>
+        <span class="shrink-0 text-xs text-muted-foreground">固定 {{ form.paymentWindowMinutes }} 分钟确认</span>
       </div>
 
       <div class="flex flex-col gap-2 rounded-md border border-border bg-muted/50 px-3 py-2 text-[11px] leading-5 text-muted-foreground sm:flex-row sm:items-center sm:justify-between">
@@ -106,11 +89,9 @@ function optionSummary(option: ApiPaymentOption) {
           :disabled="loading"
           @click="emit('edit')"
         >
-          <Settings2 class="h-3.5 w-3.5" />修改收款设置
+          <Settings2 class="h-3.5 w-3.5" />{{ complete ? '修改收款方式' : '设置收款方式' }}
         </Button>
       </div>
-
-      <p v-if="enabledOptions.length" class="text-[11px] text-muted-foreground">已就绪 {{ enabledOptions.length }} 种收款方式 · 付款窗口 {{ form.paymentWindowMinutes }} 分钟</p>
     </div>
   </Card>
 </template>

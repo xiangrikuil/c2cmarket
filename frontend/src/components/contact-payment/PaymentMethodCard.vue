@@ -4,7 +4,7 @@ import ApiPaymentMethodIcon from '@/components/api-payment/ApiPaymentMethodIcon.
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
-import { Checkbox } from '@/components/ui/checkbox'
+import { RadioGroupItem } from '@/components/ui/radio-group'
 import { Textarea } from '@/components/ui/textarea'
 import {
   apiPaymentMethodLabels,
@@ -21,7 +21,7 @@ const props = defineProps<{
 }>()
 
 const emit = defineEmits<{
-  'update:enabled': [enabled: boolean]
+  select: []
   'update:instructions': [instructions: string]
   upload: [event: Event]
   'request-remove-qr': []
@@ -33,6 +33,11 @@ const methodHint = apiPaymentMethods.find(item => item.value === props.option.pa
 <template>
   <Card class="contact-payment-option-card p-4" :class="{ 'border-primary/30': option.enabled }">
     <div v-if="!option.enabled" class="flex min-h-10 items-center gap-3">
+      <RadioGroupItem
+        :value="option.paymentMethod"
+        :disabled="disabled"
+        :aria-label="`选择${apiPaymentMethodLabels[option.paymentMethod]}`"
+      />
       <ApiPaymentMethodIcon :method="option.paymentMethod" size="md" />
       <div class="min-w-0 flex-1">
         <div class="flex flex-wrap items-center gap-2">
@@ -47,20 +52,19 @@ const methodHint = apiPaymentMethods.find(item => item.value === props.option.pa
         size="sm"
         variant="outline"
         :disabled="disabled"
-        @click="emit('update:enabled', true)"
+        @click="emit('select')"
       >
-        启用配置
+        选择
       </Button>
     </div>
 
     <div v-else class="space-y-4">
       <div class="flex items-start gap-3">
-        <Checkbox
-          :model-value="option.enabled"
+        <RadioGroupItem
+          :value="option.paymentMethod"
           class="mt-2"
           :disabled="disabled"
-          :aria-label="`停用${apiPaymentMethodLabels[option.paymentMethod]}`"
-          @update:model-value="value => emit('update:enabled', Boolean(value))"
+          :aria-label="`已选择${apiPaymentMethodLabels[option.paymentMethod]}`"
         />
         <ApiPaymentMethodIcon :method="option.paymentMethod" size="md" />
         <div class="min-w-0 flex-1">

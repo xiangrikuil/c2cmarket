@@ -2332,7 +2332,7 @@ Backend:
 Database:
   000065_remove_demands.up.sql
   000065_remove_demands.down.sql
-  ExpectedMigrationVersion = 66
+  ExpectedMigrationVersion = 67
 ```
 
 ### 3. Contracts
@@ -2349,14 +2349,14 @@ Database:
 | --- | --- |
 | Browser opens an old demand URL | Existing NotFound page; no redirect or demand shell |
 | Client calls an old demand API | Standard route-level 404 |
-| Database applies migration 65 while upgrading through the current chain | `demands` is absent; the full chain continues through schema `66`, `dirty=false` |
+| Database applies migration 65 while upgrading through the current chain | `demands` is absent; the full chain continues through schema `67`, `dirty=false` |
 | Database rolls migration 65 down | Empty `demands` schema/indexes are recreated; no rows are restored |
 | Active OpenAPI/generated types still expose Demand | Contract drift check fails |
 | Active source/docs still treat demand as a product capability | Residual scan or source-contract test fails |
 
 ### 5. Good/Base/Bad Cases
 
-- Good: migration 65 removes the table, migration 66 completes the current schema chain, runtime/API/UI references disappear together, and old URLs use the shared NotFound path.
+- Good: migration 65 removes the table, the current chain completes at migration 67, runtime/API/UI references disappear together, and old URLs use the shared NotFound path.
 - Base: a developer rolls migration 65 down locally and gets an empty compatibility schema for code rollback.
 - Bad: hide the navigation while retaining routes, handlers, generated types, search branches, or a stale database table.
 
@@ -2365,7 +2365,7 @@ Database:
 - Full Go suite plus a focused migration source test for up ordering and down no-data-restoration behavior.
 - OpenAPI generation and drift check; generated frontend types must contain no Demand operation or schema.
 - Full frontend tests, typecheck, and real-mode build with negative route/navigation assertions.
-- PostgreSQL migration 1-to-latest integration: assert version 66, `dirty=false`, and `to_regclass('public.demands') IS NULL`.
+- PostgreSQL migration 1-to-latest integration: assert version 67, `dirty=false`, and `to_regclass('public.demands') IS NULL`.
 - Real backend smoke suite and explicit old-API 404 checks.
 - Browser checks at 1440x900 and 390x844 for homepage/navigation/search/workspaces and all old demand URLs.
 
@@ -2383,4 +2383,81 @@ hide demand links -> keep API/table/generated types "for later"
 remove UI + API + service + storage + OpenAPI + generated types + current docs
 -> add forward schema-removal migration
 -> verify old URLs/APIs return standard 404
+```
+
+## Scenario: Account-Level API Payment Settings And Snapshot Boundaries
+
+### 1. Scope / Trigger
+
+- Trigger: changes to API payment account endpoints, API service payment options, service publication, API order payment snapshots, or their OpenAPI/generated contracts.
+
+### 2. Signatures
+
+```text
+GET /api/v1/me/api-payment-settings
+PUT /api/v1/me/api-payment-settings
+
+paymentWindowMinutes: 10
+paymentOptions[].paymentMethod: wechat | alipay
+paymentOptions[].enabled: boolean
+paymentOptions[].paymentInstructions: string
+paymentOptions[].paymentQrCodeDataUrl: string
+```
+
+```go
+GetAPIAccountPaymentSettings(ctx, user)
+UpdateAPIAccountPaymentSettings(ctx, user, input)
+```
+
+### 3. Contracts
+
+- GET requires a session and returns a normalized WeChat Pay plus Alipay response. A user with no saved rows receives both disabled and HTTP 200, not 404.
+- PUT requires session plus CSRF, fixes the confirmation window at ten minutes, and requires exactly one enabled method. Disabled method details may remain stored for later switching.
+- Account settings are owner-private. Public API service responses expose only accepted method labels and never expose QR-code data URLs or instructions.
+- New API service publication copies the current account setting into service payment rows. Later account changes do not mutate existing services.
+- API order creation copies the service payment method, instructions, QR code, and confirmation window into the order snapshot. Later account or service changes do not mutate existing orders.
+- The backend never chooses between two enabled methods implicitly. Application validation returns a field error and the database unique index remains the integrity backstop.
+
+### 4. Validation & Error Matrix
+
+| Condition | Result |
+| --- | --- |
+| No account rows | `200` with two disabled normalized options |
+| `paymentWindowMinutes != 10` | `422 VALIDATION_FAILED`, field `paymentWindowMinutes`, reason `fixed` |
+| No enabled method | `422 VALIDATION_FAILED`, field `paymentOptions`, reason `single_enabled` |
+| Both methods enabled | `422 VALIDATION_FAILED`, field `paymentOptions`, reason `single_enabled` |
+| Enabled method has no QR-code data URL | `422 VALIDATION_FAILED`, nested QR field `required` |
+| Duplicate or unsupported method | `422 VALIDATION_FAILED`, nested method field `duplicate` or `invalid` |
+| PUT lacks a valid session or CSRF token | `401` or `403` Problem Details |
+| Account update storage fails | No partial method switch; return an application error |
+
+### 5. Good/Base/Bad Cases
+
+- Good: the owner switches from WeChat Pay to Alipay; inactive WeChat data remains available, new services snapshot Alipay, and older services/orders remain unchanged.
+- Base: a new owner reads empty normalized settings and configures one method from the publish dialog.
+- Bad: GET returns 404, PUT enables both methods, a public service exposes QR material, or an account update rewrites existing service/order snapshots.
+
+### 6. Tests Required
+
+- Domain tests for empty normalization, fixed ten-minute validation, exactly-one enabled validation, duplicate methods, QR requirements, and inactive-data retention.
+- Handler/OpenAPI tests for GET/PUT route parity, session/CSRF behavior, response shape, and Problem Details fields.
+- PostgreSQL tests for switching methods, retaining inactive data, partial unique-index rejection, and transaction rollback after a rejected dual-enabled write.
+- Service/order regressions proving account-to-service and service-to-order copies are snapshots rather than mutable references.
+- Run `go test ./...`, `go vet ./...`, `node scripts/check-openapi-routes.mjs`, `pnpm --dir frontend openapi:check`, and `git diff --check`.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```text
+service.payment_settings_id -> mutable account payment row
+order.payment_settings_id   -> mutable service payment row
+```
+
+#### Correct
+
+```text
+account settings
+  -> copied into new service payment snapshot
+  -> copied into new order payment snapshot
 ```

@@ -357,6 +357,48 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/MyProfile"
+  /api/v1/me/api-payment-settings:
+    get:
+      operationId: getMyAPIAccountPaymentSettings
+      tags: [Profiles]
+      summary: Get the current user's account-level API payment settings.
+      description: Returns normalized WeChat Pay and Alipay settings. A user without saved settings receives both methods disabled instead of a not-found response.
+      responses:
+        "200":
+          description: Current account-level API payment settings.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/APIAccountPaymentSettings"
+        "401":
+          $ref: "#/components/responses/Problem"
+    put:
+      operationId: updateMyAPIAccountPaymentSettings
+      tags: [Profiles]
+      security:
+        - sessionCookie: []
+          csrfToken: []
+      summary: Replace the current user's account-level API payment settings.
+      description: Exactly one of WeChat Pay or Alipay must be enabled. Saved inactive method details may be retained for a later switch. New API services copy the current setting as a service snapshot; this endpoint does not mutate existing services or orders.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateAPIAccountPaymentSettingsRequest"
+      responses:
+        "200":
+          description: Updated account-level API payment settings.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/APIAccountPaymentSettings"
+        "401":
+          $ref: "#/components/responses/Problem"
+        "403":
+          $ref: "#/components/responses/Problem"
+        "422":
+          $ref: "#/components/responses/Problem"
   /api/v1/me/reputation:
     get:
       operationId: getMyReputation
@@ -8861,6 +8903,65 @@ components:
           items:
             type: string
             format: uuid
+    APIAccountPaymentSettings:
+      type: object
+      additionalProperties: false
+      required:
+        - paymentWindowMinutes
+        - paymentOptions
+        - updatedAt
+      properties:
+        paymentWindowMinutes:
+          type: integer
+          enum: [10]
+          description: Buyer payment-confirmation window. Account-level API payment settings always use ten minutes.
+        paymentOptions:
+          type: array
+          minItems: 2
+          maxItems: 2
+          description: Normalized WeChat Pay and Alipay settings. At most one option is enabled.
+          items:
+            $ref: "#/components/schemas/APIAccountPaymentOption"
+        updatedAt:
+          type: string
+          description: RFC 3339 timestamp of the latest saved option, or an empty string when no account payment setting has been saved.
+    UpdateAPIAccountPaymentSettingsRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - paymentWindowMinutes
+        - paymentOptions
+      properties:
+        paymentWindowMinutes:
+          type: integer
+          enum: [10]
+        paymentOptions:
+          type: array
+          minItems: 1
+          maxItems: 2
+          description: WeChat Pay and/or Alipay settings with exactly one enabled option. Payment methods must be unique.
+          items:
+            $ref: "#/components/schemas/APIAccountPaymentOption"
+    APIAccountPaymentOption:
+      type: object
+      additionalProperties: false
+      required:
+        - paymentMethod
+        - enabled
+        - paymentInstructions
+      properties:
+        paymentMethod:
+          type: string
+          enum: [wechat, alipay]
+        enabled:
+          type: boolean
+        paymentInstructions:
+          type: string
+          maxLength: 160
+          description: Optional private note shown only in the order payment-confirmation flow. It must not contain credentials or delivery secrets.
+        paymentQrCodeDataUrl:
+          type: string
+          description: Private WeChat Pay or Alipay QR-code data URL. The enabled option requires this value; public API service reads never expose it.
     APIServiceOrderSettingsRequest:
       type: object
       additionalProperties: false

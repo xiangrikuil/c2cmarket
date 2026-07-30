@@ -40,6 +40,7 @@ URL contract:
 /api-market/new?mode=package -> publish fixed credit packages
 /api-market/new?mode=limited -> create the prerequisite service for limited quota
 /api-market/new?after=quota -> create the prerequisite service and continue to its quota manager
+/api-market/quota/new?serviceId={id} -> publish a fixed-session quota offer for one exact service
 /my/api-services/{id}       -> owner quota manager under the existing service
 /my/api-orders/{id}         -> frozen quota order detail
 ```
@@ -58,6 +59,11 @@ URL contract:
 - The publish stepper reflects the real workflow. Limited publishing treats its selected mode as complete and starts at `配置基础服务`; its primary action is `保存基础服务，下一步设置额度包`. Free and package publishing start with their mode-specific price/package configuration and use `发布自由额度服务` or `发布固定额度包`.
 - The publish stepper uses the shared shadcn-vue `StepperSeparator`, but the page must provide an explicit non-zero horizontal height because the shared separator does not size itself. Completed segments use the primary color and incomplete segments use the border color.
 - API quota publish pages use one progressive interaction contract: explicit current/completed step state, exactly one expanded step, real summaries for completed steps, compact pending rows, and revisitable completed steps. Continue validates only the current step; final publication validates the complete form and returns focus to the first error-owning step without rebuilding form state.
+- `ApiQuotaRushPublishPage` begins with `选择要发布额度的 API 服务` and a compact `我的 API 服务` list. `新建 API 服务` is a secondary action and must not be a peer tab beside service selection.
+- Existing-service rows show title, orderability, model summary, and a stable short service ID. The list has a bounded height with internal scrolling, and the selected row is repeated in a compact `当前服务` summary.
+- A `serviceId` query selects only that exact eligible service. If it is missing or no longer orderable, show the explicit unavailable state and never select a different service.
+- New-service mode is a subordinate state with `返回选择服务`. After creation, return to the workflow with the new service selected. Copy and quota drafts survive every switch between the list, new-service mode, and payment dialog.
+- New-service mode reads the account-level payment query. If it is complete, render only its active method summary; if it is incomplete, open the shared payment dialog in place. Dismissal preserves the publish draft, and the next continue attempt opens the dialog again.
 - Desktop publish pages render one sticky buyer-preview instance beside the active step flow. Below `1241px`, the desktop preview is not rendered and the same preview content opens through the shared Dialog surface; do not maintain simultaneous desktop/mobile preview trees or a second preview DTO.
 - The generic publish first viewport is a dedicated, centered chooser capped at `max-w-5xl`: three restrained cards on desktop and one column on mobile. It contains no stepper, form, preview, or sticky publication action. After selection, the page enters the existing compact stepper and form/preview grid.
 - Mode choices preserve the approved green `自由额度`, blue `固定额度包`, and orange `限时额度包` contrast. Form sections use small semantic Lucide icons, and the buyer preview uses icon-led comparison rows. Icons reinforce field scanning but do not replace labels.

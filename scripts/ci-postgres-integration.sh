@@ -7,7 +7,7 @@ GO_BIN="${GO_BIN:-go}"
 
 POSTGRES_IMAGE="${POSTGRES_IMAGE:-postgres:18-alpine@sha256:96d56f7f57c6aacd1fcb908bc83b345ec5f83231ee486dd66a1baadce274db88}"
 MIGRATE_IMAGE="${MIGRATE_IMAGE:-migrate/migrate:v4.18.3@sha256:39b59b389634e43bb3f2d4e94bc1edef0775ec2a9a3540ce6a2cf330e5daae55}"
-EXPECTED_MIGRATION_VERSION="${EXPECTED_MIGRATION_VERSION:-66}"
+EXPECTED_MIGRATION_VERSION="${EXPECTED_MIGRATION_VERSION:-67}"
 
 POSTGRES_USER="c2c_prelaunch"
 POSTGRES_PASSWORD="c2c_prelaunch_test_password"
@@ -112,7 +112,7 @@ done
   "${MIGRATE_IMAGE}" \
   -path=/migrations \
   -database="postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@${postgres_container}:5432/${MULTIPLIER_UPGRADE_DATABASE}?sslmode=disable" \
-  up 1
+  up 2
 
 multiplier_upgrade_state="$(
   "${DOCKER_BIN}" exec "${postgres_container}" \
@@ -165,7 +165,7 @@ run_go_test() {
 run_go_test "${GENERAL_DATABASE}" ./internal/database \
   '^TestOpenPostgresWithOptionsAppliesPoolAndSessionTimeouts$'
 run_go_test "${GENERAL_DATABASE}" ./internal/store/postgres \
-  '^(TestPostgresOAuthIdentityOwnershipAndConcurrency|TestPostgresBootstrapAdminIsCreateOnlyAndProvenanced|TestPostgresBootstrapAdminRejectsConflictsAndRollsBack|TestPostgresSessionRenewalUpdatesExactlyOnceAtBoundary|TestPostgresContactReencryptDryRunAndApply|TestPostgresDataLifecycleAppliesRetentionAndPreservesAuditHistory|TestPostgresDataLifecycleSkipsWhenAdvisoryLockIsHeld|TestSlowActiveQueryCountIntegration|TestPostgresEmailVerificationChallengeLifecycle|TestPostgresIdempotencyLifecycleBoundsBodiesAndRejectsStaleGeneration)$'
+  '^(TestPostgresOAuthIdentityOwnershipAndConcurrency|TestPostgresBootstrapAdminIsCreateOnlyAndProvenanced|TestPostgresBootstrapAdminRejectsConflictsAndRollsBack|TestPostgresSessionRenewalUpdatesExactlyOnceAtBoundary|TestPostgresContactReencryptDryRunAndApply|TestPostgresDataLifecycleAppliesRetentionAndPreservesAuditHistory|TestPostgresDataLifecycleSkipsWhenAdvisoryLockIsHeld|TestSlowActiveQueryCountIntegration|TestPostgresEmailVerificationChallengeLifecycle|TestPostgresIdempotencyLifecycleBoundsBodiesAndRejectsStaleGeneration|TestAPIAccountPaymentSettingsPersistOneEnabledMethod)$'
 run_go_test "${GENERAL_DATABASE}" ./internal/server \
   '^(TestPostgresAdminOfficialPriceRecordFlow|TestPostgresProductCatalogReadAPIs|TestPostgresAPIServiceFlow|TestPostgresAPIServiceIntegrityConstraints|TestPostgresAPIPurchaseIntentFlow|TestPostgresAPIOrderReleasesPurchaseIntent|TestPostgresAPIPurchaseIntentIntegrityConstraints|TestPostgresIdempotencyProcessingReplay|TestPostgresContactSessionFlow|TestPostgresContactIntegrityConstraints|TestPostgresCarpoolMembershipIntegrityConstraints|TestPostgresOfficialPriceAdminRecordSideEffectsAreIdempotent|TestPostgresCarpoolApplicationFlow)$'
 

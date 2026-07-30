@@ -150,7 +150,7 @@ const navGroups = computed(() => {
 
   if (!isAuthenticated.value) return [browseGroup]
 
-  const groups = [browseGroup, userGroup, publishGroup]
+  const groups = [browseGroup, publishGroup, userGroup]
   if (hasMerchantWorkspace.value) groups.push(merchantGroup)
   groups.push(accountGroup)
   if (canViewAdminNav.value) groups.push(adminEntryGroup)

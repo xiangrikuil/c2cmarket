@@ -263,6 +263,10 @@ import {
 } from '@/lib/reportBackend'
 import { backendAdminUserRows } from '@/lib/adminUserBackend'
 import { shouldUseRealBackend } from '@/lib/backendClient'
+import {
+  backendGetApiPaymentAccountSettings,
+  backendUpdateApiPaymentAccountSettings,
+} from '@/lib/apiPaymentSettingsBackend'
 import { getBackupPasswordValidationMessage } from '@/lib/passwordPolicy'
 import { compareDecimal, divideDecimal, normalizeDecimal, normalizeDecimalTrimmed } from '@/lib/decimal'
 export type AdminSection =
@@ -2894,11 +2898,13 @@ export async function verifyContactMethod(contactId: string) {
 }
 
 export async function getApiPaymentAccountSettings() {
+  if (shouldUseRealBackend()) return backendGetApiPaymentAccountSettings()
   await wait()
   return cloneApiPaymentAccountSettings(apiPaymentAccountSettingsStore)
 }
 
 export async function updateApiPaymentAccountSettings(payload: Omit<ApiPaymentAccountSettings, 'updatedAt'>) {
+  if (shouldUseRealBackend()) return backendUpdateApiPaymentAccountSettings(payload)
   await wait()
   apiPaymentAccountSettingsStore = normalizeApiPaymentAccountSettings({
     paymentWindowMinutes: payload.paymentWindowMinutes,

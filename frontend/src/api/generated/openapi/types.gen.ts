@@ -1078,6 +1078,45 @@ export type ApiServicePackageInput = {
     modelCatalogIds: Array<string>;
 };
 
+export type ApiAccountPaymentSettings = {
+    /**
+     * Buyer payment-confirmation window. Account-level API payment settings always use ten minutes.
+     */
+    paymentWindowMinutes: 10;
+    /**
+     * Normalized WeChat Pay and Alipay settings. At most one option is enabled.
+     */
+    paymentOptions: [
+        ApiAccountPaymentOption,
+        ApiAccountPaymentOption
+    ];
+    /**
+     * RFC 3339 timestamp of the latest saved option, or an empty string when no account payment setting has been saved.
+     */
+    updatedAt: string;
+};
+
+export type UpdateApiAccountPaymentSettingsRequest = {
+    paymentWindowMinutes: 10;
+    /**
+     * WeChat Pay and/or Alipay settings with exactly one enabled option. Payment methods must be unique.
+     */
+    paymentOptions: Array<ApiAccountPaymentOption>;
+};
+
+export type ApiAccountPaymentOption = {
+    paymentMethod: 'wechat' | 'alipay';
+    enabled: boolean;
+    /**
+     * Optional private note shown only in the order payment-confirmation flow. It must not contain credentials or delivery secrets.
+     */
+    paymentInstructions: string;
+    /**
+     * Private WeChat Pay or Alipay QR-code data URL. The enabled option requires this value; public API service reads never expose it.
+     */
+    paymentQrCodeDataUrl?: string;
+};
+
 export type ApiServiceOrderSettingsRequest = {
     /**
      * Owner's explicit manual willingness to accept API orders. The server still derives isOrderable from current service state.
@@ -3245,6 +3284,64 @@ export type UpdateMyProfileResponses = {
 };
 
 export type UpdateMyProfileResponse = UpdateMyProfileResponses[keyof UpdateMyProfileResponses];
+
+export type GetMyApiAccountPaymentSettingsData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/v1/me/api-payment-settings';
+};
+
+export type GetMyApiAccountPaymentSettingsErrors = {
+    /**
+     * Problem Details error.
+     */
+    401: ProblemDetails;
+};
+
+export type GetMyApiAccountPaymentSettingsError = GetMyApiAccountPaymentSettingsErrors[keyof GetMyApiAccountPaymentSettingsErrors];
+
+export type GetMyApiAccountPaymentSettingsResponses = {
+    /**
+     * Current account-level API payment settings.
+     */
+    200: ApiAccountPaymentSettings;
+};
+
+export type GetMyApiAccountPaymentSettingsResponse = GetMyApiAccountPaymentSettingsResponses[keyof GetMyApiAccountPaymentSettingsResponses];
+
+export type UpdateMyApiAccountPaymentSettingsData = {
+    body: UpdateApiAccountPaymentSettingsRequest;
+    path?: never;
+    query?: never;
+    url: '/api/v1/me/api-payment-settings';
+};
+
+export type UpdateMyApiAccountPaymentSettingsErrors = {
+    /**
+     * Problem Details error.
+     */
+    401: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    403: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    422: ProblemDetails;
+};
+
+export type UpdateMyApiAccountPaymentSettingsError = UpdateMyApiAccountPaymentSettingsErrors[keyof UpdateMyApiAccountPaymentSettingsErrors];
+
+export type UpdateMyApiAccountPaymentSettingsResponses = {
+    /**
+     * Updated account-level API payment settings.
+     */
+    200: ApiAccountPaymentSettings;
+};
+
+export type UpdateMyApiAccountPaymentSettingsResponse = UpdateMyApiAccountPaymentSettingsResponses[keyof UpdateMyApiAccountPaymentSettingsResponses];
 
 export type GetMyReputationData = {
     body?: never;

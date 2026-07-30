@@ -279,6 +279,14 @@ databases converge on the current positive merchant-declared multiplier
 contract without rewriting business data. Rolling Version 66 down can fail
 explicitly when non-`1.0000` Sub2API model rows already exist.
 
+Version 67 (`000067_api_account_payment_settings`) adds account-level API
+payment settings for WeChat Pay and Alipay. It normalizes legacy API service
+snapshots to at most one enabled payment method, adds database constraints that
+keep both account and service settings mutually exclusive, and backfills each
+owner from the most recently updated enabled service snapshot. Account changes
+apply only to future service snapshots; existing services and orders remain
+unchanged.
+
 ## Contact Retention And Destruction
 
 Contact method deletion retires the mutable contact method surface. Historical

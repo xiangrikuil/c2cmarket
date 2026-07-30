@@ -30,6 +30,7 @@ describe('个人与经营中心导航', () => {
     expect(appShellSource).toContain("{ label: '安全设置', to: '/my/account'")
     expect(appShellSource).not.toContain('/my/demands')
     expect(appShellSource).toContain("{ label: '进入管理台', to: '/admin'")
+    expect(appShellSource).toContain('const groups = [browseGroup, publishGroup, userGroup]')
     expect(appShellSource).toContain('if (hasMerchantWorkspace.value) groups.push(merchantGroup)')
   })
 
@@ -39,7 +40,7 @@ describe('个人与经营中心导航', () => {
     expect(appShellSource).toContain('const showLoginAction = computed(() => authResolved.value && !isAuthenticated.value)')
     expect(appShellSource).toContain('useNotifications(isAuthenticated)')
     expect(appShellSource).toContain('if (!isAuthenticated.value) return [browseGroup]')
-    expect(appShellSource).toContain('const groups = [browseGroup, userGroup, publishGroup]')
+    expect(appShellSource).toContain('const groups = [browseGroup, publishGroup, userGroup]')
     expect(appShellSource).toContain('v-if="isAuthenticated && !sidebarCollapsed"')
     expect(appShellSource).toContain('v-if="showLoginAction"')
     expect(appShellSource).toContain('v-else-if="isAuthenticated"')
