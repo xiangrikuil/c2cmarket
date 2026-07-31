@@ -306,7 +306,10 @@ Fixed Cloudflare frontend build compatibility, committed the complete marketplac
 
 ### Main Changes
 
-(Add details)
+- 通过现有脚本创建 production PostgreSQL custom-format dump、校验和并上传 R2。
+- 识别共享 env、容器配置和数据库 SCRAM verifier 漂移；从 production Docker 网络验证真实认证边界。
+- 原子同步 `.env.production`，重置数据库角色密码，恢复既有 production backend。
+- 未执行 migration、镜像升级、分支合并、PostgreSQL 重启或 current symlink 切换。
 
 ### Git Commits
 
@@ -317,7 +320,11 @@ Fixed Cloudflare frontend build compatibility, committed the complete marketplac
 
 ### Testing
 
-- [OK] (Add test results)
+- [OK] 本地 dump checksum 与 R2 两个对象验证通过。
+- [OK] Docker 网络密码和 backend 完整连接串认证通过。
+- [OK] production/staging loopback 与公网 `/health`、`/readyz` 均返回 200。
+- [OK] production schema 52、staging schema 67，均 dirty=false。
+- [OK] backend 成功启动后 restart count 为 0，未产生新的认证或退出错误。
 
 ### Status
 
@@ -988,6 +995,38 @@ Made real backend mode explicit for default Nuxt development on port 5173, added
 | Hash | Message |
 |------|---------|
 | `9fb4457` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
+
+
+## Session 27: 恢复生产数据库认证与后端
+
+**Date**: 2026-07-31
+**Task**: 恢复生产数据库认证与后端
+**Package**: backend
+**Branch**: `codex/fix-staging-release-traceability`
+
+### Summary
+
+备份生产 PostgreSQL，校准共享 env 与 SCRAM 角色密码，恢复现有生产后端；生产与 staging 内外网健康检查均通过，未迁移 schema 或更换镜像。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+(No commits - planning session)
 
 ### Testing
 
