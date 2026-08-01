@@ -1,0 +1,1499 @@
+{
+  "version": "1.0.0",
+  "project": {
+    "name": "C2CMarket",
+    "languages": [
+      "Go",
+      "TypeScript",
+      "Vue",
+      "JavaScript",
+      "Python",
+      "Ruby",
+      "SQL"
+    ],
+    "frameworks": [
+      "Nuxt 4",
+      "Vue 3",
+      "chi",
+      "pgx",
+      "PostgreSQL 18",
+      "Pinia",
+      "TanStack Query",
+      "Tailwind CSS"
+    ],
+    "description": "面向 linux.do 社区的订阅拼车、API 服务与官网价格信息撮合平台；本领域图聚焦代码上下文中最完整的 API 服务发布、购买意向、订单履约、限量额度分发和模型真实性审计业务。",
+    "analyzedAt": "2026-07-30T12:22:28Z",
+    "gitCommitHash": "a2d65e931346fce7417c5fb7122bda32ce1c5a16"
+  },
+  "nodes": [
+    {
+      "id": "domain:api-service-marketplace",
+      "type": "domain",
+      "name": "API 服务市场",
+      "summary": "负责商户发布、审核、上下架和展示 API 服务，并将分发系统、模型、价格、额度、付款设置与买家须知组织成可购买商品。公开服务是购买意向和订单创建的上游来源。",
+      "tags": [
+        "api-service",
+        "merchant",
+        "catalog",
+        "publication"
+      ],
+      "complexity": "complex",
+      "domainMeta": {
+        "entities": [
+          "API Service",
+          "API Service Model",
+          "Merchant Profile",
+          "Payment Account Settings"
+        ],
+        "businessRules": [
+          "服务需经过草稿、待审核、需修改、通过或拒绝等审核状态",
+          "只有在线且可公开访问的服务可进入买家购买流程",
+          "按量服务必须提供未来的额度过期时间",
+          "服务发布需声明分发系统、模型、商户承诺和买家须知"
+        ],
+        "crossDomainInteractions": [
+          "向购买意向与订单履约域提供公开服务、卖家和价格快照",
+          "向限量额度分发域提供所属 API 服务",
+          "向模型真实性审计域提供待验证的服务和模型"
+        ]
+      }
+    },
+    {
+      "id": "domain:api-purchase-fulfillment",
+      "type": "domain",
+      "name": "API 购买意向与订单履约",
+      "summary": "负责买家从表达购买意向到创建订单、站外付款、卖家确认、交付和完成的完整过程。订单同时支持普通 API 服务和限量额度商品，并记录买卖双方履约状态及信誉快照。",
+      "tags": [
+        "purchase-intent",
+        "api-order",
+        "payment",
+        "delivery"
+      ],
+      "complexity": "complex",
+      "domainMeta": {
+        "entities": [
+          "API Purchase Intent",
+          "API Order",
+          "Buyer",
+          "Seller",
+          "Payment Submission",
+          "Delivery Credential"
+        ],
+        "businessRules": [
+          "购买意向状态包括 open、contacted、ordered、buyer_cancelled 和 owner_closed",
+          "已关联订单的购买意向不能再由买家取消或卖家关闭",
+          "订单初始状态为 pending_payment，买家提交付款后进入 payment_submitted",
+          "卖家可报告 payment_issue，或确认后进入 paid_confirmed",
+          "卖家提交交付后进入 delivery_submitted，再由买家验收完成",
+          "平台仅跟踪站外付款与履约，不处理站内支付、托管或上游 API 流量"
+        ],
+        "crossDomainInteractions": [
+          "从 API 服务市场读取公开服务、付款方式、卖家信息和价格快照",
+          "为限量额度商品创建订单并触发库存占用与交付",
+          "将订单履约结果提供给信誉与评价能力"
+        ]
+      }
+    },
+    {
+      "id": "domain:limited-api-quota-distribution",
+      "type": "domain",
+      "name": "限量 API 额度分发",
+      "summary": "负责商户导入额度批次、拆分限量商品、配置连续或定时开售，并在购买时分配可交付凭据。该域同时管理批次和商品的草稿、发布、暂停与归档生命周期。",
+      "tags": [
+        "api-quota",
+        "inventory",
+        "limited-offer",
+        "scheduled-sale"
+      ],
+      "complexity": "complex",
+      "domainMeta": {
+        "entities": [
+          "Quota Batch",
+          "Quota Credential",
+          "Limited Quota Offer",
+          "System Sale Slot",
+          "Quota Allocation"
+        ],
+        "businessRules": [
+          "批次和商品均支持 draft、published、paused、archived 状态",
+          "商品可使用 continuous 或 scheduled 开售模式",
+          "额度批次受硬性截止时间和声明总美元额度约束",
+          "公开说明固定包含商户自报、平台未测速的性能免责声明",
+          "购买必须通过幂等订单创建并由额度仓储完成分配"
+        ],
+        "crossDomainInteractions": [
+          "依附 API 服务市场中的服务和商户",
+          "通过 API 订单履约域承接限量额度购买",
+          "将分配后的凭据作为订单交付内容"
+        ]
+      }
+    },
+    {
+      "id": "domain:api-model-assurance",
+      "type": "domain",
+      "name": "API 模型真实性审计",
+      "summary": "负责配置待审计的 API 目标、调用适配器执行探针，并汇总风险、统计和审计报告。审计对象可绑定到市场中的具体 API 服务和模型，为买家判断服务声明提供证据。",
+      "tags": [
+        "model-audit",
+        "probe",
+        "risk",
+        "evidence"
+      ],
+      "complexity": "complex",
+      "domainMeta": {
+        "entities": [
+          "Audit Target",
+          "Audit Run",
+          "Probe",
+          "Risk Report",
+          "Model Fingerprint"
+        ],
+        "businessRules": [
+          "审计目标声明提供商类型、基础地址、声称模型和可选市场服务关联",
+          "审计通过提供商适配器向目标发起探针请求",
+          "审计结果结合随机指纹、KBF、风险与统计信息形成报告"
+        ],
+        "crossDomainInteractions": [
+          "关联 API 服务市场中的服务和模型",
+          "审计结论作为市场信任与风险展示的输入"
+        ]
+      }
+    },
+    {
+      "id": "flow:publish-api-service",
+      "type": "flow",
+      "name": "发布 API 服务",
+      "summary": "商户逐步配置服务、提交审核并在批准后上线接单。",
+      "tags": [
+        "merchant",
+        "publish",
+        "review"
+      ],
+      "complexity": "complex",
+      "domainMeta": {
+        "entryPoint": "HTTP API handled by backend/internal/server/api_market_handler.go",
+        "entryType": "http"
+      }
+    },
+    {
+      "id": "step:publish-api-service:configure-distribution",
+      "type": "step",
+      "name": "配置分发系统",
+      "summary": "商户声明使用 sub2api 或其他 API 接入方式。",
+      "tags": [
+        "distribution",
+        "merchant"
+      ],
+      "complexity": "simple",
+      "filePath": "frontend/src/components/api-service-publish/__tests__/distributionSystems.test.ts",
+      "lineRange": [
+        1,
+        13
+      ]
+    },
+    {
+      "id": "step:publish-api-service:select-models",
+      "type": "step",
+      "name": "选择服务模型",
+      "summary": "从模型目录选择启用模型，并可为具体模型配置倍率覆盖。",
+      "tags": [
+        "model",
+        "selection"
+      ],
+      "complexity": "moderate",
+      "filePath": "frontend/src/components/api-service-publish/modelSelection.ts",
+      "lineRange": [
+        1,
+        27
+      ]
+    },
+    {
+      "id": "step:publish-api-service:configure-commercial-terms",
+      "type": "step",
+      "name": "配置价格额度与付款方式",
+      "summary": "设置模型倍率、可售额度、过期时间、付款账户和付款窗口。",
+      "tags": [
+        "pricing",
+        "quota",
+        "payment-settings"
+      ],
+      "complexity": "complex",
+      "filePath": "backend/internal/module/apimarket/service.go",
+      "lineRange": [
+        1,
+        1353
+      ]
+    },
+    {
+      "id": "step:publish-api-service:declare-commitments",
+      "type": "step",
+      "name": "填写商户承诺与买家须知",
+      "summary": "补充商户服务承诺和买家在购买前必须了解的履约信息。",
+      "tags": [
+        "merchant-commitment",
+        "buyer-notice"
+      ],
+      "complexity": "moderate",
+      "filePath": "frontend/src/components/api-service-publish/__tests__/publishAssistant.test.ts",
+      "lineRange": [
+        1,
+        34
+      ]
+    },
+    {
+      "id": "step:publish-api-service:validate-and-create-draft",
+      "type": "step",
+      "name": "校验并创建服务草稿",
+      "summary": "后端校验服务、模型、额度和商业条件后保存 API 服务。",
+      "tags": [
+        "validation",
+        "draft"
+      ],
+      "complexity": "complex",
+      "filePath": "backend/internal/module/apimarket/service.go",
+      "lineRange": [
+        1,
+        1353
+      ]
+    },
+    {
+      "id": "step:publish-api-service:review-and-publish",
+      "type": "step",
+      "name": "审核并发布",
+      "summary": "服务经历待审核、需修改、通过或拒绝，批准后可上线接单，商户也可暂停或下线。",
+      "tags": [
+        "review",
+        "publication",
+        "status"
+      ],
+      "complexity": "complex",
+      "filePath": "backend/internal/module/apimarket/model.go",
+      "lineRange": [
+        1,
+        266
+      ]
+    },
+    {
+      "id": "flow:discover-api-service",
+      "type": "flow",
+      "name": "发现并评估 API 服务",
+      "summary": "买家浏览公开服务，比较模型、价格额度、商户信号和到期时间后进入购买。",
+      "tags": [
+        "buyer",
+        "discovery",
+        "evaluation"
+      ],
+      "complexity": "moderate",
+      "domainMeta": {
+        "entryPoint": "HTTP API handled by backend/internal/server/api_market_handler.go",
+        "entryType": "http"
+      }
+    },
+    {
+      "id": "step:discover-api-service:list-public-services",
+      "type": "step",
+      "name": "查询公开服务",
+      "summary": "按公开服务筛选条件读取已上线的 API 服务列表。",
+      "tags": [
+        "listing",
+        "public-service"
+      ],
+      "complexity": "moderate",
+      "filePath": "backend/internal/module/apimarket/repository.go",
+      "lineRange": [
+        1,
+        24
+      ]
+    },
+    {
+      "id": "step:discover-api-service:inspect-service-models",
+      "type": "step",
+      "name": "查看模型与倍率",
+      "summary": "展示服务声明的模型数量、模型价格倍率和服务摘要。",
+      "tags": [
+        "model",
+        "multiplier"
+      ],
+      "complexity": "simple",
+      "filePath": "frontend/src/components/api-service-detail/utils.ts",
+      "lineRange": [
+        1,
+        69
+      ]
+    },
+    {
+      "id": "step:discover-api-service:estimate-purchasable-quota",
+      "type": "step",
+      "name": "估算可购买额度",
+      "summary": "根据人民币价格、美元额度、剩余额度和单笔上限估算本次可购买量。",
+      "tags": [
+        "quota",
+        "price-estimate"
+      ],
+      "complexity": "moderate",
+      "filePath": "frontend/src/components/api-service-detail/utils.ts",
+      "lineRange": [
+        1,
+        69
+      ]
+    },
+    {
+      "id": "step:discover-api-service:review-merchant-signals",
+      "type": "step",
+      "name": "查看商户信任信号",
+      "summary": "在购买卡片中查看商户信誉和近期履约信号，再决定是否发起购买。",
+      "tags": [
+        "merchant",
+        "reputation",
+        "trust"
+      ],
+      "complexity": "moderate",
+      "filePath": "frontend/src/components/api-service-detail/__tests__/detailPageSimplification.test.ts",
+      "lineRange": [
+        1,
+        60
+      ]
+    },
+    {
+      "id": "flow:manage-api-purchase-intent",
+      "type": "flow",
+      "name": "管理 API 购买意向",
+      "summary": "买家对普通服务或限量额度表达购买意向，双方建立联系，随后转单或终止。",
+      "tags": [
+        "intent",
+        "buyer",
+        "contact"
+      ],
+      "complexity": "complex",
+      "domainMeta": {
+        "entryPoint": "HTTP API handled by backend/internal/server/api_market_handler.go",
+        "entryType": "http"
+      }
+    },
+    {
+      "id": "step:manage-api-purchase-intent:select-purchase-kind",
+      "type": "step",
+      "name": "选择购买类型",
+      "summary": "买家选择购买普通 API 服务或限量额度商品。",
+      "tags": [
+        "purchase-kind",
+        "buyer"
+      ],
+      "complexity": "simple",
+      "filePath": "backend/internal/module/apiintent/model.go",
+      "lineRange": [
+        1,
+        97
+      ]
+    },
+    {
+      "id": "step:manage-api-purchase-intent:validate-purchasable-resource",
+      "type": "step",
+      "name": "校验可购买资源",
+      "summary": "解析公开服务或限量商品，确认目标存在且当前允许买家发起购买。",
+      "tags": [
+        "validation",
+        "availability"
+      ],
+      "complexity": "complex",
+      "filePath": "backend/internal/module/apiintent/service.go",
+      "lineRange": [
+        1,
+        675
+      ]
+    },
+    {
+      "id": "step:manage-api-purchase-intent:create-open-intent",
+      "type": "step",
+      "name": "创建开放意向",
+      "summary": "使用幂等请求创建 open 状态的购买意向并归属当前买家。",
+      "tags": [
+        "open",
+        "idempotency"
+      ],
+      "complexity": "complex",
+      "filePath": "backend/internal/module/apiintent/repository.go",
+      "lineRange": [
+        1,
+        24
+      ]
+    },
+    {
+      "id": "step:manage-api-purchase-intent:contact-owner",
+      "type": "step",
+      "name": "联系服务方",
+      "summary": "买家获取联系窗口并将意向推进到 contacted 状态。",
+      "tags": [
+        "contacted",
+        "off-platform-contact"
+      ],
+      "complexity": "moderate",
+      "filePath": "backend/internal/module/apiintent/service.go",
+      "lineRange": [
+        1,
+        675
+      ]
+    },
+    {
+      "id": "step:manage-api-purchase-intent:order-or-terminate",
+      "type": "step",
+      "name": "转为订单或终止",
+      "summary": "达成交易后意向进入 ordered；未达成时可由买家取消或服务方关闭，但已转单意向禁止再次终止。",
+      "tags": [
+        "ordered",
+        "cancelled",
+        "closed"
+      ],
+      "complexity": "complex",
+      "filePath": "backend/internal/module/apiintent/service_test.go",
+      "lineRange": [
+        1,
+        164
+      ]
+    },
+    {
+      "id": "flow:fulfill-api-order",
+      "type": "flow",
+      "name": "履行 API 订单",
+      "summary": "订单从待付款开始，经买家提交付款、卖家核验、交付和买家验收；付款问题形成可恢复的异常分支。",
+      "tags": [
+        "order",
+        "payment",
+        "delivery",
+        "completion"
+      ],
+      "complexity": "complex",
+      "domainMeta": {
+        "entryPoint": "HTTP API handled by backend/internal/server/api_order_handler.go",
+        "entryType": "http"
+      }
+    },
+    {
+      "id": "step:fulfill-api-order:create-pending-payment-order",
+      "type": "step",
+      "name": "创建待付款订单",
+      "summary": "从有效购买意向创建 pending_payment 订单，并冻结购买类型、买卖双方和交易快照。",
+      "tags": [
+        "pending-payment",
+        "order-creation"
+      ],
+      "complexity": "complex",
+      "filePath": "backend/internal/module/apiorder/service.go",
+      "lineRange": [
+        1,
+        1158
+      ]
+    },
+    {
+      "id": "step:fulfill-api-order:show-payment-instructions",
+      "type": "step",
+      "name": "展示付款指引",
+      "summary": "向买家展示卖家配置的付款方式、账户信息和付款窗口。",
+      "tags": [
+        "payment-method",
+        "buyer"
+      ],
+      "complexity": "moderate",
+      "filePath": "backend/internal/server/api_order_handler.go",
+      "lineRange": [
+        1,
+        527
+      ]
+    },
+    {
+      "id": "step:fulfill-api-order:submit-payment",
+      "type": "step",
+      "name": "买家提交付款",
+      "summary": "买家在线下完成付款后提交付款摘要，订单进入 payment_submitted。",
+      "tags": [
+        "payment-submitted",
+        "off-platform-payment"
+      ],
+      "complexity": "moderate",
+      "filePath": "backend/internal/module/apiorder/model.go",
+      "lineRange": [
+        1,
+        205
+      ]
+    },
+    {
+      "id": "step:fulfill-api-order:review-payment",
+      "type": "step",
+      "name": "卖家核验付款",
+      "summary": "卖家核对站外到账记录，决定确认付款或报告付款异常。",
+      "tags": [
+        "seller",
+        "payment-review"
+      ],
+      "complexity": "moderate",
+      "filePath": "backend/internal/module/apiorder/service.go",
+      "lineRange": [
+        1,
+        1158
+      ]
+    },
+    {
+      "id": "step:fulfill-api-order:resolve-payment-issue",
+      "type": "step",
+      "name": "处理付款异常",
+      "summary": "付款不匹配时订单进入 payment_issue，买家补充或修正付款信息后可再次进入核验流程。",
+      "tags": [
+        "payment-issue",
+        "recovery"
+      ],
+      "complexity": "complex",
+      "filePath": "backend/internal/module/apiorder/model.go",
+      "lineRange": [
+        1,
+        205
+      ]
+    },
+    {
+      "id": "step:fulfill-api-order:confirm-payment",
+      "type": "step",
+      "name": "确认付款到账",
+      "summary": "卖家确认付款后将订单推进到 paid_confirmed，允许开始交付。",
+      "tags": [
+        "paid-confirmed",
+        "seller"
+      ],
+      "complexity": "moderate",
+      "filePath": "backend/internal/module/apiorder/service.go",
+      "lineRange": [
+        1,
+        1158
+      ]
+    },
+    {
+      "id": "step:fulfill-api-order:submit-delivery",
+      "type": "step",
+      "name": "卖家提交交付",
+      "summary": "卖家提交结构化凭据或交付信息，校验字段后进入 delivery_submitted。",
+      "tags": [
+        "delivery-submitted",
+        "credential"
+      ],
+      "complexity": "complex",
+      "filePath": "backend/internal/module/apiorder/service_test.go",
+      "lineRange": [
+        1,
+        624
+      ]
+    },
+    {
+      "id": "step:fulfill-api-order:accept-and-complete",
+      "type": "step",
+      "name": "买家验收并完成",
+      "summary": "买家验证交付内容后确认完成，履约结果进入双方订单记录和信誉展示。",
+      "tags": [
+        "acceptance",
+        "completed",
+        "reputation"
+      ],
+      "complexity": "complex",
+      "filePath": "backend/internal/module/apiorder/service.go",
+      "lineRange": [
+        1,
+        1158
+      ]
+    },
+    {
+      "id": "flow:prepare-quota-batch",
+      "type": "flow",
+      "name": "准备额度批次",
+      "summary": "商户导入额度凭据，声明批次总额度和截止时间，并发布为可分配库存。",
+      "tags": [
+        "quota-batch",
+        "credential",
+        "inventory"
+      ],
+      "complexity": "complex",
+      "domainMeta": {
+        "entryPoint": "HTTP API handled by backend/internal/server/api_quota_handler.go",
+        "entryType": "http"
+      }
+    },
+    {
+      "id": "step:prepare-quota-batch:declare-source-and-allowance",
+      "type": "step",
+      "name": "声明来源与总额度",
+      "summary": "填写来源类型、来源标签和声明的美元总额度。",
+      "tags": [
+        "source",
+        "allowance"
+      ],
+      "complexity": "moderate",
+      "filePath": "backend/internal/server/api_quota_handler.go",
+      "lineRange": [
+        1,
+        780
+      ]
+    },
+    {
+      "id": "step:prepare-quota-batch:upload-credentials",
+      "type": "step",
+      "name": "上传额度凭据",
+      "summary": "通过 JSON 或 multipart/CSV 导入待分发的额度凭据。",
+      "tags": [
+        "credential",
+        "csv",
+        "multipart"
+      ],
+      "complexity": "complex",
+      "filePath": "backend/internal/server/api_quota_handler.go",
+      "lineRange": [
+        1,
+        780
+      ]
+    },
+    {
+      "id": "step:prepare-quota-batch:validate-hard-cutoff",
+      "type": "step",
+      "name": "校验硬性截止时间",
+      "summary": "检查额度截止时间满足服务定义的未来有效期和一小时硬性截止约束。",
+      "tags": [
+        "expiration",
+        "validation"
+      ],
+      "complexity": "moderate",
+      "filePath": "backend/internal/module/apiquota/service_test.go",
+      "lineRange": [
+        1,
+        525
+      ]
+    },
+    {
+      "id": "step:prepare-quota-batch:create-draft-batch",
+      "type": "step",
+      "name": "创建草稿批次",
+      "summary": "保存批次和凭据为 draft，供商户继续检查和配置。",
+      "tags": [
+        "draft",
+        "batch"
+      ],
+      "complexity": "complex",
+      "filePath": "backend/internal/module/apiquota/repository.go",
+      "lineRange": [
+        1,
+        30
+      ]
+    },
+    {
+      "id": "step:prepare-quota-batch:publish-or-pause-batch",
+      "type": "step",
+      "name": "发布暂停或归档批次",
+      "summary": "商户将批次从草稿发布，也可暂停分配或在结束后归档。",
+      "tags": [
+        "published",
+        "paused",
+        "archived"
+      ],
+      "complexity": "moderate",
+      "filePath": "backend/internal/module/apiquota/model.go",
+      "lineRange": [
+        1,
+        288
+      ]
+    },
+    {
+      "id": "flow:publish-limited-quota-offer",
+      "type": "flow",
+      "name": "发布限量额度商品",
+      "summary": "从额度批次定义可售商品、开售方式和时段，发布后供买家抢购。",
+      "tags": [
+        "limited-offer",
+        "sale-mode",
+        "publication"
+      ],
+      "complexity": "complex",
+      "domainMeta": {
+        "entryPoint": "HTTP API handled by backend/internal/server/api_quota_handler.go",
+        "entryType": "http"
+      }
+    },
+    {
+      "id": "step:publish-limited-quota-offer:select-quota-batch",
+      "type": "step",
+      "name": "选择额度批次",
+      "summary": "选择已准备的批次作为限量商品的库存来源。",
+      "tags": [
+        "batch",
+        "inventory-source"
+      ],
+      "complexity": "simple",
+      "filePath": "backend/internal/module/apiquota/service.go",
+      "lineRange": [
+        1,
+        618
+      ]
+    },
+    {
+      "id": "step:publish-limited-quota-offer:configure-sale-mode",
+      "type": "step",
+      "name": "配置开售模式",
+      "summary": "选择 continuous 连续销售或 scheduled 定时开售。",
+      "tags": [
+        "continuous",
+        "scheduled"
+      ],
+      "complexity": "moderate",
+      "filePath": "backend/internal/module/apiquota/model.go",
+      "lineRange": [
+        1,
+        288
+      ]
+    },
+    {
+      "id": "step:publish-limited-quota-offer:assign-system-sale-slot",
+      "type": "step",
+      "name": "选择系统开售时段",
+      "summary": "定时销售时从系统销售时段中选择符合条件的开售窗口。",
+      "tags": [
+        "sale-slot",
+        "schedule"
+      ],
+      "complexity": "moderate",
+      "filePath": "backend/internal/server/api_quota_handler_test.go",
+      "lineRange": [
+        1,
+        311
+      ]
+    },
+    {
+      "id": "step:publish-limited-quota-offer:add-performance-disclaimer",
+      "type": "step",
+      "name": "附加性能免责声明",
+      "summary": "商品公开信息标注商户自报、平台未测速，避免将性能声明视为平台验证结果。",
+      "tags": [
+        "disclaimer",
+        "performance"
+      ],
+      "complexity": "simple",
+      "filePath": "backend/internal/module/apiquota/service.go",
+      "lineRange": [
+        1,
+        618
+      ]
+    },
+    {
+      "id": "step:publish-limited-quota-offer:publish-or-pause-offer",
+      "type": "step",
+      "name": "发布暂停或归档商品",
+      "summary": "商品从 draft 发布为可购买状态，并可在库存或运营变化时暂停或归档。",
+      "tags": [
+        "offer-status",
+        "publication"
+      ],
+      "complexity": "moderate",
+      "filePath": "backend/internal/module/apiquota/model.go",
+      "lineRange": [
+        1,
+        288
+      ]
+    },
+    {
+      "id": "flow:purchase-limited-quota",
+      "type": "flow",
+      "name": "购买限量额度",
+      "summary": "买家在有效开售窗口选择限量商品，通过幂等订单创建占用额度并沿用 API 订单履约。",
+      "tags": [
+        "buyer",
+        "limited-quota",
+        "allocation"
+      ],
+      "complexity": "complex",
+      "domainMeta": {
+        "entryPoint": "HTTP API handled by backend/internal/server/api_quota_handler.go",
+        "entryType": "http"
+      }
+    },
+    {
+      "id": "step:purchase-limited-quota:list-active-offers",
+      "type": "step",
+      "name": "查询当前可售商品",
+      "summary": "按发布状态、库存和开售时段筛选当前可购买的限量额度商品。",
+      "tags": [
+        "active-offer",
+        "availability"
+      ],
+      "complexity": "complex",
+      "filePath": "backend/internal/module/apiquota/service.go",
+      "lineRange": [
+        1,
+        618
+      ]
+    },
+    {
+      "id": "step:purchase-limited-quota:create-quota-intent",
+      "type": "step",
+      "name": "创建限量额度意向",
+      "summary": "以 limited_quota_offer 购买类型创建并跟踪买家意向。",
+      "tags": [
+        "purchase-intent",
+        "limited-quota-offer"
+      ],
+      "complexity": "moderate",
+      "filePath": "backend/internal/module/apiintent/model.go",
+      "lineRange": [
+        1,
+        97
+      ]
+    },
+    {
+      "id": "step:purchase-limited-quota:reserve-allocation",
+      "type": "step",
+      "name": "分配额度库存",
+      "summary": "仓储在创建订单时校验库存并为订单分配额度或凭据。",
+      "tags": [
+        "reservation",
+        "inventory",
+        "credential"
+      ],
+      "complexity": "complex",
+      "filePath": "backend/internal/module/apiquota/repository.go",
+      "lineRange": [
+        1,
+        30
+      ]
+    },
+    {
+      "id": "step:purchase-limited-quota:create-idempotent-order",
+      "type": "step",
+      "name": "创建幂等额度订单",
+      "summary": "以 limited_quota_offer 类型创建订单，防止重复请求产生多次占用。",
+      "tags": [
+        "api-order",
+        "idempotency"
+      ],
+      "complexity": "complex",
+      "filePath": "backend/internal/module/apiquota/service.go",
+      "lineRange": [
+        1,
+        618
+      ]
+    },
+    {
+      "id": "step:purchase-limited-quota:continue-order-fulfillment",
+      "type": "step",
+      "name": "进入订单付款与交付",
+      "summary": "买家和卖家继续使用通用 API 订单的付款、核验、交付和验收状态机。",
+      "tags": [
+        "payment",
+        "delivery",
+        "handoff"
+      ],
+      "complexity": "complex",
+      "filePath": "backend/internal/module/apiorder/service.go",
+      "lineRange": [
+        1,
+        1158
+      ]
+    },
+    {
+      "id": "flow:configure-model-audit-target",
+      "type": "flow",
+      "name": "配置模型审计目标",
+      "summary": "运营人员登记提供商目标、密钥和声称模型，并可绑定市场服务。",
+      "tags": [
+        "audit-target",
+        "configuration",
+        "provider"
+      ],
+      "complexity": "complex",
+      "domainMeta": {
+        "entryPoint": "HTTP API handled by backend/internal/server/model_audit_handler.go",
+        "entryType": "http"
+      }
+    },
+    {
+      "id": "step:configure-model-audit-target:enter-provider-details",
+      "type": "step",
+      "name": "填写提供商目标",
+      "summary": "填写目标名称、基础地址、提供商类型和声称模型。",
+      "tags": [
+        "provider",
+        "target"
+      ],
+      "complexity": "moderate",
+      "filePath": "backend/internal/server/model_audit_handler.go",
+      "lineRange": [
+        1,
+        508
+      ]
+    },
+    {
+      "id": "step:configure-model-audit-target:associate-market-service",
+      "type": "step",
+      "name": "关联市场服务与模型",
+      "summary": "可将审计目标关联到具体 API 服务及服务模型。",
+      "tags": [
+        "api-service",
+        "model-link"
+      ],
+      "complexity": "moderate",
+      "filePath": "backend/internal/server/model_audit_handler.go",
+      "lineRange": [
+        1,
+        508
+      ]
+    },
+    {
+      "id": "step:configure-model-audit-target:store-target",
+      "type": "step",
+      "name": "保存审计目标",
+      "summary": "持久化审计目标和目标密钥，供后续运行读取。",
+      "tags": [
+        "persistence",
+        "audit-target"
+      ],
+      "complexity": "complex",
+      "filePath": "backend/internal/module/modelaudit/repository.go",
+      "lineRange": [
+        1,
+        34
+      ]
+    },
+    {
+      "id": "step:configure-model-audit-target:enable-or-disable",
+      "type": "step",
+      "name": "启用或停用目标",
+      "summary": "运营人员控制目标是否参与后续模型审计。",
+      "tags": [
+        "enabled",
+        "lifecycle"
+      ],
+      "complexity": "simple",
+      "filePath": "backend/internal/server/model_audit_handler.go",
+      "lineRange": [
+        1,
+        508
+      ]
+    },
+    {
+      "id": "flow:run-model-audit",
+      "type": "flow",
+      "name": "运行模型真实性审计",
+      "summary": "系统通过提供商适配器执行模型探针，提取指纹并汇总风险报告。",
+      "tags": [
+        "audit-run",
+        "probe",
+        "risk-report"
+      ],
+      "complexity": "complex",
+      "domainMeta": {
+        "entryPoint": "HTTP API handled by backend/internal/server/model_audit_handler.go",
+        "entryType": "http"
+      }
+    },
+    {
+      "id": "step:run-model-audit:load-enabled-target",
+      "type": "step",
+      "name": "读取启用目标",
+      "summary": "加载目标配置、密钥和服务关联信息。",
+      "tags": [
+        "target",
+        "secret"
+      ],
+      "complexity": "moderate",
+      "filePath": "backend/internal/module/modelaudit/repository.go",
+      "lineRange": [
+        1,
+        34
+      ]
+    },
+    {
+      "id": "step:run-model-audit:create-provider-adapter",
+      "type": "step",
+      "name": "创建提供商适配器",
+      "summary": "根据目标提供商类型创建对应的聊天调用适配器。",
+      "tags": [
+        "adapter",
+        "provider"
+      ],
+      "complexity": "complex",
+      "filePath": "backend/internal/module/modelaudit/service.go",
+      "lineRange": [
+        1,
+        863
+      ]
+    },
+    {
+      "id": "step:run-model-audit:execute-probes",
+      "type": "step",
+      "name": "执行审计探针",
+      "summary": "向目标模型发送审计请求并记录响应和运行证据。",
+      "tags": [
+        "probe",
+        "chat-request"
+      ],
+      "complexity": "complex",
+      "filePath": "backend/internal/module/modelaudit/service_test.go",
+      "lineRange": [
+        1,
+        214
+      ]
+    },
+    {
+      "id": "step:run-model-audit:calculate-fingerprint-and-risk",
+      "type": "step",
+      "name": "计算指纹与风险",
+      "summary": "基于响应生成随机指纹、KBF 特征和风险判断。",
+      "tags": [
+        "fingerprint",
+        "kbf",
+        "risk"
+      ],
+      "complexity": "complex",
+      "filePath": "backend/internal/module/modelaudit/service.go",
+      "lineRange": [
+        1,
+        863
+      ]
+    },
+    {
+      "id": "step:run-model-audit:persist-report",
+      "type": "step",
+      "name": "保存审计报告",
+      "summary": "汇总运行统计、证据与风险结论并保存报告供查询。",
+      "tags": [
+        "report",
+        "statistics",
+        "evidence"
+      ],
+      "complexity": "complex",
+      "filePath": "backend/internal/module/modelaudit/repository.go",
+      "lineRange": [
+        1,
+        34
+      ]
+    }
+  ],
+  "edges": [
+    {
+      "source": "domain:api-service-marketplace",
+      "target": "flow:publish-api-service",
+      "type": "contains_flow",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "domain:api-service-marketplace",
+      "target": "flow:discover-api-service",
+      "type": "contains_flow",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "flow:publish-api-service",
+      "target": "step:publish-api-service:configure-distribution",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.1
+    },
+    {
+      "source": "flow:publish-api-service",
+      "target": "step:publish-api-service:select-models",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.2
+    },
+    {
+      "source": "flow:publish-api-service",
+      "target": "step:publish-api-service:configure-commercial-terms",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.3
+    },
+    {
+      "source": "flow:publish-api-service",
+      "target": "step:publish-api-service:declare-commitments",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.4
+    },
+    {
+      "source": "flow:publish-api-service",
+      "target": "step:publish-api-service:validate-and-create-draft",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "flow:publish-api-service",
+      "target": "step:publish-api-service:review-and-publish",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.6
+    },
+    {
+      "source": "flow:discover-api-service",
+      "target": "step:discover-api-service:list-public-services",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.1
+    },
+    {
+      "source": "flow:discover-api-service",
+      "target": "step:discover-api-service:inspect-service-models",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.2
+    },
+    {
+      "source": "flow:discover-api-service",
+      "target": "step:discover-api-service:estimate-purchasable-quota",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.3
+    },
+    {
+      "source": "flow:discover-api-service",
+      "target": "step:discover-api-service:review-merchant-signals",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.4
+    },
+    {
+      "source": "domain:api-purchase-fulfillment",
+      "target": "flow:manage-api-purchase-intent",
+      "type": "contains_flow",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "domain:api-purchase-fulfillment",
+      "target": "flow:fulfill-api-order",
+      "type": "contains_flow",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "flow:manage-api-purchase-intent",
+      "target": "step:manage-api-purchase-intent:select-purchase-kind",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.1
+    },
+    {
+      "source": "flow:manage-api-purchase-intent",
+      "target": "step:manage-api-purchase-intent:validate-purchasable-resource",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.2
+    },
+    {
+      "source": "flow:manage-api-purchase-intent",
+      "target": "step:manage-api-purchase-intent:create-open-intent",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.3
+    },
+    {
+      "source": "flow:manage-api-purchase-intent",
+      "target": "step:manage-api-purchase-intent:contact-owner",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.4
+    },
+    {
+      "source": "flow:manage-api-purchase-intent",
+      "target": "step:manage-api-purchase-intent:order-or-terminate",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "flow:fulfill-api-order",
+      "target": "step:fulfill-api-order:create-pending-payment-order",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.1
+    },
+    {
+      "source": "flow:fulfill-api-order",
+      "target": "step:fulfill-api-order:show-payment-instructions",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.2
+    },
+    {
+      "source": "flow:fulfill-api-order",
+      "target": "step:fulfill-api-order:submit-payment",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.3
+    },
+    {
+      "source": "flow:fulfill-api-order",
+      "target": "step:fulfill-api-order:review-payment",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.4
+    },
+    {
+      "source": "flow:fulfill-api-order",
+      "target": "step:fulfill-api-order:resolve-payment-issue",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "flow:fulfill-api-order",
+      "target": "step:fulfill-api-order:confirm-payment",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.6
+    },
+    {
+      "source": "flow:fulfill-api-order",
+      "target": "step:fulfill-api-order:submit-delivery",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "flow:fulfill-api-order",
+      "target": "step:fulfill-api-order:accept-and-complete",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "domain:limited-api-quota-distribution",
+      "target": "flow:prepare-quota-batch",
+      "type": "contains_flow",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "domain:limited-api-quota-distribution",
+      "target": "flow:publish-limited-quota-offer",
+      "type": "contains_flow",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "domain:limited-api-quota-distribution",
+      "target": "flow:purchase-limited-quota",
+      "type": "contains_flow",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "flow:prepare-quota-batch",
+      "target": "step:prepare-quota-batch:declare-source-and-allowance",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.1
+    },
+    {
+      "source": "flow:prepare-quota-batch",
+      "target": "step:prepare-quota-batch:upload-credentials",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.2
+    },
+    {
+      "source": "flow:prepare-quota-batch",
+      "target": "step:prepare-quota-batch:validate-hard-cutoff",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.3
+    },
+    {
+      "source": "flow:prepare-quota-batch",
+      "target": "step:prepare-quota-batch:create-draft-batch",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.4
+    },
+    {
+      "source": "flow:prepare-quota-batch",
+      "target": "step:prepare-quota-batch:publish-or-pause-batch",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "flow:publish-limited-quota-offer",
+      "target": "step:publish-limited-quota-offer:select-quota-batch",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.1
+    },
+    {
+      "source": "flow:publish-limited-quota-offer",
+      "target": "step:publish-limited-quota-offer:configure-sale-mode",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.2
+    },
+    {
+      "source": "flow:publish-limited-quota-offer",
+      "target": "step:publish-limited-quota-offer:assign-system-sale-slot",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.3
+    },
+    {
+      "source": "flow:publish-limited-quota-offer",
+      "target": "step:publish-limited-quota-offer:add-performance-disclaimer",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.4
+    },
+    {
+      "source": "flow:publish-limited-quota-offer",
+      "target": "step:publish-limited-quota-offer:publish-or-pause-offer",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "flow:purchase-limited-quota",
+      "target": "step:purchase-limited-quota:list-active-offers",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.1
+    },
+    {
+      "source": "flow:purchase-limited-quota",
+      "target": "step:purchase-limited-quota:create-quota-intent",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.2
+    },
+    {
+      "source": "flow:purchase-limited-quota",
+      "target": "step:purchase-limited-quota:reserve-allocation",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.3
+    },
+    {
+      "source": "flow:purchase-limited-quota",
+      "target": "step:purchase-limited-quota:create-idempotent-order",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.4
+    },
+    {
+      "source": "flow:purchase-limited-quota",
+      "target": "step:purchase-limited-quota:continue-order-fulfillment",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "domain:api-model-assurance",
+      "target": "flow:configure-model-audit-target",
+      "type": "contains_flow",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "domain:api-model-assurance",
+      "target": "flow:run-model-audit",
+      "type": "contains_flow",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "flow:configure-model-audit-target",
+      "target": "step:configure-model-audit-target:enter-provider-details",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.1
+    },
+    {
+      "source": "flow:configure-model-audit-target",
+      "target": "step:configure-model-audit-target:associate-market-service",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.2
+    },
+    {
+      "source": "flow:configure-model-audit-target",
+      "target": "step:configure-model-audit-target:store-target",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.3
+    },
+    {
+      "source": "flow:configure-model-audit-target",
+      "target": "step:configure-model-audit-target:enable-or-disable",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.4
+    },
+    {
+      "source": "flow:run-model-audit",
+      "target": "step:run-model-audit:load-enabled-target",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.1
+    },
+    {
+      "source": "flow:run-model-audit",
+      "target": "step:run-model-audit:create-provider-adapter",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.2
+    },
+    {
+      "source": "flow:run-model-audit",
+      "target": "step:run-model-audit:execute-probes",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.3
+    },
+    {
+      "source": "flow:run-model-audit",
+      "target": "step:run-model-audit:calculate-fingerprint-and-risk",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.4
+    },
+    {
+      "source": "flow:run-model-audit",
+      "target": "step:run-model-audit:persist-report",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "domain:api-service-marketplace",
+      "target": "domain:api-purchase-fulfillment",
+      "type": "cross_domain",
+      "direction": "forward",
+      "description": "公开 API 服务向购买意向和订单提供商品、商户、价格及付款设置快照。",
+      "weight": 0.9
+    },
+    {
+      "source": "domain:api-service-marketplace",
+      "target": "domain:limited-api-quota-distribution",
+      "type": "cross_domain",
+      "direction": "forward",
+      "description": "限量额度批次和商品归属市场中的 API 服务。",
+      "weight": 0.7
+    },
+    {
+      "source": "domain:limited-api-quota-distribution",
+      "target": "domain:api-purchase-fulfillment",
+      "type": "cross_domain",
+      "direction": "forward",
+      "description": "限量额度商品通过通用 API 订单完成库存分配、付款、交付和验收。",
+      "weight": 0.9
+    },
+    {
+      "source": "domain:api-service-marketplace",
+      "target": "domain:api-model-assurance",
+      "type": "cross_domain",
+      "direction": "forward",
+      "description": "市场服务和服务模型可绑定到审计目标，审计结果反向提供真实性与风险证据。",
+      "weight": 0.7
+    }
+  ],
+  "layers": [],
+  "tour": []
+}

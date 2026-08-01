@@ -102,7 +102,7 @@ const statusClass = computed(() => ({
           <Button as-child variant="outline">
             <RouterLink to="/merchant/api-orders">
               <ListOrdered />
-              查看 API 订单
+              查看 API 销售订单
             </RouterLink>
           </Button>
 

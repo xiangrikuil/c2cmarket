@@ -475,8 +475,8 @@ func (s *Service) PublicAPIService(ctx context.Context, serviceID string) (APISe
 	return items[0], nil
 }
 
-func (s *Service) OwnerAPIServices(ctx context.Context, user User, page domain.PageRequest) (domain.Page[APIService], *domain.AppError) {
-	services, appErr := s.apiMarket.OwnerServices(ctx, user, page)
+func (s *Service) OwnerAPIServices(ctx context.Context, user User, filter apimarket.OwnerServiceFilter, page domain.PageRequest) (domain.Page[APIService], *domain.AppError) {
+	services, appErr := s.apiMarket.OwnerServices(ctx, user, filter, page)
 	if appErr != nil {
 		return domain.Page[APIService]{}, appErr
 	}

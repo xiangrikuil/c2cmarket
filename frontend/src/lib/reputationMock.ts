@@ -10,7 +10,7 @@ import type {
   ReputationSnapshot,
 } from '@/types/reputation'
 
-const mockRuleVersion = 'reputation-v1'
+const mockRuleVersion = 'reputation-v2'
 const mockNow = '2026-07-24T12:00:00Z'
 
 export const mockReputationRules: ReputationRuleSet = {

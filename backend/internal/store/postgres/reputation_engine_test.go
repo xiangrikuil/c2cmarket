@@ -30,6 +30,23 @@ func TestAggregateReputationEngineFactsSQLCoversRulesAndTimeBoundaries(t *testin
 	}
 }
 
+func TestAggregateReputationEngineFactsSQLUsesSameTimeoutResponsibilityMatrix(t *testing.T) {
+	t.Parallel()
+
+	for _, required := range []string{
+		"api_order.cancel_reason = 'payment_timeout'",
+		"FROM carpool_join_confirmations confirmation",
+		"confirmation.actor_role = 'buyer'",
+		"confirmation.actor_role = 'owner'",
+		"participants.role = 'buyer' AND NOT confirmations.buyer_confirmed",
+		"participants.role = 'seller' AND NOT confirmations.owner_confirmed",
+	} {
+		if !strings.Contains(aggregateReputationEngineFactsSQL, required) {
+			t.Fatalf("engine aggregate SQL missing responsibility evidence %q", required)
+		}
+	}
+}
+
 func TestSnapshotRecordsetIncludesCacheValidityFields(t *testing.T) {
 	t.Parallel()
 

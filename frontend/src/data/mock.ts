@@ -45,7 +45,15 @@ export type Carpool = {
   region: string
   monthly: number
   serviceMultiplier?: number
+  weeklyQuotaAmount?: number
   monthlyQuotaAmount?: number
+  followsOfficialQuotaReset?: boolean | null
+  vpsRegion?: string | null
+  supportsMainlandChinaDirectConnection?: boolean | null
+  openingChannelCode?: OpeningChannelCode | null
+  customOpeningChannel?: string | null
+  paymentMethodCode?: PaymentMethodCode | null
+  customPaymentMethod?: string | null
   quotaLabel?: string
   quotaUnit?: string
   quotaPeriod?: QuotaPeriod
@@ -172,7 +180,6 @@ export type CarpoolApplicationSnapshot = {
   ownerTrustLevel: number | null
   ownerReputation?: ReputationSummary | null
   ownerType: Carpool['ownerType']
-  sourceTopicUrl: string
   accessArrangementMode?: CarpoolAccessArrangementMode
   accessArrangementNote?: string
   riskNoticeCode?: string
@@ -400,9 +407,8 @@ export type AdminAuditLog = {
   createdAt: string
 }
 
-export type ConfidenceLevel = 'high' | 'medium' | 'low'
 export type OpeningChannelCode = 'web' | 'ios_app_store' | 'google_play' | 'team_seat' | 'other'
-export type PaymentMethodCode = 'credit_card' | 'virtual_card' | 'apple_pay' | 'google_pay' | 'app_store_gift_card' | 'google_play_gift_card' | 'paypal' | 'other'
+export type PaymentMethodCode = 'credit_card' | 'virtual_card' | 'apple_pay' | 'google_pay' | 'app_store_gift_card' | 'google_play_gift_card' | 'paypal' | 'u_card' | 'other'
 export type CarpoolWarrantyMode = 'no_warranty' | 'remaining_days_compensation' | 'fixed_days_warranty'
 export type ProductPublishPolicy = 'allowed' | 'info_only' | 'blocked'
 export type ProductAccessMode = 'personal_account_cost_share' | 'provider_member_invitation' | 'owner_managed_access' | 'other_off_platform'
@@ -456,36 +462,6 @@ export type PaymentMethodOption = {
   sortOrder: number
 }
 
-export type ParsedLinuxDoTopic = {
-  topicId: string
-  topicUrl: string
-  title: string
-  authorUsername: string
-  authorUserId: string | null
-  createdAt: string
-  updatedAt: string
-  authorMatchesBoundUser: boolean
-  detected: {
-    productId: string | null
-    productText: string | null
-    regionCode: string | null
-    regionText: string | null
-    monthlyPriceCny: number | null
-    totalSeats: number | null
-    availableSeats: number | null
-    occupiedSeats: number | null
-    openingChannelId: OpeningChannelCode | null
-    paymentMethodIds: PaymentMethodCode[]
-    warrantyMode: CarpoolWarrantyMode | null
-  }
-  confidence: {
-    product: ConfidenceLevel | null
-    region: ConfidenceLevel | null
-    monthlyPrice: ConfidenceLevel | null
-    seats: ConfidenceLevel | null
-  }
-}
-
 export type TransactionTrendPoint = {
   date: string
   medianPrice: number
@@ -523,6 +499,9 @@ export type ApiGateway = 'Sub2API' | 'NewAPI Proxy' | '自建中转' | '固定�
 export type ApiBillingMode = 'metered_credit' | 'manual_credit' | 'fixed_package'
 export type ApiVisibilityRule = 'public' | 'after_intent' | 'off_platform'
 export type ApiServiceState = 'online' | 'offline' | 'reviewing' | 'paused'
+export type ApiServiceSalesView = 'active' | 'expired' | 'paused' | 'draft' | 'all'
+export type ApiServiceSalesState = 'selling' | 'upcoming' | 'paused' | 'sold_out' | 'expired' | 'draft' | 'offline' | 'archived'
+export type ApiServiceSalesChannelKind = 'flexible_quota' | 'limited_quota'
 export type ApiMerchantIdentityMode = 'public_profile' | 'store_alias'
 export type ApiTTFTBand = 'under_1s' | '1_to_3s' | '3_to_5s' | '5_to_10s' | 'over_10s'
 export type ApiQuotaBatchStatus = 'draft' | 'published' | 'paused' | 'archived'
@@ -810,6 +789,25 @@ export type ApiService = {
   acceptedPaymentMethods?: Array<'wechat' | 'alipay'>
 }
 
+export type ApiServiceSalesChannel = {
+  kind: ApiServiceSalesChannelKind
+  state: ApiServiceSalesState
+  availableUsdAllowance?: string
+  availableCopies?: number
+  nextStartsAt?: string
+  saleCutoffAt?: string
+  expiresAt?: string
+}
+
+export type ApiServiceSalesSummary = {
+  overallState: ApiServiceSalesState
+  channels: ApiServiceSalesChannel[]
+}
+
+export type OwnerApiService = ApiService & {
+  salesSummary: ApiServiceSalesSummary
+}
+
 export type PublicMerchantProfile = {
   username: string
   displayName: string
@@ -878,6 +876,9 @@ export type ApiPurchaseIntentSnapshot = {
   cnyPerUsdAllowance?: string
   warranty: string
   refundPolicy: string
+  merchantNote?: string
+  pricingSnapshotIssue?: 'missing' | 'invalid'
+  usageVisibilitySnapshotMissing?: boolean
   usageVisibility: ApiUsageVisibility
   supportedDeliveryModes: ApiDeliveryMode[]
   selectedDeliveryMode: ApiDeliveryMode
@@ -999,6 +1000,7 @@ export const carpoolPaymentMethods: PaymentMethodOption[] = [
   { code: 'app_store_gift_card', displayName: 'App Store 礼品卡', active: true, sortOrder: 50 },
   { code: 'google_play_gift_card', displayName: 'Google Play 礼品卡', active: true, sortOrder: 60 },
   { code: 'paypal', displayName: 'PayPal', active: true, sortOrder: 70 },
+  { code: 'u_card', displayName: 'U 卡', active: true, sortOrder: 80 },
   { code: 'other', displayName: '其他', active: true, sortOrder: 999 },
 ]
 
@@ -1093,36 +1095,6 @@ export const myContactMethods: UserContactMethod[] = [
   },
 ]
 
-export const parsedLinuxDoTopicMock: ParsedLinuxDoTopic = {
-  topicId: '123456',
-  topicUrl: 'https://linux.do/t/topic/123456',
-  title: 'ChatGPT Business workspace 成员席位，剩余 2 席',
-  authorUsername: 'orbit',
-  authorUserId: 'linuxdo-1024',
-  createdAt: '2026-06-18 21:20',
-  updatedAt: '2026-06-19 09:42',
-  authorMatchesBoundUser: true,
-  detected: {
-    productId: 'chatgpt-business',
-    productText: 'ChatGPT Business',
-    regionCode: 'ph',
-    regionText: '菲律宾区',
-    monthlyPriceCny: 188,
-    totalSeats: 5,
-    availableSeats: 2,
-    occupiedSeats: 3,
-    openingChannelId: 'team_seat',
-    paymentMethodIds: ['credit_card'],
-    warrantyMode: 'remaining_days_compensation',
-  },
-  confidence: {
-    product: 'high',
-    region: 'high',
-    monthlyPrice: 'high',
-    seats: 'medium',
-  },
-}
-
 export const officialPrices: OfficialPrice[] = [
   { id: 'p1', product: 'ChatGPT', plan: 'Plus', region: '土耳其区', channel: 'iOS', openingMethod: 'Apple Store', originalPrice: 'TRY 499', cny: 108, status: '已验证', source: 'linux.do 低价帖', submitter: '青柠', submitterTrust: 3, updatedAt: '12 分钟前', isLowest: true },
   { id: 'p2', product: 'ChatGPT', plan: 'Pro', region: '菲律宾区', channel: 'Web', openingMethod: '虚拟卡', originalPrice: 'PHP 7,990', cny: 988, status: '已验证', source: 'linux.do 低价帖', submitter: 'orbit', submitterTrust: 3, updatedAt: '今天 16:30', isLowest: true },
@@ -1131,15 +1103,15 @@ export const officialPrices: OfficialPrice[] = [
 ]
 
 export const carpools: Carpool[] = [
-  { id: 'c1', product: 'ChatGPT Business', region: '美国区', monthly: 188, serviceMultiplier: 1.2, monthlyQuotaAmount: 200, quotaLabel: '额度', quotaUnit: 'USD', quotaPeriod: 'monthly', seats: '3/5', pricingMode: 'fixed', fixedMonthlyPrice: 188, currentConfirmedMembers: 3, maxMembers: 5, settlementDeadline: '2026-06-25', owner: 'orbit', trustLevel: 3, ownerType: '个人车主', warranty: '车主承诺', openingMethod: '其他', status: '可上车', confirmedAt: '12 分钟前', confirmedWithin48h: true, linuxdoBound: true, sourceAuthorVerification: { status: 'verified' }, hasInfoConflict: false, hasUnresolvedDispute: false, distributionMethod: 'sub2api', distributionMethodNote: 'Sub2API 托管管理，具体方式站外确认。', providesAdminAccount: true, accessArrangementMode: 'provider_member_invitation', accessArrangementNote: 'Business workspace 管理员邀请成员席位；不得共享 Pro/Plus 主账号、密码、Session 或 Cookie。', riskNoticeCode: 'openai_subscription_carpool', riskAcknowledged: true },
-  { id: 'c2', product: 'Cursor Pro', region: '土耳其区', monthly: 68, serviceMultiplier: 1, monthlyQuotaAmount: 500, quotaLabel: '额度', quotaUnit: 'USD', quotaPeriod: 'monthly', seats: '1/6', pricingMode: 'fixed', fixedMonthlyPrice: 68, currentConfirmedMembers: 1, maxMembers: 6, owner: '青柠', trustLevel: 3, ownerType: '个人车主', warranty: '售后协商', openingMethod: '其他', status: '可上车', confirmedAt: '35 分钟前', confirmedWithin48h: true, linuxdoBound: true, sourceAuthorVerification: { status: 'verified' }, hasInfoConflict: false, hasUnresolvedDispute: false, distributionMethod: 'sub2api', distributionMethodNote: 'Sub2API 托管管理，具体方式站外确认。', providesAdminAccount: true, accessArrangementMode: 'provider_member_invitation', accessArrangementNote: '团队成员邀请或独立席位授权。' },
-  { id: 'c3', product: 'Claude Max 5x', region: '香港区', monthly: 80, serviceMultiplier: 1.1, monthlyQuotaAmount: 300, quotaLabel: '额度', quotaUnit: 'USD', quotaPeriod: 'monthly', seats: '2/4', pricingMode: 'tiered', currentConfirmedMembers: 2, maxMembers: 4, pricingTiers: [{ memberCount: 2, price: 120 }, { memberCount: 3, price: 80 }, { memberCount: 4, price: 60 }], owner: '北风', trustLevel: 4, ownerType: '个人车主', warranty: '车主承诺', openingMethod: '本地卡', status: '审核中', confirmedAt: '1 小时前', confirmedWithin48h: true, linuxdoBound: true, sourceAuthorVerification: { status: 'pending' }, hasInfoConflict: false, hasUnresolvedDispute: false, distributionMethod: 'other', distributionMethodNote: '站外托管访问，具体方式加入前确认。', providesAdminAccount: false, accessArrangementMode: 'owner_managed_access', accessArrangementNote: '车主站外管理成员访问，不在平台保存凭据。' },
-  { id: 'c4', product: 'Cursor Pro', region: '新加坡区', monthly: 39, serviceMultiplier: 1, monthlyQuotaAmount: 200, quotaLabel: '额度', quotaUnit: 'USD', quotaPeriod: 'monthly', seats: '4/4', pricingMode: 'fixed', fixedMonthlyPrice: 39, currentConfirmedMembers: 4, maxMembers: 4, owner: '周末研究员', trustLevel: 2, ownerType: '商户车源', warranty: '售后协商', openingMethod: '其他', status: '已满', confirmedAt: '今天 09:24', confirmedWithin48h: true, linuxdoBound: true, sourceAuthorVerification: { status: 'verified' }, hasInfoConflict: false, hasUnresolvedDispute: false, distributionMethod: 'other', distributionMethodNote: '商户站外安排，加入前确认。', providesAdminAccount: false },
-  { id: 'c5', product: 'ChatGPT Business', region: '日本区', monthly: 198, serviceMultiplier: 1.25, monthlyQuotaAmount: 200, quotaLabel: '额度', quotaUnit: 'USD', quotaPeriod: 'monthly', seats: '2/5', pricingMode: 'fixed', fixedMonthlyPrice: 198, currentConfirmedMembers: 2, maxMembers: 5, settlementDeadline: '2026-06-24', owner: '木舟', trustLevel: 3, ownerType: '个人车主', warranty: '车主承诺', openingMethod: '其他', status: '可上车', confirmedAt: '2 小时前', confirmedWithin48h: true, linuxdoBound: true, sourceAuthorVerification: { status: 'verified' }, hasInfoConflict: false, hasUnresolvedDispute: false, distributionMethod: 'sub2api', distributionMethodNote: 'Sub2API 托管管理，具体方式站外确认。', providesAdminAccount: true, accessArrangementMode: 'provider_member_invitation', accessArrangementNote: 'Business workspace 管理员邀请成员席位。', riskNoticeCode: 'openai_subscription_carpool', riskAcknowledged: true },
-  { id: 'c6', product: 'ChatGPT Pro 20x Web', region: '香港区', monthly: 178, serviceMultiplier: 1.35, monthlyQuotaAmount: 300, quotaLabel: '额度', quotaUnit: 'USD', quotaPeriod: 'monthly', seats: '5/6', pricingMode: 'fixed', fixedMonthlyPrice: 178, currentConfirmedMembers: 5, maxMembers: 6, owner: '纸船', trustLevel: 2, ownerType: '可信新车主', warranty: '售后协商', openingMethod: '其他', status: '可上车', confirmedAt: '今天 10:20', confirmedWithin48h: true, linuxdoBound: true, sourceAuthorVerification: { status: 'expired' }, hasInfoConflict: false, hasUnresolvedDispute: false, distributionMethod: 'sub2api', distributionMethodNote: 'Sub2API 托管管理，具体方式站外确认。', providesAdminAccount: true, accessArrangementMode: 'personal_account_cost_share', accessArrangementNote: '个人订阅费用分摊，平台不保存、不交付任何密码、Session、Cookie 或 token。', riskNoticeCode: 'openai_subscription_carpool', riskAcknowledged: true },
-  { id: 'c7', product: 'Cursor Pro', region: '新加坡区', monthly: 49, serviceMultiplier: 1, monthlyQuotaAmount: 500, quotaLabel: '额度', quotaUnit: 'USD', quotaPeriod: 'monthly', seats: '2/4', pricingMode: 'tiered', currentConfirmedMembers: 2, maxMembers: 4, pricingTiers: [{ memberCount: 2, price: 69 }, { memberCount: 3, price: 56 }, { memberCount: 4, price: 49 }], owner: '栈帧', trustLevel: 3, ownerType: '个人车主', warranty: '售后协商', openingMethod: '虚拟卡', status: '可上车', confirmedAt: '45 分钟前', confirmedWithin48h: true, linuxdoBound: true, sourceAuthorVerification: { status: 'verified' }, hasInfoConflict: false, hasUnresolvedDispute: false, distributionMethod: 'sub2api', distributionMethodNote: 'Sub2API 托管管理，具体方式站外确认。', providesAdminAccount: true },
-  { id: 'c8', product: 'Perplexity Pro', region: '美国区', monthly: 42, serviceMultiplier: 1, monthlyQuotaAmount: 150, quotaLabel: '额度', quotaUnit: 'USD', quotaPeriod: 'monthly', seats: '1/3', pricingMode: 'fixed', fixedMonthlyPrice: 42, currentConfirmedMembers: 1, maxMembers: 3, owner: '海盐', trustLevel: 2, ownerType: '可信新车主', warranty: '售后协商', openingMethod: '其他', status: '可上车', confirmedAt: '1 小时前', confirmedWithin48h: true, linuxdoBound: true, sourceAuthorVerification: { status: 'mismatch' }, hasInfoConflict: false, hasUnresolvedDispute: false, distributionMethod: 'other', distributionMethodNote: '共享家庭组席位，具体方式站外确认。', providesAdminAccount: false },
-  { id: 'c9', product: 'Gemini Advanced', region: '日本区', monthly: 36, serviceMultiplier: 1, monthlyQuotaAmount: 100, quotaLabel: '额度', quotaUnit: 'USD', quotaPeriod: 'monthly', seats: '2/5', pricingMode: 'equal_share', totalShareableCost: 108, currentConfirmedMembers: 2, maxMembers: 5, settlementDeadline: '2026-06-26', owner: '雨季', trustLevel: 3, ownerType: '个人车主', warranty: '车主承诺', openingMethod: '本地卡', status: '可上车', confirmedAt: '今天 11:05', confirmedWithin48h: true, linuxdoBound: true, sourceAuthorVerification: { status: 'verified' }, hasInfoConflict: false, hasUnresolvedDispute: false, distributionMethod: 'other', distributionMethodNote: 'Google 家庭组成员安排，具体方式站外确认。', providesAdminAccount: false },
+  { id: 'c1', product: 'ChatGPT Business', region: '美国区', monthly: 188, serviceMultiplier: 1, weeklyQuotaAmount: 50, monthlyQuotaAmount: 200, followsOfficialQuotaReset: true, vpsRegion: '美国西部', supportsMainlandChinaDirectConnection: true, openingChannelCode: 'team_seat', paymentMethodCode: 'credit_card', quotaLabel: '额度', quotaUnit: 'USD', quotaPeriod: 'monthly', seats: '3/5', pricingMode: 'fixed', fixedMonthlyPrice: 188, currentConfirmedMembers: 3, maxMembers: 5, settlementDeadline: '2026-06-25', owner: 'orbit', trustLevel: 3, ownerType: '个人车主', warranty: '车主承诺', openingMethod: '其他', status: '可上车', confirmedAt: '12 分钟前', confirmedWithin48h: true, linuxdoBound: true, sourceAuthorVerification: { status: 'verified' }, hasInfoConflict: false, hasUnresolvedDispute: false, distributionMethod: 'sub2api', distributionMethodNote: 'Sub2API 托管管理，具体方式站外确认。', providesAdminAccount: true, accessArrangementMode: 'provider_member_invitation', accessArrangementNote: 'Business workspace 管理员邀请成员席位；不得共享 Pro/Plus 主账号、密码、Session 或 Cookie。', riskNoticeCode: 'openai_subscription_carpool', riskAcknowledged: true },
+  { id: 'c2', product: 'Cursor Pro', region: '土耳其区', monthly: 68, serviceMultiplier: 1, weeklyQuotaAmount: 125, monthlyQuotaAmount: 500, followsOfficialQuotaReset: true, vpsRegion: '香港', supportsMainlandChinaDirectConnection: true, openingChannelCode: 'web', paymentMethodCode: 'u_card', quotaLabel: '额度', quotaUnit: 'USD', quotaPeriod: 'monthly', seats: '1/6', pricingMode: 'fixed', fixedMonthlyPrice: 68, currentConfirmedMembers: 1, maxMembers: 6, owner: '青柠', trustLevel: 3, ownerType: '个人车主', warranty: '售后协商', openingMethod: '其他', status: '可上车', confirmedAt: '35 分钟前', confirmedWithin48h: true, linuxdoBound: true, sourceAuthorVerification: { status: 'verified' }, hasInfoConflict: false, hasUnresolvedDispute: false, distributionMethod: 'sub2api', distributionMethodNote: 'Sub2API 托管管理，具体方式站外确认。', providesAdminAccount: true, accessArrangementMode: 'provider_member_invitation', accessArrangementNote: '团队成员邀请或独立席位授权。' },
+  { id: 'c3', product: 'Claude Max 5x', region: '香港区', monthly: 80, serviceMultiplier: 1, weeklyQuotaAmount: 75, monthlyQuotaAmount: 300, followsOfficialQuotaReset: false, vpsRegion: '香港', supportsMainlandChinaDirectConnection: false, openingChannelCode: 'web', paymentMethodCode: 'paypal', quotaLabel: '额度', quotaUnit: 'USD', quotaPeriod: 'monthly', seats: '2/4', pricingMode: 'tiered', currentConfirmedMembers: 2, maxMembers: 4, pricingTiers: [{ memberCount: 2, price: 120 }, { memberCount: 3, price: 80 }, { memberCount: 4, price: 60 }], owner: '北风', trustLevel: 4, ownerType: '个人车主', warranty: '车主承诺', openingMethod: '本地卡', status: '审核中', confirmedAt: '1 小时前', confirmedWithin48h: true, linuxdoBound: true, sourceAuthorVerification: { status: 'pending' }, hasInfoConflict: false, hasUnresolvedDispute: false, distributionMethod: 'other', distributionMethodNote: '站外托管访问，具体方式加入前确认。', providesAdminAccount: false, accessArrangementMode: 'owner_managed_access', accessArrangementNote: '车主站外管理成员访问，不在平台保存凭据。' },
+  { id: 'c4', product: 'Cursor Pro', region: '新加坡区', monthly: 39, serviceMultiplier: 1, weeklyQuotaAmount: 50, monthlyQuotaAmount: 200, followsOfficialQuotaReset: true, vpsRegion: '新加坡', supportsMainlandChinaDirectConnection: true, openingChannelCode: 'other', customOpeningChannel: '企业席位', paymentMethodCode: 'virtual_card', quotaLabel: '额度', quotaUnit: 'USD', quotaPeriod: 'monthly', seats: '4/4', pricingMode: 'fixed', fixedMonthlyPrice: 39, currentConfirmedMembers: 4, maxMembers: 4, owner: '周末研究员', trustLevel: 2, ownerType: '商户车源', warranty: '售后协商', openingMethod: '其他', status: '已满', confirmedAt: '今天 09:24', confirmedWithin48h: true, linuxdoBound: true, sourceAuthorVerification: { status: 'verified' }, hasInfoConflict: false, hasUnresolvedDispute: false, distributionMethod: 'other', distributionMethodNote: '商户站外安排，加入前确认。', providesAdminAccount: false },
+  { id: 'c5', product: 'ChatGPT Business', region: '日本区', monthly: 198, serviceMultiplier: 1, weeklyQuotaAmount: 50, monthlyQuotaAmount: 200, followsOfficialQuotaReset: true, vpsRegion: '日本东京', supportsMainlandChinaDirectConnection: false, openingChannelCode: 'team_seat', paymentMethodCode: 'credit_card', quotaLabel: '额度', quotaUnit: 'USD', quotaPeriod: 'monthly', seats: '2/5', pricingMode: 'fixed', fixedMonthlyPrice: 198, currentConfirmedMembers: 2, maxMembers: 5, settlementDeadline: '2026-06-24', owner: '木舟', trustLevel: 3, ownerType: '个人车主', warranty: '车主承诺', openingMethod: '其他', status: '可上车', confirmedAt: '2 小时前', confirmedWithin48h: true, linuxdoBound: true, sourceAuthorVerification: { status: 'verified' }, hasInfoConflict: false, hasUnresolvedDispute: false, distributionMethod: 'sub2api', distributionMethodNote: 'Sub2API 托管管理，具体方式站外确认。', providesAdminAccount: true, accessArrangementMode: 'provider_member_invitation', accessArrangementNote: 'Business workspace 管理员邀请成员席位。', riskNoticeCode: 'openai_subscription_carpool', riskAcknowledged: true },
+  { id: 'c6', product: 'ChatGPT Pro 20x Web', region: '香港区', monthly: 178, serviceMultiplier: 1, weeklyQuotaAmount: 75, monthlyQuotaAmount: 300, followsOfficialQuotaReset: true, vpsRegion: '香港', supportsMainlandChinaDirectConnection: true, openingChannelCode: 'web', paymentMethodCode: 'u_card', quotaLabel: '额度', quotaUnit: 'USD', quotaPeriod: 'monthly', seats: '5/6', pricingMode: 'fixed', fixedMonthlyPrice: 178, currentConfirmedMembers: 5, maxMembers: 6, owner: '纸船', trustLevel: 2, ownerType: '可信新车主', warranty: '售后协商', openingMethod: '其他', status: '可上车', confirmedAt: '今天 10:20', confirmedWithin48h: true, linuxdoBound: true, sourceAuthorVerification: { status: 'expired' }, hasInfoConflict: false, hasUnresolvedDispute: false, distributionMethod: 'sub2api', distributionMethodNote: 'Sub2API 托管管理，具体方式站外确认。', providesAdminAccount: true, accessArrangementMode: 'personal_account_cost_share', accessArrangementNote: '个人订阅费用分摊，平台不保存、不交付任何密码、Session、Cookie 或 token。', riskNoticeCode: 'openai_subscription_carpool', riskAcknowledged: true },
+  { id: 'c7', product: 'Cursor Pro', region: '新加坡区', monthly: 49, serviceMultiplier: 1, weeklyQuotaAmount: 125, monthlyQuotaAmount: 500, followsOfficialQuotaReset: true, vpsRegion: '新加坡', supportsMainlandChinaDirectConnection: true, openingChannelCode: 'web', paymentMethodCode: 'virtual_card', quotaLabel: '额度', quotaUnit: 'USD', quotaPeriod: 'monthly', seats: '2/4', pricingMode: 'tiered', currentConfirmedMembers: 2, maxMembers: 4, pricingTiers: [{ memberCount: 2, price: 69 }, { memberCount: 3, price: 56 }, { memberCount: 4, price: 49 }], owner: '栈帧', trustLevel: 3, ownerType: '个人车主', warranty: '售后协商', openingMethod: '虚拟卡', status: '可上车', confirmedAt: '45 分钟前', confirmedWithin48h: true, linuxdoBound: true, sourceAuthorVerification: { status: 'verified' }, hasInfoConflict: false, hasUnresolvedDispute: false, distributionMethod: 'sub2api', distributionMethodNote: 'Sub2API 托管管理，具体方式站外确认。', providesAdminAccount: true },
+  { id: 'c8', product: 'Perplexity Pro', region: '美国区', monthly: 42, serviceMultiplier: 1, weeklyQuotaAmount: 40, monthlyQuotaAmount: 150, followsOfficialQuotaReset: false, vpsRegion: '美国西部', supportsMainlandChinaDirectConnection: false, openingChannelCode: 'web', paymentMethodCode: 'paypal', quotaLabel: '额度', quotaUnit: 'USD', quotaPeriod: 'monthly', seats: '1/3', pricingMode: 'fixed', fixedMonthlyPrice: 42, currentConfirmedMembers: 1, maxMembers: 3, owner: '海盐', trustLevel: 2, ownerType: '可信新车主', warranty: '售后协商', openingMethod: '其他', status: '可上车', confirmedAt: '1 小时前', confirmedWithin48h: true, linuxdoBound: true, sourceAuthorVerification: { status: 'mismatch' }, hasInfoConflict: false, hasUnresolvedDispute: false, distributionMethod: 'other', distributionMethodNote: '共享家庭组席位，具体方式站外确认。', providesAdminAccount: false },
+  { id: 'c9', product: 'Gemini Advanced', region: '日本区', monthly: 36, serviceMultiplier: 1, weeklyQuotaAmount: 25, monthlyQuotaAmount: 100, followsOfficialQuotaReset: true, vpsRegion: '日本东京', supportsMainlandChinaDirectConnection: true, openingChannelCode: 'google_play', paymentMethodCode: 'google_pay', quotaLabel: '额度', quotaUnit: 'USD', quotaPeriod: 'monthly', seats: '2/5', pricingMode: 'equal_share', totalShareableCost: 108, currentConfirmedMembers: 2, maxMembers: 5, settlementDeadline: '2026-06-26', owner: '雨季', trustLevel: 3, ownerType: '个人车主', warranty: '车主承诺', openingMethod: '本地卡', status: '可上车', confirmedAt: '今天 11:05', confirmedWithin48h: true, linuxdoBound: true, sourceAuthorVerification: { status: 'verified' }, hasInfoConflict: false, hasUnresolvedDispute: false, distributionMethod: 'other', distributionMethodNote: 'Google 家庭组成员安排，具体方式站外确认。', providesAdminAccount: false },
 ]
 
 const carpoolApplicationSnapshots: Record<string, CarpoolApplicationSnapshot> = {
@@ -1148,7 +1120,7 @@ const carpoolApplicationSnapshots: Record<string, CarpoolApplicationSnapshot> = 
     productName: 'ChatGPT Business',
     regionName: '美国区',
     monthlyPriceCny: 188,
-    serviceMultiplier: 1.2,
+    serviceMultiplier: 1,
     monthlyQuotaAmount: 200,
     quotaLabel: '额度',
     quotaUnit: 'USD',
@@ -1163,7 +1135,6 @@ const carpoolApplicationSnapshots: Record<string, CarpoolApplicationSnapshot> = 
     ownerUsername: 'orbit',
     ownerTrustLevel: 3,
     ownerType: '个人车主',
-    sourceTopicUrl: 'https://linux.do/t/topic/123456',
     accessArrangementMode: 'provider_member_invitation',
     accessArrangementNote: 'Business workspace 管理员邀请成员席位。',
   },
@@ -1187,7 +1158,6 @@ const carpoolApplicationSnapshots: Record<string, CarpoolApplicationSnapshot> = 
     ownerUsername: '青柠',
     ownerTrustLevel: 3,
     ownerType: '个人车主',
-    sourceTopicUrl: 'https://linux.do/t/topic/223456',
     accessArrangementMode: 'provider_member_invitation',
     accessArrangementNote: '团队成员邀请或独立席位授权。',
   },
@@ -1196,7 +1166,7 @@ const carpoolApplicationSnapshots: Record<string, CarpoolApplicationSnapshot> = 
     productName: 'Claude Max 5x',
     regionName: '香港区',
     monthlyPriceCny: 80,
-    serviceMultiplier: 1.1,
+    serviceMultiplier: 1,
     monthlyQuotaAmount: 300,
     quotaLabel: '额度',
     quotaUnit: 'USD',
@@ -1211,7 +1181,6 @@ const carpoolApplicationSnapshots: Record<string, CarpoolApplicationSnapshot> = 
     ownerUsername: '北风',
     ownerTrustLevel: 4,
     ownerType: '个人车主',
-    sourceTopicUrl: 'https://linux.do/t/topic/323456',
     accessArrangementMode: 'owner_managed_access',
     accessArrangementNote: '车主站外管理成员访问，不在平台保存凭据。',
   },
@@ -1497,7 +1466,7 @@ export const adminDirectoryUsers: AdminDirectoryUser[] = [
 ]
 
 export const adminAuditLogs: AdminAuditLog[] = [
-  { id: 'audit-1', actorType: 'admin', actorLabel: '管理员', action: '审核通过', targetType: 'carpool', targetId: 'c1', targetLabel: 'ChatGPT Business', beforeStatus: '待审核', afterStatus: 'approved_offline', reason: '原帖已绑定，已声明 Business workspace 成员席位机制。', createdAt: '2026-06-19 15:42' },
+  { id: 'audit-1', actorType: 'admin', actorLabel: '管理员', action: '审核通过', targetType: 'carpool', targetId: 'c1', targetLabel: 'ChatGPT Business', beforeStatus: '待审核', afterStatus: 'approved_offline', reason: '已声明 Business workspace 成员席位机制与使用边界。', createdAt: '2026-06-19 15:42' },
   { id: 'audit-2', actorType: 'admin', actorLabel: '管理员', action: '标记风险', targetType: 'application', targetId: 'ride-app-6', targetLabel: 'Claude Max 5x 上车申请', beforeStatus: '服务中', afterStatus: '纠纷中', reason: '开通区说明存在争议。', createdAt: '2026-06-18 15:30' },
   { id: 'audit-3', actorType: 'system', actorLabel: '系统', action: '自动提醒', targetType: 'api-service', targetId: 'a3', targetLabel: '多模型备用池', beforeStatus: 'online', afterStatus: 'paused', reason: '连续 2 次未响应购买意向。', createdAt: '2026-06-19 14:10' },
 ]

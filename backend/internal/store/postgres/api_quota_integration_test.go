@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"c2c-market/backend/internal/domain"
+	"c2c-market/backend/internal/module/apimarket"
 	"c2c-market/backend/internal/module/apiorder"
 	"c2c-market/backend/internal/module/apiquota"
 	"c2c-market/backend/internal/module/auth"
@@ -53,7 +54,7 @@ func TestAPIQuotaPostgresPublishCreatesAuthoritativeInventory(t *testing.T) {
 	batch, appErr := manager.CreateBatch(ctx, user, apiquota.CreateBatchInput{
 		APIServiceID:              serviceID,
 		SourceType:                apiquota.SourceTypeSub2API,
-		DeclaredTotalUSDAllowance: "500",
+		DeclaredTotalUSDAllowance: "600",
 		SaleCutoffAt:              now.Add(5 * time.Hour),
 		ExpiresAt:                 now.Add(6 * time.Hour),
 		SourceConfirmedAt:         now,
@@ -194,6 +195,141 @@ func TestAPIQuotaPostgresPublishCreatesAuthoritativeInventory(t *testing.T) {
 	}
 
 	cleanupQuotaServiceForTest(t, ctx, pool, sellerID, buyerID)
+}
+
+func TestOwnerAPIServiceSalesProjectionTransitionsFromSellingToExpired(t *testing.T) {
+	databaseURL := strings.TrimSpace(os.Getenv("C2C_TEST_DATABASE_URL"))
+	if databaseURL == "" {
+		t.Skip("C2C_TEST_DATABASE_URL is not configured")
+	}
+	ctx := context.Background()
+	pool, err := pgxpool.New(ctx, databaseURL)
+	if err != nil {
+		t.Fatalf("connect test database: %v", err)
+	}
+	t.Cleanup(pool.Close)
+	var databaseName string
+	if err := pool.QueryRow(ctx, "select current_database()").Scan(&databaseName); err != nil {
+		t.Fatalf("read test database name: %v", err)
+	}
+	if !strings.HasSuffix(databaseName, "_quota_test") {
+		t.Fatalf("refusing to run owner sales integration test against non-dedicated database %q", databaseName)
+	}
+
+	now := time.Now().UTC().Truncate(time.Second)
+	sellerID := uuid.NewString()
+	contactID := uuid.NewString()
+	buyerID := uuid.NewString()
+	buyerContactID := uuid.NewString()
+	serviceID := uuid.NewString()
+	seedQuotaServiceForTest(t, ctx, pool, sellerID, contactID, buyerID, buyerContactID, serviceID, now)
+	t.Cleanup(func() {
+		cleanupQuotaServiceForTest(t, ctx, pool, sellerID, buyerID)
+	})
+
+	store := &Store{pool: pool}
+	manager := apiquota.NewManager(store, func() time.Time { return now })
+	user := auth.User{ID: sellerID}
+	batch, appErr := manager.CreateBatch(ctx, user, apiquota.CreateBatchInput{
+		APIServiceID:              serviceID,
+		SourceType:                apiquota.SourceTypeSub2API,
+		DeclaredTotalUSDAllowance: "500",
+		SaleCutoffAt:              now.Add(5 * time.Hour),
+		ExpiresAt:                 now.Add(6 * time.Hour),
+		SourceConfirmedAt:         now,
+	})
+	if appErr != nil {
+		t.Fatalf("create quota batch: %v", appErr)
+	}
+	_, appErr = manager.CreateOffer(ctx, user, apiquota.CreateOfferInput{
+		BatchID:            batch.ID,
+		Name:               "$50 额度包",
+		USDAllowance:       "50",
+		PriceCNY:           "5",
+		ModelMultiplier:    "1",
+		DeliveryMode:       apiquota.DeliveryModeManual,
+		DeliveryETAMinutes: 10,
+		SaleMode:           apiquota.SaleModeContinuous,
+		ContinuousCopies:   10,
+	})
+	if appErr != nil {
+		t.Fatalf("create quota offer: %v", appErr)
+	}
+	_, appErr = manager.CreateOffer(ctx, user, apiquota.CreateOfferInput{
+		BatchID:            batch.ID,
+		Name:               "$25 额度包",
+		USDAllowance:       "25",
+		PriceCNY:           "3",
+		ModelMultiplier:    "1",
+		DeliveryMode:       apiquota.DeliveryModeManual,
+		DeliveryETAMinutes: 10,
+		SaleMode:           apiquota.SaleModeContinuous,
+		ContinuousCopies:   4,
+	})
+	if appErr != nil {
+		t.Fatalf("create second quota offer: %v", appErr)
+	}
+	batch, appErr = manager.PublishBatch(ctx, user, apiquota.BatchActionInput{
+		BatchID:         batch.ID,
+		ExpectedVersion: batch.Version,
+	})
+	if appErr != nil {
+		t.Fatalf("publish quota batch: %v", appErr)
+	}
+	if _, appErr = manager.CreateBatch(ctx, user, apiquota.CreateBatchInput{
+		APIServiceID:              serviceID,
+		SourceType:                apiquota.SourceTypeSub2API,
+		DeclaredTotalUSDAllowance: "100",
+		SaleCutoffAt:              now.Add(8 * time.Hour),
+		ExpiresAt:                 now.Add(9 * time.Hour),
+		SourceConfirmedAt:         now,
+	}); appErr != nil {
+		t.Fatalf("create second quota batch: %v", appErr)
+	}
+
+	active, appErr := store.ListAPIServicesByOwner(ctx, sellerID, apimarket.OwnerServiceFilter{
+		SalesView: apimarket.OwnerSalesViewActive,
+	}, domain.PageRequest{Limit: 20})
+	if appErr != nil {
+		t.Fatalf("list active owner API services: %v", appErr)
+	}
+	if len(active.Items) != 1 ||
+		active.Items[0].ID != serviceID ||
+		active.Items[0].SalesSummary.OverallState != apimarket.ServiceSalesStateSelling ||
+		len(active.Items[0].SalesSummary.Channels) != 1 ||
+		active.Items[0].SalesSummary.Channels[0].Kind != apimarket.ServiceSalesChannelLimitedQuota ||
+		active.Items[0].SalesSummary.Channels[0].AvailableCopies <= 0 {
+		t.Fatalf("unexpected active owner sales projection: %+v", active.Items)
+	}
+
+	if _, err := pool.Exec(ctx, `
+		UPDATE api_quota_batches
+		SET sale_cutoff_at = now() - interval '2 hours',
+		    expires_at = now() - interval '1 hour',
+		    updated_at = now()
+		WHERE id = $1
+	`, batch.ID); err != nil {
+		t.Fatalf("expire quota batch: %v", err)
+	}
+	expired, appErr := store.ListAPIServicesByOwner(ctx, sellerID, apimarket.OwnerServiceFilter{
+		SalesView: apimarket.OwnerSalesViewExpired,
+	}, domain.PageRequest{Limit: 20})
+	if appErr != nil {
+		t.Fatalf("list expired owner API services: %v", appErr)
+	}
+	if len(expired.Items) != 1 ||
+		expired.Items[0].ID != serviceID ||
+		expired.Items[0].SalesSummary.OverallState != apimarket.ServiceSalesStateExpired ||
+		expired.Items[0].SalesSummary.Channels[0].State != apimarket.ServiceSalesStateExpired {
+		t.Fatalf("unexpected expired owner sales projection: %+v", expired.Items)
+	}
+
+	all, appErr := store.ListAPIServicesByOwner(ctx, sellerID, apimarket.OwnerServiceFilter{
+		SalesView: apimarket.OwnerSalesViewAll,
+	}, domain.PageRequest{Limit: 20})
+	if appErr != nil || len(all.Items) != 1 || all.Items[0].ID != serviceID {
+		t.Fatalf("expired service must remain reusable in all view, got %+v %v", all.Items, appErr)
+	}
 }
 
 func TestAPIQuotaPostgresArchiveSystemRushRetiresUnsoldCapacity(t *testing.T) {

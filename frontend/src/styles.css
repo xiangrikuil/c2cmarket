@@ -1,4 +1,5 @@
 @import "tailwindcss";
+@import "tw-animate-css";
 @import "./theme/aqua-console.css";
 @import "./theme/neumorphic-cool.css";
 @import "./theme/minimal-modern.css";
@@ -72,6 +73,11 @@
     --surface-ring-shadow: 0 0 0 3px color-mix(in oklab, var(--ring) 24%, transparent);
     --radius-card: var(--radius);
     --radius-control: var(--radius);
+    --motion-duration-fast: 120ms;
+    --motion-duration-base: 180ms;
+    --motion-duration-slow: 240ms;
+    --motion-ease-standard: cubic-bezier(0.2, 0, 0, 1);
+    --motion-ease-emphasized: cubic-bezier(0.2, 0.8, 0.2, 1);
     --app-body-background: linear-gradient(180deg, #fbfdff 0%, color-mix(in oklab, var(--background) 96%, white) 45%, #ffffff 100%);
     --app-grid-line: color-mix(in oklab, var(--border) 55%, transparent);
     --waiting: var(--info);
@@ -1299,10 +1305,26 @@ html[data-theme="minimal-modern"] .account-security-side {
   letter-spacing: -0.02em;
 }
 
-.c2c-fade-in { animation: c2c-fade-in 180ms ease-out; }
+.c2c-fade-in { animation: c2c-fade-in var(--motion-duration-base) var(--motion-ease-standard); }
+.c2c-motion-state {
+  transition-duration: var(--motion-duration-base);
+  transition-property: background-color, border-color, color, opacity, transform;
+  transition-timing-function: var(--motion-ease-standard);
+}
 @keyframes c2c-fade-in {
   from { opacity: 0; transform: translateY(4px); }
   to { opacity: 1; transform: translateY(0); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
 }
 
 @media (max-width: 720px) {
@@ -3689,7 +3711,7 @@ html[data-theme="minimal-modern"] .account-security-side {
 }
 
 .carpool-page .c2c-soft-table {
-  min-width: 810px;
+  min-width: 960px;
   table-layout: fixed;
 }
 
@@ -3724,7 +3746,7 @@ html[data-theme="minimal-modern"] .account-security-side {
 
 .carpool-page .c2c-soft-table th:nth-child(4),
 .carpool-page .c2c-soft-table td:nth-child(4) {
-  width: 190px;
+  width: 285px;
 }
 
 .carpool-page .c2c-soft-table th:nth-child(5),
@@ -3748,6 +3770,7 @@ html[data-theme="minimal-modern"] .account-security-side {
 }
 
 .carpool-table-row {
+  height: 96px;
   transition:
     background-color 150ms ease,
     box-shadow 150ms ease;
@@ -3973,37 +3996,6 @@ html[data-theme="minimal-modern"] .account-security-side {
   max-height: calc(100dvh - 80px);
   overflow-y: auto;
   scrollbar-width: thin;
-}
-
-.api-publish-confirm-list {
-  display: grid;
-  gap: 0;
-  overflow: hidden;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-}
-
-.api-publish-confirm-list > div {
-  display: grid;
-  gap: 5px;
-  padding: 12px 14px;
-  border-bottom: 1px solid var(--border);
-}
-
-.api-publish-confirm-list > div span {
-  color: var(--muted-foreground);
-  font-size: 12px;
-}
-
-.api-publish-confirm-list > div strong {
-  overflow-wrap: anywhere;
-  font-size: 13px;
-  line-height: 1.55;
-}
-
-.api-publish-confirm-list > p {
-  padding: 12px 14px;
-  background: color-mix(in oklab, var(--muted) 38%, var(--card));
 }
 
 .api-publish-card {

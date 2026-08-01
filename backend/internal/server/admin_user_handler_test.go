@@ -66,6 +66,9 @@ func TestAdminUserDetailAndGovernanceRoutes(t *testing.T) {
 	if detail.User.ID != memberSession.userID || detail.Sessions.ActiveCount != 1 || detail.EmailVerified || detail.BackupPasswordConfigured {
 		t.Fatalf("unexpected detail: %+v", detail)
 	}
+	if len(detail.AvailableActions) != 4 || detail.ImpactPreview.ActiveSessions != 1 || !detail.AccountCapabilities.CanLogin || !detail.AccountCapabilities.CanAccessHistoricalTransactions {
+		t.Fatalf("missing governance contract: %+v", detail)
+	}
 	for _, forbidden := range []string{"passwordHash", "providerSubject", "sessionToken", "csrfToken", "ipAddress", "device"} {
 		if strings.Contains(detailResponse.Body.String(), forbidden) {
 			t.Fatalf("detail leaked %s: %s", forbidden, detailResponse.Body.String())
@@ -107,6 +110,9 @@ func TestAdminUserDetailAndGovernanceRoutes(t *testing.T) {
 	}
 	if updated.User.AccountStatus != "suspended" || updated.User.Version != 2 || updated.Sessions.ActiveCount != 0 || len(updated.RecentAuditEntries) != 1 {
 		t.Fatalf("unexpected updated account: %+v", updated)
+	}
+	if updated.AccountCapabilities.CanLogin || updated.AccountCapabilities.CanPublish || !updated.AccountCapabilities.CanAccessHistoricalTransactions {
+		t.Fatalf("unexpected suspended capabilities: %+v", updated.AccountCapabilities)
 	}
 
 	replay := newJSONRequest(http.MethodPost, path, body)

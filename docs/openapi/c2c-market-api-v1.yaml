@@ -2726,6 +2726,7 @@ paths:
       operationId: listOwnerAPIServices
       tags: [OwnerAPIServices]
       parameters:
+        - $ref: "#/components/parameters/OwnerAPISalesView"
         - $ref: "#/components/parameters/Limit"
         - $ref: "#/components/parameters/Cursor"
       responses:
@@ -2734,7 +2735,9 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/APIServiceList"
+                $ref: "#/components/schemas/OwnerAPIServiceList"
+        "422":
+          $ref: "#/components/responses/Problem"
     post:
       operationId: createOwnerAPIService
       tags: [OwnerAPIServices]
@@ -6507,6 +6510,15 @@ components:
         type: integer
         enum: [20, 50, 100]
         default: 20
+    OwnerAPISalesView:
+      name: salesView
+      in: query
+      required: false
+      description: Owner sales lifecycle view. Defaults to active, which includes selling and upcoming services.
+      schema:
+        type: string
+        enum: [active, expired, paused, draft, all]
+        default: active
     FavoriteTargetType:
       name: targetType
       in: path
@@ -7053,7 +7065,7 @@ components:
       properties:
         version:
           type: string
-          const: reputation-v1
+          const: reputation-v2
         minimumNormalCompletions:
           type: integer
           minimum: 0
@@ -7721,6 +7733,7 @@ components:
         - confidence
         - ruleVersion
         - completedCount
+        - roleCompletionRate
         - roleFaultCancelRate
         - hasUnknownCancellation
         - unresolvedDisputes
@@ -7752,6 +7765,10 @@ components:
         completedCount:
           type: integer
           minimum: 0
+        roleCompletionRate:
+          type: [number, "null"]
+          minimum: 0
+          maximum: 1
         roleFaultCancelRate:
           type: [number, "null"]
           minimum: 0
@@ -9569,6 +9586,62 @@ components:
           type: string
         merchantMultiplier:
           $ref: "#/components/schemas/DecimalString"
+    APIServiceSalesChannel:
+      type: object
+      additionalProperties: false
+      required: [kind, state]
+      properties:
+        kind:
+          type: string
+          enum: [flexible_quota, limited_quota]
+        state:
+          type: string
+          enum: [selling, upcoming, paused, sold_out, expired, draft, offline, archived]
+        availableUsdAllowance:
+          $ref: "#/components/schemas/DecimalString"
+        availableCopies:
+          type: integer
+          minimum: 0
+        nextStartsAt:
+          type: string
+          format: date-time
+        saleCutoffAt:
+          type: string
+          format: date-time
+        expiresAt:
+          type: string
+          format: date-time
+    APIServiceSalesSummary:
+      type: object
+      additionalProperties: false
+      required: [overallState, channels]
+      properties:
+        overallState:
+          type: string
+          enum: [selling, upcoming, paused, sold_out, expired, draft, offline, archived]
+        channels:
+          type: array
+          items:
+            $ref: "#/components/schemas/APIServiceSalesChannel"
+    OwnerAPIServiceListItem:
+      allOf:
+        - $ref: "#/components/schemas/APIService"
+        - type: object
+          additionalProperties: false
+          required: [salesSummary]
+          properties:
+            salesSummary:
+              $ref: "#/components/schemas/APIServiceSalesSummary"
+    OwnerAPIServiceList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/OwnerAPIServiceListItem"
+        nextCursor:
+          type: [string, "null"]
     APIServiceList:
       type: object
       required: [items]
@@ -11011,7 +11084,7 @@ components:
     CreateCarpoolListingRequest:
       type: object
       additionalProperties: false
-      required: [productPlanId, ownerContactMethodId, cycleTerm, title, summary, accessArrangement, distributionMethod, distributionMethodNote, providesAdminAccount, regionCode, regionName, priceMonthlyCny, serviceMultiplier, monthlyQuotaAmount, buyerSeatCapacity, activeBuyerMembers]
+      required: [productPlanId, ownerContactMethodId, cycleTerm, title, summary, accessArrangement, distributionMethod, distributionMethodNote, providesAdminAccount, regionCode, regionName, priceMonthlyCny, serviceMultiplier, weeklyQuotaAmount, monthlyQuotaAmount, followsOfficialQuotaReset, vpsRegion, supportsMainlandChinaDirectConnection, openingChannelCode, paymentMethodCode, buyerSeatCapacity, activeBuyerMembers]
       properties:
         productPlanId:
           type: string
@@ -11054,14 +11127,46 @@ components:
         sourceUrl:
           type: string
           format: uri
+          description: Legacy optional source URL retained for compatibility. Current carpool publishing clients do not collect or require an external post.
         priceMonthlyCny:
           $ref: "#/components/schemas/DecimalString"
         serviceMultiplier:
           $ref: "#/components/schemas/DecimalString"
-          description: Owner-declared usage multiplier, for example 1.3 means billed or compared at 1.3x.
+          pattern: '^1(?:\.0+)?$'
+          description: System-fixed carpool multiplier. Clients must send 1; owners cannot edit it.
+        weeklyQuotaAmount:
+          $ref: "#/components/schemas/DecimalString"
+          description: Owner-declared per-seat weekly quota amount. It uses the selected product plan quota label and unit.
         monthlyQuotaAmount:
           $ref: "#/components/schemas/DecimalString"
           description: Owner-declared per-seat monthly quota amount. Label, unit, and period come from the selected product plan and are not accepted from the client.
+        followsOfficialQuotaReset:
+          type: boolean
+          description: Whether the declared quota follows the official provider reset schedule.
+        vpsRegion:
+          type: string
+          minLength: 1
+          maxLength: 64
+          description: Owner-declared VPS region free text. It is informational and is not a catalog filter.
+        supportsMainlandChinaDirectConnection:
+          type: boolean
+          description: Whether the owner declares that the access path supports direct connection from mainland China.
+        openingChannelCode:
+          type: string
+          enum: [web, ios_app_store, google_play, team_seat, other]
+        customOpeningChannel:
+          type: string
+          minLength: 1
+          maxLength: 64
+          description: Required only when openingChannelCode is other.
+        paymentMethodCode:
+          type: string
+          enum: [credit_card, virtual_card, apple_pay, google_pay, app_store_gift_card, google_play_gift_card, paypal, u_card, other]
+        customPaymentMethod:
+          type: string
+          minLength: 1
+          maxLength: 64
+          description: Required only when paymentMethodCode is other.
         buyerSeatCapacity:
           type: integer
           minimum: 1
@@ -11146,7 +11251,15 @@ components:
         - regionName
         - priceMonthlyCny
         - serviceMultiplier
+        - weeklyQuotaAmount
         - monthlyQuotaAmount
+        - followsOfficialQuotaReset
+        - vpsRegion
+        - supportsMainlandChinaDirectConnection
+        - openingChannelCode
+        - customOpeningChannel
+        - paymentMethodCode
+        - customPaymentMethod
         - quotaLabel
         - quotaUnit
         - quotaPeriod
@@ -11201,8 +11314,27 @@ components:
           $ref: "#/components/schemas/DecimalString"
         serviceMultiplier:
           $ref: "#/components/schemas/DecimalString"
+        weeklyQuotaAmount:
+          type: [string, "null"]
+          pattern: '^[0-9]+(?:\.[0-9]+)?$'
         monthlyQuotaAmount:
           $ref: "#/components/schemas/DecimalString"
+        followsOfficialQuotaReset:
+          type: [boolean, "null"]
+        vpsRegion:
+          type: [string, "null"]
+        supportsMainlandChinaDirectConnection:
+          type: [boolean, "null"]
+        openingChannelCode:
+          type: [string, "null"]
+          enum: [web, ios_app_store, google_play, team_seat, other, null]
+        customOpeningChannel:
+          type: [string, "null"]
+        paymentMethodCode:
+          type: [string, "null"]
+          enum: [credit_card, virtual_card, apple_pay, google_pay, app_store_gift_card, google_play_gift_card, paypal, u_card, other, null]
+        customPaymentMethod:
+          type: [string, "null"]
         quotaLabel:
           type: string
         quotaUnit:
@@ -11657,6 +11789,16 @@ components:
           type: string
         counterpartyName:
           type: string
+        subjectUserId:
+          type: string
+          format: uuid
+          description: Admin response only. Reputation subject while the dispute is unresolved.
+        subjectUsername:
+          type: string
+          description: Admin response only.
+        subjectName:
+          type: string
+          description: Admin response only.
         status:
           type: string
           enum: [open, waiting_info, resolved, closed]
@@ -12154,9 +12296,79 @@ components:
         createdAt:
           type: string
           format: date-time
+    AdminUserGovernanceAction:
+      type: object
+      additionalProperties: false
+      required: [action, kind, allowed, severity, requiresReason, requiresConfirmation]
+      properties:
+        action:
+          type: string
+          enum: [suspend, ban, archive, restore, grant_admin, revoke_admin]
+        kind:
+          type: string
+          enum: [status, permission]
+        targetStatus:
+          type: string
+          enum: [active, suspended, banned, archived]
+        targetIsAdmin:
+          type: boolean
+        allowed:
+          type: boolean
+        severity:
+          type: string
+          enum: [normal, warning, danger]
+        requiresReason:
+          type: boolean
+        requiresConfirmation:
+          type: boolean
+        blockedCode:
+          type: string
+          enum: [SELF_TARGET, LAST_ACTIVE_ADMIN, ACCOUNT_NOT_ACTIVE]
+        blockedReason:
+          type: string
+    AdminUserGovernanceImpact:
+      type: object
+      additionalProperties: false
+      required: [activeSessions, activeCarpoolListings, onlineApiServices, openCarpoolApplications, openApiOrders, openDisputes]
+      properties:
+        activeSessions:
+          type: integer
+          minimum: 0
+        activeCarpoolListings:
+          type: integer
+          minimum: 0
+        onlineApiServices:
+          type: integer
+          minimum: 0
+        openCarpoolApplications:
+          type: integer
+          minimum: 0
+        openApiOrders:
+          type: integer
+          minimum: 0
+        openDisputes:
+          type: integer
+          minimum: 0
+    AdminUserAccountCapabilities:
+      type: object
+      additionalProperties: false
+      required: [canLogin, publiclyVisible, canPublish, canCreateOrders, canRevealContact, canAccessHistoricalTransactions]
+      properties:
+        canLogin:
+          type: boolean
+        publiclyVisible:
+          type: boolean
+        canPublish:
+          type: boolean
+        canCreateOrders:
+          type: boolean
+        canRevealContact:
+          type: boolean
+        canAccessHistoricalTransactions:
+          type: boolean
     AdminUserDetail:
       type: object
-      required: [user, updatedAt, linuxDoBinding, emailVerified, backupPasswordConfigured, providers, sessions, recentAuditEntries]
+      required: [user, updatedAt, linuxDoBinding, emailVerified, backupPasswordConfigured, providers, sessions, recentAuditEntries, availableActions, impactPreview, accountCapabilities]
       properties:
         user:
           $ref: "#/components/schemas/AdminUser"
@@ -12179,6 +12391,14 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/AdminAccountAuditEntry"
+        availableActions:
+          type: array
+          items:
+            $ref: "#/components/schemas/AdminUserGovernanceAction"
+        impactPreview:
+          $ref: "#/components/schemas/AdminUserGovernanceImpact"
+        accountCapabilities:
+          $ref: "#/components/schemas/AdminUserAccountCapabilities"
     AdminUserStatusRequest:
       type: object
       additionalProperties: false

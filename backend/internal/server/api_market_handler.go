@@ -129,6 +129,26 @@ type apiServiceResponse struct {
 	SourceAuthorVerification         sourceAuthorResourceSummaryResponse `json:"sourceAuthorVerification"`
 }
 
+type ownerAPIServiceListItemResponse struct {
+	apiServiceResponse
+	SalesSummary apiServiceSalesSummaryResponse `json:"salesSummary"`
+}
+
+type apiServiceSalesSummaryResponse struct {
+	OverallState string                           `json:"overallState"`
+	Channels     []apiServiceSalesChannelResponse `json:"channels"`
+}
+
+type apiServiceSalesChannelResponse struct {
+	Kind                  string  `json:"kind"`
+	State                 string  `json:"state"`
+	AvailableUSDAllowance string  `json:"availableUsdAllowance,omitempty"`
+	AvailableCopies       int     `json:"availableCopies,omitempty"`
+	NextStartsAt          *string `json:"nextStartsAt,omitempty"`
+	SaleCutoffAt          *string `json:"saleCutoffAt,omitempty"`
+	ExpiresAt             *string `json:"expiresAt,omitempty"`
+}
+
 type publicAPIServiceResponse struct {
 	ID                               string                              `json:"id"`
 	MerchantIdentityMode             string                              `json:"merchantIdentityMode"`
@@ -493,13 +513,15 @@ func (s *Server) handleOwnerAPIServices(w http.ResponseWriter, r *http.Request) 
 		writeProblem(w, r, appErr)
 		return
 	}
-	services, appErr := s.app.OwnerAPIServices(r.Context(), user, pageRequest)
+	services, appErr := s.app.OwnerAPIServices(r.Context(), user, apimarket.OwnerServiceFilter{
+		SalesView: r.URL.Query().Get("salesView"),
+	}, pageRequest)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
 	}
-	writePageJSON(w, domain.Page[apiServiceResponse]{
-		Items:      toAPIServiceResponses(services.Items),
+	writePageJSON(w, domain.Page[ownerAPIServiceListItemResponse]{
+		Items:      toOwnerAPIServiceListItemResponses(services.Items),
 		NextCursor: services.NextCursor,
 	})
 }
@@ -956,6 +978,36 @@ func toAPIServiceResponses(services []apimarket.Service) []apiServiceResponse {
 		items = append(items, toAPIServiceResponse(service))
 	}
 	return items
+}
+
+func toOwnerAPIServiceListItemResponses(services []apimarket.Service) []ownerAPIServiceListItemResponse {
+	items := make([]ownerAPIServiceListItemResponse, 0, len(services))
+	for _, service := range services {
+		items = append(items, ownerAPIServiceListItemResponse{
+			apiServiceResponse: toAPIServiceResponse(service),
+			SalesSummary:       toAPIServiceSalesSummaryResponse(service.SalesSummary),
+		})
+	}
+	return items
+}
+
+func toAPIServiceSalesSummaryResponse(summary apimarket.ServiceSalesSummary) apiServiceSalesSummaryResponse {
+	channels := make([]apiServiceSalesChannelResponse, 0, len(summary.Channels))
+	for _, channel := range summary.Channels {
+		channels = append(channels, apiServiceSalesChannelResponse{
+			Kind:                  channel.Kind,
+			State:                 channel.State,
+			AvailableUSDAllowance: channel.AvailableUSDAllowance,
+			AvailableCopies:       channel.AvailableCopies,
+			NextStartsAt:          formatOptionalTime(channel.NextStartsAt),
+			SaleCutoffAt:          formatOptionalTime(channel.SaleCutoffAt),
+			ExpiresAt:             formatOptionalTime(channel.ExpiresAt),
+		})
+	}
+	return apiServiceSalesSummaryResponse{
+		OverallState: summary.OverallState,
+		Channels:     channels,
+	}
 }
 
 func toPublicAPIServiceResponses(services []apimarket.Service) []publicAPIServiceResponse {

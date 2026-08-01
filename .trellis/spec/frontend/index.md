@@ -17,8 +17,10 @@ This directory contains the current project conventions for the Nuxt 4 + Vue 3 f
 | [Directory Structure](./directory-structure.md) | Module organization and file layout | Active |
 | [Component Guidelines](./component-guidelines.md) | Component patterns, props, composition | Active |
 | [Marketplace UI Guidelines](./marketplace-ui-guidelines.md) | Authoritative site-wide visual, layout, marketplace hierarchy, and browser acceptance contract | Active |
+| [Functional Motion Guidelines](./motion-guidelines.md) | Transaction dialogs, keyed list updates, status feedback, timing, and reduced-motion contracts | Active |
 | [Limited API Packages](../backend/api-limited-packages.md) | Cross-layer package publishing, cards, recommendation, ordering, and lifecycle contract | Active |
 | [Limited API Quota Offers](./api-quota-offers.md) | Quota market, purchase, owner management, adapters, and responsive behavior | Active |
+| [Owner API Service Sales Lifecycle](../backend/api-quota-offers.md#scenario-owner-api-service-sales-lifecycle-projection) | Server-filtered owner read model, channel states, default views, and republishing behavior | Active |
 | [Reputation Presentation](./reputation.md) | Nullable real facts and public reputation wording | Active |
 | [Hook Guidelines](./hook-guidelines.md) | Custom hooks, data fetching patterns | Active |
 | [State Management](./state-management.md) | Local state, global state, server state | Active |
@@ -38,19 +40,21 @@ Before editing frontend code, read:
 1. [Directory Structure](./directory-structure.md)
 2. [Component Guidelines](./component-guidelines.md)
 3. [Marketplace UI Guidelines](./marketplace-ui-guidelines.md) for any product-facing UI change
-4. [Limited API Packages](../backend/api-limited-packages.md) when touching fixed package publishing, cards, recommendation, ordering, or expiry
-5. [Limited API Quota Offers](./api-quota-offers.md) when touching quota market, purchase, owner management, adapters, or mock flows
-6. [Reputation Presentation](./reputation.md) when touching trust, completion, review, cancellation, or dispute facts
-7. [Hook Guidelines](./hook-guidelines.md)
-8. [State Management](./state-management.md)
-9. [Identity And Session](../backend/identity-session.md) for account-shell, merchant avatar, or logout work
-10. [Quality Guidelines](./quality-guidelines.md)
-11. [Type Safety](./type-safety.md)
-12. [Nuxt SSR and Cloudflare Worker](./nuxt-ssr-deployment.md) for rendering, SEO, sitemap, or deployment work
-13. [Reproducible Release And Contract Drift](../backend/release-contract.md) when touching OpenAPI or generated API types
-14. [Runtime Security And Observability](../backend/runtime-operations.md) when touching `frontend/public/_headers`, frontend asset origins, or API connection origins
-15. [C2CMarket Product Context](../guides/product-context.md)
-16. [Maintainability Contract](../guides/maintainability-contract.md)
+4. [Functional Motion Guidelines](./motion-guidelines.md) when touching transaction animation, list updates, dialogs, status feedback, or reduced-motion behavior
+5. [Limited API Packages](../backend/api-limited-packages.md) when touching fixed package publishing, cards, recommendation, ordering, or expiry
+6. [Limited API Quota Offers](./api-quota-offers.md) when touching quota market, purchase, owner management, adapters, or mock flows
+7. [Owner API Service Sales Lifecycle](../backend/api-quota-offers.md#scenario-owner-api-service-sales-lifecycle-projection) when touching the owner service list, `salesSummary`, sales filters, or limited-package republishing
+8. [Reputation Presentation](./reputation.md) when touching trust, completion, review, cancellation, or dispute facts
+9. [Hook Guidelines](./hook-guidelines.md)
+10. [State Management](./state-management.md)
+11. [Identity And Session](../backend/identity-session.md) for account-shell, merchant avatar, or logout work
+12. [Quality Guidelines](./quality-guidelines.md)
+13. [Type Safety](./type-safety.md)
+14. [Nuxt SSR and Cloudflare Worker](./nuxt-ssr-deployment.md) for rendering, SEO, sitemap, or deployment work
+15. [Reproducible Release And Contract Drift](../backend/release-contract.md) when touching OpenAPI or generated API types
+16. [Runtime Security And Observability](../backend/runtime-operations.md) when touching `frontend/public/_headers`, frontend asset origins, or API connection origins
+17. [C2CMarket Product Context](../guides/product-context.md)
+18. [Maintainability Contract](../guides/maintainability-contract.md)
 
 ## Quality Check
 

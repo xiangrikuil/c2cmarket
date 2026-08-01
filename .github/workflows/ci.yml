@@ -85,6 +85,8 @@ jobs:
         run: node scripts/check-security-headers.mjs
       - name: Check Compose exposure
         run: node scripts/check-compose-exposure.mjs
+      - name: Check release workflow contract
+        run: ruby scripts/check-release-workflow.rb
       - name: Test commit-only source packaging
         run: node scripts/test-package-source.mjs
       - name: Check whitespace
@@ -292,6 +294,15 @@ jobs:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           ref: ${{ github.sha }}
+
+      - name: Connect deployment runner to Tailscale
+        uses: tailscale/github-action@780049a30b6ff5c378a9e7b389d15ece7a204888 # v4.1.3
+        with:
+          oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+          oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
+          tags: tag:c2c-ci
+          ping: ${{ secrets.VPS_HOST }}
+          version: 1.98.10
 
       - name: Create release archive
         id: archive

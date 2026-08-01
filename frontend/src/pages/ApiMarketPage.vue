@@ -6,8 +6,9 @@ import { toast } from 'vue-sonner'
 import EmptyState from '@/components/market/EmptyState.vue'
 import ErrorState from '@/components/market/ErrorState.vue'
 import SkeletonBlock from '@/components/market/SkeletonBlock.vue'
+import ApiFreeServiceCard from '@/components/api-market/ApiFreeServiceCard.vue'
 import ApiPackageCard from '@/components/api-market/ApiPackageCard.vue'
-import ReputationInlineSummary from '@/components/reputation/ReputationInlineSummary.vue'
+import type { ApiFreeServiceCardData } from '@/components/api-market/apiFreeServiceCard'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -248,8 +249,29 @@ function freeServiceCategory(service: ApiService): ConcreteProductCategoryKey {
   return getApiServiceProductCategory(service)
 }
 
-function freeServiceAvailableUsd(service: ApiService) {
-  return formatDecimal(service.availableUsdAllowance ?? String(service.balance), 0, 6)
+function freeServiceCard(service: ApiService): ApiFreeServiceCardData {
+  const category = freeServiceCategory(service)
+  return {
+    title: service.title,
+    delivery: service.delivery,
+    models: service.models,
+    category,
+    categoryLabel: getProductCategoryLabel(category),
+    iconSrc: freeServiceIconSrc(service),
+    cnyPerUsdAllowance: service.cnyPerUsdAllowance || '1',
+    minimumPurchaseCny: service.minimumPurchaseCny,
+    availableUsdAllowance: service.availableUsdAllowance ?? String(service.balance),
+    maximumPurchaseCny: service.maxBuy,
+    multiplier: service.rate,
+    ttftLabel: getApiTTFTBandLabel(service.declaredTtftBand),
+    recommendedConcurrency: service.recommendedConcurrency ?? '—',
+    paymentWindowMinutes: service.expectedResponseMinutes,
+    merchantName: getApiMerchantDisplayName(service),
+    merchantType: service.merchantType,
+    expiresAt: service.expiresAt,
+    sellerReputation: service.sellerReputation,
+    actionHref: `/api-market/${service.id}`,
+  }
 }
 
 async function purchaseOffer(offer: PublicApiQuotaOffer) {
@@ -582,77 +604,11 @@ onBeforeUnmount(() => {
         <SkeletonBlock v-else-if="freeServicesQuery.isLoading.value" :lines="8" />
         <EmptyState v-else-if="freeServices.length === 0" title="暂无自由额度服务" description="当前没有可公开下单的 API 服务。" />
         <div v-else class="quota-free-grid">
-          <Card
+          <ApiFreeServiceCard
             v-for="service in freeServices"
             :key="service.id"
-            class="quota-offer-card quota-free-card gap-0 overflow-hidden py-0"
-            :class="{ 'quota-free-card--risk': service.sellerReputation && service.sellerReputation.state !== 'active' }"
-            :data-category="freeServiceCategory(service)"
-          >
-            <img
-              v-if="freeServiceIconSrc(service)"
-              :src="freeServiceIconSrc(service) ?? undefined"
-              alt=""
-              aria-hidden="true"
-              class="quota-offer-watermark"
-            />
-            <div class="relative z-[1] flex h-full flex-col">
-              <div class="p-2.5 pb-1.5">
-                <div class="flex items-start gap-2.5">
-                  <span class="quota-offer-icon-well">
-                    <img v-if="freeServiceIconSrc(service)" :src="freeServiceIconSrc(service) ?? undefined" alt="" class="h-6 w-6 object-contain" />
-                    <Code2 v-else class="h-5 w-5" />
-                  </span>
-                  <div class="min-w-0 flex-1">
-                    <div class="flex flex-wrap items-center gap-1.5">
-                      <Badge variant="outline" class="quota-offer-category">{{ getProductCategoryLabel(freeServiceCategory(service)) }}</Badge>
-                    </div>
-                    <h2 class="mt-1 truncate text-sm font-semibold" :title="service.title">{{ service.title }}</h2>
-                    <p class="truncate text-xs text-muted-foreground" :title="`${service.delivery} · ${service.models.slice(0, 3).join(' / ')}`">{{ service.delivery }} · {{ service.models.slice(0, 3).join(' / ') }}</p>
-                  </div>
-                </div>
-                <div class="mt-1.5 flex items-end justify-between gap-2">
-                  <div class="min-w-0">
-                    <div class="quota-offer-price whitespace-nowrap text-2xl font-semibold">
-                      ¥{{ formatDecimal(service.cnyPerUsdAllowance || '1', 2, 6) }}
-                      <span class="text-sm font-medium">/ $1</span>
-                    </div>
-                    <div class="text-[11px] text-muted-foreground">按金额购买 · 最低 ¥{{ service.minimumPurchaseCny }} 起</div>
-                  </div>
-                  <div class="shrink-0 pb-0.5 text-right text-xs text-muted-foreground">可售 ${{ freeServiceAvailableUsd(service) }}</div>
-                </div>
-              </div>
-
-              <dl class="quota-offer-metrics quota-free-metrics grid grid-cols-4 gap-px text-xs">
-                <div><dt>模型倍率</dt><dd>{{ service.rate }}</dd></div>
-                <div><dt>首字响应</dt><dd>{{ getApiTTFTBandLabel(service.declaredTtftBand) }}</dd></div>
-                <div><dt>建议并发</dt><dd>{{ service.recommendedConcurrency ?? '—' }}</dd></div>
-                <div><dt>付款窗口</dt><dd>{{ service.expectedResponseMinutes }} 分钟</dd></div>
-              </dl>
-
-              <div class="flex-1 px-3 py-2.5">
-                <dl class="grid grid-cols-2 gap-x-3 gap-y-2 text-xs">
-                  <div class="flex min-w-0 items-center gap-1.5"><dt class="shrink-0 text-muted-foreground">卖家</dt><dd class="truncate font-medium" :title="`${getApiMerchantDisplayName(service)} · ${service.merchantType}`">{{ getApiMerchantDisplayName(service) }} · {{ service.merchantType }}</dd></div>
-                  <div class="flex min-w-0 items-center gap-1.5"><dt class="shrink-0 text-muted-foreground">单笔</dt><dd class="truncate font-medium" :title="`¥${service.minimumPurchaseCny} - ¥${service.maxBuy}`">¥{{ service.minimumPurchaseCny }} - ¥{{ service.maxBuy }}</dd></div>
-                  <div class="flex min-w-0 items-center gap-1.5"><dt class="shrink-0 text-muted-foreground">接入</dt><dd class="truncate font-medium" :title="service.delivery">{{ service.delivery }}</dd></div>
-                  <div class="flex min-w-0 items-center gap-1.5"><dt class="shrink-0 text-muted-foreground">有效期</dt><dd class="truncate font-medium" :title="service.expiresAt">{{ service.expiresAt }}</dd></div>
-                </dl>
-                <div class="mt-2 min-w-0 border-t border-border pt-2">
-                  <ReputationInlineSummary
-                    class="min-w-0"
-                    :summary="service.sellerReputation"
-                    :compact="service.sellerReputation?.state === 'active'"
-                  />
-                </div>
-              </div>
-
-              <div class="border-t border-border px-3 py-2">
-                <RouterLink :to="`/api-market/${service.id}`" class="block">
-                  <Button class="h-10 w-full"><ShoppingCart class="h-4 w-4" />选择金额并下单</Button>
-                </RouterLink>
-              </div>
-            </div>
-          </Card>
+            :card="freeServiceCard(service)"
+          />
         </div>
       </TabsContent>
     </Tabs>
@@ -687,34 +643,6 @@ onBeforeUnmount(() => {
   margin-inline: auto;
   align-items: start;
   gap: 1rem;
-}
-
-.quota-free-card {
-  width: 100%;
-  height: 342px;
-}
-
-.quota-free-card--risk {
-  height: auto;
-  min-height: 342px;
-}
-
-.quota-free-card .quota-offer-icon-well {
-  width: 2.25rem;
-  height: 2.25rem;
-}
-
-.quota-free-card .quota-free-metrics > div {
-  padding: 0.375rem 0.5rem;
-}
-
-.quota-free-card .quota-free-metrics dt {
-  white-space: nowrap;
-}
-
-.quota-free-card .quota-free-metrics dd {
-  margin-top: 0.125rem;
-  white-space: nowrap;
 }
 
 .quota-offer-card[data-category='gpt'] {
@@ -800,10 +728,6 @@ onBeforeUnmount(() => {
 @media (max-width: 639px) {
   .quota-free-grid {
     grid-template-columns: minmax(0, 1fr);
-  }
-
-  .quota-free-card {
-    max-width: 375px;
   }
 }
 </style>

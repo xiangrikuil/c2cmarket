@@ -588,11 +588,19 @@ func (s *Service) AdminUser(ctx context.Context, user User, userID string) (Admi
 		return AdminUserDetail{}, adminUserValidationError("id", "用户 ID 格式不正确。")
 	}
 	if s.repo != nil {
-		return s.repo.AdminUserDetail(ctx, userID)
+		detail, appErr := s.repo.AdminUserDetail(ctx, userID)
+		if appErr != nil {
+			return AdminUserDetail{}, appErr
+		}
+		return decorateAdminUserDetail(detail, user.ID), nil
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.adminUserDetailLocked(userID)
+	detail, appErr := s.adminUserDetailLocked(userID)
+	if appErr != nil {
+		return AdminUserDetail{}, appErr
+	}
+	return decorateAdminUserDetail(detail, user.ID), nil
 }
 
 func (s *Service) UpdateAdminUserStatusWithIdempotency(ctx context.Context, user User, routeKey, key, requestHash string, input AdminUserStatusInput, buildCompletion AdminUserCompletionBuilder) (idempotency.Completion, *domain.AppError) {
@@ -609,6 +617,7 @@ func (s *Service) UpdateAdminUserStatusWithIdempotency(ctx context.Context, user
 	if buildCompletion == nil {
 		return idempotency.Completion{}, adminUserInternalError()
 	}
+	buildCompletion = decorateAdminUserCompletionBuilder(input.AdminUserID, buildCompletion)
 	entry, appErr := s.idempotency.Begin(ctx, input.AdminUserID, routeKey, strings.TrimSpace(key), requestHash)
 	if appErr != nil {
 		return idempotency.Completion{}, appErr
@@ -645,6 +654,7 @@ func (s *Service) UpdateAdminUserPermissionWithIdempotency(ctx context.Context, 
 	if buildCompletion == nil {
 		return idempotency.Completion{}, adminUserInternalError()
 	}
+	buildCompletion = decorateAdminUserCompletionBuilder(input.AdminUserID, buildCompletion)
 	entry, appErr := s.idempotency.Begin(ctx, input.AdminUserID, routeKey, strings.TrimSpace(key), requestHash)
 	if appErr != nil {
 		return idempotency.Completion{}, appErr
@@ -962,6 +972,7 @@ func (s *Service) adminUserDetailLocked(userID string) (AdminUserDetail, *domain
 		User:               item,
 		Providers:          []AdminAuthProvider{},
 		RecentAuditEntries: append([]AdminAccountAuditEntry(nil), s.adminAuditEntries[userID]...),
+		ActiveAdminCount:   s.activeAdminCountLocked(),
 	}
 	if user.LinuxDoBinding != nil && user.LinuxDoBinding.Bound {
 		boundAt := user.LinuxDoBinding.BoundAt
@@ -991,6 +1002,7 @@ func (s *Service) adminUserDetailLocked(userID string) (AdminUserDetail, *domain
 			detail.LatestSessionActivityAt = &latest
 		}
 	}
+	detail.ImpactPreview.ActiveSessions = detail.ActiveSessionCount
 	return detail, nil
 }
 
@@ -1095,6 +1107,112 @@ func (s *Service) completeAdminUserMemoryMutation(ctx context.Context, entry *id
 		return idempotency.Completion{}, appErr
 	}
 	return completion, nil
+}
+
+func decorateAdminUserCompletionBuilder(adminUserID string, buildCompletion AdminUserCompletionBuilder) AdminUserCompletionBuilder {
+	return func(result AdminUserMutationResult) (idempotency.Completion, *domain.AppError) {
+		result.Detail = decorateAdminUserDetail(result.Detail, adminUserID)
+		return buildCompletion(result)
+	}
+}
+
+func decorateAdminUserDetail(detail AdminUserDetail, adminUserID string) AdminUserDetail {
+	detail.ImpactPreview.ActiveSessions = detail.ActiveSessionCount
+	isActive := detail.User.Status == AccountStatusActive
+	detail.AccountCapabilities = AdminUserAccountCapabilities{
+		CanLogin:                        isActive,
+		PubliclyVisible:                 isActive,
+		CanPublish:                      isActive,
+		CanCreateOrders:                 isActive,
+		CanRevealContact:                isActive,
+		CanAccessHistoricalTransactions: true,
+	}
+	detail.AvailableActions = adminUserGovernanceActions(detail, strings.TrimSpace(adminUserID))
+	return detail
+}
+
+func adminUserGovernanceActions(detail AdminUserDetail, adminUserID string) []AdminUserGovernanceAction {
+	actions := make([]AdminUserGovernanceAction, 0, 4)
+	for _, targetStatus := range []string{AccountStatusActive, AccountStatusSuspended, AccountStatusBanned, AccountStatusArchived} {
+		if !AllowedAdminUserStatusTransition(detail.User.Status, targetStatus) {
+			continue
+		}
+		action := AdminUserGovernanceAction{
+			Action:               adminUserStatusAction(targetStatus),
+			Kind:                 "status",
+			TargetStatus:         targetStatus,
+			Allowed:              true,
+			Severity:             adminUserStatusActionSeverity(targetStatus),
+			RequiresReason:       true,
+			RequiresConfirmation: true,
+		}
+		applyAdminUserActionBlock(&action, detail, adminUserID)
+		actions = append(actions, action)
+	}
+
+	targetIsAdmin := !detail.User.IsAdmin
+	permissionAction := AdminUserGovernanceAction{
+		Action:               AdminUserActionGrantAdmin,
+		Kind:                 "permission",
+		TargetIsAdmin:        boolPointer(targetIsAdmin),
+		Allowed:              true,
+		Severity:             "normal",
+		RequiresReason:       true,
+		RequiresConfirmation: true,
+	}
+	if detail.User.IsAdmin {
+		permissionAction.Action = AdminUserActionRevokeAdmin
+		permissionAction.Severity = "danger"
+	}
+	applyAdminUserActionBlock(&permissionAction, detail, adminUserID)
+	actions = append(actions, permissionAction)
+	return actions
+}
+
+func applyAdminUserActionBlock(action *AdminUserGovernanceAction, detail AdminUserDetail, adminUserID string) {
+	if detail.User.ID == adminUserID {
+		blockAdminUserAction(action, "SELF_TARGET", "不能修改自己的账号状态或管理员权限。")
+		return
+	}
+	deactivatesLastAdmin := action.Kind == "status" && detail.User.Status == AccountStatusActive && action.TargetStatus != AccountStatusActive
+	revokesLastAdmin := action.Action == AdminUserActionRevokeAdmin && detail.User.Status == AccountStatusActive
+	if detail.User.IsAdmin && detail.ActiveAdminCount <= 1 && (deactivatesLastAdmin || revokesLastAdmin) {
+		blockAdminUserAction(action, "LAST_ACTIVE_ADMIN", "不能停用最后一个有效管理员或撤销其权限。")
+		return
+	}
+	if action.Action == AdminUserActionGrantAdmin && detail.User.Status != AccountStatusActive {
+		blockAdminUserAction(action, "ACCOUNT_NOT_ACTIVE", "只能向正常状态的账号授予管理员权限。")
+	}
+}
+
+func blockAdminUserAction(action *AdminUserGovernanceAction, code, reason string) {
+	action.Allowed = false
+	action.BlockedCode = code
+	action.BlockedReason = reason
+}
+
+func adminUserStatusAction(status string) string {
+	switch status {
+	case AccountStatusSuspended:
+		return AdminUserActionSuspend
+	case AccountStatusBanned:
+		return AdminUserActionBan
+	case AccountStatusArchived:
+		return AdminUserActionArchive
+	default:
+		return AdminUserActionRestore
+	}
+}
+
+func adminUserStatusActionSeverity(status string) string {
+	switch status {
+	case AccountStatusSuspended:
+		return "warning"
+	case AccountStatusBanned, AccountStatusArchived:
+		return "danger"
+	default:
+		return "normal"
+	}
 }
 
 func (s *Service) activeAdminCountLocked() int {

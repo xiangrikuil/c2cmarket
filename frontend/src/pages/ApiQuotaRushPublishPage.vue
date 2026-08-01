@@ -70,7 +70,7 @@ import {
   cloneApiPaymentAccountSettings,
   isApiPaymentAccountSettingsComplete,
 } from '@/lib/apiPaymentSettings'
-import { formatDecimal } from '@/lib/decimal'
+import { formatDecimal, normalizeDecimal } from '@/lib/decimal'
 import { backendErrorMessage } from '@/lib/backendClient'
 import {
   useApiPaymentAccountSettingsQuery,
@@ -107,7 +107,7 @@ const publishSteps = [
   { title: '选择场次', description: '核对并发布' },
 ]
 
-const myServicesQuery = useMyApiServices()
+const myServicesQuery = useMyApiServices('all')
 const slotQuery = useApiQuotaSaleSlots()
 const { data: modelCatalog, isLoading: catalogLoading } = useModelCatalog()
 const {
@@ -158,7 +158,7 @@ watch([eligibleServices, requestedServiceId, () => myServicesQuery.isSuccess.val
 }, { immediate: true })
 
 const baseForm = reactive<ApiServicePublishForm>({
-  merchantIdentityMode: 'store_alias',
+  merchantIdentityMode: 'public_profile',
   merchantDisplayName: '',
   distributionSystem: 'sub2api',
   distributionSystemNote: '',
@@ -201,6 +201,11 @@ const baseForm = reactive<ApiServicePublishForm>({
   merchantNote: merchantNoteTemplate,
 })
 applySimplifiedApiQuotaDefaults(baseForm)
+const serviceDefaultMultiplier = computed(() => {
+  const multiplier = selectedService.value?.defaultMultiplier ?? baseForm.defaultMultiplier
+  return Number.isFinite(multiplier) && multiplier > 0 ? multiplier : 1
+})
+const serviceDefaultMultiplierDecimal = computed(() => normalizeDecimal(serviceDefaultMultiplier.value, 4))
 
 const baseErrors = reactive<Record<string, string>>({})
 const catalog = computed(() => modelCatalog.value ?? [])
@@ -241,7 +246,7 @@ watch([catalog, () => baseForm.providerCategory], () => {
   })
   if (compatible.length) return
   const first = filteredCatalog.value[0]
-  baseForm.selectedModels = first ? [{ modelId: first.id, multiplierOverride: null, enabled: true }] : []
+  baseForm.selectedModels = first ? [{ modelId: first.id, enabled: true }] : []
 }, { immediate: true })
 
 const rush = reactive({
@@ -250,7 +255,6 @@ const rush = reactive({
   name: '$50 限时开发额度',
   usdAllowance: '50',
   priceCny: '5.00',
-  modelMultiplier: '1.0000',
   copies: 10,
   deliveryMode: 'manual' as ApiQuotaDeliveryMode,
   deliveryEtaMinutes: 10,
@@ -264,7 +268,6 @@ if (isCopyDraft) {
   rush.name = copiedQueryValue('name') || rush.name
   rush.usdAllowance = copiedQueryValue('usdAllowance') || rush.usdAllowance
   rush.priceCny = copiedQueryValue('priceCny') || rush.priceCny
-  rush.modelMultiplier = copiedQueryValue('modelMultiplier') || rush.modelMultiplier
   const copiedDeliveryMode = copiedQueryValue('deliveryMode')
   if (copiedDeliveryMode === 'manual' || copiedDeliveryMode === 'preimported') {
     rush.deliveryMode = copiedDeliveryMode
@@ -430,7 +433,6 @@ function validateRush() {
   if (!rush.name.trim()) return '请填写限时包名称。'
   if (Number(rush.usdAllowance) <= 0) return '单份美元额度必须大于 0。'
   if (Number(rush.priceCny) <= 0) return '人民币总价必须大于 0。'
-  if (Number(rush.modelMultiplier) <= 0) return '模型倍率必须大于 0。'
   if (!Number.isInteger(rush.copies) || rush.copies < 1 || rush.copies > 5000) return '份数必须是 1-5000 的整数。'
   if (rush.deliveryEtaMinutes < 1 || rush.deliveryEtaMinutes > 10) return '交付时限必须在 1-10 分钟之间。'
   if (rush.sourceType === 'other' && !rush.sourceLabel.trim()) return '其他来源需要填写来源说明。'
@@ -522,7 +524,7 @@ async function publishRushOffer() {
       name: rush.name.trim(),
       usdAllowance: rush.usdAllowance,
       priceCny: rush.priceCny,
-      modelMultiplier: rush.modelMultiplier,
+      modelMultiplier: serviceDefaultMultiplierDecimal.value,
       copies: rush.copies,
       deliveryMode: rush.deliveryMode,
       deliveryEtaMinutes: rush.deliveryEtaMinutes,
@@ -678,7 +680,7 @@ function preview() {
           </div>
         </PublishStepSection>
 
-        <PublishStepSection :step="2" title="设置限时包" description="设置单份额度、总价、倍率、库存、来源和交付方式。" :status="publishStepStatus(2, step, completedSteps)" :summary="packageStepSummary" @edit="selectStep">
+        <PublishStepSection :step="2" title="设置限时包" description="设置单份额度、总价、库存、来源和交付方式。" :status="publishStepStatus(2, step, completedSteps)" :summary="packageStepSummary" @edit="selectStep">
           <div class="space-y-4">
             <Card class="p-5">
           <div class="flex items-start gap-2"><PackageCheck class="mt-0.5 h-5 w-5 text-primary" /><div><h2 class="font-semibold">额度与价格</h2><p class="text-sm text-muted-foreground">一个限时包对应一个场次和一种固定规格。</p></div></div>
@@ -686,7 +688,6 @@ function preview() {
             <label class="space-y-1.5 text-sm sm:col-span-2"><span class="font-medium">限时包名称</span><Input v-model="rush.name" maxlength="80" /></label>
             <label class="space-y-1.5 text-sm"><span class="font-medium">单份美元额度</span><Input v-model="rush.usdAllowance" inputmode="decimal" /></label>
             <label class="space-y-1.5 text-sm"><span class="font-medium">单份人民币总价</span><Input v-model="rush.priceCny" inputmode="decimal" /></label>
-            <label class="space-y-1.5 text-sm"><span class="font-medium">模型倍率</span><Input v-model="rush.modelMultiplier" inputmode="decimal" /></label>
             <label class="space-y-1.5 text-sm"><span class="font-medium">计划份数</span><Input v-model.number="rush.copies" type="number" min="1" max="5000" /></label>
           </div>
             </Card>
@@ -736,7 +737,7 @@ function preview() {
       </section>
 
       <ResponsivePublishPreview v-model:open="previewOpen" title="限时额度包预览" description="根据当前服务、额度包和场次实时生成。">
-        <ApiQuotaRushPublishPreview :step="step" :service-title="selectedService?.title" :slot-label="selectedSlotLabel" :draft="rush" />
+        <ApiQuotaRushPublishPreview :step="step" :service-title="selectedService?.title" :slot-label="selectedSlotLabel" :default-multiplier="serviceDefaultMultiplier" :draft="rush" />
       </ResponsivePublishPreview>
     </div>
 

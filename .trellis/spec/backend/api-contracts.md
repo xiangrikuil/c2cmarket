@@ -174,6 +174,7 @@ GET  /api/v1/admin/disputes/{id}
 POST /api/v1/admin/disputes/{id}/request-info
 POST /api/v1/admin/disputes/{id}/resolve
 POST /api/v1/admin/disputes/{id}/close
+POST /api/v1/admin/disputes/{id}/reputation-outcome
 GET  /api/v1/admin/appeals
 GET  /api/v1/admin/appeals/{id}
 POST /api/v1/admin/appeals/{id}/approve
@@ -224,7 +225,7 @@ If-Match: "<version>"                            # required for versioned admin 
 - Public API service reads and API purchase-intent creation use the orderable service predicate, not only the public status triple. A public/orderable API service must be approved, online, clear, accepting orders, have `paymentWindowMinutes` between 3 and 15, and have at least one enabled payment option. Apply this same predicate to list, detail, search, favorite validation/listing, and purchase-intent creation.
 - Product catalog read endpoints return active categories/plans and publish-policy fields from PostgreSQL. Frontend and backend must use `publishPolicy`, `accessMode`, `providerPolicyStatus`, `riskLevel`, `riskAckRequired`, and `policyVersion` instead of hard-coded Plus/Pro or Business branches.
 - Carpool listing creation must resolve `productPlanId` from the product catalog. `publishPolicy=blocked` and `publishPolicy=info_only` cannot enter the listing/application flow. Plans with `riskAckRequired=true` require matching `riskNoticeCode` and `policyVersion` on both listing creation and application creation.
-- Carpool listing creation creates `draft`; owners may edit only `draft` or `changes_requested` listings. The retained owner `submit-review` route is now the publish compatibility route: a linux.do-bound owner publishes directly to `active` after re-checking current `publishPolicy` and owner contact availability. Create/update requests must include structured `cycleTerm` fields for billing period, exit policy, and usage rules so applicants can review rules before applying. They must also include structured quota reference fields: `serviceMultiplier` as a positive decimal string, `averageQuotaPeriod` as `weekly` or `monthly`, and `averageQuotaUsd` as a positive decimal string. PostgreSQL stores these as `service_multiplier`, `average_quota_period`, and `average_quota_usd`; legacy rows may use migration defaults, but new API writes must pass service validation. Admin approve remains only for legacy `pending_review -> active`; request-changes remains only `pending_review -> changes_requested`; reject remains only `pending_review -> rejected`; pause is `active -> paused`; restore is `paused -> active`.
+- Carpool listing creation creates `draft`; owners may edit only `draft` or `changes_requested` listings. The retained owner `submit-review` route is now the publish compatibility route: a linux.do-bound owner publishes directly to `active` after re-checking current `publishPolicy` and owner contact availability. Create/update requests must include structured `cycleTerm` fields for billing period, exit policy, and usage rules so applicants can review rules before applying. They must send the system-fixed `serviceMultiplier="1"`, required positive `weeklyQuotaAmount` and `monthlyQuotaAmount`, and required reset, VPS-region, mainland-direct, opening-channel, payment-method, distribution, and administrator-account declarations. The multiplier is not owner-editable or user-facing. Nullable response fields support development data created before Version 68 and must render as `未声明`; new writes must pass service validation. Admin approve remains only for legacy `pending_review -> active`; request-changes remains only `pending_review -> changes_requested`; reject remains only `pending_review -> rejected`; pause is `active -> paused`; restore is `paused -> active`.
 - Carpool listing requests use `buyerSeatCapacity` and `activeBuyerMembers`; both count buyer seats only and exclude the listing owner.
 - Carpool public listing endpoints return `active` listings only. Owner/admin views may return non-public statuses.
 - `/owner/*` carpool endpoints are a resource perspective for the current authenticated user as listing owner, not a separate merchant account role. Do not branch permissions on an independent merchant role for these routes.
@@ -249,6 +250,16 @@ GET   /api/v1/me/carpools
 Create/update JSON fields:
   regionCode: string       # required, max 64; custom regions use "other"
   regionName: string       # required, max 64; owner-facing display text
+  serviceMultiplier: "1"  # required system-fixed compatibility value
+  weeklyQuotaAmount: DecimalString
+  monthlyQuotaAmount: DecimalString
+  followsOfficialQuotaReset: boolean
+  vpsRegion: string
+  supportsMainlandChinaDirectConnection: boolean
+  openingChannelCode: enum
+  customOpeningChannel: string # required only when openingChannelCode="other"
+  paymentMethodCode: enum
+  customPaymentMethod: string  # required only when paymentMethodCode="other"
   cycleTerm.billingPeriod: "monthly"
   accessArrangement: string
 
@@ -259,11 +270,15 @@ PostgreSQL:
 
 ### 3. Contracts
 
-- Frontend `SaveCarpoolDraftPayload.paymentMethodCodes` remains an array for facade compatibility, but publish UI, import normalization, validation, and submit mapping must keep exactly one payment method code.
+- Frontend `SaveCarpoolDraftPayload.paymentMethodCode` is a single required value. Opening channel and payment method use single-select controls; selecting `other` requires the matching custom text. `u_card` is a supported payment method code.
+- The publish UI must not expose a multiplier input. Frontend mapping always sends `serviceMultiplier=1`, and backend validation rejects any other value.
+- Weekly/monthly quota, official-reset choice, free-text VPS region, mainland-direct choice, distribution method, and administrator-account choice are all required for new writes. VPS region is display-only free text and is not a list filter.
+- The public market keeps six columns: `车源 | 价格 | 车位 | 额度 / 接入 | 车主 | 状态`. The quota/access cell shows weekly/monthly quota, official-reset and administrator-account signals, then reveals channel/payment/distribution/network detail with a shadcn popover.
 - Frontend custom region state is `regionCode="other"` plus `customRegionName`; the real backend adapter sends `regionCode` and the final trimmed `regionName`.
 - Backend create/update responses return `regionCode` and `regionName`. Public, owner, and admin listing reads must preserve these values without remapping custom regions to a fixed fallback.
 - The publish page must not expose a writable billing-period control. The backend request still writes `cycleTerm.billingPeriod="monthly"` so applicants can review monthly-cycle rules.
 - The publish page must not expose a standalone access-arrangement section. It derives `accessArrangement` from product `accessMode`; high-risk products still require the versioned risk acknowledgement before publish.
+- Current carpool publishing clients do not collect, import, or send a post URL. The optional `sourceUrl` request and response field remains only for historical API compatibility and must not become a publish, recommendation, sorting, or tradability prerequisite.
 - Public copy may display access-arrangement summaries, but must not ask for or imply sharing account passwords, API keys, sessions, cookies, tokens, or other login state.
 
 ### 4. Validation & Error Matrix
@@ -275,15 +290,18 @@ PostgreSQL:
 | `regionCode` or `regionName` longer than 64 runes | 422 | `VALIDATION_FAILED`, field-specific |
 | Region/title/summary/access-arrangement contains credential-shaped text or NUL | 422 | `SECRET_CONTENT_DETECTED`, field-specific |
 | Frontend custom region selected with empty `customRegionName` | Block submit | `region` field error |
-| Frontend zero or multiple `paymentMethodCodes` | Block submit | `paymentMethodCodes` field error |
+| Frontend missing `paymentMethodCode`, or `other` without custom text | Block submit | `paymentMethodCode` field error |
+| Missing weekly/monthly quota, reset, VPS, mainland-direct, channel, payment, distribution, or admin declaration | 422 / block submit | field-specific validation error |
+| `serviceMultiplier` is not exactly `1` | 422 | `VALIDATION_FAILED`, `serviceMultiplier` |
 | High-risk product without current risk acknowledgement | 422 / block submit | `RISK_ACK_REQUIRED` or `accessArrangement` field error |
 
 ### 5. Good/Base/Bad Cases
 
-- Good: owner selects `regionCode="other"` with `customRegionName="印度区"`; preview, linux.do post text, create payload, PostgreSQL row, public listing, owner listing, and application snapshots display `印度区`.
-- Good: topic import detects multiple payment methods; the publish form keeps the first detected code and never presents a multi-select state.
+- Good: owner selects `regionCode="other"` with `customRegionName="印度区"`; preview, generic share text, create payload, PostgreSQL row, public listing, owner listing, and application snapshots display `印度区`.
+- Good: the owner selects exactly one payment method in the publish form; no topic import or multi-select state is present.
+- Good: owner selects `paymentMethodCode="other"` and provides a trimmed `customPaymentMethod`, or selects `u_card` directly.
 - Base: owner selects a common region such as `jp`; frontend sends that code and display name, backend persists both, and reads return the same pair.
-- Bad: custom region is empty, contains `token=...`, or UI submits two payment method codes.
+- Bad: custom region is empty, contains `token=...`, or the UI submits an empty single payment method.
 - Bad: frontend removes `cycleTerm` or sends a non-monthly billing period because the readonly field was removed from the UI.
 
 ### 6. Tests Required
@@ -292,14 +310,15 @@ PostgreSQL:
 - Frontend type-check and real-backend build must cover the `SaveCarpoolDraftPayload` to backend request mapping.
 - Backend router tests must assert region fields round-trip and credential-shaped region text is rejected.
 - PostgreSQL integration tests must assert `region_code` and `region_name` survive publish/listing reads.
-- OpenAPI must list `regionCode` and `regionName` as required create fields and listing response fields.
+- OpenAPI must list `regionCode` and `regionName` as required create fields and listing response fields, while keeping carpool `sourceUrl` optional for compatibility.
 
 ### 7. Wrong vs Correct
 
 #### Wrong
 
 ```ts
-payload.paymentMethodCodes = ["credit_card", "paypal"]
+payload.paymentMethodCode = ""
+payload.serviceMultiplier = 1.35
 request.regionName = "其他"
 request.cycleTerm = undefined
 request.accessArrangement = form.freeTextAccessArrangement
@@ -310,7 +329,8 @@ This loses the owner's custom region, reintroduces multi-payment listings, and b
 #### Correct
 
 ```ts
-payload.paymentMethodCodes = [selectedPaymentCode]
+payload.paymentMethodCode = selectedPaymentCode
+payload.serviceMultiplier = 1
 request.regionCode = form.regionCode
 request.regionName = finalRegionName
 request.cycleTerm.billingPeriod = "monthly"
@@ -982,6 +1002,11 @@ If-Match: "<version>"                         # admin action routes
 - `open-dispute` creates one `dispute_cases` row, sets report status to `dispute_opened`, and returns both report and dispute.
 - API order dispute creation creates a `dispute_cases` row with `target_type='api_order'` and links `api_orders.dispute_case_id`; it does not require a `reports` row and does not mutate the order fulfillment state.
 - Dispute state machine: `open -> waiting_info|resolved|closed`. `resolve` accepts `open|waiting_info`; `request-info` accepts `open`; `close` accepts any non-closed dispute.
+- Admin dispute responses may expose optional `subjectUserId`, `subjectUsername`, and `subjectName`; public dispute DTOs must never expose these fields. Frontend adapters use the generated `DisputeCase` type instead of maintaining a duplicate handwritten dispute DTO.
+- The admin queue merges reports, disputes, and appeals, but a report with `status=dispute_opened` or a report ID already referenced by a dispute must not remain as a second actionable row.
+- A generic admin action must never map `approve` or `restore` to dispute resolution with fabricated `other_resolved` values. Resolution requires the dedicated case workflow to submit `reason`, `publicSummary`, `publicResultCode`, and `publicResult` with the latest dispute version.
+- The admin case workflow is two consecutive, separately versioned mutations: resolve the base dispute, then create the reputation outcome. Base resolution remains committed when outcome creation fails; reopening a resolved case resumes outcome creation after checking participant reputation audits for an existing outcome.
+- Outcome subjects must come from the dispute's actual participants. `not_responsible` and `undetermined` require `severity=none`. Account restrictions remain a separate governance mutation and are never created automatically by dispute resolution or outcome creation.
 - Appeal creation must reference `reportId` or `disputeId`; appeal state machine is `submitted -> approved|rejected`.
 - Admin action responses return a mutation envelope with `report`, `dispute`, or `appeal` plus fresh `version`/`ETag`.
 - Public disputes return only `id`, `username`, `type`, `result`, `handledAt`, and `unresolved`.
@@ -1003,21 +1028,27 @@ If-Match: "<version>"                         # admin action routes
 | Credential-looking title/description/statement | 422 | `SECRET_CONTENT_DETECTED` |
 | Report/dispute/appeal not found | 404 | `OBJECT_NOT_FOUND` |
 | Invalid state transition | 409 | `INVALID_STATE_TRANSITION` |
+| Base resolution succeeds but outcome creation fails | Base result remains `resolved`; reopen at the outcome step |
+| Participant audit cannot confirm whether an outcome exists | Disable outcome creation and expose retry; never assume no outcome |
 
 ### 5. Good/Base/Bad Cases
 
 - Good: user reports a public profile, admin opens a dispute with public summary/result, public profile shows one unresolved sanitized dispute.
 - Good: user reports a contact snapshot with an unreachable reason; admin rejects it with a reason and version increment.
 - Good: user creates an appeal linked to a report/dispute; admin approves it with `If-Match` and idempotent replay.
+- Good: admin submits a complete public-safe resolution, the case moves to `resolved`, and a later outcome records `undetermined/none` without creating an account restriction.
 - Base: replay the exact same report creation request with the same idempotency key; response returns the same report without duplicate rows or events.
 - Bad: report text includes passwords, API keys, tokens, sessions, cookies, recovery codes, or complete contact values; response is `422 SECRET_CONTENT_DETECTED`.
 - Bad: public dispute response contains reporter/admin IDs, raw report description, appeal statement, internal notes, admin reason, contact values, or evidence body.
 - Bad: admin tries to open a dispute from a rejected or already dispute-opened report; response is `409 INVALID_STATE_TRANSITION`.
+- Bad: a list row action silently resolves a dispute with a generic reason/result, duplicates a dispute-opened report row, or treats outcome creation as an automatic restriction.
 
 ### 6. Tests Required
 
 - OpenAPI must include all user, public, and admin report/dispute/appeal routes and schemas.
 - Backend tests or smoke must cover report creation, admin list/detail/action, dispute opening, public dispute list/profile stats, dispute resolve/close, appeal creation/list/action, `If-Match`, idempotency replay, and public DTO sanitization.
+- Frontend tests must cover structured resolution validation, de-identified snapshot parsing failures, participant/role derivation, queue de-duplication, outcome recovery after base resolution, and the absence of restriction mutations from the case dialog.
+- Browser acceptance must cover the dedicated case dialog at `1440x900` and `390x844`, including scrolling, long text, both steps, refresh/resume, and the final read-only outcome.
 - PostgreSQL migration must include `reports`, `dispute_cases`, `appeals`, and `dispute_events` with status checks, useful indexes, and one-dispute-per-report linking.
 - Frontend typecheck must prove real mode `createContactReport()`, public profile report, admin reports/appeals, and public disputes use `reportBackend` without silent mock fallback.
 - Product boundary scan must show no payment, escrow, guarantee, compensation, credential-storage, credential-delivery, external ticket, email, webhook, file-upload, or automatic penalty semantics added by reports/disputes/appeals.
@@ -1050,6 +1081,25 @@ try { return backendAdminReportRows() } catch { return mockReports }
 
 ```typescript
 if (shouldUseRealBackend()) return backendAdminReportRows()
+```
+
+#### Wrong
+
+```typescript
+// Silently closes the case without administrator-supplied public and internal facts.
+return resolveDispute(id, { publicResultCode: 'other_resolved', publicResult: '已处理' })
+```
+
+#### Correct
+
+```typescript
+return resolveDispute(id, {
+  reason,
+  publicSummary,
+  publicResultCode,
+  publicResult,
+  expectedVersion,
+})
 ```
 
 ## Scenario: Favorites Real Integration

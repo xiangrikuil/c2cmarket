@@ -143,6 +143,67 @@ test('maps public-profile merchant identity and avatar from the backend projecti
   assert.equal(service.merchantAvatarUrl, 'https://cdn.example.com/profile-owner.png')
 })
 
+test('maps the required owner sales summary without changing the public service projection', async () => {
+  const { apiMarketBackend } = await loadAPIMarketModules()
+  const service = apiMarketBackend.mapBackendOwnerAPIService({
+    ...backendPublicAPIService(),
+    salesSummary: {
+      overallState: 'selling',
+      channels: [
+        {
+          kind: 'flexible_quota',
+          state: 'selling',
+          availableUsdAllowance: '420.000000',
+        },
+        {
+          kind: 'limited_quota',
+          state: 'upcoming',
+          availableCopies: 48,
+          nextStartsAt: '2026-07-30T12:00:00Z',
+          saleCutoffAt: '2026-07-31T14:00:00Z',
+          expiresAt: '2026-07-31T15:00:00Z',
+        },
+      ],
+    },
+  })
+
+  assert.equal(service.salesSummary.overallState, 'selling')
+  assert.deepEqual(service.salesSummary.channels, [
+    {
+      kind: 'flexible_quota',
+      state: 'selling',
+      availableUsdAllowance: '420.000000',
+      availableCopies: undefined,
+      nextStartsAt: undefined,
+      saleCutoffAt: undefined,
+      expiresAt: undefined,
+    },
+    {
+      kind: 'limited_quota',
+      state: 'upcoming',
+      availableUsdAllowance: undefined,
+      availableCopies: 48,
+      nextStartsAt: '2026-07-30T12:00:00Z',
+      saleCutoffAt: '2026-07-31T14:00:00Z',
+      expiresAt: '2026-07-31T15:00:00Z',
+    },
+  ])
+})
+
+test('matches mock owner sales views with the backend filter contract', async () => {
+  const { api } = await loadAPIMarketModules()
+
+  assert.equal(api.matchesApiServiceSalesView('selling', 'active'), true)
+  assert.equal(api.matchesApiServiceSalesView('upcoming', 'active'), true)
+  assert.equal(api.matchesApiServiceSalesView('expired', 'active'), false)
+  assert.equal(api.matchesApiServiceSalesView('expired', 'expired'), true)
+  assert.equal(api.matchesApiServiceSalesView('paused', 'paused'), true)
+  assert.equal(api.matchesApiServiceSalesView('draft', 'draft'), true)
+  assert.equal(api.matchesApiServiceSalesView('offline', 'draft'), true)
+  assert.equal(api.matchesApiServiceSalesView('sold_out', 'all'), true)
+  assert.equal(api.matchesApiServiceSalesView('archived', 'all'), true)
+})
+
 test('builds buyer and merchant API order dispute paths', async () => {
   const { apiMarketBackend } = await loadAPIMarketModules()
 

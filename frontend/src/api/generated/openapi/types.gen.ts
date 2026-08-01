@@ -242,7 +242,7 @@ export type ReputationRulesResponse = {
 };
 
 export type ReputationRuleSet = {
-    version: 'reputation-v1';
+    version: 'reputation-v2';
     minimumNormalCompletions: number;
     minimumReliableCompletions: number;
     minimumHighTrustCompletions: number;
@@ -488,6 +488,7 @@ export type ReputationSummary = {
     confidence: 'low' | 'medium' | 'high';
     ruleVersion: string;
     completedCount: number;
+    roleCompletionRate: number | null;
     roleFaultCancelRate: number | null;
     hasUnknownCancellation: boolean;
     unresolvedDisputes: number;
@@ -1344,6 +1345,30 @@ export type ApiServicePackageModel = {
     merchantMultiplier: DecimalString;
 };
 
+export type ApiServiceSalesChannel = {
+    kind: 'flexible_quota' | 'limited_quota';
+    state: 'selling' | 'upcoming' | 'paused' | 'sold_out' | 'expired' | 'draft' | 'offline' | 'archived';
+    availableUsdAllowance?: DecimalString;
+    availableCopies?: number;
+    nextStartsAt?: string;
+    saleCutoffAt?: string;
+    expiresAt?: string;
+};
+
+export type ApiServiceSalesSummary = {
+    overallState: 'selling' | 'upcoming' | 'paused' | 'sold_out' | 'expired' | 'draft' | 'offline' | 'archived';
+    channels: Array<ApiServiceSalesChannel>;
+};
+
+export type OwnerApiServiceListItem = ApiService & {
+    salesSummary: ApiServiceSalesSummary;
+};
+
+export type OwnerApiServiceList = {
+    items: Array<OwnerApiServiceListItem>;
+    nextCursor?: string | null;
+};
+
 export type ApiServiceList = {
     items: Array<ApiService>;
     nextCursor?: string | null;
@@ -2078,16 +2103,45 @@ export type CreateCarpoolListingRequest = {
      * Public opening-region display name. For custom regions this is the owner-provided region text.
      */
     regionName: string;
+    /**
+     * Legacy optional source URL retained for compatibility. Current carpool publishing clients do not collect or require an external post.
+     */
     sourceUrl?: string;
     priceMonthlyCny: DecimalString;
     /**
-     * Owner-declared usage multiplier, for example 1.3 means billed or compared at 1.3x.
+     * System-fixed carpool multiplier. Clients must send 1; owners cannot edit it.
      */
     serviceMultiplier: DecimalString;
+    /**
+     * Owner-declared per-seat weekly quota amount. It uses the selected product plan quota label and unit.
+     */
+    weeklyQuotaAmount: DecimalString;
     /**
      * Owner-declared per-seat monthly quota amount. Label, unit, and period come from the selected product plan and are not accepted from the client.
      */
     monthlyQuotaAmount: DecimalString;
+    /**
+     * Whether the declared quota follows the official provider reset schedule.
+     */
+    followsOfficialQuotaReset: boolean;
+    /**
+     * Owner-declared VPS region free text. It is informational and is not a catalog filter.
+     */
+    vpsRegion: string;
+    /**
+     * Whether the owner declares that the access path supports direct connection from mainland China.
+     */
+    supportsMainlandChinaDirectConnection: boolean;
+    openingChannelCode: 'web' | 'ios_app_store' | 'google_play' | 'team_seat' | 'other';
+    /**
+     * Required only when openingChannelCode is other.
+     */
+    customOpeningChannel?: string;
+    paymentMethodCode: 'credit_card' | 'virtual_card' | 'apple_pay' | 'google_pay' | 'app_store_gift_card' | 'google_play_gift_card' | 'paypal' | 'u_card' | 'other';
+    /**
+     * Required only when paymentMethodCode is other.
+     */
+    customPaymentMethod?: string;
     /**
      * Buyer seats only. Excludes the listing owner.
      */
@@ -2144,7 +2198,15 @@ export type CarpoolListing = {
     sourceUrl?: string;
     priceMonthlyCny: DecimalString;
     serviceMultiplier: DecimalString;
+    weeklyQuotaAmount: string | null;
     monthlyQuotaAmount: DecimalString;
+    followsOfficialQuotaReset: boolean | null;
+    vpsRegion: string | null;
+    supportsMainlandChinaDirectConnection: boolean | null;
+    openingChannelCode: 'web' | 'ios_app_store' | 'google_play' | 'team_seat' | 'other' | null;
+    customOpeningChannel: string | null;
+    paymentMethodCode: 'credit_card' | 'virtual_card' | 'apple_pay' | 'google_pay' | 'app_store_gift_card' | 'google_play_gift_card' | 'paypal' | 'u_card' | 'other' | null;
+    customPaymentMethod: string | null;
     quotaLabel: string;
     quotaUnit: string;
     quotaPeriod: 'monthly';
@@ -2371,6 +2433,18 @@ export type DisputeCase = {
     counterpartyUserId?: string;
     counterpartyUsername: string;
     counterpartyName: string;
+    /**
+     * Admin response only. Reputation subject while the dispute is unresolved.
+     */
+    subjectUserId?: string;
+    /**
+     * Admin response only.
+     */
+    subjectUsername?: string;
+    /**
+     * Admin response only.
+     */
+    subjectName?: string;
     status: 'open' | 'waiting_info' | 'resolved' | 'closed';
     publicSummary: string;
     publicResultCode: 'no_action' | 'contact_invalid' | 'impersonation_confirmed' | 'description_mismatch' | 'rule_or_seat_issue' | 'api_delivery_issue' | 'other_resolved';
@@ -2616,6 +2690,37 @@ export type AdminAccountAuditEntry = {
     createdAt: string;
 };
 
+export type AdminUserGovernanceAction = {
+    action: 'suspend' | 'ban' | 'archive' | 'restore' | 'grant_admin' | 'revoke_admin';
+    kind: 'status' | 'permission';
+    targetStatus?: 'active' | 'suspended' | 'banned' | 'archived';
+    targetIsAdmin?: boolean;
+    allowed: boolean;
+    severity: 'normal' | 'warning' | 'danger';
+    requiresReason: boolean;
+    requiresConfirmation: boolean;
+    blockedCode?: 'SELF_TARGET' | 'LAST_ACTIVE_ADMIN' | 'ACCOUNT_NOT_ACTIVE';
+    blockedReason?: string;
+};
+
+export type AdminUserGovernanceImpact = {
+    activeSessions: number;
+    activeCarpoolListings: number;
+    onlineApiServices: number;
+    openCarpoolApplications: number;
+    openApiOrders: number;
+    openDisputes: number;
+};
+
+export type AdminUserAccountCapabilities = {
+    canLogin: boolean;
+    publiclyVisible: boolean;
+    canPublish: boolean;
+    canCreateOrders: boolean;
+    canRevealContact: boolean;
+    canAccessHistoricalTransactions: boolean;
+};
+
 export type AdminUserDetail = {
     user: AdminUser;
     updatedAt: string;
@@ -2625,6 +2730,9 @@ export type AdminUserDetail = {
     providers: Array<AdminAuthProvider>;
     sessions: AdminUserSessionSummary;
     recentAuditEntries: Array<AdminAccountAuditEntry>;
+    availableActions: Array<AdminUserGovernanceAction>;
+    impactPreview: AdminUserGovernanceImpact;
+    accountCapabilities: AdminUserAccountCapabilities;
 };
 
 export type AdminUserStatusRequest = {
@@ -2959,6 +3067,11 @@ export type AdminUserPage = number;
  * Administrator user-directory page size.
  */
 export type AdminUserLimit = 20 | 50 | 100;
+
+/**
+ * Owner sales lifecycle view. Defaults to active, which includes selling and upcoming services.
+ */
+export type OwnerApiSalesView = 'active' | 'expired' | 'paused' | 'draft' | 'all';
 
 export type FavoriteTargetType = 'carpool' | 'api_service' | 'api-service';
 
@@ -6426,6 +6539,10 @@ export type ListOwnerApiServicesData = {
     path?: never;
     query?: {
         /**
+         * Owner sales lifecycle view. Defaults to active, which includes selling and upcoming services.
+         */
+        salesView?: 'active' | 'expired' | 'paused' | 'draft' | 'all';
+        /**
          * Page size. Defaults to 20 and must be between 1 and 100.
          */
         limit?: number;
@@ -6437,11 +6554,20 @@ export type ListOwnerApiServicesData = {
     url: '/api/v1/owner/api-services';
 };
 
+export type ListOwnerApiServicesErrors = {
+    /**
+     * Problem Details error.
+     */
+    422: ProblemDetails;
+};
+
+export type ListOwnerApiServicesError = ListOwnerApiServicesErrors[keyof ListOwnerApiServicesErrors];
+
 export type ListOwnerApiServicesResponses = {
     /**
      * API services owned by the current user.
      */
-    200: ApiServiceList;
+    200: OwnerApiServiceList;
 };
 
 export type ListOwnerApiServicesResponse = ListOwnerApiServicesResponses[keyof ListOwnerApiServicesResponses];

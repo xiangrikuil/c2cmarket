@@ -122,7 +122,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
         <div class="flex h-14 items-center gap-3 px-4 sm:px-5 lg:px-6">
           <Button variant="ghost" size="icon" class="lg:hidden" aria-label="打开管理导航" @click="menuOpen = true"><Menu class="h-4 w-4" /></Button>
           <h1 class="hidden min-w-[150px] text-lg font-semibold md:block">{{ currentTitle }}</h1>
-          <div class="relative hidden w-full max-w-xl md:block"><Search class="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" /><Input v-model="searchText" class="h-9 pl-9" aria-label="后台全局搜索" placeholder="搜索用户或管理对象" @keyup.enter="runSearch" /></div>
+          <div v-if="route.path !== '/admin/users'" class="relative hidden w-full max-w-xl md:block"><Search class="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" /><Input v-model="searchText" class="h-9 pl-9" aria-label="后台全局搜索" placeholder="搜索用户或管理对象" @keyup.enter="runSearch" /></div>
           <div class="flex-1" />
           <Badge v-if="badges?.admin?.total" variant="secondary">我的待办 {{ formatCount(badges.admin.total) }}</Badge>
           <div class="hidden items-center gap-2 text-sm sm:flex"><span class="grid h-7 w-7 place-items-center rounded-full bg-primary/10 text-primary"><UserCog class="h-4 w-4" /></span><span>{{ adminName }}</span></div>

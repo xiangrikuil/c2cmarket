@@ -1,5 +1,6 @@
 import type {
   AdminUser,
+  AdminUserGovernanceAction,
   AdminUserDetail,
   AdminUserDirectorySummary,
   AdminUserLimit,
@@ -20,6 +21,7 @@ export type AdminUserStatus = AdminUser['accountStatus']
 export type {
   AdminUser,
   AdminUserDetail,
+  AdminUserGovernanceAction,
   AdminUserDirectorySummary,
   AdminUserLimit,
   AdminUserList,

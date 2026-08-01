@@ -82,6 +82,11 @@ func publicAPIServiceOrderablePredicate(alias string) string {
 		  AND %[1]s.publication_status = 'online'
 		  AND %[1]s.moderation_status = 'clear'
 		  AND %[1]s.accepting_orders = true
+		  AND EXISTS (
+		    SELECT 1 FROM users owner
+		    WHERE owner.id = %[1]s.owner_user_id
+		      AND owner.account_status = 'active'
+		  )
 		  AND %[1]s.payment_window_minutes BETWEEN 3 AND 15
 		  AND (%[1]s.billing_mode <> 'metered_usd_quota' OR %[1]s.available_usd_allowance > 0)
 		  AND (%[1]s.billing_mode <> 'metered_usd_quota' OR %[1]s.quota_expires_at > now())
@@ -103,10 +108,6 @@ func publicAPIServiceOrderablePredicate(alias string) string {
 		      AND po.enabled = true
 		      AND po.payment_method IN (%[2]s)
 		  )`, alias, apiServiceSupportedPaymentMethodsSQL)
-}
-
-func (s *Store) ListAPIServicesByOwner(ctx context.Context, ownerUserID string, page domain.PageRequest) (domain.Page[apimarket.Service], *domain.AppError) {
-	return s.listAPIServicesPage(ctx, `WHERE owner_user_id = $1`, []any{ownerUserID}, page)
 }
 
 func (s *Store) GetAPIServiceForOwner(ctx context.Context, ownerUserID, serviceID string) (apimarket.Service, *domain.AppError) {
@@ -1834,7 +1835,11 @@ func scanAPIServices(rows pgx.Rows) ([]apimarket.Service, *domain.AppError) {
 }
 
 func scanAPIService(row scanner, service *apimarket.Service) error {
-	return row.Scan(
+	return row.Scan(apiServiceScanDestinations(service)...)
+}
+
+func apiServiceScanDestinations(service *apimarket.Service) []any {
+	return []any{
 		&service.ID,
 		&service.OwnerUserID,
 		&service.MerchantProfileID,
@@ -1875,7 +1880,7 @@ func scanAPIService(row scanner, service *apimarket.Service) error {
 		&service.CreatedAt,
 		&service.UpdatedAt,
 		&service.Version,
-	)
+	}
 }
 
 func scanAPIPurchaseIntents(rows pgx.Rows) ([]apiintent.Intent, *domain.AppError) {

@@ -56,7 +56,15 @@ test('real carpool adapter leaves unavailable owner reputation facts null', asyn
     },
     priceMonthlyCny: '100.00',
     serviceMultiplier: '1.0000',
+    weeklyQuotaAmount: null,
     monthlyQuotaAmount: '100.000000',
+    followsOfficialQuotaReset: null,
+    vpsRegion: null,
+    supportsMainlandChinaDirectConnection: null,
+    openingChannelCode: null,
+    customOpeningChannel: null,
+    paymentMethodCode: null,
+    customPaymentMethod: null,
     quotaLabel: '额度',
     quotaUnit: 'USD',
     quotaPeriod: 'monthly',
@@ -121,7 +129,15 @@ test('real carpool adapter never treats a source URL as author verification', as
     },
     priceMonthlyCny: '100.00',
     serviceMultiplier: '1.0000',
+    weeklyQuotaAmount: '25.000000',
     monthlyQuotaAmount: '100.000000',
+    followsOfficialQuotaReset: true,
+    vpsRegion: '香港',
+    supportsMainlandChinaDirectConnection: true,
+    openingChannelCode: 'web',
+    customOpeningChannel: null,
+    paymentMethodCode: 'u_card',
+    customPaymentMethod: null,
     quotaLabel: '额度',
     quotaUnit: 'USD',
     quotaPeriod: 'monthly',
@@ -139,4 +155,10 @@ test('real carpool adapter never treats a source URL as author verification', as
 
   assert.equal(listing.sourceUrl, 'https://linux.do/t/example/2')
   assert.equal(listing.sourceAuthorVerification?.status, 'not_submitted')
+  assert.equal(listing.weeklyQuotaAmount, 25)
+  assert.equal(listing.followsOfficialQuotaReset, true)
+  assert.equal(listing.vpsRegion, '香港')
+  assert.equal(listing.supportsMainlandChinaDirectConnection, true)
+  assert.equal(listing.openingChannelCode, 'web')
+  assert.equal(listing.paymentMethodCode, 'u_card')
 })

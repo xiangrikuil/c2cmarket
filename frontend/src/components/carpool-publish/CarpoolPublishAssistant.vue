@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { ClipboardCopy, Eye, RefreshCw, Send } from 'lucide-vue-next'
+import { ClipboardCopy, Eye, Send } from 'lucide-vue-next'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
@@ -23,14 +23,14 @@ const props = defineProps<{
   totalSeats: number
   copyEnabled: boolean
   copyDisabledReason: string
-  postText: string
+  shareText: string
   submitPending: boolean
 }>()
 
 const emit = defineEmits<{
   saveDraft: []
   submitReview: []
-  copyPostText: []
+  copyShareText: []
   jumpToTask: [key: string]
 }>()
 
@@ -141,20 +141,9 @@ const topPendingText = computed(() => {
 
       <div class="mt-5 rounded-lg border border-primary/15 bg-primary/5 p-3">
         <div class="text-sm font-semibold">提效工具</div>
-        <button
-          type="button"
-          class="mt-3 flex w-full items-center justify-between gap-3 rounded-md border border-border bg-background px-3 py-2 text-left text-sm transition hover:bg-muted"
-          @click="emit('jumpToTask', 'linuxDoImport')"
-        >
-          <span class="min-w-0">
-            <span class="block font-medium">导入 linux.do 原帖</span>
-            <span class="mt-0.5 block text-xs text-muted-foreground">可选，不影响手动发布。</span>
-          </span>
-          <RefreshCw class="h-4 w-4 text-muted-foreground" />
-        </button>
-        <div class="mt-4 text-sm font-semibold">linux.do 发帖文案</div>
+        <div class="mt-3 text-sm font-semibold">车源分享文案</div>
         <p class="mt-1 text-xs leading-5 text-muted-foreground">
-          {{ copyEnabled ? '可复制当前表单内容到 linux.do 发帖。' : copyDisabledReason }}
+          {{ copyEnabled ? '可复制当前车源信息用于分享。' : copyDisabledReason }}
         </p>
         <div class="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-1 xl:grid-cols-2">
           <Dialog>
@@ -165,13 +154,13 @@ const topPendingText = computed(() => {
             </DialogTrigger>
             <DialogContent class="sm:max-w-2xl">
               <DialogHeader>
-                <DialogTitle>linux.do 发帖文案</DialogTitle>
+                <DialogTitle>车源分享文案</DialogTitle>
                 <DialogDescription>复制前确认文案中没有账号、密码、token、Cookie、API Key 或付款凭据。</DialogDescription>
               </DialogHeader>
-              <pre class="max-h-[60vh] overflow-auto whitespace-pre-wrap rounded-md border bg-muted/40 p-4 text-sm leading-6">{{ postText }}</pre>
+              <pre class="max-h-[60vh] overflow-auto whitespace-pre-wrap rounded-md border bg-muted/40 p-4 text-sm leading-6">{{ shareText }}</pre>
             </DialogContent>
           </Dialog>
-          <Button size="sm" :disabled="!copyEnabled" @click="emit('copyPostText')">
+          <Button size="sm" :disabled="!copyEnabled" @click="emit('copyShareText')">
             <ClipboardCopy class="h-4 w-4" />复制文案
           </Button>
         </div>

@@ -10,12 +10,15 @@ const apiServiceOwnerHeaderSource = readFileSync(new URL('../../components/api-s
 const publicApiServiceDetailSource = readFileSync(new URL('../../pages/ApiServiceDetailPage.vue', import.meta.url), 'utf8')
 const apiSource = readFileSync(new URL('../api.ts', import.meta.url), 'utf8')
 const apiMarketBackendSource = readFileSync(new URL('../apiMarketBackend.ts', import.meta.url), 'utf8')
+const myApiOrdersSource = readFileSync(new URL('../../pages/MyApiOrdersPage.vue', import.meta.url), 'utf8')
+const merchantApiOrdersSource = readFileSync(new URL('../../pages/MerchantApiOrdersPage.vue', import.meta.url), 'utf8')
+const apiOrderDetailSource = readFileSync(new URL('../../pages/ApiPurchaseOrderDetailPage.vue', import.meta.url), 'utf8')
 
 describe('个人与经营中心导航', () => {
   it('按个人活动与经营活动提供明确入口', () => {
     expect(appShellSource).toContain("title: '我的交易'")
     expect(appShellSource).toContain("{ label: '我的上车', to: '/my/rides'")
-    expect(appShellSource).toContain("{ label: '我的 API 订单', to: '/my/api-orders'")
+    expect(appShellSource).toContain("{ label: 'API 购买订单', to: '/my/api-orders'")
     expect(appShellSource).toContain("{ label: '收藏', to: '/my/favorites'")
     expect(appShellSource).toContain("{ label: '通知', to: '/my/notifications'")
 
@@ -23,7 +26,7 @@ describe('个人与经营中心导航', () => {
     expect(appShellSource).toContain("{ label: '我的车源', to: '/my/carpools'")
     expect(appShellSource).toContain("{ label: '上车申请', to: '/merchant/carpool-applications'")
     expect(appShellSource).toContain("{ label: '我的 API 服务', to: '/my/api-services'")
-    expect(appShellSource).toContain("{ label: 'API 订单', to: '/merchant/api-orders'")
+    expect(appShellSource).toContain("{ label: 'API 销售订单', to: '/merchant/api-orders'")
     expect(appShellSource).toContain("title: '账户'")
     expect(appShellSource).toContain("{ label: '个人中心', to: '/my'")
     expect(appShellSource).toContain("{ label: '联系与收款', to: '/my/contacts'")
@@ -32,6 +35,15 @@ describe('个人与经营中心导航', () => {
     expect(appShellSource).toContain("{ label: '进入管理台', to: '/admin'")
     expect(appShellSource).toContain('const groups = [browseGroup, publishGroup, userGroup]')
     expect(appShellSource).toContain('if (hasMerchantWorkspace.value) groups.push(merchantGroup)')
+  })
+
+  it('在导航、页面和详情返回入口明确区分 API 买卖角色', () => {
+    expect(myApiOrdersSource).toContain('title="API 购买订单"')
+    expect(myApiOrdersSource).toContain('查看自己作为买家创建的订单')
+    expect(merchantApiOrdersSource).toContain('title="API 销售订单"')
+    expect(merchantApiOrdersSource).toContain('管理自己作为商家收到的订单')
+    expect(apiOrderDetailSource).toContain("isMerchantView.value ? '返回 API 销售订单' : '返回 API 购买订单'")
+    expect(appShellSource).not.toContain("label: '我的 API 订单'")
   })
 
   it('匿名访问只展示公共导航并保留明确的登录发布入口', () => {
@@ -68,6 +80,17 @@ describe('个人与经营中心导航', () => {
     expect(routerSource).toContain("path: '/my/account', name: 'my-account', component: MyCenterPage")
   })
 
+  it('只允许 linux.do 账号配置备用密码', () => {
+    expect(myCenterSource).toContain('const canConfigureBackupPassword = computed(() => Boolean(profile.value?.linuxDoBinding.bound))')
+    expect(myCenterSource).toContain('if (!canConfigureBackupPassword.value) {')
+    expect(myCenterSource).toContain("accountSetupActiveStep === 'password' && canConfigureBackupPassword")
+    expect(myCenterSource).toContain('canConfigureBackupPassword && !profile.passwordConfigured')
+    expect(myCenterSource).toContain('不适用（仅 linux.do 账号）')
+    expect(myCenterSource).toContain("if (!profile.value || activeSection.value !== 'account' || accountRecoveryComplete.value) return ''")
+    expect(myCenterSource).not.toContain('startOAuthLogin(route.fullPath)')
+    expect(myCenterSource).not.toContain('改用 linux.do 登录')
+  })
+
   it('不再暴露职责模糊的旧菜单名称', () => {
     for (const label of ['账户与资料', '我的中心', '我的需求', '商户中心', '订单管理', '个人工作台', '商户工作台']) {
       expect(appShellSource).not.toContain(`label: '${label}'`)
@@ -80,7 +103,7 @@ describe('个人与经营中心导航', () => {
     expect(routerSource).toContain("import('@/pages/MyApiServicesPage.vue')")
     expect(routerSource).toContain("import('@/pages/MyApiServiceDetailPage.vue')")
     expect(myApiServicesSource).toContain(":title=\"quotaPublishIntent ? '选择 API 服务' : '我的 API 服务'\"")
-    expect(myApiServicesSource).toContain('useMyApiServices()')
+    expect(myApiServicesSource).toContain('useMyApiServices(salesView)')
     expect(myApiServicesSource).toContain('usePublishApiServiceMutation()')
     expect(myApiServicesSource).toContain('usePauseApiServiceMutation()')
     expect(myApiServicesSource).toContain('useResumeApiServiceMutation()')
@@ -96,8 +119,8 @@ describe('个人与经营中心导航', () => {
     expect(myApiServiceDetailSource).toContain('useMyApiService(id)')
     expect(myApiServiceDetailSource).toContain('<ApiServiceOwnerHeader')
     expect(apiServiceOwnerHeaderSource).toContain('买家视角预览')
-    expect(apiServiceOwnerHeaderSource).toContain('查看 API 订单')
-    expect(publicApiServiceDetailSource).toContain('useMyApiServices(import.meta.client)')
+    expect(apiServiceOwnerHeaderSource).toContain('查看 API 销售订单')
+    expect(publicApiServiceDetailSource).toContain("useMyApiServices('all', import.meta.client)")
     expect(publicApiServiceDetailSource).toContain("name: 'my-api-service-detail'")
     expect(publicApiServiceDetailSource).toContain('商户不能为自己的服务创建订单')
     expect(apiSource).toContain('getMyApiServiceById')

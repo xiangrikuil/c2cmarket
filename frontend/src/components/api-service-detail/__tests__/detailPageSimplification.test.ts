@@ -6,6 +6,10 @@ function componentSource(name: string) {
   return readFileSync(new URL(`../${name}.vue`, import.meta.url), 'utf8')
 }
 
+function pageSource(name: string) {
+  return readFileSync(new URL(`../../../pages/${name}.vue`, import.meta.url), 'utf8')
+}
+
 test('keeps merchant trust signals in the purchase card only', () => {
   const header = componentSource('ApiServiceHeader')
   const panel = componentSource('ApiPurchasePanel')
@@ -38,8 +42,18 @@ test('uses direct amount entry and moves acknowledgement into the dialog', () =>
   assert.doesNotMatch(selector, /presets|自定义/)
   assert.match(panel, /创建订单并查看付款方式/)
   assert.doesNotMatch(panel, /type="checkbox"/)
-  assert.match(dialog, /type="checkbox"/)
+  assert.match(dialog, /<Checkbox v-model="acknowledged"/)
   assert.match(dialog, /submitting \|\| !acknowledged/)
+})
+
+test('does not rewrite mixed query families after creating an order', () => {
+  const page = pageSource('ApiServiceDetailPage')
+  const panel = componentSource('ApiPurchasePanel')
+
+  assert.doesNotMatch(page, /setQueriesData/)
+  assert.match(page, /setQueryData\(\['api-orders', 'buyer', order\.id\], order\)/)
+  assert.match(page, /invalidateQueries\(\{ queryKey: \['api-purchase-intents'\] \}\)/)
+  assert.match(panel, /import \{ Badge \} from '@\/components\/ui\/badge'/)
 })
 
 test('layers secondary information behind marketplace detail tabs', () => {

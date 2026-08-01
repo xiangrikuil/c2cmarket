@@ -110,6 +110,7 @@ import {
   type ApiPaymentAccountSettings,
   type ApiPurchaseIntentFilters,
   type ApiServiceFilters,
+  type ApiServiceSalesView,
   type CreateApiQuotaBatchPayload,
   type CreateApiQuotaOfferPayload,
   type CreateApiQuotaOrderPayload,
@@ -286,11 +287,12 @@ export function useOtherApiMarketQuery(filters: Ref<OtherApiMarketFilters> | Oth
   })
 }
 
-export function useApiService(id: Ref<string> | string) {
+export function useApiService(id: Ref<string> | string, enabled: Ref<boolean> | boolean = true) {
   return useQuery({
     queryKey: computed(() => ['api-services', valueOf(id)]),
     retry: false,
     queryFn: () => getApiServiceById(valueOf(id)),
+    enabled: computed(() => Boolean(valueOf(id)) && valueOf(enabled)),
   })
 }
 
@@ -331,10 +333,13 @@ export function useCreateApiQuotaOrderMutation() {
   })
 }
 
-export function useMyApiServices(enabled: Ref<boolean> | boolean = true) {
+export function useMyApiServices(
+  salesView: Ref<ApiServiceSalesView> | ApiServiceSalesView = 'active',
+  enabled: Ref<boolean> | boolean = true,
+) {
   return useQuery({
-    queryKey: ['my-api-services'],
-    queryFn: getMyApiServices,
+    queryKey: computed(() => ['my-api-services', valueOf(salesView)]),
+    queryFn: () => getMyApiServices(valueOf(salesView)),
     enabled: computed(() => valueOf(enabled)),
     refetchOnMount: 'always',
   })

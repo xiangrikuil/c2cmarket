@@ -37,14 +37,48 @@ type adminUserDirectorySummary struct {
 }
 
 type adminUserDetailResponse struct {
-	User                     adminUserResponse           `json:"user"`
-	UpdatedAt                string                      `json:"updatedAt"`
-	LinuxDoBinding           adminLinuxDoBindingDTO      `json:"linuxDoBinding"`
-	EmailVerified            bool                        `json:"emailVerified"`
-	BackupPasswordConfigured bool                        `json:"backupPasswordConfigured"`
-	Providers                []adminAuthProviderDTO      `json:"providers"`
-	Sessions                 adminUserSessionSummaryDTO  `json:"sessions"`
-	RecentAuditEntries       []adminAccountAuditEntryDTO `json:"recentAuditEntries"`
+	User                     adminUserResponse               `json:"user"`
+	UpdatedAt                string                          `json:"updatedAt"`
+	LinuxDoBinding           adminLinuxDoBindingDTO          `json:"linuxDoBinding"`
+	EmailVerified            bool                            `json:"emailVerified"`
+	BackupPasswordConfigured bool                            `json:"backupPasswordConfigured"`
+	Providers                []adminAuthProviderDTO          `json:"providers"`
+	Sessions                 adminUserSessionSummaryDTO      `json:"sessions"`
+	RecentAuditEntries       []adminAccountAuditEntryDTO     `json:"recentAuditEntries"`
+	AvailableActions         []adminUserGovernanceActionDTO  `json:"availableActions"`
+	ImpactPreview            adminUserGovernanceImpactDTO    `json:"impactPreview"`
+	AccountCapabilities      adminUserAccountCapabilitiesDTO `json:"accountCapabilities"`
+}
+
+type adminUserGovernanceActionDTO struct {
+	Action               string `json:"action"`
+	Kind                 string `json:"kind"`
+	TargetStatus         string `json:"targetStatus,omitempty"`
+	TargetIsAdmin        *bool  `json:"targetIsAdmin,omitempty"`
+	Allowed              bool   `json:"allowed"`
+	Severity             string `json:"severity"`
+	RequiresReason       bool   `json:"requiresReason"`
+	RequiresConfirmation bool   `json:"requiresConfirmation"`
+	BlockedCode          string `json:"blockedCode,omitempty"`
+	BlockedReason        string `json:"blockedReason,omitempty"`
+}
+
+type adminUserGovernanceImpactDTO struct {
+	ActiveSessions          int `json:"activeSessions"`
+	ActiveCarpoolListings   int `json:"activeCarpoolListings"`
+	OnlineAPIServices       int `json:"onlineApiServices"`
+	OpenCarpoolApplications int `json:"openCarpoolApplications"`
+	OpenAPIOrders           int `json:"openApiOrders"`
+	OpenDisputes            int `json:"openDisputes"`
+}
+
+type adminUserAccountCapabilitiesDTO struct {
+	CanLogin                        bool `json:"canLogin"`
+	PubliclyVisible                 bool `json:"publiclyVisible"`
+	CanPublish                      bool `json:"canPublish"`
+	CanCreateOrders                 bool `json:"canCreateOrders"`
+	CanRevealContact                bool `json:"canRevealContact"`
+	CanAccessHistoricalTransactions bool `json:"canAccessHistoricalTransactions"`
 }
 
 type adminLinuxDoBindingDTO struct {
@@ -288,6 +322,21 @@ func toAdminUserDetailResponse(detail auth.AdminUserDetail) adminUserDetailRespo
 			CreatedAt:     entry.CreatedAt.UTC().Format(timeLayoutRFC3339),
 		})
 	}
+	actions := make([]adminUserGovernanceActionDTO, 0, len(detail.AvailableActions))
+	for _, action := range detail.AvailableActions {
+		actions = append(actions, adminUserGovernanceActionDTO{
+			Action:               action.Action,
+			Kind:                 action.Kind,
+			TargetStatus:         action.TargetStatus,
+			TargetIsAdmin:        action.TargetIsAdmin,
+			Allowed:              action.Allowed,
+			Severity:             action.Severity,
+			RequiresReason:       action.RequiresReason,
+			RequiresConfirmation: action.RequiresConfirmation,
+			BlockedCode:          action.BlockedCode,
+			BlockedReason:        action.BlockedReason,
+		})
+	}
 	linuxDoBinding := adminLinuxDoBindingDTO{Bound: detail.LinuxDoBinding.Bound}
 	if detail.LinuxDoBinding.Bound {
 		linuxDoBinding.Username = stringPointer(detail.LinuxDoBinding.Username)
@@ -307,6 +356,23 @@ func toAdminUserDetailResponse(detail auth.AdminUserDetail) adminUserDetailRespo
 			LatestActivityAt: formatOptionalTime(detail.LatestSessionActivityAt),
 		},
 		RecentAuditEntries: auditEntries,
+		AvailableActions:   actions,
+		ImpactPreview: adminUserGovernanceImpactDTO{
+			ActiveSessions:          detail.ImpactPreview.ActiveSessions,
+			ActiveCarpoolListings:   detail.ImpactPreview.ActiveCarpoolListings,
+			OnlineAPIServices:       detail.ImpactPreview.OnlineAPIServices,
+			OpenCarpoolApplications: detail.ImpactPreview.OpenCarpoolApplications,
+			OpenAPIOrders:           detail.ImpactPreview.OpenAPIOrders,
+			OpenDisputes:            detail.ImpactPreview.OpenDisputes,
+		},
+		AccountCapabilities: adminUserAccountCapabilitiesDTO{
+			CanLogin:                        detail.AccountCapabilities.CanLogin,
+			PubliclyVisible:                 detail.AccountCapabilities.PubliclyVisible,
+			CanPublish:                      detail.AccountCapabilities.CanPublish,
+			CanCreateOrders:                 detail.AccountCapabilities.CanCreateOrders,
+			CanRevealContact:                detail.AccountCapabilities.CanRevealContact,
+			CanAccessHistoricalTransactions: detail.AccountCapabilities.CanAccessHistoricalTransactions,
+		},
 	}
 }
 

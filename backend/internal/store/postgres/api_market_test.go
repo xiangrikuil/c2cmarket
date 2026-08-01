@@ -20,6 +20,30 @@ func TestAPIServiceColumnsProjectMerchantIdentityAvatar(t *testing.T) {
 	}
 }
 
+func TestOwnerAPISalesAggregationUsesOneAuthoritativeChannelProjection(t *testing.T) {
+	query := ownerAPISalesAggregationSQL()
+	for _, fragment := range []string{
+		"WITH flexible_channel AS",
+		"limited_candidates AS",
+		"limited_channel AS",
+		"availableUsdAllowance",
+		"availableCopies",
+		"nextStartsAt",
+		"saleCutoffAt",
+		"expiresAt",
+		"WHEN 'selling' THEN 0",
+		"WHEN 'upcoming' THEN 1",
+		"WHEN 'paused' THEN 2",
+		"WHEN 'sold_out' THEN 3",
+		"WHEN 'expired' THEN 4",
+		"jsonb_agg",
+	} {
+		if !strings.Contains(query, fragment) {
+			t.Fatalf("expected owner API sales aggregation to contain %q", fragment)
+		}
+	}
+}
+
 func TestStoreBuildPaymentOptionsSkipsDisabledEmptyInstructions(t *testing.T) {
 	now := time.Date(2026, 7, 8, 12, 0, 0, 0, time.UTC)
 	options := storeBuildPaymentOptions("00000000-0000-0000-0000-000000000001", nil, []apimarket.PaymentOptionInput{

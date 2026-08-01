@@ -51,7 +51,7 @@ import {
   type ApiQuotaOffer,
   type ApiQuotaSourceType,
 } from '@/lib/api'
-import { formatDecimal } from '@/lib/decimal'
+import { formatDecimal, normalizeDecimal } from '@/lib/decimal'
 import {
   findNextApiQuotaRound,
   getApiQuotaBatchStatus,
@@ -74,10 +74,13 @@ import {
 const props = defineProps<{
   apiServiceId: string
   distributionSystem: string
+  defaultMultiplier: number
 }>()
 
 const apiServiceId = toRef(props, 'apiServiceId')
 const isSub2Api = computed(() => props.distributionSystem === 'sub2api' || props.distributionSystem === 'Sub2API')
+const serviceDefaultMultiplier = computed(() => Number.isFinite(props.defaultMultiplier) && props.defaultMultiplier > 0 ? props.defaultMultiplier : 1)
+const serviceDefaultMultiplierDecimal = computed(() => normalizeDecimal(serviceDefaultMultiplier.value, 4))
 const batchesQuery = useOwnerApiQuotaBatches(apiServiceId)
 const selectedBatchId = ref('')
 const salesTab = ref('batches')
@@ -138,7 +141,6 @@ const offerForm = reactive({
   name: '',
   usdAllowance: '50',
   priceCny: '5.00',
-  modelMultiplier: '1.0000',
   deliveryMode: 'manual' as ApiQuotaOffer['deliveryMode'],
   deliveryEtaMinutes: 10,
   saleMode: 'continuous' as ApiQuotaOffer['saleMode'],
@@ -195,7 +197,7 @@ async function createOffer() {
       name: offerForm.name,
       usdAllowance: offerForm.usdAllowance,
       priceCny: offerForm.priceCny,
-      modelMultiplier: offerForm.modelMultiplier,
+      modelMultiplier: serviceDefaultMultiplierDecimal.value,
       deliveryMode: offerForm.deliveryMode,
       deliveryEtaMinutes: offerForm.deliveryEtaMinutes,
       saleMode: offerForm.saleMode,
@@ -287,7 +289,6 @@ function copyOfferRoute(offer: ApiQuotaOffer) {
       name: offer.name,
       usdAllowance: offer.usdAllowance,
       priceCny: offer.priceCny,
-      modelMultiplier: offer.modelMultiplier,
       deliveryMode: offer.deliveryMode,
       deliveryEtaMinutes: String(offer.deliveryEtaMinutes),
     },
@@ -609,7 +610,7 @@ function downloadTemplate(kind: ApiOrderDeliveryKind) {
           <label class="space-y-2 sm:col-span-2"><span class="text-sm font-medium">规格名称</span><Input v-model="offerForm.name" maxlength="80" placeholder="$50 日内额度" /></label>
           <label class="space-y-2"><span class="text-sm font-medium">美元额度</span><Input v-model="offerForm.usdAllowance" inputmode="decimal" /></label>
           <label class="space-y-2"><span class="text-sm font-medium">人民币总价</span><Input v-model="offerForm.priceCny" inputmode="decimal" /></label>
-          <label class="space-y-2"><span class="text-sm font-medium">统一模型倍率</span><Input v-model="offerForm.modelMultiplier" inputmode="decimal" /></label>
+          <div class="space-y-2"><span class="text-sm font-medium">服务倍率</span><div class="flex h-10 items-center rounded-md border border-border bg-muted/40 px-3 text-sm font-semibold">{{ serviceDefaultMultiplier.toFixed(2) }}x</div><p class="text-xs text-muted-foreground">沿用基础服务，额度规格无需重复设置。</p></div>
           <label class="space-y-2"><span class="text-sm font-medium">最长交付分钟</span><Input v-model.number="offerForm.deliveryEtaMinutes" type="number" min="1" max="10" /></label>
           <label class="space-y-2"><span class="text-sm font-medium">销售方式</span><Select v-model="offerForm.saleMode"><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="continuous">全天可买</SelectItem><SelectItem value="scheduled">定时放量</SelectItem></SelectContent></Select></label>
           <label class="space-y-2"><span class="text-sm font-medium">交付方式</span><Select v-model="offerForm.deliveryMode"><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="manual">商户手工交付</SelectItem><SelectItem value="preimported">预导入凭据</SelectItem></SelectContent></Select></label>

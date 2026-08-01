@@ -36,6 +36,7 @@ const props = defineProps<{
   userId: string
   username: string
   userVersion?: number
+  embedded?: boolean
 }>()
 
 const auditQuery = useAdminUserReputationQuery(computed(() => props.userId))
@@ -203,11 +204,11 @@ async function updateVerification(item: SourceAuthorVerificationAudit, draft: Ve
 </script>
 
 <template>
-  <section class="space-y-5 border-y border-border py-5" aria-labelledby="admin-reputation-audit-title">
+  <section class="space-y-5" :class="embedded ? '' : 'border-y border-border py-5'" aria-labelledby="admin-reputation-audit-title">
     <div class="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
       <div>
         <div class="flex flex-wrap items-center gap-2">
-          <h2 id="admin-reputation-audit-title" class="text-lg font-semibold">@{{ username }} 的信誉审计</h2>
+          <h2 id="admin-reputation-audit-title" :class="embedded ? 'text-sm font-semibold' : 'text-lg font-semibold'">@{{ username }} 的信誉审计</h2>
           <Badge variant="outline">{{ audit?.ruleVersion ?? '规则加载中' }}</Badge>
         </div>
         <p class="mt-1 text-sm text-muted-foreground">查看六份快照、原始指标、历史和治理证据。操作结果以服务端版本控制为准。</p>

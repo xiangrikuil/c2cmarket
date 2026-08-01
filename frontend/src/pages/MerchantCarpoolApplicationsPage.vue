@@ -97,7 +97,7 @@ function rejectApplication(item: CarpoolApplication) {
     <StatusTabs v-model="activeStatus" :items="['待处理', '待联系', '服务中', '待完成', '已完成', '已拒绝取消', '纠纷']" />
     <SkeletonTable v-if="isLoading" :rows="5" :columns="7" />
     <EmptyState v-else-if="rows.length === 0" title="当前筛选下暂无申请" description="新的上车申请到达后会显示在待处理队列。" />
-    <SoftTable v-else :columns="['申请人', '车源', '价格快照', '用户摘要', '状态', '申请时间', '操作']">
+    <SoftTable v-else animate-rows :columns="['申请人', '车源', '价格快照', '用户摘要', '状态', '申请时间', '操作']">
       <tr v-for="item in pagination.paginatedRows.value" :key="item.id">
         <td>
           <RouterLink :to="`/u/${item.applicantUsername}`" class="font-medium hover:underline">{{ item.applicantUsername }}</RouterLink>

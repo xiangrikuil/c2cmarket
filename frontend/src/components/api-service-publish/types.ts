@@ -13,7 +13,6 @@ export type WarrantyMode = 'no_warranty' | 'upstream_refund_only' | 'merchant_wa
 
 export type SelectedServiceModel = {
   modelId: string
-  multiplierOverride: number | null
   enabled: boolean
 }
 

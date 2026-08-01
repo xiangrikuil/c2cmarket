@@ -631,6 +631,7 @@ func NewOrder(input CreateInput, intent apiintent.Intent, service apimarket.Serv
 	}
 	return Order{
 		ID:                            uuid.NewString(),
+		PurchaseKind:                  PurchaseKindAPIService,
 		APIPurchaseIntentID:           intent.ID,
 		APIServiceID:                  intent.APIServiceID,
 		BuyerUserID:                   input.BuyerUserID,

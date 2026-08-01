@@ -198,21 +198,179 @@ func (s *Manager) PublicService(ctx context.Context, serviceID string) (Service,
 	return WithOrderability(service), nil
 }
 
-func (s *Manager) OwnerServices(ctx context.Context, user auth.User, page domain.PageRequest) (domain.Page[Service], *domain.AppError) {
+func (s *Manager) OwnerServices(ctx context.Context, user auth.User, filter OwnerServiceFilter, page domain.PageRequest) (domain.Page[Service], *domain.AppError) {
+	filter, appErr := NormalizeOwnerServiceFilter(filter)
+	if appErr != nil {
+		return domain.Page[Service]{}, appErr
+	}
 	if s.repo != nil {
-		return s.repo.ListAPIServicesByOwner(ctx, user.ID, page)
+		return s.repo.ListAPIServicesByOwner(ctx, user.ID, filter, page)
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	services := []Service{}
+	now := s.now()
 	for _, id := range s.serviceOrder {
-		service := WithOrderability(s.services[id])
-		if service.OwnerUserID == user.ID {
+		service := WithOrderabilityAt(s.services[id], now)
+		service.SalesSummary = SalesSummaryForService(service, now)
+		if service.OwnerUserID == user.ID && MatchesOwnerSalesView(service.SalesSummary.OverallState, filter.SalesView) {
 			services = append(services, service)
 		}
 	}
 	return domain.PageItems(services, page), nil
+}
+
+func NormalizeOwnerServiceFilter(filter OwnerServiceFilter) (OwnerServiceFilter, *domain.AppError) {
+	filter.SalesView = strings.TrimSpace(filter.SalesView)
+	if filter.SalesView == "" {
+		filter.SalesView = OwnerSalesViewActive
+	}
+	switch filter.SalesView {
+	case OwnerSalesViewActive, OwnerSalesViewExpired, OwnerSalesViewPaused, OwnerSalesViewDraft, OwnerSalesViewAll:
+		return filter, nil
+	default:
+		return OwnerServiceFilter{}, domain.NewFieldError(
+			http.StatusUnprocessableEntity,
+			domain.CodeValidationFailed,
+			"Invalid owner sales view",
+			"销售状态筛选无效。",
+			"salesView",
+			"invalid",
+			"salesView 必须是 active、expired、paused、draft 或 all。",
+		)
+	}
+}
+
+func MatchesOwnerSalesView(state, salesView string) bool {
+	switch salesView {
+	case OwnerSalesViewActive:
+		return state == ServiceSalesStateSelling || state == ServiceSalesStateUpcoming
+	case OwnerSalesViewExpired:
+		return state == ServiceSalesStateExpired
+	case OwnerSalesViewPaused:
+		return state == ServiceSalesStatePaused
+	case OwnerSalesViewDraft:
+		return state == ServiceSalesStateDraft || state == ServiceSalesStateOffline
+	case OwnerSalesViewAll:
+		return true
+	default:
+		return false
+	}
+}
+
+func SalesSummaryForService(service Service, now time.Time) ServiceSalesSummary {
+	channels := []ServiceSalesChannel{}
+	if service.BillingMode == ServiceBillingModeMetered {
+		available := strings.TrimSpace(service.AvailableUSDAllowance)
+		if available == "" {
+			available = strings.TrimSpace(service.DeclaredMaxUSDAllowancePerIntent)
+		}
+		channels = append(channels, ServiceSalesChannel{
+			Kind:                  ServiceSalesChannelFlexibleQuota,
+			State:                 flexibleQuotaSalesState(service, now),
+			AvailableUSDAllowance: available,
+			ExpiresAt:             service.QuotaExpiresAt,
+		})
+	}
+	overall := serviceFallbackSalesState(service, now)
+	if len(channels) > 0 {
+		overall = HighestPrioritySalesState(channels)
+	}
+	return ServiceSalesSummary{OverallState: overall, Channels: channels}
+}
+
+func HighestPrioritySalesState(channels []ServiceSalesChannel) string {
+	bestState := ServiceSalesStateArchived
+	bestPriority := salesStatePriority(bestState)
+	for _, channel := range channels {
+		priority := salesStatePriority(channel.State)
+		if priority < bestPriority {
+			bestPriority = priority
+			bestState = channel.State
+		}
+	}
+	return bestState
+}
+
+func salesStatePriority(state string) int {
+	switch state {
+	case ServiceSalesStateSelling:
+		return 0
+	case ServiceSalesStateUpcoming:
+		return 1
+	case ServiceSalesStatePaused:
+		return 2
+	case ServiceSalesStateSoldOut:
+		return 3
+	case ServiceSalesStateExpired:
+		return 4
+	case ServiceSalesStateDraft:
+		return 5
+	case ServiceSalesStateOffline:
+		return 6
+	case ServiceSalesStateArchived:
+		return 7
+	default:
+		return 8
+	}
+}
+
+func flexibleQuotaSalesState(service Service, now time.Time) string {
+	if state := serviceLifecycleSalesState(service); state != "" {
+		return state
+	}
+	if service.QuotaExpiresAt == nil {
+		return ServiceSalesStateOffline
+	}
+	if !service.QuotaExpiresAt.After(now) {
+		return ServiceSalesStateExpired
+	}
+	available := strings.TrimSpace(service.AvailableUSDAllowance)
+	if available == "" {
+		available = strings.TrimSpace(service.DeclaredMaxUSDAllowancePerIntent)
+	}
+	if amount, ok := parseNonNegativeDecimal(available); !ok || amount.Sign() == 0 {
+		return ServiceSalesStateSoldOut
+	}
+	if WithOrderabilityAt(service, now).IsOrderable {
+		return ServiceSalesStateSelling
+	}
+	return ServiceSalesStateOffline
+}
+
+func serviceFallbackSalesState(service Service, now time.Time) string {
+	if state := serviceLifecycleSalesState(service); state != "" {
+		return state
+	}
+	orderable := WithOrderabilityAt(service, now)
+	if orderable.IsOrderable {
+		return ServiceSalesStateSelling
+	}
+	for _, reason := range orderable.OrderableReasons {
+		if reason == "quota_sold_out" || reason == "package_sold_out" {
+			return ServiceSalesStateSoldOut
+		}
+		if reason == "quota_expired" {
+			return ServiceSalesStateExpired
+		}
+	}
+	return ServiceSalesStateOffline
+}
+
+func serviceLifecycleSalesState(service Service) string {
+	switch {
+	case service.PublicationStatus == ServicePublicationStatusArchived || service.ModerationStatus == ServiceModerationStatusRemoved:
+		return ServiceSalesStateArchived
+	case service.PublicationStatus == ServicePublicationStatusOwnerPaused || service.ModerationStatus == ServiceModerationStatusAdminSuspended:
+		return ServiceSalesStatePaused
+	case service.ReviewStatus != ServiceReviewStatusApproved:
+		return ServiceSalesStateDraft
+	case service.PublicationStatus != ServicePublicationStatusOnline:
+		return ServiceSalesStateOffline
+	default:
+		return ""
+	}
 }
 
 func (s *Manager) OwnerService(ctx context.Context, user auth.User, serviceID string) (Service, *domain.AppError) {

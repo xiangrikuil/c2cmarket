@@ -95,8 +95,11 @@ func servicePricingSnapshotJSON(service apimarket.Service) (string, error) {
 		packages = append(packages, packageSnapshot(pack))
 	}
 	body, err := json.Marshal(map[string]any{
-		"models":   models,
-		"packages": packages,
+		"models":              models,
+		"packages":            packages,
+		"usageVisibility":     service.UsageVisibility,
+		"merchantNote":        service.MerchantNote,
+		"merchantSupportNote": service.MerchantSupportNote,
 	})
 	if err != nil {
 		return "", err

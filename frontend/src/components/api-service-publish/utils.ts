@@ -19,13 +19,13 @@ export const publishDistributionOptions = [
     value: 'sub2api',
     title: 'Sub2API',
     description: '基础服务默认 1.00x。',
-    detail: '限时额度包可在下一步独立设置倍率。',
+    detail: '模型、固定额度包和限时额度包统一继承。',
   },
   {
     value: 'other',
     title: '其他 API 接入',
     description: '适用于 NewAPI 或自建中转。',
-    detail: '商户填写默认服务倍率。',
+    detail: '商户只需填写一次服务默认倍率。',
   },
 ] satisfies Array<{
   value: Exclude<DistributionSystem, 'new_api_proxy'>

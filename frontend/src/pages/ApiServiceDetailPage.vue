@@ -18,8 +18,6 @@ import {
   createApiPurchaseIntent,
   getApiServiceDefaultPaymentMethod,
   type ApiDeliveryMode,
-  type ApiOrder,
-  type ApiPurchaseIntent,
   type ApiService,
   type ApiServicePackage,
 } from '@/lib/api'
@@ -42,7 +40,7 @@ const { data: service, isLoading, error: serviceError, refetch: refetchService }
 const { data: catalogCategories } = productCategoriesQuery
 prefetchQueriesOnServer(apiServiceQuery, productCategoriesQuery)
 markMissingQueryAsNotFoundOnServer(apiServiceQuery, () => Boolean(service.value))
-const { data: ownedServices, isLoading: ownershipLoading } = useMyApiServices(import.meta.client)
+const { data: ownedServices, isLoading: ownershipLoading } = useMyApiServices('all', import.meta.client)
 const amount = ref(10)
 const selectedPackageId = ref('')
 const selectedDeliveryMode = ref<ApiDeliveryMode>('api_key_endpoint')
@@ -147,11 +145,7 @@ const createOrderMutation = useMutation({
     return { intent, order }
   },
   onSuccess(result) {
-    const { intent, order } = result
-    queryClient.setQueriesData<ApiPurchaseIntent[]>({ queryKey: ['my-api-purchase-intents'] }, old => old ? [intent, ...old.filter(item => item.id !== intent.id)] : old)
-    queryClient.setQueriesData<ApiPurchaseIntent[]>({ queryKey: ['merchant-api-purchase-intents'] }, old => old && old.some(item => item.merchantId === intent.merchantId) ? [intent, ...old.filter(item => item.id !== intent.id)] : old)
-    queryClient.setQueriesData<ApiPurchaseIntent[]>({ queryKey: ['api-purchase-intents'] }, old => old ? [intent, ...old.filter(item => item.id !== intent.id)] : old)
-    queryClient.setQueriesData<ApiOrder[]>({ queryKey: ['my-api-orders'] }, old => old ? [order, ...old.filter(item => item.id !== order.id)] : old)
+    const { order } = result
     queryClient.setQueryData(['api-orders', 'buyer', order.id], order)
     queryClient.invalidateQueries({ queryKey: ['my-api-purchase-intents'] })
     queryClient.invalidateQueries({ queryKey: ['merchant-api-purchase-intents'] })

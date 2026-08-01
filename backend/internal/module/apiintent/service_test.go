@@ -97,6 +97,48 @@ func TestLimitedPackageIntentFreezesExactModelSnapshot(t *testing.T) {
 	}
 }
 
+func TestIntentFreezesMerchantTermsInPricingSnapshot(t *testing.T) {
+	now := time.Date(2026, 8, 1, 8, 0, 0, 0, time.UTC)
+	service := limitedPackageIntentService(now, nil)
+	service.UsageVisibility = "merchant_reported"
+	service.MerchantNote = "高峰期可能响应变慢。"
+	service.MerchantSupportNote = "商户承诺 7 天；接口不可用时补偿额度。"
+	service.Models = []apimarket.ServiceModel{
+		{ID: "model-1", ModelNameSnapshot: "GPT-5.6", MerchantMultiplier: "1.0000", Enabled: true},
+		{ID: "model-2", ModelNameSnapshot: "GPT-5 mini", MerchantMultiplier: "0.2000", Enabled: true},
+	}
+
+	intent, appErr := NewIntent(CreateIntentInput{
+		APIServiceID:         service.ID,
+		BuyerUserID:          "buyer-1",
+		BuyerContactMethodID: "buyer-contact-1",
+		RequestedCNYAmount:   "10.00",
+		SelectedAccessMode:   "fixed_package_offsite",
+	}, service, contact.ContactMethod{Type: "telegram", Label: "买家 TG"}, contact.ContactMethodVersion{ID: "buyer-version-1"}, contact.ContactMethod{Type: "telegram", Label: "卖家 TG"}, contact.ContactMethodVersion{ID: "owner-version-1"}, now)
+	if appErr != nil {
+		t.Fatalf("new intent: %v", appErr)
+	}
+
+	var snapshot struct {
+		Models []struct {
+			ModelNameSnapshot  string `json:"modelNameSnapshot"`
+			MerchantMultiplier string `json:"merchantMultiplier"`
+		} `json:"models"`
+		UsageVisibility     string `json:"usageVisibility"`
+		MerchantNote        string `json:"merchantNote"`
+		MerchantSupportNote string `json:"merchantSupportNote"`
+	}
+	if err := json.Unmarshal([]byte(intent.PricingSnapshot), &snapshot); err != nil {
+		t.Fatalf("decode pricing snapshot: %v", err)
+	}
+	if len(snapshot.Models) != 2 || snapshot.Models[0].ModelNameSnapshot != "GPT-5.6" || snapshot.Models[1].MerchantMultiplier != "0.2000" {
+		t.Fatalf("unexpected model snapshot: %+v", snapshot.Models)
+	}
+	if snapshot.UsageVisibility != service.UsageVisibility || snapshot.MerchantNote != service.MerchantNote || snapshot.MerchantSupportNote != service.MerchantSupportNote {
+		t.Fatalf("unexpected merchant terms snapshot: %+v", snapshot)
+	}
+}
+
 func TestLimitedPackageIntentRejectsSelectedSoldOutPackage(t *testing.T) {
 	now := time.Date(2026, 7, 16, 9, 0, 0, 0, time.UTC)
 	duration := 3

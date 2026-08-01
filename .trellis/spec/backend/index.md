@@ -22,7 +22,7 @@ This directory contains guidelines for backend development. Fill in each file wi
 | [Authentication Session Renewal](./auth-sessions.md) | Seven-day idle expiry, renewal throttling, cookie sync, and absolute expiry | Active |
 | [Administrator User Directory](./admin-user-directory.md) | Server pagination, safe account detail, and transactional account governance | Active |
 | [Verification And Data Lifecycle](./verification-data-lifecycle.md) | HMAC email challenges, finite idempotency, and bounded PostgreSQL retention | Active |
-| [Limited API Quota Offers](./api-quota-offers.md) | Fixed quota inventory, rounds, orders, credentials, and concurrency | Active |
+| [Limited API Quota Offers](./api-quota-offers.md) | Fixed quota inventory, rounds, owner sales lifecycle projection, orders, credentials, and concurrency | Active |
 | [Reputation Facts](./reputation.md) | Truthful transaction facts, role/scope aggregation, and exclusions | Active |
 | [Database Guidelines](./database-guidelines.md) | PostgreSQL migration patterns and schema conventions | Active |
 | [Deployment Contract](./deployment-contract.md) | CI, GHCR, VPS release, backup, and environment isolation requirements | Active |

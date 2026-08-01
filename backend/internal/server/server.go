@@ -199,7 +199,7 @@ type Service interface {
 	UpdateAPIService(ctx context.Context, user auth.User, input apimarket.UpdateServiceInput) (apimarket.Service, *domain.AppError)
 	PublicAPIServices(ctx context.Context, filter apimarket.PublicServiceFilter) ([]apimarket.Service, *domain.AppError)
 	PublicAPIService(ctx context.Context, serviceID string) (apimarket.Service, *domain.AppError)
-	OwnerAPIServices(ctx context.Context, user auth.User, page domain.PageRequest) (domain.Page[apimarket.Service], *domain.AppError)
+	OwnerAPIServices(ctx context.Context, user auth.User, filter apimarket.OwnerServiceFilter, page domain.PageRequest) (domain.Page[apimarket.Service], *domain.AppError)
 	OwnerAPIService(ctx context.Context, user auth.User, serviceID string) (apimarket.Service, *domain.AppError)
 	AdminAPIServices(ctx context.Context, user auth.User, page domain.PageRequest) (domain.Page[apimarket.Service], *domain.AppError)
 	AdminAPIService(ctx context.Context, user auth.User, serviceID string) (apimarket.Service, *domain.AppError)

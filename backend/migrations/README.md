@@ -287,7 +287,13 @@ owner from the most recently updated enabled service snapshot. Account changes
 apply only to future service snapshots; existing services and orders remain
 unchanged.
 
-Version 68 (`000068_admin_user_directory_governance`) adds the partial recent
+Version 68 (`000068_carpool_usage_signals`) adds nullable weekly quota,
+official-reset, VPS region, mainland direct-connection, opening-channel, and
+payment-method fields to carpool listings. New listing writes require all
+signals in service validation; nullable columns preserve explicit `未声明`
+rendering for development rows created before this contract.
+
+Version 69 (`000069_admin_user_directory_governance`) adds the partial recent
 audit lookup index used by the administrator account-detail surface. Account
 status and administrator-permission changes continue to use the existing users,
 permissions, sessions, domain events, notifications, audit, and idempotency

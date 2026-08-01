@@ -1,9 +1,10 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
+import { RouterLink, useRoute, useRouter } from 'vue-router'
 import { useQuery, useQueryClient } from '@tanstack/vue-query'
-import { CheckCircle2, ChevronDown, Clock3, Copy, Headphones, KeyRound, QrCode, ShieldAlert, Star, WalletCards, XCircle } from 'lucide-vue-next'
+import { CheckCircle2, ChevronDown, ChevronRight, Clock3, Copy, Headphones, KeyRound, QrCode, ShieldAlert, Star, WalletCards, XCircle } from 'lucide-vue-next'
 import { toast } from 'vue-sonner'
+import ApiMerchantAvatar from '@/components/api-market/ApiMerchantAvatar.vue'
 import ApiPaymentMethodIcon from '@/components/api-payment/ApiPaymentMethodIcon.vue'
 import OrderContactCard from '@/components/profile/OrderContactCard.vue'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
@@ -14,6 +15,7 @@ import { Checkbox } from '@/components/ui/checkbox'
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group'
 import { Stepper, StepperDescription, StepperIndicator, StepperItem, StepperSeparator, StepperTitle, StepperTrigger } from '@/components/ui/stepper'
 import { Textarea } from '@/components/ui/textarea'
@@ -22,10 +24,11 @@ import ErrorState from '@/components/market/ErrorState.vue'
 import ShortId from '@/components/market/ShortId.vue'
 import SkeletonBlock from '@/components/market/SkeletonBlock.vue'
 import StatusBadge from '@/components/market/StatusBadge.vue'
-import ReputationSummaryCard from '@/components/reputation/ReputationSummaryCard.vue'
 import {
   apiOrderBuyerContactSnapshot,
   apiOrderMerchantContactSnapshot,
+  getApiMerchantDisplayName,
+  getApiMerchantProfileUrl,
   getApiOrderDeliveryKindLabel,
   getApiOrderEvents,
   getApiOrderPaymentIssueLabel,
@@ -49,8 +52,10 @@ import {
 } from '@/lib/apiOrderUi'
 import { apiPaymentMethodLabels, apiPaymentMethodRequiresQrCode } from '@/lib/apiPaymentSettings'
 import { formatDecimal } from '@/lib/decimal'
+import { functionalMotion } from '@/lib/motion'
 import {
   useApiOrder,
+  useApiService,
   useCancelApiOrderMutation,
   useConfirmApiOrderCompleteMutation,
   useConfirmApiOrderPaymentMutation,
@@ -67,6 +72,9 @@ const id = computed(() => String(route.params.id ?? ''))
 const perspective = computed<'buyer' | 'merchant'>(() => route.name === 'merchant-api-order-detail' ? 'merchant' : 'buyer')
 const isMerchantView = computed(() => perspective.value === 'merchant')
 const { data: order, isLoading, error: orderError, refetch: refetchOrder } = useApiOrder(id, perspective)
+const apiServiceId = computed(() => order.value?.apiServiceId ?? '')
+const shouldLoadMerchantProfile = computed(() => !isMerchantView.value && Boolean(apiServiceId.value))
+const { data: apiService } = useApiService(apiServiceId, shouldLoadMerchantProfile)
 const paymentInstructionsQuery = useQuery({
   queryKey: computed(() => ['api-order-payment-instructions', id.value]),
   queryFn: () => readApiOrderPaymentInstructions(id.value),
@@ -108,7 +116,7 @@ const openDisputeMutation = useOpenApiOrderDisputeMutation()
 const submitDeliveryMutation = useSubmitApiOrderDeliveryCredentialMutation()
 
 const backPath = computed(() => isMerchantView.value ? '/merchant/api-orders' : '/my/api-orders')
-const backLabel = computed(() => isMerchantView.value ? '返回商户订单' : '返回我的 API 订单')
+const backLabel = computed(() => isMerchantView.value ? '返回 API 销售订单' : '返回 API 购买订单')
 const canSubmitPayment = computed(() => !isMerchantView.value && order.value?.status === 'pending_payment')
 const canResubmitPayment = computed(() => !isMerchantView.value && order.value?.status === 'payment_issue')
 const canConfirmPayment = computed(() => isMerchantView.value && order.value?.status === 'payment_submitted')
@@ -130,9 +138,37 @@ const counterpartyName = computed(() => {
   if (!order.value) return ''
   return isMerchantView.value ? order.value.buyer : order.value.seller
 })
+const counterpartyDisplayName = computed(() => {
+  if (!isMerchantView.value && apiService.value) return getApiMerchantDisplayName(apiService.value)
+  return counterpartyName.value
+})
+const counterpartyProfileUrl = computed(() => {
+  if (isMerchantView.value || !apiService.value) return null
+  return getApiMerchantProfileUrl(apiService.value)
+})
+const counterpartyAvatarText = computed(() => counterpartyDisplayName.value.trim().slice(0, 1).toUpperCase() || '用')
+const counterpartyCompletedOrders = computed(() => {
+  const summary = counterpartyReputation.value
+  return summary ? `${summary.completedCount} 单` : '暂无数据'
+})
+const counterpartyCompletionRate = computed(() => {
+  const value = counterpartyReputation.value?.roleCompletionRate
+  return value === null || value === undefined ? '暂无数据' : `${Math.round(value * 100)}%`
+})
 const merchantContactSnapshot = computed(() => !isMerchantView.value && order.value ? apiOrderMerchantContactSnapshot(order.value) : null)
 const buyerContactSnapshot = computed(() => isMerchantView.value && order.value ? apiOrderBuyerContactSnapshot(order.value) : null)
 const events = computed(() => order.value ? getApiOrderEvents(order.value) : [])
+const orderModelSnapshotLabel = computed(() => {
+  const snapshot = order.value?.intentSnapshot
+  if (!snapshot) return ''
+  if (snapshot.models.length) return snapshot.models.join(' / ')
+  return snapshot.pricingSnapshotIssue === 'invalid' ? '订单模型快照不可用' : '历史订单未冻结模型信息'
+})
+const orderUsageVisibilityLabel = computed(() => {
+  const snapshot = order.value?.intentSnapshot
+  if (!snapshot) return ''
+  return snapshot.usageVisibilitySnapshotMissing ? '历史订单未冻结用量核对规则' : getApiUsageVisibilityLabel(snapshot.usageVisibility)
+})
 const paymentInstructions = computed(() => paymentInstructionsQuery.data.value ?? null)
 const paymentActionLabel = computed(() => {
   const method = order.value?.selectedPaymentMethod
@@ -414,9 +450,9 @@ onBeforeUnmount(() => {
     <div class="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
       <div>
         <Button class="-ml-3 mb-2" variant="ghost" size="sm" @click="router.push(backPath)">← {{ backLabel }}</Button>
-        <div class="flex flex-wrap items-center gap-2">
+        <div v-auto-animate="functionalMotion" class="flex flex-wrap items-center gap-2">
           <h1 class="text-2xl font-semibold tracking-tight">{{ order.serviceTitle }}</h1>
-          <StatusBadge :status="order.status" :label="getApiOrderStatusLabel(order.status)" />
+          <StatusBadge :key="order.status" :status="order.status" :label="getApiOrderStatusLabel(order.status)" />
           <Badge v-if="order.purchaseKind === 'limited_quota_offer'" variant="capability">限时额度包</Badge>
         </div>
         <p class="mt-2 text-sm text-muted-foreground">订单号：<ShortId :value="order.id" prefix="API" copyable /></p>
@@ -448,14 +484,44 @@ onBeforeUnmount(() => {
       <AlertDescription>该订单问题已经提交，请等待平台处理；无需重复提交。</AlertDescription>
     </Alert>
 
-    <section class="rounded-lg border border-border bg-card p-4" aria-labelledby="api-order-counterparty-reputation">
-      <div class="mb-4">
-        <h2 id="api-order-counterparty-reputation" class="font-semibold">交易对手信誉</h2>
-        <p class="mt-1 text-sm text-muted-foreground">
-          {{ counterpartyName }} · {{ isMerchantView ? '买家信誉' : '卖家信誉' }}
-        </p>
+    <section class="overflow-hidden rounded-lg border border-border bg-card sm:grid sm:grid-cols-[minmax(0,1.25fr)_minmax(140px,0.55fr)_minmax(140px,0.55fr)_auto]" :aria-label="`${counterpartyDisplayName}交易信息`">
+      <component
+        :is="counterpartyProfileUrl ? RouterLink : 'div'"
+        :to="counterpartyProfileUrl || undefined"
+        class="flex min-w-0 items-center gap-3 p-4 transition-colors sm:min-h-24"
+        :class="counterpartyProfileUrl ? 'hover:bg-muted/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-inset' : ''"
+      >
+        <ApiMerchantAvatar
+          v-if="!isMerchantView && apiService"
+          :service="apiService"
+          class="grid h-11 w-11 shrink-0 place-items-center rounded-full bg-muted text-sm font-semibold text-foreground"
+        />
+        <span v-else class="grid h-11 w-11 shrink-0 place-items-center rounded-full bg-muted text-sm font-semibold text-foreground">{{ counterpartyAvatarText }}</span>
+        <span class="min-w-0">
+          <strong class="block truncate">{{ counterpartyDisplayName }}</strong>
+          <span class="mt-1 block text-xs text-muted-foreground">{{ isMerchantView ? 'API 买家' : 'API 商家' }}</span>
+        </span>
+      </component>
+
+      <div class="grid grid-cols-2 border-t border-border sm:contents sm:border-t-0">
+        <div class="p-4 sm:flex sm:min-h-24 sm:flex-col sm:justify-center sm:border-l sm:border-border">
+          <div class="text-xs text-muted-foreground">已完成订单</div>
+          <div class="mt-1 font-semibold">{{ counterpartyCompletedOrders }}</div>
+        </div>
+        <div class="border-l border-border p-4 sm:flex sm:min-h-24 sm:flex-col sm:justify-center">
+          <div class="text-xs text-muted-foreground">完成率</div>
+          <div class="mt-1 font-semibold">{{ counterpartyCompletionRate }}</div>
+        </div>
       </div>
-      <ReputationSummaryCard :summary="counterpartyReputation" compact :framed="false" />
+
+      <RouterLink
+        v-if="counterpartyProfileUrl"
+        :to="counterpartyProfileUrl"
+        class="flex items-center justify-between gap-3 border-t border-border p-4 text-sm font-medium text-muted-foreground transition-colors hover:bg-muted/40 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-inset sm:min-h-24 sm:border-l sm:border-t-0"
+      >
+        <span>查看商家主页</span>
+        <ChevronRight class="h-4 w-4 shrink-0" />
+      </RouterLink>
     </section>
 
     <Card class="overflow-hidden border-border/80">
@@ -482,7 +548,7 @@ onBeforeUnmount(() => {
             <div class="mt-2 text-xs text-muted-foreground">{{ order.deliveryCredential ? '交付凭证已提交' : '无需倒计时' }}</div>
           </template>
         </div>
-        <div class="flex min-w-56 flex-col justify-center gap-2 p-5">
+        <div v-auto-animate="functionalMotion" class="flex min-w-56 flex-col justify-center gap-2 p-5">
           <div class="text-center text-xs font-medium text-muted-foreground">当前可执行操作</div>
           <Button v-if="canSubmitPayment" size="lg" :disabled="actionBusy || paymentInstructionsQuery.isLoading.value || countdown.expired" @click="paymentDialogOpen = true">
             <QrCode class="h-4 w-4" />{{ paymentActionLabel }}
@@ -512,16 +578,16 @@ onBeforeUnmount(() => {
       </div>
 
       <div class="border-t border-border bg-muted/20 px-5 py-4">
-        <Stepper v-if="order.status !== 'cancelled'" :model-value="Math.min(flowSteps.length, Math.max(1, currentFlowIndex + 1))" class="w-full items-start">
-          <StepperItem v-for="(step, index) in flowSteps" :key="step" :step="index + 1" class="relative flex flex-1 flex-col items-center">
-            <StepperTrigger class="flex flex-col items-center gap-2" disabled>
-              <StepperIndicator class="h-8 w-8">{{ currentFlowIndex > index ? '✓' : index + 1 }}</StepperIndicator>
+        <Stepper v-if="order.status !== 'cancelled'" :model-value="Math.min(flowSteps.length, Math.max(1, currentFlowIndex + 1))" class="w-full items-start overflow-x-auto px-1">
+          <StepperItem v-for="(step, index) in flowSteps" :key="step" :step="index + 1" class="relative flex min-w-[112px] flex-1 flex-col items-center">
+            <StepperTrigger class="flex w-full flex-col items-center gap-2" disabled>
+              <StepperIndicator class="c2c-motion-state h-8 w-8" :class="'relative z-10 border border-border bg-background'">{{ currentFlowIndex > index ? '✓' : index + 1 }}</StepperIndicator>
               <div class="text-center">
                 <StepperTitle class="text-sm">{{ step }}</StepperTitle>
                 <StepperDescription>{{ flowStepDescriptions[index] }}</StepperDescription>
               </div>
             </StepperTrigger>
-            <StepperSeparator v-if="index < flowSteps.length - 1" class="absolute left-[calc(50%+1.5rem)] right-[calc(-50%+1.5rem)] top-4" />
+            <StepperSeparator v-if="index < flowSteps.length - 1" class="pointer-events-none absolute left-[calc(50%+1.5rem)] right-[calc(-50%+1.5rem)] top-4 h-0.5 rounded-full bg-border group-data-[state=completed]:bg-primary/60" />
           </StepperItem>
         </Stepper>
         <div v-else class="flex items-center justify-center gap-2 py-2 text-sm text-muted-foreground"><XCircle class="h-4 w-4" />交易流程已终止</div>
@@ -564,19 +630,19 @@ onBeforeUnmount(() => {
             <div v-else class="mt-5 grid gap-4 text-sm sm:grid-cols-2">
               <div><span class="text-muted-foreground">服务</span><div>{{ order.serviceTitle }}</div></div>
               <div><span class="text-muted-foreground">商户</span><div>{{ order.seller }}</div></div>
-              <div><span class="text-muted-foreground">模型</span><div>{{ order.intentSnapshot.models.join(' / ') }}</div></div>
+              <div><span class="text-muted-foreground">模型</span><div>{{ orderModelSnapshotLabel }}</div></div>
               <div><span class="text-muted-foreground">倍率快照</span><div>{{ order.intentSnapshot.multiplier }}</div></div>
-              <div><span class="text-muted-foreground">用量核对</span><div>{{ getApiUsageVisibilityLabel(order.intentSnapshot.usageVisibility) }}</div></div>
+              <div><span class="text-muted-foreground">用量核对</span><div>{{ orderUsageVisibilityLabel }}</div></div>
               <div><span class="text-muted-foreground">付款截止</span><div>{{ formatOrderDateTime(order.paymentExpiresAt) }}</div></div>
-              <div><span class="text-muted-foreground">商户承诺</span><div>{{ legacyRevocationCopy(order.intentSnapshot.warranty) }}</div></div>
-              <div><span class="text-muted-foreground">售后说明</span><div>{{ legacyRevocationCopy(order.intentSnapshot.refundPolicy) }}</div></div>
+              <div><span class="text-muted-foreground">商户售后说明</span><div>{{ legacyRevocationCopy(order.intentSnapshot.warranty) }}</div></div>
+              <div class="sm:col-span-2"><span class="text-muted-foreground">平台交易边界</span><div>{{ legacyRevocationCopy(order.intentSnapshot.refundPolicy) }}</div></div>
             </div>
             <div v-if="order.paymentSummary" class="mt-4 rounded-md border border-border bg-muted/40 p-3 text-sm">买家付款备注：{{ order.paymentSummary }}</div>
           </CollapsibleContent>
         </Card>
       </Collapsible>
 
-      <div class="space-y-4">
+      <div v-auto-animate="functionalMotion" class="space-y-4">
 
         <Card v-if="order.deliveryCredential" class="p-5">
           <div class="flex items-center justify-between gap-3">
@@ -674,7 +740,7 @@ onBeforeUnmount(() => {
           <ChevronDown class="h-4 w-4 transition-transform" :class="orderRecordsOpen ? 'rotate-180' : ''" />
         </CollapsibleTrigger>
         <CollapsibleContent>
-          <div class="mt-4 space-y-3">
+          <div v-auto-animate="functionalMotion" class="mt-4 space-y-3">
             <div v-for="event in events" :key="event.id" class="grid gap-1 border-b border-border pb-3 text-sm md:grid-cols-[180px_1fr]">
               <div class="text-muted-foreground">{{ formatOrderDateTime(event.createdAt) }}</div>
               <div>
@@ -786,19 +852,20 @@ onBeforeUnmount(() => {
           <DialogTitle>报告付款核对问题</DialogTitle>
           <DialogDescription>请选择明确原因并通知买家补充。订单将保留当前锁定额度，不会自动取消。</DialogDescription>
         </DialogHeader>
-        <RadioGroup v-model="paymentIssueReason" class="space-y-2">
-          <label
+        <RadioGroup v-model="paymentIssueReason" class="gap-3">
+          <div
             v-for="option in paymentIssueOptions"
             :key="option.value"
-            class="flex cursor-pointer items-start gap-3 rounded-lg border border-border p-4 transition-colors hover:bg-muted/40"
-            :class="paymentIssueReason === option.value ? 'border-warning/60 bg-warning/10' : ''"
+            class="flex items-start gap-3"
           >
-            <RadioGroupItem :value="option.value" class="mt-0.5" />
-            <span>
-              <span class="block text-sm font-medium">{{ option.label }}</span>
-              <span class="mt-1 block text-xs leading-5 text-muted-foreground">{{ option.description }}</span>
-            </span>
-          </label>
+            <RadioGroupItem :id="`payment-issue-${option.value}`" :value="option.value" class="mt-0.5" />
+            <Label :for="`payment-issue-${option.value}`" class="min-w-0 flex-1 cursor-pointer items-start gap-0 leading-normal">
+              <span class="block">
+                <span class="block text-sm font-medium">{{ option.label }}</span>
+                <span class="mt-1 block text-xs leading-5 text-muted-foreground">{{ option.description }}</span>
+              </span>
+            </Label>
+          </div>
         </RadioGroup>
         <label class="block space-y-2">
           <span class="text-sm font-medium">补充说明（选填）</span>
@@ -851,11 +918,13 @@ onBeforeUnmount(() => {
           <div class="flex-1 space-y-6 overflow-y-auto px-5 py-5 sm:px-6">
             <div>
               <div class="text-sm font-semibold">请选择取消原因</div>
-              <RadioGroup v-model="cancelReason" class="mt-3">
-                <label v-for="option in API_ORDER_CANCEL_OPTIONS" :key="option.value" class="flex cursor-pointer items-start gap-3 rounded-lg border border-border p-4 transition-colors hover:bg-muted/40" :class="cancelReason === option.value ? 'border-primary bg-primary/5' : ''">
-                  <RadioGroupItem :value="option.value" class="mt-0.5" />
-                  <span class="min-w-0 flex-1"><span class="flex flex-wrap items-center gap-2"><span class="font-medium">{{ option.label }}</span><Badge :variant="option.responsibility === 'merchant' ? 'status' : 'secondary'">{{ option.responsibilityLabel }}</Badge></span></span>
-                </label>
+              <RadioGroup v-model="cancelReason" class="mt-3 gap-3">
+                <div v-for="option in API_ORDER_CANCEL_OPTIONS" :key="option.value" class="flex items-start gap-3">
+                  <RadioGroupItem :id="`cancel-reason-${option.value}`" :value="option.value" class="mt-0.5" />
+                  <Label :for="`cancel-reason-${option.value}`" class="min-w-0 flex-1 cursor-pointer items-start gap-0 leading-normal">
+                    <span class="flex flex-wrap items-center gap-2"><span class="font-medium">{{ option.label }}</span><Badge :variant="option.responsibility === 'merchant' ? 'status' : 'secondary'">{{ option.responsibilityLabel }}</Badge></span>
+                  </Label>
+                </div>
               </RadioGroup>
             </div>
 

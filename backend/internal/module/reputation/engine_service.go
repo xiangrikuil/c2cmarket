@@ -11,7 +11,7 @@ import (
 const recalculationBatchSize = 200
 
 func (s *Service) Rules() RuleSet {
-	return V1Rules()
+	return CurrentRules()
 }
 
 func (s *Service) EngineAvailable() bool {

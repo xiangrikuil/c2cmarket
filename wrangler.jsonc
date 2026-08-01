@@ -11,6 +11,10 @@
     "NUXT_PUBLIC_SITE_URL": "https://c2cmarket.shop",
     "NUXT_PUBLIC_API_BASE_URL": "https://api.c2cmarket.shop",
     "NUXT_PUBLIC_API_MODE": "real",
-    "NUXT_API_BASE_URL": "https://api.c2cmarket.shop"
+    "NUXT_API_BASE_URL": "https://api.c2cmarket.shop",
+    "NUXT_PUBLIC_UMAMI_ENABLED": "true",
+    "NUXT_PUBLIC_UMAMI_SCRIPT_URL": "https://cloud.umami.is/script.js",
+    "NUXT_PUBLIC_UMAMI_WEBSITE_ID": "110bd0c9-6337-462d-af58-02330b258307",
+    "NUXT_PUBLIC_UMAMI_DOMAINS": "c2cmarket.shop"
   }
 }

@@ -35,6 +35,8 @@ Public profile reputation fields follow the same nullable contract. A future uni
 - Public profile privacy flags may hide a fact, but hiding and zero are different states.
 - Real backend failures remain visible through the query error path. They must not fall back to mock reputation data.
 - Trust/risk presentation is informational and must not claim platform guarantee, official endorsement, or transaction safety.
+- API order detail keeps the transaction flow primary. It renders the counterparty identity with only the authoritative completed-order count and role completion rate; full tier, confidence, cancellation, dispute, rating, and restriction details remain on the public profile or reputation surfaces.
+- The API order merchant identity and avatar link to the public profile only when the service identity mode is `public_profile`. Store aliases remain non-linkable and must not expose the underlying username.
 
 ### 4. Validation & Error Matrix
 
@@ -43,6 +45,7 @@ Public profile reputation fields follow the same nullable contract. A future uni
 | `null` reputation fact | `暂无数据` or omitted optional section |
 | Backend-provided `0` | Render `0` without warning styling |
 | Positive count | Render the returned number with the neutral fact label |
+| Missing role completion rate | Render `暂无数据`; do not derive or invent a percentage in the UI |
 | Real adapter request fails | Visible error state; no mock/fixed replacement |
 | Store-alias merchant | Preserve existing identity privacy while rendering public reputation |
 
@@ -204,23 +207,23 @@ Carpool listings and API services expose the summary as
 
 ### 3. Contracts
 
-- Only `status === 'verified'` may render `原帖作者已验证` or a verified visual treatment.
-- Carpool surfaces continue to render every explicit state. API market cards omit source-author verification, while API service detail renders only `verified` and `mismatch`; `not_submitted`, `pending`, and `expired` stay hidden there.
-- The display reduction does not remove the backend field, admin audit controls, source-author reputation evidence, shared labels, or ranking contracts.
+- Only `status === 'verified'` may render `原帖作者已验证` or a verified visual treatment on a surface that still supports source-author verification.
+- Subscription carpool publish, market, detail, application, and owner-management surfaces omit every source-author state. API market cards also omit source-author verification, while API service detail renders only `verified` and `mismatch`; `not_submitted`, `pending`, and `expired` stay hidden there.
+- The carpool display removal does not remove the historical backend field, admin audit controls, API-service source-author presentation, or shared normalization helpers.
 - Real adapters copy the backend summary. They must not derive status from `sourceUrl`, source-version fields, product metadata, or mock defaults.
 - Opening the source topic depends only on a real source URL. A verified summary does not create a link, and a link does not create a verified badge.
-- Ranking or tradability helpers may compare the shared status rank, but must use the same normalization helper as display code.
+- Carpool recommendation, sorting, tradability, and availability helpers must not compare source-author status. The shared status rank remains only for compatible source-author features outside the carpool decision path.
 - Mock rows declare their source-author status explicitly so tests and previews do not teach production code to infer it.
 
 ### 4. Validation & Error Matrix
 
 | Input/state | Required presentation |
 | --- | --- |
-| Missing summary or `not_submitted` | Carpool shows `原帖作者未验证`; API market/detail hide it |
-| `pending` | Carpool shows `原帖作者待核验`; API market/detail hide it |
-| `verified` | Carpool and API detail show `原帖作者已验证`; API market hides it |
-| `mismatch` | Carpool and API detail show `原帖作者不一致`; API market hides it |
-| `expired` | Carpool shows `原帖作者验证已过期`; API market/detail hide it |
+| Missing summary or `not_submitted` | Carpool and API market/detail hide it |
+| `pending` | Carpool and API market/detail hide it |
+| `verified` | Carpool and API market hide it; API detail may show `原帖作者已验证` |
+| `mismatch` | Carpool and API market hide it; API detail may show `原帖作者不一致` |
+| `expired` | Carpool and API market/detail hide it |
 | Missing source URL | No source-topic link, regardless of verification status |
 | Real adapter request fails | Visible request error; no inferred or mock verification |
 
@@ -228,7 +231,7 @@ Carpool listings and API services expose the summary as
 
 - Good: an API service with `pending` status does not add a low-value source-author row to the market card or detail purchase panel.
 - Good: an API service with `mismatch` status still surfaces the destructive warning on detail.
-- Good: an expired carpool decision remains visible as expired and does not retain the verified badge.
+- Good: a historical carpool response may still carry an expired decision, but no carpool surface renders or ranks by it.
 - Base: an older or absent optional summary still normalizes to `not_submitted`; API display policy may hide it.
 - Bad: use `Boolean(sourceUrl)`, `sourceUrl ? 'verified' : 'not_submitted'`, or a fixed mock status in a real adapter.
 
@@ -236,7 +239,8 @@ Carpool listings and API services expose the summary as
 
 - Helper tests cover every label, verified-only truth, missing-summary normalization, and stable status ranking.
 - Carpool and API adapter tests pass a non-empty source URL with `pending`/`mismatch` and assert the backend status survives unchanged.
-- Source/component tests cover all five shared labels, prove only `verified` receives verified styling, assert the API market omission/detail allowlist, and keep carpool rendering unchanged.
+- Source/component tests cover all five shared labels, prove only `verified` receives verified styling, assert the API market omission/detail allowlist, and prove carpool surfaces omit the feature.
+- Carpool ranking and tradability tests must pass for a listing with no source URL and `not_submitted` verification.
 - Run full Vitest, Nuxt typecheck, and a production build with `NUXT_PUBLIC_API_MODE=real`, `NUXT_PUBLIC_API_BASE_URL`, and `NUXT_API_BASE_URL`.
 - Scan production frontend code for URL-to-verification boolean inference.
 

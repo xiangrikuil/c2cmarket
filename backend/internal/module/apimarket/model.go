@@ -31,6 +31,24 @@ const (
 	PaymentMethodAlipay = "alipay"
 
 	DefaultPaymentWindowMinutes = 10
+
+	OwnerSalesViewActive  = "active"
+	OwnerSalesViewExpired = "expired"
+	OwnerSalesViewPaused  = "paused"
+	OwnerSalesViewDraft   = "draft"
+	OwnerSalesViewAll     = "all"
+
+	ServiceSalesStateSelling  = "selling"
+	ServiceSalesStateUpcoming = "upcoming"
+	ServiceSalesStatePaused   = "paused"
+	ServiceSalesStateSoldOut  = "sold_out"
+	ServiceSalesStateExpired  = "expired"
+	ServiceSalesStateDraft    = "draft"
+	ServiceSalesStateOffline  = "offline"
+	ServiceSalesStateArchived = "archived"
+
+	ServiceSalesChannelFlexibleQuota = "flexible_quota"
+	ServiceSalesChannelLimitedQuota  = "limited_quota"
 )
 
 type Service struct {
@@ -82,6 +100,7 @@ type Service struct {
 	Version                          int64
 	SellerReputation                 *reputation.ReputationSnapshot
 	SourceAuthorVerification         reputation.SourceAuthorResourceSummary
+	SalesSummary                     ServiceSalesSummary
 }
 
 type ServiceAccessMode struct {
@@ -248,6 +267,25 @@ type ServiceAdminActionInput struct {
 
 type PublicServiceFilter struct {
 	PaymentMethod string
+}
+
+type OwnerServiceFilter struct {
+	SalesView string
+}
+
+type ServiceSalesSummary struct {
+	OverallState string                `json:"overallState"`
+	Channels     []ServiceSalesChannel `json:"channels"`
+}
+
+type ServiceSalesChannel struct {
+	Kind                  string     `json:"kind"`
+	State                 string     `json:"state"`
+	AvailableUSDAllowance string     `json:"availableUsdAllowance,omitempty"`
+	AvailableCopies       int        `json:"availableCopies,omitempty"`
+	NextStartsAt          *time.Time `json:"nextStartsAt,omitempty"`
+	SaleCutoffAt          *time.Time `json:"saleCutoffAt,omitempty"`
+	ExpiresAt             *time.Time `json:"expiresAt,omitempty"`
 }
 
 type UpdateOrderSettingsInput struct {

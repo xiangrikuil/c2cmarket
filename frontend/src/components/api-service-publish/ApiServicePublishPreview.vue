@@ -16,6 +16,8 @@ import {
   WalletCards,
   Zap,
 } from 'lucide-vue-next'
+import ApiFreeServiceCard from '@/components/api-market/ApiFreeServiceCard.vue'
+import type { ApiFreeServiceCardData } from '@/components/api-market/apiFreeServiceCard'
 import ApiPaymentMethodIcon from '@/components/api-payment/ApiPaymentMethodIcon.vue'
 import { Badge } from '@/components/ui/badge'
 import { Card } from '@/components/ui/card'
@@ -42,6 +44,7 @@ const title = computed(() => isLimitedQuotaMode.value
 const merchantDisplayName = computed(() => props.form.merchantIdentityMode === 'store_alias' ? props.form.merchantDisplayName.trim() || '待设置商家展示名' : '公开个人身份')
 const selectedModels = computed(() => selectedCatalogItems(props.form, props.catalogById))
 const previewPackage = computed(() => props.form.billingMode === 'fixed_package' ? props.form.packages.find(item => item.enabled) ?? null : null)
+const isFreeQuotaMode = computed(() => !isLimitedQuotaMode.value && props.form.billingMode !== 'fixed_package')
 const quotaExpiresAtLabel = computed(() => props.form.quotaExpiresAt ? props.form.quotaExpiresAt.replace('T', ' ') : '待填写')
 const paymentSummary = computed(() => {
   const labels = enabledPaymentOptions(props.form).map(option => paymentMethodLabels[option.paymentMethod])
@@ -69,7 +72,7 @@ const previewRows = computed(() => {
   ]
   if (isLimitedQuotaMode.value) {
     rows.push(
-      { label: '模型倍率', value: '下一步可编辑 · 默认 1.00x', icon: Gauge },
+      { label: '服务倍率', value: props.form.distributionSystem === 'sub2api' ? '1.00x' : formatMultiplier(props.form.defaultMultiplier), icon: Gauge },
       { label: '开售方式', value: '全天 / 定时 · 绝对失效', icon: CalendarClock },
     )
   } else {
@@ -86,6 +89,25 @@ const previewRows = computed(() => {
   )
   return rows
 })
+const freeServiceCard = computed<ApiFreeServiceCardData>(() => ({
+  title: title.value,
+  delivery: distributionLabels[props.form.distributionSystem],
+  models: selectedModels.value.map(item => item.displayName),
+  category: props.form.providerCategory,
+  categoryLabel: providerCategoryLabels[props.form.providerCategory],
+  iconSrc: providerIconSrc.value,
+  cnyPerUsdAllowance: props.form.cnyPerUsdCredit ?? 0,
+  minimumPurchaseCny: props.form.minimumPurchaseCny ?? 0,
+  availableUsdAllowance: props.form.availableCreditUsd ?? 0,
+  maximumPurchaseCny: props.form.maximumPurchaseCny ?? 0,
+  multiplier: props.form.distributionSystem === 'sub2api' ? '1.00x' : formatMultiplier(props.form.defaultMultiplier),
+  ttftLabel: getApiTTFTBandLabel(props.form.declaredTtftBand),
+  recommendedConcurrency: props.form.recommendedConcurrency || '—',
+  paymentWindowMinutes: props.form.paymentWindowMinutes,
+  merchantName: props.form.merchantDisplayName.trim() || merchantDisplayName.value,
+  merchantType: props.form.merchantIdentityMode === 'store_alias' ? '商户' : '个人卖家',
+  expiresAt: quotaExpiresAtLabel.value,
+}))
 
 const buyerFlow = [
   { label: '选择额度包', icon: ShoppingCart },
@@ -98,24 +120,27 @@ const buyerFlow = [
 
 <template>
   <div class="min-w-0 space-y-2">
-    <div
-      class="rounded-md border px-3 py-1.5 text-[11px] leading-5"
-      :class="conflictItems.length ? 'border-destructive/25 bg-destructive/5 text-destructive' : pendingItems.length ? 'border-warning/25 bg-warning/10 text-warning' : 'border-success/20 bg-success/5 text-success'"
-    >
-      {{ checkMessage }}
-    </div>
+    <ApiFreeServiceCard v-if="isFreeQuotaMode" :card="freeServiceCard" preview />
 
-    <div class="rounded-md border border-border bg-card px-3 py-2.5">
-      <div class="flex items-center justify-between gap-3 text-xs">
-        <span class="font-medium">发布完整度</span>
-        <strong>{{ completionPercent }}%</strong>
+    <template v-else>
+      <div
+        class="rounded-md border px-3 py-1.5 text-[11px] leading-5"
+        :class="conflictItems.length ? 'border-destructive/25 bg-destructive/5 text-destructive' : pendingItems.length ? 'border-warning/25 bg-warning/10 text-warning' : 'border-success/20 bg-success/5 text-success'"
+      >
+        {{ checkMessage }}
       </div>
-      <div class="mt-2 h-1.5 overflow-hidden rounded-full bg-muted">
-        <div class="h-full rounded-full bg-primary transition-[width]" :style="{ width: `${completionPercent}%` }" />
-      </div>
-    </div>
 
-    <Card class="api-publish-preview-card overflow-hidden p-0 shadow-sm" :class="isLimitedQuotaMode || previewPackage ? 'is-limited' : 'is-free'">
+      <div class="rounded-md border border-border bg-card px-3 py-2.5">
+        <div class="flex items-center justify-between gap-3 text-xs">
+          <span class="font-medium">发布完整度</span>
+          <strong>{{ completionPercent }}%</strong>
+        </div>
+        <div class="mt-2 h-1.5 overflow-hidden rounded-full bg-muted">
+          <div class="h-full rounded-full bg-primary transition-[width]" :style="{ width: `${completionPercent}%` }" />
+        </div>
+      </div>
+
+      <Card class="api-publish-preview-card overflow-hidden p-0 shadow-sm" :class="isLimitedQuotaMode || previewPackage ? 'is-limited' : 'is-free'">
       <div
         class="border-b p-3"
         :class="isLimitedQuotaMode || previewPackage ? 'border-orange-200 bg-orange-50/70' : 'border-emerald-200 bg-emerald-50/70'"
@@ -151,8 +176,8 @@ const buyerFlow = [
             <div class="mt-1 text-lg font-semibold text-orange-950">¥{{ previewPackage.priceCny }}</div>
           </div>
           <div class="rounded-md border border-border bg-muted/35 p-2.5">
-            <div class="text-xs text-muted-foreground">面板额度</div>
-            <div class="mt-1 text-lg font-semibold">{{ previewPackage.panelAllowance }}</div>
+            <div class="text-xs text-muted-foreground">面板额度（USD）</div>
+            <div class="mt-1 text-lg font-semibold">${{ previewPackage.panelAllowance }}</div>
           </div>
         </div>
 
@@ -171,7 +196,7 @@ const buyerFlow = [
           <PackageOpen class="mt-0.5 h-4 w-4 shrink-0 text-orange-600" />
           <div>
             <div class="text-xs font-semibold">额度包价格与库存待设置</div>
-            <p class="mt-0.5 text-[11px] leading-4 text-orange-900/70">额度、总价、倍率、库存、绝对失效时间与最长 10 分钟交付。</p>
+            <p class="mt-0.5 text-[11px] leading-4 text-orange-900/70">额度、总价、库存、绝对失效时间与最长 10 分钟交付；倍率沿用基础服务。</p>
           </div>
         </div>
       </div>
@@ -210,9 +235,9 @@ const buyerFlow = [
       <div class="border-t border-border bg-muted/35 px-3 py-2 text-[11px] leading-5 text-muted-foreground">
         {{ previewOnly ? apiQuotaBoundaryNotice : '平台记录订单，不代收款；不保存 API Key。' }}
       </div>
-    </Card>
+      </Card>
 
-    <section v-if="previewOnly" class="rounded-md border border-primary/20 bg-primary/5 p-3" aria-labelledby="buyer-flow-title">
+      <section v-if="previewOnly" class="rounded-md border border-primary/20 bg-primary/5 p-3" aria-labelledby="buyer-flow-title">
       <div class="flex items-center gap-2">
         <Gauge class="h-4 w-4 text-primary" />
         <h3 id="buyer-flow-title" class="text-xs font-semibold">买家购买流程</h3>
@@ -226,12 +251,13 @@ const buyerFlow = [
         </li>
       </ol>
       <p class="mt-2 border-t border-primary/15 pt-2 text-[11px] leading-5 text-muted-foreground">卖家确认收款后交付；平台记录订单，不代收款。</p>
-    </section>
+      </section>
 
-    <div v-if="previewOnly && risks.length" class="space-y-1.5">
-      <div v-for="risk in risks" :key="risk" class="rounded-md border border-amber-200 bg-amber-50 px-3 py-1.5 text-[11px] leading-5 text-amber-800">
-        {{ risk }}
+      <div v-if="previewOnly && risks.length" class="space-y-1.5">
+        <div v-for="risk in risks" :key="risk" class="rounded-md border border-amber-200 bg-amber-50 px-3 py-1.5 text-[11px] leading-5 text-amber-800">
+          {{ risk }}
+        </div>
       </div>
-    </div>
+    </template>
   </div>
 </template>

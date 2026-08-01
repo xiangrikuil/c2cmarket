@@ -17,6 +17,109 @@ func (r staticAPIModelResolver) APIModel(_ context.Context, modelID string) (cat
 	return r.models[modelID], nil
 }
 
+func TestNormalizeOwnerServiceFilterDefaultsToActiveAndRejectsUnknownViews(t *testing.T) {
+	filter, appErr := NormalizeOwnerServiceFilter(OwnerServiceFilter{})
+	if appErr != nil {
+		t.Fatalf("normalize default owner filter: %v", appErr)
+	}
+	if filter.SalesView != OwnerSalesViewActive {
+		t.Fatalf("expected default active sales view, got %q", filter.SalesView)
+	}
+
+	for _, salesView := range []string{
+		OwnerSalesViewActive,
+		OwnerSalesViewExpired,
+		OwnerSalesViewPaused,
+		OwnerSalesViewDraft,
+		OwnerSalesViewAll,
+	} {
+		filter, appErr = NormalizeOwnerServiceFilter(OwnerServiceFilter{SalesView: " " + salesView + " "})
+		if appErr != nil || filter.SalesView != salesView {
+			t.Fatalf("expected valid sales view %q, got %+v %v", salesView, filter, appErr)
+		}
+	}
+
+	_, appErr = NormalizeOwnerServiceFilter(OwnerServiceFilter{SalesView: "finished"})
+	if appErr == nil || len(appErr.FieldErrors) != 1 || appErr.FieldErrors[0].Field != "salesView" {
+		t.Fatalf("expected salesView validation error, got %+v", appErr)
+	}
+}
+
+func TestMatchesOwnerSalesViewKeepsActiveUpcomingAndHistoryDistinct(t *testing.T) {
+	if !MatchesOwnerSalesView(ServiceSalesStateSelling, OwnerSalesViewActive) {
+		t.Fatal("expected selling service in active view")
+	}
+	if !MatchesOwnerSalesView(ServiceSalesStateUpcoming, OwnerSalesViewActive) {
+		t.Fatal("expected upcoming service in active view")
+	}
+	if MatchesOwnerSalesView(ServiceSalesStateExpired, OwnerSalesViewActive) {
+		t.Fatal("expired service must not appear in active view")
+	}
+	if !MatchesOwnerSalesView(ServiceSalesStateOffline, OwnerSalesViewDraft) {
+		t.Fatal("offline service must remain reachable in draft view")
+	}
+	if !MatchesOwnerSalesView(ServiceSalesStateSoldOut, OwnerSalesViewAll) ||
+		!MatchesOwnerSalesView(ServiceSalesStateArchived, OwnerSalesViewAll) {
+		t.Fatal("sold-out and archived services must remain reachable in all view")
+	}
+}
+
+func TestHighestPrioritySalesStateSupportsMultipleSalesChannels(t *testing.T) {
+	channels := []ServiceSalesChannel{
+		{Kind: ServiceSalesChannelLimitedQuota, State: ServiceSalesStateExpired},
+		{Kind: ServiceSalesChannelFlexibleQuota, State: ServiceSalesStateSelling},
+	}
+	if got := HighestPrioritySalesState(channels); got != ServiceSalesStateSelling {
+		t.Fatalf("expected selling to outrank expired, got %q", got)
+	}
+
+	channels = []ServiceSalesChannel{
+		{Kind: ServiceSalesChannelLimitedQuota, State: ServiceSalesStateSoldOut},
+		{Kind: ServiceSalesChannelFlexibleQuota, State: ServiceSalesStatePaused},
+	}
+	if got := HighestPrioritySalesState(channels); got != ServiceSalesStatePaused {
+		t.Fatalf("expected paused to outrank sold out, got %q", got)
+	}
+}
+
+func TestSalesSummaryForMeteredServiceUsesAuthoritativeExpiryBoundary(t *testing.T) {
+	now := time.Date(2026, 7, 30, 12, 0, 0, 0, time.UTC)
+	expiresAt := now.Add(time.Hour)
+	service := Service{
+		OwnerContactMethodID:  "contact-1",
+		BillingMode:           ServiceBillingModeMetered,
+		AvailableUSDAllowance: "420.000000",
+		QuotaExpiresAt:        &expiresAt,
+		AcceptingOrders:       true,
+		PaymentWindowMinutes:  10,
+		ReviewStatus:          ServiceReviewStatusApproved,
+		PublicationStatus:     ServicePublicationStatusOnline,
+		ModerationStatus:      ServiceModerationStatusClear,
+		PaymentOptions: []PaymentOption{{
+			PaymentMethod: PaymentMethodWechat,
+			Enabled:       true,
+		}},
+	}
+
+	summary := SalesSummaryForService(service, now)
+	if summary.OverallState != ServiceSalesStateSelling || len(summary.Channels) != 1 {
+		t.Fatalf("expected selling flexible quota summary, got %+v", summary)
+	}
+	channel := summary.Channels[0]
+	if channel.Kind != ServiceSalesChannelFlexibleQuota ||
+		channel.AvailableUSDAllowance != "420.000000" ||
+		channel.ExpiresAt == nil ||
+		!channel.ExpiresAt.Equal(expiresAt) {
+		t.Fatalf("unexpected flexible quota channel: %+v", channel)
+	}
+
+	service.QuotaExpiresAt = &now
+	summary = SalesSummaryForService(service, now)
+	if summary.OverallState != ServiceSalesStateExpired || summary.Channels[0].State != ServiceSalesStateExpired {
+		t.Fatalf("expected exact cutoff to be expired, got %+v", summary)
+	}
+}
+
 func TestValidateCreateInputRequiresFutureQuotaExpirationForMeteredServices(t *testing.T) {
 	now := time.Date(2026, 7, 7, 12, 0, 0, 0, time.UTC)
 	input := validMeteredCreateInput()

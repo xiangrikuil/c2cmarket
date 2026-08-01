@@ -220,7 +220,39 @@ func loadAdminUserDetail(ctx context.Context, q queryer, userID string, now time
 		           AND session.revoked_at IS NULL
 		           AND session.expires_at > $2
 		           AND session.absolute_expires_at > $2
-		       ) AS latest_session_activity_at
+		       ) AS latest_session_activity_at,
+		       (
+		         SELECT count(*)::int
+		         FROM users admin_user
+		         WHERE admin_user.account_status = 'active'
+		           AND EXISTS (
+		             SELECT 1 FROM user_permissions permission
+		             WHERE permission.user_id = admin_user.id AND permission.permission = 'admin'
+		           )
+		       ) AS active_admin_count,
+		       (
+		         SELECT count(*)::int FROM carpool_listings listing
+		         WHERE listing.owner_user_id = u.id AND listing.status = 'active'
+		       ) AS active_carpool_listings,
+		       (
+		         SELECT count(*)::int FROM api_services service
+		         WHERE service.owner_user_id = u.id AND service.publication_status = 'online'
+		       ) AS online_api_services,
+		       (
+		         SELECT count(*)::int FROM carpool_applications application
+		         WHERE (application.buyer_user_id = u.id OR application.owner_user_id = u.id)
+		           AND application.status IN ('pending_owner', 'accepted_reserved')
+		       ) AS open_carpool_applications,
+		       (
+		         SELECT count(*)::int FROM api_orders order_row
+		         WHERE (order_row.buyer_user_id = u.id OR order_row.seller_user_id = u.id)
+		           AND (order_row.status NOT IN ('completed', 'cancelled') OR order_row.dispute_status = 'open')
+		       ) AS open_api_orders,
+		       (
+		         SELECT count(*)::int FROM dispute_cases dispute
+		         WHERE (dispute.primary_user_id = u.id OR dispute.counterparty_user_id = u.id)
+		           AND dispute.status IN ('open', 'waiting_info')
+		       ) AS open_disputes
 		FROM users u
 		LEFT JOIN linux_do_bindings binding ON binding.user_id = u.id
 		WHERE u.id = $1
@@ -244,6 +276,12 @@ func loadAdminUserDetail(ctx context.Context, q queryer, userID string, now time
 		&detail.BackupPasswordConfigured,
 		&detail.ActiveSessionCount,
 		&detail.LatestSessionActivityAt,
+		&detail.ActiveAdminCount,
+		&detail.ImpactPreview.ActiveCarpoolListings,
+		&detail.ImpactPreview.OnlineAPIServices,
+		&detail.ImpactPreview.OpenCarpoolApplications,
+		&detail.ImpactPreview.OpenAPIOrders,
+		&detail.ImpactPreview.OpenDisputes,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return auth.AdminUserDetail{}, domain.NewError(http.StatusNotFound, domain.CodeObjectNotFound, "User not found", "用户不存在。")
@@ -251,6 +289,7 @@ func loadAdminUserDetail(ctx context.Context, q queryer, userID string, now time
 	if err != nil {
 		return auth.AdminUserDetail{}, internalStoreError()
 	}
+	detail.ImpactPreview.ActiveSessions = detail.ActiveSessionCount
 	detail.LinuxDoBinding.Bound = detail.User.LinuxDoBound
 	if linuxDoUsername != nil {
 		detail.LinuxDoBinding.Username = *linuxDoUsername

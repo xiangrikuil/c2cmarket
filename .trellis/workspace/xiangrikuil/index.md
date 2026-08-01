@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 27
-- **Last Active**: 2026-07-31
+- **Total Sessions**: 28
+- **Last Active**: 2026-08-01
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~1034 | Active |
+| `journal-1.md` | ~1075 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 28 | 2026-08-01 | SSH 与 Tailscale 私网部署加固 | `fdf62ee` | `codex/tailscale-private-deploy` |
 | 27 | 2026-07-31 | 恢复生产数据库认证与后端 | - | `codex/fix-staging-release-traceability` |
 | 26 | 2026-07-29 | 未登录隐藏私有导航 | `9fb4457` | `codex/unified-auth-route-guard` |
 | 25 | 2026-07-29 | 统一登录访问控制与会话回跳 | `9a15a8d` | `codex/unified-auth-route-guard` |

@@ -2,7 +2,7 @@ package reputation
 
 import "time"
 
-const RuleVersion = "reputation-v1"
+const RuleVersion = "reputation-v2"
 
 type RuleSet struct {
 	Version                           string        `json:"version"`
@@ -23,7 +23,7 @@ type RuleSet struct {
 	CautionFaultCancelRate            float64       `json:"cautionFaultCancelRate"`
 }
 
-func V1Rules() RuleSet {
+func CurrentRules() RuleSet {
 	return RuleSet{
 		Version:                           RuleVersion,
 		MinimumNormalCompletions:          3,

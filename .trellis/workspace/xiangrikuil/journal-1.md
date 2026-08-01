@@ -1039,3 +1039,37 @@ Made real backend mode explicit for default Nuxt development on port 5173, added
 ### Next Steps
 
 - None - task complete
+
+
+## Session 28: SSH 与 Tailscale 私网部署加固
+
+**Date**: 2026-08-01
+**Task**: SSH 与 Tailscale 私网部署加固
+**Package**: backend
+**Branch**: `codex/tailscale-private-deploy`
+
+### Summary
+
+禁用 root 与密码 SSH，建立 admin/deploy 密钥边界和 Tailscale 私网部署，真实 staging 自动部署通过后删除公网 IPv4/IPv6 OpenSSH Anywhere 规则，并完成回归验证。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `fdf62ee` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

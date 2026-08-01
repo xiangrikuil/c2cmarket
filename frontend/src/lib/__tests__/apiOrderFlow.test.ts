@@ -103,6 +103,17 @@ test('labels an order-backed purchase intent as ordered', async () => {
   assert.equal(api.getApiStatusLabel('ordered'), '已生成订单')
 })
 
+test('counts revenue only after the merchant confirms receipt', async () => {
+  const api = await loadApiWithOrder('pending_payment')
+
+  for (const status of ['paid_confirmed', 'delivery_submitted', 'completed'] as ApiOrderStatus[]) {
+    assert.equal(api.isApiOrderReceiptConfirmed(status), true, `${status} should count as confirmed receipt`)
+  }
+  for (const status of ['pending_payment', 'payment_submitted', 'payment_issue', 'cancelled'] as ApiOrderStatus[]) {
+    assert.equal(api.isApiOrderReceiptConfirmed(status), false, `${status} must not count as confirmed receipt`)
+  }
+})
+
 test('cancels only an unpaid order and preserves the selected reason', async () => {
   const api = await loadApiWithOrder('pending_payment')
   const order = orderWithStatus('pending_payment')

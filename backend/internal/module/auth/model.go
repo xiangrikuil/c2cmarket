@@ -26,6 +26,13 @@ const (
 	AdminUserSortActiveDesc   = "active_desc"
 	AdminUserSortUsernameAsc  = "username_asc"
 	AdminUserSortUsernameDesc = "username_desc"
+
+	AdminUserActionSuspend     = "suspend"
+	AdminUserActionBan         = "ban"
+	AdminUserActionArchive     = "archive"
+	AdminUserActionRestore     = "restore"
+	AdminUserActionGrantAdmin  = "grant_admin"
+	AdminUserActionRevokeAdmin = "revoke_admin"
 )
 
 type User struct {
@@ -112,6 +119,37 @@ type AdminAccountAuditEntry struct {
 	CreatedAt     time.Time
 }
 
+type AdminUserGovernanceAction struct {
+	Action               string
+	Kind                 string
+	TargetStatus         string
+	TargetIsAdmin        *bool
+	Allowed              bool
+	Severity             string
+	RequiresReason       bool
+	RequiresConfirmation bool
+	BlockedCode          string
+	BlockedReason        string
+}
+
+type AdminUserGovernanceImpact struct {
+	ActiveSessions          int
+	ActiveCarpoolListings   int
+	OnlineAPIServices       int
+	OpenCarpoolApplications int
+	OpenAPIOrders           int
+	OpenDisputes            int
+}
+
+type AdminUserAccountCapabilities struct {
+	CanLogin                        bool
+	PubliclyVisible                 bool
+	CanPublish                      bool
+	CanCreateOrders                 bool
+	CanRevealContact                bool
+	CanAccessHistoricalTransactions bool
+}
+
 type AdminUserDetail struct {
 	User                     AdminUser
 	LinuxDoBinding           AdminLinuxDoBinding
@@ -121,6 +159,10 @@ type AdminUserDetail struct {
 	ActiveSessionCount       int
 	LatestSessionActivityAt  *time.Time
 	RecentAuditEntries       []AdminAccountAuditEntry
+	AvailableActions         []AdminUserGovernanceAction
+	ImpactPreview            AdminUserGovernanceImpact
+	AccountCapabilities      AdminUserAccountCapabilities
+	ActiveAdminCount         int
 }
 
 type AdminUserStatusInput struct {

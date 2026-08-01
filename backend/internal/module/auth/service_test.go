@@ -360,6 +360,44 @@ func TestAdminUserPermissionMutationProtectsLastActiveAdministrator(t *testing.T
 	}
 }
 
+func TestAdminUserDetailReturnsAuthoritativeGovernanceActions(t *testing.T) {
+	service := NewService(nil, time.Now)
+	admin, _, _ := service.CreateDevSession(context.Background(), "action-admin", true)
+	observer, _, _ := service.CreateDevSession(context.Background(), "action-observer", true)
+	member, _, _ := service.CreateDevSession(context.Background(), "action-member", false)
+
+	memberDetail, appErr := service.AdminUser(context.Background(), admin, member.ID)
+	if appErr != nil {
+		t.Fatalf("load member detail: %v", appErr)
+	}
+	if len(memberDetail.AvailableActions) != 4 {
+		t.Fatalf("expected three status actions and one permission action: %+v", memberDetail.AvailableActions)
+	}
+	for _, action := range memberDetail.AvailableActions {
+		if !action.Allowed || !action.RequiresReason || !action.RequiresConfirmation {
+			t.Fatalf("expected allowed audited member action: %+v", action)
+		}
+	}
+
+	if _, appErr := service.UpdateAdminUserStatusWithIdempotency(
+		context.Background(), admin, "status", "observer-suspend", "observer-suspend-hash",
+		AdminUserStatusInput{TargetUserID: observer.ID, Status: AccountStatusSuspended, ExpectedVersion: 1, Reason: "暂停值班"}, adminUserCompletionForTest,
+	); appErr != nil {
+		t.Fatalf("suspend observer: %v", appErr)
+	}
+	lastAdminDetail, appErr := service.AdminUser(context.Background(), User{ID: observer.ID, IsAdmin: true}, admin.ID)
+	if appErr != nil {
+		t.Fatalf("load last admin detail: %v", appErr)
+	}
+	for _, action := range lastAdminDetail.AvailableActions {
+		if action.Kind == "status" || action.Action == AdminUserActionRevokeAdmin {
+			if action.Allowed || action.BlockedCode != "LAST_ACTIVE_ADMIN" {
+				t.Fatalf("expected last active admin block: %+v", action)
+			}
+		}
+	}
+}
+
 func TestLoginWithArgon2idPasswordCreatesSession(t *testing.T) {
 	now := time.Date(2026, 6, 23, 12, 0, 0, 0, time.UTC)
 	repo := &fakeAuthRepository{
