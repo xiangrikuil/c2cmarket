@@ -287,6 +287,12 @@ owner from the most recently updated enabled service snapshot. Account changes
 apply only to future service snapshots; existing services and orders remain
 unchanged.
 
+Version 68 (`000068_admin_user_directory_governance`) adds the partial recent
+audit lookup index used by the administrator account-detail surface. Account
+status and administrator-permission changes continue to use the existing users,
+permissions, sessions, domain events, notifications, audit, and idempotency
+tables; the migration does not rewrite account data.
+
 ## Contact Retention And Destruction
 
 Contact method deletion retires the mutable contact method surface. Historical

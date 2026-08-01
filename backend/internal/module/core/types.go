@@ -22,6 +22,20 @@ type User = auth.User
 
 type Session = auth.Session
 
+type AdminUser = auth.AdminUser
+
+type AdminUserDirectoryQuery = auth.AdminUserDirectoryQuery
+
+type AdminUserDirectory = auth.AdminUserDirectory
+
+type AdminUserDetail = auth.AdminUserDetail
+
+type AdminUserStatusInput = auth.AdminUserStatusInput
+
+type AdminUserPermissionInput = auth.AdminUserPermissionInput
+
+type AdminUserCompletionBuilder = auth.AdminUserCompletionBuilder
+
 type OAuthProfile = auth.OAuthProfile
 
 type BootstrapAdminInput = auth.BootstrapAdminInput

@@ -261,7 +261,17 @@ import {
   type CreateManualInterventionReportRequest,
   type CreatePublicUserReportRequest,
 } from '@/lib/reportBackend'
-import { backendAdminUserRows } from '@/lib/adminUserBackend'
+import {
+  backendAdminUserDetail,
+  backendAdminUserDirectory,
+  backendUpdateAdminUserPermission,
+  backendUpdateAdminUserStatus,
+  type AdminUser,
+  type AdminUserDetail,
+  type AdminUserDirectoryQuery,
+  type AdminUserList,
+  type AdminUserStatus,
+} from '@/lib/adminUserBackend'
 import { shouldUseRealBackend } from '@/lib/backendClient'
 import {
   backendGetApiPaymentAccountSettings,
@@ -3138,6 +3148,155 @@ function adminDirectoryRow(item: typeof adminDirectoryUsers[number]): AdminRow {
   }
 }
 
+const adminUserStatusByLabel: Record<typeof adminDirectoryUsers[number]['accountStatus'], AdminUserStatus> = {
+  '正常': 'active',
+  '已暂停': 'suspended',
+  '已封禁': 'banned',
+  '已归档': 'archived',
+}
+
+const adminUserMockStore: AdminUser[] = adminDirectoryUsers.map((item, index) => ({
+  id: item.id,
+  username: item.username,
+  displayName: item.displayName,
+  accountStatus: adminUserStatusByLabel[item.accountStatus],
+  isAdmin: item.isAdmin,
+  linuxDoBound: item.linuxdoBound,
+  trustLevel: item.trustLevel ?? undefined,
+  createdAt: item.createdAt,
+  lastActiveAt: item.lastActiveAt,
+  version: index + 1,
+}))
+const adminUserMockAuditEntries = new Map<string, AdminUserDetail['recentAuditEntries']>()
+
+function mockAdminUserSummary() {
+  return {
+    totalUsers: adminUserMockStore.length,
+    adminUsers: adminUserMockStore.filter(item => item.isAdmin).length,
+    linuxDoBoundUsers: adminUserMockStore.filter(item => item.linuxDoBound).length,
+    activeUsers: adminUserMockStore.filter(item => item.accountStatus === 'active').length,
+    suspendedUsers: adminUserMockStore.filter(item => item.accountStatus === 'suspended').length,
+    bannedUsers: adminUserMockStore.filter(item => item.accountStatus === 'banned').length,
+    archivedUsers: adminUserMockStore.filter(item => item.accountStatus === 'archived').length,
+  }
+}
+
+function mockAdminUserDetail(item: AdminUser): AdminUserDetail {
+  return {
+    user: clone(item),
+    updatedAt: item.createdAt,
+    linuxDoBinding: {
+      bound: item.linuxDoBound,
+      username: item.linuxDoBound ? item.username : undefined,
+      trustLevel: item.trustLevel,
+    },
+    emailVerified: item.linuxDoBound,
+    backupPasswordConfigured: true,
+    providers: item.linuxDoBound ? [{ provider: 'linux.do', createdAt: item.createdAt }] : [],
+    sessions: {
+      activeCount: item.accountStatus === 'active' ? 1 : 0,
+      latestActivityAt: item.lastActiveAt ?? undefined,
+    },
+    recentAuditEntries: clone(adminUserMockAuditEntries.get(item.id) ?? []),
+  }
+}
+
+export async function getAdminUserDirectory(query: AdminUserDirectoryQuery): Promise<AdminUserList> {
+  if (shouldUseRealBackend()) return backendAdminUserDirectory(query)
+  await wait()
+  const keyword = query.search.trim().toLowerCase()
+  const filtered = adminUserMockStore.filter(item => {
+    const matchesSearch = !keyword || `${item.username} ${item.displayName}`.toLowerCase().includes(keyword)
+    const matchesStatus = query.status === 'all' || item.accountStatus === query.status
+    const matchesRole = query.role === 'all' || (query.role === 'admin' ? item.isAdmin : !item.isAdmin)
+    const matchesLinuxDo = query.linuxDo === 'all' || (query.linuxDo === 'bound' ? item.linuxDoBound : !item.linuxDoBound)
+    return matchesSearch && matchesStatus && matchesRole && matchesLinuxDo
+  })
+  const items = [...filtered].sort((left, right) => {
+    if (query.sort === 'created_asc') return left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id)
+    if (query.sort === 'active_desc') return (right.lastActiveAt ?? '').localeCompare(left.lastActiveAt ?? '') || right.id.localeCompare(left.id)
+    if (query.sort === 'username_asc') return left.username.localeCompare(right.username) || left.id.localeCompare(right.id)
+    if (query.sort === 'username_desc') return right.username.localeCompare(left.username) || right.id.localeCompare(left.id)
+    return right.createdAt.localeCompare(left.createdAt) || right.id.localeCompare(left.id)
+  })
+  const totalItems = items.length
+  const start = (query.page - 1) * query.limit
+  return {
+    items: clone(items.slice(start, start + query.limit)),
+    pagination: {
+      page: query.page,
+      limit: query.limit,
+      totalItems,
+      totalPages: Math.ceil(totalItems / query.limit),
+    },
+    summary: mockAdminUserSummary(),
+  }
+}
+
+export async function getAdminUserDetail(userId: string): Promise<AdminUserDetail> {
+  if (shouldUseRealBackend()) return backendAdminUserDetail(userId)
+  await wait()
+  const item = adminUserMockStore.find(user => user.id === userId)
+  if (!item) throw new Error('用户不存在。')
+  return mockAdminUserDetail(item)
+}
+
+export async function updateAdminUserStatus(input: {
+  userId: string
+  version: number
+  status: AdminUserStatus
+  reason: string
+}): Promise<AdminUserDetail> {
+  if (shouldUseRealBackend()) return backendUpdateAdminUserStatus(input)
+  await wait()
+  const item = adminUserMockStore.find(user => user.id === input.userId)
+  if (!item) throw new Error('用户不存在。')
+  if (item.version !== input.version) throw new Error('账号信息已更新，请刷新后重试。')
+  const beforeStatus = item.accountStatus
+  item.accountStatus = input.status
+  item.version += 1
+  adminUserMockAuditEntries.set(item.id, [{
+    id: `mock-status-${item.version}`,
+    adminUserId: 'mock-admin',
+    adminUsername: '管理员',
+    action: 'user.account_status_changed',
+    reason: input.reason.trim(),
+    beforeStatus,
+    afterStatus: input.status,
+    requestId: `mock-request-${item.version}`,
+    createdAt: new Date().toISOString(),
+  }, ...(adminUserMockAuditEntries.get(item.id) ?? [])])
+  return mockAdminUserDetail(item)
+}
+
+export async function updateAdminUserPermission(input: {
+  userId: string
+  version: number
+  isAdmin: boolean
+  reason: string
+}): Promise<AdminUserDetail> {
+  if (shouldUseRealBackend()) return backendUpdateAdminUserPermission(input)
+  await wait()
+  const item = adminUserMockStore.find(user => user.id === input.userId)
+  if (!item) throw new Error('用户不存在。')
+  if (item.version !== input.version) throw new Error('账号信息已更新，请刷新后重试。')
+  const beforeIsAdmin = item.isAdmin
+  item.isAdmin = input.isAdmin
+  item.version += 1
+  adminUserMockAuditEntries.set(item.id, [{
+    id: `mock-permission-${item.version}`,
+    adminUserId: 'mock-admin',
+    adminUsername: '管理员',
+    action: 'user.admin_permission_changed',
+    reason: input.reason.trim(),
+    beforeIsAdmin,
+    afterIsAdmin: input.isAdmin,
+    requestId: `mock-request-${item.version}`,
+    createdAt: new Date().toISOString(),
+  }, ...(adminUserMockAuditEntries.get(item.id) ?? [])])
+  return mockAdminUserDetail(item)
+}
+
 export async function getAdminSectionRows(section: AdminSection): Promise<AdminRow[]> {
   await wait()
 
@@ -3163,10 +3322,6 @@ export async function getAdminSectionRows(section: AdminSection): Promise<AdminR
 
   if (shouldUseRealBackend() && section === 'feedback') {
     return backendAdminFeedbackRows()
-  }
-
-  if (shouldUseRealBackend() && section === 'users') {
-    return backendAdminUserRows()
   }
 
   if (shouldUseRealBackend() && section === 'trade-intents') {

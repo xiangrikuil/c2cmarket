@@ -1,7 +1,6 @@
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
-import { mapBackendAdminUser } from '../adminUserBackend'
 import {
   isPassiveReputationEvidence,
   publicReputationBadges,
@@ -197,19 +196,8 @@ describe('信誉页面接线', () => {
   })
 })
 
-it('管理员用户映射保留并发控制版本', () => {
-  const row = mapBackendAdminUser({
-    id: '11111111-1111-4111-8111-111111111111',
-    username: 'audit-user',
-    displayName: 'Audit User',
-    accountStatus: 'active',
-    isAdmin: false,
-    linuxDoBound: false,
-    createdAt: '2026-07-24T00:00:00Z',
-    lastActiveAt: null,
-    version: 7,
-  })
-
-  assert.equal(row.backendVersion, 7)
-  assert.equal(row.secondary.includes('undefined'), false)
+it('管理员用户信誉审计使用服务端账号版本', () => {
+  const adminUsers = source('../../pages/AdminUsersPage.vue')
+  assert.equal(adminUsers.includes(':user-version="reputationVersion"'), true)
+  assert.equal(adminUsers.includes('selectedDetail.value.user.version'), true)
 })

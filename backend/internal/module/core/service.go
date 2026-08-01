@@ -156,9 +156,10 @@ func newServiceWithEmailSender(now func() time.Time, repositories Repositories, 
 }
 
 func newServiceWithOptions(now func() time.Time, repositories Repositories, emailSender profile.EmailSender, options ServiceOptions) *Service {
+	idempotencyService := idempotencymodule.NewService(repositories.Idempotency, now)
 	s := &Service{
-		authService:        authmodule.NewServiceWithRegistrationEmailSender(repositories.Auth, now, emailSender),
-		idempotencyService: idempotencymodule.NewService(repositories.Idempotency, now),
+		authService:        authmodule.NewServiceWithRegistrationEmailSenderAndIdempotency(repositories.Auth, now, emailSender, idempotencyService),
+		idempotencyService: idempotencyService,
 		catalogService:     catalog.NewService(repositories.Catalog, now),
 		announcement:       announcement.NewService(repositories.Announcement, now),
 		notification:       notification.NewService(repositories.Notification, now),
@@ -234,8 +235,20 @@ func (s *Service) RenewSession(ctx context.Context, sessionID string) (Session, 
 	return s.authService.RenewSession(ctx, sessionID)
 }
 
-func (s *Service) AdminUsers(ctx context.Context, user User) ([]authmodule.AdminUser, *domain.AppError) {
-	return s.authService.AdminUsers(ctx, user)
+func (s *Service) AdminUsers(ctx context.Context, user User, query authmodule.AdminUserDirectoryQuery) (authmodule.AdminUserDirectory, *domain.AppError) {
+	return s.authService.AdminUsers(ctx, user, query)
+}
+
+func (s *Service) AdminUser(ctx context.Context, user User, userID string) (authmodule.AdminUserDetail, *domain.AppError) {
+	return s.authService.AdminUser(ctx, user, userID)
+}
+
+func (s *Service) UpdateAdminUserStatusWithIdempotency(ctx context.Context, user User, routeKey, key, requestHash string, input authmodule.AdminUserStatusInput, buildCompletion authmodule.AdminUserCompletionBuilder) (idempotencymodule.Completion, *domain.AppError) {
+	return s.authService.UpdateAdminUserStatusWithIdempotency(ctx, user, routeKey, key, requestHash, input, buildCompletion)
+}
+
+func (s *Service) UpdateAdminUserPermissionWithIdempotency(ctx context.Context, user User, routeKey, key, requestHash string, input authmodule.AdminUserPermissionInput, buildCompletion authmodule.AdminUserCompletionBuilder) (idempotencymodule.Completion, *domain.AppError) {
+	return s.authService.UpdateAdminUserPermissionWithIdempotency(ctx, user, routeKey, key, requestHash, input, buildCompletion)
 }
 
 func (s *Service) RefreshSessionCSRF(ctx context.Context, sessionID string) (string, *domain.AppError) {

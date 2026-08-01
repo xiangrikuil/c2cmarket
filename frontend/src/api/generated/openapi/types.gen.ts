@@ -2562,7 +2562,79 @@ export type AdminUser = {
 
 export type AdminUserList = {
     items: Array<AdminUser>;
-    nextCursor?: string | null;
+    pagination: AdminUserPagination;
+    summary: AdminUserDirectorySummary;
+};
+
+export type AdminUserPagination = {
+    page: number;
+    limit: 20 | 50 | 100;
+    totalItems: number;
+    totalPages: number;
+};
+
+export type AdminUserDirectorySummary = {
+    totalUsers: number;
+    adminUsers: number;
+    linuxDoBoundUsers: number;
+    activeUsers: number;
+    suspendedUsers: number;
+    bannedUsers: number;
+    archivedUsers: number;
+};
+
+export type AdminLinuxDoBinding = {
+    bound: boolean;
+    username?: string;
+    trustLevel?: number;
+    boundAt?: string;
+    lastSyncedAt?: string;
+};
+
+export type AdminAuthProvider = {
+    provider: string;
+    createdAt: string;
+    lastLoginAt?: string;
+};
+
+export type AdminUserSessionSummary = {
+    activeCount: number;
+    latestActivityAt?: string;
+};
+
+export type AdminAccountAuditEntry = {
+    id: string;
+    adminUserId: string;
+    adminUsername: string;
+    action: 'user.account_status_changed' | 'user.admin_permission_changed';
+    reason: string;
+    beforeStatus?: 'active' | 'suspended' | 'banned' | 'archived';
+    afterStatus?: 'active' | 'suspended' | 'banned' | 'archived';
+    beforeIsAdmin?: boolean;
+    afterIsAdmin?: boolean;
+    requestId: string;
+    createdAt: string;
+};
+
+export type AdminUserDetail = {
+    user: AdminUser;
+    updatedAt: string;
+    linuxDoBinding: AdminLinuxDoBinding;
+    emailVerified: boolean;
+    backupPasswordConfigured: boolean;
+    providers: Array<AdminAuthProvider>;
+    sessions: AdminUserSessionSummary;
+    recentAuditEntries: Array<AdminAccountAuditEntry>;
+};
+
+export type AdminUserStatusRequest = {
+    status: 'active' | 'suspended' | 'banned' | 'archived';
+    reason: string;
+};
+
+export type AdminUserPermissionRequest = {
+    isAdmin: boolean;
+    reason: string;
 };
 
 export type AdminReportMutation = {
@@ -2877,6 +2949,16 @@ export type Limit = number;
  * Opaque pagination cursor returned as nextCursor. Clients must pass it back unchanged and must not inspect its internal encoding.
  */
 export type Cursor = string;
+
+/**
+ * One-based administrator user-directory page number.
+ */
+export type AdminUserPage = number;
+
+/**
+ * Administrator user-directory page size.
+ */
+export type AdminUserLimit = 20 | 50 | 100;
 
 export type FavoriteTargetType = 'carpool' | 'api_service' | 'api-service';
 
@@ -8475,7 +8557,21 @@ export type ListAdminApiOrdersResponse = ListAdminApiOrdersResponses[keyof ListA
 export type ListAdminUsersData = {
     body?: never;
     path?: never;
-    query?: never;
+    query?: {
+        /**
+         * One-based administrator user-directory page number.
+         */
+        page?: number;
+        /**
+         * Administrator user-directory page size.
+         */
+        limit?: 20 | 50 | 100;
+        search?: string;
+        status?: 'all' | 'active' | 'suspended' | 'banned' | 'archived';
+        role?: 'all' | 'admin' | 'user';
+        linuxDo?: 'all' | 'bound' | 'unbound';
+        sort?: 'created_desc' | 'created_asc' | 'active_desc' | 'username_asc' | 'username_desc';
+    };
     url: '/api/v1/admin/users';
 };
 
@@ -8484,18 +8580,159 @@ export type ListAdminUsersErrors = {
      * Problem Details error.
      */
     403: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    422: ProblemDetails;
 };
 
 export type ListAdminUsersError = ListAdminUsersErrors[keyof ListAdminUsersErrors];
 
 export type ListAdminUsersResponses = {
     /**
-     * Full administrator account directory without credentials, contact values, or report content.
+     * Bounded administrator account directory with authoritative filtered pagination and global summary values.
      */
     200: AdminUserList;
 };
 
 export type ListAdminUsersResponse = ListAdminUsersResponses[keyof ListAdminUsersResponses];
+
+export type GetAdminUserData = {
+    body?: never;
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/api/v1/admin/users/{id}';
+};
+
+export type GetAdminUserErrors = {
+    /**
+     * Problem Details error.
+     */
+    403: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    404: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    422: ProblemDetails;
+};
+
+export type GetAdminUserError = GetAdminUserErrors[keyof GetAdminUserErrors];
+
+export type GetAdminUserResponses = {
+    /**
+     * Administrator-safe account facts without contact values, credentials, provider subjects, or raw session data.
+     */
+    200: AdminUserDetail;
+};
+
+export type GetAdminUserResponse = GetAdminUserResponses[keyof GetAdminUserResponses];
+
+export type UpdateAdminUserStatusData = {
+    body: AdminUserStatusRequest;
+    headers: {
+        'If-Match': string;
+        'Idempotency-Key': string;
+    };
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/api/v1/admin/users/{id}/status';
+};
+
+export type UpdateAdminUserStatusErrors = {
+    /**
+     * Problem Details error.
+     */
+    403: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    404: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    409: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    412: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    422: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    428: ProblemDetails;
+};
+
+export type UpdateAdminUserStatusError = UpdateAdminUserStatusErrors[keyof UpdateAdminUserStatusErrors];
+
+export type UpdateAdminUserStatusResponses = {
+    /**
+     * Refreshed administrator-safe account detail after the status change.
+     */
+    200: AdminUserDetail;
+};
+
+export type UpdateAdminUserStatusResponse = UpdateAdminUserStatusResponses[keyof UpdateAdminUserStatusResponses];
+
+export type UpdateAdminUserPermissionData = {
+    body: AdminUserPermissionRequest;
+    headers: {
+        'If-Match': string;
+        'Idempotency-Key': string;
+    };
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/api/v1/admin/users/{id}/admin-permission';
+};
+
+export type UpdateAdminUserPermissionErrors = {
+    /**
+     * Problem Details error.
+     */
+    403: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    404: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    409: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    412: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    422: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    428: ProblemDetails;
+};
+
+export type UpdateAdminUserPermissionError = UpdateAdminUserPermissionErrors[keyof UpdateAdminUserPermissionErrors];
+
+export type UpdateAdminUserPermissionResponses = {
+    /**
+     * Refreshed administrator-safe account detail after the administrator-permission change.
+     */
+    200: AdminUserDetail;
+};
+
+export type UpdateAdminUserPermissionResponse = UpdateAdminUserPermissionResponses[keyof UpdateAdminUserPermissionResponses];
 
 export type ListAdminReportsData = {
     body?: never;
