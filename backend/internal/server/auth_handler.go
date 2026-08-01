@@ -148,12 +148,17 @@ func (s *Server) handleAdminUsers(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, r, appErr)
 		return
 	}
-	items, appErr := s.app.AdminUsers(r.Context(), user)
+	query, appErr := parseAdminUserDirectoryQuery(r)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
 	}
-	writeJSON(w, http.StatusOK, listResponse[adminUserResponse]{Items: toAdminUserResponses(items)})
+	directory, appErr := s.adminUsers.AdminUsers(r.Context(), user, query)
+	if appErr != nil {
+		writeProblem(w, r, appErr)
+		return
+	}
+	writeJSON(w, http.StatusOK, toAdminUserDirectoryResponse(directory))
 }
 
 func (s *Server) handlePasswordLogin(w http.ResponseWriter, r *http.Request) {
@@ -342,20 +347,14 @@ func toUserDTO(user auth.User) userDTO {
 func toAdminUserResponses(items []auth.AdminUser) []adminUserResponse {
 	result := make([]adminUserResponse, 0, len(items))
 	for _, item := range items {
-		linuxDoBound := item.LinuxDoBinding != nil && item.LinuxDoBinding.Bound
-		trustLevel := (*int)(nil)
-		if linuxDoBound {
-			value := item.LinuxDoBinding.TrustLevel
-			trustLevel = &value
-		}
 		result = append(result, adminUserResponse{
 			ID:            item.ID,
 			Username:      item.Username,
 			DisplayName:   item.DisplayName,
 			AccountStatus: item.Status,
 			IsAdmin:       item.IsAdmin,
-			LinuxDoBound:  linuxDoBound,
-			TrustLevel:    trustLevel,
+			LinuxDoBound:  item.LinuxDoBound,
+			TrustLevel:    item.TrustLevel,
 			CreatedAt:     item.CreatedAt.UTC().Format(time.RFC3339),
 			LastActiveAt:  formatOptionalTime(item.LastActiveAt),
 			Version:       item.Version,

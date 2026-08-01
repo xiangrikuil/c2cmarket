@@ -4342,14 +4342,156 @@ paths:
     get:
       operationId: listAdminUsers
       tags: [AdminUsers]
+      parameters:
+        - $ref: "#/components/parameters/AdminUserPage"
+        - $ref: "#/components/parameters/AdminUserLimit"
+        - name: search
+          in: query
+          required: false
+          schema:
+            type: string
+            maxLength: 100
+        - name: status
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [all, active, suspended, banned, archived]
+            default: all
+        - name: role
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [all, admin, user]
+            default: all
+        - name: linuxDo
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [all, bound, unbound]
+            default: all
+        - name: sort
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [created_desc, created_asc, active_desc, username_asc, username_desc]
+            default: created_desc
       responses:
         "200":
-          description: Full administrator account directory without credentials, contact values, or report content.
+          description: Bounded administrator account directory with authoritative filtered pagination and global summary values.
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/AdminUserList"
         "403":
+          $ref: "#/components/responses/Problem"
+        "422":
+          $ref: "#/components/responses/Problem"
+  /api/v1/admin/users/{id}:
+    get:
+      operationId: getAdminUser
+      tags: [AdminUsers]
+      parameters:
+        - $ref: "#/components/parameters/ResourceId"
+      responses:
+        "200":
+          description: Administrator-safe account facts without contact values, credentials, provider subjects, or raw session data.
+          headers:
+            ETag:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminUserDetail"
+        "403":
+          $ref: "#/components/responses/Problem"
+        "404":
+          $ref: "#/components/responses/Problem"
+        "422":
+          $ref: "#/components/responses/Problem"
+  /api/v1/admin/users/{id}/status:
+    post:
+      operationId: updateAdminUserStatus
+      tags: [AdminUsers]
+      security:
+        - sessionCookie: []
+          csrfToken: []
+      parameters:
+        - $ref: "#/components/parameters/ResourceId"
+        - $ref: "#/components/parameters/IfMatch"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AdminUserStatusRequest"
+      responses:
+        "200":
+          description: Refreshed administrator-safe account detail after the status change.
+          headers:
+            ETag:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminUserDetail"
+        "403":
+          $ref: "#/components/responses/Problem"
+        "404":
+          $ref: "#/components/responses/Problem"
+        "409":
+          $ref: "#/components/responses/Problem"
+        "412":
+          $ref: "#/components/responses/Problem"
+        "422":
+          $ref: "#/components/responses/Problem"
+        "428":
+          $ref: "#/components/responses/Problem"
+  /api/v1/admin/users/{id}/admin-permission:
+    post:
+      operationId: updateAdminUserPermission
+      tags: [AdminUsers]
+      security:
+        - sessionCookie: []
+          csrfToken: []
+      parameters:
+        - $ref: "#/components/parameters/ResourceId"
+        - $ref: "#/components/parameters/IfMatch"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AdminUserPermissionRequest"
+      responses:
+        "200":
+          description: Refreshed administrator-safe account detail after the administrator-permission change.
+          headers:
+            ETag:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminUserDetail"
+        "403":
+          $ref: "#/components/responses/Problem"
+        "404":
+          $ref: "#/components/responses/Problem"
+        "409":
+          $ref: "#/components/responses/Problem"
+        "412":
+          $ref: "#/components/responses/Problem"
+        "422":
+          $ref: "#/components/responses/Problem"
+        "428":
           $ref: "#/components/responses/Problem"
   /api/v1/admin/reports:
     get:
@@ -6347,6 +6489,24 @@ components:
       description: Opaque pagination cursor returned as nextCursor. Clients must pass it back unchanged and must not inspect its internal encoding.
       schema:
         type: string
+    AdminUserPage:
+      name: page
+      in: query
+      required: false
+      description: One-based administrator user-directory page number.
+      schema:
+        type: integer
+        minimum: 1
+        default: 1
+    AdminUserLimit:
+      name: limit
+      in: query
+      required: false
+      description: Administrator user-directory page size.
+      schema:
+        type: integer
+        enum: [20, 50, 100]
+        default: 20
     FavoriteTargetType:
       name: targetType
       in: path
@@ -11873,14 +12033,175 @@ components:
           type: integer
     AdminUserList:
       type: object
-      required: [items]
+      required: [items, pagination, summary]
       properties:
         items:
           type: array
           items:
             $ref: "#/components/schemas/AdminUser"
-        nextCursor:
-          type: [string, "null"]
+        pagination:
+          $ref: "#/components/schemas/AdminUserPagination"
+        summary:
+          $ref: "#/components/schemas/AdminUserDirectorySummary"
+    AdminUserPagination:
+      type: object
+      required: [page, limit, totalItems, totalPages]
+      properties:
+        page:
+          type: integer
+          minimum: 1
+        limit:
+          type: integer
+          enum: [20, 50, 100]
+        totalItems:
+          type: integer
+          minimum: 0
+        totalPages:
+          type: integer
+          minimum: 0
+    AdminUserDirectorySummary:
+      type: object
+      required: [totalUsers, adminUsers, linuxDoBoundUsers, activeUsers, suspendedUsers, bannedUsers, archivedUsers]
+      properties:
+        totalUsers:
+          type: integer
+          minimum: 0
+        adminUsers:
+          type: integer
+          minimum: 0
+        linuxDoBoundUsers:
+          type: integer
+          minimum: 0
+        activeUsers:
+          type: integer
+          minimum: 0
+        suspendedUsers:
+          type: integer
+          minimum: 0
+        bannedUsers:
+          type: integer
+          minimum: 0
+        archivedUsers:
+          type: integer
+          minimum: 0
+    AdminLinuxDoBinding:
+      type: object
+      required: [bound]
+      properties:
+        bound:
+          type: boolean
+        username:
+          type: string
+        trustLevel:
+          type: integer
+        boundAt:
+          type: string
+          format: date-time
+        lastSyncedAt:
+          type: string
+          format: date-time
+    AdminAuthProvider:
+      type: object
+      required: [provider, createdAt]
+      properties:
+        provider:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+        lastLoginAt:
+          type: string
+          format: date-time
+    AdminUserSessionSummary:
+      type: object
+      required: [activeCount]
+      properties:
+        activeCount:
+          type: integer
+          minimum: 0
+        latestActivityAt:
+          type: string
+          format: date-time
+    AdminAccountAuditEntry:
+      type: object
+      required: [id, adminUserId, adminUsername, action, reason, requestId, createdAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        adminUserId:
+          type: string
+          format: uuid
+        adminUsername:
+          type: string
+        action:
+          type: string
+          enum: [user.account_status_changed, user.admin_permission_changed]
+        reason:
+          type: string
+        beforeStatus:
+          type: string
+          enum: [active, suspended, banned, archived]
+        afterStatus:
+          type: string
+          enum: [active, suspended, banned, archived]
+        beforeIsAdmin:
+          type: boolean
+        afterIsAdmin:
+          type: boolean
+        requestId:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+    AdminUserDetail:
+      type: object
+      required: [user, updatedAt, linuxDoBinding, emailVerified, backupPasswordConfigured, providers, sessions, recentAuditEntries]
+      properties:
+        user:
+          $ref: "#/components/schemas/AdminUser"
+        updatedAt:
+          type: string
+          format: date-time
+        linuxDoBinding:
+          $ref: "#/components/schemas/AdminLinuxDoBinding"
+        emailVerified:
+          type: boolean
+        backupPasswordConfigured:
+          type: boolean
+        providers:
+          type: array
+          items:
+            $ref: "#/components/schemas/AdminAuthProvider"
+        sessions:
+          $ref: "#/components/schemas/AdminUserSessionSummary"
+        recentAuditEntries:
+          type: array
+          items:
+            $ref: "#/components/schemas/AdminAccountAuditEntry"
+    AdminUserStatusRequest:
+      type: object
+      additionalProperties: false
+      required: [status, reason]
+      properties:
+        status:
+          type: string
+          enum: [active, suspended, banned, archived]
+        reason:
+          type: string
+          minLength: 1
+          maxLength: 500
+    AdminUserPermissionRequest:
+      type: object
+      additionalProperties: false
+      required: [isAdmin, reason]
+      properties:
+        isAdmin:
+          type: boolean
+        reason:
+          type: string
+          minLength: 1
+          maxLength: 500
     AdminReportMutation:
       type: object
       properties:

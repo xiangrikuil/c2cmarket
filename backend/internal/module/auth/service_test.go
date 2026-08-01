@@ -2,12 +2,14 @@ package auth
 
 import (
 	"context"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"c2c-market/backend/internal/domain"
+	"c2c-market/backend/internal/module/idempotency"
 )
 
 type fakeAuthRepository struct {
@@ -16,6 +18,7 @@ type fakeAuthRepository struct {
 	credential  PasswordCredential
 	session     Session
 	adminUsers  []AdminUser
+	adminDetail AdminUserDetail
 
 	ensureUserCalls                  int
 	createEmailRegistrationCodeCalls int
@@ -53,8 +56,32 @@ func (f *fakeAuthRepository) UserByID(_ context.Context, userID string) (User, *
 	return User{}, domain.NewError(401, domain.CodeSessionExpired, "Session required", "请先登录。")
 }
 
-func (f *fakeAuthRepository) ListAdminUsers(context.Context) ([]AdminUser, *domain.AppError) {
-	return f.adminUsers, nil
+func (f *fakeAuthRepository) ListAdminUsers(_ context.Context, query AdminUserDirectoryQuery) (AdminUserDirectory, *domain.AppError) {
+	return AdminUserDirectory{
+		Items: f.adminUsers,
+		Pagination: AdminUserPagination{
+			Page:       query.Page,
+			Limit:      query.Limit,
+			TotalItems: len(f.adminUsers),
+			TotalPages: 1,
+		},
+	}, nil
+}
+
+func (f *fakeAuthRepository) AdminUserDetail(context.Context, string) (AdminUserDetail, *domain.AppError) {
+	return f.adminDetail, nil
+}
+
+func (f *fakeAuthRepository) UpdateAdminUserStatusWithIdempotency(_ context.Context, _ idempotency.Entry, _ AdminUserStatusInput, _ time.Time, buildCompletion AdminUserCompletionBuilder) (AdminUserMutationResult, idempotency.Completion, *domain.AppError) {
+	result := AdminUserMutationResult{Detail: f.adminDetail}
+	completion, appErr := buildCompletion(result)
+	return result, completion, appErr
+}
+
+func (f *fakeAuthRepository) UpdateAdminUserPermissionWithIdempotency(_ context.Context, _ idempotency.Entry, _ AdminUserPermissionInput, _ time.Time, buildCompletion AdminUserCompletionBuilder) (AdminUserMutationResult, idempotency.Completion, *domain.AppError) {
+	result := AdminUserMutationResult{Detail: f.adminDetail}
+	completion, appErr := buildCompletion(result)
+	return result, completion, appErr
 }
 
 func (f *fakeAuthRepository) PasswordCredential(_ context.Context, username string) (PasswordCredential, *domain.AppError) {
@@ -164,6 +191,172 @@ func legacyCredentialForTest(user User, password string) PasswordCredential {
 		Algorithm: PasswordAlgorithmSHA256SaltedV1,
 		Salt:      salt,
 		Hash:      legacyPasswordHash(salt, password),
+	}
+}
+
+func adminUserCompletionForTest(result AdminUserMutationResult) (idempotency.Completion, *domain.AppError) {
+	return idempotency.Completion{
+		Status:       200,
+		ContentType:  "application/json",
+		Body:         []byte(`{"id":"` + result.Detail.User.ID + `","version":` + strconv.FormatInt(result.Detail.User.Version, 10) + `}`),
+		ResourceType: "user",
+		ResourceID:   result.Detail.User.ID,
+	}, nil
+}
+
+func TestAdminUserDirectoryUsesBoundedFilteredPagesAndGlobalSummary(t *testing.T) {
+	now := time.Date(2026, 8, 1, 8, 0, 0, 0, time.UTC)
+	service := NewService(nil, func() time.Time { return now })
+	admin, _, appErr := service.CreateDevSession(context.Background(), "directory-admin", true)
+	if appErr != nil {
+		t.Fatalf("create admin: %v", appErr)
+	}
+	for index := 0; index < 25; index++ {
+		username := "member-" + string(rune('a'+index))
+		if _, _, appErr := service.CreateDevSession(context.Background(), username, false); appErr != nil {
+			t.Fatalf("create member %d: %v", index, appErr)
+		}
+	}
+
+	directory, appErr := service.AdminUsers(context.Background(), admin, AdminUserDirectoryQuery{
+		Page:  2,
+		Limit: 20,
+		Role:  AdminUserRoleUser,
+		Sort:  AdminUserSortUsernameAsc,
+	})
+	if appErr != nil {
+		t.Fatalf("list directory: %v", appErr)
+	}
+	if len(directory.Items) != 5 || directory.Pagination.TotalItems != 25 || directory.Pagination.TotalPages != 2 {
+		t.Fatalf("unexpected bounded page: %+v", directory)
+	}
+	if directory.Summary.TotalUsers != 26 || directory.Summary.AdminUsers != 1 || directory.Summary.ActiveUsers != 26 {
+		t.Fatalf("unexpected global summary: %+v", directory.Summary)
+	}
+	if directory.Items[0].Username != "member-u" {
+		t.Fatalf("unexpected page ordering: %+v", directory.Items)
+	}
+
+	filtered, appErr := service.AdminUsers(context.Background(), admin, AdminUserDirectoryQuery{
+		Page:   1,
+		Limit:  20,
+		Search: "MEMBER-A",
+	})
+	if appErr != nil {
+		t.Fatalf("filter directory: %v", appErr)
+	}
+	if filtered.Pagination.TotalItems != 1 || len(filtered.Items) != 1 || filtered.Items[0].Username != "member-a" {
+		t.Fatalf("unexpected filtered page: %+v", filtered)
+	}
+
+	emptyPage, appErr := service.AdminUsers(context.Background(), admin, AdminUserDirectoryQuery{Page: 99, Limit: 20})
+	if appErr != nil {
+		t.Fatalf("list stale page: %v", appErr)
+	}
+	if len(emptyPage.Items) != 0 || emptyPage.Pagination.TotalItems != 26 || emptyPage.Pagination.TotalPages != 2 {
+		t.Fatalf("unexpected stale page metadata: %+v", emptyPage)
+	}
+}
+
+func TestAdminUserDirectoryRejectsInvalidQueryAndNonAdmin(t *testing.T) {
+	service := NewService(nil, time.Now)
+	admin, _, _ := service.CreateDevSession(context.Background(), "query-admin", true)
+	member, _, _ := service.CreateDevSession(context.Background(), "query-member", false)
+	if _, appErr := service.AdminUsers(context.Background(), member, AdminUserDirectoryQuery{}); appErr == nil || appErr.Code != domain.CodePermissionDenied {
+		t.Fatalf("expected permission denial, got %v", appErr)
+	}
+	if _, appErr := service.AdminUsers(context.Background(), admin, AdminUserDirectoryQuery{Page: -1}); appErr == nil || appErr.Code != domain.CodeValidationFailed {
+		t.Fatalf("expected page validation error, got %v", appErr)
+	}
+	if _, appErr := service.AdminUsers(context.Background(), admin, AdminUserDirectoryQuery{Limit: 10}); appErr == nil || appErr.Code != domain.CodeValidationFailed {
+		t.Fatalf("expected limit validation error, got %v", appErr)
+	}
+}
+
+func TestAdminUserStatusMutationRevokesSessionsAndReplaysIdempotently(t *testing.T) {
+	now := time.Date(2026, 8, 1, 9, 0, 0, 0, time.UTC)
+	service := NewService(nil, func() time.Time { return now })
+	admin, _, _ := service.CreateDevSession(context.Background(), "status-admin", true)
+	member, memberSession, _ := service.CreateDevSession(context.Background(), "status-member", false)
+	detail, appErr := service.AdminUser(context.Background(), admin, member.ID)
+	if appErr != nil {
+		t.Fatalf("get detail: %v", appErr)
+	}
+	completion, appErr := service.UpdateAdminUserStatusWithIdempotency(
+		context.Background(),
+		admin,
+		"POST /api/v1/admin/users/{id}/status",
+		"status-key",
+		"status-hash",
+		AdminUserStatusInput{TargetUserID: member.ID, Status: AccountStatusSuspended, ExpectedVersion: detail.User.Version, Reason: "异常登录核查", RequestID: "request-1"},
+		adminUserCompletionForTest,
+	)
+	if appErr != nil || completion.Status != 200 {
+		t.Fatalf("suspend member: completion=%+v err=%v", completion, appErr)
+	}
+	updated, appErr := service.AdminUser(context.Background(), admin, member.ID)
+	if appErr != nil || updated.User.Status != AccountStatusSuspended || updated.User.Version != 2 || updated.ActiveSessionCount != 0 {
+		t.Fatalf("unexpected updated detail: %+v err=%v", updated, appErr)
+	}
+	if len(updated.RecentAuditEntries) != 1 || updated.RecentAuditEntries[0].Reason != "异常登录核查" {
+		t.Fatalf("missing safe audit entry: %+v", updated.RecentAuditEntries)
+	}
+	if _, _, appErr := service.GetSession(context.Background(), memberSession.ID); appErr == nil || appErr.Code != domain.CodeSessionRevoked {
+		t.Fatalf("expected revoked session, got %v", appErr)
+	}
+	replay, appErr := service.UpdateAdminUserStatusWithIdempotency(
+		context.Background(), admin, "POST /api/v1/admin/users/{id}/status", "status-key", "status-hash",
+		AdminUserStatusInput{TargetUserID: member.ID, Status: AccountStatusSuspended, ExpectedVersion: detail.User.Version, Reason: "异常登录核查", RequestID: "request-1"},
+		adminUserCompletionForTest,
+	)
+	if appErr != nil || string(replay.Body) != string(completion.Body) {
+		t.Fatalf("unexpected replay: completion=%+v err=%v", replay, appErr)
+	}
+	replayedDetail, _ := service.AdminUser(context.Background(), admin, member.ID)
+	if replayedDetail.User.Version != 2 || len(replayedDetail.RecentAuditEntries) != 1 {
+		t.Fatalf("replay must not repeat mutation: %+v", replayedDetail)
+	}
+}
+
+func TestAdminUserGovernanceRejectsSelfInvalidTransitionAndStaleVersion(t *testing.T) {
+	service := NewService(nil, time.Now)
+	admin, _, _ := service.CreateDevSession(context.Background(), "guard-admin", true)
+	member, _, _ := service.CreateDevSession(context.Background(), "guard-member", false)
+	if _, appErr := service.UpdateAdminUserStatusWithIdempotency(
+		context.Background(), admin, "status", "self-key", "self-hash",
+		AdminUserStatusInput{TargetUserID: admin.ID, Status: AccountStatusSuspended, ExpectedVersion: 1, Reason: "自操作"}, adminUserCompletionForTest,
+	); appErr == nil || appErr.Code != domain.CodePermissionDenied {
+		t.Fatalf("expected self-target denial, got %v", appErr)
+	}
+	if _, appErr := service.UpdateAdminUserStatusWithIdempotency(
+		context.Background(), admin, "status", "noop-key", "noop-hash",
+		AdminUserStatusInput{TargetUserID: member.ID, Status: AccountStatusActive, ExpectedVersion: 1, Reason: "无效变更"}, adminUserCompletionForTest,
+	); appErr == nil || appErr.Code != domain.CodeInvalidStateTransition {
+		t.Fatalf("expected invalid transition, got %v", appErr)
+	}
+	if _, appErr := service.UpdateAdminUserPermissionWithIdempotency(
+		context.Background(), admin, "permission", "stale-key", "stale-hash",
+		AdminUserPermissionInput{TargetUserID: member.ID, Grant: true, ExpectedVersion: 2, Reason: "授予值班权限"}, adminUserCompletionForTest,
+	); appErr == nil || appErr.Code != domain.CodeVersionConflict {
+		t.Fatalf("expected stale version, got %v", appErr)
+	}
+}
+
+func TestAdminUserPermissionMutationProtectsLastActiveAdministrator(t *testing.T) {
+	service := NewService(nil, time.Now)
+	admin, _, _ := service.CreateDevSession(context.Background(), "permission-admin", true)
+	secondAdmin, _, _ := service.CreateDevSession(context.Background(), "permission-second", true)
+	if _, appErr := service.UpdateAdminUserPermissionWithIdempotency(
+		context.Background(), admin, "permission", "demote-key", "demote-hash",
+		AdminUserPermissionInput{TargetUserID: secondAdmin.ID, Grant: false, ExpectedVersion: 1, Reason: "结束值班"}, adminUserCompletionForTest,
+	); appErr != nil {
+		t.Fatalf("demote second admin: %v", appErr)
+	}
+	if _, appErr := service.UpdateAdminUserStatusWithIdempotency(
+		context.Background(), User{ID: secondAdmin.ID, IsAdmin: true}, "status", "last-key", "last-hash",
+		AdminUserStatusInput{TargetUserID: admin.ID, Status: AccountStatusArchived, ExpectedVersion: 1, Reason: "归档旧账号"}, adminUserCompletionForTest,
+	); appErr == nil || appErr.Code != domain.CodeInvalidStateTransition {
+		t.Fatalf("expected last-admin protection, got %v", appErr)
 	}
 }
 

@@ -1,6 +1,32 @@
 package auth
 
-import "time"
+import (
+	"time"
+
+	"c2c-market/backend/internal/domain"
+	"c2c-market/backend/internal/module/idempotency"
+)
+
+const (
+	AccountStatusActive    = "active"
+	AccountStatusSuspended = "suspended"
+	AccountStatusBanned    = "banned"
+	AccountStatusArchived  = "archived"
+
+	AdminUserStatusAll      = "all"
+	AdminUserRoleAll        = "all"
+	AdminUserRoleAdmin      = "admin"
+	AdminUserRoleUser       = "user"
+	AdminUserLinuxDoAll     = "all"
+	AdminUserLinuxDoBound   = "bound"
+	AdminUserLinuxDoUnbound = "unbound"
+
+	AdminUserSortCreatedDesc  = "created_desc"
+	AdminUserSortCreatedAsc   = "created_asc"
+	AdminUserSortActiveDesc   = "active_desc"
+	AdminUserSortUsernameAsc  = "username_asc"
+	AdminUserSortUsernameDesc = "username_desc"
+)
 
 type User struct {
 	ID             string
@@ -12,16 +38,114 @@ type User struct {
 }
 
 type AdminUser struct {
-	ID             string
-	Username       string
-	DisplayName    string
-	IsAdmin        bool
-	Status         string
-	LinuxDoBinding *LinuxDoBinding
-	CreatedAt      time.Time
-	LastActiveAt   *time.Time
-	Version        int64
+	ID           string
+	Username     string
+	DisplayName  string
+	IsAdmin      bool
+	Status       string
+	LinuxDoBound bool
+	TrustLevel   *int
+	CreatedAt    time.Time
+	UpdatedAt    time.Time
+	LastActiveAt *time.Time
+	Version      int64
 }
+
+type AdminUserDirectoryQuery struct {
+	Page    int
+	Limit   int
+	Search  string
+	Status  string
+	Role    string
+	LinuxDo string
+	Sort    string
+}
+
+type AdminUserPagination struct {
+	Page       int
+	Limit      int
+	TotalItems int
+	TotalPages int
+}
+
+type AdminUserDirectorySummary struct {
+	TotalUsers        int
+	AdminUsers        int
+	LinuxDoBoundUsers int
+	ActiveUsers       int
+	SuspendedUsers    int
+	BannedUsers       int
+	ArchivedUsers     int
+}
+
+type AdminUserDirectory struct {
+	Items      []AdminUser
+	Pagination AdminUserPagination
+	Summary    AdminUserDirectorySummary
+}
+
+type AdminLinuxDoBinding struct {
+	Bound        bool
+	Username     string
+	TrustLevel   int
+	BoundAt      *time.Time
+	LastSyncedAt *time.Time
+}
+
+type AdminAuthProvider struct {
+	Provider    string
+	CreatedAt   time.Time
+	LastLoginAt *time.Time
+}
+
+type AdminAccountAuditEntry struct {
+	ID            string
+	AdminUserID   string
+	AdminUsername string
+	Action        string
+	Reason        string
+	BeforeStatus  string
+	AfterStatus   string
+	BeforeIsAdmin *bool
+	AfterIsAdmin  *bool
+	RequestID     string
+	CreatedAt     time.Time
+}
+
+type AdminUserDetail struct {
+	User                     AdminUser
+	LinuxDoBinding           AdminLinuxDoBinding
+	EmailVerified            bool
+	BackupPasswordConfigured bool
+	Providers                []AdminAuthProvider
+	ActiveSessionCount       int
+	LatestSessionActivityAt  *time.Time
+	RecentAuditEntries       []AdminAccountAuditEntry
+}
+
+type AdminUserStatusInput struct {
+	TargetUserID    string
+	AdminUserID     string
+	Status          string
+	ExpectedVersion int64
+	Reason          string
+	RequestID       string
+}
+
+type AdminUserPermissionInput struct {
+	TargetUserID    string
+	AdminUserID     string
+	Grant           bool
+	ExpectedVersion int64
+	Reason          string
+	RequestID       string
+}
+
+type AdminUserMutationResult struct {
+	Detail AdminUserDetail
+}
+
+type AdminUserCompletionBuilder func(AdminUserMutationResult) (idempotency.Completion, *domain.AppError)
 
 type Session struct {
 	ID                string

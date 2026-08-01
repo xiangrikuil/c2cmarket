@@ -79,13 +79,19 @@ type APIPaymentSettingsService interface {
 	UpdateAPIAccountPaymentSettings(ctx context.Context, user auth.User, input apimarket.UpdateAccountPaymentSettingsInput) (apimarket.AccountPaymentSettings, *domain.AppError)
 }
 
+type AdminUserService interface {
+	AdminUsers(ctx context.Context, user auth.User, query auth.AdminUserDirectoryQuery) (auth.AdminUserDirectory, *domain.AppError)
+	AdminUser(ctx context.Context, user auth.User, userID string) (auth.AdminUserDetail, *domain.AppError)
+	UpdateAdminUserStatusWithIdempotency(ctx context.Context, user auth.User, routeKey, key, requestHash string, input auth.AdminUserStatusInput, buildCompletion auth.AdminUserCompletionBuilder) (idempotency.Completion, *domain.AppError)
+	UpdateAdminUserPermissionWithIdempotency(ctx context.Context, user auth.User, routeKey, key, requestHash string, input auth.AdminUserPermissionInput, buildCompletion auth.AdminUserCompletionBuilder) (idempotency.Completion, *domain.AppError)
+}
+
 // Service is the legacy application facade for handlers that have not yet been
 // moved to domain-specific server dependencies.
 type Service interface {
 	CreateDevSession(ctx context.Context, username string, isAdmin bool) (auth.User, auth.Session, *domain.AppError)
 	LoginWithOAuthProfile(ctx context.Context, profile auth.OAuthProfile) (auth.User, auth.Session, *domain.AppError)
 	LoginWithPassword(ctx context.Context, username, password string) (auth.User, auth.Session, *domain.AppError)
-	AdminUsers(ctx context.Context, user auth.User) ([]auth.AdminUser, *domain.AppError)
 	StartEmailRegistration(ctx context.Context, input auth.EmailRegistrationStartInput) (auth.EmailRegistrationChallenge, *domain.AppError)
 	ConfirmEmailRegistration(ctx context.Context, input auth.EmailRegistrationConfirmInput) (auth.User, auth.Session, *domain.AppError)
 	SetPassword(ctx context.Context, input auth.SetPasswordInput) *domain.AppError
@@ -339,6 +345,7 @@ type ApplicationService interface {
 	CarpoolService
 	APIQuotaService
 	APIPaymentSettingsService
+	AdminUserService
 	ReputationGovernanceService
 }
 
@@ -347,6 +354,7 @@ type Server struct {
 	carpools         CarpoolService
 	apiQuotas        APIQuotaService
 	apiPayment       APIPaymentSettingsService
+	adminUsers       AdminUserService
 	reputation       ReputationGovernanceService
 	mux              chi.Router
 	enableDevAuth    bool
@@ -394,6 +402,7 @@ func NewServer(service ApplicationService, options ...ServerOptions) http.Handle
 		carpools:         service,
 		apiQuotas:        service,
 		apiPayment:       service,
+		adminUsers:       service,
 		reputation:       service,
 		mux:              chi.NewRouter(),
 		enableDevAuth:    option.EnableDevAuth,
