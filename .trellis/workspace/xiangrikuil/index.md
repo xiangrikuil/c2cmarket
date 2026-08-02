@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 30
-- **Last Active**: 2026-08-02
+- **Total Sessions**: 31
+- **Last Active**: 2026-08-03
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~1133 | Active |
+| `journal-1.md` | ~1155 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 31 | 2026-08-03 | Fix Nuxt development first-page latency | `37a7d25` | `codex/orders-promotions-integrated` |
 | 30 | 2026-08-02 | 整合 API 订单与推广分支 | `5586e81`, `29e1d4d`, `07af546` | `codex/orders-promotions-integrated` |
 | 29 | 2026-08-02 | API 订单角色视图与 24 小时核验期 | `a527105` | `codex/api-order-role-aware-detail` |
 | 28 | 2026-08-01 | SSH 与 Tailscale 私网部署加固 | `fdf62ee` | `codex/tailscale-private-deploy` |

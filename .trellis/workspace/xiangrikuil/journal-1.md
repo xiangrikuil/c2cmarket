@@ -1131,3 +1131,25 @@ Made real backend mode explicit for default Nuxt development on port 5173, added
 ### Status
 
 [OK] **Completed**
+
+
+## Session 31: Fix Nuxt development first-page latency
+
+**Date**: 2026-08-03
+**Task**: Fix Nuxt development first-page latency
+**Package**: frontend
+**Branch**: `codex/orders-promotions-integrated`
+
+### Summary
+
+Reduced clean development homepage TTFB from 9.83s to 3.404s, fixed query-bearing root 500s, preserved production SWR, and pushed the branch.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `37a7d25` | (see git log) |
+
+### Status
+
+[OK] **Completed**
