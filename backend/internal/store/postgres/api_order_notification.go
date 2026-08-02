@@ -57,7 +57,14 @@ func apiOrderNotificationFor(order apiorder.Order, actorUserID, eventType string
 		return apiOrderNotificationSpec{
 			RecipientUserID: order.BuyerUserID,
 			Title:           "卖家已提交交付凭证",
-			Body:            "卖家已提交买家专属接入信息，请进入订单详情核对并确认完成。",
+			Body:            "卖家已提交买家专属接入信息，请在核验期内确认可用或反馈问题。",
+			TargetURL:       buyerTarget,
+		}, true
+	case apiorder.EventDeliveryReviewReminder:
+		return apiOrderNotificationSpec{
+			RecipientUserID: order.BuyerUserID,
+			Title:           "交付凭证核验即将截止",
+			Body:            "请尽快核验交付凭证；如未反馈问题，订单将在核验期结束后自动完成。",
 			TargetURL:       buyerTarget,
 		}, true
 	case apiorder.EventCompleted:
@@ -65,6 +72,13 @@ func apiOrderNotificationFor(order apiorder.Order, actorUserID, eventType string
 			RecipientUserID: order.SellerUserID,
 			Title:           "买家已确认订单完成",
 			Body:            "买家已确认交付可用，该订单已完成。",
+			TargetURL:       sellerTarget,
+		}, true
+	case apiorder.EventAutoCompleted:
+		return apiOrderNotificationSpec{
+			RecipientUserID: order.SellerUserID,
+			Title:           "订单已自动完成",
+			Body:            "买家核验期已结束且未反馈问题，该订单已由系统自动完成。",
 			TargetURL:       sellerTarget,
 		}, true
 	case apiorder.EventPaymentTimeoutCancelled:
@@ -106,8 +120,9 @@ func insertAPIOrderDomainEventAndNotificationInTx(ctx context.Context, tx pgx.Tx
 		actorKind = "system"
 	}
 	metadata, err := json.Marshal(map[string]string{
-		"status":        order.Status,
-		"disputeStatus": order.DisputeStatus,
+		"status":           order.Status,
+		"disputeStatus":    order.DisputeStatus,
+		"completionSource": order.CompletionSource,
 	})
 	if err != nil {
 		return internalStoreError()

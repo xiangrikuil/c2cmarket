@@ -2186,6 +2186,81 @@ UPDATE api_services SET available_usd_allowance = available_usd_allowance - requ
 WHERE id = service_id AND available_usd_allowance >= requested
 ```
 
+## Scenario: API Order Delivery Review And Role Projection
+
+### 1. Scope / Trigger
+
+- Trigger: API order delivery, completion, disputes, reminders, maintenance materialization, participant detail, administrator tracking, completion statistics, or review eligibility.
+- Seller fulfillment ends when the immutable credential is submitted. The order remains `delivery_submitted` during a 24-hour buyer review window and then reaches `completed` through buyer confirmation or automatic materialization.
+
+### 2. Signatures
+
+```text
+POST /api/v1/me/api-orders/{id}/confirm-complete
+POST /api/v1/me/api-orders/{id}/dispute
+POST /api/v1/owner/api-orders/{id}/submit-delivery
+GET  /api/v1/admin/api-orders/{id}
+
+APIOrder.deliveryReviewExpiresAt?: RFC3339 timestamp
+APIOrder.completionSource?: buyer_confirmed | auto_completed
+
+api_orders.delivery_review_expires_at timestamptz
+api_orders.delivery_review_reminded_at timestamptz
+api_orders.completion_source text
+```
+
+### 3. Contracts
+
+- Credential submission sets `deliveryReviewExpiresAt = submittedAt + 24 hours`; credentials remain one-time and immutable. `delivery_submitted` is a pending buyer-review state, not a pending seller task.
+- Buyer confirmation writes `completed`, `completedAt`, and `completionSource=buyer_confirmed`. When the deadline passes without an open dispute, lazy reads/actions and scheduled maintenance materialize `completed` with `completionSource=auto_completed` and use the deadline as `completedAt`.
+- `disputeStatus=open` pauses automatic completion without replacing the fulfillment state. The platform sends the buyer at most one reminder in the final two hours; the seller has no reminder action.
+- Completion statistics and review eligibility include both completion sources. `auto_completed` never creates a rating, buyer endorsement, or positive-review fact.
+- `GET /api/v1/admin/api-orders/{id}` returns buyer/seller IDs, frozen service and amount snapshots, fulfillment timestamps, the review deadline, completion source, and dispute linkage. Admin list/detail responses omit `deliveryCredential`, payment/contact values, and participant contact details.
+- Participant responses that include the credential remain `private, no-store`, including after either completion source.
+
+### 4. Validation & Error Matrix
+
+| Condition | HTTP / result | Stable code |
+| --- | --- | --- |
+| Buyer confirms before the deadline | `completed/buyer_confirmed` | n/a |
+| Deadline passes without an open dispute | `completed/auto_completed` | n/a |
+| Deadline passes with `disputeStatus=open` | Keep `delivery_submitted` | n/a |
+| Seller submits delivery twice | 409 | `INVALID_STATE_TRANSITION` |
+| Non-buyer calls confirm or dispute | 403 | `PERMISSION_DENIED` |
+| Non-admin reads admin detail | 403 | `PERMISSION_DENIED` |
+| Unknown admin order ID | 404 | `OBJECT_NOT_FOUND` |
+
+### 5. Good/Base/Bad Cases
+
+- Good: the seller submits the credential, immediately has no remaining fulfillment action, and the buyer confirms it as usable before the deadline.
+- Base: the buyer takes no action; the order completes once as `auto_completed`, remains eligible for review, and no endorsement is synthesized.
+- Base: the buyer opens a credential dispute during review; automatic completion remains paused while the dispute is open.
+- Bad: seller status says it is waiting for buyer confirmation, an open-dispute order auto-completes, or admin detail exposes a raw key/contact value.
+
+### 6. Tests Required
+
+- Service tests assert deadline creation, buyer-confirmed completion, final-two-hour reminder deduplication, automatic completion, and open-dispute pause.
+- PostgreSQL tests assert lazy/maintenance concurrency produces at most one reminder and one completion transition.
+- Router/OpenAPI tests assert the admin detail route, both participant IDs, review fields, completion source, `private, no-store`, and credential/contact omission.
+- Statistics/review tests assert both completion sources count as completed while no automatic rating is created.
+- Migration tests assert historical `delivery_submitted` rows receive a fresh 24-hour review window.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```text
+seller submits credential -> seller waits indefinitely for buyer confirmation
+browser computes submittedAt + 24h -> client decides completion
+```
+
+#### Correct
+
+```text
+seller submits credential -> seller task complete -> server-owned buyer review deadline
+buyer confirms OR server materializes deadline without open dispute -> completed with explicit source
+```
+
 ## Scenario: Authoritative Carpool Application Eligibility
 
 ### 1. Scope / Trigger

@@ -1795,11 +1795,11 @@ export type ApiOrder = {
     apiPurchaseIntentId: string;
     apiServiceId: string;
     /**
-     * Present on owner-side views.
+     * Present on owner and administrator views.
      */
     buyerUserId?: string;
     /**
-     * Present on buyer-side views.
+     * Present on buyer and administrator views.
      */
     sellerUserId?: string;
     buyerReputation: ReputationSummary | null;
@@ -1870,9 +1870,17 @@ export type ApiOrder = {
     deliveryNote?: string;
     deliverySubmittedAt?: string | null;
     /**
+     * Authoritative end of the 24-hour buyer credential-review window. Set when delivery is submitted and retained after completion.
+     */
+    deliveryReviewExpiresAt?: string | null;
+    /**
      * Included only in buyer/seller detail and action responses for participating users; omitted from list/admin/public responses.
      */
     deliveryCredential?: ApiOrderDeliveryCredential;
+    /**
+     * Present only after completion. Automatic completion records review-window expiry and is not a buyer rating or endorsement.
+     */
+    completionSource?: 'buyer_confirmed' | 'auto_completed';
     completedAt?: string | null;
     cancelledAt?: string | null;
     cancelReason?: string;
@@ -8471,6 +8479,37 @@ export type ListAdminApiOrdersResponses = {
 };
 
 export type ListAdminApiOrdersResponse = ListAdminApiOrdersResponses[keyof ListAdminApiOrdersResponses];
+
+export type GetAdminApiOrderData = {
+    body?: never;
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/api/v1/admin/api-orders/{id}';
+};
+
+export type GetAdminApiOrderErrors = {
+    /**
+     * Problem Details error.
+     */
+    403: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    404: ProblemDetails;
+};
+
+export type GetAdminApiOrderError = GetAdminApiOrderErrors[keyof GetAdminApiOrderErrors];
+
+export type GetAdminApiOrderResponses = {
+    /**
+     * Administrator API order detail with both participant identifiers, immutable snapshots, review timing, completion source, and no contacts or raw delivery credentials.
+     */
+    200: ApiOrder;
+};
+
+export type GetAdminApiOrderResponse = GetAdminApiOrderResponses[keyof GetAdminApiOrderResponses];
 
 export type ListAdminUsersData = {
     body?: never;

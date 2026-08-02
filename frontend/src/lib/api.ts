@@ -144,6 +144,7 @@ import {
   backendAPIIntentEvents,
   backendAPIQuotaBatchAction,
   backendAPIQuotaCredentialSummary,
+  backendAdminAPIOrder,
   backendAdminAPIOrderRows,
   backendAPIServiceById,
   backendAPIServices,
@@ -473,6 +474,8 @@ export type ApiOrderStatus =
 export type ApiOrderDeliveryKind = 'api_key_endpoint' | 'login_account'
 export type ApiOrderPaymentIssueReason = 'not_received' | 'amount_mismatch' | 'remark_mismatch'
 export type ApiOrderPurchaseKind = 'api_service' | 'limited_quota_offer'
+export type ApiOrderCompletionSource = 'buyer_confirmed' | 'auto_completed'
+export type ApiOrderViewerRole = 'buyer' | 'merchant' | 'admin'
 
 export type ApiQuotaOrderSnapshot = {
   batchId: string
@@ -539,6 +542,7 @@ export type ApiOrder = {
   sellerReputation?: ReputationSummary | null
   status: ApiOrderStatus
   disputeStatus?: string
+  disputeCaseId?: string
   serviceTitle: string
   amount: number
   amountDecimal?: string
@@ -554,7 +558,9 @@ export type ApiOrder = {
   paidConfirmedAt?: string
   deliveryNote?: string
   deliverySubmittedAt?: string
+  deliveryReviewExpiresAt?: string
   deliveryCredential?: ApiOrderDeliveryCredential
+  completionSource?: ApiOrderCompletionSource
   completedAt?: string
   cancelledAt?: string
   cancelReason?: string
@@ -571,6 +577,43 @@ export type ApiOrder = {
   merchantContactChannels: ApiContactChannel[]
   buyerContactChannels: ApiContactChannel[]
   viewerRole?: 'buyer' | 'merchant'
+  createdAt: string
+  updatedAt: string
+}
+
+export type AdminApiOrderDetail = {
+  id: string
+  purchaseKind: ApiOrderPurchaseKind
+  apiPurchaseIntentId: string
+  apiServiceId: string
+  buyerUserId: string
+  sellerUserId: string
+  status: ApiOrderStatus
+  disputeStatus?: string
+  disputeCaseId?: string
+  serviceTitleSnapshot: string
+  billingModeSnapshot?: string
+  selectedPackageId?: string
+  selectedPackageSnapshot?: string
+  amount: string
+  currency: 'CNY'
+  requestedUsdAllowanceSnapshot?: string
+  cnyPerUsdAllowanceSnapshot?: string
+  selectedPaymentMethod: ApiPaymentOption['paymentMethod']
+  paymentExpiresAt: string
+  paymentSubmittedAt?: string
+  paymentIssueReason?: ApiOrderPaymentIssueReason
+  paymentIssueNote?: string
+  paymentIssueReportedAt?: string
+  paidConfirmedAt?: string
+  deliveryNote?: string
+  deliverySubmittedAt?: string
+  deliveryReviewExpiresAt?: string
+  completionSource?: ApiOrderCompletionSource
+  completedAt?: string
+  cancelledAt?: string
+  cancelReason?: string
+  version: number
   createdAt: string
   updatedAt: string
 }
@@ -736,6 +779,7 @@ const currentMerchantName = 'orbit'
 const apiPurchaseIntentStorageKey = 'c2cmarket.apiPurchaseIntents.v2'
 const apiPurchaseIntentEventStorageKey = 'c2cmarket.apiPurchaseIntentEvents.v2'
 const apiOrderStorageKey = 'c2cmarket.apiOrders.v1'
+const apiOrderDeliveryReviewWindowMs = 24 * 60 * 60 * 1000
 const apiQuotaBatchStorageKey = 'c2cmarket.apiQuotaBatches.v1'
 const apiQuotaOfferStorageKey = 'c2cmarket.apiQuotaOffers.v1'
 const apiQuotaRoundStorageKey = 'c2cmarket.apiQuotaRounds.v1'
@@ -837,11 +881,36 @@ function normalizeApiPurchaseIntentEventStore(events: ApiPurchaseIntentEvent[]):
   }))
 }
 
+function mockDeliveryReviewDeadline(submittedAt?: string) {
+  const timestamp = submittedAt ? Date.parse(submittedAt) : Number.NaN
+  return Number.isFinite(timestamp) ? new Date(timestamp + apiOrderDeliveryReviewWindowMs).toISOString() : undefined
+}
+
 function normalizeApiOrderStore(orders: ApiOrder[]): ApiOrder[] {
   return orders.map(order => ({
     ...order,
     purchaseKind: order.purchaseKind ?? 'api_service',
+    completionSource: order.completionSource ?? (order.status === 'completed' ? 'buyer_confirmed' : undefined),
+    deliveryReviewExpiresAt: order.deliveryReviewExpiresAt
+      ?? (order.status === 'delivery_submitted' ? mockDeliveryReviewDeadline(order.deliverySubmittedAt) : undefined),
   }))
+}
+
+function materializeMockApiOrderReviews(currentTime = Date.now()) {
+  let changed = false
+  for (const order of apiOrderStore) {
+    if (order.status !== 'delivery_submitted' || order.disputeStatus === 'open' || !order.deliveryReviewExpiresAt) continue
+    const deadline = Date.parse(order.deliveryReviewExpiresAt)
+    if (!Number.isFinite(deadline) || deadline > currentTime) continue
+    const completedAt = new Date(deadline).toISOString()
+    order.status = 'completed'
+    order.completionSource = 'auto_completed'
+    order.completedAt = completedAt
+    order.updatedAt = completedAt
+    order.version += 1
+    changed = true
+  }
+  if (changed) persistApiOrderStore()
 }
 
 function productPlanForCarpoolName(productName: string) {
@@ -1368,17 +1437,43 @@ export function getApiStatusLabel(status: ApiPurchaseIntentStatus) {
   return labels[status]
 }
 
-export function getApiOrderStatusLabel(status: ApiOrderStatus) {
+export function getApiOrderStatusLabel(status: ApiOrderStatus, role: ApiOrderViewerRole = 'admin') {
   const labels: Record<ApiOrderStatus, string> = {
     pending_payment: '待付款',
     payment_submitted: '买家已付款',
     payment_issue: '付款待补充',
     paid_confirmed: '已确认收款',
-    delivery_submitted: '已交付',
+    delivery_submitted: role === 'buyer' ? '待核验凭证' : role === 'merchant' ? '已完成交付' : '买家核验期',
     completed: '已完成',
     cancelled: '已取消',
   }
   return labels[status]
+}
+
+export function getApiOrderDisplayStatus(order: ApiOrder, role: ApiOrderViewerRole) {
+  if (order.status !== 'completed') return getApiOrderStatusLabel(order.status, role)
+  if (order.completionSource === 'auto_completed') return '已自动完成'
+  if (order.completionSource === 'buyer_confirmed') return role === 'buyer' ? '已确认凭证可用' : '买家已确认完成'
+  return '已完成'
+}
+
+export function getApiOrderCompletionSourceLabel(source?: ApiOrderCompletionSource) {
+  if (source === 'buyer_confirmed') return '买家主动确认'
+  if (source === 'auto_completed') return '核验期结束后系统自动完成'
+  return '尚未完成'
+}
+
+export function getApiOrderEventLabel(type: ApiOrderEvent['type']) {
+  const labels: Record<ApiOrderEvent['type'], string> = {
+    created: '创建订单',
+    payment_submitted: '买家提交付款状态',
+    payment_issue_reported: '商户报告付款问题',
+    payment_confirmed: '商户确认收款',
+    delivery_submitted: '商户完成交付',
+    completed: '订单完成',
+    cancelled: '订单取消',
+  }
+  return labels[type]
 }
 
 export function getApiOrderDeliveryKindLabel(kind: ApiOrderDeliveryKind) {
@@ -1398,16 +1493,16 @@ export function getApiOrderNextAction(order: ApiOrder, role: 'buyer' | 'merchant
     if (order.status === 'payment_submitted') return '等待商户确认收款'
     if (order.status === 'payment_issue') return '补充付款信息并重新提交'
     if (order.status === 'paid_confirmed') return '等待商户交付'
-    if (order.status === 'delivery_submitted') return '核对交付并确认完成'
-    if (order.status === 'completed') return '交易已完成'
+    if (order.status === 'delivery_submitted') return order.disputeStatus === 'open' ? '等待平台处理凭证问题' : '核验凭证，或报告问题'
+    if (order.status === 'completed') return order.completionSource === 'auto_completed' ? '订单已自动完成' : '凭证已确认可用'
     if (order.status === 'cancelled') return '查看取消原因'
   }
   if (order.status === 'pending_payment') return '等待买家付款'
   if (order.status === 'payment_submitted') return '确认已收款'
   if (order.status === 'payment_issue') return '等待买家补充付款信息'
   if (order.status === 'paid_confirmed') return '填写交付信息'
-  if (order.status === 'delivery_submitted') return '等待买家确认完成'
-  if (order.status === 'completed') return '交易已完成'
+  if (order.status === 'delivery_submitted') return '已完成交付，无需操作'
+  if (order.status === 'completed') return order.completionSource === 'auto_completed' ? '订单已自动完成' : '订单已完成'
   return '查看详情'
 }
 
@@ -1777,7 +1872,7 @@ function adminTargetLink(row: AdminRow) {
   if (row.targetType === 'official-price') return `/official-prices/${row.id}`
   if (row.targetType === 'carpool') return `/carpools/${row.id}`
   if (row.targetType === 'api-intent') return `/my/api-orders/${row.id}`
-  if (row.targetType === 'api-order') return null
+  if (row.targetType === 'api-order') return `/admin/api-orders/${row.id}`
   if (row.targetType === 'carpool-application') return `/merchant/carpool-applications/${row.id}`
   if (row.targetType === 'feedback-ticket') return `/admin/feedback/${row.id}`
   if (row.targetType === 'user') return `/u/${row.primary}`
@@ -1924,6 +2019,7 @@ function defaultApiOrderSortForRole(role: 'buyer' | 'merchant') {
 }
 
 function filterApiOrders(filters: ApiOrderFilters = {}) {
+  materializeMockApiOrderReviews()
   const keyword = filters.search?.trim().toLowerCase()
   const statuses = Array.isArray(filters.status) ? filters.status : filters.status ? [filters.status] : null
   const now = Date.now()
@@ -3082,6 +3178,50 @@ export async function getAdminOverview() {
   return clone(adminCards)
 }
 
+function projectMockAdminApiOrder(order: ApiOrder): AdminApiOrderDetail {
+  return {
+    id: order.id,
+    purchaseKind: order.purchaseKind,
+    apiPurchaseIntentId: order.apiPurchaseIntentId,
+    apiServiceId: order.apiServiceId,
+    buyerUserId: order.buyerId,
+    sellerUserId: order.sellerId,
+    status: order.status,
+    disputeStatus: order.disputeStatus,
+    disputeCaseId: order.disputeCaseId,
+    serviceTitleSnapshot: order.serviceTitle,
+    selectedPackageId: order.selectedPackageId,
+    selectedPackageSnapshot: order.packageSnapshot ? JSON.stringify(order.packageSnapshot) : undefined,
+    amount: order.amountDecimal ?? String(order.amount),
+    currency: order.currency,
+    requestedUsdAllowanceSnapshot: order.requestedUsdAllowanceDecimal ?? String(order.requestedUsdAllowance),
+    selectedPaymentMethod: order.selectedPaymentMethod,
+    paymentExpiresAt: order.paymentExpiresAt,
+    paymentSubmittedAt: order.paymentSubmittedAt,
+    paymentIssueReason: order.paymentIssueReason,
+    paymentIssueNote: order.paymentIssueNote,
+    paymentIssueReportedAt: order.paymentIssueReportedAt,
+    paidConfirmedAt: order.paidConfirmedAt,
+    deliveryNote: order.deliveryNote,
+    deliverySubmittedAt: order.deliverySubmittedAt,
+    deliveryReviewExpiresAt: order.deliveryReviewExpiresAt,
+    completionSource: order.completionSource,
+    completedAt: order.completedAt,
+    cancelledAt: order.cancelledAt,
+    cancelReason: order.cancelReason,
+    version: order.version,
+    createdAt: order.createdAt,
+    updatedAt: order.updatedAt,
+  }
+}
+
+export async function getAdminApiOrderById(id: string): Promise<AdminApiOrderDetail> {
+  if (shouldUseRealBackend()) return backendAdminAPIOrder(id)
+  await wait()
+  materializeMockApiOrderReviews()
+  return clone(projectMockAdminApiOrder(findApiOrder(id)))
+}
+
 function withAdminRowLinks(rows: AdminRow[]) {
   return rows.map(row => ({ ...row, targetTo: row.targetTo ?? adminTargetLink(row) }))
 }
@@ -3230,15 +3370,16 @@ export async function getAdminSectionRows(section: AdminSection): Promise<AdminR
   }
 
   if (section === 'trade-intents') {
+    materializeMockApiOrderReviews()
     return withAdminRowLinks(apiOrderStore.map(item => ({
       id: item.id,
       primary: `${item.serviceTitle} API 订单`,
       secondary: `${item.id} · 订单金额 ¥${item.amountDecimal ?? item.amount}`,
       owner: `${item.seller} / 买家 ${item.buyer}`,
-      status: getApiOrderStatusLabel(item.status),
+      status: item.status === 'completed' ? getApiOrderCompletionSourceLabel(item.completionSource) : getApiOrderStatusLabel(item.status, 'admin'),
       risk: item.disputeStatus || item.cancelReason || `更新于 ${item.updatedAt}`,
       targetType: 'api-order',
-      targetTo: null,
+      targetTo: `/admin/api-orders/${item.id}`,
       detailItems: [
         { label: '订单金额', value: `¥${item.amountDecimal ?? item.amount}` },
         { label: '购买额度', value: `${item.requestedUsdAllowanceDecimal ?? item.requestedUsdAllowance} 美元额度` },
@@ -4041,6 +4182,8 @@ export async function getNotifications(): Promise<UnifiedNotification[]> {
 
 export async function getNavigationBadges(): Promise<NavigationBadgeSummary> {
   if (shouldUseRealBackend()) return backendNavigationBadges()
+
+  materializeMockApiOrderReviews()
 
   const [notifications, importantAnnouncementUnread, reportRows, appealRows] = await Promise.all([
     buildUnifiedNotifications(),
@@ -4871,6 +5014,7 @@ function findApiOrder(id: string) {
 }
 
 function updateApiOrder(id: string, updater: (order: ApiOrder) => void) {
+  materializeMockApiOrderReviews()
   const order = findApiOrder(id)
   updater(order)
   order.updatedAt = nowText()
@@ -5102,6 +5246,7 @@ export async function getApiOrderById(id: string, perspective: 'buyer' | 'mercha
     return perspective === 'merchant' ? backendOwnerAPIOrder(id) : backendMyAPIOrder(id)
   }
   await wait()
+  materializeMockApiOrderReviews()
   const order = findApiOrder(id)
   if (perspective === 'merchant' && order.sellerId !== currentMerchantId) throw new Error('无权查看该订单。')
   if (perspective === 'buyer' && order.buyerId !== currentBuyerId) throw new Error('无权查看该订单。')
@@ -5180,8 +5325,10 @@ export async function confirmApiOrderComplete(id: string, version: number) {
   await wait()
   return updateApiOrder(id, order => {
     if (order.version !== version) throw new Error('订单已更新，请刷新后重试。')
-    if (order.status !== 'delivery_submitted') throw new Error('只有商户已交付的订单可以确认完成。')
+    if (order.status !== 'delivery_submitted') throw new Error('只有待核验凭证的订单可以确认可用。')
+    if (order.disputeStatus === 'open') throw new Error('订单问题正在处理中，暂时不能确认凭证可用。')
     order.status = 'completed'
+    order.completionSource = 'buyer_confirmed'
     order.completedAt = nowText()
   })
 }
@@ -5223,6 +5370,7 @@ export async function confirmApiOrderPayment(id: string, version: number) {
     shouldPersistQuota = true
     order.status = 'delivery_submitted'
     order.deliverySubmittedAt = confirmedAt
+    order.deliveryReviewExpiresAt = new Date(Date.parse(confirmedAt) + apiOrderDeliveryReviewWindowMs).toISOString()
     order.deliveryNote = '确认收款后已分配预导入的买家专属接入信息。'
     order.deliveryCredential = order.selectedDeliveryMode === 'sub2api_panel_account'
       ? {
@@ -5284,6 +5432,7 @@ export async function submitApiOrderDeliveryCredential(id: string, payload: Subm
     const submittedAt = nowText()
     order.status = 'delivery_submitted'
     order.deliverySubmittedAt = submittedAt
+    order.deliveryReviewExpiresAt = new Date(Date.parse(submittedAt) + apiOrderDeliveryReviewWindowMs).toISOString()
     if (order.packageSnapshot) {
       const expiresAt = new Date(new Date(submittedAt).getTime() + order.packageSnapshot.durationDays * 86_400_000)
       order.packageExpiresAt = expiresAt.toISOString()
@@ -5366,14 +5515,16 @@ export function getApiOrderEvents(order: ApiOrder): ApiOrderEvent[] {
     })
   }
   if (order.completedAt) {
+    const automaticallyCompleted = order.completionSource === 'auto_completed'
     events.push({
       id: `${order.id}-completed`,
       orderId: order.id,
-      actorLabel: order.buyer,
-      actorRole: 'buyer',
+      actorLabel: automaticallyCompleted ? '系统' : order.buyer,
+      actorRole: automaticallyCompleted ? 'system' : 'buyer',
       type: 'completed',
       fromStatus: 'delivery_submitted',
       toStatus: 'completed',
+      note: automaticallyCompleted ? '24 小时核验期结束，订单自动完成。' : '买家已确认凭证可用。',
       createdAt: order.completedAt,
     })
   }
@@ -5395,6 +5546,7 @@ export function getApiOrderEvents(order: ApiOrder): ApiOrderEvent[] {
 
 export async function getApiOrderNotifications(): Promise<ApiOrderNotification[]> {
   await wait()
+  materializeMockApiOrderReviews()
   const rows = apiOrderStore
     .filter(item => ['pending_payment', 'payment_issue', 'payment_submitted', 'paid_confirmed', 'delivery_submitted'].includes(item.status))
     .slice(0, 6)

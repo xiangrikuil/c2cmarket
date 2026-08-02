@@ -1977,7 +1977,7 @@ func TestAPIServiceInstantOrderFlow(t *testing.T) {
 	}
 
 	delivered := apiOrderAction(t, server, ownerSession, "owner", confirmed.ID, "submit-delivery", confirmed.Version, "api-order-submit-delivery", `{"deliveryKind":"api_key_endpoint","apiBaseUrl":"https://api.example.com/v1","apiKey":"sk-proj-test","instructions":"买家专属；提交后不可修改，后续更换请站外联系。"}`)
-	if delivered.Status != "delivery_submitted" || delivered.DeliveryNote == "" || delivered.DeliveryCredential == nil || delivered.DeliveryCredential.APIKey != "sk-proj-test" || delivered.Version != confirmed.Version+1 {
+	if delivered.Status != "delivery_submitted" || delivered.DeliveryNote == "" || delivered.DeliveryReviewExpiresAt == nil || delivered.DeliveryCredential == nil || delivered.DeliveryCredential.APIKey != "sk-proj-test" || delivered.Version != confirmed.Version+1 {
 		t.Fatalf("unexpected delivered order: %+v", delivered)
 	}
 	duplicateDelivery := newJSONRequest(http.MethodPost, "/api/v1/owner/api-orders/"+delivered.ID+"/submit-delivery", `{"deliveryKind":"api_key_endpoint","apiBaseUrl":"https://api.example.com/v1","apiKey":"sk-proj-other"}`)
@@ -2001,16 +2001,33 @@ func TestAPIServiceInstantOrderFlow(t *testing.T) {
 			continue
 		}
 		adminFoundDelivered = true
-		if item.DeliveryCredential != nil || item.RequestedUSDAllowanceSnapshot != "20.000000" || item.Amount != "16.00" {
+		if item.BuyerUserID != buyerSession.userID || item.SellerUserID != ownerSession.userID || item.DeliveryCredential != nil || item.RequestedUSDAllowanceSnapshot != "20.000000" || item.Amount != "16.00" {
 			t.Fatalf("admin API order summary must keep decimal snapshots without delivery credential: %+v", item)
 		}
 	}
 	if !adminFoundDelivered {
 		t.Fatalf("expected admin API order list to contain %s", delivered.ID)
 	}
+	adminDetailRequest := httptest.NewRequest(http.MethodGet, "/api/v1/admin/api-orders/"+delivered.ID, nil)
+	addCookie(adminDetailRequest, adminSession.cookie)
+	adminDetailResponse := httptest.NewRecorder()
+	server.ServeHTTP(adminDetailResponse, adminDetailRequest)
+	if adminDetailResponse.Code != http.StatusOK {
+		t.Fatalf("admin API order detail status %d body %s", adminDetailResponse.Code, adminDetailResponse.Body.String())
+	}
+	if strings.Contains(adminDetailResponse.Body.String(), "sk-proj-test") || strings.Contains(adminDetailResponse.Body.String(), "deliveryCredential") {
+		t.Fatalf("admin API order detail leaked raw credential: %s", adminDetailResponse.Body.String())
+	}
+	var adminDetail createdAPIOrder
+	if err := json.NewDecoder(adminDetailResponse.Body).Decode(&adminDetail); err != nil {
+		t.Fatalf("decode admin API order detail: %v", err)
+	}
+	if adminDetail.BuyerUserID != buyerSession.userID || adminDetail.SellerUserID != ownerSession.userID || adminDetail.DeliveryReviewExpiresAt == nil {
+		t.Fatalf("unexpected admin API order detail: %+v", adminDetail)
+	}
 
 	completed := apiOrderAction(t, server, buyerSession, "me", delivered.ID, "confirm-complete", delivered.Version, "api-order-confirm-complete", `{}`)
-	if completed.Status != "completed" || completed.CompletedAt == nil || completed.Version != delivered.Version+1 {
+	if completed.Status != "completed" || completed.CompletionSource != "buyer_confirmed" || completed.CompletedAt == nil || completed.Version != delivered.Version+1 {
 		t.Fatalf("unexpected completed order: %+v", completed)
 	}
 	if completed.DeliveryCredential == nil || completed.DeliveryCredential.APIKey != "sk-proj-test" {
@@ -2731,7 +2748,9 @@ type createdAPIOrder struct {
 	PaymentIssueReportedAt        *string                            `json:"paymentIssueReportedAt"`
 	PaidConfirmedAt               *string                            `json:"paidConfirmedAt"`
 	DeliveryNote                  string                             `json:"deliveryNote"`
+	DeliveryReviewExpiresAt       *string                            `json:"deliveryReviewExpiresAt"`
 	DeliveryCredential            *createdAPIOrderDeliveryCredential `json:"deliveryCredential"`
+	CompletionSource              string                             `json:"completionSource"`
 	CompletedAt                   *string                            `json:"completedAt"`
 	CancelledAt                   *string                            `json:"cancelledAt"`
 	CancelReason                  string                             `json:"cancelReason"`

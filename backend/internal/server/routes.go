@@ -207,6 +207,7 @@ func (s *Server) routes() {
 		r.Get("/admin/api-purchase-intents", s.handleAdminAPIPurchaseIntents)
 		r.Get("/admin/api-purchase-intents/{id}", s.handleAdminAPIPurchaseIntent)
 		r.Get("/admin/api-orders", s.handleAdminAPIOrders)
+		r.Get("/admin/api-orders/{id}", s.handleAdminAPIOrder)
 		r.Get("/admin/product-categories", s.handleAdminProductCategories)
 		r.Post("/admin/product-categories", s.handleCreateProductCategory)
 		r.Get("/admin/product-categories/{id}", s.handleAdminProductCategory)

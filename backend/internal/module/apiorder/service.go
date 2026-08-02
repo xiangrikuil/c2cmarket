@@ -204,6 +204,24 @@ func (s *Service) AdminOrders(ctx context.Context, user auth.User) ([]Order, *do
 	return orders, nil
 }
 
+func (s *Service) AdminOrder(ctx context.Context, user auth.User, orderID string) (Order, *domain.AppError) {
+	if !user.IsAdmin {
+		return Order{}, domain.NewError(http.StatusForbidden, domain.CodePermissionDenied, "Permission denied", "需要管理员权限。")
+	}
+	if s.repo != nil {
+		return s.repo.GetAdminAPIOrder(ctx, orderID, s.now())
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	order, ok := s.orders[strings.TrimSpace(orderID)]
+	if !ok {
+		return Order{}, notFound()
+	}
+	order = s.materializeTimeoutLocked(order.ID)
+	order.DeliveryCredential = nil
+	return order, nil
+}
+
 func (s *Service) SellerOrder(ctx context.Context, user auth.User, orderID string) (Order, *domain.AppError) {
 	if s.repo != nil {
 		return s.repo.GetAPIOrderForSeller(ctx, user.ID, orderID, s.now())
@@ -492,19 +510,39 @@ func (s *Service) registerDisputeCaseLocked(ctx context.Context, order Order, in
 
 func (s *Service) materializeTimeoutLocked(orderID string) Order {
 	order := s.orders[orderID]
-	if order.Status != StatusPendingPayment || s.now().Before(order.PaymentExpiresAt) {
+	now := s.now()
+	if order.Status == StatusPendingPayment && !now.Before(order.PaymentExpiresAt) {
+		from := order.Status
+		order.Status = StatusCancelled
+		order.CancelReason = CancelReasonPaymentTimeout
+		order.CancelledAt = &now
+		order.UpdatedAt = now
+		order.Version++
+		s.releaseInventoryLocked(&order)
+		s.orders[orderID] = order
+		s.appendEventLocked(order, "", EventPaymentTimeoutCancelled, from, order.Status, "", "payment-timeout")
 		return order
 	}
-	now := s.now()
-	from := order.Status
-	order.Status = StatusCancelled
-	order.CancelReason = CancelReasonPaymentTimeout
-	order.CancelledAt = &now
-	order.UpdatedAt = now
-	order.Version++
-	s.releaseInventoryLocked(&order)
-	s.orders[orderID] = order
-	s.appendEventLocked(order, "", EventPaymentTimeoutCancelled, from, order.Status, "", "payment-timeout")
+	if order.Status != StatusDeliverySubmitted || order.DisputeStatus == DisputeStatusOpen || order.DeliveryReviewExpiresAt == nil {
+		return order
+	}
+	if !now.Before(*order.DeliveryReviewExpiresAt) {
+		completedAt := *order.DeliveryReviewExpiresAt
+		order.Status = StatusCompleted
+		order.CompletionSource = CompletionSourceAutoCompleted
+		order.CompletedAt = &completedAt
+		order.UpdatedAt = now
+		order.Version++
+		s.orders[orderID] = order
+		s.appendEventLocked(order, "", EventAutoCompleted, StatusDeliverySubmitted, StatusCompleted, "", "delivery-review-auto-complete")
+		return order
+	}
+	reminderAt := order.DeliveryReviewExpiresAt.Add(-DeliveryReviewReminderLead)
+	if order.DeliveryReviewRemindedAt == nil && !now.Before(reminderAt) {
+		order.DeliveryReviewRemindedAt = &now
+		s.orders[orderID] = order
+		s.appendEventLocked(order, "", EventDeliveryReviewReminder, order.Status, order.Status, "", "delivery-review-reminder")
+	}
 	return order
 }
 
@@ -987,7 +1025,7 @@ func canTransition(order Order, action string, now time.Time) bool {
 	case "submit_delivery":
 		return order.Status == StatusPaidConfirmed
 	case "confirm_complete":
-		return order.Status == StatusDeliverySubmitted
+		return order.Status == StatusDeliverySubmitted && order.DisputeStatus != DisputeStatusOpen
 	case "open_dispute":
 		return order.Status != StatusCancelled && order.Status != StatusCompleted && order.DisputeStatus == DisputeStatusNone
 	default:
@@ -1021,8 +1059,11 @@ func applyAction(order Order, input ActionInput, action string, now time.Time) O
 		order.Status = StatusDeliverySubmitted
 		order.DeliveryNote = strings.TrimSpace(input.DeliveryNote)
 		order.DeliverySubmittedAt = &now
+		reviewExpiresAt := now.Add(DeliveryReviewWindow)
+		order.DeliveryReviewExpiresAt = &reviewExpiresAt
 	case "confirm_complete":
 		order.Status = StatusCompleted
+		order.CompletionSource = CompletionSourceBuyerConfirmed
 		order.CompletedAt = &now
 	case "open_dispute":
 		order.DisputeStatus = DisputeStatusOpen

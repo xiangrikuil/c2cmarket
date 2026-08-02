@@ -24,6 +24,9 @@ const (
 	DisputeStatusOpen   = "open"
 	DisputeStatusClosed = "closed"
 
+	CompletionSourceBuyerConfirmed = "buyer_confirmed"
+	CompletionSourceAutoCompleted  = "auto_completed"
+
 	CancelReasonBuyer          = "buyer_cancelled"
 	CancelReasonPaymentTimeout = "payment_timeout"
 
@@ -37,6 +40,8 @@ const (
 	EventCancelled               = "api_order.cancelled"
 	EventPaymentTimeoutCancelled = "api_order.payment_timeout_cancelled"
 	EventDisputeOpened           = "api_order.dispute_opened"
+	EventDeliveryReviewReminder  = "api_order.delivery_review_reminder_sent"
+	EventAutoCompleted           = "api_order.auto_completed"
 
 	DeliveryKindAPIKeyEndpoint = "api_key_endpoint"
 	DeliveryKindLoginAccount   = "login_account"
@@ -44,6 +49,9 @@ const (
 	PaymentIssueNotReceived    = "not_received"
 	PaymentIssueAmountMismatch = "amount_mismatch"
 	PaymentIssueRemarkMismatch = "remark_mismatch"
+
+	DeliveryReviewWindow       = 24 * time.Hour
+	DeliveryReviewReminderLead = 2 * time.Hour
 )
 
 type Order struct {
@@ -106,7 +114,10 @@ type Order struct {
 	PaidConfirmedAt               *time.Time
 	DeliveryNote                  string
 	DeliverySubmittedAt           *time.Time
+	DeliveryReviewExpiresAt       *time.Time
+	DeliveryReviewRemindedAt      *time.Time
 	DeliveryCredential            *DeliveryCredential
+	CompletionSource              string
 	CompletedAt                   *time.Time
 	CancelledAt                   *time.Time
 	CancelReason                  string

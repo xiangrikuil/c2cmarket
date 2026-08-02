@@ -2,7 +2,7 @@
 
 Date: 2026-06-17
 Author: Codex
-Source: initial project PRD captured during Trellis bootstrap; marketplace UI positioning updated from the user-approved site-wide baseline on 2026-07-14.
+Source: initial project PRD captured during Trellis bootstrap; marketplace UI positioning updated from the user-approved site-wide baseline on 2026-07-14; API order delivery-review behavior updated from the user-approved role contract on 2026-08-02.
 External references:
 - OpenAI Terms of Use: `https://openai.com/policies/terms-of-use/`
 - OpenAI Services Agreement: `https://openai.com/policies/services-agreement/`
@@ -63,7 +63,11 @@ Rationale: purchase intents remain internal tracking/audit records and may appea
 API order delivery credential wording:
 
 - Use `交付凭证`, `确认已交付`, `买家专属的接入信息`, and `提交后不可修改`; do not claim that delivery credentials can be revoked through the platform.
-- 参与方订单详情必须把 `买家付款 → 卖家确认收款 → 卖家交付 → 买家确认完成` 显示为连续流程，并在首屏提供当前参与方唯一的主操作；`delivery_submitted` 不能仅展示为“已交付”，买家必须能执行确认完成，卖家必须看到正在等待买家确认。
+- 参与方订单详情必须把 `买家付款 → 卖家确认收款 → 卖家交付 → 买家核验` 显示为连续流程，并在首屏提供当前参与方唯一的主操作。
+- 卖家提交凭证后，其履约任务立即结束；卖家侧显示 `已完成交付` 且没有催验收待办。订单仍以 `delivery_submitted` 进入 24 小时买家核验期，不得把买家是否点击确认表达为卖家的未完成任务。
+- 买家侧在核验期显示 `待核验凭证`、后端返回的截止时间、`确认凭证可用` 和 `凭证存在问题`。买家确认可提前完成；开放纠纷暂停自动完成；未反馈且无开放纠纷时系统在截止时间自动完成。
+- `completed` 必须区分 `buyer_confirmed` 与 `auto_completed`。两者都可进入完成交易与评价资格，但自动完成不得被描述为买家认可、正面评价或平台验真。
+- 管理员订单详情只读展示双方标识、订单快照、履约时间、核验截止时间、完成来源和纠纷入口，不得返回或渲染原始交付凭证和双方联系方式。
 - Do not use `自动发货`, `平台担保`, `平台验真`, `主账号密码`, `Cookie/Session/Token 交付`, or copy that implies C2CMarket tests the API.
 - The credential may be shown only in buyer/seller order detail and action responses. Public API service pages, lists, admin summaries, notifications, events, logs, and reports must not include raw API keys or passwords.
 - If a delivered key is wrong, rotated, or needs replacement, buyer and seller handle it through the displayed contact methods off-platform; V1 does not maintain station-internal credential edits or history.

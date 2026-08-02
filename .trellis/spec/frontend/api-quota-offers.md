@@ -274,3 +274,77 @@ const copied = {
 ```
 
 The server owns orderability and timing; copy drafts carry stable commercial settings only.
+
+## Scenario: Role-Aware API Order Detail And Buyer Review
+
+### 1. Scope / Trigger
+
+- Trigger: changes to buyer, seller, or administrator API order lists/details; API order countdowns; completion/dispute mutations; or backend adapters for order projections.
+- Buyer and seller reuse the participant detail page and the same order facts. Administrator detail uses a separate read-only management page.
+
+### 2. Signatures
+
+```ts
+type ApiOrderCompletionSource = 'buyer_confirmed' | 'auto_completed'
+
+type ApiPurchaseOrder = {
+  deliveryReviewExpiresAt?: string
+  completionSource?: ApiOrderCompletionSource
+}
+
+getAdminApiOrder(id: string): Promise<AdminApiOrder>
+
+/my/api-orders/:id
+/merchant/api-orders/:id
+/admin/api-orders/:id
+```
+
+### 3. Contracts
+
+- `delivery_submitted` is role-projected from one backend fact. Buyer detail shows `待核验凭证`, the server deadline/countdown, `确认凭证可用`, and `凭证存在问题`; seller detail/list shows `已完成交付` and no reminder or pending action.
+- Buyer confirmation is an optional early completion action. `凭证存在问题` reuses the existing dispute mutation with a structured reason. The browser must not invent a second issue state or recompute the 24-hour deadline.
+- `completed/buyer_confirmed` and `completed/auto_completed` use distinct truthful copy. Automatic completion must not render as buyer approval, a rating, or platform verification.
+- The shared timeline keeps the same fulfillment events while role wording changes. Buyer pending badges may include `delivery_submitted`; seller pending badges must not.
+- Credential access remains available to participants after either completion source. Seller delivery remains immutable and the UI must not offer resubmission or editing.
+- Admin detail shows buyer/seller IDs, frozen commercial data, event times, deadline, completion source, and a dispute link when present. It renders no raw credential, payment/contact value, or participant contact detail.
+
+### 4. Validation & Error Matrix
+
+| Condition | UI behavior |
+| --- | --- |
+| Buyer reviews `delivery_submitted` | Show countdown plus confirm/problem actions |
+| Seller reviews `delivery_submitted` | Show `已完成交付`; no pending action or reminder |
+| `disputeStatus=open` | Show dispute state; do not imply the countdown will finish normally |
+| `completionSource=buyer_confirmed` | Show buyer-confirmed completion copy |
+| `completionSource=auto_completed` | Show review-window-ended copy without endorsement semantics |
+| Deadline missing in `delivery_submitted` | Show stable state without fabricating a browser deadline |
+| Admin response contains no credential | Render order facts only; never infer or request participant credential fields |
+
+### 5. Good / Base / Bad Cases
+
+- Good: buyer and seller open the same delivered order; the buyer sees two review actions and the seller sees a completed delivery with no task.
+- Base: after automatic completion both participants can still read the delivered credential, while completion copy says the review window ended.
+- Bad: seller detail says `等待买家确认`, the browser starts a fresh 24-hour timer, or admin detail renders a credential/contact section.
+
+### 6. Tests Required
+
+- Vitest asserts buyer/seller status copy, actions, pending-badge differences, deadline rendering, both completion-source labels, dispute entry, and admin credential/contact omission.
+- Adapter tests assert real and mock projections preserve `deliveryReviewExpiresAt` and `completionSource` and never add credentials to admin rows/details.
+- Run full Vitest, Nuxt typecheck, and real-mode production build.
+- Browser-check buyer and seller at `1440x900` and `390x844`, administrator at `1440x900`, both buyer dialogs, no page-level horizontal overflow, and no relevant console errors.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```ts
+const deadline = addHours(order.deliverySubmittedAt, 24)
+const sellerNextStep = order.status === 'delivery_submitted' ? '等待买家确认' : ''
+```
+
+#### Correct
+
+```ts
+const deadline = order.deliveryReviewExpiresAt
+const sellerNextStep = order.status === 'delivery_submitted' ? '无需操作' : nextStepFor(order)
+```

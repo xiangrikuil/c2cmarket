@@ -39,6 +39,7 @@ const AdminProductPlansPage = () => import('@/pages/AdminProductPlansPage.vue')
 const AdminApiModelsPage = () => import('@/pages/AdminApiModelsPage.vue')
 const AdminModelAuditPage = () => import('@/pages/AdminModelAuditPage.vue')
 const AdminUsersPage = () => import('@/pages/AdminUsersPage.vue')
+const AdminApiOrderDetailPage = () => import('@/pages/AdminApiOrderDetailPage.vue')
 const AdminSectionPage = () => import('@/pages/AdminSectionPage.vue')
 const NotFoundPage = () => import('@/pages/NotFoundPage.vue')
 
@@ -110,6 +111,7 @@ export const routes: RouteRecordRaw[] = [
     { path: '/admin/official-prices', name: 'admin-official-prices', component: OfficialPriceManagePage, meta: adminAuthMeta },
     { path: '/admin/price-leads', redirect: '/admin/official-prices', meta: adminAuthMeta },
     { path: '/admin/users', name: 'admin-users', component: AdminUsersPage, meta: adminAuthMeta },
+    { path: '/admin/api-orders/:id', name: 'admin-api-order-detail', component: AdminApiOrderDetailPage, meta: adminAuthMeta },
     { path: '/admin/restrictions', redirect: '/admin/users', meta: adminAuthMeta },
     { path: '/admin/api-merchants', redirect: '/admin/api-services', meta: adminAuthMeta },
     { path: '/admin/audit-logs', redirect: '/admin/logs', meta: adminAuthMeta },

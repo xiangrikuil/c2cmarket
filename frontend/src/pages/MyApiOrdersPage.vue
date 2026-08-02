@@ -19,8 +19,8 @@ import StatusBadge from '@/components/market/StatusBadge.vue'
 import { usePagination } from '@/composables/usePagination'
 import {
   getApiMerchantVisibilityLabel,
+  getApiOrderDisplayStatus,
   getApiOrderNextAction,
-  getApiOrderStatusLabel,
 } from '@/lib/api'
 import { apiPaymentMethodLabels } from '@/lib/apiPaymentSettings'
 import { compareDecimal, formatDecimal } from '@/lib/decimal'
@@ -36,8 +36,7 @@ const keyword = ref('')
 const timeRange = ref<'all' | 'today' | '7d' | '30d'>('all')
 const sortMode = ref<'default' | 'updated' | 'created' | 'amount'>('default')
 
-const activeStatuses = ['pending_payment', 'payment_issue', 'payment_submitted', 'paid_confirmed']
-const deliveredStatuses = ['delivery_submitted', 'completed']
+const activeStatuses = ['pending_payment', 'payment_issue', 'delivery_submitted']
 
 const rows = computed(() => {
   const q = keyword.value.trim().toLowerCase()
@@ -50,7 +49,8 @@ const rows = computed(() => {
         || (activeTab.value === '待补充' && item.status === 'payment_issue')
         || (activeTab.value === '已付款' && item.status === 'payment_submitted')
         || (activeTab.value === '待交付' && item.status === 'paid_confirmed')
-        || (activeTab.value === '已交付' && deliveredStatuses.includes(item.status))
+        || (activeTab.value === '待核验' && item.status === 'delivery_submitted')
+        || (activeTab.value === '已完成' && item.status === 'completed')
         || (activeTab.value === '已取消' && item.status === 'cancelled')
       return tabMatched
         && (!rangeMs || Date.now() - createdAt <= rangeMs)
@@ -95,7 +95,7 @@ function openOrder(event: MouseEvent | KeyboardEvent, id: string) {
 
     <div class="my-api-orders-layout">
       <main class="min-w-0 space-y-4">
-        <StatusTabs v-model="activeTab" :items="['全部', '待付款', '待补充', '已付款', '待交付', '已交付', '已取消']" />
+        <StatusTabs v-model="activeTab" :items="['全部', '待付款', '待补充', '已付款', '待交付', '待核验', '已完成', '已取消']" />
 
         <div class="grid gap-2 md:grid-cols-[1fr_160px_180px]">
           <Input v-model="keyword" placeholder="搜索订单编号、服务、商户" />
@@ -124,7 +124,7 @@ function openOrder(event: MouseEvent | KeyboardEvent, id: string) {
             </div>
             <div class="my-transaction-owner"><span>{{ sellerInitial(item.seller) }}</span><div><small>商户</small><strong>{{ item.seller }}</strong><em>{{ item.intentSnapshot.trustLevel === null ? '信任等级暂无数据' : `信任等级 ${item.intentSnapshot.trustLevel}` }} · {{ getApiMerchantVisibilityLabel(item.intentSnapshot) }}</em></div></div>
             <div class="my-transaction-metric"><small>创建时间</small><strong class="inline-flex items-center gap-1.5"><CalendarClock class="h-3.5 w-3.5 text-muted-foreground" /><LocalTime :value="item.createdAt" /></strong><em>付款和交付信息按参与方权限展示</em></div>
-            <div class="my-transaction-state"><StatusBadge :status="item.status" :label="getApiOrderStatusLabel(item.status)" /><span>{{ getApiOrderNextAction(item, 'buyer') }}</span></div>
+            <div class="my-transaction-state"><StatusBadge :status="item.status" :label="getApiOrderDisplayStatus(item, 'buyer')" /><span>{{ getApiOrderNextAction(item, 'buyer') }}</span></div>
             <ArrowRight class="my-transaction-arrow" />
           </Card>
           <div class="my-transaction-pagination"><TablePagination v-model:page="pagination.page.value" :page-count="pagination.pageCount.value" :total="pagination.total.value" :start-item="pagination.startItem.value" :end-item="pagination.endItem.value" /></div>
@@ -141,7 +141,7 @@ function openOrder(event: MouseEvent | KeyboardEvent, id: string) {
             <li>1. 查看商户收款资料并完成付款</li>
             <li>2. 提交付款信息，异常时按提示补充</li>
             <li>3. 商户确认到账后提交交付</li>
-            <li>4. 买家核对后完成或发起纠纷</li>
+            <li>4. 交付后在 24 小时内确认可用或报告问题</li>
           </ol>
         </Card>
         <Card class="p-4">

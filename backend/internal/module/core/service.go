@@ -863,6 +863,18 @@ func (s *Service) AdminAPIOrders(ctx context.Context, user User) ([]APIOrder, *d
 	return s.withAPIOrderReputations(ctx, orders)
 }
 
+func (s *Service) AdminAPIOrder(ctx context.Context, user User, orderID string) (APIOrder, *domain.AppError) {
+	order, appErr := s.apiOrder.AdminOrder(ctx, user, orderID)
+	if appErr != nil {
+		return APIOrder{}, appErr
+	}
+	orders, appErr := s.withAPIOrderReputations(ctx, []APIOrder{order})
+	if appErr != nil {
+		return APIOrder{}, appErr
+	}
+	return orders[0], nil
+}
+
 func (s *Service) OwnerAPIOrder(ctx context.Context, user User, orderID string) (APIOrder, *domain.AppError) {
 	order, appErr := s.apiOrder.SellerOrder(ctx, user, orderID)
 	if appErr != nil {

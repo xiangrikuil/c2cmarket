@@ -102,6 +102,117 @@ func TestSubmitDeliveryAcceptsStructuredCredentialAndRejectsUnsafeFields(t *test
 	}
 }
 
+func TestDeliveryReviewWindowSupportsBuyerConfirmationReminderAndAutoCompletion(t *testing.T) {
+	now := time.Date(2026, 8, 2, 12, 0, 0, 0, time.UTC)
+	service := NewService(nil, nil, nil, nil, nil, func() time.Time { return now })
+	newPaidOrder := func(id string) Order {
+		return Order{
+			ID:                 id,
+			BuyerUserID:        "buyer-1",
+			SellerUserID:       "seller-1",
+			Status:             StatusPaidConfirmed,
+			DisputeStatus:      DisputeStatusNone,
+			PaymentExpiresAt:   now.Add(-time.Hour),
+			PaymentSummary:     "已付款",
+			PaymentSubmittedAt: timePointer(now.Add(-2 * time.Hour)),
+			PaidConfirmedAt:    timePointer(now.Add(-time.Hour)),
+			CreatedAt:          now.Add(-3 * time.Hour),
+			UpdatedAt:          now.Add(-time.Hour),
+			Version:            3,
+		}
+	}
+	submit := func(id, key string) Order {
+		service.orders[id] = newPaidOrder(id)
+		_, appErr := service.SubmitDeliveryWithIdempotency(context.Background(), "seller-1", "submit-delivery", key, key+"-hash", ActionInput{
+			OrderID: id,
+			DeliveryCredential: DeliveryCredentialInput{
+				DeliveryKind: DeliveryKindAPIKeyEndpoint,
+				APIBaseURL:   "https://api.example.com/v1",
+				APIKey:       "sk-proj-test",
+			},
+			ExpectedVersion: 3,
+			RequestID:       key,
+		}, testAPIOrderCompletion)
+		if appErr != nil {
+			t.Fatalf("submit delivery for %s: %v", id, appErr)
+		}
+		return service.orders[id]
+	}
+
+	confirmed := submit("buyer-confirmed", "buyer-confirmed-delivery")
+	if confirmed.DeliveryReviewExpiresAt == nil || !confirmed.DeliveryReviewExpiresAt.Equal(now.Add(DeliveryReviewWindow)) {
+		t.Fatalf("expected 24-hour review deadline, got %+v", confirmed.DeliveryReviewExpiresAt)
+	}
+	_, appErr := service.ConfirmCompleteWithIdempotency(context.Background(), "buyer-1", "confirm-complete", "buyer-confirmed", "buyer-confirmed-hash", ActionInput{
+		OrderID:         confirmed.ID,
+		ExpectedVersion: confirmed.Version,
+		RequestID:       "buyer-confirmed",
+	}, testAPIOrderCompletion)
+	if appErr != nil {
+		t.Fatalf("confirm delivery credential: %v", appErr)
+	}
+	confirmed = service.orders[confirmed.ID]
+	if confirmed.Status != StatusCompleted || confirmed.CompletionSource != CompletionSourceBuyerConfirmed {
+		t.Fatalf("expected buyer-confirmed completion, got %+v", confirmed)
+	}
+
+	automatic := submit("auto-completed", "auto-completed-delivery")
+	now = automatic.DeliveryReviewExpiresAt.Add(-DeliveryReviewReminderLead)
+	if _, appErr := service.BuyerOrder(context.Background(), auth.User{ID: "buyer-1"}, automatic.ID); appErr != nil {
+		t.Fatalf("materialize reminder: %v", appErr)
+	}
+	if service.orders[automatic.ID].DeliveryReviewRemindedAt == nil {
+		t.Fatal("expected one delivery review reminder marker")
+	}
+	if _, appErr := service.BuyerOrder(context.Background(), auth.User{ID: "buyer-1"}, automatic.ID); appErr != nil {
+		t.Fatalf("repeat reminder read: %v", appErr)
+	}
+	reminders := 0
+	for _, event := range service.events {
+		if event.APIOrderID == automatic.ID && event.EventType == EventDeliveryReviewReminder {
+			reminders++
+		}
+	}
+	if reminders != 1 {
+		t.Fatalf("expected one reminder event, got %d", reminders)
+	}
+
+	now = automatic.DeliveryReviewExpiresAt.Add(time.Minute)
+	materialized, appErr := service.BuyerOrder(context.Background(), auth.User{ID: "buyer-1"}, automatic.ID)
+	if appErr != nil {
+		t.Fatalf("materialize auto completion: %v", appErr)
+	}
+	if materialized.Status != StatusCompleted || materialized.CompletionSource != CompletionSourceAutoCompleted || materialized.CompletedAt == nil || !materialized.CompletedAt.Equal(*automatic.DeliveryReviewExpiresAt) {
+		t.Fatalf("expected deadline-based auto completion, got %+v", materialized)
+	}
+}
+
+func TestOpenDisputePausesDeliveryReviewAutoCompletion(t *testing.T) {
+	now := time.Date(2026, 8, 3, 12, 0, 0, 0, time.UTC)
+	expiresAt := now.Add(-time.Minute)
+	service := NewService(nil, nil, nil, nil, nil, func() time.Time { return now })
+	service.orders["disputed-delivery"] = Order{
+		ID:                      "disputed-delivery",
+		BuyerUserID:             "buyer-1",
+		SellerUserID:            "seller-1",
+		Status:                  StatusDeliverySubmitted,
+		DisputeStatus:           DisputeStatusOpen,
+		DeliverySubmittedAt:     timePointer(expiresAt.Add(-DeliveryReviewWindow)),
+		DeliveryReviewExpiresAt: &expiresAt,
+		CreatedAt:               expiresAt.Add(-DeliveryReviewWindow),
+		UpdatedAt:               expiresAt.Add(-DeliveryReviewWindow),
+		Version:                 4,
+	}
+
+	order, appErr := service.BuyerOrder(context.Background(), auth.User{ID: "buyer-1"}, "disputed-delivery")
+	if appErr != nil {
+		t.Fatalf("read disputed delivery: %v", appErr)
+	}
+	if order.Status != StatusDeliverySubmitted || order.CompletedAt != nil || order.CompletionSource != "" {
+		t.Fatalf("open dispute must pause auto completion, got %+v", order)
+	}
+}
+
 func TestPaymentIssueRequiresStructuredReasonAndReturnsToSubmitted(t *testing.T) {
 	now := time.Date(2026, 7, 12, 12, 0, 0, 0, time.UTC)
 	service := NewService(nil, nil, nil, nil, nil, func() time.Time {

@@ -27,6 +27,8 @@ import {
   apiOrderBuyerContactSnapshot,
   apiOrderMerchantContactSnapshot,
   getApiOrderDeliveryKindLabel,
+  getApiOrderDisplayStatus,
+  getApiOrderEventLabel,
   getApiOrderEvents,
   getApiOrderPaymentIssueLabel,
   getApiOrderStatusLabel,
@@ -90,6 +92,10 @@ const paymentIssueNote = ref('')
 const paymentIssueResponseOpen = ref(false)
 const disputeDialogOpen = ref(false)
 const disputeReason = ref('')
+const completionConfirmOpen = ref(false)
+const credentialProblemOpen = ref(false)
+const credentialProblemReason = ref<CredentialProblemReason | ''>('')
+const credentialProblemNote = ref('')
 const cancelDrawerOpen = ref(false)
 const cancelReason = ref('')
 const cancelNote = ref('')
@@ -114,7 +120,8 @@ const canResubmitPayment = computed(() => !isMerchantView.value && order.value?.
 const canConfirmPayment = computed(() => isMerchantView.value && order.value?.status === 'payment_submitted')
 const canReportPaymentIssue = computed(() => isMerchantView.value && order.value?.status === 'payment_submitted')
 const canSubmitDelivery = computed(() => isMerchantView.value && order.value?.status === 'paid_confirmed' && !order.value.deliveryCredential)
-const canConfirmComplete = computed(() => !isMerchantView.value && order.value?.status === 'delivery_submitted')
+const canConfirmComplete = computed(() => !isMerchantView.value && order.value?.status === 'delivery_submitted' && order.value.disputeStatus !== 'open')
+const canReportCredentialProblem = computed(() => canConfirmComplete.value)
 const canOpenDispute = computed(() => Boolean(
   order.value
   && order.value.status !== 'cancelled'
@@ -148,8 +155,19 @@ const paymentIssueOptions: Array<{ value: ApiOrderPaymentIssueReason, label: str
   { value: 'amount_mismatch', label: '金额不符', description: '实收金额与订单金额不一致。' },
   { value: 'remark_mismatch', label: '备注不符', description: '付款备注或订单识别信息不一致。' },
 ]
-const flowSteps = ['创建订单', '买家付款', '商户确认收款', '商户交付', '买家验收']
-const flowStepDescriptions = ['锁定下单信息', '使用商户收款方式付款', '核对实际到账', '提交一次性交付凭证', '核对后完成订单']
+type CredentialProblemReason = 'unreachable' | 'invalid_credential' | 'quota_mismatch' | 'permission_mismatch' | 'description_mismatch' | 'other'
+const credentialProblemOptions: Array<{ value: CredentialProblemReason, label: string, description: string }> = [
+  { value: 'unreachable', label: '无法连接', description: '接入地址无法访问或服务没有响应。' },
+  { value: 'invalid_credential', label: '凭证无效', description: 'API Key、账号或初始密码无法使用。' },
+  { value: 'quota_mismatch', label: '额度不符', description: '可用额度与订单快照不一致。' },
+  { value: 'permission_mismatch', label: '权限不符', description: '模型、并发或接口权限与约定不一致。' },
+  { value: 'description_mismatch', label: '与描述不符', description: '交付内容与服务或套餐说明不一致。' },
+  { value: 'other', label: '其他问题', description: '以上原因无法准确描述当前问题。' },
+]
+const credentialProblemSubmitDisabled = computed(() => !credentialProblemReason.value
+  || (credentialProblemReason.value === 'other' && !credentialProblemNote.value.trim()))
+const flowSteps = ['创建订单', '买家付款', '商户确认收款', '商户交付', '买家核验']
+const flowStepDescriptions = ['锁定下单信息', '使用商户收款方式付款', '核对实际到账', '完成一次性交付', '确认可用或核验期自动结束']
 const currentFlowIndex = computed(() => {
   if (!order.value || order.value.status === 'cancelled') return -1
   const indexes = {
@@ -168,10 +186,23 @@ const merchantDeadline = computed(() => merchantHandlingDeadline(order.value?.pa
 const activeDeadline = computed(() => {
   if (order.value?.status === 'pending_payment') return order.value.paymentExpiresAt
   if (order.value?.status === 'payment_submitted' || order.value?.status === 'paid_confirmed') return merchantDeadline.value
+  if (!isMerchantView.value && order.value?.status === 'delivery_submitted') return order.value.deliveryReviewExpiresAt
   return null
 })
 const countdown = computed(() => orderCountdown(activeDeadline.value, now.value))
-const countdownTitle = computed(() => order.value?.status === 'pending_payment' ? `请在 ${order.value.paymentWindowMinutes} 分钟内完成付款` : '商户确认并交付剩余时间')
+const countdownLabel = computed(() => {
+  if (order.value?.status !== 'delivery_submitted') return countdown.value.label
+  const hours = String(Math.floor(countdown.value.totalSeconds / 3600)).padStart(2, '0')
+  const minutes = String(Math.floor((countdown.value.totalSeconds % 3600) / 60)).padStart(2, '0')
+  const seconds = String(countdown.value.totalSeconds % 60).padStart(2, '0')
+  return `${hours}:${minutes}:${seconds}`
+})
+const countdownTitle = computed(() => {
+  if (order.value?.status === 'pending_payment') return `请在 ${order.value.paymentWindowMinutes} 分钟内完成付款`
+  if (order.value?.status === 'delivery_submitted') return '凭证核验剩余时间'
+  return '商户确认并交付剩余时间'
+})
+const pageTitle = computed(() => isMerchantView.value ? 'API 销售订单' : 'API 购买订单')
 const selectedCancelOption = computed(() => API_ORDER_CANCEL_OPTIONS.find(item => item.value === cancelReason.value))
 const canCancelOrder = computed(() => !isMerchantView.value && order.value?.status === 'pending_payment')
 const cancelSubmitDisabled = computed(() => {
@@ -190,15 +221,19 @@ const currentActionDescription = computed(() => {
     if (order.value.status === 'payment_submitted') return '买家已标记付款，请核对收款账户实际到账后确认。'
     if (order.value.status === 'payment_issue') return '已报告付款问题，正在等待买家补充付款信息。'
     if (order.value.status === 'paid_confirmed') return '收款已确认，请填写买家专属的接入信息。'
-    if (order.value.status === 'delivery_submitted') return '交付凭证已提交，等待买家核对并确认完成交易。'
-    return '双方操作已完成，这笔交易已结束。'
+    if (order.value.status === 'delivery_submitted') return '已完成交付，无需继续操作；买家可在核验期内确认可用或报告问题。'
+    if (order.value.completionSource === 'auto_completed') return '核验期已结束，订单由系统自动完成。'
+    return '买家已确认凭证可用，这笔交易已完成。'
   }
   if (order.value.status === 'pending_payment') return '查看本次订单的收款信息，完成付款后确认付款状态。'
   if (order.value.status === 'payment_submitted') return '付款状态已提交，等待商户核对收款。'
   if (order.value.status === 'payment_issue') return '商户发现付款信息不匹配，请补充说明后重新提交。'
   if (order.value.status === 'paid_confirmed') return '商户已确认收款，等待商户提交交付凭证。'
-  if (order.value.status === 'delivery_submitted') return '请核对交付凭证；确认可以使用后完成交易。'
-  return '双方操作已完成，交付凭证仍可在本页查看。'
+  if (order.value.status === 'delivery_submitted') return order.value.disputeStatus === 'open'
+    ? '凭证问题正在处理中，自动完成计时已暂停。'
+    : '请在核验期内确认凭证可用或报告问题；未反馈时订单将自动完成。'
+  if (order.value.completionSource === 'auto_completed') return '核验期内未报告问题，订单已自动完成；交付凭证仍可查看。'
+  return '你已确认凭证可用；交付凭证仍可在本页查看。'
 })
 
 function legacyRevocationCopy(value: string) {
@@ -315,13 +350,36 @@ async function resubmitPayment() {
 }
 
 async function confirmComplete() {
-  if (!order.value || !window.confirm('确认交付凭证可以使用并完成这笔交易？完成后订单将进入已完成状态。')) return
+  if (!order.value) return
   try {
     await confirmCompleteMutation.mutateAsync({ id: order.value.id, version: order.value.version })
+    completionConfirmOpen.value = false
     await refresh(order.value.id)
-    toast.success('交易已完成。')
+    toast.success('已确认凭证可用，订单完成。')
   } catch (error) {
-    toast.error(error instanceof Error ? error.message : '确认完成交易失败。')
+    toast.error(error instanceof Error ? error.message : '确认凭证可用失败。')
+  }
+}
+
+async function submitCredentialProblem() {
+  if (!order.value || !credentialProblemReason.value) return
+  const option = credentialProblemOptions.find(item => item.value === credentialProblemReason.value)
+  if (!option) return
+  const reason = `凭证异常｜${option.label}${credentialProblemNote.value.trim() ? `｜补充说明：${credentialProblemNote.value.trim()}` : ''}`
+  try {
+    await openDisputeMutation.mutateAsync({
+      id: order.value.id,
+      reason,
+      version: order.value.version,
+      perspective: 'buyer',
+    })
+    credentialProblemOpen.value = false
+    credentialProblemReason.value = ''
+    credentialProblemNote.value = ''
+    await refresh(order.value.id)
+    toast.success('凭证问题已提交，自动完成计时已暂停。')
+  } catch (error) {
+    toast.error(error instanceof Error ? error.message : '提交凭证问题失败。')
   }
 }
 
@@ -415,11 +473,11 @@ onBeforeUnmount(() => {
       <div>
         <Button class="-ml-3 mb-2" variant="ghost" size="sm" @click="router.push(backPath)">← {{ backLabel }}</Button>
         <div class="flex flex-wrap items-center gap-2">
-          <h1 class="text-2xl font-semibold tracking-tight">{{ order.serviceTitle }}</h1>
-          <StatusBadge :status="order.status" :label="getApiOrderStatusLabel(order.status)" />
+          <h1 class="text-2xl font-semibold tracking-tight">{{ pageTitle }}</h1>
+          <StatusBadge :status="order.status" :label="getApiOrderDisplayStatus(order, perspective)" />
           <Badge v-if="order.purchaseKind === 'limited_quota_offer'" variant="capability">限时额度包</Badge>
         </div>
-        <p class="mt-2 text-sm text-muted-foreground">订单号：<ShortId :value="order.id" prefix="API" copyable /></p>
+        <p class="mt-2 text-sm text-muted-foreground">{{ order.serviceTitle }} · 订单号：<ShortId :value="order.id" prefix="API" copyable /></p>
       </div>
       <Button v-if="canCancelOrder" variant="outline" class="border-destructive/40 text-destructive hover:bg-destructive/5 hover:text-destructive" @click="cancelDrawerOpen = true">
         <XCircle class="h-4 w-4" />取消订单
@@ -448,6 +506,12 @@ onBeforeUnmount(() => {
       <AlertDescription>该订单问题已经提交，请等待平台处理；无需重复提交。</AlertDescription>
     </Alert>
 
+    <Alert v-if="isMerchantView && order.status === 'delivery_submitted'" class="border-success/35 bg-success/10">
+      <CheckCircle2 class="text-success" />
+      <AlertTitle>已完成交付</AlertTitle>
+      <AlertDescription>你的履约任务已经结束，无需等待买家点击确认。订单将在买家确认可用或 24 小时核验期结束后完成。</AlertDescription>
+    </Alert>
+
     <section class="rounded-lg border border-border bg-card p-4" aria-labelledby="api-order-counterparty-reputation">
       <div class="mb-4">
         <h2 id="api-order-counterparty-reputation" class="font-semibold">交易对手信誉</h2>
@@ -461,7 +525,7 @@ onBeforeUnmount(() => {
     <Card class="overflow-hidden border-border/80">
       <div class="grid gap-0 md:grid-cols-[0.8fr_1fr_1.15fr_auto]">
         <div class="border-b border-border p-5 md:border-b-0 md:border-r">
-          <div class="text-xs text-muted-foreground">订单金额</div>
+          <div class="text-xs text-muted-foreground">{{ isMerchantView ? '应收金额' : '实付金额' }}</div>
           <div class="mt-2 text-3xl font-semibold text-primary">¥{{ orderAmountText }}</div>
           <div class="mt-1 text-xs text-muted-foreground">锁定额度 ${{ orderAllowanceText }} 美元额度</div>
         </div>
@@ -473,13 +537,13 @@ onBeforeUnmount(() => {
         <div class="border-b border-border p-5 text-center md:border-b-0 md:border-r">
           <template v-if="activeDeadline">
             <div class="text-xs font-medium" :class="countdown.urgent || countdown.expired ? 'text-destructive' : 'text-muted-foreground'">{{ countdownTitle }}</div>
-            <div class="mt-2 font-mono text-4xl font-semibold tracking-[0.16em]" :class="countdown.urgent || countdown.expired ? 'text-destructive' : 'text-foreground'">{{ countdown.label }}</div>
+            <div class="mt-2 font-mono text-3xl font-semibold" :class="countdown.urgent || countdown.expired ? 'text-destructive' : 'text-foreground'">{{ countdownLabel }}</div>
             <div class="mt-2 text-xs text-muted-foreground">{{ countdown.expired ? '本阶段处理时间已结束' : `截止 ${formatOrderDateTime(activeDeadline)}` }}</div>
           </template>
           <template v-else>
             <div class="text-xs text-muted-foreground">当前状态</div>
-            <div class="mt-3 text-xl font-semibold">{{ getApiOrderStatusLabel(order.status) }}</div>
-            <div class="mt-2 text-xs text-muted-foreground">{{ order.deliveryCredential ? '交付凭证已提交' : '无需倒计时' }}</div>
+            <div class="mt-3 text-xl font-semibold">{{ getApiOrderDisplayStatus(order, perspective) }}</div>
+            <div class="mt-2 text-xs text-muted-foreground">{{ order.deliveryCredential ? (isMerchantView ? '你的交付任务已结束' : '交付凭证已提交') : '无需倒计时' }}</div>
           </template>
         </div>
         <div class="flex min-w-56 flex-col justify-center gap-2 p-5">
@@ -501,9 +565,14 @@ onBeforeUnmount(() => {
           <Button v-else-if="canSubmitDelivery" size="lg" :disabled="actionBusy" @click="scrollToDeliveryForm">
             <KeyRound class="h-4 w-4" />继续填写交付信息
           </Button>
-          <Button v-else-if="canConfirmComplete" size="lg" :disabled="actionBusy" @click="confirmComplete">
-            <CheckCircle2 class="h-4 w-4" />确认完成交易
-          </Button>
+          <template v-else-if="canConfirmComplete">
+            <Button size="lg" :disabled="actionBusy" @click="completionConfirmOpen = true">
+              <CheckCircle2 class="h-4 w-4" />确认凭证可用
+            </Button>
+            <Button v-if="canReportCredentialProblem" variant="outline" class="border-warning/50 text-warning" :disabled="actionBusy" @click="credentialProblemOpen = true">
+              <ShieldAlert class="h-4 w-4" />凭证存在问题
+            </Button>
+          </template>
           <Button v-else-if="canOpenReviewCenter" size="lg" :disabled="actionBusy" @click="openReviewCenter">
             <Star class="h-4 w-4" />{{ isMerchantView ? '评价买家' : '评价卖家' }}
           </Button>
@@ -678,10 +747,10 @@ onBeforeUnmount(() => {
             <div v-for="event in events" :key="event.id" class="grid gap-1 border-b border-border pb-3 text-sm md:grid-cols-[180px_1fr]">
               <div class="text-muted-foreground">{{ formatOrderDateTime(event.createdAt) }}</div>
               <div>
-                <div class="font-medium">{{ event.actorLabel }} · {{ event.type }}</div>
+                <div class="font-medium">{{ event.actorLabel }} · {{ getApiOrderEventLabel(event.type) }}</div>
                 <div class="text-xs text-muted-foreground">
-                  {{ event.fromStatus ? getApiOrderStatusLabel(event.fromStatus) : '创建' }}
-                  <span v-if="event.toStatus"> → {{ getApiOrderStatusLabel(event.toStatus) }}</span>
+                  {{ event.fromStatus ? getApiOrderStatusLabel(event.fromStatus, perspective) : '创建' }}
+                  <span v-if="event.toStatus"> → {{ getApiOrderStatusLabel(event.toStatus, perspective) }}</span>
                   <span v-if="event.note"> · {{ event.note }}</span>
                 </div>
               </div>
@@ -696,6 +765,56 @@ onBeforeUnmount(() => {
       <Button v-if="canOpenDispute" variant="outline" @click="disputeDialogOpen = true"><Headphones class="h-4 w-4" />申请平台介入</Button>
       <Badge v-else-if="order.disputeStatus === 'open'" variant="status">平台介入中</Badge>
     </div>
+
+    <Dialog v-model:open="completionConfirmOpen">
+      <DialogContent class="sm:max-w-[480px]">
+        <DialogHeader>
+          <DialogTitle>确认凭证可以使用？</DialogTitle>
+          <DialogDescription>确认后订单将立即完成并开放评价。交付凭证仍可在订单详情中长期查看。</DialogDescription>
+        </DialogHeader>
+        <Alert class="border-success/25 bg-success/10">
+          <CheckCircle2 class="text-success" />
+          <AlertTitle>请先完成实际核验</AlertTitle>
+          <AlertDescription>请确认接入地址、凭证、额度和权限均符合订单说明；平台不会代替你测试 API。</AlertDescription>
+        </Alert>
+        <DialogFooter>
+          <Button variant="outline" @click="completionConfirmOpen = false">返回核验</Button>
+          <Button :disabled="actionBusy" @click="confirmComplete">{{ actionBusy ? '提交中…' : '确认凭证可用' }}</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+
+    <Dialog v-model:open="credentialProblemOpen">
+      <DialogContent class="max-h-[92dvh] overflow-y-auto sm:max-w-[560px]">
+        <DialogHeader>
+          <DialogTitle>凭证存在问题</DialogTitle>
+          <DialogDescription>选择最符合的原因。提交后订单进入问题处理，24 小时自动完成计时将暂停。</DialogDescription>
+        </DialogHeader>
+        <RadioGroup v-model="credentialProblemReason" class="space-y-2">
+          <label
+            v-for="option in credentialProblemOptions"
+            :key="option.value"
+            class="flex cursor-pointer items-start gap-3 rounded-lg border border-border p-4 transition-colors hover:bg-muted/40"
+            :class="credentialProblemReason === option.value ? 'border-warning/60 bg-warning/10' : ''"
+          >
+            <RadioGroupItem :value="option.value" class="mt-0.5" />
+            <span>
+              <span class="block text-sm font-medium">{{ option.label }}</span>
+              <span class="mt-1 block text-xs leading-5 text-muted-foreground">{{ option.description }}</span>
+            </span>
+          </label>
+        </RadioGroup>
+        <label class="block space-y-2">
+          <span class="text-sm font-medium">补充说明{{ credentialProblemReason === 'other' ? '' : '（选填）' }}</span>
+          <Textarea v-model="credentialProblemNote" class="min-h-24" maxlength="400" placeholder="说明实际表现和核验时间，不要填写 API Key、密码或验证码。" />
+          <span class="block text-right text-xs text-muted-foreground">{{ credentialProblemNote.length }} / 400</span>
+        </label>
+        <DialogFooter>
+          <Button variant="outline" @click="credentialProblemOpen = false">暂不提交</Button>
+          <Button :disabled="credentialProblemSubmitDisabled || actionBusy" @click="submitCredentialProblem">{{ actionBusy ? '提交中…' : '提交凭证问题' }}</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
 
     <Dialog v-model:open="disputeDialogOpen">
       <DialogContent class="sm:max-w-[520px]">

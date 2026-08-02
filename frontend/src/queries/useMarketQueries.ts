@@ -20,6 +20,7 @@ import {
   deleteCustomAvatar,
   getAdminFeedbackTicket,
   getAdminFeedbackTickets,
+  getAdminApiOrderById,
   getAdminOverview,
   getAdminSectionRows,
   getApiPurchaseIntentById,
@@ -1111,6 +1112,15 @@ export function useSubmitReviewMutation() {
 
 export function useAdminOverview() {
   return useQuery({ queryKey: ['admin-overview'], queryFn: getAdminOverview })
+}
+
+export function useAdminApiOrder(id: Ref<string> | string) {
+  return useQuery({
+    queryKey: computed(() => ['admin-api-orders', valueOf(id)]),
+    queryFn: () => getAdminApiOrderById(valueOf(id)),
+    enabled: computed(() => Boolean(valueOf(id))),
+    refetchOnMount: 'always',
+  })
 }
 
 export function useAdminSectionRows(section: Ref<AdminSection> | AdminSection) {

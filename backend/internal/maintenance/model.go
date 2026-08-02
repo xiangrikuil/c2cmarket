@@ -21,6 +21,9 @@ type Result struct {
 	VerificationCodesDeleted  int64
 	IdempotencyEntriesDeleted int64
 	ContactSessionsExpired    int64
+	APIOrdersPaymentExpired   int64
+	APIOrderReviewReminders   int64
+	APIOrdersAutoCompleted    int64
 	NotificationsDeleted      int64
 	DomainEventsDeleted       int64
 }

@@ -287,6 +287,13 @@ owner from the most recently updated enabled service snapshot. Account changes
 apply only to future service snapshots; existing services and orders remain
 unchanged.
 
+Version 68 (`000068_api_order_delivery_review`) adds a 24-hour buyer review
+window after API-order delivery, a one-time review reminder marker, and an
+explicit `buyer_confirmed` or `auto_completed` completion source. Existing
+delivered orders receive a fresh 24-hour window at migration time; existing
+completed orders retain their delivery history and are marked as buyer
+confirmed.
+
 ## Contact Retention And Destruction
 
 Contact method deletion retires the mutable contact method surface. Historical

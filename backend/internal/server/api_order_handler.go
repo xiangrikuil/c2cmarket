@@ -98,7 +98,9 @@ type apiOrderResponse struct {
 	PaidConfirmedAt               *string                             `json:"paidConfirmedAt,omitempty"`
 	DeliveryNote                  string                              `json:"deliveryNote,omitempty"`
 	DeliverySubmittedAt           *string                             `json:"deliverySubmittedAt,omitempty"`
+	DeliveryReviewExpiresAt       *string                             `json:"deliveryReviewExpiresAt,omitempty"`
 	DeliveryCredential            *apiOrderDeliveryCredentialResponse `json:"deliveryCredential,omitempty"`
+	CompletionSource              string                              `json:"completionSource,omitempty"`
 	CompletedAt                   *string                             `json:"completedAt,omitempty"`
 	CancelledAt                   *string                             `json:"cancelledAt,omitempty"`
 	CancelReason                  string                              `json:"cancelReason,omitempty"`
@@ -174,6 +176,22 @@ func (s *Server) handleMyAPIOrders(w http.ResponseWriter, r *http.Request) {
 	writePaginatedJSON(w, r, toAPIOrderResponses(orders, false))
 }
 
+func (s *Server) handleAdminAPIOrder(w http.ResponseWriter, r *http.Request) {
+	user, _, appErr := s.requireSession(w, r)
+	if appErr != nil {
+		writeProblem(w, r, appErr)
+		return
+	}
+	order, appErr := s.app.AdminAPIOrder(r.Context(), user, chi.URLParam(r, "id"))
+	if appErr != nil {
+		writeProblem(w, r, appErr)
+		return
+	}
+	setETag(w, order.Version)
+	w.Header().Set("Cache-Control", "private, no-store")
+	writeJSON(w, http.StatusOK, toAdminAPIOrderResponse(order))
+}
+
 func (s *Server) handleAdminAPIOrders(w http.ResponseWriter, r *http.Request) {
 	user, _, appErr := s.requireSession(w, r)
 	if appErr != nil {
@@ -185,7 +203,7 @@ func (s *Server) handleAdminAPIOrders(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, r, appErr)
 		return
 	}
-	writePaginatedJSON(w, r, toAPIOrderResponses(orders, false))
+	writePaginatedJSON(w, r, toAdminAPIOrderResponses(orders))
 }
 
 func (s *Server) handleMyAPIOrder(w http.ResponseWriter, r *http.Request) {
@@ -399,6 +417,22 @@ func toAPIOrderResponses(orders []apiorder.Order, ownerView bool) []apiOrderResp
 	return items
 }
 
+func toAdminAPIOrderResponses(orders []apiorder.Order) []apiOrderResponse {
+	items := make([]apiOrderResponse, 0, len(orders))
+	for _, order := range orders {
+		items = append(items, toAdminAPIOrderResponse(order))
+	}
+	return items
+}
+
+func toAdminAPIOrderResponse(order apiorder.Order) apiOrderResponse {
+	response := toAPIOrderResponse(order, false, false)
+	response.BuyerUserID = order.BuyerUserID
+	response.SellerUserID = order.SellerUserID
+	response.DeliveryCredential = nil
+	return response
+}
+
 func toAPIOrderResponse(order apiorder.Order, ownerView bool, includeCredential bool) apiOrderResponse {
 	response := apiOrderResponse{
 		ID:                            order.ID,
@@ -454,6 +488,8 @@ func toAPIOrderResponse(order apiorder.Order, ownerView bool, includeCredential 
 		PaymentIssueReportedAt:        formatOptionalTime(order.PaymentIssueReportedAt),
 		DeliveryNote:                  order.DeliveryNote,
 		DeliverySubmittedAt:           formatOptionalTime(order.DeliverySubmittedAt),
+		DeliveryReviewExpiresAt:       formatOptionalTime(order.DeliveryReviewExpiresAt),
+		CompletionSource:              order.CompletionSource,
 		CompletedAt:                   formatOptionalTime(order.CompletedAt),
 		CancelledAt:                   formatOptionalTime(order.CancelledAt),
 		CancelReason:                  order.CancelReason,

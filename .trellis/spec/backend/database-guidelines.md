@@ -390,6 +390,76 @@ ON api_payment_account_options(user_id)
 WHERE enabled = true;
 ```
 
+## Scenario: API Order Delivery Review Materialization
+
+### 1. Scope / Trigger
+
+- Trigger: schema, repository, maintenance, notification, or reporting changes involving API orders after credential delivery.
+- The seller's immutable credential submission finishes seller fulfillment, while the order remains reviewable by the buyer for 24 hours.
+
+### 2. Signatures
+
+```text
+api_orders.delivery_review_expires_at timestamptz
+api_orders.delivery_review_reminded_at timestamptz
+api_orders.completion_source text CHECK IN ('buyer_confirmed', 'auto_completed')
+
+MaterializeExpiredAPIOrders(ctx, now) -> payment expired, review reminded, auto completed counts
+GET /api/v1/admin/api-orders/{id}
+```
+
+### 3. Contracts
+
+- `delivery_submitted` rows require `delivery_review_expires_at`, no completion source, and no completed timestamp.
+- `completed` rows require the retained review deadline, `completion_source`, and `completed_at`.
+- Credential submission sets the deadline once and credentials remain immutable. Buyer confirmation writes `buyer_confirmed`; deadline materialization writes `auto_completed` using the deadline as the completion timestamp.
+- Open disputes block automatic completion. The final-two-hour reminder uses `delivery_review_reminded_at` as a durable deduplication marker.
+- Lazy reads/actions and scheduled maintenance share the same transaction-level transition logic, row lock, and state recheck. The partial expiry index covers only `status='delivery_submitted'`.
+- Migration 68 gives historical `delivery_submitted` rows a fresh `now() + 24 hours` window and labels historical completed rows `buyer_confirmed`.
+
+### 4. Validation & Error Matrix
+
+| Condition | Expected behavior |
+| --- | --- |
+| `delivery_submitted` has no review deadline | State-shape constraint rejects the write |
+| Completed row has no valid completion source | State-shape/source constraint rejects the write |
+| Review deadline reached with an open dispute | Keep `delivery_submitted`; emit no completion event |
+| Reminder already marked | Emit no duplicate reminder event or notification |
+| Lazy read races maintenance | Row lock and state recheck yield one durable transition |
+| Historical pending review row is migrated | Deadline is migration time plus 24 hours, never immediate bulk completion |
+
+### 5. Good / Base / Bad Cases
+
+- Good: maintenance locks an eligible row, writes `completed/auto_completed`, one event, one notification, and one completion timestamp atomically.
+- Base: the buyer confirms before the deadline and the same row becomes `completed/buyer_confirmed`.
+- Bad: compute a deadline from browser time, auto-complete an open dispute, or let lazy and scheduled paths maintain separate transition implementations.
+
+### 6. Tests Required
+
+- Migration source tests assert columns, source values, state-shape constraints, the partial index, historical backfill, and down migration.
+- In-memory/service tests assert review deadline, buyer confirmation, reminder deduplication, automatic completion, and open-dispute pause.
+- PostgreSQL tests assert row-lock/state-recheck behavior, event/notification uniqueness, and maintenance counters.
+- Run `go test ./...`, `go vet ./...`, `node scripts/check-migrations-doc.mjs`, and `git diff --check`.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```sql
+UPDATE api_orders SET status = 'completed'
+WHERE delivery_submitted_at < now() - interval '24 hours';
+```
+
+#### Correct
+
+```sql
+SELECT id FROM api_orders
+WHERE status = 'delivery_submitted'
+  AND dispute_status <> 'open'
+  AND delivery_review_expires_at <= $1
+FOR UPDATE SKIP LOCKED;
+```
+
 ## Docker Runtime
 
 - Root `compose.yaml` owns local PostgreSQL and the backend image definition.

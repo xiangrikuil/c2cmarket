@@ -1,8 +1,10 @@
 import type {
   AdminRow,
+  AdminApiOrderDetail,
   ApiBillingMode,
   ApiDeliveryMode,
   ApiOrder,
+  ApiOrderCompletionSource,
   ApiOrderDeliveryCredential,
   ApiOrderFilters,
   ApiOrderPaymentInstructions,
@@ -218,7 +220,9 @@ export type BackendAPIOrder = {
   sellerReputation?: ReputationSummary | null
   status: string
   disputeStatus?: string
+  disputeCaseId?: string
   serviceTitleSnapshot: string
+  billingModeSnapshot?: string
   selectedPackageId?: string
   selectedPackageSnapshot?: string
   packageStockReserved?: boolean
@@ -259,7 +263,9 @@ export type BackendAPIOrder = {
   paidConfirmedAt?: string | null
   deliveryNote?: string
   deliverySubmittedAt?: string | null
+  deliveryReviewExpiresAt?: string | null
   deliveryCredential?: BackendAPIOrderDeliveryCredential | null
+  completionSource?: string
   completedAt?: string | null
   cancelledAt?: string | null
   cancelReason?: string
@@ -941,8 +947,9 @@ function adminOrderStatusLabel(value: string) {
 	const labels: Record<string, string> = {
 		pending_payment: '待买家付款',
 		payment_submitted: '待确认收款',
+		payment_issue: '等待买家补充',
 		paid_confirmed: '待商户交付',
-		delivery_submitted: '待买家验收',
+		delivery_submitted: '买家核验期',
 		completed: '已完成',
 		cancelled: '已取消',
 	}
@@ -961,21 +968,77 @@ export function mapBackendAdminAPIOrder(order: BackendAPIOrder): AdminRow {
 		primary: `${order.serviceTitleSnapshot} API 订单`,
 		secondary: `${order.id} · 订单金额 ¥${order.amount}`,
 		owner: `买家 ${order.buyerUserId?.slice(0, 8) ?? '未知'} / 商户 ${order.sellerUserId?.slice(0, 8) ?? '未知'}`,
-		status: adminOrderStatusLabel(order.status),
+		status: order.status === 'completed'
+			? order.completionSource === 'auto_completed' ? '系统自动完成' : '买家主动确认'
+			: adminOrderStatusLabel(order.status),
 		risk: order.disputeStatus || order.cancelReason || `更新于 ${order.updatedAt}`,
 		targetType: 'api-order',
 		backendKind: 'api-order',
 		backendVersion: order.version,
-		targetTo: null,
+		targetTo: `/admin/api-orders/${order.id}`,
 		detailItems: [
 			{ label: '订单状态', value: order.status },
 			{ label: '订单金额', value: `¥${order.amount}` },
 			{ label: '购买额度', value: order.requestedUsdAllowanceSnapshot ? `${order.requestedUsdAllowanceSnapshot} 美元额度` : '不适用' },
 			{ label: '定价快照', value: order.cnyPerUsdAllowanceSnapshot ? `¥${order.cnyPerUsdAllowanceSnapshot} / $1` : '按套餐快照' },
 			{ label: '交付凭证', value: order.deliverySubmittedAt ? '已提交（管理摘要不展示原始凭证）' : '尚未提交' },
+			{ label: '核验截止', value: order.deliveryReviewExpiresAt ?? '不适用' },
+			{ label: '完成方式', value: order.completionSource === 'auto_completed' ? '系统自动完成' : order.completionSource === 'buyer_confirmed' ? '买家主动确认' : '尚未完成' },
 			{ label: '最近更新', value: order.updatedAt },
 		],
 	}
+}
+
+function apiOrderCompletionSource(value?: string): ApiOrderCompletionSource | undefined {
+  if (value === 'buyer_confirmed' || value === 'auto_completed') return value
+  return undefined
+}
+
+export function mapBackendAdminAPIOrderDetail(order: BackendAPIOrder): AdminApiOrderDetail {
+  if (order.currency !== 'CNY') throw new Error(`Unsupported API order currency: ${order.currency}`)
+  if (!order.buyerUserId || !order.sellerUserId) throw new Error('Admin API order response is missing participant IDs')
+  return {
+    id: order.id,
+    purchaseKind: apiOrderPurchaseKind(order.purchaseKind),
+    apiPurchaseIntentId: order.apiPurchaseIntentId,
+    apiServiceId: order.apiServiceId,
+    buyerUserId: order.buyerUserId,
+    sellerUserId: order.sellerUserId,
+    status: apiOrderStatus(order.status),
+    disputeStatus: order.disputeStatus,
+    disputeCaseId: order.disputeCaseId,
+    serviceTitleSnapshot: order.serviceTitleSnapshot,
+    billingModeSnapshot: order.billingModeSnapshot,
+    selectedPackageId: order.selectedPackageId,
+    selectedPackageSnapshot: order.selectedPackageSnapshot,
+    amount: order.amount,
+    currency: 'CNY',
+    requestedUsdAllowanceSnapshot: order.requestedUsdAllowanceSnapshot,
+    cnyPerUsdAllowanceSnapshot: order.cnyPerUsdAllowanceSnapshot,
+    selectedPaymentMethod: apiOrderPaymentMethod(order.selectedPaymentMethod),
+    paymentExpiresAt: order.paymentExpiresAt,
+    paymentSubmittedAt: order.paymentSubmittedAt ?? undefined,
+    paymentIssueReason: apiOrderPaymentIssueReason(order.paymentIssueReason),
+    paymentIssueNote: order.paymentIssueNote,
+    paymentIssueReportedAt: order.paymentIssueReportedAt ?? undefined,
+    paidConfirmedAt: order.paidConfirmedAt ?? undefined,
+    deliveryNote: order.deliveryNote,
+    deliverySubmittedAt: order.deliverySubmittedAt ?? undefined,
+    deliveryReviewExpiresAt: order.deliveryReviewExpiresAt ?? undefined,
+    completionSource: apiOrderCompletionSource(order.completionSource),
+    completedAt: order.completedAt ?? undefined,
+    cancelledAt: order.cancelledAt ?? undefined,
+    cancelReason: order.cancelReason,
+    version: order.version,
+    createdAt: order.createdAt,
+    updatedAt: order.updatedAt,
+  }
+}
+
+export async function backendAdminAPIOrder(id: string): Promise<AdminApiOrderDetail> {
+  await ensureBackendSession('admin', true)
+  const order = await backendRequest<BackendAPIOrder>(`/api/v1/admin/api-orders/${encodeURIComponent(id)}`)
+  return mapBackendAdminAPIOrderDetail(order)
 }
 
 export async function backendAPIIntentById(id: string) {
@@ -1210,7 +1273,7 @@ function filterAndSortOrders(rows: ApiOrder[], filters: ApiOrderFilters = {}, ro
   const sort = filters.sort ?? 'updated_desc'
   return filtered.sort((a, b) => {
     if (sort === 'default_buyer' || sort === 'default_merchant') {
-	      const buyerAction = (item: ApiOrder) => item.status === 'pending_payment' || item.status === 'payment_issue' || item.status === 'delivery_submitted' || item.status === 'completed'
+	      const buyerAction = (item: ApiOrder) => item.status === 'pending_payment' || item.status === 'payment_issue' || item.status === 'delivery_submitted'
       const merchantAction = (item: ApiOrder) => item.status === 'payment_submitted' || item.status === 'paid_confirmed'
       const aAction = role === 'buyer' ? buyerAction(a) : merchantAction(a)
       const bAction = role === 'buyer' ? buyerAction(b) : merchantAction(b)
@@ -1239,6 +1302,7 @@ async function mapBackendAPIOrder(order: BackendAPIOrder, viewerRole: 'buyer' | 
     sellerReputation: mapBackendReputationSummary(order.sellerReputation),
     status: apiOrderStatus(order.status),
     disputeStatus: order.disputeStatus,
+    disputeCaseId: order.disputeCaseId,
     serviceTitle: order.serviceTitleSnapshot || intent.snapshot.serviceTitle,
     amount: numberFromDecimal(order.amount),
     amountDecimal: order.amount,
@@ -1254,7 +1318,9 @@ async function mapBackendAPIOrder(order: BackendAPIOrder, viewerRole: 'buyer' | 
     paidConfirmedAt: order.paidConfirmedAt ?? undefined,
     deliveryNote: order.deliveryNote,
     deliverySubmittedAt: order.deliverySubmittedAt ?? undefined,
+    deliveryReviewExpiresAt: order.deliveryReviewExpiresAt ?? undefined,
     deliveryCredential: mapDeliveryCredential(order.deliveryCredential),
+    completionSource: apiOrderCompletionSource(order.completionSource),
     completedAt: order.completedAt ?? undefined,
     cancelledAt: order.cancelledAt ?? undefined,
     cancelReason: order.cancelReason,
