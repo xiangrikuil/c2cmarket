@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 26
-- **Last Active**: 2026-07-29
+- **Total Sessions**: 27
+- **Last Active**: 2026-08-02
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~1002 | Active |
+| `journal-1.md` | ~1036 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 27 | 2026-08-02 | API 订单角色视图与 24 小时核验期 | `a527105` | `codex/api-order-role-aware-detail` |
 | 26 | 2026-07-29 | 未登录隐藏私有导航 | `9fb4457` | `codex/unified-auth-route-guard` |
 | 25 | 2026-07-29 | 统一登录访问控制与会话回跳 | `9a15a8d` | `codex/unified-auth-route-guard` |
 | 24 | 2026-07-29 | Persist development account recovery through real backend | `44895f2` | `codex/api-publish-three-modes` |

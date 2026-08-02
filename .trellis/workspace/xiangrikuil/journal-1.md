@@ -1000,3 +1000,37 @@ Made real backend mode explicit for default Nuxt development on port 5173, added
 ### Next Steps
 
 - None - task complete
+
+
+## Session 27: API 订单角色视图与 24 小时核验期
+
+**Date**: 2026-08-02
+**Task**: API 订单角色视图与 24 小时核验期
+**Package**: frontend
+**Branch**: `codex/api-order-role-aware-detail`
+
+### Summary
+
+实现卖家交付即完成履约、买家 24 小时核验与自动完成，新增管理员只读订单详情并同步迁移、OpenAPI、角色化前端、测试和 Trellis 规范。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `a527105` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
