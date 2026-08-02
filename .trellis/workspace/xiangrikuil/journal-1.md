@@ -1107,3 +1107,27 @@ Made real backend mode explicit for default Nuxt development on port 5173, added
 ### Next Steps
 
 - None - task complete
+
+
+## Session 30: 整合 API 订单与推广分支
+
+**Date**: 2026-08-02
+**Task**: 整合 API 订单与推广分支
+**Package**: frontend
+**Branch**: `codex/orders-promotions-integrated`
+
+### Summary
+
+整合订单核验期、API 推广、增长分析、邀请奖励和公开订单号，统一 migration 68-75，通过全量质量门禁并清理本地旧分支与推广 worktree。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `5586e81` | (see git log) |
+| `29e1d4d` | (see git log) |
+| `07af546` | (see git log) |
+
+### Status
+
+[OK] **Completed**
