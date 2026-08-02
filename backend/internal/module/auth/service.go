@@ -149,6 +149,7 @@ func (s *Service) LoginWithOAuthProfile(ctx context.Context, profile OAuthProfil
 	if profile.TrustLevel <= 0 {
 		profile.TrustLevel = 1
 	}
+	profile.Attribution = NormalizeRegistrationAttribution(profile.Attribution)
 
 	now := s.now()
 	var user User
@@ -173,10 +174,11 @@ func (s *Service) LoginWithOAuthProfile(ctx context.Context, profile OAuthProfil
 					continue
 				}
 				user = User{
-					ID:          uuid.NewString(),
-					Username:    candidate,
-					DisplayName: candidate,
-					Status:      "active",
+					ID:              uuid.NewString(),
+					AnalyticsUserID: uuid.NewString(),
+					Username:        candidate,
+					DisplayName:     candidate,
+					Status:          "active",
 				}
 				s.users[user.ID] = user
 				s.usersByUsername[candidate] = user.ID
@@ -211,6 +213,7 @@ func (s *Service) LoginWithOAuthProfile(ctx context.Context, profile OAuthProfil
 		return User{}, Session{}, domain.NewError(http.StatusForbidden, domain.CodeAccountRestricted, "Account restricted", "当前账号不可执行该操作。")
 	}
 	session := newSession(user.ID, now)
+	session.NewRegistration = created
 	if s.repo != nil {
 		if appErr := s.persistSession(ctx, session, now); appErr != nil {
 			return User{}, Session{}, appErr
@@ -358,11 +361,12 @@ func (s *Service) BootstrapAdmin(ctx context.Context, input BootstrapAdminInput)
 		return BootstrapAdminResult{}, AdminBootstrapConflictError()
 	}
 	user := User{
-		ID:          uuid.NewString(),
-		Username:    username,
-		DisplayName: username,
-		IsAdmin:     true,
-		Status:      "active",
+		ID:              uuid.NewString(),
+		AnalyticsUserID: uuid.NewString(),
+		Username:        username,
+		DisplayName:     username,
+		IsAdmin:         true,
+		Status:          "active",
 	}
 	s.users[user.ID] = user
 	s.usersByUsername[user.Username] = user.ID
@@ -763,11 +767,12 @@ func (s *Service) ensureUserLocked(username string, isAdmin bool) User {
 		return user
 	}
 	user := User{
-		ID:          uuid.NewString(),
-		Username:    username,
-		DisplayName: username,
-		IsAdmin:     isAdmin,
-		Status:      "active",
+		ID:              uuid.NewString(),
+		AnalyticsUserID: uuid.NewString(),
+		Username:        username,
+		DisplayName:     username,
+		IsAdmin:         isAdmin,
+		Status:          "active",
 	}
 	s.users[user.ID] = user
 	s.usersByUsername[username] = user.ID

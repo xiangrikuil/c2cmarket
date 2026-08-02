@@ -7,13 +7,14 @@ GO_BIN="${GO_BIN:-go}"
 
 POSTGRES_IMAGE="${POSTGRES_IMAGE:-postgres:18-alpine@sha256:96d56f7f57c6aacd1fcb908bc83b345ec5f83231ee486dd66a1baadce274db88}"
 MIGRATE_IMAGE="${MIGRATE_IMAGE:-migrate/migrate:v4.18.3@sha256:39b59b389634e43bb3f2d4e94bc1edef0775ec2a9a3540ce6a2cf330e5daae55}"
-EXPECTED_MIGRATION_VERSION="${EXPECTED_MIGRATION_VERSION:-67}"
+EXPECTED_MIGRATION_VERSION="${EXPECTED_MIGRATION_VERSION:-72}"
 
 POSTGRES_USER="c2c_prelaunch"
 POSTGRES_PASSWORD="c2c_prelaunch_test_password"
 GENERAL_DATABASE="c2c_prelaunch_test"
 QUOTA_DATABASE="c2c_quota_test"
 REPUTATION_DATABASE="c2c_reputation_test_main"
+GROWTH_DATABASE="c2c_growth_test"
 MULTIPLIER_UPGRADE_DATABASE="c2c_multiplier_upgrade_test"
 
 run_id="c2c-prelaunch-$$"
@@ -66,7 +67,7 @@ published_port="$("${DOCKER_BIN}" port "${postgres_container}" 5432/tcp)"
 host_port="${published_port##*:}"
 [[ "${host_port}" =~ ^[0-9]+$ ]] || fail "could not resolve the published PostgreSQL port"
 
-for database in "${GENERAL_DATABASE}" "${QUOTA_DATABASE}" "${REPUTATION_DATABASE}"; do
+for database in "${GENERAL_DATABASE}" "${QUOTA_DATABASE}" "${REPUTATION_DATABASE}" "${GROWTH_DATABASE}"; do
   "${DOCKER_BIN}" exec "${postgres_container}" \
     createdb --username "${POSTGRES_USER}" "${database}"
 
@@ -112,7 +113,7 @@ done
   "${MIGRATE_IMAGE}" \
   -path=/migrations \
   -database="postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@${postgres_container}:5432/${MULTIPLIER_UPGRADE_DATABASE}?sslmode=disable" \
-  up 2
+  up
 
 multiplier_upgrade_state="$(
   "${DOCKER_BIN}" exec "${postgres_container}" \
@@ -167,7 +168,7 @@ run_go_test "${GENERAL_DATABASE}" ./internal/database \
 run_go_test "${GENERAL_DATABASE}" ./internal/store/postgres \
   '^(TestPostgresOAuthIdentityOwnershipAndConcurrency|TestPostgresBootstrapAdminIsCreateOnlyAndProvenanced|TestPostgresBootstrapAdminRejectsConflictsAndRollsBack|TestPostgresSessionRenewalUpdatesExactlyOnceAtBoundary|TestPostgresContactReencryptDryRunAndApply|TestPostgresDataLifecycleAppliesRetentionAndPreservesAuditHistory|TestPostgresDataLifecycleSkipsWhenAdvisoryLockIsHeld|TestSlowActiveQueryCountIntegration|TestPostgresEmailVerificationChallengeLifecycle|TestPostgresIdempotencyLifecycleBoundsBodiesAndRejectsStaleGeneration|TestAPIAccountPaymentSettingsPersistOneEnabledMethod)$'
 run_go_test "${GENERAL_DATABASE}" ./internal/server \
-  '^(TestPostgresAdminOfficialPriceRecordFlow|TestPostgresProductCatalogReadAPIs|TestPostgresAPIServiceFlow|TestPostgresAPIServiceIntegrityConstraints|TestPostgresAPIPurchaseIntentFlow|TestPostgresAPIOrderReleasesPurchaseIntent|TestPostgresAPIPurchaseIntentIntegrityConstraints|TestPostgresIdempotencyProcessingReplay|TestPostgresContactSessionFlow|TestPostgresContactIntegrityConstraints|TestPostgresCarpoolMembershipIntegrityConstraints|TestPostgresOfficialPriceAdminRecordSideEffectsAreIdempotent|TestPostgresCarpoolApplicationFlow)$'
+  '^(TestPostgresAdminOfficialPriceRecordFlow|TestPostgresProductCatalogReadAPIs|TestPostgresAPIServiceFlow|TestPostgresAPIServiceIntegrityConstraints|TestPostgresAPIPurchaseIntentFlow|TestPostgresAPIOrderReleasesPurchaseIntent|TestPostgresAPIPurchaseIntentIntegrityConstraints|TestPostgresIdempotencyProcessingReplay|TestPostgresContactSessionFlow|TestPostgresContactIntegrityConstraints|TestPostgresCarpoolMembershipIntegrityConstraints|TestPostgresOfficialPriceAdminRecordSideEffectsAreIdempotent|TestPostgresCarpoolApplicationFlow|TestPostgresAPIPromotionCapacityAndLifecycle)$'
 
 run_go_test "${QUOTA_DATABASE}" ./internal/store/postgres \
   '^TestAPIQuotaPostgres'
@@ -176,5 +177,8 @@ run_go_test "${QUOTA_DATABASE}" ./internal/server \
 
 run_go_test "${REPUTATION_DATABASE}" ./internal/store/postgres \
   '^(TestReputationEnginePostgres|TestReputationPostgres|TestSourceAuthorVerificationPostgres|TestEffectiveSourceAuthorVerificationTracks|TestTransactionReviewPostgres)'
+
+run_go_test "${GROWTH_DATABASE}" ./internal/store/postgres \
+  '^TestGrowthOverviewPostgresMetricsAndDailyActivity$'
 
 echo "PostgreSQL 18 migration and integration gate passed."

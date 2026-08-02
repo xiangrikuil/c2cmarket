@@ -213,7 +213,7 @@ paths:
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/ConfirmEmailVerificationRequest"
+              $ref: "#/components/schemas/EmailRegistrationConfirmRequest"
       responses:
         "403":
           description: Email registration disabled. Problem `code` is `EMAIL_REGISTRATION_DISABLED`.
@@ -235,6 +235,36 @@ paths:
           schema:
             type: string
             maxLength: 256
+        - name: utmSource
+          in: query
+          required: false
+          schema:
+            type: string
+            maxLength: 100
+        - name: utmMedium
+          in: query
+          required: false
+          schema:
+            type: string
+            maxLength: 100
+        - name: utmCampaign
+          in: query
+          required: false
+          schema:
+            type: string
+            maxLength: 100
+        - name: referrerHost
+          in: query
+          required: false
+          schema:
+            type: string
+            maxLength: 255
+        - name: landingPath
+          in: query
+          required: false
+          schema:
+            type: string
+            maxLength: 160
       responses:
         "200":
           description: OAuth authorization URL.
@@ -820,6 +850,30 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/PublicAPIServiceList"
+  /api/v1/api-service-promotions:
+    get:
+      operationId: listPublicAPIServicePromotions
+      tags: [APIPromotions]
+      security: []
+      summary: List currently serving API service promotions.
+      description: Returns a separately labelled operator promotion pool. Promotions never change natural API service ordering, reputation, badges, or service state.
+      parameters:
+        - name: placement
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [api_market_top]
+            default: api_market_top
+      responses:
+        "200":
+          description: Currently serving API promotions in daily deterministic order.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PublicAPIServicePromotionList"
+        "422":
+          $ref: "#/components/responses/Problem"
   /api/v1/api-services/{id}:
     get:
       operationId: getPublicAPIService
@@ -4070,6 +4124,136 @@ paths:
                 $ref: "#/components/schemas/APIServiceList"
         "403":
           $ref: "#/components/responses/Problem"
+  /api/v1/admin/api-service-promotions:
+    get:
+      operationId: listAdminAPIServicePromotions
+      tags: [AdminAPIPromotions]
+      summary: List API service promotion schedules and current eligibility.
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
+      responses:
+        "200":
+          description: Administrator promotion schedule.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminAPIServicePromotionList"
+        "403":
+          $ref: "#/components/responses/Problem"
+    post:
+      operationId: createAdminAPIServicePromotion
+      tags: [AdminAPIPromotions]
+      security:
+        - sessionCookie: []
+          csrfToken: []
+      summary: Schedule an API service in the operator promotion pool.
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateAPIServicePromotionRequest"
+      responses:
+        "201":
+          description: Promotion scheduled.
+          headers:
+            ETag:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminAPIServicePromotion"
+        "403":
+          $ref: "#/components/responses/Problem"
+        "409":
+          $ref: "#/components/responses/Problem"
+        "422":
+          $ref: "#/components/responses/Problem"
+  /api/v1/admin/api-service-promotions/availability:
+    get:
+      operationId: getAdminAPIServicePromotionAvailability
+      tags: [AdminAPIPromotions]
+      summary: Check promotion eligibility and peak capacity for a proposed schedule.
+      parameters:
+        - name: apiServiceId
+          in: query
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: placement
+          in: query
+          required: true
+          schema:
+            $ref: "#/components/schemas/APIServicePromotionPlacement"
+        - name: startsAt
+          in: query
+          required: true
+          schema:
+            type: string
+            format: date-time
+        - name: endsAt
+          in: query
+          required: true
+          schema:
+            type: string
+            format: date-time
+      responses:
+        "200":
+          description: Current service eligibility and peak concurrent occupancy for the proposed half-open time range.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/APIServicePromotionAvailability"
+        "403":
+          $ref: "#/components/responses/Problem"
+        "404":
+          $ref: "#/components/responses/Problem"
+        "422":
+          $ref: "#/components/responses/Problem"
+  /api/v1/admin/api-service-promotions/{id}/stop:
+    post:
+      operationId: stopAdminAPIServicePromotion
+      tags: [AdminAPIPromotions]
+      security:
+        - sessionCookie: []
+          csrfToken: []
+      summary: Stop a scheduled or serving API service promotion early.
+      parameters:
+        - $ref: "#/components/parameters/ResourceId"
+        - $ref: "#/components/parameters/IfMatch"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/StopAPIServicePromotionRequest"
+      responses:
+        "200":
+          description: Promotion stopped and retained in administrator history.
+          headers:
+            ETag:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminAPIServicePromotion"
+        "403":
+          $ref: "#/components/responses/Problem"
+        "404":
+          $ref: "#/components/responses/Problem"
+        "409":
+          $ref: "#/components/responses/Problem"
+        "412":
+          $ref: "#/components/responses/Problem"
+        "428":
+          $ref: "#/components/responses/Problem"
   /api/v1/admin/api-services/{id}:
     get:
       operationId: getAdminAPIService
@@ -4389,6 +4573,30 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/AdminUserList"
+        "403":
+          $ref: "#/components/responses/Problem"
+        "422":
+          $ref: "#/components/responses/Problem"
+  /api/v1/admin/growth-overview:
+    get:
+      operationId: getAdminGrowthOverview
+      tags: [AdminGrowth]
+      summary: Return authoritative registered-user growth metrics.
+      parameters:
+        - name: days
+          in: query
+          required: false
+          schema:
+            type: integer
+            enum: [7, 30, 90]
+            default: 30
+      responses:
+        "200":
+          description: Registration, activation, authenticated activity, attribution, transaction, and retention metrics from one database snapshot.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GrowthOverview"
         "403":
           $ref: "#/components/responses/Problem"
         "422":
@@ -6972,6 +7180,39 @@ components:
         code:
           type: string
           pattern: '^[0-9]{6}$'
+    RegistrationAttribution:
+      type: object
+      additionalProperties: false
+      properties:
+        source:
+          type: string
+          maxLength: 100
+        medium:
+          type: string
+          maxLength: 100
+        campaign:
+          type: string
+          maxLength: 100
+        referrerHost:
+          type: string
+          maxLength: 255
+        landingPath:
+          type: string
+          maxLength: 160
+    EmailRegistrationConfirmRequest:
+      type: object
+      additionalProperties: false
+      required: [email, code]
+      properties:
+        email:
+          type: string
+          format: email
+          maxLength: 254
+        code:
+          type: string
+          pattern: '^[0-9]{6}$'
+        attribution:
+          $ref: "#/components/schemas/RegistrationAttribution"
     MyProfile:
       type: object
       required: [id, username, displayName, emailVerified, passwordConfigured, avatarMode, accountStatus, permissions, linuxDoBinding, badges, restrictions, usernameChangePolicy, privacy, createdAt, updatedAt, version]
@@ -8156,9 +8397,12 @@ components:
           format: uri
     User:
       type: object
-      required: [id, username, displayName, isAdmin, permissions, linuxDoBinding]
+      required: [id, analyticsUserId, username, displayName, isAdmin, permissions, linuxDoBinding]
       properties:
         id:
+          type: string
+          format: uuid
+        analyticsUserId:
           type: string
           format: uuid
         username:
@@ -8173,6 +8417,186 @@ components:
             type: string
         linuxDoBinding:
           $ref: "#/components/schemas/LinuxDoBinding"
+    GrowthSummary:
+      type: object
+      required: [newUsersToday, newUsers7d, newUsers30d, newUsersInWindow, cumulativeEffectiveUsers, activatedUsers, activationRate, medianActivationHours, dau, wau, mau, d1RetentionRate, d7RetentionRate, completedCarpoolTransactions, completedApiTransactions]
+      properties:
+        newUsersToday:
+          type: integer
+          minimum: 0
+        newUsers7d:
+          type: integer
+          minimum: 0
+        newUsers30d:
+          type: integer
+          minimum: 0
+        newUsersInWindow:
+          type: integer
+          minimum: 0
+        cumulativeEffectiveUsers:
+          type: integer
+          minimum: 0
+        activatedUsers:
+          type: integer
+          minimum: 0
+        activationRate:
+          type: [number, "null"]
+          minimum: 0
+          maximum: 1
+        medianActivationHours:
+          type: [number, "null"]
+          minimum: 0
+        dau:
+          type: integer
+          minimum: 0
+        wau:
+          type: integer
+          minimum: 0
+        mau:
+          type: integer
+          minimum: 0
+        d1RetentionRate:
+          type: [number, "null"]
+          minimum: 0
+          maximum: 1
+        d7RetentionRate:
+          type: [number, "null"]
+          minimum: 0
+          maximum: 1
+        completedCarpoolTransactions:
+          type: integer
+          minimum: 0
+        completedApiTransactions:
+          type: integer
+          minimum: 0
+    GrowthRegistrationTrendPoint:
+      type: object
+      required: [date, newUsers, cumulativeUsers]
+      properties:
+        date:
+          type: string
+          format: date
+        newUsers:
+          type: integer
+          minimum: 0
+        cumulativeUsers:
+          type: integer
+          minimum: 0
+    GrowthActivityTrendPoint:
+      type: object
+      required: [date, activeUsers]
+      properties:
+        date:
+          type: string
+          format: date
+        activeUsers:
+          type: integer
+          minimum: 0
+    GrowthAttributionGroup:
+      type: object
+      required: [sourceType, source, registrations, share]
+      properties:
+        sourceType:
+          type: string
+          enum: [campaign, referral, direct, unknown, other]
+        source:
+          type: string
+        medium:
+          type: string
+        campaign:
+          type: string
+        registrations:
+          type: integer
+          minimum: 0
+        share:
+          type: number
+          minimum: 0
+          maximum: 1
+    GrowthActivation:
+      type: object
+      required: [cohortUsers, buyerActivatedUsers, buyerActivationRate, sellerActivatedUsers, sellerActivationRate, activatedUsers, activationRate]
+      properties:
+        cohortUsers:
+          type: integer
+          minimum: 0
+        buyerActivatedUsers:
+          type: integer
+          minimum: 0
+        buyerActivationRate:
+          type: [number, "null"]
+          minimum: 0
+          maximum: 1
+        sellerActivatedUsers:
+          type: integer
+          minimum: 0
+        sellerActivationRate:
+          type: [number, "null"]
+          minimum: 0
+          maximum: 1
+        activatedUsers:
+          type: integer
+          minimum: 0
+        activationRate:
+          type: [number, "null"]
+          minimum: 0
+          maximum: 1
+    GrowthRetentionCohort:
+      type: object
+      required: [cohortDate, registeredUsers, d1RetainedUsers, d1Rate, d7RetainedUsers, d7Rate]
+      properties:
+        cohortDate:
+          type: string
+          format: date
+        registeredUsers:
+          type: integer
+          minimum: 0
+        d1RetainedUsers:
+          type: [integer, "null"]
+          minimum: 0
+        d1Rate:
+          type: [number, "null"]
+          minimum: 0
+          maximum: 1
+        d7RetainedUsers:
+          type: [integer, "null"]
+          minimum: 0
+        d7Rate:
+          type: [number, "null"]
+          minimum: 0
+          maximum: 1
+    GrowthOverview:
+      type: object
+      required: [generatedAt, timezone, windowDays, summary, registrationTrend, activityTrend, attribution, activation, retentionCohorts]
+      properties:
+        generatedAt:
+          type: string
+          format: date-time
+        timezone:
+          type: string
+          const: Asia/Shanghai
+        windowDays:
+          type: integer
+          enum: [7, 30, 90]
+        summary:
+          $ref: "#/components/schemas/GrowthSummary"
+        registrationTrend:
+          type: array
+          items:
+            $ref: "#/components/schemas/GrowthRegistrationTrendPoint"
+        activityTrend:
+          type: array
+          items:
+            $ref: "#/components/schemas/GrowthActivityTrendPoint"
+        attribution:
+          type: array
+          items:
+            $ref: "#/components/schemas/GrowthAttributionGroup"
+        activation:
+          $ref: "#/components/schemas/GrowthActivation"
+        retentionCohorts:
+          type: array
+          items:
+            $ref: "#/components/schemas/GrowthRetentionCohort"
     ProductCategory:
       type: object
       required: [id, code, displayName, iconDataUrl, sortOrder, active]
@@ -8940,6 +9364,8 @@ components:
         - billingMode
         - minimumIntentCny
         - usageVisibility
+        - accountPoolType
+        - merchantRefundCommitment
         - accessModes
       properties:
         merchantProfileId:
@@ -8991,17 +9417,26 @@ components:
         merchantNote:
           type: string
           description: Internal merchant note. Must not contain credentials or secrets.
-        merchantSupportNote:
+        accountPoolType:
           type: string
-          description: Non-sensitive support note. Platform does not guarantee availability or compensation.
+          enum: [gpt_pro_20x, gpt_pro_5x, gpt_plus, custom]
+          description: One merchant-declared upstream account pool. Select custom for Claude, Gemini, or another pool not listed here.
+        accountPoolCustomName:
+          type: string
+          minLength: 2
+          maxLength: 40
+          description: Required only when accountPoolType is custom. Public label only; credentials and connection data are forbidden.
+        merchantRefundCommitment:
+          type: boolean
+          description: Explicit seller choice. True opts into api-merchant-refund-v1; false records no additional merchant refund promise.
         declaredTtftBand:
           type: string
           enum: [under_1s, 1_to_3s, 3_to_5s, 5_to_10s, over_10s]
           description: Merchant-declared time-to-first-token band. C2CMarket does not measure or verify it.
-        recommendedConcurrency:
+        declaredMaxConcurrency:
           type: integer
           minimum: 1
-          description: Merchant-declared recommended concurrent request count.
+          description: Merchant-declared maximum concurrent request count.
         performanceConfirmedAt:
           type: string
           format: date-time
@@ -9204,6 +9639,10 @@ components:
         - billingMode
         - minimumIntentCny
         - usageVisibility
+        - accountPoolType
+        - accountPoolLabel
+        - merchantRefundCommitment
+        - merchantRefundPolicyVersion
         - acceptingOrders
         - paymentWindowMinutes
         - acceptedPaymentMethods
@@ -9229,6 +9668,10 @@ components:
         merchantProfileSlug:
           type: string
           description: Public merchant profile slug for store-alias services. Public responses must not expose owner user ID.
+        merchantAvatarUrl:
+          type: string
+          format: uri
+          description: Public merchant avatar URL selected by the merchant profile or public identity.
         title:
           type: string
         shortDescription:
@@ -9265,12 +9708,24 @@ components:
           type: string
         merchantSupportNote:
           type: string
-          description: Merchant-provided non-sensitive support promise. C2CMarket does not guarantee availability, compensation, or payout.
+          description: Server-generated summary of the seller's structured refund choice. C2CMarket records the promise but does not escrow, fund, execute, or guarantee refunds.
+        accountPoolType:
+          type: [string, "null"]
+          enum: [gpt_pro_20x, gpt_pro_5x, gpt_plus, custom, null]
+          description: Null only for historical services that have not yet been revised.
+        accountPoolLabel:
+          type: [string, "null"]
+          description: Resolved public account-pool label, including a merchant-entered label when accountPoolType is custom; null with a historical null pool.
+        merchantRefundCommitment:
+          type: boolean
+        merchantRefundPolicyVersion:
+          type: string
+          enum: [api-merchant-refund-v1]
         declaredTtftBand:
           type: string
           enum: [under_1s, 1_to_3s, 3_to_5s, 5_to_10s, over_10s]
           description: Merchant-declared TTFT band; the platform has not measured it.
-        recommendedConcurrency:
+        declaredMaxConcurrency:
           type: integer
           minimum: 1
         performanceConfirmedAt:
@@ -9347,6 +9802,10 @@ components:
         - billingMode
         - minimumIntentCny
         - usageVisibility
+        - accountPoolType
+        - accountPoolLabel
+        - merchantRefundCommitment
+        - merchantRefundPolicyVersion
         - acceptingOrders
         - paymentWindowMinutes
         - acceptedPaymentMethods
@@ -9379,6 +9838,10 @@ components:
           type: string
         merchantProfileSlug:
           type: string
+        merchantAvatarUrl:
+          type: string
+          format: uri
+          description: Merchant avatar URL visible in owner and administrator service projections.
         ownerContactMethodId:
           type: string
           format: uuid
@@ -9421,11 +9884,24 @@ components:
           type: string
         merchantSupportNote:
           type: string
+          description: Server-generated summary of the structured merchant refund choice.
+        accountPoolType:
+          type: [string, "null"]
+          enum: [gpt_pro_20x, gpt_pro_5x, gpt_plus, custom, null]
+          description: Null only for historical services that have not yet been revised.
+        accountPoolLabel:
+          type: [string, "null"]
+          description: Resolved account-pool label; null with a historical null pool.
+        merchantRefundCommitment:
+          type: boolean
+        merchantRefundPolicyVersion:
+          type: string
+          enum: [api-merchant-refund-v1]
         declaredTtftBand:
           type: string
           enum: [under_1s, 1_to_3s, 3_to_5s, 5_to_10s, over_10s]
           description: Merchant-declared TTFT band; the platform has not measured it.
-        recommendedConcurrency:
+        declaredMaxConcurrency:
           type: integer
           minimum: 1
         performanceConfirmedAt:
@@ -9660,6 +10136,194 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/PublicAPIService"
+        nextCursor:
+          type: [string, "null"]
+    APIServicePromotionPlacement:
+      type: string
+      enum: [api_market_top]
+    APIServicePromotionStatus:
+      type: string
+      enum: [stopped, scheduled, finished, suppressed, serving]
+    PublicAPIServicePromotion:
+      type: object
+      additionalProperties: false
+      required: [promotionId, placement, label, startsAt, endsAt, service]
+      properties:
+        promotionId:
+          type: string
+          format: uuid
+        placement:
+          $ref: "#/components/schemas/APIServicePromotionPlacement"
+        label:
+          type: string
+          enum: [推广]
+        startsAt:
+          type: string
+          format: date-time
+        endsAt:
+          type: string
+          format: date-time
+        service:
+          $ref: "#/components/schemas/PublicAPIService"
+    PublicAPIServicePromotionList:
+      type: object
+      additionalProperties: false
+      required: [items]
+      properties:
+        items:
+          type: array
+          maxItems: 3
+          items:
+            $ref: "#/components/schemas/PublicAPIServicePromotion"
+        nextCursor:
+          type: [string, "null"]
+    APIServicePromotionEligibility:
+      type: object
+      additionalProperties: false
+      required: [configurable, displayable, hardBlockReasons, warningReasons, suppressionReasons]
+      properties:
+        configurable:
+          type: boolean
+        displayable:
+          type: boolean
+        hardBlockReasons:
+          type: array
+          items:
+            type: string
+        warningReasons:
+          type: array
+          items:
+            type: string
+        suppressionReasons:
+          type: array
+          items:
+            type: string
+    APIServicePromotionAvailability:
+      type: object
+      additionalProperties: false
+      required: [eligibility, overlappingCampaigns, capacity, remainingCapacity, sameServiceOverlap]
+      properties:
+        eligibility:
+          $ref: "#/components/schemas/APIServicePromotionEligibility"
+        overlappingCampaigns:
+          type: integer
+          minimum: 0
+          description: Peak number of existing non-stopped campaigns simultaneously active inside the proposed range.
+        capacity:
+          type: integer
+          minimum: 1
+        remainingCapacity:
+          type: integer
+          minimum: 0
+        sameServiceOverlap:
+          type: boolean
+    CreateAPIServicePromotionRequest:
+      type: object
+      additionalProperties: false
+      required: [apiServiceId, placement, startsAt, endsAt, reason]
+      properties:
+        apiServiceId:
+          type: string
+          format: uuid
+        placement:
+          $ref: "#/components/schemas/APIServicePromotionPlacement"
+        startsAt:
+          type: string
+          format: date-time
+        endsAt:
+          type: string
+          format: date-time
+        reason:
+          type: string
+          minLength: 1
+          maxLength: 500
+    StopAPIServicePromotionRequest:
+      type: object
+      additionalProperties: false
+      required: [reason]
+      properties:
+        reason:
+          type: string
+          minLength: 1
+          maxLength: 500
+    AdminAPIServicePromotion:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - apiServiceId
+        - placement
+        - startsAt
+        - endsAt
+        - status
+        - createdReason
+        - createdByAdminId
+        - stoppedAt
+        - eligibility
+        - overlappingCampaigns
+        - capacity
+        - service
+        - createdAt
+        - updatedAt
+        - version
+      properties:
+        id:
+          type: string
+          format: uuid
+        apiServiceId:
+          type: string
+          format: uuid
+        placement:
+          $ref: "#/components/schemas/APIServicePromotionPlacement"
+        startsAt:
+          type: string
+          format: date-time
+        endsAt:
+          type: string
+          format: date-time
+        status:
+          $ref: "#/components/schemas/APIServicePromotionStatus"
+        createdReason:
+          type: string
+        createdByAdminId:
+          type: string
+          format: uuid
+        stoppedAt:
+          type: [string, "null"]
+          format: date-time
+        stoppedByAdminId:
+          type: string
+          format: uuid
+        stoppedReason:
+          type: string
+        eligibility:
+          $ref: "#/components/schemas/APIServicePromotionEligibility"
+        overlappingCampaigns:
+          type: integer
+          minimum: 0
+        capacity:
+          type: integer
+          minimum: 1
+        service:
+          $ref: "#/components/schemas/APIService"
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+        version:
+          type: integer
+          minimum: 1
+    AdminAPIServicePromotionList:
+      type: object
+      additionalProperties: false
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/AdminAPIServicePromotion"
         nextCursor:
           type: [string, "null"]
     APIQuotaBatchRequest:
@@ -10011,7 +10675,7 @@ components:
       allOf:
         - $ref: "#/components/schemas/APIQuotaOfferFields"
         - type: object
-          required: [batchStatus, serviceTitle, sellerDisplayName, sellerIdentityType, sellerLinuxDoBound, declaredTtftBand, recommendedConcurrency, performanceDisclaimer, saleCutoffAt, expiresAt, availableCopies, credentialAvailableCopies, isOrderable, orderabilityCode, orderabilityReason]
+          required: [batchStatus, serviceTitle, sellerDisplayName, sellerIdentityType, sellerLinuxDoBound, declaredTtftBand, declaredMaxConcurrency, performanceDisclaimer, saleCutoffAt, expiresAt, availableCopies, credentialAvailableCopies, isOrderable, orderabilityCode, orderabilityReason]
           properties:
             batchStatus:
               type: string
@@ -10028,7 +10692,7 @@ components:
             declaredTtftBand:
               type: string
               enum: [under_1s, 1_to_3s, 3_to_5s, 5_to_10s, over_10s]
-            recommendedConcurrency:
+            declaredMaxConcurrency:
               type: integer
               minimum: 1
             performanceConfirmedAt:
@@ -10599,7 +11263,7 @@ components:
         quotaTtftBandSnapshot:
           type: string
           enum: [under_1s, 1_to_3s, 3_to_5s, 5_to_10s, over_10s]
-        quotaRecommendedConcurrencySnapshot:
+        quotaDeclaredMaxConcurrencySnapshot:
           type: integer
           minimum: 1
         quotaPerformanceConfirmedAtSnapshot:

@@ -137,7 +137,7 @@ describe('API 额度包市场视图', () => {
   })
 
   test('限时额度包预览披露体验与真实买家流程', () => {
-    assert.match(publishPreviewSource, /首字响应[\s\S]*?建议并发[\s\S]*?商户自报，平台未测速/)
+    assert.match(publishPreviewSource, /首字响应[\s\S]*?最大并发[\s\S]*?商户自报，平台未测速/)
     assert.match(apiServicePublishPageSource, /选择额度包 → 创建订单 → 站外付款 → 卖家确认收款 → 获取交付凭证/)
     assert.match(publishPreviewSource, /卖家确认收款后交付；平台记录订单，不代收款/)
 
@@ -211,7 +211,10 @@ describe('API 额度包市场视图', () => {
     assert.match(marketPageSource, /function freeServiceCategory\(service: ApiService\)[\s\S]*?getApiServiceProductCategory/)
     assert.equal(marketPageSource.match(/class="quota-offer-card/g)?.length, 2)
     assert.equal(marketPageSource.match(/:data-category="quotaOfferCategory\(item\)"/g)?.length, 2)
-    assert.match(marketPageSource, /<ApiFreeServiceCard[\s\S]*?:card="freeServiceCard\(service\)"/)
+    assert.match(
+      marketPageSource,
+      /<ApiFreeServiceCard[\s\S]*?:card="freeServiceCard\(entry\.service\)"[\s\S]*?:promoted="Boolean\(entry\.promotion\)"/,
+    )
     assert.match(marketPageSource, /sellerReputation: service\.sellerReputation/)
     assert.match(freeServiceCardSource, /:data-category="card\.category"/)
     assert.match(freeServiceCardSource, /api-free-service-card__watermark/)
@@ -223,7 +226,11 @@ describe('API 额度包市场视图', () => {
     assert.match(marketPageSource, /grid-template-columns: repeat\(auto-fit, minmax\(min\(100%, 330px\), 1fr\)\)/)
     assert.match(marketPageSource, /max-width: 1640px/)
     assert.match(marketPageSource, /margin-inline: auto/)
-    assert.match(freeServiceCardSource, /\.api-free-service-card \{[\s\S]*?height: 360px/)
+    assert.match(freeServiceCardSource, /\.api-free-service-card \{[\s\S]*?height: 410px/)
+    assert.match(freeServiceCardSource, /Megaphone[\s\S]*?推广/)
+    assert.doesNotMatch(freeServiceCardSource, /商业推广，不代表平台质量认证或信誉背书/)
+    assert.match(freeServiceCardSource, /card\.accountPoolLabel/)
+    assert.match(freeServiceCardSource, /商户全额退款承诺/)
     assert.match(freeServiceCardSource, /:compact="card\.sellerReputation\?\.state === 'active'"/)
     assert.match(freeServiceCardSource, /card\.delivery \}\} · \{\{ modelCountLabel/)
     assert.match(freeServiceCardSource, /compactModels\.visibleModels/)

@@ -185,18 +185,15 @@ const baseForm = reactive<ApiServicePublishForm>({
   paymentWindowMinutes: defaultPaymentWindowMinutes,
   paymentOptions: createDefaultPaymentOptions(),
   declaredTtftBand: '1_to_3s',
-  recommendedConcurrency: 1,
+  declaredMaxConcurrency: 1,
   performanceConfirmedAt: formatBeijingDateTimeInput(new Date()),
   packages: [],
   validity: { mode: 'days', days: 30, startsAt: 'delivered_at' },
   usageVisibility: 'merchant_confirmed',
+  accountPoolType: '',
+  accountPoolCustomName: '',
   warranty: {
-    mode: 'no_warranty',
-    warrantyDays: null,
-    coverage: null,
-    compensation: null,
-    exclusions: null,
-    refundNote: null,
+    mode: '',
   },
   merchantNote: merchantNoteTemplate,
 })
@@ -402,6 +399,12 @@ function validateBaseService() {
   }
   if (!baseForm.merchantDisplayName.trim()) baseErrors.merchantDisplayName = '请先设置个人资料显示名称。'
   if (!baseForm.selectedModels.some(item => item.enabled)) baseErrors.selectedModels = '至少选择一个模型。'
+	if (!baseForm.accountPoolType) baseErrors.accountPool = '请选择一个号池。'
+	if (baseForm.accountPoolType === 'custom') {
+		const customNameLength = Array.from(baseForm.accountPoolCustomName.trim()).length
+		if (customNameLength < 2 || customNameLength > 40) baseErrors.accountPool = '其他号池名称需要填写 2-40 个字符。'
+	}
+	if (!baseForm.warranty.mode) baseErrors.refundCommitment = '请选择是否提供商户全额退款承诺。'
   if (!paymentSettingsSuccess.value) {
     baseErrors.paymentOptions = '收款设置暂时无法加载，请稍后重试。'
   } else if (!accountSettingsComplete.value) {

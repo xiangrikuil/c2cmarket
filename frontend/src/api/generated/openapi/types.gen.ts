@@ -206,6 +206,20 @@ export type ConfirmEmailVerificationRequest = {
     code: string;
 };
 
+export type RegistrationAttribution = {
+    source?: string;
+    medium?: string;
+    campaign?: string;
+    referrerHost?: string;
+    landingPath?: string;
+};
+
+export type EmailRegistrationConfirmRequest = {
+    email: string;
+    code: string;
+    attribution?: RegistrationAttribution;
+};
+
 export type MyProfile = {
     id: string;
     username: string;
@@ -657,11 +671,81 @@ export type LinuxDoBinding = {
 
 export type User = {
     id: string;
+    analyticsUserId: string;
     username: string;
     displayName: string;
     isAdmin: boolean;
     permissions: Array<string>;
     linuxDoBinding: LinuxDoBinding;
+};
+
+export type GrowthSummary = {
+    newUsersToday: number;
+    newUsers7d: number;
+    newUsers30d: number;
+    newUsersInWindow: number;
+    cumulativeEffectiveUsers: number;
+    activatedUsers: number;
+    activationRate: number | null;
+    medianActivationHours: number | null;
+    dau: number;
+    wau: number;
+    mau: number;
+    d1RetentionRate: number | null;
+    d7RetentionRate: number | null;
+    completedCarpoolTransactions: number;
+    completedApiTransactions: number;
+};
+
+export type GrowthRegistrationTrendPoint = {
+    date: string;
+    newUsers: number;
+    cumulativeUsers: number;
+};
+
+export type GrowthActivityTrendPoint = {
+    date: string;
+    activeUsers: number;
+};
+
+export type GrowthAttributionGroup = {
+    sourceType: 'campaign' | 'referral' | 'direct' | 'unknown' | 'other';
+    source: string;
+    medium?: string;
+    campaign?: string;
+    registrations: number;
+    share: number;
+};
+
+export type GrowthActivation = {
+    cohortUsers: number;
+    buyerActivatedUsers: number;
+    buyerActivationRate: number | null;
+    sellerActivatedUsers: number;
+    sellerActivationRate: number | null;
+    activatedUsers: number;
+    activationRate: number | null;
+};
+
+export type GrowthRetentionCohort = {
+    cohortDate: string;
+    registeredUsers: number;
+    d1RetainedUsers: number | null;
+    d1Rate: number | null;
+    d7RetainedUsers: number | null;
+    d7Rate: number | null;
+};
+
+export type GrowthOverview = {
+    generatedAt: string;
+    timezone: 'Asia/Shanghai';
+    windowDays: 7 | 30 | 90;
+    summary: GrowthSummary;
+    registrationTrend: Array<GrowthRegistrationTrendPoint>;
+    activityTrend: Array<GrowthActivityTrendPoint>;
+    attribution: Array<GrowthAttributionGroup>;
+    activation: GrowthActivation;
+    retentionCohorts: Array<GrowthRetentionCohort>;
 };
 
 export type ProductCategory = {
@@ -1031,17 +1115,25 @@ export type ApiServiceRequest = {
      */
     merchantNote?: string;
     /**
-     * Non-sensitive support note. Platform does not guarantee availability or compensation.
+     * One merchant-declared upstream account pool. Select custom for Claude, Gemini, or another pool not listed here.
      */
-    merchantSupportNote?: string;
+    accountPoolType: 'gpt_pro_20x' | 'gpt_pro_5x' | 'gpt_plus' | 'custom';
+    /**
+     * Required only when accountPoolType is custom. Public label only; credentials and connection data are forbidden.
+     */
+    accountPoolCustomName?: string;
+    /**
+     * Explicit seller choice. True opts into api-merchant-refund-v1; false records no additional merchant refund promise.
+     */
+    merchantRefundCommitment: boolean;
     /**
      * Merchant-declared time-to-first-token band. C2CMarket does not measure or verify it.
      */
     declaredTtftBand?: 'under_1s' | '1_to_3s' | '3_to_5s' | '5_to_10s' | 'over_10s';
     /**
-     * Merchant-declared recommended concurrent request count.
+     * Merchant-declared maximum concurrent request count.
      */
-    recommendedConcurrency?: number;
+    declaredMaxConcurrency?: number;
     /**
      * Time when the merchant most recently confirmed the declaration. All three performance fields must be supplied together or all omitted.
      */
@@ -1166,6 +1258,10 @@ export type PublicApiService = {
      * Public merchant profile slug for store-alias services. Public responses must not expose owner user ID.
      */
     merchantProfileSlug?: string;
+    /**
+     * Public merchant avatar URL selected by the merchant profile or public identity.
+     */
+    merchantAvatarUrl?: string;
     title: string;
     shortDescription: string;
     /**
@@ -1189,14 +1285,24 @@ export type PublicApiService = {
     usageVisibility: 'none' | 'merchant_reported' | 'offsite_panel_readonly' | 'fixed_package_only';
     publicAccessNote?: string;
     /**
-     * Merchant-provided non-sensitive support promise. C2CMarket does not guarantee availability, compensation, or payout.
+     * Server-generated summary of the seller's structured refund choice. C2CMarket records the promise but does not escrow, fund, execute, or guarantee refunds.
      */
     merchantSupportNote?: string;
+    /**
+     * Null only for historical services that have not yet been revised.
+     */
+    accountPoolType: 'gpt_pro_20x' | 'gpt_pro_5x' | 'gpt_plus' | 'custom' | null;
+    /**
+     * Resolved public account-pool label, including a merchant-entered label when accountPoolType is custom; null with a historical null pool.
+     */
+    accountPoolLabel: string | null;
+    merchantRefundCommitment: boolean;
+    merchantRefundPolicyVersion: 'api-merchant-refund-v1';
     /**
      * Merchant-declared TTFT band; the platform has not measured it.
      */
     declaredTtftBand?: 'under_1s' | '1_to_3s' | '3_to_5s' | '5_to_10s' | 'over_10s';
-    recommendedConcurrency?: number;
+    declaredMaxConcurrency?: number;
     performanceConfirmedAt?: string;
     /**
      * Owner's manual accepting-orders flag. This is not sufficient by itself; clients must use isOrderable for order creation.
@@ -1245,6 +1351,10 @@ export type ApiService = {
     merchantDisplayName?: string;
     merchantProfileSlug?: string;
     /**
+     * Merchant avatar URL visible in owner and administrator service projections.
+     */
+    merchantAvatarUrl?: string;
+    /**
      * Owner/admin view only. Public clients must create purchase intents instead of reading contact values from service detail.
      */
     ownerContactMethodId?: string;
@@ -1271,12 +1381,25 @@ export type ApiService = {
     usageVisibility: 'none' | 'merchant_reported' | 'offsite_panel_readonly' | 'fixed_package_only';
     publicAccessNote?: string;
     merchantNote?: string;
+    /**
+     * Server-generated summary of the structured merchant refund choice.
+     */
     merchantSupportNote?: string;
+    /**
+     * Null only for historical services that have not yet been revised.
+     */
+    accountPoolType: 'gpt_pro_20x' | 'gpt_pro_5x' | 'gpt_plus' | 'custom' | null;
+    /**
+     * Resolved account-pool label; null with a historical null pool.
+     */
+    accountPoolLabel: string | null;
+    merchantRefundCommitment: boolean;
+    merchantRefundPolicyVersion: 'api-merchant-refund-v1';
     /**
      * Merchant-declared TTFT band; the platform has not measured it.
      */
     declaredTtftBand?: 'under_1s' | '1_to_3s' | '3_to_5s' | '5_to_10s' | 'over_10s';
-    recommendedConcurrency?: number;
+    declaredMaxConcurrency?: number;
     performanceConfirmedAt?: string;
     acceptingOrders: boolean;
     paymentWindowMinutes: number;
@@ -1376,6 +1499,81 @@ export type ApiServiceList = {
 
 export type PublicApiServiceList = {
     items: Array<PublicApiService>;
+    nextCursor?: string | null;
+};
+
+export type ApiServicePromotionPlacement = 'api_market_top';
+
+export type ApiServicePromotionStatus = 'stopped' | 'scheduled' | 'finished' | 'suppressed' | 'serving';
+
+export type PublicApiServicePromotion = {
+    promotionId: string;
+    placement: ApiServicePromotionPlacement;
+    label: '推广';
+    startsAt: string;
+    endsAt: string;
+    service: PublicApiService;
+};
+
+export type PublicApiServicePromotionList = {
+    items: Array<PublicApiServicePromotion>;
+    nextCursor?: string | null;
+};
+
+export type ApiServicePromotionEligibility = {
+    configurable: boolean;
+    displayable: boolean;
+    hardBlockReasons: Array<string>;
+    warningReasons: Array<string>;
+    suppressionReasons: Array<string>;
+};
+
+export type ApiServicePromotionAvailability = {
+    eligibility: ApiServicePromotionEligibility;
+    /**
+     * Peak number of existing non-stopped campaigns simultaneously active inside the proposed range.
+     */
+    overlappingCampaigns: number;
+    capacity: number;
+    remainingCapacity: number;
+    sameServiceOverlap: boolean;
+};
+
+export type CreateApiServicePromotionRequest = {
+    apiServiceId: string;
+    placement: ApiServicePromotionPlacement;
+    startsAt: string;
+    endsAt: string;
+    reason: string;
+};
+
+export type StopApiServicePromotionRequest = {
+    reason: string;
+};
+
+export type AdminApiServicePromotion = {
+    id: string;
+    apiServiceId: string;
+    placement: ApiServicePromotionPlacement;
+    startsAt: string;
+    endsAt: string;
+    status: ApiServicePromotionStatus;
+    createdReason: string;
+    createdByAdminId: string;
+    stoppedAt: string | null;
+    stoppedByAdminId?: string;
+    stoppedReason?: string;
+    eligibility: ApiServicePromotionEligibility;
+    overlappingCampaigns: number;
+    capacity: number;
+    service: ApiService;
+    createdAt: string;
+    updatedAt: string;
+    version: number;
+};
+
+export type AdminApiServicePromotionList = {
+    items: Array<AdminApiServicePromotion>;
     nextCursor?: string | null;
 };
 
@@ -1569,7 +1767,7 @@ export type PublicApiQuotaOffer = ApiQuotaOfferFields & {
     sellerIdentityType: 'individual' | 'merchant';
     sellerLinuxDoBound: boolean;
     declaredTtftBand: 'under_1s' | '1_to_3s' | '3_to_5s' | '5_to_10s' | 'over_10s';
-    recommendedConcurrency: number;
+    declaredMaxConcurrency: number;
     performanceConfirmedAt?: string;
     performanceDisclaimer: '商户自报，平台未测速';
     saleCutoffAt: string;
@@ -1870,7 +2068,7 @@ export type ApiOrder = {
     quotaRoundEndsAtSnapshot?: string;
     quotaDistributionSystemSnapshot?: 'sub2api' | 'new_api_proxy' | 'other';
     quotaTtftBandSnapshot?: 'under_1s' | '1_to_3s' | '3_to_5s' | '5_to_10s' | 'over_10s';
-    quotaRecommendedConcurrencySnapshot?: number;
+    quotaDeclaredMaxConcurrencySnapshot?: number;
     quotaPerformanceConfirmedAtSnapshot?: string;
     /**
      * True when the performance declaration was merchant-reported and not measured by C2CMarket.
@@ -3303,7 +3501,7 @@ export type StartEmailRegistrationErrors = {
 export type StartEmailRegistrationError = StartEmailRegistrationErrors[keyof StartEmailRegistrationErrors];
 
 export type ConfirmEmailRegistrationData = {
-    body: ConfirmEmailVerificationRequest;
+    body: EmailRegistrationConfirmRequest;
     path?: never;
     query?: never;
     url: '/api/v1/auth/email-registration/confirm';
@@ -3331,6 +3529,11 @@ export type StartOAuthLoginData = {
     path?: never;
     query?: {
         returnTo?: string;
+        utmSource?: string;
+        utmMedium?: string;
+        utmCampaign?: string;
+        referrerHost?: string;
+        landingPath?: string;
     };
     url: '/api/v1/auth/oauth/start';
 };
@@ -4075,6 +4278,33 @@ export type ListPublicApiServicesResponses = {
 };
 
 export type ListPublicApiServicesResponse = ListPublicApiServicesResponses[keyof ListPublicApiServicesResponses];
+
+export type ListPublicApiServicePromotionsData = {
+    body?: never;
+    path?: never;
+    query?: {
+        placement?: 'api_market_top';
+    };
+    url: '/api/v1/api-service-promotions';
+};
+
+export type ListPublicApiServicePromotionsErrors = {
+    /**
+     * Problem Details error.
+     */
+    422: ProblemDetails;
+};
+
+export type ListPublicApiServicePromotionsError = ListPublicApiServicePromotionsErrors[keyof ListPublicApiServicePromotionsErrors];
+
+export type ListPublicApiServicePromotionsResponses = {
+    /**
+     * Currently serving API promotions in daily deterministic order.
+     */
+    200: PublicApiServicePromotionList;
+};
+
+export type ListPublicApiServicePromotionsResponse = ListPublicApiServicePromotionsResponses[keyof ListPublicApiServicePromotionsResponses];
 
 export type GetPublicApiServiceData = {
     body?: never;
@@ -8313,6 +8543,161 @@ export type ListAdminApiServicesResponses = {
 
 export type ListAdminApiServicesResponse = ListAdminApiServicesResponses[keyof ListAdminApiServicesResponses];
 
+export type ListAdminApiServicePromotionsData = {
+    body?: never;
+    path?: never;
+    query?: {
+        /**
+         * Page size. Defaults to 20 and must be between 1 and 100.
+         */
+        limit?: number;
+        /**
+         * Opaque pagination cursor returned as nextCursor. Clients must pass it back unchanged and must not inspect its internal encoding.
+         */
+        cursor?: string;
+    };
+    url: '/api/v1/admin/api-service-promotions';
+};
+
+export type ListAdminApiServicePromotionsErrors = {
+    /**
+     * Problem Details error.
+     */
+    403: ProblemDetails;
+};
+
+export type ListAdminApiServicePromotionsError = ListAdminApiServicePromotionsErrors[keyof ListAdminApiServicePromotionsErrors];
+
+export type ListAdminApiServicePromotionsResponses = {
+    /**
+     * Administrator promotion schedule.
+     */
+    200: AdminApiServicePromotionList;
+};
+
+export type ListAdminApiServicePromotionsResponse = ListAdminApiServicePromotionsResponses[keyof ListAdminApiServicePromotionsResponses];
+
+export type CreateAdminApiServicePromotionData = {
+    body: CreateApiServicePromotionRequest;
+    headers: {
+        'Idempotency-Key': string;
+    };
+    path?: never;
+    query?: never;
+    url: '/api/v1/admin/api-service-promotions';
+};
+
+export type CreateAdminApiServicePromotionErrors = {
+    /**
+     * Problem Details error.
+     */
+    403: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    409: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    422: ProblemDetails;
+};
+
+export type CreateAdminApiServicePromotionError = CreateAdminApiServicePromotionErrors[keyof CreateAdminApiServicePromotionErrors];
+
+export type CreateAdminApiServicePromotionResponses = {
+    /**
+     * Promotion scheduled.
+     */
+    201: AdminApiServicePromotion;
+};
+
+export type CreateAdminApiServicePromotionResponse = CreateAdminApiServicePromotionResponses[keyof CreateAdminApiServicePromotionResponses];
+
+export type GetAdminApiServicePromotionAvailabilityData = {
+    body?: never;
+    path?: never;
+    query: {
+        apiServiceId: string;
+        placement: ApiServicePromotionPlacement;
+        startsAt: string;
+        endsAt: string;
+    };
+    url: '/api/v1/admin/api-service-promotions/availability';
+};
+
+export type GetAdminApiServicePromotionAvailabilityErrors = {
+    /**
+     * Problem Details error.
+     */
+    403: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    404: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    422: ProblemDetails;
+};
+
+export type GetAdminApiServicePromotionAvailabilityError = GetAdminApiServicePromotionAvailabilityErrors[keyof GetAdminApiServicePromotionAvailabilityErrors];
+
+export type GetAdminApiServicePromotionAvailabilityResponses = {
+    /**
+     * Current service eligibility and peak concurrent occupancy for the proposed half-open time range.
+     */
+    200: ApiServicePromotionAvailability;
+};
+
+export type GetAdminApiServicePromotionAvailabilityResponse = GetAdminApiServicePromotionAvailabilityResponses[keyof GetAdminApiServicePromotionAvailabilityResponses];
+
+export type StopAdminApiServicePromotionData = {
+    body: StopApiServicePromotionRequest;
+    headers: {
+        'If-Match': string;
+        'Idempotency-Key': string;
+    };
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/api/v1/admin/api-service-promotions/{id}/stop';
+};
+
+export type StopAdminApiServicePromotionErrors = {
+    /**
+     * Problem Details error.
+     */
+    403: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    404: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    409: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    412: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    428: ProblemDetails;
+};
+
+export type StopAdminApiServicePromotionError = StopAdminApiServicePromotionErrors[keyof StopAdminApiServicePromotionErrors];
+
+export type StopAdminApiServicePromotionResponses = {
+    /**
+     * Promotion stopped and retained in administrator history.
+     */
+    200: AdminApiServicePromotion;
+};
+
+export type StopAdminApiServicePromotionResponse = StopAdminApiServicePromotionResponses[keyof StopAdminApiServicePromotionResponses];
+
 export type GetAdminApiServiceData = {
     body?: never;
     path: {
@@ -8722,6 +9107,37 @@ export type ListAdminUsersResponses = {
 };
 
 export type ListAdminUsersResponse = ListAdminUsersResponses[keyof ListAdminUsersResponses];
+
+export type GetAdminGrowthOverviewData = {
+    body?: never;
+    path?: never;
+    query?: {
+        days?: 7 | 30 | 90;
+    };
+    url: '/api/v1/admin/growth-overview';
+};
+
+export type GetAdminGrowthOverviewErrors = {
+    /**
+     * Problem Details error.
+     */
+    403: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    422: ProblemDetails;
+};
+
+export type GetAdminGrowthOverviewError = GetAdminGrowthOverviewErrors[keyof GetAdminGrowthOverviewErrors];
+
+export type GetAdminGrowthOverviewResponses = {
+    /**
+     * Registration, activation, authenticated activity, attribution, transaction, and retention metrics from one database snapshot.
+     */
+    200: GrowthOverview;
+};
+
+export type GetAdminGrowthOverviewResponse = GetAdminGrowthOverviewResponses[keyof GetAdminGrowthOverviewResponses];
 
 export type GetAdminUserData = {
     body?: never;

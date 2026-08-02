@@ -58,13 +58,10 @@ test('applies simplified API quota publish defaults', () => {
       startsAt: 'delivered_at',
     },
     usageVisibility: 'fixed_package_only',
+	accountPoolType: 'gpt_pro_5x',
+	accountPoolCustomName: '',
     warranty: {
-      mode: 'merchant_warranty',
-      warrantyDays: 7,
-      coverage: '旧适用范围',
-      compensation: '旧补偿方式',
-      exclusions: '旧不适用情形',
-      refundNote: '旧退款说明',
+	  mode: 'merchant_full_refund',
     },
     merchantNote: merchantNoteTemplate,
   }
@@ -84,8 +81,8 @@ test('applies simplified API quota publish defaults', () => {
   assert.equal(form.paymentOptions.some(item => item.enabled), false)
   assert.equal(form.paymentOptions.every(item => item.paymentQrCodeDataUrl === null), true)
   assert.equal(form.quotaExpiresAt, '2026-07-10T00:00')
-  assert.equal(form.warranty.mode, 'no_warranty')
-  assert.equal(form.warranty.warrantyDays, null)
+	assert.equal(form.warranty.mode, 'merchant_full_refund')
+	assert.equal(form.accountPoolType, 'gpt_pro_5x')
   assert.equal(form.imageCapability.enabled, false)
   assert.equal(form.packages[0].id, 'pkg')
   assert.deepEqual(form.packages[0].modelCatalogIds, ['gpt-5-mini'])

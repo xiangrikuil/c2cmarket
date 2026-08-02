@@ -86,7 +86,7 @@ type Order struct {
 	QuotaRoundEndsAtSnapshot      *time.Time
 	QuotaDistributionSnapshot     string
 	QuotaTTFTBandSnapshot         string
-	QuotaRecommendedConcurrency   int
+	QuotaDeclaredMaxConcurrency   int
 	QuotaPerformanceConfirmedAt   *time.Time
 	QuotaPerformanceUnverified    bool
 	QuotaDeliveryETAMinutes       int

@@ -325,7 +325,30 @@ func TestValidateLimitedPackageRejectsUnsupportedDurationAndModelSubset(t *testi
 	}
 }
 
+func TestValidateCreateInputRequiresStructuredCommercialFacts(t *testing.T) {
+	now := time.Date(2026, 7, 1, 12, 0, 0, 0, time.UTC)
+	input := validMeteredCreateInput()
+	input.AccountPoolType = ""
+	if err := validateCreateInput(input, now); err == nil || err.FieldErrors[0].Field != "accountPoolType" {
+		t.Fatalf("expected accountPoolType field error, got %+v", err)
+	}
+
+	input = validMeteredCreateInput()
+	input.MerchantRefundCommitment = nil
+	if err := validateCreateInput(input, now); err == nil || err.FieldErrors[0].Field != "merchantRefundCommitment" {
+		t.Fatalf("expected merchantRefundCommitment field error, got %+v", err)
+	}
+
+	input = validMeteredCreateInput()
+	input.AccountPoolType = AccountPoolCustom
+	input.AccountPoolCustomName = "Claude Max"
+	if err := validateCreateInput(input, now); err != nil {
+		t.Fatalf("expected custom account pool to be valid, got %+v", err)
+	}
+}
+
 func validMeteredCreateInput() CreateServiceInput {
+	noRefundCommitment := false
 	return CreateServiceInput{
 		OwnerContactMethodID:             "contact-1",
 		MerchantIdentityMode:             "public_profile",
@@ -340,6 +363,8 @@ func validMeteredCreateInput() CreateServiceInput {
 		MaximumIntentCNY:                 "300",
 		QuotaExpiresAt:                   "2026-07-08T00:00:00Z",
 		UsageVisibility:                  "merchant_reported",
+		AccountPoolType:                  AccountPoolGPTPro20x,
+		MerchantRefundCommitment:         &noRefundCommitment,
 		AccessModes: []ServiceAccessModeInput{{
 			AccessMode: "merchant_operated_endpoint",
 		}},
@@ -353,16 +378,19 @@ func validMeteredCreateInput() CreateServiceInput {
 
 func validLimitedPackageCreateInput() CreateServiceInput {
 	duration := 3
+	refundCommitment := true
 	return CreateServiceInput{
-		OwnerContactMethodID: "contact-1",
-		MerchantIdentityMode: "public_profile",
-		Title:                "GPT 限时套餐",
-		ShortDescription:     "按固定价格购买限时面板额度。",
-		DistributionSystem:   ServiceDistributionSub2API,
-		BillingMode:          ServiceBillingModeFixedPackage,
-		MinimumIntentCNY:     "9.90",
-		MaximumIntentCNY:     "9.90",
-		UsageVisibility:      "fixed_package_only",
+		OwnerContactMethodID:     "contact-1",
+		MerchantIdentityMode:     "public_profile",
+		Title:                    "GPT 限时套餐",
+		ShortDescription:         "按固定价格购买限时面板额度。",
+		DistributionSystem:       ServiceDistributionSub2API,
+		BillingMode:              ServiceBillingModeFixedPackage,
+		MinimumIntentCNY:         "9.90",
+		MaximumIntentCNY:         "9.90",
+		UsageVisibility:          "fixed_package_only",
+		AccountPoolType:          AccountPoolGPTPro5x,
+		MerchantRefundCommitment: &refundCommitment,
 		AccessModes: []ServiceAccessModeInput{{
 			AccessMode: "fixed_package_offsite",
 		}},

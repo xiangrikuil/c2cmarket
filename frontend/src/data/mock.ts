@@ -691,7 +691,7 @@ export type PublicApiQuotaOffer = ApiQuotaOffer & {
   sellerIdentityType: 'individual' | 'merchant'
   sellerLinuxDoBound: boolean
   declaredTtftBand: ApiTTFTBand
-  recommendedConcurrency: number
+  declaredMaxConcurrency: number
   performanceConfirmedAt?: string
   performanceDisclaimer: '商户自报，平台未测速'
   saleCutoffAt: string
@@ -764,8 +764,12 @@ export type ApiService = {
   lastOnlineConfirmedAt: string
   onlineExpiresAt: string
   declaredTtftBand?: ApiTTFTBand
-  recommendedConcurrency?: number
+  declaredMaxConcurrency?: number
   performanceConfirmedAt?: string
+  accountPoolType?: 'gpt_pro_20x' | 'gpt_pro_5x' | 'gpt_plus' | 'custom'
+  accountPoolLabel?: string
+  merchantRefundCommitment?: boolean
+  merchantRefundPolicyVersion?: string
   expectedResponseMinutes: number
   responseMedianMinutes: number | null
   dailyOrderLimit: number
@@ -858,7 +862,17 @@ export type PublicDisputeRecord = {
   unresolved: boolean
 }
 
-export type ApiPurchaseIntentSnapshot = {
+export type ApiServiceCommercialSnapshot = {
+  accountPoolType?: ApiService['accountPoolType']
+  accountPoolLabel?: string
+  declaredMaxConcurrency?: number
+  merchantRefundCommitment?: boolean
+  merchantRefundPolicyVersion?: string
+  serviceValidityExpiresAt?: string | null
+  commercialFactsSnapshotIssue?: 'missing' | 'invalid'
+}
+
+export type ApiPurchaseIntentSnapshot = ApiServiceCommercialSnapshot & {
   serviceId: string
   serviceTitle: string
   sourceUrl?: string
@@ -2140,7 +2154,7 @@ export const apiQuotaOffers: PublicApiQuotaOffer[] = [
     sellerIdentityType: 'individual',
     sellerLinuxDoBound: true,
     declaredTtftBand: '1_to_3s',
-    recommendedConcurrency: 8,
+    declaredMaxConcurrency: 8,
     performanceConfirmedAt: '2026-07-19T00:30:00Z',
     performanceDisclaimer: '商户自报，平台未测速',
     saleCutoffAt: '2026-12-30T22:00:00Z',
@@ -2174,7 +2188,7 @@ export const apiQuotaOffers: PublicApiQuotaOffer[] = [
     sellerIdentityType: 'individual',
     sellerLinuxDoBound: true,
     declaredTtftBand: 'under_1s',
-    recommendedConcurrency: 5,
+    declaredMaxConcurrency: 5,
     performanceConfirmedAt: '2026-07-19T00:30:00Z',
     performanceDisclaimer: '商户自报，平台未测速',
     saleCutoffAt: '2026-12-30T22:00:00Z',

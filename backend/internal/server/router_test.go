@@ -2866,7 +2866,7 @@ type createdAPIService struct {
 	IsOrderable            bool                      `json:"isOrderable"`
 	AvailableUSDAllowance  string                    `json:"availableUsdAllowance"`
 	DeclaredTTFTBand       string                    `json:"declaredTtftBand"`
-	RecommendedConcurrency int                       `json:"recommendedConcurrency"`
+	DeclaredMaxConcurrency int                       `json:"declaredMaxConcurrency"`
 	PerformanceConfirmedAt *string                   `json:"performanceConfirmedAt"`
 	OrderableReasons       []string                  `json:"orderableReasons"`
 	Models                 []apiServiceModelResponse `json:"models"`
@@ -3023,7 +3023,10 @@ func createLinuxDoSession(t *testing.T, server http.Handler, username string) te
 	state := "oauth-state-" + username
 	callbackURL := "/api/v1/auth/oauth/callback?state=" + url.QueryEscape(state) + "&code=" + url.QueryEscape(username)
 	callback := httptest.NewRequest(http.MethodGet, callbackURL, nil)
-	callback.AddCookie(&http.Cookie{Name: oauthStateCookieName, Value: state})
+	callback.AddCookie(&http.Cookie{Name: oauthStateCookieName, Value: encodeOAuthStateCookie(oauthStateCookiePayload{
+		State:    state,
+		ReturnTo: "/",
+	})})
 	callbackResponse := httptest.NewRecorder()
 	server.ServeHTTP(callbackResponse, callback)
 	if callbackResponse.Code != http.StatusFound {
@@ -3949,7 +3952,9 @@ func apiServicePayloadWithModelAndMultiplier(ownerContactID, modelCatalogID, mul
 		"usageVisibility":"merchant_reported",
 		"publicAccessNote":"提交购买意向后直接查看商户联系方式，平台不保存任何调用凭据。",
 		"merchantNote":"仅后台可见，不展示给公开访客。",
-		"merchantSupportNote":"仅支持买家专属的子级访问安排。",
+		"accountPoolType":"gpt_pro_20x",
+		"accountPoolCustomName":"",
+		"merchantRefundCommitment":true,
 		"accessModes":[
 			{"accessMode":"buyer_dedicated_sub_key","publicNote":"站外确认买家专属的访问方式。"}
 		],

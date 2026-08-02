@@ -4,8 +4,9 @@ import { RouterLink } from 'vue-router'
 import { Flag, Heart, Share2 } from 'lucide-vue-next'
 import { toast } from 'vue-sonner'
 import ApiPaymentMethodIcon from '@/components/api-payment/ApiPaymentMethodIcon.vue'
+import ApiMerchantBadges from '@/components/api-market/ApiMerchantBadges.vue'
 import SourceAuthorVerificationBadge from '@/components/market/SourceAuthorVerificationBadge.vue'
-import ReputationSummaryCard from '@/components/reputation/ReputationSummaryCard.vue'
+import ReputationInlineSummary from '@/components/reputation/ReputationInlineSummary.vue'
 import { Badge } from '@/components/ui/badge'
 import { Card } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -40,6 +41,7 @@ const fixedPackageMode = computed(() => props.service.billingMode === 'fixed_pac
 const availablePackages = computed(() => (props.service.packages ?? []).filter(item => item.enabled && item.stockAvailable > 0))
 const selectedPackage = computed(() => availablePackages.value.find(item => item.id === props.selectedPackageId) ?? null)
 const acceptedPaymentMethods = computed(() => props.service.acceptedPaymentMethods ?? [])
+const completedOrderLabel = computed(() => props.service.sellerReputation ? `${props.service.sellerReputation.completedCount} 单` : '暂无数据')
 const showSourceAuthorVerification = computed(() => {
   const status = props.service.sourceAuthorVerification?.status
   return status === 'verified' || status === 'mismatch'
@@ -85,19 +87,24 @@ async function shareService() {
           <ApiMerchantAvatar :service="service" class="grid h-11 w-11 shrink-0 place-items-center rounded-full bg-primary text-sm font-semibold text-primary-foreground" />
           <span class="min-w-0">
             <span class="block truncate font-semibold">{{ getApiMerchantDisplayName(service) }}</span>
-            <span v-if="showSourceAuthorVerification" class="mt-1 flex flex-wrap items-center gap-1.5">
-              <SourceAuthorVerificationBadge :verification="service.sourceAuthorVerification" />
+            <span class="mt-1 flex flex-wrap items-center gap-1.5">
+              <ApiMerchantBadges :service="service" />
+              <template v-if="showSourceAuthorVerification">
+                <SourceAuthorVerificationBadge :verification="service.sourceAuthorVerification" />
+              </template>
             </span>
           </span>
         </component>
       </div>
       <div class="mt-4 border-t border-border pt-4">
-        <ReputationSummaryCard :summary="service.sellerReputation" compact :framed="false" />
+        <ReputationInlineSummary :summary="service.sellerReputation" :compact="service.sellerReputation?.state === 'active'" />
       </div>
-      <div class="mt-4 flex items-center gap-2 border-t border-border pt-4 text-xs text-muted-foreground">
-        <span class="h-1.5 w-1.5 rounded-full bg-primary" />
-        首字响应 {{ getApiTTFTBandLabel(service.declaredTtftBand) }} · 商户自报，平台未测速
-      </div>
+      <dl class="mt-4 grid grid-cols-3 gap-3 border-t border-border pt-4 text-xs">
+        <div><dt class="text-muted-foreground">可验证完成</dt><dd class="mt-1 font-semibold">{{ completedOrderLabel }}</dd></div>
+        <div><dt class="text-muted-foreground">首字响应</dt><dd class="mt-1 font-semibold">{{ getApiTTFTBandLabel(service.declaredTtftBand) }}</dd></div>
+        <div><dt class="text-muted-foreground">最大并发</dt><dd class="mt-1 font-semibold">{{ service.declaredMaxConcurrency ?? '未声明' }}</dd></div>
+      </dl>
+      <p class="mt-2 text-[11px] leading-5 text-muted-foreground">性能为商户自报，平台未测速。</p>
     </div>
 
     <div class="space-y-4 border-t border-border p-5">

@@ -133,6 +133,8 @@ score       = 0.60 * value + 0.25 * fulfillment + 0.10 * response + 0.05 * fresh
 #### Inventory, Snapshots, And Expiry
 
 - Intent creation freezes `selectedPackageSnapshot` with package ID, name, price, panel allowance, duration, description, enabled/sort order, and every package model's service-model ID, catalog ID, price-version ID, model name/provider snapshots, and merchant multiplier.
+- The intent pricing snapshot also freezes account-pool code/label, merchant-declared maximum concurrency, merchant refund commitment, fixed refund-rule version, and the service validity fact. A package order additionally freezes the delivery-relative duration and later persists its absolute `package_expires_at` when delivery starts the validity window.
+- Historical nullable pool/concurrency facts are encoded as explicit JSON `null`, not empty strings, zero sentinels, or inferred labels.
 - Order creation copies the intent snapshot. Later package/model edits must not reprice or rewrite existing intents/orders.
 - Order creation atomically reserves one unit with the order insert, intent transition, events, notifications, and idempotency completion:
 
@@ -190,7 +192,7 @@ packageExpiresAt = deliverySubmittedAt + durationDays calendar days
 
 - Migration checks: version 51 is documented; package stock/allowance/duration constraints and package-model ownership foreign keys exist; non-1 multipliers such as `1.2000` insert successfully.
 - API-market domain tests: allowed durations, positive decimals, exact model subsets, duplicate/foreign IDs, stable package/model IDs, disabled omissions, and stock-delta rejection.
-- Intent tests: package availability and a full immutable snapshot containing exact model name, multiplier, and model price-version ID.
+- Intent tests: package availability and a full immutable snapshot containing exact model name, multiplier, model price-version ID, commercial facts, and historical explicit-null behavior.
 - Order tests: last-unit reservation, cancellation and timeout release exactly once, payment-confirmation consumption, no later release, and delivery-based expiry from the frozen snapshot.
 - PostgreSQL integration: reservation/update/release occurs in the order transaction and cannot oversell under competing writes.
 - OpenAPI/router checks: publish/public response fields, snapshot/order lifecycle fields, route parity, and strict YAML parsing.

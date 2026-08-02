@@ -24,7 +24,7 @@ import { Card } from '@/components/ui/card'
 import { getApiTTFTBandLabel } from '@/lib/api'
 import { getProductCategoryIconSrc } from '@/lib/productCategoryIcon'
 import type { ApiServicePublishForm, CatalogById, SellingMode } from './types'
-import { apiQuotaBoundaryNotice, distributionLabels, enabledPaymentOptions, formatMultiplier, generatedTitle, paymentMethodLabels, providerCategoryLabels, selectedCatalogItems, simplifiedApiQuotaRules } from './utils'
+import { accountPoolLabel, apiQuotaBoundaryNotice, distributionLabels, enabledPaymentOptions, formatMultiplier, generatedTitle, paymentMethodLabels, providerCategoryLabels, selectedCatalogItems, simplifiedApiQuotaRules, warrantyLabel } from './utils'
 
 const props = defineProps<{
   form: ApiServicePublishForm
@@ -83,7 +83,8 @@ const previewRows = computed(() => {
     )
   }
   rows.push(
-    { label: '首字响应 / 建议并发', value: `${getApiTTFTBandLabel(props.form.declaredTtftBand)} / ${props.form.recommendedConcurrency} · 商户自报，平台未测速`, icon: Zap },
+	{ label: '首字响应 / 最大并发', value: `${getApiTTFTBandLabel(props.form.declaredTtftBand)} / ${props.form.declaredMaxConcurrency} · 商户自报，平台未测速`, icon: Zap },
+	{ label: '号池', value: accountPoolLabel(props.form), icon: Network },
     { label: '收款方式', value: paymentSummary.value, icon: CreditCard },
     { label: '接入类型', value: distributionLabels[props.form.distributionSystem], icon: Network },
   )
@@ -102,11 +103,14 @@ const freeServiceCard = computed<ApiFreeServiceCardData>(() => ({
   maximumPurchaseCny: props.form.maximumPurchaseCny ?? 0,
   multiplier: props.form.distributionSystem === 'sub2api' ? '1.00x' : formatMultiplier(props.form.defaultMultiplier),
   ttftLabel: getApiTTFTBandLabel(props.form.declaredTtftBand),
-  recommendedConcurrency: props.form.recommendedConcurrency || '—',
+  declaredMaxConcurrency: props.form.declaredMaxConcurrency || '—',
   paymentWindowMinutes: props.form.paymentWindowMinutes,
   merchantName: props.form.merchantDisplayName.trim() || merchantDisplayName.value,
   merchantType: props.form.merchantIdentityMode === 'store_alias' ? '商户' : '个人卖家',
   expiresAt: quotaExpiresAtLabel.value,
+	accountPoolLabel: accountPoolLabel(props.form),
+	merchantRefundCommitment: props.form.warranty.mode === 'merchant_full_refund',
+	merchantBadges: [],
 }))
 
 const buyerFlow = [
@@ -186,8 +190,10 @@ const buyerFlow = [
           <div><dt>套餐库存</dt><dd>{{ previewPackage.stockTotal }} 份</dd></div>
           <div><dt>套餐模型</dt><dd>{{ previewPackage.modelCatalogIds.map(id => catalogById.get(id)?.displayName ?? id).join(' / ') || '待选择' }}</dd></div>
           <div><dt>收款方式</dt><dd>{{ paymentSummary }}</dd></div>
-          <div><dt>接入类型</dt><dd>{{ distributionLabels[form.distributionSystem] }}</dd></div>
-          <div><dt>平台边界</dt><dd>不担保、不代赔</dd></div>
+		  <div><dt>接入类型</dt><dd>{{ distributionLabels[form.distributionSystem] }}</dd></div>
+		  <div><dt>号池</dt><dd>{{ accountPoolLabel(form) }}</dd></div>
+		  <div><dt>最大并发</dt><dd>{{ form.declaredMaxConcurrency }}</dd></div>
+		  <div><dt>退款承诺</dt><dd>{{ warrantyLabel(form.warranty) }}</dd></div>
         </dl>
       </template>
 

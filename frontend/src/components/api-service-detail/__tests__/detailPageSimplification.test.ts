@@ -15,21 +15,27 @@ test('keeps merchant trust signals in the purchase card only', () => {
   const panel = componentSource('ApiPurchasePanel')
 
   assert.doesNotMatch(header, /近期完成|首字响应|getApiMerchantDisplayName/)
-  assert.match(panel, /ReputationSummaryCard/)
-  assert.match(panel, /首字响应.*商户自报，平台未测速/)
+  assert.match(panel, /ReputationInlineSummary/)
+  assert.match(panel, /ApiMerchantBadges/)
+  assert.match(panel, /首字响应[\s\S]*最大并发[\s\S]*商户自报，平台未测速/)
   assert.match(panel, /getApiMerchantDisplayName/)
 })
 
 test('prioritizes the actual quota price over the merchant multiplier', () => {
   const summary = componentSource('ApiServiceSummary')
-  const priceIndex = summary.indexOf('美元额度售价')
-  const multiplierIndex = summary.indexOf('商户倍率')
+  const priceIndex = summary.indexOf('购买价格')
+  const multiplierIndex = summary.indexOf('模型计费倍率')
 
   assert.ok(priceIndex >= 0)
   assert.ok(multiplierIndex > priceIndex)
   assert.match(summary, /可售额度/)
-  assert.match(summary, /API 额度有效期/)
+  assert.match(summary, /服务有效期/)
   assert.match(summary, /接入类型/)
+  assert.match(summary, /首字响应/)
+  assert.match(summary, /商户声明最大并发/)
+  assert.match(summary, /付款窗口/)
+  assert.match(summary, /号池/)
+  assert.match(summary, /商户退款承诺/)
   assert.doesNotMatch(summary, /建议首次小额测试|官方模型价格的/)
 })
 
@@ -56,14 +62,14 @@ test('does not rewrite mixed query families after creating an order', () => {
   assert.match(panel, /import \{ Badge \} from '@\/components\/ui\/badge'/)
 })
 
-test('layers secondary information behind marketplace detail tabs', () => {
-  const tabs = componentSource('ApiServiceDetailsTabs')
+test('keeps summary and secondary information visible in one continuous left column', () => {
+  const details = componentSource('ApiServiceDetailsTabs')
+  const page = pageSource('ApiServiceDetailPage')
 
-  assert.match(tabs, /模型价格/)
-  assert.match(tabs, /服务说明/)
-  assert.match(tabs, /购买须知/)
-  assert.match(tabs, /role="tablist"/)
-  assert.match(tabs, /aria-selected/)
+  assert.match(details, /模型价格/)
+  assert.match(details, /购买须知/)
+  assert.doesNotMatch(details, /role="tablist"|aria-selected/)
+  assert.match(page, /<div class="min-w-0 space-y-4">[\s\S]*ApiServiceSummary[\s\S]*ApiServiceDetailsTabs/)
 })
 
 test('formats visible backend timestamps as Beijing time', () => {

@@ -20,6 +20,22 @@ func TestAPIServiceColumnsProjectMerchantIdentityAvatar(t *testing.T) {
 	}
 }
 
+func TestPublicAPIServicePredicateExcludesActiveSellerRestrictions(t *testing.T) {
+	predicate := publicAPIServiceOrderablePredicate("service")
+	for _, fragment := range []string{
+		"FROM user_restrictions restriction",
+		"restriction.role_scope IN ('seller', 'all')",
+		"restriction.action_code IN ('api_service_publish', 'all')",
+		"restriction.revoked_at IS NULL",
+		"restriction.starts_at <= now()",
+		"restriction.ends_at IS NULL OR restriction.ends_at > now()",
+	} {
+		if !strings.Contains(predicate, fragment) {
+			t.Fatalf("public API service predicate missing %q", fragment)
+		}
+	}
+}
+
 func TestOwnerAPISalesAggregationUsesOneAuthoritativeChannelProjection(t *testing.T) {
 	query := ownerAPISalesAggregationSQL()
 	for _, fragment := range []string{

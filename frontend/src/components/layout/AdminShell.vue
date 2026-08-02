@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
-import { AlertTriangle, ArrowLeft, Bell, BookOpen, Boxes, Car, ClipboardList, Code2, FileText, Gauge, Menu, MessageSquareWarning, PackageSearch, PanelLeftClose, PanelLeftOpen, Search, Settings, ShieldCheck, UserCog, Users, X } from 'lucide-vue-next'
+import { AlertTriangle, ArrowLeft, Bell, BookOpen, Boxes, Car, ClipboardList, Code2, FileText, Gauge, Menu, MessageSquareWarning, PackageSearch, PanelLeftClose, PanelLeftOpen, Search, Settings, ShieldCheck, TrendingUp, UserCog, Users, X } from 'lucide-vue-next'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -21,7 +21,10 @@ const { data: badges } = useNavigationBadges(computed(() => Boolean(profile.valu
 useRealtimeSync(computed(() => Boolean(profile.value)))
 
 const navGroups = computed(() => [
-  { title: '概览', items: [{ label: '管理工作台', to: '/admin', icon: Gauge, count: badges.value?.admin?.total ?? null }] },
+  { title: '概览', items: [
+    { label: '管理工作台', to: '/admin', icon: Gauge, count: badges.value?.admin?.total ?? null },
+    { label: '用户增长', to: '/admin/growth', icon: TrendingUp, count: null },
+  ] },
   { title: '待办与治理', items: [
     { label: '官网价格维护', to: '/admin/official-prices', icon: ShieldCheck, count: badges.value?.admin?.officialPrices ?? null },
     { label: '车源异常', to: '/admin/carpools', icon: Car, count: badges.value?.admin?.carpools ?? null },

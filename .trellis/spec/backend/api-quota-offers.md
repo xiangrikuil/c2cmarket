@@ -51,6 +51,7 @@ api_quota_credentials
 - Pending-payment cancellation or timeout releases an eligible inventory unit and pre-imported credential. The scheduled buyer claim remains, so the buyer cannot re-enter that round. Payment-submitted and later states do not release inventory.
 - Public current/next rounds must be offer-specific: a round is projected only when an active allocation exists for both the round and current offer.
 - Public cards and orders expose fixed USD, CNY, derived CNY/USD, multiplier, cutoff, expiry, distribution system, delivery ETA/mode, and seller-declared TTFT/concurrency confirmation. `performanceDisclaimer` remains `商户自报，平台未测速`.
+- Order creation freezes the API service account-pool code/label, merchant-declared maximum concurrency, merchant refund commitment, `api-merchant-refund-v1` rule version, and batch expiry inside both pricing and offer snapshots. Historical nullable pool/concurrency values remain explicit JSON `null` and are never inferred.
 - Credential CSV templates are mutually exclusive: `api_base_url,api_key,instructions` or `panel_login_url,username,password,instructions`. Import is all-or-nothing, at most 5000 rows, encrypted at rest, fingerprint-deduplicated, and never returned by public/list/summary/event/log payloads.
 
 ### 4. Validation & Error Matrix
@@ -79,7 +80,7 @@ api_quota_credentials
 
 ### 6. Tests Required
 
-- Unit: cutoff boundary, positive multiplier snapshot independent of distribution system, 1000-copy round input, orderability, CSV headers/duplicates/row limit.
+- Unit: cutoff boundary, positive multiplier and commercial-fact snapshots independent of distribution system, historical explicit-null snapshots, 1000-copy round input, orderability, CSV headers/duplicates/row limit.
 - PostgreSQL: publish rollback, `SKIP LOCKED` inventory claims, offer-specific round projection, release/retire behavior, credential reserve/deliver, idempotent replay, and cross-offer round limit.
 - Capacity: at least 1500 different buyers compete for 1000 copies; assert exactly 1000 successes, 500 expected sold-out results, no duplicate orders/credentials, no negative inventory, and no unexpected 5xx.
 - HTTP/OpenAPI: route parity, Problem Details codes, five/ten-minute snapshots, private `no-store` behavior, and no raw credential leakage.

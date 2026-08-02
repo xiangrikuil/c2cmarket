@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { RouterLink } from 'vue-router'
-import { Gauge, PackageOpen } from 'lucide-vue-next'
+import { Megaphone, PackageOpen, ShieldCheck } from 'lucide-vue-next'
 import { Badge } from '@/components/ui/badge'
 import { Card } from '@/components/ui/card'
 import ApiMerchantAvatar from '@/components/api-market/ApiMerchantAvatar.vue'
@@ -13,7 +13,9 @@ const props = defineProps<{
   row: ApiPackageRecommendation
   rank: number
   productIconSrc: string | null
+  promoted?: boolean
 }>()
+const emit = defineEmits<{ activate: [] }>()
 
 const formatNumber = (value: number, digits = 2) => value.toFixed(digits).replace(/\.?0+$/, '')
 const score = (value: number) => Math.round(value)
@@ -22,8 +24,12 @@ const hiddenModelCount = Math.max(0, props.row.package.models.length - visibleMo
 </script>
 
 <template>
-  <RouterLink :to="{ path: `/api-market/${row.service.id}`, query: { package: row.package.id } }" class="block min-w-0">
-    <Card class="api-package-card h-full min-w-0 overflow-hidden p-0">
+  <RouterLink
+    :to="{ path: `/api-market/${row.service.id}`, query: { package: row.package.id } }"
+    class="block min-w-0"
+    @click.capture="emit('activate')"
+  >
+    <Card class="api-package-card h-full min-w-0 overflow-hidden p-0" :class="{ 'api-package-card--promoted': promoted }">
       <div class="flex min-w-0 items-start gap-3 p-4 pb-3">
         <span class="api-service-card-logo api-package-card-logo">
           <img v-if="productIconSrc" :src="productIconSrc" :alt="`${row.service.title} 图标`" />
@@ -32,8 +38,9 @@ const hiddenModelCount = Math.max(0, props.row.package.models.length - visibleMo
         <div class="min-w-0 flex-1">
           <div class="flex flex-wrap items-center gap-2">
             <h2 class="truncate font-semibold text-slate-950">{{ row.package.name }}</h2>
+            <Badge v-if="promoted" variant="status"><Megaphone class="h-3 w-3" />推广</Badge>
             <Badge variant="verified">{{ row.package.durationDays }} 天</Badge>
-            <Badge v-if="rank === 1" variant="trust">综合推荐</Badge>
+            <Badge v-if="rank === 1 && !promoted" variant="trust">综合推荐</Badge>
           </div>
           <p class="mt-1 truncate text-xs text-muted-foreground">{{ row.service.title }}</p>
         </div>
@@ -58,15 +65,19 @@ const hiddenModelCount = Math.max(0, props.row.package.models.length - visibleMo
         <div><dt>价值成本</dt><dd>¥{{ formatNumber(row.declaredUnitCost, 4) }}</dd></div>
       </dl>
 
-      <div class="border-b border-border px-4 py-3">
-        <div class="mb-2 flex items-center gap-1.5 text-xs font-medium text-slate-700"><Gauge class="h-3.5 w-3.5 text-primary" />综合推荐构成</div>
-        <div class="grid grid-cols-4 gap-2 text-center text-[11px] text-muted-foreground">
+      <dl class="grid grid-cols-3 border-b border-border text-xs">
+        <div class="min-w-0 px-3 py-2"><dt class="text-muted-foreground">号池</dt><dd class="mt-1 truncate font-medium" :title="row.service.accountPoolLabel">{{ row.service.accountPoolLabel || '历史服务未补充' }}</dd></div>
+        <div class="min-w-0 border-x border-border px-3 py-2"><dt class="text-muted-foreground">最大并发</dt><dd class="mt-1 font-medium">{{ row.service.declaredMaxConcurrency ?? '—' }}</dd></div>
+        <div class="min-w-0 px-3 py-2"><dt class="text-muted-foreground">退款承诺</dt><dd class="mt-1 truncate font-medium" :title="row.service.merchantRefundCommitment ? '商户全额退款承诺' : '无额外退款承诺'"><ShieldCheck class="mr-1 inline h-3 w-3" />{{ row.service.merchantRefundCommitment ? '全额退款' : '无额外承诺' }}</dd></div>
+      </dl>
+
+      <div class="border-b border-border px-4 py-2">
+        <div class="grid grid-cols-4 gap-2 text-center text-[11px] text-muted-foreground" title="综合推荐构成">
           <span>性价比 <b class="block text-xs text-foreground">{{ score(row.valueScore) }}</b></span>
           <span>履约 <b class="block text-xs text-foreground">{{ score(row.fulfillmentScore) }}</b></span>
           <span>响应 <b class="block text-xs text-foreground">{{ score(row.responseScore) }}</b></span>
           <span>新鲜度 <b class="block text-xs text-foreground">{{ score(row.freshnessScore) }}</b></span>
         </div>
-        <p class="mt-2 text-[11px] text-muted-foreground">价值成本按商家声明估算，越低越划算。</p>
       </div>
 
       <div class="border-b border-border px-4 py-3">
@@ -94,3 +105,16 @@ const hiddenModelCount = Math.max(0, props.row.package.models.length - visibleMo
     </Card>
   </RouterLink>
 </template>
+
+<style scoped>
+.api-package-card--promoted {
+  border-color: rgb(249 115 22 / 0.58);
+  box-shadow: inset 0 3px 0 rgb(249 115 22 / 0.9);
+}
+
+.api-package-card--promoted:hover {
+  border-color: rgb(234 88 12 / 0.72);
+  box-shadow: inset 0 3px 0 rgb(234 88 12), 0 8px 24px rgb(15 23 42 / 0.06);
+}
+
+</style>

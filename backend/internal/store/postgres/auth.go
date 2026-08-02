@@ -41,8 +41,8 @@ func (s *Store) EnsureUser(ctx context.Context, username string, isAdmin bool, n
 		VALUES ($1, $1, 'active', $2, $2)
 		ON CONFLICT (username) DO UPDATE
 		SET display_name = users.display_name
-		RETURNING id::text, username, display_name, account_status
-	`, username, now).Scan(&user.ID, &user.Username, &user.DisplayName, &user.Status)
+		RETURNING id::text, analytics_user_id::text, username, display_name, account_status
+	`, username, now).Scan(&user.ID, &user.AnalyticsUserID, &user.Username, &user.DisplayName, &user.Status)
 	if err != nil {
 		return auth.User{}, internalStoreError()
 	}
@@ -63,6 +63,13 @@ func (s *Store) EnsureUser(ctx context.Context, username string, isAdmin bool, n
 			return auth.User{}, internalStoreError()
 		}
 	}
+	if err := insertRegistrationAttribution(ctx, tx, user.ID, "unknown", auth.RegistrationAttribution{
+		SourceType:  auth.RegistrationSourceUnknown,
+		Source:      auth.RegistrationSourceUnknown,
+		LandingPath: "/",
+	}, now); err != nil {
+		return auth.User{}, internalStoreError()
+	}
 
 	if err := tx.Commit(ctx); err != nil {
 		return auth.User{}, internalStoreError()
@@ -82,7 +89,7 @@ func (s *Store) UserByID(ctx context.Context, userID string) (auth.User, *domain
 	var user auth.User
 	var binding authLinuxDoBindingScan
 	err := s.pool.QueryRow(ctx, `
-		SELECT u.id::text, u.username, u.display_name, u.account_status,
+		SELECT u.id::text, u.analytics_user_id::text, u.username, u.display_name, u.account_status,
 		       EXISTS(SELECT 1 FROM user_permissions p WHERE p.user_id = u.id AND p.permission = 'admin') AS is_admin,
 		       l.linux_do_user_id, l.linux_do_username, l.trust_level, l.avatar_url, l.bound_at, l.last_synced_at
 		FROM users u
@@ -90,6 +97,7 @@ func (s *Store) UserByID(ctx context.Context, userID string) (auth.User, *domain
 		WHERE u.id = $1
 	`, userID).Scan(
 		&user.ID,
+		&user.AnalyticsUserID,
 		&user.Username,
 		&user.DisplayName,
 		&user.Status,
@@ -174,9 +182,10 @@ func (s *Store) UpsertOAuthUser(ctx context.Context, profile auth.OAuthProfile, 
 			INSERT INTO users (username, display_name, avatar_url, account_status, created_at, updated_at, last_active_at)
 			VALUES ($1, $2, NULLIF($3, ''), 'active', $4, $4, $4)
 			ON CONFLICT (username) DO NOTHING
-			RETURNING id::text, username, display_name, account_status
+			RETURNING id::text, analytics_user_id::text, username, display_name, account_status
 		`, candidate, displayName, strings.TrimSpace(profile.AvatarURL), now).Scan(
 			&createdUser.ID,
+			&createdUser.AnalyticsUserID,
 			&createdUser.Username,
 			&createdUser.DisplayName,
 			&createdUser.Status,
@@ -216,6 +225,9 @@ func (s *Store) UpsertOAuthUser(ctx context.Context, profile auth.OAuthProfile, 
 		if err != nil {
 			return auth.OAuthUserResult{}, internalStoreError()
 		}
+	}
+	if err := insertRegistrationAttribution(ctx, tx, createdUser.ID, "oauth_linux_do", profile.Attribution, now); err != nil {
+		return auth.OAuthUserResult{}, internalStoreError()
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return auth.OAuthUserResult{}, internalStoreError()
@@ -314,8 +326,8 @@ func (s *Store) BootstrapAdminPassword(ctx context.Context, credential auth.Pass
 	err = tx.QueryRow(ctx, `
 		INSERT INTO users (username, display_name, account_status, created_at, updated_at)
 		VALUES ($1, $2, 'active', $3, $3)
-		RETURNING id::text, username, display_name, account_status
-	`, username, displayName, now).Scan(&user.ID, &user.Username, &user.DisplayName, &user.Status)
+		RETURNING id::text, analytics_user_id::text, username, display_name, account_status
+	`, username, displayName, now).Scan(&user.ID, &user.AnalyticsUserID, &user.Username, &user.DisplayName, &user.Status)
 	if err != nil {
 		if isUniqueViolation(err) {
 			return auth.BootstrapAdminResult{}, auth.AdminBootstrapConflictError()
@@ -328,6 +340,13 @@ func (s *Store) BootstrapAdminPassword(ctx context.Context, credential auth.Pass
 		VALUES ($1, 'admin')
 	`, user.ID)
 	if err != nil {
+		return auth.BootstrapAdminResult{}, internalStoreError()
+	}
+	if err := insertRegistrationAttribution(ctx, tx, user.ID, "unknown", auth.RegistrationAttribution{
+		SourceType:  auth.RegistrationSourceUnknown,
+		Source:      auth.RegistrationSourceUnknown,
+		LandingPath: "/",
+	}, now); err != nil {
 		return auth.BootstrapAdminResult{}, internalStoreError()
 	}
 
@@ -366,6 +385,7 @@ func oauthUserByIdentity(ctx context.Context, q queryer, provider, subject strin
 	var binding authLinuxDoBindingScan
 	err := q.QueryRow(ctx, `
 		SELECT u.id::text,
+		       u.analytics_user_id::text,
 		       u.username,
 		       u.display_name,
 		       u.account_status,
@@ -385,6 +405,7 @@ func oauthUserByIdentity(ctx context.Context, q queryer, provider, subject strin
 		WHERE i.provider = $1 AND i.provider_subject = $2
 	`+lockClause, provider, subject).Scan(
 		&user.ID,
+		&user.AnalyticsUserID,
 		&user.Username,
 		&user.DisplayName,
 		&user.Status,
@@ -475,7 +496,7 @@ func (s *Store) PasswordCredential(ctx context.Context, username string) (auth.P
 	var credential auth.PasswordCredential
 	var binding authLinuxDoBindingScan
 	err := s.pool.QueryRow(ctx, `
-		SELECT u.id::text, u.username, u.display_name, u.account_status,
+		SELECT u.id::text, u.analytics_user_id::text, u.username, u.display_name, u.account_status,
 		       EXISTS(SELECT 1 FROM user_permissions p WHERE p.user_id = u.id AND p.permission = 'admin') AS is_admin,
 		       c.password_algorithm, c.password_salt, c.password_hash,
 		       l.linux_do_user_id, l.linux_do_username, l.trust_level, l.avatar_url, l.bound_at, l.last_synced_at
@@ -485,6 +506,7 @@ func (s *Store) PasswordCredential(ctx context.Context, username string) (auth.P
 		WHERE u.username = $1
 	`, username).Scan(
 		&credential.User.ID,
+		&credential.User.AnalyticsUserID,
 		&credential.User.Username,
 		&credential.User.DisplayName,
 		&credential.User.Status,
@@ -521,7 +543,7 @@ func (s *Store) PasswordCredentialByUserID(ctx context.Context, userID string) (
 	var credential auth.PasswordCredential
 	var binding authLinuxDoBindingScan
 	err := s.pool.QueryRow(ctx, `
-		SELECT u.id::text, u.username, u.display_name, u.account_status,
+		SELECT u.id::text, u.analytics_user_id::text, u.username, u.display_name, u.account_status,
 		       EXISTS(SELECT 1 FROM user_permissions p WHERE p.user_id = u.id AND p.permission = 'admin') AS is_admin,
 		       c.password_algorithm, c.password_salt, c.password_hash,
 		       l.linux_do_user_id, l.linux_do_username, l.trust_level, l.avatar_url, l.bound_at, l.last_synced_at
@@ -531,6 +553,7 @@ func (s *Store) PasswordCredentialByUserID(ctx context.Context, userID string) (
 		WHERE u.id = $1
 	`, userID).Scan(
 		&credential.User.ID,
+		&credential.User.AnalyticsUserID,
 		&credential.User.Username,
 		&credential.User.DisplayName,
 		&credential.User.Status,
@@ -660,12 +683,15 @@ func (s *Store) ConfirmEmailRegistration(ctx context.Context, input auth.EmailRe
 	err = tx.QueryRow(ctx, `
 		INSERT INTO users (username, display_name, email, email_verified_at, account_status, created_at, updated_at, last_active_at)
 		VALUES ($1, $1, lower($2), $3, 'active', $3, $3, $3)
-		RETURNING id::text, username, display_name, account_status
-	`, username, email, now).Scan(&user.ID, &user.Username, &user.DisplayName, &user.Status)
+		RETURNING id::text, analytics_user_id::text, username, display_name, account_status
+	`, username, email, now).Scan(&user.ID, &user.AnalyticsUserID, &user.Username, &user.DisplayName, &user.Status)
 	if isUniqueViolation(err) {
 		return auth.User{}, domain.NewError(http.StatusConflict, domain.CodeValidationFailed, "Registration conflict", "注册信息已被占用，请重新获取验证码。")
 	}
 	if err != nil {
+		return auth.User{}, internalStoreError()
+	}
+	if err := insertRegistrationAttribution(ctx, tx, user.ID, "email", auth.NormalizeRegistrationAttribution(input.Attribution), now); err != nil {
 		return auth.User{}, internalStoreError()
 	}
 
@@ -780,7 +806,7 @@ func (s *Store) getSession(ctx context.Context, sessionTokenHash, csrfTokenHash 
 		return auth.User{}, auth.Session{}, internalStoreError()
 	}
 	query := `
-		SELECT u.id::text, u.username, u.display_name, u.account_status,
+		SELECT u.id::text, u.analytics_user_id::text, u.username, u.display_name, u.account_status,
 		       EXISTS(SELECT 1 FROM user_permissions p WHERE p.user_id = u.id AND p.permission = 'admin') AS is_admin,
 		       s.session_token_hash, s.user_id::text, s.expires_at, s.renewed_at, s.absolute_expires_at, s.revoked_at,
 		       l.linux_do_user_id, l.linux_do_username, l.trust_level, l.avatar_url, l.bound_at, l.last_synced_at
@@ -800,6 +826,7 @@ func (s *Store) getSession(ctx context.Context, sessionTokenHash, csrfTokenHash 
 	session.ID = sessionTokenHash
 	err := s.pool.QueryRow(ctx, query, args...).Scan(
 		&user.ID,
+		&user.AnalyticsUserID,
 		&user.Username,
 		&user.DisplayName,
 		&user.Status,

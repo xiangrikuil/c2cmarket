@@ -884,7 +884,7 @@ html[data-theme="minimal-modern"] .account-security-side {
 }
 
 .api-package-card {
-  min-height: 390px;
+	min-height: 410px;
   border-color: color-mix(in oklab, #2563eb 16%, var(--border));
   background: linear-gradient(155deg, #ffffff 0%, #f8fbff 100%);
   box-shadow: 0 16px 38px -34px rgb(30 64 175 / 0.48);
@@ -1108,60 +1108,47 @@ html[data-theme="minimal-modern"] .account-security-side {
 }
 
 .api-service-detail-header {
-  border-color: color-mix(in oklab, var(--api-accent) 20%, var(--border));
-  background:
-    radial-gradient(circle at 92% 10%, rgb(8 145 178 / 0.13) 0 84px, transparent 86px),
-    linear-gradient(135deg, #ffffff 0%, #ecfeff 100%);
-  box-shadow: 0 16px 40px -36px rgb(8 145 178 / 0.55);
+  background: transparent;
 }
 
 .api-service-detail-summary {
   border-color: color-mix(in oklab, var(--api-accent) 16%, var(--border));
-  box-shadow: 0 18px 44px -38px rgb(15 23 42 / 0.48);
+  background: var(--card);
+  box-shadow: 0 12px 32px -28px rgb(15 23 42 / 0.42);
 }
 
 .api-service-detail-logo {
   display: grid;
-  height: 56px;
-  width: 56px;
+  height: 48px;
+  width: 48px;
   flex: 0 0 auto;
   place-items: center;
-  border: 1px solid rgb(255 255 255 / 0.7);
-  border-radius: 16px;
-  background: linear-gradient(145deg, #34d399, #0891b2);
-  color: white;
-  box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.42), 0 18px 30px -20px rgb(8 145 178 / 0.9);
-}
-
-.api-service-value-guide {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 10px;
-  border-bottom: 1px solid var(--border);
-  padding: 18px 0;
-}
-
-.api-service-value-guide > div {
-  display: grid;
-  gap: 4px;
-  min-width: 0;
-  border: 1px solid color-mix(in oklab, #0891b2 14%, var(--border));
+  border: 1px solid color-mix(in oklab, var(--api-accent) 24%, var(--border));
   border-radius: 10px;
-  background: color-mix(in oklab, #ecfeff 36%, white);
-  padding: 12px;
+  background: color-mix(in oklab, var(--api-accent) 7%, var(--card));
+  color: var(--api-accent);
 }
 
-.api-service-value-guide span,
-.api-service-value-guide small { color: var(--muted-foreground); font-size: 11px; line-height: 1.45; }
-.api-service-value-guide strong { color: #0f172a; font-size: 15px; }
+.api-service-fact-icon,
+.api-service-section-icon {
+  display: grid;
+  height: 32px;
+  width: 32px;
+  flex: 0 0 auto;
+  place-items: center;
+  border-radius: 8px;
+  background: color-mix(in oklab, var(--api-accent) 8%, var(--card));
+  color: var(--api-accent);
+}
 
-@media (max-width: 640px) {
-  .api-service-value-guide { grid-template-columns: 1fr; }
+.api-service-section-icon {
+  height: 34px;
+  width: 34px;
 }
 
 .api-service-purchase-panel {
   border-color: color-mix(in oklab, var(--primary) 22%, var(--border));
-  background: linear-gradient(180deg, color-mix(in oklab, var(--signal-soft) 36%, white) 0%, white 38%);
+  background: var(--card);
   box-shadow: 0 20px 48px -38px rgb(30 64 175 / 0.5);
 }
 

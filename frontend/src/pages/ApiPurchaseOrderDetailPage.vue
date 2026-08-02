@@ -1,10 +1,9 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
-import { RouterLink, useRoute, useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { useQuery, useQueryClient } from '@tanstack/vue-query'
-import { CheckCircle2, ChevronDown, ChevronRight, Clock3, Copy, Headphones, KeyRound, QrCode, ShieldAlert, Star, WalletCards, XCircle } from 'lucide-vue-next'
+import { ArrowLeft, CheckCircle2, ChevronDown, Clock3, Copy, Eye, EyeOff, Headphones, KeyRound, QrCode, ShieldAlert, Star, WalletCards, XCircle } from 'lucide-vue-next'
 import { toast } from 'vue-sonner'
-import ApiMerchantAvatar from '@/components/api-market/ApiMerchantAvatar.vue'
 import ApiPaymentMethodIcon from '@/components/api-payment/ApiPaymentMethodIcon.vue'
 import OrderContactCard from '@/components/profile/OrderContactCard.vue'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
@@ -27,8 +26,6 @@ import StatusBadge from '@/components/market/StatusBadge.vue'
 import {
   apiOrderBuyerContactSnapshot,
   apiOrderMerchantContactSnapshot,
-  getApiMerchantDisplayName,
-  getApiMerchantProfileUrl,
   getApiOrderDeliveryKindLabel,
   getApiOrderEvents,
   getApiOrderPaymentIssueLabel,
@@ -41,6 +38,7 @@ import {
   readApiOrderPaymentInstructions,
   type ApiOrderDeliveryKind,
   type ApiOrderPaymentIssueReason,
+  type ApiServiceCommercialSnapshot,
 } from '@/lib/api'
 import {
   API_ORDER_CANCEL_OPTIONS,
@@ -55,7 +53,6 @@ import { formatDecimal } from '@/lib/decimal'
 import { functionalMotion } from '@/lib/motion'
 import {
   useApiOrder,
-  useApiService,
   useCancelApiOrderMutation,
   useConfirmApiOrderCompleteMutation,
   useConfirmApiOrderPaymentMutation,
@@ -72,9 +69,6 @@ const id = computed(() => String(route.params.id ?? ''))
 const perspective = computed<'buyer' | 'merchant'>(() => route.name === 'merchant-api-order-detail' ? 'merchant' : 'buyer')
 const isMerchantView = computed(() => perspective.value === 'merchant')
 const { data: order, isLoading, error: orderError, refetch: refetchOrder } = useApiOrder(id, perspective)
-const apiServiceId = computed(() => order.value?.apiServiceId ?? '')
-const shouldLoadMerchantProfile = computed(() => !isMerchantView.value && Boolean(apiServiceId.value))
-const { data: apiService } = useApiService(apiServiceId, shouldLoadMerchantProfile)
 const paymentInstructionsQuery = useQuery({
   queryKey: computed(() => ['api-order-payment-instructions', id.value]),
   queryFn: () => readApiOrderPaymentInstructions(id.value),
@@ -104,6 +98,8 @@ const cancelNote = ref('')
 const cancelUnpaidConfirmed = ref(false)
 const orderDetailsOpen = ref(true)
 const orderRecordsOpen = ref(false)
+const apiKeyVisible = ref(false)
+const passwordVisible = ref(false)
 const now = ref(Date.now())
 let countdownTimer: ReturnType<typeof setInterval> | undefined
 
@@ -138,15 +134,7 @@ const counterpartyName = computed(() => {
   if (!order.value) return ''
   return isMerchantView.value ? order.value.buyer : order.value.seller
 })
-const counterpartyDisplayName = computed(() => {
-  if (!isMerchantView.value && apiService.value) return getApiMerchantDisplayName(apiService.value)
-  return counterpartyName.value
-})
-const counterpartyProfileUrl = computed(() => {
-  if (isMerchantView.value || !apiService.value) return null
-  return getApiMerchantProfileUrl(apiService.value)
-})
-const counterpartyAvatarText = computed(() => counterpartyDisplayName.value.trim().slice(0, 1).toUpperCase() || '用')
+const counterpartyAvatarText = computed(() => counterpartyName.value.trim().slice(0, 1).toUpperCase() || '用')
 const counterpartyCompletedOrders = computed(() => {
   const summary = counterpartyReputation.value
   return summary ? `${summary.completedCount} 单` : '暂无数据'
@@ -169,6 +157,43 @@ const orderUsageVisibilityLabel = computed(() => {
   if (!snapshot) return ''
   return snapshot.usageVisibilitySnapshotMissing ? '历史订单未冻结用量核对规则' : getApiUsageVisibilityLabel(snapshot.usageVisibility)
 })
+
+function commercialSnapshotFallback(snapshot: ApiServiceCommercialSnapshot) {
+  return snapshot.commercialFactsSnapshotIssue === 'invalid' ? '订单快照不可用' : '历史订单未冻结'
+}
+
+function accountPoolSnapshotLabel(snapshot: ApiServiceCommercialSnapshot) {
+  if (snapshot.accountPoolLabel) return snapshot.accountPoolLabel
+  return snapshot.commercialFactsSnapshotIssue ? commercialSnapshotFallback(snapshot) : '历史服务未补充'
+}
+
+function concurrencySnapshotLabel(snapshot: ApiServiceCommercialSnapshot) {
+  if (snapshot.declaredMaxConcurrency !== undefined) return snapshot.declaredMaxConcurrency
+  return snapshot.commercialFactsSnapshotIssue ? commercialSnapshotFallback(snapshot) : '历史服务未声明'
+}
+
+function refundCommitmentSnapshotLabel(snapshot: ApiServiceCommercialSnapshot) {
+  if (snapshot.merchantRefundCommitment === true) return '商户全额退款承诺'
+  if (snapshot.merchantRefundCommitment === false) return '无额外退款承诺'
+  return commercialSnapshotFallback(snapshot)
+}
+
+function refundPolicyVersionSnapshotLabel(snapshot: ApiServiceCommercialSnapshot) {
+  return snapshot.merchantRefundPolicyVersion || commercialSnapshotFallback(snapshot)
+}
+
+function serviceValiditySnapshotLabel(snapshot: ApiServiceCommercialSnapshot) {
+  if (snapshot.serviceValidityExpiresAt) return formatOrderDateTime(snapshot.serviceValidityExpiresAt)
+  if (snapshot.serviceValidityExpiresAt === null && !snapshot.commercialFactsSnapshotIssue) return '未设置固定失效时间'
+  return commercialSnapshotFallback(snapshot)
+}
+
+const orderServiceValidityLabel = computed(() => {
+  if (!order.value) return ''
+  if (order.value.packageExpiresAt) return formatOrderDateTime(order.value.packageExpiresAt)
+  if (order.value.packageSnapshot) return `${order.value.packageSnapshot.durationDays} 天（商户交付后开始）`
+  return serviceValiditySnapshotLabel(order.value.intentSnapshot)
+})
 const paymentInstructions = computed(() => paymentInstructionsQuery.data.value ?? null)
 const paymentActionLabel = computed(() => {
   const method = order.value?.selectedPaymentMethod
@@ -185,7 +210,7 @@ const paymentIssueOptions: Array<{ value: ApiOrderPaymentIssueReason, label: str
   { value: 'remark_mismatch', label: '备注不符', description: '付款备注或订单识别信息不一致。' },
 ]
 const flowSteps = ['创建订单', '买家付款', '商户确认收款', '商户交付', '买家验收']
-const flowStepDescriptions = ['锁定下单信息', '使用商户收款方式付款', '核对实际到账', '提交一次性交付凭证', '核对后完成订单']
+const flowStepDescriptions = ['锁定下单信息', '使用商户收款方式付款', '核对实际到账', '提交一次性接入信息', '核对后完成订单']
 const currentFlowIndex = computed(() => {
   if (!order.value || order.value.status === 'cancelled') return -1
   const indexes = {
@@ -226,15 +251,15 @@ const currentActionDescription = computed(() => {
     if (order.value.status === 'payment_submitted') return '买家已标记付款，请核对收款账户实际到账后确认。'
     if (order.value.status === 'payment_issue') return '已报告付款问题，正在等待买家补充付款信息。'
     if (order.value.status === 'paid_confirmed') return '收款已确认，请填写买家专属的接入信息。'
-    if (order.value.status === 'delivery_submitted') return '交付凭证已提交，等待买家核对并确认完成交易。'
+    if (order.value.status === 'delivery_submitted') return '接入凭证已提交，等待买家核对并确认完成交易。'
     return '双方操作已完成，这笔交易已结束。'
   }
   if (order.value.status === 'pending_payment') return '查看本次订单的收款信息，完成付款后确认付款状态。'
   if (order.value.status === 'payment_submitted') return '付款状态已提交，等待商户核对收款。'
   if (order.value.status === 'payment_issue') return '商户发现付款信息不匹配，请补充说明后重新提交。'
-  if (order.value.status === 'paid_confirmed') return '商户已确认收款，等待商户提交交付凭证。'
-  if (order.value.status === 'delivery_submitted') return '请核对交付凭证；确认可以使用后完成交易。'
-  return '双方操作已完成，交付凭证仍可在本页查看。'
+  if (order.value.status === 'paid_confirmed') return '商户已确认收款，等待商户提交接入信息。'
+  if (order.value.status === 'delivery_submitted') return '请核对接入凭证；确认可以使用后完成交易。'
+  return '双方操作已完成，接入凭证仍可在本页查看。'
 })
 
 function legacyRevocationCopy(value: string) {
@@ -351,7 +376,7 @@ async function resubmitPayment() {
 }
 
 async function confirmComplete() {
-  if (!order.value || !window.confirm('确认交付凭证可以使用并完成这笔交易？完成后订单将进入已完成状态。')) return
+  if (!order.value || !window.confirm('确认接入凭证可以使用并完成这笔交易？完成后订单将进入已完成状态。')) return
   try {
     await confirmCompleteMutation.mutateAsync({ id: order.value.id, version: order.value.version })
     await refresh(order.value.id)
@@ -415,6 +440,13 @@ async function copyValue(value: string | undefined, label: string) {
   }
 }
 
+function maskCredential(value: string | undefined) {
+  if (!value) return ''
+  if (value.length <= 8) return '••••••••'
+  const maskedLength = Math.min(18, Math.max(8, value.length - 7))
+  return `${value.slice(0, 3)}${'•'.repeat(maskedLength)}${value.slice(-4)}`
+}
+
 async function openPaymentConfirmation() {
   if (!paymentInstructions.value) {
     toast.warning('收款资料仍在加载，请稍后重试。')
@@ -447,20 +479,20 @@ onBeforeUnmount(() => {
   <ErrorState v-else-if="orderError" description="API 订单暂时无法加载，或当前账号无权查看。" @retry="refetchOrder()" />
   <EmptyState v-else-if="!order" title="未找到 API 订单" description="该订单不存在或暂不可见。"><template #action><Button variant="outline" @click="router.push(backPath)">{{ backLabel }}</Button></template></EmptyState>
   <div v-else class="space-y-4">
-    <div class="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
-      <div>
-        <Button class="-ml-3 mb-2" variant="ghost" size="sm" @click="router.push(backPath)">← {{ backLabel }}</Button>
+    <header class="flex flex-col gap-3 px-1 md:flex-row md:items-start md:justify-between">
+      <div class="min-w-0">
+        <Button class="-ml-3 mb-2" variant="ghost" size="sm" @click="router.push(backPath)"><ArrowLeft class="h-4 w-4" />{{ backLabel }}</Button>
         <div v-auto-animate="functionalMotion" class="flex flex-wrap items-center gap-2">
-          <h1 class="text-2xl font-semibold tracking-tight">{{ order.serviceTitle }}</h1>
+          <h1 class="text-2xl font-semibold">{{ isMerchantView ? 'API 销售订单' : 'API 购买订单' }}</h1>
           <StatusBadge :key="order.status" :status="order.status" :label="getApiOrderStatusLabel(order.status)" />
           <Badge v-if="order.purchaseKind === 'limited_quota_offer'" variant="capability">限时额度包</Badge>
         </div>
-        <p class="mt-2 text-sm text-muted-foreground">订单号：<ShortId :value="order.id" prefix="API" copyable /></p>
+        <p class="mt-1.5 truncate text-sm text-muted-foreground" :title="order.serviceTitle">{{ order.serviceTitle }} · 订单号 <ShortId :value="order.id" prefix="API" copyable /></p>
       </div>
       <Button v-if="canCancelOrder" variant="outline" class="border-destructive/40 text-destructive hover:bg-destructive/5 hover:text-destructive" @click="cancelDrawerOpen = true">
         <XCircle class="h-4 w-4" />取消订单
       </Button>
-    </div>
+    </header>
 
     <Alert v-if="order.status === 'cancelled'" variant="destructive">
       <XCircle />
@@ -484,47 +516,23 @@ onBeforeUnmount(() => {
       <AlertDescription>该订单问题已经提交，请等待平台处理；无需重复提交。</AlertDescription>
     </Alert>
 
-    <section class="overflow-hidden rounded-lg border border-border bg-card sm:grid sm:grid-cols-[minmax(0,1.25fr)_minmax(140px,0.55fr)_minmax(140px,0.55fr)_auto]" :aria-label="`${counterpartyDisplayName}交易信息`">
-      <component
-        :is="counterpartyProfileUrl ? RouterLink : 'div'"
-        :to="counterpartyProfileUrl || undefined"
-        class="flex min-w-0 items-center gap-3 p-4 transition-colors sm:min-h-24"
-        :class="counterpartyProfileUrl ? 'hover:bg-muted/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-inset' : ''"
-      >
-        <ApiMerchantAvatar
-          v-if="!isMerchantView && apiService"
-          :service="apiService"
-          class="grid h-11 w-11 shrink-0 place-items-center rounded-full bg-muted text-sm font-semibold text-foreground"
-        />
-        <span v-else class="grid h-11 w-11 shrink-0 place-items-center rounded-full bg-muted text-sm font-semibold text-foreground">{{ counterpartyAvatarText }}</span>
-        <span class="min-w-0">
-          <strong class="block truncate">{{ counterpartyDisplayName }}</strong>
-          <span class="mt-1 block text-xs text-muted-foreground">{{ isMerchantView ? 'API 买家' : 'API 商家' }}</span>
-        </span>
-      </component>
-
-      <div class="grid grid-cols-2 border-t border-border sm:contents sm:border-t-0">
-        <div class="p-4 sm:flex sm:min-h-24 sm:flex-col sm:justify-center sm:border-l sm:border-border">
-          <div class="text-xs text-muted-foreground">已完成订单</div>
-          <div class="mt-1 font-semibold">{{ counterpartyCompletedOrders }}</div>
-        </div>
-        <div class="border-l border-border p-4 sm:flex sm:min-h-24 sm:flex-col sm:justify-center">
-          <div class="text-xs text-muted-foreground">完成率</div>
-          <div class="mt-1 font-semibold">{{ counterpartyCompletionRate }}</div>
-        </div>
+    <Card class="overflow-hidden border-border/80">
+      <div class="border-b border-border bg-muted/20 px-4 py-5">
+        <Stepper v-if="order.status !== 'cancelled'" :model-value="Math.min(flowSteps.length, Math.max(1, currentFlowIndex + 1))" class="w-full items-start overflow-x-auto px-1">
+          <StepperItem v-for="(step, index) in flowSteps" :key="step" :step="index + 1" class="relative flex min-w-[112px] flex-1 flex-col items-center">
+            <StepperTrigger class="flex w-full flex-col items-center gap-2" disabled>
+              <StepperIndicator class="c2c-motion-state relative z-10 h-8 w-8 border border-border bg-background">{{ currentFlowIndex > index ? '✓' : index + 1 }}</StepperIndicator>
+              <div class="text-center">
+                <StepperTitle class="text-sm">{{ step }}</StepperTitle>
+                <StepperDescription>{{ flowStepDescriptions[index] }}</StepperDescription>
+              </div>
+            </StepperTrigger>
+            <StepperSeparator v-if="index < flowSteps.length - 1" class="pointer-events-none absolute left-[calc(50%+1.5rem)] right-[calc(-50%+1.5rem)] top-4 h-0.5 rounded-full bg-border group-data-[state=completed]:bg-primary/60" />
+          </StepperItem>
+        </Stepper>
+        <div v-else class="flex items-center justify-center gap-2 py-2 text-sm text-muted-foreground"><XCircle class="h-4 w-4" />交易流程已终止</div>
       </div>
 
-      <RouterLink
-        v-if="counterpartyProfileUrl"
-        :to="counterpartyProfileUrl"
-        class="flex items-center justify-between gap-3 border-t border-border p-4 text-sm font-medium text-muted-foreground transition-colors hover:bg-muted/40 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-inset sm:min-h-24 sm:border-l sm:border-t-0"
-      >
-        <span>查看商家主页</span>
-        <ChevronRight class="h-4 w-4 shrink-0" />
-      </RouterLink>
-    </section>
-
-    <Card class="overflow-hidden border-border/80">
       <div class="grid gap-0 md:grid-cols-[0.8fr_1fr_1.15fr_auto]">
         <div class="border-b border-border p-5 md:border-b-0 md:border-r">
           <div class="text-xs text-muted-foreground">订单金额</div>
@@ -545,7 +553,7 @@ onBeforeUnmount(() => {
           <template v-else>
             <div class="text-xs text-muted-foreground">当前状态</div>
             <div class="mt-3 text-xl font-semibold">{{ getApiOrderStatusLabel(order.status) }}</div>
-            <div class="mt-2 text-xs text-muted-foreground">{{ order.deliveryCredential ? '交付凭证已提交' : '无需倒计时' }}</div>
+            <div class="mt-2 text-xs text-muted-foreground">{{ order.deliveryCredential ? '接入凭证已提交' : '无需倒计时' }}</div>
           </template>
         </div>
         <div v-auto-animate="functionalMotion" class="flex min-w-56 flex-col justify-center gap-2 p-5">
@@ -577,21 +585,6 @@ onBeforeUnmount(() => {
         </div>
       </div>
 
-      <div class="border-t border-border bg-muted/20 px-5 py-4">
-        <Stepper v-if="order.status !== 'cancelled'" :model-value="Math.min(flowSteps.length, Math.max(1, currentFlowIndex + 1))" class="w-full items-start overflow-x-auto px-1">
-          <StepperItem v-for="(step, index) in flowSteps" :key="step" :step="index + 1" class="relative flex min-w-[112px] flex-1 flex-col items-center">
-            <StepperTrigger class="flex w-full flex-col items-center gap-2" disabled>
-              <StepperIndicator class="c2c-motion-state h-8 w-8" :class="'relative z-10 border border-border bg-background'">{{ currentFlowIndex > index ? '✓' : index + 1 }}</StepperIndicator>
-              <div class="text-center">
-                <StepperTitle class="text-sm">{{ step }}</StepperTitle>
-                <StepperDescription>{{ flowStepDescriptions[index] }}</StepperDescription>
-              </div>
-            </StepperTrigger>
-            <StepperSeparator v-if="index < flowSteps.length - 1" class="pointer-events-none absolute left-[calc(50%+1.5rem)] right-[calc(-50%+1.5rem)] top-4 h-0.5 rounded-full bg-border group-data-[state=completed]:bg-primary/60" />
-          </StepperItem>
-        </Stepper>
-        <div v-else class="flex items-center justify-center gap-2 py-2 text-sm text-muted-foreground"><XCircle class="h-4 w-4" />交易流程已终止</div>
-      </div>
     </Card>
 
     <Alert v-if="showMerchantTimeout">
@@ -603,7 +596,7 @@ onBeforeUnmount(() => {
       </AlertDescription>
     </Alert>
 
-    <div class="grid gap-4 lg:grid-cols-[1.1fr_0.9fr]">
+    <div class="grid items-start gap-4 lg:grid-cols-[minmax(0,0.95fr)_minmax(0,1.1fr)_minmax(280px,0.8fr)]">
       <Collapsible v-model:open="orderDetailsOpen" as-child>
         <Card class="h-fit p-5">
           <CollapsibleTrigger class="flex w-full items-center justify-between text-left">
@@ -622,7 +615,11 @@ onBeforeUnmount(() => {
               <div><span class="text-muted-foreground">额度失效</span><div>{{ formatOrderDateTime(order.quotaSnapshot.expiresAt) }}</div></div>
               <div v-if="order.quotaSnapshot.roundStartsAt"><span class="text-muted-foreground">购买轮次</span><div>{{ formatOrderDateTime(order.quotaSnapshot.roundStartsAt) }} - {{ formatOrderDateTime(order.quotaSnapshot.roundEndsAt) }}</div></div>
               <div><span class="text-muted-foreground">首字响应</span><div>{{ getApiTTFTBandLabel(order.quotaSnapshot.ttftBand) }} · 商户自报，平台未测速</div></div>
-              <div><span class="text-muted-foreground">建议并发</span><div>{{ order.quotaSnapshot.recommendedConcurrency }}</div></div>
+              <div><span class="text-muted-foreground">号池</span><div>{{ accountPoolSnapshotLabel(order.quotaSnapshot) }}</div></div>
+              <div><span class="text-muted-foreground">商户声明最大并发</span><div>{{ concurrencySnapshotLabel(order.quotaSnapshot) }}</div></div>
+              <div><span class="text-muted-foreground">商户退款承诺</span><div>{{ refundCommitmentSnapshotLabel(order.quotaSnapshot) }}</div></div>
+              <div><span class="text-muted-foreground">退款规则版本</span><div>{{ refundPolicyVersionSnapshotLabel(order.quotaSnapshot) }}</div></div>
+              <div><span class="text-muted-foreground">承诺适用截止</span><div>{{ serviceValiditySnapshotLabel(order.quotaSnapshot) }}</div></div>
               <div><span class="text-muted-foreground">预计交付</span><div>{{ getApiQuotaDeliveryModeLabel(order.quotaSnapshot.deliveryMode) }} · ≤ {{ order.quotaSnapshot.deliveryEtaMinutes }} 分钟</div></div>
               <div v-if="order.quotaSnapshot.performanceConfirmedAt"><span class="text-muted-foreground">体验确认时间</span><div>{{ formatOrderDateTime(order.quotaSnapshot.performanceConfirmedAt) }}</div></div>
               <div><span class="text-muted-foreground">付款截止</span><div>{{ formatOrderDateTime(order.paymentExpiresAt) }}</div></div>
@@ -632,9 +629,14 @@ onBeforeUnmount(() => {
               <div><span class="text-muted-foreground">商户</span><div>{{ order.seller }}</div></div>
               <div><span class="text-muted-foreground">模型</span><div>{{ orderModelSnapshotLabel }}</div></div>
               <div><span class="text-muted-foreground">倍率快照</span><div>{{ order.intentSnapshot.multiplier }}</div></div>
+              <div><span class="text-muted-foreground">号池</span><div>{{ accountPoolSnapshotLabel(order.intentSnapshot) }}</div></div>
+              <div><span class="text-muted-foreground">商户声明最大并发</span><div>{{ concurrencySnapshotLabel(order.intentSnapshot) }}</div></div>
+              <div><span class="text-muted-foreground">商户退款承诺</span><div>{{ refundCommitmentSnapshotLabel(order.intentSnapshot) }}</div></div>
+              <div><span class="text-muted-foreground">退款规则版本</span><div>{{ refundPolicyVersionSnapshotLabel(order.intentSnapshot) }}</div></div>
+              <div><span class="text-muted-foreground">服务有效期</span><div>{{ orderServiceValidityLabel }}</div></div>
               <div><span class="text-muted-foreground">用量核对</span><div>{{ orderUsageVisibilityLabel }}</div></div>
               <div><span class="text-muted-foreground">付款截止</span><div>{{ formatOrderDateTime(order.paymentExpiresAt) }}</div></div>
-              <div><span class="text-muted-foreground">商户售后说明</span><div>{{ legacyRevocationCopy(order.intentSnapshot.warranty) }}</div></div>
+              <div v-if="order.intentSnapshot.commercialFactsSnapshotIssue"><span class="text-muted-foreground">历史售后说明</span><div>{{ legacyRevocationCopy(order.intentSnapshot.warranty) }}</div></div>
               <div class="sm:col-span-2"><span class="text-muted-foreground">平台交易边界</span><div>{{ legacyRevocationCopy(order.intentSnapshot.refundPolicy) }}</div></div>
             </div>
             <div v-if="order.paymentSummary" class="mt-4 rounded-md border border-border bg-muted/40 p-3 text-sm">买家付款备注：{{ order.paymentSummary }}</div>
@@ -642,13 +644,13 @@ onBeforeUnmount(() => {
         </Card>
       </Collapsible>
 
-      <div v-auto-animate="functionalMotion" class="space-y-4">
+      <div v-auto-animate="functionalMotion" class="min-w-0 space-y-4">
 
         <Card v-if="order.deliveryCredential" class="p-5">
           <div class="flex items-center justify-between gap-3">
             <div>
-              <h2 class="font-semibold">交付凭证</h2>
-              <p class="mt-1 text-xs text-muted-foreground">{{ getApiOrderDeliveryKindLabel(order.deliveryCredential.deliveryKind) }} · {{ order.deliveryCredential.submittedAt }}</p>
+              <h2 class="font-semibold">接入凭证</h2>
+              <p class="mt-1 text-xs text-muted-foreground">{{ getApiOrderDeliveryKindLabel(order.deliveryCredential.deliveryKind) }} · {{ formatOrderDateTime(order.deliveryCredential.submittedAt) }}</p>
             </div>
             <Badge variant="verified">长期可查看</Badge>
           </div>
@@ -658,8 +660,16 @@ onBeforeUnmount(() => {
               <div class="mt-2 break-all font-mono text-xs">{{ order.deliveryCredential.apiBaseUrl }}</div>
             </div>
             <div v-if="order.deliveryCredential.apiKey" class="rounded-md border border-border p-3">
-              <div class="flex items-center justify-between gap-2"><span class="text-muted-foreground">API Key</span><Button size="sm" variant="outline" @click="copyValue(order.deliveryCredential.apiKey, 'API Key')"><Copy class="h-4 w-4" /></Button></div>
-              <div class="mt-2 break-all font-mono text-xs">{{ order.deliveryCredential.apiKey }}</div>
+              <div class="flex items-center justify-between gap-2">
+                <span class="text-muted-foreground">API Key</span>
+                <span class="flex gap-1.5">
+                  <Button size="icon" variant="outline" :title="apiKeyVisible ? '隐藏 API Key' : '显示 API Key'" @click="apiKeyVisible = !apiKeyVisible">
+                    <EyeOff v-if="apiKeyVisible" class="h-4 w-4" /><Eye v-else class="h-4 w-4" /><span class="sr-only">{{ apiKeyVisible ? '隐藏 API Key' : '显示 API Key' }}</span>
+                  </Button>
+                  <Button size="icon" variant="outline" title="复制 API Key" @click="copyValue(order.deliveryCredential.apiKey, 'API Key')"><Copy class="h-4 w-4" /><span class="sr-only">复制 API Key</span></Button>
+                </span>
+              </div>
+              <div class="mt-2 break-all font-mono text-xs">{{ apiKeyVisible ? order.deliveryCredential.apiKey : maskCredential(order.deliveryCredential.apiKey) }}</div>
             </div>
             <div v-if="order.deliveryCredential.panelLoginUrl" class="rounded-md border border-border p-3">
               <div class="flex items-center justify-between gap-2"><span class="text-muted-foreground">登录地址</span><Button size="sm" variant="outline" @click="copyValue(order.deliveryCredential.panelLoginUrl, '登录地址')"><Copy class="h-4 w-4" /></Button></div>
@@ -670,17 +680,74 @@ onBeforeUnmount(() => {
               <div class="mt-2 break-all font-mono text-xs">{{ order.deliveryCredential.username }}</div>
             </div>
             <div v-if="order.deliveryCredential.password" class="rounded-md border border-border p-3">
-              <div class="flex items-center justify-between gap-2"><span class="text-muted-foreground">初始密码</span><Button size="sm" variant="outline" @click="copyValue(order.deliveryCredential.password, '初始密码')"><Copy class="h-4 w-4" /></Button></div>
-              <div class="mt-2 break-all font-mono text-xs">{{ order.deliveryCredential.password }}</div>
+              <div class="flex items-center justify-between gap-2">
+                <span class="text-muted-foreground">初始密码</span>
+                <span class="flex gap-1.5">
+                  <Button size="icon" variant="outline" :title="passwordVisible ? '隐藏初始密码' : '显示初始密码'" @click="passwordVisible = !passwordVisible">
+                    <EyeOff v-if="passwordVisible" class="h-4 w-4" /><Eye v-else class="h-4 w-4" /><span class="sr-only">{{ passwordVisible ? '隐藏初始密码' : '显示初始密码' }}</span>
+                  </Button>
+                  <Button size="icon" variant="outline" title="复制初始密码" @click="copyValue(order.deliveryCredential.password, '初始密码')"><Copy class="h-4 w-4" /><span class="sr-only">复制初始密码</span></Button>
+                </span>
+              </div>
+              <div class="mt-2 break-all font-mono text-xs">{{ passwordVisible ? order.deliveryCredential.password : maskCredential(order.deliveryCredential.password) }}</div>
             </div>
             <div v-if="order.deliveryCredential.instructions" class="rounded-md border border-border bg-muted/40 p-3 whitespace-pre-line">{{ order.deliveryCredential.instructions }}</div>
           </div>
         </Card>
 
+        <Card v-else-if="canSubmitDelivery" id="api-order-delivery-form" class="scroll-mt-4 border-primary/25 p-5">
+          <div class="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+            <div>
+              <h2 class="font-semibold">填写接入信息</h2>
+              <p class="mt-1 text-xs text-muted-foreground">只提交买家专属的 API Key 或初始登录账号；提交后不可修改。</p>
+            </div>
+            <Badge variant="secondary">一次性交付</Badge>
+          </div>
+          <div class="mt-4 flex flex-wrap gap-2">
+            <Button :variant="deliveryKind === 'api_key_endpoint' ? 'default' : 'outline'" @click="deliveryKind = 'api_key_endpoint'"><KeyRound class="h-4 w-4" />API Key 接入</Button>
+            <Button :variant="deliveryKind === 'login_account' ? 'default' : 'outline'" @click="deliveryKind = 'login_account'">登录账号接入</Button>
+          </div>
+          <div v-if="deliveryKind === 'api_key_endpoint'" class="mt-4 grid gap-3">
+            <label class="space-y-2"><span class="text-sm font-medium">API Base URL</span><Input v-model="apiBaseUrl" placeholder="https://api.example.com/v1" /></label>
+            <label class="space-y-2"><span class="text-sm font-medium">买家专属 API Key</span><Input v-model="apiKey" placeholder="sk-proj-..." /></label>
+          </div>
+          <div v-else class="mt-4 grid gap-3">
+            <label class="space-y-2"><span class="text-sm font-medium">登录地址</span><Input v-model="panelLoginUrl" placeholder="https://panel.example.com/login" /></label>
+            <label class="space-y-2"><span class="text-sm font-medium">用户名</span><Input v-model="username" placeholder="buyer-demo" /></label>
+            <label class="space-y-2"><span class="text-sm font-medium">初始密码</span><Input v-model="password" placeholder="首次登录后按面板提示处理" /></label>
+          </div>
+          <label class="mt-4 block space-y-2">
+            <span class="text-sm font-medium">使用说明</span>
+            <Textarea v-model="deliveryInstructions" class="min-h-24" maxlength="4000" placeholder="说明限速、模型范围、后续更换 Key 或重置密码的联系方式。不要提交 Cookie、Session、OAuth token、恢复码、订阅链接或主账号凭据。" />
+          </label>
+          <div class="mt-4 flex justify-end">
+            <Button :disabled="actionBusy" @click="submitDelivery">{{ actionBusy ? '提交中…' : '确认已交付' }}</Button>
+          </div>
+        </Card>
+
+        <Card v-else class="p-5">
+          <h2 class="font-semibold">接入凭证</h2>
+          <p class="mt-2 text-sm leading-6 text-muted-foreground">{{ order.status === 'cancelled' ? '订单已取消，未产生接入凭证。' : '商户确认收款并提交接入信息后，本区域将展示订单专属凭证。' }}</p>
+        </Card>
+      </div>
+
+      <div class="min-w-0 space-y-4">
+        <Card class="p-5">
+          <h2 class="font-semibold">{{ isMerchantView ? '买家信息' : '商户信息' }}</h2>
+          <div class="mt-4 flex min-w-0 items-center gap-3">
+            <span class="grid h-11 w-11 shrink-0 place-items-center rounded-full bg-muted text-sm font-semibold text-foreground">{{ counterpartyAvatarText }}</span>
+            <span class="min-w-0"><strong class="block truncate">{{ counterpartyName }}</strong><span class="mt-1 block text-xs text-muted-foreground">订单创建时锁定的参与方</span></span>
+          </div>
+          <dl class="mt-4 grid grid-cols-2 gap-3 border-t border-border pt-4 text-sm">
+            <div><dt class="text-xs text-muted-foreground">已完成订单</dt><dd class="mt-1 font-semibold">{{ counterpartyCompletedOrders }}</dd></div>
+            <div><dt class="text-xs text-muted-foreground">完成率</dt><dd class="mt-1 font-semibold">{{ counterpartyCompletionRate }}</dd></div>
+          </dl>
+        </Card>
+
         <OrderContactCard
           v-if="merchantContactSnapshot"
           :snapshot="merchantContactSnapshot"
-          title="联系商户"
+          title="商户联系方式"
           context-label="订单创建成功后展示下单时锁定的商户联系方式"
           visible-label="已向本次订单买家展示"
           hidden-label="仅参与方可见"
@@ -692,7 +759,7 @@ onBeforeUnmount(() => {
           v-if="buyerContactSnapshot"
           :snapshot="buyerContactSnapshot"
           side="buyer"
-          title="联系买家"
+          title="买家联系方式"
           context-label="订单创建成功后展示下单时锁定的买家联系方式"
           visible-label="已向本次订单商户展示"
           hidden-label="仅参与方可见"
@@ -702,36 +769,6 @@ onBeforeUnmount(() => {
         />
       </div>
     </div>
-
-    <Card v-if="canSubmitDelivery" id="api-order-delivery-form" class="scroll-mt-4 border-primary/25 p-5">
-      <div class="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
-        <div>
-          <h2 class="font-semibold">填写交付信息</h2>
-          <p class="mt-1 text-xs text-muted-foreground">只提交买家专属的 API Key 或初始登录账号；提交后不可修改。</p>
-        </div>
-        <Badge variant="secondary">一次性交付</Badge>
-      </div>
-      <div class="mt-4 flex flex-wrap gap-2">
-        <Button :variant="deliveryKind === 'api_key_endpoint' ? 'default' : 'outline'" @click="deliveryKind = 'api_key_endpoint'"><KeyRound class="h-4 w-4" />API Key 接入</Button>
-        <Button :variant="deliveryKind === 'login_account' ? 'default' : 'outline'" @click="deliveryKind = 'login_account'">登录账号接入</Button>
-      </div>
-      <div v-if="deliveryKind === 'api_key_endpoint'" class="mt-4 grid gap-3 md:grid-cols-2">
-        <label class="space-y-2"><span class="text-sm font-medium">API Base URL</span><Input v-model="apiBaseUrl" placeholder="https://api.example.com/v1" /></label>
-        <label class="space-y-2"><span class="text-sm font-medium">买家专属 API Key</span><Input v-model="apiKey" placeholder="sk-proj-..." /></label>
-      </div>
-      <div v-else class="mt-4 grid gap-3 md:grid-cols-3">
-        <label class="space-y-2"><span class="text-sm font-medium">登录地址</span><Input v-model="panelLoginUrl" placeholder="https://panel.example.com/login" /></label>
-        <label class="space-y-2"><span class="text-sm font-medium">用户名</span><Input v-model="username" placeholder="buyer-demo" /></label>
-        <label class="space-y-2"><span class="text-sm font-medium">初始密码</span><Input v-model="password" placeholder="首次登录后按面板提示处理" /></label>
-      </div>
-      <label class="mt-4 block space-y-2">
-        <span class="text-sm font-medium">使用说明</span>
-        <Textarea v-model="deliveryInstructions" class="min-h-24" maxlength="4000" placeholder="说明限速、模型范围、后续更换 Key 或重置密码的联系方式。不要提交 Cookie、Session、OAuth token、恢复码、订阅链接或主账号凭据。" />
-      </label>
-      <div class="mt-4 flex justify-end">
-        <Button :disabled="actionBusy" @click="submitDelivery">{{ actionBusy ? '提交中…' : '确认已交付' }}</Button>
-      </div>
-    </Card>
 
     <Collapsible v-model:open="orderRecordsOpen" as-child>
       <Card class="p-5">

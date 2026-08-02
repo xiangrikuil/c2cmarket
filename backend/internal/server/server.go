@@ -14,6 +14,7 @@ import (
 	"c2c-market/backend/internal/module/apiintent"
 	"c2c-market/backend/internal/module/apimarket"
 	"c2c-market/backend/internal/module/apiorder"
+	"c2c-market/backend/internal/module/apipromotion"
 	"c2c-market/backend/internal/module/apiquota"
 	"c2c-market/backend/internal/module/auth"
 	"c2c-market/backend/internal/module/carpool"
@@ -21,6 +22,7 @@ import (
 	"c2c-market/backend/internal/module/contact"
 	"c2c-market/backend/internal/module/favorite"
 	"c2c-market/backend/internal/module/feedback"
+	"c2c-market/backend/internal/module/growth"
 	"c2c-market/backend/internal/module/idempotency"
 	"c2c-market/backend/internal/module/modelaudit"
 	"c2c-market/backend/internal/module/navigationbadge"
@@ -84,6 +86,19 @@ type AdminUserService interface {
 	AdminUser(ctx context.Context, user auth.User, userID string) (auth.AdminUserDetail, *domain.AppError)
 	UpdateAdminUserStatusWithIdempotency(ctx context.Context, user auth.User, routeKey, key, requestHash string, input auth.AdminUserStatusInput, buildCompletion auth.AdminUserCompletionBuilder) (idempotency.Completion, *domain.AppError)
 	UpdateAdminUserPermissionWithIdempotency(ctx context.Context, user auth.User, routeKey, key, requestHash string, input auth.AdminUserPermissionInput, buildCompletion auth.AdminUserCompletionBuilder) (idempotency.Completion, *domain.AppError)
+}
+
+type APIPromotionService interface {
+	PublicAPIPromotions(ctx context.Context, placement string) ([]apipromotion.Promotion, *domain.AppError)
+	AdminAPIPromotions(ctx context.Context, user auth.User) ([]apipromotion.Promotion, *domain.AppError)
+	APIPromotionAvailability(ctx context.Context, user auth.User, input apipromotion.AvailabilityInput) (apipromotion.Availability, *domain.AppError)
+	CreateAPIPromotionWithIdempotency(ctx context.Context, user auth.User, routeKey, key, requestHash string, input apipromotion.CreateInput, buildCompletion apipromotion.CompletionBuilder) (idempotency.Completion, *domain.AppError)
+	StopAPIPromotionWithIdempotency(ctx context.Context, user auth.User, routeKey, key, requestHash string, input apipromotion.StopInput, buildCompletion apipromotion.CompletionBuilder) (idempotency.Completion, *domain.AppError)
+}
+
+type GrowthService interface {
+	AdminGrowthOverview(ctx context.Context, user auth.User, windowDays int) (growth.Overview, *domain.AppError)
+	RecordAuthenticatedActivity(ctx context.Context, userID string) *domain.AppError
 }
 
 // Service is the legacy application facade for handlers that have not yet been
@@ -346,6 +361,8 @@ type ApplicationService interface {
 	APIQuotaService
 	APIPaymentSettingsService
 	AdminUserService
+	APIPromotionService
+	GrowthService
 	ReputationGovernanceService
 }
 
@@ -355,6 +372,8 @@ type Server struct {
 	apiQuotas        APIQuotaService
 	apiPayment       APIPaymentSettingsService
 	adminUsers       AdminUserService
+	apiPromotions    APIPromotionService
+	growth           GrowthService
 	reputation       ReputationGovernanceService
 	mux              chi.Router
 	enableDevAuth    bool
@@ -403,6 +422,8 @@ func NewServer(service ApplicationService, options ...ServerOptions) http.Handle
 		apiQuotas:        service,
 		apiPayment:       service,
 		adminUsers:       service,
+		apiPromotions:    service,
+		growth:           service,
 		reputation:       service,
 		mux:              chi.NewRouter(),
 		enableDevAuth:    option.EnableDevAuth,

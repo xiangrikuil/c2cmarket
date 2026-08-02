@@ -80,7 +80,7 @@ func TestAPIQuotaPostgresPublishCreatesAuthoritativeInventory(t *testing.T) {
 	if appErr != nil {
 		t.Fatalf("publish quota batch: %v", appErr)
 	}
-	if batch.Status != apiquota.BatchStatusPublished || batch.UnallocatedUSDAllowance != "0.000000" {
+	if batch.Status != apiquota.BatchStatusPublished || batch.UnallocatedUSDAllowance != "100.000000" {
 		t.Fatalf("unexpected published batch: %+v", batch)
 	}
 	var available int
@@ -1132,7 +1132,7 @@ func seedQuotaServiceForTest(t *testing.T, ctx context.Context, pool *pgxpool.Po
 			minimum_intent_cny, maximum_intent_cny, usage_visibility,
 			review_status, publication_status, moderation_status,
 			accepting_orders, payment_window_minutes,
-			declared_ttft_band, recommended_concurrency, performance_confirmed_at,
+			declared_ttft_band, declared_max_concurrency, performance_confirmed_at,
 			created_at, updated_at, version
 		) VALUES (
 			$1, $2, 'public_profile', $3, 'Sub2API 短期额度', '集成测试服务',

@@ -4,6 +4,9 @@ import {
   bucketPriceCny,
   bucketSeats,
   bucketVisibleSeconds,
+  clearAnalyticsIdentity,
+  identifyAnalyticsUser,
+  normalizeAnalyticsPath,
   sanitizeAnalyticsEvent,
   setAnalyticsRuntimeConfig,
   trackAnalytics,
@@ -11,6 +14,7 @@ import {
 
 afterEach(() => {
   setAnalyticsRuntimeConfig({})
+  vi.useRealTimers()
   vi.unstubAllGlobals()
   vi.restoreAllMocks()
 })
@@ -92,6 +96,39 @@ test('source route normalization removes known dynamic identifiers', () => {
   })
 })
 
+test('auth and normalized page events keep only low-cardinality route fields', () => {
+  assert.deepEqual(sanitizeAnalyticsEvent('oauth_login_start', {
+    method: 'oauth_linux_do',
+    source_route: '/login?returnTo=/my/rides/private-id',
+    user_id: 'business-user-id',
+    username: 'private-user',
+    returnTo: '/my/rides/private-id',
+    token: 'secret',
+  }), {
+    source_route: '/login',
+    method: 'oauth_linux_do',
+  })
+
+  assert.deepEqual(sanitizeAnalyticsEvent('login_success', {
+    method: 'untrusted-method',
+    source_route: '/my/rides/12049d7e-7088-4c99-80c6-e6cc0e8eeed1?token=secret',
+  }), {
+    source_route: '/my/rides/:id',
+    method: 'unknown',
+  })
+
+  assert.deepEqual(sanitizeAnalyticsEvent('normalized_page_view', {
+    path: '/merchant/api-orders/12049d7e-7088-4c99-80c6-e6cc0e8eeed1?credential=secret',
+    page_class: 'forged',
+    entity_id: '12049d7e-7088-4c99-80c6-e6cc0e8eeed1',
+  }), {
+    path: '/merchant/api-orders/:id',
+    page_class: 'merchant',
+  })
+
+  assert.equal(normalizeAnalyticsPath('/unknown/private-value'), '/other')
+})
+
 test('subscription carpool analytics use low-cardinality buckets and product categories', () => {
   const props = sanitizeAnalyticsEvent('carpool_detail_view', {
     product: 'ChatGPT Pro 20x Web',
@@ -146,6 +183,29 @@ test('api service events infer provider category from safe model text', () => {
   })
 })
 
+test('promotion events keep only low-cardinality placement fields', () => {
+  const props = sanitizeAnalyticsEvent('api_promotion_impression', {
+    placement: 'api_market_top',
+    display_position: 'middle',
+    category: 'Claude',
+    billing_mode: 'fixed_package',
+    target_type: 'api_service',
+    source_route: '/api-market?view=free',
+    promotion_id: 'secret-promotion-id',
+    service_id: 'secret-service-id',
+    title: 'raw title',
+  })
+
+  assert.deepEqual(props, {
+    placement: 'api_market_top',
+    display_position: 'middle',
+    provider_category: 'claude',
+    billing_mode: 'fixed_package',
+    target_type: 'api_service',
+    source_route: '/api-market',
+  })
+})
+
 test('trackAnalytics is a safe no-op unless analytics is enabled and Umami is loaded', () => {
   const track = vi.fn()
   vi.stubGlobal('window', { umami: { track } })
@@ -167,4 +227,48 @@ test('trackAnalytics is a safe no-op unless analytics is enabled and Umami is lo
 
   vi.stubGlobal('window', {})
   assert.doesNotThrow(() => trackAnalytics('search_submit', { has_query: true }))
+})
+
+test('analytics failures never escape into business behavior', async () => {
+  setAnalyticsRuntimeConfig({ enabled: true })
+  vi.stubGlobal('window', {
+    umami: {
+      track: vi.fn(() => {
+        throw new Error('blocked tracker')
+      }),
+    },
+  })
+  assert.doesNotThrow(() => trackAnalytics('login_page_view', { source_route: '/login' }))
+
+  vi.stubGlobal('window', {
+    umami: {
+      track: vi.fn(() => Promise.reject(new Error('async tracker failure'))),
+    },
+  })
+  assert.doesNotThrow(() => trackAnalytics('login_page_view', { source_route: '/login' }))
+  await Promise.resolve()
+})
+
+test('analytics identity waits for Umami and clears the distinct ID on logout', async () => {
+  vi.useFakeTimers()
+  const browser: {
+    umami: {
+      track: ReturnType<typeof vi.fn>
+      identify?: ReturnType<typeof vi.fn>
+    }
+  } = { umami: { track: vi.fn() } }
+  vi.stubGlobal('window', browser)
+  setAnalyticsRuntimeConfig({ enabled: true })
+
+  identifyAnalyticsUser('A1111111-1111-4111-8111-111111111111')
+  assert.equal(browser.umami.identify, undefined)
+
+  browser.umami.identify = vi.fn()
+  await vi.advanceTimersByTimeAsync(250)
+  assert.deepEqual(browser.umami.identify.mock.calls, [
+    ['a1111111-1111-4111-8111-111111111111'],
+  ])
+
+  clearAnalyticsIdentity()
+  assert.deepEqual(browser.umami.identify.mock.calls.at(-1), [''])
 })

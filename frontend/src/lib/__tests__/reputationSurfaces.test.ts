@@ -146,6 +146,15 @@ describe('信誉页面接线', () => {
     expect(inlineSummary).toContain('publicReputationBadges')
   })
 
+  it('紧凑信誉摘要合并正常状态下的重复低证据文案', () => {
+    expect(inlineSummary).toContain("props.summary?.state === 'active'")
+    expect(inlineSummary).toContain("props.summary.tier === 'insufficient'")
+    expect(inlineSummary).toContain("props.summary.confidence === 'low'")
+    expect(inlineSummary).toContain('状态正常')
+    expect(inlineSummary).toContain('交易样本较少')
+    expect(inlineSummary).toContain('<template v-else>')
+  })
+
   it('成长中心不诱导索评或展示还差多少五星', () => {
     expect(progressList).toContain('被动证据')
     expect(progressList).toContain('由已验证交易自然形成')
@@ -162,8 +171,11 @@ describe('信誉页面接线', () => {
     expect(rideDetail).toContain('ownerMode.value ? application.value.buyerReputation : application.value.snapshot.ownerReputation')
     expect(orderDetail).toContain('isMerchantView.value ? order.value.buyerReputation : order.value.sellerReputation')
     expect(orderDetail).toContain('counterpartyReputation.value?.roleCompletionRate')
-    expect(orderDetail).toContain('getApiMerchantProfileUrl')
-    expect(orderDetail).toContain('<ApiMerchantAvatar')
+    expect(orderDetail).toContain('isMerchantView.value ? order.value.buyer : order.value.seller')
+    expect(orderDetail).toContain('订单创建时锁定的参与方')
+    expect(orderDetail).toContain('apiOrderMerchantContactSnapshot(order.value)')
+    expect(orderDetail).not.toContain('useApiService')
+    expect(orderDetail).not.toContain('getApiMerchantProfileUrl')
     expect(orderDetail).toContain('已完成订单')
     expect(orderDetail).toContain('完成率')
     expect(orderDetail).not.toContain('<ReputationSummaryCard')

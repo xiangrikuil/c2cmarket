@@ -102,7 +102,11 @@ func TestIntentFreezesMerchantTermsInPricingSnapshot(t *testing.T) {
 	service := limitedPackageIntentService(now, nil)
 	service.UsageVisibility = "merchant_reported"
 	service.MerchantNote = "高峰期可能响应变慢。"
-	service.MerchantSupportNote = "商户承诺 7 天；接口不可用时补偿额度。"
+	service.AccountPoolType = apimarket.AccountPoolCustom
+	service.AccountPoolCustomName = "Claude Max"
+	service.DeclaredMaxConcurrency = 12
+	service.MerchantRefundCommitment = true
+	service.MerchantSupportNote = apimarket.MerchantSupportNote(true)
 	service.Models = []apimarket.ServiceModel{
 		{ID: "model-1", ModelNameSnapshot: "GPT-5.6", MerchantMultiplier: "1.0000", Enabled: true},
 		{ID: "model-2", ModelNameSnapshot: "GPT-5 mini", MerchantMultiplier: "0.2000", Enabled: true},
@@ -124,9 +128,14 @@ func TestIntentFreezesMerchantTermsInPricingSnapshot(t *testing.T) {
 			ModelNameSnapshot  string `json:"modelNameSnapshot"`
 			MerchantMultiplier string `json:"merchantMultiplier"`
 		} `json:"models"`
-		UsageVisibility     string `json:"usageVisibility"`
-		MerchantNote        string `json:"merchantNote"`
-		MerchantSupportNote string `json:"merchantSupportNote"`
+		UsageVisibility             string `json:"usageVisibility"`
+		MerchantNote                string `json:"merchantNote"`
+		MerchantSupportNote         string `json:"merchantSupportNote"`
+		AccountPoolType             string `json:"accountPoolType"`
+		AccountPoolLabel            string `json:"accountPoolLabel"`
+		DeclaredMaxConcurrency      int    `json:"declaredMaxConcurrency"`
+		MerchantRefundCommitment    bool   `json:"merchantRefundCommitment"`
+		MerchantRefundPolicyVersion string `json:"merchantRefundPolicyVersion"`
 	}
 	if err := json.Unmarshal([]byte(intent.PricingSnapshot), &snapshot); err != nil {
 		t.Fatalf("decode pricing snapshot: %v", err)
@@ -136,6 +145,30 @@ func TestIntentFreezesMerchantTermsInPricingSnapshot(t *testing.T) {
 	}
 	if snapshot.UsageVisibility != service.UsageVisibility || snapshot.MerchantNote != service.MerchantNote || snapshot.MerchantSupportNote != service.MerchantSupportNote {
 		t.Fatalf("unexpected merchant terms snapshot: %+v", snapshot)
+	}
+	if snapshot.AccountPoolType != apimarket.AccountPoolCustom || snapshot.AccountPoolLabel != "Claude Max" || snapshot.DeclaredMaxConcurrency != 12 || !snapshot.MerchantRefundCommitment || snapshot.MerchantRefundPolicyVersion != apimarket.MerchantRefundPolicyVersion {
+		t.Fatalf("unexpected commercial facts snapshot: %+v", snapshot)
+	}
+}
+
+func TestIntentSnapshotPreservesHistoricalNullCommercialFacts(t *testing.T) {
+	body, err := servicePricingSnapshotJSON(apimarket.Service{})
+	if err != nil {
+		t.Fatalf("build historical pricing snapshot: %v", err)
+	}
+
+	var snapshot map[string]any
+	if err := json.Unmarshal([]byte(body), &snapshot); err != nil {
+		t.Fatalf("decode historical pricing snapshot: %v", err)
+	}
+	for _, key := range []string{"accountPoolType", "accountPoolLabel", "declaredMaxConcurrency", "serviceValidityExpiresAt"} {
+		value, exists := snapshot[key]
+		if !exists || value != nil {
+			t.Fatalf("expected explicit null %s, got exists=%v value=%v", key, exists, value)
+		}
+	}
+	if snapshot["merchantRefundCommitment"] != false || snapshot["merchantRefundPolicyVersion"] != apimarket.MerchantRefundPolicyVersion {
+		t.Fatalf("unexpected historical refund snapshot: %+v", snapshot)
 	}
 }
 

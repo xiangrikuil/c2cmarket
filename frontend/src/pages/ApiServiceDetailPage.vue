@@ -203,7 +203,10 @@ function createOrder() {
     <ApiServiceHeader :service="service" :icon-src="serviceIconSrc" />
 
     <div class="grid min-w-0 gap-4 lg:grid-cols-[minmax(0,65fr)_minmax(340px,35fr)] lg:items-start">
-      <ApiServiceSummary :service="service" />
+      <div class="min-w-0 space-y-4">
+        <ApiServiceSummary :service="service" />
+        <ApiServiceDetailsTabs :service="service" />
+      </div>
 
       <Card v-if="ownershipLoading" class="p-5 text-sm text-muted-foreground">
         正在确认当前账号的服务视角…
@@ -228,7 +231,5 @@ function createOrder() {
         @confirm="createOrder"
       />
     </div>
-
-    <ApiServiceDetailsTabs :service="service" />
   </div>
 </template>

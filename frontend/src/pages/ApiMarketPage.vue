@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch, type ComponentPublicInstance } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { CalendarClock, Clock3, Code2, Gauge, PackageOpen, PackagePlus, Search, ShoppingCart, Zap } from 'lucide-vue-next'
 import { toast } from 'vue-sonner'
@@ -9,6 +9,7 @@ import SkeletonBlock from '@/components/market/SkeletonBlock.vue'
 import ApiFreeServiceCard from '@/components/api-market/ApiFreeServiceCard.vue'
 import ApiPackageCard from '@/components/api-market/ApiPackageCard.vue'
 import type { ApiFreeServiceCardData } from '@/components/api-market/apiFreeServiceCard'
+import { usePromotionImpression, type PromotionAnalyticsProperties } from '@/composables/usePromotionImpression'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -38,6 +39,9 @@ import {
   type ApiMarketView,
 } from '@/lib/apiQuotaOfferUi'
 import { rankApiPackages } from '@/lib/apiPackageRecommendation'
+import { getApiMerchantBadges } from '@/lib/apiMerchantBadges'
+import type { ApiServicePromotion } from '@/lib/apiMarketBackend'
+import { firstPromotionForBillingMode, placePromotionFirst } from '@/lib/apiPromotionPlacement'
 import { formatDecimal } from '@/lib/decimal'
 import {
   getProductCategory,
@@ -45,7 +49,7 @@ import {
   type ConcreteProductCategoryKey,
 } from '@/lib/productCategories'
 import { getApiServiceProductCategory, getApiServiceProductIconSrc, getProductIconSrc } from '@/lib/productCategoryIcon'
-import { useApiQuotaOffers, useApiQuotaSaleSlots, useApiServices, useCreateApiQuotaOrderMutation } from '@/queries/useMarketQueries'
+import { useApiPromotions, useApiQuotaOffers, useApiQuotaSaleSlots, useApiServices, useCreateApiQuotaOrderMutation } from '@/queries/useMarketQueries'
 import { useProductCategories } from '@/queries/useProductCatalogQueries'
 import { prefetchQueriesOnServer } from '@/queries/prefetchQueriesOnServer'
 
@@ -90,9 +94,11 @@ const slotQuery = useApiQuotaSaleSlots()
 const rushFilters = computed<ApiQuotaOfferFilters>(() => ({ slotKey: selectedSlotKey.value }))
 const rushQuery = useApiQuotaOffers(rushFilters)
 const freeServicesQuery = useApiServices({ online: true })
+const promotionQuery = useApiPromotions()
 const productCategoriesQuery = useProductCategories()
 const { data: catalogCategories } = productCategoriesQuery
 const createOrderMutation = useCreateApiQuotaOrderMutation()
+const { setPromotionElement, trackPromotionClick } = usePromotionImpression()
 prefetchQueriesOnServer(quotaQuery, slotQuery, freeServicesQuery, productCategoriesQuery)
 const categoryIconByCode = computed(() => new Map((catalogCategories.value ?? []).map(category => [category.code, category.iconDataUrl])))
 
@@ -118,6 +124,35 @@ const packageModelOptions = computed(() => {
     .sort((left, right) => left.name.localeCompare(right.name))
 })
 const packageRows = computed(() => rankApiPackages(packageServices.value, packageModel.value, Number(packageDuration.value)))
+const fixedPackagePromotion = computed(() => firstPromotionForBillingMode(
+  promotionQuery.data.value ?? [],
+  true,
+  promotion => rankApiPackages([promotion.service], packageModel.value, Number(packageDuration.value)).length > 0,
+))
+const freeServicePromotion = computed(() => firstPromotionForBillingMode(promotionQuery.data.value ?? [], false))
+const packageDisplayRows = computed(() => {
+  const naturalRows = packageRows.value.map((row, index) => ({ row, rank: index + 1, promotion: undefined as ApiServicePromotion | undefined }))
+  const promotion = fixedPackagePromotion.value
+  const promotedRow = promotion
+    ? rankApiPackages([promotion.service], packageModel.value, Number(packageDuration.value))[0]
+    : undefined
+  return placePromotionFirst(
+    naturalRows,
+    promotion,
+    (rows, item) => rows.find(row => row.row.service.id === item.service.id)
+      ?? (promotedRow ? { row: promotedRow, rank: 0, promotion: undefined } : undefined),
+    item => item.row.service.id,
+  )
+})
+const freeServiceDisplayRows = computed(() => {
+  const naturalRows = freeServices.value.map(service => ({ service, promotion: undefined as ApiServicePromotion | undefined }))
+  return placePromotionFirst(
+    naturalRows,
+    freeServicePromotion.value,
+    (rows, promotion) => rows.find(item => item.service.id === promotion.service.id) ?? { service: promotion.service, promotion: undefined },
+    item => item.service.id,
+  )
+})
 const packageReady = computed(() => Boolean(packageModel.value && packageDuration.value))
 const firstSlotDate = computed(() => slotQuery.data.value?.items[0]?.key.slice(0, 10) ?? '')
 const displayedSlotDate = computed(() => {
@@ -264,14 +299,38 @@ function freeServiceCard(service: ApiService): ApiFreeServiceCardData {
     maximumPurchaseCny: service.maxBuy,
     multiplier: service.rate,
     ttftLabel: getApiTTFTBandLabel(service.declaredTtftBand),
-    recommendedConcurrency: service.recommendedConcurrency ?? '—',
+    declaredMaxConcurrency: service.declaredMaxConcurrency ?? '—',
     paymentWindowMinutes: service.expectedResponseMinutes,
     merchantName: getApiMerchantDisplayName(service),
     merchantType: service.merchantType,
     expiresAt: service.expiresAt,
+    accountPoolLabel: service.accountPoolLabel ?? '',
+    merchantRefundCommitment: Boolean(service.merchantRefundCommitment),
+    merchantBadges: getApiMerchantBadges(service),
     sellerReputation: service.sellerReputation,
     actionHref: `/api-market/${service.id}`,
   }
+}
+
+function promotionAnalytics(item: ApiServicePromotion): PromotionAnalyticsProperties {
+  return {
+    placement: item.placement,
+    display_position: 'first',
+    provider_category: getApiServiceProductCategory(item.service),
+    billing_mode: item.service.billingMode,
+    target_type: 'api_service',
+    source_route: '/api-market',
+  }
+}
+
+function setPromotedElement(element: Element | ComponentPublicInstance | null, item?: ApiServicePromotion) {
+  if (!item) return
+  const domElement = typeof Element !== 'undefined' && element instanceof Element ? element : null
+  setPromotionElement(domElement, item.promotionId, promotionAnalytics(item))
+}
+
+function trackPromotedCardClick(item?: ApiServicePromotion) {
+  if (item) trackPromotionClick(promotionAnalytics(item))
 }
 
 async function purchaseOffer(offer: PublicApiQuotaOffer) {
@@ -411,7 +470,7 @@ onBeforeUnmount(() => {
                     <dl class="quota-offer-metrics grid grid-cols-2 gap-px text-sm sm:grid-cols-4">
                       <div><dt>模型倍率</dt><dd>{{ multiplierLabel(item) }}</dd></div>
                       <div><dt>首字响应</dt><dd>{{ getApiTTFTBandLabel(item.declaredTtftBand) }}</dd></div>
-                      <div><dt>建议并发</dt><dd>{{ item.recommendedConcurrency }}</dd></div>
+                      <div><dt>最大并发</dt><dd>{{ item.declaredMaxConcurrency }}</dd></div>
                       <div><dt>预计交付</dt><dd>≤ {{ item.deliveryEtaMinutes }} 分钟</dd></div>
                     </dl>
 
@@ -520,7 +579,7 @@ onBeforeUnmount(() => {
               <dl class="quota-offer-metrics grid grid-cols-2 gap-px text-sm sm:grid-cols-4">
                 <div><dt>模型倍率</dt><dd>{{ multiplierLabel(item) }}</dd></div>
                 <div><dt>首字响应</dt><dd>{{ getApiTTFTBandLabel(item.declaredTtftBand) }}</dd></div>
-                <div><dt>建议并发</dt><dd>{{ item.recommendedConcurrency }}</dd></div>
+                <div><dt>最大并发</dt><dd>{{ item.declaredMaxConcurrency }}</dd></div>
                 <div><dt>预计交付</dt><dd>≤ {{ item.deliveryEtaMinutes }} 分钟</dd></div>
               </dl>
 
@@ -552,7 +611,7 @@ onBeforeUnmount(() => {
         <Alert>
           <PackageOpen />
           <AlertTitle>限时流量包</AlertTitle>
-          <AlertDescription>固定价格购买商户声明的面板额度，套餐有效期从商户提交交付时开始计算。先按精确模型和有效期筛选，再比较综合推荐结果。</AlertDescription>
+          <AlertDescription>固定价格购买商户声明的面板额度，套餐有效期从商户提交交付时开始计算。先按精确模型和有效期筛选，再比较综合推荐结果；性能由商户自报，平台未测速。</AlertDescription>
         </Alert>
         <ErrorState v-if="freeServicesQuery.error.value" description="限时流量包暂时无法加载。" @retry="freeServicesQuery.refetch()" />
         <SkeletonBlock v-else-if="freeServicesQuery.isLoading.value" :lines="6" />
@@ -581,15 +640,22 @@ onBeforeUnmount(() => {
             </label>
           </div>
           <EmptyState v-if="!packageReady" title="先选择精确模型和有效期" description="选择完成后才会展示可购买套餐和综合推荐顺序。" />
-          <EmptyState v-else-if="packageRows.length === 0" title="暂无匹配的限时流量包" description="当前模型和有效期下没有可购买库存。" />
+          <EmptyState v-else-if="packageDisplayRows.length === 0" title="暂无匹配的限时流量包" description="当前模型和有效期下没有可购买库存。" />
           <div v-else class="api-service-card-grid">
-            <ApiPackageCard
-              v-for="(row, index) in packageRows"
-              :key="row.package.id"
-              :row="row"
-              :rank="index + 1"
-              :product-icon-src="freeServiceIconSrc(row.service)"
-            />
+            <div
+              v-for="entry in packageDisplayRows"
+              :key="entry.row.package.id"
+              class="min-w-0"
+              :ref="element => setPromotedElement(element, entry.promotion)"
+            >
+              <ApiPackageCard
+                :row="entry.row"
+                :rank="entry.rank"
+                :product-icon-src="freeServiceIconSrc(entry.row.service)"
+                :promoted="Boolean(entry.promotion)"
+                @activate="trackPromotedCardClick(entry.promotion)"
+              />
+            </div>
           </div>
         </template>
       </TabsContent>
@@ -602,13 +668,20 @@ onBeforeUnmount(() => {
         </Alert>
         <ErrorState v-if="freeServicesQuery.error.value" description="自由额度服务暂时无法加载。" @retry="freeServicesQuery.refetch()" />
         <SkeletonBlock v-else-if="freeServicesQuery.isLoading.value" :lines="8" />
-        <EmptyState v-else-if="freeServices.length === 0" title="暂无自由额度服务" description="当前没有可公开下单的 API 服务。" />
+        <EmptyState v-else-if="freeServiceDisplayRows.length === 0" title="暂无自由额度服务" description="当前没有可公开下单的 API 服务。" />
         <div v-else class="quota-free-grid">
-          <ApiFreeServiceCard
-            v-for="service in freeServices"
-            :key="service.id"
-            :card="freeServiceCard(service)"
-          />
+          <div
+            v-for="entry in freeServiceDisplayRows"
+            :key="entry.service.id"
+            class="min-w-0"
+            :ref="element => setPromotedElement(element, entry.promotion)"
+          >
+            <ApiFreeServiceCard
+              :card="freeServiceCard(entry.service)"
+              :promoted="Boolean(entry.promotion)"
+              @activate="trackPromotedCardClick(entry.promotion)"
+            />
+          </div>
         </div>
       </TabsContent>
     </Tabs>

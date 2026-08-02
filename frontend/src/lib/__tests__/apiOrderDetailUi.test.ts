@@ -4,10 +4,16 @@ import { describe, expect, it } from 'vitest'
 const source = readFileSync(new URL('../../pages/ApiPurchaseOrderDetailPage.vue', import.meta.url), 'utf8')
 
 describe('API 订单详情 UI 契约', () => {
-  it('使用快照投影并区分商户售后与平台边界', () => {
+  it('使用快照投影并区分结构化商户承诺、历史售后与平台边界', () => {
     expect(source).toContain('{{ orderModelSnapshotLabel }}')
     expect(source).toContain('历史订单未冻结模型信息')
-    expect(source).toContain('商户售后说明')
+    expect(source).toContain('号池')
+    expect(source).toContain('商户声明最大并发')
+    expect(source).toContain('商户退款承诺')
+    expect(source).toContain('退款规则版本')
+    expect(source).toContain('服务有效期')
+    expect(source).toContain('历史售后说明')
+    expect(source).toContain('历史订单未冻结')
     expect(source).toContain('平台交易边界')
     expect(source).not.toContain("order.intentSnapshot.models.join(' / ')")
   })
@@ -16,6 +22,27 @@ describe('API 订单详情 UI 契约', () => {
     expect(source).toMatch(/<StepperSeparator[\s\S]*?h-0\.5[\s\S]*?group-data-\[state=completed\]:bg-primary\/60/)
     expect(source).toContain('min-w-[112px]')
     expect(source).toContain('overflow-x-auto')
+  })
+
+  it('将订单、接入凭证和冻结联系方式分区展示', () => {
+    expect(source).toContain("lg:grid-cols-[minmax(0,0.95fr)_minmax(0,1.1fr)_minmax(280px,0.8fr)]")
+    expect(source).toContain('API 购买订单')
+    expect(source).toContain('API 销售订单')
+    expect(source).toContain('接入凭证')
+    expect(source).not.toContain('支付凭证')
+    expect(source).toContain('apiOrderMerchantContactSnapshot(order.value)')
+    expect(source).toContain('apiOrderBuyerContactSnapshot(order.value)')
+    expect(source).not.toContain('useApiService')
+  })
+
+  it('默认遮罩 API Key 和初始密码并保留显示与复制动作', () => {
+    expect(source).toContain('function maskCredential')
+    expect(source).toContain("const apiKeyVisible = ref(false)")
+    expect(source).toContain("const passwordVisible = ref(false)")
+    expect(source).toContain("apiKeyVisible ? order.deliveryCredential.apiKey : maskCredential(order.deliveryCredential.apiKey)")
+    expect(source).toContain("passwordVisible ? order.deliveryCredential.password : maskCredential(order.deliveryCredential.password)")
+    expect(source).toContain('复制 API Key')
+    expect(source).toContain('显示初始密码')
   })
 
   it('通过 shadcn-vue RadioGroupItem 与 Label 组合单选项', () => {

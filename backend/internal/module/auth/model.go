@@ -36,12 +36,13 @@ const (
 )
 
 type User struct {
-	ID             string
-	Username       string
-	DisplayName    string
-	IsAdmin        bool
-	Status         string
-	LinuxDoBinding *LinuxDoBinding
+	ID              string
+	AnalyticsUserID string
+	Username        string
+	DisplayName     string
+	IsAdmin         bool
+	Status          string
+	LinuxDoBinding  *LinuxDoBinding
 }
 
 type AdminUser struct {
@@ -197,6 +198,7 @@ type Session struct {
 	RenewedAt         time.Time
 	AbsoluteExpiresAt time.Time
 	RevokedAt         *time.Time
+	NewRegistration   bool
 }
 
 type LinuxDoBinding struct {
@@ -220,6 +222,7 @@ type OAuthProfile struct {
 	LinuxDoUserID    string
 	LinuxDoUsername  string
 	LinuxDoAvatarURL string
+	Attribution      RegistrationAttribution
 }
 
 type PasswordCredential struct {
@@ -264,4 +267,14 @@ type EmailRegistrationConfirmInput struct {
 	Email              string
 	Code               string
 	UsernameCandidates []string
+	Attribution        RegistrationAttribution
+}
+
+type RegistrationAttribution struct {
+	SourceType   string
+	Source       string
+	Medium       string
+	Campaign     string
+	ReferrerHost string
+	LandingPath  string
 }

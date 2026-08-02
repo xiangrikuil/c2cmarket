@@ -19,6 +19,7 @@ import { carpoolOpeningChannels, carpoolPaymentMethods, carpoolRegions } from '@
 import { defaultQuotaLabel, defaultQuotaPeriod, defaultQuotaUnit } from '@/lib/quota'
 import { mapBackendReputationSummary } from '@/lib/reputationBackend'
 import type { ReputationSummary } from '@/types/reputation'
+import { trackAnalytics } from '@/lib/analytics'
 
 type ListResponse<T> = { items: T[] }
 
@@ -624,6 +625,10 @@ export async function backendCarpoolApplicationContacts(applicationId: string): 
     }
   }
   const response = await backendRequest<BackendContactSessionContacts>(`/api/v1/contact-sessions/${application.backendContactSessionId}/contacts`)
+  trackAnalytics('contact_window_reveal', {
+    entity_type: 'carpool_application',
+    source_route: '/my/rides/:id',
+  })
   return {
     id: response.sessionId,
     orderType: 'carpool_application',

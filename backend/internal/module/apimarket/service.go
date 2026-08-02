@@ -120,9 +120,11 @@ func (s *Manager) Update(ctx context.Context, user auth.User, input UpdateServic
 		UsageVisibility:                  input.UsageVisibility,
 		PublicAccessNote:                 input.PublicAccessNote,
 		MerchantNote:                     input.MerchantNote,
-		MerchantSupportNote:              input.MerchantSupportNote,
+		AccountPoolType:                  input.AccountPoolType,
+		AccountPoolCustomName:            input.AccountPoolCustomName,
+		MerchantRefundCommitment:         input.MerchantRefundCommitment,
 		DeclaredTTFTBand:                 input.DeclaredTTFTBand,
-		RecommendedConcurrency:           input.RecommendedConcurrency,
+		DeclaredMaxConcurrency:           input.DeclaredMaxConcurrency,
 		PerformanceConfirmedAt:           input.PerformanceConfirmedAt,
 		AccessModes:                      input.AccessModes,
 		Models:                           input.Models,
@@ -600,9 +602,12 @@ func (s *Manager) buildFromInput(ctx context.Context, current Service, input Cre
 		UsageVisibility:                  strings.TrimSpace(input.UsageVisibility),
 		PublicAccessNote:                 strings.TrimSpace(input.PublicAccessNote),
 		MerchantNote:                     strings.TrimSpace(input.MerchantNote),
-		MerchantSupportNote:              strings.TrimSpace(input.MerchantSupportNote),
+		MerchantSupportNote:              MerchantSupportNote(*input.MerchantRefundCommitment),
+		AccountPoolType:                  strings.TrimSpace(input.AccountPoolType),
+		AccountPoolCustomName:            strings.TrimSpace(input.AccountPoolCustomName),
+		MerchantRefundCommitment:         *input.MerchantRefundCommitment,
 		DeclaredTTFTBand:                 strings.TrimSpace(input.DeclaredTTFTBand),
-		RecommendedConcurrency:           input.RecommendedConcurrency,
+		DeclaredMaxConcurrency:           input.DeclaredMaxConcurrency,
 		PerformanceConfirmedAt:           performanceConfirmedAt,
 		AcceptingOrders:                  current.AcceptingOrders,
 		PaymentWindowMinutes:             current.PaymentWindowMinutes,
@@ -782,8 +787,11 @@ func validateCreateInput(input CreateServiceInput, now time.Time) *domain.AppErr
 	if err := validateOptionalNonSecretText("merchantNote", input.MerchantNote); err != nil {
 		return err
 	}
-	if err := validateOptionalNonSecretText("merchantSupportNote", input.MerchantSupportNote); err != nil {
-		return err
+	if appErr := validateAccountPool(input.AccountPoolType, input.AccountPoolCustomName); appErr != nil {
+		return appErr
+	}
+	if input.MerchantRefundCommitment == nil {
+		return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Merchant refund commitment required", "请选择是否提供商户退款承诺。", "merchantRefundCommitment", "required", "请选择无额外退款承诺或商户全额退款承诺。")
 	}
 	if appErr := validatePerformanceDeclaration(input, now); appErr != nil {
 		return appErr
@@ -990,7 +998,7 @@ func parseQuotaExpiresAt(value string) (*time.Time, bool) {
 func validatePerformanceDeclaration(input CreateServiceInput, now time.Time) *domain.AppError {
 	band := strings.TrimSpace(input.DeclaredTTFTBand)
 	confirmedAt := strings.TrimSpace(input.PerformanceConfirmedAt)
-	if band == "" && input.RecommendedConcurrency == 0 && confirmedAt == "" {
+	if band == "" && input.DeclaredMaxConcurrency == 0 && confirmedAt == "" {
 		return nil
 	}
 	switch band {
@@ -998,14 +1006,58 @@ func validatePerformanceDeclaration(input CreateServiceInput, now time.Time) *do
 	default:
 		return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "TTFT band invalid", "首字响应区间无效。", "declaredTtftBand", "invalid", "请选择有效的首字响应区间。")
 	}
-	if input.RecommendedConcurrency < 1 {
-		return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Concurrency invalid", "建议并发必须大于 0。", "recommendedConcurrency", "invalid", "建议并发必须大于 0。")
+	if input.DeclaredMaxConcurrency < 1 {
+		return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Concurrency invalid", "商户声明最大并发必须大于 0。", "declaredMaxConcurrency", "invalid", "商户声明最大并发必须大于 0。")
 	}
 	parsed, ok := parsePerformanceConfirmedAt(confirmedAt)
 	if !ok || parsed == nil || parsed.After(now.Add(time.Minute)) {
 		return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Performance confirmation invalid", "服务体验最近确认时间无效。", "performanceConfirmedAt", "invalid", "最近确认时间必须是有效且不晚于当前时间的时间。")
 	}
 	return nil
+}
+
+func validateAccountPool(poolType, customName string) *domain.AppError {
+	poolType = strings.TrimSpace(poolType)
+	customName = strings.TrimSpace(customName)
+	switch poolType {
+	case AccountPoolGPTPro20x, AccountPoolGPTPro5x, AccountPoolGPTPlus:
+		if customName != "" {
+			return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Account pool custom name invalid", "预设号池不能填写自定义名称。", "accountPoolCustomName", "invalid", "只有选择其他号池时才能填写自定义名称。")
+		}
+	case AccountPoolCustom:
+		length := len([]rune(customName))
+		if length < 2 || length > 40 {
+			return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Account pool custom name invalid", "自定义号池名称长度必须为 2 到 40 个字符。", "accountPoolCustomName", "invalid", "请输入 2 到 40 个字符的号池名称。")
+		}
+		if err := validateNonSecretText("accountPoolCustomName", customName); err != nil {
+			return err
+		}
+	default:
+		return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Account pool invalid", "请选择有效的号池类型。", "accountPoolType", "invalid", "请选择 GPT Pro 20x、GPT Pro 5x、GPT Plus 或其他。")
+	}
+	return nil
+}
+
+func AccountPoolLabel(service Service) string {
+	switch service.AccountPoolType {
+	case AccountPoolGPTPro20x:
+		return "GPT Pro 20x"
+	case AccountPoolGPTPro5x:
+		return "GPT Pro 5x"
+	case AccountPoolGPTPlus:
+		return "GPT Plus"
+	case AccountPoolCustom:
+		return strings.TrimSpace(service.AccountPoolCustomName)
+	default:
+		return ""
+	}
+}
+
+func MerchantSupportNote(enabled bool) string {
+	if !enabled {
+		return "无额外退款承诺，具体问题由双方站外协商。平台不托管、不垫付、不代赔。"
+	}
+	return "商户退款承诺：订单服务有效期内，如未交付、实际号池/模型/额度与订单快照不符，或交付后连续不可用超过 1 小时且不属于排除情形，商户承诺退还订单全部实付金额。买家违规、超出商户声明最大并发、额度正常耗尽、正常上游限流或买家自身网络问题不适用。平台不托管、不垫付、不代赔。"
 }
 
 func parsePerformanceConfirmedAt(value string) (*time.Time, bool) {

@@ -32,6 +32,7 @@ const AnnouncementDetailPage = () => import('@/pages/AnnouncementDetailPage.vue'
 const LoginPage = () => import('@/pages/LoginPage.vue')
 const PublicUserPage = () => import('@/pages/PublicUserPage.vue')
 const AdminPage = () => import('@/pages/AdminPage.vue')
+const AdminGrowthPage = () => import('@/pages/AdminGrowthPage.vue')
 const AdminFeedbackPage = () => import('@/pages/AdminFeedbackPage.vue')
 const AdminAnnouncementsPage = () => import('@/pages/AdminAnnouncementsPage.vue')
 const AdminAnnouncementEditorPage = () => import('@/pages/AdminAnnouncementEditorPage.vue')
@@ -39,6 +40,7 @@ const AdminProductPlansPage = () => import('@/pages/AdminProductPlansPage.vue')
 const AdminApiModelsPage = () => import('@/pages/AdminApiModelsPage.vue')
 const AdminModelAuditPage = () => import('@/pages/AdminModelAuditPage.vue')
 const AdminUsersPage = () => import('@/pages/AdminUsersPage.vue')
+const AdminApiPromotionsPage = () => import('@/pages/AdminApiPromotionsPage.vue')
 const AdminSectionPage = () => import('@/pages/AdminSectionPage.vue')
 const NotFoundPage = () => import('@/pages/NotFoundPage.vue')
 
@@ -99,6 +101,7 @@ export const routes: RouteRecordRaw[] = [
     { path: '/announcements/:slug', name: 'announcement-detail', component: AnnouncementDetailPage },
     { path: '/u/:username', name: 'public-user', component: PublicUserPage },
     { path: '/admin', name: 'admin', component: AdminPage, meta: adminAuthMeta },
+    { path: '/admin/growth', name: 'admin-growth', component: AdminGrowthPage, meta: adminAuthMeta },
     { path: '/admin/announcements', name: 'admin-announcements', component: AdminAnnouncementsPage, meta: adminAuthMeta },
     { path: '/admin/announcements/new', name: 'admin-announcement-new', component: AdminAnnouncementEditorPage, meta: adminAuthMeta },
     { path: '/admin/announcements/:id/edit', name: 'admin-announcement-edit', component: AdminAnnouncementEditorPage, meta: adminAuthMeta },
@@ -110,6 +113,7 @@ export const routes: RouteRecordRaw[] = [
     { path: '/admin/official-prices', name: 'admin-official-prices', component: OfficialPriceManagePage, meta: adminAuthMeta },
     { path: '/admin/price-leads', redirect: '/admin/official-prices', meta: adminAuthMeta },
     { path: '/admin/users', name: 'admin-users', component: AdminUsersPage, meta: adminAuthMeta },
+    { path: '/admin/api-promotions', name: 'admin-api-promotions', component: AdminApiPromotionsPage, meta: adminAuthMeta },
     { path: '/admin/restrictions', redirect: '/admin/users', meta: adminAuthMeta },
     { path: '/admin/api-merchants', redirect: '/admin/api-services', meta: adminAuthMeta },
     { path: '/admin/audit-logs', redirect: '/admin/logs', meta: adminAuthMeta },

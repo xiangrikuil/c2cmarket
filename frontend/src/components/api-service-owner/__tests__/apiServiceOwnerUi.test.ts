@@ -38,7 +38,7 @@ describe('API 服务卖家管理页结构', () => {
   })
 
   test('服务概览合并基础配置、履约字段和支付品牌图标', () => {
-    for (const label of ['接入类型', '支持模型', '服务倍率', '额度有效期', '付款窗口', '首字响应', '建议并发', '收款方式', '未解决纠纷']) {
+	for (const label of ['接入类型', '支持模型', '服务倍率', '额度有效期', '付款窗口', '首字响应', '商户声明最大并发', '收款方式', '未解决纠纷']) {
       assert.match(overviewSource, new RegExp(label))
     }
     assert.match(overviewSource, /<Popover[\s\S]*?已有订单继续使用创建时冻结的/)

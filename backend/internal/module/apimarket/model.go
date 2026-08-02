@@ -27,6 +27,13 @@ const (
 	ServiceBillingModeManual       = "manual_usage_check"
 	ServiceBillingModeFixedPackage = "fixed_package"
 
+	AccountPoolGPTPro20x = "gpt_pro_20x"
+	AccountPoolGPTPro5x  = "gpt_pro_5x"
+	AccountPoolGPTPlus   = "gpt_plus"
+	AccountPoolCustom    = "custom"
+
+	MerchantRefundPolicyVersion = "api-merchant-refund-v1"
+
 	PaymentMethodWechat = "wechat"
 	PaymentMethodAlipay = "alipay"
 
@@ -75,8 +82,11 @@ type Service struct {
 	PublicAccessNote                 string
 	MerchantNote                     string
 	MerchantSupportNote              string
+	AccountPoolType                  string
+	AccountPoolCustomName            string
+	MerchantRefundCommitment         bool
 	DeclaredTTFTBand                 string
-	RecommendedConcurrency           int
+	DeclaredMaxConcurrency           int
 	PerformanceConfirmedAt           *time.Time
 	AcceptingOrders                  bool
 	PaymentWindowMinutes             int
@@ -184,9 +194,11 @@ type CreateServiceInput struct {
 	UsageVisibility                  string
 	PublicAccessNote                 string
 	MerchantNote                     string
-	MerchantSupportNote              string
+	AccountPoolType                  string
+	AccountPoolCustomName            string
+	MerchantRefundCommitment         *bool
 	DeclaredTTFTBand                 string
-	RecommendedConcurrency           int
+	DeclaredMaxConcurrency           int
 	PerformanceConfirmedAt           string
 	AccessModes                      []ServiceAccessModeInput
 	Models                           []ServiceModelInput
@@ -213,9 +225,11 @@ type UpdateServiceInput struct {
 	UsageVisibility                  string
 	PublicAccessNote                 string
 	MerchantNote                     string
-	MerchantSupportNote              string
+	AccountPoolType                  string
+	AccountPoolCustomName            string
+	MerchantRefundCommitment         *bool
 	DeclaredTTFTBand                 string
-	RecommendedConcurrency           int
+	DeclaredMaxConcurrency           int
 	PerformanceConfirmedAt           string
 	AccessModes                      []ServiceAccessModeInput
 	Models                           []ServiceModelInput

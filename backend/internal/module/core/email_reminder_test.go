@@ -397,6 +397,7 @@ func createTestCarpoolApplication(t *testing.T, service *Service, owner, buyer U
 
 func createOrderableAPIService(t *testing.T, service *Service, owner User, ownerContactID string) APIService {
 	t.Helper()
+	merchantRefundCommitment := false
 	created, appErr := service.CreateAPIService(context.Background(), owner, CreateAPIServiceInput{
 		MerchantIdentityMode:             "public_profile",
 		OwnerContactMethodID:             ownerContactID,
@@ -412,7 +413,11 @@ func createOrderableAPIService(t *testing.T, service *Service, owner User, owner
 		UsageVisibility:                  "merchant_reported",
 		PublicAccessNote:                 "提交购买意向后直接查看商户联系方式，平台不保存任何调用凭据。",
 		MerchantNote:                     "仅后台可见，不展示给公开访客。",
-		MerchantSupportNote:              "仅支持买家专属的子级访问安排。",
+		AccountPoolType:                  apimarket.AccountPoolGPTPlus,
+		MerchantRefundCommitment:         &merchantRefundCommitment,
+		DeclaredTTFTBand:                 "1_to_3s",
+		DeclaredMaxConcurrency:           8,
+		PerformanceConfirmedAt:           "2026-07-06T09:00:00Z",
 		AccessModes: []APIServiceAccessModeInput{
 			{AccessMode: "buyer_dedicated_sub_key", PublicNote: "站外确认买家专属的访问方式。"},
 		},

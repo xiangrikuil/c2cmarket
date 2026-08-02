@@ -66,7 +66,7 @@ describe('transaction motion feedback', () => {
   it('limits status animation to local action and timeline regions', () => {
     expect(apiOrderDetail.match(/v-auto-animate="functionalMotion"/g)?.length).toBeGreaterThanOrEqual(4)
     expect(apiOrderDetail).toContain('<StatusBadge :key="order.status"')
-    expect(apiOrderDetail).toContain('class="c2c-motion-state h-8 w-8"')
+    expect(apiOrderDetail).toMatch(/class="[^"]*c2c-motion-state[^"]*h-8[^"]*w-8[^"]*"/)
     expect(rideDetail.match(/v-auto-animate="functionalMotion"/g)?.length).toBeGreaterThanOrEqual(4)
     expect(rideDetail).toContain('<Badge :key="application.status"')
     expect(rideDetail).toContain(':key="application.status" class="mt-4 grid gap-2"')

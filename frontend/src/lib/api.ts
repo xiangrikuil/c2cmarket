@@ -49,6 +49,7 @@ import {
   type ApiQuotaSystemSaleSlot,
   type ApiQuotaSystemSaleSlotList,
   type ApiService,
+  type ApiServiceCommercialSnapshot,
   type ApiServiceSalesChannel,
   type ApiServiceSalesChannelKind,
   type ApiServiceSalesState,
@@ -487,7 +488,7 @@ export type ApiOrderDeliveryKind = 'api_key_endpoint' | 'login_account'
 export type ApiOrderPaymentIssueReason = 'not_received' | 'amount_mismatch' | 'remark_mismatch'
 export type ApiOrderPurchaseKind = 'api_service' | 'limited_quota_offer'
 
-export type ApiQuotaOrderSnapshot = {
+export type ApiQuotaOrderSnapshot = ApiServiceCommercialSnapshot & {
   batchId: string
   offerId: string
   saleRoundId?: string
@@ -503,7 +504,7 @@ export type ApiQuotaOrderSnapshot = {
   roundEndsAt?: string
   distributionSystem: ApiQuotaDistributionSystem
   ttftBand: ApiTTFTBand
-  recommendedConcurrency: number
+  declaredMaxConcurrency: number
   performanceConfirmedAt?: string
   performanceUnverified: boolean
   deliveryEtaMinutes: number
@@ -684,6 +685,7 @@ export type TransactionTrendSummary = {
 
 export type { ModelCatalogItem }
 export type { ApiMerchantIdentityMode }
+export type { ApiServiceCommercialSnapshot }
 export type {
   CarpoolProductCatalogItem,
   CarpoolApplicationEligibility,
@@ -1688,6 +1690,12 @@ function createSnapshot(service: ApiService): ApiPurchaseIntent['snapshot'] {
     creditPerCny: service.creditPerCny,
     warranty: service.warranty,
     refundPolicy: service.refundPolicy,
+    accountPoolType: service.accountPoolType,
+    accountPoolLabel: service.accountPoolLabel,
+    declaredMaxConcurrency: service.declaredMaxConcurrency,
+    merchantRefundCommitment: service.merchantRefundCommitment,
+    merchantRefundPolicyVersion: service.merchantRefundPolicyVersion,
+    serviceValidityExpiresAt: service.quotaExpiresAt ?? null,
     usageVisibility: service.usageVisibility,
     supportedDeliveryModes: [...service.deliveryModes],
     selectedDeliveryMode: service.deliveryModes[0],
@@ -2431,7 +2439,7 @@ export async function createApiQuotaOffer(payload: CreateApiQuotaOfferPayload) {
     sellerIdentityType: service.merchantType === '商户' ? 'merchant' : 'individual',
     sellerLinuxDoBound: true,
     declaredTtftBand: service.declaredTtftBand ?? '1_to_3s',
-    recommendedConcurrency: service.recommendedConcurrency ?? 1,
+    declaredMaxConcurrency: service.declaredMaxConcurrency ?? 1,
     performanceConfirmedAt: service.performanceConfirmedAt,
     performanceDisclaimer: '商户自报，平台未测速',
     saleCutoffAt: batch.saleCutoffAt,
@@ -2547,7 +2555,7 @@ export async function createApiQuotaRushOffer(payload: CreateApiQuotaRushOfferPa
     sellerIdentityType: service.merchantType === '商户' ? 'merchant' : 'individual',
     sellerLinuxDoBound: true,
     declaredTtftBand: service.declaredTtftBand ?? '1_to_3s',
-    recommendedConcurrency: service.recommendedConcurrency ?? 1,
+    declaredMaxConcurrency: service.declaredMaxConcurrency ?? 1,
     performanceConfirmedAt: service.performanceConfirmedAt,
     performanceDisclaimer: '商户自报，平台未测速',
     saleCutoffAt: slot.endsAt,
@@ -3844,6 +3852,16 @@ export async function submitApiService(payload: Record<string, unknown>) {
   const declaredTtftBand = String(payload.declaredTtftBand ?? '') as ApiTTFTBand
   const state: ApiServiceState = isPublish ? 'online' : 'offline'
   const quotaExpiresAt = beijingDateTimeInputToISOString(String(payload.quotaExpiresAt ?? ''))
+  const accountPoolType = String(payload.accountPoolType ?? '') as ApiService['accountPoolType']
+  const accountPoolLabels: Record<Exclude<NonNullable<ApiService['accountPoolType']>, 'custom'>, string> = {
+    gpt_pro_20x: 'GPT Pro 20x',
+    gpt_pro_5x: 'GPT Pro 5x',
+    gpt_plus: 'GPT Plus',
+  }
+  const accountPoolLabel = accountPoolType === 'custom'
+    ? stringValue(payload.accountPoolCustomName, '')
+    : accountPoolType ? accountPoolLabels[accountPoolType] : ''
+  const merchantRefundCommitment = (payload.warranty as { mode?: string } | undefined)?.mode === 'merchant_full_refund'
   const service: ApiService = {
     id,
     title: stringValue(payload.generatedTitle, models.length ? `${models[0]} API 服务` : '新 API 服务'),
@@ -3887,7 +3905,7 @@ export async function submitApiService(payload: Record<string, unknown>) {
     lastOnlineConfirmedAt: nowText(),
     onlineExpiresAt: nowText(),
     declaredTtftBand,
-    recommendedConcurrency: numberValue(payload.recommendedConcurrency, 1),
+    declaredMaxConcurrency: numberValue(payload.declaredMaxConcurrency, 1),
     performanceConfirmedAt: beijingDateTimeInputToISOString(String(payload.performanceConfirmedAt ?? '')) || undefined,
     expectedResponseMinutes: responseMinutes,
     responseMedianMinutes: apiTTFTApproxMinutes(declaredTtftBand),
@@ -3895,8 +3913,14 @@ export async function submitApiService(payload: Record<string, unknown>) {
     todayOrderCount: 0,
     unresolvedDisputes: 0,
     warning: publiclyOrderable ? undefined : isPublish ? '待配置接单设置' : '草稿尚未上线',
-    warranty: (payload.warranty as { mode?: string, warrantyDays?: number | null } | undefined)?.mode === 'merchant_warranty' ? `商户承诺：${(payload.warranty as { warrantyDays?: number | null }).warrantyDays ?? 7} 天可用性处理，平台不担保、不代赔` : '按商户备注站外协商，平台不担保、不代赔',
-    refundPolicy: stringValue((payload.warranty as { refundNote?: string } | undefined)?.refundNote, '按服务说明站外协商'),
+    warranty: merchantRefundCommitment
+      ? '商户退款承诺：订单有效期内符合规则时退还全部实付金额；平台不垫付、不代赔'
+      : '无额外退款承诺，具体问题由双方站外协商；平台不担保、不代赔',
+    refundPolicy: merchantRefundCommitment ? 'api-merchant-refund-v1' : '无额外退款承诺',
+    accountPoolType,
+    accountPoolLabel,
+    merchantRefundCommitment,
+    merchantRefundPolicyVersion: 'api-merchant-refund-v1',
     quotaExpiresAt: quotaExpiresAt || undefined,
     expiresAt: formatQuotaExpiresAtLabel(quotaExpiresAt) || '按服务说明',
     completed30d: 0,
@@ -5358,7 +5382,12 @@ export async function createApiQuotaOrder(payload: CreateApiQuotaOrderPayload) {
       roundEndsAt: offer.currentRound?.endsAt,
       distributionSystem: offer.distributionSystem,
       ttftBand: offer.declaredTtftBand,
-      recommendedConcurrency: offer.recommendedConcurrency,
+      declaredMaxConcurrency: offer.declaredMaxConcurrency,
+      accountPoolType: service.accountPoolType,
+      accountPoolLabel: service.accountPoolLabel,
+      merchantRefundCommitment: service.merchantRefundCommitment,
+      merchantRefundPolicyVersion: service.merchantRefundPolicyVersion,
+      serviceValidityExpiresAt: offer.expiresAt,
       performanceConfirmedAt: offer.performanceConfirmedAt,
       performanceUnverified: true,
       deliveryEtaMinutes: offer.deliveryEtaMinutes,

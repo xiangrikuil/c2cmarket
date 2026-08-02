@@ -95,16 +95,37 @@ func servicePricingSnapshotJSON(service apimarket.Service) (string, error) {
 		packages = append(packages, packageSnapshot(pack))
 	}
 	body, err := json.Marshal(map[string]any{
-		"models":              models,
-		"packages":            packages,
-		"usageVisibility":     service.UsageVisibility,
-		"merchantNote":        service.MerchantNote,
-		"merchantSupportNote": service.MerchantSupportNote,
+		"models":                      models,
+		"packages":                    packages,
+		"usageVisibility":             service.UsageVisibility,
+		"merchantNote":                service.MerchantNote,
+		"merchantSupportNote":         service.MerchantSupportNote,
+		"accountPoolType":             snapshotOptionalString(service.AccountPoolType),
+		"accountPoolLabel":            snapshotOptionalString(apimarket.AccountPoolLabel(service)),
+		"declaredMaxConcurrency":      snapshotOptionalPositiveInt(service.DeclaredMaxConcurrency),
+		"merchantRefundCommitment":    service.MerchantRefundCommitment,
+		"merchantRefundPolicyVersion": apimarket.MerchantRefundPolicyVersion,
+		"serviceValidityExpiresAt":    service.QuotaExpiresAt,
 	})
 	if err != nil {
 		return "", err
 	}
 	return string(body), nil
+}
+
+func snapshotOptionalString(value string) any {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return nil
+	}
+	return value
+}
+
+func snapshotOptionalPositiveInt(value int) any {
+	if value < 1 {
+		return nil
+	}
+	return value
 }
 
 func packageSnapshot(pack apimarket.ServicePackage) map[string]any {

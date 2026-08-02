@@ -45,6 +45,7 @@ GET  /api/v1/api-models
 GET  /api/v1/api-models/{id}
 GET  /api/v1/api-services
 GET  /api/v1/api-services/{id}
+GET  /api/v1/api-service-promotions
 POST /api/v1/api-services/{id}/purchase-intents
 GET  /api/v1/official-prices
 GET  /api/v1/official-prices/{id}
@@ -147,6 +148,10 @@ POST /api/v1/admin/carpools/{id}/pause
 POST /api/v1/admin/carpools/{id}/restore
 GET  /api/v1/admin/api-services
 GET  /api/v1/admin/api-services/{id}
+GET  /api/v1/admin/api-service-promotions
+GET  /api/v1/admin/api-service-promotions/availability
+POST /api/v1/admin/api-service-promotions
+POST /api/v1/admin/api-service-promotions/{id}/stop
 POST /api/v1/admin/api-services/{id}/approve
 POST /api/v1/admin/api-services/{id}/request-changes
 POST /api/v1/admin/api-services/{id}/reject

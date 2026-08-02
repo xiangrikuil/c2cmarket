@@ -299,6 +299,27 @@ status and administrator-permission changes continue to use the existing users,
 permissions, sessions, domain events, notifications, audit, and idempotency
 tables; the migration does not rewrite account data.
 
+Version 70 (`000070_api_service_promotions`) adds administrator-owned API
+service promotion schedules with half-open time ranges, stop facts, optimistic
+versions, and indexes for placement capacity and same-service overlap checks.
+Promotion history is independent from API service review, publication,
+reputation, badges, natural ordering, payments, and analytics storage.
+
+Version 71 (`000071_api_service_commercial_facts`) adds a single
+merchant-declared API account-pool type with an optional custom public label
+and a structured merchant full-refund commitment. Historical services keep a
+null account pool until revised; new service validation requires one. It also
+renames recommended concurrency to merchant-declared maximum concurrency
+across API services and limited-quota order snapshots without changing the
+stored numeric values. The platform snapshots the merchant promise but does
+not escrow, fund, or execute refunds.
+
+Version 72 (`000072_growth_analytics`) adds a stable random analytics identifier
+for registered users, immutable registration attribution facts, and daily
+activity rows. It also records the first publication time for carpool listings
+and API services with database triggers that preserve the original timestamp,
+so growth windows do not shift when a listing or service is edited later.
+
 ## Contact Retention And Destruction
 
 Contact method deletion retires the mutable contact method surface. Historical

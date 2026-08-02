@@ -10,6 +10,7 @@ import (
 	"c2c-market/backend/internal/module/apiintent"
 	"c2c-market/backend/internal/module/apimarket"
 	"c2c-market/backend/internal/module/apiorder"
+	"c2c-market/backend/internal/module/apipromotion"
 	"c2c-market/backend/internal/module/apiquota"
 	"c2c-market/backend/internal/module/auth"
 	"c2c-market/backend/internal/module/carpool"
@@ -17,6 +18,7 @@ import (
 	"c2c-market/backend/internal/module/contact"
 	"c2c-market/backend/internal/module/favorite"
 	"c2c-market/backend/internal/module/feedback"
+	"c2c-market/backend/internal/module/growth"
 	"c2c-market/backend/internal/module/idempotency"
 	"c2c-market/backend/internal/module/modelaudit"
 	"c2c-market/backend/internal/module/notification"
@@ -41,6 +43,8 @@ type APIServiceRepository = apimarket.Repository
 type APIPurchaseIntentRepository = apiintent.Repository
 
 type APIOrderRepository = apiorder.Repository
+
+type APIPromotionRepository = apipromotion.Repository
 
 type APIQuotaRepository = apiquota.Repository
 
@@ -68,6 +72,8 @@ type ReputationRepository = reputation.Repository
 
 type ModelAuditRepository = modelaudit.Repository
 
+type GrowthRepository = growth.Repository
+
 type Persistence interface {
 	AuthRepository
 	IdempotencyRepository
@@ -76,6 +82,7 @@ type Persistence interface {
 	APIServiceRepository
 	APIPurchaseIntentRepository
 	APIOrderRepository
+	APIPromotionRepository
 	APIQuotaRepository
 	AnnouncementRepository
 	NotificationRepository
@@ -89,6 +96,7 @@ type Persistence interface {
 	ReportRepository
 	ReputationRepository
 	ModelAuditRepository
+	GrowthRepository
 }
 
 type Repositories struct {
@@ -99,6 +107,7 @@ type Repositories struct {
 	APIService        APIServiceRepository
 	APIPurchaseIntent APIPurchaseIntentRepository
 	APIOrder          APIOrderRepository
+	APIPromotion      APIPromotionRepository
 	APIQuota          APIQuotaRepository
 	Announcement      AnnouncementRepository
 	Notification      NotificationRepository
@@ -112,6 +121,7 @@ type Repositories struct {
 	Report            ReportRepository
 	Reputation        ReputationRepository
 	ModelAudit        ModelAuditRepository
+	Growth            GrowthRepository
 }
 
 func RepositoriesFromPersistence(persistence Persistence) Repositories {
@@ -126,6 +136,7 @@ func RepositoriesFromPersistence(persistence Persistence) Repositories {
 		APIService:        persistence,
 		APIPurchaseIntent: persistence,
 		APIOrder:          persistence,
+		APIPromotion:      persistence,
 		APIQuota:          persistence,
 		Announcement:      persistence,
 		Notification:      persistence,
@@ -139,6 +150,7 @@ func RepositoriesFromPersistence(persistence Persistence) Repositories {
 		Report:            persistence,
 		Reputation:        persistence,
 		ModelAudit:        persistence,
+		Growth:            persistence,
 	}
 }
 

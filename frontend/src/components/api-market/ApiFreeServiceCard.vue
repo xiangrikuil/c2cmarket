@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { Code2, ShieldQuestion, ShoppingCart } from 'lucide-vue-next'
+import { Award, Code2, Megaphone, ShieldCheck, ShieldQuestion, ShoppingCart, Zap } from 'lucide-vue-next'
 import ReputationInlineSummary from '@/components/reputation/ReputationInlineSummary.vue'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -11,9 +11,12 @@ import { compactApiServiceModels, type ApiFreeServiceCardData } from './apiFreeS
 const props = withDefaults(defineProps<{
   card: ApiFreeServiceCardData
   preview?: boolean
+  promoted?: boolean
 }>(), {
   preview: false,
+  promoted: false,
 })
+const emit = defineEmits<{ activate: [] }>()
 
 const compactModels = computed(() => compactApiServiceModels(props.card.models))
 const modelCountLabel = computed(() => props.card.models.length ? `支持 ${props.card.models.length} 个模型` : '模型待选择')
@@ -27,6 +30,7 @@ const hasReputationRisk = computed(() => Boolean(props.card.sellerReputation && 
     :class="{
       'api-free-service-card--risk': hasReputationRisk,
       'api-free-service-card--preview': preview,
+      'api-free-service-card--promoted': promoted,
     }"
     :data-category="card.category"
   >
@@ -46,7 +50,10 @@ const hasReputationRisk = computed(() => Boolean(props.card.sellerReputation && 
             <Code2 v-else class="h-5 w-5" />
           </span>
           <div class="min-w-0 flex-1">
-            <Badge variant="outline" class="api-free-service-card__category">{{ card.categoryLabel }}</Badge>
+            <div class="flex flex-wrap items-center gap-1.5">
+              <Badge v-if="promoted" variant="status"><Megaphone class="h-3 w-3" />推广</Badge>
+              <Badge variant="outline" class="api-free-service-card__category">{{ card.categoryLabel }}</Badge>
+            </div>
             <h2 class="mt-1 truncate text-sm font-semibold" :title="card.title">{{ card.title }}</h2>
             <p class="truncate text-xs text-muted-foreground" :title="`${card.delivery} · ${modelTitle}`">
               {{ card.delivery }} · {{ modelCountLabel }}
@@ -91,7 +98,7 @@ const hasReputationRisk = computed(() => Boolean(props.card.sellerReputation && 
       <dl class="api-free-service-card__metrics grid grid-cols-4 gap-px text-xs">
         <div><dt>统一倍率</dt><dd>{{ card.multiplier }}</dd></div>
         <div><dt>首字响应</dt><dd>{{ card.ttftLabel }}</dd></div>
-        <div><dt>建议并发</dt><dd>{{ card.recommendedConcurrency || '—' }}</dd></div>
+        <div><dt title="商户声明最大并发">最大并发</dt><dd>{{ card.declaredMaxConcurrency || '—' }}</dd></div>
         <div><dt>付款窗口</dt><dd>{{ card.paymentWindowMinutes }} 分钟</dd></div>
       </dl>
 
@@ -106,8 +113,8 @@ const hasReputationRisk = computed(() => Boolean(props.card.sellerReputation && 
             <dd class="truncate font-medium" :title="`¥${card.minimumPurchaseCny} - ¥${card.maximumPurchaseCny}`">¥{{ card.minimumPurchaseCny }} - ¥{{ card.maximumPurchaseCny }}</dd>
           </div>
           <div class="flex min-w-0 items-center gap-1.5">
-            <dt class="shrink-0 text-muted-foreground">接入</dt>
-            <dd class="truncate font-medium" :title="card.delivery">{{ card.delivery }}</dd>
+            <dt class="shrink-0 text-muted-foreground">号池</dt>
+            <dd class="truncate font-medium" :title="card.accountPoolLabel">{{ card.accountPoolLabel || '历史服务未补充' }}</dd>
           </div>
           <div class="flex min-w-0 items-center gap-1.5">
             <dt class="shrink-0 text-muted-foreground">有效期</dt>
@@ -115,13 +122,32 @@ const hasReputationRisk = computed(() => Boolean(props.card.sellerReputation && 
           </div>
         </dl>
 
-        <div class="mt-2 min-w-0 border-t border-border pt-2">
+        <div class="mt-2 flex min-h-5 min-w-0 flex-wrap items-center gap-1.5 border-t border-border pt-2">
           <div v-if="preview" class="flex items-center gap-1.5 text-xs text-muted-foreground">
             <ShieldQuestion class="h-3.5 w-3.5" />
             发布后显示账户公开信誉
           </div>
+          <template v-else>
+            <Badge
+              v-for="badge in card.merchantBadges"
+              :key="badge.kind"
+              variant="outline"
+              :title="badge.description"
+              class="api-merchant-achievement-badge"
+              :class="`api-merchant-achievement-badge--${badge.kind}`"
+            >
+              <Award v-if="badge.kind === 'quality'" />
+              <Zap v-else />
+              {{ badge.label }}
+            </Badge>
+            <Badge variant="outline" :class="card.merchantRefundCommitment ? 'border-orange-300 bg-orange-50 text-orange-800' : 'text-muted-foreground'">
+              <ShieldCheck class="h-3 w-3" />{{ card.merchantRefundCommitment ? '商户全额退款承诺' : '无额外退款承诺' }}
+            </Badge>
+          </template>
+        </div>
+        <div class="api-free-service-card__reputation min-w-0">
           <ReputationInlineSummary
-            v-else
+            v-if="!preview"
             class="min-w-0"
             :summary="card.sellerReputation"
             :compact="card.sellerReputation?.state === 'active'"
@@ -136,7 +162,7 @@ const hasReputationRisk = computed(() => Boolean(props.card.sellerReputation && 
           </Button>
           <p class="mt-1 text-center text-[10px] text-muted-foreground">预览状态，不可操作</p>
         </div>
-        <RouterLink v-else-if="card.actionHref" :to="card.actionHref" class="block">
+        <RouterLink v-else-if="card.actionHref" :to="card.actionHref" class="block" @click.capture="emit('activate')">
           <Button class="h-10 w-full"><ShoppingCart class="h-4 w-4" />选择金额并下单</Button>
         </RouterLink>
       </div>
@@ -151,7 +177,7 @@ const hasReputationRisk = computed(() => Boolean(props.card.sellerReputation && 
   position: relative;
   isolation: isolate;
   width: 100%;
-  height: 360px;
+  height: 410px;
   border-radius: 0.5rem;
   border-color: color-mix(in oklab, var(--api-free-card-accent) 28%, var(--border));
   background-color: color-mix(in oklab, var(--api-free-card-accent) 4%, var(--card));
@@ -169,11 +195,25 @@ const hasReputationRisk = computed(() => Boolean(props.card.sellerReputation && 
 .api-free-service-card--risk,
 .api-free-service-card--preview {
   height: auto;
-  min-height: 360px;
+  min-height: 410px;
 }
 
 .api-free-service-card--preview {
-  min-height: 380px;
+  min-height: 410px;
+}
+
+.api-free-service-card--promoted {
+  border-color: rgb(249 115 22 / 0.58);
+  box-shadow: inset 0 3px 0 rgb(249 115 22 / 0.9);
+}
+
+.api-free-service-card--promoted:hover {
+  border-color: rgb(234 88 12 / 0.72);
+  box-shadow: inset 0 3px 0 rgb(234 88 12), 0 8px 24px rgb(15 23 42 / 0.06);
+}
+
+.api-free-service-card__reputation {
+  margin-top: 0.375rem;
 }
 
 .api-free-service-card[data-category='gpt'] {

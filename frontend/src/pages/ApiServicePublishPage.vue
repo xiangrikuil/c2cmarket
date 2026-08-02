@@ -70,6 +70,8 @@ type Field =
   | 'packages'
   | 'paymentWindowMinutes'
   | 'paymentOptions'
+  | 'accountPool'
+  | 'refundCommitment'
   | 'performance'
   | 'merchantNote'
   | 'sensitive'
@@ -140,7 +142,7 @@ const form = reactive<ApiServicePublishForm>({
   paymentWindowMinutes: defaultPaymentWindowMinutes,
   paymentOptions: createDefaultPaymentOptions(),
   declaredTtftBand: '1_to_3s',
-  recommendedConcurrency: 1,
+  declaredMaxConcurrency: 1,
   performanceConfirmedAt: formatBeijingDateTimeInput(new Date()),
   packages: initialSellingMode === 'package' ? [createDefaultApiServicePackage(['gpt-5-mini'])] : [],
   validity: {
@@ -149,13 +151,10 @@ const form = reactive<ApiServicePublishForm>({
     startsAt: 'delivered_at',
   },
   usageVisibility: 'merchant_confirmed',
+  accountPoolType: '',
+  accountPoolCustomName: '',
   warranty: {
-    mode: 'no_warranty',
-    warrantyDays: null,
-    coverage: null,
-    compensation: null,
-    exclusions: null,
-    refundNote: null,
+    mode: '',
   },
   merchantNote: merchantNoteTemplate,
 })
@@ -293,6 +292,8 @@ const freeFieldSteps: Record<Field, ApiServicePublishStep> = {
   packages: 1,
   paymentWindowMinutes: 3,
   paymentOptions: 3,
+  accountPool: 3,
+  refundCommitment: 3,
   performance: 3,
   merchantNote: 3,
   sensitive: 3,
@@ -311,6 +312,8 @@ const limitedFieldSteps: Record<Field, ApiServicePublishStep> = {
   packages: 2,
   paymentWindowMinutes: 2,
   paymentOptions: 2,
+  accountPool: 2,
+  refundCommitment: 2,
   performance: 2,
   merchantNote: 2,
   sensitive: 2,
@@ -373,13 +376,20 @@ function collectValidationErrors() {
     const missingOption = enabledPayments.value.find(option => !isApiPaymentOptionComplete(option))
     if (missingOption) next.paymentOptions = apiPaymentSettingsMissingReason(form)
   }
-  if (!form.declaredTtftBand || form.recommendedConcurrency < 1 || !beijingDateTimeInputToISOString(form.performanceConfirmedAt)) {
-    next.performance = '请完整填写首字响应区间、建议并发和最近确认时间。'
+	if (!form.accountPoolType) next.accountPool = '请选择一个号池。'
+	if (form.accountPoolType === 'custom') {
+		const customNameLength = Array.from(form.accountPoolCustomName.trim()).length
+		if (customNameLength < 2 || customNameLength > 40) next.accountPool = '其他号池名称需要填写 2-40 个字符。'
+	}
+	if (!form.warranty.mode) next.refundCommitment = '请选择无额外退款承诺或商户全额退款承诺。'
+  if (!form.declaredTtftBand || form.declaredMaxConcurrency < 1 || !beijingDateTimeInputToISOString(form.performanceConfirmedAt)) {
+		next.performance = '请完整填写首字响应区间、商户声明最大并发和最近确认时间。'
   }
   if (!form.merchantNote.trim()) next.merchantNote = '请填写备注信息。'
   if (form.merchantNote.length > 800) next.merchantNote = '备注信息最多 800 字。'
   if (containsSensitiveContent([
-    form.merchantDisplayName,
+		form.merchantDisplayName,
+		form.accountPoolCustomName,
     form.merchantNote,
     ...form.paymentOptions.map(option => option.paymentInstructions),
   ])) next.sensitive = '请移除 API Key、Sub2API key、endpoint 密钥、token、Session、Cookie、密码、付款码或面板凭据。'
@@ -425,8 +435,10 @@ const completeness = computed(() => {
     }
   }
   items.push(
-    accountPaymentSettingsComplete.value && paymentSettingsComplete.value ? done('收款方式') : pending('收款方式'),
-    form.declaredTtftBand && form.recommendedConcurrency > 0 && beijingDateTimeInputToISOString(form.performanceConfirmedAt) ? done('服务体验声明') : pending('服务体验声明'),
+		accountPaymentSettingsComplete.value && paymentSettingsComplete.value ? done('收款方式') : pending('收款方式'),
+		form.accountPoolType && (form.accountPoolType !== 'custom' || Array.from(form.accountPoolCustomName.trim()).length >= 2) ? done('号池') : pending('号池'),
+		form.warranty.mode ? done('退款承诺') : pending('退款承诺'),
+    form.declaredTtftBand && form.declaredMaxConcurrency > 0 && beijingDateTimeInputToISOString(form.performanceConfirmedAt) ? done('服务体验声明') : pending('服务体验声明'),
     form.providerCategory ? done('模型大类') : pending('模型大类'),
     incompatibleSelectedModels.value.length ? conflict('具体模型') : form.selectedModels.some(item => item.enabled) ? done('具体模型') : pending('具体模型'),
     form.merchantNote.trim() ? done('备注信息') : pending('备注信息'),

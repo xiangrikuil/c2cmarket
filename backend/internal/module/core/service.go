@@ -12,6 +12,7 @@ import (
 	"c2c-market/backend/internal/module/apiintent"
 	"c2c-market/backend/internal/module/apimarket"
 	"c2c-market/backend/internal/module/apiorder"
+	"c2c-market/backend/internal/module/apipromotion"
 	"c2c-market/backend/internal/module/apiquota"
 	authmodule "c2c-market/backend/internal/module/auth"
 	"c2c-market/backend/internal/module/carpool"
@@ -19,6 +20,7 @@ import (
 	contactmodule "c2c-market/backend/internal/module/contact"
 	"c2c-market/backend/internal/module/favorite"
 	"c2c-market/backend/internal/module/feedback"
+	"c2c-market/backend/internal/module/growth"
 	idempotencymodule "c2c-market/backend/internal/module/idempotency"
 	"c2c-market/backend/internal/module/modelaudit"
 	"c2c-market/backend/internal/module/notification"
@@ -104,6 +106,7 @@ type Service struct {
 	apiMarket          *apimarket.Manager
 	apiIntent          *apiintent.Manager
 	apiOrder           *apiorder.Service
+	apiPromotion       *apipromotion.Service
 	apiQuota           *apiquota.Manager
 	announcement       *announcement.Service
 	notification       *notification.Service
@@ -117,6 +120,7 @@ type Service struct {
 	reportService      *report.Service
 	reputationService  *reputation.Service
 	modelAudit         *modelaudit.Service
+	growthService      *growth.Service
 }
 
 type ServiceOptions struct {
@@ -164,6 +168,7 @@ func newServiceWithOptions(now func() time.Time, repositories Repositories, emai
 		announcement:       announcement.NewService(repositories.Announcement, now),
 		notification:       notification.NewService(repositories.Notification, now),
 		contactService:     contactmodule.NewService(repositories.Contact, now),
+		growthService:      growth.NewService(repositories.Growth, now),
 		profileService: profile.NewServiceWithOptions(repositories.Profile, now, emailSender, profile.ServiceOptions{
 			EmailVerificationPepper: options.EmailVerificationPepper,
 		}),
@@ -178,6 +183,7 @@ func newServiceWithOptions(now func() time.Time, repositories Repositories, emai
 	s.apiIntent = apiintent.NewManager(repositories.APIPurchaseIntent, s.apiMarket, s.contactService, s.idempotencyService, now)
 	s.reportService = report.NewService(repositories.Report, s.idempotencyService, now)
 	s.apiOrder = apiorder.NewService(repositories.APIOrder, s.apiIntent, s.apiMarket, s.reportService, s.idempotencyService, now)
+	s.apiPromotion = apipromotion.NewService(repositories.APIPromotion, s.idempotencyService, now)
 	s.apiQuota = apiquota.NewManager(repositories.APIQuota, now)
 	s.apiIntent.SetOrderExistenceChecker(s.apiOrder)
 	s.feedbackService = feedback.NewService(repositories.Feedback, s.notification, s.idempotencyService, now)
@@ -196,15 +202,21 @@ func (s *Service) ConfigureModelAuditOutbound(policy *outboundhttp.Policy) {
 }
 
 func (s *Service) CreateDevSession(ctx context.Context, username string, isAdmin bool) (User, Session, *domain.AppError) {
-	return s.authService.CreateDevSession(ctx, username, isAdmin)
+	user, session, appErr := s.authService.CreateDevSession(ctx, username, isAdmin)
+	s.recordAuthenticatedActivity(ctx, user, appErr)
+	return user, session, appErr
 }
 
 func (s *Service) LoginWithOAuthProfile(ctx context.Context, profile OAuthProfile) (User, Session, *domain.AppError) {
-	return s.authService.LoginWithOAuthProfile(ctx, profile)
+	user, session, appErr := s.authService.LoginWithOAuthProfile(ctx, profile)
+	s.recordAuthenticatedActivity(ctx, user, appErr)
+	return user, session, appErr
 }
 
 func (s *Service) LoginWithPassword(ctx context.Context, username, password string) (User, Session, *domain.AppError) {
-	return s.authService.LoginWithPassword(ctx, username, password)
+	user, session, appErr := s.authService.LoginWithPassword(ctx, username, password)
+	s.recordAuthenticatedActivity(ctx, user, appErr)
+	return user, session, appErr
 }
 
 func (s *Service) BootstrapAdmin(ctx context.Context, input BootstrapAdminInput) (BootstrapAdminResult, *domain.AppError) {
@@ -216,7 +228,9 @@ func (s *Service) StartEmailRegistration(ctx context.Context, input EmailRegistr
 }
 
 func (s *Service) ConfirmEmailRegistration(ctx context.Context, input EmailRegistrationConfirmInput) (User, Session, *domain.AppError) {
-	return s.authService.ConfirmEmailRegistration(ctx, input)
+	user, session, appErr := s.authService.ConfirmEmailRegistration(ctx, input)
+	s.recordAuthenticatedActivity(ctx, user, appErr)
+	return user, session, appErr
 }
 
 func (s *Service) SetPassword(ctx context.Context, input SetPasswordInput) *domain.AppError {
@@ -229,6 +243,23 @@ func (s *Service) GetSession(ctx context.Context, sessionID string) (User, Sessi
 
 func (s *Service) GetSessionWithCSRF(ctx context.Context, sessionID, csrfToken string) (User, Session, *domain.AppError) {
 	return s.authService.GetSessionWithCSRF(ctx, sessionID, csrfToken)
+}
+
+func (s *Service) recordAuthenticatedActivity(ctx context.Context, user User, authErr *domain.AppError) {
+	if authErr != nil || user.ID == "" || s == nil || s.growthService == nil {
+		return
+	}
+	if appErr := s.growthService.RecordActivity(ctx, user.ID); appErr != nil {
+		log.Printf("growth_activity_record_failed user_id=%s code=%s", user.ID, appErr.Code)
+	}
+}
+
+func (s *Service) AdminGrowthOverview(ctx context.Context, user User, windowDays int) (growth.Overview, *domain.AppError) {
+	return s.growthService.AdminOverview(ctx, user, windowDays)
+}
+
+func (s *Service) RecordAuthenticatedActivity(ctx context.Context, userID string) *domain.AppError {
+	return s.growthService.RecordActivity(ctx, userID)
 }
 
 func (s *Service) RenewSession(ctx context.Context, sessionID string) (Session, bool, *domain.AppError) {
@@ -473,6 +504,79 @@ func (s *Service) PublicAPIService(ctx context.Context, serviceID string) (APISe
 		return APIService{}, appErr
 	}
 	return items[0], nil
+}
+
+func (s *Service) PublicAPIPromotions(ctx context.Context, placement string) ([]apipromotion.Promotion, *domain.AppError) {
+	items, appErr := s.apiPromotion.Public(ctx, placement)
+	if appErr != nil {
+		return nil, appErr
+	}
+	return s.withAPIPromotionServiceContext(ctx, items, true)
+}
+
+func (s *Service) AdminAPIPromotions(ctx context.Context, user User) ([]apipromotion.Promotion, *domain.AppError) {
+	items, appErr := s.apiPromotion.AdminList(ctx, user)
+	if appErr != nil {
+		return nil, appErr
+	}
+	return s.withAPIPromotionServiceContext(ctx, items, false)
+}
+
+func (s *Service) APIPromotionAvailability(ctx context.Context, user User, input apipromotion.AvailabilityInput) (apipromotion.Availability, *domain.AppError) {
+	return s.apiPromotion.Availability(ctx, user, input)
+}
+
+func (s *Service) CreateAPIPromotion(ctx context.Context, user User, input apipromotion.CreateInput) (apipromotion.Promotion, *domain.AppError) {
+	item, appErr := s.apiPromotion.Create(ctx, user, input)
+	if appErr != nil {
+		return apipromotion.Promotion{}, appErr
+	}
+	items, appErr := s.withAPIPromotionServiceContext(ctx, []apipromotion.Promotion{item}, false)
+	if appErr != nil {
+		return apipromotion.Promotion{}, appErr
+	}
+	return items[0], nil
+}
+
+func (s *Service) CreateAPIPromotionWithIdempotency(ctx context.Context, user User, routeKey, key, requestHash string, input apipromotion.CreateInput, buildCompletion apipromotion.CompletionBuilder) (idempotencymodule.Completion, *domain.AppError) {
+	return s.apiPromotion.CreateWithIdempotency(ctx, user, routeKey, key, requestHash, input, buildCompletion)
+}
+
+func (s *Service) StopAPIPromotion(ctx context.Context, user User, input apipromotion.StopInput) (apipromotion.Promotion, *domain.AppError) {
+	item, appErr := s.apiPromotion.Stop(ctx, user, input)
+	if appErr != nil {
+		return apipromotion.Promotion{}, appErr
+	}
+	items, appErr := s.withAPIPromotionServiceContext(ctx, []apipromotion.Promotion{item}, false)
+	if appErr != nil {
+		return apipromotion.Promotion{}, appErr
+	}
+	return items[0], nil
+}
+
+func (s *Service) StopAPIPromotionWithIdempotency(ctx context.Context, user User, routeKey, key, requestHash string, input apipromotion.StopInput, buildCompletion apipromotion.CompletionBuilder) (idempotencymodule.Completion, *domain.AppError) {
+	return s.apiPromotion.StopWithIdempotency(ctx, user, routeKey, key, requestHash, input, buildCompletion)
+}
+
+func (s *Service) withAPIPromotionServiceContext(ctx context.Context, items []apipromotion.Promotion, includeReputation bool) ([]apipromotion.Promotion, *domain.AppError) {
+	services := make([]APIService, 0, len(items))
+	for _, item := range items {
+		services = append(services, item.Service)
+	}
+	services, appErr := s.withAPIMerchantProfiles(ctx, services)
+	if appErr != nil {
+		return nil, appErr
+	}
+	if includeReputation {
+		services, appErr = s.withSellerReputation(ctx, services)
+		if appErr != nil {
+			return nil, appErr
+		}
+	}
+	for i := range items {
+		items[i].Service = services[i]
+	}
+	return items, nil
 }
 
 func (s *Service) OwnerAPIServices(ctx context.Context, user User, filter apimarket.OwnerServiceFilter, page domain.PageRequest) (domain.Page[APIService], *domain.AppError) {

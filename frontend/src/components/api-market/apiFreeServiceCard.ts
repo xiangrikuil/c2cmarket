@@ -1,5 +1,6 @@
 import type { ConcreteProductCategoryKey } from '@/lib/productCategories'
 import type { ReputationSummary } from '@/types/reputation'
+import type { ApiMerchantBadge } from '@/lib/apiMerchantBadges'
 
 export type ApiFreeServiceCardData = {
   title: string
@@ -14,11 +15,14 @@ export type ApiFreeServiceCardData = {
   maximumPurchaseCny: string | number
   multiplier: string
   ttftLabel: string
-  recommendedConcurrency: string | number
+  declaredMaxConcurrency: string | number
   paymentWindowMinutes: number
   merchantName: string
   merchantType: string
   expiresAt: string
+  accountPoolLabel: string
+  merchantRefundCommitment: boolean
+  merchantBadges: ApiMerchantBadge[]
   sellerReputation?: ReputationSummary | null
   actionHref?: string
 }

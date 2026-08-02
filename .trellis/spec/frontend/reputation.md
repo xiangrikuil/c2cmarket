@@ -35,8 +35,10 @@ Public profile reputation fields follow the same nullable contract. A future uni
 - Public profile privacy flags may hide a fact, but hiding and zero are different states.
 - Real backend failures remain visible through the query error path. They must not fall back to mock reputation data.
 - Trust/risk presentation is informational and must not claim platform guarantee, official endorsement, or transaction safety.
+- Compact market-card summaries collapse the active + insufficient-tier + low-confidence combination to `状态正常 · 交易样本较少`; higher-evidence tiers and all caution/restricted states keep their authoritative tier, confidence, and warning presentation.
 - API order detail keeps the transaction flow primary. It renders the counterparty identity with only the authoritative completed-order count and role completion rate; full tier, confidence, cancellation, dispute, rating, and restriction details remain on the public profile or reputation surfaces.
-- The API order merchant identity and avatar link to the public profile only when the service identity mode is `public_profile`. Store aliases remain non-linkable and must not expose the underlying username.
+- API order detail renders participant names and avatars from the frozen order participant facts. It must not load the current API service to reconstruct identity or profile navigation.
+- API order contact cards render only the frozen order contact snapshots. A later public-profile link requires an explicit immutable participant ID plus privacy mode in the order contract; store aliases remain non-linkable and must not expose the underlying username.
 
 ### 4. Validation & Error Matrix
 
@@ -46,6 +48,8 @@ Public profile reputation fields follow the same nullable contract. A future uni
 | Backend-provided `0` | Render `0` without warning styling |
 | Positive count | Render the returned number with the neutral fact label |
 | Missing role completion rate | Render `暂无数据`; do not derive or invent a percentage in the UI |
+| Active state + insufficient tier + low confidence in a compact summary | Render `状态正常 · 交易样本较少` instead of three repetitive labels |
+| Current service identity differs from the order snapshot | Keep the frozen order participant name and contact facts; do not replace them |
 | Real adapter request fails | Visible error state; no mock/fixed replacement |
 | Store-alias merchant | Preserve existing identity privacy while rendering public reputation |
 

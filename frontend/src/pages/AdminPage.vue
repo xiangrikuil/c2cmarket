@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { RouterLink } from 'vue-router'
-import { AlertTriangle, ArrowRight, BarChart3, CarFront, Clock3, Code2, FileCheck2, Gauge, ListChecks, MessageSquareWarning, ScrollText, ShieldCheck } from 'lucide-vue-next'
+import { AlertTriangle, ArrowRight, BarChart3, CarFront, Clock3, Code2, FileCheck2, Gauge, ListChecks, Megaphone, MessageSquareWarning, ScrollText, ShieldCheck } from 'lucide-vue-next'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
@@ -102,7 +102,7 @@ const maxQueueValue = computed(() => Math.max(1, ...queueDistribution.value.map(
 
       <div class="space-y-5">
         <Card class="p-5"><div class="flex items-center gap-2 font-semibold"><FileCheck2 class="h-4 w-4 text-primary" />平台记录概况</div><dl class="mt-4 grid grid-cols-2 gap-3"><div v-for="item in marketHealth" :key="item.label" class="rounded-lg bg-muted/40 p-3"><dt class="text-xs text-muted-foreground">{{ item.label }}</dt><dd class="mt-1 text-xl font-semibold">{{ item.value }}</dd></div></dl><p class="mt-4 text-xs leading-5 text-muted-foreground">以上仅为当前管理查询返回的记录，不等同平台经营指标。</p></Card>
-        <Card class="p-5"><div class="flex items-center gap-2 font-semibold"><Gauge class="h-4 w-4 text-primary" />快捷入口</div><div class="admin-reference-shortcuts"><RouterLink to="/admin/carpools"><CarFront /><span>车源复核</span></RouterLink><RouterLink to="/admin/api-services"><Code2 /><span>服务审核</span></RouterLink><RouterLink to="/admin/reports"><MessageSquareWarning /><span>举报纠纷</span></RouterLink><RouterLink to="/admin/logs"><ScrollText /><span>审计日志</span></RouterLink></div></Card>
+        <Card class="p-5"><div class="flex items-center gap-2 font-semibold"><Gauge class="h-4 w-4 text-primary" />快捷入口</div><div class="admin-reference-shortcuts"><RouterLink to="/admin/carpools"><CarFront /><span>车源复核</span></RouterLink><RouterLink to="/admin/api-services"><Code2 /><span>服务审核</span></RouterLink><RouterLink to="/admin/api-promotions"><Megaphone /><span>API 推广</span></RouterLink><RouterLink to="/admin/reports"><MessageSquareWarning /><span>举报纠纷</span></RouterLink><RouterLink to="/admin/logs"><ScrollText /><span>审计日志</span></RouterLink></div></Card>
         <Card class="p-5"><div class="flex items-center gap-2 font-semibold"><Clock3 class="h-4 w-4 text-primary" />最近审计动作</div><div v-if="recentLogs.length" class="mt-4 space-y-3"><RouterLink v-for="row in recentLogs" :key="row.id" to="/admin/logs" class="block border-b border-border pb-3 last:border-0 last:pb-0"><div class="text-sm font-medium">{{ row.primary }}</div><div class="mt-1 text-xs text-muted-foreground">{{ row.secondary }} · {{ row.owner }}</div></RouterLink></div><p v-else class="mt-4 text-sm text-muted-foreground">暂无审计记录。</p></Card>
         <Card v-if="allRows.some(highRisk)" class="border-destructive/25 p-5"><div class="flex gap-3"><AlertTriangle class="mt-0.5 h-5 w-5 shrink-0 text-destructive" /><div><h2 class="font-semibold">最近异常</h2><p class="mt-2 text-sm text-muted-foreground">检测到 {{ allRows.filter(highRisk).length }} 条高风险或异常上下文，请优先从待办队列进入处理。</p></div></div></Card>
       </div>

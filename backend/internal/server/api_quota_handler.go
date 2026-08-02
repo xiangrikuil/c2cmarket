@@ -156,7 +156,7 @@ type publicAPIQuotaOfferResponse struct {
 	SellerIdentityType        string                 `json:"sellerIdentityType"`
 	SellerLinuxDOBound        bool                   `json:"sellerLinuxDoBound"`
 	DeclaredTTFTBand          string                 `json:"declaredTtftBand"`
-	RecommendedConcurrency    int                    `json:"recommendedConcurrency"`
+	DeclaredMaxConcurrency    int                    `json:"declaredMaxConcurrency"`
 	PerformanceConfirmedAt    *string                `json:"performanceConfirmedAt,omitempty"`
 	PerformanceDisclaimer     string                 `json:"performanceDisclaimer"`
 	SaleCutoffAt              string                 `json:"saleCutoffAt"`
@@ -764,7 +764,7 @@ func toPublicAPIQuotaOfferResponse(item apiquota.OfferCard) publicAPIQuotaOfferR
 		BatchStatus:           item.BatchStatus, ServiceTitle: item.ServiceTitle,
 		SellerDisplayName: item.SellerDisplayName, SellerIdentityType: item.SellerIdentityType,
 		SellerLinuxDOBound: item.SellerLinuxDOBound, DeclaredTTFTBand: item.DeclaredTTFTBand,
-		RecommendedConcurrency: item.RecommendedConcurrency, PerformanceConfirmedAt: formatOptionalTime(item.PerformanceConfirmedAt),
+		DeclaredMaxConcurrency: item.DeclaredMaxConcurrency, PerformanceConfirmedAt: formatOptionalTime(item.PerformanceConfirmedAt),
 		PerformanceDisclaimer: item.PerformanceDisclaimer, SaleCutoffAt: item.SaleCutoffAt.UTC().Format(time.RFC3339),
 		ExpiresAt: item.ExpiresAt.UTC().Format(time.RFC3339), CurrentRound: currentRound, NextRound: nextRound,
 		AvailableCopies: item.AvailableCopies, CredentialAvailableCopies: item.CredentialAvailableCopies,
