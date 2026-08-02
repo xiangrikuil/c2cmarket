@@ -10,6 +10,7 @@ import {
   Code2,
   Car,
   ExternalLink,
+  Gift,
   Home,
   LogIn,
   LogOut,
@@ -53,6 +54,7 @@ import { ACCOUNT_RECOVERY_PATH, isAccountRecoveryAllowedPath, isAccountRecoveryC
 import { usePersistentSidebar } from '@/composables/usePersistentSidebar'
 import { logoutBackendSession } from '@/lib/backendClient'
 import { loginRoute } from '@/lib/authNavigation'
+import { usePromotionRewardPublicConfig } from '@/queries/usePromotionRewardQueries'
 
 const route = useRoute()
 const router = useRouter()
@@ -69,8 +71,9 @@ const showLoginAction = computed(() => authResolved.value && !isAuthenticated.va
 const { data: notifications } = useNotifications(isAuthenticated)
 const workspaceQueriesEnabled = computed(() => Boolean(myProfile.value))
 const { data: ownedCarpools } = useMyCarpools(workspaceQueriesEnabled)
-const { data: ownedApiServices } = useMyApiServices(workspaceQueriesEnabled)
+const { data: ownedApiServices } = useMyApiServices('all', workspaceQueriesEnabled)
 const { data: navigationBadges } = useNavigationBadges(computed(() => Boolean(myProfile.value)))
+const { data: promotionRewardConfig } = usePromotionRewardPublicConfig()
 useRealtimeSync(computed(() => Boolean(myProfile.value)))
 
 const buyerApiActionCount = computed(() => navigationBadges.value?.buyer.apiOrderActions ?? 0)
@@ -119,7 +122,7 @@ const navGroups = computed(() => {
     title: '我的交易',
     items: [
       { label: '我的上车', to: '/my/rides', count: buyerCarpoolActionCount.value, icon: UsersRound },
-      { label: '我的 API 订单', to: '/my/api-orders', count: buyerApiActionCount.value, icon: ShoppingBag },
+      { label: 'API 购买订单', to: '/my/api-orders', count: buyerApiActionCount.value, icon: ShoppingBag },
       { label: '收藏', to: '/my/favorites', count: null, icon: Star },
       { label: '通知', to: '/my/notifications', count: unreadBusinessCount.value, icon: Bell },
     ],
@@ -130,7 +133,7 @@ const navGroups = computed(() => {
       { label: '我的车源', to: '/my/carpools', count: null, icon: Car },
       { label: '上车申请', to: '/merchant/carpool-applications', count: ownerCarpoolActionCount.value, icon: UserCog },
       { label: '我的 API 服务', to: '/my/api-services', count: null, icon: Code2 },
-      { label: 'API 订单', to: '/merchant/api-orders', count: merchantApiActionCount.value, icon: PackageSearch },
+      { label: 'API 销售订单', to: '/merchant/api-orders', count: merchantApiActionCount.value, icon: PackageSearch },
     ],
   }
   const accountGroup = {
@@ -139,6 +142,7 @@ const navGroups = computed(() => {
       { label: '个人中心', to: '/my', count: null, icon: UserRound },
       { label: '联系与收款', to: '/my/contacts', count: null, icon: MessageSquarePlus },
       { label: '信誉与成长', to: '/my/reputation', count: null, icon: BadgeCheck },
+      ...(promotionRewardConfig.value?.programEnabled ? [{ label: '推广权益', to: '/my/promotion-benefits', count: null, icon: Gift }] : []),
       { label: '安全设置', to: '/my/account', count: null, icon: ShieldCheck },
       { label: '反馈', to: '/my/feedback', count: feedbackMenuUnreadCount.value, icon: CircleHelp },
     ],

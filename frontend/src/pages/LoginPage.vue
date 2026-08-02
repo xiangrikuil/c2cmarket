@@ -25,6 +25,8 @@ import {
   type BackendSession,
 } from '@/lib/backendClient'
 import { normalizeReturnTo } from '@/lib/authNavigation'
+import { trackAnalytics } from '@/lib/analytics'
+import { captureReferralCode, getReferralCapture } from '@/lib/referralCapture'
 
 const route = useRoute()
 const router = useRouter()
@@ -59,6 +61,9 @@ const linuxDoIconPaths = [
 ] as const
 
 onMounted(async () => {
+  const referral = Array.isArray(route.query.ref) ? route.query.ref[0] : route.query.ref
+  captureReferralCode(referral)
+  trackAnalytics('login_page_view', { source_route: '/login' })
   await refreshSession()
 })
 
@@ -77,7 +82,11 @@ async function refreshSession() {
 async function loginWithLinuxDo() {
   oauthLoading.value = true
   try {
-    const { authorizationUrl } = await startOAuthLogin(returnTo.value)
+    const { authorizationUrl } = await startOAuthLogin(returnTo.value, getReferralCapture())
+    trackAnalytics('oauth_login_start', {
+      method: 'oauth_linux_do',
+      source_route: '/login',
+    })
     window.location.assign(authorizationUrl)
   } catch (error) {
     toast.error(error instanceof Error ? error.message : '启动 linux.do 登录失败')
@@ -97,6 +106,10 @@ async function submitPasswordLogin() {
     session.value = await loginWithPassword({
       username: trimmedUsername,
       password: password.value,
+    })
+    trackAnalytics('login_success', {
+      method: 'password',
+      source_route: '/login',
     })
     password.value = ''
     toast.success('已登录')

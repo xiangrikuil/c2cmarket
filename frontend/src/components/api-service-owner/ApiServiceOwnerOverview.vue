@@ -84,8 +84,8 @@ const quotaExpiration = computed(() => {
         </div>
         <div class="grid grid-cols-[20px_minmax(96px,0.7fr)_minmax(0,1fr)] items-start gap-3 text-sm">
           <UsersRound class="mt-0.5 h-4 w-4 text-muted-foreground" />
-          <dt class="text-muted-foreground">建议并发</dt>
-          <dd class="text-right font-medium">{{ service.recommendedConcurrency ?? '未声明' }}</dd>
+		  <dt class="text-muted-foreground">商户声明最大并发</dt>
+          <dd class="text-right font-medium">{{ service.declaredMaxConcurrency ?? '未声明' }}</dd>
         </div>
         <div class="grid grid-cols-[20px_minmax(96px,0.7fr)_minmax(0,1fr)] items-start gap-3 text-sm">
           <WalletCards class="mt-0.5 h-4 w-4 text-muted-foreground" />

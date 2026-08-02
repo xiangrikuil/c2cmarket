@@ -14,6 +14,8 @@ func TestAPIOrderResponseIncludesBuyerAndSellerReputation(t *testing.T) {
 	now := time.Date(2026, 7, 24, 12, 0, 0, 0, time.UTC)
 	buyer := testReputationSnapshot("buyer-1", reputation.RoleBuyer, reputation.ScopeAPI)
 	seller := testReputationSnapshot("seller-1", reputation.RoleSeller, reputation.ScopeAPI)
+	completionRate := 0.75
+	seller.Metrics.RoleCompletionRate = &completionRate
 	response := toAPIOrderResponse(apiorder.Order{
 		ID:               "order-1",
 		BuyerUserID:      "buyer-1",
@@ -30,5 +32,8 @@ func TestAPIOrderResponseIncludesBuyerAndSellerReputation(t *testing.T) {
 	}
 	if response.SellerReputation == nil || response.SellerReputation.Role != reputation.RoleSeller {
 		t.Fatalf("seller reputation missing: %#v", response.SellerReputation)
+	}
+	if response.SellerReputation.RoleCompletionRate == nil || *response.SellerReputation.RoleCompletionRate != completionRate {
+		t.Fatalf("seller completion rate missing: %#v", response.SellerReputation)
 	}
 }

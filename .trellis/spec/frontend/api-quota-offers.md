@@ -55,10 +55,13 @@ URL contract:
 - Generic `ApiServicePublishPage` entry renders only three peer choices: `自由额度`, `固定额度包`, and `限时额度包`. It must not default a mode or render the editor/preview before the seller chooses.
 - The publish-mode URL is authoritative: `mode=free`, `mode=package`, and `mode=limited` restore their matching editor. Invalid modes return to the chooser. Legacy `after=quota` maps to `limited`; contextual `发布限时额度包` actions still enter the existing limited workflow directly.
 - Free mode maps to `metered_credit`; package mode maps to `fixed_package`; limited mode continues through the prerequisite base-service flow. The fixed-package editor is a peer mode surface and must not be nested under another billing-mode radio group.
-- The limited workflow must say that the current page creates the prerequisite base service. Fixed USD allowance, total CNY, offer multiplier, inventory, continuous/scheduled sale mode, absolute expiry, cutoff, and delivery inventory are configured in the next `#quota-offers` step; the preview must not invent those values early.
-- The publish stepper reflects the real workflow. Limited publishing treats its selected mode as complete and starts at `配置基础服务`; its primary action is `保存基础服务，下一步设置额度包`. Free and package publishing start with their mode-specific price/package configuration and use `发布自由额度服务` or `发布固定额度包`.
+- The limited workflow must say that the current page creates the prerequisite base service. Fixed USD allowance, total CNY, inventory, continuous/scheduled sale mode, absolute expiry, cutoff, and delivery inventory are configured in the next `#quota-offers` step. The offer multiplier inherits the base service default and is not configured again; the preview must not invent the remaining values early.
+- The publish stepper reflects the real workflow and contains exactly three steps. Limited publishing treats its selected mode as complete, starts at `配置基础服务`, and uses `保存基础服务，下一步设置额度包`; the third step is completed on the dedicated quota page. Free and package publishing use three editable configuration steps and publish directly from `交易与服务` through `发布自由额度服务` or `发布固定额度包`.
 - The publish stepper uses the shared shadcn-vue `StepperSeparator`, but the page must provide an explicit non-zero horizontal height because the shared separator does not size itself. Completed segments use the primary color and incomplete segments use the border color.
 - API quota publish pages use one progressive interaction contract: explicit current/completed step state, exactly one expanded step, real summaries for completed steps, compact pending rows, and revisitable completed steps. Continue validates only the current step; final publication validates the complete form and returns focus to the first error-owning step without rebuilding form state.
+- New API services default to `public_profile`. The identity section states that the community identity is public by default and exposes one explicit checkbox to opt into `store_alias`; the rush publisher uses the same default when it creates a prerequisite service.
+- The generic publisher has no separate confirmation step or repeated seller checklist. Completed configuration steps remain revisitable, the adjacent buyer preview is the only review surface, and the sticky action bar shows completeness plus the final publish action on step three. Below the desktop-preview breakpoint, that final action bar also exposes the shared preview dialog without creating another preview tree. Final publication validates the complete form and returns focus to the first error-owning step.
+- The shared free-quota marketplace card shows one or two model tags directly. For three or more models it shows the first two tags plus `+N`, while the subtitle states the distribution system and total supported-model count. The full model list remains on the service detail page. Publish-preview purchase controls remain visually primary but are non-interactive and visibly labeled `预览状态，不可操作`.
 - `ApiQuotaRushPublishPage` begins with `选择要发布额度的 API 服务` and a compact `我的 API 服务` list. `新建 API 服务` is a secondary action and must not be a peer tab beside service selection.
 - Existing-service rows show title, orderability, model summary, and a stable short service ID. The list has a bounded height with internal scrolling, and the selected row is repeated in a compact `当前服务` summary.
 - A `serviceId` query selects only that exact eligible service. If it is missing or no longer orderable, show the explicit unavailable state and never select a different service.
@@ -77,11 +80,11 @@ URL contract:
 - The free-amount public query contains only orderable services, so its cards must not repeat a static `可创建订单` badge. Non-orderable services remain visible only in owner/admin workspaces with their authoritative reason.
 - Free-amount cards show `¥ / $1`, available USD, minimum purchase, multiplier, TTFT, concurrency, payment window, seller, CNY order range, gateway, expiry, and reputation. Their full-width action navigates to the existing service detail so the buyer can choose an amount; it must not call the fixed-offer order mutation. The repeated merchant-declaration disclaimer belongs in the free-market alert, not every card.
 - Fixed-session and other limited-offer grids keep three columns at the desktop `xl` breakpoint. The free-amount grid is centered, capped at `1640px`, and uses `repeat(auto-fit, minmax(min(100%, 330px), 1fr))`. This keeps at most four equal flexible columns, distributes spare row width into the cards instead of a blank right edge or oversized gaps, fits three columns at `1440x900`, and uses one fluid mobile track capped at `375px`.
-- A normal free-amount card is `342px` high and must satisfy `scrollHeight <= clientHeight`; active reputation uses the compact one-line summary. A caution or restricted reputation card uses `min-height: 342px` and may grow so its warning and public badges are never clipped.
+- A normal free-amount card is `360px` high and must satisfy `scrollHeight <= clientHeight`; active reputation uses the compact one-line summary. A caution or restricted reputation card uses `min-height: 360px` and may grow so its warning and public badges are never clipped.
 - Limited cards keep four performance metrics in one row at `sm` and above and `2x2` on mobile. Compact free cards keep all four metrics in one row, including at `390px`, while transaction details remain `2x2`. Purchase buttons stay full width and `40px` high.
 - Countdown presentation derives from server timestamps through `apiQuotaOfferUi.ts`; expired, cutoff, not-started, sold-out, and credential-shortage states must not be inferred from button text.
 - Purchase confirmation is fixed-value. Buyers cannot submit or edit price, USD allowance, multiplier, cutoff, or expiry. Scheduled orders include the current `saleRoundId`; continuous orders omit it.
-- New offer forms default `modelMultiplier` to `1.0000` but keep the input editable for every distribution system, including Sub2API.
+- New offer forms do not expose a `modelMultiplier` input. Models, fixed packages, and limited quota offers inherit the selected API service's positive default multiplier. The frontend still submits `modelMultiplier` because the backend persists it as an immutable offer/order snapshot.
 - Order detail renders the frozen `quotaSnapshot`; it must not recalculate historical price, multiplier, timing, TTFT, or delivery information from the current offer/service.
 - `api.ts` is the mock/real facade. Real mode uses `apiMarketBackend.ts` and `backendClient.ts`; a real failure must not fall back to mock success data.
 - Query invalidation includes public quota lists/details, owner batches/offers/rounds/credential summaries, and affected API order queries.
@@ -117,7 +120,7 @@ URL contract:
 - Good: the first market render selects `限时额度包`, while switching to `自由额度` updates the URL and preserves the legacy amount input flow.
 - Good: a seller selects `发布限时额度包`, chooses an existing API service, and lands at that service's `#quota-offers` management section.
 - Good: an incomplete account finishes email/password setup, clicks `继续发布限时额度包`, and returns to the `选择 API 服务` step.
-- Good: a Sub2API seller enters `1.2500`; the owner table, public card, purchase dialog, and order snapshot all display `1.25x`.
+- Good: a seller configures one API service multiplier; its model rows and newly created fixed or limited packages use that same value, while the owner table, public card, purchase dialog, and order snapshot display the frozen snapshot.
 - Good: a Claude offer uses the coral identity border/icon/price while an active sale still uses the shared orderable status badge and blue purchase button.
 - Good: a GPT free-amount service uses the same purple identity surfaces, shows `¥0.80 / $1` and available USD, then opens the service detail for amount selection.
 - Base: a continuous `$50 / ¥5` offer confirms ten-minute payment and no round ID.
@@ -134,27 +137,28 @@ URL contract:
 
 ### 6. Tests Required
 
-- Vitest: default tab/query, `intent=quota` entry, account-recovery `returnTo` preservation, `after=quota` post-publish navigation, quota-section anchor, countdown boundaries, fixed amount, five/ten-minute windows, Problem Details mapping, cross-offer round limit, cancellation release, CSV non-persistence, auto-delivery, editable non-one Sub2API multiplier, real adapter fields, and realtime invalidation.
+- Vitest: default tab/query, `intent=quota` entry, account-recovery `returnTo` preservation, `after=quota` post-publish navigation, quota-section anchor, countdown boundaries, fixed amount, five/ten-minute windows, Problem Details mapping, cross-offer round limit, cancellation release, CSV non-persistence, auto-delivery, service-default multiplier inheritance, real adapter fields, and realtime invalidation.
 - Publish-page regression tests cover the null/default chooser, all three current query modes, legacy `after=quota`, invalid mode handling, corrected labels, removal of the nested billing choice, mode-specific primary actions, limited preview fields, buyer-flow copy, and forbidden wording absence.
 - Progressive publish tests cover active/completed/pending state, visitable-step rules, first-error step mapping, completed summaries, sticky primary action, and the shared responsive preview boundary.
+- Publish source regressions cover the `public_profile` defaults in both service-creation entry points, the explicit store-alias opt-in copy, the exact three-step workflow, direct publication from step three without a duplicate confirmation checklist, the shared marketplace-card preview, and the one/two/many model-tag compaction rules.
 - Market-card source regressions assert both limited variants and the free-amount variant use `quota-offer-card`, `data-category`, shared product-category inference, the six static CSS selectors, full-width brand buttons, the centered `1640px` free grid with flexible `330px` minimum tracks, `342px` normal card height, compact active reputation, and no unsupported `自动交付` / `安全可靠` / `平台担保` wording.
 - Free-amount market cards omit source-author verification entirely. API service detail hides `not_submitted`, `pending`, and `expired`, and displays the badge only for `verified` or `mismatch`; the backend field remains unchanged.
 - Type/build: `pnpm --dir frontend typecheck`, then run `pnpm --dir frontend build` with `NUXT_PUBLIC_API_MODE=real`, `NUXT_PUBLIC_API_BASE_URL`, and `NUXT_API_BASE_URL`.
-- Browser: `1920x1080`, `1440x900`, and `390x844` for free-market cards; assert first-row counts of four, three, and one respectively, normal card dimensions of approximately `398x342`, `383x342`, and `347x342`, `scrollHeight <= clientHeight`, four metric columns, `40px` purchase buttons, no page-level horizontal overflow, and no console warnings/errors. At `1920x1080`, the centered grid is `1640px` wide and must not create a fifth column. At `1440x900` and `390x844`, the generic publish chooser must show exactly three modes, no editor/preview, and no page-level horizontal overflow; all three mode deep links and legacy `after=quota` remain covered by the broader publish suite.
+- Browser: `1920x1080`, `1440x900`, and `390x844` for free-market cards; assert first-row counts of four, three, and one respectively, normal card dimensions of approximately `398x360`, `383x360`, and `347x360`, `scrollHeight <= clientHeight`, four metric columns, `40px` purchase buttons, compact model tags, no page-level horizontal overflow, and no console warnings/errors. At `1920x1080`, the centered grid is `1640px` wide and must not create a fifth column. At `1440x900` and `390x844`, the generic publish chooser must show exactly three modes, no editor/preview, and no page-level horizontal overflow; all three mode deep links and legacy `after=quota` remain covered by the broader publish suite.
 
 ### 7. Wrong vs Correct
 
 #### Wrong
 
 ```ts
-const modelMultiplier = distributionSystem === 'sub2api' ? '1.0000' : form.modelMultiplier
+const modelMultiplier = offerForm.modelMultiplier
 const responseTime = service.paymentWindowMinutes
 ```
 
 #### Correct
 
 ```ts
-const modelMultiplier = form.modelMultiplier // defaults to 1.0000, remains editable
+const modelMultiplier = normalizeDecimal(selectedService.defaultMultiplier, 4)
 const responseTime = offer.declaredTtftBand // merchant-declared, unverified
 ```
 
@@ -267,13 +271,12 @@ const copied = {
   name: offer.name,
   usdAllowance: offer.usdAllowance,
   priceCny: offer.priceCny,
-  modelMultiplier: offer.modelMultiplier,
   deliveryMode: offer.deliveryMode,
   deliveryEtaMinutes: offer.deliveryEtaMinutes,
 }
 ```
 
-The server owns orderability and timing; copy drafts carry stable commercial settings only.
+The server owns orderability and timing; copy drafts carry stable editable commercial settings only. Multiplier always comes from the currently selected service.
 
 ## Scenario: Role-Aware API Order Detail And Buyer Review
 

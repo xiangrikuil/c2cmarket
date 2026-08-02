@@ -35,6 +35,7 @@ export const paymentMethodLabels: Record<PaymentMethodCode, string> = {
   app_store_gift_card: 'App Store 礼品卡',
   google_play_gift_card: 'Google Play 礼品卡',
   paypal: 'PayPal',
+  u_card: 'U 卡',
   other: '其他',
 }
 
@@ -49,9 +50,9 @@ export function distributionMethodLabel(value: CarpoolDistributionMethod | '' | 
 }
 
 export function adminAccountLabel(value: boolean | null | undefined) {
-  if (value === true) return '提供管理员'
-  if (value === false) return '不提供管理员'
-  return '待选择'
+  if (value === true) return '提供管理员账号'
+  if (value === false) return '不提供管理员账号'
+  return '未声明'
 }
 
 export function distributionFieldsComplete(form: Pick<CarpoolPublishForm, 'distributionMethod' | 'distributionMethodNote' | 'providesAdminAccount'>) {
@@ -152,16 +153,19 @@ export function warrantyPostText(warranty: CarpoolWarrantyConfig) {
   return parts.join('；')
 }
 
-export function openingChannelDisplayName(code: CarpoolPublishForm['openingChannelCode'], channelsByCode: Map<string, OpeningChannelOption>) {
+export function openingChannelDisplayName(code: CarpoolPublishForm['openingChannelCode'], channelsByCode: Map<string, OpeningChannelOption>, custom = '') {
   if (!code) return ''
+  if (code === 'other') return custom.trim()
   return channelsByCode.get(code)?.displayName ?? openingChannelLabels[code]
 }
 
-export function paymentMethodDisplayNames(codes: string[], methodsByCode: Map<string, PaymentMethodOption>) {
-  return codes.map(code => methodsByCode.get(code)?.displayName ?? paymentMethodLabels[code as PaymentMethodCode]).filter(Boolean)
+export function paymentMethodDisplayName(code: CarpoolPublishForm['paymentMethodCode'], methodsByCode: Map<string, PaymentMethodOption>, custom = '') {
+  if (!code) return ''
+  if (code === 'other') return custom.trim()
+  return methodsByCode.get(code)?.displayName ?? paymentMethodLabels[code]
 }
 
-export function canBuildLinuxDoPostText(
+export function canBuildCarpoolShareText(
   form: CarpoolPublishForm,
   regionsByCode: Map<string, RegionOption>,
   channelsByCode: Map<string, OpeningChannelOption>,
@@ -176,8 +180,13 @@ export function canBuildLinuxDoPostText(
     && form.totalSeats >= 1
     && form.occupiedSeats >= 0
     && form.occupiedSeats <= form.totalSeats
-    && openingChannelDisplayName(form.openingChannelCode, channelsByCode)
-    && paymentMethodDisplayNames(form.paymentMethodCodes, methodsByCode).length === 1
+    && openingChannelDisplayName(form.openingChannelCode, channelsByCode, form.customOpeningChannel)
+    && paymentMethodDisplayName(form.paymentMethodCode, methodsByCode, form.customPaymentMethod)
+    && form.weeklyQuotaAmount
+    && form.monthlyQuotaAmount
+    && form.followsOfficialQuotaReset !== null
+    && form.vpsRegion.trim()
+    && form.supportsMainlandChinaDirectConnection !== null
     && distributionFieldsComplete(form)
     && form.accessArrangementMode !== 'not_allowed'
     && form.accessArrangementNote.trim().length >= 8
@@ -186,7 +195,7 @@ export function canBuildLinuxDoPostText(
   )
 }
 
-export function buildLinuxDoPostText(
+export function buildCarpoolShareText(
   form: CarpoolPublishForm,
   catalogById: Map<string, CarpoolProductCatalogItem>,
   regionsByCode: Map<string, RegionOption>,
@@ -197,8 +206,8 @@ export function buildLinuxDoPostText(
   const productName = productDisplayName(form, catalogById)
   const regionName = regionDisplayName(form, regionsByCode)
   const remaining = availableSeats(form)
-  const openingChannel = openingChannelDisplayName(form.openingChannelCode, channelsByCode) || '待确认'
-  const paymentMethods = paymentMethodDisplayNames(form.paymentMethodCodes, methodsByCode).join(' / ') || '待确认'
+  const openingChannel = openingChannelDisplayName(form.openingChannelCode, channelsByCode, form.customOpeningChannel) || '待确认'
+  const paymentMethod = paymentMethodDisplayName(form.paymentMethodCode, methodsByCode, form.customPaymentMethod) || '待确认'
   const distributionText = form.distributionMethod === 'other'
     ? `${distributionMethodLabel(form.distributionMethod)}：${form.distributionMethodNote.trim() || '待确认'}`
     : distributionMethodLabel(form.distributionMethod)
@@ -219,10 +228,13 @@ export function buildLinuxDoPostText(
     `开通区：${regionName}`,
     `席位：总 ${form.totalSeats} 人，已上车 ${form.occupiedSeats} 人，剩余 ${remaining} 席`,
     `价格：${priceText}`,
-    `倍率：${form.serviceMultiplier ?? '-'}x`,
+    `每周${product?.quotaLabel || '额度'}：${form.weeklyQuotaAmount ?? '待确认'} ${product?.quotaUnit || 'USD'}`,
     `${quotaLabel}：${quotaText}`,
+    `额度重置：${form.followsOfficialQuotaReset === null ? '待确认' : form.followsOfficialQuotaReset ? '跟随官方重置' : '不跟随官方重置'}`,
+    `VPS 区域：${form.vpsRegion.trim() || '待确认'}`,
+    `国内直连：${form.supportsMainlandChinaDirectConnection === null ? '待确认' : form.supportsMainlandChinaDirectConnection ? '支持' : '不支持'}`,
     `开通渠道：${openingChannel}`,
-    `付款方式：${paymentMethods}`,
+    `付款方式：${paymentMethod}`,
     `分发方式：${distributionText}`,
     `管理员账号：${adminAccountLabel(form.providesAdminAccount)}`,
     `访问安排：${form.accessArrangementNote.trim() || '待确认'}`,

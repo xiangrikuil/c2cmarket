@@ -80,7 +80,7 @@ type apiOrderResponse struct {
 	QuotaRoundEndsAtSnapshot      *string                             `json:"quotaRoundEndsAtSnapshot,omitempty"`
 	QuotaDistributionSnapshot     string                              `json:"quotaDistributionSystemSnapshot,omitempty"`
 	QuotaTTFTBandSnapshot         string                              `json:"quotaTtftBandSnapshot,omitempty"`
-	QuotaRecommendedConcurrency   int                                 `json:"quotaRecommendedConcurrencySnapshot,omitempty"`
+	QuotaDeclaredMaxConcurrency   int                                 `json:"quotaDeclaredMaxConcurrencySnapshot,omitempty"`
 	QuotaPerformanceConfirmedAt   *string                             `json:"quotaPerformanceConfirmedAtSnapshot,omitempty"`
 	QuotaPerformanceUnverified    bool                                `json:"quotaPerformanceUnverifiedSnapshot,omitempty"`
 	QuotaDeliveryETAMinutes       int                                 `json:"quotaDeliveryEtaMinutesSnapshot,omitempty"`
@@ -470,7 +470,7 @@ func toAPIOrderResponse(order apiorder.Order, ownerView bool, includeCredential 
 		QuotaRoundEndsAtSnapshot:      formatOptionalTime(order.QuotaRoundEndsAtSnapshot),
 		QuotaDistributionSnapshot:     order.QuotaDistributionSnapshot,
 		QuotaTTFTBandSnapshot:         order.QuotaTTFTBandSnapshot,
-		QuotaRecommendedConcurrency:   order.QuotaRecommendedConcurrency,
+		QuotaDeclaredMaxConcurrency:   order.QuotaDeclaredMaxConcurrency,
 		QuotaPerformanceConfirmedAt:   formatOptionalTime(order.QuotaPerformanceConfirmedAt),
 		QuotaPerformanceUnverified:    order.QuotaPerformanceUnverified,
 		QuotaDeliveryETAMinutes:       order.QuotaDeliveryETAMinutes,

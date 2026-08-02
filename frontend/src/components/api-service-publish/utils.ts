@@ -6,7 +6,7 @@ import {
   defaultApiPaymentWindowMinutes,
   enabledApiPaymentOptions,
 } from '@/lib/apiPaymentSettings'
-import type { ApiProviderCategory, ApiServicePaymentOption, ApiServicePublishForm, BillingMode, CatalogById, DistributionSystem, PublishPaymentMethod, WarrantyConfig } from './types'
+import type { AccountPoolType, ApiProviderCategory, ApiServicePaymentOption, ApiServicePublishForm, BillingMode, CatalogById, DistributionSystem, PublishPaymentMethod, WarrantyConfig } from './types'
 
 export const distributionLabels: Record<DistributionSystem, string> = {
   sub2api: 'Sub2API',
@@ -19,13 +19,13 @@ export const publishDistributionOptions = [
     value: 'sub2api',
     title: 'Sub2API',
     description: '基础服务默认 1.00x。',
-    detail: '限时额度包可在下一步独立设置倍率。',
+    detail: '模型、固定额度包和限时额度包统一继承。',
   },
   {
     value: 'other',
     title: '其他 API 接入',
     description: '适用于 NewAPI 或自建中转。',
-    detail: '商户填写默认服务倍率。',
+    detail: '商户只需填写一次服务默认倍率。',
   },
 ] satisfies Array<{
   value: Exclude<DistributionSystem, 'new_api_proxy'>
@@ -38,6 +38,19 @@ export const providerCategoryLabels: Record<ApiProviderCategory, string> = {
   gpt: 'GPT',
   claude: 'Claude',
   other: '其他',
+}
+
+export const accountPoolLabels: Record<AccountPoolType, string> = {
+  gpt_pro_20x: 'GPT Pro 20x',
+  gpt_pro_5x: 'GPT Pro 5x',
+  gpt_plus: 'GPT Plus',
+  custom: '其他（自行填写）',
+}
+
+export function accountPoolLabel(form: Pick<ApiServicePublishForm, 'accountPoolType' | 'accountPoolCustomName'>) {
+  if (!form.accountPoolType) return '待选择'
+  if (form.accountPoolType === 'custom') return form.accountPoolCustomName.trim() || '待填写其他号池'
+  return accountPoolLabels[form.accountPoolType]
 }
 
 export const billingLabels: Record<BillingMode, string> = {
@@ -121,14 +134,6 @@ export function applySimplifiedApiQuotaDefaults(form: ApiServicePublishForm) {
     customMultiplier: null,
     note: '',
   }
-  form.warranty = {
-    mode: 'no_warranty',
-    warrantyDays: null,
-    coverage: null,
-    compensation: null,
-    exclusions: null,
-    refundNote: null,
-  }
 }
 
 export function modelProviderCategory(provider: ModelCatalogItem['provider']): ApiProviderCategory {
@@ -192,7 +197,7 @@ export function generatedTitle(form: ApiServicePublishForm, catalogById: Catalog
 }
 
 export function warrantyLabel(warranty: WarrantyConfig) {
-  if (warranty.mode === 'upstream_refund_only') return '上游退款跟随'
-  if (warranty.mode === 'merchant_warranty') return `商户承诺 ${warranty.warrantyDays ?? 0} 天`
-  return '不作承诺'
+  if (warranty.mode === 'merchant_full_refund') return '商户全额退款承诺'
+  if (warranty.mode === 'no_warranty') return '无额外退款承诺'
+  return '待选择退款承诺'
 }

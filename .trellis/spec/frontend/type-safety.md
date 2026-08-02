@@ -296,6 +296,21 @@ export type ApiOrderPaymentInstructions = {
   paymentQrCodeDataUrl: string | null
   paymentExpiresAt: string
 }
+
+export type APIIntentPricingSnapshotProjection = {
+  models: string[]
+  multiplier: string
+  defaultMultiplier: number
+  usageVisibility: ApiUsageVisibility
+  usageVisibilitySnapshotMissing: boolean
+  merchantNote: string
+  merchantSupportNote: string
+  issue?: 'missing' | 'invalid'
+}
+
+projectAPIIntentPricingSnapshot(value: string): APIIntentPricingSnapshotProjection
+
+isApiOrderReceiptConfirmed(status: ApiOrderStatus): boolean
 ```
 
 ### 3. Contracts
@@ -308,6 +323,16 @@ export type ApiOrderPaymentInstructions = {
 - Buyer/seller order detail may render `deliveryCredential` with copy buttons and long-term visibility. Lists, public API service pages, notifications, reports, admin summaries, and search rows must not render raw API keys or passwords.
 - UI wording should say `交付凭证`, `买家专属`, and `提交后不可修改`; do not claim platform revocation support, and avoid `自动发货`, `平台担保`, `平台验真`, and `主账号密码`.
 - Real backend mode must call API order endpoints through `apiMarketBackend.ts` and must not catch failures to return mock orders.
+- Intent creation freezes `pricingSnapshot.models[].modelNameSnapshot`, each model's `merchantMultiplier`, `usageVisibility`, `merchantNote`, and seller-authored `merchantSupportNote`. Order creation copies that JSON unchanged.
+- `mapBackendAPIOrder` must project `order.pricingSnapshot`, not a current service response, `serviceTitleSnapshot`, or the separately fetched intent projection. The order record is the authority after creation even when the intent usually contains the same bytes.
+- Order detail renders every non-empty frozen model name in snapshot order with duplicates removed. A missing snapshot shows explicit historical-missing copy; malformed JSON shows an explicit unavailable state. Neither path may substitute the service title or current service models.
+- Order information labels seller-authored frozen content as `商户售后说明`. The fixed platform copy is a separate `平台交易边界` field and must not be written into or presented as seller input.
+- Buyer and merchant detail routes share this snapshot projection and page component. Their five-step workflow uses the existing shadcn-vue Stepper with an explicit non-zero separator height; single-choice dialogs use the official `RadioGroupItem` plus `Label` composition.
+- Buyer navigation, list titles, detail return actions, and buyer task summaries use `API 购买订单`; merchant equivalents use `API 销售订单`. Neutral administration/review domain copy may continue to use `API 订单`.
+- Merchant operating metrics apply search, time-range, and service filters before aggregation. The active status tab filters only table rows and must not change the metric values.
+- `已确认收款金额` includes only `paid_confirmed`, `delivery_submitted`, and `completed`, because each follows explicit merchant receipt confirmation. It excludes `pending_payment`, `payment_submitted`, `payment_issue`, and `cancelled`.
+- Cancelled merchant orders contribute only to the `已取消订单` count. The UI must not present a cancelled amount or include cancelled orders in revenue-like totals.
+- A merchant order table with six columns keeps an explicit minimum table width inside the shared `SoftTable` overflow container. Mobile root width must remain bounded while the table scrolls horizontally.
 
 ### 4. Validation & Error Matrix
 
@@ -319,14 +344,25 @@ export type ApiOrderPaymentInstructions = {
 | Seller submits `api_key_endpoint` | Payload includes `deliveryKind`, `apiBaseUrl`, `apiKey`, and optional `instructions`; the detail response shows the credential. |
 | Seller submits `login_account` | Payload includes `deliveryKind`, `panelLoginUrl`, `username`, `password`, and optional `instructions`; the detail response shows the credential. |
 | Order list receives a delivered order | It may show status and submitted time, but must not render raw `apiKey` or `password`. |
+| `pricingSnapshot` is empty on a historical order | Render historical-missing model/usage/seller-support copy; do not query mutable service values as a fallback. |
+| `pricingSnapshot` is malformed JSON | Render snapshot-unavailable model/multiplier/seller-support copy; do not display `serviceTitleSnapshot` as a model. |
+| `pricingSnapshot.models` contains several valid models | Render all unique `modelNameSnapshot` values and show one multiplier or `按模型分别计算` as appropriate. |
+| Merchant opens the cancelled status tab | Table rows show only cancelled orders; operating metrics retain the same search/time/service population. |
+| Merchant cancelled an unpaid order | `已取消订单` increments, while `已确认收款金额` remains unchanged. |
+| Merchant confirms receipt, delivers, or completes | The order amount is counted exactly once in `已确认收款金额`. |
 
 ### 5. Good/Base/Bad Cases
 
 - Good: buyer detail in `pending_payment` calls `readApiOrderPaymentInstructions()` and renders the frozen WeChat QR code plus merchant contact snapshot.
 - Good: seller detail in `paid_confirmed` submits `{ deliveryKind: 'api_key_endpoint', apiBaseUrl, apiKey, instructions }`, receives `deliveryCredential`, and the form becomes read-only.
+- Good: an order frozen with `GPT-4.1`, `GPT-4.1 mini`, and `GPT-4o` shows those three names even after the merchant edits the service title or enabled models.
 - Base: a delivered order list row shows `已交付` and `deliverySubmittedAt`, but no raw `apiKey` or `password` text.
+- Base: an older order without seller-support fields says `历史订单未冻结商户售后说明` beside the separate fixed platform boundary.
+- Good: one cancelled `¥10.00` order shows `已取消订单 1` and `已确认收款金额 ¥0.00`, including while the cancelled tab is active.
 - Bad: a page derives API order fulfillment from `ApiPurchaseIntent.status`, or renders a generic `deliveryNote` textarea that can be edited after delivery.
 - Bad: a list, notification, search result, report row, or admin summary renders `order.deliveryCredential.apiKey` or `order.deliveryCredential.password`.
+- Bad: `models: [intent.serviceTitleSnapshot]`, reading the current service to repair history, or labeling fixed platform copy as seller after-sales input.
+- Bad: labeling both role-specific routes `我的 API 订单`, aggregating merchant metrics from status-tab-filtered rows, or counting cancelled/submitted-payment amounts as confirmed receipts.
 
 ### 6. Tests Required
 
@@ -334,6 +370,12 @@ export type ApiOrderPaymentInstructions = {
 - Real-mode build: `pnpm --dir frontend build` with the required Nuxt runtime API variables.
 - Source scan for forbidden product wording outside the spec allowlist.
 - Adapter/review checks must verify `paymentQrCodeDataUrl` is mapped both in order-settings submit payloads and payment-instructions responses.
+- Backend intent tests must assert the JSON snapshot freezes model names/multipliers, usage visibility, merchant note, and merchant support note.
+- Frontend projection tests must cover one/many models, duplicate removal, different multipliers, historical missing fields, malformed JSON, and the rule that order mapping reads `order.pricingSnapshot`.
+- Order-detail source/browser checks must cover explicit Stepper separator dimensions and state color, `RadioGroupItem + Label` wiring, seller/platform field separation, and mobile page overflow.
+- Receipt-status unit tests must assert all seven API order statuses, including the three included and four excluded states.
+- Workspace source tests must assert buyer/seller labels, base-filter metric aggregation, cancelled count, confirmed-receipt wording, and the merchant table minimum width.
+- Browser checks must verify stable metric values across status tabs and confirm `documentElement.scrollWidth <= clientWidth` while the mobile table container remains horizontally scrollable.
 
 ### 7. Wrong vs Correct
 
@@ -357,6 +399,36 @@ This treats delivery as an editable generic note and leaks raw credentials from 
 ```
 
 The detail-only form submits a typed credential once; list rows render status helpers, not secret fields.
+
+#### Wrong: Reconstruct Frozen Order Fields
+
+```ts
+const models = [intent.serviceTitleSnapshot]
+const warranty = '最终金额和售后由双方站外确认'
+```
+
+#### Correct: Project The Order Snapshot And Keep Responsibility Explicit
+
+```ts
+const pricing = projectAPIIntentPricingSnapshot(order.pricingSnapshot ?? '')
+const models = pricing.models
+const merchantSupportNote = pricing.merchantSupportNote
+const platformTradeBoundary = '售后由双方站外确认；平台不代收、不托管、不担保、不代赔。'
+```
+
+#### Wrong: Aggregate Merchant Amounts From Visible Rows
+
+```ts
+const orderAmountTotal = filteredRows.value.reduce(addOrderAmount, '0.00')
+```
+
+#### Correct: Aggregate Confirmed Receipts From The Base Population
+
+```ts
+const confirmedReceiptAmount = baseFilteredRows.value
+  .filter(order => isApiOrderReceiptConfirmed(order.status))
+  .reduce(addOrderAmount, '0.00')
+```
 
 ---
 

@@ -61,12 +61,14 @@ In real backend mode, product catalog state belongs to `GET /api/v1/product-cate
 ### 1. Scope / Trigger
 
 - Trigger: frontend work touching post-login routing, `AppShell.vue`, `MyCenterPage.vue`, `/my/account`, login return targets, verified email state, or password state.
-- The first public registration/login path is linux.do OAuth. OAuth-created accounts have no default password, so the frontend must force users to complete recoverable login settings before ordinary business use.
+- The first public registration/login path is linux.do OAuth. OAuth-created accounts have no default password, so the frontend must force linux.do-bound users to complete recoverable login settings before ordinary business use. Unbound development or bootstrap accounts cannot configure a backup password and must not be blocked by that inapplicable requirement.
 
 ### 2. Signatures
 
 ```ts
-type AccountRecoveryProfile = Pick<UserProfile, 'emailVerified' | 'passwordConfigured'>
+type AccountRecoveryProfile = Pick<UserProfile, 'emailVerified' | 'passwordConfigured'> & {
+  linuxDoBinding: Pick<UserProfile['linuxDoBinding'], 'bound'>
+}
 
 const ACCOUNT_RECOVERY_PATH = '/my/account'
 
@@ -78,20 +80,21 @@ function sanitizeAccountRecoveryReturnTo(value: unknown): string | null
 
 ### 3. Contracts
 
-- The source of truth is `GET /api/v1/me/profile` mapped to `UserProfile.emailVerified` and `UserProfile.passwordConfigured`.
+- The source of truth is `GET /api/v1/me/profile` mapped to `UserProfile.emailVerified`, `UserProfile.passwordConfigured`, and `UserProfile.linuxDoBinding.bound`.
 - Do not store an additional "onboarding complete" flag in Pinia, localStorage, sessionStorage, or route meta.
 - Incomplete logged-in accounts must be redirected from ordinary business pages to `/my/account`.
 - Allowed paths before completion are intentionally narrow: root overview, login/mock route, `/my/account`, announcement detail pages, and public user profiles.
 - Redirects may preserve an internal `returnTo`, but `returnTo` must be same-origin path-only and must not point back to an allowed/setup page.
-- `/my/account` must show both requirements and let the user continue to the sanitized `returnTo` only after both are complete.
+- `/my/account` requires a verified email for every account. It requires and renders the backup-password step only when `linuxDoBinding.bound=true`; unbound accounts must not see a password action, password step, or recovery redirect caused only by `passwordConfigured=false`.
 - The gate is frontend-enforced. If backend API blocking is required later, create a separate backend policy task instead of hiding that decision in frontend code.
 
 ### 4. Validation & Error Matrix
 
 | Condition | Expected behavior |
 | --- | --- |
-| `emailVerified=false` or `passwordConfigured=false` and user opens `/carpools` | Redirect to `/my/account?returnTo=/carpools...`. |
-| Both fields are true | No redirect; original route remains usable. |
+| `emailVerified=false`, or a linux.do-bound user has `passwordConfigured=false`, and user opens `/carpools` | Redirect to `/my/account?returnTo=/carpools...`. |
+| Email is verified and the account is unbound | No password step or redirect caused by `passwordConfigured=false`. |
+| Email is verified and a linux.do-bound account has a password | No redirect; original route remains usable. |
 | Incomplete account opens `/my/account` | No redirect loop; recovery tasks render. |
 | Incomplete account opens `/u/:username` or `/announcements/:slug` | No redirect. |
 | `returnTo` is external, protocol-relative, blank, or points to setup/allowed path | Drop it and do not render a continue action. |

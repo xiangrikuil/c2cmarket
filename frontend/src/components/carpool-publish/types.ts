@@ -1,5 +1,3 @@
-export type ConfidenceLevel = 'high' | 'medium' | 'low'
-
 export type OpeningChannelCode =
   | 'web'
   | 'ios_app_store'
@@ -15,6 +13,7 @@ export type PaymentMethodCode =
   | 'app_store_gift_card'
   | 'google_play_gift_card'
   | 'paypal'
+  | 'u_card'
   | 'other'
 
 export type CarpoolWarrantyMode =
@@ -95,19 +94,23 @@ export type AccessArrangementMode =
   | 'not_allowed'
 
 export type CarpoolPublishForm = {
-  linuxDoTopicUrl: string
-  parsedTopicId: string | null
   productId: string
   customProductName: string | null
   regionCode: string
   customRegionName: string | null
   monthlyPriceCny: number | null
   serviceMultiplier: number | null
+  weeklyQuotaAmount: number | null
   monthlyQuotaAmount: number | null
+  followsOfficialQuotaReset: boolean | null
+  vpsRegion: string
+  supportsMainlandChinaDirectConnection: boolean | null
   totalSeats: number
   occupiedSeats: number
   openingChannelCode: OpeningChannelCode | ''
-  paymentMethodCodes: PaymentMethodCode[]
+  customOpeningChannel: string
+  paymentMethodCode: PaymentMethodCode | ''
+  customPaymentMethod: string
   distributionMethod: CarpoolDistributionMethod | ''
   distributionMethodNote: string
   providesAdminAccount: boolean | null
@@ -118,36 +121,6 @@ export type CarpoolPublishForm = {
   riskNoticeCode: string | null
   warranty: CarpoolWarrantyConfig
   rulesNote: string
-}
-
-export type ParsedLinuxDoTopic = {
-  topicId: string
-  topicUrl: string
-  title: string
-  authorUsername: string
-  authorUserId: string | null
-  createdAt: string
-  updatedAt: string
-  authorMatchesBoundUser: boolean
-  detected: {
-    productId: string | null
-    productText: string | null
-    regionCode: string | null
-    regionText: string | null
-    monthlyPriceCny: number | null
-    totalSeats: number | null
-    availableSeats: number | null
-    occupiedSeats: number | null
-    openingChannelId: OpeningChannelCode | null
-    paymentMethodIds: PaymentMethodCode[]
-    warrantyMode: CarpoolWarrantyMode | null
-  }
-  confidence: {
-    product: ConfidenceLevel | null
-    region: ConfidenceLevel | null
-    monthlyPrice: ConfidenceLevel | null
-    seats: ConfidenceLevel | null
-  }
 }
 
 export type CompletenessStatus = 'done' | 'pending' | 'conflict'
@@ -167,12 +140,14 @@ export type PublishTaskKey =
   | 'product'
   | 'region'
   | 'monthlyPrice'
+  | 'weeklyQuota'
   | 'monthlyQuota'
+  | 'quotaReset'
+  | 'connection'
   | 'openingChannel'
   | 'paymentMethods'
   | 'distribution'
   | 'rulesNote'
-  | 'linuxDoImport'
 
 export type PublishSectionKey =
   | 'basic'

@@ -76,9 +76,9 @@ func TestOAuthCallbackRedirectsToConfiguredFrontendOrigin(t *testing.T) {
 		returnTo string
 		want     string
 	}{
-		{name: "preserves safe frontend path", returnTo: "/market?tab=api", want: "https://staging.c2cmarket.shop/market?tab=api"},
-		{name: "rejects protocol relative target", returnTo: "//evil.example/path", want: "https://staging.c2cmarket.shop/"},
-		{name: "rejects absolute target", returnTo: "https://evil.example/path", want: "https://staging.c2cmarket.shop/"},
+		{name: "preserves safe frontend path", returnTo: "/market?tab=api", want: "https://staging.c2cmarket.shop/market?authOutcome=registered&tab=api"},
+		{name: "rejects protocol relative target", returnTo: "//evil.example/path", want: "https://staging.c2cmarket.shop/?authOutcome=registered"},
+		{name: "rejects absolute target", returnTo: "https://evil.example/path", want: "https://staging.c2cmarket.shop/?authOutcome=registered"},
 	}
 
 	for _, tt := range tests {
@@ -89,7 +89,10 @@ func TestOAuthCallbackRedirectsToConfiguredFrontendOrigin(t *testing.T) {
 			})
 			state := "oauth-state"
 			request := httptest.NewRequest(http.MethodGet, "/api/v1/auth/oauth/callback?state="+state+"&code=test-user", nil)
-			request.AddCookie(&http.Cookie{Name: oauthStateCookieName, Value: state + "|" + tt.returnTo})
+			request.AddCookie(&http.Cookie{Name: oauthStateCookieName, Value: encodeOAuthStateCookie(oauthStateCookiePayload{
+				State:    state,
+				ReturnTo: tt.returnTo,
+			})})
 			response := httptest.NewRecorder()
 
 			server.ServeHTTP(response, request)

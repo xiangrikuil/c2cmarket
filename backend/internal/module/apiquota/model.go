@@ -60,7 +60,7 @@ type Batch struct {
 	DistributionSystem        string
 	ServiceOrderable          bool
 	DeclaredTTFTBand          string
-	RecommendedConcurrency    int
+	DeclaredMaxConcurrency    int
 	PerformanceConfirmedAt    *time.Time
 	SourceType                string
 	SourceLabel               string
@@ -152,7 +152,7 @@ type OfferCard struct {
 	SellerIdentityType        string
 	SellerLinuxDOBound        bool
 	DeclaredTTFTBand          string
-	RecommendedConcurrency    int
+	DeclaredMaxConcurrency    int
 	PerformanceConfirmedAt    *time.Time
 	PerformanceDisclaimer     string
 	SaleCutoffAt              time.Time

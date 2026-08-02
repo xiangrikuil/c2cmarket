@@ -1,5 +1,4 @@
 import type { Carpool, PricingTier } from '@/data/mock'
-import { isSourceAuthorVerified } from '@/lib/sourceAuthorVerification'
 
 export const fullCapacityTooltip = '按全部名额坐满后平均分摊计算，仅作参考，最终以结算时有效人数为准。'
 
@@ -111,7 +110,6 @@ export function getPricingDisplay(carpool: Carpool): PricingDisplay {
 export function isCurrentTradable(carpool: Carpool) {
   return getRemainingSeats(carpool) > 0
     && carpool.confirmedWithin48h
-    && isSourceAuthorVerified(carpool.sourceAuthorVerification)
     && !carpool.hasInfoConflict
     && carpool.hasUnresolvedDispute === false
     && carpool.status === '可上车'

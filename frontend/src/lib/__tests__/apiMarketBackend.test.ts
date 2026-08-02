@@ -59,6 +59,11 @@ function backendPublicAPIService(overrides: Record<string, unknown> = {}) {
     declaredCnyPerUsdAllowance: '0.8000',
     declaredMaxUsdAllowancePerIntent: '500.000000',
     quotaExpiresAt: '2026-08-07T17:05:00Z',
+    accountPoolType: 'gpt_pro_5x',
+    accountPoolLabel: 'GPT Pro 5x',
+    declaredMaxConcurrency: 12,
+    merchantRefundCommitment: true,
+    merchantRefundPolicyVersion: 'api-merchant-refund-v1',
     minimumIntentCny: '10.00',
     maximumIntentCny: '300.00',
     usageVisibility: 'merchant_reported',
@@ -100,6 +105,27 @@ test('maps public orderable API service responses as online services', async () 
   assert.equal(service.reviewCount, null)
   assert.equal(service.unresolvedDisputes, null)
   assert.equal(service.sourceAuthorVerification?.status, 'pending')
+  assert.equal(service.accountPoolType, 'gpt_pro_5x')
+  assert.equal(service.accountPoolLabel, 'GPT Pro 5x')
+  assert.equal(service.declaredMaxConcurrency, 12)
+  assert.equal(service.merchantRefundCommitment, true)
+  assert.equal(service.merchantRefundPolicyVersion, 'api-merchant-refund-v1')
+})
+
+test('serializes structured commercial facts without writing the legacy merchant support note', async () => {
+  const { apiMarketBackend } = await loadAPIMarketModules()
+  const request = apiMarketBackend.toBackendServiceRequest({
+    accountPoolType: 'custom',
+    accountPoolCustomName: 'Claude Max',
+    declaredMaxConcurrency: 16,
+    warranty: { mode: 'merchant_full_refund' },
+  })
+
+  assert.equal(request.accountPoolType, 'custom')
+  assert.equal(request.accountPoolCustomName, 'Claude Max')
+  assert.equal(request.declaredMaxConcurrency, 16)
+  assert.equal(request.merchantRefundCommitment, true)
+  assert.equal('merchantSupportNote' in request, false)
 })
 
 test('maps API source-author verification independently from source URL presence', async () => {
@@ -125,7 +151,7 @@ test('maps public quota offer fields without deriving TTFT from payment windows'
   assert.equal(mapped.priceCny, '8.80')
   assert.equal(mapped.modelMultiplier, '1.0000')
   assert.equal(mapped.declaredTtftBand, 'under_1s')
-  assert.equal(mapped.recommendedConcurrency, 5)
+  assert.equal(mapped.declaredMaxConcurrency, 5)
   assert.equal(mapped.nextRound?.id, source.nextRound?.id)
 })
 
@@ -141,6 +167,67 @@ test('maps public-profile merchant identity and avatar from the backend projecti
   assert.equal(service.merchantDisplayName, 'Profile Owner')
   assert.equal(service.merchantUsername, 'profile-owner')
   assert.equal(service.merchantAvatarUrl, 'https://cdn.example.com/profile-owner.png')
+})
+
+test('maps the required owner sales summary without changing the public service projection', async () => {
+  const { apiMarketBackend } = await loadAPIMarketModules()
+  const service = apiMarketBackend.mapBackendOwnerAPIService({
+    ...backendPublicAPIService(),
+    salesSummary: {
+      overallState: 'selling',
+      channels: [
+        {
+          kind: 'flexible_quota',
+          state: 'selling',
+          availableUsdAllowance: '420.000000',
+        },
+        {
+          kind: 'limited_quota',
+          state: 'upcoming',
+          availableCopies: 48,
+          nextStartsAt: '2026-07-30T12:00:00Z',
+          saleCutoffAt: '2026-07-31T14:00:00Z',
+          expiresAt: '2026-07-31T15:00:00Z',
+        },
+      ],
+    },
+  })
+
+  assert.equal(service.salesSummary.overallState, 'selling')
+  assert.deepEqual(service.salesSummary.channels, [
+    {
+      kind: 'flexible_quota',
+      state: 'selling',
+      availableUsdAllowance: '420.000000',
+      availableCopies: undefined,
+      nextStartsAt: undefined,
+      saleCutoffAt: undefined,
+      expiresAt: undefined,
+    },
+    {
+      kind: 'limited_quota',
+      state: 'upcoming',
+      availableUsdAllowance: undefined,
+      availableCopies: 48,
+      nextStartsAt: '2026-07-30T12:00:00Z',
+      saleCutoffAt: '2026-07-31T14:00:00Z',
+      expiresAt: '2026-07-31T15:00:00Z',
+    },
+  ])
+})
+
+test('matches mock owner sales views with the backend filter contract', async () => {
+  const { api } = await loadAPIMarketModules()
+
+  assert.equal(api.matchesApiServiceSalesView('selling', 'active'), true)
+  assert.equal(api.matchesApiServiceSalesView('upcoming', 'active'), true)
+  assert.equal(api.matchesApiServiceSalesView('expired', 'active'), false)
+  assert.equal(api.matchesApiServiceSalesView('expired', 'expired'), true)
+  assert.equal(api.matchesApiServiceSalesView('paused', 'paused'), true)
+  assert.equal(api.matchesApiServiceSalesView('draft', 'draft'), true)
+  assert.equal(api.matchesApiServiceSalesView('offline', 'draft'), true)
+  assert.equal(api.matchesApiServiceSalesView('sold_out', 'all'), true)
+  assert.equal(api.matchesApiServiceSalesView('archived', 'all'), true)
 })
 
 test('builds buyer and merchant API order dispute paths', async () => {

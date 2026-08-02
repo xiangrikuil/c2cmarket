@@ -1,4 +1,5 @@
 import type { AdminRow } from '@/lib/api'
+import type { DisputeCase } from '@/api/generated/openapi'
 import type { CreateContactReportRequest, PublicDisputeRecord } from '@/data/mock'
 import { backendMutation, backendRequest, ensureBackendSession } from '@/lib/backendClient'
 
@@ -9,7 +10,7 @@ type ListResponse<T> = {
 
 type BackendReportTargetType = 'contact_snapshot' | 'public_user' | 'carpool_application' | 'carpool_membership' | 'api_purchase_intent' | 'api_order'
 type BackendReportReasonCode = 'unreachable' | 'contact_invalid' | 'impersonation' | 'description_mismatch' | 'seat_rule_dispute' | 'api_quota_dispute' | 'order_delivery_dispute' | 'other'
-type BackendPublicResultCode = 'no_action' | 'contact_invalid' | 'impersonation_confirmed' | 'description_mismatch' | 'rule_or_seat_issue' | 'api_delivery_issue' | 'other_resolved'
+type BackendPublicResultCode = DisputeCase['publicResultCode']
 
 type BackendReport = {
   id: string
@@ -36,30 +37,18 @@ type BackendReport = {
   version: number
 }
 
-type BackendDispute = {
-  id: string
-  reportId?: string
-  targetType: BackendReportTargetType
-  targetId: string
-  targetLabel: string
-  primaryUserId?: string
-  primaryUsername: string
-  primaryDisplayName: string
-  counterpartyUserId?: string
-  counterpartyUsername: string
-  counterpartyName: string
-  status: 'open' | 'waiting_info' | 'resolved' | 'closed'
+type BackendDispute = DisputeCase
+
+export type AdminReportDetail = BackendReport
+export type AdminDisputeDetail = BackendDispute
+
+export type ResolveAdminDisputeInput = {
+  disputeId: string
+  expectedVersion: number
+  reason: string
   publicSummary: string
   publicResultCode: BackendPublicResultCode
   publicResult: string
-  adminReason?: string
-  openedByAdminId?: string
-  openedAt: string
-  resolvedAt?: string | null
-  closedAt?: string | null
-  createdAt: string
-  updatedAt: string
-  version: number
 }
 
 type BackendAppeal = {
@@ -247,7 +236,7 @@ function mapReportRow(item: BackendReport): AdminRow {
   }
 }
 
-function mapDisputeRow(item: BackendDispute): AdminRow {
+export function mapAdminDisputeRow(item: AdminDisputeDetail): AdminRow {
   return {
     id: item.id,
     primary: item.publicSummary || item.targetLabel,
@@ -303,7 +292,7 @@ function mapPublicDispute(item: BackendPublicDispute): PublicDisputeRecord {
 }
 
 function mutationRow(result: BackendAdminMutation, fallback: AdminRow): AdminRow {
-  if (result.dispute) return mapDisputeRow(result.dispute)
+  if (result.dispute) return mapAdminDisputeRow(result.dispute)
   if (result.report) return mapReportRow(result.report)
   if (result.appeal) return mapAppealRow(result.appeal)
   return fallback
@@ -374,9 +363,10 @@ export async function backendAdminReportRows() {
     backendRequest<ListResponse<BackendDispute>>('/api/v1/admin/disputes'),
     backendRequest<ListResponse<BackendAppeal>>('/api/v1/admin/appeals'),
   ])
+  const disputeReportIds = new Set(disputes.items.map(item => item.reportId).filter(Boolean))
   return [
-    ...reports.items.map(mapReportRow),
-    ...disputes.items.map(mapDisputeRow),
+    ...reports.items.filter(item => item.status !== 'dispute_opened' && !disputeReportIds.has(item.id)).map(mapReportRow),
+    ...disputes.items.map(mapAdminDisputeRow),
     ...appeals.items.map(mapAppealRow),
   ]
 }
@@ -387,14 +377,33 @@ export async function backendAdminAppealRows() {
   return response.items.map(mapAppealRow)
 }
 
-async function adminReport(id: string) {
+export async function backendAdminReportDetail(id: string) {
   await ensureBackendSession('admin', true)
   return backendRequest<BackendReport>(`/api/v1/admin/reports/${encodeURIComponent(id)}`)
 }
 
-async function adminDispute(id: string) {
+export async function backendAdminDisputeDetail(id: string) {
   await ensureBackendSession('admin', true)
   return backendRequest<BackendDispute>(`/api/v1/admin/disputes/${encodeURIComponent(id)}`)
+}
+
+export async function backendResolveAdminDispute(input: ResolveAdminDisputeInput) {
+  await ensureBackendSession('admin', true)
+  const result = await backendMutation<BackendAdminMutation>(
+    `/api/v1/admin/disputes/${encodeURIComponent(input.disputeId)}/resolve`,
+    {
+      reason: input.reason,
+      publicSummary: input.publicSummary,
+      publicResultCode: input.publicResultCode,
+      publicResult: input.publicResult,
+    },
+    {
+      idempotencyPrefix: 'dispute-admin-resolve',
+      ifMatch: input.expectedVersion,
+    },
+  )
+  if (!result.dispute) throw new Error('纠纷裁决响应缺少最新案件数据。')
+  return result.dispute
 }
 
 async function adminAppeal(id: string) {
@@ -404,7 +413,7 @@ async function adminAppeal(id: string) {
 
 export async function backendRunReportAdminAction(row: AdminRow, action: 'approve' | 'request_changes' | 'take_down' | 'restore' | 'restrict' | 'warn' | 'suspend' | 'ban', reason: string) {
   if (row.backendKind === 'report' || row.targetType === 'report') {
-    const detail = await adminReport(row.id)
+    const detail = await backendAdminReportDetail(row.id)
     const pathAction = action === 'approve'
       ? 'triage'
       : action === 'request_changes'
@@ -427,17 +436,18 @@ export async function backendRunReportAdminAction(row: AdminRow, action: 'approv
   }
 
   if (row.backendKind === 'dispute' || row.targetType === 'dispute') {
-    const detail = await adminDispute(row.id)
-    const pathAction = action === 'approve' || action === 'restore'
-      ? 'resolve'
-      : action === 'request_changes' || action === 'warn'
+    if (action === 'approve' || action === 'restore') {
+      throw new Error('请使用纠纷裁决面板填写公开结果和内部原因。')
+    }
+    const detail = await backendAdminDisputeDetail(row.id)
+    const pathAction = action === 'request_changes' || action === 'warn'
         ? 'request-info'
         : 'close'
     const result = await backendMutation<BackendAdminMutation>(`/api/v1/admin/disputes/${encodeURIComponent(row.id)}/${pathAction}`, {
       reason: reason || '管理台纠纷处理',
       publicSummary: detail.publicSummary || reason || detail.targetLabel,
-      publicResultCode: pathAction === 'resolve' ? 'other_resolved' : 'no_action',
-      publicResult: pathAction === 'request-info' ? '等待补充信息' : reason || detail.publicResult || '已处理',
+      publicResultCode: 'no_action',
+      publicResult: pathAction === 'request-info' ? '等待补充信息' : '案件已关闭，未作责任认定',
     }, {
       idempotencyPrefix: `dispute-admin-${pathAction}`,
       ifMatch: detail.version,

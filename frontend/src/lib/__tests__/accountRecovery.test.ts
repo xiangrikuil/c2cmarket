@@ -11,14 +11,16 @@ import {
 const completeProfile = {
   emailVerified: true,
   passwordConfigured: true,
+  linuxDoBinding: { bound: true },
 }
 
 const incompleteProfile = {
   emailVerified: false,
   passwordConfigured: false,
+  linuxDoBinding: { bound: true },
 }
 
-test('account recovery requires both verified email and password', () => {
+test('linux.do account recovery requires both verified email and backup password', () => {
   assert.equal(isAccountRecoveryComplete(completeProfile), true)
   assert.equal(isAccountRecoveryComplete(incompleteProfile), false)
   assert.deepEqual(
@@ -26,9 +28,21 @@ test('account recovery requires both verified email and password', () => {
     ['email', 'password'],
   )
   assert.deepEqual(
-    accountRecoveryRequirements({ emailVerified: true, passwordConfigured: false }).map(item => [item.id, item.completed]),
+    accountRecoveryRequirements({ emailVerified: true, passwordConfigured: false, linuxDoBinding: { bound: true } }).map(item => [item.id, item.completed]),
     [['email', true], ['password', false]],
   )
+})
+
+test('unbound account recovery does not require or expose a backup password', () => {
+  const unboundProfile = {
+    emailVerified: true,
+    passwordConfigured: false,
+    linuxDoBinding: { bound: false },
+  }
+
+  assert.equal(isAccountRecoveryComplete(unboundProfile), true)
+  assert.deepEqual(accountRecoveryRequirements(unboundProfile).map(item => item.id), ['email'])
+  assert.equal(isAccountRecoveryComplete({ ...unboundProfile, emailVerified: false }), false)
 })
 
 test('account recovery allows only setup and public explanation paths before completion', () => {

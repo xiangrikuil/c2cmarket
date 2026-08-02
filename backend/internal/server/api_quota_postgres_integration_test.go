@@ -46,7 +46,7 @@ func TestPostgresAPIQuotaHTTPFlow(t *testing.T) {
 	now := time.Now().UTC()
 	serviceBody := strings.Replace(apiServicePayload(ownerContact.ID, "1.0000"), `"accessModes":`, `
 		"declaredTtftBand":"under_1s",
-		"recommendedConcurrency":24,
+		"declaredMaxConcurrency":24,
 		"performanceConfirmedAt":"`+now.Add(-time.Minute).Format(time.RFC3339)+`",
 		"accessModes":`, 1)
 	service := createAPIServiceWithPayload(t, server, owner, serviceBody, "pg-quota-service-create-"+suffix)

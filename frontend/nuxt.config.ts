@@ -44,7 +44,7 @@ export default defineNuxtConfig({
       exclude: ['../src/**/__tests__/**'],
     },
   },
-  modules: ['@nuxtjs/sitemap'],
+  modules: ['@nuxtjs/sitemap', '@formkit/auto-animate/nuxt'],
   hooks: {
     'pages:extend'(pages) {
       pages.splice(0, pages.length, ...routes.map((route) => {

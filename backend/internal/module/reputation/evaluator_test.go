@@ -10,7 +10,7 @@ func TestEvaluateSnapshotTierAndConfidenceBoundaries(t *testing.T) {
 	t.Parallel()
 
 	now := time.Date(2026, 7, 24, 12, 0, 0, 0, time.UTC)
-	rules := V1Rules()
+	rules := CurrentRules()
 	tests := []struct {
 		name        string
 		completions int
@@ -45,7 +45,7 @@ func TestEvaluateSnapshotCancellationRateBoundaries(t *testing.T) {
 	t.Parallel()
 
 	now := time.Date(2026, 7, 24, 12, 0, 0, 0, time.UTC)
-	rules := V1Rules()
+	rules := CurrentRules()
 	tests := []struct {
 		name         string
 		completions  int
@@ -93,7 +93,7 @@ func TestEvaluateSnapshotZeroDenominatorReturnsNullRates(t *testing.T) {
 		ScopeFacts{UnknownResponsibilityCancellationCount: 2},
 		nil,
 		time.Date(2026, 7, 24, 12, 0, 0, 0, time.UTC),
-		V1Rules(),
+		CurrentRules(),
 	)
 	if snapshot.Metrics.RoleCompletionRate != nil || snapshot.Metrics.RoleFaultCancelRate != nil {
 		t.Fatalf("zero denominator must return null rates: %#v", snapshot.Metrics)
@@ -116,7 +116,7 @@ func TestEvaluateSnapshotFaultCancellationProgressUsesRequiredCleanCompletions(t
 		},
 		nil,
 		time.Date(2026, 7, 24, 12, 0, 0, 0, time.UTC),
-		V1Rules(),
+		CurrentRules(),
 	)
 	for _, item := range snapshot.Progress {
 		if item.Code != "fault_cancel_rate" {
@@ -146,7 +146,7 @@ func TestEvaluateSnapshotBayesianRatingUsesPlatformPrior(t *testing.T) {
 		},
 		nil,
 		now,
-		V1Rules(),
+		CurrentRules(),
 	)
 	expected := (5.0 + 5.0*4.2) / 6.0
 	if snapshot.Metrics.WeightedRating == nil ||
@@ -162,7 +162,7 @@ func TestEvaluateSnapshotBayesianRatingUsesPlatformPrior(t *testing.T) {
 		ScopeFacts{VerifiedReviewCount: 1, RatingSum: 5, PlatformReviewCount: 19, PlatformAverageRating: 4.9},
 		nil,
 		now,
-		V1Rules(),
+		CurrentRules(),
 	)
 	expectedNeutral := (5.0 + 5.0*4.0) / 6.0
 	if neutral.Metrics.WeightedRating == nil ||
@@ -191,7 +191,7 @@ func TestEvaluateSnapshotRiskOverridesReliableContinuity(t *testing.T) {
 		PlatformAverageRating:    4,
 		ActiveRestrictionCount:   1,
 	}
-	snapshot := EvaluateSnapshot(SnapshotKey{UserID: "user-1", Role: RoleSeller, Scope: ScopeAPI}, facts, &previous, now, V1Rules())
+	snapshot := EvaluateSnapshot(SnapshotKey{UserID: "user-1", Role: RoleSeller, Scope: ScopeAPI}, facts, &previous, now, CurrentRules())
 	if snapshot.State != StateRestricted || snapshot.Tier != TierNormal {
 		t.Fatalf("risk must override tier display inputs: tier=%q state=%q", snapshot.Tier, snapshot.State)
 	}
@@ -220,7 +220,7 @@ func TestEvaluateSnapshotSourceAuthorMismatchCausesSellerCaution(t *testing.T) {
 		},
 		nil,
 		time.Date(2026, 7, 24, 12, 0, 0, 0, time.UTC),
-		V1Rules(),
+		CurrentRules(),
 	)
 	if snapshot.State != StateCaution {
 		t.Fatalf("expected source mismatch caution, got %q", snapshot.State)
@@ -236,7 +236,7 @@ func TestEvaluateSnapshotSourceAuthorMismatchCausesSellerCaution(t *testing.T) {
 func TestEvaluateSnapshotReliableContinuityAndRecentCompletion(t *testing.T) {
 	t.Parallel()
 
-	rules := V1Rules()
+	rules := CurrentRules()
 	start := time.Date(2026, 4, 1, 12, 0, 0, 0, time.UTC)
 	key := SnapshotKey{UserID: "user-1", Role: RoleSeller, Scope: ScopeOverall}
 	facts := ScopeFacts{
@@ -285,7 +285,7 @@ func TestEvaluateSnapshotPassiveReviewProgressCannotSolicitReviews(t *testing.T)
 		ScopeFacts{CompletedCount: 10, VerifiedReviewCount: 7, RatingSum: 33},
 		nil,
 		time.Date(2026, 7, 24, 12, 0, 0, 0, time.UTC),
-		V1Rules(),
+		CurrentRules(),
 	)
 	for _, code := range []string{"verified_reviews", "weighted_rating"} {
 		found := false
@@ -333,7 +333,7 @@ func TestSnapshotIsValidCoversRuleDirtySourceAndTimeBoundaries(t *testing.T) {
 		t.Fatal("dirty snapshot must be invalid")
 	}
 	snapshot.DirtyAt = nil
-	if SnapshotIsValid(snapshot, facts, now, "reputation-v2") {
+	if SnapshotIsValid(snapshot, facts, now, "reputation-v1") {
 		t.Fatal("rule version change must invalidate snapshot")
 	}
 }

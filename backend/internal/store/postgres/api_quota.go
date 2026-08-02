@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"c2c-market/backend/internal/domain"
+	"c2c-market/backend/internal/module/apimarket"
 	"c2c-market/backend/internal/module/apiorder"
 	"c2c-market/backend/internal/module/apiquota"
 	"c2c-market/backend/internal/module/idempotency"
@@ -21,7 +22,7 @@ import (
 var apiQuotaBatchColumns = `
 	b.id::text, b.api_service_id::text, b.owner_user_id::text,
 	s.title, s.distribution_system, (` + publicAPIServiceOrderablePredicate("s") + `),
-	COALESCE(s.declared_ttft_band, ''), COALESCE(s.recommended_concurrency, 0), s.performance_confirmed_at,
+	COALESCE(s.declared_ttft_band, ''), COALESCE(s.declared_max_concurrency, 0), s.performance_confirmed_at,
 	b.source_type, COALESCE(b.source_label, ''), b.status,
 	b.declared_total_usd_allowance::text, b.unallocated_usd_allowance::text,
 	b.sale_cutoff_at, b.expires_at, b.source_confirmed_at, b.published_at,
@@ -794,11 +795,11 @@ func (s *Store) CreateSystemRushOfferWithIdempotency(ctx context.Context, entry 
 
 	var serviceTitle, distributionSystem, declaredTTFTBand string
 	var serviceOrderable bool
-	var recommendedConcurrency int
+	var declaredMaxConcurrency int
 	var performanceConfirmedAt *time.Time
 	err = tx.QueryRow(ctx, `
 		SELECT s.title, s.distribution_system, (`+publicAPIServiceOrderablePredicate("s")+`),
-		       COALESCE(s.declared_ttft_band, ''), COALESCE(s.recommended_concurrency, 0),
+		       COALESCE(s.declared_ttft_band, ''), COALESCE(s.declared_max_concurrency, 0),
 		       s.performance_confirmed_at
 		FROM api_services s
 		WHERE s.id = $1 AND s.owner_user_id = $2
@@ -808,7 +809,7 @@ func (s *Store) CreateSystemRushOfferWithIdempotency(ctx context.Context, entry 
 		&distributionSystem,
 		&serviceOrderable,
 		&declaredTTFTBand,
-		&recommendedConcurrency,
+		&declaredMaxConcurrency,
 		&performanceConfirmedAt,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -820,15 +821,15 @@ func (s *Store) CreateSystemRushOfferWithIdempotency(ctx context.Context, entry 
 	if !serviceOrderable {
 		return apiquota.RushOfferPublication{}, idempotency.Completion{}, invalidQuotaState("关联 API 服务当前不可接单。")
 	}
-	if declaredTTFTBand == "" || recommendedConcurrency < 1 || performanceConfirmedAt == nil {
-		return apiquota.RushOfferPublication{}, idempotency.Completion{}, domain.NewError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Performance declaration required", "发布额度包前必须完善商户自报首字响应、建议并发和最近确认时间。")
+	if declaredTTFTBand == "" || declaredMaxConcurrency < 1 || performanceConfirmedAt == nil {
+		return apiquota.RushOfferPublication{}, idempotency.Completion{}, domain.NewError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Performance declaration required", "发布额度包前必须完善商户自报首字响应、商户声明最大并发和最近确认时间。")
 	}
 
 	publication.Batch.ServiceTitle = serviceTitle
 	publication.Batch.DistributionSystem = distributionSystem
 	publication.Batch.ServiceOrderable = serviceOrderable
 	publication.Batch.DeclaredTTFTBand = declaredTTFTBand
-	publication.Batch.RecommendedConcurrency = recommendedConcurrency
+	publication.Batch.DeclaredMaxConcurrency = declaredMaxConcurrency
 	publication.Batch.PerformanceConfirmedAt = performanceConfirmedAt
 	publication.Offer.DistributionSystem = distributionSystem
 
@@ -1261,7 +1262,7 @@ func (s *Store) CreateAPIQuotaOrderWithIdempotency(ctx context.Context, entry id
 		QuotaSaleModeSnapshot:         orderContext.SaleMode,
 		QuotaDistributionSnapshot:     orderContext.DistributionSystem,
 		QuotaTTFTBandSnapshot:         orderContext.DeclaredTTFTBand,
-		QuotaRecommendedConcurrency:   orderContext.RecommendedConcurrency,
+		QuotaDeclaredMaxConcurrency:   orderContext.DeclaredMaxConcurrency,
 		QuotaPerformanceConfirmedAt:   &orderContext.PerformanceConfirmedAt,
 		QuotaPerformanceUnverified:    true,
 		QuotaDeliveryETAMinutes:       orderContext.DeliveryETAMinutes,
@@ -1294,7 +1295,7 @@ func (s *Store) CreateAPIQuotaOrderWithIdempotency(ctx context.Context, entry id
 			quota_model_multiplier_snapshot, quota_sale_cutoff_at_snapshot, quota_expires_at_snapshot,
 			quota_sale_mode_snapshot, quota_round_starts_at_snapshot, quota_round_ends_at_snapshot,
 			quota_distribution_system_snapshot, quota_ttft_band_snapshot,
-			quota_recommended_concurrency_snapshot, quota_performance_confirmed_at_snapshot,
+			quota_declared_max_concurrency_snapshot, quota_performance_confirmed_at_snapshot,
 			quota_performance_unverified_snapshot, quota_delivery_eta_minutes_snapshot,
 			quota_delivery_mode_snapshot,
 			amount, currency, selected_payment_method, payment_window_minutes_snapshot,
@@ -1317,7 +1318,7 @@ func (s *Store) CreateAPIQuotaOrderWithIdempotency(ctx context.Context, entry id
 		order.QuotaOfferNameSnapshot, order.QuotaPriceCNYSnapshot, order.QuotaModelMultiplierSnapshot,
 		order.QuotaSaleCutoffAtSnapshot, order.QuotaExpiresAtSnapshot, order.QuotaSaleModeSnapshot,
 		order.QuotaRoundStartsAtSnapshot, order.QuotaRoundEndsAtSnapshot, order.QuotaDistributionSnapshot,
-		order.QuotaTTFTBandSnapshot, order.QuotaRecommendedConcurrency, order.QuotaPerformanceConfirmedAt,
+		order.QuotaTTFTBandSnapshot, order.QuotaDeclaredMaxConcurrency, order.QuotaPerformanceConfirmedAt,
 		order.QuotaDeliveryETAMinutes, order.QuotaDeliveryMode, order.SelectedPaymentMethod,
 		order.PaymentWindowMinutesSnapshot, order.PaymentExpiresAt, order.PaymentInstructionsSnapshot,
 		nullText(order.PaymentQRCodeDataURLSnapshot), now)
@@ -1371,33 +1372,36 @@ func (s *Store) CreateAPIQuotaOrderWithIdempotency(ctx context.Context, entry id
 }
 
 type apiQuotaOrderContext struct {
-	OfferID                string
-	BatchID                string
-	APIServiceID           string
-	OwnerUserID            string
-	OwnerContactMethodID   string
-	OfferName              string
-	USDAllowance           string
-	PriceCNY               string
-	CNYPerUSD              string
-	ModelMultiplier        string
-	DeliveryMode           string
-	DeliveryETAMinutes     int
-	SaleMode               string
-	DistributionSystem     string
-	OfferStatus            string
-	BatchStatus            string
-	SaleCutoffAt           time.Time
-	ExpiresAt              time.Time
-	ServiceTitle           string
-	ServiceVersion         int64
-	BillingMode            string
-	MinimumIntentCNY       string
-	MaximumIntentCNY       string
-	DeclaredTTFTBand       string
-	RecommendedConcurrency int
-	PerformanceConfirmedAt time.Time
-	ServiceOrderable       bool
+	OfferID                  string
+	BatchID                  string
+	APIServiceID             string
+	OwnerUserID              string
+	OwnerContactMethodID     string
+	OfferName                string
+	USDAllowance             string
+	PriceCNY                 string
+	CNYPerUSD                string
+	ModelMultiplier          string
+	DeliveryMode             string
+	DeliveryETAMinutes       int
+	SaleMode                 string
+	DistributionSystem       string
+	OfferStatus              string
+	BatchStatus              string
+	SaleCutoffAt             time.Time
+	ExpiresAt                time.Time
+	ServiceTitle             string
+	ServiceVersion           int64
+	BillingMode              string
+	MinimumIntentCNY         string
+	MaximumIntentCNY         string
+	AccountPoolType          string
+	AccountPoolCustomName    string
+	MerchantRefundCommitment bool
+	DeclaredTTFTBand         string
+	DeclaredMaxConcurrency   int
+	PerformanceConfirmedAt   time.Time
+	ServiceOrderable         bool
 }
 
 func getAPIQuotaOrderContext(ctx context.Context, tx pgx.Tx, input apiquota.CreateOrderInput, now time.Time) (apiQuotaOrderContext, *domain.AppError) {
@@ -1411,7 +1415,8 @@ func getAPIQuotaOrderContext(ctx context.Context, tx pgx.Tx, input apiquota.Crea
 		       b.sale_cutoff_at, b.expires_at,
 		       s.title, s.version, s.billing_mode,
 		       s.minimum_intent_cny::text, COALESCE(s.maximum_intent_cny::text, ''),
-		       COALESCE(s.declared_ttft_band, ''), COALESCE(s.recommended_concurrency, 0),
+		       COALESCE(s.account_pool_type, ''), COALESCE(s.account_pool_custom_name, ''), s.merchant_refund_commitment,
+		       COALESCE(s.declared_ttft_band, ''), COALESCE(s.declared_max_concurrency, 0),
 		       s.performance_confirmed_at, (`+publicAPIServiceOrderablePredicate("s")+`)
 		FROM api_quota_offers o
 		JOIN api_quota_batches b ON b.id = o.batch_id AND b.api_service_id = o.api_service_id AND b.owner_user_id = o.owner_user_id
@@ -1425,7 +1430,8 @@ func getAPIQuotaOrderContext(ctx context.Context, tx pgx.Tx, input apiquota.Crea
 		&item.SaleMode, &item.DistributionSystem, &item.OfferStatus, &item.BatchStatus,
 		&item.SaleCutoffAt, &item.ExpiresAt, &item.ServiceTitle, &item.ServiceVersion,
 		&item.BillingMode, &item.MinimumIntentCNY, &item.MaximumIntentCNY,
-		&item.DeclaredTTFTBand, &item.RecommendedConcurrency, &item.PerformanceConfirmedAt,
+		&item.AccountPoolType, &item.AccountPoolCustomName, &item.MerchantRefundCommitment,
+		&item.DeclaredTTFTBand, &item.DeclaredMaxConcurrency, &item.PerformanceConfirmedAt,
 		&item.ServiceOrderable,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -1440,7 +1446,7 @@ func getAPIQuotaOrderContext(ctx context.Context, tx pgx.Tx, input apiquota.Crea
 	if !now.Before(item.SaleCutoffAt) || !now.Before(item.ExpiresAt) {
 		return apiQuotaOrderContext{}, domain.NewError(http.StatusConflict, domain.CodeAPIQuotaBatchExpired, "Quota batch expired", "额度包已超过最晚下单时间。")
 	}
-	if item.DeclaredTTFTBand == "" || item.RecommendedConcurrency < 1 || item.PerformanceConfirmedAt.IsZero() {
+	if item.DeclaredTTFTBand == "" || item.DeclaredMaxConcurrency < 1 || item.PerformanceConfirmedAt.IsZero() {
 		return apiQuotaOrderContext{}, invalidQuotaState("额度包服务体验声明不完整。")
 	}
 	return item, nil
@@ -1520,11 +1526,16 @@ func buildAPIQuotaSnapshot(item apiQuotaOrderContext, round apiquota.SaleRound) 
 		"cnyPerUsd": item.CNYPerUSD, "modelMultiplier": item.ModelMultiplier,
 		"saleMode": item.SaleMode, "saleCutoffAt": item.SaleCutoffAt,
 		"expiresAt": item.ExpiresAt, "distributionSystem": item.DistributionSystem,
-		"declaredTtftBand":       item.DeclaredTTFTBand,
-		"recommendedConcurrency": item.RecommendedConcurrency,
-		"performanceConfirmedAt": item.PerformanceConfirmedAt,
-		"performanceDisclaimer":  "商户自报，平台未测速",
-		"deliveryEtaMinutes":     item.DeliveryETAMinutes, "deliveryMode": item.DeliveryMode,
+		"declaredTtftBand":            item.DeclaredTTFTBand,
+		"declaredMaxConcurrency":      nullInt(item.DeclaredMaxConcurrency),
+		"accountPoolType":             nullText(item.AccountPoolType),
+		"accountPoolLabel":            nullText(apimarket.AccountPoolLabel(apimarket.Service{AccountPoolType: item.AccountPoolType, AccountPoolCustomName: item.AccountPoolCustomName})),
+		"merchantRefundCommitment":    item.MerchantRefundCommitment,
+		"merchantRefundPolicyVersion": apimarket.MerchantRefundPolicyVersion,
+		"serviceValidityExpiresAt":    item.ExpiresAt,
+		"performanceConfirmedAt":      item.PerformanceConfirmedAt,
+		"performanceDisclaimer":       "商户自报，平台未测速",
+		"deliveryEtaMinutes":          item.DeliveryETAMinutes, "deliveryMode": item.DeliveryMode,
 		"serviceTitle": item.ServiceTitle, "serviceVersion": item.ServiceVersion,
 	}
 	if round.ID != "" {
@@ -1547,7 +1558,7 @@ var publicAPIQuotaOffersQuery = `
 	            ELSE u.display_name END,
 	       CASE WHEN s.merchant_identity_mode = 'store_alias' THEN 'merchant' ELSE 'individual' END,
 	       EXISTS (SELECT 1 FROM linux_do_bindings ldb WHERE ldb.user_id = s.owner_user_id),
-	       COALESCE(s.declared_ttft_band, ''), COALESCE(s.recommended_concurrency, 0), s.performance_confirmed_at,
+	       COALESCE(s.declared_ttft_band, ''), COALESCE(s.declared_max_concurrency, 0), s.performance_confirmed_at,
 	       b.sale_cutoff_at, b.expires_at,
 	       COALESCE(current_round.id::text, ''), COALESCE(current_round.system_slot_key, ''), COALESCE(current_round.name, ''), current_round.starts_at, current_round.ends_at, COALESCE(current_round.status, ''),
 	       COALESCE(next_round.id::text, ''), COALESCE(next_round.system_slot_key, ''), COALESCE(next_round.name, ''), next_round.starts_at, next_round.ends_at, COALESCE(next_round.status, ''),
@@ -1625,7 +1636,7 @@ func scanAPIQuotaBatch(row scanner, batch *apiquota.Batch) error {
 	return row.Scan(
 		&batch.ID, &batch.APIServiceID, &batch.OwnerUserID,
 		&batch.ServiceTitle, &batch.DistributionSystem, &batch.ServiceOrderable,
-		&batch.DeclaredTTFTBand, &batch.RecommendedConcurrency, &batch.PerformanceConfirmedAt,
+		&batch.DeclaredTTFTBand, &batch.DeclaredMaxConcurrency, &batch.PerformanceConfirmedAt,
 		&batch.SourceType, &batch.SourceLabel, &batch.Status,
 		&batch.DeclaredTotalUSDAllowance, &batch.UnallocatedUSDAllowance,
 		&batch.SaleCutoffAt, &batch.ExpiresAt, &batch.SourceConfirmedAt, &batch.PublishedAt,
@@ -1720,7 +1731,7 @@ func scanAPIQuotaOfferCard(row scanner) (apiquota.OfferCard, error) {
 		&card.SortOrder, &card.PublishedAt, &card.CreatedAt, &card.UpdatedAt, &card.Version,
 		&card.BatchStatus, &card.ServiceTitle, &card.ServiceOrderable,
 		&card.SellerDisplayName, &card.SellerIdentityType, &card.SellerLinuxDOBound,
-		&card.DeclaredTTFTBand, &card.RecommendedConcurrency, &card.PerformanceConfirmedAt,
+		&card.DeclaredTTFTBand, &card.DeclaredMaxConcurrency, &card.PerformanceConfirmedAt,
 		&card.SaleCutoffAt, &card.ExpiresAt,
 		&currentID, &currentSystemSlotKey, &currentName, &currentStarts, &currentEnds, &currentStatus,
 		&nextID, &nextSystemSlotKey, &nextName, &nextStarts, &nextEnds, &nextStatus,

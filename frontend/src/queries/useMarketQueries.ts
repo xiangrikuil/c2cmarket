@@ -1,5 +1,14 @@
 import { computed, type Ref } from 'vue'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/vue-query'
+import type { CreateApiServicePromotionRequest } from '@/api/generated/openapi'
+import {
+  backendAdminAPIPromotions,
+  backendAdminAPIServiceOptions,
+  backendAPIPromotionAvailability,
+  backendCreateAPIPromotion,
+  backendPublicAPIPromotions,
+  backendStopAPIPromotion,
+} from '@/lib/apiMarketBackend'
 import {
   addFeedbackSupplement,
   cancelApiOrder,
@@ -111,6 +120,7 @@ import {
   type ApiPaymentAccountSettings,
   type ApiPurchaseIntentFilters,
   type ApiServiceFilters,
+  type ApiServiceSalesView,
   type CreateApiQuotaBatchPayload,
   type CreateApiQuotaOfferPayload,
   type CreateApiQuotaOrderPayload,
@@ -263,6 +273,83 @@ export function useApiServices(filters: Ref<ApiServiceFilters> | ApiServiceFilte
   })
 }
 
+export function useApiPromotions() {
+  return useQuery({
+    queryKey: ['api-service-promotions', 'api_market_top'],
+    queryFn: backendPublicAPIPromotions,
+    enabled: import.meta.client,
+    staleTime: 0,
+    refetchOnMount: 'always',
+    refetchOnWindowFocus: true,
+  })
+}
+
+export function useAdminApiPromotions() {
+  return useQuery({
+    queryKey: ['admin', 'api-service-promotions'],
+    queryFn: backendAdminAPIPromotions,
+    refetchOnMount: 'always',
+  })
+}
+
+export function useAdminApiServiceOptions() {
+  return useQuery({
+    queryKey: ['admin', 'api-service-promotion-options'],
+    queryFn: backendAdminAPIServiceOptions,
+  })
+}
+
+export function useAdminApiPromotionAvailability(
+  apiServiceId: Ref<string> | string,
+  startsAt: Ref<string> | string,
+  endsAt: Ref<string> | string,
+  enabled: Ref<boolean> | boolean = true,
+) {
+  return useQuery({
+    queryKey: computed(() => [
+      'admin',
+      'api-service-promotions',
+      'availability',
+      valueOf(apiServiceId),
+      valueOf(startsAt),
+      valueOf(endsAt),
+    ]),
+    queryFn: () => backendAPIPromotionAvailability(valueOf(apiServiceId), valueOf(startsAt), valueOf(endsAt)),
+    enabled: computed(() => import.meta.client
+      && valueOf(enabled)
+      && Boolean(valueOf(apiServiceId))
+      && Boolean(valueOf(startsAt))
+      && Boolean(valueOf(endsAt))),
+    retry: false,
+  })
+}
+
+export function useCreateApiPromotionMutation() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (payload: CreateApiServicePromotionRequest) => backendCreateAPIPromotion(payload),
+    onSuccess: async () => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['api-service-promotions'] }),
+        queryClient.invalidateQueries({ queryKey: ['admin', 'api-service-promotions'] }),
+      ])
+    },
+  })
+}
+
+export function useStopApiPromotionMutation() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (payload: { id: string, version: number, reason: string }) => backendStopAPIPromotion(payload.id, payload.version, payload.reason),
+    onSuccess: async () => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['api-service-promotions'] }),
+        queryClient.invalidateQueries({ queryKey: ['admin', 'api-service-promotions'] }),
+      ])
+    },
+  })
+}
+
 export function sub2ApiMarketQueryKey(filters: Sub2ApiMarketFilters) {
   return ['api-market', 'sub2api', filters] as const
 }
@@ -287,11 +374,12 @@ export function useOtherApiMarketQuery(filters: Ref<OtherApiMarketFilters> | Oth
   })
 }
 
-export function useApiService(id: Ref<string> | string) {
+export function useApiService(id: Ref<string> | string, enabled: Ref<boolean> | boolean = true) {
   return useQuery({
     queryKey: computed(() => ['api-services', valueOf(id)]),
     retry: false,
     queryFn: () => getApiServiceById(valueOf(id)),
+    enabled: computed(() => Boolean(valueOf(id)) && valueOf(enabled)),
   })
 }
 
@@ -332,10 +420,13 @@ export function useCreateApiQuotaOrderMutation() {
   })
 }
 
-export function useMyApiServices(enabled: Ref<boolean> | boolean = true) {
+export function useMyApiServices(
+  salesView: Ref<ApiServiceSalesView> | ApiServiceSalesView = 'active',
+  enabled: Ref<boolean> | boolean = true,
+) {
   return useQuery({
-    queryKey: ['my-api-services'],
-    queryFn: getMyApiServices,
+    queryKey: computed(() => ['my-api-services', valueOf(salesView)]),
+    queryFn: () => getMyApiServices(valueOf(salesView)),
     enabled: computed(() => valueOf(enabled)),
     refetchOnMount: 'always',
   })

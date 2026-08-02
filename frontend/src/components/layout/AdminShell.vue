@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
-import { AlertTriangle, ArrowLeft, Bell, BookOpen, Boxes, Car, ClipboardList, Code2, FileText, Gauge, Menu, MessageSquareWarning, PackageSearch, PanelLeftClose, PanelLeftOpen, Search, Settings, ShieldCheck, UserCog, Users, X } from 'lucide-vue-next'
+import { AlertTriangle, ArrowLeft, Bell, BookOpen, Boxes, Car, ClipboardList, Code2, FileText, Gauge, Gift, Menu, MessageSquareWarning, PackageSearch, PanelLeftClose, PanelLeftOpen, Search, Settings, ShieldCheck, TrendingUp, UserCog, Users, X } from 'lucide-vue-next'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -21,7 +21,11 @@ const { data: badges } = useNavigationBadges(computed(() => Boolean(profile.valu
 useRealtimeSync(computed(() => Boolean(profile.value)))
 
 const navGroups = computed(() => [
-  { title: '概览', items: [{ label: '管理工作台', to: '/admin', icon: Gauge, count: badges.value?.admin?.total ?? null }] },
+  { title: '概览', items: [
+    { label: '管理工作台', to: '/admin', icon: Gauge, count: badges.value?.admin?.total ?? null },
+    { label: '用户增长', to: '/admin/growth', icon: TrendingUp, count: null },
+    { label: '增长推广', to: '/admin/growth-promotions', icon: Gift, count: null },
+  ] },
   { title: '待办与治理', items: [
     { label: '官网价格维护', to: '/admin/official-prices', icon: ShieldCheck, count: badges.value?.admin?.officialPrices ?? null },
     { label: '车源异常', to: '/admin/carpools', icon: Car, count: badges.value?.admin?.carpools ?? null },
@@ -122,7 +126,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
         <div class="flex h-14 items-center gap-3 px-4 sm:px-5 lg:px-6">
           <Button variant="ghost" size="icon" class="lg:hidden" aria-label="打开管理导航" @click="menuOpen = true"><Menu class="h-4 w-4" /></Button>
           <h1 class="hidden min-w-[150px] text-lg font-semibold md:block">{{ currentTitle }}</h1>
-          <div class="relative hidden w-full max-w-xl md:block"><Search class="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" /><Input v-model="searchText" class="h-9 pl-9" aria-label="后台全局搜索" placeholder="搜索用户或管理对象" @keyup.enter="runSearch" /></div>
+          <div v-if="route.path !== '/admin/users'" class="relative hidden w-full max-w-xl md:block"><Search class="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" /><Input v-model="searchText" class="h-9 pl-9" aria-label="后台全局搜索" placeholder="搜索用户或管理对象" @keyup.enter="runSearch" /></div>
           <div class="flex-1" />
           <Badge v-if="badges?.admin?.total" variant="secondary">我的待办 {{ formatCount(badges.admin.total) }}</Badge>
           <div class="hidden items-center gap-2 text-sm sm:flex"><span class="grid h-7 w-7 place-items-center rounded-full bg-primary/10 text-primary"><UserCog class="h-4 w-4" /></span><span>{{ adminName }}</span></div>

@@ -74,6 +74,7 @@ type reputationSummaryResponse struct {
 	Confidence               string                           `json:"confidence"`
 	RuleVersion              string                           `json:"ruleVersion"`
 	CompletedCount           int                              `json:"completedCount"`
+	RoleCompletionRate       *float64                         `json:"roleCompletionRate"`
 	RoleFaultCancelRate      *float64                         `json:"roleFaultCancelRate"`
 	HasUnknownCancellation   bool                             `json:"hasUnknownCancellation"`
 	UnresolvedDisputes       int                              `json:"unresolvedDisputes"`
@@ -98,6 +99,7 @@ func toReputationSummary(snapshot *reputation.ReputationSnapshot) *reputationSum
 		Confidence:               snapshot.Confidence,
 		RuleVersion:              snapshot.RuleVersion,
 		CompletedCount:           snapshot.Metrics.CompletedCount,
+		RoleCompletionRate:       snapshot.Metrics.RoleCompletionRate,
 		RoleFaultCancelRate:      snapshot.Metrics.RoleFaultCancelRate,
 		HasUnknownCancellation:   snapshot.Metrics.UnknownResponsibilityCancellationCount > 0,
 		UnresolvedDisputes:       snapshot.Metrics.UnresolvedDisputeCount,

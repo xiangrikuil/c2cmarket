@@ -54,7 +54,7 @@ if [[ ! -f "${deploy_script}" ]]; then
 fi
 chmod 750 "${deploy_script}" "${release_dir}/scripts/backup-production-postgres.sh"
 
-"${deploy_script}" "${DEPLOY_ENVIRONMENT}" "${BACKEND_IMAGE}"
+"${deploy_script}" "${DEPLOY_ENVIRONMENT}" "${BACKEND_IMAGE}" </dev/null
 
 ln -sfn "${release_dir}" "${CURRENT_LINK}"
 rm -f "${ARCHIVE_PATH}"

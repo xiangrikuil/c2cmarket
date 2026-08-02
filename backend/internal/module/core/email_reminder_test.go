@@ -351,6 +351,8 @@ func createTestContactMethod(t *testing.T, service *Service, userID, methodType,
 
 func createTestCarpoolApplication(t *testing.T, service *Service, owner, buyer User, ownerContactID, buyerContactID string) CarpoolApplication {
 	t.Helper()
+	followsOfficialReset := true
+	supportsMainlandDirect := true
 	listing, appErr := service.PublishCarpoolListing(context.Background(), owner, PublishCarpoolListingInput{
 		ProductPlanID:        "00000000-0000-0000-0000-000000000401",
 		OwnerContactMethodID: ownerContactID,
@@ -360,18 +362,24 @@ func createTestCarpoolApplication(t *testing.T, service *Service, owner, buyer U
 			ExitPolicy:    "提前 7 天站外确认退出安排。",
 			UsageRules:    "仅限买家本人使用，不共享凭据。",
 		},
-		Title:                  "Claude Pro 拼车",
-		Summary:                "Claude Pro 社区拼车名额。",
-		AccessArrangement:      "席位和使用安排站外确认。",
-		DistributionMethod:     "sub2api",
-		DistributionMethodNote: "Sub2API 托管管理，具体方式站外确认。",
-		ProvidesAdminAccount:   true,
-		RegionCode:             "us",
-		RegionName:             "美国区",
-		PriceMonthlyCNY:        "20.00",
-		ServiceMultiplier:      "1.0000",
-		MonthlyQuotaAmount:     "20.000000",
-		BuyerSeatCapacity:      2,
+		Title:                                 "Claude Pro 拼车",
+		Summary:                               "Claude Pro 社区拼车名额。",
+		AccessArrangement:                     "席位和使用安排站外确认。",
+		DistributionMethod:                    "sub2api",
+		DistributionMethodNote:                "Sub2API 托管管理，具体方式站外确认。",
+		ProvidesAdminAccount:                  true,
+		RegionCode:                            "us",
+		RegionName:                            "美国区",
+		PriceMonthlyCNY:                       "20.00",
+		ServiceMultiplier:                     "1.0000",
+		WeeklyQuotaAmount:                     "5.000000",
+		MonthlyQuotaAmount:                    "20.000000",
+		FollowsOfficialQuotaReset:             &followsOfficialReset,
+		VPSRegion:                             "香港",
+		SupportsMainlandChinaDirectConnection: &supportsMainlandDirect,
+		OpeningChannelCode:                    "web",
+		PaymentMethodCode:                     "u_card",
+		BuyerSeatCapacity:                     2,
 	})
 	if appErr != nil {
 		t.Fatalf("publish carpool listing: %v", appErr)
@@ -389,6 +397,7 @@ func createTestCarpoolApplication(t *testing.T, service *Service, owner, buyer U
 
 func createOrderableAPIService(t *testing.T, service *Service, owner User, ownerContactID string) APIService {
 	t.Helper()
+	merchantRefundCommitment := false
 	created, appErr := service.CreateAPIService(context.Background(), owner, CreateAPIServiceInput{
 		MerchantIdentityMode:             "public_profile",
 		OwnerContactMethodID:             ownerContactID,
@@ -404,7 +413,11 @@ func createOrderableAPIService(t *testing.T, service *Service, owner User, owner
 		UsageVisibility:                  "merchant_reported",
 		PublicAccessNote:                 "提交购买意向后直接查看商户联系方式，平台不保存任何调用凭据。",
 		MerchantNote:                     "仅后台可见，不展示给公开访客。",
-		MerchantSupportNote:              "仅支持买家专属的子级访问安排。",
+		AccountPoolType:                  apimarket.AccountPoolGPTPlus,
+		MerchantRefundCommitment:         &merchantRefundCommitment,
+		DeclaredTTFTBand:                 "1_to_3s",
+		DeclaredMaxConcurrency:           8,
+		PerformanceConfirmedAt:           "2026-07-06T09:00:00Z",
 		AccessModes: []APIServiceAccessModeInput{
 			{AccessMode: "buyer_dedicated_sub_key", PublicNote: "站外确认买家专属的访问方式。"},
 		},

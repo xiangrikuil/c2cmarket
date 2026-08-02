@@ -104,6 +104,14 @@ func nullText(value string) any {
 	return value
 }
 
+func nullStringPointer(value string) *string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return nil
+	}
+	return &value
+}
+
 func nullNumeric(value string) any {
 	value = strings.TrimSpace(value)
 	if value == "" {

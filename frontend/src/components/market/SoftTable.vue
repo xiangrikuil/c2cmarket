@@ -1,9 +1,11 @@
 <script setup lang="ts">
 import { Card } from '@/components/ui/card'
 import { Table, TableBody, TableHead, TableHeader, TableRow } from '@/components/ui/table'
+import { functionalMotion } from '@/lib/motion'
 
 defineProps<{
   columns: string[]
+  animateRows?: boolean
 }>()
 </script>
 
@@ -15,7 +17,10 @@ defineProps<{
           <TableHead v-for="column in columns" :key="column">{{ column }}</TableHead>
         </TableRow>
       </TableHeader>
-      <TableBody>
+      <TableBody v-if="animateRows" v-auto-animate="functionalMotion">
+        <slot />
+      </TableBody>
+      <TableBody v-else>
         <slot />
       </TableBody>
     </Table>

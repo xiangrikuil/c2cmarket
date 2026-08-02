@@ -24,6 +24,7 @@ import {
 } from '@/lib/api'
 import { apiPaymentMethodLabels } from '@/lib/apiPaymentSettings'
 import { compareDecimal, formatDecimal } from '@/lib/decimal'
+import { functionalMotion } from '@/lib/motion'
 import { getApiServiceProductIconSrc } from '@/lib/productCategoryIcon'
 import { useMyApiOrders } from '@/queries/useMarketQueries'
 import { useProductCategories } from '@/queries/useProductCatalogQueries'
@@ -91,7 +92,7 @@ function openOrder(event: MouseEvent | KeyboardEvent, id: string) {
 
 <template>
   <div class="my-api-orders-reference space-y-4">
-    <div class="my-api-orders-heading rounded-xl border px-5 py-4"><PageTitle title="我的 API 订单" description="查看收款资料、付款状态、商户交付信息和历史订单；付款由你与商户直接完成，平台不代收或托管资金。" action-text="继续找服务" action-to="/api-market" /></div>
+    <div class="my-api-orders-heading rounded-xl border px-5 py-4"><PageTitle title="API 购买订单" description="查看自己作为买家创建的订单、付款状态和商户交付记录；付款由你与商户直接完成，平台不代收或托管资金。" action-text="继续找服务" action-to="/api-market" /></div>
 
     <div class="my-api-orders-layout">
       <main class="min-w-0 space-y-4">
@@ -108,7 +109,7 @@ function openOrder(event: MouseEvent | KeyboardEvent, id: string) {
         <EmptyState v-else-if="rows.length === 0" title="暂无 API 订单" description="当前筛选条件下没有订单，可返回 API 市场浏览可购买服务。">
           <template #action><RouterLink to="/api-market"><Button>浏览 API 服务</Button></RouterLink></template>
         </EmptyState>
-        <div v-else class="my-transaction-list">
+        <div v-else v-auto-animate="functionalMotion" class="my-transaction-list">
           <Card v-for="item in pagination.paginatedRows.value" :key="item.id" class="my-transaction-row my-api-order-row" tabindex="0" @click="openOrder($event, item.id)" @keydown.enter="openOrder($event, item.id)">
             <div class="my-transaction-product">
               <span class="my-transaction-icon my-transaction-icon--api">

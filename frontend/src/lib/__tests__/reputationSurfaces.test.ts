@@ -1,7 +1,6 @@
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
-import { mapBackendAdminUser } from '../adminUserBackend'
 import {
   isPassiveReputationEvidence,
   publicReputationBadges,
@@ -20,8 +19,9 @@ function reputationSummary(overrides: Partial<ReputationSummary> = {}): Reputati
     tier: 'high_trust',
     state: 'active',
     confidence: 'high',
-    ruleVersion: 'reputation-v1',
+    ruleVersion: 'reputation-v2',
     completedCount: 18,
+    roleCompletionRate: 0.98,
     roleFaultCancelRate: 0.02,
     hasUnknownCancellation: false,
     unresolvedDisputes: 0,
@@ -47,7 +47,7 @@ function reputationSnapshot(): ReputationSnapshot {
     tier: 'normal',
     state: 'active',
     confidence: 'low',
-    ruleVersion: 'reputation-v1',
+    ruleVersion: 'reputation-v2',
     metrics: {
       completedCount: 0,
       completedCountLast90Days: 0,
@@ -97,6 +97,7 @@ describe('信誉摘要规则', () => {
     const summary = snapshotToSummary(reputationSnapshot())
 
     assert.equal(summary.completedCount, 0)
+    assert.equal(summary.roleCompletionRate, null)
     assert.equal(summary.roleFaultCancelRate, null)
     assert.equal(summary.hasUnknownCancellation, true)
     assert.equal(summary.weightedRating, null)
@@ -126,6 +127,7 @@ describe('信誉页面接线', () => {
   const carpoolDetail = source('../../pages/CarpoolDetailPage.vue')
   const carpoolList = source('../../pages/CarpoolsPage.vue')
   const apiMarket = source('../../pages/ApiMarketPage.vue')
+  const apiFreeServiceCard = source('../../components/api-market/ApiFreeServiceCard.vue')
   const purchasePanel = source('../../components/api-service-detail/ApiPurchasePanel.vue')
   const rideDetail = source('../../pages/CarpoolApplicationDetailPage.vue')
   const orderDetail = source('../../pages/ApiPurchaseOrderDetailPage.vue')
@@ -144,6 +146,15 @@ describe('信誉页面接线', () => {
     expect(inlineSummary).toContain('publicReputationBadges')
   })
 
+  it('紧凑信誉摘要合并正常状态下的重复低证据文案', () => {
+    expect(inlineSummary).toContain("props.summary?.state === 'active'")
+    expect(inlineSummary).toContain("props.summary.tier === 'insufficient'")
+    expect(inlineSummary).toContain("props.summary.confidence === 'low'")
+    expect(inlineSummary).toContain('状态正常')
+    expect(inlineSummary).toContain('交易样本较少')
+    expect(inlineSummary).toContain('<template v-else>')
+  })
+
   it('成长中心不诱导索评或展示还差多少五星', () => {
     expect(progressList).toContain('被动证据')
     expect(progressList).toContain('由已验证交易自然形成')
@@ -151,13 +162,24 @@ describe('信誉页面接线', () => {
     expect(progressList).not.toContain('五星')
   })
 
-  it('所有交易决策页使用统一信誉摘要和正确视角字段', () => {
+  it('所有交易决策页使用权威信誉字段和正确视角', () => {
     expect(carpoolList).toContain(':summary="row.sellerReputation"')
-    expect(apiMarket).toContain(':summary="service.sellerReputation"')
+    expect(apiMarket).toContain('sellerReputation: service.sellerReputation')
+    expect(apiFreeServiceCard).toContain(':summary="card.sellerReputation"')
     expect(carpoolDetail).toContain(':summary="carpool.sellerReputation"')
     expect(purchasePanel).toContain(':summary="service.sellerReputation"')
     expect(rideDetail).toContain('ownerMode.value ? application.value.buyerReputation : application.value.snapshot.ownerReputation')
     expect(orderDetail).toContain('isMerchantView.value ? order.value.buyerReputation : order.value.sellerReputation')
+    expect(orderDetail).toContain('counterpartyReputation.value?.roleCompletionRate')
+    expect(orderDetail).toContain('isMerchantView.value ? order.value.buyer : order.value.seller')
+    expect(orderDetail).toContain('订单创建时锁定的参与方')
+    expect(orderDetail).toContain('apiOrderMerchantContactSnapshot(order.value)')
+    expect(orderDetail).not.toContain('useApiService')
+    expect(orderDetail).not.toContain('getApiMerchantProfileUrl')
+    expect(orderDetail).toContain('已完成订单')
+    expect(orderDetail).toContain('完成率')
+    expect(orderDetail).not.toContain('<ReputationSummaryCard')
+    expect(orderDetail).not.toContain('交易对手信誉')
     expect(carpoolDetail).not.toContain('信任等级${carpool.trustLevel}')
     expect(purchasePanel).not.toContain('信任等级 ${service.trustLevel}')
     expect(carpoolList).not.toContain(':trust="row.trustLevel"')
@@ -197,19 +219,8 @@ describe('信誉页面接线', () => {
   })
 })
 
-it('管理员用户映射保留并发控制版本', () => {
-  const row = mapBackendAdminUser({
-    id: '11111111-1111-4111-8111-111111111111',
-    username: 'audit-user',
-    displayName: 'Audit User',
-    accountStatus: 'active',
-    isAdmin: false,
-    linuxDoBound: false,
-    createdAt: '2026-07-24T00:00:00Z',
-    lastActiveAt: null,
-    version: 7,
-  })
-
-  assert.equal(row.backendVersion, 7)
-  assert.equal(row.secondary.includes('undefined'), false)
+it('管理员用户信誉审计使用服务端账号版本', () => {
+  const adminUsers = source('../../pages/AdminUsersPage.vue')
+  assert.equal(adminUsers.includes(':user-version="selectedDetail.user.version"'), true)
+  assert.equal(adminUsers.includes('reputationVersion'), false)
 })

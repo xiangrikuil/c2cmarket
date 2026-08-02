@@ -132,6 +132,8 @@ func TestAPIQuotaDependentMigrationsExist(t *testing.T) {
 		"000066_api_service_multiplier_reconciliation.down.sql",
 		"000067_api_account_payment_settings.up.sql",
 		"000067_api_account_payment_settings.down.sql",
+		"000069_carpool_usage_signals.up.sql",
+		"000069_carpool_usage_signals.down.sql",
 	} {
 		if _, err := os.Stat(filepath.Join("..", "..", "migrations", name)); err != nil {
 			t.Fatalf("migration file %s is unavailable: %v", name, err)

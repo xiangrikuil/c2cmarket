@@ -9,11 +9,11 @@ export type PublishDeliveryMode = 'api_key_endpoint' | 'sub2api_panel_account'
 export type PublishPaymentMethod = ApiPaymentMethod
 export type UsageVisibility = 'panel_realtime' | 'panel_balance_only' | 'merchant_confirmed' | 'fixed_package_only' | 'not_available'
 export type ValidityMode = 'days' | 'permanent'
-export type WarrantyMode = 'no_warranty' | 'upstream_refund_only' | 'merchant_warranty'
+export type AccountPoolType = 'gpt_pro_20x' | 'gpt_pro_5x' | 'gpt_plus' | 'custom'
+export type WarrantyMode = '' | 'no_warranty' | 'merchant_full_refund'
 
 export type SelectedServiceModel = {
   modelId: string
-  multiplierOverride: number | null
   enabled: boolean
 }
 
@@ -47,11 +47,6 @@ export type ApiServicePaymentOption = {
 
 export type WarrantyConfig = {
   mode: WarrantyMode
-  warrantyDays: number | null
-  coverage: string | null
-  compensation: string | null
-  exclusions: string | null
-  refundNote: string | null
 }
 
 export type ApiServicePublishForm = {
@@ -75,7 +70,7 @@ export type ApiServicePublishForm = {
   paymentWindowMinutes: number
   paymentOptions: ApiServicePaymentOption[]
   declaredTtftBand: ApiTTFTBand
-  recommendedConcurrency: number
+  declaredMaxConcurrency: number
   performanceConfirmedAt: string
   packages: ApiServicePackage[]
   validity: {
@@ -84,6 +79,8 @@ export type ApiServicePublishForm = {
     startsAt: 'delivered_at'
   }
   usageVisibility: UsageVisibility
+  accountPoolType: AccountPoolType | ''
+  accountPoolCustomName: string
   warranty: WarrantyConfig
   merchantNote: string
 }

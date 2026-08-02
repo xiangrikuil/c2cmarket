@@ -496,7 +496,7 @@ func validBatch(now time.Time) Batch {
 		DistributionSystem:        DistributionSub2API,
 		ServiceOrderable:          true,
 		DeclaredTTFTBand:          "under_1s",
-		RecommendedConcurrency:    10,
+		DeclaredMaxConcurrency:    10,
 		PerformanceConfirmedAt:    &confirmed,
 		Status:                    BatchStatusDraft,
 		SaleCutoffAt:              now.Add(4 * time.Hour),

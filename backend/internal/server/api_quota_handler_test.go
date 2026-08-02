@@ -279,11 +279,11 @@ func TestAPIServicePerformanceDeclarationRoundTrips(t *testing.T) {
 	confirmedAt := now.Add(-time.Minute).Format(time.RFC3339)
 	body := strings.Replace(apiServicePayload(ownerContact.ID, "1.0000"), `"accessModes":`, `
 		"declaredTtftBand":"1_to_3s",
-		"recommendedConcurrency":16,
+		"declaredMaxConcurrency":16,
 		"performanceConfirmedAt":"`+confirmedAt+`",
 		"accessModes":`, 1)
 	service := createAPIServiceWithPayload(t, server, owner, body, "quota-performance-create")
-	if service.DeclaredTTFTBand != "1_to_3s" || service.RecommendedConcurrency != 16 || service.PerformanceConfirmedAt == nil || *service.PerformanceConfirmedAt != confirmedAt {
+	if service.DeclaredTTFTBand != "1_to_3s" || service.DeclaredMaxConcurrency != 16 || service.PerformanceConfirmedAt == nil || *service.PerformanceConfirmedAt != confirmedAt {
 		t.Fatalf("unexpected owner performance declaration: %+v", service)
 	}
 
@@ -299,13 +299,13 @@ func TestAPIServicePerformanceDeclarationRoundTrips(t *testing.T) {
 	}
 	var public struct {
 		DeclaredTTFTBand       string  `json:"declaredTtftBand"`
-		RecommendedConcurrency int     `json:"recommendedConcurrency"`
+		DeclaredMaxConcurrency int     `json:"declaredMaxConcurrency"`
 		PerformanceConfirmedAt *string `json:"performanceConfirmedAt"`
 	}
 	if err := json.NewDecoder(response.Body).Decode(&public); err != nil {
 		t.Fatalf("decode public API service: %v", err)
 	}
-	if public.DeclaredTTFTBand != "1_to_3s" || public.RecommendedConcurrency != 16 || public.PerformanceConfirmedAt == nil || *public.PerformanceConfirmedAt != confirmedAt {
+	if public.DeclaredTTFTBand != "1_to_3s" || public.DeclaredMaxConcurrency != 16 || public.PerformanceConfirmedAt == nil || *public.PerformanceConfirmedAt != confirmedAt {
 		t.Fatalf("unexpected public performance declaration: %+v", public)
 	}
 }

@@ -67,6 +67,7 @@ export function snapshotToSummary(snapshot: ReputationSnapshot): ReputationSumma
     confidence: snapshot.confidence,
     ruleVersion: snapshot.ruleVersion,
     completedCount: snapshot.metrics.completedCount,
+    roleCompletionRate: snapshot.metrics.roleCompletionRate,
     roleFaultCancelRate: snapshot.metrics.roleFaultCancelRate,
     hasUnknownCancellation: snapshot.metrics.unknownResponsibilityCancellationCount > 0,
     unresolvedDisputes: snapshot.metrics.unresolvedDisputeCount,

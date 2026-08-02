@@ -35,7 +35,7 @@ func apiOrderNotificationFor(order apiorder.Order, actorUserID, eventType string
 	case apiorder.EventCancelled:
 		return apiOrderNotificationSpec{
 			RecipientUserID: order.SellerUserID,
-			Title:           "买家已取消订单",
+			Title:           "API 销售订单已取消",
 			Body:            "买家在付款前取消了订单，请查看记录。",
 			TargetURL:       sellerTarget,
 		}, true

@@ -29,6 +29,7 @@ if [[ ! "${BACKEND_IMAGE}" =~ ^ghcr\.io/xiangrikuil/c2cmarket-backend:[0-9a-f]{4
   echo "Backend image must use the immutable GHCR commit tag: ${BACKEND_IMAGE}" >&2
   exit 2
 fi
+EXPECTED_GIT_SHA="${BACKEND_IMAGE##*:}"
 if [[ ! "${HEALTH_RETRIES}" =~ ^[1-9][0-9]*$ ]]; then
   echo "C2C_HEALTH_RETRIES must be a positive integer: ${HEALTH_RETRIES}" >&2
   exit 2
@@ -82,16 +83,26 @@ echo "Starting ${DEPLOY_ENVIRONMENT} backend without a local build."
 
 health_url="http://127.0.0.1:${BACKEND_PORT}/health"
 ready_url="http://127.0.0.1:${BACKEND_PORT}/readyz"
+version_url="http://127.0.0.1:${BACKEND_PORT}/version"
+actual_git_sha="unavailable"
 for ((attempt = 1; attempt <= HEALTH_RETRIES; attempt += 1)); do
-  if curl -fsS "${health_url}" >/dev/null && curl -fsS "${ready_url}" >/dev/null; then
-    echo "${DEPLOY_ENVIRONMENT} backend is healthy and ready on port ${BACKEND_PORT}."
-    exit 0
+  if curl -fsS "${health_url}" >/dev/null &&
+    curl -fsS "${ready_url}" >/dev/null &&
+    version_payload="$(curl -fsS "${version_url}")"; then
+    actual_git_sha="$(
+      printf '%s' "${version_payload}" |
+        sed -n 's/.*"gitCommit":"\([^"]*\)".*/\1/p'
+    )"
+    if [[ "${actual_git_sha}" == "${EXPECTED_GIT_SHA}" ]]; then
+      echo "${DEPLOY_ENVIRONMENT} backend is healthy, ready, and running ${EXPECTED_GIT_SHA} on port ${BACKEND_PORT}."
+      exit 0
+    fi
   fi
   if ((attempt < HEALTH_RETRIES)); then
     sleep "${HEALTH_INTERVAL_SECONDS}"
   fi
 done
 
-echo "${DEPLOY_ENVIRONMENT} backend failed health/readiness checks after ${HEALTH_RETRIES} attempts." >&2
+echo "${DEPLOY_ENVIRONMENT} backend failed health/readiness/version checks after ${HEALTH_RETRIES} attempts; expected Git commit ${EXPECTED_GIT_SHA}, got ${actual_git_sha:-unavailable}." >&2
 "${compose[@]}" --profile app ps >&2
 exit 1

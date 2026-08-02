@@ -85,6 +85,8 @@ jobs:
         run: node scripts/check-security-headers.mjs
       - name: Check Compose exposure
         run: node scripts/check-compose-exposure.mjs
+      - name: Check release workflow contract
+        run: ruby scripts/check-release-workflow.rb
       - name: Test commit-only source packaging
         run: node scripts/test-package-source.mjs
       - name: Check whitespace

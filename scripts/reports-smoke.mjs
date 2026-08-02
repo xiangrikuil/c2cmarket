@@ -178,6 +178,8 @@ async function main() {
   assertPublicSafe(publicProfile.disputes)
 
   const disputeDetail = await request(`/api/v1/admin/disputes/${opened.dispute.id}`, {}, admin)
+  assert(disputeDetail.subjectUserId === reported.user.id, 'admin dispute detail should expose the target responsibility subject')
+  assert(disputeDetail.subjectUsername === reported.user.username, 'admin dispute detail should expose the subject username')
   const resolved = await request(`/api/v1/admin/disputes/${opened.dispute.id}/resolve`, {
     method: 'POST',
     idempotencyPrefix: 'reports-smoke-resolve-dispute',
@@ -185,11 +187,31 @@ async function main() {
     body: {
       reason: '双方补充说明后记录处理结果。',
       publicSummary: '公开主页信息争议',
-      publicResultCode: 'other_resolved',
-      publicResult: '已记录处理结果',
+      publicResultCode: 'description_mismatch',
+      publicResult: '已确认公开资料描述与现有记录不一致',
     },
   }, admin)
   assert(resolved.dispute?.status === 'resolved', 'dispute should resolve')
+
+  const outcomeMutation = await request(`/api/v1/admin/disputes/${opened.dispute.id}/reputation-outcome`, {
+    method: 'POST',
+    idempotencyPrefix: 'reports-smoke-reputation-outcome',
+    ifMatch: resolved.dispute.version,
+    body: {
+      subjectUserId: reported.user.id,
+      responsibility: 'responsible',
+      severity: 'low',
+      roleScope: 'all',
+      reasonCode: 'confirmed_responsibility',
+      publicReason: '根据现有记录认定公开资料主体承担责任。',
+      internalReason: '关联举报、目标快照和基础裁决结果一致。',
+    },
+  }, admin)
+  assert(outcomeMutation.outcome?.disputeCaseId === opened.dispute.id, 'reputation outcome should link to the resolved dispute')
+  assert(outcomeMutation.outcome?.disputeVersion === resolved.dispute.version + 1, 'outcome should increment dispute version')
+  const reputationAfterOutcome = await request(`/api/v1/admin/users/${reported.user.id}/reputation`, {}, admin)
+  assert(reputationAfterOutcome.outcomes.some(item => item.id === outcomeMutation.outcome.id && item.status === 'active'), 'admin reputation audit should expose the active dispute outcome')
+  assert(reputationAfterOutcome.restrictions.every(item => item.sourceDisputeOutcomeId !== outcomeMutation.outcome.id), 'dispute outcome must not create an account restriction automatically')
 
   const appeal = await request('/api/v1/me/appeals', {
     method: 'POST',
@@ -219,6 +241,8 @@ async function main() {
     },
   }, admin)
   assert(approvedAppeal.appeal?.status === 'approved', 'appeal should be approved')
+  const reputationAfterAppeal = await request(`/api/v1/admin/users/${reported.user.id}/reputation`, {}, admin)
+  assert(reputationAfterAppeal.outcomes.some(item => item.id === outcomeMutation.outcome.id && item.status === 'reversed'), 'approved appeal should reverse the dispute outcome')
 
   const rejected = await request(`/api/v1/admin/reports/${secondaryReport.id}/reject`, {
     method: 'POST',
@@ -235,6 +259,7 @@ async function main() {
     reportId: publicReport.id,
     secondaryReportId: secondaryReport.id,
     disputeId: opened.dispute.id,
+    outcomeId: outcomeMutation.outcome.id,
     appealId: appeal.id,
     publicDisputeCount: publicDisputes.items.length,
   }, null, 2))

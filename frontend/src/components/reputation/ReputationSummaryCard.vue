@@ -18,12 +18,18 @@ const props = withDefaults(defineProps<{
   summary: ReputationSummary | null | undefined
   compact?: boolean
   framed?: boolean
+  showSourceAuthorVerification?: boolean
 }>(), {
   compact: false,
   framed: true,
+  showSourceAuthorVerification: true,
 })
 
-const badges = computed(() => props.summary ? publicReputationBadges(props.summary) : [])
+const badges = computed(() => {
+  if (!props.summary) return []
+  const values = publicReputationBadges(props.summary)
+  return props.showSourceAuthorVerification ? values : values.filter(value => value !== 'source_verified')
+})
 const faultRate = computed(() => {
   const value = props.summary?.roleFaultCancelRate
   return value === null || value === undefined ? '暂无数据' : `${Math.round(value * 100)}%`
@@ -54,7 +60,7 @@ const rating = computed(() => {
       <Alert v-else-if="summary.state === 'caution'">
         <AlertTriangle class="text-amber-600" />
         <AlertTitle>{{ reputationStateLabel(summary.state) }}</AlertTitle>
-        <AlertDescription>{{ summary.warnings[0] || '存在待核对事实，交易前请查看完成、纠纷和原帖验证信息。' }}</AlertDescription>
+        <AlertDescription>{{ summary.warnings[0] || '存在待核对事实，交易前请查看完成与纠纷信息。' }}</AlertDescription>
       </Alert>
 
       <div class="flex flex-wrap items-start justify-between gap-3">

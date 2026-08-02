@@ -18,12 +18,18 @@ const props = defineProps<{
 }>()
 
 const badges = computed(() => props.summary ? publicReputationBadges(props.summary) : [])
+const usesCompactLowEvidenceLabel = computed(() => (
+  props.compact
+  && props.summary?.state === 'active'
+  && props.summary.tier === 'insufficient'
+  && props.summary.confidence === 'low'
+))
 </script>
 
 <template>
   <div
     class="text-xs"
-    :class="compact ? 'min-w-0' : 'space-y-1.5'"
+    :class="props.compact ? 'min-w-0' : 'space-y-1.5'"
     :aria-label="summary ? `${reputationRoleLabel(summary.role)}摘要` : '信誉摘要'"
   >
     <div v-if="!summary" class="flex items-center gap-1.5 text-muted-foreground">
@@ -31,20 +37,27 @@ const badges = computed(() => props.summary ? publicReputationBadges(props.summa
       信誉暂无数据
     </div>
     <template v-else>
-      <div class="flex items-center gap-1.5" :class="compact ? 'min-w-0' : 'flex-wrap'">
+      <div class="flex items-center gap-1.5" :class="props.compact ? 'min-w-0' : 'flex-wrap'">
         <Ban v-if="summary.state === 'restricted'" class="h-3.5 w-3.5 text-destructive" />
         <AlertTriangle v-else-if="summary.state === 'caution'" class="h-3.5 w-3.5 text-amber-600" />
         <CheckCircle2 v-else class="h-3.5 w-3.5 text-emerald-600" />
-        <Badge :variant="summary.state === 'restricted' ? 'destructive' : summary.state === 'caution' ? 'secondary' : 'outline'">
-          {{ reputationStateLabel(summary.state) }}
-        </Badge>
-        <strong class="shrink-0">{{ reputationTierLabel(summary.tier) }}</strong>
-        <span class="truncate text-muted-foreground" :title="reputationConfidenceLabel(summary.confidence)">{{ reputationConfidenceLabel(summary.confidence) }}</span>
+        <template v-if="usesCompactLowEvidenceLabel">
+          <span class="shrink-0 font-medium">状态正常</span>
+          <span aria-hidden="true" class="text-muted-foreground">·</span>
+          <span class="truncate text-muted-foreground">交易样本较少</span>
+        </template>
+        <template v-else>
+          <Badge :variant="summary.state === 'restricted' ? 'destructive' : summary.state === 'caution' ? 'secondary' : 'outline'">
+            {{ reputationStateLabel(summary.state) }}
+          </Badge>
+          <strong class="shrink-0">{{ reputationTierLabel(summary.tier) }}</strong>
+          <span class="truncate text-muted-foreground" :title="reputationConfidenceLabel(summary.confidence)">{{ reputationConfidenceLabel(summary.confidence) }}</span>
+        </template>
       </div>
-      <p v-if="summary.state !== 'active' && !compact" class="leading-5 text-muted-foreground">
+      <p v-if="summary.state !== 'active' && !props.compact" class="leading-5 text-muted-foreground">
         {{ summary.warnings[0] || (summary.state === 'restricted' ? '部分交易操作当前不可用。' : '交易前请核对履约和纠纷事实。') }}
       </p>
-      <div v-if="badges.length && !compact" class="flex flex-wrap gap-1">
+      <div v-if="badges.length && !props.compact" class="flex flex-wrap gap-1">
         <Badge v-for="badge in badges" :key="badge" variant="trust">{{ reputationBadgeLabel(badge) }}</Badge>
       </div>
     </template>

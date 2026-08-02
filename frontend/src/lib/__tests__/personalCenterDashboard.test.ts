@@ -88,7 +88,14 @@ describe('个人中心待办聚合', () => {
       'ride-buyer-action',
     ])
     expect(tasks.find(item => item.id === 'ride-owner-action')?.to).toBe('/merchant/carpool-applications/ride-owner-action')
-    expect(tasks.find(item => item.id === 'order-buyer-action')?.to).toBe('/my/api-orders/order-buyer-action')
+    expect(tasks.find(item => item.id === 'order-buyer-action')).toMatchObject({
+      typeLabel: 'API 购买订单',
+      to: '/my/api-orders/order-buyer-action',
+    })
+    expect(tasks.find(item => item.id === 'order-merchant-action')).toMatchObject({
+      typeLabel: 'API 销售订单',
+      to: '/merchant/api-orders/order-merchant-action',
+    })
   })
 
   it('先按业务优先级再按更新时间排序', () => {
@@ -176,7 +183,7 @@ describe('个人中心账户完整度', () => {
     })
   })
 
-  it('提醒按身份绑定、邮箱、密码、联系方式和收款设置排序', () => {
+  it('未绑定 linux.do 时不把备用密码计入完整度', () => {
     const completeness = buildAccountCompleteness({
       profile: profile({
         emailVerified: false,
@@ -189,6 +196,7 @@ describe('个人中心账户完整度', () => {
     })
 
     expect(getPrimaryAccountAlert(completeness)?.id).toBe('linuxdo')
+    expect(completeness.tasks.map(item => item.id)).not.toContain('password')
   })
 
   it('相关 API 订单按 ID 去重', () => {

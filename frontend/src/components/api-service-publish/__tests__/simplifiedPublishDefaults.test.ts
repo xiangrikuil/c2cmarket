@@ -10,6 +10,7 @@ import {
   merchantNoteTemplate,
 } from '../utils.ts'
 import type { ApiServicePublishForm } from '../types.ts'
+import { compactApiServiceModels } from '../../api-market/apiFreeServiceCard'
 import { beijingDateTimeInputToISOString } from '@/lib/apiQuotaExpiration'
 
 test('applies simplified API quota publish defaults', () => {
@@ -25,7 +26,7 @@ test('applies simplified API quota publish defaults', () => {
     cnyPerUsdCredit: 0.8,
     manualBillingNote: '旧计费说明',
     defaultMultiplier: 2,
-    selectedModels: [{ modelId: 'gpt-5-mini', multiplierOverride: 1.5, enabled: true }],
+    selectedModels: [{ modelId: 'gpt-5-mini', enabled: true }],
     imageCapability: {
       enabled: true,
       supportsTextToImage: true,
@@ -57,13 +58,10 @@ test('applies simplified API quota publish defaults', () => {
       startsAt: 'delivered_at',
     },
     usageVisibility: 'fixed_package_only',
+	accountPoolType: 'gpt_pro_5x',
+	accountPoolCustomName: '',
     warranty: {
-      mode: 'merchant_warranty',
-      warrantyDays: 7,
-      coverage: '旧适用范围',
-      compensation: '旧补偿方式',
-      exclusions: '旧不适用情形',
-      refundNote: '旧退款说明',
+	  mode: 'merchant_full_refund',
     },
     merchantNote: merchantNoteTemplate,
   }
@@ -83,8 +81,8 @@ test('applies simplified API quota publish defaults', () => {
   assert.equal(form.paymentOptions.some(item => item.enabled), false)
   assert.equal(form.paymentOptions.every(item => item.paymentQrCodeDataUrl === null), true)
   assert.equal(form.quotaExpiresAt, '2026-07-10T00:00')
-  assert.equal(form.warranty.mode, 'no_warranty')
-  assert.equal(form.warranty.warrantyDays, null)
+	assert.equal(form.warranty.mode, 'merchant_full_refund')
+	assert.equal(form.accountPoolType, 'gpt_pro_5x')
   assert.equal(form.imageCapability.enabled, false)
   assert.equal(form.packages[0].id, 'pkg')
   assert.deepEqual(form.packages[0].modelCatalogIds, ['gpt-5-mini'])
@@ -104,13 +102,47 @@ test('converts Beijing quota expiration input to a backend timestamp', () => {
 
 test('locks API publish merchant display name to profile data', () => {
   const pageSource = readFileSync(new URL('../../../pages/ApiServicePublishPage.vue', import.meta.url), 'utf8')
+  const rushPageSource = readFileSync(new URL('../../../pages/ApiQuotaRushPublishPage.vue', import.meta.url), 'utf8')
+  const identitySectionSource = readFileSync(new URL('../MerchantIdentitySection.vue', import.meta.url), 'utf8')
 
   assert.match(pageSource, /useMyProfileQuery/)
+  assert.match(pageSource, /merchantIdentityMode: 'public_profile'/)
+  assert.match(rushPageSource, /merchantIdentityMode: 'public_profile'/)
   assert.match(pageSource, /form\.merchantDisplayName = profileMerchantDisplayName\.value/)
   assert.match(pageSource, /发布必填 \{\{ publishAssistant\.doneCount \}\} \/ \{\{ publishAssistant\.totalCount \}\}/)
   assert.match(pageSource, /v-model:open="previewOpen"/)
   assert.match(pageSource, /preview-only/)
+  assert.match(identitySectionSource, /默认公开个人身份/)
+  assert.match(identitySectionSource, /隐藏社区身份，仅展示商家展示名/)
   assert.doesNotMatch(pageSource, /v-model="form\.merchantDisplayName"/)
   assert.doesNotMatch(pageSource, /placeholder="例如：小葵 API"/)
   assert.doesNotMatch(pageSource, /预览标题：/)
+})
+
+test('publishes from the third configuration step without a duplicate confirmation step', () => {
+  const pageSource = readFileSync(new URL('../../../pages/ApiServicePublishPage.vue', import.meta.url), 'utf8')
+
+  assert.match(pageSource, /type ApiServicePublishStep = 1 \| 2 \| 3/)
+  assert.match(pageSource, /currentStep\.value === 3[\s\S]*?publishService\(\)/)
+  assert.match(pageSource, /currentStep\.value === 2\) return '继续：交易与服务'[\s\S]*?'发布固定额度包' : '发布自由额度服务'/)
+  assert.match(pageSource, /currentStep\.value < 3/)
+  assert.match(pageSource, /发布必填 \{\{ publishAssistant\.doneCount \}\} \/ \{\{ publishAssistant\.totalCount \}\}/)
+  assert.match(pageSource, /<ApiServicePublishPreview[\s\S]*?preview-only/)
+  assert.match(pageSource, /currentStep === 3[\s\S]*?min-\[1241px\]:hidden[\s\S]*?@click="preview"/)
+  assert.doesNotMatch(pageSource, /title: '确认发布'|title="确认发布"|:step="4"|publishStepStatus\(4|publicationReviewRows|发布信息确认清单/)
+})
+
+test('compacts one, two, and many model labels for the market card', () => {
+  assert.deepEqual(compactApiServiceModels(['gpt-5-mini']), {
+    visibleModels: ['gpt-5-mini'],
+    hiddenModelCount: 0,
+  })
+  assert.deepEqual(compactApiServiceModels(['gpt-5-mini', 'gpt-5']), {
+    visibleModels: ['gpt-5-mini', 'gpt-5'],
+    hiddenModelCount: 0,
+  })
+  assert.deepEqual(compactApiServiceModels(['gpt-5-mini', 'gpt-5', 'gpt-4.1', 'o3']), {
+    visibleModels: ['gpt-5-mini', 'gpt-5'],
+    hiddenModelCount: 2,
+  })
 })

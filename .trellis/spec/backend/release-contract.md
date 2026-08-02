@@ -49,6 +49,10 @@ node scripts/check-openapi-types.mjs
 - Release Docker context comes only from the resolved commit archive.
   `APP_VERSION`, the full commit, and the commit time are injected with Go
   ldflags and repeated in OCI version, revision, and created labels.
+- The reusable GHCR publisher resolves the commit time from its exact
+  `git_sha` checkout and passes the same `APP_VERSION`, `GIT_COMMIT`, and
+  `BUILD_TIME` inputs to `backend/Dockerfile`; setting only OCI labels is not
+  sufficient because it leaves `/version` on development defaults.
 - Local Go builds return explicit `development` / `unknown` metadata.
   `expectedMigrationVersion` is read directly from
   `database.ExpectedMigrationVersion`, never copied into an ldflag.
@@ -76,6 +80,8 @@ node scripts/check-openapi-types.mjs
 | Production/staging retains a backend build context | Compose exposure check exits non-zero |
 | OpenAPI parse/reference warning or generated file drift | OpenAPI type check exits non-zero |
 | Image labels differ from requested release metadata | Image build exits non-zero |
+| Reusable publisher omits binary build arguments or matching OCI labels | Release workflow contract check exits non-zero |
+| Running `/version.gitCommit` differs from the immutable image SHA | VPS deployment exits non-zero before current-link promotion |
 
 ### 5. Good / Base / Bad Cases
 
@@ -99,6 +105,8 @@ cd backend && go test -count=1 ./internal/buildinfo ./internal/server
 node scripts/check-openapi-routes.mjs
 node scripts/check-openapi-types.mjs
 node scripts/check-compose-exposure.mjs
+ruby scripts/check-release-workflow.rb
+scripts/test-vps-release.sh
 scripts/package-source.sh HEAD c2cmarket-source-check.tar.gz
 scripts/build-backend-image.sh HEAD 0.0.0-test c2cmarket-backend:release-check
 ```
@@ -111,6 +119,10 @@ Assertions:
 - `/version` fields match the injected metadata and
   `database.ExpectedMigrationVersion`.
 - Image OCI labels match `/version`.
+- Reusable publishing uses the exact workflow SHA and its commit time for both
+  build arguments and OCI labels.
+- Streamed VPS installation survives a deployment child that consumes stdin,
+  and rejects a runtime commit that differs from the image SHA.
 - Production and staging expanded Compose configs contain `image` but no
   backend `build`.
 - OpenAPI regeneration has the same file set and bytes as the snapshot.

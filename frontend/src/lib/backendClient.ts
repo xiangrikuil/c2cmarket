@@ -1,4 +1,7 @@
 import { requireApiMode, type ApiMode } from '@/lib/apiMode'
+import { clearAnalyticsIdentity, identifyAnalyticsUser } from '@/lib/analytics'
+import { captureRegistrationAttribution, getRegistrationAttribution } from '@/lib/registrationAttribution'
+import { getReferralCapture } from '@/lib/referralCapture'
 
 type ProblemDetails = {
   title?: string
@@ -11,6 +14,7 @@ type ProblemDetails = {
 
 export type BackendSessionUser = {
   id: string
+  analyticsUserId: string
   username: string
   displayName: string
   isAdmin: boolean
@@ -102,6 +106,7 @@ export function getBackendCSRFToken() {
 function cacheBackendSession(session: BackendSession) {
   cachedSession = session
   setBackendCSRFToken(session.csrfToken)
+  identifyAnalyticsUser(session.user.analyticsUserId)
   return session
 }
 
@@ -109,6 +114,7 @@ function clearBackendSessionCache() {
   cachedSession = null
   sessionRequest = null
   setBackendCSRFToken(null)
+  clearAnalyticsIdentity()
 }
 
 function hasUsableCachedSession(now = Date.now()) {
@@ -181,9 +187,16 @@ export async function getCurrentBackendSession(options: {
   return sessionRequest
 }
 
-export async function startOAuthLogin(returnTo = '/') {
+export async function startOAuthLogin(returnTo = '/', inviteCode = getReferralCapture()) {
   const params = new URLSearchParams()
   if (returnTo) params.set('returnTo', returnTo)
+  if (inviteCode) params.set('inviteCode', inviteCode)
+  const attribution = getRegistrationAttribution() ?? captureRegistrationAttribution()
+  if (attribution?.source) params.set('utmSource', attribution.source)
+  if (attribution?.medium) params.set('utmMedium', attribution.medium)
+  if (attribution?.campaign) params.set('utmCampaign', attribution.campaign)
+  if (attribution?.referrerHost) params.set('referrerHost', attribution.referrerHost)
+  if (attribution?.landingPath) params.set('landingPath', attribution.landingPath)
   return backendRequest<OAuthStartResponse>(`/api/v1/auth/oauth/start?${params.toString()}`)
 }
 

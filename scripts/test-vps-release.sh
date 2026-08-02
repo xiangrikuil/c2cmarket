@@ -39,6 +39,9 @@ cat >"${TEST_ROOT}/bin/curl" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 printf 'curl %s\n' "$*" >>"${CALL_LOG}"
+if [[ "$*" == *"/version" ]]; then
+  printf '{"gitCommit":"%s"}' "${FAKE_VERSION_COMMIT:-${BACKEND_IMAGE##*:}}"
+fi
 EOF
 
 cat >"${TEST_ROOT}/bin/rclone" <<'EOF'
@@ -70,6 +73,7 @@ grep -q -- '--profile migrate run --rm migrate' "${CALL_LOG}" || fail "staging m
 grep -q -- '--profile app up -d --no-build backend' "${CALL_LOG}" || fail "staging backend was not started without a build"
 grep -q '^docker-env BACKEND_PORT=8081$' "${CALL_LOG}" || fail "staging Compose did not receive port 8081"
 grep -q '127.0.0.1:8081/readyz' "${CALL_LOG}" || fail "staging readiness did not use port 8081"
+grep -q '127.0.0.1:8081/version' "${CALL_LOG}" || fail "staging version metadata was not checked"
 
 production_image="ghcr.io/xiangrikuil/c2cmarket-backend:${PRODUCTION_SHA}"
 : >"${CALL_LOG}"
@@ -87,6 +91,12 @@ if FAIL_DOCKER_PATTERN='--profile migrate run --rm migrate' \
   fail "migration failure must fail the deployment"
 fi
 
+: >"${CALL_LOG}"
+if FAKE_VERSION_COMMIT='cccccccccccccccccccccccccccccccccccccccc' \
+  "${ROOT_DIR}/scripts/deploy-vps-backend.sh" staging "${staging_image}"; then
+  fail "runtime Git commit mismatch must fail the deployment"
+fi
+
 release_source="${TEST_ROOT}/release-source"
 mkdir -p "${release_source}/scripts"
 cat >"${release_source}/scripts/deploy-vps-backend.sh" <<'EOF'
@@ -96,6 +106,7 @@ printf '%s %s\n' "$1" "$2" >>"${INSTALL_LOG}"
 if [[ "${INSTALL_DEPLOY_FAILURE:-0}" == "1" ]]; then
   exit 17
 fi
+cat >/dev/null
 EOF
 cat >"${release_source}/scripts/backup-production-postgres.sh" <<'EOF'
 #!/usr/bin/env bash
@@ -109,8 +120,8 @@ export C2C_VPS_ROOT="${TEST_ROOT}/vps"
 export INSTALL_LOG="${TEST_ROOT}/install.log"
 mkdir -p "${C2C_VPS_ROOT}/old"
 ln -s "${C2C_VPS_ROOT}/old" "${C2C_VPS_ROOT}/staging-current"
-"${ROOT_DIR}/scripts/install-vps-release.sh" \
-  staging "${STAGING_SHA}" "${staging_image}" "${staging_archive}"
+bash -s -- staging "${STAGING_SHA}" "${staging_image}" "${staging_archive}" \
+  <"${ROOT_DIR}/scripts/install-vps-release.sh"
 expected_staging_release="${C2C_VPS_ROOT}/releases/staging/${STAGING_SHA}"
 [[ "$(readlink "${C2C_VPS_ROOT}/staging-current")" == "${expected_staging_release}" ]] || \
   fail "successful staging install did not update staging-current"
@@ -118,8 +129,9 @@ expected_staging_release="${C2C_VPS_ROOT}/releases/staging/${STAGING_SHA}"
 
 production_archive="/tmp/c2cmarket-release-production-${PRODUCTION_SHA}.tar.gz"
 tar -czf "${production_archive}" -C "${release_source}" .
-if INSTALL_DEPLOY_FAILURE=1 "${ROOT_DIR}/scripts/install-vps-release.sh" \
-  production "${PRODUCTION_SHA}" "${production_image}" "${production_archive}"; then
+if INSTALL_DEPLOY_FAILURE=1 bash -s -- \
+  production "${PRODUCTION_SHA}" "${production_image}" "${production_archive}" \
+  <"${ROOT_DIR}/scripts/install-vps-release.sh"; then
   fail "failed deployment must fail the release installer"
 fi
 [[ ! -e "${C2C_VPS_ROOT}/current" ]] || fail "failed production install must not create current"

@@ -134,7 +134,7 @@ function apiOrderTask(item: ApiOrder, role: 'buyer' | 'merchant'): PersonalCente
     id: item.id,
     kind: 'api-order',
     role,
-    typeLabel: role === 'buyer' ? '我的 API 订单' : '商户 API 订单',
+    typeLabel: role === 'buyer' ? 'API 购买订单' : 'API 销售订单',
     title: item.serviceTitle,
     status: getApiOrderStatusLabel(item.status),
     nextAction: getApiOrderNextAction(item, role),
@@ -220,13 +220,19 @@ export function buildAccountCompleteness(input: BuildAccountCompletenessInput): 
       completed: input.profile.emailVerified,
       to: '/my/account',
     },
-    {
+  ]
+
+  if (input.profile.linuxDoBinding.bound) {
+    tasks.push({
       id: 'password',
       label: '设置备用密码',
       description: '认证入口不可用时仍可登录。',
       completed: input.profile.passwordConfigured,
       to: '/my/account',
-    },
+    })
+  }
+
+  tasks.push(
     {
       id: 'contact',
       label: '添加联系方式',
@@ -248,7 +254,7 @@ export function buildAccountCompleteness(input: BuildAccountCompletenessInput): 
       completed: Boolean(input.profile.bio?.trim()),
       to: '/my/profile',
     },
-  ]
+  )
 
   if (input.hasApiServices) {
     tasks.push({

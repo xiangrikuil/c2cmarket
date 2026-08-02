@@ -19,10 +19,11 @@ func TestAPIOrderNotificationMatrix(t *testing.T) {
 		actorID   string
 		wantUser  string
 		wantURL   string
+		wantTitle string
 	}{
 		{name: "payment submitted", eventType: apiorder.EventPaymentSubmitted, actorID: order.BuyerUserID, wantUser: order.SellerUserID, wantURL: "/merchant/api-orders/" + order.ID},
 		{name: "payment issue", eventType: apiorder.EventPaymentIssueReported, actorID: order.SellerUserID, wantUser: order.BuyerUserID, wantURL: "/my/api-orders/" + order.ID},
-		{name: "buyer cancelled", eventType: apiorder.EventCancelled, actorID: order.BuyerUserID, wantUser: order.SellerUserID, wantURL: "/merchant/api-orders/" + order.ID},
+		{name: "buyer cancelled", eventType: apiorder.EventCancelled, actorID: order.BuyerUserID, wantUser: order.SellerUserID, wantURL: "/merchant/api-orders/" + order.ID, wantTitle: "API 销售订单已取消"},
 		{name: "payment confirmed", eventType: apiorder.EventPaymentConfirmed, actorID: order.SellerUserID, wantUser: order.BuyerUserID, wantURL: "/my/api-orders/" + order.ID},
 		{name: "delivery submitted", eventType: apiorder.EventDeliverySubmitted, actorID: order.SellerUserID, wantUser: order.BuyerUserID, wantURL: "/my/api-orders/" + order.ID},
 		{name: "delivery review reminder", eventType: apiorder.EventDeliveryReviewReminder, wantUser: order.BuyerUserID, wantURL: "/my/api-orders/" + order.ID},
@@ -40,6 +41,9 @@ func TestAPIOrderNotificationMatrix(t *testing.T) {
 			}
 			if spec.RecipientUserID != tt.wantUser || spec.TargetURL != tt.wantURL {
 				t.Fatalf("unexpected recipient/target: %#v", spec)
+			}
+			if tt.wantTitle != "" && spec.Title != tt.wantTitle {
+				t.Fatalf("unexpected notification title: got %q want %q", spec.Title, tt.wantTitle)
 			}
 			joined := strings.ToLower(spec.Title + " " + spec.Body)
 			for _, forbidden := range []string{"api key", "password", "token", "session", "付款摘要", "二维码"} {

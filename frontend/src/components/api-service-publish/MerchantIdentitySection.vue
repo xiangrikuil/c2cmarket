@@ -27,7 +27,7 @@ const emit = defineEmits<{
         </span>
         <div>
           <h2>展示身份</h2>
-          <p>默认只展示商家展示名，订单后再站外确认接入细节。</p>
+          <p>默认公开个人身份，方便买家核对社区资料与信誉记录。</p>
         </div>
       </div>
     </div>
@@ -39,12 +39,19 @@ const emit = defineEmits<{
           @update:model-value="value => emit('setStoreAliasVisible', Boolean(value))"
         />
         <span>
-          不公开社区身份，仅展示商家展示名
+          隐藏社区身份，仅展示商家展示名
           <span class="mt-0.5 block text-xs text-muted-foreground">买家仍可看到已绑定 linux.do、信任等级、交易评价与纠纷记录。</span>
         </span>
       </label>
       <div
-        v-if="form.merchantIdentityMode === 'store_alias'"
+        v-if="form.merchantIdentityMode === 'public_profile'"
+        class="max-w-md rounded-md border border-primary/20 bg-primary/5 px-3 py-2"
+      >
+        <div class="text-xs font-medium text-primary">公开个人身份</div>
+        <p class="mt-1 text-xs leading-5 text-muted-foreground">买家可从服务页查看你的公开社区身份与平台信誉资料。</p>
+      </div>
+      <div
+        v-else
         class="max-w-md rounded-md border border-border bg-muted/35 px-3 py-2"
         :aria-invalid="Boolean(error)"
         :aria-describedby="error ? 'api-publish-merchant-display-name-error' : undefined"

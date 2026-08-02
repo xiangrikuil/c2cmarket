@@ -814,7 +814,7 @@ const apiOrderColumns = `
 	COALESCE(quota_cny_per_usd_snapshot::text, ''), COALESCE(quota_model_multiplier_snapshot::text, ''),
 	quota_sale_cutoff_at_snapshot, quota_expires_at_snapshot, COALESCE(quota_sale_mode_snapshot, ''),
 	quota_round_starts_at_snapshot, quota_round_ends_at_snapshot, COALESCE(quota_distribution_system_snapshot, ''),
-	COALESCE(quota_ttft_band_snapshot, ''), COALESCE(quota_recommended_concurrency_snapshot, 0),
+	COALESCE(quota_ttft_band_snapshot, ''), COALESCE(quota_declared_max_concurrency_snapshot, 0),
 	quota_performance_confirmed_at_snapshot, COALESCE(quota_performance_unverified_snapshot, false),
 	COALESCE(quota_delivery_eta_minutes_snapshot, 0), COALESCE(quota_delivery_mode_snapshot, ''),
 	amount::text, currency, selected_payment_method,
@@ -907,7 +907,7 @@ func apiOrderScanTargets(order *apiorder.Order) []any {
 		&order.QuotaRoundEndsAtSnapshot,
 		&order.QuotaDistributionSnapshot,
 		&order.QuotaTTFTBandSnapshot,
-		&order.QuotaRecommendedConcurrency,
+		&order.QuotaDeclaredMaxConcurrency,
 		&order.QuotaPerformanceConfirmedAt,
 		&order.QuotaPerformanceUnverified,
 		&order.QuotaDeliveryETAMinutes,
@@ -954,6 +954,7 @@ func newStoreAPIOrder(input apiorder.CreateInput, intent apiintent.Intent, servi
 	}
 	return apiorder.Order{
 		ID:                            uuid.NewString(),
+		PurchaseKind:                  apiorder.PurchaseKindAPIService,
 		APIPurchaseIntentID:           intent.ID,
 		APIServiceID:                  intent.APIServiceID,
 		BuyerUserID:                   input.BuyerUserID,

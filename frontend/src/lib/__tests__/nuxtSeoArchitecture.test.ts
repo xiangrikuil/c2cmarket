@@ -48,10 +48,16 @@ describe('Nuxt hybrid rendering and SEO architecture', () => {
   it('keeps query hydration and public server prefetch wired into Nuxt', () => {
     const plugin = readFileSync(new URL('../../plugins/vue-query.ts', import.meta.url), 'utf8')
     const home = readFileSync(new URL('../../pages/HomePage.vue', import.meta.url), 'utf8')
+    const apiMarket = readFileSync(new URL('../../pages/ApiMarketPage.vue', import.meta.url), 'utf8')
+    const marketQueries = readFileSync(new URL('../../queries/useMarketQueries.ts', import.meta.url), 'utf8')
 
     expect(plugin).toContain('dehydrate(queryClient)')
     expect(plugin).toContain('hydrate(queryClient, vueQueryState.value)')
     expect(home).toContain('prefetchQueriesOnServer(homeMarketQuery, productCategoriesQuery)')
+    expect(apiMarket).toContain('prefetchQueriesOnServer(quotaQuery, slotQuery, freeServicesQuery, productCategoriesQuery)')
+	expect(apiMarket).toContain('const promotionQuery = useApiPromotions()')
+	expect(apiMarket).not.toContain('prefetchQueriesOnServer(promotionQuery')
+    expect(marketQueries).toMatch(/useApiPromotions\(\)[\s\S]*enabled: import\.meta\.client/)
   })
 
   it('uses only Nuxt runtime variables in current frontend deployment surfaces', () => {

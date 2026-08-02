@@ -584,6 +584,33 @@ func TestNewOrderRejectsLegacyUSDTPaymentOption(t *testing.T) {
 	}
 }
 
+func TestNewOrderSetsAPIServicePurchaseKind(t *testing.T) {
+	now := time.Date(2026, 6, 27, 12, 0, 0, 0, time.UTC)
+	intent := apiintent.Intent{
+		ID:                  "intent-1",
+		APIServiceID:        "service-1",
+		BuyerUserID:         "buyer-1",
+		OwnerUserID:         "seller-1",
+		Status:              apiintent.StatusOpen,
+		RequestedCNYAmount:  "16.00",
+		SelectedAccessMode:  "buyer_dedicated_sub_key",
+		BillingModeSnapshot: apimarket.ServiceBillingModeMetered,
+	}
+
+	order, appErr := NewOrder(CreateInput{
+		IntentID:      intent.ID,
+		BuyerUserID:   intent.BuyerUserID,
+		PaymentMethod: apimarket.PaymentMethodWechat,
+		RequestID:     "create-1",
+	}, intent, testOrderableService(now), now)
+	if appErr != nil {
+		t.Fatalf("create API service order: %v", appErr)
+	}
+	if order.PurchaseKind != PurchaseKindAPIService {
+		t.Fatalf("expected purchase kind %q, got %q", PurchaseKindAPIService, order.PurchaseKind)
+	}
+}
+
 type testIntentResolver struct {
 	intent apiintent.Intent
 }

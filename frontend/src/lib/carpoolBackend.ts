@@ -19,6 +19,7 @@ import { carpoolOpeningChannels, carpoolPaymentMethods, carpoolRegions } from '@
 import { defaultQuotaLabel, defaultQuotaPeriod, defaultQuotaUnit } from '@/lib/quota'
 import { mapBackendReputationSummary } from '@/lib/reputationBackend'
 import type { ReputationSummary } from '@/types/reputation'
+import { trackAnalytics } from '@/lib/analytics'
 
 type ListResponse<T> = { items: T[] }
 
@@ -69,7 +70,15 @@ type BackendCarpoolListing = {
   sellerReputation?: ReputationSummary | null
   priceMonthlyCny: string
   serviceMultiplier: string
+  weeklyQuotaAmount: string | null
   monthlyQuotaAmount: string
+  followsOfficialQuotaReset: boolean | null
+  vpsRegion: string | null
+  supportsMainlandChinaDirectConnection: boolean | null
+  openingChannelCode: CarpoolWithMeta['openingChannelCode']
+  customOpeningChannel: string | null
+  paymentMethodCode: CarpoolWithMeta['paymentMethodCode']
+  customPaymentMethod: string | null
   quotaLabel: string
   quotaUnit: string
   quotaPeriod: 'monthly'
@@ -318,6 +327,7 @@ export async function mapBackendCarpoolListing(listing: BackendCarpoolListing): 
   const plan = await productPlan(listing.productPlanId)
   const monthly = numberFromDecimal(listing.priceMonthlyCny)
   const serviceMultiplier = numberFromDecimal(listing.serviceMultiplier)
+  const weeklyQuotaAmount = listing.weeklyQuotaAmount ? numberFromDecimal(listing.weeklyQuotaAmount) : undefined
   const monthlyQuotaAmount = numberFromDecimal(listing.monthlyQuotaAmount)
   const activeSeats = Math.max(0, listing.activeBuyerMembers)
   const totalSeats = Math.max(1, listing.buyerSeatCapacity)
@@ -328,7 +338,15 @@ export async function mapBackendCarpoolListing(listing: BackendCarpoolListing): 
     region: listing.regionName,
     monthly,
     serviceMultiplier,
+    weeklyQuotaAmount,
     monthlyQuotaAmount,
+    followsOfficialQuotaReset: listing.followsOfficialQuotaReset,
+    vpsRegion: listing.vpsRegion,
+    supportsMainlandChinaDirectConnection: listing.supportsMainlandChinaDirectConnection,
+    openingChannelCode: listing.openingChannelCode,
+    customOpeningChannel: listing.customOpeningChannel,
+    paymentMethodCode: listing.paymentMethodCode,
+    customPaymentMethod: listing.customPaymentMethod,
     quotaLabel: listing.quotaLabel || plan.quotaLabel || defaultQuotaLabel,
     quotaUnit: listing.quotaUnit || plan.quotaUnit || defaultQuotaUnit,
     quotaPeriod: listing.quotaPeriod || plan.quotaPeriod || defaultQuotaPeriod,
@@ -472,7 +490,6 @@ async function mapApplication(application: BackendCarpoolApplication, perspectiv
       ownerTrustLevel: null,
       ownerReputation,
       ownerType: '个人车主',
-      sourceTopicUrl: listing?.sourceUrl || '',
       accessArrangementMode: mapAccessMode(plan.accessMode),
       accessArrangementNote: listing?.accessArrangement || plan.policyNote,
       riskNoticeCode: application.riskNoticeCode || plan.riskNoticeCode,
@@ -608,6 +625,10 @@ export async function backendCarpoolApplicationContacts(applicationId: string): 
     }
   }
   const response = await backendRequest<BackendContactSessionContacts>(`/api/v1/contact-sessions/${application.backendContactSessionId}/contacts`)
+  trackAnalytics('contact_window_reveal', {
+    entity_type: 'carpool_application',
+    source_route: '/my/rides/:id',
+  })
   return {
     id: response.sessionId,
     orderType: 'carpool_application',
@@ -650,10 +671,17 @@ function toListingRequest(payload: SaveCarpoolDraftPayload, ownerContactMethodId
     providesAdminAccount: Boolean(payload.providesAdminAccount),
     regionCode: payload.regionCode,
     regionName,
-    sourceUrl: payload.linuxDoTopicUrl,
     priceMonthlyCny: String(monthly),
-    serviceMultiplier: String(payload.serviceMultiplier ?? 1),
+    serviceMultiplier: '1',
+    weeklyQuotaAmount: String(payload.weeklyQuotaAmount ?? 0),
     monthlyQuotaAmount: String(payload.monthlyQuotaAmount ?? 0),
+    followsOfficialQuotaReset: payload.followsOfficialQuotaReset,
+    vpsRegion: payload.vpsRegion.trim(),
+    supportsMainlandChinaDirectConnection: payload.supportsMainlandChinaDirectConnection,
+    openingChannelCode: payload.openingChannelCode,
+    customOpeningChannel: payload.openingChannelCode === 'other' ? payload.customOpeningChannel.trim() : '',
+    paymentMethodCode: payload.paymentMethodCode,
+    customPaymentMethod: payload.paymentMethodCode === 'other' ? payload.customPaymentMethod.trim() : '',
     buyerSeatCapacity: payload.totalSeats,
     activeBuyerMembers: payload.occupiedSeats,
     riskAcknowledgement: riskAcknowledgement(plan, payload.riskNoticeCode, payload.policyVersion, payload.riskAcknowledged),

@@ -30,7 +30,7 @@ type reputationRouteService struct {
 }
 
 func (s *reputationRouteService) ReputationRules() reputation.RuleSet {
-	return reputation.V1Rules()
+	return reputation.CurrentRules()
 }
 
 func (s *reputationRouteService) PublicUserReputation(_ context.Context, username, scope string) ([]reputation.ReputationSnapshot, *domain.AppError) {

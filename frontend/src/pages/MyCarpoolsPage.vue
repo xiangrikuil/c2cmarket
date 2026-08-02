@@ -9,12 +9,11 @@ import TablePagination from '@/components/market/TablePagination.vue'
 import EmptyState from '@/components/market/EmptyState.vue'
 import LocalTime from '@/components/market/LocalTime.vue'
 import ShortId from '@/components/market/ShortId.vue'
-import SourceAuthorVerificationBadge from '@/components/market/SourceAuthorVerificationBadge.vue'
 import SkeletonTable from '@/components/market/SkeletonTable.vue'
 import { usePagination } from '@/composables/usePagination'
 import { useMerchantCarpoolApplications, useMyCarpools } from '@/queries/useMarketQueries'
 import { getPricingDisplay, getRemainingSeats } from '@/lib/pricing'
-import { formatMonthlyQuota } from '@/lib/quota'
+import { formatWeeklyMonthlyQuota } from '@/lib/quota'
 import { toast } from 'vue-sonner'
 
 const { data: carpools, isLoading } = useMyCarpools()
@@ -46,13 +45,12 @@ function applicationCounts(carpoolId: string) {
           <div class="mt-1 flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
             <ShortId :value="item.id" prefix="CAR" />
             <span>· {{ item.region }}</span>
-            <SourceAuthorVerificationBadge :verification="item.sourceAuthorVerification" />
           </div>
         </td>
         <td>
           <div class="font-semibold">{{ getPricingDisplay(item).primaryLabel }} ¥{{ getPricingDisplay(item).primaryPrice }}</div>
           <div class="mt-1 text-xs text-muted-foreground">
-            {{ item.serviceMultiplier ? `${item.serviceMultiplier}x` : '倍率待补充' }} · {{ formatMonthlyQuota(item) }}
+            {{ formatWeeklyMonthlyQuota(item) }}
           </div>
         </td>
         <td>已上车 {{ item.seatSummary?.activeMemberCount ?? item.currentConfirmedMembers }}/{{ item.maxMembers }} · 预留 {{ item.seatSummary?.reservedSeatCount ?? 0 }} · 可申请 {{ item.seatSummary?.availableSeats ?? getRemainingSeats(item) }}</td>

@@ -2,6 +2,7 @@ export type QuotaPeriod = 'monthly'
 
 export type QuotaDisplayInput = {
   amount?: number | null
+  weeklyQuotaAmount?: number | null
   monthlyQuotaAmount?: number | null
   label?: string | null
   quotaLabel?: string | null
@@ -32,4 +33,17 @@ export function formatMonthlyQuota(input: QuotaDisplayInput, fallback = '额度�
   if (!Number.isFinite(amount) || !amount || amount <= 0) return fallback
   const unit = (input.unit ?? input.quotaUnit)?.trim() || defaultQuotaUnit
   return `${quotaPeriodText(input.period ?? input.quotaPeriod)} ${formatQuotaAmount(amount)} ${unit}`
+}
+
+export function formatWeeklyMonthlyQuota(input: QuotaDisplayInput, fallback = '未声明') {
+  const unit = (input.unit ?? input.quotaUnit)?.trim() || defaultQuotaUnit
+  const weekly = input.weeklyQuotaAmount
+  const monthly = input.monthlyQuotaAmount ?? input.amount
+  const weeklyText = Number.isFinite(weekly) && weekly && weekly > 0
+    ? `${formatQuotaAmount(weekly)} ${unit}`
+    : fallback
+  const monthlyText = Number.isFinite(monthly) && monthly && monthly > 0
+    ? `${formatQuotaAmount(monthly)} ${unit}`
+    : fallback
+  return `周 ${weeklyText} · 月 ${monthlyText}`
 }
