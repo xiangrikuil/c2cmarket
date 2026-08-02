@@ -1282,7 +1282,8 @@ func (s *Store) CreateAPIQuotaOrderWithIdempotency(ctx context.Context, entry id
 		order.QuotaRoundStartsAtSnapshot = &round.StartsAt
 		order.QuotaRoundEndsAtSnapshot = &round.EndsAt
 	}
-	_, err = tx.Exec(ctx, `
+	err = insertAPIOrderWithNumberRetry(&order, apiorder.GenerateOrderNo, func() error {
+		commandTag, insertErr := tx.Exec(ctx, `
 		INSERT INTO api_orders (
 			id, purchase_kind, api_purchase_intent_id, api_service_id,
 			buyer_user_id, seller_user_id, status, dispute_status,
@@ -1300,28 +1301,37 @@ func (s *Store) CreateAPIQuotaOrderWithIdempotency(ctx context.Context, entry id
 			quota_delivery_mode_snapshot,
 			amount, currency, selected_payment_method, payment_window_minutes_snapshot,
 			payment_expires_at, payment_instructions_snapshot, payment_qr_code_data_url_snapshot,
-			created_at, updated_at, version
+			created_at, updated_at, version, order_no
 		) VALUES (
 			$1, $2, $3, $4, $5, $6, $7, $8,
 			$9, $10, $11, $12, $13, $14::jsonb,
 			$15, $16, $17, $18, $19, $20,
 			$14::jsonb, $21, $12, $22, $13, $23, $24, $25,
 			$26, $27, $28, $29, $30, $31, $32, true, $33, $34,
-			$22, 'CNY', $35, $36, $37, $38, $39, $40, $40, 1
+			$22, 'CNY', $35, $36, $37, $38, $39, $40, $40, 1, $41
 		)
+		ON CONFLICT ON CONSTRAINT ux_api_orders_order_no DO NOTHING
 	`, order.ID, order.PurchaseKind, order.APIPurchaseIntentID, order.APIServiceID,
-		order.BuyerUserID, order.SellerUserID, order.Status, order.DisputeStatus,
-		order.ServiceTitleSnapshot, order.ServiceVersionSnapshot, order.BillingModeSnapshot,
-		order.RequestedUSDAllowanceSnapshot, order.CNYPerUSDAllowanceSnapshot, snapshot,
-		order.APIQuotaBatchID, order.APIQuotaOfferID, nullUUID(order.APIQuotaSaleRoundID),
-		order.APIQuotaAllocationID, order.APIQuotaInventoryUnitID, nullUUID(order.APIQuotaCredentialID),
-		order.QuotaOfferNameSnapshot, order.QuotaPriceCNYSnapshot, order.QuotaModelMultiplierSnapshot,
-		order.QuotaSaleCutoffAtSnapshot, order.QuotaExpiresAtSnapshot, order.QuotaSaleModeSnapshot,
-		order.QuotaRoundStartsAtSnapshot, order.QuotaRoundEndsAtSnapshot, order.QuotaDistributionSnapshot,
-		order.QuotaTTFTBandSnapshot, order.QuotaDeclaredMaxConcurrency, order.QuotaPerformanceConfirmedAt,
-		order.QuotaDeliveryETAMinutes, order.QuotaDeliveryMode, order.SelectedPaymentMethod,
-		order.PaymentWindowMinutesSnapshot, order.PaymentExpiresAt, order.PaymentInstructionsSnapshot,
-		nullText(order.PaymentQRCodeDataURLSnapshot), now)
+			order.BuyerUserID, order.SellerUserID, order.Status, order.DisputeStatus,
+			order.ServiceTitleSnapshot, order.ServiceVersionSnapshot, order.BillingModeSnapshot,
+			order.RequestedUSDAllowanceSnapshot, order.CNYPerUSDAllowanceSnapshot, snapshot,
+			order.APIQuotaBatchID, order.APIQuotaOfferID, nullUUID(order.APIQuotaSaleRoundID),
+			order.APIQuotaAllocationID, order.APIQuotaInventoryUnitID, nullUUID(order.APIQuotaCredentialID),
+			order.QuotaOfferNameSnapshot, order.QuotaPriceCNYSnapshot, order.QuotaModelMultiplierSnapshot,
+			order.QuotaSaleCutoffAtSnapshot, order.QuotaExpiresAtSnapshot, order.QuotaSaleModeSnapshot,
+			order.QuotaRoundStartsAtSnapshot, order.QuotaRoundEndsAtSnapshot, order.QuotaDistributionSnapshot,
+			order.QuotaTTFTBandSnapshot, order.QuotaDeclaredMaxConcurrency, order.QuotaPerformanceConfirmedAt,
+			order.QuotaDeliveryETAMinutes, order.QuotaDeliveryMode, order.SelectedPaymentMethod,
+			order.PaymentWindowMinutesSnapshot, order.PaymentExpiresAt, order.PaymentInstructionsSnapshot,
+			nullText(order.PaymentQRCodeDataURLSnapshot), now, order.OrderNo)
+		if insertErr != nil {
+			return insertErr
+		}
+		if commandTag.RowsAffected() == 0 {
+			return errAPIOrderNumberCollision
+		}
+		return nil
+	})
 	if err != nil {
 		return apiorder.Order{}, idempotency.Completion{}, mapAPIQuotaWriteError(err)
 	}

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -608,6 +609,9 @@ func TestNewOrderSetsAPIServicePurchaseKind(t *testing.T) {
 	}
 	if order.PurchaseKind != PurchaseKindAPIService {
 		t.Fatalf("expected purchase kind %q, got %q", PurchaseKindAPIService, order.PurchaseKind)
+	}
+	if !strings.HasPrefix(order.OrderNo, "API-20260627-") || len(order.OrderNo) != len("API-20260627-")+OrderNumberSuffixLength {
+		t.Fatalf("expected a public API order number, got %q", order.OrderNo)
 	}
 }
 

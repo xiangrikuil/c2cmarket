@@ -10,6 +10,7 @@ import (
 func TestAPIOrderNotificationMatrix(t *testing.T) {
 	order := apiorder.Order{
 		ID:           "11111111-1111-4111-8111-111111111111",
+		OrderNo:      "API-20260802-K7M4P9Q2XZ",
 		BuyerUserID:  "22222222-2222-4222-8222-222222222222",
 		SellerUserID: "33333333-3333-4333-8333-333333333333",
 	}
@@ -44,6 +45,9 @@ func TestAPIOrderNotificationMatrix(t *testing.T) {
 			}
 			if tt.wantTitle != "" && spec.Title != tt.wantTitle {
 				t.Fatalf("unexpected notification title: got %q want %q", spec.Title, tt.wantTitle)
+			}
+			if !strings.Contains(spec.Body, order.OrderNo) {
+				t.Fatalf("notification body must identify the public order number: %q", spec.Body)
 			}
 			joined := strings.ToLower(spec.Title + " " + spec.Body)
 			for _, forbidden := range []string{"api key", "password", "token", "session", "付款摘要", "二维码"} {

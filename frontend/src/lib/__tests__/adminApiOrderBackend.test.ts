@@ -5,6 +5,7 @@ describe('管理员 API 订单适配', () => {
   it('展示订单十进制快照且不传播原始交付凭证', () => {
     const order: BackendAPIOrder = {
       id: 'order-1',
+      orderNo: 'API-20260802-K7M4P9Q2XZ',
       purchaseKind: 'api_service',
       apiPurchaseIntentId: 'intent-1',
       apiServiceId: 'service-1',
@@ -35,6 +36,8 @@ describe('管理员 API 订单适配', () => {
     const row = mapBackendAdminAPIOrder(order)
 
     expect(row.primary).toBe('GPT 服务 API 订单')
+    expect(row.secondary).toContain('API-20260802-K7M4P9Q2XZ')
+    expect(row.detailItems).toContainEqual({ label: '订单号', value: 'API-20260802-K7M4P9Q2XZ' })
     expect(row.secondary).toContain('订单金额 ¥10.00')
     expect(row.detailItems).toContainEqual({ label: '购买额度', value: '12.500000 美元额度' })
     expect(JSON.stringify(row)).not.toContain('must-not-leak')

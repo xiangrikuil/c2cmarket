@@ -18,6 +18,7 @@ func TestAPIOrderResponseIncludesBuyerAndSellerReputation(t *testing.T) {
 	seller.Metrics.RoleCompletionRate = &completionRate
 	response := toAPIOrderResponse(apiorder.Order{
 		ID:               "order-1",
+		OrderNo:          "API-20260802-K7M4P9Q2XZ",
 		BuyerUserID:      "buyer-1",
 		SellerUserID:     "seller-1",
 		BuyerReputation:  &buyer,
@@ -26,6 +27,9 @@ func TestAPIOrderResponseIncludesBuyerAndSellerReputation(t *testing.T) {
 		CreatedAt:        now,
 		UpdatedAt:        now,
 	}, false, false)
+	if response.OrderNo != "API-20260802-K7M4P9Q2XZ" {
+		t.Fatalf("order number missing: %#v", response)
+	}
 
 	if response.BuyerReputation == nil || response.BuyerReputation.Role != reputation.RoleBuyer {
 		t.Fatalf("buyer reputation missing: %#v", response.BuyerReputation)

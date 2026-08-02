@@ -29,6 +29,7 @@ import {
   type ApiOrder,
 } from '@/lib/api'
 import { apiPaymentMethodLabels } from '@/lib/apiPaymentSettings'
+import { matchesApiOrderSearch } from '@/lib/apiOrderUi'
 import { addDecimal, compareDecimal, formatDecimal } from '@/lib/decimal'
 import { useMerchantApiOrders } from '@/queries/useMarketQueries'
 
@@ -44,14 +45,14 @@ const busyId = ref('')
 const deliveredStatuses = ['delivery_submitted', 'completed']
 
 const baseFilteredRows = computed(() => {
-  const q = keyword.value.trim().toLowerCase()
+  const q = keyword.value.trim()
   const rangeMs = timeRange.value === 'today' ? 24 * 60 * 60 * 1000 : timeRange.value === '7d' ? 7 * 24 * 60 * 60 * 1000 : timeRange.value === '30d' ? 30 * 24 * 60 * 60 * 1000 : null
 
   return [...(data.value ?? [])].filter(item => {
     const createdAt = new Date(item.createdAt).getTime()
     return (!rangeMs || Date.now() - createdAt <= rangeMs)
       && (serviceFilter.value === 'all' || item.apiServiceId === serviceFilter.value)
-      && (!q || [item.id, item.buyer, item.serviceTitle].some(value => value.toLowerCase().includes(q)))
+      && matchesApiOrderSearch(q, [item.orderNo, item.id, item.buyer, item.serviceTitle])
   })
 })
 
@@ -139,7 +140,7 @@ async function runAction(item: ApiOrder, action: () => Promise<unknown>, message
     <EmptyState v-else-if="rows.length === 0" title="当前筛选下暂无订单" description="调整筛选条件后再试；新订单到达后会在这里显示。" />
     <SoftTable v-else animate-rows class="[&_table]:min-w-[760px]" :columns="['订单', '买家 / 服务', '订单金额 / 购买额度', '状态', '更新', '操作']">
       <tr v-for="item in pagination.paginatedRows.value" :key="item.id">
-        <td><div class="font-medium"><ShortId :value="item.id" prefix="API" copyable /></div><div class="text-xs text-muted-foreground"><LocalTime :value="item.createdAt" /></div></td>
+        <td><div class="font-medium"><ShortId :value="item.orderNo" full copyable /></div><div class="text-xs text-muted-foreground"><LocalTime :value="item.createdAt" /></div></td>
         <td>
           <div class="font-medium">{{ item.buyer }}</div>
           <div class="text-xs text-muted-foreground">{{ item.serviceTitle }} · {{ item.seller }} · {{ getApiMerchantVisibilityLabel(item.intentSnapshot) }}</div>

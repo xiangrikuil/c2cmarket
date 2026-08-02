@@ -100,6 +100,7 @@ import type { ReputationSummary } from '@/types/reputation'
 import { mockPublicUserReputation } from '@/lib/reputationMock'
 import { getPricingDisplay } from '@/lib/pricing'
 import { evaluateCarpoolApplicationEligibility, hasCredentialSharingLanguage } from '@/lib/carpoolEligibility'
+import { matchesApiOrderSearch } from '@/lib/apiOrderUi'
 export { evaluateCarpoolApplicationEligibility } from '@/lib/carpoolEligibility'
 import { defaultQuotaLabel, defaultQuotaPeriod, defaultQuotaUnit } from '@/lib/quota'
 import { beijingDateTimeInputToISOString, formatBeijingDateTimeInput, formatQuotaExpiresAtLabel } from '@/lib/apiQuotaExpiration'
@@ -545,6 +546,7 @@ export type ApiOrderPaymentInstructions = {
 
 export type ApiOrder = {
   id: string
+  orderNo: string
   purchaseKind: ApiOrderPurchaseKind
   apiPurchaseIntentId: string
   apiServiceId: string
@@ -813,13 +815,16 @@ const apiPaymentAccountSettingsStorageKey = 'c2cmarket.apiPaymentAccountSettings
 const feedbackStorageKey = 'c2cmarket.feedbackTickets.v1'
 const notificationReadStorageKey = 'c2cmarket.notificationReadState.v1'
 const favoriteStorageKey = 'c2cmarket.favorites.v1'
+const apiOrderNumberAlphabet = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789'
 const carpoolApplyAllowedStatuses: Carpool['status'][] = ['可上车']
 const carpoolContactVisibleStatuses: CarpoolApplicationStatus[] = ['accepted_reserved', 'waiting_contact', 'contacted', 'joined_pending_confirmation', 'active', 'pending_completion', 'completed', 'disputed']
 const apiContactVisibleStatuses: ApiPurchaseIntentStatus[] = ['open', 'contacted', 'ordered', 'buyer_cancelled', 'owner_closed']
 
 let apiPurchaseIntentStore = normalizeApiPurchaseIntentStore(readSessionStore(apiPurchaseIntentStorageKey, apiPurchaseIntents))
 let apiPurchaseIntentEventStore = normalizeApiPurchaseIntentEventStore(readSessionStore(apiPurchaseIntentEventStorageKey, apiPurchaseIntentEvents))
-let apiOrderStore = normalizeApiOrderStore(readSessionStore<ApiOrder[]>(apiOrderStorageKey, []))
+const loadedApiOrders = readSessionStore<ApiOrder[]>(apiOrderStorageKey, [])
+let apiOrderStore = normalizeApiOrderStore(loadedApiOrders)
+if (loadedApiOrders.some(order => !order.orderNo)) persistApiOrderStore()
 let apiQuotaBatchStore = readSessionStore<ApiQuotaBatch[]>(apiQuotaBatchStorageKey, apiQuotaBatches)
 let apiQuotaOfferStore = readSessionStore<PublicApiQuotaOffer[]>(apiQuotaOfferStorageKey, apiQuotaOffers)
 let apiQuotaRoundStore = readSessionStore<ApiQuotaRound[]>(apiQuotaRoundStorageKey, apiQuotaRounds)
@@ -898,6 +903,7 @@ function mockDeliveryReviewDeadline(submittedAt?: string) {
 function normalizeApiOrderStore(orders: ApiOrder[]): ApiOrder[] {
   return orders.map(order => ({
     ...order,
+    orderNo: order.orderNo || createMockApiOrderNo(order.createdAt),
     purchaseKind: order.purchaseKind ?? 'api_service',
     completionSource: order.completionSource ?? (order.status === 'completed' ? 'buyer_confirmed' : undefined),
     deliveryReviewExpiresAt: order.deliveryReviewExpiresAt
@@ -920,6 +926,29 @@ function materializeMockApiOrderReviews(currentTime = Date.now()) {
     changed = true
   }
   if (changed) persistApiOrderStore()
+}
+
+function createMockApiOrderNo(createdAt: string) {
+  const dateParts = new Intl.DateTimeFormat('en', {
+    timeZone: 'Asia/Shanghai',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(new Date(createdAt))
+  const datePart = ['year', 'month', 'day']
+    .map(type => dateParts.find(part => part.type === type)?.value ?? '')
+    .join('')
+  let suffix = ''
+  while (suffix.length < 10) {
+    const bytes = new Uint8Array(16)
+    globalThis.crypto.getRandomValues(bytes)
+    for (const value of bytes) {
+      if (value >= 248) continue
+      suffix += apiOrderNumberAlphabet[value % apiOrderNumberAlphabet.length]
+      if (suffix.length === 10) break
+    }
+  }
+  return `API-${datePart}-${suffix}`
 }
 
 function productPlanForCarpoolName(productName: string) {
@@ -2024,7 +2053,7 @@ function filterApiPurchaseIntents(filters: ApiPurchaseIntentFilters = {}) {
 }
 
 function apiOrderSearchTerms(order: ApiOrder) {
-  return [order.id, order.apiPurchaseIntentId, order.serviceTitle, order.buyer, order.seller, getApiMerchantDisplayName({ merchant: order.seller, snapshot: order.intentSnapshot })]
+  return [order.orderNo, order.id, order.apiPurchaseIntentId, order.serviceTitle, order.buyer, order.seller, getApiMerchantDisplayName({ merchant: order.seller, snapshot: order.intentSnapshot })]
 }
 
 function defaultApiOrderSortForRole(role: 'buyer' | 'merchant') {
@@ -2049,7 +2078,7 @@ function filterApiOrders(filters: ApiOrderFilters = {}) {
       && (!statuses || statuses.includes(item.status))
       && (!filters.serviceId || item.apiServiceId === filters.serviceId)
       && (!rangeMs || now - createdAt <= rangeMs)
-      && (!keyword || apiOrderSearchTerms(item).some(value => value.toLowerCase().includes(keyword)))
+      && (!keyword || matchesApiOrderSearch(keyword, apiOrderSearchTerms(item)))
   })
 
   const sort = filters.sort ?? 'updated_desc'
@@ -3682,13 +3711,14 @@ export async function getAdminSectionRows(section: AdminSection): Promise<AdminR
     return withAdminRowLinks(apiOrderStore.map(item => ({
       id: item.id,
       primary: `${item.serviceTitle} API 订单`,
-      secondary: `${item.id} · 订单金额 ¥${item.amountDecimal ?? item.amount}`,
+      secondary: `${item.orderNo} · 订单金额 ¥${item.amountDecimal ?? item.amount}`,
       owner: `${item.seller} / 买家 ${item.buyer}`,
       status: item.status === 'completed' ? getApiOrderCompletionSourceLabel(item.completionSource) : getApiOrderStatusLabel(item.status, 'admin'),
       risk: item.disputeStatus || item.cancelReason || `更新于 ${item.updatedAt}`,
       targetType: 'api-order',
       targetTo: `/admin/api-orders/${item.id}`,
       detailItems: [
+        { label: '订单号', value: item.orderNo },
         { label: '订单金额', value: `¥${item.amountDecimal ?? item.amount}` },
         { label: '购买额度', value: `${item.requestedUsdAllowanceDecimal ?? item.requestedUsdAllowance} 美元额度` },
         { label: '交付凭证', value: item.deliverySubmittedAt ? '已提交（管理摘要不展示原始凭证）' : '尚未提交' },
@@ -5390,6 +5420,7 @@ export async function createApiOrderFromIntent(intentId: string, paymentMethod: 
   const createdAt = nowText()
   const order: ApiOrder = {
     id: `api-order-${Date.now()}`,
+    orderNo: createMockApiOrderNo(createdAt),
     purchaseKind: 'api_service',
     apiPurchaseIntentId: intent.id,
     apiServiceId: intent.serviceId,
@@ -5489,6 +5520,7 @@ export async function createApiQuotaOrder(payload: CreateApiQuotaOrderPayload) {
   const paymentWindowMinutes = offer.saleMode === 'scheduled' ? 5 : 10
   const order: ApiOrder = {
     id: `api-order-quota-${Date.now()}`,
+    orderNo: createMockApiOrderNo(createdAt),
     purchaseKind: 'limited_quota_offer',
     apiPurchaseIntentId: intentId,
     apiServiceId: service.id,
@@ -5897,7 +5929,7 @@ export async function getApiOrderNotifications(): Promise<ApiOrderNotification[]
     .map(item => ({
       id: `api-notice-${item.id}`,
       title: getApiOrderStatusLabel(item.status),
-      detail: `${item.serviceTitle} · ${item.buyer} / ${item.seller}`,
+      detail: `${item.orderNo} · ${item.serviceTitle} · ${item.buyer} / ${item.seller}`,
       time: item.updatedAt,
       unread: item.status === 'payment_issue' || item.status === 'payment_submitted' || item.status === 'paid_confirmed',
       to: item.sellerId === currentMerchantId ? `/merchant/api-orders/${item.id}` : `/my/api-orders/${item.id}`,

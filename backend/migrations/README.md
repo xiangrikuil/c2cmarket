@@ -333,6 +333,12 @@ single-use promotion coupons with activation facts. Reward promotions use a
 separate rotating pool and do not consume administrator promotion capacity or
 change API-service review, reputation, badges, stock, price, or natural order.
 
+Version 75 (`000075_api_order_public_numbers`) adds immutable public API order
+numbers in the `API-YYYYMMDD-XXXXXXXXXX` format. Existing orders are backfilled
+from each order's Asia/Shanghai creation date with stable collision handling;
+new writes use cryptographically random suffixes. The UUID remains the internal
+primary key, route key, and relation key.
+
 ## Contact Retention And Destruction
 
 Contact method deletion retires the mutable contact method surface. Historical

@@ -546,7 +546,12 @@ onBeforeUnmount(() => {
           <StatusBadge :key="order.status" :status="order.status" :label="getApiOrderDisplayStatus(order, perspective)" />
           <Badge v-if="order.purchaseKind === 'limited_quota_offer'" variant="capability">限时额度包</Badge>
         </div>
-        <p class="mt-1.5 truncate text-sm text-muted-foreground" :title="order.serviceTitle">{{ order.serviceTitle }} · 订单号 <ShortId :value="order.id" prefix="API" copyable /></p>
+        <p class="mt-1.5 flex min-w-0 flex-wrap items-center gap-x-1 gap-y-1 text-sm text-muted-foreground" :title="order.serviceTitle">
+          <span class="min-w-0 truncate">{{ order.serviceTitle }}</span>
+          <span aria-hidden="true">·</span>
+          <span>订单号</span>
+          <ShortId :value="order.orderNo" full copyable />
+        </p>
       </div>
       <Button v-if="canCancelOrder" variant="outline" class="border-destructive/40 text-destructive hover:bg-destructive/5 hover:text-destructive" @click="cancelDrawerOpen = true">
         <XCircle class="h-4 w-4" />取消订单

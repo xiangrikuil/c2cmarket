@@ -19,6 +19,10 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
+const maxAPIOrderNumberInsertAttempts = 8
+
+var errAPIOrderNumberCollision = errors.New("API order number collision")
+
 func (s *Store) CreateAPIOrderWithIdempotency(ctx context.Context, entry idempotency.Entry, input apiorder.CreateInput, now time.Time, buildCompletion apiorder.CompletionBuilder) (apiorder.Order, idempotency.Completion, *domain.AppError) {
 	return s.apiOrderWithIdempotency(ctx, entry, input, apiorder.ActionInput{}, now, buildCompletion, "create")
 }
@@ -224,7 +228,7 @@ func (s *Store) createAPIOrderInTx(ctx context.Context, tx pgx.Tx, input apiorde
 	if appErr := reserveAPIOrderInventoryInTx(ctx, tx, order, now); appErr != nil {
 		return apiorder.Order{}, appErr
 	}
-	if appErr := insertAPIOrderInTx(ctx, tx, order); appErr != nil {
+	if appErr := insertAPIOrderInTx(ctx, tx, &order); appErr != nil {
 		return apiorder.Order{}, appErr
 	}
 	if appErr := markAPIPurchaseIntentOrderedInTx(ctx, tx, intent.ID, now); appErr != nil {
@@ -823,7 +827,8 @@ const apiOrderColumns = `
 		COALESCE(payment_issue_reason, ''), COALESCE(payment_issue_note, ''), payment_issue_reported_at, paid_confirmed_at,
 	COALESCE(delivery_note, ''), delivery_submitted_at,
 	delivery_review_expires_at, delivery_review_reminded_at, COALESCE(completion_source, ''), completed_at,
-	cancelled_at, COALESCE(cancel_reason, ''), created_at, updated_at, version
+	cancelled_at, COALESCE(cancel_reason, ''), created_at, updated_at, version,
+	order_no
 `
 
 func (s *Store) listAPIOrders(ctx context.Context, whereClause string, args []any) ([]apiorder.Order, *domain.AppError) {
@@ -936,6 +941,7 @@ func apiOrderScanTargets(order *apiorder.Order) []any {
 		&order.CreatedAt,
 		&order.UpdatedAt,
 		&order.Version,
+		&order.OrderNo,
 	}
 }
 
@@ -983,8 +989,9 @@ func newStoreAPIOrder(input apiorder.CreateInput, intent apiintent.Intent, servi
 	}, nil
 }
 
-func insertAPIOrderInTx(ctx context.Context, tx pgx.Tx, order apiorder.Order) *domain.AppError {
-	_, err := tx.Exec(ctx, `
+func insertAPIOrderInTx(ctx context.Context, tx pgx.Tx, order *apiorder.Order) *domain.AppError {
+	err := insertAPIOrderWithNumberRetry(order, apiorder.GenerateOrderNo, func() error {
+		commandTag, insertErr := tx.Exec(ctx, `
 		INSERT INTO api_orders (
 			id, api_purchase_intent_id, api_service_id, buyer_user_id, seller_user_id,
 			status, dispute_status, dispute_case_id, service_title_snapshot,
@@ -997,7 +1004,7 @@ func insertAPIOrderInTx(ctx context.Context, tx pgx.Tx, order apiorder.Order) *d
 				payment_instructions_snapshot, payment_qr_code_data_url_snapshot, payment_summary, payment_submitted_at,
 				payment_issue_reason, payment_issue_note, payment_issue_reported_at,
 				paid_confirmed_at, delivery_note, delivery_submitted_at, completed_at,
-				cancelled_at, cancel_reason, created_at, updated_at, version
+				cancelled_at, cancel_reason, created_at, updated_at, version, order_no
 		)
 		VALUES (
 			$1, $2, $3, $4, $5,
@@ -1011,20 +1018,29 @@ func insertAPIOrderInTx(ctx context.Context, tx pgx.Tx, order apiorder.Order) *d
 				$25, $26, $27, $28,
 				$29, $30, $31,
 				$32, $33, $34, $35,
-				$36, $37, $38, $39, $40
+				$36, $37, $38, $39, $40, $41
 		)
+		ON CONFLICT ON CONSTRAINT ux_api_orders_order_no DO NOTHING
 	`, order.ID, order.APIPurchaseIntentID, order.APIServiceID, order.BuyerUserID, order.SellerUserID,
-		order.Status, order.DisputeStatus, nullUUID(order.DisputeCaseID), order.ServiceTitleSnapshot,
-		order.ServiceVersionSnapshot, order.BillingModeSnapshot, nullUUID(order.SelectedPackageID),
-		nullJSON(order.SelectedPackageSnapshot), nullInt64(order.QuoteVersionSnapshot),
-		nullNumeric(order.RequestedUSDAllowanceSnapshot), nullNumeric(order.CNYPerUSDAllowanceSnapshot), nullJSON(order.PricingSnapshot),
-		order.PackageStockReserved, order.PackageExpiresAt,
-		order.Amount, order.Currency,
-		order.SelectedPaymentMethod, order.PaymentWindowMinutesSnapshot, order.PaymentExpiresAt,
-		order.PaymentInstructionsSnapshot, nullText(order.PaymentQRCodeDataURLSnapshot), nullText(order.PaymentSummary), order.PaymentSubmittedAt,
-		nullText(order.PaymentIssueReason), nullText(order.PaymentIssueNote), order.PaymentIssueReportedAt,
-		order.PaidConfirmedAt, nullText(order.DeliveryNote), order.DeliverySubmittedAt, order.CompletedAt,
-		order.CancelledAt, nullText(order.CancelReason), order.CreatedAt, order.UpdatedAt, order.Version)
+			order.Status, order.DisputeStatus, nullUUID(order.DisputeCaseID), order.ServiceTitleSnapshot,
+			order.ServiceVersionSnapshot, order.BillingModeSnapshot, nullUUID(order.SelectedPackageID),
+			nullJSON(order.SelectedPackageSnapshot), nullInt64(order.QuoteVersionSnapshot),
+			nullNumeric(order.RequestedUSDAllowanceSnapshot), nullNumeric(order.CNYPerUSDAllowanceSnapshot), nullJSON(order.PricingSnapshot),
+			order.PackageStockReserved, order.PackageExpiresAt,
+			order.Amount, order.Currency,
+			order.SelectedPaymentMethod, order.PaymentWindowMinutesSnapshot, order.PaymentExpiresAt,
+			order.PaymentInstructionsSnapshot, nullText(order.PaymentQRCodeDataURLSnapshot), nullText(order.PaymentSummary), order.PaymentSubmittedAt,
+			nullText(order.PaymentIssueReason), nullText(order.PaymentIssueNote), order.PaymentIssueReportedAt,
+			order.PaidConfirmedAt, nullText(order.DeliveryNote), order.DeliverySubmittedAt, order.CompletedAt,
+			order.CancelledAt, nullText(order.CancelReason), order.CreatedAt, order.UpdatedAt, order.Version, order.OrderNo)
+		if insertErr != nil {
+			return insertErr
+		}
+		if commandTag.RowsAffected() == 0 {
+			return errAPIOrderNumberCollision
+		}
+		return nil
+	})
 	if err != nil {
 		if isUniqueViolationOnConstraint(err, "ux_api_orders_intent") {
 			return domain.NewAPIPurchaseIntentHasOrderError()
@@ -1032,6 +1048,25 @@ func insertAPIOrderInTx(ctx context.Context, tx pgx.Tx, order apiorder.Order) *d
 		return internalStoreError()
 	}
 	return nil
+}
+
+func insertAPIOrderWithNumberRetry(order *apiorder.Order, generate func(time.Time) (string, error), insert func() error) error {
+	if order == nil || generate == nil || insert == nil {
+		return errors.New("API order number insert dependencies are unavailable")
+	}
+	for range maxAPIOrderNumberInsertAttempts {
+		orderNo, err := generate(order.CreatedAt)
+		if err != nil {
+			return err
+		}
+		order.OrderNo = orderNo
+		err = insert()
+		if errors.Is(err, errAPIOrderNumberCollision) {
+			continue
+		}
+		return err
+	}
+	return errors.New("API order number collision retry exhausted")
 }
 
 func updateAPIOrderInTx(ctx context.Context, tx pgx.Tx, order apiorder.Order) *domain.AppError {

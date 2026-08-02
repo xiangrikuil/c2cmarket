@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"c2c-market/backend/internal/module/apiorder"
 	"c2c-market/backend/internal/module/reputation"
 
 	"github.com/google/uuid"
@@ -436,22 +437,27 @@ func seedTimeoutAPIOrderForReputationTest(
 
 	orderID := uuid.NewString()
 	cancelledAt := now.Add(-10 * time.Minute)
+	orderCreatedAt := now.Add(-time.Hour)
+	orderNo, err := apiorder.GenerateOrderNo(orderCreatedAt)
+	if err != nil {
+		t.Fatalf("generate timeout API order number: %v", err)
+	}
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO api_orders (
 		  id, api_purchase_intent_id, api_service_id, buyer_user_id, seller_user_id,
 		  status, service_title_snapshot, service_version_snapshot, billing_mode_snapshot,
 		  amount, currency, selected_payment_method, payment_window_minutes_snapshot,
 		  payment_expires_at, payment_instructions_snapshot,
-		  cancelled_at, cancel_reason, created_at, updated_at
+		  cancelled_at, cancel_reason, created_at, updated_at, order_no
 		)
 		VALUES (
 		  $1, $2, $3, $4, $5,
 		  'cancelled', '付款超时信誉测试 API 服务', 1, 'manual_usage_check',
 		  20, 'CNY', 'wechat', 10,
 		  $6, '站外确认付款',
-		  $7, 'payment_timeout', $8, $7
+		  $7, 'payment_timeout', $8, $7, $9
 		)
-	`, orderID, intentID, serviceID, buyerID, sellerID, cancelledAt, cancelledAt, now.Add(-time.Hour)); err != nil {
+	`, orderID, intentID, serviceID, buyerID, sellerID, cancelledAt, cancelledAt, orderCreatedAt, orderNo); err != nil {
 		t.Fatalf("seed timeout API order: %v", err)
 	}
 	if _, err := pool.Exec(ctx, `

@@ -11496,6 +11496,7 @@ components:
       description: API service order for either a free-amount API service purchase or a limited fixed quota offer. C2CMarket does not process payments, provide escrow, or proxy API calls. After the seller explicitly confirms off-platform payment, the seller may submit one buyer-specific credential or a previously encrypted buyer-specific credential may be bound to the order. Buyer/seller detail and action responses may include it; lists, admin summaries, public responses, events, notifications, and logs must not.
       required:
         - id
+        - orderNo
         - purchaseKind
         - apiPurchaseIntentId
         - apiServiceId
@@ -11518,6 +11519,10 @@ components:
         id:
           type: string
           format: uuid
+        orderNo:
+          type: string
+          pattern: '^API-[0-9]{8}-[ABCDEFGHJKMNPQRSTUVWXYZ23456789]{10}$'
+          description: Immutable public business number. The UUID remains the route and relation key.
         purchaseKind:
           type: string
           enum: [api_service, limited_quota_offer]

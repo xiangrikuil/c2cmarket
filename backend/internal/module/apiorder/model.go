@@ -56,6 +56,7 @@ const (
 
 type Order struct {
 	ID                            string
+	OrderNo                       string
 	PurchaseKind                  string
 	APIPurchaseIntentID           string
 	APIServiceID                  string

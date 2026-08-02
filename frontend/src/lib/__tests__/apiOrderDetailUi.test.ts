@@ -39,6 +39,11 @@ describe('API 订单角色视图', () => {
 const source = detail
 
 describe('API 订单详情 UI 契约', () => {
+  it('展示完整公开业务编号且不再截取 UUID 冒充订单号', () => {
+    expect(source).toContain(':value="order.orderNo" full copyable')
+    expect(source).not.toContain(':value="order.id" prefix="API"')
+  })
+
   it('使用快照投影并区分结构化商户承诺、历史售后与平台边界', () => {
     expect(source).toContain('{{ orderModelSnapshotLabel }}')
     expect(source).toContain('历史订单未冻结模型信息')

@@ -2019,6 +2019,10 @@ export type ApiOrderReasonRequest = {
  */
 export type ApiOrder = {
     id: string;
+    /**
+     * Immutable public business number. The UUID remains the route and relation key.
+     */
+    orderNo: string;
     purchaseKind: 'api_service' | 'limited_quota_offer';
     apiPurchaseIntentId: string;
     apiServiceId: string;

@@ -23,6 +23,7 @@ import {
   getApiOrderNextAction,
 } from '@/lib/api'
 import { apiPaymentMethodLabels } from '@/lib/apiPaymentSettings'
+import { matchesApiOrderSearch } from '@/lib/apiOrderUi'
 import { compareDecimal, formatDecimal } from '@/lib/decimal'
 import { functionalMotion } from '@/lib/motion'
 import { getApiServiceProductIconSrc } from '@/lib/productCategoryIcon'
@@ -40,7 +41,7 @@ const sortMode = ref<'default' | 'updated' | 'created' | 'amount'>('default')
 const activeStatuses = ['pending_payment', 'payment_issue', 'delivery_submitted']
 
 const rows = computed(() => {
-  const q = keyword.value.trim().toLowerCase()
+  const q = keyword.value.trim()
   return [...(data.value ?? [])]
     .filter(item => {
       const createdAt = new Date(item.createdAt).getTime()
@@ -55,7 +56,7 @@ const rows = computed(() => {
         || (activeTab.value === '已取消' && item.status === 'cancelled')
       return tabMatched
         && (!rangeMs || Date.now() - createdAt <= rangeMs)
-        && (!q || [item.id, item.serviceTitle, item.seller].some(value => value.toLowerCase().includes(q)))
+        && matchesApiOrderSearch(q, [item.orderNo, item.id, item.serviceTitle, item.seller])
     })
     .sort((a, b) => {
       if (sortMode.value === 'amount') return compareDecimal(b.amountDecimal ?? String(b.amount), a.amountDecimal ?? String(a.amount))
@@ -116,7 +117,7 @@ function openOrder(event: MouseEvent | KeyboardEvent, id: string) {
                 <img v-if="orderProductIconSrc(item)" :src="orderProductIconSrc(item) ?? undefined" alt="" />
                 <Code2 v-else class="h-5 w-5" />
               </span>
-              <div class="min-w-0"><div class="truncate font-semibold text-slate-950">{{ item.serviceTitle }}</div><div class="mt-1 flex items-center gap-1.5 truncate text-xs text-muted-foreground"><ShortId :value="item.id" prefix="API" copyable /> · {{ item.intentSnapshot.models.join(' / ') }}</div></div>
+              <div class="min-w-0"><div class="truncate font-semibold text-slate-950">{{ item.serviceTitle }}</div><div class="mt-1 flex items-center gap-1.5 truncate text-xs text-muted-foreground"><ShortId :value="item.orderNo" full copyable /> · {{ item.intentSnapshot.models.join(' / ') }}</div></div>
             </div>
             <div class="my-transaction-metric">
               <small>支付金额</small>

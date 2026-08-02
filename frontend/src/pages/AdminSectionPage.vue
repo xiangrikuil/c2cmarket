@@ -34,6 +34,7 @@ import AdminDisputeResolutionDialog from '@/components/admin/AdminDisputeResolut
 import { usePagination } from '@/composables/usePagination'
 import { runAdminModerationAction, updateAdminRowStatus, type AdminRow, type AdminSection } from '@/lib/api'
 import { isCarpoolExceptionStatus } from '@/lib/carpoolModeration'
+import { matchesApiOrderSearch } from '@/lib/apiOrderUi'
 import { useAdminSectionRows } from '@/queries/useMarketQueries'
 import { toast } from 'vue-sonner'
 
@@ -112,8 +113,8 @@ const visibleRows = computed(() => {
   } else if (activeStatus.value !== '全部') {
     rows = rows.filter(row => row.status === activeStatus.value)
   }
-  const q = keyword.value.trim().toLowerCase()
-  if (q) rows = rows.filter(row => [row.id, row.primary, row.secondary, row.owner, row.status, row.risk, ...(row.detailItems ?? []).flatMap(item => [item.label, item.value])].join(' ').toLowerCase().includes(q))
+  const q = keyword.value.trim()
+  if (q) rows = rows.filter(row => matchesApiOrderSearch(q, [row.id, row.primary, row.secondary, row.owner, row.status, row.risk, ...(row.detailItems ?? []).flatMap(item => [item.label, item.value])]))
   if (riskFilter.value === 'high') rows = rows.filter(row => /高风险|纠纷|举报|封禁|异常|超时|未解决|危险/i.test(`${row.risk} ${row.status}`))
   if (riskFilter.value === 'has_note') rows = rows.filter(row => Boolean(row.risk.trim()))
   return rows

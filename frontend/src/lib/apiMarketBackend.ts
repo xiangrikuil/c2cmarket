@@ -64,6 +64,7 @@ import { beijingDateTimeInputToISOString, formatQuotaExpiresAtLabel } from '@/li
 import { backendMyMerchantProfile, backendUpsertMerchantProfile } from '@/lib/profileBackend'
 import { compareDecimal, divideDecimal, normalizeDecimal, normalizeDecimalTrimmed } from '@/lib/decimal'
 import { mapBackendReputationSummary } from '@/lib/reputationBackend'
+import { matchesApiOrderSearch } from '@/lib/apiOrderUi'
 import type { ReputationSummary } from '@/types/reputation'
 
 type ListResponse<T> = { items: T[] }
@@ -242,6 +243,7 @@ type BackendAPIOrderDeliveryCredential = {
 
 export type BackendAPIOrder = {
   id: string
+  orderNo: string
   purchaseKind: string
   apiPurchaseIntentId: string
   apiServiceId: string
@@ -1267,7 +1269,7 @@ export function mapBackendAdminAPIOrder(order: BackendAPIOrder): AdminRow {
 	return {
 		id: order.id,
 		primary: `${order.serviceTitleSnapshot} API 订单`,
-		secondary: `${order.id} · 订单金额 ¥${order.amount}`,
+		secondary: `${order.orderNo} · 订单金额 ¥${order.amount}`,
 		owner: `买家 ${order.buyerUserId?.slice(0, 8) ?? '未知'} / 商户 ${order.sellerUserId?.slice(0, 8) ?? '未知'}`,
 		status: order.status === 'completed'
 			? order.completionSource === 'auto_completed' ? '系统自动完成' : '买家主动确认'
@@ -1278,6 +1280,7 @@ export function mapBackendAdminAPIOrder(order: BackendAPIOrder): AdminRow {
 		backendVersion: order.version,
 		targetTo: `/admin/api-orders/${order.id}`,
 		detailItems: [
+			{ label: '订单号', value: order.orderNo },
 			{ label: '订单状态', value: order.status },
 			{ label: '订单金额', value: `¥${order.amount}` },
 			{ label: '购买额度', value: order.requestedUsdAllowanceSnapshot ? `${order.requestedUsdAllowanceSnapshot} 美元额度` : '不适用' },
@@ -1560,7 +1563,7 @@ function mapDeliveryCredential(value?: BackendAPIOrderDeliveryCredential | null)
 }
 
 function apiOrderSearchTerms(order: ApiOrder) {
-  return [order.id, order.apiPurchaseIntentId, order.serviceTitle, order.buyer, order.seller]
+  return [order.orderNo, order.id, order.apiPurchaseIntentId, order.serviceTitle, order.buyer, order.seller]
 }
 
 function filterAndSortOrders(rows: ApiOrder[], filters: ApiOrderFilters = {}, role: 'buyer' | 'merchant') {
@@ -1575,7 +1578,7 @@ function filterAndSortOrders(rows: ApiOrder[], filters: ApiOrderFilters = {}, ro
       && (!statuses || statuses.includes(row.status))
       && (!filters.serviceId || row.apiServiceId === filters.serviceId)
       && (!rangeMs || now - createdAt <= rangeMs)
-      && (!search || apiOrderSearchTerms(row).some(value => value.toLowerCase().includes(search)))
+      && (!search || matchesApiOrderSearch(search, apiOrderSearchTerms(row)))
   })
   const sort = filters.sort ?? 'updated_desc'
   return filtered.sort((a, b) => {
@@ -1599,6 +1602,7 @@ async function mapBackendAPIOrder(order: BackendAPIOrder, viewerRole: 'buyer' | 
   const pricingSnapshot = projectAPIIntentPricingSnapshot(order.pricingSnapshot ?? '')
   return {
     id: order.id,
+    orderNo: order.orderNo,
     purchaseKind: apiOrderPurchaseKind(order.purchaseKind),
     apiPurchaseIntentId: order.apiPurchaseIntentId,
     apiServiceId: order.apiServiceId,

@@ -44,6 +44,7 @@ type apiOrderPaymentIssueRequest struct {
 
 type apiOrderResponse struct {
 	ID                            string                              `json:"id"`
+	OrderNo                       string                              `json:"orderNo"`
 	PurchaseKind                  string                              `json:"purchaseKind"`
 	APIPurchaseIntentID           string                              `json:"apiPurchaseIntentId"`
 	APIServiceID                  string                              `json:"apiServiceId"`
@@ -436,6 +437,7 @@ func toAdminAPIOrderResponse(order apiorder.Order) apiOrderResponse {
 func toAPIOrderResponse(order apiorder.Order, ownerView bool, includeCredential bool) apiOrderResponse {
 	response := apiOrderResponse{
 		ID:                            order.ID,
+		OrderNo:                       order.OrderNo,
 		PurchaseKind:                  order.PurchaseKind,
 		APIPurchaseIntentID:           order.APIPurchaseIntentID,
 		APIServiceID:                  order.APIServiceID,

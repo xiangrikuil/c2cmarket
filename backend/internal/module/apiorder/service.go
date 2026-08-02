@@ -667,8 +667,13 @@ func NewOrder(input CreateInput, intent apiintent.Intent, service apimarket.Serv
 	if appErr != nil {
 		return Order{}, appErr
 	}
+	orderNo, err := GenerateOrderNo(now)
+	if err != nil {
+		return Order{}, domain.NewError(http.StatusInternalServerError, domain.CodeInternalError, "Internal error", "订单编号生成失败。")
+	}
 	return Order{
 		ID:                            uuid.NewString(),
+		OrderNo:                       orderNo,
 		PurchaseKind:                  PurchaseKindAPIService,
 		APIPurchaseIntentID:           intent.ID,
 		APIServiceID:                  intent.APIServiceID,
