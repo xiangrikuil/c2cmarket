@@ -223,6 +223,7 @@ type OAuthProfile struct {
 	LinuxDoUsername  string
 	LinuxDoAvatarURL string
 	Attribution      RegistrationAttribution
+	ReferralCode     string
 }
 
 type PasswordCredential struct {

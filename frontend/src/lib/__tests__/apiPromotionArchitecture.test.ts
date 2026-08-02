@@ -32,10 +32,10 @@ describe('API promotion architecture', () => {
     expect(page).not.toContain('ApiPromotionSection')
     expect(page).toContain('freeServiceDisplayRows')
     expect(page).toContain('packageDisplayRows')
-    expect(page).toContain('placePromotionFirst')
-    expect(page).toContain('@activate="trackPromotedCardClick(entry.promotion)"')
+    expect(page).toContain('placePromotions')
+    expect(page).toContain('@activate="trackPromotedCardClick(entry.promotion, entry.promotionPosition)"')
     expect(page).not.toContain('@click.capture="trackPromotedCardClick(entry.promotion)"')
-    expect(page).not.toMatch(/quotaRows[\s\S]{0,500}placePromotionFirst/)
+    expect(page).not.toMatch(/quotaRows[\s\S]{0,500}placePromotions/)
   })
 
   it('keeps a compact promotion label without the long disclaimer', () => {

@@ -229,6 +229,9 @@ func (s *Store) UpsertOAuthUser(ctx context.Context, profile auth.OAuthProfile, 
 	if err := insertRegistrationAttribution(ctx, tx, createdUser.ID, "oauth_linux_do", profile.Attribution, now); err != nil {
 		return auth.OAuthUserResult{}, internalStoreError()
 	}
+	if appErr := bindReferralRegistrationInTx(ctx, tx, createdUser.ID, profile.ReferralCode, now); appErr != nil {
+		return auth.OAuthUserResult{}, appErr
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return auth.OAuthUserResult{}, internalStoreError()
 	}

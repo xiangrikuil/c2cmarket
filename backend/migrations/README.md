@@ -320,6 +320,12 @@ activity rows. It also records the first publication time for carpool listings
 and API services with database triggers that preserve the original timestamp,
 so growth windows do not shift when a listing or service is edited later.
 
+Version 73 (`000073_promotion_rewards`) adds a disabled-by-default API-service
+referral campaign, stable invite codes, immutable referral relations, and
+single-use promotion coupons with activation facts. Reward promotions use a
+separate rotating pool and do not consume administrator promotion capacity or
+change API-service review, reputation, badges, stock, price, or natural order.
+
 ## Contact Retention And Destruction
 
 Contact method deletion retires the mutable contact method surface. Historical

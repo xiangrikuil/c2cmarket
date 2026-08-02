@@ -12,6 +12,7 @@ export const ANALYTICS_EVENTS = [
   'detail_visible_time',
   'api_promotion_impression',
   'api_promotion_click',
+  'promotion_benefit_action',
   'login_page_view',
   'oauth_login_start',
   'login_success',
@@ -46,8 +47,9 @@ const reportReasonCodes = ['unreachable', 'contact_invalid', 'impersonation', 'd
 const deliveryModes = ['api_key_endpoint', 'sub2api_panel_account', 'unknown'] as const
 const billingModes = ['metered_credit', 'manual_credit', 'fixed_package', 'unknown'] as const
 const riskNotices = ['openai_subscription_carpool', 'none', 'unknown'] as const
-const promotionPlacements = ['api_market_top'] as const
+const promotionPlacements = ['api_market_top', 'api_market_reward'] as const
 const promotionPositions = ['first', 'middle', 'last'] as const
+const promotionBenefitActions = ['copy_code', 'copy_link', 'poster_download', 'coupon_apply'] as const
 const authenticationMethods = ['oauth_linux_do', 'password'] as const
 const pageClasses = ['home', 'auth', 'discovery', 'carpool', 'api_market', 'account', 'merchant', 'admin', 'public_profile', 'other'] as const
 const staticAnalyticsPaths = new Set([
@@ -74,11 +76,13 @@ const staticAnalyticsPaths = new Set([
   '/my/reputation',
   '/me/reputation',
   '/my/notifications',
+  '/my/promotion-benefits',
   '/my/feedback',
   '/merchant/carpool-applications',
   '/merchant/api-orders',
   '/admin',
   '/admin/growth',
+  '/admin/growth-promotions',
   '/admin/announcements',
   '/admin/announcements/new',
   '/admin/product-plans',
@@ -340,6 +344,14 @@ const sanitizeAPIPromotion = (props: RawProperties) => {
   return target
 }
 
+const sanitizePromotionBenefitAction = (props: RawProperties) => {
+  const target: AnalyticsProperties = {
+    action: normalizeEnum(props.action, promotionBenefitActions),
+  }
+  addSourceRoute(target, props)
+  return target
+}
+
 const sanitizeAuthenticationEvent = (props: RawProperties, includeMethod: boolean) => {
   const target: AnalyticsProperties = {}
   addSourceRoute(target, props)
@@ -379,6 +391,8 @@ export const sanitizeAnalyticsEvent = (eventName: AnalyticsEventName, props: Raw
     case 'api_promotion_impression':
     case 'api_promotion_click':
       return sanitizeAPIPromotion(props)
+    case 'promotion_benefit_action':
+      return sanitizePromotionBenefitAction(props)
     case 'login_page_view':
       return sanitizeAuthenticationEvent(props, false)
     case 'oauth_login_start':

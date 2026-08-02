@@ -856,7 +856,7 @@ paths:
       tags: [APIPromotions]
       security: []
       summary: List currently serving API service promotions.
-      description: Returns a separately labelled operator promotion pool. Promotions never change natural API service ordering, reputation, badges, or service state.
+      description: Returns the separately labelled operator pool followed by at most one hourly-rotated reward activation. Reward promotion IDs are opaque activation IDs. Promotions never change natural API service ordering, reputation, badges, or service state.
       parameters:
         - name: placement
           in: query
@@ -6632,6 +6632,309 @@ paths:
           $ref: "#/components/responses/Problem"
         "429":
           $ref: "#/components/responses/RateLimited"
+  /api/v1/promotion-rewards/public-config:
+    get:
+      operationId: getPromotionRewardPublicConfig
+      tags: [PromotionRewards]
+      security: []
+      summary: Read the current public referral and promotion benefit rules.
+      responses:
+        "200":
+          description: Public activity state and non-sensitive rules.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PromotionRewardPublicConfig"
+  /api/v1/me/referral:
+    get:
+      operationId: getMyReferralSummary
+      tags: [PromotionRewards]
+      summary: Read the current user's invite code, statistics, and masked invite history.
+      responses:
+        "200":
+          description: Referral summary. Invitee identities are masked and risk flags are omitted.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReferralSummary"
+        "401":
+          $ref: "#/components/responses/Problem"
+        "404":
+          description: The activity is disabled. Problem code is `FEATURE_DISABLED`.
+          $ref: "#/components/responses/Problem"
+  /api/v1/me/promotion-coupons:
+    get:
+      operationId: listMyPromotionCoupons
+      tags: [PromotionRewards]
+      parameters:
+        - $ref: "#/components/parameters/PromotionRewardPage"
+        - $ref: "#/components/parameters/PromotionRewardLimit"
+        - $ref: "#/components/parameters/PromotionCouponStatus"
+      responses:
+        "200":
+          description: Promotion coupon wallet with time-derived status.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PromotionCouponPage"
+        "401":
+          $ref: "#/components/responses/Problem"
+        "422":
+          $ref: "#/components/responses/Problem"
+  /api/v1/me/promotion-coupons/{id}/apply:
+    post:
+      operationId: applyMyPromotionCoupon
+      tags: [PromotionRewards]
+      security:
+        - sessionCookie: []
+          csrfToken: []
+      parameters:
+        - $ref: "#/components/parameters/ResourceId"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ApplyPromotionCouponRequest"
+      responses:
+        "200":
+          description: Coupon consumed atomically and API service added to the reward rotation pool.
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+                const: private, no-store
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PromotionCoupon"
+        "401":
+          $ref: "#/components/responses/Problem"
+        "404":
+          $ref: "#/components/responses/Problem"
+        "409":
+          $ref: "#/components/responses/Problem"
+        "422":
+          $ref: "#/components/responses/Problem"
+  /api/v1/admin/promotion-reward-campaign:
+    get:
+      operationId: getAdminPromotionRewardCampaign
+      tags: [AdminPromotionRewards]
+      responses:
+        "200":
+          description: Versioned promotion reward campaign configuration.
+          headers:
+            ETag:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PromotionRewardCampaign"
+        "403":
+          $ref: "#/components/responses/Problem"
+    patch:
+      operationId: updateAdminPromotionRewardCampaign
+      tags: [AdminPromotionRewards]
+      security:
+        - sessionCookie: []
+          csrfToken: []
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+        - $ref: "#/components/parameters/IfMatch"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdatePromotionRewardCampaignRequest"
+      responses:
+        "200":
+          description: Campaign configuration updated and audited.
+          headers:
+            ETag:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PromotionRewardCampaign"
+        "403":
+          $ref: "#/components/responses/Problem"
+        "412":
+          $ref: "#/components/responses/Problem"
+        "422":
+          $ref: "#/components/responses/Problem"
+        "428":
+          $ref: "#/components/responses/Problem"
+  /api/v1/admin/referrals:
+    get:
+      operationId: listAdminReferrals
+      tags: [AdminPromotionRewards]
+      parameters:
+        - $ref: "#/components/parameters/PromotionRewardPage"
+        - $ref: "#/components/parameters/PromotionRewardLimit"
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [all, bound, qualified, rewarded, rejected, revoked]
+            default: all
+        - name: search
+          in: query
+          schema:
+            type: string
+            maxLength: 100
+      responses:
+        "200":
+          description: Server-paginated referral directory including administrative risk flags.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReferralPage"
+        "403":
+          $ref: "#/components/responses/Problem"
+        "422":
+          $ref: "#/components/responses/Problem"
+  /api/v1/admin/referrals/{id}/revoke:
+    post:
+      operationId: revokeAdminReferral
+      tags: [AdminPromotionRewards]
+      security:
+        - sessionCookie: []
+          csrfToken: []
+      parameters:
+        - $ref: "#/components/parameters/ResourceId"
+        - $ref: "#/components/parameters/IdempotencyKey"
+        - $ref: "#/components/parameters/IfMatch"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ReviewActionRequest"
+      responses:
+        "200":
+          description: Referral and related reward coupons revoked atomically.
+          headers:
+            ETag:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminReferralRecord"
+        "403":
+          $ref: "#/components/responses/Problem"
+        "404":
+          $ref: "#/components/responses/Problem"
+        "409":
+          $ref: "#/components/responses/Problem"
+        "412":
+          $ref: "#/components/responses/Problem"
+        "428":
+          $ref: "#/components/responses/Problem"
+  /api/v1/admin/promotion-coupons:
+    get:
+      operationId: listAdminPromotionCoupons
+      tags: [AdminPromotionRewards]
+      parameters:
+        - $ref: "#/components/parameters/PromotionRewardPage"
+        - $ref: "#/components/parameters/PromotionRewardLimit"
+        - $ref: "#/components/parameters/PromotionCouponStatus"
+        - name: source
+          in: query
+          schema:
+            $ref: "#/components/schemas/PromotionCouponSource"
+        - name: search
+          in: query
+          schema:
+            type: string
+            maxLength: 100
+      responses:
+        "200":
+          description: Server-paginated promotion coupon directory.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminPromotionCouponPage"
+        "403":
+          $ref: "#/components/responses/Problem"
+        "422":
+          $ref: "#/components/responses/Problem"
+  /api/v1/admin/promotion-coupons/grant:
+    post:
+      operationId: grantAdminPromotionCoupon
+      tags: [AdminPromotionRewards]
+      security:
+        - sessionCookie: []
+          csrfToken: []
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/GrantPromotionCouponRequest"
+      responses:
+        "201":
+          description: Administrator promotion coupon granted and audited.
+          headers:
+            ETag:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminPromotionCoupon"
+        "403":
+          $ref: "#/components/responses/Problem"
+        "404":
+          $ref: "#/components/responses/Problem"
+        "409":
+          $ref: "#/components/responses/Problem"
+        "422":
+          $ref: "#/components/responses/Problem"
+  /api/v1/admin/promotion-coupons/{id}/revoke:
+    post:
+      operationId: revokeAdminPromotionCoupon
+      tags: [AdminPromotionRewards]
+      security:
+        - sessionCookie: []
+          csrfToken: []
+      parameters:
+        - $ref: "#/components/parameters/ResourceId"
+        - $ref: "#/components/parameters/IdempotencyKey"
+        - $ref: "#/components/parameters/IfMatch"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ReviewActionRequest"
+      responses:
+        "200":
+          description: Coupon revoked and any active reward promotion stopped.
+          headers:
+            ETag:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminPromotionCoupon"
+        "403":
+          $ref: "#/components/responses/Problem"
+        "404":
+          $ref: "#/components/responses/Problem"
+        "409":
+          $ref: "#/components/responses/Problem"
+        "412":
+          $ref: "#/components/responses/Problem"
+        "428":
+          $ref: "#/components/responses/Problem"
 components:
   securitySchemes:
     sessionCookie:
@@ -6700,6 +7003,31 @@ components:
       description: Opaque pagination cursor returned as nextCursor. Clients must pass it back unchanged and must not inspect its internal encoding.
       schema:
         type: string
+    PromotionRewardPage:
+      name: page
+      in: query
+      required: false
+      schema:
+        type: integer
+        minimum: 1
+        default: 1
+    PromotionRewardLimit:
+      name: limit
+      in: query
+      required: false
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 20
+    PromotionCouponStatus:
+      name: status
+      in: query
+      required: false
+      schema:
+        type: string
+        enum: [all, pending, available, used, expired, revoked]
+        default: all
     AdminUserPage:
       name: page
       in: query
@@ -10141,19 +10469,27 @@ components:
     APIServicePromotionPlacement:
       type: string
       enum: [api_market_top]
+    PublicAPIServicePromotionPlacement:
+      type: string
+      enum: [api_market_top, api_market_reward]
+    APIServicePromotionKind:
+      type: string
+      enum: [operator, reward]
     APIServicePromotionStatus:
       type: string
       enum: [stopped, scheduled, finished, suppressed, serving]
     PublicAPIServicePromotion:
       type: object
       additionalProperties: false
-      required: [promotionId, placement, label, startsAt, endsAt, service]
+      required: [promotionId, kind, placement, label, startsAt, endsAt, service]
       properties:
         promotionId:
           type: string
           format: uuid
+        kind:
+          $ref: "#/components/schemas/APIServicePromotionKind"
         placement:
-          $ref: "#/components/schemas/APIServicePromotionPlacement"
+          $ref: "#/components/schemas/PublicAPIServicePromotionPlacement"
         label:
           type: string
           enum: [推广]
@@ -10172,7 +10508,7 @@ components:
       properties:
         items:
           type: array
-          maxItems: 3
+          maxItems: 4
           items:
             $ref: "#/components/schemas/PublicAPIServicePromotion"
         nextCursor:
@@ -13484,6 +13820,369 @@ components:
             $ref: "#/components/schemas/CarpoolMembership"
         nextCursor:
           type: [string, "null"]
+    PromotionRewardPublicConfig:
+      type: object
+      required: [programEnabled, welcomeEnabled, referralEnabled, promotionDurationHours, couponValidDays, rewardDelayHours, inviterMonthlyLimit, rulesText]
+      properties:
+        programEnabled:
+          type: boolean
+        welcomeEnabled:
+          type: boolean
+        referralEnabled:
+          type: boolean
+        promotionDurationHours:
+          type: integer
+          minimum: 1
+          maximum: 168
+        couponValidDays:
+          type: integer
+          minimum: 1
+          maximum: 365
+        rewardDelayHours:
+          type: integer
+          minimum: 0
+          maximum: 720
+        inviterMonthlyLimit:
+          type: integer
+          minimum: 0
+          maximum: 1000
+        rulesText:
+          type: string
+          maxLength: 2000
+        startsAt:
+          type: string
+          format: date-time
+        endsAt:
+          type: [string, "null"]
+          format: date-time
+    ReferralStatistics:
+      type: object
+      required: [invitedCount, qualifiedCount, rewardedCount, pendingCount, inviterRewardsThisMonth, inviterRewardsRemaining]
+      properties:
+        invitedCount:
+          type: integer
+          minimum: 0
+        qualifiedCount:
+          type: integer
+          minimum: 0
+        rewardedCount:
+          type: integer
+          minimum: 0
+        pendingCount:
+          type: integer
+          minimum: 0
+        inviterRewardsThisMonth:
+          type: integer
+          minimum: 0
+        inviterRewardsRemaining:
+          type: integer
+          minimum: 0
+    ReferralStatus:
+      type: string
+      enum: [bound, qualified, rewarded, rejected, revoked]
+    ReferralRecord:
+      type: object
+      required: [id, inviterDisplayName, inviteeDisplayName, status, boundAt, createdAt, updatedAt, version]
+      properties:
+        id:
+          type: string
+          format: uuid
+        inviterDisplayName:
+          type: string
+        inviteeDisplayName:
+          type: string
+        status:
+          $ref: "#/components/schemas/ReferralStatus"
+        boundAt:
+          type: string
+          format: date-time
+        qualifiedAt:
+          type: [string, "null"]
+          format: date-time
+        rewardedAt:
+          type: [string, "null"]
+          format: date-time
+        qualifiedApiServiceId:
+          type: string
+          format: uuid
+        rejectedAt:
+          type: [string, "null"]
+          format: date-time
+        rejectedReason:
+          type: string
+        revokedAt:
+          type: [string, "null"]
+          format: date-time
+        revokedReason:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+        version:
+          type: integer
+          minimum: 1
+    AdminReferralRecord:
+      allOf:
+        - $ref: "#/components/schemas/ReferralRecord"
+        - type: object
+          properties:
+            inviterUserId:
+              type: string
+              format: uuid
+            inviteeUserId:
+              type: string
+              format: uuid
+            riskFlags:
+              type: array
+              items:
+                type: string
+    ReferralSummary:
+      type: object
+      required: [code, statistics, records, campaign]
+      properties:
+        code:
+          type: string
+          pattern: '^[23456789ABCDEFGHJKLMNPQRSTUVWXYZ]{8}$'
+        statistics:
+          $ref: "#/components/schemas/ReferralStatistics"
+        records:
+          type: array
+          items:
+            $ref: "#/components/schemas/ReferralRecord"
+        campaign:
+          $ref: "#/components/schemas/PromotionRewardPublicConfig"
+    PromotionCouponSource:
+      type: string
+      enum: [welcome_first_api_service, referral_inviter, referral_invitee, admin_grant]
+    PromotionCouponStatusValue:
+      type: string
+      enum: [pending, available, used, expired, revoked]
+    PromotionCoupon:
+      type: object
+      required: [id, sourceType, status, availableAt, expiresAt, durationHours, createdAt, updatedAt, version]
+      properties:
+        id:
+          type: string
+          format: uuid
+        sourceType:
+          $ref: "#/components/schemas/PromotionCouponSource"
+        status:
+          $ref: "#/components/schemas/PromotionCouponStatusValue"
+        availableAt:
+          type: string
+          format: date-time
+        expiresAt:
+          type: string
+          format: date-time
+        durationHours:
+          type: integer
+          minimum: 1
+          maximum: 168
+        usedApiServiceId:
+          type: string
+          format: uuid
+        usedApiServiceTitle:
+          type: string
+        activationId:
+          type: string
+          format: uuid
+        promotionStartsAt:
+          type: [string, "null"]
+          format: date-time
+        promotionEndsAt:
+          type: [string, "null"]
+          format: date-time
+        usedAt:
+          type: [string, "null"]
+          format: date-time
+        revokedAt:
+          type: [string, "null"]
+          format: date-time
+        revokedReason:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+        version:
+          type: integer
+          minimum: 1
+    AdminPromotionCoupon:
+      allOf:
+        - $ref: "#/components/schemas/PromotionCoupon"
+        - type: object
+          properties:
+            campaignId:
+              type: string
+              format: uuid
+            userId:
+              type: string
+              format: uuid
+            userDisplayName:
+              type: string
+            grantReason:
+              type: string
+    PromotionRewardPagination:
+      type: object
+      required: [page, limit, totalItems, totalPages]
+      properties:
+        page:
+          type: integer
+          minimum: 1
+        limit:
+          type: integer
+          minimum: 1
+          maximum: 100
+        totalItems:
+          type: integer
+          minimum: 0
+        totalPages:
+          type: integer
+          minimum: 0
+    PromotionCouponPage:
+      type: object
+      required: [items, pagination]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/PromotionCoupon"
+        pagination:
+          $ref: "#/components/schemas/PromotionRewardPagination"
+    AdminPromotionCouponPage:
+      type: object
+      required: [items, pagination]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/AdminPromotionCoupon"
+        pagination:
+          $ref: "#/components/schemas/PromotionRewardPagination"
+    ReferralPage:
+      type: object
+      required: [items, pagination]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/AdminReferralRecord"
+        pagination:
+          $ref: "#/components/schemas/PromotionRewardPagination"
+    PromotionRewardCampaign:
+      type: object
+      required: [id, code, programEnabled, welcomeEnabled, referralEnabled, startsAt, promotionDurationHours, couponValidDays, rewardDelayHours, inviterMonthlyLimit, rulesText, createdAt, updatedAt, version]
+      properties:
+        id:
+          type: string
+          format: uuid
+        code:
+          type: string
+        programEnabled:
+          type: boolean
+        welcomeEnabled:
+          type: boolean
+        referralEnabled:
+          type: boolean
+        startsAt:
+          type: string
+          format: date-time
+        endsAt:
+          type: [string, "null"]
+          format: date-time
+        promotionDurationHours:
+          type: integer
+        couponValidDays:
+          type: integer
+        rewardDelayHours:
+          type: integer
+        inviterMonthlyLimit:
+          type: integer
+        rulesText:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+        version:
+          type: integer
+          minimum: 1
+    ApplyPromotionCouponRequest:
+      type: object
+      additionalProperties: false
+      required: [apiServiceId]
+      properties:
+        apiServiceId:
+          type: string
+          format: uuid
+    UpdatePromotionRewardCampaignRequest:
+      type: object
+      additionalProperties: false
+      required: [programEnabled, welcomeEnabled, referralEnabled, startsAt, endsAt, promotionDurationHours, couponValidDays, rewardDelayHours, inviterMonthlyLimit, rulesText, reason]
+      properties:
+        programEnabled:
+          type: boolean
+        welcomeEnabled:
+          type: boolean
+        referralEnabled:
+          type: boolean
+        startsAt:
+          type: string
+          format: date-time
+        endsAt:
+          type: string
+          description: Empty string clears the optional end time.
+        promotionDurationHours:
+          type: integer
+          minimum: 1
+          maximum: 168
+        couponValidDays:
+          type: integer
+          minimum: 1
+          maximum: 365
+        rewardDelayHours:
+          type: integer
+          minimum: 0
+          maximum: 720
+        inviterMonthlyLimit:
+          type: integer
+          minimum: 0
+          maximum: 1000
+        rulesText:
+          type: string
+          minLength: 1
+          maxLength: 2000
+        reason:
+          type: string
+          minLength: 2
+          maxLength: 500
+    GrantPromotionCouponRequest:
+      type: object
+      additionalProperties: false
+      required: [userId, durationHours, validDays, reason]
+      properties:
+        userId:
+          type: string
+          format: uuid
+        durationHours:
+          type: integer
+          minimum: 1
+          maximum: 168
+        validDays:
+          type: integer
+          minimum: 1
+          maximum: 365
+        reason:
+          type: string
+          minLength: 2
+          maxLength: 500
     ReviewActionRequest:
       type: object
       additionalProperties: false

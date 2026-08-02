@@ -29,6 +29,7 @@ import (
 	"c2c-market/backend/internal/module/notification"
 	"c2c-market/backend/internal/module/officialprice"
 	"c2c-market/backend/internal/module/profile"
+	"c2c-market/backend/internal/module/promotionreward"
 	"c2c-market/backend/internal/module/report"
 	"c2c-market/backend/internal/module/reputation"
 	"c2c-market/backend/internal/module/review"
@@ -99,6 +100,20 @@ type APIPromotionService interface {
 type GrowthService interface {
 	AdminGrowthOverview(ctx context.Context, user auth.User, windowDays int) (growth.Overview, *domain.AppError)
 	RecordAuthenticatedActivity(ctx context.Context, userID string) *domain.AppError
+}
+
+type PromotionRewardService interface {
+	PromotionRewardPublicConfig(ctx context.Context) (promotionreward.PublicConfig, *domain.AppError)
+	MyReferralSummary(ctx context.Context, user auth.User) (promotionreward.ReferralSummary, *domain.AppError)
+	MyPromotionCoupons(ctx context.Context, user auth.User, query promotionreward.CouponQuery) (promotionreward.CouponPage, *domain.AppError)
+	ApplyPromotionCouponWithIdempotency(ctx context.Context, user auth.User, routeKey, key, requestHash string, input promotionreward.ApplyCouponInput, buildCompletion promotionreward.CouponCompletionBuilder) (idempotency.Completion, *domain.AppError)
+	AdminPromotionRewardCampaign(ctx context.Context, user auth.User) (promotionreward.Campaign, *domain.AppError)
+	UpdateAdminPromotionRewardCampaignWithIdempotency(ctx context.Context, user auth.User, routeKey, key, requestHash string, input promotionreward.UpdateCampaignInput, buildCompletion promotionreward.CampaignCompletionBuilder) (idempotency.Completion, *domain.AppError)
+	AdminReferrals(ctx context.Context, user auth.User, query promotionreward.ReferralQuery) (promotionreward.ReferralPage, *domain.AppError)
+	RevokeAdminReferralWithIdempotency(ctx context.Context, user auth.User, routeKey, key, requestHash string, input promotionreward.RevokeReferralInput, buildCompletion promotionreward.ReferralCompletionBuilder) (idempotency.Completion, *domain.AppError)
+	AdminPromotionCoupons(ctx context.Context, user auth.User, query promotionreward.CouponQuery) (promotionreward.CouponPage, *domain.AppError)
+	GrantAdminPromotionCouponWithIdempotency(ctx context.Context, user auth.User, routeKey, key, requestHash string, input promotionreward.GrantCouponInput, buildCompletion promotionreward.CouponCompletionBuilder) (idempotency.Completion, *domain.AppError)
+	RevokeAdminPromotionCouponWithIdempotency(ctx context.Context, user auth.User, routeKey, key, requestHash string, input promotionreward.RevokeCouponInput, buildCompletion promotionreward.CouponCompletionBuilder) (idempotency.Completion, *domain.AppError)
 }
 
 // Service is the legacy application facade for handlers that have not yet been
@@ -363,6 +378,7 @@ type ApplicationService interface {
 	AdminUserService
 	APIPromotionService
 	GrowthService
+	PromotionRewardService
 	ReputationGovernanceService
 }
 
@@ -374,6 +390,7 @@ type Server struct {
 	adminUsers       AdminUserService
 	apiPromotions    APIPromotionService
 	growth           GrowthService
+	promotionRewards PromotionRewardService
 	reputation       ReputationGovernanceService
 	mux              chi.Router
 	enableDevAuth    bool
@@ -424,6 +441,7 @@ func NewServer(service ApplicationService, options ...ServerOptions) http.Handle
 		adminUsers:       service,
 		apiPromotions:    service,
 		growth:           service,
+		promotionRewards: service,
 		reputation:       service,
 		mux:              chi.NewRouter(),
 		enableDevAuth:    option.EnableDevAuth,

@@ -206,6 +206,29 @@ test('promotion events keep only low-cardinality placement fields', () => {
   })
 })
 
+test('promotion benefit actions drop invite and business identifiers', () => {
+  assert.deepEqual(sanitizeAnalyticsEvent('promotion_benefit_action', {
+    action: 'coupon_apply',
+    source_route: '/my/promotion-benefits?coupon=secret-coupon-id',
+    invite_code: '2ABCDE89',
+    coupon_id: 'secret-coupon-id',
+    service_id: 'secret-service-id',
+    user_id: 'secret-user-id',
+    username: 'private-user',
+  }), {
+    action: 'coupon_apply',
+    source_route: '/my/promotion-benefits',
+  })
+
+  assert.deepEqual(sanitizeAnalyticsEvent('promotion_benefit_action', {
+    action: 'unknown-action',
+    source_route: '/admin/growth-promotions?search=private-user',
+  }), {
+    action: 'unknown',
+    source_route: '/admin/growth-promotions',
+  })
+})
+
 test('trackAnalytics is a safe no-op unless analytics is enabled and Umami is loaded', () => {
   const track = vi.fn()
   vi.stubGlobal('window', { umami: { track } })

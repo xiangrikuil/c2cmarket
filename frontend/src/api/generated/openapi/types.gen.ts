@@ -1504,11 +1504,16 @@ export type PublicApiServiceList = {
 
 export type ApiServicePromotionPlacement = 'api_market_top';
 
+export type PublicApiServicePromotionPlacement = 'api_market_top' | 'api_market_reward';
+
+export type ApiServicePromotionKind = 'operator' | 'reward';
+
 export type ApiServicePromotionStatus = 'stopped' | 'scheduled' | 'finished' | 'suppressed' | 'serving';
 
 export type PublicApiServicePromotion = {
     promotionId: string;
-    placement: ApiServicePromotionPlacement;
+    kind: ApiServicePromotionKind;
+    placement: PublicApiServicePromotionPlacement;
     label: '推广';
     startsAt: string;
     endsAt: string;
@@ -3123,6 +3128,160 @@ export type CarpoolMembershipList = {
     nextCursor?: string | null;
 };
 
+export type PromotionRewardPublicConfig = {
+    programEnabled: boolean;
+    welcomeEnabled: boolean;
+    referralEnabled: boolean;
+    promotionDurationHours: number;
+    couponValidDays: number;
+    rewardDelayHours: number;
+    inviterMonthlyLimit: number;
+    rulesText: string;
+    startsAt?: string;
+    endsAt?: string | null;
+};
+
+export type ReferralStatistics = {
+    invitedCount: number;
+    qualifiedCount: number;
+    rewardedCount: number;
+    pendingCount: number;
+    inviterRewardsThisMonth: number;
+    inviterRewardsRemaining: number;
+};
+
+export type ReferralStatus = 'bound' | 'qualified' | 'rewarded' | 'rejected' | 'revoked';
+
+export type ReferralRecord = {
+    id: string;
+    inviterDisplayName: string;
+    inviteeDisplayName: string;
+    status: ReferralStatus;
+    boundAt: string;
+    qualifiedAt?: string | null;
+    rewardedAt?: string | null;
+    qualifiedApiServiceId?: string;
+    rejectedAt?: string | null;
+    rejectedReason?: string;
+    revokedAt?: string | null;
+    revokedReason?: string;
+    createdAt: string;
+    updatedAt: string;
+    version: number;
+};
+
+export type AdminReferralRecord = ReferralRecord & {
+    inviterUserId?: string;
+    inviteeUserId?: string;
+    riskFlags?: Array<string>;
+};
+
+export type ReferralSummary = {
+    code: string;
+    statistics: ReferralStatistics;
+    records: Array<ReferralRecord>;
+    campaign: PromotionRewardPublicConfig;
+};
+
+export type PromotionCouponSource = 'welcome_first_api_service' | 'referral_inviter' | 'referral_invitee' | 'admin_grant';
+
+export type PromotionCouponStatusValue = 'pending' | 'available' | 'used' | 'expired' | 'revoked';
+
+export type PromotionCoupon = {
+    id: string;
+    sourceType: PromotionCouponSource;
+    status: PromotionCouponStatusValue;
+    availableAt: string;
+    expiresAt: string;
+    durationHours: number;
+    usedApiServiceId?: string;
+    usedApiServiceTitle?: string;
+    activationId?: string;
+    promotionStartsAt?: string | null;
+    promotionEndsAt?: string | null;
+    usedAt?: string | null;
+    revokedAt?: string | null;
+    revokedReason?: string;
+    createdAt: string;
+    updatedAt: string;
+    version: number;
+};
+
+export type AdminPromotionCoupon = PromotionCoupon & {
+    campaignId?: string;
+    userId?: string;
+    userDisplayName?: string;
+    grantReason?: string;
+};
+
+export type PromotionRewardPagination = {
+    page: number;
+    limit: number;
+    totalItems: number;
+    totalPages: number;
+};
+
+export type PromotionCouponPage = {
+    items: Array<PromotionCoupon>;
+    pagination: PromotionRewardPagination;
+};
+
+export type AdminPromotionCouponPage = {
+    items: Array<AdminPromotionCoupon>;
+    pagination: PromotionRewardPagination;
+};
+
+export type ReferralPage = {
+    items: Array<AdminReferralRecord>;
+    pagination: PromotionRewardPagination;
+};
+
+export type PromotionRewardCampaign = {
+    id: string;
+    code: string;
+    programEnabled: boolean;
+    welcomeEnabled: boolean;
+    referralEnabled: boolean;
+    startsAt: string;
+    endsAt?: string | null;
+    promotionDurationHours: number;
+    couponValidDays: number;
+    rewardDelayHours: number;
+    inviterMonthlyLimit: number;
+    rulesText: string;
+    createdAt: string;
+    updatedAt: string;
+    version: number;
+};
+
+export type ApplyPromotionCouponRequest = {
+    apiServiceId: string;
+};
+
+export type UpdatePromotionRewardCampaignRequest = {
+    programEnabled: boolean;
+    welcomeEnabled: boolean;
+    referralEnabled: boolean;
+    startsAt: string;
+    /**
+     * Empty string clears the optional end time.
+     */
+    endsAt: string;
+    promotionDurationHours: number;
+    couponValidDays: number;
+    rewardDelayHours: number;
+    inviterMonthlyLimit: number;
+    rulesText: string;
+    reason: string;
+};
+
+export type GrantPromotionCouponRequest = {
+    userId: string;
+    durationHours: number;
+    validDays: number;
+    reason: string;
+};
+
 export type ReviewActionRequest = {
     reason: string;
 };
@@ -3255,6 +3414,12 @@ export type Limit = number;
  * Opaque pagination cursor returned as nextCursor. Clients must pass it back unchanged and must not inspect its internal encoding.
  */
 export type Cursor = string;
+
+export type PromotionRewardPage = number;
+
+export type PromotionRewardLimit = number;
+
+export type PromotionCouponStatus = 'all' | 'pending' | 'available' | 'used' | 'expired' | 'revoked';
 
 /**
  * One-based administrator user-directory page number.
@@ -11905,3 +12070,392 @@ export type GetContactSessionContactsResponses = {
 };
 
 export type GetContactSessionContactsResponse = GetContactSessionContactsResponses[keyof GetContactSessionContactsResponses];
+
+export type GetPromotionRewardPublicConfigData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/v1/promotion-rewards/public-config';
+};
+
+export type GetPromotionRewardPublicConfigResponses = {
+    /**
+     * Public activity state and non-sensitive rules.
+     */
+    200: PromotionRewardPublicConfig;
+};
+
+export type GetPromotionRewardPublicConfigResponse = GetPromotionRewardPublicConfigResponses[keyof GetPromotionRewardPublicConfigResponses];
+
+export type GetMyReferralSummaryData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/v1/me/referral';
+};
+
+export type GetMyReferralSummaryErrors = {
+    /**
+     * Problem Details error.
+     */
+    401: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    404: ProblemDetails;
+};
+
+export type GetMyReferralSummaryError = GetMyReferralSummaryErrors[keyof GetMyReferralSummaryErrors];
+
+export type GetMyReferralSummaryResponses = {
+    /**
+     * Referral summary. Invitee identities are masked and risk flags are omitted.
+     */
+    200: ReferralSummary;
+};
+
+export type GetMyReferralSummaryResponse = GetMyReferralSummaryResponses[keyof GetMyReferralSummaryResponses];
+
+export type ListMyPromotionCouponsData = {
+    body?: never;
+    path?: never;
+    query?: {
+        page?: number;
+        limit?: number;
+        status?: 'all' | 'pending' | 'available' | 'used' | 'expired' | 'revoked';
+    };
+    url: '/api/v1/me/promotion-coupons';
+};
+
+export type ListMyPromotionCouponsErrors = {
+    /**
+     * Problem Details error.
+     */
+    401: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    422: ProblemDetails;
+};
+
+export type ListMyPromotionCouponsError = ListMyPromotionCouponsErrors[keyof ListMyPromotionCouponsErrors];
+
+export type ListMyPromotionCouponsResponses = {
+    /**
+     * Promotion coupon wallet with time-derived status.
+     */
+    200: PromotionCouponPage;
+};
+
+export type ListMyPromotionCouponsResponse = ListMyPromotionCouponsResponses[keyof ListMyPromotionCouponsResponses];
+
+export type ApplyMyPromotionCouponData = {
+    body: ApplyPromotionCouponRequest;
+    headers: {
+        'Idempotency-Key': string;
+    };
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/api/v1/me/promotion-coupons/{id}/apply';
+};
+
+export type ApplyMyPromotionCouponErrors = {
+    /**
+     * Problem Details error.
+     */
+    401: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    404: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    409: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    422: ProblemDetails;
+};
+
+export type ApplyMyPromotionCouponError = ApplyMyPromotionCouponErrors[keyof ApplyMyPromotionCouponErrors];
+
+export type ApplyMyPromotionCouponResponses = {
+    /**
+     * Coupon consumed atomically and API service added to the reward rotation pool.
+     */
+    200: PromotionCoupon;
+};
+
+export type ApplyMyPromotionCouponResponse = ApplyMyPromotionCouponResponses[keyof ApplyMyPromotionCouponResponses];
+
+export type GetAdminPromotionRewardCampaignData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/v1/admin/promotion-reward-campaign';
+};
+
+export type GetAdminPromotionRewardCampaignErrors = {
+    /**
+     * Problem Details error.
+     */
+    403: ProblemDetails;
+};
+
+export type GetAdminPromotionRewardCampaignError = GetAdminPromotionRewardCampaignErrors[keyof GetAdminPromotionRewardCampaignErrors];
+
+export type GetAdminPromotionRewardCampaignResponses = {
+    /**
+     * Versioned promotion reward campaign configuration.
+     */
+    200: PromotionRewardCampaign;
+};
+
+export type GetAdminPromotionRewardCampaignResponse = GetAdminPromotionRewardCampaignResponses[keyof GetAdminPromotionRewardCampaignResponses];
+
+export type UpdateAdminPromotionRewardCampaignData = {
+    body: UpdatePromotionRewardCampaignRequest;
+    headers: {
+        'Idempotency-Key': string;
+        'If-Match': string;
+    };
+    path?: never;
+    query?: never;
+    url: '/api/v1/admin/promotion-reward-campaign';
+};
+
+export type UpdateAdminPromotionRewardCampaignErrors = {
+    /**
+     * Problem Details error.
+     */
+    403: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    412: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    422: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    428: ProblemDetails;
+};
+
+export type UpdateAdminPromotionRewardCampaignError = UpdateAdminPromotionRewardCampaignErrors[keyof UpdateAdminPromotionRewardCampaignErrors];
+
+export type UpdateAdminPromotionRewardCampaignResponses = {
+    /**
+     * Campaign configuration updated and audited.
+     */
+    200: PromotionRewardCampaign;
+};
+
+export type UpdateAdminPromotionRewardCampaignResponse = UpdateAdminPromotionRewardCampaignResponses[keyof UpdateAdminPromotionRewardCampaignResponses];
+
+export type ListAdminReferralsData = {
+    body?: never;
+    path?: never;
+    query?: {
+        page?: number;
+        limit?: number;
+        status?: 'all' | 'bound' | 'qualified' | 'rewarded' | 'rejected' | 'revoked';
+        search?: string;
+    };
+    url: '/api/v1/admin/referrals';
+};
+
+export type ListAdminReferralsErrors = {
+    /**
+     * Problem Details error.
+     */
+    403: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    422: ProblemDetails;
+};
+
+export type ListAdminReferralsError = ListAdminReferralsErrors[keyof ListAdminReferralsErrors];
+
+export type ListAdminReferralsResponses = {
+    /**
+     * Server-paginated referral directory including administrative risk flags.
+     */
+    200: ReferralPage;
+};
+
+export type ListAdminReferralsResponse = ListAdminReferralsResponses[keyof ListAdminReferralsResponses];
+
+export type RevokeAdminReferralData = {
+    body: ReviewActionRequest;
+    headers: {
+        'Idempotency-Key': string;
+        'If-Match': string;
+    };
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/api/v1/admin/referrals/{id}/revoke';
+};
+
+export type RevokeAdminReferralErrors = {
+    /**
+     * Problem Details error.
+     */
+    403: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    404: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    409: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    412: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    428: ProblemDetails;
+};
+
+export type RevokeAdminReferralError = RevokeAdminReferralErrors[keyof RevokeAdminReferralErrors];
+
+export type RevokeAdminReferralResponses = {
+    /**
+     * Referral and related reward coupons revoked atomically.
+     */
+    200: AdminReferralRecord;
+};
+
+export type RevokeAdminReferralResponse = RevokeAdminReferralResponses[keyof RevokeAdminReferralResponses];
+
+export type ListAdminPromotionCouponsData = {
+    body?: never;
+    path?: never;
+    query?: {
+        page?: number;
+        limit?: number;
+        status?: 'all' | 'pending' | 'available' | 'used' | 'expired' | 'revoked';
+        source?: PromotionCouponSource;
+        search?: string;
+    };
+    url: '/api/v1/admin/promotion-coupons';
+};
+
+export type ListAdminPromotionCouponsErrors = {
+    /**
+     * Problem Details error.
+     */
+    403: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    422: ProblemDetails;
+};
+
+export type ListAdminPromotionCouponsError = ListAdminPromotionCouponsErrors[keyof ListAdminPromotionCouponsErrors];
+
+export type ListAdminPromotionCouponsResponses = {
+    /**
+     * Server-paginated promotion coupon directory.
+     */
+    200: AdminPromotionCouponPage;
+};
+
+export type ListAdminPromotionCouponsResponse = ListAdminPromotionCouponsResponses[keyof ListAdminPromotionCouponsResponses];
+
+export type GrantAdminPromotionCouponData = {
+    body: GrantPromotionCouponRequest;
+    headers: {
+        'Idempotency-Key': string;
+    };
+    path?: never;
+    query?: never;
+    url: '/api/v1/admin/promotion-coupons/grant';
+};
+
+export type GrantAdminPromotionCouponErrors = {
+    /**
+     * Problem Details error.
+     */
+    403: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    404: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    409: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    422: ProblemDetails;
+};
+
+export type GrantAdminPromotionCouponError = GrantAdminPromotionCouponErrors[keyof GrantAdminPromotionCouponErrors];
+
+export type GrantAdminPromotionCouponResponses = {
+    /**
+     * Administrator promotion coupon granted and audited.
+     */
+    201: AdminPromotionCoupon;
+};
+
+export type GrantAdminPromotionCouponResponse = GrantAdminPromotionCouponResponses[keyof GrantAdminPromotionCouponResponses];
+
+export type RevokeAdminPromotionCouponData = {
+    body: ReviewActionRequest;
+    headers: {
+        'Idempotency-Key': string;
+        'If-Match': string;
+    };
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/api/v1/admin/promotion-coupons/{id}/revoke';
+};
+
+export type RevokeAdminPromotionCouponErrors = {
+    /**
+     * Problem Details error.
+     */
+    403: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    404: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    409: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    412: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    428: ProblemDetails;
+};
+
+export type RevokeAdminPromotionCouponError = RevokeAdminPromotionCouponErrors[keyof RevokeAdminPromotionCouponErrors];
+
+export type RevokeAdminPromotionCouponResponses = {
+    /**
+     * Coupon revoked and any active reward promotion stopped.
+     */
+    200: AdminPromotionCoupon;
+};
+
+export type RevokeAdminPromotionCouponResponse = RevokeAdminPromotionCouponResponses[keyof RevokeAdminPromotionCouponResponses];

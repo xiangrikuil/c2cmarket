@@ -38,7 +38,7 @@ Create and stop are administrator-only. They require `Idempotency-Key`; stop als
 - `api_market_top` has capacity 3 and schedules use half-open ranges `[starts_at, ends_at)`.
 - Capacity is the peak number of existing non-stopped campaigns simultaneously active anywhere inside the proposed range. It is not the number of campaigns that merely intersect the range; staggered non-concurrent schedules do not accumulate.
 - Creation takes a placement-scoped PostgreSQL transaction advisory lock before eligibility, peak capacity, same-service overlap, and insertion checks.
-- The same service cannot have overlapping non-stopped campaigns. Adjacent ranges where one ends exactly when the next starts are valid.
+- The same service cannot have overlapping non-stopped administrator campaigns or used reward-activation intervals. Administrator availability and create both query the two sources; adjacent ranges where one ends exactly when the next starts are valid.
 
 #### Atomicity And Projection
 
@@ -71,6 +71,7 @@ Create and stop are administrator-only. They require `Idempotency-Key`; stop als
 
 - Good: three schedules run sequentially; a fourth range spanning all three sees peak occupancy 1 and can be inserted because its resulting peak is 2.
 - Good: a schedule becomes `suppressed` when stock reaches zero and resumes automatically if stock returns before `ends_at`.
+- Good: an active reward activation makes same-service administrator availability report overlap and makes transactional create reject the range without consuming administrator capacity.
 - Base: no serving schedules returns an empty public list and preserves the natural market unchanged.
 - Base: a historical service with no pool or performance declaration returns no fabricated public value and freezes explicit JSON `null` values in a new order snapshot.
 - Bad: reject a proposal because three staggered rows intersect it even though they are never concurrent.

@@ -37,6 +37,9 @@ func (s *Store) CreateAPIService(ctx context.Context, service apimarket.Service)
 	if appErr := upsertAPIServiceInTx(ctx, tx, service); appErr != nil {
 		return appErr
 	}
+	if appErr := qualifyPromotionRewardsForAPIServiceInTx(ctx, tx, service.ID, service.UpdatedAt); appErr != nil {
+		return appErr
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return internalStoreError()
 	}
@@ -191,6 +194,9 @@ func (s *Store) UpdateAPIService(ctx context.Context, input apimarket.UpdateServ
 	if err != nil {
 		return apimarket.Service{}, internalStoreError()
 	}
+	if appErr := qualifyPromotionRewardsForAPIServiceInTx(ctx, tx, service.ID, now); appErr != nil {
+		return apimarket.Service{}, appErr
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return apimarket.Service{}, internalStoreError()
 	}
@@ -229,6 +235,9 @@ func (s *Store) UpdateAPIServiceOrderSettings(ctx context.Context, input apimark
 		return apimarket.Service{}, domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Service not orderable", "当前 API 服务不满足接单条件。", "acceptingOrders", "not_orderable", strings.Join(service.OrderableReasons, "；"))
 	}
 	if appErr := updateAPIServiceOrderSettingsInTx(ctx, tx, service); appErr != nil {
+		return apimarket.Service{}, appErr
+	}
+	if appErr := qualifyPromotionRewardsForAPIServiceInTx(ctx, tx, service.ID, now); appErr != nil {
 		return apimarket.Service{}, appErr
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -272,6 +281,9 @@ func (s *Store) SubmitAPIServiceForReview(ctx context.Context, user auth.User, i
 	if appErr := updateAPIServiceStateInTx(ctx, tx, service); appErr != nil {
 		return apimarket.Service{}, appErr
 	}
+	if appErr := qualifyPromotionRewardsForAPIServiceInTx(ctx, tx, service.ID, now); appErr != nil {
+		return apimarket.Service{}, appErr
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return apimarket.Service{}, internalStoreError()
 	}
@@ -309,6 +321,9 @@ func (s *Store) UpdateAPIServicePublication(ctx context.Context, input apimarket
 	if appErr := updateAPIServiceStateInTx(ctx, tx, service); appErr != nil {
 		return apimarket.Service{}, appErr
 	}
+	if appErr := qualifyPromotionRewardsForAPIServiceInTx(ctx, tx, service.ID, now); appErr != nil {
+		return apimarket.Service{}, appErr
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return apimarket.Service{}, internalStoreError()
 	}
@@ -339,6 +354,9 @@ func (s *Store) UpdateAPIServiceModeration(ctx context.Context, user auth.User, 
 	}
 	service = applyAPIServiceAdminAction(service, input, now)
 	if appErr := updateAPIServiceStateInTx(ctx, tx, service); appErr != nil {
+		return apimarket.Service{}, appErr
+	}
+	if appErr := qualifyPromotionRewardsForAPIServiceInTx(ctx, tx, service.ID, now); appErr != nil {
 		return apimarket.Service{}, appErr
 	}
 	if err := tx.Commit(ctx); err != nil {

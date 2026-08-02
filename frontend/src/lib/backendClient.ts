@@ -1,6 +1,7 @@
 import { requireApiMode, type ApiMode } from '@/lib/apiMode'
 import { clearAnalyticsIdentity, identifyAnalyticsUser } from '@/lib/analytics'
 import { captureRegistrationAttribution, getRegistrationAttribution } from '@/lib/registrationAttribution'
+import { getReferralCapture } from '@/lib/referralCapture'
 
 type ProblemDetails = {
   title?: string
@@ -186,9 +187,10 @@ export async function getCurrentBackendSession(options: {
   return sessionRequest
 }
 
-export async function startOAuthLogin(returnTo = '/') {
+export async function startOAuthLogin(returnTo = '/', inviteCode = getReferralCapture()) {
   const params = new URLSearchParams()
   if (returnTo) params.set('returnTo', returnTo)
+  if (inviteCode) params.set('inviteCode', inviteCode)
   const attribution = getRegistrationAttribution() ?? captureRegistrationAttribution()
   if (attribution?.source) params.set('utmSource', attribution.source)
   if (attribution?.medium) params.set('utmMedium', attribution.medium)

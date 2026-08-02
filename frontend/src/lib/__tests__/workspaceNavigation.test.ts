@@ -29,6 +29,8 @@ describe('个人与经营中心导航', () => {
     expect(appShellSource).toContain("{ label: 'API 销售订单', to: '/merchant/api-orders'")
     expect(appShellSource).toContain("title: '账户'")
     expect(appShellSource).toContain("{ label: '个人中心', to: '/my'")
+    expect(appShellSource).toContain("{ label: '推广权益', to: '/my/promotion-benefits'")
+    expect(appShellSource).toContain('promotionRewardConfig.value?.programEnabled')
     expect(appShellSource).toContain("{ label: '联系与收款', to: '/my/contacts'")
     expect(appShellSource).toContain("{ label: '安全设置', to: '/my/account'")
     expect(appShellSource).not.toContain('/my/demands')
@@ -100,6 +102,7 @@ describe('个人与经营中心导航', () => {
   it('为 API 服务提供独立管理页并精简个人概览', () => {
     expect(routerSource).toContain("path: '/my/api-services'")
     expect(routerSource).toContain("path: '/my/api-services/:id'")
+    expect(routerSource).toContain("path: '/my/promotion-benefits'")
     expect(routerSource).toContain("import('@/pages/MyApiServicesPage.vue')")
     expect(routerSource).toContain("import('@/pages/MyApiServiceDetailPage.vue')")
     expect(myApiServicesSource).toContain(":title=\"quotaPublishIntent ? '选择 API 服务' : '我的 API 服务'\"")

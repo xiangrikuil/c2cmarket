@@ -41,7 +41,7 @@ import {
 import { rankApiPackages } from '@/lib/apiPackageRecommendation'
 import { getApiMerchantBadges } from '@/lib/apiMerchantBadges'
 import type { ApiServicePromotion } from '@/lib/apiMarketBackend'
-import { firstPromotionForBillingMode, placePromotionFirst } from '@/lib/apiPromotionPlacement'
+import { placePromotions, promotionsForBillingMode } from '@/lib/apiPromotionPlacement'
 import { formatDecimal } from '@/lib/decimal'
 import {
   getProductCategory,
@@ -124,32 +124,32 @@ const packageModelOptions = computed(() => {
     .sort((left, right) => left.name.localeCompare(right.name))
 })
 const packageRows = computed(() => rankApiPackages(packageServices.value, packageModel.value, Number(packageDuration.value)))
-const fixedPackagePromotion = computed(() => firstPromotionForBillingMode(
+const fixedPackagePromotions = computed(() => promotionsForBillingMode(
   promotionQuery.data.value ?? [],
   true,
   promotion => rankApiPackages([promotion.service], packageModel.value, Number(packageDuration.value)).length > 0,
 ))
-const freeServicePromotion = computed(() => firstPromotionForBillingMode(promotionQuery.data.value ?? [], false))
+const freeServicePromotions = computed(() => promotionsForBillingMode(promotionQuery.data.value ?? [], false))
 const packageDisplayRows = computed(() => {
-  const naturalRows = packageRows.value.map((row, index) => ({ row, rank: index + 1, promotion: undefined as ApiServicePromotion | undefined }))
-  const promotion = fixedPackagePromotion.value
-  const promotedRow = promotion
-    ? rankApiPackages([promotion.service], packageModel.value, Number(packageDuration.value))[0]
-    : undefined
-  return placePromotionFirst(
+  const naturalRows = packageRows.value.map((row, index) => ({ row, rank: index + 1, promotion: undefined as ApiServicePromotion | undefined, promotionPosition: undefined as PromotionAnalyticsProperties['display_position'] | undefined }))
+  return placePromotions(
     naturalRows,
-    promotion,
-    (rows, item) => rows.find(row => row.row.service.id === item.service.id)
-      ?? (promotedRow ? { row: promotedRow, rank: 0, promotion: undefined } : undefined),
+    fixedPackagePromotions.value,
+    (rows, item) => {
+      const promotedRow = rankApiPackages([item.service], packageModel.value, Number(packageDuration.value))[0]
+      return rows.find(row => row.row.service.id === item.service.id)
+        ?? (promotedRow ? { row: promotedRow, rank: 0, promotion: undefined, promotionPosition: undefined } : undefined)
+    },
     item => item.row.service.id,
   )
 })
 const freeServiceDisplayRows = computed(() => {
-  const naturalRows = freeServices.value.map(service => ({ service, promotion: undefined as ApiServicePromotion | undefined }))
-  return placePromotionFirst(
+  const naturalRows = freeServices.value.map(service => ({ service, promotion: undefined as ApiServicePromotion | undefined, promotionPosition: undefined as PromotionAnalyticsProperties['display_position'] | undefined }))
+  return placePromotions(
     naturalRows,
-    freeServicePromotion.value,
-    (rows, promotion) => rows.find(item => item.service.id === promotion.service.id) ?? { service: promotion.service, promotion: undefined },
+    freeServicePromotions.value,
+    (rows, promotion) => rows.find(item => item.service.id === promotion.service.id)
+      ?? { service: promotion.service, promotion: undefined, promotionPosition: undefined },
     item => item.service.id,
   )
 })
@@ -312,10 +312,10 @@ function freeServiceCard(service: ApiService): ApiFreeServiceCardData {
   }
 }
 
-function promotionAnalytics(item: ApiServicePromotion): PromotionAnalyticsProperties {
+function promotionAnalytics(item: ApiServicePromotion, position: PromotionAnalyticsProperties['display_position']): PromotionAnalyticsProperties {
   return {
     placement: item.placement,
-    display_position: 'first',
+    display_position: position,
     provider_category: getApiServiceProductCategory(item.service),
     billing_mode: item.service.billingMode,
     target_type: 'api_service',
@@ -323,14 +323,14 @@ function promotionAnalytics(item: ApiServicePromotion): PromotionAnalyticsProper
   }
 }
 
-function setPromotedElement(element: Element | ComponentPublicInstance | null, item?: ApiServicePromotion) {
-  if (!item) return
+function setPromotedElement(element: Element | ComponentPublicInstance | null, item?: ApiServicePromotion, position?: PromotionAnalyticsProperties['display_position']) {
+  if (!item || !position) return
   const domElement = typeof Element !== 'undefined' && element instanceof Element ? element : null
-  setPromotionElement(domElement, item.promotionId, promotionAnalytics(item))
+  setPromotionElement(domElement, item.promotionId, promotionAnalytics(item, position))
 }
 
-function trackPromotedCardClick(item?: ApiServicePromotion) {
-  if (item) trackPromotionClick(promotionAnalytics(item))
+function trackPromotedCardClick(item?: ApiServicePromotion, position?: PromotionAnalyticsProperties['display_position']) {
+  if (item && position) trackPromotionClick(promotionAnalytics(item, position))
 }
 
 async function purchaseOffer(offer: PublicApiQuotaOffer) {
@@ -646,14 +646,14 @@ onBeforeUnmount(() => {
               v-for="entry in packageDisplayRows"
               :key="entry.row.package.id"
               class="min-w-0"
-              :ref="element => setPromotedElement(element, entry.promotion)"
+              :ref="element => setPromotedElement(element, entry.promotion, entry.promotionPosition)"
             >
               <ApiPackageCard
                 :row="entry.row"
                 :rank="entry.rank"
                 :product-icon-src="freeServiceIconSrc(entry.row.service)"
                 :promoted="Boolean(entry.promotion)"
-                @activate="trackPromotedCardClick(entry.promotion)"
+                @activate="trackPromotedCardClick(entry.promotion, entry.promotionPosition)"
               />
             </div>
           </div>
@@ -674,12 +674,12 @@ onBeforeUnmount(() => {
             v-for="entry in freeServiceDisplayRows"
             :key="entry.service.id"
             class="min-w-0"
-            :ref="element => setPromotedElement(element, entry.promotion)"
+            :ref="element => setPromotedElement(element, entry.promotion, entry.promotionPosition)"
           >
             <ApiFreeServiceCard
               :card="freeServiceCard(entry.service)"
               :promoted="Boolean(entry.promotion)"
-              @activate="trackPromotedCardClick(entry.promotion)"
+              @activate="trackPromotedCardClick(entry.promotion, entry.promotionPosition)"
             />
           </div>
         </div>

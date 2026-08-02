@@ -26,6 +26,7 @@ import (
 	"c2c-market/backend/internal/module/notification"
 	"c2c-market/backend/internal/module/officialprice"
 	"c2c-market/backend/internal/module/profile"
+	"c2c-market/backend/internal/module/promotionreward"
 	"c2c-market/backend/internal/module/report"
 	"c2c-market/backend/internal/module/reputation"
 	"c2c-market/backend/internal/module/review"
@@ -121,6 +122,7 @@ type Service struct {
 	reputationService  *reputation.Service
 	modelAudit         *modelaudit.Service
 	growthService      *growth.Service
+	promotionRewards   *promotionreward.Service
 }
 
 type ServiceOptions struct {
@@ -169,6 +171,7 @@ func newServiceWithOptions(now func() time.Time, repositories Repositories, emai
 		notification:       notification.NewService(repositories.Notification, now),
 		contactService:     contactmodule.NewService(repositories.Contact, now),
 		growthService:      growth.NewService(repositories.Growth, now),
+		promotionRewards:   promotionreward.NewService(repositories.PromotionReward, idempotencyService, now),
 		profileService: profile.NewServiceWithOptions(repositories.Profile, now, emailSender, profile.ServiceOptions{
 			EmailVerificationPepper: options.EmailVerificationPepper,
 		}),
@@ -556,6 +559,66 @@ func (s *Service) StopAPIPromotion(ctx context.Context, user User, input apiprom
 
 func (s *Service) StopAPIPromotionWithIdempotency(ctx context.Context, user User, routeKey, key, requestHash string, input apipromotion.StopInput, buildCompletion apipromotion.CompletionBuilder) (idempotencymodule.Completion, *domain.AppError) {
 	return s.apiPromotion.StopWithIdempotency(ctx, user, routeKey, key, requestHash, input, buildCompletion)
+}
+
+func (s *Service) PromotionRewardPublicConfig(ctx context.Context) (promotionreward.PublicConfig, *domain.AppError) {
+	return s.promotionRewards.PublicConfig(ctx)
+}
+
+func (s *Service) MyReferralSummary(ctx context.Context, user User) (promotionreward.ReferralSummary, *domain.AppError) {
+	return s.promotionRewards.MyReferral(ctx, user)
+}
+
+func (s *Service) MyPromotionCoupons(ctx context.Context, user User, query promotionreward.CouponQuery) (promotionreward.CouponPage, *domain.AppError) {
+	return s.promotionRewards.MyCoupons(ctx, user, query)
+}
+
+func (s *Service) ApplyPromotionCouponWithIdempotency(ctx context.Context, user User, routeKey, key, requestHash string, input promotionreward.ApplyCouponInput, buildCompletion promotionreward.CouponCompletionBuilder) (idempotencymodule.Completion, *domain.AppError) {
+	return s.promotionRewards.ApplyCouponWithIdempotency(ctx, user, routeKey, key, requestHash, input, buildCompletion)
+}
+
+func (s *Service) AdminPromotionRewardCampaign(ctx context.Context, user User) (promotionreward.Campaign, *domain.AppError) {
+	return s.promotionRewards.AdminCampaign(ctx, user)
+}
+
+func (s *Service) UpdateAdminPromotionRewardCampaign(ctx context.Context, user User, input promotionreward.UpdateCampaignInput) (promotionreward.Campaign, *domain.AppError) {
+	return s.promotionRewards.UpdateAdminCampaign(ctx, user, input)
+}
+
+func (s *Service) UpdateAdminPromotionRewardCampaignWithIdempotency(ctx context.Context, user User, routeKey, key, requestHash string, input promotionreward.UpdateCampaignInput, buildCompletion promotionreward.CampaignCompletionBuilder) (idempotencymodule.Completion, *domain.AppError) {
+	return s.promotionRewards.UpdateAdminCampaignWithIdempotency(ctx, user, routeKey, key, requestHash, input, buildCompletion)
+}
+
+func (s *Service) AdminReferrals(ctx context.Context, user User, query promotionreward.ReferralQuery) (promotionreward.ReferralPage, *domain.AppError) {
+	return s.promotionRewards.AdminReferrals(ctx, user, query)
+}
+
+func (s *Service) RevokeAdminReferral(ctx context.Context, user User, input promotionreward.RevokeReferralInput) (promotionreward.ReferralRecord, *domain.AppError) {
+	return s.promotionRewards.RevokeAdminReferral(ctx, user, input)
+}
+
+func (s *Service) RevokeAdminReferralWithIdempotency(ctx context.Context, user User, routeKey, key, requestHash string, input promotionreward.RevokeReferralInput, buildCompletion promotionreward.ReferralCompletionBuilder) (idempotencymodule.Completion, *domain.AppError) {
+	return s.promotionRewards.RevokeAdminReferralWithIdempotency(ctx, user, routeKey, key, requestHash, input, buildCompletion)
+}
+
+func (s *Service) AdminPromotionCoupons(ctx context.Context, user User, query promotionreward.CouponQuery) (promotionreward.CouponPage, *domain.AppError) {
+	return s.promotionRewards.AdminCoupons(ctx, user, query)
+}
+
+func (s *Service) GrantAdminPromotionCoupon(ctx context.Context, user User, input promotionreward.GrantCouponInput) (promotionreward.Coupon, *domain.AppError) {
+	return s.promotionRewards.GrantAdminCoupon(ctx, user, input)
+}
+
+func (s *Service) GrantAdminPromotionCouponWithIdempotency(ctx context.Context, user User, routeKey, key, requestHash string, input promotionreward.GrantCouponInput, buildCompletion promotionreward.CouponCompletionBuilder) (idempotencymodule.Completion, *domain.AppError) {
+	return s.promotionRewards.GrantAdminCouponWithIdempotency(ctx, user, routeKey, key, requestHash, input, buildCompletion)
+}
+
+func (s *Service) RevokeAdminPromotionCoupon(ctx context.Context, user User, input promotionreward.RevokeCouponInput) (promotionreward.Coupon, *domain.AppError) {
+	return s.promotionRewards.RevokeAdminCoupon(ctx, user, input)
+}
+
+func (s *Service) RevokeAdminPromotionCouponWithIdempotency(ctx context.Context, user User, routeKey, key, requestHash string, input promotionreward.RevokeCouponInput, buildCompletion promotionreward.CouponCompletionBuilder) (idempotencymodule.Completion, *domain.AppError) {
+	return s.promotionRewards.RevokeAdminCouponWithIdempotency(ctx, user, routeKey, key, requestHash, input, buildCompletion)
 }
 
 func (s *Service) withAPIPromotionServiceContext(ctx context.Context, items []apipromotion.Promotion, includeReputation bool) ([]apipromotion.Promotion, *domain.AppError) {

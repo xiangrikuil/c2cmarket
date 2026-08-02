@@ -52,6 +52,7 @@ func (s *Store) ListPublicAPIPromotions(ctx context.Context, placement string, n
 	}
 	visible := make([]apipromotion.Promotion, 0, len(items))
 	for i := range items {
+		items[i].Kind = apipromotion.KindOperator
 		service, err := s.getPublicAPIService(ctx, s.pool, items[i].APIServiceID, false)
 		if errors.Is(err, pgx.ErrNoRows) {
 			continue
@@ -63,6 +64,52 @@ func (s *Store) ListPublicAPIPromotions(ctx context.Context, placement string, n
 		items[i].Eligibility = apipromotion.Eligibility{Configurable: true, Displayable: true}
 		items[i].Capacity = apipromotion.APIMarketTopCapacity
 		visible = append(visible, items[i])
+	}
+	rewardRows, err := s.pool.Query(ctx, `
+		SELECT coupon.activation_id::text, coupon.used_api_service_id::text,
+		       'api_market_reward', coupon.promotion_starts_at, coupon.promotion_ends_at,
+		       'promotion reward rotation', '', NULL::timestamptz,
+		       '', '', coupon.created_at, coupon.updated_at, coupon.version
+		FROM promotion_coupons coupon
+		WHERE coupon.status = 'used'
+		  AND coupon.activation_id IS NOT NULL
+		  AND coupon.promotion_starts_at <= $1
+		  AND coupon.promotion_ends_at > $1
+		  AND EXISTS (
+		    SELECT 1 FROM api_services service
+		    WHERE service.id = coupon.used_api_service_id
+		      AND `+publicAPIServiceOrderablePredicateAt("service", "$1")+`
+		  )
+		  AND NOT EXISTS (
+		    SELECT 1 FROM api_service_promotions operator
+		    WHERE operator.api_service_id = coupon.used_api_service_id
+		      AND operator.stopped_at IS NULL
+		      AND operator.starts_at <= $1 AND operator.ends_at > $1
+		  )
+		ORDER BY md5(coupon.activation_id::text || date_trunc('hour', $1 AT TIME ZONE 'Asia/Shanghai')::text), coupon.activation_id
+		LIMIT $2
+	`, now, apipromotion.APIMarketRewardCapacity)
+	if err != nil {
+		return nil, internalStoreError()
+	}
+	defer rewardRows.Close()
+	rewards, appErr := scanAPIPromotions(rewardRows)
+	if appErr != nil {
+		return nil, appErr
+	}
+	for i := range rewards {
+		service, err := s.getPublicAPIService(ctx, s.pool, rewards[i].APIServiceID, false)
+		if errors.Is(err, pgx.ErrNoRows) {
+			continue
+		}
+		if err != nil {
+			return nil, internalStoreError()
+		}
+		rewards[i].Kind = apipromotion.KindReward
+		rewards[i].Service = service
+		rewards[i].Eligibility = apipromotion.Eligibility{Displayable: true}
+		rewards[i].Capacity = apipromotion.APIMarketRewardCapacity
+		visible = append(visible, rewards[i])
 	}
 	return visible, nil
 }
@@ -85,6 +132,7 @@ func (s *Store) ListAdminAPIPromotions(ctx context.Context, now time.Time) ([]ap
 		return nil, appErr
 	}
 	for i := range items {
+		items[i].Kind = apipromotion.KindOperator
 		service, err := s.getAPIService(ctx, s.pool, items[i].APIServiceID, false)
 		if err != nil {
 			return nil, internalStoreError()
@@ -304,6 +352,14 @@ func hasSameServicePromotionOverlap(ctx context.Context, q queryer, serviceID st
 		    AND stopped_at IS NULL
 		    AND starts_at < $3
 		    AND ends_at > $2
+		) OR EXISTS (
+		  SELECT 1
+		  FROM promotion_coupons
+		  WHERE used_api_service_id = $1
+		    AND status = 'used'
+		    AND activation_id IS NOT NULL
+		    AND promotion_starts_at < $3
+		    AND promotion_ends_at > $2
 		)
 	`, serviceID, startsAt, endsAt).Scan(&overlaps)
 	if err != nil {

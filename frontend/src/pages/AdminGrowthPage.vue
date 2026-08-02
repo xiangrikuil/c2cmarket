@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
-import { Activity, CalendarPlus, Clock3, RefreshCw, ShoppingCart, TrendingUp, UserCheck, Users } from 'lucide-vue-next'
+import { Activity, CalendarPlus, Clock3, Gift, RefreshCw, ShoppingCart, TrendingUp, UserCheck, Users } from 'lucide-vue-next'
 import GrowthTrendChart from '@/components/growth/GrowthTrendChart.vue'
 import ErrorState from '@/components/market/ErrorState.vue'
 import PageTitle from '@/components/market/PageTitle.vue'
@@ -85,6 +85,7 @@ function attributionLabel(source: string, medium?: string, campaign?: string) {
               <TabsTrigger :value="90">90 天</TabsTrigger>
             </TabsList>
           </Tabs>
+          <Button as-child variant="outline"><RouterLink to="/admin/growth-promotions"><Gift class="h-4 w-4" />增长推广</RouterLink></Button>
           <Button variant="outline" size="icon" title="刷新增长数据" aria-label="刷新增长数据" :disabled="growthQuery.isFetching.value" @click="growthQuery.refetch()">
             <RefreshCw class="h-4 w-4" :class="growthQuery.isFetching.value ? 'animate-spin' : ''" />
           </Button>

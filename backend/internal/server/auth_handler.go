@@ -5,6 +5,7 @@ import (
 	"c2c-market/backend/internal/domain"
 	"c2c-market/backend/internal/middleware"
 	"c2c-market/backend/internal/module/auth"
+	"c2c-market/backend/internal/module/promotionreward"
 	"context"
 	"crypto/rand"
 	"encoding/base64"
@@ -70,6 +71,7 @@ type oauthStateCookiePayload struct {
 	State       string                       `json:"state"`
 	ReturnTo    string                       `json:"returnTo"`
 	Attribution auth.RegistrationAttribution `json:"attribution"`
+	InviteCode  string                       `json:"inviteCode,omitempty"`
 }
 
 type setPasswordRequest struct {
@@ -292,6 +294,7 @@ func (s *Server) handleOAuthStart(w http.ResponseWriter, r *http.Request) {
 		State:       state,
 		ReturnTo:    returnTo,
 		Attribution: attribution,
+		InviteCode:  promotionreward.CanonicalReferralCode(r.URL.Query().Get("inviteCode")),
 	}))
 	writeJSON(w, http.StatusOK, oauthStartResponse{AuthorizationURL: s.oauthAuthorizationURL(r, state, returnTo)})
 }
@@ -319,6 +322,7 @@ func (s *Server) handleOAuthCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	profile.Attribution = payload.Attribution
+	profile.ReferralCode = payload.InviteCode
 	user, session, appErr := s.app.LoginWithOAuthProfile(r.Context(), profile)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
@@ -642,6 +646,7 @@ func normalizeLinuxDoAvatarURL(value string) string {
 func encodeOAuthStateCookie(payload oauthStateCookiePayload) string {
 	payload.ReturnTo = cleanReturnTo(payload.ReturnTo)
 	payload.Attribution = auth.NormalizeRegistrationAttribution(payload.Attribution)
+	payload.InviteCode = promotionreward.CanonicalReferralCode(payload.InviteCode)
 	encoded, err := json.Marshal(payload)
 	if err != nil {
 		panic(err)
@@ -662,6 +667,7 @@ func decodeOAuthStateCookie(value string) (oauthStateCookiePayload, bool) {
 	}
 	payload.ReturnTo = cleanReturnTo(payload.ReturnTo)
 	payload.Attribution = auth.NormalizeRegistrationAttribution(payload.Attribution)
+	payload.InviteCode = promotionreward.CanonicalReferralCode(payload.InviteCode)
 	return payload, true
 }
 

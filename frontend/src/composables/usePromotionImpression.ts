@@ -4,7 +4,7 @@ import { trackAnalytics } from '@/lib/analytics'
 export type PromotionDisplayPosition = 'first' | 'middle' | 'last'
 
 export type PromotionAnalyticsProperties = {
-  placement: 'api_market_top'
+  placement: 'api_market_top' | 'api_market_reward'
   display_position: PromotionDisplayPosition
   provider_category: string
   billing_mode: string

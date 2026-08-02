@@ -26,6 +26,7 @@ const MerchantCarpoolApplicationsPage = () => import('@/pages/MerchantCarpoolApp
 const MyFavoritesPage = () => import('@/pages/MyFavoritesPage.vue')
 const MyReviewsPage = () => import('@/pages/MyReviewsPage.vue')
 const MyReputationPage = () => import('@/pages/MyReputationPage.vue')
+const MyPromotionBenefitsPage = () => import('@/pages/MyPromotionBenefitsPage.vue')
 const MyNotificationsPage = () => import('@/pages/MyNotificationsPage.vue')
 const MyFeedbackPage = () => import('@/pages/MyFeedbackPage.vue')
 const AnnouncementDetailPage = () => import('@/pages/AnnouncementDetailPage.vue')
@@ -33,6 +34,7 @@ const LoginPage = () => import('@/pages/LoginPage.vue')
 const PublicUserPage = () => import('@/pages/PublicUserPage.vue')
 const AdminPage = () => import('@/pages/AdminPage.vue')
 const AdminGrowthPage = () => import('@/pages/AdminGrowthPage.vue')
+const AdminGrowthPromotionsPage = () => import('@/pages/AdminGrowthPromotionsPage.vue')
 const AdminFeedbackPage = () => import('@/pages/AdminFeedbackPage.vue')
 const AdminAnnouncementsPage = () => import('@/pages/AdminAnnouncementsPage.vue')
 const AdminAnnouncementEditorPage = () => import('@/pages/AdminAnnouncementEditorPage.vue')
@@ -95,6 +97,7 @@ export const routes: RouteRecordRaw[] = [
     { path: '/my/favorites', name: 'my-favorites', component: MyFavoritesPage, meta: userAuthMeta },
     { path: '/my/reviews', name: 'my-reviews', component: MyReviewsPage, meta: userAuthMeta },
     { path: '/my/reputation', alias: '/me/reputation', name: 'my-reputation', component: MyReputationPage, meta: userAuthMeta },
+    { path: '/my/promotion-benefits', name: 'my-promotion-benefits', component: MyPromotionBenefitsPage, meta: userAuthMeta },
     { path: '/my/notifications', name: 'my-notifications', component: MyNotificationsPage, meta: userAuthMeta },
     { path: '/my/feedback', name: 'my-feedback', component: MyFeedbackPage, meta: userAuthMeta },
     { path: '/my/feedback/:id', name: 'my-feedback-detail', component: MyFeedbackPage, meta: userAuthMeta },
@@ -102,6 +105,7 @@ export const routes: RouteRecordRaw[] = [
     { path: '/u/:username', name: 'public-user', component: PublicUserPage },
     { path: '/admin', name: 'admin', component: AdminPage, meta: adminAuthMeta },
     { path: '/admin/growth', name: 'admin-growth', component: AdminGrowthPage, meta: adminAuthMeta },
+    { path: '/admin/growth-promotions', name: 'admin-growth-promotions', component: AdminGrowthPromotionsPage, meta: adminAuthMeta },
     { path: '/admin/announcements', name: 'admin-announcements', component: AdminAnnouncementsPage, meta: adminAuthMeta },
     { path: '/admin/announcements/new', name: 'admin-announcement-new', component: AdminAnnouncementEditorPage, meta: adminAuthMeta },
     { path: '/admin/announcements/:id/edit', name: 'admin-announcement-edit', component: AdminAnnouncementEditorPage, meta: adminAuthMeta },

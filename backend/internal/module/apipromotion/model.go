@@ -9,8 +9,13 @@ import (
 )
 
 const (
-	PlacementAPIMarketTop = "api_market_top"
-	APIMarketTopCapacity  = 3
+	PlacementAPIMarketTop    = "api_market_top"
+	PlacementAPIMarketReward = "api_market_reward"
+	APIMarketTopCapacity     = 3
+	APIMarketRewardCapacity  = 1
+
+	KindOperator = "operator"
+	KindReward   = "reward"
 
 	StatusStopped    = "stopped"
 	StatusScheduled  = "scheduled"
@@ -37,6 +42,7 @@ type Availability struct {
 
 type Promotion struct {
 	ID                   string
+	Kind                 string
 	APIServiceID         string
 	Placement            string
 	StartsAt             time.Time

@@ -24,6 +24,7 @@ import (
 	"c2c-market/backend/internal/module/notification"
 	"c2c-market/backend/internal/module/officialprice"
 	"c2c-market/backend/internal/module/profile"
+	"c2c-market/backend/internal/module/promotionreward"
 	"c2c-market/backend/internal/module/report"
 	"c2c-market/backend/internal/module/reputation"
 	"c2c-market/backend/internal/module/review"
@@ -74,6 +75,8 @@ type ModelAuditRepository = modelaudit.Repository
 
 type GrowthRepository = growth.Repository
 
+type PromotionRewardRepository = promotionreward.Repository
+
 type Persistence interface {
 	AuthRepository
 	IdempotencyRepository
@@ -97,6 +100,7 @@ type Persistence interface {
 	ReputationRepository
 	ModelAuditRepository
 	GrowthRepository
+	PromotionRewardRepository
 }
 
 type Repositories struct {
@@ -122,6 +126,7 @@ type Repositories struct {
 	Reputation        ReputationRepository
 	ModelAudit        ModelAuditRepository
 	Growth            GrowthRepository
+	PromotionReward   PromotionRewardRepository
 }
 
 func RepositoriesFromPersistence(persistence Persistence) Repositories {
@@ -151,6 +156,7 @@ func RepositoriesFromPersistence(persistence Persistence) Repositories {
 		Reputation:        persistence,
 		ModelAudit:        persistence,
 		Growth:            persistence,
+		PromotionReward:   persistence,
 	}
 }
 

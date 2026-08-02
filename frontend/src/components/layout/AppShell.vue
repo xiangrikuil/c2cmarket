@@ -10,6 +10,7 @@ import {
   Code2,
   Car,
   ExternalLink,
+  Gift,
   Home,
   LogIn,
   LogOut,
@@ -53,6 +54,7 @@ import { ACCOUNT_RECOVERY_PATH, isAccountRecoveryAllowedPath, isAccountRecoveryC
 import { usePersistentSidebar } from '@/composables/usePersistentSidebar'
 import { logoutBackendSession } from '@/lib/backendClient'
 import { loginRoute } from '@/lib/authNavigation'
+import { usePromotionRewardPublicConfig } from '@/queries/usePromotionRewardQueries'
 
 const route = useRoute()
 const router = useRouter()
@@ -71,6 +73,7 @@ const workspaceQueriesEnabled = computed(() => Boolean(myProfile.value))
 const { data: ownedCarpools } = useMyCarpools(workspaceQueriesEnabled)
 const { data: ownedApiServices } = useMyApiServices('all', workspaceQueriesEnabled)
 const { data: navigationBadges } = useNavigationBadges(computed(() => Boolean(myProfile.value)))
+const { data: promotionRewardConfig } = usePromotionRewardPublicConfig()
 useRealtimeSync(computed(() => Boolean(myProfile.value)))
 
 const buyerApiActionCount = computed(() => navigationBadges.value?.buyer.apiOrderActions ?? 0)
@@ -139,6 +142,7 @@ const navGroups = computed(() => {
       { label: '个人中心', to: '/my', count: null, icon: UserRound },
       { label: '联系与收款', to: '/my/contacts', count: null, icon: MessageSquarePlus },
       { label: '信誉与成长', to: '/my/reputation', count: null, icon: BadgeCheck },
+      ...(promotionRewardConfig.value?.programEnabled ? [{ label: '推广权益', to: '/my/promotion-benefits', count: null, icon: Gift }] : []),
       { label: '安全设置', to: '/my/account', count: null, icon: ShieldCheck },
       { label: '反馈', to: '/my/feedback', count: feedbackMenuUnreadCount.value, icon: CircleHelp },
     ],

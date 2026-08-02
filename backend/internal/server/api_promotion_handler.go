@@ -39,6 +39,7 @@ type apiPromotionAvailabilityResponse struct {
 
 type publicAPIPromotionResponse struct {
 	PromotionID string                   `json:"promotionId"`
+	Kind        string                   `json:"kind"`
 	Placement   string                   `json:"placement"`
 	Label       string                   `json:"label"`
 	StartsAt    string                   `json:"startsAt"`
@@ -245,6 +246,7 @@ func toPublicAPIPromotionResponses(items []apipromotion.Promotion) []publicAPIPr
 	for _, item := range items {
 		responses = append(responses, publicAPIPromotionResponse{
 			PromotionID: item.ID,
+			Kind:        item.Kind,
 			Placement:   item.Placement,
 			Label:       "推广",
 			StartsAt:    item.StartsAt.UTC().Format(time.RFC3339),

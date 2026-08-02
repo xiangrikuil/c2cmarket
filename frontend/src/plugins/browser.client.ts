@@ -3,6 +3,7 @@ import { setAnalyticsRuntimeConfig, trackAnalytics } from '@/lib/analytics'
 import { initializeAppTheme } from '@/theme/appThemes'
 import { buildUmamiScriptConfig, installUmamiScript } from '@/lib/umamiLoader'
 import { captureRegistrationAttribution, clearRegistrationAttribution } from '@/lib/registrationAttribution'
+import { clearReferralCapture } from '@/lib/referralCapture'
 
 export default defineNuxtPlugin((nuxtApp) => {
   const config = useRuntimeConfig().public
@@ -42,6 +43,7 @@ export default defineNuxtPlugin((nuxtApp) => {
       source_route: route.path,
     })
     clearRegistrationAttribution()
+    clearReferralCapture()
 
     const query = { ...route.query }
     delete query.authOutcome
