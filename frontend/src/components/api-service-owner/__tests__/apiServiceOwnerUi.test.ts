@@ -8,7 +8,7 @@ const metricsSource = readFileSync(new URL('../ApiServiceOwnerMetrics.vue', impo
 const overviewSource = readFileSync(new URL('../ApiServiceOwnerOverview.vue', import.meta.url), 'utf8')
 const salesSource = readFileSync(new URL('../../api-quota/ApiQuotaOwnerManager.vue', import.meta.url), 'utf8')
 const listSource = readFileSync(new URL('../../../pages/MyApiServicesPage.vue', import.meta.url), 'utf8')
-const querySource = readFileSync(new URL('../../../queries/useMarketQueries.ts', import.meta.url), 'utf8')
+const appShellQuerySource = readFileSync(new URL('../../../queries/useAppShellQueries.ts', import.meta.url), 'utf8')
 
 describe('API 服务卖家管理页结构', () => {
   test('页面只编排服务头部、核心指标、服务概览和销售管理', () => {
@@ -68,6 +68,6 @@ describe('API 服务卖家管理页结构', () => {
     assert.match(listSource, /销售方式[\s\S]*?销售状态[\s\S]*?销售时间[\s\S]*?服务状态/)
     assert.match(listSource, /重新发布限时包/)
     assert.doesNotMatch(listSource, /<CompactStats/)
-    assert.match(querySource, /queryKey: computed\(\(\) => \['my-api-services', valueOf\(salesView\)\]\)/)
+    assert.match(appShellQuerySource, /queryKey: computed\(\(\) => \['my-api-services', valueOf\(salesView\)\]\)/)
   })
 })

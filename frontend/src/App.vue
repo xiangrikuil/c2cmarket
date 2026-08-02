@@ -1,11 +1,12 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, defineAsyncComponent } from 'vue'
 import { useRoute } from 'vue-router'
 import { useHead, useRuntimeConfig, useSeoMeta } from '#app'
 import AppShell from '@/components/layout/AppShell.vue'
-import AdminShell from '@/components/layout/AdminShell.vue'
 import { Toaster } from '@/components/ui/sonner'
 import { breadcrumbItems, resolveRouteSeo } from '@/seo/routeSeo'
+
+const AdminShell = defineAsyncComponent(() => import('@/components/layout/AdminShell.vue'))
 
 const route = useRoute()
 const config = useRuntimeConfig()

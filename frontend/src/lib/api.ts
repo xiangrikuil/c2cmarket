@@ -99,6 +99,13 @@ import {
 import type { ReputationSummary } from '@/types/reputation'
 import { mockPublicUserReputation } from '@/lib/reputationMock'
 import { getPricingDisplay } from '@/lib/pricing'
+import {
+  getApiMerchantDisplayName,
+  isApiServicePubliclyOrderable,
+  type ApiIntentMerchantSource,
+  type ApiMerchantIdentitySource,
+} from '@/lib/apiServicePresentation'
+export { getApiMerchantDisplayName, isApiServicePubliclyOrderable } from '@/lib/apiServicePresentation'
 import { evaluateCarpoolApplicationEligibility, hasCredentialSharingLanguage } from '@/lib/carpoolEligibility'
 import { matchesApiOrderSearch } from '@/lib/apiOrderUi'
 export { evaluateCarpoolApplicationEligibility } from '@/lib/carpoolEligibility'
@@ -1333,16 +1340,7 @@ function defaultContactLabel(type: ContactMethodType) {
   return labels[type]
 }
 
-type ApiMerchantIdentitySource = Pick<ApiService, 'merchant' | 'merchantIdentityMode' | 'merchantDisplayName'>
 type ApiMerchantProfileSource = Pick<ApiService, 'merchantIdentityMode' | 'merchantUsername'>
-type ApiIntentMerchantSource = Pick<ApiPurchaseIntent, 'merchant' | 'snapshot'>
-
-export function getApiMerchantDisplayName(source: ApiMerchantIdentitySource | ApiIntentMerchantSource) {
-  if ('snapshot' in source) {
-    return source.snapshot.merchantDisplayName || source.snapshot.merchant
-  }
-  return source.merchantDisplayName || source.merchant
-}
 
 export function canOpenApiMerchantProfile(source: ApiMerchantProfileSource | Pick<ApiPurchaseIntent['snapshot'], 'merchantIdentityMode'>) {
   return source.merchantIdentityMode === 'public_profile'
@@ -1424,10 +1422,6 @@ export function getApiServiceDefaultPaymentMethod(service: ApiService): ApiPayme
 
 export function getApiIntentDefaultPaymentMethod(intent: ApiPurchaseIntent): ApiPaymentOption['paymentMethod'] | null {
   return intent.snapshot.paymentOptions?.find(option => option.enabled && isApiPaymentOptionComplete(option))?.paymentMethod ?? null
-}
-
-export function isApiServicePubliclyOrderable(service: Pick<ApiService, 'online' | 'publiclyOrderable'>) {
-  return service.online && service.publiclyOrderable
 }
 
 export function getApiServicePublicDetailUrl(service: Pick<ApiService, 'id' | 'online' | 'publiclyOrderable'>) {

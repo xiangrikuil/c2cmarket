@@ -17,6 +17,21 @@ const privateRouteRule = {
   ssr: false,
   headers: { 'x-robots-tag': 'noindex, nofollow' },
 } as const
+const cachedPublicRouteRules = {
+  '/': { cache: { maxAge: 300, swr: true } },
+  '/official-prices': { cache: { maxAge: 300, swr: true } },
+  '/official-prices/**': { cache: { maxAge: 300, swr: true } },
+  '/carpools': { cache: { maxAge: 120, swr: true } },
+  '/carpools/**': { cache: { maxAge: 120, swr: true } },
+  '/api-market': { cache: { maxAge: 120, swr: true } },
+  '/api-market/**': { cache: { maxAge: 120, swr: true } },
+} as const
+const publicRouteRules = process.env.NODE_ENV === 'development'
+  ? Object.fromEntries(Object.keys(cachedPublicRouteRules).map(path => [path, { cache: false }]))
+  : cachedPublicRouteRules
+const routePageNames = [...new Set(routes
+  .map(route => typeof route.component === 'function' ? route.component.name : '')
+  .filter(Boolean))]
 
 if (isProductionBuild && apiMode !== 'real') {
   throw new Error('Production frontend builds must set NUXT_PUBLIC_API_MODE=real.')
@@ -46,6 +61,10 @@ export default defineNuxtConfig({
   },
   modules: ['@nuxtjs/sitemap', '@formkit/auto-animate/nuxt'],
   hooks: {
+    async 'vite:serverCreated'(server, { isServer }) {
+      if (!isServer || process.env.NODE_ENV !== 'development') return
+      await Promise.all(routePageNames.map(name => server.transformRequest(`/pages/${name}.vue?macro=true`, { ssr: true })))
+    },
     'pages:extend'(pages) {
       pages.splice(0, pages.length, ...routes.map((route) => {
         const componentName = typeof route.component === 'function' ? route.component.name : ''
@@ -96,13 +115,7 @@ export default defineNuxtConfig({
     ],
   },
   routeRules: {
-    '/': { cache: { maxAge: 300, swr: true } },
-    '/official-prices': { cache: { maxAge: 300, swr: true } },
-    '/official-prices/**': { cache: { maxAge: 300, swr: true } },
-    '/carpools': { cache: { maxAge: 120, swr: true } },
-    '/carpools/**': { cache: { maxAge: 120, swr: true } },
-    '/api-market': { cache: { maxAge: 120, swr: true } },
-    '/api-market/**': { cache: { maxAge: 120, swr: true } },
+    ...publicRouteRules,
     '/announcements/**': privateRouteRule,
     '/u/**': privateRouteRule,
     '/search/**': privateRouteRule,
@@ -122,6 +135,23 @@ export default defineNuxtConfig({
   },
   vite: {
     plugins: [tailwindcss()],
+    optimizeDeps: {
+      include: [
+        '@radix-icons/vue',
+        '@tanstack/vue-query',
+        '@vueuse/core',
+        'class-variance-authority',
+        'clsx',
+        'decimal.js',
+        'dompurify',
+        'lucide-vue-next',
+        'marked',
+        'pinia',
+        'reka-ui',
+        'tailwind-merge',
+        'vue-sonner',
+      ],
+    },
     server: {
       allowedHosts: ['c2cmarket.shop', 'staging.c2cmarket.shop'],
       proxy: {

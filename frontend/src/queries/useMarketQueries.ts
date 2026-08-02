@@ -56,13 +56,10 @@ import {
   getMyApiPurchaseIntents,
   getMyApiOrders,
   getMyApiServiceById,
-  getMyApiServices,
   getOwnerApiQuotaBatches,
   getOwnerApiQuotaOffers,
   getOwnerApiQuotaRounds,
-  getMyCarpools,
   getMyCarpoolApplications,
-  getMyProfile,
   getApiServiceById,
   getApiServices,
   getOtherApiMarketServices,
@@ -75,9 +72,7 @@ import {
   getCarpools,
   getFavorites,
   getFeedbackUnreadCount,
-  getHomeMarket,
   getModelCatalog,
-  getNotifications,
   getOfficialPriceById,
   getOfficialPrices,
   getPublicMerchantProfile,
@@ -120,7 +115,6 @@ import {
   type ApiPaymentAccountSettings,
   type ApiPurchaseIntentFilters,
   type ApiServiceFilters,
-  type ApiServiceSalesView,
   type CreateApiQuotaBatchPayload,
   type CreateApiQuotaOfferPayload,
   type CreateApiQuotaOrderPayload,
@@ -142,16 +136,13 @@ import {
   type UpdateMyProfileRequest,
   type UserProfile,
 } from '@/lib/api'
+import { myProfileQueryKey } from '@/queries/useAppShellQueries'
+
+export { useHomeMarket } from '@/queries/useHomeMarketQuery'
+export { myProfileQueryKey, useMyApiServices, useMyCarpools, useMyProfileQuery, useNotifications } from '@/queries/useAppShellQueries'
 
 function valueOf<T>(value: Ref<T> | T): T {
   return typeof value === 'object' && value !== null && 'value' in value ? value.value : value
-}
-
-export function useHomeMarket() {
-  return useQuery({
-    queryKey: ['home-market'],
-    queryFn: getHomeMarket,
-  })
 }
 
 export function transactionTrendQueryKey(productId: string, range: TransactionTrendRange) {
@@ -204,15 +195,6 @@ export function useCarpoolApplicationEligibility(id: Ref<string> | string, enabl
     queryFn: () => getCarpoolApplicationEligibility(valueOf(id)),
     enabled: computed(() => valueOf(enabled) && Boolean(valueOf(id))),
     retry: false,
-  })
-}
-
-export function useMyCarpools(enabled: Ref<boolean> | boolean = true) {
-  return useQuery({
-    queryKey: ['my-carpools'],
-    queryFn: getMyCarpools,
-    enabled: computed(() => valueOf(enabled)),
-    refetchOnMount: 'always',
   })
 }
 
@@ -420,18 +402,6 @@ export function useCreateApiQuotaOrderMutation() {
   })
 }
 
-export function useMyApiServices(
-  salesView: Ref<ApiServiceSalesView> | ApiServiceSalesView = 'active',
-  enabled: Ref<boolean> | boolean = true,
-) {
-  return useQuery({
-    queryKey: computed(() => ['my-api-services', valueOf(salesView)]),
-    queryFn: () => getMyApiServices(valueOf(salesView)),
-    enabled: computed(() => valueOf(enabled)),
-    refetchOnMount: 'always',
-  })
-}
-
 export function useMyApiService(id: Ref<string> | string) {
   return useQuery({
     queryKey: computed(() => ['my-api-services', valueOf(id)]),
@@ -544,10 +514,6 @@ export function useImportApiQuotaCredentialsMutation() {
   })
 }
 
-export function myProfileQueryKey() {
-  return ['my-profile'] as const
-}
-
 export function myContactMethodsQueryKey() {
   return ['my-contact-methods'] as const
 }
@@ -562,17 +528,6 @@ export function publicUserProfileQueryKey(username: string) {
 
 export function orderContactsQueryKey(kind: 'carpool-application' | 'api-order', id: string) {
   return ['order-contacts', kind, id] as const
-}
-
-export function useMyProfileQuery(enabled: Ref<boolean> | boolean = true) {
-  return useQuery({
-    queryKey: myProfileQueryKey(),
-    queryFn: getMyProfile,
-    enabled: computed(() => valueOf(enabled)),
-    retry: false,
-    staleTime: 30_000,
-    refetchOnWindowFocus: false,
-  })
 }
 
 export function useUpdateMyProfileMutation() {
@@ -992,15 +947,6 @@ export function useCarpoolNotifications() {
   return useQuery({
     queryKey: ['carpool-notifications'],
     queryFn: getCarpoolNotifications,
-    refetchOnMount: 'always',
-  })
-}
-
-export function useNotifications(enabled: Ref<boolean> | boolean = true) {
-  return useQuery({
-    queryKey: ['notifications'],
-    queryFn: getNotifications,
-    enabled: computed(() => valueOf(enabled)),
     refetchOnMount: 'always',
   })
 }

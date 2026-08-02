@@ -31,7 +31,7 @@ This directory contains the current project conventions for the Nuxt 4 + Vue 3 f
 | [Identity And Session](../backend/identity-session.md) | Cross-layer account/API-market avatar, email time, and logout cache contract | Active |
 | [Quality Guidelines](./quality-guidelines.md) | Code standards, forbidden patterns | Active |
 | [Type Safety](./type-safety.md) | Type patterns, validation | Active |
-| [Nuxt SSR and Cloudflare Worker](./nuxt-ssr-deployment.md) | Hybrid rendering, SEO, sitemap, runtime env, and Worker deployment contracts | Active |
+| [Nuxt SSR and Cloudflare Worker](./nuxt-ssr-deployment.md) | Hybrid rendering, development first-page performance, SEO, sitemap, runtime env, and Worker deployment contracts | Active |
 | [Reproducible Release And Contract Drift](../backend/release-contract.md) | OpenAPI generator configuration and generated type drift contract | Active |
 | [Runtime Security And Observability](../backend/runtime-operations.md) | Cloudflare Worker response-header and API-origin policy contract | Active |
 

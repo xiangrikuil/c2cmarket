@@ -2,36 +2,34 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
 import { useQueryClient } from '@tanstack/vue-query'
-import {
-  Bell,
-  BadgeCheck,
-  ChevronDown,
-  CircleHelp,
-  Code2,
-  Car,
-  ExternalLink,
-  Gift,
-  Home,
-  LogIn,
-  LogOut,
-  Megaphone,
-  Menu,
-  MessageSquarePlus,
-  PackageSearch,
-  Palette,
-  PanelLeftClose,
-  PanelLeftOpen,
-  Search,
-  ShieldCheck,
-  ShoppingBag,
-  Siren,
-  Star,
-  Upload,
-  UserCog,
-  UserRound,
-  UsersRound,
-  X,
-} from 'lucide-vue-next'
+import BadgeCheck from 'lucide-vue-next/dist/esm/icons/badge-check.js'
+import Bell from 'lucide-vue-next/dist/esm/icons/bell.js'
+import Car from 'lucide-vue-next/dist/esm/icons/car.js'
+import ChevronDown from 'lucide-vue-next/dist/esm/icons/chevron-down.js'
+import CircleHelp from 'lucide-vue-next/dist/esm/icons/circle-question-mark.js'
+import Code2 from 'lucide-vue-next/dist/esm/icons/code-xml.js'
+import ExternalLink from 'lucide-vue-next/dist/esm/icons/external-link.js'
+import Gift from 'lucide-vue-next/dist/esm/icons/gift.js'
+import Home from 'lucide-vue-next/dist/esm/icons/house.js'
+import LogIn from 'lucide-vue-next/dist/esm/icons/log-in.js'
+import LogOut from 'lucide-vue-next/dist/esm/icons/log-out.js'
+import Megaphone from 'lucide-vue-next/dist/esm/icons/megaphone.js'
+import Menu from 'lucide-vue-next/dist/esm/icons/menu.js'
+import MessageSquarePlus from 'lucide-vue-next/dist/esm/icons/message-square-plus.js'
+import PackageSearch from 'lucide-vue-next/dist/esm/icons/package-search.js'
+import Palette from 'lucide-vue-next/dist/esm/icons/palette.js'
+import PanelLeftClose from 'lucide-vue-next/dist/esm/icons/panel-left-close.js'
+import PanelLeftOpen from 'lucide-vue-next/dist/esm/icons/panel-left-open.js'
+import Search from 'lucide-vue-next/dist/esm/icons/search.js'
+import ShieldCheck from 'lucide-vue-next/dist/esm/icons/shield-check.js'
+import ShoppingBag from 'lucide-vue-next/dist/esm/icons/shopping-bag.js'
+import Siren from 'lucide-vue-next/dist/esm/icons/siren.js'
+import Star from 'lucide-vue-next/dist/esm/icons/star.js'
+import Upload from 'lucide-vue-next/dist/esm/icons/upload.js'
+import UserCog from 'lucide-vue-next/dist/esm/icons/user-cog.js'
+import UserRound from 'lucide-vue-next/dist/esm/icons/user-round.js'
+import UsersRound from 'lucide-vue-next/dist/esm/icons/users-round.js'
+import X from 'lucide-vue-next/dist/esm/icons/x.js'
 import { toast } from 'vue-sonner'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -46,7 +44,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
-import { useMyApiServices, useMyCarpools, useMyProfileQuery, useNotifications } from '@/queries/useMarketQueries'
+import { useMyApiServices, useMyCarpools, useMyProfileQuery, useNotifications } from '@/queries/useAppShellQueries'
 import { useNavigationBadges } from '@/queries/useRealtimeQueries'
 import { useRealtimeSync } from '@/composables/useRealtimeSync'
 import { appThemes, applyAppTheme, getInitialAppTheme, isAppTheme } from '@/theme/appThemes'
