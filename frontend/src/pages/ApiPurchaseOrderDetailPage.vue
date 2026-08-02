@@ -23,7 +23,6 @@ import ErrorState from '@/components/market/ErrorState.vue'
 import ShortId from '@/components/market/ShortId.vue'
 import SkeletonBlock from '@/components/market/SkeletonBlock.vue'
 import StatusBadge from '@/components/market/StatusBadge.vue'
-import ReputationSummaryCard from '@/components/reputation/ReputationSummaryCard.vue'
 import {
   apiOrderBuyerContactSnapshot,
   apiOrderMerchantContactSnapshot,
@@ -585,16 +584,6 @@ onBeforeUnmount(() => {
       <AlertTitle>已完成交付</AlertTitle>
       <AlertDescription>你的履约任务已经结束，无需等待买家点击确认。订单将在买家确认可用或 24 小时核验期结束后完成。</AlertDescription>
     </Alert>
-
-    <section class="rounded-lg border border-border bg-card p-4" aria-labelledby="api-order-counterparty-reputation">
-      <div class="mb-4">
-        <h2 id="api-order-counterparty-reputation" class="font-semibold">交易对手信誉</h2>
-        <p class="mt-1 text-sm text-muted-foreground">
-          {{ counterpartyName }} · {{ isMerchantView ? '买家信誉' : '卖家信誉' }}
-        </p>
-      </div>
-      <ReputationSummaryCard :summary="counterpartyReputation" compact :framed="false" />
-    </section>
 
     <Card class="overflow-hidden border-border/80">
       <div class="border-b border-border bg-muted/20 px-4 py-5">

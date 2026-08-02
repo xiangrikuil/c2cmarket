@@ -122,7 +122,7 @@ async function runAction(item: ApiOrder, action: () => Promise<unknown>, message
 
 <template>
   <div class="space-y-4">
-    <PageTitle title="API 销售订单" description="处理买家付款确认和一次性交付；提交凭证后你的履约任务即完成，后续问题可通过订单联系方式沟通。" />
+    <PageTitle title="API 销售订单" description="管理自己作为商家收到的订单；确认站外收款并提交一次性交付，提交凭证后你的履约任务即完成，后续问题可通过订单联系方式沟通。" />
 
     <CompactStats :items="stats" :loading="isLoading" />
 
