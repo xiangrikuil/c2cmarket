@@ -1215,3 +1215,25 @@ Disabled unsupported launch paths, repaired operations drift, and completed the 
 ### Status
 
 [OK] **Completed**
+
+
+## Session 34: Close remaining P0 data and moderation gaps
+
+**Date**: 2026-08-03
+**Task**: Close remaining P0 data and moderation gaps
+**Package**: frontend
+**Branch**: `codex/p0-p1-launch-closure`
+
+### Summary
+
+Implemented irreversible API credential retention destruction, lifecycle locking, immutable participant moderation supplements, self-safe contracts, and full PostgreSQL/frontend verification.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `be7d6eb` | (see git log) |
+
+### Status
+
+[OK] **Completed**

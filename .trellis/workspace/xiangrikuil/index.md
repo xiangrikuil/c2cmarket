@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 33
+- **Total Sessions**: 34
 - **Last Active**: 2026-08-03
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~1217 | Active |
+| `journal-1.md` | ~1239 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 34 | 2026-08-03 | Close remaining P0 data and moderation gaps | `be7d6eb` | `codex/p0-p1-launch-closure` |
 | 33 | 2026-08-03 | Close launch P0 and active-user trust flow | `0bd2874`, `3522839` | `codex/p0-p1-launch-closure` |
 | 32 | 2026-08-03 | Fix PR 20 CI failures | `9aaaba1`, `0f3aaaf` | `codex/orders-promotions-integrated` |
 | 31 | 2026-08-03 | Fix Nuxt development first-page latency | `37a7d25` | `codex/orders-promotions-integrated` |
