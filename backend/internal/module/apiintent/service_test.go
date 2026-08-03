@@ -97,6 +97,81 @@ func TestLimitedPackageIntentFreezesExactModelSnapshot(t *testing.T) {
 	}
 }
 
+func TestIntentFreezesMerchantTermsInPricingSnapshot(t *testing.T) {
+	now := time.Date(2026, 8, 1, 8, 0, 0, 0, time.UTC)
+	service := limitedPackageIntentService(now, nil)
+	service.UsageVisibility = "merchant_reported"
+	service.MerchantNote = "高峰期可能响应变慢。"
+	service.AccountPoolType = apimarket.AccountPoolCustom
+	service.AccountPoolCustomName = "Claude Max"
+	service.DeclaredMaxConcurrency = 12
+	service.MerchantRefundCommitment = true
+	service.MerchantSupportNote = apimarket.MerchantSupportNote(true)
+	service.Models = []apimarket.ServiceModel{
+		{ID: "model-1", ModelNameSnapshot: "GPT-5.6", MerchantMultiplier: "1.0000", Enabled: true},
+		{ID: "model-2", ModelNameSnapshot: "GPT-5 mini", MerchantMultiplier: "0.2000", Enabled: true},
+	}
+
+	intent, appErr := NewIntent(CreateIntentInput{
+		APIServiceID:         service.ID,
+		BuyerUserID:          "buyer-1",
+		BuyerContactMethodID: "buyer-contact-1",
+		RequestedCNYAmount:   "10.00",
+		SelectedAccessMode:   "fixed_package_offsite",
+	}, service, contact.ContactMethod{Type: "telegram", Label: "买家 TG"}, contact.ContactMethodVersion{ID: "buyer-version-1"}, contact.ContactMethod{Type: "telegram", Label: "卖家 TG"}, contact.ContactMethodVersion{ID: "owner-version-1"}, now)
+	if appErr != nil {
+		t.Fatalf("new intent: %v", appErr)
+	}
+
+	var snapshot struct {
+		Models []struct {
+			ModelNameSnapshot  string `json:"modelNameSnapshot"`
+			MerchantMultiplier string `json:"merchantMultiplier"`
+		} `json:"models"`
+		UsageVisibility             string `json:"usageVisibility"`
+		MerchantNote                string `json:"merchantNote"`
+		MerchantSupportNote         string `json:"merchantSupportNote"`
+		AccountPoolType             string `json:"accountPoolType"`
+		AccountPoolLabel            string `json:"accountPoolLabel"`
+		DeclaredMaxConcurrency      int    `json:"declaredMaxConcurrency"`
+		MerchantRefundCommitment    bool   `json:"merchantRefundCommitment"`
+		MerchantRefundPolicyVersion string `json:"merchantRefundPolicyVersion"`
+	}
+	if err := json.Unmarshal([]byte(intent.PricingSnapshot), &snapshot); err != nil {
+		t.Fatalf("decode pricing snapshot: %v", err)
+	}
+	if len(snapshot.Models) != 2 || snapshot.Models[0].ModelNameSnapshot != "GPT-5.6" || snapshot.Models[1].MerchantMultiplier != "0.2000" {
+		t.Fatalf("unexpected model snapshot: %+v", snapshot.Models)
+	}
+	if snapshot.UsageVisibility != service.UsageVisibility || snapshot.MerchantNote != service.MerchantNote || snapshot.MerchantSupportNote != service.MerchantSupportNote {
+		t.Fatalf("unexpected merchant terms snapshot: %+v", snapshot)
+	}
+	if snapshot.AccountPoolType != apimarket.AccountPoolCustom || snapshot.AccountPoolLabel != "Claude Max" || snapshot.DeclaredMaxConcurrency != 12 || !snapshot.MerchantRefundCommitment || snapshot.MerchantRefundPolicyVersion != apimarket.MerchantRefundPolicyVersion {
+		t.Fatalf("unexpected commercial facts snapshot: %+v", snapshot)
+	}
+}
+
+func TestIntentSnapshotPreservesHistoricalNullCommercialFacts(t *testing.T) {
+	body, err := servicePricingSnapshotJSON(apimarket.Service{})
+	if err != nil {
+		t.Fatalf("build historical pricing snapshot: %v", err)
+	}
+
+	var snapshot map[string]any
+	if err := json.Unmarshal([]byte(body), &snapshot); err != nil {
+		t.Fatalf("decode historical pricing snapshot: %v", err)
+	}
+	for _, key := range []string{"accountPoolType", "accountPoolLabel", "declaredMaxConcurrency", "serviceValidityExpiresAt"} {
+		value, exists := snapshot[key]
+		if !exists || value != nil {
+			t.Fatalf("expected explicit null %s, got exists=%v value=%v", key, exists, value)
+		}
+	}
+	if snapshot["merchantRefundCommitment"] != false || snapshot["merchantRefundPolicyVersion"] != apimarket.MerchantRefundPolicyVersion {
+		t.Fatalf("unexpected historical refund snapshot: %+v", snapshot)
+	}
+}
+
 func TestLimitedPackageIntentRejectsSelectedSoldOutPackage(t *testing.T) {
 	now := time.Date(2026, 7, 16, 9, 0, 0, 0, time.UTC)
 	duration := 3

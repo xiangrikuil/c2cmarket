@@ -7,6 +7,7 @@ import { toast } from 'vue-sonner'
 import ApiPaymentMethodIcon from '@/components/api-payment/ApiPaymentMethodIcon.vue'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import PageTitle from '@/components/market/PageTitle.vue'
 import SoftTable from '@/components/market/SoftTable.vue'
 import StatusTabs from '@/components/market/StatusTabs.vue'
@@ -22,11 +23,13 @@ import { usePagination } from '@/composables/usePagination'
 import {
   confirmApiOrderPayment,
   getApiMerchantVisibilityLabel,
+  getApiOrderDisplayStatus,
   getApiOrderNextAction,
-  getApiOrderStatusLabel,
+  isApiOrderReceiptConfirmed,
   type ApiOrder,
 } from '@/lib/api'
 import { apiPaymentMethodLabels } from '@/lib/apiPaymentSettings'
+import { matchesApiOrderSearch } from '@/lib/apiOrderUi'
 import { addDecimal, compareDecimal, formatDecimal } from '@/lib/decimal'
 import { useMerchantApiOrders } from '@/queries/useMarketQueries'
 
@@ -41,38 +44,41 @@ const busyId = ref('')
 
 const deliveredStatuses = ['delivery_submitted', 'completed']
 
-const filteredRows = computed(() => {
-  const q = keyword.value.trim().toLowerCase()
+const baseFilteredRows = computed(() => {
+  const q = keyword.value.trim()
   const rangeMs = timeRange.value === 'today' ? 24 * 60 * 60 * 1000 : timeRange.value === '7d' ? 7 * 24 * 60 * 60 * 1000 : timeRange.value === '30d' ? 30 * 24 * 60 * 60 * 1000 : null
 
   return [...(data.value ?? [])].filter(item => {
     const createdAt = new Date(item.createdAt).getTime()
-    const tabMatched = activeTab.value === '全部'
-      || (activeTab.value === '待买家付款' && item.status === 'pending_payment')
-      || (activeTab.value === '待确认收款' && item.status === 'payment_submitted')
-      || (activeTab.value === '等待买家补充' && item.status === 'payment_issue')
-      || (activeTab.value === '待交付' && item.status === 'paid_confirmed')
-      || (activeTab.value === '已交付' && deliveredStatuses.includes(item.status))
-      || (activeTab.value === '已取消' && item.status === 'cancelled')
-    return tabMatched
-      && (!rangeMs || Date.now() - createdAt <= rangeMs)
+    return (!rangeMs || Date.now() - createdAt <= rangeMs)
       && (serviceFilter.value === 'all' || item.apiServiceId === serviceFilter.value)
-      && (!q || [item.id, item.buyer, item.serviceTitle].some(value => value.toLowerCase().includes(q)))
+      && matchesApiOrderSearch(q, [item.orderNo, item.id, item.buyer, item.serviceTitle])
   })
 })
 
-const orderAmountTotal = computed(() => filteredRows.value.reduce(
-  (total, item) => addDecimal(total, item.amountDecimal ?? String(item.amount), 2),
-  '0.00',
-))
+const filteredRows = computed(() => baseFilteredRows.value.filter(item => activeTab.value === '全部'
+  || (activeTab.value === '待买家付款' && item.status === 'pending_payment')
+  || (activeTab.value === '待确认收款' && item.status === 'payment_submitted')
+  || (activeTab.value === '等待买家补充' && item.status === 'payment_issue')
+  || (activeTab.value === '待交付' && item.status === 'paid_confirmed')
+  || (activeTab.value === '已完成交付' && deliveredStatuses.includes(item.status))
+  || (activeTab.value === '已取消' && item.status === 'cancelled')))
+
+const confirmedReceiptAmount = computed(() => baseFilteredRows.value
+  .filter(item => isApiOrderReceiptConfirmed(item.status))
+  .reduce(
+    (total, item) => addDecimal(total, item.amountDecimal ?? String(item.amount), 2),
+    '0.00',
+  ))
 
 const stats = computed(() => [
-  { label: '待买家付款', value: filteredRows.value.filter(item => item.status === 'pending_payment').length },
-  { label: '待确认收款', value: filteredRows.value.filter(item => item.status === 'payment_submitted').length },
-  { label: '等待买家补充', value: filteredRows.value.filter(item => item.status === 'payment_issue').length },
-  { label: '待交付', value: filteredRows.value.filter(item => item.status === 'paid_confirmed').length },
-  { label: '已交付', value: filteredRows.value.filter(item => deliveredStatuses.includes(item.status)).length },
-  { label: '订单金额合计', value: `¥${formatDecimal(orderAmountTotal.value, 2, 2)}` },
+  { label: '待买家付款', value: baseFilteredRows.value.filter(item => item.status === 'pending_payment').length },
+  { label: '待确认收款', value: baseFilteredRows.value.filter(item => item.status === 'payment_submitted').length },
+  { label: '等待买家补充', value: baseFilteredRows.value.filter(item => item.status === 'payment_issue').length },
+  { label: '待交付', value: baseFilteredRows.value.filter(item => item.status === 'paid_confirmed').length },
+  { label: '已完成交付', value: baseFilteredRows.value.filter(item => deliveredStatuses.includes(item.status)).length },
+  { label: '已取消订单', value: baseFilteredRows.value.filter(item => item.status === 'cancelled').length },
+  { label: '已确认收款金额', value: `¥${formatDecimal(confirmedReceiptAmount.value, 2, 2)}` },
 ])
 
 const rows = computed(() => [...filteredRows.value].sort((a, b) => {
@@ -116,37 +122,25 @@ async function runAction(item: ApiOrder, action: () => Promise<unknown>, message
 
 <template>
   <div class="space-y-4">
-    <PageTitle title="API 订单" description="处理买家付款确认和一次性站内交付；交付信息提交后不可修改，后续问题可通过订单联系方式沟通。" />
+    <PageTitle title="API 销售订单" description="管理自己作为商家收到的订单；确认站外收款并提交一次性交付，提交凭证后你的履约任务即完成，后续问题可通过订单联系方式沟通。" />
 
     <CompactStats :items="stats" :loading="isLoading" />
 
-    <StatusTabs v-model="activeTab" :items="['全部', '待买家付款', '待确认收款', '等待买家补充', '待交付', '已交付', '已取消']" />
+    <StatusTabs v-model="activeTab" :items="['全部', '待买家付款', '待确认收款', '等待买家补充', '待交付', '已完成交付', '已取消']" />
 
     <div class="grid gap-2 md:grid-cols-2 xl:grid-cols-[1fr_160px_180px_180px]">
       <Input v-model="keyword" placeholder="搜索订单编号、买家、服务" />
-      <select v-model="timeRange" class="h-9 rounded-md border border-input bg-background px-3 text-sm">
-        <option value="all">全部时间</option>
-        <option value="today">今天</option>
-        <option value="7d">近 7 天</option>
-        <option value="30d">近 30 天</option>
-      </select>
-      <select v-model="serviceFilter" class="h-9 rounded-md border border-input bg-background px-3 text-sm">
-        <option value="all">全部服务</option>
-        <option v-for="service in serviceOptions" :key="service.id" :value="service.id">{{ service.title }}</option>
-      </select>
-      <select v-model="sortMode" class="h-9 rounded-md border border-input bg-background px-3 text-sm">
-        <option value="default">默认排序</option>
-        <option value="updated">更新时间</option>
-        <option value="amount">订单金额</option>
-      </select>
+      <Select v-model="timeRange"><SelectTrigger class="w-full"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="all">全部时间</SelectItem><SelectItem value="today">今天</SelectItem><SelectItem value="7d">近 7 天</SelectItem><SelectItem value="30d">近 30 天</SelectItem></SelectContent></Select>
+      <Select v-model="serviceFilter"><SelectTrigger class="w-full"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="all">全部服务</SelectItem><SelectItem v-for="service in serviceOptions" :key="service.id" :value="service.id">{{ service.title }}</SelectItem></SelectContent></Select>
+      <Select v-model="sortMode"><SelectTrigger class="w-full"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="default">默认排序</SelectItem><SelectItem value="updated">更新时间</SelectItem><SelectItem value="amount">订单金额</SelectItem></SelectContent></Select>
     </div>
 
     <ErrorState v-if="error" description="商户 API 订单暂时无法加载。" @retry="refetch()" />
     <SkeletonTable v-else-if="isLoading" :columns="6" />
     <EmptyState v-else-if="rows.length === 0" title="当前筛选下暂无订单" description="调整筛选条件后再试；新订单到达后会在这里显示。" />
-    <SoftTable v-else :columns="['订单', '买家 / 服务', '订单金额 / 购买额度', '状态', '更新', '操作']">
+    <SoftTable v-else animate-rows class="[&_table]:min-w-[760px]" :columns="['订单', '买家 / 服务', '订单金额 / 购买额度', '状态', '更新', '操作']">
       <tr v-for="item in pagination.paginatedRows.value" :key="item.id">
-        <td><div class="font-medium"><ShortId :value="item.id" prefix="API" copyable /></div><div class="text-xs text-muted-foreground"><LocalTime :value="item.createdAt" /></div></td>
+        <td><div class="font-medium"><ShortId :value="item.orderNo" full copyable /></div><div class="text-xs text-muted-foreground"><LocalTime :value="item.createdAt" /></div></td>
         <td>
           <div class="font-medium">{{ item.buyer }}</div>
           <div class="text-xs text-muted-foreground">{{ item.serviceTitle }} · {{ item.seller }} · {{ getApiMerchantVisibilityLabel(item.intentSnapshot) }}</div>
@@ -158,7 +152,7 @@ async function runAction(item: ApiOrder, action: () => Promise<unknown>, message
             {{ apiPaymentMethodLabels[item.selectedPaymentMethod] }} · {{ formatDecimal(item.requestedUsdAllowanceDecimal ?? String(item.requestedUsdAllowance), 2, 6) }} 美元额度
           </div>
         </td>
-        <td><StatusBadge :status="item.status" :label="getApiOrderStatusLabel(item.status)" /></td>
+        <td><StatusBadge :status="item.status" :label="getApiOrderDisplayStatus(item, 'merchant')" /></td>
         <td class="text-xs text-muted-foreground"><LocalTime :value="item.updatedAt" /></td>
         <td>
           <div class="flex flex-wrap gap-1">

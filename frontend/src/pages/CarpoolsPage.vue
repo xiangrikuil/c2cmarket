@@ -1,14 +1,13 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { Code2, MessageCircle, PackageSearch, Search, ShieldCheck, SlidersHorizontal, Sparkles, UsersRound } from 'lucide-vue-next'
+import { ChevronDown, Code2, Globe2, MessageCircle, PackageSearch, Search, ShieldCheck, SlidersHorizontal, Sparkles, UsersRound } from 'lucide-vue-next'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import FilterBar from '@/components/market/FilterBar.vue'
 import SoftTable from '@/components/market/SoftTable.vue'
-import SourceBadges from '@/components/market/SourceBadges.vue'
-import SourceAuthorVerificationBadge from '@/components/market/SourceAuthorVerificationBadge.vue'
 import ReputationInlineSummary from '@/components/reputation/ReputationInlineSummary.vue'
 import TablePagination from '@/components/market/TablePagination.vue'
 import { usePagination } from '@/composables/usePagination'
@@ -17,7 +16,7 @@ import { useCarpools, useMyProfileQuery } from '@/queries/useMarketQueries'
 import { useProductCategories } from '@/queries/useProductCatalogQueries'
 import { prefetchQueriesOnServer } from '@/queries/prefetchQueriesOnServer'
 import { compareByTradablePrice, getPricingDisplay } from '@/lib/pricing'
-import { formatMonthlyQuota } from '@/lib/quota'
+import { formatWeeklyMonthlyQuota } from '@/lib/quota'
 import {
   allProductPlanValue,
   getProductCategory,
@@ -31,8 +30,8 @@ import {
   productMatchesPlan,
   type ProductCategoryKey,
 } from '@/lib/productCategories'
-import { adminAccountLabel, distributionMethodLabel } from '@/components/carpool-publish/utils'
-import { sourceAuthorVerificationRank } from '@/lib/sourceAuthorVerification'
+import { adminAccountLabel, distributionMethodLabel, openingChannelLabels, paymentMethodLabels } from '@/components/carpool-publish/utils'
+import type { Carpool } from '@/lib/api'
 
 const filters = [
   { label: '开通区', items: ['全部', '菲律宾区', '日本区', '土耳其区', '香港区'], active: '全部' },
@@ -103,7 +102,7 @@ const rows = computed(() => {
     if (selected.value['排序'] === '最低月费') return compareByTradablePrice(a, b)
     if (selected.value['排序'] === '最近确认') return a.confirmedAt.localeCompare(b.confirmedAt)
     if (selected.value['排序'] === '剩余名额') return availableSeatsForList(b) - availableSeatsForList(a)
-    return sourceAuthorVerificationRank(b.sourceAuthorVerification) - sourceAuthorVerificationRank(a.sourceAuthorVerification)
+    return Number(b.confirmedWithin48h) - Number(a.confirmedWithin48h)
       || Number(a.ownerType !== '商户车源') - Number(b.ownerType !== '商户车源')
       || compareByTradablePrice(a, b)
   })
@@ -112,7 +111,7 @@ const rows = computed(() => {
 const pagination = usePagination(rows)
 
 const availableCount = computed(() => rows.value.filter(row => listStatusForCarpool(row) === '可上车').length)
-const verifiedSourceAuthorCount = computed(() => rows.value.filter(row => row.sourceAuthorVerification?.status === 'verified').length)
+const recentlyConfirmedCount = computed(() => rows.value.filter(row => row.confirmedWithin48h).length)
 const boundaryConfirmationCount = computed(() => rows.value.filter(row => isHighRiskGptCarpoolPlan(row.product)).length)
 const selectedCategoryLabel = computed(() => getProductCategoryLabel(selectedCategory.value))
 const activeFilterCount = computed(() => {
@@ -125,13 +124,33 @@ const categoryNotice = computed(() => {
   if (selectedCategory.value === 'gpt') {
     return 'GPT 分类会包含 Business、Plus、Pro 5x Web、Pro 20x Web；部分套餐申请前需要确认发布和使用边界。'
   }
-  return '筛选结果优先展示原帖作者已验证、近期确认、无未解决纠纷的车源；加入前请查看车源详情与站外确认要求。'
+  return '筛选结果优先展示近期确认、无未解决纠纷的车源；加入前请查看车源详情与站外确认要求。'
 })
 
-function carpoolSourceBadges(row: { monthlyQuotaAmount?: number, quotaLabel?: string, quotaUnit?: string, quotaPeriod?: string }) {
-  const badges: string[] = []
-  if (row.monthlyQuotaAmount) badges.push(formatMonthlyQuota(row))
-  return badges
+function openingChannelLabel(row: Pick<Carpool, 'openingChannelCode' | 'customOpeningChannel'>) {
+  if (row.openingChannelCode === 'other') return row.customOpeningChannel?.trim() || '未声明'
+  return row.openingChannelCode ? openingChannelLabels[row.openingChannelCode] : '未声明'
+}
+
+function paymentMethodLabel(row: Pick<Carpool, 'paymentMethodCode' | 'customPaymentMethod'>) {
+  if (row.paymentMethodCode === 'other') return row.customPaymentMethod?.trim() || '未声明'
+  return row.paymentMethodCode ? paymentMethodLabels[row.paymentMethodCode] : '未声明'
+}
+
+function quotaResetLabel(value: boolean | null | undefined) {
+  if (value === true) return '跟随官方重置'
+  if (value === false) return '不跟随官方重置'
+  return '未声明'
+}
+
+function mainlandDirectLabel(value: boolean | null | undefined) {
+  if (value === true) return '支持国内直连'
+  if (value === false) return '不支持国内直连'
+  return '未声明'
+}
+
+function accessMethodCount(row: Pick<Carpool, 'openingChannelCode' | 'distributionMethod'>) {
+  return Number(Boolean(row.openingChannelCode)) + Number(Boolean(row.distributionMethod))
 }
 
 type CarpoolListSeatRow = {
@@ -235,11 +254,11 @@ function openCarpool(event: MouseEvent | KeyboardEvent, id: string) {
         <div class="carpool-reference-heading">
           <div class="text-xs text-muted-foreground">发现市场　/　订阅拼车</div>
           <h1>订阅拼车</h1>
-          <p>月付订阅的共享席位，默认无押金。请仔细确认账号类型、原帖作者核验状态与一次申请的联系和确认流程。</p>
+          <p>月付订阅的共享席位，默认无押金。请仔细确认账号类型、额度接入信息与一次申请的联系和确认流程。</p>
         </div>
         <div class="carpool-reference-stats">
           <div><span><UsersRound /></span><dl><dt>可上车</dt><dd>{{ availableCount }}</dd><small>可立即加入</small></dl></div>
-          <div><span><ShieldCheck /></span><dl><dt>原帖作者已验证</dt><dd>{{ verifiedSourceAuthorCount }}</dd><small>身份关系已核验</small></dl></div>
+          <div><span><ShieldCheck /></span><dl><dt>近期确认</dt><dd>{{ recentlyConfirmedCount }}</dd><small>48 小时内确认</small></dl></div>
           <div><span><MessageCircle /></span><dl><dt>边界确认</dt><dd>{{ boundaryConfirmationCount }}</dd><small>已明确规则</small></dl></div>
           <div><span><SlidersHorizontal /></span><dl><dt>当前筛选</dt><dd>{{ activeFilterCount }}</dd><small>已应用筛选</small></dl></div>
         </div>
@@ -247,7 +266,7 @@ function openCarpool(event: MouseEvent | KeyboardEvent, id: string) {
       <aside class="carpool-reference-note">
         <div class="flex items-center gap-2 font-semibold text-primary"><ShieldCheck class="h-5 w-5" />关于当前筛选</div>
         <p>{{ categoryNotice }}</p>
-        <div class="mt-3 text-xs font-semibold text-primary">推荐优先选择原帖作者已验证的车源。</div>
+        <div class="mt-3 text-xs font-semibold text-primary">推荐优先选择近期确认且使用条件完整的车源。</div>
       </aside>
     </section>
 
@@ -316,7 +335,7 @@ function openCarpool(event: MouseEvent | KeyboardEvent, id: string) {
       <AlertDescription>当前列表就是公开车源巡查入口。打开任意车源详情可执行下架或要求复核；暂停和遗留审核记录请前往车源异常处理。</AlertDescription>
     </Alert>
     <div v-if="rows.length === 0" class="rounded-xl border border-border bg-card p-8 text-center text-sm text-muted-foreground">当前筛选条件下暂无可展示车源。</div>
-    <SoftTable v-else :columns="['车源', '价格', '车位', '开通信息', '车主', '状态']">
+    <SoftTable v-else :columns="['车源', '价格', '车位', '额度 / 接入', '车主', '状态']">
       <tr
         v-for="row in pagination.paginatedRows.value"
         :key="row.id"
@@ -334,13 +353,6 @@ function openCarpool(event: MouseEvent | KeyboardEvent, id: string) {
             <div class="min-w-0">
               <div class="truncate font-semibold text-slate-900">{{ row.product }}</div>
               <div class="mt-1 text-xs text-muted-foreground">{{ row.region }}</div>
-              <div class="mt-2 flex flex-wrap gap-1">
-                <SourceAuthorVerificationBadge :verification="row.sourceAuthorVerification" />
-                <SourceBadges
-                  v-if="carpoolSourceBadges(row).length"
-                  :badges="carpoolSourceBadges(row)"
-                />
-              </div>
             </div>
           </div>
         </td>
@@ -358,23 +370,50 @@ function openCarpool(event: MouseEvent | KeyboardEvent, id: string) {
           </div>
         </td>
         <td>
-          <div class="font-medium text-slate-900">{{ row.openingMethod }}</div>
-          <div class="mt-1 flex flex-wrap gap-1">
-            <Badge variant="capability">{{ distributionMethodLabel(row.distributionMethod) }}</Badge>
+          <div class="whitespace-nowrap text-sm font-semibold text-slate-900">{{ formatWeeklyMonthlyQuota(row) }}</div>
+          <div class="mt-2 flex flex-wrap items-center gap-1">
+            <Badge variant="capability">{{ quotaResetLabel(row.followsOfficialQuotaReset) }}</Badge>
             <Badge variant="capability">{{ adminAccountLabel(row.providesAdminAccount) }}</Badge>
-          </div>
-          <div class="mt-1 text-xs text-muted-foreground">{{ row.region }} · {{ row.warranty }}</div>
-          <div v-if="row.monthlyQuotaAmount" class="mt-1 text-xs text-muted-foreground">
-            {{ formatMonthlyQuota(row) }}
+            <Popover>
+              <PopoverTrigger as-child>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  class="h-5 gap-1 px-1.5 text-xs text-muted-foreground"
+                  :aria-label="`查看 ${row.product} 的接入详情`"
+                  @click.stop
+                  @keydown.stop
+                >
+                  <Globe2 class="h-3.5 w-3.5" />
+                  {{ accessMethodCount(row) || '未声明' }}{{ accessMethodCount(row) ? ' 种接入' : '' }}
+                  <ChevronDown class="h-3 w-3" />
+                </Button>
+              </PopoverTrigger>
+              <PopoverContent class="w-80" align="start" @click.stop>
+                <div class="space-y-3 text-sm">
+                  <div class="font-semibold">额度与接入详情</div>
+                  <dl class="grid grid-cols-[88px_minmax(0,1fr)] gap-x-3 gap-y-2">
+                    <dt class="text-muted-foreground">开通渠道</dt><dd>{{ openingChannelLabel(row) }}</dd>
+                    <dt class="text-muted-foreground">付款方式</dt><dd>{{ paymentMethodLabel(row) }}</dd>
+                    <dt class="text-muted-foreground">分发方式</dt><dd>{{ distributionMethodLabel(row.distributionMethod) }}</dd>
+                    <dt class="text-muted-foreground">VPS 区域</dt><dd>{{ row.vpsRegion?.trim() || '未声明' }}</dd>
+                    <dt class="text-muted-foreground">国内直连</dt><dd>{{ mainlandDirectLabel(row.supportsMainlandChinaDirectConnection) }}</dd>
+                  </dl>
+                  <p class="border-t border-border pt-3 text-xs leading-5 text-muted-foreground">具体权限与使用细节请站外确认，平台不保存管理员凭据。</p>
+                </div>
+              </PopoverContent>
+            </Popover>
           </div>
         </td>
         <td>
           <div class="flex min-w-0 items-center gap-2">
             <span class="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-slate-100 text-xs font-semibold text-slate-600">{{ ownerInitial(row.owner) }}</span>
             <div class="min-w-0">
-              <div class="truncate font-medium text-slate-900">{{ row.owner }}</div>
-              <Badge class="mt-1" variant="secondary">{{ row.ownerType }}</Badge>
-              <ReputationInlineSummary class="mt-2" :summary="row.sellerReputation" />
+              <div class="flex min-w-0 items-center gap-1.5">
+                <span class="truncate font-medium text-slate-900">{{ row.owner }}</span>
+                <Badge class="shrink-0" variant="secondary">{{ row.ownerType }}</Badge>
+              </div>
+              <ReputationInlineSummary class="mt-1" :summary="row.sellerReputation" :compact="true" />
             </div>
           </div>
         </td>

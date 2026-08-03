@@ -3,8 +3,8 @@ import { computed } from 'vue'
 import { Copy } from 'lucide-vue-next'
 import { shortId } from '@/lib/presentation'
 
-const props = withDefaults(defineProps<{ value: string, prefix?: string, copyable?: boolean }>(), { prefix: '', copyable: false })
-const display = computed(() => shortId(props.value, props.prefix))
+const props = withDefaults(defineProps<{ value: string, prefix?: string, copyable?: boolean, full?: boolean }>(), { prefix: '', copyable: false, full: false })
+const display = computed(() => props.full ? props.value : shortId(props.value, props.prefix))
 
 async function copy() {
   await navigator.clipboard?.writeText(props.value)

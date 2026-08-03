@@ -16,24 +16,32 @@ type riskAcknowledgementRequest struct {
 }
 
 type createCarpoolRequest struct {
-	ProductPlanID          string                      `json:"productPlanId"`
-	OwnerContactMethodID   string                      `json:"ownerContactMethodId"`
-	CycleTerm              carpoolCycleTermRequest     `json:"cycleTerm"`
-	Title                  string                      `json:"title"`
-	Summary                string                      `json:"summary"`
-	AccessArrangement      string                      `json:"accessArrangement"`
-	DistributionMethod     string                      `json:"distributionMethod"`
-	DistributionMethodNote string                      `json:"distributionMethodNote"`
-	ProvidesAdminAccount   bool                        `json:"providesAdminAccount"`
-	RegionCode             string                      `json:"regionCode"`
-	RegionName             string                      `json:"regionName"`
-	SourceURL              string                      `json:"sourceUrl"`
-	PriceMonthlyCNY        string                      `json:"priceMonthlyCny"`
-	ServiceMultiplier      string                      `json:"serviceMultiplier"`
-	MonthlyQuotaAmount     string                      `json:"monthlyQuotaAmount"`
-	BuyerSeatCapacity      int                         `json:"buyerSeatCapacity"`
-	ActiveBuyerMembers     int                         `json:"activeBuyerMembers"`
-	RiskAcknowledgement    *riskAcknowledgementRequest `json:"riskAcknowledgement"`
+	ProductPlanID                         string                      `json:"productPlanId"`
+	OwnerContactMethodID                  string                      `json:"ownerContactMethodId"`
+	CycleTerm                             carpoolCycleTermRequest     `json:"cycleTerm"`
+	Title                                 string                      `json:"title"`
+	Summary                               string                      `json:"summary"`
+	AccessArrangement                     string                      `json:"accessArrangement"`
+	DistributionMethod                    string                      `json:"distributionMethod"`
+	DistributionMethodNote                string                      `json:"distributionMethodNote"`
+	ProvidesAdminAccount                  bool                        `json:"providesAdminAccount"`
+	RegionCode                            string                      `json:"regionCode"`
+	RegionName                            string                      `json:"regionName"`
+	SourceURL                             string                      `json:"sourceUrl"`
+	PriceMonthlyCNY                       string                      `json:"priceMonthlyCny"`
+	ServiceMultiplier                     string                      `json:"serviceMultiplier"`
+	WeeklyQuotaAmount                     string                      `json:"weeklyQuotaAmount"`
+	MonthlyQuotaAmount                    string                      `json:"monthlyQuotaAmount"`
+	FollowsOfficialQuotaReset             *bool                       `json:"followsOfficialQuotaReset"`
+	VPSRegion                             string                      `json:"vpsRegion"`
+	SupportsMainlandChinaDirectConnection *bool                       `json:"supportsMainlandChinaDirectConnection"`
+	OpeningChannelCode                    string                      `json:"openingChannelCode"`
+	CustomOpeningChannel                  string                      `json:"customOpeningChannel"`
+	PaymentMethodCode                     string                      `json:"paymentMethodCode"`
+	CustomPaymentMethod                   string                      `json:"customPaymentMethod"`
+	BuyerSeatCapacity                     int                         `json:"buyerSeatCapacity"`
+	ActiveBuyerMembers                    int                         `json:"activeBuyerMembers"`
+	RiskAcknowledgement                   *riskAcknowledgementRequest `json:"riskAcknowledgement"`
 }
 
 type carpoolCycleTermRequest struct {
@@ -57,42 +65,50 @@ type carpoolCycleTermResponse struct {
 }
 
 type carpoolListingResponse struct {
-	ID                       string                                `json:"id"`
-	OwnerUserID              string                                `json:"ownerUserId"`
-	ProductPlanID            string                                `json:"productPlanId"`
-	OwnerContactMethodID     string                                `json:"ownerContactMethodId,omitempty"`
-	CycleTerm                *carpoolCycleTermResponse             `json:"cycleTerm,omitempty"`
-	Title                    string                                `json:"title"`
-	Summary                  string                                `json:"summary"`
-	AccessArrangement        string                                `json:"accessArrangement"`
-	DistributionMethod       string                                `json:"distributionMethod"`
-	DistributionMethodNote   string                                `json:"distributionMethodNote"`
-	ProvidesAdminAccount     bool                                  `json:"providesAdminAccount"`
-	RegionCode               string                                `json:"regionCode"`
-	RegionName               string                                `json:"regionName"`
-	SourceURL                string                                `json:"sourceUrl,omitempty"`
-	PriceMonthlyCNY          string                                `json:"priceMonthlyCny"`
-	ServiceMultiplier        string                                `json:"serviceMultiplier"`
-	MonthlyQuotaAmount       string                                `json:"monthlyQuotaAmount"`
-	QuotaLabel               string                                `json:"quotaLabel"`
-	QuotaUnit                string                                `json:"quotaUnit"`
-	QuotaPeriod              string                                `json:"quotaPeriod"`
-	BuyerSeatCapacity        int                                   `json:"buyerSeatCapacity"`
-	ActiveBuyerMembers       int                                   `json:"activeBuyerMembers"`
-	ReservedSeats            int                                   `json:"reservedSeats"`
-	AvailableSeats           int                                   `json:"availableSeats"`
-	Status                   string                                `json:"status"`
-	ReviewReason             *string                               `json:"reviewReason,omitempty"`
-	ReviewedAt               *string                               `json:"reviewedAt,omitempty"`
-	PolicyVersion            int64                                 `json:"policyVersion"`
-	RiskNoticeCode           string                                `json:"riskNoticeCode,omitempty"`
-	RiskAckRequired          bool                                  `json:"riskAckRequired"`
-	Version                  int64                                 `json:"version"`
-	CreatedAt                string                                `json:"createdAt"`
-	UpdatedAt                string                                `json:"updatedAt"`
-	ApplicationEligibility   carpoolApplicationEligibilityResponse `json:"applicationEligibility"`
-	SellerReputation         *reputationSummaryResponse            `json:"sellerReputation"`
-	SourceAuthorVerification sourceAuthorResourceSummaryResponse   `json:"sourceAuthorVerification"`
+	ID                                    string                                `json:"id"`
+	OwnerUserID                           string                                `json:"ownerUserId"`
+	ProductPlanID                         string                                `json:"productPlanId"`
+	OwnerContactMethodID                  string                                `json:"ownerContactMethodId,omitempty"`
+	CycleTerm                             *carpoolCycleTermResponse             `json:"cycleTerm,omitempty"`
+	Title                                 string                                `json:"title"`
+	Summary                               string                                `json:"summary"`
+	AccessArrangement                     string                                `json:"accessArrangement"`
+	DistributionMethod                    string                                `json:"distributionMethod"`
+	DistributionMethodNote                string                                `json:"distributionMethodNote"`
+	ProvidesAdminAccount                  bool                                  `json:"providesAdminAccount"`
+	RegionCode                            string                                `json:"regionCode"`
+	RegionName                            string                                `json:"regionName"`
+	SourceURL                             string                                `json:"sourceUrl,omitempty"`
+	PriceMonthlyCNY                       string                                `json:"priceMonthlyCny"`
+	ServiceMultiplier                     string                                `json:"serviceMultiplier"`
+	WeeklyQuotaAmount                     *string                               `json:"weeklyQuotaAmount"`
+	MonthlyQuotaAmount                    string                                `json:"monthlyQuotaAmount"`
+	FollowsOfficialQuotaReset             *bool                                 `json:"followsOfficialQuotaReset"`
+	VPSRegion                             *string                               `json:"vpsRegion"`
+	SupportsMainlandChinaDirectConnection *bool                                 `json:"supportsMainlandChinaDirectConnection"`
+	OpeningChannelCode                    *string                               `json:"openingChannelCode"`
+	CustomOpeningChannel                  *string                               `json:"customOpeningChannel"`
+	PaymentMethodCode                     *string                               `json:"paymentMethodCode"`
+	CustomPaymentMethod                   *string                               `json:"customPaymentMethod"`
+	QuotaLabel                            string                                `json:"quotaLabel"`
+	QuotaUnit                             string                                `json:"quotaUnit"`
+	QuotaPeriod                           string                                `json:"quotaPeriod"`
+	BuyerSeatCapacity                     int                                   `json:"buyerSeatCapacity"`
+	ActiveBuyerMembers                    int                                   `json:"activeBuyerMembers"`
+	ReservedSeats                         int                                   `json:"reservedSeats"`
+	AvailableSeats                        int                                   `json:"availableSeats"`
+	Status                                string                                `json:"status"`
+	ReviewReason                          *string                               `json:"reviewReason,omitempty"`
+	ReviewedAt                            *string                               `json:"reviewedAt,omitempty"`
+	PolicyVersion                         int64                                 `json:"policyVersion"`
+	RiskNoticeCode                        string                                `json:"riskNoticeCode,omitempty"`
+	RiskAckRequired                       bool                                  `json:"riskAckRequired"`
+	Version                               int64                                 `json:"version"`
+	CreatedAt                             string                                `json:"createdAt"`
+	UpdatedAt                             string                                `json:"updatedAt"`
+	ApplicationEligibility                carpoolApplicationEligibilityResponse `json:"applicationEligibility"`
+	SellerReputation                      *reputationSummaryResponse            `json:"sellerReputation"`
+	SourceAuthorVerification              sourceAuthorResourceSummaryResponse   `json:"sourceAuthorVerification"`
 }
 
 type createCarpoolApplicationRequest struct {
@@ -220,27 +236,35 @@ func (s *Server) handleUpdateCarpool(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	listing, appErr := s.carpools.UpdateCarpoolListing(r.Context(), user, carpool.UpdateListingInput{
-		ListingID:              chi.URLParam(r, "id"),
-		ProductPlanID:          req.ProductPlanID,
-		OwnerContactMethodID:   req.OwnerContactMethodID,
-		CycleTerm:              toAppCarpoolCycleTerm(req.CycleTerm),
-		Title:                  req.Title,
-		Summary:                req.Summary,
-		AccessArrangement:      req.AccessArrangement,
-		DistributionMethod:     req.DistributionMethod,
-		DistributionMethodNote: req.DistributionMethodNote,
-		ProvidesAdminAccount:   req.ProvidesAdminAccount,
-		RegionCode:             req.RegionCode,
-		RegionName:             req.RegionName,
-		SourceURL:              req.SourceURL,
-		PriceMonthlyCNY:        req.PriceMonthlyCNY,
-		ServiceMultiplier:      req.ServiceMultiplier,
-		MonthlyQuotaAmount:     req.MonthlyQuotaAmount,
-		BuyerSeatCapacity:      req.BuyerSeatCapacity,
-		ActiveBuyerMembers:     req.ActiveBuyerMembers,
-		RiskAcknowledgement:    toAppRiskAck(req.RiskAcknowledgement),
-		ExpectedVersion:        version,
-		RequestID:              requestIDFrom(r),
+		ListingID:                             chi.URLParam(r, "id"),
+		ProductPlanID:                         req.ProductPlanID,
+		OwnerContactMethodID:                  req.OwnerContactMethodID,
+		CycleTerm:                             toAppCarpoolCycleTerm(req.CycleTerm),
+		Title:                                 req.Title,
+		Summary:                               req.Summary,
+		AccessArrangement:                     req.AccessArrangement,
+		DistributionMethod:                    req.DistributionMethod,
+		DistributionMethodNote:                req.DistributionMethodNote,
+		ProvidesAdminAccount:                  req.ProvidesAdminAccount,
+		RegionCode:                            req.RegionCode,
+		RegionName:                            req.RegionName,
+		SourceURL:                             req.SourceURL,
+		PriceMonthlyCNY:                       req.PriceMonthlyCNY,
+		ServiceMultiplier:                     req.ServiceMultiplier,
+		WeeklyQuotaAmount:                     req.WeeklyQuotaAmount,
+		MonthlyQuotaAmount:                    req.MonthlyQuotaAmount,
+		FollowsOfficialQuotaReset:             req.FollowsOfficialQuotaReset,
+		VPSRegion:                             req.VPSRegion,
+		SupportsMainlandChinaDirectConnection: req.SupportsMainlandChinaDirectConnection,
+		OpeningChannelCode:                    req.OpeningChannelCode,
+		CustomOpeningChannel:                  req.CustomOpeningChannel,
+		PaymentMethodCode:                     req.PaymentMethodCode,
+		CustomPaymentMethod:                   req.CustomPaymentMethod,
+		BuyerSeatCapacity:                     req.BuyerSeatCapacity,
+		ActiveBuyerMembers:                    req.ActiveBuyerMembers,
+		RiskAcknowledgement:                   toAppRiskAck(req.RiskAcknowledgement),
+		ExpectedVersion:                       version,
+		RequestID:                             requestIDFrom(r),
 	})
 	if appErr != nil {
 		writeProblem(w, r, appErr)
@@ -252,24 +276,32 @@ func (s *Server) handleUpdateCarpool(w http.ResponseWriter, r *http.Request) {
 
 func toAppCreateCarpoolInput(req createCarpoolRequest) carpool.CreateListingInput {
 	return carpool.CreateListingInput{
-		ProductPlanID:          req.ProductPlanID,
-		OwnerContactMethodID:   req.OwnerContactMethodID,
-		CycleTerm:              toAppCarpoolCycleTerm(req.CycleTerm),
-		Title:                  req.Title,
-		Summary:                req.Summary,
-		AccessArrangement:      req.AccessArrangement,
-		DistributionMethod:     req.DistributionMethod,
-		DistributionMethodNote: req.DistributionMethodNote,
-		ProvidesAdminAccount:   req.ProvidesAdminAccount,
-		RegionCode:             req.RegionCode,
-		RegionName:             req.RegionName,
-		SourceURL:              req.SourceURL,
-		PriceMonthlyCNY:        req.PriceMonthlyCNY,
-		ServiceMultiplier:      req.ServiceMultiplier,
-		MonthlyQuotaAmount:     req.MonthlyQuotaAmount,
-		BuyerSeatCapacity:      req.BuyerSeatCapacity,
-		ActiveBuyerMembers:     req.ActiveBuyerMembers,
-		RiskAcknowledgement:    toAppRiskAck(req.RiskAcknowledgement),
+		ProductPlanID:                         req.ProductPlanID,
+		OwnerContactMethodID:                  req.OwnerContactMethodID,
+		CycleTerm:                             toAppCarpoolCycleTerm(req.CycleTerm),
+		Title:                                 req.Title,
+		Summary:                               req.Summary,
+		AccessArrangement:                     req.AccessArrangement,
+		DistributionMethod:                    req.DistributionMethod,
+		DistributionMethodNote:                req.DistributionMethodNote,
+		ProvidesAdminAccount:                  req.ProvidesAdminAccount,
+		RegionCode:                            req.RegionCode,
+		RegionName:                            req.RegionName,
+		SourceURL:                             req.SourceURL,
+		PriceMonthlyCNY:                       req.PriceMonthlyCNY,
+		ServiceMultiplier:                     req.ServiceMultiplier,
+		WeeklyQuotaAmount:                     req.WeeklyQuotaAmount,
+		MonthlyQuotaAmount:                    req.MonthlyQuotaAmount,
+		FollowsOfficialQuotaReset:             req.FollowsOfficialQuotaReset,
+		VPSRegion:                             req.VPSRegion,
+		SupportsMainlandChinaDirectConnection: req.SupportsMainlandChinaDirectConnection,
+		OpeningChannelCode:                    req.OpeningChannelCode,
+		CustomOpeningChannel:                  req.CustomOpeningChannel,
+		PaymentMethodCode:                     req.PaymentMethodCode,
+		CustomPaymentMethod:                   req.CustomPaymentMethod,
+		BuyerSeatCapacity:                     req.BuyerSeatCapacity,
+		ActiveBuyerMembers:                    req.ActiveBuyerMembers,
+		RiskAcknowledgement:                   toAppRiskAck(req.RiskAcknowledgement),
 	}
 }
 
@@ -992,42 +1024,50 @@ func toCarpoolListingResponse(listing carpool.Listing) carpoolListingResponse {
 		}
 	}
 	return carpoolListingResponse{
-		ID:                       listing.ID,
-		OwnerUserID:              listing.OwnerUserID,
-		ProductPlanID:            listing.ProductPlanID,
-		OwnerContactMethodID:     listing.OwnerContactMethodID,
-		CycleTerm:                cycleTerm,
-		Title:                    listing.Title,
-		Summary:                  listing.Summary,
-		AccessArrangement:        listing.AccessArrangement,
-		DistributionMethod:       listing.DistributionMethod,
-		DistributionMethodNote:   listing.DistributionMethodNote,
-		ProvidesAdminAccount:     listing.ProvidesAdminAccount,
-		RegionCode:               listing.RegionCode,
-		RegionName:               listing.RegionName,
-		SourceURL:                listing.SourceURL,
-		PriceMonthlyCNY:          listing.PriceMonthlyCNY,
-		ServiceMultiplier:        listing.ServiceMultiplier,
-		MonthlyQuotaAmount:       listing.MonthlyQuotaAmount,
-		QuotaLabel:               listing.QuotaLabel,
-		QuotaUnit:                listing.QuotaUnit,
-		QuotaPeriod:              listing.QuotaPeriod,
-		BuyerSeatCapacity:        listing.BuyerSeatCapacity,
-		ActiveBuyerMembers:       listing.ActiveBuyerMembers,
-		ReservedSeats:            listing.ReservedSeats,
-		AvailableSeats:           listing.AvailableSeats,
-		Status:                   listing.Status,
-		ReviewReason:             reviewReason,
-		ReviewedAt:               reviewedAt,
-		PolicyVersion:            listing.PolicyVersion,
-		RiskNoticeCode:           listing.RiskNoticeCode,
-		RiskAckRequired:          listing.RiskAckRequired,
-		Version:                  listing.Version,
-		CreatedAt:                listing.CreatedAt.UTC().Format(time.RFC3339),
-		UpdatedAt:                listing.UpdatedAt.UTC().Format(time.RFC3339),
-		ApplicationEligibility:   toCarpoolApplicationEligibilityResponse(carpool.EvaluatePublicListingEligibility(listing)),
-		SellerReputation:         toReputationSummary(listing.SellerReputation),
-		SourceAuthorVerification: toSourceAuthorResourceSummaryResponse(listing.SourceAuthorVerification),
+		ID:                                    listing.ID,
+		OwnerUserID:                           listing.OwnerUserID,
+		ProductPlanID:                         listing.ProductPlanID,
+		OwnerContactMethodID:                  listing.OwnerContactMethodID,
+		CycleTerm:                             cycleTerm,
+		Title:                                 listing.Title,
+		Summary:                               listing.Summary,
+		AccessArrangement:                     listing.AccessArrangement,
+		DistributionMethod:                    listing.DistributionMethod,
+		DistributionMethodNote:                listing.DistributionMethodNote,
+		ProvidesAdminAccount:                  listing.ProvidesAdminAccount,
+		RegionCode:                            listing.RegionCode,
+		RegionName:                            listing.RegionName,
+		SourceURL:                             listing.SourceURL,
+		PriceMonthlyCNY:                       listing.PriceMonthlyCNY,
+		ServiceMultiplier:                     listing.ServiceMultiplier,
+		WeeklyQuotaAmount:                     listing.WeeklyQuotaAmount,
+		MonthlyQuotaAmount:                    listing.MonthlyQuotaAmount,
+		FollowsOfficialQuotaReset:             listing.FollowsOfficialQuotaReset,
+		VPSRegion:                             listing.VPSRegion,
+		SupportsMainlandChinaDirectConnection: listing.SupportsMainlandChinaDirectConnection,
+		OpeningChannelCode:                    listing.OpeningChannelCode,
+		CustomOpeningChannel:                  listing.CustomOpeningChannel,
+		PaymentMethodCode:                     listing.PaymentMethodCode,
+		CustomPaymentMethod:                   listing.CustomPaymentMethod,
+		QuotaLabel:                            listing.QuotaLabel,
+		QuotaUnit:                             listing.QuotaUnit,
+		QuotaPeriod:                           listing.QuotaPeriod,
+		BuyerSeatCapacity:                     listing.BuyerSeatCapacity,
+		ActiveBuyerMembers:                    listing.ActiveBuyerMembers,
+		ReservedSeats:                         listing.ReservedSeats,
+		AvailableSeats:                        listing.AvailableSeats,
+		Status:                                listing.Status,
+		ReviewReason:                          reviewReason,
+		ReviewedAt:                            reviewedAt,
+		PolicyVersion:                         listing.PolicyVersion,
+		RiskNoticeCode:                        listing.RiskNoticeCode,
+		RiskAckRequired:                       listing.RiskAckRequired,
+		Version:                               listing.Version,
+		CreatedAt:                             listing.CreatedAt.UTC().Format(time.RFC3339),
+		UpdatedAt:                             listing.UpdatedAt.UTC().Format(time.RFC3339),
+		ApplicationEligibility:                toCarpoolApplicationEligibilityResponse(carpool.EvaluatePublicListingEligibility(listing)),
+		SellerReputation:                      toReputationSummary(listing.SellerReputation),
+		SourceAuthorVerification:              toSourceAuthorResourceSummaryResponse(listing.SourceAuthorVerification),
 	}
 }
 

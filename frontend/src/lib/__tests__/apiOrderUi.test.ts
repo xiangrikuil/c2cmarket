@@ -4,6 +4,7 @@ import {
   formatApiOrderCancelReason,
   formatOrderDateTime,
   merchantHandlingDeadline,
+  matchesApiOrderSearch,
   orderCountdown,
 } from '@/lib/apiOrderUi'
 
@@ -39,5 +40,13 @@ describe('API order UI helpers', () => {
   it('maps system cancellation codes to user-facing copy', () => {
     expect(formatApiOrderCancelReason('payment_timeout')).toBe('未在付款时间内完成付款，系统已自动取消订单。')
     expect(formatApiOrderCancelReason('个人原因｜我不再需要该服务')).toBe('个人原因｜我不再需要该服务')
+  })
+
+  it('matches public order numbers without case or hyphen sensitivity', () => {
+    const values = ['API-20260802-K7M4P9Q2XZ', 'GPT 服务', 'merchant_a']
+    expect(matchesApiOrderSearch('api20260802k7m4p9q2xz', values)).toBe(true)
+    expect(matchesApiOrderSearch('API-20260802-K7M4P9Q2XZ', values)).toBe(true)
+    expect(matchesApiOrderSearch('gpt', values)).toBe(true)
+    expect(matchesApiOrderSearch('other-order', values)).toBe(false)
   })
 })

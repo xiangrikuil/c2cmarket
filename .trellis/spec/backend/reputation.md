@@ -2,6 +2,7 @@
 
 Date: 2026-07-24
 Executor: Codex
+Updated: 2026-08-01
 
 ## Scenario: Truthful Reputation Facts And Transaction Exclusions
 
@@ -43,7 +44,10 @@ PostgreSQL:
 - Purchase intents, accepted applications, payment submission, delivery submission, or other intermediate states must not be inferred as completed transactions.
 - Buyer and seller facts remain separate. Carpool and API facts remain separate. `overall` is the service-layer sum of the two business scopes for one role.
 - The recent completion window is 90 days from the repository `now` argument. Compatibility DTO field names must not change the calculation window.
-- A responsibility cancellation is counted only when durable status/event data identifies that role as responsible. Historical cancellation without an explicit responsible actor increments the unknown count and must not be guessed.
+- A responsibility cancellation is counted only when durable status/event data identifies that role as responsible. The system executor and the business-responsible participant are separate concepts; a system-created timeout event must not be rewritten with a participant actor.
+- An API order cancelled with `cancel_reason='payment_timeout'` is buyer responsibility even though `api_order.payment_timeout_cancelled` has no actor. The seller receives neither a responsible nor an unknown cancellation fact for that order.
+- An expired `accepted_reserved` carpool application uses `carpool_join_confirmations` as responsibility evidence. A missing buyer confirmation is buyer responsibility, a missing owner confirmation is seller responsibility, and both missing confirmations create one responsibility cancellation for each role. A participant who confirmed is not affected.
+- Historical cancellation without durable status, event, reason, or confirmation evidence increments the unknown count and must not be guessed. An impossible expired carpool application with both confirmations is also unknown for both participants.
 - Unresolved disputes are `open|waiting_info` cases mapped through the actual transaction participants. A dispute is not a responsibility decision.
 - An active transaction exclusion removes all facts from that transaction for both participants. Restore makes the facts eligible again without rewriting the transaction terminal state.
 - Exclusion events are append-only and record administrator, action, reason code, reason, and time. Restore updates the current exclusion row and appends a new event.
@@ -68,12 +72,12 @@ PostgreSQL:
 - Good: a completed carpool membership contributes one buyer/carpool completion and one seller/carpool completion; an API order does not affect carpool facts.
 - Good: an administrator excludes a disputed API order, both participants lose that order's facts, and restore makes them visible again while preserving two audit events.
 - Base: a requested user has no matching terminal transactions; a successful batch query returns explicit zero facts for every role/scope.
-- Bad: count a purchase intent as an API completion, assign an expired reservation to the buyer, or run one SQL query per profile row.
+- Bad: count a purchase intent as an API completion, assign every expired reservation to the buyer without checking confirmations, use the system timeout executor as the event actor, or run one SQL query per profile row.
 
 ### 6. Tests Required
 
-- Unit tests must cover empty input, duplicate IDs, role/scope merge, 90-day window behavior, unknown cancellation, and exclusion validation.
-- Repository SQL tests must assert terminal predicates, participant joins, active-exclusion predicates, and one UUID-array batch parameter.
+- Unit tests must cover empty input, duplicate IDs, role/scope merge, 90-day window behavior, unknown cancellation, API payment-timeout responsibility, role-specific carpool confirmation expiry, and exclusion validation.
+- Repository SQL tests must assert terminal predicates, participant joins, the shared cumulative/window responsibility matrix, active-exclusion predicates, and one UUID-array batch parameter.
 - PostgreSQL integration must apply the complete migration chain, aggregate an empty user, exclude/restore a transaction, and prove exclusion events reject update/delete.
 - Profile/DTO tests must prove repository-backed zero is distinct from unavailable `null`.
 - Run `go test -count=1 ./...`, OpenAPI YAML parsing, and `git diff --check`.
@@ -102,6 +106,39 @@ facts, appErr := reputationService.AggregateFacts(ctx, userIDs)
 SELECT ... FROM api_orders
 WHERE status = 'completed'
   AND (exclusion.id IS NULL OR exclusion.restored_at IS NOT NULL);
+```
+
+#### Wrong
+
+```sql
+-- A system-created timeout event has no participant actor, so this makes the
+-- cancellation unknown for both roles.
+WHERE event.event_type = 'api_order.cancelled'
+  AND event.actor_user_id = participants.user_id;
+```
+
+```sql
+-- Expiry alone does not prove which participant missed confirmation.
+WHERE application.status = 'expired'
+  AND participants.role = 'buyer';
+```
+
+#### Correct
+
+```sql
+WHERE cancellation.actor_cancelled
+   OR (
+     participants.role = 'buyer'
+     AND api_order.cancel_reason = 'payment_timeout'
+   );
+```
+
+```sql
+WHERE application.status = 'expired'
+  AND (
+    (participants.role = 'buyer' AND NOT confirmations.buyer_confirmed)
+    OR (participants.role = 'seller' AND NOT confirmations.owner_confirmed)
+  );
 ```
 
 ## Scenario: Dispute Outcomes And Role-Scoped Action Restrictions
@@ -355,7 +392,8 @@ PostgreSQL:
 
 ### 3. Contracts
 
-- `reputation-v1` calculates six independent snapshots per user: buyer/seller crossed with overall/carpool/API.
+- `reputation-v2` calculates six independent snapshots per user: buyer/seller crossed with overall/carpool/API. The version upgrade changes timeout responsibility attribution only; tier, state, confidence, and scoring thresholds remain unchanged.
+- A cached `reputation-v1` snapshot is stale. The next list, detail, profile, or explicit recalculation read rebuilds and persists it as `reputation-v2` from current durable facts.
 - `tier`, `state`, `confidence`, metrics, progress, warnings, and badges come from one pure evaluator and one versioned rule set.
 - Verified review ratings use a Bayesian prior weight of 5. The platform prior is the same role/scope public-review average, or 4.0 while that sample has fewer than 20 reviews.
 - Common positive and negative tags use only published, non-removed reviews from non-excluded transactions. Return at most five per polarity, ordered by count descending and tag ascending.

@@ -93,7 +93,7 @@ ORDER BY r.created_at DESC
 LIMIT $2
 `
 
-const searchCarpoolsSQL = `
+var searchCarpoolsSQL = `
 SELECT
 	'carpool-' || l.id::text AS id,
 	'车源' AS type,
@@ -112,7 +112,7 @@ LEFT JOIN LATERAL (
 	  AND a.status = 'accepted_reserved'
 	  AND a.reservation_expires_at > now()
 ) reserved ON true
-WHERE l.status = 'active'
+WHERE ` + publicCarpoolListingPredicate("l") + `
   AND (
 	LOWER(l.title || ' ' || l.summary || ' ' || l.access_arrangement) ILIKE $1 ESCAPE '\'
 	OR LOWER(

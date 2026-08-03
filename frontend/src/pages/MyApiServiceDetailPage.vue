@@ -74,6 +74,6 @@ function resumeService() {
 
     <ApiServiceOwnerOverview :service="service" />
 
-    <ApiQuotaOwnerManager :api-service-id="service.id" :distribution-system="service.delivery" />
+    <ApiQuotaOwnerManager :api-service-id="service.id" :distribution-system="service.delivery" :default-multiplier="service.defaultMultiplier" />
   </main>
 </template>

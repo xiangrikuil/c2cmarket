@@ -9,11 +9,11 @@ const props = defineProps<{
   step: number
   serviceTitle?: string
   slotLabel?: string
+  defaultMultiplier: number
   draft: {
     name: string
     usdAllowance: string
     priceCny: string
-    modelMultiplier: string
     copies: number
     deliveryMode: 'manual' | 'preimported'
     deliveryEtaMinutes: number
@@ -52,7 +52,7 @@ const completionPercent = computed(() => Math.round((props.step / 3) * 100))
         <div><span class="text-xs text-muted-foreground">人民币总价</span><strong class="mt-1 block text-xl">¥{{ formatDecimal(draft.priceCny || '0', 2, 2) }}</strong></div>
         <div><span class="text-xs text-muted-foreground">折算售价</span><strong class="mt-1 block">¥{{ cnyPerUsd.toFixed(3) }} / $1</strong></div>
         <div><span class="text-xs text-muted-foreground">库存 / 总额度</span><strong class="mt-1 block">{{ draft.copies }} 份 / ${{ formatDecimal(String(totalUsd), 0, 6) }}</strong></div>
-        <div><span class="text-xs text-muted-foreground">模型倍率</span><strong class="mt-1 block">{{ Number(draft.modelMultiplier || 0).toFixed(2) }}x</strong></div>
+        <div><span class="text-xs text-muted-foreground">服务倍率</span><strong class="mt-1 block">{{ defaultMultiplier.toFixed(2) }}x</strong></div>
         <div><span class="text-xs text-muted-foreground">交付</span><strong class="mt-1 block">{{ draft.deliveryMode === 'manual' ? `手工 ≤ ${draft.deliveryEtaMinutes} 分钟` : '预导入凭据' }}</strong></div>
       </div>
 

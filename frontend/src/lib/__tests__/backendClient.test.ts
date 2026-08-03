@@ -279,3 +279,74 @@ test('logout revokes the backend session and clears the cached session', async (
   assert.equal(logoutHeaders.get('X-CSRF-Token'), 'csrf-before-logout')
   assert.equal(fetchMock.mock.calls[2]?.[0], '/api/v1/auth/session')
 })
+
+test('OAuth start sends only the stored bounded registration attribution', async () => {
+  const values = new Map<string, string>()
+  const sessionStorage = {
+    getItem: (key: string) => values.get(key) ?? null,
+    setItem: (key: string, value: string) => values.set(key, value),
+    removeItem: (key: string) => values.delete(key),
+  }
+  vi.stubGlobal('window', {
+    sessionStorage,
+    location: {
+      origin: 'https://c2cmarket.shop',
+      pathname: '/carpools/private-listing-id',
+      search: '?utm_source=linux.do&utm_medium=community&utm_campaign=launch',
+    },
+  })
+  vi.stubGlobal('document', { referrer: 'https://linux.do/t/private-topic/123?token=secret' })
+  const fetchMock = vi.fn().mockResolvedValue(jsonResponse({
+    authorizationUrl: 'https://connect.linux.do/oauth2/authorize',
+  }))
+  vi.stubGlobal('fetch', fetchMock)
+
+  const client = await loadBackendClient({ apiMode: 'real', apiBaseUrl: 'https://api.example.test' })
+  await client.startOAuthLogin('/my/rides/private-application-id?tab=contact')
+
+  const requestURL = new URL(fetchMock.mock.calls[0]?.[0] as string)
+  assert.equal(requestURL.pathname, '/api/v1/auth/oauth/start')
+  assert.equal(requestURL.searchParams.get('returnTo'), '/my/rides/private-application-id?tab=contact')
+  assert.equal(requestURL.searchParams.get('utmSource'), 'linux.do')
+  assert.equal(requestURL.searchParams.get('utmMedium'), 'community')
+  assert.equal(requestURL.searchParams.get('utmCampaign'), 'launch')
+  assert.equal(requestURL.searchParams.get('referrerHost'), 'linux.do')
+  assert.equal(requestURL.searchParams.get('landingPath'), '/carpools/:id')
+  assert.equal(requestURL.search.includes('private-topic'), false)
+  assert.equal(requestURL.search.includes('token'), false)
+})
+
+test('cached sessions identify with the opaque analytics ID and logout clears it', async () => {
+  const identify = vi.fn()
+  vi.stubGlobal('window', { umami: { identify } })
+  const fetchMock = vi.fn()
+    .mockResolvedValueOnce(jsonResponse({
+      csrfToken: 'csrf-token',
+      expiresAt: '2999-01-01T00:00:00Z',
+      user: {
+        id: 'business-user-id',
+        analyticsUserId: 'a1111111-1111-4111-8111-111111111111',
+        username: 'private-username',
+        displayName: 'Private User',
+        isAdmin: false,
+        permissions: [],
+        linuxDoBinding: { bound: true },
+      },
+    }))
+    .mockResolvedValueOnce(new Response(null, { status: 204 }))
+  vi.stubGlobal('fetch', fetchMock)
+
+  const client = await loadBackendClient({ apiMode: 'real' })
+  const analytics = await import('../analytics')
+  analytics.setAnalyticsRuntimeConfig({ enabled: true })
+
+  await client.getCurrentBackendSession()
+  await client.logoutBackendSession()
+
+  assert.deepEqual(identify.mock.calls, [
+    ['a1111111-1111-4111-8111-111111111111'],
+    [''],
+  ])
+  assert.equal(JSON.stringify(identify.mock.calls).includes('business-user-id'), false)
+  assert.equal(JSON.stringify(identify.mock.calls).includes('private-username'), false)
+})

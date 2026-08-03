@@ -5,8 +5,10 @@ import (
 	"c2c-market/backend/internal/domain"
 	"c2c-market/backend/internal/middleware"
 	"c2c-market/backend/internal/module/auth"
+	"c2c-market/backend/internal/module/promotionreward"
 	"context"
 	"crypto/rand"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -42,8 +44,34 @@ type emailRegistrationStartResponse struct {
 }
 
 type emailRegistrationConfirmRequest struct {
-	Email string `json:"email"`
-	Code  string `json:"code"`
+	Email       string                         `json:"email"`
+	Code        string                         `json:"code"`
+	Attribution registrationAttributionRequest `json:"attribution"`
+}
+
+type registrationAttributionRequest struct {
+	Source       string `json:"source"`
+	Medium       string `json:"medium"`
+	Campaign     string `json:"campaign"`
+	ReferrerHost string `json:"referrerHost"`
+	LandingPath  string `json:"landingPath"`
+}
+
+func (request registrationAttributionRequest) model() auth.RegistrationAttribution {
+	return auth.RegistrationAttribution{
+		Source:       request.Source,
+		Medium:       request.Medium,
+		Campaign:     request.Campaign,
+		ReferrerHost: request.ReferrerHost,
+		LandingPath:  request.LandingPath,
+	}
+}
+
+type oauthStateCookiePayload struct {
+	State       string                       `json:"state"`
+	ReturnTo    string                       `json:"returnTo"`
+	Attribution auth.RegistrationAttribution `json:"attribution"`
+	InviteCode  string                       `json:"inviteCode,omitempty"`
 }
 
 type setPasswordRequest struct {
@@ -87,12 +115,13 @@ type sessionResponse struct {
 }
 
 type userDTO struct {
-	ID          string                   `json:"id"`
-	Username    string                   `json:"username"`
-	DisplayName string                   `json:"displayName"`
-	IsAdmin     bool                     `json:"isAdmin"`
-	Permissions []string                 `json:"permissions"`
-	LinuxDo     sessionLinuxDoBindingDTO `json:"linuxDoBinding"`
+	ID              string                   `json:"id"`
+	AnalyticsUserID string                   `json:"analyticsUserId"`
+	Username        string                   `json:"username"`
+	DisplayName     string                   `json:"displayName"`
+	IsAdmin         bool                     `json:"isAdmin"`
+	Permissions     []string                 `json:"permissions"`
+	LinuxDo         sessionLinuxDoBindingDTO `json:"linuxDoBinding"`
 }
 
 type sessionLinuxDoBindingDTO struct {
@@ -148,12 +177,17 @@ func (s *Server) handleAdminUsers(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, r, appErr)
 		return
 	}
-	items, appErr := s.app.AdminUsers(r.Context(), user)
+	query, appErr := parseAdminUserDirectoryQuery(r)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
 	}
-	writeJSON(w, http.StatusOK, listResponse[adminUserResponse]{Items: toAdminUserResponses(items)})
+	directory, appErr := s.adminUsers.AdminUsers(r.Context(), user, query)
+	if appErr != nil {
+		writeProblem(w, r, appErr)
+		return
+	}
+	writeJSON(w, http.StatusOK, toAdminUserDirectoryResponse(directory))
 }
 
 func (s *Server) handlePasswordLogin(w http.ResponseWriter, r *http.Request) {
@@ -208,8 +242,9 @@ func (s *Server) handleConfirmEmailRegistration(w http.ResponseWriter, r *http.R
 		return
 	}
 	user, session, appErr := s.app.ConfirmEmailRegistration(r.Context(), auth.EmailRegistrationConfirmInput{
-		Email: req.Email,
-		Code:  req.Code,
+		Email:       req.Email,
+		Code:        req.Code,
+		Attribution: req.Attribution.model(),
 	})
 	if appErr != nil {
 		writeProblem(w, r, appErr)
@@ -248,11 +283,19 @@ func (s *Server) handleSetPassword(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleOAuthStart(w http.ResponseWriter, r *http.Request) {
 	state := newOAuthState()
 	returnTo := cleanReturnTo(r.URL.Query().Get("returnTo"))
-	cookieValue := state
-	if returnTo != "" {
-		cookieValue += "|" + returnTo
-	}
-	s.setOAuthStateCookie(w, cookieValue)
+	attribution := auth.NormalizeRegistrationAttribution(auth.RegistrationAttribution{
+		Source:       r.URL.Query().Get("utmSource"),
+		Medium:       r.URL.Query().Get("utmMedium"),
+		Campaign:     r.URL.Query().Get("utmCampaign"),
+		ReferrerHost: r.URL.Query().Get("referrerHost"),
+		LandingPath:  r.URL.Query().Get("landingPath"),
+	})
+	s.setOAuthStateCookie(w, encodeOAuthStateCookie(oauthStateCookiePayload{
+		State:       state,
+		ReturnTo:    returnTo,
+		Attribution: attribution,
+		InviteCode:  promotionreward.CanonicalReferralCode(r.URL.Query().Get("inviteCode")),
+	}))
 	writeJSON(w, http.StatusOK, oauthStartResponse{AuthorizationURL: s.oauthAuthorizationURL(r, state, returnTo)})
 }
 
@@ -263,8 +306,8 @@ func (s *Server) handleOAuthCallback(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, r, domain.NewError(http.StatusForbidden, domain.CodeCSRFTokenInvalid, "OAuth state invalid", "登录 state 无效或已过期。"))
 		return
 	}
-	expectedState, returnTo := splitOAuthStateCookie(stateCookie.Value)
-	if expectedState == "" || expectedState != state {
+	payload, ok := decodeOAuthStateCookie(stateCookie.Value)
+	if !ok || payload.State == "" || payload.State != state {
 		writeProblem(w, r, domain.NewError(http.StatusForbidden, domain.CodeCSRFTokenInvalid, "OAuth state invalid", "登录 state 无效或已过期。"))
 		return
 	}
@@ -278,6 +321,8 @@ func (s *Server) handleOAuthCallback(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, r, appErr)
 		return
 	}
+	profile.Attribution = payload.Attribution
+	profile.ReferralCode = payload.InviteCode
 	user, session, appErr := s.app.LoginWithOAuthProfile(r.Context(), profile)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
@@ -286,7 +331,11 @@ func (s *Server) handleOAuthCallback(w http.ResponseWriter, r *http.Request) {
 	s.setSessionCookie(w, session)
 	s.clearOAuthStateCookie(w)
 	_ = user
-	http.Redirect(w, r, s.oauthRedirectTarget(returnTo), http.StatusFound)
+	outcome := "logged_in"
+	if session.NewRegistration {
+		outcome = "registered"
+	}
+	http.Redirect(w, r, s.oauthRedirectTarget(appendAuthOutcome(payload.ReturnTo, outcome)), http.StatusFound)
 }
 
 func (s *Server) handleGetSession(w http.ResponseWriter, r *http.Request) {
@@ -330,32 +379,27 @@ func toUserDTO(user auth.User) userDTO {
 		permissions = append(permissions, "admin")
 	}
 	return userDTO{
-		ID:          user.ID,
-		Username:    user.Username,
-		DisplayName: user.DisplayName,
-		IsAdmin:     user.IsAdmin,
-		Permissions: permissions,
-		LinuxDo:     toLinuxDoBindingDTO(user.LinuxDoBinding),
+		ID:              user.ID,
+		AnalyticsUserID: user.AnalyticsUserID,
+		Username:        user.Username,
+		DisplayName:     user.DisplayName,
+		IsAdmin:         user.IsAdmin,
+		Permissions:     permissions,
+		LinuxDo:         toLinuxDoBindingDTO(user.LinuxDoBinding),
 	}
 }
 
 func toAdminUserResponses(items []auth.AdminUser) []adminUserResponse {
 	result := make([]adminUserResponse, 0, len(items))
 	for _, item := range items {
-		linuxDoBound := item.LinuxDoBinding != nil && item.LinuxDoBinding.Bound
-		trustLevel := (*int)(nil)
-		if linuxDoBound {
-			value := item.LinuxDoBinding.TrustLevel
-			trustLevel = &value
-		}
 		result = append(result, adminUserResponse{
 			ID:            item.ID,
 			Username:      item.Username,
 			DisplayName:   item.DisplayName,
 			AccountStatus: item.Status,
 			IsAdmin:       item.IsAdmin,
-			LinuxDoBound:  linuxDoBound,
-			TrustLevel:    trustLevel,
+			LinuxDoBound:  item.LinuxDoBound,
+			TrustLevel:    item.TrustLevel,
 			CreatedAt:     item.CreatedAt.UTC().Format(time.RFC3339),
 			LastActiveAt:  formatOptionalTime(item.LastActiveAt),
 			Version:       item.Version,
@@ -599,12 +643,32 @@ func normalizeLinuxDoAvatarURL(value string) string {
 	return strings.ReplaceAll(strings.TrimSpace(value), "{size}", "288")
 }
 
-func splitOAuthStateCookie(value string) (string, string) {
-	parts := strings.SplitN(value, "|", 2)
-	if len(parts) == 1 {
-		return parts[0], "/"
+func encodeOAuthStateCookie(payload oauthStateCookiePayload) string {
+	payload.ReturnTo = cleanReturnTo(payload.ReturnTo)
+	payload.Attribution = auth.NormalizeRegistrationAttribution(payload.Attribution)
+	payload.InviteCode = promotionreward.CanonicalReferralCode(payload.InviteCode)
+	encoded, err := json.Marshal(payload)
+	if err != nil {
+		panic(err)
 	}
-	return parts[0], cleanReturnTo(parts[1])
+	return base64.RawURLEncoding.EncodeToString(encoded)
+}
+
+func decodeOAuthStateCookie(value string) (oauthStateCookiePayload, bool) {
+	decoded, err := base64.RawURLEncoding.DecodeString(strings.TrimSpace(value))
+	if err != nil || len(decoded) == 0 || len(decoded) > 2048 {
+		return oauthStateCookiePayload{}, false
+	}
+	var payload oauthStateCookiePayload
+	decoder := json.NewDecoder(bytes.NewReader(decoded))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&payload); err != nil || strings.TrimSpace(payload.State) == "" {
+		return oauthStateCookiePayload{}, false
+	}
+	payload.ReturnTo = cleanReturnTo(payload.ReturnTo)
+	payload.Attribution = auth.NormalizeRegistrationAttribution(payload.Attribution)
+	payload.InviteCode = promotionreward.CanonicalReferralCode(payload.InviteCode)
+	return payload, true
 }
 
 func cleanReturnTo(value string) string {
@@ -613,6 +677,18 @@ func cleanReturnTo(value string) string {
 		return "/"
 	}
 	return value
+}
+
+func appendAuthOutcome(returnTo, outcome string) string {
+	path := cleanReturnTo(returnTo)
+	parsed, err := url.Parse(path)
+	if err != nil {
+		parsed = &url.URL{Path: "/"}
+	}
+	query := parsed.Query()
+	query.Set("authOutcome", outcome)
+	parsed.RawQuery = query.Encode()
+	return parsed.String()
 }
 
 func (s *Server) oauthRedirectTarget(returnTo string) string {

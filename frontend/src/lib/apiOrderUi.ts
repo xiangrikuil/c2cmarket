@@ -72,3 +72,15 @@ export function formatApiOrderCancelReason(value?: string | null) {
   if (reason === 'buyer_cancelled') return '买家已在付款前取消订单。'
   return reason
 }
+
+function compactOrderSearchValue(value: string) {
+  return value.toUpperCase().replace(/[^A-Z0-9]/g, '')
+}
+
+export function matchesApiOrderSearch(query: string, values: readonly string[]) {
+  const normalizedQuery = query.trim().toLowerCase()
+  if (!normalizedQuery) return true
+  const compactQuery = compactOrderSearchValue(query)
+  return values.some(value => value.toLowerCase().includes(normalizedQuery)
+    || (compactQuery.length > 0 && compactOrderSearchValue(value).includes(compactQuery)))
+}

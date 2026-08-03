@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"c2c-market/backend/internal/domain"
+	"c2c-market/backend/internal/module/apiorder"
 	"c2c-market/backend/internal/module/idempotency"
 	"c2c-market/backend/internal/module/review"
 
@@ -289,6 +290,8 @@ func TestTransactionReviewPostgresDeadlineExclusionAndCarpoolRoles(t *testing.T)
 		SET status = 'paid_confirmed',
 		    delivery_note = NULL,
 		    delivery_submitted_at = NULL,
+		    delivery_review_expires_at = NULL,
+		    completion_source = NULL,
 		    completed_at = NULL,
 		    updated_at = $2
 		WHERE id = $1
@@ -445,6 +448,11 @@ func seedCompletedAPIOrderForReview(
 	}
 
 	orderID := uuid.NewString()
+	orderCreatedAt := completedAt.Add(-4 * time.Hour)
+	orderNo, err := apiorder.GenerateOrderNo(orderCreatedAt)
+	if err != nil {
+		t.Fatalf("generate completed API order number: %v", err)
+	}
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO api_orders (
 		  id, api_purchase_intent_id, api_service_id, buyer_user_id, seller_user_id,
@@ -452,7 +460,8 @@ func seedCompletedAPIOrderForReview(
 		  amount, currency, selected_payment_method, payment_window_minutes_snapshot,
 		  payment_expires_at, payment_instructions_snapshot,
 		  payment_summary, payment_submitted_at, paid_confirmed_at,
-		  delivery_note, delivery_submitted_at, completed_at, created_at, updated_at
+		  delivery_note, delivery_submitted_at, delivery_review_expires_at, completion_source,
+		  completed_at, created_at, updated_at, order_no
 		)
 		VALUES (
 		  $1, $2, $3, $4, $5,
@@ -460,15 +469,17 @@ func seedCompletedAPIOrderForReview(
 		  20, 'CNY', 'wechat', 10,
 		  $6, '站外确认付款',
 		  '已付款', $7, $8,
-		  '已交付', $9, $10, $11, $10
+		  '已交付', $9, $10, 'buyer_confirmed', $11, $12, $11, $13
 		)
 	`, orderID, intentID, serviceID, buyerID, sellerID,
 		completedAt.Add(-3*time.Hour),
 		completedAt.Add(-2*time.Hour),
 		completedAt.Add(-90*time.Minute),
 		completedAt.Add(-30*time.Minute),
+		completedAt.Add(23*time.Hour+30*time.Minute),
 		completedAt,
-		completedAt.Add(-4*time.Hour),
+		orderCreatedAt,
+		orderNo,
 	); err != nil {
 		t.Fatalf("seed completed API order: %v", err)
 	}

@@ -306,7 +306,10 @@ Fixed Cloudflare frontend build compatibility, committed the complete marketplac
 
 ### Main Changes
 
-(Add details)
+- 通过现有脚本创建 production PostgreSQL custom-format dump、校验和并上传 R2。
+- 识别共享 env、容器配置和数据库 SCRAM verifier 漂移；从 production Docker 网络验证真实认证边界。
+- 原子同步 `.env.production`，重置数据库角色密码，恢复既有 production backend。
+- 未执行 migration、镜像升级、分支合并、PostgreSQL 重启或 current symlink 切换。
 
 ### Git Commits
 
@@ -317,7 +320,11 @@ Fixed Cloudflare frontend build compatibility, committed the complete marketplac
 
 ### Testing
 
-- [OK] (Add test results)
+- [OK] 本地 dump checksum 与 R2 两个对象验证通过。
+- [OK] Docker 网络密码和 backend 完整连接串认证通过。
+- [OK] production/staging loopback 与公网 `/health`、`/readyz` 均返回 200。
+- [OK] production schema 52、staging schema 67，均 dirty=false。
+- [OK] backend 成功启动后 restart count 为 0，未产生新的认证或退出错误。
 
 ### Status
 
@@ -1000,3 +1007,188 @@ Made real backend mode explicit for default Nuxt development on port 5173, added
 ### Next Steps
 
 - None - task complete
+
+
+## Session 27: 恢复生产数据库认证与后端
+
+**Date**: 2026-07-31
+**Task**: 恢复生产数据库认证与后端
+**Package**: backend
+**Branch**: `codex/fix-staging-release-traceability`
+
+### Summary
+
+备份生产 PostgreSQL，校准共享 env 与 SCRAM 角色密码，恢复现有生产后端；生产与 staging 内外网健康检查均通过，未迁移 schema 或更换镜像。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+(No commits - planning session)
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
+
+
+## Session 28: SSH 与 Tailscale 私网部署加固
+
+**Date**: 2026-08-01
+**Task**: SSH 与 Tailscale 私网部署加固
+**Package**: backend
+**Branch**: `codex/tailscale-private-deploy`
+
+### Summary
+
+禁用 root 与密码 SSH，建立 admin/deploy 密钥边界和 Tailscale 私网部署，真实 staging 自动部署通过后删除公网 IPv4/IPv6 OpenSSH Anywhere 规则，并完成回归验证。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `fdf62ee` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
+
+
+## Session 29: API 订单角色视图与 24 小时核验期
+
+**Date**: 2026-08-02
+**Task**: API 订单角色视图与 24 小时核验期
+**Package**: frontend
+**Branch**: `codex/api-order-role-aware-detail`
+
+### Summary
+
+实现卖家交付即完成履约、买家 24 小时核验与自动完成，新增管理员只读订单详情并同步迁移、OpenAPI、角色化前端、测试和 Trellis 规范。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `a527105` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
+
+
+## Session 30: 整合 API 订单与推广分支
+
+**Date**: 2026-08-02
+**Task**: 整合 API 订单与推广分支
+**Package**: frontend
+**Branch**: `codex/orders-promotions-integrated`
+
+### Summary
+
+整合订单核验期、API 推广、增长分析、邀请奖励和公开订单号，统一 migration 68-75，通过全量质量门禁并清理本地旧分支与推广 worktree。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `5586e81` | (see git log) |
+| `29e1d4d` | (see git log) |
+| `07af546` | (see git log) |
+
+### Status
+
+[OK] **Completed**
+
+
+## Session 31: Fix Nuxt development first-page latency
+
+**Date**: 2026-08-03
+**Task**: Fix Nuxt development first-page latency
+**Package**: frontend
+**Branch**: `codex/orders-promotions-integrated`
+
+### Summary
+
+Reduced clean development homepage TTFB from 9.83s to 3.404s, fixed query-bearing root 500s, preserved production SWR, and pushed the branch.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `37a7d25` | (see git log) |
+
+### Status
+
+[OK] **Completed**
+
+
+## Session 32: Fix PR 20 CI failures
+
+**Date**: 2026-08-03
+**Task**: Fix PR 20 CI failures
+**Package**: frontend
+**Branch**: `codex/orders-promotions-integrated`
+
+### Summary
+
+Restored PR #20 CI without changing product behavior or Umami configuration, tightened Gitleaks allowlists, and verified the pushed PR head is merge-ready.
+
+### Main Changes
+
+- Fixed the Linux-sensitive App.vue test path and migration 75 PostgreSQL rollback gate.
+- Aligned completed-order review fixtures with migration 68 state constraints.
+- Scoped public order-number Gitleaks allowlists to exact detected secret values and synchronized release/migration specs.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `9aaaba1` | (see git log) |
+| `0f3aaaf` | (see git log) |
+
+### Testing
+
+- [OK] Frontend: 74 files and 369 tests; Node 24 typecheck and real-mode Nuxt build passed.
+- [OK] Full go test ./..., go vet ./..., PostgreSQL integration 75->73->75, Gitleaks 8.30.1, migration docs, bash -n, and git diff --check passed.
+- [OK] GitHub release-gate and Cloudflare Workers preview build passed for pushed SHA 0f3aaaf.
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- Merge PR #20 into staging.

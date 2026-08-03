@@ -44,13 +44,14 @@ api_quota_credentials
 
 - A batch is the seller-declared external USD allowance source. An offer is the buyer-visible fixed USD/CNY product. A sale round limits scheduled copies. Do not collapse these objects into `api_services` or legacy `api_service_packages`.
 - `sale_cutoff_at <= expires_at - interval '1 hour'`. No new order may be created at or after either boundary.
-- `model_multiplier` must be positive and defaults to `1.0000`, but it is independent of seller identity and distribution system. Sub2API limited offers and regular API services may declare another positive multiplier; neither contract treats `1.0000` as forced.
+- `model_multiplier` must be positive and remains in offers and orders as an immutable pricing snapshot. First-party publication clients derive it from the selected API service's default multiplier and do not expose an offer-level override. The persistence contract remains independent of seller identity and distribution system.
 - Publishing locks the batch, validates all planned USD and credential capacity, reserves the full planned USD allowance, creates one inventory row per copy, and activates allocations in one transaction.
 - Purchase claims one available inventory row with `FOR UPDATE SKIP LOCKED`. A scheduled purchase also inserts the unique `(sale_round_id, buyer_user_id)` claim. The intent, order, snapshots, inventory/credential reservation, events, notifications, and completed idempotency record commit together.
 - Scheduled orders freeze a five-minute payment window. Continuous limited offers and legacy free-amount orders freeze ten minutes.
 - Pending-payment cancellation or timeout releases an eligible inventory unit and pre-imported credential. The scheduled buyer claim remains, so the buyer cannot re-enter that round. Payment-submitted and later states do not release inventory.
 - Public current/next rounds must be offer-specific: a round is projected only when an active allocation exists for both the round and current offer.
 - Public cards and orders expose fixed USD, CNY, derived CNY/USD, multiplier, cutoff, expiry, distribution system, delivery ETA/mode, and seller-declared TTFT/concurrency confirmation. `performanceDisclaimer` remains `商户自报，平台未测速`.
+- Order creation freezes the API service account-pool code/label, merchant-declared maximum concurrency, merchant refund commitment, `api-merchant-refund-v1` rule version, and batch expiry inside both pricing and offer snapshots. Historical nullable pool/concurrency values remain explicit JSON `null` and are never inferred.
 - Credential CSV templates are mutually exclusive: `api_base_url,api_key,instructions` or `panel_login_url,username,password,instructions`. Import is all-or-nothing, at most 5000 rows, encrypted at rest, fingerprint-deduplicated, and never returned by public/list/summary/event/log payloads.
 
 ### 4. Validation & Error Matrix
@@ -71,7 +72,7 @@ api_quota_credentials
 ### 5. Good / Base / Bad Cases
 
 - Good: one round allocates 10 copies of `$50` and 5 copies of `$100`; 15 different buyers can succeed, while one buyer can claim only one of the two offers.
-- Good: a Sub2API limited offer defaults to `1.0000` but persists and freezes `1.2500` when the seller declares it.
+- Good: a limited offer created for a `1.2500` API service persists and freezes `1.2500` without asking the seller to configure the multiplier again.
 - Base: a continuous offer creates a ten-minute order without a sale-round ID.
 - Bad: a public `$50` card displays the next round that only allocates `$100` inventory.
 - Bad: cancellation deletes the round claim and lets the same buyer reclaim released stock.
@@ -79,7 +80,7 @@ api_quota_credentials
 
 ### 6. Tests Required
 
-- Unit: cutoff boundary, positive multiplier independent of distribution system, 1000-copy round input, orderability, CSV headers/duplicates/row limit.
+- Unit: cutoff boundary, positive multiplier and commercial-fact snapshots independent of distribution system, historical explicit-null snapshots, 1000-copy round input, orderability, CSV headers/duplicates/row limit.
 - PostgreSQL: publish rollback, `SKIP LOCKED` inventory claims, offer-specific round projection, release/retire behavior, credential reserve/deliver, idempotent replay, and cross-offer round limit.
 - Capacity: at least 1500 different buyers compete for 1000 copies; assert exactly 1000 successes, 500 expected sold-out results, no duplicate orders/credentials, no negative inventory, and no unexpected 5xx.
 - HTTP/OpenAPI: route parity, Problem Details codes, five/ten-minute snapshots, private `no-store` behavior, and no raw credential leakage.
@@ -114,7 +115,7 @@ WHERE r.batch_id = current_batch
   );
 ```
 
-The offer freezes the seller-declared multiplier and only displays rounds that actually allocate that offer.
+The offer freezes the API service's seller-declared default multiplier and only displays rounds that actually allocate that offer.
 
 ## Scenario: Fixed Beijing Rush Slots And Atomic Publication
 
@@ -138,6 +139,7 @@ api_quota_sale_rounds.system_slot_key text NULL
 ```
 
 The owner create route accepts `multipart/form-data` with one JSON `payload` part and an optional `file` part. The payload fields are `sourceType`, `sourceLabel`, `name`, `usdAllowance`, `priceCny`, `modelMultiplier`, `copies`, `deliveryMode`, `deliveryEtaMinutes`, `slotKey`, `expiresAt`, `sourceConfirmedAt`, and optional `deliveryKind`.
+First-party clients populate `modelMultiplier` from the selected API service default; it is a required snapshot field, not a second seller-editable setting.
 
 ### 3. Contracts
 
@@ -201,3 +203,90 @@ return repo.CreateSystemRushOfferWithIdempotency(ctx, entry, publicationFrom(slo
 ```
 
 Only the server resolves a fixed slot, and the repository commits the complete publication or no publication.
+
+## Scenario: Owner API Service Sales Lifecycle Projection
+
+### 1. Scope / Trigger
+
+- Trigger: changes to the owner API-service list, limited-offer expiry visibility, sales-state filters, `salesSummary`, or the frontend service-selection workflow.
+- `APIService` remains the long-lived integration and merchant resource. A limited quota batch or offer expiring must not delete, archive, or relabel the base service as the package itself.
+- Primary owners: `internal/module/apimarket`, `internal/store/postgres/api_market_owner_sales.go`, `internal/server/api_market_handler.go`, the owner OpenAPI list schema, and `frontend/src/pages/MyApiServicesPage.vue`.
+
+### 2. Signatures
+
+```text
+GET /api/v1/owner/api-services?salesView=active|expired|paused|draft|all
+
+apimarket.Manager.OwnerServices(ctx, user, OwnerServiceFilter, PageRequest)
+postgres.Store.ListAPIServicesByOwner(ctx, ownerUserID, OwnerServiceFilter, PageRequest)
+
+OwnerAPIServiceListItem = APIService + required salesSummary
+salesSummary.overallState =
+  selling|upcoming|paused|sold_out|expired|draft|offline|archived
+salesSummary.channels[].kind = flexible_quota|limited_quota
+```
+
+### 3. Contracts
+
+- Missing `salesView` defaults to `active`. `active` contains `selling` and `upcoming`; `draft` contains `draft` and `offline`; `all` preserves every state.
+- The server filters before keyset pagination. PostgreSQL must derive channels and `overallState` in the same LATERAL/CTE projection used by `WHERE`; the frontend must not filter a partially loaded page or request batches/offers once per service.
+- One service may expose both `flexible_quota` and `limited_quota`. Overall priority is `selling > upcoming > paused > sold_out > expired > draft > offline > archived`.
+- A limited channel uses batch, offer, allocation, round, inventory, credential, cutoff, and expiry facts. It must not derive state from `APIService.billingMode`.
+- The owner list response requires `salesSummary`. Owner detail, administrator, and public service responses keep their existing schemas and must not leak this owner-only read model.
+- Normal `/my/api-services` starts with `active`. `/my/api-services?intent=quota` starts with `all` so expired, offline, and otherwise reusable base services remain selectable.
+- An expired limited channel keeps a republish action. Historical batches, offers, orders, and the base service remain queryable.
+
+### 4. Validation & Error Matrix
+
+| Condition | Result |
+| --- | --- |
+| Missing `salesView` | Normalize to `active` |
+| Unknown `salesView` | `422 VALIDATION_FAILED`, field `salesView` |
+| Current or future published sale exists | `selling` or `upcoming`; include in `active` |
+| Cutoff or expiry reached with no higher-priority channel | `expired`; exclude from `active`, include in `expired` and `all` |
+| Service or selected sale plan is paused | `paused`; include in `paused` and `all` |
+| Service is reviewing, draft, or offline | `draft` or `offline`; include in `draft` and `all` |
+| Limited sale expired while flexible quota still sells | Preserve both channels; overall remains `selling` |
+
+### 5. Good / Base / Bad Cases
+
+- Good: one service shows `自由额度 / 销售中` and `限时额度包 / 已过期` together, stays in the active view, and exposes limited-package republishing.
+- Good: a scheduled offer between valid rounds remains `upcoming` with `nextStartsAt` and stays on the default page.
+- Base: a service with no sales channel uses its service lifecycle fallback and remains reachable through `draft` or `all`.
+- Bad: deleting the base `APIService` when the last batch expires.
+- Bad: returning `salesSummary` on the public API-service list or calculating expiry from browser time.
+- Bad: loading owner services, then issuing one batch/offer request per row and filtering only those loaded rows.
+
+### 6. Tests Required
+
+- Domain: filter normalization, complete state priority, exact expiry boundaries, no-channel fallback, and two-channel coexistence.
+- PostgreSQL: multiple services/batches/offers/rounds, current and future inventory, cutoff transition, no duplicate service rows, and stable cursor/limit behavior. Run against a dedicated database through `C2C_TEST_DATABASE_URL`; a missing variable must be reported as a skip, not as executed coverage.
+- HTTP/OpenAPI: default `active`, explicit `all`, invalid filter Problem Details, required owner summary, and no public/admin/detail leakage.
+- Frontend: generated-type drift, required adapter mapping, query key includes `salesView`, mock/real parity, all status labels, `intent=quota`, and expired republish action.
+- Browser: `1440x900` and `390x844`; assert desktop buttons/mobile Select, no page or table overflow, no overlap, and no console warning/error.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```ts
+const expired = new Date(service.expiresAt) <= new Date()
+const services = (await getOwnerServices()).filter(service => !expired)
+for (const service of services) {
+  service.offers = await getQuotaOffers(service.id)
+}
+```
+
+#### Correct
+
+```sql
+SELECT api_services.*, sales.overall_state, sales.channels
+FROM api_services
+JOIN LATERAL (/* authoritative channel aggregation */) sales ON true
+WHERE api_services.owner_user_id = $1
+  AND ($2 = 'all' OR ($2 = 'active' AND sales.overall_state IN ('selling', 'upcoming')))
+ORDER BY api_services.updated_at DESC, api_services.id DESC
+LIMIT $3;
+```
+
+The list filter, pagination, and response all use one authoritative database projection; the UI only maps the returned states to labels and actions.

@@ -15,6 +15,7 @@ function createStorage(initial: Record<string, string> = {}) {
 function orderWithStatus(status: ApiOrderStatus): ApiOrder {
   return {
     id: 'api-order-flow-1',
+    purchaseKind: 'api_service',
     apiPurchaseIntentId: 'intent-1',
     apiServiceId: 'service-1',
     buyerId: 'buyer-demo-user',
@@ -47,12 +48,17 @@ function orderWithStatus(status: ApiOrderStatus): ApiOrder {
     buyerContactChannels: [],
     createdAt: '2026-07-11T10:00:00Z',
     updatedAt: '2026-07-11T10:00:00Z',
+    ...(status === 'delivery_submitted'
+      ? {
+          deliverySubmittedAt: '2099-07-11T10:00:00Z',
+          deliveryReviewExpiresAt: '2099-07-12T10:00:00Z',
+        }
+      : {}),
   }
 }
 
-async function loadApiWithOrder(status: ApiOrderStatus) {
+async function loadApiWithStoredOrder(order: ApiOrder) {
   vi.resetModules()
-  const order = orderWithStatus(status)
   const sessionStorage = createStorage({
     'c2cmarket.apiOrders.v1': JSON.stringify([order]),
   })
@@ -66,26 +72,67 @@ async function loadApiWithOrder(status: ApiOrderStatus) {
   return api
 }
 
+async function loadApiWithOrder(status: ApiOrderStatus) {
+  return loadApiWithStoredOrder(orderWithStatus(status))
+}
+
 afterEach(() => {
   vi.unstubAllGlobals()
   vi.restoreAllMocks()
   vi.resetModules()
 })
 
-test('exposes the missing buyer completion action after seller delivery', async () => {
+test('treats buyer confirmation as an optional early completion action', async () => {
   const api = await loadApiWithOrder('delivery_submitted')
   const order = orderWithStatus('delivery_submitted')
 
-  assert.equal(api.getApiOrderNextAction(order, 'buyer'), '核对交付并确认完成')
-  assert.equal(api.getApiOrderNextAction(order, 'merchant'), '等待买家确认完成')
+  assert.equal(api.getApiOrderNextAction(order, 'buyer'), '核验凭证，或报告问题')
+  assert.equal(api.getApiOrderNextAction(order, 'merchant'), '已完成交付，无需操作')
+  assert.equal(api.getApiOrderDisplayStatus(order, 'buyer'), '待核验凭证')
+  assert.equal(api.getApiOrderDisplayStatus(order, 'merchant'), '已完成交付')
   assert.equal(api.isApiOrderBuyerActionRequired(order), true)
 
   const completed = await api.confirmApiOrderComplete(order.id, order.version)
   assert.equal(completed.status, 'completed')
+  assert.equal(completed.completionSource, 'buyer_confirmed')
   assert.equal(completed.version, order.version + 1)
   assert.ok(completed.completedAt)
-  assert.equal(api.getApiOrderNextAction(completed, 'buyer'), '交易已完成')
+  assert.equal(api.getApiOrderNextAction(completed, 'buyer'), '凭证已确认可用')
   assert.equal(api.isApiOrderBuyerActionRequired(completed), false)
+})
+
+test('automatically completes an expired review window and records a system event', async () => {
+  const expired = {
+    ...orderWithStatus('delivery_submitted'),
+    deliverySubmittedAt: '2026-07-11T10:00:00Z',
+    deliveryReviewExpiresAt: '2026-07-12T10:00:00Z',
+  }
+  const api = await loadApiWithStoredOrder(expired)
+
+  const [completed] = await api.getMyApiOrders()
+  assert.equal(completed.status, 'completed')
+  assert.equal(completed.completionSource, 'auto_completed')
+  assert.equal(Date.parse(completed.completedAt ?? ''), Date.parse(expired.deliveryReviewExpiresAt))
+  assert.equal(api.getApiOrderDisplayStatus(completed, 'buyer'), '已自动完成')
+  const event = api.getApiOrderEvents(completed).at(-1)
+  assert.equal(event?.actorRole, 'system')
+  assert.equal(event?.actorLabel, '系统')
+  assert.match(event?.note ?? '', /核验期结束/)
+})
+
+test('keeps an expired delivered order open when a credential dispute exists', async () => {
+  const disputed = {
+    ...orderWithStatus('delivery_submitted'),
+    disputeStatus: 'open',
+    deliverySubmittedAt: '2026-07-11T10:00:00Z',
+    deliveryReviewExpiresAt: '2026-07-12T10:00:00Z',
+  }
+  const api = await loadApiWithStoredOrder(disputed)
+
+  const order = await api.getApiOrderById(disputed.id, 'buyer')
+  assert.equal(order.status, 'delivery_submitted')
+  assert.equal(order.completionSource, undefined)
+  assert.equal(api.getApiOrderNextAction(order, 'buyer'), '等待平台处理凭证问题')
 })
 
 test('rejects completion before the seller submits delivery', async () => {
@@ -93,7 +140,7 @@ test('rejects completion before the seller submits delivery', async () => {
 
   await assert.rejects(
     api.confirmApiOrderComplete('api-order-flow-1', 3),
-    /只有商户已交付的订单可以确认完成/,
+    /只有待核验凭证的订单可以确认可用/,
   )
 })
 
@@ -101,6 +148,17 @@ test('labels an order-backed purchase intent as ordered', async () => {
   const api = await loadApiWithOrder('pending_payment')
 
   assert.equal(api.getApiStatusLabel('ordered'), '已生成订单')
+})
+
+test('counts revenue only after the merchant confirms receipt', async () => {
+  const api = await loadApiWithOrder('pending_payment')
+
+  for (const status of ['paid_confirmed', 'delivery_submitted', 'completed'] as ApiOrderStatus[]) {
+    assert.equal(api.isApiOrderReceiptConfirmed(status), true, `${status} should count as confirmed receipt`)
+  }
+  for (const status of ['pending_payment', 'payment_submitted', 'payment_issue', 'cancelled'] as ApiOrderStatus[]) {
+    assert.equal(api.isApiOrderReceiptConfirmed(status), false, `${status} must not count as confirmed receipt`)
+  }
 })
 
 test('cancels only an unpaid order and preserves the selected reason', async () => {

@@ -19,6 +19,10 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
+const maxAPIOrderNumberInsertAttempts = 8
+
+var errAPIOrderNumberCollision = errors.New("API order number collision")
+
 func (s *Store) CreateAPIOrderWithIdempotency(ctx context.Context, entry idempotency.Entry, input apiorder.CreateInput, now time.Time, buildCompletion apiorder.CompletionBuilder) (apiorder.Order, idempotency.Completion, *domain.AppError) {
 	return s.apiOrderWithIdempotency(ctx, entry, input, apiorder.ActionInput{}, now, buildCompletion, "create")
 }
@@ -104,7 +108,7 @@ func (s *Store) GetAPIOrderForBuyer(ctx context.Context, buyerUserID, orderID st
 	if appErr := s.materializeExpiredAPIOrder(ctx, s.pool, orderID, now); appErr != nil {
 		return apiorder.Order{}, appErr
 	}
-	order, err := s.getAPIOrder(ctx, s.pool, orderID, false)
+	order, err := s.getAPIOrder(ctx, s.pool, orderID, false, true)
 	if errors.Is(err, pgx.ErrNoRows) || order.BuyerUserID != buyerUserID {
 		return apiorder.Order{}, apiOrderNotFound()
 	}
@@ -124,7 +128,7 @@ func (s *Store) ReadAPIOrderPaymentInstructions(ctx context.Context, buyerUserID
 		return apiorder.PaymentInstructionsView{}, internalStoreError()
 	}
 	defer rollback(ctx, tx)
-	order, err := s.getAPIOrder(ctx, tx, orderID, true)
+	order, err := s.getAPIOrder(ctx, tx, orderID, true, false)
 	if errors.Is(err, pgx.ErrNoRows) || order.BuyerUserID != buyerUserID {
 		return apiorder.PaymentInstructionsView{}, apiOrderNotFound()
 	}
@@ -166,11 +170,26 @@ func (s *Store) ListAdminAPIOrders(ctx context.Context, now time.Time) ([]apiord
 	return s.listAPIOrders(ctx, "", nil)
 }
 
+func (s *Store) GetAdminAPIOrder(ctx context.Context, orderID string, now time.Time) (apiorder.Order, *domain.AppError) {
+	if appErr := s.materializeExpiredAPIOrder(ctx, s.pool, orderID, now); appErr != nil {
+		return apiorder.Order{}, appErr
+	}
+	order, err := s.getAPIOrder(ctx, s.pool, orderID, false, false)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return apiorder.Order{}, apiOrderNotFound()
+	}
+	if err != nil {
+		return apiorder.Order{}, internalStoreError()
+	}
+	order.DeliveryCredential = nil
+	return order, nil
+}
+
 func (s *Store) GetAPIOrderForSeller(ctx context.Context, sellerUserID, orderID string, now time.Time) (apiorder.Order, *domain.AppError) {
 	if appErr := s.materializeExpiredAPIOrder(ctx, s.pool, orderID, now); appErr != nil {
 		return apiorder.Order{}, appErr
 	}
-	order, err := s.getAPIOrder(ctx, s.pool, orderID, false)
+	order, err := s.getAPIOrder(ctx, s.pool, orderID, false, true)
 	if errors.Is(err, pgx.ErrNoRows) || order.SellerUserID != sellerUserID {
 		return apiorder.Order{}, apiOrderNotFound()
 	}
@@ -209,7 +228,7 @@ func (s *Store) createAPIOrderInTx(ctx context.Context, tx pgx.Tx, input apiorde
 	if appErr := reserveAPIOrderInventoryInTx(ctx, tx, order, now); appErr != nil {
 		return apiorder.Order{}, appErr
 	}
-	if appErr := insertAPIOrderInTx(ctx, tx, order); appErr != nil {
+	if appErr := insertAPIOrderInTx(ctx, tx, &order); appErr != nil {
 		return apiorder.Order{}, appErr
 	}
 	if appErr := markAPIPurchaseIntentOrderedInTx(ctx, tx, intent.ID, now); appErr != nil {
@@ -260,7 +279,7 @@ func ensureNoAPIOrderForIntent(ctx context.Context, q queryer, intentID string) 
 }
 
 func (s *Store) updateAPIOrderInTx(ctx context.Context, tx pgx.Tx, input apiorder.ActionInput, now time.Time, action string) (apiorder.Order, *domain.AppError) {
-	order, err := s.getAPIOrder(ctx, tx, input.OrderID, true)
+	order, err := s.getAPIOrder(ctx, tx, input.OrderID, true, false)
 	if errors.Is(err, pgx.ErrNoRows) || !storeCanActorAccessAPIOrder(order, input.ActorUserID, action) {
 		return apiorder.Order{}, apiOrderNotFound()
 	}
@@ -329,6 +348,8 @@ func (s *Store) updateAPIOrderInTx(ctx context.Context, tx pgx.Tx, input apiorde
 		order.Status = apiorder.StatusDeliverySubmitted
 		order.DeliveryNote = apiorder.DeliverySummary(autoDeliveryKind)
 		order.DeliverySubmittedAt = &now
+		reviewExpiresAt := now.Add(apiorder.DeliveryReviewWindow)
+		order.DeliveryReviewExpiresAt = &reviewExpiresAt
 		order.Version++
 	}
 	if appErr := updateAPIOrderInTx(ctx, tx, order); appErr != nil {
@@ -340,6 +361,7 @@ func (s *Store) updateAPIOrderInTx(ctx context.Context, tx pgx.Tx, input apiorde
 		confirmedOrder.Status = apiorder.StatusPaidConfirmed
 		confirmedOrder.DeliveryNote = ""
 		confirmedOrder.DeliverySubmittedAt = nil
+		confirmedOrder.DeliveryReviewExpiresAt = nil
 		if appErr := insertAPIOrderEventInTx(ctx, tx, confirmedOrder, input.ActorUserID, apiorder.EventPaymentConfirmed, from, apiorder.StatusPaidConfirmed, "", input.RequestID, now); appErr != nil {
 			return apiorder.Order{}, appErr
 		}
@@ -376,8 +398,13 @@ func (s *Store) MaterializeExpiredAPIOrders(ctx context.Context, now time.Time) 
 	rows, err := s.pool.Query(ctx, `
 		SELECT id::text
 		FROM api_orders
-		WHERE status = 'pending_payment' AND payment_expires_at <= $1
-	`, now)
+		WHERE (status = 'pending_payment' AND payment_expires_at <= $1)
+		   OR (
+		     status = 'delivery_submitted'
+		     AND dispute_status <> 'open'
+		     AND delivery_review_expires_at <= $2
+		   )
+	`, now, now.Add(apiorder.DeliveryReviewReminderLead))
 	if err != nil {
 		return internalStoreError()
 	}
@@ -401,9 +428,16 @@ func (s *Store) MaterializeExpiredAPIOrders(ctx context.Context, now time.Time) 
 	return nil
 }
 
+type apiOrderMaterializationResult struct {
+	PaymentTimeoutCancelled bool
+	DeliveryReviewReminded  bool
+	AutoCompleted           bool
+}
+
 func (s *Store) materializeExpiredAPIOrder(ctx context.Context, q queryer, orderID string, now time.Time) *domain.AppError {
 	if tx, ok := q.(pgx.Tx); ok {
-		return s.materializeExpiredAPIOrderInTx(ctx, tx, orderID, now)
+		_, appErr := s.materializeExpiredAPIOrderInTx(ctx, tx, orderID, now)
+		return appErr
 	}
 	if s == nil || s.pool == nil {
 		return internalStoreError()
@@ -413,7 +447,7 @@ func (s *Store) materializeExpiredAPIOrder(ctx context.Context, q queryer, order
 		return internalStoreError()
 	}
 	defer rollback(ctx, tx)
-	if appErr := s.materializeExpiredAPIOrderInTx(ctx, tx, orderID, now); appErr != nil {
+	if _, appErr := s.materializeExpiredAPIOrderInTx(ctx, tx, orderID, now); appErr != nil {
 		return appErr
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -422,33 +456,75 @@ func (s *Store) materializeExpiredAPIOrder(ctx context.Context, q queryer, order
 	return nil
 }
 
-func (s *Store) materializeExpiredAPIOrderInTx(ctx context.Context, tx pgx.Tx, orderID string, now time.Time) *domain.AppError {
-	order, err := s.getAPIOrder(ctx, tx, orderID, true)
+func (s *Store) materializeExpiredAPIOrderInTx(ctx context.Context, tx pgx.Tx, orderID string, now time.Time) (apiOrderMaterializationResult, *domain.AppError) {
+	order, err := s.getAPIOrder(ctx, tx, orderID, true, false)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return nil
+		return apiOrderMaterializationResult{}, nil
 	}
 	if err != nil {
-		return internalStoreError()
+		return apiOrderMaterializationResult{}, internalStoreError()
 	}
-	if order.Status != apiorder.StatusPendingPayment || order.PaymentExpiresAt.After(now) {
-		return nil
+	if order.Status == apiorder.StatusPendingPayment && !order.PaymentExpiresAt.After(now) {
+		if appErr := releaseAPIOrderReservationInTx(ctx, tx, order, now); appErr != nil {
+			return apiOrderMaterializationResult{}, appErr
+		}
+		order.Status = apiorder.StatusCancelled
+		order.CancelReason = apiorder.CancelReasonPaymentTimeout
+		order.CancelledAt = &now
+		order.PackageStockReserved = false
+		order.UpdatedAt = now
+		order.Version++
+		if appErr := updateAPIOrderInTx(ctx, tx, order); appErr != nil {
+			return apiOrderMaterializationResult{}, appErr
+		}
+		if appErr := insertAPIOrderEventInTx(ctx, tx, order, "", apiorder.EventPaymentTimeoutCancelled, apiorder.StatusPendingPayment, apiorder.StatusCancelled, "", "payment-timeout", now); appErr != nil {
+			return apiOrderMaterializationResult{}, appErr
+		}
+		if appErr := insertAPIOrderDomainEventAndNotificationInTx(ctx, tx, order, "", apiorder.EventPaymentTimeoutCancelled, "payment-timeout", now); appErr != nil {
+			return apiOrderMaterializationResult{}, appErr
+		}
+		return apiOrderMaterializationResult{PaymentTimeoutCancelled: true}, nil
 	}
-	if appErr := releaseAPIOrderReservationInTx(ctx, tx, order, now); appErr != nil {
-		return appErr
+	if order.Status != apiorder.StatusDeliverySubmitted || order.DisputeStatus == apiorder.DisputeStatusOpen || order.DeliveryReviewExpiresAt == nil {
+		return apiOrderMaterializationResult{}, nil
 	}
-	order.Status = apiorder.StatusCancelled
-	order.CancelReason = apiorder.CancelReasonPaymentTimeout
-	order.CancelledAt = &now
-	order.PackageStockReserved = false
-	order.UpdatedAt = now
-	order.Version++
-	if appErr := updateAPIOrderInTx(ctx, tx, order); appErr != nil {
-		return appErr
+	if !now.Before(*order.DeliveryReviewExpiresAt) {
+		completedAt := *order.DeliveryReviewExpiresAt
+		order.Status = apiorder.StatusCompleted
+		order.CompletionSource = apiorder.CompletionSourceAutoCompleted
+		order.CompletedAt = &completedAt
+		order.UpdatedAt = now
+		order.Version++
+		if appErr := updateAPIOrderInTx(ctx, tx, order); appErr != nil {
+			return apiOrderMaterializationResult{}, appErr
+		}
+		if appErr := insertAPIOrderEventInTx(ctx, tx, order, "", apiorder.EventAutoCompleted, apiorder.StatusDeliverySubmitted, apiorder.StatusCompleted, "", "delivery-review-auto-complete", now); appErr != nil {
+			return apiOrderMaterializationResult{}, appErr
+		}
+		if appErr := insertAPIOrderDomainEventAndNotificationInTx(ctx, tx, order, "", apiorder.EventAutoCompleted, "delivery-review-auto-complete", now); appErr != nil {
+			return apiOrderMaterializationResult{}, appErr
+		}
+		return apiOrderMaterializationResult{AutoCompleted: true}, nil
 	}
-	if appErr := insertAPIOrderEventInTx(ctx, tx, order, "", apiorder.EventPaymentTimeoutCancelled, apiorder.StatusPendingPayment, apiorder.StatusCancelled, "", "payment-timeout", now); appErr != nil {
-		return appErr
+	reminderAt := order.DeliveryReviewExpiresAt.Add(-apiorder.DeliveryReviewReminderLead)
+	if order.DeliveryReviewRemindedAt != nil || now.Before(reminderAt) {
+		return apiOrderMaterializationResult{}, nil
 	}
-	return insertAPIOrderDomainEventAndNotificationInTx(ctx, tx, order, "", apiorder.EventPaymentTimeoutCancelled, "payment-timeout", now)
+	if _, err := tx.Exec(ctx, `
+		UPDATE api_orders
+		SET delivery_review_reminded_at = $2
+		WHERE id = $1 AND delivery_review_reminded_at IS NULL
+	`, order.ID, now); err != nil {
+		return apiOrderMaterializationResult{}, internalStoreError()
+	}
+	order.DeliveryReviewRemindedAt = &now
+	if appErr := insertAPIOrderEventInTx(ctx, tx, order, "", apiorder.EventDeliveryReviewReminder, order.Status, order.Status, "", "delivery-review-reminder", now); appErr != nil {
+		return apiOrderMaterializationResult{}, appErr
+	}
+	if appErr := insertAPIOrderDomainEventAndNotificationInTx(ctx, tx, order, "", apiorder.EventDeliveryReviewReminder, "delivery-review-reminder", now); appErr != nil {
+		return apiOrderMaterializationResult{}, appErr
+	}
+	return apiOrderMaterializationResult{DeliveryReviewReminded: true}, nil
 }
 
 func reserveAPIOrderInventoryInTx(ctx context.Context, tx pgx.Tx, order apiorder.Order, now time.Time) *domain.AppError {
@@ -742,15 +818,17 @@ const apiOrderColumns = `
 	COALESCE(quota_cny_per_usd_snapshot::text, ''), COALESCE(quota_model_multiplier_snapshot::text, ''),
 	quota_sale_cutoff_at_snapshot, quota_expires_at_snapshot, COALESCE(quota_sale_mode_snapshot, ''),
 	quota_round_starts_at_snapshot, quota_round_ends_at_snapshot, COALESCE(quota_distribution_system_snapshot, ''),
-	COALESCE(quota_ttft_band_snapshot, ''), COALESCE(quota_recommended_concurrency_snapshot, 0),
+	COALESCE(quota_ttft_band_snapshot, ''), COALESCE(quota_declared_max_concurrency_snapshot, 0),
 	quota_performance_confirmed_at_snapshot, COALESCE(quota_performance_unverified_snapshot, false),
 	COALESCE(quota_delivery_eta_minutes_snapshot, 0), COALESCE(quota_delivery_mode_snapshot, ''),
 	amount::text, currency, selected_payment_method,
 	payment_window_minutes_snapshot, payment_expires_at, payment_instructions_snapshot,
 		COALESCE(payment_qr_code_data_url_snapshot, ''), COALESCE(payment_summary, ''), payment_submitted_at,
 		COALESCE(payment_issue_reason, ''), COALESCE(payment_issue_note, ''), payment_issue_reported_at, paid_confirmed_at,
-	COALESCE(delivery_note, ''), delivery_submitted_at, completed_at,
-	cancelled_at, COALESCE(cancel_reason, ''), created_at, updated_at, version
+	COALESCE(delivery_note, ''), delivery_submitted_at,
+	delivery_review_expires_at, delivery_review_reminded_at, COALESCE(completion_source, ''), completed_at,
+	cancelled_at, COALESCE(cancel_reason, ''), created_at, updated_at, version,
+	order_no
 `
 
 func (s *Store) listAPIOrders(ctx context.Context, whereClause string, args []any) ([]apiorder.Order, *domain.AppError) {
@@ -778,14 +856,14 @@ func (s *Store) listAPIOrders(ctx context.Context, whereClause string, args []an
 	return orders, nil
 }
 
-func (s *Store) getAPIOrder(ctx context.Context, q queryer, orderID string, forUpdate bool) (apiorder.Order, error) {
+func (s *Store) getAPIOrder(ctx context.Context, q queryer, orderID string, forUpdate, includeCredential bool) (apiorder.Order, error) {
 	query := `SELECT ` + apiOrderColumns + ` FROM api_orders WHERE id = $1`
 	if forUpdate {
 		query += ` FOR UPDATE`
 	}
 	var order apiorder.Order
 	err := q.QueryRow(ctx, query, orderID).Scan(apiOrderScanTargets(&order)...)
-	if err == nil && !forUpdate {
+	if err == nil && !forUpdate && includeCredential {
 		if appErr := s.attachAPIOrderDeliveryCredential(ctx, q, &order); appErr != nil {
 			return apiorder.Order{}, errors.New(appErr.Detail)
 		}
@@ -834,7 +912,7 @@ func apiOrderScanTargets(order *apiorder.Order) []any {
 		&order.QuotaRoundEndsAtSnapshot,
 		&order.QuotaDistributionSnapshot,
 		&order.QuotaTTFTBandSnapshot,
-		&order.QuotaRecommendedConcurrency,
+		&order.QuotaDeclaredMaxConcurrency,
 		&order.QuotaPerformanceConfirmedAt,
 		&order.QuotaPerformanceUnverified,
 		&order.QuotaDeliveryETAMinutes,
@@ -854,12 +932,16 @@ func apiOrderScanTargets(order *apiorder.Order) []any {
 		&order.PaidConfirmedAt,
 		&order.DeliveryNote,
 		&order.DeliverySubmittedAt,
+		&order.DeliveryReviewExpiresAt,
+		&order.DeliveryReviewRemindedAt,
+		&order.CompletionSource,
 		&order.CompletedAt,
 		&order.CancelledAt,
 		&order.CancelReason,
 		&order.CreatedAt,
 		&order.UpdatedAt,
 		&order.Version,
+		&order.OrderNo,
 	}
 }
 
@@ -878,6 +960,7 @@ func newStoreAPIOrder(input apiorder.CreateInput, intent apiintent.Intent, servi
 	}
 	return apiorder.Order{
 		ID:                            uuid.NewString(),
+		PurchaseKind:                  apiorder.PurchaseKindAPIService,
 		APIPurchaseIntentID:           intent.ID,
 		APIServiceID:                  intent.APIServiceID,
 		BuyerUserID:                   input.BuyerUserID,
@@ -906,8 +989,9 @@ func newStoreAPIOrder(input apiorder.CreateInput, intent apiintent.Intent, servi
 	}, nil
 }
 
-func insertAPIOrderInTx(ctx context.Context, tx pgx.Tx, order apiorder.Order) *domain.AppError {
-	_, err := tx.Exec(ctx, `
+func insertAPIOrderInTx(ctx context.Context, tx pgx.Tx, order *apiorder.Order) *domain.AppError {
+	err := insertAPIOrderWithNumberRetry(order, apiorder.GenerateOrderNo, func() error {
+		commandTag, insertErr := tx.Exec(ctx, `
 		INSERT INTO api_orders (
 			id, api_purchase_intent_id, api_service_id, buyer_user_id, seller_user_id,
 			status, dispute_status, dispute_case_id, service_title_snapshot,
@@ -920,7 +1004,7 @@ func insertAPIOrderInTx(ctx context.Context, tx pgx.Tx, order apiorder.Order) *d
 				payment_instructions_snapshot, payment_qr_code_data_url_snapshot, payment_summary, payment_submitted_at,
 				payment_issue_reason, payment_issue_note, payment_issue_reported_at,
 				paid_confirmed_at, delivery_note, delivery_submitted_at, completed_at,
-				cancelled_at, cancel_reason, created_at, updated_at, version
+				cancelled_at, cancel_reason, created_at, updated_at, version, order_no
 		)
 		VALUES (
 			$1, $2, $3, $4, $5,
@@ -934,20 +1018,29 @@ func insertAPIOrderInTx(ctx context.Context, tx pgx.Tx, order apiorder.Order) *d
 				$25, $26, $27, $28,
 				$29, $30, $31,
 				$32, $33, $34, $35,
-				$36, $37, $38, $39, $40
+				$36, $37, $38, $39, $40, $41
 		)
+		ON CONFLICT ON CONSTRAINT ux_api_orders_order_no DO NOTHING
 	`, order.ID, order.APIPurchaseIntentID, order.APIServiceID, order.BuyerUserID, order.SellerUserID,
-		order.Status, order.DisputeStatus, nullUUID(order.DisputeCaseID), order.ServiceTitleSnapshot,
-		order.ServiceVersionSnapshot, order.BillingModeSnapshot, nullUUID(order.SelectedPackageID),
-		nullJSON(order.SelectedPackageSnapshot), nullInt64(order.QuoteVersionSnapshot),
-		nullNumeric(order.RequestedUSDAllowanceSnapshot), nullNumeric(order.CNYPerUSDAllowanceSnapshot), nullJSON(order.PricingSnapshot),
-		order.PackageStockReserved, order.PackageExpiresAt,
-		order.Amount, order.Currency,
-		order.SelectedPaymentMethod, order.PaymentWindowMinutesSnapshot, order.PaymentExpiresAt,
-		order.PaymentInstructionsSnapshot, nullText(order.PaymentQRCodeDataURLSnapshot), nullText(order.PaymentSummary), order.PaymentSubmittedAt,
-		nullText(order.PaymentIssueReason), nullText(order.PaymentIssueNote), order.PaymentIssueReportedAt,
-		order.PaidConfirmedAt, nullText(order.DeliveryNote), order.DeliverySubmittedAt, order.CompletedAt,
-		order.CancelledAt, nullText(order.CancelReason), order.CreatedAt, order.UpdatedAt, order.Version)
+			order.Status, order.DisputeStatus, nullUUID(order.DisputeCaseID), order.ServiceTitleSnapshot,
+			order.ServiceVersionSnapshot, order.BillingModeSnapshot, nullUUID(order.SelectedPackageID),
+			nullJSON(order.SelectedPackageSnapshot), nullInt64(order.QuoteVersionSnapshot),
+			nullNumeric(order.RequestedUSDAllowanceSnapshot), nullNumeric(order.CNYPerUSDAllowanceSnapshot), nullJSON(order.PricingSnapshot),
+			order.PackageStockReserved, order.PackageExpiresAt,
+			order.Amount, order.Currency,
+			order.SelectedPaymentMethod, order.PaymentWindowMinutesSnapshot, order.PaymentExpiresAt,
+			order.PaymentInstructionsSnapshot, nullText(order.PaymentQRCodeDataURLSnapshot), nullText(order.PaymentSummary), order.PaymentSubmittedAt,
+			nullText(order.PaymentIssueReason), nullText(order.PaymentIssueNote), order.PaymentIssueReportedAt,
+			order.PaidConfirmedAt, nullText(order.DeliveryNote), order.DeliverySubmittedAt, order.CompletedAt,
+			order.CancelledAt, nullText(order.CancelReason), order.CreatedAt, order.UpdatedAt, order.Version, order.OrderNo)
+		if insertErr != nil {
+			return insertErr
+		}
+		if commandTag.RowsAffected() == 0 {
+			return errAPIOrderNumberCollision
+		}
+		return nil
+	})
 	if err != nil {
 		if isUniqueViolationOnConstraint(err, "ux_api_orders_intent") {
 			return domain.NewAPIPurchaseIntentHasOrderError()
@@ -955,6 +1048,25 @@ func insertAPIOrderInTx(ctx context.Context, tx pgx.Tx, order apiorder.Order) *d
 		return internalStoreError()
 	}
 	return nil
+}
+
+func insertAPIOrderWithNumberRetry(order *apiorder.Order, generate func(time.Time) (string, error), insert func() error) error {
+	if order == nil || generate == nil || insert == nil {
+		return errors.New("API order number insert dependencies are unavailable")
+	}
+	for range maxAPIOrderNumberInsertAttempts {
+		orderNo, err := generate(order.CreatedAt)
+		if err != nil {
+			return err
+		}
+		order.OrderNo = orderNo
+		err = insert()
+		if errors.Is(err, errAPIOrderNumberCollision) {
+			continue
+		}
+		return err
+	}
+	return errors.New("API order number collision retry exhausted")
 }
 
 func updateAPIOrderInTx(ctx context.Context, tx pgx.Tx, order apiorder.Order) *domain.AppError {
@@ -971,18 +1083,22 @@ func updateAPIOrderInTx(ctx context.Context, tx pgx.Tx, order apiorder.Order) *d
 			    paid_confirmed_at = $10,
 			    delivery_note = $11,
 			    delivery_submitted_at = $12,
-			    completed_at = $13,
-			    cancelled_at = $14,
-			    cancel_reason = $15,
-			    package_stock_reserved = $16,
-			    package_expires_at = $17,
-			    updated_at = $18,
-			    version = $19
+			    delivery_review_expires_at = $13,
+			    delivery_review_reminded_at = $14,
+			    completion_source = $15,
+			    completed_at = $16,
+			    cancelled_at = $17,
+			    cancel_reason = $18,
+			    package_stock_reserved = $19,
+			    package_expires_at = $20,
+			    updated_at = $21,
+			    version = $22
 		WHERE id = $1
 		`, order.ID, order.Status, order.DisputeStatus, nullUUID(order.DisputeCaseID),
 		nullText(order.PaymentSummary), order.PaymentSubmittedAt,
 		nullText(order.PaymentIssueReason), nullText(order.PaymentIssueNote), order.PaymentIssueReportedAt, order.PaidConfirmedAt,
-		nullText(order.DeliveryNote), order.DeliverySubmittedAt, order.CompletedAt,
+		nullText(order.DeliveryNote), order.DeliverySubmittedAt,
+		order.DeliveryReviewExpiresAt, order.DeliveryReviewRemindedAt, nullText(order.CompletionSource), order.CompletedAt,
 		order.CancelledAt, nullText(order.CancelReason), order.PackageStockReserved, order.PackageExpiresAt,
 		order.UpdatedAt, order.Version)
 	if err != nil {
@@ -1250,7 +1366,7 @@ func storeCanTransitionAPIOrder(order apiorder.Order, action string, now time.Ti
 	case "submit_delivery":
 		return order.Status == apiorder.StatusPaidConfirmed
 	case "confirm_complete":
-		return order.Status == apiorder.StatusDeliverySubmitted
+		return order.Status == apiorder.StatusDeliverySubmitted && order.DisputeStatus != apiorder.DisputeStatusOpen
 	case "open_dispute":
 		return order.Status != apiorder.StatusCancelled && order.Status != apiorder.StatusCompleted && order.DisputeStatus == apiorder.DisputeStatusNone
 	default:
@@ -1311,8 +1427,11 @@ func storeApplyAPIOrderAction(order apiorder.Order, input apiorder.ActionInput, 
 		order.Status = apiorder.StatusDeliverySubmitted
 		order.DeliveryNote = apiorder.DeliverySummary(input.DeliveryCredential.DeliveryKind)
 		order.DeliverySubmittedAt = &now
+		reviewExpiresAt := now.Add(apiorder.DeliveryReviewWindow)
+		order.DeliveryReviewExpiresAt = &reviewExpiresAt
 	case "confirm_complete":
 		order.Status = apiorder.StatusCompleted
+		order.CompletionSource = apiorder.CompletionSourceBuyerConfirmed
 		order.CompletedAt = &now
 	case "open_dispute":
 		order.DisputeStatus = apiorder.DisputeStatusOpen

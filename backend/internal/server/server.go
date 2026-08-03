@@ -14,6 +14,7 @@ import (
 	"c2c-market/backend/internal/module/apiintent"
 	"c2c-market/backend/internal/module/apimarket"
 	"c2c-market/backend/internal/module/apiorder"
+	"c2c-market/backend/internal/module/apipromotion"
 	"c2c-market/backend/internal/module/apiquota"
 	"c2c-market/backend/internal/module/auth"
 	"c2c-market/backend/internal/module/carpool"
@@ -21,12 +22,14 @@ import (
 	"c2c-market/backend/internal/module/contact"
 	"c2c-market/backend/internal/module/favorite"
 	"c2c-market/backend/internal/module/feedback"
+	"c2c-market/backend/internal/module/growth"
 	"c2c-market/backend/internal/module/idempotency"
 	"c2c-market/backend/internal/module/modelaudit"
 	"c2c-market/backend/internal/module/navigationbadge"
 	"c2c-market/backend/internal/module/notification"
 	"c2c-market/backend/internal/module/officialprice"
 	"c2c-market/backend/internal/module/profile"
+	"c2c-market/backend/internal/module/promotionreward"
 	"c2c-market/backend/internal/module/report"
 	"c2c-market/backend/internal/module/reputation"
 	"c2c-market/backend/internal/module/review"
@@ -79,13 +82,46 @@ type APIPaymentSettingsService interface {
 	UpdateAPIAccountPaymentSettings(ctx context.Context, user auth.User, input apimarket.UpdateAccountPaymentSettingsInput) (apimarket.AccountPaymentSettings, *domain.AppError)
 }
 
+type AdminUserService interface {
+	AdminUsers(ctx context.Context, user auth.User, query auth.AdminUserDirectoryQuery) (auth.AdminUserDirectory, *domain.AppError)
+	AdminUser(ctx context.Context, user auth.User, userID string) (auth.AdminUserDetail, *domain.AppError)
+	UpdateAdminUserStatusWithIdempotency(ctx context.Context, user auth.User, routeKey, key, requestHash string, input auth.AdminUserStatusInput, buildCompletion auth.AdminUserCompletionBuilder) (idempotency.Completion, *domain.AppError)
+	UpdateAdminUserPermissionWithIdempotency(ctx context.Context, user auth.User, routeKey, key, requestHash string, input auth.AdminUserPermissionInput, buildCompletion auth.AdminUserCompletionBuilder) (idempotency.Completion, *domain.AppError)
+}
+
+type APIPromotionService interface {
+	PublicAPIPromotions(ctx context.Context, placement string) ([]apipromotion.Promotion, *domain.AppError)
+	AdminAPIPromotions(ctx context.Context, user auth.User) ([]apipromotion.Promotion, *domain.AppError)
+	APIPromotionAvailability(ctx context.Context, user auth.User, input apipromotion.AvailabilityInput) (apipromotion.Availability, *domain.AppError)
+	CreateAPIPromotionWithIdempotency(ctx context.Context, user auth.User, routeKey, key, requestHash string, input apipromotion.CreateInput, buildCompletion apipromotion.CompletionBuilder) (idempotency.Completion, *domain.AppError)
+	StopAPIPromotionWithIdempotency(ctx context.Context, user auth.User, routeKey, key, requestHash string, input apipromotion.StopInput, buildCompletion apipromotion.CompletionBuilder) (idempotency.Completion, *domain.AppError)
+}
+
+type GrowthService interface {
+	AdminGrowthOverview(ctx context.Context, user auth.User, windowDays int) (growth.Overview, *domain.AppError)
+	RecordAuthenticatedActivity(ctx context.Context, userID string) *domain.AppError
+}
+
+type PromotionRewardService interface {
+	PromotionRewardPublicConfig(ctx context.Context) (promotionreward.PublicConfig, *domain.AppError)
+	MyReferralSummary(ctx context.Context, user auth.User) (promotionreward.ReferralSummary, *domain.AppError)
+	MyPromotionCoupons(ctx context.Context, user auth.User, query promotionreward.CouponQuery) (promotionreward.CouponPage, *domain.AppError)
+	ApplyPromotionCouponWithIdempotency(ctx context.Context, user auth.User, routeKey, key, requestHash string, input promotionreward.ApplyCouponInput, buildCompletion promotionreward.CouponCompletionBuilder) (idempotency.Completion, *domain.AppError)
+	AdminPromotionRewardCampaign(ctx context.Context, user auth.User) (promotionreward.Campaign, *domain.AppError)
+	UpdateAdminPromotionRewardCampaignWithIdempotency(ctx context.Context, user auth.User, routeKey, key, requestHash string, input promotionreward.UpdateCampaignInput, buildCompletion promotionreward.CampaignCompletionBuilder) (idempotency.Completion, *domain.AppError)
+	AdminReferrals(ctx context.Context, user auth.User, query promotionreward.ReferralQuery) (promotionreward.ReferralPage, *domain.AppError)
+	RevokeAdminReferralWithIdempotency(ctx context.Context, user auth.User, routeKey, key, requestHash string, input promotionreward.RevokeReferralInput, buildCompletion promotionreward.ReferralCompletionBuilder) (idempotency.Completion, *domain.AppError)
+	AdminPromotionCoupons(ctx context.Context, user auth.User, query promotionreward.CouponQuery) (promotionreward.CouponPage, *domain.AppError)
+	GrantAdminPromotionCouponWithIdempotency(ctx context.Context, user auth.User, routeKey, key, requestHash string, input promotionreward.GrantCouponInput, buildCompletion promotionreward.CouponCompletionBuilder) (idempotency.Completion, *domain.AppError)
+	RevokeAdminPromotionCouponWithIdempotency(ctx context.Context, user auth.User, routeKey, key, requestHash string, input promotionreward.RevokeCouponInput, buildCompletion promotionreward.CouponCompletionBuilder) (idempotency.Completion, *domain.AppError)
+}
+
 // Service is the legacy application facade for handlers that have not yet been
 // moved to domain-specific server dependencies.
 type Service interface {
 	CreateDevSession(ctx context.Context, username string, isAdmin bool) (auth.User, auth.Session, *domain.AppError)
 	LoginWithOAuthProfile(ctx context.Context, profile auth.OAuthProfile) (auth.User, auth.Session, *domain.AppError)
 	LoginWithPassword(ctx context.Context, username, password string) (auth.User, auth.Session, *domain.AppError)
-	AdminUsers(ctx context.Context, user auth.User) ([]auth.AdminUser, *domain.AppError)
 	StartEmailRegistration(ctx context.Context, input auth.EmailRegistrationStartInput) (auth.EmailRegistrationChallenge, *domain.AppError)
 	ConfirmEmailRegistration(ctx context.Context, input auth.EmailRegistrationConfirmInput) (auth.User, auth.Session, *domain.AppError)
 	SetPassword(ctx context.Context, input auth.SetPasswordInput) *domain.AppError
@@ -193,7 +229,7 @@ type Service interface {
 	UpdateAPIService(ctx context.Context, user auth.User, input apimarket.UpdateServiceInput) (apimarket.Service, *domain.AppError)
 	PublicAPIServices(ctx context.Context, filter apimarket.PublicServiceFilter) ([]apimarket.Service, *domain.AppError)
 	PublicAPIService(ctx context.Context, serviceID string) (apimarket.Service, *domain.AppError)
-	OwnerAPIServices(ctx context.Context, user auth.User, page domain.PageRequest) (domain.Page[apimarket.Service], *domain.AppError)
+	OwnerAPIServices(ctx context.Context, user auth.User, filter apimarket.OwnerServiceFilter, page domain.PageRequest) (domain.Page[apimarket.Service], *domain.AppError)
 	OwnerAPIService(ctx context.Context, user auth.User, serviceID string) (apimarket.Service, *domain.AppError)
 	AdminAPIServices(ctx context.Context, user auth.User, page domain.PageRequest) (domain.Page[apimarket.Service], *domain.AppError)
 	AdminAPIService(ctx context.Context, user auth.User, serviceID string) (apimarket.Service, *domain.AppError)
@@ -223,6 +259,7 @@ type Service interface {
 	OpenAPIOrderDisputeWithIdempotency(ctx context.Context, userID, routeKey, key, requestHash string, input apiorder.ActionInput, buildCompletion apiorder.CompletionBuilder) (idempotency.Completion, *domain.AppError)
 	OwnerAPIOrders(ctx context.Context, user auth.User) ([]apiorder.Order, *domain.AppError)
 	AdminAPIOrders(ctx context.Context, user auth.User) ([]apiorder.Order, *domain.AppError)
+	AdminAPIOrder(ctx context.Context, user auth.User, orderID string) (apiorder.Order, *domain.AppError)
 	OwnerAPIOrder(ctx context.Context, user auth.User, orderID string) (apiorder.Order, *domain.AppError)
 	ConfirmAPIOrderPaymentWithIdempotency(ctx context.Context, userID, routeKey, key, requestHash string, input apiorder.ActionInput, buildCompletion apiorder.CompletionBuilder) (idempotency.Completion, *domain.AppError)
 	ReportAPIOrderPaymentIssueWithIdempotency(ctx context.Context, userID, routeKey, key, requestHash string, input apiorder.ActionInput, buildCompletion apiorder.CompletionBuilder) (idempotency.Completion, *domain.AppError)
@@ -339,6 +376,10 @@ type ApplicationService interface {
 	CarpoolService
 	APIQuotaService
 	APIPaymentSettingsService
+	AdminUserService
+	APIPromotionService
+	GrowthService
+	PromotionRewardService
 	ReputationGovernanceService
 }
 
@@ -347,6 +388,10 @@ type Server struct {
 	carpools         CarpoolService
 	apiQuotas        APIQuotaService
 	apiPayment       APIPaymentSettingsService
+	adminUsers       AdminUserService
+	apiPromotions    APIPromotionService
+	growth           GrowthService
+	promotionRewards PromotionRewardService
 	reputation       ReputationGovernanceService
 	mux              chi.Router
 	enableDevAuth    bool
@@ -394,6 +439,10 @@ func NewServer(service ApplicationService, options ...ServerOptions) http.Handle
 		carpools:         service,
 		apiQuotas:        service,
 		apiPayment:       service,
+		adminUsers:       service,
+		apiPromotions:    service,
+		growth:           service,
+		promotionRewards: service,
 		reputation:       service,
 		mux:              chi.NewRouter(),
 		enableDevAuth:    option.EnableDevAuth,

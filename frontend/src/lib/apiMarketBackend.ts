@@ -1,8 +1,10 @@
 import type {
   AdminRow,
+  AdminApiOrderDetail,
   ApiBillingMode,
   ApiDeliveryMode,
   ApiOrder,
+  ApiOrderCompletionSource,
   ApiOrderDeliveryCredential,
   ApiOrderFilters,
   ApiOrderPaymentInstructions,
@@ -22,6 +24,9 @@ import type {
   ApiPurchaseIntentEvent,
   ApiPurchaseIntentFilters,
   ApiService,
+  ApiServiceCommercialSnapshot,
+  ApiServiceSalesChannel,
+  ApiServiceSalesView,
   ApiServicePackageSnapshot,
   ApiServiceFilters,
   ApiUsageVisibility,
@@ -35,18 +40,31 @@ import type {
   ModelCatalogItem,
   ModelPriceRow,
   OtherApiMarketFilters,
+  OwnerApiService,
   PublicApiQuotaOffer,
   SaveContactMethodRequest,
   SubmitApiOrderDeliveryCredentialPayload,
   Sub2ApiMarketFilters,
   UserContactMethod,
 } from '@/lib/api'
+import type {
+  AdminApiServicePromotion,
+  AdminApiServicePromotionList,
+  ApiServicePromotionAvailability,
+  ApiService as GeneratedApiService,
+  ApiServiceSalesChannel as BackendApiServiceSalesChannel,
+  ApiServiceSalesSummary as BackendApiServiceSalesSummary,
+  CreateApiServicePromotionRequest,
+  PublicApiService,
+  PublicApiServicePromotionList,
+} from '@/api/generated/openapi'
 import { backendFormDataMutation, backendMutation, backendRequest, ensureBackendSession } from '@/lib/backendClient'
 import { apiPaymentMethodRequiresQrCode, isApiPaymentMethod, normalizeQrCodeDataUrl } from '@/lib/apiPaymentSettings'
 import { beijingDateTimeInputToISOString, formatQuotaExpiresAtLabel } from '@/lib/apiQuotaExpiration'
 import { backendMyMerchantProfile, backendUpsertMerchantProfile } from '@/lib/profileBackend'
 import { compareDecimal, divideDecimal, normalizeDecimal, normalizeDecimalTrimmed } from '@/lib/decimal'
 import { mapBackendReputationSummary } from '@/lib/reputationBackend'
+import { matchesApiOrderSearch } from '@/lib/apiOrderUi'
 import type { ReputationSummary } from '@/types/reputation'
 
 type ListResponse<T> = { items: T[] }
@@ -75,7 +93,7 @@ type BackendServicePackage = {
   name: string
   priceCny: string
   panelAllowance: string
-  durationDays?: number
+  durationDays?: number | null
   stockTotal: number
   stockAvailable: number
   description: string
@@ -126,7 +144,7 @@ type BackendAPIService = {
   availableUsdAllowance?: string
   quotaExpiresAt?: string
   declaredTtftBand?: string
-  recommendedConcurrency?: number
+  declaredMaxConcurrency?: number
   performanceConfirmedAt?: string
   minimumIntentCny: string
   maximumIntentCny?: string
@@ -134,6 +152,10 @@ type BackendAPIService = {
   publicAccessNote?: string
   merchantNote?: string
   merchantSupportNote?: string
+  accountPoolType?: 'gpt_pro_20x' | 'gpt_pro_5x' | 'gpt_plus' | 'custom' | null
+  accountPoolLabel?: string | null
+  merchantRefundCommitment?: boolean
+  merchantRefundPolicyVersion?: string
   reviewStatus?: string
   publicationStatus?: string
   moderationStatus?: string
@@ -152,6 +174,18 @@ type BackendAPIService = {
   version: number
   createdAt: string
   updatedAt: string
+}
+
+type BackendOwnerAPIService = BackendAPIService & {
+  salesSummary: BackendApiServiceSalesSummary
+}
+
+export type ApiServicePromotion = Omit<PublicApiServicePromotionList['items'][number], 'service'> & {
+  service: ApiService
+}
+
+export type AdminApiServiceOption = Pick<GeneratedApiService, 'id' | 'title' | 'reviewStatus' | 'publicationStatus' | 'moderationStatus'> & {
+  merchantDisplayName?: string
 }
 
 type ContactDisclosure = {
@@ -209,6 +243,7 @@ type BackendAPIOrderDeliveryCredential = {
 
 export type BackendAPIOrder = {
   id: string
+  orderNo: string
   purchaseKind: string
   apiPurchaseIntentId: string
   apiServiceId: string
@@ -218,7 +253,9 @@ export type BackendAPIOrder = {
   sellerReputation?: ReputationSummary | null
   status: string
   disputeStatus?: string
+  disputeCaseId?: string
   serviceTitleSnapshot: string
+  billingModeSnapshot?: string
   selectedPackageId?: string
   selectedPackageSnapshot?: string
   packageStockReserved?: boolean
@@ -242,7 +279,7 @@ export type BackendAPIOrder = {
   quotaRoundEndsAtSnapshot?: string
   quotaDistributionSystemSnapshot?: string
   quotaTtftBandSnapshot?: string
-  quotaRecommendedConcurrencySnapshot?: number
+  quotaDeclaredMaxConcurrencySnapshot?: number
   quotaPerformanceConfirmedAtSnapshot?: string
   quotaPerformanceUnverifiedSnapshot?: boolean
   quotaDeliveryEtaMinutesSnapshot?: number
@@ -259,7 +296,9 @@ export type BackendAPIOrder = {
   paidConfirmedAt?: string | null
   deliveryNote?: string
   deliverySubmittedAt?: string | null
+  deliveryReviewExpiresAt?: string | null
   deliveryCredential?: BackendAPIOrderDeliveryCredential | null
+  completionSource?: string
   completedAt?: string | null
   cancelledAt?: string | null
   cancelReason?: string
@@ -275,6 +314,48 @@ type BackendAPIOrderPaymentInstructions = {
   paymentQrCodeDataUrl?: string
   paymentExpiresAt: string
 }
+
+type BackendIntentPricingSnapshotModel = {
+  modelNameSnapshot?: unknown
+  merchantMultiplier?: unknown
+}
+
+type BackendIntentPricingSnapshot = {
+  models?: unknown
+  usageVisibility?: unknown
+  merchantNote?: unknown
+  merchantSupportNote?: unknown
+  accountPoolType?: unknown
+  accountPoolLabel?: unknown
+  declaredMaxConcurrency?: unknown
+  recommendedConcurrency?: unknown
+  merchantRefundCommitment?: unknown
+  merchantRefundPolicyVersion?: unknown
+  serviceValidityExpiresAt?: unknown
+}
+
+export type APIIntentPricingSnapshotProjection = ApiServiceCommercialSnapshot & {
+  models: string[]
+  multiplier: string
+  defaultMultiplier: number
+  usageVisibility: ApiUsageVisibility
+  usageVisibilitySnapshotMissing: boolean
+  merchantNote: string
+  merchantSupportNote: string
+  issue?: 'missing' | 'invalid'
+}
+
+const legacyMerchantSupportNote = '历史订单未冻结商户售后说明'
+const invalidMerchantSupportNote = '订单快照不可用，无法读取商户售后说明'
+const apiOrderPlatformTradeBoundary = '售后由双方站外确认；平台不代收、不托管、不担保、不代赔。'
+const commercialSnapshotKeys = [
+  'accountPoolType',
+  'accountPoolLabel',
+  'declaredMaxConcurrency',
+  'merchantRefundCommitment',
+  'merchantRefundPolicyVersion',
+  'serviceValidityExpiresAt',
+] as const
 
 type BackendAPIModel = {
   id: string
@@ -292,6 +373,137 @@ function numberFromDecimal(value: string | undefined, fallback = 0) {
   if (!value) return fallback
   const parsed = Number(value)
   return Number.isFinite(parsed) ? parsed : fallback
+}
+
+function nonEmptyString(value: unknown) {
+  return typeof value === 'string' ? value.trim() : ''
+}
+
+function apiAccountPoolType(value: unknown): ApiService['accountPoolType'] | undefined {
+  if (value === 'gpt_pro_20x' || value === 'gpt_pro_5x' || value === 'gpt_plus' || value === 'custom') return value
+  return undefined
+}
+
+function commercialSnapshotIssue(snapshot: BackendIntentPricingSnapshot): ApiServiceCommercialSnapshot['commercialFactsSnapshotIssue'] {
+  if (!commercialSnapshotKeys.every(key => Object.prototype.hasOwnProperty.call(snapshot, key))) return 'missing'
+  const validity = snapshot.serviceValidityExpiresAt
+  const poolIsHistoricalNull = snapshot.accountPoolType === null && snapshot.accountPoolLabel === null
+  const poolIsValid = Boolean(apiAccountPoolType(snapshot.accountPoolType) && nonEmptyString(snapshot.accountPoolLabel))
+  const concurrencyIsValid = snapshot.declaredMaxConcurrency === null
+    || (Number.isInteger(snapshot.declaredMaxConcurrency) && Number(snapshot.declaredMaxConcurrency) > 0)
+  if (
+    (!poolIsHistoricalNull && !poolIsValid)
+    || !concurrencyIsValid
+    || typeof snapshot.merchantRefundCommitment !== 'boolean'
+    || !nonEmptyString(snapshot.merchantRefundPolicyVersion)
+    || (validity !== null && !nonEmptyString(validity))
+  ) {
+    return 'invalid'
+  }
+  return undefined
+}
+
+function snapshotMultiplier(models: BackendIntentPricingSnapshotModel[]) {
+  const values = [...new Set(models.map(model => nonEmptyString(model.merchantMultiplier)).filter(Boolean))]
+  if (!values.length) return { label: '未冻结倍率信息', value: 1 }
+  const normalized = values.map(value => numberFromDecimal(value, Number.NaN)).filter(Number.isFinite)
+  if (normalized.length !== values.length) return { label: '订单倍率快照不可用', value: 1 }
+  if (normalized.length > 1) return { label: '按模型分别计算', value: normalized[0] }
+  return { label: `${normalized[0].toFixed(2)}x`, value: normalized[0] }
+}
+
+export function projectAPIIntentPricingSnapshot(value: string): APIIntentPricingSnapshotProjection {
+  if (!value.trim()) {
+    return {
+      models: [],
+      multiplier: '未冻结倍率信息',
+      defaultMultiplier: 1,
+      usageVisibility: 'none',
+      usageVisibilitySnapshotMissing: true,
+      merchantNote: '',
+      merchantSupportNote: legacyMerchantSupportNote,
+      commercialFactsSnapshotIssue: 'missing',
+      issue: 'missing',
+    }
+  }
+
+  let snapshot: BackendIntentPricingSnapshot
+  try {
+    const parsed = JSON.parse(value) as unknown
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('invalid pricing snapshot')
+    snapshot = parsed as BackendIntentPricingSnapshot
+  } catch {
+    return {
+      models: [],
+      multiplier: '订单倍率快照不可用',
+      defaultMultiplier: 1,
+      usageVisibility: 'none',
+      usageVisibilitySnapshotMissing: true,
+      merchantNote: '',
+      merchantSupportNote: invalidMerchantSupportNote,
+      commercialFactsSnapshotIssue: 'invalid',
+      issue: 'invalid',
+    }
+  }
+
+  const rawModels = Array.isArray(snapshot.models) ? snapshot.models : []
+  const modelRows = rawModels.filter((model): model is BackendIntentPricingSnapshotModel => Boolean(model) && typeof model === 'object' && !Array.isArray(model))
+  const models = [...new Set(modelRows.map(model => nonEmptyString(model.modelNameSnapshot)).filter(Boolean))]
+  const multiplier = snapshotMultiplier(modelRows)
+  const rawUsageVisibility = nonEmptyString(snapshot.usageVisibility)
+  const accountPoolType = apiAccountPoolType(snapshot.accountPoolType)
+  const accountPoolLabel = nonEmptyString(snapshot.accountPoolLabel) || undefined
+  const frozenConcurrency = Object.prototype.hasOwnProperty.call(snapshot, 'declaredMaxConcurrency')
+    ? snapshot.declaredMaxConcurrency
+    : snapshot.recommendedConcurrency
+  const rawConcurrency = Number(frozenConcurrency)
+  const declaredMaxConcurrency = Number.isInteger(rawConcurrency) && rawConcurrency > 0 ? rawConcurrency : undefined
+  const merchantRefundCommitment = typeof snapshot.merchantRefundCommitment === 'boolean' ? snapshot.merchantRefundCommitment : undefined
+  const merchantRefundPolicyVersion = nonEmptyString(snapshot.merchantRefundPolicyVersion) || undefined
+  const serviceValidityExpiresAt = snapshot.serviceValidityExpiresAt === null
+    ? null
+    : nonEmptyString(snapshot.serviceValidityExpiresAt) || undefined
+
+  return {
+    models,
+    multiplier: multiplier.label,
+    defaultMultiplier: multiplier.value,
+    usageVisibility: usageVisibility(rawUsageVisibility),
+    usageVisibilitySnapshotMissing: !rawUsageVisibility,
+    merchantNote: nonEmptyString(snapshot.merchantNote),
+    merchantSupportNote: nonEmptyString(snapshot.merchantSupportNote) || legacyMerchantSupportNote,
+    accountPoolType,
+    accountPoolLabel,
+    declaredMaxConcurrency,
+    merchantRefundCommitment,
+    merchantRefundPolicyVersion,
+    serviceValidityExpiresAt,
+    commercialFactsSnapshotIssue: commercialSnapshotIssue(snapshot),
+  }
+}
+
+export function merchantSupportNoteFromPublishPayload(value: unknown) {
+  const warranty = value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {}
+  const mode = nonEmptyString(warranty.mode)
+  if (mode === 'merchant_full_refund') {
+    return '商户退款承诺：订单服务有效期内，如未交付、实际号池/模型/额度与订单快照不符，或交付后连续不可用超过 1 小时且不属于排除情形，商户承诺退还订单全部实付金额。'
+  }
+  if (mode === 'upstream_refund_only') {
+    const note = nonEmptyString(warranty.refundNote)
+    return note ? `仅在上游退款后处理：${note}` : '仅在上游退款后处理。'
+  }
+  if (mode === 'merchant_warranty') {
+    const days = Number(warranty.warrantyDays)
+    const parts = [Number.isFinite(days) && days > 0 ? `商户承诺 ${days} 天` : '商户承诺']
+    const coverage = nonEmptyString(warranty.coverage)
+    const compensation = nonEmptyString(warranty.compensation)
+    const exclusions = nonEmptyString(warranty.exclusions)
+    if (coverage) parts.push(`适用范围：${coverage}`)
+    if (compensation) parts.push(`补偿方式：${compensation}`)
+    if (exclusions) parts.push(`不适用情形：${exclusions}`)
+    return `${parts.join('；')}。`
+  }
+  return '无额外售后承诺，具体问题由双方站外协商。'
 }
 
 function apiTTFTBand(value?: string): ApiTTFTBand | undefined {
@@ -414,7 +626,7 @@ export function mapBackendAPIService(service: BackendAPIService): ApiService {
     lastOnlineConfirmedAt: service.updatedAt,
     onlineExpiresAt: service.quotaExpiresAt ?? service.updatedAt,
     declaredTtftBand,
-    recommendedConcurrency: service.recommendedConcurrency,
+    declaredMaxConcurrency: service.declaredMaxConcurrency,
     performanceConfirmedAt: service.performanceConfirmedAt,
     expectedResponseMinutes: service.paymentWindowMinutes ?? 10,
     responseMedianMinutes: service.responseMedianMinutes ?? null,
@@ -423,7 +635,13 @@ export function mapBackendAPIService(service: BackendAPIService): ApiService {
     unresolvedDisputes: service.unresolvedDisputes ?? sellerReputation?.unresolvedDisputes ?? null,
     warning: state === 'reviewing' ? '等待管理员审核' : online && !publiclyOrderable ? '待配置接单设置' : undefined,
     warranty: service.merchantSupportNote || '按商户备注站外协商，平台不担保、不代赔',
-    refundPolicy: '最终金额和售后由双方站外确认，平台不处理支付或托管',
+    refundPolicy: service.merchantRefundCommitment
+      ? '订单有效期内符合商户退款承诺条件时，由商户退还全部实付金额；平台记录但不垫付、不代赔'
+      : '无额外退款承诺，具体问题由双方站外协商；平台不处理支付或托管',
+    accountPoolType: service.accountPoolType ?? undefined,
+    accountPoolLabel: service.accountPoolLabel ?? undefined,
+    merchantRefundCommitment: Boolean(service.merchantRefundCommitment),
+    merchantRefundPolicyVersion: service.merchantRefundPolicyVersion,
     quotaExpiresAt: service.quotaExpiresAt,
     expiresAt: formatQuotaExpiresAtLabel(service.quotaExpiresAt) || '按服务说明',
     completed30d: service.completed30d ?? sellerReputation?.completedCount ?? null,
@@ -456,6 +674,32 @@ export function mapBackendAPIService(service: BackendAPIService): ApiService {
     serviceUpdatedAt: service.updatedAt,
     contactChannels: [],
     acceptedPaymentMethods: (service.acceptedPaymentMethods ?? []).filter(isApiPaymentMethod),
+  }
+}
+
+function mapBackendPublicAPIService(service: PublicApiService): ApiService {
+  return mapBackendAPIService(service)
+}
+
+function mapBackendAPIServiceSalesChannel(channel: BackendApiServiceSalesChannel): ApiServiceSalesChannel {
+  return {
+    kind: channel.kind,
+    state: channel.state,
+    availableUsdAllowance: channel.availableUsdAllowance,
+    availableCopies: channel.availableCopies,
+    nextStartsAt: channel.nextStartsAt,
+    saleCutoffAt: channel.saleCutoffAt,
+    expiresAt: channel.expiresAt,
+  }
+}
+
+export function mapBackendOwnerAPIService(service: BackendOwnerAPIService): OwnerApiService {
+  return {
+    ...mapBackendAPIService(service),
+    salesSummary: {
+      overallState: service.salesSummary.overallState,
+      channels: service.salesSummary.channels.map(mapBackendAPIServiceSalesChannel),
+    },
   }
 }
 
@@ -529,7 +773,7 @@ export function mapBackendPublicAPIQuotaOffer(item: PublicApiQuotaOffer): Public
     sellerIdentityType: item.sellerIdentityType,
     sellerLinuxDoBound: item.sellerLinuxDoBound,
     declaredTtftBand: item.declaredTtftBand,
-    recommendedConcurrency: item.recommendedConcurrency,
+    declaredMaxConcurrency: item.declaredMaxConcurrency,
     performanceConfirmedAt: item.performanceConfirmedAt,
     performanceDisclaimer: item.performanceDisclaimer,
     saleCutoffAt: item.saleCutoffAt,
@@ -706,6 +950,59 @@ export async function backendAPIServices(filters: ApiServiceFilters = {}) {
   return filterServices(response.items.map(mapBackendAPIService).filter(row => row.publiclyOrderable), filters)
 }
 
+export async function backendPublicAPIPromotions(): Promise<ApiServicePromotion[]> {
+  const response = await backendRequest<PublicApiServicePromotionList>('/api/v1/api-service-promotions?placement=api_market_top')
+  return response.items.map(item => ({
+    ...item,
+    service: mapBackendPublicAPIService(item.service),
+  }))
+}
+
+export async function backendAdminAPIPromotions(): Promise<AdminApiServicePromotion[]> {
+  await ensureBackendSession('admin', true)
+  const response = await backendRequest<AdminApiServicePromotionList>('/api/v1/admin/api-service-promotions?limit=100')
+  return response.items
+}
+
+export async function backendAdminAPIServiceOptions(): Promise<AdminApiServiceOption[]> {
+  await ensureBackendSession('admin', true)
+  const response = await backendRequest<ListResponse<GeneratedApiService>>('/api/v1/admin/api-services?limit=100')
+  return response.items.map(item => ({
+    id: item.id,
+    title: item.title,
+    reviewStatus: item.reviewStatus,
+    publicationStatus: item.publicationStatus,
+    moderationStatus: item.moderationStatus,
+    merchantDisplayName: item.merchantDisplayName,
+  }))
+}
+
+export async function backendAPIPromotionAvailability(apiServiceId: string, startsAt: string, endsAt: string) {
+  await ensureBackendSession('admin', true)
+  const params = new URLSearchParams({
+    apiServiceId,
+    placement: 'api_market_top',
+    startsAt,
+    endsAt,
+  })
+  return backendRequest<ApiServicePromotionAvailability>(`/api/v1/admin/api-service-promotions/availability?${params.toString()}`)
+}
+
+export async function backendCreateAPIPromotion(payload: CreateApiServicePromotionRequest) {
+  await ensureBackendSession('admin', true)
+  return backendMutation<AdminApiServicePromotion>('/api/v1/admin/api-service-promotions', payload, {
+    idempotencyPrefix: 'api-service-promotion-create',
+  })
+}
+
+export async function backendStopAPIPromotion(id: string, version: number, reason: string) {
+  await ensureBackendSession('admin', true)
+  return backendMutation<AdminApiServicePromotion>(`/api/v1/admin/api-service-promotions/${encodeURIComponent(id)}/stop`, { reason }, {
+    idempotencyPrefix: 'api-service-promotion-stop',
+    ifMatch: version,
+  })
+}
+
 export async function backendSub2APIServices(filters: Sub2ApiMarketFilters = {}) {
   const rows = await backendAPIServices({})
   return filterServices(rows.filter(row => row.delivery === 'Sub2API'), filters)
@@ -721,10 +1018,11 @@ export async function backendAPIServiceById(id: string) {
   return mapBackendAPIService(service)
 }
 
-export async function backendOwnerAPIServices() {
+export async function backendOwnerAPIServices(salesView: ApiServiceSalesView = 'active') {
   await ensureBackendSession('merchant', false)
-  const response = await backendRequest<ListResponse<BackendAPIService>>('/api/v1/owner/api-services')
-  return response.items.map(mapBackendAPIService)
+  const params = new URLSearchParams({ salesView })
+  const response = await backendRequest<ListResponse<BackendOwnerAPIService>>(`/api/v1/owner/api-services?${params.toString()}`)
+  return response.items.map(mapBackendOwnerAPIService)
 }
 
 export async function backendOwnerAPIServiceById(id: string) {
@@ -810,6 +1108,7 @@ function mapIntent(intent: BackendAPIPurchaseIntent, viewerRole: ApiIntentViewer
   const credit = numberFromDecimal(intent.requestedUsdAllowance)
   const mode = deliveryMode(intent.selectedAccessMode)
   const merchantName = 'API 商户'
+  const pricingSnapshot = projectAPIIntentPricingSnapshot(intent.pricingSnapshot)
   return {
     id: intent.id,
     serviceId: intent.apiServiceId,
@@ -825,7 +1124,7 @@ function mapIntent(intent: BackendAPIPurchaseIntent, viewerRole: ApiIntentViewer
     purchasedCredit: credit,
     purchaseAmountCnyDecimal: intent.requestedCnyAmount,
     purchasedCreditDecimal: intent.requestedUsdAllowance || '0',
-    targetModel: intent.serviceTitleSnapshot,
+    targetModel: pricingSnapshot.models[0] ?? '',
     buyerNote: intent.buyerNote,
     snapshot: {
       serviceId: intent.apiServiceId,
@@ -837,14 +1136,24 @@ function mapIntent(intent: BackendAPIPurchaseIntent, viewerRole: ApiIntentViewer
       merchantDisplayName: merchantName,
       trustLevel: null,
       merchantType: '商户',
-      models: [intent.serviceTitleSnapshot],
-      multiplier: '1.00x',
-      defaultMultiplier: 1,
+      models: pricingSnapshot.models,
+      multiplier: pricingSnapshot.multiplier,
+      defaultMultiplier: pricingSnapshot.defaultMultiplier,
       creditPerCny: amount > 0 && credit > 0 ? Number((credit / amount).toFixed(4)) : 1,
       cnyPerUsdAllowance: intent.declaredCnyPerUsdAllowanceSnapshot || '1.0000',
-      warranty: '商户按服务说明站外处理，平台不担保、不代赔',
-      refundPolicy: '最终金额和售后由双方站外确认',
-      usageVisibility: 'none',
+      warranty: pricingSnapshot.merchantSupportNote,
+      refundPolicy: apiOrderPlatformTradeBoundary,
+      merchantNote: pricingSnapshot.merchantNote,
+      pricingSnapshotIssue: pricingSnapshot.issue,
+      usageVisibilitySnapshotMissing: pricingSnapshot.usageVisibilitySnapshotMissing,
+      usageVisibility: pricingSnapshot.usageVisibility,
+      accountPoolType: pricingSnapshot.accountPoolType,
+      accountPoolLabel: pricingSnapshot.accountPoolLabel,
+      declaredMaxConcurrency: pricingSnapshot.declaredMaxConcurrency,
+      merchantRefundCommitment: pricingSnapshot.merchantRefundCommitment,
+      merchantRefundPolicyVersion: pricingSnapshot.merchantRefundPolicyVersion,
+      serviceValidityExpiresAt: pricingSnapshot.serviceValidityExpiresAt,
+      commercialFactsSnapshotIssue: pricingSnapshot.commercialFactsSnapshotIssue,
       supportedDeliveryModes: [mode],
       selectedDeliveryMode: mode,
       selectedPackageId: intent.selectedPackageId,
@@ -941,8 +1250,9 @@ function adminOrderStatusLabel(value: string) {
 	const labels: Record<string, string> = {
 		pending_payment: '待买家付款',
 		payment_submitted: '待确认收款',
+		payment_issue: '等待买家补充',
 		paid_confirmed: '待商户交付',
-		delivery_submitted: '待买家验收',
+		delivery_submitted: '买家核验期',
 		completed: '已完成',
 		cancelled: '已取消',
 	}
@@ -959,23 +1269,80 @@ export function mapBackendAdminAPIOrder(order: BackendAPIOrder): AdminRow {
 	return {
 		id: order.id,
 		primary: `${order.serviceTitleSnapshot} API 订单`,
-		secondary: `${order.id} · 订单金额 ¥${order.amount}`,
+		secondary: `${order.orderNo} · 订单金额 ¥${order.amount}`,
 		owner: `买家 ${order.buyerUserId?.slice(0, 8) ?? '未知'} / 商户 ${order.sellerUserId?.slice(0, 8) ?? '未知'}`,
-		status: adminOrderStatusLabel(order.status),
+		status: order.status === 'completed'
+			? order.completionSource === 'auto_completed' ? '系统自动完成' : '买家主动确认'
+			: adminOrderStatusLabel(order.status),
 		risk: order.disputeStatus || order.cancelReason || `更新于 ${order.updatedAt}`,
 		targetType: 'api-order',
 		backendKind: 'api-order',
 		backendVersion: order.version,
-		targetTo: null,
+		targetTo: `/admin/api-orders/${order.id}`,
 		detailItems: [
+			{ label: '订单号', value: order.orderNo },
 			{ label: '订单状态', value: order.status },
 			{ label: '订单金额', value: `¥${order.amount}` },
 			{ label: '购买额度', value: order.requestedUsdAllowanceSnapshot ? `${order.requestedUsdAllowanceSnapshot} 美元额度` : '不适用' },
 			{ label: '定价快照', value: order.cnyPerUsdAllowanceSnapshot ? `¥${order.cnyPerUsdAllowanceSnapshot} / $1` : '按套餐快照' },
 			{ label: '交付凭证', value: order.deliverySubmittedAt ? '已提交（管理摘要不展示原始凭证）' : '尚未提交' },
+			{ label: '核验截止', value: order.deliveryReviewExpiresAt ?? '不适用' },
+			{ label: '完成方式', value: order.completionSource === 'auto_completed' ? '系统自动完成' : order.completionSource === 'buyer_confirmed' ? '买家主动确认' : '尚未完成' },
 			{ label: '最近更新', value: order.updatedAt },
 		],
 	}
+}
+
+function apiOrderCompletionSource(value?: string): ApiOrderCompletionSource | undefined {
+  if (value === 'buyer_confirmed' || value === 'auto_completed') return value
+  return undefined
+}
+
+export function mapBackendAdminAPIOrderDetail(order: BackendAPIOrder): AdminApiOrderDetail {
+  if (order.currency !== 'CNY') throw new Error(`Unsupported API order currency: ${order.currency}`)
+  if (!order.buyerUserId || !order.sellerUserId) throw new Error('Admin API order response is missing participant IDs')
+  return {
+    id: order.id,
+    purchaseKind: apiOrderPurchaseKind(order.purchaseKind),
+    apiPurchaseIntentId: order.apiPurchaseIntentId,
+    apiServiceId: order.apiServiceId,
+    buyerUserId: order.buyerUserId,
+    sellerUserId: order.sellerUserId,
+    status: apiOrderStatus(order.status),
+    disputeStatus: order.disputeStatus,
+    disputeCaseId: order.disputeCaseId,
+    serviceTitleSnapshot: order.serviceTitleSnapshot,
+    billingModeSnapshot: order.billingModeSnapshot,
+    selectedPackageId: order.selectedPackageId,
+    selectedPackageSnapshot: order.selectedPackageSnapshot,
+    amount: order.amount,
+    currency: 'CNY',
+    requestedUsdAllowanceSnapshot: order.requestedUsdAllowanceSnapshot,
+    cnyPerUsdAllowanceSnapshot: order.cnyPerUsdAllowanceSnapshot,
+    selectedPaymentMethod: apiOrderPaymentMethod(order.selectedPaymentMethod),
+    paymentExpiresAt: order.paymentExpiresAt,
+    paymentSubmittedAt: order.paymentSubmittedAt ?? undefined,
+    paymentIssueReason: apiOrderPaymentIssueReason(order.paymentIssueReason),
+    paymentIssueNote: order.paymentIssueNote,
+    paymentIssueReportedAt: order.paymentIssueReportedAt ?? undefined,
+    paidConfirmedAt: order.paidConfirmedAt ?? undefined,
+    deliveryNote: order.deliveryNote,
+    deliverySubmittedAt: order.deliverySubmittedAt ?? undefined,
+    deliveryReviewExpiresAt: order.deliveryReviewExpiresAt ?? undefined,
+    completionSource: apiOrderCompletionSource(order.completionSource),
+    completedAt: order.completedAt ?? undefined,
+    cancelledAt: order.cancelledAt ?? undefined,
+    cancelReason: order.cancelReason,
+    version: order.version,
+    createdAt: order.createdAt,
+    updatedAt: order.updatedAt,
+  }
+}
+
+export async function backendAdminAPIOrder(id: string): Promise<AdminApiOrderDetail> {
+  await ensureBackendSession('admin', true)
+  const order = await backendRequest<BackendAPIOrder>(`/api/v1/admin/api-orders/${encodeURIComponent(id)}`)
+  return mapBackendAdminAPIOrderDetail(order)
 }
 
 export async function backendAPIIntentById(id: string) {
@@ -1110,7 +1477,7 @@ function apiQuotaSaleMode(value?: string): ApiQuotaSaleMode {
   throw new Error(`Unsupported API quota sale mode: ${value}`)
 }
 
-function mapAPIQuotaOrderSnapshot(order: BackendAPIOrder): ApiQuotaOrderSnapshot | undefined {
+function mapAPIQuotaOrderSnapshot(order: BackendAPIOrder, pricingSnapshot: APIIntentPricingSnapshotProjection): ApiQuotaOrderSnapshot | undefined {
   if (order.purchaseKind !== 'limited_quota_offer') return undefined
   const ttftBand = apiTTFTBand(order.quotaTtftBandSnapshot)
   if (
@@ -1125,7 +1492,7 @@ function mapAPIQuotaOrderSnapshot(order: BackendAPIOrder): ApiQuotaOrderSnapshot
     || !order.quotaExpiresAtSnapshot
     || !order.quotaDistributionSystemSnapshot
     || !ttftBand
-    || !order.quotaRecommendedConcurrencySnapshot
+    || !order.quotaDeclaredMaxConcurrencySnapshot
     || !order.quotaDeliveryEtaMinutesSnapshot
     || !order.quotaDeliveryModeSnapshot
   ) {
@@ -1153,11 +1520,17 @@ function mapAPIQuotaOrderSnapshot(order: BackendAPIOrder): ApiQuotaOrderSnapshot
     roundEndsAt: order.quotaRoundEndsAtSnapshot,
     distributionSystem: order.quotaDistributionSystemSnapshot,
     ttftBand,
-    recommendedConcurrency: order.quotaRecommendedConcurrencySnapshot,
+    declaredMaxConcurrency: order.quotaDeclaredMaxConcurrencySnapshot,
     performanceConfirmedAt: order.quotaPerformanceConfirmedAtSnapshot,
     performanceUnverified: order.quotaPerformanceUnverifiedSnapshot === true,
     deliveryEtaMinutes: order.quotaDeliveryEtaMinutesSnapshot,
     deliveryMode: order.quotaDeliveryModeSnapshot,
+    accountPoolType: pricingSnapshot.accountPoolType,
+    accountPoolLabel: pricingSnapshot.accountPoolLabel,
+    merchantRefundCommitment: pricingSnapshot.merchantRefundCommitment,
+    merchantRefundPolicyVersion: pricingSnapshot.merchantRefundPolicyVersion,
+    serviceValidityExpiresAt: pricingSnapshot.serviceValidityExpiresAt,
+    commercialFactsSnapshotIssue: pricingSnapshot.commercialFactsSnapshotIssue,
   }
 }
 
@@ -1190,7 +1563,7 @@ function mapDeliveryCredential(value?: BackendAPIOrderDeliveryCredential | null)
 }
 
 function apiOrderSearchTerms(order: ApiOrder) {
-  return [order.id, order.apiPurchaseIntentId, order.serviceTitle, order.buyer, order.seller]
+  return [order.orderNo, order.id, order.apiPurchaseIntentId, order.serviceTitle, order.buyer, order.seller]
 }
 
 function filterAndSortOrders(rows: ApiOrder[], filters: ApiOrderFilters = {}, role: 'buyer' | 'merchant') {
@@ -1205,12 +1578,12 @@ function filterAndSortOrders(rows: ApiOrder[], filters: ApiOrderFilters = {}, ro
       && (!statuses || statuses.includes(row.status))
       && (!filters.serviceId || row.apiServiceId === filters.serviceId)
       && (!rangeMs || now - createdAt <= rangeMs)
-      && (!search || apiOrderSearchTerms(row).some(value => value.toLowerCase().includes(search)))
+      && (!search || matchesApiOrderSearch(search, apiOrderSearchTerms(row)))
   })
   const sort = filters.sort ?? 'updated_desc'
   return filtered.sort((a, b) => {
     if (sort === 'default_buyer' || sort === 'default_merchant') {
-	      const buyerAction = (item: ApiOrder) => item.status === 'pending_payment' || item.status === 'payment_issue' || item.status === 'delivery_submitted' || item.status === 'completed'
+	      const buyerAction = (item: ApiOrder) => item.status === 'pending_payment' || item.status === 'payment_issue' || item.status === 'delivery_submitted'
       const merchantAction = (item: ApiOrder) => item.status === 'payment_submitted' || item.status === 'paid_confirmed'
       const aAction = role === 'buyer' ? buyerAction(a) : merchantAction(a)
       const bAction = role === 'buyer' ? buyerAction(b) : merchantAction(b)
@@ -1226,8 +1599,10 @@ function filterAndSortOrders(rows: ApiOrder[], filters: ApiOrderFilters = {}, ro
 async function mapBackendAPIOrder(order: BackendAPIOrder, viewerRole: 'buyer' | 'merchant'): Promise<ApiOrder> {
   const intent = await backendAPIIntentById(order.apiPurchaseIntentId)
   if (order.currency !== 'CNY') throw new Error(`Unsupported API order currency: ${order.currency}`)
+  const pricingSnapshot = projectAPIIntentPricingSnapshot(order.pricingSnapshot ?? '')
   return {
     id: order.id,
+    orderNo: order.orderNo,
     purchaseKind: apiOrderPurchaseKind(order.purchaseKind),
     apiPurchaseIntentId: order.apiPurchaseIntentId,
     apiServiceId: order.apiServiceId,
@@ -1239,6 +1614,7 @@ async function mapBackendAPIOrder(order: BackendAPIOrder, viewerRole: 'buyer' | 
     sellerReputation: mapBackendReputationSummary(order.sellerReputation),
     status: apiOrderStatus(order.status),
     disputeStatus: order.disputeStatus,
+    disputeCaseId: order.disputeCaseId,
     serviceTitle: order.serviceTitleSnapshot || intent.snapshot.serviceTitle,
     amount: numberFromDecimal(order.amount),
     amountDecimal: order.amount,
@@ -1254,12 +1630,32 @@ async function mapBackendAPIOrder(order: BackendAPIOrder, viewerRole: 'buyer' | 
     paidConfirmedAt: order.paidConfirmedAt ?? undefined,
     deliveryNote: order.deliveryNote,
     deliverySubmittedAt: order.deliverySubmittedAt ?? undefined,
+    deliveryReviewExpiresAt: order.deliveryReviewExpiresAt ?? undefined,
     deliveryCredential: mapDeliveryCredential(order.deliveryCredential),
+    completionSource: apiOrderCompletionSource(order.completionSource),
     completedAt: order.completedAt ?? undefined,
     cancelledAt: order.cancelledAt ?? undefined,
     cancelReason: order.cancelReason,
     version: order.version,
-    intentSnapshot: intent.snapshot,
+    intentSnapshot: {
+      ...intent.snapshot,
+      models: pricingSnapshot.models,
+      multiplier: pricingSnapshot.multiplier,
+      defaultMultiplier: pricingSnapshot.defaultMultiplier,
+      warranty: pricingSnapshot.merchantSupportNote,
+      refundPolicy: apiOrderPlatformTradeBoundary,
+      merchantNote: pricingSnapshot.merchantNote,
+      pricingSnapshotIssue: pricingSnapshot.issue,
+      usageVisibilitySnapshotMissing: pricingSnapshot.usageVisibilitySnapshotMissing,
+      usageVisibility: pricingSnapshot.usageVisibility,
+      accountPoolType: pricingSnapshot.accountPoolType,
+      accountPoolLabel: pricingSnapshot.accountPoolLabel,
+      declaredMaxConcurrency: pricingSnapshot.declaredMaxConcurrency,
+      merchantRefundCommitment: pricingSnapshot.merchantRefundCommitment,
+      merchantRefundPolicyVersion: pricingSnapshot.merchantRefundPolicyVersion,
+      serviceValidityExpiresAt: pricingSnapshot.serviceValidityExpiresAt,
+      commercialFactsSnapshotIssue: pricingSnapshot.commercialFactsSnapshotIssue,
+    },
     selectedDeliveryMode: intent.selectedDeliveryMode,
     selectedPackageId: order.selectedPackageId ?? intent.selectedPackageId,
     packageSnapshot: parsePackageSnapshot(order.selectedPackageSnapshot) ?? intent.snapshot.selectedPackageSnapshot,
@@ -1267,7 +1663,7 @@ async function mapBackendAPIOrder(order: BackendAPIOrder, viewerRole: 'buyer' | 
     packageExpiresAt: order.packageExpiresAt ?? undefined,
     requestedUsdAllowance: numberFromDecimal(order.requestedUsdAllowanceSnapshot || intent.purchasedCreditDecimal),
     requestedUsdAllowanceDecimal: order.requestedUsdAllowanceSnapshot || intent.purchasedCreditDecimal || String(intent.purchasedCredit),
-    quotaSnapshot: mapAPIQuotaOrderSnapshot(order),
+    quotaSnapshot: mapAPIQuotaOrderSnapshot(order, pricingSnapshot),
     merchantContactChannels: intent.contactChannels,
     buyerContactChannels: intent.buyerContactChannels ?? [],
     viewerRole,
@@ -1435,11 +1831,11 @@ async function backendAdminAPIServiceAction(id: string, action: 'approve' | 'req
   })
 }
 
-function toBackendServiceRequest(payload: Record<string, unknown>) {
+export function toBackendServiceRequest(payload: Record<string, unknown>) {
   const distributionSystem = payload.distributionSystem === 'new_api_proxy' ? 'new_api_proxy' : payload.distributionSystem === 'sub2api' ? 'sub2api' : 'other'
   const billing = payload.billingMode === 'fixed_package' ? 'fixed_package' : payload.billingMode === 'manual_credit' ? 'manual_usage_check' : 'metered_usd_quota'
   const modes = Array.isArray(payload.deliveryModes) ? payload.deliveryModes as string[] : ['api_key_endpoint']
-  const selectedModels = Array.isArray(payload.selectedModels) ? payload.selectedModels as Array<{ modelId?: string, multiplierOverride?: number | null, enabled?: boolean }> : []
+  const selectedModels = Array.isArray(payload.selectedModels) ? payload.selectedModels as Array<{ modelId?: string, enabled?: boolean }> : []
   const packages = Array.isArray(payload.packages) ? payload.packages as Array<{ id?: string, name?: string, priceCny?: number, panelAllowance?: number, durationDays?: number, stockTotal?: number, description?: string, enabled?: boolean, modelCatalogIds?: string[] }> : []
 
   const fixedPackage = billing === 'fixed_package'
@@ -1461,9 +1857,11 @@ function toBackendServiceRequest(payload: Record<string, unknown>) {
     usageVisibility: toBackendUsageVisibility(payload.usageVisibility),
     publicAccessNote: String(payload.distributionSystemNote ?? ''),
     merchantNote: String(payload.merchantNote ?? ''),
-    merchantSupportNote: '平台不担保、不代赔；双方站外确认。',
+    accountPoolType: String(payload.accountPoolType ?? ''),
+    accountPoolCustomName: payload.accountPoolType === 'custom' ? String(payload.accountPoolCustomName ?? '') : '',
+    merchantRefundCommitment: Boolean(payload.warranty && typeof payload.warranty === 'object' && !Array.isArray(payload.warranty) && (payload.warranty as Record<string, unknown>).mode === 'merchant_full_refund'),
     declaredTtftBand: String(payload.declaredTtftBand ?? ''),
-    recommendedConcurrency: Number(payload.recommendedConcurrency ?? 0),
+    declaredMaxConcurrency: Number(payload.declaredMaxConcurrency ?? 0),
     performanceConfirmedAt: beijingDateTimeInputToISOString(String(payload.performanceConfirmedAt ?? '')),
     accessModes: fixedPackage
       ? [{ accessMode: 'fixed_package_offsite', publicNote: '交付后开始计算套餐有效期，具体接入信息按订单权限展示。' }]
@@ -1471,7 +1869,7 @@ function toBackendServiceRequest(payload: Record<string, unknown>) {
     models: selectedModels.filter(item => item.enabled !== false).map(item => ({
       modelCatalogId: item.modelId ?? '',
       modelPriceVersionId: '',
-      merchantMultiplier: String(item.multiplierOverride ?? payload.defaultMultiplier ?? '1.0000'),
+      merchantMultiplier: String(payload.defaultMultiplier ?? '1.0000'),
       enabled: true,
     })),
     packages: packages.map((item, index) => ({

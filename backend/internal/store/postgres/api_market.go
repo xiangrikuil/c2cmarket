@@ -37,6 +37,9 @@ func (s *Store) CreateAPIService(ctx context.Context, service apimarket.Service)
 	if appErr := upsertAPIServiceInTx(ctx, tx, service); appErr != nil {
 		return appErr
 	}
+	if appErr := qualifyPromotionRewardsForAPIServiceInTx(ctx, tx, service.ID, service.UpdatedAt); appErr != nil {
+		return appErr
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return internalStoreError()
 	}
@@ -74,17 +77,40 @@ func (s *Store) GetPublicAPIService(ctx context.Context, serviceID string) (apim
 }
 
 func publicAPIServiceOrderablePredicate(alias string) string {
+	return publicAPIServiceOrderablePredicateAt(alias, "now()")
+}
+
+func publicAPIServiceOrderablePredicateAt(alias, currentTimeExpression string) string {
 	alias = strings.TrimSpace(alias)
 	if alias == "" {
 		alias = "api_services"
+	}
+	currentTimeExpression = strings.TrimSpace(currentTimeExpression)
+	if currentTimeExpression == "" {
+		currentTimeExpression = "now()"
 	}
 	return fmt.Sprintf(`%[1]s.review_status = 'approved'
 		  AND %[1]s.publication_status = 'online'
 		  AND %[1]s.moderation_status = 'clear'
 		  AND %[1]s.accepting_orders = true
+		  AND EXISTS (
+		    SELECT 1 FROM users owner
+		    WHERE owner.id = %[1]s.owner_user_id
+		      AND owner.account_status = 'active'
+		  )
+		  AND NOT EXISTS (
+		    SELECT 1
+		    FROM user_restrictions restriction
+		    WHERE restriction.user_id = %[1]s.owner_user_id
+		      AND restriction.role_scope IN ('seller', 'all')
+		      AND restriction.action_code IN ('api_service_publish', 'all')
+		      AND restriction.revoked_at IS NULL
+		      AND restriction.starts_at <= %[3]s
+		      AND (restriction.ends_at IS NULL OR restriction.ends_at > %[3]s)
+		  )
 		  AND %[1]s.payment_window_minutes BETWEEN 3 AND 15
 		  AND (%[1]s.billing_mode <> 'metered_usd_quota' OR %[1]s.available_usd_allowance > 0)
-		  AND (%[1]s.billing_mode <> 'metered_usd_quota' OR %[1]s.quota_expires_at > now())
+		  AND (%[1]s.billing_mode <> 'metered_usd_quota' OR %[1]s.quota_expires_at > %[3]s)
 		  AND (%[1]s.billing_mode <> 'fixed_package' OR EXISTS (
 		    SELECT 1
 		    FROM api_service_packages package_row
@@ -102,11 +128,7 @@ func publicAPIServiceOrderablePredicate(alias string) string {
 		    WHERE po.api_service_id = %[1]s.id
 		      AND po.enabled = true
 		      AND po.payment_method IN (%[2]s)
-		  )`, alias, apiServiceSupportedPaymentMethodsSQL)
-}
-
-func (s *Store) ListAPIServicesByOwner(ctx context.Context, ownerUserID string, page domain.PageRequest) (domain.Page[apimarket.Service], *domain.AppError) {
-	return s.listAPIServicesPage(ctx, `WHERE owner_user_id = $1`, []any{ownerUserID}, page)
+		  )`, alias, apiServiceSupportedPaymentMethodsSQL, currentTimeExpression)
 }
 
 func (s *Store) GetAPIServiceForOwner(ctx context.Context, ownerUserID, serviceID string) (apimarket.Service, *domain.AppError) {
@@ -172,6 +194,9 @@ func (s *Store) UpdateAPIService(ctx context.Context, input apimarket.UpdateServ
 	if err != nil {
 		return apimarket.Service{}, internalStoreError()
 	}
+	if appErr := qualifyPromotionRewardsForAPIServiceInTx(ctx, tx, service.ID, now); appErr != nil {
+		return apimarket.Service{}, appErr
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return apimarket.Service{}, internalStoreError()
 	}
@@ -210,6 +235,9 @@ func (s *Store) UpdateAPIServiceOrderSettings(ctx context.Context, input apimark
 		return apimarket.Service{}, domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Service not orderable", "当前 API 服务不满足接单条件。", "acceptingOrders", "not_orderable", strings.Join(service.OrderableReasons, "；"))
 	}
 	if appErr := updateAPIServiceOrderSettingsInTx(ctx, tx, service); appErr != nil {
+		return apimarket.Service{}, appErr
+	}
+	if appErr := qualifyPromotionRewardsForAPIServiceInTx(ctx, tx, service.ID, now); appErr != nil {
 		return apimarket.Service{}, appErr
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -253,6 +281,9 @@ func (s *Store) SubmitAPIServiceForReview(ctx context.Context, user auth.User, i
 	if appErr := updateAPIServiceStateInTx(ctx, tx, service); appErr != nil {
 		return apimarket.Service{}, appErr
 	}
+	if appErr := qualifyPromotionRewardsForAPIServiceInTx(ctx, tx, service.ID, now); appErr != nil {
+		return apimarket.Service{}, appErr
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return apimarket.Service{}, internalStoreError()
 	}
@@ -290,6 +321,9 @@ func (s *Store) UpdateAPIServicePublication(ctx context.Context, input apimarket
 	if appErr := updateAPIServiceStateInTx(ctx, tx, service); appErr != nil {
 		return apimarket.Service{}, appErr
 	}
+	if appErr := qualifyPromotionRewardsForAPIServiceInTx(ctx, tx, service.ID, now); appErr != nil {
+		return apimarket.Service{}, appErr
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return apimarket.Service{}, internalStoreError()
 	}
@@ -320,6 +354,9 @@ func (s *Store) UpdateAPIServiceModeration(ctx context.Context, user auth.User, 
 	}
 	service = applyAPIServiceAdminAction(service, input, now)
 	if appErr := updateAPIServiceStateInTx(ctx, tx, service); appErr != nil {
+		return apimarket.Service{}, appErr
+	}
+	if appErr := qualifyPromotionRewardsForAPIServiceInTx(ctx, tx, service.ID, now); appErr != nil {
 		return apimarket.Service{}, appErr
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -573,7 +610,8 @@ const apiServiceColumns = `
 	quota_expires_at,
 	minimum_intent_cny::text, COALESCE(maximum_intent_cny::text, ''), usage_visibility,
 	COALESCE(public_access_note, ''), COALESCE(merchant_note, ''), COALESCE(merchant_support_note, ''),
-	COALESCE(declared_ttft_band, ''), COALESCE(recommended_concurrency, 0), performance_confirmed_at,
+	COALESCE(account_pool_type, ''), COALESCE(account_pool_custom_name, ''), merchant_refund_commitment,
+	COALESCE(declared_ttft_band, ''), COALESCE(declared_max_concurrency, 0), performance_confirmed_at,
 	accepting_orders, payment_window_minutes,
 	review_status, publication_status, moderation_status, COALESCE(approved_by_admin_id::text, ''),
 	approved_at, COALESCE(moderation_reason, ''), created_at, updated_at, version
@@ -1026,7 +1064,8 @@ func upsertAPIServiceInTx(ctx context.Context, tx pgx.Tx, service apimarket.Serv
 			quota_expires_at,
 			minimum_intent_cny, maximum_intent_cny, usage_visibility,
 			public_access_note, merchant_note, merchant_support_note,
-			declared_ttft_band, recommended_concurrency, performance_confirmed_at,
+			account_pool_type, account_pool_custom_name, merchant_refund_commitment,
+			declared_ttft_band, declared_max_concurrency, performance_confirmed_at,
 			review_status, publication_status, moderation_status,
 			approved_by_admin_id, approved_at, moderation_reason,
 			accepting_orders, payment_window_minutes,
@@ -1042,8 +1081,9 @@ func upsertAPIServiceInTx(ctx context.Context, tx pgx.Tx, service apimarket.Serv
 			$21, $22, $23,
 			$24, $25, $26,
 			$27, $28, $29,
-			$30, $31,
-			$32, $33, $34
+			$30, $31, $32,
+			$33, $34,
+			$35, $36, $37
 		)
 		ON CONFLICT (id) DO UPDATE
 		SET merchant_profile_id = EXCLUDED.merchant_profile_id,
@@ -1064,8 +1104,11 @@ func upsertAPIServiceInTx(ctx context.Context, tx pgx.Tx, service apimarket.Serv
 		    public_access_note = EXCLUDED.public_access_note,
 		    merchant_note = EXCLUDED.merchant_note,
 		    merchant_support_note = EXCLUDED.merchant_support_note,
+		    account_pool_type = EXCLUDED.account_pool_type,
+		    account_pool_custom_name = EXCLUDED.account_pool_custom_name,
+		    merchant_refund_commitment = EXCLUDED.merchant_refund_commitment,
 		    declared_ttft_band = EXCLUDED.declared_ttft_band,
-		    recommended_concurrency = EXCLUDED.recommended_concurrency,
+		    declared_max_concurrency = EXCLUDED.declared_max_concurrency,
 		    performance_confirmed_at = EXCLUDED.performance_confirmed_at,
 		    review_status = EXCLUDED.review_status,
 		    publication_status = EXCLUDED.publication_status,
@@ -1083,7 +1126,8 @@ func upsertAPIServiceInTx(ctx context.Context, tx pgx.Tx, service apimarket.Serv
 		service.QuotaExpiresAt,
 		service.MinimumIntentCNY, nullNumeric(service.MaximumIntentCNY), service.UsageVisibility,
 		nullText(service.PublicAccessNote), nullText(service.MerchantNote), nullText(service.MerchantSupportNote),
-		nullText(service.DeclaredTTFTBand), nullInt(service.RecommendedConcurrency), service.PerformanceConfirmedAt,
+		nullText(service.AccountPoolType), nullText(service.AccountPoolCustomName), service.MerchantRefundCommitment,
+		nullText(service.DeclaredTTFTBand), nullInt(service.DeclaredMaxConcurrency), service.PerformanceConfirmedAt,
 		service.ReviewStatus, service.PublicationStatus, service.ModerationStatus,
 		nullUUID(service.ApprovedByAdminID), service.ApprovedAt, nullText(service.ModerationReason),
 		service.AcceptingOrders, service.PaymentWindowMinutes,
@@ -1834,7 +1878,11 @@ func scanAPIServices(rows pgx.Rows) ([]apimarket.Service, *domain.AppError) {
 }
 
 func scanAPIService(row scanner, service *apimarket.Service) error {
-	return row.Scan(
+	return row.Scan(apiServiceScanDestinations(service)...)
+}
+
+func apiServiceScanDestinations(service *apimarket.Service) []any {
+	return []any{
 		&service.ID,
 		&service.OwnerUserID,
 		&service.MerchantProfileID,
@@ -1861,8 +1909,11 @@ func scanAPIService(row scanner, service *apimarket.Service) error {
 		&service.PublicAccessNote,
 		&service.MerchantNote,
 		&service.MerchantSupportNote,
+		&service.AccountPoolType,
+		&service.AccountPoolCustomName,
+		&service.MerchantRefundCommitment,
 		&service.DeclaredTTFTBand,
-		&service.RecommendedConcurrency,
+		&service.DeclaredMaxConcurrency,
 		&service.PerformanceConfirmedAt,
 		&service.AcceptingOrders,
 		&service.PaymentWindowMinutes,
@@ -1875,7 +1926,7 @@ func scanAPIService(row scanner, service *apimarket.Service) error {
 		&service.CreatedAt,
 		&service.UpdatedAt,
 		&service.Version,
-	)
+	}
 }
 
 func scanAPIPurchaseIntents(rows pgx.Rows) ([]apiintent.Intent, *domain.AppError) {

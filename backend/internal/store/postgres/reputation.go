@@ -15,6 +15,71 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
+const carpoolApplicationConfirmationEvidenceSQL = `
+  CROSS JOIN LATERAL (
+    SELECT
+      EXISTS (
+        SELECT 1
+        FROM carpool_join_confirmations confirmation
+        WHERE confirmation.carpool_application_id = application.id
+          AND confirmation.actor_role = 'buyer'
+      ) AS buyer_confirmed,
+      EXISTS (
+        SELECT 1
+        FROM carpool_join_confirmations confirmation
+        WHERE confirmation.carpool_application_id = application.id
+          AND confirmation.actor_role = 'owner'
+      ) AS owner_confirmed
+  ) AS confirmations
+`
+
+const carpoolApplicationResponsibleCancellationPredicate = `(
+  (participants.role = 'buyer' AND application.status = 'cancelled_by_buyer')
+  OR (participants.role = 'seller' AND application.status = 'cancelled_by_owner')
+  OR (
+    application.status = 'expired'
+    AND (
+      (participants.role = 'buyer' AND NOT confirmations.buyer_confirmed)
+      OR (participants.role = 'seller' AND NOT confirmations.owner_confirmed)
+    )
+  )
+)`
+
+const apiOrderCancellationEvidenceSQL = `
+  CROSS JOIN LATERAL (
+    SELECT
+      EXISTS (
+        SELECT 1
+        FROM api_order_events event
+        WHERE event.api_order_id = api_order.id
+          AND event.event_type = 'api_order.cancelled'
+          AND event.actor_user_id = participants.user_id
+      ) AS actor_cancelled,
+      EXISTS (
+        SELECT 1
+        FROM api_order_events event
+        WHERE event.api_order_id = api_order.id
+          AND event.event_type = 'api_order.cancelled'
+          AND event.actor_user_id IN (api_order.buyer_user_id, api_order.seller_user_id)
+      ) AS known_actor_cancelled,
+      (
+        SELECT MIN(event.created_at)
+        FROM api_order_events event
+        WHERE event.api_order_id = api_order.id
+          AND event.event_type = 'api_order.cancelled'
+          AND event.actor_user_id = participants.user_id
+      ) AS actor_cancelled_at
+  ) AS cancellation
+`
+
+const apiOrderResponsibleCancellationPredicate = `(
+  cancellation.actor_cancelled
+  OR (
+    participants.role = 'buyer'
+    AND api_order.cancel_reason = 'payment_timeout'
+  )
+)`
+
 const aggregateReputationFactsSQL = `
 WITH requested AS (
   SELECT DISTINCT unnest($1::uuid[]) AS user_id
@@ -85,15 +150,14 @@ terminal_facts AS (
     0,
     0,
     CASE
-      WHEN (
-        (participants.role = 'buyer' AND application.status = 'cancelled_by_buyer')
-        OR (participants.role = 'seller' AND application.status = 'cancelled_by_owner')
-      )
+      WHEN ` + carpoolApplicationResponsibleCancellationPredicate + `
         AND (exclusion.id IS NULL OR exclusion.restored_at IS NOT NULL)
       THEN 1 ELSE 0
     END,
     CASE
       WHEN application.status = 'expired'
+        AND confirmations.buyer_confirmed
+        AND confirmations.owner_confirmed
         AND (exclusion.id IS NULL OR exclusion.restored_at IS NOT NULL)
       THEN 1 ELSE 0
     END,
@@ -108,6 +172,7 @@ terminal_facts AS (
       (application.buyer_user_id, 'buyer'::text),
       (application.owner_user_id, 'seller'::text)
   ) AS participants(user_id, role)
+` + carpoolApplicationConfirmationEvidenceSQL + `
   LEFT JOIN reputation_transaction_exclusions exclusion
     ON exclusion.transaction_type = 'carpool_application'
    AND exclusion.transaction_id = application.id
@@ -132,17 +197,14 @@ terminal_facts AS (
       THEN 1 ELSE 0
     END,
     CASE
-      WHEN (
-        (participants.role = 'buyer' AND cancellation.buyer_cancelled)
-        OR (participants.role = 'seller' AND cancellation.seller_cancelled)
-      )
+      WHEN ` + apiOrderResponsibleCancellationPredicate + `
         AND (exclusion.id IS NULL OR exclusion.restored_at IS NOT NULL)
       THEN 1 ELSE 0
     END,
     CASE
       WHEN api_order.status = 'cancelled'
-        AND NOT cancellation.buyer_cancelled
-        AND NOT cancellation.seller_cancelled
+        AND NOT cancellation.known_actor_cancelled
+        AND api_order.cancel_reason <> 'payment_timeout'
         AND (exclusion.id IS NULL OR exclusion.restored_at IS NOT NULL)
       THEN 1 ELSE 0
     END,
@@ -157,23 +219,7 @@ terminal_facts AS (
       (api_order.buyer_user_id, 'buyer'::text),
       (api_order.seller_user_id, 'seller'::text)
   ) AS participants(user_id, role)
-  CROSS JOIN LATERAL (
-    SELECT
-      EXISTS (
-        SELECT 1
-        FROM api_order_events event
-        WHERE event.api_order_id = api_order.id
-          AND event.event_type = 'api_order.cancelled'
-          AND event.actor_user_id = api_order.buyer_user_id
-      ) AS buyer_cancelled,
-      EXISTS (
-        SELECT 1
-        FROM api_order_events event
-        WHERE event.api_order_id = api_order.id
-          AND event.event_type = 'api_order.cancelled'
-          AND event.actor_user_id = api_order.seller_user_id
-      ) AS seller_cancelled
-  ) AS cancellation
+` + apiOrderCancellationEvidenceSQL + `
   LEFT JOIN reputation_transaction_exclusions exclusion
     ON exclusion.transaction_type = 'api_order'
    AND exclusion.transaction_id = api_order.id
@@ -579,16 +625,13 @@ fault_candidates AS (
       (application.buyer_user_id, 'buyer'::text),
       (application.owner_user_id, 'seller'::text)
   ) AS participants(user_id, role)
+` + carpoolApplicationConfirmationEvidenceSQL + `
   LEFT JOIN reputation_transaction_exclusions exclusion
     ON exclusion.transaction_type = 'carpool_application'
    AND exclusion.transaction_id = application.id
   WHERE participants.user_id = requested.user_id
     AND application.updated_at >= $2 - interval '90 days'
-    AND (
-      (participants.role = 'buyer' AND application.status = 'cancelled_by_buyer')
-      OR
-      (participants.role = 'seller' AND application.status = 'cancelled_by_owner')
-    )
+    AND ` + carpoolApplicationResponsibleCancellationPredicate + `
     AND (exclusion.id IS NULL OR exclusion.restored_at IS NOT NULL)
 
   UNION ALL
@@ -597,27 +640,29 @@ fault_candidates AS (
     participants.user_id,
     participants.role,
     'api'::text,
-    event.created_at,
-    GREATEST(api_order.updated_at, event.created_at, COALESCE(exclusion.updated_at, api_order.updated_at))
+    COALESCE(cancellation.actor_cancelled_at, api_order.cancelled_at, api_order.updated_at),
+    GREATEST(
+      api_order.updated_at,
+      cancellation.actor_cancelled_at,
+      COALESCE(exclusion.updated_at, api_order.updated_at)
+    )
   FROM requested
   JOIN api_orders api_order
     ON api_order.buyer_user_id = requested.user_id
     OR api_order.seller_user_id = requested.user_id
-  JOIN api_order_events event
-    ON event.api_order_id = api_order.id
-   AND event.event_type = 'api_order.cancelled'
   CROSS JOIN LATERAL (
     VALUES
       (api_order.buyer_user_id, 'buyer'::text),
       (api_order.seller_user_id, 'seller'::text)
   ) AS participants(user_id, role)
+` + apiOrderCancellationEvidenceSQL + `
   LEFT JOIN reputation_transaction_exclusions exclusion
     ON exclusion.transaction_type = 'api_order'
    AND exclusion.transaction_id = api_order.id
   WHERE participants.user_id = requested.user_id
     AND api_order.status = 'cancelled'
-    AND event.actor_user_id = participants.user_id
-    AND event.created_at >= $2 - interval '90 days'
+    AND ` + apiOrderResponsibleCancellationPredicate + `
+    AND COALESCE(cancellation.actor_cancelled_at, api_order.cancelled_at, api_order.updated_at) >= $2 - interval '90 days'
     AND (exclusion.id IS NULL OR exclusion.restored_at IS NOT NULL)
 ),
 fault_stats AS (

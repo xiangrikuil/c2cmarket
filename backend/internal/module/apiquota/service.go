@@ -512,8 +512,8 @@ func validatePublishableBatch(batch Batch, now time.Time) *domain.AppError {
 	if !batch.ServiceOrderable {
 		return domain.NewError(http.StatusConflict, domain.CodeInvalidStateTransition, "API service unavailable", "关联 API 服务当前不可接单。")
 	}
-	if batch.DeclaredTTFTBand == "" || batch.RecommendedConcurrency < 1 || batch.PerformanceConfirmedAt == nil {
-		return domain.NewError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Performance declaration required", "发布额度包前必须完善商户自报首字响应、建议并发和最近确认时间。")
+	if batch.DeclaredTTFTBand == "" || batch.DeclaredMaxConcurrency < 1 || batch.PerformanceConfirmedAt == nil {
+		return domain.NewError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Performance declaration required", "发布额度包前必须完善商户自报首字响应、商户声明最大并发和最近确认时间。")
 	}
 	if !now.UTC().Before(batch.SaleCutoffAt) || !now.UTC().Before(batch.ExpiresAt) {
 		return domain.NewError(http.StatusConflict, domain.CodeAPIQuotaBatchExpired, "Quota batch expired", "额度批次已超过最晚下单时间。")

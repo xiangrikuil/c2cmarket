@@ -1,11 +1,33 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
-import { AlertTriangle, ArrowLeft, Bell, BookOpen, Boxes, Car, ClipboardList, Code2, FileText, Gauge, Menu, MessageSquareWarning, PackageSearch, PanelLeftClose, PanelLeftOpen, Search, Settings, ShieldCheck, UserCog, Users, X } from 'lucide-vue-next'
+import AlertTriangle from 'lucide-vue-next/dist/esm/icons/triangle-alert.js'
+import ArrowLeft from 'lucide-vue-next/dist/esm/icons/arrow-left.js'
+import Bell from 'lucide-vue-next/dist/esm/icons/bell.js'
+import BookOpen from 'lucide-vue-next/dist/esm/icons/book-open.js'
+import Boxes from 'lucide-vue-next/dist/esm/icons/boxes.js'
+import Car from 'lucide-vue-next/dist/esm/icons/car.js'
+import ClipboardList from 'lucide-vue-next/dist/esm/icons/clipboard-list.js'
+import Code2 from 'lucide-vue-next/dist/esm/icons/code-xml.js'
+import FileText from 'lucide-vue-next/dist/esm/icons/file-text.js'
+import Gauge from 'lucide-vue-next/dist/esm/icons/gauge.js'
+import Gift from 'lucide-vue-next/dist/esm/icons/gift.js'
+import Menu from 'lucide-vue-next/dist/esm/icons/menu.js'
+import MessageSquareWarning from 'lucide-vue-next/dist/esm/icons/message-square-warning.js'
+import PackageSearch from 'lucide-vue-next/dist/esm/icons/package-search.js'
+import PanelLeftClose from 'lucide-vue-next/dist/esm/icons/panel-left-close.js'
+import PanelLeftOpen from 'lucide-vue-next/dist/esm/icons/panel-left-open.js'
+import Search from 'lucide-vue-next/dist/esm/icons/search.js'
+import Settings from 'lucide-vue-next/dist/esm/icons/settings.js'
+import ShieldCheck from 'lucide-vue-next/dist/esm/icons/shield-check.js'
+import TrendingUp from 'lucide-vue-next/dist/esm/icons/trending-up.js'
+import UserCog from 'lucide-vue-next/dist/esm/icons/user-cog.js'
+import Users from 'lucide-vue-next/dist/esm/icons/users.js'
+import X from 'lucide-vue-next/dist/esm/icons/x.js'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { useMyProfileQuery } from '@/queries/useMarketQueries'
+import { useMyProfileQuery } from '@/queries/useAppShellQueries'
 import { useNavigationBadges } from '@/queries/useRealtimeQueries'
 import { usePersistentSidebar } from '@/composables/usePersistentSidebar'
 import { useRealtimeSync } from '@/composables/useRealtimeSync'
@@ -21,7 +43,11 @@ const { data: badges } = useNavigationBadges(computed(() => Boolean(profile.valu
 useRealtimeSync(computed(() => Boolean(profile.value)))
 
 const navGroups = computed(() => [
-  { title: '概览', items: [{ label: '管理工作台', to: '/admin', icon: Gauge, count: badges.value?.admin?.total ?? null }] },
+  { title: '概览', items: [
+    { label: '管理工作台', to: '/admin', icon: Gauge, count: badges.value?.admin?.total ?? null },
+    { label: '用户增长', to: '/admin/growth', icon: TrendingUp, count: null },
+    { label: '增长推广', to: '/admin/growth-promotions', icon: Gift, count: null },
+  ] },
   { title: '待办与治理', items: [
     { label: '官网价格维护', to: '/admin/official-prices', icon: ShieldCheck, count: badges.value?.admin?.officialPrices ?? null },
     { label: '车源异常', to: '/admin/carpools', icon: Car, count: badges.value?.admin?.carpools ?? null },
@@ -122,7 +148,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
         <div class="flex h-14 items-center gap-3 px-4 sm:px-5 lg:px-6">
           <Button variant="ghost" size="icon" class="lg:hidden" aria-label="打开管理导航" @click="menuOpen = true"><Menu class="h-4 w-4" /></Button>
           <h1 class="hidden min-w-[150px] text-lg font-semibold md:block">{{ currentTitle }}</h1>
-          <div class="relative hidden w-full max-w-xl md:block"><Search class="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" /><Input v-model="searchText" class="h-9 pl-9" aria-label="后台全局搜索" placeholder="搜索用户或管理对象" @keyup.enter="runSearch" /></div>
+          <div v-if="route.path !== '/admin/users'" class="relative hidden w-full max-w-xl md:block"><Search class="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" /><Input v-model="searchText" class="h-9 pl-9" aria-label="后台全局搜索" placeholder="搜索用户或管理对象" @keyup.enter="runSearch" /></div>
           <div class="flex-1" />
           <Badge v-if="badges?.admin?.total" variant="secondary">我的待办 {{ formatCount(badges.admin.total) }}</Badge>
           <div class="hidden items-center gap-2 text-sm sm:flex"><span class="grid h-7 w-7 place-items-center rounded-full bg-primary/10 text-primary"><UserCog class="h-4 w-4" /></span><span>{{ adminName }}</span></div>

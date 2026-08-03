@@ -29,55 +29,69 @@ func apiOrderNotificationFor(order apiorder.Order, actorUserID, eventType string
 		return apiOrderNotificationSpec{
 			RecipientUserID: order.SellerUserID,
 			Title:           "买家已标记付款",
-			Body:            "买家已标记完成站外付款，请核对收款记录后确认。",
+			Body:            apiOrderNotificationBody(order, "买家已标记完成站外付款，请核对收款记录后确认。"),
 			TargetURL:       sellerTarget,
 		}, true
 	case apiorder.EventCancelled:
 		return apiOrderNotificationSpec{
 			RecipientUserID: order.SellerUserID,
-			Title:           "买家已取消订单",
-			Body:            "买家在付款前取消了订单，请查看记录。",
+			Title:           "API 销售订单已取消",
+			Body:            apiOrderNotificationBody(order, "买家在付款前取消了订单，请查看记录。"),
 			TargetURL:       sellerTarget,
 		}, true
 	case apiorder.EventPaymentConfirmed:
 		return apiOrderNotificationSpec{
 			RecipientUserID: order.BuyerUserID,
 			Title:           "卖家已确认收款",
-			Body:            "卖家已确认收到站外付款，接下来将准备交付。",
+			Body:            apiOrderNotificationBody(order, "卖家已确认收到站外付款，接下来将准备交付。"),
 			TargetURL:       buyerTarget,
 		}, true
 	case apiorder.EventPaymentIssueReported:
 		return apiOrderNotificationSpec{
 			RecipientUserID: order.BuyerUserID,
 			Title:           "付款信息需要补充",
-			Body:            "商户核对后标记为“" + apiorder.PaymentIssueLabel(order.PaymentIssueReason) + "”，请补充付款说明并重新提交。",
+			Body:            apiOrderNotificationBody(order, "商户核对后标记为“"+apiorder.PaymentIssueLabel(order.PaymentIssueReason)+"”，请补充付款说明并重新提交。"),
 			TargetURL:       buyerTarget,
 		}, true
 	case apiorder.EventDeliverySubmitted:
 		return apiOrderNotificationSpec{
 			RecipientUserID: order.BuyerUserID,
 			Title:           "卖家已提交交付凭证",
-			Body:            "卖家已提交买家专属接入信息，请进入订单详情核对并确认完成。",
+			Body:            apiOrderNotificationBody(order, "卖家已提交买家专属接入信息，请在核验期内确认可用或反馈问题。"),
+			TargetURL:       buyerTarget,
+		}, true
+	case apiorder.EventDeliveryReviewReminder:
+		return apiOrderNotificationSpec{
+			RecipientUserID: order.BuyerUserID,
+			Title:           "交付凭证核验即将截止",
+			Body:            apiOrderNotificationBody(order, "请尽快核验交付凭证；如未反馈问题，订单将在核验期结束后自动完成。"),
 			TargetURL:       buyerTarget,
 		}, true
 	case apiorder.EventCompleted:
 		return apiOrderNotificationSpec{
 			RecipientUserID: order.SellerUserID,
 			Title:           "买家已确认订单完成",
-			Body:            "买家已确认交付可用，该订单已完成。",
+			Body:            apiOrderNotificationBody(order, "买家已确认交付可用，该订单已完成。"),
+			TargetURL:       sellerTarget,
+		}, true
+	case apiorder.EventAutoCompleted:
+		return apiOrderNotificationSpec{
+			RecipientUserID: order.SellerUserID,
+			Title:           "订单已自动完成",
+			Body:            apiOrderNotificationBody(order, "买家核验期已结束且未反馈问题，该订单已由系统自动完成。"),
 			TargetURL:       sellerTarget,
 		}, true
 	case apiorder.EventPaymentTimeoutCancelled:
 		return apiOrderNotificationSpec{
 			RecipientUserID: order.BuyerUserID,
 			Title:           "订单因付款超时已取消",
-			Body:            "付款窗口已结束，该订单已自动取消。",
+			Body:            apiOrderNotificationBody(order, "付款窗口已结束，该订单已自动取消。"),
 			TargetURL:       buyerTarget,
 		}, true
 	case apiorder.EventDisputeOpened:
 		spec := apiOrderNotificationSpec{
 			Title: "订单已申请人工介入",
-			Body:  "对方已申请人工介入，请查看订单状态。",
+			Body:  apiOrderNotificationBody(order, "对方已申请人工介入，请查看订单状态。"),
 		}
 		switch actorUserID {
 		case order.BuyerUserID:
@@ -95,6 +109,13 @@ func apiOrderNotificationFor(order apiorder.Order, actorUserID, eventType string
 	}
 }
 
+func apiOrderNotificationBody(order apiorder.Order, body string) string {
+	if strings.TrimSpace(order.OrderNo) == "" {
+		return body
+	}
+	return "订单 " + order.OrderNo + "：" + body
+}
+
 func insertAPIOrderDomainEventAndNotificationInTx(ctx context.Context, tx pgx.Tx, order apiorder.Order, actorUserID, eventType, requestID string, now time.Time) *domain.AppError {
 	spec, ok := apiOrderNotificationFor(order, actorUserID, eventType)
 	requestID = strings.TrimSpace(requestID)
@@ -106,8 +127,9 @@ func insertAPIOrderDomainEventAndNotificationInTx(ctx context.Context, tx pgx.Tx
 		actorKind = "system"
 	}
 	metadata, err := json.Marshal(map[string]string{
-		"status":        order.Status,
-		"disputeStatus": order.DisputeStatus,
+		"status":           order.Status,
+		"disputeStatus":    order.DisputeStatus,
+		"completionSource": order.CompletionSource,
 	})
 	if err != nil {
 		return internalStoreError()

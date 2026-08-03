@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 26
-- **Last Active**: 2026-07-29
+- **Total Sessions**: 32
+- **Last Active**: 2026-08-03
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~1002 | Active |
+| `journal-1.md` | ~1194 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,12 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 32 | 2026-08-03 | Fix PR 20 CI failures | `9aaaba1`, `0f3aaaf` | `codex/orders-promotions-integrated` |
+| 31 | 2026-08-03 | Fix Nuxt development first-page latency | `37a7d25` | `codex/orders-promotions-integrated` |
+| 30 | 2026-08-02 | 整合 API 订单与推广分支 | `5586e81`, `29e1d4d`, `07af546` | `codex/orders-promotions-integrated` |
+| 29 | 2026-08-02 | API 订单角色视图与 24 小时核验期 | `a527105` | `codex/api-order-role-aware-detail` |
+| 28 | 2026-08-01 | SSH 与 Tailscale 私网部署加固 | `fdf62ee` | `codex/tailscale-private-deploy` |
+| 27 | 2026-07-31 | 恢复生产数据库认证与后端 | - | `codex/fix-staging-release-traceability` |
 | 26 | 2026-07-29 | 未登录隐藏私有导航 | `9fb4457` | `codex/unified-auth-route-guard` |
 | 25 | 2026-07-29 | 统一登录访问控制与会话回跳 | `9a15a8d` | `codex/unified-auth-route-guard` |
 | 24 | 2026-07-29 | Persist development account recovery through real backend | `44895f2` | `codex/api-publish-three-modes` |

@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"c2c-market/backend/internal/module/apiorder"
 	"c2c-market/backend/internal/module/reputation"
 
 	"github.com/google/uuid"
@@ -298,6 +299,261 @@ func TestReputationEnginePostgresAggregatesCompletedOrderReviewAndBatchConsisten
 		excluded.Metrics.RawAverageRating != nil ||
 		excluded.Metrics.WeightedRating != nil {
 		t.Fatalf("excluded transaction remained in reputation: %#v", excluded.Metrics)
+	}
+}
+
+func TestReputationEnginePostgresAttributesRoleControlledTimeouts(t *testing.T) {
+	databaseURL := strings.TrimSpace(os.Getenv("C2C_TEST_DATABASE_URL"))
+	if databaseURL == "" {
+		t.Skip("C2C_TEST_DATABASE_URL is not configured")
+	}
+	ctx := context.Background()
+	pool, err := pgxpool.New(ctx, databaseURL)
+	if err != nil {
+		t.Fatalf("connect test database: %v", err)
+	}
+	defer pool.Close()
+	requireReviewTestDatabase(t, ctx, pool)
+
+	now := time.Date(2026, 8, 1, 12, 0, 0, 0, time.UTC)
+	sellerID := uuid.NewString()
+	sellerContactID := uuid.NewString()
+	buyerID := uuid.NewString()
+	buyerContactID := uuid.NewString()
+	serviceID := uuid.NewString()
+	seedQuotaServiceForTest(t, ctx, pool, sellerID, sellerContactID, buyerID, buyerContactID, serviceID, now.Add(-2*time.Hour))
+	seedTimeoutAPIOrderForReputationTest(t, ctx, pool, serviceID, sellerID, sellerContactID, buyerID, buyerContactID, now)
+	seedExpiredCarpoolConfirmationsForReputationTest(t, ctx, pool, sellerID, sellerContactID, buyerID, buyerContactID, now)
+
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO user_reputation_states (
+		  user_id, role, scope, tier, state, confidence, rule_version,
+		  metrics_json, warnings_json, badges_json, progress_json,
+		  tier_entered_at, state_entered_at, calculated_at
+		)
+		VALUES (
+		  $1, 'buyer', 'api', 'insufficient', 'active', 'low', 'reputation-v1',
+		  '{"completedCount":99,"roleResponsibilityCancellationCount":0}'::jsonb,
+		  '[]'::jsonb, '[]'::jsonb, '[]'::jsonb,
+		  $2, $2, $2
+		)
+	`, buyerID, now.Add(-time.Hour)); err != nil {
+		t.Fatalf("insert old-rule reputation snapshot: %v", err)
+	}
+
+	store := &Store{pool: pool}
+	service := reputation.NewService(store, func() time.Time { return now })
+	for _, userID := range []string{buyerID, sellerID} {
+		if _, appErr := service.GetUserReputation(ctx, userID); appErr != nil {
+			t.Fatalf("recalculate timeout reputation for %s: %v", userID, appErr)
+		}
+	}
+
+	facts, appErr := store.AggregateFacts(ctx, []string{buyerID, sellerID}, now)
+	if appErr != nil {
+		t.Fatalf("aggregate timeout responsibility facts: %v", appErr)
+	}
+	assertTimeoutFacts := func(label string, value reputation.ScopeFacts, responsible, recent int) {
+		t.Helper()
+		if value.RoleResponsibilityCancellationCount != responsible ||
+			value.RoleResponsibilityCancellationCount90d != recent ||
+			value.UnknownResponsibilityCancellationCount != 0 {
+			t.Fatalf("unexpected %s timeout facts: %#v", label, value)
+		}
+	}
+	assertTimeoutFacts("buyer API", facts[buyerID].Buyer.API, 1, 1)
+	assertTimeoutFacts("seller API", facts[sellerID].Seller.API, 0, 0)
+	assertTimeoutFacts("buyer carpool", facts[buyerID].Buyer.Carpool, 2, 2)
+	assertTimeoutFacts("seller carpool", facts[sellerID].Seller.Carpool, 2, 2)
+
+	var ruleVersion string
+	var completedCount, responsibleCount, unknownCount int
+	var completionRate *float64
+	if err := pool.QueryRow(ctx, `
+		SELECT
+		  rule_version,
+		  (metrics_json->>'completedCount')::integer,
+		  (metrics_json->>'roleResponsibilityCancellationCount')::integer,
+		  (metrics_json->>'unknownResponsibilityCancellationCount')::integer,
+		  (metrics_json->>'roleCompletionRate')::double precision
+		FROM user_reputation_states
+		WHERE user_id = $1 AND role = 'buyer' AND scope = 'api'
+	`, buyerID).Scan(&ruleVersion, &completedCount, &responsibleCount, &unknownCount, &completionRate); err != nil {
+		t.Fatalf("read recalculated buyer API snapshot: %v", err)
+	}
+	if ruleVersion != reputation.RuleVersion || completedCount != 0 || responsibleCount != 1 || unknownCount != 0 || completionRate == nil || *completionRate != 0 {
+		t.Fatalf("old snapshot did not rebuild with timeout responsibility: version=%s completed=%d responsible=%d unknown=%d rate=%v", ruleVersion, completedCount, responsibleCount, unknownCount, completionRate)
+	}
+}
+
+func seedTimeoutAPIOrderForReputationTest(
+	t *testing.T,
+	ctx context.Context,
+	pool *pgxpool.Pool,
+	serviceID string,
+	sellerID string,
+	sellerContactID string,
+	buyerID string,
+	buyerContactID string,
+	now time.Time,
+) {
+	t.Helper()
+	var sellerContactVersionID, buyerContactVersionID string
+	if err := pool.QueryRow(ctx, `
+		SELECT seller.current_version_id::text, buyer.current_version_id::text
+		FROM contact_methods seller
+		JOIN contact_methods buyer ON buyer.id = $2
+		WHERE seller.id = $1
+	`, sellerContactID, buyerContactID).Scan(&sellerContactVersionID, &buyerContactVersionID); err != nil {
+		t.Fatalf("read timeout order contact versions: %v", err)
+	}
+	intentID := uuid.NewString()
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO api_purchase_intents (
+		  id, api_service_id, api_service_owner_user_id, buyer_user_id, owner_user_id,
+		  buyer_contact_method_id, buyer_contact_method_version_id,
+		  owner_contact_method_id, owner_contact_method_version_id,
+		  status, requested_cny_amount, selected_access_mode,
+		  service_version_snapshot, service_title_snapshot,
+		  distribution_system_snapshot, billing_mode_snapshot,
+		  buyer_contact_type_snapshot, buyer_contact_label_snapshot,
+		  owner_contact_type_snapshot, owner_contact_label_snapshot,
+		  minimum_intent_cny_snapshot, pricing_snapshot,
+		  contacted_at, created_at, updated_at
+		)
+		VALUES (
+		  $1, $2, $3, $4, $3,
+		  $5, $6, $7, $8,
+		  'ordered', 20, 'buyer_dedicated_sub_key',
+		  1, '付款超时信誉测试 API 服务',
+		  'sub2api', 'manual_usage_check',
+		  'linuxdo', 'linux.do', 'linuxdo', 'linux.do',
+		  1, '{}'::jsonb,
+		  $9, $9, $9
+		)
+	`, intentID, serviceID, sellerID, buyerID, buyerContactID, buyerContactVersionID, sellerContactID, sellerContactVersionID, now.Add(-time.Hour)); err != nil {
+		t.Fatalf("seed timeout API purchase intent: %v", err)
+	}
+
+	orderID := uuid.NewString()
+	cancelledAt := now.Add(-10 * time.Minute)
+	orderCreatedAt := now.Add(-time.Hour)
+	orderNo, err := apiorder.GenerateOrderNo(orderCreatedAt)
+	if err != nil {
+		t.Fatalf("generate timeout API order number: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO api_orders (
+		  id, api_purchase_intent_id, api_service_id, buyer_user_id, seller_user_id,
+		  status, service_title_snapshot, service_version_snapshot, billing_mode_snapshot,
+		  amount, currency, selected_payment_method, payment_window_minutes_snapshot,
+		  payment_expires_at, payment_instructions_snapshot,
+		  cancelled_at, cancel_reason, created_at, updated_at, order_no
+		)
+		VALUES (
+		  $1, $2, $3, $4, $5,
+		  'cancelled', '付款超时信誉测试 API 服务', 1, 'manual_usage_check',
+		  20, 'CNY', 'wechat', 10,
+		  $6, '站外确认付款',
+		  $7, 'payment_timeout', $8, $7, $9
+		)
+	`, orderID, intentID, serviceID, buyerID, sellerID, cancelledAt, cancelledAt, orderCreatedAt, orderNo); err != nil {
+		t.Fatalf("seed timeout API order: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO api_order_events (
+		  api_order_id, event_type, from_status, to_status, request_id, created_at
+		)
+		VALUES ($1, 'api_order.payment_timeout_cancelled', 'pending_payment', 'cancelled', 'reputation-timeout', $2)
+	`, orderID, cancelledAt); err != nil {
+		t.Fatalf("seed timeout API order event: %v", err)
+	}
+}
+
+func seedExpiredCarpoolConfirmationsForReputationTest(
+	t *testing.T,
+	ctx context.Context,
+	pool *pgxpool.Pool,
+	sellerID string,
+	sellerContactID string,
+	buyerID string,
+	buyerContactID string,
+	now time.Time,
+) {
+	t.Helper()
+	var productPlanID string
+	if err := pool.QueryRow(ctx, `SELECT id::text FROM product_plans ORDER BY created_at, id LIMIT 1`).Scan(&productPlanID); err != nil {
+		t.Fatalf("read timeout test product plan: %v", err)
+	}
+	listingID := uuid.NewString()
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO carpool_listings (
+		  id, owner_user_id, product_plan_id, title, summary, access_arrangement,
+		  price_monthly_cny, buyer_seat_capacity, active_buyer_members, status,
+		  policy_version, owner_contact_method_id, created_at, updated_at
+		)
+		VALUES ($1, $2, $3, '确认超时信誉测试拼车', '确认超时责任测试', '双方站外确认',
+		        20, 2, 0, 'active', 1, $4, $5, $5)
+	`, listingID, sellerID, productPlanID, sellerContactID, now.Add(-2*time.Hour)); err != nil {
+		t.Fatalf("seed timeout test carpool listing: %v", err)
+	}
+
+	for index, confirmations := range []struct {
+		buyer bool
+		owner bool
+	}{
+		{buyer: false, owner: true},
+		{buyer: true, owner: false},
+		{buyer: false, owner: false},
+	} {
+		applicationID := uuid.NewString()
+		deadline := now.Add(time.Duration(-40-index) * time.Minute)
+		if _, err := pool.Exec(ctx, `
+			INSERT INTO carpool_applications (
+			  id, carpool_listing_id, buyer_user_id, owner_user_id, product_plan_id,
+			  buyer_contact_method_id, status, listing_title_snapshot,
+			  price_monthly_cny_snapshot, policy_version_snapshot,
+			  reservation_expires_at, join_confirmation_deadline,
+			  created_at, updated_at
+			)
+			VALUES (
+			  $1, $2, $3, $4, $5,
+			  $6, 'accepted_reserved', '确认超时信誉测试拼车',
+			  20, 1,
+			  $7, $7,
+			  $8, $8
+			)
+		`, applicationID, listingID, buyerID, sellerID, productPlanID, buyerContactID, deadline, now.Add(-time.Hour)); err != nil {
+			t.Fatalf("seed timeout carpool application %d: %v", index, err)
+		}
+		for _, confirmation := range []struct {
+			enabled bool
+			role    string
+			userID  string
+		}{
+			{enabled: confirmations.buyer, role: "buyer", userID: buyerID},
+			{enabled: confirmations.owner, role: "owner", userID: sellerID},
+		} {
+			if !confirmation.enabled {
+				continue
+			}
+			if _, err := pool.Exec(ctx, `
+				INSERT INTO carpool_join_confirmations (
+				  carpool_application_id, actor_user_id, actor_role,
+				  confirmed_at, request_id, created_at
+				)
+				VALUES ($1, $2, $3, $4, $5, $4)
+			`, applicationID, confirmation.userID, confirmation.role, deadline.Add(-time.Minute), "timeout-confirmation-"+applicationID+"-"+confirmation.role); err != nil {
+				t.Fatalf("seed %s confirmation for application %d: %v", confirmation.role, index, err)
+			}
+		}
+		if _, err := pool.Exec(ctx, `
+			UPDATE carpool_applications
+			SET status = 'expired', updated_at = $2, version = version + 1
+			WHERE id = $1
+		`, applicationID, deadline); err != nil {
+			t.Fatalf("expire carpool application %d: %v", index, err)
+		}
 	}
 }
 

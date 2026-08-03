@@ -287,6 +287,58 @@ owner from the most recently updated enabled service snapshot. Account changes
 apply only to future service snapshots; existing services and orders remain
 unchanged.
 
+Version 68 (`000068_api_order_delivery_review`) adds a 24-hour buyer review
+window after API-order delivery, a one-time review reminder marker, and an
+explicit `buyer_confirmed` or `auto_completed` completion source. Existing
+delivered orders receive a fresh 24-hour window at migration time; existing
+completed orders retain their delivery history and are marked as buyer
+confirmed.
+
+Version 69 (`000069_carpool_usage_signals`) adds nullable weekly quota,
+official-reset, VPS region, mainland direct-connection, opening-channel, and
+payment-method fields to carpool listings. New listing writes require all
+signals in service validation; nullable columns preserve explicit `未声明`
+rendering for development rows created before this contract.
+
+Version 70 (`000070_admin_user_directory_governance`) adds the partial recent
+audit lookup index used by the administrator account-detail surface. Account
+status and administrator-permission changes continue to use the existing users,
+permissions, sessions, domain events, notifications, audit, and idempotency
+tables; the migration does not rewrite account data.
+
+Version 71 (`000071_api_service_promotions`) adds administrator-owned API
+service promotion schedules with half-open time ranges, stop facts, optimistic
+versions, and indexes for placement capacity and same-service overlap checks.
+Promotion history is independent from API service review, publication,
+reputation, badges, natural ordering, payments, and analytics storage.
+
+Version 72 (`000072_api_service_commercial_facts`) adds a single
+merchant-declared API account-pool type with an optional custom public label
+and a structured merchant full-refund commitment. Historical services keep a
+null account pool until revised; new service validation requires one. It also
+renames recommended concurrency to merchant-declared maximum concurrency
+across API services and limited-quota order snapshots without changing the
+stored numeric values. The platform snapshots the merchant promise but does
+not escrow, fund, or execute refunds.
+
+Version 73 (`000073_growth_analytics`) adds a stable random analytics identifier
+for registered users, immutable registration attribution facts, and daily
+activity rows. It also records the first publication time for carpool listings
+and API services with database triggers that preserve the original timestamp,
+so growth windows do not shift when a listing or service is edited later.
+
+Version 74 (`000074_promotion_rewards`) adds a disabled-by-default API-service
+referral campaign, stable invite codes, immutable referral relations, and
+single-use promotion coupons with activation facts. Reward promotions use a
+separate rotating pool and do not consume administrator promotion capacity or
+change API-service review, reputation, badges, stock, price, or natural order.
+
+Version 75 (`000075_api_order_public_numbers`) adds immutable public API order
+numbers in the `API-YYYYMMDD-XXXXXXXXXX` format. Existing orders are backfilled
+from each order's Asia/Shanghai creation date with stable collision handling;
+new writes use cryptographically random suffixes. The UUID remains the internal
+primary key, route key, and relation key.
+
 ## Contact Retention And Destruction
 
 Contact method deletion retires the mutable contact method surface. Historical

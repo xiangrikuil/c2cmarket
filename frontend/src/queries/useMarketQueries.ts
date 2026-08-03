@@ -1,5 +1,14 @@
 import { computed, type Ref } from 'vue'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/vue-query'
+import type { CreateApiServicePromotionRequest } from '@/api/generated/openapi'
+import {
+  backendAdminAPIPromotions,
+  backendAdminAPIServiceOptions,
+  backendAPIPromotionAvailability,
+  backendCreateAPIPromotion,
+  backendPublicAPIPromotions,
+  backendStopAPIPromotion,
+} from '@/lib/apiMarketBackend'
 import {
   addFeedbackSupplement,
   cancelApiOrder,
@@ -20,6 +29,7 @@ import {
   deleteCustomAvatar,
   getAdminFeedbackTicket,
   getAdminFeedbackTickets,
+  getAdminApiOrderById,
   getAdminOverview,
   getAdminSectionRows,
   getApiPurchaseIntentById,
@@ -46,13 +56,10 @@ import {
   getMyApiPurchaseIntents,
   getMyApiOrders,
   getMyApiServiceById,
-  getMyApiServices,
   getOwnerApiQuotaBatches,
   getOwnerApiQuotaOffers,
   getOwnerApiQuotaRounds,
-  getMyCarpools,
   getMyCarpoolApplications,
-  getMyProfile,
   getApiServiceById,
   getApiServices,
   getOtherApiMarketServices,
@@ -65,9 +72,7 @@ import {
   getCarpools,
   getFavorites,
   getFeedbackUnreadCount,
-  getHomeMarket,
   getModelCatalog,
-  getNotifications,
   getOfficialPriceById,
   getOfficialPrices,
   getPublicMerchantProfile,
@@ -131,16 +136,13 @@ import {
   type UpdateMyProfileRequest,
   type UserProfile,
 } from '@/lib/api'
+import { myProfileQueryKey } from '@/queries/useAppShellQueries'
+
+export { useHomeMarket } from '@/queries/useHomeMarketQuery'
+export { myProfileQueryKey, useMyApiServices, useMyCarpools, useMyProfileQuery, useNotifications } from '@/queries/useAppShellQueries'
 
 function valueOf<T>(value: Ref<T> | T): T {
   return typeof value === 'object' && value !== null && 'value' in value ? value.value : value
-}
-
-export function useHomeMarket() {
-  return useQuery({
-    queryKey: ['home-market'],
-    queryFn: getHomeMarket,
-  })
 }
 
 export function transactionTrendQueryKey(productId: string, range: TransactionTrendRange) {
@@ -193,15 +195,6 @@ export function useCarpoolApplicationEligibility(id: Ref<string> | string, enabl
     queryFn: () => getCarpoolApplicationEligibility(valueOf(id)),
     enabled: computed(() => valueOf(enabled) && Boolean(valueOf(id))),
     retry: false,
-  })
-}
-
-export function useMyCarpools(enabled: Ref<boolean> | boolean = true) {
-  return useQuery({
-    queryKey: ['my-carpools'],
-    queryFn: getMyCarpools,
-    enabled: computed(() => valueOf(enabled)),
-    refetchOnMount: 'always',
   })
 }
 
@@ -262,6 +255,83 @@ export function useApiServices(filters: Ref<ApiServiceFilters> | ApiServiceFilte
   })
 }
 
+export function useApiPromotions() {
+  return useQuery({
+    queryKey: ['api-service-promotions', 'api_market_top'],
+    queryFn: backendPublicAPIPromotions,
+    enabled: import.meta.client,
+    staleTime: 0,
+    refetchOnMount: 'always',
+    refetchOnWindowFocus: true,
+  })
+}
+
+export function useAdminApiPromotions() {
+  return useQuery({
+    queryKey: ['admin', 'api-service-promotions'],
+    queryFn: backendAdminAPIPromotions,
+    refetchOnMount: 'always',
+  })
+}
+
+export function useAdminApiServiceOptions() {
+  return useQuery({
+    queryKey: ['admin', 'api-service-promotion-options'],
+    queryFn: backendAdminAPIServiceOptions,
+  })
+}
+
+export function useAdminApiPromotionAvailability(
+  apiServiceId: Ref<string> | string,
+  startsAt: Ref<string> | string,
+  endsAt: Ref<string> | string,
+  enabled: Ref<boolean> | boolean = true,
+) {
+  return useQuery({
+    queryKey: computed(() => [
+      'admin',
+      'api-service-promotions',
+      'availability',
+      valueOf(apiServiceId),
+      valueOf(startsAt),
+      valueOf(endsAt),
+    ]),
+    queryFn: () => backendAPIPromotionAvailability(valueOf(apiServiceId), valueOf(startsAt), valueOf(endsAt)),
+    enabled: computed(() => import.meta.client
+      && valueOf(enabled)
+      && Boolean(valueOf(apiServiceId))
+      && Boolean(valueOf(startsAt))
+      && Boolean(valueOf(endsAt))),
+    retry: false,
+  })
+}
+
+export function useCreateApiPromotionMutation() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (payload: CreateApiServicePromotionRequest) => backendCreateAPIPromotion(payload),
+    onSuccess: async () => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['api-service-promotions'] }),
+        queryClient.invalidateQueries({ queryKey: ['admin', 'api-service-promotions'] }),
+      ])
+    },
+  })
+}
+
+export function useStopApiPromotionMutation() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (payload: { id: string, version: number, reason: string }) => backendStopAPIPromotion(payload.id, payload.version, payload.reason),
+    onSuccess: async () => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['api-service-promotions'] }),
+        queryClient.invalidateQueries({ queryKey: ['admin', 'api-service-promotions'] }),
+      ])
+    },
+  })
+}
+
 export function sub2ApiMarketQueryKey(filters: Sub2ApiMarketFilters) {
   return ['api-market', 'sub2api', filters] as const
 }
@@ -286,11 +356,12 @@ export function useOtherApiMarketQuery(filters: Ref<OtherApiMarketFilters> | Oth
   })
 }
 
-export function useApiService(id: Ref<string> | string) {
+export function useApiService(id: Ref<string> | string, enabled: Ref<boolean> | boolean = true) {
   return useQuery({
     queryKey: computed(() => ['api-services', valueOf(id)]),
     retry: false,
     queryFn: () => getApiServiceById(valueOf(id)),
+    enabled: computed(() => Boolean(valueOf(id)) && valueOf(enabled)),
   })
 }
 
@@ -328,15 +399,6 @@ export function useCreateApiQuotaOrderMutation() {
       queryClient.invalidateQueries({ queryKey: ['api-quota-offers'] })
       invalidateApiOrderQueries(queryClient, data.id)
     },
-  })
-}
-
-export function useMyApiServices(enabled: Ref<boolean> | boolean = true) {
-  return useQuery({
-    queryKey: ['my-api-services'],
-    queryFn: getMyApiServices,
-    enabled: computed(() => valueOf(enabled)),
-    refetchOnMount: 'always',
   })
 }
 
@@ -452,10 +514,6 @@ export function useImportApiQuotaCredentialsMutation() {
   })
 }
 
-export function myProfileQueryKey() {
-  return ['my-profile'] as const
-}
-
 export function myContactMethodsQueryKey() {
   return ['my-contact-methods'] as const
 }
@@ -470,17 +528,6 @@ export function publicUserProfileQueryKey(username: string) {
 
 export function orderContactsQueryKey(kind: 'carpool-application' | 'api-order', id: string) {
   return ['order-contacts', kind, id] as const
-}
-
-export function useMyProfileQuery(enabled: Ref<boolean> | boolean = true) {
-  return useQuery({
-    queryKey: myProfileQueryKey(),
-    queryFn: getMyProfile,
-    enabled: computed(() => valueOf(enabled)),
-    retry: false,
-    staleTime: 30_000,
-    refetchOnWindowFocus: false,
-  })
 }
 
 export function useUpdateMyProfileMutation() {
@@ -904,15 +951,6 @@ export function useCarpoolNotifications() {
   })
 }
 
-export function useNotifications(enabled: Ref<boolean> | boolean = true) {
-  return useQuery({
-    queryKey: ['notifications'],
-    queryFn: getNotifications,
-    enabled: computed(() => valueOf(enabled)),
-    refetchOnMount: 'always',
-  })
-}
-
 export function useMyFeedbackTickets() {
   return useQuery({
     queryKey: ['feedback'],
@@ -1111,6 +1149,15 @@ export function useSubmitReviewMutation() {
 
 export function useAdminOverview() {
   return useQuery({ queryKey: ['admin-overview'], queryFn: getAdminOverview })
+}
+
+export function useAdminApiOrder(id: Ref<string> | string) {
+  return useQuery({
+    queryKey: computed(() => ['admin-api-orders', valueOf(id)]),
+    queryFn: () => getAdminApiOrderById(valueOf(id)),
+    enabled: computed(() => Boolean(valueOf(id))),
+    refetchOnMount: 'always',
+  })
 }
 
 export function useAdminSectionRows(section: Ref<AdminSection> | AdminSection) {

@@ -27,10 +27,35 @@ const (
 	ServiceBillingModeManual       = "manual_usage_check"
 	ServiceBillingModeFixedPackage = "fixed_package"
 
+	AccountPoolGPTPro20x = "gpt_pro_20x"
+	AccountPoolGPTPro5x  = "gpt_pro_5x"
+	AccountPoolGPTPlus   = "gpt_plus"
+	AccountPoolCustom    = "custom"
+
+	MerchantRefundPolicyVersion = "api-merchant-refund-v1"
+
 	PaymentMethodWechat = "wechat"
 	PaymentMethodAlipay = "alipay"
 
 	DefaultPaymentWindowMinutes = 10
+
+	OwnerSalesViewActive  = "active"
+	OwnerSalesViewExpired = "expired"
+	OwnerSalesViewPaused  = "paused"
+	OwnerSalesViewDraft   = "draft"
+	OwnerSalesViewAll     = "all"
+
+	ServiceSalesStateSelling  = "selling"
+	ServiceSalesStateUpcoming = "upcoming"
+	ServiceSalesStatePaused   = "paused"
+	ServiceSalesStateSoldOut  = "sold_out"
+	ServiceSalesStateExpired  = "expired"
+	ServiceSalesStateDraft    = "draft"
+	ServiceSalesStateOffline  = "offline"
+	ServiceSalesStateArchived = "archived"
+
+	ServiceSalesChannelFlexibleQuota = "flexible_quota"
+	ServiceSalesChannelLimitedQuota  = "limited_quota"
 )
 
 type Service struct {
@@ -57,8 +82,11 @@ type Service struct {
 	PublicAccessNote                 string
 	MerchantNote                     string
 	MerchantSupportNote              string
+	AccountPoolType                  string
+	AccountPoolCustomName            string
+	MerchantRefundCommitment         bool
 	DeclaredTTFTBand                 string
-	RecommendedConcurrency           int
+	DeclaredMaxConcurrency           int
 	PerformanceConfirmedAt           *time.Time
 	AcceptingOrders                  bool
 	PaymentWindowMinutes             int
@@ -82,6 +110,7 @@ type Service struct {
 	Version                          int64
 	SellerReputation                 *reputation.ReputationSnapshot
 	SourceAuthorVerification         reputation.SourceAuthorResourceSummary
+	SalesSummary                     ServiceSalesSummary
 }
 
 type ServiceAccessMode struct {
@@ -165,9 +194,11 @@ type CreateServiceInput struct {
 	UsageVisibility                  string
 	PublicAccessNote                 string
 	MerchantNote                     string
-	MerchantSupportNote              string
+	AccountPoolType                  string
+	AccountPoolCustomName            string
+	MerchantRefundCommitment         *bool
 	DeclaredTTFTBand                 string
-	RecommendedConcurrency           int
+	DeclaredMaxConcurrency           int
 	PerformanceConfirmedAt           string
 	AccessModes                      []ServiceAccessModeInput
 	Models                           []ServiceModelInput
@@ -194,9 +225,11 @@ type UpdateServiceInput struct {
 	UsageVisibility                  string
 	PublicAccessNote                 string
 	MerchantNote                     string
-	MerchantSupportNote              string
+	AccountPoolType                  string
+	AccountPoolCustomName            string
+	MerchantRefundCommitment         *bool
 	DeclaredTTFTBand                 string
-	RecommendedConcurrency           int
+	DeclaredMaxConcurrency           int
 	PerformanceConfirmedAt           string
 	AccessModes                      []ServiceAccessModeInput
 	Models                           []ServiceModelInput
@@ -248,6 +281,25 @@ type ServiceAdminActionInput struct {
 
 type PublicServiceFilter struct {
 	PaymentMethod string
+}
+
+type OwnerServiceFilter struct {
+	SalesView string
+}
+
+type ServiceSalesSummary struct {
+	OverallState string                `json:"overallState"`
+	Channels     []ServiceSalesChannel `json:"channels"`
+}
+
+type ServiceSalesChannel struct {
+	Kind                  string     `json:"kind"`
+	State                 string     `json:"state"`
+	AvailableUSDAllowance string     `json:"availableUsdAllowance,omitempty"`
+	AvailableCopies       int        `json:"availableCopies,omitempty"`
+	NextStartsAt          *time.Time `json:"nextStartsAt,omitempty"`
+	SaleCutoffAt          *time.Time `json:"saleCutoffAt,omitempty"`
+	ExpiresAt             *time.Time `json:"expiresAt,omitempty"`
 }
 
 type UpdateOrderSettingsInput struct {

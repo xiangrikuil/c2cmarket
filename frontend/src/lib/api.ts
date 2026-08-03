@@ -22,7 +22,6 @@ import {
   myContactMethods,
   myUserProfile,
   orderContactSnapshots,
-  parsedLinuxDoTopicMock,
   productTrends,
   publicCompletionRecords,
   publicDisputeRecords,
@@ -50,6 +49,13 @@ import {
   type ApiQuotaSystemSaleSlot,
   type ApiQuotaSystemSaleSlotList,
   type ApiService,
+  type ApiServiceCommercialSnapshot,
+  type ApiServiceSalesChannel,
+  type ApiServiceSalesChannelKind,
+  type ApiServiceSalesState,
+  type ApiServiceSalesSummary,
+  type ApiServiceSalesView,
+  type OwnerApiService,
   type ApiServicePackage,
   type ApiServicePackageModel,
   type ApiServicePackageSnapshot,
@@ -74,7 +80,6 @@ import {
   type OpeningChannelOption,
   type OrderContactSnapshot,
   type OrderContactSnapshotItem,
-  type ParsedLinuxDoTopic,
   type PaymentMethodOption,
   type RegionOption,
   type ModelCatalogItem,
@@ -94,11 +99,18 @@ import {
 import type { ReputationSummary } from '@/types/reputation'
 import { mockPublicUserReputation } from '@/lib/reputationMock'
 import { getPricingDisplay } from '@/lib/pricing'
+import {
+  getApiMerchantDisplayName,
+  isApiServicePubliclyOrderable,
+  type ApiIntentMerchantSource,
+  type ApiMerchantIdentitySource,
+} from '@/lib/apiServicePresentation'
+export { getApiMerchantDisplayName, isApiServicePubliclyOrderable } from '@/lib/apiServicePresentation'
 import { evaluateCarpoolApplicationEligibility, hasCredentialSharingLanguage } from '@/lib/carpoolEligibility'
+import { matchesApiOrderSearch } from '@/lib/apiOrderUi'
 export { evaluateCarpoolApplicationEligibility } from '@/lib/carpoolEligibility'
 import { defaultQuotaLabel, defaultQuotaPeriod, defaultQuotaUnit } from '@/lib/quota'
 import { beijingDateTimeInputToISOString, formatBeijingDateTimeInput, formatQuotaExpiresAtLabel } from '@/lib/apiQuotaExpiration'
-import { sourceAuthorVerificationLabel } from '@/lib/sourceAuthorVerification'
 import { getMockPublicAPIModels } from '@/lib/apiModelCatalogBackend'
 import {
   cloneApiPaymentAccountSettings,
@@ -144,6 +156,7 @@ import {
   backendAPIIntentEvents,
   backendAPIQuotaBatchAction,
   backendAPIQuotaCredentialSummary,
+  backendAdminAPIOrder,
   backendAdminAPIOrderRows,
   backendAPIServiceById,
   backendAPIServices,
@@ -261,7 +274,17 @@ import {
   type CreateManualInterventionReportRequest,
   type CreatePublicUserReportRequest,
 } from '@/lib/reportBackend'
-import { backendAdminUserRows } from '@/lib/adminUserBackend'
+import {
+  backendAdminUserDetail,
+  backendAdminUserDirectory,
+  backendUpdateAdminUserPermission,
+  backendUpdateAdminUserStatus,
+  type AdminUser,
+  type AdminUserDetail,
+  type AdminUserDirectoryQuery,
+  type AdminUserList,
+  type AdminUserStatus,
+} from '@/lib/adminUserBackend'
 import { shouldUseRealBackend } from '@/lib/backendClient'
 import {
   backendGetApiPaymentAccountSettings,
@@ -473,8 +496,10 @@ export type ApiOrderStatus =
 export type ApiOrderDeliveryKind = 'api_key_endpoint' | 'login_account'
 export type ApiOrderPaymentIssueReason = 'not_received' | 'amount_mismatch' | 'remark_mismatch'
 export type ApiOrderPurchaseKind = 'api_service' | 'limited_quota_offer'
+export type ApiOrderCompletionSource = 'buyer_confirmed' | 'auto_completed'
+export type ApiOrderViewerRole = 'buyer' | 'merchant' | 'admin'
 
-export type ApiQuotaOrderSnapshot = {
+export type ApiQuotaOrderSnapshot = ApiServiceCommercialSnapshot & {
   batchId: string
   offerId: string
   saleRoundId?: string
@@ -490,7 +515,7 @@ export type ApiQuotaOrderSnapshot = {
   roundEndsAt?: string
   distributionSystem: ApiQuotaDistributionSystem
   ttftBand: ApiTTFTBand
-  recommendedConcurrency: number
+  declaredMaxConcurrency: number
   performanceConfirmedAt?: string
   performanceUnverified: boolean
   deliveryEtaMinutes: number
@@ -528,6 +553,7 @@ export type ApiOrderPaymentInstructions = {
 
 export type ApiOrder = {
   id: string
+  orderNo: string
   purchaseKind: ApiOrderPurchaseKind
   apiPurchaseIntentId: string
   apiServiceId: string
@@ -539,6 +565,7 @@ export type ApiOrder = {
   sellerReputation?: ReputationSummary | null
   status: ApiOrderStatus
   disputeStatus?: string
+  disputeCaseId?: string
   serviceTitle: string
   amount: number
   amountDecimal?: string
@@ -554,7 +581,9 @@ export type ApiOrder = {
   paidConfirmedAt?: string
   deliveryNote?: string
   deliverySubmittedAt?: string
+  deliveryReviewExpiresAt?: string
   deliveryCredential?: ApiOrderDeliveryCredential
+  completionSource?: ApiOrderCompletionSource
   completedAt?: string
   cancelledAt?: string
   cancelReason?: string
@@ -571,6 +600,43 @@ export type ApiOrder = {
   merchantContactChannels: ApiContactChannel[]
   buyerContactChannels: ApiContactChannel[]
   viewerRole?: 'buyer' | 'merchant'
+  createdAt: string
+  updatedAt: string
+}
+
+export type AdminApiOrderDetail = {
+  id: string
+  purchaseKind: ApiOrderPurchaseKind
+  apiPurchaseIntentId: string
+  apiServiceId: string
+  buyerUserId: string
+  sellerUserId: string
+  status: ApiOrderStatus
+  disputeStatus?: string
+  disputeCaseId?: string
+  serviceTitleSnapshot: string
+  billingModeSnapshot?: string
+  selectedPackageId?: string
+  selectedPackageSnapshot?: string
+  amount: string
+  currency: 'CNY'
+  requestedUsdAllowanceSnapshot?: string
+  cnyPerUsdAllowanceSnapshot?: string
+  selectedPaymentMethod: ApiPaymentOption['paymentMethod']
+  paymentExpiresAt: string
+  paymentSubmittedAt?: string
+  paymentIssueReason?: ApiOrderPaymentIssueReason
+  paymentIssueNote?: string
+  paymentIssueReportedAt?: string
+  paidConfirmedAt?: string
+  deliveryNote?: string
+  deliverySubmittedAt?: string
+  deliveryReviewExpiresAt?: string
+  completionSource?: ApiOrderCompletionSource
+  completedAt?: string
+  cancelledAt?: string
+  cancelReason?: string
+  version: number
   createdAt: string
   updatedAt: string
 }
@@ -671,12 +737,12 @@ export type TransactionTrendSummary = {
 
 export type { ModelCatalogItem }
 export type { ApiMerchantIdentityMode }
+export type { ApiServiceCommercialSnapshot }
 export type {
   CarpoolProductCatalogItem,
   CarpoolApplicationEligibility,
   CarpoolApplicationEligibilityCode,
   OpeningChannelOption,
-  ParsedLinuxDoTopic,
   PaymentMethodOption,
   RegionOption,
 }
@@ -695,19 +761,23 @@ export type OfficialPriceWithMeta = OfficialPrice & BackendResourceMeta
 export type CarpoolDraftStatus = 'draft' | 'reviewing'
 
 export type SaveCarpoolDraftPayload = {
-  linuxDoTopicUrl: string
-  parsedTopicId: string | null
   productId: string
   customProductName: string | null
   regionCode: string
   customRegionName: string | null
   monthlyPriceCny: number | null
   serviceMultiplier: number | null
+  weeklyQuotaAmount: number | null
   monthlyQuotaAmount: number | null
+  followsOfficialQuotaReset: boolean | null
+  vpsRegion: string
+  supportsMainlandChinaDirectConnection: boolean | null
   totalSeats: number
   occupiedSeats: number
   openingChannelCode: string
-  paymentMethodCodes: string[]
+  customOpeningChannel: string
+  paymentMethodCode: string
+  customPaymentMethod: string
   distributionMethod?: Carpool['distributionMethod'] | ''
   distributionMethodNote?: string
   providesAdminAccount?: boolean | null
@@ -736,6 +806,7 @@ const currentMerchantName = 'orbit'
 const apiPurchaseIntentStorageKey = 'c2cmarket.apiPurchaseIntents.v2'
 const apiPurchaseIntentEventStorageKey = 'c2cmarket.apiPurchaseIntentEvents.v2'
 const apiOrderStorageKey = 'c2cmarket.apiOrders.v1'
+const apiOrderDeliveryReviewWindowMs = 24 * 60 * 60 * 1000
 const apiQuotaBatchStorageKey = 'c2cmarket.apiQuotaBatches.v1'
 const apiQuotaOfferStorageKey = 'c2cmarket.apiQuotaOffers.v1'
 const apiQuotaRoundStorageKey = 'c2cmarket.apiQuotaRounds.v1'
@@ -751,13 +822,16 @@ const apiPaymentAccountSettingsStorageKey = 'c2cmarket.apiPaymentAccountSettings
 const feedbackStorageKey = 'c2cmarket.feedbackTickets.v1'
 const notificationReadStorageKey = 'c2cmarket.notificationReadState.v1'
 const favoriteStorageKey = 'c2cmarket.favorites.v1'
+const apiOrderNumberAlphabet = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789'
 const carpoolApplyAllowedStatuses: Carpool['status'][] = ['可上车']
 const carpoolContactVisibleStatuses: CarpoolApplicationStatus[] = ['accepted_reserved', 'waiting_contact', 'contacted', 'joined_pending_confirmation', 'active', 'pending_completion', 'completed', 'disputed']
 const apiContactVisibleStatuses: ApiPurchaseIntentStatus[] = ['open', 'contacted', 'ordered', 'buyer_cancelled', 'owner_closed']
 
 let apiPurchaseIntentStore = normalizeApiPurchaseIntentStore(readSessionStore(apiPurchaseIntentStorageKey, apiPurchaseIntents))
 let apiPurchaseIntentEventStore = normalizeApiPurchaseIntentEventStore(readSessionStore(apiPurchaseIntentEventStorageKey, apiPurchaseIntentEvents))
-let apiOrderStore = normalizeApiOrderStore(readSessionStore<ApiOrder[]>(apiOrderStorageKey, []))
+const loadedApiOrders = readSessionStore<ApiOrder[]>(apiOrderStorageKey, [])
+let apiOrderStore = normalizeApiOrderStore(loadedApiOrders)
+if (loadedApiOrders.some(order => !order.orderNo)) persistApiOrderStore()
 let apiQuotaBatchStore = readSessionStore<ApiQuotaBatch[]>(apiQuotaBatchStorageKey, apiQuotaBatches)
 let apiQuotaOfferStore = readSessionStore<PublicApiQuotaOffer[]>(apiQuotaOfferStorageKey, apiQuotaOffers)
 let apiQuotaRoundStore = readSessionStore<ApiQuotaRound[]>(apiQuotaRoundStorageKey, apiQuotaRounds)
@@ -778,15 +852,6 @@ let myContactMethodStore = clone(myContactMethods)
 
 function clone<T>(value: T): T {
   return structuredClone(value)
-}
-
-function isLinuxDoTopicUrl(value: string) {
-  try {
-    const parsed = new URL(value)
-    return parsed.protocol === 'https:' && parsed.hostname === 'linux.do' && parsed.pathname.startsWith('/t/')
-  } catch {
-    return false
-  }
 }
 
 function readSessionStore<T>(key: string, seed: T): T {
@@ -837,11 +902,60 @@ function normalizeApiPurchaseIntentEventStore(events: ApiPurchaseIntentEvent[]):
   }))
 }
 
+function mockDeliveryReviewDeadline(submittedAt?: string) {
+  const timestamp = submittedAt ? Date.parse(submittedAt) : Number.NaN
+  return Number.isFinite(timestamp) ? new Date(timestamp + apiOrderDeliveryReviewWindowMs).toISOString() : undefined
+}
+
 function normalizeApiOrderStore(orders: ApiOrder[]): ApiOrder[] {
   return orders.map(order => ({
     ...order,
+    orderNo: order.orderNo || createMockApiOrderNo(order.createdAt),
     purchaseKind: order.purchaseKind ?? 'api_service',
+    completionSource: order.completionSource ?? (order.status === 'completed' ? 'buyer_confirmed' : undefined),
+    deliveryReviewExpiresAt: order.deliveryReviewExpiresAt
+      ?? (order.status === 'delivery_submitted' ? mockDeliveryReviewDeadline(order.deliverySubmittedAt) : undefined),
   }))
+}
+
+function materializeMockApiOrderReviews(currentTime = Date.now()) {
+  let changed = false
+  for (const order of apiOrderStore) {
+    if (order.status !== 'delivery_submitted' || order.disputeStatus === 'open' || !order.deliveryReviewExpiresAt) continue
+    const deadline = Date.parse(order.deliveryReviewExpiresAt)
+    if (!Number.isFinite(deadline) || deadline > currentTime) continue
+    const completedAt = new Date(deadline).toISOString()
+    order.status = 'completed'
+    order.completionSource = 'auto_completed'
+    order.completedAt = completedAt
+    order.updatedAt = completedAt
+    order.version += 1
+    changed = true
+  }
+  if (changed) persistApiOrderStore()
+}
+
+function createMockApiOrderNo(createdAt: string) {
+  const dateParts = new Intl.DateTimeFormat('en', {
+    timeZone: 'Asia/Shanghai',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(new Date(createdAt))
+  const datePart = ['year', 'month', 'day']
+    .map(type => dateParts.find(part => part.type === type)?.value ?? '')
+    .join('')
+  let suffix = ''
+  while (suffix.length < 10) {
+    const bytes = new Uint8Array(16)
+    globalThis.crypto.getRandomValues(bytes)
+    for (const value of bytes) {
+      if (value >= 248) continue
+      suffix += apiOrderNumberAlphabet[value % apiOrderNumberAlphabet.length]
+      if (suffix.length === 10) break
+    }
+  }
+  return `API-${datePart}-${suffix}`
 }
 
 function productPlanForCarpoolName(productName: string) {
@@ -1226,16 +1340,7 @@ function defaultContactLabel(type: ContactMethodType) {
   return labels[type]
 }
 
-type ApiMerchantIdentitySource = Pick<ApiService, 'merchant' | 'merchantIdentityMode' | 'merchantDisplayName'>
 type ApiMerchantProfileSource = Pick<ApiService, 'merchantIdentityMode' | 'merchantUsername'>
-type ApiIntentMerchantSource = Pick<ApiPurchaseIntent, 'merchant' | 'snapshot'>
-
-export function getApiMerchantDisplayName(source: ApiMerchantIdentitySource | ApiIntentMerchantSource) {
-  if ('snapshot' in source) {
-    return source.snapshot.merchantDisplayName || source.snapshot.merchant
-  }
-  return source.merchantDisplayName || source.merchant
-}
 
 export function canOpenApiMerchantProfile(source: ApiMerchantProfileSource | Pick<ApiPurchaseIntent['snapshot'], 'merchantIdentityMode'>) {
   return source.merchantIdentityMode === 'public_profile'
@@ -1319,10 +1424,6 @@ export function getApiIntentDefaultPaymentMethod(intent: ApiPurchaseIntent): Api
   return intent.snapshot.paymentOptions?.find(option => option.enabled && isApiPaymentOptionComplete(option))?.paymentMethod ?? null
 }
 
-export function isApiServicePubliclyOrderable(service: Pick<ApiService, 'online' | 'publiclyOrderable'>) {
-  return service.online && service.publiclyOrderable
-}
-
 export function getApiServicePublicDetailUrl(service: Pick<ApiService, 'id' | 'online' | 'publiclyOrderable'>) {
   return isApiServicePubliclyOrderable(service) ? `/api-market/${service.id}` : null
 }
@@ -1368,17 +1469,47 @@ export function getApiStatusLabel(status: ApiPurchaseIntentStatus) {
   return labels[status]
 }
 
-export function getApiOrderStatusLabel(status: ApiOrderStatus) {
+export function getApiOrderStatusLabel(status: ApiOrderStatus, role: ApiOrderViewerRole = 'admin') {
   const labels: Record<ApiOrderStatus, string> = {
     pending_payment: '待付款',
     payment_submitted: '买家已付款',
     payment_issue: '付款待补充',
     paid_confirmed: '已确认收款',
-    delivery_submitted: '已交付',
+    delivery_submitted: role === 'buyer' ? '待核验凭证' : role === 'merchant' ? '已完成交付' : '买家核验期',
     completed: '已完成',
     cancelled: '已取消',
   }
   return labels[status]
+}
+
+export function getApiOrderDisplayStatus(order: ApiOrder, role: ApiOrderViewerRole) {
+  if (order.status !== 'completed') return getApiOrderStatusLabel(order.status, role)
+  if (order.completionSource === 'auto_completed') return '已自动完成'
+  if (order.completionSource === 'buyer_confirmed') return role === 'buyer' ? '已确认凭证可用' : '买家已确认完成'
+  return '已完成'
+}
+
+export function getApiOrderCompletionSourceLabel(source?: ApiOrderCompletionSource) {
+  if (source === 'buyer_confirmed') return '买家主动确认'
+  if (source === 'auto_completed') return '核验期结束后系统自动完成'
+  return '尚未完成'
+}
+
+export function getApiOrderEventLabel(type: ApiOrderEvent['type']) {
+  const labels: Record<ApiOrderEvent['type'], string> = {
+    created: '创建订单',
+    payment_submitted: '买家提交付款状态',
+    payment_issue_reported: '商户报告付款问题',
+    payment_confirmed: '商户确认收款',
+    delivery_submitted: '商户完成交付',
+    completed: '订单完成',
+    cancelled: '订单取消',
+  }
+  return labels[type]
+}
+
+export function isApiOrderReceiptConfirmed(status: ApiOrderStatus) {
+  return status === 'paid_confirmed' || status === 'delivery_submitted' || status === 'completed'
 }
 
 export function getApiOrderDeliveryKindLabel(kind: ApiOrderDeliveryKind) {
@@ -1398,16 +1529,16 @@ export function getApiOrderNextAction(order: ApiOrder, role: 'buyer' | 'merchant
     if (order.status === 'payment_submitted') return '等待商户确认收款'
     if (order.status === 'payment_issue') return '补充付款信息并重新提交'
     if (order.status === 'paid_confirmed') return '等待商户交付'
-    if (order.status === 'delivery_submitted') return '核对交付并确认完成'
-    if (order.status === 'completed') return '交易已完成'
+    if (order.status === 'delivery_submitted') return order.disputeStatus === 'open' ? '等待平台处理凭证问题' : '核验凭证，或报告问题'
+    if (order.status === 'completed') return order.completionSource === 'auto_completed' ? '订单已自动完成' : '凭证已确认可用'
     if (order.status === 'cancelled') return '查看取消原因'
   }
   if (order.status === 'pending_payment') return '等待买家付款'
   if (order.status === 'payment_submitted') return '确认已收款'
   if (order.status === 'payment_issue') return '等待买家补充付款信息'
   if (order.status === 'paid_confirmed') return '填写交付信息'
-  if (order.status === 'delivery_submitted') return '等待买家确认完成'
-  if (order.status === 'completed') return '交易已完成'
+  if (order.status === 'delivery_submitted') return '已完成交付，无需操作'
+  if (order.status === 'completed') return order.completionSource === 'auto_completed' ? '订单已自动完成' : '订单已完成'
   return '查看详情'
 }
 
@@ -1515,7 +1646,6 @@ function buildCarpoolSnapshot(carpool: Carpool): CarpoolApplication['snapshot'] 
     ownerUsername: carpool.owner,
     ownerTrustLevel: carpool.trustLevel,
     ownerType: carpool.ownerType,
-    sourceTopicUrl: `https://linux.do/t/carpool-${carpool.id}`,
     accessArrangementMode: carpool.accessArrangementMode,
     accessArrangementNote: carpool.accessArrangementNote,
     riskNoticeCode: carpool.riskNoticeCode,
@@ -1678,6 +1808,12 @@ function createSnapshot(service: ApiService): ApiPurchaseIntent['snapshot'] {
     creditPerCny: service.creditPerCny,
     warranty: service.warranty,
     refundPolicy: service.refundPolicy,
+    accountPoolType: service.accountPoolType,
+    accountPoolLabel: service.accountPoolLabel,
+    declaredMaxConcurrency: service.declaredMaxConcurrency,
+    merchantRefundCommitment: service.merchantRefundCommitment,
+    merchantRefundPolicyVersion: service.merchantRefundPolicyVersion,
+    serviceValidityExpiresAt: service.quotaExpiresAt ?? null,
     usageVisibility: service.usageVisibility,
     supportedDeliveryModes: [...service.deliveryModes],
     selectedDeliveryMode: service.deliveryModes[0],
@@ -1777,7 +1913,7 @@ function adminTargetLink(row: AdminRow) {
   if (row.targetType === 'official-price') return `/official-prices/${row.id}`
   if (row.targetType === 'carpool') return `/carpools/${row.id}`
   if (row.targetType === 'api-intent') return `/my/api-orders/${row.id}`
-  if (row.targetType === 'api-order') return null
+  if (row.targetType === 'api-order') return `/admin/api-orders/${row.id}`
   if (row.targetType === 'carpool-application') return `/merchant/carpool-applications/${row.id}`
   if (row.targetType === 'feedback-ticket') return `/admin/feedback/${row.id}`
   if (row.targetType === 'user') return `/u/${row.primary}`
@@ -1911,7 +2047,7 @@ function filterApiPurchaseIntents(filters: ApiPurchaseIntentFilters = {}) {
 }
 
 function apiOrderSearchTerms(order: ApiOrder) {
-  return [order.id, order.apiPurchaseIntentId, order.serviceTitle, order.buyer, order.seller, getApiMerchantDisplayName({ merchant: order.seller, snapshot: order.intentSnapshot })]
+  return [order.orderNo, order.id, order.apiPurchaseIntentId, order.serviceTitle, order.buyer, order.seller, getApiMerchantDisplayName({ merchant: order.seller, snapshot: order.intentSnapshot })]
 }
 
 function defaultApiOrderSortForRole(role: 'buyer' | 'merchant') {
@@ -1924,6 +2060,7 @@ function defaultApiOrderSortForRole(role: 'buyer' | 'merchant') {
 }
 
 function filterApiOrders(filters: ApiOrderFilters = {}) {
+  materializeMockApiOrderReviews()
   const keyword = filters.search?.trim().toLowerCase()
   const statuses = Array.isArray(filters.status) ? filters.status : filters.status ? [filters.status] : null
   const now = Date.now()
@@ -1935,7 +2072,7 @@ function filterApiOrders(filters: ApiOrderFilters = {}) {
       && (!statuses || statuses.includes(item.status))
       && (!filters.serviceId || item.apiServiceId === filters.serviceId)
       && (!rangeMs || now - createdAt <= rangeMs)
-      && (!keyword || apiOrderSearchTerms(item).some(value => value.toLowerCase().includes(keyword)))
+      && (!keyword || matchesApiOrderSearch(keyword, apiOrderSearchTerms(item)))
   })
 
   const sort = filters.sort ?? 'updated_desc'
@@ -2096,18 +2233,6 @@ export async function getCarpoolPaymentMethods() {
   if (shouldUseRealBackend()) return backendCarpoolPaymentMethods()
   await wait()
   return clone(carpoolPaymentMethods.filter(item => item.active).sort((a, b) => a.sortOrder - b.sortOrder))
-}
-
-export async function parseLinuxDoTopic(topicUrl: string) {
-  await wait()
-  if (!isLinuxDoTopicUrl(topicUrl)) {
-    throw new Error('只能读取 https://linux.do/t/* 原帖链接')
-  }
-
-  return clone({
-    ...parsedLinuxDoTopicMock,
-    topicUrl,
-  })
 }
 
 export async function getModelCatalog() {
@@ -2433,7 +2558,7 @@ export async function createApiQuotaOffer(payload: CreateApiQuotaOfferPayload) {
     sellerIdentityType: service.merchantType === '商户' ? 'merchant' : 'individual',
     sellerLinuxDoBound: true,
     declaredTtftBand: service.declaredTtftBand ?? '1_to_3s',
-    recommendedConcurrency: service.recommendedConcurrency ?? 1,
+    declaredMaxConcurrency: service.declaredMaxConcurrency ?? 1,
     performanceConfirmedAt: service.performanceConfirmedAt,
     performanceDisclaimer: '商户自报，平台未测速',
     saleCutoffAt: batch.saleCutoffAt,
@@ -2549,7 +2674,7 @@ export async function createApiQuotaRushOffer(payload: CreateApiQuotaRushOfferPa
     sellerIdentityType: service.merchantType === '商户' ? 'merchant' : 'individual',
     sellerLinuxDoBound: true,
     declaredTtftBand: service.declaredTtftBand ?? '1_to_3s',
-    recommendedConcurrency: service.recommendedConcurrency ?? 1,
+    declaredMaxConcurrency: service.declaredMaxConcurrency ?? 1,
     performanceConfirmedAt: service.performanceConfirmedAt,
     performanceDisclaimer: '商户自报，平台未测速',
     saleCutoffAt: slot.endsAt,
@@ -2690,10 +2815,103 @@ export async function getApiServiceById(id: string) {
   return clone(apiServiceStore.find(item => item.id === id && isApiServicePubliclyOrderable(item)) ?? null)
 }
 
-export async function getMyApiServices() {
-  if (shouldUseRealBackend()) return backendOwnerAPIServices()
+const apiServiceSalesStatePriority: Record<ApiServiceSalesState, number> = {
+  selling: 0,
+  upcoming: 1,
+  paused: 2,
+  sold_out: 3,
+  expired: 4,
+  draft: 5,
+  offline: 6,
+  archived: 7,
+}
+
+function mockServiceSalesFallback(service: ApiService): ApiServiceSalesState {
+  if (service.state === 'paused') return 'paused'
+  if (service.state === 'reviewing') return 'draft'
+  if (service.state === 'offline') return 'offline'
+  if (service.publiclyOrderable) return 'selling'
+  if (service.balance <= 0) return 'sold_out'
+  return 'offline'
+}
+
+function mockFlexibleQuotaChannel(service: ApiService): ApiServiceSalesChannel | null {
+  if (service.billingMode !== 'metered_credit') return null
+  return {
+    kind: 'flexible_quota',
+    state: mockServiceSalesFallback(service),
+    availableUsdAllowance: service.availableUsdAllowance ?? String(service.balance),
+    expiresAt: service.quotaExpiresAt,
+  }
+}
+
+function mockLimitedOfferSalesState(service: ApiService, batch: ApiQuotaBatch, offer?: PublicApiQuotaOffer): ApiServiceSalesState {
+  if (batch.status === 'archived' || offer?.status === 'archived') return 'archived'
+  if (service.state === 'paused' || batch.status === 'paused' || offer?.status === 'paused') return 'paused'
+  if (service.state === 'reviewing' || batch.status === 'draft' || !offer || offer.status === 'draft') return 'draft'
+  if (service.state === 'offline') return 'offline'
+  if (offer.orderabilityCode === 'orderable') return 'selling'
+  if (offer.orderabilityCode === 'not_started') return 'upcoming'
+  if (offer.orderabilityCode === 'batch_expired') return 'expired'
+  if (offer.orderabilityCode === 'batch_paused' || offer.orderabilityCode === 'offer_paused') return 'paused'
+  if (offer.orderabilityCode === 'sold_out' || offer.orderabilityCode === 'round_ended' || offer.orderabilityCode === 'credential_unavailable') return 'sold_out'
+  return mockServiceSalesFallback(service)
+}
+
+function mockLimitedQuotaChannel(service: ApiService): ApiServiceSalesChannel | null {
+  const candidates = apiQuotaBatchStore
+    .filter(batch => batch.apiServiceId === service.id)
+    .flatMap(batch => {
+      const offers = apiQuotaOfferStore.filter(offer => offer.batchId === batch.id)
+      const rows = offers.length > 0 ? offers : [undefined]
+      return rows.map((offer): ApiServiceSalesChannel => ({
+        kind: 'limited_quota',
+        state: mockLimitedOfferSalesState(service, batch, offer),
+        availableCopies: offer?.orderabilityCode === 'not_started'
+          ? offer.nextRound?.allocations.reduce((total, allocation) => total + allocation.availableCopies, 0) ?? 0
+          : offer?.availableCopies ?? 0,
+        nextStartsAt: offer?.nextRound?.startsAt,
+        saleCutoffAt: batch.saleCutoffAt,
+        expiresAt: batch.expiresAt,
+      }))
+    })
+  return candidates.sort((left, right) => apiServiceSalesStatePriority[left.state] - apiServiceSalesStatePriority[right.state])[0] ?? null
+}
+
+export function buildMockApiServiceSalesSummary(service: ApiService): ApiServiceSalesSummary {
+  const channels = [mockFlexibleQuotaChannel(service), mockLimitedQuotaChannel(service)]
+    .filter((channel): channel is ApiServiceSalesChannel => channel !== null)
+  const overallState = channels
+    .map(channel => channel.state)
+    .sort((left, right) => apiServiceSalesStatePriority[left] - apiServiceSalesStatePriority[right])[0]
+    ?? mockServiceSalesFallback(service)
+  return { overallState, channels }
+}
+
+export function matchesApiServiceSalesView(state: ApiServiceSalesState, salesView: ApiServiceSalesView) {
+  if (salesView === 'active') return state === 'selling' || state === 'upcoming'
+  if (salesView === 'expired') return state === 'expired'
+  if (salesView === 'paused') return state === 'paused'
+  if (salesView === 'draft') return state === 'draft' || state === 'offline'
+  return true
+}
+
+function mockOwnerApiService(service: ApiService): OwnerApiService {
+  return {
+    ...service,
+    salesSummary: buildMockApiServiceSalesSummary(service),
+  }
+}
+
+export async function getMyApiServices(salesView: ApiServiceSalesView = 'active') {
+  if (shouldUseRealBackend()) return backendOwnerAPIServices(salesView)
   await wait()
-  return clone(apiServiceStore.filter(item => item.merchantUsername === myUserProfileStore.username))
+  return clone(
+    apiServiceStore
+      .filter(item => item.merchantUsername === myUserProfileStore.username)
+      .map(item => mockOwnerApiService(item))
+      .filter(item => matchesApiServiceSalesView(item.salesSummary.overallState, salesView)),
+  )
 }
 
 export async function getMyApiServiceById(id: string) {
@@ -3082,6 +3300,50 @@ export async function getAdminOverview() {
   return clone(adminCards)
 }
 
+function projectMockAdminApiOrder(order: ApiOrder): AdminApiOrderDetail {
+  return {
+    id: order.id,
+    purchaseKind: order.purchaseKind,
+    apiPurchaseIntentId: order.apiPurchaseIntentId,
+    apiServiceId: order.apiServiceId,
+    buyerUserId: order.buyerId,
+    sellerUserId: order.sellerId,
+    status: order.status,
+    disputeStatus: order.disputeStatus,
+    disputeCaseId: order.disputeCaseId,
+    serviceTitleSnapshot: order.serviceTitle,
+    selectedPackageId: order.selectedPackageId,
+    selectedPackageSnapshot: order.packageSnapshot ? JSON.stringify(order.packageSnapshot) : undefined,
+    amount: order.amountDecimal ?? String(order.amount),
+    currency: order.currency,
+    requestedUsdAllowanceSnapshot: order.requestedUsdAllowanceDecimal ?? String(order.requestedUsdAllowance),
+    selectedPaymentMethod: order.selectedPaymentMethod,
+    paymentExpiresAt: order.paymentExpiresAt,
+    paymentSubmittedAt: order.paymentSubmittedAt,
+    paymentIssueReason: order.paymentIssueReason,
+    paymentIssueNote: order.paymentIssueNote,
+    paymentIssueReportedAt: order.paymentIssueReportedAt,
+    paidConfirmedAt: order.paidConfirmedAt,
+    deliveryNote: order.deliveryNote,
+    deliverySubmittedAt: order.deliverySubmittedAt,
+    deliveryReviewExpiresAt: order.deliveryReviewExpiresAt,
+    completionSource: order.completionSource,
+    completedAt: order.completedAt,
+    cancelledAt: order.cancelledAt,
+    cancelReason: order.cancelReason,
+    version: order.version,
+    createdAt: order.createdAt,
+    updatedAt: order.updatedAt,
+  }
+}
+
+export async function getAdminApiOrderById(id: string): Promise<AdminApiOrderDetail> {
+  if (shouldUseRealBackend()) return backendAdminAPIOrder(id)
+  await wait()
+  materializeMockApiOrderReviews()
+  return clone(projectMockAdminApiOrder(findApiOrder(id)))
+}
+
 function withAdminRowLinks(rows: AdminRow[]) {
   return rows.map(row => ({ ...row, targetTo: row.targetTo ?? adminTargetLink(row) }))
 }
@@ -3138,6 +3400,213 @@ function adminDirectoryRow(item: typeof adminDirectoryUsers[number]): AdminRow {
   }
 }
 
+const adminUserStatusByLabel: Record<typeof adminDirectoryUsers[number]['accountStatus'], AdminUserStatus> = {
+  '正常': 'active',
+  '已暂停': 'suspended',
+  '已封禁': 'banned',
+  '已归档': 'archived',
+}
+
+const adminUserMockStore: AdminUser[] = adminDirectoryUsers.map((item, index) => ({
+  id: item.id,
+  username: item.username,
+  displayName: item.displayName,
+  accountStatus: adminUserStatusByLabel[item.accountStatus],
+  isAdmin: item.isAdmin,
+  linuxDoBound: item.linuxdoBound,
+  trustLevel: item.trustLevel ?? undefined,
+  createdAt: item.createdAt,
+  lastActiveAt: item.lastActiveAt,
+  version: index + 1,
+}))
+const adminUserMockAuditEntries = new Map<string, AdminUserDetail['recentAuditEntries']>()
+
+function mockAdminUserSummary() {
+  return {
+    totalUsers: adminUserMockStore.length,
+    adminUsers: adminUserMockStore.filter(item => item.isAdmin).length,
+    linuxDoBoundUsers: adminUserMockStore.filter(item => item.linuxDoBound).length,
+    activeUsers: adminUserMockStore.filter(item => item.accountStatus === 'active').length,
+    suspendedUsers: adminUserMockStore.filter(item => item.accountStatus === 'suspended').length,
+    bannedUsers: adminUserMockStore.filter(item => item.accountStatus === 'banned').length,
+    archivedUsers: adminUserMockStore.filter(item => item.accountStatus === 'archived').length,
+  }
+}
+
+function mockAdminUserActions(item: AdminUser): AdminUserDetail['availableActions'] {
+  const transitions: Record<AdminUserStatus, AdminUserStatus[]> = {
+    active: ['suspended', 'banned', 'archived'],
+    suspended: ['active', 'banned', 'archived'],
+    banned: ['active', 'archived'],
+    archived: ['active'],
+  }
+  const activeAdminCount = adminUserMockStore.filter(user => user.isAdmin && user.accountStatus === 'active').length
+  const statusActions: AdminUserDetail['availableActions'] = transitions[item.accountStatus].map(targetStatus => {
+    const action = targetStatus === 'active' ? 'restore' : targetStatus === 'suspended' ? 'suspend' : targetStatus === 'banned' ? 'ban' : 'archive'
+    const lastActiveAdmin = item.isAdmin && item.accountStatus === 'active' && activeAdminCount <= 1
+    return {
+      action,
+      kind: 'status',
+      targetStatus,
+      allowed: !lastActiveAdmin,
+      severity: targetStatus === 'active' ? 'normal' : targetStatus === 'suspended' ? 'warning' : 'danger',
+      requiresReason: true,
+      requiresConfirmation: true,
+      blockedCode: lastActiveAdmin ? 'LAST_ACTIVE_ADMIN' : undefined,
+      blockedReason: lastActiveAdmin ? '不能停用最后一个有效管理员或撤销其权限。' : undefined,
+    }
+  })
+  const grantBlocked = !item.isAdmin && item.accountStatus !== 'active'
+  const revokeBlocked = item.isAdmin && item.accountStatus === 'active' && activeAdminCount <= 1
+  return [...statusActions, {
+    action: item.isAdmin ? 'revoke_admin' : 'grant_admin',
+    kind: 'permission',
+    targetIsAdmin: !item.isAdmin,
+    allowed: !grantBlocked && !revokeBlocked,
+    severity: item.isAdmin ? 'danger' : 'normal',
+    requiresReason: true,
+    requiresConfirmation: true,
+    blockedCode: revokeBlocked ? 'LAST_ACTIVE_ADMIN' : grantBlocked ? 'ACCOUNT_NOT_ACTIVE' : undefined,
+    blockedReason: revokeBlocked
+      ? '不能停用最后一个有效管理员或撤销其权限。'
+      : grantBlocked ? '只能向正常状态的账号授予管理员权限。' : undefined,
+  }]
+}
+
+function mockAdminUserDetail(item: AdminUser): AdminUserDetail {
+	const isActive = item.accountStatus === 'active'
+  return {
+    user: clone(item),
+    updatedAt: item.createdAt,
+    linuxDoBinding: {
+      bound: item.linuxDoBound,
+      username: item.linuxDoBound ? item.username : undefined,
+      trustLevel: item.trustLevel,
+    },
+    emailVerified: item.linuxDoBound,
+    backupPasswordConfigured: true,
+    providers: item.linuxDoBound ? [{ provider: 'linux.do', createdAt: item.createdAt }] : [],
+    sessions: {
+      activeCount: isActive ? 1 : 0,
+      latestActivityAt: item.lastActiveAt ?? undefined,
+    },
+    recentAuditEntries: clone(adminUserMockAuditEntries.get(item.id) ?? []),
+		availableActions: mockAdminUserActions(item),
+		impactPreview: {
+			activeSessions: isActive ? 1 : 0,
+			activeCarpoolListings: 0,
+			onlineApiServices: 0,
+			openCarpoolApplications: 0,
+			openApiOrders: 0,
+			openDisputes: 0,
+		},
+		accountCapabilities: {
+			canLogin: isActive,
+			publiclyVisible: isActive,
+			canPublish: isActive,
+			canCreateOrders: isActive,
+			canRevealContact: isActive,
+			canAccessHistoricalTransactions: true,
+		},
+  }
+}
+
+export async function getAdminUserDirectory(query: AdminUserDirectoryQuery): Promise<AdminUserList> {
+  if (shouldUseRealBackend()) return backendAdminUserDirectory(query)
+  await wait()
+  const keyword = query.search.trim().toLowerCase()
+  const filtered = adminUserMockStore.filter(item => {
+    const matchesSearch = !keyword || `${item.username} ${item.displayName}`.toLowerCase().includes(keyword)
+    const matchesStatus = query.status === 'all' || item.accountStatus === query.status
+    const matchesRole = query.role === 'all' || (query.role === 'admin' ? item.isAdmin : !item.isAdmin)
+    const matchesLinuxDo = query.linuxDo === 'all' || (query.linuxDo === 'bound' ? item.linuxDoBound : !item.linuxDoBound)
+    return matchesSearch && matchesStatus && matchesRole && matchesLinuxDo
+  })
+  const items = [...filtered].sort((left, right) => {
+    if (query.sort === 'created_asc') return left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id)
+    if (query.sort === 'active_desc') return (right.lastActiveAt ?? '').localeCompare(left.lastActiveAt ?? '') || right.id.localeCompare(left.id)
+    if (query.sort === 'username_asc') return left.username.localeCompare(right.username) || left.id.localeCompare(right.id)
+    if (query.sort === 'username_desc') return right.username.localeCompare(left.username) || right.id.localeCompare(left.id)
+    return right.createdAt.localeCompare(left.createdAt) || right.id.localeCompare(left.id)
+  })
+  const totalItems = items.length
+  const start = (query.page - 1) * query.limit
+  return {
+    items: clone(items.slice(start, start + query.limit)),
+    pagination: {
+      page: query.page,
+      limit: query.limit,
+      totalItems,
+      totalPages: Math.ceil(totalItems / query.limit),
+    },
+    summary: mockAdminUserSummary(),
+  }
+}
+
+export async function getAdminUserDetail(userId: string): Promise<AdminUserDetail> {
+  if (shouldUseRealBackend()) return backendAdminUserDetail(userId)
+  await wait()
+  const item = adminUserMockStore.find(user => user.id === userId)
+  if (!item) throw new Error('用户不存在。')
+  return mockAdminUserDetail(item)
+}
+
+export async function updateAdminUserStatus(input: {
+  userId: string
+  version: number
+  status: AdminUserStatus
+  reason: string
+}): Promise<AdminUserDetail> {
+  if (shouldUseRealBackend()) return backendUpdateAdminUserStatus(input)
+  await wait()
+  const item = adminUserMockStore.find(user => user.id === input.userId)
+  if (!item) throw new Error('用户不存在。')
+  if (item.version !== input.version) throw new Error('账号信息已更新，请刷新后重试。')
+  const beforeStatus = item.accountStatus
+  item.accountStatus = input.status
+  item.version += 1
+  adminUserMockAuditEntries.set(item.id, [{
+    id: `mock-status-${item.version}`,
+    adminUserId: 'mock-admin',
+    adminUsername: '管理员',
+    action: 'user.account_status_changed',
+    reason: input.reason.trim(),
+    beforeStatus,
+    afterStatus: input.status,
+    requestId: `mock-request-${item.version}`,
+    createdAt: new Date().toISOString(),
+  }, ...(adminUserMockAuditEntries.get(item.id) ?? [])])
+  return mockAdminUserDetail(item)
+}
+
+export async function updateAdminUserPermission(input: {
+  userId: string
+  version: number
+  isAdmin: boolean
+  reason: string
+}): Promise<AdminUserDetail> {
+  if (shouldUseRealBackend()) return backendUpdateAdminUserPermission(input)
+  await wait()
+  const item = adminUserMockStore.find(user => user.id === input.userId)
+  if (!item) throw new Error('用户不存在。')
+  if (item.version !== input.version) throw new Error('账号信息已更新，请刷新后重试。')
+  const beforeIsAdmin = item.isAdmin
+  item.isAdmin = input.isAdmin
+  item.version += 1
+  adminUserMockAuditEntries.set(item.id, [{
+    id: `mock-permission-${item.version}`,
+    adminUserId: 'mock-admin',
+    adminUsername: '管理员',
+    action: 'user.admin_permission_changed',
+    reason: input.reason.trim(),
+    beforeIsAdmin,
+    afterIsAdmin: input.isAdmin,
+    requestId: `mock-request-${item.version}`,
+    createdAt: new Date().toISOString(),
+  }, ...(adminUserMockAuditEntries.get(item.id) ?? [])])
+  return mockAdminUserDetail(item)
+}
+
 export async function getAdminSectionRows(section: AdminSection): Promise<AdminRow[]> {
   await wait()
 
@@ -3163,10 +3632,6 @@ export async function getAdminSectionRows(section: AdminSection): Promise<AdminR
 
   if (shouldUseRealBackend() && section === 'feedback') {
     return backendAdminFeedbackRows()
-  }
-
-  if (shouldUseRealBackend() && section === 'users') {
-    return backendAdminUserRows()
   }
 
   if (shouldUseRealBackend() && section === 'trade-intents') {
@@ -3197,7 +3662,13 @@ export async function getAdminSectionRows(section: AdminSection): Promise<AdminR
       secondary: `${item.region} · ${getPricingDisplay(item).primaryLabel} ¥${getPricingDisplay(item).primaryPrice}/月 · 可申请 ${getCarpoolSeatSummary(item).availableSeats}/${item.maxMembers} 席`,
       owner: `${item.owner} · ${item.trustLevel === null ? '信任等级暂无数据' : `信任等级${item.trustLevel}`}`,
       status: item.status,
-      risk: sourceAuthorVerificationLabel(item.sourceAuthorVerification),
+      risk: item.hasInfoConflict
+        ? '信息冲突'
+        : item.hasUnresolvedDispute === true
+          ? '存在未解决纠纷'
+          : item.hasUnresolvedDispute === null
+            ? '风险数据暂无'
+            : '未发现公开风险',
       targetType: 'carpool',
       detailItems: [
         { label: '车主类型', value: item.ownerType },
@@ -3230,16 +3701,18 @@ export async function getAdminSectionRows(section: AdminSection): Promise<AdminR
   }
 
   if (section === 'trade-intents') {
+    materializeMockApiOrderReviews()
     return withAdminRowLinks(apiOrderStore.map(item => ({
       id: item.id,
       primary: `${item.serviceTitle} API 订单`,
-      secondary: `${item.id} · 订单金额 ¥${item.amountDecimal ?? item.amount}`,
+      secondary: `${item.orderNo} · 订单金额 ¥${item.amountDecimal ?? item.amount}`,
       owner: `${item.seller} / 买家 ${item.buyer}`,
-      status: getApiOrderStatusLabel(item.status),
+      status: item.status === 'completed' ? getApiOrderCompletionSourceLabel(item.completionSource) : getApiOrderStatusLabel(item.status, 'admin'),
       risk: item.disputeStatus || item.cancelReason || `更新于 ${item.updatedAt}`,
       targetType: 'api-order',
-      targetTo: null,
+      targetTo: `/admin/api-orders/${item.id}`,
       detailItems: [
+        { label: '订单号', value: item.orderNo },
         { label: '订单金额', value: `¥${item.amountDecimal ?? item.amount}` },
         { label: '购买额度', value: `${item.requestedUsdAllowanceDecimal ?? item.requestedUsdAllowance} 美元额度` },
         { label: '交付凭证', value: item.deliverySubmittedAt ? '已提交（管理摘要不展示原始凭证）' : '尚未提交' },
@@ -3259,7 +3732,7 @@ export async function getAdminSectionRows(section: AdminSection): Promise<AdminR
   if (section === 'reports') {
     return withAdminRowLinks([
       { id: 'report-1', primary: 'API 订单未及时响应', secondary: '买家提交脱敏说明，商户待回应', owner: '买家 木舟 / 商户 小葵 API', status: '处理中', risk: '需 24h 内处理', targetType: 'report', detailItems: [{ label: '处理建议', value: '要求商户补充站外确认记录' }, { label: '敏感信息', value: '仅显示脱敏说明' }] },
-      { id: 'report-2', primary: '车源剩余名额争议', secondary: '原帖信息与站内展示不一致', owner: '买家 青柠 / 车主 北风', status: '待复核', risk: '信息不一致', targetType: 'report', detailItems: [{ label: '处理建议', value: '核对原帖与站内剩余席位' }, { label: '敏感信息', value: '不展示联系方式' }] },
+      { id: 'report-2', primary: '车源剩余名额争议', secondary: '申请记录与站内展示不一致', owner: '买家 青柠 / 车主 北风', status: '待复核', risk: '信息不一致', targetType: 'report', detailItems: [{ label: '处理建议', value: '核对申请记录与站内剩余席位' }, { label: '敏感信息', value: '不展示联系方式' }] },
       { id: 'report-contact-1', primary: '联系方式无效举报', secondary: '联系快照显示可复制，但买家反馈无法联系', owner: '买家 demo_user / 商户 小葵 API', status: '处理中', risk: '只允许纠纷处理员按订单记录查看必要快照', targetType: 'contact-report', detailItems: [{ label: '处理建议', value: '按联系快照检查必要联系方式' }, { label: '可见范围', value: '仅纠纷处理员' }] },
     ])
   }
@@ -3344,6 +3817,18 @@ function assertCarpoolAccessArrangement(payload: SaveCarpoolDraftPayload, produc
   if (typeof payload.providesAdminAccount !== 'boolean') {
     throw new Error('请选择是否提供管理员账号。')
   }
+  if (!payload.weeklyQuotaAmount || payload.weeklyQuotaAmount <= 0 || !payload.monthlyQuotaAmount || payload.monthlyQuotaAmount <= 0) {
+    throw new Error('请填写有效的每周额度与每月额度。')
+  }
+  if (typeof payload.followsOfficialQuotaReset !== 'boolean') throw new Error('请选择额度是否跟随官方重置。')
+  if (!payload.vpsRegion.trim()) throw new Error('请填写 VPS 区域。')
+  if (typeof payload.supportsMainlandChinaDirectConnection !== 'boolean') throw new Error('请选择是否支持国内直连。')
+  if (!payload.openingChannelCode || (payload.openingChannelCode === 'other' && !payload.customOpeningChannel.trim())) {
+    throw new Error('请选择或填写开通渠道。')
+  }
+  if (!payload.paymentMethodCode || (payload.paymentMethodCode === 'other' && !payload.customPaymentMethod.trim())) {
+    throw new Error('请选择或填写付款方式。')
+  }
   if (carpoolRequiresRiskAck(product, payload.riskNoticeCode) && !payload.riskAcknowledged) {
     throw new Error('请先确认该套餐的发布边界。')
   }
@@ -3375,13 +3860,12 @@ function apiDeliveryModes(value: unknown): ApiDeliveryMode[] {
   return modes.length ? modes : ['api_key_endpoint']
 }
 
-function buildModelPriceRowsFromPayload(payload: Record<string, unknown>, defaultMultiplier: number, lockedMultiplier = false): ApiService['modelPriceRows'] {
-  const selected = Array.isArray(payload.selectedModels) ? payload.selectedModels as Array<{ modelId?: string, multiplierOverride?: number | null, enabled?: boolean }> : []
+function buildModelPriceRowsFromPayload(payload: Record<string, unknown>, defaultMultiplier: number): ApiService['modelPriceRows'] {
+  const selected = Array.isArray(payload.selectedModels) ? payload.selectedModels as Array<{ modelId?: string, enabled?: boolean }> : []
   return selected
     .filter(item => item.enabled !== false)
     .map(item => {
       const model = modelCatalog.find(row => row.id === item.modelId)
-      const multiplier = !lockedMultiplier && typeof item.multiplierOverride === 'number' && Number.isFinite(item.multiplierOverride) ? item.multiplierOverride : defaultMultiplier
       return {
         modelId: model?.id ?? item.modelId ?? 'custom-model',
         modelName: model?.displayName ?? item.modelId ?? '自定义模型',
@@ -3389,10 +3873,10 @@ function buildModelPriceRowsFromPayload(payload: Record<string, unknown>, defaul
         officialInputPricePerMillion: model?.officialInputPricePerMillion ?? 0,
         officialCachedInputPricePerMillion: model?.officialCachedInputPricePerMillion ?? null,
         officialOutputPricePerMillion: model?.officialOutputPricePerMillion ?? 0,
-        merchantMultiplier: multiplier,
-        actualInputPricePerMillion: Number(((model?.officialInputPricePerMillion ?? 0) * multiplier).toFixed(3)),
-        actualCachedInputPricePerMillion: model?.officialCachedInputPricePerMillion === null || model?.officialCachedInputPricePerMillion === undefined ? null : Number((model.officialCachedInputPricePerMillion * multiplier).toFixed(3)),
-        actualOutputPricePerMillion: Number(((model?.officialOutputPricePerMillion ?? 0) * multiplier).toFixed(3)),
+        merchantMultiplier: defaultMultiplier,
+        actualInputPricePerMillion: Number(((model?.officialInputPricePerMillion ?? 0) * defaultMultiplier).toFixed(3)),
+        actualCachedInputPricePerMillion: model?.officialCachedInputPricePerMillion === null || model?.officialCachedInputPricePerMillion === undefined ? null : Number((model.officialCachedInputPricePerMillion * defaultMultiplier).toFixed(3)),
+        actualOutputPricePerMillion: Number(((model?.officialOutputPricePerMillion ?? 0) * defaultMultiplier).toFixed(3)),
       }
     })
 }
@@ -3442,15 +3926,23 @@ export async function submitCarpool(payload: SaveCarpoolDraftPayload) {
   assertCarpoolAccessArrangement(payload, product)
   const id = `carpool-${Date.now()}`
   const monthly = payload.monthlyPriceCny ?? 0
-  const serviceMultiplier = payload.serviceMultiplier ?? 1
+  const weeklyQuotaAmount = payload.weeklyQuotaAmount ?? 0
   const monthlyQuotaAmount = payload.monthlyQuotaAmount ?? 0
   const carpool: Carpool = {
     id,
     product: product?.displayName ?? payload.customProductName?.trim() ?? '自定义产品',
     region: regionName,
     monthly,
-    serviceMultiplier,
+    serviceMultiplier: 1,
+    weeklyQuotaAmount,
     monthlyQuotaAmount,
+    followsOfficialQuotaReset: payload.followsOfficialQuotaReset,
+    vpsRegion: payload.vpsRegion.trim() || null,
+    supportsMainlandChinaDirectConnection: payload.supportsMainlandChinaDirectConnection,
+    openingChannelCode: payload.openingChannelCode as Carpool['openingChannelCode'],
+    customOpeningChannel: payload.customOpeningChannel.trim() || null,
+    paymentMethodCode: payload.paymentMethodCode as Carpool['paymentMethodCode'],
+    customPaymentMethod: payload.customPaymentMethod.trim() || null,
     quotaLabel: product?.quotaLabel ?? defaultQuotaLabel,
     quotaUnit: product?.quotaUnit ?? defaultQuotaUnit,
     quotaPeriod: product?.quotaPeriod ?? defaultQuotaPeriod,
@@ -3468,10 +3960,7 @@ export async function submitCarpool(payload: SaveCarpoolDraftPayload) {
     confirmedAt: nowText(),
     confirmedWithin48h: true,
     linuxdoBound: null,
-    sourceUrl: payload.linuxDoTopicUrl || undefined,
-    sourceAuthorVerification: {
-      status: payload.linuxDoTopicUrl ? 'pending' : 'not_submitted',
-    },
+    sourceAuthorVerification: { status: 'not_submitted' },
     hasInfoConflict: false,
     hasUnresolvedDispute: false,
     distributionMethod: payload.distributionMethod || 'other',
@@ -3506,7 +3995,7 @@ export async function submitApiService(payload: Record<string, unknown>) {
   const gateway = apiGatewayFromDistribution(payload.distributionSystem)
   const defaultMultiplier = numberValue(payload.defaultMultiplier, 1)
   const cnyPerUsdCredit = numberValue(payload.cnyPerUsdCredit, 1)
-  const selectedModels = Array.isArray(payload.selectedModels) ? payload.selectedModels as Array<{ modelId?: string, multiplierOverride?: number | null, enabled?: boolean }> : []
+  const selectedModels = Array.isArray(payload.selectedModels) ? payload.selectedModels as Array<{ modelId?: string, enabled?: boolean }> : []
   const models = selectedModels
     .filter(item => item.enabled !== false)
     .map(item => modelCatalog.find(model => model.id === item.modelId)?.displayName ?? item.modelId ?? '自定义模型')
@@ -3528,6 +4017,16 @@ export async function submitApiService(payload: Record<string, unknown>) {
   const declaredTtftBand = String(payload.declaredTtftBand ?? '') as ApiTTFTBand
   const state: ApiServiceState = isPublish ? 'online' : 'offline'
   const quotaExpiresAt = beijingDateTimeInputToISOString(String(payload.quotaExpiresAt ?? ''))
+  const accountPoolType = String(payload.accountPoolType ?? '') as ApiService['accountPoolType']
+  const accountPoolLabels: Record<Exclude<NonNullable<ApiService['accountPoolType']>, 'custom'>, string> = {
+    gpt_pro_20x: 'GPT Pro 20x',
+    gpt_pro_5x: 'GPT Pro 5x',
+    gpt_plus: 'GPT Plus',
+  }
+  const accountPoolLabel = accountPoolType === 'custom'
+    ? stringValue(payload.accountPoolCustomName, '')
+    : accountPoolType ? accountPoolLabels[accountPoolType] : ''
+  const merchantRefundCommitment = (payload.warranty as { mode?: string } | undefined)?.mode === 'merchant_full_refund'
   const service: ApiService = {
     id,
     title: stringValue(payload.generatedTitle, models.length ? `${models[0]} API 服务` : '新 API 服务'),
@@ -3571,7 +4070,7 @@ export async function submitApiService(payload: Record<string, unknown>) {
     lastOnlineConfirmedAt: nowText(),
     onlineExpiresAt: nowText(),
     declaredTtftBand,
-    recommendedConcurrency: numberValue(payload.recommendedConcurrency, 1),
+    declaredMaxConcurrency: numberValue(payload.declaredMaxConcurrency, 1),
     performanceConfirmedAt: beijingDateTimeInputToISOString(String(payload.performanceConfirmedAt ?? '')) || undefined,
     expectedResponseMinutes: responseMinutes,
     responseMedianMinutes: apiTTFTApproxMinutes(declaredTtftBand),
@@ -3579,8 +4078,14 @@ export async function submitApiService(payload: Record<string, unknown>) {
     todayOrderCount: 0,
     unresolvedDisputes: 0,
     warning: publiclyOrderable ? undefined : isPublish ? '待配置接单设置' : '草稿尚未上线',
-    warranty: (payload.warranty as { mode?: string, warrantyDays?: number | null } | undefined)?.mode === 'merchant_warranty' ? `商户承诺：${(payload.warranty as { warrantyDays?: number | null }).warrantyDays ?? 7} 天可用性处理，平台不担保、不代赔` : '按商户备注站外协商，平台不担保、不代赔',
-    refundPolicy: stringValue((payload.warranty as { refundNote?: string } | undefined)?.refundNote, '按服务说明站外协商'),
+    warranty: merchantRefundCommitment
+      ? '商户退款承诺：订单有效期内符合规则时退还全部实付金额；平台不垫付、不代赔'
+      : '无额外退款承诺，具体问题由双方站外协商；平台不担保、不代赔',
+    refundPolicy: merchantRefundCommitment ? 'api-merchant-refund-v1' : '无额外退款承诺',
+    accountPoolType,
+    accountPoolLabel,
+    merchantRefundCommitment,
+    merchantRefundPolicyVersion: 'api-merchant-refund-v1',
     quotaExpiresAt: quotaExpiresAt || undefined,
     expiresAt: formatQuotaExpiresAtLabel(quotaExpiresAt) || '按服务说明',
     completed30d: 0,
@@ -3601,7 +4106,6 @@ export async function submitApiService(payload: Record<string, unknown>) {
       enabled: item.enabled !== false,
       sortOrder: index,
       models: (item.modelCatalogIds ?? []).map(modelId => {
-        const selected = selectedModels.find(row => row.modelId === modelId)
         const model = modelCatalog.find(row => row.id === modelId)
         return {
           serviceModelId: `service-${modelId}`,
@@ -3609,7 +4113,7 @@ export async function submitApiService(payload: Record<string, unknown>) {
           modelPriceVersionId: '',
           modelName: model?.displayName ?? modelId,
           provider: model?.provider ?? 'other',
-          merchantMultiplier: selected?.multiplierOverride ?? defaultMultiplier,
+          merchantMultiplier: defaultMultiplier,
         }
       }),
     })),
@@ -4041,6 +4545,8 @@ export async function getNotifications(): Promise<UnifiedNotification[]> {
 
 export async function getNavigationBadges(): Promise<NavigationBadgeSummary> {
   if (shouldUseRealBackend()) return backendNavigationBadges()
+
+  materializeMockApiOrderReviews()
 
   const [notifications, importantAnnouncementUnread, reportRows, appealRows] = await Promise.all([
     buildUnifiedNotifications(),
@@ -4871,6 +5377,7 @@ function findApiOrder(id: string) {
 }
 
 function updateApiOrder(id: string, updater: (order: ApiOrder) => void) {
+  materializeMockApiOrderReviews()
   const order = findApiOrder(id)
   updater(order)
   order.updatedAt = nowText()
@@ -4907,6 +5414,7 @@ export async function createApiOrderFromIntent(intentId: string, paymentMethod: 
   const createdAt = nowText()
   const order: ApiOrder = {
     id: `api-order-${Date.now()}`,
+    orderNo: createMockApiOrderNo(createdAt),
     purchaseKind: 'api_service',
     apiPurchaseIntentId: intent.id,
     apiServiceId: intent.serviceId,
@@ -5006,6 +5514,7 @@ export async function createApiQuotaOrder(payload: CreateApiQuotaOrderPayload) {
   const paymentWindowMinutes = offer.saleMode === 'scheduled' ? 5 : 10
   const order: ApiOrder = {
     id: `api-order-quota-${Date.now()}`,
+    orderNo: createMockApiOrderNo(createdAt),
     purchaseKind: 'limited_quota_offer',
     apiPurchaseIntentId: intentId,
     apiServiceId: service.id,
@@ -5043,7 +5552,12 @@ export async function createApiQuotaOrder(payload: CreateApiQuotaOrderPayload) {
       roundEndsAt: offer.currentRound?.endsAt,
       distributionSystem: offer.distributionSystem,
       ttftBand: offer.declaredTtftBand,
-      recommendedConcurrency: offer.recommendedConcurrency,
+      declaredMaxConcurrency: offer.declaredMaxConcurrency,
+      accountPoolType: service.accountPoolType,
+      accountPoolLabel: service.accountPoolLabel,
+      merchantRefundCommitment: service.merchantRefundCommitment,
+      merchantRefundPolicyVersion: service.merchantRefundPolicyVersion,
+      serviceValidityExpiresAt: offer.expiresAt,
       performanceConfirmedAt: offer.performanceConfirmedAt,
       performanceUnverified: true,
       deliveryEtaMinutes: offer.deliveryEtaMinutes,
@@ -5102,6 +5616,7 @@ export async function getApiOrderById(id: string, perspective: 'buyer' | 'mercha
     return perspective === 'merchant' ? backendOwnerAPIOrder(id) : backendMyAPIOrder(id)
   }
   await wait()
+  materializeMockApiOrderReviews()
   const order = findApiOrder(id)
   if (perspective === 'merchant' && order.sellerId !== currentMerchantId) throw new Error('无权查看该订单。')
   if (perspective === 'buyer' && order.buyerId !== currentBuyerId) throw new Error('无权查看该订单。')
@@ -5180,8 +5695,10 @@ export async function confirmApiOrderComplete(id: string, version: number) {
   await wait()
   return updateApiOrder(id, order => {
     if (order.version !== version) throw new Error('订单已更新，请刷新后重试。')
-    if (order.status !== 'delivery_submitted') throw new Error('只有商户已交付的订单可以确认完成。')
+    if (order.status !== 'delivery_submitted') throw new Error('只有待核验凭证的订单可以确认可用。')
+    if (order.disputeStatus === 'open') throw new Error('订单问题正在处理中，暂时不能确认凭证可用。')
     order.status = 'completed'
+    order.completionSource = 'buyer_confirmed'
     order.completedAt = nowText()
   })
 }
@@ -5223,6 +5740,7 @@ export async function confirmApiOrderPayment(id: string, version: number) {
     shouldPersistQuota = true
     order.status = 'delivery_submitted'
     order.deliverySubmittedAt = confirmedAt
+    order.deliveryReviewExpiresAt = new Date(Date.parse(confirmedAt) + apiOrderDeliveryReviewWindowMs).toISOString()
     order.deliveryNote = '确认收款后已分配预导入的买家专属接入信息。'
     order.deliveryCredential = order.selectedDeliveryMode === 'sub2api_panel_account'
       ? {
@@ -5284,6 +5802,7 @@ export async function submitApiOrderDeliveryCredential(id: string, payload: Subm
     const submittedAt = nowText()
     order.status = 'delivery_submitted'
     order.deliverySubmittedAt = submittedAt
+    order.deliveryReviewExpiresAt = new Date(Date.parse(submittedAt) + apiOrderDeliveryReviewWindowMs).toISOString()
     if (order.packageSnapshot) {
       const expiresAt = new Date(new Date(submittedAt).getTime() + order.packageSnapshot.durationDays * 86_400_000)
       order.packageExpiresAt = expiresAt.toISOString()
@@ -5366,14 +5885,16 @@ export function getApiOrderEvents(order: ApiOrder): ApiOrderEvent[] {
     })
   }
   if (order.completedAt) {
+    const automaticallyCompleted = order.completionSource === 'auto_completed'
     events.push({
       id: `${order.id}-completed`,
       orderId: order.id,
-      actorLabel: order.buyer,
-      actorRole: 'buyer',
+      actorLabel: automaticallyCompleted ? '系统' : order.buyer,
+      actorRole: automaticallyCompleted ? 'system' : 'buyer',
       type: 'completed',
       fromStatus: 'delivery_submitted',
       toStatus: 'completed',
+      note: automaticallyCompleted ? '24 小时核验期结束，订单自动完成。' : '买家已确认凭证可用。',
       createdAt: order.completedAt,
     })
   }
@@ -5395,13 +5916,14 @@ export function getApiOrderEvents(order: ApiOrder): ApiOrderEvent[] {
 
 export async function getApiOrderNotifications(): Promise<ApiOrderNotification[]> {
   await wait()
+  materializeMockApiOrderReviews()
   const rows = apiOrderStore
     .filter(item => ['pending_payment', 'payment_issue', 'payment_submitted', 'paid_confirmed', 'delivery_submitted'].includes(item.status))
     .slice(0, 6)
     .map(item => ({
       id: `api-notice-${item.id}`,
       title: getApiOrderStatusLabel(item.status),
-      detail: `${item.serviceTitle} · ${item.buyer} / ${item.seller}`,
+      detail: `${item.orderNo} · ${item.serviceTitle} · ${item.buyer} / ${item.seller}`,
       time: item.updatedAt,
       unread: item.status === 'payment_issue' || item.status === 'payment_submitted' || item.status === 'paid_confirmed',
       to: item.sellerId === currentMerchantId ? `/merchant/api-orders/${item.id}` : `/my/api-orders/${item.id}`,
@@ -5578,6 +6100,11 @@ export type {
   ApiQuotaSystemSaleSlot,
   ApiQuotaSystemSaleSlotList,
   ApiService,
+  ApiServiceSalesChannel,
+  ApiServiceSalesChannelKind,
+  ApiServiceSalesState,
+  ApiServiceSalesSummary,
+  ApiServiceSalesView,
   ApiServicePackage,
   ApiServicePackageModel,
   ApiServicePackageSnapshot,
@@ -5599,6 +6126,7 @@ export type {
   CreateManualInterventionReportRequest,
   ModelPriceRow,
   OfficialPrice,
+  OwnerApiService,
   OrderContactSnapshot,
   OrderContactSnapshotItem,
   PublicMerchantProfile,

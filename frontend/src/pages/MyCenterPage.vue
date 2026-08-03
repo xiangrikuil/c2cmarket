@@ -66,7 +66,7 @@ const apiPaymentSettingsQuery = useApiPaymentAccountSettingsQuery()
 const apiPaymentSettings = apiPaymentSettingsQuery.data
 const carpoolsQuery = useMyCarpools()
 const carpools = carpoolsQuery.data
-const apiServicesQuery = useMyApiServices()
+const apiServicesQuery = useMyApiServices('all')
 const apiServices = apiServicesQuery.data
 const buyerRideApplicationsQuery = useMyCarpoolApplications({ sort: 'default_buyer' })
 const rideApplications = buyerRideApplicationsQuery.data
@@ -101,6 +101,13 @@ const sectionLinks = [
 
 type AccountSetupDialogMode = 'required' | 'password' | 'email'
 type AccountSetupStep = 'email' | 'password' | 'complete'
+type AccountSetupStepItem = {
+  id: AccountSetupStep
+  step: number
+  label: string
+  completed: boolean
+  active: boolean
+}
 
 const usageScopeOptions: { value: ContactUsageScope, label: string }[] = [
   { value: 'carpool_owner', label: '拼车车主' },
@@ -296,6 +303,7 @@ const buyerPreviewOpen = ref(false)
 useUnsavedChangesGuard(contactSettingsDirty, '联系方式与收款设置尚未保存，确认离开当前页面？')
 const accountRecoveryMissingItems = computed(() => profile.value ? accountRecoveryRequirements(profile.value).filter(item => !item.completed) : [])
 const accountRecoveryComplete = computed(() => profile.value ? isAccountRecoveryComplete(profile.value) : false)
+const canConfigureBackupPassword = computed(() => Boolean(profile.value?.linuxDoBinding.bound))
 const accountRecoveryReturnTo = computed(() => sanitizeAccountRecoveryReturnTo(route.query.returnTo))
 const quotaPublishRecovery = computed(() => accountRecoveryReturnTo.value === '/api-market/quota/new' || accountRecoveryReturnTo.value === '/my/api-services?intent=quota')
 const accountRecoveryDialogTitle = computed(() => {
@@ -303,8 +311,14 @@ const accountRecoveryDialogTitle = computed(() => {
   return quotaPublishRecovery.value ? '发布限时额度包前先完成账号设置' : '完善账号安全'
 })
 const accountRecoveryDialogDescription = computed(() => {
-  if (accountRecoveryComplete.value) return quotaPublishRecovery.value ? '继续选择 API 服务并发布限时额度包。' : '可以在这里更新邮箱或密码。'
-  return quotaPublishRecovery.value ? '完成邮箱验证和密码设置后，会继续进入限时额度包发布流程。' : '补全后即可访问个人中心其他页面和业务页。'
+  if (accountRecoveryComplete.value) {
+    if (quotaPublishRecovery.value) return '继续选择 API 服务并发布限时额度包。'
+    return canConfigureBackupPassword.value ? '可以在这里更新邮箱或备用密码。' : '可以在这里更新验证邮箱。'
+  }
+  if (quotaPublishRecovery.value) {
+    return canConfigureBackupPassword.value ? '完成邮箱验证和备用密码设置后，会继续进入限时额度包发布流程。' : '完成邮箱验证后，会继续进入限时额度包发布流程。'
+  }
+  return '补全后即可访问个人中心其他页面和业务页。'
 })
 const accountRecoveryContinueLabel = computed(() => quotaPublishRecovery.value ? '继续发布限时额度包' : '继续访问原页面')
 const accountRecoveryDialogOpen = ref(false)
@@ -317,50 +331,57 @@ const emailVerificationDevCode = ref('')
 const emailVerificationDevCodeEmail = ref('')
 let emailVerificationTimer: number | null = null
 const accountRecoveryDialogKey = computed(() => {
-  if (activeSection.value !== 'account' || accountRecoveryComplete.value) return ''
+  if (!profile.value || activeSection.value !== 'account' || accountRecoveryComplete.value) return ''
   const missingIds = accountRecoveryMissingItems.value.map(item => item.id).join(',')
   return `${accountRecoveryReturnTo.value ?? ''}:${missingIds}`
 })
-const accountSetupSteps = computed(() => [
-  {
-    id: 'email' as const,
+const accountSetupSteps = computed<AccountSetupStepItem[]>(() => {
+  const steps: AccountSetupStepItem[] = [{
+    id: 'email',
     step: 1,
     label: '绑定邮箱',
     completed: Boolean(profile.value?.emailVerified),
     active: accountSetupActiveStep.value === 'email',
-  },
-  {
-    id: 'password' as const,
-    step: 2,
-    label: '设置密码',
-    completed: Boolean(profile.value?.passwordConfigured),
-    active: accountSetupActiveStep.value === 'password',
-  },
-  {
-    id: 'complete' as const,
-    step: 3,
+  }]
+  if (canConfigureBackupPassword.value) {
+    steps.push({
+      id: 'password',
+      step: 2,
+      label: '设置备用密码',
+      completed: Boolean(profile.value?.passwordConfigured),
+      active: accountSetupActiveStep.value === 'password',
+    })
+  }
+  steps.push({
+    id: 'complete',
+    step: canConfigureBackupPassword.value ? 3 : 2,
     label: '完成',
     completed: accountRecoveryComplete.value || accountSetupActiveStep.value === 'complete',
     active: accountSetupActiveStep.value === 'complete',
-  },
-])
-const accountSecurityBenefits = [
+  })
+  return steps
+})
+const accountSecuritySideDescription = computed(() => {
+  if (quotaPublishRecovery.value) return canConfigureBackupPassword.value ? '先完成邮箱和备用密码设置，之后会回到额度包发布流程。' : '先完成邮箱验证，之后会回到额度包发布流程。'
+  return canConfigureBackupPassword.value ? '完成邮箱和备用密码设置后，可以使用更多账号功能。' : '完成邮箱验证后，可以使用更多账号功能。'
+})
+const accountSecurityBenefits = computed(() => [
   {
     title: '账号安全',
-    description: '邮箱和密码让账号恢复路径更清晰。',
+    description: canConfigureBackupPassword.value ? '邮箱和备用密码让账号恢复路径更清晰。' : '验证邮箱让账号恢复路径更清晰。',
     icon: ShieldCheck,
   },
-  {
+  ...(canConfigureBackupPassword.value ? [{
     title: '便捷登录',
     description: '认证入口暂不可用时，也可使用站内账号登录。',
     icon: KeyRound,
-  },
+  }] : []),
   {
     title: '重要通知',
     description: '接收订单状态、系统通知等重要信息。',
     icon: Bell,
   },
-] as const
+])
 const emailVerificationCooldownSeconds = computed(() => {
   if (!emailVerificationResendAvailableAt.value) return 0
   return Math.max(0, Math.ceil((emailVerificationResendAvailableAt.value - emailVerificationNow.value) / 1000))
@@ -399,7 +420,8 @@ const confirmPasswordMismatch = computed(() => (
   && passwordForm.confirmPassword !== passwordForm.newPassword
 ))
 const canSubmitAccountPassword = computed(() => (
-  passwordRulesComplete.value
+  canConfigureBackupPassword.value
+  && passwordRulesComplete.value
   && Boolean(passwordForm.confirmPassword)
   && passwordForm.confirmPassword === passwordForm.newPassword
 ))
@@ -465,9 +487,9 @@ function handleSectionLinkClick(to: string, event: MouseEvent) {
 
 function defaultAccountSetupStep(mode: AccountSetupDialogMode): AccountSetupStep {
   if (mode === 'email') return 'email'
-  if (mode === 'password') return 'password'
+  if (mode === 'password') return canConfigureBackupPassword.value ? 'password' : (profile.value?.emailVerified ? 'complete' : 'email')
   if (!profile.value?.emailVerified) return 'email'
-  if (!profile.value.passwordConfigured) return 'password'
+  if (canConfigureBackupPassword.value && !profile.value.passwordConfigured) return 'password'
   return 'complete'
 }
 
@@ -526,6 +548,10 @@ function saveProfile() {
 }
 
 function savePassword() {
+  if (!canConfigureBackupPassword.value) {
+    toast.warning('当前账号未绑定 linux.do，不能设置备用密码。')
+    return
+  }
   if (profile.value?.passwordConfigured && !passwordForm.currentPassword.trim()) {
     toast.warning('请输入当前密码。')
     return
@@ -590,7 +616,7 @@ function confirmEmailVerification() {
       emailVerificationDevCodeEmail.value = ''
       stopEmailVerificationTimer()
       emailVerificationResendAvailableAt.value = null
-      accountSetupActiveStep.value = updatedProfile.passwordConfigured ? 'complete' : 'password'
+      accountSetupActiveStep.value = updatedProfile.linuxDoBinding.bound && !updatedProfile.passwordConfigured ? 'password' : 'complete'
       toast.success('邮箱已绑定。')
     },
     onError: error => toast.error(error instanceof Error ? error.message : '邮箱绑定失败。'),
@@ -764,7 +790,7 @@ function goToLogin() {
             <div class="account-security-side-copy mt-6">
               <h2 class="text-2xl font-semibold tracking-tight">{{ quotaPublishRecovery ? '发布限时额度包' : '完善账号安全' }}</h2>
               <p class="mt-3 text-sm leading-6 text-muted-foreground">
-                {{ quotaPublishRecovery ? '先完成邮箱和密码设置，之后会回到额度包发布流程。' : '完成邮箱和密码设置后，可以使用更多账号功能。' }}
+                {{ accountSecuritySideDescription }}
               </p>
             </div>
 
@@ -874,11 +900,11 @@ function goToLogin() {
                 </div>
               </section>
 
-              <section v-else-if="accountSetupActiveStep === 'password'" class="mt-7 space-y-5">
+              <section v-else-if="accountSetupActiveStep === 'password' && canConfigureBackupPassword" class="mt-7 space-y-5">
                 <div>
-                  <h3 class="text-base font-semibold">{{ profile.passwordConfigured ? '修改密码' : '设置密码' }}</h3>
+                  <h3 class="text-base font-semibold">{{ profile.passwordConfigured ? '修改备用密码' : '设置备用密码' }}</h3>
                   <p class="mt-2 text-sm leading-6 text-muted-foreground">
-                    设置后可使用账号密码登录。
+                    设置后可在 linux.do 暂不可用时，使用站内用户名和备用密码登录。
                   </p>
                 </div>
 
@@ -974,13 +1000,13 @@ function goToLogin() {
                     {{ quotaPublishRecovery ? '现在可以继续选择 API 服务并发布限时额度包。' : '现在可以继续访问原页面，或留在账号页检查其他设置。' }}
                   </p>
                 </div>
-                <dl class="grid gap-3 rounded-lg border border-border bg-card/70 p-4 text-left text-sm sm:grid-cols-2">
+                <dl class="grid gap-3 rounded-lg border border-border bg-card/70 p-4 text-left text-sm" :class="canConfigureBackupPassword ? 'sm:grid-cols-2' : ''">
                   <div>
                     <dt class="text-muted-foreground">绑定邮箱</dt>
                     <dd class="mt-1 font-medium">{{ profile.emailVerified ? profile.email : '待同步' }}</dd>
                   </div>
-                  <div>
-                    <dt class="text-muted-foreground">密码</dt>
+                  <div v-if="canConfigureBackupPassword">
+                    <dt class="text-muted-foreground">备用密码</dt>
                     <dd class="mt-1 font-medium">{{ profile.passwordConfigured ? '已设置' : '待同步' }}</dd>
                   </div>
                 </dl>
@@ -1280,8 +1306,8 @@ function goToLogin() {
             </p>
           </div>
           <div class="flex flex-wrap gap-2">
-            <Button v-if="!profile.passwordConfigured" @click="openAccountSetupDialog('password')"><LockKeyhole class="h-4 w-4" />设置密码</Button>
-            <Button v-else variant="outline" @click="openAccountSetupDialog('password')"><LockKeyhole class="h-4 w-4" />修改密码</Button>
+            <Button v-if="canConfigureBackupPassword && !profile.passwordConfigured" @click="openAccountSetupDialog('password')"><LockKeyhole class="h-4 w-4" />设置备用密码</Button>
+            <Button v-else-if="canConfigureBackupPassword" variant="outline" @click="openAccountSetupDialog('password')"><LockKeyhole class="h-4 w-4" />修改备用密码</Button>
             <Button v-if="!profile.emailVerified" variant="outline" @click="openAccountSetupDialog('email')"><MailCheck class="h-4 w-4" />绑定邮箱</Button>
             <Button v-else variant="outline" @click="openAccountSetupDialog('email')"><MailCheck class="h-4 w-4" />更新邮箱</Button>
             <Button v-if="accountRecoveryComplete && accountRecoveryReturnTo" @click="continueAfterAccountRecovery">{{ accountRecoveryContinueLabel }}</Button>
@@ -1300,10 +1326,10 @@ function goToLogin() {
           </div>
 
           <div class="space-y-3 text-sm">
-            <h3 class="text-sm font-semibold">邮箱、密码与限制</h3>
+            <h3 class="text-sm font-semibold">邮箱、备用密码与限制</h3>
             <div class="flex justify-between gap-4"><span class="text-muted-foreground">账号状态</span><span>{{ profile.accountStatus }}</span></div>
             <div class="flex justify-between gap-4"><span class="text-muted-foreground">绑定邮箱</span><span>{{ profile.emailVerified ? profile.email : '未绑定' }}</span></div>
-            <div class="flex justify-between gap-4"><span class="text-muted-foreground">密码</span><span>{{ profile.passwordConfigured ? '已设置' : '未设置' }}</span></div>
+            <div class="flex justify-between gap-4"><span class="text-muted-foreground">备用密码</span><span>{{ canConfigureBackupPassword ? (profile.passwordConfigured ? '已设置' : '未设置') : '不适用（仅 linux.do 账号）' }}</span></div>
             <div class="flex justify-between gap-4"><span class="text-muted-foreground">功能限制</span><span>{{ profile.restrictions.length ? profile.restrictions.join('、') : '无' }}</span></div>
             <div class="space-y-2">
               <span class="block text-muted-foreground">系统铭牌</span>

@@ -150,12 +150,15 @@ func (r *Runner) execute(ctx context.Context) {
 	}
 	r.stats.successTotal.Add(1)
 	r.logger.Printf(
-		"数据维护任务完成 duration=%s sessions=%d verification_codes=%d idempotency=%d contact_sessions=%d notifications=%d domain_events=%d",
+		"数据维护任务完成 duration=%s sessions=%d verification_codes=%d idempotency=%d contact_sessions=%d api_order_payment_expired=%d api_order_review_reminders=%d api_orders_auto_completed=%d notifications=%d domain_events=%d",
 		duration,
 		result.SessionsDeleted,
 		result.VerificationCodesDeleted,
 		result.IdempotencyEntriesDeleted,
 		result.ContactSessionsExpired,
+		result.APIOrdersPaymentExpired,
+		result.APIOrderReviewReminders,
+		result.APIOrdersAutoCompleted,
 		result.NotificationsDeleted,
 		result.DomainEventsDeleted,
 	)

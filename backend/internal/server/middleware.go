@@ -7,6 +7,7 @@ import (
 	"c2c-market/backend/internal/module/idempotency"
 	"crypto/sha256"
 	"encoding/json"
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -38,6 +39,9 @@ func (s *Server) requireSession(w http.ResponseWriter, r *http.Request) (auth.Us
 func (s *Server) renewAuthenticatedSession(w http.ResponseWriter, r *http.Request, sessionToken string, user auth.User, session auth.Session, appErr *domain.AppError) (auth.User, auth.Session, *domain.AppError) {
 	if appErr != nil || !shouldRenewSessionForRequest(r) {
 		return user, session, appErr
+	}
+	if activityErr := s.growth.RecordAuthenticatedActivity(r.Context(), user.ID); activityErr != nil {
+		log.Printf("growth_activity_record_failed user_id=%s request_id=%s code=%s", user.ID, middleware.RequestIDFromRequest(r), activityErr.Code)
 	}
 	renewedSession, renewed, appErr := s.app.RenewSession(r.Context(), sessionToken)
 	if appErr != nil {

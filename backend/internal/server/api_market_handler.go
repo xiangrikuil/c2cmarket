@@ -33,9 +33,11 @@ type apiServiceRequest struct {
 	UsageVisibility                  string                        `json:"usageVisibility"`
 	PublicAccessNote                 string                        `json:"publicAccessNote"`
 	MerchantNote                     string                        `json:"merchantNote"`
-	MerchantSupportNote              string                        `json:"merchantSupportNote"`
+	AccountPoolType                  string                        `json:"accountPoolType"`
+	AccountPoolCustomName            string                        `json:"accountPoolCustomName"`
+	MerchantRefundCommitment         *bool                         `json:"merchantRefundCommitment"`
 	DeclaredTTFTBand                 string                        `json:"declaredTtftBand"`
-	RecommendedConcurrency           int                           `json:"recommendedConcurrency"`
+	DeclaredMaxConcurrency           int                           `json:"declaredMaxConcurrency"`
 	PerformanceConfirmedAt           string                        `json:"performanceConfirmedAt"`
 	AccessModes                      []apiServiceAccessModeRequest `json:"accessModes"`
 	Models                           []apiServiceModelRequest      `json:"models"`
@@ -104,8 +106,12 @@ type apiServiceResponse struct {
 	PublicAccessNote                 string                              `json:"publicAccessNote,omitempty"`
 	MerchantNote                     string                              `json:"merchantNote,omitempty"`
 	MerchantSupportNote              string                              `json:"merchantSupportNote,omitempty"`
+	AccountPoolType                  *string                             `json:"accountPoolType"`
+	AccountPoolLabel                 *string                             `json:"accountPoolLabel"`
+	MerchantRefundCommitment         bool                                `json:"merchantRefundCommitment"`
+	MerchantRefundPolicyVersion      string                              `json:"merchantRefundPolicyVersion"`
 	DeclaredTTFTBand                 string                              `json:"declaredTtftBand,omitempty"`
-	RecommendedConcurrency           int                                 `json:"recommendedConcurrency,omitempty"`
+	DeclaredMaxConcurrency           int                                 `json:"declaredMaxConcurrency,omitempty"`
 	PerformanceConfirmedAt           *string                             `json:"performanceConfirmedAt,omitempty"`
 	AcceptingOrders                  bool                                `json:"acceptingOrders"`
 	PaymentWindowMinutes             int                                 `json:"paymentWindowMinutes"`
@@ -129,6 +135,26 @@ type apiServiceResponse struct {
 	SourceAuthorVerification         sourceAuthorResourceSummaryResponse `json:"sourceAuthorVerification"`
 }
 
+type ownerAPIServiceListItemResponse struct {
+	apiServiceResponse
+	SalesSummary apiServiceSalesSummaryResponse `json:"salesSummary"`
+}
+
+type apiServiceSalesSummaryResponse struct {
+	OverallState string                           `json:"overallState"`
+	Channels     []apiServiceSalesChannelResponse `json:"channels"`
+}
+
+type apiServiceSalesChannelResponse struct {
+	Kind                  string  `json:"kind"`
+	State                 string  `json:"state"`
+	AvailableUSDAllowance string  `json:"availableUsdAllowance,omitempty"`
+	AvailableCopies       int     `json:"availableCopies,omitempty"`
+	NextStartsAt          *string `json:"nextStartsAt,omitempty"`
+	SaleCutoffAt          *string `json:"saleCutoffAt,omitempty"`
+	ExpiresAt             *string `json:"expiresAt,omitempty"`
+}
+
 type publicAPIServiceResponse struct {
 	ID                               string                              `json:"id"`
 	MerchantIdentityMode             string                              `json:"merchantIdentityMode"`
@@ -149,8 +175,12 @@ type publicAPIServiceResponse struct {
 	UsageVisibility                  string                              `json:"usageVisibility"`
 	PublicAccessNote                 string                              `json:"publicAccessNote,omitempty"`
 	MerchantSupportNote              string                              `json:"merchantSupportNote,omitempty"`
+	AccountPoolType                  *string                             `json:"accountPoolType"`
+	AccountPoolLabel                 *string                             `json:"accountPoolLabel"`
+	MerchantRefundCommitment         bool                                `json:"merchantRefundCommitment"`
+	MerchantRefundPolicyVersion      string                              `json:"merchantRefundPolicyVersion"`
 	DeclaredTTFTBand                 string                              `json:"declaredTtftBand,omitempty"`
-	RecommendedConcurrency           int                                 `json:"recommendedConcurrency,omitempty"`
+	DeclaredMaxConcurrency           int                                 `json:"declaredMaxConcurrency,omitempty"`
 	PerformanceConfirmedAt           *string                             `json:"performanceConfirmedAt,omitempty"`
 	AcceptingOrders                  bool                                `json:"acceptingOrders"`
 	PaymentWindowMinutes             int                                 `json:"paymentWindowMinutes"`
@@ -493,13 +523,15 @@ func (s *Server) handleOwnerAPIServices(w http.ResponseWriter, r *http.Request) 
 		writeProblem(w, r, appErr)
 		return
 	}
-	services, appErr := s.app.OwnerAPIServices(r.Context(), user, pageRequest)
+	services, appErr := s.app.OwnerAPIServices(r.Context(), user, apimarket.OwnerServiceFilter{
+		SalesView: r.URL.Query().Get("salesView"),
+	}, pageRequest)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
 	}
-	writePageJSON(w, domain.Page[apiServiceResponse]{
-		Items:      toAPIServiceResponses(services.Items),
+	writePageJSON(w, domain.Page[ownerAPIServiceListItemResponse]{
+		Items:      toOwnerAPIServiceListItemResponses(services.Items),
 		NextCursor: services.NextCursor,
 	})
 }
@@ -893,9 +925,11 @@ func toAppCreateAPIServiceInput(req apiServiceRequest) apimarket.CreateServiceIn
 		UsageVisibility:                  req.UsageVisibility,
 		PublicAccessNote:                 req.PublicAccessNote,
 		MerchantNote:                     req.MerchantNote,
-		MerchantSupportNote:              req.MerchantSupportNote,
+		AccountPoolType:                  req.AccountPoolType,
+		AccountPoolCustomName:            req.AccountPoolCustomName,
+		MerchantRefundCommitment:         req.MerchantRefundCommitment,
 		DeclaredTTFTBand:                 req.DeclaredTTFTBand,
-		RecommendedConcurrency:           req.RecommendedConcurrency,
+		DeclaredMaxConcurrency:           req.DeclaredMaxConcurrency,
 		PerformanceConfirmedAt:           req.PerformanceConfirmedAt,
 		AccessModes:                      accessModes,
 		Models:                           models,
@@ -923,9 +957,11 @@ func toAppUpdateAPIServiceInput(req apiServiceRequest) apimarket.UpdateServiceIn
 		UsageVisibility:                  base.UsageVisibility,
 		PublicAccessNote:                 base.PublicAccessNote,
 		MerchantNote:                     base.MerchantNote,
-		MerchantSupportNote:              base.MerchantSupportNote,
+		AccountPoolType:                  base.AccountPoolType,
+		AccountPoolCustomName:            base.AccountPoolCustomName,
+		MerchantRefundCommitment:         base.MerchantRefundCommitment,
 		DeclaredTTFTBand:                 base.DeclaredTTFTBand,
-		RecommendedConcurrency:           base.RecommendedConcurrency,
+		DeclaredMaxConcurrency:           base.DeclaredMaxConcurrency,
 		PerformanceConfirmedAt:           base.PerformanceConfirmedAt,
 		AccessModes:                      base.AccessModes,
 		Models:                           base.Models,
@@ -958,6 +994,36 @@ func toAPIServiceResponses(services []apimarket.Service) []apiServiceResponse {
 	return items
 }
 
+func toOwnerAPIServiceListItemResponses(services []apimarket.Service) []ownerAPIServiceListItemResponse {
+	items := make([]ownerAPIServiceListItemResponse, 0, len(services))
+	for _, service := range services {
+		items = append(items, ownerAPIServiceListItemResponse{
+			apiServiceResponse: toAPIServiceResponse(service),
+			SalesSummary:       toAPIServiceSalesSummaryResponse(service.SalesSummary),
+		})
+	}
+	return items
+}
+
+func toAPIServiceSalesSummaryResponse(summary apimarket.ServiceSalesSummary) apiServiceSalesSummaryResponse {
+	channels := make([]apiServiceSalesChannelResponse, 0, len(summary.Channels))
+	for _, channel := range summary.Channels {
+		channels = append(channels, apiServiceSalesChannelResponse{
+			Kind:                  channel.Kind,
+			State:                 channel.State,
+			AvailableUSDAllowance: channel.AvailableUSDAllowance,
+			AvailableCopies:       channel.AvailableCopies,
+			NextStartsAt:          formatOptionalTime(channel.NextStartsAt),
+			SaleCutoffAt:          formatOptionalTime(channel.SaleCutoffAt),
+			ExpiresAt:             formatOptionalTime(channel.ExpiresAt),
+		})
+	}
+	return apiServiceSalesSummaryResponse{
+		OverallState: summary.OverallState,
+		Channels:     channels,
+	}
+}
+
 func toPublicAPIServiceResponses(services []apimarket.Service) []publicAPIServiceResponse {
 	items := make([]publicAPIServiceResponse, 0, len(services))
 	for _, service := range services {
@@ -987,8 +1053,12 @@ func toPublicAPIServiceResponse(service apimarket.Service) publicAPIServiceRespo
 		UsageVisibility:                  service.UsageVisibility,
 		PublicAccessNote:                 service.PublicAccessNote,
 		MerchantSupportNote:              service.MerchantSupportNote,
+		AccountPoolType:                  optionalString(service.AccountPoolType),
+		AccountPoolLabel:                 optionalString(apimarket.AccountPoolLabel(service)),
+		MerchantRefundCommitment:         service.MerchantRefundCommitment,
+		MerchantRefundPolicyVersion:      apimarket.MerchantRefundPolicyVersion,
 		DeclaredTTFTBand:                 service.DeclaredTTFTBand,
-		RecommendedConcurrency:           service.RecommendedConcurrency,
+		DeclaredMaxConcurrency:           service.DeclaredMaxConcurrency,
 		PerformanceConfirmedAt:           formatOptionalTime(service.PerformanceConfirmedAt),
 		AcceptingOrders:                  service.AcceptingOrders,
 		PaymentWindowMinutes:             service.PaymentWindowMinutes,
@@ -1039,8 +1109,12 @@ func toAPIServiceResponse(service apimarket.Service) apiServiceResponse {
 		PublicAccessNote:                 service.PublicAccessNote,
 		MerchantNote:                     service.MerchantNote,
 		MerchantSupportNote:              service.MerchantSupportNote,
+		AccountPoolType:                  optionalString(service.AccountPoolType),
+		AccountPoolLabel:                 optionalString(apimarket.AccountPoolLabel(service)),
+		MerchantRefundCommitment:         service.MerchantRefundCommitment,
+		MerchantRefundPolicyVersion:      apimarket.MerchantRefundPolicyVersion,
 		DeclaredTTFTBand:                 service.DeclaredTTFTBand,
-		RecommendedConcurrency:           service.RecommendedConcurrency,
+		DeclaredMaxConcurrency:           service.DeclaredMaxConcurrency,
 		PerformanceConfirmedAt:           formatOptionalTime(service.PerformanceConfirmedAt),
 		AcceptingOrders:                  service.AcceptingOrders,
 		PaymentWindowMinutes:             service.PaymentWindowMinutes,

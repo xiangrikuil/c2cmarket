@@ -2,7 +2,7 @@
 
 Date: 2026-06-17
 Author: Codex
-Source: initial project PRD captured during Trellis bootstrap; marketplace UI positioning updated from the user-approved site-wide baseline on 2026-07-14.
+Source: initial project PRD captured during Trellis bootstrap; marketplace UI positioning updated from the user-approved site-wide baseline on 2026-07-14; API order delivery-review behavior updated from the user-approved role contract on 2026-08-02.
 External references:
 - OpenAI Terms of Use: `https://openai.com/policies/terms-of-use/`
 - OpenAI Services Agreement: `https://openai.com/policies/services-agreement/`
@@ -63,7 +63,11 @@ Rationale: purchase intents remain internal tracking/audit records and may appea
 API order delivery credential wording:
 
 - Use `交付凭证`, `确认已交付`, `买家专属的接入信息`, and `提交后不可修改`; do not claim that delivery credentials can be revoked through the platform.
-- 参与方订单详情必须把 `买家付款 → 卖家确认收款 → 卖家交付 → 买家确认完成` 显示为连续流程，并在首屏提供当前参与方唯一的主操作；`delivery_submitted` 不能仅展示为“已交付”，买家必须能执行确认完成，卖家必须看到正在等待买家确认。
+- 参与方订单详情必须把 `买家付款 → 卖家确认收款 → 卖家交付 → 买家核验` 显示为连续流程，并在首屏提供当前参与方唯一的主操作。
+- 卖家提交凭证后，其履约任务立即结束；卖家侧显示 `已完成交付` 且没有催验收待办。订单仍以 `delivery_submitted` 进入 24 小时买家核验期，不得把买家是否点击确认表达为卖家的未完成任务。
+- 买家侧在核验期显示 `待核验凭证`、后端返回的截止时间、`确认凭证可用` 和 `凭证存在问题`。买家确认可提前完成；开放纠纷暂停自动完成；未反馈且无开放纠纷时系统在截止时间自动完成。
+- `completed` 必须区分 `buyer_confirmed` 与 `auto_completed`。两者都可进入完成交易与评价资格，但自动完成不得被描述为买家认可、正面评价或平台验真。
+- 管理员订单详情只读展示双方标识、订单快照、履约时间、核验截止时间、完成来源和纠纷入口，不得返回或渲染原始交付凭证和双方联系方式。
 - Do not use `自动发货`, `平台担保`, `平台验真`, `主账号密码`, `Cookie/Session/Token 交付`, or copy that implies C2CMarket tests the API.
 - The credential may be shown only in buyer/seller order detail and action responses. Public API service pages, lists, admin summaries, notifications, events, logs, and reports must not include raw API keys or passwords.
 - If a delivered key is wrong, rotated, or needs replacement, buyer and seller handle it through the displayed contact methods off-platform; V1 does not maintain station-internal credential edits or history.
@@ -93,7 +97,7 @@ Sub2API quota vocabulary:
 
 OpenAI 个人套餐不是官方担保的团队席位，不能被描述为“官方支持共享”或“官方授权拼车”。Plus/Pro 应作为高风险个人订阅费用分摊展示，发布和申请都必须确认当前风险告知版本；Business 可作为 provider member invitation 类方案展示，但仍需要风险提示。任何方案都不得要求或鼓励共享主账号、密码、Session、Cookie、token 或其他登录态。
 
-拼车发布必须把车主声明的倍率与每周/月平均美元额度作为结构化字段收集和展示。拼车发布文案可以继续引导车主在买家须知中说明运营细节，例如中转方式、家宽地区、是否支持 Sub2API 托管管理、是否可用 Web 端。这些运营细节是买家预期说明，不是平台收集凭据。用户界面不得要求或暗示填写直接登录凭据、Sub2API 管理员密码、面板所有者凭据、具体 IP 地址、token、Session、Cookie 或 API Key。优先使用 `Sub2API 托管管理：支持 / 不支持，具体方式站外确认`、`家宽地区：仅填写国家或地区，不填写具体 IP` 等表达。
+拼车倍率固定为 `1`，发布页不展示倍率输入，后端拒绝其他值。每周额度、每月额度、是否跟随官方重置、VPS 区域、是否支持国内直连、开通渠道、付款方式、分发方式和是否提供管理员账号必须作为结构化字段收集；VPS 区域是无需筛选的自由文本。市场列表使用 `额度 / 接入` 列紧凑展示周/月额度、官方重置和管理员账号，其他渠道、付款、分发和网络信息通过详情浮层查看。开发期缺失值显示 `未声明`。账号层面的 linux.do 身份绑定仍是发布资格，但拼车车源不要求关联帖子，发布页不收集或导入帖子 URL，列表、详情、推荐排序和可交易判断也不展示或依赖原帖作者验证；历史 API 字段仅作兼容。拼车发布文案可以继续引导车主在买家须知中说明运营细节，这些运营细节是买家预期说明，不是平台收集凭据。用户界面不得要求或暗示填写直接登录凭据、Sub2API 管理员密码、面板所有者凭据、具体 IP 地址、token、Session、Cookie 或 API Key。
 
 ChatGPT Plus / Pro 当前初始策略为 `publish_policy=allowed`、`access_mode=personal_account_cost_share`、`provider_policy_status=known_restricted`、`risk_level=high`、`risk_ack_required=true`。`allowed` 只代表 C2CMarket 当前开放该品类，不代表服务提供商认可。平台必须保留通过数据库和管理端把该品类调整为 `info_only` 或 `blocked` 的能力；Go、前端和审核逻辑不得用硬编码的 Plus/Pro 分支替代产品策略字段。
 

@@ -2,7 +2,7 @@
 import { computed, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { useQueryClient } from '@tanstack/vue-query'
-import { CheckCircle2, Eye, MoreHorizontal, ShieldAlert } from 'lucide-vue-next'
+import { CheckCircle2, Eye, Gavel, MoreHorizontal, ShieldAlert } from 'lucide-vue-next'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
@@ -30,9 +30,11 @@ import TablePagination from '@/components/market/TablePagination.vue'
 import EmptyState from '@/components/market/EmptyState.vue'
 import SkeletonTable from '@/components/market/SkeletonTable.vue'
 import CompactStats from '@/components/market/CompactStats.vue'
+import AdminDisputeResolutionDialog from '@/components/admin/AdminDisputeResolutionDialog.vue'
 import { usePagination } from '@/composables/usePagination'
 import { runAdminModerationAction, updateAdminRowStatus, type AdminRow, type AdminSection } from '@/lib/api'
 import { isCarpoolExceptionStatus } from '@/lib/carpoolModeration'
+import { matchesApiOrderSearch } from '@/lib/apiOrderUi'
 import { useAdminSectionRows } from '@/queries/useMarketQueries'
 import { toast } from 'vue-sonner'
 
@@ -56,6 +58,8 @@ const drawerMode = ref<DrawerMode>('detail')
 const confirmOpen = ref(false)
 const confirmAction = ref<QuickAction>('approve')
 const confirmRowId = ref('')
+const disputeDialogOpen = ref(false)
+const disputeDialogId = ref('')
 
 type ModerationAction = 'take_down' | 'restore' | 'restrict' | 'warn' | 'suspend' | 'ban'
 type DrawerMode = 'detail' | ModerationAction
@@ -92,8 +96,8 @@ const sectionRows = computed(() => section.value === 'carpools'
 
 function requiresAdminAction(row: AdminRow) {
   if (section.value === 'reports') {
-    if (row.targetType === 'report') return ['待处理', '已分诊'].includes(row.status)
-    if (row.targetType === 'dispute') return row.status === '处理中'
+    if (row.targetType === 'report') return ['待处理', '已分诊', '需要补充信息'].includes(row.status)
+    if (row.targetType === 'dispute') return ['处理中', '需要补充信息'].includes(row.status)
     if (row.targetType === 'appeal') return row.status === '申诉复核中'
     return false
   }
@@ -109,8 +113,8 @@ const visibleRows = computed(() => {
   } else if (activeStatus.value !== '全部') {
     rows = rows.filter(row => row.status === activeStatus.value)
   }
-  const q = keyword.value.trim().toLowerCase()
-  if (q) rows = rows.filter(row => [row.id, row.primary, row.secondary, row.owner, row.status, row.risk, ...(row.detailItems ?? []).flatMap(item => [item.label, item.value])].join(' ').toLowerCase().includes(q))
+  const q = keyword.value.trim()
+  if (q) rows = rows.filter(row => matchesApiOrderSearch(q, [row.id, row.primary, row.secondary, row.owner, row.status, row.risk, ...(row.detailItems ?? []).flatMap(item => [item.label, item.value])]))
   if (riskFilter.value === 'high') rows = rows.filter(row => /高风险|纠纷|举报|封禁|异常|超时|未解决|危险/i.test(`${row.risk} ${row.status}`))
   if (riskFilter.value === 'has_note') rows = rows.filter(row => Boolean(row.risk.trim()))
   return rows
@@ -173,9 +177,24 @@ const confirmDescription = computed(() => {
 })
 
 function openDetailDrawer(row: AdminRow) {
+  if (row.targetType === 'dispute') {
+    openDisputeResolution(row)
+    return
+  }
   selectedRowId.value = row.id
   drawerMode.value = 'detail'
   drawerOpen.value = true
+}
+
+function openDisputeResolution(row: AdminRow) {
+  disputeDialogId.value = row.id
+  disputeDialogOpen.value = true
+}
+
+async function handleDisputeUpdated(updated: AdminRow) {
+  localRows.value = localRows.value.map(item => item.id === updated.id ? updated : item)
+  selectedRowId.value = updated.id
+  await queryClient.invalidateQueries({ queryKey: ['admin-section', 'reports'] })
 }
 
 function openModerationDrawer(row: AdminRow, action: ModerationAction) {
@@ -228,7 +247,7 @@ function canRestore(row: AdminRow | null) {
 function canTakeDown(row: AdminRow | null) {
   if (!row) return false
   if (row.targetType === 'report') return ['待处理', '已分诊'].includes(row.status)
-  if (row.targetType === 'dispute') return row.status !== '已关闭'
+  if (row.targetType === 'dispute') return ['处理中', '需要补充信息'].includes(row.status)
   if (row.targetType === 'appeal') return row.status === '申诉复核中'
   return ['已验证', '已通过', '可上车', '已满', '在线', '匹配中', 'normal'].some(status => row.status.includes(status))
 }
@@ -236,14 +255,14 @@ function canTakeDown(row: AdminRow | null) {
 function canApprove(row: AdminRow | null) {
   if (!row) return false
   if (row.targetType === 'report') return row.status === '待处理'
-  if (row.targetType === 'dispute') return ['处理中', '需要补充信息'].includes(row.status)
+  if (row.targetType === 'dispute') return false
   if (row.targetType === 'appeal') return row.status === '申诉复核中'
   return !['已通过', '已验证', '在线', '可上车', '匹配中'].some(status => row.status.includes(status))
 }
 
 function canRequestRecheck(row: AdminRow | null) {
   if (!row) return false
-  if (row.targetType === 'report') return ['待处理', '已分诊'].includes(row.status)
+  if (row.targetType === 'report') return ['待处理', '已分诊', '需要补充信息'].includes(row.status)
   if (row.targetType === 'dispute') return row.status === '处理中'
   if (row.targetType === 'appeal') return row.status === '申诉复核中'
   return !row.status.includes('复核')
@@ -251,9 +270,14 @@ function canRequestRecheck(row: AdminRow | null) {
 
 function primaryActionLabel(row: AdminRow | null) {
   if (row?.targetType === 'report') return '标记分诊'
-  if (row?.targetType === 'dispute') return '标记处理'
   if (row?.targetType === 'appeal') return '通过申诉'
   return '标记通过'
+}
+
+function disputeActionLabel(row: AdminRow) {
+  if (row.status === '已处理') return '责任认定'
+  if (row.status === '已关闭') return '查看案件'
+  return '裁决'
 }
 
 function secondaryActionLabel(row: AdminRow | null) {
@@ -322,7 +346,15 @@ async function requestRecheck(row: AdminRow) {
   }
   actionBusy.value = `${row.id}-recheck`
   try {
-    await setRowStatus(row, '待复核', `管理台轻量确认：${secondaryActionLabel(row)}`)
+    if (row.targetType === 'report') {
+      const updated = await runAdminModerationAction(row, 'restore', '管理台打开纠纷并进入人工裁决。')
+      localRows.value = localRows.value.map(item => item.id === row.id ? updated : item)
+      selectedRowId.value = updated.id
+      await queryClient.invalidateQueries({ queryKey: ['admin-section', 'reports'] })
+      toast.success(`${row.primary} 已打开纠纷。`)
+    } else {
+      await setRowStatus(row, '待复核', `管理台轻量确认：${secondaryActionLabel(row)}`)
+    }
     return true
   } catch (error) {
     toast.error(error instanceof Error ? error.message : '操作失败')
@@ -431,7 +463,11 @@ const showContentActions = computed(() => !['logs', 'trade-intents'].includes(se
               <Eye class="h-4 w-4" />
               详情
             </Button>
-            <Button size="sm" :disabled="!canApprove(row) || actionBusy === `${row.id}-approve`" @click="openQuickConfirm(row, 'approve')">
+            <Button v-if="row.targetType === 'dispute'" size="sm" @click="openDisputeResolution(row)">
+              <Gavel class="h-4 w-4" />
+              {{ disputeActionLabel(row) }}
+            </Button>
+            <Button v-else size="sm" :disabled="!canApprove(row) || actionBusy === `${row.id}-approve`" @click="openQuickConfirm(row, 'approve')">
               <CheckCircle2 class="h-4 w-4" />
               {{ primaryActionLabel(row) }}
             </Button>
@@ -586,5 +622,11 @@ const showContentActions = computed(() => !['logs', 'trade-intents'].includes(se
         </DialogFooter>
       </DialogContent>
     </Dialog>
+
+    <AdminDisputeResolutionDialog
+      v-model:open="disputeDialogOpen"
+      :dispute-id="disputeDialogId"
+      @updated="handleDisputeUpdated"
+    />
   </div>
 </template>

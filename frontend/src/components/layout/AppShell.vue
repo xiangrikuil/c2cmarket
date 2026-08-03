@@ -2,35 +2,34 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
 import { useQueryClient } from '@tanstack/vue-query'
-import {
-  Bell,
-  BadgeCheck,
-  ChevronDown,
-  CircleHelp,
-  Code2,
-  Car,
-  ExternalLink,
-  Home,
-  LogIn,
-  LogOut,
-  Megaphone,
-  Menu,
-  MessageSquarePlus,
-  PackageSearch,
-  Palette,
-  PanelLeftClose,
-  PanelLeftOpen,
-  Search,
-  ShieldCheck,
-  ShoppingBag,
-  Siren,
-  Star,
-  Upload,
-  UserCog,
-  UserRound,
-  UsersRound,
-  X,
-} from 'lucide-vue-next'
+import BadgeCheck from 'lucide-vue-next/dist/esm/icons/badge-check.js'
+import Bell from 'lucide-vue-next/dist/esm/icons/bell.js'
+import Car from 'lucide-vue-next/dist/esm/icons/car.js'
+import ChevronDown from 'lucide-vue-next/dist/esm/icons/chevron-down.js'
+import CircleHelp from 'lucide-vue-next/dist/esm/icons/circle-question-mark.js'
+import Code2 from 'lucide-vue-next/dist/esm/icons/code-xml.js'
+import ExternalLink from 'lucide-vue-next/dist/esm/icons/external-link.js'
+import Gift from 'lucide-vue-next/dist/esm/icons/gift.js'
+import Home from 'lucide-vue-next/dist/esm/icons/house.js'
+import LogIn from 'lucide-vue-next/dist/esm/icons/log-in.js'
+import LogOut from 'lucide-vue-next/dist/esm/icons/log-out.js'
+import Megaphone from 'lucide-vue-next/dist/esm/icons/megaphone.js'
+import Menu from 'lucide-vue-next/dist/esm/icons/menu.js'
+import MessageSquarePlus from 'lucide-vue-next/dist/esm/icons/message-square-plus.js'
+import PackageSearch from 'lucide-vue-next/dist/esm/icons/package-search.js'
+import Palette from 'lucide-vue-next/dist/esm/icons/palette.js'
+import PanelLeftClose from 'lucide-vue-next/dist/esm/icons/panel-left-close.js'
+import PanelLeftOpen from 'lucide-vue-next/dist/esm/icons/panel-left-open.js'
+import Search from 'lucide-vue-next/dist/esm/icons/search.js'
+import ShieldCheck from 'lucide-vue-next/dist/esm/icons/shield-check.js'
+import ShoppingBag from 'lucide-vue-next/dist/esm/icons/shopping-bag.js'
+import Siren from 'lucide-vue-next/dist/esm/icons/siren.js'
+import Star from 'lucide-vue-next/dist/esm/icons/star.js'
+import Upload from 'lucide-vue-next/dist/esm/icons/upload.js'
+import UserCog from 'lucide-vue-next/dist/esm/icons/user-cog.js'
+import UserRound from 'lucide-vue-next/dist/esm/icons/user-round.js'
+import UsersRound from 'lucide-vue-next/dist/esm/icons/users-round.js'
+import X from 'lucide-vue-next/dist/esm/icons/x.js'
 import { toast } from 'vue-sonner'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -45,7 +44,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
-import { useMyApiServices, useMyCarpools, useMyProfileQuery, useNotifications } from '@/queries/useMarketQueries'
+import { useMyApiServices, useMyCarpools, useMyProfileQuery, useNotifications } from '@/queries/useAppShellQueries'
 import { useNavigationBadges } from '@/queries/useRealtimeQueries'
 import { useRealtimeSync } from '@/composables/useRealtimeSync'
 import { appThemes, applyAppTheme, getInitialAppTheme, isAppTheme } from '@/theme/appThemes'
@@ -53,6 +52,7 @@ import { ACCOUNT_RECOVERY_PATH, isAccountRecoveryAllowedPath, isAccountRecoveryC
 import { usePersistentSidebar } from '@/composables/usePersistentSidebar'
 import { logoutBackendSession } from '@/lib/backendClient'
 import { loginRoute } from '@/lib/authNavigation'
+import { usePromotionRewardPublicConfig } from '@/queries/usePromotionRewardQueries'
 
 const route = useRoute()
 const router = useRouter()
@@ -69,8 +69,9 @@ const showLoginAction = computed(() => authResolved.value && !isAuthenticated.va
 const { data: notifications } = useNotifications(isAuthenticated)
 const workspaceQueriesEnabled = computed(() => Boolean(myProfile.value))
 const { data: ownedCarpools } = useMyCarpools(workspaceQueriesEnabled)
-const { data: ownedApiServices } = useMyApiServices(workspaceQueriesEnabled)
+const { data: ownedApiServices } = useMyApiServices('all', workspaceQueriesEnabled)
 const { data: navigationBadges } = useNavigationBadges(computed(() => Boolean(myProfile.value)))
+const { data: promotionRewardConfig } = usePromotionRewardPublicConfig()
 useRealtimeSync(computed(() => Boolean(myProfile.value)))
 
 const buyerApiActionCount = computed(() => navigationBadges.value?.buyer.apiOrderActions ?? 0)
@@ -119,7 +120,7 @@ const navGroups = computed(() => {
     title: '我的交易',
     items: [
       { label: '我的上车', to: '/my/rides', count: buyerCarpoolActionCount.value, icon: UsersRound },
-      { label: '我的 API 订单', to: '/my/api-orders', count: buyerApiActionCount.value, icon: ShoppingBag },
+      { label: 'API 购买订单', to: '/my/api-orders', count: buyerApiActionCount.value, icon: ShoppingBag },
       { label: '收藏', to: '/my/favorites', count: null, icon: Star },
       { label: '通知', to: '/my/notifications', count: unreadBusinessCount.value, icon: Bell },
     ],
@@ -130,7 +131,7 @@ const navGroups = computed(() => {
       { label: '我的车源', to: '/my/carpools', count: null, icon: Car },
       { label: '上车申请', to: '/merchant/carpool-applications', count: ownerCarpoolActionCount.value, icon: UserCog },
       { label: '我的 API 服务', to: '/my/api-services', count: null, icon: Code2 },
-      { label: 'API 订单', to: '/merchant/api-orders', count: merchantApiActionCount.value, icon: PackageSearch },
+      { label: 'API 销售订单', to: '/merchant/api-orders', count: merchantApiActionCount.value, icon: PackageSearch },
     ],
   }
   const accountGroup = {
@@ -139,6 +140,7 @@ const navGroups = computed(() => {
       { label: '个人中心', to: '/my', count: null, icon: UserRound },
       { label: '联系与收款', to: '/my/contacts', count: null, icon: MessageSquarePlus },
       { label: '信誉与成长', to: '/my/reputation', count: null, icon: BadgeCheck },
+      ...(promotionRewardConfig.value?.programEnabled ? [{ label: '推广权益', to: '/my/promotion-benefits', count: null, icon: Gift }] : []),
       { label: '安全设置', to: '/my/account', count: null, icon: ShieldCheck },
       { label: '反馈', to: '/my/feedback', count: feedbackMenuUnreadCount.value, icon: CircleHelp },
     ],

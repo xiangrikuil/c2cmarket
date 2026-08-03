@@ -101,6 +101,7 @@ export type ReputationSummary = {
   confidence: ReputationConfidence
   ruleVersion: string
   completedCount: number
+  roleCompletionRate: number | null
   roleFaultCancelRate: number | null
   hasUnknownCancellation: boolean
   unresolvedDisputes: number
