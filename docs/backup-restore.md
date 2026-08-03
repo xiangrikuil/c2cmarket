@@ -5,20 +5,32 @@ Author: Codex
 
 ## Policy
 
-Define and approve these values before launch:
+The checked-in systemd timer is configured to run the production backup once
+per day at 03:30 Asia/Shanghai and uses `Persistent=true` to catch up a missed
+run after the timer becomes active again. This is the repository's intended
+schedule, not proof that the timer is installed, enabled, or succeeding on the
+VPS.
+
+The repository does not define an approved RPO or RTO. Define and approve these
+values before launch:
 
 ```text
 RPO=<MAXIMUM_ACCEPTABLE_DATA_LOSS>
 RTO=<MAXIMUM_ACCEPTABLE_RESTORE_TIME>
-BACKUP_SCHEDULE=<UTC_CRON_OR_PLATFORM_SCHEDULE>
-RESTORE_DRILL_FREQUENCY=<E.G._MONTHLY>
 BACKUP_OWNER=<TEAM_OR_ROLE>
 ```
 
+The daily timer interval does not by itself establish the RPO. Backup failures,
+upload failures, and the age of the newest validated remote object must be
+included in the RPO measurement. The current operations policy calls for a
+manual isolated restore drill at least monthly; no automated restore-drill job
+is checked in.
+
 The repository backup script creates a PostgreSQL custom-format dump, a SHA-256
 checksum, uploads both to the configured R2 remote, and only then removes local
-copies older than `LOCAL_RETENTION_DAYS`. R2 lifecycle retention is configured
-outside the repository.
+copies older than `LOCAL_RETENTION_DAYS` (default 7 days). The 30-day R2
+retention target requires a Bucket Lifecycle configured and verified outside
+the repository.
 
 Backups contain encrypted contact and credential data. Store contact keyrings,
 verification pepper, OAuth/SMTP credentials, and R2 access credentials in a
@@ -78,7 +90,7 @@ the empty drill database with `pg_restore --no-owner --no-privileges`. Then:
 1. Query `schema_migrations`; record the restored backup's migration version
    and require `dirty=false`. The version may be older than the current release.
 2. Run the release's forward migrations against the drill database, then
-   require `version=64` and `dirty=false`. Never edit the restored migration
+   require `version=75` and `dirty=false`. Never edit the restored migration
    row or skip migrations to force the expected value.
 3. Run referential-integrity and representative row-count checks.
 4. Start the exact release backend image against the drill database using
@@ -107,6 +119,6 @@ selection. Before restore:
   failed one;
 - record every command, timestamp, and result without credentials.
 
-After restore, require migration `64:false`, `/readyz`, `/version`, metrics,
+After restore, require migration `75:false`, `/readyz`, `/version`, metrics,
 controlled authentication, and read-only business checks before reopening
 traffic. Resume backup scheduling only after the recovered system is stable.

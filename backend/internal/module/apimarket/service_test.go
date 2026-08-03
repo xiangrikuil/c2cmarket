@@ -134,6 +134,31 @@ func TestValidateCreateInputRequiresFutureQuotaExpirationForMeteredServices(t *t
 	}
 }
 
+func TestValidateCreateInputRejectsManualBillingAndKeepsSupportedModes(t *testing.T) {
+	now := time.Date(2026, 7, 7, 12, 0, 0, 0, time.UTC)
+	manual := validMeteredCreateInput()
+	manual.BillingMode = ServiceBillingModeManual
+
+	appErr := validateCreateInput(manual, now)
+	if appErr == nil || appErr.Code != domain.CodeValidationFailed || len(appErr.FieldErrors) != 1 {
+		t.Fatalf("expected stable manual billing validation error, got %+v", appErr)
+	}
+	fieldErr := appErr.FieldErrors[0]
+	if fieldErr.Field != "billingMode" || fieldErr.Code != "unsupported" {
+		t.Fatalf("expected billingMode unsupported field error, got %+v", fieldErr)
+	}
+
+	otherMetered := validMeteredCreateInput()
+	otherMetered.DistributionSystem = "other"
+	if appErr := validateCreateInput(otherMetered, now); appErr != nil {
+		t.Fatalf("expected other + metered billing to remain supported, got %+v", appErr)
+	}
+
+	if appErr := validateCreateInput(validLimitedPackageCreateInput(), now); appErr != nil {
+		t.Fatalf("expected fixed package billing to remain supported, got %+v", appErr)
+	}
+}
+
 func TestValidateCreateInputAllowsOptionalLinuxDoSourceURL(t *testing.T) {
 	now := time.Date(2026, 7, 7, 12, 0, 0, 0, time.UTC)
 	input := validMeteredCreateInput()
@@ -185,6 +210,30 @@ func TestOrderableReasonsIncludesExpiredQuota(t *testing.T) {
 	reasons := OrderableReasonsAt(service, now)
 	if len(reasons) != 1 || reasons[0] != "quota_expired" {
 		t.Fatalf("expected only quota_expired reason, got %#v", reasons)
+	}
+}
+
+func TestOrderableReasonsRejectUnsupportedHistoricalBillingModes(t *testing.T) {
+	now := time.Date(2026, 7, 7, 12, 0, 0, 0, time.UTC)
+	for _, billingMode := range []string{ServiceBillingModeManual, "legacy_unknown_mode"} {
+		service := Service{
+			OwnerContactMethodID: "contact-1",
+			BillingMode:          billingMode,
+			AcceptingOrders:      true,
+			PaymentWindowMinutes: 10,
+			ReviewStatus:         ServiceReviewStatusApproved,
+			PublicationStatus:    ServicePublicationStatusOnline,
+			ModerationStatus:     ServiceModerationStatusClear,
+			PaymentOptions: []PaymentOption{{
+				PaymentMethod: PaymentMethodWechat,
+				Enabled:       true,
+			}},
+		}
+
+		reasons := OrderableReasonsAt(service, now)
+		if len(reasons) != 1 || reasons[0] != "billing_mode_unsupported" {
+			t.Fatalf("expected %q to be non-orderable, got %#v", billingMode, reasons)
+		}
 	}
 }
 

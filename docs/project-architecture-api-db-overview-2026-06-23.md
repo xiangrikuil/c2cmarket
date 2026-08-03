@@ -14,9 +14,11 @@
 
 生产化方面，仓库已经有 production env 模板、Compose 覆盖、migration 服务、Dockerfile、runbook、smoke 脚本和后端 hardening：HTTP server timeout、生产 Secure cookie、OAuth timeout/响应大小限制、CORS/Origin allowlist、安全响应头、基础限流、列表分页、幂等 processing 过期恢复、API purchase intent 联系方式访问审计、搜索 trigram indexes。真实生产仍需要外部 OAuth provider、正式域名/TLS、静态前端托管、数据库备份恢复、日志/监控/告警、密钥轮换、反向代理和受控生产验证流程。产品边界明确不包含支付、托管、担保、凭据交付、第三方 API key/账号凭据保管或上游 API 代理；站内账号密码仅保存不可逆哈希。
 
-### 2026-07-06 维护更新
+### 2026-07-06 维护更新（历史快照）
 
-- 当前最新 PostgreSQL migration 是 `000065_remove_demands`，后端 `ExpectedMigrationVersion=65`，`/readyz` 会在数据库 schema 低于该版本时降级。
+以下内容记录 2026-07-06 当时的仓库状态，不表示当前分支仍停留在这些版本或实现。
+
+- 截至该快照，最新 PostgreSQL migration 是 `000065_remove_demands`，后端 `ExpectedMigrationVersion=65`，`/readyz` 会在数据库 schema 低于该版本时降级。
 - 密码写入已升级到 `argon2id_v1`，旧 `sha256_salted_v1` 只保留登录校验和成功后 rehash；首个 admin 通过显式 bootstrap 环境变量创建，不再由 migration 固定密码种子创建。
 - 前端生产构建必须显式配置真实后端：`VITE_API_MODE=real` 或 `VITE_API_BASE_URL`；`VITE_ENABLE_MOCK=true` 在 production build 中会失败。Mock/demo 仍保留为本地开发路径，真实模式不得静默 fallback 到 mock 成功数据。
 - 后端 service 迁移策略已经明确：`internal/module/<domain>` 拥有业务 service/repository contract，`internal/module/core` 只作为兼容 facade 委托，不再作为新增业务能力的膨胀入口。

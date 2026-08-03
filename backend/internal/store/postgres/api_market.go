@@ -92,6 +92,7 @@ func publicAPIServiceOrderablePredicateAt(alias, currentTimeExpression string) s
 	return fmt.Sprintf(`%[1]s.review_status = 'approved'
 		  AND %[1]s.publication_status = 'online'
 		  AND %[1]s.moderation_status = 'clear'
+		  AND %[1]s.billing_mode IN ('metered_usd_quota', 'fixed_package')
 		  AND %[1]s.accepting_orders = true
 		  AND EXISTS (
 		    SELECT 1 FROM users owner

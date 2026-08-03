@@ -168,7 +168,9 @@ OAUTH_USERINFO_URL=https://connect.linuxdo.org/api/user
 
 ## 7. Production R2 备份
 
-`scripts/backup-production-postgres.sh` 生成 custom-format dump 与 SHA-256，并上传 `c2cmarket-r2:c2cmarket-backups/postgres/production/`。R2 lifecycle 保留 30 天；本地成功上传后保留 7 天。
+`scripts/backup-production-postgres.sh` 生成 custom-format dump 与 SHA-256，并上传 `c2cmarket-r2:c2cmarket-backups/postgres/production/`。脚本只在两个对象都上传成功后清理本地文件，本地默认保留 7 天。R2 的目标保留期为 30 天，但 Bucket Lifecycle 在仓库外配置；部署时必须单独配置并核验，不能从仓库内容推断线上已经生效。
+
+配套 timer 按仓库配置每天 03:30（Asia/Shanghai）运行，并设置 `Persistent=true`。这只是预期执行计划；启用后仍需通过 `systemctl list-timers`、service exit status 和远端对象确认实际运行。仓库尚未批准具体 RPO/RTO，每日计划本身不能替代 RPO/RTO 决策或备份失败告警。
 
 将 rclone 配置放到 `/home/deploy/.config/rclone/rclone.conf`，权限 0600。安装 systemd units：
 

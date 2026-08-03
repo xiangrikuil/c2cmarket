@@ -996,12 +996,24 @@ function normalizeSub2ApiService(service: ApiService): ApiService {
   return service
 }
 
+function isSupportedApiServiceBillingMode(value: unknown): value is Exclude<ApiBillingMode, 'manual_credit'> {
+  return value === 'metered_credit' || value === 'fixed_package'
+}
+
+function requireSupportedApiServiceBillingMode(value: unknown) {
+  if (!isSupportedApiServiceBillingMode(value)) {
+    throw new Error('当前版本不支持该 API 服务计费方式。')
+  }
+  return value
+}
+
 function normalizeApiServiceStore(services: ApiService[]) {
   return services.map(service => {
     const normalized = normalizeSub2ApiService(service)
     return {
       ...normalized,
-      publiclyOrderable: normalized.publiclyOrderable ?? normalized.online,
+      publiclyOrderable: isSupportedApiServiceBillingMode(normalized.billingMode)
+        && (normalized.publiclyOrderable ?? normalized.online),
       expiresAt: normalized.quotaExpiresAt ? formatQuotaExpiresAtLabel(normalized.quotaExpiresAt) || normalized.expiresAt : normalized.expiresAt,
     }
   })
@@ -3839,10 +3851,6 @@ function apiGatewayFromDistribution(value: unknown): ApiService['delivery'] {
   return '其他'
 }
 
-function apiBillingMode(value: unknown): ApiBillingMode {
-  return value === 'fixed_package' || value === 'manual_credit' || value === 'metered_credit' ? value : 'metered_credit'
-}
-
 function apiUsageVisibility(value: unknown): ApiUsageVisibility {
   if (value === 'panel_realtime') return 'panel_realtime'
   if (value === 'panel_balance_only' || value === 'merchant_confirmed') return 'merchant_readonly'
@@ -4002,7 +4010,7 @@ export async function submitApiService(payload: Record<string, unknown>) {
     .filter(Boolean)
   const merchantIdentityMode = apiMerchantIdentityMode(normalized.merchantIdentityMode)
   const deliveryModes = apiDeliveryModes(payload.deliveryModes)
-  const billing = apiBillingMode(payload.billingMode)
+  const billing = requireSupportedApiServiceBillingMode(payload.billingMode)
   const rawPackages = Array.isArray(payload.packages)
     ? payload.packages as Array<{ id?: string, name?: string, priceCny?: number, panelAllowance?: number, durationDays?: number, stockTotal?: number, description?: string, enabled?: boolean, modelCatalogIds?: string[] }>
     : []
@@ -4148,6 +4156,7 @@ export async function publishApiService(id: string) {
   const target = apiServiceStore.find(item => item.id === id)
   if (!target) throw new Error('API 服务不存在。')
   if (target.state !== 'offline') throw new Error('当前 API 服务不能上线。')
+  requireSupportedApiServiceBillingMode(target.billingMode)
   target.state = 'online'
   target.online = true
   target.publiclyOrderable = true
@@ -4178,6 +4187,7 @@ export async function resumeApiService(id: string) {
   const target = apiServiceStore.find(item => item.id === id)
   if (!target) throw new Error('API 服务不存在。')
   if (target.state !== 'paused') throw new Error('当前 API 服务不能恢复。')
+  requireSupportedApiServiceBillingMode(target.billingMode)
   target.state = 'online'
   target.online = true
   target.publiclyOrderable = true
@@ -5233,6 +5243,7 @@ export async function createApiPurchaseIntent(payload: CreateApiPurchaseIntentPa
   await wait()
   const service = apiServiceStore.find(item => item.id === payload.serviceId)
   if (!service) throw new Error(`API service not found: ${payload.serviceId}`)
+  requireSupportedApiServiceBillingMode(service.billingMode)
   if (!isApiServicePubliclyOrderable(service) || service.state !== 'online') throw new Error('服务当前不可创建订单。')
   if (!service.deliveryModes.includes(payload.deliveryMode)) throw new Error('选择的 API 细节不属于该服务。')
   if (service.delivery !== 'Sub2API' && payload.deliveryMode === 'sub2api_panel_account') throw new Error('当前服务不支持该 API 细节。')
@@ -5396,6 +5407,9 @@ export async function createApiOrderFromIntent(intentId: string, paymentMethod: 
   if (shouldUseRealBackend()) return backendCreateAPIOrderFromIntent(intentId, paymentMethod)
   await wait()
   const intent = findApiPurchaseIntent(intentId)
+  const service = apiServiceStore.find(item => item.id === intent.serviceId)
+  if (!service) throw new Error('API 服务不存在。')
+  requireSupportedApiServiceBillingMode(service.billingMode)
   if (apiOrderStore.some(item => item.apiPurchaseIntentId === intentId)) {
     throw new Error('该购买意向已经创建过订单。')
   }
@@ -5403,9 +5417,8 @@ export async function createApiOrderFromIntent(intentId: string, paymentMethod: 
   if (!option || !isApiPaymentOptionComplete(option)) {
     throw new Error('选择的收款方式不可用，请联系商户更新收款设置。')
   }
-  const service = apiServiceStore.find(item => item.id === intent.serviceId)
   const selectedPackage = intent.selectedPackageId
-    ? service?.packages?.find(item => item.id === intent.selectedPackageId && item.enabled)
+    ? service.packages?.find(item => item.id === intent.selectedPackageId && item.enabled)
     : undefined
   if (intent.selectedPackageId && (!selectedPackage || selectedPackage.stockAvailable <= 0)) {
     throw new Error('选择的套餐已售罄或不可用。')

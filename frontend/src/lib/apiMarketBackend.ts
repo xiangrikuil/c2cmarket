@@ -1833,7 +1833,12 @@ async function backendAdminAPIServiceAction(id: string, action: 'approve' | 'req
 
 export function toBackendServiceRequest(payload: Record<string, unknown>) {
   const distributionSystem = payload.distributionSystem === 'new_api_proxy' ? 'new_api_proxy' : payload.distributionSystem === 'sub2api' ? 'sub2api' : 'other'
-  const billing = payload.billingMode === 'fixed_package' ? 'fixed_package' : payload.billingMode === 'manual_credit' ? 'manual_usage_check' : 'metered_usd_quota'
+  const billing = payload.billingMode === 'metered_credit'
+    ? 'metered_usd_quota'
+    : payload.billingMode === 'fixed_package'
+      ? 'fixed_package'
+      : null
+  if (billing === null) throw new Error('Unsupported API billing mode')
   const modes = Array.isArray(payload.deliveryModes) ? payload.deliveryModes as string[] : ['api_key_endpoint']
   const selectedModels = Array.isArray(payload.selectedModels) ? payload.selectedModels as Array<{ modelId?: string, enabled?: boolean }> : []
   const packages = Array.isArray(payload.packages) ? payload.packages as Array<{ id?: string, name?: string, priceCny?: number, panelAllowance?: number, durationDays?: number, stockTotal?: number, description?: string, enabled?: boolean, modelCatalogIds?: string[] }> : []
