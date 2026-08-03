@@ -45,7 +45,7 @@ function matchesApiOrderSearch(query: string, values: readonly string[]): boolea
 - New numbers use `crypto/rand` with rejection sampling over the 31-character alphabet. Exclude ambiguous `0/O` and `1/I/L` characters.
 - Both normal API-service orders and limited-quota-offer orders use the same generator and insertion helper.
 - Insertions retry at most eight times, and only when `ON CONFLICT ON CONSTRAINT ux_api_orders_order_no DO NOTHING` reports an `order_no` collision. Intent uniqueness and every other database error retain their existing error mapping.
-- Migration 73 backfills historical rows deterministically from the row UUID, original creation date, and a bounded collision attempt. Rollback and re-apply must reproduce the same values before constraints are restored.
+- Migration 75 backfills historical rows deterministically from the row UUID, original creation date, and a bounded collision attempt. Rollback and re-apply must reproduce the same values before constraints are restored.
 - `api_orders.id` remains the primary key, foreign-key target, permission lookup, mutation target, and frontend route parameter. `orderNo` is display and search data only.
 - `orderNo` is required in the domain model, HTTP DTO, OpenAPI schema, generated frontend type, real-backend adapter, and frontend `ApiOrder` model.
 - Buyer lists, merchant lists, order details, administrator summaries, and order notifications show the complete public number. A `ShortId` component may provide copy behavior but must use `full=true`; a parent container must wrap instead of truncating the number on narrow screens.
@@ -76,7 +76,7 @@ function matchesApiOrderSearch(query: string, values: readonly string[]): boolea
 
 - Generator unit tests: exact Shanghai date, alphabet, rejection sampling, random-source failure, format, and sample uniqueness.
 - PostgreSQL insertion tests: first-candidate collision retry, retry exhaustion, and non-number errors preserved.
-- Migration tests: column/constraint/trigger contract plus real PostgreSQL `72 -> 73 -> 72 -> 73`, format, uniqueness, Shanghai dates, deterministic hash, and immutable-update rejection.
+- Migration tests: column/constraint/trigger contract plus real PostgreSQL `74 -> 75 -> 74 -> 75`, format, uniqueness, Shanghai dates, deterministic hash, and immutable-update rejection.
 - Projection tests: domain to HTTP DTO, OpenAPI generated type, administrator summary, and notification text.
 - Frontend tests: real adapter mapping, Mock creation and legacy persistence, full display/copy surfaces, normalized search, and UUID routes.
 - Browser acceptance at desktop and `390x844`: buyer list, buyer detail, and administrator list show the complete number; no horizontal overflow.

@@ -32,22 +32,22 @@ regexes = [
 description = "The frontend API order-number alphabet is a public identifier format."
 targetRules = ["generic-api-key"]
 condition = "AND"
-regexTarget = "line"
+regexTarget = "secret"
 paths = [
   '''frontend/src/lib/api\.ts$''',
 ]
 regexes = [
-  '''^const apiOrderNumberAlphabet = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789'$''',
+  '''^ABCDEFGHJKMNPQRSTUVWXYZ23456789$''',
 ]
 
 [[allowlists]]
 description = "API order-number test fixtures are public business identifiers."
 targetRules = ["generic-api-key"]
 condition = "AND"
-regexTarget = "line"
+regexTarget = "secret"
 paths = [
   '''backend/internal/store/postgres/api_order_number_test\.go$''',
 ]
 regexes = [
-  '''API-[0-9]{8}-[ABCDEFGHJKMNPQRSTUVWXYZ23456789]{10}''',
+  '''^API-[0-9]{8}-[ABCDEFGHJKMNPQRSTUVWXYZ23456789]{10}$''',
 ]

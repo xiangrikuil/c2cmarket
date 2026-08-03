@@ -34,7 +34,7 @@ Coupon apply, campaign update, administrator grant, and both revoke commands req
 
 #### Campaign And Feature State
 
-- Migration 73 creates `promotion_reward_campaigns`, `referral_codes`, `referral_relations`, and `promotion_coupons`; it seeds the only campaign disabled with 24-hour promotion, 30-day validity, 72-hour delay, and monthly inviter limit 10.
+- Migration 74 creates `promotion_reward_campaigns`, `referral_codes`, `referral_relations`, and `promotion_coupons`; it seeds the only campaign disabled with 24-hour promotion, 30-day validity, 72-hour delay, and monthly inviter limit 10.
 - The effective campaign requires `program_enabled`, `starts_at <= now`, and either no end or `now < ends_at`. Welcome and referral switches apply only within that effective range.
 - Disabling the program stops new bindings, qualifications, rewards, and coupon application. It preserves all rows and does not truncate an activation that already started.
 - Public config exposes only switches, dates, durations, limits, and public rules. User referral reads remove user IDs and risk flags. Administrator reads retain operational IDs and risk flags.
@@ -96,7 +96,7 @@ Coupon apply, campaign update, administrator grant, and both revoke commands req
 
 ### 6. Tests Required
 
-Run `go test ./...`, `go vet ./...`, OpenAPI route/type checks, migration documentation checks, and the PostgreSQL integration suite. PostgreSQL coverage must include migration 1 -> 73 and 73 -> 72 -> 73, referral binding concurrency, first-service qualification concurrency, inviter month boundaries, coupon apply overlap/replay, public suppression, and active revocation.
+Run `go test ./...`, `go vet ./...`, OpenAPI route/type checks, migration documentation checks, and the PostgreSQL integration suite. PostgreSQL coverage must include migration 1 -> 74 and 74 -> 73 -> 74, referral binding concurrency, first-service qualification concurrency, inviter month boundaries, coupon apply overlap/replay, public suppression, and active revocation.
 
 ### 7. Wrong vs Correct
 

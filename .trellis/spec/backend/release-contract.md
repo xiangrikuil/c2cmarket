@@ -171,6 +171,7 @@ bash scripts/ci-postgres-integration.sh
 docker exec <postgres-container> pg_isready --host 127.0.0.1
 node scripts/check-security-headers.mjs
 node scripts/check-compose-exposure.mjs
+gitleaks git --config .gitleaks.toml --log-opts="origin/staging..HEAD"
 ```
 
 Required release jobs:
@@ -195,9 +196,11 @@ release-gate
   toolchain. Frontend installation is frozen and the production-like build
   uses `NUXT_PUBLIC_API_MODE=real` with both public and server API base URLs.
 - Backend format, vet, tests, race, and `govulncheck` are independent evidence.
-  PostgreSQL 18 integration migrates three empty databases through
-  `database.ExpectedMigrationVersion` with `dirty=false` and verifies the
-  Version 65→66 legacy-constraint upgrade path in a fourth isolated database.
+  PostgreSQL 18 integration migrates four empty databases through
+  `database.ExpectedMigrationVersion` with `dirty=false`, verifies the current
+  Version 75 rollback through Versions 75 and 74 to Version 73 before reapplying
+  both migrations, and verifies the Version 65→current legacy-constraint upgrade
+  path in a fifth isolated database.
 - PostgreSQL integration readiness must probe `127.0.0.1` from inside the
   container. The official PostgreSQL image starts a temporary Unix-socket-only
   initialization server before restarting into the final TCP server; a
@@ -205,9 +208,12 @@ release-gate
   can safely begin.
 - Contract checks cover routes, generated OpenAPI files, migrations, security
   headers, Compose exposure, commit-only source packaging, and whitespace.
-- Gitleaks scans full Git history. Trivy scans both the repository filesystem
-  and the exact-commit backend image for HIGH/CRITICAL findings. Syft produces
-  a non-empty SPDX JSON SBOM for that image.
+- Gitleaks scans full Git history. Allowlists for public identifiers must scope
+  `targetRules`, `paths`, and an anchored `regexTarget = "secret"` expression.
+  A line-target allowlist is forbidden because it can suppress an unrelated
+  secret found on the same line. Trivy scans both the repository filesystem and
+  the exact-commit backend image for HIGH/CRITICAL findings. Syft produces a
+  non-empty SPDX JSON SBOM for that image.
 - The image job requires a clean checkout whose `HEAD` equals `GITHUB_SHA`,
   then calls `scripts/build-backend-image.sh` with that SHA. Production and
   staging consume a prebuilt `BACKEND_IMAGE`; they never build from a deployment
@@ -231,6 +237,7 @@ release-gate
 | OpenAPI generated snapshot differs | Contracts job fails |
 | High/critical filesystem or image finding exists | Trivy job fails |
 | Gitleaks detects a non-allowlisted secret | Secret-scan job fails |
+| An allowed public identifier shares a line with an unrelated generic key | Only the exact identifier is allowlisted; the unrelated key still fails the secret scan |
 | SBOM is missing or empty | Image job fails |
 | Production Compose retains `build` or public PostgreSQL | Compose guard fails |
 
@@ -239,11 +246,15 @@ release-gate
 - Good: all eight prerequisite jobs succeed for one full SHA, PostgreSQL
   readiness proves the final loopback TCP service is accepting connections,
   the image labels and SBOM identify that SHA, and `release-gate` succeeds.
+- Good: a public order-number fixture is allowlisted by exact detected value,
+  while a generic key beside it remains reportable.
 - Base: a pull request runs the same gates without publishing or deploying.
 - Bad: `pg_isready` omits `--host`, reports the initialization socket ready,
   and `createdb` races the PostgreSQL entrypoint restart.
 - Bad: treating a green unit-test job as release approval while image scan or
   PostgreSQL integration was skipped.
+- Bad: allowlisting an entire source line because it contains one public
+  identifier, thereby hiding another finding on that line.
 - Bad: rebuilding on the server from a mutable branch after CI scanned a
   different image.
 
@@ -267,15 +278,18 @@ node scripts/check-migrations-doc.mjs
 node scripts/check-security-headers.mjs
 node scripts/check-compose-exposure.mjs
 node scripts/test-package-source.mjs
+gitleaks git --config .gitleaks.toml --log-opts="origin/staging..HEAD"
 ```
 
 The PostgreSQL gate must pass from both cold and warm image starts, migrate all
 empty databases to `ExpectedMigrationVersion` with `dirty=false`, and verify
-the supported Version 65→66 path. Its readiness command must contain
-`--host 127.0.0.1`.
+the supported Version 65→current path plus the current two-migration rollback
+and reapply path. Its readiness command must contain `--host 127.0.0.1`.
 
 Local release evidence additionally scans Git history, the filesystem, and the
-exact-commit image, then generates and parses a non-empty SPDX JSON SBOM.
+exact-commit image, then generates and parses a non-empty SPDX JSON SBOM. Every
+new Gitleaks allowlist also needs a negative probe proving that an unrelated
+generic key on the same line remains detected.
 
 ### 7. Wrong vs Correct
 
