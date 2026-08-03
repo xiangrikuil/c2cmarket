@@ -31,7 +31,7 @@ node scripts/check-openapi-types.mjs
   "version": "0.1.0",
   "gitCommit": "<full resolved commit>",
   "buildTime": "<RFC3339 commit time>",
-  "expectedMigrationVersion": 75
+  "expectedMigrationVersion": 77
 }
 ```
 
@@ -198,7 +198,7 @@ release-gate
 - Backend format, vet, tests, race, and `govulncheck` are independent evidence.
   PostgreSQL 18 integration migrates four empty databases through
   `database.ExpectedMigrationVersion` with `dirty=false`, verifies the current
-  Version 75 rollback through Versions 75 and 74 to Version 73 before reapplying
+  Version 77 rollback through Versions 77 and 76 to Version 75 before reapplying
   both migrations, and verifies the Version 65→current legacy-constraint upgrade
   path in a fifth isolated database.
 - PostgreSQL integration readiness must probe `127.0.0.1` from inside the

@@ -726,9 +726,13 @@ onBeforeUnmount(() => {
               <h2 class="font-semibold">接入凭证</h2>
               <p class="mt-1 text-xs text-muted-foreground">{{ getApiOrderDeliveryKindLabel(order.deliveryCredential.deliveryKind) }} · {{ formatOrderDateTime(order.deliveryCredential.submittedAt) }}</p>
             </div>
-            <Badge variant="verified">长期可查看</Badge>
+            <Badge :variant="order.deliveryCredential.destroyedAt ? 'secondary' : 'verified'">{{ order.deliveryCredential.destroyedAt ? '已销毁' : '保留期内可查看' }}</Badge>
           </div>
-          <div class="mt-4 space-y-3 text-sm">
+          <div v-if="order.deliveryCredential.destroyedAt" class="mt-4 rounded-md border border-border bg-muted/40 p-4 text-sm leading-6 text-muted-foreground">
+            历史凭证已按保留策略销毁，平台仅保留交付类型、提交时间和销毁时间等审计事实。
+            <div class="mt-1 text-xs">销毁时间：{{ formatOrderDateTime(order.deliveryCredential.destroyedAt) }}</div>
+          </div>
+          <div v-else class="mt-4 space-y-3 text-sm">
             <div v-if="order.deliveryCredential.apiBaseUrl" class="rounded-md border border-border p-3">
               <div class="flex items-center justify-between gap-2"><span class="text-muted-foreground">API Base URL</span><Button size="sm" variant="outline" @click="copyValue(order.deliveryCredential.apiBaseUrl, 'API Base URL')"><Copy class="h-4 w-4" /></Button></div>
               <div class="mt-2 break-all font-mono text-xs">{{ order.deliveryCredential.apiBaseUrl }}</div>
@@ -878,7 +882,7 @@ onBeforeUnmount(() => {
       <DialogContent class="sm:max-w-[480px]">
         <DialogHeader>
           <DialogTitle>确认凭证可以使用？</DialogTitle>
-          <DialogDescription>确认后订单将立即完成并开放评价。交付凭证仍可在订单详情中长期查看。</DialogDescription>
+          <DialogDescription>确认后订单将立即完成并开放评价。交付凭证仅在平台保留期内可查看，请妥善保存买家专属接入信息。</DialogDescription>
         </DialogHeader>
         <Alert class="border-success/25 bg-success/10">
           <CheckCircle2 class="text-success" />

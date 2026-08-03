@@ -52,6 +52,9 @@ var (
 	appealCreateRateLimit = rateLimitPolicy{
 		Group: "appeal_create", IPLimit: 20, UserLimit: 5,
 	}
+	reportSupplementRateLimit = rateLimitPolicy{
+		Group: "report_supplement", IPLimit: 30, UserLimit: 10,
+	}
 	modelAuditRunRateLimit = rateLimitPolicy{
 		Group: "model_audit_run_create", IPLimit: 20, UserLimit: 5,
 	}

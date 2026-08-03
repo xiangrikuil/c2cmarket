@@ -786,6 +786,22 @@ legacy pending_review -> admin approve/request-changes/reject
 - Report state is `submitted -> triaged|rejected|dispute_opened`. `open-dispute` creates a `dispute_cases` row and links it to the report.
 - Dispute state is `open -> waiting_info|resolved|closed`; `resolve` and `close` must store public-safe summary/result fields when public output changes.
 - Appeal state is `submitted -> approved|rejected`; appeal creation must reference a report or dispute.
+- An administrator information request names one active report/dispute
+  participant through `requestedFromUserId`. Only that user may submit one
+  secret-filtered text supplement for the open request. Submission marks the
+  request `answered` but does not resolve or close the parent case.
+- `moderation_info_supplements` is append-only at the database boundary: a
+  `BEFORE UPDATE OR DELETE` trigger raises SQLSTATE `55000`. Idempotent replay
+  returns the first result; a second mutation cannot replace the stored body.
+- `/me/reports` and `/me/disputes` use `SelfReportList` and
+  `SelfDisputeList`. Self responses expose only public case facts plus
+  `canSupplement`, `openInfoRequestId`, and `canAppeal` where applicable;
+  administrator reasons/IDs, target snapshots, and stored supplement bodies
+  remain admin-only. Supplement mutations return
+  `SelfModerationSupplementMutation`, not an administrator mutation schema.
+- Ordinary session authorization remains active-account-only. Suspended or
+  banned account appeals require a separate short-lived appeal session and
+  route allowlist; they must not be implemented by relaxing `requireSession`.
 - Admin report/dispute/appeal actions require session, CSRF, `Idempotency-Key`, and `If-Match`.
 - `GET /api/v1/users/{username}/disputes` and public profile embedded disputes return only public-safe fields from `dispute_cases.public_summary/public_result`; they must not expose reporter IDs, admin IDs, raw report descriptions, appeal statements, contact values, internal notes, evidence, or admin reasons.
 - Contact session reads return full selected contact values only to participants before the deadline and must set `Cache-Control: no-store`.
@@ -825,6 +841,9 @@ legacy pending_review -> admin approve/request-changes/reject
 | Announcement offline without reason | 422 | `VALIDATION_FAILED` |
 | Report/dispute/appeal not found | 404 | `OBJECT_NOT_FOUND` |
 | Report/dispute/appeal invalid state action | 409 | `INVALID_STATE_TRANSITION` |
+| Supplement submitter is not the requested participant, or the request is no longer open | 404 | `OBJECT_NOT_FOUND` |
+| Requested supplement participant is not active | 403 | `PERMISSION_DENIED` |
+| Supplement contains credential-shaped content | 422 | `SECRET_CONTENT_DETECTED` |
 | Contact window expired | 409 | `CONTACT_WINDOW_EXPIRED` |
 | API service not currently orderable for order creation | 409 | `INVALID_STATE_TRANSITION` |
 | Same API purchase intent already has any order | 409 | `API_PURCHASE_INTENT_HAS_ORDER` |
@@ -871,6 +890,14 @@ legacy pending_review -> admin approve/request-changes/reject
 - Bad: an announcement offline action without a reason returns validation failure and does not change status.
 - Good: a user reports a public user, admin opens a dispute with public summary/result, public user profile shows only the sanitized dispute summary and updated unresolved count.
 - Good: a user appeals a report/dispute; admin approves or rejects the appeal with `If-Match` and idempotency.
+- Good: an admin requests information from one active participant; that user
+  submits once, the request becomes answered, the parent case remains open,
+  and the admin notification contains no supplement body.
+- Base: retry the exact supplement request with the same idempotency key; the
+  original result replays and only one immutable supplement row exists.
+- Bad: another participant submits the request ID, a client tries to update or
+  delete the stored body, or a self response includes admin reason/identity;
+  each attempt is rejected or omitted at its owning boundary.
 - Bad: a report description contains an API key, password, token, session, cookie, recovery code, or full contact value; response is `422 SECRET_CONTENT_DETECTED`.
 - Bad: public dispute response includes reporter/admin IDs, internal notes, raw evidence, contact values, or admin reason; this violates the public DTO contract.
 
@@ -906,6 +933,11 @@ Backend contract slices must include tests for:
 - Profile/contact/merchant profile flow, including profile update, contact method list/update/verify/delete/default, public user profile privacy, public merchant profile boundary, and store-alias API service public DTO boundaries.
 - Announcement user/admin flow, including create/update/publish/offline/duplicate, user list/home/detail, receipt seen/read/dismiss, unread counts, audit logs, and route parity with OpenAPI.
 - Report/dispute/appeal flow, including contact/public-user report creation, admin report list/detail/actions, dispute open/request-info/resolve/close, public dispute list/profile stats, appeal create/list/admin approve/reject, idempotent replay, If-Match conflicts, and sanitized public DTO assertions.
+- Moderation information-request flow, including designated active
+  participant validation, parent-first lock order, one idempotent supplement,
+  database rejection of update/delete with SQLSTATE `55000`, unchanged parent
+  resolution state, secret-safe side effects, self-safe OpenAPI/generated
+  types, and no admin-only fields in `/me` payloads.
 
 ### 7. Wrong vs Correct
 
@@ -2276,6 +2308,11 @@ api_orders.completion_source text
 - Completion statistics and review eligibility include both completion sources. `auto_completed` never creates a rating, buyer endorsement, or positive-review fact.
 - `GET /api/v1/admin/api-orders/{id}` returns buyer/seller IDs, frozen service and amount snapshots, fulfillment timestamps, the review deadline, completion source, and dispute linkage. Admin list/detail responses omit `deliveryCredential`, payment/contact values, and participant contact details.
 - Participant responses that include the credential remain `private, no-store`, including after either completion source.
+- Participant detail responses expose credentials only during the configured
+  retention window. After irreversible destruction, the same projection keeps
+  `deliveryKind`, `submittedAt`, `destroyedAt`, and a public-safe
+  `destroyReason`, and omits every URL, username, instruction, key, and
+  password. The store must not attempt to decrypt a destroyed row.
 
 ### 4. Validation & Error Matrix
 
@@ -2466,7 +2503,7 @@ Backend:
 Database:
   000065_remove_demands.up.sql
   000065_remove_demands.down.sql
-  ExpectedMigrationVersion = 75 (current repository target)
+  ExpectedMigrationVersion = 77 (current repository target)
 ```
 
 ### 3. Contracts

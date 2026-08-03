@@ -239,6 +239,8 @@ type BackendAPIOrderDeliveryCredential = {
   password?: string
   instructions?: string
   submittedAt: string
+  destroyedAt?: string
+  destroyReason?: string
 }
 
 export type BackendAPIOrder = {
@@ -1550,6 +1552,9 @@ function mapDeliveryCredential(value?: BackendAPIOrderDeliveryCredential | null)
   if (value.deliveryKind !== 'api_key_endpoint' && value.deliveryKind !== 'login_account') {
     throw new Error(`Unsupported API order delivery kind: ${value.deliveryKind}`)
   }
+  if (value.destroyReason && value.destroyReason !== 'retention_expired' && value.destroyReason !== 'retired_unused') {
+    throw new Error(`Unsupported API order credential destroy reason: ${value.destroyReason}`)
+  }
   return {
     deliveryKind: value.deliveryKind,
     apiBaseUrl: value.apiBaseUrl,
@@ -1559,6 +1564,8 @@ function mapDeliveryCredential(value?: BackendAPIOrderDeliveryCredential | null)
     password: value.password,
     instructions: value.instructions,
     submittedAt: value.submittedAt,
+    destroyedAt: value.destroyedAt,
+    destroyReason: value.destroyReason as ApiOrderDeliveryCredential['destroyReason'],
   }
 }
 

@@ -51,4 +51,17 @@ describe('举报与申诉中心前端闭环', () => {
     expect(querySource).not.toContain('sessionStorage')
     expect(querySource).not.toContain("from '@/lib/api'")
   })
+
+  it('被指定用户可以提交脱敏补充材料并刷新案件查询', () => {
+    expect(pageSource).toContain('record.source.canSupplement')
+    expect(pageSource).toContain('openInfoRequestId: target.source.openInfoRequestId')
+    expect(pageSource).toContain('submitSupplementMutation.mutate({')
+    expect(pageSource).toContain('不要提交联系方式、密码、API Key、token、session、cookie 或恢复码')
+    expect(pageSource).toContain('该案件仍处于补充信息处理阶段，请留意后续通知。')
+    expect(pageSource).not.toContain('平台正在等待指定用户补充信息。')
+    expect(pageSource).not.toContain('平台正在等待指定参与方补充信息。')
+    expect(querySource).toContain('backendSubmitInfoSupplement')
+    expect(querySource).toContain('queryClient.invalidateQueries({ queryKey: myReportsQueryKey })')
+    expect(querySource).toContain('queryClient.invalidateQueries({ queryKey: myDisputesQueryKey })')
+  })
 })

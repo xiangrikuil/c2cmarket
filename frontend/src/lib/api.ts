@@ -316,6 +316,15 @@ export type AdminRow = {
   backendVersion?: number
   detailItems?: Array<{ label: string, value: string }>
   targetTo?: string | null
+  moderationParticipants?: Array<{ userId: string, label: string }>
+  moderationSupplements?: Array<{
+    id: string
+    submittedByUserId: string
+    submittedByUsername: string
+    submittedByName: string
+    body: string
+    createdAt: string
+  }>
 }
 
 export type ApiOrderNotification = {
@@ -531,6 +540,8 @@ export type ApiOrderDeliveryCredential = {
   password?: string
   instructions?: string
   submittedAt: string
+  destroyedAt?: string
+  destroyReason?: 'retention_expired' | 'retired_unused'
 }
 
 export type SubmitApiOrderDeliveryCredentialPayload = {
@@ -6043,7 +6054,7 @@ async function applyAdminStatusToTarget(row: AdminRow, status: string) {
   }
 }
 
-export async function runAdminModerationAction(row: AdminRow, action: 'approve' | 'request_changes' | 'take_down' | 'restore' | 'restrict' | 'warn' | 'suspend' | 'ban', reason: string) {
+export async function runAdminModerationAction(row: AdminRow, action: 'approve' | 'request_changes' | 'take_down' | 'restore' | 'restrict' | 'warn' | 'suspend' | 'ban', reason: string, requestedFromUserId = '') {
   if (shouldUseRealBackend() && (row.targetType === 'api-service' || row.targetType === 'api-merchant')) {
     return backendRunAdminAPIServiceAction(row, action, reason)
   }
@@ -6054,7 +6065,7 @@ export async function runAdminModerationAction(row: AdminRow, action: 'approve' 
     return backendRunOfficialPriceAdminAction(row, action, reason)
   }
   if (shouldUseRealBackend() && (row.targetType === 'report' || row.targetType === 'dispute' || row.targetType === 'appeal')) {
-    return backendRunReportAdminAction(row, action, reason)
+    return backendRunReportAdminAction(row, action, reason, requestedFromUserId)
   }
   await wait()
   if (['take_down', 'restore', 'restrict', 'warn', 'suspend', 'ban'].includes(action) && !reason.trim()) {

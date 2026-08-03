@@ -184,7 +184,7 @@ func newServiceWithOptions(now func() time.Time, repositories Repositories, emai
 	s.carpoolService = carpool.NewService(repositories.Carpool, s.catalogService, s.contactService, s.idempotencyService, now)
 	s.apiMarket = apimarket.NewManager(repositories.APIService, s.catalogService, s.contactService, now)
 	s.apiIntent = apiintent.NewManager(repositories.APIPurchaseIntent, s.apiMarket, s.contactService, s.idempotencyService, now)
-	s.reportService = report.NewService(repositories.Report, s.idempotencyService, now)
+	s.reportService = report.NewServiceWithNotifications(repositories.Report, s.idempotencyService, s.notification, now)
 	s.apiOrder = apiorder.NewService(repositories.APIOrder, s.apiIntent, s.apiMarket, s.reportService, s.idempotencyService, now)
 	s.apiPromotion = apipromotion.NewService(repositories.APIPromotion, s.idempotencyService, now)
 	s.apiQuota = apiquota.NewManager(repositories.APIQuota, now)
@@ -1738,6 +1738,10 @@ func (s *Service) AdminReport(ctx context.Context, user User, id string) (report
 
 func (s *Service) AdminReportActionWithIdempotency(ctx context.Context, user User, routeKey, key, requestHash string, input report.AdminActionInput, buildCompletion report.AdminCompletionBuilder) (IdempotencyCompletion, *domain.AppError) {
 	return s.reportService.AdminReportActionWithIdempotency(ctx, user, routeKey, key, requestHash, input, buildCompletion)
+}
+
+func (s *Service) SubmitInfoSupplementWithIdempotency(ctx context.Context, user User, routeKey, key, requestHash string, input report.SupplementInput, buildCompletion report.SupplementCompletionBuilder) (IdempotencyCompletion, *domain.AppError) {
+	return s.reportService.SubmitInfoSupplementWithIdempotency(ctx, user, routeKey, key, requestHash, input, buildCompletion)
 }
 
 func (s *Service) MyDisputes(ctx context.Context, user User) ([]report.DisputeCase, *domain.AppError) {

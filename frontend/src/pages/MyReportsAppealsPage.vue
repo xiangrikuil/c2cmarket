@@ -37,6 +37,7 @@ import {
   useMyAppealsQuery,
   useMyDisputesQuery,
   useMyReportsQuery,
+  useSubmitInfoSupplementMutation,
 } from '@/queries/useReportQueries'
 
 const route = useRoute()
@@ -45,6 +46,7 @@ const reportsQuery = useMyReportsQuery()
 const disputesQuery = useMyDisputesQuery()
 const appealsQuery = useMyAppealsQuery()
 const createAppealMutation = useCreateAppealMutation()
+const submitSupplementMutation = useSubmitInfoSupplementMutation()
 
 const filterLabels: Array<{ label: string, value: ModerationRecordFilter }> = [
   { label: '全部', value: 'all' },
@@ -56,6 +58,9 @@ const activeFilter = ref<ModerationRecordFilter>('all')
 const appealDialogOpen = ref(false)
 const appealTarget = ref<ModerationRecord | null>(null)
 const appealForm = reactive({ title: '', statement: '' })
+const supplementDialogOpen = ref(false)
+const supplementTarget = ref<ModerationRecord | null>(null)
+const supplementBody = ref('')
 
 const records = computed(() => buildModerationRecords(
   reportsQuery.data.value ?? [],
@@ -156,6 +161,41 @@ function submitAppeal() {
     onError: error => toast.error(backendErrorMessage(error, '申诉提交失败，请稍后重试。')),
   })
 }
+
+function canSupplement(record: ModerationRecord) {
+  return record.kind !== 'appeal' && record.source.canSupplement === true && Boolean(record.source.openInfoRequestId)
+}
+
+function openSupplement(record: ModerationRecord) {
+  if (!canSupplement(record)) return
+  supplementTarget.value = record
+  supplementBody.value = ''
+  supplementDialogOpen.value = true
+}
+
+function submitSupplement() {
+  const target = supplementTarget.value
+  const body = supplementBody.value.trim()
+  if (!target || target.kind === 'appeal' || !target.source.openInfoRequestId) return
+  if (body.length < 4) {
+    toast.warning('请填写至少 4 个字符的脱敏补充说明。')
+    return
+  }
+  submitSupplementMutation.mutate({
+    entityType: target.kind,
+    entityId: target.id,
+    openInfoRequestId: target.source.openInfoRequestId,
+    body,
+  }, {
+    onSuccess: () => {
+      supplementDialogOpen.value = false
+      supplementTarget.value = null
+      supplementBody.value = ''
+      toast.success('补充材料已提交，等待平台继续处理。')
+    },
+    onError: error => toast.error(backendErrorMessage(error, '补充材料提交失败，请刷新后重试。')),
+  })
+}
 </script>
 
 <template>
@@ -236,7 +276,10 @@ function submitAppeal() {
             <Alert v-if="selectedRecord.source.status === 'needs_info'">
               <ShieldAlert />
               <AlertTitle>需要进一步信息</AlertTitle>
-              <AlertDescription>平台已更新处理状态，请留意站内通知中的后续安排。</AlertDescription>
+              <AlertDescription class="flex flex-wrap items-center justify-between gap-3">
+                <span>{{ canSupplement(selectedRecord) ? '请提交脱敏事实说明，不要包含联系方式或任何凭据。' : '该案件仍处于补充信息处理阶段，请留意后续通知。' }}</span>
+                <Button v-if="canSupplement(selectedRecord)" size="sm" variant="outline" @click="openSupplement(selectedRecord)">补充材料</Button>
+              </AlertDescription>
             </Alert>
           </template>
 
@@ -252,7 +295,10 @@ function submitAppeal() {
             <Alert v-if="selectedRecord.source.status === 'waiting_info'">
               <ShieldAlert />
               <AlertTitle>需要进一步信息</AlertTitle>
-              <AlertDescription>平台已更新处理状态，请留意站内通知中的后续安排。</AlertDescription>
+              <AlertDescription class="flex flex-wrap items-center justify-between gap-3">
+                <span>{{ canSupplement(selectedRecord) ? '请提交脱敏事实说明，不要包含联系方式或任何凭据。' : '该案件仍处于补充信息处理阶段，请留意后续通知。' }}</span>
+                <Button v-if="canSupplement(selectedRecord)" size="sm" variant="outline" @click="openSupplement(selectedRecord)">补充材料</Button>
+              </AlertDescription>
             </Alert>
           </template>
 
@@ -302,6 +348,25 @@ function submitAppeal() {
           <Button variant="outline" :disabled="createAppealMutation.isPending.value" @click="appealDialogOpen = false">取消</Button>
           <Button :disabled="createAppealMutation.isPending.value" @click="submitAppeal">
             <SendHorizontal class="h-4 w-4" />{{ createAppealMutation.isPending.value ? '提交中' : '提交申诉' }}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+
+    <Dialog v-model:open="supplementDialogOpen">
+      <DialogContent class="sm:max-w-lg">
+        <DialogHeader>
+          <DialogTitle>补充案件材料</DialogTitle>
+          <DialogDescription>只填写与案件有关的脱敏事实。不要提交联系方式、密码、API Key、token、session、cookie 或恢复码。</DialogDescription>
+        </DialogHeader>
+        <label class="grid gap-2 py-2 text-sm">
+          <span class="font-medium">补充说明</span>
+          <Textarea v-model="supplementBody" class="min-h-36" maxlength="1200" placeholder="说明需要平台继续核对的事实。" />
+        </label>
+        <DialogFooter>
+          <Button variant="outline" :disabled="submitSupplementMutation.isPending.value" @click="supplementDialogOpen = false">取消</Button>
+          <Button :disabled="submitSupplementMutation.isPending.value" @click="submitSupplement">
+            <SendHorizontal class="h-4 w-4" />{{ submitSupplementMutation.isPending.value ? '提交中' : '提交材料' }}
           </Button>
         </DialogFooter>
       </DialogContent>

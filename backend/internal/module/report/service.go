@@ -13,21 +13,29 @@ import (
 	"c2c-market/backend/internal/module/apiorder"
 	"c2c-market/backend/internal/module/auth"
 	"c2c-market/backend/internal/module/idempotency"
+	"c2c-market/backend/internal/module/notification"
 
 	"github.com/google/uuid"
 )
 
 type Service struct {
-	mu          sync.Mutex
-	now         func() time.Time
-	repo        Repository
-	idempotency *idempotency.Service
-	reports     map[string]Report
-	disputes    map[string]DisputeCase
-	appeals     map[string]Appeal
+	mu              sync.Mutex
+	now             func() time.Time
+	repo            Repository
+	idempotency     *idempotency.Service
+	notifications   *notification.Service
+	reports         map[string]Report
+	disputes        map[string]DisputeCase
+	appeals         map[string]Appeal
+	infoRequests    map[string]InfoRequest
+	infoSupplements map[string][]InfoSupplement
 }
 
 func NewService(repo Repository, idempotencyService *idempotency.Service, now func() time.Time) *Service {
+	return NewServiceWithNotifications(repo, idempotencyService, nil, now)
+}
+
+func NewServiceWithNotifications(repo Repository, idempotencyService *idempotency.Service, notifications *notification.Service, now func() time.Time) *Service {
 	if now == nil {
 		now = time.Now
 	}
@@ -35,12 +43,15 @@ func NewService(repo Repository, idempotencyService *idempotency.Service, now fu
 		idempotencyService = idempotency.NewService(nil, now)
 	}
 	return &Service{
-		now:         now,
-		repo:        repo,
-		idempotency: idempotencyService,
-		reports:     make(map[string]Report),
-		disputes:    make(map[string]DisputeCase),
-		appeals:     make(map[string]Appeal),
+		now:             now,
+		repo:            repo,
+		idempotency:     idempotencyService,
+		notifications:   notifications,
+		reports:         make(map[string]Report),
+		disputes:        make(map[string]DisputeCase),
+		appeals:         make(map[string]Appeal),
+		infoRequests:    make(map[string]InfoRequest),
+		infoSupplements: make(map[string][]InfoSupplement),
 	}
 }
 
@@ -127,6 +138,7 @@ func (s *Service) AdminReport(ctx context.Context, user auth.User, id string) (R
 	if !ok {
 		return Report{}, reportNotFound()
 	}
+	item.Supplements = append([]InfoSupplement(nil), s.infoSupplements[infoSupplementEntityKey(InfoRequestEntityReport, id)]...)
 	return item, nil
 }
 
@@ -212,6 +224,7 @@ func (s *Service) AdminDispute(ctx context.Context, user auth.User, id string) (
 	if !ok {
 		return DisputeCase{}, disputeNotFound()
 	}
+	item.Supplements = append([]InfoSupplement(nil), s.infoSupplements[infoSupplementEntityKey(InfoRequestEntityDispute, id)]...)
 	return item, nil
 }
 
@@ -243,6 +256,59 @@ func (s *Service) AdminDisputeActionWithIdempotency(ctx context.Context, user au
 	if appErr != nil {
 		s.idempotency.Cancel(ctx, entry)
 		return idempotency.Completion{}, appErr
+	}
+	completion, appErr := buildCompletion(result)
+	return s.complete(ctx, entry, completion, appErr)
+}
+
+func (s *Service) SubmitInfoSupplementWithIdempotency(ctx context.Context, user auth.User, routeKey, key, requestHash string, input SupplementInput, buildCompletion SupplementCompletionBuilder) (idempotency.Completion, *domain.AppError) {
+	if strings.TrimSpace(user.ID) == "" {
+		return idempotency.Completion{}, sessionRequired()
+	}
+	if user.Status != "" && user.Status != auth.AccountStatusActive {
+		return idempotency.Completion{}, sessionRequired()
+	}
+	input.SubmittingUserID = user.ID
+	input.SubmittingUsername = user.Username
+	input.SubmittingName = displayName(user)
+	input.EntityType = normalize(input.EntityType)
+	input.EntityID = strings.TrimSpace(input.EntityID)
+	input.InfoRequestID = strings.TrimSpace(input.InfoRequestID)
+	input.Body = strings.TrimSpace(input.Body)
+	if appErr := validateSupplement(input); appErr != nil {
+		return idempotency.Completion{}, appErr
+	}
+	entry, appErr := s.begin(ctx, user.ID, routeKey, key, requestHash)
+	if appErr != nil {
+		return idempotency.Completion{}, appErr
+	}
+	if entry.State == "completed" {
+		return idempotency.CompletionFromEntry(entry), nil
+	}
+	if s.repo != nil {
+		_, completion, appErr := s.repo.SubmitInfoSupplementWithIdempotency(ctx, *entry, input, s.now(), buildCompletion)
+		if appErr != nil {
+			s.idempotency.Cancel(ctx, entry)
+			return idempotency.Completion{}, appErr
+		}
+		return completion, nil
+	}
+	result, requestedByAdminID, appErr := s.submitInfoSupplementMemory(input)
+	if appErr != nil {
+		s.idempotency.Cancel(ctx, entry)
+		return idempotency.Completion{}, appErr
+	}
+	if s.notifications != nil {
+		s.notifications.Add(notification.Notification{
+			UserID:          requestedByAdminID,
+			Type:            "案件补充材料",
+			Title:           "用户已补充案件材料",
+			Body:            "用户已提交脱敏补充说明，请重新查看案件。",
+			TargetType:      input.EntityType,
+			TargetID:        input.EntityID,
+			TargetURL:       "/admin/reports",
+			SourceEventType: "moderation.info_supplemented",
+		})
 	}
 	completion, appErr := buildCompletion(result)
 	return s.complete(ctx, entry, completion, appErr)
@@ -517,6 +583,9 @@ func (s *Service) updateReportAdminMemory(input AdminActionInput) (MutationResul
 		if item.Status != ReportStatusSubmitted && item.Status != ReportStatusTriaged {
 			return MutationResult{}, invalidState("只有新提交或已分诊的举报可以要求补充信息。")
 		}
+		if input.RequestedFromID != item.ReporterUserID {
+			return MutationResult{}, infoRequestPermissionDenied()
+		}
 		item.Status = ReportStatusNeedsInfo
 	case "reject":
 		if !canFinishReport(item.Status) {
@@ -561,6 +630,9 @@ func (s *Service) updateReportAdminMemory(input AdminActionInput) (MutationResul
 		item.AdminReason = strings.TrimSpace(input.Reason)
 		item.UpdatedAt = now
 		item.Version++
+		s.cancelInfoRequestMemory(InfoRequestEntityReport, item.ID, now)
+		item.OpenInfoRequestID = ""
+		item.InfoRequestedFromID = ""
 		s.reports[item.ID] = item
 		return MutationResult{Report: &item, Dispute: &dispute}, nil
 	default:
@@ -571,6 +643,22 @@ func (s *Service) updateReportAdminMemory(input AdminActionInput) (MutationResul
 	item.HandledAt = &now
 	item.UpdatedAt = now
 	item.Version++
+	if input.Action == "request_info" {
+		request := s.createInfoRequestMemory(InfoRequestEntityReport, item.ID, input.RequestedFromID, input.AdminUserID, input.Reason, now)
+		item.OpenInfoRequestID = request.ID
+		item.InfoRequestedFromID = request.RequestedFromID
+		if s.notifications != nil {
+			s.notifications.Add(notification.Notification{
+				UserID: request.RequestedFromID, Type: "案件补充材料", Title: "平台需要你补充案件材料",
+				Body: "请提交脱敏事实说明，不要包含联系方式或任何凭据。", TargetType: InfoRequestEntityReport,
+				TargetID: item.ID, TargetURL: "/my/reports/report/" + item.ID, SourceEventType: "moderation.info_requested",
+			})
+		}
+	} else {
+		s.cancelInfoRequestMemory(InfoRequestEntityReport, item.ID, now)
+		item.OpenInfoRequestID = ""
+		item.InfoRequestedFromID = ""
+	}
 	s.reports[item.ID] = item
 	return MutationResult{Report: &item}, nil
 }
@@ -590,6 +678,9 @@ func (s *Service) updateDisputeAdminMemory(input AdminActionInput) (MutationResu
 	case "request_info":
 		if item.Status != DisputeStatusOpen {
 			return MutationResult{}, invalidState("只有打开中的纠纷可以要求补充信息。")
+		}
+		if !isDisputeParticipant(item, input.RequestedFromID) {
+			return MutationResult{}, infoRequestPermissionDenied()
 		}
 		item.Status = DisputeStatusWaitingInfo
 	case "resolve":
@@ -613,8 +704,107 @@ func (s *Service) updateDisputeAdminMemory(input AdminActionInput) (MutationResu
 	item.PublicResult = nonEmpty(input.PublicResult, item.PublicResult)
 	item.UpdatedAt = now
 	item.Version++
+	if input.Action == "request_info" {
+		request := s.createInfoRequestMemory(InfoRequestEntityDispute, item.ID, input.RequestedFromID, input.AdminUserID, input.Reason, now)
+		item.OpenInfoRequestID = request.ID
+		item.InfoRequestedFromID = request.RequestedFromID
+		if s.notifications != nil {
+			s.notifications.Add(notification.Notification{
+				UserID: request.RequestedFromID, Type: "案件补充材料", Title: "平台需要你补充案件材料",
+				Body: "请提交脱敏事实说明，不要包含联系方式或任何凭据。", TargetType: InfoRequestEntityDispute,
+				TargetID: item.ID, TargetURL: "/my/reports/dispute/" + item.ID, SourceEventType: "moderation.info_requested",
+			})
+		}
+	} else {
+		s.cancelInfoRequestMemory(InfoRequestEntityDispute, item.ID, now)
+		item.OpenInfoRequestID = ""
+		item.InfoRequestedFromID = ""
+	}
 	s.disputes[item.ID] = item
 	return MutationResult{Dispute: &item}, nil
+}
+
+func (s *Service) createInfoRequestMemory(entityType, entityID, requestedFromID, adminID, reason string, now time.Time) InfoRequest {
+	item := InfoRequest{
+		ID: uuid.NewString(), EntityType: entityType, EntityID: entityID, RequestedFromID: requestedFromID,
+		RequestedByAdminID: adminID, InternalReason: strings.TrimSpace(reason), Status: InfoRequestStatusOpen, RequestedAt: now,
+	}
+	s.infoRequests[item.ID] = item
+	return item
+}
+
+func (s *Service) cancelInfoRequestMemory(entityType, entityID string, now time.Time) {
+	for id, item := range s.infoRequests {
+		if item.EntityType == entityType && item.EntityID == entityID && item.Status == InfoRequestStatusOpen {
+			item.Status = InfoRequestStatusCanceled
+			item.CancelledAt = &now
+			s.infoRequests[id] = item
+		}
+	}
+}
+
+func (s *Service) submitInfoSupplementMemory(input SupplementInput) (MutationResult, string, *domain.AppError) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	request, ok := s.infoRequests[input.InfoRequestID]
+	if !ok || request.EntityType != input.EntityType || request.EntityID != input.EntityID || request.RequestedFromID != input.SubmittingUserID {
+		return MutationResult{}, "", infoRequestNotFound()
+	}
+	if request.Status != InfoRequestStatusOpen {
+		return MutationResult{}, "", invalidState("该补充请求已处理，不能重复提交。")
+	}
+	now := s.now()
+	switch input.EntityType {
+	case InfoRequestEntityReport:
+		item, ok := s.reports[input.EntityID]
+		if !ok || item.ReporterUserID != input.SubmittingUserID || item.Status != ReportStatusNeedsInfo {
+			return MutationResult{}, "", infoRequestNotFound()
+		}
+		request.Status = InfoRequestStatusAnswered
+		request.AnsweredAt = &now
+		s.infoRequests[request.ID] = request
+		item.OpenInfoRequestID = ""
+		item.InfoRequestedFromID = ""
+		item.UpdatedAt = now
+		item.Version++
+		s.reports[item.ID] = item
+		s.recordInfoSupplementMemory(input, now)
+		return MutationResult{Report: &item}, request.RequestedByAdminID, nil
+	case InfoRequestEntityDispute:
+		item, ok := s.disputes[input.EntityID]
+		if !ok || !isDisputeParticipant(item, input.SubmittingUserID) || item.Status != DisputeStatusWaitingInfo {
+			return MutationResult{}, "", infoRequestNotFound()
+		}
+		request.Status = InfoRequestStatusAnswered
+		request.AnsweredAt = &now
+		s.infoRequests[request.ID] = request
+		item.OpenInfoRequestID = ""
+		item.InfoRequestedFromID = ""
+		item.UpdatedAt = now
+		item.Version++
+		s.disputes[item.ID] = item
+		s.recordInfoSupplementMemory(input, now)
+		return MutationResult{Dispute: &item}, request.RequestedByAdminID, nil
+	default:
+		return MutationResult{}, "", infoRequestNotFound()
+	}
+}
+
+func infoSupplementEntityKey(entityType, entityID string) string {
+	return entityType + ":" + entityID
+}
+
+func (s *Service) recordInfoSupplementMemory(input SupplementInput, now time.Time) {
+	key := infoSupplementEntityKey(input.EntityType, input.EntityID)
+	s.infoSupplements[key] = append(s.infoSupplements[key], InfoSupplement{
+		ID:                  uuid.NewString(),
+		InfoRequestID:       input.InfoRequestID,
+		SubmittedByUserID:   input.SubmittingUserID,
+		SubmittedByUsername: input.SubmittingUsername,
+		SubmittedByName:     input.SubmittingName,
+		Body:                strings.TrimSpace(input.Body),
+		CreatedAt:           now,
+	})
 }
 
 func (s *Service) createAppealMemory(input CreateAppealInput) (Appeal, *domain.AppError) {
@@ -775,6 +965,9 @@ func validateReportAction(input AdminActionInput) *domain.AppError {
 	if strings.TrimSpace(input.Reason) == "" {
 		return fieldError("reason", "必须填写处理原因。")
 	}
+	if input.Action == "request_info" && strings.TrimSpace(input.RequestedFromID) == "" {
+		return fieldError("requestedFromUserId", "必须指定需要补充信息的用户。")
+	}
 	if input.Action == "open_dispute" {
 		if appErr := validateText("publicSummary", input.PublicSummary, 2, 120, "公开纠纷摘要需为 2 至 120 个字符。"); appErr != nil {
 			return appErr
@@ -798,6 +991,9 @@ func validateDisputeAction(input AdminActionInput) *domain.AppError {
 	if strings.TrimSpace(input.Reason) == "" {
 		return fieldError("reason", "必须填写处理原因。")
 	}
+	if input.Action == "request_info" && strings.TrimSpace(input.RequestedFromID) == "" {
+		return fieldError("requestedFromUserId", "必须指定需要补充信息的案件参与者。")
+	}
 	if appErr := validateText("reason", input.Reason, 2, 800, "处理原因需为 2 至 800 个字符。"); appErr != nil {
 		return appErr
 	}
@@ -818,6 +1014,19 @@ func validateDisputeAction(input AdminActionInput) *domain.AppError {
 		return fieldError("publicResultCode", "公开结果代码不支持。")
 	}
 	return nil
+}
+
+func validateSupplement(input SupplementInput) *domain.AppError {
+	if input.EntityType != InfoRequestEntityReport && input.EntityType != InfoRequestEntityDispute {
+		return fieldError("entityType", "补充材料类型不支持。")
+	}
+	if input.EntityID == "" {
+		return fieldError("entityId", "必须提供案件记录。")
+	}
+	if input.InfoRequestID == "" {
+		return fieldError("openInfoRequestId", "补充请求已失效，请刷新后重试。")
+	}
+	return validateText("body", input.Body, 4, 1200, "补充说明需为 4 至 1200 个字符。")
 }
 
 func validateAppealAction(input AdminActionInput) *domain.AppError {
@@ -991,6 +1200,14 @@ func reportNotFound() *domain.AppError {
 
 func disputeNotFound() *domain.AppError {
 	return domain.NewError(http.StatusNotFound, domain.CodeObjectNotFound, "Dispute not found", "纠纷记录不存在。")
+}
+
+func infoRequestNotFound() *domain.AppError {
+	return domain.NewError(http.StatusNotFound, domain.CodeObjectNotFound, "Information request not found", "补充请求不存在、已失效或不属于当前用户。")
+}
+
+func infoRequestPermissionDenied() *domain.AppError {
+	return domain.NewError(http.StatusForbidden, domain.CodePermissionDenied, "Permission denied", "只能指定该案件中的有效参与者补充信息。")
 }
 
 func appealNotFound() *domain.AppError {

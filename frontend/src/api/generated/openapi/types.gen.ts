@@ -2008,6 +2008,14 @@ export type ApiOrderDeliveryCredential = {
     password?: string;
     instructions?: string;
     submittedAt: string;
+    /**
+     * Present after the credential payload has been irreversibly removed under the retention policy.
+     */
+    destroyedAt?: string;
+    /**
+     * Public-safe reason for irreversible credential payload removal.
+     */
+    destroyReason?: 'retention_expired' | 'retired_unused';
 };
 
 export type ApiOrderReasonRequest = {
@@ -2106,7 +2114,7 @@ export type ApiOrder = {
      */
     deliveryReviewExpiresAt?: string | null;
     /**
-     * Included only in buyer/seller detail and action responses for participating users; omitted from list/admin/public responses.
+     * Included only in buyer/seller detail and action responses for participating users; omitted from list/admin/public responses. After destruction it contains audit timestamps and no secret payload fields.
      */
     deliveryCredential?: ApiOrderDeliveryCredential;
     /**
@@ -2566,6 +2574,22 @@ export type CreateReportRequest = {
     description: string;
 };
 
+/**
+ * Admin-only immutable supplement submitted for a moderation information request. Never returned by self or public endpoints.
+ */
+export type ModerationInfoSupplement = {
+    id: string;
+    infoRequestId: string;
+    submittedByUserId: string;
+    submittedByUsername: string;
+    submittedByName: string;
+    /**
+     * Admin-only credential-free text submitted by the designated participant.
+     */
+    body: string;
+    createdAt: string;
+};
+
 export type Report = {
     id: string;
     /**
@@ -2601,6 +2625,18 @@ export type Report = {
     handledByAdminId?: string;
     handledAt?: string | null;
     disputeId?: string;
+    /**
+     * Self response only. True only for the active reporter explicitly named on the open information request.
+     */
+    readonly canSupplement?: boolean;
+    /**
+     * Self response only and present only while canSupplement is true.
+     */
+    readonly openInfoRequestId?: string;
+    /**
+     * Admin detail response only. Immutable user supplements ordered by submission time.
+     */
+    readonly supplements?: Array<ModerationInfoSupplement>;
     createdAt: string;
     updatedAt: string;
     version: number;
@@ -2628,6 +2664,18 @@ export type ReportActionRequest = {
      * Public-safe result text. It must not mention refunds, payment custody, guarantees, or credentials.
      */
     publicResult?: string;
+    /**
+     * Required only for request-info actions. Must identify an active participant in the report or dispute.
+     */
+    requestedFromUserId?: string;
+};
+
+export type InfoSupplementRequest = {
+    openInfoRequestId: string;
+    /**
+     * Credential-free plain text. Stored as an immutable supplement and never exposed on public endpoints.
+     */
+    body: string;
 };
 
 export type DisputeCase = {
@@ -2679,6 +2727,18 @@ export type DisputeCase = {
      * Present on current-user dispute responses. True only when the case is resolved or closed and the current user is eligible to appeal; when a subject is assigned, only that subject is eligible.
      */
     readonly canAppeal?: boolean;
+    /**
+     * Self response only. True only for the active participant explicitly named on the open information request.
+     */
+    readonly canSupplement?: boolean;
+    /**
+     * Self response only and present only while canSupplement is true.
+     */
+    readonly openInfoRequestId?: string;
+    /**
+     * Admin detail response only. Immutable user supplements ordered by submission time.
+     */
+    readonly supplements?: Array<ModerationInfoSupplement>;
     createdAt: string;
     updatedAt: string;
     version: number;
@@ -2972,6 +3032,77 @@ export type AdminUserStatusRequest = {
 export type AdminUserPermissionRequest = {
     isAdmin: boolean;
     reason: string;
+};
+
+export type SelfReport = {
+    id: string;
+    reporterUsername: string;
+    reporterName: string;
+    targetType: 'contact_snapshot' | 'public_user' | 'carpool_application' | 'carpool_membership' | 'api_purchase_intent' | 'api_order';
+    targetId: string;
+    canonicalTargetType: 'contact_snapshot' | 'public_user' | 'carpool_application' | 'carpool_membership' | 'api_purchase_intent' | 'api_order';
+    canonicalTargetId: string;
+    targetLabel: string;
+    reportedUsername: string;
+    reasonCode: 'unreachable' | 'contact_invalid' | 'impersonation' | 'description_mismatch' | 'seat_rule_dispute' | 'api_quota_dispute' | 'order_delivery_dispute' | 'other';
+    title: string;
+    status: 'submitted' | 'triaged' | 'needs_info' | 'rejected' | 'dispute_opened' | 'closed';
+    handledAt?: string | null;
+    disputeId?: string;
+    createdAt: string;
+    updatedAt: string;
+    version: number;
+    canSupplement: boolean;
+    /**
+     * Present only while canSupplement is true.
+     */
+    openInfoRequestId?: string;
+};
+
+export type SelfReportList = {
+    items: Array<SelfReport>;
+    nextCursor?: string | null;
+};
+
+export type SelfDispute = {
+    id: string;
+    reportId?: string;
+    targetType: 'contact_snapshot' | 'public_user' | 'carpool_application' | 'carpool_membership' | 'api_purchase_intent' | 'api_order';
+    targetId: string;
+    targetLabel: string;
+    primaryUsername: string;
+    primaryDisplayName: string;
+    counterpartyUsername: string;
+    counterpartyName: string;
+    status: 'open' | 'waiting_info' | 'resolved' | 'closed';
+    publicSummary: string;
+    publicResultCode: 'no_action' | 'contact_invalid' | 'impersonation_confirmed' | 'description_mismatch' | 'rule_or_seat_issue' | 'api_delivery_issue' | 'other_resolved';
+    publicResult: string;
+    openedAt: string;
+    resolvedAt?: string | null;
+    closedAt?: string | null;
+    createdAt: string;
+    updatedAt: string;
+    version: number;
+    canAppeal: boolean;
+    canSupplement: boolean;
+    /**
+     * Present only while canSupplement is true.
+     */
+    openInfoRequestId?: string;
+};
+
+export type SelfDisputeList = {
+    items: Array<SelfDispute>;
+    nextCursor?: string | null;
+};
+
+/**
+ * Self-safe supplement result. Administrator reasons, identities, target snapshots, and stored supplements are never returned.
+ */
+export type SelfModerationSupplementMutation = {
+    report?: SelfReport;
+    dispute?: SelfDispute;
 };
 
 export type AdminReportMutation = {
@@ -3414,6 +3545,51 @@ export type DeprecatedApiPurchaseIntentContactFieldsWritable = {
     [key: string]: never;
 };
 
+export type ReportWritable = {
+    id: string;
+    /**
+     * Admin response only.
+     */
+    reporterUserId?: string;
+    reporterUsername: string;
+    reporterName: string;
+    targetType: 'contact_snapshot' | 'public_user' | 'carpool_application' | 'carpool_membership' | 'api_purchase_intent' | 'api_order';
+    targetId: string;
+    canonicalTargetType: 'contact_snapshot' | 'public_user' | 'carpool_application' | 'carpool_membership' | 'api_purchase_intent' | 'api_order';
+    canonicalTargetId: string;
+    targetLabel: string;
+    /**
+     * Admin response only. JSON string with de-identified target context; never contains contact values, payment credentials, raw evidence, or secrets.
+     */
+    targetSnapshotJson?: string;
+    reportedUsername: string;
+    reasonCode: 'unreachable' | 'contact_invalid' | 'impersonation' | 'description_mismatch' | 'seat_rule_dispute' | 'api_quota_dispute' | 'order_delivery_dispute' | 'other';
+    title: string;
+    /**
+     * Admin response only; user-facing lists omit raw report description.
+     */
+    description?: string;
+    status: 'submitted' | 'triaged' | 'needs_info' | 'rejected' | 'dispute_opened' | 'closed';
+    /**
+     * Admin/self moderation context only; never part of public dispute summaries.
+     */
+    adminReason?: string;
+    /**
+     * Admin response only.
+     */
+    handledByAdminId?: string;
+    handledAt?: string | null;
+    disputeId?: string;
+    createdAt: string;
+    updatedAt: string;
+    version: number;
+};
+
+export type ReportListWritable = {
+    items: Array<ReportWritable>;
+    nextCursor?: string | null;
+};
+
 export type DisputeCaseWritable = {
     id: string;
     reportId?: string;
@@ -3470,7 +3646,7 @@ export type DisputeListWritable = {
 };
 
 export type AdminReportMutationWritable = {
-    report?: Report;
+    report?: ReportWritable;
     dispute?: DisputeCaseWritable;
     appeal?: Appeal;
 };
@@ -5520,10 +5696,60 @@ export type ListMyReportsResponses = {
     /**
      * Current user's submitted reports.
      */
-    200: ReportList;
+    200: SelfReportList;
 };
 
 export type ListMyReportsResponse = ListMyReportsResponses[keyof ListMyReportsResponses];
+
+export type SubmitReportInfoSupplementData = {
+    body: InfoSupplementRequest;
+    headers: {
+        'Idempotency-Key': string;
+    };
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/api/v1/me/reports/{id}/supplements';
+};
+
+export type SubmitReportInfoSupplementErrors = {
+    /**
+     * Problem Details error.
+     */
+    401: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    403: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    404: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    409: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    422: ProblemDetails;
+    /**
+     * Rate limit exceeded. Problem Details `code` is `RATE_LIMITED`.
+     */
+    429: ProblemDetails;
+};
+
+export type SubmitReportInfoSupplementError = SubmitReportInfoSupplementErrors[keyof SubmitReportInfoSupplementErrors];
+
+export type SubmitReportInfoSupplementResponses = {
+    /**
+     * Supplement accepted and the information request marked answered.
+     */
+    200: SelfModerationSupplementMutation;
+};
+
+export type SubmitReportInfoSupplementResponse = SubmitReportInfoSupplementResponses[keyof SubmitReportInfoSupplementResponses];
 
 export type ListMyDisputesData = {
     body?: never;
@@ -5554,10 +5780,60 @@ export type ListMyDisputesResponses = {
     /**
      * Current user's disputes.
      */
-    200: DisputeList;
+    200: SelfDisputeList;
 };
 
 export type ListMyDisputesResponse = ListMyDisputesResponses[keyof ListMyDisputesResponses];
+
+export type SubmitDisputeInfoSupplementData = {
+    body: InfoSupplementRequest;
+    headers: {
+        'Idempotency-Key': string;
+    };
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/api/v1/me/disputes/{id}/supplements';
+};
+
+export type SubmitDisputeInfoSupplementErrors = {
+    /**
+     * Problem Details error.
+     */
+    401: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    403: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    404: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    409: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    422: ProblemDetails;
+    /**
+     * Rate limit exceeded. Problem Details `code` is `RATE_LIMITED`.
+     */
+    429: ProblemDetails;
+};
+
+export type SubmitDisputeInfoSupplementError = SubmitDisputeInfoSupplementErrors[keyof SubmitDisputeInfoSupplementErrors];
+
+export type SubmitDisputeInfoSupplementResponses = {
+    /**
+     * Supplement accepted and the information request marked answered.
+     */
+    200: SelfModerationSupplementMutation;
+};
+
+export type SubmitDisputeInfoSupplementResponse = SubmitDisputeInfoSupplementResponses[keyof SubmitDisputeInfoSupplementResponses];
 
 export type ListMyAppealsData = {
     body?: never;

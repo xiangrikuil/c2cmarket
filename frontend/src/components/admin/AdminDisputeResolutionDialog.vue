@@ -394,6 +394,24 @@ async function submitOutcome() {
             </div>
           </section>
 
+          <section v-if="dispute.supplements?.length || report?.supplements?.length" class="space-y-4 border-b border-border py-5">
+            <div class="flex items-center gap-2">
+              <FileText class="h-4 w-4" />
+              <h2 class="text-sm font-semibold">用户补充材料</h2>
+            </div>
+            <div
+              v-for="supplement in [...(report?.supplements ?? []), ...(dispute.supplements ?? [])]"
+              :key="supplement.id"
+              class="rounded-lg border border-border bg-muted/30 p-4"
+            >
+              <div class="flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
+                <span>{{ supplement.submittedByName || supplement.submittedByUsername || supplement.submittedByUserId }}</span>
+                <LocalTime :value="supplement.createdAt" />
+              </div>
+              <p class="mt-3 whitespace-pre-wrap break-words text-sm leading-6">{{ supplement.body }}</p>
+            </div>
+          </section>
+
           <section class="space-y-4 border-b border-border py-5">
             <div class="flex items-center gap-2">
               <Users class="h-4 w-4" />

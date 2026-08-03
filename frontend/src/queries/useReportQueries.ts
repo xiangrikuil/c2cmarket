@@ -4,7 +4,9 @@ import {
   backendMyAppeals,
   backendMyDisputes,
   backendMyReports,
+  backendSubmitInfoSupplement,
   type CreateAppealRequest,
+  type SubmitInfoSupplementRequest,
 } from '@/lib/reportBackend'
 
 export const myReportsQueryKey = ['my-reports'] as const
@@ -45,6 +47,19 @@ export function useCreateAppealMutation() {
         return [data, ...current.filter(item => item.id !== data.id)]
       })
       queryClient.invalidateQueries({ queryKey: myAppealsQueryKey })
+      queryClient.invalidateQueries({ queryKey: ['navigation-badges'] })
+      queryClient.invalidateQueries({ queryKey: ['notifications'] })
+    },
+  })
+}
+
+export function useSubmitInfoSupplementMutation() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (payload: SubmitInfoSupplementRequest) => backendSubmitInfoSupplement(payload),
+    onSuccess() {
+      queryClient.invalidateQueries({ queryKey: myReportsQueryKey })
+      queryClient.invalidateQueries({ queryKey: myDisputesQueryKey })
       queryClient.invalidateQueries({ queryKey: ['navigation-badges'] })
       queryClient.invalidateQueries({ queryKey: ['notifications'] })
     },

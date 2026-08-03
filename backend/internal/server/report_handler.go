@@ -33,65 +33,87 @@ type createAppealRequest struct {
 }
 
 type reportActionRequest struct {
-	Reason           string `json:"reason"`
-	PublicSummary    string `json:"publicSummary"`
-	PublicResultCode string `json:"publicResultCode"`
-	PublicResult     string `json:"publicResult"`
+	Reason              string `json:"reason"`
+	PublicSummary       string `json:"publicSummary"`
+	PublicResultCode    string `json:"publicResultCode"`
+	PublicResult        string `json:"publicResult"`
+	RequestedFromUserID string `json:"requestedFromUserId"`
+}
+
+type infoSupplementRequest struct {
+	OpenInfoRequestID string `json:"openInfoRequestId"`
+	Body              string `json:"body"`
+}
+
+type infoSupplementResponse struct {
+	ID                  string `json:"id"`
+	InfoRequestID       string `json:"infoRequestId"`
+	SubmittedByUserID   string `json:"submittedByUserId"`
+	SubmittedByUsername string `json:"submittedByUsername"`
+	SubmittedByName     string `json:"submittedByName"`
+	Body                string `json:"body"`
+	CreatedAt           string `json:"createdAt"`
 }
 
 type reportResponse struct {
-	ID                  string  `json:"id"`
-	ReporterUserID      string  `json:"reporterUserId,omitempty"`
-	ReporterUsername    string  `json:"reporterUsername"`
-	ReporterName        string  `json:"reporterName"`
-	TargetType          string  `json:"targetType"`
-	TargetID            string  `json:"targetId"`
-	CanonicalTargetType string  `json:"canonicalTargetType"`
-	CanonicalTargetID   string  `json:"canonicalTargetId"`
-	TargetLabel         string  `json:"targetLabel"`
-	TargetSnapshotJSON  string  `json:"targetSnapshotJson,omitempty"`
-	ReportedUsername    string  `json:"reportedUsername"`
-	ReasonCode          string  `json:"reasonCode"`
-	Title               string  `json:"title"`
-	Description         string  `json:"description,omitempty"`
-	Status              string  `json:"status"`
-	AdminReason         string  `json:"adminReason,omitempty"`
-	HandledByAdminID    string  `json:"handledByAdminId,omitempty"`
-	HandledAt           *string `json:"handledAt,omitempty"`
-	DisputeID           string  `json:"disputeId,omitempty"`
-	CreatedAt           string  `json:"createdAt"`
-	UpdatedAt           string  `json:"updatedAt"`
-	Version             int64   `json:"version"`
+	ID                  string                   `json:"id"`
+	ReporterUserID      string                   `json:"reporterUserId,omitempty"`
+	ReporterUsername    string                   `json:"reporterUsername"`
+	ReporterName        string                   `json:"reporterName"`
+	TargetType          string                   `json:"targetType"`
+	TargetID            string                   `json:"targetId"`
+	CanonicalTargetType string                   `json:"canonicalTargetType"`
+	CanonicalTargetID   string                   `json:"canonicalTargetId"`
+	TargetLabel         string                   `json:"targetLabel"`
+	TargetSnapshotJSON  string                   `json:"targetSnapshotJson,omitempty"`
+	ReportedUsername    string                   `json:"reportedUsername"`
+	ReasonCode          string                   `json:"reasonCode"`
+	Title               string                   `json:"title"`
+	Description         string                   `json:"description,omitempty"`
+	Status              string                   `json:"status"`
+	AdminReason         string                   `json:"adminReason,omitempty"`
+	HandledByAdminID    string                   `json:"handledByAdminId,omitempty"`
+	HandledAt           *string                  `json:"handledAt,omitempty"`
+	DisputeID           string                   `json:"disputeId,omitempty"`
+	CreatedAt           string                   `json:"createdAt"`
+	UpdatedAt           string                   `json:"updatedAt"`
+	Version             int64                    `json:"version"`
+	CanSupplement       *bool                    `json:"canSupplement,omitempty"`
+	OpenInfoRequestID   string                   `json:"openInfoRequestId,omitempty"`
+	Supplements         []infoSupplementResponse `json:"supplements,omitempty"`
 }
 
 type disputeResponse struct {
-	ID                   string  `json:"id"`
-	ReportID             string  `json:"reportId,omitempty"`
-	TargetType           string  `json:"targetType"`
-	TargetID             string  `json:"targetId"`
-	TargetLabel          string  `json:"targetLabel"`
-	PrimaryUserID        string  `json:"primaryUserId,omitempty"`
-	PrimaryUsername      string  `json:"primaryUsername"`
-	PrimaryDisplayName   string  `json:"primaryDisplayName"`
-	CounterpartyUserID   string  `json:"counterpartyUserId,omitempty"`
-	CounterpartyUsername string  `json:"counterpartyUsername"`
-	CounterpartyName     string  `json:"counterpartyName"`
-	SubjectUserID        string  `json:"subjectUserId,omitempty"`
-	SubjectUsername      string  `json:"subjectUsername,omitempty"`
-	SubjectName          string  `json:"subjectName,omitempty"`
-	Status               string  `json:"status"`
-	PublicSummary        string  `json:"publicSummary"`
-	PublicResultCode     string  `json:"publicResultCode"`
-	PublicResult         string  `json:"publicResult"`
-	AdminReason          string  `json:"adminReason,omitempty"`
-	OpenedByAdminID      string  `json:"openedByAdminId,omitempty"`
-	OpenedAt             string  `json:"openedAt"`
-	ResolvedAt           *string `json:"resolvedAt,omitempty"`
-	ClosedAt             *string `json:"closedAt,omitempty"`
-	CreatedAt            string  `json:"createdAt"`
-	UpdatedAt            string  `json:"updatedAt"`
-	Version              int64   `json:"version"`
-	CanAppeal            *bool   `json:"canAppeal,omitempty"`
+	ID                   string                   `json:"id"`
+	ReportID             string                   `json:"reportId,omitempty"`
+	TargetType           string                   `json:"targetType"`
+	TargetID             string                   `json:"targetId"`
+	TargetLabel          string                   `json:"targetLabel"`
+	PrimaryUserID        string                   `json:"primaryUserId,omitempty"`
+	PrimaryUsername      string                   `json:"primaryUsername"`
+	PrimaryDisplayName   string                   `json:"primaryDisplayName"`
+	CounterpartyUserID   string                   `json:"counterpartyUserId,omitempty"`
+	CounterpartyUsername string                   `json:"counterpartyUsername"`
+	CounterpartyName     string                   `json:"counterpartyName"`
+	SubjectUserID        string                   `json:"subjectUserId,omitempty"`
+	SubjectUsername      string                   `json:"subjectUsername,omitempty"`
+	SubjectName          string                   `json:"subjectName,omitempty"`
+	Status               string                   `json:"status"`
+	PublicSummary        string                   `json:"publicSummary"`
+	PublicResultCode     string                   `json:"publicResultCode"`
+	PublicResult         string                   `json:"publicResult"`
+	AdminReason          string                   `json:"adminReason,omitempty"`
+	OpenedByAdminID      string                   `json:"openedByAdminId,omitempty"`
+	OpenedAt             string                   `json:"openedAt"`
+	ResolvedAt           *string                  `json:"resolvedAt,omitempty"`
+	ClosedAt             *string                  `json:"closedAt,omitempty"`
+	CreatedAt            string                   `json:"createdAt"`
+	UpdatedAt            string                   `json:"updatedAt"`
+	Version              int64                    `json:"version"`
+	CanAppeal            *bool                    `json:"canAppeal,omitempty"`
+	CanSupplement        *bool                    `json:"canSupplement,omitempty"`
+	OpenInfoRequestID    string                   `json:"openInfoRequestId,omitempty"`
+	Supplements          []infoSupplementResponse `json:"supplements,omitempty"`
 }
 
 type appealResponse struct {
@@ -175,7 +197,38 @@ func (s *Server) handleMyReports(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, r, appErr)
 		return
 	}
-	writePaginatedJSON(w, r, toReportResponses(items, false))
+	writePaginatedJSON(w, r, toMyReportResponses(items, user.ID))
+}
+
+func (s *Server) handleSubmitReportSupplement(w http.ResponseWriter, r *http.Request) {
+	s.handleSubmitInfoSupplement(w, r, report.InfoRequestEntityReport)
+}
+
+func (s *Server) handleSubmitDisputeSupplement(w http.ResponseWriter, r *http.Request) {
+	s.handleSubmitInfoSupplement(w, r, report.InfoRequestEntityDispute)
+}
+
+func (s *Server) handleSubmitInfoSupplement(w http.ResponseWriter, r *http.Request, entityType string) {
+	user, _, appErr := s.requireSessionAndCSRF(w, r)
+	if appErr != nil {
+		writeProblem(w, r, appErr)
+		return
+	}
+	body, req, appErr := decodeStrictJSON[infoSupplementRequest](r)
+	if appErr != nil {
+		writeProblem(w, r, appErr)
+		return
+	}
+	entityID := chi.URLParam(r, "id")
+	routeKey := "POST /api/v1/me/" + entityType + "s/{id}/supplements:" + entityID
+	completion, appErr := s.app.SubmitInfoSupplementWithIdempotency(r.Context(), user, routeKey, r.Header.Get("Idempotency-Key"), requestHash(r.Method, routeKey, body), report.SupplementInput{
+		EntityType: entityType, EntityID: entityID, InfoRequestID: req.OpenInfoRequestID, Body: req.Body, RequestID: requestIDFrom(r),
+	}, supplementCompletionBuilder(user.ID))
+	if appErr != nil {
+		writeProblem(w, r, appErr)
+		return
+	}
+	writeIdempotencyCompletion(w, completion)
 }
 
 func (s *Server) handleCreateAppeal(w http.ResponseWriter, r *http.Request) {
@@ -332,6 +385,7 @@ func (s *Server) handleAdminReportAction(w http.ResponseWriter, r *http.Request,
 		PublicResult:     req.PublicResult,
 		ExpectedVersion:  version,
 		RequestID:        requestIDFrom(r),
+		RequestedFromID:  req.RequestedFromUserID,
 	}, adminMutationCompletionBuilder)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
@@ -408,6 +462,7 @@ func (s *Server) handleAdminDisputeAction(w http.ResponseWriter, r *http.Request
 		PublicResult:     req.PublicResult,
 		ExpectedVersion:  version,
 		RequestID:        requestIDFrom(r),
+		RequestedFromID:  req.RequestedFromUserID,
 	}, adminMutationCompletionBuilder)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
@@ -553,12 +608,57 @@ func adminMutationCompletionBuilder(result report.MutationResult) (idempotency.C
 	}, nil
 }
 
+func supplementCompletionBuilder(userID string) report.SupplementCompletionBuilder {
+	return func(result report.MutationResult) (idempotency.Completion, *domain.AppError) {
+		payload := adminMutationResponse{}
+		resourceType := ""
+		resourceID := ""
+		version := int64(0)
+		if result.Report != nil {
+			response := toMyReportResponse(*result.Report, userID)
+			payload.Report = &response
+			resourceType, resourceID, version = "report", result.Report.ID, result.Report.Version
+		}
+		if result.Dispute != nil {
+			response := toMyDisputeResponse(*result.Dispute, userID)
+			payload.Dispute = &response
+			resourceType, resourceID, version = "dispute", result.Dispute.ID, result.Dispute.Version
+		}
+		body, err := json.Marshal(payload)
+		if err != nil {
+			return idempotency.Completion{}, domain.NewError(http.StatusInternalServerError, domain.CodeInternalError, "Internal error", "响应序列化失败。")
+		}
+		return idempotency.Completion{
+			Status: http.StatusOK, ContentType: "application/json; charset=utf-8", Body: body,
+			ResourceType: resourceType, ResourceID: resourceID, Headers: map[string]string{"ETag": `"` + strconv.FormatInt(version, 10) + `"`},
+		}, nil
+	}
+}
+
 func toReportResponses(items []report.Report, includeAdmin bool) []reportResponse {
 	result := make([]reportResponse, 0, len(items))
 	for _, item := range items {
 		result = append(result, toReportResponse(item, includeAdmin))
 	}
 	return result
+}
+
+func toMyReportResponses(items []report.Report, userID string) []reportResponse {
+	result := make([]reportResponse, 0, len(items))
+	for _, item := range items {
+		result = append(result, toMyReportResponse(item, userID))
+	}
+	return result
+}
+
+func toMyReportResponse(item report.Report, userID string) reportResponse {
+	response := toReportResponse(item, false)
+	canSupplement := item.Status == report.ReportStatusNeedsInfo && item.InfoRequestedFromID == userID && item.OpenInfoRequestID != ""
+	response.CanSupplement = &canSupplement
+	if canSupplement {
+		response.OpenInfoRequestID = item.OpenInfoRequestID
+	}
+	return response
 }
 
 func toReportResponse(item report.Report, includeAdmin bool) reportResponse {
@@ -587,6 +687,7 @@ func toReportResponse(item report.Report, includeAdmin bool) reportResponse {
 		response.TargetSnapshotJSON = item.TargetSnapshotJSON
 		response.AdminReason = item.AdminReason
 		response.HandledByAdminID = item.HandledByAdminID
+		response.Supplements = toInfoSupplementResponses(item.Supplements)
 	}
 	return response
 }
@@ -602,12 +703,21 @@ func toDisputeResponses(items []report.DisputeCase, includeAdmin bool) []dispute
 func toMyDisputeResponses(items []report.DisputeCase, userID string) []disputeResponse {
 	result := make([]disputeResponse, 0, len(items))
 	for _, item := range items {
-		response := toDisputeResponse(item, false)
-		canAppeal := report.CanAppealDispute(item, userID)
-		response.CanAppeal = &canAppeal
-		result = append(result, response)
+		result = append(result, toMyDisputeResponse(item, userID))
 	}
 	return result
+}
+
+func toMyDisputeResponse(item report.DisputeCase, userID string) disputeResponse {
+	response := toDisputeResponse(item, false)
+	canAppeal := report.CanAppealDispute(item, userID)
+	response.CanAppeal = &canAppeal
+	canSupplement := item.Status == report.DisputeStatusWaitingInfo && item.InfoRequestedFromID == userID && item.OpenInfoRequestID != ""
+	response.CanSupplement = &canSupplement
+	if canSupplement {
+		response.OpenInfoRequestID = item.OpenInfoRequestID
+	}
+	return response
 }
 
 func toDisputeResponse(item report.DisputeCase, includeAdmin bool) disputeResponse {
@@ -640,8 +750,28 @@ func toDisputeResponse(item report.DisputeCase, includeAdmin bool) disputeRespon
 		response.SubjectName = item.SubjectName
 		response.AdminReason = item.AdminReason
 		response.OpenedByAdminID = item.OpenedByAdminID
+		response.Supplements = toInfoSupplementResponses(item.Supplements)
 	}
 	return response
+}
+
+func toInfoSupplementResponses(items []report.InfoSupplement) []infoSupplementResponse {
+	if len(items) == 0 {
+		return nil
+	}
+	result := make([]infoSupplementResponse, 0, len(items))
+	for _, item := range items {
+		result = append(result, infoSupplementResponse{
+			ID:                  item.ID,
+			InfoRequestID:       item.InfoRequestID,
+			SubmittedByUserID:   item.SubmittedByUserID,
+			SubmittedByUsername: item.SubmittedByUsername,
+			SubmittedByName:     item.SubmittedByName,
+			Body:                item.Body,
+			CreatedAt:           item.CreatedAt.UTC().Format(time.RFC3339),
+		})
+	}
+	return result
 }
 
 func toAppealResponses(items []report.Appeal, includeAdmin bool) []appealResponse {

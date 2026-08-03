@@ -23,6 +23,7 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { Textarea } from '@/components/ui/textarea'
 import { Input } from '@/components/ui/input'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import PageTitle from '@/components/market/PageTitle.vue'
 import SoftTable from '@/components/market/SoftTable.vue'
 import StatusTabs from '@/components/market/StatusTabs.vue'
@@ -33,6 +34,7 @@ import CompactStats from '@/components/market/CompactStats.vue'
 import AdminDisputeResolutionDialog from '@/components/admin/AdminDisputeResolutionDialog.vue'
 import { usePagination } from '@/composables/usePagination'
 import { runAdminModerationAction, updateAdminRowStatus, type AdminRow, type AdminSection } from '@/lib/api'
+import { backendAdminModerationDetailRow } from '@/lib/reportBackend'
 import { isCarpoolExceptionStatus } from '@/lib/carpoolModeration'
 import { matchesApiOrderSearch } from '@/lib/apiOrderUi'
 import { useAdminSectionRows } from '@/queries/useMarketQueries'
@@ -50,6 +52,7 @@ const activeStatus = ref('全部')
 const keyword = ref('')
 const riskFilter = ref<'all' | 'high' | 'has_note'>('all')
 const reason = ref('')
+const requestedFromUserId = ref('')
 const confirmedRiskAction = ref(false)
 const actionBusy = ref('')
 const selectedRowId = ref('')
@@ -61,7 +64,7 @@ const confirmRowId = ref('')
 const disputeDialogOpen = ref(false)
 const disputeDialogId = ref('')
 
-type ModerationAction = 'take_down' | 'restore' | 'restrict' | 'warn' | 'suspend' | 'ban'
+type ModerationAction = 'request_info' | 'take_down' | 'restore' | 'restrict' | 'warn' | 'suspend' | 'ban'
 type DrawerMode = 'detail' | ModerationAction
 type QuickAction = 'approve' | 'recheck'
 type ModerationActionItem = {
@@ -85,6 +88,7 @@ watch(data, rows => {
 watch(drawerOpen, open => {
   if (!open) {
     reason.value = ''
+    requestedFromUserId.value = ''
     confirmedRiskAction.value = false
     drawerMode.value = 'detail'
   }
@@ -136,6 +140,7 @@ const pagination = usePagination(visibleRows)
 const selectedRow = computed(() => localRows.value.find(row => row.id === selectedRowId.value) ?? null)
 const drawerRow = computed(() => selectedRow.value)
 const drawerAction = computed(() => drawerMode.value === 'detail' ? null : drawerMode.value)
+const requestInfoParticipants = computed(() => drawerRow.value?.moderationParticipants ?? [])
 const confirmRow = computed(() => localRows.value.find(row => row.id === confirmRowId.value) ?? null)
 const panelCopy = computed(() => {
   const map: Partial<Record<AdminSection, { title: string, description: string }>> = {
@@ -176,7 +181,7 @@ const confirmDescription = computed(() => {
   return `将 ${row.primary} 执行“${label}”，并写入本地审计记录。`
 })
 
-function openDetailDrawer(row: AdminRow) {
+async function openDetailDrawer(row: AdminRow) {
   if (row.targetType === 'dispute') {
     openDisputeResolution(row)
     return
@@ -184,6 +189,15 @@ function openDetailDrawer(row: AdminRow) {
   selectedRowId.value = row.id
   drawerMode.value = 'detail'
   drawerOpen.value = true
+  if (row.targetType === 'report') {
+    try {
+      const refreshed = await backendAdminModerationDetailRow(row)
+      localRows.value = localRows.value.map(item => item.id === row.id ? refreshed : item)
+      selectedRowId.value = refreshed.id
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : '无法读取最新举报详情。')
+    }
+  }
 }
 
 function openDisputeResolution(row: AdminRow) {
@@ -209,11 +223,19 @@ function openModerationDrawer(row: AdminRow, action: ModerationAction) {
   selectedRowId.value = row.id
   drawerMode.value = action
   reason.value = ''
+  requestedFromUserId.value = ''
+  if (action === 'request_info' && row.moderationParticipants?.length === 1) {
+    requestedFromUserId.value = row.moderationParticipants[0]?.userId ?? ''
+  }
   confirmedRiskAction.value = false
   drawerOpen.value = true
 }
 
 function openQuickConfirm(row: AdminRow, action: QuickAction) {
+  if (action === 'recheck' && row.targetType === 'dispute') {
+    openModerationDrawer(row, 'request_info')
+    return
+  }
   if (action === 'approve' && !canApprove(row)) {
     toast.warning('当前记录已处于通过或在线状态，不能重复标记通过。')
     return
@@ -296,6 +318,7 @@ function negativeActionLabel(row: AdminRow | null) {
 
 function moderationActionLabel(action: ModerationAction, row: AdminRow | null) {
   const labels: Record<Exclude<ModerationAction, 'take_down'>, string> = {
+    request_info: '要求补充',
     restore: '恢复',
     restrict: '限制能力',
     warn: '警告',
@@ -311,6 +334,9 @@ function moderationActionItems(row: AdminRow | null): ModerationActionItem[] {
     { action: 'take_down', label: negativeActionLabel(row), disabled: !canTakeDown(row), danger: true },
     { action: 'restore', label: '恢复', disabled: !canRestore(row) },
   ]
+  if (row.targetType === 'report') {
+    items.unshift({ action: 'request_info', label: '要求举报人补充', disabled: !['待处理', '已分诊'].includes(row.status) })
+  }
   if (showDangerActions.value) {
     items.push(
       { action: 'restrict', label: '限制能力', disabled: false, danger: true },
@@ -384,6 +410,10 @@ async function runAction(row: AdminRow, action: ModerationAction) {
     toast.warning('请先勾选二次确认。')
     return false
   }
+  if (action === 'request_info' && !requestedFromUserId.value) {
+    toast.warning('请选择需要补充信息的案件参与者。')
+    return false
+  }
   if (action === 'restore' && !canRestore(row)) {
     toast.warning('当前记录未下架或限制，不能恢复。')
     return false
@@ -394,7 +424,8 @@ async function runAction(row: AdminRow, action: ModerationAction) {
   }
   actionBusy.value = `${row.id}-${action}`
   try {
-    const updated = await runAdminModerationAction(row, action, reason.value.trim())
+    const backendAction = action === 'request_info' ? 'request_changes' : action
+    const updated = await runAdminModerationAction(row, backendAction, reason.value.trim(), requestedFromUserId.value)
     localRows.value = localRows.value.map(item => item.id === row.id ? updated : item)
     selectedRowId.value = updated.id
     confirmedRiskAction.value = false
@@ -552,6 +583,24 @@ const showContentActions = computed(() => !['logs', 'trade-intents'].includes(se
               </div>
             </section>
 
+            <section v-if="drawerRow.moderationSupplements?.length" class="space-y-3">
+              <div>
+                <h2 class="text-sm font-semibold">用户补充材料</h2>
+                <p class="mt-1 text-sm text-muted-foreground">仅管理员可见，按提交时间排列。</p>
+              </div>
+              <div
+                v-for="supplement in drawerRow.moderationSupplements"
+                :key="supplement.id"
+                class="rounded-lg border border-border bg-muted/30 p-4"
+              >
+                <div class="flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
+                  <span>{{ supplement.submittedByName || supplement.submittedByUsername || supplement.submittedByUserId }}</span>
+                  <span>{{ new Date(supplement.createdAt).toLocaleString('zh-CN') }}</span>
+                </div>
+                <p class="mt-3 whitespace-pre-wrap break-words text-sm leading-6">{{ supplement.body }}</p>
+              </div>
+            </section>
+
             <section v-if="!drawerAction && showContentActions" class="space-y-3">
               <div>
                 <h2 class="text-sm font-semibold">{{ panelCopy.title }}</h2>
@@ -573,9 +622,25 @@ const showContentActions = computed(() => !['logs', 'trade-intents'].includes(se
             </section>
 
             <section v-if="drawerAction" class="space-y-3">
+              <label v-if="drawerAction === 'request_info'" class="space-y-2">
+                <span class="text-sm font-medium">需要补充的用户</span>
+                <div v-if="requestInfoParticipants.length === 1" class="rounded-md border border-input bg-muted/30 px-3 py-2 text-sm">
+                  {{ requestInfoParticipants[0]?.label }}
+                </div>
+                <Select v-else v-model="requestedFromUserId">
+                  <SelectTrigger class="w-full">
+                    <SelectValue placeholder="选择案件参与者" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem v-for="participant in requestInfoParticipants" :key="participant.userId" :value="participant.userId">
+                      {{ participant.label }}
+                    </SelectItem>
+                  </SelectContent>
+                </Select>
+              </label>
               <label class="space-y-2">
                 <span class="text-sm font-medium">操作原因</span>
-                <Textarea v-model="reason" class="min-h-28" placeholder="填写下架、恢复、限制或封禁原因；审计日志会记录该说明。" />
+                <Textarea v-model="reason" class="min-h-28" :placeholder="drawerAction === 'request_info' ? '说明需要该用户补充的脱敏事实；该说明仅管理员可见。' : '填写下架、恢复、限制或封禁原因；审计日志会记录该说明。'" />
               </label>
               <label class="flex items-start gap-2 rounded-lg border border-border bg-muted/30 p-3 text-xs leading-5 text-muted-foreground">
                 <input v-model="confirmedRiskAction" type="checkbox" class="mt-1 h-4 w-4 accent-primary" />

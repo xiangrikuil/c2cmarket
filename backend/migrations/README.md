@@ -73,6 +73,17 @@ versions:
 | `000064_contact_cipher_aad` | explicit legacy/AAD cipher formats for versioned contact, audit, order, and quota secrets |
 | `000065_remove_demands` | removes the prelaunch demand-post table, its indexes, and demand idempotency residue |
 | `000066_api_service_multiplier_reconciliation` | removes historical fixed-one Sub2API service-model constraints so the positive merchant-declared multiplier contract is consistent |
+| `000067_api_account_payment_settings` | account-level mutually exclusive WeChat Pay and Alipay settings for future API service snapshots |
+| `000068_api_order_delivery_review` | API-order delivery review deadlines and explicit buyer-confirmed or automatic completion sources |
+| `000069_carpool_usage_signals` | structured carpool quota, reset, region, connection, channel, and payment signals |
+| `000070_admin_user_directory_governance` | administrator account-directory governance audit lookup support |
+| `000071_api_service_promotions` | administrator-owned API service promotion schedules and lifecycle facts |
+| `000072_api_service_commercial_facts` | merchant-declared account-pool and refund-commitment facts |
+| `000073_growth_analytics` | privacy-safe user attribution, daily activity, and first-publication facts |
+| `000074_promotion_rewards` | referral campaigns, invite relations, and single-use promotion coupons |
+| `000075_api_order_public_numbers` | immutable human-facing API order numbers |
+| `000076_api_delivery_credential_destruction` | explicit irreversible destruction state for retained API delivery credential payloads |
+| `000077_moderation_info_requests` | participant-targeted moderation information requests and immutable supplements |
 
 The current runnable Go slice supports both in-memory tests and PostgreSQL runtime.
 When `DATABASE_URL` is configured, users, auth sessions, idempotency, product
@@ -339,6 +350,18 @@ from each order's Asia/Shanghai creation date with stable collision handling;
 new writes use cryptographically random suffixes. The UUID remains the internal
 primary key, route key, and relation key.
 
+Version 76 (`000076_api_delivery_credential_destruction`) adds explicit live
+and destroyed states to order delivery credentials and pre-imported quota
+credentials. Eligible maintenance runs irreversibly null credential payloads
+and fingerprints after the configured retention period while preserving only
+non-sensitive audit facts. Open disputes and submitted appeals hold order
+credential destruction; available and reserved inventory is never selected.
+
+Version 77 (`000077_moderation_info_requests`) adds participant-targeted
+administrator information requests and immutable, idempotent user supplements.
+Only the requested active case participant may answer an open request, and the
+answer marks the request as answered without resolving the report or dispute.
+
 ## Contact Retention And Destruction
 
 Contact method deletion retires the mutable contact method surface. Historical
@@ -349,11 +372,12 @@ reads, and those reads must use `Cache-Control: no-store` and write access logs
 where applicable. Access logs and domain events store identifiers and side
 metadata only, never plaintext contact values.
 
-Physical destruction of historical contact ciphertext is intentionally not
-implemented in this migration set because it must be coordinated with dispute
-retention policy, encrypted version references, and key-rotation operations.
-Future destructive retention work should add explicit `destroyed_at` semantics
-and a key-rotation/destruction runbook rather than deleting rows implicitly.
+Physical destruction of historical contact-method ciphertext remains outside
+this migration set because it must be coordinated with frozen contact-version
+references and key-rotation operations. API order delivery credentials are a
+narrower exception: Version 76 adds explicit `destroyed_at` semantics and
+irreversibly clears eligible order and pre-imported credential payloads while
+preserving non-sensitive audit facts.
 
 `000007_seed_catalog_risk_and_policy.down.sql` removes only fixed seed UUIDs. If
 business rows already reference those seed plans, PostgreSQL foreign keys are

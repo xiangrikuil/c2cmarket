@@ -214,7 +214,7 @@ func TestReputationPostgresGovernanceRestrictionAndAppealReversal(t *testing.T) 
 		  id, appellant_user_id, dispute_case_id, target_type, target_id,
 		  title, statement, status, created_at, updated_at, version
 		)
-		VALUES ($1, $2, $3, 'public_user', $2::text, '待处理申诉',
+		VALUES ($1::uuid, $2::uuid, $3::uuid, 'public_user', $2::uuid::text, '待处理申诉',
 		        '裁定前必须先处理该申诉。', 'submitted', $4, $4, 1)
 	`, blockingAppealID, subjectID, disputeID, baseTime); err != nil {
 		t.Fatalf("insert outcome-blocking appeal: %v", err)

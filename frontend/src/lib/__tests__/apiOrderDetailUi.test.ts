@@ -85,6 +85,13 @@ describe('API 订单详情 UI 契约', () => {
     expect(source).toContain('显示初始密码')
   })
 
+  it('凭证销毁后仅展示审计事实且不承诺长期保存', () => {
+    expect(source).toContain('order.deliveryCredential.destroyedAt')
+    expect(source).toContain('历史凭证已按保留策略销毁')
+    expect(source).toContain('保留期内可查看')
+    expect(source).not.toContain('长期可查看')
+  })
+
   it('通过 shadcn-vue RadioGroupItem 与 Label 组合单选项', () => {
     expect(source).toContain("import { Label } from '@/components/ui/label'")
     expect(source).toContain('<RadioGroup v-model="paymentIssueReason"')

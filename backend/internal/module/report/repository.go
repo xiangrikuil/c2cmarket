@@ -14,6 +14,7 @@ type Repository interface {
 	ListAdminReports(ctx context.Context, page domain.PageRequest) (domain.Page[Report], *domain.AppError)
 	GetAdminReport(ctx context.Context, id string) (Report, *domain.AppError)
 	UpdateReportAdminWithIdempotency(ctx context.Context, entry idempotency.Entry, input AdminActionInput, now time.Time, buildCompletion AdminCompletionBuilder) (MutationResult, idempotency.Completion, *domain.AppError)
+	SubmitInfoSupplementWithIdempotency(ctx context.Context, entry idempotency.Entry, input SupplementInput, now time.Time, buildCompletion SupplementCompletionBuilder) (MutationResult, idempotency.Completion, *domain.AppError)
 
 	CreateAppealWithIdempotency(ctx context.Context, entry idempotency.Entry, input CreateAppealInput, now time.Time, buildCompletion AppealCompletionBuilder) (Appeal, idempotency.Completion, *domain.AppError)
 	ListAppealsByUser(ctx context.Context, userID string) ([]Appeal, *domain.AppError)

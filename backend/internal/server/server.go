@@ -215,6 +215,7 @@ type Service interface {
 	AdminReports(ctx context.Context, user auth.User, page domain.PageRequest) (domain.Page[report.Report], *domain.AppError)
 	AdminReport(ctx context.Context, user auth.User, id string) (report.Report, *domain.AppError)
 	AdminReportActionWithIdempotency(ctx context.Context, user auth.User, routeKey, key, requestHash string, input report.AdminActionInput, buildCompletion report.AdminCompletionBuilder) (idempotency.Completion, *domain.AppError)
+	SubmitInfoSupplementWithIdempotency(ctx context.Context, user auth.User, routeKey, key, requestHash string, input report.SupplementInput, buildCompletion report.SupplementCompletionBuilder) (idempotency.Completion, *domain.AppError)
 	MyDisputes(ctx context.Context, user auth.User) ([]report.DisputeCase, *domain.AppError)
 	AdminDisputes(ctx context.Context, user auth.User) ([]report.DisputeCase, *domain.AppError)
 	AdminDispute(ctx context.Context, user auth.User, id string) (report.DisputeCase, *domain.AppError)

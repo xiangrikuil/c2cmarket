@@ -232,6 +232,10 @@ type AppealCompletionBuilder = report.AppealCompletionBuilder
 
 type ReportAdminCompletionBuilder = report.AdminCompletionBuilder
 
+type ReportSupplementInput = report.SupplementInput
+
+type ReportSupplementCompletionBuilder = report.SupplementCompletionBuilder
+
 type Announcement = announcement.Announcement
 
 type AnnouncementFormInput = announcement.FormInput

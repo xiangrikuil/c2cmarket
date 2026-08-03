@@ -2,7 +2,9 @@ import type { AdminRow } from '@/lib/api'
 import type {
   Appeal,
   DisputeCase,
-  Report,
+  SelfDispute,
+  SelfModerationSupplementMutation,
+  SelfReport,
 } from '@/api/generated/openapi'
 import type { CreateContactReportRequest, PublicDisputeRecord } from '@/data/mock'
 import { backendMutation, backendRequest, ensureBackendSession } from '@/lib/backendClient'
@@ -15,6 +17,16 @@ type ListResponse<T> = {
 type BackendReportTargetType = 'contact_snapshot' | 'public_user' | 'carpool_application' | 'carpool_membership' | 'api_purchase_intent' | 'api_order'
 type BackendReportReasonCode = 'unreachable' | 'contact_invalid' | 'impersonation' | 'description_mismatch' | 'seat_rule_dispute' | 'api_quota_dispute' | 'order_delivery_dispute' | 'other'
 type BackendPublicResultCode = DisputeCase['publicResultCode']
+
+export type AdminInfoSupplement = {
+  id: string
+  infoRequestId: string
+  submittedByUserId: string
+  submittedByUsername: string
+  submittedByName: string
+  body: string
+  createdAt: string
+}
 
 type BackendReport = {
   id: string
@@ -39,9 +51,10 @@ type BackendReport = {
   createdAt: string
   updatedAt: string
   version: number
+  supplements?: AdminInfoSupplement[]
 }
 
-type BackendDispute = DisputeCase
+type BackendDispute = DisputeCase & { supplements?: AdminInfoSupplement[] }
 
 export type AdminReportDetail = BackendReport
 export type AdminDisputeDetail = BackendDispute
@@ -107,9 +120,15 @@ export type CreateManualInterventionReportRequest = {
   description: string
 }
 
-export type MyReport = Report
-export type MyDispute = DisputeCase & { canAppeal: boolean }
+export type MyReport = SelfReport
+export type MyDispute = SelfDispute
 export type MyAppeal = Appeal
+export type SubmitInfoSupplementRequest = {
+  entityType: 'report' | 'dispute'
+  entityId: string
+  openInfoRequestId: string
+  body: string
+}
 export type CreateAppealRequest = {
   title: string
   statement: string
@@ -219,6 +238,29 @@ function reportTargetTo(row: BackendReport) {
   return null
 }
 
+function moderationParticipants(candidates: Array<{ userId?: string, username?: string, name?: string, role: string }>) {
+  const seen = new Set<string>()
+  return candidates.flatMap(candidate => {
+    const userId = candidate.userId?.trim() ?? ''
+    if (!userId || seen.has(userId)) return []
+    seen.add(userId)
+    const identity = candidate.name?.trim() || candidate.username?.trim() || userId
+    const username = candidate.username?.trim()
+    return [{ userId, label: `${candidate.role} · ${identity}${username && username !== identity ? ` (@${username})` : ''}` }]
+  })
+}
+
+function mapAdminSupplements(items?: AdminInfoSupplement[]) {
+  return items?.map(item => ({
+    id: item.id,
+    submittedByUserId: item.submittedByUserId,
+    submittedByUsername: item.submittedByUsername,
+    submittedByName: item.submittedByName,
+    body: item.body,
+    createdAt: item.createdAt,
+  })) ?? []
+}
+
 function mapReportRow(item: BackendReport): AdminRow {
   return {
     id: item.id,
@@ -239,6 +281,10 @@ function mapReportRow(item: BackendReport): AdminRow {
       { label: '更新时间', value: formatTime(item.updatedAt) },
     ],
     targetTo: reportTargetTo(item),
+    moderationParticipants: moderationParticipants([
+      { userId: item.reporterUserId, username: item.reporterUsername, name: item.reporterName, role: '举报人' },
+    ]),
+    moderationSupplements: mapAdminSupplements(item.supplements),
   }
 }
 
@@ -262,6 +308,12 @@ export function mapAdminDisputeRow(item: AdminDisputeDetail): AdminRow {
       { label: '更新时间', value: formatTime(item.updatedAt) },
     ],
     targetTo: item.primaryUsername ? `/u/${item.primaryUsername}` : null,
+    moderationParticipants: moderationParticipants([
+      { userId: item.primaryUserId, username: item.primaryUsername, name: item.primaryDisplayName, role: '主要参与方' },
+      { userId: item.counterpartyUserId, username: item.counterpartyUsername, name: item.counterpartyName, role: '另一参与方' },
+      { userId: item.subjectUserId, username: item.subjectUsername, name: item.subjectName, role: '责任主体' },
+    ]),
+    moderationSupplements: mapAdminSupplements(item.supplements),
   }
 }
 
@@ -381,6 +433,18 @@ export async function backendMyAppeals() {
   return backendAllPages<MyAppeal>('/api/v1/me/appeals')
 }
 
+export async function backendSubmitInfoSupplement(input: SubmitInfoSupplementRequest) {
+  await ensureBackendSession('buyer', false)
+  const result = await backendMutation<SelfModerationSupplementMutation>(
+    `/api/v1/me/${input.entityType}s/${encodeURIComponent(input.entityId)}/supplements`,
+    { openInfoRequestId: input.openInfoRequestId, body: input.body },
+    { idempotencyPrefix: `${input.entityType}-supplement` },
+  )
+  const item = input.entityType === 'report' ? result.report : result.dispute
+  if (!item) throw new Error('补充材料响应缺少最新案件数据。')
+  return item
+}
+
 export async function backendCreateAppeal(payload: CreateAppealRequest) {
   await ensureBackendSession('buyer', false)
   const source = payload.reportId
@@ -426,6 +490,12 @@ export async function backendAdminDisputeDetail(id: string) {
   return backendRequest<BackendDispute>(`/api/v1/admin/disputes/${encodeURIComponent(id)}`)
 }
 
+export async function backendAdminModerationDetailRow(row: AdminRow) {
+  if (row.targetType === 'report') return mapReportRow(await backendAdminReportDetail(row.id))
+  if (row.targetType === 'dispute') return mapAdminDisputeRow(await backendAdminDisputeDetail(row.id))
+  return row
+}
+
 export async function backendResolveAdminDispute(input: ResolveAdminDisputeInput) {
   await ensureBackendSession('admin', true)
   const result = await backendMutation<BackendAdminMutation>(
@@ -450,7 +520,7 @@ async function adminAppeal(id: string) {
   return backendRequest<BackendAppeal>(`/api/v1/admin/appeals/${encodeURIComponent(id)}`)
 }
 
-export async function backendRunReportAdminAction(row: AdminRow, action: 'approve' | 'request_changes' | 'take_down' | 'restore' | 'restrict' | 'warn' | 'suspend' | 'ban', reason: string) {
+export async function backendRunReportAdminAction(row: AdminRow, action: 'approve' | 'request_changes' | 'take_down' | 'restore' | 'restrict' | 'warn' | 'suspend' | 'ban', reason: string, requestedFromUserId = '') {
   if (row.backendKind === 'report' || row.targetType === 'report') {
     const detail = await backendAdminReportDetail(row.id)
     const pathAction = action === 'approve'
@@ -462,11 +532,15 @@ export async function backendRunReportAdminAction(row: AdminRow, action: 'approv
         : action === 'suspend'
           ? 'close'
           : 'reject'
+    if (pathAction === 'request-info' && (!requestedFromUserId || requestedFromUserId !== detail.reporterUserId)) {
+      throw new Error('举报补充信息只能指定当前举报人。')
+    }
     const result = await backendMutation<BackendAdminMutation>(`/api/v1/admin/reports/${encodeURIComponent(row.id)}/${pathAction}`, {
       reason: reason || '管理台举报处理',
       publicSummary: reason || detail.title || detail.targetLabel,
       publicResultCode: 'no_action',
       publicResult: pathAction === 'open-dispute' ? '已进入人工处理中' : '',
+      ...(pathAction === 'request-info' ? { requestedFromUserId } : {}),
     }, {
       idempotencyPrefix: `report-admin-${pathAction}`,
       ifMatch: detail.version,
@@ -482,11 +556,16 @@ export async function backendRunReportAdminAction(row: AdminRow, action: 'approv
     const pathAction = action === 'request_changes' || action === 'warn'
         ? 'request-info'
         : 'close'
+    const participantIds = new Set([detail.primaryUserId, detail.counterpartyUserId, detail.subjectUserId].filter((value): value is string => Boolean(value)))
+    if (pathAction === 'request-info' && (!requestedFromUserId || !participantIds.has(requestedFromUserId))) {
+      throw new Error('请选择当前纠纷中的有效参与者补充信息。')
+    }
     const result = await backendMutation<BackendAdminMutation>(`/api/v1/admin/disputes/${encodeURIComponent(row.id)}/${pathAction}`, {
       reason: reason || '管理台纠纷处理',
       publicSummary: detail.publicSummary || reason || detail.targetLabel,
       publicResultCode: 'no_action',
       publicResult: pathAction === 'request-info' ? '等待补充信息' : '案件已关闭，未作责任认定',
+      ...(pathAction === 'request-info' ? { requestedFromUserId } : {}),
     }, {
       idempotencyPrefix: `dispute-admin-${pathAction}`,
       ifMatch: detail.version,

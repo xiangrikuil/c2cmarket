@@ -31,6 +31,22 @@ function sessionResponse() {
   })
 }
 
+function adminSessionResponse() {
+  return jsonResponse({
+    csrfToken: 'csrf-admin-report',
+    expiresAt: '2999-01-01T00:00:00Z',
+    user: {
+      id: 'admin-1',
+      analyticsUserId: 'analytics-admin-1',
+      username: 'moderator',
+      displayName: 'Moderator',
+      isAdmin: true,
+      permissions: ['admin:reports'],
+      linuxDoBinding: { bound: true },
+    },
+  })
+}
+
 async function loadBackend(fetchMock: ReturnType<typeof vi.fn>) {
   vi.resetModules()
   vi.stubGlobal('fetch', fetchMock)
@@ -107,6 +123,74 @@ describe('举报与申诉中心真实后端适配器', () => {
     })
     assert.equal(String(init.body).includes('targetType'), false)
     assert.equal(String(init.body).includes('targetId'), false)
+  })
+
+  it('补充材料只发送开放请求 ID 和脱敏纯文本并使用幂等键', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(sessionResponse())
+      .mockResolvedValueOnce(jsonResponse({ dispute: { id: 'dispute-1', status: 'waiting_info', canSupplement: false } }))
+    const { backend } = await loadBackend(fetchMock)
+
+    await backend.backendSubmitInfoSupplement({
+      entityType: 'dispute',
+      entityId: 'dispute-1',
+      openInfoRequestId: 'request-1',
+      body: '订单状态与付款记录时间不一致，请复核。',
+    })
+
+    const [url, init] = fetchMock.mock.calls[1] as [string, RequestInit]
+    const headers = new Headers(init.headers)
+    assert.equal(url, '/api/v1/me/disputes/dispute-1/supplements')
+    assert.equal(init.method, 'POST')
+    assert.equal(headers.get('X-CSRF-Token'), 'csrf-report-center')
+    assert.match(headers.get('Idempotency-Key') ?? '', /^dispute-supplement-/)
+    assert.deepEqual(JSON.parse(String(init.body)), {
+      openInfoRequestId: 'request-1',
+      body: '订单状态与付款记录时间不一致，请复核。',
+    })
+  })
+
+  it('管理员要求举报人补充时显式发送所选用户 ID', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(adminSessionResponse())
+      .mockResolvedValueOnce(jsonResponse({
+        id: 'report-1', reporterUserId: 'reporter-1', reporterUsername: 'orbit', reporterName: 'Orbit',
+        title: '举报说明', targetLabel: 'API 订单', version: 2,
+      }))
+      .mockResolvedValueOnce(jsonResponse({ report: { id: 'report-1', status: 'needs_info', version: 3 } }))
+    const { backend } = await loadBackend(fetchMock)
+
+    await backend.backendRunReportAdminAction({
+      id: 'report-1', primary: '举报说明', secondary: '', owner: '', status: '已分诊', risk: '', targetType: 'report',
+    }, 'request_changes', '请补充订单时间线。', 'reporter-1')
+
+    const [url, init] = fetchMock.mock.calls[2] as [string, RequestInit]
+    assert.equal(url, '/api/v1/admin/reports/report-1/request-info')
+    assert.deepEqual(JSON.parse(String(init.body)), {
+      reason: '请补充订单时间线。',
+      publicSummary: '请补充订单时间线。',
+      publicResultCode: 'no_action',
+      publicResult: '',
+      requestedFromUserId: 'reporter-1',
+    })
+  })
+
+  it('管理员要求纠纷补充时拒绝非参与者 ID', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(adminSessionResponse())
+      .mockResolvedValueOnce(jsonResponse({
+        id: 'dispute-1', primaryUserId: 'seller-1', counterpartyUserId: 'buyer-1', subjectUserId: 'buyer-1',
+        publicSummary: '订单说明争议', targetLabel: 'API 订单', version: 2,
+      }))
+    const { backend } = await loadBackend(fetchMock)
+
+    await assert.rejects(
+      () => backend.backendRunReportAdminAction({
+        id: 'dispute-1', primary: '订单说明争议', secondary: '', owner: '', status: '处理中', risk: '', targetType: 'dispute',
+      }, 'request_changes', '请补充付款记录。', 'outsider-1'),
+      /请选择当前纠纷中的有效参与者补充信息/,
+    )
+    assert.equal(fetchMock.mock.calls.length, 2)
   })
 
   it('真实列表失败时抛出 Problem Details，不回退本地记录', async () => {

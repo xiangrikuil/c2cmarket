@@ -30,6 +30,18 @@ describe('管理列表数据状态', () => {
     expect(adminSectionSource).toContain("if (row.targetType === 'dispute') return ['处理中', '需要补充信息'].includes(row.status)")
     expect(reportBackendSource).toContain("publicResult: pathAction === 'request-info' ? '等待补充信息' : '案件已关闭，未作责任认定'")
     expect(reportBackendSource).not.toContain("reason || detail.publicResult || '已处理'")
+    expect(adminSectionSource).toContain("openModerationDrawer(row, 'request_info')")
+    expect(adminSectionSource).toContain('v-model="requestedFromUserId"')
+    expect(adminSectionSource).toContain("runAdminModerationAction(row, backendAction, reason.value.trim(), requestedFromUserId.value)")
+    expect(reportBackendSource).toContain("throw new Error('举报补充信息只能指定当前举报人。')")
+    expect(reportBackendSource).toContain("throw new Error('请选择当前纠纷中的有效参与者补充信息。')")
+  })
+
+  it('管理员详情展示用户补充正文但不复用公开列表字段', () => {
+    expect(adminSectionSource).toContain('drawerRow.moderationSupplements?.length')
+    expect(adminSectionSource).toContain('用户补充材料')
+    expect(disputeDialogSource).toContain('dispute.supplements?.length || report?.supplements?.length')
+    expect(reportBackendSource).toContain('backendAdminModerationDetailRow')
   })
 
   it('纠纷详情和主操作进入专用两步裁决面板', () => {

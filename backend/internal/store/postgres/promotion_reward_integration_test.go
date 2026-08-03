@@ -218,7 +218,7 @@ func TestPromotionRewardPostgresLifecycle(t *testing.T) {
 		t.Fatalf("update campaign idempotently: completion=%+v error=%v", campaignCompletion, appErr)
 	}
 	campaignReplay, appErr := rewardService.UpdateAdminCampaignWithIdempotency(ctx, adminUser, "PATCH /test/promotion-reward-campaign", campaignKey, "campaign-hash", campaignInput, campaignBuilder)
-	if appErr != nil || campaignReplay.ResourceID != campaign.ID || normalizedPromotionRewardJSON(campaignReplay.Body) != normalizedPromotionRewardJSON(campaignCompletion.Body) {
+	if appErr != nil || campaignReplay.ResourceID != campaign.ID || normalizedIntegrationJSON(campaignReplay.Body) != normalizedIntegrationJSON(campaignCompletion.Body) {
 		t.Fatalf("replay campaign update: first=%s replay=%s completion=%+v error=%v", campaignCompletion.Body, campaignReplay.Body, campaignReplay, appErr)
 	}
 	completionBuilder := func(coupon promotionreward.Coupon) (idempotency.Completion, *domain.AppError) {
@@ -362,6 +362,8 @@ func seedPromotionRewardService(t *testing.T, store *Store, ownerUserID, service
 		INSERT INTO api_services (
 			id, owner_user_id, merchant_identity_mode, owner_contact_method_id,
 			title, short_description, distribution_system, billing_mode,
+			declared_cny_per_usd_allowance, declared_max_usd_allowance_per_intent,
+			available_usd_allowance, quota_expires_at,
 			minimum_intent_cny, maximum_intent_cny, usage_visibility,
 			review_status, publication_status, moderation_status,
 			accepting_orders, payment_window_minutes,
@@ -369,11 +371,11 @@ func seedPromotionRewardService(t *testing.T, store *Store, ownerUserID, service
 			approved_at, created_at, updated_at, version
 		) VALUES (
 			$1, $2, 'public_profile', $3, '推广权益测试服务', 'PostgreSQL integration service',
-			'sub2api', 'manual_usage_check', 1, 1000, 'none',
+			'sub2api', 'metered_usd_quota', 1, 1000, 1000, $5, 1, 1000, 'offsite_panel_readonly',
 			'approved', 'online', 'clear', true, 10,
 			'under_1s', 20, $4, $4, $4, $4, 1
 		)
-	`, serviceID, ownerUserID, contactID, now); err != nil {
+	`, serviceID, ownerUserID, contactID, now, now.AddDate(0, 1, 0)); err != nil {
 		t.Fatalf("seed promotion API service: %v", err)
 	}
 	if _, err := store.pool.Exec(ctx, `
@@ -406,7 +408,7 @@ func assertPublicRewardProjection(t *testing.T, items []apipromotion.Promotion, 
 	t.Fatalf("public reward %s for service %s not found: %+v", activationID, serviceID, items)
 }
 
-func normalizedPromotionRewardJSON(body []byte) string {
+func normalizedIntegrationJSON(body []byte) string {
 	var value any
 	if err := json.Unmarshal(body, &value); err != nil {
 		return string(body)
