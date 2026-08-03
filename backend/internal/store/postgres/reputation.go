@@ -1143,6 +1143,20 @@ func (s *Store) CreateDisputeOutcomeWithIdempotency(ctx context.Context, entry i
 	if status != "resolved" && status != "closed" {
 		return reputation.GovernanceMutationResult{}, idempotency.Completion{}, domain.NewError(http.StatusConflict, domain.CodeInvalidStateTransition, "Dispute unresolved", "未解决纠纷只能形成提醒，不能创建责任裁定。")
 	}
+	var appealBlocksOutcome bool
+	if err := tx.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1
+			FROM appeals
+			WHERE dispute_case_id = $1
+			  AND status IN ('submitted', 'approved')
+		)
+	`, input.DisputeCaseID).Scan(&appealBlocksOutcome); err != nil {
+		return reputation.GovernanceMutationResult{}, idempotency.Completion{}, internalStoreError()
+	}
+	if appealBlocksOutcome {
+		return reputation.GovernanceMutationResult{}, idempotency.Completion{}, domain.NewError(http.StatusConflict, domain.CodeInvalidStateTransition, "Appeal blocks outcome", "该纠纷有待处理或已批准的申诉，不能创建信誉裁定。")
+	}
 	subjectRole, appErr := disputeSubjectRole(ctx, tx, targetType, targetID, input.SubjectUserID)
 	if appErr != nil {
 		return reputation.GovernanceMutationResult{}, idempotency.Completion{}, appErr

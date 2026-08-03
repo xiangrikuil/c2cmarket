@@ -249,6 +249,19 @@ func (s *Store) ListAdminDisputes(ctx context.Context) ([]report.DisputeCase, *d
 	return scanDisputes(rows)
 }
 
+func (s *Store) ListDisputesByUser(ctx context.Context, userID string) ([]report.DisputeCase, *domain.AppError) {
+	rows, err := s.pool.Query(ctx, disputeSelectSQL+`
+		WHERE d.primary_user_id = $1
+		   OR d.counterparty_user_id = $1
+		   OR d.subject_user_id = $1
+		ORDER BY d.updated_at DESC`, userID)
+	if err != nil {
+		return nil, internalStoreError()
+	}
+	defer rows.Close()
+	return scanDisputes(rows)
+}
+
 func (s *Store) GetAdminDispute(ctx context.Context, id string) (report.DisputeCase, *domain.AppError) {
 	item, err := scanDispute(ctx, s.pool, disputeSelectSQL+` WHERE d.id = $1`, id)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -472,29 +485,73 @@ func updateReportAdminInTx(ctx context.Context, tx pgx.Tx, input report.AdminAct
 }
 
 func createAppealInTx(ctx context.Context, tx pgx.Tx, input report.CreateAppealInput, now time.Time) (report.Appeal, *domain.AppError) {
-	targetType := strings.TrimSpace(input.TargetType)
-	targetID := strings.TrimSpace(input.TargetID)
-	if strings.TrimSpace(input.DisputeID) != "" {
-		dispute, err := scanDispute(ctx, tx, disputeSelectSQL+` WHERE d.id = $1`, input.DisputeID)
+	var sourceReport *report.Report
+	var sourceDispute *report.DisputeCase
+	reportID := strings.TrimSpace(input.ReportID)
+	disputeID := strings.TrimSpace(input.DisputeID)
+	if reportID != "" {
+		item, err := scanReport(ctx, tx, reportSelectSQL+` WHERE r.id = $1`, reportID)
 		if errors.Is(err, pgx.ErrNoRows) {
-			return report.Appeal{}, disputeNotFound()
+			return report.Appeal{}, appealSourceNotFound()
 		}
 		if err != nil {
 			return report.Appeal{}, internalStoreError()
 		}
-		targetType = dispute.TargetType
-		targetID = dispute.TargetID
+		sourceReport = &item
 	}
-	if strings.TrimSpace(input.ReportID) != "" && targetType == "" {
-		existing, err := scanReport(ctx, tx, reportSelectSQL+` WHERE r.id = $1`, input.ReportID)
+	if disputeID != "" {
+		item, err := scanDispute(ctx, tx, disputeSelectSQL+` WHERE d.id = $1 FOR UPDATE OF d`, disputeID)
 		if errors.Is(err, pgx.ErrNoRows) {
-			return report.Appeal{}, reportNotFound()
+			return report.Appeal{}, appealSourceNotFound()
 		}
 		if err != nil {
 			return report.Appeal{}, internalStoreError()
 		}
-		targetType = nonEmpty(existing.CanonicalTargetType, existing.TargetType)
-		targetID = nonEmpty(existing.CanonicalTargetID, existing.TargetID)
+		sourceDispute = &item
+	}
+	source, appErr := report.ResolveAppealSource(input.AppellantUserID, sourceReport, sourceDispute)
+	if appErr != nil {
+		return report.Appeal{}, appErr
+	}
+	sourceKind := "report"
+	sourceID := reportID
+	if disputeID != "" {
+		sourceKind = "dispute"
+		sourceID = disputeID
+	}
+	lockKey := "appeal:" + strings.TrimSpace(input.AppellantUserID) + ":" + sourceKind + ":" + sourceID
+	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, lockKey); err != nil {
+		return report.Appeal{}, internalStoreError()
+	}
+	var submittedExists bool
+	if disputeID != "" {
+		err := tx.QueryRow(ctx, `
+			SELECT EXISTS (
+				SELECT 1 FROM appeals
+				WHERE appellant_user_id = $1
+				  AND dispute_case_id = $2
+				  AND status = 'submitted'
+			)
+		`, input.AppellantUserID, disputeID).Scan(&submittedExists)
+		if err != nil {
+			return report.Appeal{}, internalStoreError()
+		}
+	} else {
+		err := tx.QueryRow(ctx, `
+			SELECT EXISTS (
+				SELECT 1 FROM appeals
+				WHERE appellant_user_id = $1
+				  AND report_id = $2
+				  AND dispute_case_id IS NULL
+				  AND status = 'submitted'
+			)
+		`, input.AppellantUserID, reportID).Scan(&submittedExists)
+		if err != nil {
+			return report.Appeal{}, internalStoreError()
+		}
+	}
+	if appErr := report.ValidateNoSubmittedAppeal(submittedExists); appErr != nil {
+		return report.Appeal{}, appErr
 	}
 	item, err := scanAppeal(ctx, tx, `
 		INSERT INTO appeals (
@@ -503,10 +560,10 @@ func createAppealInTx(ctx context.Context, tx pgx.Tx, input report.CreateAppealI
 		)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, 'submitted', $8, $8, 1)
 		RETURNING `+appealReturningColumns+`
-	`, input.AppellantUserID, nullUUID(input.ReportID), nullUUID(input.DisputeID), targetType, targetID,
+	`, input.AppellantUserID, nullUUID(reportID), nullUUID(disputeID), source.TargetType, source.TargetID,
 		strings.TrimSpace(input.Title), strings.TrimSpace(input.Statement), now)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return report.Appeal{}, reportNotFound()
+		return report.Appeal{}, appealSourceNotFound()
 	}
 	if err != nil {
 		return report.Appeal{}, internalStoreError()
@@ -584,6 +641,9 @@ func reverseReputationOutcomeForApprovedAppeal(ctx context.Context, tx pgx.Tx, a
 	}
 	if err != nil {
 		return internalStoreError()
+	}
+	if appErr := report.ValidateAppealOutcomeSubject(appeal, beforeOutcome.SubjectUserID); appErr != nil {
+		return appErr
 	}
 	reversalReason := nonEmpty(input.Reason, "申诉批准，反转关联信誉裁定。")
 	afterOutcome, err := scanDisputeOutcome(tx.QueryRow(ctx, `
@@ -1355,6 +1415,10 @@ func disputeNotFound() *domain.AppError {
 
 func appealNotFound() *domain.AppError {
 	return domain.NewError(http.StatusNotFound, domain.CodeObjectNotFound, "Appeal not found", "申诉记录不存在。")
+}
+
+func appealSourceNotFound() *domain.AppError {
+	return domain.NewError(http.StatusNotFound, domain.CodeObjectNotFound, "Appeal source not found", "关联举报或纠纷不存在。")
 }
 
 func publicProfileNotFound() *domain.AppError {

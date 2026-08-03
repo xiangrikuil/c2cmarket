@@ -1,5 +1,9 @@
 import type { AdminRow } from '@/lib/api'
-import type { DisputeCase } from '@/api/generated/openapi'
+import type {
+  Appeal,
+  DisputeCase,
+  Report,
+} from '@/api/generated/openapi'
 import type { CreateContactReportRequest, PublicDisputeRecord } from '@/data/mock'
 import { backendMutation, backendRequest, ensureBackendSession } from '@/lib/backendClient'
 
@@ -103,14 +107,16 @@ export type CreateManualInterventionReportRequest = {
   description: string
 }
 
+export type MyReport = Report
+export type MyDispute = DisputeCase & { canAppeal: boolean }
+export type MyAppeal = Appeal
 export type CreateAppealRequest = {
-  reportId?: string
-  disputeId?: string
-  targetType?: BackendReportTargetType
-  targetId?: string
   title: string
   statement: string
-}
+} & (
+  | { reportId: string, disputeId?: never }
+  | { reportId?: never, disputeId: string }
+)
 
 function formatTime(value: string | undefined | null) {
   if (!value) return ''
@@ -342,13 +348,46 @@ export async function backendCreatePublicUserReport(payload: CreatePublicUserRep
   })
 }
 
+async function backendAllPages<T>(path: string) {
+  const items: T[] = []
+  const seenCursors = new Set<string>()
+  let cursor = ''
+  do {
+    const params = new URLSearchParams({ limit: '100' })
+    if (cursor) params.set('cursor', cursor)
+    const response = await backendRequest<ListResponse<T>>(`${path}?${params.toString()}`)
+    items.push(...response.items)
+    cursor = response.nextCursor?.trim() ?? ''
+    if (cursor && seenCursors.has(cursor)) {
+      throw new Error('Backend repeated a pagination cursor.')
+    }
+    if (cursor) seenCursors.add(cursor)
+  } while (cursor)
+  return items
+}
+
+export async function backendMyReports() {
+  await ensureBackendSession('buyer', false)
+  return backendAllPages<MyReport>('/api/v1/me/reports')
+}
+
+export async function backendMyDisputes() {
+  await ensureBackendSession('buyer', false)
+  return backendAllPages<MyDispute>('/api/v1/me/disputes')
+}
+
+export async function backendMyAppeals() {
+  await ensureBackendSession('buyer', false)
+  return backendAllPages<MyAppeal>('/api/v1/me/appeals')
+}
+
 export async function backendCreateAppeal(payload: CreateAppealRequest) {
   await ensureBackendSession('buyer', false)
-  return backendMutation<BackendAppeal>('/api/v1/me/appeals', {
-    reportId: payload.reportId ?? '',
-    disputeId: payload.disputeId ?? '',
-    targetType: payload.targetType ?? '',
-    targetId: payload.targetId ?? '',
+  const source = payload.reportId
+    ? { reportId: payload.reportId }
+    : { disputeId: payload.disputeId }
+  return backendMutation<MyAppeal>('/api/v1/me/appeals', {
+    ...source,
     title: payload.title,
     statement: payload.statement,
   }, {

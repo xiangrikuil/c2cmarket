@@ -99,6 +99,7 @@ PUT  /api/v1/me/reviews/carpool-memberships/{membershipId}
 GET  /api/v1/users/{username}/reviews
 POST /api/v1/reports
 GET  /api/v1/me/reports
+GET  /api/v1/me/disputes
 POST /api/v1/me/appeals
 GET  /api/v1/me/appeals
 GET  /api/v1/users/{username}/disputes
@@ -969,6 +970,7 @@ return PublicDispute{Type: dispute.PublicSummary, Result: dispute.PublicResult}
 ```text
 POST /api/v1/reports
 GET  /api/v1/me/reports
+GET  /api/v1/me/disputes
 POST /api/v1/me/appeals
 GET  /api/v1/me/appeals
 GET  /api/v1/users/{username}/disputes
@@ -1012,7 +1014,9 @@ If-Match: "<version>"                         # admin action routes
 - A generic admin action must never map `approve` or `restore` to dispute resolution with fabricated `other_resolved` values. Resolution requires the dedicated case workflow to submit `reason`, `publicSummary`, `publicResultCode`, and `publicResult` with the latest dispute version.
 - The admin case workflow is two consecutive, separately versioned mutations: resolve the base dispute, then create the reputation outcome. Base resolution remains committed when outcome creation fails; reopening a resolved case resumes outcome creation after checking participant reputation audits for an existing outcome.
 - Outcome subjects must come from the dispute's actual participants. `not_responsible` and `undetermined` require `severity=none`. Account restrictions remain a separate governance mutation and are never created automatically by dispute resolution or outcome creation.
-- Appeal creation must reference `reportId` or `disputeId`; appeal state machine is `submitted -> approved|rejected`.
+- `GET /api/v1/me/disputes` returns only disputes where the current user is a participant or moderation subject. Its DTO omits administrator fields and subject identity, and adds a server-derived `canAppeal` decision.
+- Appeal creation must reference `reportId` or `disputeId`; the server derives the canonical target and ignores deprecated client target fields. Report-only appeals belong to the reporter and require `rejected|closed`; dispute appeals require `resolved|closed` and, when a subject exists, belong only to that subject. Outsiders receive the same `OBJECT_NOT_FOUND` response as a missing source, and dual-source link checks run only after both sources are authorized.
+- Appeal state is `submitted -> approved|rejected`. One submitted appeal per appellant and source is enforced atomically; dispute authorization locks the dispute row before reading its subject.
 - Admin action responses return a mutation envelope with `report`, `dispute`, or `appeal` plus fresh `version`/`ETag`.
 - Public disputes return only `id`, `username`, `type`, `result`, `handledAt`, and `unresolved`.
 - Public profile dispute stats count unresolved disputes from `open|waiting_info` and resolved-last-90-days from `resolved`.

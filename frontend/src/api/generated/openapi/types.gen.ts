@@ -2675,6 +2675,10 @@ export type DisputeCase = {
     openedAt: string;
     resolvedAt?: string | null;
     closedAt?: string | null;
+    /**
+     * Present on current-user dispute responses. True only when the case is resolved or closed and the current user is eligible to appeal; when a subject is assigned, only that subject is eligible.
+     */
+    readonly canAppeal?: boolean;
     createdAt: string;
     updatedAt: string;
     version: number;
@@ -2787,10 +2791,20 @@ export type PublicDisputeList = {
     nextCursor?: string | null;
 };
 
-export type CreateAppealRequest = {
+export type CreateAppealRequest = unknown & {
     reportId?: string;
     disputeId?: string;
-    targetType?: 'contact_snapshot' | 'public_user' | 'carpool_application' | 'carpool_membership' | 'api_purchase_intent' | 'api_order';
+    /**
+     * Deprecated compatibility field. The server ignores this value and derives the target type from reportId or disputeId.
+     *
+     * @deprecated
+     */
+    targetType?: string;
+    /**
+     * Deprecated compatibility field. The server ignores this value and derives the target id from reportId or disputeId.
+     *
+     * @deprecated
+     */
     targetId?: string;
     title: string;
     /**
@@ -3398,6 +3412,67 @@ export type ModelAuditTargetRequestWritable = {
  */
 export type DeprecatedApiPurchaseIntentContactFieldsWritable = {
     [key: string]: never;
+};
+
+export type DisputeCaseWritable = {
+    id: string;
+    reportId?: string;
+    targetType: 'contact_snapshot' | 'public_user' | 'carpool_application' | 'carpool_membership' | 'api_purchase_intent' | 'api_order';
+    targetId: string;
+    targetLabel: string;
+    /**
+     * Admin response only.
+     */
+    primaryUserId?: string;
+    primaryUsername: string;
+    primaryDisplayName: string;
+    /**
+     * Admin response only.
+     */
+    counterpartyUserId?: string;
+    counterpartyUsername: string;
+    counterpartyName: string;
+    /**
+     * Admin response only. Reputation subject while the dispute is unresolved.
+     */
+    subjectUserId?: string;
+    /**
+     * Admin response only.
+     */
+    subjectUsername?: string;
+    /**
+     * Admin response only.
+     */
+    subjectName?: string;
+    status: 'open' | 'waiting_info' | 'resolved' | 'closed';
+    publicSummary: string;
+    publicResultCode: 'no_action' | 'contact_invalid' | 'impersonation_confirmed' | 'description_mismatch' | 'rule_or_seat_issue' | 'api_delivery_issue' | 'other_resolved';
+    publicResult: string;
+    /**
+     * Admin response only; never returned by public dispute endpoints.
+     */
+    adminReason?: string;
+    /**
+     * Admin response only.
+     */
+    openedByAdminId?: string;
+    openedAt: string;
+    resolvedAt?: string | null;
+    closedAt?: string | null;
+    createdAt: string;
+    updatedAt: string;
+    version: number;
+};
+
+export type DisputeListWritable = {
+    items: Array<DisputeCaseWritable>;
+    nextCursor?: string | null;
+};
+
+export type AdminReportMutationWritable = {
+    report?: Report;
+    dispute?: DisputeCaseWritable;
+    appeal?: Appeal;
 };
 
 export type EmptyRequestWritable = {
@@ -5449,6 +5524,40 @@ export type ListMyReportsResponses = {
 };
 
 export type ListMyReportsResponse = ListMyReportsResponses[keyof ListMyReportsResponses];
+
+export type ListMyDisputesData = {
+    body?: never;
+    path?: never;
+    query?: {
+        /**
+         * Page size. Defaults to 20 and must be between 1 and 100.
+         */
+        limit?: number;
+        /**
+         * Opaque pagination cursor returned as nextCursor. Clients must pass it back unchanged and must not inspect its internal encoding.
+         */
+        cursor?: string;
+    };
+    url: '/api/v1/me/disputes';
+};
+
+export type ListMyDisputesErrors = {
+    /**
+     * Problem Details error.
+     */
+    401: ProblemDetails;
+};
+
+export type ListMyDisputesError = ListMyDisputesErrors[keyof ListMyDisputesErrors];
+
+export type ListMyDisputesResponses = {
+    /**
+     * Current user's disputes.
+     */
+    200: DisputeList;
+};
+
+export type ListMyDisputesResponse = ListMyDisputesResponses[keyof ListMyDisputesResponses];
 
 export type ListMyAppealsData = {
     body?: never;

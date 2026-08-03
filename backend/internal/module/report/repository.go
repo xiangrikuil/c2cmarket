@@ -21,6 +21,7 @@ type Repository interface {
 	GetAdminAppeal(ctx context.Context, id string) (Appeal, *domain.AppError)
 	UpdateAppealAdminWithIdempotency(ctx context.Context, entry idempotency.Entry, input AdminActionInput, now time.Time, buildCompletion AdminCompletionBuilder) (MutationResult, idempotency.Completion, *domain.AppError)
 
+	ListDisputesByUser(ctx context.Context, userID string) ([]DisputeCase, *domain.AppError)
 	ListAdminDisputes(ctx context.Context) ([]DisputeCase, *domain.AppError)
 	GetAdminDispute(ctx context.Context, id string) (DisputeCase, *domain.AppError)
 	UpdateDisputeAdminWithIdempotency(ctx context.Context, entry idempotency.Entry, input AdminActionInput, now time.Time, buildCompletion AdminCompletionBuilder) (MutationResult, idempotency.Completion, *domain.AppError)

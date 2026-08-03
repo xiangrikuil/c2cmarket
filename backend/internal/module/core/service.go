@@ -1740,6 +1740,10 @@ func (s *Service) AdminReportActionWithIdempotency(ctx context.Context, user Use
 	return s.reportService.AdminReportActionWithIdempotency(ctx, user, routeKey, key, requestHash, input, buildCompletion)
 }
 
+func (s *Service) MyDisputes(ctx context.Context, user User) ([]report.DisputeCase, *domain.AppError) {
+	return s.reportService.MyDisputes(ctx, user)
+}
+
 func (s *Service) AdminDisputes(ctx context.Context, user User) ([]report.DisputeCase, *domain.AppError) {
 	return s.reportService.AdminDisputes(ctx, user)
 }

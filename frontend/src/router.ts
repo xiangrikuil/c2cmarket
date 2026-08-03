@@ -29,6 +29,7 @@ const MyReputationPage = () => import('@/pages/MyReputationPage.vue')
 const MyPromotionBenefitsPage = () => import('@/pages/MyPromotionBenefitsPage.vue')
 const MyNotificationsPage = () => import('@/pages/MyNotificationsPage.vue')
 const MyFeedbackPage = () => import('@/pages/MyFeedbackPage.vue')
+const MyReportsAppealsPage = () => import('@/pages/MyReportsAppealsPage.vue')
 const AnnouncementDetailPage = () => import('@/pages/AnnouncementDetailPage.vue')
 const LoginPage = () => import('@/pages/LoginPage.vue')
 const PublicUserPage = () => import('@/pages/PublicUserPage.vue')
@@ -100,6 +101,8 @@ export const routes: RouteRecordRaw[] = [
     { path: '/my/reputation', alias: '/me/reputation', name: 'my-reputation', component: MyReputationPage, meta: userAuthMeta },
     { path: '/my/promotion-benefits', name: 'my-promotion-benefits', component: MyPromotionBenefitsPage, meta: userAuthMeta },
     { path: '/my/notifications', name: 'my-notifications', component: MyNotificationsPage, meta: userAuthMeta },
+    { path: '/my/reports', name: 'my-reports', component: MyReportsAppealsPage, meta: userAuthMeta },
+    { path: '/my/reports/:kind/:id', name: 'my-report-detail', component: MyReportsAppealsPage, meta: userAuthMeta },
     { path: '/my/feedback', name: 'my-feedback', component: MyFeedbackPage, meta: userAuthMeta },
     { path: '/my/feedback/:id', name: 'my-feedback-detail', component: MyFeedbackPage, meta: userAuthMeta },
     { path: '/announcements/:slug', name: 'announcement-detail', component: AnnouncementDetailPage },

@@ -1639,6 +1639,24 @@ paths:
                 $ref: "#/components/schemas/ReportList"
         "401":
           $ref: "#/components/responses/Problem"
+  /api/v1/me/disputes:
+    get:
+      operationId: listMyDisputes
+      tags: [Reports]
+      summary: List disputes where the current user is a participant or the moderation subject.
+      description: Returns participant-safe case fields and a server-derived canAppeal decision for the current user. Administrator reasons, administrator identifiers, subject identity fields, raw report descriptions, and appeal statements are omitted.
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
+      responses:
+        "200":
+          description: Current user's disputes.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DisputeList"
+        "401":
+          $ref: "#/components/responses/Problem"
   /api/v1/me/appeals:
     post:
       operationId: createAppeal
@@ -1646,8 +1664,8 @@ paths:
       security:
         - sessionCookie: []
           csrfToken: []
-      summary: Submit an appeal linked to a report or dispute.
-      description: Appeal content must be non-sensitive and must not include credentials, tokens, full contact values, cookies, sessions, API keys, or recovery codes.
+      summary: Submit an appeal linked to an authorized report or dispute.
+      description: The server derives targetType and targetId from the referenced source. A report appeal is available only to its reporter after the report is rejected or closed; a report already promoted to a dispute must use disputeId. A dispute appeal is available only after resolution or closure; when a subject is assigned, only that subject may appeal, otherwise either participant may appeal. If both reportId and disputeId are supplied, they must identify the same case. Only one submitted appeal per appellant and source is allowed. Appeal content must be non-sensitive and must not include credentials, tokens, full contact values, cookies, sessions, API keys, or recovery codes.
       parameters:
         - $ref: "#/components/parameters/IdempotencyKey"
       requestBody:
@@ -12859,6 +12877,10 @@ components:
         closedAt:
           type: [string, "null"]
           format: date-time
+        canAppeal:
+          type: boolean
+          readOnly: true
+          description: Present on current-user dispute responses. True only when the case is resolved or closed and the current user is eligible to appeal; when a subject is assigned, only that subject is eligible.
         createdAt:
           type: string
           format: date-time
@@ -13097,6 +13119,9 @@ components:
       type: object
       additionalProperties: false
       required: [title, statement]
+      anyOf:
+        - required: [reportId]
+        - required: [disputeId]
       properties:
         reportId:
           type: string
@@ -13106,9 +13131,12 @@ components:
           format: uuid
         targetType:
           type: string
-          enum: [contact_snapshot, public_user, carpool_application, carpool_membership, api_purchase_intent, api_order]
+          deprecated: true
+          description: Deprecated compatibility field. The server ignores this value and derives the target type from reportId or disputeId.
         targetId:
           type: string
+          deprecated: true
+          description: Deprecated compatibility field. The server ignores this value and derives the target id from reportId or disputeId.
         title:
           type: string
           minLength: 2

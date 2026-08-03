@@ -2016,6 +2016,70 @@ func TestAPIServiceInstantOrderFlow(t *testing.T) {
 		t.Fatalf("unexpected disputed API order: %+v", disputed)
 	}
 
+	buyerDisputes, buyerDisputesBody := listMyDisputes(t, server, buyerSession)
+	if len(buyerDisputes.Items) != 1 || buyerDisputes.Items[0].ID != disputed.DisputeCaseID {
+		t.Fatalf("expected buyer dispute list to contain %s, got %+v", disputed.DisputeCaseID, buyerDisputes.Items)
+	}
+	if buyerDisputes.Items[0].CanAppeal || !strings.Contains(buyerDisputesBody, `"canAppeal":false`) {
+		t.Fatalf("open dispute must expose canAppeal=false, got %+v body %s", buyerDisputes.Items[0], buyerDisputesBody)
+	}
+	for _, forbidden := range []string{"adminReason", "openedByAdminId", "primaryUserId", "counterpartyUserId", "subjectUserId", "subjectUsername", "subjectName"} {
+		if strings.Contains(buyerDisputesBody, `"`+forbidden+`"`) {
+			t.Fatalf("my disputes leaked %s: %s", forbidden, buyerDisputesBody)
+		}
+	}
+	ownerDisputes, _ := listMyDisputes(t, server, ownerSession)
+	if len(ownerDisputes.Items) != 1 || ownerDisputes.Items[0].ID != disputed.DisputeCaseID {
+		t.Fatalf("expected owner dispute list to contain %s, got %+v", disputed.DisputeCaseID, ownerDisputes.Items)
+	}
+	if ownerDisputes.Items[0].CanAppeal {
+		t.Fatalf("open dispute must not be appealable by the subject, got %+v", ownerDisputes.Items[0])
+	}
+	outsiderSession := createSession(t, server, "api-order-dispute-outsider", false)
+	outsiderDisputes, _ := listMyDisputes(t, server, outsiderSession)
+	if len(outsiderDisputes.Items) != 0 {
+		t.Fatalf("expected outsider dispute list to be empty, got %+v", outsiderDisputes.Items)
+	}
+
+	openAppealRequest := newJSONRequest(http.MethodPost, "/api/v1/me/appeals", `{
+		"disputeId":"`+disputed.DisputeCaseID+`",
+		"title":"处理中纠纷申诉",
+		"statement":"纠纷处理完成前不应允许提交申诉。"
+	}`)
+	addAuth(openAppealRequest, ownerSession, "api-order-open-dispute-appeal")
+	openAppealResponse := httptest.NewRecorder()
+	server.ServeHTTP(openAppealResponse, openAppealRequest)
+	if openAppealResponse.Code != http.StatusConflict {
+		t.Fatalf("expected open dispute appeal conflict, got %d body %s", openAppealResponse.Code, openAppealResponse.Body.String())
+	}
+	assertProblemCode(t, openAppealResponse, domain.CodeInvalidStateTransition)
+
+	forbiddenAppeal := newJSONRequest(http.MethodPost, "/api/v1/me/appeals", `{
+		"disputeId":"`+disputed.DisputeCaseID+`",
+		"title":"非裁定主体申诉",
+		"statement":"该账号不是纠纷裁定主体，不应允许提交。"
+	}`)
+	addAuth(forbiddenAppeal, buyerSession, "api-order-dispute-non-subject-appeal")
+	forbiddenAppealResponse := httptest.NewRecorder()
+	server.ServeHTTP(forbiddenAppealResponse, forbiddenAppeal)
+	if forbiddenAppealResponse.Code != http.StatusForbidden {
+		t.Fatalf("expected non-subject appeal forbidden, got %d body %s", forbiddenAppealResponse.Code, forbiddenAppealResponse.Body.String())
+	}
+	assertProblemCode(t, forbiddenAppealResponse, domain.CodePermissionDenied)
+
+	outsiderAppeal := newJSONRequest(http.MethodPost, "/api/v1/me/appeals", `{
+		"disputeId":"`+disputed.DisputeCaseID+`",
+		"title":"无权申诉",
+		"statement":"该账号不是纠纷参与方，不应允许提交。"
+	}`)
+	addAuth(outsiderAppeal, outsiderSession, "api-order-dispute-outsider-appeal")
+	outsiderAppealResponse := httptest.NewRecorder()
+	server.ServeHTTP(outsiderAppealResponse, outsiderAppeal)
+	if outsiderAppealResponse.Code != http.StatusNotFound {
+		t.Fatalf("expected outsider appeal source hidden, got %d body %s", outsiderAppealResponse.Code, outsiderAppealResponse.Body.String())
+	}
+	assertProblemCode(t, outsiderAppealResponse, domain.CodeObjectNotFound)
+
 	merchantDisputeIntent := createAPIPurchaseIntent(t, server, buyerSession, orderable.ID, buyerContact.ID, "api-order-merchant-dispute-intent")
 	merchantDisputeOrder := createAPIOrder(t, server, buyerSession, merchantDisputeIntent.ID, "wechat", "api-order-merchant-dispute-create")
 	merchantDisputePaid := apiOrderAction(t, server, buyerSession, "me", merchantDisputeOrder.ID, "submit-payment", merchantDisputeOrder.Version, "api-order-merchant-dispute-submit-payment", `{"paymentSummary":"已付款，等待商户核对。"}`)
@@ -2070,6 +2134,50 @@ func TestAPIServiceInstantOrderFlow(t *testing.T) {
 	if resolvedDispute.Dispute == nil || resolvedDispute.Dispute.Status != "resolved" || resolvedDispute.Dispute.Version != adminDispute.Version+1 {
 		t.Fatalf("unexpected resolved API order dispute: %#v", resolvedDispute.Dispute)
 	}
+	resolvedBuyerDisputes, _ := listMyDisputes(t, server, buyerSession)
+	resolvedBuyerDispute, foundResolvedBuyerDispute := findCreatedDispute(resolvedBuyerDisputes.Items, disputed.DisputeCaseID)
+	if !foundResolvedBuyerDispute || resolvedBuyerDispute.CanAppeal {
+		t.Fatalf("non-subject must retain canAppeal=false after resolution, got %+v", resolvedBuyerDisputes.Items)
+	}
+	resolvedOwnerDisputes, resolvedOwnerDisputesBody := listMyDisputes(t, server, ownerSession)
+	resolvedOwnerDispute, foundResolvedOwnerDispute := findCreatedDispute(resolvedOwnerDisputes.Items, disputed.DisputeCaseID)
+	if !foundResolvedOwnerDispute || !resolvedOwnerDispute.CanAppeal || !strings.Contains(resolvedOwnerDisputesBody, `"canAppeal":true`) {
+		t.Fatalf("resolved dispute subject must receive canAppeal=true, got %+v body %s", resolvedOwnerDisputes.Items, resolvedOwnerDisputesBody)
+	}
+
+	appealRequest := newJSONRequest(http.MethodPost, "/api/v1/me/appeals", `{
+		"disputeId":"`+disputed.DisputeCaseID+`",
+		"targetType":"public_user",
+		"targetId":"forged-target",
+		"title":"订单纠纷申诉",
+		"statement":"请求依据关联订单和双方说明重新复核。"
+	}`)
+	addAuth(appealRequest, ownerSession, "api-order-resolved-dispute-appeal")
+	appealResponse := httptest.NewRecorder()
+	server.ServeHTTP(appealResponse, appealRequest)
+	if appealResponse.Code != http.StatusCreated {
+		t.Fatalf("create authorized dispute appeal status %d body %s", appealResponse.Code, appealResponse.Body.String())
+	}
+	var appealPayload createdAppeal
+	if err := json.NewDecoder(appealResponse.Body).Decode(&appealPayload); err != nil {
+		t.Fatalf("decode created dispute appeal: %v", err)
+	}
+	if appealPayload.DisputeID != disputed.DisputeCaseID || appealPayload.TargetType != "api_order" || appealPayload.TargetID != disputed.ID {
+		t.Fatalf("appeal target must be derived from dispute, got %+v", appealPayload)
+	}
+
+	duplicateAppeal := newJSONRequest(http.MethodPost, "/api/v1/me/appeals", `{
+		"disputeId":"`+disputed.DisputeCaseID+`",
+		"title":"重复订单纠纷申诉",
+		"statement":"同一纠纷已有待处理申诉时必须拒绝重复提交。"
+	}`)
+	addAuth(duplicateAppeal, ownerSession, "api-order-resolved-dispute-appeal-duplicate")
+	duplicateAppealResponse := httptest.NewRecorder()
+	server.ServeHTTP(duplicateAppealResponse, duplicateAppeal)
+	if duplicateAppealResponse.Code != http.StatusConflict {
+		t.Fatalf("expected duplicate appeal conflict, got %d body %s", duplicateAppealResponse.Code, duplicateAppealResponse.Body.String())
+	}
+	assertProblemCode(t, duplicateAppealResponse, domain.CodeInvalidStateTransition)
 
 	outcomePath := "/api/v1/admin/disputes/" + adminDispute.ID + "/reputation-outcome"
 	outcomeBody := `{
@@ -2998,6 +3106,16 @@ type createdDispute struct {
 	PublicResult         string `json:"publicResult"`
 	OpenedByAdminID      string `json:"openedByAdminId"`
 	Version              int64  `json:"version"`
+	CanAppeal            bool   `json:"canAppeal"`
+}
+
+type createdAppeal struct {
+	ID         string `json:"id"`
+	ReportID   string `json:"reportId"`
+	DisputeID  string `json:"disputeId"`
+	TargetType string `json:"targetType"`
+	TargetID   string `json:"targetId"`
+	Status     string `json:"status"`
 }
 
 type apiOrderPaymentInstructions struct {
@@ -3787,6 +3905,32 @@ func listAdminDisputes(t *testing.T, server http.Handler, session testSession) l
 		t.Fatalf("decode admin disputes: %v", err)
 	}
 	return payload
+}
+
+func listMyDisputes(t *testing.T, server http.Handler, session testSession) (listResponse[createdDispute], string) {
+	t.Helper()
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/me/disputes", nil)
+	addCookie(request, session.cookie)
+	response := httptest.NewRecorder()
+	server.ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("my disputes status %d body %s", response.Code, response.Body.String())
+	}
+	body := response.Body.String()
+	var payload listResponse[createdDispute]
+	if err := json.NewDecoder(strings.NewReader(body)).Decode(&payload); err != nil {
+		t.Fatalf("decode my disputes: %v", err)
+	}
+	return payload, body
+}
+
+func findCreatedDispute(items []createdDispute, id string) (createdDispute, bool) {
+	for _, item := range items {
+		if item.ID == id {
+			return item, true
+		}
+	}
+	return createdDispute{}, false
 }
 
 func getAPIPurchaseIntent(t *testing.T, server http.Handler, session testSession, perspective, intentID string) createdAPIPurchaseIntent {

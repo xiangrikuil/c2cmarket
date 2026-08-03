@@ -283,6 +283,89 @@ func TestReportSchemaUpgradeMigrationAlignsLegacyDatabases(t *testing.T) {
 	}
 }
 
+func TestAppealApprovalChecksOutcomeSubjectBeforeReversal(t *testing.T) {
+	path := filepath.Join("report.go")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read report store: %v", err)
+	}
+	source := string(data)
+	start := strings.Index(source, "func reverseReputationOutcomeForApprovedAppeal")
+	if start < 0 {
+		t.Fatal("appeal reversal function start not found")
+	}
+	end := strings.Index(source[start:], "func updateDisputeAdminInTx")
+	if end < 0 {
+		t.Fatal("appeal reversal function boundaries not found")
+	}
+	section := source[start : start+end]
+	guard := strings.Index(section, "report.ValidateAppealOutcomeSubject")
+	outcomeUpdate := strings.Index(section, "UPDATE dispute_reputation_outcomes")
+	restrictionUpdate := strings.Index(section, "UPDATE user_restrictions")
+	if guard < 0 || outcomeUpdate < 0 || restrictionUpdate < 0 {
+		t.Fatalf("appeal reversal guard or mutations missing: guard=%d outcome=%d restriction=%d", guard, outcomeUpdate, restrictionUpdate)
+	}
+	if guard > outcomeUpdate || guard > restrictionUpdate {
+		t.Fatal("appeal subject guard must run before outcome and restriction mutations")
+	}
+}
+
+func TestCreateAppealSerializesSubmittedDuplicateCheck(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("report.go"))
+	if err != nil {
+		t.Fatalf("read report store: %v", err)
+	}
+	source := string(data)
+	start := strings.Index(source, "func createAppealInTx")
+	if start < 0 {
+		t.Fatal("appeal create function start not found")
+	}
+	end := strings.Index(source[start:], "func updateAppealAdminInTx")
+	if end < 0 {
+		t.Fatal("appeal create function boundaries not found")
+	}
+	section := source[start : start+end]
+	lock := strings.Index(section, "pg_advisory_xact_lock")
+	duplicateCheck := strings.Index(section, "SELECT EXISTS")
+	insert := strings.Index(section, "INSERT INTO appeals")
+	if lock < 0 || duplicateCheck < 0 || insert < 0 {
+		t.Fatalf("appeal duplicate serialization missing: lock=%d check=%d insert=%d", lock, duplicateCheck, insert)
+	}
+	if lock > duplicateCheck || duplicateCheck > insert {
+		t.Fatal("appeal advisory lock and submitted duplicate check must run before insert")
+	}
+	for _, required := range []string{"status = 'submitted'", "dispute_case_id = $2", "report_id = $2", "dispute_case_id IS NULL"} {
+		if !strings.Contains(section, required) {
+			t.Fatalf("appeal duplicate check missing %q", required)
+		}
+	}
+}
+
+func TestCreateAppealLocksDisputeBeforeAuthorization(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("report.go"))
+	if err != nil {
+		t.Fatalf("read report store: %v", err)
+	}
+	source := string(data)
+	start := strings.Index(source, "func createAppealInTx")
+	if start < 0 {
+		t.Fatal("appeal create function start not found")
+	}
+	end := strings.Index(source[start:], "func updateAppealAdminInTx")
+	if end < 0 {
+		t.Fatal("appeal create function end not found")
+	}
+	section := source[start : start+end]
+	disputeLock := strings.Index(section, "FOR UPDATE OF d")
+	authorization := strings.Index(section, "report.ResolveAppealSource")
+	if disputeLock < 0 || authorization < 0 {
+		t.Fatalf("appeal dispute lock or authorization missing: lock=%d authorization=%d", disputeLock, authorization)
+	}
+	if disputeLock > authorization {
+		t.Fatal("dispute must be locked before appeal authorization reads its subject")
+	}
+}
+
 func TestEnsureNoActiveReportForCanonicalTarget(t *testing.T) {
 	queryer := fakeReportQueryer{
 		activeReports: map[string]string{

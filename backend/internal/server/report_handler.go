@@ -91,6 +91,7 @@ type disputeResponse struct {
 	CreatedAt            string  `json:"createdAt"`
 	UpdatedAt            string  `json:"updatedAt"`
 	Version              int64   `json:"version"`
+	CanAppeal            *bool   `json:"canAppeal,omitempty"`
 }
 
 type appealResponse struct {
@@ -196,12 +197,10 @@ func (s *Server) handleCreateAppeal(w http.ResponseWriter, r *http.Request) {
 		r.Header.Get("Idempotency-Key"),
 		requestHash(r.Method, routeKey, body),
 		report.CreateAppealInput{
-			ReportID:   req.ReportID,
-			DisputeID:  req.DisputeID,
-			TargetType: req.TargetType,
-			TargetID:   req.TargetID,
-			Title:      req.Title,
-			Statement:  req.Statement,
+			ReportID:  req.ReportID,
+			DisputeID: req.DisputeID,
+			Title:     req.Title,
+			Statement: req.Statement,
 		},
 		appealCompletionBuilder(http.StatusCreated, false),
 	)
@@ -210,6 +209,20 @@ func (s *Server) handleCreateAppeal(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeIdempotencyCompletion(w, completion)
+}
+
+func (s *Server) handleMyDisputes(w http.ResponseWriter, r *http.Request) {
+	user, _, appErr := s.requireSession(w, r)
+	if appErr != nil {
+		writeProblem(w, r, appErr)
+		return
+	}
+	items, appErr := s.app.MyDisputes(r.Context(), user)
+	if appErr != nil {
+		writeProblem(w, r, appErr)
+		return
+	}
+	writePaginatedJSON(w, r, toMyDisputeResponses(items, user.ID))
 }
 
 func (s *Server) handleMyAppeals(w http.ResponseWriter, r *http.Request) {
@@ -586,6 +599,17 @@ func toDisputeResponses(items []report.DisputeCase, includeAdmin bool) []dispute
 	return result
 }
 
+func toMyDisputeResponses(items []report.DisputeCase, userID string) []disputeResponse {
+	result := make([]disputeResponse, 0, len(items))
+	for _, item := range items {
+		response := toDisputeResponse(item, false)
+		canAppeal := report.CanAppealDispute(item, userID)
+		response.CanAppeal = &canAppeal
+		result = append(result, response)
+	}
+	return result
+}
+
 func toDisputeResponse(item report.DisputeCase, includeAdmin bool) disputeResponse {
 	response := disputeResponse{
 		ID:                   item.ID,
@@ -597,8 +621,6 @@ func toDisputeResponse(item report.DisputeCase, includeAdmin bool) disputeRespon
 		PrimaryDisplayName:   item.PrimaryDisplayName,
 		CounterpartyUsername: item.CounterpartyUsername,
 		CounterpartyName:     item.CounterpartyName,
-		SubjectUsername:      item.SubjectUsername,
-		SubjectName:          item.SubjectName,
 		Status:               item.Status,
 		PublicSummary:        item.PublicSummary,
 		PublicResultCode:     item.PublicResultCode,
@@ -614,6 +636,8 @@ func toDisputeResponse(item report.DisputeCase, includeAdmin bool) disputeRespon
 		response.PrimaryUserID = item.PrimaryUserID
 		response.CounterpartyUserID = item.CounterpartyUserID
 		response.SubjectUserID = item.SubjectUserID
+		response.SubjectUsername = item.SubjectUsername
+		response.SubjectName = item.SubjectName
 		response.AdminReason = item.AdminReason
 		response.OpenedByAdminID = item.OpenedByAdminID
 	}

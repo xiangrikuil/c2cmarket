@@ -180,6 +180,25 @@ func (s *Service) AdminDisputes(ctx context.Context, user auth.User) ([]DisputeC
 	return items, nil
 }
 
+func (s *Service) MyDisputes(ctx context.Context, user auth.User) ([]DisputeCase, *domain.AppError) {
+	if strings.TrimSpace(user.ID) == "" {
+		return nil, sessionRequired()
+	}
+	if s.repo != nil {
+		return s.repo.ListDisputesByUser(ctx, user.ID)
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	items := make([]DisputeCase, 0)
+	for _, item := range s.disputes {
+		if isDisputeParticipant(item, user.ID) {
+			items = append(items, item)
+		}
+	}
+	sortDisputes(items)
+	return items, nil
+}
+
 func (s *Service) AdminDispute(ctx context.Context, user auth.User, id string) (DisputeCase, *domain.AppError) {
 	if appErr := requireAdmin(user); appErr != nil {
 		return DisputeCase{}, appErr
@@ -599,34 +618,58 @@ func (s *Service) updateDisputeAdminMemory(input AdminActionInput) (MutationResu
 }
 
 func (s *Service) createAppealMemory(input CreateAppealInput) (Appeal, *domain.AppError) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var sourceReport *Report
+	var sourceDispute *DisputeCase
+	reportID := strings.TrimSpace(input.ReportID)
+	disputeID := strings.TrimSpace(input.DisputeID)
+	if reportID != "" {
+		item, ok := s.reports[reportID]
+		if !ok {
+			return Appeal{}, appealSourceNotFound()
+		}
+		sourceReport = &item
+	}
+	if disputeID != "" {
+		item, ok := s.disputes[disputeID]
+		if !ok {
+			return Appeal{}, appealSourceNotFound()
+		}
+		sourceDispute = &item
+	}
+	source, appErr := ResolveAppealSource(input.AppellantUserID, sourceReport, sourceDispute)
+	if appErr != nil {
+		return Appeal{}, appErr
+	}
+	for _, existing := range s.appeals {
+		if existing.AppellantUserID != input.AppellantUserID || existing.Status != AppealStatusSubmitted {
+			continue
+		}
+		sameSource := disputeID != "" && existing.DisputeID == disputeID
+		if disputeID == "" {
+			sameSource = existing.DisputeID == "" && existing.ReportID == reportID
+		}
+		if appErr := ValidateNoSubmittedAppeal(sameSource); appErr != nil {
+			return Appeal{}, appErr
+		}
+	}
 	now := s.now()
 	item := Appeal{
 		ID:                uuid.NewString(),
 		AppellantUserID:   input.AppellantUserID,
 		AppellantUsername: input.AppellantUsername,
 		AppellantName:     input.AppellantName,
-		ReportID:          strings.TrimSpace(input.ReportID),
-		DisputeID:         strings.TrimSpace(input.DisputeID),
-		TargetType:        strings.TrimSpace(input.TargetType),
-		TargetID:          strings.TrimSpace(input.TargetID),
+		ReportID:          reportID,
+		DisputeID:         disputeID,
+		TargetType:        source.TargetType,
+		TargetID:          source.TargetID,
 		Title:             strings.TrimSpace(input.Title),
 		Statement:         strings.TrimSpace(input.Statement),
 		Status:            AppealStatusSubmitted,
 		CreatedAt:         now,
 		UpdatedAt:         now,
 		Version:           1,
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if item.DisputeID != "" {
-		if _, ok := s.disputes[item.DisputeID]; !ok {
-			return Appeal{}, disputeNotFound()
-		}
-	}
-	if item.ReportID != "" {
-		if _, ok := s.reports[item.ReportID]; !ok {
-			return Appeal{}, reportNotFound()
-		}
 	}
 	s.appeals[item.ID] = item
 	return item, nil
@@ -719,9 +762,6 @@ func validateCreateAppeal(input CreateAppealInput) *domain.AppError {
 	}
 	if appErr := validateText("statement", input.Statement, 4, 1000, "申诉说明需为 4 至 1000 个字符。"); appErr != nil {
 		return appErr
-	}
-	if strings.TrimSpace(input.TargetType) != "" && !validTargets[normalize(input.TargetType)] {
-		return fieldError("targetType", "申诉目标类型不支持。")
 	}
 	return nil
 }
@@ -935,6 +975,14 @@ func versionConflict() *domain.AppError {
 
 func sessionRequired() *domain.AppError {
 	return domain.NewError(http.StatusUnauthorized, domain.CodeSessionExpired, "Session required", "请先登录。")
+}
+
+func appealSourcePermissionDenied() *domain.AppError {
+	return domain.NewError(http.StatusForbidden, domain.CodePermissionDenied, "Permission denied", "你不能申诉该举报或纠纷。")
+}
+
+func appealSourceNotFound() *domain.AppError {
+	return domain.NewError(http.StatusNotFound, domain.CodeObjectNotFound, "Appeal source not found", "关联举报或纠纷不存在。")
 }
 
 func reportNotFound() *domain.AppError {

@@ -2,7 +2,7 @@
 import { computed, onUnmounted, reactive, ref, watch, watchEffect } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { toast } from 'vue-sonner'
-import { Bell, CheckCircle2, ChevronRight, CircleAlert, Eye, KeyRound, Link2, LockKeyhole, LogIn, Mail, MailCheck, MessageCircle, RefreshCw, Save, ShieldCheck, Star, Trash2 } from 'lucide-vue-next'
+import { Bell, CheckCircle2, ChevronRight, CircleAlert, Eye, KeyRound, Link2, LockKeyhole, LogIn, Mail, MailCheck, MessageCircle, RefreshCw, Save, ShieldAlert, ShieldCheck, Star, Trash2 } from 'lucide-vue-next'
 import ApiPaymentSettingsEditor from '@/components/contact-payment/ApiPaymentSettingsEditor.vue'
 import BuyerPreviewDrawer from '@/components/contact-payment/BuyerPreviewDrawer.vue'
 import ConfigurationProgressCard from '@/components/contact-payment/ConfigurationProgressCard.vue'
@@ -1341,7 +1341,7 @@ function goToLogin() {
         <div class="mt-5 flex flex-wrap gap-2">
           <Button variant="outline" @click="toast('linux.do 信息同步请求已记录。')">同步 linux.do 信息</Button>
           <Button variant="outline" @click="router.push('/my/profile')">切换头像跟随模式</Button>
-          <Button variant="outline" @click="toast('申诉请求已记录。')"><LockKeyhole class="h-4 w-4" />提交申诉</Button>
+          <Button variant="outline" @click="router.push('/my/reports')"><ShieldAlert class="h-4 w-4" />举报与申诉</Button>
         </div>
         <p class="mt-4 rounded-md border border-border bg-accent/50 p-3 text-xs leading-5 text-muted-foreground">
           linux.do 绑定不可自助解绑或换绑；异常情况请联系管理员人工处理。

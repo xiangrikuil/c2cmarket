@@ -168,10 +168,13 @@ type CreateAppealInput struct {
 	AppellantName     string
 	ReportID          string
 	DisputeID         string
-	TargetType        string
-	TargetID          string
 	Title             string
 	Statement         string
+}
+
+type AppealSource struct {
+	TargetType string
+	TargetID   string
 }
 
 type AdminActionInput struct {

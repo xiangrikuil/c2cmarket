@@ -98,6 +98,7 @@ func (s *Server) routes() {
 		r.Put("/me/reviews/carpool-memberships/{membershipId}", s.handleSubmitCarpoolMembershipReview)
 		r.Post("/reports", s.limitPolicy(reportCreateRateLimit, s.handleCreateReport))
 		r.Get("/me/reports", s.handleMyReports)
+		r.Get("/me/disputes", s.handleMyDisputes)
 		r.Post("/me/appeals", s.limitPolicy(appealCreateRateLimit, s.handleCreateAppeal))
 		r.Get("/me/appeals", s.handleMyAppeals)
 		r.Get("/me/carpools", s.handleMyCarpools)
