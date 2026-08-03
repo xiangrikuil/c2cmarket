@@ -1237,3 +1237,25 @@ Implemented irreversible API credential retention destruction, lifecycle locking
 ### Status
 
 [OK] **Completed**
+
+
+## Session 35: Close restricted-account appeal flow
+
+**Date**: 2026-08-04
+**Task**: Close restricted-account appeal flow
+**Package**: frontend
+**Branch**: `codex/p0-p1-launch-closure`
+
+### Summary
+
+Added dedicated linux.do-proven restricted-account appeal sessions, transactional account-governance appeals, standalone frontend flow, contact-value validation, CORS support, Migration 78, and full cross-layer tests.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `8774278` | (see git log) |
+
+### Status
+
+[OK] **Completed**
