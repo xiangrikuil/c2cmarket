@@ -345,6 +345,30 @@ func (s *Service) CreateAppealWithIdempotency(ctx context.Context, user auth.Use
 	return s.complete(ctx, entry, completion, appErr)
 }
 
+func (s *Service) CreateAccountGovernanceAppealWithIdempotency(ctx context.Context, appellantUserID, routeKey, key, requestHash string, input CreateAccountGovernanceAppealInput, buildCompletion AppealCompletionBuilder) (idempotency.Completion, *domain.AppError) {
+	input.AppellantUserID = strings.TrimSpace(appellantUserID)
+	input.Statement = strings.TrimSpace(input.Statement)
+	if appErr := validateCreateAccountGovernanceAppeal(input); appErr != nil {
+		return idempotency.Completion{}, appErr
+	}
+	if s.repo == nil {
+		return idempotency.Completion{}, accountGovernanceAppealUnavailable()
+	}
+	entry, appErr := s.begin(ctx, input.AppellantUserID, routeKey, key, requestHash)
+	if appErr != nil {
+		return idempotency.Completion{}, appErr
+	}
+	if entry.State == "completed" {
+		return idempotency.CompletionFromEntry(entry), nil
+	}
+	_, completion, appErr := s.repo.CreateAccountGovernanceAppealWithIdempotency(ctx, *entry, input, s.now(), buildCompletion)
+	if appErr != nil {
+		s.idempotency.Cancel(ctx, entry)
+		return idempotency.Completion{}, appErr
+	}
+	return completion, nil
+}
+
 func (s *Service) MyAppeals(ctx context.Context, user auth.User) ([]Appeal, *domain.AppError) {
 	if strings.TrimSpace(user.ID) == "" {
 		return nil, sessionRequired()
@@ -956,6 +980,13 @@ func validateCreateAppeal(input CreateAppealInput) *domain.AppError {
 	return nil
 }
 
+func validateCreateAccountGovernanceAppeal(input CreateAccountGovernanceAppealInput) *domain.AppError {
+	if strings.TrimSpace(input.AppellantUserID) == "" {
+		return sessionRequired()
+	}
+	return validateText("statement", input.Statement, 4, 1000, "申诉说明需为 4 至 1000 个字符。")
+}
+
 func validateReportAction(input AdminActionInput) *domain.AppError {
 	switch input.Action {
 	case "triage", "request_info", "reject", "open_dispute", "close":
@@ -1048,6 +1079,9 @@ func validateText(field, value string, min, max int, detail string) *domain.AppE
 	if strings.ContainsAny(value, "\x00") {
 		return fieldError(field, "文本内容包含非法字符。")
 	}
+	if looksLikeContact(value) {
+		return contactContentError(field)
+	}
 	if looksLikeSecret(value) {
 		return secretError(field)
 	}
@@ -1062,6 +1096,9 @@ func validateOptionalText(field, value string, max int) *domain.AppError {
 	count := utf8.RuneCountInString(value)
 	if count > max {
 		return fieldError(field, "文本内容过长。")
+	}
+	if looksLikeContact(value) {
+		return contactContentError(field)
 	}
 	if looksLikeSecret(value) {
 		return secretError(field)
@@ -1159,6 +1196,10 @@ func looksLikeSecret(value string) bool {
 	return domain.LooksLikeSecretContent(value)
 }
 
+func looksLikeContact(value string) bool {
+	return domain.LooksLikeContactContent(value)
+}
+
 func requireAdmin(user auth.User) *domain.AppError {
 	if !user.IsAdmin {
 		return domain.NewError(http.StatusForbidden, domain.CodePermissionDenied, "Permission denied", "需要管理员权限。")
@@ -1172,6 +1213,10 @@ func fieldError(field, detail string) *domain.AppError {
 
 func secretError(field string) *domain.AppError {
 	return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeSecretContentDetected, "Secret content detected", "不能在举报、纠纷或申诉中填写、粘贴或上传任何凭据。", field, "secret_content", "不能包含密码、API Key、Token、Session、Cookie 或恢复码。")
+}
+
+func contactContentError(field string) *domain.AppError {
+	return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeContactContentDetected, "Contact content detected", "不能在举报、纠纷或申诉中填写完整联系方式。", field, "contact_content", "不能包含手机号、邮箱、微信号、QQ 或其他完整联系方式。")
 }
 
 func invalidState(detail string) *domain.AppError {
@@ -1212,6 +1257,10 @@ func infoRequestPermissionDenied() *domain.AppError {
 
 func appealNotFound() *domain.AppError {
 	return domain.NewError(http.StatusNotFound, domain.CodeObjectNotFound, "Appeal not found", "申诉记录不存在。")
+}
+
+func accountGovernanceAppealUnavailable() *domain.AppError {
+	return domain.NewError(http.StatusInternalServerError, domain.CodeInternalError, "Internal error", "账号治理申诉服务暂不可用。")
 }
 
 func publicProfileNotFound() *domain.AppError {

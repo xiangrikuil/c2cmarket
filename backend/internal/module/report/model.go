@@ -14,6 +14,7 @@ const (
 	TargetCarpoolMembership  = "carpool_membership"
 	TargetAPIPurchaseIntent  = "api_purchase_intent"
 	TargetAPIOrder           = "api_order"
+	TargetAccountGovernance  = "account_governance"
 
 	ReportReasonUnreachable          = "unreachable"
 	ReportReasonContactInvalid       = "contact_invalid"
@@ -205,6 +206,11 @@ type CreateAppealInput struct {
 	DisputeID         string
 	Title             string
 	Statement         string
+}
+
+type CreateAccountGovernanceAppealInput struct {
+	AppellantUserID string
+	Statement       string
 }
 
 type AppealSource struct {

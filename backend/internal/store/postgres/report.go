@@ -230,6 +230,37 @@ func (s *Store) CreateAppealWithIdempotency(ctx context.Context, entry idempoten
 	return item, completion, nil
 }
 
+func (s *Store) CreateAccountGovernanceAppealWithIdempotency(ctx context.Context, entry idempotency.Entry, input report.CreateAccountGovernanceAppealInput, now time.Time, buildCompletion report.AppealCompletionBuilder) (report.Appeal, idempotency.Completion, *domain.AppError) {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return report.Appeal{}, idempotency.Completion{}, internalStoreError()
+	}
+	defer rollback(ctx, tx)
+
+	existing, appErr := lockProcessingIdempotencyInTx(ctx, tx, entry)
+	if appErr != nil {
+		return report.Appeal{}, idempotency.Completion{}, appErr
+	}
+	item, appErr := createAccountGovernanceAppealInTx(ctx, tx, input, now)
+	if appErr != nil {
+		return report.Appeal{}, idempotency.Completion{}, appErr
+	}
+	if appErr := insertDisputeEvent(ctx, tx, "appeal", item.ID, "submitted", input.AppellantUserID, "user", "用户提交账号治理申诉", false, "", now); appErr != nil {
+		return report.Appeal{}, idempotency.Completion{}, appErr
+	}
+	completion, appErr := buildCompletion(item)
+	if appErr != nil {
+		return report.Appeal{}, idempotency.Completion{}, appErr
+	}
+	if appErr := completeIdempotencyInTx(ctx, tx, existing, completion, now); appErr != nil {
+		return report.Appeal{}, idempotency.Completion{}, appErr
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return report.Appeal{}, idempotency.Completion{}, internalStoreError()
+	}
+	return item, completion, nil
+}
+
 func (s *Store) ListAppealsByUser(ctx context.Context, userID string) ([]report.Appeal, *domain.AppError) {
 	rows, err := s.pool.Query(ctx, appealSelectSQL+` WHERE a.appellant_user_id = $1 ORDER BY a.updated_at DESC`, userID)
 	if err != nil {
@@ -811,6 +842,51 @@ func createAppealInTx(ctx context.Context, tx pgx.Tx, input report.CreateAppealI
 	return item, nil
 }
 
+func createAccountGovernanceAppealInTx(ctx context.Context, tx pgx.Tx, input report.CreateAccountGovernanceAppealInput, now time.Time) (report.Appeal, *domain.AppError) {
+	appellantUserID := strings.TrimSpace(input.AppellantUserID)
+	if appErr := lockAccountGovernanceUser(ctx, tx, appellantUserID); appErr != nil {
+		return report.Appeal{}, appErr
+	}
+	appellant, found, err := accountAppealUserByID(ctx, tx, appellantUserID, true)
+	if err != nil {
+		return report.Appeal{}, internalStoreError()
+	}
+	if !found || !isAccountAppealStatus(appellant.Status) {
+		return report.Appeal{}, accountAppealStoreIneligibleError()
+	}
+	canonicalUserID := appellant.ID
+
+	var submittedExists bool
+	if err := tx.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1
+			FROM appeals
+			WHERE appellant_user_id = $1
+			  AND target_type = 'account_governance'
+			  AND status = 'submitted'
+		)
+	`, canonicalUserID).Scan(&submittedExists); err != nil {
+		return report.Appeal{}, internalStoreError()
+	}
+	if appErr := report.ValidateNoSubmittedAccountGovernanceAppeal(submittedExists); appErr != nil {
+		return report.Appeal{}, appErr
+	}
+
+	item, err := scanAppeal(ctx, tx, `
+		INSERT INTO appeals (
+			appellant_user_id, report_id, dispute_case_id, target_type, target_id, title, statement,
+			status, created_at, updated_at, version
+		)
+		VALUES ($1, NULL, NULL, 'account_governance', $1::uuid::text, '账号治理申诉', $2,
+		        'submitted', $3, $3, 1)
+		RETURNING `+appealReturningColumns+`
+	`, canonicalUserID, strings.TrimSpace(input.Statement), now)
+	if err != nil {
+		return report.Appeal{}, internalStoreError()
+	}
+	return item, nil
+}
+
 func lockUndestroyedAPIOrderCredentialForModeration(ctx context.Context, tx pgx.Tx, orderID, destroyedDetail string) *domain.AppError {
 	if _, err := tx.Exec(ctx, `
 		SELECT pg_advisory_xact_lock(hashtextextended($1 || $2::uuid::text, 0))
@@ -878,6 +954,9 @@ func updateAppealAdminInTx(ctx context.Context, tx pgx.Tx, input report.AdminAct
 }
 
 func reverseReputationOutcomeForApprovedAppeal(ctx context.Context, tx pgx.Tx, appeal report.Appeal, input report.AdminActionInput, now time.Time) *domain.AppError {
+	if appeal.TargetType == report.TargetAccountGovernance {
+		return nil
+	}
 	disputeID := strings.TrimSpace(appeal.DisputeID)
 	if disputeID == "" && strings.TrimSpace(appeal.ReportID) != "" {
 		if err := tx.QueryRow(ctx, `

@@ -86,6 +86,13 @@ func ValidateNoSubmittedAppeal(exists bool) *domain.AppError {
 	return nil
 }
 
+func ValidateNoSubmittedAccountGovernanceAppeal(exists bool) *domain.AppError {
+	if exists {
+		return invalidState("该账号已有待处理的账号治理申诉。")
+	}
+	return nil
+}
+
 func ValidateAppealOutcomeSubject(appeal Appeal, outcomeSubjectUserID string) *domain.AppError {
 	appellantUserID := strings.TrimSpace(appeal.AppellantUserID)
 	outcomeSubjectUserID = strings.TrimSpace(outcomeSubjectUserID)

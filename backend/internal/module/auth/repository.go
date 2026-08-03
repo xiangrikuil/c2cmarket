@@ -15,6 +15,7 @@ type Repository interface {
 	AdminUserDetail(ctx context.Context, userID string) (AdminUserDetail, *domain.AppError)
 	UpdateAdminUserStatusWithIdempotency(ctx context.Context, entry idempotency.Entry, input AdminUserStatusInput, now time.Time, buildCompletion AdminUserCompletionBuilder) (AdminUserMutationResult, idempotency.Completion, *domain.AppError)
 	UpdateAdminUserPermissionWithIdempotency(ctx context.Context, entry idempotency.Entry, input AdminUserPermissionInput, now time.Time, buildCompletion AdminUserCompletionBuilder) (AdminUserMutationResult, idempotency.Completion, *domain.AppError)
+	ResolveExistingOAuthUser(ctx context.Context, provider, subject string) (User, bool, *domain.AppError)
 	UpsertOAuthUser(ctx context.Context, profile OAuthProfile, now time.Time) (OAuthUserResult, *domain.AppError)
 	BootstrapAdminPassword(ctx context.Context, credential PasswordCredential, now time.Time) (BootstrapAdminResult, *domain.AppError)
 	PasswordCredential(ctx context.Context, username string) (PasswordCredential, *domain.AppError)
@@ -28,4 +29,7 @@ type Repository interface {
 	RenewSession(ctx context.Context, sessionTokenHash string, now, targetExpiresAt, renewBefore time.Time) (time.Time, bool, *domain.AppError)
 	RefreshSessionCSRF(ctx context.Context, sessionTokenHash, csrfTokenHash string, now time.Time) *domain.AppError
 	RevokeSession(ctx context.Context, sessionTokenHash string, revokedAt time.Time) *domain.AppError
+	CreateAccountAppealSession(ctx context.Context, userID, sessionTokenHash, csrfTokenHash string, expiresAt, now time.Time) (User, *domain.AppError)
+	RotateAccountAppealSessionCSRF(ctx context.Context, sessionTokenHash, csrfTokenHash string, now time.Time) (User, AccountAppealSession, *domain.AppError)
+	GetAccountAppealSessionWithCSRF(ctx context.Context, sessionTokenHash, csrfTokenHash string, now time.Time) (User, AccountAppealSession, *domain.AppError)
 }

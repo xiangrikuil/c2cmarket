@@ -30,6 +30,7 @@ const staticSeo: Record<string, Omit<RouteSeo, 'indexable'>> = {
 const privatePrefixes = [
   '/search',
   '/login',
+  '/account-appeal',
   '/auth',
   '/my',
   '/merchant',

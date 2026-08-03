@@ -278,6 +278,29 @@ paths:
                 $ref: "#/components/schemas/OAuthStartResponse"
         "429":
           $ref: "#/components/responses/RateLimited"
+  /api/v1/auth/account-appeal/start:
+    get:
+      operationId: startAccountAppealVerification
+      tags: [Auth]
+      security: []
+      summary: Start linux.do verification for a restricted-account appeal.
+      description: |
+        Starts a purpose-scoped OAuth flow that may resolve only an existing linux.do identity.
+        It never creates or updates a user, registration attribution, referral reward, ordinary
+        session, profile, or last-login fact.
+      responses:
+        "200":
+          description: Purpose-scoped OAuth authorization URL.
+          headers:
+            Set-Cookie:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OAuthStartResponse"
+        "429":
+          $ref: "#/components/responses/RateLimited"
   /api/v1/auth/oauth/callback:
     get:
       operationId: completeOAuthLogin
@@ -297,7 +320,7 @@ paths:
             type: string
       responses:
         "302":
-          description: Session cookie set and browser redirected to the original return path.
+          description: Ordinary login sets the normal session cookie and redirects to the original return path. The account-appeal purpose sets only the dedicated fixed-expiry appeal cookie and redirects to `/account-appeal` with a generic outcome hint.
           headers:
             Set-Cookie:
               schema:
@@ -323,6 +346,67 @@ paths:
           description: Logged out.
         "403":
           $ref: "#/components/responses/Problem"
+  /api/v1/account-appeal/session:
+    get:
+      operationId: getAccountAppealSession
+      tags: [AccountAppeals]
+      security:
+        - accountAppealCookie: []
+      summary: Read the fixed-expiry restricted-account appeal session.
+      description: Rotates the dedicated CSRF token without renewing the 15-minute session expiry.
+      responses:
+        "200":
+          description: Current restricted-account appeal session.
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+                const: no-store
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AccountAppealSessionResponse"
+        "401":
+          $ref: "#/components/responses/Problem"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+  /api/v1/account-appeal/appeals:
+    post:
+      operationId: createAccountGovernanceAppeal
+      tags: [AccountAppeals]
+      security:
+        - accountAppealCookie: []
+          accountAppealCSRF: []
+      summary: Submit one account-governance appeal for the verified restricted account.
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateAccountGovernanceAppealRequest"
+      responses:
+        "201":
+          description: Account-governance appeal submitted.
+          headers:
+            ETag:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AccountGovernanceAppeal"
+        "401":
+          $ref: "#/components/responses/Problem"
+        "403":
+          $ref: "#/components/responses/Problem"
+        "409":
+          $ref: "#/components/responses/Problem"
+        "422":
+          $ref: "#/components/responses/Problem"
+        "429":
+          $ref: "#/components/responses/RateLimited"
   /api/v1/search:
     get:
       operationId: searchMarket
@@ -7058,6 +7142,14 @@ components:
       type: apiKey
       in: header
       name: X-CSRF-Token
+    accountAppealCookie:
+      type: apiKey
+      in: cookie
+      name: c2c_account_appeal
+    accountAppealCSRF:
+      type: apiKey
+      in: header
+      name: X-Account-Appeal-CSRF
     metricsBearer:
       type: http
       scheme: bearer
@@ -13268,6 +13360,59 @@ components:
             $ref: "#/components/schemas/PublicDispute"
         nextCursor:
           type: [string, "null"]
+    AccountAppealSessionResponse:
+      type: object
+      additionalProperties: false
+      required: [accountStatus, csrfToken, expiresAt]
+      properties:
+        accountStatus:
+          type: string
+          enum: [suspended, banned]
+        csrfToken:
+          type: string
+          description: Dedicated CSRF token for account-appeal mutations only.
+        expiresAt:
+          type: string
+          format: date-time
+          description: Fixed session expiry. Reading the session never extends it.
+    CreateAccountGovernanceAppealRequest:
+      type: object
+      additionalProperties: false
+      required: [statement]
+      properties:
+        statement:
+          type: string
+          minLength: 4
+          maxLength: 1000
+          description: Must not contain full contact values, passwords, API keys, tokens, sessions, cookies, recovery codes, or other credential material.
+    AccountGovernanceAppeal:
+      type: object
+      additionalProperties: false
+      required: [id, targetType, targetId, title, status, createdAt, updatedAt, version]
+      properties:
+        id:
+          type: string
+          format: uuid
+        targetType:
+          type: string
+          const: account_governance
+        targetId:
+          type: string
+          format: uuid
+          description: Canonical user ID of the verified appellant.
+        title:
+          type: string
+        status:
+          type: string
+          enum: [submitted, approved, rejected]
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+        version:
+          type: integer
     CreateAppealRequest:
       type: object
       additionalProperties: false
@@ -13322,6 +13467,7 @@ components:
           format: uuid
         targetType:
           type: string
+          enum: [contact_snapshot, public_user, carpool_application, carpool_membership, api_purchase_intent, api_order, account_governance]
         targetId:
           type: string
         title:

@@ -81,6 +81,24 @@ func (s *Store) RunDataLifecycle(ctx context.Context, now time.Time, batchSize i
 		return maintenance.Result{}, internalStoreError()
 	}
 
+	result.AccountAppealSessionsDeleted, err = execMaintenanceBatch(ctx, tx, `
+		WITH candidates AS (
+			SELECT id
+			FROM account_appeal_sessions
+			WHERE (revoked_at IS NOT NULL AND revoked_at < $1)
+			   OR (revoked_at IS NULL AND expires_at < $1)
+			ORDER BY COALESCE(revoked_at, expires_at), id
+			LIMIT $2
+			FOR UPDATE SKIP LOCKED
+		)
+		DELETE FROM account_appeal_sessions target
+		USING candidates
+		WHERE target.id = candidates.id
+	`, now.Add(-policy.SessionRetention), batchSize)
+	if err != nil {
+		return maintenance.Result{}, internalStoreError()
+	}
+
 	result.VerificationCodesDeleted, err = execMaintenanceBatch(ctx, tx, `
 		WITH candidates AS (
 			SELECT id

@@ -201,6 +201,15 @@ type Session struct {
 	NewRegistration   bool
 }
 
+type AccountAppealSession struct {
+	ID        string
+	UserID    string
+	CSRFToken string
+	CreatedAt time.Time
+	ExpiresAt time.Time
+	RevokedAt *time.Time
+}
+
 type LinuxDoBinding struct {
 	Bound           bool
 	LinuxDoUserID   string

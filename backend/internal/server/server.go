@@ -121,6 +121,9 @@ type PromotionRewardService interface {
 type Service interface {
 	CreateDevSession(ctx context.Context, username string, isAdmin bool) (auth.User, auth.Session, *domain.AppError)
 	LoginWithOAuthProfile(ctx context.Context, profile auth.OAuthProfile) (auth.User, auth.Session, *domain.AppError)
+	StartAccountAppealSession(ctx context.Context, profile auth.OAuthProfile) (auth.User, auth.AccountAppealSession, *domain.AppError)
+	GetAccountAppealSession(ctx context.Context, sessionID string) (auth.User, auth.AccountAppealSession, *domain.AppError)
+	GetAccountAppealSessionWithCSRF(ctx context.Context, sessionID, csrfToken string) (auth.User, auth.AccountAppealSession, *domain.AppError)
 	LoginWithPassword(ctx context.Context, username, password string) (auth.User, auth.Session, *domain.AppError)
 	StartEmailRegistration(ctx context.Context, input auth.EmailRegistrationStartInput) (auth.EmailRegistrationChallenge, *domain.AppError)
 	ConfirmEmailRegistration(ctx context.Context, input auth.EmailRegistrationConfirmInput) (auth.User, auth.Session, *domain.AppError)
@@ -221,6 +224,7 @@ type Service interface {
 	AdminDispute(ctx context.Context, user auth.User, id string) (report.DisputeCase, *domain.AppError)
 	AdminDisputeActionWithIdempotency(ctx context.Context, user auth.User, routeKey, key, requestHash string, input report.AdminActionInput, buildCompletion report.AdminCompletionBuilder) (idempotency.Completion, *domain.AppError)
 	CreateAppealWithIdempotency(ctx context.Context, user auth.User, routeKey, key, requestHash string, input report.CreateAppealInput, buildCompletion report.AppealCompletionBuilder) (idempotency.Completion, *domain.AppError)
+	CreateAccountGovernanceAppealWithIdempotency(ctx context.Context, appellantUserID, routeKey, key, requestHash string, input report.CreateAccountGovernanceAppealInput, buildCompletion report.AppealCompletionBuilder) (idempotency.Completion, *domain.AppError)
 	MyAppeals(ctx context.Context, user auth.User) ([]report.Appeal, *domain.AppError)
 	AdminAppeals(ctx context.Context, user auth.User) ([]report.Appeal, *domain.AppError)
 	AdminAppeal(ctx context.Context, user auth.User, id string) (report.Appeal, *domain.AppError)

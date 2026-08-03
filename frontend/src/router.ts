@@ -32,6 +32,7 @@ const MyFeedbackPage = () => import('@/pages/MyFeedbackPage.vue')
 const MyReportsAppealsPage = () => import('@/pages/MyReportsAppealsPage.vue')
 const AnnouncementDetailPage = () => import('@/pages/AnnouncementDetailPage.vue')
 const LoginPage = () => import('@/pages/LoginPage.vue')
+const AccountAppealPage = () => import('@/pages/AccountAppealPage.vue')
 const PublicUserPage = () => import('@/pages/PublicUserPage.vue')
 const AdminPage = () => import('@/pages/AdminPage.vue')
 const AdminGrowthPage = () => import('@/pages/AdminGrowthPage.vue')
@@ -64,6 +65,7 @@ export const routes: RouteRecordRaw[] = [
     { path: '/', name: 'home', component: HomePage },
     { path: '/search', name: 'search', component: SearchPage },
     { path: '/login', name: 'login', component: LoginPage, meta: { standalone: true } },
+    { path: '/account-appeal', name: 'account-appeal', component: AccountAppealPage, meta: { standalone: true } },
     { path: '/auth/mock', redirect: '/login' },
     { path: '/official-prices', name: 'official-prices', component: OfficialPricesPage },
     { path: '/official-prices/detail', redirect: '/official-prices/p1' },

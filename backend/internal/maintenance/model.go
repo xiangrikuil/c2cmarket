@@ -19,6 +19,7 @@ type Policy struct {
 type Result struct {
 	LockAcquired                 bool
 	SessionsDeleted              int64
+	AccountAppealSessionsDeleted int64
 	VerificationCodesDeleted     int64
 	IdempotencyEntriesDeleted    int64
 	ContactSessionsExpired       int64

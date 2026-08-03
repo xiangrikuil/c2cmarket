@@ -362,6 +362,12 @@ administrator information requests and immutable, idempotent user supplements.
 Only the requested active case participant may answer an open request, and the
 answer marks the request as answered without resolving the report or dispute.
 
+Version 78 (`000078_account_appeal_sessions`) adds a dedicated fifteen-minute
+session for suspended or banned users who prove an existing linux.do identity.
+Only opaque session and CSRF hashes are stored. The migration also adds the
+`account_governance` appeal target with no report/dispute source and enforces at
+most one submitted account-governance appeal per user.
+
 ## Contact Retention And Destruction
 
 Contact method deletion retires the mutable contact method surface. Historical

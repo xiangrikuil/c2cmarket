@@ -216,6 +216,18 @@ func (s *Service) LoginWithOAuthProfile(ctx context.Context, profile OAuthProfil
 	return user, session, appErr
 }
 
+func (s *Service) StartAccountAppealSession(ctx context.Context, profile authmodule.OAuthProfile) (authmodule.User, authmodule.AccountAppealSession, *domain.AppError) {
+	return s.authService.StartAccountAppealSession(ctx, profile)
+}
+
+func (s *Service) GetAccountAppealSession(ctx context.Context, sessionID string) (authmodule.User, authmodule.AccountAppealSession, *domain.AppError) {
+	return s.authService.GetAccountAppealSession(ctx, sessionID)
+}
+
+func (s *Service) GetAccountAppealSessionWithCSRF(ctx context.Context, sessionID, csrfToken string) (authmodule.User, authmodule.AccountAppealSession, *domain.AppError) {
+	return s.authService.GetAccountAppealSessionWithCSRF(ctx, sessionID, csrfToken)
+}
+
 func (s *Service) LoginWithPassword(ctx context.Context, username, password string) (User, Session, *domain.AppError) {
 	user, session, appErr := s.authService.LoginWithPassword(ctx, username, password)
 	s.recordAuthenticatedActivity(ctx, user, appErr)
@@ -1762,6 +1774,10 @@ func (s *Service) AdminDisputeActionWithIdempotency(ctx context.Context, user Us
 
 func (s *Service) CreateAppealWithIdempotency(ctx context.Context, user User, routeKey, key, requestHash string, input report.CreateAppealInput, buildCompletion report.AppealCompletionBuilder) (IdempotencyCompletion, *domain.AppError) {
 	return s.reportService.CreateAppealWithIdempotency(ctx, user, routeKey, key, requestHash, input, buildCompletion)
+}
+
+func (s *Service) CreateAccountGovernanceAppealWithIdempotency(ctx context.Context, appellantUserID, routeKey, key, requestHash string, input report.CreateAccountGovernanceAppealInput, buildCompletion report.AppealCompletionBuilder) (IdempotencyCompletion, *domain.AppError) {
+	return s.reportService.CreateAccountGovernanceAppealWithIdempotency(ctx, appellantUserID, routeKey, key, requestHash, input, buildCompletion)
 }
 
 func (s *Service) MyAppeals(ctx context.Context, user User) ([]report.Appeal, *domain.AppError) {

@@ -15,6 +15,7 @@ type ListResponse<T> = {
 }
 
 type BackendReportTargetType = 'contact_snapshot' | 'public_user' | 'carpool_application' | 'carpool_membership' | 'api_purchase_intent' | 'api_order'
+type BackendAppealTargetType = BackendReportTargetType | 'account_governance'
 type BackendReportReasonCode = 'unreachable' | 'contact_invalid' | 'impersonation' | 'description_mismatch' | 'seat_rule_dispute' | 'api_quota_dispute' | 'order_delivery_dispute' | 'other'
 type BackendPublicResultCode = DisputeCase['publicResultCode']
 
@@ -75,7 +76,7 @@ type BackendAppeal = {
   appellantName: string
   reportId?: string
   disputeId?: string
-  targetType: BackendReportTargetType
+  targetType: BackendAppealTargetType
   targetId: string
   title: string
   statement?: string
@@ -161,6 +162,11 @@ function targetTypeLabel(value: BackendReportTargetType) {
     api_order: 'API 订单',
   }
   return labels[value]
+}
+
+function appealTargetTypeLabel(value: BackendAppealTargetType) {
+  if (value === 'account_governance') return '账号治理'
+  return targetTypeLabel(value)
 }
 
 function reasonLabel(value: BackendReportReasonCode) {
@@ -321,7 +327,7 @@ function mapAppealRow(item: BackendAppeal): AdminRow {
   return {
     id: item.id,
     primary: item.title,
-    secondary: `${targetTypeLabel(item.targetType)} · ${item.statement || '用户申诉说明已提交'}`,
+    secondary: `${appealTargetTypeLabel(item.targetType)} · ${item.statement || '用户申诉说明已提交'}`,
     owner: item.appellantName || item.appellantUsername,
     status: appealStatusLabel(item.status),
     risk: item.adminReason || `提交于 ${formatTime(item.createdAt)}`,

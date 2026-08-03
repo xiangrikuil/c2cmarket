@@ -2851,6 +2851,39 @@ export type PublicDisputeList = {
     nextCursor?: string | null;
 };
 
+export type AccountAppealSessionResponse = {
+    accountStatus: 'suspended' | 'banned';
+    /**
+     * Dedicated CSRF token for account-appeal mutations only.
+     */
+    csrfToken: string;
+    /**
+     * Fixed session expiry. Reading the session never extends it.
+     */
+    expiresAt: string;
+};
+
+export type CreateAccountGovernanceAppealRequest = {
+    /**
+     * Must not contain full contact values, passwords, API keys, tokens, sessions, cookies, recovery codes, or other credential material.
+     */
+    statement: string;
+};
+
+export type AccountGovernanceAppeal = {
+    id: string;
+    targetType: 'account_governance';
+    /**
+     * Canonical user ID of the verified appellant.
+     */
+    targetId: string;
+    title: string;
+    status: 'submitted' | 'approved' | 'rejected';
+    createdAt: string;
+    updatedAt: string;
+    version: number;
+};
+
 export type CreateAppealRequest = unknown & {
     reportId?: string;
     disputeId?: string;
@@ -2883,7 +2916,7 @@ export type Appeal = {
     appellantName: string;
     reportId?: string;
     disputeId?: string;
-    targetType: string;
+    targetType: 'contact_snapshot' | 'public_user' | 'carpool_application' | 'carpool_membership' | 'api_purchase_intent' | 'api_order' | 'account_governance';
     targetId: string;
     title: string;
     /**
@@ -3984,6 +4017,31 @@ export type StartOAuthLoginResponses = {
 
 export type StartOAuthLoginResponse = StartOAuthLoginResponses[keyof StartOAuthLoginResponses];
 
+export type StartAccountAppealVerificationData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/v1/auth/account-appeal/start';
+};
+
+export type StartAccountAppealVerificationErrors = {
+    /**
+     * Rate limit exceeded. Problem Details `code` is `RATE_LIMITED`.
+     */
+    429: ProblemDetails;
+};
+
+export type StartAccountAppealVerificationError = StartAccountAppealVerificationErrors[keyof StartAccountAppealVerificationErrors];
+
+export type StartAccountAppealVerificationResponses = {
+    /**
+     * Purpose-scoped OAuth authorization URL.
+     */
+    200: OAuthStartResponse;
+};
+
+export type StartAccountAppealVerificationResponse = StartAccountAppealVerificationResponses[keyof StartAccountAppealVerificationResponses];
+
 export type CompleteOAuthLoginData = {
     body?: never;
     path?: never;
@@ -4035,6 +4093,79 @@ export type LogoutSessionResponses = {
 };
 
 export type LogoutSessionResponse = LogoutSessionResponses[keyof LogoutSessionResponses];
+
+export type GetAccountAppealSessionData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/v1/account-appeal/session';
+};
+
+export type GetAccountAppealSessionErrors = {
+    /**
+     * Problem Details error.
+     */
+    401: ProblemDetails;
+    /**
+     * Rate limit exceeded. Problem Details `code` is `RATE_LIMITED`.
+     */
+    429: ProblemDetails;
+};
+
+export type GetAccountAppealSessionError = GetAccountAppealSessionErrors[keyof GetAccountAppealSessionErrors];
+
+export type GetAccountAppealSessionResponses = {
+    /**
+     * Current restricted-account appeal session.
+     */
+    200: AccountAppealSessionResponse;
+};
+
+export type GetAccountAppealSessionResponse = GetAccountAppealSessionResponses[keyof GetAccountAppealSessionResponses];
+
+export type CreateAccountGovernanceAppealData = {
+    body: CreateAccountGovernanceAppealRequest;
+    headers: {
+        'Idempotency-Key': string;
+    };
+    path?: never;
+    query?: never;
+    url: '/api/v1/account-appeal/appeals';
+};
+
+export type CreateAccountGovernanceAppealErrors = {
+    /**
+     * Problem Details error.
+     */
+    401: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    403: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    409: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    422: ProblemDetails;
+    /**
+     * Rate limit exceeded. Problem Details `code` is `RATE_LIMITED`.
+     */
+    429: ProblemDetails;
+};
+
+export type CreateAccountGovernanceAppealError = CreateAccountGovernanceAppealErrors[keyof CreateAccountGovernanceAppealErrors];
+
+export type CreateAccountGovernanceAppealResponses = {
+    /**
+     * Account-governance appeal submitted.
+     */
+    201: AccountGovernanceAppeal;
+};
+
+export type CreateAccountGovernanceAppealResponse = CreateAccountGovernanceAppealResponses[keyof CreateAccountGovernanceAppealResponses];
 
 export type SearchMarketData = {
     body?: never;

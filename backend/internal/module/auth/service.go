@@ -34,6 +34,7 @@ const (
 	SessionIdleLifetime                    = 7 * 24 * time.Hour
 	SessionRenewalInterval                 = 24 * time.Hour
 	SessionAbsoluteLifetime                = 30 * 24 * time.Hour
+	AccountAppealSessionLifetime           = 15 * time.Minute
 )
 
 type Service struct {
@@ -50,6 +51,7 @@ type Service struct {
 	oauthUserIDs                map[string]string
 	adminBootstrapRuns          map[string]adminBootstrapRun
 	sessions                    map[string]Session
+	accountAppealSessions       map[string]AccountAppealSession
 	emailRegistrationCodes      map[string]emailRegistrationChallenge
 	passwordCredentialsByUserID map[string]PasswordCredential
 }
@@ -95,6 +97,7 @@ func NewServiceWithRegistrationEmailSenderAndIdempotency(repo Repository, now fu
 		oauthUserIDs:                make(map[string]string),
 		adminBootstrapRuns:          make(map[string]adminBootstrapRun),
 		sessions:                    make(map[string]Session),
+		accountAppealSessions:       make(map[string]AccountAppealSession),
 		emailRegistrationCodes:      make(map[string]emailRegistrationChallenge),
 		passwordCredentialsByUserID: make(map[string]PasswordCredential),
 	}
@@ -224,6 +227,128 @@ func (s *Service) LoginWithOAuthProfile(ctx context.Context, profile OAuthProfil
 		s.mu.Unlock()
 	}
 	s.sendRegistrationSuccessIfNeeded(ctx, created, user, profile.Email, now)
+	return user, session, nil
+}
+
+func (s *Service) StartAccountAppealSession(ctx context.Context, profile OAuthProfile) (User, AccountAppealSession, *domain.AppError) {
+	provider := CanonicalOAuthProvider(profile.Provider)
+	subject := CanonicalOAuthSubject(profile.Subject)
+	if provider == "" || subject == "" {
+		return User{}, AccountAppealSession{}, domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Invalid OAuth profile", "OAuth 用户资料不完整。", "profile", "required", "OAuth 用户资料不完整。")
+	}
+	if !IsLinuxDoProvider(provider) {
+		return User{}, AccountAppealSession{}, accountAppealIneligibleError()
+	}
+
+	now := s.now()
+	session := AccountAppealSession{
+		ID:        newSecret("appeal_sess"),
+		CSRFToken: newSecret("appeal_csrf"),
+		CreatedAt: now,
+		ExpiresAt: now.Add(AccountAppealSessionLifetime),
+	}
+	if s.repo != nil {
+		user, found, appErr := s.repo.ResolveExistingOAuthUser(ctx, provider, subject)
+		if appErr != nil {
+			return User{}, AccountAppealSession{}, appErr
+		}
+		if !found || !eligibleAccountAppealStatus(user.Status) {
+			return User{}, AccountAppealSession{}, accountAppealIneligibleError()
+		}
+		user, appErr = s.repo.CreateAccountAppealSession(
+			ctx,
+			user.ID,
+			hashOpaqueToken(session.ID),
+			hashOpaqueToken(session.CSRFToken),
+			session.ExpiresAt,
+			now,
+		)
+		if appErr != nil {
+			return User{}, AccountAppealSession{}, appErr
+		}
+		session.UserID = user.ID
+		return user, session, nil
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	userID := s.oauthUserIDs[OAuthIdentityKey(provider, subject)]
+	user := s.users[userID]
+	if user.ID == "" || !eligibleAccountAppealStatus(user.Status) {
+		return User{}, AccountAppealSession{}, accountAppealIneligibleError()
+	}
+	for sessionID, existing := range s.accountAppealSessions {
+		if existing.UserID != user.ID || existing.RevokedAt != nil {
+			continue
+		}
+		revokedAt := now
+		existing.RevokedAt = &revokedAt
+		s.accountAppealSessions[sessionID] = existing
+	}
+	session.UserID = user.ID
+	s.accountAppealSessions[session.ID] = session
+	return user, session, nil
+}
+
+func (s *Service) GetAccountAppealSession(ctx context.Context, sessionID string) (User, AccountAppealSession, *domain.AppError) {
+	csrfToken := newSecret("appeal_csrf")
+	if s.repo != nil {
+		user, session, appErr := s.repo.RotateAccountAppealSessionCSRF(ctx, hashOpaqueToken(sessionID), hashOpaqueToken(csrfToken), s.now())
+		if appErr != nil {
+			return User{}, AccountAppealSession{}, appErr
+		}
+		session.ID = sessionID
+		session.CSRFToken = csrfToken
+		return user, session, nil
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	user, session, appErr := s.accountAppealSessionLocked(sessionID, "", false)
+	if appErr != nil {
+		return User{}, AccountAppealSession{}, appErr
+	}
+	session.CSRFToken = csrfToken
+	s.accountAppealSessions[sessionID] = session
+	return user, session, nil
+}
+
+func (s *Service) GetAccountAppealSessionWithCSRF(ctx context.Context, sessionID, csrfToken string) (User, AccountAppealSession, *domain.AppError) {
+	if s.repo != nil {
+		user, session, appErr := s.repo.GetAccountAppealSessionWithCSRF(ctx, hashOpaqueToken(sessionID), hashOpaqueToken(csrfToken), s.now())
+		if appErr != nil {
+			return User{}, AccountAppealSession{}, appErr
+		}
+		session.ID = sessionID
+		return user, session, nil
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.accountAppealSessionLocked(sessionID, csrfToken, true)
+}
+
+func (s *Service) accountAppealSessionLocked(sessionID, csrfToken string, requireCSRF bool) (User, AccountAppealSession, *domain.AppError) {
+	session, ok := s.accountAppealSessions[sessionID]
+	if !ok {
+		if requireCSRF {
+			return User{}, AccountAppealSession{}, accountAppealCSRFError()
+		}
+		return User{}, AccountAppealSession{}, accountAppealSessionExpiredError()
+	}
+	if requireCSRF && subtle.ConstantTimeCompare([]byte(session.CSRFToken), []byte(csrfToken)) != 1 {
+		return User{}, AccountAppealSession{}, accountAppealCSRFError()
+	}
+	if session.RevokedAt != nil {
+		return User{}, AccountAppealSession{}, accountAppealSessionRevokedError()
+	}
+	if !s.now().Before(session.ExpiresAt) {
+		return User{}, AccountAppealSession{}, accountAppealSessionExpiredError()
+	}
+	user := s.users[session.UserID]
+	if user.ID == "" || !eligibleAccountAppealStatus(user.Status) {
+		return User{}, AccountAppealSession{}, accountAppealSessionExpiredError()
+	}
 	return user, session, nil
 }
 
@@ -1418,6 +1543,26 @@ func requireNativePasswordUser(user User) *domain.AppError {
 
 func emailRegistrationDisabledError() *domain.AppError {
 	return domain.NewError(http.StatusForbidden, domain.CodeEmailRegistrationDisabled, "Email registration disabled", "第一版本仅支持 linux.do OAuth 注册和登录。")
+}
+
+func eligibleAccountAppealStatus(status string) bool {
+	return status == AccountStatusSuspended || status == AccountStatusBanned
+}
+
+func accountAppealIneligibleError() *domain.AppError {
+	return domain.NewError(http.StatusForbidden, domain.CodeAccountAppealIneligible, "Account appeal unavailable", "当前身份无法使用账号申诉验证。")
+}
+
+func accountAppealSessionExpiredError() *domain.AppError {
+	return domain.NewError(http.StatusUnauthorized, domain.CodeSessionExpired, "Account appeal session expired", "账号申诉验证已过期，请重新验证。")
+}
+
+func accountAppealSessionRevokedError() *domain.AppError {
+	return domain.NewError(http.StatusUnauthorized, domain.CodeSessionRevoked, "Account appeal session revoked", "账号申诉验证已失效，请重新验证。")
+}
+
+func accountAppealCSRFError() *domain.AppError {
+	return domain.NewError(http.StatusForbidden, domain.CodeCSRFTokenInvalid, "Account appeal CSRF token invalid", "账号申诉 CSRF token 无效或缺失。")
 }
 
 func linuxDoBindingRequiredError() *domain.AppError {

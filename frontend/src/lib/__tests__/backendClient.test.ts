@@ -316,6 +316,152 @@ test('OAuth start sends only the stored bounded registration attribution', async
   assert.equal(requestURL.search.includes('token'), false)
 })
 
+test('restricted-account appeals use dedicated CSRF and preserve the normal session cache', async () => {
+  const fetchMock = vi.fn()
+  vi.stubGlobal('fetch', fetchMock)
+  fetchMock
+    .mockResolvedValueOnce(jsonResponse({
+      csrfToken: 'normal-csrf',
+      expiresAt: '2999-01-01T00:00:00Z',
+      user: {
+        id: 'user-1',
+        analyticsUserId: 'a1111111-1111-4111-8111-111111111111',
+        username: 'orbit',
+        displayName: 'Orbit',
+        isAdmin: false,
+        permissions: [],
+        linuxDoBinding: { bound: true },
+      },
+    }))
+    .mockResolvedValueOnce(jsonResponse({
+      accountStatus: 'suspended',
+      csrfToken: 'appeal-csrf',
+      expiresAt: '2026-08-03T10:15:00Z',
+    }))
+    .mockResolvedValueOnce(jsonResponse({
+      id: 'appeal-1',
+      targetType: 'account_governance',
+      targetId: 'user-1',
+      title: '账号治理申诉',
+      status: 'submitted',
+      createdAt: '2026-08-03T10:01:00Z',
+      updatedAt: '2026-08-03T10:01:00Z',
+      version: 1,
+    }, 201))
+    .mockResolvedValueOnce(jsonResponse({ ok: true }))
+
+  const client = await loadBackendClient({ apiMode: 'real' })
+  await client.getCurrentBackendSession()
+  const appealSession = await client.getAccountAppealSession()
+  assert.equal(appealSession.accountStatus, 'suspended')
+  assert.equal(client.getBackendCSRFToken(), 'normal-csrf')
+
+  const appeal = await client.submitAccountGovernanceAppeal('请复核本次账号限制。')
+  assert.equal(appeal.targetType, 'account_governance')
+  await client.backendMutation('/api/v1/example', {})
+
+  const appealHeaders = new Headers((fetchMock.mock.calls[2]?.[1] as RequestInit).headers)
+  assert.equal(fetchMock.mock.calls[2]?.[0], '/api/v1/account-appeal/appeals')
+  assert.equal(appealHeaders.get('X-Account-Appeal-CSRF'), 'appeal-csrf')
+  assert.equal(appealHeaders.get('X-CSRF-Token'), null)
+  assert.match(appealHeaders.get('Idempotency-Key') ?? '', /^account-appeal-create-/)
+  assert.equal((fetchMock.mock.calls[2]?.[1] as RequestInit).body, JSON.stringify({ statement: '请复核本次账号限制。' }))
+
+  const normalHeaders = new Headers((fetchMock.mock.calls[3]?.[1] as RequestInit).headers)
+  assert.equal(normalHeaders.get('X-CSRF-Token'), 'normal-csrf')
+  assert.equal(normalHeaders.get('X-Account-Appeal-CSRF'), null)
+})
+
+test('dedicated appeal-session errors do not invalidate the normal cached session', async () => {
+  const normalSession = {
+    csrfToken: 'normal-csrf',
+    expiresAt: '2999-01-01T00:00:00Z',
+    user: {
+      id: 'user-1',
+      analyticsUserId: 'a1111111-1111-4111-8111-111111111111',
+      username: 'orbit',
+      displayName: 'Orbit',
+      isAdmin: false,
+      permissions: [],
+      linuxDoBinding: { bound: true },
+    },
+  }
+  const fetchMock = vi.fn()
+    .mockResolvedValueOnce(jsonResponse(normalSession))
+    .mockResolvedValueOnce(problemResponse({
+      status: 401,
+      code: 'SESSION_REVOKED',
+      detail: '专用申诉会话已失效。',
+    }, 401))
+  vi.stubGlobal('fetch', fetchMock)
+
+  const client = await loadBackendClient({ apiMode: 'real' })
+  await client.getCurrentBackendSession()
+  await assert.rejects(() => client.getAccountAppealSession())
+  assert.deepEqual(await client.getCurrentBackendSession(), normalSession)
+  assert.equal(fetchMock.mock.calls.length, 2)
+  assert.equal(client.getBackendCSRFToken(), 'normal-csrf')
+})
+
+test('restricted-account appeal submission refreshes only its dedicated CSRF and reuses idempotency', async () => {
+  const fetchMock = vi.fn()
+    .mockResolvedValueOnce(jsonResponse({
+      accountStatus: 'banned',
+      csrfToken: 'stale-appeal-csrf',
+      expiresAt: '2026-08-03T10:15:00Z',
+    }))
+    .mockResolvedValueOnce(problemResponse({
+      status: 403,
+      code: 'CSRF_TOKEN_INVALID',
+      detail: 'CSRF token 无效或缺失。',
+    }, 403))
+    .mockResolvedValueOnce(jsonResponse({
+      accountStatus: 'banned',
+      csrfToken: 'fresh-appeal-csrf',
+      expiresAt: '2026-08-03T10:15:00Z',
+    }))
+    .mockResolvedValueOnce(jsonResponse({
+      id: 'appeal-1',
+      targetType: 'account_governance',
+      targetId: 'user-1',
+      title: '账号治理申诉',
+      status: 'submitted',
+      createdAt: '2026-08-03T10:01:00Z',
+      updatedAt: '2026-08-03T10:01:00Z',
+      version: 1,
+    }, 201))
+  vi.stubGlobal('fetch', fetchMock)
+
+  const client = await loadBackendClient({ apiMode: 'real' })
+  await client.getAccountAppealSession()
+  await client.submitAccountGovernanceAppeal('请复核本次账号限制。')
+
+  assert.deepEqual(fetchMock.mock.calls.map(call => call[0]), [
+    '/api/v1/account-appeal/session',
+    '/api/v1/account-appeal/appeals',
+    '/api/v1/account-appeal/session',
+    '/api/v1/account-appeal/appeals',
+  ])
+  const firstHeaders = new Headers((fetchMock.mock.calls[1]?.[1] as RequestInit).headers)
+  const retryHeaders = new Headers((fetchMock.mock.calls[3]?.[1] as RequestInit).headers)
+  assert.equal(firstHeaders.get('X-Account-Appeal-CSRF'), 'stale-appeal-csrf')
+  assert.equal(retryHeaders.get('X-Account-Appeal-CSRF'), 'fresh-appeal-csrf')
+  assert.equal(firstHeaders.get('Idempotency-Key'), retryHeaders.get('Idempotency-Key'))
+})
+
+test('restricted-account appeal verification starts only the dedicated OAuth flow', async () => {
+  const fetchMock = vi.fn().mockResolvedValueOnce(jsonResponse({
+    authorizationUrl: 'https://connect.linux.do/oauth2/authorize?state=appeal',
+  }))
+  vi.stubGlobal('fetch', fetchMock)
+
+  const client = await loadBackendClient({ apiMode: 'real' })
+  const response = await client.startAccountAppealVerification()
+
+  assert.equal(response.authorizationUrl.includes('state=appeal'), true)
+  assert.equal(fetchMock.mock.calls[0]?.[0], '/api/v1/auth/account-appeal/start')
+})
+
 test('cached sessions identify with the opaque analytics ID and logout clears it', async () => {
   const identify = vi.fn()
   vi.stubGlobal('window', { umami: { identify } })

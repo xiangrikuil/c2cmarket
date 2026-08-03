@@ -17,6 +17,7 @@ type Repository interface {
 	SubmitInfoSupplementWithIdempotency(ctx context.Context, entry idempotency.Entry, input SupplementInput, now time.Time, buildCompletion SupplementCompletionBuilder) (MutationResult, idempotency.Completion, *domain.AppError)
 
 	CreateAppealWithIdempotency(ctx context.Context, entry idempotency.Entry, input CreateAppealInput, now time.Time, buildCompletion AppealCompletionBuilder) (Appeal, idempotency.Completion, *domain.AppError)
+	CreateAccountGovernanceAppealWithIdempotency(ctx context.Context, entry idempotency.Entry, input CreateAccountGovernanceAppealInput, now time.Time, buildCompletion AppealCompletionBuilder) (Appeal, idempotency.Completion, *domain.AppError)
 	ListAppealsByUser(ctx context.Context, userID string) ([]Appeal, *domain.AppError)
 	ListAdminAppeals(ctx context.Context) ([]Appeal, *domain.AppError)
 	GetAdminAppeal(ctx context.Context, id string) (Appeal, *domain.AppError)

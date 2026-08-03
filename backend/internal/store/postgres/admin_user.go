@@ -404,6 +404,9 @@ func (s *Store) UpdateAdminUserStatusWithIdempotency(ctx context.Context, entry 
 	if appErr != nil {
 		return auth.AdminUserMutationResult{}, idempotency.Completion{}, appErr
 	}
+	if appErr := lockAccountGovernanceUser(ctx, tx, input.TargetUserID); appErr != nil {
+		return auth.AdminUserMutationResult{}, idempotency.Completion{}, appErr
+	}
 	if appErr := lockAdminUserGovernanceTables(ctx, tx); appErr != nil {
 		return auth.AdminUserMutationResult{}, idempotency.Completion{}, appErr
 	}

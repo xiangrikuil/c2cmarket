@@ -2,6 +2,10 @@ import { requireApiMode, type ApiMode } from '@/lib/apiMode'
 import { clearAnalyticsIdentity, identifyAnalyticsUser } from '@/lib/analytics'
 import { captureRegistrationAttribution, getRegistrationAttribution } from '@/lib/registrationAttribution'
 import { getReferralCapture } from '@/lib/referralCapture'
+import type {
+  AccountAppealSessionResponse,
+  AccountGovernanceAppeal as AccountGovernanceAppealResponse,
+} from '@/api/generated/openapi'
 
 type ProblemDetails = {
   title?: string
@@ -38,6 +42,9 @@ export type OAuthStartResponse = {
   authorizationUrl: string
 }
 
+export type AccountAppealSession = AccountAppealSessionResponse
+export type AccountGovernanceAppeal = AccountGovernanceAppealResponse
+
 export type PasswordLoginRequest = {
   username: string
   password: string
@@ -73,6 +80,7 @@ const SESSION_LOGIN_REQUIRED_CODES = new Set([
 ])
 
 let csrfToken: string | null = null
+let accountAppealCSRFToken: string | null = null
 let cachedSession: BackendSession | null = null
 let sessionRequest: Promise<BackendSession> | null = null
 const pendingGetRequests = new Map<string, Promise<unknown>>()
@@ -200,6 +208,69 @@ export async function startOAuthLogin(returnTo = '/', inviteCode = getReferralCa
   return backendRequest<OAuthStartResponse>(`/api/v1/auth/oauth/start?${params.toString()}`)
 }
 
+export async function startAccountAppealVerification() {
+  accountAppealCSRFToken = null
+  return backendRequest<OAuthStartResponse>('/api/v1/auth/account-appeal/start', {}, {
+    affectsSessionCache: false,
+  })
+}
+
+export async function getAccountAppealSession() {
+  try {
+    const session = await backendRequest<AccountAppealSession>('/api/v1/account-appeal/session', {}, {
+      affectsSessionCache: false,
+    })
+    accountAppealCSRFToken = session.csrfToken
+    return session
+  } catch (error) {
+    accountAppealCSRFToken = null
+    throw error
+  }
+}
+
+export async function submitAccountGovernanceAppeal(statement: string) {
+  if (!accountAppealCSRFToken) {
+    throw new BackendProblemError({
+      title: 'Account appeal verification required',
+      status: 401,
+      code: 'ACCOUNT_APPEAL_SESSION_REQUIRED',
+      detail: '请先通过 linux.do 验证受限账号。',
+    }, 401)
+  }
+
+  const requestKey = idempotencyKey('account-appeal-create')
+  const request = () => backendRequest<AccountGovernanceAppeal>('/api/v1/account-appeal/appeals', {
+    method: 'POST',
+    headers: jsonHeaders({
+      'X-Account-Appeal-CSRF': accountAppealCSRFToken ?? '',
+      'Idempotency-Key': requestKey,
+    }),
+    body: JSON.stringify({ statement }),
+  }, {
+    affectsSessionCache: false,
+  })
+
+  try {
+    const appeal = await request()
+    accountAppealCSRFToken = null
+    return appeal
+  } catch (error) {
+    if (!isCSRFTokenInvalidError(error)) {
+      if (error instanceof BackendProblemError && error.status === 401) accountAppealCSRFToken = null
+      throw error
+    }
+    await getAccountAppealSession()
+    try {
+      const appeal = await request()
+      accountAppealCSRFToken = null
+      return appeal
+    } catch (retryError) {
+      if (retryError instanceof BackendProblemError && retryError.status === 401) accountAppealCSRFToken = null
+      throw retryError
+    }
+  }
+}
+
 export async function loginWithPassword(payload: PasswordLoginRequest) {
   const session = await backendJSON<BackendSession>('/api/v1/auth/password/login', payload)
   return cacheBackendSession(session)
@@ -242,7 +313,7 @@ async function decodeResponse<T>(response: Response): Promise<T> {
 export async function backendRequest<T>(
   path: string,
   init: RequestInit = {},
-  options: { notifySessionInvalidation?: boolean } = {},
+  options: { notifySessionInvalidation?: boolean, affectsSessionCache?: boolean } = {},
 ) {
   const requestInit = {
     ...init,
@@ -269,7 +340,9 @@ export async function backendRequest<T>(
     const response = await fetch(`${backendBaseURL()}${path}`, requestInit)
     return await decodeResponse<T>(response)
   } catch (error) {
-    clearBackendSessionCacheOnAuthError(error, options.notifySessionInvalidation !== false)
+    if (options.affectsSessionCache !== false) {
+      clearBackendSessionCacheOnAuthError(error, options.notifySessionInvalidation !== false)
+    }
     throw error
   }
 }
