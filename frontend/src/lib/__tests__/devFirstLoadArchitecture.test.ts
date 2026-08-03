@@ -7,7 +7,7 @@ function source(path: string) {
 }
 
 const homePage = source('../../pages/HomePage.vue')
-const app = source('../../app.vue')
+const app = source('../../App.vue')
 const appShell = source('../../components/layout/AppShell.vue')
 const adminShell = source('../../components/layout/AdminShell.vue')
 const homeMarket = source('../homeMarket.ts')
