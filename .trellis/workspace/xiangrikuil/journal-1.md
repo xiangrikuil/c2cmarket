@@ -1153,3 +1153,42 @@ Reduced clean development homepage TTFB from 9.83s to 3.404s, fixed query-bearin
 ### Status
 
 [OK] **Completed**
+
+
+## Session 32: Fix PR 20 CI failures
+
+**Date**: 2026-08-03
+**Task**: Fix PR 20 CI failures
+**Package**: frontend
+**Branch**: `codex/orders-promotions-integrated`
+
+### Summary
+
+Restored PR #20 CI without changing product behavior or Umami configuration, tightened Gitleaks allowlists, and verified the pushed PR head is merge-ready.
+
+### Main Changes
+
+- Fixed the Linux-sensitive App.vue test path and migration 75 PostgreSQL rollback gate.
+- Aligned completed-order review fixtures with migration 68 state constraints.
+- Scoped public order-number Gitleaks allowlists to exact detected secret values and synchronized release/migration specs.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `9aaaba1` | (see git log) |
+| `0f3aaaf` | (see git log) |
+
+### Testing
+
+- [OK] Frontend: 74 files and 369 tests; Node 24 typecheck and real-mode Nuxt build passed.
+- [OK] Full go test ./..., go vet ./..., PostgreSQL integration 75->73->75, Gitleaks 8.30.1, migration docs, bash -n, and git diff --check passed.
+- [OK] GitHub release-gate and Cloudflare Workers preview build passed for pushed SHA 0f3aaaf.
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- Merge PR #20 into staging.

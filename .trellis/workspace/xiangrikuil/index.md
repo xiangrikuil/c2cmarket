@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 31
+- **Total Sessions**: 32
 - **Last Active**: 2026-08-03
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~1155 | Active |
+| `journal-1.md` | ~1194 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 32 | 2026-08-03 | Fix PR 20 CI failures | `9aaaba1`, `0f3aaaf` | `codex/orders-promotions-integrated` |
 | 31 | 2026-08-03 | Fix Nuxt development first-page latency | `37a7d25` | `codex/orders-promotions-integrated` |
 | 30 | 2026-08-02 | 整合 API 订单与推广分支 | `5586e81`, `29e1d4d`, `07af546` | `codex/orders-promotions-integrated` |
 | 29 | 2026-08-02 | API 订单角色视图与 24 小时核验期 | `a527105` | `codex/api-order-role-aware-detail` |
