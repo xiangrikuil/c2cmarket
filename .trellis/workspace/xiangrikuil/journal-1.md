@@ -1192,3 +1192,26 @@ Restored PR #20 CI without changing product behavior or Umami configuration, tig
 ### Next Steps
 
 - Merge PR #20 into staging.
+
+
+## Session 33: Close launch P0 and active-user trust flow
+
+**Date**: 2026-08-03
+**Task**: Close launch P0 and active-user trust flow
+**Package**: frontend
+**Branch**: `codex/p0-p1-launch-closure`
+
+### Summary
+
+Disabled unsupported launch paths, repaired operations drift, and completed the active-user report, dispute, and appeal flow with authorization, privacy, pagination, and reputation transaction safeguards.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `0bd2874` | (see git log) |
+| `3522839` | (see git log) |
+
+### Status
+
+[OK] **Completed**
