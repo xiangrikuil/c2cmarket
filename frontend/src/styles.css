@@ -871,7 +871,8 @@ html[data-theme="minimal-modern"] .account-security-side {
   isolation: isolate;
   width: 100%;
   min-width: 0;
-  min-height: 610px;
+  height: 100%;
+  min-height: 0;
   overflow: hidden;
   border: 1px solid #e2e8f0;
   border-left: 3px solid #2563eb;
@@ -904,13 +905,13 @@ html[data-theme="minimal-modern"] .account-security-side {
 }
 
 .api-product-card__header {
-  padding: 13px 14px 11px;
+  padding: 10px 11px 9px;
 }
 
 .api-product-card__icon {
   display: grid;
-  width: 36px;
-  height: 36px;
+  width: 32px;
+  height: 32px;
   flex: 0 0 auto;
   place-items: center;
   border: 1px solid color-mix(in oklab, var(--api-product-accent, #2563eb) 22%, #e2e8f0);
@@ -939,7 +940,7 @@ html[data-theme="minimal-modern"] .account-security-side {
 
 .api-product-card__technical-facts > div {
   min-width: 0;
-  padding: 9px 7px;
+  padding: 7px 4px;
   text-align: center;
 }
 
@@ -955,7 +956,7 @@ html[data-theme="minimal-modern"] .account-security-side {
 }
 
 .api-product-card__technical-facts dd {
-  margin-top: 3px;
+  margin-top: 2px;
   overflow: hidden;
   color: #0f172a;
   font-size: 11px;
@@ -966,13 +967,13 @@ html[data-theme="minimal-modern"] .account-security-side {
 }
 
 .api-product-card__details {
-  padding: 10px 14px;
+  padding: 8px 11px;
 }
 
 .api-product-card__detail-facts {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 9px 18px;
+  gap: 6px 12px;
 }
 
 .api-product-card__detail-facts > div {
@@ -993,13 +994,13 @@ html[data-theme="minimal-modern"] .account-security-side {
 .api-product-card__merchant {
   min-width: 0;
   border-top: 1px solid #e2e8f0;
-  padding: 10px 14px;
+  padding: 8px 11px;
 }
 
 .api-product-card__merchant-avatar {
   display: grid;
-  width: 32px;
-  height: 32px;
+  width: 28px;
+  height: 28px;
   flex: 0 0 auto;
   place-items: center;
   overflow: hidden;
@@ -1013,7 +1014,7 @@ html[data-theme="minimal-modern"] .account-security-side {
 .api-product-card__action {
   margin-top: auto;
   border-top: 1px solid #e2e8f0;
-  padding: 10px 14px 11px;
+  padding: 8px 11px 9px;
 }
 
 .api-product-card__action [data-slot="button"] {
@@ -1022,10 +1023,6 @@ html[data-theme="minimal-modern"] .account-security-side {
 }
 
 @media (max-width: 420px) {
-  .api-product-card {
-    min-height: 0;
-  }
-
   .api-product-card__technical-facts > div {
     padding-inline: 4px;
   }

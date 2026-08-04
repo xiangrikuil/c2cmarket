@@ -20,8 +20,12 @@ const props = withDefaults(defineProps<{
 const emit = defineEmits<{ activate: [] }>()
 
 const compactModels = computed(() => compactApiServiceModels(props.card.models))
-const modelCountLabel = computed(() => props.card.models.length ? `支持 ${props.card.models.length} 个模型` : '模型待选择')
 const modelTitle = computed(() => props.card.models.join(' / ') || '模型待选择')
+const modelSummary = computed(() => {
+  const parts = [...compactModels.value.visibleModels]
+  if (compactModels.value.hiddenModelCount) parts.push(`+${compactModels.value.hiddenModelCount} 个`)
+  return parts.join(' / ') || '模型待选择'
+})
 const hasReputationRisk = computed(() => Boolean(props.card.sellerReputation && props.card.sellerReputation.state !== 'active'))
 const merchantInitial = computed(() => props.card.merchantName.trim().slice(0, 1).toUpperCase() || '店')
 </script>
@@ -51,32 +55,14 @@ const merchantInitial = computed(() => props.card.merchantName.trim().slice(0, 1
             </div>
             <h2 class="mt-1.5 truncate text-sm font-semibold text-slate-950" :title="card.title">{{ card.title }}</h2>
             <p class="truncate text-xs text-muted-foreground" :title="`${card.delivery} · ${modelTitle}`">
-              {{ card.delivery }} · {{ modelCountLabel }}
+              {{ card.delivery }} · {{ modelSummary }}
             </p>
-            <div class="mt-1 flex min-w-0 items-center gap-1 overflow-hidden" :title="modelTitle">
-              <Badge
-                v-for="model in compactModels.visibleModels"
-                :key="model"
-                variant="secondary"
-                class="max-w-[8.5rem] shrink truncate px-1.5 py-0 text-[10px] font-medium"
-              >
-                {{ model }}
-              </Badge>
-              <Badge
-                v-if="compactModels.hiddenModelCount"
-                variant="outline"
-                class="shrink-0 px-1.5 py-0 text-[10px] font-semibold"
-              >
-                +{{ compactModels.hiddenModelCount }}
-              </Badge>
-              <span v-if="!card.models.length" class="text-[10px] text-muted-foreground">待选择具体模型</span>
-            </div>
           </div>
         </div>
 
-        <div class="mt-3 flex items-end justify-between gap-2">
+        <div class="mt-2 flex items-end justify-between gap-2">
           <div class="min-w-0">
-            <div class="api-free-service-card__price api-product-card__price whitespace-nowrap text-2xl font-semibold">
+            <div class="api-free-service-card__price api-product-card__price whitespace-nowrap text-xl font-semibold">
               ¥{{ formatDecimal(card.cnyPerUsdAllowance, 2, 6) }}
               <span class="text-xs font-medium">/ $1</span>
             </div>
@@ -117,7 +103,7 @@ const merchantInitial = computed(() => props.card.merchantName.trim().slice(0, 1
             <div class="mt-0.5 text-[10px] text-muted-foreground">{{ card.merchantType }} · API 商家</div>
           </div>
         </div>
-        <div class="mt-2 flex min-h-5 min-w-0 flex-wrap items-center gap-1.5">
+        <div v-if="preview || card.merchantBadges.length || card.merchantRefundCommitment" class="mt-1.5 flex min-h-5 min-w-0 flex-wrap items-center gap-1.5">
           <div v-if="preview" class="flex items-center gap-1.5 text-xs text-muted-foreground">
             <ShieldQuestion class="h-3.5 w-3.5" />
             发布后显示账户公开信誉
@@ -135,12 +121,12 @@ const merchantInitial = computed(() => props.card.merchantName.trim().slice(0, 1
               <Zap v-else />
               {{ badge.label }}
             </Badge>
-            <Badge variant="outline" :class="card.merchantRefundCommitment ? 'border-orange-300 bg-orange-50 text-orange-800' : 'text-muted-foreground'">
-              <ShieldCheck class="h-3 w-3" />{{ card.merchantRefundCommitment ? '商户全额退款承诺' : '无额外退款承诺' }}
+            <Badge v-if="card.merchantRefundCommitment" variant="outline" class="border-orange-300 bg-orange-50 text-orange-800">
+              <ShieldCheck class="h-3 w-3" />商户全额退款承诺
             </Badge>
           </template>
         </div>
-        <div class="mt-1.5 min-w-0">
+        <div class="mt-1 min-w-0">
           <ReputationInlineSummary
             v-if="!preview"
             class="min-w-0"
@@ -152,13 +138,13 @@ const merchantInitial = computed(() => props.card.merchantName.trim().slice(0, 1
 
       <div class="api-product-card__action">
         <div v-if="preview">
-          <Button type="button" class="pointer-events-none h-10 w-full" aria-disabled="true" tabindex="-1">
+          <Button type="button" class="pointer-events-none h-9 w-full" aria-disabled="true" tabindex="-1">
             <ShoppingCart class="h-4 w-4" />选择金额并下单
           </Button>
           <p class="mt-1 text-center text-[10px] text-muted-foreground">预览状态，不可操作</p>
         </div>
         <RouterLink v-else-if="card.actionHref" :to="card.actionHref" class="block" @click.capture="emit('activate')">
-          <Button class="h-10 w-full"><ShoppingCart class="h-4 w-4" />选择金额并下单</Button>
+          <Button class="h-9 w-full"><ShoppingCart class="h-4 w-4" />选择金额并下单</Button>
         </RouterLink>
       </div>
     </div>

@@ -107,18 +107,18 @@ function slotTitle(slotStartedAt: string, slotState: ApiHealthSlotState) {
       </div>
     </div>
 
-    <div class="mt-2 grid grid-cols-12 gap-1" aria-label="最近一小时五分钟探测槽">
+    <div class="mt-1.5 grid grid-cols-12 gap-1" aria-label="最近一小时五分钟探测槽">
       <span
         v-for="(slot, index) in slots"
         :key="slot.slotStartedAt || index"
-        class="h-2 min-w-0 rounded-[2px]"
+        class="h-1.5 min-w-0 rounded-[2px]"
         :class="slotClass(slot.state)"
         :title="slotTitle(slot.slotStartedAt, slot.state)"
         :aria-label="slotTitle(slot.slotStartedAt, slot.state)"
       />
     </div>
 
-    <div class="mt-2 flex min-w-0 items-center gap-1 text-[10px] text-muted-foreground">
+    <div class="mt-1.5 flex min-w-0 items-center gap-1 text-[9px] text-muted-foreground">
       <span class="min-w-0 truncate" :title="summary?.probeModel ?? '未配置探测模型'">
         {{ summary?.probeModel ? `模型 ${summary.probeModel}` : '未配置探测模型' }}
       </span>
@@ -133,14 +133,14 @@ function slotTitle(slotStartedAt: string, slotState: ApiHealthSlotState) {
 <style scoped>
 .api-service-health-panel {
   border-top: 1px solid var(--border);
-  padding: 9px 12px 10px;
+  padding: 7px 9px 7px;
   background: #fff;
 }
 
 .api-service-health-panel__metrics {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  margin-top: 8px;
+  margin-top: 5px;
 }
 
 .api-service-health-panel__metrics > div {
@@ -149,7 +149,7 @@ function slotTitle(slotStartedAt: string, slotState: ApiHealthSlotState) {
 
 .api-service-health-panel__metrics > div + div {
   border-left: 1px solid var(--border);
-  padding-left: 10px;
+  padding-left: 7px;
 }
 
 .api-service-health-panel__metrics span,
@@ -159,15 +159,15 @@ function slotTitle(slotStartedAt: string, slotState: ApiHealthSlotState) {
 
 .api-service-health-panel__metrics span {
   color: var(--muted-foreground);
-  font-size: 10px;
-  line-height: 14px;
+  font-size: 9px;
+  line-height: 12px;
 }
 
 .api-service-health-panel__metrics strong {
-  margin-top: 2px;
+  margin-top: 1px;
   color: var(--foreground);
-  font-size: 12px;
+  font-size: 11px;
   font-variant-numeric: tabular-nums;
-  line-height: 16px;
+  line-height: 14px;
 }
 </style>

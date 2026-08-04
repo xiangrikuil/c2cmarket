@@ -23,6 +23,10 @@ const formatNumber = (value: number, digits = 2) => value.toFixed(digits).replac
 const score = (value: number) => Math.round(value)
 const visibleModels = props.row.package.models.slice(0, 3)
 const hiddenModelCount = Math.max(0, props.row.package.models.length - visibleModels.length)
+const modelSummary = [
+  ...visibleModels.map(model => model.modelName),
+  ...(hiddenModelCount ? [`+${hiddenModelCount} 个`] : []),
+].join(' / ') || '模型待选择'
 </script>
 
 <template>
@@ -45,19 +49,13 @@ const hiddenModelCount = Math.max(0, props.row.package.models.length - visibleMo
               <Badge v-if="rank === 1 && !promoted" variant="trust">综合推荐</Badge>
             </div>
             <h2 class="mt-1.5 truncate text-sm font-semibold text-slate-950" :title="row.package.name">{{ row.package.name }}</h2>
-            <p class="truncate text-xs text-muted-foreground" :title="row.service.title">{{ row.service.title }}</p>
-            <div class="mt-1 flex min-w-0 items-center gap-1 overflow-hidden">
-              <Badge v-for="model in visibleModels" :key="model.serviceModelId" variant="secondary" class="max-w-32 truncate px-1.5 py-0 text-[10px]">
-                {{ model.modelName }}
-              </Badge>
-              <Badge v-if="hiddenModelCount" variant="outline" class="px-1.5 py-0 text-[10px]">+{{ hiddenModelCount }}</Badge>
-            </div>
+            <p class="truncate text-xs text-muted-foreground" :title="`${row.service.title} · ${modelSummary}`">{{ row.service.title }} · {{ modelSummary }}</p>
           </div>
         </div>
 
-        <div class="mt-3 flex items-end justify-between gap-2">
+        <div class="mt-2 flex items-end justify-between gap-2">
           <div class="min-w-0">
-            <div class="api-product-card__price text-2xl font-semibold">¥{{ formatNumber(row.package.priceCny) }}</div>
+            <div class="api-product-card__price text-xl font-semibold">¥{{ formatNumber(row.package.priceCny) }}</div>
             <div class="text-[11px] text-muted-foreground">面板额度 ${{ formatNumber(row.package.panelAllowance, 6) }} · 交付后生效</div>
           </div>
           <div class="shrink-0 pb-0.5 text-right text-[11px] font-medium text-primary">综合 {{ score(row.score) }} 分</div>
@@ -96,12 +94,12 @@ const hiddenModelCount = Math.max(0, props.row.package.models.length - visibleMo
             </div>
             <div class="mt-0.5 text-[10px] text-muted-foreground">近期完成 {{ row.service.completed30d === null ? '暂无数据' : `${row.service.completed30d} 单` }}</div>
           </div>
-          <Badge variant="outline" class="shrink-0 text-[10px]" :title="row.service.merchantRefundCommitment ? '商户全额退款承诺' : '无额外退款承诺'">
-            <ShieldCheck class="h-3 w-3" />{{ row.service.merchantRefundCommitment ? '全额退款' : '无额外承诺' }}
+          <Badge v-if="row.service.merchantRefundCommitment" variant="outline" class="shrink-0 text-[10px]" title="商户全额退款承诺">
+            <ShieldCheck class="h-3 w-3" />全额退款
           </Badge>
         </div>
         <ReputationInlineSummary
-          class="mt-1.5 min-w-0"
+          class="mt-1 min-w-0"
           :summary="row.service.sellerReputation"
           :compact="row.service.sellerReputation?.state === 'active'"
         />
@@ -113,7 +111,7 @@ const hiddenModelCount = Math.max(0, props.row.package.models.length - visibleMo
           class="block"
           @click.capture="emit('activate')"
         >
-          <Button class="h-10 w-full"><ShoppingCart class="h-4 w-4" />查看并购买套餐</Button>
+          <Button class="h-9 w-full"><ShoppingCart class="h-4 w-4" />查看并购买套餐</Button>
         </RouterLink>
       </div>
     </div>

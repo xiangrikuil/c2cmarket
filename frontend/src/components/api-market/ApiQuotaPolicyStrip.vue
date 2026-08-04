@@ -39,14 +39,14 @@ const ariaLabel = computed(() => [
 .api-quota-policy-strip {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  min-height: 3.25rem;
+  min-height: 2.75rem;
   border-block: 1px solid var(--border);
   background: #f8fafc;
 }
 
 .api-quota-policy-strip > div {
   min-width: 0;
-  padding: 0.4375rem 0.5rem;
+  padding: 0.3125rem 0.375rem;
   text-align: center;
 }
 
@@ -61,13 +61,13 @@ const ariaLabel = computed(() => [
 }
 
 .api-quota-policy-strip dd {
-  min-height: 1.25rem;
-  margin-top: 0.125rem;
+  min-height: 1rem;
+  margin-top: 0.0625rem;
   overflow-wrap: anywhere;
   color: var(--foreground);
-  font-size: 0.71875rem;
+  font-size: 0.6875rem;
   font-weight: 650;
-  line-height: 0.8125rem;
+  line-height: 0.75rem;
   white-space: normal;
 }
 </style>

@@ -34,9 +34,14 @@ const emit = defineEmits<{ purchase: [offer: PublicApiQuotaOffer] }>()
 const isRush = computed(() => props.variant === 'rush')
 const purchasePending = computed(() => props.pendingOfferId === props.offer.id)
 const purchaseDisabled = computed(() => !props.offer.isOrderable || Boolean(props.pendingOfferId))
-const statusLabel = computed(() => props.offer.isOrderable
-  ? isRush.value ? '正在抢购' : '可购买'
-  : props.offer.orderabilityReason)
+const statusLabel = computed(() => {
+  if (props.offer.isOrderable) return isRush.value ? '正在抢购' : '可购买'
+  if (props.offer.orderabilityCode === 'sold_out') return '已售罄'
+  if (props.offer.orderabilityCode === 'not_started') return '未开售'
+  if (props.offer.orderabilityCode === 'round_ended') return '本轮结束'
+  if (props.offer.orderabilityCode === 'batch_expired') return '已过期'
+  return '不可购买'
+})
 const statusVariant = computed(() => {
   if (props.offer.isOrderable) return 'verified'
   if (props.offer.orderabilityCode === 'not_started') return 'trust'
@@ -85,16 +90,16 @@ function formatAbsoluteTime(value: string) {
           <div class="min-w-0 flex-1">
             <div class="flex flex-wrap items-center gap-1.5">
               <Badge variant="outline" class="api-product-card__category">{{ categoryLabel }}</Badge>
-              <Badge :variant="statusVariant">{{ statusLabel }}</Badge>
+              <Badge :variant="statusVariant" :title="offer.isOrderable ? statusLabel : offer.orderabilityReason">{{ statusLabel }}</Badge>
               <Badge v-if="!isRush" variant="secondary">{{ getApiQuotaSaleModeLabel(offer.saleMode) }}</Badge>
             </div>
             <h2 class="mt-1.5 truncate text-sm font-semibold text-slate-950" :title="offer.name">{{ offer.name }}</h2>
             <p class="truncate text-xs text-muted-foreground" :title="`${offer.serviceTitle} · ${getApiQuotaDistributionLabel(offer.distributionSystem)}`">{{ offer.serviceTitle }} · {{ getApiQuotaDistributionLabel(offer.distributionSystem) }}</p>
           </div>
         </div>
-        <div class="mt-3 flex items-end justify-between gap-2">
+        <div class="mt-2 flex items-end justify-between gap-2">
           <div>
-            <div class="api-product-card__price text-2xl font-semibold">¥{{ formatDecimal(offer.priceCny, 2, 2) }}</div>
+            <div class="api-product-card__price text-xl font-semibold">¥{{ formatDecimal(offer.priceCny, 2, 2) }}</div>
             <div class="text-[11px] text-muted-foreground">一次购买 · ${{ formatDecimal(offer.usdAllowance, 0, 6) }} 美元额度</div>
           </div>
           <div class="pb-0.5 text-right text-[11px] text-muted-foreground">¥{{ formatDecimal(offer.cnyPerUsd, 3, 6) }} / $1</div>
@@ -138,7 +143,7 @@ function formatAbsoluteTime(value: string) {
       </div>
 
       <div class="api-product-card__action">
-        <Button :disabled="purchaseDisabled" class="h-10 w-full" @click="emit('purchase', offer)">
+        <Button :disabled="purchaseDisabled" class="h-9 w-full" @click="emit('purchase', offer)">
           <ShoppingCart class="h-4 w-4" />{{ purchaseLabel }}
         </Button>
       </div>

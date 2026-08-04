@@ -49,7 +49,7 @@ describe('API promotion architecture', () => {
     expect(packageCard).not.toContain('商业推广，不代表平台质量认证或信誉背书')
     expect(freeCard).toContain('api-product-card')
     expect(packageCard).toContain('api-product-card')
-    expect(styles).toMatch(/\.api-product-card \{[\s\S]*min-height: 610px/)
+    expect(styles).toMatch(/\.api-product-card \{[\s\S]*height: 100%;[\s\S]*min-height: 0;/)
     expect(freeCard).not.toContain('api-free-service-card__promotion-note')
     expect(packageCard).not.toContain('api-package-card__promotion-note')
   })

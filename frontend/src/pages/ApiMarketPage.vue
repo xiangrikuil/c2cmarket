@@ -555,7 +555,7 @@ onBeforeUnmount(() => {
   grid-template-columns: minmax(0, 1fr);
   width: 100%;
   align-items: stretch;
-  gap: 0.875rem;
+  gap: 0.75rem;
 }
 
 @media (min-width: 760px) {
@@ -564,9 +564,15 @@ onBeforeUnmount(() => {
   }
 }
 
-@media (min-width: 1280px) {
+@media (min-width: 1100px) {
   .api-product-card-grid {
     grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+@media (min-width: 1360px) {
+  .api-product-card-grid {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
   }
 }
 </style>
