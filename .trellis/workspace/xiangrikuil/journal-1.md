@@ -1259,3 +1259,25 @@ Added dedicated linux.do-proven restricted-account appeal sessions, transactiona
 ### Status
 
 [OK] **Completed**
+
+
+## Session 36: P1 first transaction guidance
+
+**Date**: 2026-08-04
+**Task**: P1 first transaction guidance
+**Package**: frontend
+**Branch**: `codex/p0-p1-launch-closure`
+
+### Summary
+
+Added fresh-query-gated first transaction guidance to the personal center, covered all six history sources, and verified desktop/mobile layouts.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `04e6bae` | (see git log) |
+
+### Status
+
+[OK] **Completed**

@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 35
+- **Total Sessions**: 36
 - **Last Active**: 2026-08-04
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~1261 | Active |
+| `journal-1.md` | ~1283 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 36 | 2026-08-04 | P1 first transaction guidance | `04e6bae` | `codex/p0-p1-launch-closure` |
 | 35 | 2026-08-04 | Close restricted-account appeal flow | `8774278` | `codex/p0-p1-launch-closure` |
 | 34 | 2026-08-03 | Close remaining P0 data and moderation gaps | `be7d6eb` | `codex/p0-p1-launch-closure` |
 | 33 | 2026-08-03 | Close launch P0 and active-user trust flow | `0bd2874`, `3522839` | `codex/p0-p1-launch-closure` |
