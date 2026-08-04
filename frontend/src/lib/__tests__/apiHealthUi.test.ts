@@ -17,10 +17,12 @@ const backend = source('../apiHealthBackend.ts')
 describe('API 健康探针前端边界', () => {
   it('公共健康摘要固定渲染 12 槽并披露模型和单节点局限', () => {
     expect(healthPanel).toContain('Array.from({ length: 12 }')
-    expect(healthPanel).toContain('平台近期测量')
+    expect(healthPanel).toContain('平台探测')
     expect(healthPanel).toContain('仅代表当前模型与平台单节点')
     expect(healthPanel).toContain('aria-label="最近一小时五分钟探测槽"')
-    expect(healthPanel).toContain('min-h-[168px]')
+    expect(healthPanel).toContain('api-service-health-panel__metrics')
+    expect(healthPanel).toContain('successRatePercent === null')
+    expect(healthPanel).not.toContain('min-h-[168px]')
   })
 
   it('Owner 详情接入独立探针面板且 credential 永不回填', () => {

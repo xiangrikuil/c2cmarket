@@ -1,9 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import Activity from 'lucide-vue-next/dist/esm/icons/activity.js'
-import Clock3 from 'lucide-vue-next/dist/esm/icons/clock-3.js'
-import Gauge from 'lucide-vue-next/dist/esm/icons/gauge.js'
-import Server from 'lucide-vue-next/dist/esm/icons/server.js'
 import { Badge } from '@/components/ui/badge'
 import type { ApiHealthAvailabilityReason, ApiHealthSlotState, ApiHealthState, ApiServiceHealthSummary } from '@/types/apiHealth'
 
@@ -79,53 +76,98 @@ function slotTitle(slotStartedAt: string, slotState: ApiHealthSlotState) {
 </script>
 
 <template>
-  <section class="min-h-[168px] border-t border-border pt-4" aria-label="平台近期健康探测">
-    <div class="flex min-w-0 items-start justify-between gap-3">
-      <div class="min-w-0">
-        <div class="flex items-center gap-2 text-sm font-semibold">
-          <Activity class="h-4 w-4 text-primary" aria-hidden="true" />
-          <span>平台近期测量</span>
-        </div>
-        <p class="mt-1 truncate text-xs text-muted-foreground" :title="summary?.probeModel ?? '未配置探测模型'">
-          {{ summary?.probeModel ? `模型 ${summary.probeModel}` : '未配置探测模型' }}
-        </p>
+  <section class="api-service-health-panel" aria-label="平台近期健康探测">
+    <div class="flex min-w-0 items-center justify-between gap-2">
+      <div class="flex min-w-0 items-center gap-1.5">
+        <Activity class="h-3.5 w-3.5 shrink-0 text-emerald-600" aria-hidden="true" />
+        <span class="shrink-0 text-xs font-semibold">平台探测</span>
+        <time
+          class="truncate text-[10px] text-muted-foreground"
+          :datetime="summary?.lastSampledAt ?? undefined"
+          :title="formatSampleTime(summary?.lastSampledAt)"
+        >
+          {{ formatSampleTime(summary?.lastSampledAt) }}
+        </time>
       </div>
-      <Badge :variant="statusVariant">{{ stateLabel }}</Badge>
+      <Badge :variant="statusVariant" class="h-5 shrink-0 px-1.5 text-[10px]">{{ stateLabel }}</Badge>
     </div>
 
-    <div class="mt-4 grid grid-cols-3 gap-2 text-sm">
-      <div class="min-w-0">
-        <div class="flex items-center gap-1 text-xs text-muted-foreground"><Gauge class="h-3.5 w-3.5" />成功率</div>
-        <div class="mt-1 font-semibold tabular-nums">{{ summary?.successRatePercent ? `${summary.successRatePercent}%` : '—' }}</div>
+    <div class="api-service-health-panel__metrics">
+      <div>
+        <span>成功率</span>
+        <strong>{{ summary?.successRatePercent === null || summary?.successRatePercent === undefined ? '—' : `${summary.successRatePercent}%` }}</strong>
       </div>
-      <div class="min-w-0">
-        <div class="flex items-center gap-1 text-xs text-muted-foreground"><Clock3 class="h-3.5 w-3.5" />TTFT 中位</div>
-        <div class="mt-1 font-semibold tabular-nums">{{ summary?.medianTtftMs === null || summary?.medianTtftMs === undefined ? '—' : `${summary.medianTtftMs}ms` }}</div>
+      <div>
+        <span>首字中位</span>
+        <strong>{{ summary?.medianTtftMs === null || summary?.medianTtftMs === undefined ? '—' : `${summary.medianTtftMs}ms` }}</strong>
       </div>
-      <div class="min-w-0">
-        <div class="flex items-center gap-1 text-xs text-muted-foreground"><Server class="h-3.5 w-3.5" />成功样本</div>
-        <div class="mt-1 font-semibold tabular-nums">{{ summary ? `${summary.successfulSamples}/${summary.totalSamples}` : '0/0' }}</div>
+      <div>
+        <span>近 1 小时</span>
+        <strong>{{ summary ? `${summary.successfulSamples} / ${summary.totalSamples}` : '0 / 0' }}</strong>
       </div>
     </div>
 
-    <div class="mt-4 grid grid-cols-12 gap-1" aria-label="最近一小时五分钟探测槽">
+    <div class="mt-2 grid grid-cols-12 gap-1" aria-label="最近一小时五分钟探测槽">
       <span
         v-for="(slot, index) in slots"
         :key="slot.slotStartedAt || index"
-        class="h-2.5 min-w-0 rounded-[2px]"
+        class="h-2 min-w-0 rounded-[2px]"
         :class="slotClass(slot.state)"
         :title="slotTitle(slot.slotStartedAt, slot.state)"
         :aria-label="slotTitle(slot.slotStartedAt, slot.state)"
       />
     </div>
 
-    <div class="mt-3 flex min-h-5 items-center justify-between gap-3 text-xs text-muted-foreground">
-      <span class="min-w-0 truncate" :title="availabilityLabel ?? '只代表当前探测模型与平台单节点'">
+    <div class="mt-2 flex min-w-0 items-center gap-1 text-[10px] text-muted-foreground">
+      <span class="min-w-0 truncate" :title="summary?.probeModel ?? '未配置探测模型'">
+        {{ summary?.probeModel ? `模型 ${summary.probeModel}` : '未配置探测模型' }}
+      </span>
+      <span aria-hidden="true">·</span>
+      <span class="min-w-0 truncate" :title="availabilityLabel ?? '仅代表当前模型与平台单节点'">
         {{ availabilityLabel ?? '仅代表当前模型与平台单节点' }}
       </span>
-      <time class="shrink-0 tabular-nums" :datetime="summary?.lastSampledAt ?? undefined">
-        {{ formatSampleTime(summary?.lastSampledAt) }}
-      </time>
     </div>
   </section>
 </template>
+
+<style scoped>
+.api-service-health-panel {
+  border-top: 1px solid var(--border);
+  padding: 9px 12px 10px;
+  background: #fff;
+}
+
+.api-service-health-panel__metrics {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin-top: 8px;
+}
+
+.api-service-health-panel__metrics > div {
+  min-width: 0;
+}
+
+.api-service-health-panel__metrics > div + div {
+  border-left: 1px solid var(--border);
+  padding-left: 10px;
+}
+
+.api-service-health-panel__metrics span,
+.api-service-health-panel__metrics strong {
+  display: block;
+}
+
+.api-service-health-panel__metrics span {
+  color: var(--muted-foreground);
+  font-size: 10px;
+  line-height: 14px;
+}
+
+.api-service-health-panel__metrics strong {
+  margin-top: 2px;
+  color: var(--foreground);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  line-height: 16px;
+}
+</style>

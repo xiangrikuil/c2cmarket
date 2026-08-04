@@ -328,7 +328,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="space-y-5">
+  <div class="api-market-catalog space-y-5">
     <header class="flex flex-col gap-3 border-b border-border pb-4 lg:flex-row lg:items-end lg:justify-between">
       <div>
         <div class="flex items-center gap-2 text-sm font-medium text-primary"><Code2 class="h-4 w-4" />API 额度市场</div>
@@ -382,7 +382,7 @@ onBeforeUnmount(() => {
                 <div class="mt-2 font-medium">本场暂无额度包</div>
                 <p class="mt-1 text-sm text-muted-foreground">可以切换其他场次，或发布自己的限时额度包。</p>
               </div>
-              <div v-else class="mt-4 grid items-stretch gap-3 xl:grid-cols-3">
+              <div v-else class="api-product-card-grid mt-4">
                 <ApiQuotaOfferCard
                   v-for="item in rushRows"
                   :key="item.id"
@@ -442,7 +442,7 @@ onBeforeUnmount(() => {
           </template>
         </EmptyState>
 
-        <div v-else class="grid items-stretch gap-4 xl:grid-cols-3">
+        <div v-else class="api-product-card-grid">
           <ApiQuotaOfferCard
             v-for="item in quotaRows"
             :key="item.id"
@@ -493,7 +493,7 @@ onBeforeUnmount(() => {
           </div>
           <EmptyState v-if="!packageReady" title="先选择精确模型和有效期" description="选择完成后才会展示可购买套餐和综合推荐顺序。" />
           <EmptyState v-else-if="packageDisplayRows.length === 0" title="暂无匹配的限时流量包" description="当前模型和有效期下没有可购买库存。" />
-          <div v-else class="api-service-card-grid">
+          <div v-else class="api-product-card-grid">
             <div
               v-for="entry in packageDisplayRows"
               :key="entry.row.package.id"
@@ -523,7 +523,7 @@ onBeforeUnmount(() => {
         <ErrorState v-if="freeServicesQuery.error.value" description="自由额度服务暂时无法加载。" @retry="freeServicesQuery.refetch()" />
         <SkeletonBlock v-else-if="freeServicesQuery.isLoading.value" :lines="8" />
         <EmptyState v-else-if="freeServiceDisplayRows.length === 0" title="暂无自由额度服务" description="当前没有可公开下单的 API 服务。" />
-        <div v-else class="quota-free-grid">
+        <div v-else class="api-product-card-grid">
           <div
             v-for="entry in freeServiceDisplayRows"
             :key="entry.service.id"
@@ -545,19 +545,28 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
-.quota-free-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(min(100%, 330px), 1fr));
-  width: 100%;
-  max-width: 1640px;
-  margin-inline: auto;
-  align-items: start;
-  gap: 1rem;
+.api-market-catalog {
+  min-width: 0;
+  background: #fff;
 }
 
-@media (max-width: 639px) {
-  .quota-free-grid {
-    grid-template-columns: minmax(0, 1fr);
+.api-product-card-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  width: 100%;
+  align-items: stretch;
+  gap: 0.875rem;
+}
+
+@media (min-width: 760px) {
+  .api-product-card-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (min-width: 1280px) {
+  .api-product-card-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 }
 </style>

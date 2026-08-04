@@ -570,7 +570,10 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onNavigationKeydown)
 
       </header>
 
-      <main class="w-full px-4 py-5 sm:px-5 lg:px-5">
+      <main
+        class="w-full px-4 py-5 sm:px-5 lg:px-5"
+        :class="route.path === '/api-market' ? 'bg-white' : ''"
+      >
         <slot />
       </main>
     </div>
