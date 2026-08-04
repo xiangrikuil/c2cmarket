@@ -28,8 +28,67 @@ const {
   countActivePublishedContent,
   dashboardTimestamp,
   getPrimaryAccountAlert,
+  shouldShowFirstTransactionGuide,
   uniqueRelatedApiOrderCount,
 } = await import('@/lib/personalCenterDashboard')
+type FirstTransactionQueries = import('@/lib/personalCenterDashboard').FirstTransactionQueries
+type FirstTransactionQueryName = keyof FirstTransactionQueries
+type FirstTransactionQuerySnapshot = FirstTransactionQueries[FirstTransactionQueryName]
+
+const firstTransactionQueryNames: FirstTransactionQueryName[] = [
+  'ownedCarpools',
+  'ownedApiServices',
+  'buyerCarpoolApplications',
+  'ownerCarpoolApplications',
+  'buyerApiOrders',
+  'merchantApiOrders',
+]
+
+function freshEmptyQuery(): FirstTransactionQueries[FirstTransactionQueryName] {
+  return {
+    data: [],
+    isSuccess: true,
+    isFetchedAfterMount: true,
+    isFetching: false,
+  }
+}
+
+const unstableFirstTransactionStates: Array<{
+  name: string
+  state: Partial<FirstTransactionQuerySnapshot>
+}> = [
+  {
+    name: 'pending without data',
+    state: { data: undefined, isSuccess: false, isFetchedAfterMount: false, isFetching: true },
+  },
+  {
+    name: 'failed without data',
+    state: { data: undefined, isSuccess: false, isFetchedAfterMount: true, isFetching: false },
+  },
+  {
+    name: 'active refetch after a successful empty result',
+    state: { data: [], isSuccess: true, isFetchedAfterMount: true, isFetching: true },
+  },
+  {
+    name: 'cached empty result not fetched after this mount',
+    state: { data: [], isSuccess: true, isFetchedAfterMount: false, isFetching: false },
+  },
+  {
+    name: 'stale cached empty result during the mount refetch',
+    state: { data: [], isSuccess: true, isFetchedAfterMount: false, isFetching: true },
+  },
+]
+
+function emptyFirstTransactionQueries(): FirstTransactionQueries {
+  return {
+    ownedCarpools: freshEmptyQuery(),
+    ownedApiServices: freshEmptyQuery(),
+    buyerCarpoolApplications: freshEmptyQuery(),
+    ownerCarpoolApplications: freshEmptyQuery(),
+    buyerApiOrders: freshEmptyQuery(),
+    merchantApiOrders: freshEmptyQuery(),
+  }
+}
 
 function carpoolApplication(id: string, status: CarpoolApplication['status'], updatedAt: string): CarpoolApplication {
   return {
@@ -59,6 +118,26 @@ function profile(overrides: Partial<UserProfile> = {}): UserProfile {
     ...overrides,
   } as UserProfile
 }
+
+describe('个人中心首单引导', () => {
+  it('仅在六项查询都完成本次挂载后的成功刷新且为空时显示', () => {
+    expect(shouldShowFirstTransactionGuide(emptyFirstTransactionQueries())).toBe(true)
+  })
+
+  it.each(firstTransactionQueryNames)('%s 存在任意历史记录时隐藏', (queryName) => {
+    const queries = emptyFirstTransactionQueries()
+    queries[queryName] = { ...queries[queryName], data: [{ id: queryName }] }
+    expect(shouldShowFirstTransactionGuide(queries)).toBe(false)
+  })
+
+  it.each(firstTransactionQueryNames.flatMap(queryName => (
+    unstableFirstTransactionStates.map(({ name, state }) => ({ queryName, name, state }))
+  )))('$queryName 处于 $name 状态时隐藏', ({ queryName, state }) => {
+    const queries = emptyFirstTransactionQueries()
+    queries[queryName] = { ...queries[queryName], ...state }
+    expect(shouldShowFirstTransactionGuide(queries)).toBe(false)
+  })
+})
 
 describe('个人中心待办聚合', () => {
   it('只保留当前买家或商户需要行动的真实状态', () => {

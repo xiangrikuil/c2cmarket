@@ -95,6 +95,41 @@ export type BuildAccountCompletenessInput = {
   apiPaymentComplete: boolean
 }
 
+export type FirstTransactionQuerySnapshot = {
+  data: readonly unknown[] | undefined
+  isSuccess: boolean
+  isFetchedAfterMount: boolean
+  isFetching: boolean
+}
+
+export type FirstTransactionQueries = {
+  ownedCarpools: FirstTransactionQuerySnapshot
+  ownedApiServices: FirstTransactionQuerySnapshot
+  buyerCarpoolApplications: FirstTransactionQuerySnapshot
+  ownerCarpoolApplications: FirstTransactionQuerySnapshot
+  buyerApiOrders: FirstTransactionQuerySnapshot
+  merchantApiOrders: FirstTransactionQuerySnapshot
+}
+
+const firstTransactionQueryNames: Array<keyof FirstTransactionQueries> = [
+  'ownedCarpools',
+  'ownedApiServices',
+  'buyerCarpoolApplications',
+  'ownerCarpoolApplications',
+  'buyerApiOrders',
+  'merchantApiOrders',
+]
+
+export function shouldShowFirstTransactionGuide(queries: FirstTransactionQueries) {
+  return firstTransactionQueryNames.every((name) => {
+    const query = queries[name]
+    return query.isSuccess
+      && query.isFetchedAfterMount
+      && !query.isFetching
+      && query.data?.length === 0
+  })
+}
+
 export function dashboardTimestamp(value: string) {
   const normalized = value.includes('T') ? value : value.replace(' ', 'T')
   const parsed = new Date(normalized).getTime()

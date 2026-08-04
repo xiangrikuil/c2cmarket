@@ -6,6 +6,7 @@ function source(path: string) {
 }
 
 const myCenter = source('../../pages/MyCenterPage.vue')
+const router = source('../../router.ts')
 const myCarpools = source('../../pages/MyCarpoolsPage.vue')
 const myApiServices = source('../../pages/MyApiServicesPage.vue')
 const myApiServiceDetail = source('../../pages/MyApiServiceDetailPage.vue')
@@ -33,6 +34,8 @@ const profileOverviewCard = source('../../components/personal-center/ProfileOver
 const pendingActivityPanel = source('../../components/personal-center/PendingActivityPanel.vue')
 const publishedContentSection = source('../../components/personal-center/PublishedContentSection.vue')
 const accountCompletenessCard = source('../../components/personal-center/AccountCompletenessCard.vue')
+const alertPrimitive = source('../../components/ui/alert/Alert.vue')
+const alertPrimitiveVariants = source('../../components/ui/alert/index.ts')
 
 function optionalSource(path: string) {
   const url = new URL(path, import.meta.url)
@@ -72,6 +75,47 @@ describe('个人、经营与管理工作区一致性', () => {
     expect(accountCompletenessCard).toContain('role="progressbar"')
     expect(accountCompletenessCard).toContain(':aria-valuenow="completeness.percentage"')
     expect(accountCompletenessCard).toContain('重新加载')
+  })
+
+  it('首单引导只接收完整查询结论并位于个人中心工作区之前', () => {
+    expect(myCenter).toContain('shouldShowFirstTransactionGuide')
+    expect(myCenter).toContain("useMyApiServices('all')")
+    expect(myCenter).toContain(':show-first-transaction-guide="showFirstTransactionGuide"')
+
+    const derivationStart = myCenter.indexOf('const showFirstTransactionGuide')
+    const derivationEnd = myCenter.indexOf('const hasApiServices', derivationStart)
+    const derivation = myCenter.slice(derivationStart, derivationEnd)
+    expect(derivationStart).toBeGreaterThan(-1)
+    expect(derivationEnd).toBeGreaterThan(derivationStart)
+    expect(derivation).not.toContain('?? []')
+    for (const queryName of [
+      'ownedCarpools',
+      'ownedApiServices',
+      'buyerCarpoolApplications',
+      'ownerCarpoolApplications',
+      'buyerApiOrders',
+      'merchantApiOrders',
+    ]) {
+      expect(derivation).toContain(`${queryName}:`)
+    }
+
+    const profileOverview = personalCenterDashboard.indexOf('<ProfileOverviewCard')
+    const guideAlert = personalCenterDashboard.indexOf('<Alert v-if="showFirstTransactionGuide"')
+    const workArea = personalCenterDashboard.indexOf('grid min-w-0 gap-4 min-[1100px]')
+    const guideMarkup = personalCenterDashboard.slice(guideAlert, workArea)
+    expect(profileOverview).toBeGreaterThan(-1)
+    expect(guideAlert).toBeGreaterThan(profileOverview)
+    expect(workArea).toBeGreaterThan(guideAlert)
+    expect(guideMarkup).toContain('开始第一笔交易')
+    expect(guideMarkup).toContain('to="/carpools"')
+    expect(guideMarkup).toContain('to="/api-market"')
+    expect(guideMarkup).not.toContain('/new')
+    expect(guideMarkup).not.toContain('<Card')
+    expect(personalCenterDashboard).toContain("from '@/components/ui/alert'")
+    expect(alertPrimitive).toContain('role="alert"')
+    expect(alertPrimitiveVariants).toContain('relative w-full')
+    expect(router).toContain("path: '/carpools'")
+    expect(router).toContain("path: '/api-market'")
   })
 
   it('联系与收款按真实能力分组，并使用统一表单组件', () => {

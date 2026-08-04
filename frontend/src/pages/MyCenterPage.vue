@@ -30,6 +30,7 @@ import {
   buildPublishedContent,
   countActivePublishedContent,
   getPrimaryAccountAlert,
+  shouldShowFirstTransactionGuide,
   uniqueRelatedApiOrderCount,
   type PersonalCenterMetric,
 } from '@/lib/personalCenterDashboard'
@@ -211,6 +212,44 @@ const dashboardPublishedUnavailable = computed(() => (
   carpoolsQuery.isError.value && carpools.value === undefined
   && apiServicesQuery.isError.value && apiServices.value === undefined
 ))
+const showFirstTransactionGuide = computed(() => shouldShowFirstTransactionGuide({
+  ownedCarpools: {
+    data: carpools.value,
+    isSuccess: carpoolsQuery.isSuccess.value,
+    isFetchedAfterMount: carpoolsQuery.isFetchedAfterMount.value,
+    isFetching: carpoolsQuery.isFetching.value,
+  },
+  ownedApiServices: {
+    data: apiServices.value,
+    isSuccess: apiServicesQuery.isSuccess.value,
+    isFetchedAfterMount: apiServicesQuery.isFetchedAfterMount.value,
+    isFetching: apiServicesQuery.isFetching.value,
+  },
+  buyerCarpoolApplications: {
+    data: rideApplications.value,
+    isSuccess: buyerRideApplicationsQuery.isSuccess.value,
+    isFetchedAfterMount: buyerRideApplicationsQuery.isFetchedAfterMount.value,
+    isFetching: buyerRideApplicationsQuery.isFetching.value,
+  },
+  ownerCarpoolApplications: {
+    data: ownerRideApplications.value,
+    isSuccess: ownerRideApplicationsQuery.isSuccess.value,
+    isFetchedAfterMount: ownerRideApplicationsQuery.isFetchedAfterMount.value,
+    isFetching: ownerRideApplicationsQuery.isFetching.value,
+  },
+  buyerApiOrders: {
+    data: apiOrders.value,
+    isSuccess: buyerApiOrdersQuery.isSuccess.value,
+    isFetchedAfterMount: buyerApiOrdersQuery.isFetchedAfterMount.value,
+    isFetching: buyerApiOrdersQuery.isFetching.value,
+  },
+  merchantApiOrders: {
+    data: merchantApiOrders.value,
+    isSuccess: merchantApiOrdersQuery.isSuccess.value,
+    isFetchedAfterMount: merchantApiOrdersQuery.isFetchedAfterMount.value,
+    isFetching: merchantApiOrdersQuery.isFetching.value,
+  },
+}))
 const hasApiServices = computed(() => (apiServices.value?.length ?? 0) > 0)
 const savedApiPaymentComplete = computed(() => (
   Boolean(apiPaymentSettings.value && isApiPaymentAccountSettingsComplete(apiPaymentSettings.value))
@@ -1078,6 +1117,7 @@ function goToLogin() {
       :published-loading="dashboardPublishedLoading"
       :published-error="dashboardPublishedError"
       :published-unavailable="dashboardPublishedUnavailable"
+      :show-first-transaction-guide="showFirstTransactionGuide"
       :completeness-loading="dashboardCompletenessLoading"
       :completeness-error="dashboardCompletenessError"
       :enabled-contact-count="enabledContactCount"
