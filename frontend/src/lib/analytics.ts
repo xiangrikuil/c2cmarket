@@ -92,6 +92,7 @@ const staticAnalyticsPaths = new Set([
   '/admin/official-prices',
   '/admin/users',
   '/admin/api-promotions',
+  '/admin/api-health-probes',
   '/admin/carpools',
   '/admin/api-services',
   '/admin/trade-intents',

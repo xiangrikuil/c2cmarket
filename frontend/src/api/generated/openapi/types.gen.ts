@@ -1081,6 +1081,161 @@ export type ModelAuditMonitorList = {
     items: Array<ModelAuditMonitor>;
 };
 
+export type ServiceHealthSample = {
+    slotStartedAt: string;
+    state: 'smooth' | 'fluctuating' | 'abnormal' | 'no_sample';
+};
+
+/**
+ * Platform-measured service health for one configured model from the current platform node. It is not an SLA or verification of every model offered by the service.
+ */
+export type ServiceHealthSummary = {
+    state: 'normal' | 'fluctuating' | 'abnormal' | 'no_sample';
+    availabilityReason: 'unconfigured' | 'disabled' | 'unauthorized' | 'insufficient' | 'stale' | 'temporarily_unavailable' | null;
+    successRatePercent: DecimalString | null;
+    successfulSamples: number;
+    totalSamples: number;
+    medianTtftMs: number | null;
+    probeModel: string | null;
+    lastSampledAt: string | null;
+    samples: [
+        ServiceHealthSample,
+        ServiceHealthSample,
+        ServiceHealthSample,
+        ServiceHealthSample,
+        ServiceHealthSample,
+        ServiceHealthSample,
+        ServiceHealthSample,
+        ServiceHealthSample,
+        ServiceHealthSample,
+        ServiceHealthSample,
+        ServiceHealthSample,
+        ServiceHealthSample
+    ];
+};
+
+export type ApiHealthProbeProtocol = 'openai_chat_completions_v1';
+
+export type ApiHealthProbeAuthorizationStatus = 'pending' | 'verified' | 'approved' | 'rejected';
+
+export type ApiHealthProbeAuthorizationMethod = 'dns_txt' | 'http_challenge' | 'admin_approval' | null;
+
+export type ApiHealthProbeConfigRequest = {
+    /**
+     * Public HTTPS OpenAI-compatible base URL. Query strings, fragments, and userinfo are rejected.
+     */
+    baseUrl: string;
+    model: string;
+    enabled: boolean;
+};
+
+export type OwnerApiHealthProbeConfig = {
+    id: string;
+    apiServiceId: string;
+    protocol: ApiHealthProbeProtocol;
+    baseUrl: string;
+    normalizedOrigin: string;
+    model: string;
+    /**
+     * Reports only whether an encrypted credential exists. Credential plaintext, ciphertext, nonce, and fingerprint are never returned.
+     */
+    credentialConfigured: boolean;
+    enabled: boolean;
+    authorizationStatus: ApiHealthProbeAuthorizationStatus;
+    authorizationMethod: ApiHealthProbeAuthorizationMethod;
+    verifiedOrigin: string | null;
+    verifiedAt: string | null;
+    approvedAt: string | null;
+    rejectionReason: string | null;
+    challengeExpiresAt: string | null;
+    measurementVersion: number;
+    /**
+     * Low-cardinality sanitized operational code; never contains an upstream response or full URL.
+     */
+    lastConfigErrorCode: string | null;
+    version: number;
+    createdAt: string;
+    updatedAt: string;
+};
+
+export type ApiHealthProbeChallengeRequest = {
+    method: 'dns_txt' | 'http_challenge';
+};
+
+export type ApiHealthProbeChallenge = {
+    /**
+     * One-time secret returned only when the challenge is created.
+     */
+    token: string;
+    method: 'dns_txt' | 'http_challenge';
+    dnsRecordName: string | null;
+    httpUrl: string | null;
+    expiresAt: string;
+    configVersion: number;
+};
+
+export type AdminApiHealthProbeDecisionRequest = {
+    reason: string;
+};
+
+/**
+ * Minimal administrator exact-origin review projection. It never contains credential state, credential material, fingerprints, or upstream error bodies.
+ */
+export type AdminApiHealthProbe = {
+    id: string;
+    apiServiceId: string;
+    serviceTitle: string;
+    ownerUserId: string;
+    ownerUsername: string;
+    ownerDisplayName: string;
+    protocol: ApiHealthProbeProtocol;
+    normalizedOrigin: string;
+    model: string;
+    enabled: boolean;
+    authorizationStatus: ApiHealthProbeAuthorizationStatus;
+    authorizationMethod: ApiHealthProbeAuthorizationMethod;
+    verifiedOrigin: string | null;
+    verifiedAt: string | null;
+    approvedAt: string | null;
+    rejectionReason: string | null;
+    version: number;
+    updatedAt: string;
+};
+
+export type AdminApiHealthProbeList = {
+    items: Array<AdminApiHealthProbe>;
+    nextCursor?: string | null;
+};
+
+export type QuotaLimitModeInput = 'limited' | 'unlimited';
+
+export type QuotaLimitMode = 'limited' | 'unlimited' | 'unspecified';
+
+export type QuotaUsageLimitInput = {
+    mode: QuotaLimitModeInput;
+    /**
+     * Required and strictly positive when mode is limited; omitted when mode is unlimited.
+     */
+    amountUsd?: DecimalString;
+};
+
+export type QuotaUsagePolicyInput = {
+    fiveHour: QuotaUsageLimitInput;
+    daily: QuotaUsageLimitInput;
+};
+
+export type QuotaUsageLimit = {
+    mode: QuotaLimitMode;
+    amountUsd: DecimalString | null;
+};
+
+export type QuotaUsagePolicy = {
+    fiveHour: QuotaUsageLimit;
+    daily: QuotaUsageLimit;
+    scope: 'per_buyer_credential';
+    dailyReset: 'utc_plus_8_calendar_day';
+};
+
 export type ApiServiceRequest = {
     merchantProfileId?: string;
     merchantIdentityMode?: 'public_profile' | 'store_alias';
@@ -1103,6 +1258,7 @@ export type ApiServiceRequest = {
      * Required for metered USD quota services. Fixed expiration timestamp for the currently listed quota.
      */
     quotaExpiresAt?: string;
+    quotaUsagePolicy: QuotaUsagePolicyInput;
     minimumIntentCny: DecimalString;
     maximumIntentCny?: DecimalString;
     usageVisibility: 'none' | 'merchant_reported' | 'offsite_panel_readonly' | 'fixed_package_only';
@@ -1163,6 +1319,7 @@ export type ApiServicePackageInput = {
     name: string;
     priceCny: DecimalString;
     panelAllowance: DecimalString;
+    quotaUsagePolicy: QuotaUsagePolicyInput;
     durationDays: 1 | 3 | 7 | 30;
     stockTotal: number;
     description: string;
@@ -1280,6 +1437,8 @@ export type PublicApiService = {
      * Fixed expiration timestamp for the currently listed metered quota.
      */
     quotaExpiresAt?: string;
+    quotaUsagePolicy: QuotaUsagePolicy;
+    healthSummary: ServiceHealthSummary;
     minimumIntentCny: DecimalString;
     maximumIntentCny?: DecimalString;
     usageVisibility: 'none' | 'merchant_reported' | 'offsite_panel_readonly' | 'fixed_package_only';
@@ -1298,12 +1457,7 @@ export type PublicApiService = {
     accountPoolLabel: string | null;
     merchantRefundCommitment: boolean;
     merchantRefundPolicyVersion: 'api-merchant-refund-v1';
-    /**
-     * Merchant-declared TTFT band; the platform has not measured it.
-     */
-    declaredTtftBand?: 'under_1s' | '1_to_3s' | '3_to_5s' | '5_to_10s' | 'over_10s';
     declaredMaxConcurrency?: number;
-    performanceConfirmedAt?: string;
     /**
      * Owner's manual accepting-orders flag. This is not sufficient by itself; clients must use isOrderable for order creation.
      */
@@ -1376,6 +1530,7 @@ export type ApiService = {
      * Fixed expiration timestamp for the currently listed metered quota.
      */
     quotaExpiresAt?: string;
+    quotaUsagePolicy: QuotaUsagePolicy;
     minimumIntentCny: DecimalString;
     maximumIntentCny?: DecimalString;
     usageVisibility: 'none' | 'merchant_reported' | 'offsite_panel_readonly' | 'fixed_package_only';
@@ -1450,6 +1605,7 @@ export type ApiServicePackage = {
     name: string;
     priceCny: DecimalString;
     panelAllowance: DecimalString;
+    quotaUsagePolicy: QuotaUsagePolicy;
     durationDays?: 1 | 3 | 7 | 30 | null;
     stockTotal: number;
     stockAvailable: number;
@@ -1625,6 +1781,7 @@ export type ApiQuotaOfferRequest = {
      * Positive multiplier fixed on the offer after publication. New offers default to 1.0000, but every distribution system may declare another multiplier.
      */
     modelMultiplier: DecimalString;
+    quotaUsagePolicy: QuotaUsagePolicyInput;
     deliveryMode: 'manual' | 'preimported';
     deliveryEtaMinutes: number;
     saleMode: 'continuous' | 'scheduled';
@@ -1645,6 +1802,7 @@ export type ApiQuotaOfferFields = {
     priceCny: DecimalString;
     cnyPerUsd: DecimalString;
     modelMultiplier: DecimalString;
+    quotaUsagePolicy: QuotaUsagePolicy;
     deliveryMode: 'manual' | 'preimported';
     deliveryEtaMinutes: number;
     saleMode: 'continuous' | 'scheduled';
@@ -1742,6 +1900,7 @@ export type ApiQuotaRushOfferRequest = {
     usdAllowance: DecimalString;
     priceCny: DecimalString;
     modelMultiplier: DecimalString;
+    quotaUsagePolicy: QuotaUsagePolicyInput;
     copies: number;
     deliveryMode: 'manual' | 'preimported';
     deliveryEtaMinutes: number;
@@ -1771,10 +1930,8 @@ export type PublicApiQuotaOffer = ApiQuotaOfferFields & {
     sellerDisplayName: string;
     sellerIdentityType: 'individual' | 'merchant';
     sellerLinuxDoBound: boolean;
-    declaredTtftBand: 'under_1s' | '1_to_3s' | '3_to_5s' | '5_to_10s' | 'over_10s';
     declaredMaxConcurrency: number;
-    performanceConfirmedAt?: string;
-    performanceDisclaimer: '商户自报，平台未测速';
+    healthSummary: ServiceHealthSummary;
     saleCutoffAt: string;
     expiresAt: string;
     currentRound?: ApiQuotaRound;
@@ -1858,6 +2015,7 @@ export type ApiPurchaseIntentCore = {
     minimumIntentCnySnapshot: DecimalString;
     maximumIntentCnySnapshot?: DecimalString;
     pricingSnapshot: string;
+    quotaUsagePolicySnapshot: QuotaUsagePolicy;
     buyerNote?: string;
     contactedAt?: string | null;
     buyerCancelledAt?: string | null;
@@ -2070,6 +2228,7 @@ export type ApiOrder = {
      * Frozen JSON pricing snapshot from the internal purchase-intent record.
      */
     pricingSnapshot?: string;
+    quotaUsagePolicySnapshot: QuotaUsagePolicy;
     apiQuotaBatchId?: string;
     apiQuotaOfferId?: string;
     apiQuotaSaleRoundId?: string;
@@ -3571,6 +3730,19 @@ export type ModelAuditTargetRequestWritable = {
     apiServiceModelId?: string;
 };
 
+export type ApiHealthProbeConfigRequestWritable = {
+    /**
+     * Public HTTPS OpenAI-compatible base URL. Query strings, fragments, and userinfo are rejected.
+     */
+    baseUrl: string;
+    model: string;
+    /**
+     * Dedicated low-privilege probe credential. Omit on update to retain the currently encrypted credential.
+     */
+    credential?: string;
+    enabled: boolean;
+};
+
 /**
  * Reserved marker preventing reuse of optional contact-bearing API intent DTOs.
  */
@@ -3693,7 +3865,7 @@ export type IdempotencyKey = string;
 export type IfMatch = string;
 
 /**
- * Use `"0"` when creating the first source-author verification record; otherwise use the current ETag version.
+ * Use `"0"` when creating a resource whose operation explicitly supports first-write optimistic locking; otherwise use the current ETag version.
  */
 export type IfMatchAllowZero = string;
 
@@ -7588,6 +7760,198 @@ export type UpdateOwnerApiServiceResponses = {
 
 export type UpdateOwnerApiServiceResponse = UpdateOwnerApiServiceResponses[keyof UpdateOwnerApiServiceResponses];
 
+export type DeleteOwnerApiHealthProbeData = {
+    body?: never;
+    headers: {
+        'If-Match': string;
+    };
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/api/v1/owner/api-services/{id}/health-probe';
+};
+
+export type DeleteOwnerApiHealthProbeErrors = {
+    /**
+     * Problem Details error.
+     */
+    404: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    412: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    428: ProblemDetails;
+};
+
+export type DeleteOwnerApiHealthProbeError = DeleteOwnerApiHealthProbeErrors[keyof DeleteOwnerApiHealthProbeErrors];
+
+export type DeleteOwnerApiHealthProbeResponses = {
+    /**
+     * Probe configuration and its dependent samples deleted.
+     */
+    204: void;
+};
+
+export type DeleteOwnerApiHealthProbeResponse = DeleteOwnerApiHealthProbeResponses[keyof DeleteOwnerApiHealthProbeResponses];
+
+export type GetOwnerApiHealthProbeData = {
+    body?: never;
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/api/v1/owner/api-services/{id}/health-probe';
+};
+
+export type GetOwnerApiHealthProbeErrors = {
+    /**
+     * Problem Details error.
+     */
+    404: ProblemDetails;
+};
+
+export type GetOwnerApiHealthProbeError = GetOwnerApiHealthProbeErrors[keyof GetOwnerApiHealthProbeErrors];
+
+export type GetOwnerApiHealthProbeResponses = {
+    /**
+     * Private probe configuration. Credentials are never returned.
+     */
+    200: OwnerApiHealthProbeConfig;
+};
+
+export type GetOwnerApiHealthProbeResponse = GetOwnerApiHealthProbeResponses[keyof GetOwnerApiHealthProbeResponses];
+
+export type PutOwnerApiHealthProbeData = {
+    body: ApiHealthProbeConfigRequestWritable;
+    headers: {
+        /**
+         * Use `"0"` when creating a resource whose operation explicitly supports first-write optimistic locking; otherwise use the current ETag version.
+         */
+        'If-Match': string;
+    };
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/api/v1/owner/api-services/{id}/health-probe';
+};
+
+export type PutOwnerApiHealthProbeErrors = {
+    /**
+     * Problem Details error.
+     */
+    404: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    412: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    422: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    428: ProblemDetails;
+};
+
+export type PutOwnerApiHealthProbeError = PutOwnerApiHealthProbeErrors[keyof PutOwnerApiHealthProbeErrors];
+
+export type PutOwnerApiHealthProbeResponses = {
+    /**
+     * Probe configuration created or updated without echoing credential material.
+     */
+    200: OwnerApiHealthProbeConfig;
+};
+
+export type PutOwnerApiHealthProbeResponse = PutOwnerApiHealthProbeResponses[keyof PutOwnerApiHealthProbeResponses];
+
+export type CreateOwnerApiHealthProbeChallengeData = {
+    body: ApiHealthProbeChallengeRequest;
+    headers: {
+        'If-Match': string;
+        'Idempotency-Key': string;
+    };
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/api/v1/owner/api-services/{id}/health-probe/challenges';
+};
+
+export type CreateOwnerApiHealthProbeChallengeErrors = {
+    /**
+     * Problem Details error.
+     */
+    404: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    412: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    422: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    428: ProblemDetails;
+};
+
+export type CreateOwnerApiHealthProbeChallengeError = CreateOwnerApiHealthProbeChallengeErrors[keyof CreateOwnerApiHealthProbeChallengeErrors];
+
+export type CreateOwnerApiHealthProbeChallengeResponses = {
+    /**
+     * One-time ownership challenge created.
+     */
+    201: ApiHealthProbeChallenge;
+};
+
+export type CreateOwnerApiHealthProbeChallengeResponse = CreateOwnerApiHealthProbeChallengeResponses[keyof CreateOwnerApiHealthProbeChallengeResponses];
+
+export type VerifyOwnerApiHealthProbeData = {
+    body?: never;
+    headers: {
+        'If-Match': string;
+        'Idempotency-Key': string;
+    };
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/api/v1/owner/api-services/{id}/health-probe/verify';
+};
+
+export type VerifyOwnerApiHealthProbeErrors = {
+    /**
+     * Problem Details error.
+     */
+    404: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    412: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    428: ProblemDetails;
+};
+
+export type VerifyOwnerApiHealthProbeError = VerifyOwnerApiHealthProbeErrors[keyof VerifyOwnerApiHealthProbeErrors];
+
+export type VerifyOwnerApiHealthProbeResponses = {
+    /**
+     * Probe configuration after the verification attempt.
+     */
+    200: OwnerApiHealthProbeConfig;
+};
+
+export type VerifyOwnerApiHealthProbeResponse = VerifyOwnerApiHealthProbeResponses[keyof VerifyOwnerApiHealthProbeResponses];
+
 export type SubmitOwnerApiServiceReviewData = {
     body: EmptyRequestWritable;
     headers: {
@@ -9236,6 +9600,139 @@ export type ListAdminApiServicesResponses = {
 
 export type ListAdminApiServicesResponse = ListAdminApiServicesResponses[keyof ListAdminApiServicesResponses];
 
+export type ListAdminApiHealthProbesData = {
+    body?: never;
+    path?: never;
+    query?: {
+        status?: 'pending' | 'verified' | 'approved' | 'rejected';
+        /**
+         * Page size. Defaults to 20 and must be between 1 and 100.
+         */
+        limit?: number;
+        /**
+         * Opaque pagination cursor returned as nextCursor. Clients must pass it back unchanged and must not inspect its internal encoding.
+         */
+        cursor?: string;
+    };
+    url: '/api/v1/admin/api-service-health-probes';
+};
+
+export type ListAdminApiHealthProbesErrors = {
+    /**
+     * Problem Details error.
+     */
+    403: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    422: ProblemDetails;
+};
+
+export type ListAdminApiHealthProbesError = ListAdminApiHealthProbesErrors[keyof ListAdminApiHealthProbesErrors];
+
+export type ListAdminApiHealthProbesResponses = {
+    /**
+     * Minimal administrator review projection without credential material or fingerprints.
+     */
+    200: AdminApiHealthProbeList;
+};
+
+export type ListAdminApiHealthProbesResponse = ListAdminApiHealthProbesResponses[keyof ListAdminApiHealthProbesResponses];
+
+export type ApproveAdminApiHealthProbeData = {
+    body: AdminApiHealthProbeDecisionRequest;
+    headers: {
+        'If-Match': string;
+        'Idempotency-Key': string;
+    };
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/api/v1/admin/api-service-health-probes/{id}/approve';
+};
+
+export type ApproveAdminApiHealthProbeErrors = {
+    /**
+     * Problem Details error.
+     */
+    403: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    404: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    412: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    422: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    428: ProblemDetails;
+};
+
+export type ApproveAdminApiHealthProbeError = ApproveAdminApiHealthProbeErrors[keyof ApproveAdminApiHealthProbeErrors];
+
+export type ApproveAdminApiHealthProbeResponses = {
+    /**
+     * Exact origin approved for the current probe configuration version.
+     */
+    200: AdminApiHealthProbe;
+};
+
+export type ApproveAdminApiHealthProbeResponse = ApproveAdminApiHealthProbeResponses[keyof ApproveAdminApiHealthProbeResponses];
+
+export type RejectAdminApiHealthProbeData = {
+    body: AdminApiHealthProbeDecisionRequest;
+    headers: {
+        'If-Match': string;
+        'Idempotency-Key': string;
+    };
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/api/v1/admin/api-service-health-probes/{id}/reject';
+};
+
+export type RejectAdminApiHealthProbeErrors = {
+    /**
+     * Problem Details error.
+     */
+    403: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    404: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    412: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    422: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    428: ProblemDetails;
+};
+
+export type RejectAdminApiHealthProbeError = RejectAdminApiHealthProbeErrors[keyof RejectAdminApiHealthProbeErrors];
+
+export type RejectAdminApiHealthProbeResponses = {
+    /**
+     * Exact origin rejected with an administrator reason.
+     */
+    200: AdminApiHealthProbe;
+};
+
+export type RejectAdminApiHealthProbeResponse = RejectAdminApiHealthProbeResponses[keyof RejectAdminApiHealthProbeResponses];
+
 export type ListAdminApiServicePromotionsData = {
     body?: never;
     path?: never;
@@ -10796,7 +11293,7 @@ export type UpdateAdminSourceAuthorVerificationData = {
     body: UpdateSourceAuthorVerificationRequest;
     headers: {
         /**
-         * Use `"0"` when creating the first source-author verification record; otherwise use the current ETag version.
+         * Use `"0"` when creating a resource whose operation explicitly supports first-write optimistic locking; otherwise use the current ETag version.
          */
         'If-Match': string;
     };

@@ -3,6 +3,7 @@ import {
   compareDecimal,
   divideDecimal,
   formatDecimal,
+  isPositiveDecimal,
   multiplyDecimal,
   normalizeDecimalTrimmed,
 } from '@/lib/decimal'
@@ -23,5 +24,11 @@ describe('十进制金额与美元额度', () => {
   it('比较和格式化不会经过二进制浮点数', () => {
     expect(compareDecimal('12.500000', '12.5')).toBe(0)
     expect(formatDecimal('12345.500000', 2, 6)).toBe('12,345.50')
+  })
+
+  it('严格区分正数与零', () => {
+    expect(isPositiveDecimal('0')).toBe(false)
+    expect(isPositiveDecimal('0.000000')).toBe(false)
+    expect(isPositiveDecimal('0.000001')).toBe(true)
   })
 })

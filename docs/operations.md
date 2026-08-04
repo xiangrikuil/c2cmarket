@@ -8,7 +8,7 @@ Author: Codex
 | Endpoint | Purpose | Expected exposure |
 | --- | --- | --- |
 | `GET /health` | Process liveness; no database dependency | Public or proxy health check |
-| `GET /readyz` | PostgreSQL reachability and migration `78:false` | Operator/internal |
+| `GET /readyz` | PostgreSQL reachability and migration `79:false` | Operator/internal |
 | `GET /version` | Version, Git SHA, build time, migration target | Operator/internal |
 | `GET /metrics` | Prometheus/OpenMetrics runtime data | Internal plus bearer authentication |
 

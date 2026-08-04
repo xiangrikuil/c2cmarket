@@ -60,6 +60,10 @@ func TestLimitedPackageIntentFreezesExactModelSnapshot(t *testing.T) {
 		StockTotal:     2,
 		StockAvailable: 2,
 		Enabled:        true,
+		QuotaUsagePolicy: apimarket.QuotaUsagePolicy{
+			FiveHour: apimarket.QuotaUsageLimit{Mode: apimarket.QuotaLimitModeLimited, AmountUSD: "7.5"},
+			Daily:    apimarket.QuotaUsageLimit{Mode: apimarket.QuotaLimitModeUnlimited},
+		},
 		Models: []apimarket.ServicePackageModel{{
 			ServiceModelID:      "service-model-1",
 			ModelCatalogID:      "model-1",
@@ -94,6 +98,19 @@ func TestLimitedPackageIntentFreezesExactModelSnapshot(t *testing.T) {
 	}
 	if snapshot.PanelAllowance != "5.000000" || snapshot.DurationDays != 3 || len(snapshot.Models) != 1 || snapshot.Models[0].ModelNameSnapshot != "GPT-5.6" || snapshot.Models[0].ModelPriceVersionID != "price-version-1" || snapshot.Models[0].MerchantMultiplier != "0.0100" {
 		t.Fatalf("unexpected package snapshot: %+v", snapshot)
+	}
+	if intent.QuotaUsagePolicySnapshot != service.Packages[0].QuotaUsagePolicy {
+		t.Fatalf("intent did not freeze selected package quota policy: %+v", intent.QuotaUsagePolicySnapshot)
+	}
+	var pricingSnapshot struct {
+		QuotaUsagePolicy map[string]any `json:"quotaUsagePolicy"`
+	}
+	if err := json.Unmarshal([]byte(intent.PricingSnapshot), &pricingSnapshot); err != nil {
+		t.Fatalf("decode pricing snapshot: %v", err)
+	}
+	fiveHour, ok := pricingSnapshot.QuotaUsagePolicy["fiveHour"].(map[string]any)
+	if !ok || fiveHour["mode"] != apimarket.QuotaLimitModeLimited || fiveHour["amountUsd"] != "7.5" {
+		t.Fatalf("pricing snapshot did not use selected package quota policy: %+v", pricingSnapshot.QuotaUsagePolicy)
 	}
 }
 
@@ -152,7 +169,7 @@ func TestIntentFreezesMerchantTermsInPricingSnapshot(t *testing.T) {
 }
 
 func TestIntentSnapshotPreservesHistoricalNullCommercialFacts(t *testing.T) {
-	body, err := servicePricingSnapshotJSON(apimarket.Service{})
+	body, err := servicePricingSnapshotJSON(apimarket.Service{}, apimarket.UnspecifiedQuotaUsagePolicy())
 	if err != nil {
 		t.Fatalf("build historical pricing snapshot: %v", err)
 	}

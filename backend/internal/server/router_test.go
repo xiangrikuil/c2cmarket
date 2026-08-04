@@ -4110,6 +4110,7 @@ func apiServicePayloadWithModelAndMultiplier(ownerContactID, modelCatalogID, mul
 		"declaredMaxUsdAllowancePerIntent":"20.000000",
 		"availableUsdAllowance":"100.000000",
 		"quotaExpiresAt":"` + time.Now().Add(30*24*time.Hour).UTC().Format(time.RFC3339) + `",
+		"quotaUsagePolicy":{"fiveHour":{"mode":"limited","amountUsd":"5.000000"},"daily":{"mode":"unlimited"}},
 		"minimumIntentCny":"10.00",
 		"maximumIntentCny":"200.00",
 		"usageVisibility":"merchant_reported",

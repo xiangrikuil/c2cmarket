@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import { formatDecimal } from '@/lib/decimal'
 import { compactApiServiceModels, type ApiFreeServiceCardData } from './apiFreeServiceCard'
+import ApiQuotaPolicyStrip from '@/components/api-market/ApiQuotaPolicyStrip.vue'
 
 const props = withDefaults(defineProps<{
   card: ApiFreeServiceCardData
@@ -95,9 +96,11 @@ const hasReputationRisk = computed(() => Boolean(props.card.sellerReputation && 
         </div>
       </div>
 
-      <dl class="api-free-service-card__metrics grid grid-cols-4 gap-px text-xs">
+      <ApiQuotaPolicyStrip :policy="card.quotaUsagePolicy" :expiry-value="card.expiresAt" />
+      <div v-if="$slots.health" class="px-3"><slot name="health" /></div>
+
+      <dl class="api-free-service-card__metrics grid grid-cols-3 gap-px text-xs">
         <div><dt>统一倍率</dt><dd>{{ card.multiplier }}</dd></div>
-        <div><dt>首字响应</dt><dd>{{ card.ttftLabel }}</dd></div>
         <div><dt title="商户声明最大并发">最大并发</dt><dd>{{ card.declaredMaxConcurrency || '—' }}</dd></div>
         <div><dt>付款窗口</dt><dd>{{ card.paymentWindowMinutes }} 分钟</dd></div>
       </dl>
@@ -177,7 +180,7 @@ const hasReputationRisk = computed(() => Boolean(props.card.sellerReputation && 
   position: relative;
   isolation: isolate;
   width: 100%;
-  height: 410px;
+  min-height: 640px;
   border-radius: 0.5rem;
   border-color: color-mix(in oklab, var(--api-free-card-accent) 28%, var(--border));
   background-color: color-mix(in oklab, var(--api-free-card-accent) 4%, var(--card));
@@ -195,11 +198,11 @@ const hasReputationRisk = computed(() => Boolean(props.card.sellerReputation && 
 .api-free-service-card--risk,
 .api-free-service-card--preview {
   height: auto;
-  min-height: 410px;
+  min-height: 640px;
 }
 
 .api-free-service-card--preview {
-  min-height: 410px;
+  min-height: 640px;
 }
 
 .api-free-service-card--promoted {

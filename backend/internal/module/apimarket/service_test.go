@@ -411,6 +411,7 @@ func validMeteredCreateInput() CreateServiceInput {
 		MinimumIntentCNY:                 "20",
 		MaximumIntentCNY:                 "300",
 		QuotaExpiresAt:                   "2026-07-08T00:00:00Z",
+		QuotaUsagePolicy:                 testQuotaUsagePolicy(),
 		UsageVisibility:                  "merchant_reported",
 		AccountPoolType:                  AccountPoolGPTPro20x,
 		MerchantRefundCommitment:         &noRefundCommitment,
@@ -449,14 +450,22 @@ func validLimitedPackageCreateInput() CreateServiceInput {
 			Enabled:            true,
 		}},
 		Packages: []ServicePackageInput{{
-			Name:            "3 天 GPT-5.6 套餐",
-			PriceCNY:        "9.90",
-			PanelAllowance:  "5.000000",
-			DurationDays:    &duration,
-			StockTotal:      5,
-			Description:     "交付后 3 天内有效。",
-			Enabled:         true,
-			ModelCatalogIDs: []string{"model-1"},
+			Name:             "3 天 GPT-5.6 套餐",
+			PriceCNY:         "9.90",
+			PanelAllowance:   "5.000000",
+			QuotaUsagePolicy: testQuotaUsagePolicy(),
+			DurationDays:     &duration,
+			StockTotal:       5,
+			Description:      "交付后 3 天内有效。",
+			Enabled:          true,
+			ModelCatalogIDs:  []string{"model-1"},
 		}},
+	}
+}
+
+func testQuotaUsagePolicy() QuotaUsagePolicy {
+	return QuotaUsagePolicy{
+		FiveHour: QuotaUsageLimit{Mode: QuotaLimitModeLimited, AmountUSD: "5"},
+		Daily:    QuotaUsageLimit{Mode: QuotaLimitModeUnlimited},
 	}
 }

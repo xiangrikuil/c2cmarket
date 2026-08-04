@@ -293,7 +293,7 @@ func testTLSClient(t *testing.T, server *httptest.Server, timeout time.Duration)
 		t.Fatalf("NewPolicy() error: %v", err)
 	}
 	return NewClient(policy,
-		withClientTimeout(timeout),
+		WithClientTimeout(timeout),
 		withTLSConfig(&tls.Config{InsecureSkipVerify: true}),
 	), dialer
 }

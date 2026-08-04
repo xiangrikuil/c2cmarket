@@ -14,6 +14,7 @@ type Policy struct {
 	UnreadNotificationRetention    time.Duration
 	DomainEventRetention           time.Duration
 	APIDeliveryCredentialRetention time.Duration
+	APIProbeSampleRetention        time.Duration
 }
 
 type Result struct {
@@ -28,6 +29,7 @@ type Result struct {
 	APIOrdersAutoCompleted       int64
 	APIOrderCredentialsDestroyed int64
 	APIQuotaCredentialsDestroyed int64
+	APIProbeSamplesDeleted       int64
 	NotificationsDeleted         int64
 	DomainEventsDeleted          int64
 }

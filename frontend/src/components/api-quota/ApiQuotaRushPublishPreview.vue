@@ -4,6 +4,8 @@ import { CalendarClock, Clock3, PackageCheck, Store } from 'lucide-vue-next'
 import { Badge } from '@/components/ui/badge'
 import { Card } from '@/components/ui/card'
 import { formatDecimal } from '@/lib/decimal'
+import ApiQuotaPolicyStrip from '@/components/api-market/ApiQuotaPolicyStrip.vue'
+import type { ApiQuotaUsagePolicyInput } from '@/types/apiQuota'
 
 const props = defineProps<{
   step: number
@@ -14,6 +16,7 @@ const props = defineProps<{
     name: string
     usdAllowance: string
     priceCny: string
+    quotaUsagePolicy: ApiQuotaUsagePolicyInput
     copies: number
     deliveryMode: 'manual' | 'preimported'
     deliveryEtaMinutes: number
@@ -56,6 +59,11 @@ const completionPercent = computed(() => Math.round((props.step / 3) * 100))
         <div><span class="text-xs text-muted-foreground">交付</span><strong class="mt-1 block">{{ draft.deliveryMode === 'manual' ? `手工 ≤ ${draft.deliveryEtaMinutes} 分钟` : '预导入凭据' }}</strong></div>
       </div>
 
+      <ApiQuotaPolicyStrip
+        :policy="draft.quotaUsagePolicy"
+        :expiry-value="draft.expiresAt ? draft.expiresAt.replace('T', ' ') : '待填写'"
+      />
+
       <div v-if="step >= 3" class="grid gap-3 border-t border-border px-4 py-3 text-sm">
         <div class="flex gap-2"><CalendarClock class="mt-0.5 h-4 w-4 shrink-0 text-primary" /><span><small class="block text-muted-foreground">开抢场次</small><strong>{{ slotLabel || '待选择' }}</strong></span></div>
         <div class="flex gap-2"><Clock3 class="mt-0.5 h-4 w-4 shrink-0 text-primary" /><span><small class="block text-muted-foreground">绝对失效</small><strong>{{ draft.expiresAt ? draft.expiresAt.replace('T', ' ') : '待填写' }}</strong></span></div>
@@ -63,7 +71,7 @@ const completionPercent = computed(() => Math.round((props.step / 3) * 100))
 
       <div class="flex gap-2 border-t border-border bg-muted/35 px-4 py-3 text-xs leading-5 text-muted-foreground">
         <Store class="mt-0.5 h-4 w-4 shrink-0" />
-        <span>平台记录订单，不代收款。商户自报额度与性能，平台未测速、未验证上游余额。</span>
+        <span>平台记录订单，不代收款。额度规则由商户声明，平台不代理 API 流量或执行用量扣减。</span>
       </div>
     </Card>
   </div>

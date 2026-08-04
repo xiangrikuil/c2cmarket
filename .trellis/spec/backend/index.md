@@ -25,6 +25,7 @@ This directory contains guidelines for backend development. Fill in each file wi
 | [Registered-User Growth And Umami Analytics](./growth-analytics.md) | PostgreSQL KPI truth, Shanghai cohorts, first-touch attribution, opaque Umami identity, and administrator dashboard | Active |
 | [Verification And Data Lifecycle](./verification-data-lifecycle.md) | HMAC email challenges, finite idempotency, and bounded PostgreSQL retention | Active |
 | [Limited API Quota Offers](./api-quota-offers.md) | Fixed quota inventory, rounds, owner sales lifecycle projection, orders, credentials, and concurrency | Active |
+| [API Health And Quota Policy](./api-health-quota-policy.md) | Authorized active probes, one-hour health summaries, SKU quota rules, and immutable order snapshots | Active |
 | [Public API Order Numbers](./api-order-public-numbers.md) | Immutable commercial references, collision retry, UUID boundaries, projections, search, and responsive display | Active |
 | [API Service Promotions](./api-service-promotions.md) | Administrator schedules, eligibility, category-grid projection, service commercial facts, snapshots, audit, and idempotency | Active |
 | [Referral Rewards And Promotion Benefits](./promotion-rewards.md) | API-service referrals, first-publication qualification, coupon lifecycle, reward projection, administration, and audit | Active |
@@ -57,20 +58,21 @@ Before editing backend code, read:
 9. [Verification And Data Lifecycle](./verification-data-lifecycle.md) when touching email challenges, idempotency expiry/replay, retention SQL, or maintenance runners
 10. [Limited API Packages](./api-limited-packages.md) when touching fixed packages, package inventory, order snapshots, or expiry
 11. [Limited API Quota Offers](./api-quota-offers.md) when touching quota batches, offers, rounds, orders, inventory, or credential delivery
-12. [Public API Order Numbers](./api-order-public-numbers.md) when touching API order creation, migration, identifiers, DTOs, search, notifications, or visible order references
-13. [API Service Promotions](./api-service-promotions.md) when touching promotion schedules, eligibility, public promotion reads, analytics contracts, or administrator promotion actions
-14. [Referral Rewards And Promotion Benefits](./promotion-rewards.md) when touching referral attribution, first-publication rewards, promotion coupons, reward projection, or growth-promotion administration
-15. [Reputation Facts](./reputation.md) when touching reputation facts, exclusions, scoring inputs, or public reputation DTOs
-16. [Database Guidelines](./database-guidelines.md)
-17. [Deployment Contract](./deployment-contract.md) for CI/CD, images, Compose release, backup, or VPS work
-18. [Error Handling](./error-handling.md)
-19. [Quality Guidelines](./quality-guidelines.md)
-20. [Logging Guidelines](./logging-guidelines.md)
-21. [Safe Outbound HTTP](./outbound-http.md) when adding or changing outbound HTTP requests whose destination is stored, configured, or otherwise variable
-22. [Reproducible Release And Contract Drift](./release-contract.md) when touching source packaging, Docker/Compose releases, build metadata, `/version`, OpenAPI, or generated API types
-23. [Runtime Security And Observability](./runtime-operations.md) when touching response headers, `frontend/public/_headers`, `/metrics`, observability labels, or operator-route exposure
-24. [C2CMarket Product Context](../guides/product-context.md)
-25. [Maintainability Contract](../guides/maintainability-contract.md)
+12. [API Health And Quota Policy](./api-health-quota-policy.md) when touching probe authorization, execution, health projection, quota rules, or order snapshots
+13. [Public API Order Numbers](./api-order-public-numbers.md) when touching API order creation, migration, identifiers, DTOs, search, notifications, or visible order references
+14. [API Service Promotions](./api-service-promotions.md) when touching promotion schedules, eligibility, public promotion reads, analytics contracts, or administrator promotion actions
+15. [Referral Rewards And Promotion Benefits](./promotion-rewards.md) when touching referral attribution, first-publication rewards, promotion coupons, reward projection, or growth-promotion administration
+16. [Reputation Facts](./reputation.md) when touching reputation facts, exclusions, scoring inputs, or public reputation DTOs
+17. [Database Guidelines](./database-guidelines.md)
+18. [Deployment Contract](./deployment-contract.md) for CI/CD, images, Compose release, backup, or VPS work
+19. [Error Handling](./error-handling.md)
+20. [Quality Guidelines](./quality-guidelines.md)
+21. [Logging Guidelines](./logging-guidelines.md)
+22. [Safe Outbound HTTP](./outbound-http.md) when adding or changing outbound HTTP requests whose destination is stored, configured, or otherwise variable
+23. [Reproducible Release And Contract Drift](./release-contract.md) when touching source packaging, Docker/Compose releases, build metadata, `/version`, OpenAPI, or generated API types
+24. [Runtime Security And Observability](./runtime-operations.md) when touching response headers, `frontend/public/_headers`, `/metrics`, observability labels, or operator-route exposure
+25. [C2CMarket Product Context](../guides/product-context.md)
+26. [Maintainability Contract](../guides/maintainability-contract.md)
 
 ## Quality Check
 

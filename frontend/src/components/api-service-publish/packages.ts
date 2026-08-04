@@ -1,4 +1,5 @@
 import type { ApiServicePackage } from './types'
+import { defaultApiQuotaUsagePolicyInput } from '@/lib/apiQuotaPolicy'
 
 export const createDefaultApiServicePackage = (modelCatalogIds: string[]): ApiServicePackage => ({
   id: globalThis.crypto?.randomUUID?.() ?? `package-${Date.now()}`,
@@ -10,4 +11,5 @@ export const createDefaultApiServicePackage = (modelCatalogIds: string[]): ApiSe
   description: '商户提交交付后开始计算有效期。',
   enabled: true,
   modelCatalogIds: [...modelCatalogIds],
+  quotaUsagePolicy: defaultApiQuotaUsagePolicyInput(),
 })

@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Input } from '@/components/ui/input'
+import ApiQuotaPolicyFields from '@/components/api-market/ApiQuotaPolicyFields.vue'
 import { createDefaultApiServicePackage } from './packages'
 import type { ApiServicePublishForm } from './types'
 
@@ -232,6 +233,9 @@ const endPackageDrag = () => {
           <span class="text-xs font-medium">套餐说明</span>
           <Input v-model="selectedPackage.description" />
         </label>
+        <div class="mt-4 border-t border-border pt-4">
+          <ApiQuotaPolicyFields v-model="selectedPackage.quotaUsagePolicy" :error="errors.packages" />
+        </div>
       </div>
     </div>
   </Card>

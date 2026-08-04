@@ -11,6 +11,7 @@ import (
 	"c2c-market/backend/internal/health"
 	"c2c-market/backend/internal/middleware"
 	"c2c-market/backend/internal/module/announcement"
+	"c2c-market/backend/internal/module/apihealth"
 	"c2c-market/backend/internal/module/apiintent"
 	"c2c-market/backend/internal/module/apimarket"
 	"c2c-market/backend/internal/module/apiorder"
@@ -49,6 +50,7 @@ const (
 type ServerOptions struct {
 	EnableDevAuth      bool
 	ReadinessChecker   health.Checker
+	APIHealth          APIHealthService
 	NavigationBadges   NavigationBadgeService
 	RealtimeHub        *realtime.Hub
 	AppEnv             string
@@ -80,6 +82,17 @@ type NavigationBadgeService interface {
 type APIPaymentSettingsService interface {
 	GetAPIAccountPaymentSettings(ctx context.Context, user auth.User) (apimarket.AccountPaymentSettings, *domain.AppError)
 	UpdateAPIAccountPaymentSettings(ctx context.Context, user auth.User, input apimarket.UpdateAccountPaymentSettingsInput) (apimarket.AccountPaymentSettings, *domain.AppError)
+}
+
+type APIHealthService interface {
+	OwnerConfig(ctx context.Context, user auth.User, serviceID string) (apihealth.Config, bool, *domain.AppError)
+	PutOwnerConfig(ctx context.Context, user auth.User, serviceID string, input apihealth.ConfigInput, expectedVersion int64) (apihealth.Config, *domain.AppError)
+	DeleteOwnerConfig(ctx context.Context, user auth.User, serviceID string, expectedVersion int64) *domain.AppError
+	CreateChallenge(ctx context.Context, user auth.User, serviceID, method string, expectedVersion int64) (apihealth.Challenge, *domain.AppError)
+	VerifyChallenge(ctx context.Context, user auth.User, serviceID string, expectedVersion int64) (apihealth.Config, *domain.AppError)
+	AdminConfigs(ctx context.Context, user auth.User, status string, page domain.PageRequest) (domain.Page[apihealth.Config], *domain.AppError)
+	AdminDecision(ctx context.Context, user auth.User, configID string, expectedVersion int64, approve bool, reason string) (apihealth.Config, *domain.AppError)
+	Summaries(ctx context.Context, serviceIDs []string) (map[string]apihealth.Summary, *domain.AppError)
 }
 
 type AdminUserService interface {
@@ -394,6 +407,7 @@ type Server struct {
 	carpools         CarpoolService
 	apiQuotas        APIQuotaService
 	apiPayment       APIPaymentSettingsService
+	apiHealth        APIHealthService
 	adminUsers       AdminUserService
 	apiPromotions    APIPromotionService
 	growth           GrowthService
@@ -445,6 +459,7 @@ func NewServer(service ApplicationService, options ...ServerOptions) http.Handle
 		carpools:         service,
 		apiQuotas:        service,
 		apiPayment:       service,
+		apiHealth:        option.APIHealth,
 		adminUsers:       service,
 		apiPromotions:    service,
 		growth:           service,

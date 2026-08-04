@@ -12,6 +12,11 @@ const completePaymentOptions = [{
   paymentQrCodeDataUrl: 'data:image/png;base64,iVBORw0KGgo=',
 }]
 
+const writableQuotaPolicy = {
+  fiveHour: { mode: 'unlimited' as const },
+  daily: { mode: 'unlimited' as const },
+}
+
 function createStorage(initial: Record<string, string> = {}) {
   const store = new Map(Object.entries(initial))
   return {
@@ -83,8 +88,8 @@ test('rejects unsupported mock service writes and accepts supported modes', asyn
   await expectRejection(api.submitApiService({ billingMode: 'manual_credit' }))
   await expectRejection(api.submitApiService({ billingMode: 'unknown_mode' }))
 
-  const metered = await settle(api.submitApiService({ billingMode: 'metered_credit' }))
-  const fixed = await settle(api.submitApiService({ billingMode: 'fixed_package' }))
+  const metered = await settle(api.submitApiService({ billingMode: 'metered_credit', quotaUsagePolicy: writableQuotaPolicy }))
+  const fixed = await settle(api.submitApiService({ billingMode: 'fixed_package', quotaUsagePolicy: writableQuotaPolicy }))
   assert.equal(metered.billingMode, 'metered_credit')
   assert.equal(fixed.billingMode, 'fixed_package')
 })

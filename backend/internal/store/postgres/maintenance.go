@@ -134,6 +134,24 @@ func (s *Store) RunDataLifecycle(ctx context.Context, now time.Time, batchSize i
 		return maintenance.Result{}, internalStoreError()
 	}
 
+	result.APIProbeSamplesDeleted, err = execMaintenanceBatch(ctx, tx, `
+		WITH candidates AS (
+			SELECT id
+			FROM api_service_probe_samples
+			WHERE status IN ('succeeded', 'failed')
+			  AND finished_at < $1
+			ORDER BY finished_at, id
+			LIMIT $2
+			FOR UPDATE SKIP LOCKED
+		)
+		DELETE FROM api_service_probe_samples target
+		USING candidates
+		WHERE target.id = candidates.id
+	`, now.Add(-policy.APIProbeSampleRetention), batchSize)
+	if err != nil {
+		return maintenance.Result{}, internalStoreError()
+	}
+
 	result.ContactSessionsExpired, err = execMaintenanceBatch(ctx, tx, `
 		WITH candidates AS (
 			SELECT id

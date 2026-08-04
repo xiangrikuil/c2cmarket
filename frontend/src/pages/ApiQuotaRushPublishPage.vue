@@ -28,6 +28,7 @@ import PublishWorkflowStepper from '@/components/api-service-publish/PublishWork
 import ResponsivePublishPreview from '@/components/api-service-publish/ResponsivePublishPreview.vue'
 import { completePublishStep, publishStepStatus } from '@/components/api-service-publish/publishWorkflow'
 import ApiQuotaRushPublishPreview from '@/components/api-quota/ApiQuotaRushPublishPreview.vue'
+import ApiQuotaPolicyFields from '@/components/api-market/ApiQuotaPolicyFields.vue'
 import type {
   ApiProviderCategory,
   ApiServicePublishForm,
@@ -72,6 +73,7 @@ import {
 } from '@/lib/apiPaymentSettings'
 import { formatDecimal, normalizeDecimal } from '@/lib/decimal'
 import { backendErrorMessage } from '@/lib/backendClient'
+import { apiQuotaUsagePolicyInputError, defaultApiQuotaUsagePolicyInput } from '@/lib/apiQuotaPolicy'
 import {
   useApiPaymentAccountSettingsQuery,
   useApiQuotaSaleSlots,
@@ -180,6 +182,7 @@ const baseForm = reactive<ApiServicePublishForm>({
   },
   availableCreditUsd: 500,
   quotaExpiresAt: defaultQuotaExpiresAtInput(),
+  quotaUsagePolicy: defaultApiQuotaUsagePolicyInput(),
   minimumPurchaseCny: 10,
   maximumPurchaseCny: 300,
   paymentWindowMinutes: defaultPaymentWindowMinutes,
@@ -252,6 +255,7 @@ const rush = reactive({
   name: '$50 限时开发额度',
   usdAllowance: '50',
   priceCny: '5.00',
+  quotaUsagePolicy: defaultApiQuotaUsagePolicyInput(),
   copies: 10,
   deliveryMode: 'manual' as ApiQuotaDeliveryMode,
   deliveryEtaMinutes: 10,
@@ -294,6 +298,7 @@ const groupedSlots = computed(() => {
 })
 
 const expiryISO = computed(() => beijingDateTimeInputToISOString(rush.expiresAt))
+const rushQuotaPolicyError = computed(() => apiQuotaUsagePolicyInputError(rush.quotaUsagePolicy) ?? '')
 const minimumExpiry = computed(() => selectedSlot.value
   ? formatBeijingDateTimeInput(new Date(Date.parse(selectedSlot.value.endsAt) + 60 * 60 * 1000))
   : '')
@@ -436,6 +441,7 @@ function validateRush() {
   if (!rush.name.trim()) return '请填写限时包名称。'
   if (Number(rush.usdAllowance) <= 0) return '单份美元额度必须大于 0。'
   if (Number(rush.priceCny) <= 0) return '人民币总价必须大于 0。'
+  if (rushQuotaPolicyError.value) return rushQuotaPolicyError.value
   if (!Number.isInteger(rush.copies) || rush.copies < 1 || rush.copies > 5000) return '份数必须是 1-5000 的整数。'
   if (rush.deliveryEtaMinutes < 1 || rush.deliveryEtaMinutes > 10) return '交付时限必须在 1-10 分钟之间。'
   if (rush.sourceType === 'other' && !rush.sourceLabel.trim()) return '其他来源需要填写来源说明。'
@@ -528,6 +534,7 @@ async function publishRushOffer() {
       usdAllowance: rush.usdAllowance,
       priceCny: rush.priceCny,
       modelMultiplier: serviceDefaultMultiplierDecimal.value,
+      quotaUsagePolicy: rush.quotaUsagePolicy,
       copies: rush.copies,
       deliveryMode: rush.deliveryMode,
       deliveryEtaMinutes: rush.deliveryEtaMinutes,
@@ -692,6 +699,9 @@ function preview() {
             <label class="space-y-1.5 text-sm"><span class="font-medium">单份美元额度</span><Input v-model="rush.usdAllowance" inputmode="decimal" /></label>
             <label class="space-y-1.5 text-sm"><span class="font-medium">单份人民币总价</span><Input v-model="rush.priceCny" inputmode="decimal" /></label>
             <label class="space-y-1.5 text-sm"><span class="font-medium">计划份数</span><Input v-model.number="rush.copies" type="number" min="1" max="5000" /></label>
+          </div>
+          <div class="mt-4 border-t border-border pt-4">
+            <ApiQuotaPolicyFields v-model="rush.quotaUsagePolicy" :error="rushQuotaPolicyError || undefined" />
           </div>
             </Card>
             <Card class="p-5">

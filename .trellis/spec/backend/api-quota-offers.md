@@ -1,6 +1,7 @@
 # Limited API Quota Offer Contract
 
 Date: 2026-07-19
+Updated: 2026-08-04
 Author: Codex
 
 ## Scenario: Fixed, Time-Limited API Quota Offers
@@ -50,7 +51,8 @@ api_quota_credentials
 - Scheduled orders freeze a five-minute payment window. Continuous limited offers and legacy free-amount orders freeze ten minutes.
 - Pending-payment cancellation or timeout releases an eligible inventory unit and pre-imported credential. The scheduled buyer claim remains, so the buyer cannot re-enter that round. Payment-submitted and later states do not release inventory.
 - Public current/next rounds must be offer-specific: a round is projected only when an active allocation exists for both the round and current offer.
-- Public cards and orders expose fixed USD, CNY, derived CNY/USD, multiplier, cutoff, expiry, distribution system, delivery ETA/mode, and seller-declared TTFT/concurrency confirmation. `performanceDisclaimer` remains `商户自报，平台未测速`.
+- Public cards expose fixed USD, CNY, derived CNY/USD, multiplier, cutoff, expiry, distribution system, delivery ETA/mode, merchant-declared concurrency, SKU quota policy, and service-level platform health. Current public projections do not expose seller-declared TTFT or `performanceDisclaimer`; historical orders retain the frozen declaration for transaction explanation.
+- Every offer owns explicit 5h/daily USD limits. New writes allow only `limited` with a positive amount or `unlimited` without an amount. Order creation freezes the offer policy into dedicated columns and the self-describing JSON snapshot; historical `unspecified` is never inferred as unlimited.
 - Order creation freezes the API service account-pool code/label, merchant-declared maximum concurrency, merchant refund commitment, `api-merchant-refund-v1` rule version, and batch expiry inside both pricing and offer snapshots. Historical nullable pool/concurrency values remain explicit JSON `null` and are never inferred.
 - Credential CSV templates are mutually exclusive: `api_base_url,api_key,instructions` or `panel_login_url,username,password,instructions`. Import is all-or-nothing, at most 5000 rows, encrypted at rest, fingerprint-deduplicated, and never returned by public/list/summary/event/log payloads.
 

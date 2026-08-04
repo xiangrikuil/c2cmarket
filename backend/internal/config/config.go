@@ -50,6 +50,7 @@ type Config struct {
 	EmailProvider           string
 	SMTP                    SMTPConfig
 	Maintenance             MaintenanceConfig
+	APIHealth               APIHealthConfig
 	MetricsBearerToken      string
 }
 
@@ -73,6 +74,16 @@ type MaintenanceConfig struct {
 	APIDeliveryCredentialRetention time.Duration
 }
 
+type APIHealthConfig struct {
+	RunnerEnabled bool
+	ScanInterval  time.Duration
+	Timeout       time.Duration
+	Concurrency   int
+	BatchSize     int
+	Retention     time.Duration
+	ChallengeTTL  time.Duration
+}
+
 const (
 	localContactEncryptionKey    = "c2cmarket-local-contact-encryption-key-v1"
 	localContactFingerprintKey   = "c2cmarket-local-contact-fingerprint-key-v1"
@@ -88,6 +99,12 @@ const (
 	defaultDomainEventRetention           = 365 * 24 * time.Hour
 	defaultAPIDeliveryCredentialRetention = 30 * 24 * time.Hour
 	defaultDatabaseSlowQueryAfter         = time.Second
+	defaultAPIHealthScanInterval          = time.Minute
+	defaultAPIHealthTimeout               = 10 * time.Second
+	defaultAPIHealthConcurrency           = 4
+	defaultAPIHealthBatchSize             = 50
+	defaultAPIHealthRetention             = 7 * 24 * time.Hour
+	defaultAPIHealthChallengeTTL          = 15 * time.Minute
 )
 
 func Load() (Config, error) {
@@ -187,6 +204,52 @@ func Load() (Config, error) {
 	}
 	if cfg.Maintenance.UnreadNotificationRetention < cfg.Maintenance.ReadNotificationRetention {
 		return Config{}, fmt.Errorf("UNREAD_NOTIFICATION_RETENTION must not be shorter than READ_NOTIFICATION_RETENTION")
+	}
+	cfg.APIHealth.RunnerEnabled, err = parseBoolEnv("API_HEALTH_RUNNER_ENABLED", os.Getenv("API_HEALTH_RUNNER_ENABLED"), false)
+	if err != nil {
+		return Config{}, err
+	}
+	cfg.APIHealth.ScanInterval, err = parseDurationEnv("API_HEALTH_SCAN_INTERVAL", os.Getenv("API_HEALTH_SCAN_INTERVAL"), defaultAPIHealthScanInterval)
+	if err != nil {
+		return Config{}, err
+	}
+	if cfg.APIHealth.ScanInterval < 30*time.Second || cfg.APIHealth.ScanInterval > 5*time.Minute {
+		return Config{}, fmt.Errorf("API_HEALTH_SCAN_INTERVAL must be between 30s and 5m")
+	}
+	cfg.APIHealth.Timeout, err = parseDurationEnv("API_HEALTH_PROBE_TIMEOUT", os.Getenv("API_HEALTH_PROBE_TIMEOUT"), defaultAPIHealthTimeout)
+	if err != nil {
+		return Config{}, err
+	}
+	if cfg.APIHealth.Timeout < time.Second || cfg.APIHealth.Timeout > 30*time.Second {
+		return Config{}, fmt.Errorf("API_HEALTH_PROBE_TIMEOUT must be between 1s and 30s")
+	}
+	cfg.APIHealth.Concurrency, err = parseIntEnv("API_HEALTH_MAX_CONCURRENCY", os.Getenv("API_HEALTH_MAX_CONCURRENCY"), defaultAPIHealthConcurrency)
+	if err != nil {
+		return Config{}, err
+	}
+	if cfg.APIHealth.Concurrency < 1 || cfg.APIHealth.Concurrency > 32 {
+		return Config{}, fmt.Errorf("API_HEALTH_MAX_CONCURRENCY must be between 1 and 32")
+	}
+	cfg.APIHealth.BatchSize, err = parseIntEnv("API_HEALTH_CLAIM_BATCH_SIZE", os.Getenv("API_HEALTH_CLAIM_BATCH_SIZE"), defaultAPIHealthBatchSize)
+	if err != nil {
+		return Config{}, err
+	}
+	if cfg.APIHealth.BatchSize < 1 || cfg.APIHealth.BatchSize > 200 {
+		return Config{}, fmt.Errorf("API_HEALTH_CLAIM_BATCH_SIZE must be between 1 and 200")
+	}
+	cfg.APIHealth.Retention, err = parseDurationEnv("API_HEALTH_SAMPLE_RETENTION", os.Getenv("API_HEALTH_SAMPLE_RETENTION"), defaultAPIHealthRetention)
+	if err != nil {
+		return Config{}, err
+	}
+	if cfg.APIHealth.Retention < 24*time.Hour || cfg.APIHealth.Retention > 30*24*time.Hour {
+		return Config{}, fmt.Errorf("API_HEALTH_SAMPLE_RETENTION must be between 24h and 720h")
+	}
+	cfg.APIHealth.ChallengeTTL, err = parseDurationEnv("API_HEALTH_CHALLENGE_TTL", os.Getenv("API_HEALTH_CHALLENGE_TTL"), defaultAPIHealthChallengeTTL)
+	if err != nil {
+		return Config{}, err
+	}
+	if cfg.APIHealth.ChallengeTTL < 5*time.Minute || cfg.APIHealth.ChallengeTTL > time.Hour {
+		return Config{}, fmt.Errorf("API_HEALTH_CHALLENGE_TTL must be between 5m and 1h")
 	}
 	if cfg.Port == "" {
 		cfg.Port = "8080"

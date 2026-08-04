@@ -136,6 +136,17 @@ func (p *Policy) ValidateURL(ctx context.Context, raw string) (string, error) {
 	return normalized, nil
 }
 
+// NormalizeURL 只做目标语法校验与规范化，不触发 DNS 解析。
+// 持久化前仍需调用 ValidateURL，发起请求时仍需通过 NewClient 防止 DNS 重绑定。
+func (p *Policy) NormalizeURL(raw string) (string, error) {
+	normalized, _, err := p.normalizeURL(raw)
+	if err != nil {
+		p.recordRejection(err)
+		return "", err
+	}
+	return normalized, nil
+}
+
 func (p *Policy) normalizeURL(raw string) (string, string, error) {
 	if p == nil {
 		return "", "", ErrInvalidTarget

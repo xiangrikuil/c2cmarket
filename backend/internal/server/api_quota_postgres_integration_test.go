@@ -60,6 +60,7 @@ func TestPostgresAPIQuotaHTTPFlow(t *testing.T) {
 		"usdAllowance":"50",
 		"priceCny":"5.00",
 		"modelMultiplier":"1.0000",
+		"quotaUsagePolicy":{"fiveHour":{"mode":"limited","amountUsd":"5.000000"},"daily":{"mode":"unlimited"}},
 		"deliveryMode":"manual",
 		"deliveryEtaMinutes":10,
 		"saleMode":"continuous",
@@ -71,6 +72,7 @@ func TestPostgresAPIQuotaHTTPFlow(t *testing.T) {
 		"usdAllowance":"100",
 		"priceCny":"9.00",
 		"modelMultiplier":"1.0000",
+		"quotaUsagePolicy":{"fiveHour":{"mode":"limited","amountUsd":"10.000000"},"daily":{"mode":"limited","amountUsd":"50.000000"}},
 		"deliveryMode":"manual",
 		"deliveryEtaMinutes":10,
 		"saleMode":"scheduled",
@@ -82,6 +84,7 @@ func TestPostgresAPIQuotaHTTPFlow(t *testing.T) {
 		"usdAllowance":"20",
 		"priceCny":"2.00",
 		"modelMultiplier":"1.0000",
+		"quotaUsagePolicy":{"fiveHour":{"mode":"unlimited"},"daily":{"mode":"limited","amountUsd":"20.000000"}},
 		"deliveryMode":"preimported",
 		"deliveryEtaMinutes":5,
 		"saleMode":"continuous",
@@ -120,9 +123,22 @@ func TestPostgresAPIQuotaHTTPFlow(t *testing.T) {
 		t.Fatalf("public quota list status %d body %s", publicListResponse.Code, publicListResponse.Body.String())
 	}
 	publicBody := publicListResponse.Body.String()
-	for _, expected := range []string{continuous.ID, scheduled.ID, preimported.ID, `"declaredTtftBand":"under_1s"`, `"performanceDisclaimer":"商户自报，平台未测速"`} {
+	for _, expected := range []string{
+		continuous.ID,
+		scheduled.ID,
+		preimported.ID,
+		`"quotaUsagePolicy":{"fiveHour":{"mode":"limited","amountUsd":"5.000000"},"daily":{"mode":"unlimited","amountUsd":null}`,
+		`"quotaUsagePolicy":{"fiveHour":{"mode":"limited","amountUsd":"10.000000"},"daily":{"mode":"limited","amountUsd":"50.000000"}`,
+		`"quotaUsagePolicy":{"fiveHour":{"mode":"unlimited","amountUsd":null},"daily":{"mode":"limited","amountUsd":"20.000000"}`,
+		`"healthSummary":{"state":"no_sample","availabilityReason":"unconfigured"`,
+	} {
 		if !strings.Contains(publicBody, expected) {
 			t.Fatalf("public quota list missing %q: %s", expected, publicBody)
+		}
+	}
+	for _, retiredField := range []string{`"declaredTtftBand"`, `"performanceConfirmedAt"`, `"performanceDisclaimer"`} {
+		if strings.Contains(publicBody, retiredField) {
+			t.Fatalf("public quota list exposed retired merchant performance field %q: %s", retiredField, publicBody)
 		}
 	}
 	if strings.Contains(publicBody, secret) {

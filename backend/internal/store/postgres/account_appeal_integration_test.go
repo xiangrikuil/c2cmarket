@@ -223,6 +223,7 @@ func TestPostgresAccountAppealSessionLifecycleCleanupIsBounded(t *testing.T) {
 		UnreadNotificationRetention:    2 * time.Hour,
 		DomainEventRetention:           time.Hour,
 		APIDeliveryCredentialRetention: time.Hour,
+		APIProbeSampleRetention:        time.Hour,
 	}
 	first, appErr := store.RunDataLifecycle(ctx, now, 2, policy)
 	if appErr != nil {

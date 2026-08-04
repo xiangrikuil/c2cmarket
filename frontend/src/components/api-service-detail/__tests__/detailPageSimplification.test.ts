@@ -17,7 +17,8 @@ test('keeps merchant trust signals in the purchase card only', () => {
   assert.doesNotMatch(header, /近期完成|首字响应|getApiMerchantDisplayName/)
   assert.match(panel, /ReputationInlineSummary/)
   assert.match(panel, /ApiMerchantBadges/)
-  assert.match(panel, /首字响应[\s\S]*最大并发[\s\S]*商户自报，平台未测速/)
+  assert.match(panel, /可验证完成[\s\S]*商户声明最大并发/)
+  assert.doesNotMatch(panel, /首字响应|getApiTTFTBandLabel|性能为商户自报|平台未测速/)
   assert.match(panel, /getApiMerchantDisplayName/)
 })
 
@@ -31,7 +32,7 @@ test('prioritizes the actual quota price over the merchant multiplier', () => {
   assert.match(summary, /可售额度/)
   assert.match(summary, /服务有效期/)
   assert.match(summary, /接入类型/)
-  assert.match(summary, /首字响应/)
+  assert.match(summary, /<ApiServiceHealthPanel :summary="service\.healthSummary"/)
   assert.match(summary, /商户声明最大并发/)
   assert.match(summary, /付款窗口/)
   assert.match(summary, /号池/)
@@ -68,6 +69,9 @@ test('keeps summary and secondary information visible in one continuous left col
 
   assert.match(details, /模型价格/)
   assert.match(details, /购买须知/)
+  assert.match(details, /平台健康数据只反映当前探测模型与平台单节点/)
+  assert.match(details, /最大并发仍为商户声明/)
+  assert.doesNotMatch(details, /首字响应|平台未进行统一测速/)
   assert.doesNotMatch(details, /role="tablist"|aria-selected/)
   assert.match(page, /<div class="min-w-0 space-y-4">[\s\S]*ApiServiceSummary[\s\S]*ApiServiceDetailsTabs/)
 })

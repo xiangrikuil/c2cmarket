@@ -76,6 +76,7 @@ type Service struct {
 	DeclaredMaxUSDAllowancePerIntent string
 	AvailableUSDAllowance            string
 	QuotaExpiresAt                   *time.Time
+	QuotaUsagePolicy                 QuotaUsagePolicy
 	MinimumIntentCNY                 string
 	MaximumIntentCNY                 string
 	UsageVisibility                  string
@@ -138,20 +139,21 @@ type ServiceModel struct {
 }
 
 type ServicePackage struct {
-	ID             string
-	APIServiceID   string
-	Name           string
-	PriceCNY       string
-	PanelAllowance string
-	DurationDays   *int
-	StockTotal     int
-	StockAvailable int
-	Description    string
-	Enabled        bool
-	SortOrder      int
-	Models         []ServicePackageModel
-	CreatedAt      time.Time
-	UpdatedAt      time.Time
+	ID               string
+	APIServiceID     string
+	Name             string
+	PriceCNY         string
+	PanelAllowance   string
+	QuotaUsagePolicy QuotaUsagePolicy
+	DurationDays     *int
+	StockTotal       int
+	StockAvailable   int
+	Description      string
+	Enabled          bool
+	SortOrder        int
+	Models           []ServicePackageModel
+	CreatedAt        time.Time
+	UpdatedAt        time.Time
 }
 
 type ServicePackageModel struct {
@@ -189,6 +191,7 @@ type CreateServiceInput struct {
 	DeclaredMaxUSDAllowancePerIntent string
 	AvailableUSDAllowance            string
 	QuotaExpiresAt                   string
+	QuotaUsagePolicy                 QuotaUsagePolicy
 	MinimumIntentCNY                 string
 	MaximumIntentCNY                 string
 	UsageVisibility                  string
@@ -220,6 +223,7 @@ type UpdateServiceInput struct {
 	DeclaredMaxUSDAllowancePerIntent string
 	AvailableUSDAllowance            string
 	QuotaExpiresAt                   string
+	QuotaUsagePolicy                 QuotaUsagePolicy
 	MinimumIntentCNY                 string
 	MaximumIntentCNY                 string
 	UsageVisibility                  string
@@ -251,16 +255,17 @@ type ServiceModelInput struct {
 }
 
 type ServicePackageInput struct {
-	ID              string
-	Name            string
-	PriceCNY        string
-	PanelAllowance  string
-	DurationDays    *int
-	StockTotal      int
-	Description     string
-	Enabled         bool
-	SortOrder       int
-	ModelCatalogIDs []string
+	ID               string
+	Name             string
+	PriceCNY         string
+	PanelAllowance   string
+	QuotaUsagePolicy QuotaUsagePolicy
+	DurationDays     *int
+	StockTotal       int
+	Description      string
+	Enabled          bool
+	SortOrder        int
+	ModelCatalogIDs  []string
 }
 
 type ServiceOwnerActionInput struct {

@@ -12,6 +12,8 @@ import {
 } from '../apiQuotaOfferUi'
 
 const marketPageSource = readFileSync(new URL('../../pages/ApiMarketPage.vue', import.meta.url), 'utf8')
+const quotaOfferCardSource = readFileSync(new URL('../../components/api-market/ApiQuotaOfferCard.vue', import.meta.url), 'utf8')
+const quotaPolicyStripSource = readFileSync(new URL('../../components/api-market/ApiQuotaPolicyStrip.vue', import.meta.url), 'utf8')
 const freeServiceCardSource = readFileSync(new URL('../../components/api-market/ApiFreeServiceCard.vue', import.meta.url), 'utf8')
 const myApiServicesPageSource = readFileSync(new URL('../../pages/MyApiServicesPage.vue', import.meta.url), 'utf8')
 const myCenterPageSource = readFileSync(new URL('../../pages/MyCenterPage.vue', import.meta.url), 'utf8')
@@ -137,7 +139,7 @@ describe('API 额度包市场视图', () => {
   })
 
   test('限时额度包预览披露体验与真实买家流程', () => {
-    assert.match(publishPreviewSource, /首字响应[\s\S]*?最大并发[\s\S]*?商户自报，平台未测速/)
+    assert.match(publishPreviewSource, /<ApiQuotaPolicyStrip[\s\S]*?:policy="previewPackage\.quotaUsagePolicy"/)
     assert.match(apiServicePublishPageSource, /选择额度包 → 创建订单 → 站外付款 → 卖家确认收款 → 获取交付凭证/)
     assert.match(publishPreviewSource, /卖家确认收款后交付；平台记录订单，不代收款/)
 
@@ -209,8 +211,12 @@ describe('API 额度包市场视图', () => {
   test('限时与自由额度卡按产品分类复用弱主题并保留统一购买操作', () => {
     assert.match(marketPageSource, /function quotaOfferCategory\(item: PublicApiQuotaOffer\)[\s\S]*?getProductCategory/)
     assert.match(marketPageSource, /function freeServiceCategory\(service: ApiService\)[\s\S]*?getApiServiceProductCategory/)
-    assert.equal(marketPageSource.match(/class="quota-offer-card/g)?.length, 2)
-    assert.equal(marketPageSource.match(/:data-category="quotaOfferCategory\(item\)"/g)?.length, 2)
+    assert.equal(marketPageSource.match(/<ApiQuotaOfferCard/g)?.length, 2)
+    assert.equal(marketPageSource.match(/:category="quotaOfferCategory\(item\)"/g)?.length, 2)
+    assert.equal(quotaOfferCardSource.match(/class="quota-offer-card/g)?.length, 1)
+    assert.match(quotaOfferCardSource, /<ApiQuotaPolicyStrip[\s\S]*?:policy="offer\.quotaUsagePolicy"/)
+    assert.match(quotaPolicyStripSource, /\.api-quota-policy-strip dd \{[\s\S]*?overflow-wrap: anywhere;[\s\S]*?white-space: normal;/)
+    assert.doesNotMatch(quotaPolicyStripSource, /text-overflow: ellipsis/)
     assert.match(
       marketPageSource,
       /<ApiFreeServiceCard[\s\S]*?:card="freeServiceCard\(entry\.service\)"[\s\S]*?:promoted="Boolean\(entry\.promotion\)"/,
@@ -221,12 +227,13 @@ describe('API 额度包市场视图', () => {
     assert.match(freeServiceCardSource, /api-free-service-card__icon/)
     assert.match(freeServiceCardSource, /api-free-service-card__price/)
     assert.match(freeServiceCardSource, /可售 \$\{\{ formatDecimal\(card\.availableUsdAllowance/)
-    assert.match(marketPageSource, /价格、额度与性能由商户声明，平台未测速/)
+    assert.doesNotMatch(marketPageSource, /价格、额度与性能由商户声明，平台未测速/)
+    assert.match(marketPageSource, /平台测量只代表当前探测模型与平台节点/)
     assert.match(marketPageSource, /class="quota-free-grid"/)
     assert.match(marketPageSource, /grid-template-columns: repeat\(auto-fit, minmax\(min\(100%, 330px\), 1fr\)\)/)
     assert.match(marketPageSource, /max-width: 1640px/)
     assert.match(marketPageSource, /margin-inline: auto/)
-    assert.match(freeServiceCardSource, /\.api-free-service-card \{[\s\S]*?height: 410px/)
+    assert.match(freeServiceCardSource, /\.api-free-service-card \{[\s\S]*?min-height: 640px/)
     assert.match(freeServiceCardSource, /Megaphone[\s\S]*?推广/)
     assert.doesNotMatch(freeServiceCardSource, /商业推广，不代表平台质量认证或信誉背书/)
     assert.match(freeServiceCardSource, /card\.accountPoolLabel/)
@@ -242,7 +249,7 @@ describe('API 额度包市场视图', () => {
     for (const category of ['gpt', 'claude', 'gemini', 'cursor', 'perplexity', 'other']) {
       assert.match(freeServiceCardSource, new RegExp(`data-category='${category}'`))
     }
-    assert.equal(marketPageSource.match(/class="h-10 w-full"/g)?.length, 2)
+    assert.match(quotaOfferCardSource, /class="h-10 w-full" @click="emit\('purchase', offer\)"/)
     assert.match(freeServiceCardSource, /<RouterLink v-else-if="card\.actionHref"/)
     assert.match(freeServiceCardSource, /aria-disabled="true"/)
     assert.doesNotMatch(marketPageSource, /自动交付|安全可靠|平台担保|虚构原价/)
@@ -261,8 +268,16 @@ describe('API 额度包市场视图', () => {
     assert.match(marketPageSource, /refreshAtSlotBoundary/)
     assert.match(marketPageSource, /useApiQuotaOffers\(rushFilters\)/)
     assert.match(marketPageSource, /`明日 \$\{slotTime\(selectedSlot\)\} 场预告`/)
-    assert.match(marketPageSource, /立即抢购 ¥\$\{formatDecimal\(item\.priceCny/)
+    assert.match(quotaOfferCardSource, /立即抢购 ¥\$\{formatDecimal\(props\.offer\.priceCny/)
     assert.doesNotMatch(marketPageSource, /selectedOffer|confirmPurchase|<Dialog/)
+  })
+
+  test('订单详情只展示购买时冻结的额度规则与到期语义', () => {
+    assert.match(apiOrderDetailSource, /购买时额度规则/)
+    assert.match(apiOrderDetailSource, /:policy="order\.quotaUsagePolicySnapshot"/)
+    assert.match(apiOrderDetailSource, /order\.value\.quotaSnapshot[\s\S]*?quotaSnapshot\.expiresAt/)
+    assert.match(apiOrderDetailSource, /order\.value\.packageExpiresAt[\s\S]*?order\.value\.packageSnapshot[\s\S]*?`交付后 \$\{order\.value\.packageSnapshot\.durationDays\} 天`/)
+    assert.match(apiOrderDetailSource, /serviceValiditySnapshotLabel\(order\.value\.intentSnapshot\)/)
   })
 
   test('三步向导只接受开放场次并支持条件凭据 CSV', () => {

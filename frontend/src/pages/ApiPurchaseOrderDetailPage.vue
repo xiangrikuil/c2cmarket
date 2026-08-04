@@ -4,6 +4,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { useQuery, useQueryClient } from '@tanstack/vue-query'
 import { ArrowLeft, CheckCircle2, ChevronDown, Clock3, Copy, Eye, EyeOff, Headphones, KeyRound, QrCode, ShieldAlert, Star, WalletCards, XCircle } from 'lucide-vue-next'
 import { toast } from 'vue-sonner'
+import ApiQuotaPolicyStrip from '@/components/api-market/ApiQuotaPolicyStrip.vue'
 import ApiPaymentMethodIcon from '@/components/api-payment/ApiPaymentMethodIcon.vue'
 import OrderContactCard from '@/components/profile/OrderContactCard.vue'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
@@ -199,6 +200,13 @@ const orderServiceValidityLabel = computed(() => {
   if (!order.value) return ''
   if (order.value.packageExpiresAt) return formatOrderDateTime(order.value.packageExpiresAt)
   if (order.value.packageSnapshot) return `${order.value.packageSnapshot.durationDays} 天（商户交付后开始）`
+  return serviceValiditySnapshotLabel(order.value.intentSnapshot)
+})
+const orderQuotaExpiryLabel = computed(() => {
+  if (!order.value) return ''
+  if (order.value.quotaSnapshot) return formatOrderDateTime(order.value.quotaSnapshot.expiresAt)
+  if (order.value.packageExpiresAt) return formatOrderDateTime(order.value.packageExpiresAt)
+  if (order.value.packageSnapshot) return `交付后 ${order.value.packageSnapshot.durationDays} 天`
   return serviceValiditySnapshotLabel(order.value.intentSnapshot)
 })
 const paymentInstructions = computed(() => paymentInstructionsQuery.data.value ?? null)
@@ -678,6 +686,13 @@ onBeforeUnmount(() => {
             <ChevronDown class="h-4 w-4 transition-transform" :class="orderDetailsOpen ? 'rotate-180' : ''" />
           </CollapsibleTrigger>
           <CollapsibleContent>
+            <section class="mt-5" aria-labelledby="order-quota-policy-title">
+              <h3 id="order-quota-policy-title" class="mb-2 text-sm font-medium">购买时额度规则</h3>
+              <ApiQuotaPolicyStrip
+                :policy="order.quotaUsagePolicySnapshot"
+                :expiry-value="orderQuotaExpiryLabel"
+              />
+            </section>
             <div v-if="order.quotaSnapshot" class="mt-5 grid gap-4 text-sm sm:grid-cols-2">
               <div><span class="text-muted-foreground">额度包</span><div>{{ order.quotaSnapshot.offerName }}</div></div>
               <div><span class="text-muted-foreground">固定额度 / 总价</span><div>${{ formatDecimal(order.quotaSnapshot.usdAllowance, 0, 6) }} / ¥{{ formatDecimal(order.quotaSnapshot.priceCny, 2, 2) }}</div></div>

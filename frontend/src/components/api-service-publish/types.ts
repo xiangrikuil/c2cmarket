@@ -1,5 +1,6 @@
 import type { ApiMerchantIdentityMode, ApiTTFTBand, ModelCatalogItem } from '@/lib/api'
 import type { ApiPaymentMethod } from '@/lib/apiPaymentSettings'
+import type { ApiQuotaUsagePolicyInput } from '@/types/apiQuota'
 
 export type DistributionSystem = 'sub2api' | 'new_api_proxy' | 'other'
 export type ApiProviderCategory = 'gpt' | 'claude' | 'other'
@@ -36,6 +37,7 @@ export type ApiServicePackage = {
   description: string
   enabled: boolean
   modelCatalogIds: string[]
+  quotaUsagePolicy: ApiQuotaUsagePolicyInput
 }
 
 export type ApiServicePaymentOption = {
@@ -65,6 +67,7 @@ export type ApiServicePublishForm = {
   imageCapability: ImageCapabilityConfig
   availableCreditUsd: number | null
   quotaExpiresAt: string
+  quotaUsagePolicy: ApiQuotaUsagePolicyInput
   minimumPurchaseCny: number | null
   maximumPurchaseCny: number | null
   paymentWindowMinutes: number

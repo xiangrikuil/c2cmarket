@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"c2c-market/backend/internal/domain"
+	"c2c-market/backend/internal/module/apimarket"
 	"c2c-market/backend/internal/module/apiorder"
 	"c2c-market/backend/internal/module/auth"
 	"c2c-market/backend/internal/module/idempotency"
@@ -44,6 +45,7 @@ func TestCreateOfferAllowsSub2APIDeclaredMultiplier(t *testing.T) {
 		USDAllowance:       "50",
 		PriceCNY:           "5",
 		ModelMultiplier:    "1.2",
+		QuotaUsagePolicy:   validQuotaUsagePolicy(),
 		DeliveryMode:       DeliveryModeManual,
 		DeliveryETAMinutes: 10,
 		SaleMode:           SaleModeContinuous,
@@ -468,6 +470,7 @@ func validRushOfferInput(t *testing.T, now time.Time) CreateRushOfferInput {
 		USDAllowance:       "50",
 		PriceCNY:           "5",
 		ModelMultiplier:    "1",
+		QuotaUsagePolicy:   validQuotaUsagePolicy(),
 		Copies:             3,
 		DeliveryMode:       DeliveryModeManual,
 		DeliveryETAMinutes: 10,
@@ -517,9 +520,17 @@ func validOffer(batch Batch, saleMode string) Offer {
 		USDAllowance:       "50.000000",
 		PriceCNY:           "5.00",
 		ModelMultiplier:    "1.0000",
+		QuotaUsagePolicy:   validQuotaUsagePolicy(),
 		DeliveryMode:       DeliveryModeManual,
 		DeliveryETAMinutes: 10,
 		SaleMode:           saleMode,
 		Status:             OfferStatusDraft,
+	}
+}
+
+func validQuotaUsagePolicy() apimarket.QuotaUsagePolicy {
+	return apimarket.QuotaUsagePolicy{
+		FiveHour: apimarket.QuotaUsageLimit{Mode: apimarket.QuotaLimitModeLimited, AmountUSD: "5"},
+		Daily:    apimarket.QuotaUsageLimit{Mode: apimarket.QuotaLimitModeUnlimited},
 	}
 }

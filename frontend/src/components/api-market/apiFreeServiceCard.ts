@@ -1,6 +1,7 @@
 import type { ConcreteProductCategoryKey } from '@/lib/productCategories'
 import type { ReputationSummary } from '@/types/reputation'
 import type { ApiMerchantBadge } from '@/lib/apiMerchantBadges'
+import type { ApiQuotaUsagePolicy, ApiQuotaUsagePolicyInput } from '@/types/apiQuota'
 
 export type ApiFreeServiceCardData = {
   title: string
@@ -12,9 +13,9 @@ export type ApiFreeServiceCardData = {
   cnyPerUsdAllowance: string | number
   minimumPurchaseCny: string | number
   availableUsdAllowance: string | number
+  quotaUsagePolicy: ApiQuotaUsagePolicy | ApiQuotaUsagePolicyInput
   maximumPurchaseCny: string | number
   multiplier: string
-  ttftLabel: string
   declaredMaxConcurrency: string | number
   paymentWindowMinutes: number
   merchantName: string

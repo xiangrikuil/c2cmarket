@@ -5,6 +5,7 @@ import { Badge } from '@/components/ui/badge'
 import { Card } from '@/components/ui/card'
 import ApiMerchantAvatar from '@/components/api-market/ApiMerchantAvatar.vue'
 import ApiMerchantBadges from '@/components/api-market/ApiMerchantBadges.vue'
+import ApiQuotaPolicyStrip from '@/components/api-market/ApiQuotaPolicyStrip.vue'
 import ReputationInlineSummary from '@/components/reputation/ReputationInlineSummary.vue'
 import { getApiMerchantDisplayName } from '@/lib/api'
 import type { ApiPackageRecommendation } from '@/lib/apiPackageRecommendation'
@@ -46,9 +47,16 @@ const hiddenModelCount = Math.max(0, props.row.package.models.length - visibleMo
         </div>
         <div class="shrink-0 text-right">
           <div class="api-service-card-price">¥{{ formatNumber(row.package.priceCny) }}</div>
+          <div class="mt-1 text-xs text-muted-foreground">${{ formatNumber(row.package.panelAllowance, 6) }} 美元额度</div>
           <div class="mt-1 text-xs font-medium text-primary">综合 {{ score(row.score) }} 分</div>
         </div>
       </div>
+
+      <ApiQuotaPolicyStrip
+        :policy="row.package.quotaUsagePolicy"
+        :expiry-value="`交付后 ${row.package.durationDays} 天`"
+      />
+      <div v-if="$slots.health" class="px-4"><slot name="health" /></div>
 
       <div class="flex min-h-8 flex-wrap gap-1.5 px-4 pb-3">
         <Badge v-for="model in visibleModels" :key="model.serviceModelId" variant="model">

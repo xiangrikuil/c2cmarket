@@ -22,6 +22,7 @@ const (
 
 	contactFieldMethodValue   = "contact_method_value"
 	contactFieldModelAPIKey   = "model_audit_api_key"
+	contactFieldProbeAPIKey   = "api_service_probe_credential"
 	contactFieldQuotaAPIKey   = "api_quota_api_key"
 	contactFieldQuotaPassword = "api_quota_password"
 	contactFieldOrderAPIKey   = "api_order_api_key"

@@ -97,6 +97,8 @@ import {
   type UserProfile,
 } from '@/data/mock'
 import type { ReputationSummary } from '@/types/reputation'
+import type { ApiQuotaUsagePolicy, ApiQuotaUsagePolicyInput } from '@/types/apiQuota'
+export type { ApiQuotaLimitMode, ApiQuotaUsageLimit, ApiQuotaUsageLimitInput, ApiQuotaUsagePolicy, ApiQuotaUsagePolicyInput, ApiWritableQuotaLimitMode } from '@/types/apiQuota'
 import { mockPublicUserReputation } from '@/lib/reputationMock'
 import { getPricingDisplay } from '@/lib/pricing'
 import {
@@ -111,6 +113,11 @@ import { matchesApiOrderSearch } from '@/lib/apiOrderUi'
 export { evaluateCarpoolApplicationEligibility } from '@/lib/carpoolEligibility'
 import { defaultQuotaLabel, defaultQuotaPeriod, defaultQuotaUnit } from '@/lib/quota'
 import { beijingDateTimeInputToISOString, formatBeijingDateTimeInput, formatQuotaExpiresAtLabel } from '@/lib/apiQuotaExpiration'
+import {
+  apiQuotaUsagePolicyFromInput,
+  normalizeHistoricalApiQuotaUsagePolicy,
+  toApiQuotaUsagePolicyInput,
+} from '@/lib/apiQuotaPolicy'
 import { getMockPublicAPIModels } from '@/lib/apiModelCatalogBackend'
 import {
   cloneApiPaymentAccountSettings,
@@ -608,6 +615,7 @@ export type ApiOrder = {
   requestedUsdAllowance: number
   requestedUsdAllowanceDecimal?: string
   quotaSnapshot?: ApiQuotaOrderSnapshot
+  quotaUsagePolicySnapshot: ApiQuotaUsagePolicy
   merchantContactChannels: ApiContactChannel[]
   buyerContactChannels: ApiContactChannel[]
   viewerRole?: 'buyer' | 'merchant'
@@ -680,6 +688,7 @@ export type CreateApiQuotaOfferPayload = {
   usdAllowance: string
   priceCny: string
   modelMultiplier: string
+  quotaUsagePolicy: ApiQuotaUsagePolicyInput
   deliveryMode: ApiQuotaDeliveryMode
   deliveryEtaMinutes: number
   saleMode: ApiQuotaSaleMode
@@ -703,6 +712,7 @@ export type CreateApiQuotaRushOfferPayload = {
   usdAllowance: string
   priceCny: string
   modelMultiplier: string
+  quotaUsagePolicy: ApiQuotaUsagePolicyInput
   copies: number
   deliveryMode: ApiQuotaDeliveryMode
   deliveryEtaMinutes: number
@@ -844,7 +854,7 @@ const loadedApiOrders = readSessionStore<ApiOrder[]>(apiOrderStorageKey, [])
 let apiOrderStore = normalizeApiOrderStore(loadedApiOrders)
 if (loadedApiOrders.some(order => !order.orderNo)) persistApiOrderStore()
 let apiQuotaBatchStore = readSessionStore<ApiQuotaBatch[]>(apiQuotaBatchStorageKey, apiQuotaBatches)
-let apiQuotaOfferStore = readSessionStore<PublicApiQuotaOffer[]>(apiQuotaOfferStorageKey, apiQuotaOffers)
+let apiQuotaOfferStore = normalizeApiQuotaOfferStore(readSessionStore<PublicApiQuotaOffer[]>(apiQuotaOfferStorageKey, apiQuotaOffers))
 let apiQuotaRoundStore = readSessionStore<ApiQuotaRound[]>(apiQuotaRoundStorageKey, apiQuotaRounds)
 let apiQuotaCredentialSummaryStore = readSessionStore<ApiQuotaCredentialSummary[]>(apiQuotaCredentialSummaryStorageKey, apiQuotaCredentialSummaries)
 let carpoolApplicationStore = readSessionStore(carpoolApplicationStorageKey, carpoolApplications)
@@ -902,6 +912,7 @@ function normalizeApiPurchaseIntentStore(intents: ApiPurchaseIntent[]): ApiPurch
   return intents.map(intent => ({
     ...intent,
     status: intent.status,
+    quotaUsagePolicySnapshot: normalizeHistoricalApiQuotaUsagePolicy(intent.quotaUsagePolicySnapshot),
   }))
 }
 
@@ -926,6 +937,14 @@ function normalizeApiOrderStore(orders: ApiOrder[]): ApiOrder[] {
     completionSource: order.completionSource ?? (order.status === 'completed' ? 'buyer_confirmed' : undefined),
     deliveryReviewExpiresAt: order.deliveryReviewExpiresAt
       ?? (order.status === 'delivery_submitted' ? mockDeliveryReviewDeadline(order.deliverySubmittedAt) : undefined),
+    quotaUsagePolicySnapshot: normalizeHistoricalApiQuotaUsagePolicy(order.quotaUsagePolicySnapshot),
+  }))
+}
+
+function normalizeApiQuotaOfferStore(offers: PublicApiQuotaOffer[]): PublicApiQuotaOffer[] {
+  return offers.map(offer => ({
+    ...offer,
+    quotaUsagePolicy: normalizeHistoricalApiQuotaUsagePolicy(offer.quotaUsagePolicy),
   }))
 }
 
@@ -1018,11 +1037,16 @@ function requireSupportedApiServiceBillingMode(value: unknown) {
   return value
 }
 
-function normalizeApiServiceStore(services: ApiService[]) {
+function normalizeApiServiceStore(services: ApiService[]): ApiService[] {
   return services.map(service => {
     const normalized = normalizeSub2ApiService(service)
     return {
       ...normalized,
+      quotaUsagePolicy: normalizeHistoricalApiQuotaUsagePolicy(normalized.quotaUsagePolicy),
+      packages: normalized.packages?.map(item => ({
+        ...item,
+        quotaUsagePolicy: normalizeHistoricalApiQuotaUsagePolicy(item.quotaUsagePolicy),
+      })),
       publiclyOrderable: isSupportedApiServiceBillingMode(normalized.billingMode)
         && (normalized.publiclyOrderable ?? normalized.online),
       expiresAt: normalized.quotaExpiresAt ? formatQuotaExpiresAtLabel(normalized.quotaExpiresAt) || normalized.expiresAt : normalized.expiresAt,
@@ -2533,6 +2557,7 @@ export async function getOwnerApiQuotaOffers(batchId: string) {
     priceCny: item.priceCny,
     cnyPerUsd: item.cnyPerUsd,
     modelMultiplier: item.modelMultiplier,
+    quotaUsagePolicy: item.quotaUsagePolicy,
     deliveryMode: item.deliveryMode,
     deliveryEtaMinutes: item.deliveryEtaMinutes,
     saleMode: item.saleMode,
@@ -2559,6 +2584,7 @@ export async function createApiQuotaOffer(payload: CreateApiQuotaOfferPayload) {
   const usdAllowance = normalizeDecimalTrimmed(payload.usdAllowance, 6)
   const priceCny = normalizeDecimal(payload.priceCny, 2)
   const cnyPerUsd = normalizeDecimalTrimmed(divideDecimal(priceCny, usdAllowance, 6), 6)
+  const quotaUsagePolicy = apiQuotaUsagePolicyFromInput(payload.quotaUsagePolicy)
   const offer: PublicApiQuotaOffer = {
     id: `quota-offer-${Date.now()}`,
     batchId: batch.id,
@@ -2569,6 +2595,7 @@ export async function createApiQuotaOffer(payload: CreateApiQuotaOfferPayload) {
     priceCny,
     cnyPerUsd,
     modelMultiplier: normalizeDecimal(payload.modelMultiplier, 4),
+    quotaUsagePolicy,
     deliveryMode: payload.deliveryMode,
     deliveryEtaMinutes: payload.deliveryEtaMinutes,
     saleMode: payload.saleMode,
@@ -2614,6 +2641,7 @@ export async function createApiQuotaRushOffer(payload: CreateApiQuotaRushOfferPa
   const usdAllowance = normalizeDecimalTrimmed(payload.usdAllowance, 6)
   const priceCny = normalizeDecimal(payload.priceCny, 2)
   const modelMultiplier = normalizeDecimal(payload.modelMultiplier, 4)
+  const quotaUsagePolicy = apiQuotaUsagePolicyFromInput(payload.quotaUsagePolicy)
   if (Number(usdAllowance) <= 0 || Number(priceCny) <= 0 || Number(modelMultiplier) <= 0) {
     throw new Error('美元额度、人民币总价和模型倍率必须大于 0。')
   }
@@ -2684,6 +2712,7 @@ export async function createApiQuotaRushOffer(payload: CreateApiQuotaRushOfferPa
     priceCny,
     cnyPerUsd: normalizeDecimalTrimmed(divideDecimal(priceCny, usdAllowance, 6), 6),
     modelMultiplier,
+    quotaUsagePolicy,
     deliveryMode: payload.deliveryMode,
     deliveryEtaMinutes: payload.deliveryEtaMinutes,
     saleMode: 'scheduled',
@@ -4023,7 +4052,7 @@ export async function submitApiService(payload: Record<string, unknown>) {
   const deliveryModes = apiDeliveryModes(payload.deliveryModes)
   const billing = requireSupportedApiServiceBillingMode(payload.billingMode)
   const rawPackages = Array.isArray(payload.packages)
-    ? payload.packages as Array<{ id?: string, name?: string, priceCny?: number, panelAllowance?: number, durationDays?: number, stockTotal?: number, description?: string, enabled?: boolean, modelCatalogIds?: string[] }>
+    ? payload.packages as Array<{ id?: string, name?: string, priceCny?: number, panelAllowance?: number, quotaUsagePolicy?: unknown, durationDays?: number, stockTotal?: number, description?: string, enabled?: boolean, modelCatalogIds?: string[] }>
     : []
   const isPublish = payload.status === 'reviewing'
   const paymentOptions = Array.isArray(payload.paymentOptions)
@@ -4046,10 +4075,12 @@ export async function submitApiService(payload: Record<string, unknown>) {
     ? stringValue(payload.accountPoolCustomName, '')
     : accountPoolType ? accountPoolLabels[accountPoolType] : ''
   const merchantRefundCommitment = (payload.warranty as { mode?: string } | undefined)?.mode === 'merchant_full_refund'
+  const quotaUsagePolicy = apiQuotaUsagePolicyFromInput(payload.quotaUsagePolicy)
   const service: ApiService = {
     id,
     title: stringValue(payload.generatedTitle, models.length ? `${models[0]} API 服务` : '新 API 服务'),
     sourceUrl: stringValue(payload.sourceUrl, ''),
+    quotaUsagePolicy,
     merchantId: currentMerchantId,
     merchantUsername: currentMerchantName,
     merchant: currentMerchantName,
@@ -4118,6 +4149,7 @@ export async function submitApiService(payload: Record<string, unknown>) {
       name: item.name || `套餐 ${index + 1}`,
       priceCny: numberValue(item.priceCny, 0),
       panelAllowance: numberValue(item.panelAllowance, 0),
+      quotaUsagePolicy: apiQuotaUsagePolicyFromInput(toApiQuotaUsagePolicyInput(item.quotaUsagePolicy)),
       durationDays: (item.durationDays ?? 1) as 1 | 3 | 7 | 30,
       stockTotal: numberValue(item.stockTotal, 0),
       stockAvailable: numberValue(item.stockTotal, 0),
@@ -5291,6 +5323,7 @@ export async function createApiPurchaseIntent(payload: CreateApiPurchaseIntentPa
     purchasedCredit: Number(purchasedCreditDecimal),
     purchaseAmountCnyDecimal,
     purchasedCreditDecimal,
+    quotaUsagePolicySnapshot: clone(selectedPackage?.quotaUsagePolicy ?? service.quotaUsagePolicy),
     targetModel: payload.targetModel,
     buyerNote: payload.buyerNote,
     snapshot,
@@ -5463,6 +5496,7 @@ export async function createApiOrderFromIntent(intentId: string, paymentMethod: 
     packageStockReserved: Boolean(selectedPackage),
     requestedUsdAllowance: intent.purchasedCredit,
     requestedUsdAllowanceDecimal: intent.purchasedCreditDecimal || normalizeDecimalTrimmed(String(intent.purchasedCredit), 6),
+    quotaUsagePolicySnapshot: clone(intent.quotaUsagePolicySnapshot),
     merchantContactChannels: clone(intent.contactChannels),
     buyerContactChannels: clone(mockBuyerContactChannels(intent)),
     viewerRole: 'buyer',
@@ -5521,6 +5555,7 @@ export async function createApiQuotaOrder(payload: CreateApiQuotaOrderPayload) {
     purchasedCredit: Number(offer.usdAllowance),
     purchaseAmountCnyDecimal: offer.priceCny,
     purchasedCreditDecimal: offer.usdAllowance,
+    quotaUsagePolicySnapshot: clone(offer.quotaUsagePolicy),
     targetModel: service.models[0] ?? '按额度包说明',
     snapshot: intentSnapshot,
     handoff: {
@@ -5560,6 +5595,7 @@ export async function createApiQuotaOrder(payload: CreateApiQuotaOrderPayload) {
     selectedDeliveryMode,
     requestedUsdAllowance: Number(offer.usdAllowance),
     requestedUsdAllowanceDecimal: offer.usdAllowance,
+    quotaUsagePolicySnapshot: clone(offer.quotaUsagePolicy),
     quotaSnapshot: {
       batchId: offer.batchId,
       offerId: offer.id,
@@ -5575,14 +5611,14 @@ export async function createApiQuotaOrder(payload: CreateApiQuotaOrderPayload) {
       roundStartsAt: offer.currentRound?.startsAt,
       roundEndsAt: offer.currentRound?.endsAt,
       distributionSystem: offer.distributionSystem,
-      ttftBand: offer.declaredTtftBand,
+      ttftBand: service.declaredTtftBand ?? '1_to_3s',
       declaredMaxConcurrency: offer.declaredMaxConcurrency,
       accountPoolType: service.accountPoolType,
       accountPoolLabel: service.accountPoolLabel,
       merchantRefundCommitment: service.merchantRefundCommitment,
       merchantRefundPolicyVersion: service.merchantRefundPolicyVersion,
       serviceValidityExpiresAt: offer.expiresAt,
-      performanceConfirmedAt: offer.performanceConfirmedAt,
+      performanceConfirmedAt: service.performanceConfirmedAt,
       performanceUnverified: true,
       deliveryEtaMinutes: offer.deliveryEtaMinutes,
       deliveryMode: offer.deliveryMode,

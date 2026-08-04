@@ -80,6 +80,7 @@ func TestRunnerRejectsInvalidPolicy(t *testing.T) {
 			UnreadNotificationRetention:    time.Hour,
 			DomainEventRetention:           time.Hour,
 			APIDeliveryCredentialRetention: time.Hour,
+			APIProbeSampleRetention:        time.Hour,
 		},
 	}, time.Now, log.New(io.Discard, "", 0))
 	if err == nil {
@@ -119,6 +120,7 @@ func newTestRunner(t *testing.T, repo Repository, interval time.Duration) *Runne
 			UnreadNotificationRetention:    2 * time.Hour,
 			DomainEventRetention:           time.Hour,
 			APIDeliveryCredentialRetention: time.Hour,
+			APIProbeSampleRetention:        time.Hour,
 		},
 	}, time.Now, log.New(io.Discard, "", 0))
 	if err != nil {

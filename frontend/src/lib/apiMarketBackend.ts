@@ -56,6 +56,7 @@ import type {
   ApiServiceSalesSummary as BackendApiServiceSalesSummary,
   CreateApiServicePromotionRequest,
   PublicApiService,
+  PublicApiQuotaOffer as GeneratedPublicApiQuotaOffer,
   PublicApiServicePromotionList,
 } from '@/api/generated/openapi'
 import { backendFormDataMutation, backendMutation, backendRequest, ensureBackendSession } from '@/lib/backendClient'
@@ -66,6 +67,8 @@ import { compareDecimal, divideDecimal, normalizeDecimal, normalizeDecimalTrimme
 import { mapBackendReputationSummary } from '@/lib/reputationBackend'
 import { matchesApiOrderSearch } from '@/lib/apiOrderUi'
 import type { ReputationSummary } from '@/types/reputation'
+import type { ApiServiceHealthSummary } from '@/types/apiHealth'
+import { parseApiQuotaUsagePolicy, toApiQuotaUsagePolicyInput } from '@/lib/apiQuotaPolicy'
 
 type ListResponse<T> = { items: T[] }
 
@@ -93,6 +96,7 @@ type BackendServicePackage = {
   name: string
   priceCny: string
   panelAllowance: string
+  quotaUsagePolicy: unknown
   durationDays?: number | null
   stockTotal: number
   stockAvailable: number
@@ -137,6 +141,8 @@ type BackendAPIService = {
     expiresAt?: string
   }
   sellerReputation?: ReputationSummary | null
+  healthSummary?: ApiServiceHealthSummary
+  quotaUsagePolicy: unknown
   distributionSystem: string
   billingMode: string
   declaredCnyPerUsdAllowance?: string
@@ -217,6 +223,7 @@ export type BackendAPIPurchaseIntent = {
   minimumIntentCnySnapshot: string
   maximumIntentCnySnapshot?: string
   pricingSnapshot: string
+  quotaUsagePolicySnapshot: unknown
   buyerNote?: string
   contactedAt?: string | null
   buyerCancelledAt?: string | null
@@ -266,6 +273,7 @@ export type BackendAPIOrder = {
   requestedUsdAllowanceSnapshot?: string
   cnyPerUsdAllowanceSnapshot?: string
   pricingSnapshot?: string
+  quotaUsagePolicySnapshot: unknown
   apiQuotaBatchId?: string
   apiQuotaOfferId?: string
   apiQuotaSaleRoundId?: string
@@ -585,6 +593,8 @@ export function mapBackendAPIService(service: BackendAPIService): ApiService {
     sourceUrl: service.sourceUrl ?? '',
     sourceAuthorVerification: service.sourceAuthorVerification,
     sellerReputation,
+    healthSummary: service.healthSummary,
+    quotaUsagePolicy: parseApiQuotaUsagePolicy(service.quotaUsagePolicy),
     merchantId: service.merchantProfileId ?? service.ownerUserId ?? 'merchant',
     merchantUsername,
     merchant: displayName,
@@ -657,6 +667,7 @@ export function mapBackendAPIService(service: BackendAPIService): ApiService {
       name: item.name,
       priceCny: numberFromDecimal(item.priceCny),
       panelAllowance: numberFromDecimal(item.panelAllowance),
+      quotaUsagePolicy: parseApiQuotaUsagePolicy(item.quotaUsagePolicy),
       durationDays: item.durationDays as 1 | 3 | 7 | 30,
       stockTotal: item.stockTotal,
       stockAvailable: item.stockAvailable,
@@ -756,6 +767,7 @@ function mapAPIQuotaOffer(item: ApiQuotaOffer): ApiQuotaOffer {
     priceCny: item.priceCny,
     cnyPerUsd: item.cnyPerUsd,
     modelMultiplier: item.modelMultiplier,
+    quotaUsagePolicy: parseApiQuotaUsagePolicy(item.quotaUsagePolicy),
     deliveryMode: item.deliveryMode,
     deliveryEtaMinutes: item.deliveryEtaMinutes,
     saleMode: item.saleMode,
@@ -766,7 +778,7 @@ function mapAPIQuotaOffer(item: ApiQuotaOffer): ApiQuotaOffer {
   }
 }
 
-export function mapBackendPublicAPIQuotaOffer(item: PublicApiQuotaOffer): PublicApiQuotaOffer {
+export function mapBackendPublicAPIQuotaOffer(item: GeneratedPublicApiQuotaOffer): PublicApiQuotaOffer {
   return {
     ...mapAPIQuotaOffer(item),
     batchStatus: item.batchStatus,
@@ -774,10 +786,8 @@ export function mapBackendPublicAPIQuotaOffer(item: PublicApiQuotaOffer): Public
     sellerDisplayName: item.sellerDisplayName,
     sellerIdentityType: item.sellerIdentityType,
     sellerLinuxDoBound: item.sellerLinuxDoBound,
-    declaredTtftBand: item.declaredTtftBand,
+    healthSummary: item.healthSummary,
     declaredMaxConcurrency: item.declaredMaxConcurrency,
-    performanceConfirmedAt: item.performanceConfirmedAt,
-    performanceDisclaimer: item.performanceDisclaimer,
     saleCutoffAt: item.saleCutoffAt,
     expiresAt: item.expiresAt,
     currentRound: item.currentRound ? mapAPIQuotaRound(item.currentRound) : undefined,
@@ -818,7 +828,7 @@ function quotaOfferQuery(filters: ApiQuotaOfferFilters) {
 }
 
 export async function backendPublicAPIQuotaOffers(filters: ApiQuotaOfferFilters = {}) {
-  const response = await backendRequest<ListResponse<PublicApiQuotaOffer>>(`/api/v1/api-quota-offers${quotaOfferQuery(filters)}`)
+  const response = await backendRequest<ListResponse<GeneratedPublicApiQuotaOffer>>(`/api/v1/api-quota-offers${quotaOfferQuery(filters)}`)
   return response.items.map(mapBackendPublicAPIQuotaOffer)
 }
 
@@ -827,7 +837,7 @@ export async function backendAPIQuotaSaleSlots() {
 }
 
 export async function backendPublicAPIQuotaOffer(id: string) {
-  return mapBackendPublicAPIQuotaOffer(await backendRequest<PublicApiQuotaOffer>(`/api/v1/api-quota-offers/${id}`))
+  return mapBackendPublicAPIQuotaOffer(await backendRequest<GeneratedPublicApiQuotaOffer>(`/api/v1/api-quota-offers/${id}`))
 }
 
 export async function backendCreateAPIQuotaOrder(payload: CreateApiQuotaOrderPayload) {
@@ -883,6 +893,7 @@ export async function backendCreateAPIQuotaOffer(payload: CreateApiQuotaOfferPay
     usdAllowance: payload.usdAllowance,
     priceCny: payload.priceCny,
     modelMultiplier: payload.modelMultiplier,
+    quotaUsagePolicy: toApiQuotaUsagePolicyInput(payload.quotaUsagePolicy),
     deliveryMode: payload.deliveryMode,
     deliveryEtaMinutes: payload.deliveryEtaMinutes,
     saleMode: payload.saleMode,
@@ -894,8 +905,11 @@ export async function backendCreateAPIQuotaOffer(payload: CreateApiQuotaOfferPay
 
 export async function backendCreateAPIQuotaRushOffer(payload: CreateApiQuotaRushOfferPayload) {
   const form = new FormData()
-  const { apiServiceId, file, ...request } = payload
-  form.set('payload', JSON.stringify(request))
+  const { apiServiceId, file, quotaUsagePolicy, ...request } = payload
+  form.set('payload', JSON.stringify({
+    ...request,
+    quotaUsagePolicy: toApiQuotaUsagePolicyInput(quotaUsagePolicy),
+  }))
   if (file) form.set('file', file)
   const response = await backendFormDataMutation<ApiQuotaRushOfferPublication>(
     `/api/v1/owner/api-services/${apiServiceId}/quota-rush-offers`,
@@ -1126,6 +1140,7 @@ function mapIntent(intent: BackendAPIPurchaseIntent, viewerRole: ApiIntentViewer
     purchasedCredit: credit,
     purchaseAmountCnyDecimal: intent.requestedCnyAmount,
     purchasedCreditDecimal: intent.requestedUsdAllowance || '0',
+    quotaUsagePolicySnapshot: parseApiQuotaUsagePolicy(intent.quotaUsagePolicySnapshot),
     targetModel: pricingSnapshot.models[0] ?? '',
     buyerNote: intent.buyerNote,
     snapshot: {
@@ -1671,6 +1686,7 @@ async function mapBackendAPIOrder(order: BackendAPIOrder, viewerRole: 'buyer' | 
     requestedUsdAllowance: numberFromDecimal(order.requestedUsdAllowanceSnapshot || intent.purchasedCreditDecimal),
     requestedUsdAllowanceDecimal: order.requestedUsdAllowanceSnapshot || intent.purchasedCreditDecimal || String(intent.purchasedCredit),
     quotaSnapshot: mapAPIQuotaOrderSnapshot(order, pricingSnapshot),
+    quotaUsagePolicySnapshot: parseApiQuotaUsagePolicy(order.quotaUsagePolicySnapshot),
     merchantContactChannels: intent.contactChannels,
     buyerContactChannels: intent.buyerContactChannels ?? [],
     viewerRole,
@@ -1848,7 +1864,7 @@ export function toBackendServiceRequest(payload: Record<string, unknown>) {
   if (billing === null) throw new Error('Unsupported API billing mode')
   const modes = Array.isArray(payload.deliveryModes) ? payload.deliveryModes as string[] : ['api_key_endpoint']
   const selectedModels = Array.isArray(payload.selectedModels) ? payload.selectedModels as Array<{ modelId?: string, enabled?: boolean }> : []
-  const packages = Array.isArray(payload.packages) ? payload.packages as Array<{ id?: string, name?: string, priceCny?: number, panelAllowance?: number, durationDays?: number, stockTotal?: number, description?: string, enabled?: boolean, modelCatalogIds?: string[] }> : []
+  const packages = Array.isArray(payload.packages) ? payload.packages as Array<{ id?: string, name?: string, priceCny?: number, panelAllowance?: number, quotaUsagePolicy?: unknown, durationDays?: number, stockTotal?: number, description?: string, enabled?: boolean, modelCatalogIds?: string[] }> : []
 
   const fixedPackage = billing === 'fixed_package'
   return {
@@ -1864,6 +1880,7 @@ export function toBackendServiceRequest(payload: Record<string, unknown>) {
     declaredMaxUsdAllowancePerIntent: fixedPackage ? '' : String(payload.availableCreditUsd ?? '20'),
     availableUsdAllowance: fixedPackage ? '' : String(payload.availableCreditUsd ?? '20'),
     quotaExpiresAt: fixedPackage ? '' : beijingDateTimeInputToISOString(String(payload.quotaExpiresAt ?? '')),
+    quotaUsagePolicy: toApiQuotaUsagePolicyInput(payload.quotaUsagePolicy),
     minimumIntentCny: String(payload.minimumPurchaseCny ?? '10'),
     maximumIntentCny: String(payload.maximumPurchaseCny ?? '300'),
     usageVisibility: toBackendUsageVisibility(payload.usageVisibility),
@@ -1889,6 +1906,7 @@ export function toBackendServiceRequest(payload: Record<string, unknown>) {
       name: item.name ?? `套餐 ${index + 1}`,
       priceCny: String(item.priceCny ?? 20),
       panelAllowance: String(item.panelAllowance ?? 1),
+      quotaUsagePolicy: toApiQuotaUsagePolicyInput(item.quotaUsagePolicy),
       durationDays: item.durationDays,
       stockTotal: item.stockTotal ?? 0,
       description: item.description ?? '',

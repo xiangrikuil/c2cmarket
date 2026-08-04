@@ -146,6 +146,11 @@ func isUniqueViolationOnConstraint(err error, constraintName string) bool {
 	return errors.As(err, &pgErr) && pgErr.Code == "23505" && pgErr.ConstraintName == constraintName
 }
 
+func isForeignKeyViolation(err error) bool {
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) && pgErr.Code == "23503"
+}
+
 func internalStoreError() *domain.AppError {
 	return domain.NewError(http.StatusInternalServerError, domain.CodeInternalError, "Internal error", "持久化操作失败。")
 }

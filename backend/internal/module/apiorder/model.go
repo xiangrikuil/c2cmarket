@@ -4,6 +4,7 @@ import (
 	"time"
 
 	"c2c-market/backend/internal/domain"
+	"c2c-market/backend/internal/module/apimarket"
 	"c2c-market/backend/internal/module/idempotency"
 	"c2c-market/backend/internal/module/reputation"
 )
@@ -74,6 +75,7 @@ type Order struct {
 	RequestedUSDAllowanceSnapshot string
 	CNYPerUSDAllowanceSnapshot    string
 	PricingSnapshot               string
+	QuotaUsagePolicySnapshot      apimarket.QuotaUsagePolicy
 	PackageStockReserved          bool
 	PackageExpiresAt              *time.Time
 	APIQuotaBatchID               string

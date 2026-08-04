@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"c2c-market/backend/internal/domain"
+	"c2c-market/backend/internal/module/apimarket"
 	"c2c-market/backend/internal/module/apiorder"
 	"c2c-market/backend/internal/module/auth"
 	"c2c-market/backend/internal/module/idempotency"
@@ -140,6 +141,7 @@ func (m *Manager) CreateOffer(ctx context.Context, user auth.User, input CreateO
 		PriceCNY:           decimalStringMust(input.PriceCNY, 2),
 		CNYPerUSD:          divideDecimal(input.PriceCNY, input.USDAllowance, 6),
 		ModelMultiplier:    decimalStringMust(input.ModelMultiplier, 4),
+		QuotaUsagePolicy:   apimarket.NormalizeQuotaUsagePolicy(input.QuotaUsagePolicy),
 		DeliveryMode:       strings.TrimSpace(input.DeliveryMode),
 		DeliveryETAMinutes: input.DeliveryETAMinutes,
 		SaleMode:           strings.TrimSpace(input.SaleMode),
@@ -288,7 +290,7 @@ func (m *Manager) CreateRushOfferWithIdempotency(ctx context.Context, user auth.
 	}
 	offerInput := CreateOfferInput{
 		Name: input.Name, USDAllowance: input.USDAllowance, PriceCNY: input.PriceCNY,
-		ModelMultiplier: input.ModelMultiplier, DeliveryMode: input.DeliveryMode,
+		ModelMultiplier: input.ModelMultiplier, QuotaUsagePolicy: input.QuotaUsagePolicy, DeliveryMode: input.DeliveryMode,
 		DeliveryETAMinutes: input.DeliveryETAMinutes, SaleMode: SaleModeScheduled,
 	}
 	if appErr := validateCreateOfferInput(offerInput, Batch{Status: BatchStatusDraft}); appErr != nil {
@@ -317,6 +319,7 @@ func (m *Manager) CreateRushOfferWithIdempotency(ctx context.Context, user auth.
 			Name: strings.TrimSpace(input.Name), USDAllowance: decimalStringMust(input.USDAllowance, 6),
 			PriceCNY: decimalStringMust(input.PriceCNY, 2), CNYPerUSD: divideDecimal(input.PriceCNY, input.USDAllowance, 6),
 			ModelMultiplier: decimalStringMust(input.ModelMultiplier, 4), DeliveryMode: input.DeliveryMode,
+			QuotaUsagePolicy:   apimarket.NormalizeQuotaUsagePolicy(input.QuotaUsagePolicy),
 			DeliveryETAMinutes: input.DeliveryETAMinutes, SaleMode: SaleModeScheduled,
 			Status: OfferStatusDraft, CreatedAt: nowUTC, UpdatedAt: nowUTC, Version: 1,
 		},
@@ -446,6 +449,9 @@ func validateCreateOfferInput(input CreateOfferInput, batch Batch) *domain.AppEr
 	}
 	if _, ok := positiveDecimal(input.ModelMultiplier); !ok {
 		return fieldError("modelMultiplier", "模型倍率必须大于 0。")
+	}
+	if appErr := apimarket.ValidateQuotaUsagePolicy(input.QuotaUsagePolicy, "quotaUsagePolicy", false); appErr != nil {
+		return appErr
 	}
 	if input.DeliveryMode != DeliveryModeManual && input.DeliveryMode != DeliveryModePreimported {
 		return fieldError("deliveryMode", "交付模式无效。")

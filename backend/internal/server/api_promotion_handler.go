@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"c2c-market/backend/internal/domain"
+	"c2c-market/backend/internal/module/apihealth"
 	"c2c-market/backend/internal/module/apipromotion"
 	"c2c-market/backend/internal/module/idempotency"
 
@@ -74,8 +75,13 @@ func (s *Server) handlePublicAPIPromotions(w http.ResponseWriter, r *http.Reques
 		writeProblem(w, r, appErr)
 		return
 	}
+	serviceIDs := make([]string, 0, len(items))
+	for _, item := range items {
+		serviceIDs = append(serviceIDs, item.Service.ID)
+	}
+	summaries := s.loadAPIHealthSummaries(r.Context(), serviceIDs)
 	writeJSON(w, http.StatusOK, listResponse[publicAPIPromotionResponse]{
-		Items: toPublicAPIPromotionResponses(items),
+		Items: toPublicAPIPromotionResponsesWithHealth(items, summaries),
 	})
 }
 
@@ -242,8 +248,16 @@ func restoreAPIPromotionETag(completion *idempotency.Completion) {
 }
 
 func toPublicAPIPromotionResponses(items []apipromotion.Promotion) []publicAPIPromotionResponse {
+	return toPublicAPIPromotionResponsesWithHealth(items, nil)
+}
+
+func toPublicAPIPromotionResponsesWithHealth(items []apipromotion.Promotion, summaries map[string]apihealth.Summary) []publicAPIPromotionResponse {
 	responses := make([]publicAPIPromotionResponse, 0, len(items))
 	for _, item := range items {
+		health, exists := summaries[item.Service.ID]
+		if !exists {
+			health = apihealth.BuildSummary(nil, nil, time.Now().UTC())
+		}
 		responses = append(responses, publicAPIPromotionResponse{
 			PromotionID: item.ID,
 			Kind:        item.Kind,
@@ -251,7 +265,7 @@ func toPublicAPIPromotionResponses(items []apipromotion.Promotion) []publicAPIPr
 			Label:       "推广",
 			StartsAt:    item.StartsAt.UTC().Format(time.RFC3339),
 			EndsAt:      item.EndsAt.UTC().Format(time.RFC3339),
-			Service:     toPublicAPIServiceResponse(item.Service),
+			Service:     toPublicAPIServiceResponseWithHealth(item.Service, health),
 		})
 	}
 	return responses

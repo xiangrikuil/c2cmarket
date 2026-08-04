@@ -24,6 +24,10 @@ test('applies simplified API quota publish defaults', () => {
     deliveryModes: ['api_key_endpoint'],
     shortDescription: '旧短句',
     cnyPerUsdCredit: 0.8,
+    quotaUsagePolicy: {
+      fiveHour: { mode: 'unlimited' },
+      daily: { mode: 'unlimited' },
+    },
     manualBillingNote: '旧计费说明',
     defaultMultiplier: 2,
     selectedModels: [{ modelId: 'gpt-5-mini', enabled: true }],
@@ -46,6 +50,10 @@ test('applies simplified API quota publish defaults', () => {
       name: '旧套餐',
       priceCny: 50,
       panelAllowance: 20,
+      quotaUsagePolicy: {
+        fiveHour: { mode: 'limited', amountUsd: '5' },
+        daily: { mode: 'limited', amountUsd: '20' },
+      },
       durationDays: 30,
       stockTotal: 1,
       description: '旧套餐',

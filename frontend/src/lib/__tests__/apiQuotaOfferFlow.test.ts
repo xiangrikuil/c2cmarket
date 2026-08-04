@@ -5,6 +5,11 @@ import type { PublicApiQuotaOffer } from '../api'
 
 type ApiModule = typeof import('../api')
 
+const writableQuotaPolicy = {
+  fiveHour: { mode: 'unlimited' as const },
+  daily: { mode: 'unlimited' as const },
+}
+
 function createStorage(initial: Record<string, string> = {}) {
   const store = new Map(Object.entries(initial))
   return {
@@ -79,6 +84,7 @@ test('mock 固定场次按北京时间生成，并原子发布一个场次额度
     usdAllowance: '25',
     priceCny: '3.50',
     modelMultiplier: '1.0000',
+    quotaUsagePolicy: writableQuotaPolicy,
     copies: 8,
     deliveryMode: 'manual',
     deliveryEtaMinutes: 10,
@@ -116,6 +122,7 @@ test('mock 预导入发布拒绝少于计划份数的凭据', async () => {
     usdAllowance: '25',
     priceCny: '3.50',
     modelMultiplier: '1.0000',
+    quotaUsagePolicy: writableQuotaPolicy,
     copies: 2,
     deliveryMode: 'preimported',
     deliveryEtaMinutes: 2,
@@ -196,6 +203,7 @@ test('Sub2API 额度包默认一倍但允许卖家声明其他固定倍率', asy
     usdAllowance: '50',
     priceCny: '6.00',
     modelMultiplier: '1.2500',
+    quotaUsagePolicy: writableQuotaPolicy,
     deliveryMode: 'manual',
     deliveryEtaMinutes: 10,
     saleMode: 'continuous',

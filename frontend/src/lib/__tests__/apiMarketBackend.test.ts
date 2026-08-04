@@ -6,6 +6,18 @@ import { apiQuotaOffers } from '../../data/mock'
 type ApiModule = typeof import('../api')
 type ApiMarketBackendModule = typeof import('../apiMarketBackend')
 
+const writableQuotaPolicy = {
+  fiveHour: { mode: 'unlimited' as const },
+  daily: { mode: 'unlimited' as const },
+}
+
+const backendQuotaPolicy = {
+  fiveHour: { mode: 'unlimited' as const, amountUsd: null },
+  daily: { mode: 'unlimited' as const, amountUsd: null },
+  scope: 'per_buyer_credential' as const,
+  dailyReset: 'utc_plus_8_calendar_day' as const,
+}
+
 function createStorage() {
   const store = new Map<string, string>()
   return {
@@ -62,6 +74,7 @@ function backendPublicAPIService(overrides: Record<string, unknown> = {}) {
     accountPoolType: 'gpt_pro_5x',
     accountPoolLabel: 'GPT Pro 5x',
     declaredMaxConcurrency: 12,
+    quotaUsagePolicy: backendQuotaPolicy,
     merchantRefundCommitment: true,
     merchantRefundPolicyVersion: 'api-merchant-refund-v1',
     minimumIntentCny: '10.00',
@@ -130,6 +143,7 @@ test('serializes structured commercial facts without writing the legacy merchant
     accountPoolType: 'custom',
     accountPoolCustomName: 'Claude Max',
     declaredMaxConcurrency: 16,
+    quotaUsagePolicy: writableQuotaPolicy,
     warranty: { mode: 'merchant_full_refund' },
   })
 
@@ -145,11 +159,15 @@ test('serializes only supported API service billing modes', async () => {
   const otherMetered = apiMarketBackend.toBackendServiceRequest({
     distributionSystem: 'other',
     billingMode: 'metered_credit',
+    quotaUsagePolicy: writableQuotaPolicy,
   })
   assert.equal(otherMetered.distributionSystem, 'other')
   assert.equal(otherMetered.billingMode, 'metered_usd_quota')
 
-  const fixedPackage = apiMarketBackend.toBackendServiceRequest({ billingMode: 'fixed_package' })
+  const fixedPackage = apiMarketBackend.toBackendServiceRequest({
+    billingMode: 'fixed_package',
+    quotaUsagePolicy: writableQuotaPolicy,
+  })
   assert.equal(fixedPackage.billingMode, 'fixed_package')
 
   assert.throws(
@@ -179,16 +197,46 @@ test('maps API source-author verification independently from source URL presence
   assert.equal(service.sourceAuthorVerification?.status, 'mismatch')
 })
 
-test('maps public quota offer fields without deriving TTFT from payment windows', async () => {
+test('maps platform health for public quota offers without projecting seller TTFT', async () => {
   const { apiMarketBackend } = await loadAPIMarketModules()
-  const source = structuredClone(apiQuotaOffers[1]!)
+  const source = {
+    ...structuredClone(apiQuotaOffers[1]!),
+    healthSummary: {
+      state: 'no_sample' as const,
+      availabilityReason: 'unconfigured' as const,
+      successRatePercent: null,
+      successfulSamples: 0,
+      totalSamples: 0,
+      medianTtftMs: null,
+      probeModel: null,
+      lastSampledAt: null,
+      samples: Array.from({ length: 12 }, (_, index) => ({
+        slotStartedAt: `2026-08-04T00:${String(index * 5).padStart(2, '0')}:00Z`,
+        state: 'no_sample' as const,
+      })) as [
+        { slotStartedAt: string, state: 'no_sample' },
+        { slotStartedAt: string, state: 'no_sample' },
+        { slotStartedAt: string, state: 'no_sample' },
+        { slotStartedAt: string, state: 'no_sample' },
+        { slotStartedAt: string, state: 'no_sample' },
+        { slotStartedAt: string, state: 'no_sample' },
+        { slotStartedAt: string, state: 'no_sample' },
+        { slotStartedAt: string, state: 'no_sample' },
+        { slotStartedAt: string, state: 'no_sample' },
+        { slotStartedAt: string, state: 'no_sample' },
+        { slotStartedAt: string, state: 'no_sample' },
+        { slotStartedAt: string, state: 'no_sample' },
+      ],
+    },
+  }
   const mapped = apiMarketBackend.mapBackendPublicAPIQuotaOffer(source)
 
   assert.equal(mapped.id, source.id)
   assert.equal(mapped.usdAllowance, '100.000000')
   assert.equal(mapped.priceCny, '8.80')
   assert.equal(mapped.modelMultiplier, '1.0000')
-  assert.equal(mapped.declaredTtftBand, 'under_1s')
+  assert.deepEqual(mapped.healthSummary, source.healthSummary)
+  assert.equal(mapped.declaredTtftBand, undefined)
   assert.equal(mapped.declaredMaxConcurrency, 5)
   assert.equal(mapped.nextRound?.id, source.nextRound?.id)
 })

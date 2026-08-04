@@ -14,14 +14,13 @@ import {
   ShoppingCart,
   TimerReset,
   WalletCards,
-  Zap,
 } from 'lucide-vue-next'
 import ApiFreeServiceCard from '@/components/api-market/ApiFreeServiceCard.vue'
 import type { ApiFreeServiceCardData } from '@/components/api-market/apiFreeServiceCard'
+import ApiQuotaPolicyStrip from '@/components/api-market/ApiQuotaPolicyStrip.vue'
 import ApiPaymentMethodIcon from '@/components/api-payment/ApiPaymentMethodIcon.vue'
 import { Badge } from '@/components/ui/badge'
 import { Card } from '@/components/ui/card'
-import { getApiTTFTBandLabel } from '@/lib/api'
 import { getProductCategoryIconSrc } from '@/lib/productCategoryIcon'
 import type { ApiServicePublishForm, CatalogById, SellingMode } from './types'
 import { accountPoolLabel, apiQuotaBoundaryNotice, distributionLabels, enabledPaymentOptions, formatMultiplier, generatedTitle, paymentMethodLabels, providerCategoryLabels, selectedCatalogItems, simplifiedApiQuotaRules, warrantyLabel } from './utils'
@@ -83,7 +82,6 @@ const previewRows = computed(() => {
     )
   }
   rows.push(
-	{ label: '首字响应 / 最大并发', value: `${getApiTTFTBandLabel(props.form.declaredTtftBand)} / ${props.form.declaredMaxConcurrency} · 商户自报，平台未测速`, icon: Zap },
 	{ label: '号池', value: accountPoolLabel(props.form), icon: Network },
     { label: '收款方式', value: paymentSummary.value, icon: CreditCard },
     { label: '接入类型', value: distributionLabels[props.form.distributionSystem], icon: Network },
@@ -100,9 +98,9 @@ const freeServiceCard = computed<ApiFreeServiceCardData>(() => ({
   cnyPerUsdAllowance: props.form.cnyPerUsdCredit ?? 0,
   minimumPurchaseCny: props.form.minimumPurchaseCny ?? 0,
   availableUsdAllowance: props.form.availableCreditUsd ?? 0,
+  quotaUsagePolicy: props.form.quotaUsagePolicy,
   maximumPurchaseCny: props.form.maximumPurchaseCny ?? 0,
   multiplier: props.form.distributionSystem === 'sub2api' ? '1.00x' : formatMultiplier(props.form.defaultMultiplier),
-  ttftLabel: getApiTTFTBandLabel(props.form.declaredTtftBand),
   declaredMaxConcurrency: props.form.declaredMaxConcurrency || '—',
   paymentWindowMinutes: props.form.paymentWindowMinutes,
   merchantName: props.form.merchantDisplayName.trim() || merchantDisplayName.value,
@@ -184,6 +182,11 @@ const buyerFlow = [
             <div class="mt-1 text-lg font-semibold">${{ previewPackage.panelAllowance }}</div>
           </div>
         </div>
+
+        <ApiQuotaPolicyStrip
+          :policy="previewPackage.quotaUsagePolicy"
+          :expiry-value="`交付后 ${previewPackage.durationDays} 天`"
+        />
 
         <dl class="api-publish-preview-list px-3 pb-3 text-xs">
           <div><dt>套餐有效期</dt><dd>{{ previewPackage.durationDays }} 天，交付后开始</dd></div>

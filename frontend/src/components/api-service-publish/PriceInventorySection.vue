@@ -2,6 +2,7 @@
 import { CircleDollarSign } from 'lucide-vue-next'
 import { Card } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
+import ApiQuotaPolicyFields from '@/components/api-market/ApiQuotaPolicyFields.vue'
 import type { ApiServicePublishForm } from './types'
 
 defineProps<{
@@ -75,6 +76,9 @@ defineProps<{
           <p v-if="errors.quotaExpiresAt" id="api-publish-quota-expires-at-error" class="text-xs text-destructive">{{ errors.quotaExpiresAt }}</p>
           <p v-else class="text-xs text-muted-foreground">买家按该时间判断可用窗口。</p>
         </label>
+      </div>
+      <div class="mt-4 border-t border-border pt-4">
+        <ApiQuotaPolicyFields v-model="form.quotaUsagePolicy" :error="errors.quotaUsagePolicy" />
       </div>
     </div>
   </Card>

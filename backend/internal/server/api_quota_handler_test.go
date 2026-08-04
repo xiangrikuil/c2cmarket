@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"c2c-market/backend/internal/domain"
+	"c2c-market/backend/internal/module/apihealth"
 	"c2c-market/backend/internal/module/apiquota"
 	app "c2c-market/backend/internal/module/core"
 	"c2c-market/backend/internal/module/idempotency"
@@ -271,7 +272,7 @@ func newQuotaRushMultipartRequest(t *testing.T, payload, fileName, fileContents 
 	return request
 }
 
-func TestAPIServicePerformanceDeclarationRoundTrips(t *testing.T) {
+func TestAPIServicePerformanceDeclarationStaysPrivateAfterPublication(t *testing.T) {
 	now := time.Now().UTC()
 	server := newTestServer(now)
 	owner := createLinuxDoSession(t, server, "quota-performance-owner")
@@ -298,14 +299,26 @@ func TestAPIServicePerformanceDeclarationRoundTrips(t *testing.T) {
 		t.Fatalf("public API service status %d body %s", response.Code, response.Body.String())
 	}
 	var public struct {
-		DeclaredTTFTBand       string  `json:"declaredTtftBand"`
-		DeclaredMaxConcurrency int     `json:"declaredMaxConcurrency"`
-		PerformanceConfirmedAt *string `json:"performanceConfirmedAt"`
+		DeclaredMaxConcurrency int                             `json:"declaredMaxConcurrency"`
+		HealthSummary          apiServiceHealthSummaryResponse `json:"healthSummary"`
 	}
-	if err := json.NewDecoder(response.Body).Decode(&public); err != nil {
+	bodyBytes := response.Body.Bytes()
+	if err := json.Unmarshal(bodyBytes, &public); err != nil {
 		t.Fatalf("decode public API service: %v", err)
 	}
-	if public.DeclaredTTFTBand != "1_to_3s" || public.DeclaredMaxConcurrency != 16 || public.PerformanceConfirmedAt == nil || *public.PerformanceConfirmedAt != confirmedAt {
-		t.Fatalf("unexpected public performance declaration: %+v", public)
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(bodyBytes, &raw); err != nil {
+		t.Fatalf("decode public API service fields: %v", err)
+	}
+	if _, exists := raw["declaredTtftBand"]; exists {
+		t.Fatalf("public API service leaked seller-declared TTFT")
+	}
+	if _, exists := raw["performanceConfirmedAt"]; exists {
+		t.Fatalf("public API service leaked seller performance confirmation time")
+	}
+	if public.DeclaredMaxConcurrency != 16 || public.HealthSummary.State != apihealth.HealthStateNoSample ||
+		public.HealthSummary.AvailabilityReason == nil || *public.HealthSummary.AvailabilityReason != apihealth.AvailabilityUnconfigured ||
+		len(public.HealthSummary.Samples) != apihealth.SummarySlotCount {
+		t.Fatalf("unexpected public platform health projection: %+v", public)
 	}
 }

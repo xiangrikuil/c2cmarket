@@ -115,6 +115,7 @@ func (s *Manager) Update(ctx context.Context, user auth.User, input UpdateServic
 		DeclaredMaxUSDAllowancePerIntent: input.DeclaredMaxUSDAllowancePerIntent,
 		AvailableUSDAllowance:            input.AvailableUSDAllowance,
 		QuotaExpiresAt:                   input.QuotaExpiresAt,
+		QuotaUsagePolicy:                 input.QuotaUsagePolicy,
 		MinimumIntentCNY:                 input.MinimumIntentCNY,
 		MaximumIntentCNY:                 input.MaximumIntentCNY,
 		UsageVisibility:                  input.UsageVisibility,
@@ -582,6 +583,10 @@ func (s *Manager) buildFromInput(ctx context.Context, current Service, input Cre
 		moderationStatus = ServiceModerationStatusClear
 	}
 
+	quotaUsagePolicy := UnspecifiedQuotaUsagePolicy()
+	if strings.TrimSpace(input.BillingMode) == ServiceBillingModeMetered {
+		quotaUsagePolicy = NormalizeQuotaUsagePolicy(input.QuotaUsagePolicy)
+	}
 	service := Service{
 		ID:                               serviceID,
 		OwnerUserID:                      input.OwnerUserID,
@@ -597,6 +602,7 @@ func (s *Manager) buildFromInput(ctx context.Context, current Service, input Cre
 		DeclaredMaxUSDAllowancePerIntent: strings.TrimSpace(input.DeclaredMaxUSDAllowancePerIntent),
 		AvailableUSDAllowance:            strings.TrimSpace(input.AvailableUSDAllowance),
 		QuotaExpiresAt:                   quotaExpiresAt,
+		QuotaUsagePolicy:                 quotaUsagePolicy,
 		MinimumIntentCNY:                 strings.TrimSpace(input.MinimumIntentCNY),
 		MaximumIntentCNY:                 strings.TrimSpace(input.MaximumIntentCNY),
 		UsageVisibility:                  strings.TrimSpace(input.UsageVisibility),
@@ -702,19 +708,20 @@ func (s *Manager) buildFromInput(ctx context.Context, current Service, input Cre
 	retainedPackageIDs := make(map[string]bool, len(input.Packages))
 	for _, packageInput := range input.Packages {
 		pack := ServicePackage{
-			ID:             uuid.NewString(),
-			APIServiceID:   service.ID,
-			Name:           strings.TrimSpace(packageInput.Name),
-			PriceCNY:       strings.TrimSpace(packageInput.PriceCNY),
-			PanelAllowance: strings.TrimSpace(packageInput.PanelAllowance),
-			DurationDays:   packageInput.DurationDays,
-			StockTotal:     packageInput.StockTotal,
-			StockAvailable: packageInput.StockTotal,
-			Description:    strings.TrimSpace(packageInput.Description),
-			Enabled:        packageInput.Enabled,
-			SortOrder:      packageInput.SortOrder,
-			CreatedAt:      now,
-			UpdatedAt:      now,
+			ID:               uuid.NewString(),
+			APIServiceID:     service.ID,
+			Name:             strings.TrimSpace(packageInput.Name),
+			PriceCNY:         strings.TrimSpace(packageInput.PriceCNY),
+			PanelAllowance:   strings.TrimSpace(packageInput.PanelAllowance),
+			QuotaUsagePolicy: NormalizeQuotaUsagePolicy(packageInput.QuotaUsagePolicy),
+			DurationDays:     packageInput.DurationDays,
+			StockTotal:       packageInput.StockTotal,
+			StockAvailable:   packageInput.StockTotal,
+			Description:      strings.TrimSpace(packageInput.Description),
+			Enabled:          packageInput.Enabled,
+			SortOrder:        packageInput.SortOrder,
+			CreatedAt:        now,
+			UpdatedAt:        now,
 		}
 		if packageID := strings.TrimSpace(packageInput.ID); !isCreating && packageID != "" {
 			existing, ok := currentPackages[packageID]
@@ -812,6 +819,9 @@ func validateCreateInput(input CreateServiceInput, now time.Time) *domain.AppErr
 		if available, ok := parseNonNegativeDecimal(input.AvailableUSDAllowance); !ok || available.Sign() < 0 {
 			return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Available USD allowance invalid", "可售美元额度格式不正确。", "availableUsdAllowance", "invalid", "可售美元额度必须是大于等于 0 的数字。")
 		}
+		if appErr := ValidateQuotaUsagePolicy(input.QuotaUsagePolicy, "quotaUsagePolicy", false); appErr != nil {
+			return appErr
+		}
 	case ServiceBillingModeManual:
 		return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Billing mode unsupported", "当前版本暂不支持商户手工核对计费。", "billingMode", "unsupported", "当前版本暂不支持商户手工核对计费，请使用美元额度或固定套餐。")
 	case ServiceBillingModeFixedPackage:
@@ -897,6 +907,9 @@ func validateCreateInput(input CreateServiceInput, now time.Time) *domain.AppErr
 	seenPackageIDs := map[string]bool{}
 	for i, pack := range input.Packages {
 		field := fmt.Sprintf("packages.%d", i)
+		if appErr := ValidateQuotaUsagePolicy(pack.QuotaUsagePolicy, field+".quotaUsagePolicy", false); appErr != nil {
+			return appErr
+		}
 		if strings.TrimSpace(pack.Name) == "" {
 			return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Package name required", "套餐名称不能为空。", field+".name", "required", "套餐名称不能为空。")
 		}

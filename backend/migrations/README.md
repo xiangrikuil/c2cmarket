@@ -84,6 +84,8 @@ versions:
 | `000075_api_order_public_numbers` | immutable human-facing API order numbers |
 | `000076_api_delivery_credential_destruction` | explicit irreversible destruction state for retained API delivery credential payloads |
 | `000077_moderation_info_requests` | participant-targeted moderation information requests and immutable supplements |
+| `000078_account_appeal_sessions` | dedicated account-governance appeal sessions for suspended or banned users |
+| `000079_api_market_probe_and_quota_limits` | API SKU quota usage policies, immutable purchase snapshots, authorized platform probes, and probe samples |
 
 The current runnable Go slice supports both in-memory tests and PostgreSQL runtime.
 When `DATABASE_URL` is configured, users, auth sessions, idempotency, product
@@ -367,6 +369,14 @@ session for suspended or banned users who prove an existing linux.do identity.
 Only opaque session and CSRF hashes are stored. The migration also adds the
 `account_governance` appeal target with no report/dispute source and enforces at
 most one submitted account-governance appeal per user.
+
+Version 79 (`000079_api_market_probe_and_quota_limits`) adds explicit 5-hour
+and UTC+8 calendar-day USD usage policies to free-quota services, fixed
+packages, and limited-quota offers, with matching purchase-intent and order
+snapshots. It also stores one encrypted, seller-dedicated platform probe
+configuration per API service, exact-origin authorization audit events, and
+five-minute bounded probe samples. Probe results remain observational and do
+not change listing, ordering, dispute, fulfillment, or recommendation state.
 
 ## Contact Retention And Destruction
 

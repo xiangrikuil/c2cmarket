@@ -34,7 +34,10 @@ const apiQuotaOfferColumns = `
 	COALESCE(o.previous_version_id::text, ''), o.distribution_system, o.name,
 	o.usd_allowance::text, o.price_cny::text,
 	(price_cny / usd_allowance)::numeric(18,6)::text,
-	o.model_multiplier::text, o.delivery_mode, o.delivery_eta_minutes,
+	o.model_multiplier::text,
+	o.five_hour_limit_mode, COALESCE(o.five_hour_limit_usd::text, ''),
+	o.daily_limit_mode, COALESCE(o.daily_limit_usd::text, ''),
+	o.delivery_mode, o.delivery_eta_minutes,
 	o.sale_mode, o.status, o.sort_order, o.published_at,
 	o.created_at, o.updated_at, o.version
 `
@@ -138,13 +141,17 @@ func (s *Store) CreateAPIQuotaOffer(ctx context.Context, offer apiquota.Offer, c
 		INSERT INTO api_quota_offers (
 			id, batch_id, api_service_id, owner_user_id, distribution_system,
 			name, usd_allowance, price_cny, model_multiplier,
+			five_hour_limit_mode, five_hour_limit_usd, daily_limit_mode, daily_limit_usd,
 			delivery_mode, delivery_eta_minutes, sale_mode, status, sort_order,
 			created_at, updated_at, version
 		) VALUES (
-			$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, 'draft', $13, $14, $14, 1
+			$1, $2, $3, $4, $5, $6, $7, $8, $9,
+			$10, $11, $12, $13, $14, $15, $16, 'draft', $17, $18, $18, 1
 		)
 	`, offer.ID, offer.BatchID, offer.APIServiceID, offer.OwnerUserID, offer.DistributionSystem,
 		offer.Name, offer.USDAllowance, offer.PriceCNY, offer.ModelMultiplier,
+		offer.QuotaUsagePolicy.FiveHour.Mode, nullNumeric(offer.QuotaUsagePolicy.FiveHour.AmountUSD),
+		offer.QuotaUsagePolicy.Daily.Mode, nullNumeric(offer.QuotaUsagePolicy.Daily.AmountUSD),
 		offer.DeliveryMode, offer.DeliveryETAMinutes, offer.SaleMode, offer.SortOrder, now)
 	if err != nil {
 		return apiquota.Offer{}, mapAPIQuotaWriteError(err)
@@ -853,15 +860,18 @@ func (s *Store) CreateSystemRushOfferWithIdempotency(ctx context.Context, entry 
 		INSERT INTO api_quota_offers (
 			id, batch_id, api_service_id, owner_user_id, distribution_system,
 			name, usd_allowance, price_cny, model_multiplier,
+			five_hour_limit_mode, five_hour_limit_usd, daily_limit_mode, daily_limit_usd,
 			delivery_mode, delivery_eta_minutes, sale_mode, status, sort_order,
 			created_at, updated_at, version
 		) VALUES (
 			$1, $2, $3, $4, $5, $6, $7, $8, $9,
-			$10, $11, 'scheduled', 'draft', 0, $12, $12, 1
+			$10, $11, $12, $13, $14, $15, 'scheduled', 'draft', 0, $16, $16, 1
 		)
 	`, publication.Offer.ID, publication.Batch.ID, publication.Batch.APIServiceID,
 		publication.Batch.OwnerUserID, distributionSystem, publication.Offer.Name,
 		publication.Offer.USDAllowance, publication.Offer.PriceCNY, publication.Offer.ModelMultiplier,
+		publication.Offer.QuotaUsagePolicy.FiveHour.Mode, nullNumeric(publication.Offer.QuotaUsagePolicy.FiveHour.AmountUSD),
+		publication.Offer.QuotaUsagePolicy.Daily.Mode, nullNumeric(publication.Offer.QuotaUsagePolicy.Daily.AmountUSD),
 		publication.Offer.DeliveryMode, publication.Offer.DeliveryETAMinutes, now)
 	if err != nil {
 		return apiquota.RushOfferPublication{}, idempotency.Completion{}, mapAPIQuotaWriteError(err)
@@ -1202,7 +1212,10 @@ func (s *Store) CreateAPIQuotaOrderWithIdempotency(ctx context.Context, entry id
 			declared_cny_per_usd_allowance_snapshot,
 			declared_max_usd_allowance_per_intent_snapshot,
 			minimum_intent_cny_snapshot, maximum_intent_cny_snapshot,
-			pricing_snapshot, buyer_note,
+			pricing_snapshot,
+			five_hour_limit_mode_snapshot, five_hour_limit_usd_snapshot,
+			daily_limit_mode_snapshot, daily_limit_usd_snapshot,
+			buyer_note,
 			api_quota_batch_id, api_quota_offer_id, api_quota_sale_round_id,
 			api_quota_allocation_id, api_quota_inventory_unit_id, quota_offer_snapshot,
 			created_at, updated_at, version
@@ -1214,9 +1227,11 @@ func (s *Store) CreateAPIQuotaOrderWithIdempotency(ctx context.Context, entry id
 			$12, $13, $14, $15,
 			$16, $17, $18, $19,
 			$20, NULL, $21, $22,
-			$23::jsonb, $24,
-			$25, $26, $27, $28, $29, $23::jsonb,
-			$30, $30, 1
+			$23::jsonb,
+			$24, $25, $26, $27,
+			$28,
+			$29, $30, $31, $32, $33, $23::jsonb,
+			$34, $34, 1
 		)
 	`, intentID, orderContext.APIServiceID, orderContext.OwnerUserID, input.BuyerUserID,
 		buyerMethod.ID, buyerVersion.ID, ownerMethod.ID, ownerVersion.ID,
@@ -1224,7 +1239,10 @@ func (s *Store) CreateAPIQuotaOrderWithIdempotency(ctx context.Context, entry id
 		orderContext.ServiceVersion, orderContext.ServiceTitle, orderContext.DistributionSystem, orderContext.BillingMode,
 		buyerMethod.Type, buyerMethod.Label, ownerMethod.Type, ownerMethod.Label,
 		orderContext.CNYPerUSD, orderContext.MinimumIntentCNY, nullNumeric(orderContext.MaximumIntentCNY),
-		snapshot, nullText(input.BuyerNote), orderContext.BatchID, orderContext.OfferID, nullUUID(round.ID),
+		snapshot,
+		orderContext.QuotaUsagePolicy.FiveHour.Mode, nullNumeric(orderContext.QuotaUsagePolicy.FiveHour.AmountUSD),
+		orderContext.QuotaUsagePolicy.Daily.Mode, nullNumeric(orderContext.QuotaUsagePolicy.Daily.AmountUSD),
+		nullText(input.BuyerNote), orderContext.BatchID, orderContext.OfferID, nullUUID(round.ID),
 		allocationID, inventoryUnitID, now)
 	if err != nil {
 		return apiorder.Order{}, idempotency.Completion{}, mapAPIQuotaWriteError(err)
@@ -1245,6 +1263,7 @@ func (s *Store) CreateAPIQuotaOrderWithIdempotency(ctx context.Context, entry id
 		RequestedUSDAllowanceSnapshot: orderContext.USDAllowance,
 		CNYPerUSDAllowanceSnapshot:    orderContext.CNYPerUSD,
 		PricingSnapshot:               snapshot,
+		QuotaUsagePolicySnapshot:      orderContext.QuotaUsagePolicy,
 		APIQuotaBatchID:               orderContext.BatchID,
 		APIQuotaOfferID:               orderContext.OfferID,
 		APIQuotaSaleRoundID:           round.ID,
@@ -1299,6 +1318,8 @@ func (s *Store) CreateAPIQuotaOrderWithIdempotency(ctx context.Context, entry id
 			quota_declared_max_concurrency_snapshot, quota_performance_confirmed_at_snapshot,
 			quota_performance_unverified_snapshot, quota_delivery_eta_minutes_snapshot,
 			quota_delivery_mode_snapshot,
+			five_hour_limit_mode_snapshot, five_hour_limit_usd_snapshot,
+			daily_limit_mode_snapshot, daily_limit_usd_snapshot,
 			amount, currency, selected_payment_method, payment_window_minutes_snapshot,
 			payment_expires_at, payment_instructions_snapshot, payment_qr_code_data_url_snapshot,
 			created_at, updated_at, version, order_no
@@ -1308,7 +1329,8 @@ func (s *Store) CreateAPIQuotaOrderWithIdempotency(ctx context.Context, entry id
 			$15, $16, $17, $18, $19, $20,
 			$14::jsonb, $21, $12, $22, $13, $23, $24, $25,
 			$26, $27, $28, $29, $30, $31, $32, true, $33, $34,
-			$22, 'CNY', $35, $36, $37, $38, $39, $40, $40, 1, $41
+			$35, $36, $37, $38,
+			$22, 'CNY', $39, $40, $41, $42, $43, $44, $44, 1, $45
 		)
 		ON CONFLICT ON CONSTRAINT ux_api_orders_order_no DO NOTHING
 	`, order.ID, order.PurchaseKind, order.APIPurchaseIntentID, order.APIServiceID,
@@ -1321,7 +1343,10 @@ func (s *Store) CreateAPIQuotaOrderWithIdempotency(ctx context.Context, entry id
 			order.QuotaSaleCutoffAtSnapshot, order.QuotaExpiresAtSnapshot, order.QuotaSaleModeSnapshot,
 			order.QuotaRoundStartsAtSnapshot, order.QuotaRoundEndsAtSnapshot, order.QuotaDistributionSnapshot,
 			order.QuotaTTFTBandSnapshot, order.QuotaDeclaredMaxConcurrency, order.QuotaPerformanceConfirmedAt,
-			order.QuotaDeliveryETAMinutes, order.QuotaDeliveryMode, order.SelectedPaymentMethod,
+			order.QuotaDeliveryETAMinutes, order.QuotaDeliveryMode,
+			order.QuotaUsagePolicySnapshot.FiveHour.Mode, nullNumeric(order.QuotaUsagePolicySnapshot.FiveHour.AmountUSD),
+			order.QuotaUsagePolicySnapshot.Daily.Mode, nullNumeric(order.QuotaUsagePolicySnapshot.Daily.AmountUSD),
+			order.SelectedPaymentMethod,
 			order.PaymentWindowMinutesSnapshot, order.PaymentExpiresAt, order.PaymentInstructionsSnapshot,
 			nullText(order.PaymentQRCodeDataURLSnapshot), now, order.OrderNo)
 		if insertErr != nil {
@@ -1392,6 +1417,7 @@ type apiQuotaOrderContext struct {
 	PriceCNY                 string
 	CNYPerUSD                string
 	ModelMultiplier          string
+	QuotaUsagePolicy         apimarket.QuotaUsagePolicy
 	DeliveryMode             string
 	DeliveryETAMinutes       int
 	SaleMode                 string
@@ -1420,7 +1446,10 @@ func getAPIQuotaOrderContext(ctx context.Context, tx pgx.Tx, input apiquota.Crea
 		SELECT o.id::text, o.batch_id::text, o.api_service_id::text, o.owner_user_id::text,
 		       s.owner_contact_method_id::text, o.name, o.usd_allowance::text, o.price_cny::text,
 		       (o.price_cny / o.usd_allowance)::numeric(18,6)::text,
-		       o.model_multiplier::text, o.delivery_mode, o.delivery_eta_minutes,
+		       o.model_multiplier::text,
+		       o.five_hour_limit_mode, COALESCE(o.five_hour_limit_usd::text, ''),
+		       o.daily_limit_mode, COALESCE(o.daily_limit_usd::text, ''),
+		       o.delivery_mode, o.delivery_eta_minutes,
 		       o.sale_mode, o.distribution_system, o.status, b.status,
 		       b.sale_cutoff_at, b.expires_at,
 		       s.title, s.version, s.billing_mode,
@@ -1436,7 +1465,10 @@ func getAPIQuotaOrderContext(ctx context.Context, tx pgx.Tx, input apiquota.Crea
 	`, input.OfferID).Scan(
 		&item.OfferID, &item.BatchID, &item.APIServiceID, &item.OwnerUserID,
 		&item.OwnerContactMethodID, &item.OfferName, &item.USDAllowance, &item.PriceCNY,
-		&item.CNYPerUSD, &item.ModelMultiplier, &item.DeliveryMode, &item.DeliveryETAMinutes,
+		&item.CNYPerUSD, &item.ModelMultiplier,
+		&item.QuotaUsagePolicy.FiveHour.Mode, &item.QuotaUsagePolicy.FiveHour.AmountUSD,
+		&item.QuotaUsagePolicy.Daily.Mode, &item.QuotaUsagePolicy.Daily.AmountUSD,
+		&item.DeliveryMode, &item.DeliveryETAMinutes,
 		&item.SaleMode, &item.DistributionSystem, &item.OfferStatus, &item.BatchStatus,
 		&item.SaleCutoffAt, &item.ExpiresAt, &item.ServiceTitle, &item.ServiceVersion,
 		&item.BillingMode, &item.MinimumIntentCNY, &item.MaximumIntentCNY,
@@ -1543,9 +1575,15 @@ func buildAPIQuotaSnapshot(item apiQuotaOrderContext, round apiquota.SaleRound) 
 		"merchantRefundCommitment":    item.MerchantRefundCommitment,
 		"merchantRefundPolicyVersion": apimarket.MerchantRefundPolicyVersion,
 		"serviceValidityExpiresAt":    item.ExpiresAt,
-		"performanceConfirmedAt":      item.PerformanceConfirmedAt,
-		"performanceDisclaimer":       "商户自报，平台未测速",
-		"deliveryEtaMinutes":          item.DeliveryETAMinutes, "deliveryMode": item.DeliveryMode,
+		"quotaUsagePolicy": map[string]any{
+			"fiveHour":   map[string]any{"mode": item.QuotaUsagePolicy.FiveHour.Mode, "amountUsd": nullText(item.QuotaUsagePolicy.FiveHour.AmountUSD)},
+			"daily":      map[string]any{"mode": item.QuotaUsagePolicy.Daily.Mode, "amountUsd": nullText(item.QuotaUsagePolicy.Daily.AmountUSD)},
+			"scope":      apimarket.QuotaLimitScopePerBuyerCredential,
+			"dailyReset": apimarket.QuotaDailyResetUTCPlus8CalendarDay,
+		},
+		"performanceConfirmedAt": item.PerformanceConfirmedAt,
+		"performanceDisclaimer":  "商户自报，平台未测速",
+		"deliveryEtaMinutes":     item.DeliveryETAMinutes, "deliveryMode": item.DeliveryMode,
 		"serviceTitle": item.ServiceTitle, "serviceVersion": item.ServiceVersion,
 	}
 	if round.ID != "" {
@@ -1659,6 +1697,8 @@ func scanAPIQuotaOffer(row scanner, offer *apiquota.Offer) error {
 		&offer.ID, &offer.BatchID, &offer.APIServiceID, &offer.OwnerUserID,
 		&offer.PreviousVersionID, &offer.DistributionSystem, &offer.Name,
 		&offer.USDAllowance, &offer.PriceCNY, &offer.CNYPerUSD, &offer.ModelMultiplier,
+		&offer.QuotaUsagePolicy.FiveHour.Mode, &offer.QuotaUsagePolicy.FiveHour.AmountUSD,
+		&offer.QuotaUsagePolicy.Daily.Mode, &offer.QuotaUsagePolicy.Daily.AmountUSD,
 		&offer.DeliveryMode, &offer.DeliveryETAMinutes, &offer.SaleMode, &offer.Status,
 		&offer.SortOrder, &offer.PublishedAt, &offer.CreatedAt, &offer.UpdatedAt, &offer.Version,
 	)
@@ -1737,6 +1777,8 @@ func scanAPIQuotaOfferCard(row scanner) (apiquota.OfferCard, error) {
 		&card.ID, &card.BatchID, &card.APIServiceID, &card.OwnerUserID,
 		&card.PreviousVersionID, &card.DistributionSystem, &card.Name,
 		&card.USDAllowance, &card.PriceCNY, &card.CNYPerUSD, &card.ModelMultiplier,
+		&card.QuotaUsagePolicy.FiveHour.Mode, &card.QuotaUsagePolicy.FiveHour.AmountUSD,
+		&card.QuotaUsagePolicy.Daily.Mode, &card.QuotaUsagePolicy.Daily.AmountUSD,
 		&card.DeliveryMode, &card.DeliveryETAMinutes, &card.SaleMode, &card.Status,
 		&card.SortOrder, &card.PublishedAt, &card.CreatedAt, &card.UpdatedAt, &card.Version,
 		&card.BatchStatus, &card.ServiceTitle, &card.ServiceOrderable,

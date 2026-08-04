@@ -4,6 +4,7 @@ import { useRoute } from 'vue-router'
 import { toast } from 'vue-sonner'
 import ApiQuotaOwnerManager from '@/components/api-quota/ApiQuotaOwnerManager.vue'
 import ApiServiceOwnerHeader from '@/components/api-service-owner/ApiServiceOwnerHeader.vue'
+import OwnerAPIHealthProbePanel from '@/components/api-service-owner/OwnerAPIHealthProbePanel.vue'
 import ApiServiceOwnerMetrics from '@/components/api-service-owner/ApiServiceOwnerMetrics.vue'
 import ApiServiceOwnerOverview from '@/components/api-service-owner/ApiServiceOwnerOverview.vue'
 import ErrorState from '@/components/market/ErrorState.vue'
@@ -73,6 +74,8 @@ function resumeService() {
     <ApiServiceOwnerMetrics :service="service" />
 
     <ApiServiceOwnerOverview :service="service" />
+
+    <OwnerAPIHealthProbePanel :api-service-id="service.id" />
 
     <ApiQuotaOwnerManager :api-service-id="service.id" :distribution-system="service.delivery" :default-multiplier="service.defaultMultiplier" />
   </main>

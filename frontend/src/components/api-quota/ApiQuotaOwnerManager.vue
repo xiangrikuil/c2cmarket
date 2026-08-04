@@ -27,6 +27,7 @@ import {
   WalletCards,
 } from 'lucide-vue-next'
 import { toast } from 'vue-sonner'
+import ApiQuotaPolicyFields from '@/components/api-market/ApiQuotaPolicyFields.vue'
 import LocalTime from '@/components/market/LocalTime.vue'
 import SkeletonTable from '@/components/market/SkeletonTable.vue'
 import { Button } from '@/components/ui/button'
@@ -52,6 +53,7 @@ import {
   type ApiQuotaSourceType,
 } from '@/lib/api'
 import { formatDecimal, normalizeDecimal } from '@/lib/decimal'
+import { apiQuotaUsagePolicyInputError, defaultApiQuotaUsagePolicyInput } from '@/lib/apiQuotaPolicy'
 import {
   findNextApiQuotaRound,
   getApiQuotaBatchStatus,
@@ -141,6 +143,7 @@ const offerForm = reactive({
   name: '',
   usdAllowance: '50',
   priceCny: '5.00',
+  quotaUsagePolicy: defaultApiQuotaUsagePolicyInput(),
   deliveryMode: 'manual' as ApiQuotaOffer['deliveryMode'],
   deliveryEtaMinutes: 10,
   saleMode: 'continuous' as ApiQuotaOffer['saleMode'],
@@ -191,6 +194,11 @@ async function createBatch() {
 
 async function createOffer() {
   if (!selectedBatch.value) return
+  const quotaPolicyError = apiQuotaUsagePolicyInputError(offerForm.quotaUsagePolicy)
+  if (quotaPolicyError) {
+    toast.error(quotaPolicyError)
+    return
+  }
   try {
     await createOfferMutation.mutateAsync({
       batchId: selectedBatch.value.id,
@@ -198,6 +206,7 @@ async function createOffer() {
       usdAllowance: offerForm.usdAllowance,
       priceCny: offerForm.priceCny,
       modelMultiplier: serviceDefaultMultiplierDecimal.value,
+      quotaUsagePolicy: offerForm.quotaUsagePolicy,
       deliveryMode: offerForm.deliveryMode,
       deliveryEtaMinutes: offerForm.deliveryEtaMinutes,
       saleMode: offerForm.saleMode,
@@ -206,6 +215,7 @@ async function createOffer() {
     })
     offerDialogOpen.value = false
     offerForm.name = ''
+    offerForm.quotaUsagePolicy = defaultApiQuotaUsagePolicyInput()
     toast.success('额度规格已加入草稿。')
   } catch (error) {
     toast.error(mutationMessage(error, '创建额度规格失败。'))
@@ -616,6 +626,9 @@ function downloadTemplate(kind: ApiOrderDeliveryKind) {
           <label class="space-y-2"><span class="text-sm font-medium">交付方式</span><Select v-model="offerForm.deliveryMode"><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="manual">商户手工交付</SelectItem><SelectItem value="preimported">预导入凭据</SelectItem></SelectContent></Select></label>
           <label v-if="offerForm.saleMode === 'continuous'" class="space-y-2"><span class="text-sm font-medium">全天可售份数</span><Input v-model.number="offerForm.continuousCopies" type="number" min="1" max="100000" /></label>
           <label class="space-y-2"><span class="text-sm font-medium">排序</span><Input v-model.number="offerForm.sortOrder" type="number" /></label>
+          <div class="sm:col-span-2">
+            <ApiQuotaPolicyFields v-model="offerForm.quotaUsagePolicy" />
+          </div>
         </div>
         <DialogFooter><Button variant="outline" @click="offerDialogOpen = false">取消</Button><Button :disabled="createOfferMutation.isPending.value" @click="createOffer">加入批次</Button></DialogFooter>
       </DialogContent>

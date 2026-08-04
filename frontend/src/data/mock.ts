@@ -1,4 +1,6 @@
 import type { ReputationSummary } from '@/types/reputation'
+import type { ApiServiceHealthSummary } from '@/types/apiHealth'
+import type { ApiQuotaUsagePolicy } from '@/types/apiQuota'
 
 export type OfficialPrice = {
   id: string
@@ -560,6 +562,7 @@ export type ApiServicePackage = {
   enabled: boolean
   sortOrder: number
   models: ApiServicePackageModel[]
+  quotaUsagePolicy: ApiQuotaUsagePolicy
 }
 
 export type ApiServicePackageSnapshot = {
@@ -636,6 +639,7 @@ export type ApiQuotaOffer = {
   priceCny: string
   cnyPerUsd: string
   modelMultiplier: string
+  quotaUsagePolicy: ApiQuotaUsagePolicy
   deliveryMode: ApiQuotaDeliveryMode
   deliveryEtaMinutes: number
   saleMode: ApiQuotaSaleMode
@@ -690,10 +694,11 @@ export type PublicApiQuotaOffer = ApiQuotaOffer & {
   sellerDisplayName: string
   sellerIdentityType: 'individual' | 'merchant'
   sellerLinuxDoBound: boolean
-  declaredTtftBand: ApiTTFTBand
+  healthSummary?: ApiServiceHealthSummary
+  declaredTtftBand?: ApiTTFTBand
   declaredMaxConcurrency: number
   performanceConfirmedAt?: string
-  performanceDisclaimer: '商户自报，平台未测速'
+  performanceDisclaimer?: '商户自报，平台未测速'
   saleCutoffAt: string
   expiresAt: string
   currentRound?: ApiQuotaRound
@@ -719,6 +724,8 @@ export type ApiService = {
   sourceUrl?: string
   sourceAuthorVerification?: SourceAuthorResourceSummary
   sellerReputation?: ReputationSummary | null
+  healthSummary?: ApiServiceHealthSummary
+  quotaUsagePolicy: ApiQuotaUsagePolicy
   merchantId: string
   merchantUsername: string
   merchant: string
@@ -941,6 +948,7 @@ export type ApiPurchaseIntent = {
   purchasedCredit: number
   purchaseAmountCnyDecimal?: string
   purchasedCreditDecimal?: string
+  quotaUsagePolicySnapshot: ApiQuotaUsagePolicy
   targetModel: string
   buyerNote?: string
   snapshot: ApiPurchaseIntentSnapshot
@@ -1818,12 +1826,34 @@ export const modelCatalog: ModelCatalogItem[] = [
   },
 ]
 
+const limitedServiceQuotaPolicy: ApiQuotaUsagePolicy = {
+  fiveHour: { mode: 'limited', amountUsd: '50' },
+  daily: { mode: 'limited', amountUsd: '200' },
+  scope: 'per_buyer_credential',
+  dailyReset: 'utc_plus_8_calendar_day',
+}
+
+const unlimitedServiceQuotaPolicy: ApiQuotaUsagePolicy = {
+  fiveHour: { mode: 'unlimited', amountUsd: null },
+  daily: { mode: 'unlimited', amountUsd: null },
+  scope: 'per_buyer_credential',
+  dailyReset: 'utc_plus_8_calendar_day',
+}
+
+const unspecifiedServiceQuotaPolicy: ApiQuotaUsagePolicy = {
+  fiveHour: { mode: 'unspecified', amountUsd: null },
+  daily: { mode: 'unspecified', amountUsd: null },
+  scope: 'per_buyer_credential',
+  dailyReset: 'utc_plus_8_calendar_day',
+}
+
 export const apiServices: ApiService[] = [
   {
     id: 'a1',
     title: 'GPT / Claude API 服务',
     sourceUrl: 'https://linux.do/t/api-quota-sub2api/123456',
     sourceAuthorVerification: { status: 'verified' },
+    quotaUsagePolicy: limitedServiceQuotaPolicy,
     merchantId: 'merchant-orbit',
     merchantUsername: 'orbit',
     merchant: 'orbit',
@@ -1915,6 +1945,7 @@ export const apiServices: ApiService[] = [
     title: '轻量模型开发额度',
     sourceUrl: '',
     sourceAuthorVerification: { status: 'not_submitted' },
+    quotaUsagePolicy: unlimitedServiceQuotaPolicy,
     merchantId: 'merchant-qingning',
     merchantUsername: 'qingning',
     merchant: '青柠',
@@ -1992,6 +2023,12 @@ export const apiServices: ApiService[] = [
         name: 'GPT-5.5 开发流量包',
         priceCny: 9.9,
         panelAllowance: 5,
+        quotaUsagePolicy: {
+          fiveHour: { mode: 'limited', amountUsd: '5' },
+          daily: { mode: 'limited', amountUsd: '10' },
+          scope: 'per_buyer_credential',
+          dailyReset: 'utc_plus_8_calendar_day',
+        },
         durationDays: 3,
         stockTotal: 12,
         stockAvailable: 8,
@@ -2008,6 +2045,12 @@ export const apiServices: ApiService[] = [
         name: '轻量模型周包',
         priceCny: 18.8,
         panelAllowance: 12,
+        quotaUsagePolicy: {
+          fiveHour: { mode: 'limited', amountUsd: '12' },
+          daily: { mode: 'limited', amountUsd: '24' },
+          scope: 'per_buyer_credential',
+          dailyReset: 'utc_plus_8_calendar_day',
+        },
         durationDays: 7,
         stockTotal: 8,
         stockAvailable: 5,
@@ -2026,6 +2069,7 @@ export const apiServices: ApiService[] = [
     title: '多模型备用池',
     sourceUrl: 'https://linux.do/t/multi-model-api/234567',
     sourceAuthorVerification: { status: 'mismatch' },
+    quotaUsagePolicy: unspecifiedServiceQuotaPolicy,
     merchantId: 'merchant-beifeng',
     merchantUsername: 'beifeng-api',
     merchant: '北风商户',
@@ -2141,6 +2185,12 @@ export const apiQuotaOffers: PublicApiQuotaOffer[] = [
     priceCny: '5.00',
     cnyPerUsd: '0.100000',
     modelMultiplier: '1.0000',
+    quotaUsagePolicy: {
+      fiveHour: { mode: 'limited', amountUsd: '20' },
+      daily: { mode: 'unlimited', amountUsd: null },
+      scope: 'per_buyer_credential',
+      dailyReset: 'utc_plus_8_calendar_day',
+    },
     deliveryMode: 'preimported',
     deliveryEtaMinutes: 2,
     saleMode: 'continuous',
@@ -2175,6 +2225,7 @@ export const apiQuotaOffers: PublicApiQuotaOffer[] = [
     priceCny: '8.80',
     cnyPerUsd: '0.088000',
     modelMultiplier: '1.0000',
+    quotaUsagePolicy: unspecifiedServiceQuotaPolicy,
     deliveryMode: 'manual',
     deliveryEtaMinutes: 10,
     saleMode: 'scheduled',
@@ -2242,6 +2293,7 @@ export const apiPurchaseIntents: ApiPurchaseIntent[] = [
     selectedDeliveryMode: 'api_key_endpoint',
     purchaseAmountCny: 80,
     purchasedCredit: 80,
+    quotaUsagePolicySnapshot: limitedServiceQuotaPolicy,
     targetModel: 'GPT-5 mini',
     buyerNote: '开发测试额度',
     snapshot: {
@@ -2297,6 +2349,7 @@ export const apiPurchaseIntents: ApiPurchaseIntent[] = [
     selectedDeliveryMode: 'sub2api_panel_account',
     purchaseAmountCny: 120,
     purchasedCredit: 120,
+    quotaUsagePolicySnapshot: limitedServiceQuotaPolicy,
     targetModel: 'Claude Sonnet',
     snapshot: {
       serviceId: 'a1',
@@ -2351,6 +2404,7 @@ export const apiPurchaseIntents: ApiPurchaseIntent[] = [
     selectedDeliveryMode: 'api_key_endpoint',
     purchaseAmountCny: 30,
     purchasedCredit: 30,
+    quotaUsagePolicySnapshot: unlimitedServiceQuotaPolicy,
     targetModel: 'GPT mini',
     snapshot: {
       serviceId: 'a2',
@@ -2405,6 +2459,7 @@ export const apiPurchaseIntents: ApiPurchaseIntent[] = [
     selectedDeliveryMode: 'sub2api_panel_account',
     purchaseAmountCny: 60,
     purchasedCredit: 60,
+    quotaUsagePolicySnapshot: limitedServiceQuotaPolicy,
     targetModel: 'GPT-5 mini',
     snapshot: {
       serviceId: 'a1',
@@ -2461,6 +2516,7 @@ export const apiPurchaseIntents: ApiPurchaseIntent[] = [
     selectedDeliveryMode: 'sub2api_panel_account',
     purchaseAmountCny: 100,
     purchasedCredit: 100,
+    quotaUsagePolicySnapshot: unspecifiedServiceQuotaPolicy,
     targetModel: 'Claude',
     snapshot: {
       serviceId: 'a3',
@@ -2516,6 +2572,7 @@ export const apiPurchaseIntents: ApiPurchaseIntent[] = [
     selectedDeliveryMode: 'sub2api_panel_account',
     purchaseAmountCny: 200,
     purchasedCredit: 200,
+    quotaUsagePolicySnapshot: unspecifiedServiceQuotaPolicy,
     targetModel: 'GPT',
     snapshot: {
       serviceId: 'a3',

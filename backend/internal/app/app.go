@@ -4,14 +4,17 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"strings"
 	"sync"
 	"time"
 
+	"c2c-market/backend/internal/apihealthrunner"
 	"c2c-market/backend/internal/config"
 	"c2c-market/backend/internal/maintenance"
 	"c2c-market/backend/internal/middleware"
+	"c2c-market/backend/internal/module/apihealth"
 	core "c2c-market/backend/internal/module/core"
 	"c2c-market/backend/internal/module/navigationbadge"
 	"c2c-market/backend/internal/module/profile"
@@ -30,6 +33,8 @@ type App struct {
 	RealtimeHub      *realtime.Hub
 	RealtimeListener *realtime.PostgresListener
 	Maintenance      *maintenance.Runner
+	APIHealth        *apihealth.Service
+	APIHealthRunner  *apihealthrunner.Runner
 	RateLimiter      *middleware.RateLimiter
 	Metrics          *observability.Metrics
 	Handler          http.Handler
@@ -41,6 +46,11 @@ func New(ctx context.Context, cfg config.Config) (*App, error) {
 	if err != nil {
 		return nil, fmt.Errorf("初始化模型审计安全出站策略失败: %w", err)
 	}
+	apiHealthValidationPolicy, err := outboundhttp.NewPolicy(nil)
+	if err != nil {
+		return nil, fmt.Errorf("初始化 API 探针目标校验策略失败: %w", err)
+	}
+	apiHealthClientFactory := apihealth.NewOutboundHTTPClientFactory(cfg.APIHealth.Timeout)
 
 	var store *postgres.Store
 	if cfg.DatabaseURL != "" {
@@ -107,6 +117,8 @@ func New(ctx context.Context, cfg config.Config) (*App, error) {
 	realtimeHub := realtime.NewHub()
 	var realtimeListener *realtime.PostgresListener
 	var maintenanceRunner *maintenance.Runner
+	var apiHealthService *apihealth.Service
+	var apiHealthRunner *apihealthrunner.Runner
 	if cfg.DatabaseURL != "" {
 		realtimeListener, err = realtime.NewPostgresListener(cfg.DatabaseURL, realtimeHub, log.Default())
 		if err != nil {
@@ -134,6 +146,7 @@ func New(ctx context.Context, cfg config.Config) (*App, error) {
 				UnreadNotificationRetention:    cfg.Maintenance.UnreadNotificationRetention,
 				DomainEventRetention:           cfg.Maintenance.DomainEventRetention,
 				APIDeliveryCredentialRetention: cfg.Maintenance.APIDeliveryCredentialRetention,
+				APIProbeSampleRetention:        cfg.APIHealth.Retention,
 			},
 		}, time.Now, log.Default())
 		if err != nil {
@@ -144,6 +157,26 @@ func New(ctx context.Context, cfg config.Config) (*App, error) {
 			return nil, fmt.Errorf("初始化数据维护任务失败: %w", err)
 		}
 		maintenanceRunner.Start()
+		apiHealthService = apihealth.NewService(
+			store,
+			apiHealthValidationPolicy,
+			net.DefaultResolver,
+			apiHealthClientFactory,
+			time.Now,
+			cfg.APIHealth.ChallengeTTL,
+		)
+		apiHealthRunner = apihealthrunner.New(
+			store,
+			apihealth.NewOpenAIStreamingProberWithClientFactory(apiHealthClientFactory, time.Now),
+			apihealthrunner.Options{
+				Enabled: cfg.APIHealth.RunnerEnabled, ScanInterval: cfg.APIHealth.ScanInterval,
+				Timeout: cfg.APIHealth.Timeout, Concurrency: cfg.APIHealth.Concurrency,
+				BatchSize: cfg.APIHealth.BatchSize,
+			},
+			time.Now,
+			log.Default(),
+		)
+		apiHealthRunner.Start(ctx)
 	}
 
 	rateLimiter := middleware.NewRateLimiter(time.Minute)
@@ -152,6 +185,7 @@ func New(ctx context.Context, cfg config.Config) (*App, error) {
 		Database:         store,
 		RateLimiter:      rateLimiter,
 		Maintenance:      maintenanceRunner,
+		APIHealthRunner:  apiHealthRunner,
 		OutboundPolicy:   modelAuditPolicy,
 		RealtimeHub:      realtimeHub,
 		RealtimeListener: realtimeListener,
@@ -160,6 +194,7 @@ func New(ctx context.Context, cfg config.Config) (*App, error) {
 	handler := server.NewServer(service, server.ServerOptions{
 		EnableDevAuth:      cfg.EnableDevAuth,
 		ReadinessChecker:   store,
+		APIHealth:          apiHealthService,
 		NavigationBadges:   navigationBadges,
 		RealtimeHub:        realtimeHub,
 		AppEnv:             cfg.AppEnv,
@@ -190,6 +225,8 @@ func New(ctx context.Context, cfg config.Config) (*App, error) {
 		RealtimeHub:      realtimeHub,
 		RealtimeListener: realtimeListener,
 		Maintenance:      maintenanceRunner,
+		APIHealth:        apiHealthService,
+		APIHealthRunner:  apiHealthRunner,
 		RateLimiter:      rateLimiter,
 		Metrics:          runtimeMetrics,
 		Handler:          handler,
@@ -220,6 +257,9 @@ func (a *App) BeginShutdown() {
 		return
 	}
 	a.shutdownOnce.Do(func() {
+		if a.APIHealthRunner != nil {
+			a.APIHealthRunner.Close()
+		}
 		if a.RealtimeListener != nil {
 			a.RealtimeListener.Close()
 		}

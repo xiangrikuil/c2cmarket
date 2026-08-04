@@ -54,6 +54,7 @@ import { submitApiService } from '@/lib/api'
 import { trackAnalytics } from '@/lib/analytics'
 import { beijingDateTimeInputToISOString, defaultQuotaExpiresAtInput, formatBeijingDateTimeInput } from '@/lib/apiQuotaExpiration'
 import { apiPaymentSettingsMissingReason, cloneApiPaymentAccountSettings, isApiPaymentAccountSettingsComplete, isApiPaymentOptionComplete, isApiPaymentWindowValid } from '@/lib/apiPaymentSettings'
+import { apiQuotaUsagePolicyInputError, defaultApiQuotaUsagePolicyInput } from '@/lib/apiQuotaPolicy'
 import { useApiPaymentAccountSettingsQuery, useModelCatalog, useMyProfileQuery } from '@/queries/useMarketQueries'
 import { useUnsavedChangesGuard } from '@/composables/useUnsavedChangesGuard'
 
@@ -67,6 +68,7 @@ type Field =
   | 'selectedModels'
   | 'availableCreditUsd'
   | 'quotaExpiresAt'
+  | 'quotaUsagePolicy'
   | 'packages'
   | 'paymentWindowMinutes'
   | 'paymentOptions'
@@ -137,6 +139,7 @@ const form = reactive<ApiServicePublishForm>({
   },
   availableCreditUsd: 500,
   quotaExpiresAt: defaultQuotaExpiresAtInput(),
+  quotaUsagePolicy: defaultApiQuotaUsagePolicyInput(),
   minimumPurchaseCny: 10,
   maximumPurchaseCny: 300,
   paymentWindowMinutes: defaultPaymentWindowMinutes,
@@ -289,6 +292,7 @@ const freeFieldSteps: Record<Field, ApiServicePublishStep> = {
   selectedModels: 2,
   availableCreditUsd: 1,
   quotaExpiresAt: 1,
+  quotaUsagePolicy: 1,
   packages: 1,
   paymentWindowMinutes: 3,
   paymentOptions: 3,
@@ -309,6 +313,7 @@ const limitedFieldSteps: Record<Field, ApiServicePublishStep> = {
   selectedModels: 2,
   availableCreditUsd: 2,
   quotaExpiresAt: 2,
+  quotaUsagePolicy: 2,
   packages: 2,
   paymentWindowMinutes: 2,
   paymentOptions: 2,
@@ -347,6 +352,8 @@ function collectValidationErrors() {
     const quotaExpiresAtISO = beijingDateTimeInputToISOString(form.quotaExpiresAt)
     if (!quotaExpiresAtISO) next.quotaExpiresAt = '请填写有效的额度有效至时间。'
     else if (new Date(quotaExpiresAtISO).getTime() <= Date.now()) next.quotaExpiresAt = '额度有效至时间必须晚于当前时间。'
+    const quotaPolicyError = apiQuotaUsagePolicyInputError(form.quotaUsagePolicy)
+    if (quotaPolicyError) next.quotaUsagePolicy = quotaPolicyError
   }
   if (!form.selectedModels.some(item => item.enabled)) next.selectedModels = '至少选择一个模型。'
   if (missingSelectedModels.value.length) next.selectedModels = '已选模型不在当前后端模型目录中，请重新选择。'
@@ -367,6 +374,10 @@ function collectValidationErrors() {
       else if (!Number.isInteger(item.stockTotal) || item.stockTotal < 0) next.packages = `${label} 的库存必须是大于等于 0 的整数。`
       else if (!item.modelCatalogIds.length) next.packages = `${label} 至少选择一个支持模型。`
       else if (item.modelCatalogIds.some(id => !selectedModelIds.has(id))) next.packages = `${label} 包含未在服务中启用的模型。`
+      else {
+        const quotaPolicyError = apiQuotaUsagePolicyInputError(item.quotaUsagePolicy)
+        if (quotaPolicyError) next.packages = `${label}：${quotaPolicyError}`
+      }
     }
   }
   if (!paymentWindowValid.value) next.paymentWindowMinutes = '买家确认付款窗口固定为 10 分钟。'
@@ -423,7 +434,7 @@ const completeness = computed(() => {
   ]
   if (!isLimitedQuotaMode.value) {
     if (form.billingMode === 'fixed_package') {
-      items.push(enabledPackages.value.length && enabledPackages.value.every(item => item.name.trim() && item.priceCny > 0 && item.panelAllowance > 0 && [1, 3, 7, 30].includes(item.durationDays) && Number.isInteger(item.stockTotal) && item.stockTotal >= 0 && item.modelCatalogIds.length)
+      items.push(enabledPackages.value.length && enabledPackages.value.every(item => item.name.trim() && item.priceCny > 0 && item.panelAllowance > 0 && [1, 3, 7, 30].includes(item.durationDays) && Number.isInteger(item.stockTotal) && item.stockTotal >= 0 && item.modelCatalogIds.length && !apiQuotaUsagePolicyInputError(item.quotaUsagePolicy))
         ? done('套餐配置')
         : pending('套餐配置'))
     } else {
@@ -431,6 +442,7 @@ const completeness = computed(() => {
         form.cnyPerUsdCredit && form.cnyPerUsdCredit > 0 ? done('额度售价') : pending('额度售价'),
         form.availableCreditUsd && form.availableCreditUsd > 0 ? done('可售额度') : pending('可售额度'),
         beijingDateTimeInputToISOString(form.quotaExpiresAt) ? done('有效时间') : pending('有效时间'),
+        !apiQuotaUsagePolicyInputError(form.quotaUsagePolicy) ? done('额度规则') : pending('额度规则'),
       )
     }
   }

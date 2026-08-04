@@ -90,7 +90,7 @@ the empty drill database with `pg_restore --no-owner --no-privileges`. Then:
 1. Query `schema_migrations`; record the restored backup's migration version
    and require `dirty=false`. The version may be older than the current release.
 2. Run the release's forward migrations against the drill database, then
-   require `version=78` and `dirty=false`. Never edit the restored migration
+   require `version=79` and `dirty=false`. Never edit the restored migration
    row or skip migrations to force the expected value.
 3. Run referential-integrity and representative row-count checks.
 4. Start the exact release backend image against the drill database using
@@ -119,6 +119,6 @@ selection. Before restore:
   failed one;
 - record every command, timestamp, and result without credentials.
 
-After restore, require migration `78:false`, `/readyz`, `/version`, metrics,
+After restore, require migration `79:false`, `/readyz`, `/version`, metrics,
 controlled authentication, and read-only business checks before reopening
 traffic. Resume backup scheduling only after the recovered system is stable.

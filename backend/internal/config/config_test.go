@@ -17,6 +17,7 @@ func TestLoadDefaultsToDevelopmentDevAuth(t *testing.T) {
 	t.Setenv("MAINTENANCE_INTERVAL", "")
 	t.Setenv("MAINTENANCE_BATCH_SIZE", "")
 	t.Setenv("API_DELIVERY_CREDENTIAL_RETENTION", "")
+	clearAPIHealthEnv(t)
 	clearDatabaseOptionEnv(t)
 
 	cfg, err := Load()
@@ -44,11 +45,80 @@ func TestLoadDefaultsToDevelopmentDevAuth(t *testing.T) {
 	if cfg.Maintenance.APIDeliveryCredentialRetention != 30*24*time.Hour {
 		t.Fatalf("unexpected API delivery credential retention: %s", cfg.Maintenance.APIDeliveryCredentialRetention)
 	}
+	if cfg.APIHealth.RunnerEnabled || cfg.APIHealth.ScanInterval != time.Minute ||
+		cfg.APIHealth.Timeout != 10*time.Second || cfg.APIHealth.Concurrency != 4 ||
+		cfg.APIHealth.BatchSize != 50 || cfg.APIHealth.Retention != 7*24*time.Hour ||
+		cfg.APIHealth.ChallengeTTL != 15*time.Minute {
+		t.Fatalf("unexpected API health defaults: %+v", cfg.APIHealth)
+	}
 	if cfg.Database != database.DefaultPostgresOptions() {
 		t.Fatalf("unexpected database defaults: %+v", cfg.Database)
 	}
 	if cfg.DatabaseSlowQueryAfter != time.Second {
 		t.Fatalf("unexpected slow query threshold: %s", cfg.DatabaseSlowQueryAfter)
+	}
+}
+
+func TestLoadParsesAPIHealthRuntimeConfig(t *testing.T) {
+	t.Setenv("APP_ENV", EnvDevelopment)
+	t.Setenv("API_HEALTH_RUNNER_ENABLED", "true")
+	t.Setenv("API_HEALTH_SCAN_INTERVAL", "45s")
+	t.Setenv("API_HEALTH_PROBE_TIMEOUT", "12s")
+	t.Setenv("API_HEALTH_MAX_CONCURRENCY", "8")
+	t.Setenv("API_HEALTH_CLAIM_BATCH_SIZE", "120")
+	t.Setenv("API_HEALTH_SAMPLE_RETENTION", "240h")
+	t.Setenv("API_HEALTH_CHALLENGE_TTL", "30m")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("load API health config: %v", err)
+	}
+	if !cfg.APIHealth.RunnerEnabled || cfg.APIHealth.ScanInterval != 45*time.Second ||
+		cfg.APIHealth.Timeout != 12*time.Second || cfg.APIHealth.Concurrency != 8 ||
+		cfg.APIHealth.BatchSize != 120 || cfg.APIHealth.Retention != 10*24*time.Hour ||
+		cfg.APIHealth.ChallengeTTL != 30*time.Minute {
+		t.Fatalf("unexpected API health config: %+v", cfg.APIHealth)
+	}
+}
+
+func TestLoadRejectsInvalidAPIHealthRuntimeConfig(t *testing.T) {
+	tests := []struct {
+		name  string
+		key   string
+		value string
+	}{
+		{name: "enabled", key: "API_HEALTH_RUNNER_ENABLED", value: "sometimes"},
+		{name: "scan interval", key: "API_HEALTH_SCAN_INTERVAL", value: "10s"},
+		{name: "timeout", key: "API_HEALTH_PROBE_TIMEOUT", value: "45s"},
+		{name: "concurrency", key: "API_HEALTH_MAX_CONCURRENCY", value: "0"},
+		{name: "batch size", key: "API_HEALTH_CLAIM_BATCH_SIZE", value: "201"},
+		{name: "retention", key: "API_HEALTH_SAMPLE_RETENTION", value: "12h"},
+		{name: "challenge ttl", key: "API_HEALTH_CHALLENGE_TTL", value: "2m"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			clearAPIHealthEnv(t)
+			t.Setenv("APP_ENV", EnvDevelopment)
+			t.Setenv(test.key, test.value)
+			if _, err := Load(); err == nil || !strings.Contains(err.Error(), test.key) {
+				t.Fatalf("expected %s error, got %v", test.key, err)
+			}
+		})
+	}
+}
+
+func clearAPIHealthEnv(t *testing.T) {
+	t.Helper()
+	for _, name := range []string{
+		"API_HEALTH_RUNNER_ENABLED",
+		"API_HEALTH_SCAN_INTERVAL",
+		"API_HEALTH_PROBE_TIMEOUT",
+		"API_HEALTH_MAX_CONCURRENCY",
+		"API_HEALTH_CLAIM_BATCH_SIZE",
+		"API_HEALTH_SAMPLE_RETENTION",
+		"API_HEALTH_CHALLENGE_TTL",
+	} {
+		t.Setenv(name, "")
 	}
 }
 

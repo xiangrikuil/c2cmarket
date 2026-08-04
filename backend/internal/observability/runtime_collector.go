@@ -31,6 +31,11 @@ type runtimeDescriptions struct {
 	outboundRejections    *prometheus.Desc
 	maintenanceRuns       *prometheus.Desc
 	maintenanceDuration   *prometheus.Desc
+	apiHealthRuns         *prometheus.Desc
+	apiHealthProbes       *prometheus.Desc
+	apiHealthInflight     *prometheus.Desc
+	apiHealthDuration     *prometheus.Desc
+	apiHealthLastSuccess  *prometheus.Desc
 	realtimeConnections   *prometheus.Desc
 	realtimeActive        *prometheus.Desc
 	realtimeListenerError *prometheus.Desc
@@ -61,6 +66,11 @@ func newRuntimeCollector(sources Sources) prometheus.Collector {
 			outboundRejections:    desc("outbound_rejections_total", "Safe outbound HTTP rejections by fixed reason.", []string{"reason"}),
 			maintenanceRuns:       desc("maintenance_runs_total", "Data lifecycle maintenance runs by result.", []string{"result"}),
 			maintenanceDuration:   desc("maintenance_last_duration_seconds", "Duration of the latest data lifecycle maintenance run.", nil),
+			apiHealthRuns:         desc("api_health_runs_total", "API health runner scans by result.", []string{"result"}),
+			apiHealthProbes:       desc("api_health_probes_total", "Final API health probes by result.", []string{"result"}),
+			apiHealthInflight:     desc("api_health_inflight", "API health probes currently in flight.", nil),
+			apiHealthDuration:     desc("api_health_last_run_duration_seconds", "Duration of the latest API health runner scan.", nil),
+			apiHealthLastSuccess:  desc("api_health_last_success_timestamp_seconds", "Unix timestamp of the latest successful API health runner scan.", nil),
 			realtimeConnections:   desc("realtime_connections_total", "Realtime SSE connections and disconnects.", []string{"event"}),
 			realtimeActive:        desc("realtime_active_connections", "Active realtime SSE connections.", nil),
 			realtimeListenerError: desc("realtime_listener_failures_total", "Realtime PostgreSQL listener failures by reason.", []string{"reason"}),
@@ -81,6 +91,8 @@ func (c *runtimeCollector) Describe(ch chan<- *prometheus.Desc) {
 		values.migrationDirty, values.databaseReady, values.rateLimiterKeys,
 		values.rateLimiterDecisions, values.rateLimiterExpired, values.contactDecrypt,
 		values.outboundRejections, values.maintenanceRuns, values.maintenanceDuration,
+		values.apiHealthRuns, values.apiHealthProbes, values.apiHealthInflight,
+		values.apiHealthDuration, values.apiHealthLastSuccess,
 		values.realtimeConnections, values.realtimeActive, values.realtimeListenerError,
 	} {
 		ch <- item
@@ -93,7 +105,24 @@ func (c *runtimeCollector) Collect(ch chan<- prometheus.Metric) {
 	c.collectContactCrypto(ch)
 	c.collectOutbound(ch)
 	c.collectMaintenance(ch)
+	c.collectAPIHealth(ch)
 	c.collectRealtime(ch)
+}
+
+func (c *runtimeCollector) collectAPIHealth(ch chan<- prometheus.Metric) {
+	if c.sources.APIHealthRunner == nil {
+		return
+	}
+	stats := c.sources.APIHealthRunner.Stats()
+	counter(ch, c.descs.apiHealthRuns, float64(stats.RunSuccessTotal), "success")
+	counter(ch, c.descs.apiHealthRuns, float64(stats.RunFailureTotal), "failure")
+	counter(ch, c.descs.apiHealthProbes, float64(stats.ProbeSuccessTotal), "success")
+	counter(ch, c.descs.apiHealthProbes, float64(stats.ProbeFailureTotal), "failure")
+	gauge(ch, c.descs.apiHealthInflight, float64(stats.Inflight))
+	gauge(ch, c.descs.apiHealthDuration, stats.LastDurationSeconds)
+	if !stats.LastSuccessAt.IsZero() {
+		gauge(ch, c.descs.apiHealthLastSuccess, float64(stats.LastSuccessAt.Unix()))
+	}
 }
 
 func (c *runtimeCollector) collectDatabase(ch chan<- prometheus.Metric) {

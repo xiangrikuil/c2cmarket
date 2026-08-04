@@ -68,6 +68,7 @@ func TestAPIQuotaPostgresPublishCreatesAuthoritativeInventory(t *testing.T) {
 		USDAllowance:       "50",
 		PriceCNY:           "5",
 		ModelMultiplier:    "1",
+		QuotaUsagePolicy:   integrationQuotaUsagePolicy(),
 		DeliveryMode:       apiquota.DeliveryModeManual,
 		DeliveryETAMinutes: 10,
 		SaleMode:           apiquota.SaleModeContinuous,
@@ -100,6 +101,9 @@ func TestAPIQuotaPostgresPublishCreatesAuthoritativeInventory(t *testing.T) {
 	if len(page.Items) != 1 || page.Items[0].ID != offer.ID || page.Items[0].AvailableCopies != 10 || !page.Items[0].IsOrderable {
 		t.Fatalf("unexpected public offer projection: %+v", page.Items)
 	}
+	if page.Items[0].QuotaUsagePolicy.FiveHour.Mode != apimarket.QuotaLimitModeLimited || page.Items[0].QuotaUsagePolicy.FiveHour.AmountUSD != "5.250000" || page.Items[0].QuotaUsagePolicy.Daily.Mode != apimarket.QuotaLimitModeUnlimited {
+		t.Fatalf("unexpected public quota policy: %+v", page.Items[0].QuotaUsagePolicy)
+	}
 
 	buildCompletion := func(order apiorder.Order) (idempotency.Completion, *domain.AppError) {
 		return idempotency.Completion{
@@ -120,6 +124,16 @@ func TestAPIQuotaPostgresPublishCreatesAuthoritativeInventory(t *testing.T) {
 	}
 	if order.PurchaseKind != apiorder.PurchaseKindLimitedQuotaOffer || order.APIQuotaOfferID != offer.ID || order.PaymentWindowMinutesSnapshot != 10 || !order.PaymentExpiresAt.Equal(now.Add(10*time.Minute)) {
 		t.Fatalf("unexpected quota order snapshot: %+v", order)
+	}
+	if order.QuotaUsagePolicySnapshot != page.Items[0].QuotaUsagePolicy {
+		t.Fatalf("order did not freeze quota policy: order=%+v offer=%+v", order.QuotaUsagePolicySnapshot, page.Items[0].QuotaUsagePolicy)
+	}
+	intent, err := store.getAPIPurchaseIntent(ctx, pool, order.APIPurchaseIntentID, false)
+	if err != nil {
+		t.Fatalf("read quota purchase intent: %v", err)
+	}
+	if intent.QuotaUsagePolicySnapshot != order.QuotaUsagePolicySnapshot || !strings.Contains(intent.QuotaOfferSnapshot, `"quotaUsagePolicy"`) {
+		t.Fatalf("intent did not freeze self-describing quota policy: intent=%+v snapshot=%s", intent.QuotaUsagePolicySnapshot, intent.QuotaOfferSnapshot)
 	}
 	replay, appErr := manager.CreateOrderWithIdempotency(ctx, buyerID, "/api/v1/api-quota-offers/{id}/orders", "quota-order-key", "quota-order-hash", apiquota.CreateOrderInput{
 		OfferID: offer.ID, BuyerContactMethodID: buyerContactID,
@@ -172,6 +186,7 @@ func TestAPIQuotaPostgresPublishCreatesAuthoritativeInventory(t *testing.T) {
 		USDAllowance:       "50",
 		PriceCNY:           "5",
 		ModelMultiplier:    "1",
+		QuotaUsagePolicy:   integrationQuotaUsagePolicy(),
 		DeliveryMode:       apiquota.DeliveryModeManual,
 		DeliveryETAMinutes: 10,
 		SaleMode:           apiquota.SaleModeContinuous,
@@ -247,6 +262,7 @@ func TestOwnerAPIServiceSalesProjectionTransitionsFromSellingToExpired(t *testin
 		USDAllowance:       "50",
 		PriceCNY:           "5",
 		ModelMultiplier:    "1",
+		QuotaUsagePolicy:   integrationQuotaUsagePolicy(),
 		DeliveryMode:       apiquota.DeliveryModeManual,
 		DeliveryETAMinutes: 10,
 		SaleMode:           apiquota.SaleModeContinuous,
@@ -261,6 +277,7 @@ func TestOwnerAPIServiceSalesProjectionTransitionsFromSellingToExpired(t *testin
 		USDAllowance:       "25",
 		PriceCNY:           "3",
 		ModelMultiplier:    "1",
+		QuotaUsagePolicy:   integrationQuotaUsagePolicy(),
 		DeliveryMode:       apiquota.DeliveryModeManual,
 		DeliveryETAMinutes: 10,
 		SaleMode:           apiquota.SaleModeContinuous,
@@ -388,6 +405,7 @@ func TestAPIQuotaPostgresArchiveSystemRushRetiresUnsoldCapacity(t *testing.T) {
 			USDAllowance:       "50",
 			PriceCNY:           "5",
 			ModelMultiplier:    "1",
+			QuotaUsagePolicy:   integrationQuotaUsagePolicy(),
 			Copies:             2,
 			DeliveryMode:       apiquota.DeliveryModePreimported,
 			DeliveryETAMinutes: 1,
@@ -515,7 +533,7 @@ func TestAPIQuotaPostgresPublicRoundsStayOfferSpecific(t *testing.T) {
 		t.Helper()
 		offer, createErr := manager.CreateOffer(ctx, user, apiquota.CreateOfferInput{
 			BatchID: batch.ID, Name: name, USDAllowance: allowance, PriceCNY: "5",
-			ModelMultiplier: "1.2500", DeliveryMode: apiquota.DeliveryModeManual,
+			ModelMultiplier: "1.2500", QuotaUsagePolicy: integrationQuotaUsagePolicy(), DeliveryMode: apiquota.DeliveryModeManual,
 			DeliveryETAMinutes: 10, SaleMode: apiquota.SaleModeScheduled,
 		})
 		if createErr != nil {
@@ -607,7 +625,7 @@ func TestAPIQuotaPostgresTimeoutAndRoundRetirementReturnAllowance(t *testing.T) 
 	}
 	expiringOffer, appErr := manager.CreateOffer(ctx, user, apiquota.CreateOfferInput{
 		BatchID: expiringBatch.ID, Name: "$50 临期额度包", USDAllowance: "50", PriceCNY: "5",
-		ModelMultiplier: "1", DeliveryMode: apiquota.DeliveryModeManual, DeliveryETAMinutes: 10,
+		ModelMultiplier: "1", QuotaUsagePolicy: integrationQuotaUsagePolicy(), DeliveryMode: apiquota.DeliveryModeManual, DeliveryETAMinutes: 10,
 		SaleMode: apiquota.SaleModeContinuous, ContinuousCopies: 1,
 	})
 	if appErr != nil {
@@ -656,7 +674,7 @@ func TestAPIQuotaPostgresTimeoutAndRoundRetirementReturnAllowance(t *testing.T) 
 	}
 	roundOffer, appErr := manager.CreateOffer(ctx, user, apiquota.CreateOfferInput{
 		BatchID: roundBatch.ID, Name: "$50 定时额度包", USDAllowance: "50", PriceCNY: "5",
-		ModelMultiplier: "1", DeliveryMode: apiquota.DeliveryModeManual, DeliveryETAMinutes: 10,
+		ModelMultiplier: "1", QuotaUsagePolicy: integrationQuotaUsagePolicy(), DeliveryMode: apiquota.DeliveryModeManual, DeliveryETAMinutes: 10,
 		SaleMode: apiquota.SaleModeScheduled,
 	})
 	if appErr != nil {
@@ -783,7 +801,7 @@ func TestAPIQuotaPostgresConfirmPaymentConsumesAndDeliversPreimportedCredential(
 	}
 	offer, appErr := manager.CreateOffer(ctx, user, apiquota.CreateOfferInput{
 		BatchID: batch.ID, Name: "$50 预导入额度包", USDAllowance: "50", PriceCNY: "5",
-		ModelMultiplier: "1", DeliveryMode: apiquota.DeliveryModePreimported, DeliveryETAMinutes: 1,
+		ModelMultiplier: "1", QuotaUsagePolicy: integrationQuotaUsagePolicy(), DeliveryMode: apiquota.DeliveryModePreimported, DeliveryETAMinutes: 1,
 		SaleMode: apiquota.SaleModeContinuous, ContinuousCopies: 1,
 	})
 	if appErr != nil {
@@ -927,7 +945,7 @@ func TestAPIQuotaPostgresRush1500BuyersFor1000Copies(t *testing.T) {
 	}
 	offer, appErr := manager.CreateOffer(ctx, auth.User{ID: sellerID}, apiquota.CreateOfferInput{
 		BatchID: batch.ID, Name: "$1 并发额度包", USDAllowance: "1", PriceCNY: "0.10",
-		ModelMultiplier: "1", DeliveryMode: apiquota.DeliveryModeManual, DeliveryETAMinutes: 10,
+		ModelMultiplier: "1", QuotaUsagePolicy: integrationQuotaUsagePolicy(), DeliveryMode: apiquota.DeliveryModeManual, DeliveryETAMinutes: 10,
 		SaleMode: apiquota.SaleModeScheduled,
 	})
 	if appErr != nil {
@@ -1094,6 +1112,13 @@ func cleanupAPIQuotaRushTest(t *testing.T, ctx context.Context, pool *pgxpool.Po
 		if _, err := pool.Exec(ctx, statement.query, statement.args...); err != nil {
 			t.Errorf("cleanup quota rush fixture: %v", err)
 		}
+	}
+}
+
+func integrationQuotaUsagePolicy() apimarket.QuotaUsagePolicy {
+	return apimarket.QuotaUsagePolicy{
+		FiveHour: apimarket.QuotaUsageLimit{Mode: apimarket.QuotaLimitModeLimited, AmountUSD: "5.25"},
+		Daily:    apimarket.QuotaUsageLimit{Mode: apimarket.QuotaLimitModeUnlimited},
 	}
 }
 
