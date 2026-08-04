@@ -184,7 +184,7 @@ func newServiceWithOptions(now func() time.Time, repositories Repositories, emai
 	s.carpoolService = carpool.NewService(repositories.Carpool, s.catalogService, s.contactService, s.idempotencyService, now)
 	s.apiMarket = apimarket.NewManager(repositories.APIService, s.catalogService, s.contactService, now)
 	s.apiIntent = apiintent.NewManager(repositories.APIPurchaseIntent, s.apiMarket, s.contactService, s.idempotencyService, now)
-	s.reportService = report.NewService(repositories.Report, s.idempotencyService, now)
+	s.reportService = report.NewServiceWithNotifications(repositories.Report, s.idempotencyService, s.notification, now)
 	s.apiOrder = apiorder.NewService(repositories.APIOrder, s.apiIntent, s.apiMarket, s.reportService, s.idempotencyService, now)
 	s.apiPromotion = apipromotion.NewService(repositories.APIPromotion, s.idempotencyService, now)
 	s.apiQuota = apiquota.NewManager(repositories.APIQuota, now)
@@ -214,6 +214,18 @@ func (s *Service) LoginWithOAuthProfile(ctx context.Context, profile OAuthProfil
 	user, session, appErr := s.authService.LoginWithOAuthProfile(ctx, profile)
 	s.recordAuthenticatedActivity(ctx, user, appErr)
 	return user, session, appErr
+}
+
+func (s *Service) StartAccountAppealSession(ctx context.Context, profile authmodule.OAuthProfile) (authmodule.User, authmodule.AccountAppealSession, *domain.AppError) {
+	return s.authService.StartAccountAppealSession(ctx, profile)
+}
+
+func (s *Service) GetAccountAppealSession(ctx context.Context, sessionID string) (authmodule.User, authmodule.AccountAppealSession, *domain.AppError) {
+	return s.authService.GetAccountAppealSession(ctx, sessionID)
+}
+
+func (s *Service) GetAccountAppealSessionWithCSRF(ctx context.Context, sessionID, csrfToken string) (authmodule.User, authmodule.AccountAppealSession, *domain.AppError) {
+	return s.authService.GetAccountAppealSessionWithCSRF(ctx, sessionID, csrfToken)
 }
 
 func (s *Service) LoginWithPassword(ctx context.Context, username, password string) (User, Session, *domain.AppError) {
@@ -1740,6 +1752,14 @@ func (s *Service) AdminReportActionWithIdempotency(ctx context.Context, user Use
 	return s.reportService.AdminReportActionWithIdempotency(ctx, user, routeKey, key, requestHash, input, buildCompletion)
 }
 
+func (s *Service) SubmitInfoSupplementWithIdempotency(ctx context.Context, user User, routeKey, key, requestHash string, input report.SupplementInput, buildCompletion report.SupplementCompletionBuilder) (IdempotencyCompletion, *domain.AppError) {
+	return s.reportService.SubmitInfoSupplementWithIdempotency(ctx, user, routeKey, key, requestHash, input, buildCompletion)
+}
+
+func (s *Service) MyDisputes(ctx context.Context, user User) ([]report.DisputeCase, *domain.AppError) {
+	return s.reportService.MyDisputes(ctx, user)
+}
+
 func (s *Service) AdminDisputes(ctx context.Context, user User) ([]report.DisputeCase, *domain.AppError) {
 	return s.reportService.AdminDisputes(ctx, user)
 }
@@ -1754,6 +1774,10 @@ func (s *Service) AdminDisputeActionWithIdempotency(ctx context.Context, user Us
 
 func (s *Service) CreateAppealWithIdempotency(ctx context.Context, user User, routeKey, key, requestHash string, input report.CreateAppealInput, buildCompletion report.AppealCompletionBuilder) (IdempotencyCompletion, *domain.AppError) {
 	return s.reportService.CreateAppealWithIdempotency(ctx, user, routeKey, key, requestHash, input, buildCompletion)
+}
+
+func (s *Service) CreateAccountGovernanceAppealWithIdempotency(ctx context.Context, appellantUserID, routeKey, key, requestHash string, input report.CreateAccountGovernanceAppealInput, buildCompletion report.AppealCompletionBuilder) (IdempotencyCompletion, *domain.AppError) {
+	return s.reportService.CreateAccountGovernanceAppealWithIdempotency(ctx, appellantUserID, routeKey, key, requestHash, input, buildCompletion)
 }
 
 func (s *Service) MyAppeals(ctx context.Context, user User) ([]report.Appeal, *domain.AppError) {

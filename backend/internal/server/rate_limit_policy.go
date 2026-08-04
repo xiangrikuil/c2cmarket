@@ -19,6 +19,15 @@ var (
 	oauthCallbackRateLimit = rateLimitPolicy{
 		Group: "oauth_callback", IPLimit: 20, UserLimit: 10,
 	}
+	accountAppealStartRateLimit = rateLimitPolicy{
+		Group: "account_appeal_start", IPLimit: 20, UserLimit: 10,
+	}
+	accountAppealSessionRateLimit = rateLimitPolicy{
+		Group: "account_appeal_session", IPLimit: 60, UserLimit: 30,
+	}
+	accountAppealCreateRateLimit = rateLimitPolicy{
+		Group: "account_appeal_create", IPLimit: 10, UserLimit: 5,
+	}
 	emailRegistrationStartRateLimit = rateLimitPolicy{
 		Group: "email_registration_start", IPLimit: 20, UserLimit: 5, TargetLimit: 3,
 	}
@@ -51,6 +60,9 @@ var (
 	}
 	appealCreateRateLimit = rateLimitPolicy{
 		Group: "appeal_create", IPLimit: 20, UserLimit: 5,
+	}
+	reportSupplementRateLimit = rateLimitPolicy{
+		Group: "report_supplement", IPLimit: 30, UserLimit: 10,
 	}
 	modelAuditRunRateLimit = rateLimitPolicy{
 		Group: "model_audit_run_create", IPLimit: 20, UserLimit: 5,

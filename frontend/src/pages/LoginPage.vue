@@ -211,6 +211,11 @@ async function logout() {
                 请使用 linux.do 登录；密码登录仅用于已绑定 linux.do 的账号恢复访问。
               </p>
 
+              <p class="text-center text-xs leading-5 text-muted-foreground">
+                账号已被暂停或封禁？
+                <RouterLink class="font-medium text-primary hover:underline" to="/account-appeal">发起账号申诉</RouterLink>
+              </p>
+
               <div class="relative">
                 <div class="absolute inset-0 flex items-center"><span class="w-full border-t border-border"></span></div>
                 <div class="relative flex justify-center text-xs"><span class="bg-card px-3 text-muted-foreground">账号恢复</span></div>

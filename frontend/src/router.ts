@@ -29,8 +29,10 @@ const MyReputationPage = () => import('@/pages/MyReputationPage.vue')
 const MyPromotionBenefitsPage = () => import('@/pages/MyPromotionBenefitsPage.vue')
 const MyNotificationsPage = () => import('@/pages/MyNotificationsPage.vue')
 const MyFeedbackPage = () => import('@/pages/MyFeedbackPage.vue')
+const MyReportsAppealsPage = () => import('@/pages/MyReportsAppealsPage.vue')
 const AnnouncementDetailPage = () => import('@/pages/AnnouncementDetailPage.vue')
 const LoginPage = () => import('@/pages/LoginPage.vue')
+const AccountAppealPage = () => import('@/pages/AccountAppealPage.vue')
 const PublicUserPage = () => import('@/pages/PublicUserPage.vue')
 const AdminPage = () => import('@/pages/AdminPage.vue')
 const AdminGrowthPage = () => import('@/pages/AdminGrowthPage.vue')
@@ -63,6 +65,7 @@ export const routes: RouteRecordRaw[] = [
     { path: '/', name: 'home', component: HomePage },
     { path: '/search', name: 'search', component: SearchPage },
     { path: '/login', name: 'login', component: LoginPage, meta: { standalone: true } },
+    { path: '/account-appeal', name: 'account-appeal', component: AccountAppealPage, meta: { standalone: true } },
     { path: '/auth/mock', redirect: '/login' },
     { path: '/official-prices', name: 'official-prices', component: OfficialPricesPage },
     { path: '/official-prices/detail', redirect: '/official-prices/p1' },
@@ -100,6 +103,8 @@ export const routes: RouteRecordRaw[] = [
     { path: '/my/reputation', alias: '/me/reputation', name: 'my-reputation', component: MyReputationPage, meta: userAuthMeta },
     { path: '/my/promotion-benefits', name: 'my-promotion-benefits', component: MyPromotionBenefitsPage, meta: userAuthMeta },
     { path: '/my/notifications', name: 'my-notifications', component: MyNotificationsPage, meta: userAuthMeta },
+    { path: '/my/reports', name: 'my-reports', component: MyReportsAppealsPage, meta: userAuthMeta },
+    { path: '/my/reports/:kind/:id', name: 'my-report-detail', component: MyReportsAppealsPage, meta: userAuthMeta },
     { path: '/my/feedback', name: 'my-feedback', component: MyFeedbackPage, meta: userAuthMeta },
     { path: '/my/feedback/:id', name: 'my-feedback-detail', component: MyFeedbackPage, meta: userAuthMeta },
     { path: '/announcements/:slug', name: 'announcement-detail', component: AnnouncementDetailPage },

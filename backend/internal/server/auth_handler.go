@@ -22,6 +22,8 @@ import (
 
 const oauthStateCookieName = "c2c_oauth_state"
 const oauthMaxResponseBodyBytes = 1 << 20
+const oauthPurposeAccountAppeal = "account_appeal"
+const accountAppealFrontendPath = "/account-appeal"
 
 type devSessionRequest struct {
 	Username string `json:"username"`
@@ -70,6 +72,7 @@ func (request registrationAttributionRequest) model() auth.RegistrationAttributi
 type oauthStateCookiePayload struct {
 	State       string                       `json:"state"`
 	ReturnTo    string                       `json:"returnTo"`
+	Purpose     string                       `json:"purpose,omitempty"`
 	Attribution auth.RegistrationAttribution `json:"attribution"`
 	InviteCode  string                       `json:"inviteCode,omitempty"`
 }
@@ -299,6 +302,18 @@ func (s *Server) handleOAuthStart(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, oauthStartResponse{AuthorizationURL: s.oauthAuthorizationURL(r, state, returnTo)})
 }
 
+func (s *Server) handleAccountAppealOAuthStart(w http.ResponseWriter, r *http.Request) {
+	state := newOAuthState()
+	s.setOAuthStateCookie(w, encodeOAuthStateCookie(oauthStateCookiePayload{
+		State:    state,
+		ReturnTo: accountAppealFrontendPath,
+		Purpose:  oauthPurposeAccountAppeal,
+	}))
+	writeJSON(w, http.StatusOK, oauthStartResponse{
+		AuthorizationURL: s.oauthAuthorizationURL(r, state, accountAppealFrontendPath),
+	})
+}
+
 func (s *Server) handleOAuthCallback(w http.ResponseWriter, r *http.Request) {
 	state := r.URL.Query().Get("state")
 	stateCookie, err := r.Cookie(oauthStateCookieName)
@@ -311,6 +326,10 @@ func (s *Server) handleOAuthCallback(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, r, domain.NewError(http.StatusForbidden, domain.CodeCSRFTokenInvalid, "OAuth state invalid", "登录 state 无效或已过期。"))
 		return
 	}
+	if payload.Purpose != "" && payload.Purpose != oauthPurposeAccountAppeal {
+		writeProblem(w, r, domain.NewError(http.StatusForbidden, domain.CodeCSRFTokenInvalid, "OAuth state invalid", "登录 state 无效或已过期。"))
+		return
+	}
 	code := strings.TrimSpace(r.URL.Query().Get("code"))
 	if code == "" {
 		writeProblem(w, r, domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "OAuth code required", "OAuth 回调缺少 code。", "code", "required", "OAuth 回调缺少 code。"))
@@ -319,6 +338,10 @@ func (s *Server) handleOAuthCallback(w http.ResponseWriter, r *http.Request) {
 	profile, appErr := s.oauthProfile(r.Context(), code)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
+		return
+	}
+	if payload.Purpose == oauthPurposeAccountAppeal {
+		s.handleAccountAppealOAuthCallback(w, r, profile)
 		return
 	}
 	profile.Attribution = payload.Attribution
@@ -336,6 +359,23 @@ func (s *Server) handleOAuthCallback(w http.ResponseWriter, r *http.Request) {
 		outcome = "registered"
 	}
 	http.Redirect(w, r, s.oauthRedirectTarget(appendAuthOutcome(payload.ReturnTo, outcome)), http.StatusFound)
+}
+
+func (s *Server) handleAccountAppealOAuthCallback(w http.ResponseWriter, r *http.Request, profile auth.OAuthProfile) {
+	_, session, appErr := s.app.StartAccountAppealSession(r.Context(), profile)
+	if appErr != nil {
+		if appErr.Code == domain.CodeAccountAppealIneligible {
+			s.clearOAuthStateCookie(w)
+			s.clearAccountAppealCookie(w)
+			http.Redirect(w, r, s.oauthRedirectTarget(appendAccountAppealOutcome("ineligible")), http.StatusFound)
+			return
+		}
+		writeProblem(w, r, appErr)
+		return
+	}
+	s.setAccountAppealCookie(w, session)
+	s.clearOAuthStateCookie(w)
+	http.Redirect(w, r, s.oauthRedirectTarget(appendAccountAppealOutcome("verified")), http.StatusFound)
 }
 
 func (s *Server) handleGetSession(w http.ResponseWriter, r *http.Request) {
@@ -687,6 +727,14 @@ func appendAuthOutcome(returnTo, outcome string) string {
 	}
 	query := parsed.Query()
 	query.Set("authOutcome", outcome)
+	parsed.RawQuery = query.Encode()
+	return parsed.String()
+}
+
+func appendAccountAppealOutcome(outcome string) string {
+	parsed := &url.URL{Path: accountAppealFrontendPath}
+	query := parsed.Query()
+	query.Set("accountAppealOutcome", outcome)
 	parsed.RawQuery = query.Encode()
 	return parsed.String()
 }

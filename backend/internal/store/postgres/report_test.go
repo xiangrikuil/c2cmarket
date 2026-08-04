@@ -247,6 +247,32 @@ func TestReportMigrationKeepsAuditAndDuplicateContracts(t *testing.T) {
 	}
 }
 
+func TestModerationInfoRequestMigrationKeepsAuthorizationAndImmutableSupplementContracts(t *testing.T) {
+	path := filepath.Join("..", "..", "..", "migrations", "000077_moderation_info_requests.up.sql")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read moderation info request migration: %v", err)
+	}
+	sql := string(data)
+	for _, required := range []string{
+		"CREATE TABLE moderation_info_requests",
+		"requested_from_user_id uuid NOT NULL REFERENCES users(id)",
+		"requested_by_admin_id uuid NOT NULL REFERENCES users(id)",
+		"status text NOT NULL CHECK (status IN ('open', 'answered', 'cancelled'))",
+		"CREATE UNIQUE INDEX ux_moderation_info_requests_open_report",
+		"CREATE UNIQUE INDEX ux_moderation_info_requests_open_dispute",
+		"CREATE TABLE moderation_info_supplements",
+		"info_request_id uuid NOT NULL UNIQUE REFERENCES moderation_info_requests(id) ON DELETE RESTRICT",
+	} {
+		if !strings.Contains(sql, required) {
+			t.Fatalf("moderation info request migration missing %q", required)
+		}
+	}
+	if strings.Contains(sql, "UPDATE moderation_info_supplements") {
+		t.Fatal("supplements must be append-only and never updated")
+	}
+}
+
 func TestReportSchemaUpgradeMigrationAlignsLegacyDatabases(t *testing.T) {
 	path := filepath.Join("..", "..", "..", "migrations", "000048_report_schema_upgrade.up.sql")
 	data, err := os.ReadFile(path)
@@ -280,6 +306,149 @@ func TestReportSchemaUpgradeMigrationAlignsLegacyDatabases(t *testing.T) {
 		if strings.Contains(downSQL, forbidden) {
 			t.Fatalf("upgrade down migration must preserve baseline-owned objects, found %q", forbidden)
 		}
+	}
+}
+
+func TestAppealApprovalChecksOutcomeSubjectBeforeReversal(t *testing.T) {
+	path := filepath.Join("report.go")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read report store: %v", err)
+	}
+	source := string(data)
+	start := strings.Index(source, "func reverseReputationOutcomeForApprovedAppeal")
+	if start < 0 {
+		t.Fatal("appeal reversal function start not found")
+	}
+	end := strings.Index(source[start:], "func updateDisputeAdminInTx")
+	if end < 0 {
+		t.Fatal("appeal reversal function boundaries not found")
+	}
+	section := source[start : start+end]
+	guard := strings.Index(section, "report.ValidateAppealOutcomeSubject")
+	outcomeUpdate := strings.Index(section, "UPDATE dispute_reputation_outcomes")
+	restrictionUpdate := strings.Index(section, "UPDATE user_restrictions")
+	if guard < 0 || outcomeUpdate < 0 || restrictionUpdate < 0 {
+		t.Fatalf("appeal reversal guard or mutations missing: guard=%d outcome=%d restriction=%d", guard, outcomeUpdate, restrictionUpdate)
+	}
+	if guard > outcomeUpdate || guard > restrictionUpdate {
+		t.Fatal("appeal subject guard must run before outcome and restriction mutations")
+	}
+}
+
+func TestCreateAppealSerializesSubmittedDuplicateCheck(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("report.go"))
+	if err != nil {
+		t.Fatalf("read report store: %v", err)
+	}
+	source := string(data)
+	start := strings.Index(source, "func createAppealInTx")
+	if start < 0 {
+		t.Fatal("appeal create function start not found")
+	}
+	end := strings.Index(source[start:], "func lockUndestroyedAPIOrderCredentialForModeration")
+	if end < 0 {
+		t.Fatal("appeal create function boundaries not found")
+	}
+	section := source[start : start+end]
+	lock := strings.Index(section, "pg_advisory_xact_lock")
+	duplicateCheck := strings.Index(section, "SELECT EXISTS")
+	insert := strings.Index(section, "INSERT INTO appeals")
+	if lock < 0 || duplicateCheck < 0 || insert < 0 {
+		t.Fatalf("appeal duplicate serialization missing: lock=%d check=%d insert=%d", lock, duplicateCheck, insert)
+	}
+	if lock > duplicateCheck || duplicateCheck > insert {
+		t.Fatal("appeal advisory lock and submitted duplicate check must run before insert")
+	}
+	credentialGuard := strings.Index(section, "lockUndestroyedAPIOrderCredentialForModeration")
+	if credentialGuard < 0 || credentialGuard > insert {
+		t.Fatalf("API order appeal lifecycle guard must run before insert: guard=%d insert=%d", credentialGuard, insert)
+	}
+	for _, required := range []string{"status = 'submitted'", "dispute_case_id = $2", "report_id = $2", "dispute_case_id IS NULL"} {
+		if !strings.Contains(section, required) {
+			t.Fatalf("appeal duplicate check missing %q", required)
+		}
+	}
+
+	helperStart := start + end
+	helperEnd := strings.Index(source[helperStart:], "func updateAppealAdminInTx")
+	if helperEnd < 0 {
+		t.Fatal("credential lifecycle helper boundaries not found")
+	}
+	helperSection := source[helperStart : helperStart+helperEnd]
+	credentialLock := strings.Index(helperSection, "apiOrderCredentialLifecycleLockPrefix")
+	destroyedCheck := strings.Index(helperSection, "destroyed_at IS NOT NULL")
+	if credentialLock < 0 || destroyedCheck < 0 || credentialLock > destroyedCheck {
+		t.Fatalf("API order lifecycle helper must lock before checking destruction: lock=%d destroyed_check=%d", credentialLock, destroyedCheck)
+	}
+}
+
+func TestInfoSupplementLocksParentCaseBeforeInformationRequest(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("report.go"))
+	if err != nil {
+		t.Fatalf("read report store: %v", err)
+	}
+	source := string(data)
+	start := strings.Index(source, "func submitInfoSupplementInTx")
+	if start < 0 {
+		t.Fatal("supplement transaction function start not found")
+	}
+	end := strings.Index(source[start:], "func cancelOpenInfoRequests")
+	if end < 0 {
+		t.Fatal("supplement transaction function boundaries not found")
+	}
+	section := source[start : start+end]
+	parentLock := strings.Index(section, "FOR UPDATE OF r")
+	requestLock := strings.Index(section, "FOR UPDATE OF mir")
+	if parentLock < 0 || requestLock < 0 || parentLock > requestLock {
+		t.Fatalf("supplement lock order must be parent case before information request: parent=%d request=%d", parentLock, requestLock)
+	}
+}
+
+func TestOpenDisputeFromReportSerializesCredentialLifecycle(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("report.go"))
+	if err != nil {
+		t.Fatalf("read report store: %v", err)
+	}
+	source := string(data)
+	start := strings.Index(source, "func updateReportAdminInTx")
+	if start < 0 {
+		t.Fatal("report admin transaction function start not found")
+	}
+	end := strings.Index(source[start:], "func createAppealInTx")
+	if end < 0 {
+		t.Fatal("report admin transaction function boundaries not found")
+	}
+	section := source[start : start+end]
+	lifecycleLock := strings.Index(section, "lockUndestroyedAPIOrderCredentialForModeration")
+	disputeInsert := strings.Index(section, "openDisputeFromReport")
+	if lifecycleLock < 0 || disputeInsert < 0 || lifecycleLock > disputeInsert {
+		t.Fatalf("API order report dispute must lock credential lifecycle before creating the dispute: lock=%d insert=%d", lifecycleLock, disputeInsert)
+	}
+}
+
+func TestCreateAppealLocksDisputeBeforeAuthorization(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("report.go"))
+	if err != nil {
+		t.Fatalf("read report store: %v", err)
+	}
+	source := string(data)
+	start := strings.Index(source, "func createAppealInTx")
+	if start < 0 {
+		t.Fatal("appeal create function start not found")
+	}
+	end := strings.Index(source[start:], "func updateAppealAdminInTx")
+	if end < 0 {
+		t.Fatal("appeal create function end not found")
+	}
+	section := source[start : start+end]
+	disputeLock := strings.Index(section, "FOR UPDATE OF d")
+	authorization := strings.Index(section, "report.ResolveAppealSource")
+	if disputeLock < 0 || authorization < 0 {
+		t.Fatalf("appeal dispute lock or authorization missing: lock=%d authorization=%d", disputeLock, authorization)
+	}
+	if disputeLock > authorization {
+		t.Fatal("dispute must be locked before appeal authorization reads its subject")
 	}
 }
 
@@ -321,6 +490,7 @@ type fakeAPIIntentRow struct {
 }
 
 type fakeAPIOrderRow struct {
+	canonicalID   string
 	title         string
 	status        string
 	ownerID       string
@@ -380,7 +550,12 @@ func (q fakeReportQueryer) QueryRow(_ context.Context, sql string, args ...any) 
 		if !ok {
 			return fakeReportRow{err: pgx.ErrNoRows}
 		}
+		canonicalID := row.canonicalID
+		if canonicalID == "" {
+			canonicalID = id
+		}
 		return fakeReportRow{values: []any{
+			canonicalID,
 			row.title,
 			row.status,
 			row.ownerID,

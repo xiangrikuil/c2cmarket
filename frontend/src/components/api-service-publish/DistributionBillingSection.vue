@@ -1,9 +1,8 @@
 <script setup lang="ts">
-import { computed } from 'vue'
 import { Card } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import type { ApiServicePublishForm, BillingMode, DistributionSystem } from './types'
-import { billingLabels, publishDistributionOptions } from './utils'
+import { billingLabels, publishDistributionOptions, supportedPublishBillingModes } from './utils'
 
 const props = defineProps<{
   form: ApiServicePublishForm
@@ -15,7 +14,6 @@ const emit = defineEmits<{
   setBilling: [value: BillingMode]
 }>()
 
-const billingOptions = computed<BillingMode[]>(() => props.form.distributionSystem === 'sub2api' ? ['metered_credit'] : ['manual_credit', 'fixed_package'])
 </script>
 
 <template>
@@ -48,7 +46,7 @@ const billingOptions = computed<BillingMode[]>(() => props.form.distributionSyst
         <label class="text-sm font-medium">售卖计费方式</label>
         <div class="api-publish-billing-grid">
           <button
-            v-for="option in billingOptions"
+            v-for="option in supportedPublishBillingModes"
             :key="option"
             type="button"
             class="rounded-md border px-3 py-2 text-left text-sm font-medium disabled:cursor-not-allowed disabled:opacity-45"

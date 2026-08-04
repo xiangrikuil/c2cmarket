@@ -13,12 +13,13 @@ import (
 )
 
 type fakeAuthRepository struct {
-	oauthResult OAuthUserResult
-	user        User
-	credential  PasswordCredential
-	session     Session
-	adminUsers  []AdminUser
-	adminDetail AdminUserDetail
+	oauthResult          OAuthUserResult
+	user                 User
+	credential           PasswordCredential
+	session              Session
+	accountAppealSession AccountAppealSession
+	adminUsers           []AdminUser
+	adminDetail          AdminUserDetail
 
 	ensureUserCalls                  int
 	createEmailRegistrationCodeCalls int
@@ -33,6 +34,10 @@ func (f *fakeAuthRepository) EnsureUser(context.Context, string, bool, time.Time
 
 func (f *fakeAuthRepository) UpsertOAuthUser(context.Context, OAuthProfile, time.Time) (OAuthUserResult, *domain.AppError) {
 	return f.oauthResult, nil
+}
+
+func (f *fakeAuthRepository) ResolveExistingOAuthUser(context.Context, string, string) (User, bool, *domain.AppError) {
+	return f.oauthResult.User, f.oauthResult.User.ID != "", nil
 }
 
 func (f *fakeAuthRepository) BootstrapAdminPassword(_ context.Context, credential PasswordCredential, _ time.Time) (BootstrapAdminResult, *domain.AppError) {
@@ -152,6 +157,39 @@ func (f *fakeAuthRepository) RefreshSessionCSRF(context.Context, string, string,
 
 func (f *fakeAuthRepository) RevokeSession(context.Context, string, time.Time) *domain.AppError {
 	return nil
+}
+
+func (f *fakeAuthRepository) CreateAccountAppealSession(_ context.Context, userID, sessionTokenHash, csrfTokenHash string, expiresAt, now time.Time) (User, *domain.AppError) {
+	user := f.oauthResult.User
+	if user.ID == "" || user.ID != userID || !eligibleAccountAppealStatus(user.Status) {
+		return User{}, accountAppealIneligibleError()
+	}
+	f.accountAppealSession = AccountAppealSession{
+		ID:        sessionTokenHash,
+		UserID:    userID,
+		CSRFToken: csrfTokenHash,
+		CreatedAt: now,
+		ExpiresAt: expiresAt,
+	}
+	return user, nil
+}
+
+func (f *fakeAuthRepository) RotateAccountAppealSessionCSRF(_ context.Context, sessionTokenHash, csrfTokenHash string, now time.Time) (User, AccountAppealSession, *domain.AppError) {
+	if f.accountAppealSession.ID != sessionTokenHash || !now.Before(f.accountAppealSession.ExpiresAt) {
+		return User{}, AccountAppealSession{}, accountAppealSessionExpiredError()
+	}
+	f.accountAppealSession.CSRFToken = csrfTokenHash
+	return f.oauthResult.User, f.accountAppealSession, nil
+}
+
+func (f *fakeAuthRepository) GetAccountAppealSessionWithCSRF(_ context.Context, sessionTokenHash, csrfTokenHash string, now time.Time) (User, AccountAppealSession, *domain.AppError) {
+	if f.accountAppealSession.ID != sessionTokenHash || f.accountAppealSession.CSRFToken != csrfTokenHash {
+		return User{}, AccountAppealSession{}, accountAppealCSRFError()
+	}
+	if !now.Before(f.accountAppealSession.ExpiresAt) {
+		return User{}, AccountAppealSession{}, accountAppealSessionExpiredError()
+	}
+	return f.oauthResult.User, f.accountAppealSession, nil
 }
 
 func boundAdminUserForTest() User {

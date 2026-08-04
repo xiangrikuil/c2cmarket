@@ -16,6 +16,7 @@ func TestLoadDefaultsToDevelopmentDevAuth(t *testing.T) {
 	t.Setenv("EMAIL_VERIFICATION_PEPPER", "")
 	t.Setenv("MAINTENANCE_INTERVAL", "")
 	t.Setenv("MAINTENANCE_BATCH_SIZE", "")
+	t.Setenv("API_DELIVERY_CREDENTIAL_RETENTION", "")
 	clearDatabaseOptionEnv(t)
 
 	cfg, err := Load()
@@ -39,6 +40,9 @@ func TestLoadDefaultsToDevelopmentDevAuth(t *testing.T) {
 	}
 	if cfg.Maintenance.Interval != 15*time.Minute || cfg.Maintenance.BatchSize != 500 {
 		t.Fatalf("unexpected maintenance defaults: %+v", cfg.Maintenance)
+	}
+	if cfg.Maintenance.APIDeliveryCredentialRetention != 30*24*time.Hour {
+		t.Fatalf("unexpected API delivery credential retention: %s", cfg.Maintenance.APIDeliveryCredentialRetention)
 	}
 	if cfg.Database != database.DefaultPostgresOptions() {
 		t.Fatalf("unexpected database defaults: %+v", cfg.Database)
@@ -300,6 +304,12 @@ func TestLoadValidatesMaintenanceBounds(t *testing.T) {
 	t.Setenv("UNREAD_NOTIFICATION_RETENTION", "24h")
 	if _, err := Load(); err == nil {
 		t.Fatal("expected unread retention shorter than read retention to fail")
+	}
+
+	t.Setenv("READ_NOTIFICATION_RETENTION", "24h")
+	t.Setenv("API_DELIVERY_CREDENTIAL_RETENTION", "0s")
+	if _, err := Load(); err == nil || !strings.Contains(err.Error(), "API_DELIVERY_CREDENTIAL_RETENTION") {
+		t.Fatalf("expected non-positive credential retention to fail, got %v", err)
 	}
 }
 

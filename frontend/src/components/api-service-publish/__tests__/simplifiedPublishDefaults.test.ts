@@ -89,6 +89,9 @@ test('applies simplified API quota publish defaults', () => {
   assert.equal(form.manualBillingNote, '')
   assert.equal(generatedTitle(form, new Map()), 'GPT · API 限时套餐')
 
+  form.billingMode = 'metered_credit'
+  assert.equal(generatedTitle(form, new Map()), 'GPT · 其他 API 接入 自由额度')
+
   assert.doesNotMatch(merchantNoteTemplate, new RegExp('接入' + '方式：'))
   assert.match(apiQuotaBoundaryNotice, /不托管支付/)
   assert.match(apiQuotaBoundaryNotice, /不保存 API Key/)

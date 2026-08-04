@@ -112,9 +112,21 @@ test('maps public orderable API service responses as online services', async () 
   assert.equal(service.merchantRefundPolicyVersion, 'api-merchant-refund-v1')
 })
 
+test('keeps historical manual billing rows readable', async () => {
+  const { apiMarketBackend } = await loadAPIMarketModules()
+  const service = apiMarketBackend.mapBackendAPIService(backendPublicAPIService({
+    billingMode: 'manual_usage_check',
+    isOrderable: false,
+  }))
+
+  assert.equal(service.billingMode, 'manual_credit')
+  assert.equal(service.publiclyOrderable, false)
+})
+
 test('serializes structured commercial facts without writing the legacy merchant support note', async () => {
   const { apiMarketBackend } = await loadAPIMarketModules()
   const request = apiMarketBackend.toBackendServiceRequest({
+    billingMode: 'metered_credit',
     accountPoolType: 'custom',
     accountPoolCustomName: 'Claude Max',
     declaredMaxConcurrency: 16,
@@ -126,6 +138,32 @@ test('serializes structured commercial facts without writing the legacy merchant
   assert.equal(request.declaredMaxConcurrency, 16)
   assert.equal(request.merchantRefundCommitment, true)
   assert.equal('merchantSupportNote' in request, false)
+})
+
+test('serializes only supported API service billing modes', async () => {
+  const { apiMarketBackend } = await loadAPIMarketModules()
+  const otherMetered = apiMarketBackend.toBackendServiceRequest({
+    distributionSystem: 'other',
+    billingMode: 'metered_credit',
+  })
+  assert.equal(otherMetered.distributionSystem, 'other')
+  assert.equal(otherMetered.billingMode, 'metered_usd_quota')
+
+  const fixedPackage = apiMarketBackend.toBackendServiceRequest({ billingMode: 'fixed_package' })
+  assert.equal(fixedPackage.billingMode, 'fixed_package')
+
+  assert.throws(
+    () => apiMarketBackend.toBackendServiceRequest({ billingMode: 'manual_credit' }),
+    /Unsupported API billing mode/,
+  )
+  assert.throws(
+    () => apiMarketBackend.toBackendServiceRequest({ billingMode: 'unknown_mode' }),
+    /Unsupported API billing mode/,
+  )
+  assert.throws(
+    () => apiMarketBackend.toBackendServiceRequest({}),
+    /Unsupported API billing mode/,
+  )
 })
 
 test('maps API source-author verification independently from source URL presence', async () => {

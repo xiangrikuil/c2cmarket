@@ -278,6 +278,29 @@ paths:
                 $ref: "#/components/schemas/OAuthStartResponse"
         "429":
           $ref: "#/components/responses/RateLimited"
+  /api/v1/auth/account-appeal/start:
+    get:
+      operationId: startAccountAppealVerification
+      tags: [Auth]
+      security: []
+      summary: Start linux.do verification for a restricted-account appeal.
+      description: |
+        Starts a purpose-scoped OAuth flow that may resolve only an existing linux.do identity.
+        It never creates or updates a user, registration attribution, referral reward, ordinary
+        session, profile, or last-login fact.
+      responses:
+        "200":
+          description: Purpose-scoped OAuth authorization URL.
+          headers:
+            Set-Cookie:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OAuthStartResponse"
+        "429":
+          $ref: "#/components/responses/RateLimited"
   /api/v1/auth/oauth/callback:
     get:
       operationId: completeOAuthLogin
@@ -297,7 +320,7 @@ paths:
             type: string
       responses:
         "302":
-          description: Session cookie set and browser redirected to the original return path.
+          description: Ordinary login sets the normal session cookie and redirects to the original return path. The account-appeal purpose sets only the dedicated fixed-expiry appeal cookie and redirects to `/account-appeal` with a generic outcome hint.
           headers:
             Set-Cookie:
               schema:
@@ -323,6 +346,67 @@ paths:
           description: Logged out.
         "403":
           $ref: "#/components/responses/Problem"
+  /api/v1/account-appeal/session:
+    get:
+      operationId: getAccountAppealSession
+      tags: [AccountAppeals]
+      security:
+        - accountAppealCookie: []
+      summary: Read the fixed-expiry restricted-account appeal session.
+      description: Rotates the dedicated CSRF token without renewing the 15-minute session expiry.
+      responses:
+        "200":
+          description: Current restricted-account appeal session.
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+                const: no-store
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AccountAppealSessionResponse"
+        "401":
+          $ref: "#/components/responses/Problem"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+  /api/v1/account-appeal/appeals:
+    post:
+      operationId: createAccountGovernanceAppeal
+      tags: [AccountAppeals]
+      security:
+        - accountAppealCookie: []
+          accountAppealCSRF: []
+      summary: Submit one account-governance appeal for the verified restricted account.
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateAccountGovernanceAppealRequest"
+      responses:
+        "201":
+          description: Account-governance appeal submitted.
+          headers:
+            ETag:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AccountGovernanceAppeal"
+        "401":
+          $ref: "#/components/responses/Problem"
+        "403":
+          $ref: "#/components/responses/Problem"
+        "409":
+          $ref: "#/components/responses/Problem"
+        "422":
+          $ref: "#/components/responses/Problem"
+        "429":
+          $ref: "#/components/responses/RateLimited"
   /api/v1/search:
     get:
       operationId: searchMarket
@@ -1636,9 +1720,101 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/ReportList"
+                $ref: "#/components/schemas/SelfReportList"
         "401":
           $ref: "#/components/responses/Problem"
+  /api/v1/me/reports/{id}/supplements:
+    post:
+      operationId: submitReportInfoSupplement
+      tags: [Reports]
+      security:
+        - sessionCookie: []
+          csrfToken: []
+      summary: Answer the current user's open report information request.
+      description: Only the active reporter explicitly named by the administrator may answer. The text is immutable, must be credential-free plain text, and answering does not resolve or close the report.
+      parameters:
+        - $ref: "#/components/parameters/ResourceId"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/InfoSupplementRequest"
+      responses:
+        "200":
+          description: Supplement accepted and the information request marked answered.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SelfModerationSupplementMutation"
+        "401":
+          $ref: "#/components/responses/Problem"
+        "403":
+          $ref: "#/components/responses/Problem"
+        "404":
+          $ref: "#/components/responses/Problem"
+        "409":
+          $ref: "#/components/responses/Problem"
+        "422":
+          $ref: "#/components/responses/Problem"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+  /api/v1/me/disputes:
+    get:
+      operationId: listMyDisputes
+      tags: [Reports]
+      summary: List disputes where the current user is a participant or the moderation subject.
+      description: Returns participant-safe case fields and a server-derived canAppeal decision for the current user. Administrator reasons, administrator identifiers, subject identity fields, raw report descriptions, and appeal statements are omitted.
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
+      responses:
+        "200":
+          description: Current user's disputes.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SelfDisputeList"
+        "401":
+          $ref: "#/components/responses/Problem"
+  /api/v1/me/disputes/{id}/supplements:
+    post:
+      operationId: submitDisputeInfoSupplement
+      tags: [Reports]
+      security:
+        - sessionCookie: []
+          csrfToken: []
+      summary: Answer the current user's open dispute information request.
+      description: Only the active participant explicitly named by the administrator may answer. The text is immutable, must be credential-free plain text, and answering does not resolve or close the dispute.
+      parameters:
+        - $ref: "#/components/parameters/ResourceId"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/InfoSupplementRequest"
+      responses:
+        "200":
+          description: Supplement accepted and the information request marked answered.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SelfModerationSupplementMutation"
+        "401":
+          $ref: "#/components/responses/Problem"
+        "403":
+          $ref: "#/components/responses/Problem"
+        "404":
+          $ref: "#/components/responses/Problem"
+        "409":
+          $ref: "#/components/responses/Problem"
+        "422":
+          $ref: "#/components/responses/Problem"
+        "429":
+          $ref: "#/components/responses/RateLimited"
   /api/v1/me/appeals:
     post:
       operationId: createAppeal
@@ -1646,8 +1822,8 @@ paths:
       security:
         - sessionCookie: []
           csrfToken: []
-      summary: Submit an appeal linked to a report or dispute.
-      description: Appeal content must be non-sensitive and must not include credentials, tokens, full contact values, cookies, sessions, API keys, or recovery codes.
+      summary: Submit an appeal linked to an authorized report or dispute.
+      description: The server derives targetType and targetId from the referenced source. A report appeal is available only to its reporter after the report is rejected or closed; a report already promoted to a dispute must use disputeId. A dispute appeal is available only after resolution or closure; when a subject is assigned, only that subject may appeal, otherwise either participant may appeal. If both reportId and disputeId are supplied, they must identify the same case. Only one submitted appeal per appellant and source is allowed. Appeal content must be non-sensitive and must not include credentials, tokens, full contact values, cookies, sessions, API keys, or recovery codes.
       parameters:
         - $ref: "#/components/parameters/IdempotencyKey"
       requestBody:
@@ -6966,6 +7142,14 @@ components:
       type: apiKey
       in: header
       name: X-CSRF-Token
+    accountAppealCookie:
+      type: apiKey
+      in: cookie
+      name: c2c_account_appeal
+    accountAppealCSRF:
+      type: apiKey
+      in: header
+      name: X-Account-Appeal-CSRF
     metricsBearer:
       type: http
       scheme: bearer
@@ -11482,6 +11666,14 @@ components:
         submittedAt:
           type: string
           format: date-time
+        destroyedAt:
+          type: string
+          format: date-time
+          description: Present after the credential payload has been irreversibly removed under the retention policy.
+        destroyReason:
+          type: string
+          enum: [retention_expired, retired_unused]
+          description: Public-safe reason for irreversible credential payload removal.
     APIOrderReasonRequest:
       type: object
       additionalProperties: false
@@ -11684,7 +11876,7 @@ components:
           description: Authoritative end of the 24-hour buyer credential-review window. Set when delivery is submitted and retained after completion.
         deliveryCredential:
           $ref: "#/components/schemas/APIOrderDeliveryCredential"
-          description: Included only in buyer/seller detail and action responses for participating users; omitted from list/admin/public responses.
+          description: Included only in buyer/seller detail and action responses for participating users; omitted from list/admin/public responses. After destruction it contains audit timestamps and no secret payload fields.
         completionSource:
           type: string
           enum: [buyer_confirmed, auto_completed]
@@ -12692,6 +12884,30 @@ components:
           minLength: 4
           maxLength: 1000
           description: Must not contain full contact values, passwords, API keys, tokens, sessions, cookies, recovery codes, or other credential material.
+    ModerationInfoSupplement:
+      type: object
+      description: Admin-only immutable supplement submitted for a moderation information request. Never returned by self or public endpoints.
+      required: [id, infoRequestId, submittedByUserId, submittedByUsername, submittedByName, body, createdAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        infoRequestId:
+          type: string
+          format: uuid
+        submittedByUserId:
+          type: string
+          format: uuid
+        submittedByUsername:
+          type: string
+        submittedByName:
+          type: string
+        body:
+          type: string
+          description: Admin-only credential-free text submitted by the designated participant.
+        createdAt:
+          type: string
+          format: date-time
     Report:
       type: object
       required: [id, reporterUsername, reporterName, targetType, targetId, canonicalTargetType, canonicalTargetId, targetLabel, reportedUsername, reasonCode, title, status, createdAt, updatedAt, version]
@@ -12748,6 +12964,21 @@ components:
         disputeId:
           type: string
           format: uuid
+        canSupplement:
+          type: boolean
+          readOnly: true
+          description: Self response only. True only for the active reporter explicitly named on the open information request.
+        openInfoRequestId:
+          type: string
+          format: uuid
+          readOnly: true
+          description: Self response only and present only while canSupplement is true.
+        supplements:
+          type: array
+          readOnly: true
+          description: Admin detail response only. Immutable user supplements ordered by submission time.
+          items:
+            $ref: "#/components/schemas/ModerationInfoSupplement"
         createdAt:
           type: string
           format: date-time
@@ -12790,6 +13021,23 @@ components:
           minLength: 2
           maxLength: 120
           description: Public-safe result text. It must not mention refunds, payment custody, guarantees, or credentials.
+        requestedFromUserId:
+          type: string
+          format: uuid
+          description: Required only for request-info actions. Must identify an active participant in the report or dispute.
+    InfoSupplementRequest:
+      type: object
+      additionalProperties: false
+      required: [openInfoRequestId, body]
+      properties:
+        openInfoRequestId:
+          type: string
+          format: uuid
+        body:
+          type: string
+          minLength: 4
+          maxLength: 1200
+          description: Credential-free plain text. Stored as an immutable supplement and never exposed on public endpoints.
     DisputeCase:
       type: object
       required: [id, targetType, targetId, targetLabel, primaryUsername, primaryDisplayName, counterpartyUsername, counterpartyName, status, publicSummary, publicResultCode, publicResult, openedAt, createdAt, updatedAt, version]
@@ -12859,6 +13107,25 @@ components:
         closedAt:
           type: [string, "null"]
           format: date-time
+        canAppeal:
+          type: boolean
+          readOnly: true
+          description: Present on current-user dispute responses. True only when the case is resolved or closed and the current user is eligible to appeal; when a subject is assigned, only that subject is eligible.
+        canSupplement:
+          type: boolean
+          readOnly: true
+          description: Self response only. True only for the active participant explicitly named on the open information request.
+        openInfoRequestId:
+          type: string
+          format: uuid
+          readOnly: true
+          description: Self response only and present only while canSupplement is true.
+        supplements:
+          type: array
+          readOnly: true
+          description: Admin detail response only. Immutable user supplements ordered by submission time.
+          items:
+            $ref: "#/components/schemas/ModerationInfoSupplement"
         createdAt:
           type: string
           format: date-time
@@ -13093,10 +13360,66 @@ components:
             $ref: "#/components/schemas/PublicDispute"
         nextCursor:
           type: [string, "null"]
+    AccountAppealSessionResponse:
+      type: object
+      additionalProperties: false
+      required: [accountStatus, csrfToken, expiresAt]
+      properties:
+        accountStatus:
+          type: string
+          enum: [suspended, banned]
+        csrfToken:
+          type: string
+          description: Dedicated CSRF token for account-appeal mutations only.
+        expiresAt:
+          type: string
+          format: date-time
+          description: Fixed session expiry. Reading the session never extends it.
+    CreateAccountGovernanceAppealRequest:
+      type: object
+      additionalProperties: false
+      required: [statement]
+      properties:
+        statement:
+          type: string
+          minLength: 4
+          maxLength: 1000
+          description: Must not contain full contact values, passwords, API keys, tokens, sessions, cookies, recovery codes, or other credential material.
+    AccountGovernanceAppeal:
+      type: object
+      additionalProperties: false
+      required: [id, targetType, targetId, title, status, createdAt, updatedAt, version]
+      properties:
+        id:
+          type: string
+          format: uuid
+        targetType:
+          type: string
+          const: account_governance
+        targetId:
+          type: string
+          format: uuid
+          description: Canonical user ID of the verified appellant.
+        title:
+          type: string
+        status:
+          type: string
+          enum: [submitted, approved, rejected]
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+        version:
+          type: integer
     CreateAppealRequest:
       type: object
       additionalProperties: false
       required: [title, statement]
+      anyOf:
+        - required: [reportId]
+        - required: [disputeId]
       properties:
         reportId:
           type: string
@@ -13106,9 +13429,12 @@ components:
           format: uuid
         targetType:
           type: string
-          enum: [contact_snapshot, public_user, carpool_application, carpool_membership, api_purchase_intent, api_order]
+          deprecated: true
+          description: Deprecated compatibility field. The server ignores this value and derives the target type from reportId or disputeId.
         targetId:
           type: string
+          deprecated: true
+          description: Deprecated compatibility field. The server ignores this value and derives the target id from reportId or disputeId.
         title:
           type: string
           minLength: 2
@@ -13141,6 +13467,7 @@ components:
           format: uuid
         targetType:
           type: string
+          enum: [contact_snapshot, public_user, carpool_application, carpool_membership, api_purchase_intent, api_order, account_governance]
         targetId:
           type: string
         title:
@@ -13456,6 +13783,152 @@ components:
           type: string
           minLength: 1
           maxLength: 500
+    SelfReport:
+      type: object
+      additionalProperties: false
+      required: [id, reporterUsername, reporterName, targetType, targetId, canonicalTargetType, canonicalTargetId, targetLabel, reportedUsername, reasonCode, title, status, createdAt, updatedAt, version, canSupplement]
+      properties:
+        id:
+          type: string
+          format: uuid
+        reporterUsername:
+          type: string
+        reporterName:
+          type: string
+        targetType:
+          type: string
+          enum: [contact_snapshot, public_user, carpool_application, carpool_membership, api_purchase_intent, api_order]
+        targetId:
+          type: string
+        canonicalTargetType:
+          type: string
+          enum: [contact_snapshot, public_user, carpool_application, carpool_membership, api_purchase_intent, api_order]
+        canonicalTargetId:
+          type: string
+        targetLabel:
+          type: string
+        reportedUsername:
+          type: string
+        reasonCode:
+          type: string
+          enum: [unreachable, contact_invalid, impersonation, description_mismatch, seat_rule_dispute, api_quota_dispute, order_delivery_dispute, other]
+        title:
+          type: string
+        status:
+          type: string
+          enum: [submitted, triaged, needs_info, rejected, dispute_opened, closed]
+        handledAt:
+          type: [string, "null"]
+          format: date-time
+        disputeId:
+          type: string
+          format: uuid
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+        version:
+          type: integer
+        canSupplement:
+          type: boolean
+        openInfoRequestId:
+          type: string
+          format: uuid
+          description: Present only while canSupplement is true.
+    SelfReportList:
+      type: object
+      additionalProperties: false
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/SelfReport"
+        nextCursor:
+          type: [string, "null"]
+    SelfDispute:
+      type: object
+      additionalProperties: false
+      required: [id, targetType, targetId, targetLabel, primaryUsername, primaryDisplayName, counterpartyUsername, counterpartyName, status, publicSummary, publicResultCode, publicResult, openedAt, createdAt, updatedAt, version, canAppeal, canSupplement]
+      properties:
+        id:
+          type: string
+          format: uuid
+        reportId:
+          type: string
+          format: uuid
+        targetType:
+          type: string
+          enum: [contact_snapshot, public_user, carpool_application, carpool_membership, api_purchase_intent, api_order]
+        targetId:
+          type: string
+        targetLabel:
+          type: string
+        primaryUsername:
+          type: string
+        primaryDisplayName:
+          type: string
+        counterpartyUsername:
+          type: string
+        counterpartyName:
+          type: string
+        status:
+          type: string
+          enum: [open, waiting_info, resolved, closed]
+        publicSummary:
+          type: string
+        publicResultCode:
+          type: string
+          enum: [no_action, contact_invalid, impersonation_confirmed, description_mismatch, rule_or_seat_issue, api_delivery_issue, other_resolved]
+        publicResult:
+          type: string
+        openedAt:
+          type: string
+          format: date-time
+        resolvedAt:
+          type: [string, "null"]
+          format: date-time
+        closedAt:
+          type: [string, "null"]
+          format: date-time
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+        version:
+          type: integer
+        canAppeal:
+          type: boolean
+        canSupplement:
+          type: boolean
+        openInfoRequestId:
+          type: string
+          format: uuid
+          description: Present only while canSupplement is true.
+    SelfDisputeList:
+      type: object
+      additionalProperties: false
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/SelfDispute"
+        nextCursor:
+          type: [string, "null"]
+    SelfModerationSupplementMutation:
+      type: object
+      additionalProperties: false
+      description: Self-safe supplement result. Administrator reasons, identities, target snapshots, and stored supplements are never returned.
+      properties:
+        report:
+          $ref: "#/components/schemas/SelfReport"
+        dispute:
+          $ref: "#/components/schemas/SelfDispute"
     AdminReportMutation:
       type: object
       properties:

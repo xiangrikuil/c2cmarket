@@ -209,6 +209,7 @@ restriction.revoked_at is null
 - `contact_view` resolves the current viewer as buyer or seller from the resource relationship; it must not use one fixed role for every viewer.
 - Creating or publishing a carpool, applying, accepting, publishing an API service, creating an API order, viewing participant contacts, and submitting a review must call the shared action contract with the matching role/action pair.
 - Approving an appeal linked to an active outcome reverses that outcome and revokes restrictions whose `source_dispute_outcome_id` matches, in the same transaction as the appeal state change.
+- Dispute appeal authorization and reputation outcome creation serialize on the dispute row. A submitted or approved appeal blocks creating a later outcome, so an appeal cannot be invalidated by changing the dispute subject or by reapplying a reversed responsibility decision.
 - `reputation_governance_events` is append-only. Administrators create outcomes/restrictions or reverse/revoke them through domain actions; there is no API that directly edits a user's reputation tier.
 - Password login, OAuth callback, and existing session validation independently reject any account whose `account_status` is not `active`. Account status must not be inferred from reputation restrictions.
 

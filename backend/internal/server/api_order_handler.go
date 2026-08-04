@@ -119,14 +119,16 @@ type apiOrderPaymentInstructionsResponse struct {
 }
 
 type apiOrderDeliveryCredentialResponse struct {
-	DeliveryKind  string `json:"deliveryKind"`
-	APIBaseURL    string `json:"apiBaseUrl,omitempty"`
-	APIKey        string `json:"apiKey,omitempty"`
-	PanelLoginURL string `json:"panelLoginUrl,omitempty"`
-	Username      string `json:"username,omitempty"`
-	Password      string `json:"password,omitempty"`
-	Instructions  string `json:"instructions,omitempty"`
-	SubmittedAt   string `json:"submittedAt"`
+	DeliveryKind  string  `json:"deliveryKind"`
+	APIBaseURL    string  `json:"apiBaseUrl,omitempty"`
+	APIKey        string  `json:"apiKey,omitempty"`
+	PanelLoginURL string  `json:"panelLoginUrl,omitempty"`
+	Username      string  `json:"username,omitempty"`
+	Password      string  `json:"password,omitempty"`
+	Instructions  string  `json:"instructions,omitempty"`
+	SubmittedAt   string  `json:"submittedAt"`
+	DestroyedAt   *string `json:"destroyedAt,omitempty"`
+	DestroyReason string  `json:"destroyReason,omitempty"`
 }
 
 func (s *Server) handleCreateAPIOrder(w http.ResponseWriter, r *http.Request) {
@@ -511,16 +513,22 @@ func toAPIOrderResponse(order apiorder.Order, ownerView bool, includeCredential 
 }
 
 func toAPIOrderDeliveryCredentialResponse(credential apiorder.DeliveryCredential) *apiOrderDeliveryCredentialResponse {
-	return &apiOrderDeliveryCredentialResponse{
+	response := &apiOrderDeliveryCredentialResponse{
 		DeliveryKind:  credential.DeliveryKind,
-		APIBaseURL:    credential.APIBaseURL,
-		APIKey:        credential.APIKey,
-		PanelLoginURL: credential.PanelLoginURL,
-		Username:      credential.Username,
-		Password:      credential.Password,
-		Instructions:  credential.Instructions,
 		SubmittedAt:   credential.SubmittedAt.UTC().Format(time.RFC3339),
+		DestroyedAt:   formatOptionalTime(credential.DestroyedAt),
+		DestroyReason: credential.DestroyReason,
 	}
+	if credential.DestroyedAt != nil {
+		return response
+	}
+	response.APIBaseURL = credential.APIBaseURL
+	response.APIKey = credential.APIKey
+	response.PanelLoginURL = credential.PanelLoginURL
+	response.Username = credential.Username
+	response.Password = credential.Password
+	response.Instructions = credential.Instructions
+	return response
 }
 
 func apiOrderCompletionBuilder(ownerView bool) apiorder.CompletionBuilder {

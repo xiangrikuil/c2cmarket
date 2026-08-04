@@ -36,6 +36,13 @@ func TestPublicAPIServicePredicateExcludesActiveSellerRestrictions(t *testing.T)
 	}
 }
 
+func TestPublicAPIServicePredicateExcludesUnsupportedBillingModes(t *testing.T) {
+	predicate := publicAPIServiceOrderablePredicate("service")
+	if !strings.Contains(predicate, "service.billing_mode IN ('metered_usd_quota', 'fixed_package')") {
+		t.Fatalf("public API service predicate must exclude unsupported billing modes: %s", predicate)
+	}
+}
+
 func TestOwnerAPISalesAggregationUsesOneAuthoritativeChannelProjection(t *testing.T) {
 	query := ownerAPISalesAggregationSQL()
 	for _, fragment := range []string{

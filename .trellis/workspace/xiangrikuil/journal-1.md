@@ -1192,3 +1192,92 @@ Restored PR #20 CI without changing product behavior or Umami configuration, tig
 ### Next Steps
 
 - Merge PR #20 into staging.
+
+
+## Session 33: Close launch P0 and active-user trust flow
+
+**Date**: 2026-08-03
+**Task**: Close launch P0 and active-user trust flow
+**Package**: frontend
+**Branch**: `codex/p0-p1-launch-closure`
+
+### Summary
+
+Disabled unsupported launch paths, repaired operations drift, and completed the active-user report, dispute, and appeal flow with authorization, privacy, pagination, and reputation transaction safeguards.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `0bd2874` | (see git log) |
+| `3522839` | (see git log) |
+
+### Status
+
+[OK] **Completed**
+
+
+## Session 34: Close remaining P0 data and moderation gaps
+
+**Date**: 2026-08-03
+**Task**: Close remaining P0 data and moderation gaps
+**Package**: frontend
+**Branch**: `codex/p0-p1-launch-closure`
+
+### Summary
+
+Implemented irreversible API credential retention destruction, lifecycle locking, immutable participant moderation supplements, self-safe contracts, and full PostgreSQL/frontend verification.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `be7d6eb` | (see git log) |
+
+### Status
+
+[OK] **Completed**
+
+
+## Session 35: Close restricted-account appeal flow
+
+**Date**: 2026-08-04
+**Task**: Close restricted-account appeal flow
+**Package**: frontend
+**Branch**: `codex/p0-p1-launch-closure`
+
+### Summary
+
+Added dedicated linux.do-proven restricted-account appeal sessions, transactional account-governance appeals, standalone frontend flow, contact-value validation, CORS support, Migration 78, and full cross-layer tests.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `8774278` | (see git log) |
+
+### Status
+
+[OK] **Completed**
+
+
+## Session 36: P1 first transaction guidance
+
+**Date**: 2026-08-04
+**Task**: P1 first transaction guidance
+**Package**: frontend
+**Branch**: `codex/p0-p1-launch-closure`
+
+### Summary
+
+Added fresh-query-gated first transaction guidance to the personal center, covered all six history sources, and verified desktop/mobile layouts.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `04e6bae` | (see git log) |
+
+### Status
+
+[OK] **Completed**

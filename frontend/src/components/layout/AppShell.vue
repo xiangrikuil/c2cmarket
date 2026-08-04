@@ -142,6 +142,7 @@ const navGroups = computed(() => {
       { label: '信誉与成长', to: '/my/reputation', count: null, icon: BadgeCheck },
       ...(promotionRewardConfig.value?.programEnabled ? [{ label: '推广权益', to: '/my/promotion-benefits', count: null, icon: Gift }] : []),
       { label: '安全设置', to: '/my/account', count: null, icon: ShieldCheck },
+      { label: '举报与申诉', to: '/my/reports', count: null, icon: Siren },
       { label: '反馈', to: '/my/feedback', count: feedbackMenuUnreadCount.value, icon: CircleHelp },
     ],
   }

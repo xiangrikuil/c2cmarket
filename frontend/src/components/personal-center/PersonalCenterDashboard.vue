@@ -38,6 +38,7 @@ const props = defineProps<{
   publishedLoading: boolean
   publishedError: boolean
   publishedUnavailable: boolean
+  showFirstTransactionGuide: boolean
   completenessLoading: boolean
   completenessError: boolean
   enabledContactCount: number
@@ -63,6 +64,22 @@ function contactsSummary() {
 <template>
   <div class="mx-auto w-full max-w-[1440px] space-y-4">
     <ProfileOverviewCard :profile="profile" :metrics="metrics" />
+
+    <Alert v-if="showFirstTransactionGuide" class="border-primary/25 bg-primary/5 text-foreground">
+      <ShoppingBag />
+      <AlertTitle>开始第一笔交易</AlertTitle>
+      <AlertDescription>
+        <p>先看看当前可交易的拼车和 API 服务，找到合适内容后再发起申请或创建订单。</p>
+        <div class="mt-3 flex flex-wrap gap-2">
+          <Button as-child size="sm">
+            <RouterLink to="/carpools"><CarFront class="h-4 w-4" />浏览拼车</RouterLink>
+          </Button>
+          <Button as-child size="sm" variant="outline">
+            <RouterLink to="/api-market"><Code2 class="h-4 w-4" />浏览 API 服务</RouterLink>
+          </Button>
+        </div>
+      </AlertDescription>
+    </Alert>
 
     <div class="grid min-w-0 gap-4 min-[1100px]:grid-cols-[minmax(0,1fr)_320px] min-[1100px]:items-start">
       <main class="min-w-0 space-y-4">

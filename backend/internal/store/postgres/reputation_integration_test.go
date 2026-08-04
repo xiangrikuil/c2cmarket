@@ -146,6 +146,7 @@ func TestReputationPostgresGovernanceRestrictionAndAppealReversal(t *testing.T) 
 
 	adminID := uuid.NewString()
 	subjectID := uuid.NewString()
+	otherParticipantID := uuid.NewString()
 	disputeID := uuid.NewString()
 	for _, user := range []struct {
 		id       string
@@ -153,6 +154,7 @@ func TestReputationPostgresGovernanceRestrictionAndAppealReversal(t *testing.T) 
 	}{
 		{id: adminID, username: "governance-admin-" + adminID[:8]},
 		{id: subjectID, username: "governance-subject-" + subjectID[:8]},
+		{id: otherParticipantID, username: "governance-other-" + otherParticipantID[:8]},
 	} {
 		if _, err := pool.Exec(ctx, `
 			INSERT INTO users (id, username, display_name, account_status, created_at, updated_at, version)
@@ -163,14 +165,14 @@ func TestReputationPostgresGovernanceRestrictionAndAppealReversal(t *testing.T) 
 	}
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO dispute_cases (
-		  id, target_type, target_id, target_label, primary_user_id, status,
+		  id, target_type, target_id, target_label, primary_user_id, counterparty_user_id, status,
 		  public_summary, public_result_code, public_result, admin_reason,
 		  opened_by_admin_id, opened_at, created_at, updated_at, version
 		)
-		VALUES ($1, 'public_user', $2::text, '信誉治理测试用户', $2::uuid, 'open',
+		VALUES ($1, 'public_user', $2::text, '信誉治理测试用户', $2::uuid, $3::uuid, 'open',
 		        '纠纷处理中', 'no_action', '尚未裁定', '',
-		        $3, $4, $4, $4, 1)
-	`, disputeID, subjectID, adminID, baseTime); err != nil {
+		        $4, $5, $5, $5, 1)
+	`, disputeID, subjectID, otherParticipantID, adminID, baseTime); err != nil {
 		t.Fatalf("insert governance dispute: %v", err)
 	}
 
@@ -205,6 +207,31 @@ func TestReputationPostgresGovernanceRestrictionAndAppealReversal(t *testing.T) 
 		WHERE id = $1
 	`, disputeID, baseTime); err != nil {
 		t.Fatalf("resolve governance dispute: %v", err)
+	}
+	blockingAppealID := uuid.NewString()
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO appeals (
+		  id, appellant_user_id, dispute_case_id, target_type, target_id,
+		  title, statement, status, created_at, updated_at, version
+		)
+		VALUES ($1::uuid, $2::uuid, $3::uuid, 'public_user', $2::uuid::text, '待处理申诉',
+		        '裁定前必须先处理该申诉。', 'submitted', $4, $4, 1)
+	`, blockingAppealID, subjectID, disputeID, baseTime); err != nil {
+		t.Fatalf("insert outcome-blocking appeal: %v", err)
+	}
+	if _, appErr := reputationService.CreateDisputeOutcomeWithIdempotency(
+		ctx,
+		reputation.AdminActor{UserID: adminID, IsAdmin: true},
+		"POST /integration/disputes/outcome",
+		"governance-blocked-by-submitted-appeal",
+		"hash-blocked-by-submitted-appeal",
+		outcomeInput,
+		governanceIntegrationCompletion,
+	); appErr == nil || appErr.Code != domain.CodeInvalidStateTransition {
+		t.Fatalf("submitted appeal must block a reputation outcome, got %#v", appErr)
+	}
+	if _, err := pool.Exec(ctx, `DELETE FROM appeals WHERE id = $1`, blockingAppealID); err != nil {
+		t.Fatalf("remove outcome-blocking appeal fixture: %v", err)
 	}
 	if _, appErr := reputationService.CreateDisputeOutcomeWithIdempotency(
 		ctx,
@@ -308,6 +335,48 @@ func TestReputationPostgresGovernanceRestrictionAndAppealReversal(t *testing.T) 
 	if appErr := reputationService.CheckActionAllowed(ctx, subjectID, reputation.RoleBuyer, reputation.ActionAPIOrderCreate); appErr == nil {
 		t.Fatal("appeal-linked restriction must block before appeal approval")
 	}
+	mismatchedAppealID := uuid.NewString()
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO appeals (
+		  id, appellant_user_id, dispute_case_id, target_type, target_id,
+		  title, statement, status, created_at, updated_at, version
+		)
+		VALUES ($1, $2, $3, 'public_user', $4::text, '非裁定主体申诉',
+		        '该参与者不是信誉裁定主体。', 'submitted', $5, $5, 1)
+	`, mismatchedAppealID, otherParticipantID, disputeID, subjectID, currentTime); err != nil {
+		t.Fatalf("insert mismatched reputation appeal: %v", err)
+	}
+	if _, appErr := reportService.AdminAppealActionWithIdempotency(
+		ctx,
+		auth.User{ID: adminID, IsAdmin: true},
+		"POST /integration/appeals/approve",
+		"governance-mismatched-appeal-approve",
+		"hash-mismatched-appeal-approve",
+		report.AdminActionInput{
+			ID:              mismatchedAppealID,
+			Action:          "approve",
+			Reason:          "尝试批准非裁定主体的申诉。",
+			ExpectedVersion: 1,
+			RequestID:       "request-mismatched-appeal-approve",
+		},
+		reportGovernanceIntegrationCompletion,
+	); appErr == nil || appErr.Code != domain.CodeInvalidStateTransition {
+		t.Fatalf("mismatched appellant must not reverse outcome, got %#v", appErr)
+	}
+	var mismatchedAppealStatus string
+	var appealRestrictionRevokedAt *time.Time
+	if err := pool.QueryRow(ctx, `SELECT status FROM appeals WHERE id = $1`, mismatchedAppealID).Scan(&mismatchedAppealStatus); err != nil {
+		t.Fatalf("read mismatched appeal status: %v", err)
+	}
+	if err := pool.QueryRow(ctx, `SELECT status FROM dispute_reputation_outcomes WHERE id = $1`, outcomeID).Scan(&outcomeStatus); err != nil {
+		t.Fatalf("read outcome after mismatched appeal: %v", err)
+	}
+	if err := pool.QueryRow(ctx, `SELECT revoked_at FROM user_restrictions WHERE id = $1`, appealRestriction.ID).Scan(&appealRestrictionRevokedAt); err != nil {
+		t.Fatalf("read restriction after mismatched appeal: %v", err)
+	}
+	if mismatchedAppealStatus != report.AppealStatusSubmitted || outcomeStatus != reputation.OutcomeStatusActive || appealRestrictionRevokedAt != nil {
+		t.Fatalf("mismatched appeal changed protected state: appeal=%q outcome=%q revokedAt=%v", mismatchedAppealStatus, outcomeStatus, appealRestrictionRevokedAt)
+	}
 
 	appealID := uuid.NewString()
 	if _, err := pool.Exec(ctx, `
@@ -319,6 +388,22 @@ func TestReputationPostgresGovernanceRestrictionAndAppealReversal(t *testing.T) 
 		        '请求复核信誉责任与限制。', 'submitted', $4, $4, 1)
 	`, appealID, subjectID, disputeID, currentTime); err != nil {
 		t.Fatalf("insert reputation appeal: %v", err)
+	}
+	duplicateAppealTx, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin duplicate appeal transaction: %v", err)
+	}
+	_, duplicateAppealErr := createAppealInTx(ctx, duplicateAppealTx, report.CreateAppealInput{
+		AppellantUserID: subjectID,
+		DisputeID:       disputeID,
+		Title:           "重复信誉裁定申诉",
+		Statement:       "同一纠纷已有待处理申诉。",
+	}, currentTime)
+	if rollbackErr := duplicateAppealTx.Rollback(ctx); rollbackErr != nil {
+		t.Fatalf("rollback duplicate appeal transaction: %v", rollbackErr)
+	}
+	if duplicateAppealErr == nil || duplicateAppealErr.Code != domain.CodeInvalidStateTransition {
+		t.Fatalf("postgres duplicate appeal must be rejected, got %#v", duplicateAppealErr)
 	}
 	currentTime = baseTime.Add(20 * time.Minute)
 	if _, appErr := reportService.AdminAppealActionWithIdempotency(
@@ -353,6 +438,20 @@ func TestReputationPostgresGovernanceRestrictionAndAppealReversal(t *testing.T) 
 	if appErr := reputationService.CheckActionAllowed(ctx, subjectID, reputation.RoleBuyer, reputation.ActionAPIOrderCreate); appErr != nil {
 		t.Fatalf("appeal approval must revoke linked restriction: %#v", appErr)
 	}
+	postApprovalOutcomeInput := outcomeInput
+	postApprovalOutcomeInput.ExpectedVersion = 2
+	postApprovalOutcomeInput.RequestID = "request-governance-post-appeal-outcome"
+	if _, appErr := reputationService.CreateDisputeOutcomeWithIdempotency(
+		ctx,
+		reputation.AdminActor{UserID: adminID, IsAdmin: true},
+		"POST /integration/disputes/outcome",
+		"governance-blocked-by-approved-appeal",
+		"hash-blocked-by-approved-appeal",
+		postApprovalOutcomeInput,
+		governanceIntegrationCompletion,
+	); appErr == nil || appErr.Code != domain.CodeInvalidStateTransition {
+		t.Fatalf("approved appeal must block a later reputation outcome, got %#v", appErr)
+	}
 	for _, restrictionID := range []string{firstRestriction.ID, appealRestriction.ID} {
 		var revokedAt *time.Time
 		if err := pool.QueryRow(ctx, `SELECT revoked_at FROM user_restrictions WHERE id = $1`, restrictionID).Scan(&revokedAt); err != nil {
@@ -375,10 +474,15 @@ func TestReputationPostgresGovernanceRestrictionAndAppealReversal(t *testing.T) 
 		evidence.Outcomes[0].Status != reputation.OutcomeStatusReversed {
 		t.Fatalf("unexpected dispute outcome audit: %#v", evidence.Outcomes)
 	}
-	if len(evidence.Appeals) != 1 ||
-		evidence.Appeals[0].ID != appealID ||
-		evidence.Appeals[0].Status != "approved" {
+	if len(evidence.Appeals) != 2 {
 		t.Fatalf("unexpected reputation appeal audit: %#v", evidence.Appeals)
+	}
+	appealStatuses := make(map[string]string, len(evidence.Appeals))
+	for _, item := range evidence.Appeals {
+		appealStatuses[item.ID] = item.Status
+	}
+	if appealStatuses[appealID] != report.AppealStatusApproved || appealStatuses[mismatchedAppealID] != report.AppealStatusSubmitted {
+		t.Fatalf("unexpected reputation appeal statuses: %#v", appealStatuses)
 	}
 	if len(evidence.SourceAuthorVerifications) != 0 {
 		t.Fatalf("governance-only subject must not have source-author audits: %#v", evidence.SourceAuthorVerifications)

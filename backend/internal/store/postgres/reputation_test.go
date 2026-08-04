@@ -1,6 +1,7 @@
 package postgres
 
 import (
+	"os"
 	"strings"
 	"testing"
 
@@ -77,5 +78,31 @@ func TestScopeFactsKeepsRoleAndScopeIndependent(t *testing.T) {
 	}
 	if scopeFacts(&value, "unknown", reputation.ScopeAPI) != nil {
 		t.Fatal("unknown role must not map to facts")
+	}
+}
+
+func TestDisputeOutcomeSerializesWithAppealState(t *testing.T) {
+	source, err := os.ReadFile("reputation.go")
+	if err != nil {
+		t.Fatalf("read reputation store: %v", err)
+	}
+	start := strings.Index(string(source), "func (s *Store) CreateDisputeOutcomeWithIdempotency")
+	if start < 0 {
+		t.Fatal("dispute outcome function start not found")
+	}
+	end := strings.Index(string(source)[start:], "func (s *Store) CreateUserRestrictionWithIdempotency")
+	if end < 0 {
+		t.Fatal("dispute outcome function end not found")
+	}
+	section := string(source)[start : start+end]
+	disputeLock := strings.Index(section, "FOR UPDATE")
+	appealGuard := strings.Index(section, "status IN ('submitted', 'approved')")
+	subjectUpdate := strings.Index(section, "UPDATE dispute_cases")
+	outcomeInsert := strings.Index(section, "INSERT INTO dispute_reputation_outcomes")
+	if disputeLock < 0 || appealGuard < 0 || subjectUpdate < 0 || outcomeInsert < 0 {
+		t.Fatalf("outcome serialization guard missing: disputeLock=%d appealGuard=%d subjectUpdate=%d outcomeInsert=%d", disputeLock, appealGuard, subjectUpdate, outcomeInsert)
+	}
+	if disputeLock > appealGuard || appealGuard > subjectUpdate || appealGuard > outcomeInsert {
+		t.Fatal("dispute must be locked and appeal state checked before changing the subject or creating an outcome")
 	}
 }

@@ -13,6 +13,7 @@ import (
 	"c2c-market/backend/internal/module/report"
 	"c2c-market/backend/internal/module/reputation"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -110,6 +111,10 @@ func (s *Store) GetAdminReport(ctx context.Context, id string) (report.Report, *
 	if err != nil {
 		return report.Report{}, internalStoreError()
 	}
+	item.Supplements, err = listAdminInfoSupplements(ctx, s.pool, report.InfoRequestEntityReport, id)
+	if err != nil {
+		return report.Report{}, internalStoreError()
+	}
 	return item, nil
 }
 
@@ -128,6 +133,21 @@ func (s *Store) UpdateReportAdminWithIdempotency(ctx context.Context, entry idem
 	if appErr != nil {
 		return report.MutationResult{}, idempotency.Completion{}, appErr
 	}
+	if input.Action == "request_info" {
+		request, appErr := createInfoRequestInTx(ctx, tx, input, result, now)
+		if appErr != nil {
+			return report.MutationResult{}, idempotency.Completion{}, appErr
+		}
+		result.Report.OpenInfoRequestID = request.ID
+		result.Report.InfoRequestedFromID = request.RequestedFromID
+		if appErr := insertInfoRequestOpenedSideEffects(ctx, tx, request, input.RequestID, now); appErr != nil {
+			return report.MutationResult{}, idempotency.Completion{}, appErr
+		}
+	} else if result.Report != nil {
+		if appErr := cancelOpenInfoRequests(ctx, tx, report.InfoRequestEntityReport, result.Report.ID, now); appErr != nil {
+			return report.MutationResult{}, idempotency.Completion{}, appErr
+		}
+	}
 	if appErr := insertDisputeEvent(ctx, tx, "report", input.ID, input.Action, input.AdminUserID, "admin", input.Reason, input.Action == "open_dispute", input.RequestID, now); appErr != nil {
 		return report.MutationResult{}, idempotency.Completion{}, appErr
 	}
@@ -135,6 +155,36 @@ func (s *Store) UpdateReportAdminWithIdempotency(ctx context.Context, entry idem
 		if appErr := insertDisputeEvent(ctx, tx, "dispute", result.Dispute.ID, "opened", input.AdminUserID, "admin", input.Reason, true, input.RequestID, now); appErr != nil {
 			return report.MutationResult{}, idempotency.Completion{}, appErr
 		}
+	}
+	completion, appErr := buildCompletion(result)
+	if appErr != nil {
+		return report.MutationResult{}, idempotency.Completion{}, appErr
+	}
+	if appErr := completeIdempotencyInTx(ctx, tx, existing, completion, now); appErr != nil {
+		return report.MutationResult{}, idempotency.Completion{}, appErr
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return report.MutationResult{}, idempotency.Completion{}, internalStoreError()
+	}
+	return result, completion, nil
+}
+
+func (s *Store) SubmitInfoSupplementWithIdempotency(ctx context.Context, entry idempotency.Entry, input report.SupplementInput, now time.Time, buildCompletion report.SupplementCompletionBuilder) (report.MutationResult, idempotency.Completion, *domain.AppError) {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return report.MutationResult{}, idempotency.Completion{}, internalStoreError()
+	}
+	defer rollback(ctx, tx)
+	existing, appErr := lockProcessingIdempotencyInTx(ctx, tx, entry)
+	if appErr != nil {
+		return report.MutationResult{}, idempotency.Completion{}, appErr
+	}
+	result, request, appErr := submitInfoSupplementInTx(ctx, tx, input, now)
+	if appErr != nil {
+		return report.MutationResult{}, idempotency.Completion{}, appErr
+	}
+	if appErr := insertInfoSupplementSideEffects(ctx, tx, request, input.RequestID, now); appErr != nil {
+		return report.MutationResult{}, idempotency.Completion{}, appErr
 	}
 	completion, appErr := buildCompletion(result)
 	if appErr != nil {
@@ -165,6 +215,37 @@ func (s *Store) CreateAppealWithIdempotency(ctx context.Context, entry idempoten
 		return report.Appeal{}, idempotency.Completion{}, appErr
 	}
 	if appErr := insertDisputeEvent(ctx, tx, "appeal", item.ID, "submitted", input.AppellantUserID, "user", "用户提交申诉", false, "", now); appErr != nil {
+		return report.Appeal{}, idempotency.Completion{}, appErr
+	}
+	completion, appErr := buildCompletion(item)
+	if appErr != nil {
+		return report.Appeal{}, idempotency.Completion{}, appErr
+	}
+	if appErr := completeIdempotencyInTx(ctx, tx, existing, completion, now); appErr != nil {
+		return report.Appeal{}, idempotency.Completion{}, appErr
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return report.Appeal{}, idempotency.Completion{}, internalStoreError()
+	}
+	return item, completion, nil
+}
+
+func (s *Store) CreateAccountGovernanceAppealWithIdempotency(ctx context.Context, entry idempotency.Entry, input report.CreateAccountGovernanceAppealInput, now time.Time, buildCompletion report.AppealCompletionBuilder) (report.Appeal, idempotency.Completion, *domain.AppError) {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return report.Appeal{}, idempotency.Completion{}, internalStoreError()
+	}
+	defer rollback(ctx, tx)
+
+	existing, appErr := lockProcessingIdempotencyInTx(ctx, tx, entry)
+	if appErr != nil {
+		return report.Appeal{}, idempotency.Completion{}, appErr
+	}
+	item, appErr := createAccountGovernanceAppealInTx(ctx, tx, input, now)
+	if appErr != nil {
+		return report.Appeal{}, idempotency.Completion{}, appErr
+	}
+	if appErr := insertDisputeEvent(ctx, tx, "appeal", item.ID, "submitted", input.AppellantUserID, "user", "用户提交账号治理申诉", false, "", now); appErr != nil {
 		return report.Appeal{}, idempotency.Completion{}, appErr
 	}
 	completion, appErr := buildCompletion(item)
@@ -249,11 +330,28 @@ func (s *Store) ListAdminDisputes(ctx context.Context) ([]report.DisputeCase, *d
 	return scanDisputes(rows)
 }
 
+func (s *Store) ListDisputesByUser(ctx context.Context, userID string) ([]report.DisputeCase, *domain.AppError) {
+	rows, err := s.pool.Query(ctx, disputeSelectSQL+`
+		WHERE d.primary_user_id = $1
+		   OR d.counterparty_user_id = $1
+		   OR d.subject_user_id = $1
+		ORDER BY d.updated_at DESC`, userID)
+	if err != nil {
+		return nil, internalStoreError()
+	}
+	defer rows.Close()
+	return scanDisputes(rows)
+}
+
 func (s *Store) GetAdminDispute(ctx context.Context, id string) (report.DisputeCase, *domain.AppError) {
 	item, err := scanDispute(ctx, s.pool, disputeSelectSQL+` WHERE d.id = $1`, id)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return report.DisputeCase{}, disputeNotFound()
 	}
+	if err != nil {
+		return report.DisputeCase{}, internalStoreError()
+	}
+	item.Supplements, err = listAdminInfoSupplements(ctx, s.pool, report.InfoRequestEntityDispute, id)
 	if err != nil {
 		return report.DisputeCase{}, internalStoreError()
 	}
@@ -274,6 +372,21 @@ func (s *Store) UpdateDisputeAdminWithIdempotency(ctx context.Context, entry ide
 	result, appErr := updateDisputeAdminInTx(ctx, tx, input, now)
 	if appErr != nil {
 		return report.MutationResult{}, idempotency.Completion{}, appErr
+	}
+	if input.Action == "request_info" {
+		request, appErr := createInfoRequestInTx(ctx, tx, input, result, now)
+		if appErr != nil {
+			return report.MutationResult{}, idempotency.Completion{}, appErr
+		}
+		result.Dispute.OpenInfoRequestID = request.ID
+		result.Dispute.InfoRequestedFromID = request.RequestedFromID
+		if appErr := insertInfoRequestOpenedSideEffects(ctx, tx, request, input.RequestID, now); appErr != nil {
+			return report.MutationResult{}, idempotency.Completion{}, appErr
+		}
+	} else if result.Dispute != nil {
+		if appErr := cancelOpenInfoRequests(ctx, tx, report.InfoRequestEntityDispute, result.Dispute.ID, now); appErr != nil {
+			return report.MutationResult{}, idempotency.Completion{}, appErr
+		}
 	}
 	publicEvent := input.Action == "resolve" || input.Action == "close"
 	if appErr := insertDisputeEvent(ctx, tx, "dispute", input.ID, input.Action, input.AdminUserID, "admin", input.Reason, publicEvent, input.RequestID, now); appErr != nil {
@@ -390,6 +503,167 @@ func createReportInTx(ctx context.Context, tx pgx.Tx, input report.CreateReportI
 	return item, nil
 }
 
+func createInfoRequestInTx(ctx context.Context, tx pgx.Tx, input report.AdminActionInput, result report.MutationResult, now time.Time) (report.InfoRequest, *domain.AppError) {
+	requestedFromID := strings.TrimSpace(input.RequestedFromID)
+	entityType := ""
+	var reportID any
+	var disputeID any
+	if result.Report != nil {
+		entityType = report.InfoRequestEntityReport
+		reportID = result.Report.ID
+		if requestedFromID != result.Report.ReporterUserID {
+			return report.InfoRequest{}, infoRequestPermissionDenied()
+		}
+	} else if result.Dispute != nil {
+		entityType = report.InfoRequestEntityDispute
+		disputeID = result.Dispute.ID
+		if !isStoredDisputeParticipant(*result.Dispute, requestedFromID) {
+			return report.InfoRequest{}, infoRequestPermissionDenied()
+		}
+	} else {
+		return report.InfoRequest{}, internalStoreError()
+	}
+	var active bool
+	if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM users WHERE id = $1 AND account_status = 'active')`, requestedFromID).Scan(&active); err != nil {
+		return report.InfoRequest{}, internalStoreError()
+	}
+	if !active {
+		return report.InfoRequest{}, infoRequestPermissionDenied()
+	}
+	var item report.InfoRequest
+	err := tx.QueryRow(ctx, `
+		INSERT INTO moderation_info_requests (
+			entity_type, report_id, dispute_case_id, requested_from_user_id, requested_by_admin_id,
+			internal_reason, status, requested_at, created_at
+		)
+		VALUES ($1, $2, $3, $4, $5, $6, 'open', $7, $7)
+		RETURNING id::text, entity_type, COALESCE(report_id::text, dispute_case_id::text),
+		          requested_from_user_id::text, requested_by_admin_id::text, internal_reason,
+		          status, requested_at, answered_at, cancelled_at
+	`, entityType, reportID, disputeID, requestedFromID, input.AdminUserID, strings.TrimSpace(input.Reason), now).Scan(
+		&item.ID, &item.EntityType, &item.EntityID, &item.RequestedFromID, &item.RequestedByAdminID,
+		&item.InternalReason, &item.Status, &item.RequestedAt, &item.AnsweredAt, &item.CancelledAt,
+	)
+	if err != nil {
+		if isUniqueViolationOnConstraint(err, "ux_moderation_info_requests_open_report") || isUniqueViolationOnConstraint(err, "ux_moderation_info_requests_open_dispute") {
+			return report.InfoRequest{}, reportInvalidState("该案件已有待补充请求。")
+		}
+		return report.InfoRequest{}, internalStoreError()
+	}
+	return item, nil
+}
+
+func submitInfoSupplementInTx(ctx context.Context, tx pgx.Tx, input report.SupplementInput, now time.Time) (report.MutationResult, report.InfoRequest, *domain.AppError) {
+	var result report.MutationResult
+	switch input.EntityType {
+	case report.InfoRequestEntityReport:
+		current, err := scanReport(ctx, tx, reportSelectSQL+` WHERE r.id = $1 FOR UPDATE OF r`, input.EntityID)
+		if errors.Is(err, pgx.ErrNoRows) || err == nil && (current.ReporterUserID != input.SubmittingUserID || current.Status != report.ReportStatusNeedsInfo) {
+			return report.MutationResult{}, report.InfoRequest{}, infoRequestNotFound()
+		}
+		if err != nil {
+			return report.MutationResult{}, report.InfoRequest{}, internalStoreError()
+		}
+		result.Report = &current
+	case report.InfoRequestEntityDispute:
+		current, err := scanDispute(ctx, tx, disputeSelectSQL+` WHERE d.id = $1 FOR UPDATE OF d`, input.EntityID)
+		if errors.Is(err, pgx.ErrNoRows) || err == nil && (!isStoredDisputeParticipant(current, input.SubmittingUserID) || current.Status != report.DisputeStatusWaitingInfo) {
+			return report.MutationResult{}, report.InfoRequest{}, infoRequestNotFound()
+		}
+		if err != nil {
+			return report.MutationResult{}, report.InfoRequest{}, internalStoreError()
+		}
+		result.Dispute = &current
+	default:
+		return report.MutationResult{}, report.InfoRequest{}, infoRequestNotFound()
+	}
+
+	var request report.InfoRequest
+	err := tx.QueryRow(ctx, `
+		SELECT mir.id::text, mir.entity_type, COALESCE(mir.report_id::text, mir.dispute_case_id::text),
+		       mir.requested_from_user_id::text, mir.requested_by_admin_id::text, mir.internal_reason,
+		       mir.status, mir.requested_at, mir.answered_at, mir.cancelled_at
+		FROM moderation_info_requests mir
+		JOIN users requested_user ON requested_user.id = mir.requested_from_user_id
+		WHERE mir.id = $1
+		  AND mir.entity_type = $2
+		  AND COALESCE(mir.report_id::text, mir.dispute_case_id::text) = $3
+		  AND mir.requested_from_user_id = $4
+		  AND mir.status = 'open'
+		  AND requested_user.account_status = 'active'
+		FOR UPDATE OF mir
+	`, input.InfoRequestID, input.EntityType, input.EntityID, input.SubmittingUserID).Scan(
+		&request.ID, &request.EntityType, &request.EntityID, &request.RequestedFromID, &request.RequestedByAdminID,
+		&request.InternalReason, &request.Status, &request.RequestedAt, &request.AnsweredAt, &request.CancelledAt,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return report.MutationResult{}, report.InfoRequest{}, infoRequestNotFound()
+	}
+	if err != nil {
+		return report.MutationResult{}, report.InfoRequest{}, internalStoreError()
+	}
+	switch input.EntityType {
+	case report.InfoRequestEntityReport:
+		item, err := scanReport(ctx, tx, `
+			UPDATE reports SET updated_at = $2, version = version + 1 WHERE id = $1
+			RETURNING `+reportReturningColumns+`
+		`, result.Report.ID, now)
+		if err != nil {
+			return report.MutationResult{}, report.InfoRequest{}, internalStoreError()
+		}
+		result.Report = &item
+	case report.InfoRequestEntityDispute:
+		item, err := scanDispute(ctx, tx, `
+			UPDATE dispute_cases SET updated_at = $2, version = version + 1 WHERE id = $1
+			RETURNING `+disputeReturningColumns+`
+		`, result.Dispute.ID, now)
+		if err != nil {
+			return report.MutationResult{}, report.InfoRequest{}, internalStoreError()
+		}
+		result.Dispute = &item
+	}
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO moderation_info_supplements (info_request_id, submitted_by_user_id, body, created_at)
+		VALUES ($1, $2, $3, $4)
+	`, request.ID, input.SubmittingUserID, strings.TrimSpace(input.Body), now); err != nil {
+		return report.MutationResult{}, report.InfoRequest{}, internalStoreError()
+	}
+	if _, err := tx.Exec(ctx, `
+		UPDATE moderation_info_requests
+		SET status = 'answered', answered_at = $2
+		WHERE id = $1 AND status = 'open'
+	`, request.ID, now); err != nil {
+		return report.MutationResult{}, report.InfoRequest{}, internalStoreError()
+	}
+	request.Status = report.InfoRequestStatusAnswered
+	request.AnsweredAt = &now
+	if result.Report != nil {
+		result.Report.OpenInfoRequestID = ""
+		result.Report.InfoRequestedFromID = ""
+	}
+	if result.Dispute != nil {
+		result.Dispute.OpenInfoRequestID = ""
+		result.Dispute.InfoRequestedFromID = ""
+	}
+	return result, request, nil
+}
+
+func cancelOpenInfoRequests(ctx context.Context, tx pgx.Tx, entityType, entityID string, now time.Time) *domain.AppError {
+	column := "report_id"
+	if entityType == report.InfoRequestEntityDispute {
+		column = "dispute_case_id"
+	}
+	if _, err := tx.Exec(ctx, `UPDATE moderation_info_requests SET status = 'cancelled', cancelled_at = $2 WHERE `+column+` = $1 AND status = 'open'`, entityID, now); err != nil {
+		return internalStoreError()
+	}
+	return nil
+}
+
+func isStoredDisputeParticipant(item report.DisputeCase, userID string) bool {
+	userID = strings.TrimSpace(userID)
+	return userID != "" && (item.PrimaryUserID == userID || item.CounterpartyUserID == userID || item.SubjectUserID == userID)
+}
+
 func updateReportAdminInTx(ctx context.Context, tx pgx.Tx, input report.AdminActionInput, now time.Time) (report.MutationResult, *domain.AppError) {
 	current, err := scanReport(ctx, tx, reportSelectSQL+` WHERE r.id = $1 FOR UPDATE OF r`, input.ID)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -454,6 +728,11 @@ func updateReportAdminInTx(ctx context.Context, tx pgx.Tx, input report.AdminAct
 		if !canOpenDisputeFromReport(current.Status) {
 			return report.MutationResult{}, reportInvalidState("当前举报不能打开纠纷。")
 		}
+		if current.CanonicalTargetType == report.TargetAPIOrder {
+			if appErr := lockUndestroyedAPIOrderCredentialForModeration(ctx, tx, current.CanonicalTargetID, "订单交付凭据已按保留规则销毁，无法再打开纠纷。"); appErr != nil {
+				return report.MutationResult{}, appErr
+			}
+		}
 		dispute, appErr := openDisputeFromReport(ctx, tx, current, input, now)
 		if appErr != nil {
 			return report.MutationResult{}, appErr
@@ -472,29 +751,78 @@ func updateReportAdminInTx(ctx context.Context, tx pgx.Tx, input report.AdminAct
 }
 
 func createAppealInTx(ctx context.Context, tx pgx.Tx, input report.CreateAppealInput, now time.Time) (report.Appeal, *domain.AppError) {
-	targetType := strings.TrimSpace(input.TargetType)
-	targetID := strings.TrimSpace(input.TargetID)
-	if strings.TrimSpace(input.DisputeID) != "" {
-		dispute, err := scanDispute(ctx, tx, disputeSelectSQL+` WHERE d.id = $1`, input.DisputeID)
+	var sourceReport *report.Report
+	var sourceDispute *report.DisputeCase
+	reportID := strings.TrimSpace(input.ReportID)
+	disputeID := strings.TrimSpace(input.DisputeID)
+	if reportID != "" {
+		item, err := scanReport(ctx, tx, reportSelectSQL+` WHERE r.id = $1`, reportID)
 		if errors.Is(err, pgx.ErrNoRows) {
-			return report.Appeal{}, disputeNotFound()
+			return report.Appeal{}, appealSourceNotFound()
 		}
 		if err != nil {
 			return report.Appeal{}, internalStoreError()
 		}
-		targetType = dispute.TargetType
-		targetID = dispute.TargetID
+		sourceReport = &item
 	}
-	if strings.TrimSpace(input.ReportID) != "" && targetType == "" {
-		existing, err := scanReport(ctx, tx, reportSelectSQL+` WHERE r.id = $1`, input.ReportID)
+	if disputeID != "" {
+		item, err := scanDispute(ctx, tx, disputeSelectSQL+` WHERE d.id = $1 FOR UPDATE OF d`, disputeID)
 		if errors.Is(err, pgx.ErrNoRows) {
-			return report.Appeal{}, reportNotFound()
+			return report.Appeal{}, appealSourceNotFound()
 		}
 		if err != nil {
 			return report.Appeal{}, internalStoreError()
 		}
-		targetType = nonEmpty(existing.CanonicalTargetType, existing.TargetType)
-		targetID = nonEmpty(existing.CanonicalTargetID, existing.TargetID)
+		sourceDispute = &item
+	}
+	source, appErr := report.ResolveAppealSource(input.AppellantUserID, sourceReport, sourceDispute)
+	if appErr != nil {
+		return report.Appeal{}, appErr
+	}
+	if source.TargetType == report.TargetAPIOrder {
+		if appErr := lockUndestroyedAPIOrderCredentialForModeration(ctx, tx, source.TargetID, "订单交付凭据已按保留规则销毁，无法再提交申诉。"); appErr != nil {
+			return report.Appeal{}, appErr
+		}
+	}
+	sourceKind := "report"
+	sourceID := reportID
+	if disputeID != "" {
+		sourceKind = "dispute"
+		sourceID = disputeID
+	}
+	lockKey := "appeal:" + strings.TrimSpace(input.AppellantUserID) + ":" + sourceKind + ":" + sourceID
+	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, lockKey); err != nil {
+		return report.Appeal{}, internalStoreError()
+	}
+	var submittedExists bool
+	if disputeID != "" {
+		err := tx.QueryRow(ctx, `
+			SELECT EXISTS (
+				SELECT 1 FROM appeals
+				WHERE appellant_user_id = $1
+				  AND dispute_case_id = $2
+				  AND status = 'submitted'
+			)
+		`, input.AppellantUserID, disputeID).Scan(&submittedExists)
+		if err != nil {
+			return report.Appeal{}, internalStoreError()
+		}
+	} else {
+		err := tx.QueryRow(ctx, `
+			SELECT EXISTS (
+				SELECT 1 FROM appeals
+				WHERE appellant_user_id = $1
+				  AND report_id = $2
+				  AND dispute_case_id IS NULL
+				  AND status = 'submitted'
+			)
+		`, input.AppellantUserID, reportID).Scan(&submittedExists)
+		if err != nil {
+			return report.Appeal{}, internalStoreError()
+		}
+	}
+	if appErr := report.ValidateNoSubmittedAppeal(submittedExists); appErr != nil {
+		return report.Appeal{}, appErr
 	}
 	item, err := scanAppeal(ctx, tx, `
 		INSERT INTO appeals (
@@ -503,15 +831,83 @@ func createAppealInTx(ctx context.Context, tx pgx.Tx, input report.CreateAppealI
 		)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, 'submitted', $8, $8, 1)
 		RETURNING `+appealReturningColumns+`
-	`, input.AppellantUserID, nullUUID(input.ReportID), nullUUID(input.DisputeID), targetType, targetID,
+	`, input.AppellantUserID, nullUUID(reportID), nullUUID(disputeID), source.TargetType, source.TargetID,
 		strings.TrimSpace(input.Title), strings.TrimSpace(input.Statement), now)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return report.Appeal{}, reportNotFound()
+		return report.Appeal{}, appealSourceNotFound()
 	}
 	if err != nil {
 		return report.Appeal{}, internalStoreError()
 	}
 	return item, nil
+}
+
+func createAccountGovernanceAppealInTx(ctx context.Context, tx pgx.Tx, input report.CreateAccountGovernanceAppealInput, now time.Time) (report.Appeal, *domain.AppError) {
+	appellantUserID := strings.TrimSpace(input.AppellantUserID)
+	if appErr := lockAccountGovernanceUser(ctx, tx, appellantUserID); appErr != nil {
+		return report.Appeal{}, appErr
+	}
+	appellant, found, err := accountAppealUserByID(ctx, tx, appellantUserID, true)
+	if err != nil {
+		return report.Appeal{}, internalStoreError()
+	}
+	if !found || !isAccountAppealStatus(appellant.Status) {
+		return report.Appeal{}, accountAppealStoreIneligibleError()
+	}
+	canonicalUserID := appellant.ID
+
+	var submittedExists bool
+	if err := tx.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1
+			FROM appeals
+			WHERE appellant_user_id = $1
+			  AND target_type = 'account_governance'
+			  AND status = 'submitted'
+		)
+	`, canonicalUserID).Scan(&submittedExists); err != nil {
+		return report.Appeal{}, internalStoreError()
+	}
+	if appErr := report.ValidateNoSubmittedAccountGovernanceAppeal(submittedExists); appErr != nil {
+		return report.Appeal{}, appErr
+	}
+
+	item, err := scanAppeal(ctx, tx, `
+		INSERT INTO appeals (
+			appellant_user_id, report_id, dispute_case_id, target_type, target_id, title, statement,
+			status, created_at, updated_at, version
+		)
+		VALUES ($1, NULL, NULL, 'account_governance', $1::uuid::text, '账号治理申诉', $2,
+		        'submitted', $3, $3, 1)
+		RETURNING `+appealReturningColumns+`
+	`, canonicalUserID, strings.TrimSpace(input.Statement), now)
+	if err != nil {
+		return report.Appeal{}, internalStoreError()
+	}
+	return item, nil
+}
+
+func lockUndestroyedAPIOrderCredentialForModeration(ctx context.Context, tx pgx.Tx, orderID, destroyedDetail string) *domain.AppError {
+	if _, err := tx.Exec(ctx, `
+		SELECT pg_advisory_xact_lock(hashtextextended($1 || $2::uuid::text, 0))
+	`, apiOrderCredentialLifecycleLockPrefix, strings.TrimSpace(orderID)); err != nil {
+		return internalStoreError()
+	}
+	var credentialDestroyed bool
+	if err := tx.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1
+			FROM api_order_delivery_credentials
+			WHERE api_order_id = $1
+			  AND destroyed_at IS NOT NULL
+		)
+	`, orderID).Scan(&credentialDestroyed); err != nil {
+		return internalStoreError()
+	}
+	if credentialDestroyed {
+		return reportInvalidState(destroyedDetail)
+	}
+	return nil
 }
 
 func updateAppealAdminInTx(ctx context.Context, tx pgx.Tx, input report.AdminActionInput, now time.Time) (report.MutationResult, *domain.AppError) {
@@ -558,6 +954,9 @@ func updateAppealAdminInTx(ctx context.Context, tx pgx.Tx, input report.AdminAct
 }
 
 func reverseReputationOutcomeForApprovedAppeal(ctx context.Context, tx pgx.Tx, appeal report.Appeal, input report.AdminActionInput, now time.Time) *domain.AppError {
+	if appeal.TargetType == report.TargetAccountGovernance {
+		return nil
+	}
 	disputeID := strings.TrimSpace(appeal.DisputeID)
 	if disputeID == "" && strings.TrimSpace(appeal.ReportID) != "" {
 		if err := tx.QueryRow(ctx, `
@@ -584,6 +983,9 @@ func reverseReputationOutcomeForApprovedAppeal(ctx context.Context, tx pgx.Tx, a
 	}
 	if err != nil {
 		return internalStoreError()
+	}
+	if appErr := report.ValidateAppealOutcomeSubject(appeal, beforeOutcome.SubjectUserID); appErr != nil {
+		return appErr
 	}
 	reversalReason := nonEmpty(input.Reason, "申诉批准，反转关联信誉裁定。")
 	afterOutcome, err := scanDisputeOutcome(tx.QueryRow(ctx, `
@@ -984,14 +1386,14 @@ func resolveAPIIntentTarget(ctx context.Context, q queryer, input report.CreateR
 
 func resolveAPIOrderTarget(ctx context.Context, q queryer, input report.CreateReportInput) (reportTargetResolution, bool, *domain.AppError) {
 	targetID := strings.TrimSpace(input.TargetID)
-	var title, status, ownerID, ownerUsername, buyerID, buyerUsername string
+	var canonicalID, title, status, ownerID, ownerUsername, buyerID, buyerUsername string
 	err := q.QueryRow(ctx, `
-		SELECT o.service_title_snapshot, o.status, owner.id::text, owner.username, buyer.id::text, buyer.username
-		FROM api_orders o
-		JOIN users owner ON owner.id = o.seller_user_id
-		JOIN users buyer ON buyer.id = o.buyer_user_id
-		WHERE o.id = $1
-	`, targetID).Scan(&title, &status, &ownerID, &ownerUsername, &buyerID, &buyerUsername)
+			SELECT o.id::text, o.service_title_snapshot, o.status, owner.id::text, owner.username, buyer.id::text, buyer.username
+			FROM api_orders o
+			JOIN users owner ON owner.id = o.seller_user_id
+			JOIN users buyer ON buyer.id = o.buyer_user_id
+			WHERE o.id = $1
+		`, targetID).Scan(&canonicalID, &title, &status, &ownerID, &ownerUsername, &buyerID, &buyerUsername)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return reportTargetResolution{}, false, nil
 	}
@@ -1005,7 +1407,7 @@ func resolveAPIOrderTarget(ctx context.Context, q queryer, input report.CreateRe
 	return reportTargetResolution{
 		TargetLabel:         nonEmpty(input.TargetLabel, title, "API 订单"),
 		CanonicalTargetType: report.TargetAPIOrder,
-		CanonicalTargetID:   targetID,
+		CanonicalTargetID:   canonicalID,
 		ReportedUserID:      respondentID,
 		ReportedUsername:    respondentUsername,
 		ReporterRole:        reporterRole,
@@ -1111,6 +1513,66 @@ func ensurePublicUserExists(ctx context.Context, q queryer, username string) *do
 	}
 	if userID == "" {
 		return publicProfileNotFound()
+	}
+	return nil
+}
+
+func insertInfoRequestOpenedSideEffects(ctx context.Context, tx pgx.Tx, request report.InfoRequest, requestID string, now time.Time) *domain.AppError {
+	eventID := uuid.NewString()
+	requestID = nonEmpty(requestID, "unknown")
+	metadata, err := json.Marshal(map[string]string{"entityType": request.EntityType, "status": report.InfoRequestStatusOpen})
+	if err != nil {
+		return internalStoreError()
+	}
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO domain_events (id, aggregate_type, aggregate_id, event_type, actor_user_id, actor_kind, aggregate_version, request_id, metadata_json, created_at)
+		VALUES ($1, 'moderation_info_request', $2, 'moderation.info_requested', $3, 'admin', 1, $4, $5, $6)
+	`, eventID, request.ID, request.RequestedByAdminID, requestID, metadata, now); err != nil {
+		return internalStoreError()
+	}
+	targetURL := "/my/reports/report/" + request.EntityID
+	if request.EntityType == report.InfoRequestEntityDispute {
+		targetURL = "/my/reports/dispute/" + request.EntityID
+	}
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO notifications (
+			user_id, type, title, body, target_type, target_id, target_url,
+			source_event_type, source_event_id, dedupe_key, created_at
+		)
+		VALUES ($1, 'moderation_info_requested', '平台需要你补充案件材料',
+		        '请提交脱敏事实说明，不要包含联系方式或任何凭据。', $2, $3, $4,
+		        'moderation.info_requested', $5, $6, $7)
+		ON CONFLICT (user_id, dedupe_key) WHERE dedupe_key IS NOT NULL DO NOTHING
+	`, request.RequestedFromID, request.EntityType, request.EntityID, targetURL, eventID, "moderation_info_request:"+request.ID+":opened", now); err != nil {
+		return internalStoreError()
+	}
+	return nil
+}
+
+func insertInfoSupplementSideEffects(ctx context.Context, tx pgx.Tx, request report.InfoRequest, requestID string, now time.Time) *domain.AppError {
+	eventID := uuid.NewString()
+	requestID = nonEmpty(requestID, "unknown")
+	metadata, err := json.Marshal(map[string]string{"entityType": request.EntityType, "status": report.InfoRequestStatusAnswered})
+	if err != nil {
+		return internalStoreError()
+	}
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO domain_events (id, aggregate_type, aggregate_id, event_type, actor_user_id, actor_kind, aggregate_version, request_id, metadata_json, created_at)
+		VALUES ($1, 'moderation_info_request', $2, 'moderation.info_supplemented', $3, 'user', 2, $4, $5, $6)
+	`, eventID, request.ID, request.RequestedFromID, requestID, metadata, now); err != nil {
+		return internalStoreError()
+	}
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO notifications (
+			user_id, type, title, body, target_type, target_id, target_url,
+			source_event_type, source_event_id, dedupe_key, created_at
+		)
+		VALUES ($1, 'moderation_info_supplemented', '用户已补充案件材料',
+		        '用户已提交脱敏补充说明，请重新查看案件。', $2, $3, '/admin/reports',
+		        'moderation.info_supplemented', $4, $5, $6)
+		ON CONFLICT (user_id, dedupe_key) WHERE dedupe_key IS NOT NULL DO NOTHING
+	`, request.RequestedByAdminID, request.EntityType, request.EntityID, eventID, "moderation_info_request:"+request.ID+":answered", now); err != nil {
+		return internalStoreError()
 	}
 	return nil
 }
@@ -1243,11 +1705,54 @@ func scanReportRow(row scanner) (report.Report, error) {
 		&item.HandledByAdminID,
 		&item.HandledAt,
 		&item.DisputeID,
+		&item.OpenInfoRequestID,
+		&item.InfoRequestedFromID,
 		&item.CreatedAt,
 		&item.UpdatedAt,
 		&item.Version,
 	)
 	return item, err
+}
+
+func listAdminInfoSupplements(ctx context.Context, q rowQueryer, entityType, entityID string) ([]report.InfoSupplement, error) {
+	rows, err := q.Query(ctx, `
+		SELECT supplement.id::text,
+		       supplement.info_request_id::text,
+		       supplement.submitted_by_user_id::text,
+		       submitter.username,
+		       submitter.display_name,
+		       supplement.body,
+		       supplement.created_at
+		FROM moderation_info_supplements supplement
+		JOIN moderation_info_requests info_request ON info_request.id = supplement.info_request_id
+		JOIN users submitter ON submitter.id = supplement.submitted_by_user_id
+		WHERE info_request.entity_type = $1
+		  AND (($1 = 'report' AND info_request.report_id = $2::uuid)
+		    OR ($1 = 'dispute' AND info_request.dispute_case_id = $2::uuid))
+		ORDER BY supplement.created_at ASC, supplement.id ASC
+	`, entityType, entityID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	items := make([]report.InfoSupplement, 0)
+	for rows.Next() {
+		var item report.InfoSupplement
+		if err := rows.Scan(
+			&item.ID,
+			&item.InfoRequestID,
+			&item.SubmittedByUserID,
+			&item.SubmittedByUsername,
+			&item.SubmittedByName,
+			&item.Body,
+			&item.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, item)
+	}
+	return items, rows.Err()
 }
 
 func scanDisputes(rows pgx.Rows) ([]report.DisputeCase, *domain.AppError) {
@@ -1298,6 +1803,8 @@ func scanDisputeRow(row scanner) (report.DisputeCase, error) {
 		&item.CreatedAt,
 		&item.UpdatedAt,
 		&item.Version,
+		&item.OpenInfoRequestID,
+		&item.InfoRequestedFromID,
 	)
 	return item, err
 }
@@ -1357,6 +1864,10 @@ func appealNotFound() *domain.AppError {
 	return domain.NewError(http.StatusNotFound, domain.CodeObjectNotFound, "Appeal not found", "申诉记录不存在。")
 }
 
+func appealSourceNotFound() *domain.AppError {
+	return domain.NewError(http.StatusNotFound, domain.CodeObjectNotFound, "Appeal source not found", "关联举报或纠纷不存在。")
+}
+
 func publicProfileNotFound() *domain.AppError {
 	return domain.NewError(http.StatusNotFound, domain.CodeObjectNotFound, "Profile not found", "公开主页不存在。")
 }
@@ -1367,6 +1878,14 @@ func targetNotFound() *domain.AppError {
 
 func reportPermissionDenied() *domain.AppError {
 	return domain.NewError(http.StatusForbidden, domain.CodePermissionDenied, "Permission denied", "你没有权限举报该对象。")
+}
+
+func infoRequestPermissionDenied() *domain.AppError {
+	return domain.NewError(http.StatusForbidden, domain.CodePermissionDenied, "Permission denied", "只能指定该案件中的有效参与者补充信息。")
+}
+
+func infoRequestNotFound() *domain.AppError {
+	return domain.NewError(http.StatusNotFound, domain.CodeObjectNotFound, "Information request not found", "补充请求不存在、已失效或不属于当前用户。")
 }
 
 func selfReportForbidden() *domain.AppError {
@@ -1439,6 +1958,8 @@ const reportColumns = `
 	COALESCE(r.handled_by_admin_id::text, ''),
 	r.handled_at,
 	COALESCE(r.dispute_case_id::text, ''),
+	COALESCE((SELECT info.id::text FROM moderation_info_requests info WHERE info.report_id = r.id AND info.status = 'open' LIMIT 1), ''),
+	COALESCE((SELECT info.requested_from_user_id::text FROM moderation_info_requests info WHERE info.report_id = r.id AND info.status = 'open' LIMIT 1), ''),
 	r.created_at,
 	r.updated_at,
 	r.version`
@@ -1463,6 +1984,8 @@ const reportReturningColumns = `
 	COALESCE(reports.handled_by_admin_id::text, ''),
 	reports.handled_at,
 	COALESCE(reports.dispute_case_id::text, ''),
+	COALESCE((SELECT info.id::text FROM moderation_info_requests info WHERE info.report_id = reports.id AND info.status = 'open' LIMIT 1), ''),
+	COALESCE((SELECT info.requested_from_user_id::text FROM moderation_info_requests info WHERE info.report_id = reports.id AND info.status = 'open' LIMIT 1), ''),
 	reports.created_at,
 	reports.updated_at,
 	reports.version`
@@ -1500,7 +2023,9 @@ const disputeColumns = `
 	d.closed_at,
 	d.created_at,
 	d.updated_at,
-	d.version`
+	d.version,
+	COALESCE((SELECT info.id::text FROM moderation_info_requests info WHERE info.dispute_case_id = d.id AND info.status = 'open' LIMIT 1), ''),
+	COALESCE((SELECT info.requested_from_user_id::text FROM moderation_info_requests info WHERE info.dispute_case_id = d.id AND info.status = 'open' LIMIT 1), '')`
 
 const disputeReturningColumns = `
 	dispute_cases.id::text,
@@ -1528,7 +2053,9 @@ const disputeReturningColumns = `
 	dispute_cases.closed_at,
 	dispute_cases.created_at,
 	dispute_cases.updated_at,
-	dispute_cases.version`
+	dispute_cases.version,
+	COALESCE((SELECT info.id::text FROM moderation_info_requests info WHERE info.dispute_case_id = dispute_cases.id AND info.status = 'open' LIMIT 1), ''),
+	COALESCE((SELECT info.requested_from_user_id::text FROM moderation_info_requests info WHERE info.dispute_case_id = dispute_cases.id AND info.status = 'open' LIMIT 1), '')`
 
 const appealSelectSQL = `
 	SELECT ` + appealColumns + `

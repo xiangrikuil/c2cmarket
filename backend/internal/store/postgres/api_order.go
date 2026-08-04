@@ -108,12 +108,15 @@ func (s *Store) GetAPIOrderForBuyer(ctx context.Context, buyerUserID, orderID st
 	if appErr := s.materializeExpiredAPIOrder(ctx, s.pool, orderID, now); appErr != nil {
 		return apiorder.Order{}, appErr
 	}
-	order, err := s.getAPIOrder(ctx, s.pool, orderID, false, true)
-	if errors.Is(err, pgx.ErrNoRows) || order.BuyerUserID != buyerUserID {
+	order, err := s.getAPIOrderWithCredentialLifecycleLock(ctx, orderID)
+	if errors.Is(err, pgx.ErrNoRows) {
 		return apiorder.Order{}, apiOrderNotFound()
 	}
 	if err != nil {
 		return apiorder.Order{}, internalStoreError()
+	}
+	if order.BuyerUserID != buyerUserID {
+		return apiorder.Order{}, apiOrderNotFound()
 	}
 	return order, nil
 }
@@ -189,14 +192,48 @@ func (s *Store) GetAPIOrderForSeller(ctx context.Context, sellerUserID, orderID 
 	if appErr := s.materializeExpiredAPIOrder(ctx, s.pool, orderID, now); appErr != nil {
 		return apiorder.Order{}, appErr
 	}
-	order, err := s.getAPIOrder(ctx, s.pool, orderID, false, true)
-	if errors.Is(err, pgx.ErrNoRows) || order.SellerUserID != sellerUserID {
+	order, err := s.getAPIOrderWithCredentialLifecycleLock(ctx, orderID)
+	if errors.Is(err, pgx.ErrNoRows) {
 		return apiorder.Order{}, apiOrderNotFound()
 	}
 	if err != nil {
 		return apiorder.Order{}, internalStoreError()
 	}
+	if order.SellerUserID != sellerUserID {
+		return apiorder.Order{}, apiOrderNotFound()
+	}
 	return order, nil
+}
+
+func (s *Store) getAPIOrderWithCredentialLifecycleLock(ctx context.Context, orderID string) (apiorder.Order, error) {
+	if s == nil || s.pool == nil {
+		return apiorder.Order{}, errors.New("postgres store is not configured")
+	}
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return apiorder.Order{}, err
+	}
+	defer rollback(ctx, tx)
+	if err := lockAPIOrderCredentialLifecycleInTx(ctx, tx, orderID); err != nil {
+		return apiorder.Order{}, err
+	}
+	order, err := s.getAPIOrder(ctx, tx, orderID, false, true)
+	if err != nil {
+		return apiorder.Order{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return apiorder.Order{}, err
+	}
+	return order, nil
+}
+
+func lockAPIOrderCredentialLifecycleInTx(ctx context.Context, tx pgx.Tx, orderID string) error {
+	_, err := tx.Exec(ctx, `
+		SELECT pg_advisory_xact_lock(
+			hashtextextended($1::text || $2::uuid::text, 0)
+		)
+	`, apiOrderCredentialLifecycleLockPrefix, orderID)
+	return err
 }
 
 func (s *Store) createAPIOrderInTx(ctx context.Context, tx pgx.Tx, input apiorder.CreateInput, now time.Time) (apiorder.Order, *domain.AppError) {
@@ -1244,7 +1281,8 @@ func (s *Store) getAPIOrderDeliveryCredential(ctx context.Context, q queryer, or
 		       delivery_kind, COALESCE(api_base_url, ''), COALESCE(panel_login_url, ''),
 		       COALESCE(username, ''), COALESCE(instructions, ''),
 		       api_key_ciphertext, api_key_nonce, password_ciphertext, password_nonce,
-		       secret_encryption_key_version, secret_encryption_format, submitted_at, created_at
+		       secret_encryption_key_version, secret_encryption_format, submitted_at, created_at,
+		       destroyed_at, COALESCE(destroy_reason, '')
 		FROM api_order_delivery_credentials
 		WHERE api_order_id = $1
 	`, orderID).Scan(
@@ -1265,12 +1303,17 @@ func (s *Store) getAPIOrderDeliveryCredential(ctx context.Context, q queryer, or
 		&cipherFormat,
 		&credential.SubmittedAt,
 		&credential.CreatedAt,
+		&credential.DestroyedAt,
+		&credential.DestroyReason,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return apiorder.DeliveryCredential{}, false, nil
 	}
 	if err != nil {
 		return apiorder.DeliveryCredential{}, false, internalStoreError()
+	}
+	if credential.DestroyedAt != nil {
+		return credential, true, nil
 	}
 	if len(apiKeyCiphertext) > 0 {
 		apiKey, err := s.contactCodec.decode(apiKeyCiphertext, apiKeyNonce, keyVersion, cipherFormat, credential.ID, contactFieldOrderAPIKey)

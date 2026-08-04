@@ -812,7 +812,9 @@ func validateCreateInput(input CreateServiceInput, now time.Time) *domain.AppErr
 		if available, ok := parseNonNegativeDecimal(input.AvailableUSDAllowance); !ok || available.Sign() < 0 {
 			return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Available USD allowance invalid", "可售美元额度格式不正确。", "availableUsdAllowance", "invalid", "可售美元额度必须是大于等于 0 的数字。")
 		}
-	case ServiceBillingModeManual, ServiceBillingModeFixedPackage:
+	case ServiceBillingModeManual:
+		return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Billing mode unsupported", "当前版本暂不支持商户手工核对计费。", "billingMode", "unsupported", "当前版本暂不支持商户手工核对计费，请使用美元额度或固定套餐。")
+	case ServiceBillingModeFixedPackage:
 		if appErr := validateQuotaExpiresAt(input.QuotaExpiresAt, now, false); appErr != nil {
 			return appErr
 		}
@@ -1160,7 +1162,8 @@ func OrderableReasonsAt(service Service, now time.Time) []string {
 	if enabledPaymentOptionCount(service.PaymentOptions) == 0 {
 		reasons = append(reasons, "payment_method_required")
 	}
-	if service.BillingMode == ServiceBillingModeMetered {
+	switch service.BillingMode {
+	case ServiceBillingModeMetered:
 		availableText := strings.TrimSpace(service.AvailableUSDAllowance)
 		if availableText == "" {
 			availableText = strings.TrimSpace(service.DeclaredMaxUSDAllowancePerIntent)
@@ -1173,7 +1176,7 @@ func OrderableReasonsAt(service Service, now time.Time) []string {
 		} else if !service.QuotaExpiresAt.After(now) {
 			reasons = append(reasons, "quota_expired")
 		}
-	} else if service.BillingMode == ServiceBillingModeFixedPackage {
+	case ServiceBillingModeFixedPackage:
 		available := false
 		for _, pack := range service.Packages {
 			if pack.Enabled && pack.StockAvailable > 0 && len(pack.Models) > 0 {
@@ -1184,6 +1187,8 @@ func OrderableReasonsAt(service Service, now time.Time) []string {
 		if !available {
 			reasons = append(reasons, "package_sold_out")
 		}
+	default:
+		reasons = append(reasons, "billing_mode_unsupported")
 	}
 	return reasons
 }

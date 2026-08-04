@@ -55,9 +55,10 @@ export function accountPoolLabel(form: Pick<ApiServicePublishForm, 'accountPoolT
 
 export const billingLabels: Record<BillingMode, string> = {
   metered_credit: '精确额度计费',
-  manual_credit: '商户手工核对额度',
   fixed_package: '固定套餐',
 }
+
+export const supportedPublishBillingModes = ['metered_credit', 'fixed_package'] satisfies BillingMode[]
 
 export const sub2ApiPricingPolicy = {
   textModelMultiplier: 1,
@@ -193,7 +194,7 @@ export function generatedTitle(form: ApiServicePublishForm, catalogById: Catalog
   const providerSummary = providerCategoryLabels[form.providerCategory]
   if (form.billingMode === 'fixed_package') return `${providerSummary} · API 限时套餐`
   if (form.distributionSystem === 'sub2api') return `${providerSummary} · API 美元额度`
-  return `${providerSummary} · 其他 API 接入 手工核对额度`
+  return `${providerSummary} · 其他 API 接入 自由额度`
 }
 
 export function warrantyLabel(warranty: WarrantyConfig) {

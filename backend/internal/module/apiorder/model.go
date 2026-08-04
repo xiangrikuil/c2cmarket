@@ -163,6 +163,8 @@ type DeliveryCredential struct {
 	Instructions  string
 	SubmittedAt   time.Time
 	CreatedAt     time.Time
+	DestroyedAt   *time.Time
+	DestroyReason string
 }
 
 type CreateInput struct {

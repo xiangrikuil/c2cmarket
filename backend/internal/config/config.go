@@ -63,13 +63,14 @@ type SMTPConfig struct {
 }
 
 type MaintenanceConfig struct {
-	Interval                    time.Duration
-	BatchSize                   int
-	SessionRetention            time.Duration
-	EmailVerificationRetention  time.Duration
-	ReadNotificationRetention   time.Duration
-	UnreadNotificationRetention time.Duration
-	DomainEventRetention        time.Duration
+	Interval                       time.Duration
+	BatchSize                      int
+	SessionRetention               time.Duration
+	EmailVerificationRetention     time.Duration
+	ReadNotificationRetention      time.Duration
+	UnreadNotificationRetention    time.Duration
+	DomainEventRetention           time.Duration
+	APIDeliveryCredentialRetention time.Duration
 }
 
 const (
@@ -78,14 +79,15 @@ const (
 	localContactKeyVersion       = "local-dev-v1"
 	localEmailVerificationPepper = "c2cmarket-local-email-verification-pepper-v1"
 
-	defaultMaintenanceInterval         = 15 * time.Minute
-	defaultMaintenanceBatchSize        = 500
-	defaultSessionRetention            = 7 * 24 * time.Hour
-	defaultEmailVerificationRetention  = 24 * time.Hour
-	defaultReadNotificationRetention   = 90 * 24 * time.Hour
-	defaultUnreadNotificationRetention = 365 * 24 * time.Hour
-	defaultDomainEventRetention        = 365 * 24 * time.Hour
-	defaultDatabaseSlowQueryAfter      = time.Second
+	defaultMaintenanceInterval            = 15 * time.Minute
+	defaultMaintenanceBatchSize           = 500
+	defaultSessionRetention               = 7 * 24 * time.Hour
+	defaultEmailVerificationRetention     = 24 * time.Hour
+	defaultReadNotificationRetention      = 90 * 24 * time.Hour
+	defaultUnreadNotificationRetention    = 365 * 24 * time.Hour
+	defaultDomainEventRetention           = 365 * 24 * time.Hour
+	defaultAPIDeliveryCredentialRetention = 30 * 24 * time.Hour
+	defaultDatabaseSlowQueryAfter         = time.Second
 )
 
 func Load() (Config, error) {
@@ -176,6 +178,10 @@ func Load() (Config, error) {
 		return Config{}, err
 	}
 	cfg.Maintenance.DomainEventRetention, err = parseDurationEnv("DOMAIN_EVENT_RETENTION", os.Getenv("DOMAIN_EVENT_RETENTION"), defaultDomainEventRetention)
+	if err != nil {
+		return Config{}, err
+	}
+	cfg.Maintenance.APIDeliveryCredentialRetention, err = parseDurationEnv("API_DELIVERY_CREDENTIAL_RETENTION", os.Getenv("API_DELIVERY_CREDENTIAL_RETENTION"), defaultAPIDeliveryCredentialRetention)
 	if err != nil {
 		return Config{}, err
 	}

@@ -74,11 +74,12 @@ func TestRunnerRejectsInvalidPolicy(t *testing.T) {
 		Interval:  time.Minute,
 		BatchSize: 1,
 		Policy: Policy{
-			SessionRetention:            time.Hour,
-			EmailVerificationRetention:  time.Hour,
-			ReadNotificationRetention:   2 * time.Hour,
-			UnreadNotificationRetention: time.Hour,
-			DomainEventRetention:        time.Hour,
+			SessionRetention:               time.Hour,
+			EmailVerificationRetention:     time.Hour,
+			ReadNotificationRetention:      2 * time.Hour,
+			UnreadNotificationRetention:    time.Hour,
+			DomainEventRetention:           time.Hour,
+			APIDeliveryCredentialRetention: time.Hour,
 		},
 	}, time.Now, log.New(io.Discard, "", 0))
 	if err == nil {
@@ -112,11 +113,12 @@ func newTestRunner(t *testing.T, repo Repository, interval time.Duration) *Runne
 		Interval:  interval,
 		BatchSize: 10,
 		Policy: Policy{
-			SessionRetention:            time.Hour,
-			EmailVerificationRetention:  time.Hour,
-			ReadNotificationRetention:   time.Hour,
-			UnreadNotificationRetention: 2 * time.Hour,
-			DomainEventRetention:        time.Hour,
+			SessionRetention:               time.Hour,
+			EmailVerificationRetention:     time.Hour,
+			ReadNotificationRetention:      time.Hour,
+			UnreadNotificationRetention:    2 * time.Hour,
+			DomainEventRetention:           time.Hour,
+			APIDeliveryCredentialRetention: time.Hour,
 		},
 	}, time.Now, log.New(io.Discard, "", 0))
 	if err != nil {

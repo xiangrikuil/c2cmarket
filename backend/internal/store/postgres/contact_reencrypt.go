@@ -134,9 +134,10 @@ func (s *Store) loadContactReencryptRows(ctx context.Context, tx pgx.Tx, options
 			       COALESCE(api_key_ciphertext, password_ciphertext),
 			       COALESCE(api_key_nonce, password_nonce),
 			       secret_encryption_key_version, secret_encryption_format
-			FROM api_quota_credentials
-			WHERE ` + cursorClause + `
-			  AND (secret_encryption_key_version <> $2 OR secret_encryption_format <> $3)
+				FROM api_quota_credentials
+				WHERE ` + cursorClause + `
+				  AND destroyed_at IS NULL
+				  AND (secret_encryption_key_version <> $2 OR secret_encryption_format <> $3)
 			ORDER BY id
 			LIMIT $4`
 	case ContactReencryptKindAPIOrder:
@@ -145,13 +146,14 @@ func (s *Store) loadContactReencryptRows(ctx context.Context, tx pgx.Tx, options
 			       COALESCE(api_key_ciphertext, password_ciphertext),
 			       COALESCE(api_key_nonce, password_nonce),
 			       secret_encryption_key_version, secret_encryption_format
-			FROM api_order_delivery_credentials
-			WHERE ` + cursorClause + `
-			  AND (secret_encryption_key_version <> $2 OR secret_encryption_format <> $3)
+				FROM api_order_delivery_credentials
+				WHERE ` + cursorClause + `
+				  AND destroyed_at IS NULL
+				  AND (secret_encryption_key_version <> $2 OR secret_encryption_format <> $3)
 			ORDER BY id
 			LIMIT $4`
 	}
-	if !options.DryRun {
+	if !options.DryRun || options.Kind == ContactReencryptKindAPIQuota || options.Kind == ContactReencryptKindAPIOrder {
 		query += " FOR UPDATE SKIP LOCKED"
 	}
 	dbRows, err := tx.Query(ctx, query, options.Cursor, s.contactCodec.encryptionKeyVersion, contactCipherFormatAADV1, options.BatchSize)

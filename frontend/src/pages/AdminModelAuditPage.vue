@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, reactive, ref, watch } from 'vue'
-import { AlertTriangle, ClipboardCopy, Download, FileText, Pencil, Play, Plus, RefreshCw, Save, ShieldAlert, TimerReset } from 'lucide-vue-next'
+import { AlertTriangle, ClipboardCopy, Download, FileText, Pencil, Play, Plus, RefreshCw, Save, ShieldAlert } from 'lucide-vue-next'
 import { toast } from 'vue-sonner'
 import PageTitle from '@/components/market/PageTitle.vue'
 import CompactStats from '@/components/market/CompactStats.vue'
@@ -26,12 +26,10 @@ import {
 import { Textarea } from '@/components/ui/textarea'
 import {
   useCreateModelAuditBaseline,
-  useCreateModelAuditMonitor,
   useCreateModelAuditRun,
   useCreateModelAuditTarget,
   useDeleteModelAuditTarget,
   useModelAuditBaselines,
-  useModelAuditMonitors,
   useModelAuditReport,
   useModelAuditRuns,
   useModelAuditTargets,
@@ -41,7 +39,6 @@ import type {
   ModelAuditBaseline,
   ModelAuditBaselineInput,
   ModelAuditMode,
-  ModelAuditMonitorInput,
   ModelAuditProbeRiskLevel,
   ModelAuditRiskLevel,
   ModelAuditRun,
@@ -57,7 +54,6 @@ const modeOptions: Array<{ value: ModelAuditMode, label: string }> = [
   { value: 'quick', label: 'Quick' },
   { value: 'standard', label: 'Standard' },
   { value: 'strict', label: 'Strict' },
-  { value: 'scheduled', label: 'Scheduled' },
 ]
 
 const sourceTypeOptions = [
@@ -91,13 +87,11 @@ const statusLabels: Record<ModelAuditRunStatus, string> = {
 const targetsQuery = useModelAuditTargets()
 const baselinesQuery = useModelAuditBaselines()
 const runsQuery = useModelAuditRuns()
-const monitorsQuery = useModelAuditMonitors()
 const createTargetMutation = useCreateModelAuditTarget()
 const updateTargetMutation = useUpdateModelAuditTarget()
 const deleteTargetMutation = useDeleteModelAuditTarget()
 const createBaselineMutation = useCreateModelAuditBaseline()
 const createRunMutation = useCreateModelAuditRun()
-const createMonitorMutation = useCreateModelAuditMonitor()
 
 const selectedRunId = ref('')
 const reportQuery = useModelAuditReport(selectedRunId)
@@ -110,37 +104,31 @@ const baselineFeaturesText = ref(JSON.stringify(defaultBaselineFeatureJson(), nu
 const targetForm = reactive<ModelAuditTargetInput>(emptyTargetForm())
 const baselineForm = reactive<ModelAuditBaselineInput>(emptyBaselineForm())
 const runForm = reactive<ModelAuditRunInput>(emptyRunForm())
-const monitorForm = reactive<ModelAuditMonitorInput>(emptyMonitorForm())
 
 const targets = computed(() => targetsQuery.data.value ?? [])
 const baselines = computed(() => baselinesQuery.data.value ?? [])
 const runs = computed(() => runsQuery.data.value ?? [])
-const monitors = computed(() => monitorsQuery.data.value ?? [])
 const selectedRun = computed(() => runs.value.find(item => item.id === selectedRunId.value) ?? null)
 const report = computed(() => reportQuery.data.value ?? null)
 const activeTargets = computed(() => targets.value.filter(item => item.enabled))
 const completedRuns = computed(() => runs.value.filter(item => item.status === 'completed'))
 const highRiskCount = computed(() => runs.value.filter(item => item.riskLevel === 'high_risk').length)
-const enabledMonitors = computed(() => monitors.value.filter(item => item.enabled).length)
-const isLoading = computed(() => targetsQuery.isLoading.value || baselinesQuery.isLoading.value || runsQuery.isLoading.value || monitorsQuery.isLoading.value)
-const hasError = computed(() => targetsQuery.isError.value || baselinesQuery.isError.value || runsQuery.isError.value || monitorsQuery.isError.value)
+const isLoading = computed(() => targetsQuery.isLoading.value || baselinesQuery.isLoading.value || runsQuery.isLoading.value)
+const hasError = computed(() => targetsQuery.isError.value || baselinesQuery.isError.value || runsQuery.isError.value)
 const errorMessage = computed(() => {
-  const error = targetsQuery.error.value ?? baselinesQuery.error.value ?? runsQuery.error.value ?? monitorsQuery.error.value
+  const error = targetsQuery.error.value ?? baselinesQuery.error.value ?? runsQuery.error.value
   return error instanceof Error ? error.message : '模型审计数据读取失败。'
 })
 const savingTarget = computed(() => createTargetMutation.isPending.value || updateTargetMutation.isPending.value)
 const savingBaseline = computed(() => createBaselineMutation.isPending.value)
 const runningAudit = computed(() => createRunMutation.isPending.value)
-const savingMonitor = computed(() => createMonitorMutation.isPending.value)
 
 watch(activeTargets, rows => {
   if (!runForm.targetId && rows[0]) runForm.targetId = rows[0].id
-  if (!monitorForm.targetId && rows[0]) monitorForm.targetId = rows[0].id
 }, { immediate: true })
 
 watch(baselines, rows => {
   if (!runForm.baselineId && rows[0]) runForm.baselineId = rows[0].id
-  if (!monitorForm.baselineId && rows[0]) monitorForm.baselineId = rows[0].id
 }, { immediate: true })
 
 watch(runs, rows => {
@@ -195,16 +183,6 @@ function emptyRunForm(): ModelAuditRunInput {
     enableLogprobs: 'auto',
     storePromptText: false,
     storeResponseText: false,
-  }
-}
-
-function emptyMonitorForm(): ModelAuditMonitorInput {
-  return {
-    targetId: '',
-    baselineId: noSelectionValue,
-    mode: 'scheduled',
-    enabled: true,
-    cronSpec: '0 */6 * * *',
   }
 }
 
@@ -336,23 +314,6 @@ async function createRun() {
   }
 }
 
-async function createMonitor() {
-  if (!monitorForm.targetId) {
-    toast.warning('请选择巡检目标。')
-    return
-  }
-  try {
-    await createMonitorMutation.mutateAsync({
-      ...monitorForm,
-      baselineId: monitorForm.baselineId === noSelectionValue ? undefined : monitorForm.baselineId,
-      cronSpec: monitorForm.cronSpec?.trim() || undefined,
-    })
-    toast.success('巡检配置已创建。')
-  } catch (error) {
-    toast.error(error instanceof Error ? error.message : '巡检配置创建失败')
-  }
-}
-
 async function copyReportMarkdown() {
   if (!report.value?.markdown) return
   await navigator.clipboard.writeText(report.value.markdown)
@@ -461,7 +422,7 @@ function evidenceText(evidence: Record<string, unknown>) {
       description="对第三方 OpenAI-compatible API 渠道生成统计风险信号，不承载平台代理、凭据交付或自动处罚。"
     />
 
-    <CompactStats :items="[{ label: '审计目标', value: targets.length, hint: `启用 ${activeTargets.length}` }, { label: '完成运行', value: completedRuns.length, hint: `高风险 ${highRiskCount}` }, { label: '可信基线', value: baselines.length, hint: '按探针版本管理' }, { label: '巡检配置', value: enabledMonitors, hint: `全部 ${monitors.length}` }]" :loading="isLoading" />
+    <CompactStats :items="[{ label: '审计目标', value: targets.length, hint: `启用 ${activeTargets.length}` }, { label: '完成运行', value: completedRuns.length, hint: `高风险 ${highRiskCount}` }, { label: '可信基线', value: baselines.length, hint: '按探针版本管理' }]" :loading="isLoading" />
 
     <Card v-if="hasError" class="border-destructive/30 p-5">
       <div class="flex flex-col gap-4 sm:flex-row sm:items-start">
@@ -471,7 +432,7 @@ function evidenceText(evidence: Record<string, unknown>) {
         <div class="min-w-0 flex-1">
           <h2 class="font-semibold">模型审计数据读取失败</h2>
           <p class="mt-2 text-sm leading-6 text-muted-foreground">{{ errorMessage }}</p>
-          <Button class="mt-4" size="sm" variant="outline" @click="targetsQuery.refetch(); baselinesQuery.refetch(); runsQuery.refetch(); monitorsQuery.refetch()">
+          <Button class="mt-4" size="sm" variant="outline" @click="targetsQuery.refetch(); baselinesQuery.refetch(); runsQuery.refetch()">
             <RefreshCw class="h-4 w-4" />重新读取
           </Button>
         </div>
@@ -748,89 +709,6 @@ function evidenceText(evidence: Record<string, unknown>) {
               </tr>
               <tr v-if="(selectedRun?.probeScores ?? report?.probeScores ?? []).length === 0">
                 <td colspan="5" class="px-3 py-10 text-center text-sm text-muted-foreground">暂无分项证据。</td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-      </Card>
-    </section>
-
-    <section class="grid gap-4 xl:grid-cols-[minmax(0,0.8fr)_minmax(0,1.2fr)]">
-      <Card class="p-5">
-        <div class="flex items-center gap-2">
-          <TimerReset class="h-5 w-5 text-muted-foreground" />
-          <h2 class="font-semibold">定时巡检</h2>
-        </div>
-        <div class="mt-4 grid gap-3">
-          <label class="space-y-2">
-            <span class="text-sm font-medium">目标</span>
-            <Select v-model="monitorForm.targetId">
-              <SelectTrigger><SelectValue placeholder="选择目标" /></SelectTrigger>
-              <SelectContent>
-                <SelectItem v-for="target in activeTargets" :key="target.id" :value="target.id">{{ target.name }}</SelectItem>
-              </SelectContent>
-            </Select>
-          </label>
-          <label class="space-y-2">
-            <span class="text-sm font-medium">基线</span>
-            <Select v-model="monitorForm.baselineId">
-              <SelectTrigger><SelectValue placeholder="选择基线" /></SelectTrigger>
-              <SelectContent>
-                <SelectItem :value="noSelectionValue">不绑定基线</SelectItem>
-                <SelectItem v-for="baseline in baselines" :key="baseline.id" :value="baseline.id">{{ baseline.baselineName }}</SelectItem>
-              </SelectContent>
-            </Select>
-          </label>
-          <div class="grid gap-3 sm:grid-cols-2">
-            <label class="space-y-2">
-              <span class="text-sm font-medium">模式</span>
-              <Select v-model="monitorForm.mode">
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem v-for="mode in modeOptions" :key="mode.value" :value="mode.value">{{ mode.label }}</SelectItem>
-                </SelectContent>
-              </Select>
-            </label>
-            <label class="space-y-2">
-              <span class="text-sm font-medium">Cron</span>
-              <Input v-model="monitorForm.cronSpec" placeholder="0 */6 * * *" />
-            </label>
-          </div>
-          <label class="flex items-center gap-2 rounded-md border border-border bg-muted/30 p-3 text-sm">
-            <input v-model="monitorForm.enabled" type="checkbox" class="h-4 w-4 accent-primary" />
-            <span>启用巡检</span>
-          </label>
-          <Button :disabled="savingMonitor || activeTargets.length === 0" @click="createMonitor">
-            <Save class="h-4 w-4" />保存巡检
-          </Button>
-        </div>
-      </Card>
-
-      <Card class="overflow-hidden p-0">
-        <div class="border-b border-border p-4">
-          <h2 class="font-semibold">巡检列表</h2>
-        </div>
-        <div class="overflow-x-auto">
-          <table class="c2c-table w-full min-w-[720px] text-sm">
-            <thead>
-              <tr class="border-b border-border text-left text-xs text-muted-foreground">
-                <th class="px-3 py-2 font-medium">目标</th>
-                <th class="px-3 py-2 font-medium">模式</th>
-                <th class="px-3 py-2 font-medium">Cron</th>
-                <th class="px-3 py-2 font-medium">最近风险</th>
-                <th class="px-3 py-2 font-medium">状态</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr v-for="monitor in monitors" :key="monitor.id" class="border-b border-border/70 last:border-0">
-                <td class="px-3 py-3">{{ targetName(monitor.targetId) }}</td>
-                <td class="px-3 py-3">{{ modeLabel(monitor.mode) }}</td>
-                <td class="px-3 py-3 text-xs text-muted-foreground">{{ monitor.cronSpec || '-' }}</td>
-                <td class="px-3 py-3"><Badge :variant="riskVariant(monitor.lastRisk)">{{ riskLabel(monitor.lastRisk) }}</Badge></td>
-                <td class="px-3 py-3"><Badge :variant="monitor.enabled ? 'verified' : 'secondary'">{{ monitor.enabled ? '启用' : '停用' }}</Badge></td>
-              </tr>
-              <tr v-if="monitors.length === 0">
-                <td colspan="5" class="px-3 py-10 text-center text-sm text-muted-foreground">暂无巡检配置。</td>
               </tr>
             </tbody>
           </table>

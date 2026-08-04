@@ -128,11 +128,12 @@ func New(ctx context.Context, cfg config.Config) (*App, error) {
 			Interval:  cfg.Maintenance.Interval,
 			BatchSize: cfg.Maintenance.BatchSize,
 			Policy: maintenance.Policy{
-				SessionRetention:            cfg.Maintenance.SessionRetention,
-				EmailVerificationRetention:  cfg.Maintenance.EmailVerificationRetention,
-				ReadNotificationRetention:   cfg.Maintenance.ReadNotificationRetention,
-				UnreadNotificationRetention: cfg.Maintenance.UnreadNotificationRetention,
-				DomainEventRetention:        cfg.Maintenance.DomainEventRetention,
+				SessionRetention:               cfg.Maintenance.SessionRetention,
+				EmailVerificationRetention:     cfg.Maintenance.EmailVerificationRetention,
+				ReadNotificationRetention:      cfg.Maintenance.ReadNotificationRetention,
+				UnreadNotificationRetention:    cfg.Maintenance.UnreadNotificationRetention,
+				DomainEventRetention:           cfg.Maintenance.DomainEventRetention,
+				APIDeliveryCredentialRetention: cfg.Maintenance.APIDeliveryCredentialRetention,
 			},
 		}, time.Now, log.Default())
 		if err != nil {

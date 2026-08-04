@@ -239,6 +239,8 @@ type BackendAPIOrderDeliveryCredential = {
   password?: string
   instructions?: string
   submittedAt: string
+  destroyedAt?: string
+  destroyReason?: string
 }
 
 export type BackendAPIOrder = {
@@ -1550,6 +1552,9 @@ function mapDeliveryCredential(value?: BackendAPIOrderDeliveryCredential | null)
   if (value.deliveryKind !== 'api_key_endpoint' && value.deliveryKind !== 'login_account') {
     throw new Error(`Unsupported API order delivery kind: ${value.deliveryKind}`)
   }
+  if (value.destroyReason && value.destroyReason !== 'retention_expired' && value.destroyReason !== 'retired_unused') {
+    throw new Error(`Unsupported API order credential destroy reason: ${value.destroyReason}`)
+  }
   return {
     deliveryKind: value.deliveryKind,
     apiBaseUrl: value.apiBaseUrl,
@@ -1559,6 +1564,8 @@ function mapDeliveryCredential(value?: BackendAPIOrderDeliveryCredential | null)
     password: value.password,
     instructions: value.instructions,
     submittedAt: value.submittedAt,
+    destroyedAt: value.destroyedAt,
+    destroyReason: value.destroyReason as ApiOrderDeliveryCredential['destroyReason'],
   }
 }
 
@@ -1833,7 +1840,12 @@ async function backendAdminAPIServiceAction(id: string, action: 'approve' | 'req
 
 export function toBackendServiceRequest(payload: Record<string, unknown>) {
   const distributionSystem = payload.distributionSystem === 'new_api_proxy' ? 'new_api_proxy' : payload.distributionSystem === 'sub2api' ? 'sub2api' : 'other'
-  const billing = payload.billingMode === 'fixed_package' ? 'fixed_package' : payload.billingMode === 'manual_credit' ? 'manual_usage_check' : 'metered_usd_quota'
+  const billing = payload.billingMode === 'metered_credit'
+    ? 'metered_usd_quota'
+    : payload.billingMode === 'fixed_package'
+      ? 'fixed_package'
+      : null
+  if (billing === null) throw new Error('Unsupported API billing mode')
   const modes = Array.isArray(payload.deliveryModes) ? payload.deliveryModes as string[] : ['api_key_endpoint']
   const selectedModels = Array.isArray(payload.selectedModels) ? payload.selectedModels as Array<{ modelId?: string, enabled?: boolean }> : []
   const packages = Array.isArray(payload.packages) ? payload.packages as Array<{ id?: string, name?: string, priceCny?: number, panelAllowance?: number, durationDays?: number, stockTotal?: number, description?: string, enabled?: boolean, modelCatalogIds?: string[] }> : []

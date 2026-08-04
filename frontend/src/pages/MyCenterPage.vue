@@ -2,7 +2,7 @@
 import { computed, onUnmounted, reactive, ref, watch, watchEffect } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { toast } from 'vue-sonner'
-import { Bell, CheckCircle2, ChevronRight, CircleAlert, Eye, KeyRound, Link2, LockKeyhole, LogIn, Mail, MailCheck, MessageCircle, RefreshCw, Save, ShieldCheck, Star, Trash2 } from 'lucide-vue-next'
+import { Bell, CheckCircle2, ChevronRight, CircleAlert, Eye, KeyRound, Link2, LockKeyhole, LogIn, Mail, MailCheck, MessageCircle, RefreshCw, Save, ShieldAlert, ShieldCheck, Star, Trash2 } from 'lucide-vue-next'
 import ApiPaymentSettingsEditor from '@/components/contact-payment/ApiPaymentSettingsEditor.vue'
 import BuyerPreviewDrawer from '@/components/contact-payment/BuyerPreviewDrawer.vue'
 import ConfigurationProgressCard from '@/components/contact-payment/ConfigurationProgressCard.vue'
@@ -30,6 +30,7 @@ import {
   buildPublishedContent,
   countActivePublishedContent,
   getPrimaryAccountAlert,
+  shouldShowFirstTransactionGuide,
   uniqueRelatedApiOrderCount,
   type PersonalCenterMetric,
 } from '@/lib/personalCenterDashboard'
@@ -211,6 +212,44 @@ const dashboardPublishedUnavailable = computed(() => (
   carpoolsQuery.isError.value && carpools.value === undefined
   && apiServicesQuery.isError.value && apiServices.value === undefined
 ))
+const showFirstTransactionGuide = computed(() => shouldShowFirstTransactionGuide({
+  ownedCarpools: {
+    data: carpools.value,
+    isSuccess: carpoolsQuery.isSuccess.value,
+    isFetchedAfterMount: carpoolsQuery.isFetchedAfterMount.value,
+    isFetching: carpoolsQuery.isFetching.value,
+  },
+  ownedApiServices: {
+    data: apiServices.value,
+    isSuccess: apiServicesQuery.isSuccess.value,
+    isFetchedAfterMount: apiServicesQuery.isFetchedAfterMount.value,
+    isFetching: apiServicesQuery.isFetching.value,
+  },
+  buyerCarpoolApplications: {
+    data: rideApplications.value,
+    isSuccess: buyerRideApplicationsQuery.isSuccess.value,
+    isFetchedAfterMount: buyerRideApplicationsQuery.isFetchedAfterMount.value,
+    isFetching: buyerRideApplicationsQuery.isFetching.value,
+  },
+  ownerCarpoolApplications: {
+    data: ownerRideApplications.value,
+    isSuccess: ownerRideApplicationsQuery.isSuccess.value,
+    isFetchedAfterMount: ownerRideApplicationsQuery.isFetchedAfterMount.value,
+    isFetching: ownerRideApplicationsQuery.isFetching.value,
+  },
+  buyerApiOrders: {
+    data: apiOrders.value,
+    isSuccess: buyerApiOrdersQuery.isSuccess.value,
+    isFetchedAfterMount: buyerApiOrdersQuery.isFetchedAfterMount.value,
+    isFetching: buyerApiOrdersQuery.isFetching.value,
+  },
+  merchantApiOrders: {
+    data: merchantApiOrders.value,
+    isSuccess: merchantApiOrdersQuery.isSuccess.value,
+    isFetchedAfterMount: merchantApiOrdersQuery.isFetchedAfterMount.value,
+    isFetching: merchantApiOrdersQuery.isFetching.value,
+  },
+}))
 const hasApiServices = computed(() => (apiServices.value?.length ?? 0) > 0)
 const savedApiPaymentComplete = computed(() => (
   Boolean(apiPaymentSettings.value && isApiPaymentAccountSettingsComplete(apiPaymentSettings.value))
@@ -1078,6 +1117,7 @@ function goToLogin() {
       :published-loading="dashboardPublishedLoading"
       :published-error="dashboardPublishedError"
       :published-unavailable="dashboardPublishedUnavailable"
+      :show-first-transaction-guide="showFirstTransactionGuide"
       :completeness-loading="dashboardCompletenessLoading"
       :completeness-error="dashboardCompletenessError"
       :enabled-contact-count="enabledContactCount"
@@ -1341,7 +1381,7 @@ function goToLogin() {
         <div class="mt-5 flex flex-wrap gap-2">
           <Button variant="outline" @click="toast('linux.do 信息同步请求已记录。')">同步 linux.do 信息</Button>
           <Button variant="outline" @click="router.push('/my/profile')">切换头像跟随模式</Button>
-          <Button variant="outline" @click="toast('申诉请求已记录。')"><LockKeyhole class="h-4 w-4" />提交申诉</Button>
+          <Button variant="outline" @click="router.push('/my/reports')"><ShieldAlert class="h-4 w-4" />举报与申诉</Button>
         </div>
         <p class="mt-4 rounded-md border border-border bg-accent/50 p-3 text-xs leading-5 text-muted-foreground">
           linux.do 绑定不可自助解绑或换绑；异常情况请联系管理员人工处理。

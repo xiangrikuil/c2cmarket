@@ -1129,6 +1129,8 @@ func seedQuotaServiceForTest(t *testing.T, ctx context.Context, pool *pgxpool.Po
 		INSERT INTO api_services (
 			id, owner_user_id, merchant_identity_mode, owner_contact_method_id,
 			title, short_description, distribution_system, billing_mode,
+			declared_cny_per_usd_allowance, declared_max_usd_allowance_per_intent,
+			available_usd_allowance, quota_expires_at,
 			minimum_intent_cny, maximum_intent_cny, usage_visibility,
 			review_status, publication_status, moderation_status,
 			accepting_orders, payment_window_minutes,
@@ -1136,11 +1138,11 @@ func seedQuotaServiceForTest(t *testing.T, ctx context.Context, pool *pgxpool.Po
 			created_at, updated_at, version
 		) VALUES (
 			$1, $2, 'public_profile', $3, 'Sub2API 短期额度', '集成测试服务',
-			'sub2api', 'manual_usage_check', 1, 1000, 'none',
+			'sub2api', 'metered_usd_quota', 1, 1000, 1000, $5, 1, 1000, 'offsite_panel_readonly',
 			'approved', 'online', 'clear', true, 10,
 			'under_1s', 20, $4, $4, $4, 1
 		)
-	`, serviceID, sellerID, contactID, now); err != nil {
+	`, serviceID, sellerID, contactID, now, now.AddDate(1, 0, 0)); err != nil {
 		t.Fatalf("seed API service: %v", err)
 	}
 	if _, err := pool.Exec(ctx, `

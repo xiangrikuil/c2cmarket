@@ -41,6 +41,7 @@ func NewFieldError(status int, code, title, detail, field, fieldCode, message st
 
 const (
 	CodeAccountRestricted               = "ACCOUNT_RESTRICTED"
+	CodeAccountAppealIneligible         = "ACCOUNT_APPEAL_INELIGIBLE"
 	CodeActiveApplicationExists         = "ACTIVE_APPLICATION_EXISTS"
 	CodeActiveAPIIntentExists           = "ACTIVE_API_INTENT_EXISTS"
 	CodeActiveReportExists              = "ACTIVE_REPORT_EXISTS"
@@ -56,6 +57,7 @@ const (
 	CodeAPIQuotaSoldOut                 = "API_QUOTA_SOLD_OUT"
 	CodeActiveMembershipExists          = "ACTIVE_MEMBERSHIP_EXISTS"
 	CodeContactAccessForbidden          = "CONTACT_ACCESS_FORBIDDEN"
+	CodeContactContentDetected          = "CONTACT_CONTENT_DETECTED"
 	CodeContactMethodDisabled           = "CONTACT_METHOD_DISABLED"
 	CodeContactMethodNotOwned           = "CONTACT_METHOD_NOT_OWNED"
 	CodeContactMethodRequired           = "CONTACT_METHOD_REQUIRED"
