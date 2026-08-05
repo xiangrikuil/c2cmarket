@@ -615,6 +615,38 @@ func TestNewOrderSetsAPIServicePurchaseKind(t *testing.T) {
 	}
 }
 
+func TestNewOrderCopiesPromptAuditFromIntentSnapshot(t *testing.T) {
+	now := time.Date(2026, 8, 5, 12, 0, 0, 0, time.UTC)
+	intentPromptAudit := false
+	currentServicePromptAudit := true
+	intent := apiintent.Intent{
+		ID:                         "intent-1",
+		APIServiceID:               "service-1",
+		BuyerUserID:                "buyer-1",
+		OwnerUserID:                "seller-1",
+		Status:                     apiintent.StatusOpen,
+		RequestedCNYAmount:         "16.00",
+		SelectedAccessMode:         "buyer_dedicated_sub_key",
+		BillingModeSnapshot:        apimarket.ServiceBillingModeMetered,
+		PromptAuditEnabledSnapshot: &intentPromptAudit,
+	}
+	service := testOrderableService(now)
+	service.PromptAuditEnabled = &currentServicePromptAudit
+
+	order, appErr := NewOrder(CreateInput{
+		IntentID:      intent.ID,
+		BuyerUserID:   intent.BuyerUserID,
+		PaymentMethod: apimarket.PaymentMethodWechat,
+		RequestID:     "create-prompt-audit",
+	}, intent, service, now)
+	if appErr != nil {
+		t.Fatalf("create API service order: %v", appErr)
+	}
+	if order.PromptAuditEnabledSnapshot == nil || *order.PromptAuditEnabledSnapshot {
+		t.Fatalf("order must copy the false intent snapshot instead of the current service value: %+v", order.PromptAuditEnabledSnapshot)
+	}
+}
+
 type testIntentResolver struct {
 	intent apiintent.Intent
 }

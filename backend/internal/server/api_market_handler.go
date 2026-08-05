@@ -2,6 +2,7 @@ package server
 
 import (
 	"c2c-market/backend/internal/domain"
+	"c2c-market/backend/internal/module/apihealth"
 	"c2c-market/backend/internal/module/apiintent"
 	"c2c-market/backend/internal/module/apimarket"
 	"c2c-market/backend/internal/module/auth"
@@ -28,6 +29,7 @@ type apiServiceRequest struct {
 	DeclaredMaxUSDAllowancePerIntent string                        `json:"declaredMaxUsdAllowancePerIntent"`
 	AvailableUSDAllowance            string                        `json:"availableUsdAllowance"`
 	QuotaExpiresAt                   string                        `json:"quotaExpiresAt"`
+	QuotaUsagePolicy                 apiQuotaUsagePolicyRequest    `json:"quotaUsagePolicy"`
 	MinimumIntentCNY                 string                        `json:"minimumIntentCny"`
 	MaximumIntentCNY                 string                        `json:"maximumIntentCny"`
 	UsageVisibility                  string                        `json:"usageVisibility"`
@@ -36,9 +38,8 @@ type apiServiceRequest struct {
 	AccountPoolType                  string                        `json:"accountPoolType"`
 	AccountPoolCustomName            string                        `json:"accountPoolCustomName"`
 	MerchantRefundCommitment         *bool                         `json:"merchantRefundCommitment"`
-	DeclaredTTFTBand                 string                        `json:"declaredTtftBand"`
 	DeclaredMaxConcurrency           int                           `json:"declaredMaxConcurrency"`
-	PerformanceConfirmedAt           string                        `json:"performanceConfirmedAt"`
+	PromptAuditEnabled               *bool                         `json:"promptAuditEnabled"`
 	AccessModes                      []apiServiceAccessModeRequest `json:"accessModes"`
 	Models                           []apiServiceModelRequest      `json:"models"`
 	Packages                         []apiServicePackageRequest    `json:"packages"`
@@ -70,16 +71,39 @@ type apiServiceModelRequest struct {
 }
 
 type apiServicePackageRequest struct {
-	ID              string   `json:"id"`
-	Name            string   `json:"name"`
-	PriceCNY        string   `json:"priceCny"`
-	PanelAllowance  string   `json:"panelAllowance"`
-	DurationDays    *int     `json:"durationDays"`
-	StockTotal      int      `json:"stockTotal"`
-	Description     string   `json:"description"`
-	Enabled         *bool    `json:"enabled"`
-	SortOrder       int      `json:"sortOrder"`
-	ModelCatalogIDs []string `json:"modelCatalogIds"`
+	ID               string                     `json:"id"`
+	Name             string                     `json:"name"`
+	PriceCNY         string                     `json:"priceCny"`
+	PanelAllowance   string                     `json:"panelAllowance"`
+	QuotaUsagePolicy apiQuotaUsagePolicyRequest `json:"quotaUsagePolicy"`
+	DurationDays     *int                       `json:"durationDays"`
+	StockTotal       int                        `json:"stockTotal"`
+	Description      string                     `json:"description"`
+	Enabled          *bool                      `json:"enabled"`
+	SortOrder        int                        `json:"sortOrder"`
+	ModelCatalogIDs  []string                   `json:"modelCatalogIds"`
+}
+
+type apiQuotaUsageLimitRequest struct {
+	Mode      string `json:"mode"`
+	AmountUSD string `json:"amountUsd"`
+}
+
+type apiQuotaUsagePolicyRequest struct {
+	FiveHour apiQuotaUsageLimitRequest `json:"fiveHour"`
+	Daily    apiQuotaUsageLimitRequest `json:"daily"`
+}
+
+type apiQuotaUsageLimitResponse struct {
+	Mode      string  `json:"mode"`
+	AmountUSD *string `json:"amountUsd"`
+}
+
+type apiQuotaUsagePolicyResponse struct {
+	FiveHour   apiQuotaUsageLimitResponse `json:"fiveHour"`
+	Daily      apiQuotaUsageLimitResponse `json:"daily"`
+	Scope      string                     `json:"scope"`
+	DailyReset string                     `json:"dailyReset"`
 }
 
 type apiServiceResponse struct {
@@ -100,6 +124,7 @@ type apiServiceResponse struct {
 	DeclaredMaxUSDAllowancePerIntent string                              `json:"declaredMaxUsdAllowancePerIntent,omitempty"`
 	AvailableUSDAllowance            string                              `json:"availableUsdAllowance,omitempty"`
 	QuotaExpiresAt                   *string                             `json:"quotaExpiresAt,omitempty"`
+	QuotaUsagePolicy                 apiQuotaUsagePolicyResponse         `json:"quotaUsagePolicy"`
 	MinimumIntentCNY                 string                              `json:"minimumIntentCny"`
 	MaximumIntentCNY                 string                              `json:"maximumIntentCny,omitempty"`
 	UsageVisibility                  string                              `json:"usageVisibility"`
@@ -113,6 +138,7 @@ type apiServiceResponse struct {
 	DeclaredTTFTBand                 string                              `json:"declaredTtftBand,omitempty"`
 	DeclaredMaxConcurrency           int                                 `json:"declaredMaxConcurrency,omitempty"`
 	PerformanceConfirmedAt           *string                             `json:"performanceConfirmedAt,omitempty"`
+	PromptAuditEnabled               *bool                               `json:"promptAuditEnabled"`
 	AcceptingOrders                  bool                                `json:"acceptingOrders"`
 	PaymentWindowMinutes             int                                 `json:"paymentWindowMinutes"`
 	AcceptedPaymentMethods           []string                            `json:"acceptedPaymentMethods"`
@@ -137,7 +163,8 @@ type apiServiceResponse struct {
 
 type ownerAPIServiceListItemResponse struct {
 	apiServiceResponse
-	SalesSummary apiServiceSalesSummaryResponse `json:"salesSummary"`
+	SalesSummary  apiServiceSalesSummaryResponse  `json:"salesSummary"`
+	HealthSummary apiServiceHealthSummaryResponse `json:"healthSummary"`
 }
 
 type apiServiceSalesSummaryResponse struct {
@@ -170,6 +197,7 @@ type publicAPIServiceResponse struct {
 	DeclaredMaxUSDAllowancePerIntent string                              `json:"declaredMaxUsdAllowancePerIntent,omitempty"`
 	AvailableUSDAllowance            string                              `json:"availableUsdAllowance,omitempty"`
 	QuotaExpiresAt                   *string                             `json:"quotaExpiresAt,omitempty"`
+	QuotaUsagePolicy                 apiQuotaUsagePolicyResponse         `json:"quotaUsagePolicy"`
 	MinimumIntentCNY                 string                              `json:"minimumIntentCny"`
 	MaximumIntentCNY                 string                              `json:"maximumIntentCny,omitempty"`
 	UsageVisibility                  string                              `json:"usageVisibility"`
@@ -179,9 +207,9 @@ type publicAPIServiceResponse struct {
 	AccountPoolLabel                 *string                             `json:"accountPoolLabel"`
 	MerchantRefundCommitment         bool                                `json:"merchantRefundCommitment"`
 	MerchantRefundPolicyVersion      string                              `json:"merchantRefundPolicyVersion"`
-	DeclaredTTFTBand                 string                              `json:"declaredTtftBand,omitempty"`
 	DeclaredMaxConcurrency           int                                 `json:"declaredMaxConcurrency,omitempty"`
-	PerformanceConfirmedAt           *string                             `json:"performanceConfirmedAt,omitempty"`
+	PromptAuditEnabled               *bool                               `json:"promptAuditEnabled"`
+	HealthSummary                    apiServiceHealthSummaryResponse     `json:"healthSummary"`
 	AcceptingOrders                  bool                                `json:"acceptingOrders"`
 	PaymentWindowMinutes             int                                 `json:"paymentWindowMinutes"`
 	AcceptedPaymentMethods           []string                            `json:"acceptedPaymentMethods"`
@@ -220,17 +248,18 @@ type apiServiceModelResponse struct {
 }
 
 type apiServicePackageResponse struct {
-	ID             string                           `json:"id"`
-	Name           string                           `json:"name"`
-	PriceCNY       string                           `json:"priceCny"`
-	PanelAllowance string                           `json:"panelAllowance"`
-	DurationDays   *int                             `json:"durationDays,omitempty"`
-	StockTotal     int                              `json:"stockTotal"`
-	StockAvailable int                              `json:"stockAvailable"`
-	Description    string                           `json:"description"`
-	Enabled        bool                             `json:"enabled"`
-	SortOrder      int                              `json:"sortOrder"`
-	Models         []apiServicePackageModelResponse `json:"models"`
+	ID               string                           `json:"id"`
+	Name             string                           `json:"name"`
+	PriceCNY         string                           `json:"priceCny"`
+	PanelAllowance   string                           `json:"panelAllowance"`
+	QuotaUsagePolicy apiQuotaUsagePolicyResponse      `json:"quotaUsagePolicy"`
+	DurationDays     *int                             `json:"durationDays,omitempty"`
+	StockTotal       int                              `json:"stockTotal"`
+	StockAvailable   int                              `json:"stockAvailable"`
+	Description      string                           `json:"description"`
+	Enabled          bool                             `json:"enabled"`
+	SortOrder        int                              `json:"sortOrder"`
+	Models           []apiServicePackageModelResponse `json:"models"`
 }
 
 type apiServicePackageModelResponse struct {
@@ -265,32 +294,34 @@ type apiPurchaseIntentActionRequest struct {
 }
 
 type apiPurchaseIntentCoreResponse struct {
-	ID                                       string  `json:"id"`
-	APIServiceID                             string  `json:"apiServiceId"`
-	Status                                   string  `json:"status"`
-	RequestedCNYAmount                       string  `json:"requestedCnyAmount"`
-	RequestedUSDAllowance                    string  `json:"requestedUsdAllowance,omitempty"`
-	SelectedAccessMode                       string  `json:"selectedAccessMode"`
-	SelectedPackageID                        string  `json:"selectedPackageId,omitempty"`
-	SelectedPackageSnapshot                  string  `json:"selectedPackageSnapshot,omitempty"`
-	ServiceVersionSnapshot                   int64   `json:"serviceVersionSnapshot"`
-	ServiceTitleSnapshot                     string  `json:"serviceTitleSnapshot"`
-	DistributionSystemSnapshot               string  `json:"distributionSystemSnapshot"`
-	BillingModeSnapshot                      string  `json:"billingModeSnapshot"`
-	DeclaredCNYPerUSDAllowanceSnapshot       string  `json:"declaredCnyPerUsdAllowanceSnapshot,omitempty"`
-	DeclaredMaxUSDAllowancePerIntentSnapshot string  `json:"declaredMaxUsdAllowancePerIntentSnapshot,omitempty"`
-	MinimumIntentCNYSnapshot                 string  `json:"minimumIntentCnySnapshot"`
-	MaximumIntentCNYSnapshot                 string  `json:"maximumIntentCnySnapshot,omitempty"`
-	PricingSnapshot                          string  `json:"pricingSnapshot"`
-	BuyerNote                                string  `json:"buyerNote,omitempty"`
-	ContactedAt                              *string `json:"contactedAt,omitempty"`
-	BuyerCancelledAt                         *string `json:"buyerCancelledAt,omitempty"`
-	BuyerCancelReason                        string  `json:"buyerCancelReason,omitempty"`
-	OwnerClosedAt                            *string `json:"ownerClosedAt,omitempty"`
-	OwnerCloseReason                         string  `json:"ownerCloseReason,omitempty"`
-	Version                                  int64   `json:"version"`
-	CreatedAt                                string  `json:"createdAt"`
-	UpdatedAt                                string  `json:"updatedAt"`
+	ID                                       string                      `json:"id"`
+	APIServiceID                             string                      `json:"apiServiceId"`
+	Status                                   string                      `json:"status"`
+	RequestedCNYAmount                       string                      `json:"requestedCnyAmount"`
+	RequestedUSDAllowance                    string                      `json:"requestedUsdAllowance,omitempty"`
+	SelectedAccessMode                       string                      `json:"selectedAccessMode"`
+	SelectedPackageID                        string                      `json:"selectedPackageId,omitempty"`
+	SelectedPackageSnapshot                  string                      `json:"selectedPackageSnapshot,omitempty"`
+	ServiceVersionSnapshot                   int64                       `json:"serviceVersionSnapshot"`
+	ServiceTitleSnapshot                     string                      `json:"serviceTitleSnapshot"`
+	DistributionSystemSnapshot               string                      `json:"distributionSystemSnapshot"`
+	BillingModeSnapshot                      string                      `json:"billingModeSnapshot"`
+	DeclaredCNYPerUSDAllowanceSnapshot       string                      `json:"declaredCnyPerUsdAllowanceSnapshot,omitempty"`
+	DeclaredMaxUSDAllowancePerIntentSnapshot string                      `json:"declaredMaxUsdAllowancePerIntentSnapshot,omitempty"`
+	MinimumIntentCNYSnapshot                 string                      `json:"minimumIntentCnySnapshot"`
+	MaximumIntentCNYSnapshot                 string                      `json:"maximumIntentCnySnapshot,omitempty"`
+	PricingSnapshot                          string                      `json:"pricingSnapshot"`
+	QuotaUsagePolicySnapshot                 apiQuotaUsagePolicyResponse `json:"quotaUsagePolicySnapshot"`
+	PromptAuditEnabledSnapshot               *bool                       `json:"promptAuditEnabledSnapshot"`
+	BuyerNote                                string                      `json:"buyerNote,omitempty"`
+	ContactedAt                              *string                     `json:"contactedAt,omitempty"`
+	BuyerCancelledAt                         *string                     `json:"buyerCancelledAt,omitempty"`
+	BuyerCancelReason                        string                      `json:"buyerCancelReason,omitempty"`
+	OwnerClosedAt                            *string                     `json:"ownerClosedAt,omitempty"`
+	OwnerCloseReason                         string                      `json:"ownerCloseReason,omitempty"`
+	Version                                  int64                       `json:"version"`
+	CreatedAt                                string                      `json:"createdAt"`
+	UpdatedAt                                string                      `json:"updatedAt"`
 }
 
 type apiPurchaseIntentListItemResponse struct {
@@ -344,7 +375,8 @@ func (s *Server) handlePublicAPIServices(w http.ResponseWriter, r *http.Request)
 		writeProblem(w, r, appErr)
 		return
 	}
-	writePaginatedJSON(w, r, toPublicAPIServiceResponses(services))
+	summaries := s.loadAPIHealthSummaries(r.Context(), apiServiceIDs(services))
+	writePaginatedJSON(w, r, toPublicAPIServiceResponsesWithHealth(services, summaries))
 }
 
 func (s *Server) handleUpdateAPIServiceOrderSettings(w http.ResponseWriter, r *http.Request) {
@@ -387,7 +419,8 @@ func (s *Server) handlePublicAPIService(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	setETag(w, service.Version)
-	writeJSON(w, http.StatusOK, toPublicAPIServiceResponse(service))
+	summaries := s.loadAPIHealthSummaries(r.Context(), []string{service.ID})
+	writeJSON(w, http.StatusOK, toPublicAPIServiceResponseWithHealth(service, summaries[service.ID]))
 }
 
 func (s *Server) handleCreateAPIPurchaseIntent(w http.ResponseWriter, r *http.Request) {
@@ -530,8 +563,9 @@ func (s *Server) handleOwnerAPIServices(w http.ResponseWriter, r *http.Request) 
 		writeProblem(w, r, appErr)
 		return
 	}
+	summaries := s.loadAPIHealthSummaries(r.Context(), apiServiceIDs(services.Items))
 	writePageJSON(w, domain.Page[ownerAPIServiceListItemResponse]{
-		Items:      toOwnerAPIServiceListItemResponses(services.Items),
+		Items:      toOwnerAPIServiceListItemResponses(services.Items, summaries),
 		NextCursor: services.NextCursor,
 	})
 }
@@ -895,16 +929,17 @@ func toAppCreateAPIServiceInput(req apiServiceRequest) apimarket.CreateServiceIn
 			enabled = *pack.Enabled
 		}
 		packages = append(packages, apimarket.ServicePackageInput{
-			ID:              pack.ID,
-			Name:            pack.Name,
-			PriceCNY:        pack.PriceCNY,
-			PanelAllowance:  pack.PanelAllowance,
-			DurationDays:    pack.DurationDays,
-			StockTotal:      pack.StockTotal,
-			Description:     pack.Description,
-			Enabled:         enabled,
-			SortOrder:       pack.SortOrder,
-			ModelCatalogIDs: append([]string(nil), pack.ModelCatalogIDs...),
+			ID:               pack.ID,
+			Name:             pack.Name,
+			PriceCNY:         pack.PriceCNY,
+			PanelAllowance:   pack.PanelAllowance,
+			QuotaUsagePolicy: toAPIQuotaUsagePolicy(pack.QuotaUsagePolicy),
+			DurationDays:     pack.DurationDays,
+			StockTotal:       pack.StockTotal,
+			Description:      pack.Description,
+			Enabled:          enabled,
+			SortOrder:        pack.SortOrder,
+			ModelCatalogIDs:  append([]string(nil), pack.ModelCatalogIDs...),
 		})
 	}
 	return apimarket.CreateServiceInput{
@@ -920,6 +955,7 @@ func toAppCreateAPIServiceInput(req apiServiceRequest) apimarket.CreateServiceIn
 		DeclaredMaxUSDAllowancePerIntent: req.DeclaredMaxUSDAllowancePerIntent,
 		AvailableUSDAllowance:            req.AvailableUSDAllowance,
 		QuotaExpiresAt:                   req.QuotaExpiresAt,
+		QuotaUsagePolicy:                 toAPIQuotaUsagePolicy(req.QuotaUsagePolicy),
 		MinimumIntentCNY:                 req.MinimumIntentCNY,
 		MaximumIntentCNY:                 req.MaximumIntentCNY,
 		UsageVisibility:                  req.UsageVisibility,
@@ -928,9 +964,8 @@ func toAppCreateAPIServiceInput(req apiServiceRequest) apimarket.CreateServiceIn
 		AccountPoolType:                  req.AccountPoolType,
 		AccountPoolCustomName:            req.AccountPoolCustomName,
 		MerchantRefundCommitment:         req.MerchantRefundCommitment,
-		DeclaredTTFTBand:                 req.DeclaredTTFTBand,
 		DeclaredMaxConcurrency:           req.DeclaredMaxConcurrency,
-		PerformanceConfirmedAt:           req.PerformanceConfirmedAt,
+		PromptAuditEnabled:               req.PromptAuditEnabled,
 		AccessModes:                      accessModes,
 		Models:                           models,
 		Packages:                         packages,
@@ -952,6 +987,7 @@ func toAppUpdateAPIServiceInput(req apiServiceRequest) apimarket.UpdateServiceIn
 		DeclaredMaxUSDAllowancePerIntent: base.DeclaredMaxUSDAllowancePerIntent,
 		AvailableUSDAllowance:            base.AvailableUSDAllowance,
 		QuotaExpiresAt:                   base.QuotaExpiresAt,
+		QuotaUsagePolicy:                 base.QuotaUsagePolicy,
 		MinimumIntentCNY:                 base.MinimumIntentCNY,
 		MaximumIntentCNY:                 base.MaximumIntentCNY,
 		UsageVisibility:                  base.UsageVisibility,
@@ -960,9 +996,8 @@ func toAppUpdateAPIServiceInput(req apiServiceRequest) apimarket.UpdateServiceIn
 		AccountPoolType:                  base.AccountPoolType,
 		AccountPoolCustomName:            base.AccountPoolCustomName,
 		MerchantRefundCommitment:         base.MerchantRefundCommitment,
-		DeclaredTTFTBand:                 base.DeclaredTTFTBand,
 		DeclaredMaxConcurrency:           base.DeclaredMaxConcurrency,
-		PerformanceConfirmedAt:           base.PerformanceConfirmedAt,
+		PromptAuditEnabled:               base.PromptAuditEnabled,
 		AccessModes:                      base.AccessModes,
 		Models:                           base.Models,
 		Packages:                         base.Packages,
@@ -994,12 +1029,13 @@ func toAPIServiceResponses(services []apimarket.Service) []apiServiceResponse {
 	return items
 }
 
-func toOwnerAPIServiceListItemResponses(services []apimarket.Service) []ownerAPIServiceListItemResponse {
+func toOwnerAPIServiceListItemResponses(services []apimarket.Service, summaries map[string]apihealth.Summary) []ownerAPIServiceListItemResponse {
 	items := make([]ownerAPIServiceListItemResponse, 0, len(services))
 	for _, service := range services {
 		items = append(items, ownerAPIServiceListItemResponse{
 			apiServiceResponse: toAPIServiceResponse(service),
 			SalesSummary:       toAPIServiceSalesSummaryResponse(service.SalesSummary),
+			HealthSummary:      toAPIServiceHealthSummaryResponse(summaries[service.ID]),
 		})
 	}
 	return items
@@ -1025,14 +1061,26 @@ func toAPIServiceSalesSummaryResponse(summary apimarket.ServiceSalesSummary) api
 }
 
 func toPublicAPIServiceResponses(services []apimarket.Service) []publicAPIServiceResponse {
+	return toPublicAPIServiceResponsesWithHealth(services, nil)
+}
+
+func toPublicAPIServiceResponsesWithHealth(services []apimarket.Service, summaries map[string]apihealth.Summary) []publicAPIServiceResponse {
 	items := make([]publicAPIServiceResponse, 0, len(services))
 	for _, service := range services {
-		items = append(items, toPublicAPIServiceResponse(service))
+		health, exists := summaries[service.ID]
+		if !exists {
+			health = apihealth.BuildSummary(nil, nil, time.Now().UTC())
+		}
+		items = append(items, toPublicAPIServiceResponseWithHealth(service, health))
 	}
 	return items
 }
 
 func toPublicAPIServiceResponse(service apimarket.Service) publicAPIServiceResponse {
+	return toPublicAPIServiceResponseWithHealth(service, apihealth.BuildSummary(nil, nil, time.Now().UTC()))
+}
+
+func toPublicAPIServiceResponseWithHealth(service apimarket.Service, health apihealth.Summary) publicAPIServiceResponse {
 	return publicAPIServiceResponse{
 		ID:                               service.ID,
 		MerchantIdentityMode:             service.MerchantIdentityMode,
@@ -1048,6 +1096,7 @@ func toPublicAPIServiceResponse(service apimarket.Service) publicAPIServiceRespo
 		DeclaredMaxUSDAllowancePerIntent: service.DeclaredMaxUSDAllowancePerIntent,
 		AvailableUSDAllowance:            service.AvailableUSDAllowance,
 		QuotaExpiresAt:                   formatOptionalTime(service.QuotaExpiresAt),
+		QuotaUsagePolicy:                 toAPIQuotaUsagePolicyResponse(service.QuotaUsagePolicy),
 		MinimumIntentCNY:                 service.MinimumIntentCNY,
 		MaximumIntentCNY:                 service.MaximumIntentCNY,
 		UsageVisibility:                  service.UsageVisibility,
@@ -1057,9 +1106,9 @@ func toPublicAPIServiceResponse(service apimarket.Service) publicAPIServiceRespo
 		AccountPoolLabel:                 optionalString(apimarket.AccountPoolLabel(service)),
 		MerchantRefundCommitment:         service.MerchantRefundCommitment,
 		MerchantRefundPolicyVersion:      apimarket.MerchantRefundPolicyVersion,
-		DeclaredTTFTBand:                 service.DeclaredTTFTBand,
 		DeclaredMaxConcurrency:           service.DeclaredMaxConcurrency,
-		PerformanceConfirmedAt:           formatOptionalTime(service.PerformanceConfirmedAt),
+		PromptAuditEnabled:               service.PromptAuditEnabled,
+		HealthSummary:                    toAPIServiceHealthSummaryResponse(health),
 		AcceptingOrders:                  service.AcceptingOrders,
 		PaymentWindowMinutes:             service.PaymentWindowMinutes,
 		AcceptedPaymentMethods:           enabledPaymentMethods(service.PaymentOptions),
@@ -1077,6 +1126,14 @@ func toPublicAPIServiceResponse(service apimarket.Service) publicAPIServiceRespo
 		SellerReputation:                 toReputationSummary(service.SellerReputation),
 		SourceAuthorVerification:         toSourceAuthorResourceSummaryResponse(service.SourceAuthorVerification),
 	}
+}
+
+func apiServiceIDs(services []apimarket.Service) []string {
+	ids := make([]string, 0, len(services))
+	for _, service := range services {
+		ids = append(ids, service.ID)
+	}
+	return ids
 }
 
 func toAPIServiceResponse(service apimarket.Service) apiServiceResponse {
@@ -1103,6 +1160,7 @@ func toAPIServiceResponse(service apimarket.Service) apiServiceResponse {
 		DeclaredMaxUSDAllowancePerIntent: service.DeclaredMaxUSDAllowancePerIntent,
 		AvailableUSDAllowance:            service.AvailableUSDAllowance,
 		QuotaExpiresAt:                   formatOptionalTime(service.QuotaExpiresAt),
+		QuotaUsagePolicy:                 toAPIQuotaUsagePolicyResponse(service.QuotaUsagePolicy),
 		MinimumIntentCNY:                 service.MinimumIntentCNY,
 		MaximumIntentCNY:                 service.MaximumIntentCNY,
 		UsageVisibility:                  service.UsageVisibility,
@@ -1116,6 +1174,7 @@ func toAPIServiceResponse(service apimarket.Service) apiServiceResponse {
 		DeclaredTTFTBand:                 service.DeclaredTTFTBand,
 		DeclaredMaxConcurrency:           service.DeclaredMaxConcurrency,
 		PerformanceConfirmedAt:           formatOptionalTime(service.PerformanceConfirmedAt),
+		PromptAuditEnabled:               service.PromptAuditEnabled,
 		AcceptingOrders:                  service.AcceptingOrders,
 		PaymentWindowMinutes:             service.PaymentWindowMinutes,
 		AcceptedPaymentMethods:           enabledPaymentMethods(service.PaymentOptions),
@@ -1185,20 +1244,37 @@ func toAPIServicePackageResponses(packages []apimarket.ServicePackage) []apiServ
 			})
 		}
 		items = append(items, apiServicePackageResponse{
-			ID:             pack.ID,
-			Name:           pack.Name,
-			PriceCNY:       pack.PriceCNY,
-			PanelAllowance: pack.PanelAllowance,
-			DurationDays:   pack.DurationDays,
-			StockTotal:     pack.StockTotal,
-			StockAvailable: pack.StockAvailable,
-			Description:    pack.Description,
-			Enabled:        pack.Enabled,
-			SortOrder:      pack.SortOrder,
-			Models:         models,
+			ID:               pack.ID,
+			Name:             pack.Name,
+			PriceCNY:         pack.PriceCNY,
+			PanelAllowance:   pack.PanelAllowance,
+			QuotaUsagePolicy: toAPIQuotaUsagePolicyResponse(pack.QuotaUsagePolicy),
+			DurationDays:     pack.DurationDays,
+			StockTotal:       pack.StockTotal,
+			StockAvailable:   pack.StockAvailable,
+			Description:      pack.Description,
+			Enabled:          pack.Enabled,
+			SortOrder:        pack.SortOrder,
+			Models:           models,
 		})
 	}
 	return items
+}
+
+func toAPIQuotaUsagePolicy(request apiQuotaUsagePolicyRequest) apimarket.QuotaUsagePolicy {
+	return apimarket.QuotaUsagePolicy{
+		FiveHour: apimarket.QuotaUsageLimit{Mode: request.FiveHour.Mode, AmountUSD: request.FiveHour.AmountUSD},
+		Daily:    apimarket.QuotaUsageLimit{Mode: request.Daily.Mode, AmountUSD: request.Daily.AmountUSD},
+	}
+}
+
+func toAPIQuotaUsagePolicyResponse(policy apimarket.QuotaUsagePolicy) apiQuotaUsagePolicyResponse {
+	return apiQuotaUsagePolicyResponse{
+		FiveHour:   apiQuotaUsageLimitResponse{Mode: policy.FiveHour.Mode, AmountUSD: optionalString(policy.FiveHour.AmountUSD)},
+		Daily:      apiQuotaUsageLimitResponse{Mode: policy.Daily.Mode, AmountUSD: optionalString(policy.Daily.AmountUSD)},
+		Scope:      apimarket.QuotaLimitScopePerBuyerCredential,
+		DailyReset: apimarket.QuotaDailyResetUTCPlus8CalendarDay,
+	}
 }
 
 func enabledPaymentMethods(options []apimarket.PaymentOption) []string {
@@ -1290,6 +1366,8 @@ func toAPIPurchaseIntentCoreResponse(intent apiintent.Intent) apiPurchaseIntentC
 		MinimumIntentCNYSnapshot:                 intent.MinimumIntentCNYSnapshot,
 		MaximumIntentCNYSnapshot:                 intent.MaximumIntentCNYSnapshot,
 		PricingSnapshot:                          intent.PricingSnapshot,
+		QuotaUsagePolicySnapshot:                 toAPIQuotaUsagePolicyResponse(intent.QuotaUsagePolicySnapshot),
+		PromptAuditEnabledSnapshot:               intent.PromptAuditEnabledSnapshot,
 		BuyerNote:                                intent.BuyerNote,
 		ContactedAt:                              contactedAt,
 		BuyerCancelledAt:                         buyerCancelledAt,

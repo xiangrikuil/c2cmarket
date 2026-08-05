@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { Activity, CalendarDays, Clock3, Layers3, Network, ShieldCheck, Tag, Users } from 'lucide-vue-next'
+import { CalendarDays, Clock3, Layers3, Network, ShieldCheck, Tag, Users } from 'lucide-vue-next'
+import ApiServiceHealthPanel from '@/components/api-market/ApiServiceHealthPanel.vue'
 import { Card } from '@/components/ui/card'
-import { getApiTTFTBandLabel, type ApiService } from '@/lib/api'
+import type { ApiService } from '@/lib/api'
 import { formatCny, formatCnyPerUsdQuota, formatCredit, formatMultiplier } from './utils'
 
 defineProps<{
@@ -33,16 +34,16 @@ defineProps<{
       </dl>
     </section>
 
-    <dl class="grid grid-cols-2 border-y border-border bg-muted/20 text-sm md:grid-cols-4">
-      <div class="flex min-w-0 items-center gap-3 border-b border-r border-border p-4 md:border-b-0">
-        <span class="api-service-fact-icon"><Activity class="h-4 w-4" /></span>
-        <div class="min-w-0"><dt class="text-xs text-muted-foreground">首字响应</dt><dd class="mt-1 truncate font-semibold">{{ getApiTTFTBandLabel(service.declaredTtftBand) }}</dd></div>
-      </div>
-      <div class="flex min-w-0 items-center gap-3 border-b border-border p-4 md:border-b-0 md:border-r">
+    <div class="px-5 pb-5 md:px-6 md:pb-6">
+      <ApiServiceHealthPanel :summary="service.healthSummary" />
+    </div>
+
+    <dl class="grid border-y border-border bg-muted/20 text-sm sm:grid-cols-3">
+      <div class="flex min-w-0 items-center gap-3 border-b border-border p-4 sm:border-b-0 sm:border-r">
         <span class="api-service-fact-icon"><Users class="h-4 w-4" /></span>
         <div class="min-w-0"><dt class="text-xs text-muted-foreground">商户声明最大并发</dt><dd class="mt-1 truncate font-semibold">{{ service.declaredMaxConcurrency ?? '历史服务未声明' }}</dd></div>
       </div>
-      <div class="flex min-w-0 items-center gap-3 border-r border-border p-4">
+      <div class="flex min-w-0 items-center gap-3 border-b border-border p-4 sm:border-b-0 sm:border-r">
         <span class="api-service-fact-icon"><Clock3 class="h-4 w-4" /></span>
         <div class="min-w-0"><dt class="text-xs text-muted-foreground">付款窗口</dt><dd class="mt-1 truncate font-semibold">{{ service.expectedResponseMinutes }} 分钟</dd></div>
       </div>

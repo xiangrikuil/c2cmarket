@@ -12,7 +12,7 @@ import { Card } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import ApiMerchantAvatar from '@/components/api-market/ApiMerchantAvatar.vue'
-import { getApiMerchantDisplayName, getApiMerchantProfileUrl, getApiTTFTBandLabel, type ApiService } from '@/lib/api'
+import { getApiMerchantDisplayName, getApiMerchantProfileUrl, type ApiService } from '@/lib/api'
 import { apiPaymentMethodLabels } from '@/lib/apiPaymentSettings'
 import PurchaseAmountSelector from './PurchaseAmountSelector.vue'
 import PurchaseConfirmDialog from './PurchaseConfirmDialog.vue'
@@ -99,12 +99,10 @@ async function shareService() {
       <div class="mt-4 border-t border-border pt-4">
         <ReputationInlineSummary :summary="service.sellerReputation" :compact="service.sellerReputation?.state === 'active'" />
       </div>
-      <dl class="mt-4 grid grid-cols-3 gap-3 border-t border-border pt-4 text-xs">
+      <dl class="mt-4 grid grid-cols-2 gap-3 border-t border-border pt-4 text-xs">
         <div><dt class="text-muted-foreground">可验证完成</dt><dd class="mt-1 font-semibold">{{ completedOrderLabel }}</dd></div>
-        <div><dt class="text-muted-foreground">首字响应</dt><dd class="mt-1 font-semibold">{{ getApiTTFTBandLabel(service.declaredTtftBand) }}</dd></div>
-        <div><dt class="text-muted-foreground">最大并发</dt><dd class="mt-1 font-semibold">{{ service.declaredMaxConcurrency ?? '未声明' }}</dd></div>
+        <div><dt class="text-muted-foreground">商户声明最大并发</dt><dd class="mt-1 font-semibold">{{ service.declaredMaxConcurrency ?? '未声明' }}</dd></div>
       </dl>
-      <p class="mt-2 text-[11px] leading-5 text-muted-foreground">性能为商户自报，平台未测速。</p>
     </div>
 
     <div class="space-y-4 border-t border-border p-5">

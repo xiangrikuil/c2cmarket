@@ -27,7 +27,7 @@ defineProps<{
       <ul class="mt-4 grid gap-3 text-sm leading-6 text-muted-foreground">
         <li class="flex gap-2.5"><CheckCircle2 class="mt-1 h-4 w-4 shrink-0 text-primary" /><span>创建订单时会冻结金额、模型、倍率、号池、有效期与商户退款承诺等商品事实。</span></li>
         <li class="flex gap-2.5"><CheckCircle2 class="mt-1 h-4 w-4 shrink-0 text-primary" /><span>付款通过商户在订单中锁定的收款方式完成，平台记录交易状态但不代收或托管资金。</span></li>
-        <li class="flex gap-2.5"><CheckCircle2 class="mt-1 h-4 w-4 shrink-0 text-primary" /><span>首字响应和最大并发为商户声明，平台未进行统一测速。</span></li>
+        <li class="flex gap-2.5"><CheckCircle2 class="mt-1 h-4 w-4 shrink-0 text-primary" /><span>平台健康数据只反映当前探测模型与平台单节点；最大并发仍为商户声明。</span></li>
       </ul>
     </Card>
   </div>

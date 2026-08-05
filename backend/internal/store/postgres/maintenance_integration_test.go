@@ -130,6 +130,7 @@ func TestPostgresDataLifecycleAppliesRetentionAndPreservesAuditHistory(t *testin
 		UnreadNotificationRetention:    365 * 24 * time.Hour,
 		DomainEventRetention:           365 * 24 * time.Hour,
 		APIDeliveryCredentialRetention: 30 * 24 * time.Hour,
+		APIProbeSampleRetention:        7 * 24 * time.Hour,
 	}
 	result, appErr := store.RunDataLifecycle(ctx, now, 2, policy)
 	if appErr != nil {
@@ -200,6 +201,7 @@ func TestPostgresDataLifecycleSkipsWhenAdvisoryLockIsHeld(t *testing.T) {
 		UnreadNotificationRetention:    2 * time.Hour,
 		DomainEventRetention:           time.Hour,
 		APIDeliveryCredentialRetention: time.Hour,
+		APIProbeSampleRetention:        time.Hour,
 	})
 	if appErr != nil {
 		t.Fatalf("run lifecycle while locked: %v", appErr)
@@ -449,6 +451,7 @@ func lifecycleCredentialPolicy() maintenance.Policy {
 		UnreadNotificationRetention:    365 * 24 * time.Hour,
 		DomainEventRetention:           365 * 24 * time.Hour,
 		APIDeliveryCredentialRetention: 30 * 24 * time.Hour,
+		APIProbeSampleRetention:        7 * 24 * time.Hour,
 	}
 }
 

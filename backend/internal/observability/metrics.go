@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"time"
 
+	"c2c-market/backend/internal/apihealthrunner"
 	"c2c-market/backend/internal/database"
 	"c2c-market/backend/internal/domain"
 	"c2c-market/backend/internal/health"
@@ -39,6 +40,10 @@ type MaintenanceSource interface {
 	Stats() maintenance.Stats
 }
 
+type APIHealthRunnerSource interface {
+	Stats() apihealthrunner.Stats
+}
+
 type OutboundPolicySource interface {
 	Stats() outboundhttp.PolicyStats
 }
@@ -55,6 +60,7 @@ type Sources struct {
 	Database         DatabaseSource
 	RateLimiter      RateLimiterSource
 	Maintenance      MaintenanceSource
+	APIHealthRunner  APIHealthRunnerSource
 	OutboundPolicy   OutboundPolicySource
 	RealtimeHub      RealtimeHubSource
 	RealtimeListener RealtimeListenerSource

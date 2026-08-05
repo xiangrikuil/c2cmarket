@@ -2,7 +2,7 @@
 import { Boxes, CircleDollarSign, Clock3, PackageOpen, TimerReset } from 'lucide-vue-next'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
-import type { SellingMode } from './types'
+import { sellingModeLabels, type SellingMode } from './types'
 
 const emit = defineEmits<{
   select: [value: SellingMode]
@@ -18,7 +18,7 @@ const modes: Array<{
 }> = [
   {
     value: 'free',
-    title: '自由额度',
+    title: sellingModeLabels.free,
     description: '买家自定金额，按你的美元额度售价换算。',
     facts: ['持续接单', '买家自定金额', '额度可累计'],
     icon: CircleDollarSign,
@@ -26,7 +26,7 @@ const modes: Array<{
   },
   {
     value: 'package',
-    title: '固定额度包',
+    title: sellingModeLabels.package,
     description: '预设价格、面板额度、有效期和库存，买家按包购买。',
     facts: ['固定规格', '多档套餐', '交付后计时'],
     icon: PackageOpen,
@@ -34,7 +34,7 @@ const modes: Array<{
   },
   {
     value: 'limited',
-    title: '限时额度包',
+    title: sellingModeLabels.limited,
     description: '设置绝对失效时间，并按全天或指定场次放量。',
     facts: ['绝对失效', '定时放量', '最长 10 分钟交付'],
     icon: TimerReset,

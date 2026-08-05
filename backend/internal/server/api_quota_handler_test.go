@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"c2c-market/backend/internal/domain"
+	"c2c-market/backend/internal/module/apihealth"
 	"c2c-market/backend/internal/module/apiquota"
 	app "c2c-market/backend/internal/module/core"
 	"c2c-market/backend/internal/module/idempotency"
@@ -47,7 +48,7 @@ func TestAPIQuotaSystemSaleSlotsResponseAndSlotFilter(t *testing.T) {
 	assertProblemCode(t, invalidResponse, domain.CodeValidationFailed)
 }
 
-func TestAPIQuotaRushOfferMultipartPublicationDoesNotLeakCredential(t *testing.T) {
+func TestAPIQuotaRushOfferManualPublication(t *testing.T) {
 	now := time.Date(2026, 7, 23, 23, 0, 0, 0, time.UTC)
 	base := app.NewServiceWithClock(func() time.Time { return now })
 	service := &quotaRushHTTPTestService{
@@ -75,7 +76,7 @@ func TestAPIQuotaRushOfferMultipartPublicationDoesNotLeakCredential(t *testing.T
 				PriceCNY:           "5.00",
 				CNYPerUSD:          "0.100000",
 				ModelMultiplier:    "1.0000",
-				DeliveryMode:       apiquota.DeliveryModePreimported,
+				DeliveryMode:       apiquota.DeliveryModeManual,
 				DeliveryETAMinutes: 10,
 				SaleMode:           apiquota.SaleModeScheduled,
 				Status:             apiquota.OfferStatusPublished,
@@ -97,16 +98,14 @@ func TestAPIQuotaRushOfferMultipartPublicationDoesNotLeakCredential(t *testing.T
 				}},
 				Version: 1,
 			},
-			CredentialImported: 1,
+			CredentialImported: 0,
 			CredentialSummary: apiquota.CredentialSummary{
-				OfferID:   "30000000-0000-0000-0000-000000000001",
-				Available: 1,
+				OfferID: "30000000-0000-0000-0000-000000000001",
 			},
 		},
 	}
 	server := NewServer(service)
 	session := createSession(t, server, "quota-rush-owner", false)
-	const secret = "sk-rush-secret-never-return"
 	payload := `{
 		"sourceType":"sub2api",
 		"sourceLabel":"",
@@ -115,14 +114,13 @@ func TestAPIQuotaRushOfferMultipartPublicationDoesNotLeakCredential(t *testing.T
 		"priceCny":"5",
 		"modelMultiplier":"1",
 		"copies":1,
-		"deliveryMode":"preimported",
+		"deliveryMode":"manual",
 		"deliveryEtaMinutes":10,
 		"slotKey":"2026-07-24@09:00",
 		"expiresAt":"2026-07-24T11:00:00+08:00",
-		"sourceConfirmedAt":"2026-07-24T07:00:00+08:00",
-		"deliveryKind":"api_key_endpoint"
+		"sourceConfirmedAt":"2026-07-24T07:00:00+08:00"
 	}`
-	request := newQuotaRushMultipartRequest(t, payload, "credentials.csv", "api_base_url,api_key,instructions\nhttps://api.example.test,"+secret+",buyer only\n")
+	request := newQuotaRushMultipartRequest(t, payload, "", "")
 	addAuth(request, session, "quota-rush-http-create")
 	response := httptest.NewRecorder()
 	server.ServeHTTP(response, request)
@@ -130,17 +128,14 @@ func TestAPIQuotaRushOfferMultipartPublicationDoesNotLeakCredential(t *testing.T
 	if response.Code != http.StatusCreated {
 		t.Fatalf("rush publication status %d body %s", response.Code, response.Body.String())
 	}
-	if service.input.APIServiceID != "10000000-0000-0000-0000-000000000001" || len(service.input.CredentialRows) != 1 || service.input.CredentialRows[0].APIKey != secret {
-		t.Fatalf("handler did not pass parsed multipart input: %+v", service.input)
-	}
-	if strings.Contains(response.Body.String(), secret) || strings.Contains(response.Body.String(), "apiBaseUrl") {
-		t.Fatalf("rush publication response leaked credential material: %s", response.Body.String())
+	if service.input.APIServiceID != "10000000-0000-0000-0000-000000000001" || service.input.DeliveryMode != apiquota.DeliveryModeManual || service.input.DeliveryKind != "" || len(service.input.CredentialRows) != 0 {
+		t.Fatalf("handler did not pass manual publication input: %+v", service.input)
 	}
 	var result apiQuotaRushOfferResponse
 	if err := json.NewDecoder(response.Body).Decode(&result); err != nil {
 		t.Fatalf("decode rush publication: %v", err)
 	}
-	if result.CredentialImported != 1 || result.Round.SystemSlotKey != "2026-07-24@09:00" {
+	if result.CredentialImported != 0 || result.Round.SystemSlotKey != "2026-07-24@09:00" {
 		t.Fatalf("unexpected rush publication response: %+v", result)
 	}
 }
@@ -172,9 +167,21 @@ func TestAPIQuotaRushOfferMultipartRejectsMalformedAndMismatchedFiles(t *testing
 			if response.Code != http.StatusUnprocessableEntity {
 				t.Fatalf("boundary status %d body %s", response.Code, response.Body.String())
 			}
-			assertProblemCode(t, response, domain.CodeValidationFailed)
-			if strings.Contains(response.Body.String(), "sk-should-not-leak") {
-				t.Fatalf("boundary response leaked uploaded credential: %s", response.Body.String())
+			responseBody := response.Body.Bytes()
+			var problem problemDetails
+			if err := json.Unmarshal(responseBody, &problem); err != nil {
+				t.Fatalf("decode boundary problem: %v", err)
+			}
+			if problem.Code != domain.CodeValidationFailed || problem.RequestID == "" {
+				t.Fatalf("unexpected boundary problem: %+v", problem)
+			}
+			if test.name == "preimported without CSV" {
+				if len(problem.Errors) != 1 || problem.Errors[0].Field != "deliveryMode" || problem.Errors[0].Code != "new_preimported_not_allowed" {
+					t.Fatalf("unexpected preimported rejection: %+v", problem.Errors)
+				}
+			}
+			if strings.Contains(string(responseBody), "sk-should-not-leak") {
+				t.Fatalf("boundary response leaked uploaded credential: %s", responseBody)
 			}
 		})
 	}
@@ -271,20 +278,14 @@ func newQuotaRushMultipartRequest(t *testing.T, payload, fileName, fileContents 
 	return request
 }
 
-func TestAPIServicePerformanceDeclarationRoundTrips(t *testing.T) {
+func TestAPIServicePromptAuditDeclarationIsPublicWithoutRetiredPerformanceFields(t *testing.T) {
 	now := time.Now().UTC()
 	server := newTestServer(now)
 	owner := createLinuxDoSession(t, server, "quota-performance-owner")
 	ownerContact := createContactMethod(t, server, owner, "telegram", "额度包卖家", "@quota_performance_owner")
-	confirmedAt := now.Add(-time.Minute).Format(time.RFC3339)
-	body := strings.Replace(apiServicePayload(ownerContact.ID, "1.0000"), `"accessModes":`, `
-		"declaredTtftBand":"1_to_3s",
-		"declaredMaxConcurrency":16,
-		"performanceConfirmedAt":"`+confirmedAt+`",
-		"accessModes":`, 1)
-	service := createAPIServiceWithPayload(t, server, owner, body, "quota-performance-create")
-	if service.DeclaredTTFTBand != "1_to_3s" || service.DeclaredMaxConcurrency != 16 || service.PerformanceConfirmedAt == nil || *service.PerformanceConfirmedAt != confirmedAt {
-		t.Fatalf("unexpected owner performance declaration: %+v", service)
+	service := createAPIServiceWithPayload(t, server, owner, apiServicePayload(ownerContact.ID, "1.0000"), "quota-performance-create")
+	if service.DeclaredTTFTBand != "" || service.DeclaredMaxConcurrency != 8 || service.PerformanceConfirmedAt != nil || service.PromptAuditEnabled == nil || *service.PromptAuditEnabled {
+		t.Fatalf("unexpected owner publish declarations: %+v", service)
 	}
 
 	submitted := ownerAPIServiceAction(t, server, owner, service.ID, "submit-review", service.Version, "quota-performance-submit")
@@ -298,14 +299,27 @@ func TestAPIServicePerformanceDeclarationRoundTrips(t *testing.T) {
 		t.Fatalf("public API service status %d body %s", response.Code, response.Body.String())
 	}
 	var public struct {
-		DeclaredTTFTBand       string  `json:"declaredTtftBand"`
-		DeclaredMaxConcurrency int     `json:"declaredMaxConcurrency"`
-		PerformanceConfirmedAt *string `json:"performanceConfirmedAt"`
+		DeclaredMaxConcurrency int                             `json:"declaredMaxConcurrency"`
+		PromptAuditEnabled     *bool                           `json:"promptAuditEnabled"`
+		HealthSummary          apiServiceHealthSummaryResponse `json:"healthSummary"`
 	}
-	if err := json.NewDecoder(response.Body).Decode(&public); err != nil {
+	bodyBytes := response.Body.Bytes()
+	if err := json.Unmarshal(bodyBytes, &public); err != nil {
 		t.Fatalf("decode public API service: %v", err)
 	}
-	if public.DeclaredTTFTBand != "1_to_3s" || public.DeclaredMaxConcurrency != 16 || public.PerformanceConfirmedAt == nil || *public.PerformanceConfirmedAt != confirmedAt {
-		t.Fatalf("unexpected public performance declaration: %+v", public)
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(bodyBytes, &raw); err != nil {
+		t.Fatalf("decode public API service fields: %v", err)
+	}
+	if _, exists := raw["declaredTtftBand"]; exists {
+		t.Fatalf("public API service leaked seller-declared TTFT")
+	}
+	if _, exists := raw["performanceConfirmedAt"]; exists {
+		t.Fatalf("public API service leaked seller performance confirmation time")
+	}
+	if public.DeclaredMaxConcurrency != 8 || public.PromptAuditEnabled == nil || *public.PromptAuditEnabled || public.HealthSummary.State != apihealth.HealthStateNoSample ||
+		public.HealthSummary.AvailabilityReason == nil || *public.HealthSummary.AvailabilityReason != apihealth.AvailabilityUnconfigured ||
+		len(public.HealthSummary.Samples) != apihealth.SummarySlotCount {
+		t.Fatalf("unexpected public platform health projection: %+v", public)
 	}
 }

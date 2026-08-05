@@ -9,7 +9,6 @@ import {
   CalendarClock,
   Clock3,
   Eye,
-  FileKey2,
   PackageCheck,
   Plus,
   Send,
@@ -28,6 +27,7 @@ import PublishWorkflowStepper from '@/components/api-service-publish/PublishWork
 import ResponsivePublishPreview from '@/components/api-service-publish/ResponsivePublishPreview.vue'
 import { completePublishStep, publishStepStatus } from '@/components/api-service-publish/publishWorkflow'
 import ApiQuotaRushPublishPreview from '@/components/api-quota/ApiQuotaRushPublishPreview.vue'
+import ApiQuotaPolicyFields from '@/components/api-market/ApiQuotaPolicyFields.vue'
 import type {
   ApiProviderCategory,
   ApiServicePublishForm,
@@ -53,10 +53,10 @@ import { Card } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import {
   getApiMerchantDisplayName,
   submitApiService,
-  type ApiOrderDeliveryKind,
   type ApiQuotaDeliveryMode,
   type ApiQuotaSourceType,
   type ApiQuotaSystemSaleSlot,
@@ -72,6 +72,7 @@ import {
 } from '@/lib/apiPaymentSettings'
 import { formatDecimal, normalizeDecimal } from '@/lib/decimal'
 import { backendErrorMessage } from '@/lib/backendClient'
+import { apiQuotaUsagePolicyInputError, defaultApiQuotaUsagePolicyInput } from '@/lib/apiQuotaPolicy'
 import {
   useApiPaymentAccountSettingsQuery,
   useApiQuotaSaleSlots,
@@ -99,8 +100,7 @@ const selectedServiceId = ref('')
 const serviceError = ref('')
 const rushError = ref('')
 const slotError = ref('')
-const selectedFile = ref<File | null>(null)
-const selectedFileRows = ref(0)
+const selectedSlotDate = ref('')
 const publishSteps = [
   { title: '选择服务', description: '选择或新建' },
   { title: '设置限时包', description: '额度与交付' },
@@ -180,13 +180,13 @@ const baseForm = reactive<ApiServicePublishForm>({
   },
   availableCreditUsd: 500,
   quotaExpiresAt: defaultQuotaExpiresAtInput(),
+  quotaUsagePolicy: defaultApiQuotaUsagePolicyInput(),
   minimumPurchaseCny: 10,
   maximumPurchaseCny: 300,
   paymentWindowMinutes: defaultPaymentWindowMinutes,
   paymentOptions: createDefaultPaymentOptions(),
-  declaredTtftBand: '1_to_3s',
   declaredMaxConcurrency: 1,
-  performanceConfirmedAt: formatBeijingDateTimeInput(new Date()),
+  promptAuditEnabled: null,
   packages: [],
   validity: { mode: 'days', days: 30, startsAt: 'delivered_at' },
   usageVisibility: 'merchant_confirmed',
@@ -203,6 +203,8 @@ const serviceDefaultMultiplier = computed(() => {
   return Number.isFinite(multiplier) && multiplier > 0 ? multiplier : 1
 })
 const serviceDefaultMultiplierDecimal = computed(() => normalizeDecimal(serviceDefaultMultiplier.value, 4))
+const serviceDeclaredMaxConcurrency = computed(() => selectedService.value?.declaredMaxConcurrency ?? baseForm.declaredMaxConcurrency)
+const servicePromptAuditEnabled = computed(() => selectedService.value?.promptAuditEnabled ?? baseForm.promptAuditEnabled)
 
 const baseErrors = reactive<Record<string, string>>({})
 const catalog = computed(() => modelCatalog.value ?? [])
@@ -252,10 +254,10 @@ const rush = reactive({
   name: '$50 限时开发额度',
   usdAllowance: '50',
   priceCny: '5.00',
+  quotaUsagePolicy: defaultApiQuotaUsagePolicyInput(),
   copies: 10,
   deliveryMode: 'manual' as ApiQuotaDeliveryMode,
   deliveryEtaMinutes: 10,
-  deliveryKind: 'api_key_endpoint' as ApiOrderDeliveryKind,
   slotKey: '',
   expiresAt: '',
   sourceConfirmedAt: new Date().toISOString(),
@@ -265,10 +267,6 @@ if (isCopyDraft) {
   rush.name = copiedQueryValue('name') || rush.name
   rush.usdAllowance = copiedQueryValue('usdAllowance') || rush.usdAllowance
   rush.priceCny = copiedQueryValue('priceCny') || rush.priceCny
-  const copiedDeliveryMode = copiedQueryValue('deliveryMode')
-  if (copiedDeliveryMode === 'manual' || copiedDeliveryMode === 'preimported') {
-    rush.deliveryMode = copiedDeliveryMode
-  }
   const copiedDeliveryEtaMinutes = Number(copiedQueryValue('deliveryEtaMinutes'))
   if (Number.isInteger(copiedDeliveryEtaMinutes) && copiedDeliveryEtaMinutes >= 1 && copiedDeliveryEtaMinutes <= 10) {
     rush.deliveryEtaMinutes = copiedDeliveryEtaMinutes
@@ -293,14 +291,26 @@ const groupedSlots = computed(() => {
   return [...groups.entries()].map(([date, slots]) => ({ date, slots }))
 })
 
+watch([groupedSlots, selectedSlot], ([groups, slot]) => {
+  const slotDate = slot?.key.slice(0, 10)
+  if (slotDate && groups.some(group => group.date === slotDate)) {
+    selectedSlotDate.value = slotDate
+    return
+  }
+  if (!groups.some(group => group.date === selectedSlotDate.value)) {
+    selectedSlotDate.value = groups[0]?.date ?? ''
+  }
+}, { immediate: true })
+
 const expiryISO = computed(() => beijingDateTimeInputToISOString(rush.expiresAt))
+const rushQuotaPolicyError = computed(() => apiQuotaUsagePolicyInputError(rush.quotaUsagePolicy) ?? '')
 const minimumExpiry = computed(() => selectedSlot.value
   ? formatBeijingDateTimeInput(new Date(Date.parse(selectedSlot.value.endsAt) + 60 * 60 * 1000))
   : '')
 const serviceStepSummary = computed(() => selectedService.value
   ? `${selectedService.value.title} · ${selectedService.value.models.slice(0, 3).join(' / ')}`
   : serviceMode.value === 'create' ? '正在新建 API 服务' : '待选择可接单服务')
-const packageStepSummary = computed(() => `${rush.name || '限时额度包'} · $${formatDecimal(rush.usdAllowance || '0', 0, 6)} / ¥${formatDecimal(rush.priceCny || '0', 2, 2)} · ${rush.copies} 份 · ${rush.deliveryMode === 'manual' ? `手工 ≤ ${rush.deliveryEtaMinutes} 分钟` : '预导入凭据'}`)
+const packageStepSummary = computed(() => `${rush.name || '限时额度包'} · $${formatDecimal(rush.usdAllowance || '0', 0, 6)} / ¥${formatDecimal(rush.priceCny || '0', 2, 2)} · ${rush.copies} 份 · 手工 ≤ ${rush.deliveryEtaMinutes} 分钟`)
 const slotStepSummary = computed(() => selectedSlot.value
   ? `${formatSlotDate(selectedSlot.value.startsAt)} ${formatSlotTime(selectedSlot.value.startsAt)} · ${rush.expiresAt ? `失效于 ${rush.expiresAt.replace('T', ' ')}` : '待填写失效时间'}`
   : '待选择开放场次')
@@ -405,6 +415,11 @@ function validateBaseService() {
 		if (customNameLength < 2 || customNameLength > 40) baseErrors.accountPool = '其他号池名称需要填写 2-40 个字符。'
 	}
 	if (!baseForm.warranty.mode) baseErrors.refundCommitment = '请选择是否提供商户全额退款承诺。'
+  if (!Number.isInteger(baseForm.declaredMaxConcurrency) || baseForm.declaredMaxConcurrency < 1 || baseForm.declaredMaxConcurrency > 100000) {
+    baseErrors.performance = '商户声明最大并发必须是 1-100000 的整数。'
+  } else if (baseForm.promptAuditEnabled === null) {
+    baseErrors.performance = '请明确选择是否开启提示词审计。'
+  }
   if (!paymentSettingsSuccess.value) {
     baseErrors.paymentOptions = '收款设置暂时无法加载，请稍后重试。'
   } else if (!accountSettingsComplete.value) {
@@ -427,6 +442,10 @@ function continueFromService() {
     serviceError.value = '请选择一个已上线且可接单的 API 服务。'
     return
   }
+  if (selectedService.value.promptAuditEnabled === null || selectedService.value.promptAuditEnabled === undefined) {
+    serviceError.value = '该服务尚未声明提示词审计状态，请新建服务或先到服务管理中补充声明。'
+    return
+  }
   completedSteps.value = completePublishStep(completedSteps.value, 1)
   step.value = 2
   void focusStep(2)
@@ -436,13 +455,10 @@ function validateRush() {
   if (!rush.name.trim()) return '请填写限时包名称。'
   if (Number(rush.usdAllowance) <= 0) return '单份美元额度必须大于 0。'
   if (Number(rush.priceCny) <= 0) return '人民币总价必须大于 0。'
+  if (rushQuotaPolicyError.value) return rushQuotaPolicyError.value
   if (!Number.isInteger(rush.copies) || rush.copies < 1 || rush.copies > 5000) return '份数必须是 1-5000 的整数。'
   if (rush.deliveryEtaMinutes < 1 || rush.deliveryEtaMinutes > 10) return '交付时限必须在 1-10 分钟之间。'
   if (rush.sourceType === 'other' && !rush.sourceLabel.trim()) return '其他来源需要填写来源说明。'
-  if (rush.deliveryMode === 'preimported') {
-    if (!selectedFile.value) return '请上传凭据 CSV。'
-    if (selectedFileRows.value < rush.copies) return `凭据数量至少需要 ${rush.copies} 条。`
-  }
   return ''
 }
 
@@ -452,25 +468,6 @@ function continueFromPackage() {
     completedSteps.value = completePublishStep(completedSteps.value, 2)
     step.value = 3
     void focusStep(3)
-  }
-}
-
-async function selectCredentialFile(event: Event) {
-  const input = event.target as HTMLInputElement
-  const file = input.files?.[0] ?? null
-  selectedFile.value = file
-  selectedFileRows.value = 0
-  if (!file) return
-  const lines = (await file.text()).split(/\r?\n/).map(row => row.trim()).filter(Boolean)
-  selectedFileRows.value = Math.max(lines.length - 1, 0)
-}
-
-function setDeliveryMode(value: unknown) {
-  rush.deliveryMode = value === 'preimported' ? 'preimported' : 'manual'
-  rush.deliveryEtaMinutes = rush.deliveryMode === 'manual' ? 10 : 2
-  if (rush.deliveryMode === 'manual') {
-    selectedFile.value = null
-    selectedFileRows.value = 0
   }
 }
 
@@ -528,14 +525,13 @@ async function publishRushOffer() {
       usdAllowance: rush.usdAllowance,
       priceCny: rush.priceCny,
       modelMultiplier: serviceDefaultMultiplierDecimal.value,
+      quotaUsagePolicy: rush.quotaUsagePolicy,
       copies: rush.copies,
-      deliveryMode: rush.deliveryMode,
+      deliveryMode: 'manual',
       deliveryEtaMinutes: rush.deliveryEtaMinutes,
       slotKey: rush.slotKey,
       expiresAt: expiryISO.value,
       sourceConfirmedAt: rush.sourceConfirmedAt,
-      deliveryKind: rush.deliveryMode === 'preimported' ? rush.deliveryKind : undefined,
-      file: rush.deliveryMode === 'preimported' ? selectedFile.value ?? undefined : undefined,
     })
     formDirty.value = false
     toast.success('限时额度包已发布。')
@@ -683,7 +679,7 @@ function preview() {
           </div>
         </PublishStepSection>
 
-        <PublishStepSection :step="2" title="设置限时包" description="设置单份额度、总价、库存、来源和交付方式。" :status="publishStepStatus(2, step, completedSteps)" :summary="packageStepSummary" @edit="selectStep">
+        <PublishStepSection :step="2" title="设置限时包" description="设置单份额度、总价、库存、来源和交付时限。" :status="publishStepStatus(2, step, completedSteps)" :summary="packageStepSummary" @edit="selectStep">
           <div class="space-y-4">
             <Card class="p-5">
           <div class="flex items-start gap-2"><PackageCheck class="mt-0.5 h-5 w-5 text-primary" /><div><h2 class="font-semibold">额度与价格</h2><p class="text-sm text-muted-foreground">一个限时包对应一个场次和一种固定规格。</p></div></div>
@@ -692,6 +688,9 @@ function preview() {
             <label class="space-y-1.5 text-sm"><span class="font-medium">单份美元额度</span><Input v-model="rush.usdAllowance" inputmode="decimal" /></label>
             <label class="space-y-1.5 text-sm"><span class="font-medium">单份人民币总价</span><Input v-model="rush.priceCny" inputmode="decimal" /></label>
             <label class="space-y-1.5 text-sm"><span class="font-medium">计划份数</span><Input v-model.number="rush.copies" type="number" min="1" max="5000" /></label>
+          </div>
+          <div class="mt-4 border-t border-border pt-4">
+            <ApiQuotaPolicyFields v-model="rush.quotaUsagePolicy" :error="rushQuotaPolicyError || undefined" />
           </div>
             </Card>
             <Card class="p-5">
@@ -704,21 +703,12 @@ function preview() {
             </label>
             <label v-if="rush.sourceType === 'other'" class="space-y-1.5 text-sm"><span class="font-medium">来源说明</span><Input v-model="rush.sourceLabel" /></label>
             <div class="space-y-1.5 text-sm sm:col-span-2"><span class="font-medium">交付方式</span>
-              <RadioGroup :model-value="rush.deliveryMode" class="grid gap-3 sm:grid-cols-2" @update:model-value="setDeliveryMode">
-                <label class="flex cursor-pointer gap-3 rounded-md border border-border p-3 has-[[data-state=checked]]:border-primary has-[[data-state=checked]]:bg-primary/5"><RadioGroupItem value="manual" class="mt-1" /><span><strong>卖家手工交付</strong><span class="mt-1 block text-xs text-muted-foreground">确认收款后最长 10 分钟交付。</span></span></label>
-                <label class="flex cursor-pointer gap-3 rounded-md border border-border p-3 has-[[data-state=checked]]:border-primary has-[[data-state=checked]]:bg-primary/5"><RadioGroupItem value="preimported" class="mt-1" /><span><strong>预导入凭据</strong><span class="mt-1 block text-xs text-muted-foreground">确认收款后发放预导入凭据。</span></span></label>
-              </RadioGroup>
+              <div class="flex items-start gap-3 rounded-md border border-primary/25 bg-primary/5 p-3">
+                <PackageCheck class="mt-0.5 h-4 w-4 shrink-0 text-primary" />
+                <span><strong>卖家手工交付</strong><span class="mt-1 block text-xs leading-5 text-muted-foreground">确认收款后由卖家发放 API Key 与请求地址。新发布的限时额度包不再使用预导入凭据。</span></span>
+              </div>
             </div>
             <label class="space-y-1.5 text-sm"><span class="font-medium">最长交付分钟数</span><Input v-model.number="rush.deliveryEtaMinutes" type="number" min="1" max="10" /></label>
-          </div>
-          <div v-if="rush.deliveryMode === 'preimported'" class="mt-4 space-y-3 border-t border-border pt-4">
-            <div class="grid gap-3 sm:grid-cols-2">
-              <label class="space-y-1.5 text-sm"><span class="font-medium">凭据类型</span>
-                <Select v-model="rush.deliveryKind"><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="api_key_endpoint">API Key 与请求地址</SelectItem><SelectItem value="login_account">面板登录账号</SelectItem></SelectContent></Select>
-              </label>
-              <label class="space-y-1.5 text-sm"><span class="font-medium">凭据 CSV</span><Input type="file" accept=".csv,text/csv" @change="selectCredentialFile" /></label>
-            </div>
-            <p class="text-xs text-muted-foreground"><FileKey2 class="mr-1 inline h-3.5 w-3.5" />已读取 {{ selectedFileRows }} 条，必须不少于 {{ rush.copies }} 条。页面不会保存或展示原始凭据。</p>
           </div>
             </Card>
             <p v-if="rushError" class="text-sm text-destructive" role="alert">{{ rushError }}</p>
@@ -730,8 +720,27 @@ function preview() {
             <ErrorState v-if="slotQuery.error.value" description="平台场次暂时无法加载。" @retry="slotQuery.refetch()" />
             <SkeletonBlock v-else-if="slotQuery.isLoading.value" :lines="7" />
             <EmptyState v-else-if="openSlots.length === 0" title="未来七天暂无开放场次" description="当前场次都已截止报名，请稍后刷新。" />
-            <RadioGroup v-else v-model="rush.slotKey" class="space-y-4">
-              <div v-for="group in groupedSlots" :key="group.date"><div class="mb-2 text-sm font-semibold">{{ formatSlotDate(group.slots[0].startsAt) }}</div><div class="grid gap-2 sm:grid-cols-3"><label v-for="slot in group.slots" :key="slot.key" class="flex cursor-pointer items-center gap-3 rounded-md border border-border px-3 py-3 has-[[data-state=checked]]:border-primary has-[[data-state=checked]]:bg-primary/5"><RadioGroupItem :value="slot.key" /><span><strong class="font-mono text-base tabular-nums">{{ formatSlotTime(slot.startsAt) }}</strong><span class="block text-xs text-muted-foreground">持续 30 分钟</span></span></label></div></div>
+            <RadioGroup v-else v-model="rush.slotKey">
+              <Tabs v-model="selectedSlotDate" class="min-w-0">
+                <TabsList class="h-auto w-full justify-start overflow-x-auto bg-muted/60 p-1">
+                  <TabsTrigger
+                    v-for="group in groupedSlots"
+                    :key="group.date"
+                    :value="group.date"
+                    class="shrink-0 px-3 py-2 text-xs"
+                  >
+                    {{ formatSlotDate(group.slots[0].startsAt) }}
+                  </TabsTrigger>
+                </TabsList>
+                <TabsContent v-for="group in groupedSlots" :key="group.date" :value="group.date" class="mt-3">
+                  <div class="grid gap-2 sm:grid-cols-3">
+                    <label v-for="slot in group.slots" :key="slot.key" class="flex cursor-pointer items-center gap-3 rounded-md border border-border px-3 py-3 has-[[data-state=checked]]:border-primary has-[[data-state=checked]]:bg-primary/5">
+                      <RadioGroupItem :value="slot.key" />
+                      <span><strong class="font-mono text-base tabular-nums">{{ formatSlotTime(slot.startsAt) }}</strong><span class="block text-xs text-muted-foreground">持续 30 分钟</span></span>
+                    </label>
+                  </div>
+                </TabsContent>
+              </Tabs>
             </RadioGroup>
             <Card class="p-5"><div class="flex items-start gap-2"><Clock3 class="mt-0.5 h-5 w-5 text-primary" /><div><h2 class="font-semibold">额度绝对失效时间</h2><p class="text-sm text-muted-foreground">必须至少晚于所选场次结束 1 小时。</p></div></div><div class="mt-4 grid gap-3 sm:grid-cols-[minmax(0,1fr)_auto]"><Input v-model="rush.expiresAt" type="datetime-local" :min="minimumExpiry" /><div class="flex flex-wrap gap-2"><Button type="button" size="sm" variant="outline" @click="setExpiryHours(24)">24 小时后</Button><Button type="button" size="sm" variant="outline" @click="setExpiryHours(72)">3 天后</Button><Button type="button" size="sm" variant="outline" @click="setExpiryHours(168)">7 天后</Button></div></div></Card>
             <p v-if="slotError" class="text-sm text-destructive" role="alert">{{ slotError }}</p>
@@ -740,7 +749,7 @@ function preview() {
       </section>
 
       <ResponsivePublishPreview v-model:open="previewOpen" title="限时额度包预览" description="根据当前服务、额度包和场次实时生成。">
-        <ApiQuotaRushPublishPreview :step="step" :service-title="selectedService?.title" :slot-label="selectedSlotLabel" :default-multiplier="serviceDefaultMultiplier" :draft="rush" />
+        <ApiQuotaRushPublishPreview :step="step" :service-title="selectedService?.title" :slot-label="selectedSlotLabel" :default-multiplier="serviceDefaultMultiplier" :declared-max-concurrency="serviceDeclaredMaxConcurrency" :prompt-audit-enabled="servicePromptAuditEnabled" :draft="rush" />
       </ResponsivePublishPreview>
     </div>
 

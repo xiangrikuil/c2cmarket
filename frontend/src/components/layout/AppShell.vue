@@ -48,7 +48,7 @@ import { useMyApiServices, useMyCarpools, useMyProfileQuery, useNotifications } 
 import { useNavigationBadges } from '@/queries/useRealtimeQueries'
 import { useRealtimeSync } from '@/composables/useRealtimeSync'
 import { appThemes, applyAppTheme, getInitialAppTheme, isAppTheme } from '@/theme/appThemes'
-import { ACCOUNT_RECOVERY_PATH, isAccountRecoveryAllowedPath, isAccountRecoveryComplete } from '@/lib/accountRecovery'
+import { ACCOUNT_RECOVERY_PATH, isAccountRecoveryComplete, shouldRedirectToAccountRecovery } from '@/lib/accountRecovery'
 import { usePersistentSidebar } from '@/composables/usePersistentSidebar'
 import { logoutBackendSession } from '@/lib/backendClient'
 import { loginRoute } from '@/lib/authNavigation'
@@ -191,7 +191,7 @@ watch(
 watch(
   () => [route.fullPath, accountRecoveryRequired.value] as const,
   () => {
-    if (!accountRecoveryRequired.value || isAccountRecoveryAllowedPath(route.path)) return
+    if (!accountRecoveryRequired.value || !shouldRedirectToAccountRecovery(route.path, route.meta.auth)) return
     router.replace({
       path: ACCOUNT_RECOVERY_PATH,
       query: { returnTo: route.fullPath },
@@ -570,7 +570,10 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onNavigationKeydown)
 
       </header>
 
-      <main class="w-full px-4 py-5 sm:px-5 lg:px-5">
+      <main
+        class="w-full px-4 py-5 sm:px-5 lg:px-5"
+        :class="route.path === '/api-market' ? 'bg-white' : ''"
+      >
         <slot />
       </main>
     </div>

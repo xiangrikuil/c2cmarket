@@ -76,6 +76,7 @@ type Service struct {
 	DeclaredMaxUSDAllowancePerIntent string
 	AvailableUSDAllowance            string
 	QuotaExpiresAt                   *time.Time
+	QuotaUsagePolicy                 QuotaUsagePolicy
 	MinimumIntentCNY                 string
 	MaximumIntentCNY                 string
 	UsageVisibility                  string
@@ -88,6 +89,7 @@ type Service struct {
 	DeclaredTTFTBand                 string
 	DeclaredMaxConcurrency           int
 	PerformanceConfirmedAt           *time.Time
+	PromptAuditEnabled               *bool
 	AcceptingOrders                  bool
 	PaymentWindowMinutes             int
 	ReviewStatus                     string
@@ -138,20 +140,21 @@ type ServiceModel struct {
 }
 
 type ServicePackage struct {
-	ID             string
-	APIServiceID   string
-	Name           string
-	PriceCNY       string
-	PanelAllowance string
-	DurationDays   *int
-	StockTotal     int
-	StockAvailable int
-	Description    string
-	Enabled        bool
-	SortOrder      int
-	Models         []ServicePackageModel
-	CreatedAt      time.Time
-	UpdatedAt      time.Time
+	ID               string
+	APIServiceID     string
+	Name             string
+	PriceCNY         string
+	PanelAllowance   string
+	QuotaUsagePolicy QuotaUsagePolicy
+	DurationDays     *int
+	StockTotal       int
+	StockAvailable   int
+	Description      string
+	Enabled          bool
+	SortOrder        int
+	Models           []ServicePackageModel
+	CreatedAt        time.Time
+	UpdatedAt        time.Time
 }
 
 type ServicePackageModel struct {
@@ -189,6 +192,7 @@ type CreateServiceInput struct {
 	DeclaredMaxUSDAllowancePerIntent string
 	AvailableUSDAllowance            string
 	QuotaExpiresAt                   string
+	QuotaUsagePolicy                 QuotaUsagePolicy
 	MinimumIntentCNY                 string
 	MaximumIntentCNY                 string
 	UsageVisibility                  string
@@ -197,9 +201,8 @@ type CreateServiceInput struct {
 	AccountPoolType                  string
 	AccountPoolCustomName            string
 	MerchantRefundCommitment         *bool
-	DeclaredTTFTBand                 string
 	DeclaredMaxConcurrency           int
-	PerformanceConfirmedAt           string
+	PromptAuditEnabled               *bool
 	AccessModes                      []ServiceAccessModeInput
 	Models                           []ServiceModelInput
 	Packages                         []ServicePackageInput
@@ -220,6 +223,7 @@ type UpdateServiceInput struct {
 	DeclaredMaxUSDAllowancePerIntent string
 	AvailableUSDAllowance            string
 	QuotaExpiresAt                   string
+	QuotaUsagePolicy                 QuotaUsagePolicy
 	MinimumIntentCNY                 string
 	MaximumIntentCNY                 string
 	UsageVisibility                  string
@@ -228,9 +232,8 @@ type UpdateServiceInput struct {
 	AccountPoolType                  string
 	AccountPoolCustomName            string
 	MerchantRefundCommitment         *bool
-	DeclaredTTFTBand                 string
 	DeclaredMaxConcurrency           int
-	PerformanceConfirmedAt           string
+	PromptAuditEnabled               *bool
 	AccessModes                      []ServiceAccessModeInput
 	Models                           []ServiceModelInput
 	Packages                         []ServicePackageInput
@@ -251,16 +254,17 @@ type ServiceModelInput struct {
 }
 
 type ServicePackageInput struct {
-	ID              string
-	Name            string
-	PriceCNY        string
-	PanelAllowance  string
-	DurationDays    *int
-	StockTotal      int
-	Description     string
-	Enabled         bool
-	SortOrder       int
-	ModelCatalogIDs []string
+	ID               string
+	Name             string
+	PriceCNY         string
+	PanelAllowance   string
+	QuotaUsagePolicy QuotaUsagePolicy
+	DurationDays     *int
+	StockTotal       int
+	Description      string
+	Enabled          bool
+	SortOrder        int
+	ModelCatalogIDs  []string
 }
 
 type ServiceOwnerActionInput struct {

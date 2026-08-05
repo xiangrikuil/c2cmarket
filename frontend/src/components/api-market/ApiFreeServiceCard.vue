@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import { formatDecimal } from '@/lib/decimal'
 import { compactApiServiceModels, type ApiFreeServiceCardData } from './apiFreeServiceCard'
+import ApiQuotaPolicyStrip from '@/components/api-market/ApiQuotaPolicyStrip.vue'
 
 const props = withDefaults(defineProps<{
   card: ApiFreeServiceCardData
@@ -19,71 +20,51 @@ const props = withDefaults(defineProps<{
 const emit = defineEmits<{ activate: [] }>()
 
 const compactModels = computed(() => compactApiServiceModels(props.card.models))
-const modelCountLabel = computed(() => props.card.models.length ? `支持 ${props.card.models.length} 个模型` : '模型待选择')
 const modelTitle = computed(() => props.card.models.join(' / ') || '模型待选择')
+const modelSummary = computed(() => {
+  const parts = [...compactModels.value.visibleModels]
+  if (compactModels.value.hiddenModelCount) parts.push(`+${compactModels.value.hiddenModelCount} 个`)
+  return parts.join(' / ') || '模型待选择'
+})
 const hasReputationRisk = computed(() => Boolean(props.card.sellerReputation && props.card.sellerReputation.state !== 'active'))
+const merchantInitial = computed(() => props.card.merchantName.trim().slice(0, 1).toUpperCase() || '店')
 </script>
 
 <template>
   <Card
-    class="api-free-service-card gap-0 overflow-hidden py-0"
+    class="api-free-service-card api-product-card gap-0 py-0"
     :class="{
       'api-free-service-card--risk': hasReputationRisk,
       'api-free-service-card--preview': preview,
-      'api-free-service-card--promoted': promoted,
+      'api-product-card--promoted': promoted,
     }"
     :data-category="card.category"
   >
-    <img
-      v-if="card.iconSrc"
-      :src="card.iconSrc"
-      alt=""
-      aria-hidden="true"
-      class="api-free-service-card__watermark"
-    />
-
-    <div class="relative z-[1] flex h-full flex-col">
-      <div class="p-2.5 pb-1.5">
+    <div class="api-product-card__frame">
+      <div class="api-product-card__header">
         <div class="flex items-start gap-2.5">
-          <span class="api-free-service-card__icon">
+          <span class="api-free-service-card__icon api-product-card__icon">
             <img v-if="card.iconSrc" :src="card.iconSrc" alt="" class="h-6 w-6 object-contain" />
             <Code2 v-else class="h-5 w-5" />
           </span>
           <div class="min-w-0 flex-1">
             <div class="flex flex-wrap items-center gap-1.5">
               <Badge v-if="promoted" variant="status"><Megaphone class="h-3 w-3" />推广</Badge>
-              <Badge variant="outline" class="api-free-service-card__category">{{ card.categoryLabel }}</Badge>
+              <Badge variant="outline" class="api-product-card__category">{{ card.categoryLabel }}</Badge>
+              <Badge variant="verified">可购买</Badge>
             </div>
-            <h2 class="mt-1 truncate text-sm font-semibold" :title="card.title">{{ card.title }}</h2>
+            <h2 class="mt-1.5 truncate text-sm font-semibold text-slate-950" :title="card.title">{{ card.title }}</h2>
             <p class="truncate text-xs text-muted-foreground" :title="`${card.delivery} · ${modelTitle}`">
-              {{ card.delivery }} · {{ modelCountLabel }}
+              {{ card.delivery }} · {{ modelSummary }}
             </p>
-            <div class="mt-1 flex min-w-0 items-center gap-1 overflow-hidden" :title="modelTitle">
-              <Badge
-                v-for="model in compactModels.visibleModels"
-                :key="model"
-                variant="secondary"
-                class="max-w-[8.5rem] shrink truncate px-1.5 py-0 text-[10px] font-medium"
-              >
-                {{ model }}
-              </Badge>
-              <Badge
-                v-if="compactModels.hiddenModelCount"
-                variant="outline"
-                class="shrink-0 px-1.5 py-0 text-[10px] font-semibold"
-              >
-                +{{ compactModels.hiddenModelCount }}
-              </Badge>
-              <span v-if="!card.models.length" class="text-[10px] text-muted-foreground">待选择具体模型</span>
-            </div>
           </div>
         </div>
 
-        <div class="mt-1.5 flex items-end justify-between gap-2">
+        <div class="mt-2 flex items-end justify-between gap-2">
           <div class="min-w-0">
-            <div class="api-free-service-card__price whitespace-nowrap text-2xl font-semibold">
+            <div class="api-free-service-card__price api-product-card__price whitespace-nowrap text-xl font-semibold">
               ¥{{ formatDecimal(card.cnyPerUsdAllowance, 2, 6) }}
-              <span class="text-sm font-medium">/ $1</span>
+              <span class="text-xs font-medium">/ $1</span>
             </div>
             <div class="text-[11px] text-muted-foreground">
               按金额购买 · 最低 ¥{{ card.minimumPurchaseCny }} 起
@@ -95,34 +76,34 @@ const hasReputationRisk = computed(() => Boolean(props.card.sellerReputation && 
         </div>
       </div>
 
-      <dl class="api-free-service-card__metrics grid grid-cols-4 gap-px text-xs">
+      <ApiQuotaPolicyStrip :policy="card.quotaUsagePolicy" :expiry-value="card.expiresAt" />
+      <div v-if="$slots.health"><slot name="health" /></div>
+
+      <dl class="api-product-card__technical-facts">
         <div><dt>统一倍率</dt><dd>{{ card.multiplier }}</dd></div>
-        <div><dt>首字响应</dt><dd>{{ card.ttftLabel }}</dd></div>
         <div><dt title="商户声明最大并发">最大并发</dt><dd>{{ card.declaredMaxConcurrency || '—' }}</dd></div>
-        <div><dt>付款窗口</dt><dd>{{ card.paymentWindowMinutes }} 分钟</dd></div>
+        <div><dt>提示词审计</dt><dd :class="card.promptAuditEnabled === true ? 'text-orange-700' : ''">{{ card.promptAuditEnabled === null ? '未声明' : card.promptAuditEnabled ? '开启' : '关闭' }}</dd></div>
+        <div><dt>交付方式</dt><dd :title="card.delivery">{{ card.delivery }}</dd></div>
       </dl>
 
-      <div class="flex-1 px-3 py-2.5">
-        <dl class="grid grid-cols-2 gap-x-3 gap-y-2 text-xs">
-          <div class="flex min-w-0 items-center gap-1.5">
-            <dt class="shrink-0 text-muted-foreground">卖家</dt>
-            <dd class="truncate font-medium" :title="`${card.merchantName} · ${card.merchantType}`">{{ card.merchantName }} · {{ card.merchantType }}</dd>
-          </div>
-          <div class="flex min-w-0 items-center gap-1.5">
-            <dt class="shrink-0 text-muted-foreground">单笔</dt>
-            <dd class="truncate font-medium" :title="`¥${card.minimumPurchaseCny} - ¥${card.maximumPurchaseCny}`">¥{{ card.minimumPurchaseCny }} - ¥{{ card.maximumPurchaseCny }}</dd>
-          </div>
-          <div class="flex min-w-0 items-center gap-1.5">
-            <dt class="shrink-0 text-muted-foreground">号池</dt>
-            <dd class="truncate font-medium" :title="card.accountPoolLabel">{{ card.accountPoolLabel || '历史服务未补充' }}</dd>
-          </div>
-          <div class="flex min-w-0 items-center gap-1.5">
-            <dt class="shrink-0 text-muted-foreground">有效期</dt>
-            <dd class="truncate font-medium" :title="card.expiresAt">{{ card.expiresAt }}</dd>
-          </div>
+      <div class="api-product-card__details flex-1">
+        <dl class="api-product-card__detail-facts">
+          <div><dt>可售额度</dt><dd :title="`$${card.availableUsdAllowance}`">${{ formatDecimal(card.availableUsdAllowance || 0, 0, 6) }}</dd></div>
+          <div><dt>单笔范围</dt><dd :title="`¥${card.minimumPurchaseCny} - ¥${card.maximumPurchaseCny}`">¥{{ card.minimumPurchaseCny }} - ¥{{ card.maximumPurchaseCny }}</dd></div>
+          <div><dt>预计响应</dt><dd>{{ card.paymentWindowMinutes }} 分钟内</dd></div>
+          <div><dt>号池</dt><dd :title="card.accountPoolLabel">{{ card.accountPoolLabel || '历史服务未补充' }}</dd></div>
         </dl>
+      </div>
 
-        <div class="mt-2 flex min-h-5 min-w-0 flex-wrap items-center gap-1.5 border-t border-border pt-2">
+      <div class="api-product-card__merchant">
+        <div class="flex min-w-0 items-center gap-2">
+          <span class="api-product-card__merchant-avatar" aria-hidden="true">{{ merchantInitial }}</span>
+          <div class="min-w-0 flex-1">
+            <div class="truncate text-xs font-semibold" :title="card.merchantName">{{ card.merchantName }}</div>
+            <div class="mt-0.5 text-[10px] text-muted-foreground">{{ card.merchantType }} · API 商家</div>
+          </div>
+        </div>
+        <div v-if="preview || card.merchantBadges.length || card.merchantRefundCommitment" class="mt-1.5 flex min-h-5 min-w-0 flex-wrap items-center gap-1.5">
           <div v-if="preview" class="flex items-center gap-1.5 text-xs text-muted-foreground">
             <ShieldQuestion class="h-3.5 w-3.5" />
             发布后显示账户公开信誉
@@ -140,12 +121,12 @@ const hasReputationRisk = computed(() => Boolean(props.card.sellerReputation && 
               <Zap v-else />
               {{ badge.label }}
             </Badge>
-            <Badge variant="outline" :class="card.merchantRefundCommitment ? 'border-orange-300 bg-orange-50 text-orange-800' : 'text-muted-foreground'">
-              <ShieldCheck class="h-3 w-3" />{{ card.merchantRefundCommitment ? '商户全额退款承诺' : '无额外退款承诺' }}
+            <Badge v-if="card.merchantRefundCommitment" variant="outline" class="border-orange-300 bg-orange-50 text-orange-800">
+              <ShieldCheck class="h-3 w-3" />商户全额退款承诺
             </Badge>
           </template>
         </div>
-        <div class="api-free-service-card__reputation min-w-0">
+        <div class="mt-1 min-w-0">
           <ReputationInlineSummary
             v-if="!preview"
             class="min-w-0"
@@ -155,15 +136,15 @@ const hasReputationRisk = computed(() => Boolean(props.card.sellerReputation && 
         </div>
       </div>
 
-      <div class="border-t border-border px-3 py-2">
+      <div class="api-product-card__action">
         <div v-if="preview">
-          <Button type="button" class="pointer-events-none h-10 w-full" aria-disabled="true" tabindex="-1">
+          <Button type="button" class="pointer-events-none h-9 w-full" aria-disabled="true" tabindex="-1">
             <ShoppingCart class="h-4 w-4" />选择金额并下单
           </Button>
           <p class="mt-1 text-center text-[10px] text-muted-foreground">预览状态，不可操作</p>
         </div>
         <RouterLink v-else-if="card.actionHref" :to="card.actionHref" class="block" @click.capture="emit('activate')">
-          <Button class="h-10 w-full"><ShoppingCart class="h-4 w-4" />选择金额并下单</Button>
+          <Button class="h-9 w-full"><ShoppingCart class="h-4 w-4" />选择金额并下单</Button>
         </RouterLink>
       </div>
     </div>
@@ -172,138 +153,34 @@ const hasReputationRisk = computed(() => Boolean(props.card.sellerReputation && 
 
 <style scoped>
 .api-free-service-card {
-  --api-free-card-accent: #64748b;
-
-  position: relative;
-  isolation: isolate;
-  width: 100%;
-  height: 410px;
-  border-radius: 0.5rem;
-  border-color: color-mix(in oklab, var(--api-free-card-accent) 28%, var(--border));
-  background-color: color-mix(in oklab, var(--api-free-card-accent) 4%, var(--card));
-  box-shadow: inset 0 3px 0 color-mix(in oklab, var(--api-free-card-accent) 72%, transparent);
-  transition: border-color 150ms ease, box-shadow 150ms ease;
+  --api-product-accent: #64748b;
 }
 
-.api-free-service-card:hover {
-  border-color: color-mix(in oklab, var(--api-free-card-accent) 48%, var(--border));
-  box-shadow:
-    inset 0 3px 0 color-mix(in oklab, var(--api-free-card-accent) 82%, transparent),
-    0 8px 24px rgb(15 23 42 / 0.06);
-}
-
-.api-free-service-card--risk,
-.api-free-service-card--preview {
-  height: auto;
-  min-height: 410px;
-}
-
-.api-free-service-card--preview {
-  min-height: 410px;
-}
-
-.api-free-service-card--promoted {
-  border-color: rgb(249 115 22 / 0.58);
-  box-shadow: inset 0 3px 0 rgb(249 115 22 / 0.9);
-}
-
-.api-free-service-card--promoted:hover {
-  border-color: rgb(234 88 12 / 0.72);
-  box-shadow: inset 0 3px 0 rgb(234 88 12), 0 8px 24px rgb(15 23 42 / 0.06);
-}
-
-.api-free-service-card__reputation {
-  margin-top: 0.375rem;
+.api-free-service-card--risk {
+  border-left-color: var(--destructive);
 }
 
 .api-free-service-card[data-category='gpt'] {
-  --api-free-card-accent: #7c3aed;
+  --api-product-accent: #10a37f;
 }
 
 .api-free-service-card[data-category='claude'] {
-  --api-free-card-accent: #dc5f45;
+  --api-product-accent: #d97757;
 }
 
 .api-free-service-card[data-category='gemini'] {
-  --api-free-card-accent: #2563eb;
+  --api-product-accent: #2563eb;
 }
 
 .api-free-service-card[data-category='cursor'] {
-  --api-free-card-accent: #0891b2;
+  --api-product-accent: #0891b2;
 }
 
 .api-free-service-card[data-category='perplexity'] {
-  --api-free-card-accent: #059669;
+  --api-product-accent: #059669;
 }
 
 .api-free-service-card[data-category='other'] {
-  --api-free-card-accent: #64748b;
-}
-
-.api-free-service-card__icon {
-  display: grid;
-  width: 2.25rem;
-  height: 2.25rem;
-  flex: none;
-  place-items: center;
-  border: 1px solid color-mix(in oklab, var(--api-free-card-accent) 28%, var(--border));
-  border-radius: 0.5rem;
-  color: var(--api-free-card-accent);
-  background-color: color-mix(in oklab, var(--api-free-card-accent) 10%, var(--card));
-}
-
-.api-free-service-card__category {
-  border-color: color-mix(in oklab, var(--api-free-card-accent) 36%, var(--border));
-  color: var(--api-free-card-accent);
-  background-color: color-mix(in oklab, var(--api-free-card-accent) 8%, var(--card));
-}
-
-.api-free-service-card__price {
-  color: var(--api-free-card-accent);
-}
-
-.api-free-service-card__watermark {
-  position: absolute;
-  top: 4.5rem;
-  right: -1rem;
-  z-index: 0;
-  width: 7.5rem;
-  height: 7.5rem;
-  object-fit: contain;
-  opacity: 0.055;
-  pointer-events: none;
-}
-
-.api-free-service-card__metrics {
-  border-block: 1px solid color-mix(in oklab, var(--api-free-card-accent) 16%, var(--border));
-  background-color: color-mix(in oklab, var(--api-free-card-accent) 14%, var(--border));
-}
-
-.api-free-service-card__metrics > div {
-  min-width: 0;
-  padding: 0.375rem 0.5rem;
-  background-color: color-mix(in oklab, var(--api-free-card-accent) 3%, var(--card));
-}
-
-.api-free-service-card__metrics dt,
-.api-free-service-card__metrics dd {
-  white-space: nowrap;
-}
-
-.api-free-service-card__metrics dt {
-  color: var(--muted-foreground);
-}
-
-.api-free-service-card__metrics dd {
-  margin-top: 0.125rem;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  font-weight: 600;
-}
-
-@media (max-width: 639px) {
-  .api-free-service-card {
-    max-width: 375px;
-  }
+  --api-product-accent: #64748b;
 }
 </style>

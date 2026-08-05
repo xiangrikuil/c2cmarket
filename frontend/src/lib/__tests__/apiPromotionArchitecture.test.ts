@@ -41,12 +41,15 @@ describe('API promotion architecture', () => {
   it('keeps a compact promotion label without the long disclaimer', () => {
     const freeCard = readFileSync(new URL('../../components/api-market/ApiFreeServiceCard.vue', import.meta.url), 'utf8')
     const packageCard = readFileSync(new URL('../../components/api-market/ApiPackageCard.vue', import.meta.url), 'utf8')
+    const styles = readFileSync(new URL('../../styles.css', import.meta.url), 'utf8')
 
     expect(freeCard).toContain('<Badge v-if="promoted" variant="status"><Megaphone class="h-3 w-3" />推广</Badge>')
     expect(packageCard).toContain('<Badge v-if="promoted" variant="status"><Megaphone class="h-3 w-3" />推广</Badge>')
     expect(freeCard).not.toContain('商业推广，不代表平台质量认证或信誉背书')
     expect(packageCard).not.toContain('商业推广，不代表平台质量认证或信誉背书')
-    expect(freeCard).toMatch(/\.api-free-service-card \{[\s\S]*height: 410px/)
+    expect(freeCard).toContain('api-product-card')
+    expect(packageCard).toContain('api-product-card')
+    expect(styles).toMatch(/\.api-product-card \{[\s\S]*height: 100%;[\s\S]*min-height: 0;/)
     expect(freeCard).not.toContain('api-free-service-card__promotion-note')
     expect(packageCard).not.toContain('api-package-card__promotion-note')
   })

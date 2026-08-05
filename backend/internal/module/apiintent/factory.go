@@ -15,12 +15,9 @@ import (
 )
 
 func NewIntent(input CreateIntentInput, service apimarket.Service, buyerContact contact.ContactMethod, buyerVersion contact.ContactMethodVersion, ownerContact contact.ContactMethod, ownerVersion contact.ContactMethodVersion, now time.Time) (Intent, *domain.AppError) {
-	pricingSnapshot, err := servicePricingSnapshotJSON(service)
-	if err != nil {
-		return Intent{}, domain.NewError(http.StatusInternalServerError, domain.CodeInternalError, "Internal error", "响应编码失败。")
-	}
 	selectedAccessMode := strings.TrimSpace(input.SelectedAccessMode)
 	selectedPackageSnapshot := ""
+	quotaUsagePolicy := service.QuotaUsagePolicy
 	if strings.TrimSpace(input.SelectedPackageID) != "" {
 		pack, ok := findServicePackage(service, input.SelectedPackageID)
 		if !ok {
@@ -31,6 +28,11 @@ func NewIntent(input CreateIntentInput, service apimarket.Service, buyerContact 
 			return Intent{}, domain.NewError(http.StatusInternalServerError, domain.CodeInternalError, "Internal error", "响应编码失败。")
 		}
 		selectedPackageSnapshot = string(body)
+		quotaUsagePolicy = pack.QuotaUsagePolicy
+	}
+	pricingSnapshot, err := servicePricingSnapshotJSON(service, quotaUsagePolicy)
+	if err != nil {
+		return Intent{}, domain.NewError(http.StatusInternalServerError, domain.CodeInternalError, "Internal error", "响应编码失败。")
 	}
 	return Intent{
 		ID:                                       uuid.NewString(),
@@ -61,6 +63,8 @@ func NewIntent(input CreateIntentInput, service apimarket.Service, buyerContact 
 		MinimumIntentCNYSnapshot:                 decimalStringMust(service.MinimumIntentCNY, 2),
 		MaximumIntentCNYSnapshot:                 decimalStringOptional(service.MaximumIntentCNY, 2),
 		PricingSnapshot:                          pricingSnapshot,
+		QuotaUsagePolicySnapshot:                 quotaUsagePolicy,
+		PromptAuditEnabledSnapshot:               service.PromptAuditEnabled,
 		BuyerNote:                                strings.TrimSpace(input.BuyerNote),
 		CreatedAt:                                now,
 		UpdatedAt:                                now,
@@ -68,7 +72,7 @@ func NewIntent(input CreateIntentInput, service apimarket.Service, buyerContact 
 	}, nil
 }
 
-func servicePricingSnapshotJSON(service apimarket.Service) (string, error) {
+func servicePricingSnapshotJSON(service apimarket.Service, purchasedQuotaUsagePolicy apimarket.QuotaUsagePolicy) (string, error) {
 	models := make([]map[string]any, 0, len(service.Models))
 	for _, model := range service.Models {
 		if !model.Enabled {
@@ -103,9 +107,11 @@ func servicePricingSnapshotJSON(service apimarket.Service) (string, error) {
 		"accountPoolType":             snapshotOptionalString(service.AccountPoolType),
 		"accountPoolLabel":            snapshotOptionalString(apimarket.AccountPoolLabel(service)),
 		"declaredMaxConcurrency":      snapshotOptionalPositiveInt(service.DeclaredMaxConcurrency),
+		"promptAuditEnabled":          service.PromptAuditEnabled,
 		"merchantRefundCommitment":    service.MerchantRefundCommitment,
 		"merchantRefundPolicyVersion": apimarket.MerchantRefundPolicyVersion,
 		"serviceValidityExpiresAt":    service.QuotaExpiresAt,
+		"quotaUsagePolicy":            quotaUsagePolicySnapshot(purchasedQuotaUsagePolicy),
 	})
 	if err != nil {
 		return "", err
@@ -141,15 +147,31 @@ func packageSnapshot(pack apimarket.ServicePackage) map[string]any {
 		})
 	}
 	return map[string]any{
-		"id":             pack.ID,
-		"name":           pack.Name,
-		"priceCny":       pack.PriceCNY,
-		"panelAllowance": pack.PanelAllowance,
-		"durationDays":   pack.DurationDays,
-		"description":    pack.Description,
-		"enabled":        pack.Enabled,
-		"sortOrder":      pack.SortOrder,
-		"models":         models,
+		"id":               pack.ID,
+		"name":             pack.Name,
+		"priceCny":         pack.PriceCNY,
+		"panelAllowance":   pack.PanelAllowance,
+		"durationDays":     pack.DurationDays,
+		"description":      pack.Description,
+		"enabled":          pack.Enabled,
+		"sortOrder":        pack.SortOrder,
+		"models":           models,
+		"quotaUsagePolicy": quotaUsagePolicySnapshot(pack.QuotaUsagePolicy),
+	}
+}
+
+func quotaUsagePolicySnapshot(policy apimarket.QuotaUsagePolicy) map[string]any {
+	return map[string]any{
+		"fiveHour": map[string]any{
+			"mode":      policy.FiveHour.Mode,
+			"amountUsd": snapshotOptionalString(policy.FiveHour.AmountUSD),
+		},
+		"daily": map[string]any{
+			"mode":      policy.Daily.Mode,
+			"amountUsd": snapshotOptionalString(policy.Daily.AmountUSD),
+		},
+		"scope":      apimarket.QuotaLimitScopePerBuyerCredential,
+		"dailyReset": apimarket.QuotaDailyResetUTCPlus8CalendarDay,
 	}
 }
 

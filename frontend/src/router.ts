@@ -46,6 +46,7 @@ const AdminModelAuditPage = () => import('@/pages/AdminModelAuditPage.vue')
 const AdminUsersPage = () => import('@/pages/AdminUsersPage.vue')
 const AdminApiOrderDetailPage = () => import('@/pages/AdminApiOrderDetailPage.vue')
 const AdminApiPromotionsPage = () => import('@/pages/AdminApiPromotionsPage.vue')
+const AdminAPIHealthProbeReviewPage = () => import('@/pages/AdminAPIHealthProbeReviewPage.vue')
 const AdminSectionPage = () => import('@/pages/AdminSectionPage.vue')
 const NotFoundPage = () => import('@/pages/NotFoundPage.vue')
 
@@ -125,6 +126,7 @@ export const routes: RouteRecordRaw[] = [
     { path: '/admin/users', name: 'admin-users', component: AdminUsersPage, meta: adminAuthMeta },
     { path: '/admin/api-orders/:id', name: 'admin-api-order-detail', component: AdminApiOrderDetailPage, meta: adminAuthMeta },
     { path: '/admin/api-promotions', name: 'admin-api-promotions', component: AdminApiPromotionsPage, meta: adminAuthMeta },
+    { path: '/admin/api-health-probes', name: 'admin-api-health-probes', component: AdminAPIHealthProbeReviewPage, meta: adminAuthMeta },
     { path: '/admin/restrictions', redirect: '/admin/users', meta: adminAuthMeta },
     { path: '/admin/api-merchants', redirect: '/admin/api-services', meta: adminAuthMeta },
     { path: '/admin/audit-logs', redirect: '/admin/logs', meta: adminAuthMeta },

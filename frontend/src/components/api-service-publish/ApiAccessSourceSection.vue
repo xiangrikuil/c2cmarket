@@ -3,7 +3,7 @@ import { computed } from 'vue'
 import { Network } from 'lucide-vue-next'
 import { Card } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
-import type { ApiServicePublishForm, DistributionSystem, SellingMode } from './types'
+import { sellingModeLabels, type ApiServicePublishForm, type DistributionSystem, type SellingMode } from './types'
 import { formatMultiplier, publishDistributionOptions } from './utils'
 
 const props = defineProps<{
@@ -30,7 +30,7 @@ const emit = defineEmits<{
         </span>
         <div>
           <h2>接入类型与默认倍率</h2>
-          <p>{{ isLimitedQuotaMode ? '设置基础服务倍率，后续限时额度包自动继承。' : isFixedPackageMode ? '设置固定额度包服务的统一倍率。' : '设置自由额度服务的统一倍率。' }}</p>
+          <p>{{ isLimitedQuotaMode ? `设置基础服务倍率，后续${sellingModeLabels.limited}自动继承。` : isFixedPackageMode ? `设置${sellingModeLabels.package}服务的统一倍率。` : `设置${sellingModeLabels.free}服务的统一倍率。` }}</p>
         </div>
       </div>
     </div>
@@ -59,7 +59,7 @@ const emit = defineEmits<{
 
       <div v-if="form.distributionSystem === 'sub2api'" class="rounded-md border border-primary/20 bg-primary/5 px-3 py-1.5">
         <div class="text-sm font-semibold text-primary">{{ formatMultiplier(1) }}</div>
-        <p class="mt-1 text-xs text-muted-foreground">{{ isLimitedQuotaMode ? 'Sub2API 服务、模型和后续限时额度包统一使用 1.00x。' : isFixedPackageMode ? 'Sub2API 服务、模型和固定额度包统一使用 1.00x。' : 'Sub2API 服务及其模型统一使用 1.00x。' }}</p>
+        <p class="mt-1 text-xs text-muted-foreground">{{ isLimitedQuotaMode ? `Sub2API 服务、模型和后续${sellingModeLabels.limited}统一使用 1.00x。` : isFixedPackageMode ? `Sub2API 服务、模型和${sellingModeLabels.package}统一使用 1.00x。` : 'Sub2API 服务及其模型统一使用 1.00x。' }}</p>
       </div>
 
       <div v-else class="space-y-2">
@@ -80,7 +80,7 @@ const emit = defineEmits<{
           <span class="grid w-12 place-items-center border-l border-border text-sm text-muted-foreground">x</span>
         </div>
         <p v-if="errors.defaultMultiplier" id="api-publish-default-multiplier-error" class="text-xs text-destructive">{{ errors.defaultMultiplier }}</p>
-        <p v-else class="text-xs text-muted-foreground">模型、固定额度包和限时额度包统一继承该倍率，并写入交易快照。</p>
+        <p v-else class="text-xs text-muted-foreground">模型、{{ sellingModeLabels.package }}和{{ sellingModeLabels.limited }}统一继承该倍率，并写入交易快照。</p>
       </div>
 
     </div>

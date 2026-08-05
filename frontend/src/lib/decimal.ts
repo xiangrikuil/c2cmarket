@@ -49,7 +49,7 @@ export function formatDecimal(value: DecimalInput, minimumPlaces = 0, maximumPla
 
 export function isPositiveDecimal(value: DecimalInput) {
   try {
-    return decimal(value).isPositive()
+    return decimal(value).gt(0)
   } catch {
     return false
   }

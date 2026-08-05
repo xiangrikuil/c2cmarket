@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"c2c-market/backend/internal/domain"
+	"c2c-market/backend/internal/module/apimarket"
 	"c2c-market/backend/internal/module/apiorder"
 	"c2c-market/backend/internal/module/auth"
 	"c2c-market/backend/internal/module/idempotency"
@@ -44,6 +45,7 @@ func TestCreateOfferAllowsSub2APIDeclaredMultiplier(t *testing.T) {
 		USDAllowance:       "50",
 		PriceCNY:           "5",
 		ModelMultiplier:    "1.2",
+		QuotaUsagePolicy:   validQuotaUsagePolicy(),
 		DeliveryMode:       DeliveryModeManual,
 		DeliveryETAMinutes: 10,
 		SaleMode:           SaleModeContinuous,
@@ -54,6 +56,34 @@ func TestCreateOfferAllowsSub2APIDeclaredMultiplier(t *testing.T) {
 	}
 	if repo.createdOffer == nil || offer.ModelMultiplier != "1.2000" {
 		t.Fatalf("expected declared multiplier to reach repository, got %+v", offer)
+	}
+}
+
+func TestCreateOfferRejectsNewPreimportedDeliveryWithStableFieldReason(t *testing.T) {
+	now := time.Date(2026, 7, 19, 9, 0, 0, 0, time.UTC)
+	repo := &fakeRepository{batch: validBatch(now)}
+	manager := NewManager(repo, func() time.Time { return now })
+
+	_, appErr := manager.CreateOffer(context.Background(), auth.User{ID: "seller-1"}, CreateOfferInput{
+		BatchID:            repo.batch.ID,
+		Name:               "$50 额度包",
+		USDAllowance:       "50",
+		PriceCNY:           "5",
+		ModelMultiplier:    "1",
+		QuotaUsagePolicy:   validQuotaUsagePolicy(),
+		DeliveryMode:       DeliveryModePreimported,
+		DeliveryETAMinutes: 10,
+		SaleMode:           SaleModeContinuous,
+		ContinuousCopies:   10,
+	})
+	if appErr == nil || appErr.Status != http.StatusUnprocessableEntity || appErr.Code != domain.CodeValidationFailed || len(appErr.FieldErrors) != 1 {
+		t.Fatalf("expected stable preimported rejection, got %+v", appErr)
+	}
+	if fieldErr := appErr.FieldErrors[0]; fieldErr.Field != "deliveryMode" || fieldErr.Code != "new_preimported_not_allowed" {
+		t.Fatalf("unexpected preimported field error: %+v", fieldErr)
+	}
+	if repo.createdOffer != nil {
+		t.Fatal("rejected preimported offer must not reach repository")
 	}
 }
 
@@ -165,7 +195,7 @@ func TestCreateRushOfferPublishesOneManualDeliverySlot(t *testing.T) {
 	}
 }
 
-func TestCreateRushOfferRejectsCredentialShortageBeforeRepository(t *testing.T) {
+func TestCreateRushOfferRejectsNewPreimportedDeliveryWithStableFieldReason(t *testing.T) {
 	now := beijingTime(t, "2026-07-24T07:00:00+08:00")
 	repo := &fakeRepository{}
 	manager := NewManager(repo, func() time.Time { return now })
@@ -186,8 +216,11 @@ func TestCreateRushOfferRejectsCredentialShortageBeforeRepository(t *testing.T) 
 		input,
 		testRushOfferCompletion,
 	)
-	if appErr == nil || appErr.Code != domain.CodeValidationFailed || repo.rushCreateCalls != 0 {
-		t.Fatalf("expected credential shortage before repository, got err=%v calls=%d", appErr, repo.rushCreateCalls)
+	if appErr == nil || appErr.Status != http.StatusUnprocessableEntity || appErr.Code != domain.CodeValidationFailed || len(appErr.FieldErrors) != 1 || repo.rushCreateCalls != 0 {
+		t.Fatalf("expected new preimported delivery rejection before repository, got err=%v calls=%d", appErr, repo.rushCreateCalls)
+	}
+	if fieldErr := appErr.FieldErrors[0]; fieldErr.Field != "deliveryMode" || fieldErr.Code != "new_preimported_not_allowed" {
+		t.Fatalf("unexpected rush preimported field error: %+v", fieldErr)
 	}
 }
 
@@ -468,6 +501,7 @@ func validRushOfferInput(t *testing.T, now time.Time) CreateRushOfferInput {
 		USDAllowance:       "50",
 		PriceCNY:           "5",
 		ModelMultiplier:    "1",
+		QuotaUsagePolicy:   validQuotaUsagePolicy(),
 		Copies:             3,
 		DeliveryMode:       DeliveryModeManual,
 		DeliveryETAMinutes: 10,
@@ -489,6 +523,7 @@ func testRushOfferCompletion(publication RushOfferPublication) (idempotency.Comp
 
 func validBatch(now time.Time) Batch {
 	confirmed := now.Add(-time.Minute)
+	promptAuditEnabled := false
 	return Batch{
 		ID:                        "20000000-0000-0000-0000-000000000001",
 		APIServiceID:              "10000000-0000-0000-0000-000000000001",
@@ -498,6 +533,7 @@ func validBatch(now time.Time) Batch {
 		DeclaredTTFTBand:          "under_1s",
 		DeclaredMaxConcurrency:    10,
 		PerformanceConfirmedAt:    &confirmed,
+		PromptAuditEnabled:        &promptAuditEnabled,
 		Status:                    BatchStatusDraft,
 		SaleCutoffAt:              now.Add(4 * time.Hour),
 		ExpiresAt:                 now.Add(5 * time.Hour),
@@ -517,9 +553,17 @@ func validOffer(batch Batch, saleMode string) Offer {
 		USDAllowance:       "50.000000",
 		PriceCNY:           "5.00",
 		ModelMultiplier:    "1.0000",
+		QuotaUsagePolicy:   validQuotaUsagePolicy(),
 		DeliveryMode:       DeliveryModeManual,
 		DeliveryETAMinutes: 10,
 		SaleMode:           saleMode,
 		Status:             OfferStatusDraft,
+	}
+}
+
+func validQuotaUsagePolicy() apimarket.QuotaUsagePolicy {
+	return apimarket.QuotaUsagePolicy{
+		FiveHour: apimarket.QuotaUsageLimit{Mode: apimarket.QuotaLimitModeLimited, AmountUSD: "5"},
+		Daily:    apimarket.QuotaUsageLimit{Mode: apimarket.QuotaLimitModeUnlimited},
 	}
 }

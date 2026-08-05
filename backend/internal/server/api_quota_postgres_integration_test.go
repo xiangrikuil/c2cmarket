@@ -44,12 +44,7 @@ func TestPostgresAPIQuotaHTTPFlow(t *testing.T) {
 	secondBuyerContact := createContactMethod(t, server, secondBuyer, "telegram", "额度包买家二 "+suffix, "@pg_quota_buyer_two_"+strings.ReplaceAll(suffix, ".", "_"))
 
 	now := time.Now().UTC()
-	serviceBody := strings.Replace(apiServicePayload(ownerContact.ID, "1.0000"), `"accessModes":`, `
-		"declaredTtftBand":"under_1s",
-		"declaredMaxConcurrency":24,
-		"performanceConfirmedAt":"`+now.Add(-time.Minute).Format(time.RFC3339)+`",
-		"accessModes":`, 1)
-	service := createAPIServiceWithPayload(t, server, owner, serviceBody, "pg-quota-service-create-"+suffix)
+	service := createAPIServiceWithPayload(t, server, owner, apiServicePayload(ownerContact.ID, "1.0000"), "pg-quota-service-create-"+suffix)
 	submitted := ownerAPIServiceAction(t, server, owner, service.ID, "submit-review", service.Version, "pg-quota-service-submit-"+suffix)
 	publishedService := ownerAPIServiceAction(t, server, owner, submitted.ID, "publish", submitted.Version, "pg-quota-service-publish-"+suffix)
 	orderableService := updateAPIServiceOrderSettings(t, server, owner, publishedService.ID, publishedService.Version, true, "pg-quota-service-settings-"+suffix)
@@ -60,6 +55,7 @@ func TestPostgresAPIQuotaHTTPFlow(t *testing.T) {
 		"usdAllowance":"50",
 		"priceCny":"5.00",
 		"modelMultiplier":"1.0000",
+		"quotaUsagePolicy":{"fiveHour":{"mode":"limited","amountUsd":"5.000000"},"daily":{"mode":"unlimited"}},
 		"deliveryMode":"manual",
 		"deliveryEtaMinutes":10,
 		"saleMode":"continuous",
@@ -71,23 +67,48 @@ func TestPostgresAPIQuotaHTTPFlow(t *testing.T) {
 		"usdAllowance":"100",
 		"priceCny":"9.00",
 		"modelMultiplier":"1.0000",
+		"quotaUsagePolicy":{"fiveHour":{"mode":"limited","amountUsd":"10.000000"},"daily":{"mode":"limited","amountUsd":"50.000000"}},
 		"deliveryMode":"manual",
 		"deliveryEtaMinutes":10,
 		"saleMode":"scheduled",
 		"continuousCopies":0,
 		"sortOrder":20
 	}`, "pg-quota-scheduled-"+suffix)
-	preimported := createQuotaOfferHTTP(t, server, owner, batch.ID, `{
+	legacyPreimportedBody := `{
 		"name":"$20 预导入额度包",
 		"usdAllowance":"20",
 		"priceCny":"2.00",
 		"modelMultiplier":"1.0000",
+		"quotaUsagePolicy":{"fiveHour":{"mode":"unlimited"},"daily":{"mode":"limited","amountUsd":"20.000000"}},
 		"deliveryMode":"preimported",
 		"deliveryEtaMinutes":5,
 		"saleMode":"continuous",
 		"continuousCopies":1,
 		"sortOrder":30
-	}`, "pg-quota-preimported-"+suffix)
+	}`
+	preimportedRequest := newJSONRequest(http.MethodPost, "/api/v1/owner/api-quota-batches/"+batch.ID+"/offers", legacyPreimportedBody)
+	addAuth(preimportedRequest, owner, "pg-quota-preimported-rejected-"+suffix)
+	preimportedResponse := httptest.NewRecorder()
+	server.ServeHTTP(preimportedResponse, preimportedRequest)
+	if preimportedResponse.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("new preimported quota offer status %d body %s", preimportedResponse.Code, preimportedResponse.Body.String())
+	}
+	var preimportedProblem problemDetails
+	if err := json.NewDecoder(preimportedResponse.Body).Decode(&preimportedProblem); err != nil {
+		t.Fatalf("decode new preimported rejection: %v", err)
+	}
+	if preimportedProblem.Code != domain.CodeValidationFailed || len(preimportedProblem.Errors) != 1 || preimportedProblem.Errors[0].Field != "deliveryMode" || preimportedProblem.Errors[0].Code != "new_preimported_not_allowed" {
+		t.Fatalf("unexpected new preimported rejection: %+v", preimportedProblem)
+	}
+
+	preimported := createQuotaOfferHTTP(t, server, owner, batch.ID, strings.Replace(legacyPreimportedBody, `"deliveryMode":"preimported"`, `"deliveryMode":"manual"`, 1), "pg-quota-legacy-preimported-"+suffix)
+	legacyTag, err := pool.Exec(context.Background(), `UPDATE api_quota_offers SET delivery_mode = 'preimported' WHERE id = $1`, preimported.ID)
+	if err != nil {
+		t.Fatalf("mark historical preimported quota offer: %v", err)
+	}
+	if legacyTag.RowsAffected() != 1 {
+		t.Fatalf("expected one historical preimported quota offer, updated %d", legacyTag.RowsAffected())
+	}
 	round := createQuotaRoundHTTP(t, server, owner, batch.ID, scheduled.ID, now, "pg-quota-round-"+suffix)
 
 	secret := "sk-pg-quota-secret-" + strings.ReplaceAll(suffix, ".", "")
@@ -120,9 +141,22 @@ func TestPostgresAPIQuotaHTTPFlow(t *testing.T) {
 		t.Fatalf("public quota list status %d body %s", publicListResponse.Code, publicListResponse.Body.String())
 	}
 	publicBody := publicListResponse.Body.String()
-	for _, expected := range []string{continuous.ID, scheduled.ID, preimported.ID, `"declaredTtftBand":"under_1s"`, `"performanceDisclaimer":"商户自报，平台未测速"`} {
+	for _, expected := range []string{
+		continuous.ID,
+		scheduled.ID,
+		preimported.ID,
+		`"quotaUsagePolicy":{"fiveHour":{"mode":"limited","amountUsd":"5.000000"},"daily":{"mode":"unlimited","amountUsd":null}`,
+		`"quotaUsagePolicy":{"fiveHour":{"mode":"limited","amountUsd":"10.000000"},"daily":{"mode":"limited","amountUsd":"50.000000"}`,
+		`"quotaUsagePolicy":{"fiveHour":{"mode":"unlimited","amountUsd":null},"daily":{"mode":"limited","amountUsd":"20.000000"}`,
+		`"healthSummary":{"state":"no_sample","availabilityReason":"unconfigured"`,
+	} {
 		if !strings.Contains(publicBody, expected) {
 			t.Fatalf("public quota list missing %q: %s", expected, publicBody)
+		}
+	}
+	for _, retiredField := range []string{`"declaredTtftBand"`, `"performanceConfirmedAt"`, `"performanceDisclaimer"`} {
+		if strings.Contains(publicBody, retiredField) {
+			t.Fatalf("public quota list exposed retired merchant performance field %q: %s", retiredField, publicBody)
 		}
 	}
 	if strings.Contains(publicBody, secret) {

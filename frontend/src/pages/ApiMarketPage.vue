@@ -1,29 +1,27 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch, type ComponentPublicInstance } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { CalendarClock, Clock3, Code2, Gauge, PackageOpen, PackagePlus, Search, ShoppingCart, Zap } from 'lucide-vue-next'
+import { CalendarClock, Code2, PackageOpen, PackagePlus, Search, Zap } from 'lucide-vue-next'
 import { toast } from 'vue-sonner'
 import EmptyState from '@/components/market/EmptyState.vue'
 import ErrorState from '@/components/market/ErrorState.vue'
 import SkeletonBlock from '@/components/market/SkeletonBlock.vue'
 import ApiFreeServiceCard from '@/components/api-market/ApiFreeServiceCard.vue'
 import ApiPackageCard from '@/components/api-market/ApiPackageCard.vue'
+import ApiQuotaOfferCard from '@/components/api-market/ApiQuotaOfferCard.vue'
+import ApiServiceHealthPanel from '@/components/api-market/ApiServiceHealthPanel.vue'
 import type { ApiFreeServiceCardData } from '@/components/api-market/apiFreeServiceCard'
 import { usePromotionImpression, type PromotionAnalyticsProperties } from '@/composables/usePromotionImpression'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { Card } from '@/components/ui/card'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import {
   getApiMerchantDisplayName,
-  getApiQuotaDeliveryModeLabel,
   getApiQuotaDistributionLabel,
-  getApiQuotaSaleModeLabel,
-  getApiTTFTBandLabel,
   type ApiService,
   type ApiQuotaDistributionSystem,
   type ApiQuotaOfferFilters,
@@ -32,8 +30,6 @@ import {
 } from '@/lib/api'
 import {
   apiMarketViewFromQuery,
-  apiQuotaDurationLabel,
-  apiQuotaOfferCountdown,
   apiQuotaOfferErrorMessage,
   withApiMarketViewQuery,
   type ApiMarketView,
@@ -42,7 +38,6 @@ import { rankApiPackages } from '@/lib/apiPackageRecommendation'
 import { getApiMerchantBadges } from '@/lib/apiMerchantBadges'
 import type { ApiServicePromotion } from '@/lib/apiMarketBackend'
 import { placePromotions, promotionsForBillingMode } from '@/lib/apiPromotionPlacement'
-import { formatDecimal } from '@/lib/decimal'
 import {
   getProductCategory,
   getProductCategoryLabel,
@@ -191,19 +186,6 @@ function setView(value: string | number) {
   activeView.value = apiMarketViewFromQuery(value)
 }
 
-function formatAbsoluteTime(value: string) {
-  const parsed = new Date(value)
-  if (Number.isNaN(parsed.getTime())) return '时间待确认'
-  return new Intl.DateTimeFormat('zh-CN', {
-    timeZone: 'Asia/Shanghai',
-    month: 'numeric',
-    day: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-    hour12: false,
-  }).format(parsed)
-}
-
 function formatSlotDate(slot: ApiQuotaSystemSaleSlot) {
   return new Intl.DateTimeFormat('zh-CN', {
     timeZone: 'Asia/Shanghai',
@@ -240,34 +222,6 @@ function countdownPrefix(slot: ApiQuotaSystemSaleSlot) {
   return '距开抢'
 }
 
-function offerCountdown(item: PublicApiQuotaOffer) {
-  return apiQuotaOfferCountdown(item, now.value)
-}
-
-function offerRemainingCopies(item: PublicApiQuotaOffer) {
-  if (item.saleMode === 'scheduled') return `本轮剩余 ${item.availableCopies} 份`
-  return `剩余 ${item.availableCopies} 份`
-}
-
-function pricePerUsd(item: PublicApiQuotaOffer) {
-  return formatDecimal(item.cnyPerUsd, 3, 6)
-}
-
-function multiplierLabel(item: PublicApiQuotaOffer) {
-  return `${Number(item.modelMultiplier).toFixed(2)}x`
-}
-
-function sellerTypeLabel(item: PublicApiQuotaOffer) {
-  return item.sellerIdentityType === 'merchant' ? '商户' : '个人卖家'
-}
-
-function offerStatusVariant(item: PublicApiQuotaOffer) {
-  if (item.isOrderable) return 'verified'
-  if (item.orderabilityCode === 'not_started') return 'trust'
-  if (item.orderabilityCode === 'sold_out') return 'secondary'
-  return 'status'
-}
-
 function quotaOfferIconSrc(item: PublicApiQuotaOffer) {
   return getProductIconSrc(`${item.serviceTitle} ${item.name}`, categoryIconByCode.value)
 }
@@ -296,10 +250,11 @@ function freeServiceCard(service: ApiService): ApiFreeServiceCardData {
     cnyPerUsdAllowance: service.cnyPerUsdAllowance || '1',
     minimumPurchaseCny: service.minimumPurchaseCny,
     availableUsdAllowance: service.availableUsdAllowance ?? String(service.balance),
+    quotaUsagePolicy: service.quotaUsagePolicy,
     maximumPurchaseCny: service.maxBuy,
     multiplier: service.rate,
-    ttftLabel: getApiTTFTBandLabel(service.declaredTtftBand),
     declaredMaxConcurrency: service.declaredMaxConcurrency ?? '—',
+    promptAuditEnabled: service.promptAuditEnabled ?? null,
     paymentWindowMinutes: service.expectedResponseMinutes,
     merchantName: getApiMerchantDisplayName(service),
     merchantType: service.merchantType,
@@ -374,7 +329,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="space-y-5">
+  <div class="api-market-catalog space-y-5">
     <header class="flex flex-col gap-3 border-b border-border pb-4 lg:flex-row lg:items-end lg:justify-between">
       <div>
         <div class="flex items-center gap-2 text-sm font-medium text-primary"><Code2 class="h-4 w-4" />API 额度市场</div>
@@ -428,69 +383,21 @@ onBeforeUnmount(() => {
                 <div class="mt-2 font-medium">本场暂无额度包</div>
                 <p class="mt-1 text-sm text-muted-foreground">可以切换其他场次，或发布自己的限时额度包。</p>
               </div>
-              <div v-else class="mt-4 grid items-stretch gap-3 xl:grid-cols-3">
-                <Card
+              <div v-else class="api-product-card-grid mt-4">
+                <ApiQuotaOfferCard
                   v-for="item in rushRows"
                   :key="item.id"
-                  class="quota-offer-card gap-0 overflow-hidden py-0"
-                  :data-category="quotaOfferCategory(item)"
+                  :offer="item"
+                  :category="quotaOfferCategory(item)"
+                  :category-label="getProductCategoryLabel(quotaOfferCategory(item))"
+                  :icon-src="quotaOfferIconSrc(item)"
+                  :now="now"
+                  variant="rush"
+                  :pending-offer-id="pendingOfferId"
+                  @purchase="purchaseOffer"
                 >
-                  <img
-                    v-if="quotaOfferIconSrc(item)"
-                    :src="quotaOfferIconSrc(item) ?? undefined"
-                    alt=""
-                    aria-hidden="true"
-                    class="quota-offer-watermark"
-                  />
-                  <div class="relative z-[1] flex h-full flex-col">
-                    <div class="p-4 pb-3">
-                      <div class="flex items-start gap-3">
-                        <span class="quota-offer-icon-well">
-                          <img v-if="quotaOfferIconSrc(item)" :src="quotaOfferIconSrc(item) ?? undefined" alt="" class="h-6 w-6 object-contain" />
-                          <PackageOpen v-else class="h-5 w-5" />
-                        </span>
-                        <div class="min-w-0 flex-1">
-                          <div class="flex flex-wrap items-center gap-1.5">
-                            <Badge variant="outline" class="quota-offer-category">{{ getProductCategoryLabel(quotaOfferCategory(item)) }}</Badge>
-                            <Badge :variant="offerStatusVariant(item)">{{ item.isOrderable ? '正在抢购' : item.orderabilityReason }}</Badge>
-                          </div>
-                          <h3 class="mt-2 break-words text-base font-semibold">{{ item.name }}</h3>
-                          <p class="mt-1 break-words text-xs text-muted-foreground">{{ item.serviceTitle }} · {{ getApiQuotaDistributionLabel(item.distributionSystem) }}</p>
-                        </div>
-                      </div>
-                      <div class="mt-4 flex flex-wrap items-end justify-between gap-2">
-                        <div>
-                          <div class="quota-offer-price text-3xl font-semibold">¥{{ formatDecimal(item.priceCny, 2, 2) }}</div>
-                          <div class="mt-1 text-xs text-muted-foreground">一次购买 · ${{ formatDecimal(item.usdAllowance, 0, 6) }} 美元额度</div>
-                        </div>
-                        <div class="text-right text-xs text-muted-foreground">¥{{ pricePerUsd(item) }} / $1</div>
-                      </div>
-                    </div>
-
-                    <dl class="quota-offer-metrics grid grid-cols-2 gap-px text-sm sm:grid-cols-4">
-                      <div><dt>模型倍率</dt><dd>{{ multiplierLabel(item) }}</dd></div>
-                      <div><dt>首字响应</dt><dd>{{ getApiTTFTBandLabel(item.declaredTtftBand) }}</dd></div>
-                      <div><dt>最大并发</dt><dd>{{ item.declaredMaxConcurrency }}</dd></div>
-                      <div><dt>预计交付</dt><dd>≤ {{ item.deliveryEtaMinutes }} 分钟</dd></div>
-                    </dl>
-
-                    <div class="flex-1 p-4">
-                      <dl class="grid grid-cols-2 gap-x-4 gap-y-3 text-sm">
-                        <div class="min-w-0"><dt class="text-xs text-muted-foreground">卖家</dt><dd class="mt-0.5 break-words font-medium">{{ item.sellerDisplayName }}</dd><dd class="text-xs text-muted-foreground">{{ sellerTypeLabel(item) }}</dd></div>
-                        <div class="min-w-0"><dt class="text-xs text-muted-foreground">本轮库存</dt><dd class="mt-0.5 font-medium">{{ item.availableCopies }} 份</dd><dd class="text-xs text-muted-foreground">{{ item.sellerLinuxDoBound ? '已绑定 linux.do' : '未绑定 linux.do' }}</dd></div>
-                        <div class="min-w-0"><dt class="text-xs text-muted-foreground">交付方式</dt><dd class="mt-0.5 break-words font-medium">{{ getApiQuotaDeliveryModeLabel(item.deliveryMode) }}</dd></div>
-                        <div class="min-w-0"><dt class="text-xs text-muted-foreground">额度有效期</dt><dd class="mt-0.5 break-words font-medium">{{ formatAbsoluteTime(item.expiresAt) }}</dd><dd class="text-xs text-muted-foreground">约剩 {{ apiQuotaDurationLabel(item.expiresAt, now) }}</dd></div>
-                      </dl>
-                    </div>
-
-                    <div class="border-t border-border p-4">
-                      <Button class="h-10 w-full" :disabled="!item.isOrderable || Boolean(pendingOfferId)" @click="purchaseOffer(item)">
-                        <ShoppingCart class="h-4 w-4" />{{ pendingOfferId === item.id ? '正在创建订单...' : item.isOrderable ? `立即抢购 ¥${formatDecimal(item.priceCny, 2, 2)}` : item.orderabilityReason }}
-                      </Button>
-                      <p class="mt-2 flex items-start gap-1.5 text-xs leading-5 text-muted-foreground"><Gauge class="mt-0.5 h-3.5 w-3.5 shrink-0" />{{ item.performanceDisclaimer }}</p>
-                    </div>
-                  </div>
-                </Card>
+                  <template #health><ApiServiceHealthPanel :summary="item.healthSummary" /></template>
+                </ApiQuotaOfferCard>
               </div>
             </template>
           </div>
@@ -536,74 +443,20 @@ onBeforeUnmount(() => {
           </template>
         </EmptyState>
 
-        <div v-else class="grid items-stretch gap-4 xl:grid-cols-3">
-          <Card
+        <div v-else class="api-product-card-grid">
+          <ApiQuotaOfferCard
             v-for="item in quotaRows"
             :key="item.id"
-            class="quota-offer-card gap-0 overflow-hidden py-0"
-            :data-category="quotaOfferCategory(item)"
+            :offer="item"
+            :category="quotaOfferCategory(item)"
+            :category-label="getProductCategoryLabel(quotaOfferCategory(item))"
+            :icon-src="quotaOfferIconSrc(item)"
+            :now="now"
+            :pending-offer-id="pendingOfferId"
+            @purchase="purchaseOffer"
           >
-            <img
-              v-if="quotaOfferIconSrc(item)"
-              :src="quotaOfferIconSrc(item) ?? undefined"
-              alt=""
-              aria-hidden="true"
-              class="quota-offer-watermark"
-            />
-            <div class="relative z-[1] flex h-full flex-col">
-              <div class="p-4 pb-3">
-                <div class="flex items-start gap-3">
-                  <span class="quota-offer-icon-well">
-                    <img v-if="quotaOfferIconSrc(item)" :src="quotaOfferIconSrc(item) ?? undefined" alt="" class="h-6 w-6 object-contain" />
-                    <PackageOpen v-else class="h-5 w-5" />
-                  </span>
-                  <div class="min-w-0 flex-1">
-                    <div class="flex flex-wrap items-center gap-1.5">
-                      <Badge variant="outline" class="quota-offer-category">{{ getProductCategoryLabel(quotaOfferCategory(item)) }}</Badge>
-                      <Badge :variant="offerStatusVariant(item)">{{ item.isOrderable ? '可购买' : item.orderabilityReason }}</Badge>
-                      <Badge variant="secondary">{{ getApiQuotaSaleModeLabel(item.saleMode) }}</Badge>
-                    </div>
-                    <h2 class="mt-2 break-words text-base font-semibold">{{ item.name }}</h2>
-                    <p class="mt-1 break-words text-xs text-muted-foreground">{{ item.serviceTitle }} · {{ getApiQuotaDistributionLabel(item.distributionSystem) }}</p>
-                  </div>
-                </div>
-                <div class="mt-4 flex flex-wrap items-end justify-between gap-2">
-                  <div>
-                    <div class="quota-offer-price text-3xl font-semibold">¥{{ formatDecimal(item.priceCny, 2, 2) }}</div>
-                    <div class="mt-1 text-xs text-muted-foreground">一次购买 · ${{ formatDecimal(item.usdAllowance, 0, 6) }} 美元额度</div>
-                  </div>
-                  <div class="text-right text-xs text-muted-foreground">¥{{ pricePerUsd(item) }} / $1</div>
-                </div>
-              </div>
-
-              <dl class="quota-offer-metrics grid grid-cols-2 gap-px text-sm sm:grid-cols-4">
-                <div><dt>模型倍率</dt><dd>{{ multiplierLabel(item) }}</dd></div>
-                <div><dt>首字响应</dt><dd>{{ getApiTTFTBandLabel(item.declaredTtftBand) }}</dd></div>
-                <div><dt>最大并发</dt><dd>{{ item.declaredMaxConcurrency }}</dd></div>
-                <div><dt>预计交付</dt><dd>≤ {{ item.deliveryEtaMinutes }} 分钟</dd></div>
-              </dl>
-
-              <div class="flex-1 p-4">
-                <dl class="grid grid-cols-2 gap-x-4 gap-y-3 text-sm">
-                  <div class="min-w-0"><dt class="text-xs text-muted-foreground">卖家</dt><dd class="mt-0.5 break-words font-medium">{{ item.sellerDisplayName }}</dd><dd class="text-xs text-muted-foreground">{{ sellerTypeLabel(item) }} · {{ item.sellerLinuxDoBound ? '已绑定 linux.do' : '未绑定 linux.do' }}</dd></div>
-                  <div class="min-w-0"><dt class="text-xs text-muted-foreground">剩余库存</dt><dd class="mt-0.5 font-medium">{{ offerRemainingCopies(item) }}</dd></div>
-                  <div class="min-w-0"><dt class="text-xs text-muted-foreground">交付方式</dt><dd class="mt-0.5 break-words font-medium">{{ getApiQuotaDeliveryModeLabel(item.deliveryMode) }}</dd></div>
-                  <div class="min-w-0"><dt class="text-xs text-muted-foreground">销售时间</dt><dd class="mt-0.5 break-words font-medium">{{ formatAbsoluteTime(item.saleCutoffAt) }}</dd><dd class="min-h-5 font-mono text-xs tabular-nums text-muted-foreground">{{ offerCountdown(item) }}</dd></div>
-                </dl>
-                <div class="mt-3 flex gap-2 border-t border-border pt-3 text-xs leading-5 text-muted-foreground">
-                  <Clock3 class="mt-0.5 h-3.5 w-3.5 shrink-0" />
-                  <span>额度有效至 <strong class="font-medium text-foreground">{{ formatAbsoluteTime(item.expiresAt) }}</strong> · 约剩 {{ apiQuotaDurationLabel(item.expiresAt, now) }}</span>
-                </div>
-              </div>
-
-              <div class="border-t border-border p-4">
-                <Button :disabled="!item.isOrderable || Boolean(pendingOfferId)" class="h-10 w-full" @click="purchaseOffer(item)">
-                  <ShoppingCart class="h-4 w-4" />{{ pendingOfferId === item.id ? '正在创建订单...' : item.isOrderable ? `立即抢购 ¥${formatDecimal(item.priceCny, 2, 2)}` : item.orderabilityReason }}
-                </Button>
-                <p class="mt-2 flex items-start gap-1.5 text-xs leading-5 text-muted-foreground"><Gauge class="mt-0.5 h-3.5 w-3.5 shrink-0" />{{ item.performanceDisclaimer }}<span v-if="item.performanceConfirmedAt"> · {{ formatAbsoluteTime(item.performanceConfirmedAt) }} 确认</span></p>
-              </div>
-            </div>
-          </Card>
+            <template #health><ApiServiceHealthPanel :summary="item.healthSummary" /></template>
+          </ApiQuotaOfferCard>
         </div>
       </TabsContent>
 
@@ -611,7 +464,7 @@ onBeforeUnmount(() => {
         <Alert>
           <PackageOpen />
           <AlertTitle>限时流量包</AlertTitle>
-          <AlertDescription>固定价格购买商户声明的面板额度，套餐有效期从商户提交交付时开始计算。先按精确模型和有效期筛选，再比较综合推荐结果；性能由商户自报，平台未测速。</AlertDescription>
+          <AlertDescription>固定价格购买商户声明的面板额度，套餐有效期从商户提交交付时开始计算。先按精确模型和有效期筛选，再比较综合推荐结果；平台测量只代表当前探测模型与平台节点。</AlertDescription>
         </Alert>
         <ErrorState v-if="freeServicesQuery.error.value" description="限时流量包暂时无法加载。" @retry="freeServicesQuery.refetch()" />
         <SkeletonBlock v-else-if="freeServicesQuery.isLoading.value" :lines="6" />
@@ -641,7 +494,7 @@ onBeforeUnmount(() => {
           </div>
           <EmptyState v-if="!packageReady" title="先选择精确模型和有效期" description="选择完成后才会展示可购买套餐和综合推荐顺序。" />
           <EmptyState v-else-if="packageDisplayRows.length === 0" title="暂无匹配的限时流量包" description="当前模型和有效期下没有可购买库存。" />
-          <div v-else class="api-service-card-grid">
+          <div v-else class="api-product-card-grid">
             <div
               v-for="entry in packageDisplayRows"
               :key="entry.row.package.id"
@@ -654,7 +507,9 @@ onBeforeUnmount(() => {
                 :product-icon-src="freeServiceIconSrc(entry.row.service)"
                 :promoted="Boolean(entry.promotion)"
                 @activate="trackPromotedCardClick(entry.promotion, entry.promotionPosition)"
-              />
+              >
+                <template #health><ApiServiceHealthPanel :summary="entry.row.service.healthSummary" /></template>
+              </ApiPackageCard>
             </div>
           </div>
         </template>
@@ -664,12 +519,12 @@ onBeforeUnmount(() => {
         <Alert>
           <Code2 />
           <AlertTitle>自由额度</AlertTitle>
-          <AlertDescription>按人民币金额购买卖家声明的美元额度，Sub2API 维持 1.00x 倍率。订单金额和预计额度在服务详情确认；价格、额度与性能由商户声明，平台未测速。</AlertDescription>
+          <AlertDescription>按人民币金额购买卖家声明的美元额度，Sub2API 维持 1.00x 倍率。订单金额和预计额度在服务详情确认；平台测量只代表当前探测模型与平台节点。</AlertDescription>
         </Alert>
         <ErrorState v-if="freeServicesQuery.error.value" description="自由额度服务暂时无法加载。" @retry="freeServicesQuery.refetch()" />
         <SkeletonBlock v-else-if="freeServicesQuery.isLoading.value" :lines="8" />
         <EmptyState v-else-if="freeServiceDisplayRows.length === 0" title="暂无自由额度服务" description="当前没有可公开下单的 API 服务。" />
-        <div v-else class="quota-free-grid">
+        <div v-else class="api-product-card-grid">
           <div
             v-for="entry in freeServiceDisplayRows"
             :key="entry.service.id"
@@ -680,7 +535,9 @@ onBeforeUnmount(() => {
               :card="freeServiceCard(entry.service)"
               :promoted="Boolean(entry.promotion)"
               @activate="trackPromotedCardClick(entry.promotion, entry.promotionPosition)"
-            />
+            >
+              <template #health><ApiServiceHealthPanel :summary="entry.service.healthSummary" /></template>
+            </ApiFreeServiceCard>
           </div>
         </div>
       </TabsContent>
@@ -689,118 +546,34 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
-.quota-offer-card {
-  --quota-accent: #64748b;
-
-  position: relative;
-  isolation: isolate;
-  border-radius: 0.5rem;
-  border-color: color-mix(in oklab, var(--quota-accent) 28%, var(--border));
-  background-color: color-mix(in oklab, var(--quota-accent) 4%, var(--card));
-  box-shadow: inset 0 3px 0 color-mix(in oklab, var(--quota-accent) 72%, transparent);
-  transition: border-color 150ms ease, box-shadow 150ms ease;
-}
-
-.quota-offer-card:hover {
-  border-color: color-mix(in oklab, var(--quota-accent) 48%, var(--border));
-  box-shadow:
-    inset 0 3px 0 color-mix(in oklab, var(--quota-accent) 82%, transparent),
-    0 8px 24px rgb(15 23 42 / 0.06);
-}
-
-.quota-free-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(min(100%, 330px), 1fr));
-  width: 100%;
-  max-width: 1640px;
-  margin-inline: auto;
-  align-items: start;
-  gap: 1rem;
-}
-
-.quota-offer-card[data-category='gpt'] {
-  --quota-accent: #7c3aed;
-}
-
-.quota-offer-card[data-category='claude'] {
-  --quota-accent: #dc5f45;
-}
-
-.quota-offer-card[data-category='gemini'] {
-  --quota-accent: #2563eb;
-}
-
-.quota-offer-card[data-category='cursor'] {
-  --quota-accent: #0891b2;
-}
-
-.quota-offer-card[data-category='perplexity'] {
-  --quota-accent: #059669;
-}
-
-.quota-offer-card[data-category='other'] {
-  --quota-accent: #64748b;
-}
-
-.quota-offer-icon-well {
-  display: grid;
-  width: 2.5rem;
-  height: 2.5rem;
-  flex: none;
-  place-items: center;
-  border: 1px solid color-mix(in oklab, var(--quota-accent) 28%, var(--border));
-  border-radius: 0.5rem;
-  color: var(--quota-accent);
-  background-color: color-mix(in oklab, var(--quota-accent) 10%, var(--card));
-}
-
-.quota-offer-category {
-  border-color: color-mix(in oklab, var(--quota-accent) 36%, var(--border));
-  color: var(--quota-accent);
-  background-color: color-mix(in oklab, var(--quota-accent) 8%, var(--card));
-}
-
-.quota-offer-price {
-  color: var(--quota-accent);
-}
-
-.quota-offer-watermark {
-  position: absolute;
-  top: 3.75rem;
-  right: -1rem;
-  z-index: 0;
-  width: 7.5rem;
-  height: 7.5rem;
-  object-fit: contain;
-  opacity: 0.055;
-  pointer-events: none;
-}
-
-.quota-offer-metrics {
-  border-block: 1px solid color-mix(in oklab, var(--quota-accent) 16%, var(--border));
-  background-color: color-mix(in oklab, var(--quota-accent) 14%, var(--border));
-}
-
-.quota-offer-metrics > div {
+.api-market-catalog {
   min-width: 0;
-  padding: 0.75rem;
-  background-color: color-mix(in oklab, var(--quota-accent) 3%, var(--card));
+  background: #fff;
 }
 
-.quota-offer-metrics dt {
-  font-size: 0.75rem;
-  color: var(--muted-foreground);
+.api-product-card-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  width: 100%;
+  align-items: stretch;
+  gap: 0.75rem;
 }
 
-.quota-offer-metrics dd {
-  margin-top: 0.25rem;
-  overflow-wrap: anywhere;
-  font-weight: 600;
+@media (min-width: 760px) {
+  .api-product-card-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 
-@media (max-width: 639px) {
-  .quota-free-grid {
-    grid-template-columns: minmax(0, 1fr);
+@media (min-width: 1100px) {
+  .api-product-card-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+@media (min-width: 1360px) {
+  .api-product-card-grid {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
   }
 }
 </style>

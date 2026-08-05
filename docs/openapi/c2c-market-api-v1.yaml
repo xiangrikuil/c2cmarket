@@ -6,10 +6,12 @@ info:
   description: |
     This contract covers the first executable backend slice. C2CMarket is a price intelligence
     and community matching platform. It does not process payments, escrow funds, store third-party
-    general-purpose credentials, store plaintext native passwords, process payments, or proxy upstream
-    API traffic. Sellers may optionally pre-import encrypted buyer-specific API quota credentials; they
-    remain unavailable to buyers until the seller explicitly confirms off-platform payment. Native
-    C2CMarket account passwords are stored only as salted hashes.
+    general-purpose credentials, store plaintext native passwords, process payments, or proxy buyer
+    API traffic. Sellers may optionally provide one encrypted, low-privilege credential used only by
+    the platform health probe, or pre-import encrypted buyer-specific API quota credentials; neither
+    credential class is exposed by public APIs. Buyer-specific credentials remain unavailable until
+    the seller explicitly confirms off-platform payment. Native C2CMarket account passwords are stored
+    only as salted hashes.
 servers:
   - url: http://localhost:8080
 security:
@@ -3042,6 +3044,169 @@ paths:
           $ref: "#/components/responses/Problem"
         "428":
           $ref: "#/components/responses/Problem"
+  /api/v1/owner/api-services/{id}/health-probe:
+    get:
+      operationId: getOwnerAPIHealthProbe
+      tags: [OwnerAPIHealth]
+      summary: Read the current owner's service-level platform probe configuration.
+      parameters:
+        - $ref: "#/components/parameters/ResourceId"
+      responses:
+        "200":
+          description: Private probe configuration. Credentials are never returned.
+          headers:
+            ETag:
+              schema:
+                type: string
+            Cache-Control:
+              schema:
+                type: string
+                const: private, no-store
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OwnerAPIHealthProbeConfig"
+        "404":
+          $ref: "#/components/responses/Problem"
+    put:
+      operationId: putOwnerAPIHealthProbe
+      tags: [OwnerAPIHealth]
+      security:
+        - sessionCookie: []
+          csrfToken: []
+      summary: Create or replace the service-level platform probe configuration.
+      description: Use If-Match `"0"` for the first configuration. The optional credential is write-only; omitting it retains the existing encrypted credential.
+      parameters:
+        - $ref: "#/components/parameters/ResourceId"
+        - $ref: "#/components/parameters/IfMatchAllowZero"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/APIHealthProbeConfigRequest"
+      responses:
+        "200":
+          description: Probe configuration created or updated without echoing credential material.
+          headers:
+            ETag:
+              schema:
+                type: string
+            Cache-Control:
+              schema:
+                type: string
+                const: private, no-store
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OwnerAPIHealthProbeConfig"
+        "404":
+          $ref: "#/components/responses/Problem"
+        "412":
+          $ref: "#/components/responses/Problem"
+        "422":
+          $ref: "#/components/responses/Problem"
+        "428":
+          $ref: "#/components/responses/Problem"
+    delete:
+      operationId: deleteOwnerAPIHealthProbe
+      tags: [OwnerAPIHealth]
+      security:
+        - sessionCookie: []
+          csrfToken: []
+      summary: Delete the probe configuration, encrypted credential, and retained samples.
+      parameters:
+        - $ref: "#/components/parameters/ResourceId"
+        - $ref: "#/components/parameters/IfMatch"
+      responses:
+        "204":
+          description: Probe configuration and its dependent samples deleted.
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+                const: private, no-store
+        "404":
+          $ref: "#/components/responses/Problem"
+        "412":
+          $ref: "#/components/responses/Problem"
+        "428":
+          $ref: "#/components/responses/Problem"
+  /api/v1/owner/api-services/{id}/health-probe/challenges:
+    post:
+      operationId: createOwnerAPIHealthProbeChallenge
+      tags: [OwnerAPIHealth]
+      security:
+        - sessionCookie: []
+          csrfToken: []
+      summary: Create a one-time DNS or HTTP ownership challenge.
+      description: The challenge token is returned only by this response. The platform stores only its hash.
+      parameters:
+        - $ref: "#/components/parameters/ResourceId"
+        - $ref: "#/components/parameters/IfMatch"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/APIHealthProbeChallengeRequest"
+      responses:
+        "201":
+          description: One-time ownership challenge created.
+          headers:
+            ETag:
+              schema:
+                type: string
+            Cache-Control:
+              schema:
+                type: string
+                const: private, no-store
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/APIHealthProbeChallenge"
+        "404":
+          $ref: "#/components/responses/Problem"
+        "412":
+          $ref: "#/components/responses/Problem"
+        "422":
+          $ref: "#/components/responses/Problem"
+        "428":
+          $ref: "#/components/responses/Problem"
+  /api/v1/owner/api-services/{id}/health-probe/verify:
+    post:
+      operationId: verifyOwnerAPIHealthProbe
+      tags: [OwnerAPIHealth]
+      security:
+        - sessionCookie: []
+          csrfToken: []
+      summary: Verify the current one-time ownership challenge.
+      parameters:
+        - $ref: "#/components/parameters/ResourceId"
+        - $ref: "#/components/parameters/IfMatch"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      responses:
+        "200":
+          description: Probe configuration after the verification attempt.
+          headers:
+            ETag:
+              schema:
+                type: string
+            Cache-Control:
+              schema:
+                type: string
+                const: private, no-store
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OwnerAPIHealthProbeConfig"
+        "404":
+          $ref: "#/components/responses/Problem"
+        "412":
+          $ref: "#/components/responses/Problem"
+        "428":
+          $ref: "#/components/responses/Problem"
   /api/v1/owner/api-services/{id}/submit-review:
     post:
       operationId: submitOwnerAPIServiceReview
@@ -3256,7 +3421,7 @@ paths:
         - sessionCookie: []
           csrfToken: []
       summary: Publish one fixed-slot limited quota offer atomically.
-      description: Creates and publishes one batch, one scheduled offer, one system sale round, one allocation, authoritative inventory, and optional encrypted credential inventory in one transaction. Raw credential values are never returned.
+      description: Creates and publishes one manual-delivery batch, scheduled offer, system sale round, allocation, and authoritative inventory in one transaction.
       parameters:
         - $ref: "#/components/parameters/ResourceId"
         - $ref: "#/components/parameters/IdempotencyKey"
@@ -3271,10 +3436,6 @@ paths:
               properties:
                 payload:
                   $ref: "#/components/schemas/APIQuotaRushOfferRequest"
-                file:
-                  type: string
-                  format: binary
-                  description: Required only for preimported delivery. Strict UTF-8 CSV, at most 5 MiB and 5000 rows.
             encoding:
               payload:
                 contentType: application/json
@@ -4299,6 +4460,123 @@ paths:
               schema:
                 $ref: "#/components/schemas/APIServiceList"
         "403":
+          $ref: "#/components/responses/Problem"
+  /api/v1/admin/api-service-health-probes:
+    get:
+      operationId: listAdminAPIHealthProbes
+      tags: [AdminAPIHealth]
+      summary: List service-level probe configurations for exact-origin review.
+      parameters:
+        - name: status
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [pending, verified, approved, rejected]
+            default: pending
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
+      responses:
+        "200":
+          description: Minimal administrator review projection without credential material or fingerprints.
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+                const: private, no-store
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminAPIHealthProbeList"
+        "403":
+          $ref: "#/components/responses/Problem"
+        "422":
+          $ref: "#/components/responses/Problem"
+  /api/v1/admin/api-service-health-probes/{id}/approve:
+    post:
+      operationId: approveAdminAPIHealthProbe
+      tags: [AdminAPIHealth]
+      security:
+        - sessionCookie: []
+          csrfToken: []
+      summary: Approve the configuration's current exact normalized origin.
+      parameters:
+        - $ref: "#/components/parameters/ResourceId"
+        - $ref: "#/components/parameters/IfMatch"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AdminAPIHealthProbeDecisionRequest"
+      responses:
+        "200":
+          description: Exact origin approved for the current probe configuration version.
+          headers:
+            ETag:
+              schema:
+                type: string
+            Cache-Control:
+              schema:
+                type: string
+                const: private, no-store
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminAPIHealthProbe"
+        "403":
+          $ref: "#/components/responses/Problem"
+        "404":
+          $ref: "#/components/responses/Problem"
+        "412":
+          $ref: "#/components/responses/Problem"
+        "422":
+          $ref: "#/components/responses/Problem"
+        "428":
+          $ref: "#/components/responses/Problem"
+  /api/v1/admin/api-service-health-probes/{id}/reject:
+    post:
+      operationId: rejectAdminAPIHealthProbe
+      tags: [AdminAPIHealth]
+      security:
+        - sessionCookie: []
+          csrfToken: []
+      summary: Reject the configuration's current exact normalized origin.
+      parameters:
+        - $ref: "#/components/parameters/ResourceId"
+        - $ref: "#/components/parameters/IfMatch"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AdminAPIHealthProbeDecisionRequest"
+      responses:
+        "200":
+          description: Exact origin rejected with an administrator reason.
+          headers:
+            ETag:
+              schema:
+                type: string
+            Cache-Control:
+              schema:
+                type: string
+                const: private, no-store
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminAPIHealthProbe"
+        "403":
+          $ref: "#/components/responses/Problem"
+        "404":
+          $ref: "#/components/responses/Problem"
+        "412":
+          $ref: "#/components/responses/Problem"
+        "422":
+          $ref: "#/components/responses/Problem"
+        "428":
           $ref: "#/components/responses/Problem"
   /api/v1/admin/api-service-promotions:
     get:
@@ -7173,7 +7451,7 @@ components:
       name: If-Match
       in: header
       required: true
-      description: Use `"0"` when creating the first source-author verification record; otherwise use the current ETag version.
+      description: Use `"0"` when creating a resource whose operation explicitly supports first-write optimistic locking; otherwise use the current ETag version.
       schema:
         type: string
         pattern: '^"?(0|[1-9][0-9]*)"?$'
@@ -9886,6 +10164,300 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/ModelAuditMonitor"
+    ServiceHealthSample:
+      type: object
+      additionalProperties: false
+      required: [slotStartedAt, state]
+      properties:
+        slotStartedAt:
+          type: string
+          format: date-time
+        state:
+          type: string
+          enum: [smooth, fluctuating, abnormal, no_sample]
+    ServiceHealthSummary:
+      type: object
+      additionalProperties: false
+      description: Platform-measured service health for one configured model from the current platform node. It is not an SLA or verification of every model offered by the service.
+      required: [state, availabilityReason, successRatePercent, successfulSamples, totalSamples, medianTtftMs, probeModel, transportSecurity, lastSampledAt, samples]
+      properties:
+        state:
+          type: string
+          enum: [normal, fluctuating, abnormal, no_sample]
+        availabilityReason:
+          type: [string, "null"]
+          enum: [unconfigured, disabled, unauthorized, insufficient, stale, temporarily_unavailable, null]
+        successRatePercent:
+          anyOf:
+            - $ref: "#/components/schemas/DecimalString"
+            - type: "null"
+        successfulSamples:
+          type: integer
+          minimum: 0
+        totalSamples:
+          type: integer
+          minimum: 0
+        medianTtftMs:
+          type: [integer, "null"]
+          minimum: 0
+        probeModel:
+          type: [string, "null"]
+        transportSecurity:
+          type: [string, "null"]
+          enum: [secure_https, insecure_http, null]
+          description: Public-safe transport disclosure derived from the configured target scheme. It does not expose the target URL.
+        lastSampledAt:
+          type: [string, "null"]
+          format: date-time
+        samples:
+          type: array
+          minItems: 12
+          maxItems: 12
+          items:
+            $ref: "#/components/schemas/ServiceHealthSample"
+    APIHealthProbeProtocol:
+      type: string
+      enum: [openai_chat_completions_v1]
+    APIHealthProbeAuthorizationStatus:
+      type: string
+      enum: [pending, verified, approved, rejected]
+    APIHealthProbeAuthorizationMethod:
+      type: [string, "null"]
+      enum: [dns_txt, http_challenge, admin_approval, null]
+    APIHealthProbeConfigRequest:
+      type: object
+      additionalProperties: false
+      required: [baseUrl, model, enabled]
+      properties:
+        baseUrl:
+          type: string
+          format: uri
+          description: Public HTTP or HTTPS OpenAI-compatible base URL. HTTPS is recommended. A root-only URL is normalized with /v1; an existing non-root path is preserved. Query strings, fragments, userinfo, private addresses, metadata addresses, unsafe DNS results, redirects, and DNS rebinding are rejected.
+        model:
+          type: string
+          minLength: 1
+        credential:
+          type: string
+          minLength: 1
+          writeOnly: true
+          description: Dedicated low-quota, low-privilege API key restricted to the probe model. Omit on update to retain the currently encrypted credential.
+        enabled:
+          type: boolean
+        acknowledgeInsecureHttp:
+          type: boolean
+          default: false
+          description: Must be true on every request that saves an HTTP base URL; omission is treated as false. Confirms that the seller accepts unencrypted transport risk for a dedicated low-quota, low-privilege key restricted to the probe model. Ignored for HTTPS URLs.
+    OwnerAPIHealthProbeConfig:
+      type: object
+      additionalProperties: false
+      required: [id, apiServiceId, protocol, baseUrl, normalizedOrigin, model, credentialConfigured, enabled, authorizationStatus, authorizationMethod, verifiedOrigin, verifiedAt, approvedAt, rejectionReason, challengeExpiresAt, measurementVersion, lastConfigErrorCode, version, createdAt, updatedAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        apiServiceId:
+          type: string
+          format: uuid
+        protocol:
+          $ref: "#/components/schemas/APIHealthProbeProtocol"
+        baseUrl:
+          type: string
+          format: uri
+          description: Normalized OpenAI-compatible base URL. Root-only input is returned with /v1 appended.
+        normalizedOrigin:
+          type: string
+          format: uri
+        model:
+          type: string
+        credentialConfigured:
+          type: boolean
+          description: Reports only whether an encrypted credential exists. Credential plaintext, ciphertext, nonce, and fingerprint are never returned.
+        enabled:
+          type: boolean
+        authorizationStatus:
+          $ref: "#/components/schemas/APIHealthProbeAuthorizationStatus"
+        authorizationMethod:
+          $ref: "#/components/schemas/APIHealthProbeAuthorizationMethod"
+        verifiedOrigin:
+          type: [string, "null"]
+          format: uri
+        verifiedAt:
+          type: [string, "null"]
+          format: date-time
+        approvedAt:
+          type: [string, "null"]
+          format: date-time
+        rejectionReason:
+          type: [string, "null"]
+        challengeExpiresAt:
+          type: [string, "null"]
+          format: date-time
+        measurementVersion:
+          type: integer
+          minimum: 1
+        lastConfigErrorCode:
+          type: [string, "null"]
+          description: Low-cardinality sanitized operational code; never contains an upstream response or full URL.
+        version:
+          type: integer
+          minimum: 1
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+    APIHealthProbeChallengeRequest:
+      type: object
+      additionalProperties: false
+      required: [method]
+      properties:
+        method:
+          type: string
+          enum: [dns_txt, http_challenge]
+    APIHealthProbeChallenge:
+      type: object
+      additionalProperties: false
+      required: [token, method, dnsRecordName, httpUrl, expiresAt, configVersion]
+      properties:
+        token:
+          type: string
+          description: One-time secret returned only when the challenge is created.
+        method:
+          type: string
+          enum: [dns_txt, http_challenge]
+        dnsRecordName:
+          type: [string, "null"]
+        httpUrl:
+          type: [string, "null"]
+          format: uri
+        expiresAt:
+          type: string
+          format: date-time
+        configVersion:
+          type: integer
+          minimum: 1
+    AdminAPIHealthProbeDecisionRequest:
+      type: object
+      additionalProperties: false
+      required: [reason]
+      properties:
+        reason:
+          type: string
+          minLength: 1
+    AdminAPIHealthProbe:
+      type: object
+      additionalProperties: false
+      description: Minimal administrator exact-origin review projection. It never contains credential state, credential material, fingerprints, or upstream error bodies.
+      required: [id, apiServiceId, serviceTitle, ownerUserId, ownerUsername, ownerDisplayName, protocol, normalizedOrigin, model, enabled, authorizationStatus, authorizationMethod, verifiedOrigin, verifiedAt, approvedAt, rejectionReason, version, updatedAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        apiServiceId:
+          type: string
+          format: uuid
+        serviceTitle:
+          type: string
+        ownerUserId:
+          type: string
+          format: uuid
+        ownerUsername:
+          type: string
+        ownerDisplayName:
+          type: string
+        protocol:
+          $ref: "#/components/schemas/APIHealthProbeProtocol"
+        normalizedOrigin:
+          type: string
+          format: uri
+        model:
+          type: string
+        enabled:
+          type: boolean
+        authorizationStatus:
+          $ref: "#/components/schemas/APIHealthProbeAuthorizationStatus"
+        authorizationMethod:
+          $ref: "#/components/schemas/APIHealthProbeAuthorizationMethod"
+        verifiedOrigin:
+          type: [string, "null"]
+          format: uri
+        verifiedAt:
+          type: [string, "null"]
+          format: date-time
+        approvedAt:
+          type: [string, "null"]
+          format: date-time
+        rejectionReason:
+          type: [string, "null"]
+        version:
+          type: integer
+          minimum: 1
+        updatedAt:
+          type: string
+          format: date-time
+    AdminAPIHealthProbeList:
+      type: object
+      additionalProperties: false
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/AdminAPIHealthProbe"
+        nextCursor:
+          type: [string, "null"]
+    QuotaLimitModeInput:
+      type: string
+      enum: [limited, unlimited]
+    QuotaLimitMode:
+      type: string
+      enum: [limited, unlimited, unspecified]
+    QuotaUsageLimitInput:
+      type: object
+      additionalProperties: false
+      required: [mode]
+      properties:
+        mode:
+          $ref: "#/components/schemas/QuotaLimitModeInput"
+        amountUsd:
+          $ref: "#/components/schemas/DecimalString"
+          description: Required and strictly positive when mode is limited; omitted when mode is unlimited.
+    QuotaUsagePolicyInput:
+      type: object
+      additionalProperties: false
+      required: [fiveHour, daily]
+      properties:
+        fiveHour:
+          $ref: "#/components/schemas/QuotaUsageLimitInput"
+        daily:
+          $ref: "#/components/schemas/QuotaUsageLimitInput"
+    QuotaUsageLimit:
+      type: object
+      additionalProperties: false
+      required: [mode, amountUsd]
+      properties:
+        mode:
+          $ref: "#/components/schemas/QuotaLimitMode"
+        amountUsd:
+          anyOf:
+            - $ref: "#/components/schemas/DecimalString"
+            - type: "null"
+    QuotaUsagePolicy:
+      type: object
+      additionalProperties: false
+      required: [fiveHour, daily, scope, dailyReset]
+      properties:
+        fiveHour:
+          $ref: "#/components/schemas/QuotaUsageLimit"
+        daily:
+          $ref: "#/components/schemas/QuotaUsageLimit"
+        scope:
+          type: string
+          const: per_buyer_credential
+        dailyReset:
+          type: string
+          const: utc_plus_8_calendar_day
     APIServiceRequest:
       type: object
       additionalProperties: false
@@ -9895,10 +10467,13 @@ components:
         - shortDescription
         - distributionSystem
         - billingMode
+        - quotaUsagePolicy
         - minimumIntentCny
         - usageVisibility
         - accountPoolType
         - merchantRefundCommitment
+        - declaredMaxConcurrency
+        - promptAuditEnabled
         - accessModes
       properties:
         merchantProfileId:
@@ -9937,6 +10512,8 @@ components:
           type: string
           format: date-time
           description: Required for metered USD quota services. Fixed expiration timestamp for the currently listed quota.
+        quotaUsagePolicy:
+          $ref: "#/components/schemas/QuotaUsagePolicyInput"
         minimumIntentCny:
           $ref: "#/components/schemas/DecimalString"
         maximumIntentCny:
@@ -9962,18 +10539,13 @@ components:
         merchantRefundCommitment:
           type: boolean
           description: Explicit seller choice. True opts into api-merchant-refund-v1; false records no additional merchant refund promise.
-        declaredTtftBand:
-          type: string
-          enum: [under_1s, 1_to_3s, 3_to_5s, 5_to_10s, over_10s]
-          description: Merchant-declared time-to-first-token band. C2CMarket does not measure or verify it.
         declaredMaxConcurrency:
           type: integer
           minimum: 1
           description: Merchant-declared maximum concurrent request count.
-        performanceConfirmedAt:
-          type: string
-          format: date-time
-          description: Time when the merchant most recently confirmed the declaration. All three performance fields must be supplied together or all omitted.
+        promptAuditEnabled:
+          type: boolean
+          description: Required seller declaration. True means the seller may view or record buyer prompts; false remains a seller declaration, not a platform privacy guarantee.
         accessModes:
           type: array
           minItems: 1
@@ -10016,7 +10588,7 @@ components:
     APIServicePackageInput:
       type: object
       additionalProperties: false
-      required: [name, priceCny, panelAllowance, durationDays, stockTotal, description, modelCatalogIds]
+      required: [name, priceCny, panelAllowance, quotaUsagePolicy, durationDays, stockTotal, description, modelCatalogIds]
       properties:
         id:
           type: string
@@ -10028,6 +10600,8 @@ components:
           $ref: "#/components/schemas/DecimalString"
         panelAllowance:
           $ref: "#/components/schemas/DecimalString"
+        quotaUsagePolicy:
+          $ref: "#/components/schemas/QuotaUsagePolicyInput"
         durationDays:
           type: integer
           enum: [1, 3, 7, 30]
@@ -10170,12 +10744,15 @@ components:
         - shortDescription
         - distributionSystem
         - billingMode
+        - quotaUsagePolicy
+        - healthSummary
         - minimumIntentCny
         - usageVisibility
         - accountPoolType
         - accountPoolLabel
         - merchantRefundCommitment
         - merchantRefundPolicyVersion
+        - promptAuditEnabled
         - acceptingOrders
         - paymentWindowMinutes
         - acceptedPaymentMethods
@@ -10230,6 +10807,10 @@ components:
           type: string
           format: date-time
           description: Fixed expiration timestamp for the currently listed metered quota.
+        quotaUsagePolicy:
+          $ref: "#/components/schemas/QuotaUsagePolicy"
+        healthSummary:
+          $ref: "#/components/schemas/ServiceHealthSummary"
         minimumIntentCny:
           $ref: "#/components/schemas/DecimalString"
         maximumIntentCny:
@@ -10254,16 +10835,12 @@ components:
         merchantRefundPolicyVersion:
           type: string
           enum: [api-merchant-refund-v1]
-        declaredTtftBand:
-          type: string
-          enum: [under_1s, 1_to_3s, 3_to_5s, 5_to_10s, over_10s]
-          description: Merchant-declared TTFT band; the platform has not measured it.
         declaredMaxConcurrency:
           type: integer
           minimum: 1
-        performanceConfirmedAt:
-          type: string
-          format: date-time
+        promptAuditEnabled:
+          type: [boolean, "null"]
+          description: Seller prompt-audit declaration. Null means a historical service has not been revised to declare either state.
         acceptingOrders:
           type: boolean
           description: Owner's manual accepting-orders flag. This is not sufficient by itself; clients must use isOrderable for order creation.
@@ -10333,12 +10910,14 @@ components:
         - shortDescription
         - distributionSystem
         - billingMode
+        - quotaUsagePolicy
         - minimumIntentCny
         - usageVisibility
         - accountPoolType
         - accountPoolLabel
         - merchantRefundCommitment
         - merchantRefundPolicyVersion
+        - promptAuditEnabled
         - acceptingOrders
         - paymentWindowMinutes
         - acceptedPaymentMethods
@@ -10404,6 +10983,8 @@ components:
           type: string
           format: date-time
           description: Fixed expiration timestamp for the currently listed metered quota.
+        quotaUsagePolicy:
+          $ref: "#/components/schemas/QuotaUsagePolicy"
         minimumIntentCny:
           $ref: "#/components/schemas/DecimalString"
         maximumIntentCny:
@@ -10440,6 +11021,10 @@ components:
         performanceConfirmedAt:
           type: string
           format: date-time
+          description: Historical owner-visible seller confirmation time. New service writes do not accept this field.
+        promptAuditEnabled:
+          type: [boolean, "null"]
+          description: Seller prompt-audit declaration. Null means a historical service has not been revised to declare either state.
         acceptingOrders:
           type: boolean
         paymentWindowMinutes:
@@ -10546,7 +11131,7 @@ components:
           type: boolean
     APIServicePackage:
       type: object
-      required: [id, name, priceCny, panelAllowance, stockTotal, stockAvailable, description, enabled, sortOrder, models]
+      required: [id, name, priceCny, panelAllowance, quotaUsagePolicy, stockTotal, stockAvailable, description, enabled, sortOrder, models]
       properties:
         id:
           type: string
@@ -10557,6 +11142,8 @@ components:
           $ref: "#/components/schemas/DecimalString"
         panelAllowance:
           $ref: "#/components/schemas/DecimalString"
+        quotaUsagePolicy:
+          $ref: "#/components/schemas/QuotaUsagePolicy"
         durationDays:
           type: [integer, "null"]
           enum: [1, 3, 7, 30, null]
@@ -10637,10 +11224,12 @@ components:
         - $ref: "#/components/schemas/APIService"
         - type: object
           additionalProperties: false
-          required: [salesSummary]
+          required: [salesSummary, healthSummary]
           properties:
             salesSummary:
               $ref: "#/components/schemas/APIServiceSalesSummary"
+            healthSummary:
+              $ref: "#/components/schemas/ServiceHealthSummary"
     OwnerAPIServiceList:
       type: object
       required: [items]
@@ -10942,7 +11531,7 @@ components:
     APIQuotaOfferRequest:
       type: object
       additionalProperties: false
-      required: [name, usdAllowance, priceCny, modelMultiplier, deliveryMode, deliveryEtaMinutes, saleMode, continuousCopies, sortOrder]
+      required: [name, usdAllowance, priceCny, modelMultiplier, quotaUsagePolicy, deliveryMode, deliveryEtaMinutes, saleMode, continuousCopies, sortOrder]
       properties:
         name:
           type: string
@@ -10953,9 +11542,12 @@ components:
         modelMultiplier:
           $ref: "#/components/schemas/DecimalString"
           description: Positive multiplier fixed on the offer after publication. New offers default to 1.0000, but every distribution system may declare another multiplier.
+        quotaUsagePolicy:
+          $ref: "#/components/schemas/QuotaUsagePolicyInput"
         deliveryMode:
           type: string
-          enum: [manual, preimported]
+          enum: [manual]
+          description: New offers support seller manual delivery only. Historical offer responses may still report preimported.
         deliveryEtaMinutes:
           type: integer
           minimum: 1
@@ -10971,7 +11563,7 @@ components:
           type: integer
     APIQuotaOfferFields:
       type: object
-      required: [id, batchId, apiServiceId, distributionSystem, name, usdAllowance, priceCny, cnyPerUsd, modelMultiplier, deliveryMode, deliveryEtaMinutes, saleMode, status, sortOrder, version]
+      required: [id, batchId, apiServiceId, distributionSystem, name, usdAllowance, priceCny, cnyPerUsd, modelMultiplier, quotaUsagePolicy, deliveryMode, deliveryEtaMinutes, saleMode, status, sortOrder, version]
       properties:
         id:
           type: string
@@ -10995,9 +11587,12 @@ components:
           $ref: "#/components/schemas/DecimalString"
         modelMultiplier:
           $ref: "#/components/schemas/DecimalString"
+        quotaUsagePolicy:
+          $ref: "#/components/schemas/QuotaUsagePolicy"
         deliveryMode:
           type: string
           enum: [manual, preimported]
+          description: Historical response objects may still report preimported even though new offer creation accepts only manual.
         deliveryEtaMinutes:
           type: integer
           minimum: 1
@@ -11155,7 +11750,7 @@ components:
     APIQuotaRushOfferRequest:
       type: object
       additionalProperties: false
-      required: [sourceType, name, usdAllowance, priceCny, modelMultiplier, copies, deliveryMode, deliveryEtaMinutes, slotKey, expiresAt, sourceConfirmedAt]
+      required: [sourceType, name, usdAllowance, priceCny, modelMultiplier, quotaUsagePolicy, copies, deliveryMode, deliveryEtaMinutes, slotKey, expiresAt, sourceConfirmedAt]
       properties:
         sourceType:
           type: string
@@ -11171,13 +11766,16 @@ components:
           $ref: "#/components/schemas/DecimalString"
         modelMultiplier:
           $ref: "#/components/schemas/DecimalString"
+        quotaUsagePolicy:
+          $ref: "#/components/schemas/QuotaUsagePolicyInput"
         copies:
           type: integer
           minimum: 1
           maximum: 5000
         deliveryMode:
           type: string
-          enum: [manual, preimported]
+          enum: [manual]
+          description: New rush offers support seller manual delivery only. Historical offer responses may still report preimported.
         deliveryEtaMinutes:
           type: integer
           minimum: 1
@@ -11192,10 +11790,6 @@ components:
         sourceConfirmedAt:
           type: string
           format: date-time
-        deliveryKind:
-          type: string
-          enum: [api_key_endpoint, login_account]
-          description: Required only for preimported delivery.
     APIQuotaRushOfferResponse:
       type: object
       additionalProperties: false
@@ -11216,7 +11810,7 @@ components:
       allOf:
         - $ref: "#/components/schemas/APIQuotaOfferFields"
         - type: object
-          required: [batchStatus, serviceTitle, sellerDisplayName, sellerIdentityType, sellerLinuxDoBound, declaredTtftBand, declaredMaxConcurrency, performanceDisclaimer, saleCutoffAt, expiresAt, availableCopies, credentialAvailableCopies, isOrderable, orderabilityCode, orderabilityReason]
+          required: [batchStatus, serviceTitle, sellerDisplayName, sellerIdentityType, sellerLinuxDoBound, declaredMaxConcurrency, promptAuditEnabled, healthSummary, saleCutoffAt, expiresAt, availableCopies, credentialAvailableCopies, isOrderable, orderabilityCode, orderabilityReason]
           properties:
             batchStatus:
               type: string
@@ -11230,18 +11824,14 @@ components:
               enum: [individual, merchant]
             sellerLinuxDoBound:
               type: boolean
-            declaredTtftBand:
-              type: string
-              enum: [under_1s, 1_to_3s, 3_to_5s, 5_to_10s, over_10s]
             declaredMaxConcurrency:
               type: integer
               minimum: 1
-            performanceConfirmedAt:
-              type: string
-              format: date-time
-            performanceDisclaimer:
-              type: string
-              const: 商户自报，平台未测速
+            promptAuditEnabled:
+              type: [boolean, "null"]
+              description: Seller prompt-audit declaration from the linked API service. Null means historical undeclared.
+            healthSummary:
+              $ref: "#/components/schemas/ServiceHealthSummary"
             saleCutoffAt:
               type: string
               format: date-time
@@ -11378,6 +11968,8 @@ components:
         - billingModeSnapshot
         - minimumIntentCnySnapshot
         - pricingSnapshot
+        - quotaUsagePolicySnapshot
+        - promptAuditEnabledSnapshot
         - version
         - createdAt
         - updatedAt
@@ -11421,6 +12013,11 @@ components:
           $ref: "#/components/schemas/DecimalString"
         pricingSnapshot:
           type: string
+        quotaUsagePolicySnapshot:
+          $ref: "#/components/schemas/QuotaUsagePolicy"
+        promptAuditEnabledSnapshot:
+          type: [boolean, "null"]
+          description: Seller prompt-audit declaration frozen when the purchase intent was created. Null means historical undeclared.
         buyerNote:
           type: string
         contactedAt:
@@ -11699,6 +12296,8 @@ components:
         - serviceTitleSnapshot
         - serviceVersionSnapshot
         - billingModeSnapshot
+        - quotaUsagePolicySnapshot
+        - promptAuditEnabledSnapshot
         - amount
         - currency
         - selectedPaymentMethod
@@ -11777,6 +12376,11 @@ components:
         pricingSnapshot:
           type: string
           description: Frozen JSON pricing snapshot from the internal purchase-intent record.
+        quotaUsagePolicySnapshot:
+          $ref: "#/components/schemas/QuotaUsagePolicy"
+        promptAuditEnabledSnapshot:
+          type: [boolean, "null"]
+          description: Seller prompt-audit declaration frozen from the purchase intent or limited-offer order context. Null means historical undeclared and is never filled from the current service.
         apiQuotaBatchId:
           type: string
           format: uuid

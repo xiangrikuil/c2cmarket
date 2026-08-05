@@ -846,6 +846,8 @@ const apiOrderColumns = `
 	service_version_snapshot, billing_mode_snapshot, COALESCE(selected_package_id::text, ''),
 	COALESCE(selected_package_snapshot::text, ''), COALESCE(quote_version_snapshot, 0),
 	COALESCE(requested_usd_allowance_snapshot::text, ''), COALESCE(cny_per_usd_allowance_snapshot::text, ''), pricing_snapshot::text,
+	five_hour_limit_mode_snapshot, COALESCE(five_hour_limit_usd_snapshot::text, ''),
+	daily_limit_mode_snapshot, COALESCE(daily_limit_usd_snapshot::text, ''),
 	package_stock_reserved, package_expires_at,
 	COALESCE(api_quota_batch_id::text, ''), COALESCE(api_quota_offer_id::text, ''),
 	COALESCE(api_quota_sale_round_id::text, ''), COALESCE(api_quota_allocation_id::text, ''),
@@ -865,7 +867,7 @@ const apiOrderColumns = `
 	COALESCE(delivery_note, ''), delivery_submitted_at,
 	delivery_review_expires_at, delivery_review_reminded_at, COALESCE(completion_source, ''), completed_at,
 	cancelled_at, COALESCE(cancel_reason, ''), created_at, updated_at, version,
-	order_no
+	order_no, prompt_audit_enabled_snapshot
 `
 
 func (s *Store) listAPIOrders(ctx context.Context, whereClause string, args []any) ([]apiorder.Order, *domain.AppError) {
@@ -928,6 +930,10 @@ func apiOrderScanTargets(order *apiorder.Order) []any {
 		&order.RequestedUSDAllowanceSnapshot,
 		&order.CNYPerUSDAllowanceSnapshot,
 		&order.PricingSnapshot,
+		&order.QuotaUsagePolicySnapshot.FiveHour.Mode,
+		&order.QuotaUsagePolicySnapshot.FiveHour.AmountUSD,
+		&order.QuotaUsagePolicySnapshot.Daily.Mode,
+		&order.QuotaUsagePolicySnapshot.Daily.AmountUSD,
 		&order.PackageStockReserved,
 		&order.PackageExpiresAt,
 		&order.APIQuotaBatchID,
@@ -979,6 +985,7 @@ func apiOrderScanTargets(order *apiorder.Order) []any {
 		&order.UpdatedAt,
 		&order.Version,
 		&order.OrderNo,
+		&order.PromptAuditEnabledSnapshot,
 	}
 }
 
@@ -1012,6 +1019,8 @@ func newStoreAPIOrder(input apiorder.CreateInput, intent apiintent.Intent, servi
 		RequestedUSDAllowanceSnapshot: intent.RequestedUSDAllowance,
 		CNYPerUSDAllowanceSnapshot:    intent.DeclaredCNYPerUSDAllowanceSnapshot,
 		PricingSnapshot:               intent.PricingSnapshot,
+		QuotaUsagePolicySnapshot:      intent.QuotaUsagePolicySnapshot,
+		PromptAuditEnabledSnapshot:    intent.PromptAuditEnabledSnapshot,
 		PackageStockReserved:          service.BillingMode == apimarket.ServiceBillingModeFixedPackage,
 		Amount:                        amount,
 		Currency:                      currency,
@@ -1035,13 +1044,16 @@ func insertAPIOrderInTx(ctx context.Context, tx pgx.Tx, order *apiorder.Order) *
 			service_version_snapshot, billing_mode_snapshot, selected_package_id,
 				selected_package_snapshot, quote_version_snapshot,
 				requested_usd_allowance_snapshot, cny_per_usd_allowance_snapshot, pricing_snapshot,
+				five_hour_limit_mode_snapshot, five_hour_limit_usd_snapshot,
+				daily_limit_mode_snapshot, daily_limit_usd_snapshot,
 				package_stock_reserved, package_expires_at,
 				amount, currency,
 				selected_payment_method, payment_window_minutes_snapshot, payment_expires_at,
 				payment_instructions_snapshot, payment_qr_code_data_url_snapshot, payment_summary, payment_submitted_at,
 				payment_issue_reason, payment_issue_note, payment_issue_reported_at,
 				paid_confirmed_at, delivery_note, delivery_submitted_at, completed_at,
-				cancelled_at, cancel_reason, created_at, updated_at, version, order_no
+				cancelled_at, cancel_reason, created_at, updated_at, version, order_no,
+				prompt_audit_enabled_snapshot
 		)
 		VALUES (
 			$1, $2, $3, $4, $5,
@@ -1049,13 +1061,14 @@ func insertAPIOrderInTx(ctx context.Context, tx pgx.Tx, order *apiorder.Order) *
 			$10, $11, $12,
 			$13, $14,
 			$15, $16, $17,
-				$18, $19,
-				$20, $21,
-				$22, $23, $24,
-				$25, $26, $27, $28,
-				$29, $30, $31,
-				$32, $33, $34, $35,
-				$36, $37, $38, $39, $40, $41
+				$18, $19, $20, $21,
+				$22, $23,
+				$24, $25,
+				$26, $27, $28,
+				$29, $30, $31, $32,
+				$33, $34, $35,
+				$36, $37, $38, $39,
+					$40, $41, $42, $43, $44, $45, $46
 		)
 		ON CONFLICT ON CONSTRAINT ux_api_orders_order_no DO NOTHING
 	`, order.ID, order.APIPurchaseIntentID, order.APIServiceID, order.BuyerUserID, order.SellerUserID,
@@ -1063,13 +1076,16 @@ func insertAPIOrderInTx(ctx context.Context, tx pgx.Tx, order *apiorder.Order) *
 			order.ServiceVersionSnapshot, order.BillingModeSnapshot, nullUUID(order.SelectedPackageID),
 			nullJSON(order.SelectedPackageSnapshot), nullInt64(order.QuoteVersionSnapshot),
 			nullNumeric(order.RequestedUSDAllowanceSnapshot), nullNumeric(order.CNYPerUSDAllowanceSnapshot), nullJSON(order.PricingSnapshot),
+			order.QuotaUsagePolicySnapshot.FiveHour.Mode, nullNumeric(order.QuotaUsagePolicySnapshot.FiveHour.AmountUSD),
+			order.QuotaUsagePolicySnapshot.Daily.Mode, nullNumeric(order.QuotaUsagePolicySnapshot.Daily.AmountUSD),
 			order.PackageStockReserved, order.PackageExpiresAt,
 			order.Amount, order.Currency,
 			order.SelectedPaymentMethod, order.PaymentWindowMinutesSnapshot, order.PaymentExpiresAt,
 			order.PaymentInstructionsSnapshot, nullText(order.PaymentQRCodeDataURLSnapshot), nullText(order.PaymentSummary), order.PaymentSubmittedAt,
 			nullText(order.PaymentIssueReason), nullText(order.PaymentIssueNote), order.PaymentIssueReportedAt,
 			order.PaidConfirmedAt, nullText(order.DeliveryNote), order.DeliverySubmittedAt, order.CompletedAt,
-			order.CancelledAt, nullText(order.CancelReason), order.CreatedAt, order.UpdatedAt, order.Version, order.OrderNo)
+			order.CancelledAt, nullText(order.CancelReason), order.CreatedAt, order.UpdatedAt, order.Version, order.OrderNo,
+			order.PromptAuditEnabledSnapshot)
 		if insertErr != nil {
 			return insertErr
 		}

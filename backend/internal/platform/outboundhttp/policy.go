@@ -65,6 +65,7 @@ type Policy struct {
 	resolver        Resolver
 	dialer          Dialer
 	allowedHosts    map[string]struct{}
+	allowHTTP       bool
 	maxDialAttempts int
 	stats           policyStats
 }
@@ -103,6 +104,15 @@ func WithDialer(dialer Dialer) PolicyOption {
 	}
 }
 
+// WithInsecureHTTP permits unencrypted HTTP targets for a caller that applies
+// its own explicit risk-acknowledgement boundary. Policies remain HTTPS-only
+// unless this option is supplied.
+func WithInsecureHTTP() PolicyOption {
+	return func(policy *Policy) {
+		policy.allowHTTP = true
+	}
+}
+
 func NewPolicy(allowedHosts []string, options ...PolicyOption) (*Policy, error) {
 	policy := &Policy{
 		resolver:        net.DefaultResolver,
@@ -136,6 +146,17 @@ func (p *Policy) ValidateURL(ctx context.Context, raw string) (string, error) {
 	return normalized, nil
 }
 
+// NormalizeURL 只做目标语法校验与规范化，不触发 DNS 解析。
+// 持久化前仍需调用 ValidateURL，发起请求时仍需通过 NewClient 防止 DNS 重绑定。
+func (p *Policy) NormalizeURL(raw string) (string, error) {
+	normalized, _, err := p.normalizeURL(raw)
+	if err != nil {
+		p.recordRejection(err)
+		return "", err
+	}
+	return normalized, nil
+}
+
 func (p *Policy) normalizeURL(raw string) (string, string, error) {
 	if p == nil {
 		return "", "", ErrInvalidTarget
@@ -145,7 +166,8 @@ func (p *Policy) normalizeURL(raw string) (string, string, error) {
 	if err != nil || value == "" || parsed.Opaque != "" || !parsed.IsAbs() {
 		return "", "", ErrInvalidTarget
 	}
-	if !strings.EqualFold(parsed.Scheme, "https") || parsed.Host == "" {
+	scheme := strings.ToLower(parsed.Scheme)
+	if (scheme != "https" && !(scheme == "http" && p.allowHTTP)) || parsed.Host == "" {
 		return "", "", ErrInvalidTarget
 	}
 	if parsed.User != nil || parsed.RawQuery != "" || parsed.ForceQuery || parsed.Fragment != "" {
@@ -165,7 +187,7 @@ func (p *Policy) normalizeURL(raw string) (string, string, error) {
 		return "", "", err
 	}
 
-	parsed.Scheme = "https"
+	parsed.Scheme = scheme
 	parsed.User = nil
 	parsed.Host = canonicalAuthority(host, port)
 	parsed.Path = strings.TrimRight(parsed.Path, "/")

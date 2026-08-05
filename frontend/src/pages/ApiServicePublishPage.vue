@@ -27,7 +27,7 @@ import PublishStepSection from '@/components/api-service-publish/PublishStepSect
 import PublishWorkflowStepper from '@/components/api-service-publish/PublishWorkflowStepper.vue'
 import ResponsivePublishPreview from '@/components/api-service-publish/ResponsivePublishPreview.vue'
 import SellingModeSelector from '@/components/api-service-publish/SellingModeSelector.vue'
-import type { ApiProviderCategory, ApiServicePublishForm, DistributionSystem, SellingMode } from '@/components/api-service-publish/types'
+import { sellingModeLabels, type ApiProviderCategory, type ApiServicePublishForm, type DistributionSystem, type SellingMode } from '@/components/api-service-publish/types'
 import { toggleSelectedModel } from '@/components/api-service-publish/modelSelection'
 import { createDefaultApiServicePackage } from '@/components/api-service-publish/packages'
 import { apiPublishAssistantSummary, apiPublishModeFromQuery } from '@/components/api-service-publish/publishAssistant'
@@ -52,8 +52,9 @@ import { Card } from '@/components/ui/card'
 import { containsSensitiveContent, firstError, type FieldErrors } from '@/lib/formValidation'
 import { submitApiService } from '@/lib/api'
 import { trackAnalytics } from '@/lib/analytics'
-import { beijingDateTimeInputToISOString, defaultQuotaExpiresAtInput, formatBeijingDateTimeInput } from '@/lib/apiQuotaExpiration'
+import { beijingDateTimeInputToISOString, defaultQuotaExpiresAtInput } from '@/lib/apiQuotaExpiration'
 import { apiPaymentSettingsMissingReason, cloneApiPaymentAccountSettings, isApiPaymentAccountSettingsComplete, isApiPaymentOptionComplete, isApiPaymentWindowValid } from '@/lib/apiPaymentSettings'
+import { apiQuotaUsagePolicyInputError, defaultApiQuotaUsagePolicyInput } from '@/lib/apiQuotaPolicy'
 import { useApiPaymentAccountSettingsQuery, useModelCatalog, useMyProfileQuery } from '@/queries/useMarketQueries'
 import { useUnsavedChangesGuard } from '@/composables/useUnsavedChangesGuard'
 
@@ -67,6 +68,7 @@ type Field =
   | 'selectedModels'
   | 'availableCreditUsd'
   | 'quotaExpiresAt'
+  | 'quotaUsagePolicy'
   | 'packages'
   | 'paymentWindowMinutes'
   | 'paymentOptions'
@@ -85,12 +87,13 @@ const queryClient = useQueryClient()
 const route = useRoute()
 const router = useRouter()
 const analyticsSourceRoute = () => String(route.name ?? 'unknown')
-const initialSellingMode = apiPublishModeFromQuery(route.query.mode, route.query.after)
+const requestedSellingMode = apiPublishModeFromQuery(route.query.mode, route.query.after)
+const initialSellingMode: SellingMode | null = requestedSellingMode === 'limited' ? null : requestedSellingMode
 const sellingMode = ref<SellingMode | null>(initialSellingMode)
 const editorSellingMode = computed<SellingMode>(() => sellingMode.value ?? 'free')
 const isLimitedQuotaMode = computed(() => sellingMode.value === 'limited')
-const currentStep = ref<ApiServicePublishStep>(initialSellingMode === 'limited' ? 2 : 1)
-const completedSteps = ref<ApiServicePublishStep[]>(initialSellingMode === 'limited' ? [1] : [])
+const currentStep = ref<ApiServicePublishStep>(1)
+const completedSteps = ref<ApiServicePublishStep[]>([])
 const publishSteps = computed(() => isLimitedQuotaMode.value
   ? [
       { title: '销售模式', description: '限时额度包' },
@@ -99,7 +102,7 @@ const publishSteps = computed(() => isLimitedQuotaMode.value
     ]
   : [
       {
-        title: sellingMode.value === 'package' ? '配置固定额度包' : '配置自由额度',
+        title: `配置${sellingModeLabels[sellingMode.value === 'package' ? 'package' : 'free']}`,
         description: sellingMode.value === 'package' ? '规格、售价与库存' : '售价、额度与有效期',
       },
       { title: '设置接入与模型', description: '接入、模型与统一倍率' },
@@ -137,13 +140,13 @@ const form = reactive<ApiServicePublishForm>({
   },
   availableCreditUsd: 500,
   quotaExpiresAt: defaultQuotaExpiresAtInput(),
+  quotaUsagePolicy: defaultApiQuotaUsagePolicyInput(),
   minimumPurchaseCny: 10,
   maximumPurchaseCny: 300,
   paymentWindowMinutes: defaultPaymentWindowMinutes,
   paymentOptions: createDefaultPaymentOptions(),
-  declaredTtftBand: '1_to_3s',
   declaredMaxConcurrency: 1,
-  performanceConfirmedAt: formatBeijingDateTimeInput(new Date()),
+  promptAuditEnabled: null,
   packages: initialSellingMode === 'package' ? [createDefaultApiServicePackage(['gpt-5-mini'])] : [],
   validity: {
     mode: 'days',
@@ -249,9 +252,13 @@ function setErrors(next: FieldErrors<Field>) {
 }
 
 function applyRouteSellingMode(value: SellingMode | null) {
+  if (value === 'limited') {
+    void router.replace({ path: '/api-market/quota/new' })
+    return
+  }
   sellingMode.value = value
-  currentStep.value = value === 'limited' ? 2 : 1
-  completedSteps.value = value === 'limited' ? [1] : []
+  currentStep.value = 1
+  completedSteps.value = []
   setErrors({})
   if (!value) return
   form.billingMode = value === 'package' ? 'fixed_package' : 'metered_credit'
@@ -289,6 +296,7 @@ const freeFieldSteps: Record<Field, ApiServicePublishStep> = {
   selectedModels: 2,
   availableCreditUsd: 1,
   quotaExpiresAt: 1,
+  quotaUsagePolicy: 1,
   packages: 1,
   paymentWindowMinutes: 3,
   paymentOptions: 3,
@@ -309,6 +317,7 @@ const limitedFieldSteps: Record<Field, ApiServicePublishStep> = {
   selectedModels: 2,
   availableCreditUsd: 2,
   quotaExpiresAt: 2,
+  quotaUsagePolicy: 2,
   packages: 2,
   paymentWindowMinutes: 2,
   paymentOptions: 2,
@@ -347,6 +356,8 @@ function collectValidationErrors() {
     const quotaExpiresAtISO = beijingDateTimeInputToISOString(form.quotaExpiresAt)
     if (!quotaExpiresAtISO) next.quotaExpiresAt = '请填写有效的额度有效至时间。'
     else if (new Date(quotaExpiresAtISO).getTime() <= Date.now()) next.quotaExpiresAt = '额度有效至时间必须晚于当前时间。'
+    const quotaPolicyError = apiQuotaUsagePolicyInputError(form.quotaUsagePolicy)
+    if (quotaPolicyError) next.quotaUsagePolicy = quotaPolicyError
   }
   if (!form.selectedModels.some(item => item.enabled)) next.selectedModels = '至少选择一个模型。'
   if (missingSelectedModels.value.length) next.selectedModels = '已选模型不在当前后端模型目录中，请重新选择。'
@@ -354,7 +365,7 @@ function collectValidationErrors() {
   if (form.billingMode === 'fixed_package') {
     const selectedModelIds = new Set(form.selectedModels.filter(item => item.enabled).map(item => item.modelId))
     const packageIds = new Set<string>()
-    if (!enabledPackages.value.length) next.packages = '至少启用一个固定额度包。'
+    if (!enabledPackages.value.length) next.packages = `至少启用一个${sellingModeLabels.package}。`
     for (const [index, item] of form.packages.entries()) {
       const label = `套餐 ${index + 1}`
       if (!item.id || packageIds.has(item.id)) next.packages = `${label} 的标识重复，请删除后重新添加。`
@@ -367,6 +378,10 @@ function collectValidationErrors() {
       else if (!Number.isInteger(item.stockTotal) || item.stockTotal < 0) next.packages = `${label} 的库存必须是大于等于 0 的整数。`
       else if (!item.modelCatalogIds.length) next.packages = `${label} 至少选择一个支持模型。`
       else if (item.modelCatalogIds.some(id => !selectedModelIds.has(id))) next.packages = `${label} 包含未在服务中启用的模型。`
+      else {
+        const quotaPolicyError = apiQuotaUsagePolicyInputError(item.quotaUsagePolicy)
+        if (quotaPolicyError) next.packages = `${label}：${quotaPolicyError}`
+      }
     }
   }
   if (!paymentWindowValid.value) next.paymentWindowMinutes = '买家确认付款窗口固定为 10 分钟。'
@@ -382,8 +397,10 @@ function collectValidationErrors() {
 		if (customNameLength < 2 || customNameLength > 40) next.accountPool = '其他号池名称需要填写 2-40 个字符。'
 	}
 	if (!form.warranty.mode) next.refundCommitment = '请选择无额外退款承诺或商户全额退款承诺。'
-  if (!form.declaredTtftBand || form.declaredMaxConcurrency < 1 || !beijingDateTimeInputToISOString(form.performanceConfirmedAt)) {
-		next.performance = '请完整填写首字响应区间、商户声明最大并发和最近确认时间。'
+  if (!Number.isInteger(form.declaredMaxConcurrency) || form.declaredMaxConcurrency < 1 || form.declaredMaxConcurrency > 100000) {
+		next.performance = '商户声明最大并发必须是 1-100000 的整数。'
+  } else if (form.promptAuditEnabled === null) {
+    next.performance = '请明确选择是否开启提示词审计。'
   }
   if (!form.merchantNote.trim()) next.merchantNote = '请填写备注信息。'
   if (form.merchantNote.length > 800) next.merchantNote = '备注信息最多 800 字。'
@@ -423,7 +440,7 @@ const completeness = computed(() => {
   ]
   if (!isLimitedQuotaMode.value) {
     if (form.billingMode === 'fixed_package') {
-      items.push(enabledPackages.value.length && enabledPackages.value.every(item => item.name.trim() && item.priceCny > 0 && item.panelAllowance > 0 && [1, 3, 7, 30].includes(item.durationDays) && Number.isInteger(item.stockTotal) && item.stockTotal >= 0 && item.modelCatalogIds.length)
+      items.push(enabledPackages.value.length && enabledPackages.value.every(item => item.name.trim() && item.priceCny > 0 && item.panelAllowance > 0 && [1, 3, 7, 30].includes(item.durationDays) && Number.isInteger(item.stockTotal) && item.stockTotal >= 0 && item.modelCatalogIds.length && !apiQuotaUsagePolicyInputError(item.quotaUsagePolicy))
         ? done('套餐配置')
         : pending('套餐配置'))
     } else {
@@ -431,14 +448,15 @@ const completeness = computed(() => {
         form.cnyPerUsdCredit && form.cnyPerUsdCredit > 0 ? done('额度售价') : pending('额度售价'),
         form.availableCreditUsd && form.availableCreditUsd > 0 ? done('可售额度') : pending('可售额度'),
         beijingDateTimeInputToISOString(form.quotaExpiresAt) ? done('有效时间') : pending('有效时间'),
+        !apiQuotaUsagePolicyInputError(form.quotaUsagePolicy) ? done('额度规则') : pending('额度规则'),
       )
     }
   }
   items.push(
 		accountPaymentSettingsComplete.value && paymentSettingsComplete.value ? done('收款方式') : pending('收款方式'),
 		form.accountPoolType && (form.accountPoolType !== 'custom' || Array.from(form.accountPoolCustomName.trim()).length >= 2) ? done('号池') : pending('号池'),
-		form.warranty.mode ? done('退款承诺') : pending('退款承诺'),
-    form.declaredTtftBand && form.declaredMaxConcurrency > 0 && beijingDateTimeInputToISOString(form.performanceConfirmedAt) ? done('服务体验声明') : pending('服务体验声明'),
+			form.warranty.mode ? done('退款承诺') : pending('退款承诺'),
+    form.declaredMaxConcurrency > 0 && form.promptAuditEnabled !== null ? done('服务声明') : pending('服务声明'),
     form.providerCategory ? done('模型大类') : pending('模型大类'),
     incompatibleSelectedModels.value.length ? conflict('具体模型') : form.selectedModels.some(item => item.enabled) ? done('具体模型') : pending('具体模型'),
     form.merchantNote.trim() ? done('备注信息') : pending('备注信息'),
@@ -479,7 +497,7 @@ const stepOneSummary = computed(() => {
   if (isLimitedQuotaMode.value) return '限时额度包 · 当前先配置可复用基础服务'
   if (isFixedPackageMode.value) {
     const totalStock = enabledPackages.value.reduce((sum, item) => sum + item.stockTotal, 0)
-    return `固定额度包 · ${enabledPackages.value.length} 个套餐 · 总库存 ${totalStock}`
+    return `${sellingModeLabels.package} · ${enabledPackages.value.length} 个套餐 · 总库存 ${totalStock}`
   }
   const expiry = form.quotaExpiresAt ? form.quotaExpiresAt.slice(0, 10).replaceAll('-', '/') : '待填写有效期'
   return `自由额度 · ¥${form.cnyPerUsdCredit ?? 0} / $1 · 可售 $${form.availableCreditUsd ?? 0} · 有效至 ${expiry}`
@@ -497,7 +515,7 @@ const primaryActionLabel = computed(() => {
   }
   if (currentStep.value === 1) return '继续：设置接入与模型'
   if (currentStep.value === 2) return '继续：交易与服务'
-  return isFixedPackageMode.value ? '发布固定额度包' : '发布自由额度服务'
+  return isFixedPackageMode.value ? `发布${sellingModeLabels.package}` : `发布${sellingModeLabels.free}服务`
 })
 const actionHeading = computed(() => {
   if (isLimitedQuotaMode.value) return currentStep.value === 1 ? '下一步：配置基础服务' : '下一步：设置额度包'
@@ -519,7 +537,7 @@ const publishMutation = useMutation({
       status: 'reviewing',
     })
   },
-  async onSuccess(service) {
+  async onSuccess() {
     formDirty.value = false
     trackAnalytics('api_service_publish_success', {
       source_route: analyticsSourceRoute(),
@@ -528,16 +546,11 @@ const publishMutation = useMutation({
       delivery_mode: form.deliveryModes[0],
       minimum_purchase_cny: form.minimumPurchaseCny,
     })
-    toast.success(isLimitedQuotaMode.value
-      ? '基础服务已保存，继续设置额度包。'
-      : isFixedPackageMode.value
-        ? '固定额度包已发布并开启接单。'
-        : '自由额度服务已发布并开启接单。')
+    toast.success(isFixedPackageMode.value
+      ? `${sellingModeLabels.package}已发布并开启接单。`
+      : `${sellingModeLabels.free}服务已发布并开启接单。`)
     await invalidateApiServicePublishQueries()
-    const destination = isLimitedQuotaMode.value
-      ? `/api-market/quota/new?serviceId=${service.id}`
-      : '/my/api-services'
-    await router.replace(destination)
+    await router.replace('/my/api-services')
   },
   onError(error) {
     toast.error(error instanceof Error ? error.message : 'API 服务发布失败，请检查配置后重试。')
@@ -553,6 +566,10 @@ async function invalidateApiServicePublishQueries() {
 }
 
 async function chooseSellingMode(value: SellingMode) {
+  if (value === 'limited') {
+    await router.push('/api-market/quota/new')
+    return
+  }
   const { after: _after, ...query } = route.query
   await router.push({ query: { ...query, mode: value } })
 }
@@ -723,13 +740,13 @@ function confirmProviderCategoryChange() {
             {{ isLimitedQuotaMode
               ? '先配置可复用的 API 基础服务，下一步再设置额度包规格、价格、库存和放量时间。'
               : isFixedPackageMode
-                ? '买家选择固定额度包，订单保留套餐价格、额度、模型和有效期快照。'
+                ? `买家选择${sellingModeLabels.package}，订单保留套餐价格、额度、模型和有效期快照。`
                 : '买家自定购买金额，系统按你的美元额度售价创建订单。' }}
           </p>
         </div>
         <div class="flex flex-wrap gap-2">
           <Button variant="outline" @click="returnToSellingModeSelector"><ArrowLeft class="h-4 w-4" />更换销售模式</Button>
-          <Button variant="outline" @click="preview"><Eye class="h-4 w-4" />预览</Button>
+          <Button variant="outline" class="hidden min-[1241px]:inline-flex" @click="preview"><Eye class="h-4 w-4" />预览</Button>
         </div>
       </div>
 
@@ -744,7 +761,7 @@ function confirmProviderCategoryChange() {
         <section class="api-publish-editor min-w-0 space-y-3">
         <PublishStepSection
           :step="1"
-          :title="isLimitedQuotaMode ? '销售模式' : isFixedPackageMode ? '配置固定额度包' : '配置自由额度'"
+          :title="isLimitedQuotaMode ? '销售模式' : `配置${sellingModeLabels[isFixedPackageMode ? 'package' : 'free']}`"
           :description="isLimitedQuotaMode ? '已选择限时额度包。' : isFixedPackageMode ? '设置买家可选择的固定规格、价格与库存。' : '设置美元额度售价、可售额度和有效期。'"
           :status="publishStepStatus(1, currentStep, completedSteps)"
           :summary="stepOneSummary"
@@ -839,8 +856,8 @@ function confirmProviderCategoryChange() {
 
         </section>
 
-        <ResponsivePublishPreview v-model:open="previewOpen" :title="isLimitedQuotaMode ? '限时额度包基础服务预览' : isFixedPackageMode ? '固定额度包预览' : '自由额度预览'" :description="isLimitedQuotaMode ? '额度包价格、库存和时间将在下一步设置。' : '根据当前表单实时生成。'">
-          <ApiServicePublishPreview :form="form" :catalog-by-id="catalogById" :completeness="completeness" :risks="risks" :quota-for-minimum-purchase="quotaForMinimumPurchase" :selling-mode="editorSellingMode" preview-only />
+        <ResponsivePublishPreview v-model:open="previewOpen" :title="isLimitedQuotaMode ? `${sellingModeLabels.limited}基础服务预览` : `${sellingModeLabels[isFixedPackageMode ? 'package' : 'free']}预览`" :description="isLimitedQuotaMode ? '额度包价格、库存和时间将在下一步设置。' : '根据当前表单实时生成。'">
+          <ApiServicePublishPreview :form="form" :catalog-by-id="catalogById" :risks="risks" :quota-for-minimum-purchase="quotaForMinimumPurchase" :selling-mode="editorSellingMode" preview-only />
         </ResponsivePublishPreview>
       </div>
 

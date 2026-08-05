@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"net/netip"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -25,6 +26,22 @@ func (r staticResolver) LookupNetIP(_ context.Context, _ string, host string) ([
 		return nil, r.err
 	}
 	return append([]netip.Addr(nil), r.addresses[host]...), nil
+}
+
+type sequenceResolver struct {
+	mu        sync.Mutex
+	responses [][]netip.Addr
+}
+
+func (r *sequenceResolver) LookupNetIP(_ context.Context, _ string, _ string) ([]netip.Addr, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if len(r.responses) == 0 {
+		return nil, nil
+	}
+	response := append([]netip.Addr(nil), r.responses[0]...)
+	r.responses = r.responses[1:]
+	return response, nil
 }
 
 type recordingDialer struct {
@@ -126,6 +143,43 @@ func TestValidateURLNormalizesPublicTargetAndEnforcesAllowlist(t *testing.T) {
 	}
 	if _, err := NewPolicy([]string{"*.example.com"}); err == nil {
 		t.Fatal("wildcard allowlist entry was accepted")
+	}
+}
+
+func TestInsecureHTTPRequiresExplicitPolicyAndKeepsAddressProtections(t *testing.T) {
+	resolver := staticResolver{addresses: map[string][]netip.Addr{
+		"api.example.com":     {netip.MustParseAddr("93.184.216.34")},
+		"private.example.com": {netip.MustParseAddr("10.0.0.2")},
+		"mixed.example.com": {
+			netip.MustParseAddr("93.184.216.34"),
+			netip.MustParseAddr("192.168.1.10"),
+		},
+	}}
+	defaultPolicy, err := NewPolicy(nil, WithResolver(resolver))
+	if err != nil {
+		t.Fatalf("NewPolicy() default error: %v", err)
+	}
+	if _, err := defaultPolicy.ValidateURL(context.Background(), "http://api.example.com/v1"); !errors.Is(err, ErrInvalidTarget) {
+		t.Fatalf("default policy accepted HTTP: %v", err)
+	}
+
+	httpPolicy, err := NewPolicy(nil, WithResolver(resolver), WithInsecureHTTP())
+	if err != nil {
+		t.Fatalf("NewPolicy() HTTP error: %v", err)
+	}
+	normalized, err := httpPolicy.ValidateURL(context.Background(), " HTTP://API.EXAMPLE.COM./v1/ ")
+	if err != nil || normalized != "http://api.example.com/v1" {
+		t.Fatalf("HTTP validation normalized=%q err=%v", normalized, err)
+	}
+	for _, target := range []string{
+		"http://127.0.0.1/v1",
+		"http://169.254.169.254/latest/meta-data",
+		"http://private.example.com/v1",
+		"http://mixed.example.com/v1",
+	} {
+		if _, err := httpPolicy.ValidateURL(context.Background(), target); !errors.Is(err, ErrUnsafeAddress) {
+			t.Fatalf("HTTP policy accepted unsafe target %q: %v", target, err)
+		}
 	}
 }
 
@@ -238,6 +292,74 @@ func TestClientSupportsPublicHTTPSAndRejectsRedirects(t *testing.T) {
 	}
 }
 
+func TestClientSupportsExplicitPublicHTTPAndRejectsRedirects(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+		if request.URL.Path == "/redirect" {
+			http.Redirect(w, request, "http://api.example.com/ok", http.StatusFound)
+			return
+		}
+		_, _ = io.WriteString(w, `{"ok":true}`)
+	}))
+	defer server.Close()
+
+	dialer := &recordingDialer{dial: func(ctx context.Context, network, _ string) (net.Conn, error) {
+		return (&net.Dialer{}).DialContext(ctx, network, server.Listener.Addr().String())
+	}}
+	resolver := staticResolver{addresses: map[string][]netip.Addr{
+		"api.example.com": {netip.MustParseAddr("93.184.216.34")},
+	}}
+	policy, err := NewPolicy(
+		[]string{"api.example.com"},
+		WithResolver(resolver),
+		WithDialer(dialer),
+		WithInsecureHTTP(),
+	)
+	if err != nil {
+		t.Fatalf("NewPolicy() error: %v", err)
+	}
+	client := NewClient(policy, WithClientTimeout(2*time.Second))
+	response, err := client.Get("http://api.example.com/ok")
+	if err != nil {
+		t.Fatalf("GET explicit public HTTP target: %v", err)
+	}
+	_ = response.Body.Close()
+	if len(dialer.addresses) != 1 || dialer.addresses[0] != "93.184.216.34:80" {
+		t.Fatalf("dialer did not receive validated public HTTP address: %v", dialer.addresses)
+	}
+	_, err = client.Get("http://api.example.com/redirect")
+	if !errors.Is(err, ErrRedirectNotAllowed) {
+		t.Fatalf("expected HTTP redirect rejection, got %v", err)
+	}
+}
+
+func TestClientRevalidatesAcknowledgedHTTPAtDialTime(t *testing.T) {
+	resolver := &sequenceResolver{responses: [][]netip.Addr{
+		{netip.MustParseAddr("93.184.216.34")},
+		{netip.MustParseAddr("93.184.216.34"), netip.MustParseAddr("10.0.0.1")},
+	}}
+	dialer := &recordingDialer{}
+	policy, err := NewPolicy(
+		[]string{"api.example.com"},
+		WithResolver(resolver),
+		WithDialer(dialer),
+		WithInsecureHTTP(),
+	)
+	if err != nil {
+		t.Fatalf("NewPolicy() error: %v", err)
+	}
+	const target = "http://api.example.com/v1"
+	if _, err := policy.ValidateURL(context.Background(), target); err != nil {
+		t.Fatalf("initial HTTP validation failed: %v", err)
+	}
+	client := NewClient(policy, WithClientTimeout(time.Second))
+	if _, err := client.Get(target); !errors.Is(err, ErrUnsafeAddress) {
+		t.Fatalf("expected dial-time unsafe address rejection, got %v", err)
+	}
+	if len(dialer.addresses) != 0 {
+		t.Fatalf("dialer was called after HTTP DNS rebinding: %v", dialer.addresses)
+	}
+}
+
 func TestClientTotalTimeoutBoundsSlowResponse(t *testing.T) {
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		time.Sleep(100 * time.Millisecond)
@@ -293,7 +415,7 @@ func testTLSClient(t *testing.T, server *httptest.Server, timeout time.Duration)
 		t.Fatalf("NewPolicy() error: %v", err)
 	}
 	return NewClient(policy,
-		withClientTimeout(timeout),
+		WithClientTimeout(timeout),
 		withTLSConfig(&tls.Config{InsecureSkipVerify: true}),
 	), dialer
 }

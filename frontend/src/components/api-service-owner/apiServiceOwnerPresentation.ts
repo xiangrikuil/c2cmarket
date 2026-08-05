@@ -6,6 +6,7 @@ import type {
   ApiServiceSalesSummary,
   ApiServiceSalesView,
 } from '@/lib/api'
+import type { ApiHealthAvailabilityReason, ApiHealthState, ApiServiceHealthSummary } from '@/types/apiHealth'
 import { formatDecimal } from '@/lib/decimal'
 
 export type ApiServiceOwnerStatusTone = 'success' | 'waiting' | 'warning' | 'neutral'
@@ -22,6 +23,35 @@ export function getApiServiceOwnerStatus(
   if (service.state === 'reviewing') return { label: '审核中', tone: 'waiting' }
   if (service.state === 'paused') return { label: '已暂停', tone: 'warning' }
   return { label: '未上线', tone: 'neutral' }
+}
+
+export type ApiServiceProbeStatus = {
+  label: string
+  description: string
+  tone: 'success' | 'waiting' | 'warning' | 'risk' | 'neutral'
+}
+
+const probeAvailabilityPresentation: Record<Exclude<ApiHealthAvailabilityReason, null>, ApiServiceProbeStatus> = {
+  unconfigured: { label: '未配置', description: '尚未配置平台探针', tone: 'neutral' },
+  disabled: { label: '已停用', description: '平台探针已停用', tone: 'warning' },
+  unauthorized: { label: '待授权', description: '探针目标尚未完成授权', tone: 'waiting' },
+  insufficient: { label: '样本不足', description: '最近一小时样本不足', tone: 'waiting' },
+  stale: { label: '样本过期', description: '最近样本已过期', tone: 'warning' },
+  temporarily_unavailable: { label: '暂不可用', description: '探针系统暂时不可用', tone: 'risk' },
+}
+
+const probeStatePresentation: Record<ApiHealthState, ApiServiceProbeStatus> = {
+  normal: { label: '正常', description: '平台探针正常', tone: 'success' },
+  fluctuating: { label: '波动', description: '平台探针近期存在波动', tone: 'warning' },
+  abnormal: { label: '异常', description: '平台探针近期异常', tone: 'risk' },
+  no_sample: { label: '暂无数据', description: '平台探针暂无有效数据', tone: 'neutral' },
+}
+
+export function getApiServiceProbeStatus(
+  summary: ApiServiceHealthSummary,
+): ApiServiceProbeStatus {
+  if (summary.availabilityReason) return probeAvailabilityPresentation[summary.availabilityReason]
+  return probeStatePresentation[summary.state]
 }
 
 export type ApiServiceSalesStatus = {

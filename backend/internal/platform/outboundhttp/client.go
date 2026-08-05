@@ -22,7 +22,7 @@ type clientOptions struct {
 
 type ClientOption func(*clientOptions)
 
-func withClientTimeout(timeout time.Duration) ClientOption {
+func WithClientTimeout(timeout time.Duration) ClientOption {
 	return func(options *clientOptions) {
 		if timeout > 0 {
 			options.timeout = timeout

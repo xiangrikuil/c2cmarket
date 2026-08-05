@@ -52,6 +52,7 @@ test('wires category icons through admin upload and public category rendering', 
   const apiPackageCardSource = readFileSync(new URL('../../components/api-market/ApiPackageCard.vue', import.meta.url), 'utf8')
   const carpoolSource = readFileSync(new URL('../../pages/CarpoolsPage.vue', import.meta.url), 'utf8')
   const homeSource = readFileSync(new URL('../../pages/HomePage.vue', import.meta.url), 'utf8')
+  const homeSnapshotSource = readFileSync(new URL('../../components/market/HomeMarketSnapshot.vue', import.meta.url), 'utf8')
   const backendSource = readFileSync(new URL('../productCatalogBackend.ts', import.meta.url), 'utf8')
 
   assert.match(adminSource, /readProductCategoryIcon/)
@@ -61,7 +62,8 @@ test('wires category icons through admin upload and public category rendering', 
   assert.match(carpoolSource, /getProductCategoryIconSrc/)
   assert.match(carpoolSource, /getCatalogProductIconSrc/)
   assert.match(homeSource, /useProductCategories/)
-  assert.match(homeSource, /getApiServiceProductIconSrc/)
+  assert.match(homeSnapshotSource, /getApiServiceProductIconSrc/)
+  assert.match(homeSnapshotSource, /getProductIconSrc/)
   assert.match(apiMarketSource, /useProductCategories/)
   assert.match(apiMarketSource, /getApiServiceProductIconSrc/)
   assert.match(apiMarketSource, /getProductIconSrc/)

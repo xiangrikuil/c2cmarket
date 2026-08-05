@@ -3,7 +3,7 @@
 Date: 2026-07-26
 Author: Codex
 
-## Scenario: Variable-Destination HTTPS Requests
+## Scenario: Variable-Destination Outbound Requests
 
 ### 1. Scope / Trigger
 
@@ -26,6 +26,7 @@ type Dialer interface {
 }
 
 func NewPolicy(allowedHosts []string, options ...PolicyOption) (*Policy, error)
+func WithInsecureHTTP() PolicyOption
 func (p *Policy) ValidateURL(ctx context.Context, raw string) (string, error)
 func NewClient(policy *Policy, options ...ClientOption) *http.Client
 func ReadBody(body io.Reader, limit int64) ([]byte, error)
@@ -43,7 +44,10 @@ config.Config.ModelAuditAllowedHosts []string
 
 ### 3. Contracts
 
-- Accept only absolute HTTPS URLs.
+- Accept only absolute HTTPS URLs by default.
+- `WithInsecureHTTP` is a narrow opt-in owned by the API-health probe flow. It may be used only
+  after that flow has enforced `acknowledgeInsecureHttp=true` for every HTTP save and disclosed
+  the transport risk. Model audit and all other consumers remain HTTPS-only.
 - Reject URL credentials, queries, fragments, opaque URLs, zone identifiers,
   malformed ports, alternative numeric IP forms, and invalid DNS labels.
 - Treat `MODEL_AUDIT_ALLOWED_HOSTS` as an optional exact-host allowlist. Do not
@@ -71,7 +75,8 @@ config.Config.ModelAuditAllowedHosts []string
 
 | Condition | Required result |
 | --- | --- |
-| Scheme is not HTTPS, URL is relative/opaque, or authority is malformed | `ErrInvalidTarget`; do not resolve or dial |
+| Scheme is HTTP without `WithInsecureHTTP`, is neither HTTP nor HTTPS, URL is relative/opaque, or authority is malformed | `ErrInvalidTarget`; do not resolve or dial |
+| API-health HTTP request omits its request-layer acknowledgement | Reject before policy validation; do not resolve, persist, or dial |
 | URL contains credentials, query, fragment, zone ID, or invalid port | `ErrInvalidTarget`; do not persist |
 | Host is absent from a non-empty exact allowlist | `ErrHostNotAllowed`; do not resolve or dial |
 | Literal IP is private or special-use | `ErrUnsafeAddress`; do not dial |
@@ -87,6 +92,8 @@ config.Config.ModelAuditAllowedHosts []string
 - Good: `https://api.provider.example/v1` is allowlisted, all DNS answers are
   public, and the dialer receives an IP literal such as `93.184.216.34:443`.
   Documentation ranges are intentionally blocked.
+- Good: API health creates its own policy with `WithInsecureHTTP` only after owner acknowledgement;
+  `http://api.provider.example/v1` dials a validated public IP on port 80 with redirects disabled.
 - Base: `MODEL_AUDIT_ALLOWED_HOSTS` is empty. Any syntactically valid public
   HTTPS target may be saved, but private and special-use addresses still fail.
 - Bad: validating DNS only when saving, then letting `http.Transport` resolve
@@ -96,10 +103,12 @@ config.Config.ModelAuditAllowedHosts []string
   answer. The entire result set must fail before dialing.
 - Bad: using `io.LimitReader` without checking one extra byte. That silently
   turns an oversized JSON response into malformed or partial data.
+- Bad: adding `WithInsecureHTTP` to a shared/global policy or a consumer without an explicit
+  product acknowledgement and public disclosure contract.
 
 ### 6. Tests Required
 
-- URL table tests: HTTP, credentials, query, fragment, invalid/zero/overflow
+- URL table tests: HTTP rejected by default, explicitly enabled HTTP, credentials, query, fragment, invalid/zero/overflow
   ports, zone IDs, relative URLs, and alternative numeric IPv4 syntax.
 - Address table tests: loopback, unspecified, metadata, RFC1918, CGNAT,
   link-local, multicast, benchmark, documentation, reserved, IPv6 ULA,
@@ -111,8 +120,9 @@ config.Config.ModelAuditAllowedHosts []string
   exceed three.
 - TLS test: assert the ClientHello ServerName remains the original DNS host even
   though the socket dial uses an IP literal.
-- HTTP tests: successful public HTTPS, redirect rejection, slow response
-  timeout, and oversized Chat/models bodies.
+- HTTP tests: successful public HTTPS and explicitly enabled public HTTP, default HTTP rejection,
+  private/mixed-DNS HTTP rejection, redirect rejection, slow response timeout, and oversized
+  Chat/models bodies.
 - Consumer tests: model audit create and update both reject unsafe targets,
   preserve a normalized `/v1` base path, and sanitize request errors.
 - Final verification: focused tests and race tests for `outboundhttp` and
@@ -150,3 +160,15 @@ body, err := outboundhttp.ReadBody(response.Body, maxBody)
 
 Persistence validation improves feedback, while the same policy inside the
 transport remains the actual connection-time security boundary.
+
+For the API-health-only exception, construct a separate policy instance after request-layer
+acknowledgement:
+
+```go
+if usesHTTP(input.BaseURL) && !input.AcknowledgeInsecureHTTP {
+    return validationError("acknowledgeInsecureHttp")
+}
+policy, err := outboundhttp.NewPolicy(configuredHosts, outboundhttp.WithInsecureHTTP())
+```
+
+Do not add the option to model-audit or a process-wide shared policy.

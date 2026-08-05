@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"c2c-market/backend/internal/domain"
+	"c2c-market/backend/internal/module/apimarket"
 	"c2c-market/backend/internal/module/idempotency"
 )
 
@@ -62,6 +63,7 @@ type Batch struct {
 	DeclaredTTFTBand          string
 	DeclaredMaxConcurrency    int
 	PerformanceConfirmedAt    *time.Time
+	PromptAuditEnabled        *bool
 	SourceType                string
 	SourceLabel               string
 	Status                    string
@@ -88,6 +90,7 @@ type Offer struct {
 	PriceCNY           string
 	CNYPerUSD          string
 	ModelMultiplier    string
+	QuotaUsagePolicy   apimarket.QuotaUsagePolicy
 	DeliveryMode       string
 	DeliveryETAMinutes int
 	SaleMode           string
@@ -154,6 +157,7 @@ type OfferCard struct {
 	DeclaredTTFTBand          string
 	DeclaredMaxConcurrency    int
 	PerformanceConfirmedAt    *time.Time
+	PromptAuditEnabled        *bool
 	PerformanceDisclaimer     string
 	SaleCutoffAt              time.Time
 	ExpiresAt                 time.Time
@@ -184,6 +188,7 @@ type CreateOfferInput struct {
 	USDAllowance       string
 	PriceCNY           string
 	ModelMultiplier    string
+	QuotaUsagePolicy   apimarket.QuotaUsagePolicy
 	DeliveryMode       string
 	DeliveryETAMinutes int
 	SaleMode           string
@@ -267,6 +272,7 @@ type CreateRushOfferInput struct {
 	USDAllowance       string
 	PriceCNY           string
 	ModelMultiplier    string
+	QuotaUsagePolicy   apimarket.QuotaUsagePolicy
 	Copies             int
 	DeliveryMode       string
 	DeliveryETAMinutes int

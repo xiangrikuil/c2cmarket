@@ -4,18 +4,22 @@ import { CalendarClock, Clock3, PackageCheck, Store } from 'lucide-vue-next'
 import { Badge } from '@/components/ui/badge'
 import { Card } from '@/components/ui/card'
 import { formatDecimal } from '@/lib/decimal'
+import ApiQuotaPolicyStrip from '@/components/api-market/ApiQuotaPolicyStrip.vue'
+import type { ApiQuotaUsagePolicyInput } from '@/types/apiQuota'
 
 const props = defineProps<{
   step: number
   serviceTitle?: string
   slotLabel?: string
   defaultMultiplier: number
+  declaredMaxConcurrency: number
+  promptAuditEnabled: boolean | null
   draft: {
     name: string
     usdAllowance: string
     priceCny: string
+    quotaUsagePolicy: ApiQuotaUsagePolicyInput
     copies: number
-    deliveryMode: 'manual' | 'preimported'
     deliveryEtaMinutes: number
     expiresAt: string
   }
@@ -27,16 +31,10 @@ const cnyPerUsd = computed(() => {
   return usd > 0 && cny > 0 ? cny / usd : 0
 })
 const totalUsd = computed(() => Number(props.draft.usdAllowance || 0) * Number(props.draft.copies || 0))
-const completionPercent = computed(() => Math.round((props.step / 3) * 100))
 </script>
 
 <template>
   <div class="min-w-0 space-y-2">
-    <div class="rounded-md border border-border bg-card px-3 py-2.5">
-      <div class="flex items-center justify-between gap-3 text-xs"><span class="font-medium">发布进度</span><strong>{{ completionPercent }}%</strong></div>
-      <div class="mt-2 h-1.5 overflow-hidden rounded-full bg-muted"><div class="h-full rounded-full bg-primary transition-[width]" :style="{ width: `${completionPercent}%` }" /></div>
-    </div>
-
     <Card class="overflow-hidden p-0">
       <div class="border-b border-orange-100 bg-orange-50/70 p-4">
         <div class="flex items-center justify-between gap-3">
@@ -53,8 +51,15 @@ const completionPercent = computed(() => Math.round((props.step / 3) * 100))
         <div><span class="text-xs text-muted-foreground">折算售价</span><strong class="mt-1 block">¥{{ cnyPerUsd.toFixed(3) }} / $1</strong></div>
         <div><span class="text-xs text-muted-foreground">库存 / 总额度</span><strong class="mt-1 block">{{ draft.copies }} 份 / ${{ formatDecimal(String(totalUsd), 0, 6) }}</strong></div>
         <div><span class="text-xs text-muted-foreground">服务倍率</span><strong class="mt-1 block">{{ defaultMultiplier.toFixed(2) }}x</strong></div>
-        <div><span class="text-xs text-muted-foreground">交付</span><strong class="mt-1 block">{{ draft.deliveryMode === 'manual' ? `手工 ≤ ${draft.deliveryEtaMinutes} 分钟` : '预导入凭据' }}</strong></div>
+        <div><span class="text-xs text-muted-foreground">最大并发</span><strong class="mt-1 block">{{ declaredMaxConcurrency }}</strong></div>
+        <div><span class="text-xs text-muted-foreground">提示词审计</span><strong class="mt-1 block" :class="promptAuditEnabled === true ? 'text-orange-700' : ''">{{ promptAuditEnabled === null ? '未声明' : promptAuditEnabled ? '开启' : '关闭' }}</strong></div>
+        <div><span class="text-xs text-muted-foreground">交付</span><strong class="mt-1 block">手工 ≤ {{ draft.deliveryEtaMinutes }} 分钟</strong></div>
       </div>
+
+      <ApiQuotaPolicyStrip
+        :policy="draft.quotaUsagePolicy"
+        :expiry-value="draft.expiresAt ? draft.expiresAt.replace('T', ' ') : '待填写'"
+      />
 
       <div v-if="step >= 3" class="grid gap-3 border-t border-border px-4 py-3 text-sm">
         <div class="flex gap-2"><CalendarClock class="mt-0.5 h-4 w-4 shrink-0 text-primary" /><span><small class="block text-muted-foreground">开抢场次</small><strong>{{ slotLabel || '待选择' }}</strong></span></div>
@@ -63,7 +68,7 @@ const completionPercent = computed(() => Math.round((props.step / 3) * 100))
 
       <div class="flex gap-2 border-t border-border bg-muted/35 px-4 py-3 text-xs leading-5 text-muted-foreground">
         <Store class="mt-0.5 h-4 w-4 shrink-0" />
-        <span>平台记录订单，不代收款。商户自报额度与性能，平台未测速、未验证上游余额。</span>
+        <span>平台记录订单，不代收款。额度规则由商户声明，平台不代理 API 流量或执行用量扣减。</span>
       </div>
     </Card>
   </div>

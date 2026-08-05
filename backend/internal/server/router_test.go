@@ -1778,7 +1778,10 @@ func TestOwnerAPIServicesSalesViewAndOwnerOnlySummary(t *testing.T) {
 	}
 	if len(allList.Items) != 1 || allList.Items[0].ID != service.ID ||
 		allList.Items[0].SalesSummary == nil ||
-		allList.Items[0].SalesSummary.OverallState != apimarket.ServiceSalesStateDraft {
+		allList.Items[0].SalesSummary.OverallState != apimarket.ServiceSalesStateDraft ||
+		allList.Items[0].HealthSummary.State != "no_sample" ||
+		allList.Items[0].HealthSummary.AvailabilityReason == nil ||
+		*allList.Items[0].HealthSummary.AvailabilityReason != "unconfigured" {
 		t.Fatalf("expected draft service with owner sales summary, got %+v", allList.Items)
 	}
 
@@ -2980,21 +2983,23 @@ type createdCarpoolMembership struct {
 }
 
 type createdAPIService struct {
-	ID                     string                    `json:"id"`
-	SourceURL              string                    `json:"sourceUrl"`
-	ReviewStatus           string                    `json:"reviewStatus"`
-	PublicationStatus      string                    `json:"publicationStatus"`
-	ModerationStatus       string                    `json:"moderationStatus"`
-	AcceptingOrders        bool                      `json:"acceptingOrders"`
-	PaymentWindowMinutes   int                       `json:"paymentWindowMinutes"`
-	AcceptedPaymentMethods []string                  `json:"acceptedPaymentMethods"`
-	IsOrderable            bool                      `json:"isOrderable"`
-	AvailableUSDAllowance  string                    `json:"availableUsdAllowance"`
-	DeclaredTTFTBand       string                    `json:"declaredTtftBand"`
-	DeclaredMaxConcurrency int                       `json:"declaredMaxConcurrency"`
-	PerformanceConfirmedAt *string                   `json:"performanceConfirmedAt"`
-	OrderableReasons       []string                  `json:"orderableReasons"`
-	Models                 []apiServiceModelResponse `json:"models"`
+	ID                     string                          `json:"id"`
+	SourceURL              string                          `json:"sourceUrl"`
+	ReviewStatus           string                          `json:"reviewStatus"`
+	PublicationStatus      string                          `json:"publicationStatus"`
+	ModerationStatus       string                          `json:"moderationStatus"`
+	AcceptingOrders        bool                            `json:"acceptingOrders"`
+	PaymentWindowMinutes   int                             `json:"paymentWindowMinutes"`
+	AcceptedPaymentMethods []string                        `json:"acceptedPaymentMethods"`
+	IsOrderable            bool                            `json:"isOrderable"`
+	AvailableUSDAllowance  string                          `json:"availableUsdAllowance"`
+	DeclaredTTFTBand       string                          `json:"declaredTtftBand"`
+	DeclaredMaxConcurrency int                             `json:"declaredMaxConcurrency"`
+	PerformanceConfirmedAt *string                         `json:"performanceConfirmedAt"`
+	PromptAuditEnabled     *bool                           `json:"promptAuditEnabled"`
+	OrderableReasons       []string                        `json:"orderableReasons"`
+	Models                 []apiServiceModelResponse       `json:"models"`
+	HealthSummary          apiServiceHealthSummaryResponse `json:"healthSummary"`
 	SalesSummary           *struct {
 		OverallState string `json:"overallState"`
 		Channels     []struct {
@@ -4110,6 +4115,7 @@ func apiServicePayloadWithModelAndMultiplier(ownerContactID, modelCatalogID, mul
 		"declaredMaxUsdAllowancePerIntent":"20.000000",
 		"availableUsdAllowance":"100.000000",
 		"quotaExpiresAt":"` + time.Now().Add(30*24*time.Hour).UTC().Format(time.RFC3339) + `",
+		"quotaUsagePolicy":{"fiveHour":{"mode":"limited","amountUsd":"5.000000"},"daily":{"mode":"unlimited"}},
 		"minimumIntentCny":"10.00",
 		"maximumIntentCny":"200.00",
 		"usageVisibility":"merchant_reported",
@@ -4118,6 +4124,8 @@ func apiServicePayloadWithModelAndMultiplier(ownerContactID, modelCatalogID, mul
 		"accountPoolType":"gpt_pro_20x",
 		"accountPoolCustomName":"",
 		"merchantRefundCommitment":true,
+		"declaredMaxConcurrency":8,
+		"promptAuditEnabled":false,
 		"accessModes":[
 			{"accessMode":"buyer_dedicated_sub_key","publicNote":"站外确认买家专属的访问方式。"}
 		],

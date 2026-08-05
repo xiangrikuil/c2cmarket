@@ -2,6 +2,7 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
 import AlertTriangle from 'lucide-vue-next/dist/esm/icons/triangle-alert.js'
+import Activity from 'lucide-vue-next/dist/esm/icons/activity.js'
 import ArrowLeft from 'lucide-vue-next/dist/esm/icons/arrow-left.js'
 import Bell from 'lucide-vue-next/dist/esm/icons/bell.js'
 import BookOpen from 'lucide-vue-next/dist/esm/icons/book-open.js'
@@ -52,6 +53,7 @@ const navGroups = computed(() => [
     { label: '官网价格维护', to: '/admin/official-prices', icon: ShieldCheck, count: badges.value?.admin?.officialPrices ?? null },
     { label: '车源异常', to: '/admin/carpools', icon: Car, count: badges.value?.admin?.carpools ?? null },
     { label: 'API 服务审核', to: '/admin/api-services', icon: Code2, count: badges.value?.admin?.apiServices ?? null },
+    { label: 'API 探针授权', to: '/admin/api-health-probes', icon: Activity, count: null },
     { label: '问题反馈', to: '/admin/feedback', icon: ClipboardList, count: badges.value?.admin?.feedbackTickets ?? null },
     { label: '举报纠纷', to: '/admin/reports', icon: MessageSquareWarning, count: badges.value?.admin?.reports ?? null },
     { label: '申诉处理', to: '/admin/appeals', icon: AlertTriangle, count: null },

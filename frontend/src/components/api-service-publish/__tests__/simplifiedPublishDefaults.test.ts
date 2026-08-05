@@ -24,6 +24,10 @@ test('applies simplified API quota publish defaults', () => {
     deliveryModes: ['api_key_endpoint'],
     shortDescription: '旧短句',
     cnyPerUsdCredit: 0.8,
+    quotaUsagePolicy: {
+      fiveHour: { mode: 'unlimited' },
+      daily: { mode: 'unlimited' },
+    },
     manualBillingNote: '旧计费说明',
     defaultMultiplier: 2,
     selectedModels: [{ modelId: 'gpt-5-mini', enabled: true }],
@@ -46,6 +50,10 @@ test('applies simplified API quota publish defaults', () => {
       name: '旧套餐',
       priceCny: 50,
       panelAllowance: 20,
+      quotaUsagePolicy: {
+        fiveHour: { mode: 'limited', amountUsd: '5' },
+        daily: { mode: 'limited', amountUsd: '20' },
+      },
       durationDays: 30,
       stockTotal: 1,
       description: '旧套餐',
@@ -87,7 +95,7 @@ test('applies simplified API quota publish defaults', () => {
   assert.equal(form.packages[0].id, 'pkg')
   assert.deepEqual(form.packages[0].modelCatalogIds, ['gpt-5-mini'])
   assert.equal(form.manualBillingNote, '')
-  assert.equal(generatedTitle(form, new Map()), 'GPT · API 限时套餐')
+  assert.equal(generatedTitle(form, new Map()), 'GPT · 限时流量包')
 
   form.billingMode = 'metered_credit'
   assert.equal(generatedTitle(form, new Map()), 'GPT · 其他 API 接入 自由额度')
@@ -127,11 +135,12 @@ test('publishes from the third configuration step without a duplicate confirmati
 
   assert.match(pageSource, /type ApiServicePublishStep = 1 \| 2 \| 3/)
   assert.match(pageSource, /currentStep\.value === 3[\s\S]*?publishService\(\)/)
-  assert.match(pageSource, /currentStep\.value === 2\) return '继续：交易与服务'[\s\S]*?'发布固定额度包' : '发布自由额度服务'/)
+  assert.match(pageSource, /currentStep\.value === 2\) return '继续：交易与服务'[\s\S]*?sellingModeLabels\.package[\s\S]*?sellingModeLabels\.free/)
   assert.match(pageSource, /currentStep\.value < 3/)
   assert.match(pageSource, /发布必填 \{\{ publishAssistant\.doneCount \}\} \/ \{\{ publishAssistant\.totalCount \}\}/)
   assert.match(pageSource, /<ApiServicePublishPreview[\s\S]*?preview-only/)
   assert.match(pageSource, /currentStep === 3[\s\S]*?min-\[1241px\]:hidden[\s\S]*?@click="preview"/)
+  assert.match(pageSource, /class="hidden min-\[1241px\]:inline-flex"[\s\S]*?@click="preview"/)
   assert.doesNotMatch(pageSource, /title: '确认发布'|title="确认发布"|:step="4"|publishStepStatus\(4|publicationReviewRows|发布信息确认清单/)
 })
 

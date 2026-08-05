@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"c2c-market/backend/internal/apihealthrunner"
 	"c2c-market/backend/internal/database"
 	"c2c-market/backend/internal/health"
 	"c2c-market/backend/internal/maintenance"
@@ -78,6 +79,16 @@ func (metricsMaintenanceSource) Stats() maintenance.Stats {
 	}
 }
 
+type metricsAPIHealthRunnerSource struct{}
+
+func (metricsAPIHealthRunnerSource) Stats() apihealthrunner.Stats {
+	return apihealthrunner.Stats{
+		RunSuccessTotal: 3, RunFailureTotal: 1, ProbeSuccessTotal: 11,
+		ProbeFailureTotal: 2, Inflight: 1, LastDurationSeconds: 0.75,
+		LastSuccessAt: time.Unix(1_785_817_600, 0).UTC(),
+	}
+}
+
 type metricsOutboundSource struct{}
 
 func (metricsOutboundSource) Stats() outboundhttp.PolicyStats {
@@ -107,6 +118,7 @@ func TestMetricsExposeBoundedRuntimeSnapshots(t *testing.T) {
 		Database:         metricsDatabaseSource{},
 		RateLimiter:      metricsRateLimiterSource{},
 		Maintenance:      metricsMaintenanceSource{},
+		APIHealthRunner:  metricsAPIHealthRunnerSource{},
 		OutboundPolicy:   metricsOutboundSource{},
 		RealtimeHub:      metricsRealtimeHubSource{},
 		RealtimeListener: metricsRealtimeListenerSource{},
@@ -127,6 +139,9 @@ func TestMetricsExposeBoundedRuntimeSnapshots(t *testing.T) {
 		`c2c_market_contact_decrypt_total{result="unknown_key"} 1`,
 		`c2c_market_outbound_rejections_total{reason="unsafe_address"} 4`,
 		`c2c_market_maintenance_runs_total{result="skipped"} 3`,
+		`c2c_market_api_health_runs_total{result="success"} 3`,
+		`c2c_market_api_health_probes_total{result="failure"} 2`,
+		`c2c_market_api_health_inflight 1`,
 		`c2c_market_realtime_active_connections 2`,
 		`c2c_market_realtime_listener_failures_total{reason="invalid_payload"} 1`,
 	} {

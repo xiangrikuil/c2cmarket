@@ -6,6 +6,7 @@ import {
   isAccountRecoveryComplete,
   outstandingAccountRecoveryRequirements,
   sanitizeAccountRecoveryReturnTo,
+  shouldRedirectToAccountRecovery,
 } from '../accountRecovery'
 
 const completeProfile = {
@@ -53,6 +54,16 @@ test('account recovery allows only setup and public explanation paths before com
   assert.equal(isAccountRecoveryAllowedPath('/my'), false)
   assert.equal(isAccountRecoveryAllowedPath('/carpools'), false)
   assert.equal(isAccountRecoveryAllowedPath('/api-market/new'), false)
+})
+
+test('account recovery redirects only authenticated workspace and transaction routes', () => {
+  assert.equal(shouldRedirectToAccountRecovery('/carpools', undefined), false)
+  assert.equal(shouldRedirectToAccountRecovery('/api-market/service-1', undefined), false)
+  assert.equal(shouldRedirectToAccountRecovery('/official-prices/p1', undefined), false)
+  assert.equal(shouldRedirectToAccountRecovery('/carpools/new', 'user'), true)
+  assert.equal(shouldRedirectToAccountRecovery('/my/api-orders', 'user'), true)
+  assert.equal(shouldRedirectToAccountRecovery('/admin', 'admin'), true)
+  assert.equal(shouldRedirectToAccountRecovery('/my/account', 'user'), false)
 })
 
 test('account recovery return target stays internal and skips allowed setup pages', () => {

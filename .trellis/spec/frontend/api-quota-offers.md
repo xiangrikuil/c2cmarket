@@ -1,7 +1,7 @@
 # Limited API Quota Offer Frontend Contract
 
 Date: 2026-07-19
-Updated: 2026-07-29
+Updated: 2026-08-04
 Author: Codex
 
 ## Scenario: Quota Offer Market, Purchase, And Owner Management
@@ -74,11 +74,11 @@ URL contract:
 - The primary publish/continue action remains visible in a concise sticky bottom bar on desktop and mobile. At `1440x900`, `.api-publish-layout` should begin no lower than `460px`; at `390x844`, it should begin no lower than `680px`. The sticky action must remain fully inside the viewport without covering its own validation reason.
 - The limited buyer flow is `选择额度包 → 创建订单 → 站外付款 → 卖家确认收款 → 获取交付凭证`, with `平台记录订单，不代收款`. Do not use `自动发货`, `平台担保`, `资金安全`, `安全可靠`, or `获取 API Key`.
 - Mobile publish pages keep identity configuration in normal document flow. Only the concise primary action bar may stick to the bottom; a multi-field configuration panel must not cover the viewport.
-- A limited card prioritizes fixed USD, total CNY, derived `¥ / $1`, multiplier, absolute expiry/cutoff, remaining time, stock, seller identity, distribution system, TTFT, concurrency, confirmation time, and delivery ETA/mode.
+- A limited card prioritizes fixed USD, total CNY, 5h/daily multiplier-adjusted USD limits, absolute expiry, platform health for one probe model, multiplier, stock, seller identity, distribution system, merchant-declared concurrency, and delivery ETA/mode.
 - Fixed-session, other limited-offer, and free-amount service cards share `quota-offer-card` and one visual hierarchy. Limited offers infer the product category with `getProductCategory(\`${item.serviceTitle} ${item.name}\`)`; free services use provider-first `getApiServiceProductCategory(service)`. Icons and low-opacity watermarks come from the matching shared product-icon helpers. Do not add a duplicate backend category field or a page-local brand map.
 - Category themes are product identity only: GPT purple, Claude coral, Gemini blue, Cursor cyan, Perplexity green, and Other neutral gray. The theme may affect the fine border, icon well, category badge, total CNY emphasis, very light card surface, and watermark. Availability, sold-out, ended, or cancelled badges keep semantic status variants, and the primary purchase button keeps the normal brand-blue `Button` treatment.
 - The free-amount public query contains only orderable services, so its cards must not repeat a static `可创建订单` badge. Non-orderable services remain visible only in owner/admin workspaces with their authoritative reason.
-- Free-amount cards show `¥ / $1`, available USD, minimum purchase, multiplier, TTFT, concurrency, payment window, seller, CNY order range, gateway, expiry, and reputation. Their full-width action navigates to the existing service detail so the buyer can choose an amount; it must not call the fixed-offer order mutation. The repeated merchant-declaration disclaimer belongs in the free-market alert, not every card.
+- Free-amount cards show `¥ / $1`, available USD, minimum purchase, 5h/daily quota policy, expiry, multiplier, platform health, merchant-declared concurrency, payment window, seller, CNY order range, gateway, and reputation. Their full-width action navigates to the existing service detail so the buyer can choose an amount; it must not call the fixed-offer order mutation. Seller-declared TTFT and the old merchant-performance disclaimer are forbidden on current public cards and service details.
 - Fixed-session and other limited-offer grids keep three columns at the desktop `xl` breakpoint. The free-amount grid is centered, capped at `1640px`, and uses `repeat(auto-fit, minmax(min(100%, 330px), 1fr))`. This keeps at most four equal flexible columns, distributes spare row width into the cards instead of a blank right edge or oversized gaps, fits three columns at `1440x900`, and uses one fluid mobile track capped at `375px`.
 - A normal free-amount card is `360px` high and must satisfy `scrollHeight <= clientHeight`; active reputation uses the compact one-line summary. A caution or restricted reputation card uses `min-height: 360px` and may grow so its warning and public badges are never clipped.
 - Limited cards keep four performance metrics in one row at `sm` and above and `2x2` on mobile. Compact free cards keep all four metrics in one row, including at `390px`, while transaction details remain `2x2`. Purchase buttons stay full width and `40px` high.
@@ -159,7 +159,7 @@ const responseTime = service.paymentWindowMinutes
 
 ```ts
 const modelMultiplier = normalizeDecimal(selectedService.defaultMultiplier, 4)
-const responseTime = offer.declaredTtftBand // merchant-declared, unverified
+const responseTime = offer.healthSummary.medianTtftMs // platform-measured for probeModel
 ```
 
 ```vue

@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"c2c-market/backend/internal/domain"
+	"c2c-market/backend/internal/module/apihealth"
 	"c2c-market/backend/internal/module/apiquota"
 	"c2c-market/backend/internal/module/idempotency"
 
@@ -28,31 +29,33 @@ type apiQuotaBatchRequest struct {
 }
 
 type apiQuotaOfferRequest struct {
-	Name               string `json:"name"`
-	USDAllowance       string `json:"usdAllowance"`
-	PriceCNY           string `json:"priceCny"`
-	ModelMultiplier    string `json:"modelMultiplier"`
-	DeliveryMode       string `json:"deliveryMode"`
-	DeliveryETAMinutes int    `json:"deliveryEtaMinutes"`
-	SaleMode           string `json:"saleMode"`
-	ContinuousCopies   int    `json:"continuousCopies"`
-	SortOrder          int    `json:"sortOrder"`
+	Name               string                     `json:"name"`
+	USDAllowance       string                     `json:"usdAllowance"`
+	PriceCNY           string                     `json:"priceCny"`
+	ModelMultiplier    string                     `json:"modelMultiplier"`
+	QuotaUsagePolicy   apiQuotaUsagePolicyRequest `json:"quotaUsagePolicy"`
+	DeliveryMode       string                     `json:"deliveryMode"`
+	DeliveryETAMinutes int                        `json:"deliveryEtaMinutes"`
+	SaleMode           string                     `json:"saleMode"`
+	ContinuousCopies   int                        `json:"continuousCopies"`
+	SortOrder          int                        `json:"sortOrder"`
 }
 
 type apiQuotaRushOfferRequest struct {
-	SourceType         string `json:"sourceType"`
-	SourceLabel        string `json:"sourceLabel"`
-	Name               string `json:"name"`
-	USDAllowance       string `json:"usdAllowance"`
-	PriceCNY           string `json:"priceCny"`
-	ModelMultiplier    string `json:"modelMultiplier"`
-	Copies             int    `json:"copies"`
-	DeliveryMode       string `json:"deliveryMode"`
-	DeliveryETAMinutes int    `json:"deliveryEtaMinutes"`
-	SlotKey            string `json:"slotKey"`
-	ExpiresAt          string `json:"expiresAt"`
-	SourceConfirmedAt  string `json:"sourceConfirmedAt"`
-	DeliveryKind       string `json:"deliveryKind"`
+	SourceType         string                     `json:"sourceType"`
+	SourceLabel        string                     `json:"sourceLabel"`
+	Name               string                     `json:"name"`
+	USDAllowance       string                     `json:"usdAllowance"`
+	PriceCNY           string                     `json:"priceCny"`
+	ModelMultiplier    string                     `json:"modelMultiplier"`
+	QuotaUsagePolicy   apiQuotaUsagePolicyRequest `json:"quotaUsagePolicy"`
+	Copies             int                        `json:"copies"`
+	DeliveryMode       string                     `json:"deliveryMode"`
+	DeliveryETAMinutes int                        `json:"deliveryEtaMinutes"`
+	SlotKey            string                     `json:"slotKey"`
+	ExpiresAt          string                     `json:"expiresAt"`
+	SourceConfirmedAt  string                     `json:"sourceConfirmedAt"`
+	DeliveryKind       string                     `json:"deliveryKind"`
 }
 
 type apiQuotaRoundRequest struct {
@@ -91,22 +94,23 @@ type apiQuotaBatchResponse struct {
 }
 
 type apiQuotaOfferResponse struct {
-	ID                 string  `json:"id"`
-	BatchID            string  `json:"batchId"`
-	APIServiceID       string  `json:"apiServiceId"`
-	DistributionSystem string  `json:"distributionSystem"`
-	Name               string  `json:"name"`
-	USDAllowance       string  `json:"usdAllowance"`
-	PriceCNY           string  `json:"priceCny"`
-	CNYPerUSD          string  `json:"cnyPerUsd"`
-	ModelMultiplier    string  `json:"modelMultiplier"`
-	DeliveryMode       string  `json:"deliveryMode"`
-	DeliveryETAMinutes int     `json:"deliveryEtaMinutes"`
-	SaleMode           string  `json:"saleMode"`
-	Status             string  `json:"status"`
-	SortOrder          int     `json:"sortOrder"`
-	PublishedAt        *string `json:"publishedAt,omitempty"`
-	Version            int64   `json:"version"`
+	ID                 string                      `json:"id"`
+	BatchID            string                      `json:"batchId"`
+	APIServiceID       string                      `json:"apiServiceId"`
+	DistributionSystem string                      `json:"distributionSystem"`
+	Name               string                      `json:"name"`
+	USDAllowance       string                      `json:"usdAllowance"`
+	PriceCNY           string                      `json:"priceCny"`
+	CNYPerUSD          string                      `json:"cnyPerUsd"`
+	ModelMultiplier    string                      `json:"modelMultiplier"`
+	QuotaUsagePolicy   apiQuotaUsagePolicyResponse `json:"quotaUsagePolicy"`
+	DeliveryMode       string                      `json:"deliveryMode"`
+	DeliveryETAMinutes int                         `json:"deliveryEtaMinutes"`
+	SaleMode           string                      `json:"saleMode"`
+	Status             string                      `json:"status"`
+	SortOrder          int                         `json:"sortOrder"`
+	PublishedAt        *string                     `json:"publishedAt,omitempty"`
+	Version            int64                       `json:"version"`
 }
 
 type apiQuotaAllocationResponse struct {
@@ -150,24 +154,23 @@ type apiQuotaSystemSaleSlotListResponse struct {
 
 type publicAPIQuotaOfferResponse struct {
 	apiQuotaOfferResponse
-	BatchStatus               string                 `json:"batchStatus"`
-	ServiceTitle              string                 `json:"serviceTitle"`
-	SellerDisplayName         string                 `json:"sellerDisplayName"`
-	SellerIdentityType        string                 `json:"sellerIdentityType"`
-	SellerLinuxDOBound        bool                   `json:"sellerLinuxDoBound"`
-	DeclaredTTFTBand          string                 `json:"declaredTtftBand"`
-	DeclaredMaxConcurrency    int                    `json:"declaredMaxConcurrency"`
-	PerformanceConfirmedAt    *string                `json:"performanceConfirmedAt,omitempty"`
-	PerformanceDisclaimer     string                 `json:"performanceDisclaimer"`
-	SaleCutoffAt              string                 `json:"saleCutoffAt"`
-	ExpiresAt                 string                 `json:"expiresAt"`
-	CurrentRound              *apiQuotaRoundResponse `json:"currentRound,omitempty"`
-	NextRound                 *apiQuotaRoundResponse `json:"nextRound,omitempty"`
-	AvailableCopies           int                    `json:"availableCopies"`
-	CredentialAvailableCopies int                    `json:"credentialAvailableCopies"`
-	IsOrderable               bool                   `json:"isOrderable"`
-	OrderabilityCode          string                 `json:"orderabilityCode"`
-	OrderabilityReason        string                 `json:"orderabilityReason"`
+	BatchStatus               string                          `json:"batchStatus"`
+	ServiceTitle              string                          `json:"serviceTitle"`
+	SellerDisplayName         string                          `json:"sellerDisplayName"`
+	SellerIdentityType        string                          `json:"sellerIdentityType"`
+	SellerLinuxDOBound        bool                            `json:"sellerLinuxDoBound"`
+	DeclaredMaxConcurrency    int                             `json:"declaredMaxConcurrency"`
+	PromptAuditEnabled        *bool                           `json:"promptAuditEnabled"`
+	HealthSummary             apiServiceHealthSummaryResponse `json:"healthSummary"`
+	SaleCutoffAt              string                          `json:"saleCutoffAt"`
+	ExpiresAt                 string                          `json:"expiresAt"`
+	CurrentRound              *apiQuotaRoundResponse          `json:"currentRound,omitempty"`
+	NextRound                 *apiQuotaRoundResponse          `json:"nextRound,omitempty"`
+	AvailableCopies           int                             `json:"availableCopies"`
+	CredentialAvailableCopies int                             `json:"credentialAvailableCopies"`
+	IsOrderable               bool                            `json:"isOrderable"`
+	OrderabilityCode          string                          `json:"orderabilityCode"`
+	OrderabilityReason        string                          `json:"orderabilityReason"`
 }
 
 type apiQuotaCredentialSummaryResponse struct {
@@ -218,8 +221,13 @@ func (s *Server) handlePublicAPIQuotaOffers(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	items := make([]publicAPIQuotaOfferResponse, 0, len(result.Items))
+	serviceIDs := make([]string, 0, len(result.Items))
 	for _, item := range result.Items {
-		items = append(items, toPublicAPIQuotaOfferResponse(item))
+		serviceIDs = append(serviceIDs, item.APIServiceID)
+	}
+	summaries := s.loadAPIHealthSummaries(r.Context(), serviceIDs)
+	for _, item := range result.Items {
+		items = append(items, toPublicAPIQuotaOfferResponseWithHealth(item, summaries[item.APIServiceID]))
 	}
 	writePageJSON(w, domain.Page[publicAPIQuotaOfferResponse]{Items: items, NextCursor: result.NextCursor})
 }
@@ -251,7 +259,8 @@ func (s *Server) handlePublicAPIQuotaOffer(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	setETag(w, item.Version)
-	writeJSON(w, http.StatusOK, toPublicAPIQuotaOfferResponse(item))
+	summaries := s.loadAPIHealthSummaries(r.Context(), []string{item.APIServiceID})
+	writeJSON(w, http.StatusOK, toPublicAPIQuotaOfferResponseWithHealth(item, summaries[item.APIServiceID]))
 }
 
 func (s *Server) handleCreateAPIQuotaOrder(w http.ResponseWriter, r *http.Request) {
@@ -352,6 +361,10 @@ func (s *Server) handleCreateAPIQuotaRushOffer(w http.ResponseWriter, r *http.Re
 		writeProblem(w, r, appErr)
 		return
 	}
+	if req.DeliveryMode == apiquota.DeliveryModePreimported {
+		writeProblem(w, r, domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Preimported delivery retired for new offers", "新额度包只支持卖家手工交付。", "deliveryMode", "new_preimported_not_allowed", "请选择卖家手工交付。"))
+		return
+	}
 	expiresAt, appErr := parseAPIQuotaTime("expiresAt", req.ExpiresAt)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
@@ -363,17 +376,7 @@ func (s *Server) handleCreateAPIQuotaRushOffer(w http.ResponseWriter, r *http.Re
 		return
 	}
 	credentialRows := []apiquota.CredentialImportRow(nil)
-	if req.DeliveryMode == apiquota.DeliveryModePreimported {
-		if len(file) == 0 {
-			writeProblem(w, r, domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Credential CSV required", "预导入交付必须上传凭据 CSV。", "file", "required", "请上传凭据 CSV。"))
-			return
-		}
-		credentialRows, appErr = apiquota.ParseCredentialCSV(bytes.NewReader(file), req.DeliveryKind)
-		if appErr != nil {
-			writeProblem(w, r, appErr)
-			return
-		}
-	} else if len(file) > 0 {
+	if len(file) > 0 {
 		writeProblem(w, r, domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Credential CSV unexpected", "卖家手工交付不需要上传凭据 CSV。", "file", "unexpected", "请移除凭据 CSV。"))
 		return
 	}
@@ -389,7 +392,7 @@ func (s *Server) handleCreateAPIQuotaRushOffer(w http.ResponseWriter, r *http.Re
 		apiquota.CreateRushOfferInput{
 			APIServiceID: serviceID, SourceType: req.SourceType, SourceLabel: req.SourceLabel,
 			Name: req.Name, USDAllowance: req.USDAllowance, PriceCNY: req.PriceCNY,
-			ModelMultiplier: req.ModelMultiplier, Copies: req.Copies,
+			ModelMultiplier: req.ModelMultiplier, QuotaUsagePolicy: toAPIQuotaUsagePolicy(req.QuotaUsagePolicy), Copies: req.Copies,
 			DeliveryMode: req.DeliveryMode, DeliveryETAMinutes: req.DeliveryETAMinutes,
 			SlotKey: req.SlotKey, ExpiresAt: expiresAt, SourceConfirmedAt: sourceConfirmedAt,
 			DeliveryKind: req.DeliveryKind, CredentialRows: credentialRows,
@@ -438,7 +441,7 @@ func (s *Server) handleCreateAPIQuotaOffer(w http.ResponseWriter, r *http.Reques
 	s.withIdempotency(w, r, user.ID, routeKey, body, func() (int, any, string, string, *domain.AppError) {
 		item, runErr := s.apiQuotas.CreateAPIQuotaOffer(r.Context(), user, apiquota.CreateOfferInput{
 			BatchID: batchID, Name: req.Name, USDAllowance: req.USDAllowance, PriceCNY: req.PriceCNY,
-			ModelMultiplier: req.ModelMultiplier, DeliveryMode: req.DeliveryMode,
+			ModelMultiplier: req.ModelMultiplier, QuotaUsagePolicy: toAPIQuotaUsagePolicy(req.QuotaUsagePolicy), DeliveryMode: req.DeliveryMode,
 			DeliveryETAMinutes: req.DeliveryETAMinutes, SaleMode: req.SaleMode,
 			ContinuousCopies: req.ContinuousCopies, SortOrder: req.SortOrder,
 		})
@@ -725,7 +728,7 @@ func toAPIQuotaOfferResponse(item apiquota.Offer) apiQuotaOfferResponse {
 	return apiQuotaOfferResponse{
 		ID: item.ID, BatchID: item.BatchID, APIServiceID: item.APIServiceID, DistributionSystem: item.DistributionSystem,
 		Name: item.Name, USDAllowance: item.USDAllowance, PriceCNY: item.PriceCNY, CNYPerUSD: item.CNYPerUSD,
-		ModelMultiplier: item.ModelMultiplier, DeliveryMode: item.DeliveryMode, DeliveryETAMinutes: item.DeliveryETAMinutes,
+		ModelMultiplier: item.ModelMultiplier, QuotaUsagePolicy: toAPIQuotaUsagePolicyResponse(item.QuotaUsagePolicy), DeliveryMode: item.DeliveryMode, DeliveryETAMinutes: item.DeliveryETAMinutes,
 		SaleMode: item.SaleMode, Status: item.Status, SortOrder: item.SortOrder,
 		PublishedAt: formatOptionalTime(item.PublishedAt), Version: item.Version,
 	}
@@ -750,6 +753,10 @@ func toAPIQuotaRoundResponse(item apiquota.SaleRound) apiQuotaRoundResponse {
 }
 
 func toPublicAPIQuotaOfferResponse(item apiquota.OfferCard) publicAPIQuotaOfferResponse {
+	return toPublicAPIQuotaOfferResponseWithHealth(item, apihealth.BuildSummary(nil, nil, time.Now().UTC()))
+}
+
+func toPublicAPIQuotaOfferResponseWithHealth(item apiquota.OfferCard, health apihealth.Summary) publicAPIQuotaOfferResponse {
 	var currentRound, nextRound *apiQuotaRoundResponse
 	if item.CurrentRound != nil {
 		value := toAPIQuotaRoundResponse(*item.CurrentRound)
@@ -763,10 +770,11 @@ func toPublicAPIQuotaOfferResponse(item apiquota.OfferCard) publicAPIQuotaOfferR
 		apiQuotaOfferResponse: toAPIQuotaOfferResponse(item.Offer),
 		BatchStatus:           item.BatchStatus, ServiceTitle: item.ServiceTitle,
 		SellerDisplayName: item.SellerDisplayName, SellerIdentityType: item.SellerIdentityType,
-		SellerLinuxDOBound: item.SellerLinuxDOBound, DeclaredTTFTBand: item.DeclaredTTFTBand,
-		DeclaredMaxConcurrency: item.DeclaredMaxConcurrency, PerformanceConfirmedAt: formatOptionalTime(item.PerformanceConfirmedAt),
-		PerformanceDisclaimer: item.PerformanceDisclaimer, SaleCutoffAt: item.SaleCutoffAt.UTC().Format(time.RFC3339),
-		ExpiresAt: item.ExpiresAt.UTC().Format(time.RFC3339), CurrentRound: currentRound, NextRound: nextRound,
+		SellerLinuxDOBound:     item.SellerLinuxDOBound,
+		DeclaredMaxConcurrency: item.DeclaredMaxConcurrency, PromptAuditEnabled: item.PromptAuditEnabled,
+		HealthSummary: toAPIServiceHealthSummaryResponse(health),
+		SaleCutoffAt:  item.SaleCutoffAt.UTC().Format(time.RFC3339),
+		ExpiresAt:     item.ExpiresAt.UTC().Format(time.RFC3339), CurrentRound: currentRound, NextRound: nextRound,
 		AvailableCopies: item.AvailableCopies, CredentialAvailableCopies: item.CredentialAvailableCopies,
 		IsOrderable: item.IsOrderable, OrderabilityCode: item.OrderabilityCode, OrderabilityReason: item.OrderabilityReason,
 	}

@@ -60,6 +60,11 @@ export function isAccountRecoveryAllowedPath(path: string) {
   return accountRecoveryAllowedPrefixes.some(prefix => path.startsWith(prefix))
 }
 
+export function shouldRedirectToAccountRecovery(path: string, authAccess: unknown) {
+  if (authAccess !== 'user' && authAccess !== 'admin') return false
+  return !isAccountRecoveryAllowedPath(path)
+}
+
 export function sanitizeAccountRecoveryReturnTo(value: unknown) {
   if (typeof value !== 'string') return null
   const trimmed = value.trim()

@@ -60,6 +60,10 @@ func TestLimitedPackageIntentFreezesExactModelSnapshot(t *testing.T) {
 		StockTotal:     2,
 		StockAvailable: 2,
 		Enabled:        true,
+		QuotaUsagePolicy: apimarket.QuotaUsagePolicy{
+			FiveHour: apimarket.QuotaUsageLimit{Mode: apimarket.QuotaLimitModeLimited, AmountUSD: "7.5"},
+			Daily:    apimarket.QuotaUsageLimit{Mode: apimarket.QuotaLimitModeUnlimited},
+		},
 		Models: []apimarket.ServicePackageModel{{
 			ServiceModelID:      "service-model-1",
 			ModelCatalogID:      "model-1",
@@ -95,6 +99,19 @@ func TestLimitedPackageIntentFreezesExactModelSnapshot(t *testing.T) {
 	if snapshot.PanelAllowance != "5.000000" || snapshot.DurationDays != 3 || len(snapshot.Models) != 1 || snapshot.Models[0].ModelNameSnapshot != "GPT-5.6" || snapshot.Models[0].ModelPriceVersionID != "price-version-1" || snapshot.Models[0].MerchantMultiplier != "0.0100" {
 		t.Fatalf("unexpected package snapshot: %+v", snapshot)
 	}
+	if intent.QuotaUsagePolicySnapshot != service.Packages[0].QuotaUsagePolicy {
+		t.Fatalf("intent did not freeze selected package quota policy: %+v", intent.QuotaUsagePolicySnapshot)
+	}
+	var pricingSnapshot struct {
+		QuotaUsagePolicy map[string]any `json:"quotaUsagePolicy"`
+	}
+	if err := json.Unmarshal([]byte(intent.PricingSnapshot), &pricingSnapshot); err != nil {
+		t.Fatalf("decode pricing snapshot: %v", err)
+	}
+	fiveHour, ok := pricingSnapshot.QuotaUsagePolicy["fiveHour"].(map[string]any)
+	if !ok || fiveHour["mode"] != apimarket.QuotaLimitModeLimited || fiveHour["amountUsd"] != "7.5" {
+		t.Fatalf("pricing snapshot did not use selected package quota policy: %+v", pricingSnapshot.QuotaUsagePolicy)
+	}
 }
 
 func TestIntentFreezesMerchantTermsInPricingSnapshot(t *testing.T) {
@@ -105,6 +122,8 @@ func TestIntentFreezesMerchantTermsInPricingSnapshot(t *testing.T) {
 	service.AccountPoolType = apimarket.AccountPoolCustom
 	service.AccountPoolCustomName = "Claude Max"
 	service.DeclaredMaxConcurrency = 12
+	promptAuditEnabled := true
+	service.PromptAuditEnabled = &promptAuditEnabled
 	service.MerchantRefundCommitment = true
 	service.MerchantSupportNote = apimarket.MerchantSupportNote(true)
 	service.Models = []apimarket.ServiceModel{
@@ -134,6 +153,7 @@ func TestIntentFreezesMerchantTermsInPricingSnapshot(t *testing.T) {
 		AccountPoolType             string `json:"accountPoolType"`
 		AccountPoolLabel            string `json:"accountPoolLabel"`
 		DeclaredMaxConcurrency      int    `json:"declaredMaxConcurrency"`
+		PromptAuditEnabled          *bool  `json:"promptAuditEnabled"`
 		MerchantRefundCommitment    bool   `json:"merchantRefundCommitment"`
 		MerchantRefundPolicyVersion string `json:"merchantRefundPolicyVersion"`
 	}
@@ -146,13 +166,16 @@ func TestIntentFreezesMerchantTermsInPricingSnapshot(t *testing.T) {
 	if snapshot.UsageVisibility != service.UsageVisibility || snapshot.MerchantNote != service.MerchantNote || snapshot.MerchantSupportNote != service.MerchantSupportNote {
 		t.Fatalf("unexpected merchant terms snapshot: %+v", snapshot)
 	}
-	if snapshot.AccountPoolType != apimarket.AccountPoolCustom || snapshot.AccountPoolLabel != "Claude Max" || snapshot.DeclaredMaxConcurrency != 12 || !snapshot.MerchantRefundCommitment || snapshot.MerchantRefundPolicyVersion != apimarket.MerchantRefundPolicyVersion {
+	if snapshot.AccountPoolType != apimarket.AccountPoolCustom || snapshot.AccountPoolLabel != "Claude Max" || snapshot.DeclaredMaxConcurrency != 12 || snapshot.PromptAuditEnabled == nil || !*snapshot.PromptAuditEnabled || !snapshot.MerchantRefundCommitment || snapshot.MerchantRefundPolicyVersion != apimarket.MerchantRefundPolicyVersion {
 		t.Fatalf("unexpected commercial facts snapshot: %+v", snapshot)
+	}
+	if intent.PromptAuditEnabledSnapshot == nil || !*intent.PromptAuditEnabledSnapshot {
+		t.Fatalf("intent did not freeze prompt audit declaration: %+v", intent.PromptAuditEnabledSnapshot)
 	}
 }
 
 func TestIntentSnapshotPreservesHistoricalNullCommercialFacts(t *testing.T) {
-	body, err := servicePricingSnapshotJSON(apimarket.Service{})
+	body, err := servicePricingSnapshotJSON(apimarket.Service{}, apimarket.UnspecifiedQuotaUsagePolicy())
 	if err != nil {
 		t.Fatalf("build historical pricing snapshot: %v", err)
 	}
@@ -161,7 +184,7 @@ func TestIntentSnapshotPreservesHistoricalNullCommercialFacts(t *testing.T) {
 	if err := json.Unmarshal([]byte(body), &snapshot); err != nil {
 		t.Fatalf("decode historical pricing snapshot: %v", err)
 	}
-	for _, key := range []string{"accountPoolType", "accountPoolLabel", "declaredMaxConcurrency", "serviceValidityExpiresAt"} {
+	for _, key := range []string{"accountPoolType", "accountPoolLabel", "declaredMaxConcurrency", "promptAuditEnabled", "serviceValidityExpiresAt"} {
 		value, exists := snapshot[key]
 		if !exists || value != nil {
 			t.Fatalf("expected explicit null %s, got exists=%v value=%v", key, exists, value)

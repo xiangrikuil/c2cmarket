@@ -2,6 +2,7 @@
 import { computed, ref } from 'vue'
 import { useRoute } from 'vue-router'
 import {
+  Activity,
   Eye,
   ListFilter,
   PackagePlus,
@@ -26,6 +27,7 @@ import SkeletonTable from '@/components/market/SkeletonTable.vue'
 import StatusBadge from '@/components/market/StatusBadge.vue'
 import {
   apiServiceSalesViewOptions,
+  getApiServiceProbeStatus,
   getApiServiceOwnerStatus,
   getApiServiceSalesAvailabilitySummary,
   getApiServiceSalesChannelLabel,
@@ -85,6 +87,10 @@ function serviceIconSrc(item: OwnerApiService) {
 
 function serviceStatus(item: OwnerApiService) {
   return getApiServiceOwnerStatus(item)
+}
+
+function probeStatus(item: OwnerApiService) {
+  return getApiServiceProbeStatus(item.healthSummary)
 }
 
 function channelStatus(channel: ApiServiceSalesChannel) {
@@ -275,6 +281,18 @@ function resumeService(id: string) {
             <div class="mt-1 text-xs text-muted-foreground">
               最后确认 <LocalTime :value="item.lastOnlineConfirmedAt" />
             </div>
+            <div class="mt-2 flex flex-wrap items-center gap-1.5">
+              <span class="flex items-center gap-1 text-xs text-muted-foreground">
+                <Activity class="h-3.5 w-3.5" aria-hidden="true" />
+                探针
+              </span>
+              <StatusBadge
+                :status="item.healthSummary.availabilityReason ?? item.healthSummary.state"
+                :label="probeStatus(item).label"
+                :tone="probeStatus(item).tone"
+                :title="probeStatus(item).description"
+              />
+            </div>
           </td>
           <td class="align-top">
             <div class="flex min-w-44 flex-wrap gap-1">
@@ -313,7 +331,13 @@ function resumeService(id: string) {
                   选择并发布额度包
                 </RouterLink>
               </Button>
-              <Button v-else size="sm" as-child>
+              <Button v-if="!quotaPublishIntent" size="sm" variant="outline" as-child>
+                <RouterLink :to="`/my/api-services/${item.id}#health-probe`">
+                  <Activity class="h-4 w-4" />
+                  配置探针
+                </RouterLink>
+              </Button>
+              <Button v-if="!quotaPublishIntent" size="sm" as-child>
                 <RouterLink :to="`/my/api-services/${item.id}#quota-offers`">
                   <Settings2 class="h-4 w-4" />
                   高级管理
@@ -402,6 +426,19 @@ function resumeService(id: string) {
             服务最后确认 <LocalTime :value="item.lastOnlineConfirmedAt" />
           </div>
 
+          <div class="flex flex-wrap items-center gap-1.5">
+            <span class="flex items-center gap-1 text-xs text-muted-foreground">
+              <Activity class="h-3.5 w-3.5" aria-hidden="true" />
+              探针
+            </span>
+            <StatusBadge
+              :status="item.healthSummary.availabilityReason ?? item.healthSummary.state"
+              :label="probeStatus(item).label"
+              :tone="probeStatus(item).tone"
+              :title="probeStatus(item).description"
+            />
+          </div>
+
           <div class="flex min-w-0 flex-wrap gap-2">
             <Button
               v-if="item.state === 'offline'"
@@ -438,7 +475,13 @@ function resumeService(id: string) {
                 选择并发布额度包
               </RouterLink>
             </Button>
-            <Button v-else size="sm" as-child>
+            <Button v-if="!quotaPublishIntent" size="sm" variant="outline" as-child>
+              <RouterLink :to="`/my/api-services/${item.id}#health-probe`">
+                <Activity class="h-4 w-4" />
+                配置探针
+              </RouterLink>
+            </Button>
+            <Button v-if="!quotaPublishIntent" size="sm" as-child>
               <RouterLink :to="`/my/api-services/${item.id}#quota-offers`">
                 <Settings2 class="h-4 w-4" />
                 高级管理

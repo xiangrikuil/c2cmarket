@@ -11,6 +11,7 @@ import (
 
 func TestAPIQuotaSnapshotFreezesCommercialFacts(t *testing.T) {
 	expiresAt := time.Date(2026, 8, 9, 12, 0, 0, 0, time.UTC)
+	promptAuditEnabled := false
 	snapshot, appErr := buildAPIQuotaSnapshot(apiQuotaOrderContext{
 		OfferID:                  "offer-1",
 		BatchID:                  "batch-1",
@@ -28,7 +29,8 @@ func TestAPIQuotaSnapshotFreezesCommercialFacts(t *testing.T) {
 		MerchantRefundCommitment: true,
 		DeclaredTTFTBand:         "1_to_3s",
 		DeclaredMaxConcurrency:   12,
-		PerformanceConfirmedAt:   expiresAt.Add(-24 * time.Hour),
+		PerformanceConfirmedAt:   timePointer(expiresAt.Add(-24 * time.Hour)),
+		PromptAuditEnabled:       &promptAuditEnabled,
 		DeliveryETAMinutes:       15,
 		DeliveryMode:             "manual",
 		ServiceTitle:             "Claude API",
@@ -44,12 +46,13 @@ func TestAPIQuotaSnapshotFreezesCommercialFacts(t *testing.T) {
 		MerchantRefundCommitment    bool      `json:"merchantRefundCommitment"`
 		MerchantRefundPolicyVersion string    `json:"merchantRefundPolicyVersion"`
 		DeclaredMaxConcurrency      int       `json:"declaredMaxConcurrency"`
+		PromptAuditEnabled          *bool     `json:"promptAuditEnabled"`
 		ServiceValidityExpiresAt    time.Time `json:"serviceValidityExpiresAt"`
 	}
 	if err := json.Unmarshal([]byte(snapshot), &payload); err != nil {
 		t.Fatalf("decode API quota snapshot: %v", err)
 	}
-	if payload.AccountPoolType != apimarket.AccountPoolCustom || payload.AccountPoolLabel != "Claude Max" || !payload.MerchantRefundCommitment || payload.MerchantRefundPolicyVersion != apimarket.MerchantRefundPolicyVersion || payload.DeclaredMaxConcurrency != 12 || !payload.ServiceValidityExpiresAt.Equal(expiresAt) {
+	if payload.AccountPoolType != apimarket.AccountPoolCustom || payload.AccountPoolLabel != "Claude Max" || !payload.MerchantRefundCommitment || payload.MerchantRefundPolicyVersion != apimarket.MerchantRefundPolicyVersion || payload.DeclaredMaxConcurrency != 12 || payload.PromptAuditEnabled == nil || *payload.PromptAuditEnabled || !payload.ServiceValidityExpiresAt.Equal(expiresAt) {
 		t.Fatalf("unexpected API quota commercial facts snapshot: %+v", payload)
 	}
 }
@@ -71,10 +74,22 @@ func TestAPIQuotaSnapshotPreservesHistoricalNullCommercialFacts(t *testing.T) {
 	if err := json.Unmarshal([]byte(snapshot), &payload); err != nil {
 		t.Fatalf("decode historical API quota snapshot: %v", err)
 	}
-	for _, key := range []string{"accountPoolType", "accountPoolLabel", "declaredMaxConcurrency"} {
+	for _, key := range []string{"accountPoolType", "accountPoolLabel", "declaredMaxConcurrency", "promptAuditEnabled"} {
 		value, exists := payload[key]
 		if !exists || value != nil {
 			t.Fatalf("expected explicit null %s, got exists=%v value=%v", key, exists, value)
 		}
+	}
+}
+
+func TestAPIQuotaOrderAllowsHistoricalNullPromptAuditDeclaration(t *testing.T) {
+	item := apiQuotaOrderContext{DeclaredMaxConcurrency: 1, PromptAuditEnabled: nil}
+	if appErr := validateAPIQuotaOrderServiceDeclaration(item); appErr != nil {
+		t.Fatalf("expected historical null prompt audit declaration to remain purchasable, got %v", appErr)
+	}
+
+	item.DeclaredMaxConcurrency = 0
+	if appErr := validateAPIQuotaOrderServiceDeclaration(item); appErr == nil {
+		t.Fatal("expected missing maximum concurrency to remain invalid")
 	}
 }

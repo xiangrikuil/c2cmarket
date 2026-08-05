@@ -6,8 +6,9 @@ import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Input } from '@/components/ui/input'
+import ApiQuotaPolicyFields from '@/components/api-market/ApiQuotaPolicyFields.vue'
 import { createDefaultApiServicePackage } from './packages'
-import type { ApiServicePublishForm } from './types'
+import { sellingModeLabels, type ApiServicePublishForm } from './types'
 
 const props = defineProps<{
   form: ApiServicePublishForm
@@ -92,7 +93,7 @@ const endPackageDrag = () => {
     <div class="api-publish-card-header">
       <div class="flex items-center gap-2">
         <Package class="h-4 w-4 text-primary" />
-        <h2>固定额度包</h2>
+        <h2>{{ sellingModeLabels.package }}</h2>
       </div>
       <p>设置固定价格、面板额度、库存和 1 / 3 / 7 / 30 天有效期。</p>
     </div>
@@ -197,8 +198,8 @@ const endPackageDrag = () => {
           </label>
         </div>
 
-        <div class="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-5">
-          <label class="space-y-1.5 md:col-span-2 xl:col-span-1">
+        <div class="mt-4 grid gap-3 md:grid-cols-2">
+          <label class="space-y-1.5 md:col-span-2">
             <span class="text-xs font-medium">套餐名称</span>
             <Input v-model="selectedPackage.name" />
           </label>
@@ -207,7 +208,7 @@ const endPackageDrag = () => {
             <Input :model-value="selectedPackage.priceCny" min="0.01" step="0.01" type="number" @update:model-value="value => selectedPackage!.priceCny = Number(value)" />
           </label>
           <label class="space-y-1.5">
-            <span class="text-xs font-medium">面板额度（USD）</span>
+            <span class="text-xs font-medium">美元额度</span>
             <div class="flex overflow-hidden rounded-md border border-input bg-background">
               <span class="grid w-9 shrink-0 place-items-center border-r border-border text-sm text-muted-foreground">$</span>
               <Input class="border-0 shadow-none focus-visible:ring-0" :model-value="selectedPackage.panelAllowance" min="0.000001" step="0.01" type="number" @update:model-value="value => selectedPackage!.panelAllowance = Number(value)" />
@@ -232,6 +233,9 @@ const endPackageDrag = () => {
           <span class="text-xs font-medium">套餐说明</span>
           <Input v-model="selectedPackage.description" />
         </label>
+        <div class="mt-4 border-t border-border pt-4">
+          <ApiQuotaPolicyFields v-model="selectedPackage.quotaUsagePolicy" :error="errors.packages" />
+        </div>
       </div>
     </div>
   </Card>

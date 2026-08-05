@@ -690,6 +690,7 @@ func NewOrder(input CreateInput, intent apiintent.Intent, service apimarket.Serv
 		RequestedUSDAllowanceSnapshot: decimalStringOptional(intent.RequestedUSDAllowance, 6),
 		CNYPerUSDAllowanceSnapshot:    decimalStringOptional(intent.DeclaredCNYPerUSDAllowanceSnapshot, 4),
 		PricingSnapshot:               intent.PricingSnapshot,
+		PromptAuditEnabledSnapshot:    intent.PromptAuditEnabledSnapshot,
 		PackageStockReserved:          service.BillingMode == apimarket.ServiceBillingModeFixedPackage,
 		Amount:                        amount,
 		Currency:                      currency,
