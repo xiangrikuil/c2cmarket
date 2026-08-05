@@ -23,7 +23,6 @@
   <a href="https://github.com/xiangrikuil/c2cmarket/actions/workflows/ci.yml"><img src="https://github.com/xiangrikuil/c2cmarket/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <a href="./LICENSE"><img src="https://img.shields.io/badge/license-MIT-green.svg" alt="MIT License"></a>
   <a href="https://linux.do"><img src="https://img.shields.io/badge/community-linux.do-1D4ED8?logo=discourse&logoColor=white" alt="linux.do 社区"></a>
-  <img src="https://img.shields.io/badge/monitoring-Sentry%20planned-362D59?logo=sentry&logoColor=white" alt="Sentry 计划接入">
   <img src="https://img.shields.io/badge/Go-1.26.5-00ADD8?logo=go&logoColor=white" alt="Go 1.26.5">
   <img src="https://img.shields.io/badge/Vue-3-42b883?logo=vuedotjs&logoColor=white" alt="Vue 3">
 </p>
@@ -58,7 +57,7 @@ C2CMarket 把订阅拼车、API 服务、求车需求和官网公开价记录放
 | 后端 | Go 1.26.5、chi、pgx |
 | 数据库 | PostgreSQL 18、版本化 SQL migrations |
 | 部署 | Docker Compose、Cloudflare Workers、VPS/Caddy、GHCR |
-| 集成 | linux.do OAuth 2.0、阿里云 DirectMail SMTP、可选 Umami、Sentry（计划接入） |
+| 集成 | linux.do OAuth 2.0、阿里云 DirectMail SMTP、可选 Umami |
 
 ## 快速开始
 

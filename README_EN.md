@@ -23,7 +23,6 @@
   <a href="https://github.com/xiangrikuil/c2cmarket/actions/workflows/ci.yml"><img src="https://github.com/xiangrikuil/c2cmarket/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <a href="./LICENSE"><img src="https://img.shields.io/badge/license-MIT-green.svg" alt="MIT License"></a>
   <a href="https://linux.do"><img src="https://img.shields.io/badge/community-linux.do-1D4ED8?logo=discourse&logoColor=white" alt="linux.do community"></a>
-  <img src="https://img.shields.io/badge/monitoring-Sentry%20planned-362D59?logo=sentry&logoColor=white" alt="Sentry planned">
   <img src="https://img.shields.io/badge/Go-1.26.5-00ADD8?logo=go&logoColor=white" alt="Go 1.26.5">
   <img src="https://img.shields.io/badge/Vue-3-42b883?logo=vuedotjs&logoColor=white" alt="Vue 3">
 </p>
@@ -58,7 +57,7 @@ The platform does not process payments, provide escrow or fulfillment guarantees
 | Backend | Go 1.26.5, chi, pgx |
 | Database | PostgreSQL 18, versioned SQL migrations |
 | Deployment | Docker Compose, Cloudflare Workers, VPS/Caddy, GHCR |
-| Integrations | linux.do OAuth 2.0, Alibaba Cloud DirectMail SMTP, optional Umami, Sentry (planned) |
+| Integrations | linux.do OAuth 2.0, Alibaba Cloud DirectMail SMTP, optional Umami |
 
 ## Quick start
 
