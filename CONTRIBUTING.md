@@ -17,10 +17,16 @@
 cd backend && go test ./...
 cd ..
 pnpm --dir frontend typecheck
-VITE_API_MODE=real pnpm --dir frontend build
 pnpm --dir frontend test
+NUXT_PUBLIC_API_MODE=real \
+NUXT_PUBLIC_SITE_URL=https://c2cmarket.shop \
+NUXT_PUBLIC_API_BASE_URL=https://api.c2cmarket.shop \
+NUXT_API_BASE_URL=https://api.c2cmarket.shop \
+pnpm --dir frontend build
 node scripts/check-openapi-routes.mjs
+node scripts/check-openapi-types.mjs
 node scripts/check-migrations-doc.mjs
+node scripts/check-compose-exposure.mjs
 ```
 
 ## 分支与提交

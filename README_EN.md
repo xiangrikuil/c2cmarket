@@ -1,11 +1,18 @@
 <p align="center">
-  <img src="./frontend/public/c2cmarket-logo-mark.svg" alt="C2CMarket" width="88" height="88">
+  <img src="./frontend/public/c2cmarket-logo-mark.svg" alt="C2CMarket" width="80" height="80">
 </p>
 
 <h1 align="center">C2CMarket</h1>
 
 <p align="center">
-  A community marketplace for subscription carpools, API services, and official price references.
+  A community marketplace for linux.do users, covering subscription carpools, API services, and public pricing records.
+</p>
+
+<p align="center">
+  <a href="https://c2cmarket.shop"><strong>Open C2CMarket</strong></a> ·
+  <a href="./docs/openapi/c2c-market-api-v1.yaml">API contract</a> ·
+  <a href="./docs/ops/deployment-runbook.md">Deployment</a> ·
+  <a href="./CONTRIBUTING.md">Contributing</a>
 </p>
 
 <p align="center">
@@ -15,28 +22,33 @@
 <p align="center">
   <a href="https://github.com/xiangrikuil/c2cmarket/actions/workflows/ci.yml"><img src="https://github.com/xiangrikuil/c2cmarket/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <a href="./LICENSE"><img src="https://img.shields.io/badge/license-MIT-green.svg" alt="MIT License"></a>
+  <a href="https://linux.do"><img src="https://img.shields.io/badge/community-linux.do-1D4ED8?logo=discourse&logoColor=white" alt="linux.do community"></a>
+  <img src="https://img.shields.io/badge/monitoring-Sentry%20planned-362D59?logo=sentry&logoColor=white" alt="Sentry planned">
   <img src="https://img.shields.io/badge/Go-1.26.5-00ADD8?logo=go&logoColor=white" alt="Go 1.26.5">
   <img src="https://img.shields.io/badge/Vue-3-42b883?logo=vuedotjs&logoColor=white" alt="Vue 3">
 </p>
 
-> [!IMPORTANT]
-> C2CMarket is under active development. APIs, database migrations, and deployment configuration may change. Review the configuration, business rules, and applicable local requirements before deploying to production.
+<p align="center">
+  <a href="https://c2cmarket.shop">
+    <img src="./.github/assets/c2cmarket-home.png" alt="Anonymous C2CMarket home page" width="100%">
+  </a>
+</p>
 
-## Overview
+> [!NOTE]
+> C2CMarket is under development. APIs, database migrations, and deployment settings may change before 1.0. Review the [release checklist](./docs/release-checklist.md) before a production deployment.
 
-C2CMarket is a decoupled web application for community-driven listings and transaction coordination. It helps users publish, discover, and manage subscription carpools, API services, and official price records. It also includes order tracking, notifications, reviews, reports, and an administration console.
+## About C2CMarket
 
-The platform focuses on discovery, matching, off-platform communication, and reputation records. It does not process in-platform payments, provide escrow or fulfillment guarantees, or proxy upstream API traffic.
+C2CMarket brings subscription carpools, API services, buyer requests, and public pricing records into one marketplace. Users can browse or publish listings while the platform records applications, orders, notifications, reviews, and disputes. Communication and payment happen off-platform.
+
+The platform does not process payments, provide escrow or fulfillment guarantees, or proxy upstream API traffic. This boundary applies to public pages, order flows, and administration tools.
 
 ## Features
 
-- **Subscription carpools**: listings, applications, contact windows, join confirmation, completion, exit, and owner management.
-- **API service marketplace**: publishing, review, availability, orders, payment confirmation, and fulfillment status tracking.
-- **Official prices**: maintained reference records for publicly available official pricing.
-- **Community reputation**: public profiles, favorites, reviews, reports, disputes, and appeals.
-- **Notification center**: announcements, business notifications, unread state, and email reminders.
-- **Administration**: users, product catalog, listings, services, orders, announcements, feedback, and audit records.
-- **Unified search**: public carpools, API services, price records, and profiles.
+- Browse subscription carpools, API services, buyer requests, and public pricing records.
+- Publish and manage carpool or API service listings, then track applications, orders, and fulfillment states.
+- Review public profiles, ratings, reports, and dispute records before working with another user.
+- Use notifications, unified search, and administration tools for routine operations.
 
 ## Technology
 
@@ -45,24 +57,8 @@ The platform focuses on discovery, matching, off-platform communication, and rep
 | Frontend | Nuxt 4, Vue 3, TypeScript, Pinia, TanStack Query, Tailwind CSS |
 | Backend | Go 1.26.5, chi, pgx |
 | Database | PostgreSQL 18, versioned SQL migrations |
-| Infrastructure | Docker Compose, Cloudflare Workers, VPS/Caddy, GHCR, GitHub Actions |
-| Integrations | linux.do OAuth 2.0, Alibaba Cloud DirectMail SMTP, optional Umami |
-
-## Repository layout
-
-```text
-.
-├── frontend/              Nuxt 4 hybrid-rendered application
-├── backend/               Go HTTP API
-│   ├── cmd/api/           Service entry point
-│   ├── internal/          Domain modules and infrastructure
-│   └── migrations/        PostgreSQL migrations
-├── docs/openapi/          OpenAPI contract
-├── docs/ops/              Deployment and operations guides
-├── scripts/               Contract checks and smoke tests
-├── compose.yaml           Local development services
-└── compose.prod.yaml      Production Compose overrides
-```
+| Deployment | Docker Compose, Cloudflare Workers, VPS/Caddy, GHCR |
+| Integrations | linux.do OAuth 2.0, Alibaba Cloud DirectMail SMTP, optional Umami, Sentry (planned) |
 
 ## Quick start
 
@@ -81,8 +77,6 @@ cd c2cmarket
 cp .env.example .env
 ```
 
-`.env.example` contains development defaults only. Never commit real credentials.
-
 ### 2. Start PostgreSQL and apply migrations
 
 ```bash
@@ -96,7 +90,7 @@ docker compose --profile migrate run --rm migrate
 docker compose --profile app up -d --build backend
 ```
 
-The backend listens on `http://127.0.0.1:8080` by default:
+The backend listens on `http://127.0.0.1:8080` by default. Health endpoints:
 
 ```text
 GET /health
@@ -111,7 +105,7 @@ pnpm --dir frontend install --frozen-lockfile
 pnpm --dir frontend dev
 ```
 
-Open `http://127.0.0.1:3000`. The Nuxt development server uses runtime configuration to reach the local backend.
+Open `http://127.0.0.1:5173`. The development command connects to the local backend through the Nuxt same-origin proxy. For a frontend-only demo, run `pnpm --dir frontend dev:mock`.
 
 Stop the local services with:
 
@@ -121,17 +115,12 @@ docker compose --profile app down
 
 ## Local verification
 
-Run these checks before opening a pull request:
+Before opening a pull request, run the checks related to your change:
 
 ```bash
 cd backend && go test ./...
 cd ..
 pnpm --dir frontend typecheck
-NUXT_PUBLIC_API_MODE=real \
-NUXT_PUBLIC_SITE_URL=https://c2cmarket.shop \
-NUXT_PUBLIC_API_BASE_URL=https://api.c2cmarket.shop \
-NUXT_API_BASE_URL=https://api.c2cmarket.shop \
-pnpm --dir frontend build
 pnpm --dir frontend test
 node scripts/check-openapi-routes.mjs
 node scripts/check-openapi-types.mjs
@@ -139,38 +128,52 @@ node scripts/check-migrations-doc.mjs
 node scripts/check-compose-exposure.mjs
 ```
 
-Production frontend builds require real mode plus both the public and server-side API URLs.
+A production-mode frontend build also requires explicit site and API URLs:
 
-With the backend running, execute the end-to-end smoke suite when the change affects business workflows:
+```bash
+NUXT_PUBLIC_API_MODE=real \
+NUXT_PUBLIC_SITE_URL=https://c2cmarket.shop \
+NUXT_PUBLIC_API_BASE_URL=https://api.c2cmarket.shop \
+NUXT_API_BASE_URL=https://api.c2cmarket.shop \
+pnpm --dir frontend build
+```
+
+The full business smoke suite requires a running backend:
 
 ```bash
 API_BASE_URL=http://127.0.0.1:8080 node scripts/run-smokes.mjs
 ```
 
-## Configuration and deployment
+## Repository layout
 
-- Local configuration: [`.env.example`](./.env.example)
-- Production configuration: [`.env.production.example`](./.env.production.example)
-- Staging configuration: [`.env.staging.example`](./.env.staging.example)
-- API contract: [`docs/openapi/c2c-market-api-v1.yaml`](./docs/openapi/c2c-market-api-v1.yaml)
-- Deployment guide: [`docs/ops/deployment-runbook.md`](./docs/ops/deployment-runbook.md)
-- Workers/VPS deployment: [`docs/ops/cloudflare-workers-vps-backends.md`](./docs/ops/cloudflare-workers-vps-backends.md)
-- Security operations: [`docs/security.md`](./docs/security.md)
-- Production operations: [`docs/operations.md`](./docs/operations.md)
-- Backup and restore: [`docs/backup-restore.md`](./docs/backup-restore.md)
-- Release checklist: [`docs/release-checklist.md`](./docs/release-checklist.md)
+```text
+.
+├── frontend/          Nuxt application
+├── backend/           Go HTTP API and database migrations
+├── docs/openapi/      OpenAPI contract
+├── docs/ops/          Deployment and operations guides
+├── scripts/           Contract checks, release tools, and smoke tests
+├── compose.yaml       Local development services
+└── compose.prod.yaml  Production Compose overrides
+```
 
-Production requires real OAuth, independent encryption keys, an HTTPS frontend origin, PostgreSQL, and valid SMTP configuration. Do not reuse development defaults from the example files.
-Build production backend images from a fixed commit in a clean worktree with
-`scripts/build-backend-image.sh <git-ref> <version> <image>`, then set that
-exact image as `BACKEND_IMAGE`. Production Compose never builds from the
-current worktree.
+## Documentation
 
-## Product boundaries and disclaimer
+| Document | Contents |
+| --- | --- |
+| [OpenAPI contract](./docs/openapi/c2c-market-api-v1.yaml) | HTTP APIs, requests, and responses |
+| [System architecture](./docs/project-architecture-api-db-overview-2026-06-23.md) | Frontend, backend, API, and database relationships |
+| [Deployment guide](./docs/ops/deployment-runbook.md) | Environment setup, migrations, and releases |
+| [Workers/VPS deployment](./docs/ops/cloudflare-workers-vps-backends.md) | Cloudflare and backend topology |
+| [Production operations](./docs/operations.md) | Routine checks and incident handling |
+| [Backup and restore](./docs/backup-restore.md) | PostgreSQL backup and recovery |
+| [Release checklist](./docs/release-checklist.md) | Checks before and after a release |
 
-C2CMarket is not a payment, escrow, account custody, fulfillment guarantee, or API proxy platform. It must not store or transfer third-party account passwords, cookies, sessions, verification codes, recovery codes, or panel owner credentials.
+## Product boundaries
 
-Cost sharing, member invitations, and usage patterns for third-party subscriptions may be restricted by the relevant provider terms and may result in account restrictions, service interruptions, privacy exposure, or financial loss. This project is not officially affiliated with, authorized by, or guaranteed by linux.do, OpenAI, or any other third-party provider. Users are responsible for reviewing applicable terms and accepting the associated risks.
+C2CMarket is not a payment processor, escrow service, account custodian, fulfillment guarantor, or API proxy. It does not accept third-party account passwords, cookies, sessions, verification codes, recovery codes, or panel owner credentials. An API order may store one buyer-specific delivery credential and show it to the order participants only after the seller confirms off-platform payment.
+
+Cost sharing, member invitations, and usage patterns may be restricted by the relevant provider terms. C2CMarket is not affiliated with, authorized by, or endorsed by linux.do, OpenAI, or any other third-party service provider. Users are responsible for reviewing the applicable terms.
 
 ## Contributing
 
