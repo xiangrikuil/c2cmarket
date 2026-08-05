@@ -18,6 +18,7 @@ const realtimeQueries = source('../../queries/useRealtimeQueries.ts')
 const marketQueries = source('../../queries/useMarketQueries.ts')
 const apiFacade = source('../api.ts')
 const nuxtConfig = source('../../../nuxt.config.ts')
+const appThemes = source('../../theme/appThemes.ts')
 
 describe('development first-page architecture', () => {
   it('keeps homepage and app-shell entry points off the monolithic market facade', () => {
@@ -88,6 +89,18 @@ describe('development first-page architecture', () => {
     ]) {
       expect(nuxtConfig).toContain(`'${dependency}'`)
     }
+  })
+
+  it('renders the default theme before client hydration', () => {
+    expect(appThemes).toContain("export const DEFAULT_APP_THEME: AppTheme = 'minimal-modern'")
+    expect(nuxtConfig).toContain("import { DEFAULT_APP_THEME } from './src/theme/appThemes'")
+    expect(nuxtConfig).toMatch(/app:\s*\{[\s\S]*?htmlAttrs:\s*\{[\s\S]*?'data-theme': DEFAULT_APP_THEME/)
+  })
+
+  it('uses app-scoped stable Reka IDs during SSR hydration', () => {
+    expect(app).toContain("import { ConfigProvider } from 'reka-ui'")
+    expect(app).toMatch(/let rekaId = 0[\s\S]*?function useRekaId\(\)[\s\S]*?return `c2c-\$\{rekaId\}`/)
+    expect(app).toMatch(/<ConfigProvider :use-id="useRekaId">[\s\S]*?<Toaster[\s\S]*?<\/ConfigProvider>/)
   })
 
   it('keeps merchant display and orderability behavior unchanged', () => {

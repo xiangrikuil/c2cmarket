@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
 import type { ModelCatalogItem } from '@/lib/api'
 import type { ApiServicePublishForm, CatalogById } from './types'
 import { capabilityLabel, formatActualPrice, formatPrice } from './utils'
@@ -59,7 +60,7 @@ const selectedRows = computed(() => props.form.selectedModels
             {{ formatActualPrice(row.model.officialOutputPricePerMillion, form.defaultMultiplier) }}
           </td>
           <td class="px-3 py-3 text-right">
-            <button type="button" class="text-sm text-muted-foreground hover:text-destructive" @click="emit('removeModel', row.model.id)">移除</button>
+            <Button size="sm" variant="ghost" class="h-auto px-2 text-sm text-muted-foreground hover:text-destructive" @click="emit('removeModel', row.model.id)">移除</Button>
           </td>
         </tr>
       </tbody>

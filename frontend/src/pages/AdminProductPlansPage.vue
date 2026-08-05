@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import { computed, reactive, ref, watch } from 'vue'
 import {
-  AlertTriangle,
   ChevronDown,
   ChevronRight,
   FilePenLine,
@@ -12,6 +11,7 @@ import {
   Save,
   ToggleLeft,
   ToggleRight,
+  TriangleAlert,
   Trash2,
   Upload,
 } from 'lucide-vue-next'
@@ -38,6 +38,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
+import { Switch } from '@/components/ui/switch'
 import { Textarea } from '@/components/ui/textarea'
 import { productCategoryIconAccept, readProductCategoryIcon, validateProductCategoryIconFile } from '@/lib/productCategoryIcon'
 import {
@@ -514,7 +515,7 @@ function uniqueIds(ids: string[]) {
       <Card v-else-if="hasCatalogError" class="border-destructive/30 p-5">
         <div class="flex flex-col gap-4 sm:flex-row sm:items-start">
           <div class="grid h-10 w-10 shrink-0 place-items-center rounded-lg bg-destructive/10 text-destructive">
-            <AlertTriangle class="h-5 w-5" />
+            <TriangleAlert class="h-5 w-5" />
           </div>
           <div class="min-w-0 flex-1">
             <h2 class="font-semibold">套餐目录读取失败</h2>
@@ -537,7 +538,7 @@ function uniqueIds(ids: string[]) {
             class="grid gap-3 border-b border-border bg-muted/25 p-3 md:grid-cols-[minmax(0,1.6fr)_auto_auto] md:items-center"
             :class="group.category.active ? '' : 'opacity-75'"
           >
-            <button class="flex min-w-0 items-center gap-3 text-left" @click="toggleCategory(group.category.id)">
+            <Button type="button" variant="ghost" class="h-auto min-w-0 justify-start gap-3 whitespace-normal p-0 text-left hover:bg-transparent" @click="toggleCategory(group.category.id)">
               <span class="grid h-8 w-8 shrink-0 place-items-center rounded-md border bg-background text-muted-foreground">
                 <component :is="isCategoryExpanded(group.category.id) ? ChevronDown : ChevronRight" class="h-4 w-4" />
               </span>
@@ -552,7 +553,7 @@ function uniqueIds(ids: string[]) {
                 </span>
                 <span class="mt-1 block truncate text-xs text-muted-foreground">{{ group.category.code }}</span>
               </span>
-            </button>
+            </Button>
             <div class="flex flex-wrap gap-2 text-xs text-muted-foreground md:justify-end">
               <span class="rounded-md border border-border bg-background px-2 py-1">启用 {{ group.activePlanCount }}</span>
               <span class="rounded-md border border-border bg-background px-2 py-1">停用 {{ group.inactivePlanCount }}</span>
@@ -690,10 +691,10 @@ function uniqueIds(ids: string[]) {
               <span class="text-sm font-medium">排序</span>
               <Input v-model.number="categoryForm.sortOrder" type="number" />
             </label>
-            <label class="flex items-end gap-2 rounded-md border border-border bg-muted/30 p-3 text-sm">
-              <input v-model="categoryForm.active" type="checkbox" class="mb-1 h-4 w-4 accent-primary" />
+            <div class="flex items-center justify-between gap-3 rounded-md border border-border bg-muted/30 p-3 text-sm">
               <span>启用分类</span>
-            </label>
+              <Switch v-model="categoryForm.active" aria-label="启用分类" />
+            </div>
           </div>
 
           <DialogFooter>
@@ -789,21 +790,21 @@ function uniqueIds(ids: string[]) {
           </div>
 
           <div class="grid gap-3 sm:grid-cols-2">
-            <label class="flex items-start gap-2 rounded-md border border-border bg-muted/30 p-3 text-sm">
-              <input v-model="planForm.allowCustomVariant" type="checkbox" class="mt-1 h-4 w-4 accent-primary" />
+            <div class="flex items-center justify-between gap-3 rounded-md border border-border bg-muted/30 p-3 text-sm">
               <span>允许用户补充自定义变体</span>
-            </label>
-            <label class="flex items-start gap-2 rounded-md border border-border bg-muted/30 p-3 text-sm">
-              <input v-model="planForm.active" type="checkbox" class="mt-1 h-4 w-4 accent-primary" />
+              <Switch v-model="planForm.allowCustomVariant" aria-label="允许用户补充自定义变体" />
+            </div>
+            <div class="flex items-center justify-between gap-3 rounded-md border border-border bg-muted/30 p-3 text-sm">
               <span>启用套餐</span>
-            </label>
+              <Switch v-model="planForm.active" aria-label="启用套餐" />
+            </div>
           </div>
 
           <div class="rounded-md border border-border bg-muted/20 p-3">
-            <button class="flex w-full items-center justify-between gap-3 text-left text-sm font-medium" @click="showAdvancedPlanFields = !showAdvancedPlanFields">
+            <Button type="button" variant="ghost" class="h-auto w-full justify-between p-0 text-left text-sm font-medium hover:bg-transparent" @click="showAdvancedPlanFields = !showAdvancedPlanFields">
               <span>高级设置</span>
               <component :is="showAdvancedPlanFields ? ChevronDown : ChevronRight" class="h-4 w-4 text-muted-foreground" />
-            </button>
+            </Button>
             <div v-if="showAdvancedPlanFields" class="mt-3 space-y-3">
               <div class="grid gap-3 sm:grid-cols-2">
                 <label class="space-y-2">

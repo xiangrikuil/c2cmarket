@@ -39,18 +39,18 @@ function setOccupiedSeats(value: number) {
       <div class="rounded-lg border border-border bg-muted/40 p-3">
         <div class="text-xs text-muted-foreground">总名额</div>
         <div class="mt-2 grid grid-cols-[34px_1fr_34px] items-center gap-2">
-          <Button variant="outline" size="icon" :disabled="form.totalSeats <= 1" @click="setTotalSeats(form.totalSeats - 1)"><Minus class="h-4 w-4" /></Button>
+          <Button variant="outline" size="icon" aria-label="减少总名额" :disabled="form.totalSeats <= 1" @click="setTotalSeats(form.totalSeats - 1)"><Minus class="h-4 w-4" /></Button>
           <strong class="text-center text-2xl">{{ form.totalSeats }}</strong>
-          <Button variant="outline" size="icon" :disabled="form.totalSeats >= 20" @click="setTotalSeats(form.totalSeats + 1)"><Plus class="h-4 w-4" /></Button>
+          <Button variant="outline" size="icon" aria-label="增加总名额" :disabled="form.totalSeats >= 20" @click="setTotalSeats(form.totalSeats + 1)"><Plus class="h-4 w-4" /></Button>
         </div>
       </div>
 
       <div class="rounded-lg border border-border bg-muted/40 p-3">
         <div class="text-xs text-muted-foreground">已上车人数</div>
         <div class="mt-2 grid grid-cols-[34px_1fr_34px] items-center gap-2">
-          <Button variant="outline" size="icon" :disabled="form.occupiedSeats <= 0" @click="setOccupiedSeats(form.occupiedSeats - 1)"><Minus class="h-4 w-4" /></Button>
+          <Button variant="outline" size="icon" aria-label="减少已上车人数" :disabled="form.occupiedSeats <= 0" @click="setOccupiedSeats(form.occupiedSeats - 1)"><Minus class="h-4 w-4" /></Button>
           <strong class="text-center text-2xl">{{ form.occupiedSeats }}</strong>
-          <Button variant="outline" size="icon" :disabled="form.occupiedSeats >= form.totalSeats" @click="setOccupiedSeats(form.occupiedSeats + 1)"><Plus class="h-4 w-4" /></Button>
+          <Button variant="outline" size="icon" aria-label="增加已上车人数" :disabled="form.occupiedSeats >= form.totalSeats" @click="setOccupiedSeats(form.occupiedSeats + 1)"><Plus class="h-4 w-4" /></Button>
         </div>
       </div>
 

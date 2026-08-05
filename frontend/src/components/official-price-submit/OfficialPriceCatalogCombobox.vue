@@ -110,24 +110,26 @@ function selectCustom(value: string) {
 
       <div class="mt-2 max-h-72 overflow-y-auto pr-1">
         <template v-if="mode === 'product'">
-          <button
+          <Button
             v-for="item in productOptions"
             :key="item"
             type="button"
-            class="flex w-full items-center gap-2 rounded-md px-2 py-2 text-left text-sm hover:bg-accent"
+            variant="ghost"
+            class="h-auto w-full justify-start gap-2 px-2 py-2 text-left text-sm"
             @click="selectProduct(item)"
           >
             <Check :class="['h-4 w-4 shrink-0', item === modelValue ? 'text-primary opacity-100' : 'opacity-0']" />
             <span class="truncate font-medium">{{ item }}</span>
-          </button>
+          </Button>
         </template>
 
         <template v-else>
-          <button
+          <Button
             v-for="item in planOptions"
             :key="item.id"
             type="button"
-            class="flex w-full items-start gap-2 rounded-md px-2 py-2 text-left text-sm hover:bg-accent"
+            variant="ghost"
+            class="h-auto w-full justify-start gap-2 whitespace-normal px-2 py-2 text-left text-sm"
             @click="selectPlan(item)"
           >
             <Check :class="['mt-0.5 h-4 w-4 shrink-0', item.id === productPlanId ? 'text-primary opacity-100' : 'opacity-0']" />
@@ -135,13 +137,14 @@ function selectCustom(value: string) {
               <span class="block truncate font-medium">{{ item.displayName }}</span>
               <span class="mt-0.5 block truncate text-xs text-muted-foreground">{{ item.slug }}</span>
             </span>
-          </button>
+          </Button>
         </template>
 
-        <button
+        <Button
           v-if="canCreateCustom"
           type="button"
-          class="mt-1 flex w-full items-center gap-2 rounded-md px-2 py-2 text-left text-sm hover:bg-accent"
+          variant="ghost"
+          class="mt-1 h-auto w-full justify-start gap-2 whitespace-normal px-2 py-2 text-left text-sm"
           @click="selectCustom(query)"
         >
           <Plus class="h-4 w-4 shrink-0 text-primary" />
@@ -149,7 +152,7 @@ function selectCustom(value: string) {
             <span class="block truncate font-medium">使用“{{ query.trim() }}”</span>
             <span class="mt-0.5 block truncate text-xs text-muted-foreground">作为自定义{{ mode === 'product' ? '产品' : '套餐' }}提交</span>
           </span>
-        </button>
+        </Button>
 
         <div
           v-if="((mode === 'product' && !productOptions.length) || (mode === 'plan' && !planOptions.length)) && !canCreateCustom"

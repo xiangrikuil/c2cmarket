@@ -2,6 +2,7 @@
 import { computed, defineAsyncComponent } from 'vue'
 import { useRoute } from 'vue-router'
 import { useHead, useRuntimeConfig, useSeoMeta } from '#app'
+import { ConfigProvider } from 'reka-ui'
 import AppShell from '@/components/layout/AppShell.vue'
 import { Toaster } from '@/components/ui/sonner'
 import { breadcrumbItems, resolveRouteSeo } from '@/seo/routeSeo'
@@ -15,6 +16,12 @@ const adminLayout = computed(() => !standaloneLayout.value && route.path.startsW
 const seo = computed(() => resolveRouteSeo(route))
 const siteUrl = computed(() => String(config.public.siteUrl || 'https://c2cmarket.shop'))
 const canonical = computed(() => new URL(route.path, siteUrl.value).toString())
+let rekaId = 0
+
+function useRekaId() {
+  rekaId += 1
+  return `c2c-${rekaId}`
+}
 
 useSeoMeta({
   title: () => seo.value.title,
@@ -60,15 +67,17 @@ useHead(() => ({
 </script>
 
 <template>
-  <NuxtLoadingIndicator color="var(--primary)" />
-  <NuxtPage v-if="standaloneLayout" />
+  <ConfigProvider :use-id="useRekaId">
+    <NuxtLoadingIndicator color="var(--primary)" />
+    <NuxtPage v-if="standaloneLayout" />
 
-  <AdminShell v-else-if="adminLayout">
-    <NuxtPage />
-  </AdminShell>
+    <AdminShell v-else-if="adminLayout">
+      <NuxtPage />
+    </AdminShell>
 
-  <AppShell v-else>
-    <NuxtPage />
-  </AppShell>
-  <Toaster position="top-right" rich-colors />
+    <AppShell v-else>
+      <NuxtPage />
+    </AppShell>
+    <Toaster position="top-right" rich-colors />
+  </ConfigProvider>
 </template>

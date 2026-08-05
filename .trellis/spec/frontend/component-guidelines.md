@@ -78,6 +78,8 @@ Current documented exception:
 
 Use shadcn-vue primitives for new control, feedback, and disclosure UI whenever the registry provides one.
 
+All Reka-backed shadcn-vue primitives inherit the application-scoped `ConfigProvider` in `App.vue`. Keep that provider around the full application and keep its deterministic `useId` counter inside the root component setup so SSR and client hydration generate identical IDs. Do not add page-local providers or fall back to Reka's process-global counter.
+
 Required:
 
 - `Alert` for inline status/warning/help callouts instead of hand-rolled bordered notice blocks.

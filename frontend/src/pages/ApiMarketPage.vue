@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch, type ComponentPublicInstance } from 'vue'
+import { computed, onBeforeUnmount, onMounted, onServerPrefetch, ref, watch, type ComponentPublicInstance } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { CalendarClock, Code2, PackageOpen, PackagePlus, Search, Zap } from 'lucide-vue-next'
 import { toast } from 'vue-sonner'
@@ -87,14 +87,14 @@ const quotaFilters = computed<ApiQuotaOfferFilters>(() => ({
 const quotaQuery = useApiQuotaOffers(quotaFilters)
 const slotQuery = useApiQuotaSaleSlots()
 const rushFilters = computed<ApiQuotaOfferFilters>(() => ({ slotKey: selectedSlotKey.value }))
-const rushQuery = useApiQuotaOffers(rushFilters)
+const rushQuery = useApiQuotaOffers(rushFilters, computed(() => Boolean(selectedSlotKey.value)))
 const freeServicesQuery = useApiServices({ online: true })
 const promotionQuery = useApiPromotions()
 const productCategoriesQuery = useProductCategories()
 const { data: catalogCategories } = productCategoriesQuery
 const createOrderMutation = useCreateApiQuotaOrderMutation()
 const { setPromotionElement, trackPromotionClick } = usePromotionImpression()
-prefetchQueriesOnServer(quotaQuery, slotQuery, freeServicesQuery, productCategoriesQuery)
+prefetchQueriesOnServer(quotaQuery, freeServicesQuery, productCategoriesQuery)
 const categoryIconByCode = computed(() => new Map((catalogCategories.value ?? []).map(category => [category.code, category.iconDataUrl])))
 
 const quotaRows = computed(() => {
@@ -170,13 +170,23 @@ watch(() => slotQuery.data.value, value => {
   }
 }, { immediate: true })
 
-watch(displayedSlots, slots => {
+function selectDisplayedSlot(slots: ApiQuotaSystemSaleSlot[]) {
   if (slots.some(item => item.key === selectedSlotKey.value)) return
   selectedSlotKey.value = slots.find(item => item.state === 'active')?.key
     ?? slots.find(item => item.state !== 'ended')?.key
     ?? slots[0]?.key
     ?? ''
-}, { immediate: true })
+}
+
+watch(displayedSlots, selectDisplayedSlot, { immediate: true })
+
+if (import.meta.server) {
+  onServerPrefetch(async () => {
+    await slotQuery.suspense()
+    selectDisplayedSlot(displayedSlots.value)
+    if (selectedSlotKey.value) await rushQuery.suspense()
+  })
+}
 
 watch(selectedSlotKey, () => {
   refreshedBoundary = ''
@@ -336,16 +346,16 @@ onBeforeUnmount(() => {
         <h1 class="mt-2 text-2xl font-semibold tracking-normal md:text-3xl">短期额度包与自由额度</h1>
         <p class="mt-2 max-w-3xl text-sm leading-6 text-muted-foreground">额度来自卖家实际控制的站外中转系统。平台记录商品和订单，不提供额度、不代理 API 流量，也不验证上游余额。</p>
       </div>
-      <RouterLink to="/api-market/quota/new">
-        <Button class="gap-2"><PackagePlus class="h-4 w-4" />发布限时额度包</Button>
+      <RouterLink to="/api-market/quota/new" class="w-full sm:w-auto">
+        <Button class="h-11 w-full gap-2 sm:h-9"><PackagePlus class="h-4 w-4" />发布限时额度包</Button>
       </RouterLink>
     </header>
 
     <Tabs :model-value="activeView" @update:model-value="setView">
-      <TabsList class="grid h-10 w-full max-w-xl grid-cols-3">
-        <TabsTrigger value="limited">限时额度包</TabsTrigger>
-        <TabsTrigger value="packages">限时流量包</TabsTrigger>
-        <TabsTrigger value="free">自由额度</TabsTrigger>
+      <TabsList class="api-market-view-tabs grid h-11 w-full max-w-xl grid-cols-3">
+        <TabsTrigger class="min-h-11" value="limited">限时额度包</TabsTrigger>
+        <TabsTrigger class="min-h-11" value="packages">限时流量包</TabsTrigger>
+        <TabsTrigger class="min-h-11" value="free">自由额度</TabsTrigger>
       </TabsList>
 
       <TabsContent value="limited" class="mt-4 space-y-4">
@@ -368,7 +378,7 @@ onBeforeUnmount(() => {
             <SkeletonBlock v-else-if="slotQuery.isLoading.value" :lines="3" />
             <template v-else>
               <Tabs v-model="selectedSlotKey">
-                <TabsList class="grid h-auto w-full grid-cols-3">
+                <TabsList class="api-market-slot-tabs grid h-auto w-full grid-cols-3">
                   <TabsTrigger v-for="slot in displayedSlots" :key="slot.key" :value="slot.key" class="min-h-12 flex-col gap-0.5">
                     <span class="font-mono text-base tabular-nums">{{ slotTime(slot) }}</span>
                     <span class="text-[10px]">{{ slotStatusLabel(slot) }}</span>
@@ -378,10 +388,14 @@ onBeforeUnmount(() => {
 
               <ErrorState v-if="rushQuery.error.value" class="mt-4" description="本场额度包暂时无法加载。" @retry="rushQuery.refetch()" />
               <SkeletonBlock v-else-if="rushQuery.isLoading.value || !selectedSlotKey" class="mt-4" :lines="5" />
-              <div v-else-if="rushRows.length === 0" class="mt-4 flex min-h-36 flex-col items-center justify-center border-t border-dashed border-border px-4 text-center">
+              <div v-else-if="rushRows.length === 0" class="mt-4 flex min-h-32 flex-col items-center justify-center border-t border-dashed border-border px-4 py-5 text-center">
                 <CalendarClock class="h-7 w-7 text-muted-foreground" />
                 <div class="mt-2 font-medium">本场暂无额度包</div>
                 <p class="mt-1 text-sm text-muted-foreground">可以切换其他场次，或发布自己的限时额度包。</p>
+                <div class="mt-3 flex flex-wrap justify-center gap-2">
+                  <Button class="h-11 sm:h-9" size="sm" variant="outline" @click="activeView = 'free'">查看自由额度</Button>
+                  <RouterLink to="/api-market/quota/new"><Button class="h-11 sm:h-9" size="sm">发布额度包</Button></RouterLink>
+                </div>
               </div>
               <div v-else class="api-product-card-grid mt-4">
                 <ApiQuotaOfferCard
@@ -406,13 +420,13 @@ onBeforeUnmount(() => {
         <div class="flex items-center justify-between gap-3 pt-1">
           <div><h2 class="font-semibold">其他限时额度包</h2><p class="text-xs text-muted-foreground">连续销售和卖家自定义轮次。</p></div>
         </div>
-        <div class="grid gap-3 border-y border-border py-3 lg:grid-cols-[minmax(240px,1fr)_180px_150px_auto] lg:items-center">
+        <div class="api-market-filter-toolbar grid gap-3 rounded-lg border border-border bg-muted/25 p-3 lg:grid-cols-[minmax(240px,1fr)_180px_150px_auto] lg:items-center">
           <label class="relative block">
             <Search class="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-            <Input v-model="quotaSearch" class="pl-9" placeholder="搜索额度包、服务或卖家" />
+            <Input v-model="quotaSearch" class="h-11 pl-9 lg:h-9" placeholder="搜索额度包、服务或卖家" />
           </label>
           <Select v-model="distributionSystem">
-            <SelectTrigger><SelectValue placeholder="接入系统" /></SelectTrigger>
+            <SelectTrigger class="data-[size=default]:h-11 lg:data-[size=default]:h-9"><SelectValue placeholder="接入系统" /></SelectTrigger>
             <SelectContent>
               <SelectItem value="all">全部接入系统</SelectItem>
               <SelectItem value="sub2api">Sub2API</SelectItem>
@@ -421,24 +435,24 @@ onBeforeUnmount(() => {
             </SelectContent>
           </Select>
           <Select v-model="availability">
-            <SelectTrigger><SelectValue placeholder="销售状态" /></SelectTrigger>
+            <SelectTrigger class="data-[size=default]:h-11 lg:data-[size=default]:h-9"><SelectValue placeholder="销售状态" /></SelectTrigger>
             <SelectContent>
               <SelectItem value="all">全部状态</SelectItem>
               <SelectItem value="available">当前可购买</SelectItem>
             </SelectContent>
           </Select>
-          <label class="flex min-h-10 cursor-pointer items-center gap-2 rounded-md border border-border px-3 text-sm">
+          <label class="flex min-h-11 cursor-pointer items-center gap-2 rounded-md border border-border bg-background px-3 text-sm">
             <Checkbox v-model="oneMultiplier" />仅看 1.00x
           </label>
         </div>
 
         <ErrorState v-if="quotaQuery.error.value" description="额度包列表暂时无法加载。" @retry="quotaQuery.refetch()" />
         <SkeletonBlock v-else-if="quotaQuery.isLoading.value" :lines="8" />
-        <EmptyState v-else-if="quotaRows.length === 0" title="暂无匹配的额度包" description="可以调整筛选、查看自由额度，卖家也可以发布自己的限时额度包。">
+        <EmptyState v-else-if="quotaRows.length === 0" class="min-h-32 p-5" title="暂无匹配的额度包" description="可以调整筛选、查看自由额度，卖家也可以发布自己的限时额度包。">
           <template #action>
             <div class="flex flex-wrap justify-center gap-2">
-              <RouterLink to="/api-market/quota/new"><Button class="gap-2"><PackagePlus class="h-4 w-4" />发布限时额度包</Button></RouterLink>
-              <Button variant="outline" @click="activeView = 'free'">查看自由额度</Button>
+              <RouterLink to="/api-market/quota/new"><Button class="h-11 gap-2 sm:h-9"><PackagePlus class="h-4 w-4" />发布限时额度包</Button></RouterLink>
+              <Button class="h-11 sm:h-9" variant="outline" @click="activeView = 'free'">查看自由额度</Button>
             </div>
           </template>
         </EmptyState>
@@ -549,6 +563,16 @@ onBeforeUnmount(() => {
 .api-market-catalog {
   min-width: 0;
   background: #fff;
+}
+
+.api-market-view-tabs {
+  border: 1px solid var(--border);
+  background: color-mix(in oklab, var(--muted) 72%, var(--card));
+}
+
+.api-market-slot-tabs {
+  border: 1px solid color-mix(in oklab, var(--primary) 16%, var(--border));
+  background: var(--card);
 }
 
 .api-product-card-grid {

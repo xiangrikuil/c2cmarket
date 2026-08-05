@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
-import { CircleHelp, ExternalLink, Filter, Info, Package, Percent, RefreshCcw, X } from 'lucide-vue-next'
+import { ExternalLink, Filter, Info, Package, X } from 'lucide-vue-next'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
@@ -316,27 +316,31 @@ function openPrice(event: MouseEvent | KeyboardEvent, id: string) {
         </SoftTable>
       </main>
 
-      <aside class="official-price-aside space-y-3">
-        <Card class="official-price-aside-primary p-4">
-          <div class="flex items-center gap-2 font-semibold"><Info class="h-4 w-4 text-violet-600" />价格说明</div>
-          <ul class="mt-3 space-y-2 text-sm leading-6 text-muted-foreground">
-            <li>展示产品官网公开价格，仅作为方案比较参考。</li>
-            <li>实际支付可能受地区、汇率、税费和渠道政策影响。</li>
-            <li>官网价不等于本站车源或 API 服务成交价。</li>
-          </ul>
-        </Card>
-        <Card class="p-4">
-          <div class="flex items-center gap-2 font-semibold"><Percent class="h-4 w-4 text-blue-600" />税费与汇率</div>
-          <p class="mt-2 text-sm leading-6 text-muted-foreground">折合人民币用于横向比较，结账时仍以官网页面显示的币种、税费与实时汇率为准。</p>
-        </Card>
-        <Card class="p-4">
-          <div class="flex items-center gap-2 font-semibold"><RefreshCcw class="h-4 w-4 text-emerald-600" />维护状态</div>
-          <dl class="mt-3 grid gap-2 text-sm"><div class="flex justify-between"><dt class="text-muted-foreground">公开记录</dt><dd class="font-semibold">{{ (data ?? []).length }}</dd></div><div class="flex justify-between"><dt class="text-muted-foreground">维护来源</dt><dd class="font-semibold">{{ contributorCount }}</dd></div><div class="flex justify-between"><dt class="text-muted-foreground">数据来源</dt><dd class="font-semibold text-emerald-700">产品官网</dd></div></dl>
-        </Card>
-        <Card class="official-price-help p-4">
-          <div class="flex items-center gap-2 font-semibold"><CircleHelp class="h-4 w-4 text-primary" />需要帮助选择？</div>
-          <p class="mt-2 text-sm leading-6 text-muted-foreground">先比较官网公开价，再结合车源开通方式和风险说明判断是否适合。</p>
-          <RouterLink to="/carpools" class="mt-3 block"><Button class="w-full" variant="outline">浏览订阅车源</Button></RouterLink>
+      <aside class="official-price-aside">
+        <Card class="official-price-aside-primary overflow-hidden p-0">
+          <div class="flex items-center gap-2 border-b border-border px-4 py-3 font-semibold"><Info class="h-4 w-4 text-violet-600" />价格与维护说明</div>
+          <div class="divide-y divide-border">
+            <section class="px-4 py-3">
+              <h3 class="text-sm font-medium">比较口径</h3>
+              <ul class="mt-2 space-y-1.5 text-sm leading-6 text-muted-foreground">
+                <li>展示产品官网公开价格，仅作为方案比较参考。</li>
+                <li>实际支付可能受地区、汇率、税费和渠道政策影响。</li>
+                <li>官网价不等于本站车源或 API 服务成交价。</li>
+              </ul>
+            </section>
+            <section class="px-4 py-3">
+              <h3 class="text-sm font-medium">税费与汇率</h3>
+              <p class="mt-2 text-sm leading-6 text-muted-foreground">折合人民币用于横向比较，结账时仍以官网页面显示的币种、税费与实时汇率为准。</p>
+            </section>
+            <section class="px-4 py-3">
+              <h3 class="text-sm font-medium">维护状态</h3>
+              <dl class="mt-2 grid gap-2 text-sm"><div class="flex justify-between"><dt class="text-muted-foreground">公开记录</dt><dd class="font-semibold">{{ (data ?? []).length }}</dd></div><div class="flex justify-between"><dt class="text-muted-foreground">维护来源</dt><dd class="font-semibold">{{ contributorCount }}</dd></div><div class="flex justify-between"><dt class="text-muted-foreground">数据来源</dt><dd class="font-semibold">产品官网</dd></div></dl>
+            </section>
+            <section class="px-4 py-3">
+              <p class="text-sm leading-6 text-muted-foreground">先比较官网公开价，再结合车源开通方式和风险说明判断是否适合。</p>
+              <RouterLink to="/carpools" class="mt-3 block"><Button class="w-full" variant="outline">浏览订阅车源</Button></RouterLink>
+            </section>
+          </div>
         </Card>
       </aside>
     </div>

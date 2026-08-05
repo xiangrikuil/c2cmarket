@@ -5,6 +5,7 @@ import { initialSidebarCollapsed } from '@/composables/usePersistentSidebar'
 const appSource = readFileSync(new URL('../../App.vue', import.meta.url), 'utf8')
 const appShellSource = readFileSync(new URL('../../components/layout/AppShell.vue', import.meta.url), 'utf8')
 const adminShellSource = readFileSync(new URL('../../components/layout/AdminShell.vue', import.meta.url), 'utf8')
+const persistentSidebarSource = readFileSync(new URL('../../composables/usePersistentSidebar.ts', import.meta.url), 'utf8')
 
 describe('独立管理端与渐进导航', () => {
   it('根据路由选择独立管理壳', () => {
@@ -33,6 +34,11 @@ describe('独立管理端与渐进导航', () => {
     expect(initialSidebarCollapsed('true', 1440)).toBe(true)
     expect(appShellSource).toContain("usePersistentSidebar('c2c-user-sidebar-collapsed')")
     expect(adminShellSource).toContain("usePersistentSidebar('c2c-admin-sidebar-collapsed')")
+  })
+
+  it('hydration 前使用服务端稳定的展开状态', () => {
+    expect(persistentSidebarSource).toContain('const sidebarCollapsed = ref(false)')
+    expect(persistentSidebarSource).toMatch(/onMounted\(\(\) => \{[\s\S]*?window\.localStorage\.getItem\(storageKey\)/)
   })
 
   it('移动抽屉支持语义和 Escape 关闭', () => {

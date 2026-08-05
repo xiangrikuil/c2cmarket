@@ -112,7 +112,7 @@ const modelSummary = [
           class="block"
           @click.capture="emit('activate')"
         >
-          <Button class="h-9 w-full"><ShoppingCart class="h-4 w-4" />查看并购买套餐</Button>
+          <Button class="h-11 w-full sm:h-9"><ShoppingCart class="h-4 w-4" />查看并购买套餐</Button>
         </RouterLink>
       </div>
     </div>

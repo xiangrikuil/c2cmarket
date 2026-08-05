@@ -6,6 +6,7 @@ import { CheckCircle2, Eye, Gavel, MoreHorizontal, ShieldAlert } from 'lucide-vu
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
+import { Checkbox } from '@/components/ui/checkbox'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import {
   Dialog,
@@ -464,7 +465,14 @@ const showContentActions = computed(() => !['logs', 'trade-intents'].includes(se
     </div>
     <div class="mb-4 grid gap-2 md:grid-cols-[minmax(0,1fr)_180px]">
       <Input v-model="keyword" placeholder="搜索对象、管理员、动作、状态或请求追踪" />
-      <select v-model="riskFilter" class="h-9 rounded-md border border-input bg-background px-3 text-sm"><option value="all">全部风险</option><option value="high">仅高风险</option><option value="has_note">有风险/备注</option></select>
+      <Select v-model="riskFilter">
+        <SelectTrigger class="w-full" aria-label="风险筛选"><SelectValue /></SelectTrigger>
+        <SelectContent>
+          <SelectItem value="all">全部风险</SelectItem>
+          <SelectItem value="high">仅高风险</SelectItem>
+          <SelectItem value="has_note">有风险/备注</SelectItem>
+        </SelectContent>
+      </Select>
     </div>
     <StatusTabs v-model="activeStatus" :items="statusTabs" />
     <SkeletonTable v-if="isLoading" :rows="6" :columns="6" />
@@ -643,7 +651,7 @@ const showContentActions = computed(() => !['logs', 'trade-intents'].includes(se
                 <Textarea v-model="reason" class="min-h-28" :placeholder="drawerAction === 'request_info' ? '说明需要该用户补充的脱敏事实；该说明仅管理员可见。' : '填写下架、恢复、限制或封禁原因；审计日志会记录该说明。'" />
               </label>
               <label class="flex items-start gap-2 rounded-lg border border-border bg-muted/30 p-3 text-xs leading-5 text-muted-foreground">
-                <input v-model="confirmedRiskAction" type="checkbox" class="mt-1 h-4 w-4 accent-primary" />
+                <Checkbox v-model="confirmedRiskAction" class="mt-1" />
                 <span>二次确认：我已核对关联页、证据和当前状态，确认本次{{ moderationActionLabel(drawerAction, drawerRow) }}动作应写入审计日志。</span>
               </label>
               <p class="text-xs leading-5 text-muted-foreground">管理动作只更新状态并写入审计日志，不会删除记录、不会查看意向记录外的完整联系方式。</p>

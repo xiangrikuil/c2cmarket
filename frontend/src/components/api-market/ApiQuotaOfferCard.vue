@@ -145,7 +145,7 @@ function formatAbsoluteTime(value: string) {
       </div>
 
       <div class="api-product-card__action">
-        <Button :disabled="purchaseDisabled" class="h-9 w-full" @click="emit('purchase', offer)">
+        <Button :disabled="purchaseDisabled" class="h-11 w-full sm:h-9" @click="emit('purchase', offer)">
           <ShoppingCart class="h-4 w-4" />{{ purchaseLabel }}
         </Button>
       </div>

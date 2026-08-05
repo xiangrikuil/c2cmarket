@@ -138,13 +138,13 @@ const merchantInitial = computed(() => props.card.merchantName.trim().slice(0, 1
 
       <div class="api-product-card__action">
         <div v-if="preview">
-          <Button type="button" class="pointer-events-none h-9 w-full" aria-disabled="true" tabindex="-1">
+          <Button type="button" class="pointer-events-none h-11 w-full sm:h-9" aria-disabled="true" tabindex="-1">
             <ShoppingCart class="h-4 w-4" />选择金额并下单
           </Button>
           <p class="mt-1 text-center text-[10px] text-muted-foreground">预览状态，不可操作</p>
         </div>
         <RouterLink v-else-if="card.actionHref" :to="card.actionHref" class="block" @click.capture="emit('activate')">
-          <Button class="h-9 w-full"><ShoppingCart class="h-4 w-4" />选择金额并下单</Button>
+          <Button class="h-11 w-full sm:h-9"><ShoppingCart class="h-4 w-4" />选择金额并下单</Button>
         </RouterLink>
       </div>
     </div>

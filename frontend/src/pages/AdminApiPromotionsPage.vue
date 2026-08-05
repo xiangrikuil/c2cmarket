@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, reactive, ref } from 'vue'
 import type { AdminApiServicePromotion, ApiServicePromotionStatus } from '@/api/generated/openapi'
-import { CalendarClock, CircleCheck, CircleStop, LoaderCircle, Megaphone, Plus, RefreshCw, TriangleAlert } from 'lucide-vue-next'
+import { CalendarClock, CheckCircle2, CircleStop, LoaderCircle, Megaphone, Plus, RefreshCw, TriangleAlert } from 'lucide-vue-next'
 import { toast } from 'vue-sonner'
 import CompactStats from '@/components/market/CompactStats.vue'
 import EmptyState from '@/components/market/EmptyState.vue'
@@ -215,7 +215,7 @@ function firstIssue(item: AdminApiServicePromotion) {
     <Card v-else class="overflow-hidden p-0">
       <div class="flex items-center justify-between border-b border-border px-4 py-3">
         <div><h2 class="font-semibold">全部排期</h2><p class="mt-1 text-xs text-muted-foreground">状态按当前时间和服务实时资格派生。</p></div>
-        <Button variant="outline" size="icon" title="刷新推广排期" @click="promotionsQuery.refetch()"><RefreshCw class="h-4 w-4" /><span class="sr-only">刷新</span></Button>
+        <Button variant="outline" size="icon" title="刷新推广排期" aria-label="刷新推广排期" @click="promotionsQuery.refetch()"><RefreshCw class="h-4 w-4" /><span class="sr-only">刷新</span></Button>
       </div>
       <div class="overflow-x-auto">
         <Table>
@@ -242,7 +242,7 @@ function firstIssue(item: AdminApiServicePromotion) {
           <div class="flex flex-wrap items-center gap-2"><span class="text-xs text-muted-foreground">快速时长</span><Button v-for="days in [7, 14, 30]" :key="days" type="button" variant="outline" size="sm" @click="applyDuration(days)">{{ days }} 天</Button></div>
           <div v-if="availabilityEnabled" class="space-y-3 border-y border-border py-3">
             <div class="flex flex-wrap items-center justify-between gap-2">
-              <div class="flex items-center gap-2 text-sm font-medium"><CircleCheck class="h-4 w-4 text-muted-foreground" />排期校验</div>
+              <div class="flex items-center gap-2 text-sm font-medium"><CheckCircle2 class="h-4 w-4 text-muted-foreground" />排期校验</div>
               <div v-if="availability" class="flex flex-wrap gap-2">
                 <Badge :variant="availability.eligibility.configurable ? 'secondary' : 'destructive'">{{ availability.eligibility.configurable ? '可配置' : '不可配置' }}</Badge>
                 <Badge :variant="availability.eligibility.displayable ? 'secondary' : 'outline'">{{ availability.eligibility.displayable ? '当前可展示' : '暂不可展示' }}</Badge>

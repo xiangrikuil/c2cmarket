@@ -7,6 +7,7 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Textarea } from '@/components/ui/textarea'
 import PageTitle from '@/components/market/PageTitle.vue'
 import StatusTabs from '@/components/market/StatusTabs.vue'
@@ -190,20 +191,26 @@ function statusVariant(item: FeedbackTicket) {
           <div class="grid gap-3 md:grid-cols-2">
             <label class="space-y-1.5">
               <span class="text-sm font-medium">反馈类型</span>
-              <select v-model="form.type" class="h-9 w-full rounded-md border border-input bg-background px-3 text-sm">
-                <option value="function_issue">功能问题</option>
-                <option value="data_correction">数据纠错</option>
-                <option value="experience_suggestion">体验建议</option>
-                <option value="publish_contact_block">发布/联系受阻</option>
-              </select>
+              <Select v-model="form.type">
+                <SelectTrigger class="w-full"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="function_issue">功能问题</SelectItem>
+                  <SelectItem value="data_correction">数据纠错</SelectItem>
+                  <SelectItem value="experience_suggestion">体验建议</SelectItem>
+                  <SelectItem value="publish_contact_block">发布/联系受阻</SelectItem>
+                </SelectContent>
+              </Select>
             </label>
             <label class="space-y-1.5">
               <span class="text-sm font-medium">影响程度</span>
-              <select v-model="form.impact" class="h-9 w-full rounded-md border border-input bg-background px-3 text-sm">
-                <option value="general">一般</option>
-                <option value="blocks_operation">影响操作</option>
-                <option value="cannot_continue">无法继续</option>
-              </select>
+              <Select v-model="form.impact">
+                <SelectTrigger class="w-full"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="general">一般</SelectItem>
+                  <SelectItem value="blocks_operation">影响操作</SelectItem>
+                  <SelectItem value="cannot_continue">无法继续</SelectItem>
+                </SelectContent>
+              </Select>
             </label>
             <label class="space-y-1.5">
               <span class="text-sm font-medium">当前页面</span>

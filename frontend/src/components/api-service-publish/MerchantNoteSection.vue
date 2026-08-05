@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { FileText, Gauge, Layers3, ShieldAlert, ShieldCheck } from 'lucide-vue-next'
 import { Card } from '@/components/ui/card'
+import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group'
@@ -144,15 +145,16 @@ const insertSnippet = (form: ApiServicePublishForm, value: string) => {
       </div>
 
       <div class="flex flex-wrap gap-2">
-        <button
+        <Button
           v-for="snippet in merchantNoteQuickInserts"
           :key="snippet"
-          type="button"
-          class="rounded-full border border-border bg-background px-3 py-1 text-xs hover:bg-muted"
+          size="sm"
+          variant="outline"
+          class="h-auto rounded-full px-3 py-1 text-xs"
           @click="insertSnippet(form, snippet)"
         >
           + {{ snippet }}
-        </button>
+        </Button>
       </div>
     </div>
   </Card>

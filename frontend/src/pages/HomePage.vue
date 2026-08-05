@@ -2,10 +2,10 @@
 import { computed } from 'vue'
 import { RouterLink } from 'vue-router'
 import ArrowRight from 'lucide-vue-next/dist/esm/icons/arrow-right.js'
+import CarFront from 'lucide-vue-next/dist/esm/icons/car-front.js'
 import ChevronRight from 'lucide-vue-next/dist/esm/icons/chevron-right.js'
 import Code2 from 'lucide-vue-next/dist/esm/icons/code-xml.js'
 import FileChartColumnIncreasing from 'lucide-vue-next/dist/esm/icons/file-chart-column-increasing.js'
-import UsersRound from 'lucide-vue-next/dist/esm/icons/users-round.js'
 import { Badge } from '@/components/ui/badge'
 import HomeMarketSnapshot from '@/components/market/HomeMarketSnapshot.vue'
 import { isApiServicePubliclyOrderable } from '@/lib/apiServicePresentation'
@@ -47,7 +47,7 @@ const categoryIconByCode = computed(() => new Map((catalogCategories.value ?? []
 
       <section class="home-market-entries" aria-label="市场入口" :aria-busy="isLoading">
         <RouterLink to="/carpools" class="home-entry-card is-carpool">
-          <span class="home-entry-icon" aria-hidden="true"><UsersRound /></span>
+          <span class="home-entry-icon" aria-hidden="true"><CarFront /></span>
           <span class="home-entry-copy"><strong>订阅拼车</strong><small>比较月费、访问安排与剩余名额</small></span>
           <span class="home-entry-meta"><span v-if="hasMarketData">{{ tradableCarpools.length }} 个车源可申请</span><span v-else-if="isLoading" class="home-market-count-skeleton" /><span v-else>数据暂不可用</span><ChevronRight aria-hidden="true" /></span>
         </RouterLink>

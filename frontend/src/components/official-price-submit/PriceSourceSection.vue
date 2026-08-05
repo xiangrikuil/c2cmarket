@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { CreditCard, Check, CircleAlert } from 'lucide-vue-next'
+import { Check, CreditCard, TriangleAlert } from 'lucide-vue-next'
 import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import SubmitSectionHeader from './SubmitSectionHeader.vue'
@@ -59,7 +59,7 @@ defineProps<{
             :class="sourceLinkState === 'success' ? 'bg-success/10 text-success' : 'bg-destructive/10 text-destructive'"
           >
             <Check v-if="sourceLinkState === 'success'" class="h-3 w-3" />
-            <CircleAlert v-else class="h-3 w-3" />
+            <TriangleAlert v-else class="h-3 w-3" />
             {{ sourceLinkState === 'success' ? '链接格式有效' : '格式不合法' }}
           </span>
         </div>

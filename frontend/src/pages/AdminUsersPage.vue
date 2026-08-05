@@ -368,34 +368,34 @@ function auditTransition(entry: {
 
     <section class="border-y border-border" aria-label="全站账号概览">
       <div class="grid grid-cols-2 divide-x divide-y divide-border sm:grid-cols-4 xl:grid-cols-7 xl:divide-y-0">
-        <button type="button" class="min-w-0 px-4 py-3 text-left hover:bg-muted/50" :class="{ 'bg-muted/60': statusFilter === 'all' }" @click="filterByStatus('all')">
+        <Button type="button" variant="ghost" class="h-auto min-w-0 flex-col items-stretch rounded-none px-4 py-3 text-left hover:bg-muted/50" :class="{ 'bg-muted/60': statusFilter === 'all' }" @click="filterByStatus('all')">
           <span class="flex items-center gap-2 text-xs text-muted-foreground"><UsersRound class="h-3.5 w-3.5" />全部账号</span>
           <strong class="mt-1 block text-xl">{{ summary?.totalUsers ?? '-' }}</strong>
-        </button>
-        <button type="button" class="min-w-0 px-4 py-3 text-left hover:bg-emerald-50/60" :class="{ 'bg-emerald-50/70': statusFilter === 'active' }" @click="filterByStatus('active')">
+        </Button>
+        <Button type="button" variant="ghost" class="h-auto min-w-0 flex-col items-stretch rounded-none px-4 py-3 text-left hover:bg-emerald-50/60" :class="{ 'bg-emerald-50/70': statusFilter === 'active' }" @click="filterByStatus('active')">
           <span class="flex items-center gap-2 text-xs text-emerald-700"><Activity class="h-3.5 w-3.5" />正常</span>
           <strong class="mt-1 block text-xl">{{ summary?.activeUsers ?? '-' }}</strong>
-        </button>
-        <button type="button" class="min-w-0 px-4 py-3 text-left hover:bg-amber-50/70" :class="{ 'bg-amber-50/80': statusFilter === 'suspended' }" @click="filterByStatus('suspended')">
+        </Button>
+        <Button type="button" variant="ghost" class="h-auto min-w-0 flex-col items-stretch rounded-none px-4 py-3 text-left hover:bg-amber-50/70" :class="{ 'bg-amber-50/80': statusFilter === 'suspended' }" @click="filterByStatus('suspended')">
           <span class="flex items-center gap-2 text-xs text-amber-700"><PauseCircle class="h-3.5 w-3.5" />已暂停</span>
           <strong class="mt-1 block text-xl">{{ summary?.suspendedUsers ?? '-' }}</strong>
-        </button>
-        <button type="button" class="min-w-0 px-4 py-3 text-left hover:bg-red-50/70" :class="{ 'bg-red-50/80': statusFilter === 'banned' }" @click="filterByStatus('banned')">
+        </Button>
+        <Button type="button" variant="ghost" class="h-auto min-w-0 flex-col items-stretch rounded-none px-4 py-3 text-left hover:bg-red-50/70" :class="{ 'bg-red-50/80': statusFilter === 'banned' }" @click="filterByStatus('banned')">
           <span class="flex items-center gap-2 text-xs text-red-700"><Ban class="h-3.5 w-3.5" />已封禁</span>
           <strong class="mt-1 block text-xl">{{ summary?.bannedUsers ?? '-' }}</strong>
-        </button>
-        <button type="button" class="min-w-0 px-4 py-3 text-left hover:bg-zinc-100/80" :class="{ 'bg-zinc-100': statusFilter === 'archived' }" @click="filterByStatus('archived')">
+        </Button>
+        <Button type="button" variant="ghost" class="h-auto min-w-0 flex-col items-stretch rounded-none px-4 py-3 text-left hover:bg-zinc-100/80" :class="{ 'bg-zinc-100': statusFilter === 'archived' }" @click="filterByStatus('archived')">
           <span class="flex items-center gap-2 text-xs text-zinc-600"><Archive class="h-3.5 w-3.5" />已归档</span>
           <strong class="mt-1 block text-xl">{{ summary?.archivedUsers ?? '-' }}</strong>
-        </button>
-        <button type="button" class="min-w-0 px-4 py-3 text-left hover:bg-muted/50" :class="{ 'bg-muted/60': roleFilter === 'admin' }" @click="roleFilter = roleFilter === 'admin' ? 'all' : 'admin'">
+        </Button>
+        <Button type="button" variant="ghost" class="h-auto min-w-0 flex-col items-stretch rounded-none px-4 py-3 text-left hover:bg-muted/50" :class="{ 'bg-muted/60': roleFilter === 'admin' }" @click="roleFilter = roleFilter === 'admin' ? 'all' : 'admin'">
           <span class="flex items-center gap-2 text-xs text-muted-foreground"><KeyRound class="h-3.5 w-3.5" />管理员</span>
           <strong class="mt-1 block text-xl">{{ summary?.adminUsers ?? '-' }}</strong>
-        </button>
-        <button type="button" class="min-w-0 px-4 py-3 text-left hover:bg-muted/50" :class="{ 'bg-muted/60': linuxDoFilter === 'bound' }" @click="linuxDoFilter = linuxDoFilter === 'bound' ? 'all' : 'bound'">
+        </Button>
+        <Button type="button" variant="ghost" class="h-auto min-w-0 flex-col items-stretch rounded-none px-4 py-3 text-left hover:bg-muted/50" :class="{ 'bg-muted/60': linuxDoFilter === 'bound' }" @click="linuxDoFilter = linuxDoFilter === 'bound' ? 'all' : 'bound'">
           <span class="flex items-center gap-2 text-xs text-muted-foreground"><Link2 class="h-3.5 w-3.5" />linux.do</span>
           <strong class="mt-1 block text-xl">{{ summary?.linuxDoBoundUsers ?? '-' }}</strong>
-        </button>
+        </Button>
       </div>
     </section>
 
@@ -501,7 +501,7 @@ function auditTransition(entry: {
                 <UserRoundCog class="h-3.5 w-3.5" />
                 查看
               </Button>
-              <Button as-child size="icon" variant="ghost" title="打开公开主页">
+              <Button as-child size="icon" variant="ghost" title="打开公开主页" aria-label="打开公开主页">
                 <RouterLink :to="`/u/${user.username}`">
                   <Eye class="h-4 w-4" />
                   <span class="sr-only">打开公开主页</span>
