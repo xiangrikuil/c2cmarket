@@ -160,6 +160,7 @@ type publicAPIQuotaOfferResponse struct {
 	SellerIdentityType        string                          `json:"sellerIdentityType"`
 	SellerLinuxDOBound        bool                            `json:"sellerLinuxDoBound"`
 	DeclaredMaxConcurrency    int                             `json:"declaredMaxConcurrency"`
+	PromptAuditEnabled        *bool                           `json:"promptAuditEnabled"`
 	HealthSummary             apiServiceHealthSummaryResponse `json:"healthSummary"`
 	SaleCutoffAt              string                          `json:"saleCutoffAt"`
 	ExpiresAt                 string                          `json:"expiresAt"`
@@ -360,6 +361,10 @@ func (s *Server) handleCreateAPIQuotaRushOffer(w http.ResponseWriter, r *http.Re
 		writeProblem(w, r, appErr)
 		return
 	}
+	if req.DeliveryMode == apiquota.DeliveryModePreimported {
+		writeProblem(w, r, domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Preimported delivery retired for new offers", "新额度包只支持卖家手工交付。", "deliveryMode", "new_preimported_not_allowed", "请选择卖家手工交付。"))
+		return
+	}
 	expiresAt, appErr := parseAPIQuotaTime("expiresAt", req.ExpiresAt)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
@@ -371,17 +376,7 @@ func (s *Server) handleCreateAPIQuotaRushOffer(w http.ResponseWriter, r *http.Re
 		return
 	}
 	credentialRows := []apiquota.CredentialImportRow(nil)
-	if req.DeliveryMode == apiquota.DeliveryModePreimported {
-		if len(file) == 0 {
-			writeProblem(w, r, domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Credential CSV required", "预导入交付必须上传凭据 CSV。", "file", "required", "请上传凭据 CSV。"))
-			return
-		}
-		credentialRows, appErr = apiquota.ParseCredentialCSV(bytes.NewReader(file), req.DeliveryKind)
-		if appErr != nil {
-			writeProblem(w, r, appErr)
-			return
-		}
-	} else if len(file) > 0 {
+	if len(file) > 0 {
 		writeProblem(w, r, domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Credential CSV unexpected", "卖家手工交付不需要上传凭据 CSV。", "file", "unexpected", "请移除凭据 CSV。"))
 		return
 	}
@@ -776,9 +771,10 @@ func toPublicAPIQuotaOfferResponseWithHealth(item apiquota.OfferCard, health api
 		BatchStatus:           item.BatchStatus, ServiceTitle: item.ServiceTitle,
 		SellerDisplayName: item.SellerDisplayName, SellerIdentityType: item.SellerIdentityType,
 		SellerLinuxDOBound:     item.SellerLinuxDOBound,
-		DeclaredMaxConcurrency: item.DeclaredMaxConcurrency, HealthSummary: toAPIServiceHealthSummaryResponse(health),
-		SaleCutoffAt: item.SaleCutoffAt.UTC().Format(time.RFC3339),
-		ExpiresAt:    item.ExpiresAt.UTC().Format(time.RFC3339), CurrentRound: currentRound, NextRound: nextRound,
+		DeclaredMaxConcurrency: item.DeclaredMaxConcurrency, PromptAuditEnabled: item.PromptAuditEnabled,
+		HealthSummary: toAPIServiceHealthSummaryResponse(health),
+		SaleCutoffAt:  item.SaleCutoffAt.UTC().Format(time.RFC3339),
+		ExpiresAt:     item.ExpiresAt.UTC().Format(time.RFC3339), CurrentRound: currentRound, NextRound: nextRound,
 		AvailableCopies: item.AvailableCopies, CredentialAvailableCopies: item.CredentialAvailableCopies,
 		IsOrderable: item.IsOrderable, OrderabilityCode: item.OrderabilityCode, OrderabilityReason: item.OrderabilityReason,
 	}

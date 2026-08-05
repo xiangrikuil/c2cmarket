@@ -14,10 +14,11 @@ import (
 )
 
 type apiHealthProbeConfigRequest struct {
-	BaseURL    string  `json:"baseUrl"`
-	Model      string  `json:"model"`
-	Credential *string `json:"credential"`
-	Enabled    *bool   `json:"enabled"`
+	BaseURL                 string  `json:"baseUrl"`
+	Model                   string  `json:"model"`
+	Credential              *string `json:"credential"`
+	Enabled                 *bool   `json:"enabled"`
+	AcknowledgeInsecureHTTP bool    `json:"acknowledgeInsecureHttp"`
 }
 
 type apiHealthProbeChallengeRequest struct {
@@ -107,6 +108,7 @@ func (s *Server) handlePutOwnerAPIHealthProbe(w http.ResponseWriter, r *http.Req
 	}
 	config, appErr := s.apiHealth.PutOwnerConfig(r.Context(), user, chi.URLParam(r, "id"), apihealth.ConfigInput{
 		BaseURL: request.BaseURL, Model: request.Model, Credential: request.Credential, Enabled: *request.Enabled,
+		AcknowledgeInsecureHTTP: request.AcknowledgeInsecureHTTP,
 	}, version)
 	if appErr != nil {
 		writeProblem(w, r, appErr)

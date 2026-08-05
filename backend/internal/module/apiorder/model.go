@@ -76,6 +76,7 @@ type Order struct {
 	CNYPerUSDAllowanceSnapshot    string
 	PricingSnapshot               string
 	QuotaUsagePolicySnapshot      apimarket.QuotaUsagePolicy
+	PromptAuditEnabledSnapshot    *bool
 	PackageStockReserved          bool
 	PackageExpiresAt              *time.Time
 	APIQuotaBatchID               string

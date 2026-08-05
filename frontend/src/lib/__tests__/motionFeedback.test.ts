@@ -83,7 +83,7 @@ describe('transaction motion feedback', () => {
     expect(carpoolSuccess).toBeGreaterThan(-1)
     expect(carpoolRefresh).toBeGreaterThan(carpoolSuccess)
 
-    const apiSuccess = apiPublish.indexOf('toast.success(isLimitedQuotaMode.value')
+    const apiSuccess = apiPublish.indexOf('toast.success(isFixedPackageMode.value')
     const apiRefresh = apiPublish.indexOf('await invalidateApiServicePublishQueries()', apiSuccess)
     expect(apiSuccess).toBeGreaterThan(-1)
     expect(apiRefresh).toBeGreaterThan(apiSuccess)

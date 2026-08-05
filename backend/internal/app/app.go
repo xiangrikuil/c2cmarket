@@ -46,7 +46,7 @@ func New(ctx context.Context, cfg config.Config) (*App, error) {
 	if err != nil {
 		return nil, fmt.Errorf("初始化模型审计安全出站策略失败: %w", err)
 	}
-	apiHealthValidationPolicy, err := outboundhttp.NewPolicy(nil)
+	apiHealthValidationPolicy, err := outboundhttp.NewPolicy(nil, outboundhttp.WithInsecureHTTP())
 	if err != nil {
 		return nil, fmt.Errorf("初始化 API 探针目标校验策略失败: %w", err)
 	}

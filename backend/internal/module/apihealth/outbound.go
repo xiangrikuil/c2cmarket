@@ -28,7 +28,8 @@ func (factory *OutboundHTTPClientFactory) ClientFor(config Config) (*http.Client
 	if factory == nil {
 		return nil, ErrTargetIdentityMismatch
 	}
-	target, err := NormalizeTarget(config.BaseURL)
+	allowInsecureHTTP := UsesInsecureHTTP(config.BaseURL)
+	target, err := normalizeTarget(config.BaseURL, allowInsecureHTTP)
 	if err != nil || target.BaseURL != config.BaseURL || target.Origin != config.NormalizedOrigin {
 		return nil, ErrTargetIdentityMismatch
 	}
@@ -36,7 +37,11 @@ func (factory *OutboundHTTPClientFactory) ClientFor(config Config) (*http.Client
 	if err != nil || strings.TrimSpace(parsed.Hostname()) == "" {
 		return nil, ErrTargetIdentityMismatch
 	}
-	policy, err := outboundhttp.NewPolicy([]string{parsed.Hostname()})
+	options := make([]outboundhttp.PolicyOption, 0, 1)
+	if allowInsecureHTTP {
+		options = append(options, outboundhttp.WithInsecureHTTP())
+	}
+	policy, err := outboundhttp.NewPolicy([]string{parsed.Hostname()}, options...)
 	if err != nil {
 		return nil, ErrTargetIdentityMismatch
 	}

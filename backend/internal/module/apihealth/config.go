@@ -7,10 +7,11 @@ import (
 )
 
 var (
-	ErrInvalidModel           = errors.New("probe model is required")
-	ErrCredentialRequired     = errors.New("probe credential is required before enabling")
-	ErrCredentialInvalid      = errors.New("probe credential is invalid")
-	ErrInvalidExpectedVersion = errors.New("probe config version is invalid")
+	ErrInvalidModel                = errors.New("probe model is required")
+	ErrCredentialRequired          = errors.New("probe credential is required before enabling")
+	ErrCredentialInvalid           = errors.New("probe credential is invalid")
+	ErrInsecureHTTPNotAcknowledged = errors.New("insecure HTTP probe risk must be acknowledged")
+	ErrInvalidExpectedVersion      = errors.New("probe config version is invalid")
 )
 
 type ConfigMutation struct {
@@ -20,7 +21,10 @@ type ConfigMutation struct {
 }
 
 func BuildConfigMutation(existing *Config, serviceID, ownerID string, input ConfigInput, now time.Time) (ConfigMutation, error) {
-	target, err := NormalizeTarget(input.BaseURL)
+	if UsesInsecureHTTP(input.BaseURL) && !input.AcknowledgeInsecureHTTP {
+		return ConfigMutation{}, ErrInsecureHTTPNotAcknowledged
+	}
+	target, err := normalizeTarget(input.BaseURL, input.AcknowledgeInsecureHTTP)
 	if err != nil {
 		return ConfigMutation{}, err
 	}

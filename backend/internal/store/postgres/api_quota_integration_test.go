@@ -407,16 +407,11 @@ func TestAPIQuotaPostgresArchiveSystemRushRetiresUnsoldCapacity(t *testing.T) {
 			ModelMultiplier:    "1",
 			QuotaUsagePolicy:   integrationQuotaUsagePolicy(),
 			Copies:             2,
-			DeliveryMode:       apiquota.DeliveryModePreimported,
+			DeliveryMode:       apiquota.DeliveryModeManual,
 			DeliveryETAMinutes: 1,
 			SlotKey:            "2026-07-25@09:00",
 			ExpiresAt:          slotStartsAt.Add(90 * time.Minute),
 			SourceConfirmedAt:  currentTime,
-			DeliveryKind:       apiorder.DeliveryKindAPIKeyEndpoint,
-			CredentialRows: []apiquota.CredentialImportRow{
-				{DeliveryKind: apiorder.DeliveryKindAPIKeyEndpoint, APIBaseURL: "https://one.example/v1", APIKey: "sk-archive-one"},
-				{DeliveryKind: apiorder.DeliveryKindAPIKeyEndpoint, APIBaseURL: "https://two.example/v1", APIKey: "sk-archive-two"},
-			},
 		},
 		func(created apiquota.RushOfferPublication) (idempotency.Completion, *domain.AppError) {
 			publication = created
@@ -429,8 +424,17 @@ func TestAPIQuotaPostgresArchiveSystemRushRetiresUnsoldCapacity(t *testing.T) {
 	if appErr != nil {
 		t.Fatalf("create system rush offer: %v", appErr)
 	}
-	if publication.Batch.Status != apiquota.BatchStatusPublished || publication.CredentialSummary.Available != 2 {
+	if publication.Batch.Status != apiquota.BatchStatusPublished {
 		t.Fatalf("unexpected system rush publication: %+v", publication)
+	}
+	markAPIQuotaOfferAsLegacyPreimportedForTest(t, ctx, pool, publication.Offer.ID)
+	credentialSummary, appErr := manager.ImportCredentials(ctx, user, apiquota.CredentialImportInput{
+		OfferID:      publication.Offer.ID,
+		DeliveryKind: apiorder.DeliveryKindAPIKeyEndpoint,
+		CSV:          strings.NewReader("api_base_url,api_key,instructions\nhttps://one.example/v1,sk-archive-one,legacy one\nhttps://two.example/v1,sk-archive-two,legacy two\n"),
+	})
+	if appErr != nil || credentialSummary.Summary.Available != 2 {
+		t.Fatalf("seed legacy preimported rush credentials: summary=%+v err=%v", credentialSummary, appErr)
 	}
 
 	archived, appErr := manager.UpdateBatchStatus(
@@ -748,7 +752,7 @@ func TestAPIQuotaPostgresTimeoutAndRoundRetirementReturnAllowance(t *testing.T) 
 	cleanupQuotaServiceForTest(t, ctx, pool, sellerID, buyerID)
 }
 
-func TestAPIQuotaPostgresConfirmPaymentConsumesAndDeliversPreimportedCredential(t *testing.T) {
+func TestAPIQuotaPostgresConfirmPaymentConsumesAndDeliversHistoricalPreimportedCredential(t *testing.T) {
 	databaseURL := strings.TrimSpace(os.Getenv("C2C_TEST_DATABASE_URL"))
 	if databaseURL == "" {
 		t.Skip("C2C_TEST_DATABASE_URL is not configured")
@@ -801,12 +805,13 @@ func TestAPIQuotaPostgresConfirmPaymentConsumesAndDeliversPreimportedCredential(
 	}
 	offer, appErr := manager.CreateOffer(ctx, user, apiquota.CreateOfferInput{
 		BatchID: batch.ID, Name: "$50 预导入额度包", USDAllowance: "50", PriceCNY: "5",
-		ModelMultiplier: "1", QuotaUsagePolicy: integrationQuotaUsagePolicy(), DeliveryMode: apiquota.DeliveryModePreimported, DeliveryETAMinutes: 1,
+		ModelMultiplier: "1", QuotaUsagePolicy: integrationQuotaUsagePolicy(), DeliveryMode: apiquota.DeliveryModeManual, DeliveryETAMinutes: 1,
 		SaleMode: apiquota.SaleModeContinuous, ContinuousCopies: 1,
 	})
 	if appErr != nil {
-		t.Fatalf("create preimported quota offer: %v", appErr)
+		t.Fatalf("create quota offer before legacy fixture conversion: %v", appErr)
 	}
+	markAPIQuotaOfferAsLegacyPreimportedForTest(t, ctx, pool, offer.ID)
 	importResult, appErr := manager.ImportCredentials(ctx, user, apiquota.CredentialImportInput{
 		OfferID: offer.ID, DeliveryKind: apiorder.DeliveryKindAPIKeyEndpoint,
 		CSV: strings.NewReader("api_base_url,api_key,instructions\nhttps://api.example.com/v1,sk-quota-buyer-only,买家专属接入信息\n"),
@@ -1160,12 +1165,13 @@ func seedQuotaServiceForTest(t *testing.T, ctx context.Context, pool *pgxpool.Po
 			review_status, publication_status, moderation_status,
 			accepting_orders, payment_window_minutes,
 			declared_ttft_band, declared_max_concurrency, performance_confirmed_at,
+			prompt_audit_enabled,
 			created_at, updated_at, version
 		) VALUES (
 			$1, $2, 'public_profile', $3, 'Sub2API 短期额度', '集成测试服务',
 			'sub2api', 'metered_usd_quota', 1, 1000, 1000, $5, 1, 1000, 'offsite_panel_readonly',
 			'approved', 'online', 'clear', true, 10,
-			'under_1s', 20, $4, $4, $4, 1
+			'under_1s', 20, $4, false, $4, $4, 1
 		)
 	`, serviceID, sellerID, contactID, now, now.AddDate(1, 0, 0)); err != nil {
 		t.Fatalf("seed API service: %v", err)
@@ -1183,6 +1189,21 @@ func seedQuotaServiceForTest(t *testing.T, ctx context.Context, pool *pgxpool.Po
 		) VALUES ($1, $2, 'wechat', true, '站外确认', $3, $3, 1)
 	`, uuid.NewString(), serviceID, now); err != nil {
 		t.Fatalf("seed payment option: %v", err)
+	}
+}
+
+func markAPIQuotaOfferAsLegacyPreimportedForTest(t *testing.T, ctx context.Context, pool *pgxpool.Pool, offerID string) {
+	t.Helper()
+	tag, err := pool.Exec(ctx, `
+		UPDATE api_quota_offers
+		SET delivery_mode = 'preimported'
+		WHERE id = $1
+	`, offerID)
+	if err != nil {
+		t.Fatalf("mark legacy preimported quota offer: %v", err)
+	}
+	if tag.RowsAffected() != 1 {
+		t.Fatalf("expected one legacy preimported quota offer, updated %d", tag.RowsAffected())
 	}
 }
 

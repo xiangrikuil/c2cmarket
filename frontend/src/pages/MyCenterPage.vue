@@ -7,6 +7,7 @@ import ApiPaymentSettingsEditor from '@/components/contact-payment/ApiPaymentSet
 import BuyerPreviewDrawer from '@/components/contact-payment/BuyerPreviewDrawer.vue'
 import ConfigurationProgressCard from '@/components/contact-payment/ConfigurationProgressCard.vue'
 import ContactMethodCard from '@/components/contact-payment/ContactMethodCard.vue'
+import PasswordVisibilityInput from '@/components/personal-center/PasswordVisibilityInput.vue'
 import PersonalCenterDashboard from '@/components/personal-center/PersonalCenterDashboard.vue'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -948,24 +949,33 @@ function goToLogin() {
                 </div>
 
                 <div class="grid gap-4">
-                  <label v-if="profile.passwordConfigured" class="block space-y-2">
-                    <span class="text-sm font-medium">当前密码</span>
-                    <Input v-model="passwordForm.currentPassword" class="h-11" type="password" autocomplete="current-password" />
-                  </label>
-                  <label class="block space-y-2">
-                    <span class="text-sm font-medium">新密码</span>
-                    <Input v-model="passwordForm.newPassword" class="h-11" type="password" autocomplete="new-password" />
-                  </label>
-                  <label class="block space-y-2">
-                    <span class="text-sm font-medium">确认新密码</span>
-                    <Input
-                      v-model="passwordForm.confirmPassword"
-                      class="h-11"
-                      :class="confirmPasswordMismatch ? 'border-destructive bg-[#FFF7F7] focus-visible:border-destructive focus-visible:ring-destructive/20' : ''"
-                      type="password"
+                  <div v-if="profile.passwordConfigured" class="space-y-2">
+                    <label for="account-current-password" class="text-sm font-medium">当前密码</label>
+                    <PasswordVisibilityInput
+                      id="account-current-password"
+                      v-model="passwordForm.currentPassword"
+                      label="当前密码"
+                      autocomplete="current-password"
+                    />
+                  </div>
+                  <div class="space-y-2">
+                    <label for="account-new-password" class="text-sm font-medium">新密码</label>
+                    <PasswordVisibilityInput
+                      id="account-new-password"
+                      v-model="passwordForm.newPassword"
+                      label="新密码"
                       autocomplete="new-password"
-                      :aria-invalid="confirmPasswordMismatch ? 'true' : undefined"
-                      :aria-describedby="confirmPasswordMismatch ? 'account-confirm-password-error' : undefined"
+                    />
+                  </div>
+                  <div class="space-y-2">
+                    <label for="account-confirm-password" class="text-sm font-medium">确认新密码</label>
+                    <PasswordVisibilityInput
+                      id="account-confirm-password"
+                      v-model="passwordForm.confirmPassword"
+                      label="确认新密码"
+                      autocomplete="new-password"
+                      :invalid="confirmPasswordMismatch"
+                      :described-by="confirmPasswordMismatch ? 'account-confirm-password-error' : undefined"
                       @blur="confirmPasswordTouched = true"
                     />
                     <span
@@ -977,7 +987,7 @@ function goToLogin() {
                       <CircleAlert class="h-3.5 w-3.5 shrink-0" />
                       两次输入的密码不一致，请重新输入
                     </span>
-                  </label>
+                  </div>
                 </div>
 
                 <div class="rounded-2xl border border-[#E2E8F0] bg-[#F8FAFC] p-4">

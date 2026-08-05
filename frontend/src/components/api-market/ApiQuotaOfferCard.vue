@@ -60,6 +60,7 @@ const stockLabel = computed(() => isRush.value
   : props.offer.saleMode === 'scheduled'
     ? `本轮剩余 ${props.offer.availableCopies} 份`
     : `剩余 ${props.offer.availableCopies} 份`)
+const promptAuditEnabled = computed(() => props.offer.promptAuditEnabled ?? null)
 
 function formatAbsoluteTime(value: string) {
   const parsed = new Date(value)
@@ -115,14 +116,15 @@ function formatAbsoluteTime(value: string) {
       <dl class="api-product-card__technical-facts">
         <div><dt>模型倍率</dt><dd>{{ Number(offer.modelMultiplier).toFixed(2) }}x</dd></div>
         <div><dt>最大并发</dt><dd>{{ offer.declaredMaxConcurrency }}</dd></div>
+        <div><dt>提示词审计</dt><dd :class="promptAuditEnabled === true ? 'text-orange-700' : ''">{{ promptAuditEnabled === null ? '未声明' : promptAuditEnabled ? '开启' : '关闭' }}</dd></div>
         <div><dt>交付方式</dt><dd :title="getApiQuotaDeliveryModeLabel(offer.deliveryMode)">{{ getApiQuotaDeliveryModeLabel(offer.deliveryMode) }}</dd></div>
-        <div><dt>预计交付</dt><dd>≤ {{ offer.deliveryEtaMinutes }} 分钟</dd></div>
       </dl>
 
       <div class="api-product-card__details flex-1">
         <dl class="api-product-card__detail-facts">
           <div><dt>{{ isRush ? '本轮库存' : '剩余库存' }}</dt><dd>{{ stockLabel }}</dd></div>
-          <div><dt>可交付凭据</dt><dd>{{ offer.credentialAvailableCopies }} 份</dd></div>
+          <div><dt>预计交付</dt><dd>≤ {{ offer.deliveryEtaMinutes }} 分钟</dd></div>
+          <div v-if="offer.deliveryMode === 'preimported'"><dt>可交付凭据</dt><dd>{{ offer.credentialAvailableCopies }} 份</dd></div>
           <div v-if="isRush"><dt>有效剩余</dt><dd :title="formatAbsoluteTime(offer.expiresAt)">约 {{ apiQuotaDurationLabel(offer.expiresAt, now) }}</dd></div>
           <div v-else><dt>销售截止</dt><dd :title="`${formatAbsoluteTime(offer.saleCutoffAt)} · ${apiQuotaOfferCountdown(offer, now)}`">{{ formatAbsoluteTime(offer.saleCutoffAt) }}</dd></div>
           <div><dt>接入系统</dt><dd>{{ getApiQuotaDistributionLabel(offer.distributionSystem) }}</dd></div>

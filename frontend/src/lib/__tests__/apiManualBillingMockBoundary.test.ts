@@ -88,8 +88,20 @@ test('rejects unsupported mock service writes and accepts supported modes', asyn
   await expectRejection(api.submitApiService({ billingMode: 'manual_credit' }))
   await expectRejection(api.submitApiService({ billingMode: 'unknown_mode' }))
 
-  const metered = await settle(api.submitApiService({ billingMode: 'metered_credit', quotaUsagePolicy: writableQuotaPolicy }))
-  const fixed = await settle(api.submitApiService({ billingMode: 'fixed_package', quotaUsagePolicy: writableQuotaPolicy }))
+  const requiredServiceDeclarations = {
+    declaredMaxConcurrency: 1,
+    promptAuditEnabled: false,
+  }
+  const metered = await settle(api.submitApiService({
+    billingMode: 'metered_credit',
+    quotaUsagePolicy: writableQuotaPolicy,
+    ...requiredServiceDeclarations,
+  }))
+  const fixed = await settle(api.submitApiService({
+    billingMode: 'fixed_package',
+    quotaUsagePolicy: writableQuotaPolicy,
+    ...requiredServiceDeclarations,
+  }))
   assert.equal(metered.billingMode, 'metered_credit')
   assert.equal(fixed.billingMode, 'fixed_package')
 })

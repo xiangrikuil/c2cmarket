@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Gauge, Layers3, ShieldCheck } from 'lucide-vue-next'
+import { FileText, Gauge, Layers3, ShieldAlert, ShieldCheck } from 'lucide-vue-next'
 import { Card } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
@@ -32,11 +32,11 @@ const insertSnippet = (form: ApiServicePublishForm, value: string) => {
     <div class="api-publish-card-header">
       <div class="flex items-start gap-2">
         <span class="grid h-7 w-7 shrink-0 place-items-center rounded-md bg-amber-50 text-amber-600">
-          <Gauge class="h-4 w-4" />
+          <FileText class="h-4 w-4" />
         </span>
         <div>
-          <h2>服务体验与说明</h2>
-          <p>填写商户自报体验、用量核对与售后口径。</p>
+          <h2>服务规则与说明</h2>
+          <p>声明并发、提示词审计、用量核对与售后口径。</p>
         </div>
       </div>
     </div>
@@ -70,27 +70,9 @@ const insertSnippet = (form: ApiServicePublishForm, value: string) => {
 			<p v-if="errors.accountPool" id="api-publish-account-pool-error" class="text-xs text-destructive md:col-span-2">{{ errors.accountPool }}</p>
 		</div>
 
-      <div class="grid gap-3 md:grid-cols-3">
-        <label class="space-y-2">
-          <span class="text-sm font-medium">首字响应区间</span>
-          <Select v-model="form.declaredTtftBand">
-            <SelectTrigger
-              :aria-invalid="Boolean(errors.performance)"
-              :aria-describedby="errors.performance ? 'api-publish-performance-error' : undefined"
-            >
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="under_1s">&lt;1 秒</SelectItem>
-              <SelectItem value="1_to_3s">1-3 秒</SelectItem>
-              <SelectItem value="3_to_5s">3-5 秒</SelectItem>
-              <SelectItem value="5_to_10s">5-10 秒</SelectItem>
-              <SelectItem value="over_10s">&gt;10 秒</SelectItem>
-            </SelectContent>
-          </Select>
-        </label>
-        <label class="space-y-2">
-			<span class="text-sm font-medium">商户声明最大并发</span>
+      <div class="grid gap-3 md:grid-cols-2">
+        <label class="space-y-2 rounded-md border border-border p-3">
+          <span class="flex items-center gap-1.5 text-sm font-medium"><Gauge class="h-4 w-4 text-primary" />商户声明最大并发</span>
           <Input
             v-model.number="form.declaredMaxConcurrency"
             :aria-invalid="Boolean(errors.performance)"
@@ -99,19 +81,32 @@ const insertSnippet = (form: ApiServicePublishForm, value: string) => {
             min="1"
             max="100000"
           />
+          <span class="block text-xs leading-5 text-muted-foreground">这是卖家声明的并发上限，不是平台探测结果。</span>
         </label>
-        <label class="space-y-2">
-          <span class="text-sm font-medium">最近确认时间</span>
-          <Input
-            v-model="form.performanceConfirmedAt"
+        <fieldset class="space-y-2 rounded-md border border-border p-3">
+          <legend class="flex items-center gap-1.5 px-1 text-sm font-medium"><ShieldAlert class="h-4 w-4 text-orange-600" />提示词审计</legend>
+          <RadioGroup
+            :model-value="form.promptAuditEnabled === null ? undefined : String(form.promptAuditEnabled)"
+            class="grid grid-cols-2 gap-2"
             :aria-invalid="Boolean(errors.performance)"
-            :aria-describedby="errors.performance ? 'api-publish-performance-error' : undefined"
-            type="datetime-local"
-          />
-        </label>
+            :aria-describedby="errors.performance ? 'api-publish-performance-error' : 'api-publish-prompt-audit-description'"
+            @update:model-value="value => form.promptAuditEnabled = value === 'true'"
+          >
+            <label class="flex cursor-pointer items-center gap-2 rounded-md border border-border px-3 py-2 text-sm has-[[data-state=checked]]:border-orange-400 has-[[data-state=checked]]:bg-orange-50/70">
+              <RadioGroupItem value="true" />
+              开启
+            </label>
+            <label class="flex cursor-pointer items-center gap-2 rounded-md border border-border px-3 py-2 text-sm has-[[data-state=checked]]:border-primary has-[[data-state=checked]]:bg-primary/5">
+              <RadioGroupItem value="false" />
+              关闭
+            </label>
+          </RadioGroup>
+          <p id="api-publish-prompt-audit-description" class="text-xs leading-5 text-muted-foreground">
+            开启表示卖家声明可能查看或记录提示词；关闭也只是卖家声明，不代表平台已验证。
+          </p>
+        </fieldset>
       </div>
       <p v-if="errors.performance" id="api-publish-performance-error" class="text-xs text-destructive">{{ errors.performance }}</p>
-      <p class="text-xs text-muted-foreground">商户自报，平台未测速。额度包将冻结购买时的声明。</p>
 
 		<div class="space-y-2 border-y border-border py-3">
 			<div class="flex items-center gap-1.5 text-sm font-medium"><ShieldCheck class="h-4 w-4 text-primary" />退款承诺</div>

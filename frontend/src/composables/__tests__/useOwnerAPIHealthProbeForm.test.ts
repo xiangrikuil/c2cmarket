@@ -47,14 +47,40 @@ describe('Owner 探针表单', () => {
     expect(form.credential.value).toBe('')
   })
 
-  it('首次启用要求凭据并拒绝非 HTTPS 或带查询参数的地址', () => {
+  it('首次启用要求凭据并拒绝带查询参数的地址', () => {
     const config = ref<OwnerAPIHealthProbeConfig | null>(null)
     const form = useOwnerAPIHealthProbeForm(config)
     form.baseUrl.value = 'http://api.example.test/v1?token=x'
     form.model.value = 'gpt-5-mini'
     form.enabled.value = true
-    expect(form.validation.value.baseUrl).toContain('HTTPS')
-    expect(form.validation.value.credential).toContain('首次启用')
+    expect(form.validation.value.baseUrl).toContain('HTTP 或 HTTPS')
+    expect(form.validation.value.baseUrl).toContain('API 请求地址')
+    expect(form.validation.value.credential).toContain('探针专用 API Key')
     expect(form.valid.value).toBe(false)
+  })
+
+  it('HTTP 地址要求卖家主动确认风险并随保存请求提交', () => {
+    const config = ref<OwnerAPIHealthProbeConfig | null>(probe())
+    const form = useOwnerAPIHealthProbeForm(config)
+    form.baseUrl.value = 'http://api.example.test'
+
+    expect(form.isInsecureHttp.value).toBe(true)
+    expect(form.validation.value.acknowledgeInsecureHttp).toContain('确认未加密传输风险')
+    expect(form.valid.value).toBe(false)
+
+    form.acknowledgeInsecureHttp.value = true
+    expect(form.validation.value.acknowledgeInsecureHttp).toBe('')
+    expect(form.payload('service-1')).toMatchObject({
+      baseUrl: 'http://api.example.test',
+      acknowledgeInsecureHttp: true,
+    })
+  })
+
+  it('HTTPS 地址不携带 HTTP 风险确认', () => {
+    const config = ref<OwnerAPIHealthProbeConfig | null>(probe())
+    const form = useOwnerAPIHealthProbeForm(config)
+    form.acknowledgeInsecureHttp.value = true
+
+    expect(form.payload('service-1')).toMatchObject({ acknowledgeInsecureHttp: false })
   })
 })

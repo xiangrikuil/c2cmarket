@@ -254,6 +254,7 @@ function freeServiceCard(service: ApiService): ApiFreeServiceCardData {
     maximumPurchaseCny: service.maxBuy,
     multiplier: service.rate,
     declaredMaxConcurrency: service.declaredMaxConcurrency ?? '—',
+    promptAuditEnabled: service.promptAuditEnabled ?? null,
     paymentWindowMinutes: service.expectedResponseMinutes,
     merchantName: getApiMerchantDisplayName(service),
     merchantType: service.merchantType,

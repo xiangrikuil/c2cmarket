@@ -94,3 +94,53 @@ func TestBuildConfigMutationRequiresCredentialBeforeEnable(t *testing.T) {
 		t.Fatalf("expected credential error, got %v", err)
 	}
 }
+
+func TestBuildConfigMutationRequiresExplicitInsecureHTTPAcknowledgement(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, 8, 5, 12, 0, 0, 0, time.UTC)
+	credential := "low-quota-probe-key"
+	_, err := BuildConfigMutation(nil, "service", "owner", ConfigInput{
+		BaseURL: "http://api.example.com", Model: "gpt-5-mini", Credential: &credential,
+	}, now)
+	if !errors.Is(err, ErrInsecureHTTPNotAcknowledged) {
+		t.Fatalf("expected acknowledgement error, got %v", err)
+	}
+
+	mutation, err := BuildConfigMutation(nil, "service", "owner", ConfigInput{
+		BaseURL: "http://api.example.com", Model: "gpt-5-mini", Credential: &credential,
+		AcknowledgeInsecureHTTP: true,
+	}, now)
+	if err != nil {
+		t.Fatalf("build acknowledged HTTP config: %v", err)
+	}
+	if mutation.Config.BaseURL != "http://api.example.com/v1" || mutation.Config.NormalizedOrigin != "http://api.example.com:80" {
+		t.Fatalf("unexpected acknowledged HTTP config: %+v", mutation.Config)
+	}
+}
+
+func TestBuildConfigMutationInvalidatesAuthorizationWhenSchemeChanges(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, 8, 5, 12, 0, 0, 0, time.UTC)
+	verifiedAt := now.Add(-time.Hour)
+	existing := Config{
+		ID: "config", APIServiceID: "service", OwnerUserID: "owner",
+		Protocol: ProtocolOpenAIChatCompletionsV1, BaseURL: "https://api.example.com/v1",
+		NormalizedOrigin: "https://api.example.com:443", Model: "gpt-5-mini",
+		CredentialConfigured: true, Enabled: true,
+		AuthorizationStatus: AuthorizationVerified, AuthorizationMethod: AuthorizationMethodDNSTXT,
+		VerifiedOrigin: "https://api.example.com:443", VerifiedAt: &verifiedAt,
+		MeasurementVersion: 2, Version: 3, CreatedAt: now.Add(-2 * time.Hour), UpdatedAt: verifiedAt,
+	}
+	mutation, err := BuildConfigMutation(&existing, "service", "owner", ConfigInput{
+		BaseURL: "http://api.example.com/v1", Model: existing.Model, Enabled: true,
+		AcknowledgeInsecureHTTP: true,
+	}, now)
+	if err != nil {
+		t.Fatalf("change target scheme: %v", err)
+	}
+	if !mutation.AuthorizationInvalidated || !mutation.MeasurementInvalidated ||
+		mutation.Config.AuthorizationStatus != AuthorizationPending || mutation.Config.VerifiedOrigin != "" ||
+		mutation.Config.MeasurementVersion != 3 {
+		t.Fatalf("scheme change retained authorization: %+v", mutation)
+	}
+}

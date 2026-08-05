@@ -12,7 +12,7 @@ const stateLabels: Record<ApiHealthState, string> = {
   normal: '正常',
   fluctuating: '波动',
   abnormal: '异常',
-  no_sample: '暂无数据',
+  no_sample: '暂无样本',
 }
 
 const reasonLabels: Record<Exclude<ApiHealthAvailabilityReason, null>, string> = {
@@ -82,14 +82,14 @@ function slotTitle(slotStartedAt: string, slotState: ApiHealthSlotState) {
         <Activity class="h-3.5 w-3.5 shrink-0 text-emerald-600" aria-hidden="true" />
         <span class="shrink-0 text-xs font-semibold">平台探测</span>
         <time
-          class="truncate text-[10px] text-muted-foreground"
+          class="truncate text-[11px] text-muted-foreground"
           :datetime="summary?.lastSampledAt ?? undefined"
           :title="formatSampleTime(summary?.lastSampledAt)"
         >
           {{ formatSampleTime(summary?.lastSampledAt) }}
         </time>
       </div>
-      <Badge :variant="statusVariant" class="h-5 shrink-0 px-1.5 text-[10px]">{{ stateLabel }}</Badge>
+      <Badge :variant="statusVariant" class="h-5 shrink-0 px-1.5 text-[11px] font-medium">{{ stateLabel }}</Badge>
     </div>
 
     <div class="api-service-health-panel__metrics">
@@ -118,7 +118,7 @@ function slotTitle(slotStartedAt: string, slotState: ApiHealthSlotState) {
       />
     </div>
 
-    <div class="mt-1.5 flex min-w-0 items-center gap-1 text-[9px] text-muted-foreground">
+    <div class="mt-1.5 flex min-w-0 items-center gap-1 text-[10px] leading-4 text-muted-foreground">
       <span class="min-w-0 truncate" :title="summary?.probeModel ?? '未配置探测模型'">
         {{ summary?.probeModel ? `模型 ${summary.probeModel}` : '未配置探测模型' }}
       </span>
@@ -126,6 +126,13 @@ function slotTitle(slotStartedAt: string, slotState: ApiHealthSlotState) {
       <span class="min-w-0 truncate" :title="availabilityLabel ?? '仅代表当前模型与平台单节点'">
         {{ availabilityLabel ?? '仅代表当前模型与平台单节点' }}
       </span>
+      <template v-if="summary?.transportSecurity === 'insecure_http'">
+        <span aria-hidden="true">·</span>
+        <span
+          class="shrink-0 font-medium text-amber-700"
+          title="本次探测使用未加密 HTTP，API Key 和请求响应可能在传输途中被读取或篡改，结果可信度低于 HTTPS。"
+        >HTTP 未加密</span>
+      </template>
     </div>
   </section>
 </template>
@@ -159,14 +166,15 @@ function slotTitle(slotStartedAt: string, slotState: ApiHealthSlotState) {
 
 .api-service-health-panel__metrics span {
   color: var(--muted-foreground);
-  font-size: 9px;
-  line-height: 12px;
+  font-size: 10px;
+  line-height: 13px;
 }
 
 .api-service-health-panel__metrics strong {
   margin-top: 1px;
   color: var(--foreground);
-  font-size: 11px;
+  font-size: 12px;
+  font-weight: 600;
   font-variant-numeric: tabular-nums;
   line-height: 14px;
 }

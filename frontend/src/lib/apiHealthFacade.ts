@@ -26,8 +26,14 @@ function now() {
 
 function mockOrigin(baseUrl: string) {
   const url = new URL(baseUrl)
-  const port = url.port || '443'
+  const port = url.port || (url.protocol === 'http:' ? '80' : '443')
   return `${url.protocol}//${url.hostname}:${port}`
+}
+
+function normalizeMockProbeBaseURL(baseUrl: string) {
+  const url = new URL(baseUrl.trim())
+  url.pathname = url.pathname === '/' ? '/v1' : url.pathname.replace(/\/+$/, '')
+  return url.toString()
 }
 
 function mockAdminReview(config: OwnerAPIHealthProbeConfig): AdminAPIHealthProbeReview {
@@ -55,31 +61,36 @@ export async function saveOwnerAPIHealthProbe(input: SaveOwnerAPIHealthProbeInpu
   const current = mockConfigs.get(input.apiServiceId)
   if ((current?.version ?? 0) !== input.version) throw new Error('探针配置已更新，请刷新后重试。')
   const timestamp = now()
+  const baseUrl = normalizeMockProbeBaseURL(input.baseUrl)
+  if (new URL(baseUrl).protocol === 'http:' && !input.acknowledgeInsecureHttp) {
+    throw new Error('使用 HTTP 请求地址前必须确认未加密传输风险。')
+  }
+  const model = input.model.trim()
   const next: OwnerAPIHealthProbeConfig = {
     id: current?.id ?? `probe-${input.apiServiceId}`,
     apiServiceId: input.apiServiceId,
     protocol: 'openai_chat_completions_v1',
-    baseUrl: input.baseUrl.trim(),
-    normalizedOrigin: mockOrigin(input.baseUrl.trim()),
-    model: input.model.trim(),
+    baseUrl,
+    normalizedOrigin: mockOrigin(baseUrl),
+    model,
     credentialConfigured: current?.credentialConfigured || Boolean(input.credential?.trim()),
     enabled: input.enabled,
-    authorizationStatus: current?.baseUrl === input.baseUrl.trim() && current.model === input.model.trim()
+    authorizationStatus: current?.baseUrl === baseUrl && current.model === model
       ? current.authorizationStatus
       : 'pending',
-    authorizationMethod: current?.baseUrl === input.baseUrl.trim() && current.model === input.model.trim()
+    authorizationMethod: current?.baseUrl === baseUrl && current.model === model
       ? current.authorizationMethod
       : null,
-    verifiedOrigin: current?.baseUrl === input.baseUrl.trim() && current.model === input.model.trim()
+    verifiedOrigin: current?.baseUrl === baseUrl && current.model === model
       ? current.verifiedOrigin
       : null,
-    verifiedAt: current?.baseUrl === input.baseUrl.trim() && current.model === input.model.trim()
+    verifiedAt: current?.baseUrl === baseUrl && current.model === model
       ? current.verifiedAt
       : null,
     approvedAt: null,
     rejectionReason: null,
     challengeExpiresAt: null,
-    measurementVersion: (current?.measurementVersion ?? 0) + (current && current.baseUrl === input.baseUrl.trim() && current.model === input.model.trim() ? 0 : 1),
+    measurementVersion: (current?.measurementVersion ?? 0) + (current && current.baseUrl === baseUrl && current.model === model ? 0 : 1),
     lastConfigErrorCode: null,
     version: (current?.version ?? 0) + 1,
     createdAt: current?.createdAt ?? timestamp,

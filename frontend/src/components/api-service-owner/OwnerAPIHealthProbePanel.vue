@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref } from 'vue'
 import Activity from 'lucide-vue-next/dist/esm/icons/activity.js'
+import AlertTriangle from 'lucide-vue-next/dist/esm/icons/triangle-alert.js'
 import CheckCircle2 from 'lucide-vue-next/dist/esm/icons/circle-check-big.js'
 import Clipboard from 'lucide-vue-next/dist/esm/icons/clipboard.js'
 import KeyRound from 'lucide-vue-next/dist/esm/icons/key-round.js'
@@ -76,7 +77,7 @@ const errorLabels: Record<ApiHealthSafeErrorCode, string> = {
   response_too_large: '目标响应超过平台读取上限',
   invalid_stream: '目标未返回兼容的流式响应',
   empty_response: '目标流式响应没有有效内容',
-  decrypt_failed: '平台暂时无法读取探针凭据',
+  decrypt_failed: '平台暂时无法读取探针专用 API Key',
   internal: '探针系统内部错误',
   internal_timeout: '探针任务超过平台硬超时',
   challenge_mismatch: '目标返回的验证内容不匹配',
@@ -185,12 +186,12 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <Card id="health-probe" class="overflow-hidden">
+  <Card id="health-probe" class="scroll-mt-20 overflow-hidden">
     <CardHeader class="border-b border-border bg-muted/20">
       <div class="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div>
           <CardTitle class="flex items-center gap-2 text-lg"><Activity class="h-5 w-5 text-primary" />平台健康探针</CardTitle>
-          <CardDescription class="mt-1">配置专用低权限凭据，由平台按五分钟槽测量当前模型链路。</CardDescription>
+          <CardDescription class="mt-1">配置专用低额度 API Key，由平台按五分钟槽测量当前模型链路。</CardDescription>
         </div>
         <Badge v-if="probe" :variant="statusVariant">{{ statusLabels[probe.authorizationStatus] }}</Badge>
         <Badge v-else variant="outline">尚未配置</Badge>
@@ -204,7 +205,7 @@ onBeforeUnmount(() => {
       <template v-else>
         <div class="grid gap-4 lg:grid-cols-2">
           <div class="space-y-2">
-            <Label for="api-health-base-url">OpenAI 兼容 Base URL</Label>
+            <Label for="api-health-base-url">API 请求地址（Base URL）</Label>
             <Input
               id="api-health-base-url"
               v-model="form.baseUrl.value"
@@ -215,10 +216,11 @@ onBeforeUnmount(() => {
               @input="form.markTouched"
             />
             <p v-if="form.touched.value && form.validation.value.baseUrl" class="text-xs text-destructive">{{ form.validation.value.baseUrl }}</p>
+            <p class="text-xs text-muted-foreground">仅填写域名时自动补 /v1；已有路径保持不变。</p>
           </div>
 
           <div class="space-y-2">
-            <Label for="api-health-model">实际探测模型</Label>
+            <Label for="api-health-model">探测模型</Label>
             <Input
               id="api-health-model"
               v-model="form.model.value"
@@ -231,7 +233,7 @@ onBeforeUnmount(() => {
 
           <div class="space-y-2 lg:col-span-2">
             <div class="flex flex-wrap items-center justify-between gap-2">
-              <Label for="api-health-credential">探针专用凭据</Label>
+              <Label for="api-health-credential">探针专用 API Key</Label>
               <span class="text-xs text-muted-foreground">{{ probe?.credentialConfigured ? '已配置，留空则保留' : '尚未配置' }}</span>
             </div>
             <Input
@@ -239,12 +241,33 @@ onBeforeUnmount(() => {
               v-model="form.credential.value"
               type="password"
               autocomplete="new-password"
-              placeholder="输入新的专用凭据"
+              placeholder="输入新的探针专用 API Key"
               :aria-invalid="form.touched.value && Boolean(form.validation.value.credential)"
               @input="form.markTouched"
             />
             <p v-if="form.touched.value && form.validation.value.credential" class="text-xs text-destructive">{{ form.validation.value.credential }}</p>
+            <p class="text-xs text-muted-foreground">请使用专用、低额度、仅开放探测模型的 API Key，请勿填写主账号高权限 Key。</p>
           </div>
+
+          <Alert v-if="form.isInsecureHttp.value" class="border-amber-300 bg-amber-50 text-amber-950 lg:col-span-2">
+            <AlertTriangle class="h-4 w-4 text-amber-600" />
+            <AlertTitle>HTTP 请求不会加密传输</AlertTitle>
+            <AlertDescription class="space-y-3">
+              <p>探针 API Key 和请求响应可能被链路中的第三方读取或篡改。请仅使用专用、低额度、低权限且仅允许探测模型的 API Key。</p>
+              <label for="api-health-insecure-http-ack" class="flex cursor-pointer items-start gap-2 rounded border border-amber-300/70 bg-white/70 p-3">
+                <Checkbox
+                  id="api-health-insecure-http-ack"
+                  :model-value="form.acknowledgeInsecureHttp.value"
+                  class="mt-0.5"
+                  @update:model-value="form.acknowledgeInsecureHttp.value = Boolean($event); form.markTouched()"
+                />
+                <span class="text-xs leading-5">我确认该 Key 不具备主账号权限，额度损失风险可接受，并了解 HTTP 探测结果的可信度低于 HTTPS。</span>
+              </label>
+              <p v-if="form.touched.value && form.validation.value.acknowledgeInsecureHttp" class="text-xs font-medium text-destructive">
+                {{ form.validation.value.acknowledgeInsecureHttp }}
+              </p>
+            </AlertDescription>
+          </Alert>
         </div>
 
         <div class="flex flex-col gap-3 rounded-md border border-border bg-muted/20 p-4 sm:flex-row sm:items-center sm:justify-between">

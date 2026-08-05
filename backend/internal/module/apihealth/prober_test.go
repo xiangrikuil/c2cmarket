@@ -19,6 +19,10 @@ import (
 func TestOpenAIStreamingProberMeasuresFirstContentDelta(t *testing.T) {
 	startedAt := time.Date(2026, time.August, 4, 12, 0, 0, 0, time.UTC)
 	clock := newSequenceClock(startedAt, startedAt.Add(250*time.Millisecond), startedAt.Add(400*time.Millisecond))
+	target, err := NormalizeTarget("https://api.example.com")
+	if err != nil {
+		t.Fatalf("normalize target: %v", err)
+	}
 	var captured *http.Request
 	client := &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
 		captured = request
@@ -33,7 +37,7 @@ func TestOpenAIStreamingProberMeasuresFirstContentDelta(t *testing.T) {
 	prober := NewOpenAIStreamingProber(client, clock.Now)
 
 	result := prober.Probe(context.Background(), ProbeJob{
-		Config:     Config{BaseURL: "https://api.example.com/v1", Model: "gpt-5-mini"},
+		Config:     Config{BaseURL: target.BaseURL, Model: "gpt-5-mini"},
 		Credential: "probe-secret",
 	})
 
@@ -61,6 +65,56 @@ func TestOpenAIStreamingProberMeasuresFirstContentDelta(t *testing.T) {
 	if payload.Model != "gpt-5-mini" || !payload.Stream || payload.MaxTokens != 8 || len(payload.Messages) != 1 ||
 		payload.Messages[0].Role != "user" || payload.Messages[0].Content != "Reply with exactly OK." {
 		t.Fatalf("unexpected request payload: %+v", payload)
+	}
+}
+
+func TestOpenAIStreamingProberUsesAcknowledgedHTTPBaseWithoutDuplicatingV1(t *testing.T) {
+	t.Parallel()
+	target, err := normalizeTarget("http://api.example.com", true)
+	if err != nil {
+		t.Fatalf("normalize HTTP target: %v", err)
+	}
+	var captured *http.Request
+	client := &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		captured = request
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Body: io.NopCloser(strings.NewReader(
+				"data: {\"choices\":[{\"delta\":{\"content\":\"OK\"}}]}\n\n",
+			)),
+			Header: make(http.Header),
+		}, nil
+	})}
+	prober := NewOpenAIStreamingProber(client, time.Now)
+	result := prober.Probe(context.Background(), ProbeJob{
+		Config:     Config{BaseURL: target.BaseURL, NormalizedOrigin: target.Origin, Model: "gpt-5-mini"},
+		Credential: "low-quota-probe-key",
+	})
+	if result.ErrorCode != "" {
+		t.Fatalf("probe HTTP target: %+v", result)
+	}
+	if captured == nil || captured.URL.String() != "http://api.example.com/v1/chat/completions" {
+		t.Fatalf("unexpected HTTP probe endpoint: %v", captured)
+	}
+}
+
+func TestOutboundHTTPClientFactoryBindsExactInsecureOrigin(t *testing.T) {
+	t.Parallel()
+	factory := NewOutboundHTTPClientFactory(time.Second)
+	client, err := factory.ClientFor(Config{
+		BaseURL: "http://1.1.1.1/v1", NormalizedOrigin: "http://1.1.1.1:80",
+	})
+	if err != nil || client == nil {
+		t.Fatalf("create explicit HTTP client: client=%v err=%v", client, err)
+	}
+	for _, config := range []Config{
+		{BaseURL: "http://1.1.1.1/v1", NormalizedOrigin: "https://1.1.1.1:443"},
+		{BaseURL: "https://1.1.1.1/v1", NormalizedOrigin: "http://1.1.1.1:80"},
+		{BaseURL: "http://1.1.1.1/v1", NormalizedOrigin: "http://1.0.0.1:80"},
+	} {
+		if _, err := factory.ClientFor(config); !errors.Is(err, ErrTargetIdentityMismatch) {
+			t.Fatalf("factory accepted mismatched scheme/origin: config=%+v err=%v", config, err)
+		}
 	}
 }
 

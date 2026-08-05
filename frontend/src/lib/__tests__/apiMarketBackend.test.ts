@@ -143,6 +143,7 @@ test('serializes structured commercial facts without writing the legacy merchant
     accountPoolType: 'custom',
     accountPoolCustomName: 'Claude Max',
     declaredMaxConcurrency: 16,
+    promptAuditEnabled: false,
     quotaUsagePolicy: writableQuotaPolicy,
     warranty: { mode: 'merchant_full_refund' },
   })
@@ -150,6 +151,7 @@ test('serializes structured commercial facts without writing the legacy merchant
   assert.equal(request.accountPoolType, 'custom')
   assert.equal(request.accountPoolCustomName, 'Claude Max')
   assert.equal(request.declaredMaxConcurrency, 16)
+  assert.equal(request.promptAuditEnabled, false)
   assert.equal(request.merchantRefundCommitment, true)
   assert.equal('merchantSupportNote' in request, false)
 })
@@ -159,6 +161,7 @@ test('serializes only supported API service billing modes', async () => {
   const otherMetered = apiMarketBackend.toBackendServiceRequest({
     distributionSystem: 'other',
     billingMode: 'metered_credit',
+    promptAuditEnabled: true,
     quotaUsagePolicy: writableQuotaPolicy,
   })
   assert.equal(otherMetered.distributionSystem, 'other')
@@ -166,6 +169,7 @@ test('serializes only supported API service billing modes', async () => {
 
   const fixedPackage = apiMarketBackend.toBackendServiceRequest({
     billingMode: 'fixed_package',
+    promptAuditEnabled: false,
     quotaUsagePolicy: writableQuotaPolicy,
   })
   assert.equal(fixedPackage.billingMode, 'fixed_package')
@@ -181,6 +185,10 @@ test('serializes only supported API service billing modes', async () => {
   assert.throws(
     () => apiMarketBackend.toBackendServiceRequest({}),
     /Unsupported API billing mode/,
+  )
+  assert.throws(
+    () => apiMarketBackend.toBackendServiceRequest({ billingMode: 'metered_credit' }),
+    /Prompt audit selection required/,
   )
 })
 
@@ -209,6 +217,7 @@ test('maps platform health for public quota offers without projecting seller TTF
       totalSamples: 0,
       medianTtftMs: null,
       probeModel: null,
+      transportSecurity: null,
       lastSampledAt: null,
       samples: Array.from({ length: 12 }, (_, index) => ({
         slotStartedAt: `2026-08-04T00:${String(index * 5).padStart(2, '0')}:00Z`,
@@ -255,10 +264,22 @@ test('maps public-profile merchant identity and avatar from the backend projecti
   assert.equal(service.merchantAvatarUrl, 'https://cdn.example.com/profile-owner.png')
 })
 
-test('maps the required owner sales summary without changing the public service projection', async () => {
+test('maps required owner sales and health summaries without changing the public service projection', async () => {
   const { apiMarketBackend } = await loadAPIMarketModules()
+  const healthSummary = {
+    state: 'no_sample' as const,
+    availabilityReason: 'unconfigured' as const,
+    successRatePercent: null,
+    successfulSamples: 0,
+    totalSamples: 0,
+    medianTtftMs: null,
+    probeModel: null,
+    transportSecurity: null,
+    lastSampledAt: null,
+    samples: [],
+  }
   const service = apiMarketBackend.mapBackendOwnerAPIService({
-    ...backendPublicAPIService(),
+    ...backendPublicAPIService({ healthSummary }),
     salesSummary: {
       overallState: 'selling',
       channels: [
@@ -279,6 +300,7 @@ test('maps the required owner sales summary without changing the public service 
     },
   })
 
+  assert.deepEqual(service.healthSummary, healthSummary)
   assert.equal(service.salesSummary.overallState, 'selling')
   assert.deepEqual(service.salesSummary.channels, [
     {

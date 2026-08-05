@@ -694,6 +694,7 @@ export type PublicApiQuotaOffer = ApiQuotaOffer & {
   sellerDisplayName: string
   sellerIdentityType: 'individual' | 'merchant'
   sellerLinuxDoBound: boolean
+  promptAuditEnabled?: boolean | null
   healthSummary?: ApiServiceHealthSummary
   declaredTtftBand?: ApiTTFTBand
   declaredMaxConcurrency: number
@@ -773,6 +774,7 @@ export type ApiService = {
   declaredTtftBand?: ApiTTFTBand
   declaredMaxConcurrency?: number
   performanceConfirmedAt?: string
+  promptAuditEnabled?: boolean | null
   accountPoolType?: 'gpt_pro_20x' | 'gpt_pro_5x' | 'gpt_plus' | 'custom'
   accountPoolLabel?: string
   merchantRefundCommitment?: boolean
@@ -816,6 +818,7 @@ export type ApiServiceSalesSummary = {
 }
 
 export type OwnerApiService = ApiService & {
+  healthSummary: ApiServiceHealthSummary
   salesSummary: ApiServiceSalesSummary
 }
 
@@ -873,6 +876,7 @@ export type ApiServiceCommercialSnapshot = {
   accountPoolType?: ApiService['accountPoolType']
   accountPoolLabel?: string
   declaredMaxConcurrency?: number
+  promptAuditEnabled?: boolean | null
   merchantRefundCommitment?: boolean
   merchantRefundPolicyVersion?: string
   serviceValidityExpiresAt?: string | null
@@ -2203,6 +2207,7 @@ export const apiQuotaOffers: PublicApiQuotaOffer[] = [
     sellerDisplayName: '小葵 API',
     sellerIdentityType: 'individual',
     sellerLinuxDoBound: true,
+    promptAuditEnabled: false,
     declaredTtftBand: '1_to_3s',
     declaredMaxConcurrency: 8,
     performanceConfirmedAt: '2026-07-19T00:30:00Z',
@@ -2238,6 +2243,7 @@ export const apiQuotaOffers: PublicApiQuotaOffer[] = [
     sellerDisplayName: '小葵 API',
     sellerIdentityType: 'individual',
     sellerLinuxDoBound: true,
+    promptAuditEnabled: true,
     declaredTtftBand: 'under_1s',
     declaredMaxConcurrency: 5,
     performanceConfirmedAt: '2026-07-19T00:30:00Z',

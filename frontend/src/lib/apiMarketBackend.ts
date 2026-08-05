@@ -152,6 +152,7 @@ type BackendAPIService = {
   declaredTtftBand?: string
   declaredMaxConcurrency?: number
   performanceConfirmedAt?: string
+  promptAuditEnabled: boolean | null
   minimumIntentCny: string
   maximumIntentCny?: string
   usageVisibility: string
@@ -183,6 +184,7 @@ type BackendAPIService = {
 }
 
 type BackendOwnerAPIService = BackendAPIService & {
+  healthSummary: ApiServiceHealthSummary
   salesSummary: BackendApiServiceSalesSummary
 }
 
@@ -640,6 +642,7 @@ export function mapBackendAPIService(service: BackendAPIService): ApiService {
     declaredTtftBand,
     declaredMaxConcurrency: service.declaredMaxConcurrency,
     performanceConfirmedAt: service.performanceConfirmedAt,
+    promptAuditEnabled: service.promptAuditEnabled,
     expectedResponseMinutes: service.paymentWindowMinutes ?? 10,
     responseMedianMinutes: service.responseMedianMinutes ?? null,
     dailyOrderLimit: 10,
@@ -709,6 +712,7 @@ function mapBackendAPIServiceSalesChannel(channel: BackendApiServiceSalesChannel
 export function mapBackendOwnerAPIService(service: BackendOwnerAPIService): OwnerApiService {
   return {
     ...mapBackendAPIService(service),
+    healthSummary: service.healthSummary,
     salesSummary: {
       overallState: service.salesSummary.overallState,
       channels: service.salesSummary.channels.map(mapBackendAPIServiceSalesChannel),
@@ -786,6 +790,7 @@ export function mapBackendPublicAPIQuotaOffer(item: GeneratedPublicApiQuotaOffer
     sellerDisplayName: item.sellerDisplayName,
     sellerIdentityType: item.sellerIdentityType,
     sellerLinuxDoBound: item.sellerLinuxDoBound,
+    promptAuditEnabled: item.promptAuditEnabled,
     healthSummary: item.healthSummary,
     declaredMaxConcurrency: item.declaredMaxConcurrency,
     saleCutoffAt: item.saleCutoffAt,
@@ -1865,6 +1870,7 @@ export function toBackendServiceRequest(payload: Record<string, unknown>) {
   const modes = Array.isArray(payload.deliveryModes) ? payload.deliveryModes as string[] : ['api_key_endpoint']
   const selectedModels = Array.isArray(payload.selectedModels) ? payload.selectedModels as Array<{ modelId?: string, enabled?: boolean }> : []
   const packages = Array.isArray(payload.packages) ? payload.packages as Array<{ id?: string, name?: string, priceCny?: number, panelAllowance?: number, quotaUsagePolicy?: unknown, durationDays?: number, stockTotal?: number, description?: string, enabled?: boolean, modelCatalogIds?: string[] }> : []
+  if (typeof payload.promptAuditEnabled !== 'boolean') throw new Error('Prompt audit selection required')
 
   const fixedPackage = billing === 'fixed_package'
   return {
@@ -1889,9 +1895,8 @@ export function toBackendServiceRequest(payload: Record<string, unknown>) {
     accountPoolType: String(payload.accountPoolType ?? ''),
     accountPoolCustomName: payload.accountPoolType === 'custom' ? String(payload.accountPoolCustomName ?? '') : '',
     merchantRefundCommitment: Boolean(payload.warranty && typeof payload.warranty === 'object' && !Array.isArray(payload.warranty) && (payload.warranty as Record<string, unknown>).mode === 'merchant_full_refund'),
-    declaredTtftBand: String(payload.declaredTtftBand ?? ''),
     declaredMaxConcurrency: Number(payload.declaredMaxConcurrency ?? 0),
-    performanceConfirmedAt: beijingDateTimeInputToISOString(String(payload.performanceConfirmedAt ?? '')),
+    promptAuditEnabled: payload.promptAuditEnabled,
     accessModes: fixedPackage
       ? [{ accessMode: 'fixed_package_offsite', publicNote: '交付后开始计算套餐有效期，具体接入信息按订单权限展示。' }]
       : modes.map(accessMode => ({ accessMode: toBackendAccessMode(accessMode), publicNote: '仅展示接入说明，不展示凭据。' })),

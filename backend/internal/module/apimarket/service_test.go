@@ -396,8 +396,66 @@ func TestValidateCreateInputRequiresStructuredCommercialFacts(t *testing.T) {
 	}
 }
 
+func TestValidateCreateInputRequiresExplicitPromptAuditSelection(t *testing.T) {
+	now := time.Date(2026, 7, 1, 12, 0, 0, 0, time.UTC)
+	input := validMeteredCreateInput()
+	input.PromptAuditEnabled = nil
+
+	appErr := validateCreateInput(input, now)
+	if appErr == nil || appErr.Status != 422 || len(appErr.FieldErrors) != 1 {
+		t.Fatalf("expected prompt audit selection error, got %+v", appErr)
+	}
+	if fieldErr := appErr.FieldErrors[0]; fieldErr.Field != "promptAuditEnabled" || fieldErr.Code != "required" {
+		t.Fatalf("unexpected prompt audit field error: %+v", fieldErr)
+	}
+
+	for _, enabled := range []bool{false, true} {
+		input = validMeteredCreateInput()
+		input.PromptAuditEnabled = &enabled
+		if appErr := validateCreateInput(input, now); appErr != nil {
+			t.Fatalf("expected explicit prompt audit value %v to pass, got %+v", enabled, appErr)
+		}
+	}
+}
+
+func TestBuildFromInputPreservesHistoricalPerformanceFactsOnUpdate(t *testing.T) {
+	now := time.Date(2026, 8, 5, 8, 0, 0, 0, time.UTC)
+	confirmedAt := now.Add(-24 * time.Hour)
+	current := Service{
+		ID:                     "service-1",
+		DeclaredTTFTBand:       "1_to_3s",
+		PerformanceConfirmedAt: &confirmedAt,
+		CreatedAt:              now.Add(-30 * 24 * time.Hour),
+		Version:                7,
+	}
+	resolver := staticAPIModelResolver{models: map[string]catalog.APIModelCatalog{
+		"model-1": {
+			ID:                         "model-1",
+			DisplayName:                "GPT-5.6",
+			Provider:                   "OpenAI",
+			Capabilities:               []string{"text"},
+			CurrentPriceVersionID:      "price-version-1",
+			InputPricePerMillion:       "1.000000",
+			CachedInputPricePerMillion: "0.100000",
+			OutputPricePerMillion:      "8.000000",
+		},
+	}}
+	manager := NewManager(nil, resolver, nil, func() time.Time { return now })
+	input := validMeteredCreateInput()
+	input.QuotaExpiresAt = now.Add(24 * time.Hour).Format(time.RFC3339)
+
+	updated, appErr := manager.buildFromInput(context.Background(), current, input)
+	if appErr != nil {
+		t.Fatalf("build updated service: %v", appErr)
+	}
+	if updated.DeclaredTTFTBand != current.DeclaredTTFTBand || updated.PerformanceConfirmedAt == nil || !updated.PerformanceConfirmedAt.Equal(confirmedAt) {
+		t.Fatalf("historical performance facts were not preserved: %+v", updated)
+	}
+}
+
 func validMeteredCreateInput() CreateServiceInput {
 	noRefundCommitment := false
+	promptAuditEnabled := false
 	return CreateServiceInput{
 		OwnerContactMethodID:             "contact-1",
 		MerchantIdentityMode:             "public_profile",
@@ -415,6 +473,8 @@ func validMeteredCreateInput() CreateServiceInput {
 		UsageVisibility:                  "merchant_reported",
 		AccountPoolType:                  AccountPoolGPTPro20x,
 		MerchantRefundCommitment:         &noRefundCommitment,
+		DeclaredMaxConcurrency:           8,
+		PromptAuditEnabled:               &promptAuditEnabled,
 		AccessModes: []ServiceAccessModeInput{{
 			AccessMode: "merchant_operated_endpoint",
 		}},
@@ -429,6 +489,7 @@ func validMeteredCreateInput() CreateServiceInput {
 func validLimitedPackageCreateInput() CreateServiceInput {
 	duration := 3
 	refundCommitment := true
+	promptAuditEnabled := true
 	return CreateServiceInput{
 		OwnerContactMethodID:     "contact-1",
 		MerchantIdentityMode:     "public_profile",
@@ -441,6 +502,8 @@ func validLimitedPackageCreateInput() CreateServiceInput {
 		UsageVisibility:          "fixed_package_only",
 		AccountPoolType:          AccountPoolGPTPro5x,
 		MerchantRefundCommitment: &refundCommitment,
+		DeclaredMaxConcurrency:   8,
+		PromptAuditEnabled:       &promptAuditEnabled,
 		AccessModes: []ServiceAccessModeInput{{
 			AccessMode: "fixed_package_offsite",
 		}},

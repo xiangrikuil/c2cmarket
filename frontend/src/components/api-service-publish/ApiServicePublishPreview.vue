@@ -3,17 +3,12 @@ import { computed } from 'vue'
 import {
   Bot,
   CalendarClock,
-  CheckCircle2,
-  ClipboardList,
   Clock3,
   CreditCard,
   Gauge,
-  KeyRound,
   Network,
   PackageOpen,
-  ShoppingCart,
   TimerReset,
-  WalletCards,
 } from 'lucide-vue-next'
 import ApiFreeServiceCard from '@/components/api-market/ApiFreeServiceCard.vue'
 import type { ApiFreeServiceCardData } from '@/components/api-market/apiFreeServiceCard'
@@ -22,13 +17,12 @@ import ApiPaymentMethodIcon from '@/components/api-payment/ApiPaymentMethodIcon.
 import { Badge } from '@/components/ui/badge'
 import { Card } from '@/components/ui/card'
 import { getProductCategoryIconSrc } from '@/lib/productCategoryIcon'
-import type { ApiServicePublishForm, CatalogById, SellingMode } from './types'
+import { sellingModeLabels, type ApiServicePublishForm, type CatalogById, type SellingMode } from './types'
 import { accountPoolLabel, apiQuotaBoundaryNotice, distributionLabels, enabledPaymentOptions, formatMultiplier, generatedTitle, paymentMethodLabels, providerCategoryLabels, selectedCatalogItems, simplifiedApiQuotaRules, warrantyLabel } from './utils'
 
 const props = defineProps<{
   form: ApiServicePublishForm
   catalogById: CatalogById
-  completeness: Array<{ label: string, status: 'done' | 'pending' | 'conflict' }>
   risks: string[]
   quotaForMinimumPurchase: string
   sellingMode: SellingMode
@@ -50,17 +44,6 @@ const paymentSummary = computed(() => {
   return labels.length ? `${labels.join(' / ')} · 固定 ${props.form.paymentWindowMinutes} 分钟` : '待配置'
 })
 const paymentMethods = computed(() => enabledPaymentOptions(props.form).map(option => option.paymentMethod))
-const pendingItems = computed(() => props.completeness.filter(item => item.status === 'pending'))
-const conflictItems = computed(() => props.completeness.filter(item => item.status === 'conflict'))
-const completedItems = computed(() => props.completeness.filter(item => item.status === 'done'))
-const completionPercent = computed(() => props.completeness.length
-  ? Math.round((completedItems.value.length / props.completeness.length) * 100)
-  : 0)
-const checkMessage = computed(() => {
-  if (conflictItems.value.length) return `需处理：${conflictItems.value.map(item => item.label).join('、')}`
-  if (pendingItems.value.length) return `还差：${pendingItems.value.map(item => item.label).join('、')}`
-  return isLimitedQuotaMode.value ? '基础服务已完成，可以进入额度包设置' : '必填项已完成，可以发布'
-})
 const previewRows = computed(() => {
   const rows = [
     {
@@ -102,6 +85,7 @@ const freeServiceCard = computed<ApiFreeServiceCardData>(() => ({
   maximumPurchaseCny: props.form.maximumPurchaseCny ?? 0,
   multiplier: props.form.distributionSystem === 'sub2api' ? '1.00x' : formatMultiplier(props.form.defaultMultiplier),
   declaredMaxConcurrency: props.form.declaredMaxConcurrency || '—',
+  promptAuditEnabled: props.form.promptAuditEnabled,
   paymentWindowMinutes: props.form.paymentWindowMinutes,
   merchantName: props.form.merchantDisplayName.trim() || merchantDisplayName.value,
   merchantType: props.form.merchantIdentityMode === 'store_alias' ? '商户' : '个人卖家',
@@ -111,13 +95,6 @@ const freeServiceCard = computed<ApiFreeServiceCardData>(() => ({
 	merchantBadges: [],
 }))
 
-const buyerFlow = [
-  { label: '选择额度包', icon: ShoppingCart },
-  { label: '创建订单', icon: ClipboardList },
-  { label: '站外付款', icon: WalletCards },
-  { label: '确认收款', icon: CheckCircle2 },
-  { label: '交付凭证', icon: KeyRound },
-]
 </script>
 
 <template>
@@ -125,23 +102,6 @@ const buyerFlow = [
     <ApiFreeServiceCard v-if="isFreeQuotaMode" :card="freeServiceCard" preview />
 
     <template v-else>
-      <div
-        class="rounded-md border px-3 py-1.5 text-[11px] leading-5"
-        :class="conflictItems.length ? 'border-destructive/25 bg-destructive/5 text-destructive' : pendingItems.length ? 'border-warning/25 bg-warning/10 text-warning' : 'border-success/20 bg-success/5 text-success'"
-      >
-        {{ checkMessage }}
-      </div>
-
-      <div class="rounded-md border border-border bg-card px-3 py-2.5">
-        <div class="flex items-center justify-between gap-3 text-xs">
-          <span class="font-medium">发布完整度</span>
-          <strong>{{ completionPercent }}%</strong>
-        </div>
-        <div class="mt-2 h-1.5 overflow-hidden rounded-full bg-muted">
-          <div class="h-full rounded-full bg-primary transition-[width]" :style="{ width: `${completionPercent}%` }" />
-        </div>
-      </div>
-
       <Card class="api-publish-preview-card overflow-hidden p-0 shadow-sm" :class="isLimitedQuotaMode || previewPackage ? 'is-limited' : 'is-free'">
       <div
         class="border-b p-3"
@@ -154,7 +114,7 @@ const buyerFlow = [
             买家看到的内容
           </div>
           <Badge :variant="isLimitedQuotaMode ? 'status' : previewPackage ? 'model' : 'trust'">
-            {{ isLimitedQuotaMode ? '限时额度包' : previewPackage ? '固定额度包' : '自由额度' }}
+            {{ isLimitedQuotaMode ? sellingModeLabels.limited : previewPackage ? sellingModeLabels.package : sellingModeLabels.free }}
           </Badge>
         </div>
         <div class="mt-2 flex items-center gap-2">
@@ -178,7 +138,7 @@ const buyerFlow = [
             <div class="mt-1 text-lg font-semibold text-orange-950">¥{{ previewPackage.priceCny }}</div>
           </div>
           <div class="rounded-md border border-border bg-muted/35 p-2.5">
-            <div class="text-xs text-muted-foreground">面板额度（USD）</div>
+            <div class="text-xs text-muted-foreground">美元额度</div>
             <div class="mt-1 text-lg font-semibold">${{ previewPackage.panelAllowance }}</div>
           </div>
         </div>
@@ -196,6 +156,7 @@ const buyerFlow = [
 		  <div><dt>接入类型</dt><dd>{{ distributionLabels[form.distributionSystem] }}</dd></div>
 		  <div><dt>号池</dt><dd>{{ accountPoolLabel(form) }}</dd></div>
 		  <div><dt>最大并发</dt><dd>{{ form.declaredMaxConcurrency }}</dd></div>
+		  <div><dt>提示词审计</dt><dd :class="form.promptAuditEnabled === true ? 'text-orange-700' : ''">{{ form.promptAuditEnabled === null ? '未声明' : form.promptAuditEnabled ? '开启' : '关闭' }}</dd></div>
 		  <div><dt>退款承诺</dt><dd>{{ warrantyLabel(form.warranty) }}</dd></div>
         </dl>
       </template>
@@ -205,7 +166,7 @@ const buyerFlow = [
           <PackageOpen class="mt-0.5 h-4 w-4 shrink-0 text-orange-600" />
           <div>
             <div class="text-xs font-semibold">额度包价格与库存待设置</div>
-            <p class="mt-0.5 text-[11px] leading-4 text-orange-900/70">额度、总价、库存、绝对失效时间与最长 10 分钟交付；倍率沿用基础服务。</p>
+            <p class="mt-0.5 text-xs leading-5 text-orange-900/70">额度、总价、库存、绝对失效时间与最长 10 分钟交付；倍率沿用基础服务。</p>
           </div>
         </div>
       </div>
@@ -237,33 +198,17 @@ const buyerFlow = [
       </template>
 
       <div v-if="previewOnly" class="border-t border-border px-3 py-2.5">
-        <div class="text-[11px] font-medium text-muted-foreground">服务说明</div>
+        <div class="text-xs font-medium text-muted-foreground">服务说明</div>
         <p class="mt-1 whitespace-pre-line text-xs leading-5" :class="previewOnly ? '' : 'line-clamp-2'">{{ form.merchantNote || '待填写服务说明' }}</p>
       </div>
 
-      <div class="border-t border-border bg-muted/35 px-3 py-2 text-[11px] leading-5 text-muted-foreground">
+      <div class="border-t border-border bg-muted/35 px-3 py-2 text-xs leading-5 text-muted-foreground">
         {{ previewOnly ? apiQuotaBoundaryNotice : '平台记录订单，不代收款；不保存 API Key。' }}
       </div>
       </Card>
 
-      <section v-if="previewOnly" class="rounded-md border border-primary/20 bg-primary/5 p-3" aria-labelledby="buyer-flow-title">
-      <div class="flex items-center gap-2">
-        <Gauge class="h-4 w-4 text-primary" />
-        <h3 id="buyer-flow-title" class="text-xs font-semibold">买家购买流程</h3>
-      </div>
-      <ol class="mt-2 grid grid-cols-5 gap-1">
-        <li v-for="step in buyerFlow" :key="step.label" class="flex min-w-0 flex-col items-center gap-1 text-center text-[10px] leading-4">
-          <span class="grid h-7 w-7 shrink-0 place-items-center rounded-md border border-primary/20 bg-background text-primary">
-            <component :is="step.icon" class="h-3.5 w-3.5" />
-          </span>
-          <span class="font-medium">{{ step.label }}</span>
-        </li>
-      </ol>
-      <p class="mt-2 border-t border-primary/15 pt-2 text-[11px] leading-5 text-muted-foreground">卖家确认收款后交付；平台记录订单，不代收款。</p>
-      </section>
-
       <div v-if="previewOnly && risks.length" class="space-y-1.5">
-        <div v-for="risk in risks" :key="risk" class="rounded-md border border-amber-200 bg-amber-50 px-3 py-1.5 text-[11px] leading-5 text-amber-800">
+        <div v-for="risk in risks" :key="risk" class="rounded-md border border-amber-200 bg-amber-50 px-3 py-1.5 text-xs leading-5 text-amber-800">
           {{ risk }}
         </div>
       </div>

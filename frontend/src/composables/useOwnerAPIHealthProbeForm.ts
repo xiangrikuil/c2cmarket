@@ -6,6 +6,7 @@ export function useOwnerAPIHealthProbeForm(config: Ref<OwnerAPIHealthProbeConfig
   const model = ref('')
   const credential = ref('')
   const enabled = ref(false)
+  const acknowledgeInsecureHttp = ref(false)
   const touched = ref(false)
 
   watch(config, value => {
@@ -13,27 +14,40 @@ export function useOwnerAPIHealthProbeForm(config: Ref<OwnerAPIHealthProbeConfig
     model.value = value?.model ?? ''
     enabled.value = value?.enabled ?? false
     credential.value = ''
+    acknowledgeInsecureHttp.value = false
     touched.value = false
   }, { immediate: true })
 
+  const isInsecureHttp = computed(() => {
+    try {
+      return new URL(baseUrl.value.trim()).protocol === 'http:'
+    } catch {
+      return false
+    }
+  })
+
   const validation = computed(() => {
-    const errors: Record<'baseUrl' | 'model' | 'credential', string> = {
+    const errors: Record<'baseUrl' | 'model' | 'credential' | 'acknowledgeInsecureHttp', string> = {
       baseUrl: '',
       model: '',
       credential: '',
+      acknowledgeInsecureHttp: '',
     }
     const trimmedBaseURL = baseUrl.value.trim()
     try {
       const parsed = new URL(trimmedBaseURL)
-      if (parsed.protocol !== 'https:' || parsed.username || parsed.password || parsed.search || parsed.hash) {
-        errors.baseUrl = '请输入不含账号、查询参数或片段的 HTTPS 地址。'
+      if (!['http:', 'https:'].includes(parsed.protocol) || parsed.username || parsed.password || parsed.search || parsed.hash) {
+        errors.baseUrl = '请输入不含账号、查询参数或片段的 HTTP 或 HTTPS API 请求地址。'
       }
     } catch {
-      errors.baseUrl = '请输入有效的 HTTPS 地址。'
+      errors.baseUrl = '请输入有效的 HTTP 或 HTTPS API 请求地址。'
     }
     if (!model.value.trim()) errors.model = '请输入实际用于探测的模型。'
     if (enabled.value && !config.value?.credentialConfigured && !credential.value.trim()) {
-      errors.credential = '首次启用前必须填写探针专用凭据。'
+      errors.credential = '首次启用前必须填写探针专用 API Key。'
+    }
+    if (isInsecureHttp.value && !acknowledgeInsecureHttp.value) {
+      errors.acknowledgeInsecureHttp = '使用 HTTP 请求地址前必须确认未加密传输风险。'
     }
     return errors
   })
@@ -57,6 +71,7 @@ export function useOwnerAPIHealthProbeForm(config: Ref<OwnerAPIHealthProbeConfig
       model: model.value.trim(),
       ...(trimmedCredential ? { credential: trimmedCredential } : {}),
       enabled: enabled.value,
+      acknowledgeInsecureHttp: isInsecureHttp.value && acknowledgeInsecureHttp.value,
     }
   }
 
@@ -65,6 +80,8 @@ export function useOwnerAPIHealthProbeForm(config: Ref<OwnerAPIHealthProbeConfig
     model,
     credential,
     enabled,
+    acknowledgeInsecureHttp,
+    isInsecureHttp,
     touched,
     validation,
     valid,

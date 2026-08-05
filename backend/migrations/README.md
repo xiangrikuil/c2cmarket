@@ -86,6 +86,7 @@ versions:
 | `000077_moderation_info_requests` | participant-targeted moderation information requests and immutable supplements |
 | `000078_account_appeal_sessions` | dedicated account-governance appeal sessions for suspended or banned users |
 | `000079_api_market_probe_and_quota_limits` | API SKU quota usage policies, immutable purchase snapshots, authorized platform probes, and probe samples |
+| `000080_api_prompt_audit_and_publish_contract` | nullable seller prompt-audit declarations and immutable purchase/order snapshots, plus independent historical performance fields |
 
 The current runnable Go slice supports both in-memory tests and PostgreSQL runtime.
 When `DATABASE_URL` is configured, users, auth sessions, idempotency, product
@@ -377,6 +378,14 @@ snapshots. It also stores one encrypted, seller-dedicated platform probe
 configuration per API service, exact-origin authorization audit events, and
 five-minute bounded probe samples. Probe results remain observational and do
 not change listing, ordering, dispute, fulfillment, or recommendation state.
+
+Version 80 (`000080_api_prompt_audit_and_publish_contract`) adds nullable
+seller prompt-audit declarations to API services and freezes the declaration
+on purchase intents and orders. New service writes require an explicit true or
+false value while historical rows remain null. It also removes the grouped
+performance-declaration constraint so new writes can keep maximum concurrency
+without inventing seller TTFT or confirmation timestamps; the historical
+columns and their existing values remain intact.
 
 ## Contact Retention And Destruction
 

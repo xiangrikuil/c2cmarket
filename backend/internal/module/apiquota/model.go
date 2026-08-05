@@ -63,6 +63,7 @@ type Batch struct {
 	DeclaredTTFTBand          string
 	DeclaredMaxConcurrency    int
 	PerformanceConfirmedAt    *time.Time
+	PromptAuditEnabled        *bool
 	SourceType                string
 	SourceLabel               string
 	Status                    string
@@ -156,6 +157,7 @@ type OfferCard struct {
 	DeclaredTTFTBand          string
 	DeclaredMaxConcurrency    int
 	PerformanceConfirmedAt    *time.Time
+	PromptAuditEnabled        *bool
 	PerformanceDisclaimer     string
 	SaleCutoffAt              time.Time
 	ExpiresAt                 time.Time

@@ -6,7 +6,7 @@ import {
   defaultApiPaymentWindowMinutes,
   enabledApiPaymentOptions,
 } from '@/lib/apiPaymentSettings'
-import type { AccountPoolType, ApiProviderCategory, ApiServicePaymentOption, ApiServicePublishForm, BillingMode, CatalogById, DistributionSystem, PublishPaymentMethod, WarrantyConfig } from './types'
+import { sellingModeLabels, type AccountPoolType, type ApiProviderCategory, type ApiServicePaymentOption, type ApiServicePublishForm, type BillingMode, type CatalogById, type DistributionSystem, type PublishPaymentMethod, type WarrantyConfig } from './types'
 
 export const distributionLabels: Record<DistributionSystem, string> = {
   sub2api: 'Sub2API',
@@ -19,7 +19,7 @@ export const publishDistributionOptions = [
     value: 'sub2api',
     title: 'Sub2API',
     description: '基础服务默认 1.00x。',
-    detail: '模型、固定额度包和限时额度包统一继承。',
+    detail: `模型、${sellingModeLabels.package}和${sellingModeLabels.limited}统一继承。`,
   },
   {
     value: 'other',
@@ -192,7 +192,7 @@ export function selectedCatalogItems(form: ApiServicePublishForm, catalogById: C
 
 export function generatedTitle(form: ApiServicePublishForm, catalogById: CatalogById) {
   const providerSummary = providerCategoryLabels[form.providerCategory]
-  if (form.billingMode === 'fixed_package') return `${providerSummary} · API 限时套餐`
+  if (form.billingMode === 'fixed_package') return `${providerSummary} · ${sellingModeLabels.package}`
   if (form.distributionSystem === 'sub2api') return `${providerSummary} · API 美元额度`
   return `${providerSummary} · 其他 API 接入 自由额度`
 }

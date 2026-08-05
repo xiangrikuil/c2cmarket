@@ -6,8 +6,25 @@ import {
   getApiServiceSalesChannelLabel,
   getApiServiceSalesStatus,
   getApiServiceSalesTimeSummary,
+  getApiServiceProbeStatus,
   getInitialApiServiceSalesView,
 } from '../apiServiceOwnerPresentation'
+
+const healthSummary = (
+  state: 'normal' | 'fluctuating' | 'abnormal' | 'no_sample',
+  availabilityReason: 'unconfigured' | 'disabled' | 'unauthorized' | 'insufficient' | 'stale' | 'temporarily_unavailable' | null,
+) => ({
+  state,
+  availabilityReason,
+  successRatePercent: null,
+  successfulSamples: 0,
+  totalSamples: 0,
+  medianTtftMs: null,
+  probeModel: null,
+  transportSecurity: null,
+  lastSampledAt: null,
+  samples: [],
+})
 
 describe('API 服务销售生命周期展示', () => {
   test('普通入口默认有效销售，限时包入口默认全部', () => {
@@ -64,5 +81,24 @@ describe('API 服务销售生命周期展示', () => {
       kind: 'flexible_quota',
       state: 'selling',
     }), '长期服务')
+  })
+
+  test('只用服务列表健康摘要展示准确探针状态', () => {
+    assert.deepEqual(
+      [
+        ['unconfigured', '未配置'],
+        ['disabled', '已停用'],
+        ['unauthorized', '待授权'],
+        ['insufficient', '样本不足'],
+        ['stale', '样本过期'],
+        ['temporarily_unavailable', '暂不可用'],
+      ].map(([reason]) => getApiServiceProbeStatus(healthSummary('no_sample', reason as Parameters<typeof healthSummary>[1])).label),
+      ['未配置', '已停用', '待授权', '样本不足', '样本过期', '暂不可用'],
+    )
+    assert.deepEqual(
+      ['normal', 'fluctuating', 'abnormal', 'no_sample']
+        .map(state => getApiServiceProbeStatus(healthSummary(state as Parameters<typeof healthSummary>[0], null)).label),
+      ['正常', '波动', '异常', '暂无数据'],
+    )
   })
 })

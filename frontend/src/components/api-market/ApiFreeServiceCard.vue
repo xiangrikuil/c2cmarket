@@ -82,7 +82,7 @@ const merchantInitial = computed(() => props.card.merchantName.trim().slice(0, 1
       <dl class="api-product-card__technical-facts">
         <div><dt>统一倍率</dt><dd>{{ card.multiplier }}</dd></div>
         <div><dt title="商户声明最大并发">最大并发</dt><dd>{{ card.declaredMaxConcurrency || '—' }}</dd></div>
-        <div><dt>支持模型</dt><dd>{{ card.models.length || '—' }} 个</dd></div>
+        <div><dt>提示词审计</dt><dd :class="card.promptAuditEnabled === true ? 'text-orange-700' : ''">{{ card.promptAuditEnabled === null ? '未声明' : card.promptAuditEnabled ? '开启' : '关闭' }}</dd></div>
         <div><dt>交付方式</dt><dd :title="card.delivery">{{ card.delivery }}</dd></div>
       </dl>
 

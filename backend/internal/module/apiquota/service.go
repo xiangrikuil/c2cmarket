@@ -453,7 +453,10 @@ func validateCreateOfferInput(input CreateOfferInput, batch Batch) *domain.AppEr
 	if appErr := apimarket.ValidateQuotaUsagePolicy(input.QuotaUsagePolicy, "quotaUsagePolicy", false); appErr != nil {
 		return appErr
 	}
-	if input.DeliveryMode != DeliveryModeManual && input.DeliveryMode != DeliveryModePreimported {
+	if input.DeliveryMode == DeliveryModePreimported {
+		return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Preimported delivery retired for new offers", "新额度包只支持卖家手工交付。", "deliveryMode", "new_preimported_not_allowed", "请选择卖家手工交付。")
+	}
+	if input.DeliveryMode != DeliveryModeManual {
 		return fieldError("deliveryMode", "交付模式无效。")
 	}
 	if input.DeliveryETAMinutes < 1 || input.DeliveryETAMinutes > 10 {
@@ -518,8 +521,11 @@ func validatePublishableBatch(batch Batch, now time.Time) *domain.AppError {
 	if !batch.ServiceOrderable {
 		return domain.NewError(http.StatusConflict, domain.CodeInvalidStateTransition, "API service unavailable", "关联 API 服务当前不可接单。")
 	}
-	if batch.DeclaredTTFTBand == "" || batch.DeclaredMaxConcurrency < 1 || batch.PerformanceConfirmedAt == nil {
-		return domain.NewError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Performance declaration required", "发布额度包前必须完善商户自报首字响应、商户声明最大并发和最近确认时间。")
+	if batch.DeclaredMaxConcurrency < 1 {
+		return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Maximum concurrency required", "发布额度包前必须填写商户声明最大并发。", "declaredMaxConcurrency", "required", "请输入大于 0 的最大并发。")
+	}
+	if batch.PromptAuditEnabled == nil {
+		return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Prompt audit selection required", "发布额度包前必须声明是否开启提示词审计。", "promptAuditEnabled", "required", "请选择是否开启提示词审计。")
 	}
 	if !now.UTC().Before(batch.SaleCutoffAt) || !now.UTC().Before(batch.ExpiresAt) {
 		return domain.NewError(http.StatusConflict, domain.CodeAPIQuotaBatchExpired, "Quota batch expired", "额度批次已超过最晚下单时间。")

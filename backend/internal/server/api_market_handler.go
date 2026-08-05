@@ -38,9 +38,8 @@ type apiServiceRequest struct {
 	AccountPoolType                  string                        `json:"accountPoolType"`
 	AccountPoolCustomName            string                        `json:"accountPoolCustomName"`
 	MerchantRefundCommitment         *bool                         `json:"merchantRefundCommitment"`
-	DeclaredTTFTBand                 string                        `json:"declaredTtftBand"`
 	DeclaredMaxConcurrency           int                           `json:"declaredMaxConcurrency"`
-	PerformanceConfirmedAt           string                        `json:"performanceConfirmedAt"`
+	PromptAuditEnabled               *bool                         `json:"promptAuditEnabled"`
 	AccessModes                      []apiServiceAccessModeRequest `json:"accessModes"`
 	Models                           []apiServiceModelRequest      `json:"models"`
 	Packages                         []apiServicePackageRequest    `json:"packages"`
@@ -139,6 +138,7 @@ type apiServiceResponse struct {
 	DeclaredTTFTBand                 string                              `json:"declaredTtftBand,omitempty"`
 	DeclaredMaxConcurrency           int                                 `json:"declaredMaxConcurrency,omitempty"`
 	PerformanceConfirmedAt           *string                             `json:"performanceConfirmedAt,omitempty"`
+	PromptAuditEnabled               *bool                               `json:"promptAuditEnabled"`
 	AcceptingOrders                  bool                                `json:"acceptingOrders"`
 	PaymentWindowMinutes             int                                 `json:"paymentWindowMinutes"`
 	AcceptedPaymentMethods           []string                            `json:"acceptedPaymentMethods"`
@@ -163,7 +163,8 @@ type apiServiceResponse struct {
 
 type ownerAPIServiceListItemResponse struct {
 	apiServiceResponse
-	SalesSummary apiServiceSalesSummaryResponse `json:"salesSummary"`
+	SalesSummary  apiServiceSalesSummaryResponse  `json:"salesSummary"`
+	HealthSummary apiServiceHealthSummaryResponse `json:"healthSummary"`
 }
 
 type apiServiceSalesSummaryResponse struct {
@@ -207,6 +208,7 @@ type publicAPIServiceResponse struct {
 	MerchantRefundCommitment         bool                                `json:"merchantRefundCommitment"`
 	MerchantRefundPolicyVersion      string                              `json:"merchantRefundPolicyVersion"`
 	DeclaredMaxConcurrency           int                                 `json:"declaredMaxConcurrency,omitempty"`
+	PromptAuditEnabled               *bool                               `json:"promptAuditEnabled"`
 	HealthSummary                    apiServiceHealthSummaryResponse     `json:"healthSummary"`
 	AcceptingOrders                  bool                                `json:"acceptingOrders"`
 	PaymentWindowMinutes             int                                 `json:"paymentWindowMinutes"`
@@ -310,6 +312,7 @@ type apiPurchaseIntentCoreResponse struct {
 	MaximumIntentCNYSnapshot                 string                      `json:"maximumIntentCnySnapshot,omitempty"`
 	PricingSnapshot                          string                      `json:"pricingSnapshot"`
 	QuotaUsagePolicySnapshot                 apiQuotaUsagePolicyResponse `json:"quotaUsagePolicySnapshot"`
+	PromptAuditEnabledSnapshot               *bool                       `json:"promptAuditEnabledSnapshot"`
 	BuyerNote                                string                      `json:"buyerNote,omitempty"`
 	ContactedAt                              *string                     `json:"contactedAt,omitempty"`
 	BuyerCancelledAt                         *string                     `json:"buyerCancelledAt,omitempty"`
@@ -560,8 +563,9 @@ func (s *Server) handleOwnerAPIServices(w http.ResponseWriter, r *http.Request) 
 		writeProblem(w, r, appErr)
 		return
 	}
+	summaries := s.loadAPIHealthSummaries(r.Context(), apiServiceIDs(services.Items))
 	writePageJSON(w, domain.Page[ownerAPIServiceListItemResponse]{
-		Items:      toOwnerAPIServiceListItemResponses(services.Items),
+		Items:      toOwnerAPIServiceListItemResponses(services.Items, summaries),
 		NextCursor: services.NextCursor,
 	})
 }
@@ -960,9 +964,8 @@ func toAppCreateAPIServiceInput(req apiServiceRequest) apimarket.CreateServiceIn
 		AccountPoolType:                  req.AccountPoolType,
 		AccountPoolCustomName:            req.AccountPoolCustomName,
 		MerchantRefundCommitment:         req.MerchantRefundCommitment,
-		DeclaredTTFTBand:                 req.DeclaredTTFTBand,
 		DeclaredMaxConcurrency:           req.DeclaredMaxConcurrency,
-		PerformanceConfirmedAt:           req.PerformanceConfirmedAt,
+		PromptAuditEnabled:               req.PromptAuditEnabled,
 		AccessModes:                      accessModes,
 		Models:                           models,
 		Packages:                         packages,
@@ -993,9 +996,8 @@ func toAppUpdateAPIServiceInput(req apiServiceRequest) apimarket.UpdateServiceIn
 		AccountPoolType:                  base.AccountPoolType,
 		AccountPoolCustomName:            base.AccountPoolCustomName,
 		MerchantRefundCommitment:         base.MerchantRefundCommitment,
-		DeclaredTTFTBand:                 base.DeclaredTTFTBand,
 		DeclaredMaxConcurrency:           base.DeclaredMaxConcurrency,
-		PerformanceConfirmedAt:           base.PerformanceConfirmedAt,
+		PromptAuditEnabled:               base.PromptAuditEnabled,
 		AccessModes:                      base.AccessModes,
 		Models:                           base.Models,
 		Packages:                         base.Packages,
@@ -1027,12 +1029,13 @@ func toAPIServiceResponses(services []apimarket.Service) []apiServiceResponse {
 	return items
 }
 
-func toOwnerAPIServiceListItemResponses(services []apimarket.Service) []ownerAPIServiceListItemResponse {
+func toOwnerAPIServiceListItemResponses(services []apimarket.Service, summaries map[string]apihealth.Summary) []ownerAPIServiceListItemResponse {
 	items := make([]ownerAPIServiceListItemResponse, 0, len(services))
 	for _, service := range services {
 		items = append(items, ownerAPIServiceListItemResponse{
 			apiServiceResponse: toAPIServiceResponse(service),
 			SalesSummary:       toAPIServiceSalesSummaryResponse(service.SalesSummary),
+			HealthSummary:      toAPIServiceHealthSummaryResponse(summaries[service.ID]),
 		})
 	}
 	return items
@@ -1104,6 +1107,7 @@ func toPublicAPIServiceResponseWithHealth(service apimarket.Service, health apih
 		MerchantRefundCommitment:         service.MerchantRefundCommitment,
 		MerchantRefundPolicyVersion:      apimarket.MerchantRefundPolicyVersion,
 		DeclaredMaxConcurrency:           service.DeclaredMaxConcurrency,
+		PromptAuditEnabled:               service.PromptAuditEnabled,
 		HealthSummary:                    toAPIServiceHealthSummaryResponse(health),
 		AcceptingOrders:                  service.AcceptingOrders,
 		PaymentWindowMinutes:             service.PaymentWindowMinutes,
@@ -1170,6 +1174,7 @@ func toAPIServiceResponse(service apimarket.Service) apiServiceResponse {
 		DeclaredTTFTBand:                 service.DeclaredTTFTBand,
 		DeclaredMaxConcurrency:           service.DeclaredMaxConcurrency,
 		PerformanceConfirmedAt:           formatOptionalTime(service.PerformanceConfirmedAt),
+		PromptAuditEnabled:               service.PromptAuditEnabled,
 		AcceptingOrders:                  service.AcceptingOrders,
 		PaymentWindowMinutes:             service.PaymentWindowMinutes,
 		AcceptedPaymentMethods:           enabledPaymentMethods(service.PaymentOptions),
@@ -1362,6 +1367,7 @@ func toAPIPurchaseIntentCoreResponse(intent apiintent.Intent) apiPurchaseIntentC
 		MaximumIntentCNYSnapshot:                 intent.MaximumIntentCNYSnapshot,
 		PricingSnapshot:                          intent.PricingSnapshot,
 		QuotaUsagePolicySnapshot:                 toAPIQuotaUsagePolicyResponse(intent.QuotaUsagePolicySnapshot),
+		PromptAuditEnabledSnapshot:               intent.PromptAuditEnabledSnapshot,
 		BuyerNote:                                intent.BuyerNote,
 		ContactedAt:                              contactedAt,
 		BuyerCancelledAt:                         buyerCancelledAt,

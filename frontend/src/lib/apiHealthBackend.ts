@@ -109,6 +109,7 @@ export async function backendSaveOwnerAPIHealthProbe(input: SaveOwnerAPIHealthPr
     baseUrl: input.baseUrl.trim(),
     model: input.model.trim(),
     enabled: input.enabled,
+    acknowledgeInsecureHttp: input.acknowledgeInsecureHttp,
     ...(credential ? { credential } : {}),
   } satisfies ApiHealthProbeConfigRequestWritable
   const dto = await backendMutation<OwnerApiHealthProbeConfig>(

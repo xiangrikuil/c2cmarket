@@ -80,6 +80,7 @@ describe('API 健康探针真实请求', () => {
       model: ' gpt-5-mini ',
       credential: '   ',
       enabled: true,
+      acknowledgeInsecureHttp: false,
     })
 
     const [url, init] = fetchMock.mock.calls[1] as [string, RequestInit]
@@ -92,6 +93,7 @@ describe('API 健康探针真实请求', () => {
       baseUrl: 'https://api.example.test/v1',
       model: 'gpt-5-mini',
       enabled: true,
+      acknowledgeInsecureHttp: false,
     })
   })
 
@@ -108,6 +110,7 @@ describe('API 健康探针真实请求', () => {
       model: 'gpt-5-mini',
       credential: 'probe-key-once',
       enabled: true,
+      acknowledgeInsecureHttp: false,
     })
 
     const body = JSON.parse(String((fetchMock.mock.calls[1]?.[1] as RequestInit).body))
@@ -223,16 +226,43 @@ describe('API 健康探针 Mock facade', () => {
     const saved = await facade.saveOwnerAPIHealthProbe({
       apiServiceId: 'service-1',
       version: 0,
-      baseUrl: 'https://api.example.test/v1',
+      baseUrl: 'https://api.example.test',
       model: 'gpt-5-mini',
       credential: 'probe-key-once',
       enabled: true,
+      acknowledgeInsecureHttp: false,
     })
     const loaded = await facade.getOwnerAPIHealthProbe('service-1')
 
     expect(saved.credentialConfigured).toBe(true)
+    expect(saved.baseUrl).toBe('https://api.example.test/v1')
+    expect(saved.baseUrl).not.toContain('/v1/v1')
     expect(JSON.stringify(saved)).not.toContain('probe-key-once')
     expect(JSON.stringify(loaded)).not.toContain('probe-key-once')
+    facade.resetMockAPIHealthProbes()
+  })
+
+  it('HTTP Mock 配置要求确认风险并使用 80 端口 Origin', async () => {
+    vi.resetModules()
+    const client = await import('../backendClient')
+    client.setBackendRuntimeConfig({ apiMode: 'mock', apiBaseUrl: 'https://api.example.test/' })
+    const facade = await import('../apiHealthFacade')
+    facade.resetMockAPIHealthProbes()
+
+    const input = {
+      apiServiceId: 'service-http',
+      version: 0,
+      baseUrl: 'http://api.example.test',
+      model: 'gpt-5-mini',
+      credential: 'probe-key-once',
+      enabled: true,
+      acknowledgeInsecureHttp: false,
+    }
+    await expect(facade.saveOwnerAPIHealthProbe(input)).rejects.toThrow('确认未加密传输风险')
+
+    const saved = await facade.saveOwnerAPIHealthProbe({ ...input, acknowledgeInsecureHttp: true })
+    expect(saved.baseUrl).toBe('http://api.example.test/v1')
+    expect(saved.normalizedOrigin).toBe('http://api.example.test:80')
     facade.resetMockAPIHealthProbes()
   })
 })

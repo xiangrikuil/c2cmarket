@@ -19,7 +19,7 @@ test('creates an independent default fixed package for selected models', () => {
   const item = createDefaultApiServicePackage(modelIds)
   modelIds.push('gpt-5')
 
-  assert.equal(item.name, '3 天固定额度包')
+  assert.equal(item.name, '3 天限时流量包')
   assert.equal(item.durationDays, 3)
   assert.equal(item.enabled, true)
   assert.deepEqual(item.modelCatalogIds, ['gpt-5-mini'])

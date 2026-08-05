@@ -867,7 +867,7 @@ const apiOrderColumns = `
 	COALESCE(delivery_note, ''), delivery_submitted_at,
 	delivery_review_expires_at, delivery_review_reminded_at, COALESCE(completion_source, ''), completed_at,
 	cancelled_at, COALESCE(cancel_reason, ''), created_at, updated_at, version,
-	order_no
+	order_no, prompt_audit_enabled_snapshot
 `
 
 func (s *Store) listAPIOrders(ctx context.Context, whereClause string, args []any) ([]apiorder.Order, *domain.AppError) {
@@ -985,6 +985,7 @@ func apiOrderScanTargets(order *apiorder.Order) []any {
 		&order.UpdatedAt,
 		&order.Version,
 		&order.OrderNo,
+		&order.PromptAuditEnabledSnapshot,
 	}
 }
 
@@ -1019,6 +1020,7 @@ func newStoreAPIOrder(input apiorder.CreateInput, intent apiintent.Intent, servi
 		CNYPerUSDAllowanceSnapshot:    intent.DeclaredCNYPerUSDAllowanceSnapshot,
 		PricingSnapshot:               intent.PricingSnapshot,
 		QuotaUsagePolicySnapshot:      intent.QuotaUsagePolicySnapshot,
+		PromptAuditEnabledSnapshot:    intent.PromptAuditEnabledSnapshot,
 		PackageStockReserved:          service.BillingMode == apimarket.ServiceBillingModeFixedPackage,
 		Amount:                        amount,
 		Currency:                      currency,
@@ -1050,7 +1052,8 @@ func insertAPIOrderInTx(ctx context.Context, tx pgx.Tx, order *apiorder.Order) *
 				payment_instructions_snapshot, payment_qr_code_data_url_snapshot, payment_summary, payment_submitted_at,
 				payment_issue_reason, payment_issue_note, payment_issue_reported_at,
 				paid_confirmed_at, delivery_note, delivery_submitted_at, completed_at,
-				cancelled_at, cancel_reason, created_at, updated_at, version, order_no
+				cancelled_at, cancel_reason, created_at, updated_at, version, order_no,
+				prompt_audit_enabled_snapshot
 		)
 		VALUES (
 			$1, $2, $3, $4, $5,
@@ -1065,7 +1068,7 @@ func insertAPIOrderInTx(ctx context.Context, tx pgx.Tx, order *apiorder.Order) *
 				$29, $30, $31, $32,
 				$33, $34, $35,
 				$36, $37, $38, $39,
-				$40, $41, $42, $43, $44, $45
+					$40, $41, $42, $43, $44, $45, $46
 		)
 		ON CONFLICT ON CONSTRAINT ux_api_orders_order_no DO NOTHING
 	`, order.ID, order.APIPurchaseIntentID, order.APIServiceID, order.BuyerUserID, order.SellerUserID,
@@ -1081,7 +1084,8 @@ func insertAPIOrderInTx(ctx context.Context, tx pgx.Tx, order *apiorder.Order) *
 			order.PaymentInstructionsSnapshot, nullText(order.PaymentQRCodeDataURLSnapshot), nullText(order.PaymentSummary), order.PaymentSubmittedAt,
 			nullText(order.PaymentIssueReason), nullText(order.PaymentIssueNote), order.PaymentIssueReportedAt,
 			order.PaidConfirmedAt, nullText(order.DeliveryNote), order.DeliverySubmittedAt, order.CompletedAt,
-			order.CancelledAt, nullText(order.CancelReason), order.CreatedAt, order.UpdatedAt, order.Version, order.OrderNo)
+			order.CancelledAt, nullText(order.CancelReason), order.CreatedAt, order.UpdatedAt, order.Version, order.OrderNo,
+			order.PromptAuditEnabledSnapshot)
 		if insertErr != nil {
 			return insertErr
 		}

@@ -89,6 +89,7 @@ type Service struct {
 	DeclaredTTFTBand                 string
 	DeclaredMaxConcurrency           int
 	PerformanceConfirmedAt           *time.Time
+	PromptAuditEnabled               *bool
 	AcceptingOrders                  bool
 	PaymentWindowMinutes             int
 	ReviewStatus                     string
@@ -200,9 +201,8 @@ type CreateServiceInput struct {
 	AccountPoolType                  string
 	AccountPoolCustomName            string
 	MerchantRefundCommitment         *bool
-	DeclaredTTFTBand                 string
 	DeclaredMaxConcurrency           int
-	PerformanceConfirmedAt           string
+	PromptAuditEnabled               *bool
 	AccessModes                      []ServiceAccessModeInput
 	Models                           []ServiceModelInput
 	Packages                         []ServicePackageInput
@@ -232,9 +232,8 @@ type UpdateServiceInput struct {
 	AccountPoolType                  string
 	AccountPoolCustomName            string
 	MerchantRefundCommitment         *bool
-	DeclaredTTFTBand                 string
 	DeclaredMaxConcurrency           int
-	PerformanceConfirmedAt           string
+	PromptAuditEnabled               *bool
 	AccessModes                      []ServiceAccessModeInput
 	Models                           []ServiceModelInput
 	Packages                         []ServicePackageInput

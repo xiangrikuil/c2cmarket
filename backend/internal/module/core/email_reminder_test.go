@@ -398,6 +398,7 @@ func createTestCarpoolApplication(t *testing.T, service *Service, owner, buyer U
 func createOrderableAPIService(t *testing.T, service *Service, owner User, ownerContactID string) APIService {
 	t.Helper()
 	merchantRefundCommitment := false
+	promptAuditEnabled := false
 	created, appErr := service.CreateAPIService(context.Background(), owner, CreateAPIServiceInput{
 		MerchantIdentityMode:             "public_profile",
 		OwnerContactMethodID:             ownerContactID,
@@ -419,9 +420,8 @@ func createOrderableAPIService(t *testing.T, service *Service, owner User, owner
 		MerchantNote:             "仅后台可见，不展示给公开访客。",
 		AccountPoolType:          apimarket.AccountPoolGPTPlus,
 		MerchantRefundCommitment: &merchantRefundCommitment,
-		DeclaredTTFTBand:         "1_to_3s",
 		DeclaredMaxConcurrency:   8,
-		PerformanceConfirmedAt:   "2026-07-06T09:00:00Z",
+		PromptAuditEnabled:       &promptAuditEnabled,
 		AccessModes: []APIServiceAccessModeInput{
 			{AccessMode: "buyer_dedicated_sub_key", PublicNote: "站外确认买家专属的访问方式。"},
 		},

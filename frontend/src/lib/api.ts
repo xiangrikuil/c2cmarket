@@ -97,6 +97,7 @@ import {
   type UserProfile,
 } from '@/data/mock'
 import type { ReputationSummary } from '@/types/reputation'
+import type { ApiServiceHealthSummary } from '@/types/apiHealth'
 import type { ApiQuotaUsagePolicy, ApiQuotaUsagePolicyInput } from '@/types/apiQuota'
 export type { ApiQuotaLimitMode, ApiQuotaUsageLimit, ApiQuotaUsageLimitInput, ApiQuotaUsagePolicy, ApiQuotaUsagePolicyInput, ApiWritableQuotaLimitMode } from '@/types/apiQuota'
 import { mockPublicUserReputation } from '@/lib/reputationMock'
@@ -1858,6 +1859,7 @@ function createSnapshot(service: ApiService): ApiPurchaseIntent['snapshot'] {
     accountPoolType: service.accountPoolType,
     accountPoolLabel: service.accountPoolLabel,
     declaredMaxConcurrency: service.declaredMaxConcurrency,
+    promptAuditEnabled: service.promptAuditEnabled ?? null,
     merchantRefundCommitment: service.merchantRefundCommitment,
     merchantRefundPolicyVersion: service.merchantRefundPolicyVersion,
     serviceValidityExpiresAt: service.quotaExpiresAt ?? null,
@@ -2577,6 +2579,7 @@ function quotaDistributionFromService(service: ApiService): ApiQuotaDistribution
 export async function createApiQuotaOffer(payload: CreateApiQuotaOfferPayload) {
   if (shouldUseRealBackend()) return backendCreateAPIQuotaOffer(payload)
   await wait()
+  if (payload.deliveryMode !== 'manual') throw new Error('新额度包只支持卖家手工交付。')
   const batch = apiQuotaBatchStore.find(item => item.id === payload.batchId)
   const service = batch ? apiServiceStore.find(item => item.id === batch.apiServiceId) : undefined
   if (!batch || !service) throw new Error('未找到额度批次或关联服务。')
@@ -2607,10 +2610,8 @@ export async function createApiQuotaOffer(payload: CreateApiQuotaOfferPayload) {
     sellerDisplayName: getApiMerchantDisplayName(service),
     sellerIdentityType: service.merchantType === '商户' ? 'merchant' : 'individual',
     sellerLinuxDoBound: true,
-    declaredTtftBand: service.declaredTtftBand ?? '1_to_3s',
+    promptAuditEnabled: service.promptAuditEnabled ?? null,
     declaredMaxConcurrency: service.declaredMaxConcurrency ?? 1,
-    performanceConfirmedAt: service.performanceConfirmedAt,
-    performanceDisclaimer: '商户自报，平台未测速',
     saleCutoffAt: batch.saleCutoffAt,
     expiresAt: batch.expiresAt,
     availableCopies: payload.saleMode === 'continuous' ? payload.continuousCopies : 0,
@@ -2627,6 +2628,7 @@ export async function createApiQuotaOffer(payload: CreateApiQuotaOfferPayload) {
 export async function createApiQuotaRushOffer(payload: CreateApiQuotaRushOfferPayload): Promise<ApiQuotaRushOfferPublication> {
   if (shouldUseRealBackend()) return backendCreateAPIQuotaRushOffer(payload)
   await wait()
+  if (payload.deliveryMode !== 'manual') throw new Error('新额度包只支持卖家手工交付。')
   const service = apiServiceStore.find(item => item.id === payload.apiServiceId && item.merchantUsername === myUserProfileStore.username)
   if (!service) throw new Error('未找到可发布额度包的 API 服务。')
   const slot = mockApiQuotaSaleSlots().items.find(item => item.key === payload.slotKey)
@@ -2645,19 +2647,8 @@ export async function createApiQuotaRushOffer(payload: CreateApiQuotaRushOfferPa
   if (Number(usdAllowance) <= 0 || Number(priceCny) <= 0 || Number(modelMultiplier) <= 0) {
     throw new Error('美元额度、人民币总价和模型倍率必须大于 0。')
   }
-  let credentialImported = 0
-  if (payload.deliveryMode === 'preimported') {
-    if (!payload.file || !payload.deliveryKind) throw new Error('预导入交付必须选择凭据类型并上传 CSV。')
-    const rows = (await payload.file.text()).split(/\r?\n/).map(row => row.trim()).filter(Boolean)
-    const expectedHeader = payload.deliveryKind === 'api_key_endpoint'
-      ? 'api_base_url,api_key,instructions'
-      : 'panel_login_url,username,password,instructions'
-    if (rows[0]?.toLowerCase() !== expectedHeader) throw new Error(`CSV 表头必须为 ${expectedHeader}`)
-    credentialImported = rows.length - 1
-    if (credentialImported < copies) throw new Error(`凭据数量至少需要 ${copies} 条。`)
-  } else if (payload.file) {
-    throw new Error('卖家手工交付不需要上传凭据 CSV。')
-  }
+  if (payload.file || payload.deliveryKind) throw new Error('新额度包不接收预导入凭据。')
+  const credentialImported = 0
 
   const createdAt = nowText()
   const unique = Date.now()
@@ -2725,10 +2716,8 @@ export async function createApiQuotaRushOffer(payload: CreateApiQuotaRushOfferPa
     sellerDisplayName: getApiMerchantDisplayName(service),
     sellerIdentityType: service.merchantType === '商户' ? 'merchant' : 'individual',
     sellerLinuxDoBound: true,
-    declaredTtftBand: service.declaredTtftBand ?? '1_to_3s',
+    promptAuditEnabled: service.promptAuditEnabled ?? null,
     declaredMaxConcurrency: service.declaredMaxConcurrency ?? 1,
-    performanceConfirmedAt: service.performanceConfirmedAt,
-    performanceDisclaimer: '商户自报，平台未测速',
     saleCutoffAt: slot.endsAt,
     expiresAt: batch.expiresAt,
     nextRound: round,
@@ -2951,7 +2940,40 @@ export function matchesApiServiceSalesView(state: ApiServiceSalesState, salesVie
 function mockOwnerApiService(service: ApiService): OwnerApiService {
   return {
     ...service,
+    healthSummary: service.healthSummary ?? mockUnconfiguredAPIHealthSummary(),
     salesSummary: buildMockApiServiceSalesSummary(service),
+  }
+}
+
+function mockUnconfiguredAPIHealthSummary(): ApiServiceHealthSummary {
+  const slot = (minute: number): ApiServiceHealthSummary['samples'][number] => ({
+    slotStartedAt: new Date(Date.UTC(2026, 7, 4, 0, minute)).toISOString(),
+    state: 'no_sample',
+  })
+  return {
+    state: 'no_sample',
+    availabilityReason: 'unconfigured',
+    successRatePercent: null,
+    successfulSamples: 0,
+    totalSamples: 0,
+    medianTtftMs: null,
+    probeModel: null,
+    transportSecurity: null,
+    lastSampledAt: null,
+    samples: [
+      slot(0),
+      slot(5),
+      slot(10),
+      slot(15),
+      slot(20),
+      slot(25),
+      slot(30),
+      slot(35),
+      slot(40),
+      slot(45),
+      slot(50),
+      slot(55),
+    ],
   }
 }
 
@@ -4062,7 +4084,10 @@ export async function submitApiService(payload: Record<string, unknown>) {
   const hasEnabledPayment = normalizedPaymentOptions.some(item => item.enabled && isApiPaymentOptionComplete(item))
   const publiclyOrderable = isPublish && hasEnabledPayment
   const responseMinutes = numberValue(payload.paymentWindowMinutes, 10)
-  const declaredTtftBand = String(payload.declaredTtftBand ?? '') as ApiTTFTBand
+  const declaredMaxConcurrency = numberValue(payload.declaredMaxConcurrency, 0)
+  const promptAuditEnabled = typeof payload.promptAuditEnabled === 'boolean' ? payload.promptAuditEnabled : null
+  if (!Number.isInteger(declaredMaxConcurrency) || declaredMaxConcurrency < 1) throw new Error('商户声明最大并发必须是大于 0 的整数。')
+  if (promptAuditEnabled === null) throw new Error('请选择是否开启提示词审计。')
   const state: ApiServiceState = isPublish ? 'online' : 'offline'
   const quotaExpiresAt = beijingDateTimeInputToISOString(String(payload.quotaExpiresAt ?? ''))
   const accountPoolType = String(payload.accountPoolType ?? '') as ApiService['accountPoolType']
@@ -4119,11 +4144,10 @@ export async function submitApiService(payload: Record<string, unknown>) {
     publiclyOrderable,
     lastOnlineConfirmedAt: nowText(),
     onlineExpiresAt: nowText(),
-    declaredTtftBand,
-    declaredMaxConcurrency: numberValue(payload.declaredMaxConcurrency, 1),
-    performanceConfirmedAt: beijingDateTimeInputToISOString(String(payload.performanceConfirmedAt ?? '')) || undefined,
+    declaredMaxConcurrency,
+    promptAuditEnabled,
     expectedResponseMinutes: responseMinutes,
-    responseMedianMinutes: apiTTFTApproxMinutes(declaredTtftBand),
+    responseMedianMinutes: null,
     dailyOrderLimit: 5,
     todayOrderCount: 0,
     unresolvedDisputes: 0,
@@ -5537,6 +5561,7 @@ export async function createApiQuotaOrder(payload: CreateApiQuotaOrderPayload) {
   const intentId = `api-intent-quota-${Date.now()}`
   const intentSnapshot = {
     ...createSnapshot(service),
+    promptAuditEnabled: offer.promptAuditEnabled ?? null,
     multiplier: `${Number(offer.modelMultiplier).toFixed(2)}x`,
     defaultMultiplier: Number(offer.modelMultiplier),
     selectedDeliveryMode,
@@ -5613,6 +5638,7 @@ export async function createApiQuotaOrder(payload: CreateApiQuotaOrderPayload) {
       distributionSystem: offer.distributionSystem,
       ttftBand: service.declaredTtftBand ?? '1_to_3s',
       declaredMaxConcurrency: offer.declaredMaxConcurrency,
+      promptAuditEnabled: offer.promptAuditEnabled ?? null,
       accountPoolType: service.accountPoolType,
       accountPoolLabel: service.accountPoolLabel,
       merchantRefundCommitment: service.merchantRefundCommitment,

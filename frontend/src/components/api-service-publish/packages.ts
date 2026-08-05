@@ -1,9 +1,9 @@
-import type { ApiServicePackage } from './types'
+import { sellingModeLabels, type ApiServicePackage } from './types'
 import { defaultApiQuotaUsagePolicyInput } from '@/lib/apiQuotaPolicy'
 
 export const createDefaultApiServicePackage = (modelCatalogIds: string[]): ApiServicePackage => ({
   id: globalThis.crypto?.randomUUID?.() ?? `package-${Date.now()}`,
-  name: '3 天固定额度包',
+  name: `3 天${sellingModeLabels.package}`,
   priceCny: 9.9,
   panelAllowance: 5,
   durationDays: 3,

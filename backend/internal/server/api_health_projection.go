@@ -16,6 +16,7 @@ type apiServiceHealthSampleResponse struct {
 type apiServiceHealthSummaryResponse struct {
 	State              string                           `json:"state"`
 	AvailabilityReason *string                          `json:"availabilityReason"`
+	TransportSecurity  *string                          `json:"transportSecurity"`
 	SuccessRatePercent *string                          `json:"successRatePercent"`
 	SuccessfulSamples  int                              `json:"successfulSamples"`
 	TotalSamples       int                              `json:"totalSamples"`
@@ -91,8 +92,12 @@ func toAPIServiceHealthSummaryResponse(summary apihealth.Summary) apiServiceHeal
 			State:         sample.State,
 		})
 	}
+	var transportSecurity *string
+	if summary.TransportSecurity == apihealth.TransportSecurityHTTPS || summary.TransportSecurity == apihealth.TransportSecurityHTTP {
+		transportSecurity = &summary.TransportSecurity
+	}
 	return apiServiceHealthSummaryResponse{
-		State: summary.State, AvailabilityReason: availabilityReason,
+		State: summary.State, AvailabilityReason: availabilityReason, TransportSecurity: transportSecurity,
 		SuccessRatePercent: summary.SuccessRatePercent, SuccessfulSamples: summary.SuccessfulSamples,
 		TotalSamples: summary.TotalSamples, MedianTTFTMS: summary.MedianTTFTMS,
 		ProbeModel: summary.ProbeModel, LastSampledAt: lastSampledAt, Samples: samples,

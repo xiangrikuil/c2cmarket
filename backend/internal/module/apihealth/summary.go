@@ -12,14 +12,15 @@ func SlotStart(at time.Time) time.Time {
 
 func BuildSummary(config *Config, samples []Sample, now time.Time) Summary {
 	if config == nil {
-		return noSampleSummary(AvailabilityUnconfigured, nil, now)
+		return noSampleSummary(AvailabilityUnconfigured, nil, TransportSecurityUnknown, now)
 	}
 	model := config.Model
+	transportSecurity := TargetTransportSecurity(config.BaseURL)
 	if !config.Enabled {
-		return noSampleSummary(AvailabilityDisabled, &model, now)
+		return noSampleSummary(AvailabilityDisabled, &model, transportSecurity, now)
 	}
 	if !IsAuthorized(*config) {
-		return noSampleSummary(AvailabilityUnauthorized, &model, now)
+		return noSampleSummary(AvailabilityUnauthorized, &model, transportSecurity, now)
 	}
 
 	currentSlot := SlotStart(now)
@@ -43,7 +44,10 @@ func BuildSummary(config *Config, samples []Sample, now time.Time) Summary {
 	}
 	sort.Slice(final, func(i, j int) bool { return final[i].SlotStartedAt.Before(final[j].SlotStartedAt) })
 
-	summary := Summary{State: HealthStateNoSample, AvailabilityReason: AvailabilityInsufficient, ProbeModel: &model}
+	summary := Summary{
+		State: HealthStateNoSample, AvailabilityReason: AvailabilityInsufficient,
+		TransportSecurity: transportSecurity, ProbeModel: &model,
+	}
 	summary.Samples = buildHealthSlots(bySlot, currentSlot)
 	summary.TotalSamples = len(final)
 	for _, sample := range final {
@@ -80,9 +84,10 @@ func BuildSummary(config *Config, samples []Sample, now time.Time) Summary {
 	return summary
 }
 
-func noSampleSummary(reason string, model *string, now time.Time) Summary {
+func noSampleSummary(reason string, model *string, transportSecurity string, now time.Time) Summary {
 	return Summary{
-		State: HealthStateNoSample, AvailabilityReason: reason, ProbeModel: model,
+		State: HealthStateNoSample, AvailabilityReason: reason,
+		TransportSecurity: transportSecurity, ProbeModel: model,
 		Samples: buildHealthSlots(nil, SlotStart(now)),
 	}
 }

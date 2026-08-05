@@ -7,6 +7,7 @@ function source(path: string) {
 }
 
 const homePage = source('../../pages/HomePage.vue')
+const homeMarketSnapshot = source('../../components/market/HomeMarketSnapshot.vue')
 const app = source('../../App.vue')
 const appShell = source('../../components/layout/AppShell.vue')
 const adminShell = source('../../components/layout/AdminShell.vue')
@@ -33,7 +34,7 @@ describe('development first-page architecture', () => {
     expect(adminShell).not.toContain("from '@/queries/useMarketQueries'")
     expect(appShellQueries).not.toMatch(/from ['"]@\/lib\/api['"]/)
     expect(realtimeQueries).not.toMatch(/from ['"]@\/lib\/api['"]/)
-    for (const entry of [homePage, appShell, adminShell]) {
+    for (const entry of [homePage, homeMarketSnapshot, appShell, adminShell]) {
       expect(entry).not.toContain("from 'lucide-vue-next'")
       expect(entry).toContain("from 'lucide-vue-next/dist/esm/icons/")
     }

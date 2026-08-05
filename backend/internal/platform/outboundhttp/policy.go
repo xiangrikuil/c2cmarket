@@ -65,6 +65,7 @@ type Policy struct {
 	resolver        Resolver
 	dialer          Dialer
 	allowedHosts    map[string]struct{}
+	allowHTTP       bool
 	maxDialAttempts int
 	stats           policyStats
 }
@@ -100,6 +101,15 @@ func WithDialer(dialer Dialer) PolicyOption {
 		if dialer != nil {
 			policy.dialer = dialer
 		}
+	}
+}
+
+// WithInsecureHTTP permits unencrypted HTTP targets for a caller that applies
+// its own explicit risk-acknowledgement boundary. Policies remain HTTPS-only
+// unless this option is supplied.
+func WithInsecureHTTP() PolicyOption {
+	return func(policy *Policy) {
+		policy.allowHTTP = true
 	}
 }
 
@@ -156,7 +166,8 @@ func (p *Policy) normalizeURL(raw string) (string, string, error) {
 	if err != nil || value == "" || parsed.Opaque != "" || !parsed.IsAbs() {
 		return "", "", ErrInvalidTarget
 	}
-	if !strings.EqualFold(parsed.Scheme, "https") || parsed.Host == "" {
+	scheme := strings.ToLower(parsed.Scheme)
+	if (scheme != "https" && !(scheme == "http" && p.allowHTTP)) || parsed.Host == "" {
 		return "", "", ErrInvalidTarget
 	}
 	if parsed.User != nil || parsed.RawQuery != "" || parsed.ForceQuery || parsed.Fragment != "" {
@@ -176,7 +187,7 @@ func (p *Policy) normalizeURL(raw string) (string, string, error) {
 		return "", "", err
 	}
 
-	parsed.Scheme = "https"
+	parsed.Scheme = scheme
 	parsed.User = nil
 	parsed.Host = canonicalAuthority(host, port)
 	parsed.Path = strings.TrimRight(parsed.Path, "/")

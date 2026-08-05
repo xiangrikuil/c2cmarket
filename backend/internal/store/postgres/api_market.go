@@ -617,7 +617,8 @@ const apiServiceColumns = `
 	COALESCE(declared_ttft_band, ''), COALESCE(declared_max_concurrency, 0), performance_confirmed_at,
 	accepting_orders, payment_window_minutes,
 	review_status, publication_status, moderation_status, COALESCE(approved_by_admin_id::text, ''),
-	approved_at, COALESCE(moderation_reason, ''), created_at, updated_at, version
+		approved_at, COALESCE(moderation_reason, ''), created_at, updated_at, version,
+		prompt_audit_enabled
 `
 
 const apiPurchaseIntentColumns = `
@@ -641,7 +642,7 @@ const apiPurchaseIntentColumns = `
 	COALESCE(api_quota_inventory_unit_id::text, ''), COALESCE(quota_offer_snapshot::text, ''),
 	contacted_at, buyer_cancelled_at, COALESCE(buyer_cancel_reason, ''),
 	owner_closed_at, COALESCE(owner_close_reason, ''),
-	created_at, updated_at, version
+		created_at, updated_at, version, prompt_audit_enabled_snapshot
 `
 
 func (s *Store) listAPIServices(ctx context.Context, whereClause string, args []any) ([]apimarket.Service, *domain.AppError) {
@@ -905,8 +906,8 @@ func (s *Store) loadAPIServiceChildren(ctx context.Context, q queryer, service *
 
 	paymentRows, err := queryRows(ctx, q, `
 		SELECT id::text, api_service_id::text, payment_method, enabled,
-		       payment_instructions, COALESCE(payment_qr_code_data_url, ''),
-		       created_at, updated_at, version
+			payment_instructions, COALESCE(payment_qr_code_data_url, ''),
+			created_at, updated_at, version
 		FROM api_service_payment_options
 		WHERE api_service_id = $1
 		ORDER BY payment_method ASC
@@ -1082,7 +1083,7 @@ func upsertAPIServiceInTx(ctx context.Context, tx pgx.Tx, service apimarket.Serv
 			review_status, publication_status, moderation_status,
 			approved_by_admin_id, approved_at, moderation_reason,
 			accepting_orders, payment_window_minutes,
-			created_at, updated_at, version
+			created_at, updated_at, version, prompt_audit_enabled
 		)
 		VALUES (
 			$1, $2, $3, $4, $5,
@@ -1097,7 +1098,7 @@ func upsertAPIServiceInTx(ctx context.Context, tx pgx.Tx, service apimarket.Serv
 			$31, $32, $33,
 			$34, $35, $36,
 			$37, $38,
-			$39, $40, $41
+				$39, $40, $41, $42
 		)
 		ON CONFLICT (id) DO UPDATE
 		SET merchant_profile_id = EXCLUDED.merchant_profile_id,
@@ -1135,8 +1136,9 @@ func upsertAPIServiceInTx(ctx context.Context, tx pgx.Tx, service apimarket.Serv
 		    approved_at = EXCLUDED.approved_at,
 		    moderation_reason = EXCLUDED.moderation_reason,
 		    accepting_orders = EXCLUDED.accepting_orders,
-		    payment_window_minutes = EXCLUDED.payment_window_minutes,
-		    updated_at = EXCLUDED.updated_at,
+			    payment_window_minutes = EXCLUDED.payment_window_minutes,
+			    prompt_audit_enabled = EXCLUDED.prompt_audit_enabled,
+			    updated_at = EXCLUDED.updated_at,
 		    version = EXCLUDED.version
 		`, service.ID, service.OwnerUserID, nullUUID(service.MerchantProfileID), service.MerchantIdentityMode, service.OwnerContactMethodID,
 		service.Title, service.ShortDescription, nullText(service.SourceURL), service.DistributionSystem, service.BillingMode,
@@ -1151,7 +1153,7 @@ func upsertAPIServiceInTx(ctx context.Context, tx pgx.Tx, service apimarket.Serv
 		service.ReviewStatus, service.PublicationStatus, service.ModerationStatus,
 		nullUUID(service.ApprovedByAdminID), service.ApprovedAt, nullText(service.ModerationReason),
 		service.AcceptingOrders, service.PaymentWindowMinutes,
-		service.CreatedAt, service.UpdatedAt, service.Version)
+		service.CreatedAt, service.UpdatedAt, service.Version, service.PromptAuditEnabled)
 	if err != nil {
 		return internalStoreError()
 	}
@@ -1391,7 +1393,7 @@ func insertAPIPurchaseIntentInTx(ctx context.Context, tx pgx.Tx, intent apiinten
 			pricing_snapshot,
 			five_hour_limit_mode_snapshot, five_hour_limit_usd_snapshot,
 			daily_limit_mode_snapshot, daily_limit_usd_snapshot,
-			buyer_note, created_at, updated_at, version
+				buyer_note, created_at, updated_at, version, prompt_audit_enabled_snapshot
 		)
 		VALUES (
 			$1, $2, $3, $4, $5,
@@ -1407,7 +1409,7 @@ func insertAPIPurchaseIntentInTx(ctx context.Context, tx pgx.Tx, intent apiinten
 			$26, $27,
 			$28,
 			$29, $30, $31, $32,
-			$33, $34, $35, $36
+				$33, $34, $35, $36, $37
 		)
 	`, intent.ID, intent.APIServiceID, intent.APIServiceOwnerUserID, intent.BuyerUserID, intent.OwnerUserID,
 		intent.BuyerContactMethodID, intent.BuyerContactMethodVersionID,
@@ -1424,7 +1426,7 @@ func insertAPIPurchaseIntentInTx(ctx context.Context, tx pgx.Tx, intent apiinten
 		intent.QuotaUsagePolicySnapshot.FiveHour.Mode, nullNumeric(intent.QuotaUsagePolicySnapshot.FiveHour.AmountUSD),
 		intent.QuotaUsagePolicySnapshot.Daily.Mode, nullNumeric(intent.QuotaUsagePolicySnapshot.Daily.AmountUSD),
 		nullText(intent.BuyerNote),
-		intent.CreatedAt, intent.UpdatedAt, intent.Version)
+		intent.CreatedAt, intent.UpdatedAt, intent.Version, intent.PromptAuditEnabledSnapshot)
 	if err != nil {
 		if isUniqueViolation(err) {
 			return domain.NewError(http.StatusConflict, domain.CodeActiveAPIIntentExists, "Active API intent exists", "你已对该服务提交过进行中的购买意向。")
@@ -1966,6 +1968,7 @@ func apiServiceScanDestinations(service *apimarket.Service) []any {
 		&service.CreatedAt,
 		&service.UpdatedAt,
 		&service.Version,
+		&service.PromptAuditEnabled,
 	}
 }
 
@@ -2034,5 +2037,6 @@ func scanAPIPurchaseIntent(row scanner, intent *apiintent.Intent) error {
 		&intent.CreatedAt,
 		&intent.UpdatedAt,
 		&intent.Version,
+		&intent.PromptAuditEnabledSnapshot,
 	)
 }

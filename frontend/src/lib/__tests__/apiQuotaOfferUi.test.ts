@@ -10,6 +10,7 @@ import {
   apiQuotaOfferErrorMessage,
   withApiMarketViewQuery,
 } from '../apiQuotaOfferUi'
+import { sellingModeLabels } from '../../components/api-service-publish/types'
 
 const marketPageSource = readFileSync(new URL('../../pages/ApiMarketPage.vue', import.meta.url), 'utf8')
 const quotaOfferCardSource = readFileSync(new URL('../../components/api-market/ApiQuotaOfferCard.vue', import.meta.url), 'utf8')
@@ -25,6 +26,7 @@ const apiServicePublishPageSource = readFileSync(new URL('../../pages/ApiService
 const quotaRushPublishPageSource = readFileSync(new URL('../../pages/ApiQuotaRushPublishPage.vue', import.meta.url), 'utf8')
 const sellingModeSelectorSource = readFileSync(new URL('../../components/api-service-publish/SellingModeSelector.vue', import.meta.url), 'utf8')
 const fixedPackageSectionSource = readFileSync(new URL('../../components/api-service-publish/FixedPackageSection.vue', import.meta.url), 'utf8')
+const merchantNoteSectionSource = readFileSync(new URL('../../components/api-service-publish/MerchantNoteSection.vue', import.meta.url), 'utf8')
 const publishPreviewSource = readFileSync(new URL('../../components/api-service-publish/ApiServicePublishPreview.vue', import.meta.url), 'utf8')
 const selectedModelsPricingTableSource = readFileSync(new URL('../../components/api-service-publish/SelectedModelsPricingTable.vue', import.meta.url), 'utf8')
 const quotaRushPublishPreviewSource = readFileSync(new URL('../../components/api-quota/ApiQuotaRushPublishPreview.vue', import.meta.url), 'utf8')
@@ -95,24 +97,27 @@ describe('API 额度包市场视图', () => {
 
   test('发布页先选择三种同级销售模式', () => {
     assert.match(apiServicePublishPageSource, /apiPublishModeFromQuery\(route\.query\.mode, route\.query\.after\)/)
-    assert.match(sellingModeSelectorSource, /value: 'free'[\s\S]*?title: '自由额度'/)
-    assert.match(sellingModeSelectorSource, /value: 'package'[\s\S]*?title: '固定额度包'/)
-    assert.match(sellingModeSelectorSource, /value: 'limited'[\s\S]*?title: '限时额度包'/)
+    assert.deepEqual(sellingModeLabels, { free: '自由额度', package: '限时流量包', limited: '限时额度包' })
+    assert.match(sellingModeSelectorSource, /value: 'free'[\s\S]*?title: sellingModeLabels\.free/)
+    assert.match(sellingModeSelectorSource, /value: 'package'[\s\S]*?title: sellingModeLabels\.package/)
+    assert.match(sellingModeSelectorSource, /value: 'limited'[\s\S]*?title: sellingModeLabels\.limited/)
     assert.match(apiServicePublishPageSource, /<template v-if="!sellingMode">[\s\S]*?<SellingModeSelector @select="chooseSellingMode"[\s\S]*?<template v-else>/)
     assert.match(apiServicePublishPageSource, /<FixedPackageSection v-else-if="isFixedPackageMode"[\s\S]*?<PriceInventorySection v-else/)
     assert.doesNotMatch(apiServicePublishPageSource, /BillingModeSection/)
-    assert.doesNotMatch(fixedPackageSectionSource, /RadioGroup|计费方式|限时流量包/)
+    assert.doesNotMatch(fixedPackageSectionSource, /RadioGroup|计费方式/)
     assert.match(apiServicePublishPageSource, /formDirty\.value && !window\.confirm\('API 服务配置尚未发布，确认返回选择销售模式？'\)/)
     assert.match(apiServicePublishPageSource, /const \{ mode: _mode, after: _after, \.\.\.query \} = route\.query/)
-    assert.match(apiServicePublishPageSource, /保存基础服务，下一步设置额度包/)
-    assert.match(apiServicePublishPageSource, /发布固定额度包/)
-    assert.match(apiServicePublishPageSource, /发布自由额度服务/)
-    assert.match(apiServicePublishPageSource, /isLimitedQuotaMode[\s\S]*?`\/api-market\/quota\/new\?serviceId=\$\{service\.id\}`[\s\S]*?: '\/my\/api-services'/)
+    assert.match(apiServicePublishPageSource, /value === 'limited'[\s\S]*?router\.push\('\/api-market\/quota\/new'\)/)
+    assert.match(apiServicePublishPageSource, /发布\$\{sellingModeLabels\.package\}/)
+    assert.match(apiServicePublishPageSource, /发布\$\{sellingModeLabels\.free\}服务/)
+    assert.match(apiServicePublishPageSource, /value === 'limited'[\s\S]*?router\.replace\(\{ path: '\/api-market\/quota\/new' \}\)/)
   })
 
   test('固定额度包第一步不重复选择模型并明确美元面板额度', () => {
     assert.doesNotMatch(fixedPackageSectionSource, /支持模型|api-publish-model-chip|catalogById/)
-    assert.match(fixedPackageSectionSource, /面板额度（USD）[\s\S]*?>\$<\/span>[\s\S]*?selectedPackage\.panelAllowance/)
+    assert.match(fixedPackageSectionSource, /美元额度[\s\S]*?>\$<\/span>[\s\S]*?selectedPackage\.panelAllowance/)
+    assert.match(fixedPackageSectionSource, /md:grid-cols-2/)
+    assert.doesNotMatch(fixedPackageSectionSource, /xl:grid-cols-5/)
     assert.match(apiServicePublishPageSource, /item\.modelCatalogIds = \[\.\.\.enabledModelIds\]/)
   })
 
@@ -129,7 +134,7 @@ describe('API 额度包市场视图', () => {
 
   test('所有模型与额度包统一继承服务默认倍率', () => {
     assert.match(publishPreviewSource, /服务倍率[\s\S]*?formatMultiplier\(props\.form\.defaultMultiplier\)/)
-    assert.match(apiAccessSourceSectionSource, /模型、固定额度包和限时额度包统一继承该倍率/)
+    assert.match(apiAccessSourceSectionSource, /sellingModeLabels\.package[\s\S]*?sellingModeLabels\.limited[\s\S]*?统一继承该倍率/)
     assert.doesNotMatch(selectedModelsPricingTableSource, /multiplierOverride|setMultiplier|服务倍率/)
     assert.doesNotMatch(quotaRushPublishPageSource, /rush\.modelMultiplier|copiedQueryValue\('modelMultiplier'\)/)
     assert.match(quotaRushPublishPageSource, /modelMultiplier: serviceDefaultMultiplierDecimal\.value/)
@@ -144,7 +149,7 @@ describe('API 额度包市场视图', () => {
   test('限时额度包预览披露体验与真实买家流程', () => {
     assert.match(publishPreviewSource, /<ApiQuotaPolicyStrip[\s\S]*?:policy="previewPackage\.quotaUsagePolicy"/)
     assert.match(apiServicePublishPageSource, /选择额度包 → 创建订单 → 站外付款 → 卖家确认收款 → 获取交付凭证/)
-    assert.match(publishPreviewSource, /卖家确认收款后交付；平台记录订单，不代收款/)
+    assert.doesNotMatch(publishPreviewSource, /grid-cols-5[\s\S]*?买家购买流程/)
 
     const touchedCopy = [apiServicePublishPageSource, sellingModeSelectorSource, publishPreviewSource].join('\n')
     assert.doesNotMatch(touchedCopy, /自动发货|平台担保|资金安全|安全可靠|获取 API Key/)
@@ -290,13 +295,23 @@ describe('API 额度包市场视图', () => {
     assert.match(apiOrderDetailSource, /serviceValiditySnapshotLabel\(order\.value\.intentSnapshot\)/)
   })
 
-  test('三步向导只接受开放场次并支持条件凭据 CSV', () => {
+  test('三步向导只接受开放场次并仅支持手工交付', () => {
     assert.match(quotaRushPublishPageSource, /slot\.state === 'registration_open'/)
     assert.match(quotaRushPublishPageSource, /useCreateApiQuotaRushOfferMutation/)
-    assert.match(quotaRushPublishPageSource, /deliveryMode === 'preimported'/)
-    assert.match(quotaRushPublishPageSource, /凭据数量至少需要/)
+    assert.match(quotaRushPublishPageSource, /deliveryMode: 'manual'/)
+    assert.match(quotaRushPublishPageSource, /新发布的限时额度包不再使用预导入凭据/)
+    assert.doesNotMatch(quotaRushPublishPageSource, /type="file"|凭据 CSV|deliveryMode === 'preimported'/)
+    assert.match(quotaRushPublishPageSource, /<Tabs v-model="selectedSlotDate"[\s\S]*?<TabsContent v-for="group in groupedSlots"/)
     assert.match(quotaRushPublishPageSource, /24 小时后[\s\S]*?3 天后[\s\S]*?7 天后/)
     assert.match(quotaRushPublishPageSource, /watch\(selectedSlot,[\s\S]*?\}, \{ immediate: true \}\)/)
+  })
+
+  test('新发布要求提示词审计声明且不再采集商户 TTFT', () => {
+    assert.match(merchantNoteSectionSource, /提示词审计/)
+    assert.match(merchantNoteSectionSource, /form\.promptAuditEnabled === null/)
+    assert.match(apiServicePublishPageSource, /请明确选择是否开启提示词审计/)
+    assert.match(quotaRushPublishPageSource, /baseForm\.promptAuditEnabled === null/)
+    assert.doesNotMatch(merchantNoteSectionSource, /首字响应区间|最近确认时间|declaredTtftBand|performanceConfirmedAt/)
   })
 
   test('限时额度发布页区分资料失败并严格匹配显式服务 ID', () => {

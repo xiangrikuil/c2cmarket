@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, nextTick, onMounted, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { toast } from 'vue-sonner'
 import ApiQuotaOwnerManager from '@/components/api-quota/ApiQuotaOwnerManager.vue'
@@ -29,6 +29,16 @@ const actionPending = computed(() => publishMutation.isPending.value || pauseMut
 const errorMessage = computed(() => error.value instanceof Error ? error.value.message : '无法读取这条 API 服务，请确认当前账号是发布者。')
 const categoryIconByCode = computed(() => new Map((catalogCategories.value ?? []).map(category => [category.code, category.iconDataUrl])))
 const serviceIconSrc = computed(() => service.value ? getApiServiceProductIconSrc(service.value, categoryIconByCode.value) : null)
+const ownerSectionHashes = new Set(['#health-probe', '#quota-offers'])
+
+async function scrollToOwnerSection() {
+  if (!import.meta.client || !ownerSectionHashes.has(route.hash) || !service.value) return
+  await nextTick()
+  document.getElementById(route.hash.slice(1))?.scrollIntoView({ block: 'start' })
+}
+
+watch([() => route.hash, () => service.value?.id], scrollToOwnerSection, { flush: 'post' })
+onMounted(scrollToOwnerSection)
 
 function publishService() {
   if (!service.value || actionPending.value) return

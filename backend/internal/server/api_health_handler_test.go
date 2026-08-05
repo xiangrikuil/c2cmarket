@@ -129,7 +129,7 @@ func TestOwnerAPIHealthProbeRoutesKeepCredentialWriteOnly(t *testing.T) {
 		t.Fatalf("owner probe response leaked or omitted credential state: %s", body)
 	}
 
-	putBody := `{"baseUrl":"https://example.com/v1","model":"gpt-5.1","credential":"sk-owner-secret","enabled":true}`
+	putBody := `{"baseUrl":"https://example.com/v1","model":"gpt-5.1","credential":"sk-owner-secret","enabled":true,"acknowledgeInsecureHttp":false}`
 	missingCSRF := newJSONRequest(http.MethodPut, path, putBody)
 	addCookie(missingCSRF, owner.cookie)
 	missingCSRF.Header.Set("If-Match", `"4"`)
@@ -212,6 +212,31 @@ func TestOwnerAPIHealthProbeRoutesKeepCredentialWriteOnly(t *testing.T) {
 		t.Fatalf("delete status=%d version=%d body=%s", deleteResponse.Code, health.deleteExpectedVersion, deleteResponse.Body.String())
 	}
 	assertAPIHealthPrivateNoStore(t, deleteResponse)
+}
+
+func TestOwnerAPIHealthProbePassesInsecureHTTPAcknowledgement(t *testing.T) {
+	now := time.Date(2026, 8, 5, 5, 0, 0, 0, time.UTC)
+	health := &apiHealthRouteService{found: true, config: testAPIHealthConfig(now)}
+	handler := NewServer(app.NewServiceWithClock(func() time.Time { return now }), ServerOptions{
+		EnableDevAuth: true,
+		APIHealth:     health,
+	})
+	owner := createSession(t, handler, "http-probe-owner", false)
+	path := "/api/v1/owner/api-services/" + health.config.APIServiceID + "/health-probe"
+	request := newJSONRequest(http.MethodPut, path, `{"baseUrl":"http://api.example.com","model":"gpt-5-mini","credential":"low-quota-key","enabled":true,"acknowledgeInsecureHttp":true}`)
+	addAuth(request, owner, "unused")
+	request.Header.Set("If-Match", `"4"`)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("HTTP probe PUT status=%d body=%s", response.Code, response.Body.String())
+	}
+	if !health.putInput.AcknowledgeInsecureHTTP || health.putInput.BaseURL != "http://api.example.com" {
+		t.Fatalf("HTTP acknowledgement was not passed to service: %+v", health.putInput)
+	}
+	if body := response.Body.String(); strings.Contains(body, "acknowledgeInsecureHttp") || strings.Contains(body, "low-quota-key") {
+		t.Fatalf("request-only HTTP acknowledgement or credential leaked into response: %s", body)
+	}
 }
 
 func TestOwnerAPIHealthProbeFirstPutAcceptsVersionZero(t *testing.T) {

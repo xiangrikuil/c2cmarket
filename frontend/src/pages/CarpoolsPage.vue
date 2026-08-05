@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { ChevronDown, Code2, Globe2, MessageCircle, PackageSearch, Search, ShieldCheck, SlidersHorizontal, Sparkles, UsersRound } from 'lucide-vue-next'
+import { ChevronDown, Code2, Globe2, MessageCircle, PackageSearch, Search, ShieldCheck, Sparkles, UsersRound } from 'lucide-vue-next'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
@@ -114,12 +114,6 @@ const availableCount = computed(() => rows.value.filter(row => listStatusForCarp
 const recentlyConfirmedCount = computed(() => rows.value.filter(row => row.confirmedWithin48h).length)
 const boundaryConfirmationCount = computed(() => rows.value.filter(row => isHighRiskGptCarpoolPlan(row.product)).length)
 const selectedCategoryLabel = computed(() => getProductCategoryLabel(selectedCategory.value))
-const activeFilterCount = computed(() => {
-  const selectedFilterCount = filters.filter(group => selected.value[group.label] !== group.active).length
-  return selectedFilterCount
-    + Number(selectedCategory.value !== 'all')
-    + Number(selectedPlan.value !== allProductPlanValue)
-})
 const categoryNotice = computed(() => {
   if (selectedCategory.value === 'gpt') {
     return 'GPT 分类会包含 Business、Plus、Pro 5x Web、Pro 20x Web；部分套餐申请前需要确认发布和使用边界。'
@@ -260,14 +254,8 @@ function openCarpool(event: MouseEvent | KeyboardEvent, id: string) {
           <div><span><UsersRound /></span><dl><dt>可上车</dt><dd>{{ availableCount }}</dd><small>可立即加入</small></dl></div>
           <div><span><ShieldCheck /></span><dl><dt>近期确认</dt><dd>{{ recentlyConfirmedCount }}</dd><small>48 小时内确认</small></dl></div>
           <div><span><MessageCircle /></span><dl><dt>边界确认</dt><dd>{{ boundaryConfirmationCount }}</dd><small>已明确规则</small></dl></div>
-          <div><span><SlidersHorizontal /></span><dl><dt>当前筛选</dt><dd>{{ activeFilterCount }}</dd><small>已应用筛选</small></dl></div>
         </div>
       </div>
-      <aside class="carpool-reference-note">
-        <div class="flex items-center gap-2 font-semibold text-primary"><ShieldCheck class="h-5 w-5" />关于当前筛选</div>
-        <p>{{ categoryNotice }}</p>
-        <div class="mt-3 text-xs font-semibold text-primary">推荐优先选择近期确认且使用条件完整的车源。</div>
-      </aside>
     </section>
 
     <div>
@@ -327,6 +315,7 @@ function openCarpool(event: MouseEvent | KeyboardEvent, id: string) {
       </div>
       <div class="mt-4 border-t border-border pt-4">
         <FilterBar v-model="selected" :groups="filters" :result-count="rows.length" />
+        <p class="mt-3 text-xs leading-5 text-muted-foreground">{{ categoryNotice }}</p>
       </div>
     </section>
     <Alert v-if="canModerateCarpools" class="mb-4">
@@ -340,7 +329,9 @@ function openCarpool(event: MouseEvent | KeyboardEvent, id: string) {
         v-for="row in pagination.paginatedRows.value"
         :key="row.id"
         class="carpool-table-row cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        role="link"
         tabindex="0"
+        :aria-label="`查看 ${row.product} 车源`"
         @click="openCarpool($event, row.id)"
         @keydown.enter="openCarpool($event, row.id)"
       >

@@ -16,7 +16,15 @@ type NormalizedTarget struct {
 }
 
 func NormalizeTarget(raw string) (NormalizedTarget, error) {
-	policy, err := outboundhttp.NewPolicy(nil)
+	return normalizeTarget(raw, false)
+}
+
+func normalizeTarget(raw string, allowInsecureHTTP bool) (NormalizedTarget, error) {
+	options := make([]outboundhttp.PolicyOption, 0, 1)
+	if allowInsecureHTTP {
+		options = append(options, outboundhttp.WithInsecureHTTP())
+	}
+	policy, err := outboundhttp.NewPolicy(nil, options...)
 	if err != nil {
 		return NormalizedTarget{}, err
 	}
@@ -28,19 +36,42 @@ func NormalizeTarget(raw string) (NormalizedTarget, error) {
 	if err != nil {
 		return NormalizedTarget{}, fmt.Errorf("parse normalized target: %w", err)
 	}
+	if parsed.Path == "" {
+		parsed.Path = "/v1"
+		normalized = parsed.String()
+	}
 	host := parsed.Hostname()
 	port := parsed.Port()
 	if port == "" {
-		port = "443"
+		port = "80"
+		if parsed.Scheme == "https" {
+			port = "443"
+		}
 	}
 	authority := net.JoinHostPort(host, port)
 	if address, parseErr := netip.ParseAddr(host); parseErr != nil || !address.Is6() {
 		authority = host + ":" + port
 	}
 	return NormalizedTarget{
-		BaseURL: strings.TrimRight(normalized, "/"),
-		Origin:  "https://" + authority,
+		BaseURL: normalized,
+		Origin:  parsed.Scheme + "://" + authority,
 	}, nil
+}
+
+func UsesInsecureHTTP(raw string) bool {
+	parsed, err := url.Parse(strings.TrimSpace(raw))
+	return err == nil && strings.EqualFold(parsed.Scheme, "http")
+}
+
+func TargetTransportSecurity(raw string) string {
+	if UsesInsecureHTTP(raw) {
+		return TransportSecurityHTTP
+	}
+	parsed, err := url.Parse(strings.TrimSpace(raw))
+	if err == nil && strings.EqualFold(parsed.Scheme, "https") {
+		return TransportSecurityHTTPS
+	}
+	return TransportSecurityUnknown
 }
 
 func MeasurementIdentityChanged(existing Config, target NormalizedTarget, model string) bool {

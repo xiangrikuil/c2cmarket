@@ -39,6 +39,10 @@ const (
 	AvailabilityStale                  = "stale"
 	AvailabilityTemporarilyUnavailable = "temporarily_unavailable"
 
+	TransportSecurityHTTPS   = "secure_https"
+	TransportSecurityHTTP    = "insecure_http"
+	TransportSecurityUnknown = "unknown"
+
 	SlotStateSmooth      = "smooth"
 	SlotStateFluctuating = "fluctuating"
 	SlotStateAbnormal    = "abnormal"
@@ -97,10 +101,11 @@ type Config struct {
 }
 
 type ConfigInput struct {
-	BaseURL    string
-	Model      string
-	Credential *string
-	Enabled    bool
+	BaseURL                 string
+	Model                   string
+	Credential              *string
+	Enabled                 bool
+	AcknowledgeInsecureHTTP bool
 }
 
 type Challenge struct {
@@ -175,6 +180,7 @@ type HealthSlot struct {
 type Summary struct {
 	State              string
 	AvailabilityReason string
+	TransportSecurity  string
 	SuccessRatePercent *string
 	SuccessfulSamples  int
 	TotalSamples       int
@@ -185,5 +191,5 @@ type Summary struct {
 }
 
 func TemporarilyUnavailableSummary(now time.Time) Summary {
-	return noSampleSummary(AvailabilityTemporarilyUnavailable, nil, now)
+	return noSampleSummary(AvailabilityTemporarilyUnavailable, nil, TransportSecurityUnknown, now)
 }

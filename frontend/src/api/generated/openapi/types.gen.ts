@@ -1097,6 +1097,10 @@ export type ServiceHealthSummary = {
     totalSamples: number;
     medianTtftMs: number | null;
     probeModel: string | null;
+    /**
+     * Public-safe transport disclosure derived from the configured target scheme. It does not expose the target URL.
+     */
+    transportSecurity: 'secure_https' | 'insecure_http' | null;
     lastSampledAt: string | null;
     samples: [
         ServiceHealthSample,
@@ -1122,17 +1126,24 @@ export type ApiHealthProbeAuthorizationMethod = 'dns_txt' | 'http_challenge' | '
 
 export type ApiHealthProbeConfigRequest = {
     /**
-     * Public HTTPS OpenAI-compatible base URL. Query strings, fragments, and userinfo are rejected.
+     * Public HTTP or HTTPS OpenAI-compatible base URL. HTTPS is recommended. A root-only URL is normalized with /v1; an existing non-root path is preserved. Query strings, fragments, userinfo, private addresses, metadata addresses, unsafe DNS results, redirects, and DNS rebinding are rejected.
      */
     baseUrl: string;
     model: string;
     enabled: boolean;
+    /**
+     * Must be true on every request that saves an HTTP base URL; omission is treated as false. Confirms that the seller accepts unencrypted transport risk for a dedicated low-quota, low-privilege key restricted to the probe model. Ignored for HTTPS URLs.
+     */
+    acknowledgeInsecureHttp?: boolean;
 };
 
 export type OwnerApiHealthProbeConfig = {
     id: string;
     apiServiceId: string;
     protocol: ApiHealthProbeProtocol;
+    /**
+     * Normalized OpenAI-compatible base URL. Root-only input is returned with /v1 appended.
+     */
     baseUrl: string;
     normalizedOrigin: string;
     model: string;
@@ -1283,17 +1294,13 @@ export type ApiServiceRequest = {
      */
     merchantRefundCommitment: boolean;
     /**
-     * Merchant-declared time-to-first-token band. C2CMarket does not measure or verify it.
-     */
-    declaredTtftBand?: 'under_1s' | '1_to_3s' | '3_to_5s' | '5_to_10s' | 'over_10s';
-    /**
      * Merchant-declared maximum concurrent request count.
      */
-    declaredMaxConcurrency?: number;
+    declaredMaxConcurrency: number;
     /**
-     * Time when the merchant most recently confirmed the declaration. All three performance fields must be supplied together or all omitted.
+     * Required seller declaration. True means the seller may view or record buyer prompts; false remains a seller declaration, not a platform privacy guarantee.
      */
-    performanceConfirmedAt?: string;
+    promptAuditEnabled: boolean;
     accessModes: Array<ApiServiceAccessModeInput>;
     models?: Array<ApiServiceModelInput>;
     packages?: Array<ApiServicePackageInput>;
@@ -1459,6 +1466,10 @@ export type PublicApiService = {
     merchantRefundPolicyVersion: 'api-merchant-refund-v1';
     declaredMaxConcurrency?: number;
     /**
+     * Seller prompt-audit declaration. Null means a historical service has not been revised to declare either state.
+     */
+    promptAuditEnabled: boolean | null;
+    /**
      * Owner's manual accepting-orders flag. This is not sufficient by itself; clients must use isOrderable for order creation.
      */
     acceptingOrders: boolean;
@@ -1555,7 +1566,14 @@ export type ApiService = {
      */
     declaredTtftBand?: 'under_1s' | '1_to_3s' | '3_to_5s' | '5_to_10s' | 'over_10s';
     declaredMaxConcurrency?: number;
+    /**
+     * Historical owner-visible seller confirmation time. New service writes do not accept this field.
+     */
     performanceConfirmedAt?: string;
+    /**
+     * Seller prompt-audit declaration. Null means a historical service has not been revised to declare either state.
+     */
+    promptAuditEnabled: boolean | null;
     acceptingOrders: boolean;
     paymentWindowMinutes: number;
     acceptedPaymentMethods: Array<'wechat' | 'alipay'>;
@@ -1641,6 +1659,7 @@ export type ApiServiceSalesSummary = {
 
 export type OwnerApiServiceListItem = ApiService & {
     salesSummary: ApiServiceSalesSummary;
+    healthSummary: ServiceHealthSummary;
 };
 
 export type OwnerApiServiceList = {
@@ -1782,7 +1801,10 @@ export type ApiQuotaOfferRequest = {
      */
     modelMultiplier: DecimalString;
     quotaUsagePolicy: QuotaUsagePolicyInput;
-    deliveryMode: 'manual' | 'preimported';
+    /**
+     * New offers support seller manual delivery only. Historical offer responses may still report preimported.
+     */
+    deliveryMode: 'manual';
     deliveryEtaMinutes: number;
     saleMode: 'continuous' | 'scheduled';
     /**
@@ -1803,6 +1825,9 @@ export type ApiQuotaOfferFields = {
     cnyPerUsd: DecimalString;
     modelMultiplier: DecimalString;
     quotaUsagePolicy: QuotaUsagePolicy;
+    /**
+     * Historical response objects may still report preimported even though new offer creation accepts only manual.
+     */
     deliveryMode: 'manual' | 'preimported';
     deliveryEtaMinutes: number;
     saleMode: 'continuous' | 'scheduled';
@@ -1902,7 +1927,10 @@ export type ApiQuotaRushOfferRequest = {
     modelMultiplier: DecimalString;
     quotaUsagePolicy: QuotaUsagePolicyInput;
     copies: number;
-    deliveryMode: 'manual' | 'preimported';
+    /**
+     * New rush offers support seller manual delivery only. Historical offer responses may still report preimported.
+     */
+    deliveryMode: 'manual';
     deliveryEtaMinutes: number;
     slotKey: string;
     /**
@@ -1910,10 +1938,6 @@ export type ApiQuotaRushOfferRequest = {
      */
     expiresAt: string;
     sourceConfirmedAt: string;
-    /**
-     * Required only for preimported delivery.
-     */
-    deliveryKind?: 'api_key_endpoint' | 'login_account';
 };
 
 export type ApiQuotaRushOfferResponse = {
@@ -1931,6 +1955,10 @@ export type PublicApiQuotaOffer = ApiQuotaOfferFields & {
     sellerIdentityType: 'individual' | 'merchant';
     sellerLinuxDoBound: boolean;
     declaredMaxConcurrency: number;
+    /**
+     * Seller prompt-audit declaration from the linked API service. Null means historical undeclared.
+     */
+    promptAuditEnabled: boolean | null;
     healthSummary: ServiceHealthSummary;
     saleCutoffAt: string;
     expiresAt: string;
@@ -2016,6 +2044,10 @@ export type ApiPurchaseIntentCore = {
     maximumIntentCnySnapshot?: DecimalString;
     pricingSnapshot: string;
     quotaUsagePolicySnapshot: QuotaUsagePolicy;
+    /**
+     * Seller prompt-audit declaration frozen when the purchase intent was created. Null means historical undeclared.
+     */
+    promptAuditEnabledSnapshot: boolean | null;
     buyerNote?: string;
     contactedAt?: string | null;
     buyerCancelledAt?: string | null;
@@ -2229,6 +2261,10 @@ export type ApiOrder = {
      */
     pricingSnapshot?: string;
     quotaUsagePolicySnapshot: QuotaUsagePolicy;
+    /**
+     * Seller prompt-audit declaration frozen from the purchase intent or limited-offer order context. Null means historical undeclared and is never filled from the current service.
+     */
+    promptAuditEnabledSnapshot: boolean | null;
     apiQuotaBatchId?: string;
     apiQuotaOfferId?: string;
     apiQuotaSaleRoundId?: string;
@@ -3732,15 +3768,19 @@ export type ModelAuditTargetRequestWritable = {
 
 export type ApiHealthProbeConfigRequestWritable = {
     /**
-     * Public HTTPS OpenAI-compatible base URL. Query strings, fragments, and userinfo are rejected.
+     * Public HTTP or HTTPS OpenAI-compatible base URL. HTTPS is recommended. A root-only URL is normalized with /v1; an existing non-root path is preserved. Query strings, fragments, userinfo, private addresses, metadata addresses, unsafe DNS results, redirects, and DNS rebinding are rejected.
      */
     baseUrl: string;
     model: string;
     /**
-     * Dedicated low-privilege probe credential. Omit on update to retain the currently encrypted credential.
+     * Dedicated low-quota, low-privilege API key restricted to the probe model. Omit on update to retain the currently encrypted credential.
      */
     credential?: string;
     enabled: boolean;
+    /**
+     * Must be true on every request that saves an HTTP base URL; omission is treated as false. Confirms that the seller accepts unencrypted transport risk for a dedicated low-quota, low-privilege key restricted to the probe model. Ignored for HTTPS URLs.
+     */
+    acknowledgeInsecureHttp?: boolean;
 };
 
 /**
@@ -8222,10 +8262,6 @@ export type CreateOwnerApiQuotaBatchResponse = CreateOwnerApiQuotaBatchResponses
 export type CreateOwnerApiQuotaRushOfferData = {
     body: {
         payload: ApiQuotaRushOfferRequest;
-        /**
-         * Required only for preimported delivery. Strict UTF-8 CSV, at most 5 MiB and 5000 rows.
-         */
-        file?: Blob | File;
     };
     headers: {
         'Idempotency-Key': string;

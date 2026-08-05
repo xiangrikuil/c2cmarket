@@ -9,6 +9,7 @@ import type {
 export type ApiHealthState = ServiceHealthSummary['state']
 export type ApiHealthAvailabilityReason = ServiceHealthSummary['availabilityReason']
 export type ApiHealthSlotState = ServiceHealthSample['state']
+export type ApiHealthTransportSecurity = ServiceHealthSummary['transportSecurity']
 export type ApiHealthAuthorizationStatus = ApiHealthProbeAuthorizationStatus
 export type ApiHealthAuthorizationMethod = Exclude<ApiHealthProbeAuthorizationMethod, null>
 
@@ -69,6 +70,7 @@ export type SaveOwnerAPIHealthProbeInput = {
   model: string
   credential?: string
   enabled: boolean
+  acknowledgeInsecureHttp: boolean
 }
 
 export type APIHealthProbeChallenge = ApiHealthProbeChallenge

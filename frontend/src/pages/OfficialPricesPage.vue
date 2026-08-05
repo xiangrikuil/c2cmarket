@@ -23,6 +23,7 @@ type SortMode = 'updated_desc' | 'cny_asc' | 'trust_desc' | 'verified_recent' | 
 
 const route = useRoute()
 const router = useRouter()
+const isRealBackend = shouldUseRealBackend()
 const officialPricesQuery = useOfficialPrices()
 const { data } = officialPricesQuery
 prefetchQueriesOnServer(officialPricesQuery)
@@ -33,16 +34,16 @@ const region = ref(typeof route.query.region === 'string' ? route.query.region :
 const channel = ref(typeof route.query.channel === 'string' ? route.query.channel : '全部')
 const officialPriceStatuses: OfficialPrice['status'][] = ['已验证', '待验证', '需复核', '有争议', '已过期']
 const routeStatus = typeof route.query.status === 'string' && officialPriceStatuses.includes(route.query.status as OfficialPrice['status']) ? route.query.status as OfficialPrice['status'] : '全部'
-const status = ref<StatusFilter>(shouldUseRealBackend() && routeStatus !== '已验证' ? '全部' : routeStatus)
+const status = ref<StatusFilter>(isRealBackend && routeStatus !== '已验证' ? '全部' : routeStatus)
 const plan = ref(typeof route.query.plan === 'string' ? route.query.plan : '全部')
 const openingMethod = ref(typeof route.query.openingMethod === 'string' ? route.query.openingMethod : '全部')
 const source = ref(typeof route.query.source === 'string' ? route.query.source : '全部')
 const trust = ref(typeof route.query.trust === 'string' ? route.query.trust : '不限')
-const defaultSort: SortMode = shouldUseRealBackend() ? 'cny_asc' : 'updated_desc'
+const defaultSort: SortMode = isRealBackend ? 'cny_asc' : 'updated_desc'
 const sort = ref<SortMode>(route.query.sort === 'cny_asc' || route.query.sort === 'trust_desc' || route.query.sort === 'verified_recent' || route.query.sort === 'submitted_desc' ? route.query.sort : defaultSort)
 
-const statusOptions = computed<StatusFilter[]>(() => shouldUseRealBackend() ? ['全部', '已验证'] : ['全部', '已验证', '待验证'])
-const detailedStatuses = computed<StatusFilter[]>(() => shouldUseRealBackend() ? ['全部', '已验证'] : ['全部', ...officialPriceStatuses])
+const statusOptions: StatusFilter[] = ['全部', '已验证', '待验证']
+const detailedStatuses: StatusFilter[] = ['全部', ...officialPriceStatuses]
 const products = ['全部', 'ChatGPT', 'Claude', 'Cursor', 'Gemini', '其他']
 const regions = ['全部', '菲律宾', '土耳其', '香港', '日本', '美国', '其他']
 const channels = ['全部', 'Web', 'iOS App Store', 'Google Play', '其他']
@@ -57,7 +58,7 @@ const sortOptions: Array<{ label: string, value: SortMode }> = [
   { label: '最近验证', value: 'verified_recent' },
   { label: '提交时间最新', value: 'submitted_desc' },
 ]
-const pageDescription = shouldUseRealBackend()
+const pageDescription = isRealBackend
   ? '按产品、地区、渠道和开通方式维护官网公开价；公开表仅展示审核通过的已验证价格记录。'
   : '按产品、地区、渠道和开通方式维护官网公开价格记录。'
 
@@ -185,10 +186,6 @@ function openPrice(event: MouseEvent | KeyboardEvent, id: string) {
 
     <div class="official-price-layout">
       <main class="min-w-0">
-        <div class="official-price-category-tabs mb-4 flex flex-wrap gap-2">
-          <Button v-for="item in products" :key="item" :variant="product === item ? 'default' : 'outline'" @click="product = item">{{ item }}</Button>
-        </div>
-
         <div class="official-price-filter c2c-filterbar mb-4 rounded-lg border border-border bg-card px-3 py-2">
       <div class="official-price-filter-grid">
         <Input v-model="q" name="official-price-search" class="official-price-search h-8 bg-background text-sm" placeholder="搜索产品、地区、渠道或来源" />
@@ -213,7 +210,7 @@ function openPrice(event: MouseEvent | KeyboardEvent, id: string) {
             <SelectContent><SelectItem v-for="item in channels" :key="item" :value="item">{{ item }}</SelectItem></SelectContent>
           </Select>
         </label>
-        <div class="flex min-w-[236px] flex-wrap self-end rounded-md border border-border bg-background p-1">
+        <div v-if="!isRealBackend" class="official-price-status-filter flex min-w-[236px] flex-wrap self-end rounded-md border border-border bg-background p-1">
           <Button
             v-for="item in statusOptions"
             :key="item"
@@ -247,7 +244,7 @@ function openPrice(event: MouseEvent | KeyboardEvent, id: string) {
                     <SelectContent><SelectItem v-for="item in openingMethods" :key="item" :value="item">{{ item }}</SelectItem></SelectContent>
                   </Select>
                 </label>
-                <label class="grid gap-1 text-xs text-muted-foreground">详细状态
+                <label v-if="!isRealBackend" class="grid gap-1 text-xs text-muted-foreground">详细状态
                   <Select v-model="status">
                     <SelectTrigger class="h-8 bg-background text-xs text-foreground"><SelectValue /></SelectTrigger>
                     <SelectContent><SelectItem v-for="item in detailedStatuses" :key="item" :value="item">{{ item }}</SelectItem></SelectContent>
@@ -295,10 +292,10 @@ function openPrice(event: MouseEvent | KeyboardEvent, id: string) {
         </div>
 
         <div v-if="rows.length === 0" class="rounded-xl border border-border bg-card p-8 text-center text-sm text-muted-foreground">
-          {{ shouldUseRealBackend() ? '当前筛选条件下暂无已验证官网公开价格记录。' : '当前筛选条件下暂无官网公开价格记录。' }}
+          {{ isRealBackend ? '当前筛选条件下暂无已验证官网公开价格记录。' : '当前筛选条件下暂无官网公开价格记录。' }}
         </div>
         <SoftTable v-else class="official-price-table" :columns="['产品', '地区 / 渠道', '官网公开价', '折合人民币', '状态', '来源 / 维护', '更新时间']">
-      <tr v-for="row in pagination.paginatedRows.value" :key="row.id" class="cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" tabindex="0" @click="openPrice($event, row.id)" @keydown.enter="openPrice($event, row.id)">
+      <tr v-for="row in pagination.paginatedRows.value" :key="row.id" class="cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" role="link" tabindex="0" :aria-label="`查看 ${row.product} ${row.plan} 官网价格`" @click="openPrice($event, row.id)" @keydown.enter="openPrice($event, row.id)">
         <td><div class="flex items-center gap-3"><span class="official-price-product-icon" :class="productToneClass(row.product)"><img v-if="productIconSrc(row.product)" :src="productIconSrc(row.product)!" alt="" /><Package v-else class="h-4 w-4" /></span><div class="min-w-0"><div class="font-medium">{{ row.product }} {{ row.plan }}</div><div class="text-xs text-muted-foreground">{{ row.openingMethod }}</div></div></div></td>
         <td><div>{{ row.region }}</div><div class="text-xs text-muted-foreground">{{ row.channel }}</div></td>
         <td>{{ row.originalPrice }}</td>

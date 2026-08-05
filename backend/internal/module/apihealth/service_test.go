@@ -48,6 +48,58 @@ func TestServicePutOwnerConfigPassesAuthorizationInvalidationMutation(t *testing
 	}
 }
 
+func TestConfigValidationErrorUsesProbeAPIKeyWording(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name    string
+		err     error
+		message string
+	}{
+		{name: "required", err: ErrCredentialRequired, message: "启用探针前必须配置探针专用 API Key。"},
+		{name: "invalid", err: ErrCredentialInvalid, message: "探针专用 API Key 不能为空。"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			appErr := configValidationError(test.err)
+			if appErr.Detail != test.message || len(appErr.FieldErrors) != 1 ||
+				appErr.FieldErrors[0].Field != "credential" || appErr.FieldErrors[0].Message != test.message {
+				t.Fatalf("unexpected API Key validation error: %+v", appErr)
+			}
+		})
+	}
+}
+
+func TestServicePutOwnerConfigRequiresHTTPAcknowledgementBeforeValidation(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, time.August, 5, 12, 0, 0, 0, time.UTC)
+	repository := &probeServiceRepository{}
+	validationCalls := 0
+	service := NewService(repository, urlValidatorFunc(func(_ context.Context, raw string) (string, error) {
+		validationCalls++
+		return raw, nil
+	}), nil, nil, func() time.Time { return now }, time.Minute)
+	credential := "low-quota-probe-key"
+
+	_, appErr := service.PutOwnerConfig(context.Background(), auth.User{ID: "owner"}, "service", ConfigInput{
+		BaseURL: "http://api.example.com", Model: "gpt-5-mini", Credential: &credential,
+	}, 0)
+	if appErr == nil || appErr.Status != http.StatusUnprocessableEntity || len(appErr.FieldErrors) != 1 ||
+		appErr.FieldErrors[0].Field != "acknowledgeInsecureHttp" || validationCalls != 0 {
+		t.Fatalf("unexpected missing acknowledgement result: err=%+v validationCalls=%d", appErr, validationCalls)
+	}
+
+	config, appErr := service.PutOwnerConfig(context.Background(), auth.User{ID: "owner"}, "service", ConfigInput{
+		BaseURL: "http://api.example.com", Model: "gpt-5-mini", Credential: &credential,
+		AcknowledgeInsecureHTTP: true,
+	}, 0)
+	if appErr != nil {
+		t.Fatalf("put acknowledged HTTP config: %v", appErr)
+	}
+	if validationCalls != 1 || config.BaseURL != "http://api.example.com/v1" || config.NormalizedOrigin != "http://api.example.com:80" {
+		t.Fatalf("unexpected acknowledged HTTP config=%+v validationCalls=%d", config, validationCalls)
+	}
+}
+
 func TestServiceCreateChallengeBindsExactTarget(t *testing.T) {
 	t.Parallel()
 	now := time.Date(2026, time.August, 4, 12, 0, 0, 0, time.UTC)
@@ -132,6 +184,39 @@ func TestServiceVerifyHTTPChallengeDoesNotSendCredential(t *testing.T) {
 	}
 	if !repository.completedSucceeded || repository.completedReason != "" {
 		t.Fatalf("unexpected verification completion: %+v", repository)
+	}
+}
+
+func TestServiceVerifyInsecureHTTPChallengeDoesNotSendCredential(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, time.August, 5, 12, 0, 0, 0, time.UTC)
+	token := "http-control-token"
+	challenge := storedProbeChallenge(token, AuthorizationMethodHTTPChallenge, now.Add(time.Minute))
+	challenge.Config.BaseURL = "http://api.example.com/v1"
+	challenge.Config.NormalizedOrigin = "http://api.example.com:80"
+	repository := &probeServiceRepository{challenge: challenge}
+	var captured *http.Request
+	factory := httpClientFactoryFunc(func(Config) (*http.Client, error) {
+		return &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+			captured = request
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     make(http.Header),
+				Body:       io.NopCloser(bytes.NewBufferString(token)),
+			}, nil
+		})}, nil
+	})
+	service := NewService(repository, nil, nil, factory, func() time.Time { return now }, time.Minute)
+
+	_, appErr := service.VerifyChallenge(context.Background(), auth.User{ID: "owner"}, "service", 7)
+	if appErr != nil {
+		t.Fatalf("verify insecure HTTP challenge: %v", appErr)
+	}
+	if captured == nil || captured.URL.String() != "http://api.example.com:80/.well-known/c2cmarket-probe-verification" {
+		t.Fatalf("unexpected HTTP challenge target: %v", captured)
+	}
+	if captured.Header.Get("Authorization") != "" {
+		t.Fatalf("HTTP challenge sent credential header: %v", captured.Header)
 	}
 }
 

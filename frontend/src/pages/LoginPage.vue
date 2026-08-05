@@ -139,14 +139,14 @@ async function logout() {
   <main class="login-page relative grid min-h-screen justify-items-center overflow-hidden px-5 pb-6 pt-8 xl:grid-cols-[minmax(260px,1fr)_450px_minmax(260px,1fr)] xl:items-center xl:gap-12 xl:px-12">
     <aside class="login-intro relative z-10 hidden max-w-[390px] justify-self-end xl:block">
       <Badge variant="secondary">C2CMarket</Badge>
-      <h1 class="mt-5 text-5xl font-semibold leading-tight tracking-tight">连接供需，<br><span class="text-primary">高效撮合</span></h1>
+      <h2 class="mt-5 text-5xl font-semibold leading-tight tracking-tight">连接供需，<br><span class="text-primary">高效撮合</span></h2>
       <p class="mt-5 text-base leading-8 text-muted-foreground">浏览订阅拼车、API 服务与官网公开价格，在同一套真实状态中完成发现和跟进。</p>
       <div class="login-visual mt-8" aria-hidden="true"><div class="login-visual-window"><div /><div /><div /></div><div class="login-visual-orbit" /><div class="login-visual-badge"><ShieldCheck class="h-8 w-8" /></div></div>
     </aside>
     <div class="relative z-10 flex w-full max-w-[450px] flex-col items-center">
       <section class="mb-5 flex flex-col items-center text-center">
-        <div class="grid h-12 w-12 place-items-center rounded-xl bg-foreground text-background shadow-xl shadow-primary/20">
-          <ShieldCheck class="h-6 w-6 text-primary" />
+        <div class="h-12 w-12 overflow-hidden rounded-xl shadow-xl shadow-primary/20">
+          <img src="/c2cmarket-icon-512.png" alt="" class="h-full w-full object-cover" />
         </div>
         <h1 class="mt-3 text-2xl font-semibold text-primary">C2CMarket</h1>
         <p class="mt-1 text-sm text-muted-foreground">AI 低价情报与社区撮合平台</p>
@@ -297,7 +297,7 @@ async function logout() {
   background-size: auto, auto, 42px 42px, 42px 42px, auto;
 }
 
-.login-intro h1 {
+.login-intro h2 {
   color: var(--foreground);
 }
 

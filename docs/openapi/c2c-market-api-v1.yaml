@@ -3421,7 +3421,7 @@ paths:
         - sessionCookie: []
           csrfToken: []
       summary: Publish one fixed-slot limited quota offer atomically.
-      description: Creates and publishes one batch, one scheduled offer, one system sale round, one allocation, authoritative inventory, and optional encrypted credential inventory in one transaction. Raw credential values are never returned.
+      description: Creates and publishes one manual-delivery batch, scheduled offer, system sale round, allocation, and authoritative inventory in one transaction.
       parameters:
         - $ref: "#/components/parameters/ResourceId"
         - $ref: "#/components/parameters/IdempotencyKey"
@@ -3436,10 +3436,6 @@ paths:
               properties:
                 payload:
                   $ref: "#/components/schemas/APIQuotaRushOfferRequest"
-                file:
-                  type: string
-                  format: binary
-                  description: Required only for preimported delivery. Strict UTF-8 CSV, at most 5 MiB and 5000 rows.
             encoding:
               payload:
                 contentType: application/json
@@ -10183,7 +10179,7 @@ components:
       type: object
       additionalProperties: false
       description: Platform-measured service health for one configured model from the current platform node. It is not an SLA or verification of every model offered by the service.
-      required: [state, availabilityReason, successRatePercent, successfulSamples, totalSamples, medianTtftMs, probeModel, lastSampledAt, samples]
+      required: [state, availabilityReason, successRatePercent, successfulSamples, totalSamples, medianTtftMs, probeModel, transportSecurity, lastSampledAt, samples]
       properties:
         state:
           type: string
@@ -10206,6 +10202,10 @@ components:
           minimum: 0
         probeModel:
           type: [string, "null"]
+        transportSecurity:
+          type: [string, "null"]
+          enum: [secure_https, insecure_http, null]
+          description: Public-safe transport disclosure derived from the configured target scheme. It does not expose the target URL.
         lastSampledAt:
           type: [string, "null"]
           format: date-time
@@ -10232,7 +10232,7 @@ components:
         baseUrl:
           type: string
           format: uri
-          description: Public HTTPS OpenAI-compatible base URL. Query strings, fragments, and userinfo are rejected.
+          description: Public HTTP or HTTPS OpenAI-compatible base URL. HTTPS is recommended. A root-only URL is normalized with /v1; an existing non-root path is preserved. Query strings, fragments, userinfo, private addresses, metadata addresses, unsafe DNS results, redirects, and DNS rebinding are rejected.
         model:
           type: string
           minLength: 1
@@ -10240,9 +10240,13 @@ components:
           type: string
           minLength: 1
           writeOnly: true
-          description: Dedicated low-privilege probe credential. Omit on update to retain the currently encrypted credential.
+          description: Dedicated low-quota, low-privilege API key restricted to the probe model. Omit on update to retain the currently encrypted credential.
         enabled:
           type: boolean
+        acknowledgeInsecureHttp:
+          type: boolean
+          default: false
+          description: Must be true on every request that saves an HTTP base URL; omission is treated as false. Confirms that the seller accepts unencrypted transport risk for a dedicated low-quota, low-privilege key restricted to the probe model. Ignored for HTTPS URLs.
     OwnerAPIHealthProbeConfig:
       type: object
       additionalProperties: false
@@ -10259,6 +10263,7 @@ components:
         baseUrl:
           type: string
           format: uri
+          description: Normalized OpenAI-compatible base URL. Root-only input is returned with /v1 appended.
         normalizedOrigin:
           type: string
           format: uri
@@ -10467,6 +10472,8 @@ components:
         - usageVisibility
         - accountPoolType
         - merchantRefundCommitment
+        - declaredMaxConcurrency
+        - promptAuditEnabled
         - accessModes
       properties:
         merchantProfileId:
@@ -10532,18 +10539,13 @@ components:
         merchantRefundCommitment:
           type: boolean
           description: Explicit seller choice. True opts into api-merchant-refund-v1; false records no additional merchant refund promise.
-        declaredTtftBand:
-          type: string
-          enum: [under_1s, 1_to_3s, 3_to_5s, 5_to_10s, over_10s]
-          description: Merchant-declared time-to-first-token band. C2CMarket does not measure or verify it.
         declaredMaxConcurrency:
           type: integer
           minimum: 1
           description: Merchant-declared maximum concurrent request count.
-        performanceConfirmedAt:
-          type: string
-          format: date-time
-          description: Time when the merchant most recently confirmed the declaration. All three performance fields must be supplied together or all omitted.
+        promptAuditEnabled:
+          type: boolean
+          description: Required seller declaration. True means the seller may view or record buyer prompts; false remains a seller declaration, not a platform privacy guarantee.
         accessModes:
           type: array
           minItems: 1
@@ -10750,6 +10752,7 @@ components:
         - accountPoolLabel
         - merchantRefundCommitment
         - merchantRefundPolicyVersion
+        - promptAuditEnabled
         - acceptingOrders
         - paymentWindowMinutes
         - acceptedPaymentMethods
@@ -10835,6 +10838,9 @@ components:
         declaredMaxConcurrency:
           type: integer
           minimum: 1
+        promptAuditEnabled:
+          type: [boolean, "null"]
+          description: Seller prompt-audit declaration. Null means a historical service has not been revised to declare either state.
         acceptingOrders:
           type: boolean
           description: Owner's manual accepting-orders flag. This is not sufficient by itself; clients must use isOrderable for order creation.
@@ -10911,6 +10917,7 @@ components:
         - accountPoolLabel
         - merchantRefundCommitment
         - merchantRefundPolicyVersion
+        - promptAuditEnabled
         - acceptingOrders
         - paymentWindowMinutes
         - acceptedPaymentMethods
@@ -11014,6 +11021,10 @@ components:
         performanceConfirmedAt:
           type: string
           format: date-time
+          description: Historical owner-visible seller confirmation time. New service writes do not accept this field.
+        promptAuditEnabled:
+          type: [boolean, "null"]
+          description: Seller prompt-audit declaration. Null means a historical service has not been revised to declare either state.
         acceptingOrders:
           type: boolean
         paymentWindowMinutes:
@@ -11213,10 +11224,12 @@ components:
         - $ref: "#/components/schemas/APIService"
         - type: object
           additionalProperties: false
-          required: [salesSummary]
+          required: [salesSummary, healthSummary]
           properties:
             salesSummary:
               $ref: "#/components/schemas/APIServiceSalesSummary"
+            healthSummary:
+              $ref: "#/components/schemas/ServiceHealthSummary"
     OwnerAPIServiceList:
       type: object
       required: [items]
@@ -11533,7 +11546,8 @@ components:
           $ref: "#/components/schemas/QuotaUsagePolicyInput"
         deliveryMode:
           type: string
-          enum: [manual, preimported]
+          enum: [manual]
+          description: New offers support seller manual delivery only. Historical offer responses may still report preimported.
         deliveryEtaMinutes:
           type: integer
           minimum: 1
@@ -11578,6 +11592,7 @@ components:
         deliveryMode:
           type: string
           enum: [manual, preimported]
+          description: Historical response objects may still report preimported even though new offer creation accepts only manual.
         deliveryEtaMinutes:
           type: integer
           minimum: 1
@@ -11759,7 +11774,8 @@ components:
           maximum: 5000
         deliveryMode:
           type: string
-          enum: [manual, preimported]
+          enum: [manual]
+          description: New rush offers support seller manual delivery only. Historical offer responses may still report preimported.
         deliveryEtaMinutes:
           type: integer
           minimum: 1
@@ -11774,10 +11790,6 @@ components:
         sourceConfirmedAt:
           type: string
           format: date-time
-        deliveryKind:
-          type: string
-          enum: [api_key_endpoint, login_account]
-          description: Required only for preimported delivery.
     APIQuotaRushOfferResponse:
       type: object
       additionalProperties: false
@@ -11798,7 +11810,7 @@ components:
       allOf:
         - $ref: "#/components/schemas/APIQuotaOfferFields"
         - type: object
-          required: [batchStatus, serviceTitle, sellerDisplayName, sellerIdentityType, sellerLinuxDoBound, declaredMaxConcurrency, healthSummary, saleCutoffAt, expiresAt, availableCopies, credentialAvailableCopies, isOrderable, orderabilityCode, orderabilityReason]
+          required: [batchStatus, serviceTitle, sellerDisplayName, sellerIdentityType, sellerLinuxDoBound, declaredMaxConcurrency, promptAuditEnabled, healthSummary, saleCutoffAt, expiresAt, availableCopies, credentialAvailableCopies, isOrderable, orderabilityCode, orderabilityReason]
           properties:
             batchStatus:
               type: string
@@ -11815,6 +11827,9 @@ components:
             declaredMaxConcurrency:
               type: integer
               minimum: 1
+            promptAuditEnabled:
+              type: [boolean, "null"]
+              description: Seller prompt-audit declaration from the linked API service. Null means historical undeclared.
             healthSummary:
               $ref: "#/components/schemas/ServiceHealthSummary"
             saleCutoffAt:
@@ -11954,6 +11969,7 @@ components:
         - minimumIntentCnySnapshot
         - pricingSnapshot
         - quotaUsagePolicySnapshot
+        - promptAuditEnabledSnapshot
         - version
         - createdAt
         - updatedAt
@@ -11999,6 +12015,9 @@ components:
           type: string
         quotaUsagePolicySnapshot:
           $ref: "#/components/schemas/QuotaUsagePolicy"
+        promptAuditEnabledSnapshot:
+          type: [boolean, "null"]
+          description: Seller prompt-audit declaration frozen when the purchase intent was created. Null means historical undeclared.
         buyerNote:
           type: string
         contactedAt:
@@ -12278,6 +12297,7 @@ components:
         - serviceVersionSnapshot
         - billingModeSnapshot
         - quotaUsagePolicySnapshot
+        - promptAuditEnabledSnapshot
         - amount
         - currency
         - selectedPaymentMethod
@@ -12358,6 +12378,9 @@ components:
           description: Frozen JSON pricing snapshot from the internal purchase-intent record.
         quotaUsagePolicySnapshot:
           $ref: "#/components/schemas/QuotaUsagePolicy"
+        promptAuditEnabledSnapshot:
+          type: [boolean, "null"]
+          description: Seller prompt-audit declaration frozen from the purchase intent or limited-offer order context. Null means historical undeclared and is never filled from the current service.
         apiQuotaBatchId:
           type: string
           format: uuid

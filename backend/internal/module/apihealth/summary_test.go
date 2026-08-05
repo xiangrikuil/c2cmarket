@@ -44,12 +44,12 @@ func TestBuildSummaryThresholdsAndMedian(t *testing.T) {
 func TestBuildSummaryAvailabilityAndFiltering(t *testing.T) {
 	t.Parallel()
 	now := time.Date(2026, 8, 4, 12, 4, 0, 0, time.UTC)
-	if summary := BuildSummary(nil, nil, now); summary.AvailabilityReason != AvailabilityUnconfigured {
+	if summary := BuildSummary(nil, nil, now); summary.AvailabilityReason != AvailabilityUnconfigured || summary.TransportSecurity != TransportSecurityUnknown {
 		t.Fatalf("unexpected unconfigured summary: %+v", summary)
 	}
 	config := authorizedConfig(now)
 	config.Enabled = false
-	if summary := BuildSummary(&config, nil, now); summary.AvailabilityReason != AvailabilityDisabled {
+	if summary := BuildSummary(&config, nil, now); summary.AvailabilityReason != AvailabilityDisabled || summary.TransportSecurity != TransportSecurityHTTPS {
 		t.Fatalf("unexpected disabled summary: %+v", summary)
 	}
 	config.Enabled = true
@@ -68,6 +68,12 @@ func TestBuildSummaryAvailabilityAndFiltering(t *testing.T) {
 	}
 	if summary := BuildSummary(&config, wrongVersion, now); summary.TotalSamples != 0 || summary.AvailabilityReason != AvailabilityInsufficient {
 		t.Fatalf("wrong measurement version entered summary: %+v", summary)
+	}
+	config.BaseURL = "http://api.example.com/v1"
+	config.NormalizedOrigin = "http://api.example.com:80"
+	config.VerifiedOrigin = config.NormalizedOrigin
+	if summary := BuildSummary(&config, nil, now); summary.TransportSecurity != TransportSecurityHTTP {
+		t.Fatalf("HTTP summary omitted transport security: %+v", summary)
 	}
 }
 

@@ -61,7 +61,7 @@ In real backend mode, product catalog state belongs to `GET /api/v1/product-cate
 ### 1. Scope / Trigger
 
 - Trigger: frontend work touching post-login routing, `AppShell.vue`, `MyCenterPage.vue`, `/my/account`, login return targets, verified email state, or password state.
-- The first public registration/login path is linux.do OAuth. OAuth-created accounts have no default password, so the frontend must force linux.do-bound users to complete recoverable login settings before ordinary business use. Unbound development or bootstrap accounts cannot configure a backup password and must not be blocked by that inapplicable requirement.
+- The first public registration/login path is linux.do OAuth. OAuth-created accounts have no default password, so the frontend must force linux.do-bound users to complete recoverable login settings before authenticated workspace or transaction actions. Public marketplace discovery remains browseable. Unbound development or bootstrap accounts cannot configure a backup password and must not be blocked by that inapplicable requirement.
 
 ### 2. Signatures
 
@@ -75,6 +75,7 @@ const ACCOUNT_RECOVERY_PATH = '/my/account'
 function isAccountRecoveryComplete(profile: AccountRecoveryProfile): boolean
 function accountRecoveryRequirements(profile: AccountRecoveryProfile): AccountRecoveryRequirement[]
 function isAccountRecoveryAllowedPath(path: string): boolean
+function shouldRedirectToAccountRecovery(path: string, authAccess: unknown): boolean
 function sanitizeAccountRecoveryReturnTo(value: unknown): string | null
 ```
 
@@ -82,8 +83,8 @@ function sanitizeAccountRecoveryReturnTo(value: unknown): string | null
 
 - The source of truth is `GET /api/v1/me/profile` mapped to `UserProfile.emailVerified`, `UserProfile.passwordConfigured`, and `UserProfile.linuxDoBinding.bound`.
 - Do not store an additional "onboarding complete" flag in Pinia, localStorage, sessionStorage, or route meta.
-- Incomplete logged-in accounts must be redirected from ordinary business pages to `/my/account`.
-- Allowed paths before completion are intentionally narrow: root overview, login/mock route, `/my/account`, announcement detail pages, and public user profiles.
+- Incomplete logged-in accounts are redirected only from routes whose `meta.auth` is `user` or `admin`. Public market lists and details remain browseable so account recovery does not block discovery.
+- The path allowlist prevents loops and preserves setup/explanation routes such as `/my/account`, login/mock, announcement details, and public profiles even when they carry authenticated shell metadata.
 - Redirects may preserve an internal `returnTo`, but `returnTo` must be same-origin path-only and must not point back to an allowed/setup page.
 - `/my/account` requires a verified email for every account. It requires and renders the backup-password step only when `linuxDoBinding.bound=true`; unbound accounts must not see a password action, password step, or recovery redirect caused only by `passwordConfigured=false`.
 - The gate is frontend-enforced. If backend API blocking is required later, create a separate backend policy task instead of hiding that decision in frontend code.
@@ -92,7 +93,8 @@ function sanitizeAccountRecoveryReturnTo(value: unknown): string | null
 
 | Condition | Expected behavior |
 | --- | --- |
-| `emailVerified=false`, or a linux.do-bound user has `passwordConfigured=false`, and user opens `/carpools` | Redirect to `/my/account?returnTo=/carpools...`. |
+| Incomplete account opens public `/carpools`, `/api-market/:id`, or `/official-prices/:id` | Keep the public route visible; do not redirect. |
+| Incomplete account opens authenticated `/carpools/new`, `/my/api-orders`, or `/admin` | Redirect to `/my/account` with an internal `returnTo`. |
 | Email is verified and the account is unbound | No password step or redirect caused by `passwordConfigured=false`. |
 | Email is verified and a linux.do-bound account has a password | No redirect; original route remains usable. |
 | Incomplete account opens `/my/account` | No redirect loop; recovery tasks render. |
@@ -101,18 +103,18 @@ function sanitizeAccountRecoveryReturnTo(value: unknown): string | null
 
 ### 5. Good/Base/Bad Cases
 
-- Good: `AppShell.vue` imports shared account recovery helpers and redirects incomplete accounts from `/api-market/new` to `/my/account`.
+- Good: `AppShell.vue` passes `route.path` and `route.meta.auth` to the shared redirect helper, keeps `/api-market/:id` public, and redirects incomplete accounts from `/api-market/new` to `/my/account`.
 - Base: login page still uses linux.do OAuth and password-login recovery copy; it does not become a public password registration page.
-- Bad: each page independently checks `profile.emailVerified` and redirects with locally duplicated whitelist logic.
+- Bad: each page independently checks `profile.emailVerified`, or the shell redirects every route without consulting `route.meta.auth`.
 
 ### 6. Tests Required
 
-- Unit tests for completion, outstanding requirements, allowed paths, and return target sanitization.
+- Unit tests for completion, outstanding requirements, allowed paths, auth-meta redirect decisions, and return target sanitization.
 - Type check: `pnpm --dir frontend exec vue-tsc -b --pretty false`.
 - Production build: real-mode `pnpm --dir frontend build` with the required Nuxt runtime API variables.
 - Browser smoke when available:
-  - incomplete account opens a business route and reaches `/my/account`;
-  - public allowed route is not redirected;
+  - incomplete account opens an authenticated publish/transaction route and reaches `/my/account`;
+  - public market list and detail routes are not redirected;
   - completing email plus password setup allows continuing to the original route.
 
 ### 7. Wrong vs Correct
@@ -126,7 +128,7 @@ if (!profile.emailVerified) router.push('/my/account')
 #### Correct
 
 ```ts
-if (!isAccountRecoveryComplete(profile) && !isAccountRecoveryAllowedPath(route.path)) {
+if (!isAccountRecoveryComplete(profile) && shouldRedirectToAccountRecovery(route.path, route.meta.auth)) {
   router.replace({ path: ACCOUNT_RECOVERY_PATH, query: { returnTo: route.fullPath } })
 }
 ```

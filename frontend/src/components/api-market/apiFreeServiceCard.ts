@@ -17,6 +17,7 @@ export type ApiFreeServiceCardData = {
   maximumPurchaseCny: string | number
   multiplier: string
   declaredMaxConcurrency: string | number
+  promptAuditEnabled: boolean | null
   paymentWindowMinutes: number
   merchantName: string
   merchantType: string

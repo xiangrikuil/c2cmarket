@@ -23,6 +23,7 @@ const formatNumber = (value: number, digits = 2) => value.toFixed(digits).replac
 const score = (value: number) => Math.round(value)
 const visibleModels = props.row.package.models.slice(0, 3)
 const hiddenModelCount = Math.max(0, props.row.package.models.length - visibleModels.length)
+const promptAuditEnabled = computed(() => props.row.service.promptAuditEnabled ?? null)
 const modelSummary = [
   ...visibleModels.map(model => model.modelName),
   ...(hiddenModelCount ? [`+${hiddenModelCount} 个`] : []),
@@ -71,7 +72,7 @@ const modelSummary = [
       <dl class="api-product-card__technical-facts">
         <div><dt>模型倍率</dt><dd>{{ formatNumber(row.selectedModel.merchantMultiplier, 4) }}x</dd></div>
         <div><dt>最大并发</dt><dd>{{ row.service.declaredMaxConcurrency ?? '—' }}</dd></div>
-        <div><dt>有效期</dt><dd>{{ row.package.durationDays }} 天</dd></div>
+        <div><dt>提示词审计</dt><dd :class="promptAuditEnabled === true ? 'text-orange-700' : ''">{{ promptAuditEnabled === null ? '未声明' : promptAuditEnabled ? '开启' : '关闭' }}</dd></div>
         <div><dt>交付方式</dt><dd :title="row.service.delivery">{{ row.service.delivery }}</dd></div>
       </dl>
 

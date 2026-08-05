@@ -67,6 +67,9 @@ func (s *Service) PutOwnerConfig(ctx context.Context, user auth.User, serviceID 
 		return Config{}, internalError()
 	}
 	serviceID = strings.TrimSpace(serviceID)
+	if UsesInsecureHTTP(input.BaseURL) && !input.AcknowledgeInsecureHTTP {
+		return Config{}, configValidationError(ErrInsecureHTTPNotAcknowledged)
+	}
 	if _, err := s.urlValidator.ValidateURL(ctx, input.BaseURL); err != nil {
 		return Config{}, targetValidationError(err)
 	}
@@ -275,7 +278,7 @@ func versionConflict() *domain.AppError {
 
 func targetValidationError(err error) *domain.AppError {
 	code := "invalid"
-	message := "探针地址必须是可访问的公网 HTTPS 地址。"
+	message := "探针地址必须是可访问的公网 HTTP 或 HTTPS 地址。"
 	if errors.Is(err, outboundhttp.ErrUnsafeAddress) {
 		code = "unsafe_address"
 	}
@@ -288,9 +291,11 @@ func configValidationError(err error) *domain.AppError {
 	if errors.Is(err, ErrInvalidModel) {
 		field, message = "model", "必须填写探测模型。"
 	} else if errors.Is(err, ErrCredentialRequired) {
-		field, message = "credential", "启用探针前必须配置专用凭据。"
+		field, message = "credential", "启用探针前必须配置探针专用 API Key。"
 	} else if errors.Is(err, ErrCredentialInvalid) {
-		field, message = "credential", "探针凭据不能为空。"
+		field, message = "credential", "探针专用 API Key 不能为空。"
+	} else if errors.Is(err, ErrInsecureHTTPNotAcknowledged) {
+		field, message = "acknowledgeInsecureHttp", "使用 HTTP 探测前必须确认未加密传输风险。"
 	}
 	return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Probe config invalid", message, field, "invalid", message)
 }

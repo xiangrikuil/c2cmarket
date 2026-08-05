@@ -122,6 +122,8 @@ func TestIntentFreezesMerchantTermsInPricingSnapshot(t *testing.T) {
 	service.AccountPoolType = apimarket.AccountPoolCustom
 	service.AccountPoolCustomName = "Claude Max"
 	service.DeclaredMaxConcurrency = 12
+	promptAuditEnabled := true
+	service.PromptAuditEnabled = &promptAuditEnabled
 	service.MerchantRefundCommitment = true
 	service.MerchantSupportNote = apimarket.MerchantSupportNote(true)
 	service.Models = []apimarket.ServiceModel{
@@ -151,6 +153,7 @@ func TestIntentFreezesMerchantTermsInPricingSnapshot(t *testing.T) {
 		AccountPoolType             string `json:"accountPoolType"`
 		AccountPoolLabel            string `json:"accountPoolLabel"`
 		DeclaredMaxConcurrency      int    `json:"declaredMaxConcurrency"`
+		PromptAuditEnabled          *bool  `json:"promptAuditEnabled"`
 		MerchantRefundCommitment    bool   `json:"merchantRefundCommitment"`
 		MerchantRefundPolicyVersion string `json:"merchantRefundPolicyVersion"`
 	}
@@ -163,8 +166,11 @@ func TestIntentFreezesMerchantTermsInPricingSnapshot(t *testing.T) {
 	if snapshot.UsageVisibility != service.UsageVisibility || snapshot.MerchantNote != service.MerchantNote || snapshot.MerchantSupportNote != service.MerchantSupportNote {
 		t.Fatalf("unexpected merchant terms snapshot: %+v", snapshot)
 	}
-	if snapshot.AccountPoolType != apimarket.AccountPoolCustom || snapshot.AccountPoolLabel != "Claude Max" || snapshot.DeclaredMaxConcurrency != 12 || !snapshot.MerchantRefundCommitment || snapshot.MerchantRefundPolicyVersion != apimarket.MerchantRefundPolicyVersion {
+	if snapshot.AccountPoolType != apimarket.AccountPoolCustom || snapshot.AccountPoolLabel != "Claude Max" || snapshot.DeclaredMaxConcurrency != 12 || snapshot.PromptAuditEnabled == nil || !*snapshot.PromptAuditEnabled || !snapshot.MerchantRefundCommitment || snapshot.MerchantRefundPolicyVersion != apimarket.MerchantRefundPolicyVersion {
 		t.Fatalf("unexpected commercial facts snapshot: %+v", snapshot)
+	}
+	if intent.PromptAuditEnabledSnapshot == nil || !*intent.PromptAuditEnabledSnapshot {
+		t.Fatalf("intent did not freeze prompt audit declaration: %+v", intent.PromptAuditEnabledSnapshot)
 	}
 }
 
@@ -178,7 +184,7 @@ func TestIntentSnapshotPreservesHistoricalNullCommercialFacts(t *testing.T) {
 	if err := json.Unmarshal([]byte(body), &snapshot); err != nil {
 		t.Fatalf("decode historical pricing snapshot: %v", err)
 	}
-	for _, key := range []string{"accountPoolType", "accountPoolLabel", "declaredMaxConcurrency", "serviceValidityExpiresAt"} {
+	for _, key := range []string{"accountPoolType", "accountPoolLabel", "declaredMaxConcurrency", "promptAuditEnabled", "serviceValidityExpiresAt"} {
 		value, exists := snapshot[key]
 		if !exists || value != nil {
 			t.Fatalf("expected explicit null %s, got exists=%v value=%v", key, exists, value)

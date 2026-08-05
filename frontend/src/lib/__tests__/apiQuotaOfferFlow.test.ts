@@ -107,7 +107,7 @@ test('mock 固定场次按北京时间生成，并原子发布一个场次额度
   assert.equal(session.serialized().includes('api_key'), false)
 })
 
-test('mock 预导入发布拒绝少于计划份数的凭据', async () => {
+test('mock 拒绝发布新的预导入额度包', async () => {
   vi.useFakeTimers()
   vi.setSystemTime(new Date('2026-07-24T00:30:00.000Z'))
   const { api } = await loadMockAPI()
@@ -132,7 +132,7 @@ test('mock 预导入发布拒绝少于计划份数的凭据', async () => {
     expiresAt: '2026-07-25T05:30:00.000Z',
     sourceConfirmedAt: '2026-07-24T00:30:00.000Z',
   })
-  const rejection = assert.rejects(publication, /凭据数量至少需要 2 条/)
+  const rejection = assert.rejects(publication, /新额度包只支持卖家手工交付/)
   await vi.runAllTimersAsync()
   await rejection
 })

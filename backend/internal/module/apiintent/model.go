@@ -48,6 +48,7 @@ type Intent struct {
 	MaximumIntentCNYSnapshot                 string
 	PricingSnapshot                          string
 	QuotaUsagePolicySnapshot                 apimarket.QuotaUsagePolicy
+	PromptAuditEnabledSnapshot               *bool
 	APIQuotaBatchID                          string
 	APIQuotaOfferID                          string
 	APIQuotaSaleRoundID                      string
