@@ -1281,3 +1281,47 @@ Added fresh-query-gated first transaction guidance to the personal center, cover
 ### Status
 
 [OK] **Completed**
+
+
+## Session 37: README official rewrite
+
+**Date**: 2026-08-06
+**Task**: README official rewrite
+**Package**: frontend
+**Branch**: `codex/readme-official-rewrite`
+
+### Summary
+
+重写中英文 README，加入匿名产品截图、linux.do 社区徽章与 Sentry 计划接入说明，并同步贡献指南中的本地验证命令。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `4174eb8` | (see git log) |
+
+### Status
+
+[OK] **Completed**
+
+
+## Session 38: README product positioning
+
+**Date**: 2026-08-06
+**Task**: README product positioning
+**Package**: frontend
+**Branch**: `codex/readme-official-rewrite`
+
+### Summary
+
+补充中英文 README 的项目动机，说明社区信誉记录缺口与 ChatGPT、Claude 相关订阅和 API 服务额度供需，同时保留站外交易和非担保边界。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `3155d11` | (see git log) |
+
+### Status
+
+[OK] **Completed**

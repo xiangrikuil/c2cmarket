@@ -59,9 +59,9 @@ describe('API 额度包市场视图', () => {
     assert.equal(apiMarketViewFromQuery('packages'), 'packages')
     assert.equal(apiMarketViewFromQuery('free'), 'free')
     assert.deepEqual(withApiMarketViewQuery({ category: 'api' }, 'free'), { category: 'api', view: 'free' })
-    assert.match(marketPageSource, /<TabsTrigger value="limited">限时额度包<\/TabsTrigger>/)
-    assert.match(marketPageSource, /<TabsTrigger value="packages">限时流量包<\/TabsTrigger>/)
-    assert.match(marketPageSource, /<TabsTrigger value="free">自由额度<\/TabsTrigger>/)
+    assert.match(marketPageSource, /<TabsTrigger[^>]*value="limited"[^>]*>限时额度包<\/TabsTrigger>/)
+    assert.match(marketPageSource, /<TabsTrigger[^>]*value="packages"[^>]*>限时流量包<\/TabsTrigger>/)
+    assert.match(marketPageSource, /<TabsTrigger[^>]*value="free"[^>]*>自由额度<\/TabsTrigger>/)
     assert.match(marketPageSource, /router\.replace\(\{ query: withApiMarketViewQuery\(route\.query, value\) \}\)/)
   })
 
@@ -264,7 +264,7 @@ describe('API 额度包市场视图', () => {
     for (const category of ['gpt', 'claude', 'gemini', 'cursor', 'perplexity', 'other']) {
       assert.match(freeServiceCardSource, new RegExp(`data-category='${category}'`))
     }
-    assert.match(quotaOfferCardSource, /class="h-9 w-full" @click="emit\('purchase', offer\)"/)
+    assert.match(quotaOfferCardSource, /class="h-11 w-full sm:h-9" @click="emit\('purchase', offer\)"/)
     assert.match(freeServiceCardSource, /<RouterLink v-else-if="card\.actionHref"/)
     assert.match(freeServiceCardSource, /aria-disabled="true"/)
     assert.doesNotMatch(marketPageSource, /自动交付|安全可靠|平台担保|虚构原价/)
@@ -281,7 +281,8 @@ describe('API 额度包市场视图', () => {
     assert.match(marketPageSource, /serverClockOffset/)
     assert.match(marketPageSource, /slotQuery\.data\.value\?\.items/)
     assert.match(marketPageSource, /refreshAtSlotBoundary/)
-    assert.match(marketPageSource, /useApiQuotaOffers\(rushFilters\)/)
+    assert.match(marketPageSource, /useApiQuotaOffers\(rushFilters, computed\(\(\) => Boolean\(selectedSlotKey\.value\)\)\)/)
+    assert.match(marketPageSource, /onServerPrefetch\(async \(\) => \{[\s\S]*?await slotQuery\.suspense\(\)[\s\S]*?await rushQuery\.suspense\(\)/)
     assert.match(marketPageSource, /`明日 \$\{slotTime\(selectedSlot\)\} 场预告`/)
     assert.match(quotaOfferCardSource, /立即抢购 ¥\$\{formatDecimal\(props\.offer\.priceCny/)
     assert.doesNotMatch(marketPageSource, /selectedOffer|confirmPurchase|<Dialog/)

@@ -1,13 +1,13 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
-import AlertTriangle from 'lucide-vue-next/dist/esm/icons/triangle-alert.js'
+import TriangleAlert from 'lucide-vue-next/dist/esm/icons/triangle-alert.js'
 import Activity from 'lucide-vue-next/dist/esm/icons/activity.js'
 import ArrowLeft from 'lucide-vue-next/dist/esm/icons/arrow-left.js'
 import Bell from 'lucide-vue-next/dist/esm/icons/bell.js'
 import BookOpen from 'lucide-vue-next/dist/esm/icons/book-open.js'
 import Boxes from 'lucide-vue-next/dist/esm/icons/boxes.js'
-import Car from 'lucide-vue-next/dist/esm/icons/car.js'
+import CarFront from 'lucide-vue-next/dist/esm/icons/car-front.js'
 import ClipboardList from 'lucide-vue-next/dist/esm/icons/clipboard-list.js'
 import Code2 from 'lucide-vue-next/dist/esm/icons/code-xml.js'
 import FileText from 'lucide-vue-next/dist/esm/icons/file-text.js'
@@ -51,12 +51,12 @@ const navGroups = computed(() => [
   ] },
   { title: '待办与治理', items: [
     { label: '官网价格维护', to: '/admin/official-prices', icon: ShieldCheck, count: badges.value?.admin?.officialPrices ?? null },
-    { label: '车源异常', to: '/admin/carpools', icon: Car, count: badges.value?.admin?.carpools ?? null },
+    { label: '车源异常', to: '/admin/carpools', icon: CarFront, count: badges.value?.admin?.carpools ?? null },
     { label: 'API 服务审核', to: '/admin/api-services', icon: Code2, count: badges.value?.admin?.apiServices ?? null },
     { label: 'API 探针授权', to: '/admin/api-health-probes', icon: Activity, count: null },
     { label: '问题反馈', to: '/admin/feedback', icon: ClipboardList, count: badges.value?.admin?.feedbackTickets ?? null },
     { label: '举报纠纷', to: '/admin/reports', icon: MessageSquareWarning, count: badges.value?.admin?.reports ?? null },
-    { label: '申诉处理', to: '/admin/appeals', icon: AlertTriangle, count: null },
+    { label: '申诉处理', to: '/admin/appeals', icon: TriangleAlert, count: null },
   ] },
   { title: '市场目录', items: [
     { label: '套餐目录', to: '/admin/product-plans', icon: Boxes, count: null },
@@ -117,7 +117,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
   <div class="min-h-screen bg-background lg:grid" :style="{ gridTemplateColumns: sidebarCollapsed ? '64px minmax(0,1fr)' : '208px minmax(0,1fr)' }">
     <aside class="sticky top-0 hidden h-screen border-r border-sidebar-border bg-sidebar text-sidebar-foreground lg:flex lg:flex-col">
       <RouterLink to="/admin" class="flex h-14 items-center border-b border-sidebar-border" :class="sidebarCollapsed ? 'justify-center' : 'gap-2 px-4'">
-        <img src="/c2cmarket-logo-mark.svg?v=20260708-electric-blue" alt="C2CMarket" class="h-7 w-7" />
+        <img src="/c2cmarket-logo-mark.svg?v=20260806-deep-violet" alt="C2CMarket" class="h-7 w-7" />
         <span v-if="!sidebarCollapsed" class="font-semibold">管理台</span>
       </RouterLink>
       <nav class="min-h-0 flex-1 space-y-5 overflow-y-auto px-2 py-4" aria-label="管理端导航">
@@ -125,7 +125,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
           <h2 class="px-2 text-[11px] font-medium text-sidebar-foreground/55"><span v-if="!sidebarCollapsed">{{ group.title }}</span><span v-else class="mx-auto block h-px w-6 bg-sidebar-border" /></h2>
           <div class="mt-1.5 grid gap-1">
             <RouterLink v-for="item in group.items" :key="item.to" :to="item.to" class="flex h-9 items-center rounded-md text-sm font-medium transition hover:bg-sidebar-accent" :class="[activeItem?.to === item.to ? 'bg-sidebar-accent text-sidebar-accent-foreground' : 'text-sidebar-foreground/78', sidebarCollapsed ? 'justify-center' : 'gap-2.5 px-2.5']" :title="sidebarCollapsed ? item.label : undefined">
-              <component :is="item.icon" class="h-4 w-4 shrink-0" /><span v-if="!sidebarCollapsed" class="min-w-0 flex-1 truncate">{{ item.label }}</span><Badge v-if="item.count && !sidebarCollapsed" variant="secondary">{{ formatCount(item.count) }}</Badge>
+              <component :is="item.icon" class="h-[18px] w-[18px] shrink-0" /><span v-if="!sidebarCollapsed" class="min-w-0 flex-1 truncate">{{ item.label }}</span><Badge v-if="item.count && !sidebarCollapsed" variant="secondary">{{ formatCount(item.count) }}</Badge>
             </RouterLink>
           </div>
         </section>
@@ -140,7 +140,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
     <aside v-if="menuOpen" class="fixed inset-y-0 left-0 z-50 flex w-[min(336px,calc(100vw-40px))] flex-col border-r border-border bg-card shadow-xl lg:hidden" role="dialog" aria-modal="true" aria-label="管理端移动导航">
       <div class="flex h-14 items-center justify-between border-b border-border px-4"><span class="font-semibold">C2CMarket 管理台</span><Button variant="ghost" size="icon" aria-label="关闭管理导航" @click="closeMenu"><X class="h-4 w-4" /></Button></div>
       <nav class="flex-1 space-y-5 overflow-y-auto p-4">
-        <section v-for="group in navGroups" :key="group.title"><h2 class="text-xs text-muted-foreground">{{ group.title }}</h2><div class="mt-2 grid gap-1"><RouterLink v-for="item in group.items" :key="item.to" :to="item.to" class="flex items-center gap-2 rounded-md px-3 py-2.5 text-sm" :class="activeItem?.to === item.to ? 'bg-accent font-medium' : ''"><component :is="item.icon" class="h-4 w-4" />{{ item.label }}<Badge v-if="item.count" variant="secondary" class="ml-auto">{{ formatCount(item.count) }}</Badge></RouterLink></div></section>
+        <section v-for="group in navGroups" :key="group.title"><h2 class="text-xs text-muted-foreground">{{ group.title }}</h2><div class="mt-2 grid gap-1"><RouterLink v-for="item in group.items" :key="item.to" :to="item.to" class="flex items-center gap-2 rounded-md px-3 py-2.5 text-sm" :class="activeItem?.to === item.to ? 'bg-accent font-medium' : ''"><component :is="item.icon" class="h-[18px] w-[18px]" />{{ item.label }}<Badge v-if="item.count" variant="secondary" class="ml-auto">{{ formatCount(item.count) }}</Badge></RouterLink></div></section>
       </nav>
       <RouterLink to="/" class="flex items-center gap-2 border-t border-border p-4 text-sm"><ArrowLeft class="h-4 w-4" />返回用户端</RouterLink>
     </aside>

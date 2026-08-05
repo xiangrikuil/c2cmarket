@@ -115,7 +115,7 @@ pnpm build
 
 ## 主题
 
-- 当前公开主题：极致电蓝 `src/theme/minimal-modern.css`
+- 当前公开主题：深蓝紫 `src/theme/minimal-modern.css`，品牌主色为 `#5B4FE9`，无脚本或弱网首屏也直接使用同一组默认 Token。
 - `src/theme/neumorphic-cool.css` 和 `src/theme/aqua-console.css` 暂时保留样式文件，但不在应用主题入口中展示。
 - 可粘贴到 tweakcn/shadcn 的 Aqua Console 变量块：`tweakcn-theme.css`
 - Aqua Console 主题 JSON：`tweakcn-theme.json`

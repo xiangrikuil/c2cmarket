@@ -1,6 +1,9 @@
 <script setup lang="ts">
+import type { AcceptableValue } from 'reka-ui'
 import { Card } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
+import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group'
 import type { ApiServicePublishForm, BillingMode, DistributionSystem } from './types'
 import { billingLabels, publishDistributionOptions, supportedPublishBillingModes } from './utils'
 
@@ -14,6 +17,13 @@ const emit = defineEmits<{
   setBilling: [value: BillingMode]
 }>()
 
+function setDistribution(value: AcceptableValue) {
+  if (value === 'sub2api' || value === 'other') emit('setDistribution', value)
+}
+
+function setBilling(value: AcceptableValue) {
+  if (value === 'metered_credit' || value === 'fixed_package') emit('setBilling', value)
+}
 </script>
 
 <template>
@@ -26,36 +36,46 @@ const emit = defineEmits<{
     <div class="api-publish-card-body space-y-4">
       <div class="space-y-2">
         <label class="text-sm font-medium">分发系统</label>
-        <div class="api-publish-option-grid">
-          <button
+        <RadioGroup
+          :model-value="form.distributionSystem"
+          class="api-publish-option-grid"
+          aria-label="分发系统"
+          @update:model-value="setDistribution"
+        >
+          <Label
             v-for="option in publishDistributionOptions"
             :key="option.value"
-            type="button"
-            class="api-publish-option-card"
+            :for="`distribution-system-${option.value}`"
+            class="api-publish-option-card cursor-pointer items-start gap-2 font-normal"
             :class="{ 'is-active': form.distributionSystem === option.value }"
-            @click="emit('setDistribution', option.value)"
           >
+            <RadioGroupItem :id="`distribution-system-${option.value}`" :value="option.value" class="mt-0.5" />
             <span class="block text-sm font-semibold">{{ option.title }}</span>
             <span class="mt-1 block text-xs leading-5 text-muted-foreground">{{ option.description }}</span>
             <span class="mt-2 block text-[11px] leading-5 text-muted-foreground">{{ option.detail }}</span>
-          </button>
-        </div>
+          </Label>
+        </RadioGroup>
       </div>
 
       <div class="space-y-2">
         <label class="text-sm font-medium">售卖计费方式</label>
-        <div class="api-publish-billing-grid">
-          <button
+        <RadioGroup
+          :model-value="form.billingMode"
+          class="api-publish-billing-grid"
+          aria-label="售卖计费方式"
+          @update:model-value="setBilling"
+        >
+          <Label
             v-for="option in supportedPublishBillingModes"
             :key="option"
-            type="button"
-            class="rounded-md border px-3 py-2 text-left text-sm font-medium disabled:cursor-not-allowed disabled:opacity-45"
+            :for="`billing-mode-${option}`"
+            class="flex min-h-9 cursor-pointer items-center gap-2 rounded-md border px-3 py-2 text-left text-sm font-normal"
             :class="form.billingMode === option ? 'border-primary bg-primary/10 text-primary' : 'border-border bg-background hover:bg-muted'"
-            @click="emit('setBilling', option)"
           >
+            <RadioGroupItem :id="`billing-mode-${option}`" :value="option" />
             {{ billingLabels[option] }}
-          </button>
-        </div>
+          </Label>
+        </RadioGroup>
         <p v-if="form.distributionSystem !== 'sub2api'" class="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
           该分发系统无法由平台核验精确额度。前台不会展示平台实时校验或平台已核验余额。
         </p>

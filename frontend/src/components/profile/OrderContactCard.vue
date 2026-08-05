@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { useRoute } from 'vue-router'
-import { AlertTriangle, CheckCircle2, Copy, Flag, MessageCircle } from 'lucide-vue-next'
+import { CheckCircle2, Copy, Flag, MessageCircle, TriangleAlert } from 'lucide-vue-next'
 import { toast } from 'vue-sonner'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -94,7 +94,7 @@ function reportContact(item: OrderContactSnapshotItem, reasonCode: 'contact_inva
     </div>
 
     <div v-if="!snapshot.canView" class="mt-4 rounded-md border border-border bg-accent/60 p-3 text-sm text-muted-foreground">
-      <AlertTriangle class="mr-1 inline h-4 w-4" />
+      <TriangleAlert class="mr-1 inline h-4 w-4" />
       {{ snapshot.unavailableReason ?? '当前记录状态不允许查看联系方式。' }}
     </div>
 

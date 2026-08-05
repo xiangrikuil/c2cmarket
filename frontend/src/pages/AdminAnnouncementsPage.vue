@@ -12,6 +12,7 @@ import CompactStats from '@/components/market/CompactStats.vue'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
+import { Checkbox } from '@/components/ui/checkbox'
 import { Textarea } from '@/components/ui/textarea'
 import { usePagination } from '@/composables/usePagination'
 import {
@@ -183,7 +184,7 @@ async function duplicateAnnouncement(item: Announcement) {
         </label>
         <div class="space-y-3">
           <label class="flex items-start gap-2 rounded-md border border-border bg-muted/30 p-3 text-xs leading-5 text-muted-foreground">
-            <input v-model="offlineConfirmed" type="checkbox" class="mt-1 h-4 w-4 accent-primary" />
+            <Checkbox v-model="offlineConfirmed" class="mt-1" />
             <span>二次确认：我已核对公告状态和影响范围，确认下线并保留审计记录。</span>
           </label>
           <Button class="w-full" variant="destructive" :disabled="offlineMutation.isPending.value" @click="confirmOffline">

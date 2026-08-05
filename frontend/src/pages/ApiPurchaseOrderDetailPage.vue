@@ -756,10 +756,10 @@ onBeforeUnmount(() => {
               <div class="flex items-center justify-between gap-2">
                 <span class="text-muted-foreground">API Key</span>
                 <span class="flex gap-1.5">
-                  <Button size="icon" variant="outline" :title="apiKeyVisible ? '隐藏 API Key' : '显示 API Key'" @click="apiKeyVisible = !apiKeyVisible">
+                  <Button size="icon" variant="outline" :title="apiKeyVisible ? '隐藏 API Key' : '显示 API Key'" :aria-label="apiKeyVisible ? '隐藏 API Key' : '显示 API Key'" @click="apiKeyVisible = !apiKeyVisible">
                     <EyeOff v-if="apiKeyVisible" class="h-4 w-4" /><Eye v-else class="h-4 w-4" /><span class="sr-only">{{ apiKeyVisible ? '隐藏 API Key' : '显示 API Key' }}</span>
                   </Button>
-                  <Button size="icon" variant="outline" title="复制 API Key" @click="copyValue(order.deliveryCredential.apiKey, 'API Key')"><Copy class="h-4 w-4" /><span class="sr-only">复制 API Key</span></Button>
+                  <Button size="icon" variant="outline" title="复制 API Key" aria-label="复制 API Key" @click="copyValue(order.deliveryCredential.apiKey, 'API Key')"><Copy class="h-4 w-4" /><span class="sr-only">复制 API Key</span></Button>
                 </span>
               </div>
               <div class="mt-2 break-all font-mono text-xs">{{ apiKeyVisible ? order.deliveryCredential.apiKey : maskCredential(order.deliveryCredential.apiKey) }}</div>
@@ -776,10 +776,10 @@ onBeforeUnmount(() => {
               <div class="flex items-center justify-between gap-2">
                 <span class="text-muted-foreground">初始密码</span>
                 <span class="flex gap-1.5">
-                  <Button size="icon" variant="outline" :title="passwordVisible ? '隐藏初始密码' : '显示初始密码'" @click="passwordVisible = !passwordVisible">
+                  <Button size="icon" variant="outline" :title="passwordVisible ? '隐藏初始密码' : '显示初始密码'" :aria-label="passwordVisible ? '隐藏初始密码' : '显示初始密码'" @click="passwordVisible = !passwordVisible">
                     <EyeOff v-if="passwordVisible" class="h-4 w-4" /><Eye v-else class="h-4 w-4" /><span class="sr-only">{{ passwordVisible ? '隐藏初始密码' : '显示初始密码' }}</span>
                   </Button>
-                  <Button size="icon" variant="outline" title="复制初始密码" @click="copyValue(order.deliveryCredential.password, '初始密码')"><Copy class="h-4 w-4" /><span class="sr-only">复制初始密码</span></Button>
+                  <Button size="icon" variant="outline" title="复制初始密码" aria-label="复制初始密码" @click="copyValue(order.deliveryCredential.password, '初始密码')"><Copy class="h-4 w-4" /><span class="sr-only">复制初始密码</span></Button>
                 </span>
               </div>
               <div class="mt-2 break-all font-mono text-xs">{{ passwordVisible ? order.deliveryCredential.password : maskCredential(order.deliveryCredential.password) }}</div>
@@ -796,10 +796,16 @@ onBeforeUnmount(() => {
             </div>
             <Badge variant="secondary">一次性交付</Badge>
           </div>
-          <div class="mt-4 flex flex-wrap gap-2">
-            <Button :variant="deliveryKind === 'api_key_endpoint' ? 'default' : 'outline'" @click="deliveryKind = 'api_key_endpoint'"><KeyRound class="h-4 w-4" />API Key 接入</Button>
-            <Button :variant="deliveryKind === 'login_account' ? 'default' : 'outline'" @click="deliveryKind = 'login_account'">登录账号接入</Button>
-          </div>
+          <RadioGroup v-model="deliveryKind" class="mt-4 flex flex-wrap gap-2" aria-label="接入方式">
+            <div class="flex items-center gap-2 rounded-md border border-border px-3 py-2 has-[[data-state=checked]]:border-primary has-[[data-state=checked]]:bg-primary/5">
+              <RadioGroupItem id="api-order-delivery-api-key" value="api_key_endpoint" />
+              <Label for="api-order-delivery-api-key" class="flex cursor-pointer items-center gap-2 text-sm font-medium"><KeyRound class="h-4 w-4" />API Key 接入</Label>
+            </div>
+            <div class="flex items-center gap-2 rounded-md border border-border px-3 py-2 has-[[data-state=checked]]:border-primary has-[[data-state=checked]]:bg-primary/5">
+              <RadioGroupItem id="api-order-delivery-login-account" value="login_account" />
+              <Label for="api-order-delivery-login-account" class="cursor-pointer text-sm font-medium">登录账号接入</Label>
+            </div>
+          </RadioGroup>
           <div v-if="deliveryKind === 'api_key_endpoint'" class="mt-4 grid gap-3">
             <label class="space-y-2"><span class="text-sm font-medium">API Base URL</span><Input v-model="apiBaseUrl" placeholder="https://api.example.com/v1" /></label>
             <label class="space-y-2"><span class="text-sm font-medium">买家专属 API Key</span><Input v-model="apiKey" placeholder="sk-proj-..." /></label>

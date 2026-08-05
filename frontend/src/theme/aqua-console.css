@@ -3,7 +3,6 @@
  * 来源：generated from local theme export
  */
 
-:root,
 html[data-theme="aqua-console"] {
   --radius: 0.625rem;
 
@@ -76,7 +75,6 @@ html[data-theme="aqua-console"] {
   --shadow-2xl: 0 32px 72px -24px rgb(15 23 42 / 0.22);
 }
 
-.dark,
 html[data-theme="aqua-console"].dark {
   color-scheme: dark;
 

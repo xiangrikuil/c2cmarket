@@ -35,6 +35,7 @@ import {
 } from '@/components/carpool-publish/utils'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
+import { Checkbox } from '@/components/ui/checkbox'
 import {
   Dialog,
   DialogContent,
@@ -965,7 +966,7 @@ async function copyShareText() {
             :class="errors.accessArrangement ? 'ring-2 ring-warning/50 ring-offset-2 ring-offset-background' : ''"
           >
             <label class="flex gap-3 text-sm leading-6">
-              <input v-model="form.riskAcknowledged" type="checkbox" class="mt-1 h-4 w-4 shrink-0 accent-current">
+              <Checkbox v-model="form.riskAcknowledged" class="mt-1" />
               <span>
                 我确认已理解该套餐发布边界；平台不会填写、保存、交付或要求买家提供主账号、密码、API Key、Session、Cookie、token 或其他登录凭据。
               </span>
@@ -1055,11 +1056,12 @@ async function copyShareText() {
               <div class="h-full rounded-full bg-primary" :style="{ width: `${publishProgressPercent}%` }" />
             </div>
             <div class="mt-4 space-y-2">
-              <button
+              <Button
                 v-for="(task, index) in pendingPublishTasks"
                 :key="task.key"
                 type="button"
-                class="flex w-full items-center gap-3 rounded-lg border border-border bg-background px-3 py-3 text-left text-sm"
+                variant="outline"
+                class="h-auto w-full justify-start whitespace-normal px-3 py-3 text-left text-sm"
                 :class="hasTriedPublish ? 'border-warning/35' : ''"
                 @click="mobileCheckOpen = false; jumpToTask(task.key)"
               >
@@ -1069,7 +1071,7 @@ async function copyShareText() {
                   <span class="mt-0.5 block text-xs text-muted-foreground">{{ task.description }}</span>
                 </span>
                 <span class="text-muted-foreground">→</span>
-              </button>
+              </Button>
               <div v-if="!pendingPublishTasks.length" class="rounded-lg border border-success/25 bg-success/10 px-3 py-4 text-sm text-success">
                 发布必填项已完成，可以提交审核。
               </div>

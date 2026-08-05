@@ -1,8 +1,11 @@
 <script setup lang="ts">
 import { computed } from 'vue'
+import type { AcceptableValue } from 'reka-ui'
 import { Network } from 'lucide-vue-next'
 import { Card } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
+import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group'
 import { sellingModeLabels, type ApiServicePublishForm, type DistributionSystem, type SellingMode } from './types'
 import { formatMultiplier, publishDistributionOptions } from './utils'
 
@@ -19,6 +22,10 @@ const emit = defineEmits<{
   setDistribution: [value: DistributionSystem]
   setDefaultMultiplier: [value: string]
 }>()
+
+function setDistribution(value: AcceptableValue) {
+  if (value === 'sub2api' || value === 'other') emit('setDistribution', value)
+}
 </script>
 
 <template>
@@ -38,22 +45,27 @@ const emit = defineEmits<{
     <div class="api-publish-card-body space-y-2">
       <div class="space-y-2">
         <label class="text-sm font-medium">接入类型</label>
-        <div class="grid gap-2 sm:grid-cols-2">
-          <button
+        <RadioGroup
+          :model-value="form.distributionSystem"
+          class="grid gap-2 sm:grid-cols-2"
+          aria-label="接入类型"
+          :aria-invalid="Boolean(errors.distributionSystem)"
+          :aria-describedby="errors.distributionSystem ? 'api-publish-distribution-error' : undefined"
+          @update:model-value="setDistribution"
+        >
+          <Label
             v-for="option in publishDistributionOptions"
             :key="option.value"
-            type="button"
-            class="api-publish-option-card"
+            :for="`api-access-distribution-${option.value}`"
+            class="api-publish-option-card cursor-pointer items-start gap-2 font-normal"
             :class="{ 'is-active': form.distributionSystem === option.value }"
-            :aria-invalid="Boolean(errors.distributionSystem)"
-            :aria-describedby="errors.distributionSystem ? 'api-publish-distribution-error' : undefined"
-            @click="emit('setDistribution', option.value)"
           >
+            <RadioGroupItem :id="`api-access-distribution-${option.value}`" :value="option.value" class="mt-0.5" />
             <span class="block text-sm font-semibold">{{ option.title }}</span>
             <span class="mt-1 block text-xs leading-5 text-muted-foreground">{{ option.description }}</span>
             <span class="mt-2 block text-[11px] leading-5 text-muted-foreground">{{ option.detail }}</span>
-          </button>
-        </div>
+          </Label>
+        </RadioGroup>
         <p v-if="errors.distributionSystem" id="api-publish-distribution-error" class="text-xs text-destructive">{{ errors.distributionSystem }}</p>
       </div>
 

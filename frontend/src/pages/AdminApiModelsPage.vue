@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, reactive, ref } from 'vue'
-import { AlertTriangle, Building2, FilePenLine, Plus, RotateCcw, Save, ToggleLeft, ToggleRight } from 'lucide-vue-next'
+import { Building2, FilePenLine, Plus, RotateCcw, Save, ToggleLeft, ToggleRight, TriangleAlert } from 'lucide-vue-next'
 import { toast } from 'vue-sonner'
 import PageTitle from '@/components/market/PageTitle.vue'
 import CompactStats from '@/components/market/CompactStats.vue'
@@ -8,6 +8,7 @@ import StatusTabs from '@/components/market/StatusTabs.vue'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
+import { Checkbox } from '@/components/ui/checkbox'
 import {
   Dialog,
   DialogContent,
@@ -261,10 +262,10 @@ async function setModelActive(model: AdminApiModel, active: boolean) {
   }
 }
 
-function toggleCapability(capability: ApiModelCapability) {
-  modelForm.capabilities = modelForm.capabilities.includes(capability)
-    ? modelForm.capabilities.filter(item => item !== capability)
-    : [...modelForm.capabilities, capability]
+function setCapability(capability: ApiModelCapability, checked: boolean) {
+  modelForm.capabilities = checked
+    ? Array.from(new Set([...modelForm.capabilities, capability]))
+    : modelForm.capabilities.filter(item => item !== capability)
 }
 
 function matchesStatusFilter(item: AdminApiModel) {
@@ -372,7 +373,7 @@ function capabilityText(model: AdminApiModel) {
       <Card v-else-if="hasError" class="border-destructive/30 p-5">
         <div class="flex flex-col gap-4 sm:flex-row sm:items-start">
           <div class="grid h-10 w-10 shrink-0 place-items-center rounded-lg bg-destructive/10 text-destructive">
-            <AlertTriangle class="h-5 w-5" />
+            <TriangleAlert class="h-5 w-5" />
           </div>
           <div class="min-w-0 flex-1">
             <h2 class="font-semibold">API 模型目录读取失败</h2>
@@ -481,7 +482,7 @@ function capabilityText(model: AdminApiModel) {
               <Input v-model.number="providerForm.sortOrder" type="number" />
             </label>
             <label class="flex items-end gap-2 rounded-md border border-border bg-muted/30 p-3 text-sm">
-              <input v-model="providerForm.active" type="checkbox" class="mb-1 h-4 w-4 accent-primary" />
+              <Checkbox v-model="providerForm.active" class="mb-1" />
               <span>启用提供商</span>
             </label>
           </div>
@@ -535,7 +536,10 @@ function capabilityText(model: AdminApiModel) {
             <span class="text-sm font-medium">能力</span>
             <div class="grid gap-2 sm:grid-cols-3">
               <label v-for="item in apiModelCapabilities" :key="item.value" class="flex items-center gap-2 rounded-md border border-border bg-muted/30 p-2 text-sm">
-                <input :checked="modelForm.capabilities.includes(item.value)" type="checkbox" class="h-4 w-4 accent-primary" @change="toggleCapability(item.value)" />
+                <Checkbox
+                  :model-value="modelForm.capabilities.includes(item.value)"
+                  @update:model-value="value => setCapability(item.value, Boolean(value))"
+                />
                 <span>{{ item.label }}</span>
               </label>
             </div>
@@ -575,7 +579,7 @@ function capabilityText(model: AdminApiModel) {
               <Input v-model.number="modelForm.sortOrder" type="number" />
             </label>
             <label class="flex items-end gap-2 rounded-md border border-border bg-muted/30 p-3 text-sm">
-              <input v-model="modelForm.active" type="checkbox" class="mb-1 h-4 w-4 accent-primary" />
+              <Checkbox v-model="modelForm.active" class="mb-1" />
               <span>启用模型</span>
             </label>
           </div>

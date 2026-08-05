@@ -2,7 +2,7 @@
 import { computed, onUnmounted, reactive, ref, watch, watchEffect } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { toast } from 'vue-sonner'
-import { Bell, CheckCircle2, ChevronRight, CircleAlert, Eye, KeyRound, Link2, LockKeyhole, LogIn, Mail, MailCheck, MessageCircle, RefreshCw, Save, ShieldAlert, ShieldCheck, Star, Trash2 } from 'lucide-vue-next'
+import { Bell, CheckCircle2, ChevronRight, Eye, KeyRound, Link2, LockKeyhole, LogIn, Mail, MailCheck, MessageCircle, RefreshCw, Save, ShieldAlert, ShieldCheck, Star, Trash2, TriangleAlert } from 'lucide-vue-next'
 import ApiPaymentSettingsEditor from '@/components/contact-payment/ApiPaymentSettingsEditor.vue'
 import BuyerPreviewDrawer from '@/components/contact-payment/BuyerPreviewDrawer.vue'
 import ConfigurationProgressCard from '@/components/contact-payment/ConfigurationProgressCard.vue'
@@ -14,7 +14,10 @@ import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
+import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { Switch } from '@/components/ui/switch'
 import { Textarea } from '@/components/ui/textarea'
 import { useUnsavedChangesGuard } from '@/composables/useUnsavedChangesGuard'
 import { type AvatarMode, type ContactMethodType, type ContactUsageScope, type SaveContactMethodRequest, type UserContactMethod, type UserPrivacySettings } from '@/lib/api'
@@ -984,7 +987,7 @@ function goToLogin() {
                       role="alert"
                       class="flex items-center gap-1.5 text-xs font-medium text-destructive"
                     >
-                      <CircleAlert class="h-3.5 w-3.5 shrink-0" />
+                      <TriangleAlert class="h-3.5 w-3.5 shrink-0" />
                       两次输入的密码不一致，请重新输入
                     </span>
                   </div>
@@ -1186,8 +1189,16 @@ function goToLogin() {
       <aside class="my-center-profile-aside space-y-4"><Card class="p-5">
         <h2 class="font-semibold">头像</h2>
         <div class="mt-4 space-y-3">
-          <label class="flex items-center gap-2 text-sm"><input v-model="profileForm.avatarMode" type="radio" value="linuxdo" />跟随 linux.do 头像</label>
-          <label class="flex items-center gap-2 text-sm"><input v-model="profileForm.avatarMode" type="radio" value="custom_url" />使用 HTTPS 图片 URL</label>
+          <RadioGroup v-model="profileForm.avatarMode" aria-label="头像来源" class="gap-3">
+            <div class="flex items-center gap-2 text-sm">
+              <RadioGroupItem id="avatar-mode-linuxdo" value="linuxdo" />
+              <Label for="avatar-mode-linuxdo" class="cursor-pointer font-normal">跟随 linux.do 头像</Label>
+            </div>
+            <div class="flex items-center gap-2 text-sm">
+              <RadioGroupItem id="avatar-mode-custom-url" value="custom_url" />
+              <Label for="avatar-mode-custom-url" class="cursor-pointer font-normal">使用 HTTPS 图片 URL</Label>
+            </div>
+          </RadioGroup>
           <label class="space-y-2">
             <span class="text-sm font-medium">自定义头像 URL</span>
             <Input v-model="profileForm.avatarUrl" :disabled="profileForm.avatarMode !== 'custom_url'" placeholder="https://example.com/avatar.webp" />
@@ -1403,12 +1414,12 @@ function goToLogin() {
       <Card class="p-5">
         <h2 class="font-semibold">公开主页隐私设置</h2>
         <div class="mt-4 space-y-3">
-          <label class="flex items-center justify-between gap-4 text-sm"><span>展示最近活跃时间</span><input v-model="privacyForm.showLastActiveAt" type="checkbox" /></label>
-          <label class="flex items-center justify-between gap-4 text-sm"><span>展示加入时间</span><input v-model="privacyForm.showCreatedAt" type="checkbox" /></label>
-          <label class="flex items-center justify-between gap-4 text-sm"><span>展示近期完成数量</span><input v-model="privacyForm.showCompletionStats" type="checkbox" /></label>
-          <label class="flex items-center justify-between gap-4 text-sm"><span>展示响应中位时间</span><input v-model="privacyForm.showResponseMedian" type="checkbox" /></label>
-          <label class="flex items-center justify-between gap-4 text-sm"><span>展示已处理纠纷摘要</span><input v-model="privacyForm.showResolvedDisputeSummary" type="checkbox" /></label>
-          <label class="flex items-center justify-between gap-4 text-sm"><span>允许他人从公开主页举报</span><input v-model="privacyForm.allowPublicProfileReport" type="checkbox" /></label>
+          <div class="flex items-center justify-between gap-4 text-sm"><span id="privacy-last-active">展示最近活跃时间</span><Switch v-model="privacyForm.showLastActiveAt" aria-labelledby="privacy-last-active" /></div>
+          <div class="flex items-center justify-between gap-4 text-sm"><span id="privacy-created-at">展示加入时间</span><Switch v-model="privacyForm.showCreatedAt" aria-labelledby="privacy-created-at" /></div>
+          <div class="flex items-center justify-between gap-4 text-sm"><span id="privacy-completion-stats">展示近期完成数量</span><Switch v-model="privacyForm.showCompletionStats" aria-labelledby="privacy-completion-stats" /></div>
+          <div class="flex items-center justify-between gap-4 text-sm"><span id="privacy-response-median">展示响应中位时间</span><Switch v-model="privacyForm.showResponseMedian" aria-labelledby="privacy-response-median" /></div>
+          <div class="flex items-center justify-between gap-4 text-sm"><span id="privacy-resolved-disputes">展示已处理纠纷摘要</span><Switch v-model="privacyForm.showResolvedDisputeSummary" aria-labelledby="privacy-resolved-disputes" /></div>
+          <div class="flex items-center justify-between gap-4 text-sm"><span id="privacy-public-report">允许他人从公开主页举报</span><Switch v-model="privacyForm.allowPublicProfileReport" aria-labelledby="privacy-public-report" /></div>
         </div>
         <Button class="mt-5" @click="savePrivacy"><Save class="h-4 w-4" />保存隐私设置</Button>
       </Card>

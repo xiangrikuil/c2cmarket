@@ -2,6 +2,7 @@
 import { computed, ref } from 'vue'
 import { Check } from 'lucide-vue-next'
 import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import type { ModelCatalogItem } from '@/lib/api'
 import type { ApiProviderCategory, ApiServicePublishForm } from './types'
@@ -63,10 +64,10 @@ const listClass = computed(() => expanded.value ? 'max-h-64 overflow-y-auto' : '
     <div class="p-2.5">
       <div v-if="!filteredModels.length" class="text-sm text-muted-foreground">当前模型大类没有可添加的模型。</div>
       <div v-else class="api-publish-model-chip-list" :class="listClass">
-        <button
+        <Button
           v-for="model in visibleModels"
           :key="model.id"
-          type="button"
+          variant="ghost"
           class="api-publish-model-chip"
           :class="{ 'is-active': selectedIds.has(model.id) }"
           :aria-pressed="selectedIds.has(model.id)"
@@ -75,16 +76,17 @@ const listClass = computed(() => expanded.value ? 'max-h-64 overflow-y-auto' : '
         >
           <Check v-if="selectedIds.has(model.id)" class="h-3.5 w-3.5" />
           <span>{{ model.displayName }}</span>
-        </button>
+        </Button>
       </div>
-      <button
+      <Button
         v-if="hiddenCount || expanded"
-        type="button"
-        class="mt-3 rounded-full border border-border px-3 py-1 text-xs font-medium text-muted-foreground hover:bg-muted"
+        size="sm"
+        variant="outline"
+        class="mt-3 h-auto rounded-full px-3 py-1 text-xs font-medium text-muted-foreground"
         @click="expanded = !expanded"
       >
         {{ expanded ? '收起' : `展开全部，更多 ${hiddenCount} 个` }}
-      </button>
+      </Button>
     </div>
   </div>
 </template>

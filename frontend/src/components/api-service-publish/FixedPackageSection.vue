@@ -1,11 +1,13 @@
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from 'vue'
+import type { AcceptableValue } from 'reka-ui'
 import { ArrowDown, ArrowUp, Boxes, Clock3, GripVertical, Package, Pencil, Plus, Trash2 } from 'lucide-vue-next'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Input } from '@/components/ui/input'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import ApiQuotaPolicyFields from '@/components/api-market/ApiQuotaPolicyFields.vue'
 import { createDefaultApiServicePackage } from './packages'
 import { sellingModeLabels, type ApiServicePublishForm } from './types'
@@ -22,6 +24,13 @@ const dragOverPackageId = ref<string | null>(null)
 
 const selectedPackageIndex = computed(() => props.form.packages.findIndex(item => item.id === selectedPackageId.value))
 const selectedPackage = computed(() => props.form.packages[selectedPackageIndex.value] ?? null)
+
+const setDurationDays = (value: AcceptableValue) => {
+  const durationDays = Number(value)
+  if ([1, 3, 7, 30].includes(durationDays)) {
+    selectedPackage.value!.durationDays = durationDays as 1 | 3 | 7 | 30
+  }
+}
 
 watch(
   () => props.form.packages.map(item => item.id),
@@ -125,10 +134,10 @@ const endPackageDrag = () => {
           @dragover.prevent
           @drop.prevent="dropPackage(index)"
         >
-          <button
-            type="button"
+          <Button
+            variant="ghost"
             draggable="true"
-            class="hidden h-8 w-6 cursor-grab items-center justify-center rounded text-muted-foreground hover:bg-muted hover:text-foreground active:cursor-grabbing sm:flex"
+            class="hidden h-8 w-6 cursor-grab rounded p-0 text-muted-foreground hover:bg-muted hover:text-foreground active:cursor-grabbing sm:flex"
             title="拖动排序"
             aria-label="拖动排序"
             @click.stop
@@ -136,11 +145,11 @@ const endPackageDrag = () => {
             @dragend="endPackageDrag"
           >
             <GripVertical class="h-4 w-4" />
-          </button>
+          </Button>
 
-          <button
-            type="button"
-            class="min-w-0 rounded-sm text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+          <Button
+            variant="ghost"
+            class="h-auto min-w-0 justify-start rounded-sm p-0 text-left font-normal hover:bg-transparent"
             :aria-label="`编辑套餐 ${index + 1}：${item.name || '未命名套餐'}`"
             :aria-pressed="selectedPackageId === item.id"
             @click="selectPackage(item.id)"
@@ -158,7 +167,7 @@ const endPackageDrag = () => {
               <span class="inline-flex items-center gap-1"><Clock3 class="h-3.5 w-3.5" />{{ item.durationDays }} 天</span>
               <span class="inline-flex items-center gap-1"><Boxes class="h-3.5 w-3.5" />库存 {{ item.stockTotal }}</span>
             </div>
-          </button>
+          </Button>
 
           <div class="flex items-center gap-0.5">
             <Button
@@ -166,6 +175,7 @@ const endPackageDrag = () => {
               size="icon"
               variant="ghost"
               title="上移套餐"
+              aria-label="上移套餐"
               :disabled="index === 0"
               @click="movePackage(index, -1)"
             ><ArrowUp class="h-4 w-4" /></Button>
@@ -174,11 +184,12 @@ const endPackageDrag = () => {
               size="icon"
               variant="ghost"
               title="下移套餐"
+              aria-label="下移套餐"
               :disabled="index === form.packages.length - 1"
               @click="movePackage(index, 1)"
             ><ArrowDown class="h-4 w-4" /></Button>
-            <Button size="icon" variant="ghost" title="编辑套餐" @click="selectPackage(item.id)"><Pencil class="h-4 w-4" /></Button>
-            <Button size="icon" variant="ghost" title="删除套餐" :disabled="form.packages.length === 1" @click="removePackage(index)"><Trash2 class="h-4 w-4" /></Button>
+            <Button size="icon" variant="ghost" title="编辑套餐" aria-label="编辑套餐" @click="selectPackage(item.id)"><Pencil class="h-4 w-4" /></Button>
+            <Button size="icon" variant="ghost" title="删除套餐" aria-label="删除套餐" :disabled="form.packages.length === 1" @click="removePackage(index)"><Trash2 class="h-4 w-4" /></Button>
           </div>
         </div>
       </div>
@@ -216,12 +227,18 @@ const endPackageDrag = () => {
           </label>
           <label class="space-y-1.5">
             <span class="text-xs font-medium">有效期</span>
-            <select v-model.number="selectedPackage.durationDays" class="h-9 w-full rounded-md border border-input bg-background px-3 text-sm">
-              <option :value="1">1 天</option>
-              <option :value="3">3 天</option>
-              <option :value="7">7 天</option>
-              <option :value="30">30 天</option>
-            </select>
+            <Select
+              :model-value="String(selectedPackage.durationDays)"
+              @update:model-value="setDurationDays"
+            >
+              <SelectTrigger class="w-full"><SelectValue placeholder="选择有效期" /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="1">1 天</SelectItem>
+                <SelectItem value="3">3 天</SelectItem>
+                <SelectItem value="7">7 天</SelectItem>
+                <SelectItem value="30">30 天</SelectItem>
+              </SelectContent>
+            </Select>
           </label>
           <label class="space-y-1.5">
             <span class="text-xs font-medium">总库存</span>

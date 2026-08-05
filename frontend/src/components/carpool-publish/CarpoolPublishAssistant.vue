@@ -68,11 +68,12 @@ const topPendingText = computed(() => {
       <div v-if="pendingItems.length" class="mt-5">
         <h3 class="text-sm font-semibold">待补项</h3>
         <div class="mt-2 space-y-2">
-          <button
+          <Button
             v-for="(item, index) in pendingItems"
             :key="item.key"
             type="button"
-            class="flex w-full items-center gap-2 rounded-lg border border-border bg-background px-3 py-2 text-left text-sm transition hover:border-primary/40 hover:bg-primary/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            variant="outline"
+            class="h-auto w-full justify-start whitespace-normal px-3 py-2 text-left text-sm hover:border-primary/40 hover:bg-primary/5"
             @click="emit('jumpToTask', item.key)"
           >
             <span
@@ -86,7 +87,7 @@ const topPendingText = computed(() => {
               <span class="mt-0.5 block text-xs text-muted-foreground">{{ item.description }}</span>
             </span>
             <span class="text-muted-foreground">→</span>
-          </button>
+          </Button>
         </div>
       </div>
 

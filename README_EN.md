@@ -36,9 +36,15 @@
 > [!NOTE]
 > C2CMarket is under development. APIs, database migrations, and deployment settings may change before 1.0. Review the [release checklist](./docs/release-checklist.md) before a production deployment.
 
+## Why C2CMarket
+
+linux.do users already offer and seek subscription seats and API service quota, but listings are scattered across posts and separate services. Buyers and sellers have no single place to check profiles, orders, reviews, and disputes. It is hard to assess the other party before a deal or trace what happened when something goes wrong.
+
+Some ChatGPT and Claude users have spare subscription seats or API quota; others need more. Relay and community-run services meet part of that demand, but their sources, rules, and availability vary. C2CMarket brings these listings into one market, where both sides can review public profiles and transaction history before deciding whether to trade off-platform.
+
 ## About C2CMarket
 
-C2CMarket brings subscription carpools, API services, buyer requests, and public pricing records into one marketplace. Users can browse or publish listings while the platform records applications, orders, notifications, reviews, and disputes. Communication and payment happen off-platform.
+C2CMarket brings subscription carpools, API services, buyer requests, and public pricing records into one marketplace. Users can browse or publish listings. The platform records applications, orders, reviews, and disputes; communication and payment happen off-platform.
 
 The platform does not process payments, provide escrow or fulfillment guarantees, or proxy upstream API traffic. This boundary applies to public pages, order flows, and administration tools.
 

@@ -190,3 +190,100 @@ export default defineNuxtConfig({ routeRules: publicRouteRules })
 ```
 
 Development remains query-safe while production retains SSR SWR.
+
+## Scenario: Hydration-stable primitives and dependent public queries
+
+### 1. Scope / Trigger
+
+Apply this contract when changing `App.vue`, Reka-backed shadcn-vue primitives,
+or an SSR page where one public query determines the key or enabled state of a
+second query.
+
+### 2. Signatures
+
+```ts
+<ConfigProvider :use-id="useRekaId">...</ConfigProvider>
+
+useApiQuotaOffers(
+  filters: Ref<ApiQuotaOfferFilters> | ApiQuotaOfferFilters,
+  enabled: Ref<boolean> | boolean,
+)
+
+onServerPrefetch(async () => {
+  await parentQuery.suspense()
+  selectFrom(parentQuery.data.value)
+  if (selection.value) await childQuery.suspense()
+})
+```
+
+### 3. Contracts
+
+- `App.vue` wraps loading UI, standalone pages, application shells, and the
+  global toaster in one Reka `ConfigProvider`.
+- The deterministic ID counter lives inside `<script setup>`, which makes it
+  app-instance scoped on both SSR and the client. A module-global counter is
+  forbidden because request order would affect rendered IDs.
+- A dependent child query stays disabled until its authoritative parent
+  selection exists. During SSR, await the parent, assign the same default
+  selection used by the client, then await the child.
+- Server HTML and the client's first render must use the same selected key,
+  loading branch, and data branch. Do not rely on a watcher scheduled after
+  server prefetch to establish hydration-critical state.
+- Non-404 public query failures remain visible SSR failures; hydration fixes
+  must not replace an upstream error with an empty successful page.
+
+### 4. Validation & Error Matrix
+
+| Condition | Required result |
+| --- | --- |
+| Fresh direct load with Reka Tabs/Popover | No ID, node, text, class, or children hydration mismatch |
+| Parent data has an active/default item | Server and client select the same item before rendering child data |
+| Parent data has no selectable item | Child query remains disabled and the documented empty state renders |
+| Parent or child public query returns non-404 failure | SSR request remains an error response |
+| Client-side navigation | Existing cached-query and interaction behavior remains unchanged |
+
+### 5. Good / Base / Bad Cases
+
+- Good: API market SSR awaits sale slots, selects the active slot, then awaits
+  offers for that exact slot; the client hydrates the same card grid.
+- Base: no slot is available, so no empty-key offer query runs and the page
+  renders its explicit empty state.
+- Bad: the server renders a skeleton with no selected slot while the hydrated
+  client immediately renders a dated heading and offer cards.
+
+### 6. Tests Required
+
+- Source regression for the root `ConfigProvider`, app-scoped ID source, child
+  query enable guard, and sequential `onServerPrefetch` order.
+- Full Vitest and Nuxt typecheck.
+- Real-API production build.
+- Fresh direct browser loads for `/`, `/api-market`, `/carpools`,
+  `/official-prices`, and `/login`; assert zero console warning/error entries,
+  the default theme on first paint, and no horizontal overflow.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```ts
+const childQuery = useApiQuotaOffers(computed(() => ({ slotKey: selected.value })))
+prefetchQueriesOnServer(parentQuery, childQuery)
+```
+
+Both queries start together, so the child can run with an empty key and the
+server can render a different branch from the hydrated client.
+
+#### Correct
+
+```ts
+const childQuery = useApiQuotaOffers(
+  computed(() => ({ slotKey: selected.value })),
+  computed(() => Boolean(selected.value)),
+)
+
+onServerPrefetch(async () => {
+  await parentQuery.suspense()
+  selectFrom(parentQuery.data.value)
+  if (selected.value) await childQuery.suspense()
+})
+```

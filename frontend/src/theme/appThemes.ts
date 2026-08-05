@@ -3,8 +3,8 @@ export const APP_THEME_STORAGE_KEY = 'c2cmarket-theme'
 export const appThemes = [
   {
     value: 'minimal-modern',
-    label: '极致电蓝',
-    swatch: '#0052FF',
+    label: '深蓝紫',
+    swatch: '#5B4FE9',
   },
 ] as const
 

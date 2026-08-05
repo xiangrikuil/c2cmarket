@@ -2,12 +2,12 @@
 import {
   ArrowRight,
   CarFront,
-  CircleAlert,
   Code2,
   Heart,
   MessageCircle,
   Scale,
   ShoppingBag,
+  TriangleAlert,
 } from 'lucide-vue-next'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
@@ -156,7 +156,7 @@ function contactsSummary() {
         />
 
         <Alert v-if="accountAlert" class="border-warning/35 bg-warning/5 text-foreground">
-          <CircleAlert />
+          <TriangleAlert />
           <AlertTitle>{{ accountAlert.title }}</AlertTitle>
           <AlertDescription>
             <p>{{ accountAlert.description }}</p>

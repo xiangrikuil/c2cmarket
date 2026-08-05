@@ -365,11 +365,15 @@ export function useApiService(id: Ref<string> | string, enabled: Ref<boolean> | 
   })
 }
 
-export function useApiQuotaOffers(filters: Ref<ApiQuotaOfferFilters> | ApiQuotaOfferFilters = {}) {
+export function useApiQuotaOffers(
+  filters: Ref<ApiQuotaOfferFilters> | ApiQuotaOfferFilters = {},
+  enabled: Ref<boolean> | boolean = true,
+) {
   return useQuery({
     queryKey: computed(() => ['api-quota-offers', valueOf(filters)]),
     queryFn: () => getApiQuotaOffers(valueOf(filters)),
     placeholderData: previousData => previousData,
+    enabled: computed(() => valueOf(enabled)),
   })
 }
 

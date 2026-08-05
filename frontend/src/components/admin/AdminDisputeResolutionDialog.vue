@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, reactive, ref, watch } from 'vue'
 import { useQuery, useQueryClient } from '@tanstack/vue-query'
-import { AlertTriangle, CheckCircle2, FileText, Gavel, RefreshCw, Scale, Users } from 'lucide-vue-next'
+import { CheckCircle2, FileText, Gavel, RefreshCw, Scale, TriangleAlert, Users } from 'lucide-vue-next'
 import { toast } from 'vue-sonner'
 import LocalTime from '@/components/market/LocalTime.vue'
 import SkeletonBlock from '@/components/market/SkeletonBlock.vue'
@@ -366,7 +366,7 @@ async function submitOutcome() {
         <SkeletonBlock v-if="disputeQuery.isPending.value" :lines="8" />
 
         <Alert v-else-if="disputeQuery.error.value" variant="destructive">
-          <AlertTriangle class="h-4 w-4" />
+          <TriangleAlert class="h-4 w-4" />
           <AlertTitle>案件读取失败</AlertTitle>
           <AlertDescription class="flex flex-wrap items-center justify-between gap-3">
             <span>{{ errorMessage(disputeQuery.error.value, '无法读取最新纠纷详情。') }}</span>
@@ -437,7 +437,7 @@ async function submitOutcome() {
             <p v-if="!reportId" class="text-sm text-muted-foreground">参与方从关联业务对象直接申请平台介入，无关联举报记录。</p>
             <SkeletonBlock v-else-if="reportQuery.isPending.value" :lines="4" />
             <Alert v-else-if="reportQuery.error.value" variant="destructive">
-              <AlertTriangle class="h-4 w-4" />
+              <TriangleAlert class="h-4 w-4" />
               <AlertTitle>关联举报读取失败</AlertTitle>
               <AlertDescription class="flex flex-wrap items-center justify-between gap-3">
                 <span>{{ errorMessage(reportQuery.error.value, '无法读取关联举报证据。') }}</span>
@@ -457,12 +457,12 @@ async function submitOutcome() {
                 </div>
               </div>
               <Alert v-if="snapshotResult.status === 'invalid'" variant="destructive">
-                <AlertTriangle class="h-4 w-4" />
+                <TriangleAlert class="h-4 w-4" />
                 <AlertTitle>脱敏目标快照不可读取</AlertTitle>
                 <AlertDescription>{{ snapshotResult.message }}</AlertDescription>
               </Alert>
               <Alert v-else-if="snapshotResult.status === 'empty'">
-                <AlertTriangle class="h-4 w-4" />
+                <TriangleAlert class="h-4 w-4" />
                 <AlertTitle>脱敏目标快照缺失</AlertTitle>
                 <AlertDescription>关联举报未返回目标快照，基础裁决暂不可提交。</AlertDescription>
               </Alert>
@@ -488,7 +488,7 @@ async function submitOutcome() {
           </section>
 
           <Alert v-if="submitError" variant="destructive" class="mt-5">
-            <AlertTriangle class="h-4 w-4" />
+            <TriangleAlert class="h-4 w-4" />
             <AlertTitle>提交未完成</AlertTitle>
             <AlertDescription>{{ submitError }}</AlertDescription>
           </Alert>
@@ -538,7 +538,7 @@ async function submitOutcome() {
               <p class="mt-1 text-sm text-muted-foreground">该结果记录责任事实；账号限制仍在独立的用户信誉治理入口处理。</p>
             </div>
             <Alert v-if="auditError" variant="destructive">
-              <AlertTriangle class="h-4 w-4" />
+              <TriangleAlert class="h-4 w-4" />
               <AlertTitle>参与方信誉审计读取失败</AlertTitle>
               <AlertDescription class="flex flex-wrap items-center justify-between gap-3">
                 <span>{{ errorMessage(auditError, '无法确认该纠纷是否已有责任认定。') }}</span>
@@ -546,7 +546,7 @@ async function submitOutcome() {
               </AlertDescription>
             </Alert>
             <Alert v-if="outcomeParticipantsUnavailable" variant="destructive">
-              <AlertTriangle class="h-4 w-4" />
+              <TriangleAlert class="h-4 w-4" />
               <AlertTitle>没有可用责任主体</AlertTitle>
               <AlertDescription>当前案件缺少可验证的业务参与方，不能创建责任认定；基础裁决已保留。</AlertDescription>
             </Alert>
@@ -635,7 +635,7 @@ async function submitOutcome() {
           </section>
 
           <Alert v-else class="mt-5">
-            <AlertTriangle class="h-4 w-4" />
+            <TriangleAlert class="h-4 w-4" />
             <AlertTitle>案件已关闭</AlertTitle>
             <AlertDescription>关闭案件只能查看现有事实，不能补交基础裁决或责任认定。</AlertDescription>
           </Alert>

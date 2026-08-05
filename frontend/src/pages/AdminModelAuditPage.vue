@@ -1,12 +1,13 @@
 <script setup lang="ts">
 import { computed, reactive, ref, watch } from 'vue'
-import { AlertTriangle, ClipboardCopy, Download, FileText, Pencil, Play, Plus, RefreshCw, Save, ShieldAlert } from 'lucide-vue-next'
+import { ClipboardCopy, Download, FileText, Pencil, Play, Plus, RefreshCw, Save, ShieldAlert, TriangleAlert } from 'lucide-vue-next'
 import { toast } from 'vue-sonner'
 import PageTitle from '@/components/market/PageTitle.vue'
 import CompactStats from '@/components/market/CompactStats.vue'
 import { Badge, type BadgeVariants } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
+import { Checkbox } from '@/components/ui/checkbox'
 import {
   Dialog,
   DialogContent,
@@ -427,7 +428,7 @@ function evidenceText(evidence: Record<string, unknown>) {
     <Card v-if="hasError" class="border-destructive/30 p-5">
       <div class="flex flex-col gap-4 sm:flex-row sm:items-start">
         <div class="grid h-10 w-10 shrink-0 place-items-center rounded-lg bg-destructive/10 text-destructive">
-          <AlertTriangle class="h-5 w-5" />
+          <TriangleAlert class="h-5 w-5" />
         </div>
         <div class="min-w-0 flex-1">
           <h2 class="font-semibold">模型审计数据读取失败</h2>
@@ -551,15 +552,15 @@ function evidenceText(evidence: Record<string, unknown>) {
 
         <div class="mt-4 grid gap-2 sm:grid-cols-2">
           <label class="flex items-center gap-2 rounded-md border border-border bg-muted/30 p-3 text-sm">
-            <input v-model="runForm.enableModelEquality" type="checkbox" class="h-4 w-4 accent-primary" />
+            <Checkbox v-model="runForm.enableModelEquality" />
             <span>启用等价性检验</span>
           </label>
           <label class="flex items-center gap-2 rounded-md border border-border bg-muted/30 p-3 text-sm">
-            <input v-model="runForm.storePromptText" type="checkbox" class="h-4 w-4 accent-primary" />
+            <Checkbox v-model="runForm.storePromptText" />
             <span>保存 canary prompt 文本</span>
           </label>
           <label class="flex items-center gap-2 rounded-md border border-border bg-muted/30 p-3 text-sm">
-            <input v-model="runForm.storeResponseText" type="checkbox" class="h-4 w-4 accent-primary" />
+            <Checkbox v-model="runForm.storeResponseText" />
             <span>保存响应文本</span>
           </label>
           <label class="space-y-2">
@@ -748,7 +749,7 @@ function evidenceText(evidence: Record<string, unknown>) {
             </label>
           </div>
           <label class="flex items-center gap-2 rounded-md border border-border bg-muted/30 p-3 text-sm">
-            <input v-model="targetForm.enabled" type="checkbox" class="h-4 w-4 accent-primary" />
+            <Checkbox v-model="targetForm.enabled" />
             <span>启用目标</span>
           </label>
         </div>

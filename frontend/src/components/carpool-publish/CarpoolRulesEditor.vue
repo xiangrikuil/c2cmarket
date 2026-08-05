@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
 import type { CarpoolPublishForm, PublishFieldState } from './types'
 import PublishSectionCard from './PublishSectionCard.vue'
@@ -79,15 +80,17 @@ function stateLabelClass() {
     <details class="mt-3 rounded-md border border-border bg-muted/30 p-3">
       <summary class="cursor-pointer text-sm font-medium">常用说明模板</summary>
       <div class="mt-3 flex flex-wrap gap-2">
-        <button
+        <Button
           v-for="template in templates"
           :key="template"
           type="button"
-          class="rounded-full border border-border bg-background px-3 py-1 text-xs hover:bg-muted"
+          size="sm"
+          variant="outline"
+          class="h-auto rounded-full px-3 py-1 text-xs"
           @click="insertTemplate(form, template)"
         >
           + {{ template }}
-        </button>
+        </Button>
       </div>
     </details>
   </PublishSectionCard>

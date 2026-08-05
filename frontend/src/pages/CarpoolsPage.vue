@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { ChevronDown, Code2, Globe2, MessageCircle, PackageSearch, Search, ShieldCheck, Sparkles, UsersRound } from 'lucide-vue-next'
+import { CarFront, Code2, MessageCircle, PackageSearch, Search, ShieldCheck, Sparkles } from 'lucide-vue-next'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
@@ -251,7 +251,7 @@ function openCarpool(event: MouseEvent | KeyboardEvent, id: string) {
           <p>月付订阅的共享席位，默认无押金。请仔细确认账号类型、额度接入信息与一次申请的联系和确认流程。</p>
         </div>
         <div class="carpool-reference-stats">
-          <div><span><UsersRound /></span><dl><dt>可上车</dt><dd>{{ availableCount }}</dd><small>可立即加入</small></dl></div>
+          <div><span><CarFront /></span><dl><dt>可上车</dt><dd>{{ availableCount }}</dd><small>可立即加入</small></dl></div>
           <div><span><ShieldCheck /></span><dl><dt>近期确认</dt><dd>{{ recentlyConfirmedCount }}</dd><small>48 小时内确认</small></dl></div>
           <div><span><MessageCircle /></span><dl><dt>边界确认</dt><dd>{{ boundaryConfirmationCount }}</dd><small>已明确规则</small></dl></div>
         </div>
@@ -362,22 +362,21 @@ function openCarpool(event: MouseEvent | KeyboardEvent, id: string) {
         </td>
         <td>
           <div class="whitespace-nowrap text-sm font-semibold text-slate-900">{{ formatWeeklyMonthlyQuota(row) }}</div>
-          <div class="mt-2 flex flex-wrap items-center gap-1">
-            <Badge variant="capability">{{ quotaResetLabel(row.followsOfficialQuotaReset) }}</Badge>
-            <Badge variant="capability">{{ adminAccountLabel(row.providesAdminAccount) }}</Badge>
+          <div class="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
+            <span>{{ quotaResetLabel(row.followsOfficialQuotaReset) }}</span>
+            <span aria-hidden="true">·</span>
+            <span>{{ adminAccountLabel(row.providesAdminAccount) }}</span>
             <Popover>
               <PopoverTrigger as-child>
                 <Button
                   variant="ghost"
                   size="sm"
-                  class="h-5 gap-1 px-1.5 text-xs text-muted-foreground"
+                  class="h-6 px-1.5 text-xs text-primary"
                   :aria-label="`查看 ${row.product} 的接入详情`"
                   @click.stop
                   @keydown.stop
                 >
-                  <Globe2 class="h-3.5 w-3.5" />
-                  {{ accessMethodCount(row) || '未声明' }}{{ accessMethodCount(row) ? ' 种接入' : '' }}
-                  <ChevronDown class="h-3 w-3" />
+                  {{ accessMethodCount(row) ? `${accessMethodCount(row)} 种接入` : '接入未声明' }}
                 </Button>
               </PopoverTrigger>
               <PopoverContent class="w-80" align="start" @click.stop>
@@ -402,7 +401,7 @@ function openCarpool(event: MouseEvent | KeyboardEvent, id: string) {
             <div class="min-w-0">
               <div class="flex min-w-0 items-center gap-1.5">
                 <span class="truncate font-medium text-slate-900">{{ row.owner }}</span>
-                <Badge class="shrink-0" variant="secondary">{{ row.ownerType }}</Badge>
+                <span class="shrink-0 text-[11px] text-muted-foreground">{{ row.ownerType }}</span>
               </div>
               <ReputationInlineSummary class="mt-1" :summary="row.sellerReputation" :compact="true" />
             </div>

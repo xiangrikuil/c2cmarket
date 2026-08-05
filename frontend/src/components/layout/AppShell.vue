@@ -4,7 +4,7 @@ import { RouterLink, useRoute, useRouter } from 'vue-router'
 import { useQueryClient } from '@tanstack/vue-query'
 import BadgeCheck from 'lucide-vue-next/dist/esm/icons/badge-check.js'
 import Bell from 'lucide-vue-next/dist/esm/icons/bell.js'
-import Car from 'lucide-vue-next/dist/esm/icons/car.js'
+import CarFront from 'lucide-vue-next/dist/esm/icons/car-front.js'
 import ChevronDown from 'lucide-vue-next/dist/esm/icons/chevron-down.js'
 import CircleHelp from 'lucide-vue-next/dist/esm/icons/circle-question-mark.js'
 import Code2 from 'lucide-vue-next/dist/esm/icons/code-xml.js'
@@ -28,7 +28,6 @@ import Star from 'lucide-vue-next/dist/esm/icons/star.js'
 import Upload from 'lucide-vue-next/dist/esm/icons/upload.js'
 import UserCog from 'lucide-vue-next/dist/esm/icons/user-cog.js'
 import UserRound from 'lucide-vue-next/dist/esm/icons/user-round.js'
-import UsersRound from 'lucide-vue-next/dist/esm/icons/users-round.js'
 import X from 'lucide-vue-next/dist/esm/icons/x.js'
 import { toast } from 'vue-sonner'
 import { Badge } from '@/components/ui/badge'
@@ -104,7 +103,7 @@ const navGroups = computed(() => {
     title: '发现市场',
     items: [
       { label: '首页', to: '/', count: null, icon: Home },
-      { label: '订阅拼车', to: '/carpools', count: null, icon: UsersRound },
+      { label: '订阅拼车', to: '/carpools', count: null, icon: CarFront },
       { label: 'API 市场', to: '/api-market', count: null, icon: Code2 },
       { label: '官网价格', to: '/official-prices', count: null, icon: ShieldCheck },
     ],
@@ -112,14 +111,14 @@ const navGroups = computed(() => {
   const publishGroup = {
     title: '发布入口',
     items: [
-      { label: '发布车源', to: '/carpools/new', count: null, icon: Car },
+      { label: '发布车源', to: '/carpools/new', count: null, icon: CarFront },
       { label: '发布 API 服务', to: '/api-market/new', count: null, icon: PackageSearch },
     ],
   }
   const userGroup = {
     title: '我的交易',
     items: [
-      { label: '我的上车', to: '/my/rides', count: buyerCarpoolActionCount.value, icon: UsersRound },
+      { label: '我的上车', to: '/my/rides', count: buyerCarpoolActionCount.value, icon: CarFront },
       { label: 'API 购买订单', to: '/my/api-orders', count: buyerApiActionCount.value, icon: ShoppingBag },
       { label: '收藏', to: '/my/favorites', count: null, icon: Star },
       { label: '通知', to: '/my/notifications', count: unreadBusinessCount.value, icon: Bell },
@@ -128,7 +127,7 @@ const navGroups = computed(() => {
   const merchantGroup = {
     title: '经营中心',
     items: [
-      { label: '我的车源', to: '/my/carpools', count: null, icon: Car },
+      { label: '我的车源', to: '/my/carpools', count: null, icon: CarFront },
       { label: '上车申请', to: '/merchant/carpool-applications', count: ownerCarpoolActionCount.value, icon: UserCog },
       { label: '我的 API 服务', to: '/my/api-services', count: null, icon: Code2 },
       { label: 'API 销售订单', to: '/merchant/api-orders', count: merchantApiActionCount.value, icon: PackageSearch },
@@ -255,7 +254,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onNavigationKeydown)
         class="flex h-[60px] items-center border-b border-sidebar-border font-semibold tracking-tight"
         :class="sidebarCollapsed ? 'justify-center px-0' : 'gap-2.5 px-5'"
       >
-        <img src="/c2cmarket-logo-mark.svg?v=20260708-electric-blue" alt="C2CMarket" class="h-7 w-7 shrink-0" />
+        <img src="/c2cmarket-logo-mark.svg?v=20260806-deep-violet" alt="C2CMarket" class="h-7 w-7 shrink-0" />
         <span v-if="!sidebarCollapsed" class="min-w-0">
           <span class="block truncate text-[19px] font-bold leading-tight text-sidebar-foreground">C2CMarket</span>
         </span>
@@ -282,7 +281,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onNavigationKeydown)
                 class="flex min-w-0 items-center"
                 :class="sidebarCollapsed ? 'w-full justify-center' : 'gap-3 px-3'"
               >
-                <component :is="item.icon" class="h-4 w-4 shrink-0" />
+                <component :is="item.icon" class="h-[18px] w-[18px] shrink-0" />
                 <span v-if="!sidebarCollapsed" class="truncate">{{ item.label }}</span>
               </span>
               <Badge v-if="item.count && !sidebarCollapsed" variant="secondary" class="mr-2 h-5 px-1.5 text-[11px]">{{ formatBadgeCount(item.count) }}</Badge>
@@ -333,7 +332,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onNavigationKeydown)
     >
       <div class="flex h-[60px] items-center justify-between border-b border-border px-4">
         <RouterLink to="/" class="flex min-w-0 items-center gap-3 font-semibold tracking-tight" @click="closeMenu">
-          <img src="/c2cmarket-logo-mark.svg?v=20260708-electric-blue" alt="C2CMarket" class="h-8 w-8 shrink-0" />
+          <img src="/c2cmarket-logo-mark.svg?v=20260806-deep-violet" alt="C2CMarket" class="h-8 w-8 shrink-0" />
           <span class="min-w-0">
             <span class="block truncate text-[18px] font-bold leading-tight">C2CMarket</span>
           </span>
@@ -361,7 +360,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onNavigationKeydown)
               @click="closeMenu"
             >
               <span class="flex min-w-0 items-center gap-2">
-                <component :is="item.icon" class="h-4 w-4 shrink-0" />
+                <component :is="item.icon" class="h-[18px] w-[18px] shrink-0" />
                 <span class="truncate">{{ item.label }}</span>
               </span>
               <Badge v-if="item.count" variant="secondary">{{ formatBadgeCount(item.count) }}</Badge>
@@ -386,7 +385,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onNavigationKeydown)
         </Button>
         <Button as-child variant="outline" class="w-full">
           <RouterLink :to="anonymousCarpoolPublishTo" @click="closeMenu">
-            <Car class="h-4 w-4" />登录后发布车源
+            <CarFront class="h-4 w-4" />登录后发布车源
           </RouterLink>
         </Button>
         <Button as-child variant="outline" class="w-full">
@@ -404,7 +403,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onNavigationKeydown)
             <Menu class="h-4 w-4" />
           </Button>
           <RouterLink to="/" class="flex items-center gap-2 font-semibold tracking-tight lg:hidden">
-            <img src="/c2cmarket-logo-mark.svg?v=20260708-electric-blue" alt="C2CMarket" class="h-8 w-8" />
+            <img src="/c2cmarket-logo-mark.svg?v=20260806-deep-violet" alt="C2CMarket" class="h-8 w-8" />
           </RouterLink>
           <div class="hidden min-w-0 shrink-0 md:block lg:w-[260px] 2xl:w-[338px]">
             <div class="truncate text-lg font-semibold text-foreground">{{ currentTitle }}</div>
@@ -420,7 +419,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onNavigationKeydown)
                 placeholder="搜索产品、车源、API 服务"
                 @keyup.enter="runSearch"
               />
-              <button class="absolute right-2 top-1/2 -translate-y-1/2 rounded border border-input bg-background px-1.5 py-0.5 text-xs text-muted-foreground" type="button" @click="runSearch">⌘ K</button>
+              <Button class="absolute right-2 top-1/2 h-6 -translate-y-1/2 px-1.5 text-xs text-muted-foreground" type="button" size="sm" variant="outline" @click="runSearch">⌘ K</Button>
             </div>
           </div>
           <div class="flex-1" />
@@ -443,7 +442,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onNavigationKeydown)
           </DropdownMenu>
           <DropdownMenu v-if="isAuthenticated">
             <DropdownMenuTrigger as-child>
-              <Button variant="ghost" size="icon" class="relative text-muted-foreground">
+              <Button variant="ghost" size="icon" class="relative text-muted-foreground" aria-label="打开通知">
                 <Bell class="h-4 w-4" />
                 <span v-if="unreadBusinessCount" class="absolute -right-0.5 -top-0.5 inline-flex h-4 min-w-[16px] items-center justify-center rounded-full bg-primary px-1 text-[10px] leading-none text-primary-foreground">{{ formatBadgeCount(unreadBusinessCount) }}</span>
               </Button>

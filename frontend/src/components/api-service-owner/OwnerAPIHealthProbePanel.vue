@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref } from 'vue'
 import Activity from 'lucide-vue-next/dist/esm/icons/activity.js'
-import AlertTriangle from 'lucide-vue-next/dist/esm/icons/triangle-alert.js'
+import TriangleAlert from 'lucide-vue-next/dist/esm/icons/triangle-alert.js'
 import CheckCircle2 from 'lucide-vue-next/dist/esm/icons/circle-check-big.js'
 import Clipboard from 'lucide-vue-next/dist/esm/icons/clipboard.js'
 import KeyRound from 'lucide-vue-next/dist/esm/icons/key-round.js'
@@ -250,7 +250,7 @@ onBeforeUnmount(() => {
           </div>
 
           <Alert v-if="form.isInsecureHttp.value" class="border-amber-300 bg-amber-50 text-amber-950 lg:col-span-2">
-            <AlertTriangle class="h-4 w-4 text-amber-600" />
+            <TriangleAlert class="h-4 w-4 text-warning" />
             <AlertTitle>HTTP 请求不会加密传输</AlertTitle>
             <AlertDescription class="space-y-3">
               <p>探针 API Key 和请求响应可能被链路中的第三方读取或篡改。请仅使用专用、低额度、低权限且仅允许探测模型的 API Key。</p>

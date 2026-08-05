@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { AlertTriangle, Ban, CheckCircle2, ShieldQuestion } from 'lucide-vue-next'
+import { Ban, CheckCircle2, ShieldQuestion, TriangleAlert } from 'lucide-vue-next'
 import { Badge } from '@/components/ui/badge'
 import {
   publicReputationBadges,
@@ -39,12 +39,12 @@ const usesCompactLowEvidenceLabel = computed(() => (
     <template v-else>
       <div class="flex items-center gap-1.5" :class="props.compact ? 'min-w-0' : 'flex-wrap'">
         <Ban v-if="summary.state === 'restricted'" class="h-3.5 w-3.5 text-destructive" />
-        <AlertTriangle v-else-if="summary.state === 'caution'" class="h-3.5 w-3.5 text-amber-600" />
+        <TriangleAlert v-else-if="summary.state === 'caution'" class="h-3.5 w-3.5 text-warning" />
         <CheckCircle2 v-else class="h-3.5 w-3.5 text-emerald-600" />
-        <template v-if="usesCompactLowEvidenceLabel">
-          <span class="shrink-0 font-medium">状态正常</span>
+        <template v-if="props.compact">
+          <span class="shrink-0 font-medium">{{ usesCompactLowEvidenceLabel ? '状态正常' : reputationStateLabel(summary.state) }}</span>
           <span aria-hidden="true" class="text-muted-foreground">·</span>
-          <span class="truncate text-muted-foreground">交易样本较少</span>
+          <span class="truncate text-muted-foreground">{{ usesCompactLowEvidenceLabel ? '交易样本较少' : `${reputationTierLabel(summary.tier)} · ${reputationConfidenceLabel(summary.confidence)}` }}</span>
         </template>
         <template v-else>
           <Badge :variant="summary.state === 'restricted' ? 'destructive' : summary.state === 'caution' ? 'secondary' : 'outline'">

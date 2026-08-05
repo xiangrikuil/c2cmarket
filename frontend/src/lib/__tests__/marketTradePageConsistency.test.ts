@@ -73,7 +73,7 @@ describe('公开市场与交易页面一致性', () => {
     expect(search).toContain('热门拼车')
     expect(login).toContain('if (session.value) await router.replace(returnTo.value)')
     expect(login.match(/<h1\b/g)).toHaveLength(1)
-    expect(login).toContain('src="/c2cmarket-icon-512.png"')
+    expect(login).toContain('src="/c2cmarket-icon-512.png?v=20260806-deep-violet"')
     expect(officialPrices).not.toContain('official-price-category-tabs')
     expect(officialPrices).toContain('const isRealBackend = shouldUseRealBackend()')
     expect(officialPrices).toContain('v-if="!isRealBackend" class="official-price-status-filter')

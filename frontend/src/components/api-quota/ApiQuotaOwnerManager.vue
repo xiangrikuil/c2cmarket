@@ -8,7 +8,6 @@ import {
   CalendarClock,
   CheckCircle2,
   ChevronDown,
-  CircleAlert,
   CopyPlus,
   Download,
   FileKey2,
@@ -23,6 +22,7 @@ import {
   Play,
   Plus,
   Rocket,
+  ShieldAlert,
   TimerReset,
   WalletCards,
 } from 'lucide-vue-next'
@@ -393,7 +393,7 @@ function downloadTemplate(kind: ApiOrderDeliveryKind) {
         <SkeletonTable v-if="batchesQuery.isLoading.value" :rows="3" :columns="6" />
         <div v-else-if="batchesQuery.error.value" class="flex flex-col gap-3 rounded-lg border border-destructive/20 bg-destructive/5 p-4 text-sm sm:flex-row sm:items-center sm:justify-between">
           <div class="flex items-start gap-2 text-destructive">
-            <CircleAlert class="mt-0.5 h-4 w-4 shrink-0" />
+            <ShieldAlert class="mt-0.5 h-4 w-4 shrink-0" />
             <span>{{ queryErrorMessage(batchesQuery.error.value, '额度批次暂时无法加载。') }}</span>
           </div>
           <Button size="sm" variant="outline" @click="batchesQuery.refetch()">重新加载</Button>
@@ -420,10 +420,10 @@ function downloadTemplate(kind: ApiOrderDeliveryKind) {
               <TableBody>
                 <TableRow v-for="batch in batchesQuery.data.value" :key="batch.id" :data-state="selectedBatchId === batch.id ? 'selected' : undefined">
                   <TableCell>
-                    <button type="button" class="inline-flex items-center gap-2 font-mono font-medium hover:text-primary" @click="selectedBatchId = batch.id">
+                    <Button variant="ghost" class="h-auto justify-start gap-2 p-0 font-mono font-medium hover:bg-transparent hover:text-primary" @click="selectedBatchId = batch.id">
                       <span class="grid h-7 w-7 place-items-center rounded-md bg-primary/10 text-primary"><Box class="h-3.5 w-3.5" /></span>
                       {{ batch.id.slice(-8) }}
-                    </button>
+                    </Button>
                   </TableCell>
                   <TableCell class="font-medium">${{ formatDecimal(batch.declaredTotalUsdAllowance, 0, 6) }}</TableCell>
                   <TableCell>${{ formatDecimal(batch.unallocatedUsdAllowance, 0, 6) }}</TableCell>
@@ -477,18 +477,18 @@ function downloadTemplate(kind: ApiOrderDeliveryKind) {
           </div>
 
           <div v-if="selectedBatch" class="mt-4 grid overflow-hidden rounded-lg border border-border bg-muted/20 sm:grid-cols-3">
-            <button type="button" class="flex min-w-0 items-center gap-3 p-3 text-left transition-colors hover:bg-muted/60 sm:border-r sm:border-border" @click="salesTab = 'offers'">
+            <Button variant="ghost" class="h-auto w-full min-w-0 justify-start gap-3 rounded-none p-3 text-left font-normal transition-colors hover:bg-muted/60 sm:border-r sm:border-border" @click="salesTab = 'offers'">
               <span class="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-primary/10 text-primary"><Boxes class="h-4 w-4" /></span>
               <span class="min-w-0"><small class="block text-muted-foreground">销售规格</small><strong class="block truncate">{{ offers.length }} 个</strong></span>
-            </button>
-            <button type="button" class="flex min-w-0 items-center gap-3 border-t border-border p-3 text-left transition-colors hover:bg-muted/60 sm:border-t-0 sm:border-r" @click="salesTab = 'rounds'">
+            </Button>
+            <Button variant="ghost" class="h-auto w-full min-w-0 justify-start gap-3 rounded-none border-t border-border p-3 text-left font-normal transition-colors hover:bg-muted/60 sm:border-t-0 sm:border-r" @click="salesTab = 'rounds'">
               <span class="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-warning/10 text-warning"><CalendarClock class="h-4 w-4" /></span>
               <span class="min-w-0"><small class="block text-muted-foreground">下次放量</small><strong class="block truncate"><LocalTime v-if="nextRound" :value="nextRound.startsAt" /><template v-else>暂无计划</template></strong></span>
-            </button>
-            <button type="button" class="flex min-w-0 items-center gap-3 border-t border-border p-3 text-left transition-colors hover:bg-muted/60 sm:border-t-0" @click="salesTab = 'credentials'">
+            </Button>
+            <Button variant="ghost" class="h-auto w-full min-w-0 justify-start gap-3 rounded-none border-t border-border p-3 text-left font-normal transition-colors hover:bg-muted/60 sm:border-t-0" @click="salesTab = 'credentials'">
               <span class="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-signal-soft text-signal"><KeyRound class="h-4 w-4" /></span>
               <span class="min-w-0"><small class="block text-muted-foreground">交付凭据</small><strong class="block truncate">{{ credentialSummaryQuery.data.value ? `库存 ${credentialSummaryQuery.data.value.available} 份` : credentialOffers.length ? '待读取库存' : '未配置' }}</strong></span>
-            </button>
+            </Button>
           </div>
         </template>
       </TabsContent>

@@ -6,6 +6,7 @@ import AnnouncementListItem from '@/components/announcements/AnnouncementListIte
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import PageTitle from '@/components/market/PageTitle.vue'
 import CompactStats from '@/components/market/CompactStats.vue'
 import EmptyState from '@/components/market/EmptyState.vue'
@@ -89,27 +90,13 @@ function setTab(tab: NotificationTab) {
     <CompactStats :items="stats" />
 
     <div class="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-      <div class="inline-flex rounded-md border border-border bg-card p-1">
-        <button
-          type="button"
-          class="rounded px-3 py-1.5 text-sm transition"
-          :class="activeTab === 'todo' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:bg-accent hover:text-foreground'"
-          @click="setTab('todo')"
-        >
-          待办 {{ unreadCount }}
-        </button>
-        <button
-          type="button"
-          class="rounded px-3 py-1.5 text-sm transition"
-          :class="activeTab === 'transactions' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:bg-accent hover:text-foreground'"
-          @click="setTab('transactions')"
-        >
-          交易 {{ carpoolCount + apiCount }}
-        </button>
-        <button type="button" class="rounded px-3 py-1.5 text-sm transition" :class="activeTab === 'system' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:bg-accent hover:text-foreground'" @click="setTab('system')">
-          系统 {{ reviewCount + (announcementUnreadCount ?? 0) }}
-        </button>
-      </div>
+      <Tabs :model-value="activeTab" @update:model-value="value => setTab(value as NotificationTab)">
+        <TabsList>
+          <TabsTrigger value="todo">待办 {{ unreadCount }}</TabsTrigger>
+          <TabsTrigger value="transactions">交易 {{ carpoolCount + apiCount }}</TabsTrigger>
+          <TabsTrigger value="system">系统 {{ reviewCount + (announcementUnreadCount ?? 0) }}</TabsTrigger>
+        </TabsList>
+      </Tabs>
       <Button v-if="activeTab !== 'system'" variant="outline" :disabled="!unreadCount || markAllReadMutation.isPending.value" @click="markAllRead">全部标记已读</Button>
     </div>
 

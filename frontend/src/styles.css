@@ -1493,7 +1493,7 @@ html[data-theme="minimal-modern"] .account-security-side {
 
 .home-market-page {
   --home-carpool: #4f46e5;
-  --home-api: #0f9f9a;
+  --home-api: var(--info);
   --home-price: #7c3aed;
 }
 
@@ -1503,11 +1503,11 @@ html[data-theme="minimal-modern"] .account-security-side {
   grid-template-columns: minmax(300px, 0.9fr) minmax(680px, 1.9fr);
   align-items: center;
   gap: 28px;
-  border: 1px solid #bfdbfe;
+  border: 1px solid color-mix(in oklab, var(--primary) 22%, var(--border));
   border-radius: 16px;
-  background: #f8fbff;
+  background: color-mix(in oklab, var(--accent) 42%, var(--card));
   padding: 20px 24px;
-  box-shadow: 0 16px 38px -34px rgb(37 99 235 / 0.52);
+  box-shadow: 0 16px 38px -34px rgb(91 79 233 / 0.38);
 }
 
 .home-market-overview-copy {
@@ -1580,7 +1580,7 @@ html[data-theme="minimal-modern"] .account-security-side {
   grid-template-areas:
     "icon copy"
     "meta meta";
-  grid-template-columns: 44px minmax(0, 1fr);
+  grid-template-columns: 40px minmax(0, 1fr);
   grid-template-rows: 1fr auto;
   gap: 14px 12px;
   overflow: hidden;
@@ -1618,8 +1618,8 @@ html[data-theme="minimal-modern"] .account-security-side {
 .home-entry-icon {
   grid-area: icon;
   display: grid;
-  width: 42px;
-  height: 42px;
+  width: 40px;
+  height: 40px;
   place-items: center;
   border-radius: 10px;
   background: color-mix(in oklab, var(--entry-color) 11%, white);
@@ -1627,8 +1627,9 @@ html[data-theme="minimal-modern"] .account-security-side {
 }
 
 .home-entry-icon svg {
-  width: 21px;
-  height: 21px;
+  width: 18px;
+  height: 18px;
+  stroke-width: 2;
 }
 
 .home-entry-copy {
@@ -1781,7 +1782,7 @@ html[data-theme="minimal-modern"] .account-security-side {
 
 .home-market-snapshot-column-header {
   display: grid;
-  grid-template-columns: 34px minmax(0, 1fr) auto;
+  grid-template-columns: 40px minmax(0, 1fr) auto;
   align-items: center;
   gap: 10px;
   padding-bottom: 12px;
@@ -1789,8 +1790,8 @@ html[data-theme="minimal-modern"] .account-security-side {
 
 .home-market-snapshot-section-icon {
   display: grid;
-  width: 34px;
-  height: 34px;
+  width: 40px;
+  height: 40px;
   place-items: center;
   border-radius: 8px;
   background: color-mix(in oklab, var(--snapshot-accent) 10%, white);
@@ -1798,8 +1799,9 @@ html[data-theme="minimal-modern"] .account-security-side {
 }
 
 .home-market-snapshot-section-icon svg {
-  width: 19px;
-  height: 19px;
+  width: 18px;
+  height: 18px;
+  stroke-width: 2;
 }
 
 .home-market-snapshot-column-header > div {
@@ -3720,8 +3722,8 @@ html[data-theme="minimal-modern"] .account-security-side {
 
 .carpool-reference-stats > div > span {
   display: grid;
-  width: 42px;
-  height: 42px;
+  width: 40px;
+  height: 40px;
   flex: 0 0 auto;
   place-items: center;
   border-radius: 12px;
@@ -3729,7 +3731,7 @@ html[data-theme="minimal-modern"] .account-security-side {
   color: #2563eb;
 }
 
-.carpool-reference-stats svg { width: 21px; height: 21px; }
+.carpool-reference-stats svg { width: 18px; height: 18px; stroke-width: 2; }
 .carpool-reference-stats dl { display: grid; gap: 1px; }
 .carpool-reference-stats dt,
 .carpool-reference-stats small { color: var(--muted-foreground); font-size: 11px; }
@@ -3796,9 +3798,7 @@ html[data-theme="minimal-modern"] .account-security-side {
 }
 
 .carpool-catalog-panel {
-  background:
-    linear-gradient(180deg, color-mix(in oklab, var(--accent) 58%, transparent), transparent 92%),
-    var(--card);
+  background: var(--card);
   box-shadow: 0 12px 28px -22px rgb(15 23 42 / 0.28);
 }
 
@@ -3989,7 +3989,7 @@ html[data-theme="minimal-modern"] .account-security-side {
   display: block;
   height: 100%;
   border-radius: inherit;
-  background: linear-gradient(90deg, var(--primary), color-mix(in oklab, var(--info) 72%, var(--primary)));
+  background: var(--primary);
 }
 
 .carpool-status-badge {
@@ -4358,13 +4358,8 @@ html[data-theme="minimal-modern"] .account-security-side {
     background 150ms ease;
 }
 
-.api-publish-switch-row:not(:disabled):hover {
+.api-publish-switch-row:hover {
   background: color-mix(in oklab, var(--accent) 42%, var(--card));
-}
-
-.api-publish-switch-row:disabled {
-  cursor: not-allowed;
-  opacity: 0.58;
 }
 
 .api-publish-switch-row strong {
@@ -4373,44 +4368,12 @@ html[data-theme="minimal-modern"] .account-security-side {
   line-height: 1.25;
 }
 
-.api-publish-switch-row span span {
+.api-publish-switch-row > label > span {
   display: block;
   margin-top: 3px;
   color: var(--muted-foreground);
   font-size: 11px;
   line-height: 1.45;
-}
-
-.api-publish-toggle {
-  position: relative;
-  display: inline-flex;
-  width: 38px;
-  height: 22px;
-  flex: 0 0 auto;
-  border-radius: 999px;
-  background: var(--muted);
-  transition: background 150ms ease;
-}
-
-.api-publish-toggle::after {
-  content: "";
-  position: absolute;
-  top: 3px;
-  left: 3px;
-  width: 16px;
-  height: 16px;
-  border-radius: 999px;
-  background: var(--background);
-  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.22);
-  transition: transform 150ms ease;
-}
-
-.api-publish-toggle.is-on {
-  background: var(--primary);
-}
-
-.api-publish-toggle.is-on::after {
-  transform: translateX(16px);
 }
 
 .api-publish-image-price-grid {
@@ -4624,23 +4587,21 @@ html[data-theme="minimal-modern"] [data-slot="card"]:hover {
 
 html[data-theme="minimal-modern"] [data-slot="button"] {
   border-radius: var(--radius-control);
-  transition-duration: 200ms;
+  transition-duration: 160ms;
   transition-timing-function: ease-out;
 }
 
 html[data-theme="minimal-modern"] [data-slot="button"][data-variant="default"] {
   border-color: transparent;
-  background-image: var(--accent-gradient);
-  box-shadow: 0 6px 18px -12px rgb(0 82 255 / 0.55);
-}
-
-html[data-theme="minimal-modern"] [data-slot="button"]:hover {
-  transform: translateY(-1px);
+  background-color: var(--primary);
+  background-image: none;
+  box-shadow: none;
 }
 
 html[data-theme="minimal-modern"] [data-slot="button"][data-variant="default"]:hover {
-  box-shadow: 0 12px 28px -14px rgb(0 82 255 / 0.62);
-  filter: brightness(1.06);
+  background-color: var(--primary-hover);
+  box-shadow: none;
+  filter: none;
 }
 
 html[data-theme="minimal-modern"] [data-slot="button"]:active {
@@ -4678,35 +4639,43 @@ html[data-theme="minimal-modern"] .c2c-card-soft {
 
 html[data-theme="minimal-modern"] .text-teal-700,
 html[data-theme="minimal-modern"] .text-teal-800,
-html[data-theme="minimal-modern"] .text-teal-900,
+html[data-theme="minimal-modern"] .text-teal-900 {
+  color: var(--primary);
+}
+
 html[data-theme="minimal-modern"] .text-emerald-600,
 html[data-theme="minimal-modern"] .text-emerald-700,
-html[data-theme="minimal-modern"] .text-emerald-800 {
-  color: var(--primary);
+html[data-theme="minimal-modern"] .text-emerald-800,
+html[data-theme="minimal-modern"] .text-emerald-950 {
+  color: var(--success);
 }
 
 html[data-theme="minimal-modern"] .text-teal-800\/80 {
   color: color-mix(in oklab, var(--primary) 70%, var(--muted-foreground));
 }
 
-html[data-theme="minimal-modern"] .bg-teal-600,
-html[data-theme="minimal-modern"] .bg-emerald-500 {
+html[data-theme="minimal-modern"] .bg-teal-600 {
   background-color: var(--primary);
+}
+
+html[data-theme="minimal-modern"] .bg-emerald-500,
+html[data-theme="minimal-modern"] .bg-emerald-600 {
+  background-color: var(--success);
 }
 
 html[data-theme="minimal-modern"] .bg-emerald-50,
 html[data-theme="minimal-modern"] .bg-emerald-50\/40,
 html[data-theme="minimal-modern"] .bg-emerald-100,
 html[data-theme="minimal-modern"] .hover\:bg-emerald-100:hover {
-  background-color: color-mix(in oklab, var(--primary) 8%, white);
+  background-color: color-mix(in oklab, var(--success) 8%, white);
 }
 
 html[data-theme="minimal-modern"] .bg-emerald-500\/10 {
-  background-color: color-mix(in oklab, var(--primary) 10%, transparent);
+  background-color: color-mix(in oklab, var(--success) 10%, transparent);
 }
 
 html[data-theme="minimal-modern"] .border-emerald-200 {
-  border-color: color-mix(in oklab, var(--primary) 24%, var(--border));
+  border-color: color-mix(in oklab, var(--success) 24%, var(--border));
 }
 
 html[data-theme="minimal-modern"] .from-teal-500 {
@@ -4715,12 +4684,12 @@ html[data-theme="minimal-modern"] .from-teal-500 {
 }
 
 html[data-theme="minimal-modern"] .to-cyan-500 {
-  --tw-gradient-to: #4d7cff var(--tw-gradient-to-position);
+  --tw-gradient-to: #776cf0 var(--tw-gradient-to-position);
 }
 
 html[data-theme="minimal-modern"] .group:hover .group-hover\:text-teal-700,
 html[data-theme="minimal-modern"] .group:hover .group-hover\:text-teal-900 {
-  color: #003ecc;
+  color: var(--primary-hover);
 }
 
 html[data-theme="minimal-modern"] .home-exact {
@@ -4735,15 +4704,11 @@ html[data-theme="minimal-modern"] .home-exact :where(.home-card, .home-exact-her
 
 html[data-theme="minimal-modern"] .home-exact-hero {
   border-color: color-mix(in oklab, var(--primary) 28%, var(--border));
-  background:
-    radial-gradient(circle at 82% 50%, rgb(0 82 255 / 0.08) 0 18%, transparent 42%),
-    linear-gradient(135deg, #ffffff 0%, #f8fbff 58%, #eef4ff 100%);
+  background: linear-gradient(135deg, #ffffff 0%, #faf9ff 58%, var(--accent) 100%);
 }
 
 html[data-theme="minimal-modern"] .home-exact-hero::before {
-  background-image:
-    linear-gradient(30deg, rgb(0 82 255 / 0.08) 1px, transparent 1px),
-    linear-gradient(150deg, rgb(77 124 255 / 0.06) 1px, transparent 1px);
+  content: none;
 }
 
 html[data-theme="minimal-modern"] .home-hero-cube,
@@ -4752,7 +4717,7 @@ html[data-theme="minimal-modern"] .home-hero-card {
 }
 
 html[data-theme="minimal-modern"] .home-hero-card {
-  box-shadow: 0 14px 32px -20px rgb(0 82 255 / 0.42);
+  box-shadow: 0 14px 32px -20px rgb(91 79 233 / 0.32);
 }
 
 html[data-theme="minimal-modern"] .home-hero-pie {
@@ -4768,17 +4733,18 @@ html[data-theme="minimal-modern"] .home-hero-bars span:nth-child(2) {
 }
 
 html[data-theme="minimal-modern"] .home-hero-bars span:nth-child(3) {
-  background: #4d7cff;
+  background: #776cf0;
 }
 
 html[data-theme="minimal-modern"] .home-chip-active {
   border-color: var(--primary);
-  background: var(--accent-gradient);
+  background: var(--primary);
   color: var(--primary-foreground);
 }
 
 html[data-theme="minimal-modern"] .home-action-icon.from-teal-500 {
-  background-image: var(--accent-gradient);
+  background-color: var(--primary);
+  background-image: none;
 }
 
 html[data-theme="minimal-modern"] .home-announcement {
@@ -4796,6 +4762,6 @@ html[data-theme="minimal-modern"] .home-table-action-link {
 html[data-theme="minimal-modern"] .home-table-action-link:hover {
   border-color: color-mix(in oklab, var(--primary) 42%, var(--border));
   background: color-mix(in oklab, var(--primary) 12%, white);
-  color: #003ecc;
-  box-shadow: 0 10px 20px -18px rgb(0 82 255 / 0.55);
+  color: var(--primary-hover);
+  box-shadow: 0 10px 20px -18px rgb(91 79 233 / 0.40);
 }

@@ -3,6 +3,7 @@ import { defineNuxtConfig } from 'nuxt/config'
 import { resolve } from 'node:path'
 import { routes } from './src/router'
 import { requireApiMode } from './src/lib/apiMode'
+import { DEFAULT_APP_THEME } from './src/theme/appThemes'
 
 const apiMode = requireApiMode(process.env.NUXT_PUBLIC_API_MODE)
 const publicApiBaseURL = process.env.NUXT_PUBLIC_API_BASE_URL ?? ''
@@ -48,6 +49,13 @@ if (isProductionBuild && !process.env.NUXT_API_BASE_URL) {
 export default defineNuxtConfig({
   compatibilityDate: '2026-07-15',
   srcDir: 'src/',
+  app: {
+    head: {
+      htmlAttrs: {
+        'data-theme': DEFAULT_APP_THEME,
+      },
+    },
+  },
   devtools: { enabled: false },
   components: [],
   typescript: {

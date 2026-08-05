@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { AlertTriangle, Ban, CheckCircle2, ShieldQuestion } from 'lucide-vue-next'
+import { Ban, CheckCircle2, ShieldQuestion, TriangleAlert } from 'lucide-vue-next'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import {
@@ -58,7 +58,7 @@ const rating = computed(() => {
         <AlertDescription>{{ summary.warnings[0] || '部分交易操作当前不可用，请以页面操作状态为准。' }}</AlertDescription>
       </Alert>
       <Alert v-else-if="summary.state === 'caution'">
-        <AlertTriangle class="text-amber-600" />
+        <TriangleAlert class="text-warning" />
         <AlertTitle>{{ reputationStateLabel(summary.state) }}</AlertTitle>
         <AlertDescription>{{ summary.warnings[0] || '存在待核对事实，交易前请查看完成与纠纷信息。' }}</AlertDescription>
       </Alert>

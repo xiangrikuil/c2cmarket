@@ -1,6 +1,9 @@
 <script setup lang="ts">
 import { Blocks } from 'lucide-vue-next'
+import type { AcceptableValue } from 'reka-ui'
 import { Badge } from '@/components/ui/badge'
+import { Label } from '@/components/ui/label'
+import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group'
 import { getProductCategoryIconSrc } from '@/lib/productCategoryIcon'
 import type { ApiProviderCategory } from './types'
 
@@ -12,6 +15,10 @@ defineProps<{
 const emit = defineEmits<{
   'update:modelValue': [value: ApiProviderCategory]
 }>()
+
+function selectCategory(value: AcceptableValue) {
+  if (value === 'gpt' || value === 'claude' || value === 'other') emit('update:modelValue', value)
+}
 
 const fallbackCategoryIcons = new Map<string, string>()
 const options: Array<{ value: ApiProviderCategory, title: string, description: string, detail: string, iconSrc: string | null }> = [
@@ -57,20 +64,25 @@ const options: Array<{ value: ApiProviderCategory, title: string, description: s
     </div>
 
     <div class="api-publish-card-body">
-        <div class="api-publish-provider-segment" role="group" aria-label="模型大类">
-        <button
+      <RadioGroup
+        :model-value="modelValue"
+        class="api-publish-provider-segment"
+        aria-label="模型大类"
+        @update:model-value="selectCategory"
+      >
+        <Label
           v-for="option in options"
           :key="option.value"
-          type="button"
-          class="api-publish-segment-button inline-flex items-center justify-center gap-2"
+          :for="`provider-category-${option.value}`"
+          class="api-publish-segment-button inline-flex cursor-pointer items-center justify-center gap-2 font-normal"
           :class="{ 'is-active': modelValue === option.value }"
-          @click="emit('update:modelValue', option.value)"
         >
+          <RadioGroupItem :id="`provider-category-${option.value}`" :value="option.value" />
           <img v-if="option.iconSrc" :src="option.iconSrc" alt="" class="h-4 w-4 object-contain" />
           <Blocks v-else class="h-4 w-4" />
           <span>{{ option.title }}</span>
-        </button>
-      </div>
+        </Label>
+      </RadioGroup>
     </div>
   </section>
 </template>

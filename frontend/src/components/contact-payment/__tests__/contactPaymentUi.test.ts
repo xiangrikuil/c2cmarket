@@ -51,6 +51,14 @@ describe('联系方式与收款设置 UI', () => {
     expect(paymentMethodCard).not.toContain('<Checkbox')
   })
 
+  it('个人中心头像来源使用 shadcn-vue RadioGroup', () => {
+    expect(myCenter).toContain("import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group'")
+    expect(myCenter).toContain('<RadioGroup v-model="profileForm.avatarMode"')
+    expect(myCenter).toContain('id="avatar-mode-linuxdo" value="linuxdo"')
+    expect(myCenter).toContain('id="avatar-mode-custom-url" value="custom_url"')
+    expect(myCenter).not.toContain('type="radio"')
+  })
+
   it('显示未保存状态并在离开页面前保护草稿', () => {
     expect(contactMethodCard).toContain('有未保存更改')
     expect(paymentMethodCard).toContain('有未保存更改')
