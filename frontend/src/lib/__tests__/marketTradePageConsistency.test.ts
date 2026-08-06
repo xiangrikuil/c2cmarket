@@ -7,6 +7,7 @@ function source(path: string) {
 
 const home = source('../../pages/HomePage.vue')
 const homeMarketSnapshot = source('../../components/market/HomeMarketSnapshot.vue')
+const styles = source('../../styles.css')
 const search = source('../../pages/SearchPage.vue')
 const login = source('../../pages/LoginPage.vue')
 const officialPrices = source('../../pages/OfficialPricesPage.vue')
@@ -43,8 +44,9 @@ describe('公开市场与交易页面一致性', () => {
     expect(home).not.toContain('homeMarketTabStorageKey')
     expect(home).not.toContain('window.localStorage')
     expect(home).toContain('tradableCarpools.length')
-    expect(home).toContain('tradableCarpools.value.slice(0, 3)')
-    expect(home).toContain('orderableApiServices.value.slice(0, 3)')
+    expect(home).toContain('const homeMarketPreviewLimit = 5')
+    expect(home).toContain('tradableCarpools.value.slice(0, homeMarketPreviewLimit)')
+    expect(home).toContain('orderableApiServices.value.slice(0, homeMarketPreviewLimit)')
     expect(home).toContain('const hasMarketData = computed(() => data.value !== undefined)')
     expect(home).toContain('<section class="home-market-entries" aria-label="市场入口" :aria-busy="isLoading">')
     expect(homeMarketSnapshot).toContain('<CarFront v-else aria-hidden="true" />')
@@ -66,6 +68,11 @@ describe('公开市场与交易页面一致性', () => {
     expect(home).not.toContain('完整价格表')
     expect(home).not.toContain('HomeTrendChart')
     expect(home).not.toContain('社区行情总览')
+    expect(styles).toMatch(/@media \(min-width: 1024px\) \{[\s\S]*?\.home-market-page \{[\s\S]*?min-height: calc\(100dvh - 60px - 2\.5rem\);/)
+    expect(styles).toMatch(/@media \(min-width: 1024px\) \{[\s\S]*?\.home-latest-market \{[\s\S]*?flex: 1 1 auto;/)
+    expect(styles).toMatch(/\.home-market-snapshot-state,[\s\S]*?\.home-market-snapshot-empty \{[\s\S]*?flex: 1 1 auto;/)
+    expect(styles).toMatch(/\.home-record-icon \{[\s\S]*?background: white;/)
+    expect(styles).not.toContain('background: #effcf9')
   })
 
   it('为搜索、登录和官网价格提供明确状态与边界', () => {
