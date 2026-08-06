@@ -27,9 +27,10 @@ const orderableApiServices = computed(() => (data.value?.apiServices ?? [])
 const verifiedPriceRecords = computed(() => (data.value?.officialPrices ?? [])
   .filter(item => item.status === '已验证' && item.cny !== null))
 const hasMarketData = computed(() => data.value !== undefined)
+const homeMarketPreviewLimit = 5
 
-const carpoolPreview = computed(() => tradableCarpools.value.slice(0, 3))
-const apiServicePreview = computed(() => orderableApiServices.value.slice(0, 3))
+const carpoolPreview = computed(() => tradableCarpools.value.slice(0, homeMarketPreviewLimit))
+const apiServicePreview = computed(() => orderableApiServices.value.slice(0, homeMarketPreviewLimit))
 const categoryIconByCode = computed(() => new Map((catalogCategories.value ?? []).map(category => [category.code, category.iconDataUrl])))
 </script>
 
