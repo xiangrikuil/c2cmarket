@@ -1888,7 +1888,6 @@ html[data-theme="minimal-modern"] .account-security-side {
 
 .home-record-icon.is-api {
   border-color: color-mix(in oklab, var(--home-api) 25%, var(--border));
-  background: #effcf9;
   color: var(--home-api);
 }
 
@@ -2075,6 +2074,37 @@ html[data-theme="minimal-modern"] .account-security-side {
 
 .home-market-boundary strong {
   color: var(--primary);
+}
+
+@media (min-width: 1024px) {
+  .home-market-page {
+    display: flex;
+    min-height: calc(100dvh - 60px - 2.5rem);
+    flex-direction: column;
+  }
+
+  .home-latest-market {
+    display: flex;
+    min-height: 0;
+    flex: 1 1 auto;
+    flex-direction: column;
+  }
+
+  .home-market-snapshot-grid {
+    min-height: 0;
+    flex: 1 1 auto;
+  }
+
+  .home-market-snapshot-column {
+    display: flex;
+    min-height: 0;
+    flex-direction: column;
+  }
+
+  .home-market-snapshot-state,
+  .home-market-snapshot-empty {
+    flex: 1 1 auto;
+  }
 }
 
 @media (max-width: 1279px) {
