@@ -27,7 +27,6 @@ func (s *Store) Search(ctx context.Context, keyword string, perTypeLimit int) ([
 	}{
 		{sql: searchOfficialPricesSQL, args: []any{pattern, perTypeLimit}},
 		{sql: searchCarpoolsSQL, args: []any{pattern, perTypeLimit}},
-		{sql: searchDemandsSQL, args: []any{pattern, perTypeLimit}},
 		{sql: searchAPIServicesSQL, args: []any{pattern, perTypeLimit}},
 		{sql: searchUsersSQL, args: []any{pattern, perTypeLimit}},
 		{sql: searchMerchantsSQL, args: []any{pattern, perTypeLimit}},
@@ -94,7 +93,7 @@ ORDER BY r.created_at DESC
 LIMIT $2
 `
 
-const searchCarpoolsSQL = `
+var searchCarpoolsSQL = `
 SELECT
 	'carpool-' || l.id::text AS id,
 	'车源' AS type,
@@ -113,7 +112,7 @@ LEFT JOIN LATERAL (
 	  AND a.status = 'accepted_reserved'
 	  AND a.reservation_expires_at > now()
 ) reserved ON true
-WHERE l.status = 'active'
+WHERE ` + publicCarpoolListingPredicate("l") + `
   AND (
 	LOWER(l.title || ' ' || l.summary || ' ' || l.access_arrangement) ILIKE $1 ESCAPE '\'
 	OR LOWER(
@@ -125,26 +124,6 @@ WHERE l.status = 'active'
 	) ILIKE $1 ESCAPE '\'
   )
 ORDER BY l.updated_at DESC
-LIMIT $2
-`
-
-const searchDemandsSQL = `
-SELECT
-	'demand-' || d.id::text AS id,
-	'求车' AS type,
-	d.title AS title,
-	d.region_code || ' · 预算 ¥' || d.max_price_cny::text || '/月 · ' || u.display_name AS subtitle,
-	d.status AS badge,
-	'/demands/' || d.id::text AS to,
-	d.updated_at AS rank_time
-FROM demands d
-JOIN users u ON u.id = d.publisher_user_id
-WHERE d.status = 'active'
-  AND (
-	LOWER(d.title || ' ' || d.region_code || ' ' || d.owner_preference || ' ' || COALESCE(d.note, '')) ILIKE $1 ESCAPE '\'
-	OR LOWER(u.username || ' ' || u.display_name) ILIKE $1 ESCAPE '\'
-  )
-ORDER BY d.updated_at DESC
 LIMIT $2
 `
 

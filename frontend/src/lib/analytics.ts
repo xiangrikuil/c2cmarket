@@ -10,6 +10,14 @@ export const ANALYTICS_EVENTS = [
   'favorite_toggle',
   'report_submit',
   'detail_visible_time',
+  'api_promotion_impression',
+  'api_promotion_click',
+  'promotion_benefit_action',
+  'login_page_view',
+  'oauth_login_start',
+  'login_success',
+  'registration_success',
+  'normalized_page_view',
 ] as const
 
 export type AnalyticsEventName = typeof ANALYTICS_EVENTS[number]
@@ -20,6 +28,7 @@ type RawProperties = Record<string, unknown>
 type UmamiWindow = Window & {
   umami?: {
     track?: (eventName: string, data?: AnalyticsProperties) => unknown
+    identify?: (id: string) => unknown
   }
 }
 
@@ -38,6 +47,59 @@ const reportReasonCodes = ['unreachable', 'contact_invalid', 'impersonation', 'd
 const deliveryModes = ['api_key_endpoint', 'sub2api_panel_account', 'unknown'] as const
 const billingModes = ['metered_credit', 'manual_credit', 'fixed_package', 'unknown'] as const
 const riskNotices = ['openai_subscription_carpool', 'none', 'unknown'] as const
+const promotionPlacements = ['api_market_top', 'api_market_reward'] as const
+const promotionPositions = ['first', 'middle', 'last'] as const
+const promotionBenefitActions = ['copy_code', 'copy_link', 'poster_download', 'coupon_apply'] as const
+const authenticationMethods = ['oauth_linux_do', 'password'] as const
+const pageClasses = ['home', 'auth', 'discovery', 'carpool', 'api_market', 'account', 'merchant', 'admin', 'public_profile', 'other'] as const
+const staticAnalyticsPaths = new Set([
+  '/',
+  '/search',
+  '/login',
+  '/official-prices',
+  '/carpools',
+  '/carpools/new',
+  '/api-market',
+  '/api-market/new',
+  '/api-market/quota/new',
+  '/my',
+  '/my/profile',
+  '/my/contacts',
+  '/my/account',
+  '/my/privacy',
+  '/my/carpools',
+  '/my/rides',
+  '/my/api-orders',
+  '/my/api-services',
+  '/my/favorites',
+  '/my/reviews',
+  '/my/reputation',
+  '/me/reputation',
+  '/my/notifications',
+  '/my/promotion-benefits',
+  '/my/feedback',
+  '/merchant/carpool-applications',
+  '/merchant/api-orders',
+  '/admin',
+  '/admin/growth',
+  '/admin/growth-promotions',
+  '/admin/announcements',
+  '/admin/announcements/new',
+  '/admin/product-plans',
+  '/admin/api-models',
+  '/admin/model-audit',
+  '/admin/feedback',
+  '/admin/official-prices',
+  '/admin/users',
+  '/admin/api-promotions',
+  '/admin/api-health-probes',
+  '/admin/carpools',
+  '/admin/api-services',
+  '/admin/trade-intents',
+  '/admin/reports',
+  '/admin/appeals',
+  '/admin/logs',
+])
 
 const hasOwn = (value: RawProperties, key: string) => Object.prototype.hasOwnProperty.call(value, key)
 
@@ -62,33 +124,51 @@ const normalizeEnum = <T extends readonly string[]>(value: unknown, allowed: T, 
 const normalizeSourceRoute = (value: unknown) => {
   const route = asString(value)
   if (!route) return null
-  if (route.startsWith('/')) return normalizeKnownSourcePath(route.split(/[?#]/, 1)[0] || '/')
+  if (route.startsWith('/')) return normalizeAnalyticsPath(route)
   if (/^[a-z0-9_-]+$/i.test(route)) return route
   return 'unknown'
 }
 
-const normalizeKnownSourcePath = (path: string) => {
+export const normalizeAnalyticsPath = (value: unknown) => {
+  const rawPath = asString(value).split(/[?#]/, 1)[0] || '/'
+  if (!rawPath.startsWith('/') || rawPath.startsWith('//')) return '/other'
+  const path = rawPath === '/' ? '/' : `/${rawPath.split('/').filter(Boolean).join('/')}`
+  if (staticAnalyticsPaths.has(path)) return path
+
   const segments = path.split('/').filter(Boolean)
   const first = segments[0]
   const second = segments[1]
   const fourth = segments[3]
 
-  if (segments.length === 0) return '/'
   if (first === 'u' && segments.length === 2) return '/u/:username'
   if (first === 'announcements' && segments.length === 2) return '/announcements/:slug'
-  if (first === 'official-prices' && segments.length === 2 && !['submit', 'manage', 'detail'].includes(second)) return '/official-prices/:id'
-  if (first === 'carpools' && segments.length === 2 && !['new', 'detail'].includes(second)) return '/carpools/:id'
-  if (first === 'demands' && segments.length === 2) return '/demands/:id'
-  if (first === 'api-market' && segments.length === 2 && !['new', 'detail'].includes(second)) return '/api-market/:id'
+  if (first === 'official-prices' && segments.length === 2) return '/official-prices/:id'
+  if (first === 'carpools' && segments.length === 2) return '/carpools/:id'
+  if (first === 'api-market' && segments.length === 2) return '/api-market/:id'
   if (first === 'api-intents' && segments.length === 2) return '/api-intents/:id'
   if (first === 'my' && second === 'rides' && segments.length === 3) return '/my/rides/:id'
   if (first === 'my' && second === 'api-orders' && segments.length === 3) return '/my/api-orders/:id'
+  if (first === 'my' && second === 'api-services' && segments.length === 3) return '/my/api-services/:id'
   if (first === 'my' && second === 'feedback' && segments.length === 3) return '/my/feedback/:id'
   if (first === 'merchant' && second === 'carpool-applications' && segments.length === 3) return '/merchant/carpool-applications/:id'
   if (first === 'merchant' && second === 'api-orders' && segments.length === 3) return '/merchant/api-orders/:id'
   if (first === 'admin' && second === 'feedback' && segments.length === 3) return '/admin/feedback/:id'
   if (first === 'admin' && second === 'announcements' && fourth === 'edit') return '/admin/announcements/:id/edit'
-  return path
+  return '/other'
+}
+
+export const analyticsPageClass = (value: unknown): typeof pageClasses[number] => {
+  const path = normalizeAnalyticsPath(value)
+  if (path === '/') return 'home'
+  if (path === '/login') return 'auth'
+  if (path.startsWith('/carpools')) return 'carpool'
+  if (path.startsWith('/api-market')) return 'api_market'
+  if (path.startsWith('/my') || path === '/me/reputation' || path.startsWith('/api-intents')) return 'account'
+  if (path.startsWith('/merchant')) return 'merchant'
+  if (path.startsWith('/admin')) return 'admin'
+  if (path.startsWith('/u/')) return 'public_profile'
+  if (path.startsWith('/official-prices') || path.startsWith('/announcements') || path === '/search') return 'discovery'
+  return 'other'
 }
 
 const normalizeProductCategory = (value: unknown) => {
@@ -253,6 +333,41 @@ const sanitizeDetailVisibleTime = (props: RawProperties) => {
   return target
 }
 
+const sanitizeAPIPromotion = (props: RawProperties) => {
+  const target: AnalyticsProperties = {
+    placement: normalizeEnum(props.placement, promotionPlacements),
+    display_position: normalizeEnum(props.display_position, promotionPositions),
+    provider_category: normalizeProviderCategory(pickFirst(props, ['provider_category', 'category'])),
+    billing_mode: normalizeEnum(pickFirst(props, ['billing_mode', 'billingMode']), billingModes),
+    target_type: 'api_service',
+  }
+  addSourceRoute(target, props)
+  return target
+}
+
+const sanitizePromotionBenefitAction = (props: RawProperties) => {
+  const target: AnalyticsProperties = {
+    action: normalizeEnum(props.action, promotionBenefitActions),
+  }
+  addSourceRoute(target, props)
+  return target
+}
+
+const sanitizeAuthenticationEvent = (props: RawProperties, includeMethod: boolean) => {
+  const target: AnalyticsProperties = {}
+  addSourceRoute(target, props)
+  if (includeMethod) target.method = normalizeEnum(props.method, authenticationMethods)
+  return target
+}
+
+const sanitizeNormalizedPageView = (props: RawProperties) => {
+  const path = normalizeAnalyticsPath(pickFirst(props, ['path', 'source_route']))
+  return {
+    path,
+    page_class: analyticsPageClass(path),
+  }
+}
+
 export const sanitizeAnalyticsEvent = (eventName: AnalyticsEventName, props: RawProperties = {}) => {
   switch (eventName) {
     case 'search_submit':
@@ -274,12 +389,45 @@ export const sanitizeAnalyticsEvent = (eventName: AnalyticsEventName, props: Raw
       return sanitizeContactWindowReveal(props)
     case 'detail_visible_time':
       return sanitizeDetailVisibleTime(props)
+    case 'api_promotion_impression':
+    case 'api_promotion_click':
+      return sanitizeAPIPromotion(props)
+    case 'promotion_benefit_action':
+      return sanitizePromotionBenefitAction(props)
+    case 'login_page_view':
+      return sanitizeAuthenticationEvent(props, false)
+    case 'oauth_login_start':
+    case 'login_success':
+    case 'registration_success':
+      return sanitizeAuthenticationEvent(props, true)
+    case 'normalized_page_view':
+      return sanitizeNormalizedPageView(props)
   }
 }
 
-const analyticsEnabled = () => import.meta.env.VITE_UMAMI_ENABLED === 'true'
+let analyticsEnabled = false
+let analyticsDebugEnabled = false
+let desiredAnalyticsIdentity: string | undefined
+let analyticsIdentityVersion = 0
+let analyticsIdentityAttempts = 0
+let analyticsIdentityTimer: ReturnType<typeof setTimeout> | null = null
 
-const debugEnabled = () => import.meta.env.VITE_UMAMI_DEBUG === 'true'
+const analyticsIdentityUUIDPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+const analyticsIdentityRetryDelayMs = 250
+const analyticsIdentityMaxAttempts = 20
+
+const runtimeBoolean = (value: unknown) => value === true || value === 'true'
+
+export const setAnalyticsRuntimeConfig = (config: { enabled?: unknown, debug?: unknown }) => {
+  analyticsEnabled = runtimeBoolean(config.enabled)
+  analyticsDebugEnabled = runtimeBoolean(config.debug)
+  if (!analyticsEnabled) {
+    if (analyticsIdentityTimer) clearTimeout(analyticsIdentityTimer)
+    analyticsIdentityTimer = null
+    return
+  }
+  attemptAnalyticsIdentity(analyticsIdentityVersion)
+}
 
 const getUmamiTracker = () => {
   if (typeof window === 'undefined') return null
@@ -287,14 +435,80 @@ const getUmamiTracker = () => {
   return typeof tracker === 'function' ? tracker : null
 }
 
+const getUmamiIdentifier = () => {
+  if (typeof window === 'undefined') return null
+  const identify = (window as UmamiWindow).umami?.identify
+  return typeof identify === 'function' ? identify : null
+}
+
+const debugAnalyticsFailure = (label: string, error: unknown) => {
+  if (analyticsDebugEnabled) console.debug(`[analytics] ${label} failed`, error)
+}
+
+const scheduleAnalyticsIdentityRetry = (version: number) => {
+  if (!analyticsEnabled || version !== analyticsIdentityVersion || analyticsIdentityAttempts >= analyticsIdentityMaxAttempts) return
+  if (analyticsIdentityTimer) clearTimeout(analyticsIdentityTimer)
+  analyticsIdentityTimer = setTimeout(() => {
+    analyticsIdentityTimer = null
+    attemptAnalyticsIdentity(version)
+  }, analyticsIdentityRetryDelayMs)
+}
+
+function attemptAnalyticsIdentity(version: number) {
+  if (!analyticsEnabled || desiredAnalyticsIdentity === undefined || version !== analyticsIdentityVersion) return
+  analyticsIdentityAttempts += 1
+  const identify = getUmamiIdentifier()
+  if (!identify) {
+    scheduleAnalyticsIdentityRetry(version)
+    return
+  }
+  try {
+    const result = identify(desiredAnalyticsIdentity)
+    if (result && typeof (result as PromiseLike<unknown>).then === 'function') {
+      Promise.resolve(result).catch((error) => {
+        debugAnalyticsFailure('identify', error)
+        scheduleAnalyticsIdentityRetry(version)
+      })
+    }
+  } catch (error) {
+    debugAnalyticsFailure('identify', error)
+    scheduleAnalyticsIdentityRetry(version)
+  }
+}
+
+const setDesiredAnalyticsIdentity = (identity: string) => {
+  desiredAnalyticsIdentity = identity
+  analyticsIdentityVersion += 1
+  analyticsIdentityAttempts = 0
+  if (analyticsIdentityTimer) clearTimeout(analyticsIdentityTimer)
+  analyticsIdentityTimer = null
+  attemptAnalyticsIdentity(analyticsIdentityVersion)
+}
+
+export const identifyAnalyticsUser = (analyticsUserId: unknown) => {
+  const normalized = asString(analyticsUserId)
+  if (!analyticsIdentityUUIDPattern.test(normalized)) {
+    clearAnalyticsIdentity()
+    return
+  }
+  setDesiredAnalyticsIdentity(normalized.toLowerCase())
+}
+
+export const clearAnalyticsIdentity = () => {
+  setDesiredAnalyticsIdentity('')
+}
+
 export const trackAnalytics = (eventName: AnalyticsEventName, props: RawProperties = {}) => {
-  if (!analyticsEnabled()) return
+  if (!analyticsEnabled) return
   const tracker = getUmamiTracker()
   if (!tracker) return
   const sanitized = sanitizeAnalyticsEvent(eventName, props)
   try {
-    tracker(eventName, sanitized)
+    const result = tracker(eventName, sanitized)
+    if (result && typeof (result as PromiseLike<unknown>).then === 'function') {
+      Promise.resolve(result).catch(error => debugAnalyticsFailure('track', error))
+    }
   } catch (error) {
-    if (debugEnabled()) console.debug('[analytics] track failed', error)
+    debugAnalyticsFailure('track', error)
   }
 }

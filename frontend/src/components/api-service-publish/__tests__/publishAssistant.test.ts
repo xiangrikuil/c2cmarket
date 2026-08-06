@@ -1,6 +1,29 @@
 import assert from 'node:assert/strict'
 import { test } from 'vitest'
-import { apiPublishAssistantSummary, apiServiceDetailPath } from '../publishAssistant'
+import { createDefaultApiServicePackage } from '../packages'
+import { apiPublishAssistantSummary, apiPublishModeFromQuery, apiServiceDetailPath } from '../publishAssistant'
+
+test('normalizes API publish modes from current and legacy query values', () => {
+  assert.equal(apiPublishModeFromQuery(undefined, undefined), null)
+  assert.equal(apiPublishModeFromQuery('free', undefined), 'free')
+  assert.equal(apiPublishModeFromQuery('package', undefined), 'package')
+  assert.equal(apiPublishModeFromQuery('limited', undefined), 'limited')
+  assert.equal(apiPublishModeFromQuery(['package'], undefined), 'package')
+  assert.equal(apiPublishModeFromQuery(undefined, 'quota'), 'limited')
+  assert.equal(apiPublishModeFromQuery('', 'quota'), null)
+  assert.equal(apiPublishModeFromQuery('unknown', 'quota'), null)
+})
+
+test('creates an independent default fixed package for selected models', () => {
+  const modelIds = ['gpt-5-mini']
+  const item = createDefaultApiServicePackage(modelIds)
+  modelIds.push('gpt-5')
+
+  assert.equal(item.name, '3 天限时流量包')
+  assert.equal(item.durationDays, 3)
+  assert.equal(item.enabled, true)
+  assert.deepEqual(item.modelCatalogIds, ['gpt-5-mini'])
+})
 
 test('summarizes API publish assistant progress', () => {
   const summary = apiPublishAssistantSummary([

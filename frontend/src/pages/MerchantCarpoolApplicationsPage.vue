@@ -91,21 +91,21 @@ function rejectApplication(item: CarpoolApplication) {
 
 <template>
   <div>
-    <PageTitle title="上车申请" description="车主处理申请、席位预留、站外联系、上车确认和完成状态。" />
+    <PageTitle title="上车申请" description="车主处理申请、席位预留、联系沟通、上车确认和完成状态。" />
     <CompactStats class="mb-5" :items="stats" :loading="isLoading" />
 
     <StatusTabs v-model="activeStatus" :items="['待处理', '待联系', '服务中', '待完成', '已完成', '已拒绝取消', '纠纷']" />
     <SkeletonTable v-if="isLoading" :rows="5" :columns="7" />
     <EmptyState v-else-if="rows.length === 0" title="当前筛选下暂无申请" description="新的上车申请到达后会显示在待处理队列。" />
-    <SoftTable v-else :columns="['申请人', '车源', '价格快照', '用户摘要', '状态', '申请时间', '操作']">
+    <SoftTable v-else animate-rows :columns="['申请人', '车源', '价格快照', '用户摘要', '状态', '申请时间', '操作']">
       <tr v-for="item in pagination.paginatedRows.value" :key="item.id">
         <td>
           <RouterLink :to="`/u/${item.applicantUsername}`" class="font-medium hover:underline">{{ item.applicantUsername }}</RouterLink>
-          <div class="text-xs text-muted-foreground">{{ item.applicantStats.linuxdoBound ? '已绑定 linux.do' : '未绑定 linux.do' }} · 信任等级{{ item.applicantStats.trustLevel }}</div>
+          <div class="text-xs text-muted-foreground">{{ item.applicantStats.linuxdoBound === true ? '已绑定 linux.do' : item.applicantStats.linuxdoBound === false ? '未绑定 linux.do' : 'linux.do 绑定暂无数据' }} · {{ item.applicantStats.trustLevel === null ? '信任等级暂无数据' : `信任等级${item.applicantStats.trustLevel}` }}</div>
         </td>
         <td><div class="font-medium">{{ item.snapshot.productName }}</div><div class="text-xs text-muted-foreground"><ShortId :value="item.id" prefix="RIDE" /> · {{ item.snapshot.regionName }}</div></td>
         <td class="font-semibold">{{ item.snapshot.priceLabel }} ¥{{ item.snapshot.monthlyPriceCny }}</td>
-        <td class="text-xs text-muted-foreground">近30天完成 {{ item.applicantStats.completed30d }} · 买家责任取消 {{ item.applicantStats.buyerResponsibleCancellations }} · 纠纷 {{ item.applicantStats.unresolvedDisputes }}</td>
+        <td class="text-xs text-muted-foreground">近期完成 {{ item.applicantStats.completed30d ?? '暂无数据' }} · 买家责任取消 {{ item.applicantStats.buyerResponsibleCancellations ?? '暂无数据' }} · 纠纷 {{ item.applicantStats.unresolvedDisputes ?? '暂无数据' }}</td>
         <td><Badge :variant="item.status === 'pending_owner' ? 'default' : 'secondary'">{{ getCarpoolApplicationStatusLabel(item.status) }}</Badge></td>
         <td class="text-muted-foreground"><LocalTime :value="item.createdAt" /></td>
         <td>

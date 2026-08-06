@@ -106,12 +106,15 @@ async function main() {
   const health = await request('/health')
   assert(health.status === 'ok', 'backend health check failed')
 
-  const reporter = await session('reports-smoke-reporter')
-  const reported = await session('reports-smoke-target')
-  const admin = await session('reports-smoke-admin', true)
+  const suffix = Date.now().toString(36)
+  const reporter = await session(`reporter-${suffix}`)
+  const reported = await session(`target-${suffix}`)
+  const secondaryReported = await session(`secondary-${suffix}`)
+  const admin = await session(`admin-${suffix}`, true)
 
   await updatePublicProfile(reporter, 'Reports Smoke Reporter')
   await updatePublicProfile(reported, 'Reports Smoke Target')
+  await updatePublicProfile(secondaryReported, 'Reports Smoke Secondary Target')
 
   const publicReport = await request('/api/v1/reports', {
     method: 'POST',
@@ -128,24 +131,24 @@ async function main() {
   }, reporter)
   assert(publicReport.status === 'submitted', 'public user report should be submitted')
 
-  const contactReport = await request('/api/v1/reports', {
+  const secondaryReport = await request('/api/v1/reports', {
     method: 'POST',
-    idempotencyPrefix: 'reports-smoke-contact',
+    idempotencyPrefix: 'reports-smoke-secondary-public-user',
     body: {
-      targetType: 'contact_snapshot',
-      targetId: `contact-snapshot-${Date.now()}`,
-      targetLabel: '联系快照 smoke',
-      reportedUsername: reported.user.username,
-      reasonCode: 'unreachable',
-      title: '联系方式无法联系',
-      description: '站内联系快照显示可联系，但实际没有回应；这里只提交脱敏说明。',
+      targetType: 'public_user',
+      targetId: secondaryReported.user.username,
+      targetLabel: `公开主页 @${secondaryReported.user.username}`,
+      reportedUsername: secondaryReported.user.username,
+      reasonCode: 'description_mismatch',
+      title: '第二条公开主页信息需要复核',
+      description: '第二个公开资料描述需要管理员复核脱敏上下文。',
     },
   }, reporter)
-  assert(contactReport.status === 'submitted', 'contact report should be submitted')
+  assert(secondaryReport.status === 'submitted', 'secondary public user report should be submitted')
 
   const adminReports = await request('/api/v1/admin/reports', {}, admin)
   assert(adminReports.items.some(item => item.id === publicReport.id), 'admin reports should include public report')
-  assert(adminReports.items.some(item => item.id === contactReport.id), 'admin reports should include contact report')
+  assert(adminReports.items.some(item => item.id === secondaryReport.id), 'admin reports should include secondary report')
 
   const reportDetail = await request(`/api/v1/admin/reports/${publicReport.id}`, {}, admin)
   assert(reportDetail.version === publicReport.version, 'admin report detail should expose version')
@@ -171,11 +174,12 @@ async function main() {
   assertPublicSafe(publicDisputes)
 
   const publicProfile = await request(`/api/v1/users/${reported.user.username}/public-profile`)
-  assert(publicProfile.profile.stats.unresolvedDisputeCount >= 1, 'public profile stats should include unresolved dispute')
   assert(publicProfile.disputes.some(item => item.id === opened.dispute.id), 'public profile should include public dispute summary')
   assertPublicSafe(publicProfile.disputes)
 
   const disputeDetail = await request(`/api/v1/admin/disputes/${opened.dispute.id}`, {}, admin)
+  assert(disputeDetail.subjectUserId === reported.user.id, 'admin dispute detail should expose the target responsibility subject')
+  assert(disputeDetail.subjectUsername === reported.user.username, 'admin dispute detail should expose the subject username')
   const resolved = await request(`/api/v1/admin/disputes/${opened.dispute.id}/resolve`, {
     method: 'POST',
     idempotencyPrefix: 'reports-smoke-resolve-dispute',
@@ -183,10 +187,31 @@ async function main() {
     body: {
       reason: '双方补充说明后记录处理结果。',
       publicSummary: '公开主页信息争议',
-      publicResult: '已记录处理结果',
+      publicResultCode: 'description_mismatch',
+      publicResult: '已确认公开资料描述与现有记录不一致',
     },
   }, admin)
   assert(resolved.dispute?.status === 'resolved', 'dispute should resolve')
+
+  const outcomeMutation = await request(`/api/v1/admin/disputes/${opened.dispute.id}/reputation-outcome`, {
+    method: 'POST',
+    idempotencyPrefix: 'reports-smoke-reputation-outcome',
+    ifMatch: resolved.dispute.version,
+    body: {
+      subjectUserId: reported.user.id,
+      responsibility: 'responsible',
+      severity: 'low',
+      roleScope: 'all',
+      reasonCode: 'confirmed_responsibility',
+      publicReason: '根据现有记录认定公开资料主体承担责任。',
+      internalReason: '关联举报、目标快照和基础裁决结果一致。',
+    },
+  }, admin)
+  assert(outcomeMutation.outcome?.disputeCaseId === opened.dispute.id, 'reputation outcome should link to the resolved dispute')
+  assert(outcomeMutation.outcome?.disputeVersion === resolved.dispute.version + 1, 'outcome should increment dispute version')
+  const reputationAfterOutcome = await request(`/api/v1/admin/users/${reported.user.id}/reputation`, {}, admin)
+  assert(reputationAfterOutcome.outcomes.some(item => item.id === outcomeMutation.outcome.id && item.status === 'active'), 'admin reputation audit should expose the active dispute outcome')
+  assert(reputationAfterOutcome.restrictions.every(item => item.sourceDisputeOutcomeId !== outcomeMutation.outcome.id), 'dispute outcome must not create an account restriction automatically')
 
   const appeal = await request('/api/v1/me/appeals', {
     method: 'POST',
@@ -216,22 +241,25 @@ async function main() {
     },
   }, admin)
   assert(approvedAppeal.appeal?.status === 'approved', 'appeal should be approved')
+  const reputationAfterAppeal = await request(`/api/v1/admin/users/${reported.user.id}/reputation`, {}, admin)
+  assert(reputationAfterAppeal.outcomes.some(item => item.id === outcomeMutation.outcome.id && item.status === 'reversed'), 'approved appeal should reverse the dispute outcome')
 
-  const rejected = await request(`/api/v1/admin/reports/${contactReport.id}/reject`, {
+  const rejected = await request(`/api/v1/admin/reports/${secondaryReport.id}/reject`, {
     method: 'POST',
-    idempotencyPrefix: 'reports-smoke-reject-contact',
-    ifMatch: contactReport.version,
+    idempotencyPrefix: 'reports-smoke-reject-secondary',
+    ifMatch: secondaryReport.version,
     body: {
-      reason: '联系快照举报信息不足，先关闭该条。',
+      reason: '第二条公开主页举报信息不足，先关闭该条。',
     },
   }, admin)
-  assert(rejected.report?.status === 'rejected', 'contact report should be rejected')
+  assert(rejected.report?.status === 'rejected', 'secondary report should be rejected')
 
   console.log(JSON.stringify({
     ok: true,
     reportId: publicReport.id,
-    contactReportId: contactReport.id,
+    secondaryReportId: secondaryReport.id,
     disputeId: opened.dispute.id,
+    outcomeId: outcomeMutation.outcome.id,
     appealId: appeal.id,
     publicDisputeCount: publicDisputes.items.length,
   }, null, 2))

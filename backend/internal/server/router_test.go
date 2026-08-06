@@ -16,7 +16,10 @@ import (
 	"testing"
 	"time"
 
+	"c2c-market/backend/internal/domain"
 	"c2c-market/backend/internal/health"
+	"c2c-market/backend/internal/module/apimarket"
+	"c2c-market/backend/internal/module/apiorder"
 	app "c2c-market/backend/internal/module/core"
 
 	"github.com/go-chi/chi/v5"
@@ -236,6 +239,81 @@ func TestAdminUsersListsAllAccountsWithoutReportData(t *testing.T) {
 		t.Fatalf("non-admin directory status %d body %s", response.Code, response.Body.String())
 	}
 	assertProblemCode(t, response, "PERMISSION_DENIED")
+}
+
+func TestReputationGovernanceRestrictionRouteRequiresAdminAndIfMatch(t *testing.T) {
+	server := newTestServer(time.Date(2026, 7, 24, 8, 0, 0, 0, time.UTC))
+	adminSession := createSession(t, server, "reputation-route-admin", true)
+	targetSession := createSession(t, server, "reputation-route-target", false)
+	body := `{
+		"restrictionType":"contact_review_hold",
+		"roleScope":"buyer",
+		"actionCode":"contact_view",
+		"reasonCode":"dispute_review",
+		"publicReason":"纠纷处理中暂不可查看联系方式。",
+		"internalReason":"管理员正在复核关联纠纷。"
+	}`
+	path := "/api/v1/admin/users/" + targetSession.userID + "/reputation-restrictions"
+
+	nonAdmin := newJSONRequest(http.MethodPost, path, body)
+	addAuth(nonAdmin, targetSession, "reputation-route-non-admin")
+	nonAdmin.Header.Set("If-Match", `"1"`)
+	nonAdminResponse := httptest.NewRecorder()
+	server.ServeHTTP(nonAdminResponse, nonAdmin)
+	if nonAdminResponse.Code != http.StatusForbidden {
+		t.Fatalf("expected non-admin forbidden, got %d body %s", nonAdminResponse.Code, nonAdminResponse.Body.String())
+	}
+	assertProblemCode(t, nonAdminResponse, domain.CodePermissionDenied)
+
+	missingIfMatch := newJSONRequest(http.MethodPost, path, body)
+	addAuth(missingIfMatch, adminSession, "reputation-route-missing-if-match")
+	missingIfMatchResponse := httptest.NewRecorder()
+	server.ServeHTTP(missingIfMatchResponse, missingIfMatch)
+	if missingIfMatchResponse.Code != http.StatusPreconditionRequired {
+		t.Fatalf("expected missing If-Match status %d, got %d body %s", http.StatusPreconditionRequired, missingIfMatchResponse.Code, missingIfMatchResponse.Body.String())
+	}
+	assertProblemCode(t, missingIfMatchResponse, domain.CodePreconditionRequired)
+
+	create := newJSONRequest(http.MethodPost, path, body)
+	addAuth(create, adminSession, "reputation-route-create")
+	create.Header.Set("If-Match", `"1"`)
+	createResponse := httptest.NewRecorder()
+	server.ServeHTTP(createResponse, create)
+	if createResponse.Code != http.StatusCreated {
+		t.Fatalf("create reputation restriction status %d body %s", createResponse.Code, createResponse.Body.String())
+	}
+	if createResponse.Header().Get("ETag") != `"2"` {
+		t.Fatalf("expected updated user ETag, got %q", createResponse.Header().Get("ETag"))
+	}
+	var payload reputationGovernanceMutationResponse
+	if err := json.NewDecoder(createResponse.Body).Decode(&payload); err != nil {
+		t.Fatalf("decode reputation restriction: %v", err)
+	}
+	if payload.Restriction == nil ||
+		payload.Restriction.UserID != targetSession.userID ||
+		payload.Restriction.RoleScope != "buyer" ||
+		payload.Restriction.ActionCode != "contact_view" {
+		t.Fatalf("unexpected reputation restriction response: %#v", payload.Restriction)
+	}
+
+	replay := newJSONRequest(http.MethodPost, path, body)
+	addAuth(replay, adminSession, "reputation-route-create")
+	replay.Header.Set("If-Match", `"1"`)
+	replayResponse := httptest.NewRecorder()
+	server.ServeHTTP(replayResponse, replay)
+	if replayResponse.Code != http.StatusCreated {
+		t.Fatalf("expected idempotent governance replay, got status %d body %s", replayResponse.Code, replayResponse.Body.String())
+	}
+	if replayResponse.Header().Get("ETag") != createResponse.Header().Get("ETag") {
+		t.Fatalf("expected replay ETag %q, got %q", createResponse.Header().Get("ETag"), replayResponse.Header().Get("ETag"))
+	}
+	var replayPayload reputationGovernanceMutationResponse
+	if err := json.NewDecoder(replayResponse.Body).Decode(&replayPayload); err != nil {
+		t.Fatalf("decode reputation restriction replay: %v", err)
+	}
+	if replayPayload.Restriction == nil || replayPayload.Restriction.ID != payload.Restriction.ID {
+		t.Fatalf("expected idempotent restriction ID %q, got %#v", payload.Restriction.ID, replayPayload.Restriction)
+	}
 }
 
 func TestEmailRegistrationDisabled(t *testing.T) {
@@ -1105,7 +1183,7 @@ func TestCarpoolCreateReviewApplyAndAcceptFlow(t *testing.T) {
 	if listing.Status != app.CarpoolListingStatusDraft || listing.Version != 1 {
 		t.Fatalf("unexpected created listing: %+v", listing)
 	}
-	if listing.ServiceMultiplier != "1.3500" || listing.MonthlyQuotaAmount != "200.00" || listing.QuotaLabel != "额度" || listing.QuotaUnit != "USD" || listing.QuotaPeriod != "monthly" {
+	if listing.ServiceMultiplier != "1.0000" || listing.WeeklyQuotaAmount == nil || *listing.WeeklyQuotaAmount != "50.00" || listing.MonthlyQuotaAmount != "200.00" || listing.QuotaLabel != "额度" || listing.QuotaUnit != "USD" || listing.QuotaPeriod != "monthly" {
 		t.Fatalf("expected structured multiplier and quota fields, got %+v", listing)
 	}
 	if listing.RegionCode != "other" || listing.RegionName != "印度区" {
@@ -1230,6 +1308,136 @@ func TestCarpoolCreateReviewApplyAndAcceptFlow(t *testing.T) {
 	ownerCompleted := confirmCarpoolMembershipComplete(t, server, ownerSession, "owner", membership.ID, buyerCompleted.Version, "carpool-owner-complete")
 	if ownerCompleted.Status != app.CarpoolMembershipStatusCompleted || ownerCompleted.CompletedAt == nil || ownerCompleted.EndedAt == nil {
 		t.Fatalf("unexpected completed membership: %+v", ownerCompleted)
+	}
+}
+
+func TestTransactionReviewRoutesSealPublishAndAdminRemove(t *testing.T) {
+	server := newTestServer(time.Date(2026, 7, 24, 8, 0, 0, 0, time.UTC))
+	ownerSession := createLinuxDoSession(t, server, "review-route-owner")
+	buyerSession := createSession(t, server, "review-route-buyer", false)
+	adminSession := createSession(t, server, "review-route-admin", true)
+	ownerContact := createContactMethod(t, server, ownerSession, "telegram", "Review Owner TG", "@review_route_owner")
+	buyerContact := createContactMethod(t, server, buyerSession, "telegram", "Review Buyer TG", "@review_route_buyer")
+
+	listing := createCarpool(t, server, ownerSession, ownerContact.ID, "review-route-carpool-create")
+	published := submitCarpoolReview(t, server, ownerSession, listing.ID, listing.Version, "review-route-carpool-publish")
+	application := createCarpoolApplication(t, server, buyerSession, published.ID, buyerContact.ID, "review-route-carpool-apply")
+	accepted := acceptCarpoolApplication(t, server, ownerSession, application.ID, application.Version, "review-route-carpool-accept")
+	buyerConfirmed := confirmCarpoolJoin(t, server, buyerSession, "me", accepted.ID, accepted.Version, "review-route-buyer-join")
+	joined := confirmCarpoolJoin(t, server, ownerSession, "owner", accepted.ID, buyerConfirmed.Version, "review-route-owner-join")
+	membership := firstCarpoolMembership(t, server, buyerSession, "me", joined.ID)
+	buyerCompleted := confirmCarpoolMembershipComplete(t, server, buyerSession, "me", membership.ID, membership.Version, "review-route-buyer-complete")
+	completed := confirmCarpoolMembershipComplete(t, server, ownerSession, "owner", membership.ID, buyerCompleted.Version, "review-route-owner-complete")
+	if completed.Status != app.CarpoolMembershipStatusCompleted {
+		t.Fatalf("expected completed membership before review, got %+v", completed)
+	}
+
+	buyerCenter := listTransactionReviewsHTTP(t, server, buyerSession)
+	if len(buyerCenter.PresetTags) == 0 {
+		t.Fatal("review center must return server-owned preset tags")
+	}
+	pending := findReviewDTO(t, buyerCenter.Items, "pending", membership.ID)
+	if !pending.CanCreate || pending.Rating != nil || pending.Note != nil {
+		t.Fatalf("unexpected pending review row: %+v", pending)
+	}
+
+	buyerReview := submitTransactionReviewHTTP(
+		t,
+		server,
+		buyerSession,
+		http.MethodPost,
+		"carpool_membership",
+		membership.ID,
+		`{"rating":5,"tags":["沟通顺畅","规则清晰"],"note":"卖家沟通及时，规则说明清楚。"}`,
+		"review-route-buyer-create",
+		http.StatusCreated,
+	)
+	if buyerReview.Visibility != "sealed" || buyerReview.Rating == nil || *buyerReview.Rating != 5 || buyerReview.Note == nil {
+		t.Fatalf("unexpected buyer sealed review response: %+v", buyerReview)
+	}
+	replayedBuyerReview := submitTransactionReviewHTTP(
+		t,
+		server,
+		buyerSession,
+		http.MethodPost,
+		"carpool_membership",
+		membership.ID,
+		`{"rating":5,"tags":["沟通顺畅","规则清晰"],"note":"卖家沟通及时，规则说明清楚。"}`,
+		"review-route-buyer-create",
+		http.StatusCreated,
+	)
+	if replayedBuyerReview.ID != buyerReview.ID || replayedBuyerReview.Version != buyerReview.Version {
+		t.Fatalf("review create replay changed response: first=%+v replay=%+v", buyerReview, replayedBuyerReview)
+	}
+
+	ownerCenter := listTransactionReviewsHTTP(t, server, ownerSession)
+	sealedReceived := findReviewDTO(t, ownerCenter.Items, "received", membership.ID)
+	if sealedReceived.Visibility != "sealed" || sealedReceived.Rating != nil || sealedReceived.Note != nil || len(sealedReceived.Tags) != 0 {
+		t.Fatalf("sealed review leaked through HTTP response: %+v", sealedReceived)
+	}
+
+	ownerReview := submitTransactionReviewHTTP(
+		t,
+		server,
+		ownerSession,
+		http.MethodPost,
+		"carpool_membership",
+		membership.ID,
+		`{"rating":4,"tags":["付款及时"],"note":"买家付款和确认都很及时。"}`,
+		"review-route-owner-create",
+		http.StatusCreated,
+	)
+	if ownerReview.Visibility != "published" || ownerReview.FrozenAt == nil {
+		t.Fatalf("second review did not publish and freeze pair: %+v", ownerReview)
+	}
+	buyerPublished := findReviewDTO(t, listTransactionReviewsHTTP(t, server, buyerSession).Items, "sent", membership.ID)
+	if buyerPublished.Visibility != "published" || buyerPublished.FrozenAt == nil || buyerPublished.Rating == nil || *buyerPublished.Rating != 5 {
+		t.Fatalf("buyer review did not become published: %+v", buyerPublished)
+	}
+
+	editRequest := newJSONRequest(
+		http.MethodPut,
+		"/api/v1/me/transactions/carpool_membership/"+membership.ID+"/review",
+		`{"rating":1,"tags":["响应较慢"],"note":"公开后不应允许修改。"}`,
+	)
+	addAuth(editRequest, buyerSession, "review-route-buyer-edit-frozen")
+	editResponse := httptest.NewRecorder()
+	server.ServeHTTP(editResponse, editRequest)
+	if editResponse.Code != http.StatusConflict {
+		t.Fatalf("expected frozen review conflict, got %d body %s", editResponse.Code, editResponse.Body.String())
+	}
+	assertProblemCode(t, editResponse, "INVALID_STATE_TRANSITION")
+
+	removeWithoutVersion := newJSONRequest(
+		http.MethodPost,
+		"/api/v1/admin/reviews/"+buyerPublished.ID+"/remove",
+		`{"reason":"管理员确认该评价需要移除。"}`,
+	)
+	addAuth(removeWithoutVersion, adminSession, "review-route-remove-missing-version")
+	removeWithoutVersionResponse := httptest.NewRecorder()
+	server.ServeHTTP(removeWithoutVersionResponse, removeWithoutVersion)
+	if removeWithoutVersionResponse.Code != http.StatusPreconditionRequired {
+		t.Fatalf("expected missing If-Match failure, got %d body %s", removeWithoutVersionResponse.Code, removeWithoutVersionResponse.Body.String())
+	}
+
+	removeRequest := newJSONRequest(
+		http.MethodPost,
+		"/api/v1/admin/reviews/"+buyerPublished.ID+"/remove",
+		`{"reason":"管理员确认该评价需要移除。"}`,
+	)
+	addAuth(removeRequest, adminSession, "review-route-remove")
+	removeRequest.Header.Set("If-Match", `"`+strconv.FormatInt(buyerPublished.Version, 10)+`"`)
+	removeResponse := httptest.NewRecorder()
+	server.ServeHTTP(removeResponse, removeRequest)
+	if removeResponse.Code != http.StatusOK {
+		t.Fatalf("remove review status %d body %s", removeResponse.Code, removeResponse.Body.String())
+	}
+	if got := removeResponse.Header().Get("ETag"); got != `"`+strconv.FormatInt(buyerPublished.Version+1, 10)+`"` {
+		t.Fatalf("unexpected removed review ETag %q", got)
+	}
+	removedReceived := findReviewDTO(t, listTransactionReviewsHTTP(t, server, ownerSession).Items, "received", membership.ID)
+	if removedReceived.Visibility != "removed" || removedReceived.Rating != nil || removedReceived.Note != nil || len(removedReceived.Tags) != 0 {
+		t.Fatalf("removed review content remained visible: %+v", removedReceived)
 	}
 }
 
@@ -1536,6 +1744,108 @@ func TestAPIServiceCreateReviewPublishFlow(t *testing.T) {
 	}
 }
 
+func TestOwnerAPIServicesSalesViewAndOwnerOnlySummary(t *testing.T) {
+	server := newTestServer(time.Now())
+	ownerSession := createLinuxDoSession(t, server, "api-sales-view-owner")
+	ownerContact := createContactMethod(t, server, ownerSession, "telegram", "API Sales View TG", "@api_sales_view")
+	service := createAPIService(t, server, ownerSession, ownerContact.ID, "api-sales-view-create")
+
+	defaultRequest := httptest.NewRequest(http.MethodGet, "/api/v1/owner/api-services", nil)
+	addCookie(defaultRequest, ownerSession.cookie)
+	defaultResponse := httptest.NewRecorder()
+	server.ServeHTTP(defaultResponse, defaultRequest)
+	if defaultResponse.Code != http.StatusOK {
+		t.Fatalf("default owner API service list status %d body %s", defaultResponse.Code, defaultResponse.Body.String())
+	}
+	var defaultList listResponse[createdAPIService]
+	if err := json.NewDecoder(defaultResponse.Body).Decode(&defaultList); err != nil {
+		t.Fatalf("decode default owner API service list: %v", err)
+	}
+	if len(defaultList.Items) != 0 {
+		t.Fatalf("default active view must exclude draft services, got %+v", defaultList.Items)
+	}
+
+	allRequest := httptest.NewRequest(http.MethodGet, "/api/v1/owner/api-services?salesView=all", nil)
+	addCookie(allRequest, ownerSession.cookie)
+	allResponse := httptest.NewRecorder()
+	server.ServeHTTP(allResponse, allRequest)
+	if allResponse.Code != http.StatusOK {
+		t.Fatalf("all owner API service list status %d body %s", allResponse.Code, allResponse.Body.String())
+	}
+	var allList listResponse[createdAPIService]
+	if err := json.NewDecoder(allResponse.Body).Decode(&allList); err != nil {
+		t.Fatalf("decode all owner API service list: %v", err)
+	}
+	if len(allList.Items) != 1 || allList.Items[0].ID != service.ID ||
+		allList.Items[0].SalesSummary == nil ||
+		allList.Items[0].SalesSummary.OverallState != apimarket.ServiceSalesStateDraft ||
+		allList.Items[0].HealthSummary.State != "no_sample" ||
+		allList.Items[0].HealthSummary.AvailabilityReason == nil ||
+		*allList.Items[0].HealthSummary.AvailabilityReason != "unconfigured" {
+		t.Fatalf("expected draft service with owner sales summary, got %+v", allList.Items)
+	}
+
+	invalidRequest := httptest.NewRequest(http.MethodGet, "/api/v1/owner/api-services?salesView=finished", nil)
+	addCookie(invalidRequest, ownerSession.cookie)
+	invalidResponse := httptest.NewRecorder()
+	server.ServeHTTP(invalidResponse, invalidRequest)
+	if invalidResponse.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("invalid sales view status %d body %s", invalidResponse.Code, invalidResponse.Body.String())
+	}
+	assertProblemCode(t, invalidResponse, "VALIDATION_FAILED")
+
+	submitted := ownerAPIServiceAction(t, server, ownerSession, service.ID, "submit-review", service.Version, "api-sales-view-submit")
+	published := ownerAPIServiceAction(t, server, ownerSession, submitted.ID, "publish", submitted.Version, "api-sales-view-publish")
+	orderable := updateAPIServiceOrderSettings(t, server, ownerSession, published.ID, published.Version, true, "api-sales-view-settings")
+
+	activeRequest := httptest.NewRequest(http.MethodGet, "/api/v1/owner/api-services", nil)
+	addCookie(activeRequest, ownerSession.cookie)
+	activeResponse := httptest.NewRecorder()
+	server.ServeHTTP(activeResponse, activeRequest)
+	if activeResponse.Code != http.StatusOK {
+		t.Fatalf("active owner API service list status %d body %s", activeResponse.Code, activeResponse.Body.String())
+	}
+	var activeList listResponse[createdAPIService]
+	if err := json.NewDecoder(activeResponse.Body).Decode(&activeList); err != nil {
+		t.Fatalf("decode active owner API service list: %v", err)
+	}
+	if len(activeList.Items) != 1 ||
+		activeList.Items[0].SalesSummary == nil ||
+		activeList.Items[0].SalesSummary.OverallState != apimarket.ServiceSalesStateSelling ||
+		len(activeList.Items[0].SalesSummary.Channels) != 1 ||
+		activeList.Items[0].SalesSummary.Channels[0].Kind != apimarket.ServiceSalesChannelFlexibleQuota {
+		t.Fatalf("expected active flexible quota sales summary, got %+v", activeList.Items)
+	}
+
+	publicRequest := httptest.NewRequest(http.MethodGet, "/api/v1/api-services", nil)
+	publicResponse := httptest.NewRecorder()
+	server.ServeHTTP(publicResponse, publicRequest)
+	if publicResponse.Code != http.StatusOK || !strings.Contains(publicResponse.Body.String(), orderable.ID) {
+		t.Fatalf("public API service list status %d body %s", publicResponse.Code, publicResponse.Body.String())
+	}
+	if strings.Contains(publicResponse.Body.String(), `"salesSummary"`) {
+		t.Fatalf("public API service response must not expose owner sales summary: %s", publicResponse.Body.String())
+	}
+
+	paused := ownerAPIServiceAction(t, server, ownerSession, orderable.ID, "pause", orderable.Version, "api-sales-view-pause")
+	pausedRequest := httptest.NewRequest(http.MethodGet, "/api/v1/owner/api-services?salesView=paused", nil)
+	addCookie(pausedRequest, ownerSession.cookie)
+	pausedResponse := httptest.NewRecorder()
+	server.ServeHTTP(pausedResponse, pausedRequest)
+	if pausedResponse.Code != http.StatusOK {
+		t.Fatalf("paused owner API service list status %d body %s", pausedResponse.Code, pausedResponse.Body.String())
+	}
+	var pausedList listResponse[createdAPIService]
+	if err := json.NewDecoder(pausedResponse.Body).Decode(&pausedList); err != nil {
+		t.Fatalf("decode paused owner API service list: %v", err)
+	}
+	if len(pausedList.Items) != 1 || pausedList.Items[0].ID != paused.ID ||
+		pausedList.Items[0].SalesSummary == nil ||
+		pausedList.Items[0].SalesSummary.OverallState != apimarket.ServiceSalesStatePaused {
+		t.Fatalf("expected paused service in paused view, got %+v", pausedList.Items)
+	}
+}
+
 func TestAPIPurchaseIntentCreateContactAndLifecycleFlow(t *testing.T) {
 	server := newTestServer(time.Now())
 	ownerSession := createLinuxDoSession(t, server, "api-intent-owner")
@@ -1708,22 +2018,230 @@ func TestAPIServiceInstantOrderFlow(t *testing.T) {
 	if disputed.Status != "payment_submitted" || disputed.DisputeStatus != "open" || disputed.DisputeCaseID == "" || disputed.Version != 3 {
 		t.Fatalf("unexpected disputed API order: %+v", disputed)
 	}
+
+	buyerDisputes, buyerDisputesBody := listMyDisputes(t, server, buyerSession)
+	if len(buyerDisputes.Items) != 1 || buyerDisputes.Items[0].ID != disputed.DisputeCaseID {
+		t.Fatalf("expected buyer dispute list to contain %s, got %+v", disputed.DisputeCaseID, buyerDisputes.Items)
+	}
+	if buyerDisputes.Items[0].CanAppeal || !strings.Contains(buyerDisputesBody, `"canAppeal":false`) {
+		t.Fatalf("open dispute must expose canAppeal=false, got %+v body %s", buyerDisputes.Items[0], buyerDisputesBody)
+	}
+	for _, forbidden := range []string{"adminReason", "openedByAdminId", "primaryUserId", "counterpartyUserId", "subjectUserId", "subjectUsername", "subjectName"} {
+		if strings.Contains(buyerDisputesBody, `"`+forbidden+`"`) {
+			t.Fatalf("my disputes leaked %s: %s", forbidden, buyerDisputesBody)
+		}
+	}
+	ownerDisputes, _ := listMyDisputes(t, server, ownerSession)
+	if len(ownerDisputes.Items) != 1 || ownerDisputes.Items[0].ID != disputed.DisputeCaseID {
+		t.Fatalf("expected owner dispute list to contain %s, got %+v", disputed.DisputeCaseID, ownerDisputes.Items)
+	}
+	if ownerDisputes.Items[0].CanAppeal {
+		t.Fatalf("open dispute must not be appealable by the subject, got %+v", ownerDisputes.Items[0])
+	}
+	outsiderSession := createSession(t, server, "api-order-dispute-outsider", false)
+	outsiderDisputes, _ := listMyDisputes(t, server, outsiderSession)
+	if len(outsiderDisputes.Items) != 0 {
+		t.Fatalf("expected outsider dispute list to be empty, got %+v", outsiderDisputes.Items)
+	}
+
+	openAppealRequest := newJSONRequest(http.MethodPost, "/api/v1/me/appeals", `{
+		"disputeId":"`+disputed.DisputeCaseID+`",
+		"title":"处理中纠纷申诉",
+		"statement":"纠纷处理完成前不应允许提交申诉。"
+	}`)
+	addAuth(openAppealRequest, ownerSession, "api-order-open-dispute-appeal")
+	openAppealResponse := httptest.NewRecorder()
+	server.ServeHTTP(openAppealResponse, openAppealRequest)
+	if openAppealResponse.Code != http.StatusConflict {
+		t.Fatalf("expected open dispute appeal conflict, got %d body %s", openAppealResponse.Code, openAppealResponse.Body.String())
+	}
+	assertProblemCode(t, openAppealResponse, domain.CodeInvalidStateTransition)
+
+	forbiddenAppeal := newJSONRequest(http.MethodPost, "/api/v1/me/appeals", `{
+		"disputeId":"`+disputed.DisputeCaseID+`",
+		"title":"非裁定主体申诉",
+		"statement":"该账号不是纠纷裁定主体，不应允许提交。"
+	}`)
+	addAuth(forbiddenAppeal, buyerSession, "api-order-dispute-non-subject-appeal")
+	forbiddenAppealResponse := httptest.NewRecorder()
+	server.ServeHTTP(forbiddenAppealResponse, forbiddenAppeal)
+	if forbiddenAppealResponse.Code != http.StatusForbidden {
+		t.Fatalf("expected non-subject appeal forbidden, got %d body %s", forbiddenAppealResponse.Code, forbiddenAppealResponse.Body.String())
+	}
+	assertProblemCode(t, forbiddenAppealResponse, domain.CodePermissionDenied)
+
+	outsiderAppeal := newJSONRequest(http.MethodPost, "/api/v1/me/appeals", `{
+		"disputeId":"`+disputed.DisputeCaseID+`",
+		"title":"无权申诉",
+		"statement":"该账号不是纠纷参与方，不应允许提交。"
+	}`)
+	addAuth(outsiderAppeal, outsiderSession, "api-order-dispute-outsider-appeal")
+	outsiderAppealResponse := httptest.NewRecorder()
+	server.ServeHTTP(outsiderAppealResponse, outsiderAppeal)
+	if outsiderAppealResponse.Code != http.StatusNotFound {
+		t.Fatalf("expected outsider appeal source hidden, got %d body %s", outsiderAppealResponse.Code, outsiderAppealResponse.Body.String())
+	}
+	assertProblemCode(t, outsiderAppealResponse, domain.CodeObjectNotFound)
+
+	merchantDisputeIntent := createAPIPurchaseIntent(t, server, buyerSession, orderable.ID, buyerContact.ID, "api-order-merchant-dispute-intent")
+	merchantDisputeOrder := createAPIOrder(t, server, buyerSession, merchantDisputeIntent.ID, "wechat", "api-order-merchant-dispute-create")
+	merchantDisputePaid := apiOrderAction(t, server, buyerSession, "me", merchantDisputeOrder.ID, "submit-payment", merchantDisputeOrder.Version, "api-order-merchant-dispute-submit-payment", `{"paymentSummary":"已付款，等待商户核对。"}`)
+	merchantDisputed := apiOrderAction(t, server, ownerSession, "owner", merchantDisputePaid.ID, "dispute", merchantDisputePaid.Version, "api-order-merchant-open-dispute", `{"reason":"收款记录与买家提交的信息不一致，需要平台协助核对。"}`)
+	if merchantDisputed.DisputeStatus != "open" || merchantDisputed.DisputeCaseID == "" || merchantDisputed.BuyerUserID != buyerSession.userID {
+		t.Fatalf("unexpected merchant-opened API order dispute: %+v", merchantDisputed)
+	}
+	merchantDisputeReplay := apiOrderAction(t, server, ownerSession, "owner", merchantDisputePaid.ID, "dispute", merchantDisputePaid.Version, "api-order-merchant-open-dispute", `{"reason":"收款记录与买家提交的信息不一致，需要平台协助核对。"}`)
+	if merchantDisputeReplay.DisputeCaseID != merchantDisputed.DisputeCaseID || merchantDisputeReplay.Version != merchantDisputed.Version {
+		t.Fatalf("expected idempotent merchant dispute replay, got %+v and %+v", merchantDisputed, merchantDisputeReplay)
+	}
 	adminDisputes := listAdminDisputes(t, server, adminSession)
 	foundDispute := false
+	var adminDispute createdDispute
 	for _, item := range adminDisputes.Items {
 		if item.ID != disputed.DisputeCaseID {
 			continue
 		}
 		foundDispute = true
+		adminDispute = item
 		if item.TargetType != "api_order" || item.TargetID != disputed.ID || item.Status != "open" {
 			t.Fatalf("unexpected admin API order dispute: %+v", item)
 		}
 		if item.PublicSummary == "" || item.PublicResult == "" {
 			t.Fatalf("expected public-safe dispute summary/result: %+v", item)
 		}
+		if item.SubjectUserID == "" || item.SubjectUserID != item.CounterpartyUserID {
+			t.Fatalf("expected admin dispute responsibility subject fields: %+v", item)
+		}
 	}
 	if !foundDispute {
 		t.Fatalf("expected admin disputes to include API order dispute %s: %+v", disputed.DisputeCaseID, adminDisputes.Items)
+	}
+
+	resolveDispute := newJSONRequest(http.MethodPost, "/api/v1/admin/disputes/"+adminDispute.ID+"/resolve", `{
+		"reason":"关联订单和双方说明已核对。",
+		"publicSummary":"API 订单履约争议",
+		"publicResultCode":"api_delivery_issue",
+		"publicResult":"已确认订单交付说明存在争议并完成基础裁决。"
+	}`)
+	addAuth(resolveDispute, adminSession, "api-order-admin-resolve-dispute")
+	resolveDispute.Header.Set("If-Match", `"`+strconv.FormatInt(adminDispute.Version, 10)+`"`)
+	resolveDisputeResponse := httptest.NewRecorder()
+	server.ServeHTTP(resolveDisputeResponse, resolveDispute)
+	if resolveDisputeResponse.Code != http.StatusOK {
+		t.Fatalf("resolve API order dispute status %d body %s", resolveDisputeResponse.Code, resolveDisputeResponse.Body.String())
+	}
+	var resolvedDispute adminMutationResponse
+	if err := json.NewDecoder(resolveDisputeResponse.Body).Decode(&resolvedDispute); err != nil {
+		t.Fatalf("decode resolved API order dispute: %v", err)
+	}
+	if resolvedDispute.Dispute == nil || resolvedDispute.Dispute.Status != "resolved" || resolvedDispute.Dispute.Version != adminDispute.Version+1 {
+		t.Fatalf("unexpected resolved API order dispute: %#v", resolvedDispute.Dispute)
+	}
+	resolvedBuyerDisputes, _ := listMyDisputes(t, server, buyerSession)
+	resolvedBuyerDispute, foundResolvedBuyerDispute := findCreatedDispute(resolvedBuyerDisputes.Items, disputed.DisputeCaseID)
+	if !foundResolvedBuyerDispute || resolvedBuyerDispute.CanAppeal {
+		t.Fatalf("non-subject must retain canAppeal=false after resolution, got %+v", resolvedBuyerDisputes.Items)
+	}
+	resolvedOwnerDisputes, resolvedOwnerDisputesBody := listMyDisputes(t, server, ownerSession)
+	resolvedOwnerDispute, foundResolvedOwnerDispute := findCreatedDispute(resolvedOwnerDisputes.Items, disputed.DisputeCaseID)
+	if !foundResolvedOwnerDispute || !resolvedOwnerDispute.CanAppeal || !strings.Contains(resolvedOwnerDisputesBody, `"canAppeal":true`) {
+		t.Fatalf("resolved dispute subject must receive canAppeal=true, got %+v body %s", resolvedOwnerDisputes.Items, resolvedOwnerDisputesBody)
+	}
+
+	appealRequest := newJSONRequest(http.MethodPost, "/api/v1/me/appeals", `{
+		"disputeId":"`+disputed.DisputeCaseID+`",
+		"targetType":"public_user",
+		"targetId":"forged-target",
+		"title":"订单纠纷申诉",
+		"statement":"请求依据关联订单和双方说明重新复核。"
+	}`)
+	addAuth(appealRequest, ownerSession, "api-order-resolved-dispute-appeal")
+	appealResponse := httptest.NewRecorder()
+	server.ServeHTTP(appealResponse, appealRequest)
+	if appealResponse.Code != http.StatusCreated {
+		t.Fatalf("create authorized dispute appeal status %d body %s", appealResponse.Code, appealResponse.Body.String())
+	}
+	var appealPayload createdAppeal
+	if err := json.NewDecoder(appealResponse.Body).Decode(&appealPayload); err != nil {
+		t.Fatalf("decode created dispute appeal: %v", err)
+	}
+	if appealPayload.DisputeID != disputed.DisputeCaseID || appealPayload.TargetType != "api_order" || appealPayload.TargetID != disputed.ID {
+		t.Fatalf("appeal target must be derived from dispute, got %+v", appealPayload)
+	}
+
+	duplicateAppeal := newJSONRequest(http.MethodPost, "/api/v1/me/appeals", `{
+		"disputeId":"`+disputed.DisputeCaseID+`",
+		"title":"重复订单纠纷申诉",
+		"statement":"同一纠纷已有待处理申诉时必须拒绝重复提交。"
+	}`)
+	addAuth(duplicateAppeal, ownerSession, "api-order-resolved-dispute-appeal-duplicate")
+	duplicateAppealResponse := httptest.NewRecorder()
+	server.ServeHTTP(duplicateAppealResponse, duplicateAppeal)
+	if duplicateAppealResponse.Code != http.StatusConflict {
+		t.Fatalf("expected duplicate appeal conflict, got %d body %s", duplicateAppealResponse.Code, duplicateAppealResponse.Body.String())
+	}
+	assertProblemCode(t, duplicateAppealResponse, domain.CodeInvalidStateTransition)
+
+	outcomePath := "/api/v1/admin/disputes/" + adminDispute.ID + "/reputation-outcome"
+	outcomeBody := `{
+		"subjectUserId":"` + adminDispute.SubjectUserID + `",
+		"responsibility":"responsible",
+		"severity":"low",
+		"roleScope":"seller",
+		"reasonCode":"confirmed_responsibility",
+		"publicReason":"根据现有记录认定商户承担责任。",
+		"internalReason":"关联订单状态、纠纷说明和基础裁决结果一致。"
+	}`
+	missingOutcomeVersion := newJSONRequest(http.MethodPost, outcomePath, outcomeBody)
+	addAuth(missingOutcomeVersion, adminSession, "api-order-outcome-missing-version")
+	missingOutcomeVersionResponse := httptest.NewRecorder()
+	server.ServeHTTP(missingOutcomeVersionResponse, missingOutcomeVersion)
+	if missingOutcomeVersionResponse.Code != http.StatusPreconditionRequired {
+		t.Fatalf("expected reputation outcome If-Match requirement, got %d body %s", missingOutcomeVersionResponse.Code, missingOutcomeVersionResponse.Body.String())
+	}
+	assertProblemCode(t, missingOutcomeVersionResponse, domain.CodePreconditionRequired)
+
+	createOutcome := newJSONRequest(http.MethodPost, outcomePath, outcomeBody)
+	addAuth(createOutcome, adminSession, "api-order-create-outcome")
+	createOutcome.Header.Set("If-Match", `"`+strconv.FormatInt(resolvedDispute.Dispute.Version, 10)+`"`)
+	createOutcomeResponse := httptest.NewRecorder()
+	server.ServeHTTP(createOutcomeResponse, createOutcome)
+	if createOutcomeResponse.Code != http.StatusCreated {
+		t.Fatalf("create dispute reputation outcome status %d body %s", createOutcomeResponse.Code, createOutcomeResponse.Body.String())
+	}
+	var outcomeMutation reputationGovernanceMutationResponse
+	if err := json.NewDecoder(createOutcomeResponse.Body).Decode(&outcomeMutation); err != nil {
+		t.Fatalf("decode dispute reputation outcome: %v", err)
+	}
+	if outcomeMutation.Outcome == nil ||
+		outcomeMutation.Outcome.DisputeCaseID != adminDispute.ID ||
+		outcomeMutation.Outcome.SubjectUserID != adminDispute.SubjectUserID ||
+		outcomeMutation.Outcome.Responsibility != "responsible" ||
+		outcomeMutation.Outcome.RoleScope != "seller" ||
+		outcomeMutation.Outcome.DisputeVersion != resolvedDispute.Dispute.Version+1 {
+		t.Fatalf("unexpected dispute reputation outcome: %#v", outcomeMutation.Outcome)
+	}
+	if outcomeMutation.Restriction != nil {
+		t.Fatalf("dispute outcome must not create a restriction automatically: %#v", outcomeMutation.Restriction)
+	}
+	if createOutcomeResponse.Header().Get("ETag") != `"`+strconv.FormatInt(outcomeMutation.Outcome.DisputeVersion, 10)+`"` {
+		t.Fatalf("unexpected dispute reputation outcome ETag %q", createOutcomeResponse.Header().Get("ETag"))
+	}
+
+	replayOutcome := newJSONRequest(http.MethodPost, outcomePath, outcomeBody)
+	addAuth(replayOutcome, adminSession, "api-order-create-outcome")
+	replayOutcome.Header.Set("If-Match", `"`+strconv.FormatInt(resolvedDispute.Dispute.Version, 10)+`"`)
+	replayOutcomeResponse := httptest.NewRecorder()
+	server.ServeHTTP(replayOutcomeResponse, replayOutcome)
+	if replayOutcomeResponse.Code != http.StatusCreated {
+		t.Fatalf("replay dispute reputation outcome status %d body %s", replayOutcomeResponse.Code, replayOutcomeResponse.Body.String())
+	}
+	var replayedOutcome reputationGovernanceMutationResponse
+	if err := json.NewDecoder(replayOutcomeResponse.Body).Decode(&replayedOutcome); err != nil {
+		t.Fatalf("decode replayed dispute reputation outcome: %v", err)
+	}
+	if replayedOutcome.Outcome == nil || replayedOutcome.Outcome.ID != outcomeMutation.Outcome.ID {
+		t.Fatalf("expected idempotent dispute outcome replay, got %#v", replayedOutcome.Outcome)
 	}
 
 	completeEarly := newJSONRequest(http.MethodPost, "/api/v1/me/api-orders/"+paid.ID+"/confirm-complete", `{}`)
@@ -1759,7 +2277,7 @@ func TestAPIServiceInstantOrderFlow(t *testing.T) {
 	}
 
 	delivered := apiOrderAction(t, server, ownerSession, "owner", confirmed.ID, "submit-delivery", confirmed.Version, "api-order-submit-delivery", `{"deliveryKind":"api_key_endpoint","apiBaseUrl":"https://api.example.com/v1","apiKey":"sk-proj-test","instructions":"买家专属；提交后不可修改，后续更换请站外联系。"}`)
-	if delivered.Status != "delivery_submitted" || delivered.DeliveryNote == "" || delivered.DeliveryCredential == nil || delivered.DeliveryCredential.APIKey != "sk-proj-test" || delivered.Version != confirmed.Version+1 {
+	if delivered.Status != "delivery_submitted" || delivered.DeliveryNote == "" || delivered.DeliveryReviewExpiresAt == nil || delivered.DeliveryCredential == nil || delivered.DeliveryCredential.APIKey != "sk-proj-test" || delivered.Version != confirmed.Version+1 {
 		t.Fatalf("unexpected delivered order: %+v", delivered)
 	}
 	duplicateDelivery := newJSONRequest(http.MethodPost, "/api/v1/owner/api-orders/"+delivered.ID+"/submit-delivery", `{"deliveryKind":"api_key_endpoint","apiBaseUrl":"https://api.example.com/v1","apiKey":"sk-proj-other"}`)
@@ -1783,16 +2301,33 @@ func TestAPIServiceInstantOrderFlow(t *testing.T) {
 			continue
 		}
 		adminFoundDelivered = true
-		if item.DeliveryCredential != nil || item.RequestedUSDAllowanceSnapshot != "20.000000" || item.Amount != "16.00" {
+		if item.BuyerUserID != buyerSession.userID || item.SellerUserID != ownerSession.userID || item.DeliveryCredential != nil || item.RequestedUSDAllowanceSnapshot != "20.000000" || item.Amount != "16.00" {
 			t.Fatalf("admin API order summary must keep decimal snapshots without delivery credential: %+v", item)
 		}
 	}
 	if !adminFoundDelivered {
 		t.Fatalf("expected admin API order list to contain %s", delivered.ID)
 	}
+	adminDetailRequest := httptest.NewRequest(http.MethodGet, "/api/v1/admin/api-orders/"+delivered.ID, nil)
+	addCookie(adminDetailRequest, adminSession.cookie)
+	adminDetailResponse := httptest.NewRecorder()
+	server.ServeHTTP(adminDetailResponse, adminDetailRequest)
+	if adminDetailResponse.Code != http.StatusOK {
+		t.Fatalf("admin API order detail status %d body %s", adminDetailResponse.Code, adminDetailResponse.Body.String())
+	}
+	if strings.Contains(adminDetailResponse.Body.String(), "sk-proj-test") || strings.Contains(adminDetailResponse.Body.String(), "deliveryCredential") {
+		t.Fatalf("admin API order detail leaked raw credential: %s", adminDetailResponse.Body.String())
+	}
+	var adminDetail createdAPIOrder
+	if err := json.NewDecoder(adminDetailResponse.Body).Decode(&adminDetail); err != nil {
+		t.Fatalf("decode admin API order detail: %v", err)
+	}
+	if adminDetail.BuyerUserID != buyerSession.userID || adminDetail.SellerUserID != ownerSession.userID || adminDetail.DeliveryReviewExpiresAt == nil {
+		t.Fatalf("unexpected admin API order detail: %+v", adminDetail)
+	}
 
 	completed := apiOrderAction(t, server, buyerSession, "me", delivered.ID, "confirm-complete", delivered.Version, "api-order-confirm-complete", `{}`)
-	if completed.Status != "completed" || completed.CompletedAt == nil || completed.Version != delivered.Version+1 {
+	if completed.Status != "completed" || completed.CompletionSource != "buyer_confirmed" || completed.CompletedAt == nil || completed.Version != delivered.Version+1 {
 		t.Fatalf("unexpected completed order: %+v", completed)
 	}
 	if completed.DeliveryCredential == nil || completed.DeliveryCredential.APIKey != "sk-proj-test" {
@@ -2071,7 +2606,8 @@ func TestProfileContactAndMerchantProfileFlow(t *testing.T) {
 		"bio":"只公开必要业务资料。",
 		"regionCode":"cn",
 		"timezone":"Asia/Shanghai",
-		"avatarMode":"linuxdo",
+		"avatarMode":"custom_url",
+		"avatarUrl":"https://cdn.example.com/profile-owner.webp",
 		"privacy":{
 			"showCreatedAt":true,
 			"showLastActiveAt":false,
@@ -2143,7 +2679,7 @@ func TestProfileContactAndMerchantProfileFlow(t *testing.T) {
 	upsertMerchant := newJSONRequest(http.MethodPost, "/api/v1/me/merchant-profile", `{
 		"slug":"profile-store",
 		"displayName":"Profile Store",
-		"avatarUrl":""
+		"avatarUrl":"https://cdn.example.com/profile-store.png"
 	}`)
 	addAuth(upsertMerchant, session, "")
 	upsertMerchantResponse := httptest.NewRecorder()
@@ -2172,6 +2708,16 @@ func TestProfileContactAndMerchantProfileFlow(t *testing.T) {
 	if !strings.Contains(publicUserBody, `"lastActiveAt":null`) {
 		t.Fatalf("expected privacy setting to hide lastActiveAt, got %s", publicUserBody)
 	}
+	for _, expected := range []string{
+		`"completedCarpools":null`,
+		`"completedApiOrders":null`,
+		`"buyerResponsibilityCancellationCount":null`,
+		`"unresolvedDisputeCount":null`,
+	} {
+		if !strings.Contains(publicUserBody, expected) {
+			t.Fatalf("public user profile must keep unavailable reputation data null, missing %s in %s", expected, publicUserBody)
+		}
+	}
 
 	publicMerchant := httptest.NewRequest(http.MethodGet, "/api/v1/merchant-profiles/profile-store", nil)
 	publicMerchantResponse := httptest.NewRecorder()
@@ -2183,8 +2729,18 @@ func TestProfileContactAndMerchantProfileFlow(t *testing.T) {
 	if strings.Contains(publicMerchantBody, session.userID) || strings.Contains(publicMerchantBody, "updated-profile@example.com") {
 		t.Fatalf("public merchant profile leaked owner/contact data: %s", publicMerchantBody)
 	}
-	if !strings.Contains(publicMerchantBody, `"username":"profile-store"`) {
+	if !strings.Contains(publicMerchantBody, `"username":"profile-store"`) || !strings.Contains(publicMerchantBody, `"avatarUrl":"https://cdn.example.com/profile-store.png"`) {
 		t.Fatalf("expected public merchant slug as username field, got %s", publicMerchantBody)
+	}
+	for _, expected := range []string{
+		`"trustLevel":null`,
+		`"completedLast90Days":null`,
+		`"merchantResponsibleCancellations":null`,
+		`"unresolvedDisputes":null`,
+	} {
+		if !strings.Contains(publicMerchantBody, expected) {
+			t.Fatalf("public merchant profile must keep unavailable reputation data null, missing %s in %s", expected, publicMerchantBody)
+		}
 	}
 
 	apiService := createAPIServiceWithPayload(t, server, session, strings.Replace(apiServicePayload(second.ID, "1.0000"), `"merchantIdentityMode":"public_profile"`, `"merchantProfileId":"`+merchant.ID+`","merchantIdentityMode":"store_alias"`, 1), "profile-store-api-service")
@@ -2199,11 +2755,26 @@ func TestProfileContactAndMerchantProfileFlow(t *testing.T) {
 		t.Fatalf("public API service status %d body %s", publicServiceResponse.Code, publicServiceResponse.Body.String())
 	}
 	publicServiceBody := publicServiceResponse.Body.String()
-	if !strings.Contains(publicServiceBody, `"merchantDisplayName":"Profile Store"`) || !strings.Contains(publicServiceBody, `"merchantProfileSlug":"profile-store"`) {
+	if !strings.Contains(publicServiceBody, `"merchantDisplayName":"Profile Store"`) || !strings.Contains(publicServiceBody, `"merchantProfileSlug":"profile-store"`) || !strings.Contains(publicServiceBody, `"merchantAvatarUrl":"https://cdn.example.com/profile-store.png"`) {
 		t.Fatalf("expected public API service to expose store alias, got %s", publicServiceBody)
 	}
 	if strings.Contains(publicServiceBody, session.userID) || strings.Contains(publicServiceBody, second.ID) || strings.Contains(publicServiceBody, "updated-profile@example.com") {
 		t.Fatalf("public API service leaked owner/contact data: %s", publicServiceBody)
+	}
+
+	publicIdentityService := createAPIServiceWithPayload(t, server, session, apiServicePayload(second.ID, "1.0000"), "profile-public-api-service")
+	publicIdentitySubmitted := ownerAPIServiceAction(t, server, session, publicIdentityService.ID, "submit-review", publicIdentityService.Version, "profile-public-api-submit")
+	publicIdentityOnline := ownerAPIServiceAction(t, server, session, publicIdentityService.ID, "publish", publicIdentitySubmitted.Version, "profile-public-api-publish")
+	publicIdentityOrderable := updateAPIServiceOrderSettings(t, server, session, publicIdentityOnline.ID, publicIdentityOnline.Version, true, "profile-public-api-settings")
+	publicIdentityRequest := httptest.NewRequest(http.MethodGet, "/api/v1/api-services/"+publicIdentityOrderable.ID, nil)
+	publicIdentityResponse := httptest.NewRecorder()
+	server.ServeHTTP(publicIdentityResponse, publicIdentityRequest)
+	if publicIdentityResponse.Code != http.StatusOK {
+		t.Fatalf("public identity API service status %d body %s", publicIdentityResponse.Code, publicIdentityResponse.Body.String())
+	}
+	publicIdentityBody := publicIdentityResponse.Body.String()
+	if !strings.Contains(publicIdentityBody, `"merchantDisplayName":"Profile Owner"`) || !strings.Contains(publicIdentityBody, `"merchantProfileSlug":"profile-owner"`) || !strings.Contains(publicIdentityBody, `"merchantAvatarUrl":"https://cdn.example.com/profile-owner.webp"`) {
+		t.Fatalf("expected public API service to expose public profile identity and avatar, got %s", publicIdentityBody)
 	}
 }
 
@@ -2360,21 +2931,29 @@ type createdMerchantProfile struct {
 }
 
 type createdCarpool struct {
-	ID                     string                    `json:"id"`
-	Status                 string                    `json:"status"`
-	DistributionMethod     string                    `json:"distributionMethod"`
-	DistributionMethodNote string                    `json:"distributionMethodNote"`
-	ProvidesAdminAccount   bool                      `json:"providesAdminAccount"`
-	RegionCode             string                    `json:"regionCode"`
-	RegionName             string                    `json:"regionName"`
-	ServiceMultiplier      string                    `json:"serviceMultiplier"`
-	MonthlyQuotaAmount     string                    `json:"monthlyQuotaAmount"`
-	QuotaLabel             string                    `json:"quotaLabel"`
-	QuotaUnit              string                    `json:"quotaUnit"`
-	QuotaPeriod            string                    `json:"quotaPeriod"`
-	AvailableSeats         int                       `json:"availableSeats"`
-	CycleTerm              *carpoolCycleTermResponse `json:"cycleTerm"`
-	Version                int64                     `json:"version"`
+	ID                                    string                    `json:"id"`
+	Status                                string                    `json:"status"`
+	DistributionMethod                    string                    `json:"distributionMethod"`
+	DistributionMethodNote                string                    `json:"distributionMethodNote"`
+	ProvidesAdminAccount                  bool                      `json:"providesAdminAccount"`
+	RegionCode                            string                    `json:"regionCode"`
+	RegionName                            string                    `json:"regionName"`
+	ServiceMultiplier                     string                    `json:"serviceMultiplier"`
+	WeeklyQuotaAmount                     *string                   `json:"weeklyQuotaAmount"`
+	MonthlyQuotaAmount                    string                    `json:"monthlyQuotaAmount"`
+	FollowsOfficialQuotaReset             *bool                     `json:"followsOfficialQuotaReset"`
+	VPSRegion                             *string                   `json:"vpsRegion"`
+	SupportsMainlandChinaDirectConnection *bool                     `json:"supportsMainlandChinaDirectConnection"`
+	OpeningChannelCode                    *string                   `json:"openingChannelCode"`
+	CustomOpeningChannel                  *string                   `json:"customOpeningChannel"`
+	PaymentMethodCode                     *string                   `json:"paymentMethodCode"`
+	CustomPaymentMethod                   *string                   `json:"customPaymentMethod"`
+	QuotaLabel                            string                    `json:"quotaLabel"`
+	QuotaUnit                             string                    `json:"quotaUnit"`
+	QuotaPeriod                           string                    `json:"quotaPeriod"`
+	AvailableSeats                        int                       `json:"availableSeats"`
+	CycleTerm                             *carpoolCycleTermResponse `json:"cycleTerm"`
+	Version                               int64                     `json:"version"`
 }
 
 type createdCarpoolApplication struct {
@@ -2404,19 +2983,36 @@ type createdCarpoolMembership struct {
 }
 
 type createdAPIService struct {
-	ID                     string                    `json:"id"`
-	SourceURL              string                    `json:"sourceUrl"`
-	ReviewStatus           string                    `json:"reviewStatus"`
-	PublicationStatus      string                    `json:"publicationStatus"`
-	ModerationStatus       string                    `json:"moderationStatus"`
-	AcceptingOrders        bool                      `json:"acceptingOrders"`
-	PaymentWindowMinutes   int                       `json:"paymentWindowMinutes"`
-	AcceptedPaymentMethods []string                  `json:"acceptedPaymentMethods"`
-	IsOrderable            bool                      `json:"isOrderable"`
-	AvailableUSDAllowance  string                    `json:"availableUsdAllowance"`
-	OrderableReasons       []string                  `json:"orderableReasons"`
-	Models                 []apiServiceModelResponse `json:"models"`
-	Version                int64                     `json:"version"`
+	ID                     string                          `json:"id"`
+	SourceURL              string                          `json:"sourceUrl"`
+	ReviewStatus           string                          `json:"reviewStatus"`
+	PublicationStatus      string                          `json:"publicationStatus"`
+	ModerationStatus       string                          `json:"moderationStatus"`
+	AcceptingOrders        bool                            `json:"acceptingOrders"`
+	PaymentWindowMinutes   int                             `json:"paymentWindowMinutes"`
+	AcceptedPaymentMethods []string                        `json:"acceptedPaymentMethods"`
+	IsOrderable            bool                            `json:"isOrderable"`
+	AvailableUSDAllowance  string                          `json:"availableUsdAllowance"`
+	DeclaredTTFTBand       string                          `json:"declaredTtftBand"`
+	DeclaredMaxConcurrency int                             `json:"declaredMaxConcurrency"`
+	PerformanceConfirmedAt *string                         `json:"performanceConfirmedAt"`
+	PromptAuditEnabled     *bool                           `json:"promptAuditEnabled"`
+	OrderableReasons       []string                        `json:"orderableReasons"`
+	Models                 []apiServiceModelResponse       `json:"models"`
+	HealthSummary          apiServiceHealthSummaryResponse `json:"healthSummary"`
+	SalesSummary           *struct {
+		OverallState string `json:"overallState"`
+		Channels     []struct {
+			Kind                  string  `json:"kind"`
+			State                 string  `json:"state"`
+			AvailableUSDAllowance string  `json:"availableUsdAllowance"`
+			AvailableCopies       int     `json:"availableCopies"`
+			NextStartsAt          *string `json:"nextStartsAt"`
+			SaleCutoffAt          *string `json:"saleCutoffAt"`
+			ExpiresAt             *string `json:"expiresAt"`
+		} `json:"channels"`
+	} `json:"salesSummary"`
+	Version int64 `json:"version"`
 }
 
 type createdAPIPurchaseIntent struct {
@@ -2452,6 +3048,7 @@ type createdAPIPurchaseIntent struct {
 
 type createdAPIOrder struct {
 	ID                            string                             `json:"id"`
+	PurchaseKind                  string                             `json:"purchaseKind"`
 	APIPurchaseIntentID           string                             `json:"apiPurchaseIntentId"`
 	APIServiceID                  string                             `json:"apiServiceId"`
 	BuyerUserID                   string                             `json:"buyerUserId"`
@@ -2474,7 +3071,9 @@ type createdAPIOrder struct {
 	PaymentIssueReportedAt        *string                            `json:"paymentIssueReportedAt"`
 	PaidConfirmedAt               *string                            `json:"paidConfirmedAt"`
 	DeliveryNote                  string                             `json:"deliveryNote"`
+	DeliveryReviewExpiresAt       *string                            `json:"deliveryReviewExpiresAt"`
 	DeliveryCredential            *createdAPIOrderDeliveryCredential `json:"deliveryCredential"`
+	CompletionSource              string                             `json:"completionSource"`
 	CompletedAt                   *string                            `json:"completedAt"`
 	CancelledAt                   *string                            `json:"cancelledAt"`
 	CancelReason                  string                             `json:"cancelReason"`
@@ -2504,11 +3103,24 @@ type createdDispute struct {
 	CounterpartyUserID   string `json:"counterpartyUserId"`
 	CounterpartyUsername string `json:"counterpartyUsername"`
 	CounterpartyName     string `json:"counterpartyName"`
+	SubjectUserID        string `json:"subjectUserId"`
+	SubjectUsername      string `json:"subjectUsername"`
+	SubjectName          string `json:"subjectName"`
 	Status               string `json:"status"`
 	PublicSummary        string `json:"publicSummary"`
 	PublicResult         string `json:"publicResult"`
 	OpenedByAdminID      string `json:"openedByAdminId"`
 	Version              int64  `json:"version"`
+	CanAppeal            bool   `json:"canAppeal"`
+}
+
+type createdAppeal struct {
+	ID         string `json:"id"`
+	ReportID   string `json:"reportId"`
+	DisputeID  string `json:"disputeId"`
+	TargetType string `json:"targetType"`
+	TargetID   string `json:"targetId"`
+	Status     string `json:"status"`
 }
 
 type apiOrderPaymentInstructions struct {
@@ -2553,7 +3165,10 @@ func createLinuxDoSession(t *testing.T, server http.Handler, username string) te
 	state := "oauth-state-" + username
 	callbackURL := "/api/v1/auth/oauth/callback?state=" + url.QueryEscape(state) + "&code=" + url.QueryEscape(username)
 	callback := httptest.NewRequest(http.MethodGet, callbackURL, nil)
-	callback.AddCookie(&http.Cookie{Name: oauthStateCookieName, Value: state})
+	callback.AddCookie(&http.Cookie{Name: oauthStateCookieName, Value: encodeOAuthStateCookie(oauthStateCookiePayload{
+		State:    state,
+		ReturnTo: "/",
+	})})
 	callbackResponse := httptest.NewRecorder()
 	server.ServeHTTP(callbackResponse, callback)
 	if callbackResponse.Code != http.StatusFound {
@@ -3229,6 +3844,9 @@ func createAPIOrder(t *testing.T, server http.Handler, session testSession, inte
 	if err := json.NewDecoder(strings.NewReader(body)).Decode(&payload); err != nil {
 		t.Fatalf("decode API order: %v", err)
 	}
+	if payload.PurchaseKind != apiorder.PurchaseKindAPIService {
+		t.Fatalf("expected API order purchase kind %q, got %q", apiorder.PurchaseKindAPIService, payload.PurchaseKind)
+	}
 	return payload
 }
 
@@ -3292,6 +3910,32 @@ func listAdminDisputes(t *testing.T, server http.Handler, session testSession) l
 		t.Fatalf("decode admin disputes: %v", err)
 	}
 	return payload
+}
+
+func listMyDisputes(t *testing.T, server http.Handler, session testSession) (listResponse[createdDispute], string) {
+	t.Helper()
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/me/disputes", nil)
+	addCookie(request, session.cookie)
+	response := httptest.NewRecorder()
+	server.ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("my disputes status %d body %s", response.Code, response.Body.String())
+	}
+	body := response.Body.String()
+	var payload listResponse[createdDispute]
+	if err := json.NewDecoder(strings.NewReader(body)).Decode(&payload); err != nil {
+		t.Fatalf("decode my disputes: %v", err)
+	}
+	return payload, body
+}
+
+func findCreatedDispute(items []createdDispute, id string) (createdDispute, bool) {
+	for _, item := range items {
+		if item.ID == id {
+			return item, true
+		}
+	}
+	return createdDispute{}, false
 }
 
 func getAPIPurchaseIntent(t *testing.T, server http.Handler, session testSession, perspective, intentID string) createdAPIPurchaseIntent {
@@ -3421,10 +4065,17 @@ func carpoolPayload(ownerContactID string) string {
 		"providesAdminAccount":true,
 		"regionCode":"other",
 		"regionName":"印度区",
-		"sourceUrl":"https://linux.do/t/carpool/123",
 		"priceMonthlyCny":"68.00",
-		"serviceMultiplier":"1.3500",
+		"serviceMultiplier":"1.0000",
+		"weeklyQuotaAmount":"50.00",
 		"monthlyQuotaAmount":"200.00",
+		"followsOfficialQuotaReset":true,
+		"vpsRegion":"香港",
+		"supportsMainlandChinaDirectConnection":true,
+		"openingChannelCode":"web",
+		"customOpeningChannel":"",
+		"paymentMethodCode":"u_card",
+		"customPaymentMethod":"",
 		"buyerSeatCapacity":1,
 		"activeBuyerMembers":0
 	}`
@@ -3464,12 +4115,17 @@ func apiServicePayloadWithModelAndMultiplier(ownerContactID, modelCatalogID, mul
 		"declaredMaxUsdAllowancePerIntent":"20.000000",
 		"availableUsdAllowance":"100.000000",
 		"quotaExpiresAt":"` + time.Now().Add(30*24*time.Hour).UTC().Format(time.RFC3339) + `",
+		"quotaUsagePolicy":{"fiveHour":{"mode":"limited","amountUsd":"5.000000"},"daily":{"mode":"unlimited"}},
 		"minimumIntentCny":"10.00",
 		"maximumIntentCny":"200.00",
 		"usageVisibility":"merchant_reported",
 		"publicAccessNote":"提交购买意向后直接查看商户联系方式，平台不保存任何调用凭据。",
 		"merchantNote":"仅后台可见，不展示给公开访客。",
-		"merchantSupportNote":"仅支持买家专属的子级访问安排。",
+		"accountPoolType":"gpt_pro_20x",
+		"accountPoolCustomName":"",
+		"merchantRefundCommitment":true,
+		"declaredMaxConcurrency":8,
+		"promptAuditEnabled":false,
 		"accessModes":[
 			{"accessMode":"buyer_dedicated_sub_key","publicNote":"站外确认买家专属的访问方式。"}
 		],
@@ -3565,6 +4221,59 @@ func productPlanPayloadWithCategoryID(categoryID, categoryCode, slug, displayNam
 		"allowCustomVariant":true,
 		"sortOrder":120
 	}`
+}
+
+func listTransactionReviewsHTTP(t *testing.T, server http.Handler, session testSession) reviewCenterResponse {
+	t.Helper()
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/me/reviews", nil)
+	addCookie(request, session.cookie)
+	response := httptest.NewRecorder()
+	server.ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("list transaction reviews status %d body %s", response.Code, response.Body.String())
+	}
+	var payload reviewCenterResponse
+	if err := json.NewDecoder(response.Body).Decode(&payload); err != nil {
+		t.Fatalf("decode transaction reviews: %v", err)
+	}
+	return payload
+}
+
+func submitTransactionReviewHTTP(
+	t *testing.T,
+	server http.Handler,
+	session testSession,
+	method string,
+	transactionType string,
+	transactionID string,
+	body string,
+	key string,
+	expectedStatus int,
+) reviewCenterRowDTO {
+	t.Helper()
+	request := newJSONRequest(method, "/api/v1/me/transactions/"+transactionType+"/"+transactionID+"/review", body)
+	addAuth(request, session, key)
+	response := httptest.NewRecorder()
+	server.ServeHTTP(response, request)
+	if response.Code != expectedStatus {
+		t.Fatalf("submit transaction review status %d body %s", response.Code, response.Body.String())
+	}
+	var payload reviewCenterRowDTO
+	if err := json.NewDecoder(response.Body).Decode(&payload); err != nil {
+		t.Fatalf("decode transaction review: %v", err)
+	}
+	return payload
+}
+
+func findReviewDTO(t *testing.T, items []reviewCenterRowDTO, direction, transactionID string) reviewCenterRowDTO {
+	t.Helper()
+	for _, item := range items {
+		if item.Direction == direction && item.TransactionID == transactionID {
+			return item
+		}
+	}
+	t.Fatalf("review row not found: direction=%s transaction=%s items=%+v", direction, transactionID, items)
+	return reviewCenterRowDTO{}
 }
 
 func newJSONRequest(method, path, body string) *http.Request {

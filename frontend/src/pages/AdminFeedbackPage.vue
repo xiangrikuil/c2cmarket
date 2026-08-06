@@ -7,6 +7,7 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Textarea } from '@/components/ui/textarea'
 import PageTitle from '@/components/market/PageTitle.vue'
 import StatusTabs from '@/components/market/StatusTabs.vue'
@@ -149,28 +150,35 @@ function badgeVariant(item: FeedbackTicket) {
           <StatusTabs v-model="activeTab" :items="['全部', '待处理', '需要补充', '用户未读', '已结束']" />
           <div class="grid gap-2 md:grid-cols-[1fr_150px_150px]">
             <Input v-model="searchText" placeholder="搜索标题、描述、用户或关联内容" />
-            <select v-model="typeFilter" class="h-9 rounded-md border border-input bg-background px-3 text-sm">
-              <option value="all">全部类型</option>
-              <option value="function_issue">功能问题</option>
-              <option value="data_correction">数据纠错</option>
-              <option value="experience_suggestion">体验建议</option>
-              <option value="publish_contact_block">发布/联系受阻</option>
-            </select>
-            <select v-model="impactFilter" class="h-9 rounded-md border border-input bg-background px-3 text-sm">
-              <option value="all">全部影响</option>
-              <option value="general">一般</option>
-              <option value="blocks_operation">影响操作</option>
-              <option value="cannot_continue">无法继续</option>
-            </select>
+            <Select v-model="typeFilter">
+              <SelectTrigger class="w-full"><SelectValue placeholder="全部类型" /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">全部类型</SelectItem>
+                <SelectItem value="function_issue">功能问题</SelectItem>
+                <SelectItem value="data_correction">数据纠错</SelectItem>
+                <SelectItem value="experience_suggestion">体验建议</SelectItem>
+                <SelectItem value="publish_contact_block">发布/联系受阻</SelectItem>
+              </SelectContent>
+            </Select>
+            <Select v-model="impactFilter">
+              <SelectTrigger class="w-full"><SelectValue placeholder="全部影响" /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">全部影响</SelectItem>
+                <SelectItem value="general">一般</SelectItem>
+                <SelectItem value="blocks_operation">影响操作</SelectItem>
+                <SelectItem value="cannot_continue">无法继续</SelectItem>
+              </SelectContent>
+            </Select>
           </div>
         </div>
 
         <div class="grid gap-2">
-          <button
+          <Button
             v-for="item in filteredRows"
             :key="item.id"
             type="button"
-            class="rounded-md border border-border bg-background p-3 text-left transition hover:border-primary/40 hover:bg-accent/40"
+            variant="outline"
+            class="h-auto w-full justify-start whitespace-normal p-3 text-left transition hover:border-primary/40 hover:bg-accent/40"
             :class="selectedTicket?.id === item.id ? 'border-primary/50 bg-accent/60' : ''"
             @click="selectTicket(item)"
           >
@@ -180,7 +188,7 @@ function badgeVariant(item: FeedbackTicket) {
             </div>
             <div class="mt-2 text-sm text-muted-foreground">{{ getFeedbackTypeLabel(item.type) }} · {{ getFeedbackImpactLabel(item.impact) }} · {{ item.submitterName }}</div>
             <div class="mt-1 text-xs text-muted-foreground">{{ item.contextPageLabel }} · {{ item.contextTargetLabel || '未指定关联内容' }}</div>
-          </button>
+          </Button>
           <div v-if="filteredRows.length === 0" class="rounded-md border border-dashed border-border p-8 text-center text-sm text-muted-foreground">当前筛选下暂无反馈。</div>
         </div>
       </Card>
@@ -223,14 +231,17 @@ function badgeVariant(item: FeedbackTicket) {
             <div class="grid gap-3 md:grid-cols-[220px_1fr]">
               <label class="space-y-1.5">
                 <span class="text-sm font-medium">处理状态</span>
-                <select v-model="handleForm.status" class="h-9 w-full rounded-md border border-input bg-background px-3 text-sm">
-                  <option value="recorded">已记录</option>
-                  <option value="following_up">跟进中</option>
-                  <option value="resolved">已修复/已调整</option>
-                  <option value="declined">暂不处理</option>
-                  <option value="needs_user_info">需要补充信息</option>
-                  <option value="closed">关闭反馈</option>
-                </select>
+                <Select v-model="handleForm.status">
+                  <SelectTrigger class="w-full"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="recorded">已记录</SelectItem>
+                    <SelectItem value="following_up">跟进中</SelectItem>
+                    <SelectItem value="resolved">已修复/已调整</SelectItem>
+                    <SelectItem value="declined">暂不处理</SelectItem>
+                    <SelectItem value="needs_user_info">需要补充信息</SelectItem>
+                    <SelectItem value="closed">关闭反馈</SelectItem>
+                  </SelectContent>
+                </Select>
               </label>
               <label class="space-y-1.5">
                 <span class="text-sm font-medium">面向用户的处理说明</span>

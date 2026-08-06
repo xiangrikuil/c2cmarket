@@ -4,7 +4,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ENV_FILE="${ENV_FILE:-${ROOT_DIR}/.env.production}"
 COMPOSE_PROJECT="${COMPOSE_PROJECT:-c2c-prod}"
-BACKUP_DIR="${BACKUP_DIR:-${HOME}/Library/Application Support/C2CMarket/backups/production}"
+BACKUP_DIR="${BACKUP_DIR:-${XDG_STATE_HOME:-${HOME}/.local/state}/c2cmarket/backups/production}"
 R2_REMOTE="${R2_REMOTE:-c2cmarket-r2}"
 R2_BUCKET="${R2_BUCKET:-c2cmarket-backups}"
 R2_PREFIX="${R2_PREFIX:-postgres/production}"
@@ -53,7 +53,7 @@ fi
 rclone copyto "${backup_path}" "${R2_REMOTE}:${R2_BUCKET}/${R2_PREFIX}/${backup_name}"
 rclone copyto "${checksum_path}" "${R2_REMOTE}:${R2_BUCKET}/${R2_PREFIX}/${backup_name}.sha256"
 
-# 仅在远端上传全部成功后清理过期本地副本；R2 的 30 天保留由 Bucket Lifecycle 管理。
+# 仅在远端上传全部成功后清理过期本地副本；R2 的 30 天目标保留需由 Bucket Lifecycle 单独配置并验证。
 find "${BACKUP_DIR}" -type f \( -name 'c2cmarket-production-*.dump' -o -name 'c2cmarket-production-*.dump.sha256' \) -mtime "+${LOCAL_RETENTION_DAYS}" -delete
 
 echo "Uploaded ${backup_name} to ${R2_REMOTE}:${R2_BUCKET}/${R2_PREFIX}/"

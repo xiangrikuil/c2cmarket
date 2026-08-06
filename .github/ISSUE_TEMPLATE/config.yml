@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 使用与部署文档
+    url: https://github.com/xiangrikuil/c2cmarket#readme
+    about: 提交问题前请先查看项目说明、配置与部署文档。

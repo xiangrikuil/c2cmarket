@@ -23,19 +23,23 @@ const query = ref('')
 
 const catalogById = computed(() => new Map(props.catalog.map(item => [item.id, item])))
 const selectedLabel = computed(() => productDisplayName({
-  linuxDoTopicUrl: '',
-  parsedTopicId: null,
   productId: props.modelValue,
   customProductName: props.customProductName,
   regionCode: '',
   customRegionName: null,
   monthlyPriceCny: null,
   serviceMultiplier: 1,
+  weeklyQuotaAmount: null,
   monthlyQuotaAmount: null,
+  followsOfficialQuotaReset: null,
+  vpsRegion: '',
+  supportsMainlandChinaDirectConnection: null,
   totalSeats: 1,
   occupiedSeats: 0,
   openingChannelCode: '',
-  paymentMethodCodes: [],
+  customOpeningChannel: '',
+  paymentMethodCode: '',
+  customPaymentMethod: '',
   distributionMethod: '',
   distributionMethodNote: '',
   providesAdminAccount: null,
@@ -86,18 +90,19 @@ function selectProduct(item: CarpoolProductCatalogItem) {
         <div class="mt-2 max-h-72 overflow-y-auto pr-1">
           <div v-for="group in groupedOptions" :key="group.provider" class="py-1">
             <div class="px-2 py-1 text-[11px] font-medium text-muted-foreground">{{ providerLabels[group.provider] }}</div>
-            <button
+            <Button
               v-for="item in group.items"
               :key="item.id"
               type="button"
-              class="flex w-full items-start gap-2 rounded-md px-2 py-2 text-left text-sm hover:bg-accent"
+              variant="ghost"
+              class="h-auto w-full justify-start gap-2 whitespace-normal px-2 py-2 text-left text-sm"
               @click="selectProduct(item)"
             >
               <Check :class="['mt-0.5 h-4 w-4 shrink-0', item.id === modelValue ? 'text-primary opacity-100' : 'opacity-0']" />
               <span class="min-w-0">
                 <span class="block truncate font-medium">{{ item.displayName }}</span>
               </span>
-            </button>
+            </Button>
           </div>
           <div v-if="!groupedOptions.length" class="px-2 py-6 text-center text-sm text-muted-foreground">没有匹配的产品目录</div>
         </div>

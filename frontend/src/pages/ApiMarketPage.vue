@@ -1,121 +1,111 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
-import { RouterLink, useRoute, useRouter } from 'vue-router'
-import { Activity, CircleDollarSign, CircleHelp, Code2, Filter, Search, ShieldCheck, Sparkles, Upload } from 'lucide-vue-next'
+import { computed, onBeforeUnmount, onMounted, onServerPrefetch, ref, watch, type ComponentPublicInstance } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
+import { CalendarClock, Code2, PackageOpen, PackagePlus, Search, Zap } from 'lucide-vue-next'
+import { toast } from 'vue-sonner'
+import EmptyState from '@/components/market/EmptyState.vue'
+import ErrorState from '@/components/market/ErrorState.vue'
+import SkeletonBlock from '@/components/market/SkeletonBlock.vue'
+import ApiFreeServiceCard from '@/components/api-market/ApiFreeServiceCard.vue'
+import ApiPackageCard from '@/components/api-market/ApiPackageCard.vue'
+import ApiQuotaOfferCard from '@/components/api-market/ApiQuotaOfferCard.vue'
+import ApiServiceHealthPanel from '@/components/api-market/ApiServiceHealthPanel.vue'
+import type { ApiFreeServiceCardData } from '@/components/api-market/apiFreeServiceCard'
+import { usePromotionImpression, type PromotionAnalyticsProperties } from '@/composables/usePromotionImpression'
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { Checkbox } from '@/components/ui/checkbox'
 import { Input } from '@/components/ui/input'
-import { Card } from '@/components/ui/card'
-import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
-import TablePagination from '@/components/market/TablePagination.vue'
-import ApiPackageCard from '@/components/api-market/ApiPackageCard.vue'
-import { usePagination } from '@/composables/usePagination'
-import { rankApiPackages } from '@/lib/apiPackageRecommendation'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import {
-  getApiMerchantAvatarText,
   getApiMerchantDisplayName,
-  getApiMerchantProfileUrl,
-  formatUsdQuota,
-  type ApiBillingMode,
+  getApiQuotaDistributionLabel,
   type ApiService,
-  type MinimumPurchaseFilter,
-  type OtherApiMarketFilters,
-  type OtherApiMarketSort,
-  type Sub2ApiMarketFilters,
-  type Sub2ApiMarketSort,
+  type ApiQuotaDistributionSystem,
+  type ApiQuotaOfferFilters,
+  type ApiQuotaSystemSaleSlot,
+  type PublicApiQuotaOffer,
 } from '@/lib/api'
-import { useApiServices, useOtherApiMarketQuery, useSub2ApiMarketQuery } from '@/queries/useMarketQueries'
+import {
+  apiMarketViewFromQuery,
+  apiQuotaOfferErrorMessage,
+  withApiMarketViewQuery,
+  type ApiMarketView,
+} from '@/lib/apiQuotaOfferUi'
+import { rankApiPackages } from '@/lib/apiPackageRecommendation'
+import { getApiMerchantBadges } from '@/lib/apiMerchantBadges'
+import type { ApiServicePromotion } from '@/lib/apiMarketBackend'
+import { placePromotions, promotionsForBillingMode } from '@/lib/apiPromotionPlacement'
+import {
+  getProductCategory,
+  getProductCategoryLabel,
+  type ConcreteProductCategoryKey,
+} from '@/lib/productCategories'
+import { getApiServiceProductCategory, getApiServiceProductIconSrc, getProductIconSrc } from '@/lib/productCategoryIcon'
+import { useApiPromotions, useApiQuotaOffers, useApiQuotaSaleSlots, useApiServices, useCreateApiQuotaOrderMutation } from '@/queries/useMarketQueries'
+import { useProductCategories } from '@/queries/useProductCatalogQueries'
+import { prefetchQueriesOnServer } from '@/queries/prefetchQueriesOnServer'
 
-type MerchantFilter = 'all' | 'personal_first' | 'personal' | 'api'
-type Panel = 'sub2api' | 'packages' | 'other'
-type OnlineFilter = 'all' | 'online' | 'offline'
-type ImageFilter = 'all' | 'supported' | 'none'
-type BillingFilter = 'all' | ApiBillingMode
-type DistributionFilter = OtherApiMarketFilters['distributionSystem']
+type AvailabilityFilter = 'all' | 'available'
 
 const route = useRoute()
 const router = useRouter()
-
-const routePanel = (value: unknown): Panel => value === 'packages' ? 'packages' : value === 'other' ? 'other' : 'sub2api'
-const activePanel = ref<Panel>(routePanel(route.query.panel))
-
-const sub2Search = ref('')
-const sub2Model = ref('全部')
-const sub2CreditPriceMax = ref('all')
-const sub2ImageCapability = ref<ImageFilter>('all')
-const sub2MinimumPurchase = ref<MinimumPurchaseFilter>('all')
-const sub2Online = ref<OnlineFilter>('all')
-const sub2Merchant = ref<MerchantFilter>('all')
-const sub2TrustLevel = ref('all')
-const sub2Sort = ref<Sub2ApiMarketSort>('recommended')
-
-const otherSearch = ref('')
-const otherDistribution = ref<DistributionFilter>('all')
-const otherBilling = ref<BillingFilter>('all')
-const otherMinimumPurchase = ref<MinimumPurchaseFilter>('all')
-const otherOnline = ref<OnlineFilter>('all')
-const otherSort = ref<OtherApiMarketSort>('recommended')
+const activeView = ref<ApiMarketView>(apiMarketViewFromQuery(route.query.view))
+const quotaSearch = ref('')
+const distributionSystem = ref<ApiQuotaDistributionSystem | 'all'>('all')
+const availability = ref<AvailabilityFilter>('all')
+const oneMultiplier = ref(false)
 const packageModel = ref('')
 const packageDuration = ref('')
+const now = ref(Date.now())
+const serverClockOffset = ref(0)
+const selectedSlotKey = ref('')
+const pendingOfferId = ref('')
+let refreshedBoundary = ''
+let timer: ReturnType<typeof setInterval> | undefined
 
 watch(
-  () => route.query.panel,
+  () => route.query.view,
   value => {
-    const next = routePanel(value)
-    activePanel.value = next
-    if (value !== next) {
-      router.replace({ query: { ...route.query, panel: next } })
-    }
+    activeView.value = apiMarketViewFromQuery(value)
   },
   { immediate: true },
 )
 
-function setPanel(panel: Panel) {
-  activePanel.value = panel
-  router.push({ query: { ...route.query, panel } })
-}
+watch(activeView, value => {
+  if (route.query.view === value) return
+  router.replace({ query: withApiMarketViewQuery(route.query, value) })
+})
 
-function onlineValue(value: OnlineFilter) {
-  if (value === 'online') return true
-  if (value === 'offline') return false
-  return undefined
-}
-
-function creditPriceMax(value: string) {
-  if (value === 'lte_030') return 0.3
-  if (value === 'lte_050') return 0.5
-  if (value === 'lte_080') return 0.8
-  return undefined
-}
-
-const sub2Filters = computed<Sub2ApiMarketFilters>(() => ({
-  search: sub2Search.value.trim() || undefined,
-  model: sub2Model.value === '全部' ? undefined : sub2Model.value,
-  creditPriceMax: creditPriceMax(sub2CreditPriceMax.value),
-  imageCapability: sub2ImageCapability.value,
-  minimumPurchase: sub2MinimumPurchase.value,
-  online: onlineValue(sub2Online.value),
-  merchantPreference: sub2Merchant.value === 'all' ? undefined : sub2Merchant.value,
-  trustLevel: sub2TrustLevel.value === 'all' ? undefined : Number(sub2TrustLevel.value),
-  sort: sub2Sort.value,
+const quotaFilters = computed<ApiQuotaOfferFilters>(() => ({
+  distributionSystem: distributionSystem.value,
+  oneMultiplier: oneMultiplier.value,
+  onlyOrderable: availability.value === 'available',
 }))
+const quotaQuery = useApiQuotaOffers(quotaFilters)
+const slotQuery = useApiQuotaSaleSlots()
+const rushFilters = computed<ApiQuotaOfferFilters>(() => ({ slotKey: selectedSlotKey.value }))
+const rushQuery = useApiQuotaOffers(rushFilters, computed(() => Boolean(selectedSlotKey.value)))
+const freeServicesQuery = useApiServices({ online: true })
+const promotionQuery = useApiPromotions()
+const productCategoriesQuery = useProductCategories()
+const { data: catalogCategories } = productCategoriesQuery
+const createOrderMutation = useCreateApiQuotaOrderMutation()
+const { setPromotionElement, trackPromotionClick } = usePromotionImpression()
+prefetchQueriesOnServer(quotaQuery, freeServicesQuery, productCategoriesQuery)
+const categoryIconByCode = computed(() => new Map((catalogCategories.value ?? []).map(category => [category.code, category.iconDataUrl])))
 
-const otherFilters = computed<OtherApiMarketFilters>(() => ({
-  search: otherSearch.value.trim() || undefined,
-  distributionSystem: otherDistribution.value,
-  billingMode: otherBilling.value,
-  minimumPurchase: otherMinimumPurchase.value,
-  online: onlineValue(otherOnline.value),
-  sort: otherSort.value,
-}))
-
-const { data: sub2Data } = useSub2ApiMarketQuery(sub2Filters)
-const { data: otherData } = useOtherApiMarketQuery(otherFilters)
-const { data: allServicesData } = useApiServices()
-
-const sub2Rows = computed(() => (sub2Data.value ?? []).filter(row => row.billingMode !== 'fixed_package'))
-const otherRows = computed(() => (otherData.value ?? []).filter(row => row.billingMode !== 'fixed_package'))
-const packageServices = computed(() => (allServicesData.value ?? []).filter(row => row.billingMode === 'fixed_package'))
+const quotaRows = computed(() => {
+  const keyword = quotaSearch.value.trim().toLowerCase()
+  const rows = (quotaQuery.data.value ?? []).filter(item => !item.currentRound?.systemSlotKey && !item.nextRound?.systemSlotKey)
+  if (!keyword) return rows
+  return rows.filter(item => [item.name, item.serviceTitle, item.sellerDisplayName, getApiQuotaDistributionLabel(item.distributionSystem)]
+    .some(value => value.toLowerCase().includes(keyword)))
+})
+const freeServices = computed(() => (freeServicesQuery.data.value ?? []).filter(service => service.billingMode !== 'fixed_package'))
+const packageServices = computed(() => (freeServicesQuery.data.value ?? []).filter(service => service.billingMode === 'fixed_package'))
 const packageModelOptions = computed(() => {
   const options = new Map<string, string>()
   for (const service of packageServices.value) {
@@ -124,567 +114,490 @@ const packageModelOptions = computed(() => {
       for (const model of item.models) options.set(model.modelCatalogId, model.modelName)
     }
   }
-  return [...options.entries()].map(([id, name]) => ({ id, name })).sort((left, right) => left.name.localeCompare(right.name))
+  return [...options.entries()]
+    .map(([id, name]) => ({ id, name }))
+    .sort((left, right) => left.name.localeCompare(right.name))
 })
 const packageRows = computed(() => rankApiPackages(packageServices.value, packageModel.value, Number(packageDuration.value)))
+const fixedPackagePromotions = computed(() => promotionsForBillingMode(
+  promotionQuery.data.value ?? [],
+  true,
+  promotion => rankApiPackages([promotion.service], packageModel.value, Number(packageDuration.value)).length > 0,
+))
+const freeServicePromotions = computed(() => promotionsForBillingMode(promotionQuery.data.value ?? [], false))
+const packageDisplayRows = computed(() => {
+  const naturalRows = packageRows.value.map((row, index) => ({ row, rank: index + 1, promotion: undefined as ApiServicePromotion | undefined, promotionPosition: undefined as PromotionAnalyticsProperties['display_position'] | undefined }))
+  return placePromotions(
+    naturalRows,
+    fixedPackagePromotions.value,
+    (rows, item) => {
+      const promotedRow = rankApiPackages([item.service], packageModel.value, Number(packageDuration.value))[0]
+      return rows.find(row => row.row.service.id === item.service.id)
+        ?? (promotedRow ? { row: promotedRow, rank: 0, promotion: undefined, promotionPosition: undefined } : undefined)
+    },
+    item => item.row.service.id,
+  )
+})
+const freeServiceDisplayRows = computed(() => {
+  const naturalRows = freeServices.value.map(service => ({ service, promotion: undefined as ApiServicePromotion | undefined, promotionPosition: undefined as PromotionAnalyticsProperties['display_position'] | undefined }))
+  return placePromotions(
+    naturalRows,
+    freeServicePromotions.value,
+    (rows, promotion) => rows.find(item => item.service.id === promotion.service.id)
+      ?? { service: promotion.service, promotion: undefined, promotionPosition: undefined },
+    item => item.service.id,
+  )
+})
 const packageReady = computed(() => Boolean(packageModel.value && packageDuration.value))
-const totalAvailablePackages = computed(() => packageServices.value.reduce((total, service) => total + (service.packages ?? []).filter(item => item.enabled && item.stockAvailable > 0).length, 0))
-const sub2Pagination = usePagination(sub2Rows)
-const otherPagination = usePagination(otherRows)
+const firstSlotDate = computed(() => slotQuery.data.value?.items[0]?.key.slice(0, 10) ?? '')
+const displayedSlotDate = computed(() => {
+  const items = slotQuery.data.value?.items ?? []
+  const today = items.filter(item => item.key.startsWith(firstSlotDate.value))
+  if (today.some(item => item.state !== 'ended')) return firstSlotDate.value
+  return items.find(item => item.key.slice(0, 10) !== firstSlotDate.value)?.key.slice(0, 10) ?? firstSlotDate.value
+})
+const displayedSlots = computed(() => (slotQuery.data.value?.items ?? []).filter(item => item.key.startsWith(displayedSlotDate.value)))
+const selectedSlot = computed(() => displayedSlots.value.find(item => item.key === selectedSlotKey.value))
+const rushRows = computed(() => rushQuery.data.value ?? [])
+const isTomorrowPreview = computed(() => Boolean(firstSlotDate.value && displayedSlotDate.value !== firstSlotDate.value))
 
-const activePanelLabel = computed(() => activePanel.value === 'sub2api' ? 'Sub2API 美元额度' : activePanel.value === 'packages' ? '限时流量包' : '其他 API 接入')
+watch(() => slotQuery.data.value, value => {
+  if (!value) return
+  const parsed = Date.parse(value.serverNow)
+  if (Number.isFinite(parsed)) {
+    serverClockOffset.value = parsed - Date.now()
+    now.value = Date.now() + serverClockOffset.value
+  }
+}, { immediate: true })
 
-const sub2Chips = computed(() => {
-  const chips: { label: string, reset: () => void }[] = []
-  if (sub2ImageCapability.value !== 'all') chips.push({ label: sub2ImageCapability.value === 'supported' ? '支持生图' : '不支持生图', reset: () => { sub2ImageCapability.value = 'all' } })
-  if (sub2MinimumPurchase.value !== 'all') chips.push({ label: minimumPurchaseLabel(sub2MinimumPurchase.value), reset: () => { sub2MinimumPurchase.value = 'all' } })
-  if (sub2TrustLevel.value !== 'all') chips.push({ label: `信任等级${sub2TrustLevel.value}+`, reset: () => { sub2TrustLevel.value = 'all' } })
-  return chips
+function selectDisplayedSlot(slots: ApiQuotaSystemSaleSlot[]) {
+  if (slots.some(item => item.key === selectedSlotKey.value)) return
+  selectedSlotKey.value = slots.find(item => item.state === 'active')?.key
+    ?? slots.find(item => item.state !== 'ended')?.key
+    ?? slots[0]?.key
+    ?? ''
+}
+
+watch(displayedSlots, selectDisplayedSlot, { immediate: true })
+
+if (import.meta.server) {
+  onServerPrefetch(async () => {
+    await slotQuery.suspense()
+    selectDisplayedSlot(displayedSlots.value)
+    if (selectedSlotKey.value) await rushQuery.suspense()
+  })
+}
+
+watch(selectedSlotKey, () => {
+  refreshedBoundary = ''
 })
 
-const sub2AdvancedCount = computed(() => sub2Chips.value.length)
-const otherAdvancedCount = computed(() => otherChips.value.length)
+function setView(value: string | number) {
+  activeView.value = apiMarketViewFromQuery(value)
+}
 
-const sub2SignalStats = computed(() => {
-  const rows = sub2Rows.value
-  return [
-    { label: '可浏览服务', value: `${rows.length}`, detail: `${onlineCount(rows)} 个在线`, tone: 'primary' },
-    { label: '支持生图', value: `${rows.filter(row => row.imagePricing.supported).length}`, detail: '按商户声明展示', tone: 'success' },
-    { label: '最低订单', value: minimumIntentLabel(rows), detail: '创建订单起点', tone: 'warning' },
-    { label: '响应中位', value: responseMedianLabel(rows), detail: '在线商户参考', tone: 'info' },
-  ]
+function formatSlotDate(slot: ApiQuotaSystemSaleSlot) {
+  return new Intl.DateTimeFormat('zh-CN', {
+    timeZone: 'Asia/Shanghai',
+    month: 'numeric',
+    day: 'numeric',
+    weekday: 'short',
+  }).format(new Date(slot.startsAt))
+}
+
+function slotTime(slot: ApiQuotaSystemSaleSlot) {
+  return slot.key.slice(11, 16)
+}
+
+function slotStatusLabel(slot: ApiQuotaSystemSaleSlot) {
+  if (slot.state === 'active') return '正在抢购'
+  if (slot.state === 'ended') return '本场结束'
+  if (slot.state === 'registration_closed') return '等待开抢'
+  return '即将开抢'
+}
+
+function slotCountdown(slot: ApiQuotaSystemSaleSlot) {
+  if (slot.state === 'ended') return '00:00:00'
+  const target = slot.state === 'active' ? Date.parse(slot.endsAt) : Date.parse(slot.startsAt)
+  const seconds = Math.max(Math.ceil((target - now.value) / 1000), 0)
+  const hours = Math.floor(seconds / 3600)
+  const minutes = Math.floor((seconds % 3600) / 60)
+  const remainingSeconds = seconds % 60
+  return [hours, minutes, remainingSeconds].map(value => String(value).padStart(2, '0')).join(':')
+}
+
+function countdownPrefix(slot: ApiQuotaSystemSaleSlot) {
+  if (slot.state === 'active') return '距结束'
+  if (slot.state === 'ended') return '本场已结束'
+  return '距开抢'
+}
+
+function quotaOfferIconSrc(item: PublicApiQuotaOffer) {
+  return getProductIconSrc(`${item.serviceTitle} ${item.name}`, categoryIconByCode.value)
+}
+
+function quotaOfferCategory(item: PublicApiQuotaOffer): ConcreteProductCategoryKey {
+  return getProductCategory(`${item.serviceTitle} ${item.name}`)
+}
+
+function freeServiceIconSrc(service: ApiService) {
+  return getApiServiceProductIconSrc(service, categoryIconByCode.value)
+}
+
+function freeServiceCategory(service: ApiService): ConcreteProductCategoryKey {
+  return getApiServiceProductCategory(service)
+}
+
+function freeServiceCard(service: ApiService): ApiFreeServiceCardData {
+  const category = freeServiceCategory(service)
+  return {
+    title: service.title,
+    delivery: service.delivery,
+    models: service.models,
+    category,
+    categoryLabel: getProductCategoryLabel(category),
+    iconSrc: freeServiceIconSrc(service),
+    cnyPerUsdAllowance: service.cnyPerUsdAllowance || '1',
+    minimumPurchaseCny: service.minimumPurchaseCny,
+    availableUsdAllowance: service.availableUsdAllowance ?? String(service.balance),
+    quotaUsagePolicy: service.quotaUsagePolicy,
+    maximumPurchaseCny: service.maxBuy,
+    multiplier: service.rate,
+    declaredMaxConcurrency: service.declaredMaxConcurrency ?? '—',
+    promptAuditEnabled: service.promptAuditEnabled ?? null,
+    paymentWindowMinutes: service.expectedResponseMinutes,
+    merchantName: getApiMerchantDisplayName(service),
+    merchantType: service.merchantType,
+    expiresAt: service.expiresAt,
+    accountPoolLabel: service.accountPoolLabel ?? '',
+    merchantRefundCommitment: Boolean(service.merchantRefundCommitment),
+    merchantBadges: getApiMerchantBadges(service),
+    sellerReputation: service.sellerReputation,
+    actionHref: `/api-market/${service.id}`,
+  }
+}
+
+function promotionAnalytics(item: ApiServicePromotion, position: PromotionAnalyticsProperties['display_position']): PromotionAnalyticsProperties {
+  return {
+    placement: item.placement,
+    display_position: position,
+    provider_category: getApiServiceProductCategory(item.service),
+    billing_mode: item.service.billingMode,
+    target_type: 'api_service',
+    source_route: '/api-market',
+  }
+}
+
+function setPromotedElement(element: Element | ComponentPublicInstance | null, item?: ApiServicePromotion, position?: PromotionAnalyticsProperties['display_position']) {
+  if (!item || !position) return
+  const domElement = typeof Element !== 'undefined' && element instanceof Element ? element : null
+  setPromotionElement(domElement, item.promotionId, promotionAnalytics(item, position))
+}
+
+function trackPromotedCardClick(item?: ApiServicePromotion, position?: PromotionAnalyticsProperties['display_position']) {
+  if (item && position) trackPromotionClick(promotionAnalytics(item, position))
+}
+
+async function purchaseOffer(offer: PublicApiQuotaOffer) {
+  if (!offer.isOrderable || pendingOfferId.value) return
+  pendingOfferId.value = offer.id
+  try {
+    const order = await createOrderMutation.mutateAsync({
+      offerId: offer.id,
+      saleRoundId: offer.saleMode === 'scheduled' ? offer.currentRound?.id : undefined,
+    })
+    toast.success('额度包订单已创建，请在付款截止前完成站外付款。')
+    await router.push(`/my/api-orders/${order.id}`)
+  } catch (error) {
+    toast.error(apiQuotaOfferErrorMessage(error))
+    await Promise.all([slotQuery.refetch(), rushQuery.refetch(), quotaQuery.refetch()])
+  } finally {
+    pendingOfferId.value = ''
+  }
+}
+
+function refreshAtSlotBoundary() {
+  const slot = selectedSlot.value
+  if (!slot || slot.state === 'ended') return
+  const target = slot.state === 'active' ? Date.parse(slot.endsAt) : Date.parse(slot.startsAt)
+  const signature = `${slot.key}:${slot.state}`
+  if (now.value < target || refreshedBoundary === signature) return
+  refreshedBoundary = signature
+  void Promise.all([slotQuery.refetch(), rushQuery.refetch()])
+}
+
+onMounted(() => {
+  timer = setInterval(() => {
+    now.value = Date.now() + serverClockOffset.value
+    refreshAtSlotBoundary()
+  }, 1000)
 })
 
-const otherSignalStats = computed(() => {
-  const rows = otherRows.value
-  return [
-    { label: '可浏览服务', value: `${rows.length}`, detail: `${uniqueMerchantCount(rows)} 个商户`, tone: 'primary' },
-    { label: '在线服务', value: `${onlineCount(rows)}`, detail: '可创建订单', tone: 'success' },
-    { label: '最低订单', value: minimumIntentLabel(rows), detail: '不同系统单独比较', tone: 'warning' },
-    { label: '响应中位', value: responseMedianLabel(rows), detail: '在线商户参考', tone: 'info' },
-  ]
+onBeforeUnmount(() => {
+  if (timer) clearInterval(timer)
 })
-
-const packageSignalStats = computed(() => [
-  { label: '在售套餐', value: `${totalAvailablePackages.value}`, detail: `${packageServices.value.length} 个服务`, tone: 'primary' },
-  { label: '精确模型', value: `${packageModelOptions.value.length}`, detail: '先选择再推荐', tone: 'success' },
-  { label: '有效期', value: '1 / 3 / 7 / 30', detail: '交付后开始计算', tone: 'warning' },
-  { label: '当前结果', value: packageReady.value ? `${packageRows.value.length}` : '待选择', detail: '只保留综合推荐', tone: 'info' },
-])
-
-const activeSignalStats = computed(() => activePanel.value === 'sub2api' ? sub2SignalStats.value : activePanel.value === 'packages' ? packageSignalStats.value : otherSignalStats.value)
-
-function onlineCount(rows: ApiService[]) {
-  return rows.filter(row => row.publiclyOrderable).length
-}
-
-function uniqueMerchantCount(rows: ApiService[]) {
-  return new Set(rows.map(row => row.merchantId)).size
-}
-
-function minimumIntentLabel(rows: ApiService[]) {
-  if (!rows.length) return '暂无'
-  return `¥${Math.min(...rows.map(row => row.minimumPurchaseCny))} 起`
-}
-
-function responseMedianLabel(rows: ApiService[]) {
-  const onlineRows = rows.filter(row => row.publiclyOrderable)
-  if (!onlineRows.length) return '暂无'
-  const total = onlineRows.reduce((sum, row) => sum + row.responseMedianMinutes, 0)
-  return `约 ${Math.round(total / onlineRows.length)} 分钟`
-}
-
-function signalStatClass(tone: string) {
-  if (tone === 'success') return 'api-market-stat--success'
-  if (tone === 'warning') return 'api-market-stat--warning'
-  if (tone === 'info') return 'api-market-stat--info'
-  return 'api-market-stat--primary'
-}
-
-const otherChips = computed(() => {
-  const chips: { label: string, reset: () => void }[] = []
-  if (otherDistribution.value && otherDistribution.value !== 'all') chips.push({ label: otherDistribution.value, reset: () => { otherDistribution.value = 'all' } })
-  if (otherBilling.value !== 'all') chips.push({ label: billingModeLabel(otherBilling.value), reset: () => { otherBilling.value = 'all' } })
-  if (otherMinimumPurchase.value !== 'all') chips.push({ label: minimumPurchaseLabel(otherMinimumPurchase.value), reset: () => { otherMinimumPurchase.value = 'all' } })
-  return chips
-})
-
-function merchantIdentity(row: { merchantType: string }) {
-  if (row.merchantType === '商户') return 'API 商户'
-  if (row.merchantType === '可信新车主') return '可信新商户'
-  return '个人商户'
-}
-
-function billingModeLabel(value: ApiBillingMode) {
-  if (value === 'metered_credit') return '精确额度计费'
-  if (value === 'manual_credit') return '商户手工核对'
-  return '固定套餐'
-}
-
-function minimumPurchaseLabel(value: MinimumPurchaseFilter) {
-  if (value === 'lte_20') return '≤ 20 元'
-  if (value === 'between_21_50') return '21-50 元'
-  if (value === 'gt_50') return '> 50 元'
-  return '不限'
-}
-
-function accessConfirmationLabel(row: ApiService) {
-  return row.delivery
-}
-
-function usageVerificationLabel() {
-  return '用量与余额由商户说明，买家自行核对'
-}
-
-function creditPriceLabel(row: ApiService) {
-  const cnyPerUsdCredit = row.creditPerCny > 0 ? 1 / row.creditPerCny : 0
-  return `¥${cnyPerUsdCredit.toFixed(2).replace(/\.?0+$/, '')} / $1`
-}
-
-function imagePricingLabel(row: ApiService) {
-  if (!row.imagePricing.supported) return '不支持'
-  const prices = [
-    row.imagePricing.oneKPriceUsd ? `1K $${row.imagePricing.oneKPriceUsd}` : '',
-    row.imagePricing.twoKPriceUsd ? `2K $${row.imagePricing.twoKPriceUsd}` : '',
-    row.imagePricing.fourKPriceUsd ? `4K $${row.imagePricing.fourKPriceUsd}` : '',
-  ].filter(Boolean)
-  return prices.length ? prices.join(' / ') : '支持'
-}
-
-function warrantyDisplay(value: string) {
-  return value
-    .replace(/买家专属、可撤销的/g, '买家专属的')
-    .replace(/支持撤销/g, '支持站外协商更换')
-}
-
-function visibleBadges(items: string[]) {
-  return { shown: items.slice(0, 3), hidden: Math.max(0, items.length - 3) }
-}
-
-function modelMultiplierBadges(row: ApiService) {
-  return row.modelMultipliers.map(item => `${item.model} · ${item.multiplier}`)
-}
-
-function statusLabel(row: Pick<ApiService, 'state' | 'online' | 'publiclyOrderable'>) {
-  if (row.state === 'reviewing') return { text: '审核中', dot: 'bg-amber-500', textClass: 'text-amber-700' }
-  if (row.state === 'paused') return { text: '暂停接单', dot: 'bg-red-500', textClass: 'text-red-700' }
-  if (row.publiclyOrderable) return { text: '可创建订单', dot: 'bg-emerald-500', textClass: 'text-emerald-700' }
-  if (row.online) return { text: '待配置接单', dot: 'bg-amber-500', textClass: 'text-amber-700' }
-  return { text: '离线', dot: 'bg-muted-foreground', textClass: 'text-muted-foreground' }
-}
-
-function merchantProfileUrl(row: ApiService) {
-  return getApiMerchantProfileUrl(row)
-}
-
-function openService(event: MouseEvent | KeyboardEvent, row: ApiService) {
-  if (!row.publiclyOrderable) return
-  if (event instanceof MouseEvent && (event.target as HTMLElement).closest('a,button,input,select')) return
-  router.push(`/api-market/${row.id}`)
-}
 </script>
 
 <template>
-  <div class="api-market-page">
-    <div class="api-market-layout">
-      <main class="min-w-0 space-y-4">
-      <section class="api-market-hero">
-      <div class="api-market-hero-main">
-        <div class="api-market-kicker">
-          <Code2 class="h-4 w-4" />
-          <span>API 服务目录</span>
-          <Badge variant="secondary">{{ activePanelLabel }}</Badge>
-        </div>
-        <div class="mt-3 flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
-          <div class="min-w-0">
-            <h1 class="text-[32px] font-semibold leading-tight tracking-normal md:text-[38px]">连接优质 API 服务，按需灵活接入</h1>
-            <p class="mt-2 max-w-3xl text-sm leading-6">
-              按服务来源分面板查看 API 服务；创建订单后按参与方权限查看交易资料，平台不在公开页、列表或管理摘要展示 API Key、token、面板账号或密码。
-            </p>
+  <div class="api-market-catalog space-y-5">
+    <header class="flex flex-col gap-3 border-b border-border pb-4 lg:flex-row lg:items-end lg:justify-between">
+      <div>
+        <div class="flex items-center gap-2 text-sm font-medium text-primary"><Code2 class="h-4 w-4" />API 额度市场</div>
+        <h1 class="mt-2 text-2xl font-semibold tracking-normal md:text-3xl">短期额度包与自由额度</h1>
+        <p class="mt-2 max-w-3xl text-sm leading-6 text-muted-foreground">额度来自卖家实际控制的站外中转系统。平台记录商品和订单，不提供额度、不代理 API 流量，也不验证上游余额。</p>
+      </div>
+      <RouterLink to="/api-market/quota/new" class="w-full sm:w-auto">
+        <Button class="h-11 w-full gap-2 sm:h-9"><PackagePlus class="h-4 w-4" />发布限时额度包</Button>
+      </RouterLink>
+    </header>
+
+    <Tabs :model-value="activeView" @update:model-value="setView">
+      <TabsList class="api-market-view-tabs grid h-11 w-full max-w-xl grid-cols-3">
+        <TabsTrigger class="min-h-11" value="limited">限时额度包</TabsTrigger>
+        <TabsTrigger class="min-h-11" value="packages">限时流量包</TabsTrigger>
+        <TabsTrigger class="min-h-11" value="free">自由额度</TabsTrigger>
+      </TabsList>
+
+      <TabsContent value="limited" class="mt-4 space-y-4">
+        <section class="overflow-hidden border-y border-border bg-card">
+          <div class="flex flex-col gap-3 border-b border-border px-4 py-4 sm:flex-row sm:items-end sm:justify-between">
+            <div>
+              <div class="flex items-center gap-2 text-sm font-semibold text-primary"><Zap class="h-4 w-4" />今日限时抢</div>
+              <h2 class="mt-1 text-xl font-semibold">{{ isTomorrowPreview && selectedSlot ? `明日 ${slotTime(selectedSlot)} 场预告` : selectedSlot ? `${formatSlotDate(selectedSlot)} 固定场次` : '北京时间固定场次' }}</h2>
+              <p class="mt-1 text-xs text-muted-foreground">每天 09:00、13:00、20:00 开抢，每场持续 30 分钟。</p>
+            </div>
+            <div v-if="selectedSlot" class="min-w-[180px] sm:text-right">
+              <div class="text-xs text-muted-foreground">{{ countdownPrefix(selectedSlot) }}</div>
+              <div class="mt-1 font-mono text-3xl font-semibold tabular-nums tracking-normal">{{ slotCountdown(selectedSlot) }}</div>
+              <Badge class="mt-2" :variant="selectedSlot.state === 'active' ? 'verified' : selectedSlot.state === 'ended' ? 'secondary' : 'trust'">{{ slotStatusLabel(selectedSlot) }}</Badge>
+            </div>
           </div>
-        </div>
-      </div>
 
-      <div class="api-market-stats">
-        <div
-          v-for="item in activeSignalStats"
-          :key="item.label"
-          class="api-market-stat"
-          :class="signalStatClass(item.tone)"
-        >
-          <span>{{ item.label }}</span>
-          <strong>{{ item.value }}</strong>
-          <small>{{ item.detail }}</small>
-        </div>
-      </div>
-      <div class="api-market-hero-art" aria-hidden="true"><span>API</span><i /><i /><i /></div>
-    </section>
+          <div class="p-4">
+            <ErrorState v-if="slotQuery.error.value" description="固定场次暂时无法加载。" @retry="slotQuery.refetch()" />
+            <SkeletonBlock v-else-if="slotQuery.isLoading.value" :lines="3" />
+            <template v-else>
+              <Tabs v-model="selectedSlotKey">
+                <TabsList class="api-market-slot-tabs grid h-auto w-full grid-cols-3">
+                  <TabsTrigger v-for="slot in displayedSlots" :key="slot.key" :value="slot.key" class="min-h-12 flex-col gap-0.5">
+                    <span class="font-mono text-base tabular-nums">{{ slotTime(slot) }}</span>
+                    <span class="text-[10px]">{{ slotStatusLabel(slot) }}</span>
+                  </TabsTrigger>
+                </TabsList>
+              </Tabs>
 
-      <section class="api-market-panel-switch">
-      <button
-        type="button"
-        class="api-market-panel-card"
-        :class="activePanel === 'packages' ? 'api-market-panel-card--active' : ''"
-        @click="setPanel('packages')"
-      >
-        <span class="api-market-panel-icon"><CircleDollarSign class="h-4 w-4" /></span>
-        <span class="min-w-0">
-          <span class="api-market-panel-title">限时流量包</span>
-          <span class="api-market-panel-desc">按精确模型和有效期比较综合性价比</span>
-        </span>
-        <Badge variant="trust">{{ totalAvailablePackages }} 个</Badge>
-      </button>
-      <button
-        type="button"
-        class="api-market-panel-card"
-        :class="activePanel === 'sub2api' ? 'api-market-panel-card--active' : ''"
-        @click="setPanel('sub2api')"
-      >
-        <span class="api-market-panel-icon"><Sparkles class="h-4 w-4" /></span>
-          <span class="min-w-0">
-            <span class="api-market-panel-title">Sub2API 标准额度</span>
-          <span class="api-market-panel-desc">统一倍率，优先比较美元额度售价、生图价格和履约记录</span>
-        </span>
-        <Badge variant="trust">{{ sub2Rows.length }} 条</Badge>
-      </button>
-      <button
-        type="button"
-        class="api-market-panel-card"
-        :class="activePanel === 'other' ? 'api-market-panel-card--active' : ''"
-        @click="setPanel('other')"
-      >
-        <span class="api-market-panel-icon"><Activity class="h-4 w-4" /></span>
-        <span class="min-w-0">
-          <span class="api-market-panel-title">其他 API 接入</span>
-          <span class="api-market-panel-desc">NewAPI Proxy、自建代理、固定套餐和商户手工核对单独展示</span>
-        </span>
-        <Badge variant="trust">{{ otherRows.length }} 条</Badge>
-      </button>
-    </section>
-
-      <section v-if="activePanel === 'sub2api'" class="space-y-4">
-      <div class="api-market-notice">
-        <div class="api-market-notice-icon"><ShieldCheck class="h-4 w-4" /></div>
-        <div class="min-w-0">
-          <div class="flex flex-wrap items-center gap-2">
-            <div class="font-semibold text-slate-950">Sub2API 默认优先</div>
-            <Badge variant="verified">默认 1.00x</Badge>
-            <Badge variant="secondary">可售美元额度</Badge>
+              <ErrorState v-if="rushQuery.error.value" class="mt-4" description="本场额度包暂时无法加载。" @retry="rushQuery.refetch()" />
+              <SkeletonBlock v-else-if="rushQuery.isLoading.value || !selectedSlotKey" class="mt-4" :lines="5" />
+              <div v-else-if="rushRows.length === 0" class="mt-4 flex min-h-32 flex-col items-center justify-center border-t border-dashed border-border px-4 py-5 text-center">
+                <CalendarClock class="h-7 w-7 text-muted-foreground" />
+                <div class="mt-2 font-medium">本场暂无额度包</div>
+                <p class="mt-1 text-sm text-muted-foreground">可以切换其他场次，或发布自己的限时额度包。</p>
+                <div class="mt-3 flex flex-wrap justify-center gap-2">
+                  <Button class="h-11 sm:h-9" size="sm" variant="outline" @click="activeView = 'free'">查看自由额度</Button>
+                  <RouterLink to="/api-market/quota/new"><Button class="h-11 sm:h-9" size="sm">发布额度包</Button></RouterLink>
+                </div>
+              </div>
+              <div v-else class="api-product-card-grid mt-4">
+                <ApiQuotaOfferCard
+                  v-for="item in rushRows"
+                  :key="item.id"
+                  :offer="item"
+                  :category="quotaOfferCategory(item)"
+                  :category-label="getProductCategoryLabel(quotaOfferCategory(item))"
+                  :icon-src="quotaOfferIconSrc(item)"
+                  :now="now"
+                  variant="rush"
+                  :pending-offer-id="pendingOfferId"
+                  @purchase="purchaseOffer"
+                >
+                  <template #health><ApiServiceHealthPanel :summary="item.healthSummary" /></template>
+                </ApiQuotaOfferCard>
+              </div>
+            </template>
           </div>
-          <p class="mt-1 text-sm leading-6 text-muted-foreground">
-            默认倍率为 1，商家可按实际上游规则填写 0.01 等倍率，并可为具体模型单独设置。买家主要比较美元额度售价、模型倍率、商户承诺和履约记录；接入细节和用量核对由双方站外确认。
-          </p>
-        </div>
-      </div>
+        </section>
 
-      <div class="api-market-filterbar c2c-filterbar rounded-lg border border-border bg-card px-3 py-3">
-        <div class="api-market-source-tabs mb-3 flex flex-wrap gap-2 border-b border-border pb-3">
-          <Button size="sm" variant="default" @click="setPanel('sub2api')">Sub2API 美元额度</Button>
-          <Button size="sm" variant="outline" @click="setPanel('packages')">限时流量包</Button>
-          <Button size="sm" variant="outline" @click="setPanel('other')">其他 API 接入</Button>
+        <div class="flex items-center justify-between gap-3 pt-1">
+          <div><h2 class="font-semibold">其他限时额度包</h2><p class="text-xs text-muted-foreground">连续销售和卖家自定义轮次。</p></div>
         </div>
-        <div class="grid gap-2 xl:grid-cols-[minmax(220px,1fr)_120px_130px_110px_150px_auto_150px]">
-          <label class="api-market-search-field">
-            <Search class="h-4 w-4" />
-            <Input v-model="sub2Search" name="sub2api-service-search" class="h-8 border-0 bg-transparent pl-8 text-sm shadow-none focus-visible:ring-0" placeholder="搜索服务或商户" />
+        <div class="api-market-filter-toolbar grid gap-3 rounded-lg border border-border bg-muted/25 p-3 lg:grid-cols-[minmax(240px,1fr)_180px_150px_auto] lg:items-center">
+          <label class="relative block">
+            <Search class="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+            <Input v-model="quotaSearch" class="h-11 pl-9 lg:h-9" placeholder="搜索额度包、服务或卖家" />
           </label>
-          <select v-model="sub2Model" class="api-market-select">
-            <option>全部</option>
-            <option>GPT</option>
-            <option>Claude</option>
-            <option>Gemini</option>
-          </select>
-          <select v-model="sub2CreditPriceMax" class="api-market-select">
-            <option value="all">额度售价不限</option>
-            <option value="lte_030">≤ ¥0.30 / $1</option>
-            <option value="lte_050">≤ ¥0.50 / $1</option>
-            <option value="lte_080">≤ ¥0.80 / $1</option>
-          </select>
-          <select v-model="sub2Online" class="api-market-select">
-            <option value="all">全部状态</option>
-            <option value="online">仅在线</option>
-            <option value="offline">离线/暂停</option>
-          </select>
-          <select v-model="sub2Merchant" class="api-market-select">
-            <option value="all">全部商户</option>
-            <option value="personal_first">个人优先</option>
-            <option value="personal">个人商户</option>
-            <option value="api">API 商户</option>
-          </select>
-          <Popover>
-            <PopoverTrigger as-child>
-              <Button class="h-8" size="sm" variant="outline">
-                <Filter class="h-4 w-4" />
-                更多筛选<span v-if="sub2AdvancedCount">· {{ sub2AdvancedCount }}</span>
-              </Button>
-            </PopoverTrigger>
-            <PopoverContent align="end" class="w-[360px]">
-              <div class="grid gap-3">
-                <div class="text-sm font-medium">Sub2API 筛选</div>
-                <label class="grid gap-1 text-xs text-muted-foreground">生图能力
-                  <select v-model="sub2ImageCapability" class="h-8 rounded-md border border-input bg-background px-2 text-xs text-foreground">
-                    <option value="all">全部</option>
-                    <option value="supported">支持生图</option>
-                    <option value="none">不支持生图</option>
-                  </select>
-                </label>
-                <label class="grid gap-1 text-xs text-muted-foreground">最低订单金额
-                  <select v-model="sub2MinimumPurchase" class="h-8 rounded-md border border-input bg-background px-2 text-xs text-foreground">
-                    <option value="all">不限</option>
-                    <option value="lte_20">≤ 20 元</option>
-                    <option value="between_21_50">21-50 元</option>
-                    <option value="gt_50">&gt; 50 元</option>
-                  </select>
-                </label>
-                <label class="grid gap-1 text-xs text-muted-foreground">信任等级
-                  <select v-model="sub2TrustLevel" class="h-8 rounded-md border border-input bg-background px-2 text-xs text-foreground">
-                    <option value="all">全部</option>
-                    <option value="2">信任等级2+</option>
-                    <option value="3">信任等级3+</option>
-                    <option value="4">信任等级4</option>
-                  </select>
-                </label>
-              </div>
-            </PopoverContent>
-          </Popover>
-          <select v-model="sub2Sort" class="api-market-select">
-            <option value="recommended">综合推荐</option>
-            <option value="credit_price_asc">额度售价最低</option>
-            <option value="minimum_purchase_asc">最低订单金额</option>
-            <option value="response_fast">响应最快</option>
-            <option value="recent">最近上架</option>
-          </select>
+          <Select v-model="distributionSystem">
+            <SelectTrigger class="data-[size=default]:h-11 lg:data-[size=default]:h-9"><SelectValue placeholder="接入系统" /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">全部接入系统</SelectItem>
+              <SelectItem value="sub2api">Sub2API</SelectItem>
+              <SelectItem value="new_api_proxy">NewAPI</SelectItem>
+              <SelectItem value="other">其他接入</SelectItem>
+            </SelectContent>
+          </Select>
+          <Select v-model="availability">
+            <SelectTrigger class="data-[size=default]:h-11 lg:data-[size=default]:h-9"><SelectValue placeholder="销售状态" /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">全部状态</SelectItem>
+              <SelectItem value="available">当前可购买</SelectItem>
+            </SelectContent>
+          </Select>
+          <label class="flex min-h-11 cursor-pointer items-center gap-2 rounded-md border border-border bg-background px-3 text-sm">
+            <Checkbox v-model="oneMultiplier" />仅看 1.00x
+          </label>
         </div>
-        <div v-if="sub2Chips.length" class="mt-2 flex items-center gap-2 border-t border-border pt-2">
-          <span class="shrink-0 text-xs text-muted-foreground">已选</span>
-          <div class="flex min-w-0 flex-1 gap-1.5 overflow-x-auto">
-            <Badge v-for="chip in sub2Chips" :key="chip.label" variant="trust" class="cursor-pointer" @click="chip.reset">{{ chip.label }} ×</Badge>
-          </div>
-          <span class="shrink-0 text-xs text-muted-foreground">共 {{ sub2Rows.length }} 条服务</span>
-        </div>
-        <div v-else class="mt-2 flex justify-end border-t border-border pt-2 text-xs text-muted-foreground">
-          共 {{ sub2Rows.length }} 条服务
-        </div>
-      </div>
 
-      <div v-if="sub2Rows.length === 0" class="rounded-xl border border-border bg-card p-8 text-center text-sm text-muted-foreground">当前筛选条件下暂无 Sub2API 标准额度服务。</div>
-      <template v-else>
-        <div class="api-service-card-grid">
-          <Card
-            v-for="row in sub2Pagination.paginatedRows.value"
-            :key="row.id"
-            class="api-service-market-card"
-            :class="row.publiclyOrderable ? 'cursor-pointer' : 'cursor-not-allowed opacity-70'"
-            :tabindex="row.publiclyOrderable ? 0 : -1"
-            @click="openService($event, row)"
-            @keydown.enter="openService($event, row)"
+        <ErrorState v-if="quotaQuery.error.value" description="额度包列表暂时无法加载。" @retry="quotaQuery.refetch()" />
+        <SkeletonBlock v-else-if="quotaQuery.isLoading.value" :lines="8" />
+        <EmptyState v-else-if="quotaRows.length === 0" class="min-h-32 p-5" title="暂无匹配的额度包" description="可以调整筛选、查看自由额度，卖家也可以发布自己的限时额度包。">
+          <template #action>
+            <div class="flex flex-wrap justify-center gap-2">
+              <RouterLink to="/api-market/quota/new"><Button class="h-11 gap-2 sm:h-9"><PackagePlus class="h-4 w-4" />发布限时额度包</Button></RouterLink>
+              <Button class="h-11 sm:h-9" variant="outline" @click="activeView = 'free'">查看自由额度</Button>
+            </div>
+          </template>
+        </EmptyState>
+
+        <div v-else class="api-product-card-grid">
+          <ApiQuotaOfferCard
+            v-for="item in quotaRows"
+            :key="item.id"
+            :offer="item"
+            :category="quotaOfferCategory(item)"
+            :category-label="getProductCategoryLabel(quotaOfferCategory(item))"
+            :icon-src="quotaOfferIconSrc(item)"
+            :now="now"
+            :pending-offer-id="pendingOfferId"
+            @purchase="purchaseOffer"
           >
-            <div class="api-service-card-head">
-              <span class="api-service-card-logo"><Code2 class="h-5 w-5" /></span>
-              <div class="min-w-0 flex-1">
-                <div class="flex flex-wrap items-center gap-2"><h2 class="truncate font-semibold text-slate-950">{{ row.title }}</h2><Badge variant="verified">标准额度</Badge></div>
-                <div class="mt-1 flex flex-wrap gap-1"><Badge v-for="m in visibleBadges(modelMultiplierBadges(row)).shown" :key="m" variant="model">{{ m }}</Badge><Badge v-if="visibleBadges(modelMultiplierBadges(row)).hidden" variant="model">+{{ visibleBadges(modelMultiplierBadges(row)).hidden }}</Badge></div>
-              </div>
-              <div class="shrink-0 text-right"><div class="api-service-card-price">{{ creditPriceLabel(row) }}</div><div class="mt-1 text-xs text-muted-foreground">可售 {{ formatUsdQuota(row.balance) }}</div></div>
-            </div>
-            <dl class="api-service-card-metrics">
-              <div><dt>接入方式</dt><dd>{{ accessConfirmationLabel(row) }}</dd></div>
-              <div><dt>生图价格</dt><dd>{{ imagePricingLabel(row) }}</dd></div>
-              <div><dt>最低订单</dt><dd>¥{{ row.minimumPurchaseCny }} 起</dd></div>
-              <div><dt>响应参考</dt><dd>{{ row.publiclyOrderable ? `约 ${row.responseMedianMinutes} 分钟` : '暂不可接单' }}</dd></div>
-            </dl>
-            <p class="api-service-card-note">{{ usageVerificationLabel() }} · {{ warrantyDisplay(row.warranty) }}</p>
-            <div class="api-service-card-footer">
-              <component :is="merchantProfileUrl(row) ? RouterLink : 'div'" :to="merchantProfileUrl(row) || undefined" class="api-market-merchant">
-                <span class="api-market-avatar">{{ getApiMerchantAvatarText(row) }}</span>
-                <span class="min-w-0"><span class="block truncate text-sm font-medium">{{ getApiMerchantDisplayName(row) }}</span><span class="mt-0.5 flex flex-wrap gap-1"><Badge variant="identity">{{ merchantIdentity(row) }}</Badge><Badge variant="trust">信任等级{{ row.trustLevel }}</Badge></span></span>
-              </component>
-              <div class="text-right"><div class="flex items-center justify-end gap-1 text-sm" :class="statusLabel(row).textClass"><span class="h-2 w-2 rounded-full" :class="statusLabel(row).dot"></span>{{ statusLabel(row).text }}</div><div class="mt-1 text-xs font-medium text-primary">查看服务 →</div></div>
-            </div>
-          </Card>
+            <template #health><ApiServiceHealthPanel :summary="item.healthSummary" /></template>
+          </ApiQuotaOfferCard>
         </div>
-        <div class="mt-4 rounded-xl border border-border bg-card px-4 py-3">
-          <TablePagination v-model:page="sub2Pagination.page.value" :page-count="sub2Pagination.pageCount.value" :total="sub2Pagination.total.value" :start-item="sub2Pagination.startItem.value" :end-item="sub2Pagination.endItem.value" />
-        </div>
-      </template>
-    </section>
+      </TabsContent>
 
-      <section v-else-if="activePanel === 'packages'" class="space-y-4">
-        <div class="api-market-filterbar rounded-lg border border-border bg-card px-3 py-3">
-          <div class="api-market-source-tabs mb-3 flex flex-wrap gap-2 border-b border-border pb-3">
-            <Button size="sm" variant="outline" @click="setPanel('sub2api')">Sub2API 美元额度</Button>
-            <Button size="sm" variant="default" @click="setPanel('packages')">限时流量包</Button>
-            <Button size="sm" variant="outline" @click="setPanel('other')">其他 API 接入</Button>
-          </div>
-          <div class="grid gap-3 md:grid-cols-2">
+      <TabsContent value="packages" class="mt-4 space-y-4">
+        <Alert>
+          <PackageOpen />
+          <AlertTitle>限时流量包</AlertTitle>
+          <AlertDescription>固定价格购买商户声明的面板额度，套餐有效期从商户提交交付时开始计算。先按精确模型和有效期筛选，再比较综合推荐结果；平台测量只代表当前探测模型与平台节点。</AlertDescription>
+        </Alert>
+        <ErrorState v-if="freeServicesQuery.error.value" description="限时流量包暂时无法加载。" @retry="freeServicesQuery.refetch()" />
+        <SkeletonBlock v-else-if="freeServicesQuery.isLoading.value" :lines="6" />
+        <template v-else>
+          <div class="grid gap-3 border-y border-border py-3 md:grid-cols-2">
             <label class="grid gap-1.5 text-xs font-medium text-muted-foreground">
               精确模型
-              <select v-model="packageModel" class="api-market-select h-10">
-                <option value="">请选择模型</option>
-                <option v-for="model in packageModelOptions" :key="model.id" :value="model.id">{{ model.name }}</option>
-              </select>
+              <Select v-model="packageModel">
+                <SelectTrigger><SelectValue placeholder="请选择模型" /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem v-for="model in packageModelOptions" :key="model.id" :value="model.id">{{ model.name }}</SelectItem>
+                </SelectContent>
+              </Select>
             </label>
             <label class="grid gap-1.5 text-xs font-medium text-muted-foreground">
               套餐有效期
-              <select v-model="packageDuration" class="api-market-select h-10">
-                <option value="">请选择有效期</option>
-                <option value="1">1 天</option>
-                <option value="3">3 天</option>
-                <option value="7">7 天</option>
-                <option value="30">30 天</option>
-              </select>
+              <Select v-model="packageDuration">
+                <SelectTrigger><SelectValue placeholder="请选择有效期" /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="1">1 天</SelectItem>
+                  <SelectItem value="3">3 天</SelectItem>
+                  <SelectItem value="7">7 天</SelectItem>
+                  <SelectItem value="30">30 天</SelectItem>
+                </SelectContent>
+              </Select>
             </label>
           </div>
-          <p class="mt-3 border-t border-border pt-3 text-xs leading-5 text-muted-foreground">选择后按价值 60%、履约 25%、响应 10%、新鲜度 5% 计算综合推荐；倍率和价值成本按商家声明估算。</p>
-        </div>
-
-        <div v-if="!packageReady" class="rounded-lg border border-dashed border-border bg-card p-8 text-center">
-          <div class="text-sm font-semibold">先选择精确模型和有效期</div>
-          <p class="mt-2 text-xs text-muted-foreground">选择完成后才会展示可购买套餐和综合推荐顺序。</p>
-        </div>
-        <div v-else-if="packageRows.length === 0" class="rounded-lg border border-border bg-card p-8 text-center text-sm text-muted-foreground">当前模型和有效期下暂无有库存的套餐。</div>
-        <div v-else class="api-service-card-grid">
-          <ApiPackageCard v-for="(row, index) in packageRows" :key="row.package.id" :row="row" :rank="index + 1" />
-        </div>
-      </section>
-
-      <section v-else class="space-y-4">
-      <div class="api-market-notice">
-        <div class="api-market-notice-icon"><CircleDollarSign class="h-4 w-4" /></div>
-        <div class="min-w-0">
-          <div class="flex flex-wrap items-center gap-2">
-            <div class="font-semibold text-slate-950">其他 API 接入不与 Sub2API 混合排名。</div>
-            <Badge variant="secondary">单独比较</Badge>
-            <Badge variant="capability">多分发系统</Badge>
+          <EmptyState v-if="!packageReady" title="先选择精确模型和有效期" description="选择完成后才会展示可购买套餐和综合推荐顺序。" />
+          <EmptyState v-else-if="packageDisplayRows.length === 0" title="暂无匹配的限时流量包" description="当前模型和有效期下没有可购买库存。" />
+          <div v-else class="api-product-card-grid">
+            <div
+              v-for="entry in packageDisplayRows"
+              :key="entry.row.package.id"
+              class="min-w-0"
+              :ref="element => setPromotedElement(element, entry.promotion, entry.promotionPosition)"
+            >
+              <ApiPackageCard
+                :row="entry.row"
+                :rank="entry.rank"
+                :product-icon-src="freeServiceIconSrc(entry.row.service)"
+                :promoted="Boolean(entry.promotion)"
+                @activate="trackPromotedCardClick(entry.promotion, entry.promotionPosition)"
+              >
+                <template #health><ApiServiceHealthPanel :summary="entry.row.service.healthSummary" /></template>
+              </ApiPackageCard>
+            </div>
           </div>
-          <p class="mt-1 text-sm leading-6 text-muted-foreground">用户需手动切换到本面板查看。这里展示 NewAPI Proxy、自建代理、固定套餐、商户手工核对和其他系统。</p>
-        </div>
-      </div>
+        </template>
+      </TabsContent>
 
-      <div class="api-market-filterbar c2c-filterbar rounded-lg border border-border bg-card px-3 py-3">
-        <div class="api-market-source-tabs mb-3 flex flex-wrap gap-2 border-b border-border pb-3">
-          <Button size="sm" variant="outline" @click="setPanel('sub2api')">Sub2API 美元额度</Button>
-          <Button size="sm" variant="outline" @click="setPanel('packages')">限时流量包</Button>
-          <Button size="sm" variant="default" @click="setPanel('other')">其他 API 接入</Button>
-        </div>
-        <div class="grid gap-2 xl:grid-cols-[minmax(220px,1fr)_150px_150px_120px_auto_150px]">
-          <label class="api-market-search-field">
-            <Search class="h-4 w-4" />
-            <Input v-model="otherSearch" name="other-api-service-search" class="h-8 border-0 bg-transparent pl-8 text-sm shadow-none focus-visible:ring-0" placeholder="搜索套餐或商户" />
-          </label>
-          <select v-model="otherDistribution" class="api-market-select">
-            <option value="all">全部分发系统</option>
-            <option value="NewAPI Proxy">NewAPI Proxy</option>
-            <option value="自建中转">自建代理</option>
-            <option value="固定套餐">固定套餐</option>
-            <option value="商户手工核对">商户手工核对</option>
-            <option value="其他">其他系统</option>
-          </select>
-          <select v-model="otherBilling" class="api-market-select">
-            <option value="all">全部计费方式</option>
-            <option value="metered_credit">精确额度计费</option>
-            <option value="manual_credit">商户手工核对</option>
-            <option value="fixed_package">固定套餐</option>
-          </select>
-          <select v-model="otherOnline" class="api-market-select">
-            <option value="all">全部状态</option>
-            <option value="online">仅在线</option>
-            <option value="offline">离线/暂停</option>
-          </select>
-          <Popover>
-            <PopoverTrigger as-child>
-              <Button class="h-8" size="sm" variant="outline">
-                <Filter class="h-4 w-4" />
-                更多筛选<span v-if="otherAdvancedCount">· {{ otherAdvancedCount }}</span>
-              </Button>
-            </PopoverTrigger>
-            <PopoverContent align="end" class="w-[320px]">
-              <div class="grid gap-3">
-                <div class="text-sm font-medium">其他 API 筛选</div>
-                <label class="grid gap-1 text-xs text-muted-foreground">最低订单金额
-                  <select v-model="otherMinimumPurchase" class="h-8 rounded-md border border-input bg-background px-2 text-xs text-foreground">
-                    <option value="all">不限</option>
-                    <option value="lte_20">≤ 20 元</option>
-                    <option value="between_21_50">21-50 元</option>
-                    <option value="gt_50">&gt; 50 元</option>
-                  </select>
-                </label>
-              </div>
-            </PopoverContent>
-          </Popover>
-          <select v-model="otherSort" class="api-market-select">
-            <option value="recommended">综合推荐</option>
-            <option value="minimum_purchase_asc">最低订单金额</option>
-            <option value="response_fast">响应最快</option>
-            <option value="recent">最近上架</option>
-          </select>
-        </div>
-        <div v-if="otherChips.length" class="mt-2 flex items-center gap-2 border-t border-border pt-2">
-          <span class="shrink-0 text-xs text-muted-foreground">已选</span>
-          <div class="flex min-w-0 flex-1 gap-1.5 overflow-x-auto">
-            <Badge v-for="chip in otherChips" :key="chip.label" variant="trust" class="cursor-pointer" @click="chip.reset">{{ chip.label }} ×</Badge>
-          </div>
-          <span class="shrink-0 text-xs text-muted-foreground">共 {{ otherRows.length }} 条服务</span>
-        </div>
-        <div v-else class="mt-2 flex justify-end border-t border-border pt-2 text-xs text-muted-foreground">
-          共 {{ otherRows.length }} 条服务
-        </div>
-      </div>
-
-      <div v-if="otherRows.length === 0" class="rounded-xl border border-border bg-card p-8 text-center text-sm text-muted-foreground">当前筛选条件下暂无其他 API 接入服务。</div>
-      <template v-else>
-        <div class="api-service-card-grid">
-          <Card
-            v-for="row in otherPagination.paginatedRows.value"
-            :key="row.id"
-            class="api-service-market-card"
-            :class="row.publiclyOrderable ? 'cursor-pointer' : 'cursor-not-allowed opacity-70'"
-            :tabindex="row.publiclyOrderable ? 0 : -1"
-            @click="openService($event, row)"
-            @keydown.enter="openService($event, row)"
+      <TabsContent value="free" class="mt-4 space-y-4">
+        <Alert>
+          <Code2 />
+          <AlertTitle>自由额度</AlertTitle>
+          <AlertDescription>按人民币金额购买卖家声明的美元额度，Sub2API 维持 1.00x 倍率。订单金额和预计额度在服务详情确认；平台测量只代表当前探测模型与平台节点。</AlertDescription>
+        </Alert>
+        <ErrorState v-if="freeServicesQuery.error.value" description="自由额度服务暂时无法加载。" @retry="freeServicesQuery.refetch()" />
+        <SkeletonBlock v-else-if="freeServicesQuery.isLoading.value" :lines="8" />
+        <EmptyState v-else-if="freeServiceDisplayRows.length === 0" title="暂无自由额度服务" description="当前没有可公开下单的 API 服务。" />
+        <div v-else class="api-product-card-grid">
+          <div
+            v-for="entry in freeServiceDisplayRows"
+            :key="entry.service.id"
+            class="min-w-0"
+            :ref="element => setPromotedElement(element, entry.promotion, entry.promotionPosition)"
           >
-            <div class="api-service-card-head">
-              <span class="api-service-card-logo api-service-card-logo--other"><Activity class="h-5 w-5" /></span>
-              <div class="min-w-0 flex-1"><div class="flex flex-wrap items-center gap-2"><h2 class="truncate font-semibold text-slate-950">{{ row.title }}</h2><Badge variant="secondary">{{ row.delivery }}</Badge></div><p class="mt-1 truncate text-xs text-muted-foreground">{{ billingModeLabel(row.billingMode) }}</p></div>
-              <div class="shrink-0 text-right"><div class="api-service-card-price">¥{{ row.minimumPurchaseCny }} 起</div><div class="mt-1 text-xs text-muted-foreground">最低订单</div></div>
-            </div>
-            <dl class="api-service-card-metrics">
-              <div><dt>分发系统</dt><dd>{{ row.delivery }}</dd></div>
-              <div><dt>计费方式</dt><dd>{{ billingModeLabel(row.billingMode) }}</dd></div>
-              <div><dt>接入核对</dt><dd>{{ accessConfirmationLabel(row) }}</dd></div>
-              <div><dt>响应参考</dt><dd>{{ row.publiclyOrderable ? `约 ${row.responseMedianMinutes} 分钟` : '暂不可接单' }}</dd></div>
-            </dl>
-            <p class="api-service-card-note">{{ usageVerificationLabel() }} · {{ warrantyDisplay(row.warranty) }}</p>
-            <div class="api-service-card-footer">
-              <component :is="merchantProfileUrl(row) ? RouterLink : 'div'" :to="merchantProfileUrl(row) || undefined" class="api-market-merchant"><span class="api-market-avatar">{{ getApiMerchantAvatarText(row) }}</span><span class="min-w-0"><span class="block truncate text-sm font-medium">{{ getApiMerchantDisplayName(row) }}</span><span class="mt-0.5 flex flex-wrap gap-1"><Badge variant="identity">{{ merchantIdentity(row) }}</Badge><Badge variant="trust">信任等级{{ row.trustLevel }}</Badge></span></span></component>
-              <div class="text-right"><div class="flex items-center justify-end gap-1 text-sm" :class="statusLabel(row).textClass"><span class="h-2 w-2 rounded-full" :class="statusLabel(row).dot"></span>{{ statusLabel(row).text }}</div><div class="mt-1 text-xs font-medium text-primary">查看服务 →</div></div>
-            </div>
-          </Card>
+            <ApiFreeServiceCard
+              :card="freeServiceCard(entry.service)"
+              :promoted="Boolean(entry.promotion)"
+              @activate="trackPromotedCardClick(entry.promotion, entry.promotionPosition)"
+            >
+              <template #health><ApiServiceHealthPanel :summary="entry.service.healthSummary" /></template>
+            </ApiFreeServiceCard>
+          </div>
         </div>
-        <div class="mt-4 rounded-xl border border-border bg-card px-4 py-3"><TablePagination v-model:page="otherPagination.page.value" :page-count="otherPagination.pageCount.value" :total="otherPagination.total.value" :start-item="otherPagination.startItem.value" :end-item="otherPagination.endItem.value" /></div>
-      </template>
-      </section>
-      </main>
-
-      <aside class="api-market-aside space-y-3">
-        <Card class="api-market-check-card p-4">
-          <div class="flex items-center gap-2 font-semibold"><ShieldCheck class="h-4 w-4 text-cyan-700" />下单前确认</div>
-          <ul class="mt-3 space-y-2 text-sm leading-6 text-muted-foreground">
-            <li>• 比较额度售价、最低订单与商户履约记录</li>
-            <li>• 确认接入方式、用量核对和售后承诺</li>
-            <li>• 付款、Key 与账号资料仅按订单参与方权限展示</li>
-          </ul>
-        </Card>
-        <Card class="p-4">
-          <div class="flex items-center gap-2 font-semibold"><CircleHelp class="h-4 w-4 text-primary" />新手帮助</div>
-          <ul class="mt-3 space-y-2 text-sm leading-6 text-muted-foreground"><li>如何选择合适的 API 服务</li><li>计费方式与倍率说明</li><li>常见问题解答</li></ul>
-        </Card>
-        <Card class="p-4">
-          <div class="flex items-center gap-2 font-semibold"><CircleHelp class="h-4 w-4 text-primary" />交易说明</div>
-          <p class="mt-2 text-sm leading-6 text-muted-foreground">平台记录订单状态，不代收款、不托管额度，也不公开展示 API Key、token、面板账号或密码。</p>
-        </Card>
-        <RouterLink to="/api-market/new"><Button class="w-full" variant="outline"><Upload class="h-4 w-4" />发布 API 服务</Button></RouterLink>
-      </aside>
-    </div>
+      </TabsContent>
+    </Tabs>
   </div>
 </template>
+
+<style scoped>
+.api-market-catalog {
+  min-width: 0;
+  background: #fff;
+}
+
+.api-market-view-tabs {
+  border: 1px solid var(--border);
+  background: color-mix(in oklab, var(--muted) 72%, var(--card));
+}
+
+.api-market-slot-tabs {
+  border: 1px solid color-mix(in oklab, var(--primary) 16%, var(--border));
+  background: var(--card);
+}
+
+.api-product-card-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  width: 100%;
+  align-items: stretch;
+  gap: 0.75rem;
+}
+
+@media (min-width: 760px) {
+  .api-product-card-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (min-width: 1100px) {
+  .api-product-card-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+@media (min-width: 1360px) {
+  .api-product-card-grid {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+}
+</style>

@@ -73,7 +73,7 @@ getApiMerchantVisibilityLabel(source)
 ### 6. Tests Required
 
 - Type check: `pnpm --dir frontend exec vue-tsc -b --pretty false`.
-- Production build: `pnpm --dir frontend exec vite build`.
+- Production build: real-mode `pnpm --dir frontend build` with the required Nuxt runtime API variables.
 - Source scans must verify no misleading official/guarantee wording is introduced.
 - Source scans must verify public page/component code uses helper functions for API merchant identity instead of direct profile links.
 
@@ -102,15 +102,15 @@ getApiMerchantVisibilityLabel(source)
 
 ### 1. Scope / Trigger
 
-- Trigger: review center submissions are stored on source records, and public profile/search surfaces derive display rows from those source records.
-- Public profile review lists must reflect newly submitted reviews without copying static arrays.
+- Trigger: public profile reviews or search results are mapped from backend responses into frontend display records.
+- Real public review lists must reflect only backend-published transaction reviews and must never mix them with static or locally derived rows.
 - Store-alias API merchant identity must not leak through dynamic review aggregation or search result subtitles.
 
 ### 2. Signatures
 
 ```ts
 export type SearchResult = {
-  type: '官方价格' | '车源' | '求车' | 'API 服务' | '用户' | '商户'
+  type: '官方价格' | '车源' | 'API 服务' | '用户' | '商户'
   title: string
   subtitle: string
   badge: string
@@ -118,16 +118,17 @@ export type SearchResult = {
 }
 
 function publicReviewsForProfile(username: string): PublicReviewRecord[]
-function buildPublicReviewFromCarpoolApplication(application: CarpoolApplication): PublicReviewRecord | null
-function buildPublicReviewFromApiIntent(intent: ApiPurchaseIntent): PublicReviewRecord | null
+function backendPublicUserReviews(username: string): Promise<PublicReviewRecord[]>
+function backendSearchMarket(query: string): Promise<SearchResult[]>
 ```
 
 ### 3. Contracts
 
-- Static `publicReviewRecords` are seed data only; public profile APIs must also derive reviews from completed `carpoolApplicationStore` and `apiPurchaseIntentStore`.
-- Carpool application reviews can be public when the application is `completed` and has `buyerReview`; the reviewed username is `ownerUsername`.
-- API purchase intent reviews can be public only when the intent is `completed`, has `review`, and `snapshot.merchantIdentityMode === 'public_profile'`.
-- API purchase intent reviews for `store_alias` merchants must return `null`; public profile aggregation must not reveal the backing `merchantUsername`.
+- In real backend mode, `GET /api/v1/users/{username}/reviews` is the only public-review source. The adapter maps returned published reviews and must not merge `publicReviewRecords`, carpool application state, purchase intents, or API-order stores.
+- A missing `rating` is not a zero-star review. Received sealed rows exist only in the authenticated review center and never enter `PublicReviewRecord`.
+- Static `publicReviewRecords` and local source-derived rows are mock-mode data only. They must remain isolated from real public-profile requests.
+- Public review DTOs preserve backend `verified`, rating, tags, note, date, and service type. Transaction type and buyer/seller role fields may be added to the frontend record only through an explicit shared type update; consumers must not infer them from titles.
+- Store-alias API merchants must not gain a public user link through a review or search mapping. Backend public-review identity policy remains authoritative.
 - Mock `searchMarket()` must include `publicMerchantProfiles` as `type: '商户'` results in addition to user profiles.
 - Real `searchMarket()` must call `searchBackend.ts` and map backend rows to the same `SearchResult` union without silently falling back to mock data.
 - Store-alias API service search may return an `API 服务` result with the public merchant display name, but must not return a separate `商户` result or `/u/:merchantUsername` link that reveals the hidden owner.
@@ -136,42 +137,43 @@ function buildPublicReviewFromApiIntent(intent: ApiPurchaseIntent): PublicReview
 
 | Condition | Expected behavior |
 | --- | --- |
-| Completed carpool application with buyer review | Public profile for the owner includes a verified review row |
-| Completed API intent with review and public profile merchant | Public profile for that merchant includes a verified review row |
-| Completed API intent with review and store alias merchant | No public review row is generated |
+| Backend returns a published verified review | Public profile renders the mapped review |
+| Backend omits a sealed/removed/excluded review | Frontend does not reconstruct it |
+| Real public-review request fails | Visible error; no static/local fallback |
+| Review-center row has `rating=null` | Preserve `null`; do not map to zero |
 | Search keyword matches merchant username/display name/identity | Search returns a `商户` result |
 | Search keyword matches store alias display name through API service | Search may return the API service, but must not expose hidden merchant username or a public user link |
 
 ### 5. Good/Base/Bad Cases
 
-- Good: `qingning` API order review appears on `/u/qingning` because the merchant identity mode is `public_profile`.
-- Base: seed review rows continue to render alongside derived rows.
-- Bad: a `store_alias` order for `小葵 API` creates a public review row under `/u/orbit`.
+- Good: a published API-order seller-to-buyer review returned by the backend appears on the buyer's public profile with the backend rating and verified flag.
+- Base: mock mode continues to render its explicit seed reviews without affecting real mode.
+- Bad: concatenate backend reviews with `publicReviewRecords`, derive a sealed review from a completed order, or create `/u/orbit` from a store-alias service owner.
 
 ### 6. Tests Required
 
 - Type check: `pnpm --dir frontend exec vue-tsc -b --pretty false`.
-- Production build: `pnpm --dir frontend exec vite build`.
+- Production build: real-mode `pnpm --dir frontend build` with the required Nuxt runtime API variables.
+- Adapter test: real public-review reads call the backend and do not fall back to mock/local rows.
 - Source scan for product-boundary wording.
 - Source scan for store-alias leakage patterns such as direct `/u/${service.merchantUsername}` in public pages/components.
-- Browser or SPA route smoke for `/search?q=<merchant>` and a public profile with derived reviews when browser tooling is available.
+- Browser or SPA route smoke for `/search?q=<merchant>` and a public profile with backend reviews when browser tooling is available.
 
 ### 7. Wrong vs Correct
 
 #### Wrong
 
 ```ts
-if (intent.status === 'completed' && intent.review) {
-  return { username: intent.snapshot.merchantUsername, ... }
-}
+return [...await backendPublicUserReviews(username), ...publicReviewRecords]
 ```
 
 #### Correct
 
 ```ts
-if (intent.status !== 'completed' || !intent.review) return null
-if (intent.snapshot.merchantIdentityMode === 'store_alias') return null
-return { username: intent.snapshot.merchantUsername, ... }
+if (shouldUseRealBackend()) {
+  return backendPublicUserReviews(username)
+}
+return publicReviewsForProfile(username)
 ```
 
 ---
@@ -228,7 +230,7 @@ function createApiPurchaseIntent(payload: CreateApiPurchaseIntentPayload): Promi
 ### 6. Tests Required
 
 - Type check: `pnpm --dir frontend exec vue-tsc -b --pretty false`.
-- Production build: `pnpm --dir frontend exec vite build`.
+- Production build: real-mode `pnpm --dir frontend build` with the required Nuxt runtime API variables.
 - Product-boundary source scan for:
   - `购买后自动展示`
   - `购买后提供面板`
@@ -294,6 +296,21 @@ export type ApiOrderPaymentInstructions = {
   paymentQrCodeDataUrl: string | null
   paymentExpiresAt: string
 }
+
+export type APIIntentPricingSnapshotProjection = {
+  models: string[]
+  multiplier: string
+  defaultMultiplier: number
+  usageVisibility: ApiUsageVisibility
+  usageVisibilitySnapshotMissing: boolean
+  merchantNote: string
+  merchantSupportNote: string
+  issue?: 'missing' | 'invalid'
+}
+
+projectAPIIntentPricingSnapshot(value: string): APIIntentPricingSnapshotProjection
+
+isApiOrderReceiptConfirmed(status: ApiOrderStatus): boolean
 ```
 
 ### 3. Contracts
@@ -306,6 +323,16 @@ export type ApiOrderPaymentInstructions = {
 - Buyer/seller order detail may render `deliveryCredential` with copy buttons and long-term visibility. Lists, public API service pages, notifications, reports, admin summaries, and search rows must not render raw API keys or passwords.
 - UI wording should say `交付凭证`, `买家专属`, and `提交后不可修改`; do not claim platform revocation support, and avoid `自动发货`, `平台担保`, `平台验真`, and `主账号密码`.
 - Real backend mode must call API order endpoints through `apiMarketBackend.ts` and must not catch failures to return mock orders.
+- Intent creation freezes `pricingSnapshot.models[].modelNameSnapshot`, each model's `merchantMultiplier`, `usageVisibility`, `merchantNote`, and seller-authored `merchantSupportNote`. Order creation copies that JSON unchanged.
+- `mapBackendAPIOrder` must project `order.pricingSnapshot`, not a current service response, `serviceTitleSnapshot`, or the separately fetched intent projection. The order record is the authority after creation even when the intent usually contains the same bytes.
+- Order detail renders every non-empty frozen model name in snapshot order with duplicates removed. A missing snapshot shows explicit historical-missing copy; malformed JSON shows an explicit unavailable state. Neither path may substitute the service title or current service models.
+- Order information labels seller-authored frozen content as `商户售后说明`. The fixed platform copy is a separate `平台交易边界` field and must not be written into or presented as seller input.
+- Buyer and merchant detail routes share this snapshot projection and page component. Their five-step workflow uses the existing shadcn-vue Stepper with an explicit non-zero separator height; single-choice dialogs use the official `RadioGroupItem` plus `Label` composition.
+- Buyer navigation, list titles, detail return actions, and buyer task summaries use `API 购买订单`; merchant equivalents use `API 销售订单`. Neutral administration/review domain copy may continue to use `API 订单`.
+- Merchant operating metrics apply search, time-range, and service filters before aggregation. The active status tab filters only table rows and must not change the metric values.
+- `已确认收款金额` includes only `paid_confirmed`, `delivery_submitted`, and `completed`, because each follows explicit merchant receipt confirmation. It excludes `pending_payment`, `payment_submitted`, `payment_issue`, and `cancelled`.
+- Cancelled merchant orders contribute only to the `已取消订单` count. The UI must not present a cancelled amount or include cancelled orders in revenue-like totals.
+- A merchant order table with six columns keeps an explicit minimum table width inside the shared `SoftTable` overflow container. Mobile root width must remain bounded while the table scrolls horizontally.
 
 ### 4. Validation & Error Matrix
 
@@ -317,21 +344,38 @@ export type ApiOrderPaymentInstructions = {
 | Seller submits `api_key_endpoint` | Payload includes `deliveryKind`, `apiBaseUrl`, `apiKey`, and optional `instructions`; the detail response shows the credential. |
 | Seller submits `login_account` | Payload includes `deliveryKind`, `panelLoginUrl`, `username`, `password`, and optional `instructions`; the detail response shows the credential. |
 | Order list receives a delivered order | It may show status and submitted time, but must not render raw `apiKey` or `password`. |
+| `pricingSnapshot` is empty on a historical order | Render historical-missing model/usage/seller-support copy; do not query mutable service values as a fallback. |
+| `pricingSnapshot` is malformed JSON | Render snapshot-unavailable model/multiplier/seller-support copy; do not display `serviceTitleSnapshot` as a model. |
+| `pricingSnapshot.models` contains several valid models | Render all unique `modelNameSnapshot` values and show one multiplier or `按模型分别计算` as appropriate. |
+| Merchant opens the cancelled status tab | Table rows show only cancelled orders; operating metrics retain the same search/time/service population. |
+| Merchant cancelled an unpaid order | `已取消订单` increments, while `已确认收款金额` remains unchanged. |
+| Merchant confirms receipt, delivers, or completes | The order amount is counted exactly once in `已确认收款金额`. |
 
 ### 5. Good/Base/Bad Cases
 
 - Good: buyer detail in `pending_payment` calls `readApiOrderPaymentInstructions()` and renders the frozen WeChat QR code plus merchant contact snapshot.
 - Good: seller detail in `paid_confirmed` submits `{ deliveryKind: 'api_key_endpoint', apiBaseUrl, apiKey, instructions }`, receives `deliveryCredential`, and the form becomes read-only.
+- Good: an order frozen with `GPT-4.1`, `GPT-4.1 mini`, and `GPT-4o` shows those three names even after the merchant edits the service title or enabled models.
 - Base: a delivered order list row shows `已交付` and `deliverySubmittedAt`, but no raw `apiKey` or `password` text.
+- Base: an older order without seller-support fields says `历史订单未冻结商户售后说明` beside the separate fixed platform boundary.
+- Good: one cancelled `¥10.00` order shows `已取消订单 1` and `已确认收款金额 ¥0.00`, including while the cancelled tab is active.
 - Bad: a page derives API order fulfillment from `ApiPurchaseIntent.status`, or renders a generic `deliveryNote` textarea that can be edited after delivery.
 - Bad: a list, notification, search result, report row, or admin summary renders `order.deliveryCredential.apiKey` or `order.deliveryCredential.password`.
+- Bad: `models: [intent.serviceTitleSnapshot]`, reading the current service to repair history, or labeling fixed platform copy as seller after-sales input.
+- Bad: labeling both role-specific routes `我的 API 订单`, aggregating merchant metrics from status-tab-filtered rows, or counting cancelled/submitted-payment amounts as confirmed receipts.
 
 ### 6. Tests Required
 
 - Type check: `pnpm --dir frontend exec vue-tsc -b --pretty false`.
-- Real-mode build: `VITE_API_MODE=real pnpm --dir frontend exec vite build`.
+- Real-mode build: `pnpm --dir frontend build` with the required Nuxt runtime API variables.
 - Source scan for forbidden product wording outside the spec allowlist.
 - Adapter/review checks must verify `paymentQrCodeDataUrl` is mapped both in order-settings submit payloads and payment-instructions responses.
+- Backend intent tests must assert the JSON snapshot freezes model names/multipliers, usage visibility, merchant note, and merchant support note.
+- Frontend projection tests must cover one/many models, duplicate removal, different multipliers, historical missing fields, malformed JSON, and the rule that order mapping reads `order.pricingSnapshot`.
+- Order-detail source/browser checks must cover explicit Stepper separator dimensions and state color, `RadioGroupItem + Label` wiring, seller/platform field separation, and mobile page overflow.
+- Receipt-status unit tests must assert all seven API order statuses, including the three included and four excluded states.
+- Workspace source tests must assert buyer/seller labels, base-filter metric aggregation, cancelled count, confirmed-receipt wording, and the merchant table minimum width.
+- Browser checks must verify stable metric values across status tabs and confirm `documentElement.scrollWidth <= clientWidth` while the mobile table container remains horizontally scrollable.
 
 ### 7. Wrong vs Correct
 
@@ -355,6 +399,36 @@ This treats delivery as an editable generic note and leaks raw credentials from 
 ```
 
 The detail-only form submits a typed credential once; list rows render status helpers, not secret fields.
+
+#### Wrong: Reconstruct Frozen Order Fields
+
+```ts
+const models = [intent.serviceTitleSnapshot]
+const warranty = '最终金额和售后由双方站外确认'
+```
+
+#### Correct: Project The Order Snapshot And Keep Responsibility Explicit
+
+```ts
+const pricing = projectAPIIntentPricingSnapshot(order.pricingSnapshot ?? '')
+const models = pricing.models
+const merchantSupportNote = pricing.merchantSupportNote
+const platformTradeBoundary = '售后由双方站外确认；平台不代收、不托管、不担保、不代赔。'
+```
+
+#### Wrong: Aggregate Merchant Amounts From Visible Rows
+
+```ts
+const orderAmountTotal = filteredRows.value.reduce(addOrderAmount, '0.00')
+```
+
+#### Correct: Aggregate Confirmed Receipts From The Base Population
+
+```ts
+const confirmedReceiptAmount = baseFilteredRows.value
+  .filter(order => isApiOrderReceiptConfirmed(order.status))
+  .reduce(addOrderAmount, '0.00')
+```
 
 ---
 
@@ -451,7 +525,7 @@ export function initialSidebarCollapsed(
 ### 6. Tests Required
 
 - Type check: `pnpm --dir frontend exec vue-tsc -b --pretty false`.
-- Production build: `pnpm --dir frontend exec vite build`.
+- Production build: real-mode `pnpm --dir frontend build` with the required Nuxt runtime API variables.
 - Product-boundary scan for official-price and API-intent wording drift.
 - Browser/DOM smoke:
   - sidebar has no manual role switch,

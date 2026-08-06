@@ -7,8 +7,10 @@ import AnnouncementDetailContent from '@/components/announcements/AnnouncementDe
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
+import { Checkbox } from '@/components/ui/checkbox'
 import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { Switch } from '@/components/ui/switch'
 import { Textarea } from '@/components/ui/textarea'
 import {
   announcementCategoryLabels,
@@ -297,34 +299,34 @@ onBeforeRouteLeave(() => {
         </div>
 
         <div class="grid gap-3 rounded-md border border-border bg-muted/30 p-4 md:grid-cols-2">
-          <label class="flex items-start gap-2 text-sm">
-            <input checked disabled type="checkbox" class="mt-1 h-4 w-4 accent-primary" />
+          <div class="flex items-start gap-3 text-sm">
+            <Checkbox :model-value="true" disabled class="mt-1" aria-label="公告中心为必选展示渠道" />
             <span>
               <span class="font-medium">{{ announcementChannelLabels.message_center }}</span>
               <span class="mt-0.5 block text-xs text-muted-foreground">公告中心为必选展示渠道。</span>
             </span>
-          </label>
-          <label class="flex items-start gap-2 text-sm">
-            <input v-model="form.homeBanner" type="checkbox" class="mt-1 h-4 w-4 accent-primary" />
-            <span>
+          </div>
+          <div class="flex items-start gap-3 text-sm">
+            <Switch id="announcement-home-banner" v-model="form.homeBanner" class="mt-0.5" />
+            <label for="announcement-home-banner" class="cursor-pointer">
               <span class="font-medium">{{ announcementChannelLabels.home_banner }}</span>
               <span class="mt-0.5 block text-xs text-muted-foreground">只有发布中且未结束公告会进入首页候选。</span>
-            </span>
-          </label>
-          <label class="flex items-start gap-2 text-sm">
-            <input v-model="form.isPinned" type="checkbox" class="mt-1 h-4 w-4 accent-primary" />
-            <span>
+            </label>
+          </div>
+          <div class="flex items-start gap-3 text-sm">
+            <Switch id="announcement-pinned" v-model="form.isPinned" class="mt-0.5" />
+            <label for="announcement-pinned" class="cursor-pointer">
               <span class="font-medium">置顶</span>
               <span class="mt-0.5 block text-xs text-muted-foreground">置顶影响首页候选和公告列表排序展示。</span>
-            </span>
-          </label>
-          <label class="flex items-start gap-2 text-sm">
-            <input v-model="form.isDismissible" type="checkbox" class="mt-1 h-4 w-4 accent-primary" />
-            <span>
+            </label>
+          </div>
+          <div class="flex items-start gap-3 text-sm">
+            <Switch id="announcement-dismissible" v-model="form.isDismissible" class="mt-0.5" />
+            <label for="announcement-dismissible" class="cursor-pointer">
               <span class="font-medium">允许关闭首页公告</span>
               <span class="mt-0.5 block text-xs text-muted-foreground">重要公告通常不允许关闭。</span>
-            </span>
-          </label>
+            </label>
+          </div>
           <p v-if="errors.channels" class="text-xs text-destructive md:col-span-2">{{ errors.channels }}</p>
         </div>
 

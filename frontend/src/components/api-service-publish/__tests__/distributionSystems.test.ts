@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'vitest'
-import { distributionLabels, publishDistributionOptions } from '../utils.ts'
+import { distributionLabels, publishDistributionOptions, supportedPublishBillingModes } from '../utils.ts'
 
 test('exposes supported publish distribution options', () => {
   assert.deepEqual(
@@ -10,4 +10,5 @@ test('exposes supported publish distribution options', () => {
 
   assert.equal(distributionLabels.new_api_proxy, '其他 API 接入')
   assert.equal(distributionLabels.other, '其他 API 接入')
+  assert.deepEqual(supportedPublishBillingModes, ['metered_credit', 'fixed_package'])
 })

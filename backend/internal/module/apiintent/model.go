@@ -4,6 +4,7 @@ import (
 	"time"
 
 	"c2c-market/backend/internal/domain"
+	"c2c-market/backend/internal/module/apimarket"
 	"c2c-market/backend/internal/module/contact"
 	"c2c-market/backend/internal/module/idempotency"
 )
@@ -18,6 +19,7 @@ const (
 
 type Intent struct {
 	ID                                       string
+	PurchaseKind                             string
 	APIServiceID                             string
 	APIServiceOwnerUserID                    string
 	BuyerUserID                              string
@@ -45,6 +47,14 @@ type Intent struct {
 	MinimumIntentCNYSnapshot                 string
 	MaximumIntentCNYSnapshot                 string
 	PricingSnapshot                          string
+	QuotaUsagePolicySnapshot                 apimarket.QuotaUsagePolicy
+	PromptAuditEnabledSnapshot               *bool
+	APIQuotaBatchID                          string
+	APIQuotaOfferID                          string
+	APIQuotaSaleRoundID                      string
+	APIQuotaAllocationID                     string
+	APIQuotaInventoryUnitID                  string
+	QuotaOfferSnapshot                       string
 	BuyerNote                                string
 	ContactedAt                              *time.Time
 	BuyerCancelledAt                         *time.Time

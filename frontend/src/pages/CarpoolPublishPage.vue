@@ -2,7 +2,7 @@
 import { computed, nextTick, reactive, ref, watch } from 'vue'
 import { useMutation, useQueryClient } from '@tanstack/vue-query'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
-import { ChevronDown, ChevronUp, Eye, Loader2, LogIn, RefreshCw, Save, Send, ShieldCheck } from 'lucide-vue-next'
+import { Eye, Loader2, LogIn, RefreshCw, Save, Send, ShieldCheck } from 'lucide-vue-next'
 import { toast } from 'vue-sonner'
 import CarpoolBasicInfoSection from '@/components/carpool-publish/CarpoolBasicInfoSection.vue'
 import CarpoolPublishAssistant from '@/components/carpool-publish/CarpoolPublishAssistant.vue'
@@ -10,13 +10,11 @@ import CarpoolPublishPreview from '@/components/carpool-publish/CarpoolPublishPr
 import CarpoolRulesEditor from '@/components/carpool-publish/CarpoolRulesEditor.vue'
 import CarpoolWarrantySelector from '@/components/carpool-publish/CarpoolWarrantySelector.vue'
 import ChannelPaymentSection from '@/components/carpool-publish/ChannelPaymentSection.vue'
-import LinuxDoTopicImport from '@/components/carpool-publish/LinuxDoTopicImport.vue'
 import SeatCapacityEditor from '@/components/carpool-publish/SeatCapacityEditor.vue'
 import type {
   CarpoolProductCatalogItem,
   CarpoolPublishForm,
   CompletenessItem,
-  ParsedLinuxDoTopic,
   PublishDefaultItem,
   PublishFieldState,
   PublishTask,
@@ -26,8 +24,8 @@ import type {
 import {
   accessArrangementComplete,
   availableSeats,
-  buildLinuxDoPostText,
-  canBuildLinuxDoPostText,
+  buildCarpoolShareText,
+  canBuildCarpoolShareText,
   canPublishProduct,
   distributionFieldsComplete,
   hasForbiddenCredentialSharingText,
@@ -37,6 +35,7 @@ import {
 } from '@/components/carpool-publish/utils'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
+import { Checkbox } from '@/components/ui/checkbox'
 import {
   Dialog,
   DialogContent,
@@ -46,8 +45,8 @@ import {
   DialogTrigger,
 } from '@/components/ui/dialog'
 import { shouldUseRealBackend, startOAuthLogin } from '@/lib/backendClient'
-import { containsSensitiveContent, firstError, isLinuxDoTopicUrl, type FieldErrors } from '@/lib/formValidation'
-import { parseLinuxDoTopic, submitCarpool } from '@/lib/api'
+import { containsSensitiveContent, firstError, type FieldErrors } from '@/lib/formValidation'
+import { submitCarpool } from '@/lib/api'
 import { trackAnalytics } from '@/lib/analytics'
 import {
   useCarpoolOpeningChannels,
@@ -60,15 +59,16 @@ import { quotaFieldLabel } from '@/lib/quota'
 import { useUnsavedChangesGuard } from '@/composables/useUnsavedChangesGuard'
 
 type Field =
-  | 'linuxDoTopicUrl'
   | 'product'
   | 'region'
   | 'monthlyPriceCny'
-  | 'serviceMultiplier'
+  | 'weeklyQuota'
   | 'monthlyQuota'
+  | 'quotaReset'
+  | 'connection'
   | 'seats'
   | 'openingChannelCode'
-  | 'paymentMethodCodes'
+  | 'paymentMethodCode'
   | 'distribution'
   | 'accessArrangement'
   | 'warranty'
@@ -89,32 +89,34 @@ const route = useRoute()
 const router = useRouter()
 const analyticsSourceRoute = () => String(route.name ?? 'unknown')
 
-const parsedTopic = ref<ParsedLinuxDoTopic | null>(null)
 const submittedId = ref('')
 const oauthPending = ref(false)
 const hasTriedPublish = ref(false)
 const mobileCheckOpen = ref(false)
-const linuxDoImportOpen = ref(false)
 const highlightedTaskKey = ref<string | null>(null)
 const errors = reactive<FieldErrors<Field>>({})
 const publishReturnTo = '/carpools/new'
 const publishLoginRoute = { path: '/login', query: { returnTo: publishReturnTo } }
-let highlightTimer: ReturnType<typeof window.setTimeout> | null = null
+let highlightTimer: ReturnType<typeof setTimeout> | null = null
 
 const form = reactive<CarpoolPublishForm>({
-  linuxDoTopicUrl: '',
-  parsedTopicId: null,
   productId: '',
   customProductName: null,
   regionCode: '',
   customRegionName: null,
   monthlyPriceCny: null,
   serviceMultiplier: 1,
+  weeklyQuotaAmount: null,
   monthlyQuotaAmount: null,
+  followsOfficialQuotaReset: null,
+  vpsRegion: '',
+  supportsMainlandChinaDirectConnection: null,
   totalSeats: 5,
   occupiedSeats: 3,
   openingChannelCode: '',
-  paymentMethodCodes: [],
+  customOpeningChannel: '',
+  paymentMethodCode: '',
+  customPaymentMethod: '',
   distributionMethod: '',
   distributionMethodNote: '',
   providesAdminAccount: null,
@@ -157,27 +159,13 @@ watch(selectedProductForValidation, product => {
   form.riskAcknowledged = false
 })
 
-const parseTopicMutation = useMutation({
-  mutationFn: () => parseLinuxDoTopic(form.linuxDoTopicUrl),
-  onSuccess(result) {
-    parsedTopic.value = result
-    applyParsedTopic(result)
-    toast.success(`原帖读取成功 · 作者 ${result.authorUsername}`)
-  },
-  onError() {
-    parsedTopic.value = null
-    form.parsedTopicId = null
-    toast.warning('未能识别完整信息，可继续手动填写。')
-  },
-})
-
 const saveDraftMutation = useMutation({
   mutationFn: () => submitCarpool(toPayload('draft')),
   async onSuccess(result) {
     formDirty.value = false
     submittedId.value = String(result.id)
-    await invalidateCarpoolPublishQueries()
     toast.success('车源草稿已保存。')
+    await invalidateCarpoolPublishQueries()
   },
 })
 
@@ -186,7 +174,6 @@ const submitReviewMutation = useMutation({
   async onSuccess(result) {
     formDirty.value = false
     submittedId.value = String(result.id)
-    await invalidateCarpoolPublishQueries()
     trackAnalytics('carpool_publish_success', {
       source_route: analyticsSourceRoute(),
       product: selectedProductForValidation.value?.categoryCode ?? form.productId,
@@ -197,6 +184,7 @@ const submitReviewMutation = useMutation({
       risk_notice: form.riskNoticeCode ?? 'none',
     })
     toast.success('车源已提交。')
+    await invalidateCarpoolPublishQueries()
     await router.replace('/my/carpools')
   },
 })
@@ -240,12 +228,14 @@ const publishTaskFieldIds: Record<PublishTaskKey, string> = {
   product: 'carpool-task-product',
   region: 'carpool-task-region',
   monthlyPrice: 'carpool-task-monthlyPrice',
+  weeklyQuota: 'carpool-task-weeklyQuota',
   monthlyQuota: 'carpool-task-monthlyQuota',
+  quotaReset: 'carpool-task-quotaReset',
+  connection: 'carpool-task-vpsRegion',
   openingChannel: 'carpool-task-openingChannel',
   paymentMethods: 'carpool-task-paymentMethods',
   distribution: 'carpool-task-distribution',
   rulesNote: 'carpool-task-rulesNote',
-  linuxDoImport: 'carpool-tool-linuxdo-import',
 }
 
 function fieldErrorForTask(key: PublishTaskKey) {
@@ -253,9 +243,12 @@ function fieldErrorForTask(key: PublishTaskKey) {
   if (key === 'product') return errors.product ?? ''
   if (key === 'region') return errors.region ?? ''
   if (key === 'monthlyPrice') return errors.monthlyPriceCny ?? ''
+  if (key === 'weeklyQuota') return errors.weeklyQuota ?? ''
   if (key === 'monthlyQuota') return errors.monthlyQuota ?? ''
+  if (key === 'quotaReset') return errors.quotaReset ?? ''
+  if (key === 'connection') return errors.connection ?? ''
   if (key === 'openingChannel') return errors.openingChannelCode ?? ''
-  if (key === 'paymentMethods') return errors.paymentMethodCodes ?? ''
+  if (key === 'paymentMethods') return errors.paymentMethodCode ?? ''
   if (key === 'distribution') return errors.distribution ?? ''
   if (key === 'rulesNote') return errors.rulesNote ?? ''
   return ''
@@ -265,12 +258,15 @@ function taskComplete(key: PublishTaskKey) {
   if (key === 'product') return Boolean(form.productId && (form.productId !== 'other-custom' || form.customProductName?.trim()))
   if (key === 'region') return Boolean(form.regionCode && finalRegionName.value)
   if (key === 'monthlyPrice') return Boolean(form.monthlyPriceCny && form.monthlyPriceCny > 0)
+  if (key === 'weeklyQuota') return Boolean(form.weeklyQuotaAmount && form.weeklyQuotaAmount > 0)
   if (key === 'monthlyQuota') return Boolean(form.monthlyQuotaAmount && form.monthlyQuotaAmount > 0)
-  if (key === 'openingChannel') return Boolean(form.openingChannelCode)
-  if (key === 'paymentMethods') return form.paymentMethodCodes.length === 1
+  if (key === 'quotaReset') return form.followsOfficialQuotaReset !== null
+  if (key === 'connection') return Boolean(form.vpsRegion.trim() && form.supportsMainlandChinaDirectConnection !== null)
+  if (key === 'openingChannel') return Boolean(form.openingChannelCode && (form.openingChannelCode !== 'other' || form.customOpeningChannel.trim()))
+  if (key === 'paymentMethods') return Boolean(form.paymentMethodCode && (form.paymentMethodCode !== 'other' || form.customPaymentMethod.trim()))
   if (key === 'distribution') return distributionFieldsComplete(form)
   if (key === 'rulesNote') return Boolean(form.rulesNote.trim())
-  return Boolean(form.linuxDoTopicUrl.trim())
+  return false
 }
 
 const publishTasks = computed<PublishTask[]>(() => [
@@ -305,6 +301,16 @@ const publishTasks = computed<PublishTask[]>(() => [
     error: fieldErrorForTask('monthlyPrice'),
   },
   {
+    key: 'weeklyQuota',
+    label: `填写每周${selectedProductForValidation.value?.quotaLabel || '额度'}`,
+    shortLabel: `每周${selectedProductForValidation.value?.quotaLabel || '额度'}`,
+    section: 'basic',
+    fieldId: publishTaskFieldIds.weeklyQuota,
+    description: '额度与重置',
+    complete: taskComplete('weeklyQuota'),
+    error: fieldErrorForTask('weeklyQuota'),
+  },
+  {
     key: 'monthlyQuota',
     label: `填写${quotaFieldLabel(selectedProductForValidation.value)}`,
     shortLabel: quotaFieldLabel(selectedProductForValidation.value),
@@ -313,6 +319,26 @@ const publishTasks = computed<PublishTask[]>(() => [
     description: '车源基础信息',
     complete: taskComplete('monthlyQuota'),
     error: fieldErrorForTask('monthlyQuota'),
+  },
+  {
+    key: 'quotaReset',
+    label: '确认额度重置方式',
+    shortLabel: '额度重置',
+    section: 'basic',
+    fieldId: publishTaskFieldIds.quotaReset,
+    description: '额度与重置',
+    complete: taskComplete('quotaReset'),
+    error: fieldErrorForTask('quotaReset'),
+  },
+  {
+    key: 'connection',
+    label: '填写 VPS 与直连信息',
+    shortLabel: '网络接入',
+    section: 'basic',
+    fieldId: publishTaskFieldIds.connection,
+    description: 'VPS 区域与国内直连',
+    complete: taskComplete('connection'),
+    error: fieldErrorForTask('connection'),
   },
   {
     key: 'openingChannel',
@@ -338,7 +364,7 @@ const publishTasks = computed<PublishTask[]>(() => [
     key: 'distribution',
     label: '确认分发方式',
     shortLabel: '分发方式',
-    section: 'activationPayment',
+    section: 'basic',
     fieldId: publishTaskFieldIds.distribution,
     description: '分发方式与管理员账号',
     complete: taskComplete('distribution'),
@@ -382,10 +408,6 @@ function stateForTask(key: PublishTaskKey): PublishFieldState {
 }
 
 function stateForFullValidation(field: Field): PublishFieldState {
-  if (field === 'serviceMultiplier') {
-    if (hasTriedPublish.value && errors.serviceMultiplier) return 'error'
-    return form.serviceMultiplier && form.serviceMultiplier > 0 ? 'defaulted' : 'pendingRequired'
-  }
   if (field === 'seats') {
     if (hasTriedPublish.value && errors.seats) return 'error'
     return form.totalSeats >= 1 && form.totalSeats <= 20 && form.occupiedSeats >= 0 && form.occupiedSeats <= form.totalSeats ? 'defaulted' : 'pendingRequired'
@@ -405,23 +427,19 @@ const basicFieldStates = computed<Partial<Record<string, PublishFieldState>>>(()
   product: stateForTask('product'),
   region: stateForTask('region'),
   monthlyPrice: stateForTask('monthlyPrice'),
+  weeklyQuota: stateForTask('weeklyQuota'),
   monthlyQuota: stateForTask('monthlyQuota'),
-  serviceMultiplier: stateForFullValidation('serviceMultiplier'),
+  quotaReset: stateForTask('quotaReset'),
+  connection: stateForTask('connection'),
+  distribution: stateForTask('distribution'),
 }))
 
 const channelPaymentFieldStates = computed<Partial<Record<string, PublishFieldState>>>(() => ({
   openingChannel: stateForTask('openingChannel'),
   paymentMethods: stateForTask('paymentMethods'),
-  distribution: stateForTask('distribution'),
 }))
 
 const defaultItems = computed<PublishDefaultItem[]>(() => [
-  {
-    key: 'serviceMultiplier',
-    label: '倍率已默认',
-    description: `${form.serviceMultiplier ?? 1}x，可按实际情况修改。`,
-    status: stateForFullValidation('serviceMultiplier'),
-  },
   {
     key: 'seats',
     label: '名额设置已默认',
@@ -446,12 +464,14 @@ function taskFromErrorKey(key: Field): PublishTaskKey | null {
   if (key === 'product') return 'product'
   if (key === 'region') return 'region'
   if (key === 'monthlyPriceCny') return 'monthlyPrice'
+  if (key === 'weeklyQuota') return 'weeklyQuota'
   if (key === 'monthlyQuota') return 'monthlyQuota'
+  if (key === 'quotaReset') return 'quotaReset'
+  if (key === 'connection') return 'connection'
   if (key === 'openingChannelCode') return 'openingChannel'
-  if (key === 'paymentMethodCodes') return 'paymentMethods'
+  if (key === 'paymentMethodCode') return 'paymentMethods'
   if (key === 'distribution') return 'distribution'
   if (key === 'rulesNote') return 'rulesNote'
-  if (key === 'serviceMultiplier') return 'monthlyPrice'
   if (key === 'seats') return 'monthlyPrice'
   if (key === 'accessArrangement') return 'product'
   if (key === 'warranty') return 'rulesNote'
@@ -460,7 +480,6 @@ function taskFromErrorKey(key: Field): PublishTaskKey | null {
 }
 
 async function jumpToTask(key: PublishTaskKey | string) {
-  if (key === 'linuxDoImport') linuxDoImportOpen.value = true
   await nextTick()
   const targetId = publishTaskFieldIds[key as PublishTaskKey]
   const target = targetId ? document.getElementById(targetId) : null
@@ -469,8 +488,8 @@ async function jumpToTask(key: PublishTaskKey | string) {
   const focusable = target.querySelector<HTMLElement>('input, textarea, button, [tabindex]:not([tabindex="-1"])')
   focusable?.focus({ preventScroll: true })
   highlightedTaskKey.value = key
-  if (highlightTimer) window.clearTimeout(highlightTimer)
-  highlightTimer = window.setTimeout(() => {
+  if (highlightTimer) clearTimeout(highlightTimer)
+  highlightTimer = setTimeout(() => {
     highlightedTaskKey.value = null
   }, 1200)
 }
@@ -483,31 +502,6 @@ async function focusFirstInvalidTask() {
 
 function isMobilePublishCheckViewport() {
   return window.matchMedia('(max-width: 639px)').matches
-}
-
-function applyParsedTopic(topic: ParsedLinuxDoTopic) {
-  form.parsedTopicId = topic.topicId
-  if (topic.detected.productId && !form.productId) form.productId = topic.detected.productId
-  if (topic.detected.regionCode && !form.regionCode) form.regionCode = topic.detected.regionCode
-  if (topic.detected.regionCode === 'other' && topic.detected.regionText && !form.customRegionName) form.customRegionName = topic.detected.regionText
-  if (!topic.detected.regionCode && topic.detected.regionText && !form.regionCode) {
-    form.regionCode = 'other'
-    form.customRegionName = topic.detected.regionText
-  }
-  if (topic.detected.monthlyPriceCny && !form.monthlyPriceCny) form.monthlyPriceCny = topic.detected.monthlyPriceCny
-  if (topic.detected.totalSeats && form.totalSeats === 5) form.totalSeats = topic.detected.totalSeats
-  if (topic.detected.occupiedSeats !== null && form.occupiedSeats === 3) form.occupiedSeats = Math.min(topic.detected.occupiedSeats, form.totalSeats)
-  if (topic.detected.openingChannelId && !form.openingChannelCode) form.openingChannelCode = topic.detected.openingChannelId
-  if (topic.detected.paymentMethodIds.length && !form.paymentMethodCodes.length) form.paymentMethodCodes = [topic.detected.paymentMethodIds[0]]
-  if (topic.detected.warrantyMode) form.warranty.mode = topic.detected.warrantyMode
-  const detectedProduct = topic.detected.productId ? catalogById.value.get(topic.detected.productId) : null
-  if (detectedProduct) {
-    form.policyVersion = detectedProduct.policyVersion
-    form.riskNoticeCode = detectedProduct.riskNoticeCode ?? null
-    form.accessArrangementMode = detectedProduct.accessMode
-    form.accessArrangementNote = defaultAccessArrangementNote(detectedProduct)
-    form.riskAcknowledged = false
-  }
 }
 
 function defaultAccessArrangementNote(product: CarpoolProductCatalogItem) {
@@ -545,21 +539,33 @@ watch(() => form.monthlyQuotaAmount, () => {
   if (taskComplete('monthlyQuota')) clearError('monthlyQuota')
 })
 
-watch(() => form.serviceMultiplier, () => {
-  if (form.serviceMultiplier && form.serviceMultiplier > 0) clearError('serviceMultiplier')
+watch(() => form.weeklyQuotaAmount, () => {
+  if (taskComplete('weeklyQuota')) clearError('weeklyQuota')
+})
+
+watch(() => form.followsOfficialQuotaReset, () => {
+  if (taskComplete('quotaReset')) clearError('quotaReset')
+})
+
+watch(() => [form.vpsRegion, form.supportsMainlandChinaDirectConnection], () => {
+  if (taskComplete('connection')) clearError('connection')
+  if (!hasSensitiveText.value) clearError('sensitive')
 })
 
 watch(() => [form.totalSeats, form.occupiedSeats], () => {
   if (form.totalSeats >= 1 && form.totalSeats <= 20 && form.occupiedSeats >= 0 && form.occupiedSeats <= form.totalSeats) clearError('seats')
 })
 
-watch(() => form.openingChannelCode, () => {
+watch(() => [form.openingChannelCode, form.customOpeningChannel], ([code]) => {
+  if (code !== 'other') form.customOpeningChannel = ''
   if (taskComplete('openingChannel')) clearError('openingChannelCode')
+  if (!hasSensitiveText.value) clearError('sensitive')
 })
 
-watch(() => form.paymentMethodCodes.length, () => {
-  if (form.paymentMethodCodes.length > 1) form.paymentMethodCodes = form.paymentMethodCodes.slice(0, 1)
-  if (taskComplete('paymentMethods')) clearError('paymentMethodCodes')
+watch(() => [form.paymentMethodCode, form.customPaymentMethod], ([code]) => {
+  if (code !== 'other') form.customPaymentMethod = ''
+  if (taskComplete('paymentMethods')) clearError('paymentMethodCode')
+  if (!hasSensitiveText.value) clearError('sensitive')
 })
 
 watch(() => [form.distributionMethod, form.distributionMethodNote, form.providesAdminAccount], () => {
@@ -584,7 +590,6 @@ watch(() => form.rulesNote, () => {
 
 function validate(requireComplete: boolean) {
   const next: FieldErrors<Field> = {}
-  if (form.linuxDoTopicUrl.trim() && !isLinuxDoTopicUrl(form.linuxDoTopicUrl)) next.linuxDoTopicUrl = '原帖链接必须是 https://linux.do/t/*。'
   if (!form.productId) next.product = '请选择产品目录。'
   if (form.productId === 'other-custom' && !form.customProductName?.trim()) next.product = '请填写自定义产品名称。'
   if (selectedProductForValidation.value && !canPublishProduct(selectedProductForValidation.value)) {
@@ -595,13 +600,18 @@ function validate(requireComplete: boolean) {
   if (!form.regionCode) next.region = '请选择开通区。'
   else if (!finalRegionName.value) next.region = '请填写自定义开通区。'
   if (!Number.isFinite(form.monthlyPriceCny) || !form.monthlyPriceCny || form.monthlyPriceCny <= 0) next.monthlyPriceCny = '月费必须大于 0。'
-  if (!Number.isFinite(form.serviceMultiplier) || !form.serviceMultiplier || form.serviceMultiplier <= 0) next.serviceMultiplier = '倍率必须大于 0。'
+  if (!Number.isFinite(form.weeklyQuotaAmount) || !form.weeklyQuotaAmount || form.weeklyQuotaAmount <= 0) next.weeklyQuota = `每周${selectedProductForValidation.value?.quotaLabel || '额度'}必须大于 0。`
   if (!Number.isFinite(form.monthlyQuotaAmount) || !form.monthlyQuotaAmount || form.monthlyQuotaAmount <= 0) {
     next.monthlyQuota = `${quotaFieldLabel(selectedProductForValidation.value)}必须大于 0。`
   }
+  if (form.followsOfficialQuotaReset === null) next.quotaReset = '请选择额度是否跟随官方重置。'
+  if (!form.vpsRegion.trim()) next.connection = '请填写 VPS 区域。'
+  else if (form.supportsMainlandChinaDirectConnection === null) next.connection = '请选择是否支持国内直连。'
   if (form.totalSeats < 1 || form.totalSeats > 20 || form.occupiedSeats < 0 || form.occupiedSeats > form.totalSeats) next.seats = '名额必须满足总名额 1-20，且已上车人数不超过总名额。'
   if (!form.openingChannelCode) next.openingChannelCode = '请选择开通渠道。'
-  if (form.paymentMethodCodes.length !== 1) next.paymentMethodCodes = '请选择一种付款方式。'
+  else if (form.openingChannelCode === 'other' && !form.customOpeningChannel.trim()) next.openingChannelCode = '请填写其他开通渠道。'
+  if (!form.paymentMethodCode) next.paymentMethodCode = '请选择一种付款方式。'
+  else if (form.paymentMethodCode === 'other' && !form.customPaymentMethod.trim()) next.paymentMethodCode = '请填写其他付款方式。'
   if (!form.distributionMethod) {
     next.distribution = '请选择分发方式。'
   } else if (form.distributionMethod === 'other' && !form.distributionMethodNote.trim()) {
@@ -625,6 +635,9 @@ function validate(requireComplete: boolean) {
   if (containsSensitiveContent([
     form.customProductName ?? '',
     form.customRegionName ?? '',
+    form.customOpeningChannel,
+    form.customPaymentMethod,
+    form.vpsRegion,
     form.warranty.compensationMethod ?? '',
     form.warranty.exclusions ?? '',
     form.distributionMethodNote,
@@ -636,10 +649,12 @@ function validate(requireComplete: boolean) {
     delete next.product
     delete next.region
     delete next.monthlyPriceCny
-    delete next.serviceMultiplier
+    delete next.weeklyQuota
     delete next.monthlyQuota
+    delete next.quotaReset
+    delete next.connection
     delete next.openingChannelCode
-    delete next.paymentMethodCodes
+    delete next.paymentMethodCode
     delete next.distribution
     delete next.accessArrangement
     delete next.warranty
@@ -658,19 +673,23 @@ function validate(requireComplete: boolean) {
 
 function toPayload(status: 'draft' | 'reviewing') {
   return {
-    linuxDoTopicUrl: form.linuxDoTopicUrl.trim(),
-    parsedTopicId: form.parsedTopicId,
     productId: form.productId,
     customProductName: form.customProductName,
     regionCode: form.regionCode,
     customRegionName: form.regionCode === 'other' ? form.customRegionName?.trim() || null : null,
     monthlyPriceCny: form.monthlyPriceCny,
-    serviceMultiplier: form.serviceMultiplier,
+    serviceMultiplier: 1,
+    weeklyQuotaAmount: form.weeklyQuotaAmount,
     monthlyQuotaAmount: form.monthlyQuotaAmount,
+    followsOfficialQuotaReset: form.followsOfficialQuotaReset,
+    vpsRegion: form.vpsRegion.trim(),
+    supportsMainlandChinaDirectConnection: form.supportsMainlandChinaDirectConnection,
     totalSeats: form.totalSeats,
     occupiedSeats: form.occupiedSeats,
     openingChannelCode: form.openingChannelCode,
-    paymentMethodCodes: form.paymentMethodCodes.slice(0, 1),
+    customOpeningChannel: form.openingChannelCode === 'other' ? form.customOpeningChannel.trim() : '',
+    paymentMethodCode: form.paymentMethodCode,
+    customPaymentMethod: form.paymentMethodCode === 'other' ? form.customPaymentMethod.trim() : '',
     distributionMethod: form.distributionMethod,
     distributionMethodNote: form.distributionMethodNote,
     providesAdminAccount: form.providesAdminAccount,
@@ -683,20 +702,6 @@ function toPayload(status: 'draft' | 'reviewing') {
     rulesNote: form.rulesNote,
     status,
   }
-}
-
-function parseTopic() {
-  if (!form.linuxDoTopicUrl.trim()) {
-    errors.linuxDoTopicUrl = '填写 linux.do 原帖链接后可读取回填。'
-    toast.warning(errors.linuxDoTopicUrl)
-    return
-  }
-  if (!isLinuxDoTopicUrl(form.linuxDoTopicUrl)) {
-    errors.linuxDoTopicUrl = '请先填写 https://linux.do/t/* 原帖链接。'
-    toast.warning(errors.linuxDoTopicUrl)
-    return
-  }
-  parseTopicMutation.mutate()
 }
 
 function saveDraft() {
@@ -724,10 +729,12 @@ const completeness = computed<CompletenessItem[]>(() => [
   form.productId && (form.productId !== 'other-custom' || form.customProductName?.trim()) ? { label: '产品', status: 'done' } : { label: '产品', status: 'pending' },
   taskComplete('region') ? { label: '地区', status: 'done' } : { label: '地区', status: 'pending' },
   form.monthlyPriceCny && form.monthlyPriceCny > 0 ? { label: '月费', status: 'done' } : { label: '月费', status: 'pending' },
-  form.serviceMultiplier && form.serviceMultiplier > 0 && form.monthlyQuotaAmount && form.monthlyQuotaAmount > 0 ? { label: '倍率和每月额度', status: 'done' } : { label: '倍率和每月额度', status: 'pending' },
+  taskComplete('weeklyQuota') && taskComplete('monthlyQuota') ? { label: '每周 / 每月额度', status: 'done' } : { label: '每周 / 每月额度', status: 'pending' },
+  taskComplete('quotaReset') ? { label: '额度重置', status: 'done' } : { label: '额度重置', status: 'pending' },
+  taskComplete('connection') ? { label: 'VPS 与国内直连', status: 'done' } : { label: 'VPS 与国内直连', status: 'pending' },
   form.totalSeats >= 1 && form.totalSeats <= 20 && form.occupiedSeats >= 0 && form.occupiedSeats < form.totalSeats ? { label: '名额', status: 'done' } : { label: '名额', status: 'conflict' },
   form.openingChannelCode ? { label: '开通渠道', status: 'done' } : { label: '开通渠道', status: 'pending' },
-  form.paymentMethodCodes.length === 1 ? { label: '付款方式', status: 'done' } : { label: '付款方式', status: 'pending' },
+  taskComplete('paymentMethods') ? { label: '付款方式', status: 'done' } : { label: '付款方式', status: 'pending' },
   distributionFieldsComplete(form) ? { label: '分发方式', status: 'done' } : { label: '分发方式', status: 'pending' },
   accessArrangementComplete(form, selectedProductForValidation.value) ? { label: '发布边界确认', status: 'done' } : { label: '发布边界确认', status: 'conflict' },
   warrantyComplete(form.warranty) ? { label: '车主承诺', status: 'done' } : { label: '车主承诺', status: 'pending' },
@@ -744,18 +751,10 @@ const trustItems = computed<TrustItem[]>(() => [
     status: profile.value?.linuxDoBinding.bound ? 'done' : 'pending',
     description: profile.value?.linuxDoBinding.bound ? '当前账号已具备发布车源资格。' : '发布车源需要账号完成 linux.do 身份绑定。',
   },
-  {
-    label: form.linuxDoTopicUrl.trim() ? '已填写 linux.do 原帖' : '未绑定 linux.do 原帖',
-    status: form.linuxDoTopicUrl.trim() ? 'done' : 'pending',
-    description: form.linuxDoTopicUrl.trim() ? '原帖作为公开增信信息展示。' : '可发布后再复制文案到 linux.do 发帖并补充链接。',
-  },
 ])
 
 const reminders = computed(() => {
   const rows: string[] = []
-  if (!form.linuxDoTopicUrl.trim()) rows.push('未填写原帖链接不影响发布，可发布后再补充原帖提升可信度。')
-  if (form.linuxDoTopicUrl.trim() && !parsedTopic.value) rows.push('已填写原帖链接，提交前建议读取一次原帖。')
-  if (parsedTopic.value && !parsedTopic.value.authorMatchesBoundUser) rows.push('原帖作者与当前绑定用户不一致，请先确认已绑定自己的 linux.do 身份。')
   if (form.productId === 'other-custom') rows.push('自定义产品提交后需要先完成目录确认。')
   if (selectedProductForValidation.value && selectedProductForValidation.value.publishPolicy !== 'allowed') {
     rows.push(selectedProductForValidation.value.publishPolicy === 'info_only' ? '该产品当前仅用于行情和线索展示。' : '该产品当前不允许发布。')
@@ -774,17 +773,20 @@ const submittedMessage = computed(() => {
 const hasSensitiveText = computed(() => containsSensitiveContent([
   form.customProductName ?? '',
   form.customRegionName ?? '',
+  form.customOpeningChannel,
+  form.customPaymentMethod,
+  form.vpsRegion,
   form.warranty.compensationMethod ?? '',
   form.warranty.exclusions ?? '',
   form.distributionMethodNote,
   form.accessArrangementNote,
   form.rulesNote,
 ]))
-const canCopyPostText = computed(() => (
-  canBuildLinuxDoPostText(form, regionsByCode.value, openingChannelsByCode.value, paymentMethodsByCode.value)
+const canCopyShareText = computed(() => (
+  canBuildCarpoolShareText(form, regionsByCode.value, openingChannelsByCode.value, paymentMethodsByCode.value)
   && !hasSensitiveText.value
 ))
-const postText = computed(() => buildLinuxDoPostText(
+const shareText = computed(() => buildCarpoolShareText(
   form,
   catalogById.value,
   regionsByCode.value,
@@ -794,20 +796,20 @@ const postText = computed(() => buildLinuxDoPostText(
 ))
 const copyDisabledReason = computed(() => {
   if (hasSensitiveText.value) return '请先移除账号密码、token、API Key、付款二维码、银行卡号等敏感凭据。'
-  if (!canBuildLinuxDoPostText(form, regionsByCode.value, openingChannelsByCode.value, paymentMethodsByCode.value)) {
-    return '填写产品、地区、价格、名额、渠道、付款方式、售后和买家须知后可生成发帖文案。'
+  if (!canBuildCarpoolShareText(form, regionsByCode.value, openingChannelsByCode.value, paymentMethodsByCode.value)) {
+    return '填写产品、地区、价格、名额、渠道、付款方式、售后和买家须知后可生成分享文案。'
   }
   return ''
 })
 
-async function copyPostText() {
-  if (!canCopyPostText.value) {
-    toast.warning(copyDisabledReason.value || '请先补全发帖文案所需字段。')
+async function copyShareText() {
+  if (!canCopyShareText.value) {
+    toast.warning(copyDisabledReason.value || '请先补全分享文案所需字段。')
     return
   }
   try {
-    await navigator.clipboard.writeText(postText.value)
-    toast.success('已复制 linux.do 发帖文案')
+    await navigator.clipboard.writeText(shareText.value)
+    toast.success('已复制车源分享文案')
   } catch {
     toast.warning('复制失败，请手动选择文案复制')
   }
@@ -818,8 +820,8 @@ async function copyPostText() {
   <div class="space-y-5" :class="canAccessPublishForm ? 'pb-[calc(96px+env(safe-area-inset-bottom))] sm:pb-0' : 'pb-0'" @input="formDirty = true" @change="formDirty = true">
     <div class="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
       <div>
-        <h1 class="text-2xl font-semibold md:text-3xl">导入 / 发布车源</h1>
-        <p class="mt-2 max-w-3xl text-sm text-muted-foreground">可导入 linux.do 原帖自动回填，也可以手动填写后直接发布。</p>
+        <h1 class="text-2xl font-semibold md:text-3xl">发布车源</h1>
+        <p class="mt-2 max-w-3xl text-sm text-muted-foreground">填写车源的套餐、额度、接入和使用规则。</p>
       </div>
       <div v-if="canAccessPublishForm" class="hidden gap-2 sm:flex">
         <Button variant="outline" :disabled="saveDraftMutation.isPending.value" @click="saveDraft"><Save class="h-4 w-4" />保存草稿</Button>
@@ -849,7 +851,7 @@ async function copyPostText() {
         <div class="min-w-0 flex-1">
           <h2 class="text-lg font-semibold tracking-tight">登录后发布车源</h2>
           <p class="mt-2 text-sm leading-6 text-muted-foreground">
-            发布车源前需要先登录账号，并完成 linux.do 身份绑定。linux.do 原帖链接是可选增信项，不是进入表单的前置条件。
+            发布车源前需要先登录账号，并完成 linux.do 身份绑定。
           </p>
           <p class="mt-2 text-sm leading-6 text-muted-foreground">{{ profileErrorMessage }}</p>
           <div class="mt-5 flex flex-wrap gap-2">
@@ -873,7 +875,7 @@ async function copyPostText() {
         <div class="min-w-0 flex-1">
           <h2 class="text-lg font-semibold tracking-tight">完成 linux.do 身份绑定后发布车源</h2>
           <p class="mt-2 text-sm leading-6 text-muted-foreground">
-            当前账号已登录，但还没有绑定 linux.do。发布资格看账号身份绑定；原帖链接仍然可以在发布后补充，用来提升公开可信度。
+            当前账号已登录，但还没有绑定 linux.do。完成身份绑定后即可发布车源。
           </p>
           <div class="mt-5 flex flex-wrap gap-2">
             <Button :disabled="oauthPending" @click="startLinuxDoPublishAuth">
@@ -891,9 +893,8 @@ async function copyPostText() {
 
     <template v-else>
       <div class="rounded-lg border border-primary/15 bg-primary/5 p-3 sm:hidden">
-        <div class="flex items-center justify-between gap-3 text-sm font-medium">
+        <div class="flex items-center gap-3 text-sm font-medium">
           <span>发布必填 {{ completedPublishTasks.length }} / {{ publishTasks.length }}</span>
-          <span class="text-xs text-muted-foreground">{{ form.linuxDoTopicUrl.trim() ? '原帖已填写' : '原帖可选 · 手动发布' }}</span>
         </div>
         <div class="mt-2 h-2 overflow-hidden rounded-full bg-background">
           <div class="h-full rounded-full bg-primary" :style="{ width: `${publishProgressPercent}%` }" />
@@ -945,38 +946,12 @@ async function copyPostText() {
       <div v-if="submittedId" class="rounded-lg border border-border bg-accent px-4 py-3 text-sm">
         <div class="font-medium">{{ submittedMessage }}</div>
         <div class="mt-2 flex flex-wrap items-center gap-2">
-          <span class="text-xs text-muted-foreground">你可以复制标准文案到 linux.do 发帖，发帖后再回来补充原帖链接。</span>
-          <Button size="sm" variant="outline" :disabled="!canCopyPostText" @click="copyPostText">复制 linux.do 发帖文案</Button>
+          <Button size="sm" variant="outline" :disabled="!canCopyShareText" @click="copyShareText">复制车源分享文案</Button>
         </div>
       </div>
 
       <div class="grid gap-5 lg:grid-cols-[minmax(0,1fr)_minmax(320px,360px)] lg:items-start">
         <section class="space-y-4">
-          <Card id="carpool-tool-linuxdo-import" class="overflow-hidden p-0 shadow-sm" :class="highlightedTaskKey === 'linuxDoImport' ? 'ring-2 ring-primary/60 ring-offset-2 ring-offset-background' : ''">
-            <button
-              type="button"
-              class="flex w-full items-center justify-between gap-3 px-4 py-4 text-left"
-              @click="linuxDoImportOpen = !linuxDoImportOpen"
-            >
-              <span class="min-w-0">
-                <span class="block text-base font-semibold">导入 linux.do 原帖（可选）</span>
-                <span class="mt-1 block text-xs leading-5 text-muted-foreground">一键导入可自动回填产品、价格、地区、渠道和支付信息；没有原帖也可以直接手动填写。</span>
-              </span>
-              <ChevronUp v-if="linuxDoImportOpen" class="h-4 w-4 shrink-0 text-muted-foreground" />
-              <ChevronDown v-else class="h-4 w-4 shrink-0 text-muted-foreground" />
-            </button>
-            <div v-if="linuxDoImportOpen" class="border-t border-border px-4 pb-4 pt-3">
-              <LinuxDoTopicImport
-                v-model:topic-url="form.linuxDoTopicUrl"
-                :parsed-topic="parsedTopic"
-                :parse-pending="parseTopicMutation.isPending.value"
-                :error="errors.linuxDoTopicUrl"
-                embedded
-                @parse="parseTopic"
-              />
-            </div>
-          </Card>
-
           <CarpoolBasicInfoSection
             :form="form"
             :catalog="catalog"
@@ -991,7 +966,7 @@ async function copyPostText() {
             :class="errors.accessArrangement ? 'ring-2 ring-warning/50 ring-offset-2 ring-offset-background' : ''"
           >
             <label class="flex gap-3 text-sm leading-6">
-              <input v-model="form.riskAcknowledged" type="checkbox" class="mt-1 h-4 w-4 shrink-0 accent-current">
+              <Checkbox v-model="form.riskAcknowledged" class="mt-1" />
               <span>
                 我确认已理解该套餐发布边界；平台不会填写、保存、交付或要求买家提供主账号、密码、API Key、Session、Cookie、token 或其他登录凭据。
               </span>
@@ -1034,7 +1009,6 @@ async function copyPostText() {
                 :regions-by-code="regionsByCode"
                 :opening-channels-by-code="openingChannelsByCode"
                 :payment-methods-by-code="paymentMethodsByCode"
-                :parsed-topic="parsedTopic"
                 :completeness="completeness"
                 :reminders="[]"
                 :submit-pending="submitReviewMutation.isPending.value"
@@ -1051,13 +1025,13 @@ async function copyPostText() {
             :reminders="reminders"
             :remaining-seats="availableSeats(form)"
             :total-seats="form.totalSeats"
-            :copy-enabled="canCopyPostText"
+            :copy-enabled="canCopyShareText"
             :copy-disabled-reason="copyDisabledReason"
-            :post-text="postText"
+            :share-text="shareText"
             :submit-pending="submitReviewMutation.isPending.value"
             @save-draft="saveDraft"
             @submit-review="submitReview"
-            @copy-post-text="copyPostText"
+            @copy-share-text="copyShareText"
             @jump-to-task="jumpToTask"
           />
         </div>
@@ -1082,11 +1056,12 @@ async function copyPostText() {
               <div class="h-full rounded-full bg-primary" :style="{ width: `${publishProgressPercent}%` }" />
             </div>
             <div class="mt-4 space-y-2">
-              <button
+              <Button
                 v-for="(task, index) in pendingPublishTasks"
                 :key="task.key"
                 type="button"
-                class="flex w-full items-center gap-3 rounded-lg border border-border bg-background px-3 py-3 text-left text-sm"
+                variant="outline"
+                class="h-auto w-full justify-start whitespace-normal px-3 py-3 text-left text-sm"
                 :class="hasTriedPublish ? 'border-warning/35' : ''"
                 @click="mobileCheckOpen = false; jumpToTask(task.key)"
               >
@@ -1096,7 +1071,7 @@ async function copyPostText() {
                   <span class="mt-0.5 block text-xs text-muted-foreground">{{ task.description }}</span>
                 </span>
                 <span class="text-muted-foreground">→</span>
-              </button>
+              </Button>
               <div v-if="!pendingPublishTasks.length" class="rounded-lg border border-success/25 bg-success/10 px-3 py-4 text-sm text-success">
                 发布必填项已完成，可以提交审核。
               </div>

@@ -3,11 +3,17 @@ import { computed, ref } from 'vue'
 import { RouterLink } from 'vue-router'
 import { Flag, Heart, Share2 } from 'lucide-vue-next'
 import { toast } from 'vue-sonner'
-import { Card } from '@/components/ui/card'
+import ApiPaymentMethodIcon from '@/components/api-payment/ApiPaymentMethodIcon.vue'
+import ApiMerchantBadges from '@/components/api-market/ApiMerchantBadges.vue'
+import SourceAuthorVerificationBadge from '@/components/market/SourceAuthorVerificationBadge.vue'
+import ReputationInlineSummary from '@/components/reputation/ReputationInlineSummary.vue'
 import { Badge } from '@/components/ui/badge'
+import { Card } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
-import { getApiMerchantAvatarText, getApiMerchantDisplayName, getApiMerchantProfileUrl, type ApiService } from '@/lib/api'
+import ApiMerchantAvatar from '@/components/api-market/ApiMerchantAvatar.vue'
+import { getApiMerchantDisplayName, getApiMerchantProfileUrl, type ApiService } from '@/lib/api'
+import { apiPaymentMethodLabels } from '@/lib/apiPaymentSettings'
 import PurchaseAmountSelector from './PurchaseAmountSelector.vue'
 import PurchaseConfirmDialog from './PurchaseConfirmDialog.vue'
 import { compareDecimal } from '@/lib/decimal'
@@ -34,6 +40,12 @@ const estimatedCredit = computed(() => estimateUsdAllowance(String(props.amount)
 const fixedPackageMode = computed(() => props.service.billingMode === 'fixed_package')
 const availablePackages = computed(() => (props.service.packages ?? []).filter(item => item.enabled && item.stockAvailable > 0))
 const selectedPackage = computed(() => availablePackages.value.find(item => item.id === props.selectedPackageId) ?? null)
+const acceptedPaymentMethods = computed(() => props.service.acceptedPaymentMethods ?? [])
+const completedOrderLabel = computed(() => props.service.sellerReputation ? `${props.service.sellerReputation.completedCount} 单` : '暂无数据')
+const showSourceAuthorVerification = computed(() => {
+  const status = props.service.sourceAuthorVerification?.status
+  return status === 'verified' || status === 'mismatch'
+})
 
 const amountError = computed(() => {
   const decimalPattern = /^\d+(\.\d{1,2})?$/
@@ -72,22 +84,25 @@ async function shareService() {
     <div class="p-5">
       <div class="flex items-start justify-between gap-3">
         <component :is="merchantUrl ? RouterLink : 'div'" :to="merchantUrl || undefined" class="flex min-w-0 items-center gap-3">
-          <span class="grid h-11 w-11 shrink-0 place-items-center rounded-full bg-primary text-sm font-semibold text-primary-foreground">
-            {{ getApiMerchantAvatarText(service) }}
-          </span>
+          <ApiMerchantAvatar :service="service" class="grid h-11 w-11 shrink-0 place-items-center rounded-full bg-primary text-sm font-semibold text-primary-foreground" />
           <span class="min-w-0">
             <span class="block truncate font-semibold">{{ getApiMerchantDisplayName(service) }}</span>
             <span class="mt-1 flex flex-wrap items-center gap-1.5">
-              <Badge variant="trust">信任等级 {{ service.trustLevel }}</Badge>
-              <Badge variant="verified">已绑定 linux.do</Badge>
+              <ApiMerchantBadges :service="service" />
+              <template v-if="showSourceAuthorVerification">
+                <SourceAuthorVerificationBadge :verification="service.sourceAuthorVerification" />
+              </template>
             </span>
           </span>
         </component>
       </div>
-      <div class="mt-4 flex items-center gap-2 border-b border-border pb-4 text-xs text-muted-foreground">
-        <span class="h-1.5 w-1.5 rounded-full bg-primary" />
-        近 30 天完成 {{ service.completed30d }} 单 · 响应中位 {{ service.responseMedianMinutes }} 分钟
+      <div class="mt-4 border-t border-border pt-4">
+        <ReputationInlineSummary :summary="service.sellerReputation" :compact="service.sellerReputation?.state === 'active'" />
       </div>
+      <dl class="mt-4 grid grid-cols-2 gap-3 border-t border-border pt-4 text-xs">
+        <div><dt class="text-muted-foreground">可验证完成</dt><dd class="mt-1 font-semibold">{{ completedOrderLabel }}</dd></div>
+        <div><dt class="text-muted-foreground">商户声明最大并发</dt><dd class="mt-1 font-semibold">{{ service.declaredMaxConcurrency ?? '未声明' }}</dd></div>
+      </dl>
     </div>
 
     <div class="space-y-4 border-t border-border p-5">
@@ -122,10 +137,20 @@ async function shareService() {
         <div><dt class="text-muted-foreground">付款窗口</dt><dd class="mt-1 font-medium">{{ service.expectedResponseMinutes }} 分钟</dd></div>
       </dl>
 
+      <div v-if="acceptedPaymentMethods.length" class="flex flex-wrap items-center justify-between gap-2 rounded-md border border-border bg-muted/30 px-3 py-2">
+        <span class="text-xs text-muted-foreground">支持付款</span>
+        <span class="flex flex-wrap items-center justify-end gap-2">
+          <span v-for="method in acceptedPaymentMethods" :key="method" class="inline-flex items-center gap-1.5 text-xs font-medium">
+            <ApiPaymentMethodIcon :method="method" size="sm" />
+            {{ apiPaymentMethodLabels[method] }}
+          </span>
+        </span>
+      </div>
+
       <Button class="w-full" :disabled="!canSubmit" @click="openConfirm">
-        {{ submitting ? '创建中...' : '创建订单并查看付款方式' }}
+        {{ submitting ? '创建中…' : '创建订单并查看付款方式' }}
       </Button>
-      <p class="text-xs leading-5 text-muted-foreground">{{ selectedPackage ? '有效期从商家提交交付时开始计算。' : '订单创建后展示本次冻结的站外收款方式；平台记录状态但不代收、不托管资金。' }}</p>
+      <p class="text-xs leading-5 text-muted-foreground">{{ selectedPackage ? '有效期从商户提交交付时开始计算。' : '订单创建后展示下单时锁定的商户收款方式；平台记录状态但不代收、不托管资金。' }}</p>
       <div class="grid grid-cols-3 gap-2">
         <Button variant="outline" size="sm" @click="emit('toggleFavorite')"><Heart class="h-3.5 w-3.5" :class="favorited ? 'fill-current' : ''" />{{ favorited ? '已收藏' : '收藏' }}</Button>
         <Button variant="outline" size="sm" @click="shareService"><Share2 class="h-3.5 w-3.5" />分享</Button>

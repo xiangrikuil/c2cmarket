@@ -70,6 +70,73 @@ type Server struct {
 
 ---
 
+## Scenario: PostgreSQL Repository Composition
+
+### 1. Scope / Trigger
+
+- Trigger: adding a repository interface to `core.Persistence` / `core.Repositories`, or wiring `postgres.Store` into the runtime application in `internal/app`.
+- This is a process-composition contract. Unit and handler tests may construct `core.Service` through different helpers, so a green module test does not prove that the real process injected every repository.
+
+### 2. Signatures
+
+```text
+core.Persistence
+core.Repositories
+core.RepositoriesFromPersistence(Persistence) Repositories
+core.NewServiceWithRepositoriesAndEmailSender(Repositories, profile.EmailSender)
+app.New(context.Context, config.Config) (*app.App, error)
+```
+
+### 3. Contracts
+
+- When PostgreSQL is configured, `app.New` must pass `postgres.Store` through `core.RepositoriesFromPersistence(store)` rather than manually enumerating repository fields.
+- Adding a domain repository requires updating `core.Persistence`, `core.Repositories`, and `RepositoriesFromPersistence` in the same change. The `postgres.Store` compile-time assignment must then satisfy the complete aggregate.
+- Do not add a nil-repository fallback in a module manager. Missing production wiring is an application construction error, not an empty-data condition.
+- Runtime verification must call at least one route owned by the newly added repository after building the real `cmd/api` process against the task's migration chain.
+
+### 4. Validation & Error Matrix
+
+| Condition | Required result |
+| --- | --- |
+| `postgres.Store` does not implement a new repository method | Go compilation fails at `RepositoriesFromPersistence(store)` |
+| `RepositoriesFromPersistence` omits a new repository field | Focused aggregate review/test fails before release |
+| Runtime database lacks the task's migration despite reporting another branch's same version | Use an isolated database migrated from the current branch; do not overwrite or reset the existing volume |
+| A real repository is nil in production composition | Treat as a blocking wiring defect; never convert it to an empty success response |
+
+### 5. Good / Base / Bad Cases
+
+- Good: `app.New` connects PostgreSQL and calls `RepositoriesFromPersistence(store)`, so every repository in the aggregate is injected.
+- Base: no `DATABASE_URL` uses the documented in-memory slice and an empty `Repositories` value.
+- Bad: `app.New` manually lists `Auth`, `APIOrder`, and other fields but forgets a newly added `APIQuota`, causing the first public request to panic.
+- Bad: local migration state says Version 52 from another branch, so the current branch's different Version 51/52 files are assumed to exist without checking their tables.
+
+### 6. Tests Required
+
+- Run `go test -count=1 ./...` so the concrete `postgres.Store` must compile against `core.Persistence`.
+- Build and start the real backend process with the current branch's migration chain.
+- Assert `/readyz` reports the expected clean schema and call one read route owned by the new repository; for API quota work, `GET /api/v1/api-quota-offers?limit=1` must return JSON rather than panic or 500.
+- When the shared local volume belongs to another branch, create a separate development database and migrate it from Version 1 instead of deleting the existing volume.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```go
+repositories := core.Repositories{
+    Auth: store,
+    APIOrder: store,
+    // A newly added repository can be silently omitted.
+}
+```
+
+#### Correct
+
+```go
+repositories := core.RepositoriesFromPersistence(store)
+```
+
+The aggregate makes repository propagation a compile-time contract and keeps application composition aligned with module tests.
+
 ## Naming Conventions
 
 - Package names are short and responsibility-based: `server`, `app`, `domain`, `database`, `response`, `validator`.

@@ -17,6 +17,9 @@ import { backendMutation, backendRequest, ensureBackendSession } from '@/lib/bac
 import { backendCreateContactMethod } from '@/lib/apiMarketBackend'
 import { carpoolOpeningChannels, carpoolPaymentMethods, carpoolRegions } from '@/data/mock'
 import { defaultQuotaLabel, defaultQuotaPeriod, defaultQuotaUnit } from '@/lib/quota'
+import { mapBackendReputationSummary } from '@/lib/reputationBackend'
+import type { ReputationSummary } from '@/types/reputation'
+import { trackAnalytics } from '@/lib/analytics'
 
 type ListResponse<T> = { items: T[] }
 
@@ -59,9 +62,23 @@ type BackendCarpoolListing = {
   regionCode: string
   regionName: string
   sourceUrl?: string
+  sourceAuthorVerification: {
+    status: 'not_submitted' | 'pending' | 'verified' | 'mismatch' | 'expired'
+    verifiedAt?: string
+    expiresAt?: string
+  }
+  sellerReputation?: ReputationSummary | null
   priceMonthlyCny: string
   serviceMultiplier: string
+  weeklyQuotaAmount: string | null
   monthlyQuotaAmount: string
+  followsOfficialQuotaReset: boolean | null
+  vpsRegion: string | null
+  supportsMainlandChinaDirectConnection: boolean | null
+  openingChannelCode: CarpoolWithMeta['openingChannelCode']
+  customOpeningChannel: string | null
+  paymentMethodCode: CarpoolWithMeta['paymentMethodCode']
+  customPaymentMethod: string | null
   quotaLabel: string
   quotaUnit: string
   quotaPeriod: 'monthly'
@@ -117,6 +134,7 @@ type BackendCarpoolApplication = {
   version: number
   createdAt: string
   updatedAt: string
+  buyerReputation?: ReputationSummary | null
 }
 
 type BackendCarpoolApplicationEligibility = CarpoolApplicationEligibility
@@ -309,6 +327,7 @@ export async function mapBackendCarpoolListing(listing: BackendCarpoolListing): 
   const plan = await productPlan(listing.productPlanId)
   const monthly = numberFromDecimal(listing.priceMonthlyCny)
   const serviceMultiplier = numberFromDecimal(listing.serviceMultiplier)
+  const weeklyQuotaAmount = listing.weeklyQuotaAmount ? numberFromDecimal(listing.weeklyQuotaAmount) : undefined
   const monthlyQuotaAmount = numberFromDecimal(listing.monthlyQuotaAmount)
   const activeSeats = Math.max(0, listing.activeBuyerMembers)
   const totalSeats = Math.max(1, listing.buyerSeatCapacity)
@@ -319,7 +338,15 @@ export async function mapBackendCarpoolListing(listing: BackendCarpoolListing): 
     region: listing.regionName,
     monthly,
     serviceMultiplier,
+    weeklyQuotaAmount,
     monthlyQuotaAmount,
+    followsOfficialQuotaReset: listing.followsOfficialQuotaReset,
+    vpsRegion: listing.vpsRegion,
+    supportsMainlandChinaDirectConnection: listing.supportsMainlandChinaDirectConnection,
+    openingChannelCode: listing.openingChannelCode,
+    customOpeningChannel: listing.customOpeningChannel,
+    paymentMethodCode: listing.paymentMethodCode,
+    customPaymentMethod: listing.customPaymentMethod,
     quotaLabel: listing.quotaLabel || plan.quotaLabel || defaultQuotaLabel,
     quotaUnit: listing.quotaUnit || plan.quotaUnit || defaultQuotaUnit,
     quotaPeriod: listing.quotaPeriod || plan.quotaPeriod || defaultQuotaPeriod,
@@ -330,17 +357,19 @@ export async function mapBackendCarpoolListing(listing: BackendCarpoolListing): 
     maxMembers: totalSeats,
     owner: ownerLabel(listing.ownerUserId),
     ownerUserId: listing.ownerUserId,
-    trustLevel: 4,
+    trustLevel: null,
+    sellerReputation: mapBackendReputationSummary(listing.sellerReputation),
     ownerType: '个人车主',
     warranty: '车主承诺',
     openingMethod: openingMethodFromAccessMode(plan.accessMode),
     status: listingStatus(listing.status, availableSeats),
     confirmedAt: formatTime(listing.updatedAt),
     confirmedWithin48h: true,
-    linuxdoBound: Boolean(listing.sourceUrl),
-    sourcePostAccessible: Boolean(listing.sourceUrl),
+    linuxdoBound: null,
+    sourceUrl: listing.sourceUrl,
+    sourceAuthorVerification: listing.sourceAuthorVerification,
     hasInfoConflict: false,
-    hasUnresolvedDispute: false,
+    hasUnresolvedDispute: listing.sellerReputation ? listing.sellerReputation.unresolvedDisputes > 0 : null,
     distributionMethod: listing.distributionMethod,
     distributionMethodNote: listing.distributionMethodNote,
     providesAdminAccount: listing.providesAdminAccount,
@@ -420,12 +449,22 @@ async function mapApplication(application: BackendCarpoolApplication, perspectiv
   const ownerUsername = ownerLabel(application.ownerUserId)
   const buyerUsername = application.buyerUserId ? `买家 ${application.buyerUserId.slice(0, 8)}` : '买家'
   const status = applicationStatus(application, membership)
+  const buyerReputation = mapBackendReputationSummary(application.buyerReputation)
+  const ownerReputation = mapBackendReputationSummary(listing?.sellerReputation)
   return {
     id: application.id,
     carpoolId: application.carpoolListingId,
     applicantUserId: application.buyerUserId,
     applicantUsername: buyerUsername,
-    applicantStats: { linuxdoBound: true, trustLevel: 3, completed30d: 0, buyerResponsibleCancellations: 0, ownerResponsibleCancellations: 0, unresolvedDisputes: 0 },
+    applicantStats: {
+      linuxdoBound: null,
+      trustLevel: null,
+      completed30d: buyerReputation?.completedCount ?? null,
+      buyerResponsibleCancellations: null,
+      ownerResponsibleCancellations: null,
+      unresolvedDisputes: buyerReputation?.unresolvedDisputes ?? null,
+    },
+    buyerReputation,
     ownerUserId: application.ownerUserId,
     ownerUsername,
     status,
@@ -448,9 +487,9 @@ async function mapApplication(application: BackendCarpoolApplication, perspectiv
       rulesText: listing?.cycleTerm?.usageRules || listing?.cycleTerm?.exitPolicy || '规则以车源发布时说明为准，平台不托管支付、不保存凭据。',
       ownerUserId: application.ownerUserId,
       ownerUsername,
-      ownerTrustLevel: 4,
+      ownerTrustLevel: null,
+      ownerReputation,
       ownerType: '个人车主',
-      sourceTopicUrl: listing?.sourceUrl || '',
       accessArrangementMode: mapAccessMode(plan.accessMode),
       accessArrangementNote: listing?.accessArrangement || plan.policyNote,
       riskNoticeCode: application.riskNoticeCode || plan.riskNoticeCode,
@@ -586,6 +625,10 @@ export async function backendCarpoolApplicationContacts(applicationId: string): 
     }
   }
   const response = await backendRequest<BackendContactSessionContacts>(`/api/v1/contact-sessions/${application.backendContactSessionId}/contacts`)
+  trackAnalytics('contact_window_reveal', {
+    entity_type: 'carpool_application',
+    source_route: '/my/rides/:id',
+  })
   return {
     id: response.sessionId,
     orderType: 'carpool_application',
@@ -628,10 +671,17 @@ function toListingRequest(payload: SaveCarpoolDraftPayload, ownerContactMethodId
     providesAdminAccount: Boolean(payload.providesAdminAccount),
     regionCode: payload.regionCode,
     regionName,
-    sourceUrl: payload.linuxDoTopicUrl,
     priceMonthlyCny: String(monthly),
-    serviceMultiplier: String(payload.serviceMultiplier ?? 1),
+    serviceMultiplier: '1',
+    weeklyQuotaAmount: String(payload.weeklyQuotaAmount ?? 0),
     monthlyQuotaAmount: String(payload.monthlyQuotaAmount ?? 0),
+    followsOfficialQuotaReset: payload.followsOfficialQuotaReset,
+    vpsRegion: payload.vpsRegion.trim(),
+    supportsMainlandChinaDirectConnection: payload.supportsMainlandChinaDirectConnection,
+    openingChannelCode: payload.openingChannelCode,
+    customOpeningChannel: payload.openingChannelCode === 'other' ? payload.customOpeningChannel.trim() : '',
+    paymentMethodCode: payload.paymentMethodCode,
+    customPaymentMethod: payload.paymentMethodCode === 'other' ? payload.customPaymentMethod.trim() : '',
     buyerSeatCapacity: payload.totalSeats,
     activeBuyerMembers: payload.occupiedSeats,
     riskAcknowledgement: riskAcknowledgement(plan, payload.riskNoticeCode, payload.policyVersion, payload.riskAcknowledged),

@@ -63,6 +63,29 @@ func TestSubscriptionCloseAndHubCloseAreIdempotent(t *testing.T) {
 	hub.PublishAll()
 }
 
+func TestHubStatsTrackConnectionsAndDisconnects(t *testing.T) {
+	hub := NewHub()
+	first := mustSubscribe(t, hub, "user-a", false)
+	_ = mustSubscribe(t, hub, "user-b", true)
+
+	stats := hub.Stats()
+	if stats.ActiveConnections != 2 || stats.ConnectionsTotal != 2 || stats.DisconnectsTotal != 0 {
+		t.Fatalf("unexpected connected stats: %+v", stats)
+	}
+
+	first.Close()
+	stats = hub.Stats()
+	if stats.ActiveConnections != 1 || stats.DisconnectsTotal != 1 {
+		t.Fatalf("unexpected disconnect stats: %+v", stats)
+	}
+
+	hub.Close()
+	stats = hub.Stats()
+	if stats.ActiveConnections != 0 || stats.DisconnectsTotal != 2 {
+		t.Fatalf("unexpected closed stats: %+v", stats)
+	}
+}
+
 func TestHubCloseClosesActiveSubscriptions(t *testing.T) {
 	hub := NewHub()
 	subscription := mustSubscribe(t, hub, "user-a", false)

@@ -14,6 +14,7 @@ const (
 	TargetCarpoolMembership  = "carpool_membership"
 	TargetAPIPurchaseIntent  = "api_purchase_intent"
 	TargetAPIOrder           = "api_order"
+	TargetAccountGovernance  = "account_governance"
 
 	ReportReasonUnreachable          = "unreachable"
 	ReportReasonContactInvalid       = "contact_invalid"
@@ -47,6 +48,12 @@ const (
 	AppealStatusSubmitted = "submitted"
 	AppealStatusApproved  = "approved"
 	AppealStatusRejected  = "rejected"
+
+	InfoRequestEntityReport   = "report"
+	InfoRequestEntityDispute  = "dispute"
+	InfoRequestStatusOpen     = "open"
+	InfoRequestStatusAnswered = "answered"
+	InfoRequestStatusCanceled = "cancelled"
 )
 
 type Report struct {
@@ -69,6 +76,9 @@ type Report struct {
 	HandledByAdminID    string
 	HandledAt           *time.Time
 	DisputeID           string
+	OpenInfoRequestID   string
+	InfoRequestedFromID string
+	Supplements         []InfoSupplement
 	CreatedAt           time.Time
 	UpdatedAt           time.Time
 	Version             int64
@@ -86,6 +96,9 @@ type DisputeCase struct {
 	CounterpartyUserID   string
 	CounterpartyUsername string
 	CounterpartyName     string
+	SubjectUserID        string
+	SubjectUsername      string
+	SubjectName          string
 	Status               string
 	PublicSummary        string
 	PublicResultCode     string
@@ -98,6 +111,32 @@ type DisputeCase struct {
 	CreatedAt            time.Time
 	UpdatedAt            time.Time
 	Version              int64
+	OpenInfoRequestID    string
+	InfoRequestedFromID  string
+	Supplements          []InfoSupplement
+}
+
+type InfoRequest struct {
+	ID                 string
+	EntityType         string
+	EntityID           string
+	RequestedFromID    string
+	RequestedByAdminID string
+	InternalReason     string
+	Status             string
+	RequestedAt        time.Time
+	AnsweredAt         *time.Time
+	CancelledAt        *time.Time
+}
+
+type InfoSupplement struct {
+	ID                  string
+	InfoRequestID       string
+	SubmittedByUserID   string
+	SubmittedByUsername string
+	SubmittedByName     string
+	Body                string
+	CreatedAt           time.Time
 }
 
 type Appeal struct {
@@ -165,10 +204,18 @@ type CreateAppealInput struct {
 	AppellantName     string
 	ReportID          string
 	DisputeID         string
-	TargetType        string
-	TargetID          string
 	Title             string
 	Statement         string
+}
+
+type CreateAccountGovernanceAppealInput struct {
+	AppellantUserID string
+	Statement       string
+}
+
+type AppealSource struct {
+	TargetType string
+	TargetID   string
 }
 
 type AdminActionInput struct {
@@ -181,6 +228,18 @@ type AdminActionInput struct {
 	PublicResult     string
 	ExpectedVersion  int64
 	RequestID        string
+	RequestedFromID  string
+}
+
+type SupplementInput struct {
+	EntityType         string
+	EntityID           string
+	InfoRequestID      string
+	SubmittingUserID   string
+	SubmittingUsername string
+	SubmittingName     string
+	Body               string
+	RequestID          string
 }
 
 type MutationResult struct {
@@ -192,3 +251,4 @@ type MutationResult struct {
 type ReportCompletionBuilder func(Report) (idempotency.Completion, *domain.AppError)
 type AppealCompletionBuilder func(Appeal) (idempotency.Completion, *domain.AppError)
 type AdminCompletionBuilder func(MutationResult) (idempotency.Completion, *domain.AppError)
+type SupplementCompletionBuilder func(MutationResult) (idempotency.Completion, *domain.AppError)

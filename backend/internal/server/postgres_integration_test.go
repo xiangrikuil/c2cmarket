@@ -16,6 +16,7 @@ import (
 	app "c2c-market/backend/internal/module/core"
 	"c2c-market/backend/internal/store/postgres"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -155,9 +156,23 @@ func TestPostgresAPIServiceFlow(t *testing.T) {
 	assertAPIServiceChildren(t, databaseURL, service.ID, 1, 1, 0)
 
 	updated := updateAPIService(t, server, ownerSession, service.ID, service.Version, apiServicePayloadWithModel(ownerContact.ID, "00000000-0000-0000-0000-000000000a02"), "pg-api-update-"+suffix)
-	if updated.Version != 2 || len(updated.Models) != 1 || updated.Models[0].ModelCatalogID != "00000000-0000-0000-0000-000000000a02" {
+	if updated.Version != 2 || len(updated.Models) != 2 {
 		t.Fatalf("unexpected updated API service: %+v", updated)
 	}
+	var activeModel, retiredModel *apiServiceModelResponse
+	for index := range updated.Models {
+		model := &updated.Models[index]
+		switch model.ModelCatalogID {
+		case "00000000-0000-0000-0000-000000000a02":
+			activeModel = model
+		case "00000000-0000-0000-0000-000000000a01":
+			retiredModel = model
+		}
+	}
+	if activeModel == nil || !activeModel.Enabled || retiredModel == nil || retiredModel.Enabled {
+		t.Fatalf("expected replacement model active and historical model disabled, got %+v", updated.Models)
+	}
+	assertAPIServiceChildren(t, databaseURL, service.ID, 1, 2, 0)
 
 	submitted := ownerAPIServiceAction(t, server, ownerSession, updated.ID, "submit-review", updated.Version, "pg-api-submit-"+suffix)
 	if submitted.ReviewStatus != app.APIServiceReviewStatusApproved || submitted.PublicationStatus != app.APIServicePublicationStatusOffline {
@@ -171,6 +186,9 @@ func TestPostgresAPIServiceFlow(t *testing.T) {
 	if published.PublicationStatus != app.APIServicePublicationStatusOnline || published.ModerationStatus != app.APIServiceModerationStatusClear {
 		t.Fatalf("unexpected published API service: %+v", published)
 	}
+	assertPublicAPIServiceVisible(t, server, published.ID, ownerContact.ID, false)
+	assertAPIServicePublicPredicateCount(t, databaseURL, published.ID, 0)
+	published = updateAPIServiceOrderSettings(t, server, ownerSession, published.ID, published.Version, true, "pg-api-order-settings-"+suffix)
 	assertPublicAPIServiceVisible(t, server, published.ID, ownerContact.ID, true)
 	assertAPIServicePublicPredicateCount(t, databaseURL, published.ID, 1)
 
@@ -309,6 +327,7 @@ func TestPostgresAPIPurchaseIntentFlow(t *testing.T) {
 	service := createAPIService(t, server, ownerSession, ownerContact.ID, "pg-api-intent-service-create-"+suffix)
 	submitted := ownerAPIServiceAction(t, server, ownerSession, service.ID, "submit-review", service.Version, "pg-api-intent-service-submit-"+suffix)
 	published := ownerAPIServiceAction(t, server, ownerSession, submitted.ID, "publish", submitted.Version, "pg-api-intent-service-publish-"+suffix)
+	published = updateAPIServiceOrderSettings(t, server, ownerSession, published.ID, published.Version, true, "pg-api-intent-service-settings-"+suffix)
 
 	first := createAPIPurchaseIntent(t, server, buyerSession, published.ID, buyerContact.ID, "pg-api-intent-create-"+suffix)
 	second := createAPIPurchaseIntent(t, server, buyerSession, published.ID, buyerContact.ID, "pg-api-intent-create-"+suffix)
@@ -502,6 +521,7 @@ func TestPostgresAPIPurchaseIntentIntegrityConstraints(t *testing.T) {
 
 	submitted := ownerAPIServiceAction(t, server, ownerSession, service.ID, "submit-review", service.Version, "pg-api-intent-integrity-submit-"+suffix)
 	published := ownerAPIServiceAction(t, server, ownerSession, submitted.ID, "publish", submitted.Version, "pg-api-intent-integrity-publish-"+suffix)
+	published = updateAPIServiceOrderSettings(t, server, ownerSession, published.ID, published.Version, true, "pg-api-intent-integrity-settings-"+suffix)
 
 	selfIntent := newJSONRequest(http.MethodPost, "/api/v1/api-services/"+published.ID+"/purchase-intents", apiPurchaseIntentPayload(ownerContact.ID))
 	addAuth(selfIntent, ownerSession, "pg-api-intent-self-"+suffix)
@@ -622,6 +642,7 @@ func TestPostgresContactSessionFlow(t *testing.T) {
 
 	server := NewServer(app.NewServiceWithPersistence(store))
 	suffix := time.Now().Format("150405.000000000")
+	adminSession := createSession(t, server, "pg-contact-admin-"+suffix, true)
 	buyerSession := createSession(t, server, "pg-contact-buyer-"+suffix, false)
 	sellerSession := createSession(t, server, "pg-contact-seller-"+suffix, false)
 	buyerContact := createContactMethod(t, server, buyerSession, "telegram", "Buyer PG TG "+suffix, "@pg_buyer_"+suffix)
@@ -631,7 +652,7 @@ func TestPostgresContactSessionFlow(t *testing.T) {
 		"sellerUsername":"pg-contact-seller-`+suffix+`",
 		"buyerContactMethodId":"`+buyerContact.ID+`",
 		"sellerContactMethodId":"`+sellerContact.ID+`",
-		"durationSeconds":1
+		"durationSeconds":2
 	}`)
 	addAuth(request, buyerSession, "pg-contact-session-"+suffix)
 	response := httptest.NewRecorder()
@@ -662,7 +683,59 @@ func TestPostgresContactSessionFlow(t *testing.T) {
 	}
 	assertContactCiphertextDoesNotContain(t, databaseURL, "@pg_seller_"+suffix)
 
-	time.Sleep(1100 * time.Millisecond)
+	pool := openTestPool(t, databaseURL)
+	defer pool.Close()
+	restrictionID := uuid.NewString()
+	restrictedAt := time.Now().UTC()
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO user_restrictions (
+		  id, user_id, restriction_type, reason, starts_at, created_by_admin_id, created_at,
+		  role_scope, action_code, reason_code, public_reason, updated_at, version
+		)
+		VALUES ($1, $2, 'contact_view_test', 'PostgreSQL 联系窗口限制测试', $3, $4, $3,
+		        'buyer', 'contact_view', 'integration_contact_view', '纠纷处理中暂不可查看联系方式。', $3, 1)
+	`, restrictionID, buyerSession.userID, restrictedAt, adminSession.userID); err != nil {
+		t.Fatalf("insert contact-view restriction: %v", err)
+	}
+	restricted := httptest.NewRequest(http.MethodGet, "/api/v1/contact-sessions/"+created.ID+"/contacts", nil)
+	addCookie(restricted, buyerSession.cookie)
+	restrictedResponse := httptest.NewRecorder()
+	server.ServeHTTP(restrictedResponse, restricted)
+	if restrictedResponse.Code != http.StatusForbidden {
+		t.Fatalf("expected restricted contact status %d, got %d body %s", http.StatusForbidden, restrictedResponse.Code, restrictedResponse.Body.String())
+	}
+	assertProblemCode(t, restrictedResponse, domain.CodeReputationActionRestricted)
+	if strings.Contains(restrictedResponse.Body.String(), "@pg_seller_"+suffix) {
+		t.Fatal("restricted contact response must not include full contact value")
+	}
+	if count := storeAccessLogCount(t, store, created.ID); count != 1 {
+		t.Fatalf("restricted read must not append access log, got %d", count)
+	}
+
+	revokedAt := time.Now().UTC()
+	if _, err := pool.Exec(ctx, `
+		UPDATE user_restrictions
+		SET revoked_at = $2,
+		    revoked_by_admin_id = $3,
+		    revocation_reason = '集成测试撤销',
+		    updated_at = $2,
+		    version = version + 1
+		WHERE id = $1
+	`, restrictionID, revokedAt, adminSession.userID); err != nil {
+		t.Fatalf("revoke contact-view restriction: %v", err)
+	}
+	restored := httptest.NewRequest(http.MethodGet, "/api/v1/contact-sessions/"+created.ID+"/contacts", nil)
+	addCookie(restored, buyerSession.cookie)
+	restoredResponse := httptest.NewRecorder()
+	server.ServeHTTP(restoredResponse, restored)
+	if restoredResponse.Code != http.StatusOK {
+		t.Fatalf("expected restored contact status %d, got %d body %s", http.StatusOK, restoredResponse.Code, restoredResponse.Body.String())
+	}
+	if count := storeAccessLogCount(t, store, created.ID); count != 2 {
+		t.Fatalf("restored read must append access log, got %d", count)
+	}
+
+	time.Sleep(2100 * time.Millisecond)
 	expired := httptest.NewRequest(http.MethodGet, "/api/v1/contact-sessions/"+created.ID+"/contacts", nil)
 	addCookie(expired, buyerSession.cookie)
 	expiredResponse := httptest.NewRecorder()
@@ -874,7 +947,7 @@ func TestPostgresCarpoolApplicationFlow(t *testing.T) {
 	if published.Status != app.CarpoolListingStatusActive || published.AvailableSeats != 1 {
 		t.Fatalf("expected one available seat after publish, got %+v", published)
 	}
-	if published.ServiceMultiplier != "1.3500" || published.MonthlyQuotaAmount != "200.00" || published.QuotaLabel != "额度" || published.QuotaUnit != "USD" || published.QuotaPeriod != "monthly" {
+	if published.ServiceMultiplier != "1.0000" || published.WeeklyQuotaAmount == nil || *published.WeeklyQuotaAmount != "50.00" || published.MonthlyQuotaAmount != "200.00" || published.QuotaLabel != "额度" || published.QuotaUnit != "USD" || published.QuotaPeriod != "monthly" {
 		t.Fatalf("expected postgres multiplier and quota fields after publish, got %+v", published)
 	}
 	if published.RegionCode != "other" || published.RegionName != "印度区" {
@@ -1178,6 +1251,17 @@ func assertAPIServicePublicPredicateCount(t *testing.T, databaseURL, serviceID s
 		  AND review_status = 'approved'
 		  AND publication_status = 'online'
 		  AND moderation_status = 'clear'
+		  AND accepting_orders = true
+		  AND payment_window_minutes BETWEEN 3 AND 15
+		  AND (billing_mode <> 'metered_usd_quota' OR available_usd_allowance > 0)
+		  AND (billing_mode <> 'metered_usd_quota' OR quota_expires_at > now())
+		  AND EXISTS (
+		    SELECT 1
+		    FROM api_service_payment_options
+		    WHERE api_service_id = api_services.id
+		      AND enabled = true
+		      AND payment_method IN ('wechat', 'alipay')
+		  )
 	`, serviceID).Scan(&count); err != nil {
 		t.Fatalf("count public API service predicate: %v", err)
 	}
@@ -1534,7 +1618,7 @@ func assertOfficialPriceRecordIdempotencyCache(t *testing.T, databaseURL, adminU
 	if status != "completed" || !completed {
 		t.Fatalf("expected completed idempotency cache, got status=%q completed=%v", status, completed)
 	}
-	if responseStatus != http.StatusOK || contentType != "application/json; charset=utf-8" {
+	if responseStatus != http.StatusCreated || contentType != "application/json; charset=utf-8" {
 		t.Fatalf("unexpected cached response metadata: status=%d contentType=%q", responseStatus, contentType)
 	}
 	if resourceType != "official_price_record" || resourceID != recordID {

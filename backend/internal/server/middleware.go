@@ -4,14 +4,17 @@ import (
 	"c2c-market/backend/internal/domain"
 	"c2c-market/backend/internal/middleware"
 	"c2c-market/backend/internal/module/auth"
+	"c2c-market/backend/internal/module/idempotency"
+	"crypto/sha256"
 	"encoding/json"
-	"net"
+	"log"
 	"net/http"
-	"net/netip"
+	"strconv"
 	"strings"
+	"time"
 )
 
-func (s *Server) requireSessionAndCSRF(r *http.Request) (auth.User, auth.Session, *domain.AppError) {
+func (s *Server) requireSessionAndCSRF(w http.ResponseWriter, r *http.Request) (auth.User, auth.Session, *domain.AppError) {
 	sessionToken, ok := middleware.SessionToken(r)
 	if !ok {
 		return auth.User{}, auth.Session{}, domain.NewError(http.StatusUnauthorized, domain.CodeSessionExpired, "Session required", "请先登录。")
@@ -20,15 +23,67 @@ func (s *Server) requireSessionAndCSRF(r *http.Request) (auth.User, auth.Session
 	if csrfToken == "" {
 		return auth.User{}, auth.Session{}, domain.NewError(http.StatusForbidden, domain.CodeCSRFTokenInvalid, "CSRF token invalid", "CSRF token 无效或缺失。")
 	}
-	return s.app.GetSessionWithCSRF(r.Context(), sessionToken, csrfToken)
+	user, session, appErr := s.app.GetSessionWithCSRF(r.Context(), sessionToken, csrfToken)
+	return s.renewAuthenticatedSession(w, r, sessionToken, user, session, appErr)
 }
 
-func (s *Server) requireSession(r *http.Request) (auth.User, auth.Session, *domain.AppError) {
+func (s *Server) requireSession(w http.ResponseWriter, r *http.Request) (auth.User, auth.Session, *domain.AppError) {
 	sessionToken, ok := middleware.SessionToken(r)
 	if !ok {
 		return auth.User{}, auth.Session{}, domain.NewError(http.StatusUnauthorized, domain.CodeSessionExpired, "Session required", "请先登录。")
 	}
-	return s.app.GetSession(r.Context(), sessionToken)
+	user, session, appErr := s.app.GetSession(r.Context(), sessionToken)
+	return s.renewAuthenticatedSession(w, r, sessionToken, user, session, appErr)
+}
+
+func (s *Server) renewAuthenticatedSession(w http.ResponseWriter, r *http.Request, sessionToken string, user auth.User, session auth.Session, appErr *domain.AppError) (auth.User, auth.Session, *domain.AppError) {
+	if appErr != nil || !shouldRenewSessionForRequest(r) {
+		return user, session, appErr
+	}
+	if activityErr := s.growth.RecordAuthenticatedActivity(r.Context(), user.ID); activityErr != nil {
+		log.Printf("growth_activity_record_failed user_id=%s request_id=%s code=%s", user.ID, middleware.RequestIDFromRequest(r), activityErr.Code)
+	}
+	renewedSession, renewed, appErr := s.app.RenewSession(r.Context(), sessionToken)
+	if appErr != nil {
+		return auth.User{}, auth.Session{}, appErr
+	}
+	if renewed {
+		s.setSessionCookie(w, renewedSession)
+		session.ExpiresAt = renewedSession.ExpiresAt
+		session.RenewedAt = renewedSession.RenewedAt
+	}
+	return user, session, nil
+}
+
+func shouldRenewSessionForRequest(r *http.Request) bool {
+	if r == nil || r.Method == http.MethodOptions {
+		return false
+	}
+	switch r.URL.Path {
+	case "/health",
+		"/readyz",
+		"/api/v1/auth/dev-session",
+		"/api/v1/auth/password/login",
+		"/api/v1/auth/email-registration/start",
+		"/api/v1/auth/email-registration/confirm",
+		"/api/v1/auth/oauth/start",
+		"/api/v1/auth/account-appeal/start",
+		"/api/v1/auth/oauth/callback",
+		"/api/v1/account-appeal/session",
+		"/api/v1/account-appeal/appeals",
+		"/api/v1/auth/session",
+		"/api/v1/auth/session/renew",
+		"/api/v1/auth/logout",
+		"/api/v1/me/events",
+		"/api/v1/me/navigation-badges",
+		"/api/v1/me/feedback-tickets/unread-count",
+		"/api/v1/me/notifications/unread-count",
+		"/api/v1/me/announcements/unread-count",
+		"/api/v1/me/announcements/important-unread-count":
+		return false
+	default:
+		return !strings.HasPrefix(r.URL.Path, "/assets/")
+	}
 }
 
 func (s *Server) withIdempotency(w http.ResponseWriter, r *http.Request, userID, routeKey string, body []byte, run func() (int, any, string, string, *domain.AppError)) {
@@ -40,9 +95,7 @@ func (s *Server) withIdempotency(w http.ResponseWriter, r *http.Request, userID,
 		return
 	}
 	if entry.State == "completed" {
-		w.Header().Set("Content-Type", entry.ContentType)
-		w.WriteHeader(entry.Status)
-		_, _ = w.Write(entry.Body)
+		writeIdempotencyCompletion(w, idempotency.CompletionFromEntry(entry))
 		return
 	}
 
@@ -70,130 +123,72 @@ func (s *Server) withIdempotency(w http.ResponseWriter, r *http.Request, userID,
 }
 
 func (s *Server) limitHandler(routeGroup string, limit int, next http.HandlerFunc) http.HandlerFunc {
+	return s.limitHandlerByActor(routeGroup, limit, limit, next)
+}
+
+func (s *Server) limitHandlerByActor(routeGroup string, ipLimit, userLimit int, next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if appErr := s.checkRateLimit(r, routeGroup, limit); appErr != nil {
-			writeProblem(w, r, appErr)
+		if retryAfter, appErr := s.checkRateLimitByActor(r, routeGroup, ipLimit, userLimit); appErr != nil {
+			writeRateLimitProblem(w, r, retryAfter, appErr)
 			return
 		}
 		next(w, r)
 	}
 }
 
-func (s *Server) checkRateLimit(r *http.Request, routeGroup string, limit int) *domain.AppError {
-	if s.rateLimiter == nil || limit <= 0 {
-		return nil
+func (s *Server) checkRateLimit(r *http.Request, routeGroup string, limit int) (time.Duration, *domain.AppError) {
+	return s.checkRateLimitByActor(r, routeGroup, limit, limit)
+}
+
+func (s *Server) checkRateLimitByActor(r *http.Request, routeGroup string, ipLimit, userLimit int) (time.Duration, *domain.AppError) {
+	if s.rateLimiter == nil {
+		return 0, nil
 	}
-	keys := []string{"ip:" + routeGroup + ":" + s.clientIP(r)}
+	type limitKey struct {
+		value string
+		limit int
+	}
+	keys := make([]limitKey, 0, 2)
 	if sessionToken, ok := middleware.SessionToken(r); ok {
 		if user, _, appErr := s.app.GetSession(r.Context(), sessionToken); appErr == nil && strings.TrimSpace(user.ID) != "" {
-			keys = append(keys, "user:"+routeGroup+":"+user.ID)
+			keys = append(keys, limitKey{value: "user:" + routeGroup + ":" + user.ID, limit: userLimit})
 		}
 	}
+	keys = append(keys, limitKey{value: "ip:" + routeGroup + ":" + middleware.ClientIPFromRequest(r), limit: ipLimit})
 	for _, key := range keys {
-		decision := s.rateLimiter.Allow(key, limit)
+		decision := s.rateLimiter.Allow(key.value, key.limit)
 		if !decision.Allowed {
-			return domain.NewError(http.StatusTooManyRequests, domain.CodeRateLimited, "Rate limited", "请求过于频繁，请稍后再试。")
+			return decision.RetryAfter, rateLimitedError()
 		}
 	}
-	return nil
+	return 0, nil
 }
 
-func (s *Server) clientIP(r *http.Request) string {
-	remote := directRemoteAddr(r)
-	remoteAddr, ok := parseIPAddr(remote)
-	if !ok {
-		return valueOrUnknown(remote)
+func (s *Server) checkTargetRateLimit(routeGroup, targetType, target string, limit int) (time.Duration, *domain.AppError) {
+	target = strings.ToLower(strings.TrimSpace(target))
+	if s.rateLimiter == nil || target == "" || limit <= 0 {
+		return 0, nil
 	}
-	if s.trustXForwardedFor && s.isTrustedProxy(remoteAddr) {
-		if forwarded := firstForwardedClientIP(r.Header.Get("X-Forwarded-For")); forwarded != "" {
-			return forwarded
+	digest := sha256.Sum256([]byte(target))
+	key := "target:" + routeGroup + ":" + targetType + ":" + string(digest[:])
+	decision := s.rateLimiter.Allow(key, limit)
+	if decision.Allowed {
+		return 0, nil
+	}
+	return decision.RetryAfter, rateLimitedError()
+}
+
+func rateLimitedError() *domain.AppError {
+	return domain.NewError(http.StatusTooManyRequests, domain.CodeRateLimited, "Rate limited", "请求过于频繁，请稍后再试。")
+}
+
+func writeRateLimitProblem(w http.ResponseWriter, r *http.Request, retryAfter time.Duration, appErr *domain.AppError) {
+	if retryAfter > 0 {
+		seconds := int64((retryAfter + time.Second - 1) / time.Second)
+		if seconds < 1 {
+			seconds = 1
 		}
-		if realIP := singleHeaderIP(r.Header.Get("X-Real-IP")); realIP != "" {
-			return realIP
-		}
+		w.Header().Set("Retry-After", strconv.FormatInt(seconds, 10))
 	}
-	return remoteAddr.String()
-}
-
-func (s *Server) isTrustedProxy(addr netip.Addr) bool {
-	addr = addr.Unmap()
-	for _, prefix := range s.trustedProxyPrefixes {
-		if prefix.Contains(addr) {
-			return true
-		}
-	}
-	return false
-}
-
-func directRemoteAddr(r *http.Request) string {
-	if r == nil {
-		return ""
-	}
-	remote := strings.TrimSpace(r.RemoteAddr)
-	if host, _, err := net.SplitHostPort(remote); err == nil {
-		return strings.Trim(host, "[]")
-	}
-	return strings.Trim(remote, "[]")
-}
-
-func firstForwardedClientIP(value string) string {
-	parts := strings.Split(value, ",")
-	if len(parts) == 0 {
-		return ""
-	}
-	return singleHeaderIP(parts[0])
-}
-
-func singleHeaderIP(value string) string {
-	addr, ok := parseIPAddr(value)
-	if !ok {
-		return ""
-	}
-	return addr.String()
-}
-
-func parseIPAddr(value string) (netip.Addr, bool) {
-	value = strings.Trim(strings.TrimSpace(value), "[]")
-	if value == "" {
-		return netip.Addr{}, false
-	}
-	addr, err := netip.ParseAddr(value)
-	if err != nil {
-		return netip.Addr{}, false
-	}
-	return addr.Unmap(), true
-}
-
-func trustedProxyPrefixes(values []string) []netip.Prefix {
-	prefixes := []netip.Prefix{}
-	for _, value := range values {
-		if prefix, ok := trustedProxyPrefix(value); ok {
-			prefixes = append(prefixes, prefix)
-		}
-	}
-	return prefixes
-}
-
-func trustedProxyPrefix(value string) (netip.Prefix, bool) {
-	value = strings.Trim(strings.TrimSpace(value), "[]")
-	if value == "" {
-		return netip.Prefix{}, false
-	}
-	if prefix, err := netip.ParsePrefix(value); err == nil {
-		return prefix.Masked(), true
-	}
-	addr, err := netip.ParseAddr(value)
-	if err != nil {
-		return netip.Prefix{}, false
-	}
-	addr = addr.Unmap()
-	return netip.PrefixFrom(addr, addr.BitLen()), true
-}
-
-func valueOrUnknown(value string) string {
-	value = strings.TrimSpace(value)
-	if value == "" {
-		return "unknown"
-	}
-	return value
+	writeProblem(w, r, appErr)
 }

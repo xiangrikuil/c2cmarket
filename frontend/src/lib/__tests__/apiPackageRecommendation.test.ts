@@ -10,6 +10,12 @@ const packageRow = (overrides: Partial<ApiServicePackage> = {}): ApiServicePacka
   durationDays: 3,
   stockTotal: 5,
   stockAvailable: 5,
+  quotaUsagePolicy: {
+    fiveHour: { mode: 'limited', amountUsd: '2' },
+    daily: { mode: 'limited', amountUsd: '5' },
+    scope: 'per_buyer_credential',
+    dailyReset: 'utc_plus_8_calendar_day',
+  },
   description: '交付后开始计算有效期。',
   enabled: true,
   sortOrder: 0,
@@ -42,6 +48,12 @@ const service = (id: string, pack: ApiServicePackage, overrides: Partial<ApiServ
   minimumPurchaseCny: pack.priceCny,
   maxBuy: pack.priceCny,
   balance: 0,
+  quotaUsagePolicy: {
+    fiveHour: { mode: 'unlimited', amountUsd: null },
+    daily: { mode: 'unlimited', amountUsd: null },
+    scope: 'per_buyer_credential',
+    dailyReset: 'utc_plus_8_calendar_day',
+  },
   delivery: 'Sub2API',
   billingMode: 'fixed_package',
   deliveryModes: ['api_key_endpoint'],
@@ -100,6 +112,18 @@ describe('rankApiPackages', () => {
     ], 'model-1', 3, new Date('2026-07-16T00:00:00Z'))
 
     expect(rows[0].responseScore).toBe(50)
+    expect(rows[0].fulfillmentScore).toBe(50)
+  })
+
+  it.each([
+    { completed30d: null },
+    { unresolvedDisputes: null },
+    { completed30d: null, unresolvedDisputes: null },
+  ])('uses a neutral fulfillment score when reputation facts are unavailable: %o', (overrides) => {
+    const rows = rankApiPackages([
+      service('unknown-fulfillment', packageRow(), overrides),
+    ], 'model-1', 3, new Date('2026-07-16T00:00:00Z'))
+
     expect(rows[0].fulfillmentScore).toBe(50)
   })
 })

@@ -4,10 +4,15 @@ import (
 	"time"
 
 	"c2c-market/backend/internal/domain"
+	"c2c-market/backend/internal/module/apimarket"
 	"c2c-market/backend/internal/module/idempotency"
+	"c2c-market/backend/internal/module/reputation"
 )
 
 const (
+	PurchaseKindAPIService        = "api_service"
+	PurchaseKindLimitedQuotaOffer = "limited_quota_offer"
+
 	StatusPendingPayment    = "pending_payment"
 	StatusPaymentSubmitted  = "payment_submitted"
 	StatusPaymentIssue      = "payment_issue"
@@ -19,6 +24,9 @@ const (
 	DisputeStatusNone   = "none"
 	DisputeStatusOpen   = "open"
 	DisputeStatusClosed = "closed"
+
+	CompletionSourceBuyerConfirmed = "buyer_confirmed"
+	CompletionSourceAutoCompleted  = "auto_completed"
 
 	CancelReasonBuyer          = "buyer_cancelled"
 	CancelReasonPaymentTimeout = "payment_timeout"
@@ -33,6 +41,8 @@ const (
 	EventCancelled               = "api_order.cancelled"
 	EventPaymentTimeoutCancelled = "api_order.payment_timeout_cancelled"
 	EventDisputeOpened           = "api_order.dispute_opened"
+	EventDeliveryReviewReminder  = "api_order.delivery_review_reminder_sent"
+	EventAutoCompleted           = "api_order.auto_completed"
 
 	DeliveryKindAPIKeyEndpoint = "api_key_endpoint"
 	DeliveryKindLoginAccount   = "login_account"
@@ -40,10 +50,15 @@ const (
 	PaymentIssueNotReceived    = "not_received"
 	PaymentIssueAmountMismatch = "amount_mismatch"
 	PaymentIssueRemarkMismatch = "remark_mismatch"
+
+	DeliveryReviewWindow       = 24 * time.Hour
+	DeliveryReviewReminderLead = 2 * time.Hour
 )
 
 type Order struct {
 	ID                            string
+	OrderNo                       string
+	PurchaseKind                  string
 	APIPurchaseIntentID           string
 	APIServiceID                  string
 	BuyerUserID                   string
@@ -60,8 +75,34 @@ type Order struct {
 	RequestedUSDAllowanceSnapshot string
 	CNYPerUSDAllowanceSnapshot    string
 	PricingSnapshot               string
+	QuotaUsagePolicySnapshot      apimarket.QuotaUsagePolicy
+	PromptAuditEnabledSnapshot    *bool
 	PackageStockReserved          bool
 	PackageExpiresAt              *time.Time
+	APIQuotaBatchID               string
+	APIQuotaOfferID               string
+	APIQuotaSaleRoundID           string
+	APIQuotaAllocationID          string
+	APIQuotaInventoryUnitID       string
+	APIQuotaCredentialID          string
+	QuotaOfferSnapshot            string
+	QuotaOfferNameSnapshot        string
+	QuotaUSDAllowanceSnapshot     string
+	QuotaPriceCNYSnapshot         string
+	QuotaCNYPerUSDSnapshot        string
+	QuotaModelMultiplierSnapshot  string
+	QuotaSaleCutoffAtSnapshot     *time.Time
+	QuotaExpiresAtSnapshot        *time.Time
+	QuotaSaleModeSnapshot         string
+	QuotaRoundStartsAtSnapshot    *time.Time
+	QuotaRoundEndsAtSnapshot      *time.Time
+	QuotaDistributionSnapshot     string
+	QuotaTTFTBandSnapshot         string
+	QuotaDeclaredMaxConcurrency   int
+	QuotaPerformanceConfirmedAt   *time.Time
+	QuotaPerformanceUnverified    bool
+	QuotaDeliveryETAMinutes       int
+	QuotaDeliveryMode             string
 	Amount                        string
 	Currency                      string
 	SelectedPaymentMethod         string
@@ -77,13 +118,18 @@ type Order struct {
 	PaidConfirmedAt               *time.Time
 	DeliveryNote                  string
 	DeliverySubmittedAt           *time.Time
+	DeliveryReviewExpiresAt       *time.Time
+	DeliveryReviewRemindedAt      *time.Time
 	DeliveryCredential            *DeliveryCredential
+	CompletionSource              string
 	CompletedAt                   *time.Time
 	CancelledAt                   *time.Time
 	CancelReason                  string
 	CreatedAt                     time.Time
 	UpdatedAt                     time.Time
 	Version                       int64
+	BuyerReputation               *reputation.ReputationSnapshot
+	SellerReputation              *reputation.ReputationSnapshot
 }
 
 type Event struct {
@@ -120,6 +166,8 @@ type DeliveryCredential struct {
 	Instructions  string
 	SubmittedAt   time.Time
 	CreatedAt     time.Time
+	DestroyedAt   *time.Time
+	DestroyReason string
 }
 
 type CreateInput struct {

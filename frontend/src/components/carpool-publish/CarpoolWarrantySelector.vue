@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { Input } from '@/components/ui/input'
+import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group'
 import { Textarea } from '@/components/ui/textarea'
 import type { CarpoolPublishForm, CarpoolWarrantyMode } from './types'
 import PublishSectionCard from './PublishSectionCard.vue'
@@ -22,19 +23,21 @@ const options: Array<{ value: CarpoolWarrantyMode, title: string, description: s
     title="车主承诺与售后"
     description="使用结构化规则表达车主承诺口径；平台不担保、不代赔。"
   >
-    <div class="grid gap-3 md:grid-cols-3">
-      <button
+    <RadioGroup v-model="form.warranty.mode" class="grid gap-3 md:grid-cols-3">
+      <label
         v-for="option in options"
         :key="option.value"
-        type="button"
-        class="min-h-24 rounded-lg border p-3 text-left transition"
+        :for="`carpool-warranty-${option.value}`"
+        class="flex min-h-24 cursor-pointer items-start gap-3 rounded-lg border p-3 text-left transition"
         :class="form.warranty.mode === option.value ? 'border-primary bg-primary/10 ring-1 ring-primary' : 'border-border bg-background hover:bg-muted'"
-        @click="form.warranty.mode = option.value"
       >
-        <span class="block text-sm font-semibold">{{ option.title }}</span>
-        <span class="mt-1 block text-xs leading-5 text-muted-foreground">{{ option.description }}</span>
-      </button>
-    </div>
+        <RadioGroupItem :id="`carpool-warranty-${option.value}`" :value="option.value" class="mt-0.5" />
+        <span class="min-w-0">
+          <span class="block text-sm font-semibold">{{ option.title }}</span>
+          <span class="mt-1 block text-xs leading-5 text-muted-foreground">{{ option.description }}</span>
+        </span>
+      </label>
+    </RadioGroup>
 
     <div v-if="form.warranty.mode !== 'no_warranty'" class="mt-4 grid gap-3 md:grid-cols-2">
       <label v-if="form.warranty.mode === 'fixed_days_warranty'" class="space-y-2">

@@ -29,7 +29,7 @@ type favoriteStatusDTO struct {
 }
 
 func (s *Server) handleMyFavorites(w http.ResponseWriter, r *http.Request) {
-	user, _, appErr := s.requireSession(r)
+	user, _, appErr := s.requireSession(w, r)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
@@ -43,7 +43,7 @@ func (s *Server) handleMyFavorites(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleFavoriteStatus(w http.ResponseWriter, r *http.Request) {
-	user, _, appErr := s.requireSession(r)
+	user, _, appErr := s.requireSession(w, r)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
@@ -57,7 +57,7 @@ func (s *Server) handleFavoriteStatus(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleCreateFavorite(w http.ResponseWriter, r *http.Request) {
-	user, _, appErr := s.requireSessionAndCSRF(r)
+	user, _, appErr := s.requireSessionAndCSRF(w, r)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
@@ -79,7 +79,7 @@ func (s *Server) handleCreateFavorite(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleDeleteFavorite(w http.ResponseWriter, r *http.Request) {
-	user, _, appErr := s.requireSessionAndCSRF(r)
+	user, _, appErr := s.requireSessionAndCSRF(w, r)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return

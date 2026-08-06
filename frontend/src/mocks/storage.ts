@@ -18,6 +18,7 @@ function mergeSeedRecords<T extends IdRecord>(seed: T[], stored: T[]) {
 }
 
 export function readMockSessionStore<T>(key: string, seed: T): T {
+  if (typeof window === 'undefined') return cloneMock(seed)
   const stored = window.sessionStorage.getItem(key)
   if (!stored) return cloneMock(seed)
   const parsed = JSON.parse(stored) as T
@@ -28,5 +29,6 @@ export function readMockSessionStore<T>(key: string, seed: T): T {
 }
 
 export function writeMockSessionStore<T>(key: string, value: T) {
+  if (typeof window === 'undefined') return
   window.sessionStorage.setItem(key, JSON.stringify(value))
 }

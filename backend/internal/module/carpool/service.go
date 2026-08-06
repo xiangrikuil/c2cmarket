@@ -112,30 +112,38 @@ func newListing(ownerUserID string, input CreateListingInput, plan catalog.Produ
 			CreatedAt:     now,
 			UpdatedAt:     now,
 		},
-		Title:                  strings.TrimSpace(input.Title),
-		Summary:                strings.TrimSpace(input.Summary),
-		AccessArrangement:      strings.TrimSpace(input.AccessArrangement),
-		DistributionMethod:     strings.TrimSpace(input.DistributionMethod),
-		DistributionMethodNote: strings.TrimSpace(input.DistributionMethodNote),
-		ProvidesAdminAccount:   input.ProvidesAdminAccount,
-		RegionCode:             strings.TrimSpace(input.RegionCode),
-		RegionName:             strings.TrimSpace(input.RegionName),
-		SourceURL:              strings.TrimSpace(input.SourceURL),
-		PriceMonthlyCNY:        strings.TrimSpace(input.PriceMonthlyCNY),
-		ServiceMultiplier:      strings.TrimSpace(input.ServiceMultiplier),
-		MonthlyQuotaAmount:     strings.TrimSpace(input.MonthlyQuotaAmount),
-		QuotaLabel:             strings.TrimSpace(plan.QuotaLabel),
-		QuotaUnit:              strings.TrimSpace(plan.QuotaUnit),
-		QuotaPeriod:            strings.TrimSpace(plan.QuotaPeriod),
-		BuyerSeatCapacity:      input.BuyerSeatCapacity,
-		ActiveBuyerMembers:     input.ActiveBuyerMembers,
-		Status:                 status,
-		PolicyVersion:          plan.PolicyVersion,
-		RiskNoticeCode:         plan.RiskNoticeCode,
-		RiskAckRequired:        plan.RiskAckRequired,
-		CreatedAt:              now,
-		UpdatedAt:              now,
-		Version:                1,
+		Title:                                 strings.TrimSpace(input.Title),
+		Summary:                               strings.TrimSpace(input.Summary),
+		AccessArrangement:                     strings.TrimSpace(input.AccessArrangement),
+		DistributionMethod:                    strings.TrimSpace(input.DistributionMethod),
+		DistributionMethodNote:                strings.TrimSpace(input.DistributionMethodNote),
+		ProvidesAdminAccount:                  input.ProvidesAdminAccount,
+		RegionCode:                            strings.TrimSpace(input.RegionCode),
+		RegionName:                            strings.TrimSpace(input.RegionName),
+		SourceURL:                             strings.TrimSpace(input.SourceURL),
+		PriceMonthlyCNY:                       strings.TrimSpace(input.PriceMonthlyCNY),
+		ServiceMultiplier:                     strings.TrimSpace(input.ServiceMultiplier),
+		WeeklyQuotaAmount:                     optionalString(input.WeeklyQuotaAmount),
+		MonthlyQuotaAmount:                    strings.TrimSpace(input.MonthlyQuotaAmount),
+		FollowsOfficialQuotaReset:             input.FollowsOfficialQuotaReset,
+		VPSRegion:                             optionalString(input.VPSRegion),
+		SupportsMainlandChinaDirectConnection: input.SupportsMainlandChinaDirectConnection,
+		OpeningChannelCode:                    optionalString(input.OpeningChannelCode),
+		CustomOpeningChannel:                  optionalString(input.CustomOpeningChannel),
+		PaymentMethodCode:                     optionalString(input.PaymentMethodCode),
+		CustomPaymentMethod:                   optionalString(input.CustomPaymentMethod),
+		QuotaLabel:                            strings.TrimSpace(plan.QuotaLabel),
+		QuotaUnit:                             strings.TrimSpace(plan.QuotaUnit),
+		QuotaPeriod:                           strings.TrimSpace(plan.QuotaPeriod),
+		BuyerSeatCapacity:                     input.BuyerSeatCapacity,
+		ActiveBuyerMembers:                    input.ActiveBuyerMembers,
+		Status:                                status,
+		PolicyVersion:                         plan.PolicyVersion,
+		RiskNoticeCode:                        plan.RiskNoticeCode,
+		RiskAckRequired:                       plan.RiskAckRequired,
+		CreatedAt:                             now,
+		UpdatedAt:                             now,
+		Version:                               1,
 	}
 	listing.ReservedSeats = 0
 	listing.AvailableSeats = listing.BuyerSeatCapacity - listing.ActiveBuyerMembers
@@ -186,25 +194,33 @@ func (s *Service) UpdateListing(ctx context.Context, user auth.User, input Updat
 		return Listing{}, appErr
 	}
 	if err := validateCreateListingInput(CreateListingInput{
-		OwnerUserID:            user.ID,
-		ProductPlanID:          input.ProductPlanID,
-		OwnerContactMethodID:   input.OwnerContactMethodID,
-		CycleTerm:              input.CycleTerm,
-		Title:                  input.Title,
-		Summary:                input.Summary,
-		AccessArrangement:      input.AccessArrangement,
-		DistributionMethod:     input.DistributionMethod,
-		DistributionMethodNote: input.DistributionMethodNote,
-		ProvidesAdminAccount:   input.ProvidesAdminAccount,
-		RegionCode:             input.RegionCode,
-		RegionName:             input.RegionName,
-		SourceURL:              input.SourceURL,
-		PriceMonthlyCNY:        input.PriceMonthlyCNY,
-		ServiceMultiplier:      input.ServiceMultiplier,
-		MonthlyQuotaAmount:     input.MonthlyQuotaAmount,
-		BuyerSeatCapacity:      input.BuyerSeatCapacity,
-		ActiveBuyerMembers:     input.ActiveBuyerMembers,
-		RiskAcknowledgement:    input.RiskAcknowledgement,
+		OwnerUserID:                           user.ID,
+		ProductPlanID:                         input.ProductPlanID,
+		OwnerContactMethodID:                  input.OwnerContactMethodID,
+		CycleTerm:                             input.CycleTerm,
+		Title:                                 input.Title,
+		Summary:                               input.Summary,
+		AccessArrangement:                     input.AccessArrangement,
+		DistributionMethod:                    input.DistributionMethod,
+		DistributionMethodNote:                input.DistributionMethodNote,
+		ProvidesAdminAccount:                  input.ProvidesAdminAccount,
+		RegionCode:                            input.RegionCode,
+		RegionName:                            input.RegionName,
+		SourceURL:                             input.SourceURL,
+		PriceMonthlyCNY:                       input.PriceMonthlyCNY,
+		ServiceMultiplier:                     input.ServiceMultiplier,
+		WeeklyQuotaAmount:                     input.WeeklyQuotaAmount,
+		MonthlyQuotaAmount:                    input.MonthlyQuotaAmount,
+		FollowsOfficialQuotaReset:             input.FollowsOfficialQuotaReset,
+		VPSRegion:                             input.VPSRegion,
+		SupportsMainlandChinaDirectConnection: input.SupportsMainlandChinaDirectConnection,
+		OpeningChannelCode:                    input.OpeningChannelCode,
+		CustomOpeningChannel:                  input.CustomOpeningChannel,
+		PaymentMethodCode:                     input.PaymentMethodCode,
+		CustomPaymentMethod:                   input.CustomPaymentMethod,
+		BuyerSeatCapacity:                     input.BuyerSeatCapacity,
+		ActiveBuyerMembers:                    input.ActiveBuyerMembers,
+		RiskAcknowledgement:                   input.RiskAcknowledgement,
 	}, plan); err != nil {
 		return Listing{}, err
 	}
@@ -262,7 +278,15 @@ func (s *Service) UpdateListing(ctx context.Context, user auth.User, input Updat
 	listing.SourceURL = strings.TrimSpace(input.SourceURL)
 	listing.PriceMonthlyCNY = strings.TrimSpace(input.PriceMonthlyCNY)
 	listing.ServiceMultiplier = strings.TrimSpace(input.ServiceMultiplier)
+	listing.WeeklyQuotaAmount = optionalString(input.WeeklyQuotaAmount)
 	listing.MonthlyQuotaAmount = strings.TrimSpace(input.MonthlyQuotaAmount)
+	listing.FollowsOfficialQuotaReset = input.FollowsOfficialQuotaReset
+	listing.VPSRegion = optionalString(input.VPSRegion)
+	listing.SupportsMainlandChinaDirectConnection = input.SupportsMainlandChinaDirectConnection
+	listing.OpeningChannelCode = optionalString(input.OpeningChannelCode)
+	listing.CustomOpeningChannel = optionalString(input.CustomOpeningChannel)
+	listing.PaymentMethodCode = optionalString(input.PaymentMethodCode)
+	listing.CustomPaymentMethod = optionalString(input.CustomPaymentMethod)
 	listing.QuotaLabel = strings.TrimSpace(plan.QuotaLabel)
 	listing.QuotaUnit = strings.TrimSpace(plan.QuotaUnit)
 	listing.QuotaPeriod = strings.TrimSpace(plan.QuotaPeriod)
@@ -1350,11 +1374,32 @@ func validateCreateListingInput(input CreateListingInput, plan catalog.ProductPl
 	if amount, ok := parseNonNegativeDecimal(input.PriceMonthlyCNY); !ok || amount.Sign() < 0 {
 		return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Price invalid", "月费格式不正确。", "priceMonthlyCny", "invalid", "月费必须是非负数字。")
 	}
-	if multiplier, ok := parseNonNegativeDecimal(input.ServiceMultiplier); !ok || multiplier.Sign() <= 0 {
-		return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Service multiplier invalid", "倍率格式不正确。", "serviceMultiplier", "invalid", "倍率必须是大于 0 的数字。")
+	if multiplier, ok := parseNonNegativeDecimal(input.ServiceMultiplier); !ok || multiplier.Cmp(big.NewRat(1, 1)) != 0 {
+		return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Service multiplier invalid", "拼车倍率固定为 1。", "serviceMultiplier", "fixed_value", "拼车倍率必须为 1。")
+	}
+	if quota, ok := parseNonNegativeDecimal(input.WeeklyQuotaAmount); !ok || quota.Sign() <= 0 {
+		return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Weekly quota invalid", "每周额度格式不正确。", "weeklyQuotaAmount", "invalid", "每周额度必须是大于 0 的数字。")
 	}
 	if quota, ok := parseNonNegativeDecimal(input.MonthlyQuotaAmount); !ok || quota.Sign() <= 0 {
 		return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Monthly quota invalid", "每月额度格式不正确。", "monthlyQuotaAmount", "invalid", "每月额度必须是大于 0 的数字。")
+	}
+	if input.FollowsOfficialQuotaReset == nil {
+		return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Official quota reset selection required", "必须选择额度是否跟随官方重置。", "followsOfficialQuotaReset", "required", "请选择额度是否跟随官方重置。")
+	}
+	if strings.TrimSpace(input.VPSRegion) == "" {
+		return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "VPS region required", "必须填写 VPS 区域。", "vpsRegion", "required", "请填写 VPS 区域。")
+	}
+	if err := validateListingText("vpsRegion", input.VPSRegion, 64); err != nil {
+		return err
+	}
+	if input.SupportsMainlandChinaDirectConnection == nil {
+		return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Mainland direct connection selection required", "必须选择是否支持国内直连。", "supportsMainlandChinaDirectConnection", "required", "请选择是否支持国内直连。")
+	}
+	if err := validateListingChoice("openingChannelCode", input.OpeningChannelCode, input.CustomOpeningChannel, validOpeningChannelCodes()); err != nil {
+		return err
+	}
+	if err := validateListingChoice("paymentMethodCode", input.PaymentMethodCode, input.CustomPaymentMethod, validPaymentMethodCodes()); err != nil {
+		return err
 	}
 	if input.BuyerSeatCapacity <= 0 {
 		return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Seat count invalid", "买家名额必须大于 0。", "buyerSeatCapacity", "invalid", "买家名额必须大于 0。")
@@ -1665,6 +1710,51 @@ func parseNonNegativeDecimal(value string) (*big.Rat, bool) {
 		return nil, false
 	}
 	return rat, true
+}
+
+func optionalString(value string) *string {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return nil
+	}
+	return &trimmed
+}
+
+func validOpeningChannelCodes() map[string]struct{} {
+	return map[string]struct{}{
+		ListingOpeningChannelWeb: {}, ListingOpeningChannelIOSAppStore: {}, ListingOpeningChannelGooglePlay: {},
+		ListingOpeningChannelTeamSeat: {}, ListingOpeningChannelOther: {},
+	}
+}
+
+func validPaymentMethodCodes() map[string]struct{} {
+	return map[string]struct{}{
+		ListingPaymentMethodCreditCard: {}, ListingPaymentMethodVirtualCard: {}, ListingPaymentMethodApplePay: {},
+		ListingPaymentMethodGooglePay: {}, ListingPaymentMethodAppStoreGiftCard: {}, ListingPaymentMethodGooglePlayGiftCard: {},
+		ListingPaymentMethodPayPal: {}, ListingPaymentMethodUCard: {}, ListingPaymentMethodOther: {},
+	}
+}
+
+func validateListingChoice(field, code, custom string, valid map[string]struct{}) *domain.AppError {
+	code = strings.TrimSpace(code)
+	custom = strings.TrimSpace(custom)
+	if code == "" {
+		return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Selection required", "必须选择一个选项。", field, "required", "请选择一个选项。")
+	}
+	if _, ok := valid[code]; !ok {
+		return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Selection invalid", "选择项不正确。", field, "invalid", "选择项不正确。")
+	}
+	customField := "customOpeningChannel"
+	if field == "paymentMethodCode" {
+		customField = "customPaymentMethod"
+	}
+	if code == "other" && custom == "" {
+		return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Custom value required", "选择其他时必须填写具体内容。", customField, "required", "请填写具体内容。")
+	}
+	if code != "other" && custom != "" {
+		return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Custom value unexpected", "只有选择其他时才能填写自定义内容。", customField, "unexpected", "请清空自定义内容。")
+	}
+	return validateListingText(customField, custom, 64)
 }
 
 func looksLikeSecret(value string) bool {

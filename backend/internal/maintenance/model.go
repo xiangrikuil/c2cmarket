@@ -1,0 +1,39 @@
+package maintenance
+
+import (
+	"context"
+	"time"
+
+	"c2c-market/backend/internal/domain"
+)
+
+type Policy struct {
+	SessionRetention               time.Duration
+	EmailVerificationRetention     time.Duration
+	ReadNotificationRetention      time.Duration
+	UnreadNotificationRetention    time.Duration
+	DomainEventRetention           time.Duration
+	APIDeliveryCredentialRetention time.Duration
+	APIProbeSampleRetention        time.Duration
+}
+
+type Result struct {
+	LockAcquired                 bool
+	SessionsDeleted              int64
+	AccountAppealSessionsDeleted int64
+	VerificationCodesDeleted     int64
+	IdempotencyEntriesDeleted    int64
+	ContactSessionsExpired       int64
+	APIOrdersPaymentExpired      int64
+	APIOrderReviewReminders      int64
+	APIOrdersAutoCompleted       int64
+	APIOrderCredentialsDestroyed int64
+	APIQuotaCredentialsDestroyed int64
+	APIProbeSamplesDeleted       int64
+	NotificationsDeleted         int64
+	DomainEventsDeleted          int64
+}
+
+type Repository interface {
+	RunDataLifecycle(ctx context.Context, now time.Time, batchSize int, policy Policy) (Result, *domain.AppError)
+}

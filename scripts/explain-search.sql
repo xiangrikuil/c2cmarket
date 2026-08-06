@@ -25,13 +25,6 @@ FROM carpool_listings l
 WHERE l.status = 'active'
   AND lower(l.title || ' ' || l.summary || ' ' || l.access_arrangement) ILIKE '%gpt%' ESCAPE '\';
 
--- Expected: ix_demands_search_trgm
-EXPLAIN (COSTS OFF)
-SELECT d.id
-FROM demands d
-WHERE d.status = 'active'
-  AND lower(d.title || ' ' || d.region_code || ' ' || d.owner_preference || ' ' || COALESCE(d.note, '')) ILIKE '%gpt%' ESCAPE '\';
-
 -- Expected: ix_api_services_search_trgm
 EXPLAIN (COSTS OFF)
 SELECT s.id

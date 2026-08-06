@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { Textarea } from '@/components/ui/textarea'
+import type { AcceptableValue } from 'reka-ui'
 import { computed } from 'vue'
 import type { CarpoolProductCatalogItem, CarpoolPublishForm, PublishFieldState, RegionOption } from './types'
 import CarpoolProductCombobox from './CarpoolProductCombobox.vue'
@@ -19,6 +21,17 @@ const props = defineProps<{
 const selectedProduct = computed(() => props.catalog.find(item => item.id === props.form.productId) ?? null)
 const quotaLabel = computed(() => quotaFieldLabel(selectedProduct.value))
 const quotaUnit = computed(() => selectedProduct.value?.quotaUnit || 'USD')
+
+function booleanSelectValue(value: boolean | null) {
+  if (value === null) return ''
+  return value ? 'true' : 'false'
+}
+
+function selectedBoolean(value: AcceptableValue) {
+  if (value === 'true') return true
+  if (value === 'false') return false
+  return null
+}
 
 function fieldState(key: string): PublishFieldState {
   return props.fieldStates?.[key] ?? 'idle'
@@ -60,7 +73,7 @@ function stateLabelClass(key: string) {
   <PublishSectionCard
     :index="1"
     title="基础信息"
-    description="选择要发布的订阅产品，并补充地区、月费、倍率和每月额度。"
+    description="选择订阅产品，并补充额度、重置、网络和公开接入信号。"
   >
     <div class="grid gap-4 md:grid-cols-2">
       <div id="carpool-task-product" :class="fieldShellClass('product')">
@@ -117,24 +130,26 @@ function stateLabelClass(key: string) {
         <p v-else class="text-xs" :class="fieldState('monthlyPrice') === 'pendingRequired' ? 'text-warning' : 'text-muted-foreground'">默认按人民币 / 月展示。</p>
       </label>
 
-      <label id="carpool-task-serviceMultiplier" class="space-y-2" :class="fieldShellClass('serviceMultiplier')">
+      <div id="carpool-task-weeklyQuota" class="space-y-2" :class="fieldShellClass('weeklyQuota')">
         <span class="flex items-center justify-between gap-2 text-sm font-medium">
-          <span>倍率 <span class="text-xs text-primary">必填</span></span>
-          <span v-if="stateLabel('serviceMultiplier')" class="rounded-full px-2 py-0.5 text-xs font-medium" :class="stateLabelClass('serviceMultiplier')">{{ stateLabel('serviceMultiplier') }}</span>
+          <span>每周{{ selectedProduct?.quotaLabel || '额度' }} <span class="text-xs text-primary">必填</span></span>
+          <span v-if="stateLabel('weeklyQuota')" class="rounded-full px-2 py-0.5 text-xs font-medium" :class="stateLabelClass('weeklyQuota')">{{ stateLabel('weeklyQuota') }}</span>
         </span>
-        <Input
-          :model-value="form.serviceMultiplier ?? ''"
-          type="number"
-          min="0.01"
-          step="0.01"
-          placeholder="1.35"
-          @update:model-value="value => form.serviceMultiplier = value === '' ? null : Number(value)"
-        />
-        <p v-if="errors.serviceMultiplier" class="text-xs text-destructive">{{ errors.serviceMultiplier }}</p>
-        <p class="text-xs text-muted-foreground">例如 1.35x，表示车主声明的使用或折算倍率。</p>
-      </label>
+        <div class="grid gap-2 sm:grid-cols-[minmax(0,1fr)_80px]">
+          <Input
+            :model-value="form.weeklyQuotaAmount ?? ''"
+            type="number"
+            min="0.01"
+            step="1"
+            placeholder="50"
+            @update:model-value="value => form.weeklyQuotaAmount = value === '' ? null : Number(value)"
+          />
+          <Input :model-value="quotaUnit" readonly />
+        </div>
+        <p v-if="errors.weeklyQuota" class="text-xs text-destructive">{{ errors.weeklyQuota }}</p>
+      </div>
 
-      <div id="carpool-task-monthlyQuota" class="space-y-2 md:col-span-2" :class="fieldShellClass('monthlyQuota')">
+      <div id="carpool-task-monthlyQuota" class="space-y-2" :class="fieldShellClass('monthlyQuota')">
         <span class="flex items-center justify-between gap-2 text-sm font-medium">
           <span>{{ quotaLabel }} <span class="text-xs text-primary">必填</span></span>
           <span v-if="stateLabel('monthlyQuota')" class="rounded-full px-2 py-0.5 text-xs font-medium" :class="stateLabelClass('monthlyQuota')">{{ stateLabel('monthlyQuota') }}</span>
@@ -151,7 +166,52 @@ function stateLabelClass(key: string) {
           <Input :model-value="quotaUnit" readonly />
         </div>
         <p v-if="errors.monthlyQuota" class="text-xs text-destructive">{{ errors.monthlyQuota }}</p>
-        <p v-else class="text-xs" :class="fieldState('monthlyQuota') === 'pendingRequired' ? 'text-warning' : 'text-muted-foreground'">每人每月额度由套餐目录配置单位；平台不展示总额度，也不做资源池拆分。</p>
+      </div>
+
+      <label id="carpool-task-quotaReset" class="space-y-2" :class="fieldShellClass('quotaReset')">
+        <span class="font-medium">是否跟随官方重置 <span class="text-xs text-primary">必填</span></span>
+        <Select :model-value="booleanSelectValue(form.followsOfficialQuotaReset)" @update:model-value="value => form.followsOfficialQuotaReset = selectedBoolean(value)">
+          <SelectTrigger class="w-full bg-background"><SelectValue placeholder="请选择" /></SelectTrigger>
+          <SelectContent><SelectItem value="true">跟随官方重置</SelectItem><SelectItem value="false">不跟随官方重置</SelectItem></SelectContent>
+        </Select>
+        <p v-if="errors.quotaReset" class="text-xs text-destructive">{{ errors.quotaReset }}</p>
+      </label>
+
+      <label id="carpool-task-vpsRegion" class="space-y-2" :class="fieldShellClass('connection')">
+        <span class="font-medium">VPS 区域 <span class="text-xs text-primary">必填</span></span>
+        <Input v-model="form.vpsRegion" maxlength="64" placeholder="例如香港、新加坡、美国西部" />
+        <p v-if="errors.connection" class="text-xs text-destructive">{{ errors.connection }}</p>
+      </label>
+
+      <label class="space-y-2" :class="fieldShellClass('connection')">
+        <span class="font-medium">是否支持国内直连 <span class="text-xs text-primary">必填</span></span>
+        <Select :model-value="booleanSelectValue(form.supportsMainlandChinaDirectConnection)" @update:model-value="value => form.supportsMainlandChinaDirectConnection = selectedBoolean(value)">
+          <SelectTrigger class="w-full bg-background"><SelectValue placeholder="请选择" /></SelectTrigger>
+          <SelectContent><SelectItem value="true">支持国内直连</SelectItem><SelectItem value="false">不支持国内直连</SelectItem></SelectContent>
+        </Select>
+      </label>
+
+      <div id="carpool-task-distribution" class="space-y-3 md:col-span-2" :class="fieldShellClass('distribution')">
+        <div class="flex items-center justify-between gap-2 text-sm font-medium">
+          <span>分发方式与管理员账号 <span class="text-xs text-primary">必填</span></span>
+          <span v-if="stateLabel('distribution')" class="rounded-full px-2 py-0.5 text-xs font-medium" :class="stateLabelClass('distribution')">{{ stateLabel('distribution') }}</span>
+        </div>
+        <div class="grid gap-3 md:grid-cols-2">
+          <label class="space-y-2 text-sm">
+            <span class="font-medium">分发方式</span>
+            <Select v-model="form.distributionMethod"><SelectTrigger class="w-full bg-background"><SelectValue placeholder="选择分发方式" /></SelectTrigger><SelectContent><SelectItem value="sub2api">Sub2API</SelectItem><SelectItem value="other">其他</SelectItem></SelectContent></Select>
+          </label>
+          <label class="space-y-2 text-sm">
+            <span class="font-medium">是否提供管理员账号</span>
+            <Select :model-value="booleanSelectValue(form.providesAdminAccount)" @update:model-value="value => form.providesAdminAccount = selectedBoolean(value)"><SelectTrigger class="w-full bg-background"><SelectValue placeholder="请选择" /></SelectTrigger><SelectContent><SelectItem value="true">提供管理员账号</SelectItem><SelectItem value="false">不提供管理员账号</SelectItem></SelectContent></Select>
+          </label>
+        </div>
+        <label v-if="form.distributionMethod === 'other'" class="block space-y-2 text-sm">
+          <span class="font-medium">其他分发说明</span>
+          <Textarea v-model="form.distributionMethodNote" class="min-h-20 bg-background" placeholder="说明站外分发方式，不填写任何账号凭据。" />
+        </label>
+        <p v-if="errors.distribution" class="text-xs text-destructive">{{ errors.distribution }}</p>
+        <p v-else class="text-xs text-muted-foreground">具体权限与使用细节请站外确认，平台不保存管理员凭据。</p>
       </div>
     </div>
   </PublishSectionCard>

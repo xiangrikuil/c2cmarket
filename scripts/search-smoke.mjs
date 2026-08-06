@@ -135,10 +135,22 @@ async function createCarpool(owner, keyword, plan) {
       title: `Search Smoke Carpool ${keyword}`,
       summary: '搜索 smoke 公开车源',
       accessArrangement: '费用分摊或成员邀请方案，平台不保存、不交付任何凭据。',
-      sourceUrl: 'https://linux.do/t/search-smoke-carpool/123',
+      distributionMethod: 'sub2api',
+      distributionMethodNote: 'Sub2API 托管管理，具体方式站外确认。',
+      providesAdminAccount: true,
+      regionCode: 'other',
+      regionName: 'Smoke 测试区',
       priceMonthlyCny: '68.00',
-      serviceMultiplier: '1.3500',
+      serviceMultiplier: '1.0000',
+      weeklyQuotaAmount: '50.00',
       monthlyQuotaAmount: '200.00',
+      followsOfficialQuotaReset: true,
+      vpsRegion: '香港',
+      supportsMainlandChinaDirectConnection: true,
+      openingChannelCode: 'web',
+      customOpeningChannel: '',
+      paymentMethodCode: 'u_card',
+      customPaymentMethod: '',
       buyerSeatCapacity: 1,
       activeBuyerMembers: 0,
       riskAcknowledgement: plan.riskAckRequired ? {
@@ -155,27 +167,6 @@ async function createCarpool(owner, keyword, plan) {
   }, owner)
   assert(published.status === 'active', 'search carpool should publish directly')
   return published
-}
-
-async function createDemand(admin, buyer, keyword) {
-  const demand = await request('/api/v1/demands', {
-    method: 'POST',
-    idempotencyPrefix: 'search-smoke-demand-create',
-    body: {
-      title: `Search Smoke Demand ${keyword}`,
-      maxPriceCny: '199.00',
-      regionCode: 'us',
-      ownerPreference: 'personal',
-      sourceUrl: `https://linux.do/t/search-smoke-demand/${Date.now()}`,
-      note: '只记录求车上下文，后续站外确认；平台不处理支付、托管、担保或凭据。',
-    },
-  }, buyer)
-  return request(`/api/v1/admin/demands/${demand.id}/approve`, {
-    method: 'POST',
-    idempotencyPrefix: 'search-smoke-demand-approve',
-    ifMatch: demand.version,
-    body: { reason: 'search smoke approve' },
-  }, admin)
 }
 
 async function createAPIService(owner, keyword) {
@@ -233,6 +224,7 @@ async function createAPIService(owner, keyword) {
           paymentMethod: 'wechat',
           enabled: true,
           paymentInstructions: '微信收款方式由商户站外确认，平台不处理支付。',
+          paymentQrCodeDataUrl: 'data:image/png;base64,aGVsbG8=',
         },
       ],
     },
@@ -257,7 +249,6 @@ async function main() {
 
   const suffix = `${Date.now()}`
   const keyword = `searchsmoke${suffix}`
-  const buyer = await session(`search-smoke-buyer-${suffix}`)
   const owner = await linuxDoSession(`search-smoke-owner-${suffix}`)
   const admin = await session(`search-smoke-admin-${suffix}`, true)
 
@@ -267,7 +258,6 @@ async function main() {
 
   const officialRecord = await createOfficialPriceRecord(admin, keyword, plan)
   const carpool = await createCarpool(owner, keyword, plan)
-  const demand = await createDemand(admin, buyer, keyword)
   const apiService = await createAPIService(owner, keyword)
 
   const empty = await request('/api/v1/search')
@@ -276,7 +266,6 @@ async function main() {
   const results = await request(`/api/v1/search?q=${encodeURIComponent(keyword)}`)
   assert(findType(results, '官方价格', officialRecord.id), 'search should include official price result')
   assert(findType(results, '车源', carpool.id), 'search should include carpool result')
-  assert(findType(results, '求车', demand.id), 'search should include demand result')
   assert(findType(results, 'API 服务', apiService.id), 'search should include API service result')
   assert(results.items.every(item => item.title && item.subtitle && item.badge && item.to), 'search results should include display fields')
   assertPublicSafe(results)
@@ -295,7 +284,6 @@ async function main() {
     resultTypes: results.items.map(item => item.type),
     officialRecordId: officialRecord.id,
     carpoolId: carpool.id,
-    demandId: demand.id,
     apiServiceId: apiService.id,
   }, null, 2))
 }

@@ -14,6 +14,10 @@ function cookieFromSetCookie(headers) {
   return setCookie.split(',').map(item => item.split(';')[0]).join('; ')
 }
 
+function mergeCookies(...cookies) {
+  return cookies.filter(Boolean).join('; ')
+}
+
 async function decode(response) {
   const text = await response.text()
   const body = text ? JSON.parse(text) : null
@@ -47,15 +51,20 @@ async function session(username, admin = false) {
 }
 
 async function linuxDoSession(username) {
-  const start = await request('/api/v1/auth/oauth/start')
+  const startResponse = await fetch(`${baseURL}/api/v1/auth/oauth/start`)
+  const start = await decode(startResponse)
+  const startCookie = cookieFromSetCookie(startResponse.headers)
   const startURL = new URL(start.authorizationUrl)
   startURL.searchParams.set('code', username)
-  const callbackResponse = await fetch(startURL.toString(), { redirect: 'manual' })
+  const callbackResponse = await fetch(startURL.toString(), {
+    redirect: 'manual',
+    headers: startCookie ? { Cookie: startCookie } : {},
+  })
   if (callbackResponse.status !== 302) {
     const text = await callbackResponse.text()
     throw new Error(`oauth callback failed ${callbackResponse.status}: ${text}`)
   }
-  const cookie = cookieFromSetCookie(callbackResponse.headers)
+  const cookie = mergeCookies(startCookie, cookieFromSetCookie(callbackResponse.headers))
   const current = await request('/api/v1/auth/session', {}, { cookie })
   assert(current.user.linuxDoBinding?.bound === true, 'owner session should be bound to linux.do')
   return { cookie, csrfToken: current.csrfToken, user: current.user }
@@ -103,6 +112,7 @@ async function main() {
 
   const owner = await linuxDoSession('api-smoke-owner')
   const buyer = await session('api-smoke-buyer')
+  const admin = await session('api-smoke-admin', true)
 
   const models = await request('/api/v1/api-models')
   const model = models.items[0]
@@ -167,37 +177,8 @@ async function main() {
   }, owner)
   assert(onlineService.publicationStatus === 'online', 'service should be online')
 
-  const publicDetail = await request(`/api/v1/api-services/${serviceDraft.id}`)
-  assert(publicDetail.id === serviceDraft.id, 'public service detail should be available after publish')
-
-  const buyerContact = await request('/api/v1/contact-methods', {
-    method: 'POST',
-    idempotencyPrefix: 'smoke-buyer-contact',
-    body: {
-      type: 'telegram',
-      label: 'Smoke API buyer',
-      value: '@api_smoke_buyer',
-    },
-  }, buyer)
-
-  const unconfiguredIntent = await request(`/api/v1/api-services/${serviceDraft.id}/purchase-intents`, {
-    method: 'POST',
-    idempotencyPrefix: 'smoke-api-intent-unconfigured',
-    body: {
-      buyerContactMethodId: buyerContact.id,
-      requestedCnyAmount: '20',
-      requestedUsdAllowance: '25',
-      selectedAccessMode: 'buyer_dedicated_sub_key',
-      selectedPackageId: '',
-      buyerNote: 'smoke intent before order settings',
-    },
-  }, buyer)
-  const unconfiguredOrderProblem = await problemRequest(`/api/v1/me/api-purchase-intents/${unconfiguredIntent.id}/orders`, {
-    method: 'POST',
-    idempotencyPrefix: 'smoke-api-order-unconfigured',
-    body: { paymentMethod: 'wechat' },
-  }, buyer)
-  assert(unconfiguredOrderProblem.code === 'INVALID_STATE_TRANSITION', 'unconfigured service should not create API order')
+  const hiddenDetailProblem = await problemRequest(`/api/v1/api-services/${serviceDraft.id}`)
+  assert(hiddenDetailProblem.code === 'OBJECT_NOT_FOUND', 'service without order settings should not have a public detail')
 
   const orderableService = await request(`/api/v1/owner/api-services/${serviceDraft.id}/order-settings`, {
     method: 'PATCH',
@@ -210,6 +191,7 @@ async function main() {
           paymentMethod: 'wechat',
           enabled: true,
           paymentInstructions: '微信收款二维码请按商户站外确认展示，付款后填写付款摘要。',
+          paymentQrCodeDataUrl: 'data:image/png;base64,aGVsbG8=',
         },
       ],
     },
@@ -218,8 +200,21 @@ async function main() {
   assert(orderableService.isOrderable === true, 'service should be orderable after settings')
   assert(orderableService.acceptedPaymentMethods.includes('wechat'), 'service should expose wechat payment label')
 
+  const publicDetail = await request(`/api/v1/api-services/${serviceDraft.id}`)
+  assert(publicDetail.id === serviceDraft.id, 'public service detail should be available after order settings')
+
   const publicList = await request('/api/v1/api-services?paymentMethod=wechat')
   assert(publicList.items.some(item => item.id === serviceDraft.id), 'orderable service should appear in payment-filtered public list')
+
+  const buyerContact = await request('/api/v1/contact-methods', {
+    method: 'POST',
+    idempotencyPrefix: 'smoke-buyer-contact',
+    body: {
+      type: 'telegram',
+      label: 'Smoke API buyer',
+      value: '@api_smoke_buyer',
+    },
+  }, buyer)
 
   const intent = await request(`/api/v1/api-services/${serviceDraft.id}/purchase-intents`, {
     method: 'POST',
@@ -322,17 +317,27 @@ async function main() {
     method: 'POST',
     idempotencyPrefix: 'smoke-api-order-secret-delivery',
     ifMatch: confirmed.version,
-    body: { deliveryNote: 'api_key=sk-secret' },
+    body: {
+      deliveryKind: 'api_key_endpoint',
+      apiBaseUrl: 'https://example.com/api/v1/client/subscribe?token=abc',
+      apiKey: 'sk-proj-smoke',
+      instructions: '买家专属接入信息。',
+    },
   }, owner)
-  assert(secretDeliveryProblem.code === 'SECRET_CONTENT_DETECTED', 'delivery note must reject credential-looking content')
+  assert(secretDeliveryProblem.code === 'SECRET_CONTENT_DETECTED', 'delivery must reject subscription URLs')
 
   const delivered = await request(`/api/v1/owner/api-orders/${order.id}/submit-delivery`, {
     method: 'POST',
     idempotencyPrefix: 'smoke-api-order-submit-delivery',
     ifMatch: confirmed.version,
-    body: { deliveryNote: '已站外确认接入安排，买家可按商户说明完成后续操作。' },
+    body: {
+      deliveryKind: 'api_key_endpoint',
+      apiBaseUrl: 'https://api.example.com/v1',
+      apiKey: 'sk-proj-smoke',
+      instructions: '买家专属；提交后不可修改，后续更换请站外联系。',
+    },
   }, owner)
-  assert(delivered.status === 'delivery_submitted', 'owner should submit pure text delivery note')
+  assert(delivered.status === 'delivery_submitted', 'owner should submit structured delivery credentials')
 
   const completed = await request(`/api/v1/me/api-orders/${order.id}/confirm-complete`, {
     method: 'POST',
@@ -347,7 +352,7 @@ async function main() {
     idempotencyPrefix: 'smoke-api-order-duplicate',
     body: { paymentMethod: 'wechat' },
   }, buyer)
-  assert(duplicateOrderProblem.code === 'INVALID_STATE_TRANSITION', 'same purchase intent must not create a second order')
+  assert(duplicateOrderProblem.code === 'API_PURCHASE_INTENT_HAS_ORDER', 'same purchase intent must not create a second order')
 
   console.log(JSON.stringify({
     ok: true,

@@ -7,14 +7,29 @@
     "node": ">=24.11 <25",
     "pnpm": ">=10 <11"
   },
+  "pnpm": {
+    "overrides": {
+      "brace-expansion": "5.0.9",
+      "js-yaml": "4.3.0",
+      "postcss": "8.5.23",
+      "tar": "7.5.21",
+      "undici": "7.29.0"
+    }
+  },
   "scripts": {
-    "dev": "vite --host 0.0.0.0",
-    "build": "vue-tsc -b && vite build",
-    "preview": "vite preview --host 0.0.0.0",
-    "typecheck": "vue-tsc -b",
-    "test": "vitest run"
+    "dev": "nuxt dev --host 0.0.0.0 --port 5173 --dotenv .env.development",
+    "dev:mock": "NUXT_PUBLIC_API_MODE=mock nuxt dev --host 0.0.0.0 --port 5173 --dotenv .env.development",
+    "build": "nuxt build",
+    "postinstall": "nuxt prepare --dotenv .env.development",
+    "preview": "nuxt preview --host 0.0.0.0",
+    "typecheck": "nuxt typecheck --dotenv .env.development",
+    "test": "vitest run",
+    "openapi:generate": "openapi-ts --file openapi-ts.config.mjs --no-log-file",
+    "openapi:check": "node ../scripts/check-openapi-types.mjs"
   },
   "dependencies": {
+    "@formkit/auto-animate": "^0.10.0",
+    "@nuxtjs/sitemap": "^8.2.2",
     "@radix-icons/vue": "^1.0.0",
     "@tanstack/vue-query": "^5.101.0",
     "@tanstack/vue-table": "^8.21.3",
@@ -24,26 +39,32 @@
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "decimal.js": "^10.6.0",
-    "dompurify": "^3.4.11",
+    "dompurify": "^3.4.12",
     "lucide-vue-next": "^1.0.0",
     "marked": "^18.0.5",
+    "nuxt": "^4.4.8",
     "pinia": "^3.0.4",
+    "qrcode": "^1.5.4",
     "reka-ui": "^2.9.10",
     "tailwind-merge": "^3.6.0",
+    "tw-animate-css": "^1.4.0",
     "vue": "^3.5.38",
     "vue-router": "^5.1.0",
     "vue-sonner": "^2.0.9"
   },
   "devDependencies": {
+    "@hey-api/openapi-ts": "0.99.0",
     "@tailwindcss/vite": "4.3.1",
     "@tsconfig/node20": "^20.1.9",
     "@types/node": "^25.9.3",
+    "@types/qrcode": "^1.5.6",
     "@vitejs/plugin-vue": "^6.0.7",
     "@vue/tsconfig": "^0.9.1",
     "tailwindcss": "4.3.1",
     "typescript": "^6.0.3",
     "vite": "^8.0.0",
     "vitest": "4.1.9",
-    "vue-tsc": "^3.3.5"
+    "vue-tsc": "^3.3.5",
+    "wrangler": "^4.114.0"
   }
 }

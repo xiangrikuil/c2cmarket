@@ -73,13 +73,16 @@ type EmailVerificationChallenge struct {
 }
 
 type PublicStats struct {
-	CompletedCarpoolsLast30Days           *int
-	CompletedAPIIntentsLast30Days         *int
-	ResponseMedianMinutes                 *int
-	BuyerResponsibilityCancellationCount  int
-	SellerResponsibilityCancellationCount int
-	UnresolvedDisputeCount                int
-	ResolvedDisputeCountLast90Days        *int
+	CompletedCarpools                      *int
+	CompletedAPIOrders                     *int
+	CompletedCarpoolsLast90Days            *int
+	CompletedAPIOrdersLast90Days           *int
+	ResponseMedianMinutes                  *int
+	BuyerResponsibilityCancellationCount   *int
+	SellerResponsibilityCancellationCount  *int
+	UnknownResponsibilityCancellationCount *int
+	UnresolvedDisputeCount                 *int
+	ResolvedDisputeCountLast90Days         *int
 }
 
 type PublicUserProfile struct {
@@ -121,19 +124,20 @@ type UpsertMerchantProfileInput struct {
 
 type PublicMerchantProfile struct {
 	ID                               string
+	OwnerUserID                      string
 	Slug                             string
 	DisplayName                      string
 	AvatarURL                        string
 	AvatarText                       string
 	Identity                         string
-	TrustLevel                       int
-	LinuxDoBound                     bool
-	OriginalPostBound                bool
+	TrustLevel                       *int
+	LinuxDoBound                     *bool
+	OriginalPostBound                *bool
 	JoinedAt                         time.Time
 	LastActiveAt                     *time.Time
-	Completed30d                     int
-	ResponseMedianMinutes            int
-	MerchantResponsibleCancellations int
-	UnresolvedDisputes               int
-	HandledDisputes90d               int
+	CompletedLast90Days              *int
+	ResponseMedianMinutes            *int
+	MerchantResponsibleCancellations *int
+	UnresolvedDisputes               *int
+	HandledDisputesLast90Days        *int
 }

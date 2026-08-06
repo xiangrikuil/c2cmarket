@@ -12,7 +12,7 @@ Target database is PostgreSQL. Migration SQL under `backend/migrations/` is the 
 
 ## Query Patterns
 
-The process-level PostgreSQL runtime foundation is wired through `pgx/v5/pgxpool`. The current PostgreSQL repository slice covers users, auth identities, auth sessions, linux.do bindings, user permissions, idempotency, product categories, product plans, product plan policy history, official price leads, official price records, contact methods, contact sessions, contact session items, contact access logs, carpool listings, carpool cycle terms, carpool applications, carpool join confirmations, carpool memberships, carpool completion confirmations, API services, API service child tables, API purchase intents, API purchase intent contact access logs, API orders, API order events, API order payment-instruction access logs, API order delivery credentials, user profile privacy fields, merchant profiles, announcements, announcement receipts, announcement audit logs, favorites, carpool reviews, reports, dispute cases, appeals, dispute events, and moderation audit logs.
+The process-level PostgreSQL runtime foundation is wired through `pgx/v5/pgxpool`. The current PostgreSQL repository slice covers users, auth identities, auth sessions, linux.do bindings, user permissions, idempotency, product categories, product plans, product plan policy history, official price leads, official price records, contact methods, contact sessions, contact session items, contact access logs, carpool listings, carpool cycle terms, carpool applications, carpool join confirmations, carpool memberships, carpool completion confirmations, API services, API service child tables, API purchase intents, API purchase intent contact access logs, API orders, API order events, API order payment-instruction access logs, API order delivery credentials, user profile privacy fields, merchant profiles, announcements, announcement receipts, announcement audit logs, favorites, legacy carpool reviews, unified transaction reviews and revisions, reports, dispute cases, appeals, dispute events, and moderation audit logs.
 
 - Preserve service-level contracts from `backend/internal/module/core` during the transition, and add or extend focused repository interfaces for the touched business domain. New durable storage work should not depend on one broad repository interface.
 - Database-backed high-volume list repositories must accept `domain.PageRequest` and return `domain.Page[T]`. Use keyset pagination that preserves the existing list order, add a deterministic `id DESC` tie-breaker, query `LIMIT page.Limit + 1`, and derive `nextCursor` from the last returned visible item. Invalid opaque cursors must return `422 VALIDATION_FAILED` instead of falling through to an internal PostgreSQL cast error. Do not load all rows and rely on `server.paginateSlice` for migrated PostgreSQL lists.
@@ -39,6 +39,7 @@ The process-level PostgreSQL runtime foundation is wired through `pgx/v5/pgxpool
 - `carpool_memberships` is the durable joined-buyer relationship. It must reference the exact `(application, listing, buyer, owner, product_plan)` tuple and can only be inserted for an application whose status is `joined` and `joined_at` is set. `active_buyer_members` is a listing cache that must be updated in the same transaction as membership creation.
 - `carpool_cycle_terms` stores structured billing period, exit policy, and usage rules for a listing. It is part of the listing contract and should be written when a listing is created or updated, not left as an unrelated optional table.
 - `carpool_listings.region_code` and `carpool_listings.region_name` store the owner-selected opening region and public display text. Custom regions use `region_code='other'` with the trimmed custom display name in `region_name`; reads must not remap that value back to a generic fallback.
+- `carpool_listings` stores weekly/monthly quota, official-reset, VPS-region, mainland-direct, opening-channel, one payment-method, distribution, and administrator-account public signals. Version 68 keeps newly added columns nullable for development rows, while service validation requires every signal on new writes. Carpool `service_multiplier` is the fixed compatibility value `1.0000`, not an owner declaration.
 - `carpool_completion_confirmations` records buyer/owner completion confirmation rows with actor constraints. Only the second confirmation may move membership to `completed`; buyer leave and owner remove must go through explicit `left` / `removed` transitions with a reason.
 - `carpool_listings.owner_contact_method_id` records the owner-selected contact method; `carpool_applications.buyer_contact_method_id` records the buyer-selected contact method. Accept freezes the current versions from those stored selections and must not depend on a mutable default contact method or accept-body contact method.
 - `carpool_applications.contact_session_id` must be one-to-one and participant-consistent with the contact session. Database constraints/triggers should enforce session buyer = application buyer and session seller = application owner.
@@ -47,8 +48,8 @@ The process-level PostgreSQL runtime foundation is wired through `pgx/v5/pgxpool
 - API market service publishing uses `api_model_catalog`, `api_model_price_versions`, `api_services`, `api_service_access_modes`, `api_service_models`, `api_service_packages`, `api_services.accepting_orders`, `api_services.payment_window_minutes`, and `api_service_payment_options`. API purchase intents live in migration `000014_api_market_purchase_intents` and must stay separate from the service publishing migration.
 - API service public visibility is database-readable from the shared orderable predicate: `review_status='approved'`, `publication_status='online'`, `moderation_status='clear'`, `accepting_orders=true`, `payment_window_minutes BETWEEN 3 AND 15`, and at least one enabled row in `api_service_payment_options`. Use the same predicate for public list/detail, search API-service and merchant projections, favorite target validation/listing, and purchase-intent creation.
 - `api_services.owner_contact_method_id` must reference a contact method owned by the same `owner_user_id`; `merchant_profile_id` must reference a merchant profile owned by the same user when store alias mode is used.
-- `api_service_models.distribution_system` duplicates the parent service distribution system through a composite foreign key so PostgreSQL can enforce `distribution_system <> 'sub2api' OR merchant_multiplier = 1.0000`.
-- API service service-layer validation and database constraints both enforce the fixed Sub2API multiplier. Do not rely on frontend-only disabling or UI copy for this rule.
+- `api_service_models.distribution_system` duplicates the parent service distribution system through a composite foreign key so model rows remain consistent with their parent service.
+- `api_service_models.merchant_multiplier` is a positive merchant declaration for every distribution system. Service validation and the database positive-value constraint must accept any positive decimal; `1.0000` is the default, not a forced Sub2API value. `api_quota_offers.model_multiplier` is a separate positive per-offer declaration with the same default-only meaning.
 - API service tables store non-sensitive descriptions, access-mode notes, model snapshots, merchant-declared pricing, package descriptions, private payment instructions, and owner/admin-only payment QR-code data URLs. Public reads may expose payment method labels but must not expose payment instructions, QR-code data, account numbers, wallet addresses, or payment-note text. API service tables must not store credential values, endpoint secrets, panel login materials, payment proof, or platform verification snapshots.
 - `api_purchase_intents` stores immutable non-sensitive snapshots of the API service, requested amount fields, frozen buyer/owner contact method version IDs, and lifecycle timestamps. It must not store credential values, endpoint secrets, panel login materials, payment proof, quota ledger entries, platform verification snapshots, or plaintext contact values.
 - API purchase intents must not create or reference `contact_sessions`; that table remains for carpool and development contact-window flows.
@@ -56,9 +57,9 @@ The process-level PostgreSQL runtime foundation is wired through `pgx/v5/pgxpool
 - API purchase-intent cancel/close must reject once any `api_orders` row exists for that intent. After order creation, `api_orders` is the lifecycle source for buyer/seller actions.
 - API purchase-intent amount validation treats `declared_max_usd_allowance_per_intent` as a per-intent discussion cap, not an inventory ledger. Do not add reservation, deduction, or fulfillment tables as side effects of creation.
 - API purchase-intent direct contact disclosure must insert `api_purchase_intent_contact_access_logs` rows when the buyer views the merchant contact or the owner views the buyer contact. The log stores `api_purchase_intent_id`, `viewer_user_id`, `viewed_contact_owner_side`, `request_id`, and `accessed_at` only; it must not store plaintext contact values, masked contact values, credentials, payment evidence, or fulfillment data.
-- API orders live in `api_orders`; state history lives in append-only `api_order_events`; explicit payment-instruction reads live in `api_order_payment_instruction_access_logs`; one-time structured delivery credentials live in `api_order_delivery_credentials`. These tables do not create payment ledgers, wallets, escrow, refunds, API proxying, automatic fulfillment, or credential-version history.
+- API orders live in `api_orders`; state history lives in append-only `api_order_events`; explicit payment-instruction reads live in `api_order_payment_instruction_access_logs`; one-time structured delivery credentials live in `api_order_delivery_credentials`. Limited-offer pre-import inventory lives in `api_quota_credentials`, is encrypted and order-reserved, and can become the order credential only during seller payment confirmation. These tables do not create payment ledgers, wallets, escrow, refunds, API proxying, pre-confirmation fulfillment, or credential-version history.
 - `api_orders.payment_qr_code_data_url_snapshot` stores the frozen QR-code snapshot for the selected WeChat/Alipay payment method. It may be returned only from the audited buyer payment-instructions endpoint with `Cache-Control: private, no-store`; public service reads, order create responses, lists, events, notifications, logs, and idempotency response caches must not contain the QR-code payload.
-- `api_order_delivery_credentials` is the only API-order credential-storage exception. It is one row per order enforced by `ux_api_order_delivery_credentials_order`, uses `buyer_user_id` and `seller_user_id` participant columns, and stores raw API key/password values only as ciphertext+nonce using the existing contact encryption codec and key version. Non-sensitive URL, username, instructions, and timestamps may be plaintext. Buyer/seller detail and action responses may decrypt and return the credential with `Cache-Control: private, no-store`; list/admin/public/search/report/notification/event/log/idempotency responses must not include raw keys or passwords.
+- `api_order_delivery_credentials` is the delivered API-order credential boundary. It is one row per order enforced by `ux_api_order_delivery_credentials_order`, uses `buyer_user_id` and `seller_user_id` participant columns, and stores API key/password values only as ciphertext+nonce using the existing contact encryption codec and key version. `api_quota_credentials` is the only pre-order exception and must use the same encryption boundary plus seller-scoped HMAC fingerprint deduplication. Non-sensitive URL, username, instructions, and timestamps may be plaintext. Buyer/seller detail and action responses may decrypt only the delivered order row with `Cache-Control: private, no-store`; list/admin/public/search/report/notification/event/log/idempotency responses and credential summaries must not include raw keys or passwords.
 - `api_orders.api_purchase_intent_id` must have a full unique index, not a partial active-status index. The product contract is one order ever per purchase intent, including cancelled, timeout-cancelled, and completed orders. Runtime code must map PostgreSQL unique violation `23505` on `ux_api_orders_intent` to `409 API_PURCHASE_INTENT_HAS_ORDER` without leaking the raw constraint name or returning 500.
 - API order disputes must create a `dispute_cases` row with `target_type='api_order'` and write the resulting ID into `api_orders.dispute_case_id` in the same transaction as the API order idempotency completion. The linked dispute case is an admin processing queue item only, not a refund, compensation, escrow, guarantee, or forced fulfillment mechanism.
 - Payment timeout materialization must update `api_orders` from `pending_payment` to `cancelled/payment_timeout` atomically and write at most one `api_order.payment_timeout_cancelled` event per order.
@@ -72,11 +73,15 @@ The process-level PostgreSQL runtime foundation is wired through `pgx/v5/pgxpool
 - Favorite target types are limited to `carpool` and `api_service`. Because `target_id` is polymorphic, PostgreSQL cannot express one direct foreign key for all targets; repository/service code must validate public target visibility before insert and list queries must join target tables with the public predicates.
 - Favorite list queries must return only currently public-visible targets: active carpool listings and API services matching the shared orderable predicate.
 - Favorites must not create notifications, contact sessions, payment rows, fulfillment rows, or credential snapshots. They are per-user markers only.
-- Carpool reviews live in `carpool_reviews`. The only durable source type is `carpool_membership`; reviewer role is `buyer`, reviewee role is `owner`, and `source_id` references `carpool_memberships(id)`.
-- `carpool_reviews` uses a unique `(source_type, source_id, reviewer_user_id)` constraint so repeated review submission updates the original review.
-- A constraint trigger must verify the source membership is `completed`, the reviewer is `carpool_memberships.buyer_user_id`, and the reviewee is `carpool_memberships.owner_user_id`. Do not rely only on HTTP handler checks for this actor/source contract.
-- Review center queries should build rows from completed buyer memberships and left join reviews so the UI can show both `reviewable` and `reviewed` states from one backend source.
-- Public review queries should join by reviewee username and return only public-safe fields: service title/type, rating, tags, note, date, and verified flag. They must not expose reviewer IDs, contact values, contact method IDs, private membership internals, payment fields, or admin audit fields.
+- Version 57 writes all new review activity to `transaction_reviews`; `carpool_reviews` remains a legacy source retained for rollback compatibility and receives no new writes.
+- A transaction review references exactly one completed `carpool_memberships` or `api_orders` row. Partial unique indexes enforce one review per transaction and reviewer, and a source trigger verifies transaction completion, participants, opposite buyer/seller roles, the 14-day deadline, and active reputation exclusions.
+- The first review is `sealed`. A second participant submission locks the paired row and publishes/freezes both rows in the same transaction as the new review, append-only revisions, and idempotency completion.
+- A sealed review may be edited only by its author before the deadline. Published and removed content is immutable; administrator removal changes only status/removal metadata and appends a revision.
+- Review-center and public-profile reads materialize expired sealed rows as published/frozen at `review_deadline_at` with `FOR UPDATE SKIP LOCKED`. Deadline visibility must not depend on a scheduler.
+- `transaction_review_revisions` is append-only and stores `created`, `edited`, `published`, `removed`, and `migrated` snapshots. Update/delete triggers reject history mutation.
+- Version 57 migrates every legacy `carpool_reviews` row into a published/frozen transaction review while preserving ID, rating, tags, note, `created_at`, and `updated_at`, then appends one `migrated` revision.
+- Review center queries union completed carpool memberships and completed API orders for both buyer and seller roles. Received sealed rows return metadata only; rating, tags, and note become visible only when published.
+- Public review queries return only published, non-removed rows from non-excluded transactions. They must not expose user IDs, contact values, private transaction internals, payment fields, removal reasons, or administrator fields.
 - Reviews must not create notifications, contact sessions, payment rows, fulfillment rows, dispute rows, compensation rows, or credential snapshots. Disputes and reports are separate modules.
 - Reports live in `reports`; disputes live in `dispute_cases`; appeals live in `appeals`; case event history lives in `dispute_events`; administrator moderation audit entries live in `moderation_audit_logs`.
 - Report target types are limited to `contact_snapshot`, `public_user`, `carpool_application`, `carpool_membership`, `api_purchase_intent`, and `api_order`. `target_id` and `canonical_target_id` are text because public users and contact snapshots are not always UUID-backed domain rows; service code must validate required fields per target type.
@@ -101,6 +106,8 @@ The process-level PostgreSQL runtime foundation is wired through `pgx/v5/pgxpool
 - Local Docker PostgreSQL uses the root `compose.yaml` `migrate` one-shot service. Run `docker compose --profile migrate run --rm migrate` after PostgreSQL is healthy.
 - Do not rely on `/docker-entrypoint-initdb.d/` for application schema upgrades; it only runs for empty database volumes.
 - Backend readiness owns an explicit `ExpectedMigrationVersion` constant matching the latest migration number. When adding a new migration, update the constant and keep `/readyz` tests aligned so PostgreSQL readiness fails while `schema_migrations.version` is behind.
+- Before replacing a `CHECK` constraint on a table that already exists in deployed databases, inspect `pg_constraint` with `pg_get_constraintdef` and account for both canonical names and PostgreSQL-generated legacy names. A forward migration must drop every obsolete duplicate before adding the single canonical named constraint; replacing only the newest named constraint can leave an older anonymous constraint active and make otherwise valid state transitions fail at runtime.
+- Constraint-changing migrations require both upgrade-path verification against an already-applied schema and a complete empty-database migration-chain smoke. Source-text assertions alone cannot prove that no duplicate legacy constraint remains active.
 - PostgreSQL 18 Docker images must mount persistent storage at `/var/lib/postgresql`, not `/var/lib/postgresql/data`, because the image stores versioned cluster data below that parent directory.
 
 ## Scenario: Applied Report Schema Contract Upgrade
@@ -151,7 +158,7 @@ The forward migration adds `reports.canonical_target_type`, `reports.canonical_t
 - Add a focused regression that asserts the forward migration contains all required report, dispute, audit, and duplicate-archival steps.
 - Apply the complete migration chain from an empty PostgreSQL volume through `ExpectedMigrationVersion`; testing only an already-upgraded database is insufficient for compatibility migrations.
 - Run `go test ./internal/store/postgres ./internal/database` and the complete backend suite when unrelated packages compile.
-- Run `VITE_API_MODE=real pnpm --dir frontend exec vue-tsc -b --pretty false` and `VITE_API_MODE=real pnpm --dir frontend exec vite build`.
+- Run `pnpm --dir frontend typecheck` and the real-mode `pnpm --dir frontend build` with all required Nuxt runtime API variables.
 - Apply the migration to a local database and verify `schema_migrations.version`, required columns, list joins, and duplicate-active-report count.
 - Verify a failed admin list query renders an explicit error state rather than `当前筛选下暂无记录。`.
 
@@ -169,12 +176,297 @@ UPDATE reports SET canonical_target_id = target_id WHERE canonical_target_id IS 
 ALTER TABLE reports ALTER COLUMN canonical_target_id SET NOT NULL;
 ```
 
+## Scenario: Migration Version History Collision
+
+### 1. Scope / Trigger
+
+- Trigger: a branch adds migration files using a version already present on another integrated or deployed branch.
+- `schema_migrations` records only `version` and `dirty`; it does not prove which SQL file occupied that version. A database at Version 53 can therefore be missing objects from a different branch's reused Version 51/52 files.
+
+### 2. Signatures
+
+```text
+backend/migrations/000051_api_limited_packages.{up,down}.sql
+backend/migrations/000052_api_purchase_intent_ordered_constraint_cleanup.{up,down}.sql
+backend/migrations/000053_auth_session_renewal.{up,down}.sql
+backend/migrations/000054_api_quota_offers.{up,down}.sql
+...
+backend/migrations/000061_source_author_verification.{up,down}.sql
+backend/migrations/000062_auth_identity_bootstrap_hardening.{up,down}.sql
+backend/migrations/000063_verification_data_lifecycle.{up,down}.sql
+backend/migrations/000064_contact_cipher_aad.{up,down}.sql
+backend/migrations/000065_remove_demands.{up,down}.sql
+backend/migrations/000066_api_service_multiplier_reconciliation.{up,down}.sql
+backend/migrations/000067_api_account_payment_settings.{up,down}.sql
+database.ExpectedMigrationVersion = 80 (current repository target)
+```
+
+Standard execution remains:
+
+```bash
+docker compose --profile migrate run --rm migrate
+```
+
+### 3. Contracts
+
+- A migration version that has appeared on an integrated branch or has been applied to a persistent database is immutable. Never reuse its number for different SQL.
+- When unpublished migrations collide with published history, restore the published files and renumber every unpublished migration in dependency order. Do not edit `schema_migrations`, use `force`, or require a custom repair runner.
+- Version 54 historically restored `ck_api_service_models_sub2api_multiplier` without constraining the separate `api_quota_offers.model_multiplier`. That fixed-one service-model rule is not the current product contract: immutable Version 54 remains in history, and forward Version 66 removes the canonical or anonymous constraint.
+- `ExpectedMigrationVersion`, the migration README, filename-based tests, task contracts, and release documentation must move with the renumbered files.
+- Existing databases are tested through an explicitly named clone. Do not use the default development or production database for destructive down/up verification.
+
+### 4. Validation & Error Matrix
+
+| Condition | Expected behavior |
+| --- | --- |
+| Database Version 53 contains published 51/52 schema, has no rows that violate historical Version 54, and lacks new quota tables | Run standard migration 54 onward and finish at `67, dirty=false`; Version 66 removes the historical fixed-one constraint. |
+| Fresh database | Run the complete chain 1 through 67 without gaps or duplicate versions; the Version 54 constraint is an intermediate state removed by Version 66. |
+| Database Version 53 already has a Sub2API service model with `merchant_multiplier <> 1.0000` | Version 54 fails before Version 66 can run. Stop on an explicitly named clone; do not force the migration version or rewrite business data silently. |
+| Database Version 54-65 still has the fixed-one constraint | Version 66 drops every matching canonical or anonymous constraint and preserves business rows. |
+| Migration fails and marks a temporary clone dirty | Delete and recreate only that named clone from the untouched source database before retrying. |
+| Repository latest file and `ExpectedMigrationVersion` differ | `scripts/check-migrations-doc.mjs` fails. |
+
+### 5. Good / Base / Bad Cases
+
+- Good: preserve published 51/52/53, renumber unpublished files to 54-61, add later work through 67, and verify a fresh 1→67 database plus supported cloned upgrade paths.
+- Base: migrate a compatible clone 53→67; the old package schema and stable business-row hashes remain unchanged, and the fixed-one constraint is absent at Version 66.
+- Bad: replace Version 51 with unrelated SQL, see `schema_migrations=53`, and assume the replacement SQL already ran.
+
+### 6. Tests Required
+
+- Add filename/content regressions that lock the published 51/52 purpose and reject reuse for quota tables.
+- Assert every up/down file from the first affected version through `ExpectedMigrationVersion` exists.
+- Apply migrations to both a fresh database and a clone of the oldest supported persistent version.
+- Record counts and stable-field hashes before and after the clone upgrade.
+- Run the full new migration interval down and up, then verify version, dirty state, required tables, and restored constraints.
+- Run `node scripts/check-migrations-doc.mjs`, database contract tests, PostgreSQL integration tests, complete Go tests, `go vet ./...`, and `git diff --check`.
+
+### 7. Wrong vs Correct
+
+```text
+Wrong:
+  000051_api_limited_packages was already applied
+  replace it with 000051_api_quota_offers
+  force schema_migrations to the latest version
+
+Correct:
+  keep 000051_api_limited_packages
+  keep 000052_api_purchase_intent_ordered_constraint_cleanup
+  keep 000053_auth_session_renewal
+  move unpublished api_quota_offers to 000054 and preserve dependency order
+  prove both 1→latest and existing-version→latest paths
+```
+
+## Scenario: API Service Multiplier Reconciliation
+
+### 1. Scope / Trigger
+
+- Trigger: immutable Version 54 restores a fixed `1.0000` Sub2API service-model check, while the current API service contract accepts any positive merchant-declared multiplier.
+- Version 66 reconciles fresh and already-upgraded databases without editing published migration files or rewriting business rows.
+
+### 2. Signatures
+
+```text
+backend/migrations/000066_api_service_multiplier_reconciliation.up.sql
+backend/migrations/000066_api_service_multiplier_reconciliation.down.sql
+database.ExpectedMigrationVersion = 80 (current repository target)
+api_service_models.merchant_multiplier numeric(8,4) NOT NULL DEFAULT 1.0000 CHECK (merchant_multiplier > 0)
+```
+
+### 3. Contracts
+
+- The up migration inspects `pg_constraint` for `api_service_models` checks and drops both `ck_api_service_models_sub2api_multiplier` and legacy anonymous checks whose normalized definition fixes `merchant_multiplier` to one.
+- The migration must not update, delete, or otherwise normalize business rows.
+- Service validation accepts every positive decimal multiplier for every distribution system and defaults an omitted value to `1.0000`.
+- The down migration restores the historical fixed-one constraint and may fail atomically when non-`1.0000` Sub2API rows exist; rollback must never coerce those declarations.
+
+### 4. Validation & Error Matrix
+
+| Condition | Expected behavior |
+| --- | --- |
+| Version 65 database has the canonical fixed-one constraint | Version 66 drops it; the current chain continues through `67, dirty=false`. |
+| Database has a matching anonymous fixed-one check | Version 66 discovers and drops it through `pg_get_constraintdef`. |
+| Merchant declares a positive non-`1.0000` multiplier after Version 66 | Service validation and PostgreSQL both accept and preserve the normalized value. |
+| Merchant declares zero, a negative value, or invalid decimal text | Service validation returns `422 VALIDATION_FAILED`; the database positive-value check remains the integrity backstop. |
+| Version 66 down runs with non-`1.0000` Sub2API rows | Constraint creation fails; rows must not be rewritten to make rollback succeed. |
+
+### 5. Good / Base / Bad Cases
+
+- Good: keep Version 54 immutable, add Version 66, migrate a named clone, and verify custom positive multipliers round-trip.
+- Base: a service omits `merchantMultiplier`; runtime stores the default `1.0000`.
+- Bad: edit Version 54, force `schema_migrations`, or update existing multipliers to `1.0000` to hide the contract conflict.
+
+### 6. Tests Required
+
+- Source tests assert Version 66 finds canonical and anonymous fixed-one checks, drops constraints dynamically, and contains no `UPDATE` or `DELETE` of `api_service_models`.
+- Apply the complete empty-database chain through Version 67 and assert `schema_migrations` is `67, dirty=false`.
+- Apply Version 66 to a Version 65 clone and assert no matching fixed-one check remains.
+- Run API service route and PostgreSQL integration regressions that create or update a Sub2API model with a positive non-`1.0000` multiplier and read the exact normalized value back.
+- Run `node scripts/check-migrations-doc.mjs`, database contract tests, full Go tests, `go vet ./...`, and `git diff --check`.
+
+### 7. Wrong vs Correct
+
+```sql
+-- Wrong: rewrite an immutable historical migration or coerce merchant data.
+UPDATE api_service_models
+SET merchant_multiplier = 1.0000
+WHERE distribution_system = 'sub2api';
+
+-- Correct: reconcile the obsolete constraint in a new forward migration.
+ALTER TABLE api_service_models
+DROP CONSTRAINT ck_api_service_models_sub2api_multiplier;
+```
+
+## Scenario: Account API Payment Settings And Single-Method Constraints
+
+### 1. Scope / Trigger
+
+- Trigger: account API payment persistence, service payment snapshots, account-to-service backfill, or changes to enabled WeChat Pay/Alipay constraints.
+
+### 2. Signatures
+
+```text
+backend/migrations/000067_api_account_payment_settings.up.sql
+backend/migrations/000067_api_account_payment_settings.down.sql
+database.ExpectedMigrationVersion = 80 (current repository target)
+
+api_payment_account_options:
+  PRIMARY KEY (user_id, payment_method)
+  payment_method IN ('wechat', 'alipay')
+  UNIQUE (user_id) WHERE enabled = true
+
+api_service_payment_options:
+  UNIQUE (api_service_id)
+  WHERE enabled = true AND payment_method IN ('wechat', 'alipay')
+```
+
+### 3. Contracts
+
+- Version 67 first normalizes legacy service rows to at most one enabled supported method per service, then creates the service partial unique index.
+- The account table stores both supported methods when they contain retained data, but at most one may be enabled per user.
+- Account updates replace the user's rows in one transaction. A rejected method switch rolls back to the previous complete setting.
+- Backfill chooses the owner's most recently updated valid enabled service option. Rows without a non-empty QR-code data URL are not backfilled because they cannot satisfy the new account payload check.
+- The migration does not rewrite existing order snapshots or point services/orders at mutable account rows.
+- Down removes only the account table and the new service uniqueness index. It does not rewrite service/order snapshots.
+
+### 4. Validation & Error Matrix
+
+| Condition | Expected behavior |
+| --- | --- |
+| Legacy service has two enabled methods | Keep the deterministic newest row enabled and disable the other before index creation |
+| Legacy enabled service row lacks QR data | Do not backfill it into the account table |
+| Account inserts a second enabled method | Partial unique index rejects the write |
+| Enabled account row has null/blank QR data | Check constraint rejects the write |
+| Account transaction fails during method switch | Previous account rows remain unchanged |
+| Version 67 down runs | Account table and service partial unique index are removed; service/order snapshot rows remain |
+
+### 5. Good / Base / Bad Cases
+
+- Good: an owner with one valid enabled WeChat service snapshot receives one WeChat account default; switching to Alipay preserves inactive WeChat data and older service/order snapshots.
+- Base: an owner without a valid service payment row starts with no account rows and configures one method later.
+- Bad: backfill an enabled blank QR row, allow both methods enabled, update orders during migration, or delete service payment snapshots on rollback.
+
+### 6. Tests Required
+
+- Migration source tests assert deterministic service cleanup, both partial unique indexes, valid-only backfill, account constraints, and non-destructive down behavior.
+- PostgreSQL integration tests switch enabled methods, retain inactive data, attempt a dual-enabled write, and verify transaction rollback.
+- Empty-database migration chain must finish at `67, dirty=false`.
+- Existing database upgrade must verify one enabled service option per service and one enabled account option per user.
+- Run `node scripts/check-migrations-doc.mjs`, `go test ./internal/database ./internal/store/postgres`, `go test ./...`, and `git diff --check`.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```sql
+UPDATE api_orders
+SET payment_method_snapshot = account.payment_method;
+```
+
+#### Correct
+
+```sql
+CREATE UNIQUE INDEX ux_api_payment_account_options_one_enabled
+ON api_payment_account_options(user_id)
+WHERE enabled = true;
+```
+
+## Scenario: API Order Delivery Review Materialization
+
+### 1. Scope / Trigger
+
+- Trigger: schema, repository, maintenance, notification, or reporting changes involving API orders after credential delivery.
+- The seller's immutable credential submission finishes seller fulfillment, while the order remains reviewable by the buyer for 24 hours.
+
+### 2. Signatures
+
+```text
+api_orders.delivery_review_expires_at timestamptz
+api_orders.delivery_review_reminded_at timestamptz
+api_orders.completion_source text CHECK IN ('buyer_confirmed', 'auto_completed')
+
+MaterializeExpiredAPIOrders(ctx, now) -> payment expired, review reminded, auto completed counts
+GET /api/v1/admin/api-orders/{id}
+```
+
+### 3. Contracts
+
+- `delivery_submitted` rows require `delivery_review_expires_at`, no completion source, and no completed timestamp.
+- `completed` rows require the retained review deadline, `completion_source`, and `completed_at`.
+- Credential submission sets the deadline once and credentials remain immutable. Buyer confirmation writes `buyer_confirmed`; deadline materialization writes `auto_completed` using the deadline as the completion timestamp.
+- Open disputes block automatic completion. The final-two-hour reminder uses `delivery_review_reminded_at` as a durable deduplication marker.
+- Lazy reads/actions and scheduled maintenance share the same transaction-level transition logic, row lock, and state recheck. The partial expiry index covers only `status='delivery_submitted'`.
+- Migration 68 gives historical `delivery_submitted` rows a fresh `now() + 24 hours` window and labels historical completed rows `buyer_confirmed`.
+
+### 4. Validation & Error Matrix
+
+| Condition | Expected behavior |
+| --- | --- |
+| `delivery_submitted` has no review deadline | State-shape constraint rejects the write |
+| Completed row has no valid completion source | State-shape/source constraint rejects the write |
+| Review deadline reached with an open dispute | Keep `delivery_submitted`; emit no completion event |
+| Reminder already marked | Emit no duplicate reminder event or notification |
+| Lazy read races maintenance | Row lock and state recheck yield one durable transition |
+| Historical pending review row is migrated | Deadline is migration time plus 24 hours, never immediate bulk completion |
+
+### 5. Good / Base / Bad Cases
+
+- Good: maintenance locks an eligible row, writes `completed/auto_completed`, one event, one notification, and one completion timestamp atomically.
+- Base: the buyer confirms before the deadline and the same row becomes `completed/buyer_confirmed`.
+- Bad: compute a deadline from browser time, auto-complete an open dispute, or let lazy and scheduled paths maintain separate transition implementations.
+
+### 6. Tests Required
+
+- Migration source tests assert columns, source values, state-shape constraints, the partial index, historical backfill, and down migration.
+- In-memory/service tests assert review deadline, buyer confirmation, reminder deduplication, automatic completion, and open-dispute pause.
+- PostgreSQL tests assert row-lock/state-recheck behavior, event/notification uniqueness, and maintenance counters.
+- Run `go test ./...`, `go vet ./...`, `node scripts/check-migrations-doc.mjs`, and `git diff --check`.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```sql
+UPDATE api_orders SET status = 'completed'
+WHERE delivery_submitted_at < now() - interval '24 hours';
+```
+
+#### Correct
+
+```sql
+SELECT id FROM api_orders
+WHERE status = 'delivery_submitted'
+  AND dispute_status <> 'open'
+  AND delivery_review_expires_at <= $1
+FOR UPDATE SKIP LOCKED;
+```
+
 ## Docker Runtime
 
 - Root `compose.yaml` owns local PostgreSQL and the backend image definition.
 - Use `postgres:18-alpine` for the local database service unless a task explicitly changes the supported PostgreSQL line.
 - Local database defaults are documented in `.env.example`; real `.env` files stay ignored.
-- `DATABASE_URL` is read during `cmd/api` startup and wired through `internal/app`. When set, the process creates a `pgxpool` connection via `internal/database`, `/readyz` checks `schema_migrations`, and the current supported PostgreSQL slice writes users, auth identities, linux.do bindings, sessions, idempotency, official price data, contact-window data, carpool data, API services, API purchase intents, API purchase intent contact access logs, API orders, API order events, API order payment-instruction access logs, API order delivery credentials, profile/merchant data, announcements, demands, favorites, reviews, reports, disputes, appeals, dispute events, moderation audit logs, and notifications to the database. Search reads those existing public rows and must not introduce a search table unless a future task documents a real performance need.
+- `DATABASE_URL` is read during `cmd/api` startup and wired through `internal/app`. When set, the process creates a `pgxpool` connection via `internal/database`, `/readyz` checks `schema_migrations`, and the current supported PostgreSQL slice writes users, auth identities, linux.do bindings, sessions, idempotency, official price data, contact-window data, carpool data, API services, API purchase intents, API purchase intent contact access logs, API orders, API order events, API order payment-instruction access logs, API order delivery credentials, profile/merchant data, announcements, favorites, reviews, reports, disputes, appeals, dispute events, moderation audit logs, and notifications to the database. Search reads those existing public rows and must not introduce a search table unless a future task documents a real performance need.
 - `APP_ENV=production` requires `DATABASE_URL`, `FRONTEND_ORIGIN` or `ALLOWED_ORIGINS`, `CONTACT_ENCRYPTION_KEY`, `CONTACT_FINGERPRINT_KEY`, `CONTACT_KEY_VERSION`, `OAUTH_PROVIDER_MODE=oauth2`, `OAUTH_CLIENT_ID`, `OAUTH_CLIENT_SECRET`, `OAUTH_AUTHORIZE_URL`, `OAUTH_TOKEN_URL`, `OAUTH_USERINFO_URL`, `OAUTH_REDIRECT_URL`, `EMAIL_PROVIDER=aliyun_directmail`, `SMTP_HOST`, `SMTP_PORT=465`, `SMTP_USERNAME`, `SMTP_PASSWORD`, `MAIL_FROM_ADDRESS`, and `MAIL_FROM_NAME`, and rejects `ENABLE_DEV_AUTH=true`.
 - Production email uses Aliyun DirectMail SMTP, not AccessKey or DirectMail API SDK. SMTP password values must remain environment-only and never be written into logs, persisted rows, docs, or AppError details.
 - `email_verification_codes` supports login-bound `bind_email` challenges and public `email_registration` challenges. `email_registration` rows have `user_id IS NULL`; confirm must lock and consume the challenge, create the verified-email `users` row, and create `auth_sessions` in the same transaction. Store only `code_hash`, never plaintext verification codes.
@@ -211,11 +503,12 @@ ALTER TABLE reports ALTER COLUMN canonical_target_id SET NOT NULL;
 - Do not use `contact_sessions` or process logs as the audit mechanism for API purchase intent direct contact disclosure. Use `api_purchase_intent_contact_access_logs` and store identifiers/side metadata only.
 - Do not model API order uniqueness as "active order only." The database must reject any second order for the same purchase intent even after cancellation, payment timeout, or completion.
 - Do not store API order payment instructions in public service DTOs, access logs, events, notifications, regular logs, or cached idempotency response bodies. The order row may keep the frozen instruction snapshot, and the explicit buyer read endpoint returns it with `Cache-Control: private, no-store`.
-- Do not store API keys, Sub2API keys, passwords, tokens, sessions, cookies, recovery codes, endpoint secrets, subscription links, proxy-node URLs, encoded subscription URLs, nested subscription URLs, or attachment payloads in `api_orders.delivery_note`, events, notification bodies, logs, report rows, or idempotency response caches. The only supported storage location for an API order key/password is the encrypted one-time `api_order_delivery_credentials` row. Treat `delivery_note` as a generated non-sensitive summary, not a raw credential container.
+- Do not store API keys, Sub2API keys, passwords, tokens, sessions, cookies, recovery codes, endpoint secrets, subscription links, proxy-node URLs, encoded subscription URLs, nested subscription URLs, or attachment payloads in `api_orders.delivery_note`, events, notification bodies, logs, report rows, or idempotency response caches. Supported key/password storage is limited to encrypted `api_quota_credentials` pre-import inventory and the encrypted one-time `api_order_delivery_credentials` row. Treat `delivery_note` as a generated non-sensitive summary, not a raw credential container.
 - Do not expose profile contact values, contact method IDs, merchant-profile owner IDs, or hidden owner mappings through public user/merchant profile routes.
 - Do not model announcement read/dismiss state as fields on `announcements`; it is per-user receipt state and belongs in `announcement_receipts`.
 - Do not create a favorite row before checking the target is public-visible. `favorites.target_id` has no direct polymorphic FK, so missing this check can persist favorites to private or non-existent targets.
-- Do not create a review row for a non-completed membership or an API purchase intent. Current API purchase intents do not have a platform-confirmed completed state, so they are not review sources.
+- Do not create a review row for a non-completed membership/order, an API purchase intent, an application, payment submission, or delivery submission. Only completed carpool memberships and completed API orders are review sources.
+- Do not expose sealed received content, rewrite frozen review content during administrator removal, or update/delete a transaction review revision.
 - Do not expose review rows as dispute, refund, guarantee, or fulfillment evidence. Reviews are public experience notes; dispute/report workflows must use their own durable tables and state machines.
 - Do not build public dispute summaries from raw report descriptions, appeal statements, admin reasons, evidence URLs, contact values, or internal notes. Public dispute summaries must come from the explicit public fields on `dispute_cases`.
 - Do not model reports/disputes/appeals as refund, compensation, escrow, guarantee, fulfillment, external ticket, or automatic penalty systems. They are manual risk records and public-safe summaries only.

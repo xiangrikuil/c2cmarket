@@ -3,7 +3,7 @@ import { Badge } from '@/components/ui/badge'
 
 defineProps<{
   badges?: string[]
-  trust?: number
+  trust?: number | null
   ownerType?: string
   class?: string
 }>()

@@ -5,6 +5,7 @@ import (
 
 	"c2c-market/backend/internal/domain"
 	"c2c-market/backend/internal/module/idempotency"
+	"c2c-market/backend/internal/module/reputation"
 )
 
 const (
@@ -34,6 +35,22 @@ const (
 
 	ListingDistributionMethodSub2API = "sub2api"
 	ListingDistributionMethodOther   = "other"
+
+	ListingOpeningChannelWeb         = "web"
+	ListingOpeningChannelIOSAppStore = "ios_app_store"
+	ListingOpeningChannelGooglePlay  = "google_play"
+	ListingOpeningChannelTeamSeat    = "team_seat"
+	ListingOpeningChannelOther       = "other"
+
+	ListingPaymentMethodCreditCard         = "credit_card"
+	ListingPaymentMethodVirtualCard        = "virtual_card"
+	ListingPaymentMethodApplePay           = "apple_pay"
+	ListingPaymentMethodGooglePay          = "google_pay"
+	ListingPaymentMethodAppStoreGiftCard   = "app_store_gift_card"
+	ListingPaymentMethodGooglePlayGiftCard = "google_play_gift_card"
+	ListingPaymentMethodPayPal             = "paypal"
+	ListingPaymentMethodUCard              = "u_card"
+	ListingPaymentMethodOther              = "other"
 )
 
 const (
@@ -48,40 +65,50 @@ type RiskAcknowledgement struct {
 }
 
 type Listing struct {
-	ID                     string
-	OwnerUserID            string
-	ProductPlanID          string
-	OwnerContactMethodID   string
-	CycleTerm              *CycleTerm
-	Title                  string
-	Summary                string
-	AccessArrangement      string
-	DistributionMethod     string
-	DistributionMethodNote string
-	ProvidesAdminAccount   bool
-	RegionCode             string
-	RegionName             string
-	SourceURL              string
-	PriceMonthlyCNY        string
-	ServiceMultiplier      string
-	MonthlyQuotaAmount     string
-	QuotaLabel             string
-	QuotaUnit              string
-	QuotaPeriod            string
-	BuyerSeatCapacity      int
-	ActiveBuyerMembers     int
-	Status                 string
-	ReviewedByAdminID      string
-	ReviewedAt             *time.Time
-	ReviewReason           string
-	PolicyVersion          int64
-	RiskNoticeCode         string
-	RiskAckRequired        bool
-	ReservedSeats          int
-	AvailableSeats         int
-	CreatedAt              time.Time
-	UpdatedAt              time.Time
-	Version                int64
+	ID                                    string
+	OwnerUserID                           string
+	ProductPlanID                         string
+	OwnerContactMethodID                  string
+	CycleTerm                             *CycleTerm
+	Title                                 string
+	Summary                               string
+	AccessArrangement                     string
+	DistributionMethod                    string
+	DistributionMethodNote                string
+	ProvidesAdminAccount                  bool
+	RegionCode                            string
+	RegionName                            string
+	SourceURL                             string
+	PriceMonthlyCNY                       string
+	ServiceMultiplier                     string
+	WeeklyQuotaAmount                     *string
+	MonthlyQuotaAmount                    string
+	FollowsOfficialQuotaReset             *bool
+	VPSRegion                             *string
+	SupportsMainlandChinaDirectConnection *bool
+	OpeningChannelCode                    *string
+	CustomOpeningChannel                  *string
+	PaymentMethodCode                     *string
+	CustomPaymentMethod                   *string
+	QuotaLabel                            string
+	QuotaUnit                             string
+	QuotaPeriod                           string
+	BuyerSeatCapacity                     int
+	ActiveBuyerMembers                    int
+	Status                                string
+	ReviewedByAdminID                     string
+	ReviewedAt                            *time.Time
+	ReviewReason                          string
+	PolicyVersion                         int64
+	RiskNoticeCode                        string
+	RiskAckRequired                       bool
+	ReservedSeats                         int
+	AvailableSeats                        int
+	CreatedAt                             time.Time
+	UpdatedAt                             time.Time
+	Version                               int64
+	SellerReputation                      *reputation.ReputationSnapshot
+	SourceAuthorVerification              reputation.SourceAuthorResourceSummary
 }
 
 type CycleTerm struct {
@@ -122,6 +149,7 @@ type Application struct {
 	CreatedAt                time.Time
 	UpdatedAt                time.Time
 	Version                  int64
+	BuyerReputation          *reputation.ReputationSnapshot
 }
 
 type Membership struct {
@@ -150,25 +178,33 @@ type Membership struct {
 }
 
 type CreateListingInput struct {
-	OwnerUserID            string
-	ProductPlanID          string
-	OwnerContactMethodID   string
-	CycleTerm              CycleTermInput
-	Title                  string
-	Summary                string
-	AccessArrangement      string
-	DistributionMethod     string
-	DistributionMethodNote string
-	ProvidesAdminAccount   bool
-	RegionCode             string
-	RegionName             string
-	SourceURL              string
-	PriceMonthlyCNY        string
-	ServiceMultiplier      string
-	MonthlyQuotaAmount     string
-	BuyerSeatCapacity      int
-	ActiveBuyerMembers     int
-	RiskAcknowledgement    *RiskAcknowledgement
+	OwnerUserID                           string
+	ProductPlanID                         string
+	OwnerContactMethodID                  string
+	CycleTerm                             CycleTermInput
+	Title                                 string
+	Summary                               string
+	AccessArrangement                     string
+	DistributionMethod                    string
+	DistributionMethodNote                string
+	ProvidesAdminAccount                  bool
+	RegionCode                            string
+	RegionName                            string
+	SourceURL                             string
+	PriceMonthlyCNY                       string
+	ServiceMultiplier                     string
+	WeeklyQuotaAmount                     string
+	MonthlyQuotaAmount                    string
+	FollowsOfficialQuotaReset             *bool
+	VPSRegion                             string
+	SupportsMainlandChinaDirectConnection *bool
+	OpeningChannelCode                    string
+	CustomOpeningChannel                  string
+	PaymentMethodCode                     string
+	CustomPaymentMethod                   string
+	BuyerSeatCapacity                     int
+	ActiveBuyerMembers                    int
+	RiskAcknowledgement                   *RiskAcknowledgement
 }
 
 type PublishListingInput = CreateListingInput
@@ -192,28 +228,36 @@ type ReviewInput struct {
 }
 
 type UpdateListingInput struct {
-	ListingID              string
-	OwnerUserID            string
-	ProductPlanID          string
-	OwnerContactMethodID   string
-	CycleTerm              CycleTermInput
-	Title                  string
-	Summary                string
-	AccessArrangement      string
-	DistributionMethod     string
-	DistributionMethodNote string
-	ProvidesAdminAccount   bool
-	RegionCode             string
-	RegionName             string
-	SourceURL              string
-	PriceMonthlyCNY        string
-	ServiceMultiplier      string
-	MonthlyQuotaAmount     string
-	BuyerSeatCapacity      int
-	ActiveBuyerMembers     int
-	RiskAcknowledgement    *RiskAcknowledgement
-	ExpectedVersion        int64
-	RequestID              string
+	ListingID                             string
+	OwnerUserID                           string
+	ProductPlanID                         string
+	OwnerContactMethodID                  string
+	CycleTerm                             CycleTermInput
+	Title                                 string
+	Summary                               string
+	AccessArrangement                     string
+	DistributionMethod                    string
+	DistributionMethodNote                string
+	ProvidesAdminAccount                  bool
+	RegionCode                            string
+	RegionName                            string
+	SourceURL                             string
+	PriceMonthlyCNY                       string
+	ServiceMultiplier                     string
+	WeeklyQuotaAmount                     string
+	MonthlyQuotaAmount                    string
+	FollowsOfficialQuotaReset             *bool
+	VPSRegion                             string
+	SupportsMainlandChinaDirectConnection *bool
+	OpeningChannelCode                    string
+	CustomOpeningChannel                  string
+	PaymentMethodCode                     string
+	CustomPaymentMethod                   string
+	BuyerSeatCapacity                     int
+	ActiveBuyerMembers                    int
+	RiskAcknowledgement                   *RiskAcknowledgement
+	ExpectedVersion                       int64
+	RequestID                             string
 }
 
 type SubmitListingReviewInput struct {

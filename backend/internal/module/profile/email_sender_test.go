@@ -61,12 +61,13 @@ func (n nopWriteCloser) Close() error {
 func TestSMTPEmailSenderSendsRegistrationSuccess(t *testing.T) {
 	client := &fakeSMTPClient{}
 	sender, err := NewSMTPEmailSender(SMTPConfig{
-		Host:        "smtpdm.aliyun.com",
-		Port:        465,
-		Username:    "noreply@example.com",
-		Password:    "unit-test-password",
-		FromAddress: "noreply@example.com",
-		FromName:    "C2CMarket",
+		Host:           "smtpdm.aliyun.com",
+		Port:           465,
+		Username:       "noreply@example.com",
+		Password:       "unit-test-password",
+		FromAddress:    "noreply@example.com",
+		FromName:       "C2CMarket",
+		FrontendOrigin: "https://c2cmarket.example/",
 	})
 	if err != nil {
 		t.Fatalf("new smtp sender: %v", err)
@@ -89,17 +90,26 @@ func TestSMTPEmailSenderSendsRegistrationSuccess(t *testing.T) {
 	if !strings.Contains(message, "OAuth &lt;User&gt;") {
 		t.Fatalf("html/template must escape display name in html body, got %s", message)
 	}
+	decoded, err := io.ReadAll(quotedprintable.NewReader(strings.NewReader(message)))
+	if err != nil {
+		t.Fatalf("decode quoted-printable message: %v", err)
+	}
+	decodedMessage := string(decoded)
+	if !strings.Contains(decodedMessage, "https://c2cmarket.example/my") || !strings.Contains(decodedMessage, "请勿直接回复") {
+		t.Fatalf("expected profile action and system footer, got %s", decodedMessage)
+	}
 }
 
 func TestSMTPEmailSenderVerificationCopyIncludesValidityWindow(t *testing.T) {
 	client := &fakeSMTPClient{}
 	sender, err := NewSMTPEmailSender(SMTPConfig{
-		Host:        "smtpdm.aliyun.com",
-		Port:        465,
-		Username:    "noreply@example.com",
-		Password:    "unit-test-password",
-		FromAddress: "noreply@example.com",
-		FromName:    "C2CMarket",
+		Host:           "smtpdm.aliyun.com",
+		Port:           465,
+		Username:       "noreply@example.com",
+		Password:       "unit-test-password",
+		FromAddress:    "noreply@example.com",
+		FromName:       "C2CMarket",
+		FrontendOrigin: "https://c2cmarket.example",
 	})
 	if err != nil {
 		t.Fatalf("new smtp sender: %v", err)
@@ -118,20 +128,21 @@ func TestSMTPEmailSenderVerificationCopyIncludesValidityWindow(t *testing.T) {
 		t.Fatalf("decode quoted-printable message: %v", err)
 	}
 	decodedMessage := string(decoded)
-	if !strings.Contains(decodedMessage, "123456") || !strings.Contains(decodedMessage, "15 分钟内有效") || !strings.Contains(decodedMessage, expiresAt.Format(time.RFC3339)) {
-		t.Fatalf("expected verification code, validity window, and expiry timestamp, got %s", decodedMessage)
+	if !strings.Contains(decodedMessage, "123456") || !strings.Contains(decodedMessage, "15 分钟内有效") || !strings.Contains(decodedMessage, "不会向你索要验证码") || !strings.Contains(decodedMessage, "请勿直接回复") || strings.Contains(decodedMessage, "2026-06-26 09:15:00") || strings.Contains(decodedMessage, expiresAt.Format(time.RFC3339)) {
+		t.Fatalf("expected verification purpose, validity window, and confidentiality reminder without duplicate expiry time, got %s", decodedMessage)
 	}
 }
 
 func TestSMTPEmailSenderSendsCarpoolApplicationReminder(t *testing.T) {
 	client := &fakeSMTPClient{}
 	sender, err := NewSMTPEmailSender(SMTPConfig{
-		Host:        "smtpdm.aliyun.com",
-		Port:        465,
-		Username:    "noreply@example.com",
-		Password:    "unit-test-password",
-		FromAddress: "noreply@example.com",
-		FromName:    "C2CMarket",
+		Host:           "smtpdm.aliyun.com",
+		Port:           465,
+		Username:       "noreply@example.com",
+		Password:       "unit-test-password",
+		FromAddress:    "noreply@example.com",
+		FromName:       "C2CMarket",
+		FrontendOrigin: "https://c2cmarket.example",
 	})
 	if err != nil {
 		t.Fatalf("new smtp sender: %v", err)
@@ -156,7 +167,7 @@ func TestSMTPEmailSenderSendsCarpoolApplicationReminder(t *testing.T) {
 		t.Fatalf("decode quoted-printable message: %v", err)
 	}
 	decodedMessage := string(decoded)
-	if !strings.Contains(decodedMessage, "ChatGPT Pro &lt;拼车&gt;") || !strings.Contains(decodedMessage, "app-123") || !strings.Contains(decodedMessage, "订单管理") {
+	if !strings.Contains(decodedMessage, "ChatGPT Pro &lt;拼车&gt;") || !strings.Contains(decodedMessage, "CA-APP123") || !strings.Contains(decodedMessage, "经营中心 → 上车申请") || !strings.Contains(decodedMessage, "https://c2cmarket.example/merchant/carpool-applications/app-123") || strings.Contains(decodedMessage, "订单管理") {
 		t.Fatalf("expected escaped listing title and owner workflow copy, got %s", decodedMessage)
 	}
 }
@@ -164,12 +175,13 @@ func TestSMTPEmailSenderSendsCarpoolApplicationReminder(t *testing.T) {
 func TestSMTPEmailSenderSendsCarpoolAcceptanceReminder(t *testing.T) {
 	client := &fakeSMTPClient{}
 	sender, err := NewSMTPEmailSender(SMTPConfig{
-		Host:        "smtpdm.aliyun.com",
-		Port:        465,
-		Username:    "noreply@example.com",
-		Password:    "unit-test-password",
-		FromAddress: "noreply@example.com",
-		FromName:    "C2CMarket",
+		Host:           "smtpdm.aliyun.com",
+		Port:           465,
+		Username:       "noreply@example.com",
+		Password:       "unit-test-password",
+		FromAddress:    "noreply@example.com",
+		FromName:       "C2CMarket",
+		FrontendOrigin: "https://c2cmarket.example",
 	})
 	if err != nil {
 		t.Fatalf("new smtp sender: %v", err)
@@ -191,20 +203,28 @@ func TestSMTPEmailSenderSendsCarpoolAcceptanceReminder(t *testing.T) {
 		t.Fatalf("decode quoted-printable message: %v", err)
 	}
 	decodedMessage := string(decoded)
-	if !strings.Contains(decodedMessage, "Claude Pro &lt;拼车&gt;") || !strings.Contains(decodedMessage, "app-accepted") || !strings.Contains(decodedMessage, deadline.Format(time.RFC3339)) || !strings.Contains(decodedMessage, "联系窗口") {
+	if !strings.Contains(decodedMessage, "Claude Pro &lt;拼车&gt;") || !strings.Contains(decodedMessage, "CA-CEPTED") || !strings.Contains(decodedMessage, "2026-07-06 18:30:00（北京时间）") || strings.Contains(decodedMessage, deadline.Format(time.RFC3339)) || !strings.Contains(decodedMessage, "确认上车") || !strings.Contains(decodedMessage, "https://c2cmarket.example/my/rides/app-accepted") || strings.Contains(decodedMessage, "联系窗口") {
 		t.Fatalf("expected escaped listing title and buyer workflow copy, got %s", decodedMessage)
 	}
 }
 
-func TestSMTPEmailSenderSendsAPIPurchaseIntentReminder(t *testing.T) {
+func TestFormatEmailTimeUsesBeijingTime(t *testing.T) {
+	input := time.Date(2026, 7, 17, 1, 2, 3, 0, time.UTC)
+	if got, want := formatEmailTime(input), "2026-07-17 09:02:03（北京时间）"; got != want {
+		t.Fatalf("expected %q, got %q", want, got)
+	}
+}
+
+func TestSMTPEmailSenderSendsAPIOrderReminder(t *testing.T) {
 	client := &fakeSMTPClient{}
 	sender, err := NewSMTPEmailSender(SMTPConfig{
-		Host:        "smtpdm.aliyun.com",
-		Port:        465,
-		Username:    "noreply@example.com",
-		Password:    "unit-test-password",
-		FromAddress: "noreply@example.com",
-		FromName:    "C2CMarket",
+		Host:           "smtpdm.aliyun.com",
+		Port:           465,
+		Username:       "noreply@example.com",
+		Password:       "unit-test-password",
+		FromAddress:    "noreply@example.com",
+		FromName:       "C2CMarket",
+		FrontendOrigin: "https://c2cmarket.example/",
 	})
 	if err != nil {
 		t.Fatalf("new smtp sender: %v", err)
@@ -214,9 +234,10 @@ func TestSMTPEmailSenderSendsAPIPurchaseIntentReminder(t *testing.T) {
 	}
 
 	createdAt := time.Date(2026, 7, 6, 11, 0, 0, 0, time.UTC)
-	appErr := sender.SendAPIPurchaseIntentCreated(context.Background(), "merchant@example.com", "Sub2API <额度>", "intent-123", "希望站外确认 20 美元额度。", createdAt)
+	paymentExpiresAt := createdAt.Add(10 * time.Minute)
+	appErr := sender.SendAPIOrderCreated(context.Background(), "merchant@example.com", "Sub2API <额度>", "00000000-0000-0000-0000-000000aabbcc", "16.00", "CNY", paymentExpiresAt, createdAt)
 	if appErr != nil {
-		t.Fatalf("send API purchase intent reminder: %v", appErr)
+		t.Fatalf("send API order reminder: %v", appErr)
 	}
 	if !client.authCalled || client.mailFrom != "noreply@example.com" || client.rcptTo != "merchant@example.com" {
 		t.Fatalf("unexpected smtp calls auth=%v mail=%q rcpt=%q", client.authCalled, client.mailFrom, client.rcptTo)
@@ -226,19 +247,27 @@ func TestSMTPEmailSenderSendsAPIPurchaseIntentReminder(t *testing.T) {
 		t.Fatalf("decode quoted-printable message: %v", err)
 	}
 	decodedMessage := string(decoded)
-	if !strings.Contains(decodedMessage, "Sub2API &lt;额度&gt;") || !strings.Contains(decodedMessage, "intent-123") || !strings.Contains(decodedMessage, "希望站外确认 20 美元额度。") || !strings.Contains(decodedMessage, "站外联系") {
+	detailURL := "https://c2cmarket.example/merchant/api-orders/00000000-0000-0000-0000-000000aabbcc"
+	if !strings.Contains(decodedMessage, "Sub2API &lt;额度&gt;") || !strings.Contains(decodedMessage, "AO-AABBCC") || !strings.Contains(decodedMessage, "¥16.00") || !strings.Contains(decodedMessage, "2026-07-06 19:10:00（北京时间）") || !strings.Contains(decodedMessage, "订单已创建不代表款项已到账") || strings.Count(decodedMessage, detailURL) < 2 || !strings.Contains(decodedMessage, `href="`+detailURL+`"`) || strings.Contains(decodedMessage, "购买意向") {
 		t.Fatalf("expected escaped service title and merchant workflow copy, got %s", decodedMessage)
+	}
+}
+
+func TestEmailReferenceIDMatchesFrontendPresentation(t *testing.T) {
+	if got, want := emailReferenceID("00000000-0000-0000-0000-000000aabbcc", "AO"), "AO-AABBCC"; got != want {
+		t.Fatalf("expected %q, got %q", want, got)
 	}
 }
 
 func TestSMTPEmailSenderErrorDoesNotLeakPassword(t *testing.T) {
 	sender, err := NewSMTPEmailSender(SMTPConfig{
-		Host:        "smtpdm.aliyun.com",
-		Port:        465,
-		Username:    "noreply@example.com",
-		Password:    "secret-password-value",
-		FromAddress: "noreply@example.com",
-		FromName:    "C2CMarket",
+		Host:           "smtpdm.aliyun.com",
+		Port:           465,
+		Username:       "noreply@example.com",
+		Password:       "secret-password-value",
+		FromAddress:    "noreply@example.com",
+		FromName:       "C2CMarket",
+		FrontendOrigin: "https://c2cmarket.example",
 	})
 	if err != nil {
 		t.Fatalf("new smtp sender: %v", err)
@@ -258,14 +287,29 @@ func TestSMTPEmailSenderErrorDoesNotLeakPassword(t *testing.T) {
 
 func TestNewSMTPEmailSenderRequiresImplicitTLSPort(t *testing.T) {
 	_, err := NewSMTPEmailSender(SMTPConfig{
+		Host:           "smtpdm.aliyun.com",
+		Port:           587,
+		Username:       "noreply@example.com",
+		Password:       "unit-test-password",
+		FromAddress:    "noreply@example.com",
+		FromName:       "C2CMarket",
+		FrontendOrigin: "https://c2cmarket.example",
+	})
+	if err == nil {
+		t.Fatalf("expected non-465 smtp port to fail")
+	}
+}
+
+func TestNewSMTPEmailSenderRequiresFrontendOrigin(t *testing.T) {
+	_, err := NewSMTPEmailSender(SMTPConfig{
 		Host:        "smtpdm.aliyun.com",
-		Port:        587,
+		Port:        465,
 		Username:    "noreply@example.com",
 		Password:    "unit-test-password",
 		FromAddress: "noreply@example.com",
 		FromName:    "C2CMarket",
 	})
-	if err == nil {
-		t.Fatalf("expected non-465 smtp port to fail")
+	if err == nil || !strings.Contains(err.Error(), "FRONTEND_ORIGIN") {
+		t.Fatalf("expected missing frontend origin to fail, got %v", err)
 	}
 }

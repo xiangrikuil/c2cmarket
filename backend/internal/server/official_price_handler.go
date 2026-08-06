@@ -76,7 +76,7 @@ type leadAdminResponse struct {
 }
 
 func (s *Server) handleSubmitOfficialPriceLead(w http.ResponseWriter, r *http.Request) {
-	user, _, appErr := s.requireSessionAndCSRF(r)
+	user, _, appErr := s.requireSessionAndCSRF(w, r)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
@@ -119,7 +119,7 @@ func (s *Server) handleSubmitOfficialPriceLead(w http.ResponseWriter, r *http.Re
 }
 
 func (s *Server) handleMyOfficialPriceLeads(w http.ResponseWriter, r *http.Request) {
-	user, _, appErr := s.requireSession(r)
+	user, _, appErr := s.requireSession(w, r)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
@@ -133,7 +133,7 @@ func (s *Server) handleMyOfficialPriceLeads(w http.ResponseWriter, r *http.Reque
 }
 
 func (s *Server) handleMyOfficialPriceLead(w http.ResponseWriter, r *http.Request) {
-	user, _, appErr := s.requireSession(r)
+	user, _, appErr := s.requireSession(w, r)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
@@ -148,7 +148,7 @@ func (s *Server) handleMyOfficialPriceLead(w http.ResponseWriter, r *http.Reques
 }
 
 func (s *Server) handleAdminOfficialPriceLeads(w http.ResponseWriter, r *http.Request) {
-	user, _, appErr := s.requireSession(r)
+	user, _, appErr := s.requireSession(w, r)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
@@ -162,7 +162,7 @@ func (s *Server) handleAdminOfficialPriceLeads(w http.ResponseWriter, r *http.Re
 }
 
 func (s *Server) handleAdminOfficialPriceLead(w http.ResponseWriter, r *http.Request) {
-	user, _, appErr := s.requireSession(r)
+	user, _, appErr := s.requireSession(w, r)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
@@ -264,7 +264,7 @@ func (s *Server) handleOfficialPrice(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleAdminOfficialPriceRecords(w http.ResponseWriter, r *http.Request) {
-	user, _, appErr := s.requireSession(r)
+	user, _, appErr := s.requireSession(w, r)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
@@ -278,7 +278,7 @@ func (s *Server) handleAdminOfficialPriceRecords(w http.ResponseWriter, r *http.
 }
 
 func (s *Server) handleAdminOfficialPriceRecord(w http.ResponseWriter, r *http.Request) {
-	user, _, appErr := s.requireSession(r)
+	user, _, appErr := s.requireSession(w, r)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
@@ -293,7 +293,7 @@ func (s *Server) handleAdminOfficialPriceRecord(w http.ResponseWriter, r *http.R
 }
 
 func (s *Server) handleCreateAdminOfficialPriceRecord(w http.ResponseWriter, r *http.Request) {
-	user, _, appErr := s.requireSessionAndCSRF(r)
+	user, _, appErr := s.requireSessionAndCSRF(w, r)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
@@ -318,7 +318,7 @@ func (s *Server) handleCreateAdminOfficialPriceRecord(w http.ResponseWriter, r *
 }
 
 func (s *Server) handleUpdateAdminOfficialPriceRecord(w http.ResponseWriter, r *http.Request) {
-	user, _, appErr := s.requireSessionAndCSRF(r)
+	user, _, appErr := s.requireSessionAndCSRF(w, r)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
@@ -350,7 +350,7 @@ func (s *Server) handleUpdateAdminOfficialPriceRecord(w http.ResponseWriter, r *
 }
 
 func (s *Server) handleTakeDownAdminOfficialPriceRecord(w http.ResponseWriter, r *http.Request) {
-	user, _, appErr := s.requireSessionAndCSRF(r)
+	user, _, appErr := s.requireSessionAndCSRF(w, r)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
@@ -384,7 +384,7 @@ func (s *Server) handleTakeDownAdminOfficialPriceRecord(w http.ResponseWriter, r
 }
 
 func (s *Server) handleApproveOfficialPriceLead(w http.ResponseWriter, r *http.Request) {
-	user, _, appErr := s.requireSessionAndCSRF(r)
+	user, _, appErr := s.requireSessionAndCSRF(w, r)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
@@ -469,7 +469,7 @@ func (s *Server) handleRequestChangesOfficialPriceLead(w http.ResponseWriter, r 
 }
 
 func (s *Server) handleLeadReviewStatus(w http.ResponseWriter, r *http.Request, status string) {
-	user, _, appErr := s.requireSessionAndCSRF(r)
+	user, _, appErr := s.requireSessionAndCSRF(w, r)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return

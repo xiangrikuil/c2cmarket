@@ -21,14 +21,15 @@ test('maps a public carpool to the existing admin moderation contract', () => {
     status: '可上车',
     owner: 'beifeng',
     trustLevel: 3,
-    linuxdoBound: true,
+    hasInfoConflict: false,
+    hasUnresolvedDispute: false,
   }), {
     id: 'carpool-1',
     primary: 'ChatGPT Business',
     secondary: '日本区 · ¥88/月 · 可上车',
     owner: 'beifeng · 信任等级3',
     status: '可上车',
-    risk: '原帖已绑定',
+    risk: '未发现公开风险',
     targetType: 'carpool',
     targetTo: '/carpools/carpool-1',
   })

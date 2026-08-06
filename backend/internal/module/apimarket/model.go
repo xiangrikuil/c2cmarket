@@ -1,6 +1,10 @@
 package apimarket
 
-import "time"
+import (
+	"time"
+
+	"c2c-market/backend/internal/module/reputation"
+)
 
 const (
 	ServiceReviewStatusDraft            = "draft"
@@ -23,8 +27,35 @@ const (
 	ServiceBillingModeManual       = "manual_usage_check"
 	ServiceBillingModeFixedPackage = "fixed_package"
 
+	AccountPoolGPTPro20x = "gpt_pro_20x"
+	AccountPoolGPTPro5x  = "gpt_pro_5x"
+	AccountPoolGPTPlus   = "gpt_plus"
+	AccountPoolCustom    = "custom"
+
+	MerchantRefundPolicyVersion = "api-merchant-refund-v1"
+
 	PaymentMethodWechat = "wechat"
 	PaymentMethodAlipay = "alipay"
+
+	DefaultPaymentWindowMinutes = 10
+
+	OwnerSalesViewActive  = "active"
+	OwnerSalesViewExpired = "expired"
+	OwnerSalesViewPaused  = "paused"
+	OwnerSalesViewDraft   = "draft"
+	OwnerSalesViewAll     = "all"
+
+	ServiceSalesStateSelling  = "selling"
+	ServiceSalesStateUpcoming = "upcoming"
+	ServiceSalesStatePaused   = "paused"
+	ServiceSalesStateSoldOut  = "sold_out"
+	ServiceSalesStateExpired  = "expired"
+	ServiceSalesStateDraft    = "draft"
+	ServiceSalesStateOffline  = "offline"
+	ServiceSalesStateArchived = "archived"
+
+	ServiceSalesChannelFlexibleQuota = "flexible_quota"
+	ServiceSalesChannelLimitedQuota  = "limited_quota"
 )
 
 type Service struct {
@@ -34,6 +65,7 @@ type Service struct {
 	MerchantIdentityMode             string
 	MerchantDisplayName              string
 	MerchantProfileSlug              string
+	MerchantAvatarURL                string
 	OwnerContactMethodID             string
 	Title                            string
 	ShortDescription                 string
@@ -44,12 +76,20 @@ type Service struct {
 	DeclaredMaxUSDAllowancePerIntent string
 	AvailableUSDAllowance            string
 	QuotaExpiresAt                   *time.Time
+	QuotaUsagePolicy                 QuotaUsagePolicy
 	MinimumIntentCNY                 string
 	MaximumIntentCNY                 string
 	UsageVisibility                  string
 	PublicAccessNote                 string
 	MerchantNote                     string
 	MerchantSupportNote              string
+	AccountPoolType                  string
+	AccountPoolCustomName            string
+	MerchantRefundCommitment         bool
+	DeclaredTTFTBand                 string
+	DeclaredMaxConcurrency           int
+	PerformanceConfirmedAt           *time.Time
+	PromptAuditEnabled               *bool
 	AcceptingOrders                  bool
 	PaymentWindowMinutes             int
 	ReviewStatus                     string
@@ -70,6 +110,9 @@ type Service struct {
 	CreatedAt                        time.Time
 	UpdatedAt                        time.Time
 	Version                          int64
+	SellerReputation                 *reputation.ReputationSnapshot
+	SourceAuthorVerification         reputation.SourceAuthorResourceSummary
+	SalesSummary                     ServiceSalesSummary
 }
 
 type ServiceAccessMode struct {
@@ -97,20 +140,21 @@ type ServiceModel struct {
 }
 
 type ServicePackage struct {
-	ID             string
-	APIServiceID   string
-	Name           string
-	PriceCNY       string
-	PanelAllowance string
-	DurationDays   *int
-	StockTotal     int
-	StockAvailable int
-	Description    string
-	Enabled        bool
-	SortOrder      int
-	Models         []ServicePackageModel
-	CreatedAt      time.Time
-	UpdatedAt      time.Time
+	ID               string
+	APIServiceID     string
+	Name             string
+	PriceCNY         string
+	PanelAllowance   string
+	QuotaUsagePolicy QuotaUsagePolicy
+	DurationDays     *int
+	StockTotal       int
+	StockAvailable   int
+	Description      string
+	Enabled          bool
+	SortOrder        int
+	Models           []ServicePackageModel
+	CreatedAt        time.Time
+	UpdatedAt        time.Time
 }
 
 type ServicePackageModel struct {
@@ -148,12 +192,17 @@ type CreateServiceInput struct {
 	DeclaredMaxUSDAllowancePerIntent string
 	AvailableUSDAllowance            string
 	QuotaExpiresAt                   string
+	QuotaUsagePolicy                 QuotaUsagePolicy
 	MinimumIntentCNY                 string
 	MaximumIntentCNY                 string
 	UsageVisibility                  string
 	PublicAccessNote                 string
 	MerchantNote                     string
-	MerchantSupportNote              string
+	AccountPoolType                  string
+	AccountPoolCustomName            string
+	MerchantRefundCommitment         *bool
+	DeclaredMaxConcurrency           int
+	PromptAuditEnabled               *bool
 	AccessModes                      []ServiceAccessModeInput
 	Models                           []ServiceModelInput
 	Packages                         []ServicePackageInput
@@ -174,12 +223,17 @@ type UpdateServiceInput struct {
 	DeclaredMaxUSDAllowancePerIntent string
 	AvailableUSDAllowance            string
 	QuotaExpiresAt                   string
+	QuotaUsagePolicy                 QuotaUsagePolicy
 	MinimumIntentCNY                 string
 	MaximumIntentCNY                 string
 	UsageVisibility                  string
 	PublicAccessNote                 string
 	MerchantNote                     string
-	MerchantSupportNote              string
+	AccountPoolType                  string
+	AccountPoolCustomName            string
+	MerchantRefundCommitment         *bool
+	DeclaredMaxConcurrency           int
+	PromptAuditEnabled               *bool
 	AccessModes                      []ServiceAccessModeInput
 	Models                           []ServiceModelInput
 	Packages                         []ServicePackageInput
@@ -200,16 +254,17 @@ type ServiceModelInput struct {
 }
 
 type ServicePackageInput struct {
-	ID              string
-	Name            string
-	PriceCNY        string
-	PanelAllowance  string
-	DurationDays    *int
-	StockTotal      int
-	Description     string
-	Enabled         bool
-	SortOrder       int
-	ModelCatalogIDs []string
+	ID               string
+	Name             string
+	PriceCNY         string
+	PanelAllowance   string
+	QuotaUsagePolicy QuotaUsagePolicy
+	DurationDays     *int
+	StockTotal       int
+	Description      string
+	Enabled          bool
+	SortOrder        int
+	ModelCatalogIDs  []string
 }
 
 type ServiceOwnerActionInput struct {
@@ -232,6 +287,25 @@ type PublicServiceFilter struct {
 	PaymentMethod string
 }
 
+type OwnerServiceFilter struct {
+	SalesView string
+}
+
+type ServiceSalesSummary struct {
+	OverallState string                `json:"overallState"`
+	Channels     []ServiceSalesChannel `json:"channels"`
+}
+
+type ServiceSalesChannel struct {
+	Kind                  string     `json:"kind"`
+	State                 string     `json:"state"`
+	AvailableUSDAllowance string     `json:"availableUsdAllowance,omitempty"`
+	AvailableCopies       int        `json:"availableCopies,omitempty"`
+	NextStartsAt          *time.Time `json:"nextStartsAt,omitempty"`
+	SaleCutoffAt          *time.Time `json:"saleCutoffAt,omitempty"`
+	ExpiresAt             *time.Time `json:"expiresAt,omitempty"`
+}
+
 type UpdateOrderSettingsInput struct {
 	ServiceID            string
 	OwnerUserID          string
@@ -247,4 +321,17 @@ type PaymentOptionInput struct {
 	Enabled              bool
 	PaymentInstructions  string
 	PaymentQRCodeDataURL string
+}
+
+type AccountPaymentSettings struct {
+	UserID               string
+	PaymentWindowMinutes int
+	PaymentOptions       []PaymentOptionInput
+	UpdatedAt            time.Time
+}
+
+type UpdateAccountPaymentSettingsInput struct {
+	UserID               string
+	PaymentWindowMinutes int
+	PaymentOptions       []PaymentOptionInput
 }

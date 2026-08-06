@@ -34,7 +34,7 @@ type notificationReadAllDTO struct {
 }
 
 func (s *Server) handleMyNotifications(w http.ResponseWriter, r *http.Request) {
-	user, _, appErr := s.requireSession(r)
+	user, _, appErr := s.requireSession(w, r)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
@@ -56,7 +56,7 @@ func (s *Server) handleMyNotifications(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleNotificationUnreadCount(w http.ResponseWriter, r *http.Request) {
-	user, _, appErr := s.requireSession(r)
+	user, _, appErr := s.requireSession(w, r)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
@@ -70,7 +70,7 @@ func (s *Server) handleNotificationUnreadCount(w http.ResponseWriter, r *http.Re
 }
 
 func (s *Server) handleMarkNotificationRead(w http.ResponseWriter, r *http.Request) {
-	user, _, appErr := s.requireSessionAndCSRF(r)
+	user, _, appErr := s.requireSessionAndCSRF(w, r)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
@@ -88,7 +88,7 @@ func (s *Server) handleMarkNotificationRead(w http.ResponseWriter, r *http.Reque
 }
 
 func (s *Server) handleMarkAllNotificationsRead(w http.ResponseWriter, r *http.Request) {
-	user, _, appErr := s.requireSessionAndCSRF(r)
+	user, _, appErr := s.requireSessionAndCSRF(w, r)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
@@ -176,8 +176,6 @@ func notificationCategory(item notification.Notification) string {
 		return "审核结果"
 	case "feedback_ticket":
 		return "问题反馈"
-	case "demand":
-		return "求车需求"
 	default:
 		if item.Type != "" {
 			return item.Type

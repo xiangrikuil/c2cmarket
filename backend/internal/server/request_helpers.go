@@ -31,6 +31,10 @@ func requireIfMatchVersion(r *http.Request) (int64, *domain.AppError) {
 	return validator.RequireIfMatchVersion(r)
 }
 
+func requireIfMatchVersionAllowZero(r *http.Request) (int64, *domain.AppError) {
+	return validator.RequireIfMatchVersionAllowZero(r)
+}
+
 func requestHash(method, routeKey string, body []byte) string {
 	return validator.RequestHash(method, routeKey, body)
 }

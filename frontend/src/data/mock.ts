@@ -1,3 +1,7 @@
+import type { ReputationSummary } from '@/types/reputation'
+import type { ApiServiceHealthSummary } from '@/types/apiHealth'
+import type { ApiQuotaUsagePolicy } from '@/types/apiQuota'
+
 export type OfficialPrice = {
   id: string
   product: string
@@ -24,13 +28,34 @@ export type PricingTier = {
 
 export type QuotaPeriod = 'monthly'
 
+export type SourceAuthorVerificationStatus =
+  | 'not_submitted'
+  | 'pending'
+  | 'verified'
+  | 'mismatch'
+  | 'expired'
+
+export type SourceAuthorResourceSummary = {
+  status: SourceAuthorVerificationStatus
+  verifiedAt?: string
+  expiresAt?: string
+}
+
 export type Carpool = {
   id: string
   product: string
   region: string
   monthly: number
   serviceMultiplier?: number
+  weeklyQuotaAmount?: number
   monthlyQuotaAmount?: number
+  followsOfficialQuotaReset?: boolean | null
+  vpsRegion?: string | null
+  supportsMainlandChinaDirectConnection?: boolean | null
+  openingChannelCode?: OpeningChannelCode | null
+  customOpeningChannel?: string | null
+  paymentMethodCode?: PaymentMethodCode | null
+  customPaymentMethod?: string | null
   quotaLabel?: string
   quotaUnit?: string
   quotaPeriod?: QuotaPeriod
@@ -44,17 +69,19 @@ export type Carpool = {
   pricingTiers?: PricingTier[]
   owner: string
   ownerUserId?: string
-  trustLevel: number
+  trustLevel: number | null
   ownerType: '个人车主' | '商户车源' | '可信新车主'
   warranty: '车主承诺' | '售后协商'
   openingMethod: 'Apple Store' | '虚拟卡' | '其他' | '本地卡'
   status: '可上车' | '已满' | '候补' | '暂停' | '审核中'
   confirmedAt: string
   confirmedWithin48h: boolean
-  linuxdoBound: boolean
-  sourcePostAccessible: boolean
+  linuxdoBound: boolean | null
+  sourceUrl?: string
+  sourceAuthorVerification?: SourceAuthorResourceSummary
+  sellerReputation?: ReputationSummary | null
   hasInfoConflict: boolean
-  hasUnresolvedDispute: boolean
+  hasUnresolvedDispute: boolean | null
   distributionMethod: CarpoolDistributionMethod
   distributionMethodNote: string
   providesAdminAccount: boolean
@@ -152,9 +179,9 @@ export type CarpoolApplicationSnapshot = {
   rulesText: string
   ownerUserId: string
   ownerUsername: string
-  ownerTrustLevel: number
+  ownerTrustLevel: number | null
+  ownerReputation?: ReputationSummary | null
   ownerType: Carpool['ownerType']
-  sourceTopicUrl: string
   accessArrangementMode?: CarpoolAccessArrangementMode
   accessArrangementNote?: string
   riskNoticeCode?: string
@@ -162,12 +189,12 @@ export type CarpoolApplicationSnapshot = {
 }
 
 export type CarpoolApplicantStats = {
-  linuxdoBound: boolean
-  trustLevel: number
-  completed30d: number
-  buyerResponsibleCancellations: number
-  ownerResponsibleCancellations: number
-  unresolvedDisputes: number
+  linuxdoBound: boolean | null
+  trustLevel: number | null
+  completed30d: number | null
+  buyerResponsibleCancellations: number | null
+  ownerResponsibleCancellations: number | null
+  unresolvedDisputes: number | null
 }
 
 export type CarpoolApplicationReview = {
@@ -183,6 +210,7 @@ export type CarpoolApplication = {
   applicantUserId: string
   applicantUsername: string
   applicantStats: CarpoolApplicantStats
+  buyerReputation?: ReputationSummary | null
   ownerUserId: string
   ownerUsername: string
   status: CarpoolApplicationStatus
@@ -291,12 +319,15 @@ export type PublicUserProfile = {
   createdAt: string | null
   lastActiveAt: string | null
   stats: {
-    completedCarpoolsLast30Days: number | null
-    completedApiOrdersLast30Days: number | null
+    completedCarpools: number | null
+    completedApiOrders: number | null
+    completedCarpoolsLast90Days: number | null
+    completedApiOrdersLast90Days: number | null
     responseMedianMinutes: number | null
-    buyerResponsibilityCancellationCount: number
-    sellerResponsibilityCancellationCount: number
-    unresolvedDisputeCount: number
+    buyerResponsibilityCancellationCount: number | null
+    sellerResponsibilityCancellationCount: number | null
+    unknownResponsibilityCancellationCount: number | null
+    unresolvedDisputeCount: number | null
     resolvedDisputeCountLast90Days: number | null
   }
   privacy: UserPrivacySettings
@@ -357,7 +388,7 @@ export type AdminDirectoryUser = {
   username: string
   displayName: string
   linuxdoBound: boolean
-  trustLevel: number
+  trustLevel: number | null
   isAdmin: boolean
   accountStatus: '正常' | '已暂停' | '已封禁' | '已归档'
   createdAt: string
@@ -378,9 +409,8 @@ export type AdminAuditLog = {
   createdAt: string
 }
 
-export type ConfidenceLevel = 'high' | 'medium' | 'low'
 export type OpeningChannelCode = 'web' | 'ios_app_store' | 'google_play' | 'team_seat' | 'other'
-export type PaymentMethodCode = 'credit_card' | 'virtual_card' | 'apple_pay' | 'google_pay' | 'app_store_gift_card' | 'google_play_gift_card' | 'paypal' | 'other'
+export type PaymentMethodCode = 'credit_card' | 'virtual_card' | 'apple_pay' | 'google_pay' | 'app_store_gift_card' | 'google_play_gift_card' | 'paypal' | 'u_card' | 'other'
 export type CarpoolWarrantyMode = 'no_warranty' | 'remaining_days_compensation' | 'fixed_days_warranty'
 export type ProductPublishPolicy = 'allowed' | 'info_only' | 'blocked'
 export type ProductAccessMode = 'personal_account_cost_share' | 'provider_member_invitation' | 'owner_managed_access' | 'other_off_platform'
@@ -434,36 +464,6 @@ export type PaymentMethodOption = {
   sortOrder: number
 }
 
-export type ParsedLinuxDoTopic = {
-  topicId: string
-  topicUrl: string
-  title: string
-  authorUsername: string
-  authorUserId: string | null
-  createdAt: string
-  updatedAt: string
-  authorMatchesBoundUser: boolean
-  detected: {
-    productId: string | null
-    productText: string | null
-    regionCode: string | null
-    regionText: string | null
-    monthlyPriceCny: number | null
-    totalSeats: number | null
-    availableSeats: number | null
-    occupiedSeats: number | null
-    openingChannelId: OpeningChannelCode | null
-    paymentMethodIds: PaymentMethodCode[]
-    warrantyMode: CarpoolWarrantyMode | null
-  }
-  confidence: {
-    product: ConfidenceLevel | null
-    region: ConfidenceLevel | null
-    monthlyPrice: ConfidenceLevel | null
-    seats: ConfidenceLevel | null
-  }
-}
-
 export type TransactionTrendPoint = {
   date: string
   medianPrice: number
@@ -501,7 +501,28 @@ export type ApiGateway = 'Sub2API' | 'NewAPI Proxy' | '自建中转' | '固定�
 export type ApiBillingMode = 'metered_credit' | 'manual_credit' | 'fixed_package'
 export type ApiVisibilityRule = 'public' | 'after_intent' | 'off_platform'
 export type ApiServiceState = 'online' | 'offline' | 'reviewing' | 'paused'
+export type ApiServiceSalesView = 'active' | 'expired' | 'paused' | 'draft' | 'all'
+export type ApiServiceSalesState = 'selling' | 'upcoming' | 'paused' | 'sold_out' | 'expired' | 'draft' | 'offline' | 'archived'
+export type ApiServiceSalesChannelKind = 'flexible_quota' | 'limited_quota'
 export type ApiMerchantIdentityMode = 'public_profile' | 'store_alias'
+export type ApiTTFTBand = 'under_1s' | '1_to_3s' | '3_to_5s' | '5_to_10s' | 'over_10s'
+export type ApiQuotaBatchStatus = 'draft' | 'published' | 'paused' | 'archived'
+export type ApiQuotaOfferStatus = 'draft' | 'published' | 'paused' | 'archived'
+export type ApiQuotaSaleMode = 'continuous' | 'scheduled'
+export type ApiQuotaDeliveryMode = 'manual' | 'preimported'
+export type ApiQuotaSourceType = 'sub2api' | 'new_api_proxy' | 'self_hosted' | 'other'
+export type ApiQuotaDistributionSystem = 'sub2api' | 'new_api_proxy' | 'other'
+export type ApiQuotaSystemSaleSlotState = 'registration_open' | 'registration_closed' | 'active' | 'ended'
+export type ApiQuotaOrderabilityCode =
+  | 'orderable'
+  | 'service_unavailable'
+  | 'batch_paused'
+  | 'offer_paused'
+  | 'not_started'
+  | 'round_ended'
+  | 'sold_out'
+  | 'credential_unavailable'
+  | 'batch_expired'
 export type ApiPurchaseIntentStatus =
   | 'open'
   | 'contacted'
@@ -541,6 +562,7 @@ export type ApiServicePackage = {
   enabled: boolean
   sortOrder: number
   models: ApiServicePackageModel[]
+  quotaUsagePolicy: ApiQuotaUsagePolicy
 }
 
 export type ApiServicePackageSnapshot = {
@@ -592,16 +614,126 @@ export type ApiContactChannel = {
   value: string
 }
 
+export type ApiQuotaBatch = {
+  id: string
+  apiServiceId: string
+  sourceType: ApiQuotaSourceType
+  sourceLabel?: string
+  status: ApiQuotaBatchStatus
+  declaredTotalUsdAllowance: string
+  unallocatedUsdAllowance: string
+  saleCutoffAt: string
+  expiresAt: string
+  sourceConfirmedAt: string
+  publishedAt?: string
+  version: number
+}
+
+export type ApiQuotaOffer = {
+  id: string
+  batchId: string
+  apiServiceId: string
+  distributionSystem: ApiQuotaDistributionSystem
+  name: string
+  usdAllowance: string
+  priceCny: string
+  cnyPerUsd: string
+  modelMultiplier: string
+  quotaUsagePolicy: ApiQuotaUsagePolicy
+  deliveryMode: ApiQuotaDeliveryMode
+  deliveryEtaMinutes: number
+  saleMode: ApiQuotaSaleMode
+  status: ApiQuotaOfferStatus
+  sortOrder: number
+  publishedAt?: string
+  version: number
+}
+
+export type ApiQuotaAllocation = {
+  id: string
+  offerId: string
+  saleRoundId?: string
+  saleMode: ApiQuotaSaleMode
+  copyLimit: number
+  availableCopies: number
+  reservedCopies: number
+  consumedCopies: number
+  allocatedUsdAllowance: string
+  returnedUsdAllowance: string
+  status: 'planned' | 'active' | 'closed' | 'cancelled'
+}
+
+export type ApiQuotaRound = {
+  id: string
+  batchId: string
+  systemSlotKey?: string
+  name: string
+  startsAt: string
+  endsAt: string
+  status: 'scheduled' | 'closed' | 'cancelled'
+  allocations: ApiQuotaAllocation[]
+  version: number
+}
+
+export type ApiQuotaSystemSaleSlot = {
+  key: string
+  startsAt: string
+  endsAt: string
+  registrationClosesAt: string
+  state: ApiQuotaSystemSaleSlotState
+}
+
+export type ApiQuotaSystemSaleSlotList = {
+  serverNow: string
+  items: ApiQuotaSystemSaleSlot[]
+}
+
+export type PublicApiQuotaOffer = ApiQuotaOffer & {
+  batchStatus: Extract<ApiQuotaBatchStatus, 'published' | 'paused'>
+  serviceTitle: string
+  sellerDisplayName: string
+  sellerIdentityType: 'individual' | 'merchant'
+  sellerLinuxDoBound: boolean
+  promptAuditEnabled?: boolean | null
+  healthSummary?: ApiServiceHealthSummary
+  declaredTtftBand?: ApiTTFTBand
+  declaredMaxConcurrency: number
+  performanceConfirmedAt?: string
+  performanceDisclaimer?: '商户自报，平台未测速'
+  saleCutoffAt: string
+  expiresAt: string
+  currentRound?: ApiQuotaRound
+  nextRound?: ApiQuotaRound
+  availableCopies: number
+  credentialAvailableCopies: number
+  isOrderable: boolean
+  orderabilityCode: ApiQuotaOrderabilityCode
+  orderabilityReason: string
+}
+
+export type ApiQuotaCredentialSummary = {
+  offerId: string
+  available: number
+  reserved: number
+  delivered: number
+  retired: number
+}
+
 export type ApiService = {
   id: string
   title: string
   sourceUrl?: string
+  sourceAuthorVerification?: SourceAuthorResourceSummary
+  sellerReputation?: ReputationSummary | null
+  healthSummary?: ApiServiceHealthSummary
+  quotaUsagePolicy: ApiQuotaUsagePolicy
   merchantId: string
   merchantUsername: string
   merchant: string
   merchantIdentityMode: ApiMerchantIdentityMode
   merchantDisplayName: string
-  trustLevel: number
+  merchantAvatarUrl?: string
+  trustLevel: number | null
   merchantType: '个人车主' | '商户' | '可信新车主'
   models: string[]
   modelMultipliers: ApiModelMultiplier[]
@@ -639,18 +771,26 @@ export type ApiService = {
   publiclyOrderable: boolean
   lastOnlineConfirmedAt: string
   onlineExpiresAt: string
+  declaredTtftBand?: ApiTTFTBand
+  declaredMaxConcurrency?: number
+  performanceConfirmedAt?: string
+  promptAuditEnabled?: boolean | null
+  accountPoolType?: 'gpt_pro_20x' | 'gpt_pro_5x' | 'gpt_plus' | 'custom'
+  accountPoolLabel?: string
+  merchantRefundCommitment?: boolean
+  merchantRefundPolicyVersion?: string
   expectedResponseMinutes: number
-  responseMedianMinutes: number
+  responseMedianMinutes: number | null
   dailyOrderLimit: number
   todayOrderCount: number
-  unresolvedDisputes: number
+  unresolvedDisputes: number | null
   warning?: string
   warranty: string
   refundPolicy: string
   quotaExpiresAt?: string
   expiresAt: string
-  completed30d: number
-  reviewCount: number
+  completed30d: number | null
+  reviewCount: number | null
   officialPricingVersion: string
   officialPricingUpdatedAt: string
   merchantNote: string
@@ -662,23 +802,44 @@ export type ApiService = {
   acceptedPaymentMethods?: Array<'wechat' | 'alipay'>
 }
 
+export type ApiServiceSalesChannel = {
+  kind: ApiServiceSalesChannelKind
+  state: ApiServiceSalesState
+  availableUsdAllowance?: string
+  availableCopies?: number
+  nextStartsAt?: string
+  saleCutoffAt?: string
+  expiresAt?: string
+}
+
+export type ApiServiceSalesSummary = {
+  overallState: ApiServiceSalesState
+  channels: ApiServiceSalesChannel[]
+}
+
+export type OwnerApiService = ApiService & {
+  healthSummary: ApiServiceHealthSummary
+  salesSummary: ApiServiceSalesSummary
+}
+
 export type PublicMerchantProfile = {
   username: string
   displayName: string
+  avatarUrl?: string | null
   avatarText: string
   merchantId: string
   identity: '个人商户' | '可信新商户' | 'API 商户'
-  trustLevel: number
-  linuxdoBound: boolean
-  originalPostBound: boolean
+  trustLevel: number | null
+  linuxdoBound: boolean | null
+  originalPostBound: boolean | null
   joinedAt: string
   lastActiveAt: string
   linuxdoUrl: string
-  completed30d: number
-  responseMedianMinutes: number
-  merchantResponsibleCancellations: number
-  unresolvedDisputes: number
-  handledDisputes90d: number
+  completedLast90Days: number | null
+  responseMedianMinutes: number | null
+  merchantResponsibleCancellations: number | null
+  unresolvedDisputes: number | null
+  handledDisputesLast90Days: number | null
 }
 
 export type PublicCompletionRecord = {
@@ -711,7 +872,18 @@ export type PublicDisputeRecord = {
   unresolved: boolean
 }
 
-export type ApiPurchaseIntentSnapshot = {
+export type ApiServiceCommercialSnapshot = {
+  accountPoolType?: ApiService['accountPoolType']
+  accountPoolLabel?: string
+  declaredMaxConcurrency?: number
+  promptAuditEnabled?: boolean | null
+  merchantRefundCommitment?: boolean
+  merchantRefundPolicyVersion?: string
+  serviceValidityExpiresAt?: string | null
+  commercialFactsSnapshotIssue?: 'missing' | 'invalid'
+}
+
+export type ApiPurchaseIntentSnapshot = ApiServiceCommercialSnapshot & {
   serviceId: string
   serviceTitle: string
   sourceUrl?: string
@@ -720,7 +892,7 @@ export type ApiPurchaseIntentSnapshot = {
   merchantUsername: string
   merchantIdentityMode: ApiMerchantIdentityMode
   merchantDisplayName: string
-  trustLevel: number
+  trustLevel: number | null
   merchantType: ApiService['merchantType']
   models: string[]
   multiplier: string
@@ -729,6 +901,9 @@ export type ApiPurchaseIntentSnapshot = {
   cnyPerUsdAllowance?: string
   warranty: string
   refundPolicy: string
+  merchantNote?: string
+  pricingSnapshotIssue?: 'missing' | 'invalid'
+  usageVisibilitySnapshotMissing?: boolean
   usageVisibility: ApiUsageVisibility
   supportedDeliveryModes: ApiDeliveryMode[]
   selectedDeliveryMode: ApiDeliveryMode
@@ -777,6 +952,7 @@ export type ApiPurchaseIntent = {
   purchasedCredit: number
   purchaseAmountCnyDecimal?: string
   purchasedCreditDecimal?: string
+  quotaUsagePolicySnapshot: ApiQuotaUsagePolicy
   targetModel: string
   buyerNote?: string
   snapshot: ApiPurchaseIntentSnapshot
@@ -807,11 +983,11 @@ export type ApiPurchaseIntentEvent = {
 }
 
 export const categoryRows = [
-  { product: 'ChatGPT Plus', detail: '个人订阅费用分摊 / 高风险需确认', verifiedLowest: 108, leadLowest: 18, carpoolCount: 6, demandCount: 88 },
-  { product: 'ChatGPT Business', detail: 'workspace 成员邀请 / 风险需确认', verifiedLowest: 188, leadLowest: 92, carpoolCount: 18, demandCount: 35 },
-  { product: 'ChatGPT Pro 20x Web', detail: '个人订阅费用分摊 / 高风险需确认', verifiedLowest: 988, leadLowest: 56, carpoolCount: 5, demandCount: 72 },
-  { product: 'Claude Max 5x', detail: '5x / 20x 订阅', verifiedLowest: 724, leadLowest: 47, carpoolCount: 14, demandCount: 29 },
-  { product: 'Cursor Pro', detail: '团队席位 / 独立座位', verifiedLowest: 154, leadLowest: 36, carpoolCount: 18, demandCount: 24 },
+  { product: 'ChatGPT Plus', detail: '个人订阅费用分摊 / 高风险需确认', verifiedLowest: 108, leadLowest: 18, carpoolCount: 6 },
+  { product: 'ChatGPT Business', detail: 'workspace 成员邀请 / 风险需确认', verifiedLowest: 188, leadLowest: 92, carpoolCount: 18 },
+  { product: 'ChatGPT Pro 20x Web', detail: '个人订阅费用分摊 / 高风险需确认', verifiedLowest: 988, leadLowest: 56, carpoolCount: 5 },
+  { product: 'Claude Max 5x', detail: '5x / 20x 订阅', verifiedLowest: 724, leadLowest: 47, carpoolCount: 14 },
+  { product: 'Cursor Pro', detail: '团队席位 / 独立座位', verifiedLowest: 154, leadLowest: 36, carpoolCount: 18 },
 ]
 
 export const carpoolProductCatalog: CarpoolProductCatalogItem[] = [
@@ -850,6 +1026,7 @@ export const carpoolPaymentMethods: PaymentMethodOption[] = [
   { code: 'app_store_gift_card', displayName: 'App Store 礼品卡', active: true, sortOrder: 50 },
   { code: 'google_play_gift_card', displayName: 'Google Play 礼品卡', active: true, sortOrder: 60 },
   { code: 'paypal', displayName: 'PayPal', active: true, sortOrder: 70 },
+  { code: 'u_card', displayName: 'U 卡', active: true, sortOrder: 80 },
   { code: 'other', displayName: '其他', active: true, sortOrder: 999 },
 ]
 
@@ -944,36 +1121,6 @@ export const myContactMethods: UserContactMethod[] = [
   },
 ]
 
-export const parsedLinuxDoTopicMock: ParsedLinuxDoTopic = {
-  topicId: '123456',
-  topicUrl: 'https://linux.do/t/topic/123456',
-  title: 'ChatGPT Business workspace 成员席位，剩余 2 席',
-  authorUsername: 'orbit',
-  authorUserId: 'linuxdo-1024',
-  createdAt: '2026-06-18 21:20',
-  updatedAt: '2026-06-19 09:42',
-  authorMatchesBoundUser: true,
-  detected: {
-    productId: 'chatgpt-business',
-    productText: 'ChatGPT Business',
-    regionCode: 'ph',
-    regionText: '菲律宾区',
-    monthlyPriceCny: 188,
-    totalSeats: 5,
-    availableSeats: 2,
-    occupiedSeats: 3,
-    openingChannelId: 'team_seat',
-    paymentMethodIds: ['credit_card'],
-    warrantyMode: 'remaining_days_compensation',
-  },
-  confidence: {
-    product: 'high',
-    region: 'high',
-    monthlyPrice: 'high',
-    seats: 'medium',
-  },
-}
-
 export const officialPrices: OfficialPrice[] = [
   { id: 'p1', product: 'ChatGPT', plan: 'Plus', region: '土耳其区', channel: 'iOS', openingMethod: 'Apple Store', originalPrice: 'TRY 499', cny: 108, status: '已验证', source: 'linux.do 低价帖', submitter: '青柠', submitterTrust: 3, updatedAt: '12 分钟前', isLowest: true },
   { id: 'p2', product: 'ChatGPT', plan: 'Pro', region: '菲律宾区', channel: 'Web', openingMethod: '虚拟卡', originalPrice: 'PHP 7,990', cny: 988, status: '已验证', source: 'linux.do 低价帖', submitter: 'orbit', submitterTrust: 3, updatedAt: '今天 16:30', isLowest: true },
@@ -982,15 +1129,15 @@ export const officialPrices: OfficialPrice[] = [
 ]
 
 export const carpools: Carpool[] = [
-  { id: 'c1', product: 'ChatGPT Business', region: '美国区', monthly: 188, serviceMultiplier: 1.2, monthlyQuotaAmount: 200, quotaLabel: '额度', quotaUnit: 'USD', quotaPeriod: 'monthly', seats: '3/5', pricingMode: 'fixed', fixedMonthlyPrice: 188, currentConfirmedMembers: 3, maxMembers: 5, settlementDeadline: '2026-06-25', owner: 'orbit', trustLevel: 3, ownerType: '个人车主', warranty: '车主承诺', openingMethod: '其他', status: '可上车', confirmedAt: '12 分钟前', confirmedWithin48h: true, linuxdoBound: true, sourcePostAccessible: true, hasInfoConflict: false, hasUnresolvedDispute: false, distributionMethod: 'sub2api', distributionMethodNote: 'Sub2API 托管管理，具体方式站外确认。', providesAdminAccount: true, accessArrangementMode: 'provider_member_invitation', accessArrangementNote: 'Business workspace 管理员邀请成员席位；不得共享 Pro/Plus 主账号、密码、Session 或 Cookie。', riskNoticeCode: 'openai_subscription_carpool', riskAcknowledged: true },
-  { id: 'c2', product: 'Cursor Pro', region: '土耳其区', monthly: 68, serviceMultiplier: 1, monthlyQuotaAmount: 500, quotaLabel: '额度', quotaUnit: 'USD', quotaPeriod: 'monthly', seats: '1/6', pricingMode: 'fixed', fixedMonthlyPrice: 68, currentConfirmedMembers: 1, maxMembers: 6, owner: '青柠', trustLevel: 3, ownerType: '个人车主', warranty: '售后协商', openingMethod: '其他', status: '可上车', confirmedAt: '35 分钟前', confirmedWithin48h: true, linuxdoBound: true, sourcePostAccessible: true, hasInfoConflict: false, hasUnresolvedDispute: false, distributionMethod: 'sub2api', distributionMethodNote: 'Sub2API 托管管理，具体方式站外确认。', providesAdminAccount: true, accessArrangementMode: 'provider_member_invitation', accessArrangementNote: '团队成员邀请或独立席位授权。' },
-  { id: 'c3', product: 'Claude Max 5x', region: '香港区', monthly: 80, serviceMultiplier: 1.1, monthlyQuotaAmount: 300, quotaLabel: '额度', quotaUnit: 'USD', quotaPeriod: 'monthly', seats: '2/4', pricingMode: 'tiered', currentConfirmedMembers: 2, maxMembers: 4, pricingTiers: [{ memberCount: 2, price: 120 }, { memberCount: 3, price: 80 }, { memberCount: 4, price: 60 }], owner: '北风', trustLevel: 4, ownerType: '个人车主', warranty: '车主承诺', openingMethod: '本地卡', status: '审核中', confirmedAt: '1 小时前', confirmedWithin48h: true, linuxdoBound: true, sourcePostAccessible: true, hasInfoConflict: false, hasUnresolvedDispute: false, distributionMethod: 'other', distributionMethodNote: '站外托管访问，具体方式加入前确认。', providesAdminAccount: false, accessArrangementMode: 'owner_managed_access', accessArrangementNote: '车主站外管理成员访问，不在平台保存凭据。' },
-  { id: 'c4', product: 'Cursor Pro', region: '新加坡区', monthly: 39, serviceMultiplier: 1, monthlyQuotaAmount: 200, quotaLabel: '额度', quotaUnit: 'USD', quotaPeriod: 'monthly', seats: '4/4', pricingMode: 'fixed', fixedMonthlyPrice: 39, currentConfirmedMembers: 4, maxMembers: 4, owner: '周末研究员', trustLevel: 2, ownerType: '商户车源', warranty: '售后协商', openingMethod: '其他', status: '已满', confirmedAt: '今天 09:24', confirmedWithin48h: true, linuxdoBound: true, sourcePostAccessible: true, hasInfoConflict: false, hasUnresolvedDispute: false, distributionMethod: 'other', distributionMethodNote: '商户站外安排，加入前确认。', providesAdminAccount: false },
-  { id: 'c5', product: 'ChatGPT Business', region: '日本区', monthly: 198, serviceMultiplier: 1.25, monthlyQuotaAmount: 200, quotaLabel: '额度', quotaUnit: 'USD', quotaPeriod: 'monthly', seats: '2/5', pricingMode: 'fixed', fixedMonthlyPrice: 198, currentConfirmedMembers: 2, maxMembers: 5, settlementDeadline: '2026-06-24', owner: '木舟', trustLevel: 3, ownerType: '个人车主', warranty: '车主承诺', openingMethod: '其他', status: '可上车', confirmedAt: '2 小时前', confirmedWithin48h: true, linuxdoBound: true, sourcePostAccessible: true, hasInfoConflict: false, hasUnresolvedDispute: false, distributionMethod: 'sub2api', distributionMethodNote: 'Sub2API 托管管理，具体方式站外确认。', providesAdminAccount: true, accessArrangementMode: 'provider_member_invitation', accessArrangementNote: 'Business workspace 管理员邀请成员席位。', riskNoticeCode: 'openai_subscription_carpool', riskAcknowledged: true },
-  { id: 'c6', product: 'ChatGPT Pro 20x Web', region: '香港区', monthly: 178, serviceMultiplier: 1.35, monthlyQuotaAmount: 300, quotaLabel: '额度', quotaUnit: 'USD', quotaPeriod: 'monthly', seats: '5/6', pricingMode: 'fixed', fixedMonthlyPrice: 178, currentConfirmedMembers: 5, maxMembers: 6, owner: '纸船', trustLevel: 2, ownerType: '可信新车主', warranty: '售后协商', openingMethod: '其他', status: '可上车', confirmedAt: '今天 10:20', confirmedWithin48h: true, linuxdoBound: true, sourcePostAccessible: true, hasInfoConflict: false, hasUnresolvedDispute: false, distributionMethod: 'sub2api', distributionMethodNote: 'Sub2API 托管管理，具体方式站外确认。', providesAdminAccount: true, accessArrangementMode: 'personal_account_cost_share', accessArrangementNote: '个人订阅费用分摊，平台不保存、不交付任何密码、Session、Cookie 或 token。', riskNoticeCode: 'openai_subscription_carpool', riskAcknowledged: true },
-  { id: 'c7', product: 'Cursor Pro', region: '新加坡区', monthly: 49, serviceMultiplier: 1, monthlyQuotaAmount: 500, quotaLabel: '额度', quotaUnit: 'USD', quotaPeriod: 'monthly', seats: '2/4', pricingMode: 'tiered', currentConfirmedMembers: 2, maxMembers: 4, pricingTiers: [{ memberCount: 2, price: 69 }, { memberCount: 3, price: 56 }, { memberCount: 4, price: 49 }], owner: '栈帧', trustLevel: 3, ownerType: '个人车主', warranty: '售后协商', openingMethod: '虚拟卡', status: '可上车', confirmedAt: '45 分钟前', confirmedWithin48h: true, linuxdoBound: true, sourcePostAccessible: true, hasInfoConflict: false, hasUnresolvedDispute: false, distributionMethod: 'sub2api', distributionMethodNote: 'Sub2API 托管管理，具体方式站外确认。', providesAdminAccount: true },
-  { id: 'c8', product: 'Perplexity Pro', region: '美国区', monthly: 42, serviceMultiplier: 1, monthlyQuotaAmount: 150, quotaLabel: '额度', quotaUnit: 'USD', quotaPeriod: 'monthly', seats: '1/3', pricingMode: 'fixed', fixedMonthlyPrice: 42, currentConfirmedMembers: 1, maxMembers: 3, owner: '海盐', trustLevel: 2, ownerType: '可信新车主', warranty: '售后协商', openingMethod: '其他', status: '可上车', confirmedAt: '1 小时前', confirmedWithin48h: true, linuxdoBound: true, sourcePostAccessible: true, hasInfoConflict: false, hasUnresolvedDispute: false, distributionMethod: 'other', distributionMethodNote: '共享家庭组席位，具体方式站外确认。', providesAdminAccount: false },
-  { id: 'c9', product: 'Gemini Advanced', region: '日本区', monthly: 36, serviceMultiplier: 1, monthlyQuotaAmount: 100, quotaLabel: '额度', quotaUnit: 'USD', quotaPeriod: 'monthly', seats: '2/5', pricingMode: 'equal_share', totalShareableCost: 108, currentConfirmedMembers: 2, maxMembers: 5, settlementDeadline: '2026-06-26', owner: '雨季', trustLevel: 3, ownerType: '个人车主', warranty: '车主承诺', openingMethod: '本地卡', status: '可上车', confirmedAt: '今天 11:05', confirmedWithin48h: true, linuxdoBound: true, sourcePostAccessible: true, hasInfoConflict: false, hasUnresolvedDispute: false, distributionMethod: 'other', distributionMethodNote: 'Google 家庭组成员安排，具体方式站外确认。', providesAdminAccount: false },
+  { id: 'c1', product: 'ChatGPT Business', region: '美国区', monthly: 188, serviceMultiplier: 1, weeklyQuotaAmount: 50, monthlyQuotaAmount: 200, followsOfficialQuotaReset: true, vpsRegion: '美国西部', supportsMainlandChinaDirectConnection: true, openingChannelCode: 'team_seat', paymentMethodCode: 'credit_card', quotaLabel: '额度', quotaUnit: 'USD', quotaPeriod: 'monthly', seats: '3/5', pricingMode: 'fixed', fixedMonthlyPrice: 188, currentConfirmedMembers: 3, maxMembers: 5, settlementDeadline: '2026-06-25', owner: 'orbit', trustLevel: 3, ownerType: '个人车主', warranty: '车主承诺', openingMethod: '其他', status: '可上车', confirmedAt: '12 分钟前', confirmedWithin48h: true, linuxdoBound: true, sourceAuthorVerification: { status: 'verified' }, hasInfoConflict: false, hasUnresolvedDispute: false, distributionMethod: 'sub2api', distributionMethodNote: 'Sub2API 托管管理，具体方式站外确认。', providesAdminAccount: true, accessArrangementMode: 'provider_member_invitation', accessArrangementNote: 'Business workspace 管理员邀请成员席位；不得共享 Pro/Plus 主账号、密码、Session 或 Cookie。', riskNoticeCode: 'openai_subscription_carpool', riskAcknowledged: true },
+  { id: 'c2', product: 'Cursor Pro', region: '土耳其区', monthly: 68, serviceMultiplier: 1, weeklyQuotaAmount: 125, monthlyQuotaAmount: 500, followsOfficialQuotaReset: true, vpsRegion: '香港', supportsMainlandChinaDirectConnection: true, openingChannelCode: 'web', paymentMethodCode: 'u_card', quotaLabel: '额度', quotaUnit: 'USD', quotaPeriod: 'monthly', seats: '1/6', pricingMode: 'fixed', fixedMonthlyPrice: 68, currentConfirmedMembers: 1, maxMembers: 6, owner: '青柠', trustLevel: 3, ownerType: '个人车主', warranty: '售后协商', openingMethod: '其他', status: '可上车', confirmedAt: '35 分钟前', confirmedWithin48h: true, linuxdoBound: true, sourceAuthorVerification: { status: 'verified' }, hasInfoConflict: false, hasUnresolvedDispute: false, distributionMethod: 'sub2api', distributionMethodNote: 'Sub2API 托管管理，具体方式站外确认。', providesAdminAccount: true, accessArrangementMode: 'provider_member_invitation', accessArrangementNote: '团队成员邀请或独立席位授权。' },
+  { id: 'c3', product: 'Claude Max 5x', region: '香港区', monthly: 80, serviceMultiplier: 1, weeklyQuotaAmount: 75, monthlyQuotaAmount: 300, followsOfficialQuotaReset: false, vpsRegion: '香港', supportsMainlandChinaDirectConnection: false, openingChannelCode: 'web', paymentMethodCode: 'paypal', quotaLabel: '额度', quotaUnit: 'USD', quotaPeriod: 'monthly', seats: '2/4', pricingMode: 'tiered', currentConfirmedMembers: 2, maxMembers: 4, pricingTiers: [{ memberCount: 2, price: 120 }, { memberCount: 3, price: 80 }, { memberCount: 4, price: 60 }], owner: '北风', trustLevel: 4, ownerType: '个人车主', warranty: '车主承诺', openingMethod: '本地卡', status: '审核中', confirmedAt: '1 小时前', confirmedWithin48h: true, linuxdoBound: true, sourceAuthorVerification: { status: 'pending' }, hasInfoConflict: false, hasUnresolvedDispute: false, distributionMethod: 'other', distributionMethodNote: '站外托管访问，具体方式加入前确认。', providesAdminAccount: false, accessArrangementMode: 'owner_managed_access', accessArrangementNote: '车主站外管理成员访问，不在平台保存凭据。' },
+  { id: 'c4', product: 'Cursor Pro', region: '新加坡区', monthly: 39, serviceMultiplier: 1, weeklyQuotaAmount: 50, monthlyQuotaAmount: 200, followsOfficialQuotaReset: true, vpsRegion: '新加坡', supportsMainlandChinaDirectConnection: true, openingChannelCode: 'other', customOpeningChannel: '企业席位', paymentMethodCode: 'virtual_card', quotaLabel: '额度', quotaUnit: 'USD', quotaPeriod: 'monthly', seats: '4/4', pricingMode: 'fixed', fixedMonthlyPrice: 39, currentConfirmedMembers: 4, maxMembers: 4, owner: '周末研究员', trustLevel: 2, ownerType: '商户车源', warranty: '售后协商', openingMethod: '其他', status: '已满', confirmedAt: '今天 09:24', confirmedWithin48h: true, linuxdoBound: true, sourceAuthorVerification: { status: 'verified' }, hasInfoConflict: false, hasUnresolvedDispute: false, distributionMethod: 'other', distributionMethodNote: '商户站外安排，加入前确认。', providesAdminAccount: false },
+  { id: 'c5', product: 'ChatGPT Business', region: '日本区', monthly: 198, serviceMultiplier: 1, weeklyQuotaAmount: 50, monthlyQuotaAmount: 200, followsOfficialQuotaReset: true, vpsRegion: '日本东京', supportsMainlandChinaDirectConnection: false, openingChannelCode: 'team_seat', paymentMethodCode: 'credit_card', quotaLabel: '额度', quotaUnit: 'USD', quotaPeriod: 'monthly', seats: '2/5', pricingMode: 'fixed', fixedMonthlyPrice: 198, currentConfirmedMembers: 2, maxMembers: 5, settlementDeadline: '2026-06-24', owner: '木舟', trustLevel: 3, ownerType: '个人车主', warranty: '车主承诺', openingMethod: '其他', status: '可上车', confirmedAt: '2 小时前', confirmedWithin48h: true, linuxdoBound: true, sourceAuthorVerification: { status: 'verified' }, hasInfoConflict: false, hasUnresolvedDispute: false, distributionMethod: 'sub2api', distributionMethodNote: 'Sub2API 托管管理，具体方式站外确认。', providesAdminAccount: true, accessArrangementMode: 'provider_member_invitation', accessArrangementNote: 'Business workspace 管理员邀请成员席位。', riskNoticeCode: 'openai_subscription_carpool', riskAcknowledged: true },
+  { id: 'c6', product: 'ChatGPT Pro 20x Web', region: '香港区', monthly: 178, serviceMultiplier: 1, weeklyQuotaAmount: 75, monthlyQuotaAmount: 300, followsOfficialQuotaReset: true, vpsRegion: '香港', supportsMainlandChinaDirectConnection: true, openingChannelCode: 'web', paymentMethodCode: 'u_card', quotaLabel: '额度', quotaUnit: 'USD', quotaPeriod: 'monthly', seats: '5/6', pricingMode: 'fixed', fixedMonthlyPrice: 178, currentConfirmedMembers: 5, maxMembers: 6, owner: '纸船', trustLevel: 2, ownerType: '可信新车主', warranty: '售后协商', openingMethod: '其他', status: '可上车', confirmedAt: '今天 10:20', confirmedWithin48h: true, linuxdoBound: true, sourceAuthorVerification: { status: 'expired' }, hasInfoConflict: false, hasUnresolvedDispute: false, distributionMethod: 'sub2api', distributionMethodNote: 'Sub2API 托管管理，具体方式站外确认。', providesAdminAccount: true, accessArrangementMode: 'personal_account_cost_share', accessArrangementNote: '个人订阅费用分摊，平台不保存、不交付任何密码、Session、Cookie 或 token。', riskNoticeCode: 'openai_subscription_carpool', riskAcknowledged: true },
+  { id: 'c7', product: 'Cursor Pro', region: '新加坡区', monthly: 49, serviceMultiplier: 1, weeklyQuotaAmount: 125, monthlyQuotaAmount: 500, followsOfficialQuotaReset: true, vpsRegion: '新加坡', supportsMainlandChinaDirectConnection: true, openingChannelCode: 'web', paymentMethodCode: 'virtual_card', quotaLabel: '额度', quotaUnit: 'USD', quotaPeriod: 'monthly', seats: '2/4', pricingMode: 'tiered', currentConfirmedMembers: 2, maxMembers: 4, pricingTiers: [{ memberCount: 2, price: 69 }, { memberCount: 3, price: 56 }, { memberCount: 4, price: 49 }], owner: '栈帧', trustLevel: 3, ownerType: '个人车主', warranty: '售后协商', openingMethod: '虚拟卡', status: '可上车', confirmedAt: '45 分钟前', confirmedWithin48h: true, linuxdoBound: true, sourceAuthorVerification: { status: 'verified' }, hasInfoConflict: false, hasUnresolvedDispute: false, distributionMethod: 'sub2api', distributionMethodNote: 'Sub2API 托管管理，具体方式站外确认。', providesAdminAccount: true },
+  { id: 'c8', product: 'Perplexity Pro', region: '美国区', monthly: 42, serviceMultiplier: 1, weeklyQuotaAmount: 40, monthlyQuotaAmount: 150, followsOfficialQuotaReset: false, vpsRegion: '美国西部', supportsMainlandChinaDirectConnection: false, openingChannelCode: 'web', paymentMethodCode: 'paypal', quotaLabel: '额度', quotaUnit: 'USD', quotaPeriod: 'monthly', seats: '1/3', pricingMode: 'fixed', fixedMonthlyPrice: 42, currentConfirmedMembers: 1, maxMembers: 3, owner: '海盐', trustLevel: 2, ownerType: '可信新车主', warranty: '售后协商', openingMethod: '其他', status: '可上车', confirmedAt: '1 小时前', confirmedWithin48h: true, linuxdoBound: true, sourceAuthorVerification: { status: 'mismatch' }, hasInfoConflict: false, hasUnresolvedDispute: false, distributionMethod: 'other', distributionMethodNote: '共享家庭组席位，具体方式站外确认。', providesAdminAccount: false },
+  { id: 'c9', product: 'Gemini Advanced', region: '日本区', monthly: 36, serviceMultiplier: 1, weeklyQuotaAmount: 25, monthlyQuotaAmount: 100, followsOfficialQuotaReset: true, vpsRegion: '日本东京', supportsMainlandChinaDirectConnection: true, openingChannelCode: 'google_play', paymentMethodCode: 'google_pay', quotaLabel: '额度', quotaUnit: 'USD', quotaPeriod: 'monthly', seats: '2/5', pricingMode: 'equal_share', totalShareableCost: 108, currentConfirmedMembers: 2, maxMembers: 5, settlementDeadline: '2026-06-26', owner: '雨季', trustLevel: 3, ownerType: '个人车主', warranty: '车主承诺', openingMethod: '本地卡', status: '可上车', confirmedAt: '今天 11:05', confirmedWithin48h: true, linuxdoBound: true, sourceAuthorVerification: { status: 'verified' }, hasInfoConflict: false, hasUnresolvedDispute: false, distributionMethod: 'other', distributionMethodNote: 'Google 家庭组成员安排，具体方式站外确认。', providesAdminAccount: false },
 ]
 
 const carpoolApplicationSnapshots: Record<string, CarpoolApplicationSnapshot> = {
@@ -999,7 +1146,7 @@ const carpoolApplicationSnapshots: Record<string, CarpoolApplicationSnapshot> = 
     productName: 'ChatGPT Business',
     regionName: '美国区',
     monthlyPriceCny: 188,
-    serviceMultiplier: 1.2,
+    serviceMultiplier: 1,
     monthlyQuotaAmount: 200,
     quotaLabel: '额度',
     quotaUnit: 'USD',
@@ -1014,7 +1161,6 @@ const carpoolApplicationSnapshots: Record<string, CarpoolApplicationSnapshot> = 
     ownerUsername: 'orbit',
     ownerTrustLevel: 3,
     ownerType: '个人车主',
-    sourceTopicUrl: 'https://linux.do/t/topic/123456',
     accessArrangementMode: 'provider_member_invitation',
     accessArrangementNote: 'Business workspace 管理员邀请成员席位。',
   },
@@ -1038,7 +1184,6 @@ const carpoolApplicationSnapshots: Record<string, CarpoolApplicationSnapshot> = 
     ownerUsername: '青柠',
     ownerTrustLevel: 3,
     ownerType: '个人车主',
-    sourceTopicUrl: 'https://linux.do/t/topic/223456',
     accessArrangementMode: 'provider_member_invitation',
     accessArrangementNote: '团队成员邀请或独立席位授权。',
   },
@@ -1047,7 +1192,7 @@ const carpoolApplicationSnapshots: Record<string, CarpoolApplicationSnapshot> = 
     productName: 'Claude Max 5x',
     regionName: '香港区',
     monthlyPriceCny: 80,
-    serviceMultiplier: 1.1,
+    serviceMultiplier: 1,
     monthlyQuotaAmount: 300,
     quotaLabel: '额度',
     quotaUnit: 'USD',
@@ -1062,7 +1207,6 @@ const carpoolApplicationSnapshots: Record<string, CarpoolApplicationSnapshot> = 
     ownerUsername: '北风',
     ownerTrustLevel: 4,
     ownerType: '个人车主',
-    sourceTopicUrl: 'https://linux.do/t/topic/323456',
     accessArrangementMode: 'owner_managed_access',
     accessArrangementNote: '车主站外管理成员访问，不在平台保存凭据。',
   },
@@ -1184,8 +1328,8 @@ export const carpoolApplications: CarpoolApplication[] = [
   {
     id: 'ride-app-5',
     carpoolId: 'c2',
-    applicantUserId: 'buyer-haiyan',
-    applicantUsername: '海盐',
+    applicantUserId: 'buyer-demo-user',
+    applicantUsername: 'demo_user',
     applicantStats: { linuxdoBound: true, trustLevel: 2, completed30d: 0, buyerResponsibleCancellations: 0, ownerResponsibleCancellations: 0, unresolvedDisputes: 0 },
     ownerUserId: 'owner-qingning',
     ownerUsername: '青柠',
@@ -1207,8 +1351,95 @@ export const carpoolApplications: CarpoolApplication[] = [
     responsibility: null,
     disputeReason: null,
     buyerReview: { rating: 5, tags: ['规则清楚', '服务稳定'], note: '本地 mock 已验证评价。', createdAt: '2026-06-10 12:08' },
+    ownerReview: { rating: 4, tags: ['付款及时', '确认及时'], note: '买家付款和确认都很及时。', createdAt: '2026-06-10 12:10' },
     createdAt: '2026-05-10 10:00',
-    updatedAt: '2026-06-10 12:08',
+    updatedAt: '2026-06-10 12:10',
+  },
+  {
+    id: 'ride-app-7',
+    carpoolId: 'c2',
+    applicantUserId: 'buyer-demo-user',
+    applicantUsername: 'demo_user',
+    applicantStats: { linuxdoBound: true, trustLevel: 3, completed30d: 3, buyerResponsibleCancellations: 0, ownerResponsibleCancellations: 0, unresolvedDisputes: 0 },
+    ownerUserId: 'owner-qingning',
+    ownerUsername: '青柠',
+    status: 'completed',
+    seatsRequested: 1,
+    snapshot: carpoolApplicationSnapshots.c2,
+    reservedUntil: null,
+    buyerContactedAt: '2026-07-23 18:12',
+    buyerConfirmedJoinedAt: '2026-07-23 18:20',
+    ownerConfirmedJoinedAt: '2026-07-23 18:22',
+    startedAt: '2026-07-23 18:22',
+    expectedEndAt: '2026-07-24 09:00',
+    buyerConfirmedCompletedAt: '2026-07-24 09:02',
+    ownerConfirmedCompletedAt: '2026-07-24 09:04',
+    completedAt: '2026-07-24 09:04',
+    completionMode: 'mutual',
+    cancellationReasonCode: null,
+    cancellationReasonText: null,
+    responsibility: null,
+    disputeReason: null,
+    ownerReview: { rating: 5, tags: ['付款及时', '确认及时'], note: '对方已经提交，双盲期内不应向买家显示。', createdAt: '2026-07-24 09:15' },
+    createdAt: '2026-07-23 17:55',
+    updatedAt: '2026-07-24 09:15',
+  },
+  {
+    id: 'ride-app-8',
+    carpoolId: 'c3',
+    applicantUserId: 'buyer-demo-user',
+    applicantUsername: 'demo_user',
+    applicantStats: { linuxdoBound: true, trustLevel: 3, completed30d: 3, buyerResponsibleCancellations: 0, ownerResponsibleCancellations: 0, unresolvedDisputes: 0 },
+    ownerUserId: 'owner-beifeng',
+    ownerUsername: '北风',
+    status: 'completed',
+    seatsRequested: 1,
+    snapshot: carpoolApplicationSnapshots.c3,
+    reservedUntil: null,
+    buyerContactedAt: '2026-07-22 11:12',
+    buyerConfirmedJoinedAt: '2026-07-22 11:20',
+    ownerConfirmedJoinedAt: '2026-07-22 11:22',
+    startedAt: '2026-07-22 11:22',
+    expectedEndAt: '2026-07-23 12:00',
+    buyerConfirmedCompletedAt: '2026-07-23 12:02',
+    ownerConfirmedCompletedAt: '2026-07-23 12:04',
+    completedAt: '2026-07-23 12:04',
+    completionMode: 'mutual',
+    cancellationReasonCode: null,
+    cancellationReasonText: null,
+    responsibility: null,
+    disputeReason: null,
+    buyerReview: { rating: 4, tags: ['沟通顺畅', '规则清晰'], note: '自己的评价在双盲期内仍可查看和修改。', createdAt: '2026-07-23 12:18' },
+    createdAt: '2026-07-22 10:55',
+    updatedAt: '2026-07-23 12:18',
+  },
+  {
+    id: 'ride-app-9',
+    carpoolId: 'c2',
+    applicantUserId: 'buyer-demo-user',
+    applicantUsername: 'demo_user',
+    applicantStats: { linuxdoBound: true, trustLevel: 3, completed30d: 3, buyerResponsibleCancellations: 0, ownerResponsibleCancellations: 0, unresolvedDisputes: 0 },
+    ownerUserId: 'owner-qingning',
+    ownerUsername: '青柠',
+    status: 'completed',
+    seatsRequested: 1,
+    snapshot: carpoolApplicationSnapshots.c2,
+    reservedUntil: null,
+    buyerContactedAt: '2026-06-30 18:12',
+    buyerConfirmedJoinedAt: '2026-06-30 18:20',
+    ownerConfirmedJoinedAt: '2026-06-30 18:22',
+    startedAt: '2026-06-30 18:22',
+    expectedEndAt: '2026-07-01 09:00',
+    buyerConfirmedCompletedAt: '2026-07-01 09:02',
+    ownerConfirmedCompletedAt: '2026-07-01 09:04',
+    completedAt: '2026-07-01 09:04',
+    completionMode: 'mutual',
+    cancellationReasonCode: null,
+    cancellationReasonText: null,
+    responsibility: null,
+    disputeReason: null,
+    createdAt: '2026-06-30 17:55',
+    updatedAt: '2026-07-01 09:04',
   },
   {
     id: 'ride-app-6',
@@ -1244,7 +1475,7 @@ export const carpoolApplicationEvents: CarpoolApplicationEvent[] = [
   { id: 'ride-event-1', applicationId: 'ride-app-1', actorId: 'buyer-zhichuan', actorLabel: '纸船', actorRole: 'buyer', type: 'application_created', toStatus: 'pending_owner', note: '买家提交上车申请，等待车主处理。', createdAt: '2026-06-19 16:18' },
   { id: 'ride-event-2', applicationId: 'ride-app-2', actorId: 'buyer-muzhou', actorLabel: '木舟', actorRole: 'buyer', type: 'application_created', toStatus: 'pending_owner', note: '买家提交上车申请。', createdAt: '2026-06-19 15:55' },
   { id: 'ride-event-3', applicationId: 'ride-app-2', actorId: 'owner-orbit', actorLabel: 'orbit', actorRole: 'owner', type: 'owner_accepted', fromStatus: 'pending_owner', toStatus: 'accepted_reserved', note: '车主接受申请，预留 1 席 30 分钟。', createdAt: '2026-06-19 16:35' },
-  { id: 'ride-event-4', applicationId: 'ride-app-3', actorId: 'buyer-demo-user', actorLabel: 'demo_user', actorRole: 'buyer', type: 'buyer_contacted', fromStatus: 'accepted_reserved', toStatus: 'contacted', note: '买家已记录完成站外联系。', createdAt: '2026-06-18 20:12' },
+  { id: 'ride-event-4', applicationId: 'ride-app-3', actorId: 'buyer-demo-user', actorLabel: 'demo_user', actorRole: 'buyer', type: 'buyer_contacted', fromStatus: 'accepted_reserved', toStatus: 'contacted', note: '买家已记录与车主完成联系。', createdAt: '2026-06-18 20:12' },
   { id: 'ride-event-5', applicationId: 'ride-app-3', actorId: 'system', actorLabel: '系统', actorRole: 'system', type: 'service_started', fromStatus: 'joined_pending_confirmation', toStatus: 'active', note: '双方确认后进入服务中。', createdAt: '2026-06-18 20:26' },
   { id: 'ride-event-6', applicationId: 'ride-app-4', actorId: 'system', actorLabel: '系统', actorRole: 'system', type: 'pending_completion', fromStatus: 'active', toStatus: 'pending_completion', note: '服务周期到期，等待双方确认完成。', createdAt: '2026-06-19 12:48' },
   { id: 'ride-event-7', applicationId: 'ride-app-5', actorId: 'system', actorLabel: '系统', actorRole: 'system', type: 'completed', fromStatus: 'pending_completion', toStatus: 'completed', note: '双方确认完成，评价可用。', createdAt: '2026-06-10 12:04' },
@@ -1261,7 +1492,7 @@ export const adminDirectoryUsers: AdminDirectoryUser[] = [
 ]
 
 export const adminAuditLogs: AdminAuditLog[] = [
-  { id: 'audit-1', actorType: 'admin', actorLabel: '管理员', action: '审核通过', targetType: 'carpool', targetId: 'c1', targetLabel: 'ChatGPT Business', beforeStatus: '待审核', afterStatus: 'approved_offline', reason: '原帖已绑定，已声明 Business workspace 成员席位机制。', createdAt: '2026-06-19 15:42' },
+  { id: 'audit-1', actorType: 'admin', actorLabel: '管理员', action: '审核通过', targetType: 'carpool', targetId: 'c1', targetLabel: 'ChatGPT Business', beforeStatus: '待审核', afterStatus: 'approved_offline', reason: '已声明 Business workspace 成员席位机制与使用边界。', createdAt: '2026-06-19 15:42' },
   { id: 'audit-2', actorType: 'admin', actorLabel: '管理员', action: '标记风险', targetType: 'application', targetId: 'ride-app-6', targetLabel: 'Claude Max 5x 上车申请', beforeStatus: '服务中', afterStatus: '纠纷中', reason: '开通区说明存在争议。', createdAt: '2026-06-18 15:30' },
   { id: 'audit-3', actorType: 'system', actorLabel: '系统', action: '自动提醒', targetType: 'api-service', targetId: 'a3', targetLabel: '多模型备用池', beforeStatus: 'online', afterStatus: 'paused', reason: '连续 2 次未响应购买意向。', createdAt: '2026-06-19 14:10' },
 ]
@@ -1599,11 +1830,34 @@ export const modelCatalog: ModelCatalogItem[] = [
   },
 ]
 
+const limitedServiceQuotaPolicy: ApiQuotaUsagePolicy = {
+  fiveHour: { mode: 'limited', amountUsd: '50' },
+  daily: { mode: 'limited', amountUsd: '200' },
+  scope: 'per_buyer_credential',
+  dailyReset: 'utc_plus_8_calendar_day',
+}
+
+const unlimitedServiceQuotaPolicy: ApiQuotaUsagePolicy = {
+  fiveHour: { mode: 'unlimited', amountUsd: null },
+  daily: { mode: 'unlimited', amountUsd: null },
+  scope: 'per_buyer_credential',
+  dailyReset: 'utc_plus_8_calendar_day',
+}
+
+const unspecifiedServiceQuotaPolicy: ApiQuotaUsagePolicy = {
+  fiveHour: { mode: 'unspecified', amountUsd: null },
+  daily: { mode: 'unspecified', amountUsd: null },
+  scope: 'per_buyer_credential',
+  dailyReset: 'utc_plus_8_calendar_day',
+}
+
 export const apiServices: ApiService[] = [
   {
     id: 'a1',
     title: 'GPT / Claude API 服务',
     sourceUrl: 'https://linux.do/t/api-quota-sub2api/123456',
+    sourceAuthorVerification: { status: 'verified' },
+    quotaUsagePolicy: limitedServiceQuotaPolicy,
     merchantId: 'merchant-orbit',
     merchantUsername: 'orbit',
     merchant: 'orbit',
@@ -1634,6 +1888,7 @@ export const apiServices: ApiService[] = [
     state: 'online',
     online: true,
     publiclyOrderable: true,
+    acceptedPaymentMethods: ['wechat', 'alipay'],
     lastOnlineConfirmedAt: '2026-06-19 16:28',
     onlineExpiresAt: '2026-06-19 17:28',
     expectedResponseMinutes: 3,
@@ -1693,6 +1948,8 @@ export const apiServices: ApiService[] = [
     id: 'a2',
     title: '轻量模型开发额度',
     sourceUrl: '',
+    sourceAuthorVerification: { status: 'not_submitted' },
+    quotaUsagePolicy: unlimitedServiceQuotaPolicy,
     merchantId: 'merchant-qingning',
     merchantUsername: 'qingning',
     merchant: '青柠',
@@ -1770,6 +2027,12 @@ export const apiServices: ApiService[] = [
         name: 'GPT-5.5 开发流量包',
         priceCny: 9.9,
         panelAllowance: 5,
+        quotaUsagePolicy: {
+          fiveHour: { mode: 'limited', amountUsd: '5' },
+          daily: { mode: 'limited', amountUsd: '10' },
+          scope: 'per_buyer_credential',
+          dailyReset: 'utc_plus_8_calendar_day',
+        },
         durationDays: 3,
         stockTotal: 12,
         stockAvailable: 8,
@@ -1786,6 +2049,12 @@ export const apiServices: ApiService[] = [
         name: '轻量模型周包',
         priceCny: 18.8,
         panelAllowance: 12,
+        quotaUsagePolicy: {
+          fiveHour: { mode: 'limited', amountUsd: '12' },
+          daily: { mode: 'limited', amountUsd: '24' },
+          scope: 'per_buyer_credential',
+          dailyReset: 'utc_plus_8_calendar_day',
+        },
         durationDays: 7,
         stockTotal: 8,
         stockAvailable: 5,
@@ -1803,6 +2072,8 @@ export const apiServices: ApiService[] = [
     id: 'a3',
     title: '多模型备用池',
     sourceUrl: 'https://linux.do/t/multi-model-api/234567',
+    sourceAuthorVerification: { status: 'mismatch' },
+    quotaUsagePolicy: unspecifiedServiceQuotaPolicy,
     merchantId: 'merchant-beifeng',
     merchantUsername: 'beifeng-api',
     merchant: '北风商户',
@@ -1891,6 +2162,131 @@ export const apiServices: ApiService[] = [
   },
 ]
 
+export const apiQuotaBatches: ApiQuotaBatch[] = [
+  {
+    id: 'quota-batch-a1',
+    apiServiceId: 'a1',
+    sourceType: 'sub2api',
+    status: 'published',
+    declaredTotalUsdAllowance: '2500.000000',
+    unallocatedUsdAllowance: '500.000000',
+    saleCutoffAt: '2026-12-30T22:00:00Z',
+    expiresAt: '2026-12-31T00:00:00Z',
+    sourceConfirmedAt: '2026-07-19T00:30:00Z',
+    publishedAt: '2026-07-19T00:40:00Z',
+    version: 2,
+  },
+]
+
+export const apiQuotaOffers: PublicApiQuotaOffer[] = [
+  {
+    id: 'quota-offer-a1-50',
+    batchId: 'quota-batch-a1',
+    apiServiceId: 'a1',
+    distributionSystem: 'sub2api',
+    name: '$50 日内开发额度',
+    usdAllowance: '50.000000',
+    priceCny: '5.00',
+    cnyPerUsd: '0.100000',
+    modelMultiplier: '1.0000',
+    quotaUsagePolicy: {
+      fiveHour: { mode: 'limited', amountUsd: '20' },
+      daily: { mode: 'unlimited', amountUsd: null },
+      scope: 'per_buyer_credential',
+      dailyReset: 'utc_plus_8_calendar_day',
+    },
+    deliveryMode: 'preimported',
+    deliveryEtaMinutes: 2,
+    saleMode: 'continuous',
+    status: 'published',
+    sortOrder: 10,
+    publishedAt: '2026-07-19T00:40:00Z',
+    version: 1,
+    batchStatus: 'published',
+    serviceTitle: 'GPT / Claude API 服务',
+    sellerDisplayName: '小葵 API',
+    sellerIdentityType: 'individual',
+    sellerLinuxDoBound: true,
+    promptAuditEnabled: false,
+    declaredTtftBand: '1_to_3s',
+    declaredMaxConcurrency: 8,
+    performanceConfirmedAt: '2026-07-19T00:30:00Z',
+    performanceDisclaimer: '商户自报，平台未测速',
+    saleCutoffAt: '2026-12-30T22:00:00Z',
+    expiresAt: '2026-12-31T00:00:00Z',
+    availableCopies: 30,
+    credentialAvailableCopies: 30,
+    isOrderable: true,
+    orderabilityCode: 'orderable',
+    orderabilityReason: '当前可购买。',
+  },
+  {
+    id: 'quota-offer-a1-100',
+    batchId: 'quota-batch-a1',
+    apiServiceId: 'a1',
+    distributionSystem: 'sub2api',
+    name: '$100 整点额度',
+    usdAllowance: '100.000000',
+    priceCny: '8.80',
+    cnyPerUsd: '0.088000',
+    modelMultiplier: '1.0000',
+    quotaUsagePolicy: unspecifiedServiceQuotaPolicy,
+    deliveryMode: 'manual',
+    deliveryEtaMinutes: 10,
+    saleMode: 'scheduled',
+    status: 'published',
+    sortOrder: 20,
+    publishedAt: '2026-07-19T00:40:00Z',
+    version: 1,
+    batchStatus: 'published',
+    serviceTitle: 'GPT / Claude API 服务',
+    sellerDisplayName: '小葵 API',
+    sellerIdentityType: 'individual',
+    sellerLinuxDoBound: true,
+    promptAuditEnabled: true,
+    declaredTtftBand: 'under_1s',
+    declaredMaxConcurrency: 5,
+    performanceConfirmedAt: '2026-07-19T00:30:00Z',
+    performanceDisclaimer: '商户自报，平台未测速',
+    saleCutoffAt: '2026-12-30T22:00:00Z',
+    expiresAt: '2026-12-31T00:00:00Z',
+    nextRound: {
+      id: 'quota-round-a1-evening',
+      batchId: 'quota-batch-a1',
+      name: '晚间整点场',
+      startsAt: '2026-12-30T12:00:00Z',
+      endsAt: '2026-12-30T12:20:00Z',
+      status: 'scheduled',
+      allocations: [{
+        id: 'quota-allocation-a1-100',
+        offerId: 'quota-offer-a1-100',
+        saleRoundId: 'quota-round-a1-evening',
+        saleMode: 'scheduled',
+        copyLimit: 5,
+        availableCopies: 5,
+        reservedCopies: 0,
+        consumedCopies: 0,
+        allocatedUsdAllowance: '500.000000',
+        returnedUsdAllowance: '0.000000',
+        status: 'planned',
+      }],
+      version: 1,
+    },
+    availableCopies: 0,
+    credentialAvailableCopies: 0,
+    isOrderable: false,
+    orderabilityCode: 'not_started',
+    orderabilityReason: '下一轮尚未开始。',
+  },
+]
+
+export const apiQuotaRounds: ApiQuotaRound[] = apiQuotaOffers.flatMap(item => [item.currentRound, item.nextRound].filter((round): round is ApiQuotaRound => Boolean(round)))
+
+export const apiQuotaCredentialSummaries: ApiQuotaCredentialSummary[] = [
+  { offerId: 'quota-offer-a1-50', available: 30, reserved: 0, delivered: 0, retired: 0 },
+  { offerId: 'quota-offer-a1-100', available: 0, reserved: 0, delivered: 0, retired: 0 },
+]
+
 export const apiPurchaseIntents: ApiPurchaseIntent[] = [
   {
     id: 'api-intent-1001',
@@ -1903,6 +2299,7 @@ export const apiPurchaseIntents: ApiPurchaseIntent[] = [
     selectedDeliveryMode: 'api_key_endpoint',
     purchaseAmountCny: 80,
     purchasedCredit: 80,
+    quotaUsagePolicySnapshot: limitedServiceQuotaPolicy,
     targetModel: 'GPT-5 mini',
     buyerNote: '开发测试额度',
     snapshot: {
@@ -1958,6 +2355,7 @@ export const apiPurchaseIntents: ApiPurchaseIntent[] = [
     selectedDeliveryMode: 'sub2api_panel_account',
     purchaseAmountCny: 120,
     purchasedCredit: 120,
+    quotaUsagePolicySnapshot: limitedServiceQuotaPolicy,
     targetModel: 'Claude Sonnet',
     snapshot: {
       serviceId: 'a1',
@@ -2012,6 +2410,7 @@ export const apiPurchaseIntents: ApiPurchaseIntent[] = [
     selectedDeliveryMode: 'api_key_endpoint',
     purchaseAmountCny: 30,
     purchasedCredit: 30,
+    quotaUsagePolicySnapshot: unlimitedServiceQuotaPolicy,
     targetModel: 'GPT mini',
     snapshot: {
       serviceId: 'a2',
@@ -2066,6 +2465,7 @@ export const apiPurchaseIntents: ApiPurchaseIntent[] = [
     selectedDeliveryMode: 'sub2api_panel_account',
     purchaseAmountCny: 60,
     purchasedCredit: 60,
+    quotaUsagePolicySnapshot: limitedServiceQuotaPolicy,
     targetModel: 'GPT-5 mini',
     snapshot: {
       serviceId: 'a1',
@@ -2122,6 +2522,7 @@ export const apiPurchaseIntents: ApiPurchaseIntent[] = [
     selectedDeliveryMode: 'sub2api_panel_account',
     purchaseAmountCny: 100,
     purchasedCredit: 100,
+    quotaUsagePolicySnapshot: unspecifiedServiceQuotaPolicy,
     targetModel: 'Claude',
     snapshot: {
       serviceId: 'a3',
@@ -2177,6 +2578,7 @@ export const apiPurchaseIntents: ApiPurchaseIntent[] = [
     selectedDeliveryMode: 'sub2api_panel_account',
     purchaseAmountCny: 200,
     purchasedCredit: 200,
+    quotaUsagePolicySnapshot: unspecifiedServiceQuotaPolicy,
     targetModel: 'GPT',
     snapshot: {
       serviceId: 'a3',
@@ -2252,11 +2654,11 @@ export const publicMerchantProfiles: PublicMerchantProfile[] = [
     joinedAt: '2025-11-18',
     lastActiveAt: '12 分钟前',
     linuxdoUrl: 'https://linux.do/u/orbit',
-    completed30d: 6,
+    completedLast90Days: 6,
     responseMedianMinutes: 3,
     merchantResponsibleCancellations: 0,
     unresolvedDisputes: 0,
-    handledDisputes90d: 1,
+    handledDisputesLast90Days: 1,
   },
   {
     username: 'qingning',
@@ -2270,11 +2672,11 @@ export const publicMerchantProfiles: PublicMerchantProfile[] = [
     joinedAt: '2026-04-09',
     lastActiveAt: '28 分钟前',
     linuxdoUrl: 'https://linux.do/u/qingning',
-    completed30d: 3,
+    completedLast90Days: 3,
     responseMedianMinutes: 4,
     merchantResponsibleCancellations: 0,
     unresolvedDisputes: 0,
-    handledDisputes90d: 0,
+    handledDisputesLast90Days: 0,
   },
   {
     username: 'beifeng-api',
@@ -2288,11 +2690,11 @@ export const publicMerchantProfiles: PublicMerchantProfile[] = [
     joinedAt: '2025-08-26',
     lastActiveAt: '2 小时前',
     linuxdoUrl: 'https://linux.do/u/beifeng-api',
-    completed30d: 25,
+    completedLast90Days: 25,
     responseMedianMinutes: 9,
     merchantResponsibleCancellations: 1,
     unresolvedDisputes: 1,
-    handledDisputes90d: 3,
+    handledDisputesLast90Days: 3,
   },
 ]
 
@@ -2312,11 +2714,14 @@ export const publicUserProfiles: PublicUserProfile[] = [
     createdAt: myUserProfile.privacy.showCreatedAt ? '2025-11-18' : null,
     lastActiveAt: myUserProfile.privacy.showLastActiveAt ? '12 分钟前' : null,
     stats: {
-      completedCarpoolsLast30Days: 2,
-      completedApiOrdersLast30Days: 6,
+      completedCarpools: 8,
+      completedApiOrders: 18,
+      completedCarpoolsLast90Days: 2,
+      completedApiOrdersLast90Days: 6,
       responseMedianMinutes: 3,
       buyerResponsibilityCancellationCount: 0,
       sellerResponsibilityCancellationCount: 0,
+      unknownResponsibilityCancellationCount: 0,
       unresolvedDisputeCount: 0,
       resolvedDisputeCountLast90Days: 1,
     },
@@ -2340,11 +2745,14 @@ export const publicUserProfiles: PublicUserProfile[] = [
     createdAt: '2026-04-09',
     lastActiveAt: '28 分钟前',
     stats: {
-      completedCarpoolsLast30Days: 1,
-      completedApiOrdersLast30Days: 3,
+      completedCarpools: 4,
+      completedApiOrders: 8,
+      completedCarpoolsLast90Days: 1,
+      completedApiOrdersLast90Days: 3,
       responseMedianMinutes: 4,
       buyerResponsibilityCancellationCount: 0,
       sellerResponsibilityCancellationCount: 0,
+      unknownResponsibilityCancellationCount: 0,
       unresolvedDisputeCount: 0,
       resolvedDisputeCountLast90Days: 0,
     },
@@ -2375,11 +2783,14 @@ export const publicUserProfiles: PublicUserProfile[] = [
     createdAt: '2025-08-26',
     lastActiveAt: '2 小时前',
     stats: {
-      completedCarpoolsLast30Days: 0,
-      completedApiOrdersLast30Days: 25,
+      completedCarpools: 0,
+      completedApiOrders: 42,
+      completedCarpoolsLast90Days: 0,
+      completedApiOrdersLast90Days: 25,
       responseMedianMinutes: 9,
       buyerResponsibilityCancellationCount: 0,
       sellerResponsibilityCancellationCount: 1,
+      unknownResponsibilityCancellationCount: 0,
       unresolvedDisputeCount: 1,
       resolvedDisputeCountLast90Days: 3,
     },
@@ -2448,11 +2859,6 @@ export const orderContactSnapshots: OrderContactSnapshot[] = [
     unavailableReason: null,
     createdAt: '2026-06-18 20:12',
   },
-]
-
-export const demands = [
-  { id: 'd1', title: '求 ChatGPT Business 成员席位', maxPrice: 190, require: '个人车主 / 官方成员席位 / 原帖已绑', poster: '木木', trustLevel: 3, linuxdoPost: '已绑定求车帖', status: '匹配中' },
-  { id: 'd2', title: '求 Claude Max 5x 香港区', maxPrice: 90, require: '近期确认 / 可候补', poster: '纸船', trustLevel: 2, linuxdoPost: '已绑定求车帖', status: '匹配中' },
 ]
 
 export const adminCards = [

@@ -1,45 +1,397 @@
 name: ci
 
 on:
+  workflow_dispatch:
   pull_request:
   push:
-    branches: [main]
+    branches: [staging, main]
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
 
 jobs:
   backend:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
         with:
           go-version-file: backend/go.mod
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 24.11
-      - run: go test ./...
+          cache-dependency-path: backend/go.sum
+      - name: Check Go formatting
         working-directory: backend
-      - run: node scripts/check-openapi-routes.mjs
-      - run: node scripts/check-migrations-doc.mjs
+        run: |
+          unformatted="$(gofmt -l .)"
+          if [[ -n "${unformatted}" ]]; then
+            printf '%s\n' "${unformatted}"
+            exit 1
+          fi
+      - name: Vet backend
+        working-directory: backend
+        run: go vet ./...
+      - name: Test backend
+        working-directory: backend
+        run: go test -count=1 ./...
+      - name: Install govulncheck
+        working-directory: backend
+        run: go install golang.org/x/vuln/cmd/govulncheck@v1.6.0
+      - name: Scan Go dependencies
+        working-directory: backend
+        run: '"$(go env GOPATH)/bin/govulncheck" ./...'
+
+  backend-race:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
+        with:
+          go-version-file: backend/go.mod
+          cache-dependency-path: backend/go.sum
+      - name: Run backend race detector
+        working-directory: backend
+        run: go test -race -count=1 ./...
+
+  contracts:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0
+      - uses: pnpm/action-setup@7088e561eb65bb68695d245aa206f005ef30921d # v4.1.0
+        with:
+          version: 10.33.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24.11.1
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
+      - name: Install contract generator
+        working-directory: frontend
+        run: pnpm install --frozen-lockfile
+      - name: Check API routes
+        run: node scripts/check-openapi-routes.mjs
+      - name: Check generated API types
+        run: node scripts/check-openapi-types.mjs
+      - name: Check migration contract
+        run: node scripts/check-migrations-doc.mjs
+      - name: Check security header contract
+        run: node scripts/check-security-headers.mjs
+      - name: Check Compose exposure
+        run: node scripts/check-compose-exposure.mjs
+      - name: Check release workflow contract
+        run: ruby scripts/check-release-workflow.rb
+      - name: Test commit-only source packaging
+        run: node scripts/test-package-source.mjs
+      - name: Check whitespace
+        run: git diff --check
+
+  postgres-integration:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
+        with:
+          go-version-file: backend/go.mod
+          cache-dependency-path: backend/go.sum
+      - name: Run PostgreSQL 18 migration and integration gate
+        run: bash scripts/ci-postgres-integration.sh
 
   frontend:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: pnpm/action-setup@7088e561eb65bb68695d245aa206f005ef30921d # v4.1.0
         with:
-          version: 10
-      - uses: actions/setup-node@v4
+          version: 10.33.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
-          node-version: 24.11
+          node-version: 24.11.1
           cache: pnpm
           cache-dependency-path: frontend/pnpm-lock.yaml
-      - run: pnpm install --frozen-lockfile
+      - name: Install frontend dependencies
         working-directory: frontend
-      - run: pnpm typecheck
+        run: pnpm install --frozen-lockfile
+      - name: Type-check frontend
         working-directory: frontend
-      - run: pnpm build
+        run: pnpm typecheck
+      - name: Test frontend
+        working-directory: frontend
+        run: pnpm test
+      - name: Build frontend against the real API
         working-directory: frontend
         env:
-          VITE_API_MODE: real
-      - run: pnpm test
+          NUXT_PUBLIC_API_MODE: real
+          NUXT_PUBLIC_SITE_URL: https://c2cmarket.shop
+          NUXT_PUBLIC_API_BASE_URL: https://api.c2cmarket.shop
+          NUXT_API_BASE_URL: https://api.c2cmarket.shop
+        run: pnpm build
+      - name: Audit frontend dependencies
         working-directory: frontend
+        run: pnpm audit --audit-level=high
+
+  secret-scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0
+      - name: Scan Git history for secrets
+        uses: gitleaks/gitleaks-action@ff98106e4c7b2bc287b24eaf42907196329070c7 # v2.3.9
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITLEAKS_CONFIG: .gitleaks.toml
+          GITLEAKS_ENABLE_COMMENTS: "false"
+          GITLEAKS_ENABLE_SUMMARY: "true"
+          GITLEAKS_ENABLE_UPLOAD_ARTIFACT: "false"
+          GITLEAKS_VERSION: 8.30.1
+
+  filesystem-scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Scan repository filesystem
+        uses: aquasecurity/trivy-action@b6643a29fecd7f34b3597bc6acb0a98b03d33ff8 # 0.33.1
+        with:
+          scan-type: fs
+          scan-ref: .
+          scanners: vuln,misconfig,secret
+          severity: HIGH,CRITICAL
+          ignore-unfixed: "false"
+          exit-code: "1"
+          version: v0.72.0
+
+  image:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0
+      - name: Resolve image metadata
+        id: image-meta
+        run: echo "ref=c2cmarket-backend:ci-${GITHUB_SHA::12}" >> "${GITHUB_OUTPUT}"
+      - name: Verify fixed clean source commit
+        run: |
+          test "$(git rev-parse HEAD)" = "${GITHUB_SHA}"
+          git diff --quiet --ignore-submodules --
+          git diff --cached --quiet --ignore-submodules --
+          test -z "$(git ls-files --others --exclude-standard)"
+      - name: Build backend image from the checked-out commit
+        run: |
+          scripts/build-backend-image.sh \
+            "${GITHUB_SHA}" \
+            "ci-${GITHUB_SHA::12}" \
+            "${{ steps.image-meta.outputs.ref }}"
+      - name: Scan backend image
+        uses: aquasecurity/trivy-action@b6643a29fecd7f34b3597bc6acb0a98b03d33ff8 # 0.33.1
+        with:
+          scan-type: image
+          image-ref: ${{ steps.image-meta.outputs.ref }}
+          severity: HIGH,CRITICAL
+          ignore-unfixed: "false"
+          exit-code: "1"
+          version: v0.72.0
+      - name: Generate backend image SBOM
+        uses: anchore/sbom-action@da167eac915b4e86f08b264dbdbc867b61be6f0c # v0.20.11
+        with:
+          image: ${{ steps.image-meta.outputs.ref }}
+          format: spdx-json
+          output-file: c2cmarket-backend.spdx.json
+          syft-version: v1.49.0
+          upload-artifact: "false"
+          upload-release-assets: "false"
+      - name: Verify SBOM output
+        run: test -s c2cmarket-backend.spdx.json
+      - name: Upload backend image SBOM
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: c2cmarket-backend-sbom-${{ github.sha }}
+          path: c2cmarket-backend.spdx.json
+          if-no-files-found: error
+          retention-days: 30
+
+  release-gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    if: ${{ always() }}
+    needs:
+      - backend
+      - backend-race
+      - contracts
+      - postgres-integration
+      - frontend
+      - secret-scan
+      - filesystem-scan
+      - image
+    steps:
+      - name: Require every release check
+        env:
+          JOB_RESULTS: ${{ toJSON(needs) }}
+        run: |
+          failures="$(
+            jq --raw-output \
+              'to_entries[] | select(.value.result != "success") | "\(.key)=\(.value.result)"' \
+              <<<"${JOB_RESULTS}"
+          )"
+          if [[ -n "${failures}" ]]; then
+            printf '%s\n' "${failures}"
+            exit 1
+          fi
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0
+      - name: Verify release commit and clean checkout
+        run: |
+          test "$(git rev-parse HEAD)" = "${GITHUB_SHA}"
+          git diff --quiet --ignore-submodules --
+          git diff --cached --quiet --ignore-submodules --
+          test -z "$(git ls-files --others --exclude-standard)"
+
+  publish-staging:
+    name: publish staging backend
+    if: github.event_name == 'push' && github.ref == 'refs/heads/staging'
+    needs: release-gate
+    uses: ./.github/workflows/release-backend.yml
+    with:
+      release_tag: staging
+      git_sha: ${{ github.sha }}
+    permissions:
+      contents: read
+      packages: write
+
+  deploy-staging:
+    name: deploy staging backend
+    if: github.event_name == 'push' && github.ref == 'refs/heads/staging'
+    needs: publish-staging
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    environment:
+      name: staging
+    concurrency:
+      group: backend-release-staging
+      cancel-in-progress: false
+    env:
+      DEPLOY_ENVIRONMENT: staging
+      GIT_SHA: ${{ github.sha }}
+      IMAGE_REF: ghcr.io/xiangrikuil/c2cmarket-backend:${{ github.sha }}
+      VPS_HOST: ${{ secrets.VPS_HOST }}
+      VPS_USER: ${{ secrets.VPS_USER }}
+      VPS_SSH_PRIVATE_KEY: ${{ secrets.VPS_SSH_PRIVATE_KEY }}
+      VPS_SSH_KNOWN_HOSTS: ${{ secrets.VPS_SSH_KNOWN_HOSTS }}
+    steps: &deploy-backend-steps
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ github.sha }}
+
+      - name: Connect deployment runner to Tailscale
+        uses: tailscale/github-action@780049a30b6ff5c378a9e7b389d15ece7a204888 # v4.1.3
+        with:
+          oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+          oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
+          tags: tag:c2c-ci
+          ping: ${{ secrets.VPS_HOST }}
+          version: 1.98.10
+
+      - name: Create release archive
+        id: archive
+        run: |
+          set -euo pipefail
+          archive_name="c2cmarket-release-${DEPLOY_ENVIRONMENT}-${GIT_SHA}.tar.gz"
+          archive_path="${RUNNER_TEMP}/${archive_name}"
+          tar -czf "${archive_path}" \
+            compose.yaml \
+            compose.prod.yaml \
+            backend/migrations \
+            scripts/backup-production-postgres.sh \
+            scripts/deploy-vps-backend.sh \
+            scripts/install-vps-release.sh
+          echo "name=${archive_name}" >>"${GITHUB_OUTPUT}"
+          echo "path=${archive_path}" >>"${GITHUB_OUTPUT}"
+
+      - name: Configure deployment SSH identity
+        run: |
+          set -euo pipefail
+          test -n "${VPS_HOST}"
+          test -n "${VPS_USER}"
+          test -n "${VPS_SSH_PRIVATE_KEY}"
+          test -n "${VPS_SSH_KNOWN_HOSTS}"
+          install -m 700 -d "${HOME}/.ssh"
+          printf '%s\n' "${VPS_SSH_PRIVATE_KEY}" >"${HOME}/.ssh/c2cmarket_deploy"
+          printf '%s\n' "${VPS_SSH_KNOWN_HOSTS}" >"${HOME}/.ssh/known_hosts"
+          chmod 600 "${HOME}/.ssh/c2cmarket_deploy" "${HOME}/.ssh/known_hosts"
+
+      - name: Upload release archive
+        env:
+          ARCHIVE_NAME: ${{ steps.archive.outputs.name }}
+          ARCHIVE_PATH: ${{ steps.archive.outputs.path }}
+        run: |
+          set -euo pipefail
+          scp \
+            -i "${HOME}/.ssh/c2cmarket_deploy" \
+            -o BatchMode=yes \
+            -o IdentitiesOnly=yes \
+            "${ARCHIVE_PATH}" \
+            "${VPS_USER}@${VPS_HOST}:/tmp/${ARCHIVE_NAME}"
+
+      - name: Install and deploy release
+        env:
+          ARCHIVE_NAME: ${{ steps.archive.outputs.name }}
+        run: |
+          set -euo pipefail
+          ssh \
+            -i "${HOME}/.ssh/c2cmarket_deploy" \
+            -o BatchMode=yes \
+            -o IdentitiesOnly=yes \
+            "${VPS_USER}@${VPS_HOST}" \
+            /bin/bash -s -- \
+            "${DEPLOY_ENVIRONMENT}" \
+            "${GIT_SHA}" \
+            "${IMAGE_REF}" \
+            "/tmp/${ARCHIVE_NAME}" \
+            <scripts/install-vps-release.sh
+
+  publish-production:
+    name: publish production backend
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: release-gate
+    uses: ./.github/workflows/release-backend.yml
+    with:
+      release_tag: production
+      git_sha: ${{ github.sha }}
+    permissions:
+      contents: read
+      packages: write
+
+  deploy-production:
+    name: deploy production backend
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: publish-production
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    environment:
+      name: production
+    concurrency:
+      group: backend-release-production
+      cancel-in-progress: false
+    env:
+      DEPLOY_ENVIRONMENT: production
+      GIT_SHA: ${{ github.sha }}
+      IMAGE_REF: ghcr.io/xiangrikuil/c2cmarket-backend:${{ github.sha }}
+      VPS_HOST: ${{ secrets.VPS_HOST }}
+      VPS_USER: ${{ secrets.VPS_USER }}
+      VPS_SSH_PRIVATE_KEY: ${{ secrets.VPS_SSH_PRIVATE_KEY }}
+      VPS_SSH_KNOWN_HOSTS: ${{ secrets.VPS_SSH_KNOWN_HOSTS }}
+    steps: *deploy-backend-steps

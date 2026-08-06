@@ -8,8 +8,6 @@ import {
   LockKeyhole,
   LogIn,
   Loader2,
-  Search,
-  ShieldCheck,
   UserRound,
 } from 'lucide-vue-next'
 import { toast } from 'vue-sonner'
@@ -24,6 +22,9 @@ import {
   startOAuthLogin,
   type BackendSession,
 } from '@/lib/backendClient'
+import { normalizeReturnTo } from '@/lib/authNavigation'
+import { trackAnalytics } from '@/lib/analytics'
+import { captureReferralCode, getReferralCapture } from '@/lib/referralCapture'
 
 const route = useRoute()
 const router = useRouter()
@@ -40,27 +41,12 @@ const loggedIn = computed(() => Boolean(session.value))
 const displayName = computed(() => session.value?.user.displayName ?? session.value?.user.username ?? '未登录')
 const linuxDo = computed(() => session.value?.user.linuxDoBinding)
 const isAdmin = computed(() => session.value?.user.permissions.includes('admin') ?? false)
-const returnTo = computed(() => {
-  const value = typeof route.query.returnTo === 'string' ? route.query.returnTo : '/'
-  return value.startsWith('/') && !value.startsWith('//') ? value : '/'
-})
-
-const linuxDoIconPaths = [
-  {
-    d: 'm7.44,0s.09,0,.13,0c.09,0,.19,0,.28,0,.14,0,.29,0,.43,0,.09,0,.18,0,.27,0q.12,0,.25,0t.26.08c.15.03.29.06.44.08,1.97.38,3.78,1.47,4.95,3.11.04.06.09.12.13.18.67.96,1.15,2.11,1.3,3.28q0,.19.09.26c0,.15,0,.29,0,.44,0,.04,0,.09,0,.13,0,.09,0,.19,0,.28,0,.14,0,.29,0,.43,0,.09,0,.18,0,.27,0,.08,0,.17,0,.25q0,.19-.08.26c-.03.15-.06.29-.08.44-.38,1.97-1.47,3.78-3.11,4.95-.06.04-.12.09-.18.13-.96.67-2.11,1.15-3.28,1.3q-.19,0-.26.09c-.15,0-.29,0-.44,0-.04,0-.09,0-.13,0-.09,0-.19,0-.28,0-.14,0-.29,0-.43,0-.09,0-.18,0-.27,0-.08,0-.17,0-.25,0q-.19,0-.26-.08c-.15-.03-.29-.06-.44-.08-1.97-.38-3.78-1.47-4.95-3.11q-.07-.09-.13-.18c-.67-.96-1.15-2.11-1.3-3.28q0-.19-.09-.26c0-.15,0-.29,0-.44,0-.04,0-.09,0-.13,0-.09,0-.19,0-.28,0-.14,0-.29,0-.43,0-.09,0-.18,0-.27,0-.08,0-.17,0-.25q0-.19.08-.26c.03-.15.06-.29.08-.44.38-1.97,1.47-3.78,3.11-4.95.06-.04.12-.09.18-.13C4.42.73,5.57.26,6.74.1,7,.07,7.15,0,7.44,0Z',
-    fill: '#EFEFEF',
-  },
-  {
-    d: 'm1.27,11.33h13.45c-.94,1.89-2.51,3.21-4.51,3.88-1.99.59-3.96.37-5.8-.57-1.25-.7-2.67-1.9-3.14-3.3Z',
-    fill: '#FEB005',
-  },
-  {
-    d: 'm12.54,1.99c.87.7,1.82,1.59,2.18,2.68H1.27c.87-1.74,2.33-3.13,4.2-3.78,2.44-.79,5-.47,7.07,1.1Z',
-    fill: '#1D1D1F',
-  },
-] as const
+const returnTo = computed(() => normalizeReturnTo(route.query.returnTo))
 
 onMounted(async () => {
+  const referral = Array.isArray(route.query.ref) ? route.query.ref[0] : route.query.ref
+  captureReferralCode(referral)
+  trackAnalytics('login_page_view', { source_route: '/login' })
   await refreshSession()
 })
 
@@ -79,7 +65,11 @@ async function refreshSession() {
 async function loginWithLinuxDo() {
   oauthLoading.value = true
   try {
-    const { authorizationUrl } = await startOAuthLogin(returnTo.value)
+    const { authorizationUrl } = await startOAuthLogin(returnTo.value, getReferralCapture())
+    trackAnalytics('oauth_login_start', {
+      method: 'oauth_linux_do',
+      source_route: '/login',
+    })
     window.location.assign(authorizationUrl)
   } catch (error) {
     toast.error(error instanceof Error ? error.message : '启动 linux.do 登录失败')
@@ -99,6 +89,10 @@ async function submitPasswordLogin() {
     session.value = await loginWithPassword({
       username: trimmedUsername,
       password: password.value,
+    })
+    trackAnalytics('login_success', {
+      method: 'password',
+      source_route: '/login',
     })
     password.value = ''
     toast.success('已登录')
@@ -125,23 +119,17 @@ async function logout() {
 </script>
 
 <template>
-  <main class="login-page relative grid min-h-screen justify-items-center overflow-hidden px-5 pb-6 pt-8 xl:grid-cols-[minmax(260px,1fr)_450px_minmax(260px,1fr)] xl:items-center xl:gap-12 xl:px-12">
-    <aside class="login-intro relative z-10 hidden max-w-[390px] justify-self-end xl:block">
-      <Badge variant="secondary">C2CMarket</Badge>
-      <h1 class="mt-5 text-5xl font-semibold leading-tight tracking-tight">连接供需，<br><span class="text-primary">高效撮合</span></h1>
-      <p class="mt-5 text-base leading-8 text-muted-foreground">浏览订阅拼车、API 服务、求车需求与官网公开价格，在同一套真实状态中完成发现和跟进。</p>
-      <div class="login-visual mt-8" aria-hidden="true"><div class="login-visual-window"><div /><div /><div /></div><div class="login-visual-orbit" /><div class="login-visual-badge"><ShieldCheck class="h-8 w-8" /></div></div>
-    </aside>
-    <div class="relative z-10 flex w-full max-w-[450px] flex-col items-center">
+  <main class="login-page grid min-h-[100dvh] place-items-center px-5 py-8">
+    <div class="flex w-full max-w-[440px] flex-col items-center">
       <section class="mb-5 flex flex-col items-center text-center">
-        <div class="grid h-12 w-12 place-items-center rounded-xl bg-foreground text-background shadow-xl shadow-primary/20">
-          <ShieldCheck class="h-6 w-6 text-primary" />
+        <div class="h-12 w-12 overflow-hidden rounded-lg">
+          <img src="/c2cmarket-icon-512.png?v=20260806-deep-violet" alt="" class="h-full w-full object-cover" />
         </div>
         <h1 class="mt-3 text-2xl font-semibold text-primary">C2CMarket</h1>
-        <p class="mt-1 text-sm text-muted-foreground">AI 低价情报与社区撮合平台</p>
+        <p class="mt-1 text-sm text-muted-foreground">订阅拼车、API 服务与官网价格市场</p>
       </section>
 
-      <Card class="w-full rounded-2xl border-white bg-card p-5 shadow-2xl shadow-slate-900/12 backdrop-blur md:p-6">
+      <Card class="w-full rounded-lg border-border bg-card p-5 shadow-sm md:p-6">
         <div class="mb-5 text-center">
           <h2 class="text-xl font-semibold tracking-tight text-foreground">欢迎回来</h2>
           <p class="mt-1 text-sm text-muted-foreground">
@@ -182,16 +170,12 @@ async function logout() {
           <template v-else>
             <div class="space-y-4">
               <Button
-                class="h-11 w-full rounded-lg text-base shadow-lg shadow-primary/25"
+                class="h-11 w-full rounded-lg text-base"
                 :disabled="oauthLoading"
                 @click="loginWithLinuxDo"
               >
                 <Loader2 v-if="oauthLoading" class="h-4 w-4 animate-spin" />
-                <svg v-else class="h-5 w-5" viewBox="0 0 16 16" aria-hidden="true" focusable="false">
-                  <g data-name="linuxdo_icon">
-                    <path v-for="path in linuxDoIconPaths" :key="path.fill" :d="path.d" :fill="path.fill" />
-                  </g>
-                </svg>
+                <img v-else src="/linuxdo-mark.svg" alt="" class="h-5 w-5" />
                 使用 linux.do 登录
                 <ArrowRight class="ml-auto h-4 w-4" />
               </Button>
@@ -200,12 +184,17 @@ async function logout() {
                 请使用 linux.do 登录；密码登录仅用于已绑定 linux.do 的账号恢复访问。
               </p>
 
+              <p class="text-center text-xs leading-5 text-muted-foreground">
+                账号已被暂停或封禁？
+                <RouterLink class="font-medium text-primary hover:underline" to="/account-appeal">发起账号申诉</RouterLink>
+              </p>
+
               <div class="relative">
                 <div class="absolute inset-0 flex items-center"><span class="w-full border-t border-border"></span></div>
                 <div class="relative flex justify-center text-xs"><span class="bg-card px-3 text-muted-foreground">账号恢复</span></div>
               </div>
 
-              <Button type="button" variant="outline" class="h-10 w-full rounded-lg bg-card/80 text-sm" @click="showPasswordLogin = !showPasswordLogin">
+              <Button type="button" variant="outline" class="h-11 w-full rounded-lg bg-card/80 text-sm" @click="showPasswordLogin = !showPasswordLogin">
                 <LockKeyhole class="h-4 w-4" />
                 {{ showPasswordLogin ? '收起密码登录' : '已绑定 linux.do 用户密码登录' }}
               </Button>
@@ -221,7 +210,7 @@ async function logout() {
                   id="login-username"
                   v-model="username"
                   autocomplete="username"
-                  class="h-10 rounded-lg bg-card pl-11 text-sm shadow-sm"
+                  class="h-11 rounded-lg bg-card pl-11 text-sm shadow-sm"
                   placeholder="请输入用户名"
                 />
               </div>
@@ -236,22 +225,24 @@ async function logout() {
                   v-model="password"
                   :type="passwordVisible ? 'text' : 'password'"
                   autocomplete="current-password"
-                  class="h-10 rounded-lg bg-card px-11 text-sm shadow-sm"
+                  class="h-11 rounded-lg bg-card px-11 text-sm shadow-sm"
                   placeholder="请输入密码"
                 />
-                <button
+                <Button
                   type="button"
-                  class="absolute right-3 top-1/2 grid h-8 w-8 -translate-y-1/2 place-items-center rounded-md text-muted-foreground transition hover:bg-muted hover:text-foreground"
+                  variant="ghost"
+                  size="icon"
+                  class="absolute right-0 top-1/2 grid h-11 w-11 -translate-y-1/2 place-items-center rounded-r-lg text-muted-foreground transition hover:bg-muted hover:text-foreground"
                   :aria-label="passwordVisible ? '隐藏密码' : '显示密码'"
                   @click="passwordVisible = !passwordVisible"
                 >
                   <EyeOff v-if="passwordVisible" class="h-4 w-4" />
                   <Eye v-else class="h-4 w-4" />
-                </button>
+                </Button>
               </div>
             </div>
 
-            <Button class="h-10 w-full rounded-lg text-base shadow-lg shadow-primary/25" :disabled="passwordLoading" type="submit">
+            <Button class="h-11 w-full rounded-lg text-base" :disabled="passwordLoading" type="submit">
               <Loader2 v-if="passwordLoading" class="h-4 w-4 animate-spin" />
               <LogIn v-else class="h-4 w-4" />
               密码登录
@@ -262,126 +253,11 @@ async function logout() {
 
       <p class="mt-4 text-xs text-muted-foreground">© 2026 C2CMarket. All rights reserved.</p>
     </div>
-    <aside class="login-benefits relative z-10 hidden max-w-[350px] justify-self-start space-y-6 xl:block">
-      <div class="login-benefit"><span><ShieldCheck class="h-5 w-5" /></span><div><h3>公开身份与留痕</h3><p>身份、申请和订单状态由平台统一记录。</p></div></div>
-      <div class="login-benefit"><span><Search class="h-5 w-5" /></span><div><h3>真实价格参考</h3><p>区分官网公开价格与市场撮合价格。</p></div></div>
-      <div class="login-benefit"><span><UserRound class="h-5 w-5" /></span><div><h3>清晰的下一步</h3><p>只展示当前角色和状态允许执行的操作。</p></div></div>
-    </aside>
   </main>
 </template>
 
 <style scoped>
 .login-page {
-  background:
-    radial-gradient(circle at 8% 88%, color-mix(in oklab, var(--primary) 18%, transparent) 0 0, transparent 260px),
-    radial-gradient(circle at 92% 4%, color-mix(in oklab, var(--primary) 14%, transparent) 0 0, transparent 320px),
-    linear-gradient(color-mix(in oklab, var(--primary) 7%, transparent) 1px, transparent 1px),
-    linear-gradient(90deg, color-mix(in oklab, var(--primary) 7%, transparent) 1px, transparent 1px),
-    color-mix(in oklab, var(--background) 96%, white);
-  background-size: auto, auto, 42px 42px, 42px 42px, auto;
-}
-
-.login-intro h1 {
-  color: var(--foreground);
-}
-
-.login-visual {
-  position: relative;
-  width: 350px;
-  height: 210px;
-  border-radius: 32px;
-  background: radial-gradient(circle at 50% 60%, color-mix(in oklab, var(--primary) 16%, transparent), transparent 62%);
-}
-
-.login-visual-window {
-  position: absolute;
-  left: 54px;
-  top: 22px;
-  display: grid;
-  width: 240px;
-  height: 142px;
-  grid-template-columns: 1fr 1.6fr;
-  gap: 12px;
-  border: 1px solid color-mix(in oklab, var(--primary) 22%, var(--border));
-  border-radius: 18px;
-  background: rgb(255 255 255 / 0.72);
-  padding: 26px 18px 18px;
-  box-shadow: 0 28px 60px -36px color-mix(in oklab, var(--primary) 60%, #0f172a);
-  transform: perspective(500px) rotateY(8deg) rotateX(3deg);
-}
-
-.login-visual-window::before {
-  position: absolute;
-  inset: 12px auto auto 16px;
-  width: 6px;
-  height: 6px;
-  border-radius: 999px;
-  content: "";
-  background: var(--primary);
-  box-shadow: 12px 0 color-mix(in oklab, var(--primary) 48%, white), 24px 0 color-mix(in oklab, var(--primary) 24%, white);
-}
-
-.login-visual-window > div {
-  border-radius: 8px;
-  background: linear-gradient(145deg, color-mix(in oklab, var(--primary) 10%, white), white);
-}
-
-.login-visual-window > div:first-child {
-  grid-row: 1 / span 2;
-}
-
-.login-visual-orbit {
-  position: absolute;
-  inset: auto 28px 4px;
-  height: 48px;
-  border: 1px solid color-mix(in oklab, var(--primary) 20%, transparent);
-  border-radius: 50%;
-  transform: rotate(-5deg);
-}
-
-.login-visual-badge {
-  position: absolute;
-  right: 20px;
-  top: 38px;
-  display: grid;
-  width: 62px;
-  height: 62px;
-  place-items: center;
-  border: 1px solid rgb(255 255 255 / 0.7);
-  border-radius: 20px;
-  background: linear-gradient(145deg, #60a5fa, #2563eb);
-  color: white;
-  box-shadow: 0 18px 30px -18px rgb(30 64 175 / 0.78);
-}
-
-.login-benefit {
-  display: flex;
-  align-items: flex-start;
-  gap: 14px;
-}
-
-.login-benefit > span {
-  display: grid;
-  width: 46px;
-  height: 46px;
-  flex: 0 0 auto;
-  place-items: center;
-  border: 1px solid color-mix(in oklab, var(--primary) 14%, var(--border));
-  border-radius: 999px;
-  background: rgb(255 255 255 / 0.78);
-  color: var(--primary);
-  box-shadow: 0 12px 28px -24px rgb(30 64 175 / 0.5);
-}
-
-.login-benefit h3 {
-  font-size: 15px;
-  font-weight: 650;
-}
-
-.login-benefit p {
-  margin-top: 5px;
-  color: var(--muted-foreground);
-  font-size: 13px;
-  line-height: 1.7;
+  background: var(--background);
 }
 </style>

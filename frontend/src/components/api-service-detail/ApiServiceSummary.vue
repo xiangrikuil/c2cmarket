@@ -1,5 +1,7 @@
 <script setup lang="ts">
-import { CalendarDays, CircleDollarSign, Layers3, Tag } from 'lucide-vue-next'
+import { CalendarDays, Clock3, Layers3, Network, ShieldCheck, Tag, Users } from 'lucide-vue-next'
+import ApiServiceHealthPanel from '@/components/api-market/ApiServiceHealthPanel.vue'
+import { Card } from '@/components/ui/card'
 import type { ApiService } from '@/lib/api'
 import { formatCny, formatCnyPerUsdQuota, formatCredit, formatMultiplier } from './utils'
 
@@ -9,46 +11,57 @@ defineProps<{
 </script>
 
 <template>
-  <section class="api-service-detail-summary flex h-full flex-col rounded-xl border border-border bg-card p-5 shadow-sm md:p-7">
-    <div class="flex flex-wrap items-end gap-x-8 gap-y-4 border-b border-border pb-6">
-      <div>
-        <div class="text-xs font-medium text-muted-foreground">美元额度售价</div>
-        <div class="mt-2 text-4xl font-semibold tracking-tight text-primary md:text-5xl">{{ formatCnyPerUsdQuota(service) }}</div>
-      </div>
-      <div class="border-l border-border pl-8">
-        <div class="text-xs font-medium text-muted-foreground">商户倍率</div>
-        <div class="mt-2 text-3xl font-semibold tracking-tight">{{ formatMultiplier(service.defaultMultiplier) }}</div>
-      </div>
+  <Card class="api-service-detail-summary gap-0 overflow-hidden py-0 shadow-sm">
+    <section class="p-5 md:p-6">
+      <h2 class="text-base font-semibold">核心信息</h2>
+      <dl class="mt-4 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+        <div>
+          <dt class="text-xs font-medium text-muted-foreground">购买价格</dt>
+          <dd class="mt-1.5 whitespace-nowrap text-2xl font-semibold text-primary">{{ formatCnyPerUsdQuota(service) }}</dd>
+        </div>
+        <div>
+          <dt class="text-xs font-medium text-muted-foreground">可售额度</dt>
+          <dd class="mt-1.5 text-2xl font-semibold">{{ formatCredit(service.balance) }}</dd>
+        </div>
+        <div>
+          <dt class="text-xs font-medium text-muted-foreground">最低购买</dt>
+          <dd class="mt-1.5 text-2xl font-semibold">{{ formatCny(service.minimumPurchaseCny) }}</dd>
+        </div>
+        <div>
+          <dt class="text-xs font-medium text-muted-foreground">模型计费倍率</dt>
+          <dd class="mt-1.5 text-2xl font-semibold">{{ formatMultiplier(service.defaultMultiplier) }}</dd>
+        </div>
+      </dl>
+    </section>
+
+    <div class="px-5 pb-5 md:px-6 md:pb-6">
+      <ApiServiceHealthPanel :summary="service.healthSummary" />
     </div>
 
-    <dl class="grid gap-4 border-b border-border py-6 text-sm sm:grid-cols-2 xl:grid-cols-4">
-      <div class="flex items-center gap-3">
-        <span class="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-primary/8 text-primary"><CircleDollarSign class="h-4 w-4" /></span>
-        <div><dt class="text-xs text-muted-foreground">可售额度</dt><dd class="mt-1 font-semibold">{{ formatCredit(service.balance) }}</dd></div>
+    <dl class="grid border-y border-border bg-muted/20 text-sm sm:grid-cols-3">
+      <div class="flex min-w-0 items-center gap-3 border-b border-border p-4 sm:border-b-0 sm:border-r">
+        <span class="api-service-fact-icon"><Users class="h-4 w-4" /></span>
+        <div class="min-w-0"><dt class="text-xs text-muted-foreground">商户声明最大并发</dt><dd class="mt-1 truncate font-semibold">{{ service.declaredMaxConcurrency ?? '历史服务未声明' }}</dd></div>
       </div>
-      <div class="flex items-center gap-3">
-        <span class="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-muted text-muted-foreground"><Tag class="h-4 w-4" /></span>
-        <div><dt class="text-xs text-muted-foreground">最低订单</dt><dd class="mt-1 font-semibold">{{ formatCny(service.minimumPurchaseCny) }}</dd></div>
+      <div class="flex min-w-0 items-center gap-3 border-b border-border p-4 sm:border-b-0 sm:border-r">
+        <span class="api-service-fact-icon"><Clock3 class="h-4 w-4" /></span>
+        <div class="min-w-0"><dt class="text-xs text-muted-foreground">付款窗口</dt><dd class="mt-1 truncate font-semibold">{{ service.expectedResponseMinutes }} 分钟</dd></div>
       </div>
-      <div class="flex items-center gap-3">
-        <span class="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-muted text-muted-foreground"><CalendarDays class="h-4 w-4" /></span>
-        <div><dt class="text-xs text-muted-foreground">API 额度有效期</dt><dd class="mt-1 font-semibold">{{ service.expiresAt }}</dd></div>
-      </div>
-      <div class="flex items-center gap-3">
-        <span class="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-muted text-muted-foreground"><Layers3 class="h-4 w-4" /></span>
-        <div><dt class="text-xs text-muted-foreground">接入类型</dt><dd class="mt-1 font-semibold">{{ service.delivery }}</dd></div>
+      <div class="flex min-w-0 items-center gap-3 p-4">
+        <span class="api-service-fact-icon"><Network class="h-4 w-4" /></span>
+        <div class="min-w-0"><dt class="text-xs text-muted-foreground">号池</dt><dd class="mt-1 break-words font-semibold" :title="service.accountPoolLabel">{{ service.accountPoolLabel || '历史服务未补充' }}</dd></div>
       </div>
     </dl>
 
-    <div class="api-service-value-guide">
-      <div><span>充值汇率</span><strong>{{ formatCnyPerUsdQuota(service) }}</strong><small>人民币换取商户声明的美元额度</small></div>
-      <div><span>模型消耗倍率</span><strong>{{ formatMultiplier(service.defaultMultiplier) }}</strong><small>实际模型用量按服务规则扣减</small></div>
-      <div><span>支持模型</span><strong>{{ service.models.length }} 个</strong><small>{{ service.models.slice(0, 3).join(' / ') }}</small></div>
-    </div>
-
-    <div class="pt-6">
+    <section class="p-5 md:p-6">
       <h2 class="text-base font-semibold">服务说明</h2>
-      <p class="mt-2 text-sm leading-6 text-muted-foreground">{{ service.merchantNote }}</p>
-    </div>
-  </section>
+      <p class="mt-2 whitespace-pre-line text-sm leading-6 text-muted-foreground">{{ service.merchantNote }}</p>
+      <dl class="mt-5 grid gap-4 border-t border-border pt-5 text-sm sm:grid-cols-2 xl:grid-cols-4">
+        <div class="flex items-start gap-2.5"><Layers3 class="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" /><div><dt class="text-xs text-muted-foreground">接入类型</dt><dd class="mt-1 font-semibold">{{ service.delivery }}</dd></div></div>
+        <div class="flex items-start gap-2.5"><CalendarDays class="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" /><div><dt class="text-xs text-muted-foreground">服务有效期</dt><dd class="mt-1 font-semibold">{{ service.expiresAt }}</dd></div></div>
+        <div class="flex items-start gap-2.5"><Tag class="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" /><div><dt class="text-xs text-muted-foreground">支持模型</dt><dd class="mt-1 font-semibold">{{ service.models.length }} 个</dd></div></div>
+        <div class="flex items-start gap-2.5"><ShieldCheck class="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" /><div><dt class="text-xs text-muted-foreground">商户退款承诺</dt><dd class="mt-1 font-semibold">{{ service.merchantRefundCommitment ? '商户全额退款承诺' : '无额外退款承诺' }}</dd></div></div>
+      </dl>
+    </section>
+  </Card>
 </template>

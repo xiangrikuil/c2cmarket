@@ -1,18 +1,25 @@
 import type { ApiMerchantIdentityMode, ModelCatalogItem } from '@/lib/api'
 import type { ApiPaymentMethod } from '@/lib/apiPaymentSettings'
+import type { ApiQuotaUsagePolicyInput } from '@/types/apiQuota'
 
 export type DistributionSystem = 'sub2api' | 'new_api_proxy' | 'other'
 export type ApiProviderCategory = 'gpt' | 'claude' | 'other'
-export type BillingMode = 'metered_credit' | 'manual_credit' | 'fixed_package'
+export type BillingMode = 'metered_credit' | 'fixed_package'
+export type SellingMode = 'free' | 'package' | 'limited'
+export const sellingModeLabels = {
+  free: '自由额度',
+  package: '限时流量包',
+  limited: '限时额度包',
+} as const satisfies Record<SellingMode, string>
 export type PublishDeliveryMode = 'api_key_endpoint' | 'sub2api_panel_account'
 export type PublishPaymentMethod = ApiPaymentMethod
 export type UsageVisibility = 'panel_realtime' | 'panel_balance_only' | 'merchant_confirmed' | 'fixed_package_only' | 'not_available'
 export type ValidityMode = 'days' | 'permanent'
-export type WarrantyMode = 'no_warranty' | 'upstream_refund_only' | 'merchant_warranty'
+export type AccountPoolType = 'gpt_pro_20x' | 'gpt_pro_5x' | 'gpt_plus' | 'custom'
+export type WarrantyMode = '' | 'no_warranty' | 'merchant_full_refund'
 
 export type SelectedServiceModel = {
   modelId: string
-  multiplierOverride: number | null
   enabled: boolean
 }
 
@@ -35,6 +42,7 @@ export type ApiServicePackage = {
   description: string
   enabled: boolean
   modelCatalogIds: string[]
+  quotaUsagePolicy: ApiQuotaUsagePolicyInput
 }
 
 export type ApiServicePaymentOption = {
@@ -46,11 +54,6 @@ export type ApiServicePaymentOption = {
 
 export type WarrantyConfig = {
   mode: WarrantyMode
-  warrantyDays: number | null
-  coverage: string | null
-  compensation: string | null
-  exclusions: string | null
-  refundNote: string | null
 }
 
 export type ApiServicePublishForm = {
@@ -69,10 +72,13 @@ export type ApiServicePublishForm = {
   imageCapability: ImageCapabilityConfig
   availableCreditUsd: number | null
   quotaExpiresAt: string
+  quotaUsagePolicy: ApiQuotaUsagePolicyInput
   minimumPurchaseCny: number | null
   maximumPurchaseCny: number | null
   paymentWindowMinutes: number
   paymentOptions: ApiServicePaymentOption[]
+  declaredMaxConcurrency: number
+  promptAuditEnabled: boolean | null
   packages: ApiServicePackage[]
   validity: {
     mode: ValidityMode
@@ -80,6 +86,8 @@ export type ApiServicePublishForm = {
     startsAt: 'delivered_at'
   }
   usageVisibility: UsageVisibility
+  accountPoolType: AccountPoolType | ''
+  accountPoolCustomName: string
   warranty: WarrantyConfig
   merchantNote: string
 }

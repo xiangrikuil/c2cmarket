@@ -31,14 +31,17 @@ type ApiServiceProductIdentity = {
   modelPriceRows: ReadonlyArray<{ provider?: string }>
 }
 
+export function getApiServiceProductCategory(service: ApiServiceProductIdentity) {
+  const provider = service.modelPriceRows.find(row => row.provider?.trim())?.provider?.trim()
+  return getProductCategory(provider || service.models[0] || service.title)
+}
+
 /**
  * API 服务发布时已限制模型属于同一提供商，因此优先使用模型价格快照中的提供商识别套餐目录分类。
  * 旧记录缺少提供商快照时依次使用首个模型和服务标题，无法识别时由调用方展示通用 API 图标。
  */
 export function getApiServiceProductIconSrc(service: ApiServiceProductIdentity, iconByCategory: ProductCategoryIconMap) {
-  const provider = service.modelPriceRows.find(row => row.provider?.trim())?.provider?.trim()
-  const productIdentity = provider || service.models[0] || service.title
-  return getProductIconSrc(productIdentity, iconByCategory)
+  return getProductCategoryIconSrc(getApiServiceProductCategory(service), iconByCategory)
 }
 
 export function validateProductCategoryIconFile(file: Pick<File, 'type' | 'size'>) {

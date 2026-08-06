@@ -9,7 +9,6 @@ import type {
   CarpoolPublishForm,
   CompletenessItem,
   OpeningChannelOption,
-  ParsedLinuxDoTopic,
   PaymentMethodOption,
   RegionOption,
 } from './types'
@@ -19,7 +18,7 @@ import {
   distributionMethodLabel,
   requiresSubscriptionRiskAck,
   openingChannelLabels,
-  paymentMethodLabels,
+  paymentMethodDisplayName,
   previewTitle,
   regionDisplayName,
   warrantyLabel,
@@ -31,7 +30,6 @@ const props = defineProps<{
   regionsByCode: Map<string, RegionOption>
   openingChannelsByCode: Map<string, OpeningChannelOption>
   paymentMethodsByCode: Map<string, PaymentMethodOption>
-  parsedTopic: ParsedLinuxDoTopic | null
   completeness: CompletenessItem[]
   reminders: string[]
   submitPending: boolean
@@ -49,12 +47,12 @@ const completenessPercent = computed(() => {
   return Math.round((props.completeness.filter(item => item.status === 'done').length / props.completeness.length) * 100)
 })
 const paymentText = computed(() => {
-  const labels = props.form.paymentMethodCodes.map(code => props.paymentMethodsByCode.get(code)?.displayName ?? paymentMethodLabels[code])
-  return labels.length ? labels.join(' / ') : '待选择'
+  return paymentMethodDisplayName(props.form.paymentMethodCode, props.paymentMethodsByCode, props.form.customPaymentMethod) || '待选择'
 })
 const openingText = computed(() => {
   const code = props.form.openingChannelCode
   if (!code) return '待选择'
+  if (code === 'other') return props.form.customOpeningChannel.trim() || '待填写'
   return props.openingChannelsByCode.get(code)?.displayName ?? openingChannelLabels[code]
 })
 const selectedProduct = computed(() => props.catalogById.get(props.form.productId) ?? null)
@@ -75,6 +73,12 @@ const quotaLabel = computed(() => quotaFieldLabel(selectedProduct.value))
 const regionText = computed(() => regionDisplayName(props.form, props.regionsByCode) || '待选择')
 const distributionText = computed(() => distributionMethodLabel(props.form.distributionMethod))
 const adminAccountText = computed(() => adminAccountLabel(props.form.providesAdminAccount))
+const weeklyQuotaText = computed(() => {
+  if (!props.form.weeklyQuotaAmount) return '待确认'
+  return `每周 ${props.form.weeklyQuotaAmount} ${selectedProduct.value?.quotaUnit || 'USD'}`
+})
+const resetText = computed(() => props.form.followsOfficialQuotaReset === null ? '待选择' : props.form.followsOfficialQuotaReset ? '跟随官方重置' : '不跟随官方重置')
+const directConnectionText = computed(() => props.form.supportsMainlandChinaDirectConnection === null ? '待选择' : props.form.supportsMainlandChinaDirectConnection ? '支持国内直连' : '不支持国内直连')
 </script>
 
 <template>
@@ -82,7 +86,7 @@ const adminAccountText = computed(() => adminAccountLabel(props.form.providesAdm
     <Card class="relative overflow-hidden p-5 shadow-sm before:absolute before:inset-x-0 before:top-0 before:h-[3px] before:bg-primary">
       <div class="text-xs text-muted-foreground">车源预览</div>
       <h2 class="mt-2 text-lg font-semibold leading-snug">{{ previewTitle(form, catalogById, regionsByCode) }}</h2>
-      <p class="mt-1 text-xs text-muted-foreground">个人车主 · 信任等级3 · {{ parsedTopic ? '原帖已绑定' : '原帖待读取' }}</p>
+      <p class="mt-1 text-xs text-muted-foreground">个人车主 · 信任等级3 · 近期确认</p>
 
       <div class="mt-4 flex items-end justify-between gap-3">
         <div class="text-3xl font-bold tracking-tight">¥{{ form.monthlyPriceCny ?? '-' }}<span class="text-sm font-semibold">/月</span></div>
@@ -93,8 +97,9 @@ const adminAccountText = computed(() => adminAccountLabel(props.form.providesAdm
         <Badge variant="capability">{{ openingText }}</Badge>
         <Badge variant="capability">{{ distributionText }}</Badge>
         <Badge variant="capability">{{ adminAccountText }}</Badge>
-        <Badge variant="capability">{{ form.serviceMultiplier ?? '-' }}x</Badge>
+        <Badge variant="capability">{{ weeklyQuotaText }}</Badge>
         <Badge variant="capability">{{ quotaText }}</Badge>
+        <Badge variant="capability">{{ resetText }}</Badge>
         <Badge :variant="form.accessArrangementMode === 'not_allowed' ? 'secondary' : 'verified'">
           {{ arrangementLabel }}
         </Badge>
@@ -105,14 +110,16 @@ const adminAccountText = computed(() => adminAccountLabel(props.form.providesAdm
 
       <dl class="mt-4 divide-y divide-border text-sm">
         <div class="flex justify-between gap-4 py-2"><dt class="text-muted-foreground">开通区</dt><dd class="font-semibold">{{ regionText }}</dd></div>
-        <div class="flex justify-between gap-4 py-2"><dt class="text-muted-foreground">倍率</dt><dd class="font-semibold">{{ form.serviceMultiplier ?? '-' }}x</dd></div>
+        <div class="flex justify-between gap-4 py-2"><dt class="text-muted-foreground">每周额度</dt><dd class="font-semibold">{{ weeklyQuotaText }}</dd></div>
         <div class="flex justify-between gap-4 py-2"><dt class="text-muted-foreground">{{ quotaLabel }}</dt><dd class="font-semibold">{{ quotaText }}</dd></div>
+        <div class="flex justify-between gap-4 py-2"><dt class="text-muted-foreground">额度重置</dt><dd class="font-semibold">{{ resetText }}</dd></div>
+        <div class="flex justify-between gap-4 py-2"><dt class="text-muted-foreground">VPS 区域</dt><dd class="font-semibold">{{ form.vpsRegion || '待填写' }}</dd></div>
+        <div class="flex justify-between gap-4 py-2"><dt class="text-muted-foreground">国内直连</dt><dd class="font-semibold">{{ directConnectionText }}</dd></div>
         <div class="flex justify-between gap-4 py-2"><dt class="text-muted-foreground">付款方式</dt><dd class="text-right font-semibold">{{ paymentText }}</dd></div>
         <div class="flex justify-between gap-4 py-2"><dt class="text-muted-foreground">分发方式</dt><dd class="text-right font-semibold">{{ distributionText }}</dd></div>
         <div class="flex justify-between gap-4 py-2"><dt class="text-muted-foreground">管理员账号</dt><dd class="text-right font-semibold">{{ adminAccountText }}</dd></div>
         <div class="flex justify-between gap-4 py-2"><dt class="text-muted-foreground">访问安排</dt><dd class="text-right font-semibold">{{ form.accessArrangementNote || '待填写' }}</dd></div>
         <div class="flex justify-between gap-4 py-2"><dt class="text-muted-foreground">总名额</dt><dd class="font-semibold">{{ form.totalSeats }} 人车 · 已上车 {{ form.occupiedSeats }} 人</dd></div>
-        <div class="flex justify-between gap-4 py-2"><dt class="text-muted-foreground">原帖状态</dt><dd class="font-semibold">{{ parsedTopic ? '已读取并绑定' : '待读取' }}</dd></div>
       </dl>
     </Card>
 

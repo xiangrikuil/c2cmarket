@@ -78,6 +78,8 @@ Current documented exception:
 
 Use shadcn-vue primitives for new control, feedback, and disclosure UI whenever the registry provides one.
 
+All Reka-backed shadcn-vue primitives inherit the application-scoped `ConfigProvider` in `App.vue`. Keep that provider around the full application and keep its deterministic `useId` counter inside the root component setup so SSR and client hydration generate identical IDs. Do not add page-local providers or fall back to Reka's process-global counter.
+
 Required:
 
 - `Alert` for inline status/warning/help callouts instead of hand-rolled bordered notice blocks.
@@ -176,7 +178,7 @@ Avoid:
 ### 2. Signatures
 ```text
 StatusBadge(status, label?, tone?)
-ShortId(value, prefix?, copyable?)
+ShortId(value, prefix?, copyable?, full?)
 LocalTime(value, seconds?)
 CompactStats(items, loading?)
 SkeletonBlock / SkeletonTable / EmptyState / ErrorState
@@ -184,7 +186,7 @@ SkeletonBlock / SkeletonTable / EmptyState / ErrorState
 
 ### 3. Contracts
 - Use semantic tones `brand|success|waiting|warning|risk|complete|neutral` backed by theme tokens.
-- Lists show `ShortId`; full IDs exist only in title/copy/audit contexts. ISO input is rendered through `LocalTime`.
+- General transaction lists use `ShortId`, but API order lists and details show the complete public `orderNo` through `ShortId(full=true, copyable=true)`. Internal UUIDs remain short/title/copy/audit data and never replace the API business number. ISO input is rendered through `LocalTime`.
 - Loading renders skeletons, not realistic zero metrics. Empty/error states explain the condition and expose a next action or retry.
 - Components remain in `components/market` and compose existing `components/ui`; do not create a second primitive system.
 
@@ -197,7 +199,7 @@ SkeletonBlock / SkeletonTable / EmptyState / ErrorState
 | Copyable ID | accessible button copies full value |
 
 ### 5. Good/Base/Bad Cases
-- Good: order list shows `API-8EEED1`, local time, one semantic status, and full-ID copy.
+- Good: an API order list shows `API-20260802-K7M4P9Q2XZ` with copy behavior, while its UUID remains the route key.
 - Base: zero is displayed only after a successful response proves the value is zero.
 - Bad: render UUID/ISO directly or show four zero cards while a query is pending.
 
@@ -221,7 +223,7 @@ SkeletonBlock / SkeletonTable / EmptyState / ErrorState
 
 ### 1. Scope / Trigger
 
-- Trigger: work touching `/`, `/search`, `/login`, `/official-prices/**`, `/carpools/**`, `/demands/**`, `/api-market/**`, `/my/rides/**`, `/my/api-orders/**`, or `/u/:username`.
+- Trigger: work touching `/`, `/search`, `/login`, `/official-prices/**`, `/carpools/**`, `/api-market/**`, `/my/rides/**`, `/my/api-orders/**`, or `/u/:username`.
 - Public pages guide discovery and a single next action; they are not administrator dashboards.
 
 ### 2. Signatures
@@ -242,9 +244,8 @@ type PublicListState<T> = {
 - Homepage first view states the offline-payment/platform boundary and exposes the carpool and API market as the two primary destinations. Charts and administrator-style metric walls belong below discovery content or outside the homepage.
 - Market lists use a compact heading, small summary, common filters, collapsed advanced filters, and keyboard-accessible whole-row navigation. Row-local filled `查看` buttons are not the primary navigation pattern.
 - Market details use a main-information column and sticky action card. The action card renders at most one filled primary action from authoritative service eligibility/order state; favorite, share, report, cancel, and escalation stay secondary.
-- `/demands` is a demand list and `/demands/new` is the publish form. A carpool owner responds by selecting an existing public carpool, copying its public link, and opening the demand's linux.do source; later joining continues through the existing carpool-application flow.
 - Publish pages render one completeness/check contract, a buyer-facing preview, immediate numeric/risk validation, and `useUnsavedChangesGuard`. Programmatic initialization must not mark the form dirty; user input/change does.
-- Ride/API-order lists show short identifiers, local time, snapshots, status, next actor/action, and default action-needed ordering. Details show timeline/stepper and only the action allowed by current state.
+- Ride lists show short internal identifiers. API-order lists and details show the complete immutable public `orderNo`, local time, snapshots, status, next actor/action, and default action-needed ordering; their routes and actions still use the internal UUID. Details show timeline/stepper and only the action allowed by current state.
 - Public profiles never expose contact details, order IDs, credentials, or private transaction data. If all public activity collections are empty, render one unified empty state.
 - The approved delivery exception remains: API-order detail may show the buyer-specific, one-time-submitted, immutable delivery credential only to order participants. The UI must not claim platform revocation support. Lists, search, public pages, notifications, reports, and admin summaries never render it.
 
@@ -264,17 +265,16 @@ type PublicListState<T> = {
 ### 5. Good/Base/Bad Cases
 
 - Good: API service detail shows price, available allowance, min/max amount, payment window, one `创建订单并查看付款方式` button, and secondary actions.
-- Good: demand detail sends an owner to `我的车源`, then copies the selected public carpool URL and opens the demand source post.
+- Good: carpool detail shows one eligibility-driven application action and one authoritative disabled reason when the action is unavailable.
 - Base: non-orderable API rows remain visible only when the query intentionally includes them, are clearly disabled, and do not deep-link to a public 404.
 - Bad: homepage starts with a trend chart and four tall operational statistic cards.
 - Bad: a detail header, summary card, and sticky panel each repeat a different price, seat count, risk reason, or filled primary action.
-- Bad: demand publishing and demand discovery share one large page.
 
 ### 6. Tests Required
 
-- Source/contract tests cover the homepage boundary, loading/empty components, row keyboard navigation, demand route split, sticky action copy, unsaved guard, short IDs/local times, and unified public-profile empty state.
+- Source/contract tests cover the homepage boundary, loading/empty components, row keyboard navigation, sticky action copy, unsaved guard, short IDs/local times, and unified public-profile empty state.
 - Domain tests remain the authority for API-order state and carpool eligibility; page tests must not recreate their transition tables.
-- Run full Vitest, `vue-tsc`, real-API Vite build, and browser checks at 1440×900 plus mobile widths.
+- Run full Vitest, Nuxt typecheck, real-API Nuxt build, and browser checks at 1440×900 plus mobile widths.
 
 ### 7. Wrong vs Correct
 

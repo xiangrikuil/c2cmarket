@@ -9,7 +9,6 @@ import (
 	"c2c-market/backend/internal/module/carpool"
 	"c2c-market/backend/internal/module/catalog"
 	"c2c-market/backend/internal/module/contact"
-	"c2c-market/backend/internal/module/demand"
 	"c2c-market/backend/internal/module/feedback"
 	"c2c-market/backend/internal/module/idempotency"
 	"c2c-market/backend/internal/module/modelaudit"
@@ -22,6 +21,20 @@ import (
 type User = auth.User
 
 type Session = auth.Session
+
+type AdminUser = auth.AdminUser
+
+type AdminUserDirectoryQuery = auth.AdminUserDirectoryQuery
+
+type AdminUserDirectory = auth.AdminUserDirectory
+
+type AdminUserDetail = auth.AdminUserDetail
+
+type AdminUserStatusInput = auth.AdminUserStatusInput
+
+type AdminUserPermissionInput = auth.AdminUserPermissionInput
+
+type AdminUserCompletionBuilder = auth.AdminUserCompletionBuilder
 
 type OAuthProfile = auth.OAuthProfile
 
@@ -193,6 +206,8 @@ type ReviewCenterRow = review.ReviewCenterRow
 
 type SubmitReviewInput = review.SubmitReviewInput
 
+type RemoveReviewInput = review.RemoveReviewInput
+
 type PublicReview = review.PublicReview
 
 type ReviewCompletionBuilder = review.CompletionBuilder
@@ -217,6 +232,10 @@ type AppealCompletionBuilder = report.AppealCompletionBuilder
 
 type ReportAdminCompletionBuilder = report.AdminCompletionBuilder
 
+type ReportSupplementInput = report.SupplementInput
+
+type ReportSupplementCompletionBuilder = report.SupplementCompletionBuilder
+
 type Announcement = announcement.Announcement
 
 type AnnouncementFormInput = announcement.FormInput
@@ -224,16 +243,6 @@ type AnnouncementFormInput = announcement.FormInput
 type AnnouncementAuditLog = announcement.AuditLog
 
 type AnnouncementReceipt = announcement.Receipt
-
-type Demand = demand.Demand
-
-type CreateDemandInput = demand.CreateInput
-
-type DemandOwnerActionInput = demand.OwnerActionInput
-
-type DemandAdminActionInput = demand.AdminActionInput
-
-type DemandCompletionBuilder = demand.CompletionBuilder
 
 type FeedbackTicket = feedback.Ticket
 

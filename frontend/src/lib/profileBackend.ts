@@ -22,6 +22,8 @@ import type {
   UserProfile,
 } from '@/lib/api'
 import { backendPublicUserReviews } from '@/lib/reviewBackend'
+import type { ReputationSnapshot } from '@/types/reputation'
+import { mapBackendReputationSnapshot } from '@/lib/reputationBackend'
 
 type ListResponse<T> = {
   items: T[]
@@ -109,6 +111,7 @@ export type BackendMerchantProfile = {
 
 type BackendPublicUserProfileBundle = {
   profile: PublicUserProfile
+  reputations?: ReputationSnapshot[] | null
   carpools: Carpool[]
   services: ApiService[]
   completions: PublicCompletionRecord[]
@@ -217,6 +220,7 @@ export async function backendPublicUserProfile(username: string) {
   ])
   return {
     profile: response.profile,
+    reputations: (response.reputations ?? []).map(mapBackendReputationSnapshot),
     carpools: response.carpools,
     services: response.services,
     completions: response.completions,

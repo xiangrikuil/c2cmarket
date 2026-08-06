@@ -5,11 +5,15 @@ import (
 	"c2c-market/backend/internal/domain"
 	"c2c-market/backend/internal/middleware"
 	"c2c-market/backend/internal/module/auth"
+	"c2c-market/backend/internal/module/promotionreward"
 	"context"
 	"crypto/rand"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"net/url"
 	"strings"
@@ -18,6 +22,8 @@ import (
 
 const oauthStateCookieName = "c2c_oauth_state"
 const oauthMaxResponseBodyBytes = 1 << 20
+const oauthPurposeAccountAppeal = "account_appeal"
+const accountAppealFrontendPath = "/account-appeal"
 
 type devSessionRequest struct {
 	Username string `json:"username"`
@@ -40,8 +46,35 @@ type emailRegistrationStartResponse struct {
 }
 
 type emailRegistrationConfirmRequest struct {
-	Email string `json:"email"`
-	Code  string `json:"code"`
+	Email       string                         `json:"email"`
+	Code        string                         `json:"code"`
+	Attribution registrationAttributionRequest `json:"attribution"`
+}
+
+type registrationAttributionRequest struct {
+	Source       string `json:"source"`
+	Medium       string `json:"medium"`
+	Campaign     string `json:"campaign"`
+	ReferrerHost string `json:"referrerHost"`
+	LandingPath  string `json:"landingPath"`
+}
+
+func (request registrationAttributionRequest) model() auth.RegistrationAttribution {
+	return auth.RegistrationAttribution{
+		Source:       request.Source,
+		Medium:       request.Medium,
+		Campaign:     request.Campaign,
+		ReferrerHost: request.ReferrerHost,
+		LandingPath:  request.LandingPath,
+	}
+}
+
+type oauthStateCookiePayload struct {
+	State       string                       `json:"state"`
+	ReturnTo    string                       `json:"returnTo"`
+	Purpose     string                       `json:"purpose,omitempty"`
+	Attribution auth.RegistrationAttribution `json:"attribution"`
+	InviteCode  string                       `json:"inviteCode,omitempty"`
 }
 
 type setPasswordRequest struct {
@@ -53,6 +86,31 @@ type oauthStartResponse struct {
 	AuthorizationURL string `json:"authorizationUrl"`
 }
 
+type oauthProviderID string
+
+func (id *oauthProviderID) UnmarshalJSON(data []byte) error {
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.UseNumber()
+	var value any
+	if err := decoder.Decode(&value); err != nil {
+		return err
+	}
+	switch typed := value.(type) {
+	case string:
+		*id = oauthProviderID(strings.TrimSpace(typed))
+	case json.Number:
+		if _, err := typed.Int64(); err != nil {
+			return fmt.Errorf("oauth provider numeric id must be an integer: %w", err)
+		}
+		*id = oauthProviderID(typed.String())
+	case nil:
+		*id = ""
+	default:
+		return fmt.Errorf("oauth provider id must be a string or number, got %T", value)
+	}
+	return nil
+}
+
 type sessionResponse struct {
 	User      userDTO `json:"user"`
 	CSRFToken string  `json:"csrfToken"`
@@ -60,12 +118,13 @@ type sessionResponse struct {
 }
 
 type userDTO struct {
-	ID          string                   `json:"id"`
-	Username    string                   `json:"username"`
-	DisplayName string                   `json:"displayName"`
-	IsAdmin     bool                     `json:"isAdmin"`
-	Permissions []string                 `json:"permissions"`
-	LinuxDo     sessionLinuxDoBindingDTO `json:"linuxDoBinding"`
+	ID              string                   `json:"id"`
+	AnalyticsUserID string                   `json:"analyticsUserId"`
+	Username        string                   `json:"username"`
+	DisplayName     string                   `json:"displayName"`
+	IsAdmin         bool                     `json:"isAdmin"`
+	Permissions     []string                 `json:"permissions"`
+	LinuxDo         sessionLinuxDoBindingDTO `json:"linuxDoBinding"`
 }
 
 type sessionLinuxDoBindingDTO struct {
@@ -86,6 +145,7 @@ type adminUserResponse struct {
 	TrustLevel    *int    `json:"trustLevel,omitempty"`
 	CreatedAt     string  `json:"createdAt"`
 	LastActiveAt  *string `json:"lastActiveAt,omitempty"`
+	Version       int64   `json:"version"`
 }
 
 func (s *Server) handleDevSession(w http.ResponseWriter, r *http.Request) {
@@ -115,17 +175,22 @@ func (s *Server) handleDevSession(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleAdminUsers(w http.ResponseWriter, r *http.Request) {
-	user, _, appErr := s.requireSession(r)
+	user, _, appErr := s.requireSession(w, r)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
 	}
-	items, appErr := s.app.AdminUsers(r.Context(), user)
+	query, appErr := parseAdminUserDirectoryQuery(r)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
 	}
-	writeJSON(w, http.StatusOK, listResponse[adminUserResponse]{Items: toAdminUserResponses(items)})
+	directory, appErr := s.adminUsers.AdminUsers(r.Context(), user, query)
+	if appErr != nil {
+		writeProblem(w, r, appErr)
+		return
+	}
+	writeJSON(w, http.StatusOK, toAdminUserDirectoryResponse(directory))
 }
 
 func (s *Server) handlePasswordLogin(w http.ResponseWriter, r *http.Request) {
@@ -155,6 +220,9 @@ func (s *Server) handleStartEmailRegistration(w http.ResponseWriter, r *http.Req
 		writeProblem(w, r, appErr)
 		return
 	}
+	if !s.allowTarget(w, r, emailRegistrationStartRateLimit, "email", req.Email) {
+		return
+	}
 	challenge, appErr := s.app.StartEmailRegistration(r.Context(), auth.EmailRegistrationStartInput{Email: req.Email})
 	if appErr != nil {
 		writeProblem(w, r, appErr)
@@ -173,9 +241,13 @@ func (s *Server) handleConfirmEmailRegistration(w http.ResponseWriter, r *http.R
 		writeProblem(w, r, appErr)
 		return
 	}
+	if !s.allowTarget(w, r, emailRegistrationConfirmRateLimit, "email", req.Email) {
+		return
+	}
 	user, session, appErr := s.app.ConfirmEmailRegistration(r.Context(), auth.EmailRegistrationConfirmInput{
-		Email: req.Email,
-		Code:  req.Code,
+		Email:       req.Email,
+		Code:        req.Code,
+		Attribution: req.Attribution.model(),
 	})
 	if appErr != nil {
 		writeProblem(w, r, appErr)
@@ -190,7 +262,7 @@ func (s *Server) handleConfirmEmailRegistration(w http.ResponseWriter, r *http.R
 }
 
 func (s *Server) handleSetPassword(w http.ResponseWriter, r *http.Request) {
-	user, _, appErr := s.requireSessionAndCSRF(r)
+	user, _, appErr := s.requireSessionAndCSRF(w, r)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
@@ -214,12 +286,32 @@ func (s *Server) handleSetPassword(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleOAuthStart(w http.ResponseWriter, r *http.Request) {
 	state := newOAuthState()
 	returnTo := cleanReturnTo(r.URL.Query().Get("returnTo"))
-	cookieValue := state
-	if returnTo != "" {
-		cookieValue += "|" + returnTo
-	}
-	s.setOAuthStateCookie(w, cookieValue)
+	attribution := auth.NormalizeRegistrationAttribution(auth.RegistrationAttribution{
+		Source:       r.URL.Query().Get("utmSource"),
+		Medium:       r.URL.Query().Get("utmMedium"),
+		Campaign:     r.URL.Query().Get("utmCampaign"),
+		ReferrerHost: r.URL.Query().Get("referrerHost"),
+		LandingPath:  r.URL.Query().Get("landingPath"),
+	})
+	s.setOAuthStateCookie(w, encodeOAuthStateCookie(oauthStateCookiePayload{
+		State:       state,
+		ReturnTo:    returnTo,
+		Attribution: attribution,
+		InviteCode:  promotionreward.CanonicalReferralCode(r.URL.Query().Get("inviteCode")),
+	}))
 	writeJSON(w, http.StatusOK, oauthStartResponse{AuthorizationURL: s.oauthAuthorizationURL(r, state, returnTo)})
+}
+
+func (s *Server) handleAccountAppealOAuthStart(w http.ResponseWriter, r *http.Request) {
+	state := newOAuthState()
+	s.setOAuthStateCookie(w, encodeOAuthStateCookie(oauthStateCookiePayload{
+		State:    state,
+		ReturnTo: accountAppealFrontendPath,
+		Purpose:  oauthPurposeAccountAppeal,
+	}))
+	writeJSON(w, http.StatusOK, oauthStartResponse{
+		AuthorizationURL: s.oauthAuthorizationURL(r, state, accountAppealFrontendPath),
+	})
 }
 
 func (s *Server) handleOAuthCallback(w http.ResponseWriter, r *http.Request) {
@@ -229,8 +321,12 @@ func (s *Server) handleOAuthCallback(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, r, domain.NewError(http.StatusForbidden, domain.CodeCSRFTokenInvalid, "OAuth state invalid", "登录 state 无效或已过期。"))
 		return
 	}
-	expectedState, returnTo := splitOAuthStateCookie(stateCookie.Value)
-	if expectedState == "" || expectedState != state {
+	payload, ok := decodeOAuthStateCookie(stateCookie.Value)
+	if !ok || payload.State == "" || payload.State != state {
+		writeProblem(w, r, domain.NewError(http.StatusForbidden, domain.CodeCSRFTokenInvalid, "OAuth state invalid", "登录 state 无效或已过期。"))
+		return
+	}
+	if payload.Purpose != "" && payload.Purpose != oauthPurposeAccountAppeal {
 		writeProblem(w, r, domain.NewError(http.StatusForbidden, domain.CodeCSRFTokenInvalid, "OAuth state invalid", "登录 state 无效或已过期。"))
 		return
 	}
@@ -244,6 +340,12 @@ func (s *Server) handleOAuthCallback(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, r, appErr)
 		return
 	}
+	if payload.Purpose == oauthPurposeAccountAppeal {
+		s.handleAccountAppealOAuthCallback(w, r, profile)
+		return
+	}
+	profile.Attribution = payload.Attribution
+	profile.ReferralCode = payload.InviteCode
 	user, session, appErr := s.app.LoginWithOAuthProfile(r.Context(), profile)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
@@ -252,7 +354,28 @@ func (s *Server) handleOAuthCallback(w http.ResponseWriter, r *http.Request) {
 	s.setSessionCookie(w, session)
 	s.clearOAuthStateCookie(w)
 	_ = user
-	http.Redirect(w, r, s.oauthRedirectTarget(returnTo), http.StatusFound)
+	outcome := "logged_in"
+	if session.NewRegistration {
+		outcome = "registered"
+	}
+	http.Redirect(w, r, s.oauthRedirectTarget(appendAuthOutcome(payload.ReturnTo, outcome)), http.StatusFound)
+}
+
+func (s *Server) handleAccountAppealOAuthCallback(w http.ResponseWriter, r *http.Request, profile auth.OAuthProfile) {
+	_, session, appErr := s.app.StartAccountAppealSession(r.Context(), profile)
+	if appErr != nil {
+		if appErr.Code == domain.CodeAccountAppealIneligible {
+			s.clearOAuthStateCookie(w)
+			s.clearAccountAppealCookie(w)
+			http.Redirect(w, r, s.oauthRedirectTarget(appendAccountAppealOutcome("ineligible")), http.StatusFound)
+			return
+		}
+		writeProblem(w, r, appErr)
+		return
+	}
+	s.setAccountAppealCookie(w, session)
+	s.clearOAuthStateCookie(w)
+	http.Redirect(w, r, s.oauthRedirectTarget(appendAccountAppealOutcome("verified")), http.StatusFound)
 }
 
 func (s *Server) handleGetSession(w http.ResponseWriter, r *http.Request) {
@@ -261,7 +384,7 @@ func (s *Server) handleGetSession(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, r, domain.NewError(http.StatusUnauthorized, domain.CodeSessionExpired, "Session required", "请先登录。"))
 		return
 	}
-	user, session, appErr := s.requireSession(r)
+	user, session, appErr := s.requireSession(w, r)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
@@ -280,7 +403,7 @@ func (s *Server) handleGetSession(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
-	_, session, appErr := s.requireSessionAndCSRF(r)
+	_, session, appErr := s.requireSessionAndCSRF(w, r)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
@@ -296,34 +419,30 @@ func toUserDTO(user auth.User) userDTO {
 		permissions = append(permissions, "admin")
 	}
 	return userDTO{
-		ID:          user.ID,
-		Username:    user.Username,
-		DisplayName: user.DisplayName,
-		IsAdmin:     user.IsAdmin,
-		Permissions: permissions,
-		LinuxDo:     toLinuxDoBindingDTO(user.LinuxDoBinding),
+		ID:              user.ID,
+		AnalyticsUserID: user.AnalyticsUserID,
+		Username:        user.Username,
+		DisplayName:     user.DisplayName,
+		IsAdmin:         user.IsAdmin,
+		Permissions:     permissions,
+		LinuxDo:         toLinuxDoBindingDTO(user.LinuxDoBinding),
 	}
 }
 
 func toAdminUserResponses(items []auth.AdminUser) []adminUserResponse {
 	result := make([]adminUserResponse, 0, len(items))
 	for _, item := range items {
-		linuxDoBound := item.LinuxDoBinding != nil && item.LinuxDoBinding.Bound
-		trustLevel := (*int)(nil)
-		if linuxDoBound {
-			value := item.LinuxDoBinding.TrustLevel
-			trustLevel = &value
-		}
 		result = append(result, adminUserResponse{
 			ID:            item.ID,
 			Username:      item.Username,
 			DisplayName:   item.DisplayName,
 			AccountStatus: item.Status,
 			IsAdmin:       item.IsAdmin,
-			LinuxDoBound:  linuxDoBound,
-			TrustLevel:    trustLevel,
+			LinuxDoBound:  item.LinuxDoBound,
+			TrustLevel:    item.TrustLevel,
 			CreatedAt:     item.CreatedAt.UTC().Format(time.RFC3339),
 			LastActiveAt:  formatOptionalTime(item.LastActiveAt),
+			Version:       item.Version,
 		})
 	}
 	return result
@@ -343,6 +462,10 @@ func toLinuxDoBindingDTO(binding *auth.LinuxDoBinding) sessionLinuxDoBindingDTO 
 }
 
 func (s *Server) setSessionCookie(w http.ResponseWriter, session auth.Session) {
+	maxAge := 0
+	if !session.RenewedAt.IsZero() && session.ExpiresAt.After(session.RenewedAt) {
+		maxAge = int(session.ExpiresAt.Sub(session.RenewedAt) / time.Second)
+	}
 	http.SetCookie(w, &http.Cookie{
 		Name:     sessionCookieName,
 		Value:    session.ID,
@@ -351,6 +474,7 @@ func (s *Server) setSessionCookie(w http.ResponseWriter, session auth.Session) {
 		Secure:   s.cookieSecure,
 		SameSite: http.SameSiteLaxMode,
 		Expires:  session.ExpiresAt,
+		MaxAge:   maxAge,
 	})
 }
 
@@ -457,26 +581,27 @@ func (s *Server) oauthProfile(ctx context.Context, code string) (auth.OAuthProfi
 	}
 	userRequest.Header.Set("Authorization", "Bearer "+token.AccessToken)
 	var info struct {
-		Subject           string `json:"sub"`
-		ID                string `json:"id"`
-		Username          string `json:"username"`
-		PreferredUsername string `json:"preferred_username"`
-		Login             string `json:"login"`
-		Name              string `json:"name"`
-		DisplayName       string `json:"display_name"`
-		Email             string `json:"email"`
-		AvatarURL         string `json:"avatar_url"`
-		Picture           string `json:"picture"`
-		TrustLevel        int    `json:"trust_level"`
-		TrustLevelCamel   int    `json:"trustLevel"`
+		Subject           oauthProviderID `json:"sub"`
+		ID                oauthProviderID `json:"id"`
+		Username          string          `json:"username"`
+		PreferredUsername string          `json:"preferred_username"`
+		Login             string          `json:"login"`
+		Name              string          `json:"name"`
+		DisplayName       string          `json:"display_name"`
+		Email             string          `json:"email"`
+		AvatarURL         string          `json:"avatar_url"`
+		AvatarTemplate    string          `json:"avatar_template"`
+		Picture           string          `json:"picture"`
+		TrustLevel        int             `json:"trust_level"`
+		TrustLevelCamel   int             `json:"trustLevel"`
 	}
 	if appErr := s.fetchOAuthJSON(userRequest, &info); appErr != nil {
 		return auth.OAuthProfile{}, appErr
 	}
-	subject := firstNonEmpty(info.Subject, info.ID)
+	subject := firstNonEmpty(string(info.Subject), string(info.ID))
 	username := firstNonEmpty(info.Username, info.PreferredUsername, info.Login, subject)
 	displayName := firstNonEmpty(info.DisplayName, info.Name, username)
-	avatarURL := firstNonEmpty(info.AvatarURL, info.Picture)
+	avatarURL := normalizeLinuxDoAvatarURL(firstNonEmpty(info.AvatarURL, info.Picture, info.AvatarTemplate))
 	trustLevel := info.TrustLevel
 	if trustLevel == 0 {
 		trustLevel = info.TrustLevelCamel
@@ -497,7 +622,6 @@ func (s *Server) oauthProfile(ctx context.Context, code string) (auth.OAuthProfi
 
 func fakeOAuthProfile(code string) auth.OAuthProfile {
 	username := strings.TrimSpace(strings.ToLower(code))
-	grantAdmin := strings.Contains(username, "admin")
 	username = strings.TrimPrefix(username, "fake-")
 	if username == "" {
 		username = "oauth-user"
@@ -509,7 +633,6 @@ func fakeOAuthProfile(code string) auth.OAuthProfile {
 		DisplayName:      username,
 		Email:            username + "@example.test",
 		TrustLevel:       3,
-		GrantAdmin:       grantAdmin,
 		LinuxDoUserID:    "fake-" + username,
 		LinuxDoUsername:  username,
 		LinuxDoAvatarURL: "",
@@ -523,20 +646,25 @@ func (s *Server) fetchOAuthJSON(request *http.Request, target any) *domain.AppEr
 	}
 	response, err := client.Do(request)
 	if err != nil {
+		log.Printf("oauth_provider_request_failed method=%s host=%s path=%s", request.Method, request.URL.Host, request.URL.Path)
 		return domain.NewError(http.StatusBadGateway, domain.CodeInternalError, "OAuth provider unavailable", "OAuth provider 请求失败。")
 	}
 	defer response.Body.Close()
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		log.Printf("oauth_provider_rejected_request method=%s host=%s path=%s status=%d", request.Method, request.URL.Host, request.URL.Path, response.StatusCode)
 		return domain.NewError(http.StatusBadGateway, domain.CodeInternalError, "OAuth provider rejected request", "OAuth provider 返回失败状态。")
 	}
 	body, err := io.ReadAll(io.LimitReader(response.Body, oauthMaxResponseBodyBytes+1))
 	if err != nil {
+		log.Printf("oauth_provider_response_read_failed method=%s host=%s path=%s", request.Method, request.URL.Host, request.URL.Path)
 		return domain.NewError(http.StatusBadGateway, domain.CodeInternalError, "OAuth provider invalid response", "OAuth provider 响应解析失败。")
 	}
 	if len(body) > oauthMaxResponseBodyBytes {
+		log.Printf("oauth_provider_response_too_large method=%s host=%s path=%s", request.Method, request.URL.Host, request.URL.Path)
 		return domain.NewError(http.StatusBadGateway, domain.CodeInternalError, "OAuth provider response too large", "OAuth provider 响应过大。")
 	}
 	if err := json.NewDecoder(bytes.NewReader(body)).Decode(target); err != nil {
+		log.Printf("oauth_provider_response_invalid_json method=%s host=%s path=%s", request.Method, request.URL.Host, request.URL.Path)
 		return domain.NewError(http.StatusBadGateway, domain.CodeInternalError, "OAuth provider invalid response", "OAuth provider 响应解析失败。")
 	}
 	return nil
@@ -551,12 +679,36 @@ func firstNonEmpty(values ...string) string {
 	return ""
 }
 
-func splitOAuthStateCookie(value string) (string, string) {
-	parts := strings.SplitN(value, "|", 2)
-	if len(parts) == 1 {
-		return parts[0], "/"
+func normalizeLinuxDoAvatarURL(value string) string {
+	return strings.ReplaceAll(strings.TrimSpace(value), "{size}", "288")
+}
+
+func encodeOAuthStateCookie(payload oauthStateCookiePayload) string {
+	payload.ReturnTo = cleanReturnTo(payload.ReturnTo)
+	payload.Attribution = auth.NormalizeRegistrationAttribution(payload.Attribution)
+	payload.InviteCode = promotionreward.CanonicalReferralCode(payload.InviteCode)
+	encoded, err := json.Marshal(payload)
+	if err != nil {
+		panic(err)
 	}
-	return parts[0], cleanReturnTo(parts[1])
+	return base64.RawURLEncoding.EncodeToString(encoded)
+}
+
+func decodeOAuthStateCookie(value string) (oauthStateCookiePayload, bool) {
+	decoded, err := base64.RawURLEncoding.DecodeString(strings.TrimSpace(value))
+	if err != nil || len(decoded) == 0 || len(decoded) > 2048 {
+		return oauthStateCookiePayload{}, false
+	}
+	var payload oauthStateCookiePayload
+	decoder := json.NewDecoder(bytes.NewReader(decoded))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&payload); err != nil || strings.TrimSpace(payload.State) == "" {
+		return oauthStateCookiePayload{}, false
+	}
+	payload.ReturnTo = cleanReturnTo(payload.ReturnTo)
+	payload.Attribution = auth.NormalizeRegistrationAttribution(payload.Attribution)
+	payload.InviteCode = promotionreward.CanonicalReferralCode(payload.InviteCode)
+	return payload, true
 }
 
 func cleanReturnTo(value string) string {
@@ -565,6 +717,26 @@ func cleanReturnTo(value string) string {
 		return "/"
 	}
 	return value
+}
+
+func appendAuthOutcome(returnTo, outcome string) string {
+	path := cleanReturnTo(returnTo)
+	parsed, err := url.Parse(path)
+	if err != nil {
+		parsed = &url.URL{Path: "/"}
+	}
+	query := parsed.Query()
+	query.Set("authOutcome", outcome)
+	parsed.RawQuery = query.Encode()
+	return parsed.String()
+}
+
+func appendAccountAppealOutcome(outcome string) string {
+	parsed := &url.URL{Path: accountAppealFrontendPath}
+	query := parsed.Query()
+	query.Set("accountAppealOutcome", outcome)
+	parsed.RawQuery = query.Encode()
+	return parsed.String()
 }
 
 func (s *Server) oauthRedirectTarget(returnTo string) string {

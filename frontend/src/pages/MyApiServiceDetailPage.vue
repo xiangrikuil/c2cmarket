@@ -1,54 +1,44 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, nextTick, onMounted, watch } from 'vue'
 import { useRoute } from 'vue-router'
-import { ArrowLeft, ExternalLink, PackageSearch } from 'lucide-vue-next'
 import { toast } from 'vue-sonner'
-import { Badge } from '@/components/ui/badge'
-import { Button } from '@/components/ui/button'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
-import CompactStats from '@/components/market/CompactStats.vue'
-import EmptyState from '@/components/market/EmptyState.vue'
-import ShortId from '@/components/market/ShortId.vue'
+import ApiQuotaOwnerManager from '@/components/api-quota/ApiQuotaOwnerManager.vue'
+import ApiServiceOwnerHeader from '@/components/api-service-owner/ApiServiceOwnerHeader.vue'
+import OwnerAPIHealthProbePanel from '@/components/api-service-owner/OwnerAPIHealthProbePanel.vue'
+import ApiServiceOwnerMetrics from '@/components/api-service-owner/ApiServiceOwnerMetrics.vue'
+import ApiServiceOwnerOverview from '@/components/api-service-owner/ApiServiceOwnerOverview.vue'
+import ErrorState from '@/components/market/ErrorState.vue'
 import SkeletonBlock from '@/components/market/SkeletonBlock.vue'
-import {
-  getApiMerchantDisplayName,
-  getApiMerchantVisibilityLabel,
-  type ApiService,
-} from '@/lib/api'
+import { getApiServiceProductIconSrc } from '@/lib/productCategoryIcon'
 import {
   useMyApiService,
   usePauseApiServiceMutation,
   usePublishApiServiceMutation,
   useResumeApiServiceMutation,
 } from '@/queries/useMarketQueries'
+import { useProductCategories } from '@/queries/useProductCatalogQueries'
 
 const route = useRoute()
 const id = computed(() => String(route.params.id ?? ''))
-const { data: service, isLoading, error } = useMyApiService(id)
+const { data: service, isLoading, error, refetch } = useMyApiService(id)
+const { data: catalogCategories } = useProductCategories()
 const publishMutation = usePublishApiServiceMutation()
 const pauseMutation = usePauseApiServiceMutation()
 const resumeMutation = useResumeApiServiceMutation()
 const actionPending = computed(() => publishMutation.isPending.value || pauseMutation.isPending.value || resumeMutation.isPending.value)
 const errorMessage = computed(() => error.value instanceof Error ? error.value.message : '无法读取这条 API 服务，请确认当前账号是发布者。')
-const serviceStats = computed(() => service.value ? [
-  { label: '可售美元额度', value: `$${service.value.balance}`, hint: '扣除已冻结订单后的可售口径' },
-  { label: '美元额度售价', value: `¥${(1 / service.value.creditPerCny).toFixed(2)} / $1` },
-  { label: '最低订单金额', value: `¥${service.value.minimumPurchaseCny}` },
-  { label: '今日订单', value: `${service.value.todayOrderCount} / ${service.value.dailyOrderLimit}` },
-] : [])
+const categoryIconByCode = computed(() => new Map((catalogCategories.value ?? []).map(category => [category.code, category.iconDataUrl])))
+const serviceIconSrc = computed(() => service.value ? getApiServiceProductIconSrc(service.value, categoryIconByCode.value) : null)
+const ownerSectionHashes = new Set(['#health-probe', '#quota-offers'])
 
-function statusLabel(item: ApiService) {
-  if (item.online) return '在线接单'
-  if (item.state === 'reviewing') return '审核中'
-  if (item.state === 'paused') return '已暂停'
-  return '离线'
+async function scrollToOwnerSection() {
+  if (!import.meta.client || !ownerSectionHashes.has(route.hash) || !service.value) return
+  await nextTick()
+  document.getElementById(route.hash.slice(1))?.scrollIntoView({ block: 'start' })
 }
 
-function statusVariant(item: ApiService) {
-  if (item.online) return 'default'
-  if (item.state === 'reviewing' || item.state === 'paused') return 'secondary'
-  return 'outline'
-}
+watch([() => route.hash, () => service.value?.id], scrollToOwnerSection, { flush: 'post' })
+onMounted(scrollToOwnerSection)
 
 function publishService() {
   if (!service.value || actionPending.value) return
@@ -60,6 +50,7 @@ function publishService() {
 
 function pauseService() {
   if (!service.value || actionPending.value) return
+  if (!window.confirm('确认暂停这项 API 服务的接单？暂停后买家将无法创建新订单，已有订单不受影响。')) return
   pauseMutation.mutate(service.value.id, {
     onSuccess: () => toast.success('API 服务已暂停。'),
     onError: actionError => toast.error(actionError instanceof Error ? actionError.message : '暂停失败。'),
@@ -78,64 +69,24 @@ function resumeService() {
 <template>
   <SkeletonBlock v-if="isLoading" :lines="8" />
 
-  <EmptyState v-else-if="!service" title="无法打开服务管理页" :description="errorMessage"><template #action><RouterLink to="/my/api-services"><Button variant="outline">返回我的 API 服务</Button></RouterLink></template></EmptyState>
+  <ErrorState v-else-if="!service" title="无法打开服务管理页" :description="errorMessage" @retry="refetch()" />
 
-  <div v-else class="space-y-4">
-    <div class="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-      <div>
-        <RouterLink to="/my/api-services" class="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground">
-          <ArrowLeft class="h-4 w-4" />
-          我的 API 服务
-        </RouterLink>
-        <div class="mt-3 flex flex-wrap items-center gap-2">
-          <h1 class="text-2xl font-semibold md:text-3xl">{{ service.title }}</h1>
-          <Badge :variant="statusVariant(service)">{{ statusLabel(service) }}</Badge>
-        </div>
-        <p class="mt-2 text-sm text-muted-foreground">
-          {{ getApiMerchantDisplayName(service) }} · {{ getApiMerchantVisibilityLabel(service) }} · 服务编号 <ShortId :value="service.id" prefix="API-SVC" copyable />
-        </p>
-      </div>
+  <main v-else class="mx-auto w-full max-w-[1440px] space-y-5">
+    <ApiServiceOwnerHeader
+      :service="service"
+      :icon-src="serviceIconSrc"
+      :action-pending="actionPending"
+      @publish="publishService"
+      @pause="pauseService"
+      @resume="resumeService"
+    />
 
-      <div class="flex flex-wrap gap-2">
-        <RouterLink v-if="service.publiclyOrderable" :to="`/api-market/${service.id}?preview=owner`">
-          <Button variant="outline" class="gap-2"><ExternalLink class="h-4 w-4" />以买家视角预览</Button>
-        </RouterLink>
-        <Button v-else variant="outline" disabled>当前不可公开预览</Button>
-        <RouterLink to="/merchant/api-orders">
-          <Button variant="outline" class="gap-2"><PackageSearch class="h-4 w-4" />查看 API 订单</Button>
-        </RouterLink>
-        <Button v-if="service.state === 'offline'" :disabled="actionPending" @click="publishService">上线服务</Button>
-        <Button v-if="service.online" :disabled="actionPending" variant="destructive" @click="pauseService">暂停接单</Button>
-        <Button v-if="service.state === 'paused'" :disabled="actionPending" @click="resumeService">恢复接单</Button>
-      </div>
-    </div>
+    <ApiServiceOwnerMetrics :service="service" />
 
-    <CompactStats :items="serviceStats" />
+    <ApiServiceOwnerOverview :service="service" />
 
-    <Card class="border-primary/20 bg-primary/5 p-4 text-sm text-muted-foreground">价格、额度、模型和付款规则修改只影响新订单；已有订单继续使用创建时冻结的服务、金额、额度和联系方式快照。</Card>
+    <OwnerAPIHealthProbePanel :api-service-id="service.id" />
 
-    <div class="grid gap-4 lg:grid-cols-2">
-      <Card>
-        <CardHeader><CardTitle>服务配置</CardTitle></CardHeader>
-        <CardContent class="space-y-3 text-sm">
-          <div class="flex justify-between gap-4"><span class="text-muted-foreground">接入类型</span><span class="text-right font-medium">{{ service.delivery }}</span></div>
-          <div class="flex justify-between gap-4"><span class="text-muted-foreground">支持模型</span><span class="text-right font-medium">{{ service.models.join(' / ') }}</span></div>
-          <div class="flex justify-between gap-4"><span class="text-muted-foreground">服务倍率</span><span class="text-right font-medium">{{ service.rate }}</span></div>
-          <div class="flex justify-between gap-4"><span class="text-muted-foreground">额度有效期</span><span class="text-right font-medium">{{ service.expiresAt }}</span></div>
-          <div class="flex justify-between gap-4"><span class="text-muted-foreground">收款方式</span><span class="text-right font-medium">{{ service.acceptedPaymentMethods?.join(' / ') || '待配置' }}</span></div>
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader><CardTitle>经营状态</CardTitle></CardHeader>
-        <CardContent class="space-y-3 text-sm">
-          <div class="flex justify-between gap-4"><span class="text-muted-foreground">公开状态</span><span class="text-right font-medium">{{ service.publiclyOrderable ? '买家可下单' : '不在公开接单' }}</span></div>
-          <div class="flex justify-between gap-4"><span class="text-muted-foreground">最近状态变更</span><span class="text-right font-medium">{{ service.lastOnlineConfirmedAt }}</span></div>
-          <div class="flex justify-between gap-4"><span class="text-muted-foreground">响应时限</span><span class="text-right font-medium">{{ service.expectedResponseMinutes }} 分钟</span></div>
-          <div class="flex justify-between gap-4"><span class="text-muted-foreground">未解决纠纷</span><span class="text-right font-medium">{{ service.unresolvedDisputes }}</span></div>
-          <p v-if="service.warning" class="rounded-md bg-muted p-3 text-muted-foreground">{{ service.warning }}</p>
-        </CardContent>
-      </Card>
-    </div>
-  </div>
+    <ApiQuotaOwnerManager :api-service-id="service.id" :distribution-system="service.delivery" :default-multiplier="service.defaultMultiplier" />
+  </main>
 </template>

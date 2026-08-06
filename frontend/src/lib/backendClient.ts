@@ -1,3 +1,12 @@
+import { requireApiMode, type ApiMode } from '@/lib/apiMode'
+import { clearAnalyticsIdentity, identifyAnalyticsUser } from '@/lib/analytics'
+import { captureRegistrationAttribution, getRegistrationAttribution } from '@/lib/registrationAttribution'
+import { getReferralCapture } from '@/lib/referralCapture'
+import type {
+  AccountAppealSessionResponse,
+  AccountGovernanceAppeal as AccountGovernanceAppealResponse,
+} from '@/api/generated/openapi'
+
 type ProblemDetails = {
   title?: string
   status?: number
@@ -9,6 +18,7 @@ type ProblemDetails = {
 
 export type BackendSessionUser = {
   id: string
+  analyticsUserId: string
   username: string
   displayName: string
   isAdmin: boolean
@@ -32,6 +42,9 @@ export type OAuthStartResponse = {
   authorizationUrl: string
 }
 
+export type AccountAppealSession = AccountAppealSessionResponse
+export type AccountGovernanceAppeal = AccountGovernanceAppealResponse
+
 export type PasswordLoginRequest = {
   username: string
   password: string
@@ -53,27 +66,41 @@ export class BackendProblemError extends Error {
   }
 }
 
-const apiMode = import.meta.env.VITE_API_MODE
-const configuredBaseURL = import.meta.env.VITE_API_BASE_URL
-const explicitRealMode = apiMode === 'real'
+let runtimeApiMode: ApiMode | null = null
+let runtimeBaseURL = ''
 const SESSION_REFRESH_GRACE_MS = 60_000
-const SESSION_INVALIDATION_CODES = new Set([
+const SESSION_CACHE_INVALIDATION_CODES = new Set([
   'CSRF_TOKEN_INVALID',
+  'SESSION_EXPIRED',
+  'SESSION_REVOKED',
+])
+const SESSION_LOGIN_REQUIRED_CODES = new Set([
   'SESSION_EXPIRED',
   'SESSION_REVOKED',
 ])
 
 let csrfToken: string | null = null
+let accountAppealCSRFToken: string | null = null
 let cachedSession: BackendSession | null = null
 let sessionRequest: Promise<BackendSession> | null = null
 const pendingGetRequests = new Map<string, Promise<unknown>>()
+const sessionInvalidationHandlers = new Set<(error: BackendProblemError) => void>()
 
 export function shouldUseRealBackend() {
-  return explicitRealMode || Boolean(configuredBaseURL)
+  if (runtimeApiMode === null) {
+    if (import.meta.env.MODE === 'test') return false
+    throw new Error('Backend runtime config has not initialized NUXT_PUBLIC_API_MODE.')
+  }
+  return runtimeApiMode === 'real'
 }
 
 export function backendBaseURL() {
-  return configuredBaseURL ? configuredBaseURL.replace(/\/$/, '') : ''
+  return runtimeBaseURL.replace(/\/$/, '')
+}
+
+export function setBackendRuntimeConfig(config: { apiMode?: string, apiBaseUrl?: string }) {
+  runtimeApiMode = requireApiMode(config.apiMode)
+  runtimeBaseURL = config.apiBaseUrl?.trim() ?? ''
 }
 
 export function setBackendCSRFToken(token: string | null) {
@@ -87,6 +114,7 @@ export function getBackendCSRFToken() {
 function cacheBackendSession(session: BackendSession) {
   cachedSession = session
   setBackendCSRFToken(session.csrfToken)
+  identifyAnalyticsUser(session.user.analyticsUserId)
   return session
 }
 
@@ -94,6 +122,7 @@ function clearBackendSessionCache() {
   cachedSession = null
   sessionRequest = null
   setBackendCSRFToken(null)
+  clearAnalyticsIdentity()
 }
 
 function hasUsableCachedSession(now = Date.now()) {
@@ -102,17 +131,29 @@ function hasUsableCachedSession(now = Date.now()) {
   return Number.isFinite(expiresAt) && expiresAt > now + SESSION_REFRESH_GRACE_MS
 }
 
-function isSessionInvalidationError(error: unknown) {
-  return error instanceof BackendProblemError && SESSION_INVALIDATION_CODES.has(error.code)
+function isSessionCacheInvalidationError(error: unknown) {
+  return error instanceof BackendProblemError && SESSION_CACHE_INVALIDATION_CODES.has(error.code)
 }
 
 function isCSRFTokenInvalidError(error: unknown) {
   return error instanceof BackendProblemError && error.code === 'CSRF_TOKEN_INVALID'
 }
 
-function clearBackendSessionCacheOnAuthError(error: unknown) {
-  if (isSessionInvalidationError(error)) {
-    clearBackendSessionCache()
+function clearBackendSessionCacheOnAuthError(error: unknown, notifySessionInvalidation = true) {
+  if (!(error instanceof BackendProblemError)) return
+  const hadCachedSession = cachedSession !== null
+  if (isSessionCacheInvalidationError(error)) clearBackendSessionCache()
+  if (notifySessionInvalidation && hadCachedSession && SESSION_LOGIN_REQUIRED_CODES.has(error.code)) {
+    for (const handler of sessionInvalidationHandlers) {
+      handler(error)
+    }
+  }
+}
+
+export function subscribeToBackendSessionInvalidation(handler: (error: BackendProblemError) => void) {
+  sessionInvalidationHandlers.add(handler)
+  return () => {
+    sessionInvalidationHandlers.delete(handler)
   }
 }
 
@@ -129,7 +170,10 @@ function coalesceKey(path: string, init: RequestInit) {
   return `${backendBaseURL()}${path}|${headers.get('accept') ?? ''}`
 }
 
-export async function getCurrentBackendSession(options: { forceRefresh?: boolean } = {}) {
+export async function getCurrentBackendSession(options: {
+  forceRefresh?: boolean
+  notifySessionInvalidation?: boolean
+} = {}) {
   if (!options.forceRefresh && hasUsableCachedSession()) {
     return cachedSession!
   }
@@ -137,7 +181,9 @@ export async function getCurrentBackendSession(options: { forceRefresh?: boolean
     return sessionRequest
   }
 
-  sessionRequest = backendRequest<BackendSession>('/api/v1/auth/session')
+  sessionRequest = backendRequest<BackendSession>('/api/v1/auth/session', {}, {
+    notifySessionInvalidation: options.notifySessionInvalidation,
+  })
     .then(cacheBackendSession)
     .catch(error => {
       clearBackendSessionCache()
@@ -149,10 +195,80 @@ export async function getCurrentBackendSession(options: { forceRefresh?: boolean
   return sessionRequest
 }
 
-export async function startOAuthLogin(returnTo = '/') {
+export async function startOAuthLogin(returnTo = '/', inviteCode = getReferralCapture()) {
   const params = new URLSearchParams()
   if (returnTo) params.set('returnTo', returnTo)
+  if (inviteCode) params.set('inviteCode', inviteCode)
+  const attribution = getRegistrationAttribution() ?? captureRegistrationAttribution()
+  if (attribution?.source) params.set('utmSource', attribution.source)
+  if (attribution?.medium) params.set('utmMedium', attribution.medium)
+  if (attribution?.campaign) params.set('utmCampaign', attribution.campaign)
+  if (attribution?.referrerHost) params.set('referrerHost', attribution.referrerHost)
+  if (attribution?.landingPath) params.set('landingPath', attribution.landingPath)
   return backendRequest<OAuthStartResponse>(`/api/v1/auth/oauth/start?${params.toString()}`)
+}
+
+export async function startAccountAppealVerification() {
+  accountAppealCSRFToken = null
+  return backendRequest<OAuthStartResponse>('/api/v1/auth/account-appeal/start', {}, {
+    affectsSessionCache: false,
+  })
+}
+
+export async function getAccountAppealSession() {
+  try {
+    const session = await backendRequest<AccountAppealSession>('/api/v1/account-appeal/session', {}, {
+      affectsSessionCache: false,
+    })
+    accountAppealCSRFToken = session.csrfToken
+    return session
+  } catch (error) {
+    accountAppealCSRFToken = null
+    throw error
+  }
+}
+
+export async function submitAccountGovernanceAppeal(statement: string) {
+  if (!accountAppealCSRFToken) {
+    throw new BackendProblemError({
+      title: 'Account appeal verification required',
+      status: 401,
+      code: 'ACCOUNT_APPEAL_SESSION_REQUIRED',
+      detail: '请先通过 linux.do 验证受限账号。',
+    }, 401)
+  }
+
+  const requestKey = idempotencyKey('account-appeal-create')
+  const request = () => backendRequest<AccountGovernanceAppeal>('/api/v1/account-appeal/appeals', {
+    method: 'POST',
+    headers: jsonHeaders({
+      'X-Account-Appeal-CSRF': accountAppealCSRFToken ?? '',
+      'Idempotency-Key': requestKey,
+    }),
+    body: JSON.stringify({ statement }),
+  }, {
+    affectsSessionCache: false,
+  })
+
+  try {
+    const appeal = await request()
+    accountAppealCSRFToken = null
+    return appeal
+  } catch (error) {
+    if (!isCSRFTokenInvalidError(error)) {
+      if (error instanceof BackendProblemError && error.status === 401) accountAppealCSRFToken = null
+      throw error
+    }
+    await getAccountAppealSession()
+    try {
+      const appeal = await request()
+      accountAppealCSRFToken = null
+      return appeal
+    } catch (retryError) {
+      if (retryError instanceof BackendProblemError && retryError.status === 401) accountAppealCSRFToken = null
+      throw retryError
+    }
+  }
 }
 
 export async function loginWithPassword(payload: PasswordLoginRequest) {
@@ -194,7 +310,11 @@ async function decodeResponse<T>(response: Response): Promise<T> {
   return data as T
 }
 
-export async function backendRequest<T>(path: string, init: RequestInit = {}) {
+export async function backendRequest<T>(
+  path: string,
+  init: RequestInit = {},
+  options: { notifySessionInvalidation?: boolean, affectsSessionCache?: boolean } = {},
+) {
   const requestInit = {
     ...init,
     credentials: 'include' as const,
@@ -220,7 +340,9 @@ export async function backendRequest<T>(path: string, init: RequestInit = {}) {
     const response = await fetch(`${backendBaseURL()}${path}`, requestInit)
     return await decodeResponse<T>(response)
   } catch (error) {
-    clearBackendSessionCacheOnAuthError(error)
+    if (options.affectsSessionCache !== false) {
+      clearBackendSessionCacheOnAuthError(error, options.notifySessionInvalidation !== false)
+    }
     throw error
   }
 }
@@ -254,9 +376,33 @@ export async function backendMutation<T>(path: string, body: unknown, options: {
   }
 }
 
-export async function ensureBackendSession(username = 'orbit', admin = false) {
+export async function backendFormDataMutation<T>(path: string, body: FormData, options: {
+  idempotencyPrefix?: string
+  ifMatch?: number | string
+} = {}) {
+  const request = () => backendRequest<T>(path, {
+    method: 'POST',
+    headers: backendMutationHeaders(options),
+    body,
+  })
   try {
-    const current = await getCurrentBackendSession()
+    return await request()
+  } catch (error) {
+    if (!isCSRFTokenInvalidError(error)) throw error
+    await getCurrentBackendSession({ forceRefresh: true })
+    return request()
+  }
+}
+
+export async function ensureBackendSession(
+  username = 'orbit',
+  admin = false,
+  options: { notifySessionInvalidation?: boolean } = {},
+) {
+  try {
+    const current = await getCurrentBackendSession({
+      notifySessionInvalidation: options.notifySessionInvalidation,
+    })
     if (shouldUseRealBackend()) {
       if (!admin || current.user.isAdmin) return current
       throw new BackendProblemError({
@@ -270,17 +416,7 @@ export async function ensureBackendSession(username = 'orbit', admin = false) {
       return current
     }
   } catch (error) {
-    if (shouldUseRealBackend() && error instanceof BackendProblemError) {
-      throw error
-    }
-    if (shouldUseRealBackend()) {
-      throw new BackendProblemError({
-        title: 'Session required',
-        status: 401,
-        code: 'SESSION_EXPIRED',
-        detail: '请先登录后继续操作。',
-      }, 401)
-    }
+    if (shouldUseRealBackend()) throw error
   }
   const created = await backendJSON<BackendSession>('/api/v1/auth/dev-session', { username, admin })
   return cacheBackendSession(created)
@@ -301,17 +437,7 @@ export async function requireBackendSession() {
   try {
     return await getCurrentBackendSession()
   } catch (error) {
-    if (shouldUseRealBackend() && error instanceof BackendProblemError) {
-      throw error
-    }
-    if (shouldUseRealBackend()) {
-      throw new BackendProblemError({
-        title: 'Session required',
-        status: 401,
-        code: 'SESSION_EXPIRED',
-        detail: '请先登录后继续操作。',
-      }, 401)
-    }
+    if (shouldUseRealBackend()) throw error
     return ensureBackendSession()
   }
 }

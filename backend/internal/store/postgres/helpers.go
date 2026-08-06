@@ -104,6 +104,14 @@ func nullText(value string) any {
 	return value
 }
 
+func nullStringPointer(value string) *string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return nil
+	}
+	return &value
+}
+
 func nullNumeric(value string) any {
 	value = strings.TrimSpace(value)
 	if value == "" {
@@ -136,6 +144,11 @@ func isUniqueViolation(err error) bool {
 func isUniqueViolationOnConstraint(err error, constraintName string) bool {
 	var pgErr *pgconn.PgError
 	return errors.As(err, &pgErr) && pgErr.Code == "23505" && pgErr.ConstraintName == constraintName
+}
+
+func isForeignKeyViolation(err error) bool {
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) && pgErr.Code == "23503"
 }
 
 func internalStoreError() *domain.AppError {

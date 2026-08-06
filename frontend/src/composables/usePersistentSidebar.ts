@@ -1,4 +1,4 @@
-import { ref, watch } from 'vue'
+import { onMounted, ref, watch } from 'vue'
 
 export function initialSidebarCollapsed(storageValue: string | null, viewportWidth: number) {
   if (storageValue === 'true') return true
@@ -7,9 +7,12 @@ export function initialSidebarCollapsed(storageValue: string | null, viewportWid
 }
 
 export function usePersistentSidebar(storageKey: string) {
-  const stored = typeof window === 'undefined' ? null : window.localStorage.getItem(storageKey)
-  const viewportWidth = typeof window === 'undefined' ? 1440 : window.innerWidth
-  const sidebarCollapsed = ref(initialSidebarCollapsed(stored, viewportWidth))
+  const sidebarCollapsed = ref(false)
+
+  onMounted(() => {
+    const stored = window.localStorage.getItem(storageKey)
+    sidebarCollapsed.value = initialSidebarCollapsed(stored, window.innerWidth)
+  })
 
   watch(sidebarCollapsed, value => {
     if (typeof window !== 'undefined') window.localStorage.setItem(storageKey, String(value))

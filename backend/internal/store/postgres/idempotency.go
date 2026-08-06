@@ -24,8 +24,8 @@ func (s *Store) BeginIdempotency(ctx context.Context, entry idempotency.Entry) (
 	var existing idempotency.Entry
 	err = tx.QueryRow(ctx, `
 		SELECT user_id::text, route_key, idempotency_key, request_hash, status, COALESCE(response_status, 0),
-		       COALESCE(response_content_type, ''), COALESCE(response_body_json, 'null'::jsonb), COALESCE(resource_type, ''),
-		       COALESCE(resource_id::text, ''), created_at, completed_at, expires_at
+		       COALESCE(response_content_type, ''), COALESCE(response_body_json, 'null'::jsonb), response_body_cache_allowed,
+		       COALESCE(resource_type, ''), COALESCE(resource_id::text, ''), created_at, completed_at, expires_at
 		FROM idempotency_keys
 		WHERE user_id = $1 AND route_key = $2 AND idempotency_key = $3
 		FOR UPDATE
@@ -38,6 +38,7 @@ func (s *Store) BeginIdempotency(ctx context.Context, entry idempotency.Entry) (
 		&existing.Status,
 		&existing.ContentType,
 		&existing.Body,
+		&existing.BodyCacheAllowed,
 		&existing.ResourceType,
 		&existing.ResourceID,
 		&existing.CreatedAt,
@@ -45,6 +46,15 @@ func (s *Store) BeginIdempotency(ctx context.Context, entry idempotency.Entry) (
 		&existing.ExpiresAt,
 	)
 	if err == nil {
+		if !entry.CreatedAt.Before(existing.ExpiresAt) {
+			if appErr := resetIdempotencyEntry(ctx, tx, entry); appErr != nil {
+				return nil, appErr
+			}
+			if err := tx.Commit(ctx); err != nil {
+				return nil, internalStoreError()
+			}
+			return &entry, nil
+		}
 		if existing.RequestHash != entry.RequestHash {
 			if err := tx.Commit(ctx); err != nil {
 				return nil, internalStoreError()
@@ -57,24 +67,9 @@ func (s *Store) BeginIdempotency(ctx context.Context, entry idempotency.Entry) (
 			}
 			return &existing, nil
 		}
-		if entry.CreatedAt.After(existing.ExpiresAt) {
-			_, err = tx.Exec(ctx, `
-				UPDATE idempotency_keys
-				SET request_hash = $4,
-				    status = 'processing',
-				    response_status = NULL,
-				    response_content_type = NULL,
-				    response_body_json = NULL,
-				    response_body_cache_allowed = true,
-				    resource_type = NULL,
-				    resource_id = NULL,
-				    completed_at = NULL,
-				    created_at = $5,
-				    expires_at = $6
-				WHERE user_id = $1 AND route_key = $2 AND idempotency_key = $3
-			`, entry.UserID, entry.RouteKey, entry.Key, entry.RequestHash, entry.CreatedAt, entry.ExpiresAt)
-			if err != nil {
-				return nil, internalStoreError()
+		if existing.State == "failed" {
+			if appErr := resetIdempotencyEntry(ctx, tx, entry); appErr != nil {
+				return nil, appErr
 			}
 			if err := tx.Commit(ctx); err != nil {
 				return nil, internalStoreError()
@@ -106,56 +101,71 @@ func (s *Store) BeginIdempotency(ctx context.Context, entry idempotency.Entry) (
 	return &entry, nil
 }
 
-func (s *Store) CleanupExpiredIdempotency(ctx context.Context, before time.Time) *domain.AppError {
-	if s == nil || s.pool == nil {
-		return nil
-	}
-	_, err := s.pool.Exec(ctx, `
-		DELETE FROM idempotency_keys
-		WHERE status = 'processing' AND expires_at < $1
-	`, before)
-	if err != nil {
-		return internalStoreError()
-	}
-	return nil
-}
-
-func (s *Store) CompleteIdempotency(ctx context.Context, entry *idempotency.Entry, status int, contentType string, body []byte, resourceType, resourceID string, completedAt time.Time) *domain.AppError {
+func (s *Store) CompleteIdempotency(ctx context.Context, entry *idempotency.Entry, completion idempotency.Completion, completedAt time.Time) *domain.AppError {
 	if s == nil || s.pool == nil || entry == nil {
 		return nil
 	}
-	var bodyJSON json.RawMessage
-	if len(body) > 0 {
-		bodyJSON = append(bodyJSON, body...)
-	} else {
-		bodyJSON = json.RawMessage(`null`)
+	var bodyJSON any
+	cacheBody := !completion.SkipBodyCache && len(completion.Body) <= idempotency.MaxCachedResponseBodySize
+	if cacheBody {
+		raw := json.RawMessage(`null`)
+		if len(completion.Body) > 0 {
+			raw = append(json.RawMessage(nil), completion.Body...)
+		}
+		bodyJSON = raw
 	}
-	_, err := s.pool.Exec(ctx, `
+	commandTag, err := s.pool.Exec(ctx, `
 		UPDATE idempotency_keys
 		SET status = 'completed',
 		    response_status = $4,
 		    response_content_type = $5,
 		    response_body_json = $6,
-		    response_body_cache_allowed = true,
+		    response_body_cache_allowed = $10,
 		    resource_type = $7,
 		    resource_id = $8,
-		    completed_at = $9
-		WHERE user_id = $1 AND route_key = $2 AND idempotency_key = $3
-	`, entry.UserID, entry.RouteKey, entry.Key, status, contentType, bodyJSON, resourceType, nullUUID(resourceID), completedAt)
+		    completed_at = $9,
+		    expires_at = $11
+		WHERE user_id = $1
+		  AND route_key = $2
+		  AND idempotency_key = $3
+		  AND request_hash = $12
+		  AND created_at = $13
+		  AND status = 'processing'
+	`, entry.UserID, entry.RouteKey, entry.Key, completion.Status, completion.ContentType, bodyJSON,
+		completion.ResourceType, nullUUID(completion.ResourceID), completedAt, cacheBody, completedAt.Add(idempotency.CompletedRetention),
+		entry.RequestHash, entry.CreatedAt)
 	if err != nil {
 		return internalStoreError()
+	}
+	if commandTag.RowsAffected() != 1 {
+		return supersededIdempotencyError()
 	}
 	return nil
 }
 
-func (s *Store) CancelIdempotency(ctx context.Context, entry *idempotency.Entry) *domain.AppError {
+func (s *Store) CancelIdempotency(ctx context.Context, entry *idempotency.Entry, failedAt time.Time) *domain.AppError {
 	if s == nil || s.pool == nil || entry == nil {
 		return nil
 	}
 	_, err := s.pool.Exec(ctx, `
-		DELETE FROM idempotency_keys
-		WHERE user_id = $1 AND route_key = $2 AND idempotency_key = $3 AND status = 'processing'
-	`, entry.UserID, entry.RouteKey, entry.Key)
+		UPDATE idempotency_keys
+		SET status = 'failed',
+		    response_status = NULL,
+		    response_content_type = NULL,
+		    response_body_json = NULL,
+		    response_body_cache_allowed = false,
+		    resource_type = NULL,
+		    resource_id = NULL,
+		    completed_at = $4,
+		    expires_at = $5
+		WHERE user_id = $1
+		  AND route_key = $2
+		  AND idempotency_key = $3
+		  AND request_hash = $6
+		  AND created_at = $7
+		  AND status = 'processing'
+	`, entry.UserID, entry.RouteKey, entry.Key, failedAt, failedAt.Add(idempotency.FailedRetention),
+		entry.RequestHash, entry.CreatedAt)
 	if err != nil {
 		return internalStoreError()
 	}
@@ -166,8 +176,8 @@ func lockProcessingIdempotencyInTx(ctx context.Context, tx pgx.Tx, entry idempot
 	var existing idempotency.Entry
 	err := tx.QueryRow(ctx, `
 		SELECT user_id::text, route_key, idempotency_key, request_hash, status, COALESCE(response_status, 0),
-		       COALESCE(response_content_type, ''), COALESCE(response_body_json, 'null'::jsonb), COALESCE(resource_type, ''),
-		       COALESCE(resource_id::text, ''), created_at, completed_at, expires_at
+		       COALESCE(response_content_type, ''), COALESCE(response_body_json, 'null'::jsonb), response_body_cache_allowed,
+		       COALESCE(resource_type, ''), COALESCE(resource_id::text, ''), created_at, completed_at, expires_at
 		FROM idempotency_keys
 		WHERE user_id = $1 AND route_key = $2 AND idempotency_key = $3
 		FOR UPDATE
@@ -180,6 +190,7 @@ func lockProcessingIdempotencyInTx(ctx context.Context, tx pgx.Tx, entry idempot
 		&existing.Status,
 		&existing.ContentType,
 		&existing.Body,
+		&existing.BodyCacheAllowed,
 		&existing.ResourceType,
 		&existing.ResourceID,
 		&existing.CreatedAt,
@@ -192,47 +203,35 @@ func lockProcessingIdempotencyInTx(ctx context.Context, tx pgx.Tx, entry idempot
 	if err != nil {
 		return idempotency.Entry{}, internalStoreError()
 	}
+	if existing.RequestHash == entry.RequestHash && !sameIdempotencyGeneration(existing, entry) {
+		return idempotency.Entry{}, supersededIdempotencyError()
+	}
+	if !entry.CreatedAt.Before(existing.ExpiresAt) {
+		if appErr := resetIdempotencyEntry(ctx, tx, entry); appErr != nil {
+			return idempotency.Entry{}, appErr
+		}
+		return entry, nil
+	}
 	if existing.RequestHash != entry.RequestHash {
 		return idempotency.Entry{}, domain.NewError(http.StatusConflict, domain.CodeIdempotencyKeyReused, "Idempotency key reused", "同一个 Idempotency-Key 不能用于不同请求。")
 	}
 	if existing.State != "processing" {
 		return idempotency.Entry{}, domain.NewError(http.StatusConflict, domain.CodeIdempotencyInProgress, "Idempotency request in progress", "相同幂等请求仍在处理中。")
 	}
-	if entry.CreatedAt.After(existing.ExpiresAt) {
-		_, err = tx.Exec(ctx, `
-			UPDATE idempotency_keys
-			SET request_hash = $4,
-			    status = 'processing',
-			    response_status = NULL,
-			    response_content_type = NULL,
-			    response_body_json = NULL,
-			    response_body_cache_allowed = true,
-			    resource_type = NULL,
-			    resource_id = NULL,
-			    completed_at = NULL,
-			    created_at = $5,
-			    expires_at = $6
-			WHERE user_id = $1 AND route_key = $2 AND idempotency_key = $3
-		`, entry.UserID, entry.RouteKey, entry.Key, entry.RequestHash, entry.CreatedAt, entry.ExpiresAt)
-		if err != nil {
-			return idempotency.Entry{}, internalStoreError()
-		}
-		return entry, nil
-	}
 	return existing, nil
 }
 
 func completeIdempotencyInTx(ctx context.Context, tx pgx.Tx, entry idempotency.Entry, completion idempotency.Completion, completedAt time.Time) *domain.AppError {
 	var bodyJSON any
-	cacheBody := !completion.SkipBodyCache
-	if !completion.SkipBodyCache {
+	cacheBody := !completion.SkipBodyCache && len(completion.Body) <= idempotency.MaxCachedResponseBodySize
+	if cacheBody {
 		raw := json.RawMessage(`null`)
 		if len(completion.Body) > 0 {
 			raw = append(json.RawMessage(nil), completion.Body...)
 		}
 		bodyJSON = raw
 	}
-	_, err := tx.Exec(ctx, `
+	commandTag, err := tx.Exec(ctx, `
 		UPDATE idempotency_keys
 		SET status = 'completed',
 		    response_status = $4,
@@ -241,15 +240,53 @@ func completeIdempotencyInTx(ctx context.Context, tx pgx.Tx, entry idempotency.E
 		    response_body_cache_allowed = $10,
 		    resource_type = $7,
 		    resource_id = $8,
-		    completed_at = $9
+		    completed_at = $9,
+		    expires_at = $11
 		WHERE user_id = $1
 		  AND route_key = $2
 		  AND idempotency_key = $3
+		  AND request_hash = $12
+		  AND created_at = $13
 		  AND status = 'processing'
 	`, entry.UserID, entry.RouteKey, entry.Key, completion.Status, completion.ContentType, bodyJSON,
-		completion.ResourceType, nullUUID(completion.ResourceID), completedAt, cacheBody)
+		completion.ResourceType, nullUUID(completion.ResourceID), completedAt, cacheBody, completedAt.Add(idempotency.CompletedRetention),
+		entry.RequestHash, entry.CreatedAt)
+	if err != nil {
+		return internalStoreError()
+	}
+	if commandTag.RowsAffected() != 1 {
+		return supersededIdempotencyError()
+	}
+	return nil
+}
+
+func resetIdempotencyEntry(ctx context.Context, tx pgx.Tx, entry idempotency.Entry) *domain.AppError {
+	_, err := tx.Exec(ctx, `
+		UPDATE idempotency_keys
+		SET request_hash = $4,
+		    status = 'processing',
+		    response_status = NULL,
+		    response_content_type = NULL,
+		    response_body_json = NULL,
+		    response_body_cache_allowed = false,
+		    resource_type = NULL,
+		    resource_id = NULL,
+		    completed_at = NULL,
+		    created_at = $5,
+		    expires_at = $6
+		WHERE user_id = $1 AND route_key = $2 AND idempotency_key = $3
+	`, entry.UserID, entry.RouteKey, entry.Key, entry.RequestHash, entry.CreatedAt, entry.ExpiresAt)
 	if err != nil {
 		return internalStoreError()
 	}
 	return nil
+}
+
+func sameIdempotencyGeneration(current, entry idempotency.Entry) bool {
+	return current.RequestHash == entry.RequestHash &&
+		current.CreatedAt.UnixMicro() == entry.CreatedAt.UnixMicro()
+}
+
+func supersededIdempotencyError() *domain.AppError {
+	return domain.NewError(http.StatusConflict, domain.CodeIdempotencyInProgress, "Idempotency request superseded", "该幂等请求已被新的执行接管。")
 }

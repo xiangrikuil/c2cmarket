@@ -61,55 +61,60 @@ In real backend mode, product catalog state belongs to `GET /api/v1/product-cate
 ### 1. Scope / Trigger
 
 - Trigger: frontend work touching post-login routing, `AppShell.vue`, `MyCenterPage.vue`, `/my/account`, login return targets, verified email state, or password state.
-- The first public registration/login path is linux.do OAuth. OAuth-created accounts have no default password, so the frontend must force users to complete recoverable login settings before ordinary business use.
+- The first public registration/login path is linux.do OAuth. OAuth-created accounts have no default password, so the frontend must force linux.do-bound users to complete recoverable login settings before authenticated workspace or transaction actions. Public marketplace discovery remains browseable. Unbound development or bootstrap accounts cannot configure a backup password and must not be blocked by that inapplicable requirement.
 
 ### 2. Signatures
 
 ```ts
-type AccountRecoveryProfile = Pick<UserProfile, 'emailVerified' | 'passwordConfigured'>
+type AccountRecoveryProfile = Pick<UserProfile, 'emailVerified' | 'passwordConfigured'> & {
+  linuxDoBinding: Pick<UserProfile['linuxDoBinding'], 'bound'>
+}
 
 const ACCOUNT_RECOVERY_PATH = '/my/account'
 
 function isAccountRecoveryComplete(profile: AccountRecoveryProfile): boolean
 function accountRecoveryRequirements(profile: AccountRecoveryProfile): AccountRecoveryRequirement[]
 function isAccountRecoveryAllowedPath(path: string): boolean
+function shouldRedirectToAccountRecovery(path: string, authAccess: unknown): boolean
 function sanitizeAccountRecoveryReturnTo(value: unknown): string | null
 ```
 
 ### 3. Contracts
 
-- The source of truth is `GET /api/v1/me/profile` mapped to `UserProfile.emailVerified` and `UserProfile.passwordConfigured`.
+- The source of truth is `GET /api/v1/me/profile` mapped to `UserProfile.emailVerified`, `UserProfile.passwordConfigured`, and `UserProfile.linuxDoBinding.bound`.
 - Do not store an additional "onboarding complete" flag in Pinia, localStorage, sessionStorage, or route meta.
-- Incomplete logged-in accounts must be redirected from ordinary business pages to `/my/account`.
-- Allowed paths before completion are intentionally narrow: root overview, login/mock route, `/my/account`, announcement detail pages, and public user profiles.
+- Incomplete logged-in accounts are redirected only from routes whose `meta.auth` is `user` or `admin`. Public market lists and details remain browseable so account recovery does not block discovery.
+- The path allowlist prevents loops and preserves setup/explanation routes such as `/my/account`, login/mock, announcement details, and public profiles even when they carry authenticated shell metadata.
 - Redirects may preserve an internal `returnTo`, but `returnTo` must be same-origin path-only and must not point back to an allowed/setup page.
-- `/my/account` must show both requirements and let the user continue to the sanitized `returnTo` only after both are complete.
+- `/my/account` requires a verified email for every account. It requires and renders the backup-password step only when `linuxDoBinding.bound=true`; unbound accounts must not see a password action, password step, or recovery redirect caused only by `passwordConfigured=false`.
 - The gate is frontend-enforced. If backend API blocking is required later, create a separate backend policy task instead of hiding that decision in frontend code.
 
 ### 4. Validation & Error Matrix
 
 | Condition | Expected behavior |
 | --- | --- |
-| `emailVerified=false` or `passwordConfigured=false` and user opens `/carpools` | Redirect to `/my/account?returnTo=/carpools...`. |
-| Both fields are true | No redirect; original route remains usable. |
+| Incomplete account opens public `/carpools`, `/api-market/:id`, or `/official-prices/:id` | Keep the public route visible; do not redirect. |
+| Incomplete account opens authenticated `/carpools/new`, `/my/api-orders`, or `/admin` | Redirect to `/my/account` with an internal `returnTo`. |
+| Email is verified and the account is unbound | No password step or redirect caused by `passwordConfigured=false`. |
+| Email is verified and a linux.do-bound account has a password | No redirect; original route remains usable. |
 | Incomplete account opens `/my/account` | No redirect loop; recovery tasks render. |
 | Incomplete account opens `/u/:username` or `/announcements/:slug` | No redirect. |
 | `returnTo` is external, protocol-relative, blank, or points to setup/allowed path | Drop it and do not render a continue action. |
 
 ### 5. Good/Base/Bad Cases
 
-- Good: `AppShell.vue` imports shared account recovery helpers and redirects incomplete accounts from `/api-market/new` to `/my/account`.
+- Good: `AppShell.vue` passes `route.path` and `route.meta.auth` to the shared redirect helper, keeps `/api-market/:id` public, and redirects incomplete accounts from `/api-market/new` to `/my/account`.
 - Base: login page still uses linux.do OAuth and password-login recovery copy; it does not become a public password registration page.
-- Bad: each page independently checks `profile.emailVerified` and redirects with locally duplicated whitelist logic.
+- Bad: each page independently checks `profile.emailVerified`, or the shell redirects every route without consulting `route.meta.auth`.
 
 ### 6. Tests Required
 
-- Unit tests for completion, outstanding requirements, allowed paths, and return target sanitization.
+- Unit tests for completion, outstanding requirements, allowed paths, auth-meta redirect decisions, and return target sanitization.
 - Type check: `pnpm --dir frontend exec vue-tsc -b --pretty false`.
-- Production build: `VITE_API_MODE=real pnpm --dir frontend exec vite build`.
+- Production build: real-mode `pnpm --dir frontend build` with the required Nuxt runtime API variables.
 - Browser smoke when available:
-  - incomplete account opens a business route and reaches `/my/account`;
-  - public allowed route is not redirected;
+  - incomplete account opens an authenticated publish/transaction route and reaches `/my/account`;
+  - public market list and detail routes are not redirected;
   - completing email plus password setup allows continuing to the original route.
 
 ### 7. Wrong vs Correct
@@ -123,22 +128,130 @@ if (!profile.emailVerified) router.push('/my/account')
 #### Correct
 
 ```ts
-if (!isAccountRecoveryComplete(profile) && !isAccountRecoveryAllowedPath(route.path)) {
+if (!isAccountRecoveryComplete(profile) && shouldRedirectToAccountRecovery(route.path, route.meta.auth)) {
   router.replace({ path: ACCOUNT_RECOVERY_PATH, query: { returnTo: route.fullPath } })
 }
 ```
 
-## Scenario: API Service Account Payment Defaults Snapshot Into Publish Payload
+## Scenario: Development API Mode And Account Recovery Persistence
 
 ### 1. Scope / Trigger
 
-- Trigger: frontend work touching API service payment settings, `ApiServicePublishPage.vue`, My Center contact/workspace settings, or `submitApiService()` payload construction.
+- Trigger: changes to Nuxt development commands, dotenv loading, runtime API
+  mode, the local frontend/backend ports, or account recovery persistence.
+- Account recovery state is an identity-domain record, not a page preference.
+  Real-mode development must use the same backend and PostgreSQL ownership as
+  staging and production.
+
+### 2. Signatures
+
+```ts
+type ApiMode = 'real' | 'mock'
+
+function requireApiMode(value: unknown): ApiMode
+function setBackendRuntimeConfig(config: {
+  apiMode?: string
+  apiBaseUrl?: string
+}): void
+function shouldUseRealBackend(): boolean
+```
+
+```text
+pnpm --dir frontend dev       -> real, http://127.0.0.1:5173
+pnpm --dir frontend dev:mock  -> mock, http://127.0.0.1:5173
+
+NUXT_PUBLIC_API_MODE=real|mock
+NUXT_PUBLIC_SITE_URL=http://127.0.0.1:5173
+NUXT_DEV_API_PROXY_TARGET=http://127.0.0.1:8080
+```
+
+### 3. Contracts
+
+| Level | Change | Appropriate use | Limitation |
+| --- | --- | --- | --- |
+| Minimum immediate repair | Start Nuxt with `NUXT_PUBLIC_API_MODE=real`, or explicitly load the tracked development dotenv file | Unblock the current local session while backend and PostgreSQL are already running | Depends on the exact start command and does not prevent a later silent fallback |
+| Minimum repository repair | Make the default `dev` script load the real-mode development dotenv file and document the command | Small, reviewable correction for the confirmed startup bug | Still needs a contract test to keep the command and runtime mode aligned |
+| Long-term repair | Default development to validated `real` mode, provide a separate explicit Mock command, fail fast on missing/invalid mode, and test persistence across a profile refetch/page refresh | Normal ongoing development | Slightly more configuration and test work, but removes ambiguous runtime behavior |
+
+- The long-term repair is the default when the backend contract and database
+  persistence already exist.
+- The default `dev` command must explicitly load `frontend/.env.development`.
+  Do not assume Nuxt loads `.env.development` without `--dotenv`.
+- Browser API calls use the same-origin `/api` path. Nuxt proxies it to the
+  backend on `127.0.0.1:8080`; a public API base URL is not required locally.
+- `real` and `mock` are the only valid modes. Missing or invalid mode fails
+  during config loading and must not select Mock.
+- Mock is available only through `dev:mock`. Its state is demo data and is not
+  a persistence acceptance environment.
+- Do not add `localStorage`, `sessionStorage`, or Pinia persistence for
+  `email`, `emailVerified`, `emailVerifiedAt`, or `passwordConfigured` in real
+  mode. Refresh must read those fields from `GET /api/v1/me/profile`.
+- Backend unavailability in real mode remains a visible request failure.
+
+### 4. Validation & Error Matrix
+
+| Condition | Expected behavior |
+| --- | --- |
+| `NUXT_PUBLIC_API_MODE` is missing or unknown | Nuxt config and runtime config initialization fail with an explicit mode error |
+| Default `dev` starts | Runtime payload contains `apiMode:"real"` and listens on `5173` |
+| `dev:mock` starts | Runtime payload contains `apiMode:"mock"` and does not claim database persistence |
+| Backend on `8080` is unavailable in real mode | API request fails visibly; no Mock record is returned |
+| Email/password setup completes in real mode | PostgreSQL-backed profile returns `emailVerified=true` and `passwordConfigured=true` after refetch and frontend restart |
+
+### 5. Good / Base / Bad Cases
+
+- Good: `pnpm --dir frontend dev` loads the tracked development dotenv file,
+  proxies `/api` to `8080`, and a refreshed account page reads completed state
+  from the backend profile.
+- Base: a developer intentionally runs `dev:mock` for a standalone UI demo and
+  accepts that a reload may restore Mock seed state.
+- Bad: an empty mode silently executes `api.ts` Mock mutations, or the frontend
+  stores recovery fields in browser storage to hide that no database write
+  occurred.
+
+### 6. Tests Required
+
+- Unit-test `requireApiMode()` with `real`, `mock`, blank, missing, and unknown
+  values.
+- Assert the default and Mock package commands load the expected mode and use
+  port `5173`.
+- Adapter regression: set password, confirm email, discard the frontend query
+  cache, fetch `GET /api/v1/me/profile` again, and verify both completion
+  fields.
+- Runtime smoke: read the Nuxt payload for both start commands and assert
+  `apiMode`; in real mode, proxy `/readyz` and confirm database readiness.
+- Database smoke: complete account recovery through a linux.do-bound fake OAuth
+  user, restart the frontend, and read the completed profile again.
+- Run full Vitest, Nuxt typecheck, real-mode production build, relevant backend
+  tests, source-package test, and `git diff --check`.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```ts
+const apiMode = process.env.NUXT_PUBLIC_API_MODE ?? ''
+const useMock = apiMode !== 'real'
+```
+
+#### Correct
+
+```ts
+const apiMode = requireApiMode(process.env.NUXT_PUBLIC_API_MODE)
+const useRealBackend = apiMode === 'real'
+```
+
+## Scenario: API Service Account Payment Settings Share One Editor And Snapshot Into Publish Payload
+
+### 1. Scope / Trigger
+
+- Trigger: frontend work touching API service payment settings, `ApiPaymentSettingsEditor.vue`, `ApiPaymentSettingsDialog.vue`, `ApiServicePublishPage.vue`, quota-rush publishing, My Center contact/workspace settings, or `submitApiService()` payload construction.
 - The platform is a matching surface, not a payment processor. Account-level settings may describe off-platform confirmation instructions only.
 
 ### 2. Signatures
 
 ```ts
-type ApiPaymentMethod = 'wechat' | 'alipay' | 'usdt'
+type ApiPaymentMethod = 'wechat' | 'alipay'
 
 type ApiPaymentAccountSettings = {
   paymentWindowMinutes: number
@@ -153,6 +266,18 @@ type ApiPaymentAccountSettings = {
 
 getApiPaymentAccountSettings(): Promise<ApiPaymentAccountSettings>
 updateApiPaymentAccountSettings(payload: Omit<ApiPaymentAccountSettings, 'updatedAt'>): Promise<ApiPaymentAccountSettings>
+
+GET /api/v1/me/api-payment-settings
+PUT /api/v1/me/api-payment-settings
+
+type ApiPaymentSettingsEditorEmits = {
+  cancel: []
+  'dirty-change': [dirty: boolean]
+  saved: [settings: ApiPaymentAccountSettings]
+}
+
+useApiPaymentAccountSettingsQuery()
+useUpdateApiPaymentAccountSettingsMutation()
 ```
 
 Publish payload fields remain service-level:
@@ -167,53 +292,86 @@ submitApiService({
 
 ### 3. Contracts
 
-- My Center owns editing API payment defaults.
+- My Center and API publish surfaces must compose the same `ApiPaymentSettingsEditor`; do not keep a second page-local payment form.
+- A publish summary emits an `edit` command. The owning publish page renders one `ApiPaymentSettingsDialog` and must not navigate to `/my/contacts` for this action.
+- Every dialog opening starts from a deep clone of the latest saved query data. Draft edits remain component-local and must not mutate the summary, query cache, or publish snapshot before save succeeds.
 - The buyer payment confirmation window is fixed at 10 minutes; do not restore a 3-15 minute editor.
 - WeChat Pay and Alipay settings are complete when a QR-code data URL is present. Their text instructions are optional operational notes.
-- USDT settings are complete when off-platform network/address confirmation instructions are present. USDT does not use the QR-code field.
+- WeChat Pay and Alipay are the only supported account payment methods. Normalization must discard legacy or unknown methods such as `usdt`.
+- The editor uses one `RadioGroup`: choosing WeChat Pay disables Alipay and choosing Alipay disables WeChat Pay. Inactive QR-code and instruction data remain in the draft and saved account record for later switching.
+- Completeness requires exactly one enabled, complete method. Normalization of legacy Mock data with multiple enabled methods keeps only the first supported enabled method deterministically.
 - Do not add real-name identity fields to API payment settings.
-- The API service publish page must render a summary of those defaults, not a full payment editor.
-- Publishing must copy the current account defaults into `paymentWindowMinutes` and `paymentOptions` so every service stores a publish-time snapshot.
-- Updating My Center later must not silently change already-published services.
-- Frontend workspace persistence may use a local facade store until a real account-level backend endpoint exists, but service publish must still submit the existing service-level backend order-settings payload.
+- API service and quota-rush publish pages render one compact row for the active method and open the shared editor in a dialog; they must not render cards for every supported method or duplicate the full editor inside the form section.
+- In real mode the facade must call the authenticated backend endpoints. It must not read, write, or fall back to `localStorage` after a backend failure. Mock mode may keep the existing local facade store.
+- Mutation success must write the returned settings into `apiPaymentAccountSettingsQueryKey()`. The existing publish-page watcher then clones query data into `form.paymentWindowMinutes` and `form.paymentOptions`; do not add a second snapshot-update path.
+- Successful dialog save closes the dialog and shows success feedback. Failed save keeps the dialog and draft open.
+- Closing a dirty dialog through Cancel, close button, overlay, or Escape requires discard confirmation. Continuing keeps the draft; discarding leaves saved settings and the publish form unchanged.
+- Entering quota-rush new-service mode with a successfully loaded but incomplete account setting opens the shared dialog once. Dismissing it preserves the service and quota drafts; the next continue attempt opens it again.
+- QR removal changes only the draft after a dedicated confirmation and takes effect only after saving.
+- My Center must feed the shared editor's dirty state into its existing page-level unsaved-changes guard.
+- Publishing copies the current account defaults into `paymentWindowMinutes` and `paymentOptions` so every new service stores a publish-time snapshot. Order creation then copies that service snapshot into the order.
+- Updating account settings later must not silently change already-published services; changing a service must not rewrite existing orders.
 - Public API service list/detail responses must not expose raw payment instructions or QR-code material. A purchase-intent detail may show the frozen snapshot to participants only.
 
 ### 4. Validation & Error Matrix
 
 | Condition | Expected behavior |
 | --- | --- |
-| `paymentWindowMinutes !== 10` | My Center save blocks; publish page remains blocked. |
-| No enabled payment method | My Center shows a missing-settings reason; publish CTA says to configure account payment settings. |
-| Enabled WeChat Pay / Alipay lacks a QR code | My Center save blocks and publish remains incomplete. |
-| Enabled USDT has blank instructions | My Center save blocks and publish remains incomplete. |
+| `paymentWindowMinutes !== 10` | Shared editor save blocks; publish page remains blocked. |
+| No enabled payment method | Shared editor shows a missing-settings reason; publish CTA says to configure account payment settings. |
+| Both methods are enabled in a draft | Completeness fails and save requires one selected method. |
+| Enabled WeChat Pay / Alipay lacks a QR code | Shared editor save blocks and publish remains incomplete. |
+| Legacy or unknown payment method is loaded | Normalization drops it; only WeChat Pay and Alipay remain, with at most one enabled. |
 | Instructions include API keys, tokens, passwords, cookies, sessions, payment codes, bank-card numbers, or panel credentials | Save/publish validation rejects the content with visible boundary copy. |
-| Account settings complete | Publish page copies settings into the hidden service snapshot fields and preview shows method labels plus confirmation window. |
+| Dirty dialog close is requested | Show discard confirmation; continuing preserves the draft and discarding preserves saved/query state. |
+| Account update succeeds | Query cache updates, the existing watcher refreshes the publish snapshot, the dialog closes, and success feedback appears. |
+| Account update fails | Query cache and publish snapshot remain unchanged; the dialog stays open with its draft. |
+| Real-mode account read fails | Show the request error; do not return Mock or browser-local settings as success. |
+| Quota new-service continue runs without a complete setting | Keep every publish field, open the shared dialog, and remain on the same step and route. |
+| Account settings are complete | Publish page copies settings into the hidden service snapshot fields and preview shows method labels plus confirmation window. |
 
 ### 5. Good/Base/Bad Cases
 
-- Good: merchant uploads a WeChat Pay QR code once in My Center; `/api-market/new` shows `微信 · 固定 10 分钟确认`; submit still includes service-level `paymentOptions`.
-- Base: no account settings exist; publish page shows a read-only summary with a link to `/my/contacts` and disables submission.
-- Bad: every API service publish form asks the merchant to retype payment instructions, or a service stores a live reference to mutable account settings.
+- Good: a merchant opens the publish summary dialog, selects Alipay, saves its QR code, immediately sees one `支付宝 · 固定 10 分钟确认` row, and submit still includes service-level `paymentOptions`.
+- Base: no account settings exist; quota new-service mode opens an isolated inline dialog without changing the route, step, service form, or quota form.
+- Bad: both methods remain enabled, the summary renders one card per method, real mode reads `localStorage`, the summary links to `/my/contacts`, or a service stores a live reference to mutable account settings.
 
 ### 6. Tests Required
 
+- Unit tests must cover normalization to WeChat Pay/Alipay only, legacy dual-enabled normalization to one method, exactly-one completeness, QR data-URL validation, fixed 10-minute normalization, and cloned draft isolation.
+- Backend-adapter tests must assert GET/PUT paths, session/CSRF behavior, response normalization, and no real-mode Mock fallback.
+- Component/source regressions must prove My Center and publish reuse the shared editor, the editor uses radio semantics, publish owns one dialog, the summary renders only the enabled method, and the publish summary has no `RouterLink` or `/my/contacts`.
+- Dialog regressions must cover fresh sessions, dirty close, continue editing, discard, successful/failed save lifecycle, QR upload validation, and confirmed QR removal.
+- Query tests must assert mutation success updates `apiPaymentAccountSettingsQueryKey()` and the existing publish watcher copies that data into the service snapshot.
+- Quota publish regressions must assert missing settings open the dialog on new-service entry and again on continue, while the service/quota form objects remain intact.
+- `pnpm --dir frontend test`.
 - `pnpm --dir frontend exec vue-tsc -b --pretty false`.
-- Real-mode build: `VITE_API_MODE=real pnpm --dir frontend exec vite build`.
+- Real-mode build: `pnpm --dir frontend build` with the required Nuxt runtime API variables.
 - Source scan product-boundary copy around the touched publish/My Center files for payment custody, credentials, API keys, tokens, cookies, sessions, payment codes, and escrow wording.
-- Browser or curl smoke must verify `/api-market/new` direct deep link renders the SPA and does not get swallowed by the Vite `/api/` proxy.
+- Browser smoke at `1440x900` and `390x844` must verify free, fixed-package, and limited modes open the dialog without route changes; dirty close/discard works; save updates the summary; mobile content scrolls with a reachable save action and no horizontal overflow.
+- Browser or curl smoke must verify `/api-market/new` direct deep link renders the application and does not get swallowed by the Nuxt development `/api/` proxy.
 
 ### 7. Wrong vs Correct
 
 #### Wrong
 
 ```vue
+<RouterLink to="/my/contacts">配置 API 收款设置</RouterLink>
 <PaymentSettingsSection :form="form" />
 ```
 
 #### Correct
 
 ```vue
-<AccountPaymentSummarySection :form="form" :settings="accountPaymentSettingsValue" />
+<AccountPaymentSummarySection
+  :form="form"
+  :settings="accountPaymentSettingsValue"
+  @edit="paymentSettingsDialogOpen = true"
+/>
+<ApiPaymentSettingsDialog
+  v-model:open="paymentSettingsDialogOpen"
+  :settings="accountPaymentSettingsValue"
+/>
 ```
 
 ```ts
@@ -231,7 +389,7 @@ Use global/session mock state only when multiple pages must observe the same rec
 
 - API orders shown in API detail, buyer list, merchant list, notifications, and admin tracking views. Purchase intents remain internal adapter state and must not become a parallel user-facing queue.
 - Carpool applications shown in carpool detail, my rides, owner applications, notifications, and admin views.
-- Published carpool/API service/price lead/demand records that must appear in both user and admin pages.
+- Published carpool, API service, and price records that must appear in both user and admin pages.
 - Feedback tickets shown in the avatar menu, feedback history, notification center, and admin feedback queue.
 - Backend session and permission state shown in the login/account shell should be refreshed from `getCurrentBackendSession()` instead of mirrored as a mutable role selector in global state.
 - Product catalog plans shown in low-price submit and carpool publish flows after admin plan mutations.
@@ -306,7 +464,7 @@ POST /api/v1/owner/api-services/{id}/publish
 ### 6. Tests Required
 
 - `pnpm --dir frontend exec vue-tsc -b --pretty false`.
-- Real-mode build: `VITE_API_MODE=real pnpm --dir frontend exec vite build`.
+- Real-mode build: `pnpm --dir frontend build` with the required Nuxt runtime API variables.
 - Source scan on `ApiServicePublishPage.vue` for removed copy: `提交审核`, `保存草稿`, `等待管理员审核`, `仍需手动上线`.
 - Backend full tests when the real adapter sequence depends on existing owner action contracts: `cd backend && go test ./...`.
 
@@ -386,7 +544,7 @@ type BackendAPIService = {
 ### 6. Tests Required
 
 - `pnpm --dir frontend exec vue-tsc -b --pretty false`.
-- Real-mode build: `VITE_API_MODE=real pnpm --dir frontend exec vite build`.
+- Real-mode build: `pnpm --dir frontend build` with the required Nuxt runtime API variables.
 - Backend route tests or full suite to preserve the existing public 404-before-order-settings contract: `cd backend && go test ./...`.
 - Source scan for public detail links around API services when changing owner/admin/search/favorite surfaces.
 
@@ -480,7 +638,7 @@ Named SSE events `ready` and `invalidate` carry `{ schemaVersion: 1, topics: ['a
 - All-live invalidation list covers summary, notification, order, carpool, feedback, announcement, and admin prefixes.
 - Source/integration tests assert no hard-coded admin counts, undefined admin queues stay unbadged, bell has a separate full-center link, and AppShell no longer mounts full lists for counts.
 - Mutation tests assert notification/order/feedback/announcement success invalidates `navigation-badges`.
-- Full Vitest, Vue typecheck, and `VITE_API_MODE=real` production build.
+- Full Vitest, Nuxt typecheck, and real-mode Nuxt production build.
 
 ### 7. Wrong vs Correct
 
@@ -531,7 +689,7 @@ useRealtimeSync(isAuthenticated) // invalidates; REST recomputes
 - Mock facade test for pending-only cancellation and reason persistence.
 - `pnpm --dir frontend exec vitest run`.
 - `pnpm --dir frontend exec vue-tsc -b --pretty false`.
-- `VITE_API_MODE=real pnpm --dir frontend exec vite build`.
+- Real-mode `pnpm --dir frontend build` with the required Nuxt runtime API variables.
 
 ## Scenario: Decimal API Orders As The UI Source Of Truth
 
@@ -577,7 +735,7 @@ ApiOrder.requestedUsdAllowanceDecimal?: string
 
 - Decimal helper regression for `10 / 0.8 = 12.500000`, formatting, comparison, and addition.
 - Admin adapter regression proving a provided raw credential does not appear in the row JSON.
-- Full Vitest suite, `vue-tsc -b`, and `VITE_API_MODE=real vite build`.
+- Full Vitest suite, Nuxt typecheck, and real-mode Nuxt production build.
 
 ### 7. Wrong vs Correct
 

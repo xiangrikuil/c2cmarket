@@ -71,7 +71,10 @@ func insertCarpoolListingInTx(ctx context.Context, tx pgx.Tx, listing carpool.Li
 		INSERT INTO carpool_listings (
 			id, owner_user_id, product_plan_id, owner_contact_method_id, title, summary, access_arrangement,
 			distribution_method, distribution_method_note, provides_admin_account,
-			region_code, region_name, source_url, price_monthly_cny, service_multiplier, monthly_quota_amount, quota_label, quota_unit, quota_period,
+			region_code, region_name, source_url, price_monthly_cny, service_multiplier,
+			weekly_quota_amount, monthly_quota_amount, follows_official_quota_reset, vps_region,
+			supports_mainland_china_direct_connection, opening_channel_code, custom_opening_channel,
+			payment_method_code, custom_payment_method, quota_label, quota_unit, quota_period,
 			buyer_seat_capacity, active_buyer_members,
 			status, policy_version, risk_notice_code, risk_ack_required,
 			created_at, updated_at, version
@@ -79,14 +82,18 @@ func insertCarpoolListingInTx(ctx context.Context, tx pgx.Tx, listing carpool.Li
 		VALUES (
 			$1, $2, $3, $4, $5, $6, $7,
 			$8, $9, $10,
-			$11, $12, $13, $14, $15, $16, $17, $18, $19,
-			$20, $21,
-			$22, $23, $24, $25,
-			$26, $27, $28
+			$11, $12, $13, $14, $15,
+			$16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27,
+			$28, $29,
+			$30, $31, $32, $33,
+			$34, $35, $36
 		)
 	`, listing.ID, listing.OwnerUserID, listing.ProductPlanID, listing.OwnerContactMethodID, listing.Title, listing.Summary, listing.AccessArrangement,
 		listing.DistributionMethod, listing.DistributionMethodNote, listing.ProvidesAdminAccount,
-		listing.RegionCode, listing.RegionName, nullText(listing.SourceURL), listing.PriceMonthlyCNY, listing.ServiceMultiplier, listing.MonthlyQuotaAmount, listing.QuotaLabel, listing.QuotaUnit, listing.QuotaPeriod,
+		listing.RegionCode, listing.RegionName, nullText(listing.SourceURL), listing.PriceMonthlyCNY, listing.ServiceMultiplier,
+		listing.WeeklyQuotaAmount, listing.MonthlyQuotaAmount, listing.FollowsOfficialQuotaReset, listing.VPSRegion,
+		listing.SupportsMainlandChinaDirectConnection, listing.OpeningChannelCode, listing.CustomOpeningChannel,
+		listing.PaymentMethodCode, listing.CustomPaymentMethod, listing.QuotaLabel, listing.QuotaUnit, listing.QuotaPeriod,
 		listing.BuyerSeatCapacity, listing.ActiveBuyerMembers,
 		listing.Status, listing.PolicyVersion, nullText(listing.RiskNoticeCode), listing.RiskAckRequired,
 		listing.CreatedAt, listing.UpdatedAt, listing.Version)
@@ -133,7 +140,7 @@ func (s *Store) ListPublicCarpoolListings(ctx context.Context, page domain.PageR
 		rows, err = s.pool.Query(ctx, `
 			SELECT `+carpoolListingColumns+`
 			FROM `+carpoolListingViewSource+`
-			WHERE status = 'active'
+			WHERE `+publicCarpoolListingPredicate("listing_view")+`
 			ORDER BY updated_at DESC, id DESC
 			LIMIT $1
 		`, limit)
@@ -141,7 +148,7 @@ func (s *Store) ListPublicCarpoolListings(ctx context.Context, page domain.PageR
 		rows, err = s.pool.Query(ctx, `
 			SELECT `+carpoolListingColumns+`
 			FROM `+carpoolListingViewSource+`
-			WHERE status = 'active'
+			WHERE `+publicCarpoolListingPredicate("listing_view")+`
 			  AND (updated_at, id) < ($1, $2::uuid)
 			ORDER BY updated_at DESC, id DESC
 			LIMIT $3
@@ -162,14 +169,31 @@ func (s *Store) GetPublicCarpoolListing(ctx context.Context, listingID string) (
 	if s == nil || s.pool == nil {
 		return carpool.Listing{}, internalStoreError()
 	}
-	listing, err := s.getCarpoolListing(ctx, s.pool, listingID, false, false)
-	if errors.Is(err, pgx.ErrNoRows) || listing.Status != carpool.ListingStatusActive {
+	var listing carpool.Listing
+	err := scanCarpoolListing(s.pool.QueryRow(ctx, `
+		SELECT `+carpoolListingColumns+`
+		FROM `+carpoolListingViewSource+`
+		WHERE id = $1 AND `+publicCarpoolListingPredicate("listing_view"), listingID), &listing)
+	if errors.Is(err, pgx.ErrNoRows) {
 		return carpool.Listing{}, domain.NewError(http.StatusNotFound, domain.CodeObjectNotFound, "Carpool listing not found", "车源不存在。")
 	}
 	if err != nil {
 		return carpool.Listing{}, internalStoreError()
 	}
 	return listing, nil
+}
+
+func publicCarpoolListingPredicate(alias string) string {
+	alias = strings.TrimSpace(alias)
+	if alias == "" {
+		alias = "carpool_listings"
+	}
+	return alias + `.status = 'active'
+	  AND EXISTS (
+	    SELECT 1 FROM users owner
+	    WHERE owner.id = ` + alias + `.owner_user_id
+	      AND owner.account_status = 'active'
+	  )`
 }
 
 func (s *Store) ListCarpoolListingsByOwner(ctx context.Context, ownerUserID string) ([]carpool.Listing, *domain.AppError) {
@@ -317,7 +341,15 @@ func (s *Store) UpdateCarpoolListing(ctx context.Context, input carpool.UpdateLi
 	listing.SourceURL = strings.TrimSpace(input.SourceURL)
 	listing.PriceMonthlyCNY = strings.TrimSpace(input.PriceMonthlyCNY)
 	listing.ServiceMultiplier = strings.TrimSpace(input.ServiceMultiplier)
+	listing.WeeklyQuotaAmount = nullStringPointer(input.WeeklyQuotaAmount)
 	listing.MonthlyQuotaAmount = strings.TrimSpace(input.MonthlyQuotaAmount)
+	listing.FollowsOfficialQuotaReset = input.FollowsOfficialQuotaReset
+	listing.VPSRegion = nullStringPointer(input.VPSRegion)
+	listing.SupportsMainlandChinaDirectConnection = input.SupportsMainlandChinaDirectConnection
+	listing.OpeningChannelCode = nullStringPointer(input.OpeningChannelCode)
+	listing.CustomOpeningChannel = nullStringPointer(input.CustomOpeningChannel)
+	listing.PaymentMethodCode = nullStringPointer(input.PaymentMethodCode)
+	listing.CustomPaymentMethod = nullStringPointer(input.CustomPaymentMethod)
 	listing.QuotaLabel = strings.TrimSpace(planQuotaLabel)
 	listing.QuotaUnit = strings.TrimSpace(planQuotaUnit)
 	listing.QuotaPeriod = strings.TrimSpace(planQuotaPeriod)
@@ -343,22 +375,33 @@ func (s *Store) UpdateCarpoolListing(ctx context.Context, input carpool.UpdateLi
 		    source_url = $12,
 		    price_monthly_cny = $13,
 		    service_multiplier = $14,
-		    monthly_quota_amount = $15,
-		    quota_label = $16,
-		    quota_unit = $17,
-		    quota_period = $18,
-		    buyer_seat_capacity = $19,
-		    active_buyer_members = $20,
-		    policy_version = $21,
-		    risk_notice_code = $22,
-		    risk_ack_required = $23,
-		    updated_at = $24,
-		    version = $25
+		    weekly_quota_amount = $15,
+		    monthly_quota_amount = $16,
+		    follows_official_quota_reset = $17,
+		    vps_region = $18,
+		    supports_mainland_china_direct_connection = $19,
+		    opening_channel_code = $20,
+		    custom_opening_channel = $21,
+		    payment_method_code = $22,
+		    custom_payment_method = $23,
+		    quota_label = $24,
+		    quota_unit = $25,
+		    quota_period = $26,
+		    buyer_seat_capacity = $27,
+		    active_buyer_members = $28,
+		    policy_version = $29,
+		    risk_notice_code = $30,
+		    risk_ack_required = $31,
+		    updated_at = $32,
+		    version = $33
 		WHERE id = $1
 	`, listing.ID, listing.ProductPlanID, listing.OwnerContactMethodID, listing.Title, listing.Summary, listing.AccessArrangement,
 		listing.DistributionMethod, listing.DistributionMethodNote, listing.ProvidesAdminAccount,
 		listing.RegionCode, listing.RegionName,
-		nullText(listing.SourceURL), listing.PriceMonthlyCNY, listing.ServiceMultiplier, listing.MonthlyQuotaAmount, listing.QuotaLabel, listing.QuotaUnit, listing.QuotaPeriod,
+		nullText(listing.SourceURL), listing.PriceMonthlyCNY, listing.ServiceMultiplier,
+		listing.WeeklyQuotaAmount, listing.MonthlyQuotaAmount, listing.FollowsOfficialQuotaReset, listing.VPSRegion,
+		listing.SupportsMainlandChinaDirectConnection, listing.OpeningChannelCode, listing.CustomOpeningChannel,
+		listing.PaymentMethodCode, listing.CustomPaymentMethod, listing.QuotaLabel, listing.QuotaUnit, listing.QuotaPeriod,
 		listing.BuyerSeatCapacity, listing.ActiveBuyerMembers,
 		listing.PolicyVersion, nullText(listing.RiskNoticeCode), listing.RiskAckRequired, listing.UpdatedAt, listing.Version)
 	if err != nil {
@@ -923,8 +966,57 @@ const carpoolListingColumns = `
 	COALESCE(cycle_term_id::text, ''), COALESCE(cycle_billing_period, ''), cycle_start_day, COALESCE(cycle_notice_days, 0),
 	COALESCE(cycle_exit_policy, ''), COALESCE(cycle_usage_rules, ''), COALESCE(cycle_version, 0),
 	COALESCE(cycle_created_at, created_at), COALESCE(cycle_updated_at, updated_at),
-	COALESCE(source_url, ''), price_monthly_cny::text, service_multiplier::text,
-	monthly_quota_amount::text, quota_label, quota_unit, quota_period, buyer_seat_capacity, active_buyer_members,
+	COALESCE(source_url, ''),
+	COALESCE((
+	  SELECT CASE
+	    WHEN verification.source_url IS DISTINCT FROM listing_view.source_url
+	      OR verification.expected_external_user_id IS DISTINCT FROM COALESCE((
+	        SELECT binding.linux_do_user_id
+	        FROM linux_do_bindings binding
+	        WHERE binding.user_id = listing_view.owner_user_id
+	      ), '')
+	    THEN 'pending'
+	    WHEN verification.status = 'verified'
+	      AND verification.expires_at IS NOT NULL
+	      AND verification.expires_at <= now()
+	    THEN 'expired'
+	    ELSE verification.status
+	  END
+	  FROM source_author_verifications verification
+	  WHERE verification.resource_type = 'carpool'
+	    AND verification.resource_id = listing_view.id
+	), 'not_submitted'),
+	(
+	  SELECT verification.verified_at
+	  FROM source_author_verifications verification
+	  WHERE verification.resource_type = 'carpool'
+	    AND verification.resource_id = listing_view.id
+	    AND verification.source_url = listing_view.source_url
+	    AND verification.expected_external_user_id = COALESCE((
+	      SELECT binding.linux_do_user_id
+	      FROM linux_do_bindings binding
+	      WHERE binding.user_id = listing_view.owner_user_id
+	    ), '')
+	    AND verification.status = 'verified'
+	),
+	(
+	  SELECT verification.expires_at
+	  FROM source_author_verifications verification
+	  WHERE verification.resource_type = 'carpool'
+	    AND verification.resource_id = listing_view.id
+	    AND verification.source_url = listing_view.source_url
+	    AND verification.expected_external_user_id = COALESCE((
+	      SELECT binding.linux_do_user_id
+	      FROM linux_do_bindings binding
+	      WHERE binding.user_id = listing_view.owner_user_id
+	    ), '')
+	    AND verification.status = 'verified'
+	),
+	price_monthly_cny::text, service_multiplier::text,
+	weekly_quota_amount::text, monthly_quota_amount::text, follows_official_quota_reset, vps_region,
+	supports_mainland_china_direct_connection, opening_channel_code, custom_opening_channel,
+	payment_method_code, custom_payment_method,
+	quota_label, quota_unit, quota_period, buyer_seat_capacity, active_buyer_members,
 	status, COALESCE(reviewed_by_admin_id::text, ''), reviewed_at, COALESCE(review_reason, ''),
 	policy_version, COALESCE(risk_notice_code, ''), risk_ack_required, reserved_seats::int,
 	GREATEST(buyer_seat_capacity - active_buyer_members - reserved_seats, 0)::int AS available_seats,
@@ -998,6 +1090,14 @@ func scanCarpoolListings(rows pgx.Rows) ([]carpool.Listing, *domain.AppError) {
 func scanCarpoolListing(row scanner, listing *carpool.Listing) error {
 	var cycleTermID string
 	var cycleTerm carpool.CycleTerm
+	var weeklyQuotaAmount *string
+	var followsOfficialQuotaReset *bool
+	var vpsRegion *string
+	var supportsMainlandChinaDirectConnection *bool
+	var openingChannelCode *string
+	var customOpeningChannel *string
+	var paymentMethodCode *string
+	var customPaymentMethod *string
 	if err := row.Scan(
 		&listing.ID,
 		&listing.OwnerUserID,
@@ -1021,9 +1121,20 @@ func scanCarpoolListing(row scanner, listing *carpool.Listing) error {
 		&cycleTerm.CreatedAt,
 		&cycleTerm.UpdatedAt,
 		&listing.SourceURL,
+		&listing.SourceAuthorVerification.Status,
+		&listing.SourceAuthorVerification.VerifiedAt,
+		&listing.SourceAuthorVerification.ExpiresAt,
 		&listing.PriceMonthlyCNY,
 		&listing.ServiceMultiplier,
+		&weeklyQuotaAmount,
 		&listing.MonthlyQuotaAmount,
+		&followsOfficialQuotaReset,
+		&vpsRegion,
+		&supportsMainlandChinaDirectConnection,
+		&openingChannelCode,
+		&customOpeningChannel,
+		&paymentMethodCode,
+		&customPaymentMethod,
 		&listing.QuotaLabel,
 		&listing.QuotaUnit,
 		&listing.QuotaPeriod,
@@ -1044,6 +1155,14 @@ func scanCarpoolListing(row scanner, listing *carpool.Listing) error {
 	); err != nil {
 		return err
 	}
+	listing.WeeklyQuotaAmount = weeklyQuotaAmount
+	listing.FollowsOfficialQuotaReset = followsOfficialQuotaReset
+	listing.VPSRegion = vpsRegion
+	listing.SupportsMainlandChinaDirectConnection = supportsMainlandChinaDirectConnection
+	listing.OpeningChannelCode = openingChannelCode
+	listing.CustomOpeningChannel = customOpeningChannel
+	listing.PaymentMethodCode = paymentMethodCode
+	listing.CustomPaymentMethod = customPaymentMethod
 	if cycleTermID != "" {
 		cycleTerm.ID = cycleTermID
 		cycleTerm.CarpoolListingID = listing.ID

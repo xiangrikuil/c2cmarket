@@ -1,35 +1,34 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
-import {
-  Bell,
-  ChevronDown,
-  CircleHelp,
-  Code2,
-  Car,
-  ExternalLink,
-  Home,
-  LogIn,
-  LogOut,
-  Megaphone,
-  Menu,
-  MessageSquarePlus,
-  PackageSearch,
-  Palette,
-  PanelLeftClose,
-  PanelLeftOpen,
-  ScanSearch,
-  Search,
-  ShieldCheck,
-  ShoppingBag,
-  Siren,
-  Star,
-  Upload,
-  UserCog,
-  UserRound,
-  UsersRound,
-  X,
-} from 'lucide-vue-next'
+import { useQueryClient } from '@tanstack/vue-query'
+import BadgeCheck from 'lucide-vue-next/dist/esm/icons/badge-check.js'
+import Bell from 'lucide-vue-next/dist/esm/icons/bell.js'
+import CarFront from 'lucide-vue-next/dist/esm/icons/car-front.js'
+import ChevronDown from 'lucide-vue-next/dist/esm/icons/chevron-down.js'
+import CircleHelp from 'lucide-vue-next/dist/esm/icons/circle-question-mark.js'
+import Code2 from 'lucide-vue-next/dist/esm/icons/code-xml.js'
+import ExternalLink from 'lucide-vue-next/dist/esm/icons/external-link.js'
+import Gift from 'lucide-vue-next/dist/esm/icons/gift.js'
+import Home from 'lucide-vue-next/dist/esm/icons/house.js'
+import LogIn from 'lucide-vue-next/dist/esm/icons/log-in.js'
+import LogOut from 'lucide-vue-next/dist/esm/icons/log-out.js'
+import Megaphone from 'lucide-vue-next/dist/esm/icons/megaphone.js'
+import Menu from 'lucide-vue-next/dist/esm/icons/menu.js'
+import MessageSquarePlus from 'lucide-vue-next/dist/esm/icons/message-square-plus.js'
+import PackageSearch from 'lucide-vue-next/dist/esm/icons/package-search.js'
+import Palette from 'lucide-vue-next/dist/esm/icons/palette.js'
+import PanelLeftClose from 'lucide-vue-next/dist/esm/icons/panel-left-close.js'
+import PanelLeftOpen from 'lucide-vue-next/dist/esm/icons/panel-left-open.js'
+import Search from 'lucide-vue-next/dist/esm/icons/search.js'
+import ShieldCheck from 'lucide-vue-next/dist/esm/icons/shield-check.js'
+import ShoppingBag from 'lucide-vue-next/dist/esm/icons/shopping-bag.js'
+import Siren from 'lucide-vue-next/dist/esm/icons/siren.js'
+import Star from 'lucide-vue-next/dist/esm/icons/star.js'
+import Upload from 'lucide-vue-next/dist/esm/icons/upload.js'
+import UserCog from 'lucide-vue-next/dist/esm/icons/user-cog.js'
+import UserRound from 'lucide-vue-next/dist/esm/icons/user-round.js'
+import X from 'lucide-vue-next/dist/esm/icons/x.js'
 import { toast } from 'vue-sonner'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -44,25 +43,34 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
-import { useMyApiServices, useMyCarpools, useMyProfileQuery, useNotifications } from '@/queries/useMarketQueries'
+import { useMyApiServices, useMyCarpools, useMyProfileQuery, useNotifications } from '@/queries/useAppShellQueries'
 import { useNavigationBadges } from '@/queries/useRealtimeQueries'
 import { useRealtimeSync } from '@/composables/useRealtimeSync'
 import { appThemes, applyAppTheme, getInitialAppTheme, isAppTheme } from '@/theme/appThemes'
-import { ACCOUNT_RECOVERY_PATH, isAccountRecoveryAllowedPath, isAccountRecoveryComplete } from '@/lib/accountRecovery'
+import { ACCOUNT_RECOVERY_PATH, isAccountRecoveryComplete, shouldRedirectToAccountRecovery } from '@/lib/accountRecovery'
 import { usePersistentSidebar } from '@/composables/usePersistentSidebar'
+import { logoutBackendSession } from '@/lib/backendClient'
+import { loginRoute } from '@/lib/authNavigation'
+import { usePromotionRewardPublicConfig } from '@/queries/usePromotionRewardQueries'
 
 const route = useRoute()
 const router = useRouter()
+const queryClient = useQueryClient()
 const menuOpen = ref(false)
+const logoutLoading = ref(false)
 const { sidebarCollapsed } = usePersistentSidebar('c2c-user-sidebar-collapsed')
 const searchText = ref('')
 const activeTheme = ref(getInitialAppTheme())
-const { data: myProfile } = useMyProfileQuery()
-const { data: notifications } = useNotifications()
+const { data: myProfile, isPending: profilePending } = useMyProfileQuery(import.meta.client)
+const isAuthenticated = computed(() => Boolean(myProfile.value))
+const authResolved = computed(() => import.meta.client && !profilePending.value)
+const showLoginAction = computed(() => authResolved.value && !isAuthenticated.value)
+const { data: notifications } = useNotifications(isAuthenticated)
 const workspaceQueriesEnabled = computed(() => Boolean(myProfile.value))
 const { data: ownedCarpools } = useMyCarpools(workspaceQueriesEnabled)
-const { data: ownedApiServices } = useMyApiServices(workspaceQueriesEnabled)
+const { data: ownedApiServices } = useMyApiServices('all', workspaceQueriesEnabled)
 const { data: navigationBadges } = useNavigationBadges(computed(() => Boolean(myProfile.value)))
+const { data: promotionRewardConfig } = usePromotionRewardPublicConfig()
 useRealtimeSync(computed(() => Boolean(myProfile.value)))
 
 const buyerApiActionCount = computed(() => navigationBadges.value?.buyer.apiOrderActions ?? 0)
@@ -74,9 +82,14 @@ const importantAnnouncementUnreadCount = computed(() => navigationBadges.value?.
 const feedbackMenuUnreadCount = computed(() => navigationBadges.value?.feedbackUnread ?? 0)
 const currentUsername = computed(() => myProfile.value?.username ?? '')
 const currentDisplayName = computed(() => myProfile.value?.displayName ?? myProfile.value?.username ?? '未登录')
+const currentAvatarURL = computed(() => myProfile.value?.avatarUrl ?? '')
 const currentAvatarText = computed(() => currentDisplayName.value.slice(0, 1).toUpperCase())
 const canViewAdminNav = computed(() => myProfile.value?.permissions.includes('admin') ?? false)
 const announcementCenterTo = '/my/notifications?tab=announcements'
+const accountSettingsPaths = ['/my/profile', '/my/contacts', '/my/account'] as const
+const currentLoginTo = computed(() => loginRoute(route.fullPath))
+const anonymousCarpoolPublishTo = loginRoute('/carpools/new')
+const anonymousApiPublishTo = loginRoute('/api-market/new')
 const accountRecoveryRequired = computed(() => myProfile.value ? !isAccountRecoveryComplete(myProfile.value) : false)
 const hasMerchantWorkspace = computed(() => Boolean(
   (ownedCarpools.value?.length ?? 0) > 0
@@ -90,24 +103,23 @@ const navGroups = computed(() => {
     title: '发现市场',
     items: [
       { label: '首页', to: '/', count: null, icon: Home },
-      { label: '订阅拼车', to: '/carpools', count: null, icon: UsersRound },
+      { label: '订阅拼车', to: '/carpools', count: null, icon: CarFront },
       { label: 'API 市场', to: '/api-market', count: null, icon: Code2 },
-      { label: '求车需求', to: '/demands', count: null, icon: ScanSearch },
       { label: '官网价格', to: '/official-prices', count: null, icon: ShieldCheck },
     ],
   }
   const publishGroup = {
     title: '发布入口',
     items: [
-      { label: '发布车源', to: '/carpools/new', count: null, icon: Car },
+      { label: '发布车源', to: '/carpools/new', count: null, icon: CarFront },
       { label: '发布 API 服务', to: '/api-market/new', count: null, icon: PackageSearch },
     ],
   }
   const userGroup = {
     title: '我的交易',
     items: [
-      { label: '我的上车', to: '/my/rides', count: buyerCarpoolActionCount.value, icon: UsersRound },
-      { label: '我的 API 订单', to: '/my/api-orders', count: buyerApiActionCount.value, icon: ShoppingBag },
+      { label: '我的上车', to: '/my/rides', count: buyerCarpoolActionCount.value, icon: CarFront },
+      { label: 'API 购买订单', to: '/my/api-orders', count: buyerApiActionCount.value, icon: ShoppingBag },
       { label: '收藏', to: '/my/favorites', count: null, icon: Star },
       { label: '通知', to: '/my/notifications', count: unreadBusinessCount.value, icon: Bell },
     ],
@@ -115,19 +127,21 @@ const navGroups = computed(() => {
   const merchantGroup = {
     title: '经营中心',
     items: [
-      { label: '我的车源', to: '/my/carpools', count: null, icon: Car },
+      { label: '我的车源', to: '/my/carpools', count: null, icon: CarFront },
       { label: '上车申请', to: '/merchant/carpool-applications', count: ownerCarpoolActionCount.value, icon: UserCog },
       { label: '我的 API 服务', to: '/my/api-services', count: null, icon: Code2 },
-      { label: 'API 订单', to: '/merchant/api-orders', count: merchantApiActionCount.value, icon: PackageSearch },
+      { label: 'API 销售订单', to: '/merchant/api-orders', count: merchantApiActionCount.value, icon: PackageSearch },
     ],
   }
   const accountGroup = {
     title: '账户',
     items: [
-      { label: '账户与资料', to: '/my', count: null, icon: UserRound },
-      { label: '我的求车', to: '/my/demands', count: null, icon: ScanSearch },
+      { label: '个人中心', to: '/my', count: null, icon: UserRound },
       { label: '联系与收款', to: '/my/contacts', count: null, icon: MessageSquarePlus },
+      { label: '信誉与成长', to: '/my/reputation', count: null, icon: BadgeCheck },
+      ...(promotionRewardConfig.value?.programEnabled ? [{ label: '推广权益', to: '/my/promotion-benefits', count: null, icon: Gift }] : []),
       { label: '安全设置', to: '/my/account', count: null, icon: ShieldCheck },
+      { label: '举报与申诉', to: '/my/reports', count: null, icon: Siren },
       { label: '反馈', to: '/my/feedback', count: feedbackMenuUnreadCount.value, icon: CircleHelp },
     ],
   }
@@ -136,7 +150,9 @@ const navGroups = computed(() => {
     items: [{ label: '进入管理台', to: '/admin', count: navigationBadges.value?.admin?.total ?? null, icon: UserCog }],
   }
 
-  const groups = [browseGroup, userGroup, publishGroup]
+  if (!isAuthenticated.value) return [browseGroup]
+
+  const groups = [browseGroup, publishGroup, userGroup]
   if (hasMerchantWorkspace.value) groups.push(merchantGroup)
   groups.push(accountGroup)
   if (canViewAdminNav.value) groups.push(adminEntryGroup)
@@ -160,6 +176,7 @@ function isActive(to: string) {
 
 function matchesRoute(to: string) {
   if (to === '/') return route.path === '/'
+  if (to === '/my/profile') return accountSettingsPaths.includes(route.path as typeof accountSettingsPaths[number])
   return route.path === to || route.path.startsWith(`${to}/`)
 }
 
@@ -173,7 +190,7 @@ watch(
 watch(
   () => [route.fullPath, accountRecoveryRequired.value] as const,
   () => {
-    if (!accountRecoveryRequired.value || isAccountRecoveryAllowedPath(route.path)) return
+    if (!accountRecoveryRequired.value || !shouldRedirectToAccountRecovery(route.path, route.meta.auth)) return
     router.replace({
       path: ACCOUNT_RECOVERY_PATH,
       query: { returnTo: route.fullPath },
@@ -193,9 +210,19 @@ function formatBadgeCount(value: number | null | undefined) {
   return count > 99 ? '99+' : count
 }
 
-function logoutMock() {
-  toast('已退出登录。')
-  router.push('/login')
+async function logout() {
+  if (logoutLoading.value) return
+  logoutLoading.value = true
+  try {
+    await logoutBackendSession()
+    queryClient.clear()
+    toast.success('已退出登录。')
+    await router.replace('/login')
+  } catch (error) {
+    toast.error(error instanceof Error ? error.message : '退出登录失败')
+  } finally {
+    logoutLoading.value = false
+  }
 }
 
 function setActiveTheme(theme: unknown) {
@@ -227,7 +254,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onNavigationKeydown)
         class="flex h-[60px] items-center border-b border-sidebar-border font-semibold tracking-tight"
         :class="sidebarCollapsed ? 'justify-center px-0' : 'gap-2.5 px-5'"
       >
-        <img src="/c2cmarket-logo-mark.svg?v=20260708-electric-blue" alt="C2CMarket" class="h-7 w-7 shrink-0" />
+        <img src="/c2cmarket-logo-mark.svg?v=20260806-deep-violet" alt="C2CMarket" class="h-7 w-7 shrink-0" />
         <span v-if="!sidebarCollapsed" class="min-w-0">
           <span class="block truncate text-[19px] font-bold leading-tight text-sidebar-foreground">C2CMarket</span>
         </span>
@@ -254,7 +281,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onNavigationKeydown)
                 class="flex min-w-0 items-center"
                 :class="sidebarCollapsed ? 'w-full justify-center' : 'gap-3 px-3'"
               >
-                <component :is="item.icon" class="h-4 w-4 shrink-0" />
+                <component :is="item.icon" class="h-[18px] w-[18px] shrink-0" />
                 <span v-if="!sidebarCollapsed" class="truncate">{{ item.label }}</span>
               </span>
               <Badge v-if="item.count && !sidebarCollapsed" variant="secondary" class="mr-2 h-5 px-1.5 text-[11px]">{{ formatBadgeCount(item.count) }}</Badge>
@@ -264,7 +291,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onNavigationKeydown)
       </nav>
       <div class="border-t border-sidebar-border p-2">
         <RouterLink
-          v-if="!sidebarCollapsed"
+          v-if="isAuthenticated && !sidebarCollapsed"
           :to="announcementCenterTo"
           class="mb-3 flex items-center justify-between rounded-md border border-sidebar-border bg-sidebar-accent/45 px-3 py-3 text-xs leading-5 text-sidebar-foreground/75 shadow-sm transition hover:border-sidebar-primary/30 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
         >
@@ -305,7 +332,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onNavigationKeydown)
     >
       <div class="flex h-[60px] items-center justify-between border-b border-border px-4">
         <RouterLink to="/" class="flex min-w-0 items-center gap-3 font-semibold tracking-tight" @click="closeMenu">
-          <img src="/c2cmarket-logo-mark.svg?v=20260708-electric-blue" alt="C2CMarket" class="h-8 w-8 shrink-0" />
+          <img src="/c2cmarket-logo-mark.svg?v=20260806-deep-violet" alt="C2CMarket" class="h-8 w-8 shrink-0" />
           <span class="min-w-0">
             <span class="block truncate text-[18px] font-bold leading-tight">C2CMarket</span>
           </span>
@@ -333,7 +360,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onNavigationKeydown)
               @click="closeMenu"
             >
               <span class="flex min-w-0 items-center gap-2">
-                <component :is="item.icon" class="h-4 w-4 shrink-0" />
+                <component :is="item.icon" class="h-[18px] w-[18px] shrink-0" />
                 <span class="truncate">{{ item.label }}</span>
               </span>
               <Badge v-if="item.count" variant="secondary">{{ formatBadgeCount(item.count) }}</Badge>
@@ -342,6 +369,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onNavigationKeydown)
         </section>
       </nav>
       <RouterLink
+        v-if="isAuthenticated"
         :to="announcementCenterTo"
         class="border-t border-border p-4 text-xs leading-5 text-muted-foreground transition hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
         @click="closeMenu"
@@ -349,6 +377,23 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onNavigationKeydown)
         <span>平台公告 · 查看公告与更新</span>
         <Badge v-if="importantAnnouncementUnreadCount" variant="secondary" class="ml-2">{{ formatBadgeCount(importantAnnouncementUnreadCount) }}</Badge>
       </RouterLink>
+      <div v-else-if="showLoginAction" class="grid gap-2 border-t border-border p-4">
+        <Button as-child class="w-full">
+          <RouterLink :to="currentLoginTo" @click="closeMenu">
+            <LogIn class="h-4 w-4" />登录
+          </RouterLink>
+        </Button>
+        <Button as-child variant="outline" class="w-full">
+          <RouterLink :to="anonymousCarpoolPublishTo" @click="closeMenu">
+            <CarFront class="h-4 w-4" />登录后发布车源
+          </RouterLink>
+        </Button>
+        <Button as-child variant="outline" class="w-full">
+          <RouterLink :to="anonymousApiPublishTo" @click="closeMenu">
+            <Code2 class="h-4 w-4" />登录后发布 API 服务
+          </RouterLink>
+        </Button>
+      </div>
     </div>
 
     <div class="min-w-0">
@@ -358,7 +403,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onNavigationKeydown)
             <Menu class="h-4 w-4" />
           </Button>
           <RouterLink to="/" class="flex items-center gap-2 font-semibold tracking-tight lg:hidden">
-            <img src="/c2cmarket-logo-mark.svg?v=20260708-electric-blue" alt="C2CMarket" class="h-8 w-8" />
+            <img src="/c2cmarket-logo-mark.svg?v=20260806-deep-violet" alt="C2CMarket" class="h-8 w-8" />
           </RouterLink>
           <div class="hidden min-w-0 shrink-0 md:block lg:w-[260px] 2xl:w-[338px]">
             <div class="truncate text-lg font-semibold text-foreground">{{ currentTitle }}</div>
@@ -374,7 +419,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onNavigationKeydown)
                 placeholder="搜索产品、车源、API 服务"
                 @keyup.enter="runSearch"
               />
-              <button class="absolute right-2 top-1/2 -translate-y-1/2 rounded border border-input bg-background px-1.5 py-0.5 text-xs text-muted-foreground" type="button" @click="runSearch">⌘ K</button>
+              <Button class="absolute right-2 top-1/2 h-6 -translate-y-1/2 px-1.5 text-xs text-muted-foreground" type="button" size="sm" variant="outline" @click="runSearch">⌘ K</Button>
             </div>
           </div>
           <div class="flex-1" />
@@ -395,9 +440,9 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onNavigationKeydown)
               </DropdownMenuRadioGroup>
             </DropdownMenuContent>
           </DropdownMenu>
-          <DropdownMenu>
+          <DropdownMenu v-if="isAuthenticated">
             <DropdownMenuTrigger as-child>
-              <Button variant="ghost" size="icon" class="relative text-muted-foreground">
+              <Button variant="ghost" size="icon" class="relative text-muted-foreground" aria-label="打开通知">
                 <Bell class="h-4 w-4" />
                 <span v-if="unreadBusinessCount" class="absolute -right-0.5 -top-0.5 inline-flex h-4 min-w-[16px] items-center justify-center rounded-full bg-primary px-1 text-[10px] leading-none text-primary-foreground">{{ formatBadgeCount(unreadBusinessCount) }}</span>
               </Button>
@@ -420,7 +465,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onNavigationKeydown)
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
-          <DropdownMenu>
+          <DropdownMenu v-if="isAuthenticated">
             <DropdownMenuTrigger as-child>
               <Button size="sm" class="hidden md:inline-flex">
                 发布
@@ -440,16 +485,39 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onNavigationKeydown)
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
-          <RouterLink v-if="!myProfile" :to="{ path: '/login', query: { returnTo: route.fullPath } }" class="hidden md:inline-flex">
+          <DropdownMenu v-else-if="authResolved">
+            <DropdownMenuTrigger as-child>
+              <Button size="sm" class="hidden md:inline-flex">
+                登录后发布
+                <ChevronDown class="h-4 w-4" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" class="w-52">
+              <DropdownMenuItem as-child>
+                <RouterLink :to="anonymousCarpoolPublishTo" class="flex items-center gap-2">
+                  <Upload class="h-4 w-4" />登录后发布车源
+                </RouterLink>
+              </DropdownMenuItem>
+              <DropdownMenuItem as-child>
+                <RouterLink :to="anonymousApiPublishTo" class="flex items-center gap-2">
+                  <Code2 class="h-4 w-4" />登录后发布 API 服务
+                </RouterLink>
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+          <RouterLink v-if="showLoginAction" :to="currentLoginTo" class="hidden md:inline-flex">
             <Button variant="outline" size="sm">
               <LogIn class="h-4 w-4" />
               登录
             </Button>
           </RouterLink>
-          <DropdownMenu v-else>
+          <DropdownMenu v-else-if="isAuthenticated">
             <DropdownMenuTrigger as-child>
               <Button variant="ghost" size="sm" class="hidden gap-2 text-foreground md:inline-flex">
-                <span class="grid h-7 w-7 place-items-center rounded-full bg-secondary text-[12px] text-secondary-foreground">{{ currentAvatarText }}</span>
+                <span class="grid h-7 w-7 place-items-center overflow-hidden rounded-full bg-secondary text-[12px] text-secondary-foreground">
+                  <img v-if="currentAvatarURL" :src="currentAvatarURL" alt="" class="h-full w-full object-cover" />
+                  <span v-else>{{ currentAvatarText }}</span>
+                </span>
                 <span class="font-semibold">{{ currentDisplayName }}</span>
                 <ChevronDown class="h-4 w-4" />
               </Button>
@@ -463,13 +531,13 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onNavigationKeydown)
                 </RouterLink>
               </DropdownMenuItem>
               <DropdownMenuItem as-child>
-                <RouterLink to="/my/profile" class="flex items-center gap-2">
-                  <UserRound class="h-4 w-4" />个人资料
+                <RouterLink to="/my" class="flex items-center gap-2">
+                  <UserRound class="h-4 w-4" />个人中心
                 </RouterLink>
               </DropdownMenuItem>
               <DropdownMenuItem as-child>
-                <RouterLink to="/my/contacts" class="flex items-center gap-2">
-                  <MessageSquarePlus class="h-4 w-4" />联系方式
+                <RouterLink to="/my/profile" class="flex items-center gap-2">
+                  <ShieldCheck class="h-4 w-4" />账户设置
                 </RouterLink>
               </DropdownMenuItem>
               <DropdownMenuItem as-child>
@@ -487,18 +555,13 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onNavigationKeydown)
                 </RouterLink>
               </DropdownMenuItem>
               <DropdownMenuItem as-child>
-                <RouterLink to="/my/account" class="flex items-center gap-2">
-                  <ShieldCheck class="h-4 w-4" />账号与认证
-                </RouterLink>
-              </DropdownMenuItem>
-              <DropdownMenuItem as-child>
                 <RouterLink :to="{ path: '/login', query: { returnTo: route.fullPath } }" class="flex items-center gap-2">
                   <LogIn class="h-4 w-4" />登录 / 绑定
                 </RouterLink>
               </DropdownMenuItem>
               <DropdownMenuSeparator />
-              <DropdownMenuItem @click="logoutMock">
-                <LogOut class="h-4 w-4" />退出登录
+              <DropdownMenuItem :disabled="logoutLoading" @click="logout">
+                <LogOut class="h-4 w-4" />{{ logoutLoading ? '正在退出…' : '退出登录' }}
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
@@ -506,7 +569,10 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onNavigationKeydown)
 
       </header>
 
-      <main class="w-full px-4 py-5 sm:px-5 lg:px-5">
+      <main
+        class="w-full px-4 py-5 sm:px-5 lg:px-5"
+        :class="route.path === '/api-market' ? 'bg-white' : ''"
+      >
         <slot />
       </main>
     </div>

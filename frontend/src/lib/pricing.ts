@@ -110,10 +110,8 @@ export function getPricingDisplay(carpool: Carpool): PricingDisplay {
 export function isCurrentTradable(carpool: Carpool) {
   return getRemainingSeats(carpool) > 0
     && carpool.confirmedWithin48h
-    && carpool.linuxdoBound
-    && carpool.sourcePostAccessible
     && !carpool.hasInfoConflict
-    && !carpool.hasUnresolvedDispute
+    && carpool.hasUnresolvedDispute === false
     && carpool.status === '可上车'
 }
 

@@ -1,71 +1,140 @@
-import type { AdminRow } from '@/lib/api'
-import { backendRequest, ensureBackendSession } from '@/lib/backendClient'
+import type {
+  AdminUser,
+  AdminUserGovernanceAction,
+  AdminUserDetail,
+  AdminUserDirectorySummary,
+  AdminUserLimit,
+  AdminUserList,
+  AdminUserPage,
+  AdminUserPermissionRequest,
+  AdminUserStatusRequest,
+  ListAdminUsersData,
+} from '@/api/generated/openapi'
+import { backendMutation, backendRequest, ensureBackendSession } from '@/lib/backendClient'
 
-type ListResponse<T> = {
-  items: T[]
+export type AdminUserDirectoryQuery = Required<NonNullable<ListAdminUsersData['query']>>
+export type AdminUserDirectoryStatus = AdminUserDirectoryQuery['status']
+export type AdminUserDirectoryRole = AdminUserDirectoryQuery['role']
+export type AdminUserDirectoryLinuxDo = AdminUserDirectoryQuery['linuxDo']
+export type AdminUserDirectorySort = AdminUserDirectoryQuery['sort']
+export type AdminUserStatus = AdminUser['accountStatus']
+export type {
+  AdminUser,
+  AdminUserDetail,
+  AdminUserGovernanceAction,
+  AdminUserDirectorySummary,
+  AdminUserLimit,
+  AdminUserList,
+  AdminUserPage,
 }
 
-export type BackendAdminUser = {
-  id: string
-  username: string
-  displayName: string
-  accountStatus: 'active' | 'suspended' | 'banned' | 'archived'
-  isAdmin: boolean
-  linuxDoBound: boolean
-  trustLevel?: number
-  createdAt: string
-  lastActiveAt?: string | null
+export const defaultAdminUserDirectoryQuery: AdminUserDirectoryQuery = {
+  page: 1,
+  limit: 20,
+  search: '',
+  status: 'all',
+  role: 'all',
+  linuxDo: 'all',
+  sort: 'created_desc',
 }
 
-function formatTime(value: string | undefined | null) {
-  if (!value) return '从未'
-  const date = new Date(value)
-  if (!Number.isFinite(date.getTime())) return value
-  return new Intl.DateTimeFormat('sv-SE', {
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-    hour12: false,
-  }).format(date)
+const directoryStatuses: AdminUserDirectoryStatus[] = ['all', 'active', 'suspended', 'banned', 'archived']
+const directoryRoles: AdminUserDirectoryRole[] = ['all', 'admin', 'user']
+const directoryLinuxDoValues: AdminUserDirectoryLinuxDo[] = ['all', 'bound', 'unbound']
+const directorySorts: AdminUserDirectorySort[] = ['created_desc', 'created_asc', 'active_desc', 'username_asc', 'username_desc']
+const directoryLimits: AdminUserLimit[] = [20, 50, 100]
+
+function firstQueryValue(value: unknown) {
+  return Array.isArray(value) ? value[0] : value
 }
 
-function accountStatusLabel(value: BackendAdminUser['accountStatus']) {
-  const labels: Record<BackendAdminUser['accountStatus'], string> = {
-    active: '正常',
-    suspended: '已暂停',
-    banned: '已封禁',
-    archived: '已归档',
-  }
-  return labels[value]
+function queryString(value: unknown) {
+  const first = firstQueryValue(value)
+  return typeof first === 'string' ? first : ''
 }
 
-export function mapBackendAdminUser(item: BackendAdminUser): AdminRow {
-  const trust = item.linuxDoBound ? `已绑定 linux.do · 信任等级${item.trustLevel ?? 0}` : '未绑定 linux.do'
+function positiveInteger(value: unknown, fallback: number) {
+  const parsed = Number(queryString(value))
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback
+}
+
+function oneOf<T extends string>(value: unknown, values: readonly T[], fallback: T): T {
+  const candidate = queryString(value) as T
+  return values.includes(candidate) ? candidate : fallback
+}
+
+export function normalizeAdminUserDirectoryQuery(query: Record<string, unknown>): AdminUserDirectoryQuery {
+  const parsedLimit = positiveInteger(query.limit, defaultAdminUserDirectoryQuery.limit) as AdminUserLimit
   return {
-    id: item.id,
-    primary: item.username,
-    secondary: `${item.displayName} · ${trust}`,
-    owner: item.isAdmin ? '管理员账号' : '普通账号',
-    status: accountStatusLabel(item.accountStatus),
-    risk: `注册 ${formatTime(item.createdAt)} · 最近活跃 ${formatTime(item.lastActiveAt)}`,
-    targetType: 'user',
-    backendKind: 'admin-user',
-    detailItems: [
-      { label: '显示名称', value: item.displayName },
-      { label: '账号状态', value: accountStatusLabel(item.accountStatus) },
-      { label: '账号角色', value: item.isAdmin ? '管理员' : '普通用户' },
-      { label: 'linux.do 绑定', value: item.linuxDoBound ? `已绑定，信任等级${item.trustLevel ?? 0}` : '未绑定' },
-      { label: '注册时间', value: formatTime(item.createdAt) },
-      { label: '最近活跃', value: formatTime(item.lastActiveAt) },
-    ],
-    targetTo: `/u/${item.username}`,
+    page: positiveInteger(query.page, defaultAdminUserDirectoryQuery.page) as AdminUserPage,
+    limit: directoryLimits.includes(parsedLimit) ? parsedLimit : defaultAdminUserDirectoryQuery.limit,
+    search: queryString(query.search).trim().slice(0, 100),
+    status: oneOf(query.status, directoryStatuses, defaultAdminUserDirectoryQuery.status),
+    role: oneOf(query.role, directoryRoles, defaultAdminUserDirectoryQuery.role),
+    linuxDo: oneOf(query.linuxDo, directoryLinuxDoValues, defaultAdminUserDirectoryQuery.linuxDo),
+    sort: oneOf(query.sort, directorySorts, defaultAdminUserDirectoryQuery.sort),
   }
 }
 
-export async function backendAdminUserRows() {
+export function adminUserDirectoryRouteQuery(query: AdminUserDirectoryQuery) {
+  const routeQuery: Record<string, string> = {}
+  if (query.search) routeQuery.search = query.search
+  if (query.status !== defaultAdminUserDirectoryQuery.status) routeQuery.status = query.status
+  if (query.role !== defaultAdminUserDirectoryQuery.role) routeQuery.role = query.role
+  if (query.linuxDo !== defaultAdminUserDirectoryQuery.linuxDo) routeQuery.linuxDo = query.linuxDo
+  if (query.sort !== defaultAdminUserDirectoryQuery.sort) routeQuery.sort = query.sort
+  if (query.page !== defaultAdminUserDirectoryQuery.page) routeQuery.page = String(query.page)
+  if (query.limit !== defaultAdminUserDirectoryQuery.limit) routeQuery.limit = String(query.limit)
+  return routeQuery
+}
+
+export function serializeAdminUserDirectoryQuery(query: AdminUserDirectoryQuery) {
+  const params = new URLSearchParams({
+    page: String(query.page),
+    limit: String(query.limit),
+    status: query.status,
+    role: query.role,
+    linuxDo: query.linuxDo,
+    sort: query.sort,
+  })
+  if (query.search) params.set('search', query.search)
+  return params.toString()
+}
+
+export async function backendAdminUserDirectory(query: AdminUserDirectoryQuery) {
   await ensureBackendSession('admin', true)
-  const response = await backendRequest<ListResponse<BackendAdminUser>>('/api/v1/admin/users')
-  return response.items.map(mapBackendAdminUser)
+  return backendRequest<AdminUserList>(`/api/v1/admin/users?${serializeAdminUserDirectoryQuery(query)}`)
+}
+
+export async function backendAdminUserDetail(userId: string) {
+  await ensureBackendSession('admin', true)
+  return backendRequest<AdminUserDetail>(`/api/v1/admin/users/${encodeURIComponent(userId)}`)
+}
+
+export async function backendUpdateAdminUserStatus(input: {
+  userId: string
+  version: number
+  status: AdminUserStatusRequest['status']
+  reason: string
+}) {
+  await ensureBackendSession('admin', true)
+  return backendMutation<AdminUserDetail>(
+    `/api/v1/admin/users/${encodeURIComponent(input.userId)}/status`,
+    { status: input.status, reason: input.reason.trim() } satisfies AdminUserStatusRequest,
+    { ifMatch: input.version, idempotencyPrefix: 'admin-user-status' },
+  )
+}
+
+export async function backendUpdateAdminUserPermission(input: {
+  userId: string
+  version: number
+  isAdmin: boolean
+  reason: string
+}) {
+  await ensureBackendSession('admin', true)
+  return backendMutation<AdminUserDetail>(
+    `/api/v1/admin/users/${encodeURIComponent(input.userId)}/admin-permission`,
+    { isAdmin: input.isAdmin, reason: input.reason.trim() } satisfies AdminUserPermissionRequest,
+    { ifMatch: input.version, idempotencyPrefix: 'admin-user-permission' },
+  )
 }

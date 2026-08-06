@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"net/netip"
 	"strings"
 	"testing"
 	"time"
@@ -31,7 +30,7 @@ func TestProductionSessionCookieIsSecureAndLogoutClearsWithSameAttributes(t *tes
 		t.Fatalf("dev session status %d body %s", response.Code, response.Body.String())
 	}
 	sessionCookie := findCookie(t, response.Result().Cookies(), sessionCookieName)
-	if !sessionCookie.Secure || !sessionCookie.HttpOnly || sessionCookie.SameSite != http.SameSiteLaxMode {
+	if !sessionCookie.Secure || !sessionCookie.HttpOnly || sessionCookie.SameSite != http.SameSiteLaxMode || sessionCookie.MaxAge != 7*24*60*60 {
 		t.Fatalf("unexpected production session cookie: %+v", sessionCookie)
 	}
 	var payload sessionResponse
@@ -77,9 +76,9 @@ func TestOAuthCallbackRedirectsToConfiguredFrontendOrigin(t *testing.T) {
 		returnTo string
 		want     string
 	}{
-		{name: "preserves safe frontend path", returnTo: "/market?tab=api", want: "https://staging.c2cmarket.shop/market?tab=api"},
-		{name: "rejects protocol relative target", returnTo: "//evil.example/path", want: "https://staging.c2cmarket.shop/"},
-		{name: "rejects absolute target", returnTo: "https://evil.example/path", want: "https://staging.c2cmarket.shop/"},
+		{name: "preserves safe frontend path", returnTo: "/market?tab=api", want: "https://staging.c2cmarket.shop/market?authOutcome=registered&tab=api"},
+		{name: "rejects protocol relative target", returnTo: "//evil.example/path", want: "https://staging.c2cmarket.shop/?authOutcome=registered"},
+		{name: "rejects absolute target", returnTo: "https://evil.example/path", want: "https://staging.c2cmarket.shop/?authOutcome=registered"},
 	}
 
 	for _, tt := range tests {
@@ -90,7 +89,10 @@ func TestOAuthCallbackRedirectsToConfiguredFrontendOrigin(t *testing.T) {
 			})
 			state := "oauth-state"
 			request := httptest.NewRequest(http.MethodGet, "/api/v1/auth/oauth/callback?state="+state+"&code=test-user", nil)
-			request.AddCookie(&http.Cookie{Name: oauthStateCookieName, Value: state + "|" + tt.returnTo})
+			request.AddCookie(&http.Cookie{Name: oauthStateCookieName, Value: encodeOAuthStateCookie(oauthStateCookiePayload{
+				State:    state,
+				ReturnTo: tt.returnTo,
+			})})
 			response := httptest.NewRecorder()
 
 			server.ServeHTTP(response, request)
@@ -107,13 +109,16 @@ func TestOAuthCallbackRedirectsToConfiguredFrontendOrigin(t *testing.T) {
 
 func TestRateLimitedEndpointReturnsProblem429(t *testing.T) {
 	server := &Server{
-		app:         app.NewService(),
-		rateLimiter: middleware.NewRateLimiter(time.Minute),
+		app:              app.NewService(),
+		rateLimiter:      middleware.NewRateLimiter(time.Minute),
+		clientIPResolver: middleware.NewClientIPResolver(false, nil),
 	}
 	handler := server.limitHandler("test_rate_limit", 1, func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
 	})
-	wrapped := middleware.WithRequestID(http.HandlerFunc(handler))
+	wrapped := middleware.WithRequestID(
+		middleware.WithClientIP(server.clientIPResolver, http.HandlerFunc(handler)),
+	)
 	for i := 0; i < 2; i++ {
 		request := httptest.NewRequest(http.MethodGet, "/test-rate-limit", nil)
 		response := httptest.NewRecorder()
@@ -125,8 +130,103 @@ func TestRateLimitedEndpointReturnsProblem429(t *testing.T) {
 			if response.Code != http.StatusTooManyRequests {
 				t.Fatalf("expected 429, got %d body %s", response.Code, response.Body.String())
 			}
+			if retryAfter := response.Header().Get("Retry-After"); retryAfter != "60" {
+				t.Fatalf("expected Retry-After 60, got %q", retryAfter)
+			}
 			assertProblemCode(t, response, domain.CodeRateLimited)
 		}
+	}
+}
+
+func TestRateLimitUsesNormalizedTargetDimensionAcrossIPs(t *testing.T) {
+	server := &Server{
+		app:              app.NewService(),
+		rateLimiter:      middleware.NewRateLimiter(time.Minute),
+		clientIPResolver: middleware.NewClientIPResolver(false, nil),
+	}
+	policy := rateLimitPolicy{
+		Group:       "test_email_target",
+		IPLimit:     100,
+		UserLimit:   100,
+		TargetLimit: 1,
+	}
+	handler := server.limitPolicy(policy, func(w http.ResponseWriter, r *http.Request) {
+		if !server.allowTarget(w, r, policy, "email", r.Header.Get("X-Test-Email")) {
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	})
+	wrapped := middleware.WithRequestID(
+		middleware.WithClientIP(server.clientIPResolver, http.HandlerFunc(handler)),
+	)
+
+	first := httptest.NewRequest(http.MethodPost, "/test-email-target", nil)
+	first.RemoteAddr = "203.0.113.10:4001"
+	first.Header.Set("X-Test-Email", " Person@Example.com ")
+	firstResponse := httptest.NewRecorder()
+	wrapped.ServeHTTP(firstResponse, first)
+	if firstResponse.Code != http.StatusNoContent {
+		t.Fatalf("first target request expected no content, got %d body %s", firstResponse.Code, firstResponse.Body.String())
+	}
+
+	second := httptest.NewRequest(http.MethodPost, "/test-email-target", nil)
+	second.RemoteAddr = "203.0.113.11:4002"
+	second.Header.Set("X-Test-Email", "person@example.com")
+	secondResponse := httptest.NewRecorder()
+	wrapped.ServeHTTP(secondResponse, second)
+	if secondResponse.Code != http.StatusTooManyRequests {
+		t.Fatalf("same normalized target must be limited across IPs, got %d body %s", secondResponse.Code, secondResponse.Body.String())
+	}
+	if retryAfter := secondResponse.Header().Get("Retry-After"); retryAfter != "60" {
+		t.Fatalf("expected Retry-After 60, got %q", retryAfter)
+	}
+	assertProblemCode(t, secondResponse, domain.CodeRateLimited)
+}
+
+func TestRateLimitSeparatesAuthenticatedUserAndSharedIPBudgets(t *testing.T) {
+	service := app.NewService()
+	server := &Server{
+		app:         service,
+		rateLimiter: middleware.NewRateLimiter(time.Minute),
+	}
+	_, firstSession, appErr := service.CreateDevSession(context.Background(), "rate-user-one", false)
+	if appErr != nil {
+		t.Fatalf("create first session: %v", appErr)
+	}
+	_, secondSession, appErr := service.CreateDevSession(context.Background(), "rate-user-two", false)
+	if appErr != nil {
+		t.Fatalf("create second session: %v", appErr)
+	}
+	_, thirdSession, appErr := service.CreateDevSession(context.Background(), "rate-user-three", false)
+	if appErr != nil {
+		t.Fatalf("create third session: %v", appErr)
+	}
+	handler := server.limitHandlerByActor("test_actor_rate_limit", 2, 1, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	})
+	wrapped := middleware.WithRequestID(http.HandlerFunc(handler))
+
+	request := func(sessionID, remoteAddr string) *httptest.ResponseRecorder {
+		t.Helper()
+		r := httptest.NewRequest(http.MethodPost, "/test-actor-rate-limit", nil)
+		r.RemoteAddr = remoteAddr
+		r.AddCookie(&http.Cookie{Name: sessionCookieName, Value: sessionID})
+		response := httptest.NewRecorder()
+		wrapped.ServeHTTP(response, r)
+		return response
+	}
+
+	if response := request(firstSession.ID, "203.0.113.10:4001"); response.Code != http.StatusNoContent {
+		t.Fatalf("first buyer expected success, got %d body %s", response.Code, response.Body.String())
+	}
+	if response := request(firstSession.ID, "203.0.113.11:4002"); response.Code != http.StatusTooManyRequests {
+		t.Fatalf("same buyer must hit user limit across IPs, got %d body %s", response.Code, response.Body.String())
+	}
+	if response := request(secondSession.ID, "203.0.113.10:4003"); response.Code != http.StatusNoContent {
+		t.Fatalf("second buyer on shared IP expected success, got %d body %s", response.Code, response.Body.String())
+	}
+	if response := request(thirdSession.ID, "203.0.113.10:4004"); response.Code != http.StatusTooManyRequests {
+		t.Fatalf("shared IP must eventually hit its independent limit, got %d body %s", response.Code, response.Body.String())
 	}
 }
 
@@ -159,13 +259,16 @@ func TestJSONRequestBodyStrictParsingFailures(t *testing.T) {
 
 func TestRateLimitIgnoresForgedForwardingHeadersByDefault(t *testing.T) {
 	server := &Server{
-		app:         app.NewService(),
-		rateLimiter: middleware.NewRateLimiter(time.Minute),
+		app:              app.NewService(),
+		rateLimiter:      middleware.NewRateLimiter(time.Minute),
+		clientIPResolver: middleware.NewClientIPResolver(false, nil),
 	}
 	handler := server.limitHandler("test_forged_xff", 1, func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
 	})
-	wrapped := middleware.WithRequestID(http.HandlerFunc(handler))
+	wrapped := middleware.WithRequestID(
+		middleware.WithClientIP(server.clientIPResolver, http.HandlerFunc(handler)),
+	)
 
 	for i, forwardedFor := range []string{"198.51.100.10", "198.51.100.11"} {
 		request := httptest.NewRequest(http.MethodGet, "/test-forged-xff", nil)
@@ -189,15 +292,16 @@ func TestRateLimitIgnoresForgedForwardingHeadersByDefault(t *testing.T) {
 
 func TestTrustedProxyForwardingHeadersAffectRateLimitOnlyForTrustedPeer(t *testing.T) {
 	server := &Server{
-		app:                  app.NewService(),
-		rateLimiter:          middleware.NewRateLimiter(time.Minute),
-		trustXForwardedFor:   true,
-		trustedProxyPrefixes: mustTrustedProxyPrefixes(t, "10.0.0.0/24"),
+		app:              app.NewService(),
+		rateLimiter:      middleware.NewRateLimiter(time.Minute),
+		clientIPResolver: middleware.NewClientIPResolver(true, []string{"10.0.0.0/24"}),
 	}
 	handler := server.limitHandler("test_trusted_xff", 1, func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
 	})
-	wrapped := middleware.WithRequestID(http.HandlerFunc(handler))
+	wrapped := middleware.WithRequestID(
+		middleware.WithClientIP(server.clientIPResolver, http.HandlerFunc(handler)),
+	)
 
 	for _, forwardedFor := range []string{"198.51.100.10", "198.51.100.11"} {
 		request := httptest.NewRequest(http.MethodGet, "/test-trusted-xff", nil)
@@ -247,6 +351,71 @@ func TestFetchOAuthJSONRejectsOversizedBody(t *testing.T) {
 	appErr := server.fetchOAuthJSON(request, &target)
 	if appErr == nil || appErr.Status != http.StatusBadGateway || appErr.Code != domain.CodeInternalError {
 		t.Fatalf("expected bad gateway oversized oauth response, got %v", appErr)
+	}
+}
+
+func TestOAuthProfileAcceptsNumericLinuxDoUserID(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/oauth2/token":
+			_, _ = w.Write([]byte(`{"access_token":"provider-access-token","token_type":"Bearer"}`))
+		case "/api/user":
+			if authorization := r.Header.Get("Authorization"); authorization != "Bearer provider-access-token" {
+				t.Fatalf("unexpected authorization header %q", authorization)
+			}
+			_, _ = w.Write([]byte(`{"id":12345,"username":"orbit","name":"Orbit","avatar_template":"https://linux.do/user_avatar/linux.do/orbit/{size}/42_2.png","trust_level":3}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer upstream.Close()
+
+	server := &Server{
+		oauth: OAuthOptions{
+			ProviderMode: "oauth2",
+			ClientID:     "client-id",
+			ClientSecret: "client-secret",
+			TokenURL:     upstream.URL + "/oauth2/token",
+			UserInfoURL:  upstream.URL + "/api/user",
+			RedirectURL:  "https://api.example.com/api/v1/auth/oauth/callback",
+		},
+		oauthHTTPClient: upstream.Client(),
+	}
+	profile, appErr := server.oauthProfile(context.Background(), "authorization-code")
+	if appErr != nil {
+		t.Fatalf("oauth profile: %v", appErr)
+	}
+	if profile.Subject != "12345" || profile.LinuxDoUserID != "12345" {
+		t.Fatalf("unexpected oauth subject: %+v", profile)
+	}
+	if profile.Username != "orbit" || profile.DisplayName != "Orbit" || profile.TrustLevel != 3 {
+		t.Fatalf("unexpected oauth profile: %+v", profile)
+	}
+	wantAvatarURL := "https://linux.do/user_avatar/linux.do/orbit/288/42_2.png"
+	if profile.AvatarURL != wantAvatarURL || profile.LinuxDoAvatarURL != wantAvatarURL {
+		t.Fatalf("expected normalized linux.do avatar %q, got %+v", wantAvatarURL, profile)
+	}
+}
+
+func TestOAuthProviderIDAcceptsStringAndIntegerJSON(t *testing.T) {
+	for _, testCase := range []struct {
+		name string
+		json string
+		want string
+	}{
+		{name: "string", json: `"12345"`, want: "12345"},
+		{name: "integer", json: `12345`, want: "12345"},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			var id oauthProviderID
+			if err := json.Unmarshal([]byte(testCase.json), &id); err != nil {
+				t.Fatalf("unmarshal oauth provider id: %v", err)
+			}
+			if string(id) != testCase.want {
+				t.Fatalf("expected %q, got %q", testCase.want, id)
+			}
+		})
 	}
 }
 
@@ -302,13 +471,4 @@ func findCookie(t *testing.T, cookies []*http.Cookie, name string) *http.Cookie 
 	}
 	t.Fatalf("cookie %s not found in %+v", name, cookies)
 	return nil
-}
-
-func mustTrustedProxyPrefixes(t *testing.T, values ...string) []netip.Prefix {
-	t.Helper()
-	prefixes := trustedProxyPrefixes(values)
-	if len(prefixes) != len(values) {
-		t.Fatalf("expected all trusted proxy prefixes to parse: values=%+v prefixes=%+v", values, prefixes)
-	}
-	return prefixes
 }

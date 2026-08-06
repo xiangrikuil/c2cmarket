@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Check, CircleAlert, CircleDashed } from 'lucide-vue-next'
+import { Check, CircleDashed, TriangleAlert } from 'lucide-vue-next'
 import { Card } from '@/components/ui/card'
 import type { CompletenessItem } from './types'
 
@@ -26,7 +26,7 @@ defineProps<{
             :class="item.status === 'done' ? 'bg-success/10 text-success' : item.status === 'warning' ? 'bg-amber-100 text-amber-700' : 'bg-muted text-muted-foreground'"
           >
             <Check v-if="item.status === 'done'" class="h-3 w-3" />
-            <CircleAlert v-else-if="item.status === 'warning'" class="h-3 w-3" />
+            <TriangleAlert v-else-if="item.status === 'warning'" class="h-3 w-3" />
             <CircleDashed v-else class="h-3 w-3" />
           </span>
           <span>{{ item.label }}</span>

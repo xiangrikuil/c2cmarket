@@ -2,6 +2,10 @@ import {
   adminCards,
   adminAuditLogs,
   adminDirectoryUsers,
+  apiQuotaBatches,
+  apiQuotaCredentialSummaries,
+  apiQuotaOffers,
+  apiQuotaRounds,
   apiPurchaseIntentEvents,
   apiPurchaseIntents,
   apiServices,
@@ -18,7 +22,6 @@ import {
   myContactMethods,
   myUserProfile,
   orderContactSnapshots,
-  parsedLinuxDoTopicMock,
   productTrends,
   publicCompletionRecords,
   publicDisputeRecords,
@@ -35,11 +38,29 @@ import {
   type ApiPurchaseIntentEvent,
   type ApiPurchaseIntentEventType,
   type ApiPurchaseIntentStatus,
+  type ApiQuotaBatch,
+  type ApiQuotaCredentialSummary,
+  type ApiQuotaDeliveryMode,
+  type ApiQuotaDistributionSystem,
+  type ApiQuotaOffer,
+  type ApiQuotaRound,
+  type ApiQuotaSaleMode,
+  type ApiQuotaSourceType,
+  type ApiQuotaSystemSaleSlot,
+  type ApiQuotaSystemSaleSlotList,
   type ApiService,
+  type ApiServiceCommercialSnapshot,
+  type ApiServiceSalesChannel,
+  type ApiServiceSalesChannelKind,
+  type ApiServiceSalesState,
+  type ApiServiceSalesSummary,
+  type ApiServiceSalesView,
+  type OwnerApiService,
   type ApiServicePackage,
   type ApiServicePackageModel,
   type ApiServicePackageSnapshot,
   type ApiServiceState,
+  type ApiTTFTBand,
   type ApiUsageVisibility,
   type AdminAuditLog,
   type Carpool,
@@ -59,7 +80,6 @@ import {
   type OpeningChannelOption,
   type OrderContactSnapshot,
   type OrderContactSnapshotItem,
-  type ParsedLinuxDoTopic,
   type PaymentMethodOption,
   type RegionOption,
   type ModelCatalogItem,
@@ -69,17 +89,36 @@ import {
   type PublicMerchantProfile,
   type PublicUserProfile,
   type ProductTrend,
+  type PublicApiQuotaOffer,
   type TransactionRecord,
   type TransactionTrendPoint,
   type UserContactMethod,
   type UserPrivacySettings,
   type UserProfile,
 } from '@/data/mock'
+import type { ReputationSummary } from '@/types/reputation'
+import type { ApiServiceHealthSummary } from '@/types/apiHealth'
+import type { ApiQuotaUsagePolicy, ApiQuotaUsagePolicyInput } from '@/types/apiQuota'
+export type { ApiQuotaLimitMode, ApiQuotaUsageLimit, ApiQuotaUsageLimitInput, ApiQuotaUsagePolicy, ApiQuotaUsagePolicyInput, ApiWritableQuotaLimitMode } from '@/types/apiQuota'
+import { mockPublicUserReputation } from '@/lib/reputationMock'
 import { getPricingDisplay } from '@/lib/pricing'
+import {
+  getApiMerchantDisplayName,
+  isApiServicePubliclyOrderable,
+  type ApiIntentMerchantSource,
+  type ApiMerchantIdentitySource,
+} from '@/lib/apiServicePresentation'
+export { getApiMerchantDisplayName, isApiServicePubliclyOrderable } from '@/lib/apiServicePresentation'
 import { evaluateCarpoolApplicationEligibility, hasCredentialSharingLanguage } from '@/lib/carpoolEligibility'
+import { matchesApiOrderSearch } from '@/lib/apiOrderUi'
 export { evaluateCarpoolApplicationEligibility } from '@/lib/carpoolEligibility'
 import { defaultQuotaLabel, defaultQuotaPeriod, defaultQuotaUnit } from '@/lib/quota'
-import { beijingDateTimeInputToISOString, formatQuotaExpiresAtLabel } from '@/lib/apiQuotaExpiration'
+import { beijingDateTimeInputToISOString, formatBeijingDateTimeInput, formatQuotaExpiresAtLabel } from '@/lib/apiQuotaExpiration'
+import {
+  apiQuotaUsagePolicyFromInput,
+  normalizeHistoricalApiQuotaUsagePolicy,
+  toApiQuotaUsagePolicyInput,
+} from '@/lib/apiQuotaPolicy'
 import { getMockPublicAPIModels } from '@/lib/apiModelCatalogBackend'
 import {
   cloneApiPaymentAccountSettings,
@@ -123,6 +162,9 @@ import {
 import {
   backendAPIIntentById,
   backendAPIIntentEvents,
+  backendAPIQuotaBatchAction,
+  backendAPIQuotaCredentialSummary,
+  backendAdminAPIOrder,
   backendAdminAPIOrderRows,
   backendAPIServiceById,
   backendAPIServices,
@@ -131,22 +173,35 @@ import {
   backendConfirmAPIOrderComplete,
   backendConfirmAPIOrderPayment,
   backendCreateAPIOrderFromIntent,
+  backendCreateAPIQuotaBatch,
+  backendCreateAPIQuotaOffer,
+  backendCreateAPIQuotaOrder,
+  backendCreateAPIQuotaRushOffer,
+  backendCreateAPIQuotaRound,
   backendCancelAPIIntentById,
   backendCloseAPIIntent,
   backendCreateAPIPurchaseIntent,
   backendMarkAPIIntentContacted,
   backendModelCatalog,
+  backendImportAPIQuotaCredentials,
   backendMyAPIOrder,
   backendMyAPIOrders,
   backendMyAPIIntents,
   backendOtherAPIServices,
+  backendOwnerAPIQuotaBatches,
+  backendOwnerAPIQuotaOffers,
+  backendOwnerAPIQuotaRounds,
   backendOwnerAPIOrder,
   backendOwnerAPIOrders,
   backendOwnerAPIIntents,
   backendOwnerAPIServiceById,
   backendOwnerAPIServices,
+  backendOpenAPIOrderDispute,
   backendPauseAPIService,
   backendPublishAPIService,
+  backendPublicAPIQuotaOffer,
+  backendPublicAPIQuotaOffers,
+  backendAPIQuotaSaleSlots,
   backendReadAPIOrderPaymentInstructions,
   backendReportAPIOrderPaymentIssue,
   backendRunAdminAPIServiceAction,
@@ -186,11 +241,6 @@ import {
   backendSubmitOfficialPriceLead,
   backendUpdateOfficialPriceAdminStatus,
 } from '@/lib/officialPriceBackend'
-import {
-  backendAdminDemandRows,
-  backendRunAdminDemandAction,
-  backendUpdateAdminDemandStatus,
-} from '@/lib/demandBackend'
 import {
   backendFavoriteStatus,
   backendFavorites,
@@ -232,29 +282,28 @@ import {
   type CreateManualInterventionReportRequest,
   type CreatePublicUserReportRequest,
 } from '@/lib/reportBackend'
-import { backendAdminUserRows } from '@/lib/adminUserBackend'
+import {
+  backendAdminUserDetail,
+  backendAdminUserDirectory,
+  backendUpdateAdminUserPermission,
+  backendUpdateAdminUserStatus,
+  type AdminUser,
+  type AdminUserDetail,
+  type AdminUserDirectoryQuery,
+  type AdminUserList,
+  type AdminUserStatus,
+} from '@/lib/adminUserBackend'
 import { shouldUseRealBackend } from '@/lib/backendClient'
+import {
+  backendGetApiPaymentAccountSettings,
+  backendUpdateApiPaymentAccountSettings,
+} from '@/lib/apiPaymentSettingsBackend'
 import { getBackupPasswordValidationMessage } from '@/lib/passwordPolicy'
 import { compareDecimal, divideDecimal, normalizeDecimal, normalizeDecimalTrimmed } from '@/lib/decimal'
-import {
-  closeDemand,
-  getDemandById,
-  getDemands,
-  submitDemand,
-} from '@/features/demand/api'
-
-export {
-  closeDemand,
-  getDemandById,
-  getDemands,
-  submitDemand,
-}
-export type { DemandRecord, DemandStatus, SubmitDemandPayload } from '@/features/demand/api'
 export type AdminSection =
   | 'official-prices'
   | 'price-leads'
   | 'carpools'
-  | 'demands'
   | 'api-services'
   | 'trade-intents'
   | 'users'
@@ -275,6 +324,15 @@ export type AdminRow = {
   backendVersion?: number
   detailItems?: Array<{ label: string, value: string }>
   targetTo?: string | null
+  moderationParticipants?: Array<{ userId: string, label: string }>
+  moderationSupplements?: Array<{
+    id: string
+    submittedByUserId: string
+    submittedByUsername: string
+    submittedByName: string
+    body: string
+    createdAt: string
+  }>
 }
 
 export type ApiOrderNotification = {
@@ -296,7 +354,7 @@ export type CarpoolNotification = {
 
 export type UnifiedNotification = {
   id: string
-  type: '审核结果' | '上车申请' | 'API 意向' | 'API 订单' | '求车需求' | '问题反馈' | '管理操作' | '边界提醒'
+  type: '审核结果' | '上车申请' | 'API 意向' | 'API 订单' | '问题反馈' | '管理操作' | '边界提醒'
   title: string
   detail: string
   time: string
@@ -322,7 +380,7 @@ export type FavoriteListItem = FavoriteRecord & {
 
 export type SearchResult = {
   id: string
-  type: '官方价格' | '车源' | '求车' | 'API 服务' | '用户' | '商户'
+  type: '官方价格' | '车源' | 'API 服务' | '用户' | '商户'
   title: string
   subtitle: string
   badge: string
@@ -331,15 +389,35 @@ export type SearchResult = {
 
 export type ReviewCenterRow = {
   id: string
-  sourceType: 'carpool'
-  sourceId: string
+  transactionType: 'carpool_membership' | 'api_order'
+  transactionId: string
+  direction: 'pending' | 'sent' | 'received'
   target: string
   counterparty: string
-  status: '可评价' | '已评价'
-  rating: number
+  counterpartyUsername: string
+  reviewerRole: 'buyer' | 'seller'
+  revieweeRole: 'buyer' | 'seller'
+  status: 'reviewable' | 'expired' | 'sealed' | 'published' | 'removed'
+  visibility: 'none' | 'sealed' | 'published' | 'removed'
+  counterpartySubmitted: boolean
+  canCreate: boolean
+  canEdit: boolean
+  rating: number | null
   tags: string[]
-  note: string
+  note: string | null
+  completedAt: string
+  reviewDeadlineAt: string
+  submittedAt: string | null
+  visibleAt: string | null
+  frozenAt: string | null
   createdAt: string
+  updatedAt: string
+  version: number
+}
+
+export type ReviewCenterData = {
+  items: ReviewCenterRow[]
+  presetTags: string[]
 }
 
 export type FeedbackTicketType = 'function_issue' | 'data_correction' | 'experience_suggestion' | 'publish_contact_block'
@@ -410,8 +488,9 @@ export type FeedbackAdminHandlePayload = {
 }
 
 export type SubmitReviewPayload = {
-  sourceType: 'carpool'
-  sourceId: string
+  transactionType: ReviewCenterRow['transactionType']
+  transactionId: string
+  operation: 'create' | 'edit'
   rating: number
   tags: string[]
   note: string
@@ -433,6 +512,32 @@ export type ApiOrderStatus =
 
 export type ApiOrderDeliveryKind = 'api_key_endpoint' | 'login_account'
 export type ApiOrderPaymentIssueReason = 'not_received' | 'amount_mismatch' | 'remark_mismatch'
+export type ApiOrderPurchaseKind = 'api_service' | 'limited_quota_offer'
+export type ApiOrderCompletionSource = 'buyer_confirmed' | 'auto_completed'
+export type ApiOrderViewerRole = 'buyer' | 'merchant' | 'admin'
+
+export type ApiQuotaOrderSnapshot = ApiServiceCommercialSnapshot & {
+  batchId: string
+  offerId: string
+  saleRoundId?: string
+  offerName: string
+  usdAllowance: string
+  priceCny: string
+  cnyPerUsd: string
+  modelMultiplier: string
+  saleCutoffAt: string
+  expiresAt: string
+  saleMode: ApiQuotaSaleMode
+  roundStartsAt?: string
+  roundEndsAt?: string
+  distributionSystem: ApiQuotaDistributionSystem
+  ttftBand: ApiTTFTBand
+  declaredMaxConcurrency: number
+  performanceConfirmedAt?: string
+  performanceUnverified: boolean
+  deliveryEtaMinutes: number
+  deliveryMode: ApiQuotaDeliveryMode
+}
 
 export type ApiOrderDeliveryCredential = {
   deliveryKind: ApiOrderDeliveryKind
@@ -443,6 +548,8 @@ export type ApiOrderDeliveryCredential = {
   password?: string
   instructions?: string
   submittedAt: string
+  destroyedAt?: string
+  destroyReason?: 'retention_expired' | 'retired_unused'
 }
 
 export type SubmitApiOrderDeliveryCredentialPayload = {
@@ -465,14 +572,19 @@ export type ApiOrderPaymentInstructions = {
 
 export type ApiOrder = {
   id: string
+  orderNo: string
+  purchaseKind: ApiOrderPurchaseKind
   apiPurchaseIntentId: string
   apiServiceId: string
   buyerId: string
   buyer: string
   sellerId: string
   seller: string
+  buyerReputation?: ReputationSummary | null
+  sellerReputation?: ReputationSummary | null
   status: ApiOrderStatus
   disputeStatus?: string
+  disputeCaseId?: string
   serviceTitle: string
   amount: number
   amountDecimal?: string
@@ -488,7 +600,9 @@ export type ApiOrder = {
   paidConfirmedAt?: string
   deliveryNote?: string
   deliverySubmittedAt?: string
+  deliveryReviewExpiresAt?: string
   deliveryCredential?: ApiOrderDeliveryCredential
+  completionSource?: ApiOrderCompletionSource
   completedAt?: string
   cancelledAt?: string
   cancelReason?: string
@@ -501,11 +615,121 @@ export type ApiOrder = {
   packageExpiresAt?: string
   requestedUsdAllowance: number
   requestedUsdAllowanceDecimal?: string
+  quotaSnapshot?: ApiQuotaOrderSnapshot
+  quotaUsagePolicySnapshot: ApiQuotaUsagePolicy
   merchantContactChannels: ApiContactChannel[]
   buyerContactChannels: ApiContactChannel[]
   viewerRole?: 'buyer' | 'merchant'
   createdAt: string
   updatedAt: string
+}
+
+export type AdminApiOrderDetail = {
+  id: string
+  purchaseKind: ApiOrderPurchaseKind
+  apiPurchaseIntentId: string
+  apiServiceId: string
+  buyerUserId: string
+  sellerUserId: string
+  status: ApiOrderStatus
+  disputeStatus?: string
+  disputeCaseId?: string
+  serviceTitleSnapshot: string
+  billingModeSnapshot?: string
+  selectedPackageId?: string
+  selectedPackageSnapshot?: string
+  amount: string
+  currency: 'CNY'
+  requestedUsdAllowanceSnapshot?: string
+  cnyPerUsdAllowanceSnapshot?: string
+  selectedPaymentMethod: ApiPaymentOption['paymentMethod']
+  paymentExpiresAt: string
+  paymentSubmittedAt?: string
+  paymentIssueReason?: ApiOrderPaymentIssueReason
+  paymentIssueNote?: string
+  paymentIssueReportedAt?: string
+  paidConfirmedAt?: string
+  deliveryNote?: string
+  deliverySubmittedAt?: string
+  deliveryReviewExpiresAt?: string
+  completionSource?: ApiOrderCompletionSource
+  completedAt?: string
+  cancelledAt?: string
+  cancelReason?: string
+  version: number
+  createdAt: string
+  updatedAt: string
+}
+
+export type ApiQuotaOfferFilters = {
+  distributionSystem?: ApiQuotaDistributionSystem | 'all'
+  oneMultiplier?: boolean
+  onlyOrderable?: boolean
+  slotKey?: string
+}
+
+export type CreateApiQuotaOrderPayload = {
+  offerId: string
+  saleRoundId?: string
+}
+
+export type CreateApiQuotaBatchPayload = {
+  apiServiceId: string
+  sourceType: ApiQuotaBatch['sourceType']
+  sourceLabel?: string
+  declaredTotalUsdAllowance: string
+  saleCutoffAt: string
+  expiresAt: string
+  sourceConfirmedAt: string
+}
+
+export type CreateApiQuotaOfferPayload = {
+  batchId: string
+  name: string
+  usdAllowance: string
+  priceCny: string
+  modelMultiplier: string
+  quotaUsagePolicy: ApiQuotaUsagePolicyInput
+  deliveryMode: ApiQuotaDeliveryMode
+  deliveryEtaMinutes: number
+  saleMode: ApiQuotaSaleMode
+  continuousCopies: number
+  sortOrder: number
+}
+
+export type CreateApiQuotaRoundPayload = {
+  batchId: string
+  name: string
+  startsAt: string
+  endsAt: string
+  offers: Array<{ offerId: string, copies: number }>
+}
+
+export type CreateApiQuotaRushOfferPayload = {
+  apiServiceId: string
+  sourceType: ApiQuotaSourceType
+  sourceLabel?: string
+  name: string
+  usdAllowance: string
+  priceCny: string
+  modelMultiplier: string
+  quotaUsagePolicy: ApiQuotaUsagePolicyInput
+  copies: number
+  deliveryMode: ApiQuotaDeliveryMode
+  deliveryEtaMinutes: number
+  slotKey: string
+  expiresAt: string
+  sourceConfirmedAt: string
+  deliveryKind?: ApiOrderDeliveryKind
+  file?: File
+}
+
+export type ApiQuotaRushOfferPublication = {
+  batch: ApiQuotaBatch
+  offer: ApiQuotaOffer
+  round: ApiQuotaRound
+  credentialImported: number
+  credentialSummary: ApiQuotaCredentialSummary
 }
 
 export type ApiOrderEvent = {
@@ -535,12 +759,12 @@ export type TransactionTrendSummary = {
 
 export type { ModelCatalogItem }
 export type { ApiMerchantIdentityMode }
+export type { ApiServiceCommercialSnapshot }
 export type {
   CarpoolProductCatalogItem,
   CarpoolApplicationEligibility,
   CarpoolApplicationEligibilityCode,
   OpeningChannelOption,
-  ParsedLinuxDoTopic,
   PaymentMethodOption,
   RegionOption,
 }
@@ -559,19 +783,23 @@ export type OfficialPriceWithMeta = OfficialPrice & BackendResourceMeta
 export type CarpoolDraftStatus = 'draft' | 'reviewing'
 
 export type SaveCarpoolDraftPayload = {
-  linuxDoTopicUrl: string
-  parsedTopicId: string | null
   productId: string
   customProductName: string | null
   regionCode: string
   customRegionName: string | null
   monthlyPriceCny: number | null
   serviceMultiplier: number | null
+  weeklyQuotaAmount: number | null
   monthlyQuotaAmount: number | null
+  followsOfficialQuotaReset: boolean | null
+  vpsRegion: string
+  supportsMainlandChinaDirectConnection: boolean | null
   totalSeats: number
   occupiedSeats: number
   openingChannelCode: string
-  paymentMethodCodes: string[]
+  customOpeningChannel: string
+  paymentMethodCode: string
+  customPaymentMethod: string
   distributionMethod?: Carpool['distributionMethod'] | ''
   distributionMethodNote?: string
   providesAdminAccount?: boolean | null
@@ -590,7 +818,7 @@ export type SaveCarpoolDraftPayload = {
   status: CarpoolDraftStatus
 }
 
-const wait = () => new Promise(resolve => window.setTimeout(resolve, 80))
+const wait = () => new Promise(resolve => setTimeout(resolve, 80))
 const currentBuyerId = 'buyer-demo-user'
 const currentBuyerName = 'demo_user'
 const currentOwnerId = 'owner-orbit'
@@ -600,6 +828,11 @@ const currentMerchantName = 'orbit'
 const apiPurchaseIntentStorageKey = 'c2cmarket.apiPurchaseIntents.v2'
 const apiPurchaseIntentEventStorageKey = 'c2cmarket.apiPurchaseIntentEvents.v2'
 const apiOrderStorageKey = 'c2cmarket.apiOrders.v1'
+const apiOrderDeliveryReviewWindowMs = 24 * 60 * 60 * 1000
+const apiQuotaBatchStorageKey = 'c2cmarket.apiQuotaBatches.v1'
+const apiQuotaOfferStorageKey = 'c2cmarket.apiQuotaOffers.v1'
+const apiQuotaRoundStorageKey = 'c2cmarket.apiQuotaRounds.v1'
+const apiQuotaCredentialSummaryStorageKey = 'c2cmarket.apiQuotaCredentialSummaries.v1'
 const carpoolApplicationStorageKey = 'c2cmarket.carpoolApplications.v1'
 const carpoolApplicationEventStorageKey = 'c2cmarket.carpoolApplicationEvents.v1'
 const adminAuditLogStorageKey = 'c2cmarket.adminAuditLogs.v1'
@@ -611,13 +844,20 @@ const apiPaymentAccountSettingsStorageKey = 'c2cmarket.apiPaymentAccountSettings
 const feedbackStorageKey = 'c2cmarket.feedbackTickets.v1'
 const notificationReadStorageKey = 'c2cmarket.notificationReadState.v1'
 const favoriteStorageKey = 'c2cmarket.favorites.v1'
+const apiOrderNumberAlphabet = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789'
 const carpoolApplyAllowedStatuses: Carpool['status'][] = ['可上车']
 const carpoolContactVisibleStatuses: CarpoolApplicationStatus[] = ['accepted_reserved', 'waiting_contact', 'contacted', 'joined_pending_confirmation', 'active', 'pending_completion', 'completed', 'disputed']
 const apiContactVisibleStatuses: ApiPurchaseIntentStatus[] = ['open', 'contacted', 'ordered', 'buyer_cancelled', 'owner_closed']
 
 let apiPurchaseIntentStore = normalizeApiPurchaseIntentStore(readSessionStore(apiPurchaseIntentStorageKey, apiPurchaseIntents))
 let apiPurchaseIntentEventStore = normalizeApiPurchaseIntentEventStore(readSessionStore(apiPurchaseIntentEventStorageKey, apiPurchaseIntentEvents))
-let apiOrderStore = readSessionStore<ApiOrder[]>(apiOrderStorageKey, [])
+const loadedApiOrders = readSessionStore<ApiOrder[]>(apiOrderStorageKey, [])
+let apiOrderStore = normalizeApiOrderStore(loadedApiOrders)
+if (loadedApiOrders.some(order => !order.orderNo)) persistApiOrderStore()
+let apiQuotaBatchStore = readSessionStore<ApiQuotaBatch[]>(apiQuotaBatchStorageKey, apiQuotaBatches)
+let apiQuotaOfferStore = normalizeApiQuotaOfferStore(readSessionStore<PublicApiQuotaOffer[]>(apiQuotaOfferStorageKey, apiQuotaOffers))
+let apiQuotaRoundStore = readSessionStore<ApiQuotaRound[]>(apiQuotaRoundStorageKey, apiQuotaRounds)
+let apiQuotaCredentialSummaryStore = readSessionStore<ApiQuotaCredentialSummary[]>(apiQuotaCredentialSummaryStorageKey, apiQuotaCredentialSummaries)
 let carpoolApplicationStore = readSessionStore(carpoolApplicationStorageKey, carpoolApplications)
 let carpoolApplicationEventStore = readSessionStore(carpoolApplicationEventStorageKey, carpoolApplicationEvents)
 let adminAuditLogStore = readSessionStore(adminAuditLogStorageKey, adminAuditLogs)
@@ -636,16 +876,8 @@ function clone<T>(value: T): T {
   return structuredClone(value)
 }
 
-function isLinuxDoTopicUrl(value: string) {
-  try {
-    const parsed = new URL(value)
-    return parsed.protocol === 'https:' && parsed.hostname === 'linux.do' && parsed.pathname.startsWith('/t/')
-  } catch {
-    return false
-  }
-}
-
 function readSessionStore<T>(key: string, seed: T): T {
+  if (typeof window === 'undefined') return clone(seed)
   const stored = window.sessionStorage.getItem(key)
   if (!stored) return clone(seed)
   const parsed = JSON.parse(stored) as T
@@ -656,6 +888,7 @@ function readSessionStore<T>(key: string, seed: T): T {
 }
 
 function readLocalStore<T>(key: string, seed: T): T {
+  if (typeof window === 'undefined') return clone(seed)
   const stored = window.localStorage.getItem(key)
   if (!stored) return clone(seed)
   return JSON.parse(stored) as T
@@ -680,6 +913,7 @@ function normalizeApiPurchaseIntentStore(intents: ApiPurchaseIntent[]): ApiPurch
   return intents.map(intent => ({
     ...intent,
     status: intent.status,
+    quotaUsagePolicySnapshot: normalizeHistoricalApiQuotaUsagePolicy(intent.quotaUsagePolicySnapshot),
   }))
 }
 
@@ -689,6 +923,70 @@ function normalizeApiPurchaseIntentEventStore(events: ApiPurchaseIntentEvent[]):
     fromStatus: event.fromStatus,
     toStatus: event.toStatus,
   }))
+}
+
+function mockDeliveryReviewDeadline(submittedAt?: string) {
+  const timestamp = submittedAt ? Date.parse(submittedAt) : Number.NaN
+  return Number.isFinite(timestamp) ? new Date(timestamp + apiOrderDeliveryReviewWindowMs).toISOString() : undefined
+}
+
+function normalizeApiOrderStore(orders: ApiOrder[]): ApiOrder[] {
+  return orders.map(order => ({
+    ...order,
+    orderNo: order.orderNo || createMockApiOrderNo(order.createdAt),
+    purchaseKind: order.purchaseKind ?? 'api_service',
+    completionSource: order.completionSource ?? (order.status === 'completed' ? 'buyer_confirmed' : undefined),
+    deliveryReviewExpiresAt: order.deliveryReviewExpiresAt
+      ?? (order.status === 'delivery_submitted' ? mockDeliveryReviewDeadline(order.deliverySubmittedAt) : undefined),
+    quotaUsagePolicySnapshot: normalizeHistoricalApiQuotaUsagePolicy(order.quotaUsagePolicySnapshot),
+  }))
+}
+
+function normalizeApiQuotaOfferStore(offers: PublicApiQuotaOffer[]): PublicApiQuotaOffer[] {
+  return offers.map(offer => ({
+    ...offer,
+    quotaUsagePolicy: normalizeHistoricalApiQuotaUsagePolicy(offer.quotaUsagePolicy),
+  }))
+}
+
+function materializeMockApiOrderReviews(currentTime = Date.now()) {
+  let changed = false
+  for (const order of apiOrderStore) {
+    if (order.status !== 'delivery_submitted' || order.disputeStatus === 'open' || !order.deliveryReviewExpiresAt) continue
+    const deadline = Date.parse(order.deliveryReviewExpiresAt)
+    if (!Number.isFinite(deadline) || deadline > currentTime) continue
+    const completedAt = new Date(deadline).toISOString()
+    order.status = 'completed'
+    order.completionSource = 'auto_completed'
+    order.completedAt = completedAt
+    order.updatedAt = completedAt
+    order.version += 1
+    changed = true
+  }
+  if (changed) persistApiOrderStore()
+}
+
+function createMockApiOrderNo(createdAt: string) {
+  const dateParts = new Intl.DateTimeFormat('en', {
+    timeZone: 'Asia/Shanghai',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(new Date(createdAt))
+  const datePart = ['year', 'month', 'day']
+    .map(type => dateParts.find(part => part.type === type)?.value ?? '')
+    .join('')
+  let suffix = ''
+  while (suffix.length < 10) {
+    const bytes = new Uint8Array(16)
+    globalThis.crypto.getRandomValues(bytes)
+    for (const value of bytes) {
+      if (value >= 248) continue
+      suffix += apiOrderNumberAlphabet[value % apiOrderNumberAlphabet.length]
+      if (suffix.length === 10) break
+    }
+  }
+  return `API-${datePart}-${suffix}`
 }
 
 function productPlanForCarpoolName(productName: string) {
@@ -729,12 +1027,29 @@ function normalizeSub2ApiService(service: ApiService): ApiService {
   return service
 }
 
-function normalizeApiServiceStore(services: ApiService[]) {
+function isSupportedApiServiceBillingMode(value: unknown): value is Exclude<ApiBillingMode, 'manual_credit'> {
+  return value === 'metered_credit' || value === 'fixed_package'
+}
+
+function requireSupportedApiServiceBillingMode(value: unknown) {
+  if (!isSupportedApiServiceBillingMode(value)) {
+    throw new Error('当前版本不支持该 API 服务计费方式。')
+  }
+  return value
+}
+
+function normalizeApiServiceStore(services: ApiService[]): ApiService[] {
   return services.map(service => {
     const normalized = normalizeSub2ApiService(service)
     return {
       ...normalized,
-      publiclyOrderable: normalized.publiclyOrderable ?? normalized.online,
+      quotaUsagePolicy: normalizeHistoricalApiQuotaUsagePolicy(normalized.quotaUsagePolicy),
+      packages: normalized.packages?.map(item => ({
+        ...item,
+        quotaUsagePolicy: normalizeHistoricalApiQuotaUsagePolicy(item.quotaUsagePolicy),
+      })),
+      publiclyOrderable: isSupportedApiServiceBillingMode(normalized.billingMode)
+        && (normalized.publiclyOrderable ?? normalized.online),
       expiresAt: normalized.quotaExpiresAt ? formatQuotaExpiresAtLabel(normalized.quotaExpiresAt) || normalized.expiresAt : normalized.expiresAt,
     }
   })
@@ -746,6 +1061,38 @@ export function formatUsdQuota(value: number) {
 
 export function apiUsdQuotaPerCnyLabel(creditPerCny: number) {
   return `¥1 对应 ${formatUsdQuota(creditPerCny)}`
+}
+
+export function getApiTTFTBandLabel(value?: ApiTTFTBand) {
+  if (value === 'under_1s') return '<1 秒'
+  if (value === '1_to_3s') return '1-3 秒'
+  if (value === '3_to_5s') return '3-5 秒'
+  if (value === '5_to_10s') return '5-10 秒'
+  if (value === 'over_10s') return '>10 秒'
+  return '未声明'
+}
+
+function apiTTFTApproxMinutes(value?: ApiTTFTBand) {
+  if (value === 'under_1s') return 1 / 120
+  if (value === '1_to_3s') return 2 / 60
+  if (value === '3_to_5s') return 4 / 60
+  if (value === '5_to_10s') return 7.5 / 60
+  if (value === 'over_10s') return 11 / 60
+  return 0
+}
+
+export function getApiQuotaDistributionLabel(value: ApiQuotaDistributionSystem) {
+  if (value === 'sub2api') return 'Sub2API'
+  if (value === 'new_api_proxy') return 'NewAPI'
+  return '其他接入'
+}
+
+export function getApiQuotaSaleModeLabel(value: ApiQuotaSaleMode) {
+  return value === 'scheduled' ? '定时放量' : '全天可买'
+}
+
+export function getApiQuotaDeliveryModeLabel(value: ApiQuotaDeliveryMode) {
+  return value === 'preimported' ? '预导入凭据' : '商户手工交付'
 }
 
 function apiCreditPriceCny(service: ApiService) {
@@ -765,24 +1112,36 @@ export function getSupportedModelPriceRows(service: Pick<ApiService, 'models' | 
 }
 
 function persistApiPurchaseStores() {
+  if (typeof window === 'undefined') return
   window.sessionStorage.setItem(apiPurchaseIntentStorageKey, JSON.stringify(apiPurchaseIntentStore))
   window.sessionStorage.setItem(apiPurchaseIntentEventStorageKey, JSON.stringify(apiPurchaseIntentEventStore))
 }
 
 function persistApiOrderStore() {
+  if (typeof window === 'undefined') return
   window.sessionStorage.setItem(apiOrderStorageKey, JSON.stringify(apiOrderStore))
 }
 
+function persistApiQuotaStores() {
+  window.sessionStorage.setItem(apiQuotaBatchStorageKey, JSON.stringify(apiQuotaBatchStore))
+  window.sessionStorage.setItem(apiQuotaOfferStorageKey, JSON.stringify(apiQuotaOfferStore))
+  window.sessionStorage.setItem(apiQuotaRoundStorageKey, JSON.stringify(apiQuotaRoundStore))
+  window.sessionStorage.setItem(apiQuotaCredentialSummaryStorageKey, JSON.stringify(apiQuotaCredentialSummaryStore))
+}
+
 function persistCarpoolApplicationStores() {
+  if (typeof window === 'undefined') return
   window.sessionStorage.setItem(carpoolApplicationStorageKey, JSON.stringify(carpoolApplicationStore))
   window.sessionStorage.setItem(carpoolApplicationEventStorageKey, JSON.stringify(carpoolApplicationEventStore))
 }
 
 function persistAdminStores() {
+  if (typeof window === 'undefined') return
   window.sessionStorage.setItem(adminAuditLogStorageKey, JSON.stringify(adminAuditLogStore))
 }
 
 function persistMarketStores() {
+  if (typeof window === 'undefined') return
   window.sessionStorage.setItem(officialPriceStorageKey, JSON.stringify(officialPriceStore))
   window.sessionStorage.setItem(carpoolStorageKey, JSON.stringify(carpoolStore))
   window.sessionStorage.setItem(apiServiceStorageKey, JSON.stringify(apiServiceStore))
@@ -790,18 +1149,22 @@ function persistMarketStores() {
 }
 
 function persistApiPaymentAccountSettings() {
+  if (typeof window === 'undefined') return
   window.localStorage.setItem(apiPaymentAccountSettingsStorageKey, JSON.stringify(apiPaymentAccountSettingsStore))
 }
 
 function persistFeedbackTickets() {
+  if (typeof window === 'undefined') return
   window.sessionStorage.setItem(feedbackStorageKey, JSON.stringify(feedbackTicketStore))
 }
 
 function persistNotificationReadState() {
+  if (typeof window === 'undefined') return
   window.sessionStorage.setItem(notificationReadStorageKey, JSON.stringify(notificationReadStore))
 }
 
 function persistFavorites() {
+  if (typeof window === 'undefined') return
   window.sessionStorage.setItem(favoriteStorageKey, JSON.stringify(favoriteStore))
 }
 
@@ -830,6 +1193,12 @@ function minutesFromNow(minutes: number) {
 
 function compareTimeDesc(a: string, b: string) {
   return new Date(b).getTime() - new Date(a).getTime()
+}
+
+function compareNullableNumberAsc(a: number | null, b: number | null) {
+  if (a === null) return b === null ? 0 : 1
+  if (b === null) return -1
+  return a - b
 }
 
 function deadlineTime(value?: string) {
@@ -886,8 +1255,10 @@ function syncPublicCurrentUser() {
   target.createdAt = myUserProfileStore.privacy.showCreatedAt ? myUserProfileStore.createdAt : null
   target.lastActiveAt = myUserProfileStore.privacy.showLastActiveAt ? myUserProfileStore.lastActiveAt : null
   if (!myUserProfileStore.privacy.showCompletionStats) {
-    target.stats.completedCarpoolsLast30Days = null
-    target.stats.completedApiOrdersLast30Days = null
+    target.stats.completedCarpools = null
+    target.stats.completedApiOrders = null
+    target.stats.completedCarpoolsLast90Days = null
+    target.stats.completedApiOrdersLast90Days = null
   }
   if (!myUserProfileStore.privacy.showResponseMedian) target.stats.responseMedianMinutes = null
   if (!myUserProfileStore.privacy.showResolvedDisputeSummary) target.stats.resolvedDisputeCountLast90Days = null
@@ -1017,16 +1388,7 @@ function defaultContactLabel(type: ContactMethodType) {
   return labels[type]
 }
 
-type ApiMerchantIdentitySource = Pick<ApiService, 'merchant' | 'merchantIdentityMode' | 'merchantDisplayName'>
 type ApiMerchantProfileSource = Pick<ApiService, 'merchantIdentityMode' | 'merchantUsername'>
-type ApiIntentMerchantSource = Pick<ApiPurchaseIntent, 'merchant' | 'snapshot'>
-
-export function getApiMerchantDisplayName(source: ApiMerchantIdentitySource | ApiIntentMerchantSource) {
-  if ('snapshot' in source) {
-    return source.snapshot.merchantDisplayName || source.snapshot.merchant
-  }
-  return source.merchantDisplayName || source.merchant
-}
 
 export function canOpenApiMerchantProfile(source: ApiMerchantProfileSource | Pick<ApiPurchaseIntent['snapshot'], 'merchantIdentityMode'>) {
   return source.merchantIdentityMode === 'public_profile'
@@ -1110,10 +1472,6 @@ export function getApiIntentDefaultPaymentMethod(intent: ApiPurchaseIntent): Api
   return intent.snapshot.paymentOptions?.find(option => option.enabled && isApiPaymentOptionComplete(option))?.paymentMethod ?? null
 }
 
-export function isApiServicePubliclyOrderable(service: Pick<ApiService, 'online' | 'publiclyOrderable'>) {
-  return service.online && service.publiclyOrderable
-}
-
 export function getApiServicePublicDetailUrl(service: Pick<ApiService, 'id' | 'online' | 'publiclyOrderable'>) {
   return isApiServicePubliclyOrderable(service) ? `/api-market/${service.id}` : null
 }
@@ -1159,17 +1517,47 @@ export function getApiStatusLabel(status: ApiPurchaseIntentStatus) {
   return labels[status]
 }
 
-export function getApiOrderStatusLabel(status: ApiOrderStatus) {
+export function getApiOrderStatusLabel(status: ApiOrderStatus, role: ApiOrderViewerRole = 'admin') {
   const labels: Record<ApiOrderStatus, string> = {
     pending_payment: '待付款',
     payment_submitted: '买家已付款',
     payment_issue: '付款待补充',
     paid_confirmed: '已确认收款',
-    delivery_submitted: '已交付',
+    delivery_submitted: role === 'buyer' ? '待核验凭证' : role === 'merchant' ? '已完成交付' : '买家核验期',
     completed: '已完成',
     cancelled: '已取消',
   }
   return labels[status]
+}
+
+export function getApiOrderDisplayStatus(order: ApiOrder, role: ApiOrderViewerRole) {
+  if (order.status !== 'completed') return getApiOrderStatusLabel(order.status, role)
+  if (order.completionSource === 'auto_completed') return '已自动完成'
+  if (order.completionSource === 'buyer_confirmed') return role === 'buyer' ? '已确认凭证可用' : '买家已确认完成'
+  return '已完成'
+}
+
+export function getApiOrderCompletionSourceLabel(source?: ApiOrderCompletionSource) {
+  if (source === 'buyer_confirmed') return '买家主动确认'
+  if (source === 'auto_completed') return '核验期结束后系统自动完成'
+  return '尚未完成'
+}
+
+export function getApiOrderEventLabel(type: ApiOrderEvent['type']) {
+  const labels: Record<ApiOrderEvent['type'], string> = {
+    created: '创建订单',
+    payment_submitted: '买家提交付款状态',
+    payment_issue_reported: '商户报告付款问题',
+    payment_confirmed: '商户确认收款',
+    delivery_submitted: '商户完成交付',
+    completed: '订单完成',
+    cancelled: '订单取消',
+  }
+  return labels[type]
+}
+
+export function isApiOrderReceiptConfirmed(status: ApiOrderStatus) {
+  return status === 'paid_confirmed' || status === 'delivery_submitted' || status === 'completed'
 }
 
 export function getApiOrderDeliveryKindLabel(kind: ApiOrderDeliveryKind) {
@@ -1189,16 +1577,16 @@ export function getApiOrderNextAction(order: ApiOrder, role: 'buyer' | 'merchant
     if (order.status === 'payment_submitted') return '等待商户确认收款'
     if (order.status === 'payment_issue') return '补充付款信息并重新提交'
     if (order.status === 'paid_confirmed') return '等待商户交付'
-    if (order.status === 'delivery_submitted') return '核对交付并确认完成'
-    if (order.status === 'completed') return '交易已完成'
+    if (order.status === 'delivery_submitted') return order.disputeStatus === 'open' ? '等待平台处理凭证问题' : '核验凭证，或报告问题'
+    if (order.status === 'completed') return order.completionSource === 'auto_completed' ? '订单已自动完成' : '凭证已确认可用'
     if (order.status === 'cancelled') return '查看取消原因'
   }
   if (order.status === 'pending_payment') return '等待买家付款'
   if (order.status === 'payment_submitted') return '确认已收款'
   if (order.status === 'payment_issue') return '等待买家补充付款信息'
   if (order.status === 'paid_confirmed') return '填写交付信息'
-  if (order.status === 'delivery_submitted') return '等待买家确认完成'
-  if (order.status === 'completed') return '交易已完成'
+  if (order.status === 'delivery_submitted') return '已完成交付，无需操作'
+  if (order.status === 'completed') return order.completionSource === 'auto_completed' ? '订单已自动完成' : '订单已完成'
   return '查看详情'
 }
 
@@ -1306,7 +1694,6 @@ function buildCarpoolSnapshot(carpool: Carpool): CarpoolApplication['snapshot'] 
     ownerUsername: carpool.owner,
     ownerTrustLevel: carpool.trustLevel,
     ownerType: carpool.ownerType,
-    sourceTopicUrl: `https://linux.do/t/carpool-${carpool.id}`,
     accessArrangementMode: carpool.accessArrangementMode,
     accessArrangementNote: carpool.accessArrangementNote,
     riskNoticeCode: carpool.riskNoticeCode,
@@ -1354,27 +1741,6 @@ function appendAdminAuditLog(log: Omit<AdminAuditLog, 'id' | 'createdAt'> & { cr
   })
   persistAdminStores()
 }
-
-function registerMockDemandAuditListener() {
-  if (shouldUseRealBackend()) return
-  void import('@/mocks/demand').then(({ setMockDemandCreatedListener }) => {
-    setMockDemandCreatedListener(demand => {
-      appendAdminAuditLog({
-        actorType: 'system',
-        actorLabel: currentBuyerName,
-        action: '提交求车需求',
-        targetType: 'demand',
-        targetId: demand.id,
-        targetLabel: demand.title,
-        beforeStatus: null,
-        afterStatus: demand.status,
-        reason: demand.note || '用户提交求车需求',
-      })
-    })
-  })
-}
-
-registerMockDemandAuditListener()
 
 function findCarpoolApplication(id: string) {
   const application = carpoolApplicationStore.find(item => item.id === id)
@@ -1490,6 +1856,13 @@ function createSnapshot(service: ApiService): ApiPurchaseIntent['snapshot'] {
     creditPerCny: service.creditPerCny,
     warranty: service.warranty,
     refundPolicy: service.refundPolicy,
+    accountPoolType: service.accountPoolType,
+    accountPoolLabel: service.accountPoolLabel,
+    declaredMaxConcurrency: service.declaredMaxConcurrency,
+    promptAuditEnabled: service.promptAuditEnabled ?? null,
+    merchantRefundCommitment: service.merchantRefundCommitment,
+    merchantRefundPolicyVersion: service.merchantRefundPolicyVersion,
+    serviceValidityExpiresAt: service.quotaExpiresAt ?? null,
     usageVisibility: service.usageVisibility,
     supportedDeliveryModes: [...service.deliveryModes],
     selectedDeliveryMode: service.deliveryModes[0],
@@ -1588,9 +1961,8 @@ function publicReviewsForProfile(username: string) {
 function adminTargetLink(row: AdminRow) {
   if (row.targetType === 'official-price') return `/official-prices/${row.id}`
   if (row.targetType === 'carpool') return `/carpools/${row.id}`
-  if (row.targetType === 'demand') return `/demands/${row.id}`
   if (row.targetType === 'api-intent') return `/my/api-orders/${row.id}`
-  if (row.targetType === 'api-order') return null
+  if (row.targetType === 'api-order') return `/admin/api-orders/${row.id}`
   if (row.targetType === 'carpool-application') return `/merchant/carpool-applications/${row.id}`
   if (row.targetType === 'feedback-ticket') return `/admin/feedback/${row.id}`
   if (row.targetType === 'user') return `/u/${row.primary}`
@@ -1724,7 +2096,7 @@ function filterApiPurchaseIntents(filters: ApiPurchaseIntentFilters = {}) {
 }
 
 function apiOrderSearchTerms(order: ApiOrder) {
-  return [order.id, order.apiPurchaseIntentId, order.serviceTitle, order.buyer, order.seller, getApiMerchantDisplayName({ merchant: order.seller, snapshot: order.intentSnapshot })]
+  return [order.orderNo, order.id, order.apiPurchaseIntentId, order.serviceTitle, order.buyer, order.seller, getApiMerchantDisplayName({ merchant: order.seller, snapshot: order.intentSnapshot })]
 }
 
 function defaultApiOrderSortForRole(role: 'buyer' | 'merchant') {
@@ -1737,6 +2109,7 @@ function defaultApiOrderSortForRole(role: 'buyer' | 'merchant') {
 }
 
 function filterApiOrders(filters: ApiOrderFilters = {}) {
+  materializeMockApiOrderReviews()
   const keyword = filters.search?.trim().toLowerCase()
   const statuses = Array.isArray(filters.status) ? filters.status : filters.status ? [filters.status] : null
   const now = Date.now()
@@ -1748,7 +2121,7 @@ function filterApiOrders(filters: ApiOrderFilters = {}) {
       && (!statuses || statuses.includes(item.status))
       && (!filters.serviceId || item.apiServiceId === filters.serviceId)
       && (!rangeMs || now - createdAt <= rangeMs)
-      && (!keyword || apiOrderSearchTerms(item).some(value => value.toLowerCase().includes(keyword)))
+      && (!keyword || matchesApiOrderSearch(keyword, apiOrderSearchTerms(item)))
   })
 
   const sort = filters.sort ?? 'updated_desc'
@@ -1794,18 +2167,16 @@ function filterCarpoolApplications(filters: CarpoolApplicationFilters = {}) {
 
 export async function getHomeMarket() {
   if (shouldUseRealBackend()) {
-    const [officialPrices, carpools, apiServices, demands] = await Promise.all([
+    const [officialPrices, carpools, apiServices] = await Promise.all([
       backendOfficialPrices(),
       backendGetCarpools(),
       backendAPIServices({ online: true }),
-      getDemands(),
     ])
 
-    return clone({ categoryRows, officialPrices, carpools, apiServices: apiServices.filter(isApiServicePubliclyOrderable), demands, productTrends, transactionRecords, apiPurchaseIntents: apiPurchaseIntentStore })
+    return clone({ categoryRows, officialPrices, carpools, apiServices: apiServices.filter(isApiServicePubliclyOrderable), productTrends, transactionRecords, apiPurchaseIntents: apiPurchaseIntentStore })
   }
   await wait()
-  const demands = await getDemands()
-  return clone({ categoryRows, officialPrices: officialPriceStore, carpools: carpoolStore, apiServices: apiServiceStore.filter(isApiServicePubliclyOrderable), demands, productTrends, transactionRecords, apiPurchaseIntents: apiPurchaseIntentStore })
+  return clone({ categoryRows, officialPrices: officialPriceStore, carpools: carpoolStore, apiServices: apiServiceStore.filter(isApiServicePubliclyOrderable), productTrends, transactionRecords, apiPurchaseIntents: apiPurchaseIntentStore })
 }
 
 export async function getTransactionTrendSummary(productId: string, range: TransactionTrendRange): Promise<TransactionTrendSummary | null> {
@@ -1913,18 +2284,6 @@ export async function getCarpoolPaymentMethods() {
   return clone(carpoolPaymentMethods.filter(item => item.active).sort((a, b) => a.sortOrder - b.sortOrder))
 }
 
-export async function parseLinuxDoTopic(topicUrl: string) {
-  await wait()
-  if (!isLinuxDoTopicUrl(topicUrl)) {
-    throw new Error('只能读取 https://linux.do/t/* 原帖链接')
-  }
-
-  return clone({
-    ...parsedLinuxDoTopicMock,
-    topicUrl,
-  })
-}
-
 export async function getModelCatalog() {
   if (shouldUseRealBackend()) return backendModelCatalog()
   await wait()
@@ -1945,19 +2304,19 @@ function filterApiServices(filters: ApiServiceFilters = {}) {
         && (!filters.merchantType || item.merchantType === filters.merchantType)
         && (!filters.merchantPreference || filters.merchantPreference === 'personal_first' || (filters.merchantPreference === 'personal' ? item.merchantType !== '商户' : item.merchantType === '商户'))
         && (filters.hasWarranty === undefined || (filters.hasWarranty ? item.warranty.includes('补') || item.warranty.includes('承诺') || item.warranty.includes('24') : item.warranty.includes('无') || item.warranty.includes('协商')))
-        && (!filters.trustLevel || item.trustLevel >= filters.trustLevel)
+        && (!filters.trustLevel || (item.trustLevel !== null && item.trustLevel >= filters.trustLevel))
         && (!filters.minimumPurchaseCnyMax || item.minimumPurchaseCny <= filters.minimumPurchaseCnyMax)
         && (!filters.minBalance || item.balance >= filters.minBalance)
         && (!keyword || apiServicePublicSearchTerms(item).some(value => value.toLowerCase().includes(keyword)))
     })
     .sort((a, b) => {
-      if (filters.sort === 'multiplier_asc') return a.defaultMultiplier - b.defaultMultiplier || a.responseMedianMinutes - b.responseMedianMinutes
-      if (filters.sort === 'response_fast') return a.responseMedianMinutes - b.responseMedianMinutes || a.defaultMultiplier - b.defaultMultiplier
+      if (filters.sort === 'multiplier_asc') return a.defaultMultiplier - b.defaultMultiplier || compareNullableNumberAsc(a.responseMedianMinutes, b.responseMedianMinutes)
+      if (filters.sort === 'response_fast') return compareNullableNumberAsc(a.responseMedianMinutes, b.responseMedianMinutes) || a.defaultMultiplier - b.defaultMultiplier
       if (filters.sort === 'recent') return compareTimeDesc(a.lastOnlineConfirmedAt, b.lastOnlineConfirmedAt)
       const aPersonal = a.merchantType !== '商户'
       const bPersonal = b.merchantType !== '商户'
       return Number(isApiServicePubliclyOrderable(b)) - Number(isApiServicePubliclyOrderable(a))
-        || a.responseMedianMinutes - b.responseMedianMinutes
+        || compareNullableNumberAsc(a.responseMedianMinutes, b.responseMedianMinutes)
         || Number(bPersonal) - Number(aPersonal)
         || Number(a.unresolvedDisputes === 0) - Number(b.unresolvedDisputes === 0)
         || Number(b.deliveryModes.length) - Number(a.deliveryModes.length)
@@ -1987,17 +2346,17 @@ function filterSub2ApiMarketServices(filters: Sub2ApiMarketFilters = {}) {
         && matchesMinimumPurchaseFilter(item.minimumPurchaseCny, filters.minimumPurchase)
         && (filters.online === undefined || isApiServicePubliclyOrderable(item) === filters.online)
         && (!filters.merchantPreference || filters.merchantPreference === 'personal_first' || (filters.merchantPreference === 'personal' ? item.merchantType !== '商户' : item.merchantType === '商户'))
-        && (!filters.trustLevel || item.trustLevel >= filters.trustLevel)
+        && (!filters.trustLevel || (item.trustLevel !== null && item.trustLevel >= filters.trustLevel))
     })
     .sort((a, b) => {
       if (filters.sort === 'credit_price_asc') return apiCreditPriceCny(a) - apiCreditPriceCny(b) || a.minimumPurchaseCny - b.minimumPurchaseCny
-      if (filters.sort === 'minimum_purchase_asc') return a.minimumPurchaseCny - b.minimumPurchaseCny || a.responseMedianMinutes - b.responseMedianMinutes
-      if (filters.sort === 'panel_supported') return Number(b.deliveryModes.includes('sub2api_panel_account')) - Number(a.deliveryModes.includes('sub2api_panel_account')) || a.responseMedianMinutes - b.responseMedianMinutes
-      if (filters.sort === 'response_fast') return a.responseMedianMinutes - b.responseMedianMinutes || a.minimumPurchaseCny - b.minimumPurchaseCny
+      if (filters.sort === 'minimum_purchase_asc') return a.minimumPurchaseCny - b.minimumPurchaseCny || compareNullableNumberAsc(a.responseMedianMinutes, b.responseMedianMinutes)
+      if (filters.sort === 'panel_supported') return Number(b.deliveryModes.includes('sub2api_panel_account')) - Number(a.deliveryModes.includes('sub2api_panel_account')) || compareNullableNumberAsc(a.responseMedianMinutes, b.responseMedianMinutes)
+      if (filters.sort === 'response_fast') return compareNullableNumberAsc(a.responseMedianMinutes, b.responseMedianMinutes) || a.minimumPurchaseCny - b.minimumPurchaseCny
       if (filters.sort === 'recent') return compareTimeDesc(a.lastOnlineConfirmedAt, b.lastOnlineConfirmedAt)
       return Number(isApiServicePubliclyOrderable(b)) - Number(isApiServicePubliclyOrderable(a))
         || apiCreditPriceCny(a) - apiCreditPriceCny(b)
-        || a.responseMedianMinutes - b.responseMedianMinutes
+        || compareNullableNumberAsc(a.responseMedianMinutes, b.responseMedianMinutes)
         || Number(b.deliveryModes.includes('sub2api_panel_account')) - Number(a.deliveryModes.includes('sub2api_panel_account'))
         || compareTimeDesc(a.lastOnlineConfirmedAt, b.lastOnlineConfirmedAt)
     })
@@ -2016,11 +2375,11 @@ function filterOtherApiMarketServices(filters: OtherApiMarketFilters = {}) {
         && (filters.online === undefined || isApiServicePubliclyOrderable(item) === filters.online)
     })
     .sort((a, b) => {
-      if (filters.sort === 'minimum_purchase_asc') return a.minimumPurchaseCny - b.minimumPurchaseCny || a.responseMedianMinutes - b.responseMedianMinutes
-      if (filters.sort === 'response_fast') return a.responseMedianMinutes - b.responseMedianMinutes || a.minimumPurchaseCny - b.minimumPurchaseCny
+      if (filters.sort === 'minimum_purchase_asc') return a.minimumPurchaseCny - b.minimumPurchaseCny || compareNullableNumberAsc(a.responseMedianMinutes, b.responseMedianMinutes)
+      if (filters.sort === 'response_fast') return compareNullableNumberAsc(a.responseMedianMinutes, b.responseMedianMinutes) || a.minimumPurchaseCny - b.minimumPurchaseCny
       if (filters.sort === 'recent') return compareTimeDesc(a.lastOnlineConfirmedAt, b.lastOnlineConfirmedAt)
       return Number(isApiServicePubliclyOrderable(b)) - Number(isApiServicePubliclyOrderable(a))
-        || a.responseMedianMinutes - b.responseMedianMinutes
+        || compareNullableNumberAsc(a.responseMedianMinutes, b.responseMedianMinutes)
         || a.minimumPurchaseCny - b.minimumPurchaseCny
         || compareTimeDesc(a.lastOnlineConfirmedAt, b.lastOnlineConfirmedAt)
     })
@@ -2044,16 +2403,589 @@ export async function getOtherApiMarketServices(filters: OtherApiMarketFilters =
   return clone(filterOtherApiMarketServices(filters))
 }
 
+function matchesApiQuotaOfferFilters(item: PublicApiQuotaOffer, filters: ApiQuotaOfferFilters) {
+  return item.status === 'published'
+    && (filters.distributionSystem === undefined || filters.distributionSystem === 'all' || item.distributionSystem === filters.distributionSystem)
+    && (!filters.oneMultiplier || item.modelMultiplier === '1.0000')
+    && (!filters.onlyOrderable || item.isOrderable)
+}
+
+function mockApiQuotaSaleSlots(now = new Date()): ApiQuotaSystemSaleSlotList {
+  const serverNow = now.toISOString()
+  const beijingDate = formatBeijingDateTimeInput(now).slice(0, 10)
+  const [year, month, day] = beijingDate.split('-').map(Number)
+  const baseDay = Date.UTC(year, month - 1, day)
+  const items: ApiQuotaSystemSaleSlot[] = []
+  for (let dayOffset = 0; dayOffset < 7; dayOffset += 1) {
+    const date = new Date(baseDay + dayOffset * 24 * 60 * 60 * 1000)
+    const dateKey = [
+      date.getUTCFullYear(),
+      String(date.getUTCMonth() + 1).padStart(2, '0'),
+      String(date.getUTCDate()).padStart(2, '0'),
+    ].join('-')
+    for (const hour of [9, 13, 20]) {
+      const time = `${String(hour).padStart(2, '0')}:00`
+      const startsAt = beijingDateTimeInputToISOString(`${dateKey}T${time}`)
+      const startsAtMs = Date.parse(startsAt)
+      const endsAtMs = startsAtMs + 30 * 60 * 1000
+      const registrationClosesAtMs = startsAtMs - 60 * 60 * 1000
+      let state: ApiQuotaSystemSaleSlot['state'] = 'registration_open'
+      if (now.getTime() >= endsAtMs) state = 'ended'
+      else if (now.getTime() >= startsAtMs) state = 'active'
+      else if (now.getTime() >= registrationClosesAtMs) state = 'registration_closed'
+      items.push({
+        key: `${dateKey}@${time}`,
+        startsAt,
+        endsAt: new Date(endsAtMs).toISOString(),
+        registrationClosesAt: new Date(registrationClosesAtMs).toISOString(),
+        state,
+      })
+    }
+  }
+  return { serverNow, items }
+}
+
+function projectMockSystemRushOffer(item: PublicApiQuotaOffer, now = Date.now()) {
+  const round = apiQuotaRoundStore.find(candidate => candidate.allocations.some(allocation => allocation.offerId === item.id) && candidate.systemSlotKey)
+  if (!round) return item
+  const projected = clone(item)
+  const allocation = round.allocations.find(candidate => candidate.offerId === item.id)
+  projected.currentRound = undefined
+  projected.nextRound = undefined
+  projected.availableCopies = allocation?.availableCopies ?? 0
+  if (now < Date.parse(round.startsAt)) {
+    projected.nextRound = clone(round)
+    projected.isOrderable = false
+    projected.orderabilityCode = 'not_started'
+    projected.orderabilityReason = '本场尚未开抢。'
+  } else if (now < Date.parse(round.endsAt)) {
+    projected.currentRound = clone(round)
+    projected.isOrderable = projected.batchStatus === 'published'
+      && projected.status === 'published'
+      && projected.availableCopies > 0
+      && (projected.deliveryMode !== 'preimported' || projected.credentialAvailableCopies >= projected.availableCopies)
+    projected.orderabilityCode = projected.isOrderable
+      ? 'orderable'
+      : projected.availableCopies <= 0
+        ? 'sold_out'
+        : projected.deliveryMode === 'preimported'
+          ? 'credential_unavailable'
+          : 'service_unavailable'
+    projected.orderabilityReason = projected.isOrderable
+      ? '正在抢购。'
+      : projected.availableCopies <= 0
+        ? '本场已售罄。'
+        : projected.deliveryMode === 'preimported'
+          ? '可用交付凭据不足。'
+          : '本场暂不可购买。'
+  } else {
+    projected.availableCopies = 0
+    projected.isOrderable = false
+    projected.orderabilityCode = 'round_ended'
+    projected.orderabilityReason = '本场已结束。'
+  }
+  return projected
+}
+
+export async function getApiQuotaSaleSlots() {
+  if (shouldUseRealBackend()) return backendAPIQuotaSaleSlots()
+  await wait()
+  return mockApiQuotaSaleSlots()
+}
+
+export async function getApiQuotaOffers(filters: ApiQuotaOfferFilters = {}) {
+  if (shouldUseRealBackend()) return backendPublicAPIQuotaOffers(filters)
+  await wait()
+  const rows = apiQuotaOfferStore.map(item => projectMockSystemRushOffer(item))
+  return clone(rows.filter(item => {
+    if (filters.slotKey) {
+      const round = apiQuotaRoundStore.find(candidate => candidate.systemSlotKey === filters.slotKey && candidate.allocations.some(allocation => allocation.offerId === item.id))
+      if (!round) return false
+      item.currentRound = Date.now() >= Date.parse(round.startsAt) && Date.now() < Date.parse(round.endsAt) ? clone(round) : item.currentRound
+      item.nextRound = Date.now() < Date.parse(round.startsAt) ? clone(round) : item.nextRound
+    }
+    return matchesApiQuotaOfferFilters(item, filters)
+  }))
+}
+
+export async function getApiQuotaOfferById(id: string) {
+  if (shouldUseRealBackend()) return backendPublicAPIQuotaOffer(id)
+  await wait()
+  return clone(apiQuotaOfferStore.find(item => item.id === id && item.status === 'published') ?? null)
+}
+
+export async function getOwnerApiQuotaBatches(apiServiceId: string) {
+  if (shouldUseRealBackend()) return backendOwnerAPIQuotaBatches(apiServiceId)
+  await wait()
+  return clone(apiQuotaBatchStore.filter(item => item.apiServiceId === apiServiceId))
+}
+
+export async function createApiQuotaBatch(payload: CreateApiQuotaBatchPayload) {
+  if (shouldUseRealBackend()) return backendCreateAPIQuotaBatch(payload)
+  await wait()
+  const expiresAt = Date.parse(payload.expiresAt)
+  const saleCutoffAt = Date.parse(payload.saleCutoffAt)
+  if (!Number.isFinite(expiresAt) || !Number.isFinite(saleCutoffAt)) throw new Error('请填写有效的停售和失效时间。')
+  if (saleCutoffAt > expiresAt - 60 * 60 * 1000) throw new Error('最晚下单时间必须早于失效时间至少 1 小时。')
+  if (!Number.isFinite(Number(payload.declaredTotalUsdAllowance)) || Number(payload.declaredTotalUsdAllowance) <= 0) throw new Error('声明美元额度必须大于 0。')
+  const batch: ApiQuotaBatch = {
+    id: `quota-batch-${Date.now()}`,
+    apiServiceId: payload.apiServiceId,
+    sourceType: payload.sourceType,
+    sourceLabel: payload.sourceLabel?.trim() || undefined,
+    status: 'draft',
+    declaredTotalUsdAllowance: normalizeDecimalTrimmed(payload.declaredTotalUsdAllowance, 6),
+    unallocatedUsdAllowance: normalizeDecimalTrimmed(payload.declaredTotalUsdAllowance, 6),
+    saleCutoffAt: new Date(saleCutoffAt).toISOString(),
+    expiresAt: new Date(expiresAt).toISOString(),
+    sourceConfirmedAt: new Date(payload.sourceConfirmedAt).toISOString(),
+    version: 1,
+  }
+  apiQuotaBatchStore.unshift(batch)
+  persistApiQuotaStores()
+  return clone(batch)
+}
+
+export async function getOwnerApiQuotaOffers(batchId: string) {
+  if (shouldUseRealBackend()) return backendOwnerAPIQuotaOffers(batchId)
+  await wait()
+  return clone(apiQuotaOfferStore.filter(item => item.batchId === batchId).map(item => ({
+    id: item.id,
+    batchId: item.batchId,
+    apiServiceId: item.apiServiceId,
+    distributionSystem: item.distributionSystem,
+    name: item.name,
+    usdAllowance: item.usdAllowance,
+    priceCny: item.priceCny,
+    cnyPerUsd: item.cnyPerUsd,
+    modelMultiplier: item.modelMultiplier,
+    quotaUsagePolicy: item.quotaUsagePolicy,
+    deliveryMode: item.deliveryMode,
+    deliveryEtaMinutes: item.deliveryEtaMinutes,
+    saleMode: item.saleMode,
+    status: item.status,
+    sortOrder: item.sortOrder,
+    publishedAt: item.publishedAt,
+    version: item.version,
+  })))
+}
+
+function quotaDistributionFromService(service: ApiService): ApiQuotaDistributionSystem {
+  if (service.delivery === 'Sub2API') return 'sub2api'
+  if (service.delivery === 'NewAPI Proxy') return 'new_api_proxy'
+  return 'other'
+}
+
+export async function createApiQuotaOffer(payload: CreateApiQuotaOfferPayload) {
+  if (shouldUseRealBackend()) return backendCreateAPIQuotaOffer(payload)
+  await wait()
+  if (payload.deliveryMode !== 'manual') throw new Error('新额度包只支持卖家手工交付。')
+  const batch = apiQuotaBatchStore.find(item => item.id === payload.batchId)
+  const service = batch ? apiServiceStore.find(item => item.id === batch.apiServiceId) : undefined
+  if (!batch || !service) throw new Error('未找到额度批次或关联服务。')
+  if (batch.status !== 'draft') throw new Error('只有草稿批次可以新增额度规格。')
+  const usdAllowance = normalizeDecimalTrimmed(payload.usdAllowance, 6)
+  const priceCny = normalizeDecimal(payload.priceCny, 2)
+  const cnyPerUsd = normalizeDecimalTrimmed(divideDecimal(priceCny, usdAllowance, 6), 6)
+  const quotaUsagePolicy = apiQuotaUsagePolicyFromInput(payload.quotaUsagePolicy)
+  const offer: PublicApiQuotaOffer = {
+    id: `quota-offer-${Date.now()}`,
+    batchId: batch.id,
+    apiServiceId: service.id,
+    distributionSystem: quotaDistributionFromService(service),
+    name: payload.name.trim(),
+    usdAllowance,
+    priceCny,
+    cnyPerUsd,
+    modelMultiplier: normalizeDecimal(payload.modelMultiplier, 4),
+    quotaUsagePolicy,
+    deliveryMode: payload.deliveryMode,
+    deliveryEtaMinutes: payload.deliveryEtaMinutes,
+    saleMode: payload.saleMode,
+    status: 'draft',
+    sortOrder: payload.sortOrder,
+    version: 1,
+    batchStatus: 'published',
+    serviceTitle: service.title,
+    sellerDisplayName: getApiMerchantDisplayName(service),
+    sellerIdentityType: service.merchantType === '商户' ? 'merchant' : 'individual',
+    sellerLinuxDoBound: true,
+    promptAuditEnabled: service.promptAuditEnabled ?? null,
+    declaredMaxConcurrency: service.declaredMaxConcurrency ?? 1,
+    saleCutoffAt: batch.saleCutoffAt,
+    expiresAt: batch.expiresAt,
+    availableCopies: payload.saleMode === 'continuous' ? payload.continuousCopies : 0,
+    credentialAvailableCopies: 0,
+    isOrderable: false,
+    orderabilityCode: 'service_unavailable',
+    orderabilityReason: '额度批次尚未发布。',
+  }
+  apiQuotaOfferStore.push(offer)
+  persistApiQuotaStores()
+  return clone((await getOwnerApiQuotaOffers(batch.id)).find(item => item.id === offer.id)!)
+}
+
+export async function createApiQuotaRushOffer(payload: CreateApiQuotaRushOfferPayload): Promise<ApiQuotaRushOfferPublication> {
+  if (shouldUseRealBackend()) return backendCreateAPIQuotaRushOffer(payload)
+  await wait()
+  if (payload.deliveryMode !== 'manual') throw new Error('新额度包只支持卖家手工交付。')
+  const service = apiServiceStore.find(item => item.id === payload.apiServiceId && item.merchantUsername === myUserProfileStore.username)
+  if (!service) throw new Error('未找到可发布额度包的 API 服务。')
+  const slot = mockApiQuotaSaleSlots().items.find(item => item.key === payload.slotKey)
+  if (!slot) throw new Error('请选择平台开放的固定场次。')
+  if (slot.state !== 'registration_open') throw new Error('该场次已经停止报名，请选择更晚场次。')
+  const expiresAt = Date.parse(payload.expiresAt)
+  if (!Number.isFinite(expiresAt) || expiresAt < Date.parse(slot.endsAt) + 60 * 60 * 1000) {
+    throw new Error('额度失效时间必须至少晚于场次结束 1 小时。')
+  }
+  const copies = Math.trunc(payload.copies)
+  if (copies < 1 || copies > 5000) throw new Error('计划份数必须在 1-5000 之间。')
+  const usdAllowance = normalizeDecimalTrimmed(payload.usdAllowance, 6)
+  const priceCny = normalizeDecimal(payload.priceCny, 2)
+  const modelMultiplier = normalizeDecimal(payload.modelMultiplier, 4)
+  const quotaUsagePolicy = apiQuotaUsagePolicyFromInput(payload.quotaUsagePolicy)
+  if (Number(usdAllowance) <= 0 || Number(priceCny) <= 0 || Number(modelMultiplier) <= 0) {
+    throw new Error('美元额度、人民币总价和模型倍率必须大于 0。')
+  }
+  if (payload.file || payload.deliveryKind) throw new Error('新额度包不接收预导入凭据。')
+  const credentialImported = 0
+
+  const createdAt = nowText()
+  const unique = Date.now()
+  const batchId = `quota-batch-rush-${unique}`
+  const offerId = `quota-offer-rush-${unique}`
+  const roundId = `quota-round-rush-${unique}`
+  const allocation = {
+    id: `quota-allocation-rush-${unique}`,
+    offerId,
+    saleRoundId: roundId,
+    saleMode: 'scheduled' as const,
+    copyLimit: copies,
+    availableCopies: copies,
+    reservedCopies: 0,
+    consumedCopies: 0,
+    allocatedUsdAllowance: normalizeDecimalTrimmed(String(Number(usdAllowance) * copies), 6),
+    returnedUsdAllowance: '0',
+    status: 'active' as const,
+  }
+  const batch: ApiQuotaBatch = {
+    id: batchId,
+    apiServiceId: service.id,
+    sourceType: payload.sourceType,
+    sourceLabel: payload.sourceLabel?.trim() || undefined,
+    status: 'published',
+    declaredTotalUsdAllowance: allocation.allocatedUsdAllowance,
+    unallocatedUsdAllowance: '0',
+    saleCutoffAt: slot.endsAt,
+    expiresAt: new Date(expiresAt).toISOString(),
+    sourceConfirmedAt: new Date(payload.sourceConfirmedAt).toISOString(),
+    publishedAt: createdAt,
+    version: 2,
+  }
+  const round: ApiQuotaRound = {
+    id: roundId,
+    batchId,
+    systemSlotKey: slot.key,
+    name: `${slot.key.slice(0, 10)} ${slot.key.slice(11)} 场`,
+    startsAt: slot.startsAt,
+    endsAt: slot.endsAt,
+    status: 'scheduled',
+    allocations: [allocation],
+    version: 1,
+  }
+  const offer: PublicApiQuotaOffer = {
+    id: offerId,
+    batchId,
+    apiServiceId: service.id,
+    distributionSystem: quotaDistributionFromService(service),
+    name: payload.name.trim(),
+    usdAllowance,
+    priceCny,
+    cnyPerUsd: normalizeDecimalTrimmed(divideDecimal(priceCny, usdAllowance, 6), 6),
+    modelMultiplier,
+    quotaUsagePolicy,
+    deliveryMode: payload.deliveryMode,
+    deliveryEtaMinutes: payload.deliveryEtaMinutes,
+    saleMode: 'scheduled',
+    status: 'published',
+    sortOrder: 0,
+    publishedAt: createdAt,
+    version: 1,
+    batchStatus: 'published',
+    serviceTitle: service.title,
+    sellerDisplayName: getApiMerchantDisplayName(service),
+    sellerIdentityType: service.merchantType === '商户' ? 'merchant' : 'individual',
+    sellerLinuxDoBound: true,
+    promptAuditEnabled: service.promptAuditEnabled ?? null,
+    declaredMaxConcurrency: service.declaredMaxConcurrency ?? 1,
+    saleCutoffAt: slot.endsAt,
+    expiresAt: batch.expiresAt,
+    nextRound: round,
+    availableCopies: copies,
+    credentialAvailableCopies: credentialImported,
+    isOrderable: false,
+    orderabilityCode: 'not_started',
+    orderabilityReason: '本场尚未开抢。',
+  }
+  const credentialSummary: ApiQuotaCredentialSummary = {
+    offerId,
+    available: credentialImported,
+    reserved: 0,
+    delivered: 0,
+    retired: 0,
+  }
+  apiQuotaBatchStore.unshift(batch)
+  apiQuotaOfferStore.unshift(offer)
+  apiQuotaRoundStore.unshift(round)
+  apiQuotaCredentialSummaryStore.unshift(credentialSummary)
+  persistApiQuotaStores()
+  return clone({
+    batch,
+    offer,
+    round,
+    credentialImported,
+    credentialSummary,
+  })
+}
+
+export async function getOwnerApiQuotaRounds(batchId: string) {
+  if (shouldUseRealBackend()) return backendOwnerAPIQuotaRounds(batchId)
+  await wait()
+  return clone(apiQuotaRoundStore.filter(item => item.batchId === batchId))
+}
+
+export async function createApiQuotaRound(payload: CreateApiQuotaRoundPayload) {
+  if (shouldUseRealBackend()) return backendCreateAPIQuotaRound(payload)
+  await wait()
+  const batch = apiQuotaBatchStore.find(item => item.id === payload.batchId)
+  if (!batch || batch.status !== 'draft') throw new Error('只有草稿批次可以新增放量轮次。')
+  const startsAt = new Date(payload.startsAt).toISOString()
+  const endsAt = new Date(payload.endsAt).toISOString()
+  if (Date.parse(endsAt) <= Date.parse(startsAt)) throw new Error('轮次结束时间必须晚于开始时间。')
+  const roundId = `quota-round-${Date.now()}`
+  const allocations = payload.offers.map((requested, index) => {
+    const offer = apiQuotaOfferStore.find(item => item.id === requested.offerId && item.batchId === payload.batchId)
+    if (!offer || offer.saleMode !== 'scheduled') throw new Error('轮次只能分配同批次的定时额度规格。')
+    return {
+      id: `quota-allocation-${Date.now()}-${index}`,
+      offerId: offer.id,
+      saleRoundId: roundId,
+      saleMode: 'scheduled' as const,
+      copyLimit: requested.copies,
+      availableCopies: requested.copies,
+      reservedCopies: 0,
+      consumedCopies: 0,
+      allocatedUsdAllowance: normalizeDecimalTrimmed(String(Number(offer.usdAllowance) * requested.copies), 6),
+      returnedUsdAllowance: '0',
+      status: 'planned' as const,
+    }
+  })
+  const round: ApiQuotaRound = { id: roundId, batchId: payload.batchId, name: payload.name.trim(), startsAt, endsAt, status: 'scheduled', allocations, version: 1 }
+  apiQuotaRoundStore.push(round)
+  for (const allocation of allocations) {
+    const offer = apiQuotaOfferStore.find(item => item.id === allocation.offerId)
+    if (offer && (!offer.nextRound || Date.parse(startsAt) < Date.parse(offer.nextRound.startsAt))) offer.nextRound = clone(round)
+  }
+  persistApiQuotaStores()
+  return clone(round)
+}
+
+export async function updateApiQuotaBatchStatus(batchId: string, action: 'publish' | 'pause' | 'resume' | 'archive', version: number) {
+  if (shouldUseRealBackend()) return backendAPIQuotaBatchAction(batchId, action, version)
+  await wait()
+  const batch = apiQuotaBatchStore.find(item => item.id === batchId)
+  if (!batch) throw new Error('未找到额度批次。')
+  if (batch.version !== version) throw new Error('额度批次已更新，请刷新后重试。')
+  batch.status = action === 'publish' || action === 'resume' ? 'published' : action === 'pause' ? 'paused' : 'archived'
+  if (action === 'publish') batch.publishedAt = nowText()
+  batch.version += 1
+  for (const offer of apiQuotaOfferStore.filter(item => item.batchId === batchId)) {
+    if (action === 'publish' && offer.status === 'draft') {
+      offer.status = 'published'
+      offer.publishedAt = nowText()
+      offer.isOrderable = offer.saleMode === 'continuous' && offer.availableCopies > 0 && (offer.deliveryMode !== 'preimported' || offer.credentialAvailableCopies >= offer.availableCopies)
+      offer.orderabilityCode = offer.isOrderable ? 'orderable' : offer.deliveryMode === 'preimported' ? 'credential_unavailable' : 'not_started'
+      offer.orderabilityReason = offer.isOrderable ? '当前可购买。' : offer.deliveryMode === 'preimported' ? '可用交付凭据不足。' : '下一轮尚未开始。'
+    }
+    offer.batchStatus = batch.status === 'paused' ? 'paused' : 'published'
+    if (action === 'pause' || action === 'archive') {
+      offer.isOrderable = false
+      offer.orderabilityCode = 'batch_paused'
+      offer.orderabilityReason = action === 'archive' ? '额度批次已归档。' : '商户已暂停额度批次。'
+    }
+  }
+  persistApiQuotaStores()
+  return clone(batch)
+}
+
+export async function getApiQuotaCredentialSummary(offerId: string) {
+  if (shouldUseRealBackend()) return backendAPIQuotaCredentialSummary(offerId)
+  await wait()
+  return clone(apiQuotaCredentialSummaryStore.find(item => item.offerId === offerId) ?? { offerId, available: 0, reserved: 0, delivered: 0, retired: 0 })
+}
+
+export async function importApiQuotaCredentials(offerId: string, deliveryKind: ApiOrderDeliveryKind, file: File) {
+  if (shouldUseRealBackend()) return backendImportAPIQuotaCredentials(offerId, deliveryKind, file)
+  await wait()
+  const offer = apiQuotaOfferStore.find(item => item.id === offerId)
+  if (!offer || offer.deliveryMode !== 'preimported') throw new Error('只有预导入交付的额度规格可以导入凭据。')
+  const lines = (await file.text()).split(/\r?\n/).map(line => line.trim()).filter(Boolean)
+  const expectedHeader = deliveryKind === 'api_key_endpoint' ? 'api_base_url,api_key,instructions' : 'panel_login_url,username,password,instructions'
+  if (lines[0]?.toLowerCase() !== expectedHeader) throw new Error(`CSV 表头必须为 ${expectedHeader}`)
+  const imported = lines.length - 1
+  if (imported < 1 || imported > 5000) throw new Error('CSV 每次需要包含 1-5000 条凭据。')
+  let summary = apiQuotaCredentialSummaryStore.find(item => item.offerId === offerId)
+  if (!summary) {
+    summary = { offerId, available: 0, reserved: 0, delivered: 0, retired: 0 }
+    apiQuotaCredentialSummaryStore.push(summary)
+  }
+  summary.available += imported
+  offer.credentialAvailableCopies = summary.available
+  if (offer.status === 'published' && offer.availableCopies > 0 && summary.available >= offer.availableCopies) {
+    offer.isOrderable = true
+    offer.orderabilityCode = 'orderable'
+    offer.orderabilityReason = '当前可购买。'
+  }
+  persistApiQuotaStores()
+  return clone({ imported, summary })
+}
+
 export async function getApiServiceById(id: string) {
   if (shouldUseRealBackend()) return backendAPIServiceById(id)
   await wait()
   return clone(apiServiceStore.find(item => item.id === id && isApiServicePubliclyOrderable(item)) ?? null)
 }
 
-export async function getMyApiServices() {
-  if (shouldUseRealBackend()) return backendOwnerAPIServices()
+const apiServiceSalesStatePriority: Record<ApiServiceSalesState, number> = {
+  selling: 0,
+  upcoming: 1,
+  paused: 2,
+  sold_out: 3,
+  expired: 4,
+  draft: 5,
+  offline: 6,
+  archived: 7,
+}
+
+function mockServiceSalesFallback(service: ApiService): ApiServiceSalesState {
+  if (service.state === 'paused') return 'paused'
+  if (service.state === 'reviewing') return 'draft'
+  if (service.state === 'offline') return 'offline'
+  if (service.publiclyOrderable) return 'selling'
+  if (service.balance <= 0) return 'sold_out'
+  return 'offline'
+}
+
+function mockFlexibleQuotaChannel(service: ApiService): ApiServiceSalesChannel | null {
+  if (service.billingMode !== 'metered_credit') return null
+  return {
+    kind: 'flexible_quota',
+    state: mockServiceSalesFallback(service),
+    availableUsdAllowance: service.availableUsdAllowance ?? String(service.balance),
+    expiresAt: service.quotaExpiresAt,
+  }
+}
+
+function mockLimitedOfferSalesState(service: ApiService, batch: ApiQuotaBatch, offer?: PublicApiQuotaOffer): ApiServiceSalesState {
+  if (batch.status === 'archived' || offer?.status === 'archived') return 'archived'
+  if (service.state === 'paused' || batch.status === 'paused' || offer?.status === 'paused') return 'paused'
+  if (service.state === 'reviewing' || batch.status === 'draft' || !offer || offer.status === 'draft') return 'draft'
+  if (service.state === 'offline') return 'offline'
+  if (offer.orderabilityCode === 'orderable') return 'selling'
+  if (offer.orderabilityCode === 'not_started') return 'upcoming'
+  if (offer.orderabilityCode === 'batch_expired') return 'expired'
+  if (offer.orderabilityCode === 'batch_paused' || offer.orderabilityCode === 'offer_paused') return 'paused'
+  if (offer.orderabilityCode === 'sold_out' || offer.orderabilityCode === 'round_ended' || offer.orderabilityCode === 'credential_unavailable') return 'sold_out'
+  return mockServiceSalesFallback(service)
+}
+
+function mockLimitedQuotaChannel(service: ApiService): ApiServiceSalesChannel | null {
+  const candidates = apiQuotaBatchStore
+    .filter(batch => batch.apiServiceId === service.id)
+    .flatMap(batch => {
+      const offers = apiQuotaOfferStore.filter(offer => offer.batchId === batch.id)
+      const rows = offers.length > 0 ? offers : [undefined]
+      return rows.map((offer): ApiServiceSalesChannel => ({
+        kind: 'limited_quota',
+        state: mockLimitedOfferSalesState(service, batch, offer),
+        availableCopies: offer?.orderabilityCode === 'not_started'
+          ? offer.nextRound?.allocations.reduce((total, allocation) => total + allocation.availableCopies, 0) ?? 0
+          : offer?.availableCopies ?? 0,
+        nextStartsAt: offer?.nextRound?.startsAt,
+        saleCutoffAt: batch.saleCutoffAt,
+        expiresAt: batch.expiresAt,
+      }))
+    })
+  return candidates.sort((left, right) => apiServiceSalesStatePriority[left.state] - apiServiceSalesStatePriority[right.state])[0] ?? null
+}
+
+export function buildMockApiServiceSalesSummary(service: ApiService): ApiServiceSalesSummary {
+  const channels = [mockFlexibleQuotaChannel(service), mockLimitedQuotaChannel(service)]
+    .filter((channel): channel is ApiServiceSalesChannel => channel !== null)
+  const overallState = channels
+    .map(channel => channel.state)
+    .sort((left, right) => apiServiceSalesStatePriority[left] - apiServiceSalesStatePriority[right])[0]
+    ?? mockServiceSalesFallback(service)
+  return { overallState, channels }
+}
+
+export function matchesApiServiceSalesView(state: ApiServiceSalesState, salesView: ApiServiceSalesView) {
+  if (salesView === 'active') return state === 'selling' || state === 'upcoming'
+  if (salesView === 'expired') return state === 'expired'
+  if (salesView === 'paused') return state === 'paused'
+  if (salesView === 'draft') return state === 'draft' || state === 'offline'
+  return true
+}
+
+function mockOwnerApiService(service: ApiService): OwnerApiService {
+  return {
+    ...service,
+    healthSummary: service.healthSummary ?? mockUnconfiguredAPIHealthSummary(),
+    salesSummary: buildMockApiServiceSalesSummary(service),
+  }
+}
+
+function mockUnconfiguredAPIHealthSummary(): ApiServiceHealthSummary {
+  const slot = (minute: number): ApiServiceHealthSummary['samples'][number] => ({
+    slotStartedAt: new Date(Date.UTC(2026, 7, 4, 0, minute)).toISOString(),
+    state: 'no_sample',
+  })
+  return {
+    state: 'no_sample',
+    availabilityReason: 'unconfigured',
+    successRatePercent: null,
+    successfulSamples: 0,
+    totalSamples: 0,
+    medianTtftMs: null,
+    probeModel: null,
+    transportSecurity: null,
+    lastSampledAt: null,
+    samples: [
+      slot(0),
+      slot(5),
+      slot(10),
+      slot(15),
+      slot(20),
+      slot(25),
+      slot(30),
+      slot(35),
+      slot(40),
+      slot(45),
+      slot(50),
+      slot(55),
+    ],
+  }
+}
+
+export async function getMyApiServices(salesView: ApiServiceSalesView = 'active') {
+  if (shouldUseRealBackend()) return backendOwnerAPIServices(salesView)
   await wait()
-  return clone(apiServiceStore.filter(item => item.merchantUsername === myUserProfileStore.username))
+  return clone(
+    apiServiceStore
+      .filter(item => item.merchantUsername === myUserProfileStore.username)
+      .map(item => mockOwnerApiService(item))
+      .filter(item => matchesApiServiceSalesView(item.salesSummary.overallState, salesView)),
+  )
 }
 
 export async function getMyApiServiceById(id: string) {
@@ -2258,11 +3190,13 @@ export async function verifyContactMethod(contactId: string) {
 }
 
 export async function getApiPaymentAccountSettings() {
+  if (shouldUseRealBackend()) return backendGetApiPaymentAccountSettings()
   await wait()
   return cloneApiPaymentAccountSettings(apiPaymentAccountSettingsStore)
 }
 
 export async function updateApiPaymentAccountSettings(payload: Omit<ApiPaymentAccountSettings, 'updatedAt'>) {
+  if (shouldUseRealBackend()) return backendUpdateApiPaymentAccountSettings(payload)
   await wait()
   apiPaymentAccountSettingsStore = normalizeApiPaymentAccountSettings({
     paymentWindowMinutes: payload.paymentWindowMinutes,
@@ -2293,8 +3227,10 @@ export async function getPublicUserProfile(username: string) {
   syncPublicCurrentUser()
   const profile = publicUserProfiles.find(item => item.username === username)
   if (!profile) return null
+  const reputation = await mockPublicUserReputation(username, 'overall')
   return clone({
     profile: sanitizePublicUserProfile(profile),
+    reputations: reputation.reputations,
     carpools: carpoolStore.filter(item => item.owner === username && item.status === '可上车'),
     services: apiServiceStore.filter(item => item.merchantUsername === username && isApiServicePubliclyOrderable(item) && canOpenApiMerchantProfile(item)),
     completions: publicCompletionRecords.filter(item => item.username === username),
@@ -2438,6 +3374,50 @@ export async function getAdminOverview() {
   return clone(adminCards)
 }
 
+function projectMockAdminApiOrder(order: ApiOrder): AdminApiOrderDetail {
+  return {
+    id: order.id,
+    purchaseKind: order.purchaseKind,
+    apiPurchaseIntentId: order.apiPurchaseIntentId,
+    apiServiceId: order.apiServiceId,
+    buyerUserId: order.buyerId,
+    sellerUserId: order.sellerId,
+    status: order.status,
+    disputeStatus: order.disputeStatus,
+    disputeCaseId: order.disputeCaseId,
+    serviceTitleSnapshot: order.serviceTitle,
+    selectedPackageId: order.selectedPackageId,
+    selectedPackageSnapshot: order.packageSnapshot ? JSON.stringify(order.packageSnapshot) : undefined,
+    amount: order.amountDecimal ?? String(order.amount),
+    currency: order.currency,
+    requestedUsdAllowanceSnapshot: order.requestedUsdAllowanceDecimal ?? String(order.requestedUsdAllowance),
+    selectedPaymentMethod: order.selectedPaymentMethod,
+    paymentExpiresAt: order.paymentExpiresAt,
+    paymentSubmittedAt: order.paymentSubmittedAt,
+    paymentIssueReason: order.paymentIssueReason,
+    paymentIssueNote: order.paymentIssueNote,
+    paymentIssueReportedAt: order.paymentIssueReportedAt,
+    paidConfirmedAt: order.paidConfirmedAt,
+    deliveryNote: order.deliveryNote,
+    deliverySubmittedAt: order.deliverySubmittedAt,
+    deliveryReviewExpiresAt: order.deliveryReviewExpiresAt,
+    completionSource: order.completionSource,
+    completedAt: order.completedAt,
+    cancelledAt: order.cancelledAt,
+    cancelReason: order.cancelReason,
+    version: order.version,
+    createdAt: order.createdAt,
+    updatedAt: order.updatedAt,
+  }
+}
+
+export async function getAdminApiOrderById(id: string): Promise<AdminApiOrderDetail> {
+  if (shouldUseRealBackend()) return backendAdminAPIOrder(id)
+  await wait()
+  materializeMockApiOrderReviews()
+  return clone(projectMockAdminApiOrder(findApiOrder(id)))
+}
+
 function withAdminRowLinks(rows: AdminRow[]) {
   return rows.map(row => ({ ...row, targetTo: row.targetTo ?? adminTargetLink(row) }))
 }
@@ -2477,7 +3457,7 @@ function adminDirectoryRow(item: typeof adminDirectoryUsers[number]): AdminRow {
   return {
     id: item.id,
     primary: item.username,
-    secondary: `${item.displayName} · ${item.linuxdoBound ? `已绑定 linux.do · 信任等级${item.trustLevel}` : '未绑定 linux.do'}`,
+    secondary: `${item.displayName} · ${item.linuxdoBound ? `已绑定 linux.do · ${item.trustLevel === null ? '信任等级暂无数据' : `信任等级${item.trustLevel}`}` : '未绑定 linux.do'}`,
     owner: item.isAdmin ? '管理员账号' : '普通账号',
     status: item.accountStatus,
     risk: `注册 ${item.createdAt} · 最近活跃 ${item.lastActiveAt}`,
@@ -2486,12 +3466,219 @@ function adminDirectoryRow(item: typeof adminDirectoryUsers[number]): AdminRow {
       { label: '显示名称', value: item.displayName },
       { label: '账号状态', value: item.accountStatus },
       { label: '账号角色', value: item.isAdmin ? '管理员' : '普通用户' },
-      { label: 'linux.do 绑定', value: item.linuxdoBound ? `已绑定，信任等级${item.trustLevel}` : '未绑定' },
+      { label: 'linux.do 绑定', value: item.linuxdoBound ? `已绑定，${item.trustLevel === null ? '信任等级暂无数据' : `信任等级${item.trustLevel}`}` : '未绑定' },
       { label: '注册时间', value: item.createdAt },
       { label: '最近活跃', value: item.lastActiveAt },
     ],
     targetTo: `/u/${item.username}`,
   }
+}
+
+const adminUserStatusByLabel: Record<typeof adminDirectoryUsers[number]['accountStatus'], AdminUserStatus> = {
+  '正常': 'active',
+  '已暂停': 'suspended',
+  '已封禁': 'banned',
+  '已归档': 'archived',
+}
+
+const adminUserMockStore: AdminUser[] = adminDirectoryUsers.map((item, index) => ({
+  id: item.id,
+  username: item.username,
+  displayName: item.displayName,
+  accountStatus: adminUserStatusByLabel[item.accountStatus],
+  isAdmin: item.isAdmin,
+  linuxDoBound: item.linuxdoBound,
+  trustLevel: item.trustLevel ?? undefined,
+  createdAt: item.createdAt,
+  lastActiveAt: item.lastActiveAt,
+  version: index + 1,
+}))
+const adminUserMockAuditEntries = new Map<string, AdminUserDetail['recentAuditEntries']>()
+
+function mockAdminUserSummary() {
+  return {
+    totalUsers: adminUserMockStore.length,
+    adminUsers: adminUserMockStore.filter(item => item.isAdmin).length,
+    linuxDoBoundUsers: adminUserMockStore.filter(item => item.linuxDoBound).length,
+    activeUsers: adminUserMockStore.filter(item => item.accountStatus === 'active').length,
+    suspendedUsers: adminUserMockStore.filter(item => item.accountStatus === 'suspended').length,
+    bannedUsers: adminUserMockStore.filter(item => item.accountStatus === 'banned').length,
+    archivedUsers: adminUserMockStore.filter(item => item.accountStatus === 'archived').length,
+  }
+}
+
+function mockAdminUserActions(item: AdminUser): AdminUserDetail['availableActions'] {
+  const transitions: Record<AdminUserStatus, AdminUserStatus[]> = {
+    active: ['suspended', 'banned', 'archived'],
+    suspended: ['active', 'banned', 'archived'],
+    banned: ['active', 'archived'],
+    archived: ['active'],
+  }
+  const activeAdminCount = adminUserMockStore.filter(user => user.isAdmin && user.accountStatus === 'active').length
+  const statusActions: AdminUserDetail['availableActions'] = transitions[item.accountStatus].map(targetStatus => {
+    const action = targetStatus === 'active' ? 'restore' : targetStatus === 'suspended' ? 'suspend' : targetStatus === 'banned' ? 'ban' : 'archive'
+    const lastActiveAdmin = item.isAdmin && item.accountStatus === 'active' && activeAdminCount <= 1
+    return {
+      action,
+      kind: 'status',
+      targetStatus,
+      allowed: !lastActiveAdmin,
+      severity: targetStatus === 'active' ? 'normal' : targetStatus === 'suspended' ? 'warning' : 'danger',
+      requiresReason: true,
+      requiresConfirmation: true,
+      blockedCode: lastActiveAdmin ? 'LAST_ACTIVE_ADMIN' : undefined,
+      blockedReason: lastActiveAdmin ? '不能停用最后一个有效管理员或撤销其权限。' : undefined,
+    }
+  })
+  const grantBlocked = !item.isAdmin && item.accountStatus !== 'active'
+  const revokeBlocked = item.isAdmin && item.accountStatus === 'active' && activeAdminCount <= 1
+  return [...statusActions, {
+    action: item.isAdmin ? 'revoke_admin' : 'grant_admin',
+    kind: 'permission',
+    targetIsAdmin: !item.isAdmin,
+    allowed: !grantBlocked && !revokeBlocked,
+    severity: item.isAdmin ? 'danger' : 'normal',
+    requiresReason: true,
+    requiresConfirmation: true,
+    blockedCode: revokeBlocked ? 'LAST_ACTIVE_ADMIN' : grantBlocked ? 'ACCOUNT_NOT_ACTIVE' : undefined,
+    blockedReason: revokeBlocked
+      ? '不能停用最后一个有效管理员或撤销其权限。'
+      : grantBlocked ? '只能向正常状态的账号授予管理员权限。' : undefined,
+  }]
+}
+
+function mockAdminUserDetail(item: AdminUser): AdminUserDetail {
+	const isActive = item.accountStatus === 'active'
+  return {
+    user: clone(item),
+    updatedAt: item.createdAt,
+    linuxDoBinding: {
+      bound: item.linuxDoBound,
+      username: item.linuxDoBound ? item.username : undefined,
+      trustLevel: item.trustLevel,
+    },
+    emailVerified: item.linuxDoBound,
+    backupPasswordConfigured: true,
+    providers: item.linuxDoBound ? [{ provider: 'linux.do', createdAt: item.createdAt }] : [],
+    sessions: {
+      activeCount: isActive ? 1 : 0,
+      latestActivityAt: item.lastActiveAt ?? undefined,
+    },
+    recentAuditEntries: clone(adminUserMockAuditEntries.get(item.id) ?? []),
+		availableActions: mockAdminUserActions(item),
+		impactPreview: {
+			activeSessions: isActive ? 1 : 0,
+			activeCarpoolListings: 0,
+			onlineApiServices: 0,
+			openCarpoolApplications: 0,
+			openApiOrders: 0,
+			openDisputes: 0,
+		},
+		accountCapabilities: {
+			canLogin: isActive,
+			publiclyVisible: isActive,
+			canPublish: isActive,
+			canCreateOrders: isActive,
+			canRevealContact: isActive,
+			canAccessHistoricalTransactions: true,
+		},
+  }
+}
+
+export async function getAdminUserDirectory(query: AdminUserDirectoryQuery): Promise<AdminUserList> {
+  if (shouldUseRealBackend()) return backendAdminUserDirectory(query)
+  await wait()
+  const keyword = query.search.trim().toLowerCase()
+  const filtered = adminUserMockStore.filter(item => {
+    const matchesSearch = !keyword || `${item.username} ${item.displayName}`.toLowerCase().includes(keyword)
+    const matchesStatus = query.status === 'all' || item.accountStatus === query.status
+    const matchesRole = query.role === 'all' || (query.role === 'admin' ? item.isAdmin : !item.isAdmin)
+    const matchesLinuxDo = query.linuxDo === 'all' || (query.linuxDo === 'bound' ? item.linuxDoBound : !item.linuxDoBound)
+    return matchesSearch && matchesStatus && matchesRole && matchesLinuxDo
+  })
+  const items = [...filtered].sort((left, right) => {
+    if (query.sort === 'created_asc') return left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id)
+    if (query.sort === 'active_desc') return (right.lastActiveAt ?? '').localeCompare(left.lastActiveAt ?? '') || right.id.localeCompare(left.id)
+    if (query.sort === 'username_asc') return left.username.localeCompare(right.username) || left.id.localeCompare(right.id)
+    if (query.sort === 'username_desc') return right.username.localeCompare(left.username) || right.id.localeCompare(left.id)
+    return right.createdAt.localeCompare(left.createdAt) || right.id.localeCompare(left.id)
+  })
+  const totalItems = items.length
+  const start = (query.page - 1) * query.limit
+  return {
+    items: clone(items.slice(start, start + query.limit)),
+    pagination: {
+      page: query.page,
+      limit: query.limit,
+      totalItems,
+      totalPages: Math.ceil(totalItems / query.limit),
+    },
+    summary: mockAdminUserSummary(),
+  }
+}
+
+export async function getAdminUserDetail(userId: string): Promise<AdminUserDetail> {
+  if (shouldUseRealBackend()) return backendAdminUserDetail(userId)
+  await wait()
+  const item = adminUserMockStore.find(user => user.id === userId)
+  if (!item) throw new Error('用户不存在。')
+  return mockAdminUserDetail(item)
+}
+
+export async function updateAdminUserStatus(input: {
+  userId: string
+  version: number
+  status: AdminUserStatus
+  reason: string
+}): Promise<AdminUserDetail> {
+  if (shouldUseRealBackend()) return backendUpdateAdminUserStatus(input)
+  await wait()
+  const item = adminUserMockStore.find(user => user.id === input.userId)
+  if (!item) throw new Error('用户不存在。')
+  if (item.version !== input.version) throw new Error('账号信息已更新，请刷新后重试。')
+  const beforeStatus = item.accountStatus
+  item.accountStatus = input.status
+  item.version += 1
+  adminUserMockAuditEntries.set(item.id, [{
+    id: `mock-status-${item.version}`,
+    adminUserId: 'mock-admin',
+    adminUsername: '管理员',
+    action: 'user.account_status_changed',
+    reason: input.reason.trim(),
+    beforeStatus,
+    afterStatus: input.status,
+    requestId: `mock-request-${item.version}`,
+    createdAt: new Date().toISOString(),
+  }, ...(adminUserMockAuditEntries.get(item.id) ?? [])])
+  return mockAdminUserDetail(item)
+}
+
+export async function updateAdminUserPermission(input: {
+  userId: string
+  version: number
+  isAdmin: boolean
+  reason: string
+}): Promise<AdminUserDetail> {
+  if (shouldUseRealBackend()) return backendUpdateAdminUserPermission(input)
+  await wait()
+  const item = adminUserMockStore.find(user => user.id === input.userId)
+  if (!item) throw new Error('用户不存在。')
+  if (item.version !== input.version) throw new Error('账号信息已更新，请刷新后重试。')
+  const beforeIsAdmin = item.isAdmin
+  item.isAdmin = input.isAdmin
+  item.version += 1
+  adminUserMockAuditEntries.set(item.id, [{
+    id: `mock-permission-${item.version}`,
+    adminUserId: 'mock-admin',
+    adminUsername: '管理员',
+    action: 'user.admin_permission_changed',
+    reason: input.reason.trim(),
+    beforeIsAdmin,
+    afterIsAdmin: input.isAdmin,
+    requestId: `mock-request-${item.version}`,
+    createdAt: new Date().toISOString(),
+  }, ...(adminUserMockAuditEntries.get(item.id) ?? [])])
+  return mockAdminUserDetail(item)
 }
 
 export async function getAdminSectionRows(section: AdminSection): Promise<AdminRow[]> {
@@ -2509,10 +3696,6 @@ export async function getAdminSectionRows(section: AdminSection): Promise<AdminR
     return backendAdminOfficialPriceRows()
   }
 
-  if (shouldUseRealBackend() && section === 'demands') {
-    return backendAdminDemandRows()
-  }
-
   if (shouldUseRealBackend() && section === 'reports') {
     return backendAdminReportRows()
   }
@@ -2523,10 +3706,6 @@ export async function getAdminSectionRows(section: AdminSection): Promise<AdminR
 
   if (shouldUseRealBackend() && section === 'feedback') {
     return backendAdminFeedbackRows()
-  }
-
-  if (shouldUseRealBackend() && section === 'users') {
-    return backendAdminUserRows()
   }
 
   if (shouldUseRealBackend() && section === 'trade-intents') {
@@ -2555,9 +3734,15 @@ export async function getAdminSectionRows(section: AdminSection): Promise<AdminR
       id: item.id,
       primary: item.product,
       secondary: `${item.region} · ${getPricingDisplay(item).primaryLabel} ¥${getPricingDisplay(item).primaryPrice}/月 · 可申请 ${getCarpoolSeatSummary(item).availableSeats}/${item.maxMembers} 席`,
-      owner: `${item.owner} · 信任等级${item.trustLevel}`,
+      owner: `${item.owner} · ${item.trustLevel === null ? '信任等级暂无数据' : `信任等级${item.trustLevel}`}`,
       status: item.status,
-      risk: item.linuxdoBound ? '原帖已绑定' : '缺少原帖',
+      risk: item.hasInfoConflict
+        ? '信息冲突'
+        : item.hasUnresolvedDispute === true
+          ? '存在未解决纠纷'
+          : item.hasUnresolvedDispute === null
+            ? '风险数据暂无'
+            : '未发现公开风险',
       targetType: 'carpool',
       detailItems: [
         { label: '车主类型', value: item.ownerType },
@@ -2568,35 +3753,16 @@ export async function getAdminSectionRows(section: AdminSection): Promise<AdminR
     })))
   }
 
-  if (section === 'demands') {
-    const demands = await getDemands()
-    return withAdminRowLinks(demands.map(item => ({
-      id: item.id,
-      primary: item.title,
-      secondary: `最高 ¥${item.maxPrice}/月 · ${item.require}`,
-      owner: `${item.poster} · 信任等级${item.trustLevel}`,
-      status: item.status,
-      risk: item.linuxdoPost,
-      targetType: 'demand',
-      detailItems: [
-        { label: '预算', value: `¥${item.maxPrice}/月` },
-        { label: '地区', value: item.region },
-        { label: '车主偏好', value: item.ownerPreference === 'only-personal' ? '只看个人车主' : item.ownerPreference === 'personal' ? '优先个人车主' : '不限' },
-        { label: '更新时间', value: item.updatedAt },
-      ],
-    })))
-  }
-
   if (section === 'api-services') {
     return withAdminRowLinks(apiServiceStore.map(item => ({
       id: item.id,
       primary: item.title,
       secondary: `${item.models.join(' / ')} · ${item.delivery} · 接入细节站外确认`,
       owner: canOpenApiMerchantProfile(item)
-        ? `${getApiMerchantDisplayName(item)} · 信任等级${item.trustLevel}`
-        : `${getApiMerchantDisplayName(item)} → ${item.merchantUsername} · 信任等级${item.trustLevel}`,
+        ? `${getApiMerchantDisplayName(item)} · ${item.trustLevel === null ? '信任等级暂无数据' : `信任等级${item.trustLevel}`}`
+        : `${getApiMerchantDisplayName(item)} → ${item.merchantUsername} · ${item.trustLevel === null ? '信任等级暂无数据' : `信任等级${item.trustLevel}`}`,
       status: item.online ? '在线' : '离线',
-      risk: item.unresolvedDisputes ? `${item.unresolvedDisputes} 个未解决纠纷` : item.warranty,
+      risk: item.unresolvedDisputes === null ? '纠纷数据暂无' : item.unresolvedDisputes > 0 ? `${item.unresolvedDisputes} 个未解决纠纷` : item.warranty,
       targetType: 'api-service',
       targetTo: apiServiceAdminTargetLink(item),
       detailItems: [
@@ -2609,16 +3775,18 @@ export async function getAdminSectionRows(section: AdminSection): Promise<AdminR
   }
 
   if (section === 'trade-intents') {
+    materializeMockApiOrderReviews()
     return withAdminRowLinks(apiOrderStore.map(item => ({
       id: item.id,
       primary: `${item.serviceTitle} API 订单`,
-      secondary: `${item.id} · 订单金额 ¥${item.amountDecimal ?? item.amount}`,
+      secondary: `${item.orderNo} · 订单金额 ¥${item.amountDecimal ?? item.amount}`,
       owner: `${item.seller} / 买家 ${item.buyer}`,
-      status: getApiOrderStatusLabel(item.status),
+      status: item.status === 'completed' ? getApiOrderCompletionSourceLabel(item.completionSource) : getApiOrderStatusLabel(item.status, 'admin'),
       risk: item.disputeStatus || item.cancelReason || `更新于 ${item.updatedAt}`,
       targetType: 'api-order',
-      targetTo: null,
+      targetTo: `/admin/api-orders/${item.id}`,
       detailItems: [
+        { label: '订单号', value: item.orderNo },
         { label: '订单金额', value: `¥${item.amountDecimal ?? item.amount}` },
         { label: '购买额度', value: `${item.requestedUsdAllowanceDecimal ?? item.requestedUsdAllowance} 美元额度` },
         { label: '交付凭证', value: item.deliverySubmittedAt ? '已提交（管理摘要不展示原始凭证）' : '尚未提交' },
@@ -2638,7 +3806,7 @@ export async function getAdminSectionRows(section: AdminSection): Promise<AdminR
   if (section === 'reports') {
     return withAdminRowLinks([
       { id: 'report-1', primary: 'API 订单未及时响应', secondary: '买家提交脱敏说明，商户待回应', owner: '买家 木舟 / 商户 小葵 API', status: '处理中', risk: '需 24h 内处理', targetType: 'report', detailItems: [{ label: '处理建议', value: '要求商户补充站外确认记录' }, { label: '敏感信息', value: '仅显示脱敏说明' }] },
-      { id: 'report-2', primary: '车源剩余名额争议', secondary: '原帖信息与站内展示不一致', owner: '买家 青柠 / 车主 北风', status: '待复核', risk: '信息不一致', targetType: 'report', detailItems: [{ label: '处理建议', value: '核对原帖与站内剩余席位' }, { label: '敏感信息', value: '不展示联系方式' }] },
+      { id: 'report-2', primary: '车源剩余名额争议', secondary: '申请记录与站内展示不一致', owner: '买家 青柠 / 车主 北风', status: '待复核', risk: '信息不一致', targetType: 'report', detailItems: [{ label: '处理建议', value: '核对申请记录与站内剩余席位' }, { label: '敏感信息', value: '不展示联系方式' }] },
       { id: 'report-contact-1', primary: '联系方式无效举报', secondary: '联系快照显示可复制，但买家反馈无法联系', owner: '买家 demo_user / 商户 小葵 API', status: '处理中', risk: '只允许纠纷处理员按订单记录查看必要快照', targetType: 'contact-report', detailItems: [{ label: '处理建议', value: '按联系快照检查必要联系方式' }, { label: '可见范围', value: '仅纠纷处理员' }] },
     ])
   }
@@ -2723,6 +3891,18 @@ function assertCarpoolAccessArrangement(payload: SaveCarpoolDraftPayload, produc
   if (typeof payload.providesAdminAccount !== 'boolean') {
     throw new Error('请选择是否提供管理员账号。')
   }
+  if (!payload.weeklyQuotaAmount || payload.weeklyQuotaAmount <= 0 || !payload.monthlyQuotaAmount || payload.monthlyQuotaAmount <= 0) {
+    throw new Error('请填写有效的每周额度与每月额度。')
+  }
+  if (typeof payload.followsOfficialQuotaReset !== 'boolean') throw new Error('请选择额度是否跟随官方重置。')
+  if (!payload.vpsRegion.trim()) throw new Error('请填写 VPS 区域。')
+  if (typeof payload.supportsMainlandChinaDirectConnection !== 'boolean') throw new Error('请选择是否支持国内直连。')
+  if (!payload.openingChannelCode || (payload.openingChannelCode === 'other' && !payload.customOpeningChannel.trim())) {
+    throw new Error('请选择或填写开通渠道。')
+  }
+  if (!payload.paymentMethodCode || (payload.paymentMethodCode === 'other' && !payload.customPaymentMethod.trim())) {
+    throw new Error('请选择或填写付款方式。')
+  }
   if (carpoolRequiresRiskAck(product, payload.riskNoticeCode) && !payload.riskAcknowledged) {
     throw new Error('请先确认该套餐的发布边界。')
   }
@@ -2731,10 +3911,6 @@ function assertCarpoolAccessArrangement(payload: SaveCarpoolDraftPayload, produc
 function apiGatewayFromDistribution(value: unknown): ApiService['delivery'] {
   if (value === 'sub2api') return 'Sub2API'
   return '其他'
-}
-
-function apiBillingMode(value: unknown): ApiBillingMode {
-  return value === 'fixed_package' || value === 'manual_credit' || value === 'metered_credit' ? value : 'metered_credit'
 }
 
 function apiUsageVisibility(value: unknown): ApiUsageVisibility {
@@ -2754,13 +3930,12 @@ function apiDeliveryModes(value: unknown): ApiDeliveryMode[] {
   return modes.length ? modes : ['api_key_endpoint']
 }
 
-function buildModelPriceRowsFromPayload(payload: Record<string, unknown>, defaultMultiplier: number, lockedMultiplier = false): ApiService['modelPriceRows'] {
-  const selected = Array.isArray(payload.selectedModels) ? payload.selectedModels as Array<{ modelId?: string, multiplierOverride?: number | null, enabled?: boolean }> : []
+function buildModelPriceRowsFromPayload(payload: Record<string, unknown>, defaultMultiplier: number): ApiService['modelPriceRows'] {
+  const selected = Array.isArray(payload.selectedModels) ? payload.selectedModels as Array<{ modelId?: string, enabled?: boolean }> : []
   return selected
     .filter(item => item.enabled !== false)
     .map(item => {
       const model = modelCatalog.find(row => row.id === item.modelId)
-      const multiplier = !lockedMultiplier && typeof item.multiplierOverride === 'number' && Number.isFinite(item.multiplierOverride) ? item.multiplierOverride : defaultMultiplier
       return {
         modelId: model?.id ?? item.modelId ?? 'custom-model',
         modelName: model?.displayName ?? item.modelId ?? '自定义模型',
@@ -2768,10 +3943,10 @@ function buildModelPriceRowsFromPayload(payload: Record<string, unknown>, defaul
         officialInputPricePerMillion: model?.officialInputPricePerMillion ?? 0,
         officialCachedInputPricePerMillion: model?.officialCachedInputPricePerMillion ?? null,
         officialOutputPricePerMillion: model?.officialOutputPricePerMillion ?? 0,
-        merchantMultiplier: multiplier,
-        actualInputPricePerMillion: Number(((model?.officialInputPricePerMillion ?? 0) * multiplier).toFixed(3)),
-        actualCachedInputPricePerMillion: model?.officialCachedInputPricePerMillion === null || model?.officialCachedInputPricePerMillion === undefined ? null : Number((model.officialCachedInputPricePerMillion * multiplier).toFixed(3)),
-        actualOutputPricePerMillion: Number(((model?.officialOutputPricePerMillion ?? 0) * multiplier).toFixed(3)),
+        merchantMultiplier: defaultMultiplier,
+        actualInputPricePerMillion: Number(((model?.officialInputPricePerMillion ?? 0) * defaultMultiplier).toFixed(3)),
+        actualCachedInputPricePerMillion: model?.officialCachedInputPricePerMillion === null || model?.officialCachedInputPricePerMillion === undefined ? null : Number((model.officialCachedInputPricePerMillion * defaultMultiplier).toFixed(3)),
+        actualOutputPricePerMillion: Number(((model?.officialOutputPricePerMillion ?? 0) * defaultMultiplier).toFixed(3)),
       }
     })
 }
@@ -2821,15 +3996,23 @@ export async function submitCarpool(payload: SaveCarpoolDraftPayload) {
   assertCarpoolAccessArrangement(payload, product)
   const id = `carpool-${Date.now()}`
   const monthly = payload.monthlyPriceCny ?? 0
-  const serviceMultiplier = payload.serviceMultiplier ?? 1
+  const weeklyQuotaAmount = payload.weeklyQuotaAmount ?? 0
   const monthlyQuotaAmount = payload.monthlyQuotaAmount ?? 0
   const carpool: Carpool = {
     id,
     product: product?.displayName ?? payload.customProductName?.trim() ?? '自定义产品',
     region: regionName,
     monthly,
-    serviceMultiplier,
+    serviceMultiplier: 1,
+    weeklyQuotaAmount,
     monthlyQuotaAmount,
+    followsOfficialQuotaReset: payload.followsOfficialQuotaReset,
+    vpsRegion: payload.vpsRegion.trim() || null,
+    supportsMainlandChinaDirectConnection: payload.supportsMainlandChinaDirectConnection,
+    openingChannelCode: payload.openingChannelCode as Carpool['openingChannelCode'],
+    customOpeningChannel: payload.customOpeningChannel.trim() || null,
+    paymentMethodCode: payload.paymentMethodCode as Carpool['paymentMethodCode'],
+    customPaymentMethod: payload.customPaymentMethod.trim() || null,
     quotaLabel: product?.quotaLabel ?? defaultQuotaLabel,
     quotaUnit: product?.quotaUnit ?? defaultQuotaUnit,
     quotaPeriod: product?.quotaPeriod ?? defaultQuotaPeriod,
@@ -2846,8 +4029,8 @@ export async function submitCarpool(payload: SaveCarpoolDraftPayload) {
     status: payload.status === 'reviewing' ? '可上车' : '暂停',
     confirmedAt: nowText(),
     confirmedWithin48h: true,
-    linuxdoBound: Boolean(payload.linuxDoTopicUrl),
-    sourcePostAccessible: Boolean(payload.linuxDoTopicUrl),
+    linuxdoBound: null,
+    sourceAuthorVerification: { status: 'not_submitted' },
     hasInfoConflict: false,
     hasUnresolvedDispute: false,
     distributionMethod: payload.distributionMethod || 'other',
@@ -2882,16 +4065,16 @@ export async function submitApiService(payload: Record<string, unknown>) {
   const gateway = apiGatewayFromDistribution(payload.distributionSystem)
   const defaultMultiplier = numberValue(payload.defaultMultiplier, 1)
   const cnyPerUsdCredit = numberValue(payload.cnyPerUsdCredit, 1)
-  const selectedModels = Array.isArray(payload.selectedModels) ? payload.selectedModels as Array<{ modelId?: string, multiplierOverride?: number | null, enabled?: boolean }> : []
+  const selectedModels = Array.isArray(payload.selectedModels) ? payload.selectedModels as Array<{ modelId?: string, enabled?: boolean }> : []
   const models = selectedModels
     .filter(item => item.enabled !== false)
     .map(item => modelCatalog.find(model => model.id === item.modelId)?.displayName ?? item.modelId ?? '自定义模型')
     .filter(Boolean)
   const merchantIdentityMode = apiMerchantIdentityMode(normalized.merchantIdentityMode)
   const deliveryModes = apiDeliveryModes(payload.deliveryModes)
-  const billing = apiBillingMode(payload.billingMode)
+  const billing = requireSupportedApiServiceBillingMode(payload.billingMode)
   const rawPackages = Array.isArray(payload.packages)
-    ? payload.packages as Array<{ id?: string, name?: string, priceCny?: number, panelAllowance?: number, durationDays?: number, stockTotal?: number, description?: string, enabled?: boolean, modelCatalogIds?: string[] }>
+    ? payload.packages as Array<{ id?: string, name?: string, priceCny?: number, panelAllowance?: number, quotaUsagePolicy?: unknown, durationDays?: number, stockTotal?: number, description?: string, enabled?: boolean, modelCatalogIds?: string[] }>
     : []
   const isPublish = payload.status === 'reviewing'
   const paymentOptions = Array.isArray(payload.paymentOptions)
@@ -2901,12 +4084,28 @@ export async function submitApiService(payload: Record<string, unknown>) {
   const hasEnabledPayment = normalizedPaymentOptions.some(item => item.enabled && isApiPaymentOptionComplete(item))
   const publiclyOrderable = isPublish && hasEnabledPayment
   const responseMinutes = numberValue(payload.paymentWindowMinutes, 10)
+  const declaredMaxConcurrency = numberValue(payload.declaredMaxConcurrency, 0)
+  const promptAuditEnabled = typeof payload.promptAuditEnabled === 'boolean' ? payload.promptAuditEnabled : null
+  if (!Number.isInteger(declaredMaxConcurrency) || declaredMaxConcurrency < 1) throw new Error('商户声明最大并发必须是大于 0 的整数。')
+  if (promptAuditEnabled === null) throw new Error('请选择是否开启提示词审计。')
   const state: ApiServiceState = isPublish ? 'online' : 'offline'
   const quotaExpiresAt = beijingDateTimeInputToISOString(String(payload.quotaExpiresAt ?? ''))
+  const accountPoolType = String(payload.accountPoolType ?? '') as ApiService['accountPoolType']
+  const accountPoolLabels: Record<Exclude<NonNullable<ApiService['accountPoolType']>, 'custom'>, string> = {
+    gpt_pro_20x: 'GPT Pro 20x',
+    gpt_pro_5x: 'GPT Pro 5x',
+    gpt_plus: 'GPT Plus',
+  }
+  const accountPoolLabel = accountPoolType === 'custom'
+    ? stringValue(payload.accountPoolCustomName, '')
+    : accountPoolType ? accountPoolLabels[accountPoolType] : ''
+  const merchantRefundCommitment = (payload.warranty as { mode?: string } | undefined)?.mode === 'merchant_full_refund'
+  const quotaUsagePolicy = apiQuotaUsagePolicyFromInput(payload.quotaUsagePolicy)
   const service: ApiService = {
     id,
     title: stringValue(payload.generatedTitle, models.length ? `${models[0]} API 服务` : '新 API 服务'),
     sourceUrl: stringValue(payload.sourceUrl, ''),
+    quotaUsagePolicy,
     merchantId: currentMerchantId,
     merchantUsername: currentMerchantName,
     merchant: currentMerchantName,
@@ -2945,14 +4144,22 @@ export async function submitApiService(payload: Record<string, unknown>) {
     publiclyOrderable,
     lastOnlineConfirmedAt: nowText(),
     onlineExpiresAt: nowText(),
+    declaredMaxConcurrency,
+    promptAuditEnabled,
     expectedResponseMinutes: responseMinutes,
-    responseMedianMinutes: responseMinutes,
+    responseMedianMinutes: null,
     dailyOrderLimit: 5,
     todayOrderCount: 0,
     unresolvedDisputes: 0,
     warning: publiclyOrderable ? undefined : isPublish ? '待配置接单设置' : '草稿尚未上线',
-    warranty: (payload.warranty as { mode?: string, warrantyDays?: number | null } | undefined)?.mode === 'merchant_warranty' ? `商户承诺：${(payload.warranty as { warrantyDays?: number | null }).warrantyDays ?? 7} 天可用性处理，平台不担保、不代赔` : '按商户备注站外协商，平台不担保、不代赔',
-    refundPolicy: stringValue((payload.warranty as { refundNote?: string } | undefined)?.refundNote, '按服务说明站外协商'),
+    warranty: merchantRefundCommitment
+      ? '商户退款承诺：订单有效期内符合规则时退还全部实付金额；平台不垫付、不代赔'
+      : '无额外退款承诺，具体问题由双方站外协商；平台不担保、不代赔',
+    refundPolicy: merchantRefundCommitment ? 'api-merchant-refund-v1' : '无额外退款承诺',
+    accountPoolType,
+    accountPoolLabel,
+    merchantRefundCommitment,
+    merchantRefundPolicyVersion: 'api-merchant-refund-v1',
     quotaExpiresAt: quotaExpiresAt || undefined,
     expiresAt: formatQuotaExpiresAtLabel(quotaExpiresAt) || '按服务说明',
     completed30d: 0,
@@ -2966,6 +4173,7 @@ export async function submitApiService(payload: Record<string, unknown>) {
       name: item.name || `套餐 ${index + 1}`,
       priceCny: numberValue(item.priceCny, 0),
       panelAllowance: numberValue(item.panelAllowance, 0),
+      quotaUsagePolicy: apiQuotaUsagePolicyFromInput(toApiQuotaUsagePolicyInput(item.quotaUsagePolicy)),
       durationDays: (item.durationDays ?? 1) as 1 | 3 | 7 | 30,
       stockTotal: numberValue(item.stockTotal, 0),
       stockAvailable: numberValue(item.stockTotal, 0),
@@ -2973,7 +4181,6 @@ export async function submitApiService(payload: Record<string, unknown>) {
       enabled: item.enabled !== false,
       sortOrder: index,
       models: (item.modelCatalogIds ?? []).map(modelId => {
-        const selected = selectedModels.find(row => row.modelId === modelId)
         const model = modelCatalog.find(row => row.id === modelId)
         return {
           serviceModelId: `service-${modelId}`,
@@ -2981,7 +4188,7 @@ export async function submitApiService(payload: Record<string, unknown>) {
           modelPriceVersionId: '',
           modelName: model?.displayName ?? modelId,
           provider: model?.provider ?? 'other',
-          merchantMultiplier: selected?.multiplierOverride ?? defaultMultiplier,
+          merchantMultiplier: defaultMultiplier,
         }
       }),
     })),
@@ -3016,6 +4223,7 @@ export async function publishApiService(id: string) {
   const target = apiServiceStore.find(item => item.id === id)
   if (!target) throw new Error('API 服务不存在。')
   if (target.state !== 'offline') throw new Error('当前 API 服务不能上线。')
+  requireSupportedApiServiceBillingMode(target.billingMode)
   target.state = 'online'
   target.online = true
   target.publiclyOrderable = true
@@ -3046,6 +4254,7 @@ export async function resumeApiService(id: string) {
   const target = apiServiceStore.find(item => item.id === id)
   if (!target) throw new Error('API 服务不存在。')
   if (target.state !== 'paused') throw new Error('当前 API 服务不能恢复。')
+  requireSupportedApiServiceBillingMode(target.billingMode)
   target.state = 'online'
   target.online = true
   target.publiclyOrderable = true
@@ -3365,20 +4574,6 @@ async function buildUnifiedNotifications(): Promise<UnifiedNotification[]> {
       to: `/official-prices/${item.id}`,
     }))
 
-  const demands = await getDemands()
-  const demandRows: UnifiedNotification[] = demands
-    .filter(item => item.poster === currentBuyerName || item.status === '匹配中')
-    .slice(0, 6)
-    .map(item => ({
-      id: `demand-notice-${item.id}`,
-      type: '求车需求',
-      title: item.status === '匹配中' ? '求车需求匹配中' : '求车需求状态更新',
-      detail: `${item.title} · 预算 ¥${item.maxPrice}/月`,
-      time: item.updatedAt,
-      unread: item.status === '匹配中',
-      to: `/demands/${item.id}`,
-    }))
-
   const feedbackRows: UnifiedNotification[] = feedbackTicketStore
     .filter(item => item.submitterUserId === currentBuyerId || item.submitterUsername === myUserProfileStore.username)
     .filter(item => item.latestAdminUpdateAt)
@@ -3415,7 +4610,7 @@ async function buildUnifiedNotifications(): Promise<UnifiedNotification[]> {
     to: '/my/notifications',
   }]
 
-  return markReadState([...carpoolRows, ...apiRows, ...officialRows, ...demandRows, ...feedbackRows, ...adminRows, ...fixedRows]
+  return markReadState([...carpoolRows, ...apiRows, ...officialRows, ...feedbackRows, ...adminRows, ...fixedRows]
     .sort((a, b) => compareTimeDesc(a.time, b.time)))
 }
 
@@ -3427,6 +4622,8 @@ export async function getNotifications(): Promise<UnifiedNotification[]> {
 
 export async function getNavigationBadges(): Promise<NavigationBadgeSummary> {
   if (shouldUseRealBackend()) return backendNavigationBadges()
+
+  materializeMockApiOrderReviews()
 
   const [notifications, importantAnnouncementUnread, reportRows, appealRows] = await Promise.all([
     buildUnifiedNotifications(),
@@ -3592,16 +4789,12 @@ export async function searchMarket(keyword: string): Promise<SearchResult[]> {
   await wait()
   const q = keyword.trim().toLowerCase()
   if (!q) return []
-  const demandRows = await getDemands()
   const officialResults = officialPriceStore
     .filter(item => [item.product, item.plan, item.region, item.channel, item.submitter].some(value => value.toLowerCase().includes(q)))
     .map(item => ({ id: `official-${item.id}`, type: '官方价格' as const, title: `${item.product} ${item.plan}`, subtitle: `${item.region} · ${item.originalPrice} · ${item.status}`, badge: item.status, to: `/official-prices/${item.id}` }))
   const carpoolResults = carpoolStore
     .filter(item => [item.product, item.region, item.owner].some(value => value.toLowerCase().includes(q)))
     .map(item => ({ id: `carpool-${item.id}`, type: '车源' as const, title: item.product, subtitle: `${item.region} · ${item.owner} · ${getPricingDisplay(item).primaryLabel} ¥${getPricingDisplay(item).primaryPrice}/月`, badge: item.status, to: `/carpools/${item.id}` }))
-  const demandResults = demandRows
-    .filter(item => [item.title, item.require, item.poster, item.region].some(value => value.toLowerCase().includes(q)))
-    .map(item => ({ id: `demand-${item.id}`, type: '求车' as const, title: item.title, subtitle: `${item.region} · 预算 ¥${item.maxPrice}/月 · ${item.poster}`, badge: item.status, to: `/demands/${item.id}` }))
   const apiResults = apiServiceStore
     .filter(isApiServicePubliclyOrderable)
     .filter(item => apiServicePublicSearchTerms(item).some(value => value.toLowerCase().includes(q)))
@@ -3612,8 +4805,8 @@ export async function searchMarket(keyword: string): Promise<SearchResult[]> {
       id: `merchant-${item.username}`,
       type: '商户' as const,
       title: item.displayName,
-      subtitle: `@${item.username} · ${item.identity} · 近30天完成 ${item.completed30d}`,
-      badge: item.unresolvedDisputes ? `${item.unresolvedDisputes} 个未解决纠纷` : item.originalPostBound ? '原帖已绑定' : '待补充原帖',
+      subtitle: `@${item.username} · ${item.identity} · 近90天完成 ${item.completedLast90Days ?? '暂无数据'}`,
+      badge: item.unresolvedDisputes === null ? '纠纷数据暂无' : item.unresolvedDisputes > 0 ? `${item.unresolvedDisputes} 个未解决纠纷` : item.originalPostBound === true ? '原帖已绑定' : item.originalPostBound === false ? '原帖未绑定' : '原帖数据暂无',
       to: `/u/${item.username}`,
     }))
   const userResults = publicUserProfiles
@@ -3624,42 +4817,148 @@ export async function searchMarket(keyword: string): Promise<SearchResult[]> {
         id: `user-${item.username}`,
         type: '用户' as const,
         title: item.displayName,
-        subtitle: `公开个人主页 · @${item.username} · 信任等级${item.trustLevel}`,
+        subtitle: `公开个人主页 · @${item.username} · ${item.trustLevel === null ? '信任等级暂无数据' : `信任等级${item.trustLevel}`}`,
         badge: item.linuxDoBound ? '已绑定 linux.do' : '未绑定',
         to: `/u/${item.username}`,
       }
     })
-  return clone([...officialResults, ...carpoolResults, ...demandResults, ...apiResults, ...merchantResults, ...userResults])
+  return clone([...officialResults, ...carpoolResults, ...apiResults, ...merchantResults, ...userResults])
 }
 
-export async function getReviewCenterRows(): Promise<ReviewCenterRow[]> {
+export async function getReviewCenterRows(): Promise<ReviewCenterData> {
   if (shouldUseRealBackend()) return backendReviewCenterRows()
   await wait()
-  const carpoolRows: ReviewCenterRow[] = carpoolApplicationStore
+  const reviewWindowMs = 14 * 24 * 60 * 60 * 1000
+  const carpoolRows = carpoolApplicationStore
     .filter(item => item.status === 'completed' && (item.applicantUserId === currentBuyerId || item.ownerUserId === currentOwnerId))
-    .map(item => ({
-      id: `review-carpool-${item.id}`,
-      sourceType: 'carpool',
-      sourceId: item.id,
-      target: item.snapshot.productName,
-      counterparty: item.applicantUserId === currentBuyerId ? item.ownerUsername : item.applicantUsername,
-      status: item.buyerReview ? '已评价' : '可评价',
-      rating: item.buyerReview?.rating ?? 0,
-      tags: item.buyerReview?.tags ?? [],
-      note: item.buyerReview?.note ?? '',
-      createdAt: item.buyerReview?.createdAt ?? item.completedAt ?? item.updatedAt,
-    }))
-  return clone(carpoolRows.sort((a, b) => compareTimeDesc(a.createdAt, b.createdAt)))
+    .flatMap((item): ReviewCenterRow[] => {
+      const currentIsBuyer = item.applicantUserId === currentBuyerId
+      const ownReview = currentIsBuyer ? item.buyerReview : item.ownerReview
+      const counterpartyReview = currentIsBuyer ? item.ownerReview : item.buyerReview
+      const completedAt = item.completedAt ?? item.updatedAt
+      const completedAtMs = Date.parse(completedAt)
+      if (!Number.isFinite(completedAtMs)) throw new Error(`评价交易完成时间无效：${item.id}`)
+      const reviewDeadlineAt = new Date(completedAtMs + reviewWindowMs).toISOString()
+      const deadlinePassed = Date.now() >= Date.parse(reviewDeadlineAt)
+      const bothSubmitted = Boolean(ownReview && counterpartyReview)
+      const published = bothSubmitted || deadlinePassed
+      const visibleAt = published
+        ? bothSubmitted
+          ? new Date(Math.max(Date.parse(ownReview!.createdAt), Date.parse(counterpartyReview!.createdAt))).toISOString()
+          : reviewDeadlineAt
+        : null
+      const counterparty = currentIsBuyer ? item.ownerUsername : item.applicantUsername
+      const ownReviewerRole = currentIsBuyer ? 'buyer' as const : 'seller' as const
+      const ownRevieweeRole = currentIsBuyer ? 'seller' as const : 'buyer' as const
+      const rows: ReviewCenterRow[] = []
+
+      if (ownReview) {
+        rows.push({
+          id: `review-carpool-${item.id}-sent`,
+          transactionType: 'carpool_membership',
+          transactionId: item.id,
+          direction: 'sent',
+          target: item.snapshot.productName,
+          counterparty,
+          counterpartyUsername: counterparty,
+          reviewerRole: ownReviewerRole,
+          revieweeRole: ownRevieweeRole,
+          status: published ? 'published' : 'sealed',
+          visibility: published ? 'published' : 'sealed',
+          counterpartySubmitted: Boolean(counterpartyReview),
+          canCreate: false,
+          canEdit: !published,
+          rating: ownReview.rating,
+          tags: [...ownReview.tags],
+          note: ownReview.note,
+          completedAt,
+          reviewDeadlineAt,
+          submittedAt: ownReview.createdAt,
+          visibleAt,
+          frozenAt: visibleAt,
+          createdAt: ownReview.createdAt,
+          updatedAt: ownReview.createdAt,
+          version: 1,
+        })
+      } else {
+        rows.push({
+          id: `reviewable-carpool-${item.id}`,
+          transactionType: 'carpool_membership',
+          transactionId: item.id,
+          direction: 'pending',
+          target: item.snapshot.productName,
+          counterparty,
+          counterpartyUsername: counterparty,
+          reviewerRole: ownReviewerRole,
+          revieweeRole: ownRevieweeRole,
+          status: deadlinePassed ? 'expired' : 'reviewable',
+          visibility: 'none',
+          counterpartySubmitted: Boolean(counterpartyReview),
+          canCreate: !deadlinePassed,
+          canEdit: false,
+          rating: null,
+          tags: [],
+          note: null,
+          completedAt,
+          reviewDeadlineAt,
+          submittedAt: null,
+          visibleAt: null,
+          frozenAt: null,
+          createdAt: completedAt,
+          updatedAt: completedAt,
+          version: 0,
+        })
+      }
+
+      if (counterpartyReview) {
+        rows.push({
+          id: `review-carpool-${item.id}-received`,
+          transactionType: 'carpool_membership',
+          transactionId: item.id,
+          direction: 'received',
+          target: item.snapshot.productName,
+          counterparty,
+          counterpartyUsername: counterparty,
+          reviewerRole: ownRevieweeRole,
+          revieweeRole: ownReviewerRole,
+          status: published ? 'published' : 'sealed',
+          visibility: published ? 'published' : 'sealed',
+          counterpartySubmitted: true,
+          canCreate: false,
+          canEdit: false,
+          rating: published ? counterpartyReview.rating : null,
+          tags: published ? [...counterpartyReview.tags] : [],
+          note: published ? counterpartyReview.note : null,
+          completedAt,
+          reviewDeadlineAt,
+          submittedAt: counterpartyReview.createdAt,
+          visibleAt,
+          frozenAt: visibleAt,
+          createdAt: counterpartyReview.createdAt,
+          updatedAt: counterpartyReview.createdAt,
+          version: 1,
+        })
+      }
+      return rows
+    })
+  return {
+    items: clone(carpoolRows.sort((a, b) => compareTimeDesc(a.createdAt, b.createdAt))),
+    presetTags: ['沟通顺畅', '描述真实', '响应及时', '规则清晰', '付款及时', '确认及时', '交付清晰', '合作愉快', '响应较慢', '与描述不符'],
+  }
 }
 
 export async function submitReview(payload: SubmitReviewPayload) {
   if (shouldUseRealBackend()) return backendSubmitReview(payload)
   await wait()
-  return reviewCarpoolApplication(payload.sourceId, {
+  await reviewCarpoolApplication(payload.transactionId, {
     rating: payload.rating,
     tags: payload.tags,
     note: payload.note,
   })
+  const center = await getReviewCenterRows()
+  const row = center.items.find(item => item.transactionId === payload.transactionId && item.direction === 'sent')
+  if (!row) throw new Error('评价已保存，但评价中心记录暂不可用。')
+  return row
 }
 
 export async function getCarpoolApplications(filters: CarpoolApplicationFilters = {}) {
@@ -3679,7 +4978,7 @@ export async function getMerchantCarpoolApplications(filters: CarpoolApplication
   return clone(filterCarpoolApplications({ ...filters, ownerId: currentOwnerId, sort: filters.sort ?? 'default_owner' }))
 }
 
-export async function getCarpoolApplicationById(id: string) {
+export async function getCarpoolApplicationById(id: string): Promise<CarpoolApplicationWithMeta | null> {
   if (shouldUseRealBackend()) return backendCarpoolApplicationById(id)
   await wait()
   return clone(carpoolApplicationStore.find(item => item.id === id) ?? null)
@@ -3845,7 +5144,7 @@ export async function markCarpoolApplicationContacted(id: string) {
       type: 'buyer_contacted',
       fromStatus,
       toStatus: 'contacted',
-      note: '买家已记录完成站外联系。',
+      note: '买家已记录与车主完成联系。',
     })
   })
 }
@@ -3986,14 +5285,22 @@ export async function reviewCarpoolApplication(id: string, payload: ReviewCarpoo
   await wait()
   return updateCarpoolApplication(id, application => {
     if (application.status !== 'completed') throw new Error('只有已完成记录可以评价')
-    application.buyerReview = { ...payload, createdAt: nowText() }
+    const completedAtMs = Date.parse(application.completedAt ?? application.updatedAt)
+    if (!Number.isFinite(completedAtMs)) throw new Error('交易完成时间无效')
+    if (Date.now() >= completedAtMs + 14 * 24 * 60 * 60 * 1000) throw new Error('评价窗口已截止')
+    const currentIsBuyer = application.applicantUserId === currentBuyerId
+    const currentIsOwner = application.ownerUserId === currentOwnerId
+    if (!currentIsBuyer && !currentIsOwner) throw new Error('只有交易参与方可以评价')
+    const review = { ...payload, createdAt: nowText() }
+    if (currentIsBuyer) application.buyerReview = review
+    else application.ownerReview = review
     appendCarpoolApplicationEvent({
       applicationId: id,
-      actorId: application.applicantUserId,
-      actorLabel: application.applicantUsername,
-      actorRole: 'buyer',
+      actorId: currentIsBuyer ? application.applicantUserId : application.ownerUserId,
+      actorLabel: currentIsBuyer ? application.applicantUsername : application.ownerUsername,
+      actorRole: currentIsBuyer ? 'buyer' : 'owner',
       type: 'admin_updated',
-      note: `买家已评价：${payload.rating} 星`,
+      note: `${currentIsBuyer ? '买家' : '车主'}已评价：${payload.rating} 星`,
     })
   })
 }
@@ -4003,6 +5310,7 @@ export async function createApiPurchaseIntent(payload: CreateApiPurchaseIntentPa
   await wait()
   const service = apiServiceStore.find(item => item.id === payload.serviceId)
   if (!service) throw new Error(`API service not found: ${payload.serviceId}`)
+  requireSupportedApiServiceBillingMode(service.billingMode)
   if (!isApiServicePubliclyOrderable(service) || service.state !== 'online') throw new Error('服务当前不可创建订单。')
   if (!service.deliveryModes.includes(payload.deliveryMode)) throw new Error('选择的 API 细节不属于该服务。')
   if (service.delivery !== 'Sub2API' && payload.deliveryMode === 'sub2api_panel_account') throw new Error('当前服务不支持该 API 细节。')
@@ -4039,6 +5347,7 @@ export async function createApiPurchaseIntent(payload: CreateApiPurchaseIntentPa
     purchasedCredit: Number(purchasedCreditDecimal),
     purchaseAmountCnyDecimal,
     purchasedCreditDecimal,
+    quotaUsagePolicySnapshot: clone(selectedPackage?.quotaUsagePolicy ?? service.quotaUsagePolicy),
     targetModel: payload.targetModel,
     buyerNote: payload.buyerNote,
     snapshot,
@@ -4147,6 +5456,7 @@ function findApiOrder(id: string) {
 }
 
 function updateApiOrder(id: string, updater: (order: ApiOrder) => void) {
+  materializeMockApiOrderReviews()
   const order = findApiOrder(id)
   updater(order)
   order.updatedAt = nowText()
@@ -4165,6 +5475,9 @@ export async function createApiOrderFromIntent(intentId: string, paymentMethod: 
   if (shouldUseRealBackend()) return backendCreateAPIOrderFromIntent(intentId, paymentMethod)
   await wait()
   const intent = findApiPurchaseIntent(intentId)
+  const service = apiServiceStore.find(item => item.id === intent.serviceId)
+  if (!service) throw new Error('API 服务不存在。')
+  requireSupportedApiServiceBillingMode(service.billingMode)
   if (apiOrderStore.some(item => item.apiPurchaseIntentId === intentId)) {
     throw new Error('该购买意向已经创建过订单。')
   }
@@ -4172,9 +5485,8 @@ export async function createApiOrderFromIntent(intentId: string, paymentMethod: 
   if (!option || !isApiPaymentOptionComplete(option)) {
     throw new Error('选择的收款方式不可用，请联系商户更新收款设置。')
   }
-  const service = apiServiceStore.find(item => item.id === intent.serviceId)
   const selectedPackage = intent.selectedPackageId
-    ? service?.packages?.find(item => item.id === intent.selectedPackageId && item.enabled)
+    ? service.packages?.find(item => item.id === intent.selectedPackageId && item.enabled)
     : undefined
   if (intent.selectedPackageId && (!selectedPackage || selectedPackage.stockAvailable <= 0)) {
     throw new Error('选择的套餐已售罄或不可用。')
@@ -4183,6 +5495,8 @@ export async function createApiOrderFromIntent(intentId: string, paymentMethod: 
   const createdAt = nowText()
   const order: ApiOrder = {
     id: `api-order-${Date.now()}`,
+    orderNo: createMockApiOrderNo(createdAt),
+    purchaseKind: 'api_service',
     apiPurchaseIntentId: intent.id,
     apiServiceId: intent.serviceId,
     buyerId: intent.buyerId,
@@ -4206,6 +5520,7 @@ export async function createApiOrderFromIntent(intentId: string, paymentMethod: 
     packageStockReserved: Boolean(selectedPackage),
     requestedUsdAllowance: intent.purchasedCredit,
     requestedUsdAllowanceDecimal: intent.purchasedCreditDecimal || normalizeDecimalTrimmed(String(intent.purchasedCredit), 6),
+    quotaUsagePolicySnapshot: clone(intent.quotaUsagePolicySnapshot),
     merchantContactChannels: clone(intent.contactChannels),
     buyerContactChannels: clone(mockBuyerContactChannels(intent)),
     viewerRole: 'buyer',
@@ -4220,6 +5535,153 @@ export async function createApiOrderFromIntent(intentId: string, paymentMethod: 
   persistApiPurchaseStores()
   persistApiOrderStore()
   if (selectedPackage) persistMarketStores()
+  return clone(order)
+}
+
+export async function createApiQuotaOrder(payload: CreateApiQuotaOrderPayload) {
+  if (shouldUseRealBackend()) return backendCreateAPIQuotaOrder(payload)
+  await wait()
+  const offer = apiQuotaOfferStore.find(item => item.id === payload.offerId)
+  const service = offer ? apiServiceStore.find(item => item.id === offer.apiServiceId) : undefined
+  if (!offer || !service) throw new Error('额度包不存在或已下架。')
+  if (!offer.isOrderable || offer.availableCopies <= 0) throw new Error(offer.orderabilityReason || '当前额度包不可购买。')
+  if (offer.saleMode === 'scheduled' && (!payload.saleRoundId || payload.saleRoundId !== offer.currentRound?.id)) throw new Error('当前放量轮次已变化，请刷新后重试。')
+  if (payload.saleRoundId && apiOrderStore.some(order => order.buyerId === currentBuyerId && order.quotaSnapshot?.saleRoundId === payload.saleRoundId)) {
+    throw new Error('同一买家每轮最多购买 1 份额度包。')
+  }
+  const selectedDeliveryMode = service.deliveryModes[0] ?? 'api_key_endpoint'
+  const paymentMethod = getApiServiceDefaultPaymentMethod(service)
+  if (!paymentMethod) throw new Error('商户尚未配置可用的微信或支付宝收款方式。')
+  const credentialSummary = offer.deliveryMode === 'preimported'
+    ? apiQuotaCredentialSummaryStore.find(item => item.offerId === offer.id)
+    : undefined
+  if (offer.deliveryMode === 'preimported' && (!credentialSummary || credentialSummary.available <= 0)) throw new Error('当前没有可用交付凭据。')
+
+  const createdAt = nowText()
+  const intentId = `api-intent-quota-${Date.now()}`
+  const intentSnapshot = {
+    ...createSnapshot(service),
+    promptAuditEnabled: offer.promptAuditEnabled ?? null,
+    multiplier: `${Number(offer.modelMultiplier).toFixed(2)}x`,
+    defaultMultiplier: Number(offer.modelMultiplier),
+    selectedDeliveryMode,
+    expiresAt: formatQuotaExpiresAtLabel(offer.expiresAt) || offer.expiresAt,
+  }
+  const intent: ApiPurchaseIntent = {
+    id: intentId,
+    serviceId: service.id,
+    buyerId: currentBuyerId,
+    buyer: currentBuyerName,
+    merchantId: service.merchantId,
+    merchant: getApiMerchantDisplayName(service),
+    status: 'ordered',
+    selectedDeliveryMode,
+    purchaseAmountCny: Number(offer.priceCny),
+    purchasedCredit: Number(offer.usdAllowance),
+    purchaseAmountCnyDecimal: offer.priceCny,
+    purchasedCreditDecimal: offer.usdAllowance,
+    quotaUsagePolicySnapshot: clone(offer.quotaUsagePolicy),
+    targetModel: service.models[0] ?? '按额度包说明',
+    snapshot: intentSnapshot,
+    handoff: {
+      intentId,
+      selectedDeliveryMode,
+      status: 'closed',
+      requiresFirstLoginPasswordReset: selectedDeliveryMode === 'sub2api_panel_account' && service.panelRequiresPasswordReset,
+      note: '限时额度包已直接生成订单。',
+    },
+    contactChannels: clone(service.contactChannels),
+    buyerContactChannels: [{ type: 'linuxdo', label: 'linux.do 私信', value: '@buyer' }],
+    createdAt,
+    updatedAt: createdAt,
+  }
+  const paymentWindowMinutes = offer.saleMode === 'scheduled' ? 5 : 10
+  const order: ApiOrder = {
+    id: `api-order-quota-${Date.now()}`,
+    orderNo: createMockApiOrderNo(createdAt),
+    purchaseKind: 'limited_quota_offer',
+    apiPurchaseIntentId: intentId,
+    apiServiceId: service.id,
+    buyerId: currentBuyerId,
+    buyer: currentBuyerName,
+    sellerId: service.merchantId,
+    seller: getApiMerchantDisplayName(service),
+    status: 'pending_payment',
+    disputeStatus: 'none',
+    serviceTitle: service.title,
+    amount: Number(offer.priceCny),
+    amountDecimal: offer.priceCny,
+    currency: 'CNY',
+    selectedPaymentMethod: paymentMethod,
+    paymentWindowMinutes,
+    paymentExpiresAt: minutesFromNow(paymentWindowMinutes),
+    version: 1,
+    intentSnapshot: clone(intentSnapshot),
+    selectedDeliveryMode,
+    requestedUsdAllowance: Number(offer.usdAllowance),
+    requestedUsdAllowanceDecimal: offer.usdAllowance,
+    quotaUsagePolicySnapshot: clone(offer.quotaUsagePolicy),
+    quotaSnapshot: {
+      batchId: offer.batchId,
+      offerId: offer.id,
+      saleRoundId: payload.saleRoundId,
+      offerName: offer.name,
+      usdAllowance: offer.usdAllowance,
+      priceCny: offer.priceCny,
+      cnyPerUsd: offer.cnyPerUsd,
+      modelMultiplier: offer.modelMultiplier,
+      saleCutoffAt: offer.saleCutoffAt,
+      expiresAt: offer.expiresAt,
+      saleMode: offer.saleMode,
+      roundStartsAt: offer.currentRound?.startsAt,
+      roundEndsAt: offer.currentRound?.endsAt,
+      distributionSystem: offer.distributionSystem,
+      ttftBand: service.declaredTtftBand ?? '1_to_3s',
+      declaredMaxConcurrency: offer.declaredMaxConcurrency,
+      promptAuditEnabled: offer.promptAuditEnabled ?? null,
+      accountPoolType: service.accountPoolType,
+      accountPoolLabel: service.accountPoolLabel,
+      merchantRefundCommitment: service.merchantRefundCommitment,
+      merchantRefundPolicyVersion: service.merchantRefundPolicyVersion,
+      serviceValidityExpiresAt: offer.expiresAt,
+      performanceConfirmedAt: service.performanceConfirmedAt,
+      performanceUnverified: true,
+      deliveryEtaMinutes: offer.deliveryEtaMinutes,
+      deliveryMode: offer.deliveryMode,
+    },
+    merchantContactChannels: clone(service.contactChannels),
+    buyerContactChannels: clone(mockBuyerContactChannels(intent)),
+    viewerRole: 'buyer',
+    createdAt,
+    updatedAt: createdAt,
+  }
+
+  offer.availableCopies -= 1
+  if (credentialSummary) {
+    credentialSummary.available -= 1
+    credentialSummary.reserved += 1
+    offer.credentialAvailableCopies = credentialSummary.available
+  }
+  if (offer.availableCopies === 0) {
+    offer.isOrderable = false
+    offer.orderabilityCode = 'sold_out'
+    offer.orderabilityReason = '当前轮次已售罄。'
+  }
+  apiPurchaseIntentStore.unshift(intent)
+  apiOrderStore.unshift(order)
+  appendApiIntentEvent({
+    intentId,
+    actorId: currentBuyerId,
+    actorLabel: currentBuyerName,
+    actorRole: 'buyer',
+    type: 'intent_created',
+    toStatus: 'ordered',
+    metadata: { offerId: offer.id, amount: Number(offer.priceCny) },
+    createdAt,
+  })
+  persistApiPurchaseStores()
+  persistApiOrderStore()
+  persistApiQuotaStores()
   return clone(order)
 }
 
@@ -4240,6 +5702,7 @@ export async function getApiOrderById(id: string, perspective: 'buyer' | 'mercha
     return perspective === 'merchant' ? backendOwnerAPIOrder(id) : backendMyAPIOrder(id)
   }
   await wait()
+  materializeMockApiOrderReviews()
   const order = findApiOrder(id)
   if (perspective === 'merchant' && order.sellerId !== currentMerchantId) throw new Error('无权查看该订单。')
   if (perspective === 'buyer' && order.buyerId !== currentBuyerId) throw new Error('无权查看该订单。')
@@ -4278,7 +5741,7 @@ export async function submitApiOrderPayment(id: string, paymentSummary: string, 
 export async function cancelApiOrder(id: string, reason: string, version: number) {
   if (shouldUseRealBackend()) return backendCancelAPIOrder(id, reason, version)
   await wait()
-  return updateApiOrder(id, order => {
+  const updated = updateApiOrder(id, order => {
     if (order.version !== version) throw new Error('订单已更新，请刷新后重试。')
     if (order.status !== 'pending_payment') throw new Error('只有尚未付款的订单可以取消。')
     const trimmedReason = reason.trim()
@@ -4294,6 +5757,23 @@ export async function cancelApiOrder(id: string, reason: string, version: number
       persistMarketStores()
     }
   })
+  if (updated.purchaseKind === 'limited_quota_offer' && updated.quotaSnapshot) {
+    const offer = apiQuotaOfferStore.find(item => item.id === updated.quotaSnapshot!.offerId)
+    if (offer && Date.now() < Date.parse(offer.saleCutoffAt)) {
+      offer.availableCopies += 1
+      offer.isOrderable = offer.batchStatus === 'published' && offer.status === 'published'
+      offer.orderabilityCode = offer.isOrderable ? 'orderable' : offer.orderabilityCode
+      offer.orderabilityReason = offer.isOrderable ? '当前可购买。' : offer.orderabilityReason
+    }
+    const summary = apiQuotaCredentialSummaryStore.find(item => item.offerId === updated.quotaSnapshot!.offerId)
+    if (summary && summary.reserved > 0) {
+      summary.reserved -= 1
+      summary.available += 1
+      if (offer) offer.credentialAvailableCopies = summary.available
+    }
+    persistApiQuotaStores()
+  }
+  return updated
 }
 
 export async function confirmApiOrderComplete(id: string, version: number) {
@@ -4301,22 +5781,72 @@ export async function confirmApiOrderComplete(id: string, version: number) {
   await wait()
   return updateApiOrder(id, order => {
     if (order.version !== version) throw new Error('订单已更新，请刷新后重试。')
-    if (order.status !== 'delivery_submitted') throw new Error('只有商户已交付的订单可以确认完成。')
+    if (order.status !== 'delivery_submitted') throw new Error('只有待核验凭证的订单可以确认可用。')
+    if (order.disputeStatus === 'open') throw new Error('订单问题正在处理中，暂时不能确认凭证可用。')
     order.status = 'completed'
+    order.completionSource = 'buyer_confirmed'
     order.completedAt = nowText()
+  })
+}
+
+export async function openApiOrderDispute(id: string, reason: string, version: number, perspective: 'buyer' | 'merchant') {
+  if (shouldUseRealBackend()) return backendOpenAPIOrderDispute(id, reason, version, perspective)
+  await wait()
+  return updateApiOrder(id, order => {
+    if (order.version !== version) throw new Error('订单已更新，请刷新后重试。')
+    if (perspective === 'buyer' && order.buyerId !== currentBuyerId) throw new Error('无权操作该订单。')
+    if (perspective === 'merchant' && order.sellerId !== currentMerchantId) throw new Error('无权操作该订单。')
+    if (order.status === 'cancelled' || order.status === 'completed' || order.disputeStatus === 'open') {
+      throw new Error('当前订单不能再次申请平台介入。')
+    }
+    if (!reason.trim()) throw new Error('请填写订单问题说明。')
+    order.disputeStatus = 'open'
   })
 }
 
 export async function confirmApiOrderPayment(id: string, version: number) {
   if (shouldUseRealBackend()) return backendConfirmAPIOrderPayment(id, version)
   await wait()
-  return updateApiOrder(id, order => {
+  let shouldPersistQuota = false
+  const updated = updateApiOrder(id, order => {
     if (order.version !== version) throw new Error('订单已更新，请刷新后重试。')
     if (order.status !== 'payment_submitted') throw new Error('只有买家已付款订单可以确认收款。')
-    order.status = 'paid_confirmed'
-    order.paidConfirmedAt = nowText()
+    const confirmedAt = nowText()
+    order.paidConfirmedAt = confirmedAt
     order.packageStockReserved = false
+    if (order.purchaseKind !== 'limited_quota_offer' || order.quotaSnapshot?.deliveryMode !== 'preimported') {
+      order.status = 'paid_confirmed'
+      return
+    }
+
+    const summary = apiQuotaCredentialSummaryStore.find(item => item.offerId === order.quotaSnapshot!.offerId)
+    if (!summary || summary.reserved <= 0) throw new Error('预留交付凭据不存在，请刷新后重试。')
+    summary.reserved -= 1
+    summary.delivered += 1
+    shouldPersistQuota = true
+    order.status = 'delivery_submitted'
+    order.deliverySubmittedAt = confirmedAt
+    order.deliveryReviewExpiresAt = new Date(Date.parse(confirmedAt) + apiOrderDeliveryReviewWindowMs).toISOString()
+    order.deliveryNote = '确认收款后已分配预导入的买家专属接入信息。'
+    order.deliveryCredential = order.selectedDeliveryMode === 'sub2api_panel_account'
+      ? {
+          deliveryKind: 'login_account',
+          panelLoginUrl: 'https://mock-panel.example.test/login',
+          username: `buyer-${order.id}`,
+          password: `mock-${order.id}`,
+          instructions: '演示环境自动分配的买家专属凭证。',
+          submittedAt: confirmedAt,
+        }
+      : {
+          deliveryKind: 'api_key_endpoint',
+          apiBaseUrl: 'https://mock-api.example.test/v1',
+          apiKey: `mock-${order.id}`,
+          instructions: '演示环境自动分配的买家专属凭证。',
+          submittedAt: confirmedAt,
+        }
   })
+  if (shouldPersistQuota) persistApiQuotaStores()
+  return updated
 }
 
 export async function reportApiOrderPaymentIssue(id: string, reason: ApiOrderPaymentIssueReason, note: string, version: number) {
@@ -4358,6 +5888,7 @@ export async function submitApiOrderDeliveryCredential(id: string, payload: Subm
     const submittedAt = nowText()
     order.status = 'delivery_submitted'
     order.deliverySubmittedAt = submittedAt
+    order.deliveryReviewExpiresAt = new Date(Date.parse(submittedAt) + apiOrderDeliveryReviewWindowMs).toISOString()
     if (order.packageSnapshot) {
       const expiresAt = new Date(new Date(submittedAt).getTime() + order.packageSnapshot.durationDays * 86_400_000)
       order.packageExpiresAt = expiresAt.toISOString()
@@ -4440,14 +5971,16 @@ export function getApiOrderEvents(order: ApiOrder): ApiOrderEvent[] {
     })
   }
   if (order.completedAt) {
+    const automaticallyCompleted = order.completionSource === 'auto_completed'
     events.push({
       id: `${order.id}-completed`,
       orderId: order.id,
-      actorLabel: order.buyer,
-      actorRole: 'buyer',
+      actorLabel: automaticallyCompleted ? '系统' : order.buyer,
+      actorRole: automaticallyCompleted ? 'system' : 'buyer',
       type: 'completed',
       fromStatus: 'delivery_submitted',
       toStatus: 'completed',
+      note: automaticallyCompleted ? '24 小时核验期结束，订单自动完成。' : '买家已确认凭证可用。',
       createdAt: order.completedAt,
     })
   }
@@ -4469,13 +6002,14 @@ export function getApiOrderEvents(order: ApiOrder): ApiOrderEvent[] {
 
 export async function getApiOrderNotifications(): Promise<ApiOrderNotification[]> {
   await wait()
+  materializeMockApiOrderReviews()
   const rows = apiOrderStore
     .filter(item => ['pending_payment', 'payment_issue', 'payment_submitted', 'paid_confirmed', 'delivery_submitted'].includes(item.status))
     .slice(0, 6)
     .map(item => ({
       id: `api-notice-${item.id}`,
       title: getApiOrderStatusLabel(item.status),
-      detail: `${item.serviceTitle} · ${item.buyer} / ${item.seller}`,
+      detail: `${item.orderNo} · ${item.serviceTitle} · ${item.buyer} / ${item.seller}`,
       time: item.updatedAt,
       unread: item.status === 'payment_issue' || item.status === 'payment_submitted' || item.status === 'paid_confirmed',
       to: item.sellerId === currentMerchantId ? `/merchant/api-orders/${item.id}` : `/my/api-orders/${item.id}`,
@@ -4512,9 +6046,6 @@ export async function updateAdminRowStatus(row: AdminRow, status: string, reason
   }
   if (shouldUseRealBackend() && row.targetType === 'official-price') {
     return backendUpdateOfficialPriceAdminStatus(row, status, reason)
-  }
-  if (shouldUseRealBackend() && row.targetType === 'demand') {
-    return backendUpdateAdminDemandStatus(row, status, reason)
   }
   if (shouldUseRealBackend() && (row.targetType === 'report' || row.targetType === 'dispute' || row.targetType === 'appeal')) {
     return backendUpdateReportAdminStatus(row, status, reason)
@@ -4561,10 +6092,6 @@ async function applyAdminStatusToTarget(row: AdminRow, status: string) {
       persistMarketStores()
     }
   }
-  if (row.targetType === 'demand') {
-    const { updateMockDemandAdminStatus } = await import('@/mocks/demand')
-    updateMockDemandAdminStatus(row.id, status)
-  }
   if (row.targetType === 'api-service' || row.targetType === 'api-merchant') {
     const target = apiServiceStore.find(item => item.id === row.id)
     if (target) {
@@ -4589,7 +6116,7 @@ async function applyAdminStatusToTarget(row: AdminRow, status: string) {
   }
 }
 
-export async function runAdminModerationAction(row: AdminRow, action: 'approve' | 'request_changes' | 'take_down' | 'restore' | 'restrict' | 'warn' | 'suspend' | 'ban', reason: string) {
+export async function runAdminModerationAction(row: AdminRow, action: 'approve' | 'request_changes' | 'take_down' | 'restore' | 'restrict' | 'warn' | 'suspend' | 'ban', reason: string, requestedFromUserId = '') {
   if (shouldUseRealBackend() && (row.targetType === 'api-service' || row.targetType === 'api-merchant')) {
     return backendRunAdminAPIServiceAction(row, action, reason)
   }
@@ -4599,11 +6126,8 @@ export async function runAdminModerationAction(row: AdminRow, action: 'approve' 
   if (shouldUseRealBackend() && row.targetType === 'official-price') {
     return backendRunOfficialPriceAdminAction(row, action, reason)
   }
-  if (shouldUseRealBackend() && row.targetType === 'demand') {
-    return backendRunAdminDemandAction(row, action, reason)
-  }
   if (shouldUseRealBackend() && (row.targetType === 'report' || row.targetType === 'dispute' || row.targetType === 'appeal')) {
-    return backendRunReportAdminAction(row, action, reason)
+    return backendRunReportAdminAction(row, action, reason, requestedFromUserId)
   }
   await wait()
   if (['take_down', 'restore', 'restrict', 'warn', 'suspend', 'ban'].includes(action) && !reason.trim()) {
@@ -4651,11 +6175,27 @@ export type {
   ApiPurchaseIntentEvent,
   ApiPurchaseIntentEventType,
   ApiPurchaseIntentStatus,
+  ApiQuotaBatch,
+  ApiQuotaCredentialSummary,
+  ApiQuotaDeliveryMode,
+  ApiQuotaDistributionSystem,
+  ApiQuotaOffer,
+  ApiQuotaRound,
+  ApiQuotaSaleMode,
+  ApiQuotaSourceType,
+  ApiQuotaSystemSaleSlot,
+  ApiQuotaSystemSaleSlotList,
   ApiService,
+  ApiServiceSalesChannel,
+  ApiServiceSalesChannelKind,
+  ApiServiceSalesState,
+  ApiServiceSalesSummary,
+  ApiServiceSalesView,
   ApiServicePackage,
   ApiServicePackageModel,
   ApiServicePackageSnapshot,
   ApiServiceState,
+  ApiTTFTBand,
   ApiUsageVisibility,
   AvatarMode,
   Carpool,
@@ -4672,11 +6212,13 @@ export type {
   CreateManualInterventionReportRequest,
   ModelPriceRow,
   OfficialPrice,
+  OwnerApiService,
   OrderContactSnapshot,
   OrderContactSnapshotItem,
   PublicMerchantProfile,
   PublicUserProfile,
   ProductTrend,
+  PublicApiQuotaOffer,
   TransactionRecord,
   TransactionTrendPoint,
   UserContactMethod,

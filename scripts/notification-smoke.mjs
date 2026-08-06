@@ -14,6 +14,10 @@ function cookieFromSetCookie(headers) {
   return setCookie.split(',').map(item => item.split(';')[0]).join('; ')
 }
 
+function mergeCookies(...cookies) {
+  return cookies.filter(Boolean).join('; ')
+}
+
 async function decode(response) {
   const text = await response.text()
   const body = text ? JSON.parse(text) : null
@@ -38,15 +42,20 @@ async function session(username, admin = false) {
 }
 
 async function linuxDoSession(username) {
-  const start = await request('/api/v1/auth/oauth/start')
+  const startResponse = await fetch(`${baseURL}/api/v1/auth/oauth/start`)
+  const start = await decode(startResponse)
+  const startCookie = cookieFromSetCookie(startResponse.headers)
   const startURL = new URL(start.authorizationUrl)
   startURL.searchParams.set('code', username)
-  const callbackResponse = await fetch(startURL.toString(), { redirect: 'manual' })
+  const callbackResponse = await fetch(startURL.toString(), {
+    redirect: 'manual',
+    headers: startCookie ? { Cookie: startCookie } : {},
+  })
   if (callbackResponse.status !== 302) {
     const text = await callbackResponse.text()
     throw new Error(`oauth callback failed ${callbackResponse.status}: ${text}`)
   }
-  const cookie = cookieFromSetCookie(callbackResponse.headers)
+  const cookie = mergeCookies(startCookie, cookieFromSetCookie(callbackResponse.headers))
   const current = await request('/api/v1/auth/session', {}, { cookie })
   assert(current.user.linuxDoBinding?.bound === true, 'owner session should be bound to linux.do')
   return { cookie, csrfToken: current.csrfToken, user: current.user }
@@ -135,7 +144,25 @@ async function createPublicAPIService(owner) {
     body: {},
   }, owner)
   assert(online.publicationStatus === 'online', 'service should be online')
-  return online
+
+  const orderable = await request(`/api/v1/owner/api-services/${draft.id}/order-settings`, {
+    method: 'PATCH',
+    ifMatch: online.version,
+    body: {
+      acceptingOrders: true,
+      paymentWindowMinutes: 10,
+      paymentOptions: [
+        {
+          paymentMethod: 'wechat',
+          enabled: true,
+          paymentInstructions: '微信收款方式由商户站外确认，平台不处理支付。',
+          paymentQrCodeDataUrl: 'data:image/png;base64,aGVsbG8=',
+        },
+      ],
+    },
+  }, owner)
+  assert(orderable.isOrderable === true, 'service should be orderable after settings')
+  return orderable
 }
 
 async function createPurchaseIntent(buyer, service) {

@@ -37,7 +37,7 @@ type contactMethodResponse struct {
 type contactMethodListResponse = listResponse[contactMethodResponse]
 
 func (s *Server) handleCreateContactMethod(w http.ResponseWriter, r *http.Request) {
-	user, _, appErr := s.requireSessionAndCSRF(r)
+	user, _, appErr := s.requireSessionAndCSRF(w, r)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
@@ -73,7 +73,7 @@ func (s *Server) handleCreateContactMethod(w http.ResponseWriter, r *http.Reques
 }
 
 func (s *Server) handleMyContactMethods(w http.ResponseWriter, r *http.Request) {
-	user, _, appErr := s.requireSession(r)
+	user, _, appErr := s.requireSession(w, r)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
@@ -91,7 +91,7 @@ func (s *Server) handleMyContactMethods(w http.ResponseWriter, r *http.Request) 
 }
 
 func (s *Server) handleUpdateContactMethod(w http.ResponseWriter, r *http.Request) {
-	user, _, appErr := s.requireSessionAndCSRF(r)
+	user, _, appErr := s.requireSessionAndCSRF(w, r)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
@@ -126,7 +126,7 @@ func (s *Server) handleUpdateContactMethod(w http.ResponseWriter, r *http.Reques
 }
 
 func (s *Server) handleDeleteContactMethod(w http.ResponseWriter, r *http.Request) {
-	user, _, appErr := s.requireSessionAndCSRF(r)
+	user, _, appErr := s.requireSessionAndCSRF(w, r)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
@@ -140,7 +140,7 @@ func (s *Server) handleDeleteContactMethod(w http.ResponseWriter, r *http.Reques
 }
 
 func (s *Server) handleSetDefaultContactMethod(w http.ResponseWriter, r *http.Request) {
-	user, _, appErr := s.requireSessionAndCSRF(r)
+	user, _, appErr := s.requireSessionAndCSRF(w, r)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
@@ -154,7 +154,7 @@ func (s *Server) handleSetDefaultContactMethod(w http.ResponseWriter, r *http.Re
 }
 
 func (s *Server) handleVerifyContactMethod(w http.ResponseWriter, r *http.Request) {
-	user, _, appErr := s.requireSessionAndCSRF(r)
+	user, _, appErr := s.requireSessionAndCSRF(w, r)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
@@ -183,7 +183,7 @@ type contactSessionResponse struct {
 }
 
 func (s *Server) handleCreateDevContactSession(w http.ResponseWriter, r *http.Request) {
-	user, _, appErr := s.requireSessionAndCSRF(r)
+	user, _, appErr := s.requireSessionAndCSRF(w, r)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
@@ -236,7 +236,7 @@ type contactItemDTO struct {
 }
 
 func (s *Server) handleReadContactSession(w http.ResponseWriter, r *http.Request) {
-	user, _, appErr := s.requireSession(r)
+	user, _, appErr := s.requireSession(w, r)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return

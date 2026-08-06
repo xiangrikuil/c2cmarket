@@ -2,10 +2,11 @@
 import { computed, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useQueryClient } from '@tanstack/vue-query'
-import { ExternalLink, Flag, Heart, Info, MapPin, MessageCircle, Share2, ShieldAlert, Sparkles } from 'lucide-vue-next'
+import { Flag, Heart, Info, MapPin, MessageCircle, Share2, ShieldAlert, Sparkles } from 'lucide-vue-next'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
+import { Checkbox } from '@/components/ui/checkbox'
 import {
   Dialog,
   DialogContent,
@@ -19,13 +20,17 @@ import SourceBadges from '@/components/market/SourceBadges.vue'
 import EmptyState from '@/components/market/EmptyState.vue'
 import ErrorState from '@/components/market/ErrorState.vue'
 import SkeletonBlock from '@/components/market/SkeletonBlock.vue'
+import ReputationSummaryCard from '@/components/reputation/ReputationSummaryCard.vue'
 import { createCarpoolApplication, getCarpoolAccessArrangementLabel, isHighRiskSubscriptionCarpool, runAdminModerationAction, type Carpool } from '@/lib/api'
 import { createCarpoolModerationRow } from '@/lib/carpoolModeration'
 import { trackAnalytics } from '@/lib/analytics'
 import { fullCapacityTooltip, getPricingDisplay, getRemainingSeats } from '@/lib/pricing'
-import { formatMonthlyQuota, quotaFieldLabel } from '@/lib/quota'
+import { formatWeeklyMonthlyQuota } from '@/lib/quota'
+import { adminAccountLabel, distributionMethodLabel, openingChannelLabels, paymentMethodLabels } from '@/components/carpool-publish/utils'
 import { useDetailVisibleAnalytics } from '@/composables/useDetailVisibleAnalytics'
 import { useCarpool, useCarpoolApplicationEligibility, useFavoriteStatus, useMyProfileQuery, useToggleFavoriteMutation } from '@/queries/useMarketQueries'
+import { markMissingQueryAsNotFoundOnServer, prefetchQueriesOnServer } from '@/queries/prefetchQueriesOnServer'
+import { useEntitySeo } from '@/composables/useEntitySeo'
 import { toast } from 'vue-sonner'
 
 const route = useRoute()
@@ -33,10 +38,13 @@ const router = useRouter()
 const queryClient = useQueryClient()
 const analyticsSourceRoute = () => String(route.name ?? 'unknown')
 const id = computed(() => String(route.params.id ?? ''))
-const { data: carpool, isLoading, error: carpoolError, refetch: refetchCarpool } = useCarpool(id)
-const { data: applicationEligibility, isLoading: eligibilityLoading, isError: eligibilityError } = useCarpoolApplicationEligibility(id)
-const { data: myProfile } = useMyProfileQuery()
-const { data: favoriteStatus } = useFavoriteStatus('carpool', id)
+const carpoolQuery = useCarpool(id)
+const { data: carpool, isLoading, error: carpoolError, refetch: refetchCarpool } = carpoolQuery
+prefetchQueriesOnServer(carpoolQuery)
+markMissingQueryAsNotFoundOnServer(carpoolQuery, () => Boolean(carpool.value))
+const { data: applicationEligibility, isLoading: eligibilityLoading, isError: eligibilityError } = useCarpoolApplicationEligibility(id, import.meta.client)
+const { data: myProfile } = useMyProfileQuery(import.meta.client)
+const { data: favoriteStatus } = useFavoriteStatus('carpool', id, import.meta.client)
 const toggleFavoriteMutation = useToggleFavoriteMutation()
 const applyDialogOpen = ref(false)
 const rulesAccepted = ref(false)
@@ -48,8 +56,29 @@ const adminReason = ref('')
 const adminConfirmStep = ref<'reason' | 'confirm'>('reason')
 const adminActionBusy = ref(false)
 const pricing = computed(() => carpool.value ? getPricingDisplay(carpool.value) : null)
-const quotaText = computed(() => carpool.value ? formatMonthlyQuota(carpool.value) : '额度待补充')
-const quotaLabel = computed(() => carpool.value ? quotaFieldLabel(carpool.value) : '每月额度')
+const quotaText = computed(() => carpool.value ? formatWeeklyMonthlyQuota(carpool.value) : '未声明')
+const openingChannelText = computed(() => {
+  const value = carpool.value
+  if (!value?.openingChannelCode) return '未声明'
+  if (value.openingChannelCode === 'other') return value.customOpeningChannel?.trim() || '未声明'
+  return openingChannelLabels[value.openingChannelCode]
+})
+const paymentMethodText = computed(() => {
+  const value = carpool.value
+  if (!value?.paymentMethodCode) return '未声明'
+  if (value.paymentMethodCode === 'other') return value.customPaymentMethod?.trim() || '未声明'
+  return paymentMethodLabels[value.paymentMethodCode]
+})
+const quotaResetText = computed(() => {
+  if (carpool.value?.followsOfficialQuotaReset === true) return '跟随官方重置'
+  if (carpool.value?.followsOfficialQuotaReset === false) return '不跟随官方重置'
+  return '未声明'
+})
+const mainlandDirectText = computed(() => {
+  if (carpool.value?.supportsMainlandChinaDirectConnection === true) return '支持国内直连'
+  if (carpool.value?.supportsMainlandChinaDirectConnection === false) return '不支持国内直连'
+  return '未声明'
+})
 const seatSummary = computed(() => carpool.value?.seatSummary ?? null)
 const favorited = computed(() => Boolean(favoriteStatus.value))
 const applyDisabledReason = computed(() => {
@@ -75,6 +104,23 @@ const statusToneClass = computed(() => {
   if (applicationEligibility.value?.code === 'eligible') return 'border-emerald-200 bg-emerald-50 text-emerald-700'
   if (applicationEligibility.value?.code === 'credential_risk' || applicationEligibility.value?.code === 'owner_action_required') return 'border-amber-200 bg-amber-50 text-amber-800'
   return 'border-border bg-muted/30 text-muted-foreground'
+})
+
+useEntitySeo({
+  indexable: computed(() => Boolean(carpool.value)),
+  title: computed(() => carpool.value ? `${carpool.value.product} 拼车｜C2CMarket` : '订阅拼车详情｜C2CMarket'),
+  description: computed(() => carpool.value ? `${carpool.value.product}，${carpool.value.region}，月费 ¥${getPricingDisplay(carpool.value).primaryPrice}，查看剩余席位、访问安排与风险提示。` : '查看订阅拼车详情。'),
+  schema: computed(() => carpool.value ? {
+    '@type': 'Service',
+    name: `${carpool.value.product} 拼车`,
+    areaServed: carpool.value.region,
+    offers: {
+      '@type': 'Offer',
+      priceCurrency: 'CNY',
+      price: getPricingDisplay(carpool.value).primaryPrice,
+      availability: availableSeats.value > 0 ? 'https://schema.org/InStock' : 'https://schema.org/OutOfStock',
+    },
+  } : null),
 })
 
 useDetailVisibleAnalytics({
@@ -174,15 +220,17 @@ async function applyToJoin() {
   applyBusy.value = true
   try {
     const application = await createCarpoolApplication(carpool.value.id, { rulesAccepted: rulesAccepted.value })
-    await queryClient.invalidateQueries({ queryKey: ['my-carpool-applications'] })
-    await queryClient.invalidateQueries({ queryKey: ['merchant-carpool-applications'] })
-    await queryClient.invalidateQueries({ queryKey: ['carpools'] })
-    await queryClient.invalidateQueries({ queryKey: ['admin-section'] })
-    await queryClient.invalidateQueries({ queryKey: ['carpool-notifications'] })
-    await queryClient.invalidateQueries({ queryKey: ['navigation-badges'] })
     applyDialogOpen.value = false
     trackAnalytics('carpool_application_submit_success', carpoolAnalyticsProps(carpool.value))
     toast.success(`申请已提交，等待车主处理：${application.id}`)
+    await Promise.all([
+      queryClient.invalidateQueries({ queryKey: ['my-carpool-applications'] }),
+      queryClient.invalidateQueries({ queryKey: ['merchant-carpool-applications'] }),
+      queryClient.invalidateQueries({ queryKey: ['carpools'] }),
+      queryClient.invalidateQueries({ queryKey: ['admin-section'] }),
+      queryClient.invalidateQueries({ queryKey: ['carpool-notifications'] }),
+      queryClient.invalidateQueries({ queryKey: ['navigation-badges'] }),
+    ])
   } catch (error) {
     toast.error(error instanceof Error ? error.message : '申请失败')
   } finally {
@@ -244,11 +292,7 @@ async function shareCarpool() {
                 <span class="font-medium">{{ pricing?.note }}</span>
               </div>
               <div class="flex justify-between gap-4 rounded-md bg-muted/40 px-3 py-2">
-                <span class="text-muted-foreground">倍率</span>
-                <span class="font-medium">{{ carpool.serviceMultiplier ?? '-' }}x</span>
-              </div>
-              <div class="flex justify-between gap-4 rounded-md bg-muted/40 px-3 py-2">
-                <span class="text-muted-foreground">{{ quotaLabel }}</span>
+                <span class="text-muted-foreground">每周 / 每月额度</span>
                 <span class="font-medium">{{ quotaText }}</span>
               </div>
             </div>
@@ -347,8 +391,14 @@ async function shareCarpool() {
             <span>¥{{ pricing.nextTierPrice }}/月</span>
           </div>
           <div class="grid gap-1 border-b border-border pb-3 sm:flex sm:justify-between"><span class="text-muted-foreground">价格说明</span><span>{{ pricing?.note }}</span></div>
-          <div class="grid gap-1 border-b border-border pb-3 sm:flex sm:justify-between"><span class="text-muted-foreground">倍率</span><span>{{ carpool.serviceMultiplier ?? '-' }}x</span></div>
-          <div class="grid gap-1 border-b border-border pb-3 sm:flex sm:justify-between"><span class="text-muted-foreground">{{ quotaLabel }}</span><span>{{ quotaText }}</span></div>
+          <div class="grid gap-1 border-b border-border pb-3 sm:flex sm:justify-between"><span class="text-muted-foreground">每周 / 每月额度</span><span>{{ quotaText }}</span></div>
+          <div class="grid gap-1 border-b border-border pb-3 sm:flex sm:justify-between"><span class="text-muted-foreground">额度重置</span><span>{{ quotaResetText }}</span></div>
+          <div class="grid gap-1 border-b border-border pb-3 sm:flex sm:justify-between"><span class="text-muted-foreground">VPS 区域</span><span>{{ carpool.vpsRegion?.trim() || '未声明' }}</span></div>
+          <div class="grid gap-1 border-b border-border pb-3 sm:flex sm:justify-between"><span class="text-muted-foreground">国内直连</span><span>{{ mainlandDirectText }}</span></div>
+          <div class="grid gap-1 border-b border-border pb-3 sm:flex sm:justify-between"><span class="text-muted-foreground">开通渠道</span><span>{{ openingChannelText }}</span></div>
+          <div class="grid gap-1 border-b border-border pb-3 sm:flex sm:justify-between"><span class="text-muted-foreground">付款方式</span><span>{{ paymentMethodText }}</span></div>
+          <div class="grid gap-1 border-b border-border pb-3 sm:flex sm:justify-between"><span class="text-muted-foreground">分发方式</span><span>{{ distributionMethodLabel(carpool.distributionMethod) }}</span></div>
+          <div class="grid gap-1 border-b border-border pb-3 sm:flex sm:justify-between"><span class="text-muted-foreground">管理员账号</span><span>{{ adminAccountLabel(carpool.providesAdminAccount) }}</span></div>
           <div class="grid gap-1 border-b border-border pb-3 sm:flex sm:justify-between"><span class="text-muted-foreground">开通区</span><span>{{ carpool.region }}</span></div>
           <div class="grid gap-1 border-b border-border pb-3 sm:flex sm:justify-between"><span class="text-muted-foreground">开通方式</span><span>{{ carpool.openingMethod }}</span></div>
           <div class="grid gap-1 border-b border-border pb-3 sm:flex sm:justify-between"><span class="text-muted-foreground">车主承诺</span><span>{{ carpool.warranty }} · 平台不担保、不代赔</span></div>
@@ -368,11 +418,11 @@ async function shareCarpool() {
         <h2 class="text-lg font-semibold">车主信息</h2>
         <div class="mt-6 space-y-4 text-sm">
           <div class="flex justify-between"><span class="text-muted-foreground">车主</span><span>linux.do @{{ carpool.owner }}</span></div>
-          <div class="flex justify-between"><span class="text-muted-foreground">信任</span><span>信任等级{{ carpool.trustLevel }}</span></div>
           <div class="flex justify-between"><span class="text-muted-foreground">车主类型</span><span>{{ carpool.ownerType }}</span></div>
-          <div class="flex justify-between"><span class="text-muted-foreground">原帖</span><Badge :variant="carpool.linuxdoBound ? 'default' : 'secondary'">{{ carpool.linuxdoBound ? '已绑定' : '待绑定' }}</Badge></div>
-          <SourceBadges :badges="[carpool.linuxdoBound ? '原帖已绑定' : '待绑定原帖', '近期确认', getCarpoolAccessArrangementLabel(carpool.accessArrangementMode), isHighRiskSubscriptionCarpool(carpool) ? '风险已确认' : '普通风险']" />
-          <Button class="w-full" variant="outline" @click="toast('当前车源暂未提供可打开的原帖链接。')"><ExternalLink class="h-4 w-4" />打开原帖</Button>
+          <SourceBadges :badges="['近期确认', getCarpoolAccessArrangementLabel(carpool.accessArrangementMode), isHighRiskSubscriptionCarpool(carpool) ? '风险已确认' : '普通风险']" />
+          <div class="border-t border-border pt-4">
+            <ReputationSummaryCard :summary="carpool.sellerReputation" compact :framed="false" :show-source-author-verification="false" />
+          </div>
         </div>
       </Card>
     </div>
@@ -407,32 +457,35 @@ async function shareCarpool() {
       </div>
     </Card>
 
-    <div v-if="applyDialogOpen" class="fixed inset-0 z-50 grid place-items-center bg-black/35 p-4" role="dialog" aria-modal="true">
-      <Card class="w-full max-w-lg p-0">
-        <div class="border-b border-border p-4">
-          <h2 class="text-lg font-semibold">申请上车</h2>
-          <p class="mt-1 text-sm text-muted-foreground">提交后等待车主接受；接受前不占用名额。</p>
-        </div>
-        <div class="space-y-4 p-4 text-sm">
+    <Dialog v-model:open="applyDialogOpen">
+      <DialogContent class="sm:max-w-lg">
+        <DialogHeader>
+          <DialogTitle>申请上车</DialogTitle>
+          <DialogDescription>提交后等待车主接受；接受前不占用名额。</DialogDescription>
+        </DialogHeader>
+        <div class="space-y-4 text-sm">
           <dl class="grid gap-3 sm:grid-cols-2">
             <div><dt class="text-muted-foreground">车源</dt><dd class="font-medium">{{ carpool.product }}</dd></div>
             <div><dt class="text-muted-foreground">开通区</dt><dd>{{ carpool.region }}</dd></div>
             <div><dt class="text-muted-foreground">月费快照</dt><dd>¥{{ pricing?.primaryPrice }}/月 · {{ pricing?.primaryLabel }}</dd></div>
             <div><dt class="text-muted-foreground">申请名额</dt><dd>1 人</dd></div>
-            <div><dt class="text-muted-foreground">车主</dt><dd>{{ carpool.owner }} · 信任等级{{ carpool.trustLevel }}</dd></div>
+            <div><dt class="text-muted-foreground">车主</dt><dd>{{ carpool.owner }}</dd></div>
             <div><dt class="text-muted-foreground">{{ seatAvailabilityLabel }}</dt><dd>{{ availableSeats }} / {{ totalSeats }} 位</dd></div>
           </dl>
+          <div class="border-t border-border pt-4">
+            <ReputationSummaryCard :summary="carpool.sellerReputation" compact :framed="false" :show-source-author-verification="false" />
+          </div>
           <label class="flex items-start gap-2 rounded-md border border-border p-3">
-            <input v-model="rulesAccepted" type="checkbox" class="mt-1 h-4 w-4 accent-primary" />
+            <Checkbox v-model="rulesAccepted" class="mt-1" />
             <span>我理解平台只记录上车意向和状态，不托管支付、不保存账号或 token、不担保或代赔；如需要共享密码、Session、Cookie 或 token，应放弃申请。</span>
           </label>
         </div>
-        <div class="flex justify-end gap-2 border-t border-border p-4">
-          <Button variant="outline" @click="applyDialogOpen = false">取消</Button>
+        <DialogFooter>
+          <Button variant="outline" :disabled="applyBusy" @click="applyDialogOpen = false">取消</Button>
           <Button :disabled="applyBusy || !rulesAccepted" @click="applyToJoin">提交申请</Button>
-        </div>
-      </Card>
-    </div>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
 
     <Dialog v-model:open="adminDialogOpen">
       <DialogContent class="sm:max-w-lg">

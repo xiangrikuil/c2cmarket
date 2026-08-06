@@ -17,6 +17,109 @@ func (r staticAPIModelResolver) APIModel(_ context.Context, modelID string) (cat
 	return r.models[modelID], nil
 }
 
+func TestNormalizeOwnerServiceFilterDefaultsToActiveAndRejectsUnknownViews(t *testing.T) {
+	filter, appErr := NormalizeOwnerServiceFilter(OwnerServiceFilter{})
+	if appErr != nil {
+		t.Fatalf("normalize default owner filter: %v", appErr)
+	}
+	if filter.SalesView != OwnerSalesViewActive {
+		t.Fatalf("expected default active sales view, got %q", filter.SalesView)
+	}
+
+	for _, salesView := range []string{
+		OwnerSalesViewActive,
+		OwnerSalesViewExpired,
+		OwnerSalesViewPaused,
+		OwnerSalesViewDraft,
+		OwnerSalesViewAll,
+	} {
+		filter, appErr = NormalizeOwnerServiceFilter(OwnerServiceFilter{SalesView: " " + salesView + " "})
+		if appErr != nil || filter.SalesView != salesView {
+			t.Fatalf("expected valid sales view %q, got %+v %v", salesView, filter, appErr)
+		}
+	}
+
+	_, appErr = NormalizeOwnerServiceFilter(OwnerServiceFilter{SalesView: "finished"})
+	if appErr == nil || len(appErr.FieldErrors) != 1 || appErr.FieldErrors[0].Field != "salesView" {
+		t.Fatalf("expected salesView validation error, got %+v", appErr)
+	}
+}
+
+func TestMatchesOwnerSalesViewKeepsActiveUpcomingAndHistoryDistinct(t *testing.T) {
+	if !MatchesOwnerSalesView(ServiceSalesStateSelling, OwnerSalesViewActive) {
+		t.Fatal("expected selling service in active view")
+	}
+	if !MatchesOwnerSalesView(ServiceSalesStateUpcoming, OwnerSalesViewActive) {
+		t.Fatal("expected upcoming service in active view")
+	}
+	if MatchesOwnerSalesView(ServiceSalesStateExpired, OwnerSalesViewActive) {
+		t.Fatal("expired service must not appear in active view")
+	}
+	if !MatchesOwnerSalesView(ServiceSalesStateOffline, OwnerSalesViewDraft) {
+		t.Fatal("offline service must remain reachable in draft view")
+	}
+	if !MatchesOwnerSalesView(ServiceSalesStateSoldOut, OwnerSalesViewAll) ||
+		!MatchesOwnerSalesView(ServiceSalesStateArchived, OwnerSalesViewAll) {
+		t.Fatal("sold-out and archived services must remain reachable in all view")
+	}
+}
+
+func TestHighestPrioritySalesStateSupportsMultipleSalesChannels(t *testing.T) {
+	channels := []ServiceSalesChannel{
+		{Kind: ServiceSalesChannelLimitedQuota, State: ServiceSalesStateExpired},
+		{Kind: ServiceSalesChannelFlexibleQuota, State: ServiceSalesStateSelling},
+	}
+	if got := HighestPrioritySalesState(channels); got != ServiceSalesStateSelling {
+		t.Fatalf("expected selling to outrank expired, got %q", got)
+	}
+
+	channels = []ServiceSalesChannel{
+		{Kind: ServiceSalesChannelLimitedQuota, State: ServiceSalesStateSoldOut},
+		{Kind: ServiceSalesChannelFlexibleQuota, State: ServiceSalesStatePaused},
+	}
+	if got := HighestPrioritySalesState(channels); got != ServiceSalesStatePaused {
+		t.Fatalf("expected paused to outrank sold out, got %q", got)
+	}
+}
+
+func TestSalesSummaryForMeteredServiceUsesAuthoritativeExpiryBoundary(t *testing.T) {
+	now := time.Date(2026, 7, 30, 12, 0, 0, 0, time.UTC)
+	expiresAt := now.Add(time.Hour)
+	service := Service{
+		OwnerContactMethodID:  "contact-1",
+		BillingMode:           ServiceBillingModeMetered,
+		AvailableUSDAllowance: "420.000000",
+		QuotaExpiresAt:        &expiresAt,
+		AcceptingOrders:       true,
+		PaymentWindowMinutes:  10,
+		ReviewStatus:          ServiceReviewStatusApproved,
+		PublicationStatus:     ServicePublicationStatusOnline,
+		ModerationStatus:      ServiceModerationStatusClear,
+		PaymentOptions: []PaymentOption{{
+			PaymentMethod: PaymentMethodWechat,
+			Enabled:       true,
+		}},
+	}
+
+	summary := SalesSummaryForService(service, now)
+	if summary.OverallState != ServiceSalesStateSelling || len(summary.Channels) != 1 {
+		t.Fatalf("expected selling flexible quota summary, got %+v", summary)
+	}
+	channel := summary.Channels[0]
+	if channel.Kind != ServiceSalesChannelFlexibleQuota ||
+		channel.AvailableUSDAllowance != "420.000000" ||
+		channel.ExpiresAt == nil ||
+		!channel.ExpiresAt.Equal(expiresAt) {
+		t.Fatalf("unexpected flexible quota channel: %+v", channel)
+	}
+
+	service.QuotaExpiresAt = &now
+	summary = SalesSummaryForService(service, now)
+	if summary.OverallState != ServiceSalesStateExpired || summary.Channels[0].State != ServiceSalesStateExpired {
+		t.Fatalf("expected exact cutoff to be expired, got %+v", summary)
+	}
+}
+
 func TestValidateCreateInputRequiresFutureQuotaExpirationForMeteredServices(t *testing.T) {
 	now := time.Date(2026, 7, 7, 12, 0, 0, 0, time.UTC)
 	input := validMeteredCreateInput()
@@ -28,6 +131,31 @@ func TestValidateCreateInputRequiresFutureQuotaExpirationForMeteredServices(t *t
 	}
 	if len(err.FieldErrors) != 1 || err.FieldErrors[0].Field != "quotaExpiresAt" {
 		t.Fatalf("expected quotaExpiresAt field error, got %+v", err)
+	}
+}
+
+func TestValidateCreateInputRejectsManualBillingAndKeepsSupportedModes(t *testing.T) {
+	now := time.Date(2026, 7, 7, 12, 0, 0, 0, time.UTC)
+	manual := validMeteredCreateInput()
+	manual.BillingMode = ServiceBillingModeManual
+
+	appErr := validateCreateInput(manual, now)
+	if appErr == nil || appErr.Code != domain.CodeValidationFailed || len(appErr.FieldErrors) != 1 {
+		t.Fatalf("expected stable manual billing validation error, got %+v", appErr)
+	}
+	fieldErr := appErr.FieldErrors[0]
+	if fieldErr.Field != "billingMode" || fieldErr.Code != "unsupported" {
+		t.Fatalf("expected billingMode unsupported field error, got %+v", fieldErr)
+	}
+
+	otherMetered := validMeteredCreateInput()
+	otherMetered.DistributionSystem = "other"
+	if appErr := validateCreateInput(otherMetered, now); appErr != nil {
+		t.Fatalf("expected other + metered billing to remain supported, got %+v", appErr)
+	}
+
+	if appErr := validateCreateInput(validLimitedPackageCreateInput(), now); appErr != nil {
+		t.Fatalf("expected fixed package billing to remain supported, got %+v", appErr)
 	}
 }
 
@@ -82,6 +210,30 @@ func TestOrderableReasonsIncludesExpiredQuota(t *testing.T) {
 	reasons := OrderableReasonsAt(service, now)
 	if len(reasons) != 1 || reasons[0] != "quota_expired" {
 		t.Fatalf("expected only quota_expired reason, got %#v", reasons)
+	}
+}
+
+func TestOrderableReasonsRejectUnsupportedHistoricalBillingModes(t *testing.T) {
+	now := time.Date(2026, 7, 7, 12, 0, 0, 0, time.UTC)
+	for _, billingMode := range []string{ServiceBillingModeManual, "legacy_unknown_mode"} {
+		service := Service{
+			OwnerContactMethodID: "contact-1",
+			BillingMode:          billingMode,
+			AcceptingOrders:      true,
+			PaymentWindowMinutes: 10,
+			ReviewStatus:         ServiceReviewStatusApproved,
+			PublicationStatus:    ServicePublicationStatusOnline,
+			ModerationStatus:     ServiceModerationStatusClear,
+			PaymentOptions: []PaymentOption{{
+				PaymentMethod: PaymentMethodWechat,
+				Enabled:       true,
+			}},
+		}
+
+		reasons := OrderableReasonsAt(service, now)
+		if len(reasons) != 1 || reasons[0] != "billing_mode_unsupported" {
+			t.Fatalf("expected %q to be non-orderable, got %#v", billingMode, reasons)
+		}
 	}
 }
 
@@ -222,7 +374,88 @@ func TestValidateLimitedPackageRejectsUnsupportedDurationAndModelSubset(t *testi
 	}
 }
 
+func TestValidateCreateInputRequiresStructuredCommercialFacts(t *testing.T) {
+	now := time.Date(2026, 7, 1, 12, 0, 0, 0, time.UTC)
+	input := validMeteredCreateInput()
+	input.AccountPoolType = ""
+	if err := validateCreateInput(input, now); err == nil || err.FieldErrors[0].Field != "accountPoolType" {
+		t.Fatalf("expected accountPoolType field error, got %+v", err)
+	}
+
+	input = validMeteredCreateInput()
+	input.MerchantRefundCommitment = nil
+	if err := validateCreateInput(input, now); err == nil || err.FieldErrors[0].Field != "merchantRefundCommitment" {
+		t.Fatalf("expected merchantRefundCommitment field error, got %+v", err)
+	}
+
+	input = validMeteredCreateInput()
+	input.AccountPoolType = AccountPoolCustom
+	input.AccountPoolCustomName = "Claude Max"
+	if err := validateCreateInput(input, now); err != nil {
+		t.Fatalf("expected custom account pool to be valid, got %+v", err)
+	}
+}
+
+func TestValidateCreateInputRequiresExplicitPromptAuditSelection(t *testing.T) {
+	now := time.Date(2026, 7, 1, 12, 0, 0, 0, time.UTC)
+	input := validMeteredCreateInput()
+	input.PromptAuditEnabled = nil
+
+	appErr := validateCreateInput(input, now)
+	if appErr == nil || appErr.Status != 422 || len(appErr.FieldErrors) != 1 {
+		t.Fatalf("expected prompt audit selection error, got %+v", appErr)
+	}
+	if fieldErr := appErr.FieldErrors[0]; fieldErr.Field != "promptAuditEnabled" || fieldErr.Code != "required" {
+		t.Fatalf("unexpected prompt audit field error: %+v", fieldErr)
+	}
+
+	for _, enabled := range []bool{false, true} {
+		input = validMeteredCreateInput()
+		input.PromptAuditEnabled = &enabled
+		if appErr := validateCreateInput(input, now); appErr != nil {
+			t.Fatalf("expected explicit prompt audit value %v to pass, got %+v", enabled, appErr)
+		}
+	}
+}
+
+func TestBuildFromInputPreservesHistoricalPerformanceFactsOnUpdate(t *testing.T) {
+	now := time.Date(2026, 8, 5, 8, 0, 0, 0, time.UTC)
+	confirmedAt := now.Add(-24 * time.Hour)
+	current := Service{
+		ID:                     "service-1",
+		DeclaredTTFTBand:       "1_to_3s",
+		PerformanceConfirmedAt: &confirmedAt,
+		CreatedAt:              now.Add(-30 * 24 * time.Hour),
+		Version:                7,
+	}
+	resolver := staticAPIModelResolver{models: map[string]catalog.APIModelCatalog{
+		"model-1": {
+			ID:                         "model-1",
+			DisplayName:                "GPT-5.6",
+			Provider:                   "OpenAI",
+			Capabilities:               []string{"text"},
+			CurrentPriceVersionID:      "price-version-1",
+			InputPricePerMillion:       "1.000000",
+			CachedInputPricePerMillion: "0.100000",
+			OutputPricePerMillion:      "8.000000",
+		},
+	}}
+	manager := NewManager(nil, resolver, nil, func() time.Time { return now })
+	input := validMeteredCreateInput()
+	input.QuotaExpiresAt = now.Add(24 * time.Hour).Format(time.RFC3339)
+
+	updated, appErr := manager.buildFromInput(context.Background(), current, input)
+	if appErr != nil {
+		t.Fatalf("build updated service: %v", appErr)
+	}
+	if updated.DeclaredTTFTBand != current.DeclaredTTFTBand || updated.PerformanceConfirmedAt == nil || !updated.PerformanceConfirmedAt.Equal(confirmedAt) {
+		t.Fatalf("historical performance facts were not preserved: %+v", updated)
+	}
+}
+
 func validMeteredCreateInput() CreateServiceInput {
+	noRefundCommitment := false
+	promptAuditEnabled := false
 	return CreateServiceInput{
 		OwnerContactMethodID:             "contact-1",
 		MerchantIdentityMode:             "public_profile",
@@ -236,7 +469,12 @@ func validMeteredCreateInput() CreateServiceInput {
 		MinimumIntentCNY:                 "20",
 		MaximumIntentCNY:                 "300",
 		QuotaExpiresAt:                   "2026-07-08T00:00:00Z",
+		QuotaUsagePolicy:                 testQuotaUsagePolicy(),
 		UsageVisibility:                  "merchant_reported",
+		AccountPoolType:                  AccountPoolGPTPro20x,
+		MerchantRefundCommitment:         &noRefundCommitment,
+		DeclaredMaxConcurrency:           8,
+		PromptAuditEnabled:               &promptAuditEnabled,
 		AccessModes: []ServiceAccessModeInput{{
 			AccessMode: "merchant_operated_endpoint",
 		}},
@@ -250,16 +488,22 @@ func validMeteredCreateInput() CreateServiceInput {
 
 func validLimitedPackageCreateInput() CreateServiceInput {
 	duration := 3
+	refundCommitment := true
+	promptAuditEnabled := true
 	return CreateServiceInput{
-		OwnerContactMethodID: "contact-1",
-		MerchantIdentityMode: "public_profile",
-		Title:                "GPT 限时套餐",
-		ShortDescription:     "按固定价格购买限时面板额度。",
-		DistributionSystem:   ServiceDistributionSub2API,
-		BillingMode:          ServiceBillingModeFixedPackage,
-		MinimumIntentCNY:     "9.90",
-		MaximumIntentCNY:     "9.90",
-		UsageVisibility:      "fixed_package_only",
+		OwnerContactMethodID:     "contact-1",
+		MerchantIdentityMode:     "public_profile",
+		Title:                    "GPT 限时套餐",
+		ShortDescription:         "按固定价格购买限时面板额度。",
+		DistributionSystem:       ServiceDistributionSub2API,
+		BillingMode:              ServiceBillingModeFixedPackage,
+		MinimumIntentCNY:         "9.90",
+		MaximumIntentCNY:         "9.90",
+		UsageVisibility:          "fixed_package_only",
+		AccountPoolType:          AccountPoolGPTPro5x,
+		MerchantRefundCommitment: &refundCommitment,
+		DeclaredMaxConcurrency:   8,
+		PromptAuditEnabled:       &promptAuditEnabled,
 		AccessModes: []ServiceAccessModeInput{{
 			AccessMode: "fixed_package_offsite",
 		}},
@@ -269,14 +513,22 @@ func validLimitedPackageCreateInput() CreateServiceInput {
 			Enabled:            true,
 		}},
 		Packages: []ServicePackageInput{{
-			Name:            "3 天 GPT-5.6 套餐",
-			PriceCNY:        "9.90",
-			PanelAllowance:  "5.000000",
-			DurationDays:    &duration,
-			StockTotal:      5,
-			Description:     "交付后 3 天内有效。",
-			Enabled:         true,
-			ModelCatalogIDs: []string{"model-1"},
+			Name:             "3 天 GPT-5.6 套餐",
+			PriceCNY:         "9.90",
+			PanelAllowance:   "5.000000",
+			QuotaUsagePolicy: testQuotaUsagePolicy(),
+			DurationDays:     &duration,
+			StockTotal:       5,
+			Description:      "交付后 3 天内有效。",
+			Enabled:          true,
+			ModelCatalogIDs:  []string{"model-1"},
 		}},
+	}
+}
+
+func testQuotaUsagePolicy() QuotaUsagePolicy {
+	return QuotaUsagePolicy{
+		FiveHour: QuotaUsageLimit{Mode: QuotaLimitModeLimited, AmountUSD: "5"},
+		Daily:    QuotaUsageLimit{Mode: QuotaLimitModeUnlimited},
 	}
 }

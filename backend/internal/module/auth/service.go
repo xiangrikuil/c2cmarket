@@ -15,8 +15,10 @@ import (
 	"sync"
 	"time"
 	"unicode"
+	"unicode/utf8"
 
 	"c2c-market/backend/internal/domain"
+	"c2c-market/backend/internal/module/idempotency"
 
 	"github.com/google/uuid"
 	"golang.org/x/crypto/argon2"
@@ -29,17 +31,27 @@ const (
 	argon2idV1Iterations            uint32 = 3
 	argon2idV1Parallelism           uint8  = 1
 	argon2idV1KeyLength             uint32 = 32
+	SessionIdleLifetime                    = 7 * 24 * time.Hour
+	SessionRenewalInterval                 = 24 * time.Hour
+	SessionAbsoluteLifetime                = 30 * 24 * time.Hour
+	AccountAppealSessionLifetime           = 15 * time.Minute
 )
 
 type Service struct {
 	mu                          sync.Mutex
 	now                         func() time.Time
 	repo                        Repository
+	idempotency                 *idempotency.Service
 	registrationEmailSender     RegistrationEmailSender
 	users                       map[string]User
+	adminUsers                  map[string]AdminUser
+	adminAuditEntries           map[string][]AdminAccountAuditEntry
 	usersByUsername             map[string]string
 	usersByVerifiedEmail        map[string]string
+	oauthUserIDs                map[string]string
+	adminBootstrapRuns          map[string]adminBootstrapRun
 	sessions                    map[string]Session
+	accountAppealSessions       map[string]AccountAppealSession
 	emailRegistrationCodes      map[string]emailRegistrationChallenge
 	passwordCredentialsByUserID map[string]PasswordCredential
 }
@@ -58,27 +70,37 @@ type emailRegistrationChallenge struct {
 }
 
 func NewService(repo Repository, now func() time.Time) *Service {
-	return NewServiceWithRegistrationEmailSender(repo, now, nil)
+	return NewServiceWithRegistrationEmailSenderAndIdempotency(repo, now, nil, nil)
 }
 
 func NewServiceWithRegistrationEmailSender(repo Repository, now func() time.Time, registrationEmailSender RegistrationEmailSender) *Service {
+	return NewServiceWithRegistrationEmailSenderAndIdempotency(repo, now, registrationEmailSender, nil)
+}
+
+func NewServiceWithRegistrationEmailSenderAndIdempotency(repo Repository, now func() time.Time, registrationEmailSender RegistrationEmailSender, idempotencyService *idempotency.Service) *Service {
 	if now == nil {
 		now = time.Now
+	}
+	if idempotencyService == nil {
+		idempotencyService = idempotency.NewService(nil, now)
 	}
 	service := &Service{
 		now:                         now,
 		repo:                        repo,
+		idempotency:                 idempotencyService,
 		registrationEmailSender:     registrationEmailSender,
 		users:                       make(map[string]User),
+		adminUsers:                  make(map[string]AdminUser),
+		adminAuditEntries:           make(map[string][]AdminAccountAuditEntry),
 		usersByUsername:             make(map[string]string),
 		usersByVerifiedEmail:        make(map[string]string),
+		oauthUserIDs:                make(map[string]string),
+		adminBootstrapRuns:          make(map[string]adminBootstrapRun),
 		sessions:                    make(map[string]Session),
+		accountAppealSessions:       make(map[string]AccountAppealSession),
 		emailRegistrationCodes:      make(map[string]emailRegistrationChallenge),
 		passwordCredentialsByUserID: make(map[string]PasswordCredential),
 	}
-	service.ensureUserLocked("admin", true)
-	service.ensureUserLocked("buyer", false)
-	service.ensureUserLocked("seller", false)
 	return service
 }
 
@@ -94,13 +116,8 @@ func (s *Service) CreateDevSession(ctx context.Context, username string, isAdmin
 		if appErr != nil {
 			return User{}, Session{}, appErr
 		}
-		session := Session{
-			ID:        newSecret("sess"),
-			UserID:    user.ID,
-			CSRFToken: newSecret("csrf"),
-			ExpiresAt: now.Add(24 * time.Hour),
-		}
-		if appErr := s.repo.CreateSession(ctx, user.ID, hashOpaqueToken(session.ID), hashOpaqueToken(session.CSRFToken), session.ExpiresAt, now); appErr != nil {
+		session := newSession(user.ID, now)
+		if appErr := s.persistSession(ctx, session, now); appErr != nil {
 			return User{}, Session{}, appErr
 		}
 		return user, session, nil
@@ -116,21 +133,17 @@ func (s *Service) CreateDevSession(ctx context.Context, username string, isAdmin
 	}
 
 	now := s.now()
-	session := Session{
-		ID:        newSecret("sess"),
-		UserID:    user.ID,
-		CSRFToken: newSecret("csrf"),
-		ExpiresAt: now.Add(24 * time.Hour),
-	}
+	session := newSession(user.ID, now)
 	s.sessions[session.ID] = session
 	return user, session, nil
 }
 
 func (s *Service) LoginWithOAuthProfile(ctx context.Context, profile OAuthProfile) (User, Session, *domain.AppError) {
-	profile.Provider = strings.TrimSpace(profile.Provider)
-	profile.Subject = strings.TrimSpace(profile.Subject)
-	profile.Username = normalizeUsername(profile.Username)
-	if profile.Provider == "" || profile.Subject == "" || profile.Username == "" {
+	profile.Provider = CanonicalOAuthProvider(profile.Provider)
+	profile.Subject = CanonicalOAuthSubject(profile.Subject)
+	rawUsername := strings.TrimSpace(profile.Username)
+	profile.Username = OAuthUsernameCandidate(profile.Username, profile.Provider, profile.Subject, 0)
+	if profile.Provider == "" || profile.Subject == "" || rawUsername == "" {
 		return User{}, Session{}, domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Invalid OAuth profile", "OAuth 用户资料不完整。", "profile", "required", "OAuth 用户资料不完整。")
 	}
 	if profile.DisplayName == "" {
@@ -139,6 +152,7 @@ func (s *Service) LoginWithOAuthProfile(ctx context.Context, profile OAuthProfil
 	if profile.TrustLevel <= 0 {
 		profile.TrustLevel = 1
 	}
+	profile.Attribution = NormalizeRegistrationAttribution(profile.Attribution)
 
 	now := s.now()
 	var user User
@@ -152,33 +166,59 @@ func (s *Service) LoginWithOAuthProfile(ctx context.Context, profile OAuthProfil
 		created = result.Created
 	} else {
 		s.mu.Lock()
-		_, existed := s.usersByUsername[profile.Username]
-		user = s.ensureUserLocked(profile.Username, profile.GrantAdmin)
-		created = !existed
-		user.DisplayName = strings.TrimSpace(profile.DisplayName)
-		if profile.GrantAdmin {
-			user.IsAdmin = true
+		identityKey := OAuthIdentityKey(profile.Provider, profile.Subject)
+		userID := s.oauthUserIDs[identityKey]
+		if userID != "" {
+			user = s.users[userID]
+		} else {
+			for attempt := 0; ; attempt++ {
+				candidate := OAuthUsernameCandidate(profile.Username, profile.Provider, profile.Subject, attempt)
+				if s.usersByUsername[candidate] != "" {
+					continue
+				}
+				user = User{
+					ID:              uuid.NewString(),
+					AnalyticsUserID: uuid.NewString(),
+					Username:        candidate,
+					DisplayName:     candidate,
+					Status:          "active",
+				}
+				s.users[user.ID] = user
+				s.usersByUsername[candidate] = user.ID
+				s.oauthUserIDs[identityKey] = user.ID
+				created = true
+				break
+			}
 		}
-		user.LinuxDoBinding = &LinuxDoBinding{
-			Bound:           true,
-			LinuxDoUserID:   valueOrDefault(profile.LinuxDoUserID, profile.Subject),
-			LinuxDoUsername: valueOrDefault(profile.LinuxDoUsername, profile.Username),
-			TrustLevel:      profile.TrustLevel,
-			AvatarURL:       valueOrDefault(profile.LinuxDoAvatarURL, profile.AvatarURL),
-			BoundAt:         now,
-			LastSyncedAt:    now,
+		user.DisplayName = strings.TrimSpace(profile.DisplayName)
+		if user.DisplayName == "" {
+			user.DisplayName = user.Username
+		}
+		if IsLinuxDoProvider(profile.Provider) {
+			boundAt := now
+			if user.LinuxDoBinding != nil && !user.LinuxDoBinding.BoundAt.IsZero() {
+				boundAt = user.LinuxDoBinding.BoundAt
+			}
+			user.LinuxDoBinding = &LinuxDoBinding{
+				Bound:           true,
+				LinuxDoUserID:   valueOrDefault(profile.LinuxDoUserID, profile.Subject),
+				LinuxDoUsername: valueOrDefault(profile.LinuxDoUsername, profile.Username),
+				TrustLevel:      profile.TrustLevel,
+				AvatarURL:       valueOrDefault(profile.LinuxDoAvatarURL, profile.AvatarURL),
+				BoundAt:         boundAt,
+				LastSyncedAt:    now,
+			}
 		}
 		s.users[user.ID] = user
 		s.mu.Unlock()
 	}
-	session := Session{
-		ID:        newSecret("sess"),
-		UserID:    user.ID,
-		CSRFToken: newSecret("csrf"),
-		ExpiresAt: now.Add(24 * time.Hour),
+	if user.Status != "active" {
+		return User{}, Session{}, domain.NewError(http.StatusForbidden, domain.CodeAccountRestricted, "Account restricted", "当前账号不可执行该操作。")
 	}
+	session := newSession(user.ID, now)
+	session.NewRegistration = created
 	if s.repo != nil {
-		if appErr := s.repo.CreateSession(ctx, user.ID, hashOpaqueToken(session.ID), hashOpaqueToken(session.CSRFToken), session.ExpiresAt, now); appErr != nil {
+		if appErr := s.persistSession(ctx, session, now); appErr != nil {
 			return User{}, Session{}, appErr
 		}
 	} else {
@@ -187,6 +227,128 @@ func (s *Service) LoginWithOAuthProfile(ctx context.Context, profile OAuthProfil
 		s.mu.Unlock()
 	}
 	s.sendRegistrationSuccessIfNeeded(ctx, created, user, profile.Email, now)
+	return user, session, nil
+}
+
+func (s *Service) StartAccountAppealSession(ctx context.Context, profile OAuthProfile) (User, AccountAppealSession, *domain.AppError) {
+	provider := CanonicalOAuthProvider(profile.Provider)
+	subject := CanonicalOAuthSubject(profile.Subject)
+	if provider == "" || subject == "" {
+		return User{}, AccountAppealSession{}, domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Invalid OAuth profile", "OAuth 用户资料不完整。", "profile", "required", "OAuth 用户资料不完整。")
+	}
+	if !IsLinuxDoProvider(provider) {
+		return User{}, AccountAppealSession{}, accountAppealIneligibleError()
+	}
+
+	now := s.now()
+	session := AccountAppealSession{
+		ID:        newSecret("appeal_sess"),
+		CSRFToken: newSecret("appeal_csrf"),
+		CreatedAt: now,
+		ExpiresAt: now.Add(AccountAppealSessionLifetime),
+	}
+	if s.repo != nil {
+		user, found, appErr := s.repo.ResolveExistingOAuthUser(ctx, provider, subject)
+		if appErr != nil {
+			return User{}, AccountAppealSession{}, appErr
+		}
+		if !found || !eligibleAccountAppealStatus(user.Status) {
+			return User{}, AccountAppealSession{}, accountAppealIneligibleError()
+		}
+		user, appErr = s.repo.CreateAccountAppealSession(
+			ctx,
+			user.ID,
+			hashOpaqueToken(session.ID),
+			hashOpaqueToken(session.CSRFToken),
+			session.ExpiresAt,
+			now,
+		)
+		if appErr != nil {
+			return User{}, AccountAppealSession{}, appErr
+		}
+		session.UserID = user.ID
+		return user, session, nil
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	userID := s.oauthUserIDs[OAuthIdentityKey(provider, subject)]
+	user := s.users[userID]
+	if user.ID == "" || !eligibleAccountAppealStatus(user.Status) {
+		return User{}, AccountAppealSession{}, accountAppealIneligibleError()
+	}
+	for sessionID, existing := range s.accountAppealSessions {
+		if existing.UserID != user.ID || existing.RevokedAt != nil {
+			continue
+		}
+		revokedAt := now
+		existing.RevokedAt = &revokedAt
+		s.accountAppealSessions[sessionID] = existing
+	}
+	session.UserID = user.ID
+	s.accountAppealSessions[session.ID] = session
+	return user, session, nil
+}
+
+func (s *Service) GetAccountAppealSession(ctx context.Context, sessionID string) (User, AccountAppealSession, *domain.AppError) {
+	csrfToken := newSecret("appeal_csrf")
+	if s.repo != nil {
+		user, session, appErr := s.repo.RotateAccountAppealSessionCSRF(ctx, hashOpaqueToken(sessionID), hashOpaqueToken(csrfToken), s.now())
+		if appErr != nil {
+			return User{}, AccountAppealSession{}, appErr
+		}
+		session.ID = sessionID
+		session.CSRFToken = csrfToken
+		return user, session, nil
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	user, session, appErr := s.accountAppealSessionLocked(sessionID, "", false)
+	if appErr != nil {
+		return User{}, AccountAppealSession{}, appErr
+	}
+	session.CSRFToken = csrfToken
+	s.accountAppealSessions[sessionID] = session
+	return user, session, nil
+}
+
+func (s *Service) GetAccountAppealSessionWithCSRF(ctx context.Context, sessionID, csrfToken string) (User, AccountAppealSession, *domain.AppError) {
+	if s.repo != nil {
+		user, session, appErr := s.repo.GetAccountAppealSessionWithCSRF(ctx, hashOpaqueToken(sessionID), hashOpaqueToken(csrfToken), s.now())
+		if appErr != nil {
+			return User{}, AccountAppealSession{}, appErr
+		}
+		session.ID = sessionID
+		return user, session, nil
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.accountAppealSessionLocked(sessionID, csrfToken, true)
+}
+
+func (s *Service) accountAppealSessionLocked(sessionID, csrfToken string, requireCSRF bool) (User, AccountAppealSession, *domain.AppError) {
+	session, ok := s.accountAppealSessions[sessionID]
+	if !ok {
+		if requireCSRF {
+			return User{}, AccountAppealSession{}, accountAppealCSRFError()
+		}
+		return User{}, AccountAppealSession{}, accountAppealSessionExpiredError()
+	}
+	if requireCSRF && subtle.ConstantTimeCompare([]byte(session.CSRFToken), []byte(csrfToken)) != 1 {
+		return User{}, AccountAppealSession{}, accountAppealCSRFError()
+	}
+	if session.RevokedAt != nil {
+		return User{}, AccountAppealSession{}, accountAppealSessionRevokedError()
+	}
+	if !s.now().Before(session.ExpiresAt) {
+		return User{}, AccountAppealSession{}, accountAppealSessionExpiredError()
+	}
+	user := s.users[session.UserID]
+	if user.ID == "" || !eligibleAccountAppealStatus(user.Status) {
+		return User{}, AccountAppealSession{}, accountAppealSessionExpiredError()
+	}
 	return user, session, nil
 }
 
@@ -258,14 +420,9 @@ func (s *Service) LoginWithPassword(ctx context.Context, username, password stri
 			return User{}, Session{}, appErr
 		}
 	}
-	session := Session{
-		ID:        newSecret("sess"),
-		UserID:    credential.User.ID,
-		CSRFToken: newSecret("csrf"),
-		ExpiresAt: now.Add(24 * time.Hour),
-	}
+	session := newSession(credential.User.ID, now)
 	if s.repo != nil {
-		if appErr := s.repo.CreateSession(ctx, credential.User.ID, hashOpaqueToken(session.ID), hashOpaqueToken(session.CSRFToken), session.ExpiresAt, now); appErr != nil {
+		if appErr := s.persistSession(ctx, session, now); appErr != nil {
 			return User{}, Session{}, appErr
 		}
 	} else {
@@ -304,12 +461,46 @@ func (s *Service) BootstrapAdmin(ctx context.Context, input BootstrapAdminInput)
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.hasAdminPasswordCredentialLocked() {
-		return BootstrapAdminResult{}, nil
+	if run, ok := s.adminBootstrapRuns[InitialAdminBootstrapKey]; ok {
+		user := s.users[run.UserID]
+		credential := s.passwordCredentialsByUserID[run.UserID]
+		if user.ID == "" ||
+			run.Username != user.Username ||
+			user.Status != "active" ||
+			!user.IsAdmin ||
+			s.usersByUsername[run.Username] != run.UserID ||
+			credential.User.ID != user.ID {
+			return BootstrapAdminResult{}, AdminBootstrapInconsistentError()
+		}
+		if username != run.Username {
+			return BootstrapAdminResult{}, AdminBootstrapConflictError()
+		}
+		return BootstrapAdminResult{User: user}, nil
 	}
-	user := s.ensureUserLocked(username, true)
+	for _, user := range s.users {
+		if user.IsAdmin {
+			return BootstrapAdminResult{}, AdminBootstrapConflictError()
+		}
+	}
+	if s.usersByUsername[username] != "" {
+		return BootstrapAdminResult{}, AdminBootstrapConflictError()
+	}
+	user := User{
+		ID:              uuid.NewString(),
+		AnalyticsUserID: uuid.NewString(),
+		Username:        username,
+		DisplayName:     username,
+		IsAdmin:         true,
+		Status:          "active",
+	}
+	s.users[user.ID] = user
+	s.usersByUsername[user.Username] = user.ID
 	credential.User = user
 	s.passwordCredentialsByUserID[user.ID] = credential
+	s.adminBootstrapRuns[InitialAdminBootstrapKey] = adminBootstrapRun{
+		UserID:   user.ID,
+		Username: user.Username,
+	}
 	return BootstrapAdminResult{User: user, Created: true}, nil
 }
 
@@ -413,7 +604,8 @@ func (s *Service) GetSession(ctx context.Context, sessionID string) (User, Sessi
 	if session.RevokedAt != nil {
 		return User{}, Session{}, domain.NewError(http.StatusUnauthorized, domain.CodeSessionRevoked, "Session revoked", "当前会话已退出。")
 	}
-	if !s.now().Before(session.ExpiresAt) {
+	now := s.now()
+	if !now.Before(session.ExpiresAt) || !now.Before(session.AbsoluteExpiresAt) {
 		return User{}, Session{}, domain.NewError(http.StatusUnauthorized, domain.CodeSessionExpired, "Session expired", "当前会话已过期。")
 	}
 	user, ok := s.users[session.UserID]
@@ -421,6 +613,36 @@ func (s *Service) GetSession(ctx context.Context, sessionID string) (User, Sessi
 		return User{}, Session{}, domain.NewError(http.StatusForbidden, domain.CodeAccountRestricted, "Account restricted", "当前账号不可执行该操作。")
 	}
 	return user, session, nil
+}
+
+func (s *Service) RenewSession(ctx context.Context, sessionID string) (Session, bool, *domain.AppError) {
+	now := s.now()
+	targetExpiresAt := now.Add(SessionIdleLifetime)
+	renewBefore := now.Add(-SessionRenewalInterval)
+	if s.repo != nil {
+		expiresAt, renewed, appErr := s.repo.RenewSession(ctx, hashOpaqueToken(sessionID), now, targetExpiresAt, renewBefore)
+		if appErr != nil || !renewed {
+			return Session{}, renewed, appErr
+		}
+		return Session{ID: sessionID, ExpiresAt: expiresAt, RenewedAt: now}, true, nil
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	session, ok := s.sessions[sessionID]
+	if !ok || session.RevokedAt != nil || !now.Before(session.ExpiresAt) || !now.Before(session.AbsoluteExpiresAt) {
+		return Session{}, false, nil
+	}
+	if session.RenewedAt.After(renewBefore) {
+		return Session{}, false, nil
+	}
+	if targetExpiresAt.After(session.AbsoluteExpiresAt) {
+		targetExpiresAt = session.AbsoluteExpiresAt
+	}
+	session.RenewedAt = now
+	session.ExpiresAt = targetExpiresAt
+	s.sessions[sessionID] = session
+	return session, true, nil
 }
 
 func (s *Service) GetSessionWithCSRF(ctx context.Context, sessionID, csrfToken string) (User, Session, *domain.AppError) {
@@ -437,33 +659,152 @@ func (s *Service) GetSessionWithCSRF(ctx context.Context, sessionID, csrfToken s
 	return user, session, nil
 }
 
-func (s *Service) AdminUsers(ctx context.Context, user User) ([]AdminUser, *domain.AppError) {
+func (s *Service) AdminUsers(ctx context.Context, user User, query AdminUserDirectoryQuery) (AdminUserDirectory, *domain.AppError) {
 	if !user.IsAdmin {
-		return nil, domain.NewError(http.StatusForbidden, domain.CodePermissionDenied, "Permission denied", "需要管理员权限。")
+		return AdminUserDirectory{}, adminPermissionRequired()
+	}
+	query, appErr := normalizeAdminUserDirectoryQuery(query)
+	if appErr != nil {
+		return AdminUserDirectory{}, appErr
 	}
 	if s.repo != nil {
-		return s.repo.ListAdminUsers(ctx)
+		return s.repo.ListAdminUsers(ctx, query)
 	}
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	items := make([]AdminUser, 0, len(s.users))
+	summary := AdminUserDirectorySummary{}
 	for _, item := range s.users {
-		items = append(items, AdminUser{
-			ID:             item.ID,
-			Username:       item.Username,
-			DisplayName:    item.DisplayName,
-			IsAdmin:        item.IsAdmin,
-			Status:         item.Status,
-			LinuxDoBinding: item.LinuxDoBinding,
-			CreatedAt:      s.now(),
-		})
+		adminUser := s.adminUserLocked(item)
+		addAdminUserSummary(&summary, adminUser)
+		if adminUserMatchesQuery(adminUser, query) {
+			items = append(items, adminUser)
+		}
 	}
-	sort.Slice(items, func(i, j int) bool {
-		return items[i].Username < items[j].Username
-	})
-	return items, nil
+	sortAdminUsers(items, query.Sort)
+	totalItems := len(items)
+	totalPages := 0
+	if totalItems > 0 {
+		totalPages = (totalItems + query.Limit - 1) / query.Limit
+	}
+	start := (query.Page - 1) * query.Limit
+	if start >= totalItems {
+		items = []AdminUser{}
+	} else {
+		end := min(start+query.Limit, totalItems)
+		items = append([]AdminUser(nil), items[start:end]...)
+	}
+	return AdminUserDirectory{
+		Items: items,
+		Pagination: AdminUserPagination{
+			Page:       query.Page,
+			Limit:      query.Limit,
+			TotalItems: totalItems,
+			TotalPages: totalPages,
+		},
+		Summary: summary,
+	}, nil
+}
+
+func (s *Service) AdminUser(ctx context.Context, user User, userID string) (AdminUserDetail, *domain.AppError) {
+	if !user.IsAdmin {
+		return AdminUserDetail{}, adminPermissionRequired()
+	}
+	userID = strings.TrimSpace(userID)
+	if _, err := uuid.Parse(userID); err != nil {
+		return AdminUserDetail{}, adminUserValidationError("id", "用户 ID 格式不正确。")
+	}
+	if s.repo != nil {
+		detail, appErr := s.repo.AdminUserDetail(ctx, userID)
+		if appErr != nil {
+			return AdminUserDetail{}, appErr
+		}
+		return decorateAdminUserDetail(detail, user.ID), nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	detail, appErr := s.adminUserDetailLocked(userID)
+	if appErr != nil {
+		return AdminUserDetail{}, appErr
+	}
+	return decorateAdminUserDetail(detail, user.ID), nil
+}
+
+func (s *Service) UpdateAdminUserStatusWithIdempotency(ctx context.Context, user User, routeKey, key, requestHash string, input AdminUserStatusInput, buildCompletion AdminUserCompletionBuilder) (idempotency.Completion, *domain.AppError) {
+	if !user.IsAdmin {
+		return idempotency.Completion{}, adminPermissionRequired()
+	}
+	input.AdminUserID = strings.TrimSpace(user.ID)
+	input.TargetUserID = strings.TrimSpace(input.TargetUserID)
+	input.Status = strings.TrimSpace(input.Status)
+	input.Reason = strings.TrimSpace(input.Reason)
+	if appErr := validateAdminUserStatusInput(input); appErr != nil {
+		return idempotency.Completion{}, appErr
+	}
+	if buildCompletion == nil {
+		return idempotency.Completion{}, adminUserInternalError()
+	}
+	buildCompletion = decorateAdminUserCompletionBuilder(input.AdminUserID, buildCompletion)
+	entry, appErr := s.idempotency.Begin(ctx, input.AdminUserID, routeKey, strings.TrimSpace(key), requestHash)
+	if appErr != nil {
+		return idempotency.Completion{}, appErr
+	}
+	if entry.State == "completed" {
+		return idempotency.CompletionFromEntry(entry), nil
+	}
+	if s.repo != nil {
+		_, completion, appErr := s.repo.UpdateAdminUserStatusWithIdempotency(ctx, *entry, input, s.now(), buildCompletion)
+		if appErr != nil {
+			s.idempotency.Cancel(ctx, entry)
+			return idempotency.Completion{}, appErr
+		}
+		return completion, nil
+	}
+	result, appErr := s.updateAdminUserStatusMemory(input)
+	if appErr != nil {
+		s.idempotency.Cancel(ctx, entry)
+		return idempotency.Completion{}, appErr
+	}
+	return s.completeAdminUserMemoryMutation(ctx, entry, result, buildCompletion)
+}
+
+func (s *Service) UpdateAdminUserPermissionWithIdempotency(ctx context.Context, user User, routeKey, key, requestHash string, input AdminUserPermissionInput, buildCompletion AdminUserCompletionBuilder) (idempotency.Completion, *domain.AppError) {
+	if !user.IsAdmin {
+		return idempotency.Completion{}, adminPermissionRequired()
+	}
+	input.AdminUserID = strings.TrimSpace(user.ID)
+	input.TargetUserID = strings.TrimSpace(input.TargetUserID)
+	input.Reason = strings.TrimSpace(input.Reason)
+	if appErr := validateAdminUserPermissionInput(input); appErr != nil {
+		return idempotency.Completion{}, appErr
+	}
+	if buildCompletion == nil {
+		return idempotency.Completion{}, adminUserInternalError()
+	}
+	buildCompletion = decorateAdminUserCompletionBuilder(input.AdminUserID, buildCompletion)
+	entry, appErr := s.idempotency.Begin(ctx, input.AdminUserID, routeKey, strings.TrimSpace(key), requestHash)
+	if appErr != nil {
+		return idempotency.Completion{}, appErr
+	}
+	if entry.State == "completed" {
+		return idempotency.CompletionFromEntry(entry), nil
+	}
+	if s.repo != nil {
+		_, completion, appErr := s.repo.UpdateAdminUserPermissionWithIdempotency(ctx, *entry, input, s.now(), buildCompletion)
+		if appErr != nil {
+			s.idempotency.Cancel(ctx, entry)
+			return idempotency.Completion{}, appErr
+		}
+		return completion, nil
+	}
+	result, appErr := s.updateAdminUserPermissionMemory(input)
+	if appErr != nil {
+		s.idempotency.Cancel(ctx, entry)
+		return idempotency.Completion{}, appErr
+	}
+	return s.completeAdminUserMemoryMutation(ctx, entry, result, buildCompletion)
 }
 
 func (s *Service) RefreshSessionCSRF(ctx context.Context, sessionID string) (string, *domain.AppError) {
@@ -503,6 +844,29 @@ func (s *Service) Logout(ctx context.Context, sessionID string) {
 	s.sessions[sessionID] = session
 }
 
+func newSession(userID string, now time.Time) Session {
+	return Session{
+		ID:                newSecret("sess"),
+		UserID:            userID,
+		CSRFToken:         newSecret("csrf"),
+		ExpiresAt:         now.Add(SessionIdleLifetime),
+		RenewedAt:         now,
+		AbsoluteExpiresAt: now.Add(SessionAbsoluteLifetime),
+	}
+}
+
+func (s *Service) persistSession(ctx context.Context, session Session, now time.Time) *domain.AppError {
+	return s.repo.CreateSession(
+		ctx,
+		session.UserID,
+		hashOpaqueToken(session.ID),
+		hashOpaqueToken(session.CSRFToken),
+		session.ExpiresAt,
+		session.AbsoluteExpiresAt,
+		now,
+	)
+}
+
 func (s *Service) rehashPasswordCredential(ctx context.Context, credential PasswordCredential, password string, now time.Time) *domain.AppError {
 	next := newPasswordCredential(User{ID: credential.User.ID}, password)
 	if s.repo != nil {
@@ -517,19 +881,6 @@ func (s *Service) rehashPasswordCredential(ctx context.Context, credential Passw
 	return nil
 }
 
-func (s *Service) hasAdminPasswordCredentialLocked() bool {
-	for userID, credential := range s.passwordCredentialsByUserID {
-		if credential.User.ID == "" {
-			continue
-		}
-		user := s.users[userID]
-		if user.IsAdmin {
-			return true
-		}
-	}
-	return false
-}
-
 func (s *Service) ensureUserLocked(username string, isAdmin bool) User {
 	username = normalizeUsername(username)
 	if id := s.usersByUsername[username]; id != "" {
@@ -541,15 +892,530 @@ func (s *Service) ensureUserLocked(username string, isAdmin bool) User {
 		return user
 	}
 	user := User{
-		ID:          uuid.NewString(),
-		Username:    username,
-		DisplayName: username,
-		IsAdmin:     isAdmin,
-		Status:      "active",
+		ID:              uuid.NewString(),
+		AnalyticsUserID: uuid.NewString(),
+		Username:        username,
+		DisplayName:     username,
+		IsAdmin:         isAdmin,
+		Status:          "active",
 	}
 	s.users[user.ID] = user
 	s.usersByUsername[username] = user.ID
 	return user
+}
+
+func normalizeAdminUserDirectoryQuery(query AdminUserDirectoryQuery) (AdminUserDirectoryQuery, *domain.AppError) {
+	query.Search = strings.TrimSpace(query.Search)
+	query.Status = strings.TrimSpace(query.Status)
+	query.Role = strings.TrimSpace(query.Role)
+	query.LinuxDo = strings.TrimSpace(query.LinuxDo)
+	query.Sort = strings.TrimSpace(query.Sort)
+	if query.Page == 0 {
+		query.Page = 1
+	}
+	if query.Limit == 0 {
+		query.Limit = 20
+	}
+	if query.Status == "" {
+		query.Status = AdminUserStatusAll
+	}
+	if query.Role == "" {
+		query.Role = AdminUserRoleAll
+	}
+	if query.LinuxDo == "" {
+		query.LinuxDo = AdminUserLinuxDoAll
+	}
+	if query.Sort == "" {
+		query.Sort = AdminUserSortCreatedDesc
+	}
+	if query.Page < 1 {
+		return AdminUserDirectoryQuery{}, adminUserValidationError("page", "页码必须是正整数。")
+	}
+	if query.Limit != 20 && query.Limit != 50 && query.Limit != 100 {
+		return AdminUserDirectoryQuery{}, adminUserValidationError("limit", "每页数量仅支持 20、50 或 100。")
+	}
+	if utf8.RuneCountInString(query.Search) > 100 {
+		return AdminUserDirectoryQuery{}, adminUserValidationError("search", "搜索内容最多 100 字。")
+	}
+	if !stringIn(query.Status, AdminUserStatusAll, AccountStatusActive, AccountStatusSuspended, AccountStatusBanned, AccountStatusArchived) {
+		return AdminUserDirectoryQuery{}, adminUserValidationError("status", "账号状态筛选值不受支持。")
+	}
+	if !stringIn(query.Role, AdminUserRoleAll, AdminUserRoleAdmin, AdminUserRoleUser) {
+		return AdminUserDirectoryQuery{}, adminUserValidationError("role", "账号角色筛选值不受支持。")
+	}
+	if !stringIn(query.LinuxDo, AdminUserLinuxDoAll, AdminUserLinuxDoBound, AdminUserLinuxDoUnbound) {
+		return AdminUserDirectoryQuery{}, adminUserValidationError("linuxDo", "linux.do 绑定筛选值不受支持。")
+	}
+	if !stringIn(query.Sort, AdminUserSortCreatedDesc, AdminUserSortCreatedAsc, AdminUserSortActiveDesc, AdminUserSortUsernameAsc, AdminUserSortUsernameDesc) {
+		return AdminUserDirectoryQuery{}, adminUserValidationError("sort", "排序方式不受支持。")
+	}
+	return query, nil
+}
+
+func validateAdminUserStatusInput(input AdminUserStatusInput) *domain.AppError {
+	if input.AdminUserID == "" {
+		return domain.NewError(http.StatusUnauthorized, domain.CodeSessionExpired, "Session required", "请先登录。")
+	}
+	if input.TargetUserID == "" {
+		return adminUserValidationError("id", "必须提供目标用户 ID。")
+	}
+	if input.TargetUserID == input.AdminUserID {
+		return domain.NewError(http.StatusForbidden, domain.CodePermissionDenied, "Self management forbidden", "不能修改自己的账号状态。")
+	}
+	if !stringIn(input.Status, AccountStatusActive, AccountStatusSuspended, AccountStatusBanned, AccountStatusArchived) {
+		return adminUserValidationError("status", "目标账号状态不受支持。")
+	}
+	return validateAdminUserMutationReason(input.ExpectedVersion, input.Reason)
+}
+
+func validateAdminUserPermissionInput(input AdminUserPermissionInput) *domain.AppError {
+	if input.AdminUserID == "" {
+		return domain.NewError(http.StatusUnauthorized, domain.CodeSessionExpired, "Session required", "请先登录。")
+	}
+	if input.TargetUserID == "" {
+		return adminUserValidationError("id", "必须提供目标用户 ID。")
+	}
+	if input.TargetUserID == input.AdminUserID {
+		return domain.NewError(http.StatusForbidden, domain.CodePermissionDenied, "Self management forbidden", "不能修改自己的管理员权限。")
+	}
+	return validateAdminUserMutationReason(input.ExpectedVersion, input.Reason)
+}
+
+func validateAdminUserMutationReason(expectedVersion int64, reason string) *domain.AppError {
+	if expectedVersion < 1 {
+		return adminUserValidationError("version", "必须提供有效账号版本。")
+	}
+	if strings.TrimSpace(reason) == "" {
+		return adminUserValidationError("reason", "账号治理操作必须填写原因。")
+	}
+	if utf8.RuneCountInString(reason) > 500 {
+		return adminUserValidationError("reason", "操作原因最多 500 字。")
+	}
+	return nil
+}
+
+func (s *Service) adminUserLocked(user User) AdminUser {
+	item, exists := s.adminUsers[user.ID]
+	if !exists {
+		now := s.now()
+		item = AdminUser{
+			ID:        user.ID,
+			CreatedAt: now,
+			UpdatedAt: now,
+			Version:   1,
+		}
+	}
+	item.Username = user.Username
+	item.DisplayName = user.DisplayName
+	item.IsAdmin = user.IsAdmin
+	item.Status = user.Status
+	item.LinuxDoBound = user.LinuxDoBinding != nil && user.LinuxDoBinding.Bound
+	item.TrustLevel = nil
+	if item.LinuxDoBound {
+		value := user.LinuxDoBinding.TrustLevel
+		item.TrustLevel = &value
+	}
+	s.adminUsers[user.ID] = item
+	return item
+}
+
+func addAdminUserSummary(summary *AdminUserDirectorySummary, user AdminUser) {
+	summary.TotalUsers++
+	if user.IsAdmin {
+		summary.AdminUsers++
+	}
+	if user.LinuxDoBound {
+		summary.LinuxDoBoundUsers++
+	}
+	switch user.Status {
+	case AccountStatusActive:
+		summary.ActiveUsers++
+	case AccountStatusSuspended:
+		summary.SuspendedUsers++
+	case AccountStatusBanned:
+		summary.BannedUsers++
+	case AccountStatusArchived:
+		summary.ArchivedUsers++
+	}
+}
+
+func adminUserMatchesQuery(user AdminUser, query AdminUserDirectoryQuery) bool {
+	if query.Status != AdminUserStatusAll && user.Status != query.Status {
+		return false
+	}
+	if query.Role == AdminUserRoleAdmin && !user.IsAdmin {
+		return false
+	}
+	if query.Role == AdminUserRoleUser && user.IsAdmin {
+		return false
+	}
+	if query.LinuxDo == AdminUserLinuxDoBound && !user.LinuxDoBound {
+		return false
+	}
+	if query.LinuxDo == AdminUserLinuxDoUnbound && user.LinuxDoBound {
+		return false
+	}
+	search := strings.ToLower(query.Search)
+	return search == "" || strings.Contains(strings.ToLower(user.Username+" "+user.DisplayName), search)
+}
+
+func sortAdminUsers(items []AdminUser, sortValue string) {
+	sort.SliceStable(items, func(i, j int) bool {
+		left, right := items[i], items[j]
+		switch sortValue {
+		case AdminUserSortCreatedAsc:
+			if !left.CreatedAt.Equal(right.CreatedAt) {
+				return left.CreatedAt.Before(right.CreatedAt)
+			}
+		case AdminUserSortActiveDesc:
+			if left.LastActiveAt == nil || right.LastActiveAt == nil {
+				if left.LastActiveAt != right.LastActiveAt {
+					return left.LastActiveAt != nil
+				}
+			} else if !left.LastActiveAt.Equal(*right.LastActiveAt) {
+				return left.LastActiveAt.After(*right.LastActiveAt)
+			}
+		case AdminUserSortUsernameAsc:
+			if left.Username != right.Username {
+				return left.Username < right.Username
+			}
+		case AdminUserSortUsernameDesc:
+			if left.Username != right.Username {
+				return left.Username > right.Username
+			}
+		default:
+			if !left.CreatedAt.Equal(right.CreatedAt) {
+				return left.CreatedAt.After(right.CreatedAt)
+			}
+		}
+		return left.ID < right.ID
+	})
+}
+
+func (s *Service) adminUserDetailLocked(userID string) (AdminUserDetail, *domain.AppError) {
+	user, ok := s.users[userID]
+	if !ok {
+		return AdminUserDetail{}, adminUserNotFound()
+	}
+	item := s.adminUserLocked(user)
+	detail := AdminUserDetail{
+		User:               item,
+		Providers:          []AdminAuthProvider{},
+		RecentAuditEntries: append([]AdminAccountAuditEntry(nil), s.adminAuditEntries[userID]...),
+		ActiveAdminCount:   s.activeAdminCountLocked(),
+	}
+	if user.LinuxDoBinding != nil && user.LinuxDoBinding.Bound {
+		boundAt := user.LinuxDoBinding.BoundAt
+		lastSyncedAt := user.LinuxDoBinding.LastSyncedAt
+		detail.LinuxDoBinding = AdminLinuxDoBinding{
+			Bound:        true,
+			Username:     user.LinuxDoBinding.LinuxDoUsername,
+			TrustLevel:   user.LinuxDoBinding.TrustLevel,
+			BoundAt:      &boundAt,
+			LastSyncedAt: &lastSyncedAt,
+		}
+	}
+	for _, verifiedUserID := range s.usersByVerifiedEmail {
+		if verifiedUserID == userID {
+			detail.EmailVerified = true
+			break
+		}
+	}
+	detail.BackupPasswordConfigured = s.passwordCredentialsByUserID[userID].User.ID != ""
+	for _, session := range s.sessions {
+		if session.UserID != userID || session.RevokedAt != nil || !s.now().Before(session.ExpiresAt) || !s.now().Before(session.AbsoluteExpiresAt) {
+			continue
+		}
+		detail.ActiveSessionCount++
+		latest := session.RenewedAt
+		if detail.LatestSessionActivityAt == nil || latest.After(*detail.LatestSessionActivityAt) {
+			detail.LatestSessionActivityAt = &latest
+		}
+	}
+	detail.ImpactPreview.ActiveSessions = detail.ActiveSessionCount
+	return detail, nil
+}
+
+func (s *Service) updateAdminUserStatusMemory(input AdminUserStatusInput) (AdminUserMutationResult, *domain.AppError) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	user, ok := s.users[input.TargetUserID]
+	if !ok {
+		return AdminUserMutationResult{}, adminUserNotFound()
+	}
+	current := s.adminUserLocked(user)
+	if current.Version != input.ExpectedVersion {
+		return AdminUserMutationResult{}, adminUserVersionConflict()
+	}
+	if !AllowedAdminUserStatusTransition(current.Status, input.Status) {
+		return AdminUserMutationResult{}, adminUserInvalidTransition("当前账号状态不能执行该变更。")
+	}
+	if current.IsAdmin && current.Status == AccountStatusActive && input.Status != AccountStatusActive && s.activeAdminCountLocked() <= 1 {
+		return AdminUserMutationResult{}, adminUserInvalidTransition("不能停用最后一个有效管理员账号。")
+	}
+	beforeStatus := current.Status
+	now := s.now()
+	user.Status = input.Status
+	s.users[user.ID] = user
+	current.Status = input.Status
+	current.Version++
+	current.UpdatedAt = now
+	s.adminUsers[user.ID] = current
+	if beforeStatus == AccountStatusActive && input.Status != AccountStatusActive {
+		for id, session := range s.sessions {
+			if session.UserID == user.ID && session.RevokedAt == nil {
+				revokedAt := now
+				session.RevokedAt = &revokedAt
+				s.sessions[id] = session
+			}
+		}
+	}
+	s.appendAdminAuditEntryLocked(user.ID, AdminAccountAuditEntry{
+		ID:           uuid.NewString(),
+		AdminUserID:  input.AdminUserID,
+		Action:       "user.account_status_changed",
+		Reason:       input.Reason,
+		BeforeStatus: beforeStatus,
+		AfterStatus:  input.Status,
+		RequestID:    input.RequestID,
+		CreatedAt:    now,
+	})
+	detail, appErr := s.adminUserDetailLocked(user.ID)
+	return AdminUserMutationResult{Detail: detail}, appErr
+}
+
+func (s *Service) updateAdminUserPermissionMemory(input AdminUserPermissionInput) (AdminUserMutationResult, *domain.AppError) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	user, ok := s.users[input.TargetUserID]
+	if !ok {
+		return AdminUserMutationResult{}, adminUserNotFound()
+	}
+	current := s.adminUserLocked(user)
+	if current.Version != input.ExpectedVersion {
+		return AdminUserMutationResult{}, adminUserVersionConflict()
+	}
+	if current.IsAdmin == input.Grant {
+		return AdminUserMutationResult{}, adminUserInvalidTransition("账号管理员权限没有变化。")
+	}
+	if input.Grant && current.Status != AccountStatusActive {
+		return AdminUserMutationResult{}, adminUserInvalidTransition("只能向有效账号授予管理员权限。")
+	}
+	if !input.Grant && current.Status == AccountStatusActive && s.activeAdminCountLocked() <= 1 {
+		return AdminUserMutationResult{}, adminUserInvalidTransition("不能撤销最后一个有效管理员的权限。")
+	}
+	beforeIsAdmin := current.IsAdmin
+	now := s.now()
+	user.IsAdmin = input.Grant
+	s.users[user.ID] = user
+	current.IsAdmin = input.Grant
+	current.Version++
+	current.UpdatedAt = now
+	s.adminUsers[user.ID] = current
+	s.appendAdminAuditEntryLocked(user.ID, AdminAccountAuditEntry{
+		ID:            uuid.NewString(),
+		AdminUserID:   input.AdminUserID,
+		Action:        "user.admin_permission_changed",
+		Reason:        input.Reason,
+		BeforeIsAdmin: boolPointer(beforeIsAdmin),
+		AfterIsAdmin:  boolPointer(input.Grant),
+		RequestID:     input.RequestID,
+		CreatedAt:     now,
+	})
+	detail, appErr := s.adminUserDetailLocked(user.ID)
+	return AdminUserMutationResult{Detail: detail}, appErr
+}
+
+func (s *Service) completeAdminUserMemoryMutation(ctx context.Context, entry *idempotency.Entry, result AdminUserMutationResult, buildCompletion AdminUserCompletionBuilder) (idempotency.Completion, *domain.AppError) {
+	completion, appErr := buildCompletion(result)
+	if appErr != nil {
+		s.idempotency.Cancel(ctx, entry)
+		return idempotency.Completion{}, appErr
+	}
+	if appErr := s.idempotency.Complete(ctx, entry, completion.Status, completion.ContentType, completion.Body, completion.ResourceType, completion.ResourceID); appErr != nil {
+		s.idempotency.Cancel(ctx, entry)
+		return idempotency.Completion{}, appErr
+	}
+	return completion, nil
+}
+
+func decorateAdminUserCompletionBuilder(adminUserID string, buildCompletion AdminUserCompletionBuilder) AdminUserCompletionBuilder {
+	return func(result AdminUserMutationResult) (idempotency.Completion, *domain.AppError) {
+		result.Detail = decorateAdminUserDetail(result.Detail, adminUserID)
+		return buildCompletion(result)
+	}
+}
+
+func decorateAdminUserDetail(detail AdminUserDetail, adminUserID string) AdminUserDetail {
+	detail.ImpactPreview.ActiveSessions = detail.ActiveSessionCount
+	isActive := detail.User.Status == AccountStatusActive
+	detail.AccountCapabilities = AdminUserAccountCapabilities{
+		CanLogin:                        isActive,
+		PubliclyVisible:                 isActive,
+		CanPublish:                      isActive,
+		CanCreateOrders:                 isActive,
+		CanRevealContact:                isActive,
+		CanAccessHistoricalTransactions: true,
+	}
+	detail.AvailableActions = adminUserGovernanceActions(detail, strings.TrimSpace(adminUserID))
+	return detail
+}
+
+func adminUserGovernanceActions(detail AdminUserDetail, adminUserID string) []AdminUserGovernanceAction {
+	actions := make([]AdminUserGovernanceAction, 0, 4)
+	for _, targetStatus := range []string{AccountStatusActive, AccountStatusSuspended, AccountStatusBanned, AccountStatusArchived} {
+		if !AllowedAdminUserStatusTransition(detail.User.Status, targetStatus) {
+			continue
+		}
+		action := AdminUserGovernanceAction{
+			Action:               adminUserStatusAction(targetStatus),
+			Kind:                 "status",
+			TargetStatus:         targetStatus,
+			Allowed:              true,
+			Severity:             adminUserStatusActionSeverity(targetStatus),
+			RequiresReason:       true,
+			RequiresConfirmation: true,
+		}
+		applyAdminUserActionBlock(&action, detail, adminUserID)
+		actions = append(actions, action)
+	}
+
+	targetIsAdmin := !detail.User.IsAdmin
+	permissionAction := AdminUserGovernanceAction{
+		Action:               AdminUserActionGrantAdmin,
+		Kind:                 "permission",
+		TargetIsAdmin:        boolPointer(targetIsAdmin),
+		Allowed:              true,
+		Severity:             "normal",
+		RequiresReason:       true,
+		RequiresConfirmation: true,
+	}
+	if detail.User.IsAdmin {
+		permissionAction.Action = AdminUserActionRevokeAdmin
+		permissionAction.Severity = "danger"
+	}
+	applyAdminUserActionBlock(&permissionAction, detail, adminUserID)
+	actions = append(actions, permissionAction)
+	return actions
+}
+
+func applyAdminUserActionBlock(action *AdminUserGovernanceAction, detail AdminUserDetail, adminUserID string) {
+	if detail.User.ID == adminUserID {
+		blockAdminUserAction(action, "SELF_TARGET", "不能修改自己的账号状态或管理员权限。")
+		return
+	}
+	deactivatesLastAdmin := action.Kind == "status" && detail.User.Status == AccountStatusActive && action.TargetStatus != AccountStatusActive
+	revokesLastAdmin := action.Action == AdminUserActionRevokeAdmin && detail.User.Status == AccountStatusActive
+	if detail.User.IsAdmin && detail.ActiveAdminCount <= 1 && (deactivatesLastAdmin || revokesLastAdmin) {
+		blockAdminUserAction(action, "LAST_ACTIVE_ADMIN", "不能停用最后一个有效管理员或撤销其权限。")
+		return
+	}
+	if action.Action == AdminUserActionGrantAdmin && detail.User.Status != AccountStatusActive {
+		blockAdminUserAction(action, "ACCOUNT_NOT_ACTIVE", "只能向正常状态的账号授予管理员权限。")
+	}
+}
+
+func blockAdminUserAction(action *AdminUserGovernanceAction, code, reason string) {
+	action.Allowed = false
+	action.BlockedCode = code
+	action.BlockedReason = reason
+}
+
+func adminUserStatusAction(status string) string {
+	switch status {
+	case AccountStatusSuspended:
+		return AdminUserActionSuspend
+	case AccountStatusBanned:
+		return AdminUserActionBan
+	case AccountStatusArchived:
+		return AdminUserActionArchive
+	default:
+		return AdminUserActionRestore
+	}
+}
+
+func adminUserStatusActionSeverity(status string) string {
+	switch status {
+	case AccountStatusSuspended:
+		return "warning"
+	case AccountStatusBanned, AccountStatusArchived:
+		return "danger"
+	default:
+		return "normal"
+	}
+}
+
+func (s *Service) activeAdminCountLocked() int {
+	count := 0
+	for _, user := range s.users {
+		if user.IsAdmin && user.Status == AccountStatusActive {
+			count++
+		}
+	}
+	return count
+}
+
+func (s *Service) appendAdminAuditEntryLocked(userID string, entry AdminAccountAuditEntry) {
+	if admin := s.users[entry.AdminUserID]; admin.ID != "" {
+		entry.AdminUsername = admin.Username
+	}
+	entries := append([]AdminAccountAuditEntry{entry}, s.adminAuditEntries[userID]...)
+	if len(entries) > 20 {
+		entries = entries[:20]
+	}
+	s.adminAuditEntries[userID] = entries
+}
+
+func AllowedAdminUserStatusTransition(current, next string) bool {
+	switch current {
+	case AccountStatusActive:
+		return stringIn(next, AccountStatusSuspended, AccountStatusBanned, AccountStatusArchived)
+	case AccountStatusSuspended:
+		return stringIn(next, AccountStatusActive, AccountStatusBanned, AccountStatusArchived)
+	case AccountStatusBanned:
+		return stringIn(next, AccountStatusActive, AccountStatusArchived)
+	case AccountStatusArchived:
+		return next == AccountStatusActive
+	default:
+		return false
+	}
+}
+
+func stringIn(value string, values ...string) bool {
+	for _, candidate := range values {
+		if value == candidate {
+			return true
+		}
+	}
+	return false
+}
+
+func boolPointer(value bool) *bool {
+	return &value
+}
+
+func adminPermissionRequired() *domain.AppError {
+	return domain.NewError(http.StatusForbidden, domain.CodePermissionDenied, "Permission denied", "需要管理员权限。")
+}
+
+func adminUserValidationError(field, detail string) *domain.AppError {
+	return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "User management validation failed", detail, field, "invalid", detail)
+}
+
+func adminUserNotFound() *domain.AppError {
+	return domain.NewError(http.StatusNotFound, domain.CodeObjectNotFound, "User not found", "用户不存在。")
+}
+
+func adminUserVersionConflict() *domain.AppError {
+	return domain.NewError(http.StatusPreconditionFailed, domain.CodeVersionConflict, "Version conflict", "账号信息已更新，请刷新后重试。")
+}
+
+func adminUserInvalidTransition(detail string) *domain.AppError {
+	return domain.NewError(http.StatusConflict, domain.CodeInvalidStateTransition, "Invalid state transition", detail)
+}
+
+func adminUserInternalError() *domain.AppError {
+	return domain.NewError(http.StatusInternalServerError, domain.CodeInternalError, "Internal error", "账号治理响应编码失败。")
 }
 
 func normalizeUsername(value string) string {
@@ -677,6 +1543,26 @@ func requireNativePasswordUser(user User) *domain.AppError {
 
 func emailRegistrationDisabledError() *domain.AppError {
 	return domain.NewError(http.StatusForbidden, domain.CodeEmailRegistrationDisabled, "Email registration disabled", "第一版本仅支持 linux.do OAuth 注册和登录。")
+}
+
+func eligibleAccountAppealStatus(status string) bool {
+	return status == AccountStatusSuspended || status == AccountStatusBanned
+}
+
+func accountAppealIneligibleError() *domain.AppError {
+	return domain.NewError(http.StatusForbidden, domain.CodeAccountAppealIneligible, "Account appeal unavailable", "当前身份无法使用账号申诉验证。")
+}
+
+func accountAppealSessionExpiredError() *domain.AppError {
+	return domain.NewError(http.StatusUnauthorized, domain.CodeSessionExpired, "Account appeal session expired", "账号申诉验证已过期，请重新验证。")
+}
+
+func accountAppealSessionRevokedError() *domain.AppError {
+	return domain.NewError(http.StatusUnauthorized, domain.CodeSessionRevoked, "Account appeal session revoked", "账号申诉验证已失效，请重新验证。")
+}
+
+func accountAppealCSRFError() *domain.AppError {
+	return domain.NewError(http.StatusForbidden, domain.CodeCSRFTokenInvalid, "Account appeal CSRF token invalid", "账号申诉 CSRF token 无效或缺失。")
 }
 
 func linuxDoBindingRequiredError() *domain.AppError {

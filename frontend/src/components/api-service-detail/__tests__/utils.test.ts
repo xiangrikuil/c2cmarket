@@ -38,11 +38,12 @@ test('formats API service timestamps in Beijing time', () => {
 
 test('renders the home API entry list from publicly orderable service fields', () => {
   const homeSource = readFileSync(new URL('../../../pages/HomePage.vue', import.meta.url), 'utf8')
+  const snapshotSource = readFileSync(new URL('../../market/HomeMarketSnapshot.vue', import.meta.url), 'utf8')
 
-  assert.match(homeSource, /filter\(item => item\.publiclyOrderable\)/)
-  assert.match(homeSource, /formatModelSummary\(item\.models\)/)
-  assert.match(homeSource, /formatCnyPerUsdQuota\(item\)/)
-  assert.match(homeSource, /getApiMerchantDisplayName\(item\)/)
-  assert.match(homeSource, /当前可购买 API 服务/)
-  assert.doesNotMatch(homeSource, /2\.5M Tokens|500K Tokens|1M Tokens|\/ 1K Tokens/)
+  assert.match(homeSource, /filter\(isApiServicePubliclyOrderable\)/)
+  assert.match(snapshotSource, /formatModelSummary\(item\.models\)/)
+  assert.match(snapshotSource, /formatCnyPerUsdQuota\(item\)/)
+  assert.match(snapshotSource, /getApiMerchantDisplayName\(item\)/)
+  assert.match(snapshotSource, /<h3 id="home-api-snapshot-title">可购买 API 服务/)
+  assert.doesNotMatch(`${homeSource}\n${snapshotSource}`, /2\.5M Tokens|500K Tokens|1M Tokens|\/ 1K Tokens/)
 })

@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { test } from 'vitest'
 import {
+  getApiServiceProductCategory,
   getApiServiceProductIconSrc,
   getProductCategoryIconSrc,
   getProductIconSrc,
@@ -31,11 +32,13 @@ test('resolves uploaded and fallback category icons consistently', () => {
 test('resolves API service icons from the selected model provider instead of the generic title', () => {
   const categoryIcons = new Map([['gpt', 'data:image/png;base64,套餐目录GPT图标']])
 
-  assert.equal(getApiServiceProductIconSrc({
+  const openAiService = {
     title: 'Sub2API 美元额度服务',
     models: ['GPT-4.1'],
     modelPriceRows: [{ provider: 'OpenAI' }],
-  }, categoryIcons), 'data:image/png;base64,套餐目录GPT图标')
+  }
+  assert.equal(getApiServiceProductCategory(openAiService), 'gpt')
+  assert.equal(getApiServiceProductIconSrc(openAiService, categoryIcons), 'data:image/png;base64,套餐目录GPT图标')
   assert.equal(getApiServiceProductIconSrc({
     title: '美元额度服务',
     models: ['Claude Sonnet'],
@@ -45,8 +48,11 @@ test('resolves API service icons from the selected model provider instead of the
 
 test('wires category icons through admin upload and public category rendering', () => {
   const adminSource = readFileSync(new URL('../../pages/AdminProductPlansPage.vue', import.meta.url), 'utf8')
+  const apiMarketSource = readFileSync(new URL('../../pages/ApiMarketPage.vue', import.meta.url), 'utf8')
+  const apiPackageCardSource = readFileSync(new URL('../../components/api-market/ApiPackageCard.vue', import.meta.url), 'utf8')
   const carpoolSource = readFileSync(new URL('../../pages/CarpoolsPage.vue', import.meta.url), 'utf8')
   const homeSource = readFileSync(new URL('../../pages/HomePage.vue', import.meta.url), 'utf8')
+  const homeSnapshotSource = readFileSync(new URL('../../components/market/HomeMarketSnapshot.vue', import.meta.url), 'utf8')
   const backendSource = readFileSync(new URL('../productCatalogBackend.ts', import.meta.url), 'utf8')
 
   assert.match(adminSource, /readProductCategoryIcon/)
@@ -56,6 +62,11 @@ test('wires category icons through admin upload and public category rendering', 
   assert.match(carpoolSource, /getProductCategoryIconSrc/)
   assert.match(carpoolSource, /getCatalogProductIconSrc/)
   assert.match(homeSource, /useProductCategories/)
-  assert.match(homeSource, /getApiServiceProductIconSrc/)
+  assert.match(homeSnapshotSource, /getApiServiceProductIconSrc/)
+  assert.match(homeSnapshotSource, /getProductIconSrc/)
+  assert.match(apiMarketSource, /useProductCategories/)
+  assert.match(apiMarketSource, /getApiServiceProductIconSrc/)
+  assert.match(apiMarketSource, /getProductIconSrc/)
+  assert.match(apiPackageCardSource, /productIconSrc/)
   assert.match(backendSource, /iconDataUrl: input\.iconDataUrl\.trim\(\)/)
 })

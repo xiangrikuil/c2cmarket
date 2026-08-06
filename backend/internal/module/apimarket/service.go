@@ -22,13 +22,14 @@ type APIModelResolver interface {
 }
 
 type Manager struct {
-	mu           sync.Mutex
-	now          func() time.Time
-	repo         Repository
-	catalog      APIModelResolver
-	contact      *contact.Service
-	services     map[string]Service
-	serviceOrder []string
+	mu                     sync.Mutex
+	now                    func() time.Time
+	repo                   Repository
+	catalog                APIModelResolver
+	contact                *contact.Service
+	services               map[string]Service
+	serviceOrder           []string
+	accountPaymentSettings map[string]AccountPaymentSettings
 }
 
 func NewManager(repo Repository, catalogResolver APIModelResolver, contactService *contact.Service, now func() time.Time) *Manager {
@@ -39,11 +40,12 @@ func NewManager(repo Repository, catalogResolver APIModelResolver, contactServic
 		contactService = contact.NewService(nil, now)
 	}
 	return &Manager{
-		now:      now,
-		repo:     repo,
-		catalog:  catalogResolver,
-		contact:  contactService,
-		services: make(map[string]Service),
+		now:                    now,
+		repo:                   repo,
+		catalog:                catalogResolver,
+		contact:                contactService,
+		services:               make(map[string]Service),
+		accountPaymentSettings: make(map[string]AccountPaymentSettings),
 	}
 }
 
@@ -113,12 +115,17 @@ func (s *Manager) Update(ctx context.Context, user auth.User, input UpdateServic
 		DeclaredMaxUSDAllowancePerIntent: input.DeclaredMaxUSDAllowancePerIntent,
 		AvailableUSDAllowance:            input.AvailableUSDAllowance,
 		QuotaExpiresAt:                   input.QuotaExpiresAt,
+		QuotaUsagePolicy:                 input.QuotaUsagePolicy,
 		MinimumIntentCNY:                 input.MinimumIntentCNY,
 		MaximumIntentCNY:                 input.MaximumIntentCNY,
 		UsageVisibility:                  input.UsageVisibility,
 		PublicAccessNote:                 input.PublicAccessNote,
 		MerchantNote:                     input.MerchantNote,
-		MerchantSupportNote:              input.MerchantSupportNote,
+		AccountPoolType:                  input.AccountPoolType,
+		AccountPoolCustomName:            input.AccountPoolCustomName,
+		MerchantRefundCommitment:         input.MerchantRefundCommitment,
+		DeclaredMaxConcurrency:           input.DeclaredMaxConcurrency,
+		PromptAuditEnabled:               input.PromptAuditEnabled,
 		AccessModes:                      input.AccessModes,
 		Models:                           input.Models,
 		Packages:                         input.Packages,
@@ -193,21 +200,179 @@ func (s *Manager) PublicService(ctx context.Context, serviceID string) (Service,
 	return WithOrderability(service), nil
 }
 
-func (s *Manager) OwnerServices(ctx context.Context, user auth.User, page domain.PageRequest) (domain.Page[Service], *domain.AppError) {
+func (s *Manager) OwnerServices(ctx context.Context, user auth.User, filter OwnerServiceFilter, page domain.PageRequest) (domain.Page[Service], *domain.AppError) {
+	filter, appErr := NormalizeOwnerServiceFilter(filter)
+	if appErr != nil {
+		return domain.Page[Service]{}, appErr
+	}
 	if s.repo != nil {
-		return s.repo.ListAPIServicesByOwner(ctx, user.ID, page)
+		return s.repo.ListAPIServicesByOwner(ctx, user.ID, filter, page)
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	services := []Service{}
+	now := s.now()
 	for _, id := range s.serviceOrder {
-		service := WithOrderability(s.services[id])
-		if service.OwnerUserID == user.ID {
+		service := WithOrderabilityAt(s.services[id], now)
+		service.SalesSummary = SalesSummaryForService(service, now)
+		if service.OwnerUserID == user.ID && MatchesOwnerSalesView(service.SalesSummary.OverallState, filter.SalesView) {
 			services = append(services, service)
 		}
 	}
 	return domain.PageItems(services, page), nil
+}
+
+func NormalizeOwnerServiceFilter(filter OwnerServiceFilter) (OwnerServiceFilter, *domain.AppError) {
+	filter.SalesView = strings.TrimSpace(filter.SalesView)
+	if filter.SalesView == "" {
+		filter.SalesView = OwnerSalesViewActive
+	}
+	switch filter.SalesView {
+	case OwnerSalesViewActive, OwnerSalesViewExpired, OwnerSalesViewPaused, OwnerSalesViewDraft, OwnerSalesViewAll:
+		return filter, nil
+	default:
+		return OwnerServiceFilter{}, domain.NewFieldError(
+			http.StatusUnprocessableEntity,
+			domain.CodeValidationFailed,
+			"Invalid owner sales view",
+			"销售状态筛选无效。",
+			"salesView",
+			"invalid",
+			"salesView 必须是 active、expired、paused、draft 或 all。",
+		)
+	}
+}
+
+func MatchesOwnerSalesView(state, salesView string) bool {
+	switch salesView {
+	case OwnerSalesViewActive:
+		return state == ServiceSalesStateSelling || state == ServiceSalesStateUpcoming
+	case OwnerSalesViewExpired:
+		return state == ServiceSalesStateExpired
+	case OwnerSalesViewPaused:
+		return state == ServiceSalesStatePaused
+	case OwnerSalesViewDraft:
+		return state == ServiceSalesStateDraft || state == ServiceSalesStateOffline
+	case OwnerSalesViewAll:
+		return true
+	default:
+		return false
+	}
+}
+
+func SalesSummaryForService(service Service, now time.Time) ServiceSalesSummary {
+	channels := []ServiceSalesChannel{}
+	if service.BillingMode == ServiceBillingModeMetered {
+		available := strings.TrimSpace(service.AvailableUSDAllowance)
+		if available == "" {
+			available = strings.TrimSpace(service.DeclaredMaxUSDAllowancePerIntent)
+		}
+		channels = append(channels, ServiceSalesChannel{
+			Kind:                  ServiceSalesChannelFlexibleQuota,
+			State:                 flexibleQuotaSalesState(service, now),
+			AvailableUSDAllowance: available,
+			ExpiresAt:             service.QuotaExpiresAt,
+		})
+	}
+	overall := serviceFallbackSalesState(service, now)
+	if len(channels) > 0 {
+		overall = HighestPrioritySalesState(channels)
+	}
+	return ServiceSalesSummary{OverallState: overall, Channels: channels}
+}
+
+func HighestPrioritySalesState(channels []ServiceSalesChannel) string {
+	bestState := ServiceSalesStateArchived
+	bestPriority := salesStatePriority(bestState)
+	for _, channel := range channels {
+		priority := salesStatePriority(channel.State)
+		if priority < bestPriority {
+			bestPriority = priority
+			bestState = channel.State
+		}
+	}
+	return bestState
+}
+
+func salesStatePriority(state string) int {
+	switch state {
+	case ServiceSalesStateSelling:
+		return 0
+	case ServiceSalesStateUpcoming:
+		return 1
+	case ServiceSalesStatePaused:
+		return 2
+	case ServiceSalesStateSoldOut:
+		return 3
+	case ServiceSalesStateExpired:
+		return 4
+	case ServiceSalesStateDraft:
+		return 5
+	case ServiceSalesStateOffline:
+		return 6
+	case ServiceSalesStateArchived:
+		return 7
+	default:
+		return 8
+	}
+}
+
+func flexibleQuotaSalesState(service Service, now time.Time) string {
+	if state := serviceLifecycleSalesState(service); state != "" {
+		return state
+	}
+	if service.QuotaExpiresAt == nil {
+		return ServiceSalesStateOffline
+	}
+	if !service.QuotaExpiresAt.After(now) {
+		return ServiceSalesStateExpired
+	}
+	available := strings.TrimSpace(service.AvailableUSDAllowance)
+	if available == "" {
+		available = strings.TrimSpace(service.DeclaredMaxUSDAllowancePerIntent)
+	}
+	if amount, ok := parseNonNegativeDecimal(available); !ok || amount.Sign() == 0 {
+		return ServiceSalesStateSoldOut
+	}
+	if WithOrderabilityAt(service, now).IsOrderable {
+		return ServiceSalesStateSelling
+	}
+	return ServiceSalesStateOffline
+}
+
+func serviceFallbackSalesState(service Service, now time.Time) string {
+	if state := serviceLifecycleSalesState(service); state != "" {
+		return state
+	}
+	orderable := WithOrderabilityAt(service, now)
+	if orderable.IsOrderable {
+		return ServiceSalesStateSelling
+	}
+	for _, reason := range orderable.OrderableReasons {
+		if reason == "quota_sold_out" || reason == "package_sold_out" {
+			return ServiceSalesStateSoldOut
+		}
+		if reason == "quota_expired" {
+			return ServiceSalesStateExpired
+		}
+	}
+	return ServiceSalesStateOffline
+}
+
+func serviceLifecycleSalesState(service Service) string {
+	switch {
+	case service.PublicationStatus == ServicePublicationStatusArchived || service.ModerationStatus == ServiceModerationStatusRemoved:
+		return ServiceSalesStateArchived
+	case service.PublicationStatus == ServicePublicationStatusOwnerPaused || service.ModerationStatus == ServiceModerationStatusAdminSuspended:
+		return ServiceSalesStatePaused
+	case service.ReviewStatus != ServiceReviewStatusApproved:
+		return ServiceSalesStateDraft
+	case service.PublicationStatus != ServicePublicationStatusOnline:
+		return ServiceSalesStateOffline
+	default:
+		return ""
+	}
 }
 
 func (s *Manager) OwnerService(ctx context.Context, user auth.User, serviceID string) (Service, *domain.AppError) {
@@ -416,6 +581,10 @@ func (s *Manager) buildFromInput(ctx context.Context, current Service, input Cre
 		moderationStatus = ServiceModerationStatusClear
 	}
 
+	quotaUsagePolicy := UnspecifiedQuotaUsagePolicy()
+	if strings.TrimSpace(input.BillingMode) == ServiceBillingModeMetered {
+		quotaUsagePolicy = NormalizeQuotaUsagePolicy(input.QuotaUsagePolicy)
+	}
 	service := Service{
 		ID:                               serviceID,
 		OwnerUserID:                      input.OwnerUserID,
@@ -431,12 +600,20 @@ func (s *Manager) buildFromInput(ctx context.Context, current Service, input Cre
 		DeclaredMaxUSDAllowancePerIntent: strings.TrimSpace(input.DeclaredMaxUSDAllowancePerIntent),
 		AvailableUSDAllowance:            strings.TrimSpace(input.AvailableUSDAllowance),
 		QuotaExpiresAt:                   quotaExpiresAt,
+		QuotaUsagePolicy:                 quotaUsagePolicy,
 		MinimumIntentCNY:                 strings.TrimSpace(input.MinimumIntentCNY),
 		MaximumIntentCNY:                 strings.TrimSpace(input.MaximumIntentCNY),
 		UsageVisibility:                  strings.TrimSpace(input.UsageVisibility),
 		PublicAccessNote:                 strings.TrimSpace(input.PublicAccessNote),
 		MerchantNote:                     strings.TrimSpace(input.MerchantNote),
-		MerchantSupportNote:              strings.TrimSpace(input.MerchantSupportNote),
+		MerchantSupportNote:              MerchantSupportNote(*input.MerchantRefundCommitment),
+		AccountPoolType:                  strings.TrimSpace(input.AccountPoolType),
+		AccountPoolCustomName:            strings.TrimSpace(input.AccountPoolCustomName),
+		MerchantRefundCommitment:         *input.MerchantRefundCommitment,
+		DeclaredTTFTBand:                 current.DeclaredTTFTBand,
+		DeclaredMaxConcurrency:           input.DeclaredMaxConcurrency,
+		PerformanceConfirmedAt:           current.PerformanceConfirmedAt,
+		PromptAuditEnabled:               input.PromptAuditEnabled,
 		AcceptingOrders:                  current.AcceptingOrders,
 		PaymentWindowMinutes:             current.PaymentWindowMinutes,
 		ReviewStatus:                     reviewStatus,
@@ -530,19 +707,20 @@ func (s *Manager) buildFromInput(ctx context.Context, current Service, input Cre
 	retainedPackageIDs := make(map[string]bool, len(input.Packages))
 	for _, packageInput := range input.Packages {
 		pack := ServicePackage{
-			ID:             uuid.NewString(),
-			APIServiceID:   service.ID,
-			Name:           strings.TrimSpace(packageInput.Name),
-			PriceCNY:       strings.TrimSpace(packageInput.PriceCNY),
-			PanelAllowance: strings.TrimSpace(packageInput.PanelAllowance),
-			DurationDays:   packageInput.DurationDays,
-			StockTotal:     packageInput.StockTotal,
-			StockAvailable: packageInput.StockTotal,
-			Description:    strings.TrimSpace(packageInput.Description),
-			Enabled:        packageInput.Enabled,
-			SortOrder:      packageInput.SortOrder,
-			CreatedAt:      now,
-			UpdatedAt:      now,
+			ID:               uuid.NewString(),
+			APIServiceID:     service.ID,
+			Name:             strings.TrimSpace(packageInput.Name),
+			PriceCNY:         strings.TrimSpace(packageInput.PriceCNY),
+			PanelAllowance:   strings.TrimSpace(packageInput.PanelAllowance),
+			QuotaUsagePolicy: NormalizeQuotaUsagePolicy(packageInput.QuotaUsagePolicy),
+			DurationDays:     packageInput.DurationDays,
+			StockTotal:       packageInput.StockTotal,
+			StockAvailable:   packageInput.StockTotal,
+			Description:      strings.TrimSpace(packageInput.Description),
+			Enabled:          packageInput.Enabled,
+			SortOrder:        packageInput.SortOrder,
+			CreatedAt:        now,
+			UpdatedAt:        now,
 		}
 		if packageID := strings.TrimSpace(packageInput.ID); !isCreating && packageID != "" {
 			existing, ok := currentPackages[packageID]
@@ -615,8 +793,14 @@ func validateCreateInput(input CreateServiceInput, now time.Time) *domain.AppErr
 	if err := validateOptionalNonSecretText("merchantNote", input.MerchantNote); err != nil {
 		return err
 	}
-	if err := validateOptionalNonSecretText("merchantSupportNote", input.MerchantSupportNote); err != nil {
-		return err
+	if appErr := validateAccountPool(input.AccountPoolType, input.AccountPoolCustomName); appErr != nil {
+		return appErr
+	}
+	if input.MerchantRefundCommitment == nil {
+		return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Merchant refund commitment required", "请选择是否提供商户退款承诺。", "merchantRefundCommitment", "required", "请选择无额外退款承诺或商户全额退款承诺。")
+	}
+	if appErr := validateServiceDeclaration(input); appErr != nil {
+		return appErr
 	}
 	switch strings.TrimSpace(input.DistributionSystem) {
 	case ServiceDistributionSub2API, "new_api_proxy", "other":
@@ -634,7 +818,12 @@ func validateCreateInput(input CreateServiceInput, now time.Time) *domain.AppErr
 		if available, ok := parseNonNegativeDecimal(input.AvailableUSDAllowance); !ok || available.Sign() < 0 {
 			return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Available USD allowance invalid", "可售美元额度格式不正确。", "availableUsdAllowance", "invalid", "可售美元额度必须是大于等于 0 的数字。")
 		}
-	case ServiceBillingModeManual, ServiceBillingModeFixedPackage:
+		if appErr := ValidateQuotaUsagePolicy(input.QuotaUsagePolicy, "quotaUsagePolicy", false); appErr != nil {
+			return appErr
+		}
+	case ServiceBillingModeManual:
+		return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Billing mode unsupported", "当前版本暂不支持商户手工核对计费。", "billingMode", "unsupported", "当前版本暂不支持商户手工核对计费，请使用美元额度或固定套餐。")
+	case ServiceBillingModeFixedPackage:
 		if appErr := validateQuotaExpiresAt(input.QuotaExpiresAt, now, false); appErr != nil {
 			return appErr
 		}
@@ -717,6 +906,9 @@ func validateCreateInput(input CreateServiceInput, now time.Time) *domain.AppErr
 	seenPackageIDs := map[string]bool{}
 	for i, pack := range input.Packages {
 		field := fmt.Sprintf("packages.%d", i)
+		if appErr := ValidateQuotaUsagePolicy(pack.QuotaUsagePolicy, field+".quotaUsagePolicy", false); appErr != nil {
+			return appErr
+		}
 		if strings.TrimSpace(pack.Name) == "" {
 			return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Package name required", "套餐名称不能为空。", field+".name", "required", "套餐名称不能为空。")
 		}
@@ -817,6 +1009,60 @@ func parseQuotaExpiresAt(value string) (*time.Time, bool) {
 	return &expiresAt, true
 }
 
+func validateServiceDeclaration(input CreateServiceInput) *domain.AppError {
+	if input.DeclaredMaxConcurrency < 1 {
+		return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Maximum concurrency required", "必须填写商户声明最大并发。", "declaredMaxConcurrency", "required", "请输入大于 0 的最大并发。")
+	}
+	if input.PromptAuditEnabled == nil {
+		return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Prompt audit selection required", "必须声明是否开启提示词审计。", "promptAuditEnabled", "required", "请选择是否开启提示词审计。")
+	}
+	return nil
+}
+
+func validateAccountPool(poolType, customName string) *domain.AppError {
+	poolType = strings.TrimSpace(poolType)
+	customName = strings.TrimSpace(customName)
+	switch poolType {
+	case AccountPoolGPTPro20x, AccountPoolGPTPro5x, AccountPoolGPTPlus:
+		if customName != "" {
+			return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Account pool custom name invalid", "预设号池不能填写自定义名称。", "accountPoolCustomName", "invalid", "只有选择其他号池时才能填写自定义名称。")
+		}
+	case AccountPoolCustom:
+		length := len([]rune(customName))
+		if length < 2 || length > 40 {
+			return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Account pool custom name invalid", "自定义号池名称长度必须为 2 到 40 个字符。", "accountPoolCustomName", "invalid", "请输入 2 到 40 个字符的号池名称。")
+		}
+		if err := validateNonSecretText("accountPoolCustomName", customName); err != nil {
+			return err
+		}
+	default:
+		return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Account pool invalid", "请选择有效的号池类型。", "accountPoolType", "invalid", "请选择 GPT Pro 20x、GPT Pro 5x、GPT Plus 或其他。")
+	}
+	return nil
+}
+
+func AccountPoolLabel(service Service) string {
+	switch service.AccountPoolType {
+	case AccountPoolGPTPro20x:
+		return "GPT Pro 20x"
+	case AccountPoolGPTPro5x:
+		return "GPT Pro 5x"
+	case AccountPoolGPTPlus:
+		return "GPT Plus"
+	case AccountPoolCustom:
+		return strings.TrimSpace(service.AccountPoolCustomName)
+	default:
+		return ""
+	}
+}
+
+func MerchantSupportNote(enabled bool) string {
+	if !enabled {
+		return "无额外退款承诺，具体问题由双方站外协商。平台不托管、不垫付、不代赔。"
+	}
+	return "商户退款承诺：订单服务有效期内，如未交付、实际号池/模型/额度与订单快照不符，或交付后连续不可用超过 1 小时且不属于排除情形，商户承诺退还订单全部实付金额。买家违规、超出商户声明最大并发、额度正常耗尽、正常上游限流或买家自身网络问题不适用。平台不托管、不垫付、不代赔。"
+}
+
 func validateAdminActionInput(input ServiceAdminActionInput) *domain.AppError {
 	if strings.TrimSpace(input.ServiceID) == "" {
 		return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "API service required", "必须提供 API 服务。", "serviceId", "required", "必须提供 API 服务。")
@@ -904,7 +1150,8 @@ func OrderableReasonsAt(service Service, now time.Time) []string {
 	if enabledPaymentOptionCount(service.PaymentOptions) == 0 {
 		reasons = append(reasons, "payment_method_required")
 	}
-	if service.BillingMode == ServiceBillingModeMetered {
+	switch service.BillingMode {
+	case ServiceBillingModeMetered:
 		availableText := strings.TrimSpace(service.AvailableUSDAllowance)
 		if availableText == "" {
 			availableText = strings.TrimSpace(service.DeclaredMaxUSDAllowancePerIntent)
@@ -917,7 +1164,7 @@ func OrderableReasonsAt(service Service, now time.Time) []string {
 		} else if !service.QuotaExpiresAt.After(now) {
 			reasons = append(reasons, "quota_expired")
 		}
-	} else if service.BillingMode == ServiceBillingModeFixedPackage {
+	case ServiceBillingModeFixedPackage:
 		available := false
 		for _, pack := range service.Packages {
 			if pack.Enabled && pack.StockAvailable > 0 && len(pack.Models) > 0 {
@@ -928,6 +1175,8 @@ func OrderableReasonsAt(service Service, now time.Time) []string {
 		if !available {
 			reasons = append(reasons, "package_sold_out")
 		}
+	default:
+		reasons = append(reasons, "billing_mode_unsupported")
 	}
 	return reasons
 }
@@ -1085,36 +1334,9 @@ func validateOrderSettingsInput(input UpdateOrderSettingsInput) *domain.AppError
 	if input.PaymentWindowMinutes < 3 || input.PaymentWindowMinutes > 15 {
 		return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Payment window invalid", "付款窗口必须在 3 到 15 分钟之间。", "paymentWindowMinutes", "range", "付款窗口必须在 3 到 15 分钟之间。")
 	}
-	if len(input.PaymentOptions) == 0 {
-		return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Payment option required", "至少配置一种收款方式。", "paymentOptions", "required", "至少配置一种收款方式。")
-	}
-	seen := map[string]bool{}
-	enabledCount := 0
-	for i, option := range input.PaymentOptions {
-		field := fmt.Sprintf("paymentOptions.%d", i)
-		method := strings.TrimSpace(option.PaymentMethod)
-		if !IsSupportedPaymentMethod(method) {
-			return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Payment method invalid", "付款方式不支持。", field+".paymentMethod", "invalid", "付款方式不支持。")
-		}
-		if seen[method] {
-			return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Payment method duplicated", "付款方式不能重复。", field+".paymentMethod", "duplicate", "付款方式不能重复。")
-		}
-		seen[method] = true
-		if option.Enabled {
-			enabledCount++
-			if requiresPaymentQRCode(method) && strings.TrimSpace(option.PaymentQRCodeDataURL) == "" {
-				return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Payment QR code required", "启用微信或支付宝收款必须上传收款码。", field+".paymentQrCodeDataUrl", "required", "必须上传收款码。")
-			}
-			if !requiresPaymentQRCode(method) && strings.TrimSpace(option.PaymentInstructions) == "" {
-				return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Payment instructions required", "启用收款方式必须填写收款说明。", field+".paymentInstructions", "required", "必须填写收款说明。")
-			}
-		}
-		if err := validateOptionalNonSecretText(field+".paymentInstructions", option.PaymentInstructions); err != nil {
-			return err
-		}
-		if err := validateOptionalPaymentQRCodeDataURL(field+".paymentQrCodeDataUrl", option.PaymentQRCodeDataURL); err != nil {
-			return err
-		}
+	enabledCount, appErr := validatePaymentOptionInputs(input.PaymentOptions)
+	if appErr != nil {
+		return appErr
 	}
 	if input.AcceptingOrders && enabledCount == 0 {
 		return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Payment method required", "开启接单前至少启用一种收款方式。", "paymentOptions", "required", "至少启用一种收款方式。")

@@ -37,6 +37,9 @@ func (s *Store) CreateAPIService(ctx context.Context, service apimarket.Service)
 	if appErr := upsertAPIServiceInTx(ctx, tx, service); appErr != nil {
 		return appErr
 	}
+	if appErr := qualifyPromotionRewardsForAPIServiceInTx(ctx, tx, service.ID, service.UpdatedAt); appErr != nil {
+		return appErr
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return internalStoreError()
 	}
@@ -74,17 +77,41 @@ func (s *Store) GetPublicAPIService(ctx context.Context, serviceID string) (apim
 }
 
 func publicAPIServiceOrderablePredicate(alias string) string {
+	return publicAPIServiceOrderablePredicateAt(alias, "now()")
+}
+
+func publicAPIServiceOrderablePredicateAt(alias, currentTimeExpression string) string {
 	alias = strings.TrimSpace(alias)
 	if alias == "" {
 		alias = "api_services"
 	}
+	currentTimeExpression = strings.TrimSpace(currentTimeExpression)
+	if currentTimeExpression == "" {
+		currentTimeExpression = "now()"
+	}
 	return fmt.Sprintf(`%[1]s.review_status = 'approved'
 		  AND %[1]s.publication_status = 'online'
 		  AND %[1]s.moderation_status = 'clear'
+		  AND %[1]s.billing_mode IN ('metered_usd_quota', 'fixed_package')
 		  AND %[1]s.accepting_orders = true
+		  AND EXISTS (
+		    SELECT 1 FROM users owner
+		    WHERE owner.id = %[1]s.owner_user_id
+		      AND owner.account_status = 'active'
+		  )
+		  AND NOT EXISTS (
+		    SELECT 1
+		    FROM user_restrictions restriction
+		    WHERE restriction.user_id = %[1]s.owner_user_id
+		      AND restriction.role_scope IN ('seller', 'all')
+		      AND restriction.action_code IN ('api_service_publish', 'all')
+		      AND restriction.revoked_at IS NULL
+		      AND restriction.starts_at <= %[3]s
+		      AND (restriction.ends_at IS NULL OR restriction.ends_at > %[3]s)
+		  )
 		  AND %[1]s.payment_window_minutes BETWEEN 3 AND 15
 		  AND (%[1]s.billing_mode <> 'metered_usd_quota' OR %[1]s.available_usd_allowance > 0)
-		  AND (%[1]s.billing_mode <> 'metered_usd_quota' OR %[1]s.quota_expires_at > now())
+		  AND (%[1]s.billing_mode <> 'metered_usd_quota' OR %[1]s.quota_expires_at > %[3]s)
 		  AND (%[1]s.billing_mode <> 'fixed_package' OR EXISTS (
 		    SELECT 1
 		    FROM api_service_packages package_row
@@ -102,11 +129,7 @@ func publicAPIServiceOrderablePredicate(alias string) string {
 		    WHERE po.api_service_id = %[1]s.id
 		      AND po.enabled = true
 		      AND po.payment_method IN (%[2]s)
-		  )`, alias, apiServiceSupportedPaymentMethodsSQL)
-}
-
-func (s *Store) ListAPIServicesByOwner(ctx context.Context, ownerUserID string, page domain.PageRequest) (domain.Page[apimarket.Service], *domain.AppError) {
-	return s.listAPIServicesPage(ctx, `WHERE owner_user_id = $1`, []any{ownerUserID}, page)
+		  )`, alias, apiServiceSupportedPaymentMethodsSQL, currentTimeExpression)
 }
 
 func (s *Store) GetAPIServiceForOwner(ctx context.Context, ownerUserID, serviceID string) (apimarket.Service, *domain.AppError) {
@@ -172,6 +195,9 @@ func (s *Store) UpdateAPIService(ctx context.Context, input apimarket.UpdateServ
 	if err != nil {
 		return apimarket.Service{}, internalStoreError()
 	}
+	if appErr := qualifyPromotionRewardsForAPIServiceInTx(ctx, tx, service.ID, now); appErr != nil {
+		return apimarket.Service{}, appErr
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return apimarket.Service{}, internalStoreError()
 	}
@@ -210,6 +236,9 @@ func (s *Store) UpdateAPIServiceOrderSettings(ctx context.Context, input apimark
 		return apimarket.Service{}, domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Service not orderable", "当前 API 服务不满足接单条件。", "acceptingOrders", "not_orderable", strings.Join(service.OrderableReasons, "；"))
 	}
 	if appErr := updateAPIServiceOrderSettingsInTx(ctx, tx, service); appErr != nil {
+		return apimarket.Service{}, appErr
+	}
+	if appErr := qualifyPromotionRewardsForAPIServiceInTx(ctx, tx, service.ID, now); appErr != nil {
 		return apimarket.Service{}, appErr
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -253,6 +282,9 @@ func (s *Store) SubmitAPIServiceForReview(ctx context.Context, user auth.User, i
 	if appErr := updateAPIServiceStateInTx(ctx, tx, service); appErr != nil {
 		return apimarket.Service{}, appErr
 	}
+	if appErr := qualifyPromotionRewardsForAPIServiceInTx(ctx, tx, service.ID, now); appErr != nil {
+		return apimarket.Service{}, appErr
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return apimarket.Service{}, internalStoreError()
 	}
@@ -290,6 +322,9 @@ func (s *Store) UpdateAPIServicePublication(ctx context.Context, input apimarket
 	if appErr := updateAPIServiceStateInTx(ctx, tx, service); appErr != nil {
 		return apimarket.Service{}, appErr
 	}
+	if appErr := qualifyPromotionRewardsForAPIServiceInTx(ctx, tx, service.ID, now); appErr != nil {
+		return apimarket.Service{}, appErr
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return apimarket.Service{}, internalStoreError()
 	}
@@ -320,6 +355,9 @@ func (s *Store) UpdateAPIServiceModeration(ctx context.Context, user auth.User, 
 	}
 	service = applyAPIServiceAdminAction(service, input, now)
 	if appErr := updateAPIServiceStateInTx(ctx, tx, service); appErr != nil {
+		return apimarket.Service{}, appErr
+	}
+	if appErr := qualifyPromotionRewardsForAPIServiceInTx(ctx, tx, service.ID, now); appErr != nil {
 		return apimarket.Service{}, appErr
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -501,21 +539,90 @@ func (s *Store) updateAPIPurchaseIntentWithIdempotency(ctx context.Context, entr
 
 const apiServiceColumns = `
 	id::text, owner_user_id::text, COALESCE(merchant_profile_id::text, ''), merchant_identity_mode,
-	COALESCE((SELECT mp.display_name FROM merchant_profiles mp WHERE mp.id = api_services.merchant_profile_id AND mp.owner_user_id = api_services.owner_user_id), ''),
-	COALESCE((SELECT mp.slug FROM merchant_profiles mp WHERE mp.id = api_services.merchant_profile_id AND mp.owner_user_id = api_services.owner_user_id), ''),
-	owner_contact_method_id::text, title, short_description, COALESCE(source_url, ''), distribution_system, billing_mode,
+	COALESCE(CASE WHEN merchant_identity_mode = 'store_alias'
+		THEN (SELECT mp.display_name FROM merchant_profiles mp WHERE mp.id = api_services.merchant_profile_id AND mp.owner_user_id = api_services.owner_user_id)
+		ELSE (SELECT u.display_name FROM users u WHERE u.id = api_services.owner_user_id)
+	END, ''),
+	COALESCE(CASE WHEN merchant_identity_mode = 'store_alias'
+		THEN (SELECT mp.slug FROM merchant_profiles mp WHERE mp.id = api_services.merchant_profile_id AND mp.owner_user_id = api_services.owner_user_id)
+		ELSE (SELECT u.username FROM users u WHERE u.id = api_services.owner_user_id)
+	END, ''),
+	COALESCE(CASE WHEN merchant_identity_mode = 'store_alias'
+		THEN (SELECT mp.avatar_url FROM merchant_profiles mp WHERE mp.id = api_services.merchant_profile_id AND mp.owner_user_id = api_services.owner_user_id)
+		ELSE (
+			SELECT CASE WHEN u.avatar_mode = 'custom_url'
+				THEN u.custom_avatar_url
+				ELSE COALESCE(l.avatar_url, u.avatar_url)
+			END
+			FROM users u
+			LEFT JOIN linux_do_bindings l ON l.user_id = u.id
+			WHERE u.id = api_services.owner_user_id
+		)
+		END, ''),
+	owner_contact_method_id::text, title, short_description, COALESCE(source_url, ''),
+	COALESCE((
+	  SELECT CASE
+	    WHEN verification.source_url IS DISTINCT FROM api_services.source_url
+	      OR verification.expected_external_user_id IS DISTINCT FROM COALESCE((
+	        SELECT binding.linux_do_user_id
+	        FROM linux_do_bindings binding
+	        WHERE binding.user_id = api_services.owner_user_id
+	      ), '')
+	    THEN 'pending'
+	    WHEN verification.status = 'verified'
+	      AND verification.expires_at IS NOT NULL
+	      AND verification.expires_at <= now()
+	    THEN 'expired'
+	    ELSE verification.status
+	  END
+	  FROM source_author_verifications verification
+	  WHERE verification.resource_type = 'api_service'
+	    AND verification.resource_id = api_services.id
+	), 'not_submitted'),
+	(
+	  SELECT verification.verified_at
+	  FROM source_author_verifications verification
+	  WHERE verification.resource_type = 'api_service'
+	    AND verification.resource_id = api_services.id
+	    AND verification.source_url = api_services.source_url
+	    AND verification.expected_external_user_id = COALESCE((
+	      SELECT binding.linux_do_user_id
+	      FROM linux_do_bindings binding
+	      WHERE binding.user_id = api_services.owner_user_id
+	    ), '')
+	    AND verification.status = 'verified'
+	),
+	(
+	  SELECT verification.expires_at
+	  FROM source_author_verifications verification
+	  WHERE verification.resource_type = 'api_service'
+	    AND verification.resource_id = api_services.id
+	    AND verification.source_url = api_services.source_url
+	    AND verification.expected_external_user_id = COALESCE((
+	      SELECT binding.linux_do_user_id
+	      FROM linux_do_bindings binding
+	      WHERE binding.user_id = api_services.owner_user_id
+	    ), '')
+	    AND verification.status = 'verified'
+	),
+	distribution_system, billing_mode,
 	COALESCE(declared_cny_per_usd_allowance::text, ''), COALESCE(declared_max_usd_allowance_per_intent::text, ''),
 	COALESCE(available_usd_allowance::text, ''),
 	quota_expires_at,
+	five_hour_limit_mode, COALESCE(five_hour_limit_usd::text, ''),
+	daily_limit_mode, COALESCE(daily_limit_usd::text, ''),
 	minimum_intent_cny::text, COALESCE(maximum_intent_cny::text, ''), usage_visibility,
 	COALESCE(public_access_note, ''), COALESCE(merchant_note, ''), COALESCE(merchant_support_note, ''),
+	COALESCE(account_pool_type, ''), COALESCE(account_pool_custom_name, ''), merchant_refund_commitment,
+	COALESCE(declared_ttft_band, ''), COALESCE(declared_max_concurrency, 0), performance_confirmed_at,
 	accepting_orders, payment_window_minutes,
 	review_status, publication_status, moderation_status, COALESCE(approved_by_admin_id::text, ''),
-	approved_at, COALESCE(moderation_reason, ''), created_at, updated_at, version
+		approved_at, COALESCE(moderation_reason, ''), created_at, updated_at, version,
+		prompt_audit_enabled
 `
 
 const apiPurchaseIntentColumns = `
-	id::text, api_service_id::text, api_service_owner_user_id::text, buyer_user_id::text,
+	id::text, purchase_kind, api_service_id::text, api_service_owner_user_id::text, buyer_user_id::text,
 	owner_user_id::text, buyer_contact_method_id::text, buyer_contact_method_version_id::text,
 	owner_contact_method_id::text, owner_contact_method_version_id::text, status,
 	requested_cny_amount::text, COALESCE(requested_usd_allowance::text, ''),
@@ -526,10 +633,16 @@ const apiPurchaseIntentColumns = `
 	COALESCE(declared_cny_per_usd_allowance_snapshot::text, ''),
 	COALESCE(declared_max_usd_allowance_per_intent_snapshot::text, ''),
 	minimum_intent_cny_snapshot::text, COALESCE(maximum_intent_cny_snapshot::text, ''),
-	pricing_snapshot::text, COALESCE(buyer_note, ''),
+	pricing_snapshot::text,
+	five_hour_limit_mode_snapshot, COALESCE(five_hour_limit_usd_snapshot::text, ''),
+	daily_limit_mode_snapshot, COALESCE(daily_limit_usd_snapshot::text, ''),
+	COALESCE(buyer_note, ''),
+	COALESCE(api_quota_batch_id::text, ''), COALESCE(api_quota_offer_id::text, ''),
+	COALESCE(api_quota_sale_round_id::text, ''), COALESCE(api_quota_allocation_id::text, ''),
+	COALESCE(api_quota_inventory_unit_id::text, ''), COALESCE(quota_offer_snapshot::text, ''),
 	contacted_at, buyer_cancelled_at, COALESCE(buyer_cancel_reason, ''),
 	owner_closed_at, COALESCE(owner_close_reason, ''),
-	created_at, updated_at, version
+		created_at, updated_at, version, prompt_audit_enabled_snapshot
 `
 
 func (s *Store) listAPIServices(ctx context.Context, whereClause string, args []any) ([]apimarket.Service, *domain.AppError) {
@@ -706,6 +819,8 @@ func (s *Store) loadAPIServiceChildren(ctx context.Context, q queryer, service *
 
 	packageRows, err := queryRows(ctx, q, `
 		SELECT id::text, api_service_id::text, name, price_cny::text, panel_allowance::text,
+		       five_hour_limit_mode, COALESCE(five_hour_limit_usd::text, ''),
+		       daily_limit_mode, COALESCE(daily_limit_usd::text, ''),
 		       duration_days, stock_total, stock_available, description, enabled, sort_order,
 		       created_at, updated_at
 		FROM api_service_packages
@@ -725,6 +840,10 @@ func (s *Store) loadAPIServiceChildren(ctx context.Context, q queryer, service *
 			&pack.Name,
 			&pack.PriceCNY,
 			&pack.PanelAllowance,
+			&pack.QuotaUsagePolicy.FiveHour.Mode,
+			&pack.QuotaUsagePolicy.FiveHour.AmountUSD,
+			&pack.QuotaUsagePolicy.Daily.Mode,
+			&pack.QuotaUsagePolicy.Daily.AmountUSD,
 			&pack.DurationDays,
 			&pack.StockTotal,
 			&pack.StockAvailable,
@@ -787,8 +906,8 @@ func (s *Store) loadAPIServiceChildren(ctx context.Context, q queryer, service *
 
 	paymentRows, err := queryRows(ctx, q, `
 		SELECT id::text, api_service_id::text, payment_method, enabled,
-		       payment_instructions, COALESCE(payment_qr_code_data_url, ''),
-		       created_at, updated_at, version
+			payment_instructions, COALESCE(payment_qr_code_data_url, ''),
+			created_at, updated_at, version
 		FROM api_service_payment_options
 		WHERE api_service_id = $1
 		ORDER BY payment_method ASC
@@ -877,7 +996,7 @@ func (s *Store) createAPIPurchaseIntentInTx(ctx context.Context, tx pgx.Tx, inpu
 	if appErr := insertAPIPurchaseIntentInTx(ctx, tx, intent); appErr != nil {
 		return apiintent.Intent{}, appErr
 	}
-	if appErr := insertAPIPurchaseIntentEventAndTargetNotification(ctx, tx, intent, intent.BuyerUserID, intent.OwnerUserID, "api_purchase_intent.created", "收到新的购买意向", "买家已提交购买意向，请查看详情并站外联系。", input.RequestID, now); appErr != nil {
+	if appErr := insertAPIPurchaseIntentEventAndTargetNotification(ctx, tx, intent, intent.BuyerUserID, intent.OwnerUserID, "api_purchase_intent.created", "收到新的购买意向", "买家已提交购买意向，请查看详情并及时沟通。", input.RequestID, now); appErr != nil {
 		return apiintent.Intent{}, appErr
 	}
 	intent, appErr = s.withAPIPurchaseIntentMerchantContact(ctx, tx, intent)
@@ -956,24 +1075,30 @@ func upsertAPIServiceInTx(ctx context.Context, tx pgx.Tx, service apimarket.Serv
 			title, short_description, source_url, distribution_system, billing_mode,
 			declared_cny_per_usd_allowance, declared_max_usd_allowance_per_intent, available_usd_allowance,
 			quota_expires_at,
+			five_hour_limit_mode, five_hour_limit_usd, daily_limit_mode, daily_limit_usd,
 			minimum_intent_cny, maximum_intent_cny, usage_visibility,
 			public_access_note, merchant_note, merchant_support_note,
+			account_pool_type, account_pool_custom_name, merchant_refund_commitment,
+			declared_ttft_band, declared_max_concurrency, performance_confirmed_at,
 			review_status, publication_status, moderation_status,
 			approved_by_admin_id, approved_at, moderation_reason,
 			accepting_orders, payment_window_minutes,
-			created_at, updated_at, version
+			created_at, updated_at, version, prompt_audit_enabled
 		)
 		VALUES (
 			$1, $2, $3, $4, $5,
 			$6, $7, $8, $9, $10,
 			$11, $12, $13,
 			$14,
-			$15, $16, $17,
-			$18, $19, $20,
-			$21, $22, $23,
-			$24, $25, $26,
-			$27, $28,
-			$29, $30, $31
+			$15, $16, $17, $18,
+			$19, $20, $21,
+			$22, $23, $24,
+			$25, $26, $27,
+			$28, $29, $30,
+			$31, $32, $33,
+			$34, $35, $36,
+			$37, $38,
+				$39, $40, $41, $42
 		)
 		ON CONFLICT (id) DO UPDATE
 		SET merchant_profile_id = EXCLUDED.merchant_profile_id,
@@ -988,12 +1113,22 @@ func upsertAPIServiceInTx(ctx context.Context, tx pgx.Tx, service apimarket.Serv
 		    declared_max_usd_allowance_per_intent = EXCLUDED.declared_max_usd_allowance_per_intent,
 		    available_usd_allowance = EXCLUDED.available_usd_allowance,
 		    quota_expires_at = EXCLUDED.quota_expires_at,
+		    five_hour_limit_mode = EXCLUDED.five_hour_limit_mode,
+		    five_hour_limit_usd = EXCLUDED.five_hour_limit_usd,
+		    daily_limit_mode = EXCLUDED.daily_limit_mode,
+		    daily_limit_usd = EXCLUDED.daily_limit_usd,
 		    minimum_intent_cny = EXCLUDED.minimum_intent_cny,
 		    maximum_intent_cny = EXCLUDED.maximum_intent_cny,
 		    usage_visibility = EXCLUDED.usage_visibility,
 		    public_access_note = EXCLUDED.public_access_note,
 		    merchant_note = EXCLUDED.merchant_note,
 		    merchant_support_note = EXCLUDED.merchant_support_note,
+		    account_pool_type = EXCLUDED.account_pool_type,
+		    account_pool_custom_name = EXCLUDED.account_pool_custom_name,
+		    merchant_refund_commitment = EXCLUDED.merchant_refund_commitment,
+		    declared_ttft_band = EXCLUDED.declared_ttft_band,
+		    declared_max_concurrency = EXCLUDED.declared_max_concurrency,
+		    performance_confirmed_at = EXCLUDED.performance_confirmed_at,
 		    review_status = EXCLUDED.review_status,
 		    publication_status = EXCLUDED.publication_status,
 		    moderation_status = EXCLUDED.moderation_status,
@@ -1001,19 +1136,24 @@ func upsertAPIServiceInTx(ctx context.Context, tx pgx.Tx, service apimarket.Serv
 		    approved_at = EXCLUDED.approved_at,
 		    moderation_reason = EXCLUDED.moderation_reason,
 		    accepting_orders = EXCLUDED.accepting_orders,
-		    payment_window_minutes = EXCLUDED.payment_window_minutes,
-		    updated_at = EXCLUDED.updated_at,
+			    payment_window_minutes = EXCLUDED.payment_window_minutes,
+			    prompt_audit_enabled = EXCLUDED.prompt_audit_enabled,
+			    updated_at = EXCLUDED.updated_at,
 		    version = EXCLUDED.version
 		`, service.ID, service.OwnerUserID, nullUUID(service.MerchantProfileID), service.MerchantIdentityMode, service.OwnerContactMethodID,
 		service.Title, service.ShortDescription, nullText(service.SourceURL), service.DistributionSystem, service.BillingMode,
 		nullNumeric(service.DeclaredCNYPerUSDAllowance), nullNumeric(service.DeclaredMaxUSDAllowancePerIntent), nullNumeric(service.AvailableUSDAllowance),
 		service.QuotaExpiresAt,
+		service.QuotaUsagePolicy.FiveHour.Mode, nullNumeric(service.QuotaUsagePolicy.FiveHour.AmountUSD),
+		service.QuotaUsagePolicy.Daily.Mode, nullNumeric(service.QuotaUsagePolicy.Daily.AmountUSD),
 		service.MinimumIntentCNY, nullNumeric(service.MaximumIntentCNY), service.UsageVisibility,
 		nullText(service.PublicAccessNote), nullText(service.MerchantNote), nullText(service.MerchantSupportNote),
+		nullText(service.AccountPoolType), nullText(service.AccountPoolCustomName), service.MerchantRefundCommitment,
+		nullText(service.DeclaredTTFTBand), nullInt(service.DeclaredMaxConcurrency), service.PerformanceConfirmedAt,
 		service.ReviewStatus, service.PublicationStatus, service.ModerationStatus,
 		nullUUID(service.ApprovedByAdminID), service.ApprovedAt, nullText(service.ModerationReason),
 		service.AcceptingOrders, service.PaymentWindowMinutes,
-		service.CreatedAt, service.UpdatedAt, service.Version)
+		service.CreatedAt, service.UpdatedAt, service.Version, service.PromptAuditEnabled)
 	if err != nil {
 		return internalStoreError()
 	}
@@ -1070,15 +1210,21 @@ func upsertAPIServiceInTx(ctx context.Context, tx pgx.Tx, service apimarket.Serv
 	for _, pack := range service.Packages {
 		commandTag, execErr := tx.Exec(ctx, `
 			INSERT INTO api_service_packages (
-					id, api_service_id, name, price_cny, panel_allowance, duration_days,
+					id, api_service_id, name, price_cny, panel_allowance,
+					five_hour_limit_mode, five_hour_limit_usd, daily_limit_mode, daily_limit_usd,
+					duration_days,
 					stock_total, stock_available, description, enabled, sort_order,
 					created_at, updated_at
 				)
-				VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+				VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
 				ON CONFLICT (id) DO UPDATE
 				SET name = EXCLUDED.name,
 				    price_cny = EXCLUDED.price_cny,
 				    panel_allowance = EXCLUDED.panel_allowance,
+				    five_hour_limit_mode = EXCLUDED.five_hour_limit_mode,
+				    five_hour_limit_usd = EXCLUDED.five_hour_limit_usd,
+				    daily_limit_mode = EXCLUDED.daily_limit_mode,
+				    daily_limit_usd = EXCLUDED.daily_limit_usd,
 				    duration_days = EXCLUDED.duration_days,
 				    stock_available = api_service_packages.stock_available
 				      + EXCLUDED.stock_total - api_service_packages.stock_total,
@@ -1090,7 +1236,9 @@ func upsertAPIServiceInTx(ctx context.Context, tx pgx.Tx, service apimarket.Serv
 				WHERE api_service_packages.api_service_id = EXCLUDED.api_service_id
 				  AND api_service_packages.stock_available
 				      + EXCLUDED.stock_total - api_service_packages.stock_total >= 0
-			`, pack.ID, service.ID, pack.Name, pack.PriceCNY, pack.PanelAllowance, pack.DurationDays,
+			`, pack.ID, service.ID, pack.Name, pack.PriceCNY, pack.PanelAllowance,
+			pack.QuotaUsagePolicy.FiveHour.Mode, nullNumeric(pack.QuotaUsagePolicy.FiveHour.AmountUSD),
+			pack.QuotaUsagePolicy.Daily.Mode, nullNumeric(pack.QuotaUsagePolicy.Daily.AmountUSD), pack.DurationDays,
 			pack.StockTotal, pack.StockAvailable, pack.Description, pack.Enabled, pack.SortOrder,
 			pack.CreatedAt, pack.UpdatedAt)
 		if execErr != nil {
@@ -1242,7 +1390,10 @@ func insertAPIPurchaseIntentInTx(ctx context.Context, tx pgx.Tx, intent apiinten
 			declared_cny_per_usd_allowance_snapshot,
 			declared_max_usd_allowance_per_intent_snapshot,
 			minimum_intent_cny_snapshot, maximum_intent_cny_snapshot,
-			pricing_snapshot, buyer_note, created_at, updated_at, version
+			pricing_snapshot,
+			five_hour_limit_mode_snapshot, five_hour_limit_usd_snapshot,
+			daily_limit_mode_snapshot, daily_limit_usd_snapshot,
+				buyer_note, created_at, updated_at, version, prompt_audit_enabled_snapshot
 		)
 		VALUES (
 			$1, $2, $3, $4, $5,
@@ -1256,7 +1407,9 @@ func insertAPIPurchaseIntentInTx(ctx context.Context, tx pgx.Tx, intent apiinten
 			$24,
 			$25,
 			$26, $27,
-			$28, $29, $30, $31, $32
+			$28,
+			$29, $30, $31, $32,
+				$33, $34, $35, $36, $37
 		)
 	`, intent.ID, intent.APIServiceID, intent.APIServiceOwnerUserID, intent.BuyerUserID, intent.OwnerUserID,
 		intent.BuyerContactMethodID, intent.BuyerContactMethodVersionID,
@@ -1269,8 +1422,11 @@ func insertAPIPurchaseIntentInTx(ctx context.Context, tx pgx.Tx, intent apiinten
 		nullNumeric(intent.DeclaredCNYPerUSDAllowanceSnapshot),
 		nullNumeric(intent.DeclaredMaxUSDAllowancePerIntentSnapshot),
 		intent.MinimumIntentCNYSnapshot, nullNumeric(intent.MaximumIntentCNYSnapshot),
-		json.RawMessage(intent.PricingSnapshot), nullText(intent.BuyerNote),
-		intent.CreatedAt, intent.UpdatedAt, intent.Version)
+		json.RawMessage(intent.PricingSnapshot),
+		intent.QuotaUsagePolicySnapshot.FiveHour.Mode, nullNumeric(intent.QuotaUsagePolicySnapshot.FiveHour.AmountUSD),
+		intent.QuotaUsagePolicySnapshot.Daily.Mode, nullNumeric(intent.QuotaUsagePolicySnapshot.Daily.AmountUSD),
+		nullText(intent.BuyerNote),
+		intent.CreatedAt, intent.UpdatedAt, intent.Version, intent.PromptAuditEnabledSnapshot)
 	if err != nil {
 		if isUniqueViolation(err) {
 			return domain.NewError(http.StatusConflict, domain.CodeActiveAPIIntentExists, "Active API intent exists", "你已对该服务提交过进行中的购买意向。")
@@ -1367,18 +1523,20 @@ func (s *Store) readFrozenContactVersion(ctx context.Context, q queryer, version
 	}
 	var item contact.ContactItemView
 	var ciphertext, nonce []byte
+	var keyVersion, cipherFormat string
 	err := q.QueryRow(ctx, `
-		SELECT v.value_ciphertext, v.value_nonce, v.masked_value
+		SELECT v.value_ciphertext, v.value_nonce, v.encryption_key_version,
+		       v.encryption_format, v.masked_value
 		FROM contact_method_versions v
 		WHERE v.id = $1 AND v.contact_method_id = $2 AND v.owner_user_id = $3
-	`, versionID, methodID, ownerID).Scan(&ciphertext, &nonce, &item.MaskedValue)
+	`, versionID, methodID, ownerID).Scan(&ciphertext, &nonce, &keyVersion, &cipherFormat, &item.MaskedValue)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return contact.ContactItemView{}, domain.NewError(http.StatusConflict, domain.CodeMerchantContactUnavailable, "Contact unavailable", "冻结联系方式不可用。")
 	}
 	if err != nil {
 		return contact.ContactItemView{}, internalStoreError()
 	}
-	value, err := s.contactCodec.decode(ciphertext, nonce)
+	value, err := s.contactCodec.decode(ciphertext, nonce, keyVersion, cipherFormat, versionID, contactFieldMethodValue)
 	if err != nil {
 		return contact.ContactItemView{}, internalStoreError()
 	}
@@ -1601,6 +1759,9 @@ func storeValidateAPIServiceOrderSettings(input apimarket.UpdateOrderSettingsInp
 			return err
 		}
 	}
+	if enabledCount > 1 {
+		return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Multiple payment methods enabled", "微信支付和支付宝只能启用一种。", "paymentOptions", "single_enabled", "只能启用一种收款方式。")
+	}
 	if input.AcceptingOrders && enabledCount == 0 {
 		return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Payment method required", "开启接单前至少启用一种收款方式。", "paymentOptions", "required", "至少启用一种收款方式。")
 	}
@@ -1755,29 +1916,47 @@ func scanAPIServices(rows pgx.Rows) ([]apimarket.Service, *domain.AppError) {
 }
 
 func scanAPIService(row scanner, service *apimarket.Service) error {
-	return row.Scan(
+	return row.Scan(apiServiceScanDestinations(service)...)
+}
+
+func apiServiceScanDestinations(service *apimarket.Service) []any {
+	return []any{
 		&service.ID,
 		&service.OwnerUserID,
 		&service.MerchantProfileID,
 		&service.MerchantIdentityMode,
 		&service.MerchantDisplayName,
 		&service.MerchantProfileSlug,
+		&service.MerchantAvatarURL,
 		&service.OwnerContactMethodID,
 		&service.Title,
 		&service.ShortDescription,
 		&service.SourceURL,
+		&service.SourceAuthorVerification.Status,
+		&service.SourceAuthorVerification.VerifiedAt,
+		&service.SourceAuthorVerification.ExpiresAt,
 		&service.DistributionSystem,
 		&service.BillingMode,
 		&service.DeclaredCNYPerUSDAllowance,
 		&service.DeclaredMaxUSDAllowancePerIntent,
 		&service.AvailableUSDAllowance,
 		&service.QuotaExpiresAt,
+		&service.QuotaUsagePolicy.FiveHour.Mode,
+		&service.QuotaUsagePolicy.FiveHour.AmountUSD,
+		&service.QuotaUsagePolicy.Daily.Mode,
+		&service.QuotaUsagePolicy.Daily.AmountUSD,
 		&service.MinimumIntentCNY,
 		&service.MaximumIntentCNY,
 		&service.UsageVisibility,
 		&service.PublicAccessNote,
 		&service.MerchantNote,
 		&service.MerchantSupportNote,
+		&service.AccountPoolType,
+		&service.AccountPoolCustomName,
+		&service.MerchantRefundCommitment,
+		&service.DeclaredTTFTBand,
+		&service.DeclaredMaxConcurrency,
+		&service.PerformanceConfirmedAt,
 		&service.AcceptingOrders,
 		&service.PaymentWindowMinutes,
 		&service.ReviewStatus,
@@ -1789,7 +1968,8 @@ func scanAPIService(row scanner, service *apimarket.Service) error {
 		&service.CreatedAt,
 		&service.UpdatedAt,
 		&service.Version,
-	)
+		&service.PromptAuditEnabled,
+	}
 }
 
 func scanAPIPurchaseIntents(rows pgx.Rows) ([]apiintent.Intent, *domain.AppError) {
@@ -1810,6 +1990,7 @@ func scanAPIPurchaseIntents(rows pgx.Rows) ([]apiintent.Intent, *domain.AppError
 func scanAPIPurchaseIntent(row scanner, intent *apiintent.Intent) error {
 	return row.Scan(
 		&intent.ID,
+		&intent.PurchaseKind,
 		&intent.APIServiceID,
 		&intent.APIServiceOwnerUserID,
 		&intent.BuyerUserID,
@@ -1837,7 +2018,17 @@ func scanAPIPurchaseIntent(row scanner, intent *apiintent.Intent) error {
 		&intent.MinimumIntentCNYSnapshot,
 		&intent.MaximumIntentCNYSnapshot,
 		&intent.PricingSnapshot,
+		&intent.QuotaUsagePolicySnapshot.FiveHour.Mode,
+		&intent.QuotaUsagePolicySnapshot.FiveHour.AmountUSD,
+		&intent.QuotaUsagePolicySnapshot.Daily.Mode,
+		&intent.QuotaUsagePolicySnapshot.Daily.AmountUSD,
 		&intent.BuyerNote,
+		&intent.APIQuotaBatchID,
+		&intent.APIQuotaOfferID,
+		&intent.APIQuotaSaleRoundID,
+		&intent.APIQuotaAllocationID,
+		&intent.APIQuotaInventoryUnitID,
+		&intent.QuotaOfferSnapshot,
 		&intent.ContactedAt,
 		&intent.BuyerCancelledAt,
 		&intent.BuyerCancelReason,
@@ -1846,5 +2037,6 @@ func scanAPIPurchaseIntent(row scanner, intent *apiintent.Intent) error {
 		&intent.CreatedAt,
 		&intent.UpdatedAt,
 		&intent.Version,
+		&intent.PromptAuditEnabledSnapshot,
 	)
 }

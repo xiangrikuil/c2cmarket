@@ -14,6 +14,7 @@ import SkeletonTable from '@/components/market/SkeletonTable.vue'
 import { usePagination } from '@/composables/usePagination'
 import { getCarpoolApplicationNextAction, getCarpoolApplicationStatusLabel, type CarpoolApplication } from '@/lib/api'
 import { getProductCategory } from '@/lib/productCategories'
+import { functionalMotion } from '@/lib/motion'
 import { getProductCategoryIconSrc } from '@/lib/productCategoryIcon'
 import { useMyCarpoolApplications } from '@/queries/useMarketQueries'
 
@@ -78,7 +79,7 @@ function openApplication(event: MouseEvent | KeyboardEvent, id: string) {
 
 <template>
   <div class="my-rides-reference space-y-4">
-    <div class="my-rides-heading rounded-xl border px-5 py-4"><PageTitle title="我的上车" description="查看上车申请、席位预留、站外联系、服务中、待完成和评价状态。" action-text="继续找车源" action-to="/carpools" /></div>
+    <div class="my-rides-heading rounded-xl border px-5 py-4"><PageTitle title="我的上车" description="查看上车申请、席位预留、联系沟通、服务中、待完成和评价状态。" action-text="继续找车源" action-to="/carpools" /></div>
     <div class="my-rides-reference-stats">
       <div><span><PlayCircle /></span><dl><dt>需要我处理</dt><dd>{{ stats[0]?.value ?? 0 }}</dd><small>继续确认当前步骤</small></dl></div>
       <div><span><Clock3 /></span><dl><dt>等待车主</dt><dd>{{ stats[1]?.value ?? 0 }}</dd><small>等待车主处理</small></dl></div>
@@ -88,7 +89,7 @@ function openApplication(event: MouseEvent | KeyboardEvent, id: string) {
     <StatusTabs v-model="activeStatus" :items="['全部', '待车主处理', '待联系', '服务中', '待完成', '已完成', '已取消', '纠纷']" />
     <SkeletonTable v-if="isLoading" :rows="5" :columns="6" />
     <EmptyState v-else-if="rows.length === 0" title="当前筛选下暂无上车申请" description="可以继续浏览车源，或切换状态查看历史申请。" />
-    <div v-else class="my-transaction-list">
+    <div v-else v-auto-animate="functionalMotion" class="my-transaction-list">
       <Card
         v-for="item in pagination.paginatedRows.value"
         :key="item.id"

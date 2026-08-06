@@ -12,7 +12,7 @@
 - One API service has exactly one billing mode. Existing `metered_usd_quota` behavior remains independent from `fixed_package`.
 - A marketplace row/card represents one package, not one service or merchant.
 - Limited packages remain inside `/api-market`; publishing remains inside `/api-market/new`. Do not add a separate top-level marketplace route.
-- Package value uses merchant-declared multipliers. UI copy must label the estimate `按商家声明估算`; the platform does not claim to verify the multiplier.
+- Package value uses the API service's merchant-declared default multiplier. UI copy must label the estimate `按商家声明估算`; the platform does not claim to verify the multiplier.
 
 ### 2. Signatures
 
@@ -49,7 +49,7 @@ api_orders:
   package_expires_at     timestamptz NULL
 ```
 
-`api_service_models.merchant_multiplier` is a positive decimal string. It is not forced to `1.0000`; values such as `0.0100`, `1.0000`, and `1.2000` are valid.
+`api_service_models.merchant_multiplier` is a positive decimal string and stores the service-level multiplier snapshot for each model row. All models created through one first-party publish form receive the same value. It is not globally forced to `1.0000`; values such as `0.0100`, `1.0000`, and `1.2000` remain valid service defaults.
 
 ### 3. Contracts
 
@@ -78,6 +78,7 @@ packages[]:
 ```
 
 - Creation ignores client-supplied package IDs and allocates server IDs.
+- The first-party frontend exposes one service default multiplier, writes it to every `models[].merchantMultiplier`, and offers no per-model or per-package override. A package inherits the multiplier through its linked service-model snapshots.
 - Update preserves IDs for retained models and packages. A non-empty package ID must already belong to the current service.
 - Packages omitted during update are disabled, not deleted, so intents/orders can still resolve their references.
 - Updating total stock preserves reserved and consumed units:
@@ -91,7 +92,7 @@ newStockAvailable = oldStockAvailable + newStockTotal - oldStockTotal
 
 #### Public Response And Recommendation
 
-`PublicAPIService` exposes `packages`, `completed30d`, `unresolvedDisputes`, `responseMedianMinutes`, and `updatedAt`.
+`PublicAPIService` exposes `packages`, merchant identity fields (`merchantDisplayName`, `merchantProfileSlug`, `merchantAvatarUrl`), `completed30d`, `unresolvedDisputes`, `responseMedianMinutes`, and `updatedAt`.
 
 ```text
 APIServicePackage:
@@ -126,11 +127,14 @@ score       = 0.60 * value + 0.25 * fulfillment + 0.10 * response + 0.05 * fresh
 
 - Sort by descending score, lower declared unit cost, higher available stock, newer service update, then package ID.
 - Cards use two columns on desktop and one on mobile, maintain stable dimensions, and show no more than three model chips plus `+N`.
+- Package cards consume the same `merchantAvatarUrl` projection as other API-market cards. They render an image when present and the merchant/store-name initial only when absent.
 - Opening a card navigates to `/api-market/{serviceId}?package={packageId}`. Detail preselects that valid package and fixes the intent/order amount to its CNY price.
 
 #### Inventory, Snapshots, And Expiry
 
 - Intent creation freezes `selectedPackageSnapshot` with package ID, name, price, panel allowance, duration, description, enabled/sort order, and every package model's service-model ID, catalog ID, price-version ID, model name/provider snapshots, and merchant multiplier.
+- The intent pricing snapshot also freezes account-pool code/label, merchant-declared maximum concurrency, merchant refund commitment, fixed refund-rule version, and the service validity fact. A package order additionally freezes the delivery-relative duration and later persists its absolute `package_expires_at` when delivery starts the validity window.
+- Historical nullable pool/concurrency facts are encoded as explicit JSON `null`, not empty strings, zero sentinels, or inferred labels.
 - Order creation copies the intent snapshot. Later package/model edits must not reprice or rewrite existing intents/orders.
 - Order creation atomically reserves one unit with the order insert, intent transition, events, notifications, and idempotency completion:
 
@@ -175,7 +179,7 @@ packageExpiresAt = deliverySubmittedAt + durationDays calendar days
 
 ### 5. Good/Base/Bad Cases
 
-- Good: a merchant publishes 1-, 3-, 7-, and 30-day packages, enables exact models, and uses `0.0100` for a relay multiplier while a self-hosted listing keeps `1.0000`.
+- Good: a merchant publishes 1-, 3-, 7-, and 30-day packages and enables exact models; every package/model row inherits that service's `0.0100` default while another self-hosted service keeps `1.0000`.
 - Good: two buyers race for the last unit; exactly one order commits and the other receives a stock conflict.
 - Good: a 3-day package is delivered at time T; its frozen expiry is T plus 3 calendar days even if the merchant edits or disables the package later.
 - Base: a package with total 12 and available 8 is edited to total 10; available becomes 6, preserving four reserved/consumed units.
@@ -188,11 +192,12 @@ packageExpiresAt = deliverySubmittedAt + durationDays calendar days
 
 - Migration checks: version 51 is documented; package stock/allowance/duration constraints and package-model ownership foreign keys exist; non-1 multipliers such as `1.2000` insert successfully.
 - API-market domain tests: allowed durations, positive decimals, exact model subsets, duplicate/foreign IDs, stable package/model IDs, disabled omissions, and stock-delta rejection.
-- Intent tests: package availability and a full immutable snapshot containing exact model name, multiplier, and model price-version ID.
+- Intent tests: package availability and a full immutable snapshot containing exact model name, multiplier, model price-version ID, commercial facts, and historical explicit-null behavior.
 - Order tests: last-unit reservation, cancellation and timeout release exactly once, payment-confirmation consumption, no later release, and delivery-based expiry from the frozen snapshot.
 - PostgreSQL integration: reservation/update/release occurs in the order transaction and cannot oversell under competing writes.
 - OpenAPI/router checks: publish/public response fields, snapshot/order lifecycle fields, route parity, and strict YAML parsing.
-- Frontend unit tests: adapter mapping, mock lifecycle parity, exact model/duration filtering, all score components, deterministic tie breakers, and sold-out exclusion.
+- Frontend unit tests: uniform service-default multiplier mapping with no model/package override, adapter mapping, mock lifecycle parity, exact model/duration filtering, all score components, deterministic tie breakers, and sold-out exclusion.
+- Merchant projection tests: both `public_profile` and `store_alias` preserve their correct avatar boundary through storage, API response, frontend adapter, and shared card component.
 - Frontend gates: `vue-tsc`, Vitest, real-backend production build, plus desktop/mobile browser checks for package cards, query preselection, fixed order amount, publish controls, and viewport overflow.
 - Metered-quota regression tests must continue passing after every package change.
 

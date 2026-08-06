@@ -3,7 +3,7 @@ package server
 import (
 	"context"
 	"log"
-	"net/netip"
+	"strings"
 	"time"
 
 	"c2c-market/backend/internal/config"
@@ -11,25 +11,31 @@ import (
 	"c2c-market/backend/internal/health"
 	"c2c-market/backend/internal/middleware"
 	"c2c-market/backend/internal/module/announcement"
+	"c2c-market/backend/internal/module/apihealth"
 	"c2c-market/backend/internal/module/apiintent"
 	"c2c-market/backend/internal/module/apimarket"
 	"c2c-market/backend/internal/module/apiorder"
+	"c2c-market/backend/internal/module/apipromotion"
+	"c2c-market/backend/internal/module/apiquota"
 	"c2c-market/backend/internal/module/auth"
 	"c2c-market/backend/internal/module/carpool"
 	"c2c-market/backend/internal/module/catalog"
 	"c2c-market/backend/internal/module/contact"
-	"c2c-market/backend/internal/module/demand"
 	"c2c-market/backend/internal/module/favorite"
 	"c2c-market/backend/internal/module/feedback"
+	"c2c-market/backend/internal/module/growth"
 	"c2c-market/backend/internal/module/idempotency"
 	"c2c-market/backend/internal/module/modelaudit"
 	"c2c-market/backend/internal/module/navigationbadge"
 	"c2c-market/backend/internal/module/notification"
 	"c2c-market/backend/internal/module/officialprice"
 	"c2c-market/backend/internal/module/profile"
+	"c2c-market/backend/internal/module/promotionreward"
 	"c2c-market/backend/internal/module/report"
+	"c2c-market/backend/internal/module/reputation"
 	"c2c-market/backend/internal/module/review"
 	"c2c-market/backend/internal/module/search"
+	"c2c-market/backend/internal/observability"
 	"c2c-market/backend/internal/realtime"
 	"github.com/go-chi/chi/v5"
 	"net/http"
@@ -44,6 +50,7 @@ const (
 type ServerOptions struct {
 	EnableDevAuth      bool
 	ReadinessChecker   health.Checker
+	APIHealth          APIHealthService
 	NavigationBadges   NavigationBadgeService
 	RealtimeHub        *realtime.Hub
 	AppEnv             string
@@ -52,6 +59,9 @@ type ServerOptions struct {
 	OAuth              OAuthOptions
 	TrustXForwardedFor bool
 	TrustedProxies     []string
+	RateLimiter        *middleware.RateLimiter
+	Metrics            *observability.Metrics
+	MetricsBearerToken string
 }
 
 type OAuthOptions struct {
@@ -69,18 +79,71 @@ type NavigationBadgeService interface {
 	Get(ctx context.Context, user auth.User) (navigationbadge.Summary, *domain.AppError)
 }
 
+type APIPaymentSettingsService interface {
+	GetAPIAccountPaymentSettings(ctx context.Context, user auth.User) (apimarket.AccountPaymentSettings, *domain.AppError)
+	UpdateAPIAccountPaymentSettings(ctx context.Context, user auth.User, input apimarket.UpdateAccountPaymentSettingsInput) (apimarket.AccountPaymentSettings, *domain.AppError)
+}
+
+type APIHealthService interface {
+	OwnerConfig(ctx context.Context, user auth.User, serviceID string) (apihealth.Config, bool, *domain.AppError)
+	PutOwnerConfig(ctx context.Context, user auth.User, serviceID string, input apihealth.ConfigInput, expectedVersion int64) (apihealth.Config, *domain.AppError)
+	DeleteOwnerConfig(ctx context.Context, user auth.User, serviceID string, expectedVersion int64) *domain.AppError
+	CreateChallenge(ctx context.Context, user auth.User, serviceID, method string, expectedVersion int64) (apihealth.Challenge, *domain.AppError)
+	VerifyChallenge(ctx context.Context, user auth.User, serviceID string, expectedVersion int64) (apihealth.Config, *domain.AppError)
+	AdminConfigs(ctx context.Context, user auth.User, status string, page domain.PageRequest) (domain.Page[apihealth.Config], *domain.AppError)
+	AdminDecision(ctx context.Context, user auth.User, configID string, expectedVersion int64, approve bool, reason string) (apihealth.Config, *domain.AppError)
+	Summaries(ctx context.Context, serviceIDs []string) (map[string]apihealth.Summary, *domain.AppError)
+}
+
+type AdminUserService interface {
+	AdminUsers(ctx context.Context, user auth.User, query auth.AdminUserDirectoryQuery) (auth.AdminUserDirectory, *domain.AppError)
+	AdminUser(ctx context.Context, user auth.User, userID string) (auth.AdminUserDetail, *domain.AppError)
+	UpdateAdminUserStatusWithIdempotency(ctx context.Context, user auth.User, routeKey, key, requestHash string, input auth.AdminUserStatusInput, buildCompletion auth.AdminUserCompletionBuilder) (idempotency.Completion, *domain.AppError)
+	UpdateAdminUserPermissionWithIdempotency(ctx context.Context, user auth.User, routeKey, key, requestHash string, input auth.AdminUserPermissionInput, buildCompletion auth.AdminUserCompletionBuilder) (idempotency.Completion, *domain.AppError)
+}
+
+type APIPromotionService interface {
+	PublicAPIPromotions(ctx context.Context, placement string) ([]apipromotion.Promotion, *domain.AppError)
+	AdminAPIPromotions(ctx context.Context, user auth.User) ([]apipromotion.Promotion, *domain.AppError)
+	APIPromotionAvailability(ctx context.Context, user auth.User, input apipromotion.AvailabilityInput) (apipromotion.Availability, *domain.AppError)
+	CreateAPIPromotionWithIdempotency(ctx context.Context, user auth.User, routeKey, key, requestHash string, input apipromotion.CreateInput, buildCompletion apipromotion.CompletionBuilder) (idempotency.Completion, *domain.AppError)
+	StopAPIPromotionWithIdempotency(ctx context.Context, user auth.User, routeKey, key, requestHash string, input apipromotion.StopInput, buildCompletion apipromotion.CompletionBuilder) (idempotency.Completion, *domain.AppError)
+}
+
+type GrowthService interface {
+	AdminGrowthOverview(ctx context.Context, user auth.User, windowDays int) (growth.Overview, *domain.AppError)
+	RecordAuthenticatedActivity(ctx context.Context, userID string) *domain.AppError
+}
+
+type PromotionRewardService interface {
+	PromotionRewardPublicConfig(ctx context.Context) (promotionreward.PublicConfig, *domain.AppError)
+	MyReferralSummary(ctx context.Context, user auth.User) (promotionreward.ReferralSummary, *domain.AppError)
+	MyPromotionCoupons(ctx context.Context, user auth.User, query promotionreward.CouponQuery) (promotionreward.CouponPage, *domain.AppError)
+	ApplyPromotionCouponWithIdempotency(ctx context.Context, user auth.User, routeKey, key, requestHash string, input promotionreward.ApplyCouponInput, buildCompletion promotionreward.CouponCompletionBuilder) (idempotency.Completion, *domain.AppError)
+	AdminPromotionRewardCampaign(ctx context.Context, user auth.User) (promotionreward.Campaign, *domain.AppError)
+	UpdateAdminPromotionRewardCampaignWithIdempotency(ctx context.Context, user auth.User, routeKey, key, requestHash string, input promotionreward.UpdateCampaignInput, buildCompletion promotionreward.CampaignCompletionBuilder) (idempotency.Completion, *domain.AppError)
+	AdminReferrals(ctx context.Context, user auth.User, query promotionreward.ReferralQuery) (promotionreward.ReferralPage, *domain.AppError)
+	RevokeAdminReferralWithIdempotency(ctx context.Context, user auth.User, routeKey, key, requestHash string, input promotionreward.RevokeReferralInput, buildCompletion promotionreward.ReferralCompletionBuilder) (idempotency.Completion, *domain.AppError)
+	AdminPromotionCoupons(ctx context.Context, user auth.User, query promotionreward.CouponQuery) (promotionreward.CouponPage, *domain.AppError)
+	GrantAdminPromotionCouponWithIdempotency(ctx context.Context, user auth.User, routeKey, key, requestHash string, input promotionreward.GrantCouponInput, buildCompletion promotionreward.CouponCompletionBuilder) (idempotency.Completion, *domain.AppError)
+	RevokeAdminPromotionCouponWithIdempotency(ctx context.Context, user auth.User, routeKey, key, requestHash string, input promotionreward.RevokeCouponInput, buildCompletion promotionreward.CouponCompletionBuilder) (idempotency.Completion, *domain.AppError)
+}
+
 // Service is the legacy application facade for handlers that have not yet been
 // moved to domain-specific server dependencies.
 type Service interface {
 	CreateDevSession(ctx context.Context, username string, isAdmin bool) (auth.User, auth.Session, *domain.AppError)
 	LoginWithOAuthProfile(ctx context.Context, profile auth.OAuthProfile) (auth.User, auth.Session, *domain.AppError)
+	StartAccountAppealSession(ctx context.Context, profile auth.OAuthProfile) (auth.User, auth.AccountAppealSession, *domain.AppError)
+	GetAccountAppealSession(ctx context.Context, sessionID string) (auth.User, auth.AccountAppealSession, *domain.AppError)
+	GetAccountAppealSessionWithCSRF(ctx context.Context, sessionID, csrfToken string) (auth.User, auth.AccountAppealSession, *domain.AppError)
 	LoginWithPassword(ctx context.Context, username, password string) (auth.User, auth.Session, *domain.AppError)
-	AdminUsers(ctx context.Context, user auth.User) ([]auth.AdminUser, *domain.AppError)
 	StartEmailRegistration(ctx context.Context, input auth.EmailRegistrationStartInput) (auth.EmailRegistrationChallenge, *domain.AppError)
 	ConfirmEmailRegistration(ctx context.Context, input auth.EmailRegistrationConfirmInput) (auth.User, auth.Session, *domain.AppError)
 	SetPassword(ctx context.Context, input auth.SetPasswordInput) *domain.AppError
 	GetSession(ctx context.Context, sessionID string) (auth.User, auth.Session, *domain.AppError)
 	GetSessionWithCSRF(ctx context.Context, sessionID, csrfToken string) (auth.User, auth.Session, *domain.AppError)
+	RenewSession(ctx context.Context, sessionID string) (auth.Session, bool, *domain.AppError)
 	RefreshSessionCSRF(ctx context.Context, sessionID string) (string, *domain.AppError)
 	Logout(ctx context.Context, sessionID string)
 	BeginIdempotency(ctx context.Context, userID, routeKey, key, requestHash string) (*idempotency.Entry, *domain.AppError)
@@ -144,17 +207,7 @@ type Service interface {
 	PublicOfficialPriceRecords(ctx context.Context) ([]officialprice.Record, *domain.AppError)
 	PublicOfficialPriceRecord(ctx context.Context, recordID string) (officialprice.Record, *domain.AppError)
 
-	CreateDemand(ctx context.Context, user auth.User, input demand.CreateInput) (demand.Demand, *domain.AppError)
-	PublicDemands(ctx context.Context) ([]demand.Demand, *domain.AppError)
-	PublicDemand(ctx context.Context, demandID string) (demand.Demand, *domain.AppError)
 	SearchMarket(ctx context.Context, keyword string) ([]search.Result, *domain.AppError)
-	MyDemands(ctx context.Context, user auth.User) ([]demand.Demand, *domain.AppError)
-	MyDemand(ctx context.Context, user auth.User, demandID string) (demand.Demand, *domain.AppError)
-	AdminDemands(ctx context.Context, user auth.User) ([]demand.Demand, *domain.AppError)
-	AdminDemand(ctx context.Context, user auth.User, demandID string) (demand.Demand, *domain.AppError)
-	CloseDemandWithIdempotency(ctx context.Context, userID, routeKey, key, requestHash string, input demand.OwnerActionInput, buildCompletion demand.CompletionBuilder) (idempotency.Completion, *domain.AppError)
-	ReopenDemandWithIdempotency(ctx context.Context, userID, routeKey, key, requestHash string, input demand.OwnerActionInput, buildCompletion demand.CompletionBuilder) (idempotency.Completion, *domain.AppError)
-	AdminDemandActionWithIdempotency(ctx context.Context, userID, routeKey, key, requestHash string, input demand.AdminActionInput, buildCompletion demand.CompletionBuilder) (idempotency.Completion, *domain.AppError)
 	CreateFeedbackTicketWithIdempotency(ctx context.Context, user auth.User, routeKey, key, requestHash string, input feedback.CreateInput, buildCompletion feedback.CompletionBuilder) (idempotency.Completion, *domain.AppError)
 	MyFeedbackTickets(ctx context.Context, user auth.User, page domain.PageRequest) (domain.Page[feedback.Ticket], *domain.AppError)
 	MyFeedbackTicket(ctx context.Context, user auth.User, id string) (feedback.Ticket, *domain.AppError)
@@ -169,17 +222,22 @@ type Service interface {
 	CreateFavoriteWithIdempotency(ctx context.Context, userID, routeKey, key, requestHash, targetType, targetID string, buildCompletion favorite.CompletionBuilder) (idempotency.Completion, *domain.AppError)
 	DeleteFavorite(ctx context.Context, user auth.User, targetType, targetID string) (favorite.MutationResult, *domain.AppError)
 	ListMyReviewCenterRows(ctx context.Context, user auth.User) ([]review.ReviewCenterRow, *domain.AppError)
+	SubmitTransactionReviewWithIdempotency(ctx context.Context, userID, routeKey, key, requestHash string, input review.SubmitReviewInput, buildCompletion review.CompletionBuilder) (idempotency.Completion, *domain.AppError)
 	SubmitCarpoolMembershipReviewWithIdempotency(ctx context.Context, userID, routeKey, key, requestHash string, input review.SubmitReviewInput, buildCompletion review.CompletionBuilder) (idempotency.Completion, *domain.AppError)
+	AdminRemoveTransactionReviewWithIdempotency(ctx context.Context, user auth.User, routeKey, key, requestHash string, input review.RemoveReviewInput, buildCompletion review.CompletionBuilder) (idempotency.Completion, *domain.AppError)
 	PublicUserReviews(ctx context.Context, username string) ([]review.PublicReview, *domain.AppError)
 	CreateReportWithIdempotency(ctx context.Context, user auth.User, routeKey, key, requestHash string, input report.CreateReportInput, buildCompletion report.ReportCompletionBuilder) (idempotency.Completion, *domain.AppError)
 	MyReports(ctx context.Context, user auth.User) ([]report.Report, *domain.AppError)
 	AdminReports(ctx context.Context, user auth.User, page domain.PageRequest) (domain.Page[report.Report], *domain.AppError)
 	AdminReport(ctx context.Context, user auth.User, id string) (report.Report, *domain.AppError)
 	AdminReportActionWithIdempotency(ctx context.Context, user auth.User, routeKey, key, requestHash string, input report.AdminActionInput, buildCompletion report.AdminCompletionBuilder) (idempotency.Completion, *domain.AppError)
+	SubmitInfoSupplementWithIdempotency(ctx context.Context, user auth.User, routeKey, key, requestHash string, input report.SupplementInput, buildCompletion report.SupplementCompletionBuilder) (idempotency.Completion, *domain.AppError)
+	MyDisputes(ctx context.Context, user auth.User) ([]report.DisputeCase, *domain.AppError)
 	AdminDisputes(ctx context.Context, user auth.User) ([]report.DisputeCase, *domain.AppError)
 	AdminDispute(ctx context.Context, user auth.User, id string) (report.DisputeCase, *domain.AppError)
 	AdminDisputeActionWithIdempotency(ctx context.Context, user auth.User, routeKey, key, requestHash string, input report.AdminActionInput, buildCompletion report.AdminCompletionBuilder) (idempotency.Completion, *domain.AppError)
 	CreateAppealWithIdempotency(ctx context.Context, user auth.User, routeKey, key, requestHash string, input report.CreateAppealInput, buildCompletion report.AppealCompletionBuilder) (idempotency.Completion, *domain.AppError)
+	CreateAccountGovernanceAppealWithIdempotency(ctx context.Context, appellantUserID, routeKey, key, requestHash string, input report.CreateAccountGovernanceAppealInput, buildCompletion report.AppealCompletionBuilder) (idempotency.Completion, *domain.AppError)
 	MyAppeals(ctx context.Context, user auth.User) ([]report.Appeal, *domain.AppError)
 	AdminAppeals(ctx context.Context, user auth.User) ([]report.Appeal, *domain.AppError)
 	AdminAppeal(ctx context.Context, user auth.User, id string) (report.Appeal, *domain.AppError)
@@ -190,7 +248,7 @@ type Service interface {
 	UpdateAPIService(ctx context.Context, user auth.User, input apimarket.UpdateServiceInput) (apimarket.Service, *domain.AppError)
 	PublicAPIServices(ctx context.Context, filter apimarket.PublicServiceFilter) ([]apimarket.Service, *domain.AppError)
 	PublicAPIService(ctx context.Context, serviceID string) (apimarket.Service, *domain.AppError)
-	OwnerAPIServices(ctx context.Context, user auth.User, page domain.PageRequest) (domain.Page[apimarket.Service], *domain.AppError)
+	OwnerAPIServices(ctx context.Context, user auth.User, filter apimarket.OwnerServiceFilter, page domain.PageRequest) (domain.Page[apimarket.Service], *domain.AppError)
 	OwnerAPIService(ctx context.Context, user auth.User, serviceID string) (apimarket.Service, *domain.AppError)
 	AdminAPIServices(ctx context.Context, user auth.User, page domain.PageRequest) (domain.Page[apimarket.Service], *domain.AppError)
 	AdminAPIService(ctx context.Context, user auth.User, serviceID string) (apimarket.Service, *domain.AppError)
@@ -220,6 +278,7 @@ type Service interface {
 	OpenAPIOrderDisputeWithIdempotency(ctx context.Context, userID, routeKey, key, requestHash string, input apiorder.ActionInput, buildCompletion apiorder.CompletionBuilder) (idempotency.Completion, *domain.AppError)
 	OwnerAPIOrders(ctx context.Context, user auth.User) ([]apiorder.Order, *domain.AppError)
 	AdminAPIOrders(ctx context.Context, user auth.User) ([]apiorder.Order, *domain.AppError)
+	AdminAPIOrder(ctx context.Context, user auth.User, orderID string) (apiorder.Order, *domain.AppError)
 	OwnerAPIOrder(ctx context.Context, user auth.User, orderID string) (apiorder.Order, *domain.AppError)
 	ConfirmAPIOrderPaymentWithIdempotency(ctx context.Context, userID, routeKey, key, requestHash string, input apiorder.ActionInput, buildCompletion apiorder.CompletionBuilder) (idempotency.Completion, *domain.AppError)
 	ReportAPIOrderPaymentIssueWithIdempotency(ctx context.Context, userID, routeKey, key, requestHash string, input apiorder.ActionInput, buildCompletion apiorder.CompletionBuilder) (idempotency.Completion, *domain.AppError)
@@ -295,29 +354,80 @@ type CarpoolService interface {
 	EndCarpoolMembershipWithIdempotency(ctx context.Context, userID, routeKey, key, requestHash string, input carpool.EndMembershipInput, buildCompletion carpool.MembershipCompletionBuilder) (idempotency.Completion, *domain.AppError)
 }
 
+type APIQuotaService interface {
+	PublicAPIQuotaOffers(ctx context.Context, filter apiquota.PublicOfferFilter, page domain.PageRequest) (domain.Page[apiquota.OfferCard], *domain.AppError)
+	APIQuotaSystemSaleSlots() []apiquota.SystemSaleSlot
+	PublicAPIQuotaOffer(ctx context.Context, offerID string) (apiquota.OfferCard, *domain.AppError)
+	OwnerAPIQuotaBatches(ctx context.Context, user auth.User, apiServiceID string, page domain.PageRequest) (domain.Page[apiquota.Batch], *domain.AppError)
+	CreateAPIQuotaBatch(ctx context.Context, user auth.User, input apiquota.CreateBatchInput) (apiquota.Batch, *domain.AppError)
+	OwnerAPIQuotaOffers(ctx context.Context, user auth.User, batchID string) ([]apiquota.Offer, *domain.AppError)
+	CreateAPIQuotaOffer(ctx context.Context, user auth.User, input apiquota.CreateOfferInput) (apiquota.Offer, *domain.AppError)
+	OwnerAPIQuotaRounds(ctx context.Context, user auth.User, batchID string) ([]apiquota.SaleRound, *domain.AppError)
+	CreateAPIQuotaRound(ctx context.Context, user auth.User, input apiquota.CreateRoundInput) (apiquota.SaleRound, *domain.AppError)
+	PublishAPIQuotaBatch(ctx context.Context, user auth.User, input apiquota.BatchActionInput) (apiquota.Batch, *domain.AppError)
+	UpdateAPIQuotaBatchStatus(ctx context.Context, user auth.User, input apiquota.BatchActionInput, action string) (apiquota.Batch, *domain.AppError)
+	CreateAPIQuotaOrderWithIdempotency(ctx context.Context, userID, routeKey, key, requestHash string, input apiquota.CreateOrderInput, buildCompletion apiorder.CompletionBuilder) (idempotency.Completion, *domain.AppError)
+	ImportAPIQuotaCredentials(ctx context.Context, user auth.User, input apiquota.CredentialImportInput) (apiquota.CredentialImportResult, *domain.AppError)
+	APIQuotaCredentialSummary(ctx context.Context, user auth.User, offerID string) (apiquota.CredentialSummary, *domain.AppError)
+	CreateAPIQuotaRushOfferWithIdempotency(ctx context.Context, user auth.User, routeKey, key, requestHash string, input apiquota.CreateRushOfferInput, buildCompletion apiquota.RushOfferCompletionBuilder) (idempotency.Completion, *domain.AppError)
+}
+
+type ReputationGovernanceService interface {
+	ReputationAvailable() bool
+	ReputationRules() reputation.RuleSet
+	PublicUserReputation(ctx context.Context, username, scope string) ([]reputation.ReputationSnapshot, *domain.AppError)
+	MyReputation(ctx context.Context, user auth.User) ([]reputation.ReputationSnapshot, *domain.AppError)
+	AdminUserReputation(ctx context.Context, user auth.User, userID string, historyLimit int) (reputation.AdminReputationAudit, *domain.AppError)
+	AdminRecalculateUserReputation(ctx context.Context, user auth.User, userID string) (reputation.RecalculationResult, *domain.AppError)
+	AdminRecalculateAllReputation(ctx context.Context, user auth.User) (reputation.RecalculationResult, *domain.AppError)
+	AdminSourceAuthorVerification(ctx context.Context, user auth.User, resourceType, resourceID string) (reputation.SourceAuthorVerificationAudit, *domain.AppError)
+	AdminUpdateSourceAuthorVerification(ctx context.Context, user auth.User, input reputation.UpdateSourceAuthorVerificationInput) (reputation.SourceAuthorVerificationAudit, *domain.AppError)
+	AdminCreateDisputeOutcomeWithIdempotency(ctx context.Context, user auth.User, routeKey, key, requestHash string, input reputation.CreateOutcomeInput, buildCompletion reputation.GovernanceCompletionBuilder) (idempotency.Completion, *domain.AppError)
+	AdminCreateUserRestrictionWithIdempotency(ctx context.Context, user auth.User, routeKey, key, requestHash string, input reputation.CreateRestrictionInput, buildCompletion reputation.GovernanceCompletionBuilder) (idempotency.Completion, *domain.AppError)
+	AdminRevokeUserRestrictionWithIdempotency(ctx context.Context, user auth.User, routeKey, key, requestHash string, input reputation.RevokeRestrictionInput, buildCompletion reputation.GovernanceCompletionBuilder) (idempotency.Completion, *domain.AppError)
+	CheckReputationActionAllowed(ctx context.Context, userID, role, action string) *domain.AppError
+}
+
 // ApplicationService is the constructor aggregate while handlers migrate from
 // the legacy facade to domain-specific service boundaries.
 type ApplicationService interface {
 	Service
 	CarpoolService
+	APIQuotaService
+	APIPaymentSettingsService
+	AdminUserService
+	APIPromotionService
+	GrowthService
+	PromotionRewardService
+	ReputationGovernanceService
 }
 
 type Server struct {
-	app                  Service
-	carpools             CarpoolService
-	mux                  chi.Router
-	enableDevAuth        bool
-	readinessChecker     health.Checker
-	navigationBadges     NavigationBadgeService
-	realtimeHub          *realtime.Hub
-	oauth                OAuthOptions
-	frontendOrigin       string
-	cookieSecure         bool
-	allowedOrigins       []string
-	rateLimiter          *middleware.RateLimiter
-	oauthHTTPClient      *http.Client
-	trustXForwardedFor   bool
-	trustedProxyPrefixes []netip.Prefix
+	app              Service
+	carpools         CarpoolService
+	apiQuotas        APIQuotaService
+	apiPayment       APIPaymentSettingsService
+	apiHealth        APIHealthService
+	adminUsers       AdminUserService
+	apiPromotions    APIPromotionService
+	growth           GrowthService
+	promotionRewards PromotionRewardService
+	reputation       ReputationGovernanceService
+	mux              chi.Router
+	enableDevAuth    bool
+	readinessChecker health.Checker
+	navigationBadges NavigationBadgeService
+	realtimeHub      *realtime.Hub
+	oauth            OAuthOptions
+	frontendOrigin   string
+	cookieSecure     bool
+	allowedOrigins   []string
+	rateLimiter      *middleware.RateLimiter
+	oauthHTTPClient  *http.Client
+	clientIPResolver middleware.ClientIPResolver
+	metrics          *observability.Metrics
+	metricsToken     string
+	metricsAuth      bool
 }
 
 func NewServer(service ApplicationService, options ...ServerOptions) http.Handler {
@@ -336,33 +446,54 @@ func NewServer(service ApplicationService, options ...ServerOptions) http.Handle
 	if realtimeHub == nil {
 		realtimeHub = realtime.NewHub()
 	}
+	rateLimiter := option.RateLimiter
+	if rateLimiter == nil {
+		rateLimiter = middleware.NewRateLimiter(time.Minute)
+	}
+	metrics := option.Metrics
+	if metrics == nil {
+		metrics = observability.New(observability.Sources{RateLimiter: rateLimiter})
+	}
 	server := &Server{
-		app:                  service,
-		carpools:             service,
-		mux:                  chi.NewRouter(),
-		enableDevAuth:        option.EnableDevAuth,
-		readinessChecker:     option.ReadinessChecker,
-		navigationBadges:     navigationBadges,
-		realtimeHub:          realtimeHub,
-		oauth:                option.OAuth,
-		frontendOrigin:       option.FrontendOrigin,
-		cookieSecure:         option.AppEnv == config.EnvProduction,
-		allowedOrigins:       append([]string(nil), option.AllowedOrigins...),
-		rateLimiter:          middleware.NewRateLimiter(time.Minute),
-		oauthHTTPClient:      &http.Client{Timeout: 10 * time.Second},
-		trustXForwardedFor:   option.TrustXForwardedFor,
-		trustedProxyPrefixes: trustedProxyPrefixes(option.TrustedProxies),
+		app:              service,
+		carpools:         service,
+		apiQuotas:        service,
+		apiPayment:       service,
+		apiHealth:        option.APIHealth,
+		adminUsers:       service,
+		apiPromotions:    service,
+		growth:           service,
+		promotionRewards: service,
+		reputation:       service,
+		mux:              chi.NewRouter(),
+		enableDevAuth:    option.EnableDevAuth,
+		readinessChecker: option.ReadinessChecker,
+		navigationBadges: navigationBadges,
+		realtimeHub:      realtimeHub,
+		oauth:            option.OAuth,
+		frontendOrigin:   option.FrontendOrigin,
+		cookieSecure:     option.AppEnv == config.EnvProduction,
+		allowedOrigins:   append([]string(nil), option.AllowedOrigins...),
+		rateLimiter:      rateLimiter,
+		oauthHTTPClient:  &http.Client{Timeout: 10 * time.Second},
+		clientIPResolver: middleware.NewClientIPResolver(option.TrustXForwardedFor, option.TrustedProxies),
+		metrics:          metrics,
+		metricsToken:     strings.TrimSpace(option.MetricsBearerToken),
+		metricsAuth:      option.AppEnv == config.EnvProduction || strings.TrimSpace(option.MetricsBearerToken) != "",
 	}
 	server.routes()
 	return middleware.WithRequestID(
-		middleware.WithRequestLogging(
-			log.Default(),
-			middleware.WithSecurityHeaders(
-				middleware.WithCORSAndOrigin(server.mux, middleware.CORSOptions{
-					AllowedOrigins: server.allowedOrigins,
-					Production:     option.AppEnv == config.EnvProduction,
-				}),
-				middleware.SecurityHeadersOptions{HSTS: option.AppEnv == config.EnvProduction},
+		middleware.WithClientIP(
+			server.clientIPResolver,
+			middleware.WithRequestLogging(
+				log.Default(),
+				middleware.WithSecurityHeaders(
+					middleware.WithCORSAndOrigin(server.mux, middleware.CORSOptions{
+						AllowedOrigins: server.allowedOrigins,
+						Production:     option.AppEnv == config.EnvProduction,
+					}),
+					middleware.SecurityHeadersOptions{HSTS: option.AppEnv == config.EnvProduction},
+				),
 			),
 		),
 	)

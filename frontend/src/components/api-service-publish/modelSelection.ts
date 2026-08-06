@@ -1,6 +1,5 @@
 type SelectableServiceModel = {
   modelId: string
-  multiplierOverride: number | null
   enabled: boolean
 }
 
@@ -15,7 +14,7 @@ export const toggleSelectedModel = (selectedModels: SelectableServiceModel[], mo
   if (selectedIds.has(modelId)) return selectedModels.filter(item => item.modelId !== modelId)
   return [
     ...selectedModels.filter(item => item.modelId !== modelId),
-    { modelId, multiplierOverride: null, enabled: true },
+    { modelId, enabled: true },
   ]
 }
 

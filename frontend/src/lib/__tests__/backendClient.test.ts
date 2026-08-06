@@ -17,18 +17,15 @@ function problemResponse(body: unknown, status: number) {
   })
 }
 
-async function loadBackendClient(env: Record<string, string> = {}): Promise<BackendClientModule> {
+async function loadBackendClient(config: { apiMode?: string, apiBaseUrl?: string } = {}): Promise<BackendClientModule> {
   vi.resetModules()
-  vi.unstubAllEnvs()
-  for (const [key, value] of Object.entries(env)) {
-    vi.stubEnv(key, value)
-  }
-  return import('../backendClient')
+  const client = await import('../backendClient')
+  client.setBackendRuntimeConfig(config)
+  return client
 }
 
 afterEach(() => {
   vi.unstubAllGlobals()
-  vi.unstubAllEnvs()
   vi.restoreAllMocks()
   vi.resetModules()
 })
@@ -42,7 +39,7 @@ test('real backend mode surfaces expired sessions without dev-session fallback',
     detail: '请先登录后继续操作。',
   }, 401))
 
-  const client = await loadBackendClient({ VITE_API_MODE: 'real' })
+  const client = await loadBackendClient({ apiMode: 'real' })
 
   await assert.rejects(
     () => client.ensureBackendSession('orbit'),
@@ -57,6 +54,25 @@ test('real backend mode surfaces expired sessions without dev-session fallback',
   assert.equal(fetchMock.mock.calls[0]?.[0], '/api/v1/auth/session')
 })
 
+test('runtime backend mode requires an explicit supported value', async () => {
+  vi.resetModules()
+  const client = await import('../backendClient')
+
+  assert.throws(
+    () => client.setBackendRuntimeConfig({}),
+    /NUXT_PUBLIC_API_MODE must be explicitly set to "real" or "mock"/,
+  )
+  assert.throws(
+    () => client.setBackendRuntimeConfig({ apiMode: 'development' }),
+    /NUXT_PUBLIC_API_MODE must be explicitly set to "real" or "mock"/,
+  )
+
+  client.setBackendRuntimeConfig({ apiMode: 'mock' })
+  assert.equal(client.shouldUseRealBackend(), false)
+  client.setBackendRuntimeConfig({ apiMode: 'real' })
+  assert.equal(client.shouldUseRealBackend(), true)
+})
+
 test('decodes Problem Details into BackendProblemError', async () => {
   const fetchMock = vi.fn()
   vi.stubGlobal('fetch', fetchMock)
@@ -68,7 +84,7 @@ test('decodes Problem Details into BackendProblemError', async () => {
     requestId: 'req_test',
   }, 422))
 
-  const client = await loadBackendClient({ VITE_API_BASE_URL: 'https://api.example.test/' })
+  const client = await loadBackendClient({ apiMode: 'real', apiBaseUrl: 'https://api.example.test/' })
 
   await assert.rejects(
     () => client.backendRequest('/api/v1/search?q=x'),
@@ -111,7 +127,9 @@ test('refreshes session and retries mutation after stale CSRF token', async () =
     }))
     .mockResolvedValueOnce(jsonResponse({ ok: true }))
 
-  const client = await loadBackendClient({ VITE_API_MODE: 'real' })
+  const client = await loadBackendClient({ apiMode: 'real' })
+  const invalidationHandler = vi.fn()
+  client.subscribeToBackendSessionInvalidation(invalidationHandler)
   client.setBackendCSRFToken('stale-token')
 
   const result = await client.backendMutation<{ ok: boolean }>('/api/v1/example', { name: 'demo' })
@@ -126,4 +144,355 @@ test('refreshes session and retries mutation after stale CSRF token', async () =
   const retryMutationHeaders = new Headers((fetchMock.mock.calls[2]?.[1] as RequestInit).headers)
   assert.equal(firstMutationHeaders.get('X-CSRF-Token'), 'stale-token')
   assert.equal(retryMutationHeaders.get('X-CSRF-Token'), 'fresh-token')
+  assert.equal(invalidationHandler.mock.calls.length, 0)
+})
+
+for (const code of ['SESSION_EXPIRED', 'SESSION_REVOKED']) {
+  test(`notifies session invalidation subscribers for ${code}`, async () => {
+    const fetchMock = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
+    fetchMock
+      .mockResolvedValueOnce(jsonResponse({
+        csrfToken: 'active-token',
+        expiresAt: '2999-01-01T00:00:00Z',
+        user: {
+          id: 'user-1',
+          username: 'orbit',
+          displayName: 'Orbit',
+          isAdmin: false,
+          permissions: [],
+          linuxDoBinding: { bound: false },
+        },
+      }))
+      .mockResolvedValueOnce(problemResponse({
+        status: 401,
+        code,
+        detail: '请重新登录。',
+      }, 401))
+
+    const client = await loadBackendClient({ apiMode: 'real' })
+    const invalidationHandler = vi.fn()
+    client.subscribeToBackendSessionInvalidation(invalidationHandler)
+
+    await client.getCurrentBackendSession()
+    await assert.rejects(() => client.backendRequest('/api/v1/private'))
+
+    assert.equal(invalidationHandler.mock.calls.length, 1)
+    assert.equal(invalidationHandler.mock.calls[0]?.[0].code, code)
+  })
+}
+
+test('does not notify an unsubscribed session invalidation handler', async () => {
+  const fetchMock = vi.fn()
+  vi.stubGlobal('fetch', fetchMock)
+  fetchMock
+    .mockResolvedValueOnce(jsonResponse({
+      csrfToken: 'active-token',
+      expiresAt: '2999-01-01T00:00:00Z',
+      user: {
+        id: 'user-1',
+        username: 'orbit',
+        displayName: 'Orbit',
+        isAdmin: false,
+        permissions: [],
+        linuxDoBinding: { bound: false },
+      },
+    }))
+    .mockResolvedValueOnce(problemResponse({
+      status: 401,
+      code: 'SESSION_EXPIRED',
+      detail: '请重新登录。',
+    }, 401))
+
+  const client = await loadBackendClient({ apiMode: 'real' })
+  const invalidationHandler = vi.fn()
+  const unsubscribe = client.subscribeToBackendSessionInvalidation(invalidationHandler)
+  await client.getCurrentBackendSession()
+  unsubscribe()
+
+  await assert.rejects(() => client.backendRequest('/api/v1/private'))
+
+  assert.equal(invalidationHandler.mock.calls.length, 0)
+})
+
+test('does not treat an anonymous public-page session probe as session invalidation', async () => {
+  const fetchMock = vi.fn()
+  vi.stubGlobal('fetch', fetchMock)
+  fetchMock.mockResolvedValueOnce(problemResponse({
+    status: 401,
+    code: 'SESSION_EXPIRED',
+    detail: '请先登录。',
+  }, 401))
+
+  const client = await loadBackendClient({ apiMode: 'real' })
+  const invalidationHandler = vi.fn()
+  client.subscribeToBackendSessionInvalidation(invalidationHandler)
+
+  await assert.rejects(() => client.getCurrentBackendSession())
+
+  assert.equal(invalidationHandler.mock.calls.length, 0)
+})
+
+test('real backend mode preserves network errors during session checks', async () => {
+  const fetchMock = vi.fn().mockRejectedValue(new TypeError('network unavailable'))
+  vi.stubGlobal('fetch', fetchMock)
+  const client = await loadBackendClient({ apiMode: 'real' })
+
+  await assert.rejects(
+    () => client.ensureBackendSession('orbit'),
+    error => error instanceof TypeError && error.message === 'network unavailable',
+  )
+})
+
+test('logout revokes the backend session and clears the cached session', async () => {
+  const fetchMock = vi.fn()
+  vi.stubGlobal('fetch', fetchMock)
+  const firstSession = {
+    csrfToken: 'csrf-before-logout',
+    expiresAt: '2999-01-01T00:00:00Z',
+    user: {
+      id: 'user-1',
+      username: 'orbit',
+      displayName: 'Orbit',
+      isAdmin: false,
+      permissions: [],
+      linuxDoBinding: { bound: true },
+    },
+  }
+  const nextSession = {
+    ...firstSession,
+    csrfToken: 'csrf-after-login',
+  }
+  fetchMock
+    .mockResolvedValueOnce(jsonResponse(firstSession))
+    .mockResolvedValueOnce(new Response(null, { status: 204 }))
+    .mockResolvedValueOnce(jsonResponse(nextSession))
+
+  const client = await loadBackendClient({ apiMode: 'real' })
+  assert.deepEqual(await client.getCurrentBackendSession(), firstSession)
+  await client.logoutBackendSession()
+  assert.deepEqual(await client.getCurrentBackendSession(), nextSession)
+
+  assert.equal(fetchMock.mock.calls.length, 3)
+  assert.equal(fetchMock.mock.calls[1]?.[0], '/api/v1/auth/logout')
+  const logoutHeaders = new Headers((fetchMock.mock.calls[1]?.[1] as RequestInit).headers)
+  assert.equal(logoutHeaders.get('X-CSRF-Token'), 'csrf-before-logout')
+  assert.equal(fetchMock.mock.calls[2]?.[0], '/api/v1/auth/session')
+})
+
+test('OAuth start sends only the stored bounded registration attribution', async () => {
+  const values = new Map<string, string>()
+  const sessionStorage = {
+    getItem: (key: string) => values.get(key) ?? null,
+    setItem: (key: string, value: string) => values.set(key, value),
+    removeItem: (key: string) => values.delete(key),
+  }
+  vi.stubGlobal('window', {
+    sessionStorage,
+    location: {
+      origin: 'https://c2cmarket.shop',
+      pathname: '/carpools/private-listing-id',
+      search: '?utm_source=linux.do&utm_medium=community&utm_campaign=launch',
+    },
+  })
+  vi.stubGlobal('document', { referrer: 'https://linux.do/t/private-topic/123?token=secret' })
+  const fetchMock = vi.fn().mockResolvedValue(jsonResponse({
+    authorizationUrl: 'https://connect.linux.do/oauth2/authorize',
+  }))
+  vi.stubGlobal('fetch', fetchMock)
+
+  const client = await loadBackendClient({ apiMode: 'real', apiBaseUrl: 'https://api.example.test' })
+  await client.startOAuthLogin('/my/rides/private-application-id?tab=contact')
+
+  const requestURL = new URL(fetchMock.mock.calls[0]?.[0] as string)
+  assert.equal(requestURL.pathname, '/api/v1/auth/oauth/start')
+  assert.equal(requestURL.searchParams.get('returnTo'), '/my/rides/private-application-id?tab=contact')
+  assert.equal(requestURL.searchParams.get('utmSource'), 'linux.do')
+  assert.equal(requestURL.searchParams.get('utmMedium'), 'community')
+  assert.equal(requestURL.searchParams.get('utmCampaign'), 'launch')
+  assert.equal(requestURL.searchParams.get('referrerHost'), 'linux.do')
+  assert.equal(requestURL.searchParams.get('landingPath'), '/carpools/:id')
+  assert.equal(requestURL.search.includes('private-topic'), false)
+  assert.equal(requestURL.search.includes('token'), false)
+})
+
+test('restricted-account appeals use dedicated CSRF and preserve the normal session cache', async () => {
+  const fetchMock = vi.fn()
+  vi.stubGlobal('fetch', fetchMock)
+  fetchMock
+    .mockResolvedValueOnce(jsonResponse({
+      csrfToken: 'normal-csrf',
+      expiresAt: '2999-01-01T00:00:00Z',
+      user: {
+        id: 'user-1',
+        analyticsUserId: 'a1111111-1111-4111-8111-111111111111',
+        username: 'orbit',
+        displayName: 'Orbit',
+        isAdmin: false,
+        permissions: [],
+        linuxDoBinding: { bound: true },
+      },
+    }))
+    .mockResolvedValueOnce(jsonResponse({
+      accountStatus: 'suspended',
+      csrfToken: 'appeal-csrf',
+      expiresAt: '2026-08-03T10:15:00Z',
+    }))
+    .mockResolvedValueOnce(jsonResponse({
+      id: 'appeal-1',
+      targetType: 'account_governance',
+      targetId: 'user-1',
+      title: '账号治理申诉',
+      status: 'submitted',
+      createdAt: '2026-08-03T10:01:00Z',
+      updatedAt: '2026-08-03T10:01:00Z',
+      version: 1,
+    }, 201))
+    .mockResolvedValueOnce(jsonResponse({ ok: true }))
+
+  const client = await loadBackendClient({ apiMode: 'real' })
+  await client.getCurrentBackendSession()
+  const appealSession = await client.getAccountAppealSession()
+  assert.equal(appealSession.accountStatus, 'suspended')
+  assert.equal(client.getBackendCSRFToken(), 'normal-csrf')
+
+  const appeal = await client.submitAccountGovernanceAppeal('请复核本次账号限制。')
+  assert.equal(appeal.targetType, 'account_governance')
+  await client.backendMutation('/api/v1/example', {})
+
+  const appealHeaders = new Headers((fetchMock.mock.calls[2]?.[1] as RequestInit).headers)
+  assert.equal(fetchMock.mock.calls[2]?.[0], '/api/v1/account-appeal/appeals')
+  assert.equal(appealHeaders.get('X-Account-Appeal-CSRF'), 'appeal-csrf')
+  assert.equal(appealHeaders.get('X-CSRF-Token'), null)
+  assert.match(appealHeaders.get('Idempotency-Key') ?? '', /^account-appeal-create-/)
+  assert.equal((fetchMock.mock.calls[2]?.[1] as RequestInit).body, JSON.stringify({ statement: '请复核本次账号限制。' }))
+
+  const normalHeaders = new Headers((fetchMock.mock.calls[3]?.[1] as RequestInit).headers)
+  assert.equal(normalHeaders.get('X-CSRF-Token'), 'normal-csrf')
+  assert.equal(normalHeaders.get('X-Account-Appeal-CSRF'), null)
+})
+
+test('dedicated appeal-session errors do not invalidate the normal cached session', async () => {
+  const normalSession = {
+    csrfToken: 'normal-csrf',
+    expiresAt: '2999-01-01T00:00:00Z',
+    user: {
+      id: 'user-1',
+      analyticsUserId: 'a1111111-1111-4111-8111-111111111111',
+      username: 'orbit',
+      displayName: 'Orbit',
+      isAdmin: false,
+      permissions: [],
+      linuxDoBinding: { bound: true },
+    },
+  }
+  const fetchMock = vi.fn()
+    .mockResolvedValueOnce(jsonResponse(normalSession))
+    .mockResolvedValueOnce(problemResponse({
+      status: 401,
+      code: 'SESSION_REVOKED',
+      detail: '专用申诉会话已失效。',
+    }, 401))
+  vi.stubGlobal('fetch', fetchMock)
+
+  const client = await loadBackendClient({ apiMode: 'real' })
+  await client.getCurrentBackendSession()
+  await assert.rejects(() => client.getAccountAppealSession())
+  assert.deepEqual(await client.getCurrentBackendSession(), normalSession)
+  assert.equal(fetchMock.mock.calls.length, 2)
+  assert.equal(client.getBackendCSRFToken(), 'normal-csrf')
+})
+
+test('restricted-account appeal submission refreshes only its dedicated CSRF and reuses idempotency', async () => {
+  const fetchMock = vi.fn()
+    .mockResolvedValueOnce(jsonResponse({
+      accountStatus: 'banned',
+      csrfToken: 'stale-appeal-csrf',
+      expiresAt: '2026-08-03T10:15:00Z',
+    }))
+    .mockResolvedValueOnce(problemResponse({
+      status: 403,
+      code: 'CSRF_TOKEN_INVALID',
+      detail: 'CSRF token 无效或缺失。',
+    }, 403))
+    .mockResolvedValueOnce(jsonResponse({
+      accountStatus: 'banned',
+      csrfToken: 'fresh-appeal-csrf',
+      expiresAt: '2026-08-03T10:15:00Z',
+    }))
+    .mockResolvedValueOnce(jsonResponse({
+      id: 'appeal-1',
+      targetType: 'account_governance',
+      targetId: 'user-1',
+      title: '账号治理申诉',
+      status: 'submitted',
+      createdAt: '2026-08-03T10:01:00Z',
+      updatedAt: '2026-08-03T10:01:00Z',
+      version: 1,
+    }, 201))
+  vi.stubGlobal('fetch', fetchMock)
+
+  const client = await loadBackendClient({ apiMode: 'real' })
+  await client.getAccountAppealSession()
+  await client.submitAccountGovernanceAppeal('请复核本次账号限制。')
+
+  assert.deepEqual(fetchMock.mock.calls.map(call => call[0]), [
+    '/api/v1/account-appeal/session',
+    '/api/v1/account-appeal/appeals',
+    '/api/v1/account-appeal/session',
+    '/api/v1/account-appeal/appeals',
+  ])
+  const firstHeaders = new Headers((fetchMock.mock.calls[1]?.[1] as RequestInit).headers)
+  const retryHeaders = new Headers((fetchMock.mock.calls[3]?.[1] as RequestInit).headers)
+  assert.equal(firstHeaders.get('X-Account-Appeal-CSRF'), 'stale-appeal-csrf')
+  assert.equal(retryHeaders.get('X-Account-Appeal-CSRF'), 'fresh-appeal-csrf')
+  assert.equal(firstHeaders.get('Idempotency-Key'), retryHeaders.get('Idempotency-Key'))
+})
+
+test('restricted-account appeal verification starts only the dedicated OAuth flow', async () => {
+  const fetchMock = vi.fn().mockResolvedValueOnce(jsonResponse({
+    authorizationUrl: 'https://connect.linux.do/oauth2/authorize?state=appeal',
+  }))
+  vi.stubGlobal('fetch', fetchMock)
+
+  const client = await loadBackendClient({ apiMode: 'real' })
+  const response = await client.startAccountAppealVerification()
+
+  assert.equal(response.authorizationUrl.includes('state=appeal'), true)
+  assert.equal(fetchMock.mock.calls[0]?.[0], '/api/v1/auth/account-appeal/start')
+})
+
+test('cached sessions identify with the opaque analytics ID and logout clears it', async () => {
+  const identify = vi.fn()
+  vi.stubGlobal('window', { umami: { identify } })
+  const fetchMock = vi.fn()
+    .mockResolvedValueOnce(jsonResponse({
+      csrfToken: 'csrf-token',
+      expiresAt: '2999-01-01T00:00:00Z',
+      user: {
+        id: 'business-user-id',
+        analyticsUserId: 'a1111111-1111-4111-8111-111111111111',
+        username: 'private-username',
+        displayName: 'Private User',
+        isAdmin: false,
+        permissions: [],
+        linuxDoBinding: { bound: true },
+      },
+    }))
+    .mockResolvedValueOnce(new Response(null, { status: 204 }))
+  vi.stubGlobal('fetch', fetchMock)
+
+  const client = await loadBackendClient({ apiMode: 'real' })
+  const analytics = await import('../analytics')
+  analytics.setAnalyticsRuntimeConfig({ enabled: true })
+
+  await client.getCurrentBackendSession()
+  await client.logoutBackendSession()
+
+  assert.deepEqual(identify.mock.calls, [
+    ['a1111111-1111-4111-8111-111111111111'],
+    [''],
+  ])
+  assert.equal(JSON.stringify(identify.mock.calls).includes('business-user-id'), false)
+  assert.equal(JSON.stringify(identify.mock.calls).includes('private-username'), false)
 })

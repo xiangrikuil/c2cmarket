@@ -77,8 +77,13 @@ func NewService(repo Repository, intentResolver BuyerIntentResolver, serviceReso
 }
 
 func (s *Service) CreateWithIdempotency(ctx context.Context, userID, routeKey, key, requestHash string, input CreateInput, buildCompletion CompletionBuilder) (idempotency.Completion, *domain.AppError) {
+	_, completion, _, appErr := s.CreateWithIdempotencyResult(ctx, userID, routeKey, key, requestHash, input, buildCompletion)
+	return completion, appErr
+}
+
+func (s *Service) CreateWithIdempotencyResult(ctx context.Context, userID, routeKey, key, requestHash string, input CreateInput, buildCompletion CompletionBuilder) (Order, idempotency.Completion, bool, *domain.AppError) {
 	input.BuyerUserID = userID
-	return s.createOrUpdateWithIdempotency(ctx, userID, routeKey, key, requestHash, input, ActionInput{}, buildCompletion, "create")
+	return s.createOrUpdateWithIdempotencyResult(ctx, userID, routeKey, key, requestHash, input, ActionInput{}, buildCompletion, "create")
 }
 
 func (s *Service) BuyerOrders(ctx context.Context, user auth.User) ([]Order, *domain.AppError) {
@@ -199,6 +204,24 @@ func (s *Service) AdminOrders(ctx context.Context, user auth.User) ([]Order, *do
 	return orders, nil
 }
 
+func (s *Service) AdminOrder(ctx context.Context, user auth.User, orderID string) (Order, *domain.AppError) {
+	if !user.IsAdmin {
+		return Order{}, domain.NewError(http.StatusForbidden, domain.CodePermissionDenied, "Permission denied", "需要管理员权限。")
+	}
+	if s.repo != nil {
+		return s.repo.GetAdminAPIOrder(ctx, orderID, s.now())
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	order, ok := s.orders[strings.TrimSpace(orderID)]
+	if !ok {
+		return Order{}, notFound()
+	}
+	order = s.materializeTimeoutLocked(order.ID)
+	order.DeliveryCredential = nil
+	return order, nil
+}
+
 func (s *Service) SellerOrder(ctx context.Context, user auth.User, orderID string) (Order, *domain.AppError) {
 	if s.repo != nil {
 		return s.repo.GetAPIOrderForSeller(ctx, user.ID, orderID, s.now())
@@ -276,27 +299,33 @@ func (s *Service) SubmitDeliveryWithIdempotency(ctx context.Context, userID, rou
 }
 
 func (s *Service) createOrUpdateWithIdempotency(ctx context.Context, userID, routeKey, key, requestHash string, createInput CreateInput, actionInput ActionInput, buildCompletion CompletionBuilder, action string) (idempotency.Completion, *domain.AppError) {
+	_, completion, _, appErr := s.createOrUpdateWithIdempotencyResult(ctx, userID, routeKey, key, requestHash, createInput, actionInput, buildCompletion, action)
+	return completion, appErr
+}
+
+func (s *Service) createOrUpdateWithIdempotencyResult(ctx context.Context, userID, routeKey, key, requestHash string, createInput CreateInput, actionInput ActionInput, buildCompletion CompletionBuilder, action string) (Order, idempotency.Completion, bool, *domain.AppError) {
 	key = strings.TrimSpace(key)
 	if err := idempotency.ValidateKey(key); err != nil {
-		return idempotency.Completion{}, err
+		return Order{}, idempotency.Completion{}, false, err
 	}
 	if buildCompletion == nil {
-		return idempotency.Completion{}, domain.NewError(http.StatusInternalServerError, domain.CodeInternalError, "Internal error", "响应编码失败。")
+		return Order{}, idempotency.Completion{}, false, domain.NewError(http.StatusInternalServerError, domain.CodeInternalError, "Internal error", "响应编码失败。")
 	}
 
 	entry, appErr := s.idempotency.Begin(ctx, userID, routeKey, key, requestHash)
 	if appErr != nil {
-		return idempotency.Completion{}, appErr
+		return Order{}, idempotency.Completion{}, false, appErr
 	}
 	if entry.State == "completed" {
 		if entry.ResourceType == resourceType && entry.ResourceID != "" {
 			order, replayErr := s.orderForReplay(ctx, userID, entry.ResourceID, action)
 			if replayErr != nil {
-				return idempotency.Completion{}, replayErr
+				return Order{}, idempotency.Completion{}, false, replayErr
 			}
-			return buildCompletion(order)
+			completion, completionErr := buildCompletion(order)
+			return order, completion, false, completionErr
 		}
-		return idempotency.CompletionFromEntry(entry), nil
+		return Order{}, idempotency.CompletionFromEntry(entry), false, nil
 	}
 
 	if s.repo != nil {
@@ -322,12 +351,11 @@ func (s *Service) createOrUpdateWithIdempotency(ctx context.Context, userID, rou
 		default:
 			appErr = domain.NewError(http.StatusInternalServerError, domain.CodeInternalError, "Internal error", "未知订单动作。")
 		}
-		_ = order
 		if appErr != nil {
 			s.idempotency.Cancel(ctx, entry)
-			return idempotency.Completion{}, appErr
+			return Order{}, idempotency.Completion{}, false, appErr
 		}
-		return completion, nil
+		return order, completion, action == "create", nil
 	}
 
 	var order Order
@@ -338,24 +366,33 @@ func (s *Service) createOrUpdateWithIdempotency(ctx context.Context, userID, rou
 	}
 	if appErr != nil {
 		s.idempotency.Cancel(ctx, entry)
-		return idempotency.Completion{}, appErr
+		return Order{}, idempotency.Completion{}, false, appErr
 	}
 	completion, appErr := buildCompletion(order)
 	if appErr != nil {
 		s.idempotency.Cancel(ctx, entry)
-		return idempotency.Completion{}, appErr
+		return Order{}, idempotency.Completion{}, false, appErr
 	}
 	if appErr := s.idempotency.Complete(ctx, entry, completion.Status, completion.ContentType, completion.Body, completion.ResourceType, completion.ResourceID); appErr != nil {
 		s.idempotency.Cancel(ctx, entry)
-		return idempotency.Completion{}, appErr
+		return Order{}, idempotency.Completion{}, false, appErr
 	}
-	return completion, nil
+	return order, completion, action == "create", nil
 }
 
 func (s *Service) orderForReplay(ctx context.Context, userID, orderID, action string) (Order, *domain.AppError) {
 	switch action {
-	case "create", "submit_payment", "cancel", "confirm_complete", "open_dispute":
+	case "create", "submit_payment", "cancel", "confirm_complete":
 		return s.BuyerOrder(ctx, auth.User{ID: userID}, orderID)
+	case "open_dispute":
+		order, appErr := s.BuyerOrder(ctx, auth.User{ID: userID}, orderID)
+		if appErr == nil {
+			return order, nil
+		}
+		if appErr.Status != http.StatusNotFound {
+			return Order{}, appErr
+		}
+		return s.SellerOrder(ctx, auth.User{ID: userID}, orderID)
 	case "confirm_payment", "report_payment_issue", "submit_delivery":
 		return s.SellerOrder(ctx, auth.User{ID: userID}, orderID)
 	default:
@@ -473,19 +510,39 @@ func (s *Service) registerDisputeCaseLocked(ctx context.Context, order Order, in
 
 func (s *Service) materializeTimeoutLocked(orderID string) Order {
 	order := s.orders[orderID]
-	if order.Status != StatusPendingPayment || s.now().Before(order.PaymentExpiresAt) {
+	now := s.now()
+	if order.Status == StatusPendingPayment && !now.Before(order.PaymentExpiresAt) {
+		from := order.Status
+		order.Status = StatusCancelled
+		order.CancelReason = CancelReasonPaymentTimeout
+		order.CancelledAt = &now
+		order.UpdatedAt = now
+		order.Version++
+		s.releaseInventoryLocked(&order)
+		s.orders[orderID] = order
+		s.appendEventLocked(order, "", EventPaymentTimeoutCancelled, from, order.Status, "", "payment-timeout")
 		return order
 	}
-	now := s.now()
-	from := order.Status
-	order.Status = StatusCancelled
-	order.CancelReason = CancelReasonPaymentTimeout
-	order.CancelledAt = &now
-	order.UpdatedAt = now
-	order.Version++
-	s.releaseInventoryLocked(&order)
-	s.orders[orderID] = order
-	s.appendEventLocked(order, "", EventPaymentTimeoutCancelled, from, order.Status, "", "payment-timeout")
+	if order.Status != StatusDeliverySubmitted || order.DisputeStatus == DisputeStatusOpen || order.DeliveryReviewExpiresAt == nil {
+		return order
+	}
+	if !now.Before(*order.DeliveryReviewExpiresAt) {
+		completedAt := *order.DeliveryReviewExpiresAt
+		order.Status = StatusCompleted
+		order.CompletionSource = CompletionSourceAutoCompleted
+		order.CompletedAt = &completedAt
+		order.UpdatedAt = now
+		order.Version++
+		s.orders[orderID] = order
+		s.appendEventLocked(order, "", EventAutoCompleted, StatusDeliverySubmitted, StatusCompleted, "", "delivery-review-auto-complete")
+		return order
+	}
+	reminderAt := order.DeliveryReviewExpiresAt.Add(-DeliveryReviewReminderLead)
+	if order.DeliveryReviewRemindedAt == nil && !now.Before(reminderAt) {
+		order.DeliveryReviewRemindedAt = &now
+		s.orders[orderID] = order
+		s.appendEventLocked(order, "", EventDeliveryReviewReminder, order.Status, order.Status, "", "delivery-review-reminder")
+	}
 	return order
 }
 
@@ -598,7 +655,7 @@ func NewOrder(input CreateInput, intent apiintent.Intent, service apimarket.Serv
 	if strings.TrimSpace(input.IntentID) == "" {
 		return Order{}, domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "API purchase intent required", "必须提供购买意向。", "intentId", "required", "必须提供购买意向。")
 	}
-	if !apimarket.IsOrderableService(service) {
+	if !apimarket.WithOrderabilityAt(service, now).IsOrderable {
 		return Order{}, domain.NewError(http.StatusConflict, domain.CodeInvalidStateTransition, "Service not orderable", "当前 API 服务不可下单。")
 	}
 	method := strings.TrimSpace(input.PaymentMethod)
@@ -610,8 +667,14 @@ func NewOrder(input CreateInput, intent apiintent.Intent, service apimarket.Serv
 	if appErr != nil {
 		return Order{}, appErr
 	}
+	orderNo, err := GenerateOrderNo(now)
+	if err != nil {
+		return Order{}, domain.NewError(http.StatusInternalServerError, domain.CodeInternalError, "Internal error", "订单编号生成失败。")
+	}
 	return Order{
 		ID:                            uuid.NewString(),
+		OrderNo:                       orderNo,
+		PurchaseKind:                  PurchaseKindAPIService,
 		APIPurchaseIntentID:           intent.ID,
 		APIServiceID:                  intent.APIServiceID,
 		BuyerUserID:                   input.BuyerUserID,
@@ -627,6 +690,7 @@ func NewOrder(input CreateInput, intent apiintent.Intent, service apimarket.Serv
 		RequestedUSDAllowanceSnapshot: decimalStringOptional(intent.RequestedUSDAllowance, 6),
 		CNYPerUSDAllowanceSnapshot:    decimalStringOptional(intent.DeclaredCNYPerUSDAllowanceSnapshot, 4),
 		PricingSnapshot:               intent.PricingSnapshot,
+		PromptAuditEnabledSnapshot:    intent.PromptAuditEnabledSnapshot,
 		PackageStockReserved:          service.BillingMode == apimarket.ServiceBillingModeFixedPackage,
 		Amount:                        amount,
 		Currency:                      currency,
@@ -968,7 +1032,7 @@ func canTransition(order Order, action string, now time.Time) bool {
 	case "submit_delivery":
 		return order.Status == StatusPaidConfirmed
 	case "confirm_complete":
-		return order.Status == StatusDeliverySubmitted
+		return order.Status == StatusDeliverySubmitted && order.DisputeStatus != DisputeStatusOpen
 	case "open_dispute":
 		return order.Status != StatusCancelled && order.Status != StatusCompleted && order.DisputeStatus == DisputeStatusNone
 	default:
@@ -1002,8 +1066,11 @@ func applyAction(order Order, input ActionInput, action string, now time.Time) O
 		order.Status = StatusDeliverySubmitted
 		order.DeliveryNote = strings.TrimSpace(input.DeliveryNote)
 		order.DeliverySubmittedAt = &now
+		reviewExpiresAt := now.Add(DeliveryReviewWindow)
+		order.DeliveryReviewExpiresAt = &reviewExpiresAt
 	case "confirm_complete":
 		order.Status = StatusCompleted
+		order.CompletionSource = CompletionSourceBuyerConfirmed
 		order.CompletedAt = &now
 	case "open_dispute":
 		order.DisputeStatus = DisputeStatusOpen

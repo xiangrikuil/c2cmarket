@@ -45,6 +45,14 @@ export function useCarpoolApplication(id: Ref<string> | string) {
 - Do not call `fetch`, `sessionStorage`, or raw mock arrays directly from pages when an existing facade/hook can be extended.
 - Use `refetchOnMount: 'always'` for workflow pages where another route likely changed the same state, such as my carpool applications or API intents.
 - Use `placeholderData: previousData => previousData` only when keeping the previous result is an intentional UX behavior for filter changes.
+- When an empty-state decision aggregates multiple queries, require every query to be successful, fetched after the current mount, not fetching, and empty. Do not project `undefined` or stale cached data through `data ?? []`, because an active mount refetch can otherwise flash a false "new user" or "no records" state.
+
+```ts
+const isFreshEmpty = query.isSuccess.value
+  && query.isFetchedAfterMount.value
+  && !query.isFetching.value
+  && query.data.value?.length === 0
+```
 
 ---
 
@@ -65,4 +73,5 @@ export function useCarpoolApplication(id: Ref<string> | string) {
 - Returning mock data after a real backend request fails. Real mode failures must be visible to the caller/user.
 - Calling `/auth/dev-session` from a real backend route/page to get a buyer, owner, or admin identity. Dev sessions are reserved for development/test smoke scripts and mock/local mode.
 - Using plain values in query keys for refs without `computed`, causing stale reads after route param or filter changes.
+- Treating `data ?? []` as proof that a query has completed successfully when rendering an aggregate empty state.
 - Putting page-only tab/form state into TanStack Query or Pinia when normal Vue local state is sufficient.
