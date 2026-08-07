@@ -265,4 +265,62 @@ describe('API 健康探针 Mock facade', () => {
     expect(saved.normalizedOrigin).toBe('http://api.example.test:80')
     facade.resetMockAPIHealthProbes()
   })
+
+  it('Mock 仅在 Origin 变化时重置授权，模型和路径变化只更新测量版本', async () => {
+    vi.resetModules()
+    const client = await import('../backendClient')
+    client.setBackendRuntimeConfig({ apiMode: 'mock', apiBaseUrl: 'https://api.example.test/' })
+    const facade = await import('../apiHealthFacade')
+    facade.resetMockAPIHealthProbes()
+
+    let config = await facade.saveOwnerAPIHealthProbe({
+      apiServiceId: 'service-auth',
+      version: 0,
+      baseUrl: 'https://api.example.test/v1',
+      model: 'gpt-5-mini',
+      credential: 'probe-key-once',
+      enabled: true,
+      acknowledgeInsecureHttp: false,
+    })
+    const challenge = await facade.createAPIHealthChallenge({
+      apiServiceId: 'service-auth',
+      version: config.version,
+      method: 'dns_txt',
+    })
+    config = await facade.verifyAPIHealthChallenge({ apiServiceId: 'service-auth', version: challenge.configVersion })
+
+    config = await facade.saveOwnerAPIHealthProbe({
+      apiServiceId: 'service-auth',
+      version: config.version,
+      baseUrl: config.baseUrl,
+      model: 'gpt-5.1',
+      enabled: true,
+      acknowledgeInsecureHttp: false,
+    })
+    expect(config.authorizationStatus).toBe('verified')
+    expect(config.measurementVersion).toBe(2)
+
+    config = await facade.saveOwnerAPIHealthProbe({
+      apiServiceId: 'service-auth',
+      version: config.version,
+      baseUrl: 'https://api.example.test/openai/v1',
+      model: config.model,
+      enabled: true,
+      acknowledgeInsecureHttp: false,
+    })
+    expect(config.authorizationStatus).toBe('verified')
+    expect(config.measurementVersion).toBe(3)
+
+    config = await facade.saveOwnerAPIHealthProbe({
+      apiServiceId: 'service-auth',
+      version: config.version,
+      baseUrl: 'https://other.example.test/v1',
+      model: config.model,
+      enabled: true,
+      acknowledgeInsecureHttp: false,
+    })
+    expect(config.authorizationStatus).toBe('pending')
+    expect(config.measurementVersion).toBe(4)
+    facade.resetMockAPIHealthProbes()
+  })
 })

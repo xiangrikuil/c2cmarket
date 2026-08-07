@@ -18,6 +18,10 @@ export function useOwnerAPIHealthProbeForm(config: Ref<OwnerAPIHealthProbeConfig
     touched.value = false
   }, { immediate: true })
 
+  watch(baseUrl, () => {
+    acknowledgeInsecureHttp.value = false
+  }, { flush: 'sync' })
+
   const isInsecureHttp = computed(() => {
     try {
       return new URL(baseUrl.value.trim()).protocol === 'http:'
@@ -25,6 +29,14 @@ export function useOwnerAPIHealthProbeForm(config: Ref<OwnerAPIHealthProbeConfig
       return false
     }
   })
+
+  const hasSavedInsecureHttpAcknowledgement = computed(() => {
+    if (!isInsecureHttp.value || !config.value) return false
+    return config.value.baseUrl.trim() === baseUrl.value.trim()
+  })
+  const requiresInsecureHttpAcknowledgement = computed(() => (
+    isInsecureHttp.value && !hasSavedInsecureHttpAcknowledgement.value
+  ))
 
   const validation = computed(() => {
     const errors: Record<'baseUrl' | 'model' | 'credential' | 'acknowledgeInsecureHttp', string> = {
@@ -46,7 +58,7 @@ export function useOwnerAPIHealthProbeForm(config: Ref<OwnerAPIHealthProbeConfig
     if (enabled.value && !config.value?.credentialConfigured && !credential.value.trim()) {
       errors.credential = '首次启用前必须填写探针专用 API Key。'
     }
-    if (isInsecureHttp.value && !acknowledgeInsecureHttp.value) {
+    if (requiresInsecureHttpAcknowledgement.value && !acknowledgeInsecureHttp.value) {
       errors.acknowledgeInsecureHttp = '使用 HTTP 请求地址前必须确认未加密传输风险。'
     }
     return errors
@@ -71,7 +83,8 @@ export function useOwnerAPIHealthProbeForm(config: Ref<OwnerAPIHealthProbeConfig
       model: model.value.trim(),
       ...(trimmedCredential ? { credential: trimmedCredential } : {}),
       enabled: enabled.value,
-      acknowledgeInsecureHttp: isInsecureHttp.value && acknowledgeInsecureHttp.value,
+      acknowledgeInsecureHttp: isInsecureHttp.value
+        && (hasSavedInsecureHttpAcknowledgement.value || acknowledgeInsecureHttp.value),
     }
   }
 
@@ -82,6 +95,7 @@ export function useOwnerAPIHealthProbeForm(config: Ref<OwnerAPIHealthProbeConfig
     enabled,
     acknowledgeInsecureHttp,
     isInsecureHttp,
+    requiresInsecureHttpAcknowledgement,
     touched,
     validation,
     valid,

@@ -110,8 +110,8 @@ func (s *Store) UpsertOwnerProbeConfig(ctx context.Context, mutation apihealth.C
 		    authorization_status = $15, authorization_method = $16,
 		    verified_origin = $17, verified_at = $18,
 		    approved_by_admin_id = $19, approved_at = $20, rejection_reason = $21,
-		    challenge_token_hash = CASE WHEN c.measurement_version <> $22 THEN NULL ELSE c.challenge_token_hash END,
-		    challenge_expires_at = CASE WHEN c.measurement_version <> $22 THEN NULL ELSE c.challenge_expires_at END,
+		    challenge_token_hash = CASE WHEN $27 THEN NULL ELSE c.challenge_token_hash END,
+		    challenge_expires_at = CASE WHEN $27 THEN NULL ELSE c.challenge_expires_at END,
 		    measurement_version = $22, last_config_error_code = $23,
 		    version = $24, updated_at = $25
 		WHERE c.id = $1 AND c.api_service_id = $2 AND c.owner_user_id = $3 AND c.version = $26
@@ -122,7 +122,8 @@ func (s *Store) UpsertOwnerProbeConfig(ctx context.Context, mutation apihealth.C
 		nullText(encoded.CipherFormat), nullBytes([]byte(encoded.Fingerprint)), config.Enabled,
 		config.AuthorizationStatus, nullText(config.AuthorizationMethod), nullText(config.VerifiedOrigin), config.VerifiedAt,
 		nullUUID(config.ApprovedByAdminID), config.ApprovedAt, nullText(config.RejectionReason),
-		config.MeasurementVersion, nullText(config.LastConfigErrorCode), config.Version, config.UpdatedAt, expectedVersion)
+		config.MeasurementVersion, nullText(config.LastConfigErrorCode), config.Version, config.UpdatedAt, expectedVersion,
+		mutation.AuthorizationInvalidated)
 	if err := scanAPIProbeConfig(row, &config); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return apihealth.Config{}, apiHealthVersionConflict()
@@ -137,7 +138,7 @@ func (s *Store) UpsertOwnerProbeConfig(ctx context.Context, mutation apihealth.C
 			config.OwnerUserID,
 			apihealth.AuthorizationActionOriginInvalidated,
 			"",
-			apihealth.AuthorizationReasonMeasurementChanged,
+			apihealth.AuthorizationReasonOriginChanged,
 			config.UpdatedAt,
 		); appErr != nil {
 			return apihealth.Config{}, appErr

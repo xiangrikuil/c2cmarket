@@ -66,32 +66,27 @@ export async function saveOwnerAPIHealthProbe(input: SaveOwnerAPIHealthProbeInpu
     throw new Error('使用 HTTP 请求地址前必须确认未加密传输风险。')
   }
   const model = input.model.trim()
+  const normalizedOrigin = mockOrigin(baseUrl)
+  const measurementChanged = !current || current.baseUrl !== baseUrl || current.model !== model
+  const authorizationChanged = !current || current.normalizedOrigin !== normalizedOrigin
   const next: OwnerAPIHealthProbeConfig = {
     id: current?.id ?? `probe-${input.apiServiceId}`,
     apiServiceId: input.apiServiceId,
     protocol: 'openai_chat_completions_v1',
     baseUrl,
-    normalizedOrigin: mockOrigin(baseUrl),
+    normalizedOrigin,
     model,
     credentialConfigured: current?.credentialConfigured || Boolean(input.credential?.trim()),
     enabled: input.enabled,
-    authorizationStatus: current?.baseUrl === baseUrl && current.model === model
-      ? current.authorizationStatus
-      : 'pending',
-    authorizationMethod: current?.baseUrl === baseUrl && current.model === model
-      ? current.authorizationMethod
-      : null,
-    verifiedOrigin: current?.baseUrl === baseUrl && current.model === model
-      ? current.verifiedOrigin
-      : null,
-    verifiedAt: current?.baseUrl === baseUrl && current.model === model
-      ? current.verifiedAt
-      : null,
-    approvedAt: null,
-    rejectionReason: null,
-    challengeExpiresAt: null,
-    measurementVersion: (current?.measurementVersion ?? 0) + (current && current.baseUrl === baseUrl && current.model === model ? 0 : 1),
-    lastConfigErrorCode: null,
+    authorizationStatus: current && !authorizationChanged ? current.authorizationStatus : 'pending',
+    authorizationMethod: current && !authorizationChanged ? current.authorizationMethod : null,
+    verifiedOrigin: current && !authorizationChanged ? current.verifiedOrigin : null,
+    verifiedAt: current && !authorizationChanged ? current.verifiedAt : null,
+    approvedAt: current && !authorizationChanged ? current.approvedAt : null,
+    rejectionReason: current && !authorizationChanged ? current.rejectionReason : null,
+    challengeExpiresAt: current && !authorizationChanged ? current.challengeExpiresAt : null,
+    measurementVersion: (current?.measurementVersion ?? 0) + (measurementChanged ? 1 : 0),
+    lastConfigErrorCode: measurementChanged ? null : current?.lastConfigErrorCode ?? null,
     version: (current?.version ?? 0) + 1,
     createdAt: current?.createdAt ?? timestamp,
     updatedAt: timestamp,

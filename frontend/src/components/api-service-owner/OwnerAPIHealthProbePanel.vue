@@ -254,7 +254,7 @@ onBeforeUnmount(() => {
             <AlertTitle>HTTP 请求不会加密传输</AlertTitle>
             <AlertDescription class="space-y-3">
               <p>探针 API Key 和请求响应可能被链路中的第三方读取或篡改。请仅使用专用、低额度、低权限且仅允许探测模型的 API Key。</p>
-              <label for="api-health-insecure-http-ack" class="flex cursor-pointer items-start gap-2 rounded border border-amber-300/70 bg-white/70 p-3">
+              <label v-if="form.requiresInsecureHttpAcknowledgement.value" for="api-health-insecure-http-ack" class="flex cursor-pointer items-start gap-2 rounded border border-amber-300/70 bg-white/70 p-3">
                 <Checkbox
                   id="api-health-insecure-http-ack"
                   :model-value="form.acknowledgeInsecureHttp.value"
@@ -263,6 +263,9 @@ onBeforeUnmount(() => {
                 />
                 <span class="text-xs leading-5">我确认该 Key 不具备主账号权限，额度损失风险可接受，并了解 HTTP 探测结果的可信度低于 HTTPS。</span>
               </label>
+              <p v-else class="flex items-center gap-2 text-xs font-medium text-amber-800">
+                <CheckCircle2 class="h-4 w-4 shrink-0" />当前 HTTP 地址的未加密传输风险已确认
+              </p>
               <p v-if="form.touched.value && form.validation.value.acknowledgeInsecureHttp" class="text-xs font-medium text-destructive">
                 {{ form.validation.value.acknowledgeInsecureHttp }}
               </p>

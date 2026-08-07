@@ -54,6 +54,7 @@ func BuildConfigMutation(existing *Config, serviceID, ownerID string, input Conf
 	}
 	updated := *existing
 	measurementChanged := MeasurementIdentityChanged(*existing, target, model)
+	authorizationChanged := AuthorizationIdentityChanged(*existing, target)
 	updated.Protocol = ProtocolOpenAIChatCompletionsV1
 	updated.BaseURL = target.BaseURL
 	updated.NormalizedOrigin = target.Origin
@@ -64,6 +65,9 @@ func BuildConfigMutation(existing *Config, serviceID, ownerID string, input Conf
 	updated.Version++
 	if measurementChanged {
 		updated.MeasurementVersion++
+		updated.LastConfigErrorCode = ""
+	}
+	if authorizationChanged {
 		updated.AuthorizationStatus = AuthorizationPending
 		updated.AuthorizationMethod = ""
 		updated.VerifiedOrigin = ""
@@ -72,11 +76,10 @@ func BuildConfigMutation(existing *Config, serviceID, ownerID string, input Conf
 		updated.ApprovedAt = nil
 		updated.RejectionReason = ""
 		updated.ChallengeExpiresAt = nil
-		updated.LastConfigErrorCode = ""
 	}
 	return ConfigMutation{
 		Config: updated, MeasurementInvalidated: measurementChanged,
-		AuthorizationInvalidated: measurementChanged,
+		AuthorizationInvalidated: authorizationChanged,
 	}, nil
 }
 

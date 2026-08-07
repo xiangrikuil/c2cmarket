@@ -41,6 +41,8 @@ describe('API 健康探针前端边界', () => {
     expect(ownerPanel).toContain('HTTP 请求不会加密传输')
     expect(ownerPanel).toContain('可能被链路中的第三方读取或篡改')
     expect(ownerPanel).toContain('额度损失风险可接受')
+    expect(ownerPanel).toContain('form.requiresInsecureHttpAcknowledgement.value')
+    expect(ownerPanel).toContain('当前 HTTP 地址的未加密传输风险已确认')
     expect(ownerPanel).toContain('平台暂时无法读取探针专用 API Key')
     expect(ownerPanel).not.toContain('OpenAI 兼容 Base URL')
     expect(ownerPanel).not.toContain('探针专用凭据')

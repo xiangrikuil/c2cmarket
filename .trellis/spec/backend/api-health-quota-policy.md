@@ -2,6 +2,7 @@
 
 Date: 2026-08-04
 Author: Codex
+Updated: 2026-08-07
 
 ## Scenario: Platform Probe Health And SKU Quota Rules
 
@@ -79,7 +80,10 @@ API_HEALTH_CHALLENGE_TTL
   `/api/v1`, and `/openai/v1` are preserved, preventing accidental `/v1/v1` composition.
 - HTTPS remains the default and recommended transport. API health alone may accept a public HTTP
   target when every owner PUT explicitly sends `acknowledgeInsecureHttp=true`. The acknowledgement
-  is request-only; the persisted URL scheme is the runtime fact. HTTPS PUTs send or behave as false.
+  is request-only; the persisted URL scheme is the runtime fact. The owner UI may derive the
+  acknowledgement for an unchanged persisted HTTP Base URL, because that row could only have been
+  saved through this validation gate. A new or changed HTTP Base URL starts unchecked and must be
+  confirmed explicitly. HTTPS PUTs send or behave as false.
 - HTTP probe traffic is unencrypted: the dedicated API key and request/response may be read or
   modified in transit. The owner UI must state this and require a dedicated low-quota,
   low-privilege key restricted to the probe model.
@@ -99,10 +103,13 @@ API_HEALTH_CHALLENGE_TTL
 - Ownership is established by an exact-host DNS TXT challenge on the default 443 origin, an
   unauthenticated HTTP challenge at the exact origin's fixed well-known path, or administrator
   approval of the current exact origin. HTTP verification never sends the probe credential.
-- Authorization binds protocol, normalized base URL including base path, model, scheme,
-  hostname, and effective port. Any measurement-identity change increments
-  `measurement_version`, resets authorization, clears a live challenge, and appends an
-  `origin_invalidated` authorization event in the same transaction.
+- Measurement identity binds protocol, normalized Base URL including base path, normalized Origin,
+  and model. Any measurement-identity change increments `measurement_version` so old samples are
+  excluded from the current summary. Target-ownership authorization binds only the normalized
+  Origin (`scheme + hostname + effective port`). A model or same-Origin path change preserves an
+  existing authorization and live challenge. An Origin change resets authorization, clears a live
+  challenge, and appends an `origin_invalidated` event with reason
+  `authorization_origin_changed` in the same transaction.
 - The runner claims only enabled, credentialed, authorized configs whose verified origin equals
   the normalized origin. It creates at most one sample per service/five-minute slot, performs
   HTTP outside the claim transaction, finalizes only a running sample, and converges abandoned
@@ -146,6 +153,9 @@ API_HEALTH_CHALLENGE_TTL
 | HTTP/HTTPS target contains only an origin or trailing root slash | Persist and return the origin with `/v1` appended |
 | HTTP/HTTPS target already contains a non-root path | Preserve the normalized path; never append another `/v1` |
 | HTTP target omits `acknowledgeInsecureHttp=true` | `422 VALIDATION_FAILED` on `acknowledgeInsecureHttp` |
+| Owner reloads an unchanged persisted HTTP Base URL | UI derives acknowledgement and PUT still sends `true` without another checkbox action |
+| Model or Base URL path changes on the same normalized Origin | Increment measurement version; preserve authorization and live challenge |
+| Scheme, hostname, or effective port changes | Increment measurement version; reset authorization and clear live challenge |
 | Non-HTTP(S), private, mixed-DNS, redirecting, or malformed target | `422 VALIDATION_FAILED` on `baseUrl` |
 | Enabling without a configured credential | `422 VALIDATION_FAILED` on `credential` |
 | DNS challenge for a non-443 origin | `422 VALIDATION_FAILED`, `port_not_supported` |
@@ -165,8 +175,10 @@ API_HEALTH_CHALLENGE_TTL
 
 - Good: one service has three paid SKUs with different policies; all cards share one measured
   health summary while each order freezes its own policy.
-- Good: changing `/v1` to `/proxy/v1` invalidates an approved target and records the invalidation
-  atomically before any new sample can be claimed.
+- Good: changing `/v1` to `/proxy/v1` on the same Origin starts a new measurement version while
+  preserving the already-proven Origin authorization.
+- Good: changing `https://api.example.com:443` to `https://api.example.com:8443` resets
+  authorization and records the Origin invalidation atomically before any new sample can be claimed.
 - Good: entering `https://api.example.com` saves `https://api.example.com/v1`, while entering
   `https://api.example.com/openai/v1` preserves the existing path.
 - Good: entering `http://api.example.com` with explicit acknowledgement saves
@@ -181,7 +193,8 @@ API_HEALTH_CHALLENGE_TTL
 ### 6. Tests Required
 
 - Domain: root-only `/v1` completion, existing-path preservation, target normalization,
-  base-path/model invalidation, credential retention/rotation,
+  base-path/model measurement invalidation with authorization retention, Origin authorization
+  invalidation, credential retention/rotation,
   DNS multi-TXT/expiry/non-443, HTTP fixed path/no-auth, SSE chunking/limits/error classes,
   12-slot order, minimum samples, stale data, thresholds, and odd/even median.
 - Runner/store: same-slot concurrency, authorization claim filters, credential decrypt failure,
@@ -193,7 +206,8 @@ API_HEALTH_CHALLENGE_TTL
 - HTTP/OpenAPI: route/type parity, CSRF, ETag/If-Match, request-only insecure acknowledgement,
   no-store, write-only credential, one-time challenge token, secret leakage scan, public transport
   disclosure, public seller-TTFT absence, and fail-open enrichment.
-- Frontend: generated-type adapters, owner/admin mutations, policy controls, snapshot rendering,
+- Frontend: unchanged persisted HTTP acknowledgement derivation, changed-HTTP reset, generated-type
+  adapters, owner/admin mutations, policy controls, snapshot rendering,
   three card variants, no merchant-TTFT copy, fixed 12-slot layout, and desktop/mobile overflow.
 - Required gates: `go test ./...`, relevant race tests, `go vet ./...`, OpenAPI/migration guards,
   full Vitest/typecheck/build, and `scripts/ci-postgres-integration.sh`.
@@ -209,6 +223,10 @@ if publicIP(target) {
 
 baseURL = strings.TrimRight(baseURL, "/") + "/v1"
 
+if MeasurementIdentityChanged(existing, target, model) {
+    resetAuthorization()
+}
+
 order.QuotaUsagePolicySnapshot = currentOffer.QuotaUsagePolicy
 ```
 
@@ -221,6 +239,13 @@ if apihealth.IsAuthorized(config) && config.VerifiedOrigin == config.NormalizedO
 
 if parsed.Path == "" || parsed.Path == "/" {
     parsed.Path = "/v1"
+}
+
+if MeasurementIdentityChanged(existing, target, model) {
+    measurementVersion++
+}
+if AuthorizationIdentityChanged(existing, target) {
+    resetAuthorization()
 }
 
 order.QuotaUsagePolicySnapshot = intent.QuotaUsagePolicySnapshot

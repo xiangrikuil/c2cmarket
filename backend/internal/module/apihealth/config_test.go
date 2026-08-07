@@ -53,19 +53,42 @@ func TestBuildConfigMutationSeparatesConfigAndMeasurementVersions(t *testing.T) 
 	if err != nil {
 		t.Fatalf("change model: %v", err)
 	}
-	if modelChanged.Config.Version != 3 || modelChanged.Config.MeasurementVersion != 2 || !modelChanged.MeasurementInvalidated || !modelChanged.AuthorizationInvalidated || modelChanged.Config.AuthorizationStatus != AuthorizationPending {
-		t.Fatalf("measurement update did not invalidate authorization: %+v", modelChanged)
+	if modelChanged.Config.Version != 3 || modelChanged.Config.MeasurementVersion != 2 ||
+		!modelChanged.MeasurementInvalidated || modelChanged.AuthorizationInvalidated || !IsAuthorized(modelChanged.Config) {
+		t.Fatalf("model update did not preserve same-origin authorization: %+v", modelChanged)
+	}
+
+	pathChanged, err := BuildConfigMutation(&modelChanged.Config, "service", "owner", ConfigInput{
+		BaseURL: "https://api.example.com/openai/v1", Model: modelChanged.Config.Model, Enabled: false,
+	}, now.Add(3*time.Minute))
+	if err != nil {
+		t.Fatalf("change base path: %v", err)
+	}
+	if pathChanged.Config.MeasurementVersion != 3 || !pathChanged.MeasurementInvalidated ||
+		pathChanged.AuthorizationInvalidated || !IsAuthorized(pathChanged.Config) {
+		t.Fatalf("base-path update did not preserve same-origin authorization: %+v", pathChanged)
+	}
+
+	originChanged, err := BuildConfigMutation(&pathChanged.Config, "service", "owner", ConfigInput{
+		BaseURL: "https://other.example.com/v1", Model: pathChanged.Config.Model, Enabled: false,
+	}, now.Add(4*time.Minute))
+	if err != nil {
+		t.Fatalf("change origin: %v", err)
+	}
+	if originChanged.Config.MeasurementVersion != 4 || !originChanged.MeasurementInvalidated ||
+		!originChanged.AuthorizationInvalidated || originChanged.Config.AuthorizationStatus != AuthorizationPending {
+		t.Fatalf("origin update retained authorization: %+v", originChanged)
 	}
 }
 
-func TestBuildConfigMutationInvalidatesPendingChallengeWhenMeasurementChanges(t *testing.T) {
+func TestBuildConfigMutationPreservesPendingChallengeWhenMeasurementChangesOnSameOrigin(t *testing.T) {
 	t.Parallel()
 	now := time.Date(2026, 8, 4, 12, 0, 0, 0, time.UTC)
 	expiresAt := now.Add(10 * time.Minute)
 	existing := Config{
 		ID: "config", APIServiceID: "service", OwnerUserID: "owner",
 		Protocol: ProtocolOpenAIChatCompletionsV1, BaseURL: "https://api.example.com/v1",
-		NormalizedOrigin: "https://api.example.com", Model: "gpt-5",
+		NormalizedOrigin: "https://api.example.com:443", Model: "gpt-5",
 		CredentialConfigured: true, AuthorizationStatus: AuthorizationPending,
 		AuthorizationMethod: AuthorizationMethodDNSTXT, ChallengeExpiresAt: &expiresAt,
 		MeasurementVersion: 1, Version: 1, CreatedAt: now, UpdatedAt: now,
@@ -77,11 +100,11 @@ func TestBuildConfigMutationInvalidatesPendingChallengeWhenMeasurementChanges(t 
 	if err != nil {
 		t.Fatalf("change pending config model: %v", err)
 	}
-	if !mutation.MeasurementInvalidated || !mutation.AuthorizationInvalidated {
-		t.Fatalf("measurement change did not invalidate pending authorization: %+v", mutation)
+	if !mutation.MeasurementInvalidated || mutation.AuthorizationInvalidated {
+		t.Fatalf("same-origin measurement change invalidated pending authorization: %+v", mutation)
 	}
-	if mutation.Config.ChallengeExpiresAt != nil || mutation.Config.AuthorizationMethod != "" {
-		t.Fatalf("measurement change retained pending challenge: %+v", mutation.Config)
+	if mutation.Config.ChallengeExpiresAt != existing.ChallengeExpiresAt || mutation.Config.AuthorizationMethod != AuthorizationMethodDNSTXT {
+		t.Fatalf("same-origin measurement change cleared pending challenge: %+v", mutation.Config)
 	}
 }
 

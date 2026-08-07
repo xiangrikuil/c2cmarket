@@ -122,6 +122,20 @@ func TestAPIHealthPostgresConfigAuthorizationAndProbeLifecycle(t *testing.T) {
 	if appErr != nil || string(challenge.TokenHash) != string(hash) {
 		t.Fatalf("read challenge: %+v %v", challenge, appErr)
 	}
+	challengeMutation, err := apihealth.BuildConfigMutation(&config, serviceID, sellerID, apihealth.ConfigInput{
+		BaseURL: "https://example.com/openai/v1", Model: config.Model, Enabled: true,
+	}, now.Add(30*time.Second))
+	if err != nil || !challengeMutation.MeasurementInvalidated || challengeMutation.AuthorizationInvalidated {
+		t.Fatalf("build same-origin challenge update: mutation=%+v err=%v", challengeMutation, err)
+	}
+	config, appErr = store.UpsertOwnerProbeConfig(ctx, challengeMutation, nil, config.Version)
+	if appErr != nil || config.ChallengeExpiresAt == nil || config.AuthorizationMethod != apihealth.AuthorizationMethodDNSTXT {
+		t.Fatalf("same-origin update cleared challenge metadata: %+v %v", config, appErr)
+	}
+	challenge, appErr = store.GetProbeChallenge(ctx, sellerID, serviceID)
+	if appErr != nil || string(challenge.TokenHash) != string(hash) {
+		t.Fatalf("same-origin update cleared challenge token: %+v %v", challenge, appErr)
+	}
 	config, appErr = store.CompleteProbeVerification(ctx, sellerID, serviceID, apihealth.AuthorizationMethodDNSTXT, config.Version, true, "", now.Add(time.Minute))
 	if appErr != nil || !apihealth.IsAuthorized(config) {
 		t.Fatalf("verify config: %+v %v", config, appErr)
@@ -137,7 +151,7 @@ func TestAPIHealthPostgresConfigAuthorizationAndProbeLifecycle(t *testing.T) {
 		t.Fatalf("metadata update unexpectedly invalidated measurement identity: %+v", metadataMutation)
 	}
 	config, appErr = store.UpsertOwnerProbeConfig(ctx, metadataMutation, &rotatedCredential, config.Version)
-	if appErr != nil || !apihealth.IsAuthorized(config) || config.MeasurementVersion != 1 {
+	if appErr != nil || !apihealth.IsAuthorized(config) || config.MeasurementVersion != 2 {
 		t.Fatalf("update probe credential: %+v %v", config, appErr)
 	}
 	var invalidationEventCount int
@@ -199,9 +213,28 @@ func TestAPIHealthPostgresConfigAuthorizationAndProbeLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatalf("build model update: %v", err)
 	}
+	if !updatedMutation.MeasurementInvalidated || updatedMutation.AuthorizationInvalidated {
+		t.Fatalf("model update produced wrong invalidation flags: %+v", updatedMutation)
+	}
 	config, appErr = store.UpsertOwnerProbeConfig(ctx, updatedMutation, nil, config.Version)
-	if appErr != nil || config.MeasurementVersion != 2 || config.AuthorizationStatus != apihealth.AuthorizationPending {
+	if appErr != nil || config.MeasurementVersion != 3 || !apihealth.IsAuthorized(config) {
 		t.Fatalf("update measurement identity: %+v %v", config, appErr)
+	}
+	if err := pool.QueryRow(ctx, `
+		SELECT count(*) FROM api_service_probe_authorization_events
+		WHERE probe_config_id = $1 AND action = $2
+	`, config.ID, apihealth.AuthorizationActionOriginInvalidated).Scan(&invalidationEventCount); err != nil || invalidationEventCount != 0 {
+		t.Fatalf("same-origin model update appended invalidation event: count=%d err=%v", invalidationEventCount, err)
+	}
+	originMutation, err := apihealth.BuildConfigMutation(&config, serviceID, sellerID, apihealth.ConfigInput{
+		BaseURL: "https://other.example.com/v1", Model: config.Model, Enabled: true,
+	}, slot.Add(2*time.Minute))
+	if err != nil || !originMutation.MeasurementInvalidated || !originMutation.AuthorizationInvalidated {
+		t.Fatalf("build changed-origin update: mutation=%+v err=%v", originMutation, err)
+	}
+	config, appErr = store.UpsertOwnerProbeConfig(ctx, originMutation, nil, config.Version)
+	if appErr != nil || config.MeasurementVersion != 4 || config.AuthorizationStatus != apihealth.AuthorizationPending {
+		t.Fatalf("changed-origin update retained authorization: %+v %v", config, appErr)
 	}
 	var eventAction, eventActorUserID, eventMethod, eventOrigin, eventReason, persistedAuthorizationStatus string
 	var persistedMeasurementVersion int64
@@ -218,9 +251,9 @@ func TestAPIHealthPostgresConfigAuthorizationAndProbeLifecycle(t *testing.T) {
 	); err != nil {
 		t.Fatalf("read updated config with invalidation event: %v", err)
 	}
-	if persistedAuthorizationStatus != apihealth.AuthorizationPending || persistedMeasurementVersion != 2 ||
+	if persistedAuthorizationStatus != apihealth.AuthorizationPending || persistedMeasurementVersion != 4 ||
 		eventAction != apihealth.AuthorizationActionOriginInvalidated || eventActorUserID != sellerID || eventMethod != "" ||
-		eventOrigin != config.NormalizedOrigin || eventReason != apihealth.AuthorizationReasonMeasurementChanged {
+		eventOrigin != config.NormalizedOrigin || eventReason != apihealth.AuthorizationReasonOriginChanged {
 		t.Fatalf("unexpected persisted invalidation transition: status=%s measurement=%d action=%s actor=%s method=%s origin=%s reason=%s",
 			persistedAuthorizationStatus, persistedMeasurementVersion, eventAction, eventActorUserID, eventMethod, eventOrigin, eventReason)
 	}
@@ -248,7 +281,7 @@ func TestAPIHealthPostgresConfigAuthorizationAndProbeLifecycle(t *testing.T) {
 		t.Fatalf("approve config: %+v %v", config, appErr)
 	}
 	jobs, appErr = store.ClaimDueProbes(ctx, nextSlot, nextSlot, 10, 10*time.Second)
-	if appErr != nil || len(jobs) != 1 || jobs[0].Sample.MeasurementVersion != 2 {
+	if appErr != nil || len(jobs) != 1 || jobs[0].Sample.MeasurementVersion != 4 {
 		t.Fatalf("claim approved measurement: %+v %v", jobs, appErr)
 	}
 	timeoutSweepAt := nextSlot.Add(11 * time.Second)

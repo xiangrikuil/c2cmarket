@@ -13,7 +13,7 @@ import (
 	"c2c-market/backend/internal/module/auth"
 )
 
-func TestServicePutOwnerConfigPassesAuthorizationInvalidationMutation(t *testing.T) {
+func TestServicePutOwnerConfigPreservesAuthorizationForSameOriginModelChange(t *testing.T) {
 	t.Parallel()
 	now := time.Date(2026, time.August, 4, 12, 0, 0, 0, time.UTC)
 	verifiedAt := now.Add(-time.Hour)
@@ -37,10 +37,10 @@ func TestServicePutOwnerConfigPassesAuthorizationInvalidationMutation(t *testing
 		t.Fatalf("update owner config: %v", appErr)
 	}
 	mutation := repository.upsertMutation
-	if !mutation.MeasurementInvalidated || !mutation.AuthorizationInvalidated {
-		t.Fatalf("complete invalidation mutation was not passed to repository: %+v", mutation)
+	if !mutation.MeasurementInvalidated || mutation.AuthorizationInvalidated {
+		t.Fatalf("same-origin model update passed the wrong invalidation flags: %+v", mutation)
 	}
-	if mutation.Config.Model != "gpt-5.1" || mutation.Config.AuthorizationStatus != AuthorizationPending || mutation.Config.Version != 7 {
+	if mutation.Config.Model != "gpt-5.1" || !IsAuthorized(mutation.Config) || mutation.Config.Version != 7 {
 		t.Fatalf("unexpected persisted mutation config: %+v", mutation.Config)
 	}
 	if repository.upsertExpectedVersion != 6 || repository.upsertCredential != nil || config != mutation.Config {

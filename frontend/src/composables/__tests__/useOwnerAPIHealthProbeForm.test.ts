@@ -65,6 +65,7 @@ describe('Owner 探针表单', () => {
     form.baseUrl.value = 'http://api.example.test'
 
     expect(form.isInsecureHttp.value).toBe(true)
+    expect(form.requiresInsecureHttpAcknowledgement.value).toBe(true)
     expect(form.validation.value.acknowledgeInsecureHttp).toContain('确认未加密传输风险')
     expect(form.valid.value).toBe(false)
 
@@ -74,6 +75,31 @@ describe('Owner 探针表单', () => {
       baseUrl: 'http://api.example.test',
       acknowledgeInsecureHttp: true,
     })
+  })
+
+  it('已保存的同一 HTTP 地址不重复要求确认，但更换地址后重新要求', () => {
+    const existing = probe()
+    existing.baseUrl = 'http://api.example.test/v1'
+    existing.normalizedOrigin = 'http://api.example.test:80'
+    const config = ref<OwnerAPIHealthProbeConfig | null>(existing)
+    const form = useOwnerAPIHealthProbeForm(config)
+
+    expect(form.isInsecureHttp.value).toBe(true)
+    expect(form.requiresInsecureHttpAcknowledgement.value).toBe(false)
+    expect(form.validation.value.acknowledgeInsecureHttp).toBe('')
+    expect(form.payload('service-1')).toMatchObject({ acknowledgeInsecureHttp: true })
+
+    form.baseUrl.value = 'http://other.example.test/v1'
+    expect(form.requiresInsecureHttpAcknowledgement.value).toBe(true)
+    expect(form.validation.value.acknowledgeInsecureHttp).toContain('确认未加密传输风险')
+    expect(form.payload('service-1')).toMatchObject({ acknowledgeInsecureHttp: false })
+
+    form.acknowledgeInsecureHttp.value = true
+    expect(form.payload('service-1')).toMatchObject({ acknowledgeInsecureHttp: true })
+
+    form.baseUrl.value = 'http://third.example.test/v1'
+    expect(form.acknowledgeInsecureHttp.value).toBe(false)
+    expect(form.validation.value.acknowledgeInsecureHttp).toContain('确认未加密传输风险')
   })
 
   it('HTTPS 地址不携带 HTTP 风险确认', () => {

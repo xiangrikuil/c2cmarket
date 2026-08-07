@@ -80,3 +80,7 @@ func MeasurementIdentityChanged(existing Config, target NormalizedTarget, model 
 		existing.NormalizedOrigin != target.Origin ||
 		existing.Model != strings.TrimSpace(model)
 }
+
+func AuthorizationIdentityChanged(existing Config, target NormalizedTarget) bool {
+	return existing.NormalizedOrigin != target.Origin
+}

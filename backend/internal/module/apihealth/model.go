@@ -21,7 +21,7 @@ const (
 	AuthorizationActionAdminRejected         = "admin_rejected"
 	AuthorizationActionOriginInvalidated     = "origin_invalidated"
 	AuthorizationActionConfigDeleted         = "config_deleted"
-	AuthorizationReasonMeasurementChanged    = "measurement_identity_changed"
+	AuthorizationReasonOriginChanged         = "authorization_origin_changed"
 
 	SampleStatusRunning   = "running"
 	SampleStatusSucceeded = "succeeded"
