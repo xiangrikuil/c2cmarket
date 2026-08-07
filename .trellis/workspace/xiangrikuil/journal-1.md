@@ -1325,3 +1325,25 @@ Added fresh-query-gated first transaction guidance to the personal center, cover
 ### Status
 
 [OK] **Completed**
+
+
+## Session 39: 修复健康探针重复授权与 HTTP 确认
+
+**Date**: 2026-08-07
+**Task**: 修复健康探针重复授权与 HTTP 确认
+**Package**: frontend
+**Branch**: `codex/api-health-probe-repeat-prompts`
+
+### Summary
+
+拆分测量身份与 Origin 授权身份，复用已保存 HTTP 地址的确认状态，并完成后端、PostgreSQL、前端与 Mock 全链路验证。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `ba6c07c` | (see git log) |
+
+### Status
+
+[OK] **Completed**
