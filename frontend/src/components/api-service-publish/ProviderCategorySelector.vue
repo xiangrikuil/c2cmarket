@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import { Blocks } from 'lucide-vue-next'
-import type { AcceptableValue } from 'reka-ui'
 import { Badge } from '@/components/ui/badge'
 import { Label } from '@/components/ui/label'
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group'
@@ -16,7 +15,7 @@ const emit = defineEmits<{
   'update:modelValue': [value: ApiProviderCategory]
 }>()
 
-function selectCategory(value: AcceptableValue) {
+function selectCategory(value: unknown) {
   if (value === 'gpt' || value === 'claude' || value === 'other') emit('update:modelValue', value)
 }
 

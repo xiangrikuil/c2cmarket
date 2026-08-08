@@ -2,7 +2,6 @@
 import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Textarea } from '@/components/ui/textarea'
-import type { AcceptableValue } from 'reka-ui'
 import { computed } from 'vue'
 import type { CarpoolProductCatalogItem, CarpoolPublishForm, PublishFieldState, RegionOption } from './types'
 import CarpoolProductCombobox from './CarpoolProductCombobox.vue'
@@ -27,7 +26,7 @@ function booleanSelectValue(value: boolean | null) {
   return value ? 'true' : 'false'
 }
 
-function selectedBoolean(value: AcceptableValue) {
+function selectedBoolean(value: unknown) {
   if (value === 'true') return true
   if (value === 'false') return false
   return null
