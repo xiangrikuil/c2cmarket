@@ -396,7 +396,7 @@ func (s *Store) AdminListAPIModelProviders(ctx context.Context) ([]catalog.APIMo
 	rows, err := s.pool.Query(ctx, `
 		SELECT `+apiModelProviderColumns+`
 		FROM api_model_providers
-		ORDER BY provider_category ASC, sort_order ASC, model_key ASC, id ASC
+		ORDER BY provider_category ASC, sort_order ASC, display_name ASC, id ASC
 	`)
 	if err != nil {
 		return nil, internalStoreError()
@@ -501,7 +501,7 @@ func (s *Store) ListAPIModels(ctx context.Context) ([]catalog.APIModelCatalog, *
 		SELECT `+apiModelColumns+`
 		FROM `+apiModelViewSource+`
 		WHERE active = true AND provider_active = true
-		ORDER BY sort_order ASC, display_name ASC
+		ORDER BY sort_order ASC, model_key ASC
 	`)
 	if err != nil {
 		return nil, internalStoreError()
@@ -536,7 +536,7 @@ func (s *Store) AdminListAPIModels(ctx context.Context) ([]catalog.APIModelCatal
 	rows, err := s.pool.Query(ctx, `
 		SELECT `+apiModelColumns+`
 		FROM `+apiModelViewSource+`
-		ORDER BY provider_category ASC, sort_order ASC, display_name ASC, id ASC
+		ORDER BY provider_category ASC, sort_order ASC, model_key ASC, id ASC
 	`)
 	if err != nil {
 		return nil, internalStoreError()
@@ -688,22 +688,30 @@ func (s *Store) AdminSetAPIModelActive(ctx context.Context, input catalog.APIMod
 	if s == nil || s.pool == nil {
 		return catalog.APIModelCatalog{}, internalStoreError()
 	}
-	var model catalog.APIModelCatalog
-	err := scanAPIModel(s.pool.QueryRow(ctx, `
-		WITH changed AS (
-			UPDATE api_model_catalog
-			SET active = $2, updated_at = now()
-			WHERE id = $1
-			RETURNING id
-		)
-		SELECT `+apiModelColumns+`
-		FROM `+apiModelViewSource+`
-		JOIN changed ON changed.id = api_model_view.id
-	`, input.ID, active), &model)
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return catalog.APIModelCatalog{}, internalStoreError()
+	}
+	defer rollback(ctx, tx)
+
+	var modelID string
+	err = tx.QueryRow(ctx, `
+		UPDATE api_model_catalog
+		SET active = $2, updated_at = now()
+		WHERE id = $1
+		RETURNING id::text
+	`, input.ID, active).Scan(&modelID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return catalog.APIModelCatalog{}, apiModelNotFound()
 	}
 	if err != nil {
+		return catalog.APIModelCatalog{}, internalStoreError()
+	}
+	model, appErr := getAPIModelInTx(ctx, tx, modelID)
+	if appErr != nil {
+		return catalog.APIModelCatalog{}, appErr
+	}
+	if err := tx.Commit(ctx); err != nil {
 		return catalog.APIModelCatalog{}, internalStoreError()
 	}
 	return model, nil

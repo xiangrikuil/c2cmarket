@@ -8,7 +8,30 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"c2c-market/backend/internal/platform/outboundhttp"
 )
+
+func TestFixedSourceClientRejectsRedirects(t *testing.T) {
+	redirected := false
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/redirected" {
+			redirected = true
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		http.Redirect(w, r, "/redirected", http.StatusFound)
+	}))
+	defer server.Close()
+
+	_, err := newFixedSourceHTTPClient(time.Second).Get(server.URL)
+	if !errors.Is(err, outboundhttp.ErrRedirectNotAllowed) {
+		t.Fatalf("expected redirect rejection, got %v", err)
+	}
+	if redirected {
+		t.Fatal("fixed-source client followed redirect")
+	}
+}
 
 func TestClientFetchParsesCatalog(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -69,5 +92,12 @@ func TestClientFetchHonorsClientTimeout(t *testing.T) {
 	_, err := client.Fetch(context.Background())
 	if !errors.Is(err, ErrUnavailable) {
 		t.Fatalf("expected timeout to report unavailable, got %v", err)
+	}
+}
+
+func TestNewClientUsesDefaultTimeout(t *testing.T) {
+	client := NewClient(0)
+	if client.httpClient.Timeout != defaultTimeout {
+		t.Fatalf("unexpected default timeout %s", client.httpClient.Timeout)
 	}
 }

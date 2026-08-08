@@ -17,6 +17,7 @@ import (
 const (
 	SourceURL         = "https://models.dev/api.json"
 	responseBodyLimit = 16 << 20
+	defaultTimeout    = 15 * time.Second
 )
 
 var (
@@ -65,14 +66,24 @@ type Client struct {
 }
 
 func NewClient(timeout time.Duration) *Client {
-	policy, err := outboundhttp.NewPolicy([]string{"models.dev"})
-	if err != nil {
-		panic(fmt.Sprintf("invalid fixed models.dev policy: %v", err))
+	if timeout <= 0 {
+		timeout = defaultTimeout
 	}
 	return &Client{
-		httpClient: outboundhttp.NewClient(policy, outboundhttp.WithClientTimeout(timeout)),
+		httpClient: newFixedSourceHTTPClient(timeout),
 		endpoint:   SourceURL,
 		bodyLimit:  responseBodyLimit,
+	}
+}
+
+func newFixedSourceHTTPClient(timeout time.Duration) *http.Client {
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	return &http.Client{
+		Transport: transport,
+		Timeout:   timeout,
+		CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
+			return outboundhttp.ErrRedirectNotAllowed
+		},
 	}
 }
 

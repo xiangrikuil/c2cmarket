@@ -816,6 +816,9 @@ func apiModelSyncSelectionsFromRequest(items []apiModelSyncSelectionRequest) []c
 }
 
 func apiModelBulkMutationCompletionBuilder(result catalog.APIModelBulkMutationResult) (idempotency.Completion, *domain.AppError) {
+	if len(result.IDs) == 0 {
+		return idempotency.Completion{}, domain.NewError(http.StatusInternalServerError, domain.CodeInternalError, "Internal error", "API 模型目录批量操作缺少关联资源。")
+	}
 	body, err := json.Marshal(apiModelBulkMutationResponse{
 		Created: result.Created, Updated: result.Updated, Changed: result.Changed,
 		IDs: append([]string(nil), result.IDs...),
@@ -825,7 +828,7 @@ func apiModelBulkMutationCompletionBuilder(result catalog.APIModelBulkMutationRe
 	}
 	return idempotency.Completion{
 		Status: http.StatusOK, ContentType: "application/json; charset=utf-8", Body: body,
-		ResourceType: "api_model_catalog",
+		ResourceType: "api_model_catalog", ResourceID: result.IDs[0],
 	}, nil
 }
 

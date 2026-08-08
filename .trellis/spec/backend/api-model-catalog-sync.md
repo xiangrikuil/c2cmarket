@@ -38,7 +38,7 @@ Persistence continues to use `api_model_providers`, `api_model_catalog`, `api_mo
 
 ### 3. Contracts
 
-- The backend fetches only the fixed `https://models.dev/api.json` endpoint through the bounded outbound HTTP client. The client timeout is 15 seconds, the decoded body is limited to 16 MiB, redirects are rejected, and trailing JSON is invalid.
+- The backend fetches only the source-code constant `https://models.dev/api.json` endpoint through a dedicated bounded HTTPS client. Because neither administrators nor request payloads can change its host or path, this fixed-source client uses the standard TLS transport so system and transparent proxies can route synthetic DNS addresses; user-configurable destinations must continue through `internal/platform/outboundhttp`. The client timeout is 15 seconds, the decoded body is limited to 16 MiB, redirects are rejected, and trailing JSON is invalid.
 - The first supported provider allowlist is `openai`, `anthropic`, `google`, and `perplexity`. Requests carry local provider IDs; the backend resolves and validates their provider codes.
 - Keep the exact models.dev model `id` as `modelKey`, including lowercase punctuation such as `gpt-4.1-mini`. Do not derive it from a display name and do not append `/v1` or any other suffix.
 - Import candidates must accept text input and produce text output. Embedding, image-output, audio, Realtime, moderation, and video models are excluded from the supported candidate set.
@@ -47,7 +47,10 @@ Persistence continues to use `api_model_providers`, `api_model_catalog`, `api_mo
 - New rows are selected for import by the frontend but default to `active=false`. Activation is a separate explicit choice. Existing price updates preserve provider, capabilities, sort order, and active state.
 - Apply accepts only `new` and `price_changed` selections. The stable fingerprint covers status, provider identity, exact model key, canonical capabilities, source URL/version, prices, and local model/price-version IDs; `active` is intentionally excluded so an administrator can choose activation after preview.
 - Apply locks and validates every selected row before writing, rolls the current price version forward, and completes idempotency in one PostgreSQL transaction. Any conflict rolls back the whole batch.
+- A completed bulk apply or status mutation associates its idempotency record with the first affected model ID while retaining every affected ID in the cached response body. An empty mutation result is an internal error and must not be written as a completed idempotency record.
 - Bulk status validates and locks the complete model set before one atomic update. The public catalog continues to return only rows where both model and provider are active.
+- PostgreSQL provider lists order by provider category, sort order, provider `display_name`, and ID. Model lists order by model `model_key`; Migration 81 removed `api_model_catalog.display_name`, while `api_model_providers` never has a `model_key`. Keep these relation-specific columns explicit and cover all three catalog reads with a current-schema integration test.
+- Single-model activation and deactivation must update and then read the catalog projection in separate statements inside one transaction. A data-modifying CTE joined back to `api_model_view` both risks ambiguous columns and reads the statement-start snapshot instead of a reliable updated projection. Cover both state transitions against the current PostgreSQL schema.
 - Real frontend mode must call these endpoints and surface failures. Mock mode must reproduce preview side-effect freedom, fingerprint validation, atomic apply, active-state preservation, and public-catalog invalidation; it must not silently turn a real backend failure into mock success.
 - On narrow viewports, the sync dialog itself must remain within the viewport. Apply `min-w-0` through grid/content ancestors and confine the wide comparison table to its own `overflow-x-auto` container; the dialog must not become the horizontal scroller.
 
@@ -74,7 +77,7 @@ Persistence continues to use `api_model_providers`, `api_model_catalog`, `api_mo
 
 ### 6. Tests Required
 
-- models.dev client tests assert valid public response shape, HTTP failure, malformed/trailing JSON, response-size limit, and client timeout classification.
+- models.dev client tests assert fixed-source redirect rejection, valid public response shape, HTTP failure, malformed/trailing JSON, response-size limit, and client timeout classification.
 - Server tests assert preview status counts, exact model keys, unavailable/source-missing records, tampered fingerprint rejection, atomic create plus price update, default inactive state, existing active-state preservation, idempotency replay, bulk activation, public visibility, and external-source Problem Details.
 - PostgreSQL coverage must assert row locking, old price-version closure, new current version creation, whole-batch rollback, stale version conflict, and idempotency completion in the business transaction.
 - Frontend adapter tests assert preview has no writes, new imports remain hidden from the public catalog until enabled, price updates preserve active state, stale/tampered selections fail, and bulk status refreshes public/admin queries.
