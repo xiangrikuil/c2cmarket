@@ -21,6 +21,7 @@ import (
 	"c2c-market/backend/internal/module/apimarket"
 	"c2c-market/backend/internal/module/apiorder"
 	app "c2c-market/backend/internal/module/core"
+	"c2c-market/backend/internal/platform/modelsdev"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
@@ -739,6 +740,191 @@ func TestAdminAPIModelCRUDAndPublicVisibility(t *testing.T) {
 	}
 	if !strings.Contains(adminListResponse.Body.String(), `"modelKey":"GPT-Test-Model"`) || !strings.Contains(adminListResponse.Body.String(), `"active":false`) {
 		t.Fatalf("admin API model list must include inactive rows, got %s", adminListResponse.Body.String())
+	}
+}
+
+func TestAdminAPIModelModelsDevSyncAndBulkStatus(t *testing.T) {
+	now := time.Date(2026, 8, 8, 8, 0, 0, 0, time.UTC)
+	service := app.NewServiceWithClock(func() time.Time { return now })
+	service.ConfigureModelsDevSource(staticModelsDevSource{catalog: modelsdev.Catalog{
+		"openai": {
+			ID: "openai", Name: "OpenAI",
+			Models: map[string]modelsdev.Model{
+				"gpt-sync-test": {
+					ID: "gpt-sync-test", LastUpdated: "2026-08-08", Reasoning: true,
+					Modalities: modelsdev.Modalities{Input: []string{"text", "image"}, Output: []string{"text"}},
+					Cost:       &modelsdev.Cost{Input: "0.4", CacheRead: "0.1", Output: "1.6"},
+				},
+				"gpt-4.1-mini": {
+					ID: "gpt-4.1-mini", LastUpdated: "2026-08-08",
+					Modalities: modelsdev.Modalities{Input: []string{"text"}, Output: []string{"text"}},
+					Cost:       &modelsdev.Cost{Input: "0.5", CacheRead: "0.1", Output: "1.8"},
+				},
+				"gpt-invalid-price": {
+					ID: "gpt-invalid-price", LastUpdated: "2026-08-08",
+					Modalities: modelsdev.Modalities{Input: []string{"text"}, Output: []string{"text"}},
+				},
+			},
+		},
+	}})
+	server := NewServer(service)
+	adminSession := createSession(t, server, "admin-models-dev-sync", true)
+
+	providersRequest := httptest.NewRequest(http.MethodGet, "/api/v1/admin/api-model-providers", nil)
+	addCookie(providersRequest, adminSession.cookie)
+	providersResponse := httptest.NewRecorder()
+	server.ServeHTTP(providersResponse, providersRequest)
+	if providersResponse.Code != http.StatusOK {
+		t.Fatalf("list providers status %d body %s", providersResponse.Code, providersResponse.Body.String())
+	}
+	var providers listResponse[apiModelProviderResponse]
+	if err := json.NewDecoder(providersResponse.Body).Decode(&providers); err != nil {
+		t.Fatalf("decode providers: %v", err)
+	}
+	providerID := ""
+	for _, provider := range providers.Items {
+		if provider.Code == "openai" {
+			providerID = provider.ID
+			break
+		}
+	}
+	if providerID == "" {
+		t.Fatal("expected seeded openai provider")
+	}
+
+	previewBody := `{"providerIds":["` + providerID + `"]}`
+	previewRequest := newJSONRequest(http.MethodPost, "/api/v1/admin/api-models/models-dev/preview", previewBody)
+	addCookie(previewRequest, adminSession.cookie)
+	previewResponseRecorder := httptest.NewRecorder()
+	server.ServeHTTP(previewResponseRecorder, previewRequest)
+	if previewResponseRecorder.Code != http.StatusOK {
+		t.Fatalf("preview status %d body %s", previewResponseRecorder.Code, previewResponseRecorder.Body.String())
+	}
+	var preview apiModelSyncPreviewResponse
+	if err := json.NewDecoder(previewResponseRecorder.Body).Decode(&preview); err != nil {
+		t.Fatalf("decode preview: %v", err)
+	}
+	var candidate apiModelSyncItemResponse
+	var changedCandidate apiModelSyncItemResponse
+	for _, item := range preview.Items {
+		if item.ModelKey == "gpt-sync-test" {
+			candidate = item
+		}
+		if item.ModelKey == "gpt-4.1-mini" {
+			changedCandidate = item
+		}
+	}
+	if candidate.Status != "new" || candidate.Fingerprint == "" || changedCandidate.Status != "price_changed" || changedCandidate.Fingerprint == "" || preview.Counts.New != 1 || preview.Counts.PriceChanged != 1 || preview.Counts.SourceMissing != 1 || preview.Counts.Unavailable != 1 {
+		t.Fatalf("unexpected preview candidate=%+v counts=%+v", candidate, preview.Counts)
+	}
+
+	applyPayload := apiModelSyncApplyRequest{Items: []apiModelSyncSelectionRequest{
+		{
+			Fingerprint: candidate.Fingerprint, Status: candidate.Status, ProviderID: candidate.ProviderID,
+			ProviderCode: candidate.ProviderCode, ModelKey: candidate.ModelKey,
+			Capabilities: candidate.Capabilities, SourceURL: candidate.SourceURL,
+			SourceVersion: candidate.SourceVersion, InputPricePerMillion: candidate.InputPricePerMillion,
+			CachedInputPricePerMillion: candidate.CachedInputPricePerMillion,
+			OutputPricePerMillion:      candidate.OutputPricePerMillion, Active: false,
+		},
+		{
+			Fingerprint: changedCandidate.Fingerprint, Status: changedCandidate.Status,
+			ProviderID: changedCandidate.ProviderID, ProviderCode: changedCandidate.ProviderCode,
+			ModelKey: changedCandidate.ModelKey, Capabilities: changedCandidate.Capabilities,
+			SourceURL: changedCandidate.SourceURL, SourceVersion: changedCandidate.SourceVersion,
+			InputPricePerMillion:       changedCandidate.InputPricePerMillion,
+			CachedInputPricePerMillion: changedCandidate.CachedInputPricePerMillion,
+			OutputPricePerMillion:      changedCandidate.OutputPricePerMillion,
+			LocalModelID:               changedCandidate.LocalModelID, LocalPriceVersionID: changedCandidate.LocalPriceVersionID,
+			Active: false,
+		},
+	}}
+	applyBodyBytes, err := json.Marshal(applyPayload)
+	if err != nil {
+		t.Fatalf("marshal apply request: %v", err)
+	}
+	applyBody := string(applyBodyBytes)
+	tamperedPayload := applyPayload
+	tamperedPayload.Items = append([]apiModelSyncSelectionRequest(nil), applyPayload.Items...)
+	tamperedPayload.Items[0].OutputPricePerMillion = "0.000001"
+	tamperedBodyBytes, err := json.Marshal(tamperedPayload)
+	if err != nil {
+		t.Fatalf("marshal tampered apply request: %v", err)
+	}
+	tamperedRequest := newJSONRequest(http.MethodPost, "/api/v1/admin/api-models/models-dev/apply", string(tamperedBodyBytes))
+	addAuth(tamperedRequest, adminSession, "models-dev-apply-tampered")
+	tamperedResponse := httptest.NewRecorder()
+	server.ServeHTTP(tamperedResponse, tamperedRequest)
+	if tamperedResponse.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("tampered apply status %d body %s", tamperedResponse.Code, tamperedResponse.Body.String())
+	}
+
+	applyRequest := newJSONRequest(http.MethodPost, "/api/v1/admin/api-models/models-dev/apply", applyBody)
+	addAuth(applyRequest, adminSession, "models-dev-apply")
+	applyResponse := httptest.NewRecorder()
+	server.ServeHTTP(applyResponse, applyRequest)
+	if applyResponse.Code != http.StatusOK || !strings.Contains(applyResponse.Body.String(), `"created":1`) || !strings.Contains(applyResponse.Body.String(), `"updated":1`) {
+		t.Fatalf("apply status %d body %s", applyResponse.Code, applyResponse.Body.String())
+	}
+
+	replayRequest := newJSONRequest(http.MethodPost, "/api/v1/admin/api-models/models-dev/apply", applyBody)
+	addAuth(replayRequest, adminSession, "models-dev-apply")
+	replayResponse := httptest.NewRecorder()
+	server.ServeHTTP(replayResponse, replayRequest)
+	if replayResponse.Code != http.StatusOK || replayResponse.Body.String() != applyResponse.Body.String() {
+		t.Fatalf("replay status %d body %s", replayResponse.Code, replayResponse.Body.String())
+	}
+
+	modelsRequest := httptest.NewRequest(http.MethodGet, "/api/v1/admin/api-models", nil)
+	addCookie(modelsRequest, adminSession.cookie)
+	modelsResponse := httptest.NewRecorder()
+	server.ServeHTTP(modelsResponse, modelsRequest)
+	var models listResponse[apiModelResponse]
+	if err := json.NewDecoder(modelsResponse.Body).Decode(&models); err != nil {
+		t.Fatalf("decode models: %v", err)
+	}
+	modelID := ""
+	priceUpdated := false
+	for _, model := range models.Items {
+		if model.ModelKey == "gpt-sync-test" {
+			if model.Active {
+				t.Fatalf("new synced model must default inactive: %+v", model)
+			}
+			modelID = model.ID
+		}
+		if model.ModelKey == "gpt-4.1-mini" {
+			priceUpdated = model.Active && model.InputPricePerMillion == "0.500000" && model.OutputPricePerMillion == "1.800000" && model.CurrentPriceVersionID != changedCandidate.LocalPriceVersionID
+		}
+	}
+	if modelID == "" {
+		t.Fatal("expected synced model in admin catalog")
+	}
+	if !priceUpdated {
+		t.Fatal("expected existing model price version to update without deactivation")
+	}
+
+	bulkRequest := newJSONRequest(http.MethodPost, "/api/v1/admin/api-models/bulk-status", `{"modelIds":["`+modelID+`"],"active":true}`)
+	addAuth(bulkRequest, adminSession, "models-dev-bulk-status")
+	bulkResponse := httptest.NewRecorder()
+	server.ServeHTTP(bulkResponse, bulkRequest)
+	if bulkResponse.Code != http.StatusOK || !strings.Contains(bulkResponse.Body.String(), `"changed":1`) {
+		t.Fatalf("bulk status %d body %s", bulkResponse.Code, bulkResponse.Body.String())
+	}
+
+	publicRequest := httptest.NewRequest(http.MethodGet, "/api/v1/api-models", nil)
+	publicResponse := httptest.NewRecorder()
+	server.ServeHTTP(publicResponse, publicRequest)
+	if publicResponse.Code != http.StatusOK || !strings.Contains(publicResponse.Body.String(), `"modelKey":"gpt-sync-test"`) {
+		t.Fatalf("public catalog status %d body %s", publicResponse.Code, publicResponse.Body.String())
+	}
+
+	service.ConfigureModelsDevSource(staticModelsDevSource{err: modelsdev.ErrUnavailable})
+	unavailableRequest := newJSONRequest(http.MethodPost, "/api/v1/admin/api-models/models-dev/preview", previewBody)
+	addCookie(unavailableRequest, adminSession.cookie)
+	unavailableResponse := httptest.NewRecorder()
+	server.ServeHTTP(unavailableResponse, unavailableRequest)
+	if unavailableResponse.Code != http.StatusBadGateway || !strings.Contains(unavailableResponse.Body.String(), `"code":"EXTERNAL_SOURCE_UNAVAILABLE"`) {
+		t.Fatalf("unavailable preview status %d body %s", unavailableResponse.Code, unavailableResponse.Body.String())
 	}
 }
 
@@ -2899,6 +3085,15 @@ type testSession struct {
 	cookie string
 	csrf   string
 	userID string
+}
+
+type staticModelsDevSource struct {
+	catalog modelsdev.Catalog
+	err     error
+}
+
+func (s staticModelsDevSource) Fetch(context.Context) (modelsdev.Catalog, error) {
+	return s.catalog, s.err
 }
 
 type createdLead struct {

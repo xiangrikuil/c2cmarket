@@ -1,10 +1,15 @@
 package server
 
 import (
-	"c2c-market/backend/internal/module/catalog"
-	"github.com/go-chi/chi/v5"
+	"encoding/json"
 	"net/http"
 	"time"
+
+	"c2c-market/backend/internal/domain"
+	"c2c-market/backend/internal/module/catalog"
+	"c2c-market/backend/internal/module/idempotency"
+
+	"github.com/go-chi/chi/v5"
 )
 
 type productCategoryResponse struct {
@@ -123,6 +128,83 @@ type apiModelProviderRequest struct {
 	DisplayName      string `json:"displayName"`
 	Active           bool   `json:"active"`
 	SortOrder        int    `json:"sortOrder"`
+}
+
+type apiModelSyncPreviewRequest struct {
+	ProviderIDs []string `json:"providerIds"`
+}
+
+type apiModelSyncPreviewResponse struct {
+	Fingerprint string                     `json:"fingerprint"`
+	FetchedAt   string                     `json:"fetchedAt"`
+	Counts      apiModelSyncCountsResponse `json:"counts"`
+	Items       []apiModelSyncItemResponse `json:"items"`
+}
+
+type apiModelSyncCountsResponse struct {
+	New           int `json:"new"`
+	PriceChanged  int `json:"priceChanged"`
+	Unchanged     int `json:"unchanged"`
+	SourceMissing int `json:"sourceMissing"`
+	Unavailable   int `json:"unavailable"`
+}
+
+type apiModelSyncItemResponse struct {
+	CandidateKey                    string   `json:"candidateKey"`
+	Fingerprint                     string   `json:"fingerprint"`
+	Status                          string   `json:"status"`
+	ReasonCode                      string   `json:"reasonCode,omitempty"`
+	Reason                          string   `json:"reason,omitempty"`
+	ProviderID                      string   `json:"providerId"`
+	ProviderCode                    string   `json:"providerCode"`
+	Provider                        string   `json:"provider"`
+	ModelKey                        string   `json:"modelKey"`
+	Capabilities                    []string `json:"capabilities"`
+	SourceURL                       string   `json:"sourceUrl,omitempty"`
+	SourceVersion                   string   `json:"sourceVersion,omitempty"`
+	InputPricePerMillion            string   `json:"inputPricePerMillion,omitempty"`
+	CachedInputPricePerMillion      string   `json:"cachedInputPricePerMillion,omitempty"`
+	OutputPricePerMillion           string   `json:"outputPricePerMillion,omitempty"`
+	LocalModelID                    string   `json:"localModelId,omitempty"`
+	LocalPriceVersionID             string   `json:"localPriceVersionId,omitempty"`
+	LocalInputPricePerMillion       string   `json:"localInputPricePerMillion,omitempty"`
+	LocalCachedInputPricePerMillion string   `json:"localCachedInputPricePerMillion,omitempty"`
+	LocalOutputPricePerMillion      string   `json:"localOutputPricePerMillion,omitempty"`
+	LocalSourceURL                  string   `json:"localSourceUrl,omitempty"`
+	LocalSourceVersion              string   `json:"localSourceVersion,omitempty"`
+}
+
+type apiModelSyncApplyRequest struct {
+	Items []apiModelSyncSelectionRequest `json:"items"`
+}
+
+type apiModelSyncSelectionRequest struct {
+	Fingerprint                string   `json:"fingerprint"`
+	Status                     string   `json:"status"`
+	ProviderID                 string   `json:"providerId"`
+	ProviderCode               string   `json:"providerCode"`
+	ModelKey                   string   `json:"modelKey"`
+	Capabilities               []string `json:"capabilities"`
+	SourceURL                  string   `json:"sourceUrl"`
+	SourceVersion              string   `json:"sourceVersion"`
+	InputPricePerMillion       string   `json:"inputPricePerMillion"`
+	CachedInputPricePerMillion string   `json:"cachedInputPricePerMillion"`
+	OutputPricePerMillion      string   `json:"outputPricePerMillion"`
+	LocalModelID               string   `json:"localModelId"`
+	LocalPriceVersionID        string   `json:"localPriceVersionId"`
+	Active                     bool     `json:"active"`
+}
+
+type apiModelBulkStatusRequest struct {
+	ModelIDs []string `json:"modelIds"`
+	Active   bool     `json:"active"`
+}
+
+type apiModelBulkMutationResponse struct {
+	Created int      `json:"created"`
+	Updated int      `json:"updated"`
+	Changed int      `json:"changed"`
+	IDs     []string `json:"ids"`
 }
 
 func (s *Server) handleProductCategories(w http.ResponseWriter, r *http.Request) {
@@ -470,6 +552,75 @@ func (s *Server) handleAdminAPIModel(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, toAPIModelResponse(model))
 }
 
+func (s *Server) handlePreviewAPIModelSync(w http.ResponseWriter, r *http.Request) {
+	user, _, appErr := s.requireSession(w, r)
+	if appErr != nil {
+		writeProblem(w, r, appErr)
+		return
+	}
+	request, appErr := decodeStrictJSONOnly[apiModelSyncPreviewRequest](r)
+	if appErr != nil {
+		writeProblem(w, r, appErr)
+		return
+	}
+	preview, appErr := s.app.PreviewAPIModelSync(r.Context(), user, catalog.APIModelSyncPreviewInput{ProviderIDs: request.ProviderIDs})
+	if appErr != nil {
+		writeProblem(w, r, appErr)
+		return
+	}
+	writeJSON(w, http.StatusOK, toAPIModelSyncPreviewResponse(preview))
+}
+
+func (s *Server) handleApplyAPIModelSync(w http.ResponseWriter, r *http.Request) {
+	user, _, appErr := s.requireSessionAndCSRF(w, r)
+	if appErr != nil {
+		writeProblem(w, r, appErr)
+		return
+	}
+	body, request, appErr := decodeStrictJSON[apiModelSyncApplyRequest](r)
+	if appErr != nil {
+		writeProblem(w, r, appErr)
+		return
+	}
+	routeKey := "POST /api/v1/admin/api-models/models-dev/apply"
+	completion, appErr := s.app.ApplyAPIModelSyncWithIdempotency(
+		r.Context(), user, routeKey, r.Header.Get("Idempotency-Key"),
+		requestHash(r.Method, routeKey, body),
+		catalog.APIModelSyncApplyInput{Items: apiModelSyncSelectionsFromRequest(request.Items)},
+		apiModelBulkMutationCompletionBuilder,
+	)
+	if appErr != nil {
+		writeProblem(w, r, appErr)
+		return
+	}
+	writeIdempotencyCompletion(w, completion)
+}
+
+func (s *Server) handleBulkAPIModelStatus(w http.ResponseWriter, r *http.Request) {
+	user, _, appErr := s.requireSessionAndCSRF(w, r)
+	if appErr != nil {
+		writeProblem(w, r, appErr)
+		return
+	}
+	body, request, appErr := decodeStrictJSON[apiModelBulkStatusRequest](r)
+	if appErr != nil {
+		writeProblem(w, r, appErr)
+		return
+	}
+	routeKey := "POST /api/v1/admin/api-models/bulk-status"
+	completion, appErr := s.app.SetAPIModelsActiveWithIdempotency(
+		r.Context(), user, routeKey, r.Header.Get("Idempotency-Key"),
+		requestHash(r.Method, routeKey, body),
+		catalog.APIModelBulkStatusInput{ModelIDs: request.ModelIDs, Active: request.Active},
+		apiModelBulkMutationCompletionBuilder,
+	)
+	if appErr != nil {
+		writeProblem(w, r, appErr)
+		return
+	}
+	writeIdempotencyCompletion(w, completion)
+}
+
 func (s *Server) handleCreateAPIModel(w http.ResponseWriter, r *http.Request) {
 	user, _, appErr := s.requireSessionAndCSRF(w, r)
 	if appErr != nil {
@@ -616,6 +767,66 @@ func toAPIModelResponses(models []catalog.APIModelCatalog) []apiModelResponse {
 		items = append(items, toAPIModelResponse(model))
 	}
 	return items
+}
+
+func toAPIModelSyncPreviewResponse(preview catalog.APIModelSyncPreview) apiModelSyncPreviewResponse {
+	items := make([]apiModelSyncItemResponse, 0, len(preview.Items))
+	for _, item := range preview.Items {
+		items = append(items, apiModelSyncItemResponse{
+			CandidateKey: item.CandidateKey, Fingerprint: item.Fingerprint, Status: item.Status,
+			ReasonCode: item.ReasonCode, Reason: item.Reason, ProviderID: item.ProviderID,
+			ProviderCode: item.ProviderCode, Provider: item.Provider, ModelKey: item.ModelKey,
+			Capabilities: append([]string(nil), item.Capabilities...), SourceURL: item.SourceURL,
+			SourceVersion: item.SourceVersion, InputPricePerMillion: item.InputPricePerMillion,
+			CachedInputPricePerMillion: item.CachedInputPricePerMillion,
+			OutputPricePerMillion:      item.OutputPricePerMillion, LocalModelID: item.LocalModelID,
+			LocalPriceVersionID:             item.LocalPriceVersionID,
+			LocalInputPricePerMillion:       item.LocalInputPricePerMillion,
+			LocalCachedInputPricePerMillion: item.LocalCachedInputPricePerMillion,
+			LocalOutputPricePerMillion:      item.LocalOutputPricePerMillion,
+			LocalSourceURL:                  item.LocalSourceURL, LocalSourceVersion: item.LocalSourceVersion,
+		})
+	}
+	return apiModelSyncPreviewResponse{
+		Fingerprint: preview.Fingerprint,
+		FetchedAt:   preview.FetchedAt.UTC().Format(time.RFC3339),
+		Counts: apiModelSyncCountsResponse{
+			New: preview.Counts.New, PriceChanged: preview.Counts.PriceChanged,
+			Unchanged: preview.Counts.Unchanged, SourceMissing: preview.Counts.SourceMissing,
+			Unavailable: preview.Counts.Unavailable,
+		},
+		Items: items,
+	}
+}
+
+func apiModelSyncSelectionsFromRequest(items []apiModelSyncSelectionRequest) []catalog.APIModelSyncSelection {
+	result := make([]catalog.APIModelSyncSelection, 0, len(items))
+	for _, item := range items {
+		result = append(result, catalog.APIModelSyncSelection{
+			Fingerprint: item.Fingerprint, Status: item.Status, ProviderID: item.ProviderID,
+			ProviderCode: item.ProviderCode, ModelKey: item.ModelKey,
+			Capabilities: append([]string(nil), item.Capabilities...), SourceURL: item.SourceURL,
+			SourceVersion: item.SourceVersion, InputPricePerMillion: item.InputPricePerMillion,
+			CachedInputPricePerMillion: item.CachedInputPricePerMillion,
+			OutputPricePerMillion:      item.OutputPricePerMillion, LocalModelID: item.LocalModelID,
+			LocalPriceVersionID: item.LocalPriceVersionID, Active: item.Active,
+		})
+	}
+	return result
+}
+
+func apiModelBulkMutationCompletionBuilder(result catalog.APIModelBulkMutationResult) (idempotency.Completion, *domain.AppError) {
+	body, err := json.Marshal(apiModelBulkMutationResponse{
+		Created: result.Created, Updated: result.Updated, Changed: result.Changed,
+		IDs: append([]string(nil), result.IDs...),
+	})
+	if err != nil {
+		return idempotency.Completion{}, domain.NewError(http.StatusInternalServerError, domain.CodeInternalError, "Internal error", "API 模型目录响应编码失败。")
+	}
+	return idempotency.Completion{
+		Status: http.StatusOK, ContentType: "application/json; charset=utf-8", Body: body,
+		ResourceType: "api_model_catalog",
+	}, nil
 }
 
 func toAPIModelResponse(model catalog.APIModelCatalog) apiModelResponse {

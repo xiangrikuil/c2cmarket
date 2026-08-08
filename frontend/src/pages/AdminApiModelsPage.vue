@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { computed, reactive, ref } from 'vue'
-import { Building2, FilePenLine, Plus, RotateCcw, Save, ToggleLeft, ToggleRight, TriangleAlert } from 'lucide-vue-next'
+import { computed, reactive, ref, watch } from 'vue'
+import { Building2, CloudDownload, FilePenLine, Plus, Power, PowerOff, RotateCcw, Save, ToggleLeft, ToggleRight, TriangleAlert } from 'lucide-vue-next'
 import { toast } from 'vue-sonner'
+import AdminApiModelSyncDialog from '@/components/admin/AdminApiModelSyncDialog.vue'
 import PageTitle from '@/components/market/PageTitle.vue'
 import CompactStats from '@/components/market/CompactStats.vue'
 import StatusTabs from '@/components/market/StatusTabs.vue'
@@ -30,6 +31,7 @@ import {
   useAdminAPIModels,
   useCreateAPIModel,
   useCreateAPIModelProvider,
+  useSetAPIModelsBulkStatus,
   useSetAPIModelActive,
   useSetAPIModelProviderActive,
   useUpdateAPIModel,
@@ -53,6 +55,8 @@ const editingModelId = ref('')
 const editingProviderId = ref('')
 const isModelFormOpen = ref(false)
 const isProviderFormOpen = ref(false)
+const isSyncDialogOpen = ref(false)
+const selectedModelIds = ref<string[]>([])
 
 const providersQuery = useAdminAPIModelProviders()
 const modelsQuery = useAdminAPIModels()
@@ -62,6 +66,7 @@ const providerActiveMutation = useSetAPIModelProviderActive()
 const createModelMutation = useCreateAPIModel()
 const updateModelMutation = useUpdateAPIModel()
 const modelActiveMutation = useSetAPIModelActive()
+const bulkStatusMutation = useSetAPIModelsBulkStatus()
 
 const providers = computed(() => providersQuery.data.value ?? [])
 const activeProviders = computed(() => providers.value.filter(item => item.active))
@@ -69,6 +74,9 @@ const rows = computed(() => modelsQuery.data.value ?? [])
 const providerForm = reactive<ApiModelProviderInput>(emptyProviderForm())
 const modelForm = reactive<ApiModelInput>(emptyModelForm())
 const visibleRows = computed(() => rows.value.filter(matchesStatusFilter))
+const selectedModels = computed(() => rows.value.filter(item => selectedModelIds.value.includes(item.id)))
+const allVisibleSelected = computed(() => visibleRows.value.length > 0 && visibleRows.value.every(item => selectedModelIds.value.includes(item.id)))
+const someVisibleSelected = computed(() => visibleRows.value.some(item => selectedModelIds.value.includes(item.id)))
 const activeCount = computed(() => rows.value.filter(item => item.active && item.providerActive).length)
 const inactiveCount = computed(() => rows.value.length - activeCount.value)
 const providerCount = computed(() => providers.value.length)
@@ -84,6 +92,11 @@ const providerFormTitle = computed(() => editingProviderId.value ? '编辑 API �
 const modelFormTitle = computed(() => editingModelId.value ? '编辑 API 模型' : '新建 API 模型')
 const editingProvider = computed(() => providers.value.find(item => item.id === editingProviderId.value) ?? null)
 const editingModel = computed(() => rows.value.find(item => item.id === editingModelId.value) ?? null)
+
+watch(rows, currentRows => {
+  const validIds = new Set(currentRows.map(item => item.id))
+  selectedModelIds.value = selectedModelIds.value.filter(id => validIds.has(id))
+})
 
 const providerLabelMap = Object.fromEntries(apiModelProviderCategories.map(item => [item.value, item.label])) as Record<ApiModelProviderCategory, string>
 const capabilityLabelMap = Object.fromEntries(apiModelCapabilities.map(item => [item.value, item.label])) as Record<ApiModelCapability, string>
@@ -259,6 +272,31 @@ async function setModelActive(model: AdminApiModel, active: boolean) {
   }
 }
 
+function toggleModelSelection(modelId: string, checked: boolean) {
+  selectedModelIds.value = checked
+    ? Array.from(new Set([...selectedModelIds.value, modelId]))
+    : selectedModelIds.value.filter(id => id !== modelId)
+}
+
+function toggleVisibleModels(checked: boolean) {
+  const visibleIds = new Set(visibleRows.value.map(item => item.id))
+  selectedModelIds.value = checked
+    ? Array.from(new Set([...selectedModelIds.value, ...visibleIds]))
+    : selectedModelIds.value.filter(id => !visibleIds.has(id))
+}
+
+async function setSelectedModelsActive(active: boolean) {
+  if (selectedModelIds.value.length === 0) return
+  if (!active && !window.confirm(`停用选中的 ${selectedModelIds.value.length} 个模型后，它们将从新服务发布选择中移除。确认继续？`)) return
+  try {
+    const result = await bulkStatusMutation.mutateAsync({ modelIds: [...selectedModelIds.value], active })
+    toast.success(active ? `已启用 ${result.changed} 个模型。` : `已停用 ${result.changed} 个模型。`)
+    selectedModelIds.value = []
+  } catch (error) {
+    toast.error(error instanceof Error ? error.message : '批量更新模型状态失败')
+  }
+}
+
 function setCapability(capability: ApiModelCapability, checked: boolean) {
   modelForm.capabilities = checked
     ? Array.from(new Set([...modelForm.capabilities, capability]))
@@ -358,9 +396,26 @@ function capabilityText(model: AdminApiModel) {
     <section class="space-y-4">
       <div class="flex flex-wrap items-center justify-between gap-3">
         <StatusTabs v-model="statusFilter" :items="['全部', '启用', '停用']" class="mb-0" />
-        <Button size="sm" :disabled="activeProviders.length === 0" @click="openCreateModel">
-          <Plus class="h-4 w-4" />新建模型
-        </Button>
+        <div class="flex flex-wrap items-center justify-end gap-2">
+          <Button size="sm" variant="outline" :disabled="providers.length === 0" @click="isSyncDialogOpen = true">
+            <CloudDownload class="h-4 w-4" />从 models.dev 更新
+          </Button>
+          <Button size="sm" :disabled="activeProviders.length === 0" @click="openCreateModel">
+            <Plus class="h-4 w-4" />新建模型
+          </Button>
+        </div>
+      </div>
+
+      <div v-if="selectedModels.length > 0" class="flex flex-wrap items-center justify-between gap-3 rounded-md border border-border bg-muted/30 px-3 py-2">
+        <span class="text-sm text-muted-foreground">已选择 {{ selectedModels.length }} 个模型</span>
+        <div class="flex flex-wrap gap-2">
+          <Button size="sm" variant="outline" :disabled="bulkStatusMutation.isPending.value" @click="setSelectedModelsActive(true)">
+            <Power class="h-4 w-4" />批量启用
+          </Button>
+          <Button size="sm" variant="outline" :disabled="bulkStatusMutation.isPending.value" @click="setSelectedModelsActive(false)">
+            <PowerOff class="h-4 w-4" />批量停用
+          </Button>
+        </div>
       </div>
 
       <div v-if="isLoading" class="rounded-md border border-border p-8 text-center text-sm text-muted-foreground">
@@ -382,9 +437,16 @@ function capabilityText(model: AdminApiModel) {
 
       <Card v-else class="overflow-hidden p-0">
         <div class="overflow-x-auto">
-          <table class="c2c-table w-full min-w-[980px] text-sm">
+          <table class="c2c-table w-full min-w-[1040px] text-sm">
             <thead>
               <tr class="border-b border-border text-left text-xs text-muted-foreground">
+                <th class="w-12 px-3 py-2 font-medium">
+                  <Checkbox
+                    :model-value="allVisibleSelected ? true : someVisibleSelected ? 'indeterminate' : false"
+                    aria-label="选择当前筛选的全部模型"
+                    @update:model-value="value => toggleVisibleModels(Boolean(value))"
+                  />
+                </th>
                 <th class="px-3 py-2 font-medium">模型</th>
                 <th class="px-3 py-2 font-medium">提供商</th>
                 <th class="px-3 py-2 font-medium">能力</th>
@@ -397,6 +459,13 @@ function capabilityText(model: AdminApiModel) {
             </thead>
             <tbody>
               <tr v-for="model in visibleRows" :key="model.id" class="border-b border-border/70 last:border-0">
+                <td class="px-3 py-3">
+                  <Checkbox
+                    :model-value="selectedModelIds.includes(model.id)"
+                    :aria-label="`选择 ${model.modelKey}`"
+                    @update:model-value="value => toggleModelSelection(model.id, Boolean(value))"
+                  />
+                </td>
                 <td class="max-w-[260px] px-3 py-3">
                   <div class="truncate font-medium">{{ model.modelKey }}</div>
                 </td>
@@ -430,7 +499,7 @@ function capabilityText(model: AdminApiModel) {
                 </td>
               </tr>
               <tr v-if="visibleRows.length === 0">
-                <td colspan="8" class="px-3 py-10 text-center text-sm text-muted-foreground">
+                <td colspan="9" class="px-3 py-10 text-center text-sm text-muted-foreground">
                   当前筛选下暂无 API 模型。
                 </td>
               </tr>
@@ -583,5 +652,10 @@ function capabilityText(model: AdminApiModel) {
         </div>
       </DialogContent>
     </Dialog>
+
+    <AdminApiModelSyncDialog
+      v-model:open="isSyncDialogOpen"
+      :providers="providers"
+    />
   </div>
 </template>

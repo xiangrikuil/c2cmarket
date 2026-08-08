@@ -14,6 +14,8 @@ import (
 
 	"c2c-market/backend/internal/domain"
 	"c2c-market/backend/internal/module/auth"
+	"c2c-market/backend/internal/module/idempotency"
+	"c2c-market/backend/internal/platform/modelsdev"
 
 	"github.com/google/uuid"
 )
@@ -22,6 +24,8 @@ type Service struct {
 	mu            sync.Mutex
 	now           func() time.Time
 	repo          Repository
+	idempotency   *idempotency.Service
+	modelsDev     modelsdev.Source
 	categories    map[string]ProductCategory
 	productPlans  map[string]ProductPlan
 	apiProviders  map[string]APIModelProvider
@@ -30,13 +34,15 @@ type Service struct {
 	apiModelOrder []string
 }
 
-func NewService(repo Repository, now func() time.Time) *Service {
+func NewService(repo Repository, idempotencyService *idempotency.Service, modelsDevSource modelsdev.Source, now func() time.Time) *Service {
 	if now == nil {
 		now = time.Now
 	}
 	service := &Service{
 		now:          now,
 		repo:         repo,
+		idempotency:  idempotencyService,
+		modelsDev:    modelsDevSource,
 		categories:   make(map[string]ProductCategory),
 		productPlans: make(map[string]ProductPlan),
 		apiProviders: make(map[string]APIModelProvider),
@@ -47,6 +53,15 @@ func NewService(repo Repository, now func() time.Time) *Service {
 	service.seedAPIModelProviders()
 	service.seedAPIModels()
 	return service
+}
+
+func (s *Service) SetModelsDevSource(source modelsdev.Source) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.modelsDev = source
 }
 
 func (s *Service) ProductCategories(ctx context.Context) ([]ProductCategory, *domain.AppError) {

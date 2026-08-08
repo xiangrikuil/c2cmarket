@@ -2,8 +2,10 @@ package catalog
 
 import (
 	"context"
+	"time"
 
 	"c2c-market/backend/internal/domain"
+	"c2c-market/backend/internal/module/idempotency"
 )
 
 type Repository interface {
@@ -33,4 +35,6 @@ type Repository interface {
 	AdminCreateAPIModel(ctx context.Context, input APIModelMutationInput) (APIModelCatalog, *domain.AppError)
 	AdminUpdateAPIModel(ctx context.Context, input APIModelMutationInput) (APIModelCatalog, *domain.AppError)
 	AdminSetAPIModelActive(ctx context.Context, input APIModelMutationInput, active bool) (APIModelCatalog, *domain.AppError)
+	AdminApplyAPIModelSyncWithIdempotency(ctx context.Context, entry idempotency.Entry, input APIModelSyncMutationInput, now time.Time, buildCompletion APIModelSyncCompletionBuilder) (APIModelBulkMutationResult, idempotency.Completion, *domain.AppError)
+	AdminSetAPIModelsActiveWithIdempotency(ctx context.Context, entry idempotency.Entry, input APIModelBulkStatusMutationInput, now time.Time, buildCompletion APIModelSyncCompletionBuilder) (APIModelBulkMutationResult, idempotency.Completion, *domain.AppError)
 }

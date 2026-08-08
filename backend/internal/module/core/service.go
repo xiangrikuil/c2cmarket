@@ -31,6 +31,7 @@ import (
 	"c2c-market/backend/internal/module/reputation"
 	"c2c-market/backend/internal/module/review"
 	"c2c-market/backend/internal/module/search"
+	"c2c-market/backend/internal/platform/modelsdev"
 	"c2c-market/backend/internal/platform/outboundhttp"
 )
 
@@ -166,7 +167,7 @@ func newServiceWithOptions(now func() time.Time, repositories Repositories, emai
 	s := &Service{
 		authService:        authmodule.NewServiceWithRegistrationEmailSenderAndIdempotency(repositories.Auth, now, emailSender, idempotencyService),
 		idempotencyService: idempotencyService,
-		catalogService:     catalog.NewService(repositories.Catalog, now),
+		catalogService:     catalog.NewService(repositories.Catalog, idempotencyService, modelsdev.NewClient(15*time.Second), now),
 		announcement:       announcement.NewService(repositories.Announcement, now),
 		notification:       notification.NewService(repositories.Notification, now),
 		contactService:     contactmodule.NewService(repositories.Contact, now),
@@ -482,6 +483,25 @@ func (s *Service) UpdateAPIModel(ctx context.Context, user User, modelID string,
 
 func (s *Service) SetAPIModelActive(ctx context.Context, user User, modelID string, active bool) (APIModelCatalog, *domain.AppError) {
 	return s.catalogService.SetAPIModelActive(ctx, user, modelID, active)
+}
+
+func (s *Service) PreviewAPIModelSync(ctx context.Context, user User, input catalog.APIModelSyncPreviewInput) (catalog.APIModelSyncPreview, *domain.AppError) {
+	return s.catalogService.PreviewAPIModelSync(ctx, user, input)
+}
+
+func (s *Service) ApplyAPIModelSyncWithIdempotency(ctx context.Context, user User, routeKey, key, requestHash string, input catalog.APIModelSyncApplyInput, buildCompletion catalog.APIModelSyncCompletionBuilder) (idempotencymodule.Completion, *domain.AppError) {
+	return s.catalogService.ApplyAPIModelSyncWithIdempotency(ctx, user, routeKey, key, requestHash, input, buildCompletion)
+}
+
+func (s *Service) SetAPIModelsActiveWithIdempotency(ctx context.Context, user User, routeKey, key, requestHash string, input catalog.APIModelBulkStatusInput, buildCompletion catalog.APIModelSyncCompletionBuilder) (idempotencymodule.Completion, *domain.AppError) {
+	return s.catalogService.SetAPIModelsActiveWithIdempotency(ctx, user, routeKey, key, requestHash, input, buildCompletion)
+}
+
+func (s *Service) ConfigureModelsDevSource(source modelsdev.Source) {
+	if s == nil || s.catalogService == nil {
+		return
+	}
+	s.catalogService.SetModelsDevSource(source)
 }
 
 func (s *Service) CreateAPIService(ctx context.Context, user User, input CreateAPIServiceInput) (APIService, *domain.AppError) {

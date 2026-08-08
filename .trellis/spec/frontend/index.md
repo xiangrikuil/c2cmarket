@@ -33,6 +33,7 @@ This directory contains the current project conventions for the Nuxt 4 + Vue 3 f
 | [Identity And Session](../backend/identity-session.md) | Cross-layer account/API-market avatar, email time, and logout cache contract | Active |
 | [Quality Guidelines](./quality-guidelines.md) | Code standards, forbidden patterns | Active |
 | [Type Safety](./type-safety.md) | Type patterns, validation | Active |
+| [API Model Catalog Pricing Sync And Activation](../backend/api-model-catalog-sync.md) | Administrator-reviewed models.dev sync, activation, query invalidation, and responsive dialog boundaries | Active |
 | [Nuxt SSR and Cloudflare Worker](./nuxt-ssr-deployment.md) | Hybrid rendering, development first-page performance, SEO, sitemap, runtime env, and Worker deployment contracts | Active |
 | [Reproducible Release And Contract Drift](../backend/release-contract.md) | OpenAPI generator configuration and generated type drift contract | Active |
 | [Runtime Security And Observability](../backend/runtime-operations.md) | Cloudflare Worker response-header and API-origin policy contract | Active |
@@ -62,11 +63,12 @@ Before editing frontend code, read:
 17. [Identity And Session](../backend/identity-session.md) for account-shell, merchant avatar, or logout work
 18. [Quality Guidelines](./quality-guidelines.md)
 19. [Type Safety](./type-safety.md)
-20. [Nuxt SSR and Cloudflare Worker](./nuxt-ssr-deployment.md) for rendering, SEO, sitemap, or deployment work
-21. [Reproducible Release And Contract Drift](../backend/release-contract.md) when touching OpenAPI or generated API types
-22. [Runtime Security And Observability](../backend/runtime-operations.md) when touching `frontend/public/_headers`, frontend asset origins, or API connection origins
-23. [C2CMarket Product Context](../guides/product-context.md)
-24. [Maintainability Contract](../guides/maintainability-contract.md)
+20. [API Model Catalog Pricing Sync And Activation](../backend/api-model-catalog-sync.md) when touching `/admin/api-models`, models.dev preview/apply, bulk activation, or public model catalog invalidation
+21. [Nuxt SSR and Cloudflare Worker](./nuxt-ssr-deployment.md) for rendering, SEO, sitemap, or deployment work
+22. [Reproducible Release And Contract Drift](../backend/release-contract.md) when touching OpenAPI or generated API types
+23. [Runtime Security And Observability](../backend/runtime-operations.md) when touching `frontend/public/_headers`, frontend asset origins, or API connection origins
+24. [C2CMarket Product Context](../guides/product-context.md)
+25. [Maintainability Contract](../guides/maintainability-contract.md)
 
 ## Quality Check
 

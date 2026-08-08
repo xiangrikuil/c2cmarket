@@ -6444,6 +6444,96 @@ paths:
           $ref: "#/components/responses/Problem"
         "422":
           $ref: "#/components/responses/Problem"
+  /api/v1/admin/api-models/models-dev/preview:
+    post:
+      operationId: previewAdminAPIModelModelsDevSync
+      tags: [AdminAPICatalog]
+      description: Fetch supported official providers from models.dev and return a read-only catalog difference preview. This operation never writes catalog data.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/APIModelSyncPreviewRequest"
+      responses:
+        "200":
+          description: Structured models.dev difference preview.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/APIModelSyncPreview"
+        "400":
+          $ref: "#/components/responses/Problem"
+        "403":
+          $ref: "#/components/responses/Problem"
+        "422":
+          $ref: "#/components/responses/Problem"
+        "502":
+          $ref: "#/components/responses/Problem"
+  /api/v1/admin/api-models/models-dev/apply:
+    post:
+      operationId: applyAdminAPIModelModelsDevSync
+      tags: [AdminAPICatalog]
+      security:
+        - sessionCookie: []
+          csrfToken: []
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/APIModelSyncApplyRequest"
+      responses:
+        "200":
+          description: Selected new models and price changes applied atomically.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/APIModelBulkMutationResult"
+        "400":
+          $ref: "#/components/responses/Problem"
+        "403":
+          $ref: "#/components/responses/Problem"
+        "409":
+          $ref: "#/components/responses/Problem"
+        "412":
+          $ref: "#/components/responses/Problem"
+        "422":
+          $ref: "#/components/responses/Problem"
+  /api/v1/admin/api-models/bulk-status:
+    post:
+      operationId: setAdminAPIModelsBulkStatus
+      tags: [AdminAPICatalog]
+      security:
+        - sessionCookie: []
+          csrfToken: []
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/APIModelBulkStatusRequest"
+      responses:
+        "200":
+          description: Selected models activated or deactivated atomically.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/APIModelBulkMutationResult"
+        "400":
+          $ref: "#/components/responses/Problem"
+        "403":
+          $ref: "#/components/responses/Problem"
+        "404":
+          $ref: "#/components/responses/Problem"
+        "409":
+          $ref: "#/components/responses/Problem"
+        "422":
+          $ref: "#/components/responses/Problem"
   /api/v1/admin/api-models/{id}:
     get:
       operationId: getAdminAPIModel
@@ -9805,6 +9895,205 @@ components:
             $ref: "#/components/schemas/APIModel"
         nextCursor:
           type: [string, "null"]
+    APIModelSyncPreviewRequest:
+      type: object
+      additionalProperties: false
+      required: [providerIds]
+      properties:
+        providerIds:
+          type: array
+          minItems: 1
+          maxItems: 4
+          uniqueItems: true
+          items:
+            type: string
+            format: uuid
+    APIModelSyncStatus:
+      type: string
+      enum: [new, price_changed, unchanged, source_missing, unavailable]
+    APIModelSyncCounts:
+      type: object
+      required: [new, priceChanged, unchanged, sourceMissing, unavailable]
+      properties:
+        new:
+          type: integer
+          minimum: 0
+        priceChanged:
+          type: integer
+          minimum: 0
+        unchanged:
+          type: integer
+          minimum: 0
+        sourceMissing:
+          type: integer
+          minimum: 0
+        unavailable:
+          type: integer
+          minimum: 0
+    APIModelSyncItem:
+      type: object
+      required: [candidateKey, fingerprint, status, providerId, providerCode, provider, modelKey, capabilities]
+      properties:
+        candidateKey:
+          type: string
+        fingerprint:
+          type: string
+          description: Stable 64-character fingerprint for new and price-changed candidates; empty for informational rows.
+        status:
+          $ref: "#/components/schemas/APIModelSyncStatus"
+        reasonCode:
+          type: string
+        reason:
+          type: string
+        providerId:
+          type: string
+          format: uuid
+        providerCode:
+          type: string
+        provider:
+          type: string
+        modelKey:
+          type: string
+          description: Exact models.dev model id, preserved without display-name rewriting.
+        capabilities:
+          type: array
+          items:
+            type: string
+            enum: [text, chat, vision, image_generation, image_edit, reasoning]
+        sourceUrl:
+          type: string
+        sourceVersion:
+          type: string
+        inputPricePerMillion:
+          $ref: "#/components/schemas/DecimalString"
+        cachedInputPricePerMillion:
+          $ref: "#/components/schemas/DecimalString"
+        outputPricePerMillion:
+          $ref: "#/components/schemas/DecimalString"
+        localModelId:
+          type: string
+          format: uuid
+        localPriceVersionId:
+          type: string
+          format: uuid
+        localInputPricePerMillion:
+          $ref: "#/components/schemas/DecimalString"
+        localCachedInputPricePerMillion:
+          $ref: "#/components/schemas/DecimalString"
+        localOutputPricePerMillion:
+          $ref: "#/components/schemas/DecimalString"
+        localSourceUrl:
+          type: string
+        localSourceVersion:
+          type: string
+    APIModelSyncPreview:
+      type: object
+      required: [fingerprint, fetchedAt, counts, items]
+      properties:
+        fingerprint:
+          type: string
+          pattern: "^[a-f0-9]{64}$"
+        fetchedAt:
+          type: string
+          format: date-time
+        counts:
+          $ref: "#/components/schemas/APIModelSyncCounts"
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/APIModelSyncItem"
+    APIModelSyncSelection:
+      type: object
+      additionalProperties: false
+      required: [fingerprint, status, providerId, providerCode, modelKey, capabilities, sourceUrl, sourceVersion, inputPricePerMillion, cachedInputPricePerMillion, outputPricePerMillion, localModelId, localPriceVersionId, active]
+      properties:
+        fingerprint:
+          type: string
+          pattern: "^[a-f0-9]{64}$"
+        status:
+          type: string
+          enum: [new, price_changed]
+        providerId:
+          type: string
+          format: uuid
+        providerCode:
+          type: string
+          enum: [openai, anthropic, google, perplexity]
+        modelKey:
+          type: string
+          minLength: 1
+          maxLength: 120
+        capabilities:
+          type: array
+          minItems: 1
+          items:
+            type: string
+            enum: [text, vision, reasoning]
+        sourceUrl:
+          type: string
+          enum: ["https://models.dev/api.json"]
+        sourceVersion:
+          type: string
+          pattern: "^models\\.dev:"
+        inputPricePerMillion:
+          type: string
+        cachedInputPricePerMillion:
+          type: string
+        outputPricePerMillion:
+          type: string
+        localModelId:
+          type: string
+          description: Empty for new models; current local model UUID for price changes.
+        localPriceVersionId:
+          type: string
+          description: Empty for new models; current local price version UUID for price changes.
+        active:
+          type: boolean
+          description: Applies only to newly imported models. New models remain inactive unless explicitly true.
+    APIModelSyncApplyRequest:
+      type: object
+      additionalProperties: false
+      required: [items]
+      properties:
+        items:
+          type: array
+          minItems: 1
+          maxItems: 200
+          items:
+            $ref: "#/components/schemas/APIModelSyncSelection"
+    APIModelBulkStatusRequest:
+      type: object
+      additionalProperties: false
+      required: [modelIds, active]
+      properties:
+        modelIds:
+          type: array
+          minItems: 1
+          maxItems: 200
+          uniqueItems: true
+          items:
+            type: string
+            format: uuid
+        active:
+          type: boolean
+    APIModelBulkMutationResult:
+      type: object
+      required: [created, updated, changed, ids]
+      properties:
+        created:
+          type: integer
+          minimum: 0
+        updated:
+          type: integer
+          minimum: 0
+        changed:
+          type: integer
+          minimum: 0
+        ids:
+          type: array
+          items:
+            type: string
+            format: uuid
     ModelAuditRiskLevel:
       type: string
       enum: [consistent, suspicious, high_risk, insufficient_data]

@@ -1,3 +1,12 @@
+import type {
+  ApiModelBulkMutationResult as GeneratedApiModelBulkMutationResult,
+  ApiModelBulkStatusRequest as GeneratedApiModelBulkStatusRequest,
+  ApiModelSyncItem as GeneratedApiModelSyncItem,
+  ApiModelSyncPreview as GeneratedApiModelSyncPreview,
+  ApiModelSyncSelection as GeneratedApiModelSyncSelection,
+  ApiModelSyncStatus as GeneratedApiModelSyncStatus,
+} from '@/api/generated/openapi'
+
 export type ApiModelProviderCategory = 'gpt' | 'claude' | 'cursor' | 'gemini' | 'perplexity' | 'other'
 
 export type ApiModelCapability =
@@ -61,6 +70,14 @@ export type ApiModelInput = {
   active: boolean
   sortOrder: number
 }
+
+export type ModelsDevProviderCode = 'openai' | 'anthropic' | 'google' | 'perplexity'
+export type ApiModelSyncStatus = GeneratedApiModelSyncStatus
+export type ApiModelSyncItem = GeneratedApiModelSyncItem
+export type ApiModelSyncPreview = GeneratedApiModelSyncPreview
+export type ApiModelSyncSelection = GeneratedApiModelSyncSelection
+export type ApiModelBulkStatusInput = GeneratedApiModelBulkStatusRequest
+export type ApiModelBulkMutationResult = GeneratedApiModelBulkMutationResult
 
 export const apiModelProviderCategories: Array<{ value: ApiModelProviderCategory, label: string }> = [
   { value: 'gpt', label: 'GPT' },

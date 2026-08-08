@@ -182,6 +182,9 @@ type Service interface {
 	CreateAPIModel(ctx context.Context, user auth.User, input catalog.APIModelInput) (catalog.APIModelCatalog, *domain.AppError)
 	UpdateAPIModel(ctx context.Context, user auth.User, modelID string, input catalog.APIModelInput) (catalog.APIModelCatalog, *domain.AppError)
 	SetAPIModelActive(ctx context.Context, user auth.User, modelID string, active bool) (catalog.APIModelCatalog, *domain.AppError)
+	PreviewAPIModelSync(ctx context.Context, user auth.User, input catalog.APIModelSyncPreviewInput) (catalog.APIModelSyncPreview, *domain.AppError)
+	ApplyAPIModelSyncWithIdempotency(ctx context.Context, user auth.User, routeKey, key, requestHash string, input catalog.APIModelSyncApplyInput, buildCompletion catalog.APIModelSyncCompletionBuilder) (idempotency.Completion, *domain.AppError)
+	SetAPIModelsActiveWithIdempotency(ctx context.Context, user auth.User, routeKey, key, requestHash string, input catalog.APIModelBulkStatusInput, buildCompletion catalog.APIModelSyncCompletionBuilder) (idempotency.Completion, *domain.AppError)
 
 	AdminModelAuditTargets(ctx context.Context, user auth.User) ([]modelaudit.Target, *domain.AppError)
 	AdminModelAuditTarget(ctx context.Context, user auth.User, targetID string) (modelaudit.Target, *domain.AppError)

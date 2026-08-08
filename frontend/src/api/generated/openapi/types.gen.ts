@@ -907,6 +907,100 @@ export type ApiModelList = {
     nextCursor?: string | null;
 };
 
+export type ApiModelSyncPreviewRequest = {
+    providerIds: Array<string>;
+};
+
+export type ApiModelSyncStatus = 'new' | 'price_changed' | 'unchanged' | 'source_missing' | 'unavailable';
+
+export type ApiModelSyncCounts = {
+    new: number;
+    priceChanged: number;
+    unchanged: number;
+    sourceMissing: number;
+    unavailable: number;
+};
+
+export type ApiModelSyncItem = {
+    candidateKey: string;
+    /**
+     * Stable 64-character fingerprint for new and price-changed candidates; empty for informational rows.
+     */
+    fingerprint: string;
+    status: ApiModelSyncStatus;
+    reasonCode?: string;
+    reason?: string;
+    providerId: string;
+    providerCode: string;
+    provider: string;
+    /**
+     * Exact models.dev model id, preserved without display-name rewriting.
+     */
+    modelKey: string;
+    capabilities: Array<'text' | 'chat' | 'vision' | 'image_generation' | 'image_edit' | 'reasoning'>;
+    sourceUrl?: string;
+    sourceVersion?: string;
+    inputPricePerMillion?: DecimalString;
+    cachedInputPricePerMillion?: DecimalString;
+    outputPricePerMillion?: DecimalString;
+    localModelId?: string;
+    localPriceVersionId?: string;
+    localInputPricePerMillion?: DecimalString;
+    localCachedInputPricePerMillion?: DecimalString;
+    localOutputPricePerMillion?: DecimalString;
+    localSourceUrl?: string;
+    localSourceVersion?: string;
+};
+
+export type ApiModelSyncPreview = {
+    fingerprint: string;
+    fetchedAt: string;
+    counts: ApiModelSyncCounts;
+    items: Array<ApiModelSyncItem>;
+};
+
+export type ApiModelSyncSelection = {
+    fingerprint: string;
+    status: 'new' | 'price_changed';
+    providerId: string;
+    providerCode: 'openai' | 'anthropic' | 'google' | 'perplexity';
+    modelKey: string;
+    capabilities: Array<'text' | 'vision' | 'reasoning'>;
+    sourceUrl: 'https://models.dev/api.json';
+    sourceVersion: string;
+    inputPricePerMillion: string;
+    cachedInputPricePerMillion: string;
+    outputPricePerMillion: string;
+    /**
+     * Empty for new models; current local model UUID for price changes.
+     */
+    localModelId: string;
+    /**
+     * Empty for new models; current local price version UUID for price changes.
+     */
+    localPriceVersionId: string;
+    /**
+     * Applies only to newly imported models. New models remain inactive unless explicitly true.
+     */
+    active: boolean;
+};
+
+export type ApiModelSyncApplyRequest = {
+    items: Array<ApiModelSyncSelection>;
+};
+
+export type ApiModelBulkStatusRequest = {
+    modelIds: Array<string>;
+    active: boolean;
+};
+
+export type ApiModelBulkMutationResult = {
+    created: number;
+    updated: number;
+    changed: number;
+    ids: Array<string>;
+};
+
 export type ModelAuditRiskLevel = 'consistent' | 'suspicious' | 'high_risk' | 'insufficient_data';
 
 export type ModelAuditProbeRiskLevel = 'consistent' | 'suspicious' | 'high_risk' | 'insufficient_data' | 'not_applicable';
@@ -12324,6 +12418,131 @@ export type CreateAdminApiModelResponses = {
 };
 
 export type CreateAdminApiModelResponse = CreateAdminApiModelResponses[keyof CreateAdminApiModelResponses];
+
+export type PreviewAdminApiModelModelsDevSyncData = {
+    body: ApiModelSyncPreviewRequest;
+    path?: never;
+    query?: never;
+    url: '/api/v1/admin/api-models/models-dev/preview';
+};
+
+export type PreviewAdminApiModelModelsDevSyncErrors = {
+    /**
+     * Problem Details error.
+     */
+    400: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    403: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    422: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    502: ProblemDetails;
+};
+
+export type PreviewAdminApiModelModelsDevSyncError = PreviewAdminApiModelModelsDevSyncErrors[keyof PreviewAdminApiModelModelsDevSyncErrors];
+
+export type PreviewAdminApiModelModelsDevSyncResponses = {
+    /**
+     * Structured models.dev difference preview.
+     */
+    200: ApiModelSyncPreview;
+};
+
+export type PreviewAdminApiModelModelsDevSyncResponse = PreviewAdminApiModelModelsDevSyncResponses[keyof PreviewAdminApiModelModelsDevSyncResponses];
+
+export type ApplyAdminApiModelModelsDevSyncData = {
+    body: ApiModelSyncApplyRequest;
+    headers: {
+        'Idempotency-Key': string;
+    };
+    path?: never;
+    query?: never;
+    url: '/api/v1/admin/api-models/models-dev/apply';
+};
+
+export type ApplyAdminApiModelModelsDevSyncErrors = {
+    /**
+     * Problem Details error.
+     */
+    400: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    403: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    409: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    412: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    422: ProblemDetails;
+};
+
+export type ApplyAdminApiModelModelsDevSyncError = ApplyAdminApiModelModelsDevSyncErrors[keyof ApplyAdminApiModelModelsDevSyncErrors];
+
+export type ApplyAdminApiModelModelsDevSyncResponses = {
+    /**
+     * Selected new models and price changes applied atomically.
+     */
+    200: ApiModelBulkMutationResult;
+};
+
+export type ApplyAdminApiModelModelsDevSyncResponse = ApplyAdminApiModelModelsDevSyncResponses[keyof ApplyAdminApiModelModelsDevSyncResponses];
+
+export type SetAdminApiModelsBulkStatusData = {
+    body: ApiModelBulkStatusRequest;
+    headers: {
+        'Idempotency-Key': string;
+    };
+    path?: never;
+    query?: never;
+    url: '/api/v1/admin/api-models/bulk-status';
+};
+
+export type SetAdminApiModelsBulkStatusErrors = {
+    /**
+     * Problem Details error.
+     */
+    400: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    403: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    404: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    409: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    422: ProblemDetails;
+};
+
+export type SetAdminApiModelsBulkStatusError = SetAdminApiModelsBulkStatusErrors[keyof SetAdminApiModelsBulkStatusErrors];
+
+export type SetAdminApiModelsBulkStatusResponses = {
+    /**
+     * Selected models activated or deactivated atomically.
+     */
+    200: ApiModelBulkMutationResult;
+};
+
+export type SetAdminApiModelsBulkStatusResponse = SetAdminApiModelsBulkStatusResponses[keyof SetAdminApiModelsBulkStatusResponses];
 
 export type GetAdminApiModelData = {
     body?: never;

@@ -66,6 +66,7 @@ const (
 	CodeContactWindowExpired              = "CONTACT_WINDOW_EXPIRED"
 	CodeCSRFTokenInvalid                  = "CSRF_TOKEN_INVALID"
 	CodeEmailRegistrationDisabled         = "EMAIL_REGISTRATION_DISABLED"
+	CodeExternalSourceUnavailable         = "EXTERNAL_SOURCE_UNAVAILABLE"
 	CodeFeatureDisabled                   = "FEATURE_DISABLED"
 	CodeFieldNotAllowed                   = "FIELD_NOT_ALLOWED"
 	CodeIdempotencyInProgress             = "IDEMPOTENCY_IN_PROGRESS"

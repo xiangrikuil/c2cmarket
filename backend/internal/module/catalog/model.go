@@ -1,6 +1,11 @@
 package catalog
 
-import "time"
+import (
+	"time"
+
+	"c2c-market/backend/internal/domain"
+	"c2c-market/backend/internal/module/idempotency"
+)
 
 type ProductCategory struct {
 	ID          string
@@ -143,3 +148,101 @@ type APIModelMutationInput struct {
 	OperatorID string
 	Form       APIModelInput
 }
+
+const (
+	APIModelSyncStatusNew           = "new"
+	APIModelSyncStatusPriceChanged  = "price_changed"
+	APIModelSyncStatusUnchanged     = "unchanged"
+	APIModelSyncStatusSourceMissing = "source_missing"
+	APIModelSyncStatusUnavailable   = "unavailable"
+)
+
+type APIModelSyncPreviewInput struct {
+	ProviderIDs []string
+}
+
+type APIModelSyncPreview struct {
+	Fingerprint string
+	FetchedAt   time.Time
+	Counts      APIModelSyncCounts
+	Items       []APIModelSyncItem
+}
+
+type APIModelSyncCounts struct {
+	New           int
+	PriceChanged  int
+	Unchanged     int
+	SourceMissing int
+	Unavailable   int
+}
+
+type APIModelSyncItem struct {
+	CandidateKey                    string
+	Fingerprint                     string
+	Status                          string
+	ReasonCode                      string
+	Reason                          string
+	ProviderID                      string
+	ProviderCode                    string
+	Provider                        string
+	ModelKey                        string
+	Capabilities                    []string
+	SourceURL                       string
+	SourceVersion                   string
+	InputPricePerMillion            string
+	CachedInputPricePerMillion      string
+	OutputPricePerMillion           string
+	LocalModelID                    string
+	LocalPriceVersionID             string
+	LocalInputPricePerMillion       string
+	LocalCachedInputPricePerMillion string
+	LocalOutputPricePerMillion      string
+	LocalSourceURL                  string
+	LocalSourceVersion              string
+}
+
+type APIModelSyncSelection struct {
+	Fingerprint                string
+	Status                     string
+	ProviderID                 string
+	ProviderCode               string
+	ModelKey                   string
+	Capabilities               []string
+	SourceURL                  string
+	SourceVersion              string
+	InputPricePerMillion       string
+	CachedInputPricePerMillion string
+	OutputPricePerMillion      string
+	LocalModelID               string
+	LocalPriceVersionID        string
+	Active                     bool
+}
+
+type APIModelSyncApplyInput struct {
+	Items []APIModelSyncSelection
+}
+
+type APIModelSyncMutationInput struct {
+	OperatorID string
+	Items      []APIModelSyncSelection
+}
+
+type APIModelBulkStatusInput struct {
+	ModelIDs []string
+	Active   bool
+}
+
+type APIModelBulkStatusMutationInput struct {
+	OperatorID string
+	ModelIDs   []string
+	Active     bool
+}
+
+type APIModelBulkMutationResult struct {
+	Created int
+	Updated int
+	Changed int
+	IDs     []string
+}
+
+type APIModelSyncCompletionBuilder func(APIModelBulkMutationResult) (idempotency.Completion, *domain.AppError)
