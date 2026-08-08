@@ -1414,3 +1414,25 @@ Added administrator-reviewed models.dev preview/apply, atomic price version upda
 ### Status
 
 [OK] **Completed**
+
+
+## Session 43: 真实模型探针与 24 小时健康度
+
+**Date**: 2026-08-08
+**Task**: 真实模型探针与 24 小时健康度
+**Package**: frontend
+**Branch**: `codex/api-health-probe-repeat-prompts`
+
+### Summary
+
+完成真实流式模型探针、一次性预检凭证、24 小时健康摘要、Runner 告警、成本统计和美西延迟校准，并通过全量与 PostgreSQL/浏览器验证。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `fd7e1e1` | (see git log) |
+
+### Status
+
+[OK] **Completed**
