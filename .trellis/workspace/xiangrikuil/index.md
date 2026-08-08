@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 40
+- **Total Sessions**: 41
 - **Last Active**: 2026-08-08
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~1371 | Active |
+| `journal-1.md` | ~1393 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 41 | 2026-08-08 | API model catalog models.dev pricing sync | `7d79e8d` | `codex/api-health-probe-repeat-prompts` |
 | 40 | 2026-08-08 | API probe sharing and model tester | `e9bc73d` | `codex/api-health-probe-repeat-prompts` |
 | 39 | 2026-08-07 | 修复健康探针重复授权与 HTTP 确认 | `ba6c07c` | `codex/api-health-probe-repeat-prompts` |
 | 38 | 2026-08-06 | README product positioning | `3155d11` | `codex/readme-official-rewrite` |

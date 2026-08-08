@@ -1369,3 +1369,25 @@ Replaced service-scoped challenge probes with reusable seller connections, froze
 ### Status
 
 [OK] **Completed**
+
+
+## Session 41: API model catalog models.dev pricing sync
+
+**Date**: 2026-08-08
+**Task**: API model catalog models.dev pricing sync
+**Package**: frontend
+**Branch**: `codex/api-health-probe-repeat-prompts`
+
+### Summary
+
+Added administrator-reviewed models.dev preview/apply, atomic price version updates, explicit model activation, bulk status controls, OpenAPI contracts, responsive frontend workflow, and full local verification.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `7d79e8d` | (see git log) |
+
+### Status
+
+[OK] **Completed**
