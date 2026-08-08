@@ -1347,3 +1347,25 @@ Added fresh-query-gated first transaction guidance to the personal center, cover
 ### Status
 
 [OK] **Completed**
+
+
+## Session 40: API probe sharing and model tester
+
+**Date**: 2026-08-08
+**Task**: API probe sharing and model tester
+**Package**: frontend
+**Branch**: `codex/api-health-probe-repeat-prompts`
+
+### Summary
+
+Replaced service-scoped challenge probes with reusable seller connections, froze and verified delivery targets, added the temporary buyer model tester, unified canonical model keys, and passed full backend/frontend/PostgreSQL gates.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `e9bc73d` | (see git log) |
+
+### Status
+
+[OK] **Completed**
