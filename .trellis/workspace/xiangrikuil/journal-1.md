@@ -1391,3 +1391,26 @@ Added administrator-reviewed models.dev preview/apply, atomic price version upda
 ### Status
 
 [OK] **Completed**
+
+
+## Session 42: API 模型目录同步修复与紧凑界面改版
+
+**Date**: 2026-08-08
+**Task**: API 模型目录同步修复与紧凑界面改版
+**Package**: frontend
+**Branch**: `codex/api-health-probe-repeat-prompts`
+
+### Summary
+
+修复 models.dev 同步与模型启停稳定性，并将管理员 API 模型目录改为紧凑页签、组合筛选、明确开关状态和批量操作界面；完成全量测试、类型检查、real-mode 构建及桌面/移动端浏览器验收。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `3beccd9` | (see git log) |
+| `110d11e` | (see git log) |
+
+### Status
+
+[OK] **Completed**
