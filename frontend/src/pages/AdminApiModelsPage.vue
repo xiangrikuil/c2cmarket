@@ -134,7 +134,6 @@ function emptyModelForm(): ApiModelInput {
   return {
     providerId: activeProviders.value[0]?.id ?? '',
     modelKey: '',
-    displayName: '',
     capabilities: ['chat'],
     inputTokenPrice: '',
     cachedInputTokenPrice: '',
@@ -168,7 +167,6 @@ function inputFromModel(model: AdminApiModel): ApiModelInput {
   return {
     providerId: model.providerId,
     modelKey: model.modelKey,
-    displayName: model.displayName,
     capabilities: [...model.capabilities],
     inputTokenPrice: model.inputPricePerMillion ?? '',
     cachedInputTokenPrice: model.cachedInputPricePerMillion ?? '',
@@ -190,7 +188,6 @@ function validateModelForm() {
   if (!modelForm.providerId.trim()) return '请选择 API 提供商。'
   if (!activeProviders.value.some(item => item.id === modelForm.providerId)) return '请选择启用中的 API 提供商。'
   if (!modelForm.modelKey.trim()) return '请填写模型标识。'
-  if (!modelForm.displayName.trim()) return '请填写展示名。'
   if (modelForm.capabilities.length === 0) return '至少选择一种能力。'
   for (const field of [modelForm.inputTokenPrice, modelForm.cachedInputTokenPrice, modelForm.outputTokenPrice]) {
     if (!field.trim()) continue
@@ -253,7 +250,7 @@ async function setProviderActive(provider: AdminApiModelProvider, active: boolea
 }
 
 async function setModelActive(model: AdminApiModel, active: boolean) {
-  if (!active && !window.confirm(`停用模型“${model.displayName}”会将其从新服务发布选择中移除，已有订单仍使用快照。确认继续？`)) return
+  if (!active && !window.confirm(`停用模型“${model.modelKey}”会将其从新服务发布选择中移除，已有订单仍使用快照。确认继续？`)) return
   try {
     await modelActiveMutation.mutateAsync({ id: model.id, active })
     toast.success(active ? 'API 模型已启用。' : 'API 模型已停用。')
@@ -401,8 +398,7 @@ function capabilityText(model: AdminApiModel) {
             <tbody>
               <tr v-for="model in visibleRows" :key="model.id" class="border-b border-border/70 last:border-0">
                 <td class="max-w-[260px] px-3 py-3">
-                  <div class="font-medium">{{ model.displayName }}</div>
-                  <div class="mt-1 truncate text-xs text-muted-foreground">{{ model.modelKey }}</div>
+                  <div class="truncate font-medium">{{ model.modelKey }}</div>
                 </td>
                 <td class="px-3 py-3">
                   <div class="font-medium">{{ model.provider }}</div>
@@ -521,16 +517,10 @@ function capabilityText(model: AdminApiModel) {
             </Select>
           </label>
 
-          <div class="grid gap-3 sm:grid-cols-2">
-            <label class="space-y-2">
-              <span class="text-sm font-medium">模型标识</span>
-              <Input v-model="modelForm.modelKey" placeholder="gpt-4o-mini" />
-            </label>
-            <label class="space-y-2">
-              <span class="text-sm font-medium">展示名</span>
-              <Input v-model="modelForm.displayName" placeholder="GPT-4o mini" />
-            </label>
-          </div>
+          <label class="block max-w-md space-y-2">
+            <span class="text-sm font-medium">模型标识</span>
+            <Input v-model="modelForm.modelKey" placeholder="gpt-4.1-mini" />
+          </label>
 
           <div class="space-y-2">
             <span class="text-sm font-medium">能力</span>

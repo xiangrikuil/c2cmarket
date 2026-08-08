@@ -2,6 +2,7 @@
 
 Date: 2026-06-21
 Author: Codex
+Updated: 2026-08-08
 
 ## Scenario: Backend Contract Foundation And Current Real Business Slices
 
@@ -46,6 +47,9 @@ GET  /api/v1/api-models/{id}
 GET  /api/v1/api-services
 GET  /api/v1/api-services/{id}
 GET  /api/v1/api-service-promotions
+GET  /api/v1/tools/api-model-tester/order-sources
+POST /api/v1/tools/api-model-tester/discover
+POST /api/v1/tools/api-model-tester/test
 POST /api/v1/api-services/{id}/purchase-intents
 GET  /api/v1/official-prices
 GET  /api/v1/official-prices/{id}
@@ -114,8 +118,15 @@ POST /api/v1/owner/carpool-memberships/{id}/confirm-complete
 POST /api/v1/owner/carpool-memberships/{id}/remove
 GET  /api/v1/owner/api-services
 POST /api/v1/owner/api-services
+GET  /api/v1/owner/api-probe-connections
+POST /api/v1/owner/api-probe-connections
+GET  /api/v1/owner/api-probe-connections/{id}
+PATCH /api/v1/owner/api-probe-connections/{id}
+DELETE /api/v1/owner/api-probe-connections/{id}
+POST /api/v1/owner/api-probe-connections/{id}/verify
 GET  /api/v1/owner/api-services/{id}
 PATCH /api/v1/owner/api-services/{id}
+PATCH /api/v1/owner/api-services/{id}/probe-connection
 POST /api/v1/owner/api-services/{id}/submit-review
 POST /api/v1/owner/api-services/{id}/publish
 POST /api/v1/owner/api-services/{id}/pause
@@ -229,6 +240,12 @@ If-Match: "<version>"                            # required for versioned admin 
 - `GET/POST/PATCH /api/v1/me/merchant-profile` owns the current user's store alias profile. Self responses may include the owner ID; public merchant profile responses must not expose owner user ID or contact values.
 - API services with `merchantIdentityMode=store_alias` must reference a merchant profile owned by the service owner. Public API service DTOs may expose `merchantDisplayName` and `merchantProfileSlug`, but not the backing owner user ID or contact method IDs.
 - Public API service reads and API purchase-intent creation use the orderable service predicate, not only the public status triple. A public/orderable API service must be approved, online, clear, accepting orders, have `paymentWindowMinutes` between 3 and 15, and have at least one enabled payment option. Apply this same predicate to list, detail, search, favorite validation/listing, and purchase-intent creation.
+- API services additionally require an enabled, verified seller-owned `probeConnectionId` before
+  publication and new-order creation. Owner responses may expose the connection ID/name and
+  management state; public responses expose only the derived `healthSummary`, never Base URL,
+  connection ID, credential metadata, or model-list contents.
+- API catalog and service model DTOs use `modelKey` and `modelKeySnapshot` as their sole visible
+  model names and request identifiers. Do not reintroduce `displayName` or `modelNameSnapshot`.
 - Product catalog read endpoints return active categories/plans and publish-policy fields from PostgreSQL. Frontend and backend must use `publishPolicy`, `accessMode`, `providerPolicyStatus`, `riskLevel`, `riskAckRequired`, and `policyVersion` instead of hard-coded Plus/Pro or Business branches.
 - Carpool listing creation must resolve `productPlanId` from the product catalog. `publishPolicy=blocked` and `publishPolicy=info_only` cannot enter the listing/application flow. Plans with `riskAckRequired=true` require matching `riskNoticeCode` and `policyVersion` on both listing creation and application creation.
 - Carpool listing creation creates `draft`; owners may edit only `draft` or `changes_requested` listings. The retained owner `submit-review` route is now the publish compatibility route: a linux.do-bound owner publishes directly to `active` after re-checking current `publishPolicy` and owner contact availability. Create/update requests must include structured `cycleTerm` fields for billing period, exit policy, and usage rules so applicants can review rules before applying. They must send the system-fixed `serviceMultiplier="1"`, required positive `weeklyQuotaAmount` and `monthlyQuotaAmount`, and required reset, VPS-region, mainland-direct, opening-channel, payment-method, distribution, and administrator-account declarations. The multiplier is not owner-editable or user-facing. Nullable response fields support development data created before Version 68 and must render as `未声明`; new writes must pass service validation. Admin approve remains only for legacy `pending_review -> active`; request-changes remains only `pending_review -> changes_requested`; reject remains only `pending_review -> rejected`; pause is `active -> paused`; restore is `paused -> active`.
@@ -2631,4 +2648,116 @@ order.payment_settings_id   -> mutable service payment row
 account settings
   -> copied into new service payment snapshot
   -> copied into new order payment snapshot
+```
+
+## Scenario: Reusable API Probe And Temporary Model Tester Contracts
+
+### 1. Scope / Trigger
+
+- Trigger: route, DTO, session, CSRF, OpenAPI, or generated-type changes for reusable probe
+  connections, service binding, delivery target snapshots, or the API model tester.
+- The behavioral source of truth is
+  [API Probe Connections, Model Testing, And Quota Policy](./api-health-quota-policy.md).
+
+### 2. Signatures
+
+```text
+APIProbeConnectionRequest:
+  name, baseUrl, credential?, enabled, acknowledgeInsecureHttp?
+
+APIServiceProbeConnectionRequest:
+  probeConnectionId
+
+APIModelTesterDiscoverRequest:
+  credentialSource
+
+APIModelTesterTestRequest:
+  credentialSource, model[1..512]
+```
+
+```text
+manual credentialSource:
+  kind=manual, baseUrl, apiKey(writeOnly), acknowledgeInsecureHttp
+
+order credentialSource:
+  kind=order, orderId, acknowledgeInsecureHttp
+```
+
+### 3. Contracts
+
+- Probe connection list/detail/create/update/delete/verify routes are owner-private and use
+  `Cache-Control: private, no-store`. Credential input is write-only. PATCH/DELETE require
+  `If-Match`; create/verify require `Idempotency-Key`; every mutation requires session and CSRF.
+- The service binding request contains only `probeConnectionId`. The backend verifies ownership,
+  enabled state, completed `/models` verification, and service version. It never accepts Base URL
+  or Key through the service DTO.
+- Removed service-level health-probe and administrator approval routes remain unregistered. Do not
+  retain compatibility handlers for DNS TXT, HTTP challenge, target ownership, configured model,
+  or TTFT fields.
+- Model tester credential sources are a strict tagged union. Manual sources contain `baseUrl`,
+  write-only `apiKey`, and `acknowledgeInsecureHttp`; order sources contain only `orderId` and the
+  acknowledgement. Unknown or mixed fields fail strict JSON decoding/validation.
+- Model tester POST routes require session plus CSRF, reject HTTP without explicit current-request
+  acknowledgement, and return `private, no-store`. They do not use idempotency because each click
+  intentionally makes new third-party calls.
+- `discover` may return stable `401`, `403`, `404`, `409`, `422`, `429`, `502`, and `504` problems.
+  `test` may return `401`, `403`, `404`, `409`, or `422`; protocol failures after a valid request
+  are represented independently in the successful response.
+- `test.model` accepts one non-empty identifier up to 512 Unicode code points without control
+  characters. It is not restricted to the platform model catalog; the UI restricts selection to
+  the current `/models` discovery result.
+- Neither tester endpoint returns the API key, provider response body, full third-party error,
+  prompt, or internal resolved address. Order sources never contain the key.
+
+### 4. Validation & Error Matrix
+
+| Condition | Result |
+| --- | --- |
+| Probe mutation lacks session/CSRF | `401` or `403` before business decoding |
+| Probe PATCH/DELETE lacks or has stale `If-Match` | `428` or `412 VERSION_CONFLICT` |
+| Service binds a missing, foreign, disabled, or unverified connection | `422 VALIDATION_FAILED` on `probeConnectionId` |
+| Referenced connection delete | `409 INVALID_STATE_TRANSITION` with owner-safe service references |
+| Tester manual/order fields are mixed or malformed | `422 VALIDATION_FAILED` |
+| Tester HTTP source omits acknowledgement | `422 VALIDATION_FAILED` on `credentialSource.acknowledgeInsecureHttp` |
+| Tester order is foreign/missing or credential unavailable | `404` or `409` without key/existence leakage |
+| `test.model` is empty, over 512 code points, or contains controls | `422 VALIDATION_FAILED` on `model` |
+
+### 5. Good / Base / Bad Cases
+
+- Good: owner creates one connection, receives no key in the response, binds it to two services,
+  and both owner DTOs reference the connection while public DTOs expose health only.
+- Good: buyer selects an authorized order source and the POST body contains only order ID plus the
+  current HTTP acknowledgement; the server resolves the key after authorization.
+- Base: an HTTPS tester request sends `acknowledgeInsecureHttp=false`; the field does not enable any
+  broader outbound policy and the request proceeds through normal target validation.
+- Bad: putting the key in a query string, returning it from order sources, accepting body-level
+  `expectedVersion`, or registering compatibility challenge/admin routes.
+
+### 6. Tests Required
+
+- Route/OpenAPI parity for all connection, binding, and tester paths and response statuses.
+- Strict request tests for manual/order unions, HTTP acknowledgement, model length, session/CSRF,
+  no-store headers, key non-disclosure, owner/buyer isolation, and destroyed order credentials.
+- Generated frontend types must be regenerated from OpenAPI and `openapi:check` must remain clean.
+
+### 7. Wrong vs Correct
+
+```json
+// Wrong: service-scoped target and secret duplication.
+{"probeBaseUrl":"https://api.example.com/v1","probeKey":"sk-secret","probeModel":"gpt-4.1-mini"}
+```
+
+```json
+// Correct: service binds a separately managed reusable connection.
+{"probeConnectionId":"00000000-0000-0000-0000-000000000801"}
+```
+
+```json
+// Wrong: order import leaks or resubmits the delivered key.
+{"kind":"order","orderId":"...","apiKey":"sk-secret"}
+```
+
+```json
+// Correct: the backend authorizes and resolves the order credential.
+{"kind":"order","orderId":"00000000-0000-0000-0000-000000000802","acknowledgeInsecureHttp":false}
 ```

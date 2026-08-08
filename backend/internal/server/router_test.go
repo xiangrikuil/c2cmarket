@@ -778,7 +778,6 @@ func TestAdminAPIModelValidationAndAuth(t *testing.T) {
 		body string
 	}{
 		{name: "invalid-provider", body: apiModelPayload("00000000-0000-0000-0000-00000000ffff", "bad-provider-model", "Bad Provider", "0.1", "", "0.2", "pricing", true)},
-		{name: "empty-display-name", body: apiModelPayload(provider.ID, "empty-display-model", "", "0.1", "", "0.2", "pricing", true)},
 		{name: "empty-capabilities", body: apiModelPayloadWithCapabilities(provider.ID, "empty-cap-model", "Empty Cap", []string{}, "0.1", "", "0.2", "pricing", true)},
 		{name: "invalid-capabilities", body: apiModelPayloadWithCapabilities(provider.ID, "bad-cap-model", "Bad Cap", []string{"chat", "audio"}, "0.1", "", "0.2", "pricing", true)},
 		{name: "negative-price", body: apiModelPayload(provider.ID, "negative-price-model", "Negative Price", "-0.1", "", "0.2", "pricing", true)},
@@ -2984,6 +2983,7 @@ type createdCarpoolMembership struct {
 
 type createdAPIService struct {
 	ID                     string                          `json:"id"`
+	ProbeConnectionID      string                          `json:"probeConnectionId"`
 	SourceURL              string                          `json:"sourceUrl"`
 	ReviewStatus           string                          `json:"reviewStatus"`
 	PublicationStatus      string                          `json:"publicationStatus"`
@@ -4106,6 +4106,7 @@ func apiServicePayloadWithModelAndMultiplier(ownerContactID, modelCatalogID, mul
 	return `{
 		"merchantIdentityMode":"public_profile",
 		"ownerContactMethodId":"` + ownerContactID + `",
+		"probeConnectionId":"00000000-0000-0000-0000-000000000811",
 		"title":"Sub2API 美元额度意向服务",
 		"shortDescription":"商户声明美元额度售价，双方站外确认具体安排。",
 		"sourceUrl":"https://linux.do/t/api-service/123",
@@ -4158,11 +4159,11 @@ func productPlanPayload(categoryCode, slug, displayName, publishPolicy, riskLeve
 	return productPlanPayloadWithCategoryID(categoryID, categoryCode, slug, displayName, publishPolicy, riskLevel, riskAckRequired)
 }
 
-func apiModelPayload(providerID, modelKey, displayName, inputPrice, cachedInputPrice, outputPrice, sourceVersion string, active bool) string {
-	return apiModelPayloadWithCapabilities(providerID, modelKey, displayName, []string{" vision ", "chat", "text", "chat"}, inputPrice, cachedInputPrice, outputPrice, sourceVersion, active)
+func apiModelPayload(providerID, modelKey, _ string, inputPrice, cachedInputPrice, outputPrice, sourceVersion string, active bool) string {
+	return apiModelPayloadWithCapabilities(providerID, modelKey, "", []string{" vision ", "chat", "text", "chat"}, inputPrice, cachedInputPrice, outputPrice, sourceVersion, active)
 }
 
-func apiModelPayloadWithCapabilities(providerID, modelKey, displayName string, capabilities []string, inputPrice, cachedInputPrice, outputPrice, sourceVersion string, active bool) string {
+func apiModelPayloadWithCapabilities(providerID, modelKey, _ string, capabilities []string, inputPrice, cachedInputPrice, outputPrice, sourceVersion string, active bool) string {
 	capabilityJSON := make([]string, 0, len(capabilities))
 	for _, capability := range capabilities {
 		capabilityJSON = append(capabilityJSON, strconv.Quote(capability))
@@ -4174,7 +4175,6 @@ func apiModelPayloadWithCapabilities(providerID, modelKey, displayName string, c
 	return `{
 		"providerId":"` + providerID + `",
 		"modelKey":"` + modelKey + `",
-		"displayName":"` + displayName + `",
 		"capabilities":[` + strings.Join(capabilityJSON, ",") + `],
 		"inputTokenPrice":"` + inputPrice + `",
 		"cachedInputTokenPrice":"` + cachedInputPrice + `",

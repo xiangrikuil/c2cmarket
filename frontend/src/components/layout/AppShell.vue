@@ -5,11 +5,13 @@ import { useQueryClient } from '@tanstack/vue-query'
 import BadgeCheck from 'lucide-vue-next/dist/esm/icons/badge-check.js'
 import Bell from 'lucide-vue-next/dist/esm/icons/bell.js'
 import CarFront from 'lucide-vue-next/dist/esm/icons/car-front.js'
+import Cable from 'lucide-vue-next/dist/esm/icons/cable.js'
 import ChevronDown from 'lucide-vue-next/dist/esm/icons/chevron-down.js'
 import CircleHelp from 'lucide-vue-next/dist/esm/icons/circle-question-mark.js'
 import Code2 from 'lucide-vue-next/dist/esm/icons/code-xml.js'
 import ExternalLink from 'lucide-vue-next/dist/esm/icons/external-link.js'
 import Gift from 'lucide-vue-next/dist/esm/icons/gift.js'
+import FlaskConical from 'lucide-vue-next/dist/esm/icons/flask-conical.js'
 import Home from 'lucide-vue-next/dist/esm/icons/house.js'
 import LogIn from 'lucide-vue-next/dist/esm/icons/log-in.js'
 import LogOut from 'lucide-vue-next/dist/esm/icons/log-out.js'
@@ -52,6 +54,7 @@ import { usePersistentSidebar } from '@/composables/usePersistentSidebar'
 import { logoutBackendSession } from '@/lib/backendClient'
 import { loginRoute } from '@/lib/authNavigation'
 import { usePromotionRewardPublicConfig } from '@/queries/usePromotionRewardQueries'
+import { useOwnerAPIProbeConnections } from '@/queries/useApiHealthQueries'
 
 const route = useRoute()
 const router = useRouter()
@@ -69,6 +72,7 @@ const { data: notifications } = useNotifications(isAuthenticated)
 const workspaceQueriesEnabled = computed(() => Boolean(myProfile.value))
 const { data: ownedCarpools } = useMyCarpools(workspaceQueriesEnabled)
 const { data: ownedApiServices } = useMyApiServices('all', workspaceQueriesEnabled)
+const { data: probeConnections } = useOwnerAPIProbeConnections(workspaceQueriesEnabled)
 const { data: navigationBadges } = useNavigationBadges(computed(() => Boolean(myProfile.value)))
 const { data: promotionRewardConfig } = usePromotionRewardPublicConfig()
 useRealtimeSync(computed(() => Boolean(myProfile.value)))
@@ -94,6 +98,7 @@ const accountRecoveryRequired = computed(() => myProfile.value ? !isAccountRecov
 const hasMerchantWorkspace = computed(() => Boolean(
   (ownedCarpools.value?.length ?? 0) > 0
   || (ownedApiServices.value?.length ?? 0) > 0
+  || (probeConnections.value?.length ?? 0) > 0
   || ownerCarpoolActionCount.value > 0
   || merchantApiActionCount.value > 0,
 ))
@@ -130,7 +135,14 @@ const navGroups = computed(() => {
       { label: '我的车源', to: '/my/carpools', count: null, icon: CarFront },
       { label: '上车申请', to: '/merchant/carpool-applications', count: ownerCarpoolActionCount.value, icon: UserCog },
       { label: '我的 API 服务', to: '/my/api-services', count: null, icon: Code2 },
+      { label: '探针连接', to: '/my/api-probe-connections', count: null, icon: Cable },
       { label: 'API 销售订单', to: '/merchant/api-orders', count: merchantApiActionCount.value, icon: PackageSearch },
+    ],
+  }
+  const toolsGroup = {
+    title: '工具',
+    items: [
+      { label: 'API 模型测试', to: '/tools/api-model-tester', count: null, icon: FlaskConical },
     ],
   }
   const accountGroup = {
@@ -154,6 +166,7 @@ const navGroups = computed(() => {
 
   const groups = [browseGroup, publishGroup, userGroup]
   if (hasMerchantWorkspace.value) groups.push(merchantGroup)
+  groups.push(toolsGroup)
   groups.push(accountGroup)
   if (canViewAdminNav.value) groups.push(adminEntryGroup)
   return groups

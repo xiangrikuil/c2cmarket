@@ -201,7 +201,7 @@ func serviceModelNames(service apimarket.Service) []string {
 	models := make([]string, 0, len(service.Models))
 	for _, model := range service.Models {
 		if model.Enabled {
-			models = append(models, model.ModelNameSnapshot)
+			models = append(models, model.ModelKey)
 		}
 	}
 	return models

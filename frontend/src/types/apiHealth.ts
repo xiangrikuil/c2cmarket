@@ -1,17 +1,14 @@
-import type {
-  ApiHealthProbeAuthorizationMethod,
-  ApiHealthProbeAuthorizationStatus,
-  ApiHealthProbeChallenge,
-  ServiceHealthSample,
-  ServiceHealthSummary,
-} from '@/api/generated/openapi'
-
-export type ApiHealthState = ServiceHealthSummary['state']
-export type ApiHealthAvailabilityReason = ServiceHealthSummary['availabilityReason']
-export type ApiHealthSlotState = ServiceHealthSample['state']
-export type ApiHealthTransportSecurity = ServiceHealthSummary['transportSecurity']
-export type ApiHealthAuthorizationStatus = ApiHealthProbeAuthorizationStatus
-export type ApiHealthAuthorizationMethod = Exclude<ApiHealthProbeAuthorizationMethod, null>
+export type ApiHealthState = 'normal' | 'fluctuating' | 'abnormal' | 'no_sample'
+export type ApiHealthAvailabilityReason =
+  | 'unconfigured'
+  | 'disabled'
+  | 'unverified'
+  | 'insufficient'
+  | 'stale'
+  | 'temporarily_unavailable'
+  | null
+export type ApiHealthSlotState = 'smooth' | 'fluctuating' | 'abnormal' | 'no_sample'
+export type ApiHealthTransportSecurity = 'secure_https' | 'insecure_http' | 'unknown' | null
 
 export type ApiHealthSafeErrorCode =
   | 'blocked_target'
@@ -22,73 +19,60 @@ export type ApiHealthSafeErrorCode =
   | 'timeout'
   | 'http_4xx'
   | 'http_5xx'
+  | 'rate_limited'
   | 'response_too_large'
-  | 'invalid_stream'
-  | 'empty_response'
+  | 'invalid_response'
   | 'decrypt_failed'
   | 'internal'
   | 'internal_timeout'
-  | 'challenge_mismatch'
-  | 'challenge_expired'
-  | 'dns_resolution_failed'
-  | 'invalid_origin'
-  | 'target_blocked'
-  | 'http_request_failed'
-  | 'http_status'
-  | 'http_response_invalid'
 
-export type ApiServiceHealthSample = ServiceHealthSample
-export type ApiServiceHealthSummary = ServiceHealthSummary
+export type ApiServiceHealthSample = {
+  slotStartedAt: string
+  state: ApiHealthSlotState
+}
 
-export type OwnerAPIHealthProbeConfig = {
+export type ApiServiceHealthSummary = {
+  state: ApiHealthState
+  availabilityReason: ApiHealthAvailabilityReason
+  successRatePercent: string | null
+  successfulSamples: number
+  totalSamples: number
+  transportSecurity: ApiHealthTransportSecurity
+  lastSampledAt: string | null
+  samples: ApiServiceHealthSample[]
+}
+
+export type ApiProbeConnectionVerificationStatus = 'unverified' | 'verified' | 'failed'
+
+export type ApiProbeConnectionServiceReference = {
   id: string
-  apiServiceId: string
-  protocol: 'openai_chat_completions_v1'
+  title: string
+}
+
+export type OwnerAPIProbeConnection = {
+  id: string
+  name: string
   baseUrl: string
-  normalizedOrigin: string
-  model: string
+  normalizedBaseUrl: string
   credentialConfigured: boolean
   enabled: boolean
-  authorizationStatus: ApiHealthAuthorizationStatus
-  authorizationMethod: ApiHealthAuthorizationMethod | null
-  verifiedOrigin: string | null
+  verificationStatus: ApiProbeConnectionVerificationStatus
   verifiedAt: string | null
-  approvedAt: string | null
-  rejectionReason: string | null
-  challengeExpiresAt: string | null
+  lastVerificationErrorCode: ApiHealthSafeErrorCode | null
   measurementVersion: number
-  lastConfigErrorCode: ApiHealthSafeErrorCode | null
   version: number
+  referencedServices: ApiProbeConnectionServiceReference[]
+  healthSummary?: ApiServiceHealthSummary
   createdAt: string
   updatedAt: string
 }
 
-export type SaveOwnerAPIHealthProbeInput = {
-  apiServiceId: string
-  version: number
+export type SaveOwnerAPIProbeConnectionInput = {
+  id?: string
+  version?: number
+  name: string
   baseUrl: string
-  model: string
   credential?: string
   enabled: boolean
   acknowledgeInsecureHttp: boolean
-}
-
-export type APIHealthProbeChallenge = ApiHealthProbeChallenge
-
-export type AdminAPIHealthProbeReview = {
-  id: string
-  apiServiceId: string
-  serviceTitle: string | null
-  ownerUserId: string
-  ownerDisplayName: string | null
-  ownerUsername: string | null
-  normalizedOrigin: string
-  authorizationStatus: ApiHealthAuthorizationStatus
-  version: number
-  updatedAt: string
-}
-
-export type AdminAPIHealthProbeReviewList = {
-  items: AdminAPIHealthProbeReview[]
-  nextCursor: string | null
 }

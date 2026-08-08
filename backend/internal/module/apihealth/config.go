@@ -4,86 +4,70 @@ import (
 	"errors"
 	"strings"
 	"time"
+
+	"c2c-market/backend/internal/platform/openaiapi"
 )
 
 var (
-	ErrInvalidModel                = errors.New("probe model is required")
-	ErrCredentialRequired          = errors.New("probe credential is required before enabling")
+	ErrInvalidName                 = errors.New("probe connection name is required")
+	ErrCredentialRequired          = errors.New("probe credential is required")
 	ErrCredentialInvalid           = errors.New("probe credential is invalid")
 	ErrInsecureHTTPNotAcknowledged = errors.New("insecure HTTP probe risk must be acknowledged")
-	ErrInvalidExpectedVersion      = errors.New("probe config version is invalid")
 )
 
-type ConfigMutation struct {
-	Config                   Config
-	MeasurementInvalidated   bool
-	AuthorizationInvalidated bool
+func NewConnection(ownerID string, input ConnectionInput, target openaiapi.BaseURL, result ProbeResult, now time.Time) (Connection, error) {
+	name := strings.TrimSpace(input.Name)
+	if name == "" || len([]rune(name)) > 80 {
+		return Connection{}, ErrInvalidName
+	}
+	if input.Credential == nil || strings.TrimSpace(*input.Credential) == "" {
+		return Connection{}, ErrCredentialRequired
+	}
+	connection := Connection{
+		OwnerUserID: ownerID, Name: name, BaseURL: target.Raw, NormalizedBaseURL: target.Canonical,
+		CredentialConfigured: true, MeasurementVersion: 1, Version: 1, CreatedAt: now, UpdatedAt: now,
+	}
+	applyVerification(&connection, input.Enabled, result, now)
+	return connection, nil
 }
 
-func BuildConfigMutation(existing *Config, serviceID, ownerID string, input ConfigInput, now time.Time) (ConfigMutation, error) {
-	if UsesInsecureHTTP(input.BaseURL) && !input.AcknowledgeInsecureHTTP {
-		return ConfigMutation{}, ErrInsecureHTTPNotAcknowledged
-	}
-	target, err := normalizeTarget(input.BaseURL, input.AcknowledgeInsecureHTTP)
-	if err != nil {
-		return ConfigMutation{}, err
-	}
-	model := strings.TrimSpace(input.Model)
-	if model == "" {
-		return ConfigMutation{}, ErrInvalidModel
+func UpdateConnection(existing Connection, input ConnectionInput, target openaiapi.BaseURL, result *ProbeResult, now time.Time) (Connection, error) {
+	name := strings.TrimSpace(input.Name)
+	if name == "" || len([]rune(name)) > 80 {
+		return Connection{}, ErrInvalidName
 	}
 	if input.Credential != nil && strings.TrimSpace(*input.Credential) == "" {
-		return ConfigMutation{}, ErrCredentialInvalid
+		return Connection{}, ErrCredentialInvalid
 	}
-	credentialConfigured := input.Credential != nil
-	if existing != nil && existing.CredentialConfigured {
-		credentialConfigured = true
-	}
-	if input.Enabled && !credentialConfigured {
-		return ConfigMutation{}, ErrCredentialRequired
-	}
-	if existing == nil {
-		return ConfigMutation{Config: Config{
-			APIServiceID: serviceID, OwnerUserID: ownerID,
-			Protocol: ProtocolOpenAIChatCompletionsV1, BaseURL: target.BaseURL,
-			NormalizedOrigin: target.Origin, Model: model,
-			CredentialConfigured: credentialConfigured, Enabled: input.Enabled,
-			AuthorizationStatus: AuthorizationPending,
-			MeasurementVersion:  1, Version: 1, CreatedAt: now, UpdatedAt: now,
-		}}, nil
-	}
-	updated := *existing
-	measurementChanged := MeasurementIdentityChanged(*existing, target, model)
-	authorizationChanged := AuthorizationIdentityChanged(*existing, target)
-	updated.Protocol = ProtocolOpenAIChatCompletionsV1
-	updated.BaseURL = target.BaseURL
-	updated.NormalizedOrigin = target.Origin
-	updated.Model = model
-	updated.CredentialConfigured = credentialConfigured
+	updated := existing
+	updated.Name = name
+	updated.BaseURL = target.Raw
+	updated.NormalizedBaseURL = target.Canonical
 	updated.Enabled = input.Enabled
 	updated.UpdatedAt = now
 	updated.Version++
-	if measurementChanged {
+	if result != nil {
 		updated.MeasurementVersion++
-		updated.LastConfigErrorCode = ""
+		updated.CredentialConfigured = true
+		applyVerification(&updated, input.Enabled, *result, now)
 	}
-	if authorizationChanged {
-		updated.AuthorizationStatus = AuthorizationPending
-		updated.AuthorizationMethod = ""
-		updated.VerifiedOrigin = ""
-		updated.VerifiedAt = nil
-		updated.ApprovedByAdminID = ""
-		updated.ApprovedAt = nil
-		updated.RejectionReason = ""
-		updated.ChallengeExpiresAt = nil
-	}
-	return ConfigMutation{
-		Config: updated, MeasurementInvalidated: measurementChanged,
-		AuthorizationInvalidated: authorizationChanged,
-	}, nil
+	return updated, nil
 }
 
-func IsAuthorized(config Config) bool {
-	return (config.AuthorizationStatus == AuthorizationVerified || config.AuthorizationStatus == AuthorizationApproved) &&
-		config.VerifiedOrigin == config.NormalizedOrigin && config.VerifiedAt != nil
+func applyVerification(connection *Connection, enableRequested bool, result ProbeResult, now time.Time) {
+	connection.Enabled = false
+	connection.VerifiedAt = nil
+	connection.LastVerificationErrorCode = result.ErrorCode
+	if result.ErrorCode == "" {
+		connection.VerificationStatus = VerificationVerified
+		connection.VerifiedAt = timePointer(now)
+		connection.Enabled = enableRequested
+		return
+	}
+	connection.VerificationStatus = VerificationFailed
+}
+
+func timePointer(value time.Time) *time.Time {
+	copy := value
+	return &copy
 }

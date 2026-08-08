@@ -35,6 +35,8 @@ function serviceWithBilling(id: string, billingMode: unknown, state: ApiService[
     state,
     online: state === 'online',
     publiclyOrderable: true,
+    probeConnectionId: 'probe-connection-ready',
+    probeReady: true,
   }
 }
 

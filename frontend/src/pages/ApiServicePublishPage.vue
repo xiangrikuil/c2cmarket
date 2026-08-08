@@ -21,6 +21,7 @@ import MerchantIdentitySection from '@/components/api-service-publish/MerchantId
 import MerchantNoteSection from '@/components/api-service-publish/MerchantNoteSection.vue'
 import ModelMultiSelect from '@/components/api-service-publish/ModelMultiSelect.vue'
 import PriceInventorySection from '@/components/api-service-publish/PriceInventorySection.vue'
+import ProbeConnectionSection from '@/components/api-service-publish/ProbeConnectionSection.vue'
 import ProviderCategorySelector from '@/components/api-service-publish/ProviderCategorySelector.vue'
 import SelectedModelsPricingTable from '@/components/api-service-publish/SelectedModelsPricingTable.vue'
 import PublishStepSection from '@/components/api-service-publish/PublishStepSection.vue'
@@ -49,6 +50,7 @@ import {
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
+import { backendErrorMessage } from '@/lib/backendClient'
 import { containsSensitiveContent, firstError, type FieldErrors } from '@/lib/formValidation'
 import { submitApiService } from '@/lib/api'
 import { trackAnalytics } from '@/lib/analytics'
@@ -56,12 +58,14 @@ import { beijingDateTimeInputToISOString, defaultQuotaExpiresAtInput } from '@/l
 import { apiPaymentSettingsMissingReason, cloneApiPaymentAccountSettings, isApiPaymentAccountSettingsComplete, isApiPaymentOptionComplete, isApiPaymentWindowValid } from '@/lib/apiPaymentSettings'
 import { apiQuotaUsagePolicyInputError, defaultApiQuotaUsagePolicyInput } from '@/lib/apiQuotaPolicy'
 import { useApiPaymentAccountSettingsQuery, useModelCatalog, useMyProfileQuery } from '@/queries/useMarketQueries'
+import { useOwnerAPIProbeConnections } from '@/queries/useApiHealthQueries'
 import { useUnsavedChangesGuard } from '@/composables/useUnsavedChangesGuard'
 
 type Field =
   | 'merchantIdentity'
   | 'merchantDisplayName'
   | 'distributionSystem'
+  | 'probeConnection'
   | 'defaultMultiplier'
   | 'providerCategory'
   | 'cnyPerUsdCredit'
@@ -83,6 +87,7 @@ type ApiServicePublishStep = 1 | 2 | 3
 const { data: modelCatalog, isLoading: catalogLoading } = useModelCatalog()
 const { data: accountPaymentSettings, isLoading: paymentSettingsLoading } = useApiPaymentAccountSettingsQuery()
 const { data: myProfile, isLoading: profileLoading } = useMyProfileQuery()
+const probeConnectionsQuery = useOwnerAPIProbeConnections()
 const queryClient = useQueryClient()
 const route = useRoute()
 const router = useRouter()
@@ -116,6 +121,7 @@ const formDirty = ref(false)
 useUnsavedChangesGuard(formDirty, 'API 服务配置尚未发布，确认离开当前页面？')
 
 const form = reactive<ApiServicePublishForm>({
+  probeConnectionId: '',
   merchantIdentityMode: 'public_profile',
   merchantDisplayName: '',
   distributionSystem: 'sub2api',
@@ -167,6 +173,14 @@ const catalog = computed(() => modelCatalog.value ?? [])
 const filteredCatalog = computed(() => catalog.value.filter(item => modelProviderCategory(item.provider) === form.providerCategory))
 const catalogById = computed(() => new Map(catalog.value.map(item => [item.id, item])))
 const selectedModels = computed(() => selectedCatalogItems(form, catalogById.value))
+const probeConnections = computed(() => probeConnectionsQuery.data.value ?? [])
+const selectedProbeConnection = computed(() => probeConnections.value.find(connection => connection.id === form.probeConnectionId) ?? null)
+const probeConnectionReady = computed(() => Boolean(
+  selectedProbeConnection.value?.enabled && selectedProbeConnection.value.verificationStatus === 'verified',
+))
+const probeConnectionError = computed(() => probeConnectionsQuery.error.value
+  ? backendErrorMessage(probeConnectionsQuery.error.value, '探针连接暂时无法读取。')
+  : '')
 const incompatibleSelectedModels = computed(() => selectedModels.value.filter(item => modelProviderCategory(item.provider) !== form.providerCategory))
 const missingSelectedModels = computed(() => form.selectedModels.filter(item => item.enabled && !catalogById.value.has(item.modelId)))
 const pendingProviderCategoryLabel = computed(() => pendingProviderCategory.value ? providerCategoryLabels[pendingProviderCategory.value] : '')
@@ -290,6 +304,7 @@ const freeFieldSteps: Record<Field, ApiServicePublishStep> = {
   merchantIdentity: 3,
   merchantDisplayName: 3,
   distributionSystem: 2,
+  probeConnection: 2,
   defaultMultiplier: 2,
   providerCategory: 2,
   cnyPerUsdCredit: 1,
@@ -311,6 +326,7 @@ const limitedFieldSteps: Record<Field, ApiServicePublishStep> = {
   merchantIdentity: 2,
   merchantDisplayName: 2,
   distributionSystem: 2,
+  probeConnection: 2,
   defaultMultiplier: 2,
   providerCategory: 2,
   cnyPerUsdCredit: 2,
@@ -344,6 +360,8 @@ function collectValidationErrors() {
     else if (hasMisleadingMerchantName(merchantDisplayName)) next.merchantDisplayName = '商家展示名不能包含官方、担保、兜底等误导词，请到个人中心调整。'
   }
   if (!['sub2api', 'other'].includes(form.distributionSystem)) next.distributionSystem = '请选择接入类型。'
+  if (!form.probeConnectionId) next.probeConnection = '请选择已验证且启用的探针连接。'
+  else if (!probeConnectionReady.value) next.probeConnection = '所选探针连接当前不可用，请重新验证、启用或选择其他连接。'
   if (!Number.isFinite(form.defaultMultiplier) || form.defaultMultiplier <= 0) {
     next.defaultMultiplier = '默认服务倍率必须大于 0。'
   }
@@ -436,6 +454,7 @@ const completeness = computed(() => {
   const items: Array<{ label: string, status: 'done' | 'pending' | 'conflict' }> = [
     form.merchantIdentityMode === 'public_profile' || form.merchantDisplayName.trim() ? done('展示身份') : pending('展示身份'),
     form.distributionSystem ? done('接入类型') : pending('接入类型'),
+    probeConnectionReady.value ? done('探针连接') : pending('探针连接'),
     form.distributionSystem === 'sub2api' || (Number.isFinite(form.defaultMultiplier) && form.defaultMultiplier > 0) ? done('服务倍率') : pending('服务倍率'),
   ]
   if (!isLimitedQuotaMode.value) {
@@ -505,7 +524,8 @@ const stepOneSummary = computed(() => {
 const stepTwoSummary = computed(() => {
   const multiplier = form.distributionSystem === 'sub2api' ? '1.00x' : `${form.defaultMultiplier.toFixed(2)}x`
   const modelCount = selectedModels.value.length
-  return `${form.distributionSystem === 'sub2api' ? 'Sub2API' : '其他 API 接入'} · ${providerCategoryLabels[form.providerCategory]} · ${modelCount ? `${modelCount} 个模型` : '待选择模型'} · 统一倍率 ${multiplier}`
+  const connection = selectedProbeConnection.value?.name ?? '待选择连接'
+  return `${form.distributionSystem === 'sub2api' ? 'Sub2API' : '其他 API 接入'} · ${connection} · ${providerCategoryLabels[form.providerCategory]} · ${modelCount ? `${modelCount} 个模型` : '待选择模型'} · 统一倍率 ${multiplier}`
 })
 const stepThreeSummary = computed(() => `${paymentSummary.value} · ${form.merchantIdentityMode === 'store_alias' ? '商家展示名' : '公开个人身份'}`)
 const primaryActionLabel = computed(() => {
@@ -795,6 +815,14 @@ function confirmProviderCategoryChange() {
         >
           <div class="space-y-3">
             <ApiAccessSourceSection :form="form" :errors="errors" :selling-mode="editorSellingMode" @set-distribution="setDistribution" @set-default-multiplier="setDefaultMultiplier" />
+            <ProbeConnectionSection
+              v-model="form.probeConnectionId"
+              :connections="probeConnections"
+              :loading="probeConnectionsQuery.isLoading.value"
+              :error="probeConnectionError"
+              :field-error="errors.probeConnection"
+              @refresh="probeConnectionsQuery.refetch()"
+            />
             <AccountPaymentSummarySection
               v-if="isLimitedQuotaMode"
               :form="form"

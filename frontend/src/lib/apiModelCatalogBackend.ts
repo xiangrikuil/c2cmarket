@@ -202,7 +202,6 @@ function seedAdminAPIModels(providers: AdminApiModelProvider[]): AdminApiModel[]
       provider: provider.displayName,
       providerActive: provider.active,
       modelKey: item.name,
-      displayName: item.displayName,
       capabilities: normalizeCapabilities(item.capabilities),
       active: item.active,
       currentPriceVersionId: item.officialInputPricePerMillion !== null || item.officialCachedInputPricePerMillion !== null || item.officialOutputPricePerMillion !== null ? `mock-price-${item.id}-seed` : undefined,
@@ -233,7 +232,6 @@ function normalizeModelInput(input: ApiModelInput): ApiModelInput {
   return {
     providerId: input.providerId.trim(),
     modelKey: input.modelKey.trim(),
-    displayName: input.displayName.trim(),
     capabilities: normalizeCapabilities(input.capabilities),
     inputTokenPrice: normalizePriceInput(input.inputTokenPrice),
     cachedInputTokenPrice: normalizePriceInput(input.cachedInputTokenPrice),
@@ -279,7 +277,6 @@ function fromModelInput(id: string, input: ApiModelInput, previous?: AdminApiMod
     provider: previous?.provider ?? '',
     providerActive: previous?.providerActive ?? true,
     modelKey: input.modelKey,
-    displayName: input.displayName,
     capabilities: input.capabilities,
     active: input.active,
     currentPriceVersionId: priceVersionId,
@@ -311,7 +308,6 @@ function toPublicModel(item: AdminApiModel): ModelCatalogItem {
     id: item.id,
     provider: publicProvider(item),
     name: item.modelKey,
-    displayName: item.displayName,
     capabilities: item.capabilities.filter(isPublicCapability),
     officialInputPricePerMillion: priceToNumber(item.inputPricePerMillion),
     officialCachedInputPricePerMillion: priceToNumber(item.cachedInputPricePerMillion),
@@ -413,6 +409,6 @@ function sortAdminAPIModels(items: AdminApiModel[]) {
     const providerDelta = providerOrder.indexOf(left.providerCategory) - providerOrder.indexOf(right.providerCategory)
     if (providerDelta !== 0) return providerDelta
     if (left.sortOrder !== right.sortOrder) return left.sortOrder - right.sortOrder
-    return left.displayName.localeCompare(right.displayName)
+    return left.modelKey.localeCompare(right.modelKey)
   })
 }

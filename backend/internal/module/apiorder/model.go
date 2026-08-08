@@ -75,6 +75,9 @@ type Order struct {
 	RequestedUSDAllowanceSnapshot string
 	CNYPerUSDAllowanceSnapshot    string
 	PricingSnapshot               string
+	ProbeConnectionIDSnapshot     string
+	APIBaseURLSnapshot            string
+	NormalizedAPIBaseURLSnapshot  string
 	QuotaUsagePolicySnapshot      apimarket.QuotaUsagePolicy
 	PromptAuditEnabledSnapshot    *bool
 	PackageStockReserved          bool

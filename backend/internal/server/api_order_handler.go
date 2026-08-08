@@ -64,6 +64,8 @@ type apiOrderResponse struct {
 	RequestedUSDAllowanceSnapshot string                              `json:"requestedUsdAllowanceSnapshot,omitempty"`
 	CNYPerUSDAllowanceSnapshot    string                              `json:"cnyPerUsdAllowanceSnapshot,omitempty"`
 	PricingSnapshot               string                              `json:"pricingSnapshot"`
+	ProbeConnectionIDSnapshot     string                              `json:"probeConnectionIdSnapshot,omitempty"`
+	APIBaseURLSnapshot            string                              `json:"apiBaseUrlSnapshot,omitempty"`
 	QuotaUsagePolicySnapshot      apiQuotaUsagePolicyResponse         `json:"quotaUsagePolicySnapshot"`
 	PromptAuditEnabledSnapshot    *bool                               `json:"promptAuditEnabledSnapshot"`
 	PackageStockReserved          bool                                `json:"packageStockReserved"`
@@ -459,6 +461,8 @@ func toAPIOrderResponse(order apiorder.Order, ownerView bool, includeCredential 
 		RequestedUSDAllowanceSnapshot: order.RequestedUSDAllowanceSnapshot,
 		CNYPerUSDAllowanceSnapshot:    order.CNYPerUSDAllowanceSnapshot,
 		PricingSnapshot:               order.PricingSnapshot,
+		ProbeConnectionIDSnapshot:     order.ProbeConnectionIDSnapshot,
+		APIBaseURLSnapshot:            order.APIBaseURLSnapshot,
 		QuotaUsagePolicySnapshot:      toAPIQuotaUsagePolicyResponse(order.QuotaUsagePolicySnapshot),
 		PromptAuditEnabledSnapshot:    order.PromptAuditEnabledSnapshot,
 		PackageStockReserved:          order.PackageStockReserved,

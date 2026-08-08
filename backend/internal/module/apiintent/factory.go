@@ -82,7 +82,7 @@ func servicePricingSnapshotJSON(service apimarket.Service, purchasedQuotaUsagePo
 			"id":                                  model.ID,
 			"modelCatalogId":                      model.ModelCatalogID,
 			"modelPriceVersionId":                 model.ModelPriceVersionID,
-			"modelNameSnapshot":                   model.ModelNameSnapshot,
+			"modelKey":                            model.ModelKey,
 			"providerSnapshot":                    model.ProviderSnapshot,
 			"capabilitiesSnapshot":                model.CapabilitiesSnapshot,
 			"merchantMultiplier":                  model.MerchantMultiplier,
@@ -141,7 +141,7 @@ func packageSnapshot(pack apimarket.ServicePackage) map[string]any {
 			"serviceModelId":      model.ServiceModelID,
 			"modelCatalogId":      model.ModelCatalogID,
 			"modelPriceVersionId": model.ModelPriceVersionID,
-			"modelNameSnapshot":   model.ModelNameSnapshot,
+			"modelKey":            model.ModelKey,
 			"providerSnapshot":    model.ProviderSnapshot,
 			"merchantMultiplier":  model.MerchantMultiplier,
 		})

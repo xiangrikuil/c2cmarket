@@ -98,6 +98,7 @@ import {
   submitFeedback,
   submitReview,
   resumeApiService,
+  updateApiServiceProbeConnection,
   updateContactMethod,
   updateApiPaymentAccountSettings,
   updateApiQuotaBatchStatus,
@@ -943,6 +944,20 @@ export function useResumeApiServiceMutation() {
       queryClient.invalidateQueries({ queryKey: ['api-market'] })
       queryClient.invalidateQueries({ queryKey: ['home-market'] })
       queryClient.invalidateQueries({ queryKey: ['admin-section'] })
+    },
+  })
+}
+
+export function useUpdateApiServiceProbeConnectionMutation() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: updateApiServiceProbeConnection,
+    onSuccess(data) {
+      queryClient.setQueryData(['my-api-services', data.id], data)
+      queryClient.invalidateQueries({ queryKey: ['my-api-services'] })
+      queryClient.invalidateQueries({ queryKey: ['api-services'] })
+      queryClient.invalidateQueries({ queryKey: ['api-market'] })
+      queryClient.invalidateQueries({ queryKey: ['api-probe-connections'] })
     },
   })
 }

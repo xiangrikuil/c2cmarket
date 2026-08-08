@@ -1,61 +1,69 @@
-# API Health And Quota Policy Contract
+# API Probe Connections, Model Testing, And Quota Policy
 
-Date: 2026-08-04
+Date: 2026-08-08
 Author: Codex
-Updated: 2026-08-07
 
-## Scenario: Platform Probe Health And SKU Quota Rules
+## Scenario: Reusable Seller Probes, Frozen Delivery Targets, And Temporary Buyer Tests
 
 ### 1. Scope / Trigger
 
-- Trigger: changes to API health configuration, target authorization, probe execution,
-  public API-market health projection, 5h/daily quota rules, or API intent/order snapshots.
+- Trigger: changes to seller probe connections, API service publication/orderability, probe
+  execution, public health projection, API delivery validation, the API model tester, model-key
+  snapshots, or 5h/daily quota rules.
 - Primary owners are `internal/module/apihealth`, `internal/apihealthrunner`,
-  `internal/store/postgres/api_health.go`, the API-market/quota stores and handlers,
-  migrations `000079` and `000080`, the OpenAPI contract, and the shared frontend
-  health/quota components.
-- Health is a service-level platform measurement. Quota policy is a SKU-level seller contract.
-  They are separate facts and must not share persistence or fallback rules.
+  `internal/platform/openaiapi`, `internal/module/apiorder`, `internal/module/apimodeltest`, the
+  PostgreSQL API-market stores, migration `000081`, OpenAPI, and the matching frontend adapters.
+- Probe health, order delivery credentials, temporary model-test credentials, and SKU quota policy
+  are separate facts. They may share the stateless OpenAI-compatible HTTP adapter, but never share
+  secrets, samples, or persistence lifecycles.
 
 ### 2. Signatures
 
 ```text
-GET|PUT|DELETE /api/v1/owner/api-services/{id}/health-probe
-POST /api/v1/owner/api-services/{id}/health-probe/challenges
-POST /api/v1/owner/api-services/{id}/health-probe/verify
+GET    /api/v1/owner/api-probe-connections
+POST   /api/v1/owner/api-probe-connections
+GET    /api/v1/owner/api-probe-connections/{id}
+PATCH  /api/v1/owner/api-probe-connections/{id}
+DELETE /api/v1/owner/api-probe-connections/{id}
+POST   /api/v1/owner/api-probe-connections/{id}/verify
 
-GET  /api/v1/admin/api-service-health-probes
-POST /api/v1/admin/api-service-health-probes/{id}/approve
-POST /api/v1/admin/api-service-health-probes/{id}/reject
+PATCH  /api/v1/owner/api-services/{id}/probe-connection
+
+GET    /api/v1/tools/api-model-tester/order-sources
+POST   /api/v1/tools/api-model-tester/discover
+POST   /api/v1/tools/api-model-tester/test
 ```
 
 ```text
-QuotaUsageLimitInput { mode: limited|unlimited, amountUsd? }
-QuotaUsageLimit      { mode: limited|unlimited|unspecified, amountUsd: DecimalString|null }
-QuotaUsagePolicy     { fiveHour, daily, scope: per_buyer_credential,
-                       dailyReset: utc_plus_8_calendar_day }
+APIProbeConnection:
+  id, name, baseUrl, credentialConfigured, enabled, verificationStatus,
+  verifiedAt, lastVerificationErrorCode, measurementVersion, version,
+  referencedServices[], healthSummary, createdAt, updatedAt
 
-ServiceHealthSummary { state, availabilityReason, successRatePercent,
-                       successfulSamples, totalSamples, medianTtftMs,
-                       probeModel, transportSecurity, lastSampledAt, samples[12] }
+ServiceHealthSummary:
+  state, availabilityReason, successRatePercent, successfulSamples,
+  totalSamples, transportSecurity, lastSampledAt, samples[12]
+
+APIModelTesterCredentialSource:
+  manual { kind, baseUrl, apiKey, acknowledgeInsecureHttp }
+  order  { kind, orderId, acknowledgeInsecureHttp }
+
+QuotaUsagePolicy:
+  fiveHour, daily, scope: per_buyer_credential,
+  dailyReset: utc_plus_8_calendar_day
 ```
 
 ```text
-api_service_probe_configs
-api_service_probe_authorization_events
-api_service_probe_samples
+api_probe_connections
+api_probe_connection_samples
 
-api_services/api_service_packages/api_quota_offers:
-  five_hour_limit_mode, five_hour_limit_usd,
-  daily_limit_mode, daily_limit_usd
-
-api_purchase_intents/api_orders:
-  five_hour_limit_mode_snapshot, five_hour_limit_usd_snapshot,
-  daily_limit_mode_snapshot, daily_limit_usd_snapshot,
-  prompt_audit_enabled_snapshot
-
-api_services:
-  prompt_audit_enabled boolean|null
+api_services.probe_connection_id
+api_purchase_intents:
+  probe_connection_id_snapshot, api_base_url_snapshot,
+  normalized_api_base_url_snapshot
+api_orders:
+  probe_connection_id_snapshot, api_base_url_snapshot,
+  normalized_api_base_url_snapshot
 ```
 
 Runtime environment:
@@ -67,189 +75,188 @@ API_HEALTH_PROBE_TIMEOUT
 API_HEALTH_MAX_CONCURRENCY
 API_HEALTH_CLAIM_BATCH_SIZE
 API_HEALTH_SAMPLE_RETENTION
-API_HEALTH_CHALLENGE_TTL
 ```
+
+There is no challenge TTL. DNS TXT, HTTP challenge, and administrator probe approval are removed.
 
 ### 3. Contracts
 
-- The probe protocol is fixed to OpenAI-compatible streaming chat completions. The platform
-  joins `chat/completions`, sends one bounded canary prompt, records the first non-empty content
-  TTFT, and never persists response content.
-- A root-only base URL such as `https://api.example.com` is normalized to
-  `https://api.example.com/v1` before persistence. Existing non-root paths such as `/v1`,
-  `/api/v1`, and `/openai/v1` are preserved, preventing accidental `/v1/v1` composition.
-- HTTPS remains the default and recommended transport. API health alone may accept a public HTTP
-  target when every owner PUT explicitly sends `acknowledgeInsecureHttp=true`. The acknowledgement
-  is request-only; the persisted URL scheme is the runtime fact. The owner UI may derive the
-  acknowledgement for an unchanged persisted HTTP Base URL, because that row could only have been
-  saved through this validation gate. A new or changed HTTP Base URL starts unchecked and must be
-  confirmed explicitly. HTTPS PUTs send or behave as false.
-- HTTP probe traffic is unencrypted: the dedicated API key and request/response may be read or
-  modified in transit. The owner UI must state this and require a dedicated low-quota,
-  low-privilege key restricted to the probe model.
-- Probe credentials are dedicated low-quota, low-privilege secrets restricted to the probe model
-  and encrypted with the contact codec under
-  a probe-specific field/AAD. Owner responses expose only `credentialConfigured`; challenge
-  tokens are returned once and only hashes are stored.
-- Owner and administrator mutations require session, CSRF, `If-Match`, and private no-store
-  responses. Initial owner PUT uses `If-Match: "0"`; stale versions return
-  `412 VERSION_CONFLICT`. Challenge creation, challenge verification, administrator approval,
-  and administrator rejection also require `Idempotency-Key`; replay restores the cached status,
-  body, and ETag without repeating the authorization transition.
-- Both accepted schemes disable proxy and redirects, re-resolve DNS for the actual dial, and reject
-  private, loopback, link-local, metadata, special-use, or mixed public/private results. The shared
-  `outboundhttp` HTTPS-only default remains unchanged; API health owns the narrow HTTP exception.
-  Public-address validation does not prove target ownership.
-- Ownership is established by an exact-host DNS TXT challenge on the default 443 origin, an
-  unauthenticated HTTP challenge at the exact origin's fixed well-known path, or administrator
-  approval of the current exact origin. HTTP verification never sends the probe credential.
-- Measurement identity binds protocol, normalized Base URL including base path, normalized Origin,
-  and model. Any measurement-identity change increments `measurement_version` so old samples are
-  excluded from the current summary. Target-ownership authorization binds only the normalized
-  Origin (`scheme + hostname + effective port`). A model or same-Origin path change preserves an
-  existing authorization and live challenge. An Origin change resets authorization, clears a live
-  challenge, and appends an `origin_invalidated` event with reason
-  `authorization_origin_changed` in the same transaction.
-- The runner claims only enabled, credentialed, authorized configs whose verified origin equals
-  the normalized origin. It creates at most one sample per service/five-minute slot, performs
-  HTTP outside the claim transaction, finalizes only a running sample, and converges abandoned
-  running samples to `internal_timeout`.
-- Public summaries use the current measurement version and model, exclude running samples, and
-  always return 12 ascending five-minute slots. Fewer than three final samples, data older than
-  ten minutes, disabled/unauthorized/unconfigured probes, and health-query failures have explicit
-  `no_sample` reasons.
-- Public summaries derive `transportSecurity` from the private config without exposing the URL:
-  `secure_https`, `insecure_http`, or `null` when unconfigured. Buyer UI shows a compact
-  `HTTP 未加密` disclosure for `insecure_http` even when the summary has no final samples.
-- Public health enrichment batches distinct service IDs. A health read failure degrades only the
-  health field to `temporarily_unavailable`; it cannot block listing, detail, publication,
-  purchase, fulfillment, dispute handling, or recommendation order.
-- Current public cards and service details use platform `healthSummary` for TTFT. They do not
-  expose seller-declared TTFT or `performanceDisclaimer`. Historical orders retain the frozen
-  seller declaration for transaction explanation only.
-- 5h and daily limits are seller-declared USD amounts after the SKU's model multiplier. They are
-  not token counts, upstream list-price amounts, or platform-enforced usage meters. Each buyer
-  credential has its own limits, and daily means the UTC+8 calendar day.
-- New service/package/offer writes require each limit to be explicitly `limited` with a strictly
-  positive decimal amount or `unlimited` without an amount. `unspecified` exists only for
-  historical reads and renders as `未说明`, never `不限`.
-- New service creates and edits require an explicit `promptAuditEnabled` true or false value.
-  Historical service rows remain null and are returned as `promptAuditEnabled: null`; false is a
-  seller declaration rather than a platform privacy guarantee.
-- Standard purchase intents freeze the service declaration in
-  `prompt_audit_enabled_snapshot` and the pricing JSON. Standard orders copy that intent snapshot,
-  never the current service. Limited-offer order creation freezes the same value in its intent,
-  order column, and self-describing quota JSON. Historical null remains explicit and is never
-  inferred from the current service.
-- Free-amount services own one policy, each fixed package owns one policy, and each limited quota
-  offer owns one policy. Intent creation freezes the selected SKU policy; order creation copies
-  the intent snapshot. Limited-offer inventory transactions freeze the same policy into the
-  intent, order, and self-describing JSON snapshot atomically.
+#### 3.1 Reusable seller connections
+
+- A probe connection belongs to one seller and can be bound to any number of that seller's API
+  services. A service binds at most one connection. Cross-owner reads and bindings behave as not
+  found or unavailable and must not reveal another seller's connection.
+- Creation requires a name, complete Base URL, dedicated Bearer key, enabled choice, and explicit
+  HTTP acknowledgement when applicable. It immediately performs authenticated
+  `GET {BaseURL}/models`; only HTTP 2xx with an OpenAI-compatible `data[]` envelope verifies the
+  connection. Model IDs are not stored or compared with service declarations.
+- Verification proves only that the seller supplied a working Endpoint + Key and authorized the
+  platform to use that key. It does not prove ownership of an IP, domain, server, upstream account,
+  or official model.
+- Base URLs are trimmed but otherwise preserved for display and order snapshots. Never append
+  `/v1`, change case, or rewrite the business path. A separate canonical value normalizes scheme,
+  host, default port, and trailing slash only for strict comparison.
+- Changing the Base URL or key, or re-enabling a disabled connection, performs a fresh `/models`
+  verification and increments `measurementVersion`. A failed verification leaves the connection
+  disabled/unverified and pauses every bound service from taking new orders. It does not alter old
+  orders.
+- Connection writes require session and CSRF. PATCH/DELETE require `If-Match`; create and explicit
+  verify require `Idempotency-Key`. Responses are `private, no-store` and never include the key or
+  its fingerprint.
+- Deleting a referenced connection returns `409` with the affected service references. Disabling
+  remains allowed and immediately stops scheduling and new-order eligibility. Deleting an
+  unreferenced connection cascades only its samples.
+
+#### 3.2 Runner and public health
+
+- The runner performs only authenticated `GET {BaseURL}/models`. It never specifies or tests a
+  model, never calls Responses or Chat Completions, and never records response bodies or TTFT.
+- Each enabled, verified, credentialed connection is claimed at most once per five-minute slot,
+  regardless of how many services reference it. HTTP executes outside the claim transaction.
+  Abandoned running rows converge to `internal_timeout`; finalization updates only running rows.
+- Every dial re-resolves and validates all DNS answers. Private, loopback, link-local, metadata,
+  special-use, and mixed public/private results are rejected. Environment proxies and redirects
+  are disabled. These protections remain active for HTTP and HTTPS.
+- A service reads the summary of its currently bound connection. Multiple services bound to the
+  same connection therefore share the same current sample set without duplicate outbound calls.
+- Public health contains connection authentication availability only. It never exposes Base URL,
+  key, model list, configured model, TTFT, or connection ownership claims. Summaries retain the
+  fixed 12 ascending five-minute slots and explicit no-sample reasons.
+- A health-enrichment read failure degrades only `healthSummary` to temporarily unavailable. It
+  must not fail the surrounding list/detail response.
+
+#### 3.3 Service and order target snapshots
+
+- A service can be published or accept new standard/package/quota orders only while its bound
+  connection is enabled and verified. Publication and order creation check the same persisted
+  readiness predicate.
+- Standard purchase-intent creation and limited-quota order creation freeze the connection ID,
+  seller-entered Base URL, and canonical comparison value. Standard order creation copies the
+  intent snapshot rather than reading the current service.
+- Seller `api_key_endpoint` delivery must provide a Base URL canonically equal to the frozen order
+  target. Scheme, host kind, host value, effective port, and path must match. A domain and one of
+  its resolved IPs are intentionally different targets. The seller's submitted spelling is not
+  rewritten or given an automatic `/v1`.
+- Before accepting delivery, the backend calls `GET {submitted BaseURL}/models` with the delivered
+  buyer key. This verifies only current authentication and compatible list structure; it does not
+  compare returned models with seller declarations or copy the key into the probe connection.
+- Order credentials, probe keys, and temporary tester keys have independent encryption and
+  retention boundaries. The periodic runner can read only probe-connection credentials.
+
+#### 3.4 Temporary API model tester
+
+- The tester accepts manual credentials or a current buyer's eligible delivered order. Order
+  sources expose order metadata and Base URL only; the key remains server-side and is re-authorized
+  and decrypted for every discover/test request.
+- HTTP requires `acknowledgeInsecureHttp=true` for both manual and order sources. The UI shows an
+  unchecked warning for the current HTTP target and resets it when the source target changes.
+- `discover` returns every unique non-empty model ID from `/models` in provider order. It does not
+  restrict results to the platform catalog or seller-declared models.
+- `test` accepts one discovered model ID and independently performs one minimal non-streaming
+  Responses call and one Chat Completions call. Success requires HTTP 2xx, the protocol array
+  (`output` or `choices`), and no non-null top-level `error`; response text is never returned.
+- The frontend offers one-model, selected-model, and all-model actions, with at most three model
+  requests in flight. Each model means two outbound calls. There is no product cooldown because
+  the user owns the credential and quota, but normal body, timeout, response-size, and
+  infrastructure limits still apply.
+- Results and manual keys stay in page memory only. Source change, refresh, navigation, or
+  unmount clears them. Do not put keys or results in URL queries, storage, analytics, logs, or
+  persistent tables. Testing never changes order, dispute, completion, or public health state.
+
+#### 3.5 Model keys and quota policy
+
+- `modelKey` is the one canonical public catalog name and real request identifier, for example
+  `gpt-4.1-mini`. Do not create a decorative display-name variant such as `GPT-4.1 mini`.
+- Service/package API DTOs expose canonical names as `modelKeySnapshot`. Intent/order
+  `pricingSnapshot.models[]` stores the same canonical identifier as `modelKey`; APIs and frontend
+  projections must not restore `displayName` or `modelNameSnapshot` compatibility fields.
+- New service/package/offer writes require each 5h/daily limit to be explicitly `limited` with a
+  positive decimal amount or `unlimited` without an amount. `unspecified` is historical-read only.
+- Intent/order creation freezes the selected SKU quota policy and prompt-audit declaration. Never
+  recompute a historical order from the current service, package, or quota offer.
 
 ### 4. Validation & Error Matrix
 
 | Condition | Result |
 | --- | --- |
-| HTTP/HTTPS target contains only an origin or trailing root slash | Persist and return the origin with `/v1` appended |
-| HTTP/HTTPS target already contains a non-root path | Preserve the normalized path; never append another `/v1` |
-| HTTP target omits `acknowledgeInsecureHttp=true` | `422 VALIDATION_FAILED` on `acknowledgeInsecureHttp` |
-| Owner reloads an unchanged persisted HTTP Base URL | UI derives acknowledgement and PUT still sends `true` without another checkbox action |
-| Model or Base URL path changes on the same normalized Origin | Increment measurement version; preserve authorization and live challenge |
-| Scheme, hostname, or effective port changes | Increment measurement version; reset authorization and clear live challenge |
-| Non-HTTP(S), private, mixed-DNS, redirecting, or malformed target | `422 VALIDATION_FAILED` on `baseUrl` |
-| Enabling without a configured credential | `422 VALIDATION_FAILED` on `credential` |
-| DNS challenge for a non-443 origin | `422 VALIDATION_FAILED`, `port_not_supported` |
-| Empty or expired/mismatched challenge | Remain unauthorized; never execute a probe |
-| Owner/admin version is stale or initial PUT omits version zero | `412 VERSION_CONFLICT` or `428` |
-| Administrator decision references a missing probe config | `404 OBJECT_NOT_FOUND`; do not report a version conflict |
-| Administrator decision omits a reason | `422 VALIDATION_FAILED` on `reason` |
-| Health repository/enrichment fails | Return product with `no_sample/temporarily_unavailable` |
-| New policy uses `unspecified` | `422 VALIDATION_FAILED` on the limit mode |
-| `limited` omits or supplies a non-positive amount | `422 VALIDATION_FAILED` on `amountUsd` |
-| `unlimited` includes an amount | `422 VALIDATION_FAILED` on `amountUsd` |
-| Historical mode is `unspecified` | Return `{ mode: unspecified, amountUsd: null }` |
-| New service create/update omits `promptAuditEnabled` | `422 VALIDATION_FAILED`, field `promptAuditEnabled`, reason `required` |
-| Historical service/intent/order has no prompt-audit declaration | Return the applicable field as explicit JSON `null` |
+| HTTP source omits current-request acknowledgement | `422 VALIDATION_FAILED` on `acknowledgeInsecureHttp` |
+| Base URL contains only an origin | Preserve it; do not append `/v1` |
+| Base URL already contains a path | Preserve the path; structured joins append only the endpoint |
+| Target is malformed, private, mixed-DNS, or redirecting | Stable target/network error; never dial an unsafe address |
+| Connection verification returns invalid `/models` JSON | Connection remains failed/disabled with `invalid_response` |
+| Connection is disabled, failed, missing a key, or belongs to another seller | Cannot bind/publish/order |
+| Referenced connection delete | `409 INVALID_STATE_TRANSITION` with service references |
+| Stale connection mutation | `412 VERSION_CONFLICT`; missing precondition is `428` |
+| Delivery target differs only by default port/trailing slash/case | Canonical match succeeds |
+| Delivery swaps domain for resolved IP, IP for domain, port, scheme, or path | `422 VALIDATION_FAILED` on delivery Base URL |
+| Delivered key cannot authenticate `/models` | Reject delivery without persisting the credential |
+| Tester order is missing/foreign | `404`; do not reveal existence |
+| Tester credential was destroyed or is unsupported | `409 API_MODEL_TEST_CREDENTIAL_UNAVAILABLE` |
+| Tester `/models` gets 429/5xx/timeout | `429`/`502`/`504` with stable problem details |
+| Model protocol returns 2xx with non-array `output`/`choices` or top-level error | `invalid_response` for that protocol |
+| New quota limit uses `unspecified`, invalid amount, or mismatched mode/amount | `422 VALIDATION_FAILED` |
 
 ### 5. Good / Base / Bad Cases
 
-- Good: one service has three paid SKUs with different policies; all cards share one measured
-  health summary while each order freezes its own policy.
-- Good: changing `/v1` to `/proxy/v1` on the same Origin starts a new measurement version while
-  preserving the already-proven Origin authorization.
-- Good: changing `https://api.example.com:443` to `https://api.example.com:8443` resets
-  authorization and records the Origin invalidation atomically before any new sample can be claimed.
-- Good: entering `https://api.example.com` saves `https://api.example.com/v1`, while entering
-  `https://api.example.com/openai/v1` preserves the existing path.
-- Good: entering `http://api.example.com` with explicit acknowledgement saves
-  `http://api.example.com/v1`, derives origin port 80, and discloses `insecure_http` publicly.
-- Base: an unconfigured service remains purchasable and displays 12 no-sample slots with the
-  `unconfigured` reason.
-- Bad: treating SSRF validation as ownership proof, sending `Authorization` during HTTP challenge,
-  or authorizing a host suffix/wildcard.
-- Bad: returning unlimited for a historical null, recomputing an old order from the current SKU,
-  or using platform probe TTFT in the package recommendation score.
+- Good: one seller creates one verified connection and binds three separately sold services. The
+  runner emits one sample per slot and all three public services read the same health summary.
+- Good: an order freezes `http://155.103.116.134:31238/`; delivery with the same target and a buyer
+  key authenticates `/models`, while a domain resolving to that IP is rejected as a different host.
+- Good: a buyer imports an eligible order into the tester, explicitly acknowledges its HTTP target,
+  discovers every returned model ID, and tests selected IDs without changing the order or health.
+- Base: a verified connection is disabled. Existing orders remain intact, runner claims stop, and
+  bound services become unavailable for new publication/orders until it is re-enabled and verified.
+- Base: `/models` returns an empty valid `data` array. Connection authentication may be verified and
+  the tester shows zero discovered models; neither flow invents platform catalog entries.
+- Bad: creating one probe row per service, using returned model IDs as service verification, or
+  issuing Responses/Chat calls from the periodic runner.
+- Bad: adding `/v1`, treating a domain and its resolved IP as equal, persisting temporary tester
+  results, or presenting a successful call as proof of official model identity.
 
 ### 6. Tests Required
 
-- Domain: root-only `/v1` completion, existing-path preservation, target normalization,
-  base-path/model measurement invalidation with authorization retention, Origin authorization
-  invalidation, credential retention/rotation,
-  DNS multi-TXT/expiry/non-443, HTTP fixed path/no-auth, SSE chunking/limits/error classes,
-  12-slot order, minimum samples, stale data, thresholds, and odd/even median.
-- Runner/store: same-slot concurrency, authorization claim filters, credential decrypt failure,
-  running timeout convergence, conditional finalize, atomic invalidation event, exact-origin
-  administrator reject/approve, owner isolation, and retention of final samples only.
-- Quota/order: limited/unlimited/unspecified validation, explicit true/false prompt-audit writes,
-  historical prompt-audit nulls, all three SKU locations, source-SKU mutation after purchase, and
-  immutable dedicated plus JSON snapshots.
-- HTTP/OpenAPI: route/type parity, CSRF, ETag/If-Match, request-only insecure acknowledgement,
-  no-store, write-only credential, one-time challenge token, secret leakage scan, public transport
-  disclosure, public seller-TTFT absence, and fail-open enrichment.
-- Frontend: unchanged persisted HTTP acknowledgement derivation, changed-HTTP reset, generated-type
-  adapters, owner/admin mutations, policy controls, snapshot rendering,
-  three card variants, no merchant-TTFT copy, fixed 12-slot layout, and desktop/mobile overflow.
-- Required gates: `go test ./...`, relevant race tests, `go vet ./...`, OpenAPI/migration guards,
-  full Vitest/typecheck/build, and `scripts/ci-postgres-integration.sh`.
+- Domain and handlers: connection create/update/verify/delete, HTTP acknowledgement, no secret
+  projection, service readiness, binding ownership, publication/orderability, and canonical order
+  target comparisons.
+- PostgreSQL: owner isolation, optimistic version conflict, referenced-delete rejection,
+  same-slot concurrent claim deduplication, credential decryption failure, finalization, shared
+  service summary input, running-timeout convergence, retention, and cascade deletion.
+- PostgreSQL fixtures that exercise public/orderable services must bind an enabled, verified probe
+  connection owned by the seller. Keep draft-only fixtures unbound, and never weaken the production
+  orderability predicate to preserve an old test fixture.
+- Credential-destruction concurrency tests must commit credential setup before starting the
+  lifecycle lock transaction. The destructive update must run inside the transaction holding that
+  lock so concurrent reads observe the intended block-then-unavailable sequence.
+- OpenAI adapter: Base URL preservation, no automatic `/v1`, `/models` envelope and deduplication,
+  both protocol request shapes, array response validation, top-level error rejection, error
+  classification, response limits, and safe outbound dialing.
+- Tester: manual/order authorization, destroyed credentials, CSRF/no-store, no key response,
+  HTTP acknowledgement, three-worker frontend queue, cancellation, and memory-only state.
+- Contracts: OpenAPI route/status/type parity, generated frontend types, the explicit
+  service/package `modelKeySnapshot` versus intent/order pricing `modelKey` boundary, and scans
+  excluding removed challenge/admin/model/TTFT fields.
+- Required gates: full Go test/vet, focused race tests, PostgreSQL integration when configured,
+  OpenAPI generate/check/route parity, full Vitest/typecheck/build, and `git diff --check`.
 
 ### 7. Wrong vs Correct
 
-#### Wrong
-
 ```go
-if publicIP(target) {
-    config.AuthorizationStatus = "approved"
+// Wrong: one runner call per service and implicit HTTP permission.
+for _, service := range services {
+	probe(service.BaseURL, service.APIKey, service.Model)
 }
 
-baseURL = strings.TrimRight(baseURL, "/") + "/v1"
-
-if MeasurementIdentityChanged(existing, target, model) {
-    resetAuthorization()
+// Correct: one claimed slot per reusable connection; no model is selected.
+jobs := claimDueConnections(slot)
+for _, job := range jobs {
+	discoverModels(job.Connection.BaseURL, job.Credential)
 }
-
-order.QuotaUsagePolicySnapshot = currentOffer.QuotaUsagePolicy
 ```
 
-#### Correct
-
 ```go
-if apihealth.IsAuthorized(config) && config.VerifiedOrigin == config.NormalizedOrigin {
-    jobs = claimCurrentFiveMinuteSlot(config)
-}
+// Wrong: accept a delivered domain because it resolves to the frozen IP.
+equal := resolvedIP(deliveryURL) == frozenIP
 
-if parsed.Path == "" || parsed.Path == "/" {
-    parsed.Path = "/v1"
-}
-
-if MeasurementIdentityChanged(existing, target, model) {
-    measurementVersion++
-}
-if AuthorizationIdentityChanged(existing, target) {
-    resetAuthorization()
-}
-
-order.QuotaUsagePolicySnapshot = intent.QuotaUsagePolicySnapshot
+// Correct: compare canonical URL facts without DNS equivalence.
+equal := canonicalDeliveryURL(deliveryURL) == order.NormalizedAPIBaseURLSnapshot
 ```
-
-Public-address validation limits where the platform connects; DNS/HTTP/admin verification proves
-the exact target authorization. Orders copy frozen intent facts rather than mutable current SKUs.

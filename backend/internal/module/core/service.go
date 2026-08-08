@@ -204,6 +204,13 @@ func (s *Service) ConfigureModelAuditOutbound(policy *outboundhttp.Policy) {
 	s.modelAudit.SetOutboundPolicy(policy)
 }
 
+func (s *Service) ConfigureAPIOrderDeliveryVerifier(timeout time.Duration) {
+	if s == nil || s.apiOrder == nil {
+		return
+	}
+	s.apiOrder.SetDeliveryCredentialVerifier(apiorder.NewOpenAIDeliveryCredentialVerifier(timeout))
+}
+
 func (s *Service) CreateDevSession(ctx context.Context, username string, isAdmin bool) (User, Session, *domain.AppError) {
 	user, session, appErr := s.authService.CreateDevSession(ctx, username, isAdmin)
 	s.recordAuthenticatedActivity(ctx, user, appErr)
@@ -487,6 +494,14 @@ func (s *Service) CreateAPIService(ctx context.Context, user User, input CreateA
 
 func (s *Service) UpdateAPIService(ctx context.Context, user User, input UpdateAPIServiceInput) (APIService, *domain.AppError) {
 	service, appErr := s.apiMarket.Update(ctx, user, input)
+	if appErr != nil {
+		return APIService{}, appErr
+	}
+	return s.withAPIMerchantProfile(ctx, service)
+}
+
+func (s *Service) UpdateAPIServiceProbeConnection(ctx context.Context, user User, input apimarket.UpdateProbeConnectionInput) (APIService, *domain.AppError) {
+	service, appErr := s.apiMarket.UpdateProbeConnection(ctx, user, input)
 	if appErr != nil {
 		return APIService{}, appErr
 	}

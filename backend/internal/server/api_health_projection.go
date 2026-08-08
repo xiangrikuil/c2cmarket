@@ -20,8 +20,6 @@ type apiServiceHealthSummaryResponse struct {
 	SuccessRatePercent *string                          `json:"successRatePercent"`
 	SuccessfulSamples  int                              `json:"successfulSamples"`
 	TotalSamples       int                              `json:"totalSamples"`
-	MedianTTFTMS       *int                             `json:"medianTtftMs"`
-	ProbeModel         *string                          `json:"probeModel"`
 	LastSampledAt      *string                          `json:"lastSampledAt"`
 	Samples            []apiServiceHealthSampleResponse `json:"samples"`
 }
@@ -99,7 +97,6 @@ func toAPIServiceHealthSummaryResponse(summary apihealth.Summary) apiServiceHeal
 	return apiServiceHealthSummaryResponse{
 		State: summary.State, AvailabilityReason: availabilityReason, TransportSecurity: transportSecurity,
 		SuccessRatePercent: summary.SuccessRatePercent, SuccessfulSamples: summary.SuccessfulSamples,
-		TotalSamples: summary.TotalSamples, MedianTTFTMS: summary.MedianTTFTMS,
-		ProbeModel: summary.ProbeModel, LastSampledAt: lastSampledAt, Samples: samples,
+		TotalSamples: summary.TotalSamples, LastSampledAt: lastSampledAt, Samples: samples,
 	}
 }

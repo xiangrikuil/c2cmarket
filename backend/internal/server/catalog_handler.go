@@ -79,7 +79,6 @@ type apiModelResponse struct {
 	Provider                   string   `json:"provider"`
 	ProviderActive             bool     `json:"providerActive"`
 	ModelKey                   string   `json:"modelKey"`
-	DisplayName                string   `json:"displayName"`
 	Capabilities               []string `json:"capabilities"`
 	Active                     bool     `json:"active"`
 	CurrentPriceVersionID      string   `json:"currentPriceVersionId,omitempty"`
@@ -97,7 +96,6 @@ type apiModelResponse struct {
 type apiModelRequest struct {
 	ProviderID            string   `json:"providerId"`
 	ModelKey              string   `json:"modelKey"`
-	DisplayName           string   `json:"displayName"`
 	Capabilities          []string `json:"capabilities"`
 	InputTokenPrice       string   `json:"inputTokenPrice"`
 	CachedInputTokenPrice string   `json:"cachedInputTokenPrice"`
@@ -633,7 +631,6 @@ func toAPIModelResponse(model catalog.APIModelCatalog) apiModelResponse {
 		Provider:                   model.Provider,
 		ProviderActive:             model.ProviderActive,
 		ModelKey:                   model.ModelKey,
-		DisplayName:                model.DisplayName,
 		Capabilities:               model.Capabilities,
 		Active:                     model.Active,
 		CurrentPriceVersionID:      model.CurrentPriceVersionID,
@@ -653,7 +650,6 @@ func apiModelInputFromRequest(req apiModelRequest) catalog.APIModelInput {
 	return catalog.APIModelInput{
 		ProviderID:            req.ProviderID,
 		ModelKey:              req.ModelKey,
-		DisplayName:           req.DisplayName,
 		Capabilities:          req.Capabilities,
 		SourceURL:             req.SourceURL,
 		SourceVersion:         req.SourceVersion,

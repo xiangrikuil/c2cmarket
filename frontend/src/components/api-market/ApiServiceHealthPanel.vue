@@ -16,12 +16,12 @@ const stateLabels: Record<ApiHealthState, string> = {
 }
 
 const reasonLabels: Record<Exclude<ApiHealthAvailabilityReason, null>, string> = {
-  unconfigured: '尚未配置平台探针',
-  disabled: '平台探针已停用',
-  unauthorized: '探针目标尚未完成授权',
+  unconfigured: '尚未绑定探针连接',
+  disabled: '探针连接已停用',
+  unverified: '探针连接尚未通过鉴权验证',
   insufficient: '最近一小时样本不足',
   stale: '最近样本已过期',
-  temporarily_unavailable: '探针系统暂时不可用',
+  temporarily_unavailable: '探针连接暂时不可用',
 }
 
 const slotLabels: Record<ApiHealthSlotState, string> = {
@@ -76,11 +76,11 @@ function slotTitle(slotStartedAt: string, slotState: ApiHealthSlotState) {
 </script>
 
 <template>
-  <section class="api-service-health-panel" aria-label="平台近期健康探测">
+  <section class="api-service-health-panel" aria-label="探针连接近期可用性">
     <div class="flex min-w-0 items-center justify-between gap-2">
       <div class="flex min-w-0 items-center gap-1.5">
         <Activity class="h-3.5 w-3.5 shrink-0 text-emerald-600" aria-hidden="true" />
-        <span class="shrink-0 text-xs font-semibold">平台探测</span>
+        <span class="shrink-0 text-xs font-semibold">探针连接可用性</span>
         <time
           class="truncate text-[11px] text-muted-foreground"
           :datetime="summary?.lastSampledAt ?? undefined"
@@ -98,12 +98,12 @@ function slotTitle(slotStartedAt: string, slotState: ApiHealthSlotState) {
         <strong>{{ summary?.successRatePercent === null || summary?.successRatePercent === undefined ? '—' : `${summary.successRatePercent}%` }}</strong>
       </div>
       <div>
-        <span>首字中位</span>
-        <strong>{{ summary?.medianTtftMs === null || summary?.medianTtftMs === undefined ? '—' : `${summary.medianTtftMs}ms` }}</strong>
-      </div>
-      <div>
         <span>近 1 小时</span>
         <strong>{{ summary ? `${summary.successfulSamples} / ${summary.totalSamples}` : '0 / 0' }}</strong>
+      </div>
+      <div>
+        <span>连接方式</span>
+        <strong>{{ summary?.transportSecurity === 'insecure_http' ? 'HTTP' : summary?.transportSecurity === 'secure_https' ? 'HTTPS' : '—' }}</strong>
       </div>
     </div>
 
@@ -119,12 +119,8 @@ function slotTitle(slotStartedAt: string, slotState: ApiHealthSlotState) {
     </div>
 
     <div class="mt-1.5 flex min-w-0 items-center gap-1 text-[10px] leading-4 text-muted-foreground">
-      <span class="min-w-0 truncate" :title="summary?.probeModel ?? '未配置探测模型'">
-        {{ summary?.probeModel ? `模型 ${summary.probeModel}` : '未配置探测模型' }}
-      </span>
-      <span aria-hidden="true">·</span>
-      <span class="min-w-0 truncate" :title="availabilityLabel ?? '仅代表当前模型与平台单节点'">
-        {{ availabilityLabel ?? '仅代表当前模型与平台单节点' }}
+      <span class="min-w-0 truncate" :title="availabilityLabel ?? '仅代表 Base URL 与专用探针 Key 的鉴权可用性，不代表任一具体模型可调用'">
+        {{ availabilityLabel ?? '仅代表连接鉴权可用性，不代表任一具体模型可调用' }}
       </span>
       <template v-if="summary?.transportSecurity === 'insecure_http'">
         <span aria-hidden="true">·</span>

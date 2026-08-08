@@ -22,6 +22,7 @@ import ApiAccessSourceSection from '@/components/api-service-publish/ApiAccessSo
 import MerchantNoteSection from '@/components/api-service-publish/MerchantNoteSection.vue'
 import ModelMultiSelect from '@/components/api-service-publish/ModelMultiSelect.vue'
 import ProviderCategorySelector from '@/components/api-service-publish/ProviderCategorySelector.vue'
+import ProbeConnectionSection from '@/components/api-service-publish/ProbeConnectionSection.vue'
 import PublishStepSection from '@/components/api-service-publish/PublishStepSection.vue'
 import PublishWorkflowStepper from '@/components/api-service-publish/PublishWorkflowStepper.vue'
 import ResponsivePublishPreview from '@/components/api-service-publish/ResponsivePublishPreview.vue'
@@ -82,6 +83,7 @@ import {
   useMyProfileQuery,
 } from '@/queries/useMarketQueries'
 import { useUnsavedChangesGuard } from '@/composables/useUnsavedChangesGuard'
+import { useOwnerAPIProbeConnections } from '@/queries/useApiHealthQueries'
 
 type ServiceMode = 'existing' | 'create'
 
@@ -108,6 +110,7 @@ const publishSteps = [
 ]
 
 const myServicesQuery = useMyApiServices('all')
+const probeConnectionsQuery = useOwnerAPIProbeConnections()
 const slotQuery = useApiQuotaSaleSlots()
 const { data: modelCatalog, isLoading: catalogLoading } = useModelCatalog()
 const {
@@ -158,6 +161,7 @@ watch([eligibleServices, requestedServiceId, () => myServicesQuery.isSuccess.val
 }, { immediate: true })
 
 const baseForm = reactive<ApiServicePublishForm>({
+  probeConnectionId: '',
   merchantIdentityMode: 'public_profile',
   merchantDisplayName: '',
   distributionSystem: 'sub2api',
@@ -211,6 +215,14 @@ const catalog = computed(() => modelCatalog.value ?? [])
 const catalogById = computed(() => new Map(catalog.value.map(item => [item.id, item])))
 const filteredCatalog = computed(() => catalog.value.filter(item => modelProviderCategory(item.provider) === baseForm.providerCategory))
 const selectedModels = computed(() => selectedCatalogItems(baseForm, catalogById.value))
+const probeConnections = computed(() => probeConnectionsQuery.data.value ?? [])
+const selectedProbeConnection = computed(() => probeConnections.value.find(connection => connection.id === baseForm.probeConnectionId) ?? null)
+const probeConnectionReady = computed(() => Boolean(
+  selectedProbeConnection.value?.enabled && selectedProbeConnection.value.verificationStatus === 'verified',
+))
+const probeConnectionError = computed(() => probeConnectionsQuery.error.value
+  ? backendErrorMessage(probeConnectionsQuery.error.value, '探针连接暂时无法读取。')
+  : '')
 const accountSettingsValue = computed(() => accountPaymentSettings.value
   ? cloneApiPaymentAccountSettings(accountPaymentSettings.value)
   : { paymentWindowMinutes: defaultPaymentWindowMinutes, paymentOptions: createDefaultPaymentOptions(), updatedAt: '' })
@@ -408,6 +420,8 @@ function validateBaseService() {
     return false
   }
   if (!baseForm.merchantDisplayName.trim()) baseErrors.merchantDisplayName = '请先设置个人资料显示名称。'
+  if (!baseForm.probeConnectionId) baseErrors.probeConnection = '请选择已验证且启用的探针连接。'
+  else if (!probeConnectionReady.value) baseErrors.probeConnection = '所选探针连接当前不可用，请重新选择。'
   if (!baseForm.selectedModels.some(item => item.enabled)) baseErrors.selectedModels = '至少选择一个模型。'
 	if (!baseForm.accountPoolType) baseErrors.accountPool = '请选择一个号池。'
 	if (baseForm.accountPoolType === 'custom') {
@@ -664,6 +678,14 @@ function preview() {
               <template v-else>
                 <Alert><Server /><AlertTitle>先完善 API 服务</AlertTitle><AlertDescription>这里设置接入方式、模型与账户收款资料；额度价格、份数和场次在后续步骤设置。</AlertDescription></Alert>
                 <ApiAccessSourceSection :form="baseForm" :errors="baseErrors" selling-mode="limited" @set-distribution="setDistribution" @set-default-multiplier="setDefaultMultiplier" />
+                <ProbeConnectionSection
+                  v-model="baseForm.probeConnectionId"
+                  :connections="probeConnections"
+                  :loading="probeConnectionsQuery.isLoading.value"
+                  :error="probeConnectionError"
+                  :field-error="baseErrors.probeConnection"
+                  @refresh="probeConnectionsQuery.refetch()"
+                />
                 <AccountPaymentSummarySection
                   :form="baseForm"
                   :settings="accountSettingsValue"

@@ -981,6 +981,103 @@ paths:
                 $ref: "#/components/schemas/PublicAPIService"
         "404":
           $ref: "#/components/responses/Problem"
+  /api/v1/tools/api-model-tester/order-sources:
+    get:
+      operationId: listAPIModelTesterOrderSources
+      tags: [APIModelTester]
+      summary: List the current buyer's API orders eligible for temporary credential import.
+      responses:
+        "200":
+          description: Eligible order sources without API key material.
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+                const: private, no-store
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/APIModelTesterOrderSourceList"
+        "401":
+          $ref: "#/components/responses/Problem"
+  /api/v1/tools/api-model-tester/discover:
+    post:
+      operationId: discoverAPIModels
+      tags: [APIModelTester]
+      security:
+        - sessionCookie: []
+          csrfToken: []
+      summary: Discover all model IDs returned by an OpenAI-compatible /models endpoint.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/APIModelTesterDiscoverRequest"
+      responses:
+        "200":
+          description: Complete de-duplicated model IDs from this request. The result is not persisted.
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+                const: private, no-store
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/APIModelTesterDiscovery"
+        "401":
+          $ref: "#/components/responses/Problem"
+        "403":
+          $ref: "#/components/responses/Problem"
+        "404":
+          $ref: "#/components/responses/Problem"
+        "409":
+          $ref: "#/components/responses/Problem"
+        "429":
+          $ref: "#/components/responses/Problem"
+        "422":
+          $ref: "#/components/responses/Problem"
+        "502":
+          $ref: "#/components/responses/Problem"
+        "504":
+          $ref: "#/components/responses/Problem"
+  /api/v1/tools/api-model-tester/test:
+    post:
+      operationId: testAPIModel
+      tags: [APIModelTester]
+      security:
+        - sessionCookie: []
+          csrfToken: []
+      summary: Run one minimal Responses and Chat Completions call for a selected model ID.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/APIModelTesterTestRequest"
+      responses:
+        "200":
+          description: Per-protocol result for this request. Response bodies and credentials are not returned or persisted.
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+                const: private, no-store
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/APIModelTesterTestResult"
+        "401":
+          $ref: "#/components/responses/Problem"
+        "403":
+          $ref: "#/components/responses/Problem"
+        "404":
+          $ref: "#/components/responses/Problem"
+        "409":
+          $ref: "#/components/responses/Problem"
+        "422":
+          $ref: "#/components/responses/Problem"
   /api/v1/api-services/{id}/purchase-intents:
     post:
       operationId: createAPIPurchaseIntent
@@ -3044,20 +3141,15 @@ paths:
           $ref: "#/components/responses/Problem"
         "428":
           $ref: "#/components/responses/Problem"
-  /api/v1/owner/api-services/{id}/health-probe:
+  /api/v1/owner/api-probe-connections:
     get:
-      operationId: getOwnerAPIHealthProbe
+      operationId: listOwnerAPIProbeConnections
       tags: [OwnerAPIHealth]
-      summary: Read the current owner's service-level platform probe configuration.
-      parameters:
-        - $ref: "#/components/parameters/ResourceId"
+      summary: List reusable probe connections owned by the current seller.
       responses:
         "200":
-          description: Private probe configuration. Credentials are never returned.
+          description: Private reusable connections. Credentials are never returned.
           headers:
-            ETag:
-              schema:
-                type: string
             Cache-Control:
               schema:
                 type: string
@@ -3065,29 +3157,27 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/OwnerAPIHealthProbeConfig"
-        "404":
+                $ref: "#/components/schemas/OwnerAPIProbeConnectionList"
+        "401":
           $ref: "#/components/responses/Problem"
-    put:
-      operationId: putOwnerAPIHealthProbe
+    post:
+      operationId: createOwnerAPIProbeConnection
       tags: [OwnerAPIHealth]
       security:
         - sessionCookie: []
           csrfToken: []
-      summary: Create or replace the service-level platform probe configuration.
-      description: Use If-Match `"0"` for the first configuration. The optional credential is write-only; omitting it retains the existing encrypted credential.
+      summary: Create and immediately verify a reusable probe connection.
       parameters:
-        - $ref: "#/components/parameters/ResourceId"
-        - $ref: "#/components/parameters/IfMatchAllowZero"
+        - $ref: "#/components/parameters/IdempotencyKey"
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/APIHealthProbeConfigRequest"
+              $ref: "#/components/schemas/APIProbeConnectionRequest"
       responses:
-        "200":
-          description: Probe configuration created or updated without echoing credential material.
+        "201":
+          description: Connection created after the initial authenticated /models check.
           headers:
             ETag:
               schema:
@@ -3099,7 +3189,68 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/OwnerAPIHealthProbeConfig"
+                $ref: "#/components/schemas/OwnerAPIProbeConnection"
+        "401":
+          $ref: "#/components/responses/Problem"
+        "409":
+          $ref: "#/components/responses/Problem"
+        "422":
+          $ref: "#/components/responses/Problem"
+  /api/v1/owner/api-probe-connections/{id}:
+    get:
+      operationId: getOwnerAPIProbeConnection
+      tags: [OwnerAPIHealth]
+      summary: Read one reusable probe connection owned by the current seller.
+      parameters:
+        - $ref: "#/components/parameters/ResourceId"
+      responses:
+        "200":
+          description: Private probe connection without credential material.
+          headers:
+            ETag:
+              schema:
+                type: string
+            Cache-Control:
+              schema:
+                type: string
+                const: private, no-store
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OwnerAPIProbeConnection"
+        "404":
+          $ref: "#/components/responses/Problem"
+    put:
+      operationId: updateOwnerAPIProbeConnection
+      tags: [OwnerAPIHealth]
+      security:
+        - sessionCookie: []
+          csrfToken: []
+      summary: Replace a reusable probe connection and reverify it when its target or credential changes.
+      parameters:
+        - $ref: "#/components/parameters/ResourceId"
+        - $ref: "#/components/parameters/IfMatch"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/APIProbeConnectionRequest"
+      responses:
+        "200":
+          description: Updated connection without echoing credential material.
+          headers:
+            ETag:
+              schema:
+                type: string
+            Cache-Control:
+              schema:
+                type: string
+                const: private, no-store
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OwnerAPIProbeConnection"
         "404":
           $ref: "#/components/responses/Problem"
         "412":
@@ -3109,18 +3260,18 @@ paths:
         "428":
           $ref: "#/components/responses/Problem"
     delete:
-      operationId: deleteOwnerAPIHealthProbe
+      operationId: deleteOwnerAPIProbeConnection
       tags: [OwnerAPIHealth]
       security:
         - sessionCookie: []
           csrfToken: []
-      summary: Delete the probe configuration, encrypted credential, and retained samples.
+      summary: Delete an unreferenced probe connection and its retained samples.
       parameters:
         - $ref: "#/components/parameters/ResourceId"
         - $ref: "#/components/parameters/IfMatch"
       responses:
         "204":
-          description: Probe configuration and its dependent samples deleted.
+          description: Probe connection and its dependent samples deleted.
           headers:
             Cache-Control:
               schema:
@@ -3128,32 +3279,27 @@ paths:
                 const: private, no-store
         "404":
           $ref: "#/components/responses/Problem"
+        "409":
+          $ref: "#/components/responses/Problem"
         "412":
           $ref: "#/components/responses/Problem"
         "428":
           $ref: "#/components/responses/Problem"
-  /api/v1/owner/api-services/{id}/health-probe/challenges:
+  /api/v1/owner/api-probe-connections/{id}/verify:
     post:
-      operationId: createOwnerAPIHealthProbeChallenge
+      operationId: verifyOwnerAPIProbeConnection
       tags: [OwnerAPIHealth]
       security:
         - sessionCookie: []
           csrfToken: []
-      summary: Create a one-time DNS or HTTP ownership challenge.
-      description: The challenge token is returned only by this response. The platform stores only its hash.
+      summary: Re-run the authenticated /models check for a reusable probe connection.
       parameters:
         - $ref: "#/components/parameters/ResourceId"
         - $ref: "#/components/parameters/IfMatch"
         - $ref: "#/components/parameters/IdempotencyKey"
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/APIHealthProbeChallengeRequest"
       responses:
-        "201":
-          description: One-time ownership challenge created.
+        "200":
+          description: Connection state after the verification attempt.
           headers:
             ETag:
               schema:
@@ -3165,7 +3311,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/APIHealthProbeChallenge"
+                $ref: "#/components/schemas/OwnerAPIProbeConnection"
         "404":
           $ref: "#/components/responses/Problem"
         "412":
@@ -3174,33 +3320,34 @@ paths:
           $ref: "#/components/responses/Problem"
         "428":
           $ref: "#/components/responses/Problem"
-  /api/v1/owner/api-services/{id}/health-probe/verify:
-    post:
-      operationId: verifyOwnerAPIHealthProbe
-      tags: [OwnerAPIHealth]
+  /api/v1/owner/api-services/{id}/probe-connection:
+    patch:
+      operationId: updateOwnerAPIServiceProbeConnection
+      tags: [OwnerAPIServices]
       security:
         - sessionCookie: []
           csrfToken: []
-      summary: Verify the current one-time ownership challenge.
+      summary: Bind or unbind one verified reusable probe connection for an owned API service.
       parameters:
         - $ref: "#/components/parameters/ResourceId"
         - $ref: "#/components/parameters/IfMatch"
-        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/APIServiceProbeConnectionRequest"
       responses:
         "200":
-          description: Probe configuration after the verification attempt.
+          description: Owner API service with its current probe readiness.
           headers:
             ETag:
               schema:
                 type: string
-            Cache-Control:
-              schema:
-                type: string
-                const: private, no-store
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/OwnerAPIHealthProbeConfig"
+                $ref: "#/components/schemas/APIService"
         "404":
           $ref: "#/components/responses/Problem"
         "412":
@@ -4460,123 +4607,6 @@ paths:
               schema:
                 $ref: "#/components/schemas/APIServiceList"
         "403":
-          $ref: "#/components/responses/Problem"
-  /api/v1/admin/api-service-health-probes:
-    get:
-      operationId: listAdminAPIHealthProbes
-      tags: [AdminAPIHealth]
-      summary: List service-level probe configurations for exact-origin review.
-      parameters:
-        - name: status
-          in: query
-          required: false
-          schema:
-            type: string
-            enum: [pending, verified, approved, rejected]
-            default: pending
-        - $ref: "#/components/parameters/Limit"
-        - $ref: "#/components/parameters/Cursor"
-      responses:
-        "200":
-          description: Minimal administrator review projection without credential material or fingerprints.
-          headers:
-            Cache-Control:
-              schema:
-                type: string
-                const: private, no-store
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/AdminAPIHealthProbeList"
-        "403":
-          $ref: "#/components/responses/Problem"
-        "422":
-          $ref: "#/components/responses/Problem"
-  /api/v1/admin/api-service-health-probes/{id}/approve:
-    post:
-      operationId: approveAdminAPIHealthProbe
-      tags: [AdminAPIHealth]
-      security:
-        - sessionCookie: []
-          csrfToken: []
-      summary: Approve the configuration's current exact normalized origin.
-      parameters:
-        - $ref: "#/components/parameters/ResourceId"
-        - $ref: "#/components/parameters/IfMatch"
-        - $ref: "#/components/parameters/IdempotencyKey"
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/AdminAPIHealthProbeDecisionRequest"
-      responses:
-        "200":
-          description: Exact origin approved for the current probe configuration version.
-          headers:
-            ETag:
-              schema:
-                type: string
-            Cache-Control:
-              schema:
-                type: string
-                const: private, no-store
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/AdminAPIHealthProbe"
-        "403":
-          $ref: "#/components/responses/Problem"
-        "404":
-          $ref: "#/components/responses/Problem"
-        "412":
-          $ref: "#/components/responses/Problem"
-        "422":
-          $ref: "#/components/responses/Problem"
-        "428":
-          $ref: "#/components/responses/Problem"
-  /api/v1/admin/api-service-health-probes/{id}/reject:
-    post:
-      operationId: rejectAdminAPIHealthProbe
-      tags: [AdminAPIHealth]
-      security:
-        - sessionCookie: []
-          csrfToken: []
-      summary: Reject the configuration's current exact normalized origin.
-      parameters:
-        - $ref: "#/components/parameters/ResourceId"
-        - $ref: "#/components/parameters/IfMatch"
-        - $ref: "#/components/parameters/IdempotencyKey"
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/AdminAPIHealthProbeDecisionRequest"
-      responses:
-        "200":
-          description: Exact origin rejected with an administrator reason.
-          headers:
-            ETag:
-              schema:
-                type: string
-            Cache-Control:
-              schema:
-                type: string
-                const: private, no-store
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/AdminAPIHealthProbe"
-        "403":
-          $ref: "#/components/responses/Problem"
-        "404":
-          $ref: "#/components/responses/Problem"
-        "412":
-          $ref: "#/components/responses/Problem"
-        "422":
-          $ref: "#/components/responses/Problem"
-        "428":
           $ref: "#/components/responses/Problem"
   /api/v1/admin/api-service-promotions:
     get:
@@ -9678,7 +9708,7 @@ components:
           type: [string, "null"]
     APIModel:
       type: object
-      required: [id, providerId, providerCategory, providerCode, provider, providerActive, modelKey, displayName, capabilities, active, sortOrder, createdAt, updatedAt]
+      required: [id, providerId, providerCategory, providerCode, provider, providerActive, modelKey, capabilities, active, sortOrder, createdAt, updatedAt]
       properties:
         id:
           type: string
@@ -9696,8 +9726,6 @@ components:
         providerActive:
           type: boolean
         modelKey:
-          type: string
-        displayName:
           type: string
         capabilities:
           type: array
@@ -9733,7 +9761,7 @@ components:
     APIModelRequest:
       type: object
       additionalProperties: false
-      required: [providerId, modelKey, displayName, capabilities, active, sortOrder]
+      required: [providerId, modelKey, capabilities, active, sortOrder]
       properties:
         providerId:
           type: string
@@ -9742,10 +9770,6 @@ components:
           type: string
           minLength: 1
           maxLength: 120
-        displayName:
-          type: string
-          minLength: 1
-          maxLength: 80
         capabilities:
           type: array
           minItems: 1
@@ -10178,15 +10202,15 @@ components:
     ServiceHealthSummary:
       type: object
       additionalProperties: false
-      description: Platform-measured service health for one configured model from the current platform node. It is not an SLA or verification of every model offered by the service.
-      required: [state, availabilityReason, successRatePercent, successfulSamples, totalSamples, medianTtftMs, probeModel, transportSecurity, lastSampledAt, samples]
+      description: Platform-measured availability of one reusable Base URL and dedicated probe Key. It does not verify any model offered by a service and is not an SLA.
+      required: [state, availabilityReason, successRatePercent, successfulSamples, totalSamples, transportSecurity, lastSampledAt, samples]
       properties:
         state:
           type: string
           enum: [normal, fluctuating, abnormal, no_sample]
         availabilityReason:
           type: [string, "null"]
-          enum: [unconfigured, disabled, unauthorized, insufficient, stale, temporarily_unavailable, null]
+          enum: [unconfigured, disabled, unverified, insufficient, stale, temporarily_unavailable, null]
         successRatePercent:
           anyOf:
             - $ref: "#/components/schemas/DecimalString"
@@ -10197,11 +10221,6 @@ components:
         totalSamples:
           type: integer
           minimum: 0
-        medianTtftMs:
-          type: [integer, "null"]
-          minimum: 0
-        probeModel:
-          type: [string, "null"]
         transportSecurity:
           type: [string, "null"]
           enum: [secure_https, insecure_http, null]
@@ -10215,188 +10234,91 @@ components:
           maxItems: 12
           items:
             $ref: "#/components/schemas/ServiceHealthSample"
-    APIHealthProbeProtocol:
-      type: string
-      enum: [openai_chat_completions_v1]
-    APIHealthProbeAuthorizationStatus:
-      type: string
-      enum: [pending, verified, approved, rejected]
-    APIHealthProbeAuthorizationMethod:
-      type: [string, "null"]
-      enum: [dns_txt, http_challenge, admin_approval, null]
-    APIHealthProbeConfigRequest:
+    APIProbeConnectionRequest:
       type: object
       additionalProperties: false
-      required: [baseUrl, model, enabled]
+      required: [name, baseUrl, enabled]
       properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 80
         baseUrl:
           type: string
           format: uri
-          description: Public HTTP or HTTPS OpenAI-compatible base URL. HTTPS is recommended. A root-only URL is normalized with /v1; an existing non-root path is preserved. Query strings, fragments, userinfo, private addresses, metadata addresses, unsafe DNS results, redirects, and DNS rebinding are rejected.
-        model:
-          type: string
-          minLength: 1
+          description: Complete public HTTP or HTTPS OpenAI-compatible Base URL. The platform never appends /v1. Query strings, fragments, userinfo, unsafe addresses, redirects, and DNS rebinding are rejected.
         credential:
           type: string
           minLength: 1
           writeOnly: true
-          description: Dedicated low-quota, low-privilege API key restricted to the probe model. Omit on update to retain the currently encrypted credential.
+          description: Dedicated probe Key. Required when creating a connection; omit on update to retain the encrypted credential.
         enabled:
           type: boolean
         acknowledgeInsecureHttp:
           type: boolean
           default: false
-          description: Must be true on every request that saves an HTTP base URL; omission is treated as false. Confirms that the seller accepts unencrypted transport risk for a dedicated low-quota, low-privilege key restricted to the probe model. Ignored for HTTPS URLs.
-    OwnerAPIHealthProbeConfig:
+          description: Must be true when saving an HTTP Base URL. HTTP sends the dedicated probe Key over an unencrypted connection.
+    APIProbeConnectionServiceReference:
       type: object
       additionalProperties: false
-      required: [id, apiServiceId, protocol, baseUrl, normalizedOrigin, model, credentialConfigured, enabled, authorizationStatus, authorizationMethod, verifiedOrigin, verifiedAt, approvedAt, rejectionReason, challengeExpiresAt, measurementVersion, lastConfigErrorCode, version, createdAt, updatedAt]
+      required: [id, title]
       properties:
         id:
           type: string
           format: uuid
-        apiServiceId:
+        title:
+          type: string
+    OwnerAPIProbeConnection:
+      type: object
+      additionalProperties: false
+      required: [id, name, baseUrl, normalizedBaseUrl, credentialConfigured, enabled, verificationStatus, verifiedAt, lastVerificationErrorCode, measurementVersion, version, referencedServices, healthSummary, createdAt, updatedAt]
+      properties:
+        id:
           type: string
           format: uuid
-        protocol:
-          $ref: "#/components/schemas/APIHealthProbeProtocol"
+        name:
+          type: string
         baseUrl:
           type: string
           format: uri
-          description: Normalized OpenAI-compatible base URL. Root-only input is returned with /v1 appended.
-        normalizedOrigin:
+          description: The seller's trimmed input. It is not rewritten or completed with /v1.
+        normalizedBaseUrl:
           type: string
           format: uri
-        model:
-          type: string
+          description: Canonical comparison value. Domains are never resolved to IP literals for equality.
         credentialConfigured:
           type: boolean
-          description: Reports only whether an encrypted credential exists. Credential plaintext, ciphertext, nonce, and fingerprint are never returned.
+          description: Indicates only that an encrypted dedicated Key exists. Key material and fingerprints are never returned.
         enabled:
           type: boolean
-        authorizationStatus:
-          $ref: "#/components/schemas/APIHealthProbeAuthorizationStatus"
-        authorizationMethod:
-          $ref: "#/components/schemas/APIHealthProbeAuthorizationMethod"
-        verifiedOrigin:
-          type: [string, "null"]
-          format: uri
+        verificationStatus:
+          type: string
+          enum: [unverified, verified, failed]
         verifiedAt:
           type: [string, "null"]
           format: date-time
-        approvedAt:
+        lastVerificationErrorCode:
           type: [string, "null"]
-          format: date-time
-        rejectionReason:
-          type: [string, "null"]
-        challengeExpiresAt:
-          type: [string, "null"]
-          format: date-time
+          description: Sanitized low-cardinality error code without a URL, credential, or third-party response body.
         measurementVersion:
           type: integer
           minimum: 1
-        lastConfigErrorCode:
-          type: [string, "null"]
-          description: Low-cardinality sanitized operational code; never contains an upstream response or full URL.
         version:
           type: integer
           minimum: 1
+        referencedServices:
+          type: array
+          items:
+            $ref: "#/components/schemas/APIProbeConnectionServiceReference"
+        healthSummary:
+          $ref: "#/components/schemas/ServiceHealthSummary"
         createdAt:
           type: string
           format: date-time
         updatedAt:
           type: string
           format: date-time
-    APIHealthProbeChallengeRequest:
-      type: object
-      additionalProperties: false
-      required: [method]
-      properties:
-        method:
-          type: string
-          enum: [dns_txt, http_challenge]
-    APIHealthProbeChallenge:
-      type: object
-      additionalProperties: false
-      required: [token, method, dnsRecordName, httpUrl, expiresAt, configVersion]
-      properties:
-        token:
-          type: string
-          description: One-time secret returned only when the challenge is created.
-        method:
-          type: string
-          enum: [dns_txt, http_challenge]
-        dnsRecordName:
-          type: [string, "null"]
-        httpUrl:
-          type: [string, "null"]
-          format: uri
-        expiresAt:
-          type: string
-          format: date-time
-        configVersion:
-          type: integer
-          minimum: 1
-    AdminAPIHealthProbeDecisionRequest:
-      type: object
-      additionalProperties: false
-      required: [reason]
-      properties:
-        reason:
-          type: string
-          minLength: 1
-    AdminAPIHealthProbe:
-      type: object
-      additionalProperties: false
-      description: Minimal administrator exact-origin review projection. It never contains credential state, credential material, fingerprints, or upstream error bodies.
-      required: [id, apiServiceId, serviceTitle, ownerUserId, ownerUsername, ownerDisplayName, protocol, normalizedOrigin, model, enabled, authorizationStatus, authorizationMethod, verifiedOrigin, verifiedAt, approvedAt, rejectionReason, version, updatedAt]
-      properties:
-        id:
-          type: string
-          format: uuid
-        apiServiceId:
-          type: string
-          format: uuid
-        serviceTitle:
-          type: string
-        ownerUserId:
-          type: string
-          format: uuid
-        ownerUsername:
-          type: string
-        ownerDisplayName:
-          type: string
-        protocol:
-          $ref: "#/components/schemas/APIHealthProbeProtocol"
-        normalizedOrigin:
-          type: string
-          format: uri
-        model:
-          type: string
-        enabled:
-          type: boolean
-        authorizationStatus:
-          $ref: "#/components/schemas/APIHealthProbeAuthorizationStatus"
-        authorizationMethod:
-          $ref: "#/components/schemas/APIHealthProbeAuthorizationMethod"
-        verifiedOrigin:
-          type: [string, "null"]
-          format: uri
-        verifiedAt:
-          type: [string, "null"]
-          format: date-time
-        approvedAt:
-          type: [string, "null"]
-          format: date-time
-        rejectionReason:
-          type: [string, "null"]
-        version:
-          type: integer
-          minimum: 1
-        updatedAt:
-          type: string
-          format: date-time
-    AdminAPIHealthProbeList:
+    OwnerAPIProbeConnectionList:
       type: object
       additionalProperties: false
       required: [items]
@@ -10404,9 +10326,143 @@ components:
         items:
           type: array
           items:
-            $ref: "#/components/schemas/AdminAPIHealthProbe"
-        nextCursor:
-          type: [string, "null"]
+            $ref: "#/components/schemas/OwnerAPIProbeConnection"
+    APIModelTesterManualCredentialSource:
+      type: object
+      additionalProperties: false
+      required: [kind, baseUrl, apiKey, acknowledgeInsecureHttp]
+      properties:
+        kind:
+          type: string
+          const: manual
+        baseUrl:
+          type: string
+          format: uri
+          description: Complete Base URL. The platform never appends /v1.
+        apiKey:
+          type: string
+          minLength: 1
+          writeOnly: true
+          description: Used only by the current request and never persisted or returned.
+        acknowledgeInsecureHttp:
+          type: boolean
+          description: Must be true when baseUrl uses HTTP; confirms the current request may send the Bearer key over an unencrypted connection.
+    APIModelTesterOrderCredentialSource:
+      type: object
+      additionalProperties: false
+      required: [kind, orderId, acknowledgeInsecureHttp]
+      properties:
+        kind:
+          type: string
+          const: order
+        orderId:
+          type: string
+          format: uuid
+        acknowledgeInsecureHttp:
+          type: boolean
+          description: Must be true when the selected order Base URL uses HTTP; the confirmation applies only to this tester request.
+    APIModelTesterCredentialSource:
+      oneOf:
+        - $ref: "#/components/schemas/APIModelTesterManualCredentialSource"
+        - $ref: "#/components/schemas/APIModelTesterOrderCredentialSource"
+      discriminator:
+        propertyName: kind
+        mapping:
+          manual: "#/components/schemas/APIModelTesterManualCredentialSource"
+          order: "#/components/schemas/APIModelTesterOrderCredentialSource"
+    APIModelTesterDiscoverRequest:
+      type: object
+      additionalProperties: false
+      required: [credentialSource]
+      properties:
+        credentialSource:
+          $ref: "#/components/schemas/APIModelTesterCredentialSource"
+    APIModelTesterTestRequest:
+      type: object
+      additionalProperties: false
+      required: [credentialSource, model]
+      properties:
+        credentialSource:
+          $ref: "#/components/schemas/APIModelTesterCredentialSource"
+        model:
+          type: string
+          minLength: 1
+          maxLength: 512
+    APIModelTesterOrderSource:
+      type: object
+      additionalProperties: false
+      required: [orderId, orderNo, serviceTitle, baseUrl, deliveredAt]
+      properties:
+        orderId:
+          type: string
+          format: uuid
+        orderNo:
+          type: string
+        serviceTitle:
+          type: string
+        baseUrl:
+          type: string
+          format: uri
+        deliveredAt:
+          type: string
+          format: date-time
+    APIModelTesterOrderSourceList:
+      type: object
+      additionalProperties: false
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/APIModelTesterOrderSource"
+    APIModelTesterDiscovery:
+      type: object
+      additionalProperties: false
+      required: [baseUrl, models, discoveredAt]
+      properties:
+        baseUrl:
+          type: string
+          format: uri
+        models:
+          type: array
+          items:
+            type: string
+        discoveredAt:
+          type: string
+          format: date-time
+    APIModelTesterErrorCode:
+      type: string
+      enum: ["", authentication_failed, protocol_unsupported, rate_limited, request_rejected, upstream_error, timeout, blocked_target, dns_failed, connect_failed, tls_failed, response_too_large, invalid_response, internal]
+    APIModelTesterProtocolResult:
+      type: object
+      additionalProperties: false
+      required: [succeeded, httpStatusClass, durationMs, errorCode]
+      properties:
+        succeeded:
+          type: boolean
+        httpStatusClass:
+          type: integer
+          minimum: 0
+          maximum: 5
+        durationMs:
+          type: integer
+          minimum: 0
+        errorCode:
+          $ref: "#/components/schemas/APIModelTesterErrorCode"
+    APIModelTesterTestResult:
+      type: object
+      additionalProperties: false
+      required: [model, responsesResult, chatCompletionsResult, testedAt]
+      properties:
+        model:
+          type: string
+        responsesResult:
+          $ref: "#/components/schemas/APIModelTesterProtocolResult"
+        chatCompletionsResult:
+          $ref: "#/components/schemas/APIModelTesterProtocolResult"
+        testedAt:
+          type: string
+          format: date-time
     QuotaLimitModeInput:
       type: string
       enum: [limited, unlimited]
@@ -10485,6 +10541,10 @@ components:
         ownerContactMethodId:
           type: string
           format: uuid
+        probeConnectionId:
+          type: string
+          format: uuid
+          description: Optional while saving a draft. Publication and order acceptance require an enabled, verified connection owned by the seller.
         title:
           type: string
           maxLength: 120
@@ -10697,6 +10757,14 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/APIServicePaymentOptionInput"
+    APIServiceProbeConnectionRequest:
+      type: object
+      additionalProperties: false
+      required: [probeConnectionId]
+      properties:
+        probeConnectionId:
+          type: string
+          description: Reusable connection UUID, or an empty string to unbind the service.
     APIServicePaymentOptionInput:
       type: object
       additionalProperties: false
@@ -10753,6 +10821,7 @@ components:
         - merchantRefundCommitment
         - merchantRefundPolicyVersion
         - promptAuditEnabled
+        - probeReady
         - acceptingOrders
         - paymentWindowMinutes
         - acceptedPaymentMethods
@@ -10958,6 +11027,13 @@ components:
           type: string
           format: uuid
           description: Owner/admin view only. Public clients must create purchase intents instead of reading contact values from service detail.
+        probeConnectionId:
+          type: string
+          format: uuid
+          description: Owner/admin-only reusable probe connection binding. Public service DTOs never expose it.
+        probeReady:
+          type: boolean
+          description: True only while the bound connection is enabled and verified. Periodic sample failures do not change this readiness fact.
         title:
           type: string
         shortDescription:
@@ -11100,7 +11176,7 @@ components:
           type: string
     APIServiceModel:
       type: object
-      required: [id, modelCatalogId, modelNameSnapshot, providerSnapshot, capabilitiesSnapshot, merchantMultiplier, enabled]
+      required: [id, modelCatalogId, modelKeySnapshot, providerSnapshot, capabilitiesSnapshot, merchantMultiplier, enabled]
       properties:
         id:
           type: string
@@ -11111,7 +11187,7 @@ components:
         modelPriceVersionId:
           type: string
           format: uuid
-        modelNameSnapshot:
+        modelKeySnapshot:
           type: string
         providerSnapshot:
           type: string
@@ -11165,7 +11241,7 @@ components:
             $ref: "#/components/schemas/APIServicePackageModel"
     APIServicePackageModel:
       type: object
-      required: [serviceModelId, modelCatalogId, modelNameSnapshot, providerSnapshot, merchantMultiplier]
+      required: [serviceModelId, modelCatalogId, modelKeySnapshot, providerSnapshot, merchantMultiplier]
       properties:
         serviceModelId:
           type: string
@@ -11176,7 +11252,7 @@ components:
         modelPriceVersionId:
           type: string
           format: uuid
-        modelNameSnapshot:
+        modelKeySnapshot:
           type: string
         providerSnapshot:
           type: string
@@ -12376,6 +12452,14 @@ components:
         pricingSnapshot:
           type: string
           description: Frozen JSON pricing snapshot from the internal purchase-intent record.
+        probeConnectionIdSnapshot:
+          type: string
+          format: uuid
+          description: Reusable connection selected when the order was created. Historical orders may omit it.
+        apiBaseUrlSnapshot:
+          type: string
+          format: uri
+          description: Seller-entered Base URL frozen when the order was created. The normalized comparison value remains private to the backend.
         quotaUsagePolicySnapshot:
           $ref: "#/components/schemas/QuotaUsagePolicy"
         promptAuditEnabledSnapshot:

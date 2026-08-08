@@ -866,7 +866,6 @@ export type ApiModel = {
     provider: string;
     providerActive: boolean;
     modelKey: string;
-    displayName: string;
     capabilities: Array<'text' | 'chat' | 'vision' | 'image_generation' | 'image_edit' | 'reasoning'>;
     active: boolean;
     currentPriceVersionId?: string;
@@ -884,7 +883,6 @@ export type ApiModel = {
 export type ApiModelRequest = {
     providerId: string;
     modelKey: string;
-    displayName: string;
     capabilities: Array<'text' | 'chat' | 'vision' | 'image_generation' | 'image_edit' | 'reasoning'>;
     /**
      * Decimal string per million tokens. Empty string means null.
@@ -1087,16 +1085,14 @@ export type ServiceHealthSample = {
 };
 
 /**
- * Platform-measured service health for one configured model from the current platform node. It is not an SLA or verification of every model offered by the service.
+ * Platform-measured availability of one reusable Base URL and dedicated probe Key. It does not verify any model offered by a service and is not an SLA.
  */
 export type ServiceHealthSummary = {
     state: 'normal' | 'fluctuating' | 'abnormal' | 'no_sample';
-    availabilityReason: 'unconfigured' | 'disabled' | 'unauthorized' | 'insufficient' | 'stale' | 'temporarily_unavailable' | null;
+    availabilityReason: 'unconfigured' | 'disabled' | 'unverified' | 'insufficient' | 'stale' | 'temporarily_unavailable' | null;
     successRatePercent: DecimalString | null;
     successfulSamples: number;
     totalSamples: number;
-    medianTtftMs: number | null;
-    probeModel: string | null;
     /**
      * Public-safe transport disclosure derived from the configured target scheme. It does not expose the target URL.
      */
@@ -1118,104 +1114,126 @@ export type ServiceHealthSummary = {
     ];
 };
 
-export type ApiHealthProbeProtocol = 'openai_chat_completions_v1';
-
-export type ApiHealthProbeAuthorizationStatus = 'pending' | 'verified' | 'approved' | 'rejected';
-
-export type ApiHealthProbeAuthorizationMethod = 'dns_txt' | 'http_challenge' | 'admin_approval' | null;
-
-export type ApiHealthProbeConfigRequest = {
+export type ApiProbeConnectionRequest = {
+    name: string;
     /**
-     * Public HTTP or HTTPS OpenAI-compatible base URL. HTTPS is recommended. A root-only URL is normalized with /v1; an existing non-root path is preserved. Query strings, fragments, userinfo, private addresses, metadata addresses, unsafe DNS results, redirects, and DNS rebinding are rejected.
+     * Complete public HTTP or HTTPS OpenAI-compatible Base URL. The platform never appends /v1. Query strings, fragments, userinfo, unsafe addresses, redirects, and DNS rebinding are rejected.
      */
     baseUrl: string;
-    model: string;
     enabled: boolean;
     /**
-     * Must be true on every request that saves an HTTP base URL; omission is treated as false. Confirms that the seller accepts unencrypted transport risk for a dedicated low-quota, low-privilege key restricted to the probe model. Ignored for HTTPS URLs.
+     * Must be true when saving an HTTP Base URL. HTTP sends the dedicated probe Key over an unencrypted connection.
      */
     acknowledgeInsecureHttp?: boolean;
 };
 
-export type OwnerApiHealthProbeConfig = {
+export type ApiProbeConnectionServiceReference = {
     id: string;
-    apiServiceId: string;
-    protocol: ApiHealthProbeProtocol;
+    title: string;
+};
+
+export type OwnerApiProbeConnection = {
+    id: string;
+    name: string;
     /**
-     * Normalized OpenAI-compatible base URL. Root-only input is returned with /v1 appended.
+     * The seller's trimmed input. It is not rewritten or completed with /v1.
      */
     baseUrl: string;
-    normalizedOrigin: string;
-    model: string;
     /**
-     * Reports only whether an encrypted credential exists. Credential plaintext, ciphertext, nonce, and fingerprint are never returned.
+     * Canonical comparison value. Domains are never resolved to IP literals for equality.
+     */
+    normalizedBaseUrl: string;
+    /**
+     * Indicates only that an encrypted dedicated Key exists. Key material and fingerprints are never returned.
      */
     credentialConfigured: boolean;
     enabled: boolean;
-    authorizationStatus: ApiHealthProbeAuthorizationStatus;
-    authorizationMethod: ApiHealthProbeAuthorizationMethod;
-    verifiedOrigin: string | null;
+    verificationStatus: 'unverified' | 'verified' | 'failed';
     verifiedAt: string | null;
-    approvedAt: string | null;
-    rejectionReason: string | null;
-    challengeExpiresAt: string | null;
-    measurementVersion: number;
     /**
-     * Low-cardinality sanitized operational code; never contains an upstream response or full URL.
+     * Sanitized low-cardinality error code without a URL, credential, or third-party response body.
      */
-    lastConfigErrorCode: string | null;
+    lastVerificationErrorCode: string | null;
+    measurementVersion: number;
     version: number;
+    referencedServices: Array<ApiProbeConnectionServiceReference>;
+    healthSummary: ServiceHealthSummary;
     createdAt: string;
     updatedAt: string;
 };
 
-export type ApiHealthProbeChallengeRequest = {
-    method: 'dns_txt' | 'http_challenge';
+export type OwnerApiProbeConnectionList = {
+    items: Array<OwnerApiProbeConnection>;
 };
 
-export type ApiHealthProbeChallenge = {
+export type ApiModelTesterManualCredentialSource = {
+    kind: 'manual';
     /**
-     * One-time secret returned only when the challenge is created.
+     * Complete Base URL. The platform never appends /v1.
      */
-    token: string;
-    method: 'dns_txt' | 'http_challenge';
-    dnsRecordName: string | null;
-    httpUrl: string | null;
-    expiresAt: string;
-    configVersion: number;
+    baseUrl: string;
+    /**
+     * Must be true when baseUrl uses HTTP; confirms the current request may send the Bearer key over an unencrypted connection.
+     */
+    acknowledgeInsecureHttp: boolean;
 };
 
-export type AdminApiHealthProbeDecisionRequest = {
-    reason: string;
+export type ApiModelTesterOrderCredentialSource = {
+    kind: 'order';
+    orderId: string;
+    /**
+     * Must be true when the selected order Base URL uses HTTP; the confirmation applies only to this tester request.
+     */
+    acknowledgeInsecureHttp: boolean;
 };
 
-/**
- * Minimal administrator exact-origin review projection. It never contains credential state, credential material, fingerprints, or upstream error bodies.
- */
-export type AdminApiHealthProbe = {
-    id: string;
-    apiServiceId: string;
-    serviceTitle: string;
-    ownerUserId: string;
-    ownerUsername: string;
-    ownerDisplayName: string;
-    protocol: ApiHealthProbeProtocol;
-    normalizedOrigin: string;
+export type ApiModelTesterCredentialSource = ({
+    kind: 'manual';
+} & ApiModelTesterManualCredentialSource) | ({
+    kind: 'order';
+} & ApiModelTesterOrderCredentialSource);
+
+export type ApiModelTesterDiscoverRequest = {
+    credentialSource: ApiModelTesterCredentialSource;
+};
+
+export type ApiModelTesterTestRequest = {
+    credentialSource: ApiModelTesterCredentialSource;
     model: string;
-    enabled: boolean;
-    authorizationStatus: ApiHealthProbeAuthorizationStatus;
-    authorizationMethod: ApiHealthProbeAuthorizationMethod;
-    verifiedOrigin: string | null;
-    verifiedAt: string | null;
-    approvedAt: string | null;
-    rejectionReason: string | null;
-    version: number;
-    updatedAt: string;
 };
 
-export type AdminApiHealthProbeList = {
-    items: Array<AdminApiHealthProbe>;
-    nextCursor?: string | null;
+export type ApiModelTesterOrderSource = {
+    orderId: string;
+    orderNo: string;
+    serviceTitle: string;
+    baseUrl: string;
+    deliveredAt: string;
+};
+
+export type ApiModelTesterOrderSourceList = {
+    items: Array<ApiModelTesterOrderSource>;
+};
+
+export type ApiModelTesterDiscovery = {
+    baseUrl: string;
+    models: Array<string>;
+    discoveredAt: string;
+};
+
+export type ApiModelTesterErrorCode = '' | 'authentication_failed' | 'protocol_unsupported' | 'rate_limited' | 'request_rejected' | 'upstream_error' | 'timeout' | 'blocked_target' | 'dns_failed' | 'connect_failed' | 'tls_failed' | 'response_too_large' | 'invalid_response' | 'internal';
+
+export type ApiModelTesterProtocolResult = {
+    succeeded: boolean;
+    httpStatusClass: number;
+    durationMs: number;
+    errorCode: ApiModelTesterErrorCode;
+};
+
+export type ApiModelTesterTestResult = {
+    model: string;
+    responsesResult: ApiModelTesterProtocolResult;
+    chatCompletionsResult: ApiModelTesterProtocolResult;
+    testedAt: string;
 };
 
 export type QuotaLimitModeInput = 'limited' | 'unlimited';
@@ -1251,6 +1269,10 @@ export type ApiServiceRequest = {
     merchantProfileId?: string;
     merchantIdentityMode?: 'public_profile' | 'store_alias';
     ownerContactMethodId: string;
+    /**
+     * Optional while saving a draft. Publication and order acceptance require an enabled, verified connection owned by the seller.
+     */
+    probeConnectionId?: string;
     title: string;
     shortDescription: string;
     /**
@@ -1381,6 +1403,13 @@ export type ApiServiceOrderSettingsRequest = {
     acceptingOrders?: boolean;
     paymentWindowMinutes?: number;
     paymentOptions?: Array<ApiServicePaymentOptionInput>;
+};
+
+export type ApiServiceProbeConnectionRequest = {
+    /**
+     * Reusable connection UUID, or an empty string to unbind the service.
+     */
+    probeConnectionId: string;
 };
 
 export type ApiServicePaymentOptionInput = {
@@ -1523,6 +1552,14 @@ export type ApiService = {
      * Owner/admin view only. Public clients must create purchase intents instead of reading contact values from service detail.
      */
     ownerContactMethodId?: string;
+    /**
+     * Owner/admin-only reusable probe connection binding. Public service DTOs never expose it.
+     */
+    probeConnectionId?: string;
+    /**
+     * True only while the bound connection is enabled and verified. Periodic sample failures do not change this readiness fact.
+     */
+    probeReady?: boolean;
     title: string;
     shortDescription: string;
     /**
@@ -1608,7 +1645,7 @@ export type ApiServiceModel = {
     id: string;
     modelCatalogId: string;
     modelPriceVersionId?: string;
-    modelNameSnapshot: string;
+    modelKeySnapshot: string;
     providerSnapshot: string;
     capabilitiesSnapshot: Array<string>;
     merchantMultiplier: DecimalString;
@@ -1637,7 +1674,7 @@ export type ApiServicePackageModel = {
     serviceModelId: string;
     modelCatalogId: string;
     modelPriceVersionId?: string;
-    modelNameSnapshot: string;
+    modelKeySnapshot: string;
     providerSnapshot: string;
     merchantMultiplier: DecimalString;
 };
@@ -2260,6 +2297,14 @@ export type ApiOrder = {
      * Frozen JSON pricing snapshot from the internal purchase-intent record.
      */
     pricingSnapshot?: string;
+    /**
+     * Reusable connection selected when the order was created. Historical orders may omit it.
+     */
+    probeConnectionIdSnapshot?: string;
+    /**
+     * Seller-entered Base URL frozen when the order was created. The normalized comparison value remains private to the backend.
+     */
+    apiBaseUrlSnapshot?: string;
     quotaUsagePolicySnapshot: QuotaUsagePolicy;
     /**
      * Seller prompt-audit declaration frozen from the purchase intent or limited-offer order context. Null means historical undeclared and is never filled from the current service.
@@ -3766,21 +3811,52 @@ export type ModelAuditTargetRequestWritable = {
     apiServiceModelId?: string;
 };
 
-export type ApiHealthProbeConfigRequestWritable = {
+export type ApiProbeConnectionRequestWritable = {
+    name: string;
     /**
-     * Public HTTP or HTTPS OpenAI-compatible base URL. HTTPS is recommended. A root-only URL is normalized with /v1; an existing non-root path is preserved. Query strings, fragments, userinfo, private addresses, metadata addresses, unsafe DNS results, redirects, and DNS rebinding are rejected.
+     * Complete public HTTP or HTTPS OpenAI-compatible Base URL. The platform never appends /v1. Query strings, fragments, userinfo, unsafe addresses, redirects, and DNS rebinding are rejected.
      */
     baseUrl: string;
-    model: string;
     /**
-     * Dedicated low-quota, low-privilege API key restricted to the probe model. Omit on update to retain the currently encrypted credential.
+     * Dedicated probe Key. Required when creating a connection; omit on update to retain the encrypted credential.
      */
     credential?: string;
     enabled: boolean;
     /**
-     * Must be true on every request that saves an HTTP base URL; omission is treated as false. Confirms that the seller accepts unencrypted transport risk for a dedicated low-quota, low-privilege key restricted to the probe model. Ignored for HTTPS URLs.
+     * Must be true when saving an HTTP Base URL. HTTP sends the dedicated probe Key over an unencrypted connection.
      */
     acknowledgeInsecureHttp?: boolean;
+};
+
+export type ApiModelTesterManualCredentialSourceWritable = {
+    kind: 'manual';
+    /**
+     * Complete Base URL. The platform never appends /v1.
+     */
+    baseUrl: string;
+    /**
+     * Used only by the current request and never persisted or returned.
+     */
+    apiKey: string;
+    /**
+     * Must be true when baseUrl uses HTTP; confirms the current request may send the Bearer key over an unencrypted connection.
+     */
+    acknowledgeInsecureHttp: boolean;
+};
+
+export type ApiModelTesterCredentialSourceWritable = ({
+    kind: 'manual';
+} & ApiModelTesterManualCredentialSourceWritable) | ({
+    kind: 'order';
+} & ApiModelTesterOrderCredentialSource);
+
+export type ApiModelTesterDiscoverRequestWritable = {
+    credentialSource: ApiModelTesterCredentialSourceWritable;
+};
+
+export type ApiModelTesterTestRequestWritable = {
+    credentialSource: ApiModelTesterCredentialSourceWritable;
+    model: string;
 };
 
 /**
@@ -5103,6 +5179,125 @@ export type GetPublicApiServiceResponses = {
 };
 
 export type GetPublicApiServiceResponse = GetPublicApiServiceResponses[keyof GetPublicApiServiceResponses];
+
+export type ListApiModelTesterOrderSourcesData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/v1/tools/api-model-tester/order-sources';
+};
+
+export type ListApiModelTesterOrderSourcesErrors = {
+    /**
+     * Problem Details error.
+     */
+    401: ProblemDetails;
+};
+
+export type ListApiModelTesterOrderSourcesError = ListApiModelTesterOrderSourcesErrors[keyof ListApiModelTesterOrderSourcesErrors];
+
+export type ListApiModelTesterOrderSourcesResponses = {
+    /**
+     * Eligible order sources without API key material.
+     */
+    200: ApiModelTesterOrderSourceList;
+};
+
+export type ListApiModelTesterOrderSourcesResponse = ListApiModelTesterOrderSourcesResponses[keyof ListApiModelTesterOrderSourcesResponses];
+
+export type DiscoverApiModelsData = {
+    body: ApiModelTesterDiscoverRequestWritable;
+    path?: never;
+    query?: never;
+    url: '/api/v1/tools/api-model-tester/discover';
+};
+
+export type DiscoverApiModelsErrors = {
+    /**
+     * Problem Details error.
+     */
+    401: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    403: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    404: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    409: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    422: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    429: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    502: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    504: ProblemDetails;
+};
+
+export type DiscoverApiModelsError = DiscoverApiModelsErrors[keyof DiscoverApiModelsErrors];
+
+export type DiscoverApiModelsResponses = {
+    /**
+     * Complete de-duplicated model IDs from this request. The result is not persisted.
+     */
+    200: ApiModelTesterDiscovery;
+};
+
+export type DiscoverApiModelsResponse = DiscoverApiModelsResponses[keyof DiscoverApiModelsResponses];
+
+export type TestApiModelData = {
+    body: ApiModelTesterTestRequestWritable;
+    path?: never;
+    query?: never;
+    url: '/api/v1/tools/api-model-tester/test';
+};
+
+export type TestApiModelErrors = {
+    /**
+     * Problem Details error.
+     */
+    401: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    403: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    404: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    409: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    422: ProblemDetails;
+};
+
+export type TestApiModelError = TestApiModelErrors[keyof TestApiModelErrors];
+
+export type TestApiModelResponses = {
+    /**
+     * Per-protocol result for this request. Response bodies and credentials are not returned or persisted.
+     */
+    200: ApiModelTesterTestResult;
+};
+
+export type TestApiModelResponse = TestApiModelResponses[keyof TestApiModelResponses];
 
 export type CreateApiPurchaseIntentData = {
     body: CreateApiPurchaseIntentRequest;
@@ -7800,7 +7995,68 @@ export type UpdateOwnerApiServiceResponses = {
 
 export type UpdateOwnerApiServiceResponse = UpdateOwnerApiServiceResponses[keyof UpdateOwnerApiServiceResponses];
 
-export type DeleteOwnerApiHealthProbeData = {
+export type ListOwnerApiProbeConnectionsData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/v1/owner/api-probe-connections';
+};
+
+export type ListOwnerApiProbeConnectionsErrors = {
+    /**
+     * Problem Details error.
+     */
+    401: ProblemDetails;
+};
+
+export type ListOwnerApiProbeConnectionsError = ListOwnerApiProbeConnectionsErrors[keyof ListOwnerApiProbeConnectionsErrors];
+
+export type ListOwnerApiProbeConnectionsResponses = {
+    /**
+     * Private reusable connections. Credentials are never returned.
+     */
+    200: OwnerApiProbeConnectionList;
+};
+
+export type ListOwnerApiProbeConnectionsResponse = ListOwnerApiProbeConnectionsResponses[keyof ListOwnerApiProbeConnectionsResponses];
+
+export type CreateOwnerApiProbeConnectionData = {
+    body: ApiProbeConnectionRequestWritable;
+    headers: {
+        'Idempotency-Key': string;
+    };
+    path?: never;
+    query?: never;
+    url: '/api/v1/owner/api-probe-connections';
+};
+
+export type CreateOwnerApiProbeConnectionErrors = {
+    /**
+     * Problem Details error.
+     */
+    401: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    409: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    422: ProblemDetails;
+};
+
+export type CreateOwnerApiProbeConnectionError = CreateOwnerApiProbeConnectionErrors[keyof CreateOwnerApiProbeConnectionErrors];
+
+export type CreateOwnerApiProbeConnectionResponses = {
+    /**
+     * Connection created after the initial authenticated /models check.
+     */
+    201: OwnerApiProbeConnection;
+};
+
+export type CreateOwnerApiProbeConnectionResponse = CreateOwnerApiProbeConnectionResponses[keyof CreateOwnerApiProbeConnectionResponses];
+
+export type DeleteOwnerApiProbeConnectionData = {
     body?: never;
     headers: {
         'If-Match': string;
@@ -7809,14 +8065,18 @@ export type DeleteOwnerApiHealthProbeData = {
         id: string;
     };
     query?: never;
-    url: '/api/v1/owner/api-services/{id}/health-probe';
+    url: '/api/v1/owner/api-probe-connections/{id}';
 };
 
-export type DeleteOwnerApiHealthProbeErrors = {
+export type DeleteOwnerApiProbeConnectionErrors = {
     /**
      * Problem Details error.
      */
     404: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    409: ProblemDetails;
     /**
      * Problem Details error.
      */
@@ -7827,60 +8087,57 @@ export type DeleteOwnerApiHealthProbeErrors = {
     428: ProblemDetails;
 };
 
-export type DeleteOwnerApiHealthProbeError = DeleteOwnerApiHealthProbeErrors[keyof DeleteOwnerApiHealthProbeErrors];
+export type DeleteOwnerApiProbeConnectionError = DeleteOwnerApiProbeConnectionErrors[keyof DeleteOwnerApiProbeConnectionErrors];
 
-export type DeleteOwnerApiHealthProbeResponses = {
+export type DeleteOwnerApiProbeConnectionResponses = {
     /**
-     * Probe configuration and its dependent samples deleted.
+     * Probe connection and its dependent samples deleted.
      */
     204: void;
 };
 
-export type DeleteOwnerApiHealthProbeResponse = DeleteOwnerApiHealthProbeResponses[keyof DeleteOwnerApiHealthProbeResponses];
+export type DeleteOwnerApiProbeConnectionResponse = DeleteOwnerApiProbeConnectionResponses[keyof DeleteOwnerApiProbeConnectionResponses];
 
-export type GetOwnerApiHealthProbeData = {
+export type GetOwnerApiProbeConnectionData = {
     body?: never;
     path: {
         id: string;
     };
     query?: never;
-    url: '/api/v1/owner/api-services/{id}/health-probe';
+    url: '/api/v1/owner/api-probe-connections/{id}';
 };
 
-export type GetOwnerApiHealthProbeErrors = {
+export type GetOwnerApiProbeConnectionErrors = {
     /**
      * Problem Details error.
      */
     404: ProblemDetails;
 };
 
-export type GetOwnerApiHealthProbeError = GetOwnerApiHealthProbeErrors[keyof GetOwnerApiHealthProbeErrors];
+export type GetOwnerApiProbeConnectionError = GetOwnerApiProbeConnectionErrors[keyof GetOwnerApiProbeConnectionErrors];
 
-export type GetOwnerApiHealthProbeResponses = {
+export type GetOwnerApiProbeConnectionResponses = {
     /**
-     * Private probe configuration. Credentials are never returned.
+     * Private probe connection without credential material.
      */
-    200: OwnerApiHealthProbeConfig;
+    200: OwnerApiProbeConnection;
 };
 
-export type GetOwnerApiHealthProbeResponse = GetOwnerApiHealthProbeResponses[keyof GetOwnerApiHealthProbeResponses];
+export type GetOwnerApiProbeConnectionResponse = GetOwnerApiProbeConnectionResponses[keyof GetOwnerApiProbeConnectionResponses];
 
-export type PutOwnerApiHealthProbeData = {
-    body: ApiHealthProbeConfigRequestWritable;
+export type UpdateOwnerApiProbeConnectionData = {
+    body: ApiProbeConnectionRequestWritable;
     headers: {
-        /**
-         * Use `"0"` when creating a resource whose operation explicitly supports first-write optimistic locking; otherwise use the current ETag version.
-         */
         'If-Match': string;
     };
     path: {
         id: string;
     };
     query?: never;
-    url: '/api/v1/owner/api-services/{id}/health-probe';
+    url: '/api/v1/owner/api-probe-connections/{id}';
 };
 
-export type PutOwnerApiHealthProbeErrors = {
+export type UpdateOwnerApiProbeConnectionErrors = {
     /**
      * Problem Details error.
      */
@@ -7899,19 +8156,19 @@ export type PutOwnerApiHealthProbeErrors = {
     428: ProblemDetails;
 };
 
-export type PutOwnerApiHealthProbeError = PutOwnerApiHealthProbeErrors[keyof PutOwnerApiHealthProbeErrors];
+export type UpdateOwnerApiProbeConnectionError = UpdateOwnerApiProbeConnectionErrors[keyof UpdateOwnerApiProbeConnectionErrors];
 
-export type PutOwnerApiHealthProbeResponses = {
+export type UpdateOwnerApiProbeConnectionResponses = {
     /**
-     * Probe configuration created or updated without echoing credential material.
+     * Updated connection without echoing credential material.
      */
-    200: OwnerApiHealthProbeConfig;
+    200: OwnerApiProbeConnection;
 };
 
-export type PutOwnerApiHealthProbeResponse = PutOwnerApiHealthProbeResponses[keyof PutOwnerApiHealthProbeResponses];
+export type UpdateOwnerApiProbeConnectionResponse = UpdateOwnerApiProbeConnectionResponses[keyof UpdateOwnerApiProbeConnectionResponses];
 
-export type CreateOwnerApiHealthProbeChallengeData = {
-    body: ApiHealthProbeChallengeRequest;
+export type VerifyOwnerApiProbeConnectionData = {
+    body?: never;
     headers: {
         'If-Match': string;
         'Idempotency-Key': string;
@@ -7920,10 +8177,10 @@ export type CreateOwnerApiHealthProbeChallengeData = {
         id: string;
     };
     query?: never;
-    url: '/api/v1/owner/api-services/{id}/health-probe/challenges';
+    url: '/api/v1/owner/api-probe-connections/{id}/verify';
 };
 
-export type CreateOwnerApiHealthProbeChallengeErrors = {
+export type VerifyOwnerApiProbeConnectionErrors = {
     /**
      * Problem Details error.
      */
@@ -7942,31 +8199,30 @@ export type CreateOwnerApiHealthProbeChallengeErrors = {
     428: ProblemDetails;
 };
 
-export type CreateOwnerApiHealthProbeChallengeError = CreateOwnerApiHealthProbeChallengeErrors[keyof CreateOwnerApiHealthProbeChallengeErrors];
+export type VerifyOwnerApiProbeConnectionError = VerifyOwnerApiProbeConnectionErrors[keyof VerifyOwnerApiProbeConnectionErrors];
 
-export type CreateOwnerApiHealthProbeChallengeResponses = {
+export type VerifyOwnerApiProbeConnectionResponses = {
     /**
-     * One-time ownership challenge created.
+     * Connection state after the verification attempt.
      */
-    201: ApiHealthProbeChallenge;
+    200: OwnerApiProbeConnection;
 };
 
-export type CreateOwnerApiHealthProbeChallengeResponse = CreateOwnerApiHealthProbeChallengeResponses[keyof CreateOwnerApiHealthProbeChallengeResponses];
+export type VerifyOwnerApiProbeConnectionResponse = VerifyOwnerApiProbeConnectionResponses[keyof VerifyOwnerApiProbeConnectionResponses];
 
-export type VerifyOwnerApiHealthProbeData = {
-    body?: never;
+export type UpdateOwnerApiServiceProbeConnectionData = {
+    body: ApiServiceProbeConnectionRequest;
     headers: {
         'If-Match': string;
-        'Idempotency-Key': string;
     };
     path: {
         id: string;
     };
     query?: never;
-    url: '/api/v1/owner/api-services/{id}/health-probe/verify';
+    url: '/api/v1/owner/api-services/{id}/probe-connection';
 };
 
-export type VerifyOwnerApiHealthProbeErrors = {
+export type UpdateOwnerApiServiceProbeConnectionErrors = {
     /**
      * Problem Details error.
      */
@@ -7981,16 +8237,16 @@ export type VerifyOwnerApiHealthProbeErrors = {
     428: ProblemDetails;
 };
 
-export type VerifyOwnerApiHealthProbeError = VerifyOwnerApiHealthProbeErrors[keyof VerifyOwnerApiHealthProbeErrors];
+export type UpdateOwnerApiServiceProbeConnectionError = UpdateOwnerApiServiceProbeConnectionErrors[keyof UpdateOwnerApiServiceProbeConnectionErrors];
 
-export type VerifyOwnerApiHealthProbeResponses = {
+export type UpdateOwnerApiServiceProbeConnectionResponses = {
     /**
-     * Probe configuration after the verification attempt.
+     * Owner API service with its current probe readiness.
      */
-    200: OwnerApiHealthProbeConfig;
+    200: ApiService;
 };
 
-export type VerifyOwnerApiHealthProbeResponse = VerifyOwnerApiHealthProbeResponses[keyof VerifyOwnerApiHealthProbeResponses];
+export type UpdateOwnerApiServiceProbeConnectionResponse = UpdateOwnerApiServiceProbeConnectionResponses[keyof UpdateOwnerApiServiceProbeConnectionResponses];
 
 export type SubmitOwnerApiServiceReviewData = {
     body: EmptyRequestWritable;
@@ -9635,139 +9891,6 @@ export type ListAdminApiServicesResponses = {
 };
 
 export type ListAdminApiServicesResponse = ListAdminApiServicesResponses[keyof ListAdminApiServicesResponses];
-
-export type ListAdminApiHealthProbesData = {
-    body?: never;
-    path?: never;
-    query?: {
-        status?: 'pending' | 'verified' | 'approved' | 'rejected';
-        /**
-         * Page size. Defaults to 20 and must be between 1 and 100.
-         */
-        limit?: number;
-        /**
-         * Opaque pagination cursor returned as nextCursor. Clients must pass it back unchanged and must not inspect its internal encoding.
-         */
-        cursor?: string;
-    };
-    url: '/api/v1/admin/api-service-health-probes';
-};
-
-export type ListAdminApiHealthProbesErrors = {
-    /**
-     * Problem Details error.
-     */
-    403: ProblemDetails;
-    /**
-     * Problem Details error.
-     */
-    422: ProblemDetails;
-};
-
-export type ListAdminApiHealthProbesError = ListAdminApiHealthProbesErrors[keyof ListAdminApiHealthProbesErrors];
-
-export type ListAdminApiHealthProbesResponses = {
-    /**
-     * Minimal administrator review projection without credential material or fingerprints.
-     */
-    200: AdminApiHealthProbeList;
-};
-
-export type ListAdminApiHealthProbesResponse = ListAdminApiHealthProbesResponses[keyof ListAdminApiHealthProbesResponses];
-
-export type ApproveAdminApiHealthProbeData = {
-    body: AdminApiHealthProbeDecisionRequest;
-    headers: {
-        'If-Match': string;
-        'Idempotency-Key': string;
-    };
-    path: {
-        id: string;
-    };
-    query?: never;
-    url: '/api/v1/admin/api-service-health-probes/{id}/approve';
-};
-
-export type ApproveAdminApiHealthProbeErrors = {
-    /**
-     * Problem Details error.
-     */
-    403: ProblemDetails;
-    /**
-     * Problem Details error.
-     */
-    404: ProblemDetails;
-    /**
-     * Problem Details error.
-     */
-    412: ProblemDetails;
-    /**
-     * Problem Details error.
-     */
-    422: ProblemDetails;
-    /**
-     * Problem Details error.
-     */
-    428: ProblemDetails;
-};
-
-export type ApproveAdminApiHealthProbeError = ApproveAdminApiHealthProbeErrors[keyof ApproveAdminApiHealthProbeErrors];
-
-export type ApproveAdminApiHealthProbeResponses = {
-    /**
-     * Exact origin approved for the current probe configuration version.
-     */
-    200: AdminApiHealthProbe;
-};
-
-export type ApproveAdminApiHealthProbeResponse = ApproveAdminApiHealthProbeResponses[keyof ApproveAdminApiHealthProbeResponses];
-
-export type RejectAdminApiHealthProbeData = {
-    body: AdminApiHealthProbeDecisionRequest;
-    headers: {
-        'If-Match': string;
-        'Idempotency-Key': string;
-    };
-    path: {
-        id: string;
-    };
-    query?: never;
-    url: '/api/v1/admin/api-service-health-probes/{id}/reject';
-};
-
-export type RejectAdminApiHealthProbeErrors = {
-    /**
-     * Problem Details error.
-     */
-    403: ProblemDetails;
-    /**
-     * Problem Details error.
-     */
-    404: ProblemDetails;
-    /**
-     * Problem Details error.
-     */
-    412: ProblemDetails;
-    /**
-     * Problem Details error.
-     */
-    422: ProblemDetails;
-    /**
-     * Problem Details error.
-     */
-    428: ProblemDetails;
-};
-
-export type RejectAdminApiHealthProbeError = RejectAdminApiHealthProbeErrors[keyof RejectAdminApiHealthProbeErrors];
-
-export type RejectAdminApiHealthProbeResponses = {
-    /**
-     * Exact origin rejected with an administrator reason.
-     */
-    200: AdminApiHealthProbe;
-};
-
-export type RejectAdminApiHealthProbeResponse = RejectAdminApiHealthProbeResponses[keyof RejectAdminApiHealthProbeResponses];
 
 export type ListAdminApiServicePromotionsData = {
     body?: never;

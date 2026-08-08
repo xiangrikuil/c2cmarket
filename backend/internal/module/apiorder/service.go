@@ -47,6 +47,7 @@ type Service struct {
 	services              PublicServiceResolver
 	disputes              DisputeCaseCreator
 	idempotency           *idempotency.Service
+	deliveryVerifier      DeliveryCredentialVerifier
 	orders                map[string]Order
 	credentials           map[string]DeliveryCredential
 	availableAllowances   map[string]*big.Rat
@@ -326,6 +327,12 @@ func (s *Service) createOrUpdateWithIdempotencyResult(ctx context.Context, userI
 			return order, completion, false, completionErr
 		}
 		return Order{}, idempotency.CompletionFromEntry(entry), false, nil
+	}
+	if action == "submit_delivery" && actionInput.DeliveryCredential.DeliveryKind == DeliveryKindAPIKeyEndpoint {
+		if appErr := s.verifyAPIKeyDelivery(ctx, userID, actionInput); appErr != nil {
+			s.idempotency.Cancel(ctx, entry)
+			return Order{}, idempotency.Completion{}, false, appErr
+		}
 	}
 
 	if s.repo != nil {
@@ -658,6 +665,9 @@ func NewOrder(input CreateInput, intent apiintent.Intent, service apimarket.Serv
 	if !apimarket.WithOrderabilityAt(service, now).IsOrderable {
 		return Order{}, domain.NewError(http.StatusConflict, domain.CodeInvalidStateTransition, "Service not orderable", "当前 API 服务不可下单。")
 	}
+	if strings.TrimSpace(service.ProbeConnectionID) == "" || strings.TrimSpace(service.ProbeBaseURL) == "" || strings.TrimSpace(service.NormalizedProbeBaseURL) == "" {
+		return Order{}, domain.NewError(http.StatusConflict, domain.CodeInvalidStateTransition, "Probe target unavailable", "当前 API 服务缺少可冻结的探针连接目标。")
+	}
 	method := strings.TrimSpace(input.PaymentMethod)
 	option, ok := findPaymentOption(service, method)
 	if !ok {
@@ -690,6 +700,9 @@ func NewOrder(input CreateInput, intent apiintent.Intent, service apimarket.Serv
 		RequestedUSDAllowanceSnapshot: decimalStringOptional(intent.RequestedUSDAllowance, 6),
 		CNYPerUSDAllowanceSnapshot:    decimalStringOptional(intent.DeclaredCNYPerUSDAllowanceSnapshot, 4),
 		PricingSnapshot:               intent.PricingSnapshot,
+		ProbeConnectionIDSnapshot:     service.ProbeConnectionID,
+		APIBaseURLSnapshot:            service.ProbeBaseURL,
+		NormalizedAPIBaseURLSnapshot:  service.NormalizedProbeBaseURL,
 		PromptAuditEnabledSnapshot:    intent.PromptAuditEnabledSnapshot,
 		PackageStockReserved:          service.BillingMode == apimarket.ServiceBillingModeFixedPackage,
 		Amount:                        amount,

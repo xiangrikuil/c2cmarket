@@ -47,8 +47,7 @@ func TestLoadDefaultsToDevelopmentDevAuth(t *testing.T) {
 	}
 	if cfg.APIHealth.RunnerEnabled || cfg.APIHealth.ScanInterval != time.Minute ||
 		cfg.APIHealth.Timeout != 10*time.Second || cfg.APIHealth.Concurrency != 4 ||
-		cfg.APIHealth.BatchSize != 50 || cfg.APIHealth.Retention != 7*24*time.Hour ||
-		cfg.APIHealth.ChallengeTTL != 15*time.Minute {
+		cfg.APIHealth.BatchSize != 50 || cfg.APIHealth.Retention != 7*24*time.Hour {
 		t.Fatalf("unexpected API health defaults: %+v", cfg.APIHealth)
 	}
 	if cfg.Database != database.DefaultPostgresOptions() {
@@ -67,7 +66,6 @@ func TestLoadParsesAPIHealthRuntimeConfig(t *testing.T) {
 	t.Setenv("API_HEALTH_MAX_CONCURRENCY", "8")
 	t.Setenv("API_HEALTH_CLAIM_BATCH_SIZE", "120")
 	t.Setenv("API_HEALTH_SAMPLE_RETENTION", "240h")
-	t.Setenv("API_HEALTH_CHALLENGE_TTL", "30m")
 
 	cfg, err := Load()
 	if err != nil {
@@ -75,8 +73,7 @@ func TestLoadParsesAPIHealthRuntimeConfig(t *testing.T) {
 	}
 	if !cfg.APIHealth.RunnerEnabled || cfg.APIHealth.ScanInterval != 45*time.Second ||
 		cfg.APIHealth.Timeout != 12*time.Second || cfg.APIHealth.Concurrency != 8 ||
-		cfg.APIHealth.BatchSize != 120 || cfg.APIHealth.Retention != 10*24*time.Hour ||
-		cfg.APIHealth.ChallengeTTL != 30*time.Minute {
+		cfg.APIHealth.BatchSize != 120 || cfg.APIHealth.Retention != 10*24*time.Hour {
 		t.Fatalf("unexpected API health config: %+v", cfg.APIHealth)
 	}
 }
@@ -93,7 +90,6 @@ func TestLoadRejectsInvalidAPIHealthRuntimeConfig(t *testing.T) {
 		{name: "concurrency", key: "API_HEALTH_MAX_CONCURRENCY", value: "0"},
 		{name: "batch size", key: "API_HEALTH_CLAIM_BATCH_SIZE", value: "201"},
 		{name: "retention", key: "API_HEALTH_SAMPLE_RETENTION", value: "12h"},
-		{name: "challenge ttl", key: "API_HEALTH_CHALLENGE_TTL", value: "2m"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -116,7 +112,6 @@ func clearAPIHealthEnv(t *testing.T) {
 		"API_HEALTH_MAX_CONCURRENCY",
 		"API_HEALTH_CLAIM_BATCH_SIZE",
 		"API_HEALTH_SAMPLE_RETENTION",
-		"API_HEALTH_CHALLENGE_TTL",
 	} {
 		t.Setenv(name, "")
 	}

@@ -16,7 +16,6 @@ export type AdminApiModel = {
   provider: string
   providerActive: boolean
   modelKey: string
-  displayName: string
   capabilities: ApiModelCapability[]
   active: boolean
   currentPriceVersionId?: string
@@ -53,7 +52,6 @@ export type ApiModelProviderInput = {
 export type ApiModelInput = {
   providerId: string
   modelKey: string
-  displayName: string
   capabilities: ApiModelCapability[]
   inputTokenPrice: string
   cachedInputTokenPrice: string

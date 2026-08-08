@@ -14,6 +14,7 @@ import (
 	"c2c-market/backend/internal/module/apihealth"
 	"c2c-market/backend/internal/module/apiintent"
 	"c2c-market/backend/internal/module/apimarket"
+	"c2c-market/backend/internal/module/apimodeltest"
 	"c2c-market/backend/internal/module/apiorder"
 	"c2c-market/backend/internal/module/apipromotion"
 	"c2c-market/backend/internal/module/apiquota"
@@ -51,6 +52,7 @@ type ServerOptions struct {
 	EnableDevAuth      bool
 	ReadinessChecker   health.Checker
 	APIHealth          APIHealthService
+	APIModelTester     APIModelTesterService
 	NavigationBadges   NavigationBadgeService
 	RealtimeHub        *realtime.Hub
 	AppEnv             string
@@ -85,14 +87,19 @@ type APIPaymentSettingsService interface {
 }
 
 type APIHealthService interface {
-	OwnerConfig(ctx context.Context, user auth.User, serviceID string) (apihealth.Config, bool, *domain.AppError)
-	PutOwnerConfig(ctx context.Context, user auth.User, serviceID string, input apihealth.ConfigInput, expectedVersion int64) (apihealth.Config, *domain.AppError)
-	DeleteOwnerConfig(ctx context.Context, user auth.User, serviceID string, expectedVersion int64) *domain.AppError
-	CreateChallenge(ctx context.Context, user auth.User, serviceID, method string, expectedVersion int64) (apihealth.Challenge, *domain.AppError)
-	VerifyChallenge(ctx context.Context, user auth.User, serviceID string, expectedVersion int64) (apihealth.Config, *domain.AppError)
-	AdminConfigs(ctx context.Context, user auth.User, status string, page domain.PageRequest) (domain.Page[apihealth.Config], *domain.AppError)
-	AdminDecision(ctx context.Context, user auth.User, configID string, expectedVersion int64, approve bool, reason string) (apihealth.Config, *domain.AppError)
+	OwnerConnections(ctx context.Context, user auth.User) ([]apihealth.Connection, *domain.AppError)
+	OwnerConnection(ctx context.Context, user auth.User, connectionID string) (apihealth.Connection, bool, *domain.AppError)
+	CreateOwnerConnection(ctx context.Context, user auth.User, input apihealth.ConnectionInput) (apihealth.Connection, *domain.AppError)
+	UpdateOwnerConnection(ctx context.Context, user auth.User, connectionID string, input apihealth.ConnectionInput, expectedVersion int64) (apihealth.Connection, *domain.AppError)
+	VerifyOwnerConnection(ctx context.Context, user auth.User, connectionID string, expectedVersion int64) (apihealth.Connection, *domain.AppError)
+	DeleteOwnerConnection(ctx context.Context, user auth.User, connectionID string, expectedVersion int64) *domain.AppError
 	Summaries(ctx context.Context, serviceIDs []string) (map[string]apihealth.Summary, *domain.AppError)
+}
+
+type APIModelTesterService interface {
+	OrderSources(ctx context.Context, user auth.User) ([]apimodeltest.OrderSource, *domain.AppError)
+	Discover(ctx context.Context, user auth.User, source apimodeltest.CredentialSource) (apimodeltest.Discovery, *domain.AppError)
+	Test(ctx context.Context, user auth.User, source apimodeltest.CredentialSource, model string) (apimodeltest.ModelTest, *domain.AppError)
 }
 
 type AdminUserService interface {
@@ -246,6 +253,7 @@ type Service interface {
 
 	CreateAPIService(ctx context.Context, user auth.User, input apimarket.CreateServiceInput) (apimarket.Service, *domain.AppError)
 	UpdateAPIService(ctx context.Context, user auth.User, input apimarket.UpdateServiceInput) (apimarket.Service, *domain.AppError)
+	UpdateAPIServiceProbeConnection(ctx context.Context, user auth.User, input apimarket.UpdateProbeConnectionInput) (apimarket.Service, *domain.AppError)
 	PublicAPIServices(ctx context.Context, filter apimarket.PublicServiceFilter) ([]apimarket.Service, *domain.AppError)
 	PublicAPIService(ctx context.Context, serviceID string) (apimarket.Service, *domain.AppError)
 	OwnerAPIServices(ctx context.Context, user auth.User, filter apimarket.OwnerServiceFilter, page domain.PageRequest) (domain.Page[apimarket.Service], *domain.AppError)
@@ -408,6 +416,7 @@ type Server struct {
 	apiQuotas        APIQuotaService
 	apiPayment       APIPaymentSettingsService
 	apiHealth        APIHealthService
+	apiModelTester   APIModelTesterService
 	adminUsers       AdminUserService
 	apiPromotions    APIPromotionService
 	growth           GrowthService
@@ -442,6 +451,10 @@ func NewServer(service ApplicationService, options ...ServerOptions) http.Handle
 	if navigationBadges == nil {
 		navigationBadges = navigationbadge.NewService(nil, time.Now)
 	}
+	apiModelTester := option.APIModelTester
+	if apiModelTester == nil {
+		apiModelTester = apimodeltest.NewService(nil, 15*time.Second, time.Now)
+	}
 	realtimeHub := option.RealtimeHub
 	if realtimeHub == nil {
 		realtimeHub = realtime.NewHub()
@@ -460,6 +473,7 @@ func NewServer(service ApplicationService, options ...ServerOptions) http.Handle
 		apiQuotas:        service,
 		apiPayment:       service,
 		apiHealth:        option.APIHealth,
+		apiModelTester:   apiModelTester,
 		adminUsers:       service,
 		apiPromotions:    service,
 		growth:           service,

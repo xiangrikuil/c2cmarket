@@ -10,17 +10,16 @@ func SlotStart(at time.Time) time.Time {
 	return at.UTC().Truncate(ProbeSlotDuration)
 }
 
-func BuildSummary(config *Config, samples []Sample, now time.Time) Summary {
-	if config == nil {
-		return noSampleSummary(AvailabilityUnconfigured, nil, TransportSecurityUnknown, now)
+func BuildSummary(connection *Connection, samples []Sample, now time.Time) Summary {
+	if connection == nil {
+		return noSampleSummary(AvailabilityUnconfigured, TransportSecurityUnknown, now)
 	}
-	model := config.Model
-	transportSecurity := TargetTransportSecurity(config.BaseURL)
-	if !config.Enabled {
-		return noSampleSummary(AvailabilityDisabled, &model, transportSecurity, now)
+	transportSecurity := TargetTransportSecurity(connection.BaseURL)
+	if !connection.Enabled {
+		return noSampleSummary(AvailabilityDisabled, transportSecurity, now)
 	}
-	if !IsAuthorized(*config) {
-		return noSampleSummary(AvailabilityUnauthorized, &model, transportSecurity, now)
+	if connection.VerificationStatus != VerificationVerified || connection.VerifiedAt == nil {
+		return noSampleSummary(AvailabilityUnverified, transportSecurity, now)
 	}
 
 	currentSlot := SlotStart(now)
@@ -29,7 +28,7 @@ func BuildSummary(config *Config, samples []Sample, now time.Time) Summary {
 	final := make([]Sample, 0, SummarySlotCount)
 	for _, sample := range samples {
 		slot := sample.SlotStartedAt.UTC()
-		if sample.MeasurementVersion != config.MeasurementVersion || sample.ProbeModelSnapshot != config.Model ||
+		if sample.MeasurementVersion != connection.MeasurementVersion ||
 			(sample.Status != SampleStatusSucceeded && sample.Status != SampleStatusFailed) ||
 			slot.Before(windowStart) || slot.After(currentSlot) {
 			continue
@@ -46,10 +45,10 @@ func BuildSummary(config *Config, samples []Sample, now time.Time) Summary {
 
 	summary := Summary{
 		State: HealthStateNoSample, AvailabilityReason: AvailabilityInsufficient,
-		TransportSecurity: transportSecurity, ProbeModel: &model,
+		TransportSecurity: transportSecurity,
+		Samples:           buildHealthSlots(bySlot, currentSlot),
+		TotalSamples:      len(final),
 	}
-	summary.Samples = buildHealthSlots(bySlot, currentSlot)
-	summary.TotalSamples = len(final)
 	for _, sample := range final {
 		if sample.Status == SampleStatusSucceeded {
 			summary.SuccessfulSamples++
@@ -70,13 +69,12 @@ func BuildSummary(config *Config, samples []Sample, now time.Time) Summary {
 	rateTenths := (summary.SuccessfulSamples*1000 + len(final)/2) / len(final)
 	rate := strconv.Itoa(rateTenths/10) + "." + strconv.Itoa(rateTenths%10)
 	summary.SuccessRatePercent = &rate
-	summary.MedianTTFTMS = medianSuccessfulTTFT(final)
 	summary.AvailabilityReason = ""
 	recentTwoFailed := len(final) >= 2 && final[len(final)-1].Status == SampleStatusFailed && final[len(final)-2].Status == SampleStatusFailed
 	switch {
 	case rateTenths < 800 || recentTwoFailed:
 		summary.State = HealthStateAbnormal
-	case rateTenths < 950 || (summary.MedianTTFTMS != nil && *summary.MedianTTFTMS > 3000):
+	case rateTenths < 950:
 		summary.State = HealthStateFluctuating
 	default:
 		summary.State = HealthStateNormal
@@ -84,11 +82,11 @@ func BuildSummary(config *Config, samples []Sample, now time.Time) Summary {
 	return summary
 }
 
-func noSampleSummary(reason string, model *string, transportSecurity string, now time.Time) Summary {
+func noSampleSummary(reason, transportSecurity string, now time.Time) Summary {
 	return Summary{
 		State: HealthStateNoSample, AvailabilityReason: reason,
-		TransportSecurity: transportSecurity, ProbeModel: model,
-		Samples: buildHealthSlots(nil, SlotStart(now)),
+		TransportSecurity: transportSecurity,
+		Samples:           buildHealthSlots(nil, SlotStart(now)),
 	}
 }
 
@@ -98,35 +96,13 @@ func buildHealthSlots(samples map[time.Time]Sample, currentSlot time.Time) []Hea
 		slot := currentSlot.Add(-time.Duration(index) * ProbeSlotDuration)
 		state := SlotStateNoSample
 		if sample, ok := samples[slot]; ok {
-			switch sample.Status {
-			case SampleStatusFailed:
+			if sample.Status == SampleStatusFailed {
 				state = SlotStateAbnormal
-			case SampleStatusSucceeded:
-				state = SlotStateFluctuating
-				if sample.TTFTMS != nil && *sample.TTFTMS <= 3000 {
-					state = SlotStateSmooth
-				}
+			} else if sample.Status == SampleStatusSucceeded {
+				state = SlotStateSmooth
 			}
 		}
 		result = append(result, HealthSlot{SlotStartedAt: slot, State: state})
 	}
 	return result
-}
-
-func medianSuccessfulTTFT(samples []Sample) *int {
-	values := make([]int, 0, len(samples))
-	for _, sample := range samples {
-		if sample.Status == SampleStatusSucceeded && sample.TTFTMS != nil {
-			values = append(values, *sample.TTFTMS)
-		}
-	}
-	if len(values) == 0 {
-		return nil
-	}
-	sort.Ints(values)
-	median := values[len(values)/2]
-	if len(values)%2 == 0 {
-		median = (values[len(values)/2-1] + values[len(values)/2] + 1) / 2
-	}
-	return &median
 }

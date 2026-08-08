@@ -81,7 +81,7 @@ type BackendServiceModel = {
   id?: string
   modelCatalogId: string
   modelPriceVersionId?: string
-  modelNameSnapshot: string
+  modelKeySnapshot: string
   providerSnapshot: string
   capabilitiesSnapshot: string[]
   merchantMultiplier: string
@@ -110,7 +110,7 @@ type BackendServicePackageModel = {
   serviceModelId: string
   modelCatalogId: string
   modelPriceVersionId?: string
-  modelNameSnapshot: string
+  modelKeySnapshot: string
   providerSnapshot: string
   merchantMultiplier: string
 }
@@ -125,6 +125,8 @@ type BackendPaymentOption = {
 
 type BackendAPIService = {
   id: string
+  probeConnectionId?: string
+  probeReady?: boolean
   ownerUserId?: string
   merchantProfileId?: string
   merchantIdentityMode: string
@@ -328,7 +330,7 @@ type BackendAPIOrderPaymentInstructions = {
 }
 
 type BackendIntentPricingSnapshotModel = {
-  modelNameSnapshot?: unknown
+  modelKey?: unknown
   merchantMultiplier?: unknown
 }
 
@@ -374,7 +376,6 @@ type BackendAPIModel = {
   providerCategory: string
   provider: string
   modelKey: string
-  displayName: string
   capabilities: string[]
   inputPricePerMillion?: string
   cachedInputPricePerMillion?: string
@@ -460,7 +461,7 @@ export function projectAPIIntentPricingSnapshot(value: string): APIIntentPricing
 
   const rawModels = Array.isArray(snapshot.models) ? snapshot.models : []
   const modelRows = rawModels.filter((model): model is BackendIntentPricingSnapshotModel => Boolean(model) && typeof model === 'object' && !Array.isArray(model))
-  const models = [...new Set(modelRows.map(model => nonEmptyString(model.modelNameSnapshot)).filter(Boolean))]
+  const models = [...new Set(modelRows.map(model => nonEmptyString(model.modelKey)).filter(Boolean))]
   const multiplier = snapshotMultiplier(modelRows)
   const rawUsageVisibility = nonEmptyString(snapshot.usageVisibility)
   const accountPoolType = apiAccountPoolType(snapshot.accountPoolType)
@@ -565,7 +566,7 @@ function serviceState(service: BackendAPIService): ApiService['state'] {
 function modelPriceRows(models: BackendServiceModel[]): ModelPriceRow[] {
   return models.filter(item => item.enabled).map(item => ({
     modelId: item.modelCatalogId,
-    modelName: item.modelNameSnapshot,
+    modelName: item.modelKeySnapshot,
     provider: item.providerSnapshot,
     officialInputPricePerMillion: numberFromDecimal(item.effectiveInputPricePerMillion),
     officialCachedInputPricePerMillion: item.effectiveCachedInputPricePerMillion ? numberFromDecimal(item.effectiveCachedInputPricePerMillion) : null,
@@ -591,6 +592,9 @@ export function mapBackendAPIService(service: BackendAPIService): ApiService {
   const sellerReputation = mapBackendReputationSummary(service.sellerReputation)
   return {
     id: service.id,
+    version: service.version,
+    probeConnectionId: service.probeConnectionId,
+    probeReady: service.probeReady,
     title: service.title.replace(/意向服务/g, '服务').replace(/API 意向/g, 'API 订单'),
     sourceUrl: service.sourceUrl ?? '',
     sourceAuthorVerification: service.sourceAuthorVerification,
@@ -605,8 +609,8 @@ export function mapBackendAPIService(service: BackendAPIService): ApiService {
     merchantAvatarUrl: service.merchantAvatarUrl?.trim() || undefined,
     trustLevel: null,
     merchantType: '商户',
-    models: service.models.filter(item => item.enabled).map(item => item.modelNameSnapshot),
-    modelMultipliers: service.models.filter(item => item.enabled).map(item => ({ model: item.modelNameSnapshot, multiplier: `${numberFromDecimal(item.merchantMultiplier, 1).toFixed(2)}x` })),
+    models: service.models.filter(item => item.enabled).map(item => item.modelKeySnapshot),
+    modelMultipliers: service.models.filter(item => item.enabled).map(item => ({ model: item.modelKeySnapshot, multiplier: `${numberFromDecimal(item.merchantMultiplier, 1).toFixed(2)}x` })),
     rate: `${numberFromDecimal(service.models[0]?.merchantMultiplier, 1).toFixed(2)}x`,
     defaultMultiplier: numberFromDecimal(service.models[0]?.merchantMultiplier, 1),
     creditPerCny,
@@ -681,7 +685,7 @@ export function mapBackendAPIService(service: BackendAPIService): ApiService {
         serviceModelId: model.serviceModelId,
         modelCatalogId: model.modelCatalogId,
         modelPriceVersionId: model.modelPriceVersionId ?? '',
-        modelName: model.modelNameSnapshot,
+        modelName: model.modelKeySnapshot,
         provider: model.providerSnapshot,
         merchantMultiplier: numberFromDecimal(model.merchantMultiplier, 1),
       })),
@@ -1076,7 +1080,6 @@ function mapBackendModel(model: BackendAPIModel): ModelCatalogItem {
     id: model.id,
     provider: providerFromBackend(model.providerCategory || model.provider),
     name: model.modelKey,
-    displayName: model.displayName,
     capabilities: capabilitiesFromBackend(model.capabilities),
     officialInputPricePerMillion: model.inputPricePerMillion ? numberFromDecimal(model.inputPricePerMillion) : null,
     officialCachedInputPricePerMillion: model.cachedInputPricePerMillion ? numberFromDecimal(model.cachedInputPricePerMillion) : null,
@@ -1115,7 +1118,7 @@ function parsePackageSnapshot(value?: string): ApiServicePackageSnapshot | undef
         serviceModelId: String(model.serviceModelId ?? ''),
         modelCatalogId: String(model.modelCatalogId ?? ''),
         modelPriceVersionId: String(model.modelPriceVersionId ?? ''),
-        modelName: String(model.modelNameSnapshot ?? model.modelName ?? ''),
+        modelName: String(model.modelKeySnapshot ?? ''),
         merchantMultiplier: numberFromDecimal(String(model.merchantMultiplier ?? '1')),
       })),
     }
@@ -1830,6 +1833,20 @@ export async function backendSubmitAPIService(payload: Record<string, unknown>) 
   return mapBackendAPIService(response)
 }
 
+export async function backendUpdateAPIServiceProbeConnection(input: {
+  id: string
+  probeConnectionId: string
+  version: number
+}) {
+  await ensureBackendSession('merchant', false)
+  const response = await backendMutation<BackendAPIService>(
+    `/api/v1/owner/api-services/${encodeURIComponent(input.id)}/probe-connection`,
+    { probeConnectionId: input.probeConnectionId },
+    { method: 'PATCH', ifMatch: input.version },
+  )
+  return mapBackendAPIService(response)
+}
+
 async function backendUpdateAPIServiceOrderSettings(id: string, payload: Record<string, unknown>, version: number) {
   return backendMutation<BackendAPIService>(`/api/v1/owner/api-services/${id}/order-settings`, toBackendOrderSettingsRequest(payload), {
     method: 'PATCH',
@@ -1874,6 +1891,7 @@ export function toBackendServiceRequest(payload: Record<string, unknown>) {
 
   const fixedPackage = billing === 'fixed_package'
   return {
+    probeConnectionId: String(payload.probeConnectionId ?? ''),
     merchantProfileId: String(payload.merchantProfileId ?? ''),
     merchantIdentityMode: String(payload.merchantIdentityMode ?? 'public_profile'),
     ownerContactMethodId: String(payload.ownerContactMethodId ?? ''),

@@ -34,6 +34,9 @@ func (s *Store) CreateAPIService(ctx context.Context, service apimarket.Service)
 	if _, _, appErr := lockContactVersionForOwner(ctx, tx, service.OwnerContactMethodID, service.OwnerUserID, "商户联系方式不可用或不属于当前用户。"); appErr != nil {
 		return appErr
 	}
+	if appErr := validateReadyAPIProbeConnectionInTx(ctx, tx, service.OwnerUserID, service.ProbeConnectionID); appErr != nil {
+		return appErr
+	}
 	if appErr := upsertAPIServiceInTx(ctx, tx, service); appErr != nil {
 		return appErr
 	}
@@ -94,6 +97,13 @@ func publicAPIServiceOrderablePredicateAt(alias, currentTimeExpression string) s
 		  AND %[1]s.moderation_status = 'clear'
 		  AND %[1]s.billing_mode IN ('metered_usd_quota', 'fixed_package')
 		  AND %[1]s.accepting_orders = true
+		  AND EXISTS (
+		    SELECT 1 FROM api_probe_connections probe_connection
+		    WHERE probe_connection.id = %[1]s.probe_connection_id
+		      AND probe_connection.owner_user_id = %[1]s.owner_user_id
+		      AND probe_connection.enabled = true
+		      AND probe_connection.verification_status = 'verified'
+		  )
 		  AND EXISTS (
 		    SELECT 1 FROM users owner
 		    WHERE owner.id = %[1]s.owner_user_id
@@ -183,6 +193,9 @@ func (s *Store) UpdateAPIService(ctx context.Context, input apimarket.UpdateServ
 	if _, _, appErr := lockContactVersionForOwner(ctx, tx, service.OwnerContactMethodID, service.OwnerUserID, "商户联系方式不可用或不属于当前用户。"); appErr != nil {
 		return apimarket.Service{}, appErr
 	}
+	if appErr := validateReadyAPIProbeConnectionInTx(ctx, tx, service.OwnerUserID, service.ProbeConnectionID); appErr != nil {
+		return apimarket.Service{}, appErr
+	}
 	service.UpdatedAt = now
 	service.Version = current.Version + 1
 	service.AcceptingOrders = current.AcceptingOrders
@@ -197,6 +210,77 @@ func (s *Store) UpdateAPIService(ctx context.Context, input apimarket.UpdateServ
 	}
 	if appErr := qualifyPromotionRewardsForAPIServiceInTx(ctx, tx, service.ID, now); appErr != nil {
 		return apimarket.Service{}, appErr
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return apimarket.Service{}, internalStoreError()
+	}
+	return service, nil
+}
+
+func validateReadyAPIProbeConnectionInTx(ctx context.Context, tx pgx.Tx, ownerUserID, connectionID string) *domain.AppError {
+	connectionID = strings.TrimSpace(connectionID)
+	if connectionID == "" {
+		return nil
+	}
+	var ready bool
+	err := tx.QueryRow(ctx, `
+		SELECT enabled AND verification_status = 'verified'
+		FROM api_probe_connections
+		WHERE id = $1 AND owner_user_id = $2
+		FOR SHARE
+	`, connectionID, ownerUserID).Scan(&ready)
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return internalStoreError()
+	}
+	if errors.Is(err, pgx.ErrNoRows) || !ready {
+		return domain.NewFieldError(
+			http.StatusUnprocessableEntity,
+			domain.CodeValidationFailed,
+			"Probe connection unavailable",
+			"探针连接不存在、不属于当前用户，或尚未启用并验证通过。",
+			"probeConnectionId",
+			"not_ready",
+			"请选择自己已启用且验证通过的探针连接。",
+		)
+	}
+	return nil
+}
+
+func (s *Store) UpdateAPIServiceProbeConnection(ctx context.Context, input apimarket.UpdateProbeConnectionInput, now time.Time) (apimarket.Service, *domain.AppError) {
+	if s == nil || s.pool == nil {
+		return apimarket.Service{}, internalStoreError()
+	}
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return apimarket.Service{}, internalStoreError()
+	}
+	defer rollback(ctx, tx)
+	service, err := s.getAPIService(ctx, tx, input.ServiceID, true)
+	if errors.Is(err, pgx.ErrNoRows) || service.OwnerUserID != input.OwnerUserID {
+		return apimarket.Service{}, domain.NewError(http.StatusNotFound, domain.CodeObjectNotFound, "API service not found", "API 服务不存在。")
+	}
+	if err != nil {
+		return apimarket.Service{}, internalStoreError()
+	}
+	if input.ExpectedVersion > 0 && service.Version != input.ExpectedVersion {
+		return apimarket.Service{}, domain.NewError(http.StatusPreconditionFailed, domain.CodeVersionConflict, "Version conflict", "资源版本已变化，请刷新后重试。")
+	}
+	connectionID := strings.TrimSpace(input.ProbeConnectionID)
+	if appErr := validateReadyAPIProbeConnectionInTx(ctx, tx, input.OwnerUserID, connectionID); appErr != nil {
+		return apimarket.Service{}, appErr
+	}
+	if _, err := tx.Exec(ctx, `
+		UPDATE api_services
+		SET probe_connection_id = $1,
+		    updated_at = $2,
+		    version = version + 1
+		WHERE id = $3 AND owner_user_id = $4
+	`, nullUUID(connectionID), now, input.ServiceID, input.OwnerUserID); err != nil {
+		return apimarket.Service{}, internalStoreError()
+	}
+	service, err = s.getAPIService(ctx, tx, input.ServiceID, false)
+	if err != nil {
+		return apimarket.Service{}, internalStoreError()
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return apimarket.Service{}, internalStoreError()
@@ -311,6 +395,9 @@ func (s *Store) UpdateAPIServicePublication(ctx context.Context, input apimarket
 		return apimarket.Service{}, domain.NewError(http.StatusConflict, domain.CodeInvalidStateTransition, "Invalid state transition", "当前 API 服务状态不能执行该操作。")
 	}
 	if action == "publish" || action == "resume" {
+		if strings.TrimSpace(service.ProbeConnectionID) == "" || !service.ProbeReady {
+			return apimarket.Service{}, domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Probe connection required", "上线 API 服务前必须绑定已启用且验证通过的探针连接。", "probeConnectionId", "not_ready", "请选择已启用且验证通过的探针连接。")
+		}
 		if strings.TrimSpace(service.OwnerContactMethodID) == "" {
 			return apimarket.Service{}, domain.NewError(http.StatusUnprocessableEntity, domain.CodeMerchantContactRequired, "Merchant contact required", "上线 API 服务必须配置商户联系方式。")
 		}
@@ -618,6 +705,26 @@ const apiServiceColumns = `
 	accepting_orders, payment_window_minutes,
 	review_status, publication_status, moderation_status, COALESCE(approved_by_admin_id::text, ''),
 		approved_at, COALESCE(moderation_reason, ''), created_at, updated_at, version,
+		COALESCE(probe_connection_id::text, ''),
+		EXISTS (
+		  SELECT 1 FROM api_probe_connections probe_connection
+		  WHERE probe_connection.id = api_services.probe_connection_id
+		    AND probe_connection.owner_user_id = api_services.owner_user_id
+		    AND probe_connection.enabled = true
+		    AND probe_connection.verification_status = 'verified'
+		),
+		COALESCE((
+		  SELECT probe_connection.base_url
+		  FROM api_probe_connections probe_connection
+		  WHERE probe_connection.id = api_services.probe_connection_id
+		    AND probe_connection.owner_user_id = api_services.owner_user_id
+		), ''),
+		COALESCE((
+		  SELECT probe_connection.normalized_base_url
+		  FROM api_probe_connections probe_connection
+		  WHERE probe_connection.id = api_services.probe_connection_id
+		    AND probe_connection.owner_user_id = api_services.owner_user_id
+		), ''),
 		prompt_audit_enabled
 `
 
@@ -775,7 +882,7 @@ func (s *Store) loadAPIServiceChildren(ctx context.Context, q queryer, service *
 
 	modelRows, err := queryRows(ctx, q, `
 		SELECT id::text, api_service_id::text, distribution_system, model_catalog_id::text,
-		       COALESCE(model_price_version_id::text, ''), model_name_snapshot, provider_snapshot,
+		       COALESCE(model_price_version_id::text, ''), model_key_snapshot, provider_snapshot,
 		       capabilities_snapshot, merchant_multiplier::text,
 		       COALESCE(effective_input_price_per_million::text, ''),
 		       COALESCE(effective_cached_input_price_per_million::text, ''),
@@ -798,7 +905,7 @@ func (s *Store) loadAPIServiceChildren(ctx context.Context, q queryer, service *
 			&model.DistributionSystem,
 			&model.ModelCatalogID,
 			&model.ModelPriceVersionID,
-			&model.ModelNameSnapshot,
+			&model.ModelKey,
 			&model.ProviderSnapshot,
 			&model.CapabilitiesSnapshot,
 			&model.MerchantMultiplier,
@@ -867,7 +974,7 @@ func (s *Store) loadAPIServiceChildren(ctx context.Context, q queryer, service *
 	packageModelRows, err := queryRows(ctx, q, `
 		SELECT relation.api_service_package_id::text, model.id::text,
 		       model.model_catalog_id::text, COALESCE(model.model_price_version_id::text, ''),
-		       model.model_name_snapshot, model.provider_snapshot, model.merchant_multiplier::text
+		       model.model_key_snapshot, model.provider_snapshot, model.merchant_multiplier::text
 		FROM api_service_package_models relation
 		JOIN api_service_models model
 		  ON model.api_service_id = relation.api_service_id
@@ -887,7 +994,7 @@ func (s *Store) loadAPIServiceChildren(ctx context.Context, q queryer, service *
 			&model.ServiceModelID,
 			&model.ModelCatalogID,
 			&model.ModelPriceVersionID,
-			&model.ModelNameSnapshot,
+			&model.ModelKey,
 			&model.ProviderSnapshot,
 			&model.MerchantMultiplier,
 		); err != nil {
@@ -1083,7 +1190,7 @@ func upsertAPIServiceInTx(ctx context.Context, tx pgx.Tx, service apimarket.Serv
 			review_status, publication_status, moderation_status,
 			approved_by_admin_id, approved_at, moderation_reason,
 			accepting_orders, payment_window_minutes,
-			created_at, updated_at, version, prompt_audit_enabled
+			created_at, updated_at, version, probe_connection_id, prompt_audit_enabled
 		)
 		VALUES (
 			$1, $2, $3, $4, $5,
@@ -1098,7 +1205,7 @@ func upsertAPIServiceInTx(ctx context.Context, tx pgx.Tx, service apimarket.Serv
 			$31, $32, $33,
 			$34, $35, $36,
 			$37, $38,
-				$39, $40, $41, $42
+				$39, $40, $41, $42, $43
 		)
 		ON CONFLICT (id) DO UPDATE
 		SET merchant_profile_id = EXCLUDED.merchant_profile_id,
@@ -1136,8 +1243,9 @@ func upsertAPIServiceInTx(ctx context.Context, tx pgx.Tx, service apimarket.Serv
 		    approved_at = EXCLUDED.approved_at,
 		    moderation_reason = EXCLUDED.moderation_reason,
 		    accepting_orders = EXCLUDED.accepting_orders,
-			    payment_window_minutes = EXCLUDED.payment_window_minutes,
-			    prompt_audit_enabled = EXCLUDED.prompt_audit_enabled,
+		    payment_window_minutes = EXCLUDED.payment_window_minutes,
+		    probe_connection_id = EXCLUDED.probe_connection_id,
+		    prompt_audit_enabled = EXCLUDED.prompt_audit_enabled,
 			    updated_at = EXCLUDED.updated_at,
 		    version = EXCLUDED.version
 		`, service.ID, service.OwnerUserID, nullUUID(service.MerchantProfileID), service.MerchantIdentityMode, service.OwnerContactMethodID,
@@ -1153,7 +1261,7 @@ func upsertAPIServiceInTx(ctx context.Context, tx pgx.Tx, service apimarket.Serv
 		service.ReviewStatus, service.PublicationStatus, service.ModerationStatus,
 		nullUUID(service.ApprovedByAdminID), service.ApprovedAt, nullText(service.ModerationReason),
 		service.AcceptingOrders, service.PaymentWindowMinutes,
-		service.CreatedAt, service.UpdatedAt, service.Version, service.PromptAuditEnabled)
+		service.CreatedAt, service.UpdatedAt, service.Version, nullUUID(service.ProbeConnectionID), service.PromptAuditEnabled)
 	if err != nil {
 		return internalStoreError()
 	}
@@ -1176,7 +1284,7 @@ func upsertAPIServiceInTx(ctx context.Context, tx pgx.Tx, service apimarket.Serv
 		_, err = tx.Exec(ctx, `
 			INSERT INTO api_service_models (
 				id, api_service_id, distribution_system, model_catalog_id, model_price_version_id,
-				model_name_snapshot, provider_snapshot, capabilities_snapshot, merchant_multiplier,
+				model_key_snapshot, provider_snapshot, capabilities_snapshot, merchant_multiplier,
 				effective_input_price_per_million, effective_cached_input_price_per_million,
 				effective_output_price_per_million, enabled, created_at, updated_at
 			)
@@ -1190,7 +1298,7 @@ func upsertAPIServiceInTx(ctx context.Context, tx pgx.Tx, service apimarket.Serv
 				SET distribution_system = EXCLUDED.distribution_system,
 				    model_catalog_id = EXCLUDED.model_catalog_id,
 				    model_price_version_id = EXCLUDED.model_price_version_id,
-				    model_name_snapshot = EXCLUDED.model_name_snapshot,
+				    model_key_snapshot = EXCLUDED.model_key_snapshot,
 				    provider_snapshot = EXCLUDED.provider_snapshot,
 				    capabilities_snapshot = EXCLUDED.capabilities_snapshot,
 				    merchant_multiplier = EXCLUDED.merchant_multiplier,
@@ -1200,7 +1308,7 @@ func upsertAPIServiceInTx(ctx context.Context, tx pgx.Tx, service apimarket.Serv
 				    enabled = EXCLUDED.enabled,
 				    updated_at = EXCLUDED.updated_at
 		`, model.ID, service.ID, service.DistributionSystem, model.ModelCatalogID, nullUUID(model.ModelPriceVersionID),
-			model.ModelNameSnapshot, model.ProviderSnapshot, model.CapabilitiesSnapshot, model.MerchantMultiplier,
+			model.ModelKey, model.ProviderSnapshot, model.CapabilitiesSnapshot, model.MerchantMultiplier,
 			nullNumeric(model.EffectiveInputPricePerMillion), nullNumeric(model.EffectiveCachedInputPricePerMillion),
 			nullNumeric(model.EffectiveOutputPricePerMillion), model.Enabled, model.CreatedAt, model.UpdatedAt)
 		if err != nil {
@@ -1968,6 +2076,10 @@ func apiServiceScanDestinations(service *apimarket.Service) []any {
 		&service.CreatedAt,
 		&service.UpdatedAt,
 		&service.Version,
+		&service.ProbeConnectionID,
+		&service.ProbeReady,
+		&service.ProbeBaseURL,
+		&service.NormalizedProbeBaseURL,
 		&service.PromptAuditEnabled,
 	}
 }

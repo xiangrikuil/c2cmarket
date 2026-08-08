@@ -98,6 +98,7 @@ import {
 } from '@/data/mock'
 import type { ReputationSummary } from '@/types/reputation'
 import type { ApiServiceHealthSummary } from '@/types/apiHealth'
+import { getOwnerAPIProbeConnections, updateMockAPIProbeConnectionReference } from '@/lib/apiHealthFacade'
 import type { ApiQuotaUsagePolicy, ApiQuotaUsagePolicyInput } from '@/types/apiQuota'
 export type { ApiQuotaLimitMode, ApiQuotaUsageLimit, ApiQuotaUsageLimitInput, ApiQuotaUsagePolicy, ApiQuotaUsagePolicyInput, ApiWritableQuotaLimitMode } from '@/types/apiQuota'
 import { mockPublicUserReputation } from '@/lib/reputationMock'
@@ -211,6 +212,7 @@ import {
   backendSub2APIServices,
   backendSubmitAPIService,
   backendUpdateAdminAPIServiceStatus,
+  backendUpdateAPIServiceProbeConnection,
 } from '@/lib/apiMarketBackend'
 import {
   backendCreateContact,
@@ -2956,8 +2958,6 @@ function mockUnconfiguredAPIHealthSummary(): ApiServiceHealthSummary {
     successRatePercent: null,
     successfulSamples: 0,
     totalSamples: 0,
-    medianTtftMs: null,
-    probeModel: null,
     transportSecurity: null,
     lastSampledAt: null,
     samples: [
@@ -3938,7 +3938,7 @@ function buildModelPriceRowsFromPayload(payload: Record<string, unknown>, defaul
       const model = modelCatalog.find(row => row.id === item.modelId)
       return {
         modelId: model?.id ?? item.modelId ?? 'custom-model',
-        modelName: model?.displayName ?? item.modelId ?? '自定义模型',
+        modelName: model?.name ?? item.modelId ?? '自定义模型',
         provider: model?.provider === 'openai' ? 'OpenAI' : model?.provider === 'anthropic' ? 'Anthropic' : 'Other',
         officialInputPricePerMillion: model?.officialInputPricePerMillion ?? 0,
         officialCachedInputPricePerMillion: model?.officialCachedInputPricePerMillion ?? null,
@@ -4060,6 +4060,13 @@ export async function submitCarpool(payload: SaveCarpoolDraftPayload) {
 export async function submitApiService(payload: Record<string, unknown>) {
   if (shouldUseRealBackend()) return backendSubmitAPIService(payload)
   await wait()
+  const billing = requireSupportedApiServiceBillingMode(payload.billingMode)
+  const isPublish = payload.status === 'reviewing'
+  const probeConnectionId = stringValue(payload.probeConnectionId, '')
+  const probeConnection = (await getOwnerAPIProbeConnections()).find(connection => connection.id === probeConnectionId)
+  if (isPublish && (!probeConnection || !probeConnection.enabled || probeConnection.verificationStatus !== 'verified')) {
+    throw new Error('请选择已验证且启用的探针连接。')
+  }
   const id = `api-${Date.now()}`
   const normalized = normalizeMerchantDisplayName(payload)
   const gateway = apiGatewayFromDistribution(payload.distributionSystem)
@@ -4068,15 +4075,13 @@ export async function submitApiService(payload: Record<string, unknown>) {
   const selectedModels = Array.isArray(payload.selectedModels) ? payload.selectedModels as Array<{ modelId?: string, enabled?: boolean }> : []
   const models = selectedModels
     .filter(item => item.enabled !== false)
-    .map(item => modelCatalog.find(model => model.id === item.modelId)?.displayName ?? item.modelId ?? '自定义模型')
+    .map(item => modelCatalog.find(model => model.id === item.modelId)?.name ?? item.modelId ?? '自定义模型')
     .filter(Boolean)
   const merchantIdentityMode = apiMerchantIdentityMode(normalized.merchantIdentityMode)
   const deliveryModes = apiDeliveryModes(payload.deliveryModes)
-  const billing = requireSupportedApiServiceBillingMode(payload.billingMode)
   const rawPackages = Array.isArray(payload.packages)
     ? payload.packages as Array<{ id?: string, name?: string, priceCny?: number, panelAllowance?: number, quotaUsagePolicy?: unknown, durationDays?: number, stockTotal?: number, description?: string, enabled?: boolean, modelCatalogIds?: string[] }>
     : []
-  const isPublish = payload.status === 'reviewing'
   const paymentOptions = Array.isArray(payload.paymentOptions)
     ? payload.paymentOptions as Array<{ paymentMethod?: string, enabled?: boolean, paymentInstructions?: string, paymentQrCodeDataUrl?: string | null }>
     : []
@@ -4103,6 +4108,9 @@ export async function submitApiService(payload: Record<string, unknown>) {
   const quotaUsagePolicy = apiQuotaUsagePolicyFromInput(payload.quotaUsagePolicy)
   const service: ApiService = {
     id,
+    version: 1,
+    probeConnectionId,
+    probeReady: Boolean(probeConnection?.enabled && probeConnection.verificationStatus === 'verified'),
     title: stringValue(payload.generatedTitle, models.length ? `${models[0]} API 服务` : '新 API 服务'),
     sourceUrl: stringValue(payload.sourceUrl, ''),
     quotaUsagePolicy,
@@ -4186,7 +4194,7 @@ export async function submitApiService(payload: Record<string, unknown>) {
           serviceModelId: `service-${modelId}`,
           modelCatalogId: modelId,
           modelPriceVersionId: '',
-          modelName: model?.displayName ?? modelId,
+          modelName: model?.name ?? modelId,
           provider: model?.provider ?? 'other',
           merchantMultiplier: defaultMultiplier,
         }
@@ -4202,6 +4210,11 @@ export async function submitApiService(payload: Record<string, unknown>) {
     paymentOptions: normalizedPaymentOptions,
   }).paymentOptions
   apiServiceStore.unshift(service)
+  updateMockAPIProbeConnectionReference({
+    connectionId: probeConnectionId,
+    serviceId: service.id,
+    serviceTitle: service.title,
+  })
   persistMarketStores()
   appendAdminAuditLog({
     actorType: 'system',
@@ -4224,11 +4237,46 @@ export async function publishApiService(id: string) {
   if (!target) throw new Error('API 服务不存在。')
   if (target.state !== 'offline') throw new Error('当前 API 服务不能上线。')
   requireSupportedApiServiceBillingMode(target.billingMode)
+  if (!target.probeConnectionId || !target.probeReady) throw new Error('上线前必须绑定已验证且启用的探针连接。')
   target.state = 'online'
   target.online = true
   target.publiclyOrderable = true
   target.warning = undefined
   target.lastOnlineConfirmedAt = nowText()
+  persistMarketStores()
+  return clone(target)
+}
+
+export async function updateApiServiceProbeConnection(input: {
+  id: string
+  probeConnectionId: string
+  version: number
+}) {
+  if (shouldUseRealBackend()) return backendUpdateAPIServiceProbeConnection(input)
+  await wait()
+  const target = apiServiceStore.find(item => item.id === input.id)
+  if (!target) throw new Error('API 服务不存在。')
+  const currentVersion = target.version ?? 1
+  if (currentVersion !== input.version) throw new Error('API 服务已更新，请刷新后重试。')
+  const connection = input.probeConnectionId
+    ? (await getOwnerAPIProbeConnections()).find(item => item.id === input.probeConnectionId)
+    : null
+  if (input.probeConnectionId && (!connection || !connection.enabled || connection.verificationStatus !== 'verified')) {
+    throw new Error('只能绑定已验证且启用的探针连接。')
+  }
+  const previousConnectionId = target.probeConnectionId
+  target.probeConnectionId = connection?.id
+  target.probeReady = Boolean(connection)
+  target.version = currentVersion + 1
+  target.publiclyOrderable = Boolean(connection) && target.online
+  target.warning = connection ? undefined : '未绑定可用探针连接'
+  target.serviceUpdatedAt = nowText()
+  updateMockAPIProbeConnectionReference({
+    previousConnectionId,
+    connectionId: connection?.id,
+    serviceId: target.id,
+    serviceTitle: target.title,
+  })
   persistMarketStores()
   return clone(target)
 }
@@ -4255,6 +4303,7 @@ export async function resumeApiService(id: string) {
   if (!target) throw new Error('API 服务不存在。')
   if (target.state !== 'paused') throw new Error('当前 API 服务不能恢复。')
   requireSupportedApiServiceBillingMode(target.billingMode)
+  if (!target.probeConnectionId || !target.probeReady) throw new Error('恢复接单前必须绑定已验证且启用的探针连接。')
   target.state = 'online'
   target.online = true
   target.publiclyOrderable = true

@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"log"
-	"net"
 	"net/http"
 	"strings"
 	"sync"
@@ -15,6 +14,7 @@ import (
 	"c2c-market/backend/internal/maintenance"
 	"c2c-market/backend/internal/middleware"
 	"c2c-market/backend/internal/module/apihealth"
+	"c2c-market/backend/internal/module/apimodeltest"
 	core "c2c-market/backend/internal/module/core"
 	"c2c-market/backend/internal/module/navigationbadge"
 	"c2c-market/backend/internal/module/profile"
@@ -34,6 +34,7 @@ type App struct {
 	RealtimeListener *realtime.PostgresListener
 	Maintenance      *maintenance.Runner
 	APIHealth        *apihealth.Service
+	APIModelTester   *apimodeltest.Service
 	APIHealthRunner  *apihealthrunner.Runner
 	RateLimiter      *middleware.RateLimiter
 	Metrics          *observability.Metrics
@@ -46,12 +47,6 @@ func New(ctx context.Context, cfg config.Config) (*App, error) {
 	if err != nil {
 		return nil, fmt.Errorf("初始化模型审计安全出站策略失败: %w", err)
 	}
-	apiHealthValidationPolicy, err := outboundhttp.NewPolicy(nil, outboundhttp.WithInsecureHTTP())
-	if err != nil {
-		return nil, fmt.Errorf("初始化 API 探针目标校验策略失败: %w", err)
-	}
-	apiHealthClientFactory := apihealth.NewOutboundHTTPClientFactory(cfg.APIHealth.Timeout)
-
 	var store *postgres.Store
 	if cfg.DatabaseURL != "" {
 		connectCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
@@ -92,6 +87,7 @@ func New(ctx context.Context, cfg config.Config) (*App, error) {
 		service = core.NewServiceWithRepositoriesEmailSenderAndOptions(core.RepositoriesFromPersistence(store), emailSender, serviceOptions)
 	}
 	service.ConfigureModelAuditOutbound(modelAuditPolicy)
+	service.ConfigureAPIOrderDeliveryVerifier(cfg.APIHealth.Timeout)
 	if strings.TrimSpace(cfg.BootstrapAdminPassword) != "" {
 		result, appErr := service.BootstrapAdmin(ctx, core.BootstrapAdminInput{
 			Username: cfg.BootstrapAdminUsername,
@@ -157,17 +153,11 @@ func New(ctx context.Context, cfg config.Config) (*App, error) {
 			return nil, fmt.Errorf("初始化数据维护任务失败: %w", err)
 		}
 		maintenanceRunner.Start()
-		apiHealthService = apihealth.NewService(
-			store,
-			apiHealthValidationPolicy,
-			net.DefaultResolver,
-			apiHealthClientFactory,
-			time.Now,
-			cfg.APIHealth.ChallengeTTL,
-		)
+		apiHealthProber := apihealth.NewOpenAIModelsProber(cfg.APIHealth.Timeout)
+		apiHealthService = apihealth.NewService(store, apiHealthProber, time.Now)
 		apiHealthRunner = apihealthrunner.New(
 			store,
-			apihealth.NewOpenAIStreamingProberWithClientFactory(apiHealthClientFactory, time.Now),
+			apiHealthProber,
 			apihealthrunner.Options{
 				Enabled: cfg.APIHealth.RunnerEnabled, ScanInterval: cfg.APIHealth.ScanInterval,
 				Timeout: cfg.APIHealth.Timeout, Concurrency: cfg.APIHealth.Concurrency,
@@ -178,6 +168,7 @@ func New(ctx context.Context, cfg config.Config) (*App, error) {
 		)
 		apiHealthRunner.Start(ctx)
 	}
+	apiModelTesterService := apimodeltest.NewService(store, cfg.APIHealth.Timeout, time.Now)
 
 	rateLimiter := middleware.NewRateLimiter(time.Minute)
 	rateLimiter.Start(ctx)
@@ -195,6 +186,7 @@ func New(ctx context.Context, cfg config.Config) (*App, error) {
 		EnableDevAuth:      cfg.EnableDevAuth,
 		ReadinessChecker:   store,
 		APIHealth:          apiHealthService,
+		APIModelTester:     apiModelTesterService,
 		NavigationBadges:   navigationBadges,
 		RealtimeHub:        realtimeHub,
 		AppEnv:             cfg.AppEnv,
@@ -226,6 +218,7 @@ func New(ctx context.Context, cfg config.Config) (*App, error) {
 		RealtimeListener: realtimeListener,
 		Maintenance:      maintenanceRunner,
 		APIHealth:        apiHealthService,
+		APIModelTester:   apiModelTesterService,
 		APIHealthRunner:  apiHealthRunner,
 		RateLimiter:      rateLimiter,
 		Metrics:          runtimeMetrics,

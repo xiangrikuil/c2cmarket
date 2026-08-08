@@ -68,7 +68,7 @@ func TestLimitedPackageIntentFreezesExactModelSnapshot(t *testing.T) {
 			ServiceModelID:      "service-model-1",
 			ModelCatalogID:      "model-1",
 			ModelPriceVersionID: "price-version-1",
-			ModelNameSnapshot:   "GPT-5.6",
+			ModelKey:            "GPT-5.6",
 			ProviderSnapshot:    "OpenAI",
 			MerchantMultiplier:  "0.0100",
 		}},
@@ -89,14 +89,14 @@ func TestLimitedPackageIntentFreezesExactModelSnapshot(t *testing.T) {
 		DurationDays   int    `json:"durationDays"`
 		Models         []struct {
 			ModelPriceVersionID string `json:"modelPriceVersionId"`
-			ModelNameSnapshot   string `json:"modelNameSnapshot"`
+			ModelKey            string `json:"modelKey"`
 			MerchantMultiplier  string `json:"merchantMultiplier"`
 		} `json:"models"`
 	}
 	if err := json.Unmarshal([]byte(intent.SelectedPackageSnapshot), &snapshot); err != nil {
 		t.Fatalf("decode package snapshot: %v", err)
 	}
-	if snapshot.PanelAllowance != "5.000000" || snapshot.DurationDays != 3 || len(snapshot.Models) != 1 || snapshot.Models[0].ModelNameSnapshot != "GPT-5.6" || snapshot.Models[0].ModelPriceVersionID != "price-version-1" || snapshot.Models[0].MerchantMultiplier != "0.0100" {
+	if snapshot.PanelAllowance != "5.000000" || snapshot.DurationDays != 3 || len(snapshot.Models) != 1 || snapshot.Models[0].ModelKey != "GPT-5.6" || snapshot.Models[0].ModelPriceVersionID != "price-version-1" || snapshot.Models[0].MerchantMultiplier != "0.0100" {
 		t.Fatalf("unexpected package snapshot: %+v", snapshot)
 	}
 	if intent.QuotaUsagePolicySnapshot != service.Packages[0].QuotaUsagePolicy {
@@ -127,8 +127,8 @@ func TestIntentFreezesMerchantTermsInPricingSnapshot(t *testing.T) {
 	service.MerchantRefundCommitment = true
 	service.MerchantSupportNote = apimarket.MerchantSupportNote(true)
 	service.Models = []apimarket.ServiceModel{
-		{ID: "model-1", ModelNameSnapshot: "GPT-5.6", MerchantMultiplier: "1.0000", Enabled: true},
-		{ID: "model-2", ModelNameSnapshot: "GPT-5 mini", MerchantMultiplier: "0.2000", Enabled: true},
+		{ID: "model-1", ModelKey: "GPT-5.6", MerchantMultiplier: "1.0000", Enabled: true},
+		{ID: "model-2", ModelKey: "GPT-5 mini", MerchantMultiplier: "0.2000", Enabled: true},
 	}
 
 	intent, appErr := NewIntent(CreateIntentInput{
@@ -144,7 +144,7 @@ func TestIntentFreezesMerchantTermsInPricingSnapshot(t *testing.T) {
 
 	var snapshot struct {
 		Models []struct {
-			ModelNameSnapshot  string `json:"modelNameSnapshot"`
+			ModelKey           string `json:"modelKey"`
 			MerchantMultiplier string `json:"merchantMultiplier"`
 		} `json:"models"`
 		UsageVisibility             string `json:"usageVisibility"`
@@ -160,7 +160,7 @@ func TestIntentFreezesMerchantTermsInPricingSnapshot(t *testing.T) {
 	if err := json.Unmarshal([]byte(intent.PricingSnapshot), &snapshot); err != nil {
 		t.Fatalf("decode pricing snapshot: %v", err)
 	}
-	if len(snapshot.Models) != 2 || snapshot.Models[0].ModelNameSnapshot != "GPT-5.6" || snapshot.Models[1].MerchantMultiplier != "0.2000" {
+	if len(snapshot.Models) != 2 || snapshot.Models[0].ModelKey != "GPT-5.6" || snapshot.Models[1].MerchantMultiplier != "0.2000" {
 		t.Fatalf("unexpected model snapshot: %+v", snapshot.Models)
 	}
 	if snapshot.UsageVisibility != service.UsageVisibility || snapshot.MerchantNote != service.MerchantNote || snapshot.MerchantSupportNote != service.MerchantSupportNote {
@@ -198,7 +198,7 @@ func TestIntentSnapshotPreservesHistoricalNullCommercialFacts(t *testing.T) {
 func TestLimitedPackageIntentRejectsSelectedSoldOutPackage(t *testing.T) {
 	now := time.Date(2026, 7, 16, 9, 0, 0, 0, time.UTC)
 	duration := 3
-	model := []apimarket.ServicePackageModel{{ServiceModelID: "service-model-1", ModelCatalogID: "model-1", ModelNameSnapshot: "GPT-5.6", MerchantMultiplier: "1.0000"}}
+	model := []apimarket.ServicePackageModel{{ServiceModelID: "service-model-1", ModelCatalogID: "model-1", ModelKey: "GPT-5.6", MerchantMultiplier: "1.0000"}}
 	service := limitedPackageIntentService(now, []apimarket.ServicePackage{
 		{ID: "sold-out", Name: "售罄套餐", PriceCNY: "9.90", PanelAllowance: "5", DurationDays: &duration, StockTotal: 1, StockAvailable: 0, Enabled: true, Models: model},
 		{ID: "available", Name: "有货套餐", PriceCNY: "19.90", PanelAllowance: "10", DurationDays: &duration, StockTotal: 1, StockAvailable: 1, Enabled: true, Models: model},
@@ -221,6 +221,8 @@ func limitedPackageIntentService(now time.Time, packages []apimarket.ServicePack
 		ID:                   "service-1",
 		OwnerUserID:          "seller-1",
 		OwnerContactMethodID: "owner-contact-1",
+		ProbeConnectionID:    "probe-connection-1",
+		ProbeReady:           true,
 		Title:                "限时套餐服务",
 		DistributionSystem:   apimarket.ServiceDistributionSub2API,
 		BillingMode:          apimarket.ServiceBillingModeFixedPackage,

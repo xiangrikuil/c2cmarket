@@ -90,7 +90,7 @@ function backendPublicAPIService(overrides: Record<string, unknown> = {}) {
     models: [{
       id: 'model-row-1',
       modelCatalogId: 'gpt-5-mini',
-      modelNameSnapshot: 'GPT-5 mini',
+      modelKeySnapshot: 'gpt-5-mini',
       providerSnapshot: 'OpenAI',
       capabilitiesSnapshot: ['text', 'chat'],
       merchantMultiplier: '1.0000',
@@ -215,8 +215,6 @@ test('maps platform health for public quota offers without projecting seller TTF
       successRatePercent: null,
       successfulSamples: 0,
       totalSamples: 0,
-      medianTtftMs: null,
-      probeModel: null,
       transportSecurity: null,
       lastSampledAt: null,
       samples: Array.from({ length: 12 }, (_, index) => ({
@@ -272,8 +270,6 @@ test('maps required owner sales and health summaries without changing the public
     successRatePercent: null,
     successfulSamples: 0,
     totalSamples: 0,
-    medianTtftMs: null,
-    probeModel: null,
     transportSecurity: null,
     lastSampledAt: null,
     samples: [],

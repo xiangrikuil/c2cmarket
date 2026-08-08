@@ -600,7 +600,6 @@ export type ModelCatalogItem = {
   id: string
   provider: 'openai' | 'anthropic' | 'other'
   name: string
-  displayName: string
   capabilities: ModelCapability[]
   officialInputPricePerMillion: number | null
   officialCachedInputPricePerMillion: number | null
@@ -721,6 +720,9 @@ export type ApiQuotaCredentialSummary = {
 
 export type ApiService = {
   id: string
+  version?: number
+  probeConnectionId?: string
+  probeReady?: boolean
   title: string
   sourceUrl?: string
   sourceAuthorVerification?: SourceAuthorResourceSummary
@@ -1766,7 +1768,6 @@ export const modelCatalog: ModelCatalogItem[] = [
     id: 'gpt-5-mini',
     provider: 'openai',
     name: 'gpt-5-mini',
-    displayName: 'GPT-5 mini',
     capabilities: ['chat', 'vision', 'reasoning'],
     officialInputPricePerMillion: 0.25,
     officialCachedInputPricePerMillion: 0.025,
@@ -1777,7 +1778,6 @@ export const modelCatalog: ModelCatalogItem[] = [
     id: 'gpt-5-5',
     provider: 'openai',
     name: 'gpt-5.5',
-    displayName: 'GPT-5.5',
     capabilities: ['chat', 'vision', 'reasoning'],
     officialInputPricePerMillion: 1.75,
     officialCachedInputPricePerMillion: 0.175,
@@ -1788,7 +1788,6 @@ export const modelCatalog: ModelCatalogItem[] = [
     id: 'gpt-image',
     provider: 'openai',
     name: 'gpt-image',
-    displayName: 'GPT Image',
     capabilities: ['image_generation', 'image_edit'],
     officialInputPricePerMillion: null,
     officialCachedInputPricePerMillion: null,
@@ -1799,7 +1798,6 @@ export const modelCatalog: ModelCatalogItem[] = [
     id: 'claude-sonnet',
     provider: 'anthropic',
     name: 'claude-sonnet',
-    displayName: 'Claude Sonnet',
     capabilities: ['chat', 'vision'],
     officialInputPricePerMillion: 3,
     officialCachedInputPricePerMillion: null,
@@ -1810,7 +1808,6 @@ export const modelCatalog: ModelCatalogItem[] = [
     id: 'claude-opus',
     provider: 'anthropic',
     name: 'claude-opus',
-    displayName: 'Claude Opus',
     capabilities: ['chat', 'vision', 'reasoning'],
     officialInputPricePerMillion: 15,
     officialCachedInputPricePerMillion: null,
@@ -1821,7 +1818,6 @@ export const modelCatalog: ModelCatalogItem[] = [
     id: 'gemini-flash',
     provider: 'other',
     name: 'gemini-flash',
-    displayName: 'Gemini Flash',
     capabilities: ['chat', 'vision'],
     officialInputPricePerMillion: 0.1,
     officialCachedInputPricePerMillion: 0.025,

@@ -86,7 +86,6 @@ type APIModelCatalog struct {
 	Provider                   string
 	ProviderActive             bool
 	ModelKey                   string
-	DisplayName                string
 	Capabilities               []string
 	Active                     bool
 	SortOrder                  int
@@ -129,7 +128,6 @@ type APIModelProviderMutationInput struct {
 type APIModelInput struct {
 	ProviderID            string
 	ModelKey              string
-	DisplayName           string
 	Capabilities          []string
 	SourceURL             string
 	SourceVersion         string

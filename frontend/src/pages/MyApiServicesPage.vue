@@ -284,7 +284,7 @@ function resumeService(id: string) {
             <div class="mt-2 flex flex-wrap items-center gap-1.5">
               <span class="flex items-center gap-1 text-xs text-muted-foreground">
                 <Activity class="h-3.5 w-3.5" aria-hidden="true" />
-                探针
+                探针连接
               </span>
               <StatusBadge
                 :status="item.healthSummary.availabilityReason ?? item.healthSummary.state"
@@ -332,9 +332,9 @@ function resumeService(id: string) {
                 </RouterLink>
               </Button>
               <Button v-if="!quotaPublishIntent" size="sm" variant="outline" as-child>
-                <RouterLink :to="`/my/api-services/${item.id}#health-probe`">
+                <RouterLink to="/my/api-probe-connections">
                   <Activity class="h-4 w-4" />
-                  配置探针
+                  管理探针连接
                 </RouterLink>
               </Button>
               <Button v-if="!quotaPublishIntent" size="sm" as-child>
@@ -429,7 +429,7 @@ function resumeService(id: string) {
           <div class="flex flex-wrap items-center gap-1.5">
             <span class="flex items-center gap-1 text-xs text-muted-foreground">
               <Activity class="h-3.5 w-3.5" aria-hidden="true" />
-              探针
+              探针连接
             </span>
             <StatusBadge
               :status="item.healthSummary.availabilityReason ?? item.healthSummary.state"
@@ -476,9 +476,9 @@ function resumeService(id: string) {
               </RouterLink>
             </Button>
             <Button v-if="!quotaPublishIntent" size="sm" variant="outline" as-child>
-              <RouterLink :to="`/my/api-services/${item.id}#health-probe`">
+              <RouterLink to="/my/api-probe-connections">
                 <Activity class="h-4 w-4" />
-                配置探针
+                管理探针连接
               </RouterLink>
             </Button>
             <Button v-if="!quotaPublishIntent" size="sm" as-child>

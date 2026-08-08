@@ -25,17 +25,17 @@ const expanded = ref(false)
 const selectedIds = computed(() => selectedModelIdSet(props.form.selectedModels))
 const selectedModelNames = computed(() => props.form.selectedModels
   .filter(item => item.enabled)
-  .map(item => props.catalog.find(model => model.id === item.modelId)?.displayName ?? item.modelId)
+  .map(item => props.catalog.find(model => model.id === item.modelId)?.name ?? item.modelId)
   .filter(Boolean))
 const selectedSummary = computed(() => summarizeSelectedModelNames(selectedModelNames.value))
 const filteredModels = computed(() => {
   const normalized = keyword.value.trim().toLowerCase()
   return props.catalog
     .filter(item => {
-      const matched = !normalized || [item.id, item.displayName, item.name, providerLabel(item.provider)].some(value => value.toLowerCase().includes(normalized))
+      const matched = !normalized || [item.id, item.name, providerLabel(item.provider)].some(value => value.toLowerCase().includes(normalized))
       return matched && modelProviderCategory(item.provider) === props.providerCategory
     })
-    .sort((a, b) => Number(selectedIds.value.has(b.id)) - Number(selectedIds.value.has(a.id)) || a.displayName.localeCompare(b.displayName))
+    .sort((a, b) => Number(selectedIds.value.has(b.id)) - Number(selectedIds.value.has(a.id)) || a.name.localeCompare(b.name))
 })
 const collapsedLimit = 6
 const visibleModels = computed(() => expanded.value || keyword.value.trim() ? filteredModels.value : filteredModels.value.slice(0, collapsedLimit))
@@ -71,11 +71,11 @@ const listClass = computed(() => expanded.value ? 'max-h-64 overflow-y-auto' : '
           class="api-publish-model-chip"
           :class="{ 'is-active': selectedIds.has(model.id) }"
           :aria-pressed="selectedIds.has(model.id)"
-          :title="`${model.displayName} · ${model.name}`"
+          :title="model.name"
           @click="emit('toggleModel', model.id)"
         >
           <Check v-if="selectedIds.has(model.id)" class="h-3.5 w-3.5" />
-          <span>{{ model.displayName }}</span>
+          <span>{{ model.name }}</span>
         </Button>
       </div>
       <Button

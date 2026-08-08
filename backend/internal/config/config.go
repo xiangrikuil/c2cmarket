@@ -81,7 +81,6 @@ type APIHealthConfig struct {
 	Concurrency   int
 	BatchSize     int
 	Retention     time.Duration
-	ChallengeTTL  time.Duration
 }
 
 const (
@@ -104,7 +103,6 @@ const (
 	defaultAPIHealthConcurrency           = 4
 	defaultAPIHealthBatchSize             = 50
 	defaultAPIHealthRetention             = 7 * 24 * time.Hour
-	defaultAPIHealthChallengeTTL          = 15 * time.Minute
 )
 
 func Load() (Config, error) {
@@ -243,13 +241,6 @@ func Load() (Config, error) {
 	}
 	if cfg.APIHealth.Retention < 24*time.Hour || cfg.APIHealth.Retention > 30*24*time.Hour {
 		return Config{}, fmt.Errorf("API_HEALTH_SAMPLE_RETENTION must be between 24h and 720h")
-	}
-	cfg.APIHealth.ChallengeTTL, err = parseDurationEnv("API_HEALTH_CHALLENGE_TTL", os.Getenv("API_HEALTH_CHALLENGE_TTL"), defaultAPIHealthChallengeTTL)
-	if err != nil {
-		return Config{}, err
-	}
-	if cfg.APIHealth.ChallengeTTL < 5*time.Minute || cfg.APIHealth.ChallengeTTL > time.Hour {
-		return Config{}, fmt.Errorf("API_HEALTH_CHALLENGE_TTL must be between 5m and 1h")
 	}
 	if cfg.Port == "" {
 		cfg.Port = "8080"

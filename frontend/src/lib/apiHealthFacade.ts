@@ -1,189 +1,158 @@
 import { shouldUseRealBackend } from '@/lib/backendClient'
 import {
-  backendAdminAPIHealthProbes,
-  backendCreateAPIHealthChallenge,
-  backendDeleteOwnerAPIHealthProbe,
-  backendOwnerAPIHealthProbe,
-  backendReviewAPIHealthProbe,
-  backendSaveOwnerAPIHealthProbe,
-  backendVerifyAPIHealthChallenge,
+  backendCreateOwnerAPIProbeConnection,
+  backendDeleteOwnerAPIProbeConnection,
+  backendOwnerAPIProbeConnection,
+  backendOwnerAPIProbeConnections,
+  backendUpdateOwnerAPIProbeConnection,
+  backendVerifyOwnerAPIProbeConnection,
 } from '@/lib/apiHealthBackend'
-import type {
-  AdminAPIHealthProbeReview,
-  AdminAPIHealthProbeReviewList,
-  ApiHealthAuthorizationMethod,
-  ApiHealthAuthorizationStatus,
-  APIHealthProbeChallenge,
-  OwnerAPIHealthProbeConfig,
-  SaveOwnerAPIHealthProbeInput,
-} from '@/types/apiHealth'
+import type { OwnerAPIProbeConnection, SaveOwnerAPIProbeConnectionInput } from '@/types/apiHealth'
 
-const mockConfigs = new Map<string, OwnerAPIHealthProbeConfig>()
+const mockConnections = new Map<string, OwnerAPIProbeConnection>()
 
 function now() {
   return new Date().toISOString()
 }
 
-function mockOrigin(baseUrl: string) {
-  const url = new URL(baseUrl)
-  const port = url.port || (url.protocol === 'http:' ? '80' : '443')
-  return `${url.protocol}//${url.hostname}:${port}`
+function normalizeMockBaseURL(value: string) {
+  const raw = value.trim()
+  const url = new URL(raw)
+  if (url.protocol !== 'http:' && url.protocol !== 'https:') throw new Error('Base URL 必须使用 HTTP 或 HTTPS。')
+  if (url.username || url.password || url.search || url.hash) throw new Error('Base URL 不能包含用户信息、查询参数或锚点。')
+  url.hostname = url.hostname.toLowerCase()
+  if ((url.protocol === 'https:' && url.port === '443') || (url.protocol === 'http:' && url.port === '80')) url.port = ''
+  url.pathname = url.pathname.replace(/\/+$/, '') || '/'
+  const canonical = url.toString().replace(/\/$/, '')
+  return { raw, canonical }
 }
 
-function normalizeMockProbeBaseURL(baseUrl: string) {
-  const url = new URL(baseUrl.trim())
-  url.pathname = url.pathname === '/' ? '/v1' : url.pathname.replace(/\/+$/, '')
-  return url.toString()
+function clone<T>(value: T): T {
+  return structuredClone(value)
 }
 
-function mockAdminReview(config: OwnerAPIHealthProbeConfig): AdminAPIHealthProbeReview {
+function mockVerification(credential: string | undefined) {
+  const failed = credential?.toLowerCase().includes('invalid') ?? false
   return {
-    id: config.id,
-    apiServiceId: config.apiServiceId,
-    serviceTitle: null,
-    ownerUserId: 'mock-owner',
-    ownerDisplayName: '演示卖家',
-    ownerUsername: 'mock-owner',
-    normalizedOrigin: config.normalizedOrigin,
-    authorizationStatus: config.authorizationStatus,
-    version: config.version,
-    updatedAt: config.updatedAt,
+    verificationStatus: failed ? 'failed' as const : 'verified' as const,
+    verifiedAt: failed ? null : now(),
+    lastVerificationErrorCode: failed ? 'authorization_invalid' as const : null,
   }
 }
 
-export async function getOwnerAPIHealthProbe(apiServiceId: string) {
-  if (shouldUseRealBackend()) return backendOwnerAPIHealthProbe(apiServiceId)
-  return structuredClone(mockConfigs.get(apiServiceId) ?? null)
+export async function getOwnerAPIProbeConnections() {
+  if (shouldUseRealBackend()) return backendOwnerAPIProbeConnections()
+  return [...mockConnections.values()].sort((left, right) => right.updatedAt.localeCompare(left.updatedAt)).map(clone)
 }
 
-export async function saveOwnerAPIHealthProbe(input: SaveOwnerAPIHealthProbeInput) {
-  if (shouldUseRealBackend()) return backendSaveOwnerAPIHealthProbe(input)
-  const current = mockConfigs.get(input.apiServiceId)
-  if ((current?.version ?? 0) !== input.version) throw new Error('探针配置已更新，请刷新后重试。')
+export async function getOwnerAPIProbeConnection(id: string) {
+  if (shouldUseRealBackend()) return backendOwnerAPIProbeConnection(id)
+  const connection = mockConnections.get(id)
+  if (!connection) throw new Error('探针连接不存在。')
+  return clone(connection)
+}
+
+export async function createOwnerAPIProbeConnection(input: SaveOwnerAPIProbeConnectionInput) {
+  if (shouldUseRealBackend()) return backendCreateOwnerAPIProbeConnection(input)
+  const name = input.name.trim()
+  const credential = input.credential?.trim()
+  if (!name) throw new Error('请填写连接名称。')
+  if (!credential) throw new Error('首次创建必须填写探针专用 API Key。')
+  const target = normalizeMockBaseURL(input.baseUrl)
+  if (target.raw.startsWith('http://') && !input.acknowledgeInsecureHttp) throw new Error('请先确认 HTTP 未加密传输风险。')
   const timestamp = now()
-  const baseUrl = normalizeMockProbeBaseURL(input.baseUrl)
-  if (new URL(baseUrl).protocol === 'http:' && !input.acknowledgeInsecureHttp) {
-    throw new Error('使用 HTTP 请求地址前必须确认未加密传输风险。')
-  }
-  const model = input.model.trim()
-  const normalizedOrigin = mockOrigin(baseUrl)
-  const measurementChanged = !current || current.baseUrl !== baseUrl || current.model !== model
-  const authorizationChanged = !current || current.normalizedOrigin !== normalizedOrigin
-  const next: OwnerAPIHealthProbeConfig = {
-    id: current?.id ?? `probe-${input.apiServiceId}`,
-    apiServiceId: input.apiServiceId,
-    protocol: 'openai_chat_completions_v1',
-    baseUrl,
-    normalizedOrigin,
-    model,
-    credentialConfigured: current?.credentialConfigured || Boolean(input.credential?.trim()),
-    enabled: input.enabled,
-    authorizationStatus: current && !authorizationChanged ? current.authorizationStatus : 'pending',
-    authorizationMethod: current && !authorizationChanged ? current.authorizationMethod : null,
-    verifiedOrigin: current && !authorizationChanged ? current.verifiedOrigin : null,
-    verifiedAt: current && !authorizationChanged ? current.verifiedAt : null,
-    approvedAt: current && !authorizationChanged ? current.approvedAt : null,
-    rejectionReason: current && !authorizationChanged ? current.rejectionReason : null,
-    challengeExpiresAt: current && !authorizationChanged ? current.challengeExpiresAt : null,
-    measurementVersion: (current?.measurementVersion ?? 0) + (measurementChanged ? 1 : 0),
-    lastConfigErrorCode: measurementChanged ? null : current?.lastConfigErrorCode ?? null,
-    version: (current?.version ?? 0) + 1,
-    createdAt: current?.createdAt ?? timestamp,
+  const verification = mockVerification(credential)
+  const connection: OwnerAPIProbeConnection = {
+    id: crypto.randomUUID(),
+    name,
+    baseUrl: target.raw,
+    normalizedBaseUrl: target.canonical,
+    credentialConfigured: true,
+    enabled: input.enabled && verification.verificationStatus === 'verified',
+    ...verification,
+    measurementVersion: 1,
+    version: 1,
+    referencedServices: [],
+    createdAt: timestamp,
     updatedAt: timestamp,
   }
-  mockConfigs.set(input.apiServiceId, next)
-  return structuredClone(next)
+  mockConnections.set(connection.id, connection)
+  return clone(connection)
 }
 
-export async function deleteOwnerAPIHealthProbe(input: { apiServiceId: string, version: number }) {
-  if (shouldUseRealBackend()) return backendDeleteOwnerAPIHealthProbe(input)
-  const current = mockConfigs.get(input.apiServiceId)
-  if (!current || current.version !== input.version) throw new Error('探针配置已更新，请刷新后重试。')
-  mockConfigs.delete(input.apiServiceId)
-}
-
-export async function createAPIHealthChallenge(input: {
-  apiServiceId: string
-  version: number
-  method: Exclude<ApiHealthAuthorizationMethod, 'admin_approval'>
-}) {
-  if (shouldUseRealBackend()) return backendCreateAPIHealthChallenge(input)
-  const current = mockConfigs.get(input.apiServiceId)
-  if (!current || current.version !== input.version) throw new Error('探针配置已更新，请刷新后重试。')
-  const token = `mock-probe-${crypto.randomUUID()}`
-  const expiresAt = new Date(Date.now() + 15 * 60_000).toISOString()
-  const url = new URL(current.normalizedOrigin)
-  const challenge: APIHealthProbeChallenge = {
-    token,
-    method: input.method,
-    dnsRecordName: input.method === 'dns_txt' ? `_c2cmarket-probe.${url.hostname}` : null,
-    httpUrl: input.method === 'http_challenge' ? `${current.normalizedOrigin}/.well-known/c2cmarket-probe-verification` : null,
-    expiresAt,
-    configVersion: current.version + 1,
+export async function updateOwnerAPIProbeConnection(input: SaveOwnerAPIProbeConnectionInput & { id: string, version: number }) {
+  if (shouldUseRealBackend()) return backendUpdateOwnerAPIProbeConnection(input)
+  const current = mockConnections.get(input.id)
+  if (!current || current.version !== input.version) throw new Error('探针连接已更新，请刷新后重试。')
+  const target = normalizeMockBaseURL(input.baseUrl)
+  if (target.raw.startsWith('http://') && !input.acknowledgeInsecureHttp) throw new Error('请先确认 HTTP 未加密传输风险。')
+  const credential = input.credential?.trim()
+  const mustVerify = target.canonical !== current.normalizedBaseUrl || Boolean(credential) || (input.enabled && !current.enabled)
+  const verification = mustVerify ? mockVerification(credential) : {
+    verificationStatus: current.verificationStatus,
+    verifiedAt: current.verifiedAt,
+    lastVerificationErrorCode: current.lastVerificationErrorCode,
   }
-  mockConfigs.set(input.apiServiceId, {
+  const updated: OwnerAPIProbeConnection = {
     ...current,
-    authorizationMethod: input.method,
-    challengeExpiresAt: expiresAt,
-    version: challenge.configVersion,
+    name: input.name.trim(),
+    baseUrl: target.raw,
+    normalizedBaseUrl: target.canonical,
+    credentialConfigured: current.credentialConfigured || Boolean(credential),
+    enabled: input.enabled && verification.verificationStatus === 'verified',
+    ...verification,
+    measurementVersion: current.measurementVersion + (mustVerify ? 1 : 0),
+    version: current.version + 1,
     updatedAt: now(),
-  })
-  return challenge
+  }
+  mockConnections.set(input.id, updated)
+  return clone(updated)
 }
 
-export async function verifyAPIHealthChallenge(input: { apiServiceId: string, version: number }) {
-  if (shouldUseRealBackend()) return backendVerifyAPIHealthChallenge(input)
-  const current = mockConfigs.get(input.apiServiceId)
-  if (!current || current.version !== input.version) throw new Error('探针配置已更新，请刷新后重试。')
-  const next: OwnerAPIHealthProbeConfig = {
+export async function deleteOwnerAPIProbeConnection(input: { id: string, version: number }) {
+  if (shouldUseRealBackend()) return backendDeleteOwnerAPIProbeConnection(input)
+  const current = mockConnections.get(input.id)
+  if (!current || current.version !== input.version) throw new Error('探针连接已更新，请刷新后重试。')
+  if (current.referencedServices.length) throw new Error('该连接仍被 API 服务引用，请先改绑或解绑。')
+  mockConnections.delete(input.id)
+}
+
+export async function verifyOwnerAPIProbeConnection(input: { id: string, version: number }) {
+  if (shouldUseRealBackend()) return backendVerifyOwnerAPIProbeConnection(input)
+  const current = mockConnections.get(input.id)
+  if (!current || current.version !== input.version) throw new Error('探针连接已更新，请刷新后重试。')
+  const updated: OwnerAPIProbeConnection = {
     ...current,
-    authorizationStatus: 'verified',
-    verifiedOrigin: current.normalizedOrigin,
+    verificationStatus: 'verified',
     verifiedAt: now(),
-    challengeExpiresAt: null,
+    lastVerificationErrorCode: null,
     version: current.version + 1,
     updatedAt: now(),
   }
-  mockConfigs.set(input.apiServiceId, next)
-  return structuredClone(next)
+  mockConnections.set(input.id, updated)
+  return clone(updated)
 }
 
-export async function getAdminAPIHealthProbes(status: ApiHealthAuthorizationStatus) {
-  if (shouldUseRealBackend()) return backendAdminAPIHealthProbes(status)
-  const items = [...mockConfigs.values()]
-    .filter(config => config.authorizationStatus === status)
-    .map(mockAdminReview)
-  return {
-    items,
-    nextCursor: null,
-  } satisfies AdminAPIHealthProbeReviewList
+export function resetMockAPIProbeConnections() {
+  mockConnections.clear()
 }
 
-export async function reviewAPIHealthProbe(input: {
-  id: string
-  version: number
-  decision: 'approve' | 'reject'
-  reason: string
+export function updateMockAPIProbeConnectionReference(input: {
+  previousConnectionId?: string
+  connectionId?: string
+  serviceId: string
+  serviceTitle: string
 }) {
-  if (shouldUseRealBackend()) return backendReviewAPIHealthProbe(input)
-  const entry = [...mockConfigs.entries()].find(([, config]) => config.id === input.id)
-  if (!entry || entry[1].version !== input.version) throw new Error('探针配置已更新，请刷新后重试。')
-  const [apiServiceId, current] = entry
-  const next: OwnerAPIHealthProbeConfig = {
-    ...current,
-    authorizationStatus: input.decision === 'approve' ? 'approved' : 'rejected',
-    authorizationMethod: 'admin_approval',
-    verifiedOrigin: input.decision === 'approve' ? current.normalizedOrigin : null,
-    verifiedAt: input.decision === 'approve' ? now() : null,
-    approvedAt: input.decision === 'approve' ? now() : null,
-    rejectionReason: input.decision === 'reject' ? input.reason.trim() : null,
-    version: current.version + 1,
-    updatedAt: now(),
+  if (input.previousConnectionId) {
+    const previous = mockConnections.get(input.previousConnectionId)
+    if (previous) {
+      previous.referencedServices = previous.referencedServices.filter(service => service.id !== input.serviceId)
+    }
   }
-  mockConfigs.set(apiServiceId, next)
-  return mockAdminReview(next)
-}
-
-export function resetMockAPIHealthProbes() {
-  mockConfigs.clear()
+  if (input.connectionId) {
+    const next = mockConnections.get(input.connectionId)
+    if (next && !next.referencedServices.some(service => service.id === input.serviceId)) {
+      next.referencedServices = [...next.referencedServices, { id: input.serviceId, title: input.serviceTitle }]
+    }
+  }
 }

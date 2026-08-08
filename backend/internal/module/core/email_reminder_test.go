@@ -402,6 +402,7 @@ func createOrderableAPIService(t *testing.T, service *Service, owner User, owner
 	created, appErr := service.CreateAPIService(context.Background(), owner, CreateAPIServiceInput{
 		MerchantIdentityMode:             "public_profile",
 		OwnerContactMethodID:             ownerContactID,
+		ProbeConnectionID:                "00000000-0000-0000-0000-000000000811",
 		Title:                            "Sub2API 美元额度意向服务",
 		ShortDescription:                 "商户声明美元额度售价，双方站外确认具体安排。",
 		DistributionSystem:               apimarket.ServiceDistributionSub2API,

@@ -3,25 +3,9 @@ package apihealth
 import "time"
 
 const (
-	ProtocolOpenAIChatCompletionsV1 = "openai_chat_completions_v1"
-
-	AuthorizationPending  = "pending"
-	AuthorizationVerified = "verified"
-	AuthorizationApproved = "approved"
-	AuthorizationRejected = "rejected"
-
-	AuthorizationMethodDNSTXT        = "dns_txt"
-	AuthorizationMethodHTTPChallenge = "http_challenge"
-	AuthorizationMethodAdminApproval = "admin_approval"
-
-	AuthorizationActionChallengeCreated      = "challenge_created"
-	AuthorizationActionVerificationSucceeded = "verification_succeeded"
-	AuthorizationActionVerificationFailed    = "verification_failed"
-	AuthorizationActionAdminApproved         = "admin_approved"
-	AuthorizationActionAdminRejected         = "admin_rejected"
-	AuthorizationActionOriginInvalidated     = "origin_invalidated"
-	AuthorizationActionConfigDeleted         = "config_deleted"
-	AuthorizationReasonOriginChanged         = "authorization_origin_changed"
+	VerificationUnverified = "unverified"
+	VerificationVerified   = "verified"
+	VerificationFailed     = "failed"
 
 	SampleStatusRunning   = "running"
 	SampleStatusSucceeded = "succeeded"
@@ -34,7 +18,7 @@ const (
 
 	AvailabilityUnconfigured           = "unconfigured"
 	AvailabilityDisabled               = "disabled"
-	AvailabilityUnauthorized           = "unauthorized"
+	AvailabilityUnverified             = "unverified"
 	AvailabilityInsufficient           = "insufficient"
 	AvailabilityStale                  = "stale"
 	AvailabilityTemporarilyUnavailable = "temporarily_unavailable"
@@ -56,9 +40,9 @@ const (
 	ErrorTimeout              = "timeout"
 	ErrorHTTP4xx              = "http_4xx"
 	ErrorHTTP5xx              = "http_5xx"
+	ErrorRateLimited          = "rate_limited"
 	ErrorResponseTooLarge     = "response_too_large"
-	ErrorInvalidStream        = "invalid_stream"
-	ErrorEmptyResponse        = "empty_response"
+	ErrorInvalidResponse      = "invalid_response"
 	ErrorDecryptFailed        = "decrypt_failed"
 	ErrorInternal             = "internal"
 	ErrorInternalTimeout      = "internal_timeout"
@@ -72,98 +56,62 @@ const (
 	SummaryStaleAfter   = 10 * time.Minute
 )
 
-type Config struct {
-	ID                   string
-	APIServiceID         string
-	OwnerUserID          string
-	ServiceTitle         string
-	OwnerUsername        string
-	OwnerDisplayName     string
-	Protocol             string
-	BaseURL              string
-	NormalizedOrigin     string
-	Model                string
-	CredentialConfigured bool
-	Enabled              bool
-	AuthorizationStatus  string
-	AuthorizationMethod  string
-	VerifiedOrigin       string
-	VerifiedAt           *time.Time
-	ApprovedByAdminID    string
-	ApprovedAt           *time.Time
-	RejectionReason      string
-	ChallengeExpiresAt   *time.Time
-	MeasurementVersion   int64
-	LastConfigErrorCode  string
-	Version              int64
-	CreatedAt            time.Time
-	UpdatedAt            time.Time
+type ServiceReference struct {
+	ID    string
+	Title string
 }
 
-type ConfigInput struct {
+type Connection struct {
+	ID                        string
+	OwnerUserID               string
+	Name                      string
+	BaseURL                   string
+	NormalizedBaseURL         string
+	CredentialConfigured      bool
+	Enabled                   bool
+	VerificationStatus        string
+	VerifiedAt                *time.Time
+	LastVerificationErrorCode string
+	MeasurementVersion        int64
+	Version                   int64
+	References                []ServiceReference
+	HealthSummary             Summary
+	CreatedAt                 time.Time
+	UpdatedAt                 time.Time
+}
+
+type ConnectionInput struct {
+	Name                    string
 	BaseURL                 string
-	Model                   string
 	Credential              *string
 	Enabled                 bool
 	AcknowledgeInsecureHTTP bool
 }
 
-type Challenge struct {
-	Token         string
-	Method        string
-	DNSRecordName string
-	HTTPURL       string
-	ExpiresAt     time.Time
-	ConfigVersion int64
-}
-
-type StoredChallenge struct {
-	Config    Config
-	Method    string
-	TokenHash []byte
-	ExpiresAt time.Time
-}
-
-type AuthorizationEvent struct {
-	ID             string
-	ProbeConfigID  string
-	APIServiceID   string
-	ActorUserID    string
-	Action         string
-	Method         string
-	OriginSnapshot string
-	Reason         string
-	CreatedAt      time.Time
-}
-
 type ProbeJob struct {
 	Sample          Sample
-	Config          Config
+	Connection      Connection
 	Credential      string
 	CredentialError bool
 }
 
 type ProbeResult struct {
-	TTFTMS          int
 	TotalDurationMS int
 	HTTPStatusClass int
 	ErrorCode       string
 }
 
 type SummaryInput struct {
-	Config  *Config
-	Samples []Sample
+	Connection *Connection
+	Samples    []Sample
 }
 
 type Sample struct {
 	ID                 string
-	APIServiceID       string
-	ProbeConfigID      string
+	ConnectionID       string
 	MeasurementVersion int64
-	ProbeModelSnapshot string
 	SlotStartedAt      time.Time
 	Status             string
-	TTFTMS             *int
 	TotalDurationMS    *int
 	HTTPStatusClass    *int
 	ErrorCode          string
@@ -184,12 +132,10 @@ type Summary struct {
 	SuccessRatePercent *string
 	SuccessfulSamples  int
 	TotalSamples       int
-	MedianTTFTMS       *int
-	ProbeModel         *string
 	LastSampledAt      *time.Time
 	Samples            []HealthSlot
 }
 
 func TemporarilyUnavailableSummary(now time.Time) Summary {
-	return noSampleSummary(AvailabilityTemporarilyUnavailable, nil, TransportSecurityUnknown, now)
+	return noSampleSummary(AvailabilityTemporarilyUnavailable, TransportSecurityUnknown, now)
 }
