@@ -153,7 +153,7 @@ func New(ctx context.Context, cfg config.Config) (*App, error) {
 			return nil, fmt.Errorf("初始化数据维护任务失败: %w", err)
 		}
 		maintenanceRunner.Start()
-		apiHealthProber := apihealth.NewOpenAIModelsProber(cfg.APIHealth.Timeout)
+		apiHealthProber := apihealth.NewOpenAIRealModelProber(cfg.APIHealth.Timeout)
 		apiHealthService = apihealth.NewService(store, apiHealthProber, time.Now)
 		apiHealthRunner = apihealthrunner.New(
 			store,
@@ -166,6 +166,7 @@ func New(ctx context.Context, cfg config.Config) (*App, error) {
 			time.Now,
 			log.Default(),
 		)
+		apiHealthService.SetRunnerStatusProvider(apiHealthRunner)
 		apiHealthRunner.Start(ctx)
 	}
 	apiModelTesterService := apimodeltest.NewService(store, cfg.APIHealth.Timeout, time.Now)
@@ -186,6 +187,7 @@ func New(ctx context.Context, cfg config.Config) (*App, error) {
 		EnableDevAuth:      cfg.EnableDevAuth,
 		ReadinessChecker:   store,
 		APIHealth:          apiHealthService,
+		AdminAPIHealth:     apiHealthService,
 		APIModelTester:     apiModelTesterService,
 		NavigationBadges:   navigationBadges,
 		RealtimeHub:        realtimeHub,

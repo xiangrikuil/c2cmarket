@@ -11,6 +11,7 @@ import ClipboardList from 'lucide-vue-next/dist/esm/icons/clipboard-list.js'
 import Code2 from 'lucide-vue-next/dist/esm/icons/code-xml.js'
 import FileText from 'lucide-vue-next/dist/esm/icons/file-text.js'
 import Gauge from 'lucide-vue-next/dist/esm/icons/gauge.js'
+import Activity from 'lucide-vue-next/dist/esm/icons/activity.js'
 import Gift from 'lucide-vue-next/dist/esm/icons/gift.js'
 import Menu from 'lucide-vue-next/dist/esm/icons/menu.js'
 import MessageSquareWarning from 'lucide-vue-next/dist/esm/icons/message-square-warning.js'
@@ -59,6 +60,7 @@ const navGroups = computed(() => [
   { title: '市场目录', items: [
     { label: '套餐目录', to: '/admin/product-plans', icon: Boxes, count: null },
     { label: 'API 模型目录', to: '/admin/api-models', icon: PackageSearch, count: null },
+    { label: '探针校准', to: '/admin/api-health', icon: Activity, count: null },
     { label: '模型审计', to: '/admin/model-audit', icon: BookOpen, count: null },
   ] },
   { title: '交易与用户', items: [

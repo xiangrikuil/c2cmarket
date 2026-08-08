@@ -26,7 +26,7 @@ This directory contains guidelines for backend development. Fill in each file wi
 | [Registered-User Growth And Umami Analytics](./growth-analytics.md) | PostgreSQL KPI truth, Shanghai cohorts, first-touch attribution, opaque Umami identity, and administrator dashboard | Active |
 | [Verification And Data Lifecycle](./verification-data-lifecycle.md) | HMAC email challenges, finite idempotency, and bounded PostgreSQL retention | Active |
 | [Limited API Quota Offers](./api-quota-offers.md) | Fixed quota inventory, rounds, owner sales lifecycle projection, orders, credentials, and concurrency | Active |
-| [API Health And Quota Policy](./api-health-quota-policy.md) | Authorized active probes, one-hour health summaries, SKU quota rules, and immutable order snapshots | Active |
+| [API Health And Quota Policy](./api-health-quota-policy.md) | Reusable real-model probes, 24-hour health, latency calibration, quota rules, and immutable order snapshots | Active |
 | [Public API Order Numbers](./api-order-public-numbers.md) | Immutable commercial references, collision retry, UUID boundaries, projections, search, and responsive display | Active |
 | [API Service Promotions](./api-service-promotions.md) | Administrator schedules, eligibility, category-grid projection, service commercial facts, snapshots, audit, and idempotency | Active |
 | [Referral Rewards And Promotion Benefits](./promotion-rewards.md) | API-service referrals, first-publication qualification, coupon lifecycle, reward projection, administration, and audit | Active |

@@ -10,6 +10,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -37,12 +38,15 @@ const (
 	ErrorTLS                 ErrorCode = "tls_failed"
 	ErrorResponseTooLarge    ErrorCode = "response_too_large"
 	ErrorInvalidResponse     ErrorCode = "invalid_response"
+	ErrorStreamInterrupted   ErrorCode = "stream_interrupted"
 	ErrorInternal            ErrorCode = "internal"
 )
 
 type Result struct {
+	HTTPStatus      int
 	HTTPStatusClass int
 	DurationMS      int
+	RetryAfterMS    int
 	ErrorCode       ErrorCode
 }
 
@@ -176,20 +180,20 @@ func (client *Client) do(ctx context.Context, method, path string, body []byte) 
 		now = time.Now
 	}
 	startedAt := now()
-	finish := func(code ErrorCode, statusClass int) Result {
+	finish := func(code ErrorCode, status int, retryAfterMS int) Result {
 		duration := int(now().Sub(startedAt).Milliseconds())
 		if duration < 0 {
 			duration = 0
 		}
-		return Result{HTTPStatusClass: statusClass, DurationMS: duration, ErrorCode: code}
+		return Result{HTTPStatus: status, HTTPStatusClass: status / 100, DurationMS: duration, RetryAfterMS: retryAfterMS, ErrorCode: code}
 	}
 	endpoint, err := JoinEndpoint(client.baseURL, path)
 	if err != nil {
-		return nil, finish(ErrorInternal, 0)
+		return nil, finish(ErrorInternal, 0, 0)
 	}
 	request, err := http.NewRequestWithContext(ctx, method, endpoint, bytes.NewReader(body))
 	if err != nil {
-		return nil, finish(ErrorInternal, 0)
+		return nil, finish(ErrorInternal, 0, 0)
 	}
 	request.Header.Set("Authorization", "Bearer "+client.apiKey)
 	request.Header.Set("Accept", "application/json")
@@ -198,22 +202,47 @@ func (client *Client) do(ctx context.Context, method, path string, body []byte) 
 	}
 	response, err := client.httpClient.Do(request)
 	if err != nil {
-		return nil, finish(classifyRequestError(ctx, err), 0)
+		return nil, finish(classifyRequestError(ctx, err), 0, 0)
 	}
 	defer response.Body.Close()
-	statusClass := response.StatusCode / 100
+	retryAfterMS := parseRetryAfter(response.Header.Get("Retry-After"), now())
 	limit := int64(callResponseLimit)
 	if path == "models" {
 		limit = modelsResponseLimit
 	}
 	responseBody, err := outboundhttp.ReadBody(response.Body, limit)
 	if err != nil {
-		return nil, finish(classifyRequestError(ctx, err), statusClass)
+		return nil, finish(classifyRequestError(ctx, err), response.StatusCode, retryAfterMS)
 	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		return nil, finish(classifyHTTPStatus(response.StatusCode), statusClass)
+		return nil, finish(classifyHTTPResponse(response.StatusCode, responseBody), response.StatusCode, retryAfterMS)
 	}
-	return responseBody, finish(ErrorNone, statusClass)
+	return responseBody, finish(ErrorNone, response.StatusCode, retryAfterMS)
+}
+
+func parseRetryAfter(value string, now time.Time) int {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return 0
+	}
+	if seconds, err := strconv.Atoi(value); err == nil {
+		if seconds <= 0 {
+			return 0
+		}
+		if seconds > 3 {
+			seconds = 3
+		}
+		return seconds * 1000
+	}
+	when, err := http.ParseTime(value)
+	if err != nil || !when.After(now) {
+		return 0
+	}
+	delay := when.Sub(now)
+	if delay > 3*time.Second {
+		delay = 3 * time.Second
+	}
+	return int(delay.Milliseconds())
 }
 
 func validObjectResponse(body []byte, requiredField string) bool {
@@ -242,7 +271,7 @@ func classifyHTTPStatus(status int) ErrorCode {
 		return ErrorAuthentication
 	case status == http.StatusTooManyRequests:
 		return ErrorRateLimited
-	case status == http.StatusBadRequest || status == http.StatusNotFound || status == http.StatusMethodNotAllowed || status == http.StatusUnprocessableEntity:
+	case status == http.StatusNotFound || status == http.StatusMethodNotAllowed:
 		return ErrorProtocolUnsupported
 	case status >= 400 && status < 500:
 		return ErrorRequestRejected
@@ -251,6 +280,28 @@ func classifyHTTPStatus(status int) ErrorCode {
 	default:
 		return ErrorInvalidResponse
 	}
+}
+
+func classifyHTTPResponse(status int, body []byte) ErrorCode {
+	if status != http.StatusNotFound {
+		return classifyHTTPStatus(status)
+	}
+	var envelope struct {
+		Error struct {
+			Type  string `json:"type"`
+			Param string `json:"param"`
+			Code  string `json:"code"`
+		} `json:"error"`
+	}
+	if json.Unmarshal(body, &envelope) == nil {
+		code := strings.ToLower(strings.TrimSpace(envelope.Error.Code))
+		typeName := strings.ToLower(strings.TrimSpace(envelope.Error.Type))
+		param := strings.ToLower(strings.TrimSpace(envelope.Error.Param))
+		if param == "model" || strings.Contains(code, "model") || strings.Contains(typeName, "model") {
+			return ErrorRequestRejected
+		}
+	}
+	return ErrorProtocolUnsupported
 }
 
 func classifyRequestError(ctx context.Context, err error) ErrorCode {

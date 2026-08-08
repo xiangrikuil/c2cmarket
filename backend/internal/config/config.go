@@ -99,10 +99,10 @@ const (
 	defaultAPIDeliveryCredentialRetention = 30 * 24 * time.Hour
 	defaultDatabaseSlowQueryAfter         = time.Second
 	defaultAPIHealthScanInterval          = time.Minute
-	defaultAPIHealthTimeout               = 10 * time.Second
+	defaultAPIHealthTimeout               = 30 * time.Second
 	defaultAPIHealthConcurrency           = 4
 	defaultAPIHealthBatchSize             = 50
-	defaultAPIHealthRetention             = 7 * 24 * time.Hour
+	defaultAPIHealthRetention             = 8 * 24 * time.Hour
 )
 
 func Load() (Config, error) {
@@ -203,7 +203,7 @@ func Load() (Config, error) {
 	if cfg.Maintenance.UnreadNotificationRetention < cfg.Maintenance.ReadNotificationRetention {
 		return Config{}, fmt.Errorf("UNREAD_NOTIFICATION_RETENTION must not be shorter than READ_NOTIFICATION_RETENTION")
 	}
-	cfg.APIHealth.RunnerEnabled, err = parseBoolEnv("API_HEALTH_RUNNER_ENABLED", os.Getenv("API_HEALTH_RUNNER_ENABLED"), false)
+	cfg.APIHealth.RunnerEnabled, err = parseBoolEnv("API_HEALTH_RUNNER_ENABLED", os.Getenv("API_HEALTH_RUNNER_ENABLED"), true)
 	if err != nil {
 		return Config{}, err
 	}

@@ -52,6 +52,7 @@ type ServerOptions struct {
 	EnableDevAuth      bool
 	ReadinessChecker   health.Checker
 	APIHealth          APIHealthService
+	AdminAPIHealth     AdminAPIHealthService
 	APIModelTester     APIModelTesterService
 	NavigationBadges   NavigationBadgeService
 	RealtimeHub        *realtime.Hub
@@ -89,11 +90,20 @@ type APIPaymentSettingsService interface {
 type APIHealthService interface {
 	OwnerConnections(ctx context.Context, user auth.User) ([]apihealth.Connection, *domain.AppError)
 	OwnerConnection(ctx context.Context, user auth.User, connectionID string) (apihealth.Connection, bool, *domain.AppError)
+	PreflightOwnerConnection(ctx context.Context, user auth.User, input apihealth.ConnectionInput) (apihealth.PreflightResult, *domain.AppError)
+	PreflightExistingOwnerConnection(ctx context.Context, user auth.User, connectionID string, input apihealth.ConnectionInput, expectedVersion int64) (apihealth.PreflightResult, *domain.AppError)
 	CreateOwnerConnection(ctx context.Context, user auth.User, input apihealth.ConnectionInput) (apihealth.Connection, *domain.AppError)
 	UpdateOwnerConnection(ctx context.Context, user auth.User, connectionID string, input apihealth.ConnectionInput, expectedVersion int64) (apihealth.Connection, *domain.AppError)
 	VerifyOwnerConnection(ctx context.Context, user auth.User, connectionID string, expectedVersion int64) (apihealth.Connection, *domain.AppError)
 	DeleteOwnerConnection(ctx context.Context, user auth.User, connectionID string, expectedVersion int64) *domain.AppError
 	Summaries(ctx context.Context, serviceIDs []string) (map[string]apihealth.Summary, *domain.AppError)
+}
+
+type AdminAPIHealthService interface {
+	ProbeCalibration(ctx context.Context, model, protocol, environment string) (apihealth.Calibration, *domain.AppError)
+	PreviewLatencyRule(ctx context.Context, model, protocol, environment string, slowTTFTMS, hardTimeoutMS int) (apihealth.LatencyRulePreview, *domain.AppError)
+	PublishLatencyRule(ctx context.Context, admin auth.User, model, protocol, environment string, slowTTFTMS, hardTimeoutMS int) (apihealth.LatencyRule, *domain.AppError)
+	LatencyRules(ctx context.Context) ([]apihealth.LatencyRule, *domain.AppError)
 }
 
 type APIModelTesterService interface {
@@ -419,6 +429,7 @@ type Server struct {
 	apiQuotas        APIQuotaService
 	apiPayment       APIPaymentSettingsService
 	apiHealth        APIHealthService
+	adminAPIHealth   AdminAPIHealthService
 	apiModelTester   APIModelTesterService
 	adminUsers       AdminUserService
 	apiPromotions    APIPromotionService
@@ -476,6 +487,7 @@ func NewServer(service ApplicationService, options ...ServerOptions) http.Handle
 		apiQuotas:        service,
 		apiPayment:       service,
 		apiHealth:        option.APIHealth,
+		adminAPIHealth:   option.AdminAPIHealth,
 		apiModelTester:   apiModelTester,
 		adminUsers:       service,
 		apiPromotions:    service,

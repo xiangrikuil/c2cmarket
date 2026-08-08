@@ -409,7 +409,7 @@ func createOrderableAPIService(t *testing.T, service *Service, owner User, owner
 		BillingMode:                      apimarket.ServiceBillingModeMetered,
 		DeclaredCNYPerUSDAllowance:       "0.8000",
 		DeclaredMaxUSDAllowancePerIntent: "20.000000",
-		QuotaExpiresAt:                   "2026-08-08T00:00:00Z",
+		QuotaExpiresAt:                   "2099-08-08T00:00:00Z",
 		QuotaUsagePolicy: apimarket.QuotaUsagePolicy{
 			FiveHour: apimarket.QuotaUsageLimit{Mode: apimarket.QuotaLimitModeUnlimited},
 			Daily:    apimarket.QuotaUsageLimit{Mode: apimarket.QuotaLimitModeUnlimited},

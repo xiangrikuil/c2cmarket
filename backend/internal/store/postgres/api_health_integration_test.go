@@ -37,6 +37,7 @@ func TestPostgresAPIProbeConnectionLifecycle(t *testing.T) {
 		if connectionID != "" {
 			_, _ = store.pool.Exec(context.Background(), `DELETE FROM api_probe_connections WHERE id = $1`, connectionID)
 		}
+		_, _ = store.pool.Exec(context.Background(), `DELETE FROM api_probe_connection_model_changes WHERE changed_by_user_id = $1`, sellerID)
 		cleanupLifecycleCredentialFixtures(t, context.Background(), store, sellerID, buyerID, "")
 	})
 	seedQuotaServiceForTest(t, ctx, store.pool, sellerID, sellerContactID, buyerID, buyerContactID, serviceID, now)
@@ -50,6 +51,10 @@ func TestPostgresAPIProbeConnectionLifecycle(t *testing.T) {
 		Enabled:            true,
 		VerificationStatus: apihealth.VerificationVerified,
 		VerifiedAt:         &verifiedAt,
+		ProbeModel:         apihealth.DefaultGPTProbeModel,
+		ProbeProtocol:      apihealth.ProtocolResponsesV1,
+		AvailableModels:    []string{apihealth.DefaultGPTProbeModel},
+		ProbeEnvironment:   apihealth.ProbeEnvironmentUSWestV1,
 		MeasurementVersion: 1,
 		Version:            1,
 		CreatedAt:          now,
@@ -128,9 +133,17 @@ func TestPostgresAPIProbeConnectionLifecycle(t *testing.T) {
 	if len(jobs) != 1 || jobs[0].Connection.ID != connection.ID || jobs[0].Credential != rotatedCredential || jobs[0].CredentialError {
 		t.Fatalf("same-slot claim was not deduplicated: %+v", jobs)
 	}
+	ttft := 120
+	firstTextAt := slot.Add(120 * time.Millisecond)
+	firstDuration := 321
 	finalized, appErr := store.FinalizeProbe(ctx, jobs[0].Sample.ID, apihealth.ProbeResult{
-		TotalDurationMS: 321,
-		HTTPStatusClass: 2,
+		Outcome: apihealth.OutcomeFirstSuccess,
+		Attempts: []apihealth.ProbeAttempt{{
+			AttemptNumber: 1, StartedAt: slot, FirstTextAt: &firstTextAt, FinishedAt: slot.Add(321 * time.Millisecond),
+			HTTPStatus: http.StatusOK, TTFTMS: &ttft, TotalDurationMS: firstDuration, Succeeded: true,
+		}},
+		TotalDurationMS: firstDuration, HTTPStatus: http.StatusOK, HTTPStatusClass: 2,
+		FirstAttemptTTFTMS: &ttft, FirstAttemptTotalDurationMS: &firstDuration,
 	}, slot.Add(time.Second))
 	if appErr != nil || !finalized {
 		t.Fatalf("finalize successful probe: finalized=%t error=%v", finalized, appErr)

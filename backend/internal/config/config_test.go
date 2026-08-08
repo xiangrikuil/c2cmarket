@@ -45,9 +45,9 @@ func TestLoadDefaultsToDevelopmentDevAuth(t *testing.T) {
 	if cfg.Maintenance.APIDeliveryCredentialRetention != 30*24*time.Hour {
 		t.Fatalf("unexpected API delivery credential retention: %s", cfg.Maintenance.APIDeliveryCredentialRetention)
 	}
-	if cfg.APIHealth.RunnerEnabled || cfg.APIHealth.ScanInterval != time.Minute ||
-		cfg.APIHealth.Timeout != 10*time.Second || cfg.APIHealth.Concurrency != 4 ||
-		cfg.APIHealth.BatchSize != 50 || cfg.APIHealth.Retention != 7*24*time.Hour {
+	if !cfg.APIHealth.RunnerEnabled || cfg.APIHealth.ScanInterval != time.Minute ||
+		cfg.APIHealth.Timeout != 30*time.Second || cfg.APIHealth.Concurrency != 4 ||
+		cfg.APIHealth.BatchSize != 50 || cfg.APIHealth.Retention != 8*24*time.Hour {
 		t.Fatalf("unexpected API health defaults: %+v", cfg.APIHealth)
 	}
 	if cfg.Database != database.DefaultPostgresOptions() {

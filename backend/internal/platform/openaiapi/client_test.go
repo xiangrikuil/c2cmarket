@@ -105,7 +105,7 @@ func TestHTTPStatusClassification(t *testing.T) {
 	tests := map[int]ErrorCode{
 		http.StatusUnauthorized:        ErrorAuthentication,
 		http.StatusForbidden:           ErrorAuthentication,
-		http.StatusBadRequest:          ErrorProtocolUnsupported,
+		http.StatusBadRequest:          ErrorRequestRejected,
 		http.StatusNotFound:            ErrorProtocolUnsupported,
 		http.StatusTooManyRequests:     ErrorRateLimited,
 		http.StatusTeapot:              ErrorRequestRejected,

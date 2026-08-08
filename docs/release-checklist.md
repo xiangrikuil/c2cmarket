@@ -35,12 +35,12 @@ assumption or a previous release.
 - [ ] A fresh custom-format backup and checksum exist in remote storage.
 - [ ] Backup checksum and `pg_restore --list` validation passed.
 - [ ] Latest isolated PostgreSQL 18 restore drill meets RPO/RTO.
-- [ ] Migrations and rollback implications from 62 through current migration 80 were reviewed.
+- [ ] Migrations and rollback implications from 62 through current migration 82 were reviewed.
 - [ ] No contact re-encryption apply job is part of the deployment.
 
 ## 4. Stage The Release
 
-- [ ] Staging migrated from its current version through 80 with `dirty=false`.
+- [ ] Staging migrated from its current version through 82 with `dirty=false`.
 - [ ] Staging `/health`, `/readyz`, `/version`, and authenticated `/metrics` pass.
 - [ ] Staging OAuth first/repeat login, email verification, limiter responses,
       contact reads, SSE, maintenance, and representative transactions pass.
@@ -50,7 +50,7 @@ assumption or a previous release.
 ## 5. Deploy Production
 
 - [ ] Start/verify PostgreSQL before migration.
-- [ ] Apply forward migrations once; require `schema_migrations=80:false`.
+- [ ] Apply forward migrations once; require `schema_migrations=82:false`.
 - [ ] Start the backend from the approved immutable image with `--no-build`.
 - [ ] Require `/health`, `/readyz`, and `/version` to match the approved image.
 - [ ] Scrape `/metrics` through the restricted authenticated path.

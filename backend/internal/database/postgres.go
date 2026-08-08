@@ -13,7 +13,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-const ExpectedMigrationVersion int64 = 81
+const ExpectedMigrationVersion int64 = 82
 
 const postgresReadinessTimeout = 3 * time.Second
 

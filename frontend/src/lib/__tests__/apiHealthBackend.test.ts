@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 function jsonResponse(body: unknown, status = 200) {
@@ -69,6 +70,49 @@ afterEach(() => {
 })
 
 describe('共享探针连接真实请求', () => {
+  it('快捷重新启用先预检已存凭据，再携带一次性 token 更新', () => {
+    const page = readFileSync(new URL('../../pages/MyApiProbeConnectionsPage.vue', import.meta.url), 'utf8')
+    const toggleFlow = page.slice(page.indexOf('async function setEnabled'), page.indexOf('async function removeConnection'))
+    expect(toggleFlow).toContain('await preflightMutation.mutateAsync')
+    expect(toggleFlow).toContain('preflightToken = verification.preflightToken')
+    expect(toggleFlow).toContain('preflightToken,')
+  })
+
+  it('预检读取模型并固定协议，不使用创建幂等键', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse(ownerSession()))
+      .mockResolvedValueOnce(jsonResponse({
+        errorCode: null,
+        availableModels: ['gpt-5.6-luna', 'gpt-5.6-sol'],
+        probeModel: 'gpt-5.6-luna',
+        probeProtocol: 'openai_responses_v1',
+        probeEnvironment: 'us-west-v1',
+        dailyBaseCostUpperBoundUsd: '0.0123000000',
+        priceUnavailable: false,
+        preflightToken: 'preflight-token',
+      }))
+    const { backend } = await loadBackend(fetchMock)
+
+    const result = await backend.backendPreflightOwnerAPIProbeConnection({
+      name: '主 Sub2API',
+      baseUrl: 'https://api.example.test/v1',
+      credential: 'probe-key-once',
+      probeModel: 'gpt-5.6-luna',
+      enabled: true,
+      acknowledgeInsecureHttp: false,
+    })
+
+    const [url, init] = fetchMock.mock.calls[1] as [string, RequestInit]
+    const headers = new Headers(init.headers)
+    expect(url).toBe('https://api.example.test/api/v1/owner/api-probe-connections/preflight')
+    expect(init.method).toBe('POST')
+    expect(headers.get('X-CSRF-Token')).toBe('csrf-owner')
+    expect(headers.get('Idempotency-Key')).toBeNull()
+    expect(result.probeProtocol).toBe('openai_responses_v1')
+    expect(result.availableModels).toEqual(['gpt-5.6-luna', 'gpt-5.6-sol'])
+    expect(result.preflightToken).toBe('preflight-token')
+  })
+
   it('创建连接携带 CSRF 和幂等键，Key 只出现在当前请求体', async () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(jsonResponse(ownerSession()))
@@ -79,6 +123,8 @@ describe('共享探针连接真实请求', () => {
       name: ' 主 Sub2API ',
       baseUrl: ' https://api.example.test/v1 ',
       credential: ' probe-key-once ',
+      probeModel: 'gpt-5.6-luna',
+      preflightToken: 'preflight-token',
       enabled: true,
       acknowledgeInsecureHttp: false,
     })
@@ -93,6 +139,8 @@ describe('共享探针连接真实请求', () => {
       name: '主 Sub2API',
       baseUrl: 'https://api.example.test/v1',
       credential: 'probe-key-once',
+      probeModel: 'gpt-5.6-luna',
+      preflightToken: 'preflight-token',
       enabled: true,
       acknowledgeInsecureHttp: false,
     })
@@ -162,13 +210,16 @@ describe('共享探针连接 Mock facade', () => {
     const facade = await import('../apiHealthFacade')
     facade.resetMockAPIProbeConnections()
 
-    const saved = await facade.createOwnerAPIProbeConnection({
+    const createInput = {
       name: '低额度探针',
       baseUrl: 'https://api.example.test',
       credential: 'probe-key-once',
+      probeModel: 'gpt-5.6-luna',
       enabled: true,
       acknowledgeInsecureHttp: false,
-    })
+    }
+    const preflight = await facade.preflightOwnerAPIProbeConnection(createInput)
+    const saved = await facade.createOwnerAPIProbeConnection({ ...createInput, preflightToken: preflight.preflightToken ?? undefined })
     const loaded = await facade.getOwnerAPIProbeConnection(saved.id)
 
     expect(saved.baseUrl).toBe('https://api.example.test')
@@ -193,7 +244,9 @@ describe('共享探针连接 Mock facade', () => {
       acknowledgeInsecureHttp: false,
     }
     await expect(facade.createOwnerAPIProbeConnection(input)).rejects.toThrow('HTTP 未加密传输风险')
-    const saved = await facade.createOwnerAPIProbeConnection({ ...input, acknowledgeInsecureHttp: true })
+    const acknowledged = { ...input, probeModel: 'gpt-5.6-luna', acknowledgeInsecureHttp: true }
+    const preflight = await facade.preflightOwnerAPIProbeConnection(acknowledged)
+    const saved = await facade.createOwnerAPIProbeConnection({ ...acknowledged, preflightToken: preflight.preflightToken ?? undefined })
     facade.updateMockAPIProbeConnectionReference({ connectionId: saved.id, serviceId: 'service-1', serviceTitle: '示例 API' })
     await assert.rejects(() => facade.deleteOwnerAPIProbeConnection({ id: saved.id, version: saved.version }), /仍被 API 服务引用/)
     facade.resetMockAPIProbeConnections()

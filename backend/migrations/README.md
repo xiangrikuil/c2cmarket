@@ -87,6 +87,8 @@ versions:
 | `000078_account_appeal_sessions` | dedicated account-governance appeal sessions for suspended or banned users |
 | `000079_api_market_probe_and_quota_limits` | API SKU quota usage policies, immutable purchase snapshots, authorized platform probes, and probe samples |
 | `000080_api_prompt_audit_and_publish_contract` | nullable seller prompt-audit declarations and immutable purchase/order snapshots, plus independent historical performance fields |
+| `000081_api_probe_connections_and_model_keys` | reusable seller probe connections, frozen order delivery targets, and canonical API model keys |
+| `000082_api_probe_real_model_health` | real streaming model probes, attempt and usage facts, model-change history, and immutable latency rules |
 
 The current runnable Go slice supports both in-memory tests and PostgreSQL runtime.
 When `DATABASE_URL` is configured, users, auth sessions, idempotency, product
@@ -386,6 +388,19 @@ false value while historical rows remain null. It also removes the grouped
 performance-declaration constraint so new writes can keep maximum concurrency
 without inventing seller TTFT or confirmation timestamps; the historical
 columns and their existing values remain intact.
+
+Version 81 (`000081_api_probe_connections_and_model_keys`) replaces
+service-scoped probe configuration with reusable seller-owned connections.
+Services and orders retain exact Base URL snapshots, while API model catalog,
+service, package, and order projections use canonical model keys without
+decorative display-name variants.
+
+Version 82 (`000082_api_probe_real_model_health`) upgrades connection checks
+from `/models`-only samples to real streaming model probes. It records
+per-attempt TTFT, retry, usage, and cost facts, preserves model-change history,
+and adds immutable model/protocol/environment latency-rule versions. Existing
+local probe connections are disabled for explicit revalidation and incompatible
+legacy samples are cleared before the new schema constraints apply.
 
 ## Contact Retention And Destruction
 

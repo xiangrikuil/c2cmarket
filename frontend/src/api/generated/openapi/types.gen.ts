@@ -1178,21 +1178,115 @@ export type ServiceHealthSample = {
     state: 'smooth' | 'fluctuating' | 'abnormal' | 'no_sample';
 };
 
+export type ServiceHealthHourlyBucket = {
+    hourStartedAt: string;
+    state: 'smooth' | 'fluctuating' | 'abnormal' | 'no_sample';
+    completedCycles: number;
+    firstAttemptSuccesses: number;
+    retryRecoveries: number;
+    finalFailures: number;
+    slowSuccesses: number;
+    finalSuccessPercent: DecimalString | null;
+    averageTtftMs: number | null;
+};
+
+export type ServiceHealthCost = {
+    knownBaseCostUsd: string;
+    knownRetryCostUsd: string;
+    projectedDailyCostUsd: string;
+    hasUnknownUsage: boolean;
+    knownUsageSamples: number;
+};
+
 /**
- * Platform-measured availability of one reusable Base URL and dedicated probe Key. It does not verify any model offered by a service and is not an SLA.
+ * End-to-end real-model health measured from the platform's US West probe environment for one reusable Base URL, dedicated Key, model, and fixed protocol. It is not an SLA for every buyer region or every service model.
  */
 export type ServiceHealthSummary = {
     state: 'normal' | 'fluctuating' | 'abnormal' | 'no_sample';
-    availabilityReason: 'unconfigured' | 'disabled' | 'unverified' | 'insufficient' | 'stale' | 'temporarily_unavailable' | null;
-    successRatePercent: DecimalString | null;
-    successfulSamples: number;
-    totalSamples: number;
+    availabilityReason: 'unconfigured' | 'disabled' | 'unverified' | 'insufficient' | 'stale' | 'temporarily_unavailable' | 'runner_disabled' | null;
     /**
      * Public-safe transport disclosure derived from the configured target scheme. It does not expose the target URL.
      */
     transportSecurity: 'secure_https' | 'insecure_http' | null;
+    /**
+     * First-attempt successes divided by completed probe cycles.
+     */
+    stabilityPercent: DecimalString | null;
+    /**
+     * First-attempt successes plus retry recoveries divided by completed cycles.
+     */
+    finalSuccessPercent: DecimalString | null;
+    coveragePercent: DecimalString;
+    completedCycles: number;
+    theoreticalSlots: number;
+    firstAttemptSuccesses: number;
+    retryRecoveries: number;
+    finalFailures: number;
+    averageTtftMs: number | null;
+    p50TtftMs: number | null;
+    p95TtftMs: number | null;
     lastSampledAt: string | null;
+    probeModel: string | null;
+    probeProtocol: 'openai_responses_v1' | 'openai_chat_completions_v1' | null;
+    probeEnvironment: 'us-west-v1' | null;
+    probeEnvironmentLabel: string | null;
+    probeModelChangedAt: string | null;
+    accumulatingSamples: boolean;
+    hourlyBuckets: [
+        ServiceHealthHourlyBucket,
+        ServiceHealthHourlyBucket,
+        ServiceHealthHourlyBucket,
+        ServiceHealthHourlyBucket,
+        ServiceHealthHourlyBucket,
+        ServiceHealthHourlyBucket,
+        ServiceHealthHourlyBucket,
+        ServiceHealthHourlyBucket,
+        ServiceHealthHourlyBucket,
+        ServiceHealthHourlyBucket,
+        ServiceHealthHourlyBucket,
+        ServiceHealthHourlyBucket,
+        ServiceHealthHourlyBucket,
+        ServiceHealthHourlyBucket,
+        ServiceHealthHourlyBucket,
+        ServiceHealthHourlyBucket,
+        ServiceHealthHourlyBucket,
+        ServiceHealthHourlyBucket,
+        ServiceHealthHourlyBucket,
+        ServiceHealthHourlyBucket,
+        ServiceHealthHourlyBucket,
+        ServiceHealthHourlyBucket,
+        ServiceHealthHourlyBucket,
+        ServiceHealthHourlyBucket
+    ];
+    cost: ServiceHealthCost;
+    /**
+     * @deprecated
+     */
+    successRatePercent: DecimalString | null;
+    /**
+     * @deprecated
+     */
+    successfulSamples: number;
+    /**
+     * @deprecated
+     */
+    totalSamples: number;
+    /**
+     * @deprecated
+     */
     samples: [
+        ServiceHealthSample,
+        ServiceHealthSample,
+        ServiceHealthSample,
+        ServiceHealthSample,
+        ServiceHealthSample,
+        ServiceHealthSample,
+        ServiceHealthSample,
+        ServiceHealthSample,
+        ServiceHealthSample,
+        ServiceHealthSample,
+        ServiceHealthSample,
+        ServiceHealthSample,
         ServiceHealthSample,
         ServiceHealthSample,
         ServiceHealthSample,
@@ -1214,11 +1308,29 @@ export type ApiProbeConnectionRequest = {
      * Complete public HTTP or HTTPS OpenAI-compatible Base URL. The platform never appends /v1. Query strings, fragments, userinfo, unsafe addresses, redirects, and DNS rebinding are rejected.
      */
     baseUrl: string;
+    /**
+     * Exact model ID returned by the current Key's /models response. When omitted, gpt-5.6-luna is selected only if it is present.
+     */
+    probeModel?: string;
     enabled: boolean;
     /**
      * Must be true when saving an HTTP Base URL. HTTP sends the dedicated probe Key over an unencrypted connection.
      */
     acknowledgeInsecureHttp?: boolean;
+};
+
+export type ApiProbeConnectionPreflight = {
+    errorCode: string | null;
+    availableModels: Array<string>;
+    probeModel: string | null;
+    probeProtocol: 'openai_responses_v1' | 'openai_chat_completions_v1' | null;
+    probeEnvironment: 'us-west-v1';
+    dailyBaseCostUpperBoundUsd: string | null;
+    priceUnavailable: boolean;
+    /**
+     * Ten-minute one-time save token. Null when verification did not succeed.
+     */
+    preflightToken: string | null;
 };
 
 export type ApiProbeConnectionServiceReference = {
@@ -1248,6 +1360,22 @@ export type OwnerApiProbeConnection = {
      * Sanitized low-cardinality error code without a URL, credential, or third-party response body.
      */
     lastVerificationErrorCode: string | null;
+    /**
+     * Exact model ID used by scheduled real-model probes.
+     */
+    probeModel: string | null;
+    probeProtocol: 'openai_responses_v1' | 'openai_chat_completions_v1' | null;
+    /**
+     * Private model IDs from the most recent owner verification.
+     */
+    availableModels: Array<string>;
+    probeEnvironment: 'us-west-v1';
+    probeModelChangedAt: string | null;
+    /**
+     * Conservative 1.00x price estimate for 288 scheduled requests; retries are excluded.
+     */
+    dailyBaseCostUpperBoundUsd: string | null;
+    priceUnavailable: boolean;
     measurementVersion: number;
     version: number;
     referencedServices: Array<ApiProbeConnectionServiceReference>;
@@ -1258,6 +1386,68 @@ export type OwnerApiProbeConnection = {
 
 export type OwnerApiProbeConnectionList = {
     items: Array<OwnerApiProbeConnection>;
+};
+
+export type ApiProbeLatencyCalibration = {
+    model: string;
+    protocol: 'openai_responses_v1' | 'openai_chat_completions_v1';
+    environment: 'us-west-v1';
+    environmentLabel: string;
+    observationStartedAt: string;
+    observationEndedAt: string;
+    completeCalendarDays: number;
+    connectionCount: number;
+    sampleCount: number;
+    p50TtftMs: number | null;
+    p90TtftMs: number | null;
+    p95TtftMs: number | null;
+    p99TtftMs: number | null;
+    ready: boolean;
+};
+
+export type ApiProbeLatencyRuleRequest = {
+    model: string;
+    protocol: 'openai_responses_v1' | 'openai_chat_completions_v1';
+    environment: 'us-west-v1';
+    slowTtftMs: number;
+    hardTimeoutMs: number;
+};
+
+export type ApiProbeLatencyRulePreview = {
+    calibration: ApiProbeLatencyCalibration;
+    slowTtftMs: number;
+    hardTimeoutMs: number;
+    slowSampleCount: number;
+    slowPercent: DecimalString;
+    overTimeoutCount: number;
+    overTimeoutPercent: DecimalString;
+};
+
+export type ApiProbeLatencyRule = {
+    id: string;
+    model: string;
+    protocol: 'openai_responses_v1' | 'openai_chat_completions_v1';
+    environment: 'us-west-v1';
+    environmentLabel: string;
+    version: number;
+    slowTtftMs: number;
+    hardTimeoutMs: number;
+    observationStartedAt: string;
+    observationEndedAt: string;
+    completeCalendarDays: number;
+    connectionCount: number;
+    sampleCount: number;
+    p50TtftMs: number | null;
+    p90TtftMs: number | null;
+    p95TtftMs: number | null;
+    p99TtftMs: number | null;
+    status: 'active' | 'superseded';
+    publishedAt: string;
+    supersededAt: string | null;
+};
+
+export type ApiProbeLatencyRuleList = {
+    items: Array<ApiProbeLatencyRule>;
 };
 
 export type ApiModelTesterManualCredentialSource = {
@@ -3915,6 +4105,14 @@ export type ApiProbeConnectionRequestWritable = {
      * Dedicated probe Key. Required when creating a connection; omit on update to retain the encrypted credential.
      */
     credential?: string;
+    /**
+     * Exact model ID returned by the current Key's /models response. When omitted, gpt-5.6-luna is selected only if it is present.
+     */
+    probeModel?: string;
+    /**
+     * Short-lived one-time token returned by a successful preflight. Required for create and updates that change or re-enable the measured configuration.
+     */
+    preflightToken?: string;
     enabled: boolean;
     /**
      * Must be true when saving an HTTP Base URL. HTTP sends the dedicated probe Key over an unencrypted connection.
@@ -8089,6 +8287,35 @@ export type UpdateOwnerApiServiceResponses = {
 
 export type UpdateOwnerApiServiceResponse = UpdateOwnerApiServiceResponses[keyof UpdateOwnerApiServiceResponses];
 
+export type PreflightOwnerApiProbeConnectionData = {
+    body: ApiProbeConnectionRequestWritable;
+    path?: never;
+    query?: never;
+    url: '/api/v1/owner/api-probe-connections/preflight';
+};
+
+export type PreflightOwnerApiProbeConnectionErrors = {
+    /**
+     * Problem Details error.
+     */
+    401: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    422: ProblemDetails;
+};
+
+export type PreflightOwnerApiProbeConnectionError = PreflightOwnerApiProbeConnectionErrors[keyof PreflightOwnerApiProbeConnectionErrors];
+
+export type PreflightOwnerApiProbeConnectionResponses = {
+    /**
+     * Available model IDs, selected probe model, fixed protocol, and current price estimate.
+     */
+    200: ApiProbeConnectionPreflight;
+};
+
+export type PreflightOwnerApiProbeConnectionResponse = PreflightOwnerApiProbeConnectionResponses[keyof PreflightOwnerApiProbeConnectionResponses];
+
 export type ListOwnerApiProbeConnectionsData = {
     body?: never;
     path?: never;
@@ -8303,6 +8530,48 @@ export type VerifyOwnerApiProbeConnectionResponses = {
 };
 
 export type VerifyOwnerApiProbeConnectionResponse = VerifyOwnerApiProbeConnectionResponses[keyof VerifyOwnerApiProbeConnectionResponses];
+
+export type PreflightExistingOwnerApiProbeConnectionData = {
+    body: ApiProbeConnectionRequestWritable;
+    headers: {
+        'If-Match': string;
+    };
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/api/v1/owner/api-probe-connections/{id}/preflight';
+};
+
+export type PreflightExistingOwnerApiProbeConnectionErrors = {
+    /**
+     * Problem Details error.
+     */
+    404: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    412: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    422: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    428: ProblemDetails;
+};
+
+export type PreflightExistingOwnerApiProbeConnectionError = PreflightExistingOwnerApiProbeConnectionErrors[keyof PreflightExistingOwnerApiProbeConnectionErrors];
+
+export type PreflightExistingOwnerApiProbeConnectionResponses = {
+    /**
+     * Available model IDs, selected probe model, fixed protocol, and current price estimate.
+     */
+    200: ApiProbeConnectionPreflight;
+};
+
+export type PreflightExistingOwnerApiProbeConnectionResponse = PreflightExistingOwnerApiProbeConnectionResponses[keyof PreflightExistingOwnerApiProbeConnectionResponses];
 
 export type UpdateOwnerApiServiceProbeConnectionData = {
     body: ApiServiceProbeConnectionRequest;
@@ -12360,6 +12629,125 @@ export type DeactivateAdminApiModelProviderResponses = {
 };
 
 export type DeactivateAdminApiModelProviderResponse = DeactivateAdminApiModelProviderResponses[keyof DeactivateAdminApiModelProviderResponses];
+
+export type GetAdminApiProbeLatencyCalibrationData = {
+    body?: never;
+    path?: never;
+    query?: {
+        model?: string;
+        protocol?: 'openai_responses_v1' | 'openai_chat_completions_v1';
+        environment?: 'us-west-v1';
+    };
+    url: '/api/v1/admin/api-health/latency-calibration';
+};
+
+export type GetAdminApiProbeLatencyCalibrationErrors = {
+    /**
+     * Problem Details error.
+     */
+    403: ProblemDetails;
+};
+
+export type GetAdminApiProbeLatencyCalibrationError = GetAdminApiProbeLatencyCalibrationErrors[keyof GetAdminApiProbeLatencyCalibrationErrors];
+
+export type GetAdminApiProbeLatencyCalibrationResponses = {
+    /**
+     * Current read-only calibration facts.
+     */
+    200: ApiProbeLatencyCalibration;
+};
+
+export type GetAdminApiProbeLatencyCalibrationResponse = GetAdminApiProbeLatencyCalibrationResponses[keyof GetAdminApiProbeLatencyCalibrationResponses];
+
+export type PreviewAdminApiProbeLatencyRuleData = {
+    body: ApiProbeLatencyRuleRequest;
+    path?: never;
+    query?: never;
+    url: '/api/v1/admin/api-health/latency-rules/preview';
+};
+
+export type PreviewAdminApiProbeLatencyRuleErrors = {
+    /**
+     * Problem Details error.
+     */
+    403: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    422: ProblemDetails;
+};
+
+export type PreviewAdminApiProbeLatencyRuleError = PreviewAdminApiProbeLatencyRuleErrors[keyof PreviewAdminApiProbeLatencyRuleErrors];
+
+export type PreviewAdminApiProbeLatencyRuleResponses = {
+    /**
+     * Read-only impact preview; no rule is published.
+     */
+    200: ApiProbeLatencyRulePreview;
+};
+
+export type PreviewAdminApiProbeLatencyRuleResponse = PreviewAdminApiProbeLatencyRuleResponses[keyof PreviewAdminApiProbeLatencyRuleResponses];
+
+export type ListAdminApiProbeLatencyRulesData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/v1/admin/api-health/latency-rules';
+};
+
+export type ListAdminApiProbeLatencyRulesErrors = {
+    /**
+     * Problem Details error.
+     */
+    403: ProblemDetails;
+};
+
+export type ListAdminApiProbeLatencyRulesError = ListAdminApiProbeLatencyRulesErrors[keyof ListAdminApiProbeLatencyRulesErrors];
+
+export type ListAdminApiProbeLatencyRulesResponses = {
+    /**
+     * Published latency rule history.
+     */
+    200: ApiProbeLatencyRuleList;
+};
+
+export type ListAdminApiProbeLatencyRulesResponse = ListAdminApiProbeLatencyRulesResponses[keyof ListAdminApiProbeLatencyRulesResponses];
+
+export type PublishAdminApiProbeLatencyRuleData = {
+    body: ApiProbeLatencyRuleRequest;
+    headers: {
+        'Idempotency-Key': string;
+    };
+    path?: never;
+    query?: never;
+    url: '/api/v1/admin/api-health/latency-rules';
+};
+
+export type PublishAdminApiProbeLatencyRuleErrors = {
+    /**
+     * Problem Details error.
+     */
+    403: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    409: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    422: ProblemDetails;
+};
+
+export type PublishAdminApiProbeLatencyRuleError = PublishAdminApiProbeLatencyRuleErrors[keyof PublishAdminApiProbeLatencyRuleErrors];
+
+export type PublishAdminApiProbeLatencyRuleResponses = {
+    /**
+     * New active rule version.
+     */
+    201: ApiProbeLatencyRule;
+};
+
+export type PublishAdminApiProbeLatencyRuleResponse = PublishAdminApiProbeLatencyRuleResponses[keyof PublishAdminApiProbeLatencyRuleResponses];
 
 export type ListAdminApiModelsData = {
     body?: never;

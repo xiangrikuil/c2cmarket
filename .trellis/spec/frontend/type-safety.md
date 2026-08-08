@@ -584,23 +584,47 @@ type ApiModelTesterRowState = {
   result?: ApiModelTesterModelResult
   message?: string
 }
+
+type ApiProbeConnectionPreflight = {
+  errorCode: string | null
+  availableModels: string[]
+  probeModel: string | null
+  probeProtocol: 'openai_responses_v1' | 'openai_chat_completions_v1' | null
+  probeEnvironment: 'us-west-v1'
+  dailyBaseCostUpperBoundUsd: string | null
+  priceUnavailable: boolean
+  preflightToken: string | null
+}
 ```
 
 ```text
 /my/api-probe-connections
 /tools/api-model-tester
+/admin/api-health
 ```
 
 ### 3. Contracts
 
 - `/my/api-probe-connections` owns reusable seller connection management. Connection forms send
-  name, Base URL, optional write-only credential, enabled state, and HTTP acknowledgement. They do
-  not expose model, TTFT, DNS TXT, HTTP challenge, ownership verification, or administrator review.
+  name, Base URL, optional write-only credential, exact probe model, enabled state, and HTTP
+  acknowledgement. Measurement-changing writes first use the create/existing preflight endpoint,
+  then send its one-time `preflightToken`; save must not repeat the paid real-model verification.
+- Preflight model options are only the current `/models` IDs. The form defaults to exact
+  `gpt-5.6-luna` when the backend selected it, shows the fixed Responses/Chat result and the 1.00x
+  daily estimate, and invalidates its token when Base URL, credential, or model changes.
+- The connection table and public market card reuse the same 24-hour health component. The compact
+  surface shows 24 fixed-size hourly cells, stability, average TTFT, coverage, and runner warnings;
+  the tooltip owns protocol, environment, P50/P95, retry/failure, and cost detail.
+- Re-enabling a disabled connection is measurement-changing: the quick switch first performs an
+  existing-credential preflight, then updates with its token. Disabling remains a direct update.
 - API service create/edit sends `probeConnectionId`; it never duplicates Base URL or key in the
   service form. The selector shows only the current seller's connections and explains unavailable
   binding state without exposing credentials.
 - Public market types contain only `healthSummary`. Owner connection ID/name/readiness fields must
   not leak into public DTO adapters or cards.
+- `/admin/api-health` reads exact model/protocol/environment calibration facts, allows X/Y preview,
+  and enables publication only when the backend reports at least seven complete UTC days and five
+  independent connections. The page never derives or auto-publishes thresholds from percentiles.
 - Model tester `ApiModelTesterCredentialSource` is a strict manual/order union. Both variants carry
   `acknowledgeInsecureHttp`; manual carries Base URL and Key, order carries only order ID.
 - The HTTP warning is conditional on the current manual or selected-order Base URL. It starts
@@ -622,6 +646,12 @@ type ApiModelTesterRowState = {
 | --- | --- |
 | Manual Base URL or Key missing | Disable/get-model action and retain no test state |
 | Current target is HTTP and acknowledgement is false | Show warning and block discover/test |
+| Probe preflight did not return a usable one-time token | Keep connection save disabled |
+| Probe Base URL, credential, or model changes after preflight | Invalidate token and require preflight again |
+| Disabled probe connection is switched on | Preflight stored credential, then update with returned token |
+| Health runner is disabled or stale | Show the backend `runner_disabled`/`stale` explanation, not silent grey |
+| Fewer than three current-version health samples | Show sample accumulation and grey cells |
+| Calibration readiness is false | Disable rule publication while retaining observed percentiles |
 | Source Base URL/order changes | Cancel active work, clear discovery/results, reset HTTP acknowledgement |
 | `/models` returns zero IDs | Show an empty discovered state; do not invent catalog models |
 | One protocol fails while the other succeeds | Render two independent cells for the same model |
@@ -632,19 +662,29 @@ type ApiModelTesterRowState = {
 
 - Good: seller selects one existing verified connection on several publish forms; no form asks for
   the endpoint or key again and public cards expose only the shared health result.
+- Good: seller preflights `gpt-5.6-luna`, receives a one-time token, saves once, and the connection
+  plus every bound service display the same 24-hour health strip without duplicate model calls.
+- Base: the runner is disabled. The enabled connection displays a clear operational warning while
+  retaining its configuration and old immutable samples.
 - Good: buyer selects an HTTP order, checks the warning, discovers `gpt-4.1-mini`, then runs either
   one row or all rows with separate Responses and Chat results.
 - Base: an HTTPS source keeps acknowledgement false and performs the same discovery/test workflow
   without showing an HTTP warning.
 - Base: a source change during an all-model run aborts active requests and returns the page to an
   empty discovery state.
-- Bad: storing the manual key, allowing free-form model IDs after discovery, title-casing model IDs,
-  or showing seller connection IDs/Base URLs on public service cards.
+- Bad: storing the manual key, allowing free-form probe/test model IDs, title-casing model IDs,
+  saving without a matching preflight token, dynamically ranking health colors, or showing seller
+  connection IDs/Base URLs on public service cards.
 
 ### 6. Tests Required
 
 - Adapter request-body tests for both credential-source variants, trimming, HTTP acknowledgement,
   cancellation signal, CSRF-backed mutation, and absence of keys in URLs.
+- Probe adapter/component tests for preflight token transport, token invalidation, default Luna,
+  re-enable preflight, exact model IDs, 24 fixed cells, coverage, runner warnings, Chat fallback,
+  cost unknown state, and no public connection internals.
+- Calibration tests for dimension queries, invalid X/Y, not-ready publication, preview, published
+  immutable rule history, and generated OpenAPI type parity.
 - Component/source tests for conditional HTTP warning, target-change reset, authorized order
   preselection, discovery-only model selection, three-worker concurrency, cancellation, and unmount
   cleanup.

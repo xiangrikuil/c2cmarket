@@ -3141,6 +3141,36 @@ paths:
           $ref: "#/components/responses/Problem"
         "428":
           $ref: "#/components/responses/Problem"
+  /api/v1/owner/api-probe-connections/preflight:
+    post:
+      operationId: preflightOwnerAPIProbeConnection
+      tags: [OwnerAPIHealth]
+      security:
+        - sessionCookie: []
+          csrfToken: []
+      summary: Discover models and fix the real probe protocol before saving a connection.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/APIProbeConnectionRequest"
+      responses:
+        "200":
+          description: Available model IDs, selected probe model, fixed protocol, and current price estimate.
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+                const: private, no-store
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/APIProbeConnectionPreflight"
+        "401":
+          $ref: "#/components/responses/Problem"
+        "422":
+          $ref: "#/components/responses/Problem"
   /api/v1/owner/api-probe-connections:
     get:
       operationId: listOwnerAPIProbeConnections
@@ -3312,6 +3342,43 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/OwnerAPIProbeConnection"
+        "404":
+          $ref: "#/components/responses/Problem"
+        "412":
+          $ref: "#/components/responses/Problem"
+        "422":
+          $ref: "#/components/responses/Problem"
+        "428":
+          $ref: "#/components/responses/Problem"
+  /api/v1/owner/api-probe-connections/{id}/preflight:
+    post:
+      operationId: preflightExistingOwnerAPIProbeConnection
+      tags: [OwnerAPIHealth]
+      security:
+        - sessionCookie: []
+          csrfToken: []
+      summary: Reuse the stored credential to preview a model or target change before saving it.
+      parameters:
+        - $ref: "#/components/parameters/ResourceId"
+        - $ref: "#/components/parameters/IfMatch"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/APIProbeConnectionRequest"
+      responses:
+        "200":
+          description: Available model IDs, selected probe model, fixed protocol, and current price estimate.
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+                const: private, no-store
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/APIProbeConnectionPreflight"
         "404":
           $ref: "#/components/responses/Problem"
         "412":
@@ -6405,6 +6472,102 @@ paths:
         "403":
           $ref: "#/components/responses/Problem"
         "404":
+          $ref: "#/components/responses/Problem"
+  /api/v1/admin/api-health/latency-calibration:
+    get:
+      operationId: getAdminAPIProbeLatencyCalibration
+      tags: [AdminAPIHealth]
+      summary: Read the observation window and TTFT percentiles for one probe dimension.
+      parameters:
+        - name: model
+          in: query
+          schema:
+            type: string
+        - name: protocol
+          in: query
+          schema:
+            type: string
+            enum: [openai_responses_v1, openai_chat_completions_v1]
+        - name: environment
+          in: query
+          schema:
+            type: string
+            enum: [us-west-v1]
+      responses:
+        "200":
+          description: Current read-only calibration facts.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/APIProbeLatencyCalibration"
+        "403":
+          $ref: "#/components/responses/Problem"
+  /api/v1/admin/api-health/latency-rules/preview:
+    post:
+      operationId: previewAdminAPIProbeLatencyRule
+      tags: [AdminAPIHealth]
+      security:
+        - sessionCookie: []
+          csrfToken: []
+      summary: Preview how fixed TTFT thresholds would classify the current calibration samples.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/APIProbeLatencyRuleRequest"
+      responses:
+        "200":
+          description: Read-only impact preview; no rule is published.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/APIProbeLatencyRulePreview"
+        "403":
+          $ref: "#/components/responses/Problem"
+        "422":
+          $ref: "#/components/responses/Problem"
+  /api/v1/admin/api-health/latency-rules:
+    get:
+      operationId: listAdminAPIProbeLatencyRules
+      tags: [AdminAPIHealth]
+      summary: List immutable published and superseded probe latency rules.
+      responses:
+        "200":
+          description: Published latency rule history.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/APIProbeLatencyRuleList"
+        "403":
+          $ref: "#/components/responses/Problem"
+    post:
+      operationId: publishAdminAPIProbeLatencyRule
+      tags: [AdminAPIHealth]
+      security:
+        - sessionCookie: []
+          csrfToken: []
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      summary: Publish a new immutable fixed-threshold rule after calibration is ready.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/APIProbeLatencyRuleRequest"
+      responses:
+        "201":
+          description: New active rule version.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/APIProbeLatencyRule"
+        "403":
+          $ref: "#/components/responses/Problem"
+        "409":
+          $ref: "#/components/responses/Problem"
+        "422":
           $ref: "#/components/responses/Problem"
   /api/v1/admin/api-models:
     get:
@@ -10488,39 +10651,151 @@ components:
         state:
           type: string
           enum: [smooth, fluctuating, abnormal, no_sample]
+    ServiceHealthHourlyBucket:
+      type: object
+      additionalProperties: false
+      required: [hourStartedAt, state, completedCycles, firstAttemptSuccesses, retryRecoveries, finalFailures, slowSuccesses, finalSuccessPercent, averageTtftMs]
+      properties:
+        hourStartedAt:
+          type: string
+          format: date-time
+        state:
+          type: string
+          enum: [smooth, fluctuating, abnormal, no_sample]
+        completedCycles:
+          type: integer
+          minimum: 0
+        firstAttemptSuccesses:
+          type: integer
+          minimum: 0
+        retryRecoveries:
+          type: integer
+          minimum: 0
+        finalFailures:
+          type: integer
+          minimum: 0
+        slowSuccesses:
+          type: integer
+          minimum: 0
+        finalSuccessPercent:
+          anyOf:
+            - $ref: "#/components/schemas/DecimalString"
+            - type: "null"
+        averageTtftMs:
+          type: [integer, "null"]
+          minimum: 0
+    ServiceHealthCost:
+      type: object
+      additionalProperties: false
+      required: [knownBaseCostUsd, knownRetryCostUsd, projectedDailyCostUsd, hasUnknownUsage, knownUsageSamples]
+      properties:
+        knownBaseCostUsd:
+          type: string
+        knownRetryCostUsd:
+          type: string
+        projectedDailyCostUsd:
+          type: string
+        hasUnknownUsage:
+          type: boolean
+        knownUsageSamples:
+          type: integer
+          minimum: 0
     ServiceHealthSummary:
       type: object
       additionalProperties: false
-      description: Platform-measured availability of one reusable Base URL and dedicated probe Key. It does not verify any model offered by a service and is not an SLA.
-      required: [state, availabilityReason, successRatePercent, successfulSamples, totalSamples, transportSecurity, lastSampledAt, samples]
+      description: End-to-end real-model health measured from the platform's US West probe environment for one reusable Base URL, dedicated Key, model, and fixed protocol. It is not an SLA for every buyer region or every service model.
+      required: [state, availabilityReason, transportSecurity, stabilityPercent, finalSuccessPercent, coveragePercent, completedCycles, theoreticalSlots, firstAttemptSuccesses, retryRecoveries, finalFailures, averageTtftMs, p50TtftMs, p95TtftMs, lastSampledAt, probeModel, probeProtocol, probeEnvironment, probeEnvironmentLabel, probeModelChangedAt, accumulatingSamples, hourlyBuckets, cost, successRatePercent, successfulSamples, totalSamples, samples]
       properties:
         state:
           type: string
           enum: [normal, fluctuating, abnormal, no_sample]
         availabilityReason:
           type: [string, "null"]
-          enum: [unconfigured, disabled, unverified, insufficient, stale, temporarily_unavailable, null]
-        successRatePercent:
-          anyOf:
-            - $ref: "#/components/schemas/DecimalString"
-            - type: "null"
-        successfulSamples:
-          type: integer
-          minimum: 0
-        totalSamples:
-          type: integer
-          minimum: 0
+          enum: [unconfigured, disabled, unverified, insufficient, stale, temporarily_unavailable, runner_disabled, null]
         transportSecurity:
           type: [string, "null"]
           enum: [secure_https, insecure_http, null]
           description: Public-safe transport disclosure derived from the configured target scheme. It does not expose the target URL.
+        stabilityPercent:
+          anyOf:
+            - $ref: "#/components/schemas/DecimalString"
+            - type: "null"
+          description: First-attempt successes divided by completed probe cycles.
+        finalSuccessPercent:
+          anyOf:
+            - $ref: "#/components/schemas/DecimalString"
+            - type: "null"
+          description: First-attempt successes plus retry recoveries divided by completed cycles.
+        coveragePercent:
+          $ref: "#/components/schemas/DecimalString"
+        completedCycles:
+          type: integer
+          minimum: 0
+        theoreticalSlots:
+          type: integer
+          minimum: 0
+        firstAttemptSuccesses:
+          type: integer
+          minimum: 0
+        retryRecoveries:
+          type: integer
+          minimum: 0
+        finalFailures:
+          type: integer
+          minimum: 0
+        averageTtftMs:
+          type: [integer, "null"]
+          minimum: 0
+        p50TtftMs:
+          type: [integer, "null"]
+          minimum: 0
+        p95TtftMs:
+          type: [integer, "null"]
+          minimum: 0
         lastSampledAt:
           type: [string, "null"]
           format: date-time
+        probeModel:
+          type: [string, "null"]
+        probeProtocol:
+          type: [string, "null"]
+          enum: [openai_responses_v1, openai_chat_completions_v1, null]
+        probeEnvironment:
+          type: [string, "null"]
+          enum: [us-west-v1, null]
+        probeEnvironmentLabel:
+          type: [string, "null"]
+        probeModelChangedAt:
+          type: [string, "null"]
+          format: date-time
+        accumulatingSamples:
+          type: boolean
+        hourlyBuckets:
+          type: array
+          minItems: 24
+          maxItems: 24
+          items:
+            $ref: "#/components/schemas/ServiceHealthHourlyBucket"
+        cost:
+          $ref: "#/components/schemas/ServiceHealthCost"
+        successRatePercent:
+          anyOf:
+            - $ref: "#/components/schemas/DecimalString"
+            - type: "null"
+          deprecated: true
+        successfulSamples:
+          type: integer
+          minimum: 0
+          deprecated: true
+        totalSamples:
+          type: integer
+          minimum: 0
+          deprecated: true
         samples:
           type: array
-          minItems: 12
-          maxItems: 12
+          minItems: 24
+          maxItems: 24
+          deprecated: true
           items:
             $ref: "#/components/schemas/ServiceHealthSample"
     APIProbeConnectionRequest:
@@ -10541,12 +10816,46 @@ components:
           minLength: 1
           writeOnly: true
           description: Dedicated probe Key. Required when creating a connection; omit on update to retain the encrypted credential.
+        probeModel:
+          type: string
+          description: Exact model ID returned by the current Key's /models response. When omitted, gpt-5.6-luna is selected only if it is present.
+        preflightToken:
+          type: string
+          minLength: 1
+          writeOnly: true
+          description: Short-lived one-time token returned by a successful preflight. Required for create and updates that change or re-enable the measured configuration.
         enabled:
           type: boolean
         acknowledgeInsecureHttp:
           type: boolean
           default: false
           description: Must be true when saving an HTTP Base URL. HTTP sends the dedicated probe Key over an unencrypted connection.
+    APIProbeConnectionPreflight:
+      type: object
+      additionalProperties: false
+      required: [errorCode, availableModels, probeModel, probeProtocol, probeEnvironment, dailyBaseCostUpperBoundUsd, priceUnavailable, preflightToken]
+      properties:
+        errorCode:
+          type: [string, "null"]
+        availableModels:
+          type: array
+          items:
+            type: string
+        probeModel:
+          type: [string, "null"]
+        probeProtocol:
+          type: [string, "null"]
+          enum: [openai_responses_v1, openai_chat_completions_v1, null]
+        probeEnvironment:
+          type: string
+          enum: [us-west-v1]
+        dailyBaseCostUpperBoundUsd:
+          type: [string, "null"]
+        priceUnavailable:
+          type: boolean
+        preflightToken:
+          type: [string, "null"]
+          description: Ten-minute one-time save token. Null when verification did not succeed.
     APIProbeConnectionServiceReference:
       type: object
       additionalProperties: false
@@ -10560,7 +10869,7 @@ components:
     OwnerAPIProbeConnection:
       type: object
       additionalProperties: false
-      required: [id, name, baseUrl, normalizedBaseUrl, credentialConfigured, enabled, verificationStatus, verifiedAt, lastVerificationErrorCode, measurementVersion, version, referencedServices, healthSummary, createdAt, updatedAt]
+      required: [id, name, baseUrl, normalizedBaseUrl, credentialConfigured, enabled, verificationStatus, verifiedAt, lastVerificationErrorCode, probeModel, probeProtocol, availableModels, probeEnvironment, probeModelChangedAt, dailyBaseCostUpperBoundUsd, priceUnavailable, measurementVersion, version, referencedServices, healthSummary, createdAt, updatedAt]
       properties:
         id:
           type: string
@@ -10589,6 +10898,28 @@ components:
         lastVerificationErrorCode:
           type: [string, "null"]
           description: Sanitized low-cardinality error code without a URL, credential, or third-party response body.
+        probeModel:
+          type: [string, "null"]
+          description: Exact model ID used by scheduled real-model probes.
+        probeProtocol:
+          type: [string, "null"]
+          enum: [openai_responses_v1, openai_chat_completions_v1, null]
+        availableModels:
+          type: array
+          items:
+            type: string
+          description: Private model IDs from the most recent owner verification.
+        probeEnvironment:
+          type: string
+          enum: [us-west-v1]
+        probeModelChangedAt:
+          type: [string, "null"]
+          format: date-time
+        dailyBaseCostUpperBoundUsd:
+          type: [string, "null"]
+          description: Conservative 1.00x price estimate for 288 scheduled requests; retries are excluded.
+        priceUnavailable:
+          type: boolean
         measurementVersion:
           type: integer
           minimum: 1
@@ -10616,6 +10947,172 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/OwnerAPIProbeConnection"
+    APIProbeLatencyCalibration:
+      type: object
+      additionalProperties: false
+      required: [model, protocol, environment, environmentLabel, observationStartedAt, observationEndedAt, completeCalendarDays, connectionCount, sampleCount, p50TtftMs, p90TtftMs, p95TtftMs, p99TtftMs, ready]
+      properties:
+        model:
+          type: string
+        protocol:
+          type: string
+          enum: [openai_responses_v1, openai_chat_completions_v1]
+        environment:
+          type: string
+          enum: [us-west-v1]
+        environmentLabel:
+          type: string
+        observationStartedAt:
+          type: string
+          format: date-time
+        observationEndedAt:
+          type: string
+          format: date-time
+        completeCalendarDays:
+          type: integer
+          minimum: 0
+        connectionCount:
+          type: integer
+          minimum: 0
+        sampleCount:
+          type: integer
+          format: int64
+          minimum: 0
+        p50TtftMs:
+          type: [integer, "null"]
+          minimum: 0
+        p90TtftMs:
+          type: [integer, "null"]
+          minimum: 0
+        p95TtftMs:
+          type: [integer, "null"]
+          minimum: 0
+        p99TtftMs:
+          type: [integer, "null"]
+          minimum: 0
+        ready:
+          type: boolean
+    APIProbeLatencyRuleRequest:
+      type: object
+      additionalProperties: false
+      required: [model, protocol, environment, slowTtftMs, hardTimeoutMs]
+      properties:
+        model:
+          type: string
+          minLength: 1
+        protocol:
+          type: string
+          enum: [openai_responses_v1, openai_chat_completions_v1]
+        environment:
+          type: string
+          enum: [us-west-v1]
+        slowTtftMs:
+          type: integer
+          minimum: 1
+          maximum: 29999
+        hardTimeoutMs:
+          type: integer
+          minimum: 2
+          maximum: 30000
+    APIProbeLatencyRulePreview:
+      type: object
+      additionalProperties: false
+      required: [calibration, slowTtftMs, hardTimeoutMs, slowSampleCount, slowPercent, overTimeoutCount, overTimeoutPercent]
+      properties:
+        calibration:
+          $ref: "#/components/schemas/APIProbeLatencyCalibration"
+        slowTtftMs:
+          type: integer
+          minimum: 1
+        hardTimeoutMs:
+          type: integer
+          minimum: 2
+        slowSampleCount:
+          type: integer
+          format: int64
+          minimum: 0
+        slowPercent:
+          $ref: "#/components/schemas/DecimalString"
+        overTimeoutCount:
+          type: integer
+          format: int64
+          minimum: 0
+        overTimeoutPercent:
+          $ref: "#/components/schemas/DecimalString"
+    APIProbeLatencyRule:
+      type: object
+      additionalProperties: false
+      required: [id, model, protocol, environment, environmentLabel, version, slowTtftMs, hardTimeoutMs, observationStartedAt, observationEndedAt, completeCalendarDays, connectionCount, sampleCount, p50TtftMs, p90TtftMs, p95TtftMs, p99TtftMs, status, publishedAt, supersededAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        model:
+          type: string
+        protocol:
+          type: string
+          enum: [openai_responses_v1, openai_chat_completions_v1]
+        environment:
+          type: string
+          enum: [us-west-v1]
+        environmentLabel:
+          type: string
+        version:
+          type: integer
+          format: int64
+          minimum: 1
+        slowTtftMs:
+          type: integer
+          minimum: 1
+        hardTimeoutMs:
+          type: integer
+          minimum: 2
+        observationStartedAt:
+          type: string
+          format: date-time
+        observationEndedAt:
+          type: string
+          format: date-time
+        completeCalendarDays:
+          type: integer
+          minimum: 0
+        connectionCount:
+          type: integer
+          minimum: 0
+        sampleCount:
+          type: integer
+          format: int64
+          minimum: 0
+        p50TtftMs:
+          type: [integer, "null"]
+          minimum: 0
+        p90TtftMs:
+          type: [integer, "null"]
+          minimum: 0
+        p95TtftMs:
+          type: [integer, "null"]
+          minimum: 0
+        p99TtftMs:
+          type: [integer, "null"]
+          minimum: 0
+        status:
+          type: string
+          enum: [active, superseded]
+        publishedAt:
+          type: string
+          format: date-time
+        supersededAt:
+          type: [string, "null"]
+          format: date-time
+    APIProbeLatencyRuleList:
+      type: object
+      additionalProperties: false
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/APIProbeLatencyRule"
     APIModelTesterManualCredentialSource:
       type: object
       additionalProperties: false

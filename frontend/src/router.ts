@@ -44,6 +44,7 @@ const AdminAnnouncementsPage = () => import('@/pages/AdminAnnouncementsPage.vue'
 const AdminAnnouncementEditorPage = () => import('@/pages/AdminAnnouncementEditorPage.vue')
 const AdminProductPlansPage = () => import('@/pages/AdminProductPlansPage.vue')
 const AdminApiModelsPage = () => import('@/pages/AdminApiModelsPage.vue')
+const AdminApiHealthCalibrationPage = () => import('@/pages/AdminApiHealthCalibrationPage.vue')
 const AdminModelAuditPage = () => import('@/pages/AdminModelAuditPage.vue')
 const AdminUsersPage = () => import('@/pages/AdminUsersPage.vue')
 const AdminApiOrderDetailPage = () => import('@/pages/AdminApiOrderDetailPage.vue')
@@ -121,6 +122,7 @@ export const routes: RouteRecordRaw[] = [
     { path: '/admin/announcements/:id/edit', name: 'admin-announcement-edit', component: AdminAnnouncementEditorPage, meta: adminAuthMeta },
     { path: '/admin/product-plans', name: 'admin-product-plans', component: AdminProductPlansPage, meta: adminAuthMeta },
     { path: '/admin/api-models', name: 'admin-api-models', component: AdminApiModelsPage, meta: adminAuthMeta },
+    { path: '/admin/api-health', name: 'admin-api-health', component: AdminApiHealthCalibrationPage, meta: adminAuthMeta },
     { path: '/admin/model-audit', name: 'admin-model-audit', component: AdminModelAuditPage, meta: adminAuthMeta },
     { path: '/admin/feedback', name: 'admin-feedback', component: AdminFeedbackPage, meta: adminAuthMeta },
     { path: '/admin/feedback/:id', name: 'admin-feedback-detail', component: AdminFeedbackPage, meta: adminAuthMeta },

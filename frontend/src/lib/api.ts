@@ -97,7 +97,7 @@ import {
   type UserProfile,
 } from '@/data/mock'
 import type { ReputationSummary } from '@/types/reputation'
-import type { ApiServiceHealthSummary } from '@/types/apiHealth'
+import type { ApiServiceHealthHourlyBucket, ApiServiceHealthSample, ApiServiceHealthSummary } from '@/types/apiHealth'
 import { getOwnerAPIProbeConnections, updateMockAPIProbeConnectionReference } from '@/lib/apiHealthFacade'
 import type { ApiQuotaUsagePolicy, ApiQuotaUsagePolicyInput } from '@/types/apiQuota'
 export type { ApiQuotaLimitMode, ApiQuotaUsageLimit, ApiQuotaUsageLimitInput, ApiQuotaUsagePolicy, ApiQuotaUsagePolicyInput, ApiWritableQuotaLimitMode } from '@/types/apiQuota'
@@ -2948,33 +2948,57 @@ function mockOwnerApiService(service: ApiService): OwnerApiService {
 }
 
 function mockUnconfiguredAPIHealthSummary(): ApiServiceHealthSummary {
-  const slot = (minute: number): ApiServiceHealthSummary['samples'][number] => ({
-    slotStartedAt: new Date(Date.UTC(2026, 7, 4, 0, minute)).toISOString(),
-    state: 'no_sample',
-  })
-  return {
-    state: 'no_sample',
-    availabilityReason: 'unconfigured',
-    successRatePercent: null,
-    successfulSamples: 0,
-    totalSamples: 0,
-    transportSecurity: null,
-    lastSampledAt: null,
-    samples: [
-      slot(0),
-      slot(5),
-      slot(10),
-      slot(15),
-      slot(20),
-      slot(25),
-      slot(30),
-      slot(35),
-      slot(40),
-      slot(45),
-      slot(50),
-      slot(55),
-    ],
-  }
+	const slot = (hour: number): ApiServiceHealthSample => ({
+		slotStartedAt: new Date(Date.UTC(2026, 7, 4, hour)).toISOString(),
+		state: 'no_sample',
+	})
+	const bucket = (hour: number): ApiServiceHealthHourlyBucket => ({
+		hourStartedAt: new Date(Date.UTC(2026, 7, 4, hour)).toISOString(),
+		state: 'no_sample',
+		completedCycles: 0,
+		firstAttemptSuccesses: 0,
+		retryRecoveries: 0,
+		finalFailures: 0,
+		slowSuccesses: 0,
+		finalSuccessPercent: null,
+		averageTtftMs: null,
+	})
+	const hours = Array.from({ length: 24 }, (_, index) => index)
+	return {
+		state: 'no_sample',
+		availabilityReason: 'unconfigured',
+		transportSecurity: null,
+		stabilityPercent: null,
+		finalSuccessPercent: null,
+		coveragePercent: '0.0',
+		completedCycles: 0,
+		theoreticalSlots: 288,
+		firstAttemptSuccesses: 0,
+		retryRecoveries: 0,
+		finalFailures: 0,
+		averageTtftMs: null,
+		p50TtftMs: null,
+		p95TtftMs: null,
+		lastSampledAt: null,
+		probeModel: null,
+		probeProtocol: null,
+		probeEnvironment: null,
+		probeEnvironmentLabel: null,
+		probeModelChangedAt: null,
+		accumulatingSamples: false,
+		hourlyBuckets: hours.map(bucket),
+		cost: {
+			knownBaseCostUsd: '0',
+			knownRetryCostUsd: '0',
+			projectedDailyCostUsd: '',
+			hasUnknownUsage: false,
+			knownUsageSamples: 0,
+		},
+		successRatePercent: null,
+		successfulSamples: 0,
+		totalSamples: 0,
+		samples: hours.map(slot),
+	}
 }
 
 export async function getMyApiServices(salesView: ApiServiceSalesView = 'active') {

@@ -17,6 +17,8 @@ type apiProbeConnectionRequest struct {
 	Name                    string  `json:"name"`
 	BaseURL                 string  `json:"baseUrl"`
 	Credential              *string `json:"credential"`
+	ProbeModel              string  `json:"probeModel"`
+	PreflightToken          string  `json:"preflightToken"`
 	Enabled                 *bool   `json:"enabled"`
 	AcknowledgeInsecureHTTP bool    `json:"acknowledgeInsecureHttp"`
 }
@@ -27,21 +29,92 @@ type apiProbeConnectionServiceResponse struct {
 }
 
 type ownerAPIProbeConnectionResponse struct {
-	ID                        string                              `json:"id"`
-	Name                      string                              `json:"name"`
-	BaseURL                   string                              `json:"baseUrl"`
-	NormalizedBaseURL         string                              `json:"normalizedBaseUrl"`
-	CredentialConfigured      bool                                `json:"credentialConfigured"`
-	Enabled                   bool                                `json:"enabled"`
-	VerificationStatus        string                              `json:"verificationStatus"`
-	VerifiedAt                *time.Time                          `json:"verifiedAt"`
-	LastVerificationErrorCode *string                             `json:"lastVerificationErrorCode"`
-	MeasurementVersion        int64                               `json:"measurementVersion"`
-	Version                   int64                               `json:"version"`
-	ReferencedServices        []apiProbeConnectionServiceResponse `json:"referencedServices"`
-	HealthSummary             apiServiceHealthSummaryResponse     `json:"healthSummary"`
-	CreatedAt                 time.Time                           `json:"createdAt"`
-	UpdatedAt                 time.Time                           `json:"updatedAt"`
+	ID                         string                              `json:"id"`
+	Name                       string                              `json:"name"`
+	BaseURL                    string                              `json:"baseUrl"`
+	NormalizedBaseURL          string                              `json:"normalizedBaseUrl"`
+	CredentialConfigured       bool                                `json:"credentialConfigured"`
+	Enabled                    bool                                `json:"enabled"`
+	VerificationStatus         string                              `json:"verificationStatus"`
+	VerifiedAt                 *time.Time                          `json:"verifiedAt"`
+	LastVerificationErrorCode  *string                             `json:"lastVerificationErrorCode"`
+	ProbeModel                 *string                             `json:"probeModel"`
+	ProbeProtocol              *string                             `json:"probeProtocol"`
+	AvailableModels            []string                            `json:"availableModels"`
+	ProbeEnvironment           string                              `json:"probeEnvironment"`
+	ProbeModelChangedAt        *time.Time                          `json:"probeModelChangedAt"`
+	DailyBaseCostUpperBoundUSD *string                             `json:"dailyBaseCostUpperBoundUsd"`
+	PriceUnavailable           bool                                `json:"priceUnavailable"`
+	MeasurementVersion         int64                               `json:"measurementVersion"`
+	Version                    int64                               `json:"version"`
+	ReferencedServices         []apiProbeConnectionServiceResponse `json:"referencedServices"`
+	HealthSummary              apiServiceHealthSummaryResponse     `json:"healthSummary"`
+	CreatedAt                  time.Time                           `json:"createdAt"`
+	UpdatedAt                  time.Time                           `json:"updatedAt"`
+}
+
+type apiProbeConnectionPreflightResponse struct {
+	ErrorCode                  *string  `json:"errorCode"`
+	AvailableModels            []string `json:"availableModels"`
+	ProbeModel                 *string  `json:"probeModel"`
+	ProbeProtocol              *string  `json:"probeProtocol"`
+	ProbeEnvironment           string   `json:"probeEnvironment"`
+	DailyBaseCostUpperBoundUSD *string  `json:"dailyBaseCostUpperBoundUsd"`
+	PriceUnavailable           bool     `json:"priceUnavailable"`
+	PreflightToken             *string  `json:"preflightToken"`
+}
+
+func (server *Server) handlePreflightOwnerAPIProbeConnection(w http.ResponseWriter, request *http.Request) {
+	setAPIHealthPrivateHeaders(w)
+	user, _, appErr := server.requireSessionAndCSRF(w, request)
+	if appErr != nil {
+		writeProblem(w, request, appErr)
+		return
+	}
+	input, appErr := decodeStrictJSONOnly[apiProbeConnectionRequest](request)
+	if appErr != nil {
+		writeProblem(w, request, appErr)
+		return
+	}
+	if appErr = server.requireAPIHealthService(); appErr != nil {
+		writeProblem(w, request, appErr)
+		return
+	}
+	result, appErr := server.apiHealth.PreflightOwnerConnection(request.Context(), user, toAPIProbeConnectionInput(input))
+	if appErr != nil {
+		writeProblem(w, request, appErr)
+		return
+	}
+	writeJSON(w, http.StatusOK, toAPIProbeConnectionPreflightResponse(result))
+}
+
+func (server *Server) handlePreflightExistingOwnerAPIProbeConnection(w http.ResponseWriter, request *http.Request) {
+	setAPIHealthPrivateHeaders(w)
+	user, _, appErr := server.requireSessionAndCSRF(w, request)
+	if appErr != nil {
+		writeProblem(w, request, appErr)
+		return
+	}
+	input, appErr := decodeStrictJSONOnly[apiProbeConnectionRequest](request)
+	if appErr != nil {
+		writeProblem(w, request, appErr)
+		return
+	}
+	version, appErr := requireIfMatchVersion(request)
+	if appErr != nil {
+		writeProblem(w, request, appErr)
+		return
+	}
+	if appErr = server.requireAPIHealthService(); appErr != nil {
+		writeProblem(w, request, appErr)
+		return
+	}
+	result, appErr := server.apiHealth.PreflightExistingOwnerConnection(request.Context(), user, chi.URLParam(request, "id"), toAPIProbeConnectionInput(input), version)
+	if appErr != nil {
+		writeProblem(w, request, appErr)
+		return
+	}
+	writeJSON(w, http.StatusOK, toAPIProbeConnectionPreflightResponse(result))
 }
 
 func (server *Server) handleOwnerAPIProbeConnections(w http.ResponseWriter, request *http.Request) {
@@ -267,7 +340,8 @@ func restoreAPIHealthETag(completion *idempotency.Completion) {
 
 func toAPIProbeConnectionInput(request apiProbeConnectionRequest) apihealth.ConnectionInput {
 	return apihealth.ConnectionInput{
-		Name: request.Name, BaseURL: request.BaseURL, Credential: request.Credential, Enabled: request.Enabled != nil && *request.Enabled,
+		Name: request.Name, BaseURL: request.BaseURL, Credential: request.Credential, ProbeModel: request.ProbeModel,
+		PreflightToken: request.PreflightToken, Enabled: request.Enabled != nil && *request.Enabled,
 		AcknowledgeInsecureHTTP: request.AcknowledgeInsecureHTTP,
 	}
 }
@@ -277,14 +351,31 @@ func toOwnerAPIProbeConnectionResponse(connection apihealth.Connection) ownerAPI
 	for _, reference := range connection.References {
 		references = append(references, apiProbeConnectionServiceResponse{ID: reference.ID, Title: reference.Title})
 	}
+	dailyCost := apiHealthOptionalString(apihealth.DailyBaseCostUpperBoundUSD(connection.Price))
 	return ownerAPIProbeConnectionResponse{
 		ID: connection.ID, Name: connection.Name, BaseURL: connection.BaseURL, NormalizedBaseURL: connection.NormalizedBaseURL,
 		CredentialConfigured: connection.CredentialConfigured, Enabled: connection.Enabled,
 		VerificationStatus: connection.VerificationStatus, VerifiedAt: connection.VerifiedAt,
 		LastVerificationErrorCode: apiHealthStringPointer(connection.LastVerificationErrorCode),
-		MeasurementVersion:        connection.MeasurementVersion, Version: connection.Version,
+		ProbeModel:                apiHealthOptionalString(connection.ProbeModel), ProbeProtocol: apiHealthOptionalString(connection.ProbeProtocol),
+		AvailableModels: append([]string(nil), connection.AvailableModels...), ProbeEnvironment: connection.ProbeEnvironment,
+		ProbeModelChangedAt: connection.ProbeModelChangedAt, DailyBaseCostUpperBoundUSD: dailyCost,
+		PriceUnavailable:   dailyCost == nil,
+		MeasurementVersion: connection.MeasurementVersion, Version: connection.Version,
 		ReferencedServices: references, HealthSummary: toAPIServiceHealthSummaryResponse(connection.HealthSummary),
 		CreatedAt: connection.CreatedAt, UpdatedAt: connection.UpdatedAt,
+	}
+}
+
+func toAPIProbeConnectionPreflightResponse(result apihealth.PreflightResult) apiProbeConnectionPreflightResponse {
+	return apiProbeConnectionPreflightResponse{
+		ErrorCode:       apiHealthStringPointer(result.Verification.ErrorCode),
+		AvailableModels: append([]string(nil), result.Verification.AvailableModels...),
+		ProbeModel:      apiHealthOptionalString(result.Verification.ProbeModel), ProbeProtocol: apiHealthOptionalString(result.Verification.ProbeProtocol),
+		ProbeEnvironment:           apihealth.ProbeEnvironmentUSWestV1,
+		DailyBaseCostUpperBoundUSD: apiHealthOptionalString(result.DailyBaseCostUpperBoundUSD),
+		PriceUnavailable:           result.PriceUnavailable,
+		PreflightToken:             apiHealthOptionalString(result.PreflightToken),
 	}
 }
 

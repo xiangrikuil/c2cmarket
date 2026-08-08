@@ -5,6 +5,7 @@ import {
   deleteOwnerAPIProbeConnection,
   getOwnerAPIProbeConnection,
   getOwnerAPIProbeConnections,
+  preflightOwnerAPIProbeConnection,
   updateOwnerAPIProbeConnection,
   verifyOwnerAPIProbeConnection,
 } from '@/lib/apiHealthFacade'
@@ -57,6 +58,10 @@ export function useCreateOwnerAPIProbeConnectionMutation() {
       return invalidateConnections(queryClient, connection.id)
     },
   })
+}
+
+export function usePreflightOwnerAPIProbeConnectionMutation() {
+  return useMutation({ mutationFn: preflightOwnerAPIProbeConnection })
 }
 
 export function useUpdateOwnerAPIProbeConnectionMutation() {

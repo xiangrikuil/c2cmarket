@@ -30,6 +30,15 @@ func (service *apiHealthRouteService) OwnerConnections(context.Context, auth.Use
 func (service *apiHealthRouteService) OwnerConnection(context.Context, auth.User, string) (apihealth.Connection, bool, *domain.AppError) {
 	return service.connection, service.found, nil
 }
+func (service *apiHealthRouteService) PreflightOwnerConnection(_ context.Context, _ auth.User, input apihealth.ConnectionInput) (apihealth.PreflightResult, *domain.AppError) {
+	service.input = input
+	return testAPIProbePreflight(input), nil
+}
+func (service *apiHealthRouteService) PreflightExistingOwnerConnection(_ context.Context, _ auth.User, _ string, input apihealth.ConnectionInput, expectedVersion int64) (apihealth.PreflightResult, *domain.AppError) {
+	service.input = input
+	service.expectedVersion = expectedVersion
+	return testAPIProbePreflight(input), nil
+}
 func (service *apiHealthRouteService) CreateOwnerConnection(_ context.Context, _ auth.User, input apihealth.ConnectionInput) (apihealth.Connection, *domain.AppError) {
 	service.input = input
 	connection := service.connection
@@ -68,6 +77,14 @@ func TestOwnerAPIProbeConnectionRoutesKeepCredentialWriteOnly(t *testing.T) {
 	health := &apiHealthRouteService{found: true, connection: testAPIProbeConnection(now)}
 	handler := NewServer(app.NewServiceWithClock(func() time.Time { return now }), ServerOptions{EnableDevAuth: true, APIHealth: health})
 	owner := createSession(t, handler, "probe-connection-owner", false)
+	preflight := newJSONRequest(http.MethodPost, "/api/v1/owner/api-probe-connections/preflight", `{"name":"低额度探针","baseUrl":"https://api.example.com/v1","credential":"probe-secret","probeModel":"gpt-5.6-luna","enabled":true}`)
+	addAuth(preflight, owner, "unused")
+	preflightResponse := httptest.NewRecorder()
+	handler.ServeHTTP(preflightResponse, preflight)
+	if preflightResponse.Code != http.StatusOK || !strings.Contains(preflightResponse.Body.String(), `"preflightToken":"preflight-token"`) {
+		t.Fatalf("preflight status=%d body=%s", preflightResponse.Code, preflightResponse.Body.String())
+	}
+	assertAPIHealthPrivateNoStore(t, preflightResponse)
 
 	listRequest := httptest.NewRequest(http.MethodGet, "/api/v1/owner/api-probe-connections", nil)
 	addCookie(listRequest, owner.cookie)
@@ -150,10 +167,23 @@ func testAPIProbeConnection(now time.Time) apihealth.Connection {
 		ID: "00000000-0000-0000-0000-000000000811", OwnerUserID: "owner-1", Name: "主 Sub2API",
 		BaseURL: "https://api.example.com/v1", NormalizedBaseURL: "https://api.example.com/v1",
 		CredentialConfigured: true, Enabled: true, VerificationStatus: apihealth.VerificationVerified,
-		VerifiedAt: &verifiedAt, MeasurementVersion: 2, Version: 4,
+		VerifiedAt: &verifiedAt, ProbeModel: apihealth.DefaultGPTProbeModel,
+		ProbeProtocol: apihealth.ProtocolResponsesV1, AvailableModels: []string{apihealth.DefaultGPTProbeModel},
+		ProbeEnvironment: apihealth.ProbeEnvironmentUSWestV1, MeasurementVersion: 2, Version: 4,
 		References: []apihealth.ServiceReference{{ID: "service-1", Title: "额度服务"}},
 		CreatedAt:  now.Add(-time.Hour), UpdatedAt: now,
 	}
+}
+
+func testAPIProbePreflight(input apihealth.ConnectionInput) apihealth.PreflightResult {
+	model := input.ProbeModel
+	if model == "" {
+		model = apihealth.DefaultGPTProbeModel
+	}
+	return apihealth.PreflightResult{Verification: apihealth.VerificationResult{
+		HTTPStatus: 200, AvailableModels: []string{model}, ProbeModel: model,
+		ProbeProtocol: apihealth.ProtocolResponsesV1,
+	}, PriceUnavailable: true, PreflightToken: "preflight-token"}
 }
 
 func assertAPIHealthPrivateNoStore(t *testing.T, response *httptest.ResponseRecorder) {

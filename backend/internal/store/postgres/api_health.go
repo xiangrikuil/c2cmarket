@@ -17,20 +17,30 @@ import (
 const apiProbeConnectionColumns = `
 	c.id::text, c.owner_user_id::text, c.name, c.base_url, c.normalized_base_url,
 	(c.credential_ciphertext IS NOT NULL), c.enabled, c.verification_status,
-	c.verified_at, COALESCE(c.last_verification_error_code, ''), c.measurement_version,
-	c.version, c.created_at, c.updated_at
+	c.verified_at, COALESCE(c.last_verification_error_code, ''),
+	COALESCE(c.probe_model, ''), COALESCE(c.probe_protocol, ''), c.probe_models_snapshot,
+	c.probe_environment, c.probe_model_changed_at, COALESCE(c.probe_price_version_id::text, ''),
+	COALESCE(c.probe_input_price_per_million::text, ''), COALESCE(c.probe_cached_input_price_per_million::text, ''),
+	COALESCE(c.probe_output_price_per_million::text, ''), COALESCE(c.probe_price_currency, ''),
+	c.measurement_version, c.version, c.created_at, c.updated_at
+`
+
+const apiProbeSampleColumns = `
+	sample.id::text, sample.connection_id::text, sample.measurement_version, sample.slot_started_at,
+	sample.status, sample.probe_model, sample.probe_protocol, sample.probe_environment,
+	COALESCE(sample.latency_rule_version_id::text, ''), COALESCE(sample.outcome, ''), sample.attempt_count,
+	sample.first_attempt_ttft_ms, sample.first_attempt_total_duration_ms, sample.recovery_duration_ms,
+	sample.total_duration_ms, sample.http_status_class, sample.final_http_status, COALESCE(sample.error_code, ''),
+	sample.input_tokens, sample.cached_input_tokens, sample.output_tokens, sample.reasoning_tokens,
+	sample.usage_complete, COALESCE(sample.base_cost_usd::text, ''), COALESCE(sample.retry_cost_usd::text, ''),
+	sample.started_at, sample.finished_at, sample.created_at
 `
 
 func (store *Store) ListOwnerProbeConnections(ctx context.Context, ownerUserID string) ([]apihealth.Connection, *domain.AppError) {
 	if store == nil || store.pool == nil {
 		return nil, internalStoreError()
 	}
-	rows, err := store.pool.Query(ctx, `
-		SELECT `+apiProbeConnectionColumns+`
-		FROM api_probe_connections c
-		WHERE c.owner_user_id = $1
-		ORDER BY c.updated_at DESC, c.id DESC
-	`, ownerUserID)
+	rows, err := store.pool.Query(ctx, `SELECT `+apiProbeConnectionColumns+` FROM api_probe_connections c WHERE c.owner_user_id = $1 ORDER BY c.updated_at DESC, c.id DESC`, ownerUserID)
 	if err != nil {
 		return nil, internalStoreError()
 	}
@@ -59,11 +69,7 @@ func (store *Store) GetOwnerProbeConnection(ctx context.Context, ownerUserID, co
 		return apihealth.Connection{}, false, internalStoreError()
 	}
 	var connection apihealth.Connection
-	err := scanAPIProbeConnection(store.pool.QueryRow(ctx, `
-		SELECT `+apiProbeConnectionColumns+`
-		FROM api_probe_connections c
-		WHERE c.owner_user_id = $1 AND c.id = $2
-	`, ownerUserID, connectionID), &connection)
+	err := scanAPIProbeConnection(store.pool.QueryRow(ctx, `SELECT `+apiProbeConnectionColumns+` FROM api_probe_connections c WHERE c.owner_user_id = $1 AND c.id = $2`, ownerUserID, connectionID), &connection)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return apihealth.Connection{}, false, nil
 	}
@@ -86,12 +92,7 @@ func (store *Store) GetOwnerProbeConnectionCredential(ctx context.Context, owner
 	var keyVersion, cipherFormat string
 	destinations := apiProbeConnectionScanDestinations(&connection)
 	destinations = append(destinations, &ciphertext, &nonce, &keyVersion, &cipherFormat)
-	err := store.pool.QueryRow(ctx, `
-		SELECT `+apiProbeConnectionColumns+`, c.credential_ciphertext, c.credential_nonce,
-		       c.credential_key_version, c.credential_cipher_format
-		FROM api_probe_connections c
-		WHERE c.owner_user_id = $1 AND c.id = $2
-	`, ownerUserID, connectionID).Scan(destinations...)
+	err := store.pool.QueryRow(ctx, `SELECT `+apiProbeConnectionColumns+`, c.credential_ciphertext, c.credential_nonce, c.credential_key_version, c.credential_cipher_format FROM api_probe_connections c WHERE c.owner_user_id = $1 AND c.id = $2`, ownerUserID, connectionID).Scan(destinations...)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return apihealth.Connection{}, "", false, nil
 	}
@@ -105,6 +106,34 @@ func (store *Store) GetOwnerProbeConnectionCredential(ctx context.Context, owner
 	return connection, credential, true, nil
 }
 
+func (store *Store) LookupProbeModelPrice(ctx context.Context, model string) (apihealth.PriceSnapshot, bool, *domain.AppError) {
+	if store == nil || store.pool == nil {
+		return apihealth.PriceSnapshot{}, false, internalStoreError()
+	}
+	var price apihealth.PriceSnapshot
+	err := store.pool.QueryRow(ctx, `
+		SELECT version.id::text,
+		       COALESCE(version.input_price_per_million::text, ''),
+		       COALESCE(version.cached_input_price_per_million::text, ''),
+		       COALESCE(version.output_price_per_million::text, ''),
+		       'USD'
+		FROM api_model_catalog model
+		JOIN LATERAL (
+		  SELECT * FROM api_model_price_versions value
+		  WHERE value.model_catalog_id = model.id AND value.valid_to IS NULL
+		  ORDER BY value.valid_from DESC LIMIT 1
+		) version ON true
+		WHERE model.model_key = $1
+	`, strings.TrimSpace(model)).Scan(&price.VersionID, &price.InputPricePerMillion, &price.CachedInputPricePerMillion, &price.OutputPricePerMillion, &price.Currency)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return apihealth.PriceSnapshot{}, false, nil
+	}
+	if err != nil {
+		return apihealth.PriceSnapshot{}, false, internalStoreError()
+	}
+	return price, true, nil
+}
+
 func (store *Store) CreateOwnerProbeConnection(ctx context.Context, connection apihealth.Connection, credential string) (apihealth.Connection, *domain.AppError) {
 	if store == nil || store.pool == nil || store.contactCodec == nil {
 		return apihealth.Connection{}, internalStoreError()
@@ -114,27 +143,48 @@ func (store *Store) CreateOwnerProbeConnection(ctx context.Context, connection a
 	if err != nil {
 		return apihealth.Connection{}, internalStoreError()
 	}
-	row := store.pool.QueryRow(ctx, `
+	tx, err := store.pool.Begin(ctx)
+	if err != nil {
+		return apihealth.Connection{}, internalStoreError()
+	}
+	defer rollback(ctx, tx)
+	row := tx.QueryRow(ctx, `
 		INSERT INTO api_probe_connections AS c (
 			id, owner_user_id, name, base_url, normalized_base_url,
-			credential_ciphertext, credential_nonce, credential_key_version,
-			credential_cipher_format, credential_fingerprint,
+			credential_ciphertext, credential_nonce, credential_key_version, credential_cipher_format, credential_fingerprint,
 			enabled, verification_status, verified_at, last_verification_error_code,
+			probe_model, probe_protocol, probe_models_snapshot, probe_environment, probe_model_changed_at,
+			probe_price_version_id, probe_input_price_per_million, probe_cached_input_price_per_million,
+			probe_output_price_per_million, probe_price_currency,
 			measurement_version, version, created_at, updated_at
 		) VALUES (
-			$1, $2, $3, $4, $5,
-			$6, $7, $8, $9, $10,
-			$11, $12, $13, $14, $15, $16, $17, $18
-		)
-		RETURNING `+apiProbeConnectionColumns,
+			$1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
+			$11, $12, $13, $14, $15, $16, $17, $18, $19,
+			$20, $21, $22, $23, $24, $25, $26, $27, $28
+		) RETURNING `+apiProbeConnectionColumns,
 		connection.ID, connection.OwnerUserID, connection.Name, connection.BaseURL, connection.NormalizedBaseURL,
 		encoded.Ciphertext, encoded.Nonce, encoded.EncryptionKeyVersion, encoded.CipherFormat, []byte(encoded.Fingerprint),
 		connection.Enabled, connection.VerificationStatus, connection.VerifiedAt, nullText(connection.LastVerificationErrorCode),
+		nullText(connection.ProbeModel), nullText(connection.ProbeProtocol), connection.AvailableModels, connection.ProbeEnvironment,
+		connection.ProbeModelChangedAt, nullUUID(connection.Price.VersionID), nullDecimal(connection.Price.InputPricePerMillion),
+		nullDecimal(connection.Price.CachedInputPricePerMillion), nullDecimal(connection.Price.OutputPricePerMillion), nullText(connection.Price.Currency),
 		connection.MeasurementVersion, connection.Version, connection.CreatedAt, connection.UpdatedAt)
 	if err := scanAPIProbeConnection(row, &connection); err != nil {
 		if isForeignKeyViolation(err) {
 			return apihealth.Connection{}, apiHealthConflict("当前用户不存在，无法创建探针连接。")
 		}
+		return apihealth.Connection{}, internalStoreError()
+	}
+	if connection.ProbeModel != "" {
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO api_probe_connection_model_changes (
+			  connection_id, changed_by_user_id, new_measurement_version, new_model, new_protocol, environment, changed_at
+			) VALUES ($1, $2, $3, $4, $5, $6, $7)
+		`, connection.ID, connection.OwnerUserID, connection.MeasurementVersion, connection.ProbeModel, connection.ProbeProtocol, connection.ProbeEnvironment, connection.CreatedAt); err != nil {
+			return apihealth.Connection{}, internalStoreError()
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
 		return apihealth.Connection{}, internalStoreError()
 	}
 	return connection, nil
@@ -153,7 +203,22 @@ func (store *Store) UpdateOwnerProbeConnection(ctx context.Context, connection a
 			return apihealth.Connection{}, internalStoreError()
 		}
 	}
-	row := store.pool.QueryRow(ctx, `
+	tx, err := store.pool.Begin(ctx)
+	if err != nil {
+		return apihealth.Connection{}, internalStoreError()
+	}
+	defer rollback(ctx, tx)
+	var oldModel, oldProtocol string
+	var oldMeasurementVersion, actualVersion int64
+	if err := tx.QueryRow(ctx, `SELECT COALESCE(probe_model, ''), COALESCE(probe_protocol, ''), measurement_version, version FROM api_probe_connections WHERE id = $1 AND owner_user_id = $2 FOR UPDATE`, connection.ID, connection.OwnerUserID).Scan(&oldModel, &oldProtocol, &oldMeasurementVersion, &actualVersion); errors.Is(err, pgx.ErrNoRows) {
+		return apihealth.Connection{}, apiHealthNotFound()
+	} else if err != nil {
+		return apihealth.Connection{}, internalStoreError()
+	}
+	if actualVersion != expectedVersion {
+		return apihealth.Connection{}, apiHealthVersionConflict()
+	}
+	row := tx.QueryRow(ctx, `
 		UPDATE api_probe_connections c
 		SET name = $4, base_url = $5, normalized_base_url = $6,
 		    credential_ciphertext = CASE WHEN $7 THEN $8 ELSE c.credential_ciphertext END,
@@ -161,9 +226,12 @@ func (store *Store) UpdateOwnerProbeConnection(ctx context.Context, connection a
 		    credential_key_version = CASE WHEN $7 THEN $10 ELSE c.credential_key_version END,
 		    credential_cipher_format = CASE WHEN $7 THEN $11 ELSE c.credential_cipher_format END,
 		    credential_fingerprint = CASE WHEN $7 THEN $12 ELSE c.credential_fingerprint END,
-		    enabled = $13, verification_status = $14, verified_at = $15,
-		    last_verification_error_code = $16, measurement_version = $17,
-		    version = $18, updated_at = $19
+		    enabled = $13, verification_status = $14, verified_at = $15, last_verification_error_code = $16,
+		    probe_model = $17, probe_protocol = $18, probe_models_snapshot = $19,
+		    probe_environment = $20, probe_model_changed_at = $21,
+		    probe_price_version_id = $22, probe_input_price_per_million = $23,
+		    probe_cached_input_price_per_million = $24, probe_output_price_per_million = $25,
+		    probe_price_currency = $26, measurement_version = $27, version = $28, updated_at = $29
 		WHERE c.id = $1 AND c.owner_user_id = $2 AND c.version = $3
 		RETURNING `+apiProbeConnectionColumns,
 		connection.ID, connection.OwnerUserID, expectedVersion,
@@ -171,10 +239,29 @@ func (store *Store) UpdateOwnerProbeConnection(ctx context.Context, connection a
 		credentialProvided, nullBytes(encoded.Ciphertext), nullBytes(encoded.Nonce), nullText(encoded.EncryptionKeyVersion),
 		nullText(encoded.CipherFormat), nullBytes([]byte(encoded.Fingerprint)), connection.Enabled,
 		connection.VerificationStatus, connection.VerifiedAt, nullText(connection.LastVerificationErrorCode),
+		nullText(connection.ProbeModel), nullText(connection.ProbeProtocol), connection.AvailableModels,
+		connection.ProbeEnvironment, connection.ProbeModelChangedAt, nullUUID(connection.Price.VersionID),
+		nullDecimal(connection.Price.InputPricePerMillion), nullDecimal(connection.Price.CachedInputPricePerMillion),
+		nullDecimal(connection.Price.OutputPricePerMillion), nullText(connection.Price.Currency),
 		connection.MeasurementVersion, connection.Version, connection.UpdatedAt)
 	if err := scanAPIProbeConnection(row, &connection); errors.Is(err, pgx.ErrNoRows) {
 		return apihealth.Connection{}, apiHealthVersionConflict()
 	} else if err != nil {
+		return apihealth.Connection{}, internalStoreError()
+	}
+	if connection.ProbeModel != "" && (oldModel != connection.ProbeModel || oldProtocol != connection.ProbeProtocol) {
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO api_probe_connection_model_changes (
+			  connection_id, changed_by_user_id, old_measurement_version, new_measurement_version,
+			  old_model, new_model, old_protocol, new_protocol, environment, changed_at
+			) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+		`, connection.ID, connection.OwnerUserID, oldMeasurementVersion, connection.MeasurementVersion,
+			nullText(oldModel), connection.ProbeModel, nullText(oldProtocol), connection.ProbeProtocol,
+			connection.ProbeEnvironment, connection.UpdatedAt); err != nil {
+			return apihealth.Connection{}, internalStoreError()
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
 		return apihealth.Connection{}, internalStoreError()
 	}
 	return connection, nil
@@ -190,10 +277,7 @@ func (store *Store) DeleteOwnerProbeConnection(ctx context.Context, ownerUserID,
 	}
 	defer rollback(ctx, tx)
 	var version int64
-	if err := tx.QueryRow(ctx, `
-		SELECT version FROM api_probe_connections
-		WHERE owner_user_id = $1 AND id = $2 FOR UPDATE
-	`, ownerUserID, connectionID).Scan(&version); errors.Is(err, pgx.ErrNoRows) {
+	if err := tx.QueryRow(ctx, `SELECT version FROM api_probe_connections WHERE owner_user_id = $1 AND id = $2 FOR UPDATE`, ownerUserID, connectionID).Scan(&version); errors.Is(err, pgx.ErrNoRows) {
 		return apiHealthNotFound()
 	} else if err != nil {
 		return internalStoreError()
@@ -201,10 +285,7 @@ func (store *Store) DeleteOwnerProbeConnection(ctx context.Context, ownerUserID,
 	if version != expectedVersion {
 		return apiHealthVersionConflict()
 	}
-	rows, err := tx.Query(ctx, `
-		SELECT id::text, title FROM api_services
-		WHERE probe_connection_id = $1 ORDER BY updated_at DESC, id
-	`, connectionID)
+	rows, err := tx.Query(ctx, `SELECT id::text, title FROM api_services WHERE probe_connection_id = $1 ORDER BY updated_at DESC, id`, connectionID)
 	if err != nil {
 		return internalStoreError()
 	}
@@ -244,16 +325,25 @@ func (store *Store) LoadOwnerProbeConnectionSamples(ctx context.Context, ownerUs
 		return result, nil
 	}
 	rows, err := store.pool.Query(ctx, `
-		SELECT sample.connection_id::text, sample.id::text, sample.connection_id::text,
-		       sample.measurement_version, sample.slot_started_at, sample.status,
-		       sample.total_duration_ms, sample.http_status_class, COALESCE(sample.error_code, ''),
-		       sample.started_at, sample.finished_at, sample.created_at
+		SELECT sample.connection_id::text, `+apiProbeSampleColumns+`
 		FROM api_probe_connection_samples sample
 		JOIN api_probe_connections connection ON connection.id = sample.connection_id
-		WHERE connection.owner_user_id = $1
-		  AND sample.connection_id = ANY($2::uuid[])
-		  AND sample.slot_started_at >= $3
+		WHERE connection.owner_user_id = $1 AND sample.connection_id = ANY($2::uuid[])
+		  AND sample.measurement_version = connection.measurement_version
 		  AND sample.status IN ('succeeded', 'failed')
+		  AND (
+		    sample.slot_started_at >= $3
+		    OR sample.id = (
+		      SELECT previous.id
+		      FROM api_probe_connection_samples previous
+		      WHERE previous.connection_id = sample.connection_id
+		        AND previous.measurement_version = connection.measurement_version
+		        AND previous.status IN ('succeeded', 'failed')
+		        AND previous.slot_started_at < $3
+		      ORDER BY previous.slot_started_at DESC, previous.created_at DESC, previous.id DESC
+		      LIMIT 1
+		    )
+		  )
 		ORDER BY sample.connection_id, sample.slot_started_at
 	`, ownerUserID, connectionIDs, since)
 	if err != nil {
@@ -281,12 +371,7 @@ func (store *Store) LoadProbeSummaryInputs(ctx context.Context, serviceIDs []str
 	if len(serviceIDs) == 0 {
 		return result, nil
 	}
-	rows, err := store.pool.Query(ctx, `
-		SELECT service.id::text, `+apiProbeConnectionColumns+`
-		FROM api_services service
-		JOIN api_probe_connections c ON c.id = service.probe_connection_id
-		WHERE service.id = ANY($1::uuid[])
-	`, serviceIDs)
+	rows, err := store.pool.Query(ctx, `SELECT service.id::text, `+apiProbeConnectionColumns+` FROM api_services service JOIN api_probe_connections c ON c.id = service.probe_connection_id WHERE service.id = ANY($1::uuid[])`, serviceIDs)
 	if err != nil {
 		return nil, internalStoreError()
 	}
@@ -308,15 +393,26 @@ func (store *Store) LoadProbeSummaryInputs(ctx context.Context, serviceIDs []str
 	rows.Close()
 
 	sampleRows, err := store.pool.Query(ctx, `
-		SELECT service.id::text,
-		       sample.id::text, sample.connection_id::text, sample.measurement_version,
-		       sample.slot_started_at, sample.status, sample.total_duration_ms,
-		       sample.http_status_class, COALESCE(sample.error_code, ''), sample.started_at,
-		       sample.finished_at, sample.created_at
+		SELECT service.id::text, `+apiProbeSampleColumns+`
 		FROM api_services service
+		JOIN api_probe_connections connection ON connection.id = service.probe_connection_id
 		JOIN api_probe_connection_samples sample ON sample.connection_id = service.probe_connection_id
-		WHERE service.id = ANY($1::uuid[]) AND sample.slot_started_at >= $2
+		WHERE service.id = ANY($1::uuid[])
+		  AND sample.measurement_version = connection.measurement_version
 		  AND sample.status IN ('succeeded', 'failed')
+		  AND (
+		    sample.slot_started_at >= $2
+		    OR sample.id = (
+		      SELECT previous.id
+		      FROM api_probe_connection_samples previous
+		      WHERE previous.connection_id = sample.connection_id
+		        AND previous.measurement_version = connection.measurement_version
+		        AND previous.status IN ('succeeded', 'failed')
+		        AND previous.slot_started_at < $2
+		      ORDER BY previous.slot_started_at DESC, previous.created_at DESC, previous.id DESC
+		      LIMIT 1
+		    )
+		  )
 		ORDER BY service.id, sample.slot_started_at
 	`, serviceIDs, since)
 	if err != nil {
@@ -356,41 +452,51 @@ func (store *Store) ClaimDueProbes(ctx context.Context, slotStartedAt, now time.
 	}
 	if _, err := tx.Exec(ctx, `
 		UPDATE api_probe_connection_samples
-		SET status = 'failed', total_duration_ms = $2,
+		SET status = 'failed', outcome = 'final_failure', attempt_count = 1,
+		    total_duration_ms = $2, first_attempt_total_duration_ms = $2,
 		    error_code = 'internal_timeout', finished_at = $1
-		WHERE status = 'running'
-		  AND started_at <= $1::timestamptz - ($3::bigint * interval '1 millisecond')
+		WHERE status = 'running' AND started_at <= $1::timestamptz - ($3::bigint * interval '1 millisecond')
 	`, now, timeoutMS, timeoutMS); err != nil {
 		return nil, internalStoreError()
 	}
 	rows, err := tx.Query(ctx, `
 		SELECT `+apiProbeConnectionColumns+`,
-		       c.credential_ciphertext, c.credential_nonce, c.credential_key_version, c.credential_cipher_format
+		       c.credential_ciphertext, c.credential_nonce, c.credential_key_version, c.credential_cipher_format,
+		       COALESCE(rule.id::text, ''), COALESCE(rule.version, 0), COALESCE(rule.slow_ttft_ms, 0),
+		       COALESCE(rule.hard_timeout_ms, 0), rule.published_at
 		FROM api_probe_connections c
+		LEFT JOIN LATERAL (
+		  SELECT * FROM api_probe_latency_rules value
+		  WHERE value.model = c.probe_model AND value.protocol = c.probe_protocol
+		    AND value.environment = c.probe_environment AND value.status = 'active'
+		  ORDER BY value.version DESC LIMIT 1
+		) rule ON true
 		WHERE c.enabled = true AND c.verification_status = 'verified'
-		  AND c.credential_ciphertext IS NOT NULL
+		  AND c.credential_ciphertext IS NOT NULL AND c.probe_model IS NOT NULL AND c.probe_protocol IS NOT NULL
 		  AND NOT EXISTS (
 		    SELECT 1 FROM api_probe_connection_samples sample
 		    WHERE sample.connection_id = c.id AND sample.slot_started_at = $2
 		  )
-		ORDER BY c.updated_at, c.id
-		FOR UPDATE SKIP LOCKED LIMIT $1
+		ORDER BY c.updated_at, c.id FOR UPDATE OF c SKIP LOCKED LIMIT $1
 	`, limit, slotStartedAt)
 	if err != nil {
 		return nil, internalStoreError()
 	}
 	type claimedConnection struct {
-		connection   apihealth.Connection
-		ciphertext   []byte
-		nonce        []byte
-		keyVersion   string
-		cipherFormat string
+		connection                apihealth.Connection
+		ciphertext, nonce         []byte
+		keyVersion, cipherFormat  string
+		ruleID                    string
+		ruleVersion               int64
+		slowTTFTMS, hardTimeoutMS int
+		rulePublishedAt           *time.Time
 	}
 	claimed := make([]claimedConnection, 0, limit)
 	for rows.Next() {
 		var item claimedConnection
 		destinations := apiProbeConnectionScanDestinations(&item.connection)
-		destinations = append(destinations, &item.ciphertext, &item.nonce, &item.keyVersion, &item.cipherFormat)
+		destinations = append(destinations, &item.ciphertext, &item.nonce, &item.keyVersion, &item.cipherFormat,
+			&item.ruleID, &item.ruleVersion, &item.slowTTFTMS, &item.hardTimeoutMS, &item.rulePublishedAt)
 		if err := rows.Scan(destinations...); err != nil {
 			rows.Close()
 			return nil, internalStoreError()
@@ -406,29 +512,36 @@ func (store *Store) ClaimDueProbes(ctx context.Context, slotStartedAt, now time.
 	jobs := make([]apihealth.ProbeJob, 0, len(claimed))
 	for _, item := range claimed {
 		sample := apihealth.Sample{
-			ID: uuid.NewString(), ConnectionID: item.connection.ID,
-			MeasurementVersion: item.connection.MeasurementVersion,
-			SlotStartedAt:      slotStartedAt, Status: apihealth.SampleStatusRunning,
-			StartedAt: now, CreatedAt: now,
+			ID: uuid.NewString(), ConnectionID: item.connection.ID, MeasurementVersion: item.connection.MeasurementVersion,
+			SlotStartedAt: slotStartedAt, Status: apihealth.SampleStatusRunning, ProbeModel: item.connection.ProbeModel,
+			ProbeProtocol: item.connection.ProbeProtocol, ProbeEnvironment: item.connection.ProbeEnvironment,
+			LatencyRuleVersionID: item.ruleID, StartedAt: now, CreatedAt: now,
 		}
 		command, err := tx.Exec(ctx, `
 			INSERT INTO api_probe_connection_samples (
-				id, connection_id, measurement_version, slot_started_at, status, started_at, created_at
-			) VALUES ($1, $2, $3, $4, 'running', $5, $5)
+			  id, connection_id, measurement_version, slot_started_at, status,
+			  probe_model, probe_protocol, probe_environment, latency_rule_version_id, started_at, created_at
+			) VALUES ($1, $2, $3, $4, 'running', $5, $6, $7, $8, $9, $9)
 			ON CONFLICT (connection_id, slot_started_at) DO NOTHING
-		`, sample.ID, sample.ConnectionID, sample.MeasurementVersion, sample.SlotStartedAt, sample.StartedAt)
+		`, sample.ID, sample.ConnectionID, sample.MeasurementVersion, sample.SlotStartedAt,
+			sample.ProbeModel, sample.ProbeProtocol, sample.ProbeEnvironment, nullUUID(sample.LatencyRuleVersionID), sample.StartedAt)
 		if err != nil {
 			return nil, internalStoreError()
 		}
 		if command.RowsAffected() == 0 {
 			continue
 		}
+		job := apihealth.ProbeJob{Sample: sample, Connection: item.connection}
+		if item.ruleID != "" {
+			job.LatencyRule = &apihealth.LatencyRule{ID: item.ruleID, Model: item.connection.ProbeModel, Protocol: item.connection.ProbeProtocol, Environment: item.connection.ProbeEnvironment, Version: item.ruleVersion, SlowTTFTMS: item.slowTTFTMS, HardTimeoutMS: item.hardTimeoutMS}
+		}
 		credential, err := store.contactCodec.decode(item.ciphertext, item.nonce, item.keyVersion, item.cipherFormat, item.connection.ID, contactFieldProbeAPIKey)
 		if err != nil {
-			jobs = append(jobs, apihealth.ProbeJob{Sample: sample, Connection: item.connection, CredentialError: true})
-			continue
+			job.CredentialError = true
+		} else {
+			job.Credential = credential
 		}
-		jobs = append(jobs, apihealth.ProbeJob{Sample: sample, Connection: item.connection, Credential: credential})
+		jobs = append(jobs, job)
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return nil, internalStoreError()
@@ -438,21 +551,58 @@ func (store *Store) ClaimDueProbes(ctx context.Context, slotStartedAt, now time.
 
 func (store *Store) FinalizeProbe(ctx context.Context, sampleID string, result apihealth.ProbeResult, finishedAt time.Time) (bool, *domain.AppError) {
 	status := apihealth.SampleStatusSucceeded
-	var errorCode any
-	if result.ErrorCode != "" {
+	if result.Outcome == apihealth.OutcomeFinalFailure || result.ErrorCode != "" {
 		status = apihealth.SampleStatusFailed
-		errorCode = result.ErrorCode
+		result.Outcome = apihealth.OutcomeFinalFailure
 	}
-	command, err := store.pool.Exec(ctx, `
-		UPDATE api_probe_connection_samples
-		SET status = $2, total_duration_ms = $3,
-		    http_status_class = $4, error_code = $5, finished_at = $6
-		WHERE id = $1 AND status = 'running'
-	`, sampleID, status, result.TotalDurationMS, nullInt(result.HTTPStatusClass), errorCode, finishedAt)
+	attemptCount := len(result.Attempts)
+	if attemptCount == 0 {
+		attemptCount = 1
+	}
+	tx, err := store.pool.Begin(ctx)
 	if err != nil {
 		return false, internalStoreError()
 	}
-	return command.RowsAffected() == 1, nil
+	defer rollback(ctx, tx)
+	command, err := tx.Exec(ctx, `
+		UPDATE api_probe_connection_samples
+		SET status = $2, outcome = $3, attempt_count = $4,
+		    first_attempt_ttft_ms = $5, first_attempt_total_duration_ms = $6,
+		    recovery_duration_ms = $7, total_duration_ms = $8,
+		    http_status_class = $9, final_http_status = $10, error_code = $11,
+		    input_tokens = $12, cached_input_tokens = $13, output_tokens = $14, reasoning_tokens = $15,
+		    usage_complete = $16, base_cost_usd = $17, retry_cost_usd = $18, finished_at = $19
+		WHERE id = $1 AND status = 'running'
+	`, sampleID, status, result.Outcome, attemptCount,
+		result.FirstAttemptTTFTMS, result.FirstAttemptTotalDurationMS, result.RecoveryDurationMS,
+		result.TotalDurationMS, nullInt(result.HTTPStatusClass), nullInt(result.HTTPStatus), nullText(result.ErrorCode),
+		result.Usage.InputTokens, result.Usage.CachedInputTokens, result.Usage.OutputTokens, result.Usage.ReasoningTokens,
+		result.UsageComplete, nullDecimal(result.BaseCostUSD), nullDecimal(result.RetryCostUSD), finishedAt)
+	if err != nil {
+		return false, internalStoreError()
+	}
+	if command.RowsAffected() == 0 {
+		return false, nil
+	}
+	for _, attempt := range result.Attempts {
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO api_probe_connection_attempts (
+			  sample_id, attempt_number, started_at, first_text_at, finished_at,
+			  http_status, ttft_ms, total_duration_ms, succeeded, retryable, error_code, retry_after_ms,
+			  input_tokens, cached_input_tokens, output_tokens, reasoning_tokens, usage_complete, cost_usd
+			) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
+		`, sampleID, attempt.AttemptNumber, attempt.StartedAt, attempt.FirstTextAt, attempt.FinishedAt,
+			nullInt(attempt.HTTPStatus), attempt.TTFTMS, attempt.TotalDurationMS, attempt.Succeeded, attempt.Retryable,
+			nullText(attempt.ErrorCode), nullInt(attempt.RetryAfterMS), attempt.Usage.InputTokens,
+			attempt.Usage.CachedInputTokens, attempt.Usage.OutputTokens, attempt.Usage.ReasoningTokens,
+			attempt.Usage.Complete(), nullDecimal(attempt.CostUSD)); err != nil {
+			return false, internalStoreError()
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return false, internalStoreError()
+	}
+	return true, nil
 }
 
 func (store *Store) DeleteFinalProbeSamplesBefore(ctx context.Context, cutoff time.Time, limit int) (int, *domain.AppError) {
@@ -461,12 +611,11 @@ func (store *Store) DeleteFinalProbeSamplesBefore(ctx context.Context, cutoff ti
 	}
 	command, err := store.pool.Exec(ctx, `
 		WITH expired AS (
-			SELECT id FROM api_probe_connection_samples
-			WHERE status IN ('succeeded', 'failed') AND finished_at < $1
-			ORDER BY finished_at, id LIMIT $2
+		  SELECT id FROM api_probe_connection_samples
+		  WHERE status IN ('succeeded', 'failed') AND finished_at < $1
+		  ORDER BY finished_at, id LIMIT $2
 		)
-		DELETE FROM api_probe_connection_samples sample USING expired
-		WHERE sample.id = expired.id
+		DELETE FROM api_probe_connection_samples sample USING expired WHERE sample.id = expired.id
 	`, cutoff, limit)
 	if err != nil {
 		return 0, internalStoreError()
@@ -483,12 +632,7 @@ func (store *Store) loadProbeConnectionReferences(ctx context.Context, connectio
 		byID[connections[index].ID] = index
 		connections[index].References = []apihealth.ServiceReference{}
 	}
-	rows, err := store.pool.Query(ctx, `
-		SELECT probe_connection_id::text, id::text, title
-		FROM api_services
-		WHERE probe_connection_id = ANY($1::uuid[])
-		ORDER BY updated_at DESC, id
-	`, connectionIDs)
+	rows, err := store.pool.Query(ctx, `SELECT probe_connection_id::text, id::text, title FROM api_services WHERE probe_connection_id = ANY($1::uuid[]) ORDER BY updated_at DESC, id`, connectionIDs)
 	if err != nil {
 		return internalStoreError()
 	}
@@ -518,6 +662,10 @@ func apiProbeConnectionScanDestinations(connection *apihealth.Connection) []any 
 		&connection.ID, &connection.OwnerUserID, &connection.Name, &connection.BaseURL,
 		&connection.NormalizedBaseURL, &connection.CredentialConfigured, &connection.Enabled,
 		&connection.VerificationStatus, &connection.VerifiedAt, &connection.LastVerificationErrorCode,
+		&connection.ProbeModel, &connection.ProbeProtocol, &connection.AvailableModels,
+		&connection.ProbeEnvironment, &connection.ProbeModelChangedAt, &connection.Price.VersionID,
+		&connection.Price.InputPricePerMillion, &connection.Price.CachedInputPricePerMillion,
+		&connection.Price.OutputPricePerMillion, &connection.Price.Currency,
 		&connection.MeasurementVersion, &connection.Version, &connection.CreatedAt, &connection.UpdatedAt,
 	}
 }
@@ -525,13 +673,25 @@ func apiProbeConnectionScanDestinations(connection *apihealth.Connection) []any 
 func apiProbeSampleScanDestinations(sample *apihealth.Sample) []any {
 	return []any{
 		&sample.ID, &sample.ConnectionID, &sample.MeasurementVersion, &sample.SlotStartedAt,
-		&sample.Status, &sample.TotalDurationMS, &sample.HTTPStatusClass, &sample.ErrorCode,
+		&sample.Status, &sample.ProbeModel, &sample.ProbeProtocol, &sample.ProbeEnvironment,
+		&sample.LatencyRuleVersionID, &sample.Outcome, &sample.AttemptCount,
+		&sample.FirstAttemptTTFTMS, &sample.FirstAttemptTotalDurationMS, &sample.RecoveryDurationMS,
+		&sample.TotalDurationMS, &sample.HTTPStatusClass, &sample.FinalHTTPStatus, &sample.ErrorCode,
+		&sample.Usage.InputTokens, &sample.Usage.CachedInputTokens, &sample.Usage.OutputTokens,
+		&sample.Usage.ReasoningTokens, &sample.UsageComplete, &sample.BaseCostUSD, &sample.RetryCostUSD,
 		&sample.StartedAt, &sample.FinishedAt, &sample.CreatedAt,
 	}
 }
 
 func nullBytes(value []byte) any {
 	if len(value) == 0 {
+		return nil
+	}
+	return value
+}
+
+func nullDecimal(value string) any {
+	if strings.TrimSpace(value) == "" {
 		return nil
 	}
 	return value

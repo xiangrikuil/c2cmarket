@@ -38,6 +38,7 @@ const probeAvailabilityPresentation: Record<Exclude<ApiHealthAvailabilityReason,
   insufficient: { label: '样本不足', description: '最近一小时样本不足', tone: 'waiting' },
   stale: { label: '样本过期', description: '最近样本已过期', tone: 'warning' },
   temporarily_unavailable: { label: '暂不可用', description: '探针连接暂时不可用', tone: 'risk' },
+  runner_disabled: { label: '任务未运行', description: '平台周期探针任务未运行', tone: 'risk' },
 }
 
 const probeStatePresentation: Record<ApiHealthState, ApiServiceProbeStatus> = {
