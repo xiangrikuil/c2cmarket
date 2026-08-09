@@ -34,6 +34,7 @@ const currentAdminId = 'admin-demo'
 const currentAdminName = '演示管理员'
 
 let announcementStore = readSessionStore<Announcement[]>(announcementStorageKey, announcementSeeds)
+  .map(normalizeStoredAnnouncement)
 let announcementAuditLogStore = readSessionStore<AnnouncementAuditLog[]>(announcementAuditStorageKey, announcementAuditLogSeeds)
 
 const wait = () => new Promise(resolve => setTimeout(resolve, 80))
@@ -184,6 +185,7 @@ export async function createAnnouncement(input: AnnouncementFormInput): Promise<
   }
   await wait()
   const normalized = normalizeAnnouncementInput(input)
+  const actionTime = nowIso()
   const announcement: Announcement = {
     id: `ann-${Date.now()}`,
     slug: createSlug(normalized.title),
@@ -193,8 +195,9 @@ export async function createAnnouncement(input: AnnouncementFormInput): Promise<
     version: 1,
     createdBy: currentAdminId,
     updatedBy: currentAdminId,
-    createdAt: nowIso(),
-    updatedAt: nowIso(),
+    contentUpdatedAt: actionTime,
+    createdAt: actionTime,
+    updatedAt: actionTime,
   }
   announcementStore = [announcement, ...announcementStore]
   persistAnnouncementStores()
@@ -213,13 +216,16 @@ export async function updateAnnouncement(id: string, input: AnnouncementFormInpu
   const announcement = findAnnouncement(id)
   const beforeStatus = getAnnouncementDisplayStatus(announcement)
   const normalized = normalizeAnnouncementInput(input)
+  const actionTime = nowIso()
+  const contentChanged = hasUserVisibleContentChanged(announcement, normalized)
   const next: Announcement = {
     ...announcement,
     ...normalized,
     slug: announcement.slug,
     version: announcement.version + 1,
     updatedBy: currentAdminId,
-    updatedAt: nowIso(),
+    contentUpdatedAt: contentChanged ? actionTime : announcement.contentUpdatedAt,
+    updatedAt: actionTime,
   }
   announcementStore = announcementStore.map(item => item.id === id ? next : item)
   persistAnnouncementStores()
@@ -234,17 +240,27 @@ export async function publishAnnouncement(id: string): Promise<Announcement> {
   }
   await wait()
   const announcement = findAnnouncement(id)
-  const status = new Date(announcement.publishAt).getTime() > Date.now() ? 'scheduled' : 'published'
+  const now = new Date()
+  const actionTime = now.toISOString()
+  const isScheduled = new Date(announcement.publishAt).getTime() > now.getTime()
+  const effectivePublishTime = isScheduled ? new Date(announcement.publishAt).getTime() : now.getTime()
+  if (announcement.expireAt && new Date(announcement.expireAt).getTime() <= effectivePublishTime) {
+    throw new Error(isScheduled
+      ? '结束时间必须晚于计划发布时间，请调整后再发布。'
+      : '结束时间已过，请调整结束时间后再发布。')
+  }
+  const status = isScheduled ? 'scheduled' : 'published'
   const next: Announcement = {
     ...announcement,
     status,
+    publishAt: isScheduled ? announcement.publishAt : actionTime,
     version: announcement.version + 1,
     updatedBy: currentAdminId,
-    updatedAt: nowIso(),
+    updatedAt: actionTime,
   }
   announcementStore = announcementStore.map(item => item.id === id ? next : item)
   persistAnnouncementStores()
-  appendAuditLog('announcement_published', next, status === 'scheduled' ? '设置未来发布时间' : '立即发布公告')
+  appendAuditLog('announcement_published', next, status === 'scheduled' ? '设置未来发布时间' : '立即发布公告', actionTime)
   return clone(next)
 }
 
@@ -282,6 +298,7 @@ export async function duplicateAnnouncement(id: string): Promise<Announcement> {
   }
   await wait()
   const announcement = findAnnouncement(id)
+  const actionTime = nowIso()
   const duplicated: Announcement = {
     ...announcement,
     id: `ann-${Date.now()}`,
@@ -291,8 +308,9 @@ export async function duplicateAnnouncement(id: string): Promise<Announcement> {
     version: 1,
     createdBy: currentAdminId,
     updatedBy: currentAdminId,
-    createdAt: nowIso(),
-    updatedAt: nowIso(),
+    contentUpdatedAt: actionTime,
+    createdAt: actionTime,
+    updatedAt: actionTime,
   }
   announcementStore = [duplicated, ...announcementStore]
   persistAnnouncementStores()
@@ -325,7 +343,24 @@ function normalizeAnnouncementInput(input: AnnouncementFormInput): AnnouncementF
   return normalized
 }
 
-function appendAuditLog(action: AnnouncementAuditAction, announcement: Announcement, reason?: string) {
+function hasUserVisibleContentChanged(announcement: Announcement, input: AnnouncementFormInput) {
+  return announcement.title !== input.title
+    || announcement.summary !== input.summary
+    || announcement.contentMarkdown !== input.contentMarkdown
+    || announcement.category !== input.category
+    || announcement.level !== input.level
+    || announcement.ctaLabel !== input.ctaLabel
+    || announcement.ctaUrl !== input.ctaUrl
+}
+
+function normalizeStoredAnnouncement(announcement: Announcement): Announcement {
+  return {
+    ...announcement,
+    contentUpdatedAt: announcement.contentUpdatedAt || announcement.publishAt,
+  }
+}
+
+function appendAuditLog(action: AnnouncementAuditAction, announcement: Announcement, reason?: string, createdAt = nowIso()) {
   announcementAuditLogStore = [
     {
       id: `ann-audit-${Date.now()}-${announcementAuditLogStore.length + 1}`,
@@ -335,7 +370,7 @@ function appendAuditLog(action: AnnouncementAuditAction, announcement: Announcem
       operatorId: currentAdminId,
       operatorName: currentAdminName,
       reason,
-      createdAt: nowIso(),
+      createdAt,
     },
     ...announcementAuditLogStore,
   ]

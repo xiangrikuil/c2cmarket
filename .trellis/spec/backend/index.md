@@ -16,6 +16,7 @@ This directory contains guidelines for backend development. Fill in each file wi
 |-------|-------------|--------|
 | [Directory Structure](./directory-structure.md) | Module organization and file layout | Active |
 | [API Contracts](./api-contracts.md) | HTTP, session, CSRF, idempotency, and slice contracts | Active |
+| [Announcement Publication Lifecycle](./announcement-lifecycle.md) | Immediate/scheduled publication times, atomic persistence, status projection, and user-detail metadata | Active |
 | [API Model Catalog Pricing Sync And Activation](./api-model-catalog-sync.md) | Administrator-reviewed models.dev preview/apply, price versions, activation, and responsive admin workflow | Active |
 | [Identity And Session](./identity-session.md) | linux.do/account/API-market avatar projection, email time presentation, and logout cache consistency | Active |
 | [Limited API Packages](./api-limited-packages.md) | Cross-layer publishing, recommendation, snapshot, inventory, and expiry contract | Active |
@@ -77,6 +78,7 @@ Before editing backend code, read:
 26. [Runtime Security And Observability](./runtime-operations.md) when touching response headers, `frontend/public/_headers`, `/metrics`, observability labels, or operator-route exposure
 27. [C2CMarket Product Context](../guides/product-context.md)
 28. [Maintainability Contract](../guides/maintainability-contract.md)
+29. [Announcement Publication Lifecycle](./announcement-lifecycle.md) when touching announcement publication, timing, status derivation, audit persistence, Mock parity, or user-detail time metadata
 
 ## Quality Check
 

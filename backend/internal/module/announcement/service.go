@@ -195,27 +195,28 @@ func (s *Service) CreateAnnouncement(ctx context.Context, user auth.User, form F
 	s.ensureSeedLocked()
 	now := s.now()
 	item := Announcement{
-		ID:              uuid.NewString(),
-		Slug:            s.uniqueSlugLocked(input.Form.Title),
-		Title:           strings.TrimSpace(input.Form.Title),
-		Summary:         strings.TrimSpace(input.Form.Summary),
-		ContentMarkdown: strings.TrimSpace(input.Form.ContentMarkdown),
-		Category:        input.Form.Category,
-		Level:           input.Form.Level,
-		Status:          StatusDraft,
-		Channels:        normalizeChannels(input.Form.Channels),
-		Audience:        Audience{Type: "all"},
-		IsPinned:        input.Form.IsPinned,
-		IsDismissible:   input.Form.IsDismissible,
-		CTALabel:        strings.TrimSpace(input.Form.CTALabel),
-		CTAURL:          strings.TrimSpace(input.Form.CTAURL),
-		PublishAt:       input.Form.PublishAt,
-		ExpireAt:        input.Form.ExpireAt,
-		Version:         1,
-		CreatedBy:       user.ID,
-		UpdatedBy:       user.ID,
-		CreatedAt:       now,
-		UpdatedAt:       now,
+		ID:               uuid.NewString(),
+		Slug:             s.uniqueSlugLocked(input.Form.Title),
+		Title:            strings.TrimSpace(input.Form.Title),
+		Summary:          strings.TrimSpace(input.Form.Summary),
+		ContentMarkdown:  strings.TrimSpace(input.Form.ContentMarkdown),
+		Category:         input.Form.Category,
+		Level:            input.Form.Level,
+		Status:           StatusDraft,
+		Channels:         normalizeChannels(input.Form.Channels),
+		Audience:         Audience{Type: "all"},
+		IsPinned:         input.Form.IsPinned,
+		IsDismissible:    input.Form.IsDismissible,
+		CTALabel:         strings.TrimSpace(input.Form.CTALabel),
+		CTAURL:           strings.TrimSpace(input.Form.CTAURL),
+		PublishAt:        input.Form.PublishAt,
+		ExpireAt:         input.Form.ExpireAt,
+		ContentUpdatedAt: now,
+		Version:          1,
+		CreatedBy:        user.ID,
+		UpdatedBy:        user.ID,
+		CreatedAt:        now,
+		UpdatedAt:        now,
 	}
 	s.putLocked(item)
 	s.appendAuditLocked(AuditCreated, item, user, "创建公告草稿", now)
@@ -240,7 +241,9 @@ func (s *Service) UpdateAnnouncement(ctx context.Context, user auth.User, id str
 	if !ok {
 		return Announcement{}, notFound()
 	}
-	beforeStatus := displayStatus(item, s.now())
+	now := s.now()
+	beforeStatus := displayStatus(item, now)
+	contentChanged := UserVisibleContentChanged(item, form)
 	item.Title = strings.TrimSpace(form.Title)
 	item.Summary = strings.TrimSpace(form.Summary)
 	item.ContentMarkdown = strings.TrimSpace(form.ContentMarkdown)
@@ -253,12 +256,15 @@ func (s *Service) UpdateAnnouncement(ctx context.Context, user auth.User, id str
 	item.CTAURL = strings.TrimSpace(form.CTAURL)
 	item.PublishAt = form.PublishAt
 	item.ExpireAt = form.ExpireAt
+	if contentChanged {
+		item.ContentUpdatedAt = now
+	}
 	item.UpdatedBy = user.ID
-	item.UpdatedAt = s.now()
+	item.UpdatedAt = now
 	item.Version++
 	s.putLocked(item)
 	if beforeStatus == StatusPublished {
-		s.appendAuditLocked(AuditUpdated, item, user, "编辑已发布公告", s.now())
+		s.appendAuditLocked(AuditUpdated, item, user, "编辑已发布公告", now)
 	}
 	return item, nil
 }
@@ -268,8 +274,9 @@ func (s *Service) PublishAnnouncement(ctx context.Context, user auth.User, id st
 		return Announcement{}, appErr
 	}
 	input := ActionInput{ID: id, OperatorID: user.ID, OperatorName: user.DisplayName}
+	now := s.now()
 	if s.repo != nil {
-		return s.repo.PublishAnnouncement(ctx, input, s.now())
+		return s.repo.PublishAnnouncement(ctx, input, now)
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -278,20 +285,21 @@ func (s *Service) PublishAnnouncement(ctx context.Context, user auth.User, id st
 	if !ok {
 		return Announcement{}, notFound()
 	}
-	status := StatusPublished
-	if item.PublishAt.After(s.now()) {
-		status = StatusScheduled
+	status, publishAt, appErr := ResolvePublishTransition(item, now)
+	if appErr != nil {
+		return Announcement{}, appErr
 	}
 	item.Status = status
+	item.PublishAt = publishAt
 	item.UpdatedBy = user.ID
-	item.UpdatedAt = s.now()
+	item.UpdatedAt = now
 	item.Version++
 	s.putLocked(item)
 	reason := "立即发布公告"
 	if status == StatusScheduled {
 		reason = "设置未来发布时间"
 	}
-	s.appendAuditLocked(AuditPublished, item, user, reason, s.now())
+	s.appendAuditLocked(AuditPublished, item, user, reason, now)
 	return item, nil
 }
 
@@ -350,6 +358,7 @@ func (s *Service) DuplicateAnnouncement(ctx context.Context, user auth.User, id 
 	item.Version = 1
 	item.CreatedBy = user.ID
 	item.UpdatedBy = user.ID
+	item.ContentUpdatedAt = now
 	item.CreatedAt = now
 	item.UpdatedAt = now
 	item.Receipt = nil
@@ -461,26 +470,27 @@ func (s *Service) ensureSeedLocked() {
 	now := s.now()
 	publishAt := now.Add(-2 * time.Hour)
 	item := Announcement{
-		ID:              uuid.NewString(),
-		Slug:            "platform-rules-api-service-publish-update",
-		Title:           "API 服务发布规范已调整",
-		Summary:         "平台已更新 API 服务发布规范，发布前请确认接入方式、意向金额和站外确认说明符合新要求。",
-		ContentMarkdown: "## API 服务发布规范已调整\n\n- 不得在平台填写、粘贴或上传 API Key、账号密码、token 或 session。\n- 买家提交的是购买意向，不是平台内支付订单。",
-		Category:        CategoryRules,
-		Level:           LevelImportant,
-		Status:          StatusPublished,
-		Channels:        []string{ChannelMessageCenter, ChannelHomeBanner},
-		Audience:        Audience{Type: "all"},
-		IsPinned:        true,
-		IsDismissible:   false,
-		CTALabel:        "查看 API 集市",
-		CTAURL:          "/api-market",
-		PublishAt:       publishAt,
-		Version:         1,
-		CreatedBy:       "system",
-		UpdatedBy:       "system",
-		CreatedAt:       publishAt.Add(-20 * time.Minute),
-		UpdatedAt:       publishAt,
+		ID:               uuid.NewString(),
+		Slug:             "platform-rules-api-service-publish-update",
+		Title:            "API 服务发布规范已调整",
+		Summary:          "平台已更新 API 服务发布规范，发布前请确认接入方式、意向金额和站外确认说明符合新要求。",
+		ContentMarkdown:  "## API 服务发布规范已调整\n\n- 不得在平台填写、粘贴或上传 API Key、账号密码、token 或 session。\n- 买家提交的是购买意向，不是平台内支付订单。",
+		Category:         CategoryRules,
+		Level:            LevelImportant,
+		Status:           StatusPublished,
+		Channels:         []string{ChannelMessageCenter, ChannelHomeBanner},
+		Audience:         Audience{Type: "all"},
+		IsPinned:         true,
+		IsDismissible:    false,
+		CTALabel:         "查看 API 集市",
+		CTAURL:           "/api-market",
+		PublishAt:        publishAt,
+		ContentUpdatedAt: publishAt,
+		Version:          1,
+		CreatedBy:        "system",
+		UpdatedBy:        "system",
+		CreatedAt:        publishAt.Add(-20 * time.Minute),
+		UpdatedAt:        publishAt,
 	}
 	s.putLocked(item)
 	s.auditLogs = []AuditLog{{
@@ -551,6 +561,43 @@ func validateChannelFilter(channel string) *domain.AppError {
 
 func DisplayStatus(item Announcement, now time.Time) string {
 	return displayStatus(item, now)
+}
+
+func ResolvePublishTransition(item Announcement, now time.Time) (string, time.Time, *domain.AppError) {
+	effectivePublishAt := now
+	isScheduled := item.PublishAt.After(now)
+	if isScheduled {
+		effectivePublishAt = item.PublishAt
+	}
+	if item.ExpireAt != nil && !item.ExpireAt.After(effectivePublishAt) {
+		message := "结束时间已过，请调整结束时间后再发布。"
+		if isScheduled {
+			message = "结束时间必须晚于计划发布时间，请调整后再发布。"
+		}
+		return "", time.Time{}, domain.NewFieldError(
+			http.StatusUnprocessableEntity,
+			domain.CodeValidationFailed,
+			"Announcement publish window invalid",
+			message,
+			"expireAt",
+			"elapsed",
+			message,
+		)
+	}
+	if isScheduled {
+		return StatusScheduled, item.PublishAt, nil
+	}
+	return StatusPublished, now, nil
+}
+
+func UserVisibleContentChanged(item Announcement, form FormInput) bool {
+	return item.Title != strings.TrimSpace(form.Title) ||
+		item.Summary != strings.TrimSpace(form.Summary) ||
+		item.ContentMarkdown != strings.TrimSpace(form.ContentMarkdown) ||
+		item.Category != form.Category ||
+		item.Level != form.Level ||
+		item.CTALabel != strings.TrimSpace(form.CTALabel) ||
+		item.CTAURL != strings.TrimSpace(form.CTAURL)
 }
 
 func IsUnread(item Announcement) bool {

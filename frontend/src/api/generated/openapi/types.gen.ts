@@ -113,6 +113,10 @@ export type Announcement = {
     ctaUrl?: string;
     publishAt: string;
     expireAt?: string;
+    /**
+     * Last change to user-visible title, summary, Markdown content, category, level, or CTA fields. Management-only changes do not advance this value.
+     */
+    contentUpdatedAt: string;
     version: number;
     createdBy: string;
     updatedBy: string;

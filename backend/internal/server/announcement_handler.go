@@ -11,28 +11,29 @@ import (
 )
 
 type announcementDTO struct {
-	ID              string                  `json:"id"`
-	Slug            string                  `json:"slug"`
-	Title           string                  `json:"title"`
-	Summary         string                  `json:"summary"`
-	ContentMarkdown string                  `json:"contentMarkdown"`
-	Category        string                  `json:"category"`
-	Level           string                  `json:"level"`
-	Status          string                  `json:"status"`
-	Channels        []string                `json:"channels"`
-	Audience        announcementAudienceDTO `json:"audience"`
-	IsPinned        bool                    `json:"isPinned"`
-	IsDismissible   bool                    `json:"isDismissible"`
-	CTALabel        *string                 `json:"ctaLabel,omitempty"`
-	CTAURL          *string                 `json:"ctaUrl,omitempty"`
-	PublishAt       string                  `json:"publishAt"`
-	ExpireAt        *string                 `json:"expireAt,omitempty"`
-	Version         int64                   `json:"version"`
-	CreatedBy       string                  `json:"createdBy"`
-	UpdatedBy       string                  `json:"updatedBy"`
-	CreatedAt       string                  `json:"createdAt"`
-	UpdatedAt       string                  `json:"updatedAt"`
-	Receipt         *announcementReceiptDTO `json:"receipt,omitempty"`
+	ID               string                  `json:"id"`
+	Slug             string                  `json:"slug"`
+	Title            string                  `json:"title"`
+	Summary          string                  `json:"summary"`
+	ContentMarkdown  string                  `json:"contentMarkdown"`
+	Category         string                  `json:"category"`
+	Level            string                  `json:"level"`
+	Status           string                  `json:"status"`
+	Channels         []string                `json:"channels"`
+	Audience         announcementAudienceDTO `json:"audience"`
+	IsPinned         bool                    `json:"isPinned"`
+	IsDismissible    bool                    `json:"isDismissible"`
+	CTALabel         *string                 `json:"ctaLabel,omitempty"`
+	CTAURL           *string                 `json:"ctaUrl,omitempty"`
+	PublishAt        string                  `json:"publishAt"`
+	ExpireAt         *string                 `json:"expireAt,omitempty"`
+	ContentUpdatedAt string                  `json:"contentUpdatedAt"`
+	Version          int64                   `json:"version"`
+	CreatedBy        string                  `json:"createdBy"`
+	UpdatedBy        string                  `json:"updatedBy"`
+	CreatedAt        string                  `json:"createdAt"`
+	UpdatedAt        string                  `json:"updatedAt"`
+	Receipt          *announcementReceiptDTO `json:"receipt,omitempty"`
 }
 
 type announcementAudienceDTO struct {
@@ -377,28 +378,29 @@ func toAnnouncementDTOs(items []announcement.Announcement) []announcementDTO {
 
 func toAnnouncementDTO(item announcement.Announcement) announcementDTO {
 	return announcementDTO{
-		ID:              item.ID,
-		Slug:            item.Slug,
-		Title:           item.Title,
-		Summary:         item.Summary,
-		ContentMarkdown: item.ContentMarkdown,
-		Category:        item.Category,
-		Level:           item.Level,
-		Status:          item.Status,
-		Channels:        item.Channels,
-		Audience:        announcementAudienceDTO{Type: item.Audience.Type},
-		IsPinned:        item.IsPinned,
-		IsDismissible:   item.IsDismissible,
-		CTALabel:        optionalString(item.CTALabel),
-		CTAURL:          optionalString(item.CTAURL),
-		PublishAt:       item.PublishAt.UTC().Format(time.RFC3339),
-		ExpireAt:        formatOptionalTime(item.ExpireAt),
-		Version:         item.Version,
-		CreatedBy:       item.CreatedBy,
-		UpdatedBy:       item.UpdatedBy,
-		CreatedAt:       item.CreatedAt.UTC().Format(time.RFC3339),
-		UpdatedAt:       item.UpdatedAt.UTC().Format(time.RFC3339),
-		Receipt:         toAnnouncementReceiptDTOPtr(item.Receipt),
+		ID:               item.ID,
+		Slug:             item.Slug,
+		Title:            item.Title,
+		Summary:          item.Summary,
+		ContentMarkdown:  item.ContentMarkdown,
+		Category:         item.Category,
+		Level:            item.Level,
+		Status:           item.Status,
+		Channels:         item.Channels,
+		Audience:         announcementAudienceDTO{Type: item.Audience.Type},
+		IsPinned:         item.IsPinned,
+		IsDismissible:    item.IsDismissible,
+		CTALabel:         optionalString(item.CTALabel),
+		CTAURL:           optionalString(item.CTAURL),
+		PublishAt:        item.PublishAt.UTC().Format(time.RFC3339),
+		ExpireAt:         formatOptionalTime(item.ExpireAt),
+		ContentUpdatedAt: item.ContentUpdatedAt.UTC().Format(time.RFC3339),
+		Version:          item.Version,
+		CreatedBy:        item.CreatedBy,
+		UpdatedBy:        item.UpdatedBy,
+		CreatedAt:        item.CreatedAt.UTC().Format(time.RFC3339),
+		UpdatedAt:        item.UpdatedAt.UTC().Format(time.RFC3339),
+		Receipt:          toAnnouncementReceiptDTOPtr(item.Receipt),
 	}
 }
 

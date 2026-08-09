@@ -43,28 +43,29 @@ type Receipt struct {
 }
 
 type Announcement struct {
-	ID              string
-	Slug            string
-	Title           string
-	Summary         string
-	ContentMarkdown string
-	Category        string
-	Level           string
-	Status          string
-	Channels        []string
-	Audience        Audience
-	IsPinned        bool
-	IsDismissible   bool
-	CTALabel        string
-	CTAURL          string
-	PublishAt       time.Time
-	ExpireAt        *time.Time
-	Version         int64
-	CreatedBy       string
-	UpdatedBy       string
-	CreatedAt       time.Time
-	UpdatedAt       time.Time
-	Receipt         *Receipt
+	ID               string
+	Slug             string
+	Title            string
+	Summary          string
+	ContentMarkdown  string
+	Category         string
+	Level            string
+	Status           string
+	Channels         []string
+	Audience         Audience
+	IsPinned         bool
+	IsDismissible    bool
+	CTALabel         string
+	CTAURL           string
+	PublishAt        time.Time
+	ExpireAt         *time.Time
+	ContentUpdatedAt time.Time
+	Version          int64
+	CreatedBy        string
+	UpdatedBy        string
+	CreatedAt        time.Time
+	UpdatedAt        time.Time
+	Receipt          *Receipt
 }
 
 type FormInput struct {

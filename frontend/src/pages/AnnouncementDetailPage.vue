@@ -18,7 +18,10 @@ const { data: announcement, isLoading } = useAnnouncementDetail(slug)
 const markReadMutation = useMarkAnnouncementRead()
 
 const publishedAt = computed(() => announcement.value ? formatTime(announcement.value.publishAt) : '')
-const updatedAt = computed(() => announcement.value ? formatTime(announcement.value.updatedAt) : '')
+const contentUpdatedAt = computed(() => announcement.value ? formatTime(announcement.value.contentUpdatedAt) : '')
+const wasUpdatedAfterPublish = computed(() => announcement.value
+  ? new Date(announcement.value.contentUpdatedAt).getTime() > new Date(announcement.value.publishAt).getTime()
+  : false)
 const ctaIsExternal = computed(() => Boolean(announcement.value?.ctaUrl?.startsWith('https://')))
 
 watch(announcement, item => {
@@ -67,10 +70,9 @@ function formatTime(value: string) {
         </div>
         <h1 class="mt-4 text-2xl font-semibold tracking-tight md:text-3xl">{{ announcement.title }}</h1>
         <p class="mt-2 max-w-3xl text-sm leading-6 text-muted-foreground">{{ announcement.summary }}</p>
-        <div class="mt-4 flex flex-wrap gap-3 text-xs text-muted-foreground">
-          <span>发布时间：{{ publishedAt }}</span>
-          <span>更新时间：{{ updatedAt }}</span>
-          <span>已读状态：已自动记录</span>
+        <div class="mt-4 flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
+          <span>发布于 {{ publishedAt }}</span>
+          <span v-if="wasUpdatedAfterPublish">更新于 {{ contentUpdatedAt }}</span>
         </div>
         </Card>
 
@@ -99,16 +101,7 @@ function formatTime(value: string) {
       </main>
       <aside class="announcement-reference-aside space-y-3">
         <Card class="p-4">
-          <h2 class="font-semibold">公告信息</h2>
-          <dl class="mt-3 grid gap-3 text-sm">
-            <div><dt class="text-xs text-muted-foreground">分类</dt><dd class="mt-1 font-medium">{{ announcementCategoryLabels[announcement.category] }}</dd></div>
-            <div><dt class="text-xs text-muted-foreground">级别</dt><dd class="mt-1 font-medium">{{ announcementLevelLabels[announcement.level] }}</dd></div>
-            <div><dt class="text-xs text-muted-foreground">发布时间</dt><dd class="mt-1 text-muted-foreground">{{ publishedAt }}</dd></div>
-            <div><dt class="text-xs text-muted-foreground">最近更新</dt><dd class="mt-1 text-muted-foreground">{{ updatedAt }}</dd></div>
-          </dl>
-        </Card>
-        <Card class="p-4">
-          <h2 class="font-semibold">阅读提示</h2>
+          <h2 class="font-semibold">阅读说明</h2>
           <p class="mt-2 text-sm leading-6 text-muted-foreground">公告正文以当前页面为准。涉及具体订单或车源时，请回到对应详情页核对最新状态。</p>
           <Button class="mt-3 w-full" variant="outline" @click="router.push('/my/notifications?tab=announcements')">查看全部公告</Button>
         </Card>
