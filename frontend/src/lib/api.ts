@@ -619,6 +619,7 @@ export type ApiOrder = {
   selectedPaymentMethod: ApiPaymentOption['paymentMethod']
   paymentWindowMinutes: number
   paymentExpiresAt: string
+  buyerNote?: string
   paymentSummary?: string
   paymentSubmittedAt?: string
   paymentIssueReason?: ApiOrderPaymentIssueReason
@@ -5817,6 +5818,7 @@ export async function createApiOrderFromIntent(intentId: string, paymentMethod: 
     selectedPaymentMethod: paymentMethod,
     paymentWindowMinutes: 10,
     paymentExpiresAt: minutesFromNow(10),
+    buyerNote: intent.buyerNote,
     version: 1,
     intentSnapshot: clone(intent.snapshot),
     selectedDeliveryMode: intent.selectedDeliveryMode,
@@ -5920,6 +5922,7 @@ export async function createApiQuotaOrder(payload: CreateApiQuotaOrderPayload) {
     selectedPaymentMethod: paymentMethod,
     paymentWindowMinutes,
     paymentExpiresAt: minutesFromNow(paymentWindowMinutes),
+    buyerNote: intent.buyerNote,
     version: 1,
     intentSnapshot: clone(intentSnapshot),
     selectedDeliveryMode,

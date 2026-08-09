@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
-import { RouterLink } from 'vue-router'
+import { RouterLink, useRouter } from 'vue-router'
 import { useQueryClient } from '@tanstack/vue-query'
-import { CheckCircle2, KeyRound } from 'lucide-vue-next'
+import { CheckCircle2, Eye, KeyRound } from 'lucide-vue-next'
 import { toast } from 'vue-sonner'
 import ApiPaymentMethodIcon from '@/components/api-payment/ApiPaymentMethodIcon.vue'
 import { Button } from '@/components/ui/button'
@@ -35,6 +35,7 @@ import { addDecimal, formatDecimal } from '@/lib/decimal'
 import { useMerchantApiOrders, useMerchantApiOrdersPage } from '@/queries/useMarketQueries'
 
 const queryClient = useQueryClient()
+const router = useRouter()
 const { data } = useMerchantApiOrders({ sort: 'default_merchant' })
 const activeTab = ref('全部')
 const keyword = ref('')
@@ -125,6 +126,11 @@ async function runAction(item: ApiOrder, action: () => Promise<unknown>, message
     busyId.value = ''
   }
 }
+
+function openOrder(event: MouseEvent | KeyboardEvent, id: string) {
+  if (event.target instanceof Element && event.target.closest('a,button')) return
+  router.push(`/merchant/api-orders/${id}`)
+}
 </script>
 
 <template>
@@ -146,7 +152,7 @@ async function runAction(item: ApiOrder, action: () => Promise<unknown>, message
     <SkeletonTable v-else-if="isLoading" :columns="6" />
     <EmptyState v-else-if="rows.length === 0" title="当前筛选下暂无订单" description="调整筛选条件后再试；新订单到达后会在这里显示。" />
     <SoftTable v-else animate-rows class="[&_table]:min-w-[760px]" :columns="['订单', '买家 / 服务', '订单金额 / 购买额度', '状态', '更新', '操作']">
-      <tr v-for="item in rows" :key="item.id">
+      <tr v-for="item in rows" :key="item.id" class="cursor-pointer" tabindex="0" @click="openOrder($event, item.id)" @keydown.enter="openOrder($event, item.id)">
         <td><div class="font-medium"><ShortId :value="item.orderNo" full copyable /></div><div class="text-xs text-muted-foreground"><LocalTime :value="item.createdAt" /></div></td>
         <td>
           <div class="font-medium">{{ item.buyer }}</div>
@@ -163,11 +169,16 @@ async function runAction(item: ApiOrder, action: () => Promise<unknown>, message
         <td class="text-xs text-muted-foreground"><LocalTime :value="item.updatedAt" /></td>
         <td>
           <div class="flex flex-wrap gap-1">
+            <RouterLink :to="`/merchant/api-orders/${item.id}`">
+              <Button size="sm" variant="outline">
+                <KeyRound v-if="item.status === 'paid_confirmed'" class="h-4 w-4" />
+                <Eye v-else class="h-4 w-4" />
+                {{ item.status === 'paid_confirmed' ? '填写交付' : '查看详情' }}
+              </Button>
+            </RouterLink>
             <Button v-if="item.status === 'payment_submitted'" size="sm" :disabled="busyId === item.id" @click="runAction(item, () => confirmApiOrderPayment(item.id, item.version), '已确认收款。')">
               <CheckCircle2 class="h-4 w-4" />确认已收款
             </Button>
-            <RouterLink v-if="item.status === 'paid_confirmed'" :to="`/merchant/api-orders/${item.id}`"><Button size="sm" variant="outline"><KeyRound class="h-4 w-4" />填写交付</Button></RouterLink>
-            <RouterLink v-if="item.status !== 'payment_submitted' && item.status !== 'paid_confirmed'" :to="`/merchant/api-orders/${item.id}`"><Button size="sm" variant="outline">查看</Button></RouterLink>
             <span v-if="item.status === 'delivery_submitted' || item.status === 'completed'" class="text-xs text-muted-foreground">{{ getApiOrderNextAction(item, 'merchant') }}</span>
           </div>
         </td>

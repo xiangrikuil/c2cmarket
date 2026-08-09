@@ -634,6 +634,41 @@ onBeforeUnmount(() => {
       <AlertDescription>你的履约任务已经结束，无需等待买家点击确认。订单将在买家确认可用或 24 小时核验期结束后完成。</AlertDescription>
     </Alert>
 
+    <section v-if="isMerchantView" class="border-y border-border bg-card px-4 py-5 sm:px-5" aria-labelledby="merchant-payment-check-title">
+      <div class="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+        <div>
+          <h2 id="merchant-payment-check-title" class="font-semibold">收款核对</h2>
+          <p class="mt-1 text-xs leading-5 text-muted-foreground">先核对实际到账、买家备注和订单联系方式，再确认收款。</p>
+        </div>
+        <Badge :variant="canConfirmPayment ? 'trust' : 'secondary'">{{ canConfirmPayment ? '待核款' : getApiOrderDisplayStatus(order, perspective) }}</Badge>
+      </div>
+
+      <dl class="mt-4 grid gap-3 text-sm sm:grid-cols-2 lg:grid-cols-4">
+        <div class="border-l-2 border-primary pl-3"><dt class="text-xs text-muted-foreground">应收金额</dt><dd class="mt-1 text-xl font-semibold text-primary">¥{{ orderAmountText }}</dd></div>
+        <div><dt class="text-xs text-muted-foreground">付款方式</dt><dd class="mt-1 flex items-center gap-2 font-medium"><ApiPaymentMethodIcon :method="order.selectedPaymentMethod" size="sm" />{{ apiPaymentMethodLabels[order.selectedPaymentMethod] }}</dd></div>
+        <div v-if="order.buyerNote"><dt class="text-xs text-muted-foreground">下单备注</dt><dd class="mt-1 whitespace-pre-line break-words">{{ order.buyerNote }}</dd></div>
+        <div v-if="order.paymentSummary"><dt class="text-xs text-muted-foreground">付款备注</dt><dd class="mt-1 whitespace-pre-line break-words">{{ order.paymentSummary }}</dd></div>
+      </dl>
+
+      <OrderContactCard
+        v-if="buyerContactSnapshot"
+        class="mt-4"
+        :snapshot="buyerContactSnapshot"
+        side="buyer"
+        title="买家联系方式"
+        compact
+        :show-contacted-action="false"
+        :show-issue-actions="false"
+      />
+
+      <div v-if="canConfirmPayment" class="mt-4 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+        <Button v-if="canReportPaymentIssue" variant="outline" class="border-warning/50 text-warning" :disabled="actionBusy" @click="paymentIssueDialogOpen = true">
+          <ShieldAlert class="h-4 w-4" />付款有问题
+        </Button>
+        <Button :disabled="actionBusy" @click="confirmPayment"><CheckCircle2 class="h-4 w-4" />确认已收款</Button>
+      </div>
+    </section>
+
     <Card class="overflow-hidden border-border/80">
       <div class="border-b border-border bg-muted/20 px-4 py-5">
         <Stepper v-if="order.status !== 'cancelled'" :model-value="Math.min(flowSteps.length, Math.max(1, currentFlowIndex + 1))" class="w-full items-start overflow-x-auto px-1">
@@ -683,12 +718,7 @@ onBeforeUnmount(() => {
             <WalletCards class="h-4 w-4" />补充并重新提交
           </Button>
           <template v-else-if="canConfirmPayment">
-            <Button size="lg" :disabled="actionBusy" @click="confirmPayment">
-              <CheckCircle2 class="h-4 w-4" />确认已收款
-            </Button>
-            <Button v-if="canReportPaymentIssue" variant="outline" class="border-warning/50 text-warning" :disabled="actionBusy" @click="paymentIssueDialogOpen = true">
-              <ShieldAlert class="h-4 w-4" />报告付款问题
-            </Button>
+            <Badge variant="trust">请在上方“收款核对”区处理</Badge>
           </template>
           <Button v-else-if="canSubmitDelivery" size="lg" :disabled="actionBusy" @click="scrollToDeliveryForm">
             <KeyRound class="h-4 w-4" />继续填写交付信息
@@ -1061,9 +1091,18 @@ onBeforeUnmount(() => {
             <div v-if="paymentInstructions.paymentInstructions" class="px-4 py-3"><div class="text-muted-foreground">商户说明</div><div class="mt-1 whitespace-pre-line leading-6">{{ paymentInstructions.paymentInstructions }}</div></div>
           </div>
 
+          <OrderContactCard
+            v-if="merchantContactSnapshot"
+            :snapshot="merchantContactSnapshot"
+            title="付款有疑问？直接联系商户"
+            compact
+            :show-contacted-action="false"
+            :show-issue-actions="false"
+          />
+
           <label class="block space-y-2">
             <span class="text-sm font-medium">付款备注（选填）</span>
-            <Textarea v-model="paymentSummary" class="min-h-20" maxlength="500" placeholder="可填写付款时间、备注或尾号，便于商户核对。" />
+            <Textarea v-model="paymentSummary" class="min-h-20" maxlength="500" placeholder="可填写付款时间、订单号后 6 位或交易尾号，便于商户核对。" />
           </label>
 
           <Alert>
@@ -1101,7 +1140,7 @@ onBeforeUnmount(() => {
       <DialogContent class="sm:max-w-[520px]">
         <DialogHeader>
           <DialogTitle>报告付款核对问题</DialogTitle>
-          <DialogDescription>请选择明确原因并通知买家补充。订单将保留当前锁定额度，不会自动取消。</DialogDescription>
+          <DialogDescription>请先通过订单内微信或 linux.do 私信联系买家核对；仍需补充时再选择明确原因。订单将保留当前锁定额度。</DialogDescription>
         </DialogHeader>
         <RadioGroup v-model="paymentIssueReason" class="gap-3">
           <div
@@ -1188,7 +1227,7 @@ onBeforeUnmount(() => {
             <Alert variant="destructive">
               <ShieldAlert />
               <AlertTitle>请确认尚未付款</AlertTitle>
-              <AlertDescription>如果已经付款，请不要取消订单，应等待商户处理或申请平台介入。</AlertDescription>
+              <AlertDescription>如果已经付款，请不要取消订单。先通过微信或 linux.do 私信联系商户；双方沟通后仍未解决再申请平台介入。</AlertDescription>
             </Alert>
 
             <label class="flex cursor-pointer items-start gap-3 rounded-lg border border-border p-4">

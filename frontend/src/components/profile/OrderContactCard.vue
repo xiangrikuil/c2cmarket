@@ -21,6 +21,7 @@ const props = defineProps<{
   contactedLabel?: string
   showContactedAction?: boolean
   showIssueActions?: boolean
+  compact?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -38,6 +39,7 @@ const hiddenLabel = computed(() => props.hiddenLabel ?? '暂不可见')
 const footerText = computed(() => props.footerText ?? '联系方式来自联系快照；修改个人联系方式不会改变当前记录。')
 const showContactedAction = computed(() => props.showContactedAction ?? true)
 const showIssueActions = computed(() => props.showIssueActions ?? true)
+const compact = computed(() => props.compact ?? false)
 
 function displayValue(item: OrderContactSnapshotItem) {
   return props.snapshot.canView ? item.displayValue ?? item.maskedValue : item.maskedValue
@@ -82,7 +84,31 @@ function reportContact(item: OrderContactSnapshotItem, reasonCode: 'contact_inva
 </script>
 
 <template>
-  <Card class="p-5">
+  <Card :class="compact ? 'p-4' : 'p-5'">
+    <template v-if="compact">
+      <div>
+        <h2 class="text-sm font-semibold">{{ title }}</h2>
+        <p class="mt-1 text-xs leading-5 text-muted-foreground">有疑问时先直接联系对方核对，保留订单编号和付款记录。</p>
+      </div>
+      <div v-if="snapshot.canView && contacts.length" class="mt-3 space-y-2">
+        <div v-for="item in contacts" :key="`${item.type}-${item.label}`" class="flex flex-col gap-2 border-t border-border pt-3 first:border-t-0 first:pt-0 sm:flex-row sm:items-center sm:justify-between">
+          <div class="min-w-0">
+            <div class="text-xs text-muted-foreground">{{ item.label }}</div>
+            <div class="mt-0.5 break-all text-sm font-medium">{{ displayValue(item) }}</div>
+          </div>
+          <Button v-if="item.type === 'linuxdo' && item.actionUrl" size="sm" variant="outline" @click="openLinuxDoMessage(item)">
+            <MessageCircle class="h-4 w-4" />linux.do 私信
+          </Button>
+          <Button v-else size="sm" variant="outline" @click="copyContact(item)">
+            <Copy class="h-4 w-4" />{{ item.type === 'wechat' ? '复制微信' : `复制${item.label}` }}
+          </Button>
+        </div>
+      </div>
+      <div v-else class="mt-3 text-xs leading-5 text-muted-foreground">
+        {{ snapshot.unavailableReason ?? '当前订单没有可展示的联系方式。' }}
+      </div>
+    </template>
+    <template v-else>
     <div class="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
       <div>
         <h2 class="font-semibold">{{ title }}</h2>
@@ -135,5 +161,6 @@ function reportContact(item: OrderContactSnapshotItem, reasonCode: 'contact_inva
     <div v-else class="mt-4 rounded-md border border-border bg-muted/40 p-3 text-sm text-muted-foreground">
       当前快照没有可展示的联系方式。
     </div>
+    </template>
   </Card>
 </template>

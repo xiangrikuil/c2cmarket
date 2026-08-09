@@ -1723,6 +1723,7 @@ async function mapBackendAPIOrder(order: BackendAPIOrder, viewerRole: 'buyer' | 
     selectedPaymentMethod: apiOrderPaymentMethod(order.selectedPaymentMethod),
     paymentWindowMinutes: order.paymentWindowMinutesSnapshot,
     paymentExpiresAt: order.paymentExpiresAt,
+    buyerNote: intent.buyerNote,
     paymentSummary: order.paymentSummary,
     paymentSubmittedAt: order.paymentSubmittedAt ?? undefined,
     paymentIssueReason: apiOrderPaymentIssueReason(order.paymentIssueReason),
