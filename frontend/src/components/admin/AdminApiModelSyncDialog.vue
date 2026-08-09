@@ -16,11 +16,13 @@ import {
 } from '@/components/ui/dialog'
 import { Switch } from '@/components/ui/switch'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { BackendProblemError, backendErrorMessage } from '@/lib/backendClient'
 import { useApplyAPIModelsDevSync, usePreviewAPIModelsDevSync } from '@/queries/useApiModelCatalogQueries'
 import type {
   AdminApiModelProvider,
   ApiModelBulkMutationResult,
   ApiModelSyncItem,
+  ApiModelSyncPreview,
   ApiModelSyncSelection,
   ApiModelSyncStatus,
   ModelsDevProviderCode,
@@ -98,11 +100,26 @@ async function fetchPreview() {
   }
   try {
     const result = await previewMutation.mutateAsync([...selectedProviderIds.value])
-    selectedCandidateKeys.value = result.items.filter(item => item.status === 'new').map(item => item.candidateKey)
-    activeCandidateKeys.value = []
-    activeStatus.value = result.counts.new > 0 ? 'new' : result.counts.priceChanged > 0 ? 'price_changed' : 'unchanged'
+    applyPreviewResult(result)
   } catch (error) {
-    toast.error(error instanceof Error ? error.message : 'models.dev 数据获取失败')
+    toast.error(backendErrorMessage(error, 'models.dev 数据获取失败'))
+  }
+}
+
+function applyPreviewResult(result: ApiModelSyncPreview) {
+  selectedCandidateKeys.value = result.items.filter(item => item.status === 'new').map(item => item.candidateKey)
+  activeCandidateKeys.value = []
+  activeStatus.value = result.counts.new > 0 ? 'new' : result.counts.priceChanged > 0 ? 'price_changed' : 'unchanged'
+}
+
+async function refreshPreviewAfterConflict() {
+  applyMutation.reset()
+  try {
+    const result = await previewMutation.mutateAsync([...selectedProviderIds.value])
+    applyPreviewResult(result)
+    toast.warning('模型目录已更新，旧选择已失效。请重新确认预览后再应用。')
+  } catch (error) {
+    toast.error(backendErrorMessage(error, '模型目录已变化，重新获取同步预览失败。'))
   }
 }
 
@@ -126,7 +143,11 @@ async function applySelection() {
     emit('applied', result)
     dialogOpen.value = false
   } catch (error) {
-    toast.error(error instanceof Error ? error.message : '应用 models.dev 变化失败')
+    if (error instanceof BackendProblemError && error.code === 'VERSION_CONFLICT') {
+      await refreshPreviewAfterConflict()
+      return
+    }
+    toast.error(backendErrorMessage(error, '应用 models.dev 变化失败'))
   }
 }
 

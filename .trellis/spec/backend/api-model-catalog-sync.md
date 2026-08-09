@@ -47,6 +47,7 @@ Persistence continues to use `api_model_providers`, `api_model_catalog`, `api_mo
 - New rows are selected for import by the frontend but default to `active=false`. Activation is a separate explicit choice. Existing price updates preserve provider, capabilities, sort order, and active state.
 - Apply accepts only `new` and `price_changed` selections. The stable fingerprint covers status, provider identity, exact model key, canonical capabilities, source URL/version, prices, and local model/price-version IDs; `active` is intentionally excluded so an administrator can choose activation after preview.
 - Apply locks and validates every selected row before writing, rolls the current price version forward, and completes idempotency in one PostgreSQL transaction. Any conflict rolls back the whole batch.
+- When apply returns `412 VERSION_CONFLICT`, the frontend must discard the stale preview and its selection/activation choices, fetch a fresh preview for the currently selected providers, and require explicit administrator review before another apply. It must never automatically replay the stale selection or automatically submit the refreshed preview.
 - A completed bulk apply or status mutation associates its idempotency record with the first affected model ID while retaining every affected ID in the cached response body. An empty mutation result is an internal error and must not be written as a completed idempotency record.
 - Bulk status validates and locks the complete model set before one atomic update. The public catalog continues to return only rows where both model and provider are active.
 - PostgreSQL provider lists order by provider category, sort order, provider `display_name`, and ID. Model lists order by model `model_key`; Migration 81 removed `api_model_catalog.display_name`, while `api_model_providers` never has a `model_key`. Keep these relation-specific columns explicit and cover all three catalog reads with a current-schema integration test.
@@ -66,14 +67,16 @@ Persistence continues to use `api_model_providers`, `api_model_catalog`, `api_mo
 | Apply item has a changed payload but an old fingerprint | `422 VALIDATION_FAILED`; no catalog writes |
 | Local model or current price version changed after preview | `412 VERSION_CONFLICT`; roll back the batch |
 | New model key is now occupied | `412 VERSION_CONFLICT`; roll back the batch |
+| Frontend receives `412 VERSION_CONFLICT` from apply | Reset the failed apply state, fetch a fresh preview, reset selection/activation state from that preview, and show a visible re-review warning |
 | Apply or bulk request repeats the same idempotency key and request hash | Replay the stored completion; do not create another price version |
 | Bulk request contains an invalid or missing model ID | Validation/not-found error; update no models |
 
 ### 5. Good / Base / Bad Cases
 
 - Good: preview four official providers, import selected new models as inactive, explicitly activate one new model, confirm selected price changes, and retain the existing active state of updated models.
+- Good: a stale apply receives `412`, refreshes the preview in place, clears stale activation choices, and waits for the administrator to review and submit again.
 - Base: close or cancel preview, receive `source_missing`, or receive an unchanged catalog. Local models, price versions, and activation remain untouched.
-- Bad: write during preview, import all providers, normalize `gpt-4.1-mini` into a display label, auto-enable new rows, update only the first valid row of a conflicting batch, or let the 920px comparison table widen a 390px dialog.
+- Bad: write during preview, import all providers, normalize `gpt-4.1-mini` into a display label, auto-enable new rows, update only the first valid row of a conflicting batch, automatically replay a stale selection after `412`, or let the 920px comparison table widen a 390px dialog.
 
 ### 6. Tests Required
 
@@ -81,6 +84,7 @@ Persistence continues to use `api_model_providers`, `api_model_catalog`, `api_mo
 - Server tests assert preview status counts, exact model keys, unavailable/source-missing records, tampered fingerprint rejection, atomic create plus price update, default inactive state, existing active-state preservation, idempotency replay, bulk activation, public visibility, and external-source Problem Details.
 - PostgreSQL coverage must assert row locking, old price-version closure, new current version creation, whole-batch rollback, stale version conflict, and idempotency completion in the business transaction.
 - Frontend adapter tests assert preview has no writes, new imports remain hidden from the public catalog until enabled, price updates preserve active state, stale/tampered selections fail, and bulk status refreshes public/admin queries.
+- Frontend dialog tests assert `VERSION_CONFLICT` triggers one preview refresh, resets stale selections and activation choices, surfaces a re-review warning, and does not invoke apply again.
 - Run `go test ./...`, frontend Vitest, Nuxt typecheck/build, OpenAPI route/type drift checks, and browser QA at desktop and mobile widths.
 - Browser QA must inspect all five preview tabs, initial selection defaults, the activation switch, price comparison, apply result, batch status, horizontal table scrolling, reachable dialog footer, and absence of console errors.
 
@@ -105,6 +109,9 @@ The first flow bypasses administrator review and local catalog ownership. The se
 fixed bounded fetch -> read-only classified preview -> explicit selections
   -> fingerprint and local-version validation -> one atomic apply
   -> new rows inactive unless explicitly enabled -> active public catalog only
+
+stale apply -> 412 rollback -> discard stale preview and choices
+  -> fetch current preview -> explicit review -> optional new apply
 ```
 
 ```vue
