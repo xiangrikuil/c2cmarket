@@ -56,10 +56,11 @@ export function useActiveAnnouncements(channel?: Ref<AnnouncementChannel | undef
   })
 }
 
-export function useActiveHomeAnnouncement() {
+export function useActiveHomeAnnouncement(enabled: Ref<boolean> | boolean = true) {
   return useQuery({
     queryKey: announcementQueryKeys.home,
     queryFn: getActiveHomeAnnouncement,
+    enabled: computed(() => valueOf(enabled)),
     refetchOnMount: 'always',
   })
 }
