@@ -17,6 +17,7 @@ import { backendMutation, backendRequest, ensureBackendSession } from '@/lib/bac
 import { backendCreateContactMethod } from '@/lib/apiMarketBackend'
 import { carpoolOpeningChannels, carpoolPaymentMethods, carpoolRegions } from '@/data/mock'
 import { defaultQuotaLabel, defaultQuotaPeriod, defaultQuotaUnit } from '@/lib/quota'
+import { linuxDoProfileSummaryUrl } from '@/lib/linuxDo'
 import { mapBackendReputationSummary } from '@/lib/reputationBackend'
 import type { ReputationSummary } from '@/types/reputation'
 import { trackAnalytics } from '@/lib/analytics'
@@ -680,7 +681,7 @@ function contactItem(item: BackendContactSessionContacts['items'][number]): Orde
     displayValue: item.value,
     verified: item.type === 'linuxdo',
     usageScope,
-    actionUrl: item.type === 'linuxdo' ? `https://linux.do/u/${item.value.replace(/^@/, '')}/messages/new` : undefined,
+    actionUrl: item.type === 'linuxdo' ? linuxDoProfileSummaryUrl(item.value) : undefined,
   }
 }
 

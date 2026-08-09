@@ -256,6 +256,7 @@ test('contact reveal analytics fires only after authoritative disclosure succeed
 
   const contacts = await backendCarpoolApplicationContacts('application-id')
   assert.equal(contacts.canView, true)
+  assert.equal(contacts.sellerContacts[0]?.actionUrl, 'https://linux.do/u/seller/summary')
   assert.deepEqual(track.mock.calls, [[
     'contact_window_reveal',
     {

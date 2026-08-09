@@ -320,6 +320,7 @@ import {
   type AdminUserStatus,
 } from '@/lib/adminUserBackend'
 import { shouldUseRealBackend } from '@/lib/backendClient'
+import { linuxDoProfileSummaryUrl } from '@/lib/linuxDo'
 import {
   backendGetApiPaymentAccountSettings,
   backendUpdateApiPaymentAccountSettings,
@@ -1333,7 +1334,7 @@ export function apiIntentMerchantContactSnapshot(intent: ApiPurchaseIntent): Ord
       displayValue: channel.value,
       verified: channel.type === 'linuxdo',
       usageScope: 'api_merchant',
-      actionUrl: channel.type === 'linuxdo' ? `https://linux.do/u/${channel.value.replace(/^@/, '')}/messages/new` : undefined,
+      actionUrl: channel.type === 'linuxdo' ? linuxDoProfileSummaryUrl(channel.value) : undefined,
     })) : [],
     buyerContacts: [],
     contactWindowEndsAt: null,
@@ -1357,7 +1358,7 @@ export function apiIntentBuyerContactSnapshot(intent: ApiPurchaseIntent): OrderC
       displayValue: channel.value,
       verified: channel.type === 'linuxdo',
       usageScope: 'buyer',
-      actionUrl: channel.type === 'linuxdo' ? `https://linux.do/u/${channel.value.replace(/^@/, '')}/messages/new` : undefined,
+      actionUrl: channel.type === 'linuxdo' ? linuxDoProfileSummaryUrl(channel.value) : undefined,
     })) : [],
     contactWindowEndsAt: null,
     canView,
@@ -1374,7 +1375,7 @@ function contactChannelsToSnapshotItems(channels: ApiContactChannel[], usageScop
     displayValue: channel.value,
     verified: channel.type === 'linuxdo',
     usageScope,
-    actionUrl: channel.type === 'linuxdo' ? `https://linux.do/u/${channel.value.replace(/^@/, '')}/messages/new` : undefined,
+    actionUrl: channel.type === 'linuxdo' ? linuxDoProfileSummaryUrl(channel.value) : undefined,
   }))
 }
 
@@ -3442,7 +3443,7 @@ export async function getCarpoolApplicationContacts(applicationId: string): Prom
     orderType: 'carpool_application',
     orderId: applicationId,
     sellerContacts: [
-      { type: 'linuxdo', label: 'linux.do 私信', maskedValue: `@${application.ownerUsername}`, displayValue: `@${application.ownerUsername}`, verified: true, usageScope: 'carpool_owner', actionUrl: `https://linux.do/u/${application.ownerUsername}/messages/new` },
+      { type: 'linuxdo', label: 'linux.do 私信', maskedValue: `@${application.ownerUsername}`, displayValue: `@${application.ownerUsername}`, verified: true, usageScope: 'carpool_owner', actionUrl: linuxDoProfileSummaryUrl(application.ownerUsername) },
     ],
     buyerContacts: [],
     contactWindowEndsAt: application.reservedUntil,

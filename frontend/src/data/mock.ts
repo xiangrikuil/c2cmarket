@@ -2830,10 +2830,10 @@ export const orderContactSnapshots: OrderContactSnapshot[] = [
     orderId: 'ride-app-2',
     sellerContacts: [
       { type: 'wechat', label: '微信', maskedValue: 'c2c_***', displayValue: 'c2c_orbit', verified: false, usageScope: 'carpool_owner' },
-      { type: 'linuxdo', label: 'linux.do 私信', maskedValue: '@orbit', displayValue: '@orbit', verified: true, usageScope: 'carpool_owner', actionUrl: 'https://linux.do/u/orbit/messages/new' },
+      { type: 'linuxdo', label: 'linux.do 私信', maskedValue: '@orbit', displayValue: '@orbit', verified: true, usageScope: 'carpool_owner', actionUrl: 'https://linux.do/u/orbit/summary' },
     ],
     buyerContacts: [
-      { type: 'linuxdo', label: 'linux.do 私信', maskedValue: '@muzhou', displayValue: '@muzhou', verified: true, usageScope: 'buyer', actionUrl: 'https://linux.do/u/muzhou/messages/new' },
+      { type: 'linuxdo', label: 'linux.do 私信', maskedValue: '@muzhou', displayValue: '@muzhou', verified: true, usageScope: 'buyer', actionUrl: 'https://linux.do/u/muzhou/summary' },
     ],
     contactWindowEndsAt: '2026-06-19 17:05',
     canView: true,
@@ -2845,10 +2845,10 @@ export const orderContactSnapshots: OrderContactSnapshot[] = [
     orderType: 'carpool_application',
     orderId: 'ride-app-3',
     sellerContacts: [
-      { type: 'linuxdo', label: 'linux.do 私信', maskedValue: '@qingning', displayValue: '@qingning', verified: true, usageScope: 'carpool_owner', actionUrl: 'https://linux.do/u/qingning/messages/new' },
+      { type: 'linuxdo', label: 'linux.do 私信', maskedValue: '@qingning', displayValue: '@qingning', verified: true, usageScope: 'carpool_owner', actionUrl: 'https://linux.do/u/qingning/summary' },
     ],
     buyerContacts: [
-      { type: 'linuxdo', label: 'linux.do 私信', maskedValue: '@demo_user', displayValue: '@demo_user', verified: true, usageScope: 'buyer', actionUrl: 'https://linux.do/u/demo_user/messages/new' },
+      { type: 'linuxdo', label: 'linux.do 私信', maskedValue: '@demo_user', displayValue: '@demo_user', verified: true, usageScope: 'buyer', actionUrl: 'https://linux.do/u/demo_user/summary' },
     ],
     contactWindowEndsAt: '2026-06-18 20:42',
     canView: true,
