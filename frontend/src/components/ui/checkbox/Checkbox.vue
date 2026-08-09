@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import type { CheckboxRootEmits, CheckboxRootProps } from "reka-ui"
 import type { HTMLAttributes } from "vue"
-import { CheckIcon } from '@radix-icons/vue'
 import { reactiveOmit } from "@vueuse/core"
+import { Check } from "lucide-vue-next"
 import { CheckboxIndicator, CheckboxRoot, useForwardPropsEmits } from "reka-ui"
 import { cn } from "@/lib/utils"
 
@@ -28,7 +28,7 @@ const forwarded = useForwardPropsEmits(delegatedProps, emits)
       class="grid place-content-center text-current transition-none"
     >
       <slot v-bind="slotProps">
-        <CheckIcon class="size-3.5" />
+        <Check class="size-3.5" />
       </slot>
     </CheckboxIndicator>
   </CheckboxRoot>

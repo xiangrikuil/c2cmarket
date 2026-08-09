@@ -145,7 +145,6 @@ export default defineNuxtConfig({
     plugins: [tailwindcss()],
     optimizeDeps: {
       include: [
-        '@radix-icons/vue',
         '@tanstack/vue-query',
         '@vueuse/core',
         'class-variance-authority',

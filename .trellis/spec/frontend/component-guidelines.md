@@ -93,8 +93,18 @@ Treat generated shadcn-vue files as vendor-style project source.
 
 Current documented exception:
 
-- `frontend/src/components/ui/sonner/Sonner.vue` uses `CheckCircledIcon`, `InfoCircledIcon`, `CrossCircledIcon`, and `ExclamationTriangleIcon` because the generated shadcn-vue template referenced icon names that are not exported by the installed official `@radix-icons/vue@1.0.0` package.
+- The current `new-york-v4` registry imports icons from `@lucide/vue`. This project uses the already-established `lucide-vue-next` package instead, while keeping the same Lucide glyphs, sizes, and primitive composition. Do not add a second Lucide package or restore the removed `@radix-icons/vue` dependency only to match an upstream import path.
 - `frontend/src/components/ui/badge/index.ts` keeps product semantic badge variants (`identity`, `verified`, `trust`, `capability`, `model`, `status`) in the generated badge variant map so every market tag shares one Aqua Console color contract instead of duplicating per-page badge classes.
+
+## Official Consistency Review
+
+When adding or refreshing shadcn-vue primitives:
+
+- Resolve the official baseline from `frontend/components.json` and compare against the corresponding structured `new-york-v4` registry JSON. A CLI `diff` result alone is not sufficient evidence because it may report no updates while registry templates have changed.
+- Classify every local difference as official parity, a documented product or package exception, a required fix, or an explicitly deferred item. Keep business positioning and sizing exceptions at the call site.
+- For Tooltip, Popover, DropdownMenu, Select, and Dialog, review Portal usage, Arrow where the official component provides one, default alignment, collision bounds, state classes, and keyboard dismissal.
+- Keep scroll overflow on an inner body when a floating Arrow extends outside the positioned content. Do not clip the Arrow from the outer content node.
+- Preserve dependency-boundary and official-composition tests when refreshing generated files. Tests must reject direct business-layer `reka-ui` imports and removed icon dependencies.
 
 ---
 

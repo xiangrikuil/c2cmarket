@@ -179,11 +179,6 @@ a { color: inherit; text-decoration: none; }
   box-shadow: var(--shadow-2xs);
 }
 
-[data-slot="card"] {
-  border-radius: var(--radius);
-  gap: 1rem;
-}
-
 html[data-theme="neumorphic-cool"] [data-slot="card"] {
   border-color: transparent;
   border-radius: var(--radius-card);
@@ -4611,14 +4606,8 @@ html[data-theme="minimal-modern"] [data-slot="card"] {
   box-shadow: var(--surface-raised-sm);
 }
 
-html[data-theme="minimal-modern"] [data-slot="card"]:hover {
-  box-shadow: var(--surface-hover);
-}
-
 html[data-theme="minimal-modern"] [data-slot="button"] {
   border-radius: var(--radius-control);
-  transition-duration: 160ms;
-  transition-timing-function: ease-out;
 }
 
 html[data-theme="minimal-modern"] [data-slot="button"][data-variant="default"] {
@@ -4632,10 +4621,6 @@ html[data-theme="minimal-modern"] [data-slot="button"][data-variant="default"]:h
   background-color: var(--primary-hover);
   box-shadow: none;
   filter: none;
-}
-
-html[data-theme="minimal-modern"] [data-slot="button"]:active {
-  transform: scale(0.98);
 }
 
 html[data-theme="minimal-modern"] [data-slot="input"],
