@@ -180,9 +180,13 @@ func (service *Service) consumePreflight(
 		return PreflightResult{}, configValidationError(ErrPreflightRequired)
 	}
 	grant, found := service.preflights.consume(token, service.now().UTC())
+	normalizedRequestedModel := strings.TrimSpace(requestedModel)
+	if normalizedRequestedModel == "" {
+		normalizedRequestedModel = grant.ProbeModel
+	}
 	if !found || grant.OwnerUserID != ownerUserID || grant.ConnectionID != connectionID ||
 		grant.ExpectedVersion != expectedVersion || grant.CanonicalBaseURL != target.Canonical ||
-		grant.CredentialFingerprint != credentialFingerprint(credential) || grant.ProbeModel != strings.TrimSpace(requestedModel) ||
+		grant.CredentialFingerprint != credentialFingerprint(credential) || grant.ProbeModel != normalizedRequestedModel ||
 		grant.ProbeProtocol == "" || grant.Result.Verification.ProbeProtocol != grant.ProbeProtocol {
 		return PreflightResult{}, configValidationError(ErrPreflightInvalid)
 	}

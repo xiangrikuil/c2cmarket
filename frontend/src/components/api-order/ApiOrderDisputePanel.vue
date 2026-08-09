@@ -14,9 +14,9 @@ import {
   apiOrderDisputeIssueLabels,
   apiOrderDisputeRemedyStatusLabels,
   apiOrderDisputeResolutionLabels,
-  getApiOrderDisputeStatusLabel,
   type ApiOrderDisputeResolution,
 } from '@/lib/apiOrderDispute'
+import { getDisputeCaseStatusLabel } from '@/lib/disputeCase'
 import {
   useAppendDisputeMessageMutation,
   useClaimDisputeRemedyMutation,
@@ -204,7 +204,7 @@ async function contestRemedy() {
         </h2>
         <p class="mt-1 text-sm text-muted-foreground">{{ dispute?.targetLabel }}</p>
       </div>
-      <Badge v-if="dispute" variant="status">{{ getApiOrderDisputeStatusLabel(dispute.status) }}</Badge>
+      <Badge v-if="dispute" variant="status">{{ getDisputeCaseStatusLabel(dispute.status) }}</Badge>
     </div>
 
     <SkeletonBlock v-if="disputeQuery.isPending.value" :lines="6" />

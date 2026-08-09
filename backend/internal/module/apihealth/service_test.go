@@ -40,6 +40,30 @@ func TestCreateConnectionVerifiesAndEnablesSuccessfulTarget(t *testing.T) {
 	}
 }
 
+func TestCreateConnectionAcceptsOmittedModelSelectedByPreflight(t *testing.T) {
+	now := time.Date(2026, 8, 8, 10, 0, 0, 0, time.UTC)
+	repository := &connectionRepository{}
+	verifier := &connectionVerifier{result: successfulVerification()}
+	service := NewService(repository, verifier, func() time.Time { return now })
+	credential := "probe-key"
+	input := ConnectionInput{
+		Name: "主连接", BaseURL: "https://api.example.com/v1", Credential: &credential, Enabled: true,
+	}
+
+	preflight, appErr := service.PreflightOwnerConnection(context.Background(), auth.User{ID: "owner-1"}, input)
+	if appErr != nil || preflight.PreflightToken == "" || preflight.Verification.ProbeModel != DefaultGPTProbeModel {
+		t.Fatalf("PreflightOwnerConnection() result=%+v error=%v", preflight, appErr)
+	}
+	input.PreflightToken = preflight.PreflightToken
+	connection, appErr := service.CreateOwnerConnection(context.Background(), auth.User{ID: "owner-1"}, input)
+	if appErr != nil {
+		t.Fatalf("CreateOwnerConnection() error: %v", appErr)
+	}
+	if connection.ProbeModel != DefaultGPTProbeModel || verifier.calls != 1 {
+		t.Fatalf("unexpected default-model connection=%+v verifier calls=%d", connection, verifier.calls)
+	}
+}
+
 func TestCreateConnectionRequiresSuccessfulPreflight(t *testing.T) {
 	repository := &connectionRepository{}
 	service := NewService(repository, &connectionVerifier{result: VerificationResult{ErrorCode: ErrorAuthorizationInvalid}}, time.Now)

@@ -7,6 +7,7 @@ import {
   isApiOrderDisputeActive,
   normalizeApiOrderDisputeStatus,
 } from '@/lib/apiOrderDispute'
+import { getDisputeCaseStatusLabel } from '@/lib/disputeCase'
 
 const orderDetailSource = readFileSync(new URL('../../pages/ApiPurchaseOrderDetailPage.vue', import.meta.url), 'utf8')
 const disputePanelSource = readFileSync(new URL('../../components/api-order/ApiOrderDisputePanel.vue', import.meta.url), 'utf8')
@@ -44,6 +45,23 @@ describe('API order dispute projection', () => {
   test('normalizes legacy missing values and rejects unknown backend states', () => {
     expect(normalizeApiOrderDisputeStatus(undefined)).toBe('none')
     expect(() => normalizeApiOrderDisputeStatus('resolved')).toThrow('Unsupported API order dispute status')
+  })
+
+  test('maps every dispute-case status and uses the case helper in the participant panel', () => {
+    expect(([
+      'negotiating',
+      'open',
+      'waiting_info',
+      'resolved',
+      'closed',
+    ] as const).map(getDisputeCaseStatusLabel)).toEqual([
+      '协商中',
+      '处理中',
+      '需要补充信息',
+      '已处理',
+      '已关闭',
+    ])
+    expect(disputePanelSource).toContain('getDisputeCaseStatusLabel(dispute.status)')
   })
 
   test('requires bilateral settlement and keeps platform review as a separate action', () => {

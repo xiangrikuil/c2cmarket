@@ -10,6 +10,7 @@ import type {
 } from '@/api/generated/openapi'
 import type { CreateContactReportRequest, PublicDisputeRecord } from '@/data/mock'
 import { backendMutation, backendRequest, ensureBackendSession } from '@/lib/backendClient'
+import { getDisputeCaseStatusLabel } from '@/lib/disputeCase'
 
 type ListResponse<T> = {
   items: T[]
@@ -205,17 +206,6 @@ function reportStatusLabel(value: BackendReport['status']) {
   return labels[value]
 }
 
-function disputeStatusLabel(value: BackendDispute['status']) {
-  const labels: Record<BackendDispute['status'], string> = {
-	negotiating: '协商中',
-    open: '处理中',
-    waiting_info: '需要补充信息',
-    resolved: '已处理',
-    closed: '已关闭',
-  }
-  return labels[value]
-}
-
 function publicResultCodeLabel(value: BackendPublicResultCode) {
   const labels: Record<BackendPublicResultCode, string> = {
     no_action: '未记录处置',
@@ -311,7 +301,7 @@ export function mapAdminDisputeRow(item: AdminDisputeDetail): AdminRow {
     primary: item.publicSummary || item.targetLabel,
     secondary: `${targetTypeLabel(item.targetType)} · ${item.publicResult || '等待处理结果'}`,
     owner: `${item.primaryDisplayName || item.primaryUsername}${item.counterpartyUsername ? ` / @${item.counterpartyUsername}` : ''}`,
-    status: disputeStatusLabel(item.status),
+    status: getDisputeCaseStatusLabel(item.status),
     risk: item.adminReason || `公开摘要：${item.publicSummary || '未填写'}`,
     targetType: 'dispute',
     backendKind: 'dispute',
