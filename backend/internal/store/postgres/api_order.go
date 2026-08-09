@@ -261,6 +261,9 @@ func (s *Store) createAPIOrderInTx(ctx context.Context, tx pgx.Tx, input apiorde
 		return apiorder.Order{}, appErr
 	}
 	service = apimarket.WithOrderability(service)
+	if appErr := ensureAPIServicePublishAllowedInTx(ctx, tx, service.OwnerUserID, now); appErr != nil {
+		return apiorder.Order{}, appErr
+	}
 	order, appErr := newStoreAPIOrder(input, intent, service, now)
 	if appErr != nil {
 		return apiorder.Order{}, appErr

@@ -91,6 +91,8 @@ versions:
 | `000082_api_probe_real_model_health` | real streaming model probes, attempt and usage facts, model-change history, and immutable latency rules |
 | `000084_api_order_dispute_status_projection` | adds negotiation and remediation phases while keeping API-order dispute state as a synchronized projection |
 | `000085_api_order_dispute_negotiation` | adds structured API-order requests, immutable participant messages, and bilateral settlement proposals |
+| `000087_api_order_dispute_remedies` | adds auditable post-ruling remedy requirements, claims, beneficiary responses, neutral timeouts, and administrator-confirmed overdue facts |
+| `000088_api_order_dispute_sanctions` | links seller restrictions to overdue remedies and indexes the 180-day confirmed-breach window |
 
 The current runnable Go slice supports both in-memory tests and PostgreSQL runtime.
 When `DATABASE_URL` is configured, users, auth sessions, idempotency, product
@@ -419,6 +421,11 @@ remedy records for API-order disputes. Responsibility, action, amount, due
 dates, fulfillment claims, counterparty responses, neutral confirmation
 timeouts, and administrator-confirmed overdue facts remain separate from the
 dispute case status and API-order lifecycle.
+
+Version 88 (`000088_api_order_dispute_sanctions`) links an administrator-applied
+API-order seller restriction directly to its overdue remedy, prevents a second
+restriction from consuming the same overdue fact, and indexes confirmed seller
+breaches for the rolling 180-day recommendation window.
 
 ## Contact Retention And Destruction
 

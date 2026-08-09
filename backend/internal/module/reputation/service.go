@@ -2,6 +2,7 @@ package reputation
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"regexp"
 	"strings"
@@ -17,15 +18,27 @@ import (
 var reasonCodePattern = regexp.MustCompile(`^[a-z][a-z0-9_]{1,63}$`)
 
 type Service struct {
-	mu           sync.Mutex
-	repo         Repository
-	engineRepo   EngineRepository
-	sourceRepo   SourceAuthorRepository
-	auditRepo    AuditRepository
-	idempotency  *idempotency.Service
-	now          func() time.Time
-	outcomes     map[string]DisputeOutcome
-	restrictions map[string]UserRestriction
+	mu                    sync.Mutex
+	repo                  Repository
+	engineRepo            EngineRepository
+	sourceRepo            SourceAuthorRepository
+	auditRepo             AuditRepository
+	sanctionRepo          APIOrderSanctionRepository
+	activeRestrictionRepo ActiveRestrictionRepository
+	idempotency           *idempotency.Service
+	now                   func() time.Time
+	outcomes              map[string]DisputeOutcome
+	restrictions          map[string]UserRestriction
+	apiOrderOverdueFacts  map[string]apiOrderRemedyOverdueFact
+	userVersions          map[string]int64
+}
+
+type apiOrderRemedyOverdueFact struct {
+	disputeCaseID     string
+	remedyID          string
+	responsibleUserID string
+	sellerUserID      string
+	overdueAt         time.Time
 }
 
 func NewService(repo Repository, now func() time.Time, idempotencyServices ...*idempotency.Service) *Service {
@@ -40,11 +53,13 @@ func NewService(repo Repository, now func() time.Time, idempotencyServices ...*i
 		idempotencyService = idempotency.NewService(nil, now)
 	}
 	service := &Service{
-		repo:         repo,
-		idempotency:  idempotencyService,
-		now:          now,
-		outcomes:     make(map[string]DisputeOutcome),
-		restrictions: make(map[string]UserRestriction),
+		repo:                 repo,
+		idempotency:          idempotencyService,
+		now:                  now,
+		outcomes:             make(map[string]DisputeOutcome),
+		restrictions:         make(map[string]UserRestriction),
+		apiOrderOverdueFacts: make(map[string]apiOrderRemedyOverdueFact),
+		userVersions:         make(map[string]int64),
 	}
 	if engineRepo, ok := repo.(EngineRepository); ok {
 		service.engineRepo = engineRepo
@@ -55,7 +70,42 @@ func NewService(repo Repository, now func() time.Time, idempotencyServices ...*i
 	if auditRepo, ok := repo.(AuditRepository); ok {
 		service.auditRepo = auditRepo
 	}
+	if sanctionRepo, ok := repo.(APIOrderSanctionRepository); ok {
+		service.sanctionRepo = sanctionRepo
+	}
+	if activeRestrictionRepo, ok := repo.(ActiveRestrictionRepository); ok {
+		service.activeRestrictionRepo = activeRestrictionRepo
+	}
 	return service
+}
+
+func (s *Service) TracksAPIOrderRemedyFactsInMemory() bool {
+	return s != nil && s.sanctionRepo == nil
+}
+
+func (s *Service) RecordAPIOrderRemedyOverdueFact(disputeCaseID, remedyID, responsibleUserID, sellerUserID string, overdueAt time.Time) {
+	if !s.TracksAPIOrderRemedyFactsInMemory() || strings.TrimSpace(remedyID) == "" || overdueAt.IsZero() {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.recordAPIOrderRemedyOverdueFactLocked(apiOrderRemedyOverdueFact{
+		disputeCaseID:     strings.TrimSpace(disputeCaseID),
+		remedyID:          strings.TrimSpace(remedyID),
+		responsibleUserID: strings.TrimSpace(responsibleUserID),
+		sellerUserID:      strings.TrimSpace(sellerUserID),
+		overdueAt:         overdueAt,
+	})
+}
+
+func (s *Service) recordAPIOrderRemedyOverdueFactLocked(fact apiOrderRemedyOverdueFact) {
+	if fact.remedyID == "" || fact.overdueAt.IsZero() {
+		return
+	}
+	if _, exists := s.apiOrderOverdueFacts[fact.remedyID]; exists {
+		return
+	}
+	s.apiOrderOverdueFacts[fact.remedyID] = fact
 }
 
 func (s *Service) AggregateFacts(ctx context.Context, userIDs []string) (map[string]RawFacts, *domain.AppError) {
@@ -182,6 +232,82 @@ func (s *Service) CreateUserRestrictionWithIdempotency(ctx context.Context, acto
 	return s.completeInMemoryMutation(ctx, entry, result, buildCompletion)
 }
 
+func (s *Service) APIOrderSanctionRecommendation(ctx context.Context, actor AdminActor, disputeCaseID string) (APIOrderSanctionRecommendation, *domain.AppError) {
+	if appErr := validateAdminActor(actor); appErr != nil {
+		return APIOrderSanctionRecommendation{}, appErr
+	}
+	disputeCaseID = strings.TrimSpace(disputeCaseID)
+	if _, err := uuid.Parse(disputeCaseID); err != nil {
+		return APIOrderSanctionRecommendation{}, validationField("disputeCaseId", "纠纷 ID 必须是 UUID。")
+	}
+	if s.sanctionRepo != nil {
+		return s.sanctionRepo.GetAPIOrderSanctionRecommendation(ctx, disputeCaseID, s.now())
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.apiOrderSanctionRecommendationInMemoryLocked(disputeCaseID, s.now())
+}
+
+func (s *Service) ApplyAPIOrderSanctionWithIdempotency(ctx context.Context, actor AdminActor, routeKey, key, requestHash string, input ApplyAPIOrderSanctionInput, buildCompletion GovernanceCompletionBuilder) (idempotency.Completion, *domain.AppError) {
+	if appErr := validateAdminActor(actor); appErr != nil {
+		return idempotency.Completion{}, appErr
+	}
+	input.AdminUserID = strings.TrimSpace(actor.UserID)
+	input.DisputeCaseID = strings.TrimSpace(input.DisputeCaseID)
+	input.InternalReason = strings.TrimSpace(input.InternalReason)
+	if _, err := uuid.Parse(input.DisputeCaseID); err != nil {
+		return idempotency.Completion{}, validationField("disputeCaseId", "纠纷 ID 必须是 UUID。")
+	}
+	if len([]rune(input.InternalReason)) < 2 || len([]rune(input.InternalReason)) > 2000 {
+		return idempotency.Completion{}, validationField("internalReason", "内部说明需为 2 至 2000 个字符。")
+	}
+	if input.ExpectedUserVersion <= 0 {
+		return idempotency.Completion{}, validationField("If-Match", "必须提供当前用户版本。")
+	}
+	entry, appErr := s.idempotency.Begin(ctx, input.AdminUserID, routeKey, key, requestHash)
+	if appErr != nil {
+		return idempotency.Completion{}, appErr
+	}
+	if entry.State == "completed" {
+		return idempotency.CompletionFromEntry(entry), nil
+	}
+	if s.sanctionRepo != nil {
+		_, completion, appErr := s.sanctionRepo.ApplyAPIOrderSanctionWithIdempotency(ctx, *entry, input, s.now(), buildCompletion)
+		if appErr != nil {
+			s.idempotency.Cancel(ctx, entry)
+			return idempotency.Completion{}, appErr
+		}
+		return completion, nil
+	}
+	result, appErr := s.applyAPIOrderSanctionInMemory(input)
+	if appErr != nil {
+		s.idempotency.Cancel(ctx, entry)
+		return idempotency.Completion{}, appErr
+	}
+	return s.completeInMemoryMutation(ctx, entry, result, buildCompletion)
+}
+
+func (s *Service) ActiveRestrictions(ctx context.Context, userID string) ([]UserRestriction, *domain.AppError) {
+	userID = strings.TrimSpace(userID)
+	if userID == "" {
+		return nil, domain.NewError(http.StatusUnauthorized, domain.CodeSessionExpired, "Session required", "请先登录。")
+	}
+	if s.activeRestrictionRepo != nil {
+		return s.activeRestrictionRepo.ListActiveRestrictions(ctx, userID, s.now())
+	}
+	now := s.now()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	items := make([]UserRestriction, 0)
+	for _, item := range s.restrictions {
+		if item.UserID != userID || item.RevokedAt != nil || now.Before(item.StartsAt) || (item.EndsAt != nil && !now.Before(*item.EndsAt)) {
+			continue
+		}
+		items = append(items, item)
+	}
+	return items, nil
+}
+
 func (s *Service) RevokeUserRestrictionWithIdempotency(ctx context.Context, actor AdminActor, routeKey, key, requestHash string, input RevokeRestrictionInput, buildCompletion GovernanceCompletionBuilder) (idempotency.Completion, *domain.AppError) {
 	if appErr := validateAdminActor(actor); appErr != nil {
 		return idempotency.Completion{}, appErr
@@ -277,8 +403,21 @@ func (s *Service) createDisputeOutcomeInMemory(input CreateOutcomeInput) (Govern
 		DisputeVersion:    input.ExpectedVersion + 1,
 		apiOrderDispute:   input.APIOrderDispute,
 		remedyOverdueFact: input.RemedyOverdueFact,
+		remedyID:          input.RemedyID,
+		remedyResponsible: input.RemedyResponsible,
+		remedyOverdueAt:   input.RemedyOverdueAt,
+		apiOrderSellerID:  input.APIOrderSellerID,
 	}
 	s.outcomes[item.ID] = item
+	if item.apiOrderDispute && item.remedyOverdueFact && item.remedyOverdueAt != nil {
+		s.recordAPIOrderRemedyOverdueFactLocked(apiOrderRemedyOverdueFact{
+			disputeCaseID:     item.DisputeCaseID,
+			remedyID:          item.remedyID,
+			responsibleUserID: item.remedyResponsible,
+			sellerUserID:      item.apiOrderSellerID,
+			overdueAt:         *item.remedyOverdueAt,
+		})
+	}
 	return GovernanceMutationResult{Outcome: &item}, nil
 }
 
@@ -296,8 +435,8 @@ func (s *Service) createUserRestrictionInMemory(input CreateRestrictionInput) (G
 		if outcome.RoleScope != RoleAll && input.RoleScope != outcome.RoleScope {
 			return GovernanceMutationResult{}, validationField("roleScope", "限制角色不能超出关联裁定角色。")
 		}
-		if outcome.apiOrderDispute && !outcome.remedyOverdueFact {
-			return GovernanceMutationResult{}, apiOrderRemedyOutcomeUnavailable()
+		if outcome.apiOrderDispute {
+			return GovernanceMutationResult{}, apiOrderRestrictionRequiresDedicatedSanction()
 		}
 	}
 	now := s.now()
@@ -320,7 +459,157 @@ func (s *Service) createUserRestrictionInMemory(input CreateRestrictionInput) (G
 		UserVersion:            input.ExpectedUserVersion + 1,
 	}
 	s.restrictions[item.ID] = item
+	s.userVersions[input.UserID] = item.UserVersion
 	return GovernanceMutationResult{Restriction: &item}, nil
+}
+
+func (s *Service) apiOrderSanctionRecommendationInMemoryLocked(disputeCaseID string, now time.Time) (APIOrderSanctionRecommendation, *domain.AppError) {
+	var outcome *DisputeOutcome
+	var inactiveOutcome *DisputeOutcome
+	for _, item := range s.outcomes {
+		if item.DisputeCaseID != disputeCaseID {
+			continue
+		}
+		copy := item
+		if item.Status == OutcomeStatusActive {
+			outcome = &copy
+			break
+		}
+		inactiveOutcome = &copy
+	}
+	if outcome == nil {
+		if inactiveOutcome != nil {
+			return APIOrderSanctionRecommendation{
+				DisputeCaseID:      disputeCaseID,
+				DisputeVersion:     inactiveOutcome.DisputeVersion,
+				RemedyID:           inactiveOutcome.remedyID,
+				OutcomeID:          inactiveOutcome.ID,
+				SubjectUserID:      inactiveOutcome.SubjectUserID,
+				SubjectUserVersion: s.currentUserVersionLocked(inactiveOutcome.SubjectUserID),
+				ReasonCode:         "active_outcome_required",
+			}, nil
+		}
+		for _, fact := range s.apiOrderOverdueFacts {
+			if fact.disputeCaseID == disputeCaseID {
+				return APIOrderSanctionRecommendation{
+					DisputeCaseID: disputeCaseID,
+					RemedyID:      fact.remedyID,
+					ReasonCode:    "active_outcome_required",
+				}, nil
+			}
+		}
+		return APIOrderSanctionRecommendation{}, domain.NewError(http.StatusNotFound, domain.CodeObjectNotFound, "Dispute sanction unavailable", "纠纷尚无可用于处罚的责任结果。")
+	}
+	recommendation := APIOrderSanctionRecommendation{
+		DisputeCaseID:      disputeCaseID,
+		DisputeVersion:     outcome.DisputeVersion,
+		RemedyID:           outcome.remedyID,
+		OutcomeID:          outcome.ID,
+		SubjectUserID:      outcome.SubjectUserID,
+		SubjectUserVersion: s.currentUserVersionLocked(outcome.SubjectUserID),
+	}
+	switch {
+	case !outcome.apiOrderDispute:
+		recommendation.ReasonCode = "api_order_required"
+		return recommendation, nil
+	case !outcome.remedyOverdueFact || outcome.remedyID == "" || outcome.remedyOverdueAt == nil:
+		recommendation.ReasonCode = "overdue_remedy_required"
+		return recommendation, nil
+	case !faultResponsibility(outcome.Responsibility):
+		recommendation.ReasonCode = "responsible_outcome_required"
+		return recommendation, nil
+	case outcome.SubjectUserID != outcome.remedyResponsible || outcome.SubjectUserID != outcome.apiOrderSellerID:
+		recommendation.ReasonCode = "responsible_seller_required"
+		return recommendation, nil
+	}
+	windowStart := now.AddDate(0, 0, -APIOrderSanctionWindowDays)
+	for _, fact := range s.apiOrderOverdueFacts {
+		if fact.responsibleUserID == outcome.SubjectUserID && fact.responsibleUserID == fact.sellerUserID && !fact.overdueAt.Before(windowStart) {
+			recommendation.ConfirmedBreaches180Days++
+		}
+	}
+	recommendation.Eligible = true
+	recommendation.ReasonCode = "eligible"
+	recommendation.RecommendedDays = RecommendedAPIOrderSanctionDays(recommendation.ConfirmedBreaches180Days)
+	for _, restriction := range s.restrictions {
+		if restriction.SourceDisputeRemedyID == outcome.remedyID {
+			copy := restriction
+			recommendation.AlreadyApplied = true
+			recommendation.ExistingRestriction = &copy
+			break
+		}
+	}
+	return recommendation, nil
+}
+
+func (s *Service) applyAPIOrderSanctionInMemory(input ApplyAPIOrderSanctionInput) (GovernanceMutationResult, *domain.AppError) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	now := s.now()
+	recommendation, appErr := s.apiOrderSanctionRecommendationInMemoryLocked(input.DisputeCaseID, now)
+	if appErr != nil {
+		return GovernanceMutationResult{}, appErr
+	}
+	if recommendation.SubjectUserVersion != input.ExpectedUserVersion {
+		return GovernanceMutationResult{}, domain.NewError(http.StatusPreconditionFailed, domain.CodeVersionConflict, "Version conflict", "资源版本已变化，请刷新后重试。")
+	}
+	if !recommendation.Eligible {
+		return GovernanceMutationResult{}, sanctionUnavailable()
+	}
+	if recommendation.AlreadyApplied {
+		return GovernanceMutationResult{}, domain.NewError(http.StatusConflict, domain.CodeInvalidStateTransition, "Sanction already applied", "该逾期整改已经创建过处罚限制。")
+	}
+	endsAt := now.AddDate(0, 0, recommendation.RecommendedDays)
+	item := UserRestriction{
+		ID:                     uuid.NewString(),
+		UserID:                 recommendation.SubjectUserID,
+		RestrictionType:        RestrictionTypeAPIOrderRemedyOverdue,
+		RoleScope:              RoleSeller,
+		ActionCode:             ActionAPIServicePublish,
+		ReasonCode:             ReasonCodeAPIOrderRemedyOverdue,
+		PublicReason:           APIOrderSanctionPublicReason(recommendation.RecommendedDays),
+		InternalReason:         input.InternalReason,
+		StartsAt:               now,
+		EndsAt:                 &endsAt,
+		SourceDisputeOutcomeID: recommendation.OutcomeID,
+		SourceDisputeRemedyID:  recommendation.RemedyID,
+		CreatedByAdminID:       input.AdminUserID,
+		CreatedAt:              now,
+		UpdatedAt:              now,
+		Version:                1,
+		UserVersion:            recommendation.SubjectUserVersion + 1,
+	}
+	s.restrictions[item.ID] = item
+	s.userVersions[item.UserID] = item.UserVersion
+	return GovernanceMutationResult{Restriction: &item}, nil
+}
+
+func (s *Service) currentUserVersionLocked(userID string) int64 {
+	if version := s.userVersions[userID]; version > 0 {
+		return version
+	}
+	return 1
+}
+
+func RecommendedAPIOrderSanctionDays(confirmedBreaches180Days int) int {
+	if confirmedBreaches180Days <= 0 {
+		return 0
+	}
+	if confirmedBreaches180Days == 1 {
+		return 7
+	}
+	if confirmedBreaches180Days == 2 {
+		return 30
+	}
+	return 90
+}
+
+func APIOrderSanctionPublicReason(days int) string {
+	return fmt.Sprintf("因平台确认 API 订单纠纷逾期未履行，暂停 API 服务新接单、发布和恢复 %d 天；已成立订单仍可继续履约。", days)
+}
+
+func sanctionUnavailable() *domain.AppError {
+	return domain.NewError(http.StatusConflict, domain.CodeInvalidStateTransition, "Sanction unavailable", "当前纠纷不满足 API 卖家逾期处罚条件。")
 }
 
 func (s *Service) revokeUserRestrictionInMemory(input RevokeRestrictionInput) (GovernanceMutationResult, *domain.AppError) {
@@ -497,6 +786,10 @@ func faultResponsibility(value string) bool {
 
 func apiOrderRemedyOutcomeUnavailable() *domain.AppError {
 	return domain.NewError(http.StatusConflict, domain.CodeInvalidStateTransition, "Overdue remedy required", "API 订单责任裁定只能基于管理员已确认的逾期未履行事实。")
+}
+
+func apiOrderRestrictionRequiresDedicatedSanction() *domain.AppError {
+	return domain.NewError(http.StatusConflict, domain.CodeInvalidStateTransition, "Dedicated sanction required", "API 订单逾期限制必须通过纠纷处罚流程创建。")
 }
 
 func validateCreateRestrictionInput(input CreateRestrictionInput) *domain.AppError {

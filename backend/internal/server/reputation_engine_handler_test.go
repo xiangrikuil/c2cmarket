@@ -12,6 +12,7 @@ import (
 	"c2c-market/backend/internal/domain"
 	"c2c-market/backend/internal/module/auth"
 	app "c2c-market/backend/internal/module/core"
+	"c2c-market/backend/internal/module/idempotency"
 	"c2c-market/backend/internal/module/reputation"
 )
 
@@ -27,6 +28,8 @@ type reputationRouteService struct {
 	sourceReadType  string
 	sourceReadID    string
 	sourceUpdate    reputation.UpdateSourceAuthorVerificationInput
+	sanctionReadID  string
+	sanctionApply   reputation.ApplyAPIOrderSanctionInput
 }
 
 func (s *reputationRouteService) ReputationRules() reputation.RuleSet {
@@ -47,6 +50,82 @@ func (s *reputationRouteService) MyReputation(_ context.Context, user auth.User)
 	return []reputation.ReputationSnapshot{
 		testReputationSnapshot(user.ID, reputation.RoleBuyer, reputation.ScopeOverall),
 	}, nil
+}
+
+func (s *reputationRouteService) MyActiveReputationRestrictions(_ context.Context, user auth.User) ([]reputation.UserRestriction, *domain.AppError) {
+	now := time.Date(2026, 8, 9, 12, 0, 0, 0, time.UTC)
+	endsAt := now.Add(30 * 24 * time.Hour)
+	return []reputation.UserRestriction{{
+		ID:                     "77777777-7777-4777-8777-777777777777",
+		UserID:                 user.ID,
+		RestrictionType:        reputation.RestrictionTypeAPIOrderRemedyOverdue,
+		RoleScope:              reputation.RoleSeller,
+		ActionCode:             reputation.ActionAPIServicePublish,
+		ReasonCode:             reputation.ReasonCodeAPIOrderRemedyOverdue,
+		PublicReason:           "暂停新接单、发布和恢复；已成立订单仍可继续履约。",
+		InternalReason:         "不得出现在自助响应中的内部说明",
+		StartsAt:               now,
+		EndsAt:                 &endsAt,
+		SourceDisputeOutcomeID: "88888888-8888-4888-8888-888888888888",
+		SourceDisputeRemedyID:  "99999999-9999-4999-8999-999999999999",
+		CreatedByAdminID:       "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+		CreatedAt:              now,
+		UpdatedAt:              now,
+		Version:                1,
+	}}, nil
+}
+
+func (s *reputationRouteService) AdminAPIOrderSanctionRecommendation(_ context.Context, user auth.User, disputeCaseID string) (reputation.APIOrderSanctionRecommendation, *domain.AppError) {
+	if !user.IsAdmin {
+		return reputation.APIOrderSanctionRecommendation{}, domain.NewError(http.StatusForbidden, domain.CodePermissionDenied, "Permission denied", "需要管理员权限。")
+	}
+	s.sanctionReadID = disputeCaseID
+	return reputation.APIOrderSanctionRecommendation{
+		Eligible:                 true,
+		ReasonCode:               "eligible",
+		DisputeCaseID:            disputeCaseID,
+		RemedyID:                 "99999999-9999-4999-8999-999999999999",
+		OutcomeID:                "88888888-8888-4888-8888-888888888888",
+		SubjectUserID:            "77777777-7777-4777-8777-777777777777",
+		ConfirmedBreaches180Days: 2,
+		RecommendedDays:          30,
+		SubjectUserVersion:       4,
+	}, nil
+}
+
+func (s *reputationRouteService) AdminApplyAPIOrderSanctionWithIdempotency(
+	_ context.Context,
+	user auth.User,
+	_, _, _ string,
+	input reputation.ApplyAPIOrderSanctionInput,
+	buildCompletion reputation.GovernanceCompletionBuilder,
+) (idempotency.Completion, *domain.AppError) {
+	if !user.IsAdmin {
+		return idempotency.Completion{}, domain.NewError(http.StatusForbidden, domain.CodePermissionDenied, "Permission denied", "需要管理员权限。")
+	}
+	s.sanctionApply = input
+	now := time.Date(2026, 8, 9, 12, 0, 0, 0, time.UTC)
+	endsAt := now.Add(30 * 24 * time.Hour)
+	restriction := reputation.UserRestriction{
+		ID:                     "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+		UserID:                 "77777777-7777-4777-8777-777777777777",
+		RestrictionType:        reputation.RestrictionTypeAPIOrderRemedyOverdue,
+		RoleScope:              reputation.RoleSeller,
+		ActionCode:             reputation.ActionAPIServicePublish,
+		ReasonCode:             reputation.ReasonCodeAPIOrderRemedyOverdue,
+		PublicReason:           "暂停新接单、发布和恢复；已成立订单仍可继续履约。",
+		InternalReason:         input.InternalReason,
+		StartsAt:               now,
+		EndsAt:                 &endsAt,
+		SourceDisputeOutcomeID: "88888888-8888-4888-8888-888888888888",
+		SourceDisputeRemedyID:  "99999999-9999-4999-8999-999999999999",
+		CreatedByAdminID:       user.ID,
+		CreatedAt:              now,
+		UpdatedAt:              now,
+		Version:                1,
+		UserVersion:            input.ExpectedUserVersion + 1,
+	}
+	return buildCompletion(reputation.GovernanceMutationResult{Restriction: &restriction})
 }
 
 func (s *reputationRouteService) AdminUserReputation(_ context.Context, user auth.User, userID string, historyLimit int) (reputation.AdminReputationAudit, *domain.AppError) {
@@ -204,6 +283,88 @@ func TestMyReputationRequiresSession(t *testing.T) {
 	}
 	if service.myUserID != session.userID {
 		t.Fatalf("expected session user %q, got %q", session.userID, service.myUserID)
+	}
+	var body map[string]json.RawMessage
+	if err := json.NewDecoder(response.Body).Decode(&body); err != nil {
+		t.Fatalf("decode my reputation: %v", err)
+	}
+	var restrictions []map[string]json.RawMessage
+	if err := json.Unmarshal(body["activeRestrictions"], &restrictions); err != nil {
+		t.Fatalf("decode active restrictions: %v", err)
+	}
+	if len(restrictions) != 1 {
+		t.Fatalf("expected one active restriction, got %#v", restrictions)
+	}
+	for _, forbidden := range []string{"id", "userId", "internalReason", "sourceDisputeOutcomeId", "sourceDisputeRemedyId", "createdByAdminId", "version"} {
+		if _, exists := restrictions[0][forbidden]; exists {
+			t.Fatalf("public active restriction leaked %q: %#v", forbidden, restrictions[0])
+		}
+	}
+	for _, required := range []string{"restrictionType", "roleScope", "actionCode", "reasonCode", "publicReason", "startsAt", "endsAt"} {
+		if _, exists := restrictions[0][required]; !exists {
+			t.Fatalf("public active restriction missing %q: %#v", required, restrictions[0])
+		}
+	}
+}
+
+func TestAPIOrderSanctionRecommendationAndApplyRoutes(t *testing.T) {
+	t.Parallel()
+
+	service := &reputationRouteService{ApplicationService: app.NewService()}
+	server := NewServer(service)
+	nonAdmin := createSession(t, server, "sanction-member", false)
+	admin := createSession(t, server, "sanction-admin", true)
+	disputeID := "66666666-6666-4666-8666-666666666666"
+	recommendationPath := "/api/v1/admin/disputes/" + disputeID + "/sanction-recommendation"
+
+	forbidden := httptest.NewRequest(http.MethodGet, recommendationPath, nil)
+	addCookie(forbidden, nonAdmin.cookie)
+	forbiddenResponse := httptest.NewRecorder()
+	server.ServeHTTP(forbiddenResponse, forbidden)
+	if forbiddenResponse.Code != http.StatusForbidden {
+		t.Fatalf("expected non-admin recommendation rejection, got %d body %s", forbiddenResponse.Code, forbiddenResponse.Body.String())
+	}
+
+	read := httptest.NewRequest(http.MethodGet, recommendationPath, nil)
+	addCookie(read, admin.cookie)
+	readResponse := httptest.NewRecorder()
+	server.ServeHTTP(readResponse, read)
+	if readResponse.Code != http.StatusOK || readResponse.Header().Get("ETag") != `"4"` || service.sanctionReadID != disputeID {
+		t.Fatalf("unexpected recommendation response: status=%d etag=%q dispute=%q body=%s", readResponse.Code, readResponse.Header().Get("ETag"), service.sanctionReadID, readResponse.Body.String())
+	}
+	var recommendation apiOrderSanctionRecommendationResponse
+	if err := json.NewDecoder(readResponse.Body).Decode(&recommendation); err != nil {
+		t.Fatalf("decode recommendation: %v", err)
+	}
+	if !recommendation.Eligible || recommendation.ConfirmedBreaches180Days != 2 || recommendation.RecommendedDays != 30 || recommendation.SubjectUserVersion != 4 {
+		t.Fatalf("unexpected recommendation: %#v", recommendation)
+	}
+
+	applyPath := "/api/v1/admin/disputes/" + disputeID + "/sanction"
+	body := `{"internalReason":"管理员核对整改逾期事实后显式处罚。"}`
+	missingVersion := httptest.NewRequest(http.MethodPost, applyPath, strings.NewReader(body))
+	missingVersion.Header.Set("Content-Type", "application/json")
+	addAuth(missingVersion, admin, "sanction-missing-version")
+	missingVersionResponse := httptest.NewRecorder()
+	server.ServeHTTP(missingVersionResponse, missingVersion)
+	if missingVersionResponse.Code != http.StatusPreconditionRequired {
+		t.Fatalf("expected missing subject version rejection, got %d body %s", missingVersionResponse.Code, missingVersionResponse.Body.String())
+	}
+
+	apply := httptest.NewRequest(http.MethodPost, applyPath, strings.NewReader(body))
+	apply.Header.Set("Content-Type", "application/json")
+	apply.Header.Set("If-Match", `"4"`)
+	addAuth(apply, admin, "sanction-apply")
+	applyResponse := httptest.NewRecorder()
+	server.ServeHTTP(applyResponse, apply)
+	if applyResponse.Code != http.StatusCreated || applyResponse.Header().Get("ETag") != `"5"` {
+		t.Fatalf("unexpected apply response: status=%d etag=%q body=%s", applyResponse.Code, applyResponse.Header().Get("ETag"), applyResponse.Body.String())
+	}
+	if service.sanctionApply.DisputeCaseID != disputeID || service.sanctionApply.ExpectedUserVersion != 4 || service.sanctionApply.InternalReason != "管理员核对整改逾期事实后显式处罚。" {
+		t.Fatalf("unexpected sanction input: %#v", service.sanctionApply)
+	}
+	if !strings.Contains(applyResponse.Body.String(), `"sourceDisputeRemedyId":"99999999-9999-4999-8999-999999999999"`) {
+		t.Fatalf("admin restriction response missing remedy source: %s", applyResponse.Body.String())
 	}
 }
 

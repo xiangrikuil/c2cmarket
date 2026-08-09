@@ -292,6 +292,17 @@ export type MyReputationResponse = {
         ReputationSnapshot,
         ReputationSnapshot
     ];
+    activeRestrictions: Array<PublicActiveReputationRestriction>;
+};
+
+export type PublicActiveReputationRestriction = {
+    restrictionType: string;
+    roleScope: 'buyer' | 'seller' | 'all';
+    actionCode: 'carpool_publish' | 'carpool_apply' | 'carpool_accept' | 'api_service_publish' | 'api_order_create' | 'contact_view' | 'review_submit' | 'all';
+    reasonCode: string;
+    publicReason: string;
+    startsAt: string;
+    endsAt: string | null;
 };
 
 export type AdminReputationAudit = {
@@ -3480,6 +3491,7 @@ export type UserReputationRestriction = {
     startsAt: string;
     endsAt?: string | null;
     sourceDisputeOutcomeId?: string;
+    sourceDisputeRemedyId?: string;
     createdByAdminId: string;
     revokedAt?: string | null;
     revokedByAdminId?: string;
@@ -3493,6 +3505,23 @@ export type UserReputationRestriction = {
 export type ReputationGovernanceMutation = {
     outcome?: DisputeReputationOutcome;
     restriction?: UserReputationRestriction;
+};
+
+export type ApiOrderSanctionRecommendation = {
+    eligible: boolean;
+    reasonCode: string;
+    remedyId?: string;
+    outcomeId?: string;
+    subjectUserId?: string;
+    confirmedBreaches180Days: number;
+    recommendedDays: 0 | 7 | 30 | 90;
+    alreadyApplied: boolean;
+    existingRestriction?: UserReputationRestriction;
+    subjectUserVersion?: number;
+};
+
+export type ApplyApiOrderSanctionRequest = {
+    internalReason: string;
 };
 
 export type PublicDispute = {
@@ -12249,6 +12278,100 @@ export type CreateDisputeReputationOutcomeResponses = {
 };
 
 export type CreateDisputeReputationOutcomeResponse = CreateDisputeReputationOutcomeResponses[keyof CreateDisputeReputationOutcomeResponses];
+
+export type GetApiOrderSanctionRecommendationData = {
+    body?: never;
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/api/v1/admin/disputes/{id}/sanction-recommendation';
+};
+
+export type GetApiOrderSanctionRecommendationErrors = {
+    /**
+     * Problem Details error.
+     */
+    401: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    403: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    404: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    422: ProblemDetails;
+};
+
+export type GetApiOrderSanctionRecommendationError = GetApiOrderSanctionRecommendationErrors[keyof GetApiOrderSanctionRecommendationErrors];
+
+export type GetApiOrderSanctionRecommendationResponses = {
+    /**
+     * Current eligibility, tier, application state, and subject-user version.
+     */
+    200: ApiOrderSanctionRecommendation;
+};
+
+export type GetApiOrderSanctionRecommendationResponse = GetApiOrderSanctionRecommendationResponses[keyof GetApiOrderSanctionRecommendationResponses];
+
+export type ApplyApiOrderSanctionData = {
+    body: ApplyApiOrderSanctionRequest;
+    headers: {
+        'If-Match': string;
+        'Idempotency-Key': string;
+    };
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/api/v1/admin/disputes/{id}/sanction';
+};
+
+export type ApplyApiOrderSanctionErrors = {
+    /**
+     * Problem Details error.
+     */
+    401: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    403: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    404: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    409: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    412: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    422: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    428: ProblemDetails;
+};
+
+export type ApplyApiOrderSanctionError = ApplyApiOrderSanctionErrors[keyof ApplyApiOrderSanctionErrors];
+
+export type ApplyApiOrderSanctionResponses = {
+    /**
+     * The dedicated seller API-service restriction was created.
+     */
+    201: ReputationGovernanceMutation;
+};
+
+export type ApplyApiOrderSanctionResponse = ApplyApiOrderSanctionResponses[keyof ApplyApiOrderSanctionResponses];
 
 export type CreateUserReputationRestrictionData = {
     body: CreateUserReputationRestrictionRequest;

@@ -6005,6 +6005,79 @@ paths:
           $ref: "#/components/responses/Problem"
         "428":
           $ref: "#/components/responses/Problem"
+  /api/v1/admin/disputes/{id}/sanction-recommendation:
+    get:
+      operationId: getAPIOrderSanctionRecommendation
+      tags: [AdminReports]
+      security:
+        - sessionCookie: []
+      summary: Recompute the current API-order overdue-remedy sanction recommendation.
+      description: The recommendation is derived from current dispute, remedy, outcome, seller, and 180-day overdue facts. It does not create a restriction.
+      parameters:
+        - $ref: "#/components/parameters/ResourceId"
+      responses:
+        "200":
+          description: Current eligibility, tier, application state, and subject-user version.
+          headers:
+            ETag:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/APIOrderSanctionRecommendation"
+        "401":
+          $ref: "#/components/responses/Problem"
+        "403":
+          $ref: "#/components/responses/Problem"
+        "404":
+          $ref: "#/components/responses/Problem"
+        "422":
+          $ref: "#/components/responses/Problem"
+  /api/v1/admin/disputes/{id}/sanction:
+    post:
+      operationId: applyAPIOrderSanction
+      tags: [AdminReports]
+      security:
+        - sessionCookie: []
+          csrfToken: []
+      summary: Apply the current API-order overdue-remedy sanction after explicit administrator confirmation.
+      description: Recomputes and locks eligibility and tier, then atomically creates the seller API-service restriction, governance event, seller notification, and idempotency result. If-Match is the subject user's current version.
+      parameters:
+        - $ref: "#/components/parameters/ResourceId"
+        - $ref: "#/components/parameters/IfMatch"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ApplyAPIOrderSanctionRequest"
+      responses:
+        "201":
+          description: The dedicated seller API-service restriction was created.
+          headers:
+            ETag:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReputationGovernanceMutation"
+        "401":
+          $ref: "#/components/responses/Problem"
+        "403":
+          $ref: "#/components/responses/Problem"
+        "404":
+          $ref: "#/components/responses/Problem"
+        "409":
+          $ref: "#/components/responses/Problem"
+        "412":
+          $ref: "#/components/responses/Problem"
+        "422":
+          $ref: "#/components/responses/Problem"
+        "428":
+          $ref: "#/components/responses/Problem"
   /api/v1/admin/users/{id}/reputation-restrictions:
     post:
       operationId: createUserReputationRestriction
@@ -8732,7 +8805,8 @@ components:
             $ref: "#/components/schemas/ReputationSnapshot"
     MyReputationResponse:
       type: object
-      required: [ruleVersion, items]
+      additionalProperties: false
+      required: [ruleVersion, items, activeRestrictions]
       properties:
         ruleVersion:
           type: string
@@ -8742,6 +8816,34 @@ components:
           maxItems: 6
           items:
             $ref: "#/components/schemas/ReputationSnapshot"
+        activeRestrictions:
+          type: array
+          maxItems: 100
+          items:
+            $ref: "#/components/schemas/PublicActiveReputationRestriction"
+    PublicActiveReputationRestriction:
+      type: object
+      additionalProperties: false
+      required: [restrictionType, roleScope, actionCode, reasonCode, publicReason, startsAt, endsAt]
+      properties:
+        restrictionType:
+          type: string
+        roleScope:
+          type: string
+          enum: [buyer, seller, all]
+        actionCode:
+          type: string
+          enum: [carpool_publish, carpool_apply, carpool_accept, api_service_publish, api_order_create, contact_view, review_submit, all]
+        reasonCode:
+          type: string
+        publicReason:
+          type: string
+        startsAt:
+          type: string
+          format: date-time
+        endsAt:
+          type: [string, "null"]
+          format: date-time
     AdminReputationAudit:
       type: object
       additionalProperties: false
@@ -15248,6 +15350,9 @@ components:
         sourceDisputeOutcomeId:
           type: string
           format: uuid
+        sourceDisputeRemedyId:
+          type: string
+          format: uuid
         createdByAdminId:
           type: string
           format: uuid
@@ -15276,6 +15381,46 @@ components:
           $ref: "#/components/schemas/DisputeReputationOutcome"
         restriction:
           $ref: "#/components/schemas/UserReputationRestriction"
+    APIOrderSanctionRecommendation:
+      type: object
+      additionalProperties: false
+      required: [eligible, reasonCode, confirmedBreaches180Days, recommendedDays, alreadyApplied]
+      properties:
+        eligible:
+          type: boolean
+        reasonCode:
+          type: string
+        remedyId:
+          type: string
+          format: uuid
+        outcomeId:
+          type: string
+          format: uuid
+        subjectUserId:
+          type: string
+          format: uuid
+        confirmedBreaches180Days:
+          type: integer
+          minimum: 0
+        recommendedDays:
+          type: integer
+          enum: [0, 7, 30, 90]
+        alreadyApplied:
+          type: boolean
+        existingRestriction:
+          $ref: "#/components/schemas/UserReputationRestriction"
+        subjectUserVersion:
+          type: integer
+          minimum: 1
+    ApplyAPIOrderSanctionRequest:
+      type: object
+      additionalProperties: false
+      required: [internalReason]
+      properties:
+        internalReason:
+          type: string
+          minLength: 2
+          maxLength: 2000
     PublicDispute:
       type: object
       required: [id, username, type, result, handledAt, unresolved]

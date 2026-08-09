@@ -1117,6 +1117,9 @@ func (s *Store) CreateAPIQuotaOrderWithIdempotency(ctx context.Context, entry id
 	if orderContext.OwnerUserID == input.BuyerUserID {
 		return apiorder.Order{}, idempotency.Completion{}, invalidQuotaState("不能购买自己发布的额度包。")
 	}
+	if appErr := ensureAPIServicePublishAllowedInTx(ctx, tx, orderContext.OwnerUserID, now); appErr != nil {
+		return apiorder.Order{}, idempotency.Completion{}, appErr
+	}
 	buyerMethod, buyerVersion, appErr := lockContactVersionForOwner(ctx, tx, input.BuyerContactMethodID, input.BuyerUserID, "买家联系方式不可用或不属于当前用户。")
 	if appErr != nil {
 		return apiorder.Order{}, idempotency.Completion{}, appErr

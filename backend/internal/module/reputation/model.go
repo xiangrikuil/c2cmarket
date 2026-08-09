@@ -77,6 +77,10 @@ const (
 	SourceAggregatePartial       = "partial"
 	SourceAggregateVerified      = "verified"
 	SourceAggregateMismatch      = "mismatch"
+
+	RestrictionTypeAPIOrderRemedyOverdue = "api_order_remedy_overdue"
+	ReasonCodeAPIOrderRemedyOverdue      = "api_order_remedy_overdue"
+	APIOrderSanctionWindowDays           = 180
 )
 
 type ScopeFacts struct {
@@ -389,6 +393,10 @@ type DisputeOutcome struct {
 	DisputeVersion    int64
 	apiOrderDispute   bool
 	remedyOverdueFact bool
+	remedyID          string
+	remedyResponsible string
+	remedyOverdueAt   *time.Time
+	apiOrderSellerID  string
 }
 
 type UserRestriction struct {
@@ -403,6 +411,7 @@ type UserRestriction struct {
 	StartsAt               time.Time
 	EndsAt                 *time.Time
 	SourceDisputeOutcomeID string
+	SourceDisputeRemedyID  string
 	CreatedByAdminID       string
 	RevokedAt              *time.Time
 	RevokedByAdminID       string
@@ -427,6 +436,10 @@ type CreateOutcomeInput struct {
 	RequestID         string
 	APIOrderDispute   bool
 	RemedyOverdueFact bool
+	RemedyID          string
+	RemedyResponsible string
+	RemedyOverdueAt   *time.Time
+	APIOrderSellerID  string
 }
 
 type CreateRestrictionInput struct {
@@ -451,6 +464,29 @@ type RevokeRestrictionInput struct {
 	AdminUserID     string
 	ExpectedVersion int64
 	RequestID       string
+}
+
+type APIOrderSanctionRecommendation struct {
+	Eligible                 bool
+	ReasonCode               string
+	DisputeCaseID            string
+	DisputeVersion           int64
+	RemedyID                 string
+	OutcomeID                string
+	SubjectUserID            string
+	ConfirmedBreaches180Days int
+	RecommendedDays          int
+	AlreadyApplied           bool
+	ExistingRestriction      *UserRestriction
+	SubjectUserVersion       int64
+}
+
+type ApplyAPIOrderSanctionInput struct {
+	DisputeCaseID       string
+	InternalReason      string
+	AdminUserID         string
+	ExpectedUserVersion int64
+	RequestID           string
 }
 
 type GovernanceMutationResult struct {

@@ -149,7 +149,7 @@ function allSnapshots(userId: string) {
 }
 
 export async function mockMyReputation(): Promise<MyReputationResponse> {
-  return { ruleVersion: mockRuleVersion, items: allSnapshots('mock-current-user') }
+  return { ruleVersion: mockRuleVersion, items: allSnapshots('mock-current-user'), activeRestrictions: [] }
 }
 
 export async function mockPublicUserReputation(username: string, scope: ReputationScope): Promise<ReputationScopeResponse> {

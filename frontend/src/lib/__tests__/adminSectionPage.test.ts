@@ -57,7 +57,8 @@ describe('管理列表数据状态', () => {
     expect(disputeDialogSource).toContain("['VERSION_CONFLICT', 'INVALID_STATE_TRANSITION'].includes(error.code)")
     expect(disputeDialogSource).toContain('resolutionSubmitting')
     expect(disputeDialogSource).toContain('根据脱敏参与方快照派生；无法可靠判断时使用全部角色。')
-    expect(disputeDialogSource).toContain('账号限制仍在独立的用户信誉治理入口处理。')
+    expect(disputeDialogSource).toContain('保存后系统会根据当前逾期事实重新计算处罚建议，不会自动创建限制。')
+    expect(disputeDialogSource).toContain('useApplyAPIOrderSanctionMutation')
     expect(disputeDialogSource).not.toContain('createReputationRestriction')
   })
 

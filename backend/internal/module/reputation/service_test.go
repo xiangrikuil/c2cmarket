@@ -204,8 +204,105 @@ func TestAPIOrderFaultOutcomeAndSourceRestrictionRequireOverdueRemedy(t *testing
 		StartsAt:               now,
 		SourceDisputeOutcomeID: overdue.Outcome.ID,
 		AdminUserID:            "admin-1",
-	}); appErr != nil {
-		t.Fatalf("overdue API-order outcome should source a restriction: %+v", appErr)
+	}); appErr == nil || appErr.Code != domain.CodeInvalidStateTransition {
+		t.Fatalf("generic API-order restriction must use the dedicated sanction flow: %+v", appErr)
+	}
+}
+
+func TestAPIOrderSanctionInMemoryCountsRemedyFactsAtExactWindowBoundary(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 8, 9, 12, 0, 0, 0, time.UTC)
+	service := NewService(nil, func() time.Time { return now })
+	disputeID := "11111111-1111-4111-8111-111111111111"
+	currentRemedyID := "22222222-2222-4222-8222-222222222222"
+	sellerID := "33333333-3333-4333-8333-333333333333"
+
+	service.RecordAPIOrderRemedyOverdueFact(
+		"44444444-4444-4444-8444-444444444444",
+		"55555555-5555-4555-8555-555555555555",
+		sellerID,
+		sellerID,
+		now.AddDate(0, 0, -APIOrderSanctionWindowDays),
+	)
+	service.RecordAPIOrderRemedyOverdueFact(
+		"66666666-6666-4666-8666-666666666666",
+		"77777777-7777-4777-8777-777777777777",
+		sellerID,
+		sellerID,
+		now.AddDate(0, 0, -APIOrderSanctionWindowDays).Add(-time.Nanosecond),
+	)
+	service.RecordAPIOrderRemedyOverdueFact(
+		"88888888-8888-4888-8888-888888888888",
+		"99999999-9999-4999-8999-999999999999",
+		sellerID,
+		"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+		now.Add(-24*time.Hour),
+	)
+
+	currentOverdueAt := now.Add(-24 * time.Hour)
+	created, appErr := service.createDisputeOutcomeInMemory(CreateOutcomeInput{
+		DisputeCaseID:     disputeID,
+		SubjectUserID:     sellerID,
+		Responsibility:    ResponsibilityResponsible,
+		Severity:          SeverityMedium,
+		RoleScope:         RoleSeller,
+		ReasonCode:        "api_order_remedy_overdue",
+		PublicReason:      "整改逾期。",
+		InternalReason:    "管理员确认整改逾期。",
+		AdminUserID:       "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+		ExpectedVersion:   3,
+		APIOrderDispute:   true,
+		RemedyOverdueFact: true,
+		RemedyID:          currentRemedyID,
+		RemedyResponsible: sellerID,
+		RemedyOverdueAt:   &currentOverdueAt,
+		APIOrderSellerID:  sellerID,
+	})
+	if appErr != nil || created.Outcome == nil {
+		t.Fatalf("create current overdue outcome: result=%+v err=%+v", created, appErr)
+	}
+
+	recommendation, appErr := service.APIOrderSanctionRecommendation(context.Background(), AdminActor{UserID: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", IsAdmin: true}, disputeID)
+	if appErr != nil {
+		t.Fatalf("recommend sanction: %v", appErr)
+	}
+	if !recommendation.Eligible || recommendation.ConfirmedBreaches180Days != 2 || recommendation.RecommendedDays != 30 {
+		t.Fatalf("unexpected exact-boundary recommendation: %+v", recommendation)
+	}
+
+	result, appErr := service.applyAPIOrderSanctionInMemory(ApplyAPIOrderSanctionInput{
+		DisputeCaseID:       disputeID,
+		InternalReason:      "管理员显式确认处罚。",
+		AdminUserID:         "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+		ExpectedUserVersion: recommendation.SubjectUserVersion,
+	})
+	if appErr != nil || result.Restriction == nil {
+		t.Fatalf("apply sanction: result=%+v err=%+v", result, appErr)
+	}
+	if result.Restriction.SourceDisputeRemedyID != currentRemedyID || result.Restriction.EndsAt == nil || !result.Restriction.EndsAt.Equal(now.AddDate(0, 0, 30)) {
+		t.Fatalf("unexpected applied restriction: %+v", result.Restriction)
+	}
+	if _, appErr := service.applyAPIOrderSanctionInMemory(ApplyAPIOrderSanctionInput{
+		DisputeCaseID:       disputeID,
+		InternalReason:      "不得重复处罚同一整改。",
+		AdminUserID:         "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+		ExpectedUserVersion: result.Restriction.UserVersion,
+	}); appErr == nil || appErr.Code != domain.CodeInvalidStateTransition {
+		t.Fatalf("same remedy must not create a second restriction: %+v", appErr)
+	}
+	if len(service.restrictions) != 1 {
+		t.Fatalf("same remedy created duplicate restrictions: %+v", service.restrictions)
+	}
+}
+
+func TestRecommendedAPIOrderSanctionDaysUsesFixedTiers(t *testing.T) {
+	t.Parallel()
+
+	for breaches, want := range map[int]int{0: 0, 1: 7, 2: 30, 3: 90, 8: 90} {
+		if got := RecommendedAPIOrderSanctionDays(breaches); got != want {
+			t.Fatalf("breaches=%d got %d days, want %d", breaches, got, want)
+		}
 	}
 }
 

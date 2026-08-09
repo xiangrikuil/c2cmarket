@@ -12,6 +12,7 @@ import (
 	"c2c-market/backend/internal/module/apiorder"
 	"c2c-market/backend/internal/module/auth"
 	"c2c-market/backend/internal/module/idempotency"
+	"c2c-market/backend/internal/module/reputation"
 
 	"github.com/google/uuid"
 )
@@ -19,9 +20,18 @@ import (
 const performanceDisclaimer = "商户自报，平台未测速"
 
 type Manager struct {
-	repo        Repository
-	idempotency *idempotency.Service
-	now         func() time.Time
+	repo          Repository
+	idempotency   *idempotency.Service
+	now           func() time.Time
+	actionChecker interface {
+		CheckActionAllowed(context.Context, string, string, string) *domain.AppError
+	}
+}
+
+func (m *Manager) SetActionChecker(checker interface {
+	CheckActionAllowed(context.Context, string, string, string) *domain.AppError
+}) {
+	m.actionChecker = checker
 }
 
 func NewManager(repo Repository, now func() time.Time) *Manager {
@@ -56,6 +66,17 @@ func (m *Manager) CreateOrderWithIdempotency(ctx context.Context, userID, routeK
 			return buildCompletion(order)
 		}
 		return idempotency.CompletionFromEntry(entry), nil
+	}
+	if m.actionChecker != nil {
+		offer, appErr := m.repo.GetPublicAPIQuotaOffer(ctx, input.OfferID, m.now().UTC())
+		if appErr != nil {
+			m.idempotency.Cancel(ctx, entry)
+			return idempotency.Completion{}, appErr
+		}
+		if appErr := m.actionChecker.CheckActionAllowed(ctx, offer.OwnerUserID, reputation.RoleSeller, reputation.ActionAPIServicePublish); appErr != nil {
+			m.idempotency.Cancel(ctx, entry)
+			return idempotency.Completion{}, appErr
+		}
 	}
 	_, completion, appErr := m.repo.CreateAPIQuotaOrderWithIdempotency(ctx, *entry, input, m.now().UTC(), buildCompletion)
 	if appErr != nil {

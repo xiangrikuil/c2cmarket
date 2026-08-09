@@ -198,3 +198,96 @@ api_service_publish copy -> "limits new orders, publishing, and restoring; exist
 ### Tests Required
 
 - Cover exact due/confirmation boundaries, active-remedy close rejection, contest reopening both projections, neutral timeout wording, and overdue-only outcome, restriction, and aggregate reputation evidence.
+
+## Scenario: Confirmed Overdue Remedies Produce Explicit Tiered Seller Sanctions
+
+### 1. Scope / Trigger
+
+- Trigger: changing API-order remedy sanctions, restriction evidence, seller API-order creation, administrator sanction UI, seller restriction visibility, or the rolling breach window.
+- The system recommends a sanction from durable facts. Only an administrator mutation creates the restriction; remedy expiry or outcome creation must never apply it automatically.
+
+### 2. Signatures
+
+```text
+GET  /api/v1/admin/disputes/{id}/sanction-recommendation
+POST /api/v1/admin/disputes/{id}/sanction
+  If-Match: "<subject-user-version>"
+  Idempotency-Key: <opaque key>
+  { "internalReason": "2..2000 characters" }
+
+GET /api/v1/me/reputation
+  -> { ruleVersion, items, activeRestrictions[] }
+
+user_restrictions.source_dispute_remedy_id uuid
+  REFERENCES api_order_dispute_remedies(id) ON DELETE RESTRICT
+  UNIQUE WHERE source_dispute_remedy_id IS NOT NULL
+
+reputation.RecommendedAPIOrderSanctionDays(count int) int
+  0 -> 0, 1 -> 7, 2 -> 30, 3+ -> 90
+```
+
+### 3. Contracts
+
+- Eligibility requires an API-order dispute, its latest remedy in administrator-confirmed `overdue`, an active `responsible|shared` outcome, and the same user as outcome subject, remedy responsible party, and order seller.
+- The 180-day count uses `overdue_at >= now - 180 days`, includes the current qualifying fact, and counts only overdue remedies whose responsible user is the linked API-order seller. Historical facts remain counted even if a later appeal reverses their outcome; the durable overdue fact is not rewritten.
+- Recommendation reads use one read-only repeatable-read PostgreSQL snapshot. Apply locks and revalidates the dispute, latest remedy, active outcome, API order, subject user version, and existing remedy-linked restriction before calculating the current tier.
+- Apply always creates `role_scope=seller`, `action_code=api_service_publish`, a fixed-expiry restriction, both outcome/remedy evidence links, one governance event, one public seller notification to `/my/reputation`, and one completed idempotency result in the same transaction.
+- A remedy evidence link is immutable audit ownership. Upstream deletion is restricted, and the partial unique index prevents a second sanction even after expiry or revocation.
+- Generic administrator restriction creation must reject API-order outcome sources. It must not accept or write `sourceDisputeRemedyId`; the dedicated sanction endpoint owns this evidence.
+- Active `api_service_publish|all` restrictions for seller/all roles block new normal API orders and limited-quota API orders inside their PostgreSQL transactions before contact locking, inventory reservation, intent advancement, or order insertion.
+- The same restriction continues to block API-service submission, publication, restoration, public visibility, and promotion. Existing orders do not consult this gate and continue payment, delivery, completion, after-sales, and dispute actions.
+- `/me/reputation.activeRestrictions` is a public-safe projection: restriction type, role, action, reason code, public reason, start, and optional end only. It must not expose IDs, internal reasons, administrator IDs, source evidence IDs, versions, or governance records.
+- Product copy must name all three limited abilities: new orders, publishing, and restoring. It must also state that existing orders continue; copy that says the restriction only stops new orders is false.
+- After `412 VERSION_CONFLICT` or a state conflict, the administrator UI refetches the recommendation and clears explicit confirmation before another apply attempt.
+
+### 4. Validation & Error Matrix
+
+| Condition | Required result |
+| --- | --- |
+| Non-API dispute or no latest overdue remedy | Recommendation is ineligible with a granular reason code; apply returns `409 INVALID_STATE_TRANSITION` |
+| Missing/inactive/non-fault outcome | Recommendation is ineligible; no restriction, event, notification, or completed idempotency result |
+| Subject, remedy responsible party, and order seller differ | Recommendation is ineligible with `responsible_seller_required` |
+| Missing or stale subject-user `If-Match` | `428 PRECONDITION_REQUIRED` or `412 VERSION_CONFLICT` |
+| Internal reason is outside 2..2000 characters | `422 VALIDATION_FAILED` on `internalReason` |
+| Same remedy is submitted again | Exact completed replay returns the original response; any second sanction attempt creates no new restriction |
+| Seller has an active matching restriction during new order creation | `403 REPUTATION_ACTION_RESTRICTED`; inventory, intent, contact, and order state remain unchanged |
+| Restriction is expired or revoked | New order, submission, publication, and restoration gates allow the action again |
+
+### 5. Good / Base / Bad Cases
+
+- Good: a seller's second administrator-confirmed overdue remedy inside 180 days recommends 30 days; an administrator confirms once, and the restriction, user version, event, notification, and idempotency completion commit atomically.
+- Good: the seller is restricted after an order already exists. New normal and quota orders fail, while the existing buyer can still pay and the seller can still deliver and handle the dispute.
+- Base: an administrator rules the buyer request invalid or the responsible party fulfills on time. No overdue fact exists, so no sanction recommendation is eligible.
+- Bad: count an unresolved complaint, a due timestamp alone, or a beneficiary confirmation timeout as a seller breach.
+- Bad: create the restriction automatically when `mark_overdue` runs, accept a remedy ID through the generic restriction form, or show internal governance fields on the seller reputation page.
+
+### 6. Tests Required
+
+- Migration tests: expected version 88, `ON DELETE RESTRICT`, remedy-source partial uniqueness, overdue lookup index, and executable down migration.
+- Service tests: every ineligible reason, exact 180-day boundary, outside-window exclusion, `0/1/2/3+` tier mapping, historical-fact counting, subject/seller parity, duplicate remedy application, and in-memory/PostgreSQL parity.
+- Store tests: repeatable-read recommendation snapshot, apply lock/revalidation order, unique conflict, and atomic restriction/event/notification/idempotency writes.
+- Order tests: both normal and limited-quota restriction gates precede contact, inventory, intent, and order side effects; existing-order mutations have no added gate.
+- Route/OpenAPI tests: administrator authority, CSRF, idempotency, subject-user `If-Match`, fresh `ETag`, dedicated route parity, generic request exclusion, and generated types.
+- Frontend tests: recommendation/refetch flow, explicit confirmation, conflict reset, accurate three-ability copy, public active-restriction projection, and no internal-field leakage.
+- Gates: full Go test/vet, full Vitest, Nuxt typecheck and real-mode production build, migration/OpenAPI/generated-type checks, and `git diff --check`.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```text
+mark remedy overdue -> automatically create a 30-day restriction
+generic restriction request -> accepts sourceDisputeRemedyId
+restriction copy -> "only stops new orders"
+new quota order -> claim inventory -> check seller restriction
+```
+
+#### Correct
+
+```text
+mark remedy overdue -> durable sanction evidence only
+GET recommendation -> one repeatable-read snapshot
+administrator POST -> revalidate -> explicit fixed-tier restriction
+restriction copy -> "limits new orders, publishing, and restoring; existing orders continue"
+new quota order -> check seller restriction -> claim inventory -> create order
+```

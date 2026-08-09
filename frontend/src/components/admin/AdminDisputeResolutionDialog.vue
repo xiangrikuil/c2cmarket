@@ -2,7 +2,7 @@
 import { computed, reactive, ref, watch } from 'vue'
 import { useQuery, useQueryClient } from '@tanstack/vue-query'
 import { useNow } from '@vueuse/core'
-import { CheckCircle2, Clock3, FileText, Gavel, MessageSquareText, RefreshCw, Scale, TriangleAlert, Users } from 'lucide-vue-next'
+import { CheckCircle2, Clock3, FileText, Gavel, MessageSquareText, RefreshCw, Scale, ShieldAlert, TriangleAlert, Users } from 'lucide-vue-next'
 import { toast } from 'vue-sonner'
 import LocalTime from '@/components/market/LocalTime.vue'
 import SkeletonBlock from '@/components/market/SkeletonBlock.vue'
@@ -49,6 +49,8 @@ import {
 } from '@/lib/reportBackend'
 import {
   useAdminUserReputationQuery,
+  useAPIOrderSanctionRecommendationQuery,
+  useApplyAPIOrderSanctionMutation,
   useCreateDisputeReputationOutcomeMutation,
 } from '@/queries/useReputationQueries'
 import type { AdminRow } from '@/lib/api'
@@ -73,6 +75,7 @@ const emit = defineEmits<{
 
 const queryClient = useQueryClient()
 const createOutcomeMutation = useCreateDisputeReputationOutcomeMutation()
+const applySanctionMutation = useApplyAPIOrderSanctionMutation()
 
 function negotiationParticipantLabel(userId: string) {
   if (!dispute.value) return userId
@@ -89,6 +92,9 @@ const overdueSubmitting = ref(false)
 const remedyErrors = ref<Record<string, string>>({})
 const overdueReason = ref('')
 const overdueConfirmed = ref(false)
+const sanctionInternalReason = ref('')
+const sanctionConfirmed = ref(false)
+const sanctionSubmitError = ref('')
 
 const dialogOpen = computed({
   get: () => props.open,
@@ -178,6 +184,23 @@ const hasActiveRemedy = computed(() => currentRemedy.value?.status === 'pending'
 const now = useNow({ interval: 1000 })
 const remedyDeadlineReached = computed(() => Boolean(currentRemedy.value?.dueAt) && now.value.getTime() >= new Date(currentRemedy.value!.dueAt).getTime())
 const hasOverdueAPIOrderRemedy = computed(() => dispute.value?.targetType === 'api_order' && currentRemedy.value?.status === 'overdue')
+const sanctionRecommendationEnabled = computed(() => Boolean(
+  props.open
+  && hasOverdueAPIOrderRemedy.value
+  && existingOutcome.value?.status === 'active'
+  && ['responsible', 'shared'].includes(existingOutcome.value.responsibility),
+))
+const sanctionDisputeID = computed(() => props.disputeId)
+const sanctionQuery = useAPIOrderSanctionRecommendationQuery(sanctionDisputeID, sanctionRecommendationEnabled)
+const sanctionRecommendation = computed(() => sanctionQuery.data.value ?? null)
+const canApplySanction = computed(() => Boolean(
+  sanctionRecommendation.value?.eligible
+  && !sanctionRecommendation.value.alreadyApplied
+  && sanctionRecommendation.value.subjectUserVersion
+  && sanctionInternalReason.value.trim().length >= 2
+  && sanctionInternalReason.value.trim().length <= 2000
+  && sanctionConfirmed.value,
+))
 const currentStep = computed(() => {
   if (existingOutcome.value) return 'complete'
   if (dispute.value?.status === 'open' || dispute.value?.status === 'waiting_info') return 'resolution'
@@ -202,6 +225,9 @@ watch(
     remedyErrors.value = {}
     overdueReason.value = ''
     overdueConfirmed.value = false
+    sanctionInternalReason.value = ''
+    sanctionConfirmed.value = false
+    sanctionSubmitError.value = ''
     initializedCaseVersion.value = ''
   },
 )
@@ -442,6 +468,44 @@ async function submitOutcome() {
     if (!await recoverSubmissionConflict(error)) {
       submitError.value = errorMessage(error, '责任认定提交失败，基础裁决已保留。')
     }
+  }
+}
+
+function sanctionReasonLabel(reasonCode: string) {
+  const labels: Record<string, string> = {
+    api_order_required: '该纠纷不是 API 订单纠纷。',
+    overdue_remedy_required: '最新整改尚未形成管理员确认的逾期事实。',
+    active_outcome_required: '当前没有有效的责任认定。',
+    responsible_outcome_required: '责任认定不是责任方或共同责任。',
+    responsible_seller_required: '整改责任方、责任主体与订单卖家不一致。',
+  }
+  return labels[reasonCode] ?? '当前事实不满足处罚条件。'
+}
+
+async function applySanction() {
+  const recommendation = sanctionRecommendation.value
+  if (!dispute.value || !recommendation?.subjectUserVersion || !canApplySanction.value) return
+  sanctionSubmitError.value = ''
+  try {
+    await applySanctionMutation.mutateAsync({
+      disputeCaseId: dispute.value.id,
+      subjectUserId: recommendation.subjectUserId,
+      internalReason: sanctionInternalReason.value.trim(),
+      expectedUserVersion: recommendation.subjectUserVersion,
+    })
+    sanctionConfirmed.value = false
+    await sanctionQuery.refetch()
+    toast.success('API 服务限制已生效。')
+  } catch (error) {
+    if (error instanceof BackendProblemError && ['VERSION_CONFLICT', 'INVALID_STATE_TRANSITION'].includes(error.code)) {
+      sanctionConfirmed.value = false
+      await sanctionQuery.refetch()
+      sanctionSubmitError.value = error.code === 'VERSION_CONFLICT'
+        ? '卖家账号版本已变化，已重新计算处罚建议，请核对后重试。'
+        : '处罚依据已变化，已重新读取当前建议。'
+      return
+    }
+    sanctionSubmitError.value = errorMessage(error, 'API 服务限制创建失败。')
   }
 }
 </script>
@@ -792,7 +856,7 @@ async function submitOutcome() {
           <section v-else-if="currentStep === 'outcome'" class="space-y-4 pt-5">
             <div>
               <h2 class="text-sm font-semibold">责任与信誉结果</h2>
-              <p class="mt-1 text-sm text-muted-foreground">该结果记录责任事实；账号限制仍在独立的用户信誉治理入口处理。</p>
+              <p class="mt-1 text-sm text-muted-foreground">该结果只记录责任事实；保存后系统会根据当前逾期事实重新计算处罚建议，不会自动创建限制。</p>
             </div>
             <Alert v-if="auditError" variant="destructive">
               <TriangleAlert class="h-4 w-4" />
@@ -889,6 +953,62 @@ async function submitOutcome() {
               <div><div class="text-xs text-muted-foreground">公开说明</div><div class="mt-1 whitespace-pre-wrap text-sm">{{ existingOutcome.publicReason }}</div></div>
               <div><div class="text-xs text-muted-foreground">内部说明</div><div class="mt-1 whitespace-pre-wrap text-sm">{{ existingOutcome.internalReason }}</div></div>
             </div>
+            <div v-if="sanctionRecommendationEnabled" class="space-y-4 border-t border-border pt-5">
+              <div class="flex items-center gap-2">
+                <ShieldAlert class="h-5 w-5 text-destructive" />
+                <h3 class="text-sm font-semibold">API 订单逾期处罚</h3>
+              </div>
+              <SkeletonBlock v-if="sanctionQuery.isPending.value" :lines="3" />
+              <Alert v-else-if="sanctionQuery.error.value" variant="destructive">
+                <TriangleAlert class="h-4 w-4" />
+                <AlertTitle>处罚建议读取失败</AlertTitle>
+                <AlertDescription class="flex flex-wrap items-center justify-between gap-3">
+                  <span>{{ errorMessage(sanctionQuery.error.value, '无法读取当前处罚建议。') }}</span>
+                  <Button size="sm" variant="outline" @click="sanctionQuery.refetch()"><RefreshCw class="h-4 w-4" />重试</Button>
+                </AlertDescription>
+              </Alert>
+              <template v-else-if="sanctionRecommendation?.alreadyApplied">
+                <Alert>
+                  <CheckCircle2 class="h-4 w-4" />
+                  <AlertTitle>处罚已应用</AlertTitle>
+                  <AlertDescription>
+                    当前处罚限制已创建<template v-if="sanctionRecommendation.existingRestriction?.endsAt">，截止 <LocalTime :value="sanctionRecommendation.existingRestriction.endsAt" /></template>。
+                  </AlertDescription>
+                </Alert>
+                <p class="text-sm font-medium">暂停 API 服务新接单、发布和恢复；已成立订单继续付款、交付、完成、售后和纠纷处理。</p>
+              </template>
+              <template v-else-if="sanctionRecommendation?.eligible">
+                <dl class="grid gap-4 sm:grid-cols-3">
+                  <div><dt class="text-xs text-muted-foreground">近 180 天确认逾期</dt><dd class="mt-1 text-lg font-semibold">{{ sanctionRecommendation.confirmedBreaches180Days }} 次</dd></div>
+                  <div><dt class="text-xs text-muted-foreground">本次限制期限</dt><dd class="mt-1 text-lg font-semibold">{{ sanctionRecommendation.recommendedDays }} 天</dd></div>
+                  <div><dt class="text-xs text-muted-foreground">固定范围</dt><dd class="mt-1 text-sm font-semibold">卖家 · API 服务</dd></div>
+                </dl>
+                <Alert>
+                  <ShieldAlert class="h-4 w-4" />
+                  <AlertTitle>限制影响</AlertTitle>
+                  <AlertDescription>暂停新接单、发布和恢复。已成立订单仍可继续付款、交付、完成、售后和纠纷处理。</AlertDescription>
+                </Alert>
+                <label class="space-y-1.5 text-sm">
+                  <span class="font-medium">内部处罚说明</span>
+                  <Textarea v-model="sanctionInternalReason" rows="3" maxlength="2000" placeholder="记录本次处罚判断，不会展示给卖家。" />
+                  <span v-if="sanctionInternalReason.trim().length > 0 && sanctionInternalReason.trim().length < 2" class="text-xs text-destructive">内部说明至少 2 个字符。</span>
+                </label>
+                <label class="flex items-start gap-3 border border-border bg-muted/30 p-3 text-sm">
+                  <Checkbox v-model="sanctionConfirmed" class="mt-0.5" />
+                  <span>我已核对逾期整改、责任主体和订单卖家一致，并确认按当前 {{ sanctionRecommendation.recommendedDays }} 天档位创建限制。</span>
+                </label>
+                <Alert v-if="sanctionSubmitError" variant="destructive">
+                  <TriangleAlert class="h-4 w-4" />
+                  <AlertTitle>处罚未应用</AlertTitle>
+                  <AlertDescription>{{ sanctionSubmitError }}</AlertDescription>
+                </Alert>
+              </template>
+              <Alert v-else-if="sanctionRecommendation">
+                <TriangleAlert class="h-4 w-4" />
+                <AlertTitle>当前不满足处罚条件</AlertTitle>
+                <AlertDescription>{{ sanctionReasonLabel(sanctionRecommendation.reasonCode) }}</AlertDescription>
+              </Alert>
+            </div>
           </section>
 
           <Alert v-else class="mt-5">
@@ -922,6 +1042,14 @@ async function submitOutcome() {
           @click="submitOutcome"
         >
           <Scale class="h-4 w-4" />保存责任认定
+        </Button>
+        <Button
+          v-else-if="currentStep === 'complete' && sanctionRecommendation?.eligible && !sanctionRecommendation.alreadyApplied"
+          variant="destructive"
+          :disabled="!canApplySanction || applySanctionMutation.isPending.value"
+          @click="applySanction"
+        >
+          <ShieldAlert class="h-4 w-4" />应用 API 服务限制
         </Button>
       </DialogFooter>
     </DialogContent>

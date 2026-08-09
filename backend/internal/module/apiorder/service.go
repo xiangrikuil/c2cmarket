@@ -18,6 +18,7 @@ import (
 	"c2c-market/backend/internal/module/apimarket"
 	"c2c-market/backend/internal/module/auth"
 	"c2c-market/backend/internal/module/idempotency"
+	"c2c-market/backend/internal/module/reputation"
 
 	"github.com/google/uuid"
 )
@@ -57,6 +58,15 @@ type Service struct {
 	availablePackageStock map[string]int
 	events                []Event
 	accessLogs            []PaymentInstructionAccessLog
+	actionChecker         interface {
+		CheckActionAllowed(context.Context, string, string, string) *domain.AppError
+	}
+}
+
+func (s *Service) SetActionChecker(checker interface {
+	CheckActionAllowed(context.Context, string, string, string) *domain.AppError
+}) {
+	s.actionChecker = checker
 }
 
 func NewService(repo Repository, intentResolver BuyerIntentResolver, serviceResolver PublicServiceResolver, disputeCreator DisputeCaseCreator, idempotencyService *idempotency.Service, now func() time.Time) *Service {
@@ -491,6 +501,11 @@ func (s *Service) createInMemory(ctx context.Context, input CreateInput) (Order,
 	service, appErr := s.services.PublicService(ctx, intent.APIServiceID)
 	if appErr != nil {
 		return Order{}, appErr
+	}
+	if s.actionChecker != nil {
+		if appErr := s.actionChecker.CheckActionAllowed(ctx, intent.OwnerUserID, reputation.RoleSeller, reputation.ActionAPIServicePublish); appErr != nil {
+			return Order{}, appErr
+		}
 	}
 
 	s.mu.Lock()

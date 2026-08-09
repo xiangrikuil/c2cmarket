@@ -187,9 +187,11 @@ func newServiceWithOptions(now func() time.Time, repositories Repositories, emai
 	s.apiIntent = apiintent.NewManager(repositories.APIPurchaseIntent, s.apiMarket, s.contactService, s.idempotencyService, now)
 	s.reportService = report.NewServiceWithNotifications(repositories.Report, s.idempotencyService, s.notification, now)
 	s.apiOrder = apiorder.NewService(repositories.APIOrder, s.apiIntent, s.apiMarket, s.reportService, s.idempotencyService, now)
+	s.apiOrder.SetActionChecker(s.reputationService)
 	s.reportService.SetDisputeProjectionCloser(s.apiOrder)
 	s.apiPromotion = apipromotion.NewService(repositories.APIPromotion, s.idempotencyService, now)
 	s.apiQuota = apiquota.NewManager(repositories.APIQuota, now)
+	s.apiQuota.SetActionChecker(s.reputationService)
 	s.apiIntent.SetOrderExistenceChecker(s.apiOrder)
 	s.feedbackService = feedback.NewService(repositories.Feedback, s.notification, s.idempotencyService, now)
 	s.favoriteService = favorite.NewService(repositories.Favorite, s.idempotencyService, s, now)
@@ -1813,7 +1815,43 @@ func (s *Service) AdminDispute(ctx context.Context, user User, id string) (repor
 }
 
 func (s *Service) AdminDisputeActionWithIdempotency(ctx context.Context, user User, routeKey, key, requestHash string, input report.AdminActionInput, buildCompletion report.AdminCompletionBuilder) (IdempotencyCompletion, *domain.AppError) {
-	return s.reportService.AdminDisputeActionWithIdempotency(ctx, user, routeKey, key, requestHash, input, buildCompletion)
+	var overdueRemedy *report.DisputeRemedy
+	var overdueSellerUserID string
+	if input.Action == "mark_overdue" && s.reputationService.TracksAPIOrderRemedyFactsInMemory() {
+		dispute, appErr := s.reportService.AdminDispute(ctx, user, input.ID)
+		if appErr != nil {
+			return IdempotencyCompletion{}, appErr
+		}
+		if dispute.TargetType == report.TargetAPIOrder && len(dispute.Remedies) > 0 {
+			remedy := dispute.Remedies[0]
+			overdueRemedy = &remedy
+			order, orderErr := s.apiOrder.AdminOrder(ctx, user, dispute.TargetID)
+			if orderErr != nil {
+				return IdempotencyCompletion{}, orderErr
+			}
+			overdueSellerUserID = order.SellerUserID
+		}
+	}
+	completion, appErr := s.reportService.AdminDisputeActionWithIdempotency(ctx, user, routeKey, key, requestHash, input, buildCompletion)
+	if appErr == nil && overdueRemedy != nil {
+		overdueAt := s.now()
+		if updated, readErr := s.reportService.AdminDispute(ctx, user, input.ID); readErr == nil {
+			for _, remedy := range updated.Remedies {
+				if remedy.ID == overdueRemedy.ID && remedy.OverdueAt != nil {
+					overdueAt = *remedy.OverdueAt
+					break
+				}
+			}
+		}
+		s.reputationService.RecordAPIOrderRemedyOverdueFact(
+			overdueRemedy.DisputeCaseID,
+			overdueRemedy.ID,
+			overdueRemedy.ResponsibleUserID,
+			overdueSellerUserID,
+			overdueAt,
+		)
+	}
+	return completion, appErr
 }
 
 func (s *Service) CreateAppealWithIdempotency(ctx context.Context, user User, routeKey, key, requestHash string, input report.CreateAppealInput, buildCompletion report.AppealCompletionBuilder) (IdempotencyCompletion, *domain.AppError) {
@@ -1948,7 +1986,33 @@ func (s *Service) AdminCreateDisputeOutcomeWithIdempotency(ctx context.Context, 
 	}
 	input.APIOrderDispute = dispute.TargetType == report.TargetAPIOrder
 	input.RemedyOverdueFact = input.APIOrderDispute && len(dispute.Remedies) > 0 && dispute.Remedies[0].Status == report.RemedyStatusOverdue
+	if input.RemedyOverdueFact {
+		remedy := dispute.Remedies[0]
+		order, orderErr := s.apiOrder.AdminOrder(ctx, user, dispute.TargetID)
+		if orderErr != nil {
+			return IdempotencyCompletion{}, orderErr
+		}
+		input.RemedyID = remedy.ID
+		input.RemedyResponsible = remedy.ResponsibleUserID
+		input.RemedyOverdueAt = remedy.OverdueAt
+		input.APIOrderSellerID = order.SellerUserID
+	}
 	return s.reputationService.CreateDisputeOutcomeWithIdempotency(ctx, reputation.AdminActor{UserID: user.ID, IsAdmin: user.IsAdmin}, routeKey, key, requestHash, input, buildCompletion)
+}
+
+func (s *Service) AdminAPIOrderSanctionRecommendation(ctx context.Context, user User, disputeCaseID string) (reputation.APIOrderSanctionRecommendation, *domain.AppError) {
+	return s.reputationService.APIOrderSanctionRecommendation(ctx, reputation.AdminActor{UserID: user.ID, IsAdmin: user.IsAdmin}, disputeCaseID)
+}
+
+func (s *Service) AdminApplyAPIOrderSanctionWithIdempotency(ctx context.Context, user User, routeKey, key, requestHash string, input reputation.ApplyAPIOrderSanctionInput, buildCompletion reputation.GovernanceCompletionBuilder) (IdempotencyCompletion, *domain.AppError) {
+	return s.reputationService.ApplyAPIOrderSanctionWithIdempotency(ctx, reputation.AdminActor{UserID: user.ID, IsAdmin: user.IsAdmin}, routeKey, key, requestHash, input, buildCompletion)
+}
+
+func (s *Service) MyActiveReputationRestrictions(ctx context.Context, user User) ([]reputation.UserRestriction, *domain.AppError) {
+	if _, appErr := s.profileService.MyProfile(ctx, user); appErr != nil {
+		return nil, appErr
+	}
+	return s.reputationService.ActiveRestrictions(ctx, user.ID)
 }
 
 func (s *Service) AdminCreateUserRestrictionWithIdempotency(ctx context.Context, user User, routeKey, key, requestHash string, input reputation.CreateRestrictionInput, buildCompletion reputation.GovernanceCompletionBuilder) (IdempotencyCompletion, *domain.AppError) {

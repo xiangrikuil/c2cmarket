@@ -316,6 +316,8 @@ func (s *Server) routes() {
 		r.Post("/admin/disputes/{id}/close", s.handleCloseDispute)
 		r.Post("/admin/disputes/{id}/remedy/mark-overdue", s.handleMarkDisputeRemedyOverdue)
 		r.Post("/admin/disputes/{id}/reputation-outcome", s.handleCreateDisputeReputationOutcome)
+		r.Get("/admin/disputes/{id}/sanction-recommendation", s.handleAPIOrderSanctionRecommendation)
+		r.Post("/admin/disputes/{id}/sanction", s.handleApplyAPIOrderSanction)
 		r.Post("/admin/users/{id}/reputation-restrictions", s.handleCreateUserReputationRestriction)
 		r.Get("/admin/users/{id}/reputation", s.handleAdminUserReputation)
 		r.Post("/admin/users/{id}/reputation/recalculate", s.handleAdminRecalculateUserReputation)

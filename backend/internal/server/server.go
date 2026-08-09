@@ -406,6 +406,9 @@ type ReputationGovernanceService interface {
 	AdminSourceAuthorVerification(ctx context.Context, user auth.User, resourceType, resourceID string) (reputation.SourceAuthorVerificationAudit, *domain.AppError)
 	AdminUpdateSourceAuthorVerification(ctx context.Context, user auth.User, input reputation.UpdateSourceAuthorVerificationInput) (reputation.SourceAuthorVerificationAudit, *domain.AppError)
 	AdminCreateDisputeOutcomeWithIdempotency(ctx context.Context, user auth.User, routeKey, key, requestHash string, input reputation.CreateOutcomeInput, buildCompletion reputation.GovernanceCompletionBuilder) (idempotency.Completion, *domain.AppError)
+	AdminAPIOrderSanctionRecommendation(ctx context.Context, user auth.User, disputeCaseID string) (reputation.APIOrderSanctionRecommendation, *domain.AppError)
+	AdminApplyAPIOrderSanctionWithIdempotency(ctx context.Context, user auth.User, routeKey, key, requestHash string, input reputation.ApplyAPIOrderSanctionInput, buildCompletion reputation.GovernanceCompletionBuilder) (idempotency.Completion, *domain.AppError)
+	MyActiveReputationRestrictions(ctx context.Context, user auth.User) ([]reputation.UserRestriction, *domain.AppError)
 	AdminCreateUserRestrictionWithIdempotency(ctx context.Context, user auth.User, routeKey, key, requestHash string, input reputation.CreateRestrictionInput, buildCompletion reputation.GovernanceCompletionBuilder) (idempotency.Completion, *domain.AppError)
 	AdminRevokeUserRestrictionWithIdempotency(ctx context.Context, user auth.User, routeKey, key, requestHash string, input reputation.RevokeRestrictionInput, buildCompletion reputation.GovernanceCompletionBuilder) (idempotency.Completion, *domain.AppError)
 	CheckReputationActionAllowed(ctx context.Context, userID, role, action string) *domain.AppError
