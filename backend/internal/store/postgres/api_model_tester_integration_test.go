@@ -121,6 +121,7 @@ func TestPostgresAPIServiceProbeConnectionBindingEnforcesOwnerAndReadiness(t *te
 	connectionIDs := []string{}
 	t.Cleanup(func() {
 		_, _ = store.pool.Exec(context.Background(), `UPDATE api_services SET probe_connection_id = NULL WHERE owner_user_id = $1`, sellerID)
+		_, _ = store.pool.Exec(context.Background(), `DELETE FROM api_probe_connection_model_changes WHERE changed_by_user_id IN ($1, $2)`, sellerID, buyerID)
 		for _, connectionID := range connectionIDs {
 			_, _ = store.pool.Exec(context.Background(), `DELETE FROM api_probe_connections WHERE id = $1`, connectionID)
 		}
@@ -138,7 +139,10 @@ func TestPostgresAPIServiceProbeConnectionBindingEnforcesOwnerAndReadiness(t *te
 			OwnerUserID: ownerID, Name: name,
 			BaseURL: "https://api.example.com/v1", NormalizedBaseURL: "https://api.example.com/v1",
 			CredentialConfigured: true, Enabled: enabled, VerificationStatus: verificationStatus,
-			VerifiedAt: verifiedAt, MeasurementVersion: 1, Version: 1, CreatedAt: now, UpdatedAt: now,
+			VerifiedAt: verifiedAt, ProbeModel: apihealth.DefaultGPTProbeModel,
+			ProbeProtocol: apihealth.ProtocolResponsesV1, AvailableModels: []string{apihealth.DefaultGPTProbeModel},
+			ProbeEnvironment:   apihealth.ProbeEnvironmentUSWestV1,
+			MeasurementVersion: 1, Version: 1, CreatedAt: now, UpdatedAt: now,
 		}, "probe-secret")
 		if appErr != nil {
 			t.Fatalf("create %s connection: %v", name, appErr)

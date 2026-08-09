@@ -364,11 +364,13 @@ func seedPromotionRewardService(t *testing.T, store *Store, ownerUserID, service
 			id, owner_user_id, name, base_url, normalized_base_url,
 			credential_ciphertext, credential_nonce, credential_key_version,
 			credential_cipher_format, credential_fingerprint,
+			probe_model, probe_protocol,
 			enabled, verification_status, verified_at,
 			created_at, updated_at
 		) VALUES (
 			$1, $2, '推广权益测试探针', 'https://api.example.com/v1', 'https://api.example.com/v1',
 			$3, $4, 'test-key', 'test-format', $5,
+			'gpt-5-mini', 'openai_responses_v1',
 			true, 'verified', $6, $6, $6
 		)
 	`, connectionID, ownerUserID, []byte("test-ciphertext"), []byte("test-nonce"), []byte("test-fingerprint"), now); err != nil {

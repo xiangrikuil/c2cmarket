@@ -1137,12 +1137,14 @@ func seedOrderableQuotaServiceForTest(t *testing.T, ctx context.Context, pool *p
 			id, owner_user_id, name, base_url, normalized_base_url,
 			credential_ciphertext, credential_nonce, credential_key_version,
 			credential_cipher_format, credential_fingerprint,
+			probe_model, probe_protocol,
 			enabled, verification_status, verified_at,
 			measurement_version, version, created_at, updated_at
 		) VALUES (
 			$1, $2, '额度集成测试探针', 'https://quota.example.com/v1', 'https://quota.example.com/v1',
 			decode('0102', 'hex'), decode('000000000000000000000000', 'hex'), 'test-v1',
 			'test-v1', decode('0304', 'hex'),
+			'gpt-5-mini', 'openai_responses_v1',
 			true, 'verified', $3, 1, 1, $3, $3
 		)
 	`, connectionID, sellerID, now); err != nil {

@@ -7,7 +7,10 @@ GO_BIN="${GO_BIN:-go}"
 
 POSTGRES_IMAGE="${POSTGRES_IMAGE:-postgres:18-alpine@sha256:96d56f7f57c6aacd1fcb908bc83b345ec5f83231ee486dd66a1baadce274db88}"
 MIGRATE_IMAGE="${MIGRATE_IMAGE:-migrate/migrate:v4.18.3@sha256:39b59b389634e43bb3f2d4e94bc1edef0775ec2a9a3540ce6a2cf330e5daae55}"
-EXPECTED_MIGRATION_VERSION="${EXPECTED_MIGRATION_VERSION:-82}"
+EXPECTED_MIGRATION_VERSION="${EXPECTED_MIGRATION_VERSION:-$(
+  sed -nE 's/^const ExpectedMigrationVersion int64 = ([0-9]+)$/\1/p' \
+    "${ROOT_DIR}/backend/internal/database/postgres.go"
+)}"
 
 POSTGRES_USER="c2c_prelaunch"
 POSTGRES_PASSWORD="c2c_prelaunch_test_password"
@@ -25,6 +28,14 @@ fail() {
   echo "PostgreSQL integration gate failed: $*" >&2
   exit 1
 }
+
+[[ "${EXPECTED_MIGRATION_VERSION}" =~ ^[0-9]+$ ]] ||
+  fail "could not resolve ExpectedMigrationVersion from backend/internal/database/postgres.go"
+
+CURRENT_MIGRATION_ROLLBACK_BASE_VERSION=76
+CURRENT_MIGRATION_ROLLBACK_STEPS=$((EXPECTED_MIGRATION_VERSION - CURRENT_MIGRATION_ROLLBACK_BASE_VERSION))
+((CURRENT_MIGRATION_ROLLBACK_STEPS > 0)) ||
+  fail "ExpectedMigrationVersion must be greater than rollback baseline ${CURRENT_MIGRATION_ROLLBACK_BASE_VERSION}"
 
 cleanup() {
   if [[ "${postgres_container}" == c2c-prelaunch-*-postgres ]]; then
@@ -97,7 +108,7 @@ done
   "${MIGRATE_IMAGE}" \
   -path=/migrations \
   -database="postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@${postgres_container}:5432/${GENERAL_DATABASE}?sslmode=disable" \
-  down 6
+  down "${CURRENT_MIGRATION_ROLLBACK_STEPS}"
 
 current_migration_rollback_state="$(
   "${DOCKER_BIN}" exec "${postgres_container}" \
@@ -106,8 +117,9 @@ current_migration_rollback_state="$(
     --dbname "${GENERAL_DATABASE}" \
     --command "SELECT version::text || ':' || dirty::text || ':' || (to_regclass('public.api_service_probe_configs') IS NULL)::text || ':' || (to_regclass('public.account_appeal_sessions') IS NULL)::text || ':' || (to_regclass('public.moderation_info_requests') IS NULL)::text || ':' || (EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'public' AND table_name IN ('api_order_delivery_credentials', 'api_quota_credentials') AND column_name = 'destroyed_at'))::text FROM schema_migrations"
 )"
-[[ "${current_migration_rollback_state}" == "76:false:true:true:true:true" ]] ||
-  fail "current migration rollback state is ${current_migration_rollback_state}, expected 76:false:true:true:true:true"
+expected_migration_rollback_state="${CURRENT_MIGRATION_ROLLBACK_BASE_VERSION}:false:true:true:true:true"
+[[ "${current_migration_rollback_state}" == "${expected_migration_rollback_state}" ]] ||
+  fail "current migration rollback state is ${current_migration_rollback_state}, expected ${expected_migration_rollback_state}"
 
 "${DOCKER_BIN}" run --rm \
   --network "${network_name}" \
@@ -115,7 +127,7 @@ current_migration_rollback_state="$(
   "${MIGRATE_IMAGE}" \
   -path=/migrations \
   -database="postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@${postgres_container}:5432/${GENERAL_DATABASE}?sslmode=disable" \
-  up 6
+  up "${CURRENT_MIGRATION_ROLLBACK_STEPS}"
 
 "${DOCKER_BIN}" exec "${postgres_container}" \
   createdb --username "${POSTGRES_USER}" "${MULTIPLIER_UPGRADE_DATABASE}"
