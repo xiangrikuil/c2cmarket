@@ -1368,7 +1368,7 @@ func TestCarpoolCreateReviewApplyAndAcceptFlow(t *testing.T) {
 	if listing.Status != app.CarpoolListingStatusDraft || listing.Version != 1 {
 		t.Fatalf("unexpected created listing: %+v", listing)
 	}
-	if listing.ServiceMultiplier != "1.0000" || listing.WeeklyQuotaAmount == nil || *listing.WeeklyQuotaAmount != "50.00" || listing.MonthlyQuotaAmount != "200.00" || listing.QuotaLabel != "额度" || listing.QuotaUnit != "USD" || listing.QuotaPeriod != "monthly" {
+	if listing.ServiceMultiplier != "1.0000" || listing.DailyQuotaAmount == nil || *listing.DailyQuotaAmount != "50.00" || listing.WeeklyQuotaAmount != "200.00" || listing.QuotaLabel != "额度" || listing.QuotaUnit != "USD" || listing.QuotaPeriod != "monthly" {
 		t.Fatalf("expected structured multiplier and quota fields, got %+v", listing)
 	}
 	if listing.RegionCode != "other" || listing.RegionName != "印度区" {
@@ -3263,8 +3263,8 @@ type createdCarpool struct {
 	RegionCode                            string                    `json:"regionCode"`
 	RegionName                            string                    `json:"regionName"`
 	ServiceMultiplier                     string                    `json:"serviceMultiplier"`
-	WeeklyQuotaAmount                     *string                   `json:"weeklyQuotaAmount"`
-	MonthlyQuotaAmount                    string                    `json:"monthlyQuotaAmount"`
+	DailyQuotaAmount                      *string                   `json:"dailyQuotaAmount"`
+	WeeklyQuotaAmount                     string                    `json:"weeklyQuotaAmount"`
 	FollowsOfficialQuotaReset             *bool                     `json:"followsOfficialQuotaReset"`
 	VPSRegion                             *string                   `json:"vpsRegion"`
 	SupportsMainlandChinaDirectConnection *bool                     `json:"supportsMainlandChinaDirectConnection"`
@@ -4470,8 +4470,8 @@ func carpoolPayload(ownerContactID string) string {
 		"regionName":"印度区",
 		"priceMonthlyCny":"68.00",
 		"serviceMultiplier":"1.0000",
-		"weeklyQuotaAmount":"50.00",
-		"monthlyQuotaAmount":"200.00",
+		"dailyQuotaAmount":"50.00",
+		"weeklyQuotaAmount":"200.00",
 		"followsOfficialQuotaReset":true,
 		"vpsRegion":"香港",
 		"supportsMainlandChinaDirectConnection":true,

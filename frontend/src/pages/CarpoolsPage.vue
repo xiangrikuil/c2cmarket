@@ -16,7 +16,7 @@ import { useCarpools, useMyProfileQuery } from '@/queries/useMarketQueries'
 import { useProductCategories } from '@/queries/useProductCatalogQueries'
 import { prefetchQueriesOnServer } from '@/queries/prefetchQueriesOnServer'
 import { compareByTradablePrice, getPricingDisplay } from '@/lib/pricing'
-import { formatWeeklyMonthlyQuota } from '@/lib/quota'
+import { formatDailyWeeklyQuota } from '@/lib/quota'
 import {
   allProductPlanValue,
   getProductCategory,
@@ -361,7 +361,7 @@ function openCarpool(event: MouseEvent | KeyboardEvent, id: string) {
           </div>
         </td>
         <td>
-          <div class="whitespace-nowrap text-sm font-semibold text-slate-900">{{ formatWeeklyMonthlyQuota(row) }}</div>
+          <div class="whitespace-nowrap text-sm font-semibold text-slate-900">{{ formatDailyWeeklyQuota(row) }}</div>
           <div class="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
             <span>{{ quotaResetLabel(row.followsOfficialQuotaReset) }}</span>
             <span aria-hidden="true">·</span>

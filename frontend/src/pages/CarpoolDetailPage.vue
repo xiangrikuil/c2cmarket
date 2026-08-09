@@ -25,7 +25,7 @@ import { createCarpoolApplication, getCarpoolAccessArrangementLabel, isHighRiskS
 import { createCarpoolModerationRow } from '@/lib/carpoolModeration'
 import { trackAnalytics } from '@/lib/analytics'
 import { fullCapacityTooltip, getPricingDisplay, getRemainingSeats } from '@/lib/pricing'
-import { formatWeeklyMonthlyQuota } from '@/lib/quota'
+import { formatDailyWeeklyQuota } from '@/lib/quota'
 import { adminAccountLabel, distributionMethodLabel, openingChannelLabels, paymentMethodLabels } from '@/components/carpool-publish/utils'
 import { useDetailVisibleAnalytics } from '@/composables/useDetailVisibleAnalytics'
 import { useCarpool, useCarpoolApplicationEligibility, useFavoriteStatus, useMyProfileQuery, useToggleFavoriteMutation } from '@/queries/useMarketQueries'
@@ -56,7 +56,7 @@ const adminReason = ref('')
 const adminConfirmStep = ref<'reason' | 'confirm'>('reason')
 const adminActionBusy = ref(false)
 const pricing = computed(() => carpool.value ? getPricingDisplay(carpool.value) : null)
-const quotaText = computed(() => carpool.value ? formatWeeklyMonthlyQuota(carpool.value) : '未声明')
+const quotaText = computed(() => carpool.value ? formatDailyWeeklyQuota(carpool.value) : '未声明')
 const openingChannelText = computed(() => {
   const value = carpool.value
   if (!value?.openingChannelCode) return '未声明'
@@ -292,7 +292,7 @@ async function shareCarpool() {
                 <span class="font-medium">{{ pricing?.note }}</span>
               </div>
               <div class="flex justify-between gap-4 rounded-md bg-muted/40 px-3 py-2">
-                <span class="text-muted-foreground">每周 / 每月额度</span>
+                <span class="text-muted-foreground">每天 / 每周额度</span>
                 <span class="font-medium">{{ quotaText }}</span>
               </div>
             </div>
@@ -391,7 +391,7 @@ async function shareCarpool() {
             <span>¥{{ pricing.nextTierPrice }}/月</span>
           </div>
           <div class="grid gap-1 border-b border-border pb-3 sm:flex sm:justify-between"><span class="text-muted-foreground">价格说明</span><span>{{ pricing?.note }}</span></div>
-          <div class="grid gap-1 border-b border-border pb-3 sm:flex sm:justify-between"><span class="text-muted-foreground">每周 / 每月额度</span><span>{{ quotaText }}</span></div>
+          <div class="grid gap-1 border-b border-border pb-3 sm:flex sm:justify-between"><span class="text-muted-foreground">每天 / 每周额度</span><span>{{ quotaText }}</span></div>
           <div class="grid gap-1 border-b border-border pb-3 sm:flex sm:justify-between"><span class="text-muted-foreground">额度重置</span><span>{{ quotaResetText }}</span></div>
           <div class="grid gap-1 border-b border-border pb-3 sm:flex sm:justify-between"><span class="text-muted-foreground">VPS 区域</span><span>{{ carpool.vpsRegion?.trim() || '未声明' }}</span></div>
           <div class="grid gap-1 border-b border-border pb-3 sm:flex sm:justify-between"><span class="text-muted-foreground">国内直连</span><span>{{ mainlandDirectText }}</span></div>

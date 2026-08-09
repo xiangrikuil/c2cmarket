@@ -100,8 +100,8 @@ export type CarpoolPublishForm = {
   customRegionName: string | null
   monthlyPriceCny: number | null
   serviceMultiplier: number | null
+  dailyQuotaAmount: number | null
   weeklyQuotaAmount: number | null
-  monthlyQuotaAmount: number | null
   followsOfficialQuotaReset: boolean | null
   vpsRegion: string
   supportsMainlandChinaDirectConnection: boolean | null
@@ -140,8 +140,8 @@ export type PublishTaskKey =
   | 'product'
   | 'region'
   | 'monthlyPrice'
+  | 'dailyQuota'
   | 'weeklyQuota'
-  | 'monthlyQuota'
   | 'quotaReset'
   | 'connection'
   | 'openingChannel'

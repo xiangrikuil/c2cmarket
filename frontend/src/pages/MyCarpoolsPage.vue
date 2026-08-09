@@ -13,7 +13,7 @@ import SkeletonTable from '@/components/market/SkeletonTable.vue'
 import { usePagination } from '@/composables/usePagination'
 import { useMerchantCarpoolApplications, useMyCarpools } from '@/queries/useMarketQueries'
 import { getPricingDisplay, getRemainingSeats } from '@/lib/pricing'
-import { formatWeeklyMonthlyQuota } from '@/lib/quota'
+import { formatDailyWeeklyQuota } from '@/lib/quota'
 import { toast } from 'vue-sonner'
 
 const { data: carpools, isLoading } = useMyCarpools()
@@ -50,7 +50,7 @@ function applicationCounts(carpoolId: string) {
         <td>
           <div class="font-semibold">{{ getPricingDisplay(item).primaryLabel }} ¥{{ getPricingDisplay(item).primaryPrice }}</div>
           <div class="mt-1 text-xs text-muted-foreground">
-            {{ formatWeeklyMonthlyQuota(item) }}
+            {{ formatDailyWeeklyQuota(item) }}
           </div>
         </td>
         <td>已上车 {{ item.seatSummary?.activeMemberCount ?? item.currentConfirmedMembers }}/{{ item.maxMembers }} · 预留 {{ item.seatSummary?.reservedSeatCount ?? 0 }} · 可申请 {{ item.seatSummary?.availableSeats ?? getRemainingSeats(item) }}</td>

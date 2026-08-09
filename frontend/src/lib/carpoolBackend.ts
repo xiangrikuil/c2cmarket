@@ -70,8 +70,8 @@ type BackendCarpoolListing = {
   sellerReputation?: ReputationSummary | null
   priceMonthlyCny: string
   serviceMultiplier: string
-  weeklyQuotaAmount: string | null
-  monthlyQuotaAmount: string
+  dailyQuotaAmount: string | null
+  weeklyQuotaAmount: string
   followsOfficialQuotaReset: boolean | null
   vpsRegion: string | null
   supportsMainlandChinaDirectConnection: boolean | null
@@ -327,8 +327,8 @@ export async function mapBackendCarpoolListing(listing: BackendCarpoolListing): 
   const plan = await productPlan(listing.productPlanId)
   const monthly = numberFromDecimal(listing.priceMonthlyCny)
   const serviceMultiplier = numberFromDecimal(listing.serviceMultiplier)
-  const weeklyQuotaAmount = listing.weeklyQuotaAmount ? numberFromDecimal(listing.weeklyQuotaAmount) : undefined
-  const monthlyQuotaAmount = numberFromDecimal(listing.monthlyQuotaAmount)
+  const dailyQuotaAmount = listing.dailyQuotaAmount ? numberFromDecimal(listing.dailyQuotaAmount) : undefined
+  const weeklyQuotaAmount = numberFromDecimal(listing.weeklyQuotaAmount)
   const activeSeats = Math.max(0, listing.activeBuyerMembers)
   const totalSeats = Math.max(1, listing.buyerSeatCapacity)
   const availableSeats = Math.max(0, listing.availableSeats)
@@ -338,8 +338,8 @@ export async function mapBackendCarpoolListing(listing: BackendCarpoolListing): 
     region: listing.regionName,
     monthly,
     serviceMultiplier,
+    dailyQuotaAmount,
     weeklyQuotaAmount,
-    monthlyQuotaAmount,
     followsOfficialQuotaReset: listing.followsOfficialQuotaReset,
     vpsRegion: listing.vpsRegion,
     supportsMainlandChinaDirectConnection: listing.supportsMainlandChinaDirectConnection,
@@ -475,7 +475,7 @@ async function mapApplication(application: BackendCarpoolApplication, perspectiv
       regionName: listing?.regionName || '其他',
       monthlyPriceCny: monthly,
       serviceMultiplier: listing ? numberFromDecimal(listing.serviceMultiplier) : undefined,
-      monthlyQuotaAmount: listing ? numberFromDecimal(listing.monthlyQuotaAmount) : undefined,
+      weeklyQuotaAmount: listing ? numberFromDecimal(listing.weeklyQuotaAmount) : undefined,
       quotaLabel: listing?.quotaLabel || plan.quotaLabel || defaultQuotaLabel,
       quotaUnit: listing?.quotaUnit || plan.quotaUnit || defaultQuotaUnit,
       quotaPeriod: listing?.quotaPeriod || plan.quotaPeriod || defaultQuotaPeriod,
@@ -673,8 +673,8 @@ function toListingRequest(payload: SaveCarpoolDraftPayload, ownerContactMethodId
     regionName,
     priceMonthlyCny: String(monthly),
     serviceMultiplier: '1',
+    dailyQuotaAmount: String(payload.dailyQuotaAmount ?? 0),
     weeklyQuotaAmount: String(payload.weeklyQuotaAmount ?? 0),
-    monthlyQuotaAmount: String(payload.monthlyQuotaAmount ?? 0),
     followsOfficialQuotaReset: payload.followsOfficialQuotaReset,
     vpsRegion: payload.vpsRegion.trim(),
     supportsMainlandChinaDirectConnection: payload.supportsMainlandChinaDirectConnection,

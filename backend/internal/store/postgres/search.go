@@ -100,7 +100,8 @@ SELECT
 	l.title AS title,
 	'¥' || l.price_monthly_cny::text || '/月 · 可用席位 ' ||
 	GREATEST(l.buyer_seat_capacity - l.active_buyer_members - COALESCE(reserved.reserved_seats, 0), 0)::text ||
-	' · 每月' || l.quota_label || ' ' || l.monthly_quota_amount::text || ' ' || l.quota_unit AS subtitle,
+	' · 每天' || l.quota_label || ' ' || COALESCE(l.daily_quota_amount::text, '未声明') || ' ' || l.quota_unit ||
+	' · 每周' || l.quota_label || ' ' || l.weekly_quota_amount::text || ' ' || l.quota_unit AS subtitle,
 	l.status AS badge,
 	'/carpools/' || l.id::text AS to,
 	l.updated_at AS rank_time
@@ -118,7 +119,8 @@ WHERE ` + publicCarpoolListingPredicate("l") + `
 	OR LOWER(
 		COALESCE(l.source_url, '') || ' ' ||
 		l.price_monthly_cny::text || ' ' ||
-		l.monthly_quota_amount::text || ' ' ||
+		COALESCE(l.daily_quota_amount::text, '') || ' ' ||
+		l.weekly_quota_amount::text || ' ' ||
 		l.quota_label || ' ' ||
 		l.quota_unit
 	) ILIKE $1 ESCAPE '\'

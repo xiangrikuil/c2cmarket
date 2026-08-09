@@ -11,7 +11,7 @@ import type {
   PaymentMethodOption,
   RegionOption,
 } from './types'
-import { formatMonthlyQuota, quotaFieldLabel } from '@/lib/quota'
+import { formatQuotaAmount } from '@/lib/quota'
 
 export const providerLabels: Record<CatalogProviderCode, string> = {
   openai: 'OpenAI',
@@ -182,8 +182,8 @@ export function canBuildCarpoolShareText(
     && form.occupiedSeats <= form.totalSeats
     && openingChannelDisplayName(form.openingChannelCode, channelsByCode, form.customOpeningChannel)
     && paymentMethodDisplayName(form.paymentMethodCode, methodsByCode, form.customPaymentMethod)
+    && form.dailyQuotaAmount
     && form.weeklyQuotaAmount
-    && form.monthlyQuotaAmount
     && form.followsOfficialQuotaReset !== null
     && form.vpsRegion.trim()
     && form.supportsMainlandChinaDirectConnection !== null
@@ -212,13 +212,9 @@ export function buildCarpoolShareText(
     ? `${distributionMethodLabel(form.distributionMethod)}：${form.distributionMethodNote.trim() || '待确认'}`
     : distributionMethodLabel(form.distributionMethod)
   const product = selectedProduct(form, catalogById)
-  const quotaText = formatMonthlyQuota({
-    amount: form.monthlyQuotaAmount,
-    label: product?.quotaLabel,
-    unit: product?.quotaUnit,
-    period: product?.quotaPeriod,
-  }, '待确认')
-  const quotaLabel = quotaFieldLabel(product)
+  const unit = product?.quotaUnit || 'USD'
+  const dailyQuota = form.dailyQuotaAmount ? `${formatQuotaAmount(form.dailyQuotaAmount)} ${unit}` : '待确认'
+  const weeklyQuota = form.weeklyQuotaAmount ? `${formatQuotaAmount(form.weeklyQuotaAmount)} ${unit}` : '待确认'
   const priceText = form.monthlyPriceCny ? `¥${form.monthlyPriceCny}/月` : '价格待确认'
 
   return [
@@ -228,8 +224,8 @@ export function buildCarpoolShareText(
     `开通区：${regionName}`,
     `席位：总 ${form.totalSeats} 人，已上车 ${form.occupiedSeats} 人，剩余 ${remaining} 席`,
     `价格：${priceText}`,
-    `每周${product?.quotaLabel || '额度'}：${form.weeklyQuotaAmount ?? '待确认'} ${product?.quotaUnit || 'USD'}`,
-    `${quotaLabel}：${quotaText}`,
+    `每天${product?.quotaLabel || '额度'}：${dailyQuota}`,
+    `每周${product?.quotaLabel || '额度'}：${weeklyQuota}`,
     `额度重置：${form.followsOfficialQuotaReset === null ? '待确认' : form.followsOfficialQuotaReset ? '跟随官方重置' : '不跟随官方重置'}`,
     `VPS 区域：${form.vpsRegion.trim() || '待确认'}`,
     `国内直连：${form.supportsMainlandChinaDirectConnection === null ? '待确认' : form.supportsMainlandChinaDirectConnection ? '支持' : '不支持'}`,

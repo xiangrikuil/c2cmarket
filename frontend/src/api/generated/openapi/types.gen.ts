@@ -2891,13 +2891,13 @@ export type CreateCarpoolListingRequest = {
      */
     serviceMultiplier: DecimalString;
     /**
-     * Owner-declared per-seat weekly quota amount. It uses the selected product plan quota label and unit.
+     * Owner-declared per-seat daily quota amount. It uses the selected product plan quota label and unit.
+     */
+    dailyQuotaAmount: DecimalString;
+    /**
+     * Owner-declared per-seat weekly quota amount. Label and unit come from the selected product plan and are not accepted from the client.
      */
     weeklyQuotaAmount: DecimalString;
-    /**
-     * Owner-declared per-seat monthly quota amount. Label, unit, and period come from the selected product plan and are not accepted from the client.
-     */
-    monthlyQuotaAmount: DecimalString;
     /**
      * Whether the declared quota follows the official provider reset schedule.
      */
@@ -2976,8 +2976,8 @@ export type CarpoolListing = {
     sourceUrl?: string;
     priceMonthlyCny: DecimalString;
     serviceMultiplier: DecimalString;
-    weeklyQuotaAmount: string | null;
-    monthlyQuotaAmount: DecimalString;
+    dailyQuotaAmount: string | null;
+    weeklyQuotaAmount: DecimalString;
     followsOfficialQuotaReset: boolean | null;
     vpsRegion: string | null;
     supportsMainlandChinaDirectConnection: boolean | null;

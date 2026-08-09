@@ -794,8 +794,8 @@ export type SaveCarpoolDraftPayload = {
   customRegionName: string | null
   monthlyPriceCny: number | null
   serviceMultiplier: number | null
+  dailyQuotaAmount: number | null
   weeklyQuotaAmount: number | null
-  monthlyQuotaAmount: number | null
   followsOfficialQuotaReset: boolean | null
   vpsRegion: string
   supportsMainlandChinaDirectConnection: boolean | null
@@ -1694,7 +1694,7 @@ function buildCarpoolSnapshot(carpool: Carpool): CarpoolApplication['snapshot'] 
     regionName: carpool.region,
     monthlyPriceCny: pricing.primaryPrice,
     serviceMultiplier: carpool.serviceMultiplier,
-    monthlyQuotaAmount: carpool.monthlyQuotaAmount,
+    weeklyQuotaAmount: carpool.weeklyQuotaAmount,
     quotaLabel: carpool.quotaLabel,
     quotaUnit: carpool.quotaUnit,
     quotaPeriod: carpool.quotaPeriod,
@@ -3927,8 +3927,8 @@ function assertCarpoolAccessArrangement(payload: SaveCarpoolDraftPayload, produc
   if (typeof payload.providesAdminAccount !== 'boolean') {
     throw new Error('请选择是否提供管理员账号。')
   }
-  if (!payload.weeklyQuotaAmount || payload.weeklyQuotaAmount <= 0 || !payload.monthlyQuotaAmount || payload.monthlyQuotaAmount <= 0) {
-    throw new Error('请填写有效的每周额度与每月额度。')
+  if (!payload.dailyQuotaAmount || payload.dailyQuotaAmount <= 0 || !payload.weeklyQuotaAmount || payload.weeklyQuotaAmount <= 0) {
+    throw new Error('请填写有效的每天额度与每周额度。')
   }
   if (typeof payload.followsOfficialQuotaReset !== 'boolean') throw new Error('请选择额度是否跟随官方重置。')
   if (!payload.vpsRegion.trim()) throw new Error('请填写 VPS 区域。')
@@ -4032,16 +4032,16 @@ export async function submitCarpool(payload: SaveCarpoolDraftPayload) {
   assertCarpoolAccessArrangement(payload, product)
   const id = `carpool-${Date.now()}`
   const monthly = payload.monthlyPriceCny ?? 0
+  const dailyQuotaAmount = payload.dailyQuotaAmount ?? 0
   const weeklyQuotaAmount = payload.weeklyQuotaAmount ?? 0
-  const monthlyQuotaAmount = payload.monthlyQuotaAmount ?? 0
   const carpool: Carpool = {
     id,
     product: product?.displayName ?? payload.customProductName?.trim() ?? '自定义产品',
     region: regionName,
     monthly,
     serviceMultiplier: 1,
+    dailyQuotaAmount,
     weeklyQuotaAmount,
-    monthlyQuotaAmount,
     followsOfficialQuotaReset: payload.followsOfficialQuotaReset,
     vpsRegion: payload.vpsRegion.trim() || null,
     supportsMainlandChinaDirectConnection: payload.supportsMainlandChinaDirectConnection,

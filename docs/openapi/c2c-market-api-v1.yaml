@@ -14178,7 +14178,7 @@ components:
     CreateCarpoolListingRequest:
       type: object
       additionalProperties: false
-      required: [productPlanId, ownerContactMethodId, cycleTerm, title, summary, accessArrangement, distributionMethod, distributionMethodNote, providesAdminAccount, regionCode, regionName, priceMonthlyCny, serviceMultiplier, weeklyQuotaAmount, monthlyQuotaAmount, followsOfficialQuotaReset, vpsRegion, supportsMainlandChinaDirectConnection, openingChannelCode, paymentMethodCode, buyerSeatCapacity, activeBuyerMembers]
+      required: [productPlanId, ownerContactMethodId, cycleTerm, title, summary, accessArrangement, distributionMethod, distributionMethodNote, providesAdminAccount, regionCode, regionName, priceMonthlyCny, serviceMultiplier, dailyQuotaAmount, weeklyQuotaAmount, followsOfficialQuotaReset, vpsRegion, supportsMainlandChinaDirectConnection, openingChannelCode, paymentMethodCode, buyerSeatCapacity, activeBuyerMembers]
       properties:
         productPlanId:
           type: string
@@ -14228,12 +14228,12 @@ components:
           $ref: "#/components/schemas/DecimalString"
           pattern: '^1(?:\.0+)?$'
           description: System-fixed carpool multiplier. Clients must send 1; owners cannot edit it.
+        dailyQuotaAmount:
+          $ref: "#/components/schemas/DecimalString"
+          description: Owner-declared per-seat daily quota amount. It uses the selected product plan quota label and unit.
         weeklyQuotaAmount:
           $ref: "#/components/schemas/DecimalString"
-          description: Owner-declared per-seat weekly quota amount. It uses the selected product plan quota label and unit.
-        monthlyQuotaAmount:
-          $ref: "#/components/schemas/DecimalString"
-          description: Owner-declared per-seat monthly quota amount. Label, unit, and period come from the selected product plan and are not accepted from the client.
+          description: Owner-declared per-seat weekly quota amount. Label and unit come from the selected product plan and are not accepted from the client.
         followsOfficialQuotaReset:
           type: boolean
           description: Whether the declared quota follows the official provider reset schedule.
@@ -14345,8 +14345,8 @@ components:
         - regionName
         - priceMonthlyCny
         - serviceMultiplier
+        - dailyQuotaAmount
         - weeklyQuotaAmount
-        - monthlyQuotaAmount
         - followsOfficialQuotaReset
         - vpsRegion
         - supportsMainlandChinaDirectConnection
@@ -14408,10 +14408,10 @@ components:
           $ref: "#/components/schemas/DecimalString"
         serviceMultiplier:
           $ref: "#/components/schemas/DecimalString"
-        weeklyQuotaAmount:
+        dailyQuotaAmount:
           type: [string, "null"]
           pattern: '^[0-9]+(?:\.[0-9]+)?$'
-        monthlyQuotaAmount:
+        weeklyQuotaAmount:
           $ref: "#/components/schemas/DecimalString"
         followsOfficialQuotaReset:
           type: [boolean, "null"]

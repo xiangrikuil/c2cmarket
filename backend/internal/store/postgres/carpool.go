@@ -72,7 +72,7 @@ func insertCarpoolListingInTx(ctx context.Context, tx pgx.Tx, listing carpool.Li
 			id, owner_user_id, product_plan_id, owner_contact_method_id, title, summary, access_arrangement,
 			distribution_method, distribution_method_note, provides_admin_account,
 			region_code, region_name, source_url, price_monthly_cny, service_multiplier,
-			weekly_quota_amount, monthly_quota_amount, follows_official_quota_reset, vps_region,
+			daily_quota_amount, weekly_quota_amount, follows_official_quota_reset, vps_region,
 			supports_mainland_china_direct_connection, opening_channel_code, custom_opening_channel,
 			payment_method_code, custom_payment_method, quota_label, quota_unit, quota_period,
 			buyer_seat_capacity, active_buyer_members,
@@ -91,7 +91,7 @@ func insertCarpoolListingInTx(ctx context.Context, tx pgx.Tx, listing carpool.Li
 	`, listing.ID, listing.OwnerUserID, listing.ProductPlanID, listing.OwnerContactMethodID, listing.Title, listing.Summary, listing.AccessArrangement,
 		listing.DistributionMethod, listing.DistributionMethodNote, listing.ProvidesAdminAccount,
 		listing.RegionCode, listing.RegionName, nullText(listing.SourceURL), listing.PriceMonthlyCNY, listing.ServiceMultiplier,
-		listing.WeeklyQuotaAmount, listing.MonthlyQuotaAmount, listing.FollowsOfficialQuotaReset, listing.VPSRegion,
+		listing.DailyQuotaAmount, listing.WeeklyQuotaAmount, listing.FollowsOfficialQuotaReset, listing.VPSRegion,
 		listing.SupportsMainlandChinaDirectConnection, listing.OpeningChannelCode, listing.CustomOpeningChannel,
 		listing.PaymentMethodCode, listing.CustomPaymentMethod, listing.QuotaLabel, listing.QuotaUnit, listing.QuotaPeriod,
 		listing.BuyerSeatCapacity, listing.ActiveBuyerMembers,
@@ -341,8 +341,8 @@ func (s *Store) UpdateCarpoolListing(ctx context.Context, input carpool.UpdateLi
 	listing.SourceURL = strings.TrimSpace(input.SourceURL)
 	listing.PriceMonthlyCNY = strings.TrimSpace(input.PriceMonthlyCNY)
 	listing.ServiceMultiplier = strings.TrimSpace(input.ServiceMultiplier)
-	listing.WeeklyQuotaAmount = nullStringPointer(input.WeeklyQuotaAmount)
-	listing.MonthlyQuotaAmount = strings.TrimSpace(input.MonthlyQuotaAmount)
+	listing.DailyQuotaAmount = nullStringPointer(input.DailyQuotaAmount)
+	listing.WeeklyQuotaAmount = strings.TrimSpace(input.WeeklyQuotaAmount)
 	listing.FollowsOfficialQuotaReset = input.FollowsOfficialQuotaReset
 	listing.VPSRegion = nullStringPointer(input.VPSRegion)
 	listing.SupportsMainlandChinaDirectConnection = input.SupportsMainlandChinaDirectConnection
@@ -375,8 +375,8 @@ func (s *Store) UpdateCarpoolListing(ctx context.Context, input carpool.UpdateLi
 		    source_url = $12,
 		    price_monthly_cny = $13,
 		    service_multiplier = $14,
-		    weekly_quota_amount = $15,
-		    monthly_quota_amount = $16,
+		    daily_quota_amount = $15,
+		    weekly_quota_amount = $16,
 		    follows_official_quota_reset = $17,
 		    vps_region = $18,
 		    supports_mainland_china_direct_connection = $19,
@@ -399,7 +399,7 @@ func (s *Store) UpdateCarpoolListing(ctx context.Context, input carpool.UpdateLi
 		listing.DistributionMethod, listing.DistributionMethodNote, listing.ProvidesAdminAccount,
 		listing.RegionCode, listing.RegionName,
 		nullText(listing.SourceURL), listing.PriceMonthlyCNY, listing.ServiceMultiplier,
-		listing.WeeklyQuotaAmount, listing.MonthlyQuotaAmount, listing.FollowsOfficialQuotaReset, listing.VPSRegion,
+		listing.DailyQuotaAmount, listing.WeeklyQuotaAmount, listing.FollowsOfficialQuotaReset, listing.VPSRegion,
 		listing.SupportsMainlandChinaDirectConnection, listing.OpeningChannelCode, listing.CustomOpeningChannel,
 		listing.PaymentMethodCode, listing.CustomPaymentMethod, listing.QuotaLabel, listing.QuotaUnit, listing.QuotaPeriod,
 		listing.BuyerSeatCapacity, listing.ActiveBuyerMembers,
@@ -1013,7 +1013,7 @@ const carpoolListingColumns = `
 	    AND verification.status = 'verified'
 	),
 	price_monthly_cny::text, service_multiplier::text,
-	weekly_quota_amount::text, monthly_quota_amount::text, follows_official_quota_reset, vps_region,
+	daily_quota_amount::text, weekly_quota_amount::text, follows_official_quota_reset, vps_region,
 	supports_mainland_china_direct_connection, opening_channel_code, custom_opening_channel,
 	payment_method_code, custom_payment_method,
 	quota_label, quota_unit, quota_period, buyer_seat_capacity, active_buyer_members,
@@ -1090,7 +1090,7 @@ func scanCarpoolListings(rows pgx.Rows) ([]carpool.Listing, *domain.AppError) {
 func scanCarpoolListing(row scanner, listing *carpool.Listing) error {
 	var cycleTermID string
 	var cycleTerm carpool.CycleTerm
-	var weeklyQuotaAmount *string
+	var dailyQuotaAmount *string
 	var followsOfficialQuotaReset *bool
 	var vpsRegion *string
 	var supportsMainlandChinaDirectConnection *bool
@@ -1126,8 +1126,8 @@ func scanCarpoolListing(row scanner, listing *carpool.Listing) error {
 		&listing.SourceAuthorVerification.ExpiresAt,
 		&listing.PriceMonthlyCNY,
 		&listing.ServiceMultiplier,
-		&weeklyQuotaAmount,
-		&listing.MonthlyQuotaAmount,
+		&dailyQuotaAmount,
+		&listing.WeeklyQuotaAmount,
 		&followsOfficialQuotaReset,
 		&vpsRegion,
 		&supportsMainlandChinaDirectConnection,
@@ -1155,7 +1155,7 @@ func scanCarpoolListing(row scanner, listing *carpool.Listing) error {
 	); err != nil {
 		return err
 	}
-	listing.WeeklyQuotaAmount = weeklyQuotaAmount
+	listing.DailyQuotaAmount = dailyQuotaAmount
 	listing.FollowsOfficialQuotaReset = followsOfficialQuotaReset
 	listing.VPSRegion = vpsRegion
 	listing.SupportsMainlandChinaDirectConnection = supportsMainlandChinaDirectConnection

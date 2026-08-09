@@ -123,8 +123,8 @@ func newListing(ownerUserID string, input CreateListingInput, plan catalog.Produ
 		SourceURL:                             strings.TrimSpace(input.SourceURL),
 		PriceMonthlyCNY:                       strings.TrimSpace(input.PriceMonthlyCNY),
 		ServiceMultiplier:                     strings.TrimSpace(input.ServiceMultiplier),
-		WeeklyQuotaAmount:                     optionalString(input.WeeklyQuotaAmount),
-		MonthlyQuotaAmount:                    strings.TrimSpace(input.MonthlyQuotaAmount),
+		DailyQuotaAmount:                      optionalString(input.DailyQuotaAmount),
+		WeeklyQuotaAmount:                     strings.TrimSpace(input.WeeklyQuotaAmount),
 		FollowsOfficialQuotaReset:             input.FollowsOfficialQuotaReset,
 		VPSRegion:                             optionalString(input.VPSRegion),
 		SupportsMainlandChinaDirectConnection: input.SupportsMainlandChinaDirectConnection,
@@ -209,8 +209,8 @@ func (s *Service) UpdateListing(ctx context.Context, user auth.User, input Updat
 		SourceURL:                             input.SourceURL,
 		PriceMonthlyCNY:                       input.PriceMonthlyCNY,
 		ServiceMultiplier:                     input.ServiceMultiplier,
+		DailyQuotaAmount:                      input.DailyQuotaAmount,
 		WeeklyQuotaAmount:                     input.WeeklyQuotaAmount,
-		MonthlyQuotaAmount:                    input.MonthlyQuotaAmount,
 		FollowsOfficialQuotaReset:             input.FollowsOfficialQuotaReset,
 		VPSRegion:                             input.VPSRegion,
 		SupportsMainlandChinaDirectConnection: input.SupportsMainlandChinaDirectConnection,
@@ -278,8 +278,8 @@ func (s *Service) UpdateListing(ctx context.Context, user auth.User, input Updat
 	listing.SourceURL = strings.TrimSpace(input.SourceURL)
 	listing.PriceMonthlyCNY = strings.TrimSpace(input.PriceMonthlyCNY)
 	listing.ServiceMultiplier = strings.TrimSpace(input.ServiceMultiplier)
-	listing.WeeklyQuotaAmount = optionalString(input.WeeklyQuotaAmount)
-	listing.MonthlyQuotaAmount = strings.TrimSpace(input.MonthlyQuotaAmount)
+	listing.DailyQuotaAmount = optionalString(input.DailyQuotaAmount)
+	listing.WeeklyQuotaAmount = strings.TrimSpace(input.WeeklyQuotaAmount)
 	listing.FollowsOfficialQuotaReset = input.FollowsOfficialQuotaReset
 	listing.VPSRegion = optionalString(input.VPSRegion)
 	listing.SupportsMainlandChinaDirectConnection = input.SupportsMainlandChinaDirectConnection
@@ -1377,11 +1377,11 @@ func validateCreateListingInput(input CreateListingInput, plan catalog.ProductPl
 	if multiplier, ok := parseNonNegativeDecimal(input.ServiceMultiplier); !ok || multiplier.Cmp(big.NewRat(1, 1)) != 0 {
 		return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Service multiplier invalid", "拼车倍率固定为 1。", "serviceMultiplier", "fixed_value", "拼车倍率必须为 1。")
 	}
+	if quota, ok := parseNonNegativeDecimal(input.DailyQuotaAmount); !ok || quota.Sign() <= 0 {
+		return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Daily quota invalid", "每天额度格式不正确。", "dailyQuotaAmount", "invalid", "每天额度必须是大于 0 的数字。")
+	}
 	if quota, ok := parseNonNegativeDecimal(input.WeeklyQuotaAmount); !ok || quota.Sign() <= 0 {
 		return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Weekly quota invalid", "每周额度格式不正确。", "weeklyQuotaAmount", "invalid", "每周额度必须是大于 0 的数字。")
-	}
-	if quota, ok := parseNonNegativeDecimal(input.MonthlyQuotaAmount); !ok || quota.Sign() <= 0 {
-		return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Monthly quota invalid", "每月额度格式不正确。", "monthlyQuotaAmount", "invalid", "每月额度必须是大于 0 的数字。")
 	}
 	if input.FollowsOfficialQuotaReset == nil {
 		return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Official quota reset selection required", "必须选择额度是否跟随官方重置。", "followsOfficialQuotaReset", "required", "请选择额度是否跟随官方重置。")

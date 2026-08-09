@@ -81,8 +81,8 @@ type Listing struct {
 	SourceURL                             string
 	PriceMonthlyCNY                       string
 	ServiceMultiplier                     string
-	WeeklyQuotaAmount                     *string
-	MonthlyQuotaAmount                    string
+	DailyQuotaAmount                      *string
+	WeeklyQuotaAmount                     string
 	FollowsOfficialQuotaReset             *bool
 	VPSRegion                             *string
 	SupportsMainlandChinaDirectConnection *bool
@@ -193,8 +193,8 @@ type CreateListingInput struct {
 	SourceURL                             string
 	PriceMonthlyCNY                       string
 	ServiceMultiplier                     string
+	DailyQuotaAmount                      string
 	WeeklyQuotaAmount                     string
-	MonthlyQuotaAmount                    string
 	FollowsOfficialQuotaReset             *bool
 	VPSRegion                             string
 	SupportsMainlandChinaDirectConnection *bool
@@ -244,8 +244,8 @@ type UpdateListingInput struct {
 	SourceURL                             string
 	PriceMonthlyCNY                       string
 	ServiceMultiplier                     string
+	DailyQuotaAmount                      string
 	WeeklyQuotaAmount                     string
-	MonthlyQuotaAmount                    string
 	FollowsOfficialQuotaReset             *bool
 	VPSRegion                             string
 	SupportsMainlandChinaDirectConnection *bool

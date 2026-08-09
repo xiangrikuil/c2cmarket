@@ -89,6 +89,7 @@ versions:
 | `000080_api_prompt_audit_and_publish_contract` | nullable seller prompt-audit declarations and immutable purchase/order snapshots, plus independent historical performance fields |
 | `000081_api_probe_connections_and_model_keys` | reusable seller probe connections, frozen order delivery targets, and canonical API model keys |
 | `000082_api_probe_real_model_health` | real streaming model probes, attempt and usage facts, model-change history, and immutable latency rules |
+| `000083_carpool_daily_weekly_quota` | renames carpool weekly/monthly quota fields to daily/weekly while preserving existing values |
 | `000084_api_order_dispute_status_projection` | adds negotiation and remediation phases while keeping API-order dispute state as a synchronized projection |
 | `000085_api_order_dispute_negotiation` | adds structured API-order requests, immutable participant messages, and bilateral settlement proposals |
 | `000086_announcement_content_updated_at` | separates user-visible announcement content updates from general record mutation time |
@@ -406,6 +407,10 @@ per-attempt TTFT, retry, usage, and cost facts, preserves model-change history,
 and adds immutable model/protocol/environment latency-rule versions. Existing
 local probe connections are disabled for explicit revalidation and incompatible
 legacy samples are cleared before the new schema constraints apply.
+
+Version 83 (`000083_carpool_daily_weekly_quota`) corrects the carpool quota
+period contract. The former weekly value becomes the daily value, and the
+former monthly value becomes the weekly value without rewriting amounts.
 
 Version 84 (`000084_api_order_dispute_status_projection`) extends dispute-case
 and API-order dispute status constraints for the V1 negotiation and remediation
