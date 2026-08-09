@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 46
-- **Last Active**: 2026-08-09
+- **Total Sessions**: 48
+- **Last Active**: 2026-08-10
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~1513 | Active |
+| `journal-1.md` | ~1570 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,8 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 48 | 2026-08-10 | 公告体验与首页公告条收口 | `72c5967`, `3b2fbbb`, `82f9a9c`, `6490c09` | `codex/api-health-probe-repeat-prompts` |
+| 47 | 2026-08-10 | 全仓半成品功能审计 | - | `codex/api-health-probe-repeat-prompts` |
 | 46 | 2026-08-09 | 工作区剩余改动原子提交整理 | `332bd00`…`a7fc49e` | `codex/api-health-probe-repeat-prompts` |
 | 45 | 2026-08-09 | API 订单纠纷处罚治理 | `68be0c5` | `codex/api-health-probe-repeat-prompts` |
 | 44 | 2026-08-09 | 收紧前端 Reka UI 依赖边界 | `523e44e` | `codex/api-health-probe-repeat-prompts` |

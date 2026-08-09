@@ -1511,3 +1511,60 @@ Added administrator-reviewed models.dev preview/apply, atomic price version upda
 ### Status
 
 [OK] **Completed**
+
+
+## Session 47: 全仓半成品功能审计
+
+**Date**: 2026-08-10
+**Task**: 全仓半成品功能审计
+**Package**: frontend
+**Branch**: `codex/api-health-probe-repeat-prompts`
+
+### Summary
+
+完成全仓半成品审计；确认无 P0、2 个 P1、4 个 P2、1 个 P3，并记录 smoke 漂移与 36 个 Trellis 归档候选。
+
+### Main Changes
+
+- 生成跨前端、后端、OpenAPI、smoke 和 Trellis 台账的证据化审计报告。
+
+### Git Commits
+
+(No commits - planning session)
+
+### Testing
+
+- [OK] Go test/vet、104 文件 572 项 Vitest、Nuxt typecheck/real build、OpenAPI、migration、Compose 与本地 health/profile 复现通过。
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- 优先修复头像真实模式和公开用户资料，再修我的车源、管理员日志与 smoke。
+
+
+## Session 48: 公告体验与首页公告条收口
+
+**Date**: 2026-08-10
+**Task**: 公告体验与首页公告条收口
+**Package**: frontend
+**Branch**: `codex/api-health-probe-repeat-prompts`
+
+### Summary
+
+完成用户公告详情单栏化、可选跳转按钮、首页公告条与响应式视觉收口，并通过完整前端门禁。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `72c5967` | (see git log) |
+| `3b2fbbb` | (see git log) |
+| `82f9a9c` | (see git log) |
+| `6490c09` | (see git log) |
+
+### Status
+
+[OK] **Completed**
