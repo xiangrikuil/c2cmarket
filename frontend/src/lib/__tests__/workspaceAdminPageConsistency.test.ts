@@ -183,7 +183,7 @@ describe('个人、经营与管理工作区一致性', () => {
     expect(reviews).toContain('评价已被管理员移除')
     expect(reviews).toContain('对方已提交评价，内容将在你提交评价或截止时间到达后显示')
     expect(reviews).toContain('[&_table]:min-w-[760px]')
-    expect(notifications).toContain("type NotificationTab = 'todo' | 'transactions' | 'system'")
+    expect(notifications).toContain("type NotificationTab = 'todo' | 'transactions' | 'system' | 'announcements'")
     expect(notifications).toContain("type === 'API 意向' ? 'API 订单'")
     expect(feedback).toContain('下一责任人：你')
     expect(feedback).toContain('下一责任人：管理员')

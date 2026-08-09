@@ -127,6 +127,7 @@ const navGroups = computed(() => {
       { label: 'API 购买订单', to: '/my/api-orders', count: buyerApiActionCount.value, icon: ShoppingBag },
       { label: '收藏', to: '/my/favorites', count: null, icon: Star },
       { label: '通知', to: '/my/notifications', count: unreadBusinessCount.value, icon: Bell },
+      { label: '平台公告', to: announcementCenterTo, count: importantAnnouncementUnreadCount.value, icon: Megaphone },
     ],
   }
   const merchantGroup = {
@@ -190,6 +191,8 @@ function isActive(to: string) {
 function matchesRoute(to: string) {
   if (to === '/') return route.path === '/'
   if (to === '/my/profile') return accountSettingsPaths.includes(route.path as typeof accountSettingsPaths[number])
+  if (to === announcementCenterTo) return route.path === '/my/notifications' && route.query.tab === 'announcements'
+  if (to === '/my/notifications') return route.path === to && route.query.tab !== 'announcements'
   return route.path === to || route.path.startsWith(`${to}/`)
 }
 
@@ -303,18 +306,6 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onNavigationKeydown)
         </section>
       </nav>
       <div class="border-t border-sidebar-border p-2">
-        <RouterLink
-          v-if="isAuthenticated && !sidebarCollapsed"
-          :to="announcementCenterTo"
-          class="mb-3 flex items-center justify-between rounded-md border border-sidebar-border bg-sidebar-accent/45 px-3 py-3 text-xs leading-5 text-sidebar-foreground/75 shadow-sm transition hover:border-sidebar-primary/30 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
-        >
-          <div>
-            <div class="font-medium text-sidebar-primary">平台公告</div>
-            <div class="mt-1">查看公告与更新</div>
-          </div>
-          <Badge v-if="importantAnnouncementUnreadCount" variant="secondary">{{ formatBadgeCount(importantAnnouncementUnreadCount) }}</Badge>
-          <ChevronDown class="h-4 w-4 -rotate-90 text-sidebar-foreground/45" />
-        </RouterLink>
         <Button
           variant="ghost"
           size="sm"
@@ -381,16 +372,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onNavigationKeydown)
           </div>
         </section>
       </nav>
-      <RouterLink
-        v-if="isAuthenticated"
-        :to="announcementCenterTo"
-        class="border-t border-border p-4 text-xs leading-5 text-muted-foreground transition hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
-        @click="closeMenu"
-      >
-        <span>平台公告 · 查看公告与更新</span>
-        <Badge v-if="importantAnnouncementUnreadCount" variant="secondary" class="ml-2">{{ formatBadgeCount(importantAnnouncementUnreadCount) }}</Badge>
-      </RouterLink>
-      <div v-else-if="showLoginAction" class="grid gap-2 border-t border-border p-4">
+      <div v-if="showLoginAction" class="grid gap-2 border-t border-border p-4">
         <Button as-child class="w-full">
           <RouterLink :to="currentLoginTo" @click="closeMenu">
             <LogIn class="h-4 w-4" />登录
