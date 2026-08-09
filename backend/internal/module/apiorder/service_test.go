@@ -313,6 +313,70 @@ func TestOpenDisputePausesDeliveryReviewAutoCompletion(t *testing.T) {
 	}
 }
 
+func TestCloseDisputeProjectionConvergesOnceAndPreservesOrderLifecycle(t *testing.T) {
+	now := time.Date(2026, 8, 9, 8, 0, 0, 0, time.UTC)
+	service := NewService(nil, nil, nil, nil, nil, func() time.Time { return now })
+	order := Order{
+		ID:               "order-dispute-projection",
+		BuyerUserID:      "buyer-1",
+		SellerUserID:     "seller-1",
+		Status:           StatusPaymentSubmitted,
+		DisputeStatus:    DisputeStatusOpen,
+		DisputeCaseID:    "dispute-1",
+		PaymentSummary:   "已站外付款。",
+		PaymentExpiresAt: now.Add(time.Hour),
+		CreatedAt:        now.Add(-time.Hour),
+		UpdatedAt:        now.Add(-time.Minute),
+		Version:          3,
+	}
+	service.orders[order.ID] = order
+
+	if appErr := service.CloseDisputeProjection(context.Background(), "dispute-1", "admin-1", "resolve-1"); appErr != nil {
+		t.Fatalf("close dispute projection: %v", appErr)
+	}
+	closed := service.orders[order.ID]
+	if closed.DisputeStatus != DisputeStatusClosed || closed.Version != 4 {
+		t.Fatalf("expected closed projection and one version increment, got %+v", closed)
+	}
+	if closed.Status != order.Status || closed.PaymentSummary != order.PaymentSummary || closed.DisputeCaseID != order.DisputeCaseID {
+		t.Fatalf("projection update changed order lifecycle facts: before=%+v after=%+v", order, closed)
+	}
+
+	if appErr := service.CloseDisputeProjection(context.Background(), "dispute-1", "admin-1", "close-2"); appErr != nil {
+		t.Fatalf("repeat close dispute projection: %v", appErr)
+	}
+	if replayed := service.orders[order.ID]; replayed.Version != closed.Version {
+		t.Fatalf("closed projection must be idempotent, got version %d want %d", replayed.Version, closed.Version)
+	}
+	if len(service.events) != 1 || service.events[0].EventType != EventDisputeClosed {
+		t.Fatalf("expected one dispute closed event, got %+v", service.events)
+	}
+	if event := service.events[0]; event.FromStatus != order.Status || event.ToStatus != order.Status {
+		t.Fatalf("dispute event must preserve transaction status fields, got %+v", event)
+	}
+
+	if appErr := service.CloseDisputeProjection(context.Background(), "missing", "admin-1", "missing"); appErr == nil || appErr.Code != domain.CodeInvalidStateTransition {
+		t.Fatalf("mismatched dispute relation must fail explicitly, got %v", appErr)
+	}
+}
+
+func TestValidateRequestedDisputeAmountRequiresPlainDecimalSyntax(t *testing.T) {
+	for _, amount := range []string{"", "0", "0.00", "1/2", "1e2", "+1", "-1", ".5", "1.", "1.001"} {
+		t.Run(amount, func(t *testing.T) {
+			appErr := ValidateRequestedDisputeAmount(DisputeResolutionPartialRefund, amount, "100.00")
+			if appErr == nil || appErr.Code != domain.CodeValidationFailed {
+				t.Fatalf("amount %q must be rejected as a non-positive or non-decimal value, got %v", amount, appErr)
+			}
+		})
+	}
+	if appErr := ValidateRequestedDisputeAmount(DisputeResolutionPartialRefund, "25.50", "100.00"); appErr != nil {
+		t.Fatalf("plain decimal amount must be accepted: %v", appErr)
+	}
+	if appErr := ValidateRequestedDisputeAmount(DisputeResolutionPartialRefund, "100.01", "100.00"); appErr == nil || appErr.Code != domain.CodeValidationFailed {
+		t.Fatalf("amount above the order total must be rejected, got %v", appErr)
+	}
+}
+
 func TestPaymentIssueRequiresStructuredReasonAndReturnsToSubmitted(t *testing.T) {
 	now := time.Date(2026, 7, 12, 12, 0, 0, 0, time.UTC)
 	service := NewService(nil, nil, nil, nil, nil, func() time.Time {

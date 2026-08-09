@@ -5,6 +5,7 @@ import type {
   ApiDeliveryMode,
   ApiOrder,
   ApiOrderCompletionSource,
+	ApiOrderDisputeStatus,
   ApiOrderDeliveryCredential,
   ApiOrderFilters,
   ApiOrderPaymentInstructions,
@@ -66,6 +67,7 @@ import { backendMyMerchantProfile, backendUpsertMerchantProfile } from '@/lib/pr
 import { compareDecimal, divideDecimal, normalizeDecimal, normalizeDecimalTrimmed } from '@/lib/decimal'
 import { mapBackendReputationSummary } from '@/lib/reputationBackend'
 import { matchesApiOrderSearch } from '@/lib/apiOrderUi'
+import { normalizeApiOrderDisputeStatus, type OpenApiOrderDisputeInput } from '@/lib/apiOrderDispute'
 import type { ReputationSummary } from '@/types/reputation'
 import type { ApiServiceHealthSummary } from '@/types/apiHealth'
 import { parseApiQuotaUsagePolicy, toApiQuotaUsagePolicyInput } from '@/lib/apiQuotaPolicy'
@@ -265,7 +267,7 @@ export type BackendAPIOrder = {
   buyerReputation?: ReputationSummary | null
   sellerReputation?: ReputationSummary | null
   status: string
-  disputeStatus?: string
+	disputeStatus?: ApiOrderDisputeStatus
   disputeCaseId?: string
   serviceTitleSnapshot: string
   billingModeSnapshot?: string
@@ -1334,7 +1336,7 @@ export function mapBackendAdminAPIOrderDetail(order: BackendAPIOrder): AdminApiO
     buyerUserId: order.buyerUserId,
     sellerUserId: order.sellerUserId,
     status: apiOrderStatus(order.status),
-    disputeStatus: order.disputeStatus,
+		disputeStatus: normalizeApiOrderDisputeStatus(order.disputeStatus),
     disputeCaseId: order.disputeCaseId,
     serviceTitleSnapshot: order.serviceTitleSnapshot,
     billingModeSnapshot: order.billingModeSnapshot,
@@ -1643,7 +1645,7 @@ async function mapBackendAPIOrder(order: BackendAPIOrder, viewerRole: 'buyer' | 
     buyerReputation: mapBackendReputationSummary(order.buyerReputation),
     sellerReputation: mapBackendReputationSummary(order.sellerReputation),
     status: apiOrderStatus(order.status),
-    disputeStatus: order.disputeStatus,
+    disputeStatus: normalizeApiOrderDisputeStatus(order.disputeStatus),
     disputeCaseId: order.disputeCaseId,
     serviceTitle: order.serviceTitleSnapshot || intent.snapshot.serviceTitle,
     amount: numberFromDecimal(order.amount),
@@ -1770,8 +1772,8 @@ export function apiOrderDisputePath(id: string, perspective: 'buyer' | 'merchant
   return `/api/v1/${scope}/api-orders/${encodeURIComponent(id)}/dispute`
 }
 
-export async function backendOpenAPIOrderDispute(id: string, reason: string, version: number, perspective: 'buyer' | 'merchant') {
-  const response = await backendMutation<BackendAPIOrder>(apiOrderDisputePath(id, perspective), { reason }, {
+export async function backendOpenAPIOrderDispute(id: string, input: OpenApiOrderDisputeInput, version: number, perspective: 'buyer' | 'merchant') {
+  const response = await backendMutation<BackendAPIOrder>(apiOrderDisputePath(id, perspective), input, {
     idempotencyPrefix: `api-order-${perspective}-dispute`,
     ifMatch: version,
   })

@@ -336,6 +336,28 @@ func TestAppealApprovalChecksOutcomeSubjectBeforeReversal(t *testing.T) {
 	}
 }
 
+func TestDisputeResolutionSynchronizesAPIOrderProjectionInsideAdminTransaction(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("report.go"))
+	if err != nil {
+		t.Fatalf("read report store: %v", err)
+	}
+	source := string(data)
+	for _, required := range []string{
+		"closeAPIOrderDisputeProjectionInTx(ctx, tx, item, input, now)",
+		"SELECT id::text, status, dispute_status",
+		"WHERE id::text = $1",
+		"AND dispute_case_id = $2",
+		"SET dispute_status = $2",
+		"version = version + 1",
+		"apiorder.EventDisputeClosed",
+		"orderStatus, orderStatus, \"纠纷已结案\"",
+	} {
+		if !strings.Contains(source, required) {
+			t.Fatalf("dispute projection transaction is missing %q", required)
+		}
+	}
+}
+
 func TestCreateAppealSerializesSubmittedDuplicateCheck(t *testing.T) {
 	data, err := os.ReadFile(filepath.Join("report.go"))
 	if err != nil {
@@ -449,6 +471,37 @@ func TestCreateAppealLocksDisputeBeforeAuthorization(t *testing.T) {
 	}
 	if disputeLock > authorization {
 		t.Fatal("dispute must be locked before appeal authorization reads its subject")
+	}
+}
+
+func TestDisputeParticipantMutationLocksCaseBeforeOrderAndCompletesIdempotencyLast(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("report.go"))
+	if err != nil {
+		t.Fatalf("read report store: %v", err)
+	}
+	source := string(data)
+	start := strings.Index(source, "func (s *Store) UpdateDisputeParticipantWithIdempotency")
+	if start < 0 {
+		t.Fatal("participant dispute transaction function start not found")
+	}
+	end := strings.Index(source[start:], "func (s *Store) applyDisputeParticipantActionInTx")
+	if end < 0 {
+		t.Fatal("participant dispute transaction function end not found")
+	}
+	section := source[start : start+end]
+	disputeLock := strings.Index(section, "FOR UPDATE OF d")
+	orderLock := strings.Index(section, "s.getAPIOrder(ctx, tx, item.TargetID, true, false)")
+	mutation := strings.Index(section, "s.applyDisputeParticipantActionInTx")
+	completion := strings.Index(section, "completeIdempotencyInTx")
+	commit := strings.Index(section, "tx.Commit")
+	if disputeLock < 0 || orderLock < 0 || mutation < 0 || completion < 0 || commit < 0 {
+		t.Fatalf("participant transaction contract is incomplete: dispute=%d order=%d mutation=%d completion=%d commit=%d", disputeLock, orderLock, mutation, completion, commit)
+	}
+	if !(disputeLock < orderLock && orderLock < mutation && mutation < completion && completion < commit) {
+		t.Fatalf("participant transaction lock/write order drifted: dispute=%d order=%d mutation=%d completion=%d commit=%d", disputeLock, orderLock, mutation, completion, commit)
+	}
+	if !strings.Contains(section, "item.TargetType != report.TargetAPIOrder") || !strings.Contains(section, "return report.DisputeCase{}, idempotency.Completion{}, disputeNotFound()") {
+		t.Fatal("non-API disputes must remain hidden from API-order negotiation mutations")
 	}
 }
 

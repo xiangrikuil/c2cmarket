@@ -247,7 +247,7 @@ dispute_facts AS (
   JOIN dispute_cases dispute
     ON dispute.subject_user_id = requested.user_id
    AND dispute.target_type = 'carpool_membership'
-   AND dispute.status IN ('open', 'waiting_info')
+	AND dispute.status IN ('negotiating', 'open', 'waiting_info')
   JOIN carpool_memberships membership
     ON dispute.target_id = membership.id::text
   LEFT JOIN reputation_transaction_exclusions exclusion
@@ -274,7 +274,7 @@ dispute_facts AS (
   JOIN dispute_cases dispute
     ON dispute.subject_user_id = requested.user_id
    AND dispute.target_type = 'carpool_application'
-   AND dispute.status IN ('open', 'waiting_info')
+	AND dispute.status IN ('negotiating', 'open', 'waiting_info')
   JOIN carpool_applications application
     ON dispute.target_id = application.id::text
   LEFT JOIN reputation_transaction_exclusions exclusion
@@ -301,7 +301,7 @@ dispute_facts AS (
   JOIN dispute_cases dispute
     ON dispute.subject_user_id = requested.user_id
    AND dispute.target_type = 'api_order'
-   AND dispute.status IN ('open', 'waiting_info')
+	AND dispute.status IN ('negotiating', 'open', 'waiting_info')
   JOIN api_orders api_order
     ON dispute.target_id = api_order.id::text
   LEFT JOIN reputation_transaction_exclusions exclusion
@@ -328,7 +328,7 @@ dispute_facts AS (
   JOIN dispute_cases dispute
     ON dispute.subject_user_id = requested.user_id
    AND dispute.target_type = 'api_purchase_intent'
-   AND dispute.status IN ('open', 'waiting_info')
+	AND dispute.status IN ('negotiating', 'open', 'waiting_info')
   JOIN api_purchase_intents intent
     ON dispute.target_id = intent.id::text
   LEFT JOIN reputation_transaction_exclusions exclusion

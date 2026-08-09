@@ -1411,7 +1411,7 @@ func loadAPIServiceRecommendationStats(ctx context.Context, q queryer, service *
 		SELECT COUNT(*) FILTER (
 		         WHERE status = 'completed' AND completed_at >= now() - interval '30 days'
 		       )::int,
-		       COUNT(*) FILTER (WHERE dispute_status = 'open')::int,
+		       COUNT(*) FILTER (WHERE dispute_status NOT IN ('none', 'closed'))::int,
 		       COALESCE(
 		         percentile_cont(0.5) WITHIN GROUP (
 		           ORDER BY EXTRACT(EPOCH FROM (first_seller_response_at - created_at)) / 60.0

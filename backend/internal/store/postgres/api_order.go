@@ -355,6 +355,11 @@ func (s *Store) updateAPIOrderInTx(ctx context.Context, tx pgx.Tx, input apiorde
 	if !storeCanTransitionAPIOrder(order, action, now) {
 		return apiorder.Order{}, domain.NewError(http.StatusConflict, domain.CodeInvalidStateTransition, "Invalid state transition", "当前订单状态不能执行该操作。")
 	}
+	if action == "open_dispute" {
+		if appErr := apiorder.ValidateRequestedDisputeAmount(input.RequestedResolution, input.RequestedAmountCNY, order.Amount); appErr != nil {
+			return apiorder.Order{}, appErr
+		}
+	}
 	if action == "submit_delivery" {
 		expiresAt, appErr := apiorder.PackageExpiryFromSnapshot(order.SelectedPackageSnapshot, now)
 		if appErr != nil {
@@ -464,7 +469,7 @@ func (s *Store) MaterializeExpiredAPIOrders(ctx context.Context, now time.Time) 
 		WHERE (status = 'pending_payment' AND payment_expires_at <= $1)
 		   OR (
 		     status = 'delivery_submitted'
-		     AND dispute_status <> 'open'
+		     AND dispute_status IN ('none', 'closed')
 		     AND delivery_review_expires_at <= $2
 		   )
 	`, now, now.Add(apiorder.DeliveryReviewReminderLead))
@@ -548,7 +553,7 @@ func (s *Store) materializeExpiredAPIOrderInTx(ctx context.Context, tx pgx.Tx, o
 		}
 		return apiOrderMaterializationResult{PaymentTimeoutCancelled: true}, nil
 	}
-	if order.Status != apiorder.StatusDeliverySubmitted || order.DisputeStatus == apiorder.DisputeStatusOpen || order.DeliveryReviewExpiresAt == nil {
+	if order.Status != apiorder.StatusDeliverySubmitted || apiorder.IsDisputeActive(order.DisputeStatus) || order.DeliveryReviewExpiresAt == nil {
 		return apiOrderMaterializationResult{}, nil
 	}
 	if !now.Before(*order.DeliveryReviewExpiresAt) {
@@ -1397,14 +1402,24 @@ func openDisputeFromAPIOrderInTx(ctx context.Context, tx pgx.Tx, order apiorder.
 		INSERT INTO dispute_cases (
 			report_id, target_type, target_id, target_label, primary_user_id, counterparty_user_id,
 			subject_user_id,
-			status, public_summary, public_result_code, public_result, admin_reason, opened_by_admin_id, opened_at,
+			status, issue_code, requested_resolution, requested_amount_cny,
+			public_summary, public_result_code, public_result, admin_reason, opened_by_admin_id, opened_at,
 			created_at, updated_at, version
 		)
-		VALUES (NULL, $1, $2, $3, $4, $5, $5, 'open', $6, $7, $8, $9, $10, $11, $11, $11, 1)
+		VALUES (NULL, $1, $2, $3, $4, $5, $5, 'negotiating', $6, $7, $8, $9, $10, $11, $12, $4, $13, $13, $13, 1)
 		RETURNING `+disputeReturningColumns+`
 	`, report.TargetAPIOrder, order.ID, strings.TrimSpace(order.ServiceTitleSnapshot), input.ActorUserID, counterpartyID,
-		"API 订单纠纷", report.PublicResultNoAction, "已进入人工处理中", strings.TrimSpace(input.Reason), input.ActorUserID, now)
+		strings.TrimSpace(input.IssueCode), strings.TrimSpace(input.RequestedResolution), nullNumeric(input.RequestedAmountCNY),
+		"API 订单纠纷", report.PublicResultNoAction, "双方协商中", "", now)
 	if err != nil {
+		return report.DisputeCase{}, internalStoreError()
+	}
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO api_order_dispute_messages (
+			id, dispute_case_id, sender_user_id, body, request_id, created_at
+		)
+		VALUES ($1, $2, $3, $4, $5, $6)
+	`, uuid.NewString(), item.ID, input.ActorUserID, strings.TrimSpace(input.Reason), strings.TrimSpace(input.RequestID), now); err != nil {
 		return report.DisputeCase{}, internalStoreError()
 	}
 	return item, nil
@@ -1465,7 +1480,7 @@ func storeCanTransitionAPIOrder(order apiorder.Order, action string, now time.Ti
 	case "submit_delivery":
 		return order.Status == apiorder.StatusPaidConfirmed
 	case "confirm_complete":
-		return order.Status == apiorder.StatusDeliverySubmitted && order.DisputeStatus != apiorder.DisputeStatusOpen
+		return order.Status == apiorder.StatusDeliverySubmitted && !apiorder.IsDisputeActive(order.DisputeStatus)
 	case "open_dispute":
 		return order.Status != apiorder.StatusCancelled && order.Status != apiorder.StatusCompleted && order.DisputeStatus == apiorder.DisputeStatusNone
 	default:
@@ -1533,7 +1548,7 @@ func storeApplyAPIOrderAction(order apiorder.Order, input apiorder.ActionInput, 
 		order.CompletionSource = apiorder.CompletionSourceBuyerConfirmed
 		order.CompletedAt = &now
 	case "open_dispute":
-		order.DisputeStatus = apiorder.DisputeStatusOpen
+		order.DisputeStatus = apiorder.DisputeStatusNegotiating
 	}
 	order.UpdatedAt = now
 	order.Version++

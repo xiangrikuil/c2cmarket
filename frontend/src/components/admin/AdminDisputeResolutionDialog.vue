@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, reactive, ref, watch } from 'vue'
 import { useQuery, useQueryClient } from '@tanstack/vue-query'
-import { CheckCircle2, FileText, Gavel, RefreshCw, Scale, TriangleAlert, Users } from 'lucide-vue-next'
+import { CheckCircle2, FileText, Gavel, MessageSquareText, RefreshCw, Scale, TriangleAlert, Users } from 'lucide-vue-next'
 import { toast } from 'vue-sonner'
 import LocalTime from '@/components/market/LocalTime.vue'
 import SkeletonBlock from '@/components/market/SkeletonBlock.vue'
@@ -50,6 +50,7 @@ import {
 } from '@/queries/useReputationQueries'
 import type { AdminRow } from '@/lib/api'
 import type { DisputeReputationOutcome } from '@/types/reputation'
+import { apiOrderDisputeIssueLabels, apiOrderDisputeResolutionLabels } from '@/lib/apiOrderDispute'
 
 const props = defineProps<{
   open: boolean
@@ -63,6 +64,12 @@ const emit = defineEmits<{
 
 const queryClient = useQueryClient()
 const createOutcomeMutation = useCreateDisputeReputationOutcomeMutation()
+
+function negotiationParticipantLabel(userId: string) {
+  if (!dispute.value) return userId
+  if (userId === dispute.value.primaryUserId) return participantLabel(dispute.value.primaryDisplayName, dispute.value.primaryUsername, userId)
+  return participantLabel(dispute.value.counterpartyName, dispute.value.counterpartyUsername, userId)
+}
 const createdOutcome = ref<DisputeReputationOutcome | null>(null)
 const resolutionErrors = ref<Partial<Record<keyof ResolutionForm, string>>>({})
 const outcomeErrors = ref<Partial<Record<keyof OutcomeForm, string>>>({})
@@ -224,6 +231,7 @@ function targetTypeLabel(value?: string) {
 }
 
 function statusLabel(value?: AdminDisputeDetail['status']) {
+	if (value === 'negotiating') return '协商中'
   if (value === 'open') return '待裁决'
   if (value === 'waiting_info') return '等待补充'
   if (value === 'resolved') return '已裁决'
@@ -426,6 +434,46 @@ async function submitOutcome() {
                 <div class="text-xs text-muted-foreground">另一参与方</div>
                 <div class="mt-1 text-sm font-medium">{{ participantLabel(dispute.counterpartyName, dispute.counterpartyUsername, dispute.counterpartyUserId) }}<span v-if="dispute.counterpartyUsername"> · @{{ dispute.counterpartyUsername }}</span></div>
               </div>
+            </div>
+          </section>
+
+          <section v-if="dispute.targetType === 'api_order'" class="space-y-5 border-b border-border py-5">
+            <div class="flex items-center gap-2">
+              <MessageSquareText class="h-4 w-4" />
+              <h2 class="text-sm font-semibold">订单协商记录</h2>
+            </div>
+            <dl class="grid gap-3 sm:grid-cols-3">
+              <div>
+                <dt class="text-xs text-muted-foreground">问题类型</dt>
+                <dd class="mt-1 text-sm font-medium">{{ dispute.issueCode ? apiOrderDisputeIssueLabels[dispute.issueCode] : '历史纠纷' }}</dd>
+              </div>
+              <div>
+                <dt class="text-xs text-muted-foreground">诉求</dt>
+                <dd class="mt-1 text-sm font-medium">{{ dispute.requestedResolution ? apiOrderDisputeResolutionLabels[dispute.requestedResolution] : '未结构化记录' }}</dd>
+              </div>
+              <div>
+                <dt class="text-xs text-muted-foreground">诉求金额</dt>
+                <dd class="mt-1 text-sm font-medium">{{ dispute.requestedAmountCny ? `¥${dispute.requestedAmountCny}` : '不涉及' }}</dd>
+              </div>
+            </dl>
+            <div v-if="dispute.messages?.length" class="space-y-3">
+              <article v-for="message in dispute.messages" :key="message.id" class="border-l-2 border-border pl-3">
+                <div class="flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
+                  <span>{{ negotiationParticipantLabel(message.senderUserId) }}</span>
+                  <LocalTime :value="message.createdAt" />
+                </div>
+                <p class="mt-1 whitespace-pre-wrap break-words text-sm leading-6">{{ message.body }}</p>
+              </article>
+            </div>
+            <p v-else class="text-sm text-muted-foreground">暂无订单内留言。</p>
+            <div v-if="dispute.settlementProposals?.length" class="space-y-3">
+              <article v-for="proposal in dispute.settlementProposals" :key="proposal.id" class="border-l-2 border-warning pl-3">
+                <div class="flex flex-wrap items-center justify-between gap-2">
+                  <span class="text-sm font-medium">{{ apiOrderDisputeResolutionLabels[proposal.resolution] }}<span v-if="proposal.amountCny"> · ¥{{ proposal.amountCny }}</span></span>
+                  <Badge variant="secondary">{{ proposal.status }}</Badge>
+                </div>
+                <p class="mt-1 whitespace-pre-wrap break-words text-sm leading-6">{{ proposal.terms }}</p>
+              </article>
             </div>
           </section>
 

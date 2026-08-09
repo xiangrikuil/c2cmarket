@@ -32,6 +32,7 @@ const (
 	ReportStatusDisputeOpened = "dispute_opened"
 	ReportStatusClosed        = "closed"
 
+	DisputeStatusNegotiating = "negotiating"
 	DisputeStatusOpen        = "open"
 	DisputeStatusWaitingInfo = "waiting_info"
 	DisputeStatusResolved    = "resolved"
@@ -54,6 +55,17 @@ const (
 	InfoRequestStatusOpen     = "open"
 	InfoRequestStatusAnswered = "answered"
 	InfoRequestStatusCanceled = "cancelled"
+
+	DisputeMessageActionAppend   = "append_message"
+	DisputeMessageActionPropose  = "create_proposal"
+	DisputeMessageActionConfirm  = "confirm_proposal"
+	DisputeMessageActionReject   = "reject_proposal"
+	DisputeMessageActionEscalate = "escalate"
+
+	SettlementStatusPending    = "pending"
+	SettlementStatusAccepted   = "accepted"
+	SettlementStatusRejected   = "rejected"
+	SettlementStatusSuperseded = "superseded"
 )
 
 type Report struct {
@@ -100,6 +112,9 @@ type DisputeCase struct {
 	SubjectUsername      string
 	SubjectName          string
 	Status               string
+	IssueCode            string
+	RequestedResolution  string
+	RequestedAmountCNY   string
 	PublicSummary        string
 	PublicResultCode     string
 	PublicResult         string
@@ -114,6 +129,33 @@ type DisputeCase struct {
 	OpenInfoRequestID    string
 	InfoRequestedFromID  string
 	Supplements          []InfoSupplement
+	Messages             []DisputeMessage
+	SettlementProposals  []SettlementProposal
+}
+
+type DisputeMessage struct {
+	ID            string
+	DisputeCaseID string
+	SenderUserID  string
+	Body          string
+	CreatedAt     time.Time
+}
+
+type SettlementProposal struct {
+	ID               string
+	DisputeCaseID    string
+	ProposedByUserID string
+	Resolution       string
+	AmountCNY        string
+	Terms            string
+	Status           string
+	AcceptedByUserID string
+	AcceptedAt       *time.Time
+	RejectedByUserID string
+	RejectedAt       *time.Time
+	CreatedAt        time.Time
+	UpdatedAt        time.Time
+	Version          int64
 }
 
 type InfoRequest struct {
@@ -242,6 +284,19 @@ type SupplementInput struct {
 	RequestID          string
 }
 
+type DisputeParticipantActionInput struct {
+	DisputeID   string
+	ActorUserID string
+	Action      string
+	Body        string
+	Resolution  string
+	AmountCNY   string
+	Terms       string
+	ProposalID  string
+	Reason      string
+	RequestID   string
+}
+
 type MutationResult struct {
 	Report  *Report
 	Dispute *DisputeCase
@@ -252,3 +307,4 @@ type ReportCompletionBuilder func(Report) (idempotency.Completion, *domain.AppEr
 type AppealCompletionBuilder func(Appeal) (idempotency.Completion, *domain.AppError)
 type AdminCompletionBuilder func(MutationResult) (idempotency.Completion, *domain.AppError)
 type SupplementCompletionBuilder func(MutationResult) (idempotency.Completion, *domain.AppError)
+type DisputeParticipantCompletionBuilder func(DisputeCase) (idempotency.Completion, *domain.AppError)

@@ -34,6 +34,13 @@ describe('API 订单角色视图', () => {
     expect(adminDetail).not.toContain('order.apiKey')
     expect(adminDetail).not.toContain('order.password')
   })
+
+  it('uses the shared dispute projection labels in the admin detail', () => {
+    expect(adminDetail).toContain('getApiOrderDisputeStatusLabel(order.disputeStatus)')
+    expect(adminDetail).toContain('getApiOrderDisputeStatusDescription(order.disputeStatus)')
+    expect(adminDetail).toContain("order.disputeStatus !== 'none'")
+    expect(adminDetail).not.toContain("order.disputeStatus || '无纠纷'")
+  })
 })
 
 const source = detail

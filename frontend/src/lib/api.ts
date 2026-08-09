@@ -112,6 +112,9 @@ import {
 export { getApiMerchantDisplayName, isApiServicePubliclyOrderable } from '@/lib/apiServicePresentation'
 import { evaluateCarpoolApplicationEligibility, hasCredentialSharingLanguage } from '@/lib/carpoolEligibility'
 import { matchesApiOrderSearch } from '@/lib/apiOrderUi'
+import { isApiOrderDisputeActive, normalizeApiOrderDisputeStatus, type ApiOrderDisputeStatus, type OpenApiOrderDisputeInput } from '@/lib/apiOrderDispute'
+export { canOpenApiOrderDispute, getApiOrderDisputeStatusDescription, getApiOrderDisputeStatusLabel, isApiOrderDisputeActive, normalizeApiOrderDisputeStatus } from '@/lib/apiOrderDispute'
+export type { ApiOrderDisputeStatus } from '@/lib/apiOrderDispute'
 export { evaluateCarpoolApplicationEligibility } from '@/lib/carpoolEligibility'
 import { defaultQuotaLabel, defaultQuotaPeriod, defaultQuotaUnit } from '@/lib/quota'
 import { beijingDateTimeInputToISOString, formatBeijingDateTimeInput, formatQuotaExpiresAtLabel } from '@/lib/apiQuotaExpiration'
@@ -585,7 +588,7 @@ export type ApiOrder = {
   buyerReputation?: ReputationSummary | null
   sellerReputation?: ReputationSummary | null
   status: ApiOrderStatus
-  disputeStatus?: string
+  disputeStatus?: ApiOrderDisputeStatus
   disputeCaseId?: string
   serviceTitle: string
   amount: number
@@ -634,7 +637,7 @@ export type AdminApiOrderDetail = {
   buyerUserId: string
   sellerUserId: string
   status: ApiOrderStatus
-  disputeStatus?: string
+  disputeStatus?: ApiOrderDisputeStatus
   disputeCaseId?: string
   serviceTitleSnapshot: string
   billingModeSnapshot?: string
@@ -936,7 +939,8 @@ function normalizeApiOrderStore(orders: ApiOrder[]): ApiOrder[] {
   return orders.map(order => ({
     ...order,
     orderNo: order.orderNo || createMockApiOrderNo(order.createdAt),
-    purchaseKind: order.purchaseKind ?? 'api_service',
+		purchaseKind: order.purchaseKind ?? 'api_service',
+		disputeStatus: normalizeApiOrderDisputeStatus(order.disputeStatus),
     completionSource: order.completionSource ?? (order.status === 'completed' ? 'buyer_confirmed' : undefined),
     deliveryReviewExpiresAt: order.deliveryReviewExpiresAt
       ?? (order.status === 'delivery_submitted' ? mockDeliveryReviewDeadline(order.deliverySubmittedAt) : undefined),
@@ -954,7 +958,7 @@ function normalizeApiQuotaOfferStore(offers: PublicApiQuotaOffer[]): PublicApiQu
 function materializeMockApiOrderReviews(currentTime = Date.now()) {
   let changed = false
   for (const order of apiOrderStore) {
-    if (order.status !== 'delivery_submitted' || order.disputeStatus === 'open' || !order.deliveryReviewExpiresAt) continue
+		if (order.status !== 'delivery_submitted' || isApiOrderDisputeActive(order.disputeStatus) || !order.deliveryReviewExpiresAt) continue
     const deadline = Date.parse(order.deliveryReviewExpiresAt)
     if (!Number.isFinite(deadline) || deadline > currentTime) continue
     const completedAt = new Date(deadline).toISOString()
@@ -1579,7 +1583,15 @@ export function getApiOrderNextAction(order: ApiOrder, role: 'buyer' | 'merchant
     if (order.status === 'payment_submitted') return '等待商户确认收款'
     if (order.status === 'payment_issue') return '补充付款信息并重新提交'
     if (order.status === 'paid_confirmed') return '等待商户交付'
-    if (order.status === 'delivery_submitted') return order.disputeStatus === 'open' ? '等待平台处理凭证问题' : '核验凭证，或报告问题'
+    if (order.status === 'delivery_submitted') {
+      switch (normalizeApiOrderDisputeStatus(order.disputeStatus)) {
+        case 'negotiating': return '继续协商订单问题'
+        case 'open': return '等待平台处理凭证问题'
+        case 'awaiting_fulfillment': return '等待裁决要求履行'
+        case 'fulfillment_confirmation': return '确认履行结果'
+        default: return '核验凭证，或报告问题'
+      }
+    }
     if (order.status === 'completed') return order.completionSource === 'auto_completed' ? '订单已自动完成' : '凭证已确认可用'
     if (order.status === 'cancelled') return '查看取消原因'
   }
@@ -5855,25 +5867,25 @@ export async function confirmApiOrderComplete(id: string, version: number) {
   return updateApiOrder(id, order => {
     if (order.version !== version) throw new Error('订单已更新，请刷新后重试。')
     if (order.status !== 'delivery_submitted') throw new Error('只有待核验凭证的订单可以确认可用。')
-    if (order.disputeStatus === 'open') throw new Error('订单问题正在处理中，暂时不能确认凭证可用。')
+		if (isApiOrderDisputeActive(order.disputeStatus)) throw new Error('订单问题正在处理中，暂时不能确认凭证可用。')
     order.status = 'completed'
     order.completionSource = 'buyer_confirmed'
     order.completedAt = nowText()
   })
 }
 
-export async function openApiOrderDispute(id: string, reason: string, version: number, perspective: 'buyer' | 'merchant') {
-  if (shouldUseRealBackend()) return backendOpenAPIOrderDispute(id, reason, version, perspective)
+export async function openApiOrderDispute(id: string, input: OpenApiOrderDisputeInput, version: number, perspective: 'buyer' | 'merchant') {
+  if (shouldUseRealBackend()) return backendOpenAPIOrderDispute(id, input, version, perspective)
   await wait()
   return updateApiOrder(id, order => {
     if (order.version !== version) throw new Error('订单已更新，请刷新后重试。')
     if (perspective === 'buyer' && order.buyerId !== currentBuyerId) throw new Error('无权操作该订单。')
     if (perspective === 'merchant' && order.sellerId !== currentMerchantId) throw new Error('无权操作该订单。')
-    if (order.status === 'cancelled' || order.status === 'completed' || order.disputeStatus === 'open') {
+		if (order.status === 'cancelled' || order.status === 'completed' || normalizeApiOrderDisputeStatus(order.disputeStatus) !== 'none') {
       throw new Error('当前订单不能再次申请平台介入。')
     }
-    if (!reason.trim()) throw new Error('请填写订单问题说明。')
-    order.disputeStatus = 'open'
+    if (!input.reason.trim()) throw new Error('请填写订单问题说明。')
+    order.disputeStatus = 'negotiating'
   })
 }
 

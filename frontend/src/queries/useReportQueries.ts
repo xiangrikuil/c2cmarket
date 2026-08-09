@@ -1,10 +1,18 @@
+import { computed, type Ref } from 'vue'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/vue-query'
 import {
+  backendAppendDisputeMessage,
+  backendConfirmDisputeSettlementProposal,
   backendCreateAppeal,
+  backendCreateDisputeSettlementProposal,
+  backendEscalateDispute,
   backendMyAppeals,
+  backendMyDispute,
   backendMyDisputes,
   backendMyReports,
   backendSubmitInfoSupplement,
+  backendRejectDisputeSettlementProposal,
+  type CreateDisputeSettlementProposalRequest,
   type CreateAppealRequest,
   type SubmitInfoSupplementRequest,
 } from '@/lib/reportBackend'
@@ -12,6 +20,7 @@ import {
 export const myReportsQueryKey = ['my-reports'] as const
 export const myDisputesQueryKey = ['my-disputes'] as const
 export const myAppealsQueryKey = ['my-appeals'] as const
+export const myDisputeQueryKey = (id: string) => ['my-dispute', id] as const
 
 export function useMyReportsQuery() {
   return useQuery({
@@ -27,6 +36,47 @@ export function useMyDisputesQuery() {
     queryFn: backendMyDisputes,
     refetchOnMount: 'always',
   })
+}
+
+export function useMyDisputeQuery(id: Ref<string>) {
+  return useQuery({
+    queryKey: computed(() => myDisputeQueryKey(id.value)),
+    queryFn: () => backendMyDispute(id.value),
+    enabled: computed(() => Boolean(id.value)),
+    refetchOnMount: 'always',
+  })
+}
+
+function useDisputeMutation<T>(mutationFn: (input: T) => ReturnType<typeof backendMyDispute>) {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn,
+    onSuccess(data) {
+      queryClient.setQueryData(myDisputeQueryKey(data.id), data)
+      queryClient.invalidateQueries({ queryKey: myDisputesQueryKey })
+      queryClient.invalidateQueries({ queryKey: ['api-orders'] })
+    },
+  })
+}
+
+export function useAppendDisputeMessageMutation() {
+  return useDisputeMutation(({ disputeId, body }: { disputeId: string, body: string }) => backendAppendDisputeMessage(disputeId, body))
+}
+
+export function useCreateDisputeSettlementProposalMutation() {
+  return useDisputeMutation(({ disputeId, input }: { disputeId: string, input: CreateDisputeSettlementProposalRequest }) => backendCreateDisputeSettlementProposal(disputeId, input))
+}
+
+export function useConfirmDisputeSettlementProposalMutation() {
+  return useDisputeMutation(({ disputeId, proposalId }: { disputeId: string, proposalId: string }) => backendConfirmDisputeSettlementProposal(disputeId, proposalId))
+}
+
+export function useRejectDisputeSettlementProposalMutation() {
+  return useDisputeMutation(({ disputeId, proposalId, reason }: { disputeId: string, proposalId: string, reason: string }) => backendRejectDisputeSettlementProposal(disputeId, proposalId, reason))
+}
+
+export function useEscalateDisputeMutation() {
+  return useDisputeMutation(({ disputeId, reason }: { disputeId: string, reason: string }) => backendEscalateDispute(disputeId, reason))
 }
 
 export function useMyAppealsQuery() {

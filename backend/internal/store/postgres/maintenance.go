@@ -245,7 +245,7 @@ func destroyCompletedAPIOrderCredentialsInTx(ctx context.Context, tx pgx.Tx, now
 			    FROM dispute_cases dispute
 			    WHERE dispute.target_type = 'api_order'
 			      AND dispute.target_id = order_row.id::text
-			      AND dispute.status IN ('open', 'waiting_info')
+			      AND dispute.status IN ('negotiating', 'open', 'waiting_info')
 			  )
 			  AND NOT EXISTS (
 			    SELECT 1
@@ -294,7 +294,7 @@ func destroyCompletedAPIOrderCredentialsInTx(ctx context.Context, tx pgx.Tx, now
 			    FROM dispute_cases dispute
 			    WHERE dispute.target_type = 'api_order'
 			      AND dispute.target_id = locked_candidates.api_order_id::text
-			      AND dispute.status IN ('open', 'waiting_info')
+			      AND dispute.status IN ('negotiating', 'open', 'waiting_info')
 			  )
 			  AND NOT EXISTS (
 			    SELECT 1
@@ -409,7 +409,7 @@ func (s *Store) materializeAPIOrdersForMaintenanceInTx(ctx context.Context, tx p
 		WHERE (status = 'pending_payment' AND payment_expires_at <= $1)
 		   OR (
 		     status = 'delivery_submitted'
-		     AND dispute_status <> 'open'
+		     AND dispute_status IN ('none', 'closed')
 		     AND delivery_review_expires_at <= $2
 		   )
 		ORDER BY COALESCE(delivery_review_expires_at, payment_expires_at), id

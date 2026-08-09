@@ -187,6 +187,7 @@ func newServiceWithOptions(now func() time.Time, repositories Repositories, emai
 	s.apiIntent = apiintent.NewManager(repositories.APIPurchaseIntent, s.apiMarket, s.contactService, s.idempotencyService, now)
 	s.reportService = report.NewServiceWithNotifications(repositories.Report, s.idempotencyService, s.notification, now)
 	s.apiOrder = apiorder.NewService(repositories.APIOrder, s.apiIntent, s.apiMarket, s.reportService, s.idempotencyService, now)
+	s.reportService.SetDisputeProjectionCloser(s.apiOrder)
 	s.apiPromotion = apipromotion.NewService(repositories.APIPromotion, s.idempotencyService, now)
 	s.apiQuota = apiquota.NewManager(repositories.APIQuota, now)
 	s.apiIntent.SetOrderExistenceChecker(s.apiOrder)
@@ -1793,6 +1794,14 @@ func (s *Service) SubmitInfoSupplementWithIdempotency(ctx context.Context, user 
 
 func (s *Service) MyDisputes(ctx context.Context, user User) ([]report.DisputeCase, *domain.AppError) {
 	return s.reportService.MyDisputes(ctx, user)
+}
+
+func (s *Service) MyDispute(ctx context.Context, user User, id string) (report.DisputeCase, *domain.AppError) {
+	return s.reportService.MyDispute(ctx, user, id)
+}
+
+func (s *Service) DisputeParticipantActionWithIdempotency(ctx context.Context, user User, routeKey, key, requestHash string, input report.DisputeParticipantActionInput, buildCompletion report.DisputeParticipantCompletionBuilder) (IdempotencyCompletion, *domain.AppError) {
+	return s.reportService.DisputeParticipantActionWithIdempotency(ctx, user, routeKey, key, requestHash, input, buildCompletion)
 }
 
 func (s *Service) AdminDisputes(ctx context.Context, user User) ([]report.DisputeCase, *domain.AppError) {

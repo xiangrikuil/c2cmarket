@@ -246,12 +246,12 @@ func loadAdminUserDetail(ctx context.Context, q queryer, userID string, now time
 		       (
 		         SELECT count(*)::int FROM api_orders order_row
 		         WHERE (order_row.buyer_user_id = u.id OR order_row.seller_user_id = u.id)
-		           AND (order_row.status NOT IN ('completed', 'cancelled') OR order_row.dispute_status = 'open')
+		           AND (order_row.status NOT IN ('completed', 'cancelled') OR order_row.dispute_status NOT IN ('none', 'closed'))
 		       ) AS open_api_orders,
 		       (
 		         SELECT count(*)::int FROM dispute_cases dispute
 		         WHERE (dispute.primary_user_id = u.id OR dispute.counterparty_user_id = u.id)
-		           AND dispute.status IN ('open', 'waiting_info')
+		           AND dispute.status IN ('negotiating', 'open', 'waiting_info')
 		       ) AS open_disputes
 		FROM users u
 		LEFT JOIN linux_do_bindings binding ON binding.user_id = u.id

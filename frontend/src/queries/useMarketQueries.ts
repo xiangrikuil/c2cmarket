@@ -137,6 +137,7 @@ import {
   type UpdateMyProfileRequest,
   type UserProfile,
 } from '@/lib/api'
+import type { OpenApiOrderDisputeInput } from '@/lib/apiOrderDispute'
 import { myProfileQueryKey } from '@/queries/useAppShellQueries'
 
 export { useHomeMarket } from '@/queries/useHomeMarketQuery'
@@ -854,7 +855,7 @@ export function useConfirmApiOrderCompleteMutation() {
 export function useOpenApiOrderDisputeMutation() {
   const queryClient = useQueryClient()
   return useMutation({
-    mutationFn: ({ id, reason, version, perspective }: { id: string, reason: string, version: number, perspective: 'buyer' | 'merchant' }) => openApiOrderDispute(id, reason, version, perspective),
+    mutationFn: ({ id, input, version, perspective }: { id: string, input: OpenApiOrderDisputeInput, version: number, perspective: 'buyer' | 'merchant' }) => openApiOrderDispute(id, input, version, perspective),
     onSuccess(data, variables) {
       queryClient.setQueryData(['api-orders', variables.perspective, data.id], data)
       invalidateApiOrderQueries(queryClient, data.id)

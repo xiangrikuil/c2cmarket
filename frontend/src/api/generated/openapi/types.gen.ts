@@ -2533,6 +2533,19 @@ export type ApiOrderReasonRequest = {
     reason: string;
 };
 
+export type ApiOrderDisputeRequest = {
+    issueCode: 'service_unavailable' | 'description_mismatch' | 'quota_shortage' | 'expired_early' | 'not_delivered' | 'refund_not_received' | 'payment_dispute' | 'other';
+    requestedResolution: 'full_refund' | 'partial_refund' | 'continue_fulfillment' | 'other';
+    /**
+     * Required only for partial_refund and must not exceed the API order amount.
+     */
+    requestedAmountCny?: string | null;
+    /**
+     * Immutable credential-free initial message.
+     */
+    reason: string;
+};
+
 /**
  * API service order for either a free-amount API service purchase or a limited fixed quota offer. C2CMarket does not process payments, provide escrow, or proxy API calls. After the seller explicitly confirms off-platform payment, the seller may submit one buyer-specific credential or a previously encrypted buyer-specific credential may be bound to the order. Buyer/seller detail and action responses may include it; lists, admin summaries, public responses, events, notifications, and logs must not.
  */
@@ -2556,7 +2569,10 @@ export type ApiOrder = {
     buyerReputation: ReputationSummary | null;
     sellerReputation: ReputationSummary | null;
     status: 'pending_payment' | 'payment_submitted' | 'payment_issue' | 'paid_confirmed' | 'delivery_submitted' | 'completed' | 'cancelled';
-    disputeStatus: 'none' | 'open' | 'closed';
+    /**
+     * Order projection of the linked dispute phase. The order fulfillment status remains independent.
+     */
+    disputeStatus: 'none' | 'negotiating' | 'open' | 'awaiting_fulfillment' | 'fulfillment_confirmation' | 'closed';
     disputeCaseId?: string;
     serviceTitleSnapshot: string;
     serviceVersionSnapshot: number;
@@ -3202,6 +3218,56 @@ export type InfoSupplementRequest = {
     body: string;
 };
 
+export type DisputeMessageRequest = {
+    /**
+     * Immutable credential-free plain text.
+     */
+    body: string;
+};
+
+export type DisputeSettlementProposalRequest = {
+    resolution: 'full_refund' | 'partial_refund' | 'continue_fulfillment' | 'other';
+    /**
+     * Required only for partial_refund and must not exceed the API order amount.
+     */
+    amountCny?: string | null;
+    /**
+     * Exact credential-free terms that the counterparty will confirm or reject.
+     */
+    terms: string;
+};
+
+export type DisputeParticipantReasonRequest = {
+    reason: string;
+};
+
+export type DisputeEscalationRequest = {
+    reason: string;
+};
+
+export type DisputeMessage = {
+    id: string;
+    senderUserId: string;
+    body: string;
+    createdAt: string;
+};
+
+export type DisputeSettlementProposal = {
+    id: string;
+    proposedByUserId: string;
+    resolution: 'full_refund' | 'partial_refund' | 'continue_fulfillment' | 'other';
+    amountCny?: DecimalString;
+    terms: string;
+    status: 'pending' | 'accepted' | 'rejected' | 'superseded';
+    acceptedByUserId?: string;
+    acceptedAt?: string | null;
+    rejectedByUserId?: string;
+    rejectedAt?: string | null;
+    createdAt: string;
+    updatedAt: string;
+    version: number;
+};
+
 export type DisputeCase = {
     id: string;
     reportId?: string;
@@ -3232,7 +3298,10 @@ export type DisputeCase = {
      * Admin response only.
      */
     subjectName?: string;
-    status: 'open' | 'waiting_info' | 'resolved' | 'closed';
+    status: 'negotiating' | 'open' | 'waiting_info' | 'resolved' | 'closed';
+    issueCode?: 'service_unavailable' | 'description_mismatch' | 'quota_shortage' | 'expired_early' | 'not_delivered' | 'refund_not_received' | 'payment_dispute' | 'other';
+    requestedResolution?: 'full_refund' | 'partial_refund' | 'continue_fulfillment' | 'other';
+    requestedAmountCny?: DecimalString;
     publicSummary: string;
     publicResultCode: 'no_action' | 'contact_invalid' | 'impersonation_confirmed' | 'description_mismatch' | 'rule_or_seat_issue' | 'api_delivery_issue' | 'other_resolved';
     publicResult: string;
@@ -3263,6 +3332,8 @@ export type DisputeCase = {
      * Admin detail response only. Immutable user supplements ordered by submission time.
      */
     readonly supplements?: Array<ModerationInfoSupplement>;
+    readonly messages?: Array<DisputeMessage>;
+    readonly settlementProposals?: Array<DisputeSettlementProposal>;
     createdAt: string;
     updatedAt: string;
     version: number;
@@ -3629,9 +3700,20 @@ export type SelfDispute = {
     targetLabel: string;
     primaryUsername: string;
     primaryDisplayName: string;
+    /**
+     * Present on authorized detail and mutation responses for message attribution.
+     */
+    primaryUserId?: string;
     counterpartyUsername: string;
     counterpartyName: string;
-    status: 'open' | 'waiting_info' | 'resolved' | 'closed';
+    /**
+     * Present on authorized detail and mutation responses for message attribution.
+     */
+    counterpartyUserId?: string;
+    status: 'negotiating' | 'open' | 'waiting_info' | 'resolved' | 'closed';
+    issueCode?: 'service_unavailable' | 'description_mismatch' | 'quota_shortage' | 'expired_early' | 'not_delivered' | 'refund_not_received' | 'payment_dispute' | 'other';
+    requestedResolution?: 'full_refund' | 'partial_refund' | 'continue_fulfillment' | 'other';
+    requestedAmountCny?: DecimalString;
     publicSummary: string;
     publicResultCode: 'no_action' | 'contact_invalid' | 'impersonation_confirmed' | 'description_mismatch' | 'rule_or_seat_issue' | 'api_delivery_issue' | 'other_resolved';
     publicResult: string;
@@ -3647,6 +3729,14 @@ export type SelfDispute = {
      * Present only while canSupplement is true.
      */
     openInfoRequestId?: string;
+    /**
+     * Present on authorized detail and mutation responses.
+     */
+    readonly messages?: Array<DisputeMessage>;
+    /**
+     * Newest-first proposal history on authorized detail and mutation responses.
+     */
+    readonly settlementProposals?: Array<DisputeSettlementProposal>;
 };
 
 export type SelfDisputeList = {
@@ -4233,7 +4323,10 @@ export type DisputeCaseWritable = {
      * Admin response only.
      */
     subjectName?: string;
-    status: 'open' | 'waiting_info' | 'resolved' | 'closed';
+    status: 'negotiating' | 'open' | 'waiting_info' | 'resolved' | 'closed';
+    issueCode?: 'service_unavailable' | 'description_mismatch' | 'quota_shortage' | 'expired_early' | 'not_delivered' | 'refund_not_received' | 'payment_dispute' | 'other';
+    requestedResolution?: 'full_refund' | 'partial_refund' | 'continue_fulfillment' | 'other';
+    requestedAmountCny?: DecimalString;
     publicSummary: string;
     publicResultCode: 'no_action' | 'contact_invalid' | 'impersonation_confirmed' | 'description_mismatch' | 'rule_or_seat_issue' | 'api_delivery_issue' | 'other_resolved';
     publicResult: string;
@@ -4256,6 +4349,58 @@ export type DisputeCaseWritable = {
 export type DisputeListWritable = {
     items: Array<DisputeCaseWritable>;
     nextCursor?: string | null;
+};
+
+export type SelfDisputeWritable = {
+    id: string;
+    reportId?: string;
+    targetType: 'contact_snapshot' | 'public_user' | 'carpool_application' | 'carpool_membership' | 'api_purchase_intent' | 'api_order';
+    targetId: string;
+    targetLabel: string;
+    primaryUsername: string;
+    primaryDisplayName: string;
+    /**
+     * Present on authorized detail and mutation responses for message attribution.
+     */
+    primaryUserId?: string;
+    counterpartyUsername: string;
+    counterpartyName: string;
+    /**
+     * Present on authorized detail and mutation responses for message attribution.
+     */
+    counterpartyUserId?: string;
+    status: 'negotiating' | 'open' | 'waiting_info' | 'resolved' | 'closed';
+    issueCode?: 'service_unavailable' | 'description_mismatch' | 'quota_shortage' | 'expired_early' | 'not_delivered' | 'refund_not_received' | 'payment_dispute' | 'other';
+    requestedResolution?: 'full_refund' | 'partial_refund' | 'continue_fulfillment' | 'other';
+    requestedAmountCny?: DecimalString;
+    publicSummary: string;
+    publicResultCode: 'no_action' | 'contact_invalid' | 'impersonation_confirmed' | 'description_mismatch' | 'rule_or_seat_issue' | 'api_delivery_issue' | 'other_resolved';
+    publicResult: string;
+    openedAt: string;
+    resolvedAt?: string | null;
+    closedAt?: string | null;
+    createdAt: string;
+    updatedAt: string;
+    version: number;
+    canAppeal: boolean;
+    canSupplement: boolean;
+    /**
+     * Present only while canSupplement is true.
+     */
+    openInfoRequestId?: string;
+};
+
+export type SelfDisputeListWritable = {
+    items: Array<SelfDisputeWritable>;
+    nextCursor?: string | null;
+};
+
+/**
+ * Self-safe supplement result. Administrator reasons, identities, target snapshots, and stored supplements are never returned.
+ */
+export type SelfModerationSupplementMutationWritable = {
+    report?: SelfReport;
+    dispute?: SelfDisputeWritable;
 };
 
 export type AdminReportMutationWritable = {
@@ -6615,6 +6760,245 @@ export type ListMyDisputesResponses = {
 
 export type ListMyDisputesResponse = ListMyDisputesResponses[keyof ListMyDisputesResponses];
 
+export type GetMyDisputeData = {
+    body?: never;
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/api/v1/me/disputes/{id}';
+};
+
+export type GetMyDisputeErrors = {
+    /**
+     * Problem Details error.
+     */
+    401: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    404: ProblemDetails;
+};
+
+export type GetMyDisputeError = GetMyDisputeErrors[keyof GetMyDisputeErrors];
+
+export type GetMyDisputeResponses = {
+    /**
+     * Participant-safe dispute detail.
+     */
+    200: SelfDispute;
+};
+
+export type GetMyDisputeResponse = GetMyDisputeResponses[keyof GetMyDisputeResponses];
+
+export type AppendMyDisputeMessageData = {
+    body: DisputeMessageRequest;
+    headers: {
+        'Idempotency-Key': string;
+    };
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/api/v1/me/disputes/{id}/messages';
+};
+
+export type AppendMyDisputeMessageErrors = {
+    /**
+     * Problem Details error.
+     */
+    401: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    404: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    409: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    422: ProblemDetails;
+};
+
+export type AppendMyDisputeMessageError = AppendMyDisputeMessageErrors[keyof AppendMyDisputeMessageErrors];
+
+export type AppendMyDisputeMessageResponses = {
+    /**
+     * Updated dispute detail.
+     */
+    200: SelfDispute;
+};
+
+export type AppendMyDisputeMessageResponse = AppendMyDisputeMessageResponses[keyof AppendMyDisputeMessageResponses];
+
+export type CreateMyDisputeSettlementProposalData = {
+    body: DisputeSettlementProposalRequest;
+    headers: {
+        'Idempotency-Key': string;
+    };
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/api/v1/me/disputes/{id}/settlement-proposals';
+};
+
+export type CreateMyDisputeSettlementProposalErrors = {
+    /**
+     * Problem Details error.
+     */
+    401: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    404: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    409: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    422: ProblemDetails;
+};
+
+export type CreateMyDisputeSettlementProposalError = CreateMyDisputeSettlementProposalErrors[keyof CreateMyDisputeSettlementProposalErrors];
+
+export type CreateMyDisputeSettlementProposalResponses = {
+    /**
+     * Updated dispute detail.
+     */
+    200: SelfDispute;
+};
+
+export type CreateMyDisputeSettlementProposalResponse = CreateMyDisputeSettlementProposalResponses[keyof CreateMyDisputeSettlementProposalResponses];
+
+export type ConfirmMyDisputeSettlementProposalData = {
+    body: EmptyRequestWritable;
+    headers: {
+        'Idempotency-Key': string;
+    };
+    path: {
+        id: string;
+        proposalId: string;
+    };
+    query?: never;
+    url: '/api/v1/me/disputes/{id}/settlement-proposals/{proposalId}/confirm';
+};
+
+export type ConfirmMyDisputeSettlementProposalErrors = {
+    /**
+     * Problem Details error.
+     */
+    401: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    404: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    409: ProblemDetails;
+};
+
+export type ConfirmMyDisputeSettlementProposalError = ConfirmMyDisputeSettlementProposalErrors[keyof ConfirmMyDisputeSettlementProposalErrors];
+
+export type ConfirmMyDisputeSettlementProposalResponses = {
+    /**
+     * Dispute closed after bilateral confirmation.
+     */
+    200: SelfDispute;
+};
+
+export type ConfirmMyDisputeSettlementProposalResponse = ConfirmMyDisputeSettlementProposalResponses[keyof ConfirmMyDisputeSettlementProposalResponses];
+
+export type RejectMyDisputeSettlementProposalData = {
+    body: DisputeParticipantReasonRequest;
+    headers: {
+        'Idempotency-Key': string;
+    };
+    path: {
+        id: string;
+        proposalId: string;
+    };
+    query?: never;
+    url: '/api/v1/me/disputes/{id}/settlement-proposals/{proposalId}/reject';
+};
+
+export type RejectMyDisputeSettlementProposalErrors = {
+    /**
+     * Problem Details error.
+     */
+    401: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    404: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    409: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    422: ProblemDetails;
+};
+
+export type RejectMyDisputeSettlementProposalError = RejectMyDisputeSettlementProposalErrors[keyof RejectMyDisputeSettlementProposalErrors];
+
+export type RejectMyDisputeSettlementProposalResponses = {
+    /**
+     * Proposal rejected; dispute remains negotiating.
+     */
+    200: SelfDispute;
+};
+
+export type RejectMyDisputeSettlementProposalResponse = RejectMyDisputeSettlementProposalResponses[keyof RejectMyDisputeSettlementProposalResponses];
+
+export type EscalateMyDisputeData = {
+    body: DisputeEscalationRequest;
+    headers: {
+        'Idempotency-Key': string;
+    };
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/api/v1/me/disputes/{id}/escalate';
+};
+
+export type EscalateMyDisputeErrors = {
+    /**
+     * Problem Details error.
+     */
+    401: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    404: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    409: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    422: ProblemDetails;
+};
+
+export type EscalateMyDisputeError = EscalateMyDisputeErrors[keyof EscalateMyDisputeErrors];
+
+export type EscalateMyDisputeResponses = {
+    /**
+     * Dispute moved to platform review.
+     */
+    200: SelfDispute;
+};
+
+export type EscalateMyDisputeResponse = EscalateMyDisputeResponses[keyof EscalateMyDisputeResponses];
+
 export type SubmitDisputeInfoSupplementData = {
     body: InfoSupplementRequest;
     headers: {
@@ -7346,7 +7730,7 @@ export type ConfirmMyApiOrderCompleteResponses = {
 export type ConfirmMyApiOrderCompleteResponse = ConfirmMyApiOrderCompleteResponses[keyof ConfirmMyApiOrderCompleteResponses];
 
 export type OpenMyApiOrderDisputeData = {
-    body: ApiOrderReasonRequest;
+    body: ApiOrderDisputeRequest;
     headers: {
         'If-Match': string;
         'Idempotency-Key': string;
@@ -9583,7 +9967,7 @@ export type SubmitOwnerApiOrderDeliveryResponses = {
 export type SubmitOwnerApiOrderDeliveryResponse = SubmitOwnerApiOrderDeliveryResponses[keyof SubmitOwnerApiOrderDeliveryResponses];
 
 export type OpenOwnerApiOrderDisputeData = {
-    body: ApiOrderReasonRequest;
+    body: ApiOrderDisputeRequest;
     headers: {
         'If-Match': string;
         'Idempotency-Key': string;

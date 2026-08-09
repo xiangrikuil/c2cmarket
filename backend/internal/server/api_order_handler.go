@@ -37,6 +37,13 @@ type apiOrderReasonRequest struct {
 	Reason string `json:"reason"`
 }
 
+type apiOrderDisputeRequest struct {
+	IssueCode           string `json:"issueCode"`
+	RequestedResolution string `json:"requestedResolution"`
+	RequestedAmountCNY  string `json:"requestedAmountCny"`
+	Reason              string `json:"reason"`
+}
+
 type apiOrderPaymentIssueRequest struct {
 	Reason string `json:"reason"`
 	Note   string `json:"note"`
@@ -407,9 +414,17 @@ func (s *Server) decodeAPIOrderAction(r *http.Request, action string) ([]byte, a
 	case "report-payment-issue":
 		body, req, appErr := decodeStrictJSON[apiOrderPaymentIssueRequest](r)
 		return body, apiorder.ActionInput{PaymentIssueReason: req.Reason, PaymentIssueNote: req.Note}, appErr
-	case "cancel", "dispute":
+	case "cancel":
 		body, req, appErr := decodeStrictJSON[apiOrderReasonRequest](r)
 		return body, apiorder.ActionInput{Reason: req.Reason}, appErr
+	case "dispute":
+		body, req, appErr := decodeStrictJSON[apiOrderDisputeRequest](r)
+		return body, apiorder.ActionInput{
+			IssueCode:           req.IssueCode,
+			RequestedResolution: req.RequestedResolution,
+			RequestedAmountCNY:  req.RequestedAmountCNY,
+			Reason:              req.Reason,
+		}, appErr
 	default:
 		body, _, appErr := decodeStrictJSON[emptyRequest](r)
 		return body, apiorder.ActionInput{}, appErr

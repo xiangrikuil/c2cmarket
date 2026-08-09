@@ -253,6 +253,8 @@ type Service interface {
 	AdminReportActionWithIdempotency(ctx context.Context, user auth.User, routeKey, key, requestHash string, input report.AdminActionInput, buildCompletion report.AdminCompletionBuilder) (idempotency.Completion, *domain.AppError)
 	SubmitInfoSupplementWithIdempotency(ctx context.Context, user auth.User, routeKey, key, requestHash string, input report.SupplementInput, buildCompletion report.SupplementCompletionBuilder) (idempotency.Completion, *domain.AppError)
 	MyDisputes(ctx context.Context, user auth.User) ([]report.DisputeCase, *domain.AppError)
+	MyDispute(ctx context.Context, user auth.User, id string) (report.DisputeCase, *domain.AppError)
+	DisputeParticipantActionWithIdempotency(ctx context.Context, user auth.User, routeKey, key, requestHash string, input report.DisputeParticipantActionInput, buildCompletion report.DisputeParticipantCompletionBuilder) (idempotency.Completion, *domain.AppError)
 	AdminDisputes(ctx context.Context, user auth.User) ([]report.DisputeCase, *domain.AppError)
 	AdminDispute(ctx context.Context, user auth.User, id string) (report.DisputeCase, *domain.AppError)
 	AdminDisputeActionWithIdempotency(ctx context.Context, user auth.User, routeKey, key, requestHash string, input report.AdminActionInput, buildCompletion report.AdminCompletionBuilder) (idempotency.Completion, *domain.AppError)

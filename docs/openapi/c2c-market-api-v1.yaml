@@ -1877,6 +1877,165 @@ paths:
                 $ref: "#/components/schemas/SelfDisputeList"
         "401":
           $ref: "#/components/responses/Problem"
+  /api/v1/me/disputes/{id}:
+    get:
+      operationId: getMyDispute
+      tags: [Reports]
+      summary: Read an authorized dispute with immutable negotiation history.
+      parameters:
+        - $ref: "#/components/parameters/ResourceId"
+      responses:
+        "200":
+          description: Participant-safe dispute detail.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SelfDispute"
+        "401":
+          $ref: "#/components/responses/Problem"
+        "404":
+          $ref: "#/components/responses/Problem"
+  /api/v1/me/disputes/{id}/messages:
+    post:
+      operationId: appendMyDisputeMessage
+      tags: [Reports]
+      security:
+        - sessionCookie: []
+          csrfToken: []
+      summary: Append an immutable credential-free plain-text message.
+      parameters:
+        - $ref: "#/components/parameters/ResourceId"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DisputeMessageRequest"
+      responses:
+        "200":
+          description: Updated dispute detail.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SelfDispute"
+        "401": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+        "409": { $ref: "#/components/responses/Problem" }
+        "422": { $ref: "#/components/responses/Problem" }
+  /api/v1/me/disputes/{id}/settlement-proposals:
+    post:
+      operationId: createMyDisputeSettlementProposal
+      tags: [Reports]
+      security:
+        - sessionCookie: []
+          csrfToken: []
+      summary: Propose a bilateral settlement; the creator counts as the first confirmation.
+      parameters:
+        - $ref: "#/components/parameters/ResourceId"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DisputeSettlementProposalRequest"
+      responses:
+        "200":
+          description: Updated dispute detail.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SelfDispute"
+        "401": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+        "409": { $ref: "#/components/responses/Problem" }
+        "422": { $ref: "#/components/responses/Problem" }
+  /api/v1/me/disputes/{id}/settlement-proposals/{proposalId}/confirm:
+    post:
+      operationId: confirmMyDisputeSettlementProposal
+      tags: [Reports]
+      security:
+        - sessionCookie: []
+          csrfToken: []
+      summary: Confirm the counterparty's pending proposal and close the dispute atomically.
+      parameters:
+        - $ref: "#/components/parameters/ResourceId"
+        - name: proposalId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/EmptyRequest" }
+      responses:
+        "200":
+          description: Dispute closed after bilateral confirmation.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SelfDispute" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+        "409": { $ref: "#/components/responses/Problem" }
+  /api/v1/me/disputes/{id}/settlement-proposals/{proposalId}/reject:
+    post:
+      operationId: rejectMyDisputeSettlementProposal
+      tags: [Reports]
+      security:
+        - sessionCookie: []
+          csrfToken: []
+      summary: Reject the counterparty's proposal without deciding that the original claim is invalid.
+      parameters:
+        - $ref: "#/components/parameters/ResourceId"
+        - name: proposalId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/DisputeParticipantReasonRequest" }
+      responses:
+        "200":
+          description: Proposal rejected; dispute remains negotiating.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SelfDispute" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+        "409": { $ref: "#/components/responses/Problem" }
+        "422": { $ref: "#/components/responses/Problem" }
+  /api/v1/me/disputes/{id}/escalate:
+    post:
+      operationId: escalateMyDispute
+      tags: [Reports]
+      security:
+        - sessionCookie: []
+          csrfToken: []
+      summary: End participant negotiation and request platform review.
+      parameters:
+        - $ref: "#/components/parameters/ResourceId"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/DisputeEscalationRequest" }
+      responses:
+        "200":
+          description: Dispute moved to platform review.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SelfDispute" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+        "409": { $ref: "#/components/responses/Problem" }
+        "422": { $ref: "#/components/responses/Problem" }
   /api/v1/me/disputes/{id}/supplements:
     post:
       operationId: submitDisputeInfoSupplement
@@ -2455,7 +2614,7 @@ paths:
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/APIOrderReasonRequest"
+              $ref: "#/components/schemas/APIOrderDisputeRequest"
       responses:
         "200":
           description: API order dispute case opened and linked to the order.
@@ -4210,7 +4369,7 @@ paths:
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/APIOrderReasonRequest"
+              $ref: "#/components/schemas/APIOrderDisputeRequest"
       responses:
         "200":
           description: API order dispute case opened by the service owner and linked to the order.
@@ -13141,6 +13300,26 @@ components:
         reason:
           type: string
           maxLength: 4000
+    APIOrderDisputeRequest:
+      type: object
+      additionalProperties: false
+      required: [issueCode, requestedResolution, reason]
+      properties:
+        issueCode:
+          type: string
+          enum: [service_unavailable, description_mismatch, quota_shortage, expired_early, not_delivered, refund_not_received, payment_dispute, other]
+        requestedResolution:
+          type: string
+          enum: [full_refund, partial_refund, continue_fulfillment, other]
+        requestedAmountCny:
+          type: [string, "null"]
+          pattern: '^[0-9]+(?:\.[0-9]{1,2})?$'
+          description: Required only for partial_refund and must not exceed the API order amount.
+        reason:
+          type: string
+          minLength: 1
+          maxLength: 500
+          description: Immutable credential-free initial message.
     APIOrder:
       type: object
       additionalProperties: false
@@ -13206,7 +13385,8 @@ components:
           enum: [pending_payment, payment_submitted, payment_issue, paid_confirmed, delivery_submitted, completed, cancelled]
         disputeStatus:
           type: string
-          enum: [none, open, closed]
+          description: Order projection of the linked dispute phase. The order fulfillment status remains independent.
+          enum: [none, negotiating, open, awaiting_fulfillment, fulfillment_confirmation, closed]
         disputeCaseId:
           type: string
           format: uuid
@@ -14512,6 +14692,81 @@ components:
           minLength: 4
           maxLength: 1200
           description: Credential-free plain text. Stored as an immutable supplement and never exposed on public endpoints.
+    DisputeMessageRequest:
+      type: object
+      additionalProperties: false
+      required: [body]
+      properties:
+        body:
+          type: string
+          minLength: 1
+          maxLength: 2000
+          description: Immutable credential-free plain text.
+    DisputeSettlementProposalRequest:
+      type: object
+      additionalProperties: false
+      required: [resolution, terms]
+      properties:
+        resolution:
+          type: string
+          enum: [full_refund, partial_refund, continue_fulfillment, other]
+        amountCny:
+          type: [string, "null"]
+          pattern: '^[0-9]+(?:\.[0-9]{1,2})?$'
+          description: Required only for partial_refund and must not exceed the API order amount.
+        terms:
+          type: string
+          minLength: 1
+          maxLength: 2000
+          description: Exact credential-free terms that the counterparty will confirm or reject.
+    DisputeParticipantReasonRequest:
+      type: object
+      additionalProperties: false
+      required: [reason]
+      properties:
+        reason:
+          type: string
+          maxLength: 500
+    DisputeEscalationRequest:
+      type: object
+      additionalProperties: false
+      required: [reason]
+      properties:
+        reason:
+          type: string
+          minLength: 2
+          maxLength: 500
+    DisputeMessage:
+      type: object
+      additionalProperties: false
+      required: [id, senderUserId, body, createdAt]
+      properties:
+        id: { type: string, format: uuid }
+        senderUserId: { type: string, format: uuid }
+        body: { type: string }
+        createdAt: { type: string, format: date-time }
+    DisputeSettlementProposal:
+      type: object
+      additionalProperties: false
+      required: [id, proposedByUserId, resolution, terms, status, createdAt, updatedAt, version]
+      properties:
+        id: { type: string, format: uuid }
+        proposedByUserId: { type: string, format: uuid }
+        resolution:
+          type: string
+          enum: [full_refund, partial_refund, continue_fulfillment, other]
+        amountCny: { $ref: "#/components/schemas/DecimalString" }
+        terms: { type: string }
+        status:
+          type: string
+          enum: [pending, accepted, rejected, superseded]
+        acceptedByUserId: { type: string, format: uuid }
+        acceptedAt: { type: [string, "null"], format: date-time }
+        rejectedByUserId: { type: string, format: uuid }
+        rejectedAt: { type: [string, "null"], format: date-time }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+        version: { type: integer }
     DisputeCase:
       type: object
       required: [id, targetType, targetId, targetLabel, primaryUsername, primaryDisplayName, counterpartyUsername, counterpartyName, status, publicSummary, publicResultCode, publicResult, openedAt, createdAt, updatedAt, version]
@@ -14557,7 +14812,15 @@ components:
           description: Admin response only.
         status:
           type: string
-          enum: [open, waiting_info, resolved, closed]
+          enum: [negotiating, open, waiting_info, resolved, closed]
+        issueCode:
+          type: string
+          enum: [service_unavailable, description_mismatch, quota_shortage, expired_early, not_delivered, refund_not_received, payment_dispute, other]
+        requestedResolution:
+          type: string
+          enum: [full_refund, partial_refund, continue_fulfillment, other]
+        requestedAmountCny:
+          $ref: "#/components/schemas/DecimalString"
         publicSummary:
           type: string
         publicResultCode:
@@ -14600,6 +14863,14 @@ components:
           description: Admin detail response only. Immutable user supplements ordered by submission time.
           items:
             $ref: "#/components/schemas/ModerationInfoSupplement"
+        messages:
+          type: array
+          readOnly: true
+          items: { $ref: "#/components/schemas/DisputeMessage" }
+        settlementProposals:
+          type: array
+          readOnly: true
+          items: { $ref: "#/components/schemas/DisputeSettlementProposal" }
         createdAt:
           type: string
           format: date-time
@@ -15344,13 +15615,29 @@ components:
           type: string
         primaryDisplayName:
           type: string
+        primaryUserId:
+          type: string
+          format: uuid
+          description: Present on authorized detail and mutation responses for message attribution.
         counterpartyUsername:
           type: string
         counterpartyName:
           type: string
+        counterpartyUserId:
+          type: string
+          format: uuid
+          description: Present on authorized detail and mutation responses for message attribution.
         status:
           type: string
-          enum: [open, waiting_info, resolved, closed]
+          enum: [negotiating, open, waiting_info, resolved, closed]
+        issueCode:
+          type: string
+          enum: [service_unavailable, description_mismatch, quota_shortage, expired_early, not_delivered, refund_not_received, payment_dispute, other]
+        requestedResolution:
+          type: string
+          enum: [full_refund, partial_refund, continue_fulfillment, other]
+        requestedAmountCny:
+          $ref: "#/components/schemas/DecimalString"
         publicSummary:
           type: string
         publicResultCode:
@@ -15383,6 +15670,16 @@ components:
           type: string
           format: uuid
           description: Present only while canSupplement is true.
+        messages:
+          type: array
+          readOnly: true
+          description: Present on authorized detail and mutation responses.
+          items: { $ref: "#/components/schemas/DisputeMessage" }
+        settlementProposals:
+          type: array
+          readOnly: true
+          description: Newest-first proposal history on authorized detail and mutation responses.
+          items: { $ref: "#/components/schemas/DisputeSettlementProposal" }
     SelfDisputeList:
       type: object
       additionalProperties: false

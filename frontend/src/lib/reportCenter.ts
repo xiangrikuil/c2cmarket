@@ -41,6 +41,7 @@ const reportStatusLabels: Record<MyReport['status'], string> = {
 }
 
 const disputeStatusLabels: Record<MyDispute['status'], string> = {
+  negotiating: '协商中',
   open: '处理中',
   waiting_info: '需要补充信息',
   resolved: '已处理',

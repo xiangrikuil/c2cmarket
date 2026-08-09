@@ -6,6 +6,7 @@ import { ArrowLeft, CheckCircle2, ChevronDown, Clock3, Copy, Eye, EyeOff, Headph
 import { toast } from 'vue-sonner'
 import ApiQuotaPolicyStrip from '@/components/api-market/ApiQuotaPolicyStrip.vue'
 import ApiPaymentMethodIcon from '@/components/api-payment/ApiPaymentMethodIcon.vue'
+import ApiOrderDisputePanel from '@/components/api-order/ApiOrderDisputePanel.vue'
 import OrderContactCard from '@/components/profile/OrderContactCard.vue'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
@@ -17,6 +18,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Stepper, StepperDescription, StepperIndicator, StepperItem, StepperSeparator, StepperTitle, StepperTrigger } from '@/components/ui/stepper'
 import { Textarea } from '@/components/ui/textarea'
 import EmptyState from '@/components/market/EmptyState.vue'
@@ -27,7 +29,10 @@ import StatusBadge from '@/components/market/StatusBadge.vue'
 import {
   apiOrderBuyerContactSnapshot,
   apiOrderMerchantContactSnapshot,
+	canOpenApiOrderDispute,
   getApiOrderDeliveryKindLabel,
+	getApiOrderDisputeStatusDescription,
+	getApiOrderDisputeStatusLabel,
   getApiOrderDisplayStatus,
   getApiOrderEventLabel,
   getApiOrderEvents,
@@ -38,6 +43,7 @@ import {
   getApiQuotaSaleModeLabel,
   getApiTTFTBandLabel,
   getApiUsageVisibilityLabel,
+	isApiOrderDisputeActive,
   readApiOrderPaymentInstructions,
   type ApiOrderDeliveryKind,
   type ApiOrderPaymentIssueReason,
@@ -52,6 +58,12 @@ import {
   orderCountdown,
 } from '@/lib/apiOrderUi'
 import { apiPaymentMethodLabels, apiPaymentMethodRequiresQrCode } from '@/lib/apiPaymentSettings'
+import {
+  apiOrderDisputeIssueLabels,
+  apiOrderDisputeResolutionLabels,
+  type ApiOrderDisputeIssueCode,
+  type ApiOrderDisputeResolution,
+} from '@/lib/apiOrderDispute'
 import { formatDecimal } from '@/lib/decimal'
 import { functionalMotion } from '@/lib/motion'
 import {
@@ -94,6 +106,9 @@ const paymentIssueReason = ref<ApiOrderPaymentIssueReason | ''>('')
 const paymentIssueNote = ref('')
 const paymentIssueResponseOpen = ref(false)
 const disputeDialogOpen = ref(false)
+const disputeIssueCode = ref<ApiOrderDisputeIssueCode>('service_unavailable')
+const disputeRequestedResolution = ref<ApiOrderDisputeResolution>('full_refund')
+const disputeRequestedAmount = ref('')
 const disputeReason = ref('')
 const completionConfirmOpen = ref(false)
 const credentialProblemOpen = ref(false)
@@ -125,13 +140,22 @@ const canResubmitPayment = computed(() => !isMerchantView.value && order.value?.
 const canConfirmPayment = computed(() => isMerchantView.value && order.value?.status === 'payment_submitted')
 const canReportPaymentIssue = computed(() => isMerchantView.value && order.value?.status === 'payment_submitted')
 const canSubmitDelivery = computed(() => isMerchantView.value && order.value?.status === 'paid_confirmed' && !order.value.deliveryCredential)
-const canConfirmComplete = computed(() => !isMerchantView.value && order.value?.status === 'delivery_submitted' && order.value.disputeStatus !== 'open')
+const canConfirmComplete = computed(() => !isMerchantView.value && order.value?.status === 'delivery_submitted' && !isApiOrderDisputeActive(order.value.disputeStatus))
 const canReportCredentialProblem = computed(() => canConfirmComplete.value)
 const canOpenDispute = computed(() => Boolean(
   order.value
   && order.value.status !== 'cancelled'
   && order.value.status !== 'completed'
-  && order.value.disputeStatus !== 'open',
+  && canOpenApiOrderDispute(order.value.disputeStatus),
+))
+const showDisputeStatus = computed(() => Boolean(order.value && (order.value.disputeStatus ?? 'none') !== 'none'))
+const disputeViewerUserId = computed(() => {
+  if (!order.value) return ''
+  return isMerchantView.value ? order.value.sellerId : order.value.buyerId
+})
+const canSubmitDispute = computed(() => Boolean(
+  disputeReason.value.trim()
+  && (disputeRequestedResolution.value !== 'partial_refund' || disputeRequestedAmount.value.trim()),
 ))
 const canOpenReviewCenter = computed(() => order.value?.status === 'completed')
 const counterpartyReputation = computed(() => {
@@ -298,7 +322,7 @@ const currentActionDescription = computed(() => {
   if (order.value.status === 'payment_submitted') return '付款状态已提交，等待商户核对收款。'
   if (order.value.status === 'payment_issue') return '商户发现付款信息不匹配，请补充说明后重新提交。'
   if (order.value.status === 'paid_confirmed') return '商户已确认收款，等待商户提交交付凭证。'
-  if (order.value.status === 'delivery_submitted') return order.value.disputeStatus === 'open'
+  if (order.value.status === 'delivery_submitted') return isApiOrderDisputeActive(order.value.disputeStatus)
     ? '凭证问题正在处理中，自动完成计时已暂停。'
     : '请在核验期内确认凭证可用或报告问题；未反馈时订单将自动完成。'
   if (order.value.completionSource === 'auto_completed') return '核验期内未报告问题，订单已自动完成；交付凭证仍可查看。'
@@ -384,18 +408,24 @@ async function reportPaymentIssue() {
 }
 
 async function submitOrderDispute() {
-  if (!order.value || !disputeReason.value.trim()) return
+	if (!order.value || !canSubmitDispute.value) return
   try {
     await openDisputeMutation.mutateAsync({
       id: order.value.id,
-      reason: disputeReason.value.trim(),
+      input: {
+        issueCode: disputeIssueCode.value,
+        requestedResolution: disputeRequestedResolution.value,
+        requestedAmountCny: disputeRequestedResolution.value === 'partial_refund' ? disputeRequestedAmount.value.trim() : null,
+        reason: disputeReason.value.trim(),
+      },
       version: order.value.version,
       perspective: perspective.value,
     })
     disputeDialogOpen.value = false
+    disputeRequestedAmount.value = ''
     disputeReason.value = ''
     await refresh(order.value.id)
-    toast.success('订单问题已提交，平台将介入处理。')
+    toast.success('订单纠纷已发起，双方可先协商处理。')
   } catch (error) {
     toast.error(error instanceof Error ? error.message : '提交订单问题失败。')
   }
@@ -438,7 +468,12 @@ async function submitCredentialProblem() {
   try {
     await openDisputeMutation.mutateAsync({
       id: order.value.id,
-      reason,
+      input: {
+        issueCode: 'service_unavailable',
+        requestedResolution: 'full_refund',
+        requestedAmountCny: null,
+        reason,
+      },
       version: order.value.version,
       perspective: 'buyer',
     })
@@ -581,11 +616,17 @@ onBeforeUnmount(() => {
       </AlertDescription>
     </Alert>
 
-    <Alert v-if="order.disputeStatus === 'open'" class="border-warning/35 bg-warning/10">
-      <ShieldAlert class="text-warning" />
-      <AlertTitle>平台介入中</AlertTitle>
-      <AlertDescription>该订单问题已经提交，请等待平台处理；无需重复提交。</AlertDescription>
+    <Alert v-if="showDisputeStatus" :class="isApiOrderDisputeActive(order.disputeStatus) ? 'border-warning/35 bg-warning/10' : 'border-border bg-muted/20'">
+      <ShieldAlert :class="isApiOrderDisputeActive(order.disputeStatus) ? 'text-warning' : 'text-muted-foreground'" />
+      <AlertTitle>{{ getApiOrderDisputeStatusLabel(order.disputeStatus) }}</AlertTitle>
+      <AlertDescription>{{ getApiOrderDisputeStatusDescription(order.disputeStatus) }}</AlertDescription>
     </Alert>
+
+    <ApiOrderDisputePanel
+      v-if="order.disputeCaseId"
+      :dispute-id="order.disputeCaseId"
+      :viewer-user-id="disputeViewerUserId"
+    />
 
     <Alert v-if="isMerchantView && order.status === 'delivery_submitted'" class="border-success/35 bg-success/10">
       <CheckCircle2 class="text-success" />
@@ -673,8 +714,8 @@ onBeforeUnmount(() => {
       <Clock3 />
       <AlertTitle>商户处理已超时，订单不会自动取消</AlertTitle>
       <AlertDescription class="flex flex-wrap items-center justify-between gap-3">
-        <span>你已提交付款状态，请勿重复付款。可以先联系商户，仍未解决时申请平台介入。</span>
-        <Button v-if="canOpenDispute" size="sm" variant="outline" @click="disputeDialogOpen = true"><Headphones class="h-4 w-4" />申请平台介入</Button>
+        <span>你已提交付款状态，请勿重复付款。可发起订单纠纷，与商户在订单内协商处理。</span>
+        <Button v-if="canOpenDispute" size="sm" variant="outline" @click="disputeDialogOpen = true"><Headphones class="h-4 w-4" />发起纠纷</Button>
       </AlertDescription>
     </Alert>
 
@@ -893,10 +934,10 @@ onBeforeUnmount(() => {
       </Card>
     </Collapsible>
 
-    <div class="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-border bg-muted/20 px-5 py-4">
-      <div><div class="text-sm font-medium">遇到订单问题？</div><div class="mt-1 text-xs text-muted-foreground">付款、收款或交付出现异常时，可从当前订单申请平台介入。</div></div>
-      <Button v-if="canOpenDispute" variant="outline" @click="disputeDialogOpen = true"><Headphones class="h-4 w-4" />申请平台介入</Button>
-      <Badge v-else-if="order.disputeStatus === 'open'" variant="status">平台介入中</Badge>
+    <div class="flex flex-wrap items-center justify-between gap-3 border-y border-border px-1 py-4">
+      <div><div class="text-sm font-medium">订单履约存在争议？</div><div class="mt-1 text-xs leading-5 text-muted-foreground">发起后先由双方协商；无法达成一致时再申请平台审核。</div></div>
+      <Button v-if="canOpenDispute" variant="outline" @click="disputeDialogOpen = true"><Headphones class="h-4 w-4" />发起纠纷</Button>
+      <Badge v-else-if="showDisputeStatus" variant="status">{{ getApiOrderDisputeStatusLabel(order.disputeStatus) }}</Badge>
     </div>
 
     <Dialog v-model:open="completionConfirmOpen">
@@ -952,9 +993,33 @@ onBeforeUnmount(() => {
     <Dialog v-model:open="disputeDialogOpen">
       <DialogContent class="sm:max-w-[520px]">
         <DialogHeader>
-          <DialogTitle>提交订单问题</DialogTitle>
-          <DialogDescription>请说明付款、收款或交付中遇到的问题。平台会将说明关联到当前订单。</DialogDescription>
+          <DialogTitle>发起订单纠纷</DialogTitle>
+          <DialogDescription>提交后进入双方协商；任一方可在无法达成一致时申请平台审核。</DialogDescription>
         </DialogHeader>
+        <div class="grid gap-4 sm:grid-cols-2">
+          <label class="block space-y-2">
+            <span class="text-sm font-medium">问题类型</span>
+            <Select v-model="disputeIssueCode">
+              <SelectTrigger><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem v-for="(label, value) in apiOrderDisputeIssueLabels" :key="value" :value="value">{{ label }}</SelectItem>
+              </SelectContent>
+            </Select>
+          </label>
+          <label class="block space-y-2">
+            <span class="text-sm font-medium">处理诉求</span>
+            <Select v-model="disputeRequestedResolution">
+              <SelectTrigger><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem v-for="(label, value) in apiOrderDisputeResolutionLabels" :key="value" :value="value">{{ label }}</SelectItem>
+              </SelectContent>
+            </Select>
+          </label>
+        </div>
+        <label v-if="disputeRequestedResolution === 'partial_refund'" class="block space-y-2">
+          <span class="text-sm font-medium">部分退款金额</span>
+          <Input v-model="disputeRequestedAmount" inputmode="decimal" placeholder="不超过订单金额" />
+        </label>
         <label class="block space-y-2">
           <span class="text-sm font-medium">问题说明</span>
           <Textarea v-model="disputeReason" class="min-h-32" maxlength="500" placeholder="请描述发生时间、当前状态和希望协助处理的事项。不要填写密码、API Key、验证码等敏感信息。" />
@@ -962,12 +1027,12 @@ onBeforeUnmount(() => {
         </label>
         <Alert>
           <ShieldAlert />
-          <AlertTitle>提交后进入平台处理</AlertTitle>
-          <AlertDescription>同一订单无需重复提交；处理进展请留意通知。</AlertDescription>
+          <AlertTitle>请勿提交敏感信息</AlertTitle>
+          <AlertDescription>不要填写完整 API Key、密码、验证码、Cookie 或支付账号。</AlertDescription>
         </Alert>
         <DialogFooter>
           <Button variant="outline" @click="disputeDialogOpen = false">取消</Button>
-          <Button :disabled="!disputeReason.trim() || actionBusy" @click="submitOrderDispute">{{ actionBusy ? '提交中…' : '提交订单问题' }}</Button>
+          <Button :disabled="!canSubmitDispute || actionBusy" @click="submitOrderDispute">{{ actionBusy ? '提交中…' : '发起纠纷' }}</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>

@@ -23,7 +23,7 @@ func TestAggregateReputationFactsSQLUsesTruthfulTerminalStatesAndBatchInput(t *t
 		"membership.ended_by_user_id = membership.buyer_user_id",
 		"membership.ended_by_user_id = membership.owner_user_id",
 		"event.event_type = 'api_order.cancelled'",
-		"dispute.status IN ('open', 'waiting_info')",
+		"dispute.status IN ('negotiating', 'open', 'waiting_info')",
 		"ON dispute.subject_user_id = requested.user_id",
 		"reputation_transaction_exclusions",
 		"exclusion.restored_at IS NOT NULL",

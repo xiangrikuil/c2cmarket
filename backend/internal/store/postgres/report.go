@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"c2c-market/backend/internal/domain"
+	"c2c-market/backend/internal/module/apiorder"
 	"c2c-market/backend/internal/module/idempotency"
 	"c2c-market/backend/internal/module/report"
 	"c2c-market/backend/internal/module/reputation"
@@ -351,11 +352,331 @@ func (s *Store) GetAdminDispute(ctx context.Context, id string) (report.DisputeC
 	if err != nil {
 		return report.DisputeCase{}, internalStoreError()
 	}
+	if appErr := loadAPIOrderDisputeNegotiation(ctx, s.pool, &item); appErr != nil {
+		return report.DisputeCase{}, appErr
+	}
 	item.Supplements, err = listAdminInfoSupplements(ctx, s.pool, report.InfoRequestEntityDispute, id)
 	if err != nil {
 		return report.DisputeCase{}, internalStoreError()
 	}
 	return item, nil
+}
+
+func (s *Store) GetDisputeForParticipant(ctx context.Context, id, userID string) (report.DisputeCase, *domain.AppError) {
+	item, err := scanDispute(ctx, s.pool, disputeSelectSQL+`
+		WHERE d.id = $1
+		  AND (d.primary_user_id = $2 OR d.counterparty_user_id = $2 OR d.subject_user_id = $2)
+	`, id, userID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return report.DisputeCase{}, disputeNotFound()
+	}
+	if err != nil {
+		return report.DisputeCase{}, internalStoreError()
+	}
+	if appErr := loadAPIOrderDisputeNegotiation(ctx, s.pool, &item); appErr != nil {
+		return report.DisputeCase{}, appErr
+	}
+	return item, nil
+}
+
+func (s *Store) UpdateDisputeParticipantWithIdempotency(ctx context.Context, entry idempotency.Entry, input report.DisputeParticipantActionInput, now time.Time, buildCompletion report.DisputeParticipantCompletionBuilder) (report.DisputeCase, idempotency.Completion, *domain.AppError) {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return report.DisputeCase{}, idempotency.Completion{}, internalStoreError()
+	}
+	defer rollback(ctx, tx)
+
+	existing, appErr := lockProcessingIdempotencyInTx(ctx, tx, entry)
+	if appErr != nil {
+		return report.DisputeCase{}, idempotency.Completion{}, appErr
+	}
+	item, err := scanDispute(ctx, tx, disputeSelectSQL+`
+		WHERE d.id = $1
+		  AND (d.primary_user_id = $2 OR d.counterparty_user_id = $2 OR d.subject_user_id = $2)
+		FOR UPDATE OF d
+	`, input.DisputeID, input.ActorUserID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return report.DisputeCase{}, idempotency.Completion{}, disputeNotFound()
+	}
+	if err != nil {
+		return report.DisputeCase{}, idempotency.Completion{}, internalStoreError()
+	}
+	if item.TargetType != report.TargetAPIOrder {
+		return report.DisputeCase{}, idempotency.Completion{}, disputeNotFound()
+	}
+	order, err := s.getAPIOrder(ctx, tx, item.TargetID, true, false)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return report.DisputeCase{}, idempotency.Completion{}, domain.NewError(http.StatusConflict, domain.CodeInvalidStateTransition, "Invalid state transition", "纠纷关联的 API 订单状态不一致。")
+	}
+	if err != nil {
+		return report.DisputeCase{}, idempotency.Completion{}, internalStoreError()
+	}
+	if order.DisputeCaseID != item.ID {
+		return report.DisputeCase{}, idempotency.Completion{}, domain.NewError(http.StatusConflict, domain.CodeInvalidStateTransition, "Invalid state transition", "纠纷关联的 API 订单状态不一致。")
+	}
+
+	if appErr := s.applyDisputeParticipantActionInTx(ctx, tx, &item, &order, input, now); appErr != nil {
+		return report.DisputeCase{}, idempotency.Completion{}, appErr
+	}
+	if appErr := loadAPIOrderDisputeNegotiation(ctx, tx, &item); appErr != nil {
+		return report.DisputeCase{}, idempotency.Completion{}, appErr
+	}
+	completion, appErr := buildCompletion(item)
+	if appErr != nil {
+		return report.DisputeCase{}, idempotency.Completion{}, appErr
+	}
+	if appErr := completeIdempotencyInTx(ctx, tx, existing, completion, now); appErr != nil {
+		return report.DisputeCase{}, idempotency.Completion{}, appErr
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return report.DisputeCase{}, idempotency.Completion{}, internalStoreError()
+	}
+	return item, completion, nil
+}
+
+func (s *Store) applyDisputeParticipantActionInTx(ctx context.Context, tx pgx.Tx, item *report.DisputeCase, order *apiorder.Order, input report.DisputeParticipantActionInput, now time.Time) *domain.AppError {
+	if item == nil || order == nil {
+		return internalStoreError()
+	}
+	switch input.Action {
+	case report.DisputeMessageActionAppend:
+		if item.Status != report.DisputeStatusNegotiating && item.Status != report.DisputeStatusOpen && item.Status != report.DisputeStatusWaitingInfo {
+			return participantDisputeInvalidState("当前纠纷状态不能继续留言。")
+		}
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO api_order_dispute_messages (id, dispute_case_id, sender_user_id, body, request_id, created_at)
+			VALUES ($1, $2, $3, $4, $5, $6)
+		`, uuid.NewString(), item.ID, input.ActorUserID, strings.TrimSpace(input.Body), strings.TrimSpace(input.RequestID), now); err != nil {
+			return internalStoreError()
+		}
+		if appErr := touchDisputeCaseInTx(ctx, tx, item, now); appErr != nil {
+			return appErr
+		}
+		return insertDisputeEvent(ctx, tx, "dispute", item.ID, "message_appended", input.ActorUserID, "user", "", false, input.RequestID, now)
+
+	case report.DisputeMessageActionPropose:
+		if item.Status != report.DisputeStatusNegotiating || order.DisputeStatus != apiorder.DisputeStatusNegotiating {
+			return participantDisputeInvalidState("平台已介入或纠纷已结束，不能再提交协商方案。")
+		}
+		if appErr := apiorder.ValidateRequestedDisputeAmount(input.Resolution, input.AmountCNY, order.Amount); appErr != nil {
+			return appErr
+		}
+		if _, err := tx.Exec(ctx, `
+			UPDATE api_order_dispute_settlement_proposals
+			SET status = 'superseded', updated_at = $2, version = version + 1
+			WHERE dispute_case_id = $1 AND status = 'pending'
+		`, item.ID, now); err != nil {
+			return internalStoreError()
+		}
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO api_order_dispute_settlement_proposals (
+				id, dispute_case_id, proposed_by_user_id, resolution, amount_cny,
+				terms, status, request_id, created_at, updated_at, version
+			)
+			VALUES ($1, $2, $3, $4, $5, $6, 'pending', $7, $8, $8, 1)
+		`, uuid.NewString(), item.ID, input.ActorUserID, input.Resolution, nullNumeric(input.AmountCNY), strings.TrimSpace(input.Terms), strings.TrimSpace(input.RequestID), now); err != nil {
+			return internalStoreError()
+		}
+		if appErr := touchDisputeCaseInTx(ctx, tx, item, now); appErr != nil {
+			return appErr
+		}
+		return insertDisputeEvent(ctx, tx, "dispute", item.ID, "settlement_proposed", input.ActorUserID, "user", input.Terms, true, input.RequestID, now)
+
+	case report.DisputeMessageActionConfirm, report.DisputeMessageActionReject:
+		if item.Status != report.DisputeStatusNegotiating || order.DisputeStatus != apiorder.DisputeStatusNegotiating {
+			return participantDisputeInvalidState("平台已介入或纠纷已结束，不能处理协商方案。")
+		}
+		proposal, appErr := lockSettlementProposalInTx(ctx, tx, item.ID, input.ProposalID)
+		if appErr != nil {
+			return appErr
+		}
+		if proposal.Status != report.SettlementStatusPending || proposal.ProposedByUserID == input.ActorUserID {
+			return participantDisputeInvalidState("只能由另一方确认或拒绝当前待确认方案。")
+		}
+		if input.Action == report.DisputeMessageActionReject {
+			if _, err := tx.Exec(ctx, `
+				UPDATE api_order_dispute_settlement_proposals
+				SET status = 'rejected', rejected_by_user_id = $2, rejected_at = $3, updated_at = $3, version = version + 1
+				WHERE id = $1
+			`, proposal.ID, input.ActorUserID, now); err != nil {
+				return internalStoreError()
+			}
+			if appErr := touchDisputeCaseInTx(ctx, tx, item, now); appErr != nil {
+				return appErr
+			}
+			return insertDisputeEvent(ctx, tx, "dispute", item.ID, "settlement_rejected", input.ActorUserID, "user", input.Reason, true, input.RequestID, now)
+		}
+		if _, err := tx.Exec(ctx, `
+			UPDATE api_order_dispute_settlement_proposals
+			SET status = 'accepted', accepted_by_user_id = $2, accepted_at = $3, updated_at = $3, version = version + 1
+			WHERE id = $1
+		`, proposal.ID, input.ActorUserID, now); err != nil {
+			return internalStoreError()
+		}
+		if err := tx.QueryRow(ctx, `
+			UPDATE dispute_cases
+			SET status = 'closed', public_result = '双方已确认协商方案', closed_at = $2,
+			    updated_at = $2, version = version + 1
+			WHERE id = $1
+			RETURNING status, public_result, closed_at, updated_at, version
+		`, item.ID, now).Scan(&item.Status, &item.PublicResult, &item.ClosedAt, &item.UpdatedAt, &item.Version); err != nil {
+			return internalStoreError()
+		}
+		order.DisputeStatus = apiorder.DisputeStatusClosed
+		order.UpdatedAt = now
+		order.Version++
+		if appErr := updateAPIOrderInTx(ctx, tx, *order); appErr != nil {
+			return appErr
+		}
+		if appErr := insertAPIOrderEventInTx(ctx, tx, *order, input.ActorUserID, apiorder.EventDisputeClosed, order.Status, order.Status, "双方已确认协商方案", input.RequestID, now); appErr != nil {
+			return appErr
+		}
+		return insertDisputeEvent(ctx, tx, "dispute", item.ID, "settlement_accepted", input.ActorUserID, "user", proposal.Terms, true, input.RequestID, now)
+
+	case report.DisputeMessageActionEscalate:
+		if item.Status != report.DisputeStatusNegotiating || order.DisputeStatus != apiorder.DisputeStatusNegotiating {
+			return participantDisputeInvalidState("当前纠纷已由平台处理或已经结案。")
+		}
+		if _, err := tx.Exec(ctx, `
+			UPDATE api_order_dispute_settlement_proposals
+			SET status = 'superseded', updated_at = $2, version = version + 1
+			WHERE dispute_case_id = $1 AND status = 'pending'
+		`, item.ID, now); err != nil {
+			return internalStoreError()
+		}
+		if err := tx.QueryRow(ctx, `
+			UPDATE dispute_cases
+			SET status = 'open', public_result = '平台审核中', updated_at = $2, version = version + 1
+			WHERE id = $1
+			RETURNING status, public_result, updated_at, version
+		`, item.ID, now).Scan(&item.Status, &item.PublicResult, &item.UpdatedAt, &item.Version); err != nil {
+			return internalStoreError()
+		}
+		order.DisputeStatus = apiorder.DisputeStatusOpen
+		order.UpdatedAt = now
+		order.Version++
+		if appErr := updateAPIOrderInTx(ctx, tx, *order); appErr != nil {
+			return appErr
+		}
+		if appErr := insertAPIOrderEventInTx(ctx, tx, *order, input.ActorUserID, apiorder.EventDisputeOpened, order.Status, order.Status, "已申请平台介入", input.RequestID, now); appErr != nil {
+			return appErr
+		}
+		return insertDisputeEvent(ctx, tx, "dispute", item.ID, "escalated", input.ActorUserID, "user", input.Reason, true, input.RequestID, now)
+	default:
+		return participantDisputeInvalidState("纠纷协商动作不支持。")
+	}
+}
+
+func touchDisputeCaseInTx(ctx context.Context, tx pgx.Tx, item *report.DisputeCase, now time.Time) *domain.AppError {
+	if err := tx.QueryRow(ctx, `
+		UPDATE dispute_cases
+		SET updated_at = $2, version = version + 1
+		WHERE id = $1
+		RETURNING updated_at, version
+	`, item.ID, now).Scan(&item.UpdatedAt, &item.Version); err != nil {
+		return internalStoreError()
+	}
+	return nil
+}
+
+func participantDisputeInvalidState(detail string) *domain.AppError {
+	return domain.NewError(http.StatusConflict, domain.CodeInvalidStateTransition, "Invalid state transition", detail)
+}
+
+func lockSettlementProposalInTx(ctx context.Context, tx pgx.Tx, disputeID, proposalID string) (report.SettlementProposal, *domain.AppError) {
+	var item report.SettlementProposal
+	err := tx.QueryRow(ctx, `
+		SELECT id::text, dispute_case_id::text, proposed_by_user_id::text, resolution,
+		       COALESCE(amount_cny::text, ''), terms, status,
+		       COALESCE(accepted_by_user_id::text, ''), accepted_at,
+		       COALESCE(rejected_by_user_id::text, ''), rejected_at,
+		       created_at, updated_at, version
+		FROM api_order_dispute_settlement_proposals
+		WHERE id = $1 AND dispute_case_id = $2
+		FOR UPDATE
+	`, proposalID, disputeID).Scan(
+		&item.ID, &item.DisputeCaseID, &item.ProposedByUserID, &item.Resolution,
+		&item.AmountCNY, &item.Terms, &item.Status, &item.AcceptedByUserID,
+		&item.AcceptedAt, &item.RejectedByUserID, &item.RejectedAt,
+		&item.CreatedAt, &item.UpdatedAt, &item.Version,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return report.SettlementProposal{}, disputeNotFound()
+	}
+	if err != nil {
+		return report.SettlementProposal{}, internalStoreError()
+	}
+	return item, nil
+}
+
+func loadAPIOrderDisputeNegotiation(ctx context.Context, q queryer, item *report.DisputeCase) *domain.AppError {
+	if item == nil || item.TargetType != report.TargetAPIOrder {
+		return nil
+	}
+	messages, err := listAPIOrderDisputeMessages(ctx, q, item.ID)
+	if err != nil {
+		return internalStoreError()
+	}
+	proposals, err := listAPIOrderDisputeProposals(ctx, q, item.ID)
+	if err != nil {
+		return internalStoreError()
+	}
+	item.Messages = messages
+	item.SettlementProposals = proposals
+	return nil
+}
+
+func listAPIOrderDisputeMessages(ctx context.Context, q queryer, disputeID string) ([]report.DisputeMessage, error) {
+	rows, err := queryRows(ctx, q, `
+		SELECT id::text, dispute_case_id::text, sender_user_id::text, body, created_at
+		FROM api_order_dispute_messages
+		WHERE dispute_case_id = $1
+		ORDER BY created_at, id
+	`, disputeID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := make([]report.DisputeMessage, 0)
+	for rows.Next() {
+		var item report.DisputeMessage
+		if err := rows.Scan(&item.ID, &item.DisputeCaseID, &item.SenderUserID, &item.Body, &item.CreatedAt); err != nil {
+			return nil, err
+		}
+		items = append(items, item)
+	}
+	return items, rows.Err()
+}
+
+func listAPIOrderDisputeProposals(ctx context.Context, q queryer, disputeID string) ([]report.SettlementProposal, error) {
+	rows, err := queryRows(ctx, q, `
+		SELECT id::text, dispute_case_id::text, proposed_by_user_id::text, resolution,
+		       COALESCE(amount_cny::text, ''), terms, status,
+		       COALESCE(accepted_by_user_id::text, ''), accepted_at,
+		       COALESCE(rejected_by_user_id::text, ''), rejected_at,
+		       created_at, updated_at, version
+		FROM api_order_dispute_settlement_proposals
+		WHERE dispute_case_id = $1
+		ORDER BY created_at DESC, id DESC
+	`, disputeID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := make([]report.SettlementProposal, 0)
+	for rows.Next() {
+		var item report.SettlementProposal
+		if err := rows.Scan(
+			&item.ID, &item.DisputeCaseID, &item.ProposedByUserID, &item.Resolution,
+			&item.AmountCNY, &item.Terms, &item.Status, &item.AcceptedByUserID,
+			&item.AcceptedAt, &item.RejectedByUserID, &item.RejectedAt,
+			&item.CreatedAt, &item.UpdatedAt, &item.Version,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, item)
+	}
+	return items, rows.Err()
 }
 
 func (s *Store) UpdateDisputeAdminWithIdempotency(ctx context.Context, entry idempotency.Entry, input report.AdminActionInput, now time.Time, buildCompletion report.AdminCompletionBuilder) (report.MutationResult, idempotency.Completion, *domain.AppError) {
@@ -415,7 +736,7 @@ func (s *Store) ListPublicUserDisputes(ctx context.Context, username string) ([]
 		       d.public_summary,
 		       d.public_result,
 		       COALESCE(d.resolved_at, d.closed_at, d.updated_at) AS handled_at,
-		       d.status IN ('open', 'waiting_info') AS unresolved
+		       d.status IN ('negotiating', 'open', 'waiting_info') AS unresolved
 		FROM dispute_cases d
 		JOIN users u ON u.id = d.subject_user_id
 		WHERE u.username = $1
@@ -447,7 +768,7 @@ func (s *Store) PublicUserDisputeStats(ctx context.Context, username string, now
 	var stats report.PublicStats
 	if err := s.pool.QueryRow(ctx, `
 		SELECT
-		  COUNT(*) FILTER (WHERE d.status IN ('open', 'waiting_info'))::int,
+		  COUNT(*) FILTER (WHERE d.status IN ('negotiating', 'open', 'waiting_info'))::int,
 		  COUNT(*) FILTER (
 		    WHERE d.status IN ('resolved', 'closed')
 		      AND COALESCE(d.resolved_at, d.closed_at, d.updated_at) >= $2
@@ -1107,10 +1428,55 @@ func updateDisputeAdminInTx(ctx context.Context, tx pgx.Tx, input report.AdminAc
 	if err != nil {
 		return report.MutationResult{}, internalStoreError()
 	}
+	if item.TargetType == report.TargetAPIOrder && (input.Action == "resolve" || input.Action == "close") {
+		if appErr := closeAPIOrderDisputeProjectionInTx(ctx, tx, item, input, now); appErr != nil {
+			return report.MutationResult{}, appErr
+		}
+	}
 	if appErr := insertDisputeModerationAuditLog(ctx, tx, input, current, item, now); appErr != nil {
 		return report.MutationResult{}, appErr
 	}
 	return report.MutationResult{Dispute: &item}, nil
+}
+
+func closeAPIOrderDisputeProjectionInTx(ctx context.Context, tx pgx.Tx, dispute report.DisputeCase, input report.AdminActionInput, now time.Time) *domain.AppError {
+	var orderID string
+	var orderStatus string
+	var currentStatus string
+	err := tx.QueryRow(ctx, `
+			SELECT id::text, status, dispute_status
+			FROM api_orders
+			WHERE id::text = $1
+			  AND dispute_case_id = $2
+			FOR UPDATE
+		`, dispute.TargetID, dispute.ID).Scan(&orderID, &orderStatus, &currentStatus)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return reportInvalidState("纠纷关联的 API 订单不存在或关联不一致。")
+	}
+	if err != nil {
+		return internalStoreError()
+	}
+	if currentStatus == apiorder.DisputeStatusClosed {
+		return nil
+	}
+	if !apiorder.IsDisputeActive(currentStatus) {
+		return reportInvalidState("纠纷关联的 API 订单状态不一致，无法结案。")
+	}
+	commandTag, err := tx.Exec(ctx, `
+		UPDATE api_orders
+		SET dispute_status = $2,
+		    updated_at = $3,
+		    version = version + 1
+		WHERE id = $1
+		  AND dispute_status = $4
+	`, orderID, apiorder.DisputeStatusClosed, now, currentStatus)
+	if err != nil {
+		return internalStoreError()
+	}
+	if commandTag.RowsAffected() != 1 {
+		return versionConflict()
+	}
+	return insertAPIOrderEventInTx(ctx, tx, apiorder.Order{ID: orderID}, input.AdminUserID, apiorder.EventDisputeClosed, orderStatus, orderStatus, "纠纷已结案", input.RequestID, now)
 }
 
 func updateReportStatus(ctx context.Context, tx pgx.Tx, id, status, adminID, reason string, now time.Time) (report.Report, *domain.AppError) {
@@ -1792,6 +2158,9 @@ func scanDisputeRow(row scanner) (report.DisputeCase, error) {
 		&item.SubjectUsername,
 		&item.SubjectName,
 		&item.Status,
+		&item.IssueCode,
+		&item.RequestedResolution,
+		&item.RequestedAmountCNY,
 		&item.PublicSummary,
 		&item.PublicResultCode,
 		&item.PublicResult,
@@ -2013,6 +2382,9 @@ const disputeColumns = `
 	COALESCE(subject_user.username, ''),
 	COALESCE(subject_user.display_name, ''),
 	d.status,
+	d.issue_code,
+	d.requested_resolution,
+	COALESCE(d.requested_amount_cny::text, ''),
 	d.public_summary,
 	d.public_result_code,
 	d.public_result,
@@ -2043,6 +2415,9 @@ const disputeReturningColumns = `
 	COALESCE((SELECT username FROM users WHERE users.id = dispute_cases.subject_user_id), ''),
 	COALESCE((SELECT display_name FROM users WHERE users.id = dispute_cases.subject_user_id), ''),
 	dispute_cases.status,
+	dispute_cases.issue_code,
+	dispute_cases.requested_resolution,
+	COALESCE(dispute_cases.requested_amount_cny::text, ''),
 	dispute_cases.public_summary,
 	dispute_cases.public_result_code,
 	dispute_cases.public_result,

@@ -14,8 +14,11 @@ import SkeletonBlock from '@/components/market/SkeletonBlock.vue'
 import StatusBadge from '@/components/market/StatusBadge.vue'
 import {
   getApiOrderCompletionSourceLabel,
+  getApiOrderDisputeStatusDescription,
+  getApiOrderDisputeStatusLabel,
   getApiOrderPaymentIssueLabel,
   getApiOrderStatusLabel,
+  isApiOrderDisputeActive,
 } from '@/lib/api'
 import { formatOrderDateTime } from '@/lib/apiOrderUi'
 import { apiPaymentMethodLabels } from '@/lib/apiPaymentSettings'
@@ -76,10 +79,10 @@ const errorMessage = computed(() => error.value instanceof Error ? error.value.m
       <RouterLink v-if="order.disputeStatus === 'open'" to="/admin/reports"><Button variant="outline"><ShieldAlert class="h-4 w-4" />进入纠纷处理</Button></RouterLink>
     </div>
 
-    <Alert v-if="order.disputeStatus === 'open'" class="border-warning/35 bg-warning/10">
-      <ShieldAlert class="text-warning" />
-      <AlertTitle>订单存在开放纠纷</AlertTitle>
-      <AlertDescription>自动完成已暂停<span v-if="order.disputeCaseId">，纠纷编号 {{ order.disputeCaseId }}</span>。</AlertDescription>
+    <Alert v-if="order.disputeStatus !== 'none'" :class="isApiOrderDisputeActive(order.disputeStatus) ? 'border-warning/35 bg-warning/10' : 'border-border bg-muted/20'">
+      <ShieldAlert :class="isApiOrderDisputeActive(order.disputeStatus) ? 'text-warning' : 'text-muted-foreground'" />
+      <AlertTitle>{{ getApiOrderDisputeStatusLabel(order.disputeStatus) }}</AlertTitle>
+      <AlertDescription>{{ getApiOrderDisputeStatusDescription(order.disputeStatus) }}<span v-if="order.disputeCaseId"> 纠纷编号 {{ order.disputeCaseId }}。</span></AlertDescription>
     </Alert>
 
     <div class="grid gap-4 xl:grid-cols-[1.15fr_0.85fr]">
@@ -129,7 +132,7 @@ const errorMessage = computed(() => error.value instanceof Error ? error.value.m
             <div><dt class="text-xs text-muted-foreground">核验截止</dt><dd class="mt-1">{{ formatOrderDateTime(order.deliveryReviewExpiresAt) }}</dd></div>
             <div><dt class="text-xs text-muted-foreground">完成方式</dt><dd class="mt-1">{{ getApiOrderCompletionSourceLabel(order.completionSource) }}</dd></div>
             <div><dt class="text-xs text-muted-foreground">完成时间</dt><dd class="mt-1">{{ formatOrderDateTime(order.completedAt) }}</dd></div>
-            <div><dt class="text-xs text-muted-foreground">纠纷状态</dt><dd class="mt-1">{{ order.disputeStatus || '无纠纷' }}</dd></div>
+            <div><dt class="text-xs text-muted-foreground">纠纷状态</dt><dd class="mt-1">{{ getApiOrderDisputeStatusLabel(order.disputeStatus) }}</dd></div>
           </dl>
         </Card>
 
