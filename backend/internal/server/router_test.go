@@ -2390,7 +2390,7 @@ func TestAPIServiceInstantOrderFlow(t *testing.T) {
 	if err := json.NewDecoder(resolveDisputeResponse.Body).Decode(&resolvedDispute); err != nil {
 		t.Fatalf("decode resolved API order dispute: %v", err)
 	}
-	if resolvedDispute.Dispute == nil || resolvedDispute.Dispute.Status != "resolved" || resolvedDispute.Dispute.Version != adminDispute.Version+1 {
+	if resolvedDispute.Dispute == nil || resolvedDispute.Dispute.Status != "closed" || resolvedDispute.Dispute.Version != adminDispute.Version+1 {
 		t.Fatalf("unexpected resolved API order dispute: %#v", resolvedDispute.Dispute)
 	}
 	resolvedBuyerOrder := getAPIOrder(t, server, buyerSession, "me", disputed.ID)
@@ -2465,6 +2465,25 @@ func TestAPIServiceInstantOrderFlow(t *testing.T) {
 	}
 	assertProblemCode(t, missingOutcomeVersionResponse, domain.CodePreconditionRequired)
 
+	blockedFaultOutcome := newJSONRequest(http.MethodPost, outcomePath, outcomeBody)
+	addAuth(blockedFaultOutcome, adminSession, "api-order-create-fault-outcome-without-overdue")
+	blockedFaultOutcome.Header.Set("If-Match", `"`+strconv.FormatInt(resolvedDispute.Dispute.Version, 10)+`"`)
+	blockedFaultOutcomeResponse := httptest.NewRecorder()
+	server.ServeHTTP(blockedFaultOutcomeResponse, blockedFaultOutcome)
+	if blockedFaultOutcomeResponse.Code != http.StatusConflict {
+		t.Fatalf("fault outcome without overdue remedy status %d body %s", blockedFaultOutcomeResponse.Code, blockedFaultOutcomeResponse.Body.String())
+	}
+	assertProblemCode(t, blockedFaultOutcomeResponse, domain.CodeInvalidStateTransition)
+
+	outcomeBody = `{
+		"subjectUserId":"` + adminDispute.SubjectUserID + `",
+		"responsibility":"not_responsible",
+		"severity":"none",
+		"roleScope":"seller",
+		"reasonCode":"invalid_claim",
+		"publicReason":"根据现有记录未认定商户承担责任。",
+		"internalReason":"管理员复核后认定现有事实不支持责任结论。"
+	}`
 	createOutcome := newJSONRequest(http.MethodPost, outcomePath, outcomeBody)
 	addAuth(createOutcome, adminSession, "api-order-create-outcome")
 	createOutcome.Header.Set("If-Match", `"`+strconv.FormatInt(resolvedDispute.Dispute.Version, 10)+`"`)
@@ -2480,7 +2499,7 @@ func TestAPIServiceInstantOrderFlow(t *testing.T) {
 	if outcomeMutation.Outcome == nil ||
 		outcomeMutation.Outcome.DisputeCaseID != adminDispute.ID ||
 		outcomeMutation.Outcome.SubjectUserID != adminDispute.SubjectUserID ||
-		outcomeMutation.Outcome.Responsibility != "responsible" ||
+		outcomeMutation.Outcome.Responsibility != "not_responsible" ||
 		outcomeMutation.Outcome.RoleScope != "seller" ||
 		outcomeMutation.Outcome.DisputeVersion != resolvedDispute.Dispute.Version+1 {
 		t.Fatalf("unexpected dispute reputation outcome: %#v", outcomeMutation.Outcome)

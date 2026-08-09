@@ -2036,6 +2036,84 @@ paths:
         "404": { $ref: "#/components/responses/Problem" }
         "409": { $ref: "#/components/responses/Problem" }
         "422": { $ref: "#/components/responses/Problem" }
+  /api/v1/me/disputes/{id}/remedy/claim:
+    post:
+      operationId: claimMyDisputeRemedyFulfilled
+      tags: [Reports]
+      security:
+        - sessionCookie: []
+          csrfToken: []
+      summary: Let the responsible participant declare that the current remedy was fulfilled.
+      parameters:
+        - $ref: "#/components/parameters/ResourceId"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/DisputeRemedyClaimRequest" }
+      responses:
+        "200":
+          description: Remedy moved to beneficiary confirmation without closing the dispute.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SelfDispute" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+        "409": { $ref: "#/components/responses/Problem" }
+        "422": { $ref: "#/components/responses/Problem" }
+  /api/v1/me/disputes/{id}/remedy/confirm:
+    post:
+      operationId: confirmMyDisputeRemedyFulfilled
+      tags: [Reports]
+      security:
+        - sessionCookie: []
+          csrfToken: []
+      summary: Let the beneficiary confirm the declared remedy result and close the dispute.
+      parameters:
+        - $ref: "#/components/parameters/ResourceId"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/DisputeRemedyConfirmRequest" }
+      responses:
+        "200":
+          description: Latest dispute detail, closed by confirmation or neutral timeout normalization.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SelfDispute" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+        "409": { $ref: "#/components/responses/Problem" }
+        "422": { $ref: "#/components/responses/Problem" }
+  /api/v1/me/disputes/{id}/remedy/contest:
+    post:
+      operationId: contestMyDisputeRemedyFulfilled
+      tags: [Reports]
+      security:
+        - sessionCookie: []
+          csrfToken: []
+      summary: Let the beneficiary deny the declared result and return the dispute to platform review.
+      parameters:
+        - $ref: "#/components/parameters/ResourceId"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/DisputeRemedyContestRequest" }
+      responses:
+        "200":
+          description: Latest dispute detail in platform review, or closed by neutral timeout normalization.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SelfDispute" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+        "409": { $ref: "#/components/responses/Problem" }
+        "422": { $ref: "#/components/responses/Problem" }
   /api/v1/me/disputes/{id}/supplements:
     post:
       operationId: submitDisputeInfoSupplement
@@ -5809,7 +5887,7 @@ paths:
               $ref: "#/components/schemas/ReportActionRequest"
       responses:
         "200":
-          description: Dispute resolved with a public-safe result.
+          description: API-order disputes close immediately when no remedy is required, or enter remedy fulfillment when a remedy is supplied.
           headers:
             ETag:
               schema:
@@ -5858,6 +5936,35 @@ paths:
           $ref: "#/components/responses/Problem"
         "428":
           $ref: "#/components/responses/Problem"
+  /api/v1/admin/disputes/{id}/remedy/mark-overdue:
+    post:
+      operationId: markDisputeRemedyOverdue
+      tags: [AdminReports]
+      security:
+        - sessionCookie: []
+          csrfToken: []
+      summary: Confirm after the remedy deadline that the responsible participant did not fulfill it.
+      parameters:
+        - $ref: "#/components/parameters/ResourceId"
+        - $ref: "#/components/parameters/IfMatch"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ReportActionRequest" }
+      responses:
+        "200":
+          description: Remedy marked overdue and dispute closed by an administrator.
+          headers:
+            ETag:
+              schema: { type: string }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AdminReportMutation" }
+        "409": { $ref: "#/components/responses/Problem" }
+        "412": { $ref: "#/components/responses/Problem" }
+        "428": { $ref: "#/components/responses/Problem" }
   /api/v1/admin/disputes/{id}/reputation-outcome:
     post:
       operationId: createDisputeReputationOutcome
@@ -14679,6 +14786,11 @@ components:
           type: string
           format: uuid
           description: Required only for request-info actions. Must identify an active participant in the report or dispute.
+        remedy:
+          anyOf:
+            - $ref: "#/components/schemas/DisputeRemedyRequest"
+            - type: "null"
+          description: Optional only for resolving an API-order dispute. Omit or send null when no fulfillment is required.
     InfoSupplementRequest:
       type: object
       additionalProperties: false
@@ -14736,6 +14848,59 @@ components:
           type: string
           minLength: 2
           maxLength: 500
+    DisputeRemedyRequest:
+      type: object
+      additionalProperties: false
+      required: [action, responsibleUserId, instructions, dueAt]
+      properties:
+        action:
+          type: string
+          enum: [full_refund, partial_refund, continue_fulfillment, other]
+        amountCny:
+          type: string
+          pattern: '^[0-9]+(?:\.[0-9]{1,2})?$'
+          description: Required only for partial_refund and must not exceed the API order amount.
+        responsibleUserId:
+          type: string
+          format: uuid
+        instructions:
+          type: string
+          minLength: 2
+          maxLength: 2000
+          description: Public credential-free fulfillment instructions.
+        dueAt:
+          type: string
+          format: date-time
+          description: Must be later than the administrator mutation time.
+    DisputeRemedyClaimRequest:
+      type: object
+      additionalProperties: false
+      required: [note]
+      properties:
+        note:
+          type: string
+          minLength: 2
+          maxLength: 2000
+          description: Credential-free declaration from the responsible participant; it does not close the dispute.
+    DisputeRemedyConfirmRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        reason:
+          type: string
+          minLength: 2
+          maxLength: 500
+          description: Optional credential-free confirmation note.
+    DisputeRemedyContestRequest:
+      type: object
+      additionalProperties: false
+      required: [reason]
+      properties:
+        reason:
+          type: string
+          minLength: 2
+          maxLength: 2000
+          description: Required credential-free explanation that returns the dispute to platform review.
     DisputeMessage:
       type: object
       additionalProperties: false
@@ -14764,6 +14929,37 @@ components:
         acceptedAt: { type: [string, "null"], format: date-time }
         rejectedByUserId: { type: string, format: uuid }
         rejectedAt: { type: [string, "null"], format: date-time }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+        version: { type: integer }
+    DisputeRemedy:
+      type: object
+      additionalProperties: false
+      required: [id, action, currency, responsibleUserId, beneficiaryUserId, instructions, status, dueAt, createdAt, updatedAt, version]
+      properties:
+        id: { type: string, format: uuid }
+        action:
+          type: string
+          enum: [full_refund, partial_refund, continue_fulfillment, other]
+        amountCny: { $ref: "#/components/schemas/DecimalString" }
+        currency:
+          type: string
+          enum: [CNY]
+        responsibleUserId: { type: string, format: uuid }
+        beneficiaryUserId: { type: string, format: uuid }
+        instructions: { type: string }
+        status:
+          type: string
+          enum: [pending, claimed_fulfilled, confirmed, contested, confirmation_expired, overdue, cancelled]
+        dueAt: { type: string, format: date-time }
+        claimedAt: { type: string, format: date-time }
+        confirmationDueAt: { type: string, format: date-time }
+        confirmedAt: { type: string, format: date-time }
+        contestedAt: { type: string, format: date-time }
+        confirmationExpiredAt: { type: string, format: date-time }
+        overdueAt: { type: string, format: date-time }
+        claimNote: { type: string }
+        responseNote: { type: string }
         createdAt: { type: string, format: date-time }
         updatedAt: { type: string, format: date-time }
         version: { type: integer }
@@ -14871,6 +15067,11 @@ components:
           type: array
           readOnly: true
           items: { $ref: "#/components/schemas/DisputeSettlementProposal" }
+        remedies:
+          type: array
+          readOnly: true
+          description: Newest-first auditable API-order remedy history.
+          items: { $ref: "#/components/schemas/DisputeRemedy" }
         createdAt:
           type: string
           format: date-time
@@ -15680,6 +15881,11 @@ components:
           readOnly: true
           description: Newest-first proposal history on authorized detail and mutation responses.
           items: { $ref: "#/components/schemas/DisputeSettlementProposal" }
+        remedies:
+          type: array
+          readOnly: true
+          description: Newest-first API-order remedy history visible to both participants.
+          items: { $ref: "#/components/schemas/DisputeRemedy" }
     SelfDisputeList:
       type: object
       additionalProperties: false

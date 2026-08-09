@@ -34,11 +34,20 @@ type createAppealRequest struct {
 }
 
 type reportActionRequest struct {
-	Reason              string `json:"reason"`
-	PublicSummary       string `json:"publicSummary"`
-	PublicResultCode    string `json:"publicResultCode"`
-	PublicResult        string `json:"publicResult"`
-	RequestedFromUserID string `json:"requestedFromUserId"`
+	Reason              string                `json:"reason"`
+	PublicSummary       string                `json:"publicSummary"`
+	PublicResultCode    string                `json:"publicResultCode"`
+	PublicResult        string                `json:"publicResult"`
+	RequestedFromUserID string                `json:"requestedFromUserId"`
+	Remedy              *disputeRemedyRequest `json:"remedy"`
+}
+
+type disputeRemedyRequest struct {
+	Action            string `json:"action"`
+	AmountCNY         string `json:"amountCny"`
+	ResponsibleUserID string `json:"responsibleUserId"`
+	Instructions      string `json:"instructions"`
+	DueAt             string `json:"dueAt"`
 }
 
 type infoSupplementRequest struct {
@@ -58,6 +67,10 @@ type disputeSettlementProposalRequest struct {
 
 type disputeParticipantReasonRequest struct {
 	Reason string `json:"reason"`
+}
+
+type disputeRemedyClaimRequest struct {
+	Note string `json:"note"`
 }
 
 type infoSupplementResponse struct {
@@ -134,6 +147,7 @@ type disputeResponse struct {
 	Supplements          []infoSupplementResponse     `json:"supplements,omitempty"`
 	Messages             []disputeMessageResponse     `json:"messages,omitempty"`
 	SettlementProposals  []settlementProposalResponse `json:"settlementProposals,omitempty"`
+	Remedies             []disputeRemedyResponse      `json:"remedies,omitempty"`
 }
 
 type disputeMessageResponse struct {
@@ -157,6 +171,29 @@ type settlementProposalResponse struct {
 	CreatedAt        string  `json:"createdAt"`
 	UpdatedAt        string  `json:"updatedAt"`
 	Version          int64   `json:"version"`
+}
+
+type disputeRemedyResponse struct {
+	ID                    string  `json:"id"`
+	Action                string  `json:"action"`
+	AmountCNY             string  `json:"amountCny,omitempty"`
+	Currency              string  `json:"currency"`
+	ResponsibleUserID     string  `json:"responsibleUserId"`
+	BeneficiaryUserID     string  `json:"beneficiaryUserId"`
+	Instructions          string  `json:"instructions"`
+	Status                string  `json:"status"`
+	DueAt                 string  `json:"dueAt"`
+	ClaimedAt             *string `json:"claimedAt,omitempty"`
+	ConfirmationDueAt     *string `json:"confirmationDueAt,omitempty"`
+	ConfirmedAt           *string `json:"confirmedAt,omitempty"`
+	ContestedAt           *string `json:"contestedAt,omitempty"`
+	ConfirmationExpiredAt *string `json:"confirmationExpiredAt,omitempty"`
+	OverdueAt             *string `json:"overdueAt,omitempty"`
+	ClaimNote             string  `json:"claimNote,omitempty"`
+	ResponseNote          string  `json:"responseNote,omitempty"`
+	CreatedAt             string  `json:"createdAt"`
+	UpdatedAt             string  `json:"updatedAt"`
+	Version               int64   `json:"version"`
 }
 
 type appealResponse struct {
@@ -425,6 +462,57 @@ func (s *Server) handleEscalateDispute(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func (s *Server) handleClaimDisputeRemedy(w http.ResponseWriter, r *http.Request) {
+	user, _, appErr := s.requireSessionAndCSRF(w, r)
+	if appErr != nil {
+		writeProblem(w, r, appErr)
+		return
+	}
+	body, req, appErr := decodeStrictJSON[disputeRemedyClaimRequest](r)
+	if appErr != nil {
+		writeProblem(w, r, appErr)
+		return
+	}
+	s.handleDisputeParticipantAction(w, r, user, body, report.DisputeParticipantActionInput{
+		Action: report.DisputeRemedyActionClaim,
+		Note:   req.Note,
+	})
+}
+
+func (s *Server) handleConfirmDisputeRemedy(w http.ResponseWriter, r *http.Request) {
+	user, _, appErr := s.requireSessionAndCSRF(w, r)
+	if appErr != nil {
+		writeProblem(w, r, appErr)
+		return
+	}
+	body, req, appErr := decodeStrictJSON[disputeParticipantReasonRequest](r)
+	if appErr != nil {
+		writeProblem(w, r, appErr)
+		return
+	}
+	s.handleDisputeParticipantAction(w, r, user, body, report.DisputeParticipantActionInput{
+		Action: report.DisputeRemedyActionConfirm,
+		Reason: req.Reason,
+	})
+}
+
+func (s *Server) handleContestDisputeRemedy(w http.ResponseWriter, r *http.Request) {
+	user, _, appErr := s.requireSessionAndCSRF(w, r)
+	if appErr != nil {
+		writeProblem(w, r, appErr)
+		return
+	}
+	body, req, appErr := decodeStrictJSON[disputeParticipantReasonRequest](r)
+	if appErr != nil {
+		writeProblem(w, r, appErr)
+		return
+	}
+	s.handleDisputeParticipantAction(w, r, user, body, report.DisputeParticipantActionInput{
+		Action: report.DisputeRemedyActionContest,
+		Reason: req.Reason,
+	})
+}
+
 func (s *Server) handleDisputeParticipantAction(w http.ResponseWriter, r *http.Request, user auth.User, body []byte, input report.DisputeParticipantActionInput) {
 	input.DisputeID = chi.URLParam(r, "id")
 	input.RequestID = requestIDFrom(r)
@@ -598,6 +686,10 @@ func (s *Server) handleCloseDispute(w http.ResponseWriter, r *http.Request) {
 	s.handleAdminDisputeAction(w, r, "close")
 }
 
+func (s *Server) handleMarkDisputeRemedyOverdue(w http.ResponseWriter, r *http.Request) {
+	s.handleAdminDisputeAction(w, r, "mark_overdue")
+}
+
 func (s *Server) handleAdminDisputeAction(w http.ResponseWriter, r *http.Request, action string) {
 	user, _, appErr := s.requireSessionAndCSRF(w, r)
 	if appErr != nil {
@@ -608,6 +700,19 @@ func (s *Server) handleAdminDisputeAction(w http.ResponseWriter, r *http.Request
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
+	}
+	var remedyInput *report.DisputeRemedyInput
+	if req.Remedy != nil {
+		dueAt, dueErr := parseRequiredTime(req.Remedy.DueAt, "remedy.dueAt")
+		if dueErr != nil {
+			writeProblem(w, r, dueErr)
+			return
+		}
+		remedyInput = &report.DisputeRemedyInput{
+			Action: req.Remedy.Action, AmountCNY: req.Remedy.AmountCNY,
+			ResponsibleUserID: req.Remedy.ResponsibleUserID,
+			Instructions:      req.Remedy.Instructions, DueAt: dueAt,
+		}
 	}
 	version, appErr := requireIfMatchVersion(r)
 	if appErr != nil {
@@ -626,6 +731,7 @@ func (s *Server) handleAdminDisputeAction(w http.ResponseWriter, r *http.Request
 		ExpectedVersion:  version,
 		RequestID:        requestIDFrom(r),
 		RequestedFromID:  req.RequestedFromUserID,
+		Remedy:           remedyInput,
 	}, adminMutationCompletionBuilder)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
@@ -936,6 +1042,7 @@ func toDisputeResponse(item report.DisputeCase, includeAdmin bool) disputeRespon
 		Version:              item.Version,
 		Messages:             toDisputeMessageResponses(item.Messages),
 		SettlementProposals:  toSettlementProposalResponses(item.SettlementProposals),
+		Remedies:             toDisputeRemedyResponses(item.Remedies),
 	}
 	if includeAdmin {
 		response.PrimaryUserID = item.PrimaryUserID
@@ -977,6 +1084,26 @@ func toSettlementProposalResponses(items []report.SettlementProposal) []settleme
 			RejectedByUserID: item.RejectedByUserID, RejectedAt: formatOptionalTime(item.RejectedAt),
 			CreatedAt: item.CreatedAt.UTC().Format(time.RFC3339), UpdatedAt: item.UpdatedAt.UTC().Format(time.RFC3339),
 			Version: item.Version,
+		})
+	}
+	return result
+}
+
+func toDisputeRemedyResponses(items []report.DisputeRemedy) []disputeRemedyResponse {
+	if len(items) == 0 {
+		return nil
+	}
+	result := make([]disputeRemedyResponse, 0, len(items))
+	for _, item := range items {
+		result = append(result, disputeRemedyResponse{
+			ID: item.ID, Action: item.Action, AmountCNY: item.AmountCNY, Currency: item.Currency,
+			ResponsibleUserID: item.ResponsibleUserID, BeneficiaryUserID: item.BeneficiaryUserID,
+			Instructions: item.Instructions, Status: item.Status, DueAt: item.DueAt.UTC().Format(time.RFC3339),
+			ClaimedAt: formatOptionalTime(item.ClaimedAt), ConfirmationDueAt: formatOptionalTime(item.ConfirmationDueAt),
+			ConfirmedAt: formatOptionalTime(item.ConfirmedAt), ContestedAt: formatOptionalTime(item.ContestedAt),
+			ConfirmationExpiredAt: formatOptionalTime(item.ConfirmationExpiredAt), OverdueAt: formatOptionalTime(item.OverdueAt),
+			ClaimNote: item.ClaimNote, ResponseNote: item.ResponseNote,
+			CreatedAt: item.CreatedAt.UTC().Format(time.RFC3339), UpdatedAt: item.UpdatedAt.UTC().Format(time.RFC3339), Version: item.Version,
 		})
 	}
 	return result

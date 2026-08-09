@@ -18,20 +18,21 @@ type Policy struct {
 }
 
 type Result struct {
-	LockAcquired                 bool
-	SessionsDeleted              int64
-	AccountAppealSessionsDeleted int64
-	VerificationCodesDeleted     int64
-	IdempotencyEntriesDeleted    int64
-	ContactSessionsExpired       int64
-	APIOrdersPaymentExpired      int64
-	APIOrderReviewReminders      int64
-	APIOrdersAutoCompleted       int64
-	APIOrderCredentialsDestroyed int64
-	APIQuotaCredentialsDestroyed int64
-	APIProbeSamplesDeleted       int64
-	NotificationsDeleted         int64
-	DomainEventsDeleted          int64
+	LockAcquired                      bool
+	SessionsDeleted                   int64
+	AccountAppealSessionsDeleted      int64
+	VerificationCodesDeleted          int64
+	IdempotencyEntriesDeleted         int64
+	ContactSessionsExpired            int64
+	APIOrdersPaymentExpired           int64
+	APIOrderReviewReminders           int64
+	APIOrdersAutoCompleted            int64
+	DisputeRemedyConfirmationsExpired int64
+	APIOrderCredentialsDestroyed      int64
+	APIQuotaCredentialsDestroyed      int64
+	APIProbeSamplesDeleted            int64
+	NotificationsDeleted              int64
+	DomainEventsDeleted               int64
 }
 
 type Repository interface {

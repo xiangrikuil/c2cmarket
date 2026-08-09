@@ -174,7 +174,11 @@ func (s *Service) CreateUserRestrictionWithIdempotency(ctx context.Context, acto
 		return completion, nil
 	}
 
-	result := s.createUserRestrictionInMemory(input)
+	result, appErr := s.createUserRestrictionInMemory(input)
+	if appErr != nil {
+		s.idempotency.Cancel(ctx, entry)
+		return idempotency.Completion{}, appErr
+	}
 	return s.completeInMemoryMutation(ctx, entry, result, buildCompletion)
 }
 
@@ -255,30 +259,47 @@ func (s *Service) createDisputeOutcomeInMemory(input CreateOutcomeInput) (Govern
 	}
 	now := s.now()
 	item := DisputeOutcome{
-		ID:               uuid.NewString(),
-		DisputeCaseID:    input.DisputeCaseID,
-		SubjectUserID:    input.SubjectUserID,
-		Responsibility:   input.Responsibility,
-		Severity:         input.Severity,
-		RoleScope:        input.RoleScope,
-		Status:           OutcomeStatusActive,
-		ReasonCode:       input.ReasonCode,
-		PublicReason:     input.PublicReason,
-		InternalReason:   input.InternalReason,
-		DecidedByAdminID: input.AdminUserID,
-		DecidedAt:        now,
-		CreatedAt:        now,
-		UpdatedAt:        now,
-		Version:          1,
-		DisputeVersion:   input.ExpectedVersion + 1,
+		ID:                uuid.NewString(),
+		DisputeCaseID:     input.DisputeCaseID,
+		SubjectUserID:     input.SubjectUserID,
+		Responsibility:    input.Responsibility,
+		Severity:          input.Severity,
+		RoleScope:         input.RoleScope,
+		Status:            OutcomeStatusActive,
+		ReasonCode:        input.ReasonCode,
+		PublicReason:      input.PublicReason,
+		InternalReason:    input.InternalReason,
+		DecidedByAdminID:  input.AdminUserID,
+		DecidedAt:         now,
+		CreatedAt:         now,
+		UpdatedAt:         now,
+		Version:           1,
+		DisputeVersion:    input.ExpectedVersion + 1,
+		apiOrderDispute:   input.APIOrderDispute,
+		remedyOverdueFact: input.RemedyOverdueFact,
 	}
 	s.outcomes[item.ID] = item
 	return GovernanceMutationResult{Outcome: &item}, nil
 }
 
-func (s *Service) createUserRestrictionInMemory(input CreateRestrictionInput) GovernanceMutationResult {
+func (s *Service) createUserRestrictionInMemory(input CreateRestrictionInput) (GovernanceMutationResult, *domain.AppError) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if input.SourceDisputeOutcomeID != "" {
+		outcome, ok := s.outcomes[input.SourceDisputeOutcomeID]
+		if !ok {
+			return GovernanceMutationResult{}, domain.NewError(http.StatusNotFound, domain.CodeObjectNotFound, "Outcome not found", "关联信誉裁定不存在。")
+		}
+		if outcome.Status != OutcomeStatusActive || outcome.SubjectUserID != input.UserID {
+			return GovernanceMutationResult{}, domain.NewError(http.StatusConflict, domain.CodeInvalidStateTransition, "Outcome unavailable", "关联信誉裁定已反转或主体不匹配。")
+		}
+		if outcome.RoleScope != RoleAll && input.RoleScope != outcome.RoleScope {
+			return GovernanceMutationResult{}, validationField("roleScope", "限制角色不能超出关联裁定角色。")
+		}
+		if outcome.apiOrderDispute && !outcome.remedyOverdueFact {
+			return GovernanceMutationResult{}, apiOrderRemedyOutcomeUnavailable()
+		}
+	}
 	now := s.now()
 	item := UserRestriction{
 		ID:                     uuid.NewString(),
@@ -299,7 +320,7 @@ func (s *Service) createUserRestrictionInMemory(input CreateRestrictionInput) Go
 		UserVersion:            input.ExpectedUserVersion + 1,
 	}
 	s.restrictions[item.ID] = item
-	return GovernanceMutationResult{Restriction: &item}
+	return GovernanceMutationResult{Restriction: &item}, nil
 }
 
 func (s *Service) revokeUserRestrictionInMemory(input RevokeRestrictionInput) (GovernanceMutationResult, *domain.AppError) {
@@ -464,7 +485,18 @@ func validateCreateOutcomeInput(input CreateOutcomeInput) *domain.AppError {
 	if input.ExpectedVersion <= 0 {
 		return validationField("If-Match", "必须提供当前纠纷版本。")
 	}
+	if input.APIOrderDispute && faultResponsibility(input.Responsibility) && !input.RemedyOverdueFact {
+		return apiOrderRemedyOutcomeUnavailable()
+	}
 	return nil
+}
+
+func faultResponsibility(value string) bool {
+	return value == ResponsibilityResponsible || value == ResponsibilityShared
+}
+
+func apiOrderRemedyOutcomeUnavailable() *domain.AppError {
+	return domain.NewError(http.StatusConflict, domain.CodeInvalidStateTransition, "Overdue remedy required", "API 订单责任裁定只能基于管理员已确认的逾期未履行事实。")
 }
 
 func validateCreateRestrictionInput(input CreateRestrictionInput) *domain.AppError {

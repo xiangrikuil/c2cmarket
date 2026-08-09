@@ -1942,6 +1942,12 @@ func (s *Service) AdminUpdateSourceAuthorVerification(
 }
 
 func (s *Service) AdminCreateDisputeOutcomeWithIdempotency(ctx context.Context, user User, routeKey, key, requestHash string, input reputation.CreateOutcomeInput, buildCompletion reputation.GovernanceCompletionBuilder) (IdempotencyCompletion, *domain.AppError) {
+	dispute, appErr := s.reportService.AdminDispute(ctx, user, input.DisputeCaseID)
+	if appErr != nil {
+		return IdempotencyCompletion{}, appErr
+	}
+	input.APIOrderDispute = dispute.TargetType == report.TargetAPIOrder
+	input.RemedyOverdueFact = input.APIOrderDispute && len(dispute.Remedies) > 0 && dispute.Remedies[0].Status == report.RemedyStatusOverdue
 	return s.reputationService.CreateDisputeOutcomeWithIdempotency(ctx, reputation.AdminActor{UserID: user.ID, IsAdmin: user.IsAdmin}, routeKey, key, requestHash, input, buildCompletion)
 }
 

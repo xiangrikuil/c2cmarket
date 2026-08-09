@@ -414,6 +414,12 @@ requests, immutable participant messages, and bilateral settlement proposals.
 Existing dispute rows are not rewritten, and a proposal can close a dispute
 only after the counterparty confirms the same pending proposal.
 
+Version 87 (`000087_api_order_dispute_remedies`) adds auditable post-ruling
+remedy records for API-order disputes. Responsibility, action, amount, due
+dates, fulfillment claims, counterparty responses, neutral confirmation
+timeouts, and administrator-confirmed overdue facts remain separate from the
+dispute case status and API-order lifecycle.
+
 ## Contact Retention And Destruction
 
 Contact method deletion retires the mutable contact method surface. Historical

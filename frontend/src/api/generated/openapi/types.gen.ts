@@ -3208,6 +3208,10 @@ export type ReportActionRequest = {
      * Required only for request-info actions. Must identify an active participant in the report or dispute.
      */
     requestedFromUserId?: string;
+    /**
+     * Optional only for resolving an API-order dispute. Omit or send null when no fulfillment is required.
+     */
+    remedy?: DisputeRemedyRequest | null;
 };
 
 export type InfoSupplementRequest = {
@@ -3245,6 +3249,44 @@ export type DisputeEscalationRequest = {
     reason: string;
 };
 
+export type DisputeRemedyRequest = {
+    action: 'full_refund' | 'partial_refund' | 'continue_fulfillment' | 'other';
+    /**
+     * Required only for partial_refund and must not exceed the API order amount.
+     */
+    amountCny?: string;
+    responsibleUserId: string;
+    /**
+     * Public credential-free fulfillment instructions.
+     */
+    instructions: string;
+    /**
+     * Must be later than the administrator mutation time.
+     */
+    dueAt: string;
+};
+
+export type DisputeRemedyClaimRequest = {
+    /**
+     * Credential-free declaration from the responsible participant; it does not close the dispute.
+     */
+    note: string;
+};
+
+export type DisputeRemedyConfirmRequest = {
+    /**
+     * Optional credential-free confirmation note.
+     */
+    reason?: string;
+};
+
+export type DisputeRemedyContestRequest = {
+    /**
+     * Required credential-free explanation that returns the dispute to platform review.
+     */
+    reason: string;
+};
+
 export type DisputeMessage = {
     id: string;
     senderUserId: string;
@@ -3263,6 +3305,29 @@ export type DisputeSettlementProposal = {
     acceptedAt?: string | null;
     rejectedByUserId?: string;
     rejectedAt?: string | null;
+    createdAt: string;
+    updatedAt: string;
+    version: number;
+};
+
+export type DisputeRemedy = {
+    id: string;
+    action: 'full_refund' | 'partial_refund' | 'continue_fulfillment' | 'other';
+    amountCny?: DecimalString;
+    currency: 'CNY';
+    responsibleUserId: string;
+    beneficiaryUserId: string;
+    instructions: string;
+    status: 'pending' | 'claimed_fulfilled' | 'confirmed' | 'contested' | 'confirmation_expired' | 'overdue' | 'cancelled';
+    dueAt: string;
+    claimedAt?: string;
+    confirmationDueAt?: string;
+    confirmedAt?: string;
+    contestedAt?: string;
+    confirmationExpiredAt?: string;
+    overdueAt?: string;
+    claimNote?: string;
+    responseNote?: string;
     createdAt: string;
     updatedAt: string;
     version: number;
@@ -3334,6 +3399,10 @@ export type DisputeCase = {
     readonly supplements?: Array<ModerationInfoSupplement>;
     readonly messages?: Array<DisputeMessage>;
     readonly settlementProposals?: Array<DisputeSettlementProposal>;
+    /**
+     * Newest-first auditable API-order remedy history.
+     */
+    readonly remedies?: Array<DisputeRemedy>;
     createdAt: string;
     updatedAt: string;
     version: number;
@@ -3737,6 +3806,10 @@ export type SelfDispute = {
      * Newest-first proposal history on authorized detail and mutation responses.
      */
     readonly settlementProposals?: Array<DisputeSettlementProposal>;
+    /**
+     * Newest-first API-order remedy history visible to both participants.
+     */
+    readonly remedies?: Array<DisputeRemedy>;
 };
 
 export type SelfDisputeList = {
@@ -6998,6 +7071,132 @@ export type EscalateMyDisputeResponses = {
 };
 
 export type EscalateMyDisputeResponse = EscalateMyDisputeResponses[keyof EscalateMyDisputeResponses];
+
+export type ClaimMyDisputeRemedyFulfilledData = {
+    body: DisputeRemedyClaimRequest;
+    headers: {
+        'Idempotency-Key': string;
+    };
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/api/v1/me/disputes/{id}/remedy/claim';
+};
+
+export type ClaimMyDisputeRemedyFulfilledErrors = {
+    /**
+     * Problem Details error.
+     */
+    401: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    404: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    409: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    422: ProblemDetails;
+};
+
+export type ClaimMyDisputeRemedyFulfilledError = ClaimMyDisputeRemedyFulfilledErrors[keyof ClaimMyDisputeRemedyFulfilledErrors];
+
+export type ClaimMyDisputeRemedyFulfilledResponses = {
+    /**
+     * Remedy moved to beneficiary confirmation without closing the dispute.
+     */
+    200: SelfDispute;
+};
+
+export type ClaimMyDisputeRemedyFulfilledResponse = ClaimMyDisputeRemedyFulfilledResponses[keyof ClaimMyDisputeRemedyFulfilledResponses];
+
+export type ConfirmMyDisputeRemedyFulfilledData = {
+    body: DisputeRemedyConfirmRequest;
+    headers: {
+        'Idempotency-Key': string;
+    };
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/api/v1/me/disputes/{id}/remedy/confirm';
+};
+
+export type ConfirmMyDisputeRemedyFulfilledErrors = {
+    /**
+     * Problem Details error.
+     */
+    401: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    404: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    409: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    422: ProblemDetails;
+};
+
+export type ConfirmMyDisputeRemedyFulfilledError = ConfirmMyDisputeRemedyFulfilledErrors[keyof ConfirmMyDisputeRemedyFulfilledErrors];
+
+export type ConfirmMyDisputeRemedyFulfilledResponses = {
+    /**
+     * Latest dispute detail, closed by confirmation or neutral timeout normalization.
+     */
+    200: SelfDispute;
+};
+
+export type ConfirmMyDisputeRemedyFulfilledResponse = ConfirmMyDisputeRemedyFulfilledResponses[keyof ConfirmMyDisputeRemedyFulfilledResponses];
+
+export type ContestMyDisputeRemedyFulfilledData = {
+    body: DisputeRemedyContestRequest;
+    headers: {
+        'Idempotency-Key': string;
+    };
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/api/v1/me/disputes/{id}/remedy/contest';
+};
+
+export type ContestMyDisputeRemedyFulfilledErrors = {
+    /**
+     * Problem Details error.
+     */
+    401: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    404: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    409: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    422: ProblemDetails;
+};
+
+export type ContestMyDisputeRemedyFulfilledError = ContestMyDisputeRemedyFulfilledErrors[keyof ContestMyDisputeRemedyFulfilledErrors];
+
+export type ContestMyDisputeRemedyFulfilledResponses = {
+    /**
+     * Latest dispute detail in platform review, or closed by neutral timeout normalization.
+     */
+    200: SelfDispute;
+};
+
+export type ContestMyDisputeRemedyFulfilledResponse = ContestMyDisputeRemedyFulfilledResponses[keyof ContestMyDisputeRemedyFulfilledResponses];
 
 export type SubmitDisputeInfoSupplementData = {
     body: InfoSupplementRequest;
@@ -11915,7 +12114,7 @@ export type ResolveDisputeError = ResolveDisputeErrors[keyof ResolveDisputeError
 
 export type ResolveDisputeResponses = {
     /**
-     * Dispute resolved with a public-safe result.
+     * API-order disputes close immediately when no remedy is required, or enter remedy fulfillment when a remedy is supplied.
      */
     200: AdminReportMutation;
 };
@@ -11960,6 +12159,45 @@ export type CloseDisputeResponses = {
 };
 
 export type CloseDisputeResponse = CloseDisputeResponses[keyof CloseDisputeResponses];
+
+export type MarkDisputeRemedyOverdueData = {
+    body: ReportActionRequest;
+    headers: {
+        'If-Match': string;
+        'Idempotency-Key': string;
+    };
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/api/v1/admin/disputes/{id}/remedy/mark-overdue';
+};
+
+export type MarkDisputeRemedyOverdueErrors = {
+    /**
+     * Problem Details error.
+     */
+    409: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    412: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    428: ProblemDetails;
+};
+
+export type MarkDisputeRemedyOverdueError = MarkDisputeRemedyOverdueErrors[keyof MarkDisputeRemedyOverdueErrors];
+
+export type MarkDisputeRemedyOverdueResponses = {
+    /**
+     * Remedy marked overdue and dispute closed by an administrator.
+     */
+    200: AdminReportMutation;
+};
+
+export type MarkDisputeRemedyOverdueResponse = MarkDisputeRemedyOverdueResponses[keyof MarkDisputeRemedyOverdueResponses];
 
 export type CreateDisputeReputationOutcomeData = {
     body: CreateDisputeReputationOutcomeRequest;

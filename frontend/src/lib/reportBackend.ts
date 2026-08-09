@@ -2,6 +2,7 @@ import type { AdminRow } from '@/lib/api'
 import type {
   Appeal,
   DisputeCase,
+  DisputeRemedyRequest,
   SelfDispute,
   DisputeSettlementProposalRequest,
   SelfModerationSupplementMutation,
@@ -68,6 +69,13 @@ export type ResolveAdminDisputeInput = {
   publicSummary: string
   publicResultCode: BackendPublicResultCode
   publicResult: string
+  remedy?: DisputeRemedyRequest | null
+}
+
+export type MarkAdminDisputeRemedyOverdueInput = {
+  disputeId: string
+  expectedVersion: number
+  reason: string
 }
 
 type BackendAppeal = {
@@ -477,6 +485,28 @@ export async function backendEscalateDispute(disputeId: string, reason: string) 
   })
 }
 
+export async function backendClaimDisputeRemedy(disputeId: string, note: string) {
+  await ensureBackendSession('buyer', false)
+  return backendMutation<MyDispute>(`/api/v1/me/disputes/${encodeURIComponent(disputeId)}/remedy/claim`, { note }, {
+    idempotencyPrefix: 'dispute-remedy-claim',
+  })
+}
+
+export async function backendConfirmDisputeRemedy(disputeId: string, reason = '') {
+  await ensureBackendSession('buyer', false)
+  const trimmedReason = reason.trim()
+  return backendMutation<MyDispute>(`/api/v1/me/disputes/${encodeURIComponent(disputeId)}/remedy/confirm`, trimmedReason ? { reason: trimmedReason } : {}, {
+    idempotencyPrefix: 'dispute-remedy-confirm',
+  })
+}
+
+export async function backendContestDisputeRemedy(disputeId: string, reason: string) {
+  await ensureBackendSession('buyer', false)
+  return backendMutation<MyDispute>(`/api/v1/me/disputes/${encodeURIComponent(disputeId)}/remedy/contest`, { reason }, {
+    idempotencyPrefix: 'dispute-remedy-contest',
+  })
+}
+
 export async function backendMyAppeals() {
   await ensureBackendSession('buyer', false)
   return backendAllPages<MyAppeal>('/api/v1/me/appeals')
@@ -554,6 +584,7 @@ export async function backendResolveAdminDispute(input: ResolveAdminDisputeInput
       publicSummary: input.publicSummary,
       publicResultCode: input.publicResultCode,
       publicResult: input.publicResult,
+      remedy: input.remedy ?? null,
     },
     {
       idempotencyPrefix: 'dispute-admin-resolve',
@@ -561,6 +592,20 @@ export async function backendResolveAdminDispute(input: ResolveAdminDisputeInput
     },
   )
   if (!result.dispute) throw new Error('纠纷裁决响应缺少最新案件数据。')
+  return result.dispute
+}
+
+export async function backendMarkAdminDisputeRemedyOverdue(input: MarkAdminDisputeRemedyOverdueInput) {
+  await ensureBackendSession('admin', true)
+  const result = await backendMutation<BackendAdminMutation>(
+    `/api/v1/admin/disputes/${encodeURIComponent(input.disputeId)}/remedy/mark-overdue`,
+    { reason: input.reason },
+    {
+      idempotencyPrefix: 'dispute-remedy-mark-overdue',
+      ifMatch: input.expectedVersion,
+    },
+  )
+  if (!result.dispute) throw new Error('整改逾期确认响应缺少最新案件数据。')
   return result.dispute
 }
 

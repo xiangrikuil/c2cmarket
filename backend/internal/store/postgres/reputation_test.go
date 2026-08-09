@@ -96,13 +96,38 @@ func TestDisputeOutcomeSerializesWithAppealState(t *testing.T) {
 	}
 	section := string(source)[start : start+end]
 	disputeLock := strings.Index(section, "FOR UPDATE")
+	remedyGuard := strings.Index(section, "FROM api_order_dispute_remedies")
 	appealGuard := strings.Index(section, "status IN ('submitted', 'approved')")
 	subjectUpdate := strings.Index(section, "UPDATE dispute_cases")
 	outcomeInsert := strings.Index(section, "INSERT INTO dispute_reputation_outcomes")
-	if disputeLock < 0 || appealGuard < 0 || subjectUpdate < 0 || outcomeInsert < 0 {
-		t.Fatalf("outcome serialization guard missing: disputeLock=%d appealGuard=%d subjectUpdate=%d outcomeInsert=%d", disputeLock, appealGuard, subjectUpdate, outcomeInsert)
+	if disputeLock < 0 || remedyGuard < 0 || appealGuard < 0 || subjectUpdate < 0 || outcomeInsert < 0 {
+		t.Fatalf("outcome serialization guard missing: disputeLock=%d remedyGuard=%d appealGuard=%d subjectUpdate=%d outcomeInsert=%d", disputeLock, remedyGuard, appealGuard, subjectUpdate, outcomeInsert)
 	}
-	if disputeLock > appealGuard || appealGuard > subjectUpdate || appealGuard > outcomeInsert {
-		t.Fatal("dispute must be locked and appeal state checked before changing the subject or creating an outcome")
+	if disputeLock > remedyGuard || remedyGuard > subjectUpdate || appealGuard > subjectUpdate || appealGuard > outcomeInsert {
+		t.Fatal("dispute and latest remedy must be checked before changing the subject or creating an outcome")
+	}
+}
+
+func TestSourceLinkedRestrictionRechecksAPIOrderOverdueFact(t *testing.T) {
+	t.Parallel()
+
+	source, err := os.ReadFile("reputation.go")
+	if err != nil {
+		t.Fatalf("read reputation store: %v", err)
+	}
+	start := strings.Index(string(source), "func (s *Store) CreateUserRestrictionWithIdempotency")
+	end := strings.Index(string(source)[start:], "func apiOrderRemedyOutcomeUnavailable")
+	if start < 0 || end < 0 {
+		t.Fatal("restriction function section not found")
+	}
+	section := string(source)[start : start+end]
+	for _, required := range []string{
+		"JOIN dispute_cases dispute ON dispute.id = outcome.dispute_case_id",
+		"FROM api_order_dispute_remedies remedy",
+		"targetType == report.TargetAPIOrder && remedyStatus != report.RemedyStatusOverdue",
+	} {
+		if !strings.Contains(section, required) {
+			t.Fatalf("source-linked restriction guard missing %q", required)
+		}
 	}
 }

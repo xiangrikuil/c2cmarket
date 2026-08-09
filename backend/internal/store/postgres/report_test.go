@@ -343,14 +343,15 @@ func TestDisputeResolutionSynchronizesAPIOrderProjectionInsideAdminTransaction(t
 	}
 	source := string(data)
 	for _, required := range []string{
-		"closeAPIOrderDisputeProjectionInTx(ctx, tx, item, input, now)",
+		"setAPIOrderDisputeProjectionInTx(ctx, tx, item, input",
+		"createAPIOrderDisputeRemedyInTx(ctx, tx, item, input, now)",
 		"SELECT id::text, status, dispute_status",
 		"WHERE id::text = $1",
 		"AND dispute_case_id = $2",
 		"SET dispute_status = $2",
 		"version = version + 1",
 		"apiorder.EventDisputeClosed",
-		"orderStatus, orderStatus, \"纠纷已结案\"",
+		"apiorder.EventDisputeRemedyAwaiting",
 	} {
 		if !strings.Contains(source, required) {
 			t.Fatalf("dispute projection transaction is missing %q", required)

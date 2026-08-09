@@ -3,6 +3,9 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/vue-query'
 import {
   backendAppendDisputeMessage,
   backendConfirmDisputeSettlementProposal,
+  backendClaimDisputeRemedy,
+  backendConfirmDisputeRemedy,
+  backendContestDisputeRemedy,
   backendCreateAppeal,
   backendCreateDisputeSettlementProposal,
   backendEscalateDispute,
@@ -55,6 +58,8 @@ function useDisputeMutation<T>(mutationFn: (input: T) => ReturnType<typeof backe
       queryClient.setQueryData(myDisputeQueryKey(data.id), data)
       queryClient.invalidateQueries({ queryKey: myDisputesQueryKey })
       queryClient.invalidateQueries({ queryKey: ['api-orders'] })
+      queryClient.invalidateQueries({ queryKey: ['notifications'] })
+      queryClient.invalidateQueries({ queryKey: ['navigation-badges'] })
     },
   })
 }
@@ -77,6 +82,18 @@ export function useRejectDisputeSettlementProposalMutation() {
 
 export function useEscalateDisputeMutation() {
   return useDisputeMutation(({ disputeId, reason }: { disputeId: string, reason: string }) => backendEscalateDispute(disputeId, reason))
+}
+
+export function useClaimDisputeRemedyMutation() {
+  return useDisputeMutation(({ disputeId, note }: { disputeId: string, note: string }) => backendClaimDisputeRemedy(disputeId, note))
+}
+
+export function useConfirmDisputeRemedyMutation() {
+  return useDisputeMutation(({ disputeId, reason = '' }: { disputeId: string, reason?: string }) => backendConfirmDisputeRemedy(disputeId, reason))
+}
+
+export function useContestDisputeRemedyMutation() {
+  return useDisputeMutation(({ disputeId, reason }: { disputeId: string, reason: string }) => backendContestDisputeRemedy(disputeId, reason))
 }
 
 export function useMyAppealsQuery() {

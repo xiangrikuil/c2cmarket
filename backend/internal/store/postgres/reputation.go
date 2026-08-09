@@ -10,6 +10,7 @@ import (
 
 	"c2c-market/backend/internal/domain"
 	"c2c-market/backend/internal/module/idempotency"
+	"c2c-market/backend/internal/module/report"
 	"c2c-market/backend/internal/module/reputation"
 
 	"github.com/jackc/pgx/v5"
@@ -709,6 +710,16 @@ outcome_candidates AS (
   ) AS scopes
   WHERE outcome.status = 'active'
     AND outcome.responsibility IN ('responsible', 'shared')
+    AND (
+      dispute.target_type <> 'api_order'
+      OR (
+        SELECT remedy.status
+        FROM api_order_dispute_remedies remedy
+        WHERE remedy.dispute_case_id = dispute.id
+        ORDER BY remedy.created_at DESC, remedy.id DESC
+        LIMIT 1
+      ) = 'overdue'
+    )
     AND outcome.decided_at >= $2 - interval '365 days'
 ),
 outcome_stats AS (
@@ -1143,6 +1154,24 @@ func (s *Store) CreateDisputeOutcomeWithIdempotency(ctx context.Context, entry i
 	if status != "resolved" && status != "closed" {
 		return reputation.GovernanceMutationResult{}, idempotency.Completion{}, domain.NewError(http.StatusConflict, domain.CodeInvalidStateTransition, "Dispute unresolved", "未解决纠纷只能形成提醒，不能创建责任裁定。")
 	}
+	if targetType == report.TargetAPIOrder && (input.Responsibility == reputation.ResponsibilityResponsible || input.Responsibility == reputation.ResponsibilityShared) {
+		var remedyStatus string
+		if err := tx.QueryRow(ctx, `
+			SELECT status
+			FROM api_order_dispute_remedies
+			WHERE dispute_case_id = $1
+			ORDER BY created_at DESC, id DESC
+			LIMIT 1
+			FOR UPDATE
+		`, input.DisputeCaseID).Scan(&remedyStatus); errors.Is(err, pgx.ErrNoRows) {
+			return reputation.GovernanceMutationResult{}, idempotency.Completion{}, apiOrderRemedyOutcomeUnavailable()
+		} else if err != nil {
+			return reputation.GovernanceMutationResult{}, idempotency.Completion{}, internalStoreError()
+		}
+		if remedyStatus != report.RemedyStatusOverdue {
+			return reputation.GovernanceMutationResult{}, idempotency.Completion{}, apiOrderRemedyOutcomeUnavailable()
+		}
+	}
 	var appealBlocksOutcome bool
 	if err := tx.QueryRow(ctx, `
 		SELECT EXISTS (
@@ -1231,19 +1260,33 @@ func (s *Store) CreateUserRestrictionWithIdempotency(ctx context.Context, entry 
 		return reputation.GovernanceMutationResult{}, idempotency.Completion{}, reputationVersionConflict()
 	}
 	if input.SourceDisputeOutcomeID != "" {
-		var subjectUserID, roleScope, outcomeStatus string
+		var subjectUserID, roleScope, outcomeStatus, targetType, remedyStatus string
 		if err := tx.QueryRow(ctx, `
-			SELECT subject_user_id::text, role_scope, status
-			FROM dispute_reputation_outcomes
-			WHERE id = $1
-			FOR UPDATE
-		`, input.SourceDisputeOutcomeID).Scan(&subjectUserID, &roleScope, &outcomeStatus); errors.Is(err, pgx.ErrNoRows) {
+			SELECT outcome.subject_user_id::text,
+			       outcome.role_scope,
+			       outcome.status,
+			       dispute.target_type,
+			       COALESCE((
+			         SELECT remedy.status
+			         FROM api_order_dispute_remedies remedy
+			         WHERE remedy.dispute_case_id = dispute.id
+			         ORDER BY remedy.created_at DESC, remedy.id DESC
+			         LIMIT 1
+			       ), '')
+			FROM dispute_reputation_outcomes outcome
+			JOIN dispute_cases dispute ON dispute.id = outcome.dispute_case_id
+			WHERE outcome.id = $1
+			FOR UPDATE OF outcome, dispute
+		`, input.SourceDisputeOutcomeID).Scan(&subjectUserID, &roleScope, &outcomeStatus, &targetType, &remedyStatus); errors.Is(err, pgx.ErrNoRows) {
 			return reputation.GovernanceMutationResult{}, idempotency.Completion{}, domain.NewError(http.StatusNotFound, domain.CodeObjectNotFound, "Outcome not found", "关联信誉裁定不存在。")
 		} else if err != nil {
 			return reputation.GovernanceMutationResult{}, idempotency.Completion{}, internalStoreError()
 		}
 		if outcomeStatus != reputation.OutcomeStatusActive || subjectUserID != input.UserID {
 			return reputation.GovernanceMutationResult{}, idempotency.Completion{}, domain.NewError(http.StatusConflict, domain.CodeInvalidStateTransition, "Outcome unavailable", "关联信誉裁定已反转或主体不匹配。")
+		}
+		if targetType == report.TargetAPIOrder && remedyStatus != report.RemedyStatusOverdue {
+			return reputation.GovernanceMutationResult{}, idempotency.Completion{}, apiOrderRemedyOutcomeUnavailable()
 		}
 		if roleScope != reputation.RoleAll && input.RoleScope != roleScope {
 			return reputation.GovernanceMutationResult{}, idempotency.Completion{}, domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Role scope invalid", "限制角色不能超出关联裁定角色。", "roleScope", "invalid", "限制角色不能超出关联裁定角色。")
@@ -1288,6 +1331,10 @@ func (s *Store) CreateUserRestrictionWithIdempotency(ctx context.Context, entry 
 		return reputation.GovernanceMutationResult{}, idempotency.Completion{}, internalStoreError()
 	}
 	return result, completion, nil
+}
+
+func apiOrderRemedyOutcomeUnavailable() *domain.AppError {
+	return domain.NewError(http.StatusConflict, domain.CodeInvalidStateTransition, "Overdue remedy required", "API 订单责任裁定只能基于管理员已确认的逾期未履行事实。")
 }
 
 func (s *Store) RevokeUserRestrictionWithIdempotency(ctx context.Context, entry idempotency.Entry, input reputation.RevokeRestrictionInput, now time.Time, buildCompletion reputation.GovernanceCompletionBuilder) (reputation.GovernanceMutationResult, idempotency.Completion, *domain.AppError) {

@@ -281,7 +281,7 @@ func (s *Service) SetDisputeProjection(_ context.Context, disputeCaseID, status,
 	if s.repo != nil {
 		return domain.NewError(http.StatusInternalServerError, domain.CodeInternalError, "Internal error", "数据库纠纷投影必须在管理员事务中更新。")
 	}
-	if status != DisputeStatusOpen && status != DisputeStatusClosed {
+	if status != DisputeStatusOpen && status != DisputeStatusAwaitingFulfillment && status != DisputeStatusFulfillmentConfirmation && status != DisputeStatusClosed {
 		return domain.NewError(http.StatusConflict, domain.CodeInvalidStateTransition, "Invalid state transition", "纠纷投影目标状态不支持。")
 	}
 	disputeCaseID = strings.TrimSpace(disputeCaseID)
@@ -300,15 +300,28 @@ func (s *Service) SetDisputeProjection(_ context.Context, disputeCaseID, status,
 		if !IsDisputeActive(order.DisputeStatus) {
 			return domain.NewError(http.StatusConflict, domain.CodeInvalidStateTransition, "Invalid state transition", "纠纷关联的 API 订单状态不一致，无法结案。")
 		}
+		previousDisputeStatus := order.DisputeStatus
 		order.DisputeStatus = status
 		order.UpdatedAt = s.now()
 		order.Version++
 		s.orders[id] = order
 		eventType := EventDisputeOpened
 		note := "已申请平台介入"
-		if status == DisputeStatusClosed {
+		switch status {
+		case DisputeStatusAwaitingFulfillment:
+			eventType = EventDisputeRemedyAwaiting
+			note = "平台已裁决，等待责任方履行"
+		case DisputeStatusFulfillmentConfirmation:
+			eventType = EventDisputeRemedyClaimed
+			note = "责任方已声明履行，等待对方确认"
+		case DisputeStatusOpen:
+			if previousDisputeStatus == DisputeStatusFulfillmentConfirmation {
+				eventType = EventDisputeRemedyContested
+				note = "对方对履行结果有异议，平台重新审核"
+			}
+		case DisputeStatusClosed:
 			eventType = EventDisputeClosed
-			note = "双方已确认协商方案"
+			note = "纠纷整改流程已结案"
 		}
 		s.appendEventLocked(order, actorUserID, eventType, order.Status, order.Status, note, requestID)
 		return nil

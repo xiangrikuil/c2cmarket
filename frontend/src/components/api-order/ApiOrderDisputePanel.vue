@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
-import { Check, Handshake, MessageSquareText, Scale, Send, X } from 'lucide-vue-next'
+import { Check, Clock3, Gavel, Handshake, MessageSquareText, Scale, Send, X } from 'lucide-vue-next'
 import { toast } from 'vue-sonner'
 import LocalTime from '@/components/market/LocalTime.vue'
 import SkeletonBlock from '@/components/market/SkeletonBlock.vue'
@@ -12,13 +12,17 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Textarea } from '@/components/ui/textarea'
 import {
   apiOrderDisputeIssueLabels,
+  apiOrderDisputeRemedyStatusLabels,
   apiOrderDisputeResolutionLabels,
   getApiOrderDisputeStatusLabel,
   type ApiOrderDisputeResolution,
 } from '@/lib/apiOrderDispute'
 import {
   useAppendDisputeMessageMutation,
+  useClaimDisputeRemedyMutation,
   useConfirmDisputeSettlementProposalMutation,
+  useConfirmDisputeRemedyMutation,
+  useContestDisputeRemedyMutation,
   useCreateDisputeSettlementProposalMutation,
   useEscalateDisputeMutation,
   useMyDisputeQuery,
@@ -39,15 +43,27 @@ const proposalAmount = ref('')
 const proposalTerms = ref('')
 const rejectReason = ref('')
 const escalationReason = ref('')
+const remedyClaimNote = ref('')
+const remedyConfirmationNote = ref('')
+const remedyContestReason = ref('')
 
 const appendMessageMutation = useAppendDisputeMessageMutation()
 const createProposalMutation = useCreateDisputeSettlementProposalMutation()
 const confirmProposalMutation = useConfirmDisputeSettlementProposalMutation()
 const rejectProposalMutation = useRejectDisputeSettlementProposalMutation()
 const escalateMutation = useEscalateDisputeMutation()
+const claimRemedyMutation = useClaimDisputeRemedyMutation()
+const confirmRemedyMutation = useConfirmDisputeRemedyMutation()
+const contestRemedyMutation = useContestDisputeRemedyMutation()
 
 const pendingProposal = computed(() => dispute.value?.settlementProposals?.find(item => item.status === 'pending') ?? null)
 const proposalHistory = computed(() => dispute.value?.settlementProposals?.filter(item => item.status !== 'pending') ?? [])
+const currentRemedy = computed(() => dispute.value?.remedies?.[0] ?? null)
+const remedyHistory = computed(() => dispute.value?.remedies?.slice(1) ?? [])
+const isRemedyResponsible = computed(() => currentRemedy.value?.responsibleUserId === props.viewerUserId)
+const isRemedyBeneficiary = computed(() => currentRemedy.value?.beneficiaryUserId === props.viewerUserId)
+const canClaimRemedy = computed(() => currentRemedy.value?.status === 'pending' && isRemedyResponsible.value)
+const canRespondToRemedy = computed(() => currentRemedy.value?.status === 'claimed_fulfilled' && isRemedyBeneficiary.value)
 const canNegotiate = computed(() => dispute.value?.status === 'negotiating')
 const canMessage = computed(() => ['negotiating', 'open', 'waiting_info'].includes(dispute.value?.status ?? ''))
 const pendingFromMe = computed(() => pendingProposal.value?.proposedByUserId === props.viewerUserId)
@@ -55,7 +71,10 @@ const mutationBusy = computed(() => appendMessageMutation.isPending.value
   || createProposalMutation.isPending.value
   || confirmProposalMutation.isPending.value
   || rejectProposalMutation.isPending.value
-  || escalateMutation.isPending.value)
+  || escalateMutation.isPending.value
+  || claimRemedyMutation.isPending.value
+  || confirmRemedyMutation.isPending.value
+  || contestRemedyMutation.isPending.value)
 
 function senderLabel(senderUserId: string) {
   return senderUserId === props.viewerUserId ? '我' : '对方'
@@ -68,6 +87,10 @@ function proposalStatusLabel(status: string) {
     rejected: '已拒绝',
     superseded: '已被新方案替代',
   } as Record<string, string>)[status] ?? status
+}
+
+function participantRoleLabel(userId: string) {
+  return userId === props.viewerUserId ? '我' : '对方'
 }
 
 function mutationError(error: unknown, fallback: string) {
@@ -138,6 +161,38 @@ async function escalate() {
     mutationError(error, '平台介入申请失败。')
   }
 }
+
+async function claimRemedy() {
+  if (!remedyClaimNote.value.trim()) return
+  try {
+    await claimRemedyMutation.mutateAsync({ disputeId: props.disputeId, note: remedyClaimNote.value.trim() })
+    remedyClaimNote.value = ''
+    toast.success('履行声明已提交，等待对方确认。')
+  } catch (error) {
+    mutationError(error, '履行声明提交失败。')
+  }
+}
+
+async function confirmRemedy() {
+  try {
+    await confirmRemedyMutation.mutateAsync({ disputeId: props.disputeId, reason: remedyConfirmationNote.value.trim() })
+    remedyConfirmationNote.value = ''
+    toast.success('已确认整改履行完成，纠纷已结案。')
+  } catch (error) {
+    mutationError(error, '整改确认失败。')
+  }
+}
+
+async function contestRemedy() {
+  if (remedyContestReason.value.trim().length < 2) return
+  try {
+    await contestRemedyMutation.mutateAsync({ disputeId: props.disputeId, reason: remedyContestReason.value.trim() })
+    remedyContestReason.value = ''
+    toast.success('已反馈未收到或未履行，纠纷重新进入平台审核。')
+  } catch (error) {
+    mutationError(error, '平台复核申请失败。')
+  }
+}
 </script>
 
 <template>
@@ -176,6 +231,82 @@ async function escalate() {
           <dd class="mt-1 text-sm font-medium">{{ dispute.requestedAmountCny ? `¥${dispute.requestedAmountCny}` : '不涉及' }}</dd>
         </div>
       </dl>
+
+      <section v-if="currentRemedy" class="border-b border-border py-5">
+        <div class="mb-4 flex flex-wrap items-center justify-between gap-2">
+          <h3 class="flex items-center gap-2 text-sm font-semibold"><Gavel class="h-4 w-4" />平台裁决与整改</h3>
+          <Badge variant="status">{{ apiOrderDisputeRemedyStatusLabels[currentRemedy.status] }}</Badge>
+        </div>
+        <dl class="grid gap-x-6 gap-y-4 sm:grid-cols-3">
+          <div>
+            <dt class="text-xs text-muted-foreground">整改动作</dt>
+            <dd class="mt-1 text-sm font-medium">
+              {{ apiOrderDisputeResolutionLabels[currentRemedy.action] }}<span v-if="currentRemedy.amountCny"> · ¥{{ currentRemedy.amountCny }}</span>
+            </dd>
+          </div>
+          <div>
+            <dt class="text-xs text-muted-foreground">责任方</dt>
+            <dd class="mt-1 text-sm font-medium">{{ participantRoleLabel(currentRemedy.responsibleUserId) }}</dd>
+          </div>
+          <div>
+            <dt class="text-xs text-muted-foreground">履行期限</dt>
+            <dd class="mt-1 flex items-center gap-1.5 text-sm font-medium"><Clock3 class="h-3.5 w-3.5" /><LocalTime :value="currentRemedy.dueAt" /></dd>
+          </div>
+        </dl>
+        <div class="mt-4 border-l-2 border-warning pl-4">
+          <p class="text-xs text-muted-foreground">整改要求</p>
+          <p class="mt-1 whitespace-pre-wrap break-words text-sm leading-6">{{ currentRemedy.instructions }}</p>
+        </div>
+        <div v-if="currentRemedy.claimNote" class="mt-4 border-l-2 border-border pl-4">
+          <div class="flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
+            <span>责任方履行声明</span>
+            <LocalTime v-if="currentRemedy.claimedAt" :value="currentRemedy.claimedAt" />
+          </div>
+          <p class="mt-1 whitespace-pre-wrap break-words text-sm leading-6">{{ currentRemedy.claimNote }}</p>
+          <p v-if="currentRemedy.confirmationDueAt && currentRemedy.status === 'claimed_fulfilled'" class="mt-2 text-xs text-muted-foreground">
+            对方反馈截止：<LocalTime :value="currentRemedy.confirmationDueAt" />
+          </p>
+        </div>
+        <div v-if="currentRemedy.responseNote" class="mt-4 border-l-2 border-border pl-4">
+          <p class="text-xs text-muted-foreground">结果记录</p>
+          <p class="mt-1 whitespace-pre-wrap break-words text-sm leading-6">{{ currentRemedy.responseNote }}</p>
+        </div>
+        <Alert v-if="currentRemedy.status === 'confirmation_expired'" class="mt-4">
+          <AlertTitle>确认期已结束</AlertTitle>
+          <AlertDescription>对方未在期限内反馈，流程已中性结案；平台未核验退款到账或履约事实。</AlertDescription>
+        </Alert>
+
+        <div v-if="canClaimRemedy" class="mt-5 space-y-3">
+          <Textarea v-model="remedyClaimNote" class="min-h-20" maxlength="2000" placeholder="说明已如何完成退款或继续履约，请勿填写 API Key、密码等敏感信息。" />
+          <Button :disabled="remedyClaimNote.trim().length < 2 || mutationBusy" @click="claimRemedy">
+            <Check class="h-4 w-4" />声明已履行
+          </Button>
+        </div>
+        <div v-else-if="canRespondToRemedy" class="mt-5 space-y-3">
+          <Textarea v-model="remedyConfirmationNote" class="min-h-16" maxlength="500" placeholder="确认说明（选填）" />
+          <Button :disabled="mutationBusy" @click="confirmRemedy"><Check class="h-4 w-4" />确认已收到或已完成</Button>
+          <div class="border-t border-border pt-4">
+            <Textarea v-model="remedyContestReason" class="min-h-20" maxlength="2000" placeholder="如未收到退款或履约未完成，请说明事实并申请平台复核。" />
+            <Button class="mt-3" variant="outline" :disabled="remedyContestReason.trim().length < 2 || mutationBusy" @click="contestRemedy">
+              <X class="h-4 w-4" />未收到或未完成
+            </Button>
+          </div>
+        </div>
+
+        <div v-if="remedyHistory.length" class="mt-5 border-t border-border pt-4">
+          <h4 class="text-xs font-medium text-muted-foreground">历史整改</h4>
+          <div class="mt-3 space-y-4">
+            <article v-for="remedy in remedyHistory" :key="remedy.id" class="border-l-2 border-border pl-4">
+              <div class="flex flex-wrap items-center justify-between gap-2">
+                <span class="text-sm font-medium">{{ apiOrderDisputeResolutionLabels[remedy.action] }}<span v-if="remedy.amountCny"> · ¥{{ remedy.amountCny }}</span></span>
+                <Badge variant="secondary">{{ apiOrderDisputeRemedyStatusLabels[remedy.status] }}</Badge>
+              </div>
+              <p class="mt-2 whitespace-pre-wrap break-words text-sm leading-6">{{ remedy.instructions }}</p>
+              <div class="mt-2 text-xs text-muted-foreground"><LocalTime :value="remedy.updatedAt" /></div>
+            </article>
+          </div>
+        </div>
+      </section>
 
       <section class="border-b border-border py-5">
         <h3 class="mb-4 flex items-center gap-2 text-sm font-semibold"><MessageSquareText class="h-4 w-4" />沟通记录</h3>

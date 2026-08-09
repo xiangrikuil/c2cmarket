@@ -17,6 +17,7 @@ export type ApiOrderDisputeIssueCode =
   | 'other'
 
 export type ApiOrderDisputeResolution = 'full_refund' | 'partial_refund' | 'continue_fulfillment' | 'other'
+export type ApiOrderDisputeRemedyStatus = 'pending' | 'claimed_fulfilled' | 'confirmed' | 'contested' | 'confirmation_expired' | 'overdue' | 'cancelled'
 
 export type OpenApiOrderDisputeInput = {
   issueCode: ApiOrderDisputeIssueCode
@@ -41,6 +42,16 @@ export const apiOrderDisputeResolutionLabels: Record<ApiOrderDisputeResolution, 
   partial_refund: '部分退款',
   continue_fulfillment: '继续履约',
   other: '其他方案',
+}
+
+export const apiOrderDisputeRemedyStatusLabels: Record<ApiOrderDisputeRemedyStatus, string> = {
+  pending: '等待责任方履行',
+  claimed_fulfilled: '履行待对方确认',
+  confirmed: '对方已确认',
+  contested: '平台重新审核中',
+  confirmation_expired: '确认超时中性结案',
+  overdue: '平台已确认逾期',
+  cancelled: '整改已终止',
 }
 
 export function normalizeApiOrderDisputeStatus(value: unknown): ApiOrderDisputeStatus {
@@ -86,7 +97,7 @@ export function getApiOrderDisputeStatusDescription(value: unknown): string {
     negotiating: '双方正在订单内协商处理，请围绕同一诉求补充脱敏事实。',
     open: '纠纷已提交平台审核。平台由管理员非实时处理，请勿重复提交。',
     awaiting_fulfillment: '平台已经作出裁决，正在等待责任方按裁决要求履行。',
-    fulfillment_confirmation: '责任方已提交履行结果，正在等待对方或平台确认。',
+    fulfillment_confirmation: '责任方已提交履行结果，正在等待整改受益方反馈。',
     closed: '该订单纠纷已经处理完毕，纠纷记录已结案。',
   }
   return descriptions[normalizeApiOrderDisputeStatus(value)]

@@ -184,3 +184,17 @@ seller escalates         -> case=open, order.dispute_status=open
 administrator rules invalid -> administrator workflow may close the case
 api_service_publish copy -> "limits new orders, publishing, and restoring; existing orders continue"
 ```
+
+## Scenario: Post-Ruling Remedies Produce Sanction Evidence Only After Confirmed Overdue
+
+### Contracts
+
+- An administrator resolves an API-order dispute either without a remedy, which closes the case and order projection, or with a new append-only remedy, which keeps the case `resolved` and projects the order to `awaiting_fulfillment`.
+- Only the responsible party may move `pending` to `claimed_fulfilled`; this projects `fulfillment_confirmation` and does not close the case. Only the beneficiary may confirm or contest. Confirmation closes both projections, while contesting preserves the remedy history and reopens both projections for administrator review.
+- A beneficiary response timeout is exactly 48 hours and closes with `confirmation_expired`. Its public result must state that the beneficiary did not respond and the platform did not verify payment or fulfillment.
+- Ordinary administrator close is forbidden while the latest remedy is `pending` or `claimed_fulfilled`. Reaching `due_at` alone does not create fault; only the administrator `mark_overdue` action may record `overdue` and close both projections.
+- API-order outcomes with `responsible` or `shared` responsibility, source-linked restrictions, and aggregate fault counts are eligible only when the latest remedy is `overdue`. No-remedy and administrator-invalid-claim decisions may create only non-fault outcomes such as `not_responsible` or `undetermined`.
+
+### Tests Required
+
+- Cover exact due/confirmation boundaries, active-remedy close rejection, contest reopening both projections, neutral timeout wording, and overdue-only outcome, restriction, and aggregate reputation evidence.

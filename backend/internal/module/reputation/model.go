@@ -387,6 +387,8 @@ type DisputeOutcome struct {
 	UpdatedAt         time.Time
 	Version           int64
 	DisputeVersion    int64
+	apiOrderDispute   bool
+	remedyOverdueFact bool
 }
 
 type UserRestriction struct {
@@ -412,17 +414,19 @@ type UserRestriction struct {
 }
 
 type CreateOutcomeInput struct {
-	DisputeCaseID   string
-	SubjectUserID   string
-	Responsibility  string
-	Severity        string
-	RoleScope       string
-	ReasonCode      string
-	PublicReason    string
-	InternalReason  string
-	AdminUserID     string
-	ExpectedVersion int64
-	RequestID       string
+	DisputeCaseID     string
+	SubjectUserID     string
+	Responsibility    string
+	Severity          string
+	RoleScope         string
+	ReasonCode        string
+	PublicReason      string
+	InternalReason    string
+	AdminUserID       string
+	ExpectedVersion   int64
+	RequestID         string
+	APIOrderDispute   bool
+	RemedyOverdueFact bool
 }
 
 type CreateRestrictionInput struct {

@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { computed, reactive, ref, watch } from 'vue'
 import { useQuery, useQueryClient } from '@tanstack/vue-query'
-import { CheckCircle2, FileText, Gavel, MessageSquareText, RefreshCw, Scale, TriangleAlert, Users } from 'lucide-vue-next'
+import { useNow } from '@vueuse/core'
+import { CheckCircle2, Clock3, FileText, Gavel, MessageSquareText, RefreshCw, Scale, TriangleAlert, Users } from 'lucide-vue-next'
 import { toast } from 'vue-sonner'
 import LocalTime from '@/components/market/LocalTime.vue'
 import SkeletonBlock from '@/components/market/SkeletonBlock.vue'
@@ -9,6 +10,7 @@ import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
+import { Input } from '@/components/ui/input'
 import {
   Dialog,
   DialogContent,
@@ -40,6 +42,7 @@ import { BackendProblemError } from '@/lib/backendClient'
 import {
   backendAdminDisputeDetail,
   backendAdminReportDetail,
+  backendMarkAdminDisputeRemedyOverdue,
   backendResolveAdminDispute,
   mapAdminDisputeRow,
   type AdminDisputeDetail,
@@ -49,8 +52,14 @@ import {
   useCreateDisputeReputationOutcomeMutation,
 } from '@/queries/useReputationQueries'
 import type { AdminRow } from '@/lib/api'
+import type { DisputeRemedyRequest } from '@/api/generated/openapi'
 import type { DisputeReputationOutcome } from '@/types/reputation'
-import { apiOrderDisputeIssueLabels, apiOrderDisputeResolutionLabels } from '@/lib/apiOrderDispute'
+import {
+  apiOrderDisputeIssueLabels,
+  apiOrderDisputeRemedyStatusLabels,
+  apiOrderDisputeResolutionLabels,
+  type ApiOrderDisputeResolution,
+} from '@/lib/apiOrderDispute'
 
 const props = defineProps<{
   open: boolean
@@ -76,6 +85,10 @@ const outcomeErrors = ref<Partial<Record<keyof OutcomeForm, string>>>({})
 const submitError = ref('')
 const initializedCaseVersion = ref('')
 const resolutionSubmitting = ref(false)
+const overdueSubmitting = ref(false)
+const remedyErrors = ref<Record<string, string>>({})
+const overdueReason = ref('')
+const overdueConfirmed = ref(false)
 
 const dialogOpen = computed({
   get: () => props.open,
@@ -120,6 +133,20 @@ const resolutionForm = reactive<ResolutionForm>({
   confirmed: false,
 })
 
+const remedyForm = reactive<{
+  decision: '' | 'none' | ApiOrderDisputeResolution
+  amountCny: string
+  responsibleUserId: string
+  instructions: string
+  dueAt: string
+}>({
+  decision: '',
+  amountCny: '',
+  responsibleUserId: '',
+  instructions: '',
+  dueAt: '',
+})
+
 const outcomeForm = reactive<OutcomeForm>({
   subjectUserId: '',
   responsibility: 'undetermined',
@@ -146,10 +173,16 @@ const evidenceBlocked = computed(() => Boolean(reportId.value) && (
   || Boolean(reportQuery.error.value)
   || snapshotResult.value.status !== 'valid'
 ))
+const currentRemedy = computed(() => dispute.value?.remedies?.[0] ?? null)
+const hasActiveRemedy = computed(() => currentRemedy.value?.status === 'pending' || currentRemedy.value?.status === 'claimed_fulfilled')
+const now = useNow({ interval: 1000 })
+const remedyDeadlineReached = computed(() => Boolean(currentRemedy.value?.dueAt) && now.value.getTime() >= new Date(currentRemedy.value!.dueAt).getTime())
+const hasOverdueAPIOrderRemedy = computed(() => dispute.value?.targetType === 'api_order' && currentRemedy.value?.status === 'overdue')
 const currentStep = computed(() => {
   if (existingOutcome.value) return 'complete'
   if (dispute.value?.status === 'open' || dispute.value?.status === 'waiting_info') return 'resolution'
-  if (dispute.value?.status === 'resolved') return 'outcome'
+  if (dispute.value?.status === 'resolved' && hasActiveRemedy.value) return 'remedy'
+  if (dispute.value?.status === 'resolved' || hasOverdueAPIOrderRemedy.value) return 'outcome'
   return 'closed'
 })
 const outcomeParticipantsUnavailable = computed(() => currentStep.value === 'outcome' && participants.value.length === 0)
@@ -166,6 +199,9 @@ watch(
     submitError.value = ''
     resolutionErrors.value = {}
     outcomeErrors.value = {}
+    remedyErrors.value = {}
+    overdueReason.value = ''
+    overdueConfirmed.value = false
     initializedCaseVersion.value = ''
   },
 )
@@ -182,6 +218,11 @@ watch(
     resolutionForm.publicResult = ''
     resolutionForm.internalReason = ''
     resolutionForm.confirmed = false
+    remedyForm.decision = ''
+    remedyForm.amountCny = ''
+    remedyForm.responsibleUserId = ''
+    remedyForm.instructions = ''
+    remedyForm.dueAt = ''
     outcomeForm.subjectUserId = value.subjectUserId ?? value.counterpartyUserId ?? ''
     outcomeForm.responsibility = 'undetermined'
     outcomeForm.severity = 'none'
@@ -276,15 +317,17 @@ async function recoverSubmissionConflict(error: unknown) {
 async function submitResolution() {
   if (resolutionSubmitting.value) return
   resolutionErrors.value = validateResolutionForm(resolutionForm)
+  remedyErrors.value = validateRemedyDecision()
   submitError.value = ''
   const publicResultCode = resolutionForm.publicResultCode
-  if (Object.keys(resolutionErrors.value).length > 0 || !dispute.value || !publicResultCode) return
+  if (Object.keys(resolutionErrors.value).length > 0 || Object.keys(remedyErrors.value).length > 0 || !dispute.value || !publicResultCode) return
   if (evidenceBlocked.value) {
     submitError.value = '关联举报证据尚未完整读取，当前不能提交基础裁决。'
     return
   }
   resolutionSubmitting.value = true
   try {
+    const remedy = buildRemedyRequest()
     const updated = await backendResolveAdminDispute({
       disputeId: dispute.value.id,
       expectedVersion: dispute.value.version,
@@ -292,6 +335,7 @@ async function submitResolution() {
       publicSummary: resolutionForm.publicSummary.trim(),
       publicResultCode,
       publicResult: resolutionForm.publicResult.trim(),
+      remedy,
     })
     initializedCaseVersion.value = `${updated.id}:${updated.version}`
     queryClient.setQueryData(disputeQueryKey.value, updated)
@@ -301,13 +345,65 @@ async function submitResolution() {
     outcomeForm.confirmed = false
     emit('updated', mapAdminDisputeRow(updated))
     await retryAudits()
-    toast.success('基础裁决已保存，请继续责任认定。')
+    toast.success(remedy ? '基础裁决已保存，等待责任方履行。' : '基础裁决已保存，纠纷已结案。')
   } catch (error) {
     if (!await recoverSubmissionConflict(error)) {
       submitError.value = errorMessage(error, '基础裁决提交失败。')
     }
   } finally {
     resolutionSubmitting.value = false
+  }
+}
+
+function validateRemedyDecision() {
+  const errors: Record<string, string> = {}
+  if (dispute.value?.targetType !== 'api_order') return errors
+  if (!remedyForm.decision) {
+    errors.decision = '请选择无需履行或具体整改动作。'
+    return errors
+  }
+  if (remedyForm.decision === 'none') return errors
+  if (!participants.value.some(item => item.userId === remedyForm.responsibleUserId)) errors.responsibleUserId = '请选择当前纠纷参与方。'
+  const instructionsLength = remedyForm.instructions.trim().length
+  if (instructionsLength < 2 || instructionsLength > 2000) errors.instructions = '整改说明需为 2 至 2000 个字符。'
+  const dueAt = new Date(remedyForm.dueAt)
+  if (!remedyForm.dueAt || !Number.isFinite(dueAt.getTime()) || dueAt.getTime() <= Date.now()) errors.dueAt = '整改期限必须晚于当前时间。'
+  if (remedyForm.decision === 'partial_refund' && !/^(?:0|[1-9]\d*)(?:\.\d{1,2})?$/.test(remedyForm.amountCny.trim())) {
+    errors.amountCny = '请输入最多两位小数的退款金额。'
+  } else if (remedyForm.decision === 'partial_refund' && Number(remedyForm.amountCny) <= 0) {
+    errors.amountCny = '退款金额必须大于 0。'
+  }
+  return errors
+}
+
+function buildRemedyRequest(): DisputeRemedyRequest | null {
+  if (dispute.value?.targetType !== 'api_order' || remedyForm.decision === 'none' || remedyForm.decision === '') return null
+  return {
+    action: remedyForm.decision,
+    ...(remedyForm.decision === 'partial_refund' ? { amountCny: remedyForm.amountCny.trim() } : {}),
+    responsibleUserId: remedyForm.responsibleUserId,
+    instructions: remedyForm.instructions.trim(),
+    dueAt: new Date(remedyForm.dueAt).toISOString(),
+  }
+}
+
+async function markRemedyOverdue() {
+  if (!dispute.value || !currentRemedy.value || overdueSubmitting.value || overdueReason.value.trim().length < 2 || !overdueConfirmed.value) return
+  overdueSubmitting.value = true
+  submitError.value = ''
+  try {
+    const updated = await backendMarkAdminDisputeRemedyOverdue({
+      disputeId: dispute.value.id,
+      expectedVersion: dispute.value.version,
+      reason: overdueReason.value.trim(),
+    })
+    queryClient.setQueryData(disputeQueryKey.value, updated)
+    emit('updated', mapAdminDisputeRow(updated))
+    toast.success('已确认整改逾期并结案。')
+  } catch (error) {
+    if (!await recoverSubmissionConflict(error)) submitError.value = errorMessage(error, '整改逾期确认失败。')
+  } finally {
+    overdueSubmitting.value = false
   }
 }
 
@@ -361,9 +457,12 @@ async function submitOutcome() {
         <DialogDescription>{{ dispute?.targetLabel || '读取案件详情中' }}</DialogDescription>
       </DialogHeader>
 
-      <div class="grid shrink-0 grid-cols-2 border-b border-border text-sm">
+      <div class="grid shrink-0 grid-cols-3 border-b border-border text-sm">
         <div class="flex items-center justify-center gap-2 px-3 py-3" :class="currentStep === 'resolution' ? 'bg-primary text-primary-foreground' : 'bg-muted/40'">
           <Gavel class="h-4 w-4" />基础裁决
+        </div>
+        <div class="flex items-center justify-center gap-2 border-l border-border px-3 py-3" :class="currentStep === 'remedy' ? 'bg-primary text-primary-foreground' : 'bg-muted/40'">
+          <Clock3 class="h-4 w-4" />整改履行
         </div>
         <div class="flex items-center justify-center gap-2 border-l border-border px-3 py-3" :class="currentStep === 'outcome' || currentStep === 'complete' ? 'bg-primary text-primary-foreground' : 'bg-muted/40'">
           <Scale class="h-4 w-4" />责任认定
@@ -475,6 +574,38 @@ async function submitOutcome() {
                 <p class="mt-1 whitespace-pre-wrap break-words text-sm leading-6">{{ proposal.terms }}</p>
               </article>
             </div>
+            <div v-if="currentRemedy" class="space-y-3 border-t border-border pt-4">
+              <div class="flex flex-wrap items-center justify-between gap-2">
+                <h3 class="text-sm font-semibold">当前整改要求</h3>
+                <Badge variant="status">{{ apiOrderDisputeRemedyStatusLabels[currentRemedy.status] }}</Badge>
+              </div>
+              <dl class="grid gap-3 sm:grid-cols-3">
+                <div>
+                  <dt class="text-xs text-muted-foreground">动作</dt>
+                  <dd class="mt-1 text-sm font-medium">{{ apiOrderDisputeResolutionLabels[currentRemedy.action] }}<span v-if="currentRemedy.amountCny"> · ¥{{ currentRemedy.amountCny }}</span></dd>
+                </div>
+                <div>
+                  <dt class="text-xs text-muted-foreground">责任方</dt>
+                  <dd class="mt-1 text-sm font-medium">{{ negotiationParticipantLabel(currentRemedy.responsibleUserId) }}</dd>
+                </div>
+                <div>
+                  <dt class="text-xs text-muted-foreground">履行期限</dt>
+                  <dd class="mt-1 text-sm font-medium"><LocalTime :value="currentRemedy.dueAt" /></dd>
+                </div>
+              </dl>
+              <div class="border-l-2 border-warning pl-3">
+                <p class="text-xs text-muted-foreground">公开整改说明</p>
+                <p class="mt-1 whitespace-pre-wrap break-words text-sm leading-6">{{ currentRemedy.instructions }}</p>
+              </div>
+              <div v-if="currentRemedy.claimNote" class="border-l-2 border-border pl-3">
+                <p class="text-xs text-muted-foreground">责任方履行声明</p>
+                <p class="mt-1 whitespace-pre-wrap break-words text-sm leading-6">{{ currentRemedy.claimNote }}</p>
+              </div>
+              <div v-if="currentRemedy.responseNote" class="border-l-2 border-border pl-3">
+                <p class="text-xs text-muted-foreground">结果记录</p>
+                <p class="mt-1 whitespace-pre-wrap break-words text-sm leading-6">{{ currentRemedy.responseNote }}</p>
+              </div>
+            </div>
           </section>
 
           <section class="space-y-4 border-b border-border py-5">
@@ -573,11 +704,89 @@ async function submitOutcome() {
                 <span v-if="resolutionErrors.internalReason" class="text-xs text-destructive">{{ resolutionErrors.internalReason }}</span>
               </label>
             </div>
+            <div v-if="dispute.targetType === 'api_order'" class="space-y-4 border-t border-border pt-4">
+              <div>
+                <h3 class="text-sm font-semibold">整改决策</h3>
+                <p class="mt-1 text-sm text-muted-foreground">必须明确选择无需履行或创建一条整改要求。责任方声明履行后不会自动结案。</p>
+              </div>
+              <div class="grid gap-4 sm:grid-cols-2">
+                <label class="space-y-1.5 text-sm">
+                  <span class="font-medium">裁决后的履行动作</span>
+                  <Select v-model="remedyForm.decision">
+                    <SelectTrigger class="w-full"><SelectValue placeholder="选择履行动作" /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="none">无需履行，直接结案</SelectItem>
+                      <SelectItem v-for="(label, value) in apiOrderDisputeResolutionLabels" :key="value" :value="value">{{ label }}</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <span v-if="remedyErrors.decision" class="text-xs text-destructive">{{ remedyErrors.decision }}</span>
+                </label>
+                <label v-if="remedyForm.decision && remedyForm.decision !== 'none'" class="space-y-1.5 text-sm">
+                  <span class="font-medium">整改责任方</span>
+                  <Select v-model="remedyForm.responsibleUserId">
+                    <SelectTrigger class="w-full"><SelectValue placeholder="选择责任方" /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem v-for="participant in participants" :key="participant.userId" :value="participant.userId">
+                        {{ participantLabel(participant.name, participant.username, participant.userId) }} · {{ participant.roleLabel }}
+                      </SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <span v-if="remedyErrors.responsibleUserId" class="text-xs text-destructive">{{ remedyErrors.responsibleUserId }}</span>
+                </label>
+                <label v-if="remedyForm.decision === 'partial_refund'" class="space-y-1.5 text-sm">
+                  <span class="font-medium">部分退款金额（CNY）</span>
+                  <Input v-model="remedyForm.amountCny" inputmode="decimal" placeholder="例如 25.50" />
+                  <span v-if="remedyErrors.amountCny" class="text-xs text-destructive">{{ remedyErrors.amountCny }}</span>
+                </label>
+                <label v-if="remedyForm.decision && remedyForm.decision !== 'none'" class="space-y-1.5 text-sm">
+                  <span class="font-medium">履行期限</span>
+                  <Input v-model="remedyForm.dueAt" type="datetime-local" />
+                  <span v-if="remedyErrors.dueAt" class="text-xs text-destructive">{{ remedyErrors.dueAt }}</span>
+                </label>
+                <label v-if="remedyForm.decision && remedyForm.decision !== 'none'" class="space-y-1.5 text-sm sm:col-span-2">
+                  <span class="font-medium">公开整改说明</span>
+                  <Textarea v-model="remedyForm.instructions" rows="3" maxlength="2000" placeholder="说明责任方要完成的退款或继续履约事项，请勿填写凭据。" />
+                  <span v-if="remedyErrors.instructions" class="text-xs text-destructive">{{ remedyErrors.instructions }}</span>
+                </label>
+              </div>
+            </div>
             <label class="flex items-start gap-3 border border-border bg-muted/30 p-3 text-sm">
               <Checkbox v-model="resolutionForm.confirmed" class="mt-0.5" />
               <span>我已核对关联对象、参与方和现有证据，公开文案不包含联系方式、凭据或站外支付信息。</span>
             </label>
             <p v-if="resolutionErrors.confirmed" class="text-xs text-destructive">{{ resolutionErrors.confirmed }}</p>
+          </section>
+
+          <section v-else-if="currentStep === 'remedy' && currentRemedy" class="space-y-4 pt-5">
+            <div>
+              <h2 class="text-sm font-semibold">整改履行进度</h2>
+              <p class="mt-1 text-sm text-muted-foreground">责任方声明履行不会结案；等待受益方确认、反馈未收到，或确认期中性结束。</p>
+            </div>
+            <Alert v-if="currentRemedy.status === 'claimed_fulfilled'">
+              <Clock3 class="h-4 w-4" />
+              <AlertTitle>等待受益方反馈</AlertTitle>
+              <AlertDescription>
+                责任方已提交履行声明。确认截止时间：
+                <LocalTime v-if="currentRemedy.confirmationDueAt" :value="currentRemedy.confirmationDueAt" />
+              </AlertDescription>
+            </Alert>
+            <template v-else-if="currentRemedy.status === 'pending'">
+              <Alert v-if="!remedyDeadlineReached">
+                <Clock3 class="h-4 w-4" />
+                <AlertTitle>整改期限尚未到达</AlertTitle>
+                <AlertDescription>责任方仍可声明履行。平台不能提前确认逾期。</AlertDescription>
+              </Alert>
+              <div class="space-y-3 border-t border-border pt-4">
+                <label class="space-y-1.5 text-sm">
+                  <span class="font-medium">逾期确认原因</span>
+                  <Textarea v-model="overdueReason" rows="3" maxlength="800" placeholder="记录平台核对到的逾期未履行事实。" />
+                </label>
+                <label class="flex items-start gap-3 border border-border bg-muted/30 p-3 text-sm">
+                  <Checkbox v-model="overdueConfirmed" class="mt-0.5" />
+                  <span>我确认当前时间已达到裁决期限，且责任方仍未声明履行。该动作会形成后续处罚可消费的逾期事实。</span>
+                </label>
+              </div>
+            </template>
           </section>
 
           <section v-else-if="currentStep === 'outcome'" class="space-y-4 pt-5">
@@ -698,6 +907,14 @@ async function submitOutcome() {
           @click="submitResolution"
         >
           <Gavel class="h-4 w-4" />保存基础裁决
+        </Button>
+        <Button
+          v-else-if="currentStep === 'remedy' && currentRemedy?.status === 'pending'"
+          variant="destructive"
+          :disabled="!remedyDeadlineReached || overdueReason.trim().length < 2 || !overdueConfirmed || overdueSubmitting"
+          @click="markRemedyOverdue"
+        >
+          <Clock3 class="h-4 w-4" />确认逾期未履行
         </Button>
         <Button
           v-else-if="currentStep === 'outcome'"
