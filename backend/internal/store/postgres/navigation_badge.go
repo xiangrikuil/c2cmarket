@@ -147,10 +147,13 @@ SELECT
     (SELECT count(*)::int FROM official_price_leads WHERE status = 'pending')
   ELSE 0 END AS admin_official_prices,
   CASE WHEN $3 THEN
-    (SELECT count(*)::int FROM carpool_listings WHERE status = 'pending_review')
+    (SELECT count(*)::int FROM carpool_listings WHERE status IN ('pending_review', 'paused'))
   ELSE 0 END AS admin_carpools,
   CASE WHEN $3 THEN
-    (SELECT count(*)::int FROM api_services WHERE review_status = 'pending_review')
+    (SELECT count(*)::int
+     FROM api_services
+     WHERE review_status = 'pending_review'
+       OR moderation_status = 'admin_suspended')
   ELSE 0 END AS admin_api_services,
   CASE WHEN $3 THEN
     (SELECT count(*)::int FROM feedback_tickets WHERE status IN ('submitted', 'following_up'))

@@ -3797,7 +3797,11 @@ export async function getAdminSectionRows(section: AdminSection): Promise<AdminR
       owner: canOpenApiMerchantProfile(item)
         ? `${getApiMerchantDisplayName(item)} · ${item.trustLevel === null ? '信任等级暂无数据' : `信任等级${item.trustLevel}`}`
         : `${getApiMerchantDisplayName(item)} → ${item.merchantUsername} · ${item.trustLevel === null ? '信任等级暂无数据' : `信任等级${item.trustLevel}`}`,
-      status: item.online ? '在线' : '离线',
+      status: item.state === 'reviewing'
+        ? '待处理'
+        : item.state === 'paused'
+          ? item.warning === '已下架' ? '已下架' : '暂停'
+          : item.online ? '在线' : '已通过',
       risk: item.unresolvedDisputes === null ? '纠纷数据暂无' : item.unresolvedDisputes > 0 ? `${item.unresolvedDisputes} 个未解决纠纷` : item.warranty,
       targetType: 'api-service',
       targetTo: apiServiceAdminTargetLink(item),
@@ -4761,8 +4765,8 @@ export async function getNavigationBadges(): Promise<NavigationBadgeSummary> {
   if (myUserProfileStore.permissions.includes('admin')) {
     const admin = {
       officialPrices: officialPriceStore.filter(item => item.status === '待验证').length,
-      carpools: carpoolStore.filter(item => item.status === '审核中').length,
-      apiServices: apiServiceStore.filter(item => item.state === 'reviewing').length,
+      carpools: carpoolStore.filter(item => item.status === '审核中' || item.status === '暂停').length,
+      apiServices: apiServiceStore.filter(item => item.state === 'reviewing' || (item.state === 'paused' && item.warning === '已下架')).length,
       feedbackTickets: feedbackTicketStore.filter(item => item.status === 'submitted' || item.status === 'following_up').length,
       reports: reportRows.filter(item => !item.status.includes('关闭') && !item.status.includes('需要补充')).length
         + appealRows.filter(item => item.status === '申诉复核中').length,

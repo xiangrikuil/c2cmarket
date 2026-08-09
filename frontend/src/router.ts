@@ -56,8 +56,8 @@ const userAuthMeta = { auth: 'user' } as const
 const adminAuthMeta = { auth: 'admin' } as const
 
 const adminChildren = [
-  ['carpools', '车源异常处理', '处理暂停、下架、待复核和遗留审核车源；公开在售车源直接在普通列表巡查。'],
-  ['api-services', 'API 服务审核', '审核模型价格、最低订单金额、交易说明和商户承诺规则。'],
+  ['carpools', '车源管理', '集中巡查公开车源，并处理暂停、待复核和遗留审核记录。'],
+  ['api-services', 'API 服务管理', '巡查公开服务，并处理遗留待审、下架和其他异常记录。'],
   ['trade-intents', 'API 订单追踪', '查看 API 订单、参与方、金额快照、完成和取消状态。'],
   ['reports', '举报纠纷', '处理举报、纠纷和未解决记录。'],
   ['appeals', '申诉处理', '处理用户对限制、下架和封禁的申诉。'],

@@ -1610,7 +1610,7 @@ func canUpdateListingStatus(currentStatus, nextStatus, action string) bool {
 	case "reject":
 		return nextStatus == ListingStatusRejected && currentStatus == ListingStatusPendingReview
 	case "request_changes":
-		return nextStatus == ListingStatusChangesRequested && currentStatus == ListingStatusPendingReview
+		return nextStatus == ListingStatusChangesRequested && (currentStatus == ListingStatusPendingReview || currentStatus == ListingStatusActive)
 	case "pause":
 		return nextStatus == ListingStatusPaused && currentStatus == ListingStatusActive
 	case "restore":
@@ -1622,7 +1622,7 @@ func canUpdateListingStatus(currentStatus, nextStatus, action string) bool {
 	case ListingStatusRejected:
 		return currentStatus == ListingStatusPendingReview
 	case ListingStatusChangesRequested:
-		return currentStatus == ListingStatusPendingReview
+		return currentStatus == ListingStatusPendingReview || currentStatus == ListingStatusActive
 	case ListingStatusPaused:
 		return currentStatus == ListingStatusActive
 	default:

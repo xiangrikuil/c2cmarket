@@ -321,7 +321,7 @@ function openCarpool(event: MouseEvent | KeyboardEvent, id: string) {
     <Alert v-if="canModerateCarpools" class="mb-4">
       <ShieldCheck />
       <AlertTitle>管理员巡查模式</AlertTitle>
-      <AlertDescription>当前列表就是公开车源巡查入口。打开任意车源详情可执行下架或要求复核；暂停和遗留审核记录请前往车源异常处理。</AlertDescription>
+      <AlertDescription>当前列表就是公开车源巡查入口。打开任意车源详情可执行下架或要求复核；暂停和遗留审核记录可在车源管理的异常车源视图处理。</AlertDescription>
     </Alert>
     <div v-if="rows.length === 0" class="rounded-xl border border-border bg-card p-8 text-center text-sm text-muted-foreground">当前筛选条件下暂无可展示车源。</div>
     <SoftTable v-else :columns="['车源', '价格', '车位', '额度 / 接入', '车主', '状态']">

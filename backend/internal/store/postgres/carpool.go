@@ -2056,7 +2056,7 @@ func canUpdateCarpoolListingStatus(currentStatus, nextStatus, action string) boo
 	case "reject":
 		return nextStatus == carpool.ListingStatusRejected && currentStatus == carpool.ListingStatusPendingReview
 	case "request_changes":
-		return nextStatus == carpool.ListingStatusChangesRequested && currentStatus == carpool.ListingStatusPendingReview
+		return nextStatus == carpool.ListingStatusChangesRequested && (currentStatus == carpool.ListingStatusPendingReview || currentStatus == carpool.ListingStatusActive)
 	case "pause":
 		return nextStatus == carpool.ListingStatusPaused && currentStatus == carpool.ListingStatusActive
 	case "restore":
@@ -2068,7 +2068,7 @@ func canUpdateCarpoolListingStatus(currentStatus, nextStatus, action string) boo
 	case carpool.ListingStatusRejected:
 		return currentStatus == carpool.ListingStatusPendingReview
 	case carpool.ListingStatusChangesRequested:
-		return currentStatus == carpool.ListingStatusPendingReview
+		return currentStatus == carpool.ListingStatusPendingReview || currentStatus == carpool.ListingStatusActive
 	case carpool.ListingStatusPaused:
 		return currentStatus == carpool.ListingStatusActive
 	default:
