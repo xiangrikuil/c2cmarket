@@ -45,11 +45,13 @@ function formatTime(value: string) {
 
 <template>
   <div class="announcement-reference-page space-y-5">
-    <div class="announcement-reference-heading rounded-xl border px-5 py-4"><PageTitle title="公告详情" description="平台公告与业务通知独立展示。" /></div>
+    <div class="announcement-reference-heading rounded-xl border px-5 py-4">
+      <PageTitle title="公告详情" description="平台规则、功能更新与业务公告。" />
+    </div>
 
-    <Card v-if="isLoading" class="p-6 text-sm text-muted-foreground">公告加载中...</Card>
+    <Card v-if="isLoading" class="mx-auto max-w-4xl p-6 text-sm text-muted-foreground">公告加载中...</Card>
 
-    <Card v-else-if="!announcement" class="p-8 text-center">
+    <Card v-else-if="!announcement" class="mx-auto max-w-4xl p-8 text-center">
       <h2 class="text-xl font-semibold">公告不存在或当前不可见</h2>
       <p class="mt-2 text-sm text-muted-foreground">该公告可能仍是草稿、待发布、已下线，或链接输入有误。</p>
       <div class="mt-5 flex justify-center">
@@ -60,52 +62,49 @@ function formatTime(value: string) {
       </div>
     </Card>
 
-    <article v-else class="announcement-reference-layout">
-      <main class="min-w-0 space-y-4">
-        <Card class="announcement-reference-summary p-5">
-        <div class="flex flex-wrap items-center gap-2">
-          <Badge variant="outline">{{ announcementCategoryLabels[announcement.category] }}</Badge>
-          <Badge :variant="announcement.level === 'important' ? 'default' : 'secondary'">{{ announcementLevelLabels[announcement.level] }}</Badge>
-          <Badge v-if="announcement.isPinned" variant="secondary">置顶</Badge>
-        </div>
-        <h1 class="mt-4 text-2xl font-semibold tracking-tight md:text-3xl">{{ announcement.title }}</h1>
-        <p class="mt-2 max-w-3xl text-sm leading-6 text-muted-foreground">{{ announcement.summary }}</p>
-        <div class="mt-4 flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
-          <span>发布于 {{ publishedAt }}</span>
-          <span v-if="wasUpdatedAfterPublish">更新于 {{ contentUpdatedAt }}</span>
-        </div>
-        </Card>
+    <template v-else>
+      <Card class="announcement-reference-article mx-auto max-w-4xl overflow-hidden p-0">
+        <article>
+          <header class="announcement-reference-article-header p-5 md:p-7">
+            <div class="flex flex-wrap items-center gap-2">
+              <Badge variant="outline">{{ announcementCategoryLabels[announcement.category] }}</Badge>
+              <Badge :variant="announcement.level === 'important' ? 'default' : 'secondary'">{{ announcementLevelLabels[announcement.level] }}</Badge>
+              <Badge v-if="announcement.isPinned" variant="secondary">置顶</Badge>
+            </div>
+            <h1 class="mt-4 text-2xl font-semibold tracking-tight md:text-3xl">{{ announcement.title }}</h1>
+            <p class="mt-2 max-w-3xl text-sm leading-6 text-muted-foreground">{{ announcement.summary }}</p>
+            <div class="mt-4 flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
+              <span>发布于 {{ publishedAt }}</span>
+              <span v-if="wasUpdatedAfterPublish">更新于 {{ contentUpdatedAt }}</span>
+            </div>
+          </header>
 
-        <Card class="announcement-reference-content p-5">
-        <AnnouncementDetailContent :content-markdown="announcement.contentMarkdown" />
-        <div v-if="announcement.ctaLabel && announcement.ctaUrl" class="mt-6">
-          <a v-if="ctaIsExternal" :href="announcement.ctaUrl" target="_blank" rel="noopener noreferrer">
-            <Button>
-              {{ announcement.ctaLabel }}
-              <ExternalLink class="h-4 w-4" />
-            </Button>
-          </a>
-          <RouterLink v-else :to="announcement.ctaUrl">
-            <Button>
-              {{ announcement.ctaLabel }}
-              <ExternalLink class="h-4 w-4" />
-            </Button>
-          </RouterLink>
-        </div>
-        </Card>
+          <div class="border-t border-border px-5 py-6 md:px-7 md:py-8">
+            <AnnouncementDetailContent :content-markdown="announcement.contentMarkdown" />
+            <div v-if="announcement.ctaLabel && announcement.ctaUrl" class="mt-7">
+              <Button v-if="ctaIsExternal" as-child>
+                <a :href="announcement.ctaUrl" target="_blank" rel="noopener noreferrer">
+                  {{ announcement.ctaLabel }}
+                  <ExternalLink class="h-4 w-4" />
+                </a>
+              </Button>
+              <Button v-else as-child>
+                <RouterLink :to="announcement.ctaUrl">
+                  {{ announcement.ctaLabel }}
+                  <ExternalLink class="h-4 w-4" />
+                </RouterLink>
+              </Button>
+            </div>
+          </div>
+        </article>
+      </Card>
 
+      <div class="mx-auto flex max-w-4xl">
         <Button variant="outline" @click="router.push('/my/notifications?tab=announcements')">
           <ArrowLeft class="h-4 w-4" />
           返回公告列表
         </Button>
-      </main>
-      <aside class="announcement-reference-aside space-y-3">
-        <Card class="p-4">
-          <h2 class="font-semibold">阅读说明</h2>
-          <p class="mt-2 text-sm leading-6 text-muted-foreground">公告正文以当前页面为准。涉及具体订单或车源时，请回到对应详情页核对最新状态。</p>
-          <Button class="mt-3 w-full" variant="outline" @click="router.push('/my/notifications?tab=announcements')">查看全部公告</Button>
-        </Card>
-      </aside>
-    </article>
+      </div>
+    </template>
   </div>
 </template>
