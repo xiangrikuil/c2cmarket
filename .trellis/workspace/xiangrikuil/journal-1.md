@@ -1436,3 +1436,78 @@ Added administrator-reviewed models.dev preview/apply, atomic price version upda
 ### Status
 
 [OK] **Completed**
+
+
+## Session 44: 收紧前端 Reka UI 依赖边界
+
+**Date**: 2026-08-09
+**Task**: 收紧前端 Reka UI 依赖边界
+**Package**: frontend
+**Branch**: `codex/api-health-probe-repeat-prompts`
+
+### Summary
+
+移除 5 个业务组件对 Reka UI 类型的直接引用，新增 shadcn-vue 依赖边界测试，并将规则写入前端组件规范。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `523e44e` | (see git log) |
+
+### Status
+
+[OK] **Completed**
+
+
+## Session 45: API 订单纠纷处罚治理
+
+**Date**: 2026-08-09
+**Task**: API 订单纠纷处罚治理
+**Package**: frontend
+**Branch**: `codex/api-health-probe-repeat-prompts`
+
+### Summary
+
+实现管理员确认逾期后的 180 天阶梯处罚、两条 API 新订单事务门禁、公开限制明细与管理端显式确认，并完成全量本地验证。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `68be0c5` | (see git log) |
+
+### Status
+
+[OK] **Completed**
+
+
+## Session 46: 工作区剩余改动原子提交整理
+
+**Date**: 2026-08-09
+**Task**: 工作区剩余改动原子提交整理
+**Package**: frontend
+**Branch**: `codex/api-health-probe-repeat-prompts`
+
+### Summary
+
+将 182 条未提交状态按业务意图重写为 10 个可独立审查和回退的原子提交，修正 shadcn-vue、通用分页、卖家订单和公告分页的历史归组边界；最终树与整理前完全一致，并通过全量 Go、Vitest、typecheck、real-mode build、OpenAPI、migration 和 diff 门禁。保留 `frontend/src/lib/api.ts` 的纯缩进改动、既有 stash 和纠纷处罚隔离工作树，未 push、部署或执行生产 migration。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `332bd00` | `refactor(frontend): align shadcn primitives with official registry` |
+| `8b843f0` | `fix(catalog): refresh model preview after conflicts` |
+| `98ff952` | `fix(announcements): preserve publication lifecycle timestamps` |
+| `22640fe` | `feat(carpools): collect daily and weekly quotas` |
+| `9c9e660` | `feat(admin): align listing moderation workflows` |
+| `39ffba9` | `feat(pagination): paginate market and workspace lists` |
+| `d70a1cc` | `fix(contacts): link linuxdo profiles to summary pages` |
+| `84c35ac` | `feat(api-orders): add seller payment reconciliation details` |
+| `8f5f865` | `feat(announcements): redesign admin and notification workflows` |
+| `a7fc49e` | `refactor(frontend): remove legacy array pagination` |
+
+### Status
+
+[OK] **Completed**

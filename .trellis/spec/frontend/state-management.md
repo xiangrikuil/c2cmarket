@@ -795,3 +795,159 @@ const disabled = paused || risky || hasApplication || seats === 0
 const disabled = !eligibility.canApply
 const reason = eligibility.reason
 ```
+
+## Scenario: API Market Infinite Cursor Queries
+
+All real-backend business lists follow the same ownership rule: the browser may retain opaque cursors for previous/next navigation, but it must not slice, filter, or sort a fetched array to manufacture pages. Every visible search, filter, and sort value belongs in the query key and backend request. Array pagination helpers are Mock-only and real mode must fail visibly when a server pagination adapter is missing.
+
+### 1. Scope / Trigger
+
+- Trigger: changes to API market service/offer lists, cursor adapters, market
+  filters or tabs, SSR prefetch, or the infinite-scroll sentinel.
+
+### 2. Signatures
+
+```ts
+type CursorPage<T> = { items: T[]; nextCursor?: string }
+
+useInfiniteApiServices(filters, enabled, scope)
+useInfiniteApiQuotaOffers(filters, enabled)
+flattenUniqueCursorPages(pages)
+```
+
+### 3. Contracts
+
+- Infinite queries request 20 rows per page, pass `nextCursor` back unchanged,
+  and stop when it is absent. Query keys contain every server filter plus the
+  market-view scope when two tabs share one endpoint.
+- Hidden market views keep their query disabled. Filter, slot, or view changes
+  create a new cursor chain from the first page rather than reusing stale data.
+- API package/free tabs send the billing mode to the backend. Once a package
+  model and duration are selected, both values are server filters; limited
+  quota search and system-slot exclusion are also server filters. Components
+  may defensively project returned DTOs, but must not use current-page array
+  filtering as the source of visible matching results.
+- Flattened pages are deduplicated by business ID; a later copy replaces the
+  stale record without changing the first-seen card position.
+- Each visible product source owns one sentinel. Intersection loads the next
+  page only when it exists and no load/error is active. A next-page error keeps
+  prior cards visible and exposes retry; the final page shows a terminal state.
+- SSR prefetches only the first page of the currently visible top-level market
+  view. Dependent sale-slot offers still await the slot list, select the same
+  slot as the client, and then prefetch that slot's first page.
+- Existing facade reads that promise a complete array may collect every page,
+  but must fail on a repeated cursor.
+
+### 4. Validation & Error Matrix
+
+| Condition | Required UI behavior |
+| --- | --- |
+| First page has no cursor | Render rows/empty state and `已加载全部`; no extra request |
+| Sentinel enters the 400px preload margin | Fetch one next page |
+| Next page fails | Preserve loaded cards and show `重试加载` |
+| Search/filter/view/slot changes | New query key and first-page cursor; matching is applied before backend pagination |
+| Adjacent pages repeat an ID | Render one card using the later record |
+| Hidden tab | No background page requests |
+| SSR route uses `view=free` | Prefetch service page only, not limited offers |
+
+### 5. Good / Base / Bad Cases
+
+- Good: scrolling loads later cards, a transient failure leaves existing cards
+  usable, and retry continues from the same cursor.
+- Base: one short page naturally ends without a second request.
+- Bad: `useQuery` discards `nextCursor`, both tabs prefetch on every SSR request,
+  or a filter change appends new results to the old cursor chain.
+
+### 6. Tests Required
+
+- Cursor adapter serialization and null/blank cursor normalization.
+- Mock paging, page-boundary deduplication, and repeated-cursor rejection.
+- Query-key, enabled-state, visible-view SSR prefetch, and four-sentinel source
+  regressions.
+- Full Vitest, Nuxt typecheck, real-mode production build, and browser checks
+  for incremental loading, retry, tab isolation, and horizontal overflow.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```ts
+const query = useQuery({ queryFn: () => getApiServices(filters.value) })
+prefetchQueriesOnServer(quotaQuery, servicesQuery)
+```
+
+#### Correct
+
+```ts
+const query = useInfiniteQuery({
+  queryKey: computed(() => ['api-services', 'infinite', view.value, filters.value]),
+  queryFn: ({ pageParam }) => getApiServicesPage(filters.value, { limit: 20, cursor: pageParam || undefined }),
+  getNextPageParam: page => page.nextCursor,
+})
+
+const visibleQuery = view.value === 'limited' ? quotaQuery : servicesQuery
+prefetchQueriesOnServer(visibleQuery)
+```
+
+## Scenario: 通知与平台公告查询页签隔离
+
+### 1. Scope / Trigger
+
+- 触发条件：修改 `/my/notifications` 的 URL 页签、通知分类、公告列表或 `AppShell` 中指向同一路径的导航项。
+- 目标：业务通知与平台公告可以共享路由页面，但不能共享活动状态或混排内容。
+
+### 2. Signatures
+
+```ts
+type NotificationTab = 'todo' | 'transactions' | 'system' | 'announcements'
+
+const announcementCenterTo = '/my/notifications?tab=announcements'
+```
+
+### 3. Contracts
+
+- `tab=announcements` 必须直接映射到 `announcements`，不得降级成 `system`。
+- `todo`、`transactions`、`system` 只渲染站内业务通知；`announcements` 只渲染公告查询结果。
+- “系统通知”计数不包含公告未读数；公告未读数只属于“平台公告”。
+- 待办、交易和系统页签数字必须复用渲染列表的同一个分类函数，不能用另一组业务类型汇总近似计算。
+- 同一路径存在普通通知和公告两个侧栏入口时，活动态必须同时判断 `route.path` 与 `route.query.tab`。
+- 公告入口属于认证用户的正常导航项，不得再用侧栏底部卡片重复表达同一目的地。
+- 切换页签继续使用 URL 查询状态，使刷新、返回和深链接保持一致。
+
+### 4. Validation & Error Matrix
+
+| URL / 操作 | 必须结果 |
+| --- | --- |
+| `/my/notifications` | 选中“通知”和默认待办页签 |
+| `?tab=system` | 只显示系统通知，公告行数为 0 |
+| `?tab=announcements` | 选中“平台公告”，只显示公告列表 |
+| 点击“平台公告”页签 | URL 更新为 `tab=announcements`，标题和侧栏活动态同步 |
+| 未知 `tab` | 规范化回默认待办，不静默合并到其他业务页签 |
+| 任一通知页签 | 页签数字等于该页签实际可见行数 |
+
+### 5. Good / Base / Bad Cases
+
+- Good：公告页显示“平台公告”标题、公告导航选中，系统通知不会出现在公告列表上方。
+- Base：通知与公告继续复用现有路由、查询 hooks 和 shadcn-vue `Tabs`。
+- Bad：为了复用模板把 `announcements` 映射成 `system`，再在系统通知卡片后追加公告卡片。
+
+### 6. Tests Required
+
+- 源契约测试断言四项 `NotificationTab`、独立查询映射、独立模板分支和查询感知的侧栏匹配。
+- 浏览器分别打开 `tab=system` 与 `tab=announcements`，断言标题、选中页签、侧栏活动态和两类行数互斥。
+- 运行全量 Vitest、Nuxt typecheck、real-mode production build，并在 390px 与 1440px 检查横向溢出。
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```ts
+if (route.query.tab === 'system' || route.query.tab === 'announcements') return 'system'
+```
+
+#### Correct
+
+```ts
+if (route.query.tab === 'system') return 'system'
+if (route.query.tab === 'announcements') return 'announcements'
+```
