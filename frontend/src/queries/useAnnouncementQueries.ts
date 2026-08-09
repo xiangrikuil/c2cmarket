@@ -7,6 +7,7 @@ import {
   getActiveAnnouncements,
   getActiveHomeAnnouncement,
   getAdminAnnouncements,
+  getAdminAnnouncementsPage,
   getAnnouncementAuditLogs,
   getAnnouncementById,
   getAnnouncementBySlug,
@@ -19,6 +20,8 @@ import {
   publishAnnouncement,
   updateAnnouncement,
 } from '@/lib/announcementsApi'
+import type { AdminAnnouncementPageFilters } from '@/lib/announcementsApi'
+import type { CursorPageRequest } from '@/lib/cursorPagination'
 import type { AnnouncementChannel, AnnouncementFormInput } from '@/types/announcement'
 
 function valueOf<T>(value: Ref<T> | T): T {
@@ -89,6 +92,14 @@ export function useAdminAnnouncements() {
   return useQuery({
     queryKey: announcementQueryKeys.adminList,
     queryFn: getAdminAnnouncements,
+    refetchOnMount: 'always',
+  })
+}
+
+export function useAdminAnnouncementsPage(filters: Ref<AdminAnnouncementPageFilters> | AdminAnnouncementPageFilters, page: Ref<CursorPageRequest> | CursorPageRequest) {
+  return useQuery({
+    queryKey: computed(() => [...announcementQueryKeys.adminList, 'page', valueOf(filters), valueOf(page)]),
+    queryFn: () => getAdminAnnouncementsPage(valueOf(filters), valueOf(page)),
     refetchOnMount: 'always',
   })
 }

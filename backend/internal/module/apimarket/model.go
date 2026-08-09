@@ -298,7 +298,10 @@ type ServiceAdminActionInput struct {
 }
 
 type PublicServiceFilter struct {
-	PaymentMethod string
+	PaymentMethod         string
+	BillingMode           string
+	PackageModelCatalogID string
+	PackageDurationDays   int
 }
 
 type OwnerServiceFilter struct {

@@ -375,15 +375,31 @@ type contactDisclosureDTO struct {
 }
 
 func (s *Server) handlePublicAPIServices(w http.ResponseWriter, r *http.Request) {
-	services, appErr := s.app.PublicAPIServices(r.Context(), apimarket.PublicServiceFilter{
-		PaymentMethod: r.URL.Query().Get("paymentMethod"),
-	})
+	pageRequest, appErr := parsePageRequest(r)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
 	}
-	summaries := s.loadAPIHealthSummaries(r.Context(), apiServiceIDs(services))
-	writePaginatedJSON(w, r, toPublicAPIServiceResponsesWithHealth(services, summaries))
+	packageDurationDays, appErr := parseListQueryInteger(r, "packageDurationDays")
+	if appErr != nil {
+		writeProblem(w, r, appErr)
+		return
+	}
+	services, appErr := s.app.PublicAPIServices(r.Context(), apimarket.PublicServiceFilter{
+		PaymentMethod:         r.URL.Query().Get("paymentMethod"),
+		BillingMode:           r.URL.Query().Get("billingMode"),
+		PackageModelCatalogID: r.URL.Query().Get("packageModelCatalogId"),
+		PackageDurationDays:   packageDurationDays,
+	}, pageRequest)
+	if appErr != nil {
+		writeProblem(w, r, appErr)
+		return
+	}
+	summaries := s.loadAPIHealthSummaries(r.Context(), apiServiceIDs(services.Items))
+	writePageJSON(w, domain.Page[publicAPIServiceResponse]{
+		Items:      toPublicAPIServiceResponsesWithHealth(services.Items, summaries),
+		NextCursor: services.NextCursor,
+	})
 }
 
 func (s *Server) handleUpdateAPIServiceOrderSettings(w http.ResponseWriter, r *http.Request) {
@@ -830,7 +846,7 @@ func (s *Server) handleAdminAPIServices(w http.ResponseWriter, r *http.Request) 
 		writeProblem(w, r, appErr)
 		return
 	}
-	services, appErr := s.app.AdminAPIServices(r.Context(), user, pageRequest)
+	services, appErr := s.app.AdminAPIServices(r.Context(), user, adminAPIServiceFilter(r), pageRequest)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return

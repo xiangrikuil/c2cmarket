@@ -12,11 +12,11 @@ type Repository interface {
 	GetAPIAccountPaymentSettings(ctx context.Context, userID string) (AccountPaymentSettings, *domain.AppError)
 	UpdateAPIAccountPaymentSettings(ctx context.Context, input UpdateAccountPaymentSettingsInput, now time.Time) (AccountPaymentSettings, *domain.AppError)
 	CreateAPIService(ctx context.Context, service Service) *domain.AppError
-	ListPublicAPIServices(ctx context.Context, filter PublicServiceFilter) ([]Service, *domain.AppError)
+	ListPublicAPIServices(ctx context.Context, filter PublicServiceFilter, page domain.PageRequest) (domain.Page[Service], *domain.AppError)
 	GetPublicAPIService(ctx context.Context, serviceID string) (Service, *domain.AppError)
 	ListAPIServicesByOwner(ctx context.Context, ownerUserID string, filter OwnerServiceFilter, page domain.PageRequest) (domain.Page[Service], *domain.AppError)
 	GetAPIServiceForOwner(ctx context.Context, ownerUserID, serviceID string) (Service, *domain.AppError)
-	ListAdminAPIServices(ctx context.Context, page domain.PageRequest) (domain.Page[Service], *domain.AppError)
+	ListAdminAPIServices(ctx context.Context, filter AdminServiceFilter, page domain.PageRequest) (domain.Page[Service], *domain.AppError)
 	GetAdminAPIService(ctx context.Context, serviceID string) (Service, *domain.AppError)
 	UpdateAPIService(ctx context.Context, input UpdateServiceInput, service Service, now time.Time) (Service, *domain.AppError)
 	UpdateAPIServiceProbeConnection(ctx context.Context, input UpdateProbeConnectionInput, now time.Time) (Service, *domain.AppError)

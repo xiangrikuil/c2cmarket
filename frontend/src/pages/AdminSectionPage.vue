@@ -29,18 +29,18 @@ import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import PageTitle from '@/components/market/PageTitle.vue'
 import SoftTable from '@/components/market/SoftTable.vue'
 import StatusTabs from '@/components/market/StatusTabs.vue'
-import TablePagination from '@/components/market/TablePagination.vue'
+import CursorTablePagination from '@/components/market/CursorTablePagination.vue'
 import EmptyState from '@/components/market/EmptyState.vue'
 import SkeletonTable from '@/components/market/SkeletonTable.vue'
 import CompactStats from '@/components/market/CompactStats.vue'
 import AdminDisputeResolutionDialog from '@/components/admin/AdminDisputeResolutionDialog.vue'
-import { usePagination } from '@/composables/usePagination'
+import { useCursorPagination } from '@/composables/useCursorPagination'
 import { runAdminModerationAction, updateAdminRowStatus, type AdminRow, type AdminSection } from '@/lib/api'
 import { backendAdminModerationDetailRow } from '@/lib/reportBackend'
 import { isCarpoolAdminActionStatus, isCarpoolExceptionStatus } from '@/lib/carpoolModeration'
 import { isApiServiceAdminActionStatus, isApiServiceExceptionStatus, isApiServicePublicStatus } from '@/lib/apiServiceModeration'
 import { matchesApiOrderSearch } from '@/lib/apiOrderUi'
-import { useAdminSectionRows } from '@/queries/useMarketQueries'
+import { useAdminSectionRows, useAdminSectionRowsPage } from '@/queries/useMarketQueries'
 import { toast } from 'vue-sonner'
 
 const route = useRoute()
@@ -50,7 +50,6 @@ const queryClient = useQueryClient()
 const title = computed(() => String(route.meta.title ?? '管理页面'))
 const description = computed(() => String(route.meta.description ?? '管理当前模块的数据、状态和审核记录。'))
 const section = computed(() => String(route.meta.section ?? 'official-prices') as AdminSection)
-const { data, error, isFetching, isLoading, refetch } = useAdminSectionRows(section)
 const localRows = ref<AdminRow[]>([])
 const activeStatus = ref('全部')
 const carpoolView = ref<CarpoolView>(route.query.view === 'exceptions' ? 'exceptions' : 'public')
@@ -81,6 +80,24 @@ type ModerationActionItem = {
   disabled: boolean
   danger?: boolean
 }
+
+const serverPagedSections: AdminSection[] = ['carpools', 'api-services', 'official-prices', 'price-leads', 'trade-intents']
+const supportsServerPagination = computed(() => serverPagedSections.includes(section.value))
+const pageFilters = computed(() => ({
+  q: keyword.value.trim() || undefined,
+  view: section.value === 'carpools' ? carpoolView.value : section.value === 'api-services' ? apiServiceView.value : undefined,
+  activeStatus: activeStatus.value,
+  risk: riskFilter.value,
+}))
+const pagination = useCursorPagination([section, activeStatus, keyword, riskFilter, carpoolView, apiServiceView])
+const pageRequest = computed(() => ({ limit: pagination.pageSize, cursor: pagination.cursor.value }))
+const fullRowsQuery = useAdminSectionRows(section, computed(() => !supportsServerPagination.value))
+const pageRowsQuery = useAdminSectionRowsPage(section, pageFilters, pageRequest, supportsServerPagination)
+const data = computed(() => supportsServerPagination.value ? pageRowsQuery.data.value?.items : fullRowsQuery.data.value)
+const error = computed(() => supportsServerPagination.value ? pageRowsQuery.error.value : fullRowsQuery.error.value)
+const isFetching = computed(() => supportsServerPagination.value ? pageRowsQuery.isFetching.value : fullRowsQuery.isFetching.value)
+const isLoading = computed(() => supportsServerPagination.value ? pageRowsQuery.isLoading.value : fullRowsQuery.isLoading.value)
+const refetch = () => supportsServerPagination.value ? pageRowsQuery.refetch() : fullRowsQuery.refetch()
 
 watch(data, rows => {
   localRows.value = rows ? [...rows] : []
@@ -151,6 +168,7 @@ function requiresAdminAction(row: AdminRow) {
 }
 
 const visibleRows = computed(() => {
+  if (supportsServerPagination.value) return localRows.value
   let rows = sectionRows.value
   if (activeStatus.value === '待处理') {
     rows = rows.filter(requiresAdminAction)
@@ -169,6 +187,14 @@ const visibleRows = computed(() => {
 const pendingCount = computed(() => sectionRows.value.filter(requiresAdminAction).length)
 const reviewCount = computed(() => sectionRows.value.filter(row => row.status.includes('复核')).length)
 const summaryStats = computed(() => {
+  if (supportsServerPagination.value) {
+    return [
+      { label: '本页记录', value: localRows.value.length },
+      { label: '待处理', value: localRows.value.filter(requiresAdminAction).length },
+      { label: '需复核', value: localRows.value.filter(row => row.status.includes('复核')).length },
+      { label: '当前筛选', value: visibleRows.value.length },
+    ]
+  }
   if (section.value === 'carpools' && carpoolView.value === 'public') {
     return [
       { label: '公开车源', value: sectionRows.value.length },
@@ -199,7 +225,6 @@ const statusTabs = computed(() => {
   if (['official-prices', 'price-leads', 'trade-intents'].includes(section.value)) return ['全部']
   return ['全部', '待处理', '已通过', '需复核', '已关闭']
 })
-const pagination = usePagination(visibleRows)
 const selectedRow = computed(() => localRows.value.find(row => row.id === selectedRowId.value) ?? null)
 const drawerRow = computed(() => selectedRow.value)
 const drawerAction = computed(() => drawerMode.value === 'detail' ? null : drawerMode.value)
@@ -567,9 +592,9 @@ const showContentActions = computed(() => !['logs', 'trade-intents'].includes(se
       </AlertDescription>
     </Alert>
     <EmptyState v-else-if="visibleRows.length === 0" title="当前筛选下暂无记录" description="调整状态筛选，或等待新的管理记录进入队列。" />
-    <SoftTable v-else :columns="['对象', '详情', '提交 / 关联人', '状态', '风险 / 备注', '操作']">
+    <SoftTable v-else class="[&_table]:min-w-[760px]" :columns="['对象', '详情', '提交 / 关联人', '状态', '风险 / 备注', '操作']">
       <tr
-        v-for="row in pagination.paginatedRows.value"
+        v-for="row in visibleRows"
         :key="row.id"
         :class="row.id === selectedRow?.id ? 'bg-accent/60' : ''"
       >
@@ -624,13 +649,14 @@ const showContentActions = computed(() => !['logs', 'trade-intents'].includes(se
           </div>
         </td>
       </tr>
-      <template #footer>
-        <TablePagination
-          v-model:page="pagination.page.value"
-          :page-count="pagination.pageCount.value"
-          :total="pagination.total.value"
-          :start-item="pagination.startItem.value"
-          :end-item="pagination.endItem.value"
+      <template v-if="supportsServerPagination" #footer>
+        <CursorTablePagination
+          :page="pagination.page.value"
+          :item-count="visibleRows.length"
+          :has-next-page="Boolean(pageRowsQuery.data.value?.nextCursor)"
+          :loading="pageRowsQuery.isFetching.value"
+          @previous="pagination.previous"
+          @next="pagination.next(pageRowsQuery.data.value?.nextCursor)"
         />
       </template>
     </SoftTable>

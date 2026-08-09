@@ -343,7 +343,7 @@ func (s *Server) handlePublicCarpools(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, r, appErr)
 		return
 	}
-	listings, appErr := s.carpools.PublicCarpoolListings(r.Context(), pageRequest)
+	listings, appErr := s.carpools.PublicCarpoolListings(r.Context(), carpoolListingFilter(r), pageRequest)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
@@ -403,7 +403,7 @@ func (s *Server) handleAdminCarpools(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, r, appErr)
 		return
 	}
-	listings, appErr := s.carpools.AdminCarpoolListings(r.Context(), user, pageRequest)
+	listings, appErr := s.carpools.AdminCarpoolListings(r.Context(), user, carpoolListingFilter(r), pageRequest)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
@@ -522,7 +522,12 @@ func (s *Server) handleMyCarpoolApplications(w http.ResponseWriter, r *http.Requ
 		writeProblem(w, r, appErr)
 		return
 	}
-	writePaginatedJSON(w, r, toCarpoolApplicationResponses(applications))
+	memberships, appErr := s.carpools.MyCarpoolMemberships(r.Context(), user)
+	if appErr != nil {
+		writeProblem(w, r, appErr)
+		return
+	}
+	writePaginatedJSON(w, r, toCarpoolApplicationResponses(filterCarpoolApplications(r, applications, memberships)))
 }
 
 func (s *Server) handleMyCarpoolApplication(w http.ResponseWriter, r *http.Request) {
@@ -627,7 +632,12 @@ func (s *Server) handleOwnerCarpoolApplications(w http.ResponseWriter, r *http.R
 		writeProblem(w, r, appErr)
 		return
 	}
-	writePaginatedJSON(w, r, toCarpoolApplicationResponses(applications))
+	memberships, appErr := s.carpools.OwnerCarpoolMemberships(r.Context(), user)
+	if appErr != nil {
+		writeProblem(w, r, appErr)
+		return
+	}
+	writePaginatedJSON(w, r, toCarpoolApplicationResponses(filterCarpoolApplications(r, applications, memberships)))
 }
 
 func (s *Server) handleOwnerCarpoolApplication(w http.ResponseWriter, r *http.Request) {

@@ -139,7 +139,7 @@ func (s *Service) AdminReports(ctx context.Context, user auth.User, page domain.
 		items = append(items, item)
 	}
 	sortReports(items)
-	return domain.PageItems(items, page), nil
+	return domain.PageItems(items, page)
 }
 
 func (s *Service) AdminReport(ctx context.Context, user auth.User, id string) (Report, *domain.AppError) {

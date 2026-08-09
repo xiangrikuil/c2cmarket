@@ -106,7 +106,7 @@ describe('个人与经营中心导航', () => {
     expect(routerSource).toContain("import('@/pages/MyApiServicesPage.vue')")
     expect(routerSource).toContain("import('@/pages/MyApiServiceDetailPage.vue')")
     expect(myApiServicesSource).toContain(":title=\"quotaPublishIntent ? '选择 API 服务' : '我的 API 服务'\"")
-    expect(myApiServicesSource).toContain('useMyApiServices(salesView)')
+    expect(myApiServicesSource).toContain('usePagedMyApiServices(salesView, pageRequest)')
     expect(myApiServicesSource).toContain('usePublishApiServiceMutation()')
     expect(myApiServicesSource).toContain('usePauseApiServiceMutation()')
     expect(myApiServicesSource).toContain('useResumeApiServiceMutation()')

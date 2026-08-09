@@ -5,6 +5,7 @@ import { CalendarClock, Code2, PackageOpen, PackagePlus, Search, Zap } from 'luc
 import { toast } from 'vue-sonner'
 import EmptyState from '@/components/market/EmptyState.vue'
 import ErrorState from '@/components/market/ErrorState.vue'
+import InfiniteScrollSentinel from '@/components/market/InfiniteScrollSentinel.vue'
 import SkeletonBlock from '@/components/market/SkeletonBlock.vue'
 import ApiFreeServiceCard from '@/components/api-market/ApiFreeServiceCard.vue'
 import ApiPackageCard from '@/components/api-market/ApiPackageCard.vue'
@@ -21,8 +22,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import {
   getApiMerchantDisplayName,
-  getApiQuotaDistributionLabel,
   type ApiService,
+  type ApiServiceFilters,
   type ApiQuotaDistributionSystem,
   type ApiQuotaOfferFilters,
   type ApiQuotaSystemSaleSlot,
@@ -37,6 +38,7 @@ import {
 import { rankApiPackages } from '@/lib/apiPackageRecommendation'
 import { getApiMerchantBadges } from '@/lib/apiMerchantBadges'
 import type { ApiServicePromotion } from '@/lib/apiMarketBackend'
+import { flattenUniqueCursorPages } from '@/lib/cursorPagination'
 import { placePromotions, promotionsForBillingMode } from '@/lib/apiPromotionPlacement'
 import {
   getProductCategory,
@@ -44,7 +46,7 @@ import {
   type ConcreteProductCategoryKey,
 } from '@/lib/productCategories'
 import { getApiServiceProductCategory, getApiServiceProductIconSrc, getProductIconSrc } from '@/lib/productCategoryIcon'
-import { useApiPromotions, useApiQuotaOffers, useApiQuotaSaleSlots, useApiServices, useCreateApiQuotaOrderMutation } from '@/queries/useMarketQueries'
+import { useApiPromotions, useApiQuotaSaleSlots, useCreateApiQuotaOrderMutation, useInfiniteApiQuotaOffers, useInfiniteApiServices, useModelCatalog } from '@/queries/useMarketQueries'
 import { useProductCategories } from '@/queries/useProductCatalogQueries'
 import { prefetchQueriesOnServer } from '@/queries/prefetchQueriesOnServer'
 
@@ -59,6 +61,7 @@ const availability = ref<AvailabilityFilter>('all')
 const oneMultiplier = ref(false)
 const packageModel = ref('')
 const packageDuration = ref('')
+const packageReady = computed(() => Boolean(packageModel.value && packageDuration.value))
 const now = ref(Date.now())
 const serverClockOffset = ref(0)
 const selectedSlotKey = ref('')
@@ -83,39 +86,45 @@ const quotaFilters = computed<ApiQuotaOfferFilters>(() => ({
   distributionSystem: distributionSystem.value,
   oneMultiplier: oneMultiplier.value,
   onlyOrderable: availability.value === 'available',
+  search: quotaSearch.value.trim() || undefined,
+  excludeSystemSlots: true,
 }))
-const quotaQuery = useApiQuotaOffers(quotaFilters)
+const limitedViewEnabled = computed(() => activeView.value === 'limited')
+const serviceViewEnabled = computed(() => activeView.value === 'packages' || activeView.value === 'free')
+const serviceFilters = computed<ApiServiceFilters>(() => ({
+  online: true,
+  billingMode: activeView.value === 'packages' ? 'fixed_package' : 'metered_credit',
+  packageModelCatalogId: activeView.value === 'packages' && packageReady.value ? packageModel.value : undefined,
+  packageDurationDays: activeView.value === 'packages' && packageReady.value ? Number(packageDuration.value) : undefined,
+}))
+const quotaQuery = useInfiniteApiQuotaOffers(quotaFilters, limitedViewEnabled)
 const slotQuery = useApiQuotaSaleSlots()
 const rushFilters = computed<ApiQuotaOfferFilters>(() => ({ slotKey: selectedSlotKey.value }))
-const rushQuery = useApiQuotaOffers(rushFilters, computed(() => Boolean(selectedSlotKey.value)))
-const freeServicesQuery = useApiServices({ online: true })
+const rushQuery = useInfiniteApiQuotaOffers(rushFilters, computed(() => limitedViewEnabled.value && Boolean(selectedSlotKey.value)))
+const freeServicesQuery = useInfiniteApiServices(serviceFilters, serviceViewEnabled, activeView)
 const promotionQuery = useApiPromotions()
 const productCategoriesQuery = useProductCategories()
+const modelCatalogQuery = useModelCatalog()
 const { data: catalogCategories } = productCategoriesQuery
 const createOrderMutation = useCreateApiQuotaOrderMutation()
 const { setPromotionElement, trackPromotionClick } = usePromotionImpression()
-prefetchQueriesOnServer(quotaQuery, freeServicesQuery, productCategoriesQuery)
+const visibleMarketQuery = activeView.value === 'limited' ? quotaQuery : freeServicesQuery
+prefetchQueriesOnServer(visibleMarketQuery, productCategoriesQuery, modelCatalogQuery)
 const categoryIconByCode = computed(() => new Map((catalogCategories.value ?? []).map(category => [category.code, category.iconDataUrl])))
+const quotaHasLoadedPages = computed(() => Boolean(quotaQuery.data.value?.pages.length))
+const rushHasLoadedPages = computed(() => Boolean(rushQuery.data.value?.pages.length))
+const servicesHaveLoadedPages = computed(() => Boolean(freeServicesQuery.data.value?.pages.length))
 
 const quotaRows = computed(() => {
-  const keyword = quotaSearch.value.trim().toLowerCase()
-  const rows = (quotaQuery.data.value ?? []).filter(item => !item.currentRound?.systemSlotKey && !item.nextRound?.systemSlotKey)
-  if (!keyword) return rows
-  return rows.filter(item => [item.name, item.serviceTitle, item.sellerDisplayName, getApiQuotaDistributionLabel(item.distributionSystem)]
-    .some(value => value.toLowerCase().includes(keyword)))
+  return flattenUniqueCursorPages(quotaQuery.data.value?.pages)
 })
-const freeServices = computed(() => (freeServicesQuery.data.value ?? []).filter(service => service.billingMode !== 'fixed_package'))
-const packageServices = computed(() => (freeServicesQuery.data.value ?? []).filter(service => service.billingMode === 'fixed_package'))
+const loadedServices = computed(() => flattenUniqueCursorPages(freeServicesQuery.data.value?.pages))
+const freeServices = computed(() => loadedServices.value.filter(service => service.billingMode !== 'fixed_package'))
+const packageServices = computed(() => loadedServices.value.filter(service => service.billingMode === 'fixed_package'))
 const packageModelOptions = computed(() => {
-  const options = new Map<string, string>()
-  for (const service of packageServices.value) {
-    for (const item of service.packages ?? []) {
-      if (!item.enabled || item.stockAvailable <= 0) continue
-      for (const model of item.models) options.set(model.modelCatalogId, model.modelName)
-    }
-  }
-  return [...options.entries()]
-    .map(([id, name]) => ({ id, name }))
+  return (modelCatalogQuery.data.value ?? [])
+    .filter(item => item.active)
+    .map(item => ({ id: item.id, name: item.name }))
     .sort((left, right) => left.name.localeCompare(right.name))
 })
 const packageRows = computed(() => rankApiPackages(packageServices.value, packageModel.value, Number(packageDuration.value)))
@@ -148,7 +157,6 @@ const freeServiceDisplayRows = computed(() => {
     item => item.service.id,
   )
 })
-const packageReady = computed(() => Boolean(packageModel.value && packageDuration.value))
 const firstSlotDate = computed(() => slotQuery.data.value?.items[0]?.key.slice(0, 10) ?? '')
 const displayedSlotDate = computed(() => {
   const items = slotQuery.data.value?.items ?? []
@@ -158,7 +166,7 @@ const displayedSlotDate = computed(() => {
 })
 const displayedSlots = computed(() => (slotQuery.data.value?.items ?? []).filter(item => item.key.startsWith(displayedSlotDate.value)))
 const selectedSlot = computed(() => displayedSlots.value.find(item => item.key === selectedSlotKey.value))
-const rushRows = computed(() => rushQuery.data.value ?? [])
+const rushRows = computed(() => flattenUniqueCursorPages(rushQuery.data.value?.pages))
 const isTomorrowPreview = computed(() => Boolean(firstSlotDate.value && displayedSlotDate.value !== firstSlotDate.value))
 
 watch(() => slotQuery.data.value, value => {
@@ -386,7 +394,7 @@ onBeforeUnmount(() => {
                 </TabsList>
               </Tabs>
 
-              <ErrorState v-if="rushQuery.error.value" class="mt-4" description="本场额度包暂时无法加载。" @retry="rushQuery.refetch()" />
+              <ErrorState v-if="rushQuery.error.value && !rushHasLoadedPages" class="mt-4" description="本场额度包暂时无法加载。" @retry="rushQuery.refetch()" />
               <SkeletonBlock v-else-if="rushQuery.isLoading.value || !selectedSlotKey" class="mt-4" :lines="5" />
               <div v-else-if="rushRows.length === 0" class="mt-4 flex min-h-32 flex-col items-center justify-center border-t border-dashed border-border px-4 py-5 text-center">
                 <CalendarClock class="h-7 w-7 text-muted-foreground" />
@@ -413,6 +421,14 @@ onBeforeUnmount(() => {
                   <template #health><ApiServiceHealthPanel :summary="item.healthSummary" /></template>
                 </ApiQuotaOfferCard>
               </div>
+              <InfiniteScrollSentinel
+                v-if="selectedSlotKey && !(rushQuery.error.value && !rushHasLoadedPages)"
+                :has-more="Boolean(rushQuery.hasNextPage.value)"
+                :loading="rushQuery.isFetchingNextPage.value"
+                :error="rushQuery.isFetchNextPageError.value"
+                @load="rushQuery.fetchNextPage()"
+                @retry="rushQuery.fetchNextPage()"
+              />
             </template>
           </div>
         </section>
@@ -446,9 +462,9 @@ onBeforeUnmount(() => {
           </label>
         </div>
 
-        <ErrorState v-if="quotaQuery.error.value" description="额度包列表暂时无法加载。" @retry="quotaQuery.refetch()" />
+        <ErrorState v-if="quotaQuery.error.value && !quotaHasLoadedPages" description="额度包列表暂时无法加载。" @retry="quotaQuery.refetch()" />
         <SkeletonBlock v-else-if="quotaQuery.isLoading.value" :lines="8" />
-        <EmptyState v-else-if="quotaRows.length === 0" class="min-h-32 p-5" title="暂无匹配的额度包" description="可以调整筛选、查看自由额度，卖家也可以发布自己的限时额度包。">
+        <EmptyState v-else-if="quotaRows.length === 0 && !quotaQuery.hasNextPage.value" class="min-h-32 p-5" title="暂无匹配的额度包" description="可以调整筛选、查看自由额度，卖家也可以发布自己的限时额度包。">
           <template #action>
             <div class="flex flex-wrap justify-center gap-2">
               <RouterLink to="/api-market/quota/new"><Button class="h-11 gap-2 sm:h-9"><PackagePlus class="h-4 w-4" />发布限时额度包</Button></RouterLink>
@@ -472,6 +488,14 @@ onBeforeUnmount(() => {
             <template #health><ApiServiceHealthPanel :summary="item.healthSummary" /></template>
           </ApiQuotaOfferCard>
         </div>
+        <InfiniteScrollSentinel
+          v-if="!(quotaQuery.error.value && !quotaHasLoadedPages)"
+          :has-more="Boolean(quotaQuery.hasNextPage.value)"
+          :loading="quotaQuery.isFetchingNextPage.value"
+          :error="quotaQuery.isFetchNextPageError.value"
+          @load="quotaQuery.fetchNextPage()"
+          @retry="quotaQuery.fetchNextPage()"
+        />
       </TabsContent>
 
       <TabsContent value="packages" class="mt-4 space-y-4">
@@ -480,7 +504,7 @@ onBeforeUnmount(() => {
           <AlertTitle>限时流量包</AlertTitle>
           <AlertDescription>固定价格购买商户声明的面板额度，套餐有效期从商户提交交付时开始计算。先按精确模型和有效期筛选，再比较综合推荐结果；平台测量只代表当前探测模型与平台节点。</AlertDescription>
         </Alert>
-        <ErrorState v-if="freeServicesQuery.error.value" description="限时流量包暂时无法加载。" @retry="freeServicesQuery.refetch()" />
+        <ErrorState v-if="freeServicesQuery.error.value && !servicesHaveLoadedPages" description="限时流量包暂时无法加载。" @retry="freeServicesQuery.refetch()" />
         <SkeletonBlock v-else-if="freeServicesQuery.isLoading.value" :lines="6" />
         <template v-else>
           <div class="grid gap-3 border-y border-border py-3 md:grid-cols-2">
@@ -526,6 +550,13 @@ onBeforeUnmount(() => {
               </ApiPackageCard>
             </div>
           </div>
+          <InfiniteScrollSentinel
+            :has-more="Boolean(freeServicesQuery.hasNextPage.value)"
+            :loading="freeServicesQuery.isFetchingNextPage.value"
+            :error="freeServicesQuery.isFetchNextPageError.value"
+            @load="freeServicesQuery.fetchNextPage()"
+            @retry="freeServicesQuery.fetchNextPage()"
+          />
         </template>
       </TabsContent>
 
@@ -535,7 +566,7 @@ onBeforeUnmount(() => {
           <AlertTitle>自由额度</AlertTitle>
           <AlertDescription>按人民币金额购买卖家声明的美元额度，Sub2API 维持 1.00x 倍率。订单金额和预计额度在服务详情确认；平台测量只代表当前探测模型与平台节点。</AlertDescription>
         </Alert>
-        <ErrorState v-if="freeServicesQuery.error.value" description="自由额度服务暂时无法加载。" @retry="freeServicesQuery.refetch()" />
+        <ErrorState v-if="freeServicesQuery.error.value && !servicesHaveLoadedPages" description="自由额度服务暂时无法加载。" @retry="freeServicesQuery.refetch()" />
         <SkeletonBlock v-else-if="freeServicesQuery.isLoading.value" :lines="8" />
         <EmptyState v-else-if="freeServiceDisplayRows.length === 0" title="暂无自由额度服务" description="当前没有可公开下单的 API 服务。" />
         <div v-else class="api-product-card-grid">
@@ -554,6 +585,14 @@ onBeforeUnmount(() => {
             </ApiFreeServiceCard>
           </div>
         </div>
+        <InfiniteScrollSentinel
+          v-if="!(freeServicesQuery.error.value && !servicesHaveLoadedPages)"
+          :has-more="Boolean(freeServicesQuery.hasNextPage.value)"
+          :loading="freeServicesQuery.isFetchingNextPage.value"
+          :error="freeServicesQuery.isFetchNextPageError.value"
+          @load="freeServicesQuery.fetchNextPage()"
+          @retry="freeServicesQuery.fetchNextPage()"
+        />
       </TabsContent>
     </Tabs>
   </div>

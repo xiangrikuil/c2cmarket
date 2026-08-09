@@ -203,12 +203,12 @@ func (s *Manager) UpdateProbeConnection(ctx context.Context, user auth.User, inp
 	return service, nil
 }
 
-func (s *Manager) PublicServices(ctx context.Context, filter PublicServiceFilter) ([]Service, *domain.AppError) {
+func (s *Manager) PublicServices(ctx context.Context, filter PublicServiceFilter, page domain.PageRequest) (domain.Page[Service], *domain.AppError) {
 	if err := validatePublicServiceFilter(filter); err != nil {
-		return nil, err
+		return domain.Page[Service]{}, err
 	}
 	if s.repo != nil {
-		return s.repo.ListPublicAPIServices(ctx, filter)
+		return s.repo.ListPublicAPIServices(ctx, filter, page)
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -216,11 +216,11 @@ func (s *Manager) PublicServices(ctx context.Context, filter PublicServiceFilter
 	services := []Service{}
 	for _, id := range s.serviceOrder {
 		service := WithOrderability(s.services[id])
-		if IsOrderableService(service) && matchesPaymentMethod(service, filter.PaymentMethod) {
+		if IsOrderableService(service) && matchesPublicServiceFilter(service, filter) {
 			services = append(services, service)
 		}
 	}
-	return services, nil
+	return domain.PageItems(services, page)
 }
 
 func (s *Manager) PublicService(ctx context.Context, serviceID string) (Service, *domain.AppError) {
@@ -257,7 +257,7 @@ func (s *Manager) OwnerServices(ctx context.Context, user auth.User, filter Owne
 			services = append(services, service)
 		}
 	}
-	return domain.PageItems(services, page), nil
+	return domain.PageItems(services, page)
 }
 
 func NormalizeOwnerServiceFilter(filter OwnerServiceFilter) (OwnerServiceFilter, *domain.AppError) {
@@ -426,12 +426,12 @@ func (s *Manager) OwnerService(ctx context.Context, user auth.User, serviceID st
 	return WithOrderability(service), nil
 }
 
-func (s *Manager) AdminServices(ctx context.Context, user auth.User, page domain.PageRequest) (domain.Page[Service], *domain.AppError) {
+func (s *Manager) AdminServices(ctx context.Context, user auth.User, filter AdminServiceFilter, page domain.PageRequest) (domain.Page[Service], *domain.AppError) {
 	if !user.IsAdmin {
 		return domain.Page[Service]{}, domain.NewError(http.StatusForbidden, domain.CodePermissionDenied, "Permission denied", "需要管理员权限。")
 	}
 	if s.repo != nil {
-		return s.repo.ListAdminAPIServices(ctx, page)
+		return s.repo.ListAdminAPIServices(ctx, filter, page)
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -440,7 +440,7 @@ func (s *Manager) AdminServices(ctx context.Context, user auth.User, page domain
 	for _, id := range s.serviceOrder {
 		services = append(services, WithOrderability(s.services[id]))
 	}
-	return domain.PageItems(services, page), nil
+	return domain.PageItems(filterAdminServices(services, filter), page)
 }
 
 func (s *Manager) AdminService(ctx context.Context, user auth.User, serviceID string) (Service, *domain.AppError) {
@@ -1274,6 +1274,37 @@ func matchesPaymentMethod(service Service, paymentMethod string) bool {
 	return false
 }
 
+func matchesPublicServiceFilter(service Service, filter PublicServiceFilter) bool {
+	if !matchesPaymentMethod(service, filter.PaymentMethod) {
+		return false
+	}
+	billingMode := strings.TrimSpace(filter.BillingMode)
+	if billingMode != "" && service.BillingMode != billingMode {
+		return false
+	}
+	modelCatalogID := strings.TrimSpace(filter.PackageModelCatalogID)
+	if modelCatalogID == "" && filter.PackageDurationDays == 0 {
+		return true
+	}
+	for _, item := range service.Packages {
+		if !item.Enabled || item.StockAvailable <= 0 {
+			continue
+		}
+		if filter.PackageDurationDays > 0 && (item.DurationDays == nil || *item.DurationDays != filter.PackageDurationDays) {
+			continue
+		}
+		if modelCatalogID == "" {
+			return true
+		}
+		for _, model := range item.Models {
+			if model.ModelCatalogID == modelCatalogID {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 func HasAccessMode(service Service, accessMode string) bool {
 	accessMode = strings.TrimSpace(accessMode)
 	if accessMode == "" {
@@ -1388,11 +1419,14 @@ func applyAdminAction(service Service, input ServiceAdminActionInput, now time.T
 }
 
 func validatePublicServiceFilter(filter PublicServiceFilter) *domain.AppError {
-	if strings.TrimSpace(filter.PaymentMethod) == "" {
-		return nil
-	}
-	if !IsSupportedPaymentMethod(filter.PaymentMethod) {
+	if paymentMethod := strings.TrimSpace(filter.PaymentMethod); paymentMethod != "" && !IsSupportedPaymentMethod(paymentMethod) {
 		return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Payment method invalid", "付款方式不支持。", "paymentMethod", "invalid", "付款方式不支持。")
+	}
+	if billingMode := strings.TrimSpace(filter.BillingMode); billingMode != "" && billingMode != ServiceBillingModeMetered && billingMode != ServiceBillingModeFixedPackage {
+		return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Billing mode invalid", "计费模式筛选无效。", "billingMode", "invalid", "计费模式筛选无效。")
+	}
+	if filter.PackageDurationDays != 0 && filter.PackageDurationDays != 1 && filter.PackageDurationDays != 3 && filter.PackageDurationDays != 7 && filter.PackageDurationDays != 30 {
+		return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Package duration invalid", "套餐有效期筛选无效。", "packageDurationDays", "invalid", "套餐有效期仅支持 1、3、7 或 30 天。")
 	}
 	return nil
 }

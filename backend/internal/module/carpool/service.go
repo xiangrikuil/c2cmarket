@@ -346,9 +346,9 @@ func (s *Service) SubmitListingForReview(ctx context.Context, user auth.User, in
 	return s.withSeatSummaryLocked(listing), nil
 }
 
-func (s *Service) PublicListings(ctx context.Context, page domain.PageRequest) (domain.Page[Listing], *domain.AppError) {
+func (s *Service) PublicListings(ctx context.Context, filter ListingFilter, page domain.PageRequest) (domain.Page[Listing], *domain.AppError) {
 	if s.repo != nil {
-		return s.repo.ListPublicCarpoolListings(ctx, page)
+		return s.repo.ListPublicCarpoolListings(ctx, filter, page)
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -360,7 +360,7 @@ func (s *Service) PublicListings(ctx context.Context, page domain.PageRequest) (
 			listings = append(listings, listing)
 		}
 	}
-	return domain.PageItems(listings, page), nil
+	return domain.PageItems(filterListings(listings, filter), page)
 }
 
 func (s *Service) PublicListing(ctx context.Context, listingID string) (Listing, *domain.AppError) {
@@ -394,12 +394,12 @@ func (s *Service) MyListings(ctx context.Context, user auth.User) ([]Listing, *d
 	return listings, nil
 }
 
-func (s *Service) AdminListings(ctx context.Context, user auth.User, page domain.PageRequest) (domain.Page[Listing], *domain.AppError) {
+func (s *Service) AdminListings(ctx context.Context, user auth.User, filter ListingFilter, page domain.PageRequest) (domain.Page[Listing], *domain.AppError) {
 	if !user.IsAdmin {
 		return domain.Page[Listing]{}, domain.NewError(http.StatusForbidden, domain.CodePermissionDenied, "Permission denied", "需要管理员权限。")
 	}
 	if s.repo != nil {
-		return s.repo.ListAdminCarpoolListings(ctx, page)
+		return s.repo.ListAdminCarpoolListings(ctx, filter, page)
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -408,7 +408,7 @@ func (s *Service) AdminListings(ctx context.Context, user auth.User, page domain
 	for _, id := range s.listingOrder {
 		listings = append(listings, s.withSeatSummaryLocked(s.listings[id]))
 	}
-	return domain.PageItems(listings, page), nil
+	return domain.PageItems(filterListings(listings, filter), page)
 }
 
 func (s *Service) AdminListing(ctx context.Context, user auth.User, listingID string) (Listing, *domain.AppError) {

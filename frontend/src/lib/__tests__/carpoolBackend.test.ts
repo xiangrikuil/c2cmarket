@@ -184,7 +184,8 @@ test('contact reveal analytics fires only after authoritative disclosure succeed
         },
       })
     }
-    if (path.endsWith('/api/v1/me/carpool-memberships')) return jsonResponse({ items: [] })
+    if (path.includes('/api/v1/me/carpool-memberships?limit=100')) return jsonResponse({ items: [] })
+    if (path.includes('/api/v1/owner/carpool-memberships?limit=100')) return jsonResponse({ items: [] })
     if (path.endsWith('/api/v1/me/carpool-applications/application-id')) {
       return jsonResponse({
         id: 'application-id',

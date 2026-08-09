@@ -89,7 +89,7 @@ test('real review center preserves sealed content and backend preset tags', asyn
   assert.equal(result.items[0]?.rating, null)
   assert.equal(result.items[0]?.note, null)
   assert.deepEqual(result.items[0]?.tags, [])
-  assert.equal(fetchMock.mock.calls[1]?.[0], '/api/v1/me/reviews')
+  assert.equal(fetchMock.mock.calls[1]?.[0], '/api/v1/me/reviews?limit=100')
 })
 
 test('real review create uses the generic carpool transaction POST route', async () => {

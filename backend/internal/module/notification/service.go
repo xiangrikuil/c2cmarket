@@ -47,7 +47,7 @@ func (s *Service) List(ctx context.Context, userID string, page domain.PageReque
 	}
 	s.mu.Unlock()
 	sortNotifications(items)
-	return domain.PageItems(items, page), nil
+	return domain.PageItems(items, page)
 }
 
 func (s *Service) UnreadCount(ctx context.Context, userID string) (int, *domain.AppError) {

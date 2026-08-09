@@ -291,6 +291,93 @@ func TestUpdateProbeConnectionRebindsAndUnbindsWithoutRebuildingService(t *testi
 	}
 }
 
+func TestPublicServicesPaginatesFilteredOrderableServices(t *testing.T) {
+	now := time.Date(2026, 8, 9, 8, 0, 0, 0, time.UTC)
+	manager := NewManager(nil, nil, nil, func() time.Time { return now })
+	manager.serviceOrder = []string{"wechat-1", "alipay-1", "wechat-2"}
+	manager.services["wechat-1"] = testPublicService("wechat-1", PaymentMethodWechat, now.Add(3*time.Minute))
+	manager.services["alipay-1"] = testPublicService("alipay-1", PaymentMethodAlipay, now.Add(2*time.Minute))
+	manager.services["wechat-2"] = testPublicService("wechat-2", PaymentMethodWechat, now.Add(time.Minute))
+
+	first, appErr := manager.PublicServices(context.Background(), PublicServiceFilter{PaymentMethod: PaymentMethodWechat}, domain.PageRequest{Limit: 1})
+	if appErr != nil {
+		t.Fatalf("list first public service page: %v", appErr)
+	}
+	if len(first.Items) != 1 || first.Items[0].ID != "wechat-1" || first.NextCursor == nil {
+		t.Fatalf("unexpected first page: %+v", first)
+	}
+
+	second, appErr := manager.PublicServices(context.Background(), PublicServiceFilter{PaymentMethod: PaymentMethodWechat}, domain.PageRequest{Limit: 1, Cursor: *first.NextCursor})
+	if appErr != nil {
+		t.Fatalf("list second public service page: %v", appErr)
+	}
+	if len(second.Items) != 1 || second.Items[0].ID != "wechat-2" || second.NextCursor != nil {
+		t.Fatalf("unexpected second page: %+v", second)
+	}
+}
+
+func TestPublicServicesFiltersPackagesBeforePagination(t *testing.T) {
+	now := time.Date(2026, 8, 9, 8, 0, 0, 0, time.UTC)
+	manager := NewManager(nil, nil, nil, func() time.Time { return now })
+	manager.serviceOrder = []string{"metered-newer", "package-other", "package-match"}
+	manager.services["metered-newer"] = testPublicService("metered-newer", PaymentMethodWechat, now.Add(3*time.Minute))
+	manager.services["package-other"] = testPublicPackageService("package-other", "model-other", 30, now.Add(2*time.Minute))
+	manager.services["package-match"] = testPublicPackageService("package-match", "model-target", 7, now.Add(time.Minute))
+
+	page, appErr := manager.PublicServices(context.Background(), PublicServiceFilter{
+		BillingMode:           ServiceBillingModeFixedPackage,
+		PackageModelCatalogID: "model-target",
+		PackageDurationDays:   7,
+	}, domain.PageRequest{Limit: 1})
+	if appErr != nil {
+		t.Fatalf("list filtered package services: %v", appErr)
+	}
+	if len(page.Items) != 1 || page.Items[0].ID != "package-match" || page.NextCursor != nil {
+		t.Fatalf("package filters must run before pagination: %+v", page)
+	}
+}
+
+func testPublicService(id, paymentMethod string, updatedAt time.Time) Service {
+	expiresAt := updatedAt.Add(24 * time.Hour)
+	return Service{
+		ID:                    id,
+		OwnerContactMethodID:  "contact-1",
+		ProbeConnectionID:     "probe-1",
+		ProbeReady:            true,
+		BillingMode:           ServiceBillingModeMetered,
+		AvailableUSDAllowance: "100.000000",
+		QuotaExpiresAt:        &expiresAt,
+		AcceptingOrders:       true,
+		PaymentWindowMinutes:  10,
+		ReviewStatus:          ServiceReviewStatusApproved,
+		PublicationStatus:     ServicePublicationStatusOnline,
+		ModerationStatus:      ServiceModerationStatusClear,
+		PaymentOptions: []PaymentOption{{
+			PaymentMethod: paymentMethod,
+			Enabled:       true,
+		}},
+		UpdatedAt: updatedAt,
+	}
+}
+
+func testPublicPackageService(id, modelCatalogID string, durationDays int, updatedAt time.Time) Service {
+	service := testPublicService(id, PaymentMethodWechat, updatedAt)
+	service.BillingMode = ServiceBillingModeFixedPackage
+	service.AvailableUSDAllowance = ""
+	service.QuotaExpiresAt = nil
+	service.Packages = []ServicePackage{{
+		ID:             id + "-package",
+		Enabled:        true,
+		StockAvailable: 2,
+		DurationDays:   &durationDays,
+		Models: []ServicePackageModel{{
+			ServiceModelID: id + "-model",
+			ModelCatalogID: modelCatalogID,
+		}},
+	}}
+	return service
+}
+
 func TestValidateOrderSettingsRejectsUSDTPaymentMethod(t *testing.T) {
 	err := validateOrderSettingsInput(UpdateOrderSettingsInput{
 		AcceptingOrders:      true,

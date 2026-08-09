@@ -187,7 +187,7 @@ func (s *Server) handleMyAPIOrders(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, r, appErr)
 		return
 	}
-	writePaginatedJSON(w, r, toAPIOrderResponses(orders, false))
+	writePaginatedJSON(w, r, toAPIOrderResponses(filterAPIOrders(r, orders), false))
 }
 
 func (s *Server) handleAdminAPIOrder(w http.ResponseWriter, r *http.Request) {
@@ -217,7 +217,7 @@ func (s *Server) handleAdminAPIOrders(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, r, appErr)
 		return
 	}
-	writePaginatedJSON(w, r, toAdminAPIOrderResponses(orders))
+	writePaginatedJSON(w, r, toAdminAPIOrderResponses(filterAPIOrders(r, orders)))
 }
 
 func (s *Server) handleMyAPIOrder(w http.ResponseWriter, r *http.Request) {
@@ -324,7 +324,7 @@ func (s *Server) handleOwnerAPIOrders(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, r, appErr)
 		return
 	}
-	writePaginatedJSON(w, r, toAPIOrderResponses(orders, true))
+	writePaginatedJSON(w, r, toAPIOrderResponses(filterAPIOrders(r, orders), true))
 }
 
 func (s *Server) handleOwnerAPIOrder(w http.ResponseWriter, r *http.Request) {

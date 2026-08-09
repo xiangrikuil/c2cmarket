@@ -646,11 +646,27 @@ func (s *Store) ListPublicAPIQuotaOffers(ctx context.Context, filter apiquota.Pu
 		      AND (o.delivery_mode = 'manual' OR credentials.available_copies >= stock.available_copies)
 		    )
 		  )
+		  AND (
+		    $8 = '' OR o.name ILIKE '%' || $8 || '%'
+		    OR s.title ILIKE '%' || $8 || '%'
+		    OR (CASE WHEN s.merchant_identity_mode = 'store_alias' THEN COALESCE(mp.display_name, u.display_name) ELSE u.display_name END) ILIKE '%' || $8 || '%'
+		    OR replace(o.distribution_system, '_', ' ') ILIKE '%' || $8 || '%'
+		  )
+		  AND (
+		    NOT $9 OR NOT EXISTS (
+		      SELECT 1
+		      FROM api_quota_allocations system_allocation
+		      JOIN api_quota_sale_rounds system_round ON system_round.id = system_allocation.sale_round_id
+		      WHERE system_allocation.offer_id = o.id
+		        AND system_allocation.status = 'active'
+		        AND system_round.system_slot_key IS NOT NULL
+		    )
+		  )
 		ORDER BY o.updated_at DESC, o.id DESC
-		LIMIT $8
+		LIMIT $10
 	`, now, strings.TrimSpace(filter.DistributionSystem), filter.OnlyOneMultiplier,
 		strings.TrimSpace(filter.SystemSlotKey), nullTime(position.Time), nullUUID(position.ID),
-		filter.OnlyOrderable, page.Limit+1)
+		filter.OnlyOrderable, strings.TrimSpace(filter.Search), filter.ExcludeSystemSlots, page.Limit+1)
 	if err != nil {
 		return domain.Page[apiquota.OfferCard]{}, internalStoreError()
 	}

@@ -531,16 +531,20 @@ func (s *Service) UpdateAPIServiceProbeConnection(ctx context.Context, user User
 	return s.withAPIMerchantProfile(ctx, service)
 }
 
-func (s *Service) PublicAPIServices(ctx context.Context, filter apimarket.PublicServiceFilter) ([]APIService, *domain.AppError) {
-	services, appErr := s.apiMarket.PublicServices(ctx, filter)
+func (s *Service) PublicAPIServices(ctx context.Context, filter apimarket.PublicServiceFilter, page domain.PageRequest) (domain.Page[APIService], *domain.AppError) {
+	services, appErr := s.apiMarket.PublicServices(ctx, filter, page)
 	if appErr != nil {
-		return nil, appErr
+		return domain.Page[APIService]{}, appErr
 	}
-	services, appErr = s.withAPIMerchantProfiles(ctx, services)
+	items, appErr := s.withAPIMerchantProfiles(ctx, services.Items)
 	if appErr != nil {
-		return nil, appErr
+		return domain.Page[APIService]{}, appErr
 	}
-	return s.withSellerReputation(ctx, services)
+	items, appErr = s.withSellerReputation(ctx, items)
+	if appErr != nil {
+		return domain.Page[APIService]{}, appErr
+	}
+	return domain.Page[APIService]{Items: items, NextCursor: services.NextCursor}, nil
 }
 
 func (s *Service) PublicAPIService(ctx context.Context, serviceID string) (APIService, *domain.AppError) {
@@ -712,8 +716,8 @@ func (s *Service) OwnerAPIService(ctx context.Context, user User, serviceID stri
 	return s.withAPIMerchantProfile(ctx, service)
 }
 
-func (s *Service) AdminAPIServices(ctx context.Context, user User, page domain.PageRequest) (domain.Page[APIService], *domain.AppError) {
-	services, appErr := s.apiMarket.AdminServices(ctx, user, page)
+func (s *Service) AdminAPIServices(ctx context.Context, user User, filter apimarket.AdminServiceFilter, page domain.PageRequest) (domain.Page[APIService], *domain.AppError) {
+	services, appErr := s.apiMarket.AdminServices(ctx, user, filter, page)
 	if appErr != nil {
 		return domain.Page[APIService]{}, appErr
 	}
@@ -1167,8 +1171,8 @@ func (s *Service) SubmitCarpoolListingForReview(ctx context.Context, user User, 
 	return s.carpoolService.SubmitListingForReview(ctx, user, input)
 }
 
-func (s *Service) PublicCarpoolListings(ctx context.Context, page domain.PageRequest) (domain.Page[CarpoolListing], *domain.AppError) {
-	listings, appErr := s.carpoolService.PublicListings(ctx, page)
+func (s *Service) PublicCarpoolListings(ctx context.Context, filter carpool.ListingFilter, page domain.PageRequest) (domain.Page[CarpoolListing], *domain.AppError) {
+	listings, appErr := s.carpoolService.PublicListings(ctx, filter, page)
 	if appErr != nil {
 		return domain.Page[CarpoolListing]{}, appErr
 	}
@@ -1199,8 +1203,8 @@ func (s *Service) MyCarpoolListings(ctx context.Context, user User) ([]CarpoolLi
 	return s.carpoolService.MyListings(ctx, user)
 }
 
-func (s *Service) AdminCarpoolListings(ctx context.Context, user User, page domain.PageRequest) (domain.Page[CarpoolListing], *domain.AppError) {
-	return s.carpoolService.AdminListings(ctx, user, page)
+func (s *Service) AdminCarpoolListings(ctx context.Context, user User, filter carpool.ListingFilter, page domain.PageRequest) (domain.Page[CarpoolListing], *domain.AppError) {
+	return s.carpoolService.AdminListings(ctx, user, filter, page)
 }
 
 func (s *Service) AdminCarpoolListing(ctx context.Context, user User, listingID string) (CarpoolListing, *domain.AppError) {

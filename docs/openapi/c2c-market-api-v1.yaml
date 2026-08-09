@@ -929,6 +929,29 @@ paths:
       parameters:
         - $ref: "#/components/parameters/Limit"
         - $ref: "#/components/parameters/Cursor"
+        - name: paymentMethod
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [wechat, alipay]
+        - name: billingMode
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [metered_usd_quota, fixed_package]
+        - name: packageModelCatalogId
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: packageDurationDays
+          in: query
+          required: false
+          schema:
+            type: integer
+            enum: [1, 3, 7, 30]
       responses:
         "200":
           description: Public API services.
@@ -1170,6 +1193,17 @@ paths:
           schema:
             type: string
             pattern: '^\d{4}-\d{2}-\d{2}@(09|13|20):00$'
+        - name: search
+          in: query
+          required: false
+          schema:
+            type: string
+            maxLength: 100
+        - name: excludeSystemSlots
+          in: query
+          required: false
+          schema:
+            type: boolean
       responses:
         "200":
           description: Limited API quota offer cards with server-derived orderability.
@@ -1287,6 +1321,38 @@ paths:
       parameters:
         - $ref: "#/components/parameters/Limit"
         - $ref: "#/components/parameters/Cursor"
+        - name: q
+          in: query
+          schema: { type: string }
+          description: Case-insensitive search across listing ID, title, summary, region, owner ID, and review reason before pagination.
+        - name: productPlanIds
+          in: query
+          schema: { type: string }
+          description: Comma-separated product-plan IDs applied before pagination.
+        - name: region
+          in: query
+          schema: { type: string }
+          description: Exact region code or display name applied before pagination.
+        - name: statuses
+          in: query
+          schema: { type: string }
+          description: Comma-separated listing statuses applied before pagination.
+        - name: view
+          in: query
+          schema: { type: string, enum: [public, exceptions] }
+          description: Optional public or exception projection applied before pagination.
+        - name: risk
+          in: query
+          schema: { type: string, enum: [high] }
+          description: Restrict results to listings requiring or mentioning risk acknowledgement.
+        - name: sort
+          in: query
+          schema: { type: string, enum: [recommended, updated_desc, price_asc, seats_desc] }
+          description: Stable server-side ordering. Recommended currently uses the updated-descending order.
+        - name: none
+          in: query
+          schema: { type: string, enum: ["1"] }
+          description: Return an empty page when a selected client filter has no server-side representation.
       responses:
         "200":
           description: Active carpool listings.
@@ -1294,6 +1360,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/CarpoolListingList"
+        "422":
+          $ref: "#/components/responses/Problem"
     post:
       operationId: createCarpool
       tags: [Carpools]
@@ -4726,6 +4794,38 @@ paths:
       parameters:
         - $ref: "#/components/parameters/Limit"
         - $ref: "#/components/parameters/Cursor"
+        - name: q
+          in: query
+          schema: { type: string }
+          description: Case-insensitive search across listing ID, title, summary, region, owner ID, and review reason before pagination.
+        - name: productPlanIds
+          in: query
+          schema: { type: string }
+          description: Comma-separated product-plan IDs applied before pagination.
+        - name: region
+          in: query
+          schema: { type: string }
+          description: Exact region code or display name applied before pagination.
+        - name: statuses
+          in: query
+          schema: { type: string }
+          description: Comma-separated listing statuses applied before pagination.
+        - name: view
+          in: query
+          schema: { type: string, enum: [public, exceptions] }
+          description: Restrict the management list to public or exceptional rows before pagination.
+        - name: risk
+          in: query
+          schema: { type: string, enum: [high] }
+          description: Restrict results to listings requiring or mentioning risk acknowledgement.
+        - name: sort
+          in: query
+          schema: { type: string, enum: [recommended, updated_desc, price_asc, seats_desc] }
+          description: Stable server-side ordering. Recommended currently uses the updated-descending order.
+        - name: none
+          in: query
+          schema: { type: string, enum: ["1"] }
+          description: Return an empty page for a known-empty filter combination.
       responses:
         "200":
           description: Admin carpool queue.
@@ -4734,6 +4834,8 @@ paths:
               schema:
                 $ref: "#/components/schemas/CarpoolListingList"
         "403":
+          $ref: "#/components/responses/Problem"
+        "422":
           $ref: "#/components/responses/Problem"
   /api/v1/admin/carpools/{id}:
     get:
@@ -4903,6 +5005,22 @@ paths:
       parameters:
         - $ref: "#/components/parameters/Limit"
         - $ref: "#/components/parameters/Cursor"
+        - name: q
+          in: query
+          schema: { type: string }
+          description: Case-insensitive search across service ID, title, description, merchant, owner ID, and moderation reason before pagination.
+        - name: view
+          in: query
+          schema: { type: string, enum: [public, exceptions] }
+          description: Restrict the management list to public or exceptional rows before pagination.
+        - name: statuses
+          in: query
+          schema: { type: string }
+          description: Comma-separated projected administrator statuses applied before pagination.
+        - name: risk
+          in: query
+          schema: { type: string, enum: [high] }
+          description: Restrict results to moderation exceptions or services with an active dispute.
       responses:
         "200":
           description: Admin API service queue.
@@ -4911,6 +5029,8 @@ paths:
               schema:
                 $ref: "#/components/schemas/APIServiceList"
         "403":
+          $ref: "#/components/responses/Problem"
+        "422":
           $ref: "#/components/responses/Problem"
   /api/v1/admin/api-service-promotions:
     get:

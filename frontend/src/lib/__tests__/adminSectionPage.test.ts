@@ -7,7 +7,8 @@ const reportBackendSource = readFileSync(new URL('../reportBackend.ts', import.m
 
 describe('管理列表数据状态', () => {
   it('在请求失败时显示错误而不是空记录，并移除固定演示统计', () => {
-    expect(adminSectionSource).toContain('const { data, error, isFetching, isLoading, refetch } = useAdminSectionRows(section)')
+    expect(adminSectionSource).toContain('const pageRowsQuery = useAdminSectionRowsPage(section, pageFilters, pageRequest, supportsServerPagination)')
+    expect(adminSectionSource).toContain('const fullRowsQuery = useAdminSectionRows(section, computed(() => !supportsServerPagination.value))')
     expect(adminSectionSource).toContain('v-else-if="error"')
     expect(adminSectionSource).toContain('管理数据读取失败')
     expect(adminSectionSource).toContain('@click="refetch()"')
@@ -21,7 +22,8 @@ describe('管理列表数据状态', () => {
 
   it('举报纠纷队列包含角标统计覆盖的待处理申诉', () => {
     expect(reportBackendSource).toContain('const [reports, disputes, appeals] = await Promise.all([')
-    expect(reportBackendSource).toContain('...appeals.items.map(mapAppealRow)')
+    expect(reportBackendSource).toContain('...appeals.map(mapAppealRow)')
+    expect(reportBackendSource).toContain("backendAllPages<BackendAppeal>('/api/v1/admin/appeals')")
     expect(reportBackendSource).toContain("item.status !== 'dispute_opened' && !disputeReportIds.has(item.id)")
   })
 

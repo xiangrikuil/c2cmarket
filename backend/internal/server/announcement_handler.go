@@ -209,7 +209,7 @@ func (s *Server) handleAdminAnnouncements(w http.ResponseWriter, r *http.Request
 		writeProblem(w, r, appErr)
 		return
 	}
-	writeJSON(w, http.StatusOK, listResponse[announcementDTO]{Items: toAnnouncementDTOs(items)})
+	writePaginatedJSON(w, r, toAnnouncementDTOs(filterAdminAnnouncements(r, items)))
 }
 
 func (s *Server) handleAdminAnnouncement(w http.ResponseWriter, r *http.Request) {

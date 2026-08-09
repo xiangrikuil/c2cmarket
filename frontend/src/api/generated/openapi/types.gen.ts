@@ -5656,6 +5656,10 @@ export type ListPublicApiServicesData = {
          * Opaque pagination cursor returned as nextCursor. Clients must pass it back unchanged and must not inspect its internal encoding.
          */
         cursor?: string;
+        paymentMethod?: 'wechat' | 'alipay';
+        billingMode?: 'metered_usd_quota' | 'fixed_package';
+        packageModelCatalogId?: string;
+        packageDurationDays?: 1 | 3 | 7 | 30;
     };
     url: '/api/v1/api-services';
 };
@@ -5915,6 +5919,8 @@ export type ListPublicApiQuotaOffersData = {
          * Stable Beijing slot key returned by `/api/v1/api-quota-sale-slots`.
          */
         slotKey?: string;
+        search?: string;
+        excludeSystemSlots?: boolean;
     };
     url: '/api/v1/api-quota-offers';
 };
@@ -6066,9 +6072,50 @@ export type ListCarpoolsData = {
          * Opaque pagination cursor returned as nextCursor. Clients must pass it back unchanged and must not inspect its internal encoding.
          */
         cursor?: string;
+        /**
+         * Case-insensitive search across listing ID, title, summary, region, owner ID, and review reason before pagination.
+         */
+        q?: string;
+        /**
+         * Comma-separated product-plan IDs applied before pagination.
+         */
+        productPlanIds?: string;
+        /**
+         * Exact region code or display name applied before pagination.
+         */
+        region?: string;
+        /**
+         * Comma-separated listing statuses applied before pagination.
+         */
+        statuses?: string;
+        /**
+         * Optional public or exception projection applied before pagination.
+         */
+        view?: 'public' | 'exceptions';
+        /**
+         * Restrict results to listings requiring or mentioning risk acknowledgement.
+         */
+        risk?: 'high';
+        /**
+         * Stable server-side ordering. Recommended currently uses the updated-descending order.
+         */
+        sort?: 'recommended' | 'updated_desc' | 'price_asc' | 'seats_desc';
+        /**
+         * Return an empty page when a selected client filter has no server-side representation.
+         */
+        none?: '1';
     };
     url: '/api/v1/carpools';
 };
+
+export type ListCarpoolsErrors = {
+    /**
+     * Problem Details error.
+     */
+    422: ProblemDetails;
+};
+
+export type ListCarpoolsError = ListCarpoolsErrors[keyof ListCarpoolsErrors];
 
 export type ListCarpoolsResponses = {
     /**
@@ -10609,6 +10656,38 @@ export type ListAdminCarpoolsData = {
          * Opaque pagination cursor returned as nextCursor. Clients must pass it back unchanged and must not inspect its internal encoding.
          */
         cursor?: string;
+        /**
+         * Case-insensitive search across listing ID, title, summary, region, owner ID, and review reason before pagination.
+         */
+        q?: string;
+        /**
+         * Comma-separated product-plan IDs applied before pagination.
+         */
+        productPlanIds?: string;
+        /**
+         * Exact region code or display name applied before pagination.
+         */
+        region?: string;
+        /**
+         * Comma-separated listing statuses applied before pagination.
+         */
+        statuses?: string;
+        /**
+         * Restrict the management list to public or exceptional rows before pagination.
+         */
+        view?: 'public' | 'exceptions';
+        /**
+         * Restrict results to listings requiring or mentioning risk acknowledgement.
+         */
+        risk?: 'high';
+        /**
+         * Stable server-side ordering. Recommended currently uses the updated-descending order.
+         */
+        sort?: 'recommended' | 'updated_desc' | 'price_asc' | 'seats_desc';
+        /**
+         * Return an empty page for a known-empty filter combination.
+         */
+        none?: '1';
     };
     url: '/api/v1/admin/carpools';
 };
@@ -10618,6 +10697,10 @@ export type ListAdminCarpoolsErrors = {
      * Problem Details error.
      */
     403: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    422: ProblemDetails;
 };
 
 export type ListAdminCarpoolsError = ListAdminCarpoolsErrors[keyof ListAdminCarpoolsErrors];
@@ -10849,6 +10932,22 @@ export type ListAdminApiServicesData = {
          * Opaque pagination cursor returned as nextCursor. Clients must pass it back unchanged and must not inspect its internal encoding.
          */
         cursor?: string;
+        /**
+         * Case-insensitive search across service ID, title, description, merchant, owner ID, and moderation reason before pagination.
+         */
+        q?: string;
+        /**
+         * Restrict the management list to public or exceptional rows before pagination.
+         */
+        view?: 'public' | 'exceptions';
+        /**
+         * Comma-separated projected administrator statuses applied before pagination.
+         */
+        statuses?: string;
+        /**
+         * Restrict results to moderation exceptions or services with an active dispute.
+         */
+        risk?: 'high';
     };
     url: '/api/v1/admin/api-services';
 };
@@ -10858,6 +10957,10 @@ export type ListAdminApiServicesErrors = {
      * Problem Details error.
      */
     403: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    422: ProblemDetails;
 };
 
 export type ListAdminApiServicesError = ListAdminApiServicesErrors[keyof ListAdminApiServicesErrors];

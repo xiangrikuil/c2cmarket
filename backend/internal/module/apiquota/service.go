@@ -261,6 +261,10 @@ func (m *Manager) PublicOffers(ctx context.Context, filter PublicOfferFilter, pa
 	if filter.DistributionSystem != "" && filter.DistributionSystem != "sub2api" && filter.DistributionSystem != "new_api_proxy" && filter.DistributionSystem != "other" {
 		return domain.Page[OfferCard]{}, domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Invalid distribution system", "接入系统筛选无效。", "distributionSystem", "invalid", "接入系统筛选无效。")
 	}
+	filter.Search = strings.TrimSpace(filter.Search)
+	if len([]rune(filter.Search)) > 100 {
+		return domain.Page[OfferCard]{}, domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Search query too long", "搜索关键词不能超过 100 个字符。", "search", "max_length", "搜索关键词不能超过 100 个字符。")
+	}
 	if strings.TrimSpace(filter.SystemSlotKey) != "" {
 		slot, appErr := ResolveSystemSaleSlot(filter.SystemSlotKey, m.now())
 		if appErr != nil {

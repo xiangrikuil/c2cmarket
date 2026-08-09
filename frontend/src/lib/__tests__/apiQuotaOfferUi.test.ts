@@ -281,7 +281,7 @@ describe('API 额度包市场视图', () => {
     assert.match(marketPageSource, /serverClockOffset/)
     assert.match(marketPageSource, /slotQuery\.data\.value\?\.items/)
     assert.match(marketPageSource, /refreshAtSlotBoundary/)
-    assert.match(marketPageSource, /useApiQuotaOffers\(rushFilters, computed\(\(\) => Boolean\(selectedSlotKey\.value\)\)\)/)
+    assert.match(marketPageSource, /useInfiniteApiQuotaOffers\(rushFilters, computed\(\(\) => limitedViewEnabled\.value && Boolean\(selectedSlotKey\.value\)\)\)/)
     assert.match(marketPageSource, /onServerPrefetch\(async \(\) => \{[\s\S]*?await slotQuery\.suspense\(\)[\s\S]*?await rushQuery\.suspense\(\)/)
     assert.match(marketPageSource, /`明日 \$\{slotTime\(selectedSlot\)\} 场预告`/)
     assert.match(quotaOfferCardSource, /立即抢购 ¥\$\{formatDecimal\(props\.offer\.priceCny/)

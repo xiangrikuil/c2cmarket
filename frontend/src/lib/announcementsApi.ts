@@ -20,12 +20,14 @@ import {
   requireBackendSession,
   shouldUseRealBackend,
 } from '@/lib/backendClient'
+import { collectCursorPages, normalizeNextCursor, paginateCursorItems, type CursorPage, type CursorPageRequest } from '@/lib/cursorPagination'
 import type {
   Announcement,
   AnnouncementAuditAction,
   AnnouncementAuditLog,
   AnnouncementChannel,
   AnnouncementFormInput,
+  AnnouncementStatus,
 } from '@/types/announcement'
 
 const announcementStorageKey = 'marketplace.announcement.admin-drafts'
@@ -39,8 +41,13 @@ let announcementAuditLogStore = readSessionStore<AnnouncementAuditLog[]>(announc
 
 const wait = () => new Promise(resolve => setTimeout(resolve, 80))
 
-type ListResponse<T> = { items: T[] }
+type ListResponse<T> = { items: T[], nextCursor?: string | null }
 type CountResponse = { count: number }
+
+export type AdminAnnouncementPageFilters = {
+  q?: string
+  statusGroup?: 'working' | AnnouncementStatus | 'history' | 'all'
+}
 
 export async function getAnnouncements(): Promise<Announcement[]> {
   if (shouldUseRealBackend()) {
@@ -157,14 +164,40 @@ export async function getImportantAnnouncementUnreadCount(): Promise<number> {
     .length
 }
 
-export async function getAdminAnnouncements(): Promise<Announcement[]> {
+function filterAdminAnnouncementItems(items: Announcement[], filters: AdminAnnouncementPageFilters) {
+  const query = filters.q?.trim().toLocaleLowerCase()
+  return items.filter((item) => {
+    const status = getAnnouncementDisplayStatus(item)
+    const matchesStatus = !filters.statusGroup || filters.statusGroup === 'all'
+      || filters.statusGroup === status
+      || (filters.statusGroup === 'working' && ['draft', 'scheduled', 'published'].includes(status))
+      || (filters.statusGroup === 'history' && ['offline', 'expired'].includes(status))
+    if (!matchesStatus) return false
+    if (!query) return true
+    return [item.id, item.title, item.summary, item.category, item.level, status, item.channels.join(' '), item.isPinned ? '置顶' : '']
+      .join(' ')
+      .toLocaleLowerCase()
+      .includes(query)
+  })
+}
+
+export async function getAdminAnnouncementsPage(filters: AdminAnnouncementPageFilters = {}, page: CursorPageRequest = {}): Promise<CursorPage<Announcement>> {
   if (shouldUseRealBackend()) {
     await ensureBackendSession('admin', true)
-    const response = await backendRequest<ListResponse<Announcement>>('/api/v1/admin/announcements')
-    return response.items
+    const params = new URLSearchParams()
+    if (filters.q?.trim()) params.set('q', filters.q.trim())
+    if (filters.statusGroup) params.set('statusGroup', filters.statusGroup)
+    if (page.limit) params.set('limit', String(page.limit))
+    if (page.cursor) params.set('cursor', page.cursor)
+    const response = await backendRequest<ListResponse<Announcement>>(`/api/v1/admin/announcements?${params.toString()}`)
+    return { items: response.items, nextCursor: normalizeNextCursor(response.nextCursor) }
   }
   await wait()
-  return clone(announcementStore.sort(compareAnnouncementsByTimeDesc))
+  return paginateCursorItems(clone(filterAdminAnnouncementItems(announcementStore, filters).sort(compareAnnouncementsByTimeDesc)), page)
+}
+
+export async function getAdminAnnouncements(): Promise<Announcement[]> {
+  return collectCursorPages(page => getAdminAnnouncementsPage({}, page))
 }
 
 export async function getAnnouncementById(id: string): Promise<Announcement | null> {

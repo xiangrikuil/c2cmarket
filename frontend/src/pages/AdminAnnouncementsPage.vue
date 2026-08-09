@@ -7,14 +7,14 @@ import AnnouncementDetailContent from '@/components/announcements/AnnouncementDe
 import PageTitle from '@/components/market/PageTitle.vue'
 import SoftTable from '@/components/market/SoftTable.vue'
 import StatusTabs from '@/components/market/StatusTabs.vue'
-import TablePagination from '@/components/market/TablePagination.vue'
+import CursorTablePagination from '@/components/market/CursorTablePagination.vue'
 import CompactStats from '@/components/market/CompactStats.vue'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Textarea } from '@/components/ui/textarea'
-import { usePagination } from '@/composables/usePagination'
+import { useCursorPagination } from '@/composables/useCursorPagination'
 import {
   announcementAuditActionLabels,
   announcementCategoryLabels,
@@ -26,6 +26,7 @@ import {
 } from '@/lib/announcementUtils'
 import {
   useAdminAnnouncements,
+  useAdminAnnouncementsPage,
   useAnnouncementAuditLogs,
   useDuplicateAnnouncement,
   useOfflineAnnouncement,
@@ -36,7 +37,7 @@ import type { Announcement, AnnouncementStatus } from '@/types/announcement'
 type StatusFilter = '全部' | '草稿' | '待发布' | '发布中' | '已下线' | '已结束'
 
 const router = useRouter()
-const { data: announcements, isLoading } = useAdminAnnouncements()
+const { data: announcements } = useAdminAnnouncements()
 const { data: auditLogs } = useAnnouncementAuditLogs()
 const publishMutation = usePublishAnnouncement()
 const offlineMutation = useOfflineAnnouncement()
@@ -62,23 +63,23 @@ const statusCounts = computed(() => rows.value.reduce<Record<AnnouncementStatus,
   archived: 0,
 }))
 
-const visibleRows = computed(() => {
-  if (activeStatus.value === '全部') return rows.value
-  return rows.value.filter(item => statusFilterLabel(getAnnouncementDisplayStatus(item)) === activeStatus.value)
+const statusGroup = computed(() => {
+  if (activeStatus.value === '草稿') return 'draft' as const
+  if (activeStatus.value === '待发布') return 'scheduled' as const
+  if (activeStatus.value === '发布中') return 'published' as const
+  if (activeStatus.value === '已下线') return 'offline' as const
+  if (activeStatus.value === '已结束') return 'expired' as const
+  return 'all' as const
 })
-const pagination = usePagination(visibleRows, 10)
+const pageFilters = computed(() => ({ statusGroup: statusGroup.value }))
+const pagination = useCursorPagination([activeStatus], 10)
+const pageRequest = computed(() => ({ limit: pagination.pageSize, cursor: pagination.cursor.value }))
+const pageQuery = useAdminAnnouncementsPage(pageFilters, pageRequest)
+const visibleRows = computed(() => pageQuery.data.value?.items ?? [])
+const isLoading = computed(() => pageQuery.isLoading.value || pageQuery.isFetching.value)
 const previewAnnouncement = computed(() => rows.value.find(item => item.id === previewId.value) ?? rows.value[0] ?? null)
 const offlineTarget = computed(() => rows.value.find(item => item.id === offlineTargetId.value) ?? null)
 const recentAuditLogs = computed(() => (auditLogs.value ?? []).slice(0, 8))
-
-function statusFilterLabel(status: AnnouncementStatus): StatusFilter {
-  if (status === 'draft') return '草稿'
-  if (status === 'scheduled') return '待发布'
-  if (status === 'published') return '发布中'
-  if (status === 'offline') return '已下线'
-  if (status === 'expired') return '已结束'
-  return '全部'
-}
 
 function badgeVariant(status: AnnouncementStatus) {
   if (status === 'published') return 'default'
@@ -202,7 +203,7 @@ async function duplicateAnnouncement(item: Announcement) {
 
     <div v-else class="space-y-5">
       <div class="space-y-3 lg:hidden">
-        <Card v-for="item in pagination.paginatedRows.value" :key="item.id" class="p-4">
+        <Card v-for="item in visibleRows" :key="item.id" class="p-4">
           <div class="flex flex-wrap items-center gap-2">
             <Badge :variant="badgeVariant(getAnnouncementDisplayStatus(item))">{{ announcementStatusLabels[getAnnouncementDisplayStatus(item)] }}</Badge>
             <Badge variant="outline">{{ announcementCategoryLabels[item.category] }}</Badge>
@@ -229,7 +230,7 @@ async function duplicateAnnouncement(item: Announcement) {
 
       <div class="hidden lg:block">
         <SoftTable :columns="['公告', '分类 / 级别', '展示位置', '面向用户', '时间', '状态', '操作']">
-          <tr v-for="item in pagination.paginatedRows.value" :key="item.id">
+          <tr v-for="item in visibleRows" :key="item.id">
             <td class="max-w-[280px]">
               <div class="font-semibold">{{ item.title }}</div>
               <div class="mt-1 line-clamp-2 text-xs leading-5 text-muted-foreground">{{ item.summary }}</div>
@@ -262,24 +263,26 @@ async function duplicateAnnouncement(item: Announcement) {
             <td colspan="7" class="py-10 text-center text-sm text-muted-foreground">当前筛选下暂无公告。</td>
           </tr>
           <template #footer>
-            <TablePagination
-              v-model:page="pagination.page.value"
-              :page-count="pagination.pageCount.value"
-              :total="pagination.total.value"
-              :start-item="pagination.startItem.value"
-              :end-item="pagination.endItem.value"
+            <CursorTablePagination
+              :page="pagination.page.value"
+              :item-count="visibleRows.length"
+              :has-next-page="Boolean(pageQuery.data.value?.nextCursor)"
+              :loading="pageQuery.isFetching.value"
+              @previous="pagination.previous"
+              @next="pagination.next(pageQuery.data.value?.nextCursor)"
             />
           </template>
         </SoftTable>
       </div>
 
       <div class="lg:hidden">
-        <TablePagination
-          v-model:page="pagination.page.value"
-          :page-count="pagination.pageCount.value"
-          :total="pagination.total.value"
-          :start-item="pagination.startItem.value"
-          :end-item="pagination.endItem.value"
+        <CursorTablePagination
+          :page="pagination.page.value"
+          :item-count="visibleRows.length"
+          :has-next-page="Boolean(pageQuery.data.value?.nextCursor)"
+          :loading="pageQuery.isFetching.value"
+          @previous="pagination.previous"
+          @next="pagination.next(pageQuery.data.value?.nextCursor)"
         />
       </div>
     </div>

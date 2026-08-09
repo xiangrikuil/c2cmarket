@@ -71,8 +71,9 @@ import { normalizeApiOrderDisputeStatus, type OpenApiOrderDisputeInput } from '@
 import type { ReputationSummary } from '@/types/reputation'
 import type { ApiServiceHealthSummary } from '@/types/apiHealth'
 import { parseApiQuotaUsagePolicy, toApiQuotaUsagePolicyInput } from '@/lib/apiQuotaPolicy'
+import { collectCursorPages, normalizeNextCursor, type CursorPage, type CursorPageRequest } from '@/lib/cursorPagination'
 
-type ListResponse<T> = { items: T[] }
+type ListResponse<T> = { items: T[], nextCursor?: string | null }
 
 type BackendAccessMode = {
   accessMode: string
@@ -732,6 +733,15 @@ function filterServices(rows: ApiService[], filters: ApiServiceFilters | Sub2Api
     if (search && ![row.title, row.merchant, row.merchantDisplayName, ...row.models].some(value => value.toLowerCase().includes(search))) return false
     if ('deliveryMode' in filters && filters.deliveryMode && !row.deliveryModes.includes(filters.deliveryMode)) return false
     if ('online' in filters && filters.online !== undefined && row.publiclyOrderable !== filters.online) return false
+    if ('billingMode' in filters && filters.billingMode && filters.billingMode !== 'all' && row.billingMode !== filters.billingMode) return false
+    if ('packageModelCatalogId' in filters || 'packageDurationDays' in filters) {
+      const modelCatalogID = 'packageModelCatalogId' in filters ? filters.packageModelCatalogId : undefined
+      const durationDays = 'packageDurationDays' in filters ? filters.packageDurationDays : undefined
+      if ((modelCatalogID || durationDays) && !(row.packages ?? []).some(item => item.enabled
+        && item.stockAvailable > 0
+        && (!durationDays || item.durationDays === durationDays)
+        && (!modelCatalogID || item.models.some(model => model.modelCatalogId === modelCatalogID)))) return false
+    }
     return true
   })
 }
@@ -828,19 +838,30 @@ function mapAPIQuotaBatch(item: ApiQuotaBatch): ApiQuotaBatch {
   }
 }
 
-function quotaOfferQuery(filters: ApiQuotaOfferFilters) {
+function quotaOfferQuery(filters: ApiQuotaOfferFilters, page: CursorPageRequest = {}) {
   const params = new URLSearchParams()
   if (filters.distributionSystem && filters.distributionSystem !== 'all') params.set('distributionSystem', filters.distributionSystem)
   if (filters.oneMultiplier) params.set('oneMultiplier', 'true')
   if (filters.onlyOrderable) params.set('onlyOrderable', 'true')
   if (filters.slotKey) params.set('slotKey', filters.slotKey)
+  if (filters.search?.trim()) params.set('search', filters.search.trim())
+  if (filters.excludeSystemSlots) params.set('excludeSystemSlots', 'true')
+  if (page.limit) params.set('limit', String(page.limit))
+  if (page.cursor) params.set('cursor', page.cursor)
   const query = params.toString()
   return query ? `?${query}` : ''
 }
 
+export async function backendPublicAPIQuotaOffersPage(filters: ApiQuotaOfferFilters = {}, page: CursorPageRequest = {}): Promise<CursorPage<PublicApiQuotaOffer>> {
+  const response = await backendRequest<ListResponse<GeneratedPublicApiQuotaOffer>>(`/api/v1/api-quota-offers${quotaOfferQuery(filters, page)}`)
+  return {
+    items: response.items.map(mapBackendPublicAPIQuotaOffer),
+    nextCursor: normalizeNextCursor(response.nextCursor),
+  }
+}
+
 export async function backendPublicAPIQuotaOffers(filters: ApiQuotaOfferFilters = {}) {
-  const response = await backendRequest<ListResponse<GeneratedPublicApiQuotaOffer>>(`/api/v1/api-quota-offers${quotaOfferQuery(filters)}`)
-  return response.items.map(mapBackendPublicAPIQuotaOffer)
+  return collectCursorPages(page => backendPublicAPIQuotaOffersPage(filters, page))
 }
 
 export async function backendAPIQuotaSaleSlots() {
@@ -972,9 +993,26 @@ export async function backendImportAPIQuotaCredentials(offerId: string, delivery
   })
 }
 
+export async function backendAPIServicesPage(filters: ApiServiceFilters = {}, page: CursorPageRequest = {}): Promise<CursorPage<ApiService>> {
+  const params = new URLSearchParams()
+  if (filters.billingMode) {
+    const billingMode = filters.billingMode === 'metered_credit' ? 'metered_usd_quota' : filters.billingMode
+    params.set('billingMode', billingMode)
+  }
+  if (filters.packageModelCatalogId?.trim()) params.set('packageModelCatalogId', filters.packageModelCatalogId.trim())
+  if (filters.packageDurationDays) params.set('packageDurationDays', String(filters.packageDurationDays))
+  if (page.limit) params.set('limit', String(page.limit))
+  if (page.cursor) params.set('cursor', page.cursor)
+  const query = params.toString()
+  const response = await backendRequest<ListResponse<BackendAPIService>>(`/api/v1/api-services${query ? `?${query}` : ''}`)
+  return {
+    items: response.items.map(mapBackendAPIService),
+    nextCursor: normalizeNextCursor(response.nextCursor),
+  }
+}
+
 export async function backendAPIServices(filters: ApiServiceFilters = {}) {
-  const response = await backendRequest<ListResponse<BackendAPIService>>('/api/v1/api-services')
-  return filterServices(response.items.map(mapBackendAPIService).filter(row => row.publiclyOrderable), filters)
+  return filterServices(await collectCursorPages(page => backendAPIServicesPage({}, page)), filters)
 }
 
 export async function backendPublicAPIPromotions(): Promise<ApiServicePromotion[]> {
@@ -1046,10 +1084,19 @@ export async function backendAPIServiceById(id: string) {
 }
 
 export async function backendOwnerAPIServices(salesView: ApiServiceSalesView = 'active') {
+  return collectCursorPages(page => backendOwnerAPIServicesPage(salesView, page))
+}
+
+export async function backendOwnerAPIServicesPage(salesView: ApiServiceSalesView = 'active', page: CursorPageRequest = {}): Promise<CursorPage<OwnerApiService>> {
   await ensureBackendSession('merchant', false)
   const params = new URLSearchParams({ salesView })
+  if (page.limit) params.set('limit', String(page.limit))
+  if (page.cursor) params.set('cursor', page.cursor)
   const response = await backendRequest<ListResponse<BackendOwnerAPIService>>(`/api/v1/owner/api-services?${params.toString()}`)
-  return response.items.map(mapBackendOwnerAPIService)
+  return {
+    items: response.items.map(mapBackendOwnerAPIService),
+    nextCursor: normalizeNextCursor(response.nextCursor),
+  }
 }
 
 export async function backendOwnerAPIServiceById(id: string) {
@@ -1286,10 +1333,32 @@ function adminOrderStatusLabel(value: string) {
 	return labels[value] ?? value
 }
 
-export async function backendAdminAPIOrderRows(): Promise<AdminRow[]> {
+function apiOrderPageQuery(filters: ApiOrderFilters, page: CursorPageRequest) {
+  const params = new URLSearchParams()
+  const statuses = Array.isArray(filters.status) ? filters.status : filters.status ? [filters.status] : []
+  if (statuses.length) params.set('statuses', statuses.join(','))
+  if (filters.serviceId) params.set('serviceId', filters.serviceId)
+  if (filters.search?.trim()) params.set('q', filters.search.trim())
+  if (filters.dateRange && filters.dateRange !== 'all') params.set('dateRange', filters.dateRange)
+  if (filters.sort) params.set('sort', filters.sort)
+  if (filters.risk && filters.risk !== 'all') params.set('risk', filters.risk)
+  if (page.limit) params.set('limit', String(page.limit))
+  if (page.cursor) params.set('cursor', page.cursor)
+  const query = params.toString()
+  return query ? `?${query}` : ''
+}
+
+export async function backendAdminAPIOrderRowsPage(filters: ApiOrderFilters = {}, page: CursorPageRequest = {}): Promise<CursorPage<AdminRow>> {
 	await ensureBackendSession('admin', true)
-	const response = await backendRequest<ListResponse<BackendAPIOrder>>('/api/v1/admin/api-orders')
-	return response.items.map(mapBackendAdminAPIOrder)
+	const response = await backendRequest<ListResponse<BackendAPIOrder>>(`/api/v1/admin/api-orders${apiOrderPageQuery(filters, page)}`)
+	return {
+		items: response.items.map(mapBackendAdminAPIOrder),
+		nextCursor: normalizeNextCursor(response.nextCursor),
+	}
+}
+
+export async function backendAdminAPIOrderRows(): Promise<AdminRow[]> {
+	return collectCursorPages(page => backendAdminAPIOrderRowsPage({}, page))
 }
 
 export function mapBackendAdminAPIOrder(order: BackendAPIOrder): AdminRow {
@@ -1712,16 +1781,28 @@ export async function backendCreateAPIOrderFromIntent(intentId: string, paymentM
   return mapBackendAPIOrder(response, 'buyer')
 }
 
+export async function backendMyAPIOrdersPage(filters: ApiOrderFilters = {}, page: CursorPageRequest = {}): Promise<CursorPage<ApiOrder>> {
+	const response = await backendRequest<ListResponse<BackendAPIOrder>>(`/api/v1/me/api-orders${apiOrderPageQuery(filters, page)}`)
+	return {
+		items: await Promise.all(response.items.map(item => mapBackendAPIOrder(item, 'buyer'))),
+		nextCursor: normalizeNextCursor(response.nextCursor),
+	}
+}
+
 export async function backendMyAPIOrders(filters: ApiOrderFilters = {}) {
-  const response = await backendRequest<ListResponse<BackendAPIOrder>>('/api/v1/me/api-orders')
-  const orders = await Promise.all(response.items.map(item => mapBackendAPIOrder(item, 'buyer')))
-  return filterAndSortOrders(orders, filters, 'buyer')
+	return collectCursorPages(page => backendMyAPIOrdersPage(filters, page))
+}
+
+export async function backendOwnerAPIOrdersPage(filters: ApiOrderFilters = {}, page: CursorPageRequest = {}): Promise<CursorPage<ApiOrder>> {
+	const response = await backendRequest<ListResponse<BackendAPIOrder>>(`/api/v1/owner/api-orders${apiOrderPageQuery(filters, page)}`)
+	return {
+		items: await Promise.all(response.items.map(item => mapBackendAPIOrder(item, 'merchant'))),
+		nextCursor: normalizeNextCursor(response.nextCursor),
+	}
 }
 
 export async function backendOwnerAPIOrders(filters: ApiOrderFilters = {}) {
-  const response = await backendRequest<ListResponse<BackendAPIOrder>>('/api/v1/owner/api-orders')
-  const orders = await Promise.all(response.items.map(item => mapBackendAPIOrder(item, 'merchant')))
-  return filterAndSortOrders(orders, filters, 'merchant')
+	return collectCursorPages(page => backendOwnerAPIOrdersPage(filters, page))
 }
 
 export async function backendMyAPIOrder(id: string) {
@@ -2028,10 +2109,36 @@ function serviceAdminRow(service: BackendAPIService): AdminRow {
   }
 }
 
-export async function backendAdminAPIServiceRows() {
+export type AdminAPIServicePageFilters = {
+  q?: string
+  view?: 'public' | 'exceptions'
+  statuses?: string[]
+  risk?: 'all' | 'high' | 'has_note'
+}
+
+function adminAPIServicePageQuery(filters: AdminAPIServicePageFilters, page: CursorPageRequest) {
+  const params = new URLSearchParams()
+  if (filters.q?.trim()) params.set('q', filters.q.trim())
+  if (filters.view) params.set('view', filters.view)
+  if (filters.statuses?.length) params.set('statuses', filters.statuses.join(','))
+  if (filters.risk && filters.risk !== 'all') params.set('risk', filters.risk)
+  if (page.limit) params.set('limit', String(page.limit))
+  if (page.cursor) params.set('cursor', page.cursor)
+  const query = params.toString()
+  return query ? `?${query}` : ''
+}
+
+export async function backendAdminAPIServiceRowsPage(filters: AdminAPIServicePageFilters = {}, page: CursorPageRequest = {}): Promise<CursorPage<AdminRow>> {
   await ensureBackendSession('admin', true)
-  const response = await backendRequest<ListResponse<BackendAPIService>>('/api/v1/admin/api-services')
-  return response.items.map(serviceAdminRow)
+  const response = await backendRequest<ListResponse<BackendAPIService>>(`/api/v1/admin/api-services${adminAPIServicePageQuery(filters, page)}`)
+  return {
+    items: response.items.map(serviceAdminRow),
+    nextCursor: normalizeNextCursor(response.nextCursor),
+  }
+}
+
+export async function backendAdminAPIServiceRows() {
+  return collectCursorPages(page => backendAdminAPIServiceRowsPage({}, page))
 }
 
 export async function backendUpdateAdminAPIServiceStatus(row: AdminRow, status: string, reason: string) {

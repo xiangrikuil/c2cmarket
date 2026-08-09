@@ -5,21 +5,23 @@ import { Button } from '@/components/ui/button'
 import PageTitle from '@/components/market/PageTitle.vue'
 import SoftTable from '@/components/market/SoftTable.vue'
 import StatusTabs from '@/components/market/StatusTabs.vue'
-import TablePagination from '@/components/market/TablePagination.vue'
+import CursorTablePagination from '@/components/market/CursorTablePagination.vue'
 import EmptyState from '@/components/market/EmptyState.vue'
 import LocalTime from '@/components/market/LocalTime.vue'
 import ShortId from '@/components/market/ShortId.vue'
 import SkeletonTable from '@/components/market/SkeletonTable.vue'
-import { usePagination } from '@/composables/usePagination'
-import { useMerchantCarpoolApplications, useMyCarpools } from '@/queries/useMarketQueries'
+import { useCursorPagination } from '@/composables/useCursorPagination'
+import { useMerchantCarpoolApplications, usePagedMyCarpools } from '@/queries/useMarketQueries'
 import { getPricingDisplay, getRemainingSeats } from '@/lib/pricing'
 import { formatDailyWeeklyQuota } from '@/lib/quota'
 import { toast } from 'vue-sonner'
 
-const { data: carpools, isLoading } = useMyCarpools()
+const pagination = useCursorPagination()
+const pageRequest = computed(() => ({ limit: pagination.pageSize, cursor: pagination.cursor.value }))
+const pageQuery = usePagedMyCarpools(pageRequest)
 const { data: applications } = useMerchantCarpoolApplications({ sort: 'default_owner' })
-const rows = computed(() => carpools.value ?? [])
-const pagination = usePagination(rows)
+const rows = computed(() => pageQuery.data.value?.items ?? [])
+const isLoading = computed(() => pageQuery.isLoading.value || pageQuery.isFetching.value)
 
 function applicationCounts(carpoolId: string) {
   const related = (applications.value ?? []).filter(item => item.carpoolId === carpoolId)
@@ -39,7 +41,7 @@ function applicationCounts(carpoolId: string) {
     <SkeletonTable v-if="isLoading" :rows="5" :columns="7" />
     <EmptyState v-else-if="rows.length === 0" title="暂未发布车源" description="发布后可在这里管理名额、申请和公开状态。"><template #action><RouterLink to="/carpools/new"><Button>发布车源</Button></RouterLink></template></EmptyState>
     <SoftTable v-else :columns="['车源', '价格', '车位', '申请', '状态', '最后确认', '操作']">
-      <tr v-for="item in pagination.paginatedRows.value" :key="item.id">
+      <tr v-for="item in rows" :key="item.id">
         <td>
           <div class="font-medium">{{ item.product }}</div>
           <div class="mt-1 flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
@@ -67,12 +69,13 @@ function applicationCounts(carpoolId: string) {
         </td>
       </tr>
       <template #footer>
-        <TablePagination
-          v-model:page="pagination.page.value"
-          :page-count="pagination.pageCount.value"
-          :total="pagination.total.value"
-          :start-item="pagination.startItem.value"
-          :end-item="pagination.endItem.value"
+        <CursorTablePagination
+          :page="pagination.page.value"
+          :item-count="rows.length"
+          :has-next-page="Boolean(pageQuery.data.value?.nextCursor)"
+          :loading="pageQuery.isFetching.value"
+          @previous="pagination.previous"
+          @next="pagination.next(pageQuery.data.value?.nextCursor)"
         />
       </template>
     </SoftTable>

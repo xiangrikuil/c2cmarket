@@ -61,7 +61,8 @@ describe('API 服务卖家管理页结构', () => {
 
   test('服务列表按销售生命周期筛选并区分桌面与移动布局', () => {
     assert.match(listSource, /getInitialApiServiceSalesView\(route\.query\.intent\)/)
-    assert.match(listSource, /useMyApiServices\(salesView\)/)
+    assert.match(listSource, /usePagedMyApiServices\(salesView, pageRequest\)/)
+    assert.match(listSource, /useCursorPagination\(\[salesView\]\)/)
     assert.match(listSource, /<Select v-model="salesView">/)
     assert.match(listSource, /class="hidden md:block"/)
     assert.match(listSource, /class="divide-y divide-border border-y border-border md:hidden"/)

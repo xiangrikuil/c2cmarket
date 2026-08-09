@@ -541,22 +541,21 @@ export async function backendCreateAppeal(payload: CreateAppealRequest) {
 export async function backendAdminReportRows() {
   await ensureBackendSession('admin', true)
   const [reports, disputes, appeals] = await Promise.all([
-    backendRequest<ListResponse<BackendReport>>('/api/v1/admin/reports'),
-    backendRequest<ListResponse<BackendDispute>>('/api/v1/admin/disputes'),
-    backendRequest<ListResponse<BackendAppeal>>('/api/v1/admin/appeals'),
+    backendAllPages<BackendReport>('/api/v1/admin/reports'),
+    backendAllPages<BackendDispute>('/api/v1/admin/disputes'),
+    backendAllPages<BackendAppeal>('/api/v1/admin/appeals'),
   ])
-  const disputeReportIds = new Set(disputes.items.map(item => item.reportId).filter(Boolean))
+  const disputeReportIds = new Set(disputes.map(item => item.reportId).filter(Boolean))
   return [
-    ...reports.items.filter(item => item.status !== 'dispute_opened' && !disputeReportIds.has(item.id)).map(mapReportRow),
-    ...disputes.items.map(mapAdminDisputeRow),
-    ...appeals.items.map(mapAppealRow),
+    ...reports.filter(item => item.status !== 'dispute_opened' && !disputeReportIds.has(item.id)).map(mapReportRow),
+    ...disputes.map(mapAdminDisputeRow),
+    ...appeals.map(mapAppealRow),
   ]
 }
 
 export async function backendAdminAppealRows() {
   await ensureBackendSession('admin', true)
-  const response = await backendRequest<ListResponse<BackendAppeal>>('/api/v1/admin/appeals')
-  return response.items.map(mapAppealRow)
+  return (await backendAllPages<BackendAppeal>('/api/v1/admin/appeals')).map(mapAppealRow)
 }
 
 export async function backendAdminReportDetail(id: string) {

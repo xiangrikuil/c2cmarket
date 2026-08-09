@@ -233,6 +233,8 @@ type PublicOfferFilter struct {
 	OnlyOneMultiplier  bool
 	OnlyOrderable      bool
 	SystemSlotKey      string
+	Search             string
+	ExcludeSystemSlots bool
 }
 
 type CredentialSummary struct {

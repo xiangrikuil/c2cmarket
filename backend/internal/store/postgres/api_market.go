@@ -49,23 +49,57 @@ func (s *Store) CreateAPIService(ctx context.Context, service apimarket.Service)
 	return nil
 }
 
-func (s *Store) ListPublicAPIServices(ctx context.Context, filter apimarket.PublicServiceFilter) ([]apimarket.Service, *domain.AppError) {
+func (s *Store) ListPublicAPIServices(ctx context.Context, filter apimarket.PublicServiceFilter, page domain.PageRequest) (domain.Page[apimarket.Service], *domain.AppError) {
 	where := `WHERE ` + publicAPIServiceOrderablePredicate("api_services")
 	var args []any
+	addArgument := func(value any) string {
+		args = append(args, value)
+		return "$" + strconv.Itoa(len(args))
+	}
 	if strings.TrimSpace(filter.PaymentMethod) != "" {
+		placeholder := addArgument(strings.TrimSpace(filter.PaymentMethod))
 		where += `
 		  AND EXISTS (
 		    SELECT 1
 		    FROM api_service_payment_options po
 		    WHERE po.api_service_id = api_services.id
 		      AND po.enabled = true
-		      AND po.payment_method = $1
+		      AND po.payment_method = ` + placeholder + `
 		      AND po.payment_method IN (` + apiServiceSupportedPaymentMethodsSQL + `)
 		  )
 		`
-		args = []any{strings.TrimSpace(filter.PaymentMethod)}
 	}
-	return s.listAPIServices(ctx, where, args)
+	if strings.TrimSpace(filter.BillingMode) != "" {
+		where += ` AND api_services.billing_mode = ` + addArgument(strings.TrimSpace(filter.BillingMode))
+	}
+	if strings.TrimSpace(filter.PackageModelCatalogID) != "" || filter.PackageDurationDays > 0 {
+		where += `
+		  AND EXISTS (
+		    SELECT 1
+		    FROM api_service_packages package_row
+		    WHERE package_row.api_service_id = api_services.id
+		      AND package_row.enabled = true
+		      AND package_row.stock_available > 0`
+		if filter.PackageDurationDays > 0 {
+			where += ` AND package_row.duration_days = ` + addArgument(filter.PackageDurationDays)
+		}
+		if strings.TrimSpace(filter.PackageModelCatalogID) != "" {
+			where += `
+		      AND EXISTS (
+		        SELECT 1
+		        FROM api_service_package_models package_model
+		        JOIN api_service_models service_model
+		          ON service_model.id = package_model.api_service_model_id
+		         AND service_model.api_service_id = package_model.api_service_id
+		        WHERE package_model.api_service_package_id = package_row.id
+		          AND package_model.api_service_id = package_row.api_service_id
+		          AND service_model.model_catalog_id::text = ` + addArgument(strings.TrimSpace(filter.PackageModelCatalogID)) + `
+		      )`
+		}
+		where += `
+		  )`
+	}
+	return s.listAPIServicesPage(ctx, where, args, page)
 }
 
 func (s *Store) GetPublicAPIService(ctx context.Context, serviceID string) (apimarket.Service, *domain.AppError) {
@@ -153,8 +187,76 @@ func (s *Store) GetAPIServiceForOwner(ctx context.Context, ownerUserID, serviceI
 	return service, nil
 }
 
-func (s *Store) ListAdminAPIServices(ctx context.Context, page domain.PageRequest) (domain.Page[apimarket.Service], *domain.AppError) {
-	return s.listAPIServicesPage(ctx, "", nil, page)
+func (s *Store) ListAdminAPIServices(ctx context.Context, filter apimarket.AdminServiceFilter, page domain.PageRequest) (domain.Page[apimarket.Service], *domain.AppError) {
+	conditions := make([]string, 0, 5)
+	args := make([]any, 0, 6)
+	addArgument := func(value any) string {
+		args = append(args, value)
+		return "$" + strconv.Itoa(len(args))
+	}
+	statusExpression := apiServiceAdminStatusSQL("api_services")
+	if len(filter.Statuses) > 0 {
+		placeholder := addArgument(filter.Statuses)
+		conditions = append(conditions, "("+statusExpression+") = ANY("+placeholder+"::text[])")
+	}
+	switch strings.TrimSpace(filter.View) {
+	case apimarket.AdminServiceViewPublic:
+		conditions = append(conditions, "("+statusExpression+") = 'online'")
+	case apimarket.AdminServiceViewExceptions:
+		conditions = append(conditions, "("+statusExpression+") IN ('pending', 'changes_requested', 'suspended', 'rejected', 'removed')")
+	}
+	if strings.TrimSpace(filter.Risk) == apimarket.AdminServiceRiskHigh {
+		conditions = append(conditions, `(api_services.moderation_status <> 'clear' OR EXISTS (
+			SELECT 1
+			FROM api_orders risk_order
+			WHERE risk_order.api_service_id = api_services.id
+			  AND risk_order.dispute_status NOT IN ('none', 'closed')
+		))`)
+	}
+	if query := strings.TrimSpace(filter.Query); query != "" {
+		placeholder := addArgument(strings.ToLower(query))
+		conditions = append(conditions, `(
+			strpos(lower(api_services.id::text), `+placeholder+`) > 0 OR
+			strpos(lower(api_services.title), `+placeholder+`) > 0 OR
+			strpos(lower(api_services.short_description), `+placeholder+`) > 0 OR
+			strpos(lower(api_services.owner_user_id::text), `+placeholder+`) > 0 OR
+			strpos(lower(COALESCE(api_services.moderation_reason, '')), `+placeholder+`) > 0 OR
+			EXISTS (
+				SELECT 1 FROM users owner
+				WHERE owner.id = api_services.owner_user_id
+				  AND strpos(lower(COALESCE(owner.display_name, '')), `+placeholder+`) > 0
+			) OR
+			EXISTS (
+				SELECT 1 FROM merchant_profiles merchant
+				WHERE merchant.id = api_services.merchant_profile_id
+				  AND merchant.owner_user_id = api_services.owner_user_id
+				  AND strpos(lower(COALESCE(merchant.display_name, '')), `+placeholder+`) > 0
+			)
+		)`)
+	}
+	whereClause := ""
+	if len(conditions) > 0 {
+		whereClause = "WHERE " + strings.Join(conditions, " AND ")
+	}
+	return s.listAPIServicesPage(ctx, whereClause, args, page)
+}
+
+func apiServiceAdminStatusSQL(alias string) string {
+	alias = strings.TrimSpace(alias)
+	if alias == "" {
+		alias = "api_services"
+	}
+	return `CASE
+		WHEN ` + alias + `.moderation_status = 'removed' THEN 'removed'
+		WHEN ` + alias + `.moderation_status = 'admin_suspended' THEN 'suspended'
+		WHEN ` + alias + `.review_status = 'pending_review' THEN 'pending'
+		WHEN ` + alias + `.review_status = 'changes_requested' THEN 'changes_requested'
+		WHEN ` + alias + `.review_status = 'rejected' THEN 'rejected'
+		WHEN ` + alias + `.review_status = 'approved' AND ` + alias + `.publication_status = 'online' THEN 'online'
+		WHEN ` + alias + `.review_status = 'approved' AND ` + alias + `.publication_status = 'owner_paused' THEN 'paused'
+		WHEN ` + alias + `.review_status = 'approved' THEN 'approved'
+		ELSE 'draft'
+	END`
 }
 
 func (s *Store) GetAdminAPIService(ctx context.Context, serviceID string) (apimarket.Service, *domain.AppError) {
