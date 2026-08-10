@@ -164,13 +164,60 @@ test('account recovery remains complete after the profile is fetched again', asy
   )
 })
 
+test('linux.do avatar shortcut persists through the real profile PATCH', async () => {
+  const current = backendProfile({
+    avatarMode: 'custom_url',
+    avatarUrl: 'https://cdn.example.com/custom.webp',
+    customAvatarUrl: 'https://cdn.example.com/custom.webp',
+    bio: 'Keep this biography',
+    regionCode: 'cn',
+    timezone: 'Asia/Shanghai',
+  })
+  const updated = backendProfile({
+    avatarMode: 'linuxdo',
+    avatarUrl: 'https://linux.do/avatar/orbit.png',
+    customAvatarUrl: null,
+    bio: 'Keep this biography',
+    regionCode: 'cn',
+    timezone: 'Asia/Shanghai',
+  })
+  const fetchMock = vi.fn()
+    .mockResolvedValueOnce(jsonResponse({
+      csrfToken: 'csrf-profile',
+      expiresAt: '2999-01-01T00:00:00Z',
+      user: {
+        id: 'user-1',
+        username: 'orbit',
+        displayName: 'Orbit',
+        isAdmin: false,
+        permissions: [],
+        linuxDoBinding: { bound: true },
+      },
+    }))
+    .mockResolvedValueOnce(jsonResponse(current))
+    .mockResolvedValueOnce(jsonResponse(updated))
+  vi.stubGlobal('fetch', fetchMock)
+
+  const { backendUseLinuxDoAvatar } = await loadProfileBackend({ apiMode: 'real' })
+  const profile = await backendUseLinuxDoAvatar()
+
+  assert.equal(profile.avatarMode, 'linuxdo')
+  assert.equal(profile.customAvatarUrl, null)
+  assert.deepEqual(
+    fetchMock.mock.calls.map(call => call[0]),
+    ['/api/v1/auth/session', '/api/v1/me/profile', '/api/v1/me/profile'],
+  )
+  const request = fetchMock.mock.calls[2]?.[1] as RequestInit
+  const payload = JSON.parse(String(request.body))
+  assert.equal(request.method, 'PATCH')
+  assert.equal(payload.avatarMode, 'linuxdo')
+  assert.equal(payload.avatarUrl, '')
+  assert.equal(payload.bio, 'Keep this biography')
+  assert.deepEqual(payload.privacy, current.privacy)
+})
+
 test('public profile adapter preserves unavailable reputation facts as null', async () => {
-  const fetchMock = vi.fn((input: RequestInfo | URL) => {
-    const url = String(input)
-    if (url.endsWith('/reviews')) {
-      return Promise.resolve(jsonResponse({ items: [] }))
-    }
-    return Promise.resolve(jsonResponse({
+  const fetchMock = vi.fn(() => Promise.resolve(jsonResponse({
       profile: {
         id: '11111111-1111-4111-8111-111111111111',
         username: 'truthful',
@@ -200,7 +247,8 @@ test('public profile adapter preserves unavailable reputation facts as null', as
         privacy: {
           showCreatedAt: true,
           showLastActiveAt: true,
-          showCompletionStats: true,
+          showCompletedCarpoolCount: true,
+          showCompletedApiIntentCount: false,
           showResponseMedian: true,
           showResolvedDisputeSummary: true,
           allowPublicProfileReport: true,
@@ -209,10 +257,18 @@ test('public profile adapter preserves unavailable reputation facts as null', as
       carpools: [],
       services: [],
       completions: [],
-      reviews: [],
+      reviews: [{
+        id: 'review-1',
+        username: 'reviewer',
+        date: '2026-08-10',
+        serviceType: 'API 服务',
+        rating: 5,
+        tags: ['响应及时'],
+        note: '公开评价',
+        verified: true,
+      }],
       disputes: [],
-    }))
-  })
+    })))
   vi.stubGlobal('fetch', fetchMock)
 
   const { backendPublicUserProfile } = await loadProfileBackend({ apiMode: 'real' })
@@ -223,4 +279,8 @@ test('public profile adapter preserves unavailable reputation facts as null', as
   assert.equal(result.profile.stats.completedCarpoolsLast90Days, null)
   assert.equal(result.profile.stats.buyerResponsibilityCancellationCount, null)
   assert.equal(result.profile.stats.unresolvedDisputeCount, null)
+  assert.equal(result.profile.privacy.showCompletionStats, true)
+  assert.equal(result.reviews[0]?.id, 'review-1')
+  assert.equal(fetchMock.mock.calls.length, 1)
+  assert.equal(fetchMock.mock.calls[0]?.[0], '/api/v1/users/truthful/public-profile')
 })

@@ -12,6 +12,8 @@ import type {
   PaymentMethodOption,
   RegionOption,
   SaveCarpoolDraftPayload,
+	OwnerCarpoolEditData,
+	OwnerCarpoolView,
 } from '@/lib/api'
 import { backendMutation, backendRequest, ensureBackendSession } from '@/lib/backendClient'
 import { backendCreateContactMethod } from '@/lib/apiMarketBackend'
@@ -33,7 +35,7 @@ export type CarpoolPageFilters = {
   ownerType?: string
   warranty?: string
   statuses?: string[]
-  view?: 'public' | 'exceptions'
+	view?: 'public' | 'exceptions' | OwnerCarpoolView
   risk?: 'all' | 'high' | 'has_note'
   sort?: 'recommended' | 'updated_desc' | 'created_desc' | 'default_buyer' | 'default_owner' | 'price_asc' | 'seats_desc'
   none?: boolean
@@ -451,17 +453,67 @@ export async function backendCarpoolApplicationEligibility(id: string) {
   return backendRequest<BackendCarpoolApplicationEligibility>(`/api/v1/carpools/${id}/eligibility`)
 }
 
-export async function backendOwnerCarpoolsPage(page: CursorPageRequest = {}): Promise<CursorPage<CarpoolWithMeta>> {
+export async function backendOwnerCarpoolsPage(view?: OwnerCarpoolView, page: CursorPageRequest = {}): Promise<CursorPage<CarpoolWithMeta>> {
   await ensureBackendSession('owner', false)
-  const response = await backendRequest<ListResponse<BackendCarpoolListing>>(`/api/v1/me/carpools${carpoolPageQuery({}, page)}`)
+  const response = await backendRequest<ListResponse<BackendCarpoolListing>>(`/api/v1/me/carpools${carpoolPageQuery({ view }, page)}`)
   return {
     items: await mapListings(response.items),
     nextCursor: normalizeNextCursor(response.nextCursor),
   }
 }
 
-export async function backendOwnerCarpools() {
-  return collectCursorPages(page => backendOwnerCarpoolsPage(page))
+export async function backendOwnerCarpools(view?: OwnerCarpoolView) {
+  return collectCursorPages(page => backendOwnerCarpoolsPage(view, page))
+}
+
+function ownerCarpoolEditData(listing: BackendCarpoolListing, plan: BackendProductPlan): OwnerCarpoolEditData {
+	return {
+		id: listing.id,
+		version: listing.version,
+		backendStatus: listing.status,
+		ownerContactMethodId: listing.ownerContactMethodId ?? '',
+		payload: {
+			productId: listing.productPlanId,
+			customProductName: listing.title !== plan.displayName ? listing.title : null,
+			regionCode: listing.regionCode,
+			customRegionName: listing.regionCode === 'other' ? listing.regionName : null,
+			monthlyPriceCny: numberFromDecimal(listing.priceMonthlyCny),
+			serviceMultiplier: numberFromDecimal(listing.serviceMultiplier),
+			dailyQuotaAmount: listing.dailyQuotaAmount ? numberFromDecimal(listing.dailyQuotaAmount) : null,
+			weeklyQuotaAmount: numberFromDecimal(listing.weeklyQuotaAmount),
+			followsOfficialQuotaReset: listing.followsOfficialQuotaReset,
+			vpsRegion: listing.vpsRegion ?? '',
+			supportsMainlandChinaDirectConnection: listing.supportsMainlandChinaDirectConnection,
+			totalSeats: listing.buyerSeatCapacity,
+			occupiedSeats: listing.activeBuyerMembers,
+			openingChannelCode: listing.openingChannelCode ?? '',
+			customOpeningChannel: listing.customOpeningChannel ?? '',
+			paymentMethodCode: listing.paymentMethodCode ?? '',
+			customPaymentMethod: listing.customPaymentMethod ?? '',
+			distributionMethod: listing.distributionMethod,
+			distributionMethodNote: listing.distributionMethodNote,
+			providesAdminAccount: listing.providesAdminAccount,
+			accessArrangementMode: mapAccessMode(plan.accessMode),
+			accessArrangementNote: listing.accessArrangement,
+			riskAcknowledged: listing.riskAckRequired,
+			policyVersion: listing.policyVersion,
+			riskNoticeCode: listing.riskNoticeCode ?? null,
+			warranty: {
+				mode: 'remaining_days_compensation',
+				fixedWarrantyDays: null,
+				compensationMethod: listing.cycleTerm?.exitPolicy ?? '',
+				exclusions: '',
+			},
+			rulesNote: listing.cycleTerm?.usageRules ?? listing.summary,
+			status: 'draft',
+		},
+	}
+}
+
+export async function backendOwnerCarpoolForEdit(id: string): Promise<OwnerCarpoolEditData> {
+	await ensureBackendSession('owner', false)
+	const listing = await backendRequest<BackendCarpoolListing>(`/api/v1/me/carpools/${encodeURIComponent(id)}`)
+	return ownerCarpoolEditData(listing, await productPlan(listing.productPlanId))
 }
 
 function applicationStatus(application: BackendCarpoolApplication, membership?: BackendCarpoolMembership): CarpoolApplicationWithMeta['status'] {
@@ -748,7 +800,7 @@ function toListingRequest(payload: SaveCarpoolDraftPayload, ownerContactMethodId
     regionCode: payload.regionCode,
     regionName,
     priceMonthlyCny: String(monthly),
-    serviceMultiplier: '1',
+    serviceMultiplier: String(payload.serviceMultiplier ?? 1),
     dailyQuotaAmount: String(payload.dailyQuotaAmount ?? 0),
     weeklyQuotaAmount: String(payload.weeklyQuotaAmount ?? 0),
     followsOfficialQuotaReset: payload.followsOfficialQuotaReset,
@@ -780,6 +832,30 @@ export async function backendSubmitCarpool(payload: SaveCarpoolDraftPayload) {
     idempotencyPrefix: publish ? 'carpool-publish' : 'carpool-listing',
   })
   return mapBackendCarpoolListing(listing)
+}
+
+export async function backendUpdateOwnerCarpool(
+	id: string,
+	payload: SaveCarpoolDraftPayload,
+	version: number,
+	ownerContactMethodId: string,
+	submitForReview: boolean,
+) {
+	await ensureBackendSession('owner', false)
+	const plan = await productPlan(payload.productId)
+	let listing = await backendMutation<BackendCarpoolListing>(
+		`/api/v1/carpools/${encodeURIComponent(id)}`,
+		toListingRequest(payload, ownerContactMethodId, plan),
+		{ method: 'PATCH', ifMatch: version },
+	)
+	if (submitForReview) {
+		listing = await backendMutation<BackendCarpoolListing>(
+			`/api/v1/carpools/${encodeURIComponent(id)}/submit-review`,
+			{},
+			{ ifMatch: listing.version, idempotencyPrefix: 'carpool-submit-review' },
+		)
+	}
+	return mapBackendCarpoolListing(listing)
 }
 
 export async function backendCreateCarpoolApplication(carpoolId: string, payload: { rulesAccepted: boolean }) {

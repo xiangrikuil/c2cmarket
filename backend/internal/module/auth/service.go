@@ -46,6 +46,7 @@ type Service struct {
 	users                       map[string]User
 	adminUsers                  map[string]AdminUser
 	adminAuditEntries           map[string][]AdminAccountAuditEntry
+	adminAuditLogs              []AdminAuditLog
 	usersByUsername             map[string]string
 	usersByVerifiedEmail        map[string]string
 	oauthUserIDs                map[string]string
@@ -92,6 +93,7 @@ func NewServiceWithRegistrationEmailSenderAndIdempotency(repo Repository, now fu
 		users:                       make(map[string]User),
 		adminUsers:                  make(map[string]AdminUser),
 		adminAuditEntries:           make(map[string][]AdminAccountAuditEntry),
+		adminAuditLogs:              []AdminAuditLog{},
 		usersByUsername:             make(map[string]string),
 		usersByVerifiedEmail:        make(map[string]string),
 		oauthUserIDs:                make(map[string]string),
@@ -708,6 +710,35 @@ func (s *Service) AdminUsers(ctx context.Context, user User, query AdminUserDire
 	}, nil
 }
 
+func (s *Service) AdminAuditLogs(ctx context.Context, user User, filter AdminAuditLogFilter, page domain.PageRequest) (domain.Page[AdminAuditLog], *domain.AppError) {
+	if !user.IsAdmin {
+		return domain.Page[AdminAuditLog]{}, adminPermissionRequired()
+	}
+	filter, appErr := normalizeAdminAuditLogFilter(filter)
+	if appErr != nil {
+		return domain.Page[AdminAuditLog]{}, appErr
+	}
+	if s.repo != nil {
+		return s.repo.ListAdminAuditLogs(ctx, filter, page)
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	items := make([]AdminAuditLog, 0, len(s.adminAuditLogs))
+	for _, item := range s.adminAuditLogs {
+		if adminAuditLogMatches(item, filter) {
+			items = append(items, item)
+		}
+	}
+	sort.SliceStable(items, func(i, j int) bool {
+		if !items[i].CreatedAt.Equal(items[j].CreatedAt) {
+			return items[i].CreatedAt.After(items[j].CreatedAt)
+		}
+		return items[i].ID > items[j].ID
+	})
+	return domain.PageItems(items, page)
+}
+
 func (s *Service) AdminUser(ctx context.Context, user User, userID string) (AdminUserDetail, *domain.AppError) {
 	if !user.IsAdmin {
 		return AdminUserDetail{}, adminPermissionRequired()
@@ -950,6 +981,56 @@ func normalizeAdminUserDirectoryQuery(query AdminUserDirectoryQuery) (AdminUserD
 		return AdminUserDirectoryQuery{}, adminUserValidationError("sort", "排序方式不受支持。")
 	}
 	return query, nil
+}
+
+func normalizeAdminAuditLogFilter(filter AdminAuditLogFilter) (AdminAuditLogFilter, *domain.AppError) {
+	filter.Search = strings.TrimSpace(filter.Search)
+	filter.Action = strings.TrimSpace(filter.Action)
+	filter.TargetType = strings.TrimSpace(filter.TargetType)
+	filter.ActorUserID = strings.TrimSpace(filter.ActorUserID)
+	filter.TargetID = strings.TrimSpace(filter.TargetID)
+	if utf8.RuneCountInString(filter.Search) > 100 {
+		return AdminAuditLogFilter{}, adminUserValidationError("search", "搜索内容最多 100 字。")
+	}
+	if utf8.RuneCountInString(filter.Action) > 100 {
+		return AdminAuditLogFilter{}, adminUserValidationError("action", "动作筛选最多 100 字。")
+	}
+	if utf8.RuneCountInString(filter.TargetType) > 100 {
+		return AdminAuditLogFilter{}, adminUserValidationError("targetType", "目标类型筛选最多 100 字。")
+	}
+	for field, value := range map[string]string{"actorUserId": filter.ActorUserID, "targetId": filter.TargetID} {
+		if value == "" {
+			continue
+		}
+		if _, err := uuid.Parse(value); err != nil {
+			return AdminAuditLogFilter{}, adminUserValidationError(field, field+" 格式不正确。")
+		}
+	}
+	return filter, nil
+}
+
+func adminAuditLogMatches(item AdminAuditLog, filter AdminAuditLogFilter) bool {
+	if filter.Action != "" && item.Action != filter.Action {
+		return false
+	}
+	if filter.TargetType != "" && item.TargetType != filter.TargetType {
+		return false
+	}
+	if filter.ActorUserID != "" && item.ActorUserID != filter.ActorUserID {
+		return false
+	}
+	if filter.TargetID != "" && item.TargetID != filter.TargetID {
+		return false
+	}
+	search := strings.ToLower(filter.Search)
+	if search == "" {
+		return true
+	}
+	haystack := strings.ToLower(strings.Join([]string{
+		item.ID, item.ActorUsername, item.Action, item.TargetType, item.TargetID,
+		item.Reason, item.RequestID,
+	}, " "))
+	return strings.Contains(haystack, search)
 }
 
 func validateAdminUserStatusInput(input AdminUserStatusInput) *domain.AppError {
@@ -1364,6 +1445,29 @@ func (s *Service) appendAdminAuditEntryLocked(userID string, entry AdminAccountA
 		entries = entries[:20]
 	}
 	s.adminAuditEntries[userID] = entries
+	beforeStatus := stringPointerOrNil(entry.BeforeStatus)
+	afterStatus := stringPointerOrNil(entry.AfterStatus)
+	s.adminAuditLogs = append([]AdminAuditLog{{
+		ID:            entry.ID,
+		ActorUserID:   entry.AdminUserID,
+		ActorUsername: entry.AdminUsername,
+		Action:        entry.Action,
+		TargetType:    "user",
+		TargetID:      userID,
+		Reason:        entry.Reason,
+		RequestID:     entry.RequestID,
+		BeforeStatus:  beforeStatus,
+		AfterStatus:   afterStatus,
+		CreatedAt:     entry.CreatedAt,
+	}}, s.adminAuditLogs...)
+}
+
+func stringPointerOrNil(value string) *string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return nil
+	}
+	return &value
 }
 
 func AllowedAdminUserStatusTransition(current, next string) bool {

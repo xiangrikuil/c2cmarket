@@ -1,11 +1,112 @@
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
 import { afterEach, test, vi } from 'vitest'
+
+const myCarpoolsSource = readFileSync(new URL('../../pages/MyCarpoolsPage.vue', import.meta.url), 'utf8')
+const publishSource = readFileSync(new URL('../../pages/CarpoolPublishPage.vue', import.meta.url), 'utf8')
 
 function jsonResponse(body: unknown) {
   return new Response(JSON.stringify(body), {
     status: 200,
     headers: { 'content-type': 'application/json' },
   })
+}
+
+function backendSession() {
+  return {
+    csrfToken: 'csrf-carpool',
+    expiresAt: '2999-01-01T00:00:00Z',
+    user: {
+      id: 'owner-id',
+      analyticsUserId: 'a1111111-1111-4111-8111-111111111111',
+      username: 'owner',
+      displayName: 'Owner',
+      isAdmin: false,
+      permissions: [],
+      linuxDoBinding: { bound: true },
+    },
+  }
+}
+
+function productPlan() {
+  return {
+    id: 'plan-id',
+    categoryCode: 'gpt',
+    providerCode: 'openai',
+    slug: 'test-plan',
+    displayName: '测试套餐',
+    description: '',
+    publishPolicy: 'allowed',
+    accessMode: 'provider_member_invitation',
+    providerPolicyStatus: 'unknown',
+    riskLevel: 'normal',
+    riskAckRequired: true,
+    riskNoticeCode: 'shared-account-risk',
+    policyVersion: 7,
+    policyNote: '',
+    quotaLabel: '额度',
+    quotaUnit: 'USD',
+    quotaPeriod: 'monthly',
+    allowCustomVariant: false,
+    sortOrder: 1,
+    createdAt: '2026-08-01T00:00:00Z',
+    updatedAt: '2026-08-01T00:00:00Z',
+  }
+}
+
+function ownerListing(overrides: Record<string, unknown> = {}) {
+  return {
+    id: 'listing-id',
+    ownerUserId: 'owner-id',
+    ownerContactMethodId: 'contact-id',
+    productPlanId: 'plan-id',
+    cycleTerm: {
+      id: 'cycle-id',
+      billingPeriod: 'monthly',
+      cycleStartDay: 1,
+      noticeDays: 2,
+      exitPolicy: '按剩余天数补偿',
+      usageRules: '不得转售',
+      version: 1,
+      createdAt: '2026-08-01T00:00:00Z',
+      updatedAt: '2026-08-01T00:00:00Z',
+    },
+    title: '测试套餐',
+    summary: '测试摘要',
+    accessArrangement: '通过官方邀请加入',
+    distributionMethod: 'sub2api',
+    distributionMethodNote: '系统分发',
+    providesAdminAccount: false,
+    regionCode: 'other',
+    regionName: '新加坡二区',
+    sourceAuthorVerification: { status: 'verified' },
+    priceMonthlyCny: '88.50',
+    serviceMultiplier: '1.2500',
+    dailyQuotaAmount: '12.500000',
+    weeklyQuotaAmount: '75.000000',
+    followsOfficialQuotaReset: true,
+    vpsRegion: 'Singapore',
+    supportsMainlandChinaDirectConnection: false,
+    openingChannelCode: 'other',
+    customOpeningChannel: '邀请链接',
+    paymentMethodCode: 'other',
+    customPaymentMethod: '银行转账',
+    quotaLabel: '额度',
+    quotaUnit: 'USD',
+    quotaPeriod: 'monthly',
+    buyerSeatCapacity: 5,
+    activeBuyerMembers: 2,
+    reservedSeats: 1,
+    availableSeats: 2,
+    status: 'changes_requested',
+    policyVersion: 7,
+    riskNoticeCode: 'shared-account-risk',
+    riskAckRequired: true,
+    version: 11,
+    createdAt: '2026-08-01T00:00:00Z',
+    updatedAt: '2026-08-02T00:00:00Z',
+    ...overrides,
+  }
 }
 
 afterEach(() => {
@@ -271,4 +372,172 @@ test('contact reveal analytics fires only after authoritative disclosure succeed
     /contact request failed/,
   )
   assert.equal(track.mock.calls.length, 1)
+})
+
+test('owner carpool page serializes view and cursor without forcing a default view', async () => {
+  const fetchMock = vi.fn()
+    .mockResolvedValueOnce(jsonResponse(backendSession()))
+    .mockResolvedValueOnce(jsonResponse({ items: [], nextCursor: 'next-owner-page' }))
+    .mockResolvedValueOnce(jsonResponse({ items: [] }))
+  vi.stubGlobal('fetch', fetchMock)
+
+  const client = await import('../backendClient')
+  client.setBackendRuntimeConfig({ apiMode: 'real' })
+  const { backendOwnerCarpools, backendOwnerCarpoolsPage } = await import('../carpoolBackend')
+
+  const page = await backendOwnerCarpoolsPage('needs_edit', { limit: 20, cursor: 'opaque+/=' })
+  assert.equal(page.nextCursor, 'next-owner-page')
+  const [pagePath, pageQuery = ''] = String(fetchMock.mock.calls[1]?.[0]).split('?')
+  assert.equal(pagePath, '/api/v1/me/carpools')
+  assert.deepEqual(Object.fromEntries(new URLSearchParams(pageQuery)), {
+    view: 'needs_edit',
+    limit: '20',
+    cursor: 'opaque+/=',
+  })
+
+  await backendOwnerCarpools()
+  assert.equal(fetchMock.mock.calls[2]?.[0], '/api/v1/me/carpools?limit=100')
+})
+
+test('owner carpool edit detail maps every persisted publish field', async () => {
+  const fetchMock = vi.fn()
+    .mockResolvedValueOnce(jsonResponse(backendSession()))
+    .mockResolvedValueOnce(jsonResponse(ownerListing()))
+    .mockResolvedValueOnce(jsonResponse(productPlan()))
+  vi.stubGlobal('fetch', fetchMock)
+
+  const client = await import('../backendClient')
+  client.setBackendRuntimeConfig({ apiMode: 'real' })
+  const { backendOwnerCarpoolForEdit } = await import('../carpoolBackend')
+
+  const detail = await backendOwnerCarpoolForEdit('listing/id')
+  assert.equal(fetchMock.mock.calls[1]?.[0], '/api/v1/me/carpools/listing%2Fid')
+  assert.deepEqual(detail, {
+    id: 'listing-id',
+    version: 11,
+    backendStatus: 'changes_requested',
+    ownerContactMethodId: 'contact-id',
+    payload: {
+      productId: 'plan-id',
+      customProductName: null,
+      regionCode: 'other',
+      customRegionName: '新加坡二区',
+      monthlyPriceCny: 88.5,
+      serviceMultiplier: 1.25,
+      dailyQuotaAmount: 12.5,
+      weeklyQuotaAmount: 75,
+      followsOfficialQuotaReset: true,
+      vpsRegion: 'Singapore',
+      supportsMainlandChinaDirectConnection: false,
+      totalSeats: 5,
+      occupiedSeats: 2,
+      openingChannelCode: 'other',
+      customOpeningChannel: '邀请链接',
+      paymentMethodCode: 'other',
+      customPaymentMethod: '银行转账',
+      distributionMethod: 'sub2api',
+      distributionMethodNote: '系统分发',
+      providesAdminAccount: false,
+      accessArrangementMode: 'provider_member_invitation',
+      accessArrangementNote: '通过官方邀请加入',
+      riskAcknowledged: true,
+      policyVersion: 7,
+      riskNoticeCode: 'shared-account-risk',
+      warranty: {
+        mode: 'remaining_days_compensation',
+        fixedWarrantyDays: null,
+        compensationMethod: '按剩余天数补偿',
+        exclusions: '',
+      },
+      rulesNote: '不得转售',
+      status: 'draft',
+    },
+  })
+})
+
+test('owner carpool update uses If-Match and submits with the patched version', async () => {
+  const fetchMock = vi.fn()
+    .mockResolvedValueOnce(jsonResponse(backendSession()))
+    .mockResolvedValueOnce(jsonResponse(productPlan()))
+    .mockResolvedValueOnce(jsonResponse(ownerListing({ version: 12, status: 'draft' })))
+    .mockResolvedValueOnce(jsonResponse(ownerListing({ version: 13, status: 'pending_review' })))
+  vi.stubGlobal('fetch', fetchMock)
+
+  const client = await import('../backendClient')
+  client.setBackendRuntimeConfig({ apiMode: 'real' })
+  const { backendUpdateOwnerCarpool } = await import('../carpoolBackend')
+  const payload = {
+    productId: 'plan-id',
+    customProductName: null,
+    regionCode: 'other',
+    customRegionName: '新加坡二区',
+    monthlyPriceCny: 88.5,
+    serviceMultiplier: 1.25,
+    dailyQuotaAmount: 12.5,
+    weeklyQuotaAmount: 75,
+    followsOfficialQuotaReset: true,
+    vpsRegion: 'Singapore',
+    supportsMainlandChinaDirectConnection: false,
+    totalSeats: 5,
+    occupiedSeats: 2,
+    openingChannelCode: 'other',
+    customOpeningChannel: '邀请链接',
+    paymentMethodCode: 'other',
+    customPaymentMethod: '银行转账',
+    distributionMethod: 'sub2api' as const,
+    distributionMethodNote: '系统分发',
+    providesAdminAccount: false,
+    accessArrangementMode: 'provider_member_invitation' as const,
+    accessArrangementNote: '通过官方邀请加入',
+    riskAcknowledged: true,
+    policyVersion: 7,
+    riskNoticeCode: 'shared-account-risk',
+    warranty: {
+      mode: 'remaining_days_compensation',
+      fixedWarrantyDays: null,
+      compensationMethod: '按剩余天数补偿',
+      exclusions: '',
+    },
+    rulesNote: '不得转售',
+    status: 'reviewing' as const,
+  }
+
+  const updated = await backendUpdateOwnerCarpool('listing/id', payload, 11, 'contact-id', true)
+  assert.equal(updated.backendVersion, 13)
+
+  const [patchPath, patchInit] = fetchMock.mock.calls[2] ?? []
+  assert.equal(patchPath, '/api/v1/carpools/listing%2Fid')
+  assert.equal(patchInit?.method, 'PATCH')
+  assert.equal(new Headers(patchInit?.headers).get('If-Match'), '"11"')
+  assert.equal(new Headers(patchInit?.headers).get('X-CSRF-Token'), 'csrf-carpool')
+  const patchBody = JSON.parse(String(patchInit?.body))
+  assert.equal(patchBody.serviceMultiplier, '1.25')
+  assert.equal(patchBody.dailyQuotaAmount, '12.5')
+  assert.equal(patchBody.ownerContactMethodId, 'contact-id')
+  assert.deepEqual(patchBody.riskAcknowledgement, {
+    riskNoticeCode: 'shared-account-risk',
+    policyVersion: 7,
+  })
+
+  const [submitPath, submitInit] = fetchMock.mock.calls[3] ?? []
+  assert.equal(submitPath, '/api/v1/carpools/listing%2Fid/submit-review')
+  assert.equal(submitInit?.method, 'POST')
+  assert.equal(new Headers(submitInit?.headers).get('If-Match'), '"12"')
+  assert.match(new Headers(submitInit?.headers).get('Idempotency-Key') ?? '', /^carpool-submit-review-/)
+})
+
+test('owner carpool pages bind real tabs, edit routing, and version conflict recovery', () => {
+  assert.match(myCarpoolsSource, /<StatusTabs v-model="activeTab"/)
+  assert.match(myCarpoolsSource, /`\/my\/carpools\/\$\{item\.id\}\/edit`/)
+  assert.match(myCarpoolsSource, /draft: '草稿'/)
+  assert.match(myCarpoolsSource, /changes_requested: '待修改'/)
+  assert.match(myCarpoolsSource, /paused: '已暂停'/)
+  assert.match(myCarpoolsSource, /ownerStatusLabel\(item\)/)
+  assert.doesNotMatch(myCarpoolsSource, /toast\.(?:info|success)\([^)]*编辑/)
+
+  assert.match(publishSource, /route\.name === 'my-carpool-edit'/)
+  assert.match(publishSource, /error\.status === 412/)
+  assert.match(publishSource, /error\.code === 'VERSION_CONFLICT'/)
+  assert.match(publishSource, /editQuery\.refetch\(\)/)
+  assert.match(publishSource, /updateMyCarpool\(/)
 })

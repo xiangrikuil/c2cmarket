@@ -854,6 +854,35 @@ export type PublicCompletionRecord = {
   status: '平台确认完成'
 }
 
+export type PublicProfileCarpool = {
+  id: string
+  title: string
+  summary: string
+  regionName: string
+  priceMonthlyCny: string
+  availableSeats: number
+  updatedAt: string
+}
+
+export type PublicProfileAPIService = {
+  id: string
+  title: string
+  shortDescription: string
+  billingMode: ApiBillingMode
+  availableUsdAllowance: string
+  usageVisibility: ApiUsageVisibility
+  refundCommitment: boolean
+  updatedAt: string
+}
+
+export type PublicProfileCompletion = {
+  id: string
+  kind: 'carpool' | 'api_order'
+  title: string
+  role: 'buyer' | 'seller'
+  completedAt: string
+}
+
 export type PublicReviewRecord = {
   id: string
   username: string

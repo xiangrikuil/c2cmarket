@@ -138,6 +138,29 @@ func TestPostgresAdminUserDirectoryAndGovernance(t *testing.T) {
 		t.Fatalf("missing transactional side effects sessions=%d events=%d audits=%d notifications=%d idempotency=%d", revokedSessions, events, audits, notifications, completedKeys)
 	}
 
+	auditPage, appErr := store.ListAdminAuditLogs(ctx, auth.AdminAuditLogFilter{
+		Action:      "user.account_status_changed",
+		TargetType:  "user",
+		ActorUserID: adminUser.ID,
+		TargetID:    targetUser.ID,
+		Search:      "PostgreSQL 集成核查",
+	}, domain.PageRequest{Limit: 1})
+	if appErr != nil || len(auditPage.Items) != 1 || auditPage.NextCursor != nil {
+		t.Fatalf("unexpected filtered audit page: %+v err=%v", auditPage, appErr)
+	}
+	auditItem := auditPage.Items[0]
+	if auditItem.ActorUsername != adminUser.Username || auditItem.BeforeStatus == nil || *auditItem.BeforeStatus != auth.AccountStatusActive || auditItem.AfterStatus == nil || *auditItem.AfterStatus != auth.AccountStatusSuspended {
+		t.Fatalf("unexpected safe audit projection: %+v", auditItem)
+	}
+	firstAuditPage, appErr := store.ListAdminAuditLogs(ctx, auth.AdminAuditLogFilter{TargetType: "user", TargetID: targetUser.ID}, domain.PageRequest{Limit: 1})
+	if appErr != nil || len(firstAuditPage.Items) != 1 || firstAuditPage.NextCursor == nil {
+		t.Fatalf("unexpected first audit cursor page: %+v err=%v", firstAuditPage, appErr)
+	}
+	secondAuditPage, appErr := store.ListAdminAuditLogs(ctx, auth.AdminAuditLogFilter{TargetType: "user", TargetID: targetUser.ID}, domain.PageRequest{Limit: 1, Cursor: *firstAuditPage.NextCursor})
+	if appErr != nil || len(secondAuditPage.Items) != 1 || secondAuditPage.NextCursor != nil || secondAuditPage.Items[0].ID == firstAuditPage.Items[0].ID {
+		t.Fatalf("unexpected second audit cursor page: %+v err=%v", secondAuditPage, appErr)
+	}
+
 	secondAdmin, appErr := store.EnsureUser(ctx, "second-admin-"+suffix, true, now.Add(time.Hour))
 	if appErr != nil {
 		t.Fatalf("ensure second admin: %v", appErr)

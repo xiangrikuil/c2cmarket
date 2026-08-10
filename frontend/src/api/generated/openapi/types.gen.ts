@@ -536,11 +536,40 @@ export type PublicUserProfileBundle = {
         ReputationSnapshot,
         ReputationSnapshot
     ] | null;
-    carpools: Array<unknown>;
-    services: Array<unknown>;
-    completions: Array<unknown>;
-    reviews: Array<unknown>;
+    carpools: Array<PublicProfileCarpool>;
+    services: Array<PublicProfileApiService>;
+    completions: Array<PublicProfileCompletion>;
+    reviews: Array<PublicReview>;
     disputes: Array<PublicDispute>;
+};
+
+export type PublicProfileCarpool = {
+    id: string;
+    title: string;
+    summary: string;
+    regionName: string;
+    priceMonthlyCny: DecimalString;
+    availableSeats: number;
+    updatedAt: string;
+};
+
+export type PublicProfileApiService = {
+    id: string;
+    title: string;
+    shortDescription: string;
+    billingMode: 'metered_usd_quota' | 'manual_usage_check' | 'fixed_package';
+    availableUsdAllowance: string;
+    usageVisibility: string;
+    refundCommitment: boolean;
+    updatedAt: string;
+};
+
+export type PublicProfileCompletion = {
+    id: string;
+    kind: 'carpool' | 'api_order';
+    title: string;
+    role: 'buyer' | 'seller';
+    completedAt: string;
 };
 
 /**
@@ -599,14 +628,6 @@ export type MerchantProfile = {
     createdAt: string;
     updatedAt: string;
     version: number;
-};
-
-export type PublicMerchantProfileBundle = {
-    profile: PublicMerchantProfile;
-    services: Array<unknown>;
-    completions: Array<unknown>;
-    reviews: Array<unknown>;
-    disputes: Array<unknown>;
 };
 
 /**
@@ -3709,6 +3730,25 @@ export type AdminAccountAuditEntry = {
     createdAt: string;
 };
 
+export type AdminAuditLog = {
+    id: string;
+    actorUserId: string;
+    actorUsername: string;
+    action: string;
+    targetType: string;
+    targetId: string;
+    reason: string;
+    requestId: string;
+    beforeStatus: string | null;
+    afterStatus: string | null;
+    createdAt: string;
+};
+
+export type AdminAuditLogList = {
+    items: Array<AdminAuditLog>;
+    nextCursor: string | null;
+};
+
 export type AdminUserGovernanceAction = {
     action: 'suspend' | 'ban' | 'archive' | 'restore' | 'grant_admin' | 'revoke_admin';
     kind: 'status' | 'permission';
@@ -5455,7 +5495,7 @@ export type GetPublicMerchantProfileResponses = {
     /**
      * Public merchant profile without owner user id or contact values.
      */
-    200: PublicMerchantProfileBundle;
+    200: PublicMerchantProfile;
 };
 
 export type GetPublicMerchantProfileResponse = GetPublicMerchantProfileResponses[keyof GetPublicMerchantProfileResponses];
@@ -7411,6 +7451,10 @@ export type ListMyCarpoolsData = {
     path?: never;
     query?: {
         /**
+         * Owner listing view. Filtering is applied before cursor pagination.
+         */
+        view?: 'recruiting' | 'serving' | 'history' | 'needs_edit';
+        /**
          * Page size. Defaults to 20 and must be between 1 and 100.
          */
         limit?: number;
@@ -7422,6 +7466,19 @@ export type ListMyCarpoolsData = {
     url: '/api/v1/me/carpools';
 };
 
+export type ListMyCarpoolsErrors = {
+    /**
+     * Problem Details error.
+     */
+    401: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    422: ProblemDetails;
+};
+
+export type ListMyCarpoolsError = ListMyCarpoolsErrors[keyof ListMyCarpoolsErrors];
+
 export type ListMyCarpoolsResponses = {
     /**
      * Current user's carpool listings.
@@ -7430,6 +7487,37 @@ export type ListMyCarpoolsResponses = {
 };
 
 export type ListMyCarpoolsResponse = ListMyCarpoolsResponses[keyof ListMyCarpoolsResponses];
+
+export type GetMyCarpoolData = {
+    body?: never;
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/api/v1/me/carpools/{id}';
+};
+
+export type GetMyCarpoolErrors = {
+    /**
+     * Problem Details error.
+     */
+    401: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    404: ProblemDetails;
+};
+
+export type GetMyCarpoolError = GetMyCarpoolErrors[keyof GetMyCarpoolErrors];
+
+export type GetMyCarpoolResponses = {
+    /**
+     * Current owner's carpool listing, including non-public editable states.
+     */
+    200: CarpoolListing;
+};
+
+export type GetMyCarpoolResponse = GetMyCarpoolResponses[keyof GetMyCarpoolResponses];
 
 export type ListMyCarpoolApplicationsData = {
     body?: never;
@@ -11569,6 +11657,49 @@ export type ListAdminUsersResponses = {
 };
 
 export type ListAdminUsersResponse = ListAdminUsersResponses[keyof ListAdminUsersResponses];
+
+export type ListAdminAuditLogsData = {
+    body?: never;
+    path?: never;
+    query?: {
+        /**
+         * Page size. Defaults to 20 and must be between 1 and 100.
+         */
+        limit?: number;
+        /**
+         * Opaque pagination cursor returned as nextCursor. Clients must pass it back unchanged and must not inspect its internal encoding.
+         */
+        cursor?: string;
+        search?: string;
+        action?: string;
+        targetType?: string;
+        actorUserId?: string;
+        targetId?: string;
+    };
+    url: '/api/v1/admin/audit-logs';
+};
+
+export type ListAdminAuditLogsErrors = {
+    /**
+     * Problem Details error.
+     */
+    403: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    422: ProblemDetails;
+};
+
+export type ListAdminAuditLogsError = ListAdminAuditLogsErrors[keyof ListAdminAuditLogsErrors];
+
+export type ListAdminAuditLogsResponses = {
+    /**
+     * Stable cursor page of persisted global administrator audit entries.
+     */
+    200: AdminAuditLogList;
+};
+
+export type ListAdminAuditLogsResponse = ListAdminAuditLogsResponses[keyof ListAdminAuditLogsResponses];
 
 export type GetAdminGrowthOverviewData = {
     body?: never;

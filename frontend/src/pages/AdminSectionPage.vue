@@ -81,7 +81,7 @@ type ModerationActionItem = {
   danger?: boolean
 }
 
-const serverPagedSections: AdminSection[] = ['carpools', 'api-services', 'official-prices', 'price-leads', 'trade-intents']
+const serverPagedSections: AdminSection[] = ['carpools', 'api-services', 'official-prices', 'price-leads', 'trade-intents', 'logs']
 const supportsServerPagination = computed(() => serverPagedSections.includes(section.value))
 const pageFilters = computed(() => ({
   q: keyword.value.trim() || undefined,
@@ -222,7 +222,7 @@ const errorMessage = computed(() => error.value instanceof Error ? error.value.m
 const statusTabs = computed(() => {
   if (section.value === 'carpools') return carpoolView.value === 'exceptions' ? ['全部', '待处理', '需复核'] : ['全部']
   if (section.value === 'api-services') return apiServiceView.value === 'exceptions' ? ['全部', '待处理', '需复核'] : ['全部']
-  if (['official-prices', 'price-leads', 'trade-intents'].includes(section.value)) return ['全部']
+  if (['official-prices', 'price-leads', 'trade-intents', 'logs'].includes(section.value)) return ['全部']
   return ['全部', '待处理', '已通过', '需复核', '已关闭']
 })
 const selectedRow = computed(() => localRows.value.find(row => row.id === selectedRowId.value) ?? null)
@@ -570,9 +570,9 @@ const showContentActions = computed(() => !['logs', 'trade-intents'].includes(se
         <TabsTrigger value="exceptions">异常服务</TabsTrigger>
       </TabsList>
     </Tabs>
-    <div class="mb-4 grid gap-2 md:grid-cols-[minmax(0,1fr)_180px]">
+    <div class="mb-4 grid gap-2" :class="section === 'logs' ? '' : 'md:grid-cols-[minmax(0,1fr)_180px]'">
       <Input v-model="keyword" placeholder="搜索对象、管理员、动作、状态或请求追踪" />
-      <Select v-model="riskFilter">
+      <Select v-if="section !== 'logs'" v-model="riskFilter">
         <SelectTrigger class="w-full" aria-label="风险筛选"><SelectValue /></SelectTrigger>
         <SelectContent>
           <SelectItem value="all">全部风险</SelectItem>

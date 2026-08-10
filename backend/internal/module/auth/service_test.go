@@ -20,6 +20,7 @@ type fakeAuthRepository struct {
 	accountAppealSession AccountAppealSession
 	adminUsers           []AdminUser
 	adminDetail          AdminUserDetail
+	adminAuditLogs       domain.Page[AdminAuditLog]
 
 	ensureUserCalls                  int
 	createEmailRegistrationCodeCalls int
@@ -71,6 +72,10 @@ func (f *fakeAuthRepository) ListAdminUsers(_ context.Context, query AdminUserDi
 			TotalPages: 1,
 		},
 	}, nil
+}
+
+func (f *fakeAuthRepository) ListAdminAuditLogs(context.Context, AdminAuditLogFilter, domain.PageRequest) (domain.Page[AdminAuditLog], *domain.AppError) {
+	return f.adminAuditLogs, nil
 }
 
 func (f *fakeAuthRepository) AdminUserDetail(context.Context, string) (AdminUserDetail, *domain.AppError) {
@@ -308,6 +313,40 @@ func TestAdminUserDirectoryRejectsInvalidQueryAndNonAdmin(t *testing.T) {
 	}
 	if _, appErr := service.AdminUsers(context.Background(), admin, AdminUserDirectoryQuery{Limit: 10}); appErr == nil || appErr.Code != domain.CodeValidationFailed {
 		t.Fatalf("expected limit validation error, got %v", appErr)
+	}
+}
+
+func TestAdminAuditLogsAreFilteredBoundedAndAdminOnly(t *testing.T) {
+	now := time.Date(2026, 8, 1, 8, 0, 0, 0, time.UTC)
+	service := NewService(nil, func() time.Time { return now })
+	admin, _, _ := service.CreateDevSession(context.Background(), "audit-admin", true)
+	member, _, _ := service.CreateDevSession(context.Background(), "audit-member", false)
+	targetOne := "11111111-1111-4111-8111-111111111111"
+	targetTwo := "22222222-2222-4222-8222-222222222222"
+	before := AccountStatusActive
+	after := AccountStatusSuspended
+	service.adminAuditLogs = []AdminAuditLog{
+		{ID: "33333333-3333-4333-8333-333333333333", ActorUserID: admin.ID, ActorUsername: admin.Username, Action: "user.account_status_changed", TargetType: "user", TargetID: targetOne, Reason: "异常登录核查", RequestID: "request-new", BeforeStatus: &before, AfterStatus: &after, CreatedAt: now},
+		{ID: "22222222-2222-4222-8222-222222222222", ActorUserID: admin.ID, ActorUsername: admin.Username, Action: "official_price_record.updated", TargetType: "official_price_record", TargetID: targetTwo, Reason: "价格复核", RequestID: "request-old", CreatedAt: now.Add(-time.Minute)},
+	}
+
+	first, appErr := service.AdminAuditLogs(context.Background(), admin, AdminAuditLogFilter{ActorUserID: admin.ID}, domain.PageRequest{Limit: 1})
+	if appErr != nil || len(first.Items) != 1 || first.Items[0].TargetID != targetOne || first.NextCursor == nil {
+		t.Fatalf("unexpected first audit page: %+v err=%v", first, appErr)
+	}
+	second, appErr := service.AdminAuditLogs(context.Background(), admin, AdminAuditLogFilter{ActorUserID: admin.ID}, domain.PageRequest{Limit: 1, Cursor: *first.NextCursor})
+	if appErr != nil || len(second.Items) != 1 || second.Items[0].TargetID != targetTwo || second.NextCursor != nil {
+		t.Fatalf("unexpected second audit page: %+v err=%v", second, appErr)
+	}
+	filtered, appErr := service.AdminAuditLogs(context.Background(), admin, AdminAuditLogFilter{Action: "user.account_status_changed", TargetType: "user", TargetID: targetOne, Search: "异常登录"}, domain.PageRequest{Limit: 20})
+	if appErr != nil || len(filtered.Items) != 1 || filtered.Items[0].RequestID != "request-new" {
+		t.Fatalf("unexpected filtered audit page: %+v err=%v", filtered, appErr)
+	}
+	if _, appErr := service.AdminAuditLogs(context.Background(), member, AdminAuditLogFilter{}, domain.PageRequest{Limit: 20}); appErr == nil || appErr.Code != domain.CodePermissionDenied {
+		t.Fatalf("expected audit permission denial, got %v", appErr)
+	}
+	if _, appErr := service.AdminAuditLogs(context.Background(), admin, AdminAuditLogFilter{TargetID: "not-a-uuid"}, domain.PageRequest{Limit: 20}); appErr == nil || appErr.Code != domain.CodeValidationFailed {
+		t.Fatalf("expected audit target validation error, got %v", appErr)
 	}
 }
 

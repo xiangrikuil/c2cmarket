@@ -33,6 +33,12 @@ const (
 	MembershipStatusLeft      = "left"
 	MembershipStatusRemoved   = "removed"
 
+	OwnerListingViewAll        = ""
+	OwnerListingViewRecruiting = "recruiting"
+	OwnerListingViewServing    = "serving"
+	OwnerListingViewHistory    = "history"
+	OwnerListingViewNeedsEdit  = "needs_edit"
+
 	ListingDistributionMethodSub2API = "sub2api"
 	ListingDistributionMethodOther   = "other"
 

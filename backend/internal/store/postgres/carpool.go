@@ -126,7 +126,7 @@ func insertCarpoolListingInTx(ctx context.Context, tx pgx.Tx, listing carpool.Li
 }
 
 func (s *Store) ListPublicCarpoolListings(ctx context.Context, filter carpool.ListingFilter, page domain.PageRequest) (domain.Page[carpool.Listing], *domain.AppError) {
-	return s.listCarpoolListingsPage(ctx, filter, page, true)
+	return s.listCarpoolListingsPage(ctx, filter, page, true, "")
 }
 
 func (s *Store) GetPublicCarpoolListing(ctx context.Context, listingID string) (carpool.Listing, *domain.AppError) {
@@ -160,28 +160,29 @@ func publicCarpoolListingPredicate(alias string) string {
 	  )`
 }
 
-func (s *Store) ListCarpoolListingsByOwner(ctx context.Context, ownerUserID string) ([]carpool.Listing, *domain.AppError) {
+func (s *Store) ListCarpoolListingsByOwner(ctx context.Context, ownerUserID, view string, page domain.PageRequest) (domain.Page[carpool.Listing], *domain.AppError) {
+	return s.listCarpoolListingsPage(ctx, carpool.ListingFilter{View: view}, page, false, ownerUserID)
+}
+
+func (s *Store) GetCarpoolListingByOwner(ctx context.Context, ownerUserID, listingID string) (carpool.Listing, *domain.AppError) {
 	if s == nil || s.pool == nil {
-		return nil, internalStoreError()
+		return carpool.Listing{}, internalStoreError()
 	}
-	rows, err := s.pool.Query(ctx, `
-		SELECT `+carpoolListingColumns+`
-		FROM `+carpoolListingViewSource+`
-		WHERE owner_user_id = $1
-		ORDER BY updated_at DESC
-	`, ownerUserID)
+	listing, err := s.getCarpoolListing(ctx, s.pool, listingID, false, false)
+	if errors.Is(err, pgx.ErrNoRows) || (err == nil && listing.OwnerUserID != ownerUserID) {
+		return carpool.Listing{}, domain.NewError(http.StatusNotFound, domain.CodeObjectNotFound, "Carpool listing not found", "车源不存在。")
+	}
 	if err != nil {
-		return nil, internalStoreError()
+		return carpool.Listing{}, internalStoreError()
 	}
-	defer rows.Close()
-	return scanCarpoolListings(rows)
+	return listing, nil
 }
 
 func (s *Store) ListAdminCarpoolListings(ctx context.Context, filter carpool.ListingFilter, page domain.PageRequest) (domain.Page[carpool.Listing], *domain.AppError) {
-	return s.listCarpoolListingsPage(ctx, filter, page, false)
+	return s.listCarpoolListingsPage(ctx, filter, page, false, "")
 }
 
-func (s *Store) listCarpoolListingsPage(ctx context.Context, filter carpool.ListingFilter, page domain.PageRequest, publicOnly bool) (domain.Page[carpool.Listing], *domain.AppError) {
+func (s *Store) listCarpoolListingsPage(ctx context.Context, filter carpool.ListingFilter, page domain.PageRequest, publicOnly bool, ownerUserID string) (domain.Page[carpool.Listing], *domain.AppError) {
 	if s == nil || s.pool == nil {
 		return domain.Page[carpool.Listing]{}, internalStoreError()
 	}
@@ -213,6 +214,10 @@ func (s *Store) listCarpoolListingsPage(ctx context.Context, filter carpool.List
 	if publicOnly {
 		conditions = append(conditions, "("+publicCarpoolListingPredicate("listing_view")+")")
 	}
+	if strings.TrimSpace(ownerUserID) != "" {
+		placeholder := addArgument(ownerUserID)
+		conditions = append(conditions, "owner_user_id = "+placeholder+"::uuid")
+	}
 	if filter.None {
 		conditions = append(conditions, "FALSE")
 	}
@@ -233,6 +238,14 @@ func (s *Store) listCarpoolListingsPage(ctx context.Context, filter carpool.List
 		conditions = append(conditions, "status = 'active'")
 	case carpool.ListingViewExceptions:
 		conditions = append(conditions, "status <> 'active'")
+	case carpool.OwnerListingViewRecruiting:
+		conditions = append(conditions, "status = 'active'", "active_buyer_members = 0")
+	case carpool.OwnerListingViewServing:
+		conditions = append(conditions, "status = 'active'", "active_buyer_members > 0")
+	case carpool.OwnerListingViewHistory:
+		conditions = append(conditions, "status = ANY('{rejected,removed}'::text[])")
+	case carpool.OwnerListingViewNeedsEdit:
+		conditions = append(conditions, "status = ANY('{draft,changes_requested,pending_review,paused}'::text[])")
 	}
 	if strings.TrimSpace(filter.Risk) == carpool.ListingRiskHigh {
 		conditions = append(conditions, "(risk_ack_required = true OR strpos(lower(COALESCE(review_reason, '')), '风险') > 0)")

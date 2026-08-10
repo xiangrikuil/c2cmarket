@@ -4,6 +4,7 @@ import (
 	"context"
 	"log"
 	"net/http"
+	"sort"
 	"strings"
 	"time"
 
@@ -294,6 +295,10 @@ func (s *Service) RenewSession(ctx context.Context, sessionID string) (Session, 
 
 func (s *Service) AdminUsers(ctx context.Context, user User, query authmodule.AdminUserDirectoryQuery) (authmodule.AdminUserDirectory, *domain.AppError) {
 	return s.authService.AdminUsers(ctx, user, query)
+}
+
+func (s *Service) AdminAuditLogs(ctx context.Context, user User, filter authmodule.AdminAuditLogFilter, page domain.PageRequest) (domain.Page[authmodule.AdminAuditLog], *domain.AppError) {
+	return s.authService.AdminAuditLogs(ctx, user, filter, page)
 }
 
 func (s *Service) AdminUser(ctx context.Context, user User, userID string) (authmodule.AdminUserDetail, *domain.AppError) {
@@ -1199,8 +1204,12 @@ func (s *Service) CarpoolApplicationEligibility(ctx context.Context, user User, 
 	return s.carpoolService.ApplicationEligibility(ctx, user, listingID)
 }
 
-func (s *Service) MyCarpoolListings(ctx context.Context, user User) ([]CarpoolListing, *domain.AppError) {
-	return s.carpoolService.MyListings(ctx, user)
+func (s *Service) MyCarpoolListings(ctx context.Context, user User, view string, page domain.PageRequest) (domain.Page[CarpoolListing], *domain.AppError) {
+	return s.carpoolService.MyListings(ctx, user, view, page)
+}
+
+func (s *Service) MyCarpoolListing(ctx context.Context, user User, listingID string) (CarpoolListing, *domain.AppError) {
+	return s.carpoolService.MyListing(ctx, user, listingID)
 }
 
 func (s *Service) AdminCarpoolListings(ctx context.Context, user User, filter carpool.ListingFilter, page domain.PageRequest) (domain.Page[CarpoolListing], *domain.AppError) {
@@ -1432,6 +1441,199 @@ func (s *Service) PublicUserProfile(ctx context.Context, username string) (Publi
 		publicProfile.Stats.ResolvedDisputeCountLast90Days = &resolved
 	}
 	return publicProfile, nil
+}
+
+func (s *Service) PublicUserProfileBundle(ctx context.Context, username string) (profile.PublicUserProfileBundle, *domain.AppError) {
+	publicProfile, appErr := s.PublicUserProfile(ctx, username)
+	if appErr != nil {
+		return profile.PublicUserProfileBundle{}, appErr
+	}
+	user := User{ID: publicProfile.ID}
+
+	listingPage, appErr := s.carpoolService.MyListings(ctx, user, carpool.OwnerListingViewAll, domain.PageRequest{Limit: 100})
+	if appErr != nil {
+		return profile.PublicUserProfileBundle{}, appErr
+	}
+	services, appErr := s.apiMarket.OwnerServices(ctx, user, apimarket.OwnerServiceFilter{SalesView: apimarket.OwnerSalesViewAll}, domain.PageRequest{Limit: 100})
+	if appErr != nil {
+		return profile.PublicUserProfileBundle{}, appErr
+	}
+	buyerMemberships, appErr := s.carpoolService.MyMemberships(ctx, user)
+	if appErr != nil {
+		return profile.PublicUserProfileBundle{}, appErr
+	}
+	ownerMemberships, appErr := s.carpoolService.OwnerMemberships(ctx, user)
+	if appErr != nil {
+		return profile.PublicUserProfileBundle{}, appErr
+	}
+	buyerOrders, appErr := s.apiOrder.BuyerOrders(ctx, user)
+	if appErr != nil {
+		return profile.PublicUserProfileBundle{}, appErr
+	}
+	sellerOrders, appErr := s.apiOrder.SellerOrders(ctx, user)
+	if appErr != nil {
+		return profile.PublicUserProfileBundle{}, appErr
+	}
+	reviews, appErr := s.reviewService.PublicForUser(ctx, username)
+	if appErr != nil {
+		return profile.PublicUserProfileBundle{}, appErr
+	}
+	disputes, appErr := s.reportService.PublicUserDisputes(ctx, username)
+	if appErr != nil {
+		return profile.PublicUserProfileBundle{}, appErr
+	}
+
+	reputations := []reputation.ReputationSnapshot{}
+	if s.reputationService.EngineAvailable() {
+		reputations, appErr = s.reputationService.GetUserScope(ctx, publicProfile.ID, reputation.ScopeOverall)
+		if appErr != nil {
+			return profile.PublicUserProfileBundle{}, appErr
+		}
+	}
+	return profile.PublicUserProfileBundle{
+		Profile:     publicProfile,
+		Reputations: reputations,
+		Carpools:    publicProfileCarpools(listingPage.Items),
+		Services:    publicProfileAPIServices(services.Items),
+		Completions: publicProfileCompletions(publicProfile, buyerMemberships, ownerMemberships, buyerOrders, sellerOrders),
+		Reviews:     publicProfileReviews(reviews),
+		Disputes:    publicProfileDisputes(disputes),
+	}, nil
+}
+
+func publicProfileCarpools(listings []carpool.Listing) []profile.PublicProfileCarpool {
+	items := make([]profile.PublicProfileCarpool, 0, len(listings))
+	for _, listing := range listings {
+		if listing.Status != carpool.ListingStatusActive {
+			continue
+		}
+		items = append(items, profile.PublicProfileCarpool{
+			ID:              listing.ID,
+			Title:           listing.Title,
+			Summary:         listing.Summary,
+			RegionName:      listing.RegionName,
+			PriceMonthlyCNY: listing.PriceMonthlyCNY,
+			AvailableSeats:  listing.AvailableSeats,
+			UpdatedAt:       listing.UpdatedAt,
+		})
+	}
+	sort.Slice(items, func(i, j int) bool {
+		if items[i].UpdatedAt.Equal(items[j].UpdatedAt) {
+			return items[i].ID > items[j].ID
+		}
+		return items[i].UpdatedAt.After(items[j].UpdatedAt)
+	})
+	return limitSlice(items, 6)
+}
+
+func publicProfileAPIServices(services []apimarket.Service) []profile.PublicProfileAPIService {
+	items := make([]profile.PublicProfileAPIService, 0, len(services))
+	for _, service := range services {
+		if !apimarket.IsPublicService(service) || service.MerchantIdentityMode != "public_profile" {
+			continue
+		}
+		items = append(items, profile.PublicProfileAPIService{
+			ID:                    service.ID,
+			Title:                 service.Title,
+			ShortDescription:      service.ShortDescription,
+			BillingMode:           service.BillingMode,
+			AvailableUSDAllowance: service.AvailableUSDAllowance,
+			UsageVisibility:       service.UsageVisibility,
+			RefundCommitment:      service.MerchantRefundCommitment,
+			UpdatedAt:             service.UpdatedAt,
+		})
+	}
+	sort.Slice(items, func(i, j int) bool {
+		if items[i].UpdatedAt.Equal(items[j].UpdatedAt) {
+			return items[i].ID > items[j].ID
+		}
+		return items[i].UpdatedAt.After(items[j].UpdatedAt)
+	})
+	return limitSlice(items, 6)
+}
+
+func publicProfileCompletions(
+	publicProfile profile.PublicUserProfile,
+	buyerMemberships []carpool.Membership,
+	ownerMemberships []carpool.Membership,
+	buyerOrders []apiorder.Order,
+	sellerOrders []apiorder.Order,
+) []profile.PublicProfileCompletion {
+	items := []profile.PublicProfileCompletion{}
+	seen := make(map[string]struct{})
+	if publicProfile.Privacy.ShowCompletedCarpoolCount {
+		for _, membership := range append(buyerMemberships, ownerMemberships...) {
+			if membership.Status != carpool.MembershipStatusCompleted || membership.CompletedAt == nil {
+				continue
+			}
+			key := "carpool:" + membership.ID
+			if _, exists := seen[key]; exists {
+				continue
+			}
+			seen[key] = struct{}{}
+			role := "seller"
+			if membership.BuyerUserID == publicProfile.ID {
+				role = "buyer"
+			}
+			items = append(items, profile.PublicProfileCompletion{ID: membership.ID, Kind: "carpool", Title: "拼车成员关系", Role: role, CompletedAt: *membership.CompletedAt})
+		}
+	}
+	if publicProfile.Privacy.ShowCompletedAPIIntentCount {
+		for _, order := range append(buyerOrders, sellerOrders...) {
+			if order.Status != apiorder.StatusCompleted || order.CompletedAt == nil {
+				continue
+			}
+			key := "api_order:" + order.ID
+			if _, exists := seen[key]; exists {
+				continue
+			}
+			seen[key] = struct{}{}
+			role := "seller"
+			if order.BuyerUserID == publicProfile.ID {
+				role = "buyer"
+			}
+			items = append(items, profile.PublicProfileCompletion{ID: order.ID, Kind: "api_order", Title: order.ServiceTitleSnapshot, Role: role, CompletedAt: *order.CompletedAt})
+		}
+	}
+	sort.Slice(items, func(i, j int) bool {
+		if items[i].CompletedAt.Equal(items[j].CompletedAt) {
+			if items[i].Kind == items[j].Kind {
+				return items[i].ID > items[j].ID
+			}
+			return items[i].Kind > items[j].Kind
+		}
+		return items[i].CompletedAt.After(items[j].CompletedAt)
+	})
+	return limitSlice(items, 10)
+}
+
+func publicProfileReviews(items []review.PublicReview) []review.PublicReview {
+	result := append([]review.PublicReview(nil), items...)
+	sort.Slice(result, func(i, j int) bool {
+		if result[i].Date.Equal(result[j].Date) {
+			return result[i].ID > result[j].ID
+		}
+		return result[i].Date.After(result[j].Date)
+	})
+	return limitSlice(result, 10)
+}
+
+func publicProfileDisputes(items []report.PublicDispute) []report.PublicDispute {
+	result := append([]report.PublicDispute(nil), items...)
+	sort.Slice(result, func(i, j int) bool {
+		if result[i].HandledAt.Equal(result[j].HandledAt) {
+			return result[i].ID > result[j].ID
+		}
+		return result[i].HandledAt.After(result[j].HandledAt)
+	})
+	return limitSlice(result, 10)
+}
+
+func limitSlice[T any](items []T, limit int) []T {
+	if len(items) <= limit {
+		return items
+	}
+	return items[:limit]
 }
 
 func (s *Service) MyMerchantProfile(ctx context.Context, user User) (MerchantProfile, *domain.AppError) {

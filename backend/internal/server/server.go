@@ -114,6 +114,7 @@ type APIModelTesterService interface {
 
 type AdminUserService interface {
 	AdminUsers(ctx context.Context, user auth.User, query auth.AdminUserDirectoryQuery) (auth.AdminUserDirectory, *domain.AppError)
+	AdminAuditLogs(ctx context.Context, user auth.User, filter auth.AdminAuditLogFilter, page domain.PageRequest) (domain.Page[auth.AdminAuditLog], *domain.AppError)
 	AdminUser(ctx context.Context, user auth.User, userID string) (auth.AdminUserDetail, *domain.AppError)
 	UpdateAdminUserStatusWithIdempotency(ctx context.Context, user auth.User, routeKey, key, requestHash string, input auth.AdminUserStatusInput, buildCompletion auth.AdminUserCompletionBuilder) (idempotency.Completion, *domain.AppError)
 	UpdateAdminUserPermissionWithIdempotency(ctx context.Context, user auth.User, routeKey, key, requestHash string, input auth.AdminUserPermissionInput, buildCompletion auth.AdminUserCompletionBuilder) (idempotency.Completion, *domain.AppError)
@@ -130,6 +131,10 @@ type APIPromotionService interface {
 type GrowthService interface {
 	AdminGrowthOverview(ctx context.Context, user auth.User, windowDays int) (growth.Overview, *domain.AppError)
 	RecordAuthenticatedActivity(ctx context.Context, userID string) *domain.AppError
+}
+
+type PublicProfileService interface {
+	PublicUserProfileBundle(ctx context.Context, username string) (profile.PublicUserProfileBundle, *domain.AppError)
 }
 
 type PromotionRewardService interface {
@@ -357,7 +362,8 @@ type CarpoolService interface {
 	PublicCarpoolListings(ctx context.Context, filter carpool.ListingFilter, page domain.PageRequest) (domain.Page[carpool.Listing], *domain.AppError)
 	PublicCarpoolListing(ctx context.Context, listingID string) (carpool.Listing, *domain.AppError)
 	CarpoolApplicationEligibility(ctx context.Context, user auth.User, listingID string) (carpool.ApplicationEligibility, *domain.AppError)
-	MyCarpoolListings(ctx context.Context, user auth.User) ([]carpool.Listing, *domain.AppError)
+	MyCarpoolListings(ctx context.Context, user auth.User, view string, page domain.PageRequest) (domain.Page[carpool.Listing], *domain.AppError)
+	MyCarpoolListing(ctx context.Context, user auth.User, listingID string) (carpool.Listing, *domain.AppError)
 	AdminCarpoolListings(ctx context.Context, user auth.User, filter carpool.ListingFilter, page domain.PageRequest) (domain.Page[carpool.Listing], *domain.AppError)
 	AdminCarpoolListing(ctx context.Context, user auth.User, listingID string) (carpool.Listing, *domain.AppError)
 	UpdateCarpoolListingReviewStatus(ctx context.Context, user auth.User, input carpool.ReviewInput) (carpool.Listing, *domain.AppError)
@@ -426,6 +432,7 @@ type ApplicationService interface {
 	GrowthService
 	PromotionRewardService
 	ReputationGovernanceService
+	PublicProfileService
 }
 
 type Server struct {
@@ -441,6 +448,7 @@ type Server struct {
 	growth           GrowthService
 	promotionRewards PromotionRewardService
 	reputation       ReputationGovernanceService
+	publicProfiles   PublicProfileService
 	mux              chi.Router
 	enableDevAuth    bool
 	readinessChecker health.Checker
@@ -499,6 +507,7 @@ func NewServer(service ApplicationService, options ...ServerOptions) http.Handle
 		growth:           service,
 		promotionRewards: service,
 		reputation:       service,
+		publicProfiles:   service,
 		mux:              chi.NewRouter(),
 		enableDevAuth:    option.EnableDevAuth,
 		readinessChecker: option.ReadinessChecker,
