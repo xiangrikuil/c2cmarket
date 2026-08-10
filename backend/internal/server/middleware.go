@@ -63,6 +63,7 @@ func shouldRenewSessionForRequest(r *http.Request) bool {
 	case "/health",
 		"/readyz",
 		"/api/v1/auth/dev-session",
+		"/api/v1/auth/dev-persona-session",
 		"/api/v1/auth/password/login",
 		"/api/v1/auth/email-registration/start",
 		"/api/v1/auth/email-registration/confirm",

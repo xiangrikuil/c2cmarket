@@ -21,7 +21,7 @@ This directory contains guidelines for backend development. Fill in each file wi
 | [Identity And Session](./identity-session.md) | linux.do/account/API-market avatar projection, email time presentation, and logout cache consistency | Active |
 | [Limited API Packages](./api-limited-packages.md) | Cross-layer publishing, recommendation, snapshot, inventory, and expiry contract | Active |
 | [OAuth Identity And Administrator Bootstrap](./auth-identity.md) | Immutable provider identity ownership and proven create-only administrator bootstrap | Active |
-| [Authentication Session Renewal](./auth-sessions.md) | Seven-day idle expiry, renewal throttling, cookie sync, and absolute expiry | Active |
+| [Authentication Sessions](./auth-sessions.md) | Renewal rules plus fixed, production-isolated development personas and cache replacement | Active |
 | [Restricted-Account Governance Appeals](./account-governance-appeals.md) | Existing-identity-only OAuth, dedicated fixed-expiry sessions, and appeal/account-status isolation | Active |
 | [Administrator User Directory](./admin-user-directory.md) | Server pagination, safe account detail, and transactional account governance | Active |
 | [Registered-User Growth And Umami Analytics](./growth-analytics.md) | PostgreSQL KPI truth, Shanghai cohorts, first-touch attribution, opaque Umami identity, and administrator dashboard | Active |

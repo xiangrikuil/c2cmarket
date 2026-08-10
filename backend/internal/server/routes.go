@@ -18,6 +18,7 @@ func (s *Server) routes() {
 	s.mux.Route("/api/v1", func(r chi.Router) {
 		if s.enableDevAuth {
 			r.Post("/auth/dev-session", s.limitHandler("auth_dev_session", 60, s.handleDevSession))
+			r.Post("/auth/dev-persona-session", s.limitHandler("auth_dev_persona_session", 60, s.handleDevPersonaSession))
 			r.Post("/dev/contact-sessions", s.limitHandler("dev_contact_session", 10, s.handleCreateDevContactSession))
 		}
 		r.Post("/auth/password/login", s.limitPolicy(passwordLoginRateLimit, s.handlePasswordLogin))

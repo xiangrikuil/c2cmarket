@@ -66,6 +66,7 @@ func TestSessionRenewalRequestPolicy(t *testing.T) {
 		{method: http.MethodGet, path: "/readyz", want: false},
 		{method: http.MethodGet, path: "/assets/app.js", want: false},
 		{method: http.MethodPost, path: "/api/v1/auth/dev-session", want: false},
+		{method: http.MethodPost, path: "/api/v1/auth/dev-persona-session", want: false},
 		{method: http.MethodPost, path: "/api/v1/auth/password/login", want: false},
 		{method: http.MethodGet, path: "/api/v1/auth/oauth/start", want: false},
 		{method: http.MethodGet, path: "/api/v1/auth/oauth/callback", want: false},

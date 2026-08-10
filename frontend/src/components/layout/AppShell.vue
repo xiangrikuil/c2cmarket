@@ -55,6 +55,7 @@ import { logoutBackendSession } from '@/lib/backendClient'
 import { loginRoute } from '@/lib/authNavigation'
 import { usePromotionRewardPublicConfig } from '@/queries/usePromotionRewardQueries'
 import { useOwnerAPIProbeConnections } from '@/queries/useApiHealthQueries'
+import DevPersonaSwitcher from '@/components/layout/DevPersonaSwitcher.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -418,6 +419,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onNavigationKeydown)
             </div>
           </div>
           <div class="flex-1" />
+          <DevPersonaSwitcher :current-username="currentUsername" />
           <DropdownMenu v-if="appThemes.length > 1">
             <DropdownMenuTrigger as-child>
               <Button variant="ghost" size="icon" aria-label="切换主题">

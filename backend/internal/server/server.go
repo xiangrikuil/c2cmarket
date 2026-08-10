@@ -22,6 +22,7 @@ import (
 	"c2c-market/backend/internal/module/carpool"
 	"c2c-market/backend/internal/module/catalog"
 	"c2c-market/backend/internal/module/contact"
+	"c2c-market/backend/internal/module/devpersona"
 	"c2c-market/backend/internal/module/favorite"
 	"c2c-market/backend/internal/module/feedback"
 	"c2c-market/backend/internal/module/growth"
@@ -80,6 +81,10 @@ type OAuthOptions struct {
 
 type NavigationBadgeService interface {
 	Get(ctx context.Context, user auth.User) (navigationbadge.Summary, *domain.AppError)
+}
+
+type DevPersonaSessionService interface {
+	PrepareDevPersonaSession(ctx context.Context, persona string) (devpersona.Result, *domain.AppError)
 }
 
 type APIPaymentSettingsService interface {
@@ -424,6 +429,7 @@ type ReputationGovernanceService interface {
 // the legacy facade to domain-specific service boundaries.
 type ApplicationService interface {
 	Service
+	DevPersonaSessionService
 	CarpoolService
 	APIQuotaService
 	APIPaymentSettingsService
@@ -449,6 +455,7 @@ type Server struct {
 	promotionRewards PromotionRewardService
 	reputation       ReputationGovernanceService
 	publicProfiles   PublicProfileService
+	devPersonas      DevPersonaSessionService
 	mux              chi.Router
 	enableDevAuth    bool
 	readinessChecker health.Checker
@@ -508,6 +515,7 @@ func NewServer(service ApplicationService, options ...ServerOptions) http.Handle
 		promotionRewards: service,
 		reputation:       service,
 		publicProfiles:   service,
+		devPersonas:      service,
 		mux:              chi.NewRouter(),
 		enableDevAuth:    option.EnableDevAuth,
 		readinessChecker: option.ReadinessChecker,

@@ -10,6 +10,7 @@ import (
 
 type Repository interface {
 	EnsureUser(ctx context.Context, username string, isAdmin bool, now time.Time) (User, *domain.AppError)
+	SetDevAdminPermission(ctx context.Context, userID string, isAdmin bool, now time.Time) *domain.AppError
 	UserByID(ctx context.Context, userID string) (User, *domain.AppError)
 	ListAdminUsers(ctx context.Context, query AdminUserDirectoryQuery) (AdminUserDirectory, *domain.AppError)
 	ListAdminAuditLogs(ctx context.Context, filter AdminAuditLogFilter, page domain.PageRequest) (domain.Page[AdminAuditLog], *domain.AppError)
