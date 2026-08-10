@@ -1,4 +1,8 @@
+import { seedVerifiedProbeConnection } from './smoke-support.mjs'
+
 const baseURL = process.env.API_BASE_URL ?? 'http://127.0.0.1:8080'
+const runSuffix = process.env.SMOKE_RUN_ID || `${Date.now()}-${Math.random().toString(16).slice(2, 10)}`
+const userSuffix = runSuffix.replace(/[^a-z0-9]/gi, '').slice(-8).toLowerCase()
 
 function assert(condition, message) {
   if (!condition) throw new Error(message)
@@ -83,17 +87,24 @@ async function main() {
   const health = await request('/health')
   assert(health.status === 'ok', 'backend health check failed')
 
-  const owner = await linuxDoSession('profile-smoke-owner')
-  const buyer = await session('profile-smoke-buyer')
+  const ownerUsername = `profile-${userSuffix}`
+  const merchantSlug = `profile-store-${userSuffix}`
+  const emailValue = `profile-smoke-${runSuffix}@example.com`
+  const updatedEmailValue = `profile-updated-${runSuffix}@example.com`
+  const ownerContactValue = `@profile_owner_${runSuffix.replaceAll('-', '_')}`
+  const buyerContactValue = `@profile_buyer_${runSuffix.replaceAll('-', '_')}`
+  const owner = await linuxDoSession(ownerUsername)
+  const buyer = await session(`prof-buy-${userSuffix}`)
+  const probeConnectionId = seedVerifiedProbeConnection(owner.user.id)
 
   const originalProfile = await request('/api/v1/me/profile', {}, owner)
-  assert(originalProfile.username === 'profile-smoke-owner', 'owner profile should match dev session')
+  assert(originalProfile.username === ownerUsername, 'owner profile should match dev session')
 
   const updatedProfile = await request('/api/v1/me/profile', {
     method: 'PATCH',
     body: {
       displayName: 'Profile Smoke Owner',
-      username: 'profile-smoke-owner',
+      username: ownerUsername,
       bio: '只公开必要业务资料。',
       regionCode: 'cn',
       timezone: 'Asia/Shanghai',
@@ -118,7 +129,7 @@ async function main() {
     body: {
       type: 'telegram',
       label: 'Profile Smoke Owner TG',
-      value: '@profile_smoke_owner',
+      value: ownerContactValue,
       usageScopes: ['api_merchant'],
       isDefault: true,
       enabled: true,
@@ -132,7 +143,7 @@ async function main() {
     body: {
       type: 'email',
       label: 'Profile Smoke Email',
-      value: 'profile-smoke@example.com',
+      value: emailValue,
       usageScopes: ['buyer'],
       isDefault: false,
       enabled: true,
@@ -141,28 +152,28 @@ async function main() {
 
   const listedContacts = await request('/api/v1/me/contact-methods', {}, owner)
   const listedEmail = listedContacts.items.find(item => item.id === emailContact.id)
-  assert(listedEmail?.displayValue === 'profile-smoke@example.com', 'self contact list should expose full contact value')
+  assert(listedEmail?.displayValue === emailValue, 'self contact list should expose full contact value')
 
   const updatedContact = await request(`/api/v1/contact-methods/${emailContact.id}`, {
     method: 'PATCH',
     body: {
       type: 'email',
       label: 'Profile Smoke Email Updated',
-      displayValue: 'profile-smoke-updated@example.com',
+      displayValue: updatedEmailValue,
       usageScopes: ['buyer', 'api_merchant'],
       isDefault: true,
       enabled: true,
     },
   }, owner)
   assert(updatedContact.isDefault === true, 'updated contact should become default')
-  assert(updatedContact.displayValue === 'profile-smoke-updated@example.com', 'updated contact should return full value')
+  assert(updatedContact.displayValue === updatedEmailValue, 'updated contact should return full value')
 
   const verifiedContact = await request(`/api/v1/contact-methods/${emailContact.id}/verify`, {
     method: 'POST',
     body: {},
   }, owner)
   assert(verifiedContact.verified === true, 'verify action should mark contact verified')
-  assert(verifiedContact.displayValue === 'profile-smoke-updated@example.com', 'verified contact should preserve full value for owner')
+  assert(verifiedContact.displayValue === updatedEmailValue, 'verified contact should preserve full value for owner')
 
   const deletedContact = await request(`/api/v1/contact-methods/${ownerContact.id}`, {
     method: 'DELETE',
@@ -173,7 +184,7 @@ async function main() {
   const merchantProfile = await request('/api/v1/me/merchant-profile', {
     method: 'POST',
     body: {
-      slug: 'profile-smoke-store',
+      slug: merchantSlug,
       displayName: 'Profile Smoke Store',
       avatarUrl: '',
     },
@@ -181,21 +192,27 @@ async function main() {
   assert(merchantProfile.ownerUserId === owner.user.id, 'self merchant profile should include owner id')
 
   const myMerchantProfile = await request('/api/v1/me/merchant-profile', {}, owner)
-  assert(myMerchantProfile.slug === 'profile-smoke-store', 'my merchant profile should be readable')
+  assert(myMerchantProfile.slug === merchantSlug, 'my merchant profile should be readable')
 
-  const publicUser = await request('/api/v1/users/profile-smoke-owner/public-profile')
+  const publicUser = await request(`/api/v1/users/${ownerUsername}/public-profile`)
   assert(publicUser.profile.displayName === 'Profile Smoke Owner', 'public user profile should reflect profile update')
   assert(publicUser.profile.lastActiveAt === null, 'public user profile should respect lastActive privacy')
   const publicUserText = JSON.stringify(publicUser)
-  assert(!publicUserText.includes('profile-smoke-updated@example.com'), 'public user profile must not leak contact value')
+  assert(!publicUserText.includes(updatedEmailValue), 'public user profile must not leak contact value')
   assert(!publicUserText.includes(emailContact.id), 'public user profile must not leak contact id')
+  for (const field of ['carpools', 'services', 'completions', 'reviews', 'disputes']) {
+    assert(Array.isArray(publicUser[field]), `public user ${field} should be a typed array`)
+  }
 
-  const publicMerchant = await request('/api/v1/merchant-profiles/profile-smoke-store')
-  assert(publicMerchant.profile.username === 'profile-smoke-store', 'public merchant profile should use slug as public username')
-  assert(publicMerchant.profile.displayName === 'Profile Smoke Store', 'public merchant profile should expose display name')
+  const publicMerchant = await request(`/api/v1/merchant-profiles/${merchantSlug}`)
+  assert(publicMerchant.username === merchantSlug, 'public merchant profile should use slug as public username')
+  assert(publicMerchant.displayName === 'Profile Smoke Store', 'public merchant profile should expose display name')
+  for (const removedField of ['profile', 'services', 'completions', 'reviews', 'disputes']) {
+    assert(!(removedField in publicMerchant), `public merchant profile must not include ${removedField}`)
+  }
   const publicMerchantText = JSON.stringify(publicMerchant)
   assert(!publicMerchantText.includes(owner.user.id), 'public merchant profile must not expose owner user id')
-  assert(!publicMerchantText.includes('profile-smoke-updated@example.com'), 'public merchant profile must not leak contact value')
+  assert(!publicMerchantText.includes(updatedEmailValue), 'public merchant profile must not leak contact value')
 
   const models = await request('/api/v1/api-models')
   const model = models.items[0]
@@ -205,22 +222,32 @@ async function main() {
     method: 'POST',
     idempotencyPrefix: 'profile-smoke-api-service',
     body: {
-      merchantProfileId: merchantProfile.id,
-      merchantIdentityMode: 'store_alias',
+      merchantProfileId: '',
+      merchantIdentityMode: 'public_profile',
       ownerContactMethodId: emailContact.id,
+      probeConnectionId,
       title: `Profile Smoke API ${Date.now()}`,
-      shortDescription: 'Profile smoke store alias API 服务',
+      shortDescription: 'Profile smoke 公开主页 API 服务',
       distributionSystem: 'sub2api',
       billingMode: 'metered_usd_quota',
       declaredCnyPerUsdAllowance: '0.8',
       declaredMaxUsdAllowancePerIntent: '100',
+      availableUsdAllowance: '1000',
       quotaExpiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
+      quotaUsagePolicy: {
+        fiveHour: { mode: 'limited', amountUsd: '5' },
+        daily: { mode: 'unlimited' },
+      },
       minimumIntentCny: '20',
       maximumIntentCny: '300',
       usageVisibility: 'offsite_panel_readonly',
       publicAccessNote: '仅展示接入说明，不展示凭据。',
       merchantNote: '站外确认后按说明接入。',
-      merchantSupportNote: '平台不担保、不代赔；双方站外确认。',
+      accountPoolType: 'custom',
+      accountPoolCustomName: 'Profile Smoke Pool',
+      merchantRefundCommitment: false,
+      declaredMaxConcurrency: 4,
+      promptAuditEnabled: false,
       accessModes: [
         { accessMode: 'buyer_dedicated_sub_key', publicNote: '站外确认接入说明。' },
       ],
@@ -230,8 +257,8 @@ async function main() {
       packages: [],
     },
   }, owner)
-  assert(serviceDraft.merchantIdentityMode === 'store_alias', 'service should use store alias identity')
-  assert(serviceDraft.merchantDisplayName === 'Profile Smoke Store', 'owner service response should expose store display name')
+  assert(serviceDraft.merchantIdentityMode === 'public_profile', 'service should use public profile identity')
+  assert(serviceDraft.merchantDisplayName === 'Profile Smoke Owner', 'owner service response should expose public profile display name')
 
   const autoApprovedService = await request(`/api/v1/owner/api-services/${serviceDraft.id}/submit-review`, {
     method: 'POST',
@@ -269,13 +296,16 @@ async function main() {
   assert(orderableService.isOrderable === true, 'service should be orderable after settings')
 
   const publicService = await request(`/api/v1/api-services/${serviceDraft.id}`)
-  assert(publicService.merchantIdentityMode === 'store_alias', 'public service should keep store alias identity')
-  assert(publicService.merchantDisplayName === 'Profile Smoke Store', 'public service should show merchant profile display name')
-  assert(publicService.merchantProfileSlug === 'profile-smoke-store', 'public service should show merchant profile slug')
+  assert(publicService.merchantIdentityMode === 'public_profile', 'public service should keep public profile identity')
+  assert(publicService.merchantDisplayName === 'Profile Smoke Owner', 'public service should show public profile display name')
   const publicServiceText = JSON.stringify(publicService)
   assert(!publicServiceText.includes(owner.user.id), 'public service must not leak owner user id')
   assert(!publicServiceText.includes(emailContact.id), 'public service must not leak owner contact method id')
-  assert(!publicServiceText.includes('profile-smoke-updated@example.com'), 'public service must not leak owner contact value')
+  assert(!publicServiceText.includes(updatedEmailValue), 'public service must not leak owner contact value')
+
+  const enrichedPublicUser = await request(`/api/v1/users/${ownerUsername}/public-profile`)
+  assert(enrichedPublicUser.services.some(item => item.id === serviceDraft.id), 'public user profile should aggregate the online public-profile API service')
+  assert(!JSON.stringify(enrichedPublicUser).includes(emailContact.id), 'aggregated public profile must not leak contact ids')
 
   const buyerContact = await request('/api/v1/contact-methods', {
     method: 'POST',
@@ -283,7 +313,7 @@ async function main() {
     body: {
       type: 'telegram',
       label: 'Profile Smoke Buyer',
-      value: '@profile_smoke_buyer',
+      value: buyerContactValue,
     },
   }, buyer)
   const intent = await request(`/api/v1/api-services/${serviceDraft.id}/purchase-intents`, {
@@ -298,7 +328,7 @@ async function main() {
       buyerNote: 'profile smoke intent',
     },
   }, buyer)
-  assert(intent.merchantContact?.value === 'profile-smoke-updated@example.com', 'buyer should see frozen store alias merchant contact after intent')
+  assert(intent.merchantContact?.value === updatedEmailValue, 'buyer should see frozen public-profile merchant contact after intent')
 
   console.log(JSON.stringify({
     ok: true,

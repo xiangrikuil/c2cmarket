@@ -106,9 +106,9 @@ async function main() {
   const health = await request('/health')
   assert(health.status === 'ok', 'backend health check failed')
 
-  const buyer = await session('official-price-smoke-buyer')
-  const admin = await session('official-price-smoke-admin', true)
-  const suffix = Date.now().toString(36)
+  const suffix = process.env.SMOKE_RUN_ID || `${Date.now()}-${Math.random().toString(16).slice(2, 10)}`
+  const buyer = await session(`official-price-smoke-buyer-${suffix}`)
+  const admin = await session(`official-price-smoke-admin-${suffix}`, true)
 
   const productPlans = await request('/api/v1/product-plans')
   const plan = productPlans.items.find(item => item.publishPolicy !== 'blocked') ?? productPlans.items[0]

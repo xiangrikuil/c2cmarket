@@ -106,11 +106,12 @@ async function main() {
   const health = await request('/health')
   assert(health.status === 'ok', 'backend health check failed')
 
-  const suffix = Date.now().toString(36)
-  const reporter = await session(`reporter-${suffix}`)
-  const reported = await session(`target-${suffix}`)
-  const secondaryReported = await session(`secondary-${suffix}`)
-  const admin = await session(`admin-${suffix}`, true)
+  const suffix = process.env.SMOKE_RUN_ID || `${Date.now()}-${Math.random().toString(16).slice(2, 10)}`
+  const userSuffix = suffix.replace(/[^a-z0-9]/gi, '').slice(-8).toLowerCase()
+  const reporter = await session(`reporter-${userSuffix}`)
+  const reported = await session(`target-${userSuffix}`)
+  const secondaryReported = await session(`second-${userSuffix}`)
+  const admin = await session(`admin-${userSuffix}`, true)
 
   await updatePublicProfile(reporter, 'Reports Smoke Reporter')
   await updatePublicProfile(reported, 'Reports Smoke Target')
@@ -217,7 +218,6 @@ async function main() {
     method: 'POST',
     idempotencyPrefix: 'reports-smoke-appeal',
     body: {
-      reportId: publicReport.id,
       disputeId: opened.dispute.id,
       title: '申请复核公开纠纷记录',
       statement: '用户已补充脱敏说明，申请管理员复核处理结果。',
