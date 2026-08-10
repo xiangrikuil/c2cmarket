@@ -2,6 +2,7 @@ package auth
 
 import (
 	"context"
+	"net/http"
 	"strconv"
 	"strings"
 	"sync"
@@ -21,6 +22,7 @@ type fakeAuthRepository struct {
 	adminUsers           []AdminUser
 	adminDetail          AdminUserDetail
 	adminAuditLogs       domain.Page[AdminAuditLog]
+	lastOAuthProfile     OAuthProfile
 
 	ensureUserCalls                  int
 	createEmailRegistrationCodeCalls int
@@ -33,7 +35,21 @@ func (f *fakeAuthRepository) EnsureUser(context.Context, string, bool, time.Time
 	return User{}, domain.NewError(500, domain.CodeInternalError, "not implemented", "not implemented")
 }
 
-func (f *fakeAuthRepository) UpsertOAuthUser(context.Context, OAuthProfile, time.Time) (OAuthUserResult, *domain.AppError) {
+func (f *fakeAuthRepository) SetDevAdminPermission(_ context.Context, userID string, isAdmin bool, _ time.Time) *domain.AppError {
+	if f.user.ID == userID {
+		f.user.IsAdmin = isAdmin
+		return nil
+	}
+	if f.oauthResult.User.ID == userID {
+		f.oauthResult.User.IsAdmin = isAdmin
+		f.user = f.oauthResult.User
+		return nil
+	}
+	return domain.NewError(404, domain.CodeObjectNotFound, "Development persona not found", "开发身份不存在。")
+}
+
+func (f *fakeAuthRepository) UpsertOAuthUser(_ context.Context, profile OAuthProfile, _ time.Time) (OAuthUserResult, *domain.AppError) {
+	f.lastOAuthProfile = profile
 	return f.oauthResult, nil
 }
 
@@ -245,6 +261,82 @@ func adminUserCompletionForTest(result AdminUserMutationResult) (idempotency.Com
 		ResourceType: "user",
 		ResourceID:   result.Detail.User.ID,
 	}, nil
+}
+
+func TestLoginDevPersonaIdentityPreservesCustomizedDisplayName(t *testing.T) {
+	repository := &fakeAuthRepository{oauthResult: OAuthUserResult{User: User{
+		ID:          "dev-buyer-id",
+		Username:    "dev-buyer",
+		DisplayName: "本地自定义买家",
+		Status:      AccountStatusActive,
+	}}}
+	service := NewService(repository, time.Now)
+
+	user, appErr := service.LoginDevPersonaIdentity(context.Background(), OAuthProfile{
+		Provider: "linux_do",
+		Subject:  "dev-persona-buyer",
+		Username: "dev-buyer",
+	}, "开发买家")
+	if appErr != nil {
+		t.Fatalf("login development persona: %v", appErr)
+	}
+	if user.Username != "dev-buyer" {
+		t.Fatalf("expected fixed username, got %q", user.Username)
+	}
+	if repository.lastOAuthProfile.DisplayName != "本地自定义买家" {
+		t.Fatalf("expected customized display name to be preserved, got %q", repository.lastOAuthProfile.DisplayName)
+	}
+}
+
+func TestLoginDevPersonaIdentityRejectsOccupiedUsernameWithoutGrantingAdmin(t *testing.T) {
+	service := NewService(nil, time.Now)
+	occupied, _, appErr := service.CreateDevSession(context.Background(), "dev-seller", false)
+	if appErr != nil {
+		t.Fatalf("create occupied username: %v", appErr)
+	}
+
+	_, appErr = service.LoginDevPersonaIdentity(context.Background(), OAuthProfile{
+		Provider: "linux_do",
+		Subject:  "dev-persona-seller",
+		Username: "dev-seller",
+	}, "开发卖家")
+	if appErr == nil || appErr.Status != http.StatusConflict {
+		t.Fatalf("expected occupied persona username conflict, got %+v", appErr)
+	}
+	service.mu.Lock()
+	occupiedAfter := service.users[occupied.ID]
+	service.mu.Unlock()
+	if occupiedAfter.IsAdmin {
+		t.Fatalf("occupied account must remain non-admin: %+v", occupiedAfter)
+	}
+	isolated, found, appErr := service.resolveOAuthUser(context.Background(), "linux_do", "dev-persona-seller")
+	if appErr != nil || !found {
+		t.Fatalf("expected isolated OAuth identity, found=%v err=%v", found, appErr)
+	}
+	if isolated.Username == "dev-seller" || isolated.IsAdmin {
+		t.Fatalf("collision identity must be isolated and non-admin: %+v", isolated)
+	}
+}
+
+func TestCreateDevPersonaSessionAppliesExactAdminPermission(t *testing.T) {
+	service := NewService(nil, time.Now)
+	identity, appErr := service.LoginDevPersonaIdentity(context.Background(), OAuthProfile{
+		Provider: "linux_do",
+		Subject:  "dev-persona-buyer",
+		Username: "dev-buyer",
+	}, "开发买家")
+	if appErr != nil {
+		t.Fatalf("create development persona identity: %v", appErr)
+	}
+
+	admin, _, appErr := service.CreateDevPersonaSession(context.Background(), identity.ID, true)
+	if appErr != nil || !admin.IsAdmin {
+		t.Fatalf("grant development admin permission: user=%+v err=%v", admin, appErr)
+	}
+	buyer, _, appErr := service.CreateDevPersonaSession(context.Background(), identity.ID, false)
+	if appErr != nil || buyer.IsAdmin {
+		t.Fatalf("revoke development admin permission: user=%+v err=%v", buyer, appErr)
+	}
 }
 
 func TestAdminUserDirectoryUsesBoundedFilteredPagesAndGlobalSummary(t *testing.T) {

@@ -13,7 +13,12 @@ import (
 	"time"
 
 	"c2c-market/backend/internal/domain"
+	"c2c-market/backend/internal/module/apimarket"
+	"c2c-market/backend/internal/module/auth"
+	"c2c-market/backend/internal/module/contact"
 	app "c2c-market/backend/internal/module/core"
+	"c2c-market/backend/internal/module/devpersona"
+	"c2c-market/backend/internal/module/profile"
 	"c2c-market/backend/internal/store/postgres"
 
 	"github.com/google/uuid"
@@ -73,6 +78,204 @@ func TestPostgresAdminOfficialPriceRecordFlow(t *testing.T) {
 	}
 
 	assertOfficialPriceRecordAdminSideEffects(t, databaseURL, first.ID, "official_price_record.created", "official_price_record.create", 1)
+}
+
+func TestPostgresDevPersonaSessionReadinessAndIdempotency(t *testing.T) {
+	databaseURL := strings.TrimSpace(os.Getenv("C2C_TEST_DATABASE_URL"))
+	if databaseURL == "" {
+		t.Skip("C2C_TEST_DATABASE_URL is not set")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	store, err := postgres.Connect(ctx, databaseURL)
+	if err != nil {
+		t.Fatalf("connect postgres: %v", err)
+	}
+	defer store.Close()
+	pool := openTestPool(t, databaseURL)
+	defer pool.Close()
+
+	service := app.NewServiceWithPersistence(store)
+	handler := NewServer(service, ServerOptions{EnableDevAuth: true})
+	prepare := func(persona string) devPersonaSessionResponse {
+		t.Helper()
+		request := newJSONRequest(http.MethodPost, "/api/v1/auth/dev-persona-session", `{"persona":"`+persona+`"}`)
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, request)
+		if response.Code != http.StatusOK {
+			t.Fatalf("prepare %s status %d body %s", persona, response.Code, response.Body.String())
+		}
+		if responseSessionCookie(response) == nil {
+			t.Fatalf("prepare %s did not set a normal session cookie", persona)
+		}
+		var payload devPersonaSessionResponse
+		if err := json.NewDecoder(response.Body).Decode(&payload); err != nil {
+			t.Fatalf("decode %s persona response: %v", persona, err)
+		}
+		return payload
+	}
+
+	buyer := prepare("buyer")
+	if _, err := pool.Exec(ctx, `INSERT INTO user_permissions (user_id, permission) VALUES ($1, 'admin') ON CONFLICT DO NOTHING`, buyer.User.ID); err != nil {
+		t.Fatalf("seed buyer admin permission: %v", err)
+	}
+	buyerAgain := prepare("buyer")
+	seller := prepare("seller")
+	sellerUser := auth.User{
+		ID:          seller.User.ID,
+		Username:    seller.User.Username,
+		DisplayName: seller.User.DisplayName,
+		Status:      auth.AccountStatusActive,
+	}
+	methods, appErr := service.ListContactMethods(ctx, seller.User.ID)
+	if appErr != nil {
+		t.Fatalf("list seller contacts before customization: %v", appErr)
+	}
+	var sellerWechat contact.ContactMethod
+	for _, method := range methods {
+		if method.Type == "wechat" {
+			sellerWechat = method
+			break
+		}
+	}
+	if sellerWechat.ID == "" {
+		t.Fatalf("seller WeChat contact missing before customization: %+v", methods)
+	}
+	if _, appErr := service.UpdateContactMethod(ctx, contact.UpdateContactMethodInput{
+		UserID:    seller.User.ID,
+		MethodID:  sellerWechat.ID,
+		Type:      sellerWechat.Type,
+		Label:     "工作微信",
+		Value:     "seller-custom-wechat",
+		Enabled:   true,
+		IsDefault: sellerWechat.IsDefault,
+	}); appErr != nil {
+		t.Fatalf("customize seller contact: %v", appErr)
+	}
+	if _, appErr := service.UpsertMyMerchantProfile(ctx, sellerUser, profile.UpsertMerchantProfileInput{
+		Slug: "custom-seller-shop", DisplayName: "本地自定义店铺",
+	}); appErr != nil {
+		t.Fatalf("customize seller merchant profile: %v", appErr)
+	}
+	if _, appErr := service.UpdateAPIAccountPaymentSettings(ctx, sellerUser, apimarket.UpdateAccountPaymentSettingsInput{
+		PaymentWindowMinutes: apimarket.DefaultPaymentWindowMinutes,
+		PaymentOptions: []apimarket.PaymentOptionInput{
+			{PaymentMethod: apimarket.PaymentMethodWechat},
+			{PaymentMethod: apimarket.PaymentMethodAlipay, Enabled: true, PaymentQRCodeDataURL: "data:image/png;base64,YWxpcGF5"},
+		},
+	}); appErr != nil {
+		t.Fatalf("customize seller payment settings: %v", appErr)
+	}
+	if _, _, loginErr := service.LoginWithPassword(ctx, seller.User.Username, "CustomDev#2027"); loginErr != nil {
+		if appErr := service.SetPassword(ctx, auth.SetPasswordInput{
+			UserID: seller.User.ID, CurrentPassword: devpersona.SharedPassword, NewPassword: "CustomDev#2027",
+		}); appErr != nil {
+			t.Fatalf("customize seller password: %v", appErr)
+		}
+	}
+	if _, err := pool.Exec(ctx, `UPDATE users SET display_name = '本地自定义卖家' WHERE id = $1`, seller.User.ID); err != nil {
+		t.Fatalf("customize seller display name: %v", err)
+	}
+	sellerAgain := prepare("seller")
+	admin := prepare("admin")
+
+	if buyer.User.ID != buyerAgain.User.ID || seller.User.ID != sellerAgain.User.ID {
+		t.Fatalf("development persona identities changed: buyer=%s/%s seller=%s/%s", buyer.User.ID, buyerAgain.User.ID, seller.User.ID, sellerAgain.User.ID)
+	}
+	if buyerAgain.User.IsAdmin || sellerAgain.User.IsAdmin || !admin.User.IsAdmin {
+		t.Fatalf("unexpected persona permissions: buyer=%v seller=%v admin=%v", buyerAgain.User.IsAdmin, sellerAgain.User.IsAdmin, admin.User.IsAdmin)
+	}
+	if sellerAgain.User.DisplayName != "本地自定义卖家" {
+		t.Fatalf("seller display name was overwritten: %q", sellerAgain.User.DisplayName)
+	}
+	methods, appErr = service.ListContactMethods(ctx, seller.User.ID)
+	if appErr != nil {
+		t.Fatalf("list customized seller contacts: %v", appErr)
+	}
+	foundCustomizedWechat := false
+	for _, method := range methods {
+		if method.Type != "wechat" {
+			continue
+		}
+		foundCustomizedWechat = method.DisplayValue == "seller-custom-wechat"
+	}
+	if !foundCustomizedWechat {
+		t.Fatalf("seller WeChat contact was overwritten: %+v", methods)
+	}
+	merchant, appErr := service.MyMerchantProfile(ctx, sellerUser)
+	if appErr != nil || merchant.Slug != "custom-seller-shop" || merchant.DisplayName != "本地自定义店铺" {
+		t.Fatalf("seller merchant profile was overwritten: merchant=%+v err=%v", merchant, appErr)
+	}
+	settings, appErr := service.GetAPIAccountPaymentSettings(ctx, sellerUser)
+	if appErr != nil || !settings.PaymentOptions[1].Enabled || settings.PaymentOptions[0].Enabled {
+		t.Fatalf("seller payment settings were overwritten: settings=%+v err=%v", settings, appErr)
+	}
+	if _, _, appErr := service.LoginWithPassword(ctx, seller.User.Username, "CustomDev#2027"); appErr != nil {
+		t.Fatalf("seller password was overwritten: %v", appErr)
+	}
+
+	for _, item := range []struct {
+		username string
+		admin    bool
+	}{
+		{username: "dev-buyer"},
+		{username: "dev-seller"},
+		{username: "dev-admin", admin: true},
+	} {
+		var emailVerified, passwordConfigured, linuxDoBound, hasAdminPermission bool
+		err := pool.QueryRow(ctx, `
+			SELECT u.email_verified_at IS NOT NULL,
+			       EXISTS (SELECT 1 FROM user_password_credentials c WHERE c.user_id = u.id),
+			       EXISTS (SELECT 1 FROM linux_do_bindings b WHERE b.user_id = u.id),
+			       EXISTS (SELECT 1 FROM user_permissions p WHERE p.user_id = u.id AND p.permission = 'admin')
+			FROM users u
+			WHERE u.username = $1
+		`, item.username).Scan(&emailVerified, &passwordConfigured, &linuxDoBound, &hasAdminPermission)
+		if err != nil {
+			t.Fatalf("read %s readiness: %v", item.username, err)
+		}
+		if !emailVerified || !passwordConfigured || !linuxDoBound || hasAdminPermission != item.admin {
+			t.Fatalf("unexpected %s readiness: email=%v password=%v linuxdo=%v admin=%v", item.username, emailVerified, passwordConfigured, linuxDoBound, hasAdminPermission)
+		}
+	}
+
+	for _, username := range []string{"dev-buyer", "dev-seller"} {
+		var enabledContacts, enabledTypes int
+		if err := pool.QueryRow(ctx, `
+			SELECT count(*) FILTER (WHERE m.enabled),
+			       count(DISTINCT m.type) FILTER (WHERE m.enabled AND m.type IN ('linuxdo', 'wechat'))
+			FROM contact_methods m
+			JOIN users u ON u.id = m.user_id
+			WHERE u.username = $1
+		`, username).Scan(&enabledContacts, &enabledTypes); err != nil {
+			t.Fatalf("read %s contacts: %v", username, err)
+		}
+		if enabledContacts != 2 || enabledTypes != 2 {
+			t.Fatalf("unexpected %s contacts: enabled=%d required_types=%d", username, enabledContacts, enabledTypes)
+		}
+	}
+
+	var merchantProfiles, paymentRows, enabledPayments int
+	if err := pool.QueryRow(ctx, `
+		SELECT count(*)
+		FROM merchant_profiles m
+		JOIN users u ON u.id = m.owner_user_id
+		WHERE u.username = 'dev-seller' AND m.status = 'active'
+	`).Scan(&merchantProfiles); err != nil {
+		t.Fatalf("read seller merchant profile: %v", err)
+	}
+	if err := pool.QueryRow(ctx, `
+		SELECT count(*), count(*) FILTER (WHERE option.enabled)
+		FROM api_payment_account_options option
+		JOIN users u ON u.id = option.user_id
+		WHERE u.username = 'dev-seller'
+	`).Scan(&paymentRows, &enabledPayments); err != nil {
+		t.Fatalf("read seller payment settings: %v", err)
+	}
+	if merchantProfiles != 1 || paymentRows != 1 || enabledPayments != 1 {
+		t.Fatalf("unexpected seller readiness: merchants=%d payment_rows=%d enabled_payments=%d", merchantProfiles, paymentRows, enabledPayments)
+	}
 }
 
 func TestPostgresProductCatalogReadAPIs(t *testing.T) {

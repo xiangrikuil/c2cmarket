@@ -33,6 +33,7 @@ import { useNavigationBadges } from '@/queries/useRealtimeQueries'
 import { usePersistentSidebar } from '@/composables/usePersistentSidebar'
 import { useRealtimeSync } from '@/composables/useRealtimeSync'
 import { ACCOUNT_RECOVERY_PATH, isAccountRecoveryAllowedPath, isAccountRecoveryComplete } from '@/lib/accountRecovery'
+import DevPersonaSwitcher from '@/components/layout/DevPersonaSwitcher.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -78,6 +79,7 @@ const activeItem = computed(() => navGroups.value.flatMap(group => group.items)
   .sort((a, b) => b.to.length - a.to.length)[0])
 const currentTitle = computed(() => activeItem.value?.label ?? '管理台')
 const adminName = computed(() => profile.value?.displayName || profile.value?.username || '管理员')
+const currentUsername = computed(() => profile.value?.username ?? '')
 const recoveryRequired = computed(() => profile.value ? !isAccountRecoveryComplete(profile.value) : false)
 
 function formatCount(value: number | null) {
@@ -153,6 +155,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
           <div v-if="route.path !== '/admin/users'" class="relative hidden w-full max-w-xl md:block"><Search class="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" /><Input v-model="searchText" class="h-9 pl-9" aria-label="后台全局搜索" placeholder="搜索用户或管理对象" @keyup.enter="runSearch" /></div>
           <div class="flex-1" />
           <Badge v-if="badges?.admin?.total" variant="secondary">我的待办 {{ formatCount(badges.admin.total) }}</Badge>
+          <DevPersonaSwitcher :current-username="currentUsername" />
           <div class="hidden items-center gap-2 text-sm sm:flex"><span class="grid h-7 w-7 place-items-center rounded-full bg-primary/10 text-primary"><UserCog class="h-4 w-4" /></span><span>{{ adminName }}</span></div>
           <RouterLink to="/"><Button size="sm" variant="outline"><ArrowLeft class="h-4 w-4" /><span class="hidden sm:inline">返回用户端</span></Button></RouterLink>
         </div>

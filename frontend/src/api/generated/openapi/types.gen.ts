@@ -680,6 +680,17 @@ export type SessionResponse = {
     expiresAt: string;
 };
 
+export type DevPersonaSessionRequest = {
+    persona: 'buyer' | 'seller' | 'admin';
+};
+
+export type DevPersonaSessionResponse = {
+    persona: 'buyer' | 'seller' | 'admin';
+    user: User;
+    csrfToken: string;
+    expiresAt: string;
+};
+
 export type PasswordLoginRequest = {
     username: string;
     password: string;
@@ -4716,6 +4727,35 @@ export type CreateDevSessionResponses = {
 };
 
 export type CreateDevSessionResponse = CreateDevSessionResponses[keyof CreateDevSessionResponses];
+
+export type CreateDevPersonaSessionData = {
+    body: DevPersonaSessionRequest;
+    path?: never;
+    query?: never;
+    url: '/api/v1/auth/dev-persona-session';
+};
+
+export type CreateDevPersonaSessionErrors = {
+    /**
+     * Problem Details error.
+     */
+    422: ProblemDetails;
+    /**
+     * Rate limit exceeded. Problem Details `code` is `RATE_LIMITED`.
+     */
+    429: ProblemDetails;
+};
+
+export type CreateDevPersonaSessionError = CreateDevPersonaSessionErrors[keyof CreateDevPersonaSessionErrors];
+
+export type CreateDevPersonaSessionResponses = {
+    /**
+     * Prepared development persona and normal session.
+     */
+    200: DevPersonaSessionResponse;
+};
+
+export type CreateDevPersonaSessionResponse = CreateDevPersonaSessionResponses[keyof CreateDevPersonaSessionResponses];
 
 export type GetSessionData = {
     body?: never;

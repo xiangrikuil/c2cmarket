@@ -140,6 +140,89 @@ func (s *Service) CreateDevSession(ctx context.Context, username string, isAdmin
 	return user, session, nil
 }
 
+// LoginDevPersonaIdentity establishes the fixed OAuth identity used by a
+// development persona without replacing a display name customized locally.
+func (s *Service) LoginDevPersonaIdentity(ctx context.Context, profile OAuthProfile, displayName string) (User, *domain.AppError) {
+	provider := CanonicalOAuthProvider(profile.Provider)
+	subject := CanonicalOAuthSubject(profile.Subject)
+	expectedUsername := OAuthUsernameCandidate(profile.Username, provider, subject, 0)
+	profile.DisplayName = strings.TrimSpace(displayName)
+
+	existing, found, appErr := s.resolveOAuthUser(ctx, provider, subject)
+	if appErr != nil {
+		return User{}, appErr
+	}
+	if found && strings.TrimSpace(existing.DisplayName) != "" && existing.DisplayName != existing.Username {
+		profile.DisplayName = existing.DisplayName
+	}
+
+	user, _, appErr := s.LoginWithOAuthProfile(ctx, profile)
+	if appErr != nil {
+		return User{}, appErr
+	}
+	if user.Username != expectedUsername {
+		return User{}, domain.NewFieldError(
+			http.StatusConflict,
+			domain.CodeValidationFailed,
+			"Development persona username unavailable",
+			"开发身份用户名已被其他账号占用。",
+			"username",
+			"unavailable",
+			"开发身份用户名已被其他账号占用。",
+		)
+	}
+	return user, nil
+}
+
+// CreateDevPersonaSession applies the exact requested administrator state and
+// creates a normal application session for a previously established persona.
+func (s *Service) CreateDevPersonaSession(ctx context.Context, userID string, isAdmin bool) (User, Session, *domain.AppError) {
+	userID = strings.TrimSpace(userID)
+	if userID == "" {
+		return User{}, Session{}, domain.NewError(http.StatusNotFound, domain.CodeObjectNotFound, "Development persona not found", "开发身份不存在。")
+	}
+
+	now := s.now()
+	if s.repo != nil {
+		if appErr := s.repo.SetDevAdminPermission(ctx, userID, isAdmin, now); appErr != nil {
+			return User{}, Session{}, appErr
+		}
+		user, appErr := s.repo.UserByID(ctx, userID)
+		if appErr != nil {
+			return User{}, Session{}, appErr
+		}
+		session := newSession(user.ID, now)
+		if appErr := s.persistSession(ctx, session, now); appErr != nil {
+			return User{}, Session{}, appErr
+		}
+		return user, session, nil
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	user, ok := s.users[userID]
+	if !ok {
+		return User{}, Session{}, domain.NewError(http.StatusNotFound, domain.CodeObjectNotFound, "Development persona not found", "开发身份不存在。")
+	}
+	user.IsAdmin = isAdmin
+	s.users[user.ID] = user
+	session := newSession(user.ID, now)
+	s.sessions[session.ID] = session
+	return user, session, nil
+}
+
+func (s *Service) resolveOAuthUser(ctx context.Context, provider, subject string) (User, bool, *domain.AppError) {
+	if s.repo != nil {
+		return s.repo.ResolveExistingOAuthUser(ctx, provider, subject)
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	userID := s.oauthUserIDs[OAuthIdentityKey(provider, subject)]
+	user, found := s.users[userID]
+	return user, found, nil
+}
+
 func (s *Service) LoginWithOAuthProfile(ctx context.Context, profile OAuthProfile) (User, Session, *domain.AppError) {
 	profile.Provider = CanonicalOAuthProvider(profile.Provider)
 	profile.Subject = CanonicalOAuthSubject(profile.Subject)

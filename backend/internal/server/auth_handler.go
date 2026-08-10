@@ -5,6 +5,7 @@ import (
 	"c2c-market/backend/internal/domain"
 	"c2c-market/backend/internal/middleware"
 	"c2c-market/backend/internal/module/auth"
+	"c2c-market/backend/internal/module/devpersona"
 	"c2c-market/backend/internal/module/promotionreward"
 	"context"
 	"crypto/rand"
@@ -28,6 +29,10 @@ const accountAppealFrontendPath = "/account-appeal"
 type devSessionRequest struct {
 	Username string `json:"username"`
 	Admin    bool   `json:"admin"`
+}
+
+type devPersonaSessionRequest struct {
+	Persona string `json:"persona"`
 }
 
 type passwordLoginRequest struct {
@@ -117,6 +122,13 @@ type sessionResponse struct {
 	ExpiresAt string  `json:"expiresAt"`
 }
 
+type devPersonaSessionResponse struct {
+	Persona   devpersona.Persona `json:"persona"`
+	User      userDTO            `json:"user"`
+	CSRFToken string             `json:"csrfToken"`
+	ExpiresAt string             `json:"expiresAt"`
+}
+
 type userDTO struct {
 	ID              string                   `json:"id"`
 	AnalyticsUserID string                   `json:"analyticsUserId"`
@@ -171,6 +183,30 @@ func (s *Server) handleDevSession(w http.ResponseWriter, r *http.Request) {
 		User:      toUserDTO(user),
 		CSRFToken: session.CSRFToken,
 		ExpiresAt: session.ExpiresAt.UTC().Format(time.RFC3339),
+	})
+}
+
+func (s *Server) handleDevPersonaSession(w http.ResponseWriter, r *http.Request) {
+	if !s.enableDevAuth {
+		writeProblem(w, r, domain.NewError(http.StatusNotFound, domain.CodeObjectNotFound, "Not found", "接口不存在。"))
+		return
+	}
+	req, appErr := decodeStrictJSONOnly[devPersonaSessionRequest](r)
+	if appErr != nil {
+		writeProblem(w, r, appErr)
+		return
+	}
+	result, appErr := s.devPersonas.PrepareDevPersonaSession(r.Context(), req.Persona)
+	if appErr != nil {
+		writeProblem(w, r, appErr)
+		return
+	}
+	s.setSessionCookie(w, result.Session)
+	writeJSON(w, http.StatusOK, devPersonaSessionResponse{
+		Persona:   result.Persona,
+		User:      toUserDTO(result.User),
+		CSRFToken: result.Session.CSRFToken,
+		ExpiresAt: result.Session.ExpiresAt.UTC().Format(time.RFC3339),
 	})
 }
 

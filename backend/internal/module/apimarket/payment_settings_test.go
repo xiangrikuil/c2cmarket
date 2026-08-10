@@ -59,6 +59,20 @@ func TestAccountPaymentSettingsRequireExactlyOneEnabledMethod(t *testing.T) {
 	}
 }
 
+func TestHasSingleUsableAccountPaymentOptionUsesAccountValidation(t *testing.T) {
+	valid := []PaymentOptionInput{
+		{PaymentMethod: PaymentMethodWechat, Enabled: true, PaymentQRCodeDataURL: "data:image/png;base64,d2VjaGF0"},
+		{PaymentMethod: PaymentMethodAlipay},
+	}
+	if !HasSingleUsableAccountPaymentOption(valid) {
+		t.Fatal("expected validated account payment option to be usable")
+	}
+	valid[0].PaymentQRCodeDataURL = ""
+	if HasSingleUsableAccountPaymentOption(valid) {
+		t.Fatal("enabled QR payment without a QR code must be unusable")
+	}
+}
+
 func TestAccountPaymentSettingsValidationBoundaries(t *testing.T) {
 	validOptions := []PaymentOptionInput{
 		{PaymentMethod: PaymentMethodWechat, Enabled: true, PaymentQRCodeDataURL: "data:image/png;base64,d2VjaGF0"},

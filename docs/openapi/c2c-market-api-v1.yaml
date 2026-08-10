@@ -110,6 +110,34 @@ paths:
                 $ref: "#/components/schemas/SessionResponse"
         "429":
           $ref: "#/components/responses/RateLimited"
+  /api/v1/auth/dev-persona-session:
+    post:
+      x-dev-only: true
+      operationId: createDevPersonaSession
+      tags: [DevAuth]
+      security: []
+      summary: Prepare and sign in as a fixed local development persona.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DevPersonaSessionRequest"
+      responses:
+        "200":
+          description: Prepared development persona and normal session.
+          headers:
+            Set-Cookie:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DevPersonaSessionResponse"
+        "422":
+          $ref: "#/components/responses/Problem"
+        "429":
+          $ref: "#/components/responses/RateLimited"
   /api/v1/auth/session:
     get:
       operationId: getSession
@@ -10063,6 +10091,29 @@ components:
       type: object
       required: [user, csrfToken, expiresAt]
       properties:
+        user:
+          $ref: "#/components/schemas/User"
+        csrfToken:
+          type: string
+        expiresAt:
+          type: string
+          format: date-time
+    DevPersonaSessionRequest:
+      type: object
+      additionalProperties: false
+      required: [persona]
+      properties:
+        persona:
+          type: string
+          enum: [buyer, seller, admin]
+    DevPersonaSessionResponse:
+      type: object
+      additionalProperties: false
+      required: [persona, user, csrfToken, expiresAt]
+      properties:
+        persona:
+          type: string
+          enum: [buyer, seller, admin]
         user:
           $ref: "#/components/schemas/User"
         csrfToken:

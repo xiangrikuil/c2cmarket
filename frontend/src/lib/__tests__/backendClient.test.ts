@@ -280,6 +280,185 @@ test('logout revokes the backend session and clears the cached session', async (
   assert.equal(fetchMock.mock.calls[2]?.[0], '/api/v1/auth/session')
 })
 
+test('development persona login replaces the cached session and CSRF token', async () => {
+  const fetchMock = vi.fn()
+  vi.stubGlobal('fetch', fetchMock)
+  const originalSession = {
+    csrfToken: 'buyer-csrf',
+    expiresAt: '2999-01-01T00:00:00Z',
+    user: {
+      id: 'buyer-id',
+      analyticsUserId: 'a1111111-1111-4111-8111-111111111111',
+      username: 'dev-buyer',
+      displayName: '开发买家',
+      isAdmin: false,
+      permissions: [],
+      linuxDoBinding: { bound: true },
+    },
+  }
+  const sellerSession = {
+    persona: 'seller',
+    csrfToken: 'seller-csrf',
+    expiresAt: '2999-01-01T00:00:00Z',
+    user: {
+      id: 'seller-id',
+      analyticsUserId: 'a2222222-2222-4222-8222-222222222222',
+      username: 'dev-seller',
+      displayName: '开发卖家',
+      isAdmin: false,
+      permissions: [],
+      linuxDoBinding: { bound: true },
+    },
+  }
+  fetchMock
+    .mockResolvedValueOnce(jsonResponse(originalSession))
+    .mockResolvedValueOnce(jsonResponse(sellerSession))
+
+  const client = await loadBackendClient({ apiMode: 'real' })
+  await client.getCurrentBackendSession()
+  const switched = await client.createDevPersonaSession('seller')
+
+  assert.deepEqual(switched, sellerSession)
+  assert.equal(client.getBackendCSRFToken(), 'seller-csrf')
+  assert.deepEqual(await client.getCurrentBackendSession(), sellerSession)
+  assert.equal(fetchMock.mock.calls.length, 2)
+  assert.equal(fetchMock.mock.calls[1]?.[0], '/api/v1/auth/dev-persona-session')
+  assert.equal((fetchMock.mock.calls[1]?.[1] as RequestInit).body, JSON.stringify({ persona: 'seller' }))
+})
+
+test('development persona login cannot be overwritten by an older session request', async () => {
+  let resolveOldSession!: (response: Response) => void
+  const oldSessionResponse = new Promise<Response>((resolve) => {
+    resolveOldSession = resolve
+  })
+  const sellerSession = {
+    persona: 'seller' as const,
+    csrfToken: 'seller-csrf',
+    expiresAt: '2999-01-01T00:00:00Z',
+    user: {
+      id: 'seller-id',
+      analyticsUserId: 'a2222222-2222-4222-8222-222222222222',
+      username: 'dev-seller',
+      displayName: '开发卖家',
+      isAdmin: false,
+      permissions: [],
+      linuxDoBinding: { bound: true },
+    },
+  }
+  const oldBuyerSession = {
+    ...sellerSession,
+    persona: undefined,
+    csrfToken: 'old-buyer-csrf',
+    user: { ...sellerSession.user, id: 'buyer-id', username: 'dev-buyer', displayName: '开发买家' },
+  }
+  const fetchMock = vi.fn()
+    .mockImplementationOnce(() => oldSessionResponse)
+    .mockResolvedValueOnce(jsonResponse(sellerSession))
+  vi.stubGlobal('fetch', fetchMock)
+
+  const client = await loadBackendClient({ apiMode: 'real' })
+  const staleRead = client.getCurrentBackendSession()
+  const switched = await client.createDevPersonaSession('seller')
+  resolveOldSession(jsonResponse(oldBuyerSession))
+
+  assert.deepEqual(await staleRead, sellerSession)
+  assert.deepEqual(switched, sellerSession)
+  assert.equal(client.getBackendCSRFToken(), 'seller-csrf')
+  assert.deepEqual(await client.getCurrentBackendSession(), sellerSession)
+  assert.equal(fetchMock.mock.calls.length, 2)
+})
+
+test('an older authenticated failure cannot clear a replacement persona session', async () => {
+  let resolveOldRequest!: (response: Response) => void
+  const oldRequestResponse = new Promise<Response>((resolve) => {
+    resolveOldRequest = resolve
+  })
+  const sellerSession = {
+    persona: 'seller' as const,
+    csrfToken: 'seller-csrf',
+    expiresAt: '2999-01-01T00:00:00Z',
+    user: {
+      id: 'seller-id',
+      analyticsUserId: 'a2222222-2222-4222-8222-222222222222',
+      username: 'dev-seller',
+      displayName: '开发卖家',
+      isAdmin: false,
+      permissions: [],
+      linuxDoBinding: { bound: true },
+    },
+  }
+  const fetchMock = vi.fn()
+    .mockImplementationOnce(() => oldRequestResponse)
+    .mockResolvedValueOnce(jsonResponse(sellerSession))
+  vi.stubGlobal('fetch', fetchMock)
+
+  const client = await loadBackendClient({ apiMode: 'real' })
+  const oldRequest = client.backendRequest('/api/v1/private')
+  await client.createDevPersonaSession('seller')
+  resolveOldRequest(problemResponse({
+    status: 401,
+    code: 'SESSION_REVOKED',
+    detail: '旧会话已失效。',
+  }, 401))
+
+  await assert.rejects(oldRequest)
+  assert.equal(client.getBackendCSRFToken(), 'seller-csrf')
+  assert.deepEqual(await client.getCurrentBackendSession(), sellerSession)
+  assert.equal(fetchMock.mock.calls.length, 2)
+})
+
+test('a replacement persona does not coalesce GETs with the previous session generation', async () => {
+  let resolveOldProfile!: (response: Response) => void
+  const oldProfileResponse = new Promise<Response>((resolve) => {
+    resolveOldProfile = resolve
+  })
+  const sellerSession = {
+    persona: 'seller' as const,
+    csrfToken: 'seller-csrf',
+    expiresAt: '2999-01-01T00:00:00Z',
+    user: {
+      id: 'seller-id',
+      analyticsUserId: 'a2222222-2222-4222-8222-222222222222',
+      username: 'dev-seller',
+      displayName: '开发卖家',
+      isAdmin: false,
+      permissions: [],
+      linuxDoBinding: { bound: true },
+    },
+  }
+  const newProfile = { id: 'seller-id', username: 'dev-seller', displayName: '开发卖家' }
+  const oldProfile = { id: 'buyer-id', username: 'dev-buyer', displayName: '开发买家' }
+  const fetchMock = vi.fn()
+    .mockImplementationOnce(() => oldProfileResponse)
+    .mockResolvedValueOnce(jsonResponse(sellerSession))
+    .mockResolvedValueOnce(jsonResponse(newProfile))
+  vi.stubGlobal('fetch', fetchMock)
+
+  const client = await loadBackendClient({ apiMode: 'real' })
+  const previousProfileRead = client.backendRequest('/api/v1/me/profile')
+  await client.createDevPersonaSession('seller')
+  const replacementProfile = await client.backendRequest('/api/v1/me/profile')
+  resolveOldProfile(jsonResponse(oldProfile))
+
+  assert.deepEqual(replacementProfile, newProfile)
+  assert.deepEqual(await previousProfileRead, oldProfile)
+  assert.equal(fetchMock.mock.calls.length, 3)
+  assert.equal(fetchMock.mock.calls[0]?.[0], '/api/v1/me/profile')
+  assert.equal(fetchMock.mock.calls[2]?.[0], '/api/v1/me/profile')
+})
+
+test('development persona login has no mock-mode fallback', async () => {
+  const fetchMock = vi.fn()
+  vi.stubGlobal('fetch', fetchMock)
+  const client = await loadBackendClient({ apiMode: 'mock' })
+
+  await assert.rejects(
+    () => client.createDevPersonaSession('buyer'),
+    /requires real API mode/,
+  )
+  assert.equal(fetchMock.mock.calls.length, 0)
+})
+
 test('OAuth start sends only the stored bounded registration attribution', async () => {
   const values = new Map<string, string>()
   const sessionStorage = {
