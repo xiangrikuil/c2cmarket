@@ -1592,3 +1592,25 @@ Added administrator-reviewed models.dev preview/apply, atomic price version upda
 ### Status
 
 [OK] **Completed**
+
+
+## Session 50: Development personas and user switcher
+
+**Date**: 2026-08-10
+**Task**: Development personas and user switcher
+**Package**: frontend
+**Branch**: `codex/dev-user-switcher`
+
+### Summary
+
+Added fixed buyer, seller, and admin development personas, protected session bootstrap tooling, a dev-only responsive switcher, exact admin permission handling, session cache race protection, OpenAPI coverage, PostgreSQL integration tests, and local browser verification.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `d995824` | (see git log) |
+
+### Status
+
+[OK] **Completed**
