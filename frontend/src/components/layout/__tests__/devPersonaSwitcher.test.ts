@@ -17,6 +17,11 @@ describe('development persona switcher', () => {
   })
 
   it('clears and refetches stale user state before navigating home', () => {
+    expect(switcher).toContain('v-model:open="popoverOpen"')
+    expect(switcher).toContain('<PopoverContent align="end"')
+    expect(switcher).toContain('@click="choosePersona(item.persona)"')
+    expect(switcher).toContain('popoverOpen.value = false')
+    expect(switcher).toContain('collisionSuffixPattern.test')
     expect(switcher).toContain('queryClient.getMutationCache().clear()')
     expect(switcher).toContain("queryClient.removeQueries({ type: 'inactive' })")
     expect(switcher).toContain("queryClient.resetQueries({ type: 'active' })")

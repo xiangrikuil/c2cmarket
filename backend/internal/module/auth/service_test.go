@@ -2,7 +2,6 @@ package auth
 
 import (
 	"context"
-	"net/http"
 	"strconv"
 	"strings"
 	"sync"
@@ -288,20 +287,20 @@ func TestLoginDevPersonaIdentityPreservesCustomizedDisplayName(t *testing.T) {
 	}
 }
 
-func TestLoginDevPersonaIdentityRejectsOccupiedUsernameWithoutGrantingAdmin(t *testing.T) {
+func TestLoginDevPersonaIdentityUsesIsolatedIdentityWhenUsernameIsOccupied(t *testing.T) {
 	service := NewService(nil, time.Now)
 	occupied, _, appErr := service.CreateDevSession(context.Background(), "dev-seller", false)
 	if appErr != nil {
 		t.Fatalf("create occupied username: %v", appErr)
 	}
 
-	_, appErr = service.LoginDevPersonaIdentity(context.Background(), OAuthProfile{
+	isolated, appErr := service.LoginDevPersonaIdentity(context.Background(), OAuthProfile{
 		Provider: "linux_do",
 		Subject:  "dev-persona-seller",
 		Username: "dev-seller",
 	}, "开发卖家")
-	if appErr == nil || appErr.Status != http.StatusConflict {
-		t.Fatalf("expected occupied persona username conflict, got %+v", appErr)
+	if appErr != nil {
+		t.Fatalf("login isolated development persona: %v", appErr)
 	}
 	service.mu.Lock()
 	occupiedAfter := service.users[occupied.ID]
@@ -309,9 +308,9 @@ func TestLoginDevPersonaIdentityRejectsOccupiedUsernameWithoutGrantingAdmin(t *t
 	if occupiedAfter.IsAdmin {
 		t.Fatalf("occupied account must remain non-admin: %+v", occupiedAfter)
 	}
-	isolated, found, appErr := service.resolveOAuthUser(context.Background(), "linux_do", "dev-persona-seller")
-	if appErr != nil || !found {
-		t.Fatalf("expected isolated OAuth identity, found=%v err=%v", found, appErr)
+	resolved, found, appErr := service.resolveOAuthUser(context.Background(), "linux_do", "dev-persona-seller")
+	if appErr != nil || !found || resolved.ID != isolated.ID {
+		t.Fatalf("expected isolated OAuth identity, user=%+v found=%v err=%v", resolved, found, appErr)
 	}
 	if isolated.Username == "dev-seller" || isolated.IsAdmin {
 		t.Fatalf("collision identity must be isolated and non-admin: %+v", isolated)

@@ -139,6 +139,28 @@ func TestPrepareSessionPreservesUsableSellerData(t *testing.T) {
 	}
 }
 
+func TestPrepareSessionKeepsOccupiedPreferredUsernameIsolated(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	services := newTestServices()
+	occupied, _, appErr := services.identity.CreateDevSession(ctx, "dev-seller", false)
+	if appErr != nil {
+		t.Fatalf("occupy preferred seller username: %v", appErr)
+	}
+
+	prepared, appErr := services.personas.PrepareSession(ctx, string(Seller))
+	if appErr != nil {
+		t.Fatalf("prepare isolated seller: %v", appErr)
+	}
+	if prepared.User.ID == occupied.ID || prepared.User.Username == occupied.Username {
+		t.Fatalf("development persona reused occupied account: occupied=%+v prepared=%+v", occupied, prepared.User)
+	}
+	merchant, appErr := services.profiles.MyMerchantProfile(ctx, prepared.User)
+	if appErr != nil || merchant.Slug != prepared.User.Username {
+		t.Fatalf("isolated seller merchant mismatch: merchant=%+v err=%v", merchant, appErr)
+	}
+}
+
 func TestParseRejectsUnknownPersona(t *testing.T) {
 	t.Parallel()
 	for _, value := range []string{"developer", "Buyer", " buyer "} {

@@ -147,7 +147,7 @@ func (s *Service) ensureSellerReadiness(ctx context.Context, user auth.User, def
 			return appErr
 		}
 		if _, appErr := s.profiles.UpsertMyMerchantProfile(ctx, user, profile.UpsertMerchantProfileInput{
-			Slug:        definition.Username,
+			Slug:        user.Username,
 			DisplayName: definition.DisplayName + "店铺",
 		}); appErr != nil {
 			return appErr

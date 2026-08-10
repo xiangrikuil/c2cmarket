@@ -145,7 +145,6 @@ func (s *Service) CreateDevSession(ctx context.Context, username string, isAdmin
 func (s *Service) LoginDevPersonaIdentity(ctx context.Context, profile OAuthProfile, displayName string) (User, *domain.AppError) {
 	provider := CanonicalOAuthProvider(profile.Provider)
 	subject := CanonicalOAuthSubject(profile.Subject)
-	expectedUsername := OAuthUsernameCandidate(profile.Username, provider, subject, 0)
 	profile.DisplayName = strings.TrimSpace(displayName)
 
 	existing, found, appErr := s.resolveOAuthUser(ctx, provider, subject)
@@ -159,17 +158,6 @@ func (s *Service) LoginDevPersonaIdentity(ctx context.Context, profile OAuthProf
 	user, _, appErr := s.LoginWithOAuthProfile(ctx, profile)
 	if appErr != nil {
 		return User{}, appErr
-	}
-	if user.Username != expectedUsername {
-		return User{}, domain.NewFieldError(
-			http.StatusConflict,
-			domain.CodeValidationFailed,
-			"Development persona username unavailable",
-			"开发身份用户名已被其他账号占用。",
-			"username",
-			"unavailable",
-			"开发身份用户名已被其他账号占用。",
-		)
 	}
 	return user, nil
 }
