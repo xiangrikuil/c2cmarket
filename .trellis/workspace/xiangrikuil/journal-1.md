@@ -1592,3 +1592,25 @@ Added administrator-reviewed models.dev preview/apply, atomic price version upda
 ### Status
 
 [OK] **Completed**
+
+
+## Session 50: 管理员 API 订单监管分页与筛选
+
+**Date**: 2026-08-10
+**Task**: 管理员 API 订单监管分页与筛选
+**Package**: frontend
+**Branch**: `codex/admin-api-order-supervision`
+
+### Summary
+
+完成管理员 API 订单数据库级组合筛选、稳定 keyset 分页、OpenAPI/前端/Mock 对齐及双视口验证。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `51103da` | (see git log) |
+
+### Status
+
+[OK] **Completed**
