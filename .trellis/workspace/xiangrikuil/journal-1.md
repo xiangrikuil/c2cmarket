@@ -1592,3 +1592,25 @@ Added administrator-reviewed models.dev preview/apply, atomic price version upda
 ### Status
 
 [OK] **Completed**
+
+
+## Session 50: API order after-sales contacts and refund evidence
+
+**Date**: 2026-08-10
+**Task**: API order after-sales contacts and refund evidence
+**Package**: frontend
+**Branch**: `codex/api-order-after-sales-contacts`
+
+### Summary
+
+Added multi-contact merchant snapshots, completed-order 24-hour dispute reporting grace period, frozen refund policy evidence, migration 89, and frontend/backend coverage.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `3b29dc8` | (see git log) |
+
+### Status
+
+[OK] **Completed**

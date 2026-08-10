@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 49
+- **Total Sessions**: 50
 - **Last Active**: 2026-08-10
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~1594 | Active |
+| `journal-1.md` | ~1616 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 50 | 2026-08-10 | API order after-sales contacts and refund evidence | `3b29dc8` | `codex/api-order-after-sales-contacts` |
 | 49 | 2026-08-10 | 完善审计发现的未完成功能 | `284cfd526d924c275c0ba738e5f32af3146c36a3`, `5830894022420d114ec6f04e3704d81e980cf807`, `34dbb85389bcb91f3e6a4af37085e1c73248016a` | `codex/complete-unfinished-workflows` |
 | 48 | 2026-08-10 | 公告体验与首页公告条收口 | `72c5967`, `3b2fbbb`, `82f9a9c`, `6490c09` | `codex/api-health-probe-repeat-prompts` |
 | 47 | 2026-08-10 | 全仓半成品功能审计 | - | `codex/api-health-probe-repeat-prompts` |
