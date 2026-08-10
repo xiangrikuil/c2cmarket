@@ -99,6 +99,7 @@ import {
 import type { ReputationSummary } from '@/types/reputation'
 import type { ApiServiceHealthHourlyBucket, ApiServiceHealthSample, ApiServiceHealthSummary } from '@/types/apiHealth'
 import { getOwnerAPIProbeConnections, updateMockAPIProbeConnectionReference } from '@/lib/apiHealthFacade'
+import { backendAdminAuditLogRows, backendAdminAuditLogRowsPage } from '@/lib/adminAuditBackend'
 import type { ApiQuotaUsagePolicy, ApiQuotaUsagePolicyInput } from '@/types/apiQuota'
 export type { ApiQuotaLimitMode, ApiQuotaUsageLimit, ApiQuotaUsageLimitInput, ApiQuotaUsagePolicy, ApiQuotaUsagePolicyInput, ApiWritableQuotaLimitMode } from '@/types/apiQuota'
 import { mockPublicUserReputation } from '@/lib/reputationMock'
@@ -153,6 +154,7 @@ import {
   backendGetCarpoolById,
   backendGetCarpools,
   backendGetCarpoolsPage,
+	backendOwnerCarpoolForEdit,
   backendOwnerCarpools,
   backendOwnerCarpoolsPage,
   backendMerchantCarpoolApplications,
@@ -165,6 +167,7 @@ import {
   backendRejectCarpoolApplication,
   backendRunAdminCarpoolAction,
   backendSubmitCarpool,
+	backendUpdateOwnerCarpool,
   backendUpdateAdminCarpoolStatus,
   backendWithdrawCarpoolAcceptance,
 } from '@/lib/carpoolBackend'
@@ -250,6 +253,7 @@ import {
   backendUpdateContact,
   backendUpdateMyProfile,
   backendUpsertMerchantProfile,
+  backendUseLinuxDoAvatar,
   backendVerifyContact,
   type BackendMerchantProfile,
 } from '@/lib/profileBackend'
@@ -811,6 +815,7 @@ export type CarpoolApplicationWithMeta = CarpoolApplication & BackendResourceMet
 export type OfficialPriceWithMeta = OfficialPrice & BackendResourceMeta
 
 export type CarpoolDraftStatus = 'draft' | 'reviewing'
+export type OwnerCarpoolView = 'recruiting' | 'serving' | 'history' | 'needs_edit'
 
 export type SaveCarpoolDraftPayload = {
   productId: string
@@ -846,6 +851,14 @@ export type SaveCarpoolDraftPayload = {
   }
   rulesNote: string
   status: CarpoolDraftStatus
+}
+
+export type OwnerCarpoolEditData = {
+	id: string
+	version: number
+	backendStatus: string
+	ownerContactMethodId: string
+	payload: SaveCarpoolDraftPayload
 }
 
 const wait = () => new Promise(resolve => setTimeout(resolve, 80))
@@ -2358,17 +2371,111 @@ export async function getCarpoolApplicationEligibility(id: string): Promise<Carp
   return clone(evaluateCarpoolApplicationEligibility(carpool, getCarpoolSeatSummary(carpool), hasOngoingApplication, currentBuyerId, hasActiveMembership))
 }
 
-export async function getMyCarpools() {
-  if (shouldUseRealBackend()) return backendOwnerCarpools()
-  await wait()
-  return clone(carpoolStore
-    .filter(item => item.owner === currentOwnerName)
-    .map(item => ({ ...item, seatSummary: getCarpoolSeatSummary(item) })))
+export async function getMyCarpools(view?: OwnerCarpoolView) {
+	if (shouldUseRealBackend()) return backendOwnerCarpools(view)
+	await wait()
+	return clone(carpoolStore
+		.filter(item => item.owner === currentOwnerName)
+		.filter(item => {
+			if (!view) return true
+			if (view === 'recruiting') return item.status === '可上车' && item.currentConfirmedMembers === 0
+			if (view === 'serving') return item.status === '可上车' && item.currentConfirmedMembers > 0
+			if (view === 'history') return false
+			return item.status === '暂停' || item.status === '审核中'
+		})
+		.map(item => ({ ...item, seatSummary: getCarpoolSeatSummary(item) })))
 }
 
-export async function getMyCarpoolsPage(page: CursorPageRequest = {}): Promise<CursorPage<CarpoolWithMeta>> {
-  if (shouldUseRealBackend()) return backendOwnerCarpoolsPage(page)
-  return paginateCursorItems(await getMyCarpools(), page)
+export async function getMyCarpoolsPage(view: OwnerCarpoolView, page: CursorPageRequest = {}): Promise<CursorPage<CarpoolWithMeta>> {
+	if (shouldUseRealBackend()) return backendOwnerCarpoolsPage(view, page)
+	return paginateCursorItems(await getMyCarpools(view), page)
+}
+
+export async function getMyCarpoolForEdit(id: string): Promise<OwnerCarpoolEditData> {
+	if (shouldUseRealBackend()) return backendOwnerCarpoolForEdit(id)
+	await wait()
+	const carpool = carpoolStore.find(item => item.id === id && item.owner === currentOwnerName)
+	if (!carpool) throw new Error('车源不存在。')
+	const product = carpoolProductCatalog.find(item => item.displayName === carpool.product)
+	const region = carpoolRegions.find(item => item.displayName === carpool.region)
+	return clone({
+		id: carpool.id,
+		version: 1,
+		backendStatus: carpool.status === '审核中' ? 'pending_review' : 'draft',
+		ownerContactMethodId: 'mock-owner-contact',
+		payload: {
+			productId: product?.id ?? '',
+			customProductName: product ? null : carpool.product,
+			regionCode: region?.code ?? 'other',
+			customRegionName: region ? null : carpool.region,
+			monthlyPriceCny: carpool.monthly,
+			serviceMultiplier: carpool.serviceMultiplier ?? 1,
+			dailyQuotaAmount: carpool.dailyQuotaAmount ?? null,
+			weeklyQuotaAmount: carpool.weeklyQuotaAmount ?? null,
+			followsOfficialQuotaReset: carpool.followsOfficialQuotaReset ?? null,
+			vpsRegion: carpool.vpsRegion ?? '',
+			supportsMainlandChinaDirectConnection: carpool.supportsMainlandChinaDirectConnection ?? null,
+			totalSeats: carpool.maxMembers,
+			occupiedSeats: carpool.currentConfirmedMembers,
+			openingChannelCode: carpool.openingChannelCode ?? '',
+			customOpeningChannel: carpool.customOpeningChannel ?? '',
+			paymentMethodCode: carpool.paymentMethodCode ?? '',
+			customPaymentMethod: carpool.customPaymentMethod ?? '',
+			distributionMethod: carpool.distributionMethod,
+			distributionMethodNote: carpool.distributionMethodNote,
+			providesAdminAccount: carpool.providesAdminAccount,
+			accessArrangementMode: carpool.accessArrangementMode,
+			accessArrangementNote: carpool.accessArrangementNote,
+			riskAcknowledged: carpool.riskAcknowledged,
+			policyVersion: product?.policyVersion ?? null,
+			riskNoticeCode: carpool.riskNoticeCode ?? null,
+			warranty: {
+				mode: 'remaining_days_compensation',
+				fixedWarrantyDays: null,
+				compensationMethod: '按未使用天数补时或退还对应周期费用',
+				exclusions: '',
+			},
+			rulesNote: carpool.accessArrangementNote ?? carpool.distributionMethodNote,
+			status: 'draft',
+		},
+	})
+}
+
+export async function updateMyCarpool(id: string, payload: SaveCarpoolDraftPayload, version: number, ownerContactMethodId: string, submitForReview: boolean) {
+	if (shouldUseRealBackend()) return backendUpdateOwnerCarpool(id, payload, version, ownerContactMethodId, submitForReview)
+	await wait()
+	const index = carpoolStore.findIndex(item => item.id === id && item.owner === currentOwnerName)
+	if (index < 0) throw new Error('车源不存在。')
+	const current = carpoolStore[index]!
+	const product = carpoolProductCatalog.find(item => item.id === payload.productId)
+	const region = carpoolRegions.find(item => item.code === payload.regionCode)
+	const updated: Carpool = {
+		...current,
+		product: payload.customProductName?.trim() || product?.displayName || current.product,
+		region: payload.customRegionName?.trim() || region?.displayName || current.region,
+		monthly: payload.monthlyPriceCny ?? 0,
+		dailyQuotaAmount: payload.dailyQuotaAmount ?? undefined,
+		weeklyQuotaAmount: payload.weeklyQuotaAmount ?? undefined,
+		followsOfficialQuotaReset: payload.followsOfficialQuotaReset,
+		vpsRegion: payload.vpsRegion,
+		supportsMainlandChinaDirectConnection: payload.supportsMainlandChinaDirectConnection,
+		currentConfirmedMembers: payload.occupiedSeats,
+		maxMembers: payload.totalSeats,
+		openingChannelCode: payload.openingChannelCode as Carpool['openingChannelCode'],
+		customOpeningChannel: payload.customOpeningChannel || null,
+		paymentMethodCode: payload.paymentMethodCode as Carpool['paymentMethodCode'],
+		customPaymentMethod: payload.customPaymentMethod || null,
+		distributionMethod: payload.distributionMethod || 'other',
+		distributionMethodNote: payload.distributionMethodNote ?? '',
+		providesAdminAccount: Boolean(payload.providesAdminAccount),
+		accessArrangementMode: payload.accessArrangementMode,
+		accessArrangementNote: payload.accessArrangementNote,
+		status: submitForReview ? '审核中' : '暂停',
+		confirmedAt: nowText(),
+	}
+	carpoolStore[index] = updated
+	persistMarketStores()
+	return clone({ ...updated, backendVersion: version + (submitForReview ? 2 : 1), backendStatus: submitForReview ? 'pending_review' : 'draft' })
 }
 
 export async function getCarpoolProductCatalog() {
@@ -3239,6 +3346,7 @@ export async function uploadMyAvatarMock(file: File) {
 }
 
 export async function deleteCustomAvatar() {
+  if (shouldUseRealBackend()) return backendUseLinuxDoAvatar()
   await wait()
   myUserProfileStore = {
     ...myUserProfileStore,
@@ -3251,6 +3359,7 @@ export async function deleteCustomAvatar() {
 }
 
 export async function useLinuxDoAvatar() {
+  if (shouldUseRealBackend()) return backendUseLinuxDoAvatar()
   await wait()
   myUserProfileStore = {
     ...myUserProfileStore,
@@ -3383,13 +3492,7 @@ export async function getPublicMerchantProfile(username: string) {
   await wait()
   const profile = publicMerchantProfiles.find(item => item.username === username)
   if (!profile) return null
-  return clone({
-    profile,
-    services: apiServiceStore.filter(item => item.merchantUsername === username && isApiServicePubliclyOrderable(item) && canOpenApiMerchantProfile(item)),
-    completions: publicCompletionRecords.filter(item => item.username === username),
-    reviews: publicReviewsForProfile(username),
-    disputes: publicDisputeRecords.filter(item => item.username === username),
-  })
+	  return clone(profile)
 }
 
 export async function getPublicUserProfile(username: string) {
@@ -3402,9 +3505,41 @@ export async function getPublicUserProfile(username: string) {
   return clone({
     profile: sanitizePublicUserProfile(profile),
     reputations: reputation.reputations,
-    carpools: carpoolStore.filter(item => item.owner === username && item.status === '可上车'),
-    services: apiServiceStore.filter(item => item.merchantUsername === username && isApiServicePubliclyOrderable(item) && canOpenApiMerchantProfile(item)),
-    completions: publicCompletionRecords.filter(item => item.username === username),
+	    carpools: carpoolStore
+	      .filter(item => item.owner === username && item.status === '可上车')
+	      .slice(0, 6)
+	      .map(item => ({
+	        id: item.id,
+	        title: item.product,
+	        summary: item.accessArrangementNote ?? item.warranty,
+	        regionName: item.region,
+	        priceMonthlyCny: String(item.monthly),
+	        availableSeats: Math.max(0, item.maxMembers - item.currentConfirmedMembers),
+	        updatedAt: item.confirmedAt,
+	      })),
+	    services: apiServiceStore
+	      .filter(item => item.merchantUsername === username && item.merchantIdentityMode === 'public_profile' && isApiServicePubliclyOrderable(item))
+	      .slice(0, 6)
+	      .map(item => ({
+	        id: item.id,
+	        title: item.title,
+	        shortDescription: item.merchantNote,
+	        billingMode: item.billingMode,
+	        availableUsdAllowance: item.availableUsdAllowance ?? '',
+	        usageVisibility: item.usageVisibility,
+	        refundCommitment: Boolean(item.merchantRefundCommitment),
+	        updatedAt: item.serviceUpdatedAt ?? item.lastOnlineConfirmedAt,
+	      })),
+	    completions: publicCompletionRecords
+	      .filter(item => item.username === username)
+	      .slice(0, 10)
+	      .map(item => ({
+	        id: item.id,
+	        kind: item.serviceType.includes('API') ? 'api_order' as const : 'carpool' as const,
+	        title: item.serviceType,
+	        role: 'buyer' as const,
+	        completedAt: item.date,
+	      })),
     reviews: publicReviewsForProfile(username),
     disputes: publicDisputeRecords.filter(item => item.username === username),
   })
@@ -3883,6 +4018,10 @@ export async function getAdminSectionRows(section: AdminSection): Promise<AdminR
     return backendAdminAPIOrderRows()
   }
 
+  if (shouldUseRealBackend() && section === 'logs') {
+    return backendAdminAuditLogRows()
+  }
+
   function apiServiceAdminTargetLink(item: ApiService) {
     return getApiServicePublicDetailUrl(item)
   }
@@ -4015,6 +4154,10 @@ export type AdminSectionPageFilters = {
   view?: 'public' | 'exceptions'
   activeStatus?: string
   risk?: 'all' | 'high' | 'has_note'
+  action?: string
+  targetType?: string
+  actorUserId?: string
+  targetId?: string
 }
 
 function adminSectionBackendStatuses(section: AdminSection, activeStatus: string | undefined) {
@@ -4066,6 +4209,15 @@ export async function getAdminSectionRowsPage(section: AdminSection, filters: Ad
   }
   if (shouldUseRealBackend() && section === 'trade-intents') {
     return backendAdminAPIOrderRowsPage({ search: filters.q, risk: filters.risk }, page)
+  }
+  if (shouldUseRealBackend() && section === 'logs') {
+    return backendAdminAuditLogRowsPage({
+      search: filters.q,
+      action: filters.action,
+      targetType: filters.targetType,
+      actorUserId: filters.actorUserId,
+      targetId: filters.targetId,
+    }, page)
   }
   if (shouldUseRealBackend()) {
     throw new Error(`管理模块 ${section} 未配置服务端分页适配器。`)

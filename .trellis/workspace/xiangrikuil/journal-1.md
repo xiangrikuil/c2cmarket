@@ -1568,3 +1568,27 @@ Added administrator-reviewed models.dev preview/apply, atomic price version upda
 ### Status
 
 [OK] **Completed**
+
+
+## Session 49: 完善审计发现的未完成功能
+
+**Date**: 2026-08-10
+**Task**: 完善审计发现的未完成功能
+**Package**: frontend
+**Branch**: `codex/complete-unfinished-workflows`
+
+### Summary
+
+完成真实头像 mutation、公开资料聚合、我的车源四视图与编辑、持久化管理员审计、linux.do 动作收口、商户资料合同收缩及可重复的 11 项 smoke；完整本地门禁和浏览器验收通过。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `284cfd526d924c275c0ba738e5f32af3146c36a3` | (see git log) |
+| `5830894022420d114ec6f04e3704d81e980cf807` | (see git log) |
+| `34dbb85389bcb91f3e6a4af37085e1c73248016a` | (see git log) |
+
+### Status
+
+[OK] **Completed**

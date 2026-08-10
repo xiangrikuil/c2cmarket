@@ -774,8 +774,8 @@ paths:
           description: Public merchant profile without owner user id or contact values.
           content:
             application/json:
-              schema:
-                $ref: "#/components/schemas/PublicMerchantProfileBundle"
+                schema:
+                  $ref: "#/components/schemas/PublicMerchantProfile"
         "404":
           $ref: "#/components/responses/Problem"
   /api/v1/announcements:
@@ -2277,6 +2277,12 @@ paths:
       operationId: listMyCarpools
       tags: [Carpools]
       parameters:
+        - name: view
+          in: query
+          schema:
+            type: string
+            enum: [recruiting, serving, history, needs_edit]
+          description: Owner listing view. Filtering is applied before cursor pagination.
         - $ref: "#/components/parameters/Limit"
         - $ref: "#/components/parameters/Cursor"
       responses:
@@ -2286,6 +2292,31 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/CarpoolListingList"
+        "401":
+          $ref: "#/components/responses/Problem"
+        "422":
+          $ref: "#/components/responses/Problem"
+  /api/v1/me/carpools/{id}:
+    get:
+      operationId: getMyCarpool
+      tags: [Carpools]
+      parameters:
+        - $ref: "#/components/parameters/ResourceId"
+      responses:
+        "200":
+          description: Current owner's carpool listing, including non-public editable states.
+          headers:
+            ETag:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CarpoolListing"
+        "401":
+          $ref: "#/components/responses/Problem"
+        "404":
+          $ref: "#/components/responses/Problem"
   /api/v1/me/carpool-applications:
     get:
       operationId: listMyCarpoolApplications
@@ -5502,6 +5533,55 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/AdminUserList"
+        "403":
+          $ref: "#/components/responses/Problem"
+        "422":
+          $ref: "#/components/responses/Problem"
+  /api/v1/admin/audit-logs:
+    get:
+      operationId: listAdminAuditLogs
+      tags: [AdminUsers]
+      description: Return persisted administrator actions without exposing raw before/after JSON payloads.
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
+        - name: search
+          in: query
+          required: false
+          schema:
+            type: string
+            maxLength: 100
+        - name: action
+          in: query
+          required: false
+          schema:
+            type: string
+            maxLength: 100
+        - name: targetType
+          in: query
+          required: false
+          schema:
+            type: string
+            maxLength: 100
+        - name: actorUserId
+          in: query
+          required: false
+          schema:
+            type: string
+            format: uuid
+        - name: targetId
+          in: query
+          required: false
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Stable cursor page of persisted global administrator audit entries.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminAuditLogList"
         "403":
           $ref: "#/components/responses/Problem"
         "422":
@@ -9644,20 +9724,94 @@ components:
             $ref: "#/components/schemas/ReputationSnapshot"
         carpools:
           type: array
-          items: {}
+          maxItems: 6
+          items:
+            $ref: "#/components/schemas/PublicProfileCarpool"
         services:
           type: array
-          items: {}
+          maxItems: 6
+          items:
+            $ref: "#/components/schemas/PublicProfileApiService"
         completions:
           type: array
-          items: {}
+          maxItems: 10
+          items:
+            $ref: "#/components/schemas/PublicProfileCompletion"
         reviews:
           type: array
-          items: {}
+          maxItems: 10
+          items:
+            $ref: "#/components/schemas/PublicReview"
         disputes:
           type: array
+          maxItems: 10
           items:
             $ref: "#/components/schemas/PublicDispute"
+    PublicProfileCarpool:
+      type: object
+      additionalProperties: false
+      required: [id, title, summary, regionName, priceMonthlyCny, availableSeats, updatedAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        title:
+          type: string
+        summary:
+          type: string
+        regionName:
+          type: string
+        priceMonthlyCny:
+          $ref: "#/components/schemas/DecimalString"
+        availableSeats:
+          type: integer
+          minimum: 0
+        updatedAt:
+          type: string
+          format: date-time
+    PublicProfileApiService:
+      type: object
+      additionalProperties: false
+      required: [id, title, shortDescription, billingMode, availableUsdAllowance, usageVisibility, refundCommitment, updatedAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        title:
+          type: string
+        shortDescription:
+          type: string
+        billingMode:
+          type: string
+          enum: [metered_usd_quota, manual_usage_check, fixed_package]
+        availableUsdAllowance:
+          type: string
+        usageVisibility:
+          type: string
+        refundCommitment:
+          type: boolean
+        updatedAt:
+          type: string
+          format: date-time
+    PublicProfileCompletion:
+      type: object
+      additionalProperties: false
+      required: [id, kind, title, role, completedAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        kind:
+          type: string
+          enum: [carpool, api_order]
+        title:
+          type: string
+        role:
+          type: string
+          enum: [buyer, seller]
+        completedAt:
+          type: string
+          format: date-time
     PublicUserProfile:
       type: object
       description: Public profile fields only; unavailable reputation facts are null and never replaced with demo values.
@@ -9796,24 +9950,6 @@ components:
           format: date-time
         version:
           type: integer
-    PublicMerchantProfileBundle:
-      type: object
-      required: [profile, services, completions, reviews, disputes]
-      properties:
-        profile:
-          $ref: "#/components/schemas/PublicMerchantProfile"
-        services:
-          type: array
-          items: {}
-        completions:
-          type: array
-          items: {}
-        reviews:
-          type: array
-          items: {}
-        disputes:
-          type: array
-          items: {}
     PublicMerchantProfile:
       type: object
       description: Public merchant fields only; no owner user id or contact values. Unavailable reputation facts are null.
@@ -15873,6 +16009,47 @@ components:
         createdAt:
           type: string
           format: date-time
+    AdminAuditLog:
+      type: object
+      additionalProperties: false
+      required: [id, actorUserId, actorUsername, action, targetType, targetId, reason, requestId, beforeStatus, afterStatus, createdAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        actorUserId:
+          type: string
+          format: uuid
+        actorUsername:
+          type: string
+        action:
+          type: string
+        targetType:
+          type: string
+        targetId:
+          type: string
+          format: uuid
+        reason:
+          type: string
+        requestId:
+          type: string
+        beforeStatus:
+          type: [string, "null"]
+        afterStatus:
+          type: [string, "null"]
+        createdAt:
+          type: string
+          format: date-time
+    AdminAuditLogList:
+      type: object
+      required: [items, nextCursor]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/AdminAuditLog"
+        nextCursor:
+          type: [string, "null"]
     AdminUserGovernanceAction:
       type: object
       additionalProperties: false

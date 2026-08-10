@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 48
+- **Total Sessions**: 49
 - **Last Active**: 2026-08-10
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~1570 | Active |
+| `journal-1.md` | ~1594 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 49 | 2026-08-10 | 完善审计发现的未完成功能 | `284cfd526d924c275c0ba738e5f32af3146c36a3`, `5830894022420d114ec6f04e3704d81e980cf807`, `34dbb85389bcb91f3e6a4af37085e1c73248016a` | `codex/complete-unfinished-workflows` |
 | 48 | 2026-08-10 | 公告体验与首页公告条收口 | `72c5967`, `3b2fbbb`, `82f9a9c`, `6490c09` | `codex/api-health-probe-repeat-prompts` |
 | 47 | 2026-08-10 | 全仓半成品功能审计 | - | `codex/api-health-probe-repeat-prompts` |
 | 46 | 2026-08-09 | 工作区剩余改动原子提交整理 | `332bd00`…`a7fc49e` | `codex/api-health-probe-repeat-prompts` |

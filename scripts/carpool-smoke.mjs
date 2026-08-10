@@ -1,4 +1,5 @@
 const baseURL = process.env.API_BASE_URL ?? 'http://127.0.0.1:8080'
+const runSuffix = process.env.SMOKE_RUN_ID || `${Date.now()}-${Math.random().toString(16).slice(2, 10)}`
 
 function assert(condition, message) {
   if (!condition) throw new Error(message)
@@ -95,15 +96,17 @@ async function main() {
   const health = await request('/health')
   assert(health.status === 'ok', 'backend health check failed')
 
-  const owner = await linuxDoSession('carpool-smoke-owner')
-  const buyer = await session('carpool-smoke-buyer')
+  const owner = await linuxDoSession(`carpool-smoke-owner-${runSuffix}`)
+  const buyer = await session(`carpool-smoke-buyer-${runSuffix}`)
 
   const plans = await request('/api/v1/product-plans')
   const plan = plans.items.find(item => item.riskAckRequired && item.publishPolicy === 'allowed') ?? plans.items[0]
   assert(plan?.id, 'product plan catalog is empty')
 
-  const ownerContact = await createContact(owner, '@carpool_smoke_owner', 'Smoke carpool owner')
-  const buyerContact = await createContact(buyer, '@carpool_smoke_buyer', 'Smoke carpool buyer')
+  const ownerContactValue = `@carpool_owner_${runSuffix.replaceAll('-', '_')}`
+  const buyerContactValue = `@carpool_buyer_${runSuffix.replaceAll('-', '_')}`
+  const ownerContact = await createContact(owner, ownerContactValue, 'Smoke carpool owner')
+  const buyerContact = await createContact(buyer, buyerContactValue, 'Smoke carpool buyer')
 
   const listing = await request('/api/v1/carpools', {
     method: 'POST',
@@ -128,8 +131,8 @@ async function main() {
       regionName: 'Smoke 测试区',
       priceMonthlyCny: '68.00',
       serviceMultiplier: '1.0000',
+      dailyQuotaAmount: '10.00',
       weeklyQuotaAmount: '50.00',
-      monthlyQuotaAmount: '200.00',
       followsOfficialQuotaReset: true,
       vpsRegion: '香港',
       supportsMainlandChinaDirectConnection: true,
@@ -181,10 +184,10 @@ async function main() {
   assert(accepted.contactSessionId, 'accepted application should expose contact session id')
 
   const buyerContacts = await request(`/api/v1/contact-sessions/${accepted.contactSessionId}/contacts`, {}, buyer)
-  assert(buyerContacts.items.some(item => item.value === '@carpool_smoke_owner'), 'buyer should see owner contact')
+  assert(buyerContacts.items.some(item => item.value === ownerContactValue), 'buyer should see owner contact')
 
   const ownerContacts = await request(`/api/v1/contact-sessions/${accepted.contactSessionId}/contacts`, {}, owner)
-  assert(ownerContacts.items.some(item => item.value === '@carpool_smoke_buyer'), 'owner should see buyer contact')
+  assert(ownerContacts.items.some(item => item.value === buyerContactValue), 'owner should see buyer contact')
 
   const buyerJoined = await request(`/api/v1/me/carpool-applications/${application.id}/confirm-join`, {
     method: 'POST',

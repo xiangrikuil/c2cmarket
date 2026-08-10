@@ -140,6 +140,7 @@ import {
   type FeedbackAdminHandlePayload,
   type FeedbackSupplementPayload,
   type OtherApiMarketFilters,
+	type OwnerCarpoolView,
   type SubmitFeedbackPayload,
   type Sub2ApiMarketFilters,
   type CarpoolApplicationFilters,
@@ -1297,10 +1298,10 @@ export function useAdminSectionRowsPage(section: Ref<AdminSection> | AdminSectio
   })
 }
 
-export function usePagedMyCarpools(page: Ref<CursorPageRequest> | CursorPageRequest) {
+export function usePagedMyCarpools(view: Ref<OwnerCarpoolView> | OwnerCarpoolView, page: Ref<CursorPageRequest> | CursorPageRequest) {
   return useQuery({
-    queryKey: computed(() => ['my-carpools', 'page', valueOf(page)]),
-    queryFn: () => getMyCarpoolsPage(valueOf(page)),
+		queryKey: computed(() => ['my-carpools', valueOf(view), 'page', valueOf(page)]),
+		queryFn: () => getMyCarpoolsPage(valueOf(view), valueOf(page)),
     refetchOnMount: 'always',
   })
 }

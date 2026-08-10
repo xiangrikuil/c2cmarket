@@ -1,4 +1,7 @@
+import { seedVerifiedProbeConnection } from './smoke-support.mjs'
+
 const baseURL = process.env.API_BASE_URL ?? 'http://127.0.0.1:8080'
+const runSuffix = process.env.SMOKE_RUN_ID || `${Date.now()}-${Math.random().toString(16).slice(2, 10)}`
 
 function assert(condition, message) {
   if (!condition) throw new Error(message)
@@ -110,9 +113,12 @@ async function main() {
   const health = await request('/health')
   assert(health.status === 'ok', 'backend health check failed')
 
-  const owner = await linuxDoSession('api-smoke-owner')
-  const buyer = await session('api-smoke-buyer')
-  const admin = await session('api-smoke-admin', true)
+  const owner = await linuxDoSession(`api-smoke-owner-${runSuffix}`)
+  const buyer = await session(`api-smoke-buyer-${runSuffix}`)
+  const admin = await session(`api-smoke-admin-${runSuffix}`, true)
+  const probeConnectionId = seedVerifiedProbeConnection(owner.user.id)
+  const ownerContactValue = `@api_smoke_owner_${runSuffix.replaceAll('-', '_')}`
+  const buyerContactValue = `@api_smoke_buyer_${runSuffix.replaceAll('-', '_')}`
 
   const models = await request('/api/v1/api-models')
   const model = models.items[0]
@@ -124,7 +130,7 @@ async function main() {
     body: {
       type: 'telegram',
       label: 'Smoke API owner',
-      value: '@api_smoke_owner',
+      value: ownerContactValue,
     },
   }, owner)
 
@@ -135,19 +141,29 @@ async function main() {
       merchantProfileId: '',
       merchantIdentityMode: 'public_profile',
       ownerContactMethodId: ownerContact.id,
+      probeConnectionId,
       title: `Smoke API Service ${Date.now()}`,
       shortDescription: '真实 API 集市 smoke 服务',
       distributionSystem: 'sub2api',
       billingMode: 'metered_usd_quota',
       declaredCnyPerUsdAllowance: '0.8',
       declaredMaxUsdAllowancePerIntent: '100',
+      availableUsdAllowance: '1000',
       quotaExpiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
+      quotaUsagePolicy: {
+        fiveHour: { mode: 'limited', amountUsd: '5' },
+        daily: { mode: 'unlimited' },
+      },
       minimumIntentCny: '20',
       maximumIntentCny: '300',
       usageVisibility: 'offsite_panel_readonly',
       publicAccessNote: '仅展示接入说明，不展示凭据。',
       merchantNote: '站外确认后按说明接入。',
-      merchantSupportNote: '平台不担保、不代赔；双方站外确认。',
+      accountPoolType: 'custom',
+      accountPoolCustomName: 'Smoke API Pool',
+      merchantRefundCommitment: false,
+      declaredMaxConcurrency: 4,
+      promptAuditEnabled: false,
       accessModes: [
         { accessMode: 'buyer_dedicated_sub_key', publicNote: '站外确认接入说明。' },
         { accessMode: 'buyer_dedicated_panel_subaccount', publicNote: '站外确认面板说明。' },
@@ -212,7 +228,7 @@ async function main() {
     body: {
       type: 'telegram',
       label: 'Smoke API buyer',
-      value: '@api_smoke_buyer',
+      value: buyerContactValue,
     },
   }, buyer)
 
@@ -229,13 +245,13 @@ async function main() {
     },
   }, buyer)
   assert(intent.status === 'open', 'intent should be open')
-  assert(intent.merchantContact?.value === '@api_smoke_owner', 'buyer should see frozen merchant contact')
+  assert(intent.merchantContact?.value === ownerContactValue, 'buyer should see frozen merchant contact')
 
   const buyerDetail = await request(`/api/v1/me/api-purchase-intents/${intent.id}`, {}, buyer)
-  assert(buyerDetail.merchantContact?.value === '@api_smoke_owner', 'buyer detail should include merchant contact')
+  assert(buyerDetail.merchantContact?.value === ownerContactValue, 'buyer detail should include merchant contact')
 
   const ownerDetail = await request(`/api/v1/owner/api-purchase-intents/${intent.id}`, {}, owner)
-  assert(ownerDetail.buyerContact?.value === '@api_smoke_buyer', 'owner detail should include buyer contact')
+  assert(ownerDetail.buyerContact?.value === buyerContactValue, 'owner detail should include buyer contact')
 
   const contacted = await request(`/api/v1/owner/api-purchase-intents/${intent.id}/mark-contacted`, {
     method: 'POST',
@@ -298,9 +314,13 @@ async function main() {
     method: 'POST',
     idempotencyPrefix: 'smoke-api-dispute-open',
     ifMatch: disputePaid.version,
-    body: { reason: '付款后商户未按站外确认说明继续处理。' },
+    body: {
+      issueCode: 'not_delivered',
+      requestedResolution: 'continue_fulfillment',
+      reason: '付款后商户未按站外确认说明继续处理。',
+    },
   }, buyer)
-  assert(disputed.disputeStatus === 'open', 'API order dispute should be open')
+  assert(disputed.disputeStatus === 'negotiating', 'API order dispute should start in negotiation')
   assert(disputed.disputeCaseId, 'API order dispute should bind disputeCaseId')
   const adminDisputes = await request('/api/v1/admin/disputes', {}, admin)
   assert(adminDisputes.items.some(item => item.id === disputed.disputeCaseId && item.targetType === 'api_order' && item.targetId === disputed.id), 'admin disputes should include API order dispute case')
@@ -331,9 +351,10 @@ async function main() {
     idempotencyPrefix: 'smoke-api-order-submit-delivery',
     ifMatch: confirmed.version,
     body: {
-      deliveryKind: 'api_key_endpoint',
-      apiBaseUrl: 'https://api.example.com/v1',
-      apiKey: 'sk-proj-smoke',
+      deliveryKind: 'login_account',
+      panelLoginUrl: 'https://panel.example.com/login',
+      username: `smoke-buyer-${runSuffix}`,
+      password: `smoke-password-${runSuffix}`,
       instructions: '买家专属；提交后不可修改，后续更换请站外联系。',
     },
   }, owner)

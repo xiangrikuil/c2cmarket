@@ -1496,6 +1496,60 @@ func TestCarpoolCreateReviewApplyAndAcceptFlow(t *testing.T) {
 	}
 }
 
+func TestMyCarpoolViewsAndOwnerDetail(t *testing.T) {
+	t.Parallel()
+
+	server := newTestServer(time.Now())
+	ownerSession := createLinuxDoSession(t, server, "owner-listing-view")
+	otherSession := createLinuxDoSession(t, server, "other-listing-view")
+	ownerContact := createContactMethod(t, server, ownerSession, "telegram", "Owner Listing View", "@owner_listing_view")
+	listing := createCarpool(t, server, ownerSession, ownerContact.ID, "owner-listing-view-create")
+
+	needsEdit := httptest.NewRequest(http.MethodGet, "/api/v1/me/carpools?view=needs_edit&limit=1", nil)
+	addCookie(needsEdit, ownerSession.cookie)
+	needsEditResponse := httptest.NewRecorder()
+	server.ServeHTTP(needsEditResponse, needsEdit)
+	if needsEditResponse.Code != http.StatusOK || !strings.Contains(needsEditResponse.Body.String(), listing.ID) {
+		t.Fatalf("expected draft in needs-edit view, got %d body %s", needsEditResponse.Code, needsEditResponse.Body.String())
+	}
+
+	recruiting := httptest.NewRequest(http.MethodGet, "/api/v1/me/carpools?view=recruiting&limit=1", nil)
+	addCookie(recruiting, ownerSession.cookie)
+	recruitingResponse := httptest.NewRecorder()
+	server.ServeHTTP(recruitingResponse, recruiting)
+	if recruitingResponse.Code != http.StatusOK || strings.Contains(recruitingResponse.Body.String(), listing.ID) {
+		t.Fatalf("draft must not appear in recruiting view, got %d body %s", recruitingResponse.Code, recruitingResponse.Body.String())
+	}
+
+	detail := httptest.NewRequest(http.MethodGet, "/api/v1/me/carpools/"+listing.ID, nil)
+	addCookie(detail, ownerSession.cookie)
+	detailResponse := httptest.NewRecorder()
+	server.ServeHTTP(detailResponse, detail)
+	if detailResponse.Code != http.StatusOK || !strings.Contains(detailResponse.Body.String(), listing.ID) {
+		t.Fatalf("expected owner detail, got %d body %s", detailResponse.Code, detailResponse.Body.String())
+	}
+	if detailResponse.Header().Get("ETag") != `"1"` {
+		t.Fatalf("expected owner detail ETag, got %q", detailResponse.Header().Get("ETag"))
+	}
+
+	otherDetail := httptest.NewRequest(http.MethodGet, "/api/v1/me/carpools/"+listing.ID, nil)
+	addCookie(otherDetail, otherSession.cookie)
+	otherDetailResponse := httptest.NewRecorder()
+	server.ServeHTTP(otherDetailResponse, otherDetail)
+	if otherDetailResponse.Code != http.StatusNotFound {
+		t.Fatalf("expected non-owner detail 404, got %d body %s", otherDetailResponse.Code, otherDetailResponse.Body.String())
+	}
+
+	invalidView := httptest.NewRequest(http.MethodGet, "/api/v1/me/carpools?view=unknown", nil)
+	addCookie(invalidView, ownerSession.cookie)
+	invalidViewResponse := httptest.NewRecorder()
+	server.ServeHTTP(invalidViewResponse, invalidView)
+	if invalidViewResponse.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("expected invalid view 422, got %d body %s", invalidViewResponse.Code, invalidViewResponse.Body.String())
+	}
+	assertProblemCode(t, invalidViewResponse, "VALIDATION_FAILED")
+}
+
 func TestTransactionReviewRoutesSealPublishAndAdminRemove(t *testing.T) {
 	server := newTestServer(time.Date(2026, 7, 24, 8, 0, 0, 0, time.UTC))
 	ownerSession := createLinuxDoSession(t, server, "review-route-owner")
@@ -3044,6 +3098,11 @@ func TestProfileContactAndMerchantProfileFlow(t *testing.T) {
 	if strings.Contains(publicMerchantBody, session.userID) || strings.Contains(publicMerchantBody, "updated-profile@example.com") {
 		t.Fatalf("public merchant profile leaked owner/contact data: %s", publicMerchantBody)
 	}
+	for _, forbidden := range []string{`"profile":`, `"services":`, `"completions":`, `"reviews":`, `"disputes":`} {
+		if strings.Contains(publicMerchantBody, forbidden) {
+			t.Fatalf("public merchant profile retained removed bundle field %s: %s", forbidden, publicMerchantBody)
+		}
+	}
 	if !strings.Contains(publicMerchantBody, `"username":"profile-store"`) || !strings.Contains(publicMerchantBody, `"avatarUrl":"https://cdn.example.com/profile-store.png"`) {
 		t.Fatalf("expected public merchant slug as username field, got %s", publicMerchantBody)
 	}
@@ -3090,6 +3149,28 @@ func TestProfileContactAndMerchantProfileFlow(t *testing.T) {
 	publicIdentityBody := publicIdentityResponse.Body.String()
 	if !strings.Contains(publicIdentityBody, `"merchantDisplayName":"Profile Owner"`) || !strings.Contains(publicIdentityBody, `"merchantProfileSlug":"profile-owner"`) || !strings.Contains(publicIdentityBody, `"merchantAvatarUrl":"https://cdn.example.com/profile-owner.webp"`) {
 		t.Fatalf("expected public API service to expose public profile identity and avatar, got %s", publicIdentityBody)
+	}
+
+	publicUserAfterServices := httptest.NewRequest(http.MethodGet, "/api/v1/users/profile-owner/public-profile", nil)
+	publicUserAfterServicesResponse := httptest.NewRecorder()
+	server.ServeHTTP(publicUserAfterServicesResponse, publicUserAfterServices)
+	if publicUserAfterServicesResponse.Code != http.StatusOK {
+		t.Fatalf("public user after services status %d body %s", publicUserAfterServicesResponse.Code, publicUserAfterServicesResponse.Body.String())
+	}
+	publicUserAfterServicesBody := publicUserAfterServicesResponse.Body.String()
+	if !strings.Contains(publicUserAfterServicesBody, publicIdentityOrderable.ID) {
+		t.Fatalf("public user profile omitted public-identity API service %s: %s", publicIdentityOrderable.ID, publicUserAfterServicesBody)
+	}
+	if strings.Contains(publicUserAfterServicesBody, orderable.ID) {
+		t.Fatalf("public user profile exposed store-alias API service %s: %s", orderable.ID, publicUserAfterServicesBody)
+	}
+	for _, forbidden := range []string{
+		`"ownerUserId":`, `"buyerUserId":`, `"sellerUserId":`, `"ownerContactMethodId":`,
+		`"paymentInstructions":`, `"deliveryCredential":`, `"apiKey":`, `"password":`,
+	} {
+		if strings.Contains(publicUserAfterServicesBody, forbidden) {
+			t.Fatalf("public user profile leaked sensitive field %s: %s", forbidden, publicUserAfterServicesBody)
+		}
 	}
 }
 

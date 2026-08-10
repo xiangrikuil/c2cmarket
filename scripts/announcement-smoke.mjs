@@ -1,4 +1,5 @@
 const baseURL = process.env.API_BASE_URL ?? 'http://127.0.0.1:8080'
+const runSuffix = process.env.SMOKE_RUN_ID || `${Date.now()}-${Math.random().toString(16).slice(2, 10)}`
 
 function assert(condition, message) {
   if (!condition) throw new Error(message)
@@ -87,9 +88,9 @@ async function main() {
   const health = await request('/health')
   assert(health.status === 'ok', 'backend health check failed')
 
-  const admin = await session('announcement-smoke-admin', true)
-  const user = await session('announcement-smoke-user')
-  const nonAdmin = await session('announcement-smoke-non-admin')
+  const admin = await session(`announcement-smoke-admin-${runSuffix}`, true)
+  const user = await session(`announcement-smoke-user-${runSuffix}`)
+  const nonAdmin = await session(`announcement-smoke-non-admin-${runSuffix}`)
 
   const initialUserList = await request('/api/v1/announcements', {}, user)
   assert(Array.isArray(initialUserList.items), 'announcement list should return items')

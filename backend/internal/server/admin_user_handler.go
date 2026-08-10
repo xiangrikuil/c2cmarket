@@ -114,6 +114,20 @@ type adminAccountAuditEntryDTO struct {
 	CreatedAt     string `json:"createdAt"`
 }
 
+type adminAuditLogDTO struct {
+	ID            string  `json:"id"`
+	ActorUserID   string  `json:"actorUserId"`
+	ActorUsername string  `json:"actorUsername"`
+	Action        string  `json:"action"`
+	TargetType    string  `json:"targetType"`
+	TargetID      string  `json:"targetId"`
+	Reason        string  `json:"reason"`
+	RequestID     string  `json:"requestId"`
+	BeforeStatus  *string `json:"beforeStatus"`
+	AfterStatus   *string `json:"afterStatus"`
+	CreatedAt     string  `json:"createdAt"`
+}
+
 type adminUserStatusRequest struct {
 	Status string `json:"status"`
 	Reason string `json:"reason"`
@@ -171,6 +185,48 @@ func (s *Server) handleAdminUser(w http.ResponseWriter, r *http.Request) {
 	}
 	setETag(w, detail.User.Version)
 	writeJSON(w, http.StatusOK, toAdminUserDetailResponse(detail))
+}
+
+func (s *Server) handleAdminAuditLogs(w http.ResponseWriter, r *http.Request) {
+	user, _, appErr := s.requireSession(w, r)
+	if appErr != nil {
+		writeProblem(w, r, appErr)
+		return
+	}
+	pageRequest, appErr := parsePageRequest(r)
+	if appErr != nil {
+		writeProblem(w, r, appErr)
+		return
+	}
+	values := r.URL.Query()
+	page, appErr := s.adminUsers.AdminAuditLogs(r.Context(), user, auth.AdminAuditLogFilter{
+		Search:      values.Get("search"),
+		Action:      values.Get("action"),
+		TargetType:  values.Get("targetType"),
+		ActorUserID: values.Get("actorUserId"),
+		TargetID:    values.Get("targetId"),
+	}, pageRequest)
+	if appErr != nil {
+		writeProblem(w, r, appErr)
+		return
+	}
+	items := make([]adminAuditLogDTO, 0, len(page.Items))
+	for _, item := range page.Items {
+		items = append(items, adminAuditLogDTO{
+			ID:            item.ID,
+			ActorUserID:   item.ActorUserID,
+			ActorUsername: item.ActorUsername,
+			Action:        item.Action,
+			TargetType:    item.TargetType,
+			TargetID:      item.TargetID,
+			Reason:        item.Reason,
+			RequestID:     item.RequestID,
+			BeforeStatus:  item.BeforeStatus,
+			AfterStatus:   item.AfterStatus,
+			CreatedAt:     item.CreatedAt.UTC().Format(timeLayoutRFC3339),
+		})
+	}
+	writePageJSON(w, domain.Page[adminAuditLogDTO]{Items: items, NextCursor: page.NextCursor})
 }
 
 func (s *Server) handleUpdateAdminUserStatus(w http.ResponseWriter, r *http.Request) {

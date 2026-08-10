@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, reactive, ref, watch } from 'vue'
-import { useMutation, useQueryClient } from '@tanstack/vue-query'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/vue-query'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
 import { Eye, Loader2, LogIn, RefreshCw, Save, Send, ShieldCheck } from 'lucide-vue-next'
 import { toast } from 'vue-sonner'
@@ -44,9 +44,9 @@ import {
   DialogTitle,
   DialogTrigger,
 } from '@/components/ui/dialog'
-import { shouldUseRealBackend, startOAuthLogin } from '@/lib/backendClient'
+import { BackendProblemError, shouldUseRealBackend, startOAuthLogin } from '@/lib/backendClient'
 import { containsSensitiveContent, firstError, type FieldErrors } from '@/lib/formValidation'
-import { submitCarpool } from '@/lib/api'
+import { getMyCarpoolForEdit, submitCarpool, updateMyCarpool } from '@/lib/api'
 import { trackAnalytics } from '@/lib/analytics'
 import {
   useCarpoolOpeningChannels,
@@ -87,14 +87,26 @@ const queryClient = useQueryClient()
 const route = useRoute()
 const router = useRouter()
 const analyticsSourceRoute = () => String(route.name ?? 'unknown')
+const isEditMode = computed(() => route.name === 'my-carpool-edit')
+const editingId = computed(() => isEditMode.value ? String(route.params.id ?? '') : '')
+const editQuery = useQuery({
+	queryKey: computed(() => ['my-carpools', 'detail', editingId.value]),
+	queryFn: () => getMyCarpoolForEdit(editingId.value),
+	enabled: computed(() => isEditMode.value && Boolean(editingId.value)),
+	retry: false,
+})
 
 const submittedId = ref('')
 const oauthPending = ref(false)
 const hasTriedPublish = ref(false)
 const mobileCheckOpen = ref(false)
 const highlightedTaskKey = ref<string | null>(null)
+const editInitialized = ref(false)
+const hydratingEdit = ref(false)
+const editVersion = ref(0)
+const editOwnerContactMethodId = ref('')
 const errors = reactive<FieldErrors<Field>>({})
-const publishReturnTo = '/carpools/new'
+const publishReturnTo = isEditMode.value ? route.fullPath : '/carpools/new'
 const publishLoginRoute = { path: '/login', query: { returnTo: publishReturnTo } }
 let highlightTimer: ReturnType<typeof setTimeout> | null = null
 
@@ -143,14 +155,19 @@ const openingChannelsByCode = computed(() => new Map(channelOptions.value.map(it
 const paymentMethodsByCode = computed(() => new Map(paymentOptions.value.map(item => [item.code, item])))
 const selectedProductForValidation = computed(() => catalogById.value.get(form.productId) ?? null)
 const finalRegionName = computed(() => regionDisplayName(form, regionsByCode.value))
-const canAccessPublishForm = computed(() => Boolean(profile.value?.linuxDoBinding.bound))
+const editableBackendStatus = computed(() => {
+	const status = editQuery.data.value?.backendStatus
+	return status === 'draft' || status === 'changes_requested'
+})
+const canAccessPublishForm = computed(() => Boolean(profile.value?.linuxDoBinding.bound) && (!isEditMode.value || editableBackendStatus.value))
 const profileErrorMessage = computed(() => {
   const error = profileQuery.error.value
   return error instanceof Error ? error.message : '请先登录并完成 linux.do 身份绑定。'
 })
 
 watch(selectedProductForValidation, product => {
-  if (!product) return
+	if (!product) return
+	if (hydratingEdit.value) return
   form.policyVersion = product.policyVersion
   form.riskNoticeCode = product.riskNoticeCode ?? null
   form.accessArrangementMode = product.accessMode
@@ -158,18 +175,37 @@ watch(selectedProductForValidation, product => {
   form.riskAcknowledged = false
 })
 
+watch(() => editQuery.data.value, async detail => {
+	if (!detail || editInitialized.value) return
+	hydratingEdit.value = true
+	editVersion.value = detail.version
+	editOwnerContactMethodId.value = detail.ownerContactMethodId
+	Object.assign(form, detail.payload, { warranty: { ...detail.payload.warranty } })
+	submittedId.value = detail.id
+	formDirty.value = false
+	editInitialized.value = true
+	await nextTick()
+	hydratingEdit.value = false
+}, { immediate: true })
+
 const saveDraftMutation = useMutation({
-  mutationFn: () => submitCarpool(toPayload('draft')),
-  async onSuccess(result) {
-    formDirty.value = false
-    submittedId.value = String(result.id)
-    toast.success('车源草稿已保存。')
-    await invalidateCarpoolPublishQueries()
-  },
+	mutationFn: () => isEditMode.value
+		? updateMyCarpool(editingId.value, toPayload('draft'), editVersion.value, editOwnerContactMethodId.value, false)
+		: submitCarpool(toPayload('draft')),
+	async onSuccess(result) {
+		formDirty.value = false
+		submittedId.value = String(result.id)
+		toast.success(isEditMode.value ? '车源修改已保存。' : '车源草稿已保存。')
+		await invalidateCarpoolPublishQueries()
+		if (isEditMode.value) await router.replace('/my/carpools')
+	},
+	onError: handleCarpoolMutationError,
 })
 
 const submitReviewMutation = useMutation({
-  mutationFn: () => submitCarpool(toPayload('reviewing')),
+	mutationFn: () => isEditMode.value
+		? updateMyCarpool(editingId.value, toPayload('reviewing'), editVersion.value, editOwnerContactMethodId.value, true)
+		: submitCarpool(toPayload('reviewing')),
   async onSuccess(result) {
     formDirty.value = false
     submittedId.value = String(result.id)
@@ -182,17 +218,46 @@ const submitReviewMutation = useMutation({
       risk_ack_required: Boolean(form.riskNoticeCode),
       risk_notice: form.riskNoticeCode ?? 'none',
     })
-    toast.success('车源已提交。')
-    await invalidateCarpoolPublishQueries()
-    await router.replace('/my/carpools')
-  },
+		toast.success(isEditMode.value ? '车源修改已提交审核。' : '车源已提交。')
+		await invalidateCarpoolPublishQueries()
+		await router.replace('/my/carpools')
+	},
+	onError: handleCarpoolMutationError,
 })
 
 async function invalidateCarpoolPublishQueries() {
   await queryClient.invalidateQueries({ queryKey: ['carpools'] })
   await queryClient.invalidateQueries({ queryKey: ['home-market'] })
   await queryClient.invalidateQueries({ queryKey: ['admin-section'] })
-  await queryClient.invalidateQueries({ queryKey: ['notifications'] })
+	await queryClient.invalidateQueries({ queryKey: ['notifications'] })
+	await queryClient.invalidateQueries({ queryKey: ['my-carpools'] })
+}
+
+async function handleCarpoolMutationError(error: unknown) {
+	if (isEditMode.value && error instanceof BackendProblemError && (error.status === 412 || error.code === 'VERSION_CONFLICT')) {
+		toast.warning('车源已被更新，已重新读取最新版本，请确认后再次保存。')
+		formDirty.value = false
+		editInitialized.value = false
+		await editQuery.refetch()
+		return
+	}
+	if (error instanceof BackendProblemError && error.fieldErrors.length) {
+		const fieldMap: Record<string, Field> = {
+			productPlanId: 'product', regionCode: 'region', regionName: 'region', priceMonthlyCny: 'monthlyPriceCny',
+			dailyQuotaAmount: 'dailyQuota', weeklyQuotaAmount: 'weeklyQuota', followsOfficialQuotaReset: 'quotaReset',
+			vpsRegion: 'connection', supportsMainlandChinaDirectConnection: 'connection', buyerSeatCapacity: 'seats',
+			activeBuyerMembers: 'seats', openingChannelCode: 'openingChannelCode', paymentMethodCode: 'paymentMethodCode',
+			distributionMethod: 'distribution', distributionMethodNote: 'distribution', providesAdminAccount: 'distribution',
+			accessArrangement: 'accessArrangement', summary: 'rulesNote',
+		}
+		const next: FieldErrors<Field> = {}
+		for (const issue of error.fieldErrors) {
+			const field = issue.field ? fieldMap[issue.field] : undefined
+			if (field && issue.message) next[field] = issue.message
+		}
+		if (Object.keys(next).length) setErrors(next)
+	}
+	toast.error(error instanceof Error ? error.message : '车源保存失败。')
 }
 
 async function startLinuxDoPublishAuth() {
@@ -209,7 +274,11 @@ async function startLinuxDoPublishAuth() {
 }
 
 function ensurePublishAccess() {
-  if (canAccessPublishForm.value) return true
+	if (canAccessPublishForm.value) return true
+	if (isEditMode.value && editQuery.data.value && !editableBackendStatus.value) {
+		toast.warning('当前车源状态不可编辑。')
+		return false
+	}
   toast.warning('完成 linux.do 身份绑定后才能发布车源。')
   return false
 }
@@ -819,30 +888,39 @@ async function copyShareText() {
   <div class="space-y-5" :class="canAccessPublishForm ? 'pb-[calc(96px+env(safe-area-inset-bottom))] sm:pb-0' : 'pb-0'" @input="formDirty = true" @change="formDirty = true">
     <div class="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
       <div>
-        <h1 class="text-2xl font-semibold md:text-3xl">发布车源</h1>
-        <p class="mt-2 max-w-3xl text-sm text-muted-foreground">填写车源的套餐、额度、接入和使用规则。</p>
+		<h1 class="text-2xl font-semibold md:text-3xl">{{ isEditMode ? '编辑车源' : '发布车源' }}</h1>
+		<p class="mt-2 max-w-3xl text-sm text-muted-foreground">{{ isEditMode ? '更新车源的套餐、额度、接入和使用规则。' : '填写车源的套餐、额度、接入和使用规则。' }}</p>
       </div>
       <div v-if="canAccessPublishForm" class="hidden gap-2 sm:flex">
-        <Button variant="outline" :disabled="saveDraftMutation.isPending.value" @click="saveDraft"><Save class="h-4 w-4" />保存草稿</Button>
-        <Button :disabled="submitReviewMutation.isPending.value" @click="submitReview"><Send class="h-4 w-4" />检查并发布</Button>
+		<Button variant="outline" :disabled="saveDraftMutation.isPending.value" @click="saveDraft"><Save class="h-4 w-4" />{{ isEditMode ? '保存修改' : '保存草稿' }}</Button>
+		<Button :disabled="submitReviewMutation.isPending.value" @click="submitReview"><Send class="h-4 w-4" />{{ isEditMode ? '保存并提交审核' : '检查并发布' }}</Button>
       </div>
     </div>
 
-    <Card v-if="profileQuery.isPending.value" class="mx-auto max-w-2xl p-6">
+    <Card v-if="profileQuery.isPending.value || (isEditMode && editQuery.isPending.value)" class="mx-auto max-w-2xl p-6">
       <div class="flex flex-col gap-4 sm:flex-row sm:items-start">
         <div class="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-primary/10 text-primary">
           <Loader2 class="h-5 w-5 animate-spin" />
         </div>
         <div class="min-w-0 flex-1">
-          <h2 class="text-lg font-semibold tracking-tight">正在确认发布资格</h2>
+		  <h2 class="text-lg font-semibold tracking-tight">{{ isEditMode ? '正在读取车源' : '正在确认发布资格' }}</h2>
           <p class="mt-2 text-sm leading-6 text-muted-foreground">
-            车源发布需要当前账号已绑定 linux.do，确认完成后会进入发布表单。
+			{{ isEditMode ? '正在读取最新车源内容和版本。' : '车源发布需要当前账号已绑定 linux.do，确认完成后会进入发布表单。' }}
           </p>
         </div>
       </div>
     </Card>
 
-    <Card v-else-if="profileQuery.isError.value || !profile" class="mx-auto max-w-2xl p-6">
+	<Card v-else-if="isEditMode && editQuery.isError.value" class="mx-auto max-w-2xl p-6">
+	  <h2 class="text-lg font-semibold">无法读取车源</h2>
+	  <p class="mt-2 text-sm text-muted-foreground">{{ editQuery.error.value instanceof Error ? editQuery.error.value.message : '车源不存在或不属于当前账号。' }}</p>
+	  <div class="mt-5 flex gap-2">
+		<Button variant="outline" :disabled="editQuery.isFetching.value" @click="editQuery.refetch()"><RefreshCw class="h-4 w-4" />重新读取</Button>
+		<RouterLink to="/my/carpools"><Button>返回我的车源</Button></RouterLink>
+	  </div>
+	</Card>
+
+	<Card v-else-if="profileQuery.isError.value || !profile" class="mx-auto max-w-2xl p-6">
       <div class="flex flex-col gap-4 sm:flex-row sm:items-start">
         <div class="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-primary/10 text-primary">
           <LogIn class="h-5 w-5" />
@@ -889,6 +967,12 @@ async function copyShareText() {
         </div>
       </div>
     </Card>
+
+	<Card v-else-if="isEditMode && !editableBackendStatus" class="mx-auto max-w-2xl p-6">
+	  <h2 class="text-lg font-semibold">当前车源不可编辑</h2>
+	  <p class="mt-2 text-sm text-muted-foreground">只有草稿和管理员要求修改的车源可以编辑。请返回车源管理页查看当前状态。</p>
+	  <RouterLink class="mt-5 inline-flex" to="/my/carpools"><Button>返回我的车源</Button></RouterLink>
+	</Card>
 
     <template v-else>
       <div class="rounded-lg border border-primary/15 bg-primary/5 p-3 sm:hidden">
@@ -1037,8 +1121,8 @@ async function copyShareText() {
       </div>
 
       <div class="sticky bottom-0 z-30 grid grid-cols-2 gap-2 border-t border-border bg-background/95 py-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))] backdrop-blur sm:hidden">
-        <Button variant="outline" :disabled="saveDraftMutation.isPending.value" @click="saveDraft">保存草稿</Button>
-        <Button :disabled="submitReviewMutation.isPending.value" @click="submitReview">检查并发布</Button>
+		<Button variant="outline" :disabled="saveDraftMutation.isPending.value" @click="saveDraft">{{ isEditMode ? '保存修改' : '保存草稿' }}</Button>
+		<Button :disabled="submitReviewMutation.isPending.value" @click="submitReview">{{ isEditMode ? '保存并提交' : '检查并发布' }}</Button>
       </div>
 
       <Dialog v-model:open="mobileCheckOpen">

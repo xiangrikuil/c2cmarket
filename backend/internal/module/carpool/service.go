@@ -5,6 +5,7 @@ import (
 	"math/big"
 	"net/http"
 	"net/url"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -377,9 +378,12 @@ func (s *Service) PublicListing(ctx context.Context, listingID string) (Listing,
 	return s.withSeatSummaryLocked(listing), nil
 }
 
-func (s *Service) MyListings(ctx context.Context, user auth.User) ([]Listing, *domain.AppError) {
+func (s *Service) MyListings(ctx context.Context, user auth.User, view string, page domain.PageRequest) (domain.Page[Listing], *domain.AppError) {
+	if !isOwnerListingView(view) {
+		return domain.Page[Listing]{}, domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Invalid owner listing view", "车源视图无效。", "view", "invalid", "车源视图无效。")
+	}
 	if s.repo != nil {
-		return s.repo.ListCarpoolListingsByOwner(ctx, user.ID)
+		return s.repo.ListCarpoolListingsByOwner(ctx, user.ID, view, page)
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -387,11 +391,56 @@ func (s *Service) MyListings(ctx context.Context, user auth.User) ([]Listing, *d
 	var listings []Listing
 	for _, id := range s.listingOrder {
 		listing := s.withSeatSummaryLocked(s.listings[id])
-		if listing.OwnerUserID == user.ID {
+		if listing.OwnerUserID == user.ID && matchesOwnerListingView(listing, view) {
 			listings = append(listings, listing)
 		}
 	}
-	return listings, nil
+	sort.Slice(listings, func(i, j int) bool {
+		if listings[i].UpdatedAt.Equal(listings[j].UpdatedAt) {
+			return listings[i].ID > listings[j].ID
+		}
+		return listings[i].UpdatedAt.After(listings[j].UpdatedAt)
+	})
+	return domain.PageItems(listings, page)
+}
+
+func (s *Service) MyListing(ctx context.Context, user auth.User, listingID string) (Listing, *domain.AppError) {
+	if s.repo != nil {
+		return s.repo.GetCarpoolListingByOwner(ctx, user.ID, listingID)
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.expireReservationsLocked(s.now())
+	listing, ok := s.listings[listingID]
+	if !ok || listing.OwnerUserID != user.ID {
+		return Listing{}, domain.NewError(http.StatusNotFound, domain.CodeObjectNotFound, "Carpool listing not found", "车源不存在。")
+	}
+	return s.withSeatSummaryLocked(listing), nil
+}
+
+func isOwnerListingView(view string) bool {
+	switch strings.TrimSpace(view) {
+	case OwnerListingViewAll, OwnerListingViewRecruiting, OwnerListingViewServing, OwnerListingViewHistory, OwnerListingViewNeedsEdit:
+		return true
+	default:
+		return false
+	}
+}
+
+func matchesOwnerListingView(listing Listing, view string) bool {
+	switch strings.TrimSpace(view) {
+	case OwnerListingViewRecruiting:
+		return listing.Status == ListingStatusActive && listing.ActiveBuyerMembers == 0
+	case OwnerListingViewServing:
+		return listing.Status == ListingStatusActive && listing.ActiveBuyerMembers > 0
+	case OwnerListingViewHistory:
+		return listing.Status == ListingStatusRejected || listing.Status == ListingStatusRemoved
+	case OwnerListingViewNeedsEdit:
+		return listing.Status == ListingStatusDraft || listing.Status == ListingStatusChangesRequested ||
+			listing.Status == ListingStatusPendingReview || listing.Status == ListingStatusPaused
+	default:
+		return true
+	}
 }
 
 func (s *Service) AdminListings(ctx context.Context, user auth.User, filter ListingFilter, page domain.PageRequest) (domain.Page[Listing], *domain.AppError) {

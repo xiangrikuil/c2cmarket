@@ -1,4 +1,7 @@
+import { seedVerifiedProbeConnection } from './smoke-support.mjs'
+
 const baseURL = process.env.API_BASE_URL ?? 'http://127.0.0.1:8080'
+const runSuffix = process.env.SMOKE_RUN_ID || `${Date.now()}-${Math.random().toString(16).slice(2, 10)}`
 
 function assert(condition, message) {
   if (!condition) throw new Error(message)
@@ -118,7 +121,7 @@ async function createOfficialPriceRecord(admin, keyword, plan) {
 }
 
 async function createCarpool(owner, keyword, plan) {
-  const ownerContact = await createContact(owner, '@search_smoke_carpool_owner', 'Search smoke carpool owner')
+  const ownerContact = await createContact(owner, `@search_carpool_${runSuffix.replaceAll('-', '_')}`, 'Search smoke carpool owner')
   const listing = await request('/api/v1/carpools', {
     method: 'POST',
     idempotencyPrefix: 'search-smoke-carpool-create',
@@ -142,8 +145,8 @@ async function createCarpool(owner, keyword, plan) {
       regionName: 'Smoke 测试区',
       priceMonthlyCny: '68.00',
       serviceMultiplier: '1.0000',
+      dailyQuotaAmount: '10.00',
       weeklyQuotaAmount: '50.00',
-      monthlyQuotaAmount: '200.00',
       followsOfficialQuotaReset: true,
       vpsRegion: '香港',
       supportsMainlandChinaDirectConnection: true,
@@ -173,7 +176,8 @@ async function createAPIService(owner, keyword) {
   const models = await request('/api/v1/api-models')
   const model = models.items[0]
   assert(model?.id, 'api model catalog is empty')
-  const ownerContact = await createContact(owner, '@search_smoke_api_owner', 'Search smoke API owner')
+  const ownerContact = await createContact(owner, `@search_api_${runSuffix.replaceAll('-', '_')}`, 'Search smoke API owner')
+  const probeConnectionId = seedVerifiedProbeConnection(owner.user.id)
   const draft = await request('/api/v1/owner/api-services', {
     method: 'POST',
     idempotencyPrefix: 'search-smoke-api-create',
@@ -181,19 +185,29 @@ async function createAPIService(owner, keyword) {
       merchantProfileId: '',
       merchantIdentityMode: 'public_profile',
       ownerContactMethodId: ownerContact.id,
+      probeConnectionId,
       title: `Search Smoke API ${keyword}`,
       shortDescription: '搜索 smoke API 服务',
       distributionSystem: 'sub2api',
       billingMode: 'metered_usd_quota',
       declaredCnyPerUsdAllowance: '0.8',
       declaredMaxUsdAllowancePerIntent: '100',
+      availableUsdAllowance: '1000',
       quotaExpiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
+      quotaUsagePolicy: {
+        fiveHour: { mode: 'limited', amountUsd: '5' },
+        daily: { mode: 'unlimited' },
+      },
       minimumIntentCny: '20',
       maximumIntentCny: '300',
       usageVisibility: 'offsite_panel_readonly',
       publicAccessNote: '仅展示接入说明，不展示凭据。',
       merchantNote: '站外确认后按说明接入。',
-      merchantSupportNote: '平台不担保、不代赔；双方站外确认。',
+      accountPoolType: 'custom',
+      accountPoolCustomName: 'Search Smoke Pool',
+      merchantRefundCommitment: false,
+      declaredMaxConcurrency: 4,
+      promptAuditEnabled: false,
       accessModes: [{ accessMode: 'buyer_dedicated_sub_key', publicNote: '站外确认接入说明。' }],
       models: [{ modelCatalogId: model.id, merchantMultiplier: '1.0000', enabled: true }],
       packages: [],
@@ -237,7 +251,7 @@ function findType(results, type, id) {
 
 function assertPublicSafe(results) {
   const text = JSON.stringify(results)
-  const forbidden = ['@search_smoke_api_owner', '@search_smoke_carpool_owner', 'ownerContactMethodId', 'ownerUserId', 'api key', 'password=', 'access_token=', 'cookie=']
+  const forbidden = ['@search_api_', '@search_carpool_', 'ownerContactMethodId', 'ownerUserId', 'api key', 'password=', 'access_token=', 'cookie=']
   for (const word of forbidden) {
     assert(!text.toLowerCase().includes(word.toLowerCase()), `search result leaked forbidden text: ${word}`)
   }
@@ -247,7 +261,7 @@ async function main() {
   const health = await request('/health')
   assert(health.status === 'ok', 'backend health check failed')
 
-  const suffix = `${Date.now()}`
+  const suffix = process.env.SMOKE_RUN_ID || `${Date.now()}-${Math.random().toString(16).slice(2, 10)}`
   const keyword = `searchsmoke${suffix}`
   const owner = await linuxDoSession(`search-smoke-owner-${suffix}`)
   const admin = await session(`search-smoke-admin-${suffix}`, true)

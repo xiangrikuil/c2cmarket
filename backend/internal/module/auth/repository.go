@@ -12,6 +12,7 @@ type Repository interface {
 	EnsureUser(ctx context.Context, username string, isAdmin bool, now time.Time) (User, *domain.AppError)
 	UserByID(ctx context.Context, userID string) (User, *domain.AppError)
 	ListAdminUsers(ctx context.Context, query AdminUserDirectoryQuery) (AdminUserDirectory, *domain.AppError)
+	ListAdminAuditLogs(ctx context.Context, filter AdminAuditLogFilter, page domain.PageRequest) (domain.Page[AdminAuditLog], *domain.AppError)
 	AdminUserDetail(ctx context.Context, userID string) (AdminUserDetail, *domain.AppError)
 	UpdateAdminUserStatusWithIdempotency(ctx context.Context, entry idempotency.Entry, input AdminUserStatusInput, now time.Time, buildCompletion AdminUserCompletionBuilder) (AdminUserMutationResult, idempotency.Completion, *domain.AppError)
 	UpdateAdminUserPermissionWithIdempotency(ctx context.Context, entry idempotency.Entry, input AdminUserPermissionInput, now time.Time, buildCompletion AdminUserCompletionBuilder) (AdminUserMutationResult, idempotency.Completion, *domain.AppError)

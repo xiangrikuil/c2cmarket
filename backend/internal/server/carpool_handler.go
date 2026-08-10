@@ -384,12 +384,35 @@ func (s *Server) handleMyCarpools(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, r, appErr)
 		return
 	}
-	listings, appErr := s.carpools.MyCarpoolListings(r.Context(), user)
+	pageRequest, appErr := parsePageRequest(r)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
 	}
-	writePaginatedJSON(w, r, toCarpoolListingResponses(listings))
+	listings, appErr := s.carpools.MyCarpoolListings(r.Context(), user, r.URL.Query().Get("view"), pageRequest)
+	if appErr != nil {
+		writeProblem(w, r, appErr)
+		return
+	}
+	writePageJSON(w, domain.Page[carpoolListingResponse]{
+		Items:      toCarpoolListingResponses(listings.Items),
+		NextCursor: listings.NextCursor,
+	})
+}
+
+func (s *Server) handleMyCarpool(w http.ResponseWriter, r *http.Request) {
+	user, _, appErr := s.requireSession(w, r)
+	if appErr != nil {
+		writeProblem(w, r, appErr)
+		return
+	}
+	listing, appErr := s.carpools.MyCarpoolListing(r.Context(), user, chi.URLParam(r, "id"))
+	if appErr != nil {
+		writeProblem(w, r, appErr)
+		return
+	}
+	setETag(w, listing.Version)
+	writeJSON(w, http.StatusOK, toCarpoolListingResponse(listing))
 }
 
 func (s *Server) handleAdminCarpools(w http.ResponseWriter, r *http.Request) {

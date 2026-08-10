@@ -90,6 +90,7 @@ export const routes: RouteRecordRaw[] = [
     { path: '/my/account', name: 'my-account', component: MyCenterPage, meta: userAuthMeta },
     { path: '/my/privacy', name: 'my-privacy', component: MyCenterPage, meta: userAuthMeta },
     { path: '/my/carpools', name: 'my-carpools', component: MyCarpoolsPage, meta: userAuthMeta },
+	{ path: '/my/carpools/:id/edit', name: 'my-carpool-edit', component: CarpoolPublishPage, meta: userAuthMeta },
     { path: '/my/rides', name: 'my-rides', component: MyRidesPage, meta: userAuthMeta },
     { path: '/my/rides/:id', name: 'my-ride-detail', component: CarpoolApplicationDetailPage, meta: userAuthMeta },
     { path: '/my/api-orders', name: 'my-api-orders', component: MyApiOrdersPage, meta: userAuthMeta },

@@ -120,6 +120,28 @@ type AdminAccountAuditEntry struct {
 	CreatedAt     time.Time
 }
 
+type AdminAuditLogFilter struct {
+	Search      string
+	Action      string
+	TargetType  string
+	ActorUserID string
+	TargetID    string
+}
+
+type AdminAuditLog struct {
+	ID            string
+	ActorUserID   string
+	ActorUsername string
+	Action        string
+	TargetType    string
+	TargetID      string
+	Reason        string
+	RequestID     string
+	BeforeStatus  *string
+	AfterStatus   *string
+	CreatedAt     time.Time
+}
+
 type AdminUserGovernanceAction struct {
 	Action               string
 	Kind                 string

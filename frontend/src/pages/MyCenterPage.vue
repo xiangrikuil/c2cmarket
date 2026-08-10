@@ -1399,9 +1399,8 @@ function goToLogin() {
           </div>
         </div>
 
-        <div class="mt-5 flex flex-wrap gap-2">
-          <Button variant="outline" @click="toast('linux.do 信息同步请求已记录。')">同步 linux.do 信息</Button>
-          <Button variant="outline" @click="router.push('/my/profile')">切换头像跟随模式</Button>
+	        <div class="mt-5 flex flex-wrap gap-2">
+	          <Button variant="outline" @click="router.push('/my/profile')">切换头像跟随模式</Button>
           <Button variant="outline" @click="router.push('/my/reports')"><ShieldAlert class="h-4 w-4" />举报与申诉</Button>
         </div>
         <p class="mt-4 rounded-md border border-border bg-accent/50 p-3 text-xs leading-5 text-muted-foreground">

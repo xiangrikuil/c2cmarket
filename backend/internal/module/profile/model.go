@@ -1,6 +1,12 @@
 package profile
 
-import "time"
+import (
+	"time"
+
+	"c2c-market/backend/internal/module/report"
+	"c2c-market/backend/internal/module/reputation"
+	"c2c-market/backend/internal/module/review"
+)
 
 type PrivacySettings struct {
 	ShowCreatedAt               bool
@@ -101,6 +107,45 @@ type PublicUserProfile struct {
 	Privacy         PrivacySettings
 	Stats           PublicStats
 	Badges          []string
+}
+
+type PublicProfileCarpool struct {
+	ID              string
+	Title           string
+	Summary         string
+	RegionName      string
+	PriceMonthlyCNY string
+	AvailableSeats  int
+	UpdatedAt       time.Time
+}
+
+type PublicProfileAPIService struct {
+	ID                    string
+	Title                 string
+	ShortDescription      string
+	BillingMode           string
+	AvailableUSDAllowance string
+	UsageVisibility       string
+	RefundCommitment      bool
+	UpdatedAt             time.Time
+}
+
+type PublicProfileCompletion struct {
+	ID          string
+	Kind        string
+	Title       string
+	Role        string
+	CompletedAt time.Time
+}
+
+type PublicUserProfileBundle struct {
+	Profile     PublicUserProfile
+	Reputations []reputation.ReputationSnapshot
+	Carpools    []PublicProfileCarpool
+	Services    []PublicProfileAPIService
+	Completions []PublicProfileCompletion
+	Reviews     []review.PublicReview
+	Disputes    []report.PublicDispute
 }
 
 type MerchantProfile struct {

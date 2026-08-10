@@ -144,6 +144,54 @@ func TestAdminUserDetailAndGovernanceRoutes(t *testing.T) {
 	assertProblemCode(t, selfPermissionResponse, domain.CodePermissionDenied)
 }
 
+func TestAdminAuditLogRouteReadsGlobalSafeProjection(t *testing.T) {
+	server := newTestServer(time.Date(2026, 8, 1, 12, 0, 0, 0, time.UTC))
+	adminSession := createSession(t, server, "audit-route-admin", true)
+	memberSession := createSession(t, server, "audit-route-member", false)
+
+	update := newJSONRequest(http.MethodPost, "/api/v1/admin/users/"+memberSession.userID+"/status", `{"status":"suspended","reason":"审计路由核查"}`)
+	addAuth(update, adminSession, "audit-route-update")
+	update.Header.Set("If-Match", `"1"`)
+	updateResponse := httptest.NewRecorder()
+	server.ServeHTTP(updateResponse, update)
+	if updateResponse.Code != http.StatusOK {
+		t.Fatalf("seed audit status %d body %s", updateResponse.Code, updateResponse.Body.String())
+	}
+
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/admin/audit-logs?limit=1&action=user.account_status_changed&targetType=user&actorUserId="+adminSession.userID+"&targetId="+memberSession.userID, nil)
+	addCookie(request, adminSession.cookie)
+	response := httptest.NewRecorder()
+	server.ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("audit list status %d body %s", response.Code, response.Body.String())
+	}
+	var payload listResponse[adminAuditLogDTO]
+	if err := json.NewDecoder(response.Body).Decode(&payload); err != nil {
+		t.Fatalf("decode audit list: %v", err)
+	}
+	if len(payload.Items) != 1 {
+		t.Fatalf("unexpected audit list: %+v", payload)
+	}
+	item := payload.Items[0]
+	if item.ActorUsername != "audit-route-admin" || item.TargetID != memberSession.userID || item.Reason != "审计路由核查" || item.BeforeStatus == nil || *item.BeforeStatus != "active" || item.AfterStatus == nil || *item.AfterStatus != "suspended" {
+		t.Fatalf("unexpected audit projection: %+v", item)
+	}
+	for _, forbidden := range []string{"before_json", "after_json", "beforeJson", "afterJson", "password", "csrfToken"} {
+		if strings.Contains(response.Body.String(), forbidden) {
+			t.Fatalf("audit response leaked %s: %s", forbidden, response.Body.String())
+		}
+	}
+
+	nonAdmin := createSession(t, server, "audit-route-reader", false)
+	request = httptest.NewRequest(http.MethodGet, "/api/v1/admin/audit-logs", nil)
+	addCookie(request, nonAdmin.cookie)
+	response = httptest.NewRecorder()
+	server.ServeHTTP(response, request)
+	if response.Code != http.StatusForbidden {
+		t.Fatalf("non-admin audit status %d body %s", response.Code, response.Body.String())
+	}
+}
+
 func TestAdminUserPermissionRouteGrantsAdministratorAccess(t *testing.T) {
 	server := newTestServer(time.Date(2026, 8, 1, 12, 0, 0, 0, time.UTC))
 	adminSession := createSession(t, server, "permission-route-admin", true)
