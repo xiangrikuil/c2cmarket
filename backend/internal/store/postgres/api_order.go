@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -166,11 +167,11 @@ func (s *Store) ListAPIOrdersBySeller(ctx context.Context, sellerUserID string, 
 	return s.listAPIOrders(ctx, `WHERE seller_user_id = $1`, []any{sellerUserID})
 }
 
-func (s *Store) ListAdminAPIOrders(ctx context.Context, now time.Time) ([]apiorder.Order, *domain.AppError) {
+func (s *Store) ListAdminAPIOrders(ctx context.Context, filter apiorder.AdminOrderFilter, page domain.PageRequest, now time.Time) (domain.Page[apiorder.Order], *domain.AppError) {
 	if appErr := s.MaterializeExpiredAPIOrders(ctx, now); appErr != nil {
-		return nil, appErr
+		return domain.Page[apiorder.Order]{}, appErr
 	}
-	return s.listAPIOrders(ctx, "", nil)
+	return s.listAdminAPIOrdersPage(ctx, filter, page, now)
 }
 
 func (s *Store) GetAdminAPIOrder(ctx context.Context, orderID string, now time.Time) (apiorder.Order, *domain.AppError) {
@@ -917,6 +918,159 @@ func (s *Store) listAPIOrders(ctx context.Context, whereClause string, args []an
 		return nil, internalStoreError()
 	}
 	defer rows.Close()
+	orders := []apiorder.Order{}
+	for rows.Next() {
+		var order apiorder.Order
+		if err := rows.Scan(apiOrderScanTargets(&order)...); err != nil {
+			return nil, internalStoreError()
+		}
+		orders = append(orders, order)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, internalStoreError()
+	}
+	return orders, nil
+}
+
+func (s *Store) listAdminAPIOrdersPage(ctx context.Context, filter apiorder.AdminOrderFilter, page domain.PageRequest, now time.Time) (domain.Page[apiorder.Order], *domain.AppError) {
+	if s == nil || s.pool == nil {
+		return domain.Page[apiorder.Order]{}, internalStoreError()
+	}
+	page = normalizePageRequest(page)
+	sortMode := filter.NormalizedSort()
+	position, appErr := apiorder.DecodeAdminOrderCursor(page.Cursor, sortMode)
+	if appErr != nil {
+		return domain.Page[apiorder.Order]{}, appErr
+	}
+	var timePosition time.Time
+	if page.Cursor != "" {
+		if _, err := uuid.Parse(position.ID); err != nil {
+			return domain.Page[apiorder.Order]{}, invalidPageCursorError()
+		}
+		switch sortMode {
+		case apiorder.AdminOrderSortAmountAsc, apiorder.AdminOrderSortAmountDesc:
+		default:
+			parsed, err := time.Parse(time.RFC3339Nano, position.Value)
+			if err != nil {
+				return domain.Page[apiorder.Order]{}, invalidPageCursorError()
+			}
+			timePosition = parsed
+		}
+	}
+
+	conditions := make([]string, 0, 12)
+	args := make([]any, 0, 16)
+	addArgument := func(value any) string {
+		args = append(args, value)
+		return "$" + strconv.Itoa(len(args))
+	}
+	if len(filter.Statuses) > 0 {
+		placeholder := addArgument(filter.Statuses)
+		conditions = append(conditions, "status = ANY("+placeholder+"::text[])")
+	}
+	if createdAfter, ok := filter.CreatedAfter(now); ok {
+		placeholder := addArgument(createdAfter)
+		conditions = append(conditions, "created_at >= "+placeholder)
+	}
+	if value := strings.TrimSpace(filter.BuyerUserID); value != "" {
+		placeholder := addArgument(value)
+		conditions = append(conditions, "buyer_user_id = "+placeholder+"::uuid")
+	}
+	if value := strings.TrimSpace(filter.SellerUserID); value != "" {
+		placeholder := addArgument(value)
+		conditions = append(conditions, "seller_user_id = "+placeholder+"::uuid")
+	}
+	if value := strings.TrimSpace(filter.APIServiceID); value != "" {
+		placeholder := addArgument(value)
+		conditions = append(conditions, "api_service_id = "+placeholder+"::uuid")
+	}
+	activeDisputeStatuses := []string{
+		apiorder.DisputeStatusNegotiating,
+		apiorder.DisputeStatusOpen,
+		apiorder.DisputeStatusAwaitingFulfillment,
+		apiorder.DisputeStatusFulfillmentConfirmation,
+	}
+	switch strings.TrimSpace(filter.Dispute) {
+	case apiorder.AdminOrderDisputeActive:
+		placeholder := addArgument(activeDisputeStatuses)
+		conditions = append(conditions, "dispute_status = ANY("+placeholder+"::text[])")
+	case apiorder.AdminOrderDisputeNone:
+		placeholder := addArgument(activeDisputeStatuses)
+		conditions = append(conditions, "NOT (dispute_status = ANY("+placeholder+"::text[]))")
+	}
+	if value := strings.TrimSpace(filter.MinAmount); value != "" {
+		placeholder := addArgument(value)
+		conditions = append(conditions, "amount >= "+placeholder+"::numeric")
+	}
+	if value := strings.TrimSpace(filter.MaxAmount); value != "" {
+		placeholder := addArgument(value)
+		conditions = append(conditions, "amount <= "+placeholder+"::numeric")
+	}
+	if value := strings.ToLower(strings.TrimSpace(filter.Query)); value != "" {
+		placeholder := addArgument(value)
+		conditions = append(conditions, `(
+			strpos(lower(id::text), `+placeholder+`) > 0 OR
+			strpos(lower(order_no), `+placeholder+`) > 0 OR
+			strpos(lower(api_service_id::text), `+placeholder+`) > 0 OR
+			strpos(lower(service_title_snapshot), `+placeholder+`) > 0 OR
+			strpos(lower(buyer_user_id::text), `+placeholder+`) > 0 OR
+			strpos(lower(seller_user_id::text), `+placeholder+`) > 0 OR
+			(
+				regexp_replace(`+placeholder+`, '[^a-z0-9]', '', 'g') <> '' AND
+				strpos(regexp_replace(lower(order_no), '[^a-z0-9]', '', 'g'), regexp_replace(`+placeholder+`, '[^a-z0-9]', '', 'g')) > 0
+			)
+		)`)
+	}
+	if page.Cursor != "" {
+		valuePlaceholder := ""
+		switch sortMode {
+		case apiorder.AdminOrderSortAmountAsc, apiorder.AdminOrderSortAmountDesc:
+			valuePlaceholder = addArgument(position.Value) + "::numeric"
+		default:
+			valuePlaceholder = addArgument(timePosition) + "::timestamptz"
+		}
+		idPlaceholder := addArgument(position.ID) + "::uuid"
+		switch sortMode {
+		case apiorder.AdminOrderSortCreatedDesc:
+			conditions = append(conditions, "(created_at, id) < ("+valuePlaceholder+", "+idPlaceholder+")")
+		case apiorder.AdminOrderSortAmountDesc:
+			conditions = append(conditions, "(amount, id) < ("+valuePlaceholder+", "+idPlaceholder+")")
+		case apiorder.AdminOrderSortAmountAsc:
+			conditions = append(conditions, "(amount, id) > ("+valuePlaceholder+", "+idPlaceholder+")")
+		default:
+			conditions = append(conditions, "(updated_at, id) < ("+valuePlaceholder+", "+idPlaceholder+")")
+		}
+	}
+
+	query := "SELECT " + apiOrderColumns + " FROM api_orders"
+	if len(conditions) > 0 {
+		query += " WHERE " + strings.Join(conditions, " AND ")
+	}
+	switch sortMode {
+	case apiorder.AdminOrderSortCreatedDesc:
+		query += " ORDER BY created_at DESC, id DESC"
+	case apiorder.AdminOrderSortAmountDesc:
+		query += " ORDER BY amount DESC, id DESC"
+	case apiorder.AdminOrderSortAmountAsc:
+		query += " ORDER BY amount ASC, id ASC"
+	default:
+		query += " ORDER BY updated_at DESC, id DESC"
+	}
+	args = append(args, page.Limit+1)
+	query += " LIMIT $" + strconv.Itoa(len(args))
+	rows, err := s.pool.Query(ctx, query, args...)
+	if err != nil {
+		return domain.Page[apiorder.Order]{}, internalStoreError()
+	}
+	defer rows.Close()
+	orders, appErr := scanAPIOrders(rows)
+	if appErr != nil {
+		return domain.Page[apiorder.Order]{}, appErr
+	}
+	return apiorder.PageAdminOrderItems(orders, page, sortMode), nil
+}
+
+func scanAPIOrders(rows pgx.Rows) ([]apiorder.Order, *domain.AppError) {
 	orders := []apiorder.Order{}
 	for rows.Next() {
 		var order apiorder.Order

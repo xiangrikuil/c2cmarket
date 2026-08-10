@@ -10,6 +10,7 @@ import (
 
 	"c2c-market/backend/internal/domain"
 	"c2c-market/backend/internal/module/apimarket"
+	"c2c-market/backend/internal/module/apiorder"
 	"c2c-market/backend/internal/module/apiquota"
 	"c2c-market/backend/internal/module/carpool"
 
@@ -204,6 +205,207 @@ func TestPostgresBusinessListFiltersAndSortsBeforePagination(t *testing.T) {
 	modelCatalogID := seedPublicServicePaginationFilters(t, store, owner.ID, serviceIDs, fixedServiceID, now)
 	assertPublicServiceFiltersBeforePagination(t, store, fixedServiceID, modelCatalogID)
 	assertPublicQuotaFiltersBeforePagination(t, store, owner.ID, serviceIDs[0], now)
+	assertAdminAPIOrderFiltersAndPagination(t, store, owner.ID, contactID, serviceIDs[0], now)
+}
+
+func assertAdminAPIOrderFiltersAndPagination(t *testing.T, store *Store, sellerID, sellerContactID, serviceID string, now time.Time) {
+	t.Helper()
+	ctx := context.Background()
+	suffix := strings.ReplaceAll(uuid.NewString()[:8], "-", "")
+	buyer, appErr := store.EnsureUser(ctx, "order-pagination-buyer-"+suffix, false, now)
+	if appErr != nil {
+		t.Fatalf("ensure order pagination buyer: %v", appErr)
+	}
+	buyerContactID := uuid.NewString()
+	if _, err := store.pool.Exec(ctx, `
+		INSERT INTO contact_methods (id, user_id, type, label, is_default, enabled, created_at, updated_at)
+		VALUES ($1, $2, 'linuxdo', 'linux.do', true, true, $3, $3)
+	`, buyerContactID, buyer.ID, now); err != nil {
+		t.Fatalf("seed order pagination buyer contact: %v", err)
+	}
+	seedContactVersionForTest(t, ctx, store.pool, buyerContactID, buyer.ID, now)
+	if _, err := store.pool.Exec(ctx, `
+		INSERT INTO api_service_access_modes (api_service_id, access_mode, public_note)
+		VALUES ($1, 'buyer_dedicated_sub_key', '站外确认')
+		ON CONFLICT (api_service_id, access_mode) DO NOTHING
+	`, serviceID); err != nil {
+		t.Fatalf("seed order pagination access mode: %v", err)
+	}
+
+	var buyerContactVersionID, sellerContactVersionID string
+	if err := store.pool.QueryRow(ctx, `SELECT current_version_id::text FROM contact_methods WHERE id = $1`, buyerContactID).Scan(&buyerContactVersionID); err != nil {
+		t.Fatalf("read buyer contact version: %v", err)
+	}
+	if err := store.pool.QueryRow(ctx, `SELECT current_version_id::text FROM contact_methods WHERE id = $1`, sellerContactID).Scan(&sellerContactVersionID); err != nil {
+		t.Fatalf("read seller contact version: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = store.pool.Exec(context.Background(), `DELETE FROM api_orders WHERE buyer_user_id = $1`, buyer.ID)
+		_, _ = store.pool.Exec(context.Background(), `DELETE FROM api_purchase_intents WHERE buyer_user_id = $1`, buyer.ID)
+		_, _ = store.pool.Exec(context.Background(), `UPDATE contact_methods SET current_version_id = NULL WHERE user_id = $1`, buyer.ID)
+		_, _ = store.pool.Exec(context.Background(), `DELETE FROM contact_method_versions WHERE owner_user_id = $1`, buyer.ID)
+		_, _ = store.pool.Exec(context.Background(), `DELETE FROM contact_methods WHERE user_id = $1`, buyer.ID)
+		_, _ = store.pool.Exec(context.Background(), `DELETE FROM users WHERE id = $1`, buyer.ID)
+	})
+
+	orderIDs := make([]string, 0, 27)
+	var deepOrderNo, deepAmount string
+	for index := 0; index < 27; index++ {
+		intentID := uuid.NewString()
+		orderID := uuid.NewString()
+		createdAt := now.Add(-time.Duration(index) * time.Minute)
+		amount := fmt.Sprintf("%d.00", index%5+1)
+		if _, err := store.pool.Exec(ctx, `
+			INSERT INTO api_purchase_intents (
+				id, api_service_id, api_service_owner_user_id, buyer_user_id, owner_user_id,
+				buyer_contact_method_id, buyer_contact_method_version_id,
+				owner_contact_method_id, owner_contact_method_version_id,
+				status, requested_cny_amount, requested_usd_allowance, selected_access_mode,
+				service_version_snapshot, service_title_snapshot,
+				distribution_system_snapshot, billing_mode_snapshot,
+				buyer_contact_type_snapshot, buyer_contact_label_snapshot,
+				owner_contact_type_snapshot, owner_contact_label_snapshot,
+				minimum_intent_cny_snapshot, pricing_snapshot, contacted_at, created_at, updated_at
+			) VALUES (
+				$1, $2, $3, $4, $3,
+				$5, $6, $7, $8,
+				'ordered', $9, 20, 'buyer_dedicated_sub_key',
+				1, $10, 'sub2api', 'metered_usd_quota',
+				'linuxdo', 'linux.do', 'linuxdo', 'linux.do',
+				1, '{}'::jsonb, $11, $11, $11
+			)
+		`, intentID, serviceID, sellerID, buyer.ID, buyerContactID, buyerContactVersionID,
+			sellerContactID, sellerContactVersionID, amount, fmt.Sprintf("监管分页 API 服务 %02d", index), createdAt); err != nil {
+			t.Fatalf("seed order pagination intent %d: %v", index, err)
+		}
+		orderNo, err := apiorder.GenerateOrderNo(createdAt)
+		if err != nil {
+			t.Fatalf("generate order pagination number %d: %v", index, err)
+		}
+		if _, err := store.pool.Exec(ctx, `
+			INSERT INTO api_orders (
+				id, api_purchase_intent_id, api_service_id, buyer_user_id, seller_user_id,
+				status, dispute_status, service_title_snapshot, service_version_snapshot,
+				billing_mode_snapshot, requested_usd_allowance_snapshot, cny_per_usd_allowance_snapshot,
+				amount, currency, selected_payment_method,
+				payment_window_minutes_snapshot, payment_expires_at,
+				payment_instructions_snapshot, created_at, updated_at, order_no
+			) VALUES (
+				$1, $2, $3, $4, $5,
+				'pending_payment', 'none', $6, 1,
+				'metered_usd_quota', 20, 1,
+				$7, 'CNY', 'wechat',
+				10, $8, '站外确认付款', $9, $9, $10
+			)
+		`, orderID, intentID, serviceID, buyer.ID, sellerID, fmt.Sprintf("监管分页 API 服务 %02d", index), amount, now.Add(2*time.Hour), createdAt, orderNo); err != nil {
+			t.Fatalf("seed order pagination order %d: %v", index, err)
+		}
+		orderIDs = append(orderIDs, orderID)
+		if index == 26 {
+			deepOrderNo = orderNo
+			deepAmount = amount
+		}
+	}
+
+	first, appErr := store.ListAdminAPIOrders(ctx, apiorder.AdminOrderFilter{}, domain.PageRequest{Limit: 20}, now)
+	if appErr != nil || len(first.Items) != 20 || first.NextCursor == nil {
+		t.Fatalf("admin order first page: page=%+v error=%v", first, appErr)
+	}
+	for _, order := range first.Items {
+		if order.OrderNo == deepOrderNo {
+			t.Fatalf("deep order unexpectedly appeared on first page: %s", deepOrderNo)
+		}
+	}
+	deepQuery := strings.ToLower(strings.ReplaceAll(deepOrderNo, "-", ""))
+	deepPage, appErr := store.ListAdminAPIOrders(ctx, apiorder.AdminOrderFilter{
+		Query:        deepQuery,
+		Statuses:     []string{apiorder.StatusPendingPayment},
+		BuyerUserID:  buyer.ID,
+		SellerUserID: sellerID,
+		APIServiceID: serviceID,
+		Dispute:      apiorder.AdminOrderDisputeNone,
+		MinAmount:    deepAmount,
+		MaxAmount:    deepAmount,
+	}, domain.PageRequest{Limit: 1}, now)
+	if appErr != nil || len(deepPage.Items) != 1 || deepPage.Items[0].OrderNo != deepOrderNo || deepPage.NextCursor != nil {
+		t.Fatalf("admin order filters must run before pagination: page=%+v error=%v", deepPage, appErr)
+	}
+
+	for _, sortMode := range []string{
+		apiorder.AdminOrderSortUpdatedDesc,
+		apiorder.AdminOrderSortCreatedDesc,
+		apiorder.AdminOrderSortAmountDesc,
+		apiorder.AdminOrderSortAmountAsc,
+	} {
+		items := collectAdminAPIOrderIntegrationPages(t, store, apiorder.AdminOrderFilter{BuyerUserID: buyer.ID, Sort: sortMode}, 6, now)
+		assertAdminAPIOrderPageCoverage(t, items, orderIDs, sortMode)
+	}
+
+	amountFirst, appErr := store.ListAdminAPIOrders(ctx, apiorder.AdminOrderFilter{BuyerUserID: buyer.ID, Sort: apiorder.AdminOrderSortAmountAsc}, domain.PageRequest{Limit: 1}, now)
+	if appErr != nil || amountFirst.NextCursor == nil {
+		t.Fatalf("admin amount cursor precondition: page=%+v error=%v", amountFirst, appErr)
+	}
+	if _, appErr := store.ListAdminAPIOrders(ctx, apiorder.AdminOrderFilter{BuyerUserID: buyer.ID, Sort: apiorder.AdminOrderSortCreatedDesc}, domain.PageRequest{Limit: 1, Cursor: *amountFirst.NextCursor}, now); appErr == nil || appErr.Code != domain.CodeValidationFailed {
+		t.Fatalf("sort-mismatched admin order cursor error = %+v", appErr)
+	}
+}
+
+func collectAdminAPIOrderIntegrationPages(t *testing.T, store *Store, filter apiorder.AdminOrderFilter, limit int, now time.Time) []apiorder.Order {
+	t.Helper()
+	var items []apiorder.Order
+	var cursor string
+	for {
+		page, appErr := store.ListAdminAPIOrders(context.Background(), filter, domain.PageRequest{Limit: limit, Cursor: cursor}, now)
+		if appErr != nil {
+			t.Fatalf("collect admin API order page: %v", appErr)
+		}
+		items = append(items, page.Items...)
+		if page.NextCursor == nil {
+			return items
+		}
+		if *page.NextCursor == cursor {
+			t.Fatalf("admin API order cursor repeated: %q", cursor)
+		}
+		cursor = *page.NextCursor
+	}
+}
+
+func assertAdminAPIOrderPageCoverage(t *testing.T, items []apiorder.Order, expectedIDs []string, sortMode string) {
+	t.Helper()
+	if len(items) != len(expectedIDs) {
+		t.Fatalf("admin API order page coverage = %d, want %d for %s", len(items), len(expectedIDs), sortMode)
+	}
+	seen := make(map[string]struct{}, len(items))
+	for index, order := range items {
+		if _, exists := seen[order.ID]; exists {
+			t.Fatalf("duplicate admin API order across %s page boundary: %s", sortMode, order.ID)
+		}
+		seen[order.ID] = struct{}{}
+		if index == 0 {
+			continue
+		}
+		previous := items[index-1]
+		switch sortMode {
+		case apiorder.AdminOrderSortAmountAsc:
+			comparison := apiorder.CompareAdminOrderAmounts(previous.Amount, order.Amount)
+			if comparison > 0 || comparison == 0 && previous.ID >= order.ID {
+				t.Fatalf("amount ascending keyset order broke at %d: %+v then %+v", index, previous, order)
+			}
+		case apiorder.AdminOrderSortAmountDesc:
+			comparison := apiorder.CompareAdminOrderAmounts(previous.Amount, order.Amount)
+			if comparison < 0 || comparison == 0 && previous.ID <= order.ID {
+				t.Fatalf("amount descending keyset order broke at %d: %+v then %+v", index, previous, order)
+			}
+		case apiorder.AdminOrderSortCreatedDesc:
+			if previous.CreatedAt.Before(order.CreatedAt) || previous.CreatedAt.Equal(order.CreatedAt) && previous.ID <= order.ID {
+				t.Fatalf("created descending keyset order broke at %d: %+v then %+v", index, previous, order)
+			}
+		default:
+			if previous.UpdatedAt.Before(order.UpdatedAt) || previous.UpdatedAt.Equal(order.UpdatedAt) && previous.ID <= order.ID {
+				t.Fatalf("updated descending keyset order broke at %d: %+v then %+v", index, previous, order)
+			}
+		}
+	}
 }
 
 func seedPublicServicePaginationFilters(t *testing.T, store *Store, ownerID string, serviceIDs []string, fixedServiceID string, now time.Time) string {

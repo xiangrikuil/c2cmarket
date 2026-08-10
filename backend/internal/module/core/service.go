@@ -1094,12 +1094,16 @@ func (s *Service) OwnerAPIOrders(ctx context.Context, user User) ([]APIOrder, *d
 	return s.withAPIOrderReputations(ctx, orders)
 }
 
-func (s *Service) AdminAPIOrders(ctx context.Context, user User) ([]APIOrder, *domain.AppError) {
-	orders, appErr := s.apiOrder.AdminOrders(ctx, user)
+func (s *Service) AdminAPIOrders(ctx context.Context, user User, filter apiorder.AdminOrderFilter, pageRequest domain.PageRequest) (domain.Page[APIOrder], *domain.AppError) {
+	page, appErr := s.apiOrder.AdminOrders(ctx, user, filter, pageRequest)
 	if appErr != nil {
-		return nil, appErr
+		return domain.Page[APIOrder]{}, appErr
 	}
-	return s.withAPIOrderReputations(ctx, orders)
+	orders, appErr := s.withAPIOrderReputations(ctx, page.Items)
+	if appErr != nil {
+		return domain.Page[APIOrder]{}, appErr
+	}
+	return domain.Page[APIOrder]{Items: orders, NextCursor: page.NextCursor}, nil
 }
 
 func (s *Service) AdminAPIOrder(ctx context.Context, user User, orderID string) (APIOrder, *domain.AppError) {

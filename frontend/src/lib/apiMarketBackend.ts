@@ -1333,14 +1333,19 @@ function adminOrderStatusLabel(value: string) {
 	return labels[value] ?? value
 }
 
-function apiOrderPageQuery(filters: ApiOrderFilters, page: CursorPageRequest) {
+export function apiOrderPageQuery(filters: ApiOrderFilters, page: CursorPageRequest) {
   const params = new URLSearchParams()
   const statuses = Array.isArray(filters.status) ? filters.status : filters.status ? [filters.status] : []
   if (statuses.length) params.set('statuses', statuses.join(','))
-  if (filters.serviceId) params.set('serviceId', filters.serviceId)
+  if (filters.buyerId?.trim()) params.set('buyerId', filters.buyerId.trim())
+  if (filters.sellerId?.trim()) params.set('sellerId', filters.sellerId.trim())
+  if (filters.serviceId?.trim()) params.set('serviceId', filters.serviceId.trim())
   if (filters.search?.trim()) params.set('q', filters.search.trim())
   if (filters.dateRange && filters.dateRange !== 'all') params.set('dateRange', filters.dateRange)
   if (filters.sort) params.set('sort', filters.sort)
+  if (filters.dispute && filters.dispute !== 'all') params.set('dispute', filters.dispute)
+  if (filters.minAmount?.trim()) params.set('minAmount', filters.minAmount.trim())
+  if (filters.maxAmount?.trim()) params.set('maxAmount', filters.maxAmount.trim())
   if (filters.risk && filters.risk !== 'all') params.set('risk', filters.risk)
   if (page.limit) params.set('limit', String(page.limit))
   if (page.cursor) params.set('cursor', page.cursor)

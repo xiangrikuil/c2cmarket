@@ -11555,6 +11555,28 @@ export type ListAdminApiOrdersData = {
     path?: never;
     query?: {
         /**
+         * Match an order number, order ID, API service ID or title, buyer ID, or seller ID.
+         */
+        q?: string;
+        /**
+         * API order statuses encoded as a comma-separated query value.
+         */
+        statuses?: Array<'pending_payment' | 'payment_submitted' | 'payment_issue' | 'paid_confirmed' | 'delivery_submitted' | 'completed' | 'cancelled'>;
+        dateRange?: 'all' | 'today' | '7d' | '30d';
+        buyerId?: string;
+        sellerId?: string;
+        serviceId?: string;
+        dispute?: 'all' | 'active' | 'none';
+        /**
+         * Inclusive non-negative CNY amount lower bound.
+         */
+        minAmount?: string;
+        /**
+         * Inclusive non-negative CNY amount upper bound.
+         */
+        maxAmount?: string;
+        sort?: 'updated_desc' | 'created_desc' | 'amount_desc' | 'amount_asc';
+        /**
          * Page size. Defaults to 20 and must be between 1 and 100.
          */
         limit?: number;
@@ -11571,13 +11593,17 @@ export type ListAdminApiOrdersErrors = {
      * Problem Details error.
      */
     403: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    422: ProblemDetails;
 };
 
 export type ListAdminApiOrdersError = ListAdminApiOrdersErrors[keyof ListAdminApiOrdersErrors];
 
 export type ListAdminApiOrdersResponses = {
     /**
-     * Administrator API order tracking list with decimal pricing snapshots and without contacts or raw delivery credentials.
+     * Administrator API order supervision list with decimal pricing snapshots and without contacts or raw delivery credentials.
      */
     200: ApiOrderList;
 };

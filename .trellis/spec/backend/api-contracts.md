@@ -2295,6 +2295,88 @@ UPDATE api_services SET available_usd_allowance = available_usd_allowance - requ
 WHERE id = service_id AND available_usd_allowance >= requested
 ```
 
+## Scenario: Admin API Order Supervision Query Contract
+
+### 1. Scope / Trigger
+
+- Trigger: administrator API-order list work that adds or changes search, filters, sorting, cursor pagination, OpenAPI fields, frontend query state, or Mock behavior.
+- The compatibility route remains `/admin/trade-intents`, but its visible product name is `API 订单监管` and its backend authority is `GET /api/v1/admin/api-orders`.
+
+### 2. Signatures
+
+```text
+GET /api/v1/admin/api-orders
+  ?q
+  &statuses=pending_payment,payment_submitted,payment_issue,paid_confirmed,delivery_submitted,completed,cancelled
+  &dateRange=today|7d|30d
+  &buyerId=<uuid>
+  &sellerId=<uuid>
+  &serviceId=<uuid>
+  &dispute=active|none
+  &minAmount=<non-negative decimal>
+  &maxAmount=<non-negative decimal>
+  &sort=updated_desc|created_desc|amount_desc|amount_asc
+  &limit=1..100
+  &cursor=<opaque sort-bound cursor>
+
+ListAdminAPIOrders(ctx, apiorder.AdminOrderFilter, domain.PageRequest) (domain.Page[domain.APIOrder], error)
+```
+
+### 3. Contracts
+
+- The default page size is 20 and the maximum is 100. PostgreSQL applies every search/filter predicate before the keyset predicate and `LIMIT limit + 1`; handlers must not load the full table or filter a page-sized slice in memory.
+- Every sort uses the requested scalar plus order ID as a deterministic tie-breaker. The opaque cursor is bound to the sort mode; changing filters or sort starts again from page one, and a cursor created for another sort is invalid.
+- `q` matches UUIDs, service/participant public-safe fields, and normalized public order numbers so searches such as `k7m4p9q2xz` and `API-...-K7M4-P9Q2XZ` remain equivalent in PostgreSQL, in-memory tests, and Mock mode.
+- `dateRange=today` means the current Asia/Shanghai calendar day, not a rolling 24-hour window and not the host machine's local calendar.
+- Amounts remain decimal strings from input through query serialization and Mock comparison. Filter inputs use text semantics with `inputmode="decimal"`; do not rely on native number-input `v-model` values supporting string methods or exact JavaScript-number precision.
+- The administrator list is read-only and returns only public-safe order state and immutable snapshots. It omits contacts, payment instructions/data, and every delivery credential field.
+- Frontend query keys include every visible filter and sort value. The real adapter serializes the same fields documented in OpenAPI; Mock mode applies equivalent filtering/sorting before pagination and binds cursors to the active sort.
+
+### 4. Validation & Error Matrix
+
+| Condition | Result |
+| --- | --- |
+| Unknown status, date range, dispute mode, or sort | `422 VALIDATION_FAILED` on the corresponding field |
+| Invalid buyer, seller, or service UUID | `422 VALIDATION_FAILED` on that UUID field |
+| Negative or malformed minimum/maximum amount | `422 VALIDATION_FAILED` on that amount field |
+| `minAmount > maxAmount` | `422 VALIDATION_FAILED` on `minAmount` / `maxAmount` |
+| Invalid, non-UUID, or sort-mismatched cursor | `422 VALIDATION_FAILED` on `cursor` |
+| Valid filters with no matches | `200` with `items=[]` and no `nextCursor` |
+| Non-admin caller | `403 PERMISSION_DENIED` |
+
+### 5. Good/Base/Bad Cases
+
+- Good: an administrator combines status, seller, active-dispute, `7d`, and amount filters; SQL finds a matching row beyond the unfiltered first 20 records and returns a stable next cursor.
+- Base: no filters and no sort returns the first 20 orders by `updated_at DESC, id DESC`.
+- Base: `today` at `2026-08-09T16:30:00Z` includes rows from the Shanghai date `2026-08-10` and excludes rows from the preceding Shanghai day.
+- Bad: fetch 20 rows, filter them in the handler, then claim there are no matches while matching rows exist deeper in the table.
+- Bad: convert `9999999999999999.99` to JavaScript `Number` or call `.trim()` directly on a value emitted by a native number input.
+
+### 6. Tests Required
+
+- Go unit tests cover all filters, normalized order-number search, all four sort orders, tie-breakers, sort-bound cursors, and Shanghai day boundaries.
+- Handler tests assert field-level `422` responses for every enum, UUID, decimal range, and cursor failure.
+- A dedicated PostgreSQL integration test seeds more than one page and proves filtering happens before pagination for all four stable sort modes.
+- OpenAPI route/schema checks and generated frontend types must match the documented query signature.
+- Frontend tests cover query omission/serialization, Mock parity, large exact decimals, cursor/sort mismatch, and numeric-or-text input normalization.
+- Browser verification covers filter/reset interaction, no new console errors, and no horizontal overflow at desktop and mobile widths.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```text
+SELECT all rows -> handler filters/sorts -> offset cursor
+Number(minAmount) -> compare binary floating-point values
+```
+
+#### Correct
+
+```text
+WHERE all filters -> keyset predicate for active sort -> ORDER BY scalar, id -> LIMIT limit + 1
+canonical decimal text -> exact decimal comparison -> sort-bound opaque cursor
+```
+
 ## Scenario: API Order Delivery Review And Role Projection
 
 ### 1. Scope / Trigger

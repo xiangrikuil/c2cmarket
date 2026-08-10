@@ -58,7 +58,7 @@ const adminAuthMeta = { auth: 'admin' } as const
 const adminChildren = [
   ['carpools', '车源管理', '集中巡查公开车源，并处理暂停、待复核和遗留审核记录。'],
   ['api-services', 'API 服务管理', '巡查公开服务，并处理遗留待审、下架和其他异常记录。'],
-  ['trade-intents', 'API 订单追踪', '查看 API 订单、参与方、金额快照、完成和取消状态。'],
+  ['trade-intents', 'API 订单监管', '查看 API 订单、参与方、金额快照、完成和取消状态。'],
   ['reports', '举报纠纷', '处理举报、纠纷和未解决记录。'],
   ['appeals', '申诉处理', '处理用户对限制、下架和封禁的申诉。'],
   ['logs', '审计日志', '查看系统与管理员操作记录。'],

@@ -63,12 +63,12 @@ const errorMessage = computed(() => error.value instanceof Error ? error.value.m
   <SkeletonBlock v-if="isLoading" :lines="10" />
   <ErrorState v-else-if="error" :description="errorMessage" @retry="refetch()" />
   <EmptyState v-else-if="!order" title="未找到 API 订单" description="订单不存在或当前管理员无权查看。">
-    <template #action><Button variant="outline" @click="router.push('/admin/trade-intents')">返回订单追踪</Button></template>
+    <template #action><Button variant="outline" @click="router.push('/admin/trade-intents')">返回订单监管</Button></template>
   </EmptyState>
   <div v-else class="space-y-4">
     <div class="flex flex-col gap-3 border-b border-border pb-4 md:flex-row md:items-start md:justify-between">
       <div class="min-w-0">
-        <Button class="-ml-3 mb-2" variant="ghost" size="sm" @click="router.push('/admin/trade-intents')"><ArrowLeft class="h-4 w-4" />返回订单追踪</Button>
+        <Button class="-ml-3 mb-2" variant="ghost" size="sm" @click="router.push('/admin/trade-intents')"><ArrowLeft class="h-4 w-4" />返回订单监管</Button>
         <div class="flex flex-wrap items-center gap-2">
           <h1 class="text-2xl font-semibold">API 订单监管详情</h1>
           <StatusBadge :status="order.status" :label="getApiOrderStatusLabel(order.status, 'admin')" />

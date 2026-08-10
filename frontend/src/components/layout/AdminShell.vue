@@ -64,7 +64,7 @@ const navGroups = computed(() => [
     { label: '模型审计', to: '/admin/model-audit', icon: BookOpen, count: null },
   ] },
   { title: '交易与用户', items: [
-    { label: 'API 订单追踪', to: '/admin/trade-intents', icon: FileText, count: null },
+    { label: 'API 订单监管', to: '/admin/trade-intents', icon: FileText, count: null },
     { label: '用户目录', to: '/admin/users', icon: Users, count: null },
   ] },
   { title: '内容与系统', items: [

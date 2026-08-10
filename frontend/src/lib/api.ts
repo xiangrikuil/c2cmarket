@@ -2050,6 +2050,9 @@ export type ApiOrderFilters = {
   search?: string
   dateRange?: 'all' | 'today' | '7d' | '30d'
   sort?: 'default_buyer' | 'default_merchant' | 'updated_desc' | 'created_desc' | 'amount_desc' | 'amount_asc'
+  dispute?: 'all' | 'active' | 'none'
+  minAmount?: string
+  maxAmount?: string
   risk?: 'all' | 'high' | 'has_note'
 }
 
@@ -2152,7 +2155,18 @@ function filterApiPurchaseIntents(filters: ApiPurchaseIntentFilters = {}) {
 }
 
 function apiOrderSearchTerms(order: ApiOrder) {
-  return [order.orderNo, order.id, order.apiPurchaseIntentId, order.serviceTitle, order.buyer, order.seller, getApiMerchantDisplayName({ merchant: order.seller, snapshot: order.intentSnapshot })]
+  return [
+    order.orderNo,
+    order.id,
+    order.apiPurchaseIntentId,
+    order.apiServiceId,
+    order.serviceTitle,
+    order.buyerId,
+    order.buyer,
+    order.sellerId,
+    order.seller,
+    getApiMerchantDisplayName({ merchant: order.seller, snapshot: order.intentSnapshot }),
+  ]
 }
 
 function defaultApiOrderSortForRole(role: 'buyer' | 'merchant') {
@@ -2164,31 +2178,49 @@ function defaultApiOrderSortForRole(role: 'buyer' | 'merchant') {
   }
 }
 
-function filterApiOrders(filters: ApiOrderFilters = {}) {
-  materializeMockApiOrderReviews()
+export function filterApiOrderRows(source: readonly ApiOrder[], filters: ApiOrderFilters = {}, now = new Date()) {
   const keyword = filters.search?.trim().toLowerCase()
   const statuses = Array.isArray(filters.status) ? filters.status : filters.status ? [filters.status] : null
-  const now = Date.now()
-  const rangeMs = filters.dateRange === 'today' ? 24 * 60 * 60 * 1000 : filters.dateRange === '7d' ? 7 * 24 * 60 * 60 * 1000 : filters.dateRange === '30d' ? 30 * 24 * 60 * 60 * 1000 : null
-  const rows = apiOrderStore.filter(item => {
+  const createdAfter = filters.dateRange === 'today'
+    ? new Date(beijingDateTimeInputToISOString(`${formatBeijingDateTimeInput(now).slice(0, 10)}T00:00`)).getTime()
+    : filters.dateRange === '7d'
+      ? now.getTime() - 7 * 24 * 60 * 60 * 1000
+      : filters.dateRange === '30d'
+        ? now.getTime() - 30 * 24 * 60 * 60 * 1000
+        : null
+  const minAmount = filters.minAmount || null
+  const maxAmount = filters.maxAmount || null
+  const rows = source.filter(item => {
     const createdAt = new Date(item.createdAt).getTime()
+    const amount = item.amountDecimal ?? String(item.amount)
+    const activeDispute = isApiOrderDisputeActive(item.disputeStatus)
     return (!filters.buyerId || item.buyerId === filters.buyerId)
       && (!filters.sellerId || item.sellerId === filters.sellerId)
       && (!statuses || statuses.includes(item.status))
       && (!filters.serviceId || item.apiServiceId === filters.serviceId)
-      && (!rangeMs || now - createdAt <= rangeMs)
+      && (createdAfter === null || createdAt >= createdAfter)
+      && (!filters.dispute || filters.dispute === 'all' || filters.dispute === 'active' && activeDispute || filters.dispute === 'none' && !activeDispute)
+      && (minAmount === null || compareDecimal(amount, minAmount) >= 0)
+      && (maxAmount === null || compareDecimal(amount, maxAmount) <= 0)
       && (!keyword || matchesApiOrderSearch(keyword, apiOrderSearchTerms(item)))
   })
 
   const sort = filters.sort ?? 'updated_desc'
   return rows.sort((a, b) => {
-    if (sort === 'default_buyer') return defaultApiOrderSortForRole('buyer')(a, b)
-    if (sort === 'default_merchant') return defaultApiOrderSortForRole('merchant')(a, b)
-    if (sort === 'created_desc') return compareTimeDesc(a.createdAt, b.createdAt)
-    if (sort === 'amount_desc') return b.amount - a.amount
-    if (sort === 'amount_asc') return a.amount - b.amount
-    return compareTimeDesc(a.updatedAt, b.updatedAt)
+    if (sort === 'default_buyer') return defaultApiOrderSortForRole('buyer')(a, b) || b.id.localeCompare(a.id)
+    if (sort === 'default_merchant') return defaultApiOrderSortForRole('merchant')(a, b) || b.id.localeCompare(a.id)
+    if (sort === 'created_desc') return compareTimeDesc(a.createdAt, b.createdAt) || b.id.localeCompare(a.id)
+    const leftAmount = a.amountDecimal ?? String(a.amount)
+    const rightAmount = b.amountDecimal ?? String(b.amount)
+    if (sort === 'amount_desc') return compareDecimal(rightAmount, leftAmount) || b.id.localeCompare(a.id)
+    if (sort === 'amount_asc') return compareDecimal(leftAmount, rightAmount) || a.id.localeCompare(b.id)
+    return compareTimeDesc(a.updatedAt, b.updatedAt) || b.id.localeCompare(a.id)
   })
+}
+
+function filterApiOrders(filters: ApiOrderFilters = {}) {
+  materializeMockApiOrderReviews()
+  return filterApiOrderRows(apiOrderStore, filters)
 }
 
 function defaultCarpoolSortForRole(role: 'buyer' | 'owner') {
@@ -3987,6 +4019,30 @@ export async function updateAdminUserPermission(input: {
   return mockAdminUserDetail(item)
 }
 
+function mapMockAdminAPIOrder(item: ApiOrder): AdminRow {
+  return {
+    id: item.id,
+    primary: `${item.serviceTitle} API 订单`,
+    secondary: `${item.orderNo} · 订单金额 ¥${item.amountDecimal ?? item.amount}`,
+    owner: `${item.seller} / 买家 ${item.buyer}`,
+    status: item.status === 'completed' ? getApiOrderCompletionSourceLabel(item.completionSource) : getApiOrderStatusLabel(item.status, 'admin'),
+    risk: item.disputeStatus || item.cancelReason || `更新于 ${item.updatedAt}`,
+    targetType: 'api-order',
+    targetTo: `/admin/api-orders/${item.id}`,
+    detailItems: [
+      { label: '订单号', value: item.orderNo },
+      { label: '订单状态', value: item.status },
+      { label: 'API 服务 ID', value: item.apiServiceId },
+      { label: '买家用户 ID', value: item.buyerId },
+      { label: '商户用户 ID', value: item.sellerId },
+      { label: '订单金额', value: `¥${item.amountDecimal ?? item.amount}` },
+      { label: '购买额度', value: `${item.requestedUsdAllowanceDecimal ?? item.requestedUsdAllowance} 美元额度` },
+      { label: '交付凭证', value: item.deliverySubmittedAt ? '已提交（管理摘要不展示原始凭证）' : '尚未提交' },
+      { label: '最近更新', value: item.updatedAt },
+    ],
+  }
+}
+
 export async function getAdminSectionRows(section: AdminSection): Promise<AdminRow[]> {
   await wait()
 
@@ -4090,23 +4146,7 @@ export async function getAdminSectionRows(section: AdminSection): Promise<AdminR
 
   if (section === 'trade-intents') {
     materializeMockApiOrderReviews()
-    return withAdminRowLinks(apiOrderStore.map(item => ({
-      id: item.id,
-      primary: `${item.serviceTitle} API 订单`,
-      secondary: `${item.orderNo} · 订单金额 ¥${item.amountDecimal ?? item.amount}`,
-      owner: `${item.seller} / 买家 ${item.buyer}`,
-      status: item.status === 'completed' ? getApiOrderCompletionSourceLabel(item.completionSource) : getApiOrderStatusLabel(item.status, 'admin'),
-      risk: item.disputeStatus || item.cancelReason || `更新于 ${item.updatedAt}`,
-      targetType: 'api-order',
-      targetTo: `/admin/api-orders/${item.id}`,
-      detailItems: [
-        { label: '订单号', value: item.orderNo },
-        { label: '订单金额', value: `¥${item.amountDecimal ?? item.amount}` },
-        { label: '购买额度', value: `${item.requestedUsdAllowanceDecimal ?? item.requestedUsdAllowance} 美元额度` },
-        { label: '交付凭证', value: item.deliverySubmittedAt ? '已提交（管理摘要不展示原始凭证）' : '尚未提交' },
-        { label: '最近更新', value: item.updatedAt },
-      ],
-    })))
+    return withAdminRowLinks(apiOrderStore.map(mapMockAdminAPIOrder))
   }
 
   if (section === 'feedback') {
@@ -4158,6 +4198,15 @@ export type AdminSectionPageFilters = {
   targetType?: string
   actorUserId?: string
   targetId?: string
+  orderStatus?: ApiOrderStatus | 'all'
+  orderDateRange?: 'all' | 'today' | '7d' | '30d'
+  orderBuyerId?: string
+  orderSellerId?: string
+  orderServiceId?: string
+  orderDispute?: 'all' | 'active' | 'none'
+  orderMinAmount?: string
+  orderMaxAmount?: string
+  orderSort?: 'updated_desc' | 'created_desc' | 'amount_desc' | 'amount_asc'
 }
 
 function adminSectionBackendStatuses(section: AdminSection, activeStatus: string | undefined) {
@@ -4193,6 +4242,48 @@ function filterAdminSectionPageRows(rows: AdminRow[], filters: AdminSectionPageF
   })
 }
 
+function adminSectionAPIOrderFilters(filters: AdminSectionPageFilters): ApiOrderFilters {
+  const minAmount = normalizeMockAdminOrderAmount(filters.orderMinAmount, '最小金额')
+  const maxAmount = normalizeMockAdminOrderAmount(filters.orderMaxAmount, '最大金额')
+  if (minAmount && maxAmount && compareDecimal(minAmount, maxAmount) > 0) {
+    throw new Error('最大金额不能小于最小金额。')
+  }
+  return {
+    search: filters.q,
+    status: filters.orderStatus && filters.orderStatus !== 'all' ? filters.orderStatus : undefined,
+    dateRange: filters.orderDateRange,
+    buyerId: filters.orderBuyerId?.trim() || undefined,
+    sellerId: filters.orderSellerId?.trim() || undefined,
+    serviceId: filters.orderServiceId?.trim() || undefined,
+    dispute: filters.orderDispute,
+    minAmount,
+    maxAmount,
+    sort: filters.orderSort ?? 'updated_desc',
+  }
+}
+
+function normalizeMockAdminOrderAmount(value: string | undefined, label: string) {
+  const normalized = value?.trim()
+  if (!normalized) return undefined
+  if (!/^[0-9]+(?:\.[0-9]+)?$/.test(normalized)) {
+    throw new Error(`${label}必须是非负十进制数。`)
+  }
+  return normalized
+}
+
+export function paginateMockAdminAPIOrderRows(rows: AdminRow[], page: CursorPageRequest, sort: NonNullable<AdminSectionPageFilters['orderSort']>) {
+  const limit = Math.min(100, Math.max(1, page.limit ?? 20))
+  const match = page.cursor?.match(/^mock:api-orders:([a-z_]+):(\d+)$/)
+  if (page.cursor && (!match || match[1] !== sort)) throw new Error('分页 cursor 无效。')
+  const offset = match ? Number(match[2]) : 0
+  if (!Number.isSafeInteger(offset)) throw new Error('分页 cursor 无效。')
+  const end = Math.min(rows.length, offset + limit)
+  return {
+    items: rows.slice(offset, end),
+    nextCursor: end < rows.length ? `mock:api-orders:${sort}:${end}` : undefined,
+  }
+}
+
 export async function getAdminSectionRowsPage(section: AdminSection, filters: AdminSectionPageFilters = {}, page: CursorPageRequest = {}): Promise<CursorPage<AdminRow>> {
   const statuses = adminSectionBackendStatuses(section, filters.activeStatus)
   if (shouldUseRealBackend() && section === 'carpools') {
@@ -4208,7 +4299,7 @@ export async function getAdminSectionRowsPage(section: AdminSection, filters: Ad
     }, page)
   }
   if (shouldUseRealBackend() && section === 'trade-intents') {
-    return backendAdminAPIOrderRowsPage({ search: filters.q, risk: filters.risk }, page)
+    return backendAdminAPIOrderRowsPage(adminSectionAPIOrderFilters(filters), page)
   }
   if (shouldUseRealBackend() && section === 'logs') {
     return backendAdminAuditLogRowsPage({
@@ -4221,6 +4312,11 @@ export async function getAdminSectionRowsPage(section: AdminSection, filters: Ad
   }
   if (shouldUseRealBackend()) {
     throw new Error(`管理模块 ${section} 未配置服务端分页适配器。`)
+  }
+  if (section === 'trade-intents') {
+    const orderFilters = adminSectionAPIOrderFilters(filters)
+    const rows = filterApiOrders(orderFilters).map(mapMockAdminAPIOrder)
+    return paginateMockAdminAPIOrderRows(rows, page, filters.orderSort ?? 'updated_desc')
   }
   return paginateCursorItems(filterAdminSectionPageRows(await getAdminSectionRows(section), filters), page)
 }

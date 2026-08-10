@@ -2,7 +2,7 @@
 import { computed, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useQueryClient } from '@tanstack/vue-query'
-import { CheckCircle2, Eye, Gavel, MoreHorizontal, ShieldAlert } from 'lucide-vue-next'
+import { CheckCircle2, Eye, Gavel, MoreHorizontal, RotateCcw, ShieldAlert } from 'lucide-vue-next'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
@@ -35,11 +35,11 @@ import SkeletonTable from '@/components/market/SkeletonTable.vue'
 import CompactStats from '@/components/market/CompactStats.vue'
 import AdminDisputeResolutionDialog from '@/components/admin/AdminDisputeResolutionDialog.vue'
 import { useCursorPagination } from '@/composables/useCursorPagination'
-import { runAdminModerationAction, updateAdminRowStatus, type AdminRow, type AdminSection } from '@/lib/api'
+import { runAdminModerationAction, updateAdminRowStatus, type AdminRow, type AdminSection, type ApiOrderStatus } from '@/lib/api'
 import { backendAdminModerationDetailRow } from '@/lib/reportBackend'
 import { isCarpoolAdminActionStatus, isCarpoolExceptionStatus } from '@/lib/carpoolModeration'
 import { isApiServiceAdminActionStatus, isApiServiceExceptionStatus, isApiServicePublicStatus } from '@/lib/apiServiceModeration'
-import { matchesApiOrderSearch } from '@/lib/apiOrderUi'
+import { matchesApiOrderSearch, normalizeApiOrderAmountFilter } from '@/lib/apiOrderUi'
 import { useAdminSectionRows, useAdminSectionRowsPage } from '@/queries/useMarketQueries'
 import { toast } from 'vue-sonner'
 
@@ -56,6 +56,17 @@ const carpoolView = ref<CarpoolView>(route.query.view === 'exceptions' ? 'except
 const apiServiceView = ref<ApiServiceView>(route.query.view === 'exceptions' ? 'exceptions' : 'public')
 const keyword = ref('')
 const riskFilter = ref<'all' | 'high' | 'has_note'>('all')
+const orderStatus = ref<ApiOrderStatus | 'all'>('all')
+const orderDateRange = ref<'all' | 'today' | '7d' | '30d'>('all')
+const orderBuyerId = ref('')
+const orderSellerId = ref('')
+const orderServiceId = ref('')
+const orderDispute = ref<'all' | 'active' | 'none'>('all')
+const orderMinAmount = ref<string | number>('')
+const orderMaxAmount = ref<string | number>('')
+const orderSort = ref<'updated_desc' | 'created_desc' | 'amount_desc' | 'amount_asc'>('updated_desc')
+const normalizedOrderMinAmount = computed(() => normalizeApiOrderAmountFilter(orderMinAmount.value))
+const normalizedOrderMaxAmount = computed(() => normalizeApiOrderAmountFilter(orderMaxAmount.value))
 const reason = ref('')
 const requestedFromUserId = ref('')
 const confirmedRiskAction = ref(false)
@@ -87,9 +98,34 @@ const pageFilters = computed(() => ({
   q: keyword.value.trim() || undefined,
   view: section.value === 'carpools' ? carpoolView.value : section.value === 'api-services' ? apiServiceView.value : undefined,
   activeStatus: activeStatus.value,
-  risk: riskFilter.value,
+  risk: section.value === 'trade-intents' ? undefined : riskFilter.value,
+  orderStatus: section.value === 'trade-intents' ? orderStatus.value : undefined,
+  orderDateRange: section.value === 'trade-intents' ? orderDateRange.value : undefined,
+  orderBuyerId: section.value === 'trade-intents' ? orderBuyerId.value.trim() || undefined : undefined,
+  orderSellerId: section.value === 'trade-intents' ? orderSellerId.value.trim() || undefined : undefined,
+  orderServiceId: section.value === 'trade-intents' ? orderServiceId.value.trim() || undefined : undefined,
+  orderDispute: section.value === 'trade-intents' ? orderDispute.value : undefined,
+  orderMinAmount: section.value === 'trade-intents' ? normalizedOrderMinAmount.value || undefined : undefined,
+  orderMaxAmount: section.value === 'trade-intents' ? normalizedOrderMaxAmount.value || undefined : undefined,
+  orderSort: section.value === 'trade-intents' ? orderSort.value : undefined,
 }))
-const pagination = useCursorPagination([section, activeStatus, keyword, riskFilter, carpoolView, apiServiceView])
+const pagination = useCursorPagination([
+  section,
+  activeStatus,
+  keyword,
+  riskFilter,
+  carpoolView,
+  apiServiceView,
+  orderStatus,
+  orderDateRange,
+  orderBuyerId,
+  orderSellerId,
+  orderServiceId,
+  orderDispute,
+  orderMinAmount,
+  orderMaxAmount,
+  orderSort,
+])
 const pageRequest = computed(() => ({ limit: pagination.pageSize, cursor: pagination.cursor.value }))
 const fullRowsQuery = useAdminSectionRows(section, computed(() => !supportsServerPagination.value))
 const pageRowsQuery = useAdminSectionRowsPage(section, pageFilters, pageRequest, supportsServerPagination)
@@ -236,7 +272,7 @@ const panelCopy = computed(() => {
     'price-leads': { title: '价格记录维护', description: '维护地区、渠道、原币价格、折合人民币和来源记录，再决定通过、复核或下架。' },
     carpools: { title: '车源管理', description: '集中巡查公开车源，并处理暂停、待复核和遗留审核记录。' },
     'api-services': { title: 'API 服务管理', description: '集中巡查公开服务，并处理遗留待审、下架和其他异常记录。' },
-    'trade-intents': { title: 'API 订单追踪', description: '查看 API 订单状态、参与方、金额快照、取消责任与纠纷标记；管理摘要不展示联系方式或原始交付凭证。' },
+    'trade-intents': { title: 'API 订单监管', description: '查看 API 订单状态、参与方、金额快照、取消责任与纠纷标记；管理摘要不展示联系方式或原始交付凭证。' },
     reports: { title: '举报纠纷处理', description: '只展示脱敏上下文；必要联系方式仍限制在联系快照流程内。' },
     appeals: { title: '申诉处理', description: '结合关联记录和未解决纠纷判断是否恢复能力。' },
     logs: { title: '审计日志', description: '只读查看管理动作、前后状态和原因。' },
@@ -552,6 +588,29 @@ async function confirmModerationAction() {
 
 const showDangerActions = computed(() => false)
 const showContentActions = computed(() => !['logs', 'trade-intents'].includes(section.value))
+const hasOrderFilters = computed(() => keyword.value.trim() !== ''
+  || orderStatus.value !== 'all'
+  || orderDateRange.value !== 'all'
+  || orderBuyerId.value.trim() !== ''
+  || orderSellerId.value.trim() !== ''
+  || orderServiceId.value.trim() !== ''
+  || orderDispute.value !== 'all'
+  || normalizedOrderMinAmount.value !== ''
+  || normalizedOrderMaxAmount.value !== ''
+  || orderSort.value !== 'updated_desc')
+
+function clearOrderFilters() {
+  keyword.value = ''
+  orderStatus.value = 'all'
+  orderDateRange.value = 'all'
+  orderBuyerId.value = ''
+  orderSellerId.value = ''
+  orderServiceId.value = ''
+  orderDispute.value = 'all'
+  orderMinAmount.value = ''
+  orderMaxAmount.value = ''
+  orderSort.value = 'updated_desc'
+}
 </script>
 
 <template>
@@ -570,7 +629,62 @@ const showContentActions = computed(() => !['logs', 'trade-intents'].includes(se
         <TabsTrigger value="exceptions">异常服务</TabsTrigger>
       </TabsList>
     </Tabs>
-    <div class="mb-4 grid gap-2" :class="section === 'logs' ? '' : 'md:grid-cols-[minmax(0,1fr)_180px]'">
+    <div v-if="section === 'trade-intents'" class="mb-4 space-y-2">
+      <div class="grid gap-2 sm:grid-cols-2 xl:grid-cols-[minmax(240px,1fr)_180px_160px_180px]">
+        <Input v-model="keyword" placeholder="订单号、订单 ID、服务或参与方 ID" aria-label="订单关键词" />
+        <Select v-model="orderStatus">
+          <SelectTrigger class="w-full" aria-label="订单状态"><SelectValue /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">全部状态</SelectItem>
+            <SelectItem value="pending_payment">待买家付款</SelectItem>
+            <SelectItem value="payment_submitted">待确认收款</SelectItem>
+            <SelectItem value="payment_issue">等待买家补充</SelectItem>
+            <SelectItem value="paid_confirmed">待商户交付</SelectItem>
+            <SelectItem value="delivery_submitted">买家核验期</SelectItem>
+            <SelectItem value="completed">已完成</SelectItem>
+            <SelectItem value="cancelled">已取消</SelectItem>
+          </SelectContent>
+        </Select>
+        <Select v-model="orderDateRange">
+          <SelectTrigger class="w-full" aria-label="创建时间"><SelectValue /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">全部时间</SelectItem>
+            <SelectItem value="today">今天</SelectItem>
+            <SelectItem value="7d">近 7 天</SelectItem>
+            <SelectItem value="30d">近 30 天</SelectItem>
+          </SelectContent>
+        </Select>
+        <Select v-model="orderSort">
+          <SelectTrigger class="w-full" aria-label="订单排序"><SelectValue /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="updated_desc">最近更新</SelectItem>
+            <SelectItem value="created_desc">最新创建</SelectItem>
+            <SelectItem value="amount_desc">金额从高到低</SelectItem>
+            <SelectItem value="amount_asc">金额从低到高</SelectItem>
+          </SelectContent>
+        </Select>
+      </div>
+      <div class="grid gap-2 sm:grid-cols-2 lg:grid-cols-4 2xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)_160px_130px_130px_auto]">
+        <Input v-model="orderBuyerId" placeholder="买家用户 ID" aria-label="买家用户 ID" />
+        <Input v-model="orderSellerId" placeholder="商户用户 ID" aria-label="商户用户 ID" />
+        <Input v-model="orderServiceId" placeholder="API 服务 ID" aria-label="API 服务 ID" />
+        <Select v-model="orderDispute">
+          <SelectTrigger class="w-full" aria-label="纠纷状态"><SelectValue /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">全部纠纷</SelectItem>
+            <SelectItem value="active">有进行中纠纷</SelectItem>
+            <SelectItem value="none">无进行中纠纷</SelectItem>
+          </SelectContent>
+        </Select>
+        <Input v-model="orderMinAmount" type="text" inputmode="decimal" placeholder="最低金额" aria-label="最低金额" />
+        <Input v-model="orderMaxAmount" type="text" inputmode="decimal" placeholder="最高金额" aria-label="最高金额" />
+        <Button type="button" variant="outline" size="sm" class="h-9 whitespace-nowrap" :disabled="!hasOrderFilters" @click="clearOrderFilters">
+          <RotateCcw class="h-4 w-4" />
+          清空筛选
+        </Button>
+      </div>
+    </div>
+    <div v-else class="mb-4 grid gap-2" :class="section === 'logs' ? '' : 'md:grid-cols-[minmax(0,1fr)_180px]'">
       <Input v-model="keyword" placeholder="搜索对象、管理员、动作、状态或请求追踪" />
       <Select v-if="section !== 'logs'" v-model="riskFilter">
         <SelectTrigger class="w-full" aria-label="风险筛选"><SelectValue /></SelectTrigger>
