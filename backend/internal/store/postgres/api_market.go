@@ -31,7 +31,7 @@ func (s *Store) CreateAPIService(ctx context.Context, service apimarket.Service)
 		return internalStoreError()
 	}
 	defer rollback(ctx, tx)
-	if _, _, appErr := lockContactVersionForOwner(ctx, tx, service.OwnerContactMethodID, service.OwnerUserID, "商户联系方式不可用或不属于当前用户。"); appErr != nil {
+	if appErr := lockAPIServiceContacts(ctx, tx, service, "商户联系方式不可用或不属于当前用户。"); appErr != nil {
 		return appErr
 	}
 	if appErr := validateReadyAPIProbeConnectionInTx(ctx, tx, service.OwnerUserID, service.ProbeConnectionID); appErr != nil {
@@ -292,7 +292,7 @@ func (s *Store) UpdateAPIService(ctx context.Context, input apimarket.UpdateServ
 	if !canEditAPIService(current) {
 		return apimarket.Service{}, domain.NewError(http.StatusConflict, domain.CodeInvalidStateTransition, "Invalid state transition", "当前 API 服务状态不能直接修改，请先开始修订。")
 	}
-	if _, _, appErr := lockContactVersionForOwner(ctx, tx, service.OwnerContactMethodID, service.OwnerUserID, "商户联系方式不可用或不属于当前用户。"); appErr != nil {
+	if appErr := lockAPIServiceContacts(ctx, tx, service, "商户联系方式不可用或不属于当前用户。"); appErr != nil {
 		return apimarket.Service{}, appErr
 	}
 	if appErr := validateReadyAPIProbeConnectionInTx(ctx, tx, service.OwnerUserID, service.ProbeConnectionID); appErr != nil {
@@ -455,7 +455,7 @@ func (s *Store) SubmitAPIServiceForReview(ctx context.Context, user auth.User, i
 	if user.LinuxDoBinding == nil || !user.LinuxDoBinding.Bound {
 		return apimarket.Service{}, domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "linux.do binding required", "提交 API 服务前需要完成 linux.do 身份绑定。", "linuxDoBinding", "required", "需要先完成 linux.do 身份绑定。")
 	}
-	if _, _, appErr := lockContactVersionForOwner(ctx, tx, service.OwnerContactMethodID, service.OwnerUserID, "商户联系方式不可用或不属于当前用户。"); appErr != nil {
+	if appErr := lockAPIServiceContacts(ctx, tx, service, "商户联系方式不可用或不属于当前用户。"); appErr != nil {
 		return apimarket.Service{}, appErr
 	}
 	service.ReviewStatus = apimarket.ServiceReviewStatusApproved
@@ -500,10 +500,10 @@ func (s *Store) UpdateAPIServicePublication(ctx context.Context, input apimarket
 		if strings.TrimSpace(service.ProbeConnectionID) == "" || !service.ProbeReady {
 			return apimarket.Service{}, domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Probe connection required", "上线 API 服务前必须绑定已启用且验证通过的探针连接。", "probeConnectionId", "not_ready", "请选择已启用且验证通过的探针连接。")
 		}
-		if strings.TrimSpace(service.OwnerContactMethodID) == "" {
+		if len(service.OwnerContactMethodIDs) == 0 {
 			return apimarket.Service{}, domain.NewError(http.StatusUnprocessableEntity, domain.CodeMerchantContactRequired, "Merchant contact required", "上线 API 服务必须配置商户联系方式。")
 		}
-		if _, _, appErr := lockContactVersionForOwner(ctx, tx, service.OwnerContactMethodID, service.OwnerUserID, "商户联系方式当前不可用。"); appErr != nil {
+		if appErr := lockAPIServiceContacts(ctx, tx, service, "商户联系方式当前不可用。"); appErr != nil {
 			return apimarket.Service{}, domain.NewError(http.StatusConflict, domain.CodeMerchantContactUnavailable, "Merchant contact unavailable", "商户联系方式当前不可用。")
 		}
 	}
@@ -960,6 +960,31 @@ func (s *Store) getPublicAPIService(ctx context.Context, q queryer, serviceID st
 }
 
 func (s *Store) loadAPIServiceChildren(ctx context.Context, q queryer, service *apimarket.Service) *domain.AppError {
+	contactRows, err := queryRows(ctx, q, `
+		SELECT contact_method_id::text
+		FROM api_service_contact_methods
+		WHERE api_service_id = $1
+		ORDER BY sort_order ASC
+	`, service.ID)
+	if err != nil {
+		return internalStoreError()
+	}
+	defer contactRows.Close()
+	service.OwnerContactMethodIDs = nil
+	for contactRows.Next() {
+		var contactMethodID string
+		if err := contactRows.Scan(&contactMethodID); err != nil {
+			return internalStoreError()
+		}
+		service.OwnerContactMethodIDs = append(service.OwnerContactMethodIDs, contactMethodID)
+	}
+	if err := contactRows.Err(); err != nil {
+		return internalStoreError()
+	}
+	if len(service.OwnerContactMethodIDs) == 0 && strings.TrimSpace(service.OwnerContactMethodID) != "" {
+		service.OwnerContactMethodIDs = []string{service.OwnerContactMethodID}
+	}
+
 	accessRows, err := queryRows(ctx, q, `
 		SELECT api_service_id::text, access_mode, COALESCE(public_note, '')
 		FROM api_service_access_modes
@@ -1193,12 +1218,12 @@ func (s *Store) createAPIPurchaseIntentInTx(ctx context.Context, tx pgx.Tx, inpu
 	if appErr != nil {
 		return apiintent.Intent{}, appErr
 	}
-	ownerMethod, ownerVersion, appErr := lockContactVersionForOwner(ctx, tx, service.OwnerContactMethodID, service.OwnerUserID, "商户联系方式不可用或归属不正确。")
+	ownerSnapshots, appErr := lockAPIServiceOwnerContactSnapshots(ctx, tx, service.ID, service.OwnerUserID, service.OwnerContactMethodID, service.OwnerContactMethodIDs, "商户联系方式不可用或归属不正确。")
 	if appErr != nil {
 		return apiintent.Intent{}, domain.NewError(http.StatusConflict, domain.CodeMerchantContactUnavailable, "Merchant contact unavailable", "商户联系方式当前不可用。")
 	}
 
-	intent, appErr := apiintent.NewIntent(input, service, buyerMethod, buyerVersion, ownerMethod, ownerVersion, now)
+	intent, appErr := apiintent.NewIntentWithOwnerContacts(input, service, buyerMethod, buyerVersion, ownerSnapshots, now)
 	if appErr != nil {
 		return apiintent.Intent{}, appErr
 	}
@@ -1367,6 +1392,18 @@ func upsertAPIServiceInTx(ctx context.Context, tx pgx.Tx, service apimarket.Serv
 	if err != nil {
 		return internalStoreError()
 	}
+	if _, err := tx.Exec(ctx, `DELETE FROM api_service_contact_methods WHERE api_service_id = $1`, service.ID); err != nil {
+		return internalStoreError()
+	}
+	for index, contactMethodID := range service.OwnerContactMethodIDs {
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO api_service_contact_methods (
+				api_service_id, owner_user_id, contact_method_id, sort_order, created_at
+			) VALUES ($1, $2, $3, $4, $5)
+		`, service.ID, service.OwnerUserID, contactMethodID, index, service.UpdatedAt); err != nil {
+			return internalStoreError()
+		}
+	}
 	if _, err := tx.Exec(ctx, `DELETE FROM api_service_access_modes WHERE api_service_id = $1`, service.ID); err != nil {
 		return internalStoreError()
 	}
@@ -1487,6 +1524,67 @@ func upsertAPIServiceInTx(ctx context.Context, tx pgx.Tx, service apimarket.Serv
 		}
 	}
 	return nil
+}
+
+func lockAPIServiceContacts(ctx context.Context, tx pgx.Tx, service apimarket.Service, detail string) *domain.AppError {
+	methodIDs := service.OwnerContactMethodIDs
+	if len(methodIDs) == 0 && strings.TrimSpace(service.OwnerContactMethodID) != "" {
+		methodIDs = []string{service.OwnerContactMethodID}
+	}
+	if len(methodIDs) == 0 {
+		return domain.NewError(http.StatusUnprocessableEntity, domain.CodeMerchantContactRequired, "Merchant contact required", "至少需要一种商户联系方式。")
+	}
+	for _, methodID := range methodIDs {
+		if _, _, appErr := lockContactVersionForOwner(ctx, tx, methodID, service.OwnerUserID, detail); appErr != nil {
+			return appErr
+		}
+	}
+	return nil
+}
+
+func lockAPIServiceOwnerContactSnapshots(ctx context.Context, tx pgx.Tx, serviceID, ownerUserID, fallbackMethodID string, methodIDs []string, detail string) ([]apiintent.OwnerContactSnapshot, *domain.AppError) {
+	if len(methodIDs) == 0 {
+		rows, err := tx.Query(ctx, `
+			SELECT contact_method_id::text
+			FROM api_service_contact_methods
+			WHERE api_service_id = $1 AND owner_user_id = $2
+			ORDER BY sort_order ASC
+		`, serviceID, ownerUserID)
+		if err != nil {
+			return nil, internalStoreError()
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var methodID string
+			if err := rows.Scan(&methodID); err != nil {
+				return nil, internalStoreError()
+			}
+			methodIDs = append(methodIDs, methodID)
+		}
+		if err := rows.Err(); err != nil {
+			return nil, internalStoreError()
+		}
+	}
+	if len(methodIDs) == 0 && strings.TrimSpace(fallbackMethodID) != "" {
+		methodIDs = []string{fallbackMethodID}
+	}
+	if len(methodIDs) == 0 {
+		return nil, domain.NewError(http.StatusConflict, domain.CodeMerchantContactUnavailable, "Merchant contact unavailable", detail)
+	}
+	snapshots := make([]apiintent.OwnerContactSnapshot, 0, len(methodIDs))
+	for _, methodID := range methodIDs {
+		method, version, appErr := lockContactVersionForOwner(ctx, tx, methodID, ownerUserID, detail)
+		if appErr != nil {
+			return nil, appErr
+		}
+		snapshots = append(snapshots, apiintent.OwnerContactSnapshot{
+			ContactMethodID:        method.ID,
+			ContactMethodVersionID: version.ID,
+			Type:                   method.Type,
+			Label:                  method.Label,
+		})
+	}
+	return snapshots, nil
 }
 
 func loadAPIServiceRecommendationStats(ctx context.Context, q queryer, service *apimarket.Service) *domain.AppError {
@@ -1643,6 +1741,34 @@ func insertAPIPurchaseIntentInTx(ctx context.Context, tx pgx.Tx, intent apiinten
 		}
 		return internalStoreError()
 	}
+	if appErr := insertAPIPurchaseIntentOwnerContactSnapshotsInTx(ctx, tx, intent); appErr != nil {
+		return appErr
+	}
+	return nil
+}
+
+func insertAPIPurchaseIntentOwnerContactSnapshotsInTx(ctx context.Context, tx pgx.Tx, intent apiintent.Intent) *domain.AppError {
+	snapshots := intent.OwnerContactSnapshots
+	if len(snapshots) == 0 && strings.TrimSpace(intent.OwnerContactMethodID) != "" {
+		snapshots = []apiintent.OwnerContactSnapshot{{
+			ContactMethodID:        intent.OwnerContactMethodID,
+			ContactMethodVersionID: intent.OwnerContactMethodVersionID,
+			Type:                   intent.OwnerContactTypeSnapshot,
+			Label:                  intent.OwnerContactLabelSnapshot,
+		}}
+	}
+	for index, snapshot := range snapshots {
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO api_purchase_intent_owner_contact_snapshots (
+				api_purchase_intent_id, owner_user_id, contact_method_id,
+				contact_method_version_id, contact_type_snapshot,
+				contact_label_snapshot, sort_order, created_at
+			) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+		`, intent.ID, intent.OwnerUserID, snapshot.ContactMethodID,
+			snapshot.ContactMethodVersionID, snapshot.Type, snapshot.Label, index, intent.CreatedAt); err != nil {
+			return internalStoreError()
+		}
+	}
 	return nil
 }
 
@@ -1710,11 +1836,48 @@ func insertAPIPurchaseIntentContactAccessLogInTx(ctx context.Context, tx pgx.Tx,
 }
 
 func (s *Store) withAPIPurchaseIntentMerchantContact(ctx context.Context, q queryer, intent apiintent.Intent) (apiintent.Intent, *domain.AppError) {
-	item, appErr := s.readFrozenContactVersion(ctx, q, intent.OwnerContactMethodVersionID, intent.OwnerContactMethodID, intent.OwnerUserID, "merchant", intent.OwnerContactTypeSnapshot, intent.OwnerContactLabelSnapshot)
-	if appErr != nil {
-		return apiintent.Intent{}, appErr
+	rows, err := queryRows(ctx, q, `
+		SELECT contact_method_id::text, contact_method_version_id::text,
+		       contact_type_snapshot, contact_label_snapshot
+		FROM api_purchase_intent_owner_contact_snapshots
+		WHERE api_purchase_intent_id = $1 AND owner_user_id = $2
+		ORDER BY sort_order ASC
+	`, intent.ID, intent.OwnerUserID)
+	if err != nil {
+		return apiintent.Intent{}, internalStoreError()
 	}
-	intent.MerchantContact = &item
+	defer rows.Close()
+	intent.OwnerContactSnapshots = nil
+	for rows.Next() {
+		var snapshot apiintent.OwnerContactSnapshot
+		if err := rows.Scan(&snapshot.ContactMethodID, &snapshot.ContactMethodVersionID, &snapshot.Type, &snapshot.Label); err != nil {
+			return apiintent.Intent{}, internalStoreError()
+		}
+		intent.OwnerContactSnapshots = append(intent.OwnerContactSnapshots, snapshot)
+	}
+	if err := rows.Err(); err != nil {
+		return apiintent.Intent{}, internalStoreError()
+	}
+	if len(intent.OwnerContactSnapshots) == 0 {
+		intent.OwnerContactSnapshots = []apiintent.OwnerContactSnapshot{{
+			ContactMethodID:        intent.OwnerContactMethodID,
+			ContactMethodVersionID: intent.OwnerContactMethodVersionID,
+			Type:                   intent.OwnerContactTypeSnapshot,
+			Label:                  intent.OwnerContactLabelSnapshot,
+		}}
+	}
+	intent.MerchantContacts = nil
+	for _, snapshot := range intent.OwnerContactSnapshots {
+		item, appErr := s.readFrozenContactVersion(ctx, q, snapshot.ContactMethodVersionID, snapshot.ContactMethodID, intent.OwnerUserID, "merchant", snapshot.Type, snapshot.Label)
+		if appErr != nil {
+			return apiintent.Intent{}, appErr
+		}
+		intent.MerchantContacts = append(intent.MerchantContacts, item)
+	}
+	if len(intent.MerchantContacts) > 0 {
+		primary := intent.MerchantContacts[0]
+		intent.MerchantContact = &primary
+	}
 	return intent, nil
 }
 

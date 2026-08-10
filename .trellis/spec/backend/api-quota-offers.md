@@ -1,14 +1,14 @@
 # Limited API Quota Offer Contract
 
 Date: 2026-07-19
-Updated: 2026-08-04
+Updated: 2026-08-10
 Author: Codex
 
 ## Scenario: Fixed, Time-Limited API Quota Offers
 
 ### 1. Scope / Trigger
 
-- Trigger: changes to limited API quota batches, offers, sale rounds, inventory units, quota orders, pre-imported delivery credentials, public offer projections, or their OpenAPI routes.
+- Trigger: changes to limited API quota batches, offers, sale rounds, inventory units, quota orders, merchant contact snapshots, after-sales eligibility, pre-imported delivery credentials, public offer projections, or their OpenAPI routes.
 - This contract is separate from the legacy Sub2API free-amount purchase path. Both reuse `api_services` and `api_orders`, but only limited offers use `purchase_kind='limited_quota_offer'` and authoritative inventory units.
 - Primary owners: `internal/module/apiquota`, `internal/store/postgres/api_quota.go`, `internal/server/api_quota_handler.go`, migrations `000054`, `000055`, and `000056`, and `docs/openapi/c2c-market-api-v1.yaml`.
 
@@ -39,6 +39,8 @@ api_quota_allocations
 api_quota_inventory_units
 api_quota_round_claims
 api_quota_credentials
+api_purchase_intent_owner_contact_snapshots
+api_orders.quota_expires_at_snapshot
 ```
 
 ### 3. Contracts
@@ -48,6 +50,7 @@ api_quota_credentials
 - `model_multiplier` must be positive and remains in offers and orders as an immutable pricing snapshot. First-party publication clients derive it from the selected API service's default multiplier and do not expose an offer-level override. The persistence contract remains independent of seller identity and distribution system.
 - Publishing locks the batch, validates all planned USD and credential capacity, reserves the full planned USD allowance, creates one inventory row per copy, and activates allocations in one transaction.
 - Purchase claims one available inventory row with `FOR UPDATE SKIP LOCKED`. A scheduled purchase also inserts the unique `(sale_round_id, buyer_user_id)` claim. The intent, order, snapshots, inventory/credential reservation, events, notifications, and completed idempotency record commit together.
+- The same purchase transaction locks every ordered contact configured on the base API service and freezes each immutable merchant contact version on the generated intent. The first frozen contact continues populating legacy single-contact fields; no current profile value is read to repair historical orders.
 - Scheduled orders freeze a five-minute payment window. Continuous limited offers and legacy free-amount orders freeze ten minutes.
 - Pending-payment cancellation or timeout releases an eligible inventory unit and pre-imported credential. The scheduled buyer claim remains, so the buyer cannot re-enter that round. Payment-submitted and later states do not release inventory.
 - Public current/next rounds must be offer-specific: a round is projected only when an active allocation exists for both the round and current offer.
@@ -58,6 +61,7 @@ api_quota_credentials
   pre-imported offers, credential imports, orderability, reservations, and fulfillment remain
   readable and operational; response enums continue to describe both historical modes.
 - Order creation freezes the API service account-pool code/label, merchant-declared maximum concurrency, merchant refund commitment, `api-merchant-refund-v1` rule version, and batch expiry inside both pricing and offer snapshots. Historical nullable pool/concurrency values remain explicit JSON `null` and are never inferred.
+- `quota_expires_at_snapshot` is the authoritative validity end for limited-quota after-sales. A first dispute may be opened only while `now < quotaExpiresAtSnapshot + 24h`; completed-order `issueOccurredAt` must be no later than the frozen quota expiry. Reporting grace does not extend the quota, credential, sale, or refund entitlement.
 - Historical pre-imported credential CSV templates remain mutually exclusive:
   `api_base_url,api_key,instructions` or `panel_login_url,username,password,instructions`. Import is
   all-or-nothing, at most 5000 rows, encrypted at rest, fingerprint-deduplicated, and never
@@ -79,11 +83,15 @@ api_quota_credentials
 | Batch cutoff/expiry reached | `409 API_QUOTA_BATCH_EXPIRED` |
 | Same idempotency key with another body | Existing `IDEMPOTENCY_KEY_REUSED` contract |
 | New standard or rush offer uses `deliveryMode=preimported` | `422 VALIDATION_FAILED`, field `deliveryMode`, reason `new_preimported_not_allowed` |
+| Any configured merchant contact is missing, disabled, or no longer owned when buying | `409 MERCHANT_CONTACT_UNAVAILABLE`; inventory, claim, intent, and order writes roll back |
+| Completed limited-quota report is at or after frozen expiry plus 24 hours | `409 INVALID_STATE_TRANSITION`, reason `after_sales_expired` |
+| Completed limited-quota report occurrence is after frozen expiry | `422 VALIDATION_FAILED`, field `issueOccurredAt`, reason `after_validity` |
 
 ### 5. Good / Base / Bad Cases
 
 - Good: one round allocates 10 copies of `$50` and 5 copies of `$100`; 15 different buyers can succeed, while one buyer can claim only one of the two offers.
 - Good: a limited offer created for a `1.2500` API service persists and freezes `1.2500` without asking the seller to configure the multiplier again.
+- Good: a rush order atomically freezes WeChat and linux.do contact versions, and a failure occurring before quota expiry can be reported during the following 24 hours without extending the quota.
 - Base: a continuous offer creates a ten-minute order without a sale-round ID.
 - Base: a historical pre-imported offer can still import credentials and complete an existing
   pre-imported order; this compatibility does not reopen pre-imported publication.
@@ -91,11 +99,13 @@ api_quota_credentials
 - Bad: hiding `preimported` from response enums and making historical orders impossible to explain.
 - Bad: cancellation deletes the round claim and lets the same buyer reclaim released stock.
 - Bad: raw CSV keys or passwords appear in idempotency caches, public responses, summaries, notifications, or logs.
+- Bad: reserve inventory before validating/freeze-locking every merchant contact, re-read a current contact for order detail, or restart the after-sales clock in the browser.
 
 ### 6. Tests Required
 
 - Unit: cutoff boundary, positive multiplier and commercial-fact snapshots independent of distribution system, historical explicit-null snapshots, stable standard/rush pre-imported rejection, 1000-copy round input, historical orderability, and CSV headers/duplicates/row limit.
 - PostgreSQL: publish rollback, `SKIP LOCKED` inventory claims, offer-specific round projection, release/retire behavior, credential reserve/deliver, idempotent replay, and cross-offer round limit.
+- PostgreSQL contact/after-sales integration: all selected contacts freeze in service order inside the purchase transaction; a contact failure leaves inventory and claims untouched; frozen quota expiry controls the exact reporting boundary.
 - Capacity: at least 1500 different buyers compete for 1000 copies; assert exactly 1000 successes, 500 expected sold-out results, no duplicate orders/credentials, no negative inventory, and no unexpected 5xx.
 - HTTP/OpenAPI: route parity, Problem Details codes, five/ten-minute snapshots, private `no-store` behavior, and no raw credential leakage.
 - Required commands: `go test ./...`, `node scripts/check-openapi-routes.mjs`, and `node scripts/check-migrations-doc.mjs`.
@@ -130,6 +140,20 @@ WHERE r.batch_id = current_batch
 ```
 
 The offer freezes the API service's seller-declared default multiplier and only displays rounds that actually allocate that offer.
+
+#### Wrong: Rebuild Limited-Quota Evidence From Mutable State
+
+```text
+contacts = currentService.ownerContacts
+afterSalesDeadline = browserNow + 24h
+```
+
+#### Correct: Use Frozen Intent And Order Facts
+
+```text
+contacts = intent.ownerContactSnapshots ordered by sort_order
+afterSalesDeadline = order.quotaExpiresAtSnapshot + 24h
+```
 
 ## Scenario: Fixed Beijing Rush Slots And Atomic Publication
 

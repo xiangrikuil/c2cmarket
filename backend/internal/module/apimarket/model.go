@@ -67,6 +67,7 @@ type Service struct {
 	MerchantProfileSlug              string
 	MerchantAvatarURL                string
 	OwnerContactMethodID             string
+	OwnerContactMethodIDs            []string
 	ProbeConnectionID                string
 	ProbeReady                       bool
 	ProbeBaseURL                     string
@@ -187,6 +188,7 @@ type CreateServiceInput struct {
 	MerchantProfileID                string
 	MerchantIdentityMode             string
 	OwnerContactMethodID             string
+	OwnerContactMethodIDs            []string
 	ProbeConnectionID                string
 	Title                            string
 	ShortDescription                 string
@@ -219,6 +221,7 @@ type UpdateServiceInput struct {
 	MerchantProfileID                string
 	MerchantIdentityMode             string
 	OwnerContactMethodID             string
+	OwnerContactMethodIDs            []string
 	ProbeConnectionID                string
 	Title                            string
 	ShortDescription                 string

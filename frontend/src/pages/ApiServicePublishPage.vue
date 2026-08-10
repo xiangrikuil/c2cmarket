@@ -18,6 +18,7 @@ import ApiAccessSourceSection from '@/components/api-service-publish/ApiAccessSo
 import ApiServicePublishPreview from '@/components/api-service-publish/ApiServicePublishPreview.vue'
 import FixedPackageSection from '@/components/api-service-publish/FixedPackageSection.vue'
 import MerchantIdentitySection from '@/components/api-service-publish/MerchantIdentitySection.vue'
+import MerchantContactMethodsSection from '@/components/api-service-publish/MerchantContactMethodsSection.vue'
 import MerchantNoteSection from '@/components/api-service-publish/MerchantNoteSection.vue'
 import ModelMultiSelect from '@/components/api-service-publish/ModelMultiSelect.vue'
 import PriceInventorySection from '@/components/api-service-publish/PriceInventorySection.vue'
@@ -57,13 +58,14 @@ import { trackAnalytics } from '@/lib/analytics'
 import { beijingDateTimeInputToISOString, defaultQuotaExpiresAtInput } from '@/lib/apiQuotaExpiration'
 import { apiPaymentSettingsMissingReason, cloneApiPaymentAccountSettings, isApiPaymentAccountSettingsComplete, isApiPaymentOptionComplete, isApiPaymentWindowValid } from '@/lib/apiPaymentSettings'
 import { apiQuotaUsagePolicyInputError, defaultApiQuotaUsagePolicyInput } from '@/lib/apiQuotaPolicy'
-import { useApiPaymentAccountSettingsQuery, useModelCatalog, useMyProfileQuery } from '@/queries/useMarketQueries'
+import { useApiPaymentAccountSettingsQuery, useModelCatalog, useMyContactMethodsQuery, useMyProfileQuery } from '@/queries/useMarketQueries'
 import { useOwnerAPIProbeConnections } from '@/queries/useApiHealthQueries'
 import { useUnsavedChangesGuard } from '@/composables/useUnsavedChangesGuard'
 
 type Field =
   | 'merchantIdentity'
   | 'merchantDisplayName'
+	| 'ownerContactMethods'
   | 'distributionSystem'
   | 'probeConnection'
   | 'defaultMultiplier'
@@ -87,6 +89,7 @@ type ApiServicePublishStep = 1 | 2 | 3
 const { data: modelCatalog, isLoading: catalogLoading } = useModelCatalog()
 const { data: accountPaymentSettings, isLoading: paymentSettingsLoading } = useApiPaymentAccountSettingsQuery()
 const { data: myProfile, isLoading: profileLoading } = useMyProfileQuery()
+const contactMethodsQuery = useMyContactMethodsQuery()
 const probeConnectionsQuery = useOwnerAPIProbeConnections()
 const queryClient = useQueryClient()
 const route = useRoute()
@@ -121,7 +124,8 @@ const formDirty = ref(false)
 useUnsavedChangesGuard(formDirty, 'API 服务配置尚未发布，确认离开当前页面？')
 
 const form = reactive<ApiServicePublishForm>({
-  probeConnectionId: '',
+	probeConnectionId: '',
+	ownerContactMethodIds: [],
   merchantIdentityMode: 'public_profile',
   merchantDisplayName: '',
   distributionSystem: 'sub2api',
@@ -174,6 +178,9 @@ const filteredCatalog = computed(() => catalog.value.filter(item => modelProvide
 const catalogById = computed(() => new Map(catalog.value.map(item => [item.id, item])))
 const selectedModels = computed(() => selectedCatalogItems(form, catalogById.value))
 const probeConnections = computed(() => probeConnectionsQuery.data.value ?? [])
+const availableOwnerContacts = computed(() => (contactMethodsQuery.data.value ?? []).filter(contact => (
+  contact.enabled && contact.usageScopes.includes('api_merchant')
+)))
 const selectedProbeConnection = computed(() => probeConnections.value.find(connection => connection.id === form.probeConnectionId) ?? null)
 const probeConnectionReady = computed(() => Boolean(
   selectedProbeConnection.value?.enabled && selectedProbeConnection.value.verificationStatus === 'verified',
@@ -223,6 +230,15 @@ function syncHiddenPublishFields() {
 syncHiddenPublishFields()
 
 watch(profileMerchantDisplayName, () => syncMerchantDisplayNameSnapshot(), { immediate: true })
+
+watch(availableOwnerContacts, contacts => {
+  const availableIds = new Set(contacts.map(contact => contact.id))
+  form.ownerContactMethodIds = form.ownerContactMethodIds.filter(id => availableIds.has(id))
+  if (form.ownerContactMethodIds.length || !contacts.length) return
+  const recommended = contacts.filter(contact => contact.type === 'wechat' || contact.type === 'linuxdo')
+  const fallback = contacts.find(contact => contact.isDefault) ?? contacts[0]
+  form.ownerContactMethodIds = recommended.length ? recommended.map(contact => contact.id) : fallback ? [fallback.id] : []
+}, { immediate: true })
 
 watch([catalog, () => form.providerCategory], () => {
   if (!catalog.value.length) return
@@ -303,6 +319,7 @@ function displayNameLength(value: string) {
 const freeFieldSteps: Record<Field, ApiServicePublishStep> = {
   merchantIdentity: 3,
   merchantDisplayName: 3,
+	ownerContactMethods: 3,
   distributionSystem: 2,
   probeConnection: 2,
   defaultMultiplier: 2,
@@ -325,6 +342,7 @@ const freeFieldSteps: Record<Field, ApiServicePublishStep> = {
 const limitedFieldSteps: Record<Field, ApiServicePublishStep> = {
   merchantIdentity: 2,
   merchantDisplayName: 2,
+	ownerContactMethods: 2,
   distributionSystem: 2,
   probeConnection: 2,
   defaultMultiplier: 2,
@@ -353,6 +371,7 @@ function collectValidationErrors() {
   const next: FieldErrors<Field> = {}
   const merchantDisplayName = form.merchantDisplayName.trim()
   if (!['public_profile', 'store_alias'].includes(form.merchantIdentityMode)) next.merchantIdentity = '请选择对外展示身份。'
+	if (!form.ownerContactMethodIds.length) next.ownerContactMethods = '请至少选择一种订单联系方式。'
   if (form.merchantIdentityMode === 'store_alias') {
     if (!merchantDisplayName) next.merchantDisplayName = profileLoading.value ? '正在读取个人资料显示名称。' : '请先到个人中心设置显示名称。'
     else if (displayNameLength(merchantDisplayName) > 32) next.merchantDisplayName = '商家展示名最多 32 个字符，请到个人中心调整。'
@@ -455,6 +474,7 @@ const completeness = computed(() => {
     form.merchantIdentityMode === 'public_profile' || form.merchantDisplayName.trim() ? done('展示身份') : pending('展示身份'),
     form.distributionSystem ? done('接入类型') : pending('接入类型'),
     probeConnectionReady.value ? done('探针连接') : pending('探针连接'),
+		form.ownerContactMethodIds.length ? done('订单联系方式') : pending('订单联系方式'),
     form.distributionSystem === 'sub2api' || (Number.isFinite(form.defaultMultiplier) && form.defaultMultiplier > 0) ? done('服务倍率') : pending('服务倍率'),
   ]
   if (!isLimitedQuotaMode.value) {
@@ -855,6 +875,12 @@ function confirmProviderCategoryChange() {
               </div>
             </Card>
             <template v-if="isLimitedQuotaMode">
+              <MerchantContactMethodsSection
+                :form="form"
+                :contacts="availableOwnerContacts"
+                :loading="contactMethodsQuery.isLoading.value"
+                :error="errors.ownerContactMethods"
+              />
               <MerchantNoteSection :form="form" :errors="errors" />
               <MerchantIdentitySection :form="form" :profile-loading="profileLoading" :display-name-status="merchantDisplayNameStatus" :error="errors.merchantDisplayName" @set-store-alias-visible="setStoreAliasVisible" />
             </template>
@@ -876,6 +902,12 @@ function confirmProviderCategoryChange() {
               :settings="accountPaymentSettingsValue"
               :loading="paymentSettingsLoading"
               @edit="paymentSettingsDialogOpen = true"
+            />
+            <MerchantContactMethodsSection
+              :form="form"
+              :contacts="availableOwnerContacts"
+              :loading="contactMethodsQuery.isLoading.value"
+              :error="errors.ownerContactMethods"
             />
             <MerchantNoteSection :form="form" :errors="errors" />
             <MerchantIdentitySection :form="form" :profile-loading="profileLoading" :display-name-status="merchantDisplayNameStatus" :error="errors.merchantDisplayName" @set-store-alias-visible="setStoreAliasVisible" />

@@ -67,7 +67,7 @@ import { backendMyMerchantProfile, backendUpsertMerchantProfile } from '@/lib/pr
 import { compareDecimal, divideDecimal, normalizeDecimal, normalizeDecimalTrimmed } from '@/lib/decimal'
 import { mapBackendReputationSummary } from '@/lib/reputationBackend'
 import { matchesApiOrderSearch } from '@/lib/apiOrderUi'
-import { normalizeApiOrderDisputeStatus, type OpenApiOrderDisputeInput } from '@/lib/apiOrderDispute'
+import { apiOrderPlatformTradeBoundary, normalizeApiOrderDisputeStatus, type OpenApiOrderDisputeInput } from '@/lib/apiOrderDispute'
 import type { ReputationSummary } from '@/types/reputation'
 import type { ApiServiceHealthSummary } from '@/types/apiHealth'
 import { parseApiQuotaUsagePolicy, toApiQuotaUsagePolicyInput } from '@/lib/apiQuotaPolicy'
@@ -137,6 +137,7 @@ type BackendAPIService = {
   merchantProfileSlug?: string
   merchantAvatarUrl?: string
   ownerContactMethodId?: string
+	ownerContactMethodIds?: string[]
   title: string
   shortDescription: string
   sourceUrl?: string
@@ -238,6 +239,7 @@ export type BackendAPIPurchaseIntent = {
   ownerClosedAt?: string | null
   ownerCloseReason?: string
   merchantContact?: ContactDisclosure | null
+	merchantContacts?: ContactDisclosure[]
   buyerContact?: ContactDisclosure | null
   version: number
   createdAt: string
@@ -319,6 +321,9 @@ export type BackendAPIOrder = {
   completedAt?: string | null
   cancelledAt?: string | null
   cancelReason?: string
+	afterSalesExpiresAt?: string | null
+	canOpenDispute: boolean
+	disputeEligibilityReason: string
   version: number
   createdAt: string
   updatedAt: string
@@ -364,7 +369,6 @@ export type APIIntentPricingSnapshotProjection = ApiServiceCommercialSnapshot & 
 
 const legacyMerchantSupportNote = '历史订单未冻结商户售后说明'
 const invalidMerchantSupportNote = '订单快照不可用，无法读取商户售后说明'
-const apiOrderPlatformTradeBoundary = '售后由双方站外确认；平台不代收、不托管、不担保、不代赔。'
 const commercialSnapshotKeys = [
   'accountPoolType',
   'accountPoolLabel',
@@ -1249,7 +1253,9 @@ function mapIntent(intent: BackendAPIPurchaseIntent, viewerRole: ApiIntentViewer
       requiresFirstLoginPasswordReset: mode === 'sub2api_panel_account',
       note: '真实后端购买意向记录',
     },
-    contactChannels: contactToChannel(intent.merchantContact),
+		contactChannels: intent.merchantContacts?.length
+			? intent.merchantContacts.flatMap(contactToChannel)
+			: contactToChannel(intent.merchantContact),
     buyerContactChannels: contactToChannel(intent.buyerContact),
     viewerRole,
     createdAt: intent.createdAt,
@@ -1429,6 +1435,9 @@ export function mapBackendAdminAPIOrderDetail(order: BackendAPIOrder): AdminApiO
     completedAt: order.completedAt ?? undefined,
     cancelledAt: order.cancelledAt ?? undefined,
     cancelReason: order.cancelReason,
+		afterSalesExpiresAt: order.afterSalesExpiresAt ?? undefined,
+		canOpenDispute: order.canOpenDispute,
+		disputeEligibilityReason: order.disputeEligibilityReason,
     version: order.version,
     createdAt: order.createdAt,
     updatedAt: order.updatedAt,
@@ -1625,6 +1634,8 @@ function mapAPIQuotaOrderSnapshot(order: BackendAPIOrder, pricingSnapshot: APIIn
     accountPoolLabel: pricingSnapshot.accountPoolLabel,
     merchantRefundCommitment: pricingSnapshot.merchantRefundCommitment,
     merchantRefundPolicyVersion: pricingSnapshot.merchantRefundPolicyVersion,
+		warranty: pricingSnapshot.merchantSupportNote,
+		refundPolicy: apiOrderPlatformTradeBoundary,
     serviceValidityExpiresAt: pricingSnapshot.serviceValidityExpiresAt,
     commercialFactsSnapshotIssue: pricingSnapshot.commercialFactsSnapshotIssue,
   }
@@ -1738,6 +1749,9 @@ async function mapBackendAPIOrder(order: BackendAPIOrder, viewerRole: 'buyer' | 
     completedAt: order.completedAt ?? undefined,
     cancelledAt: order.cancelledAt ?? undefined,
     cancelReason: order.cancelReason,
+		afterSalesExpiresAt: order.afterSalesExpiresAt ?? undefined,
+		canOpenDispute: order.canOpenDispute,
+		disputeEligibilityReason: order.disputeEligibilityReason,
     version: order.version,
     intentSnapshot: {
       ...intent.snapshot,
@@ -1889,21 +1903,14 @@ export async function backendSubmitAPIOrderDeliveryCredential(id: string, payloa
 export async function backendSubmitAPIService(payload: Record<string, unknown>) {
   await ensureBackendSession('merchant', false)
   const merchantProfile = await ensureMerchantProfile(payload)
-  let ownerContactMethodId = String(payload.ownerContactMethodId ?? '')
-  if (!ownerContactMethodId) {
-    const contact = await backendCreateContactMethod({
-      type: 'linuxdo',
-      label: 'linux.do 私信',
-      displayValue: '@merchant',
-      usageScopes: ['api_merchant'],
-      isDefault: true,
-      enabled: true,
-    })
-    ownerContactMethodId = contact.id
-  }
+	const ownerContactMethodIds = Array.isArray(payload.ownerContactMethodIds)
+		? payload.ownerContactMethodIds.map(String).filter(Boolean)
+		: []
+	if (!ownerContactMethodIds.length) throw new Error('请先在个人中心添加并选择至少一种 API 订单联系方式。')
   let response = await backendMutation<BackendAPIService>('/api/v1/owner/api-services', toBackendServiceRequest({
     ...payload,
-    ownerContactMethodId,
+		ownerContactMethodId: ownerContactMethodIds[0],
+		ownerContactMethodIds,
     merchantProfileId: merchantProfile.id,
     merchantIdentityMode: 'store_alias',
   }), {
@@ -1974,11 +1981,15 @@ export function toBackendServiceRequest(payload: Record<string, unknown>) {
   if (typeof payload.promptAuditEnabled !== 'boolean') throw new Error('Prompt audit selection required')
 
   const fixedPackage = billing === 'fixed_package'
+	const ownerContactMethodIds = Array.isArray(payload.ownerContactMethodIds)
+		? payload.ownerContactMethodIds.map(String).filter(Boolean)
+		: []
   return {
     probeConnectionId: String(payload.probeConnectionId ?? ''),
     merchantProfileId: String(payload.merchantProfileId ?? ''),
     merchantIdentityMode: String(payload.merchantIdentityMode ?? 'public_profile'),
-    ownerContactMethodId: String(payload.ownerContactMethodId ?? ''),
+		ownerContactMethodId: ownerContactMethodIds[0] ?? String(payload.ownerContactMethodId ?? ''),
+		ownerContactMethodIds,
     title: String(payload.generatedTitle ?? 'API 服务'),
     shortDescription: String(payload.shortDescription ?? 'API 服务'),
     sourceUrl: String(payload.sourceUrl ?? ''),

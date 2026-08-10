@@ -904,6 +904,8 @@ export type PublicDisputeRecord = {
 }
 
 export type ApiServiceCommercialSnapshot = {
+	warranty?: string
+	refundPolicy?: string
   accountPoolType?: ApiService['accountPoolType']
   accountPoolLabel?: string
   declaredMaxConcurrency?: number
@@ -930,8 +932,8 @@ export type ApiPurchaseIntentSnapshot = ApiServiceCommercialSnapshot & {
   defaultMultiplier: number
   creditPerCny: number
   cnyPerUsdAllowance?: string
-  warranty: string
-  refundPolicy: string
+	warranty: string
+	refundPolicy: string
   merchantNote?: string
   pricingSnapshotIssue?: 'missing' | 'invalid'
   usageVisibilitySnapshotMissing?: boolean

@@ -543,11 +543,17 @@ func (s *Service) updateInMemory(ctx context.Context, input ActionInput, action 
 	if !ok || !canActorAccess(order, input.ActorUserID, action) {
 		return Order{}, notFound()
 	}
-	order = s.materializeTimeoutLocked(order.ID)
+	now := s.now()
+	order = s.materializeTimeoutLockedAt(order.ID, now)
 	if input.ExpectedVersion > 0 && order.Version != input.ExpectedVersion {
 		return Order{}, domain.NewError(http.StatusPreconditionFailed, domain.CodeVersionConflict, "Version conflict", "资源版本已变化，请刷新后重试。")
 	}
-	if !canTransition(order, action, s.now()) {
+	if action == "open_dispute" {
+		if _, appErr := ValidateDisputeOccurrence(order, input.IssueOccurredAt, now); appErr != nil {
+			return Order{}, appErr
+		}
+	}
+	if !canTransition(order, action, now) {
 		return Order{}, domain.NewError(http.StatusConflict, domain.CodeInvalidStateTransition, "Invalid state transition", "当前订单状态不能执行该操作。")
 	}
 	if action == "open_dispute" {
@@ -560,7 +566,7 @@ func (s *Service) updateInMemory(ctx context.Context, input ActionInput, action 
 		s.releaseInventoryLocked(&order)
 	}
 	if action == "submit_delivery" {
-		expiresAt, appErr := PackageExpiryFromSnapshot(order.SelectedPackageSnapshot, s.now())
+		expiresAt, appErr := PackageExpiryFromSnapshot(order.SelectedPackageSnapshot, now)
 		if appErr != nil {
 			return Order{}, appErr
 		}
@@ -568,18 +574,18 @@ func (s *Service) updateInMemory(ctx context.Context, input ActionInput, action 
 		if _, exists := s.credentials[order.ID]; exists {
 			return Order{}, domain.NewError(http.StatusConflict, domain.CodeInvalidStateTransition, "Invalid state transition", "交付信息已提交，不能再次修改。")
 		}
-		credential := newDeliveryCredential(order, input.DeliveryCredential, s.now())
+		credential := newDeliveryCredential(order, input.DeliveryCredential, now)
 		s.credentials[order.ID] = credential
 		order.DeliveryCredential = &credential
 	}
 	if action == "open_dispute" {
-		caseID, appErr := s.registerDisputeCaseLocked(ctx, order, input)
+		caseID, appErr := s.registerDisputeCaseLocked(ctx, order, input, now)
 		if appErr != nil {
 			return Order{}, appErr
 		}
 		order.DisputeCaseID = caseID
 	}
-	order = applyAction(order, input, action, s.now())
+	order = WithAfterSalesProjection(applyAction(order, input, action, now), now)
 	s.orders[order.ID] = order
 	s.appendEventLocked(order, input.ActorUserID, eventTypeForAction(action), from, order.Status, noteForAction(input, action), input.RequestID)
 	return order, nil
@@ -592,9 +598,13 @@ func (s *Service) withCredentialLocked(order Order) Order {
 	return order
 }
 
-func (s *Service) registerDisputeCaseLocked(ctx context.Context, order Order, input ActionInput) (string, *domain.AppError) {
+func (s *Service) registerDisputeCaseLocked(ctx context.Context, order Order, input ActionInput, now time.Time) (string, *domain.AppError) {
 	if s.disputes == nil {
 		return "", domain.NewError(http.StatusInternalServerError, domain.CodeInternalError, "Internal error", "订单纠纷登记依赖不可用。")
+	}
+	issueOccurredAt, appErr := ValidateDisputeOccurrence(order, input.IssueOccurredAt, now)
+	if appErr != nil {
+		return "", appErr
 	}
 	return s.disputes.RegisterAPIOrderDispute(ctx, DisputeCaseInput{
 		OrderID:             order.ID,
@@ -606,14 +616,18 @@ func (s *Service) registerDisputeCaseLocked(ctx context.Context, order Order, in
 		IssueCode:           strings.TrimSpace(input.IssueCode),
 		RequestedResolution: strings.TrimSpace(input.RequestedResolution),
 		RequestedAmountCNY:  strings.TrimSpace(input.RequestedAmountCNY),
+		IssueOccurredAt:     issueOccurredAt,
 		RequestID:           input.RequestID,
-		Now:                 s.now(),
+		Now:                 now,
 	})
 }
 
 func (s *Service) materializeTimeoutLocked(orderID string) Order {
+	return s.materializeTimeoutLockedAt(orderID, s.now())
+}
+
+func (s *Service) materializeTimeoutLockedAt(orderID string, now time.Time) Order {
 	order := s.orders[orderID]
-	now := s.now()
 	if order.Status == StatusPendingPayment && !now.Before(order.PaymentExpiresAt) {
 		from := order.Status
 		order.Status = StatusCancelled
@@ -624,10 +638,10 @@ func (s *Service) materializeTimeoutLocked(orderID string) Order {
 		s.releaseInventoryLocked(&order)
 		s.orders[orderID] = order
 		s.appendEventLocked(order, "", EventPaymentTimeoutCancelled, from, order.Status, "", "payment-timeout")
-		return order
+		return WithAfterSalesProjection(order, now)
 	}
 	if order.Status != StatusDeliverySubmitted || IsDisputeActive(order.DisputeStatus) || order.DeliveryReviewExpiresAt == nil {
-		return order
+		return WithAfterSalesProjection(order, now)
 	}
 	if !now.Before(*order.DeliveryReviewExpiresAt) {
 		completedAt := *order.DeliveryReviewExpiresAt
@@ -638,7 +652,7 @@ func (s *Service) materializeTimeoutLocked(orderID string) Order {
 		order.Version++
 		s.orders[orderID] = order
 		s.appendEventLocked(order, "", EventAutoCompleted, StatusDeliverySubmitted, StatusCompleted, "", "delivery-review-auto-complete")
-		return order
+		return WithAfterSalesProjection(order, now)
 	}
 	reminderAt := order.DeliveryReviewExpiresAt.Add(-DeliveryReviewReminderLead)
 	if order.DeliveryReviewRemindedAt == nil && !now.Before(reminderAt) {
@@ -646,7 +660,7 @@ func (s *Service) materializeTimeoutLocked(orderID string) Order {
 		s.orders[orderID] = order
 		s.appendEventLocked(order, "", EventDeliveryReviewReminder, order.Status, order.Status, "", "delivery-review-reminder")
 	}
-	return order
+	return WithAfterSalesProjection(order, now)
 }
 
 func (s *Service) reserveInventoryLocked(order Order, service apimarket.Service) *domain.AppError {
@@ -777,7 +791,7 @@ func NewOrder(input CreateInput, intent apiintent.Intent, service apimarket.Serv
 	if err != nil {
 		return Order{}, domain.NewError(http.StatusInternalServerError, domain.CodeInternalError, "Internal error", "订单编号生成失败。")
 	}
-	return Order{
+	order := Order{
 		ID:                            uuid.NewString(),
 		OrderNo:                       orderNo,
 		PurchaseKind:                  PurchaseKindAPIService,
@@ -811,7 +825,8 @@ func NewOrder(input CreateInput, intent apiintent.Intent, service apimarket.Serv
 		CreatedAt:                     now,
 		UpdatedAt:                     now,
 		Version:                       1,
-	}, nil
+	}
+	return WithAfterSalesProjection(order, now), nil
 }
 
 func findPaymentOption(service apimarket.Service, method string) (apimarket.PaymentOption, bool) {
@@ -1184,7 +1199,7 @@ func canTransition(order Order, action string, now time.Time) bool {
 	case "confirm_complete":
 		return order.Status == StatusDeliverySubmitted && !IsDisputeActive(order.DisputeStatus)
 	case "open_dispute":
-		return order.Status != StatusCancelled && order.Status != StatusCompleted && order.DisputeStatus == DisputeStatusNone
+		return WithAfterSalesProjection(order, now).CanOpenDispute
 	default:
 		return false
 	}

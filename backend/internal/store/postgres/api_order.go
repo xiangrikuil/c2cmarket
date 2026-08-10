@@ -101,7 +101,7 @@ func (s *Store) ListAPIOrdersByBuyer(ctx context.Context, buyerUserID string, no
 	if appErr := s.MaterializeExpiredAPIOrders(ctx, now); appErr != nil {
 		return nil, appErr
 	}
-	return s.listAPIOrders(ctx, `WHERE buyer_user_id = $1`, []any{buyerUserID})
+	return s.listAPIOrders(ctx, `WHERE buyer_user_id = $1`, []any{buyerUserID}, now)
 }
 
 func (s *Store) GetAPIOrderForBuyer(ctx context.Context, buyerUserID, orderID string, now time.Time) (apiorder.Order, *domain.AppError) {
@@ -118,7 +118,7 @@ func (s *Store) GetAPIOrderForBuyer(ctx context.Context, buyerUserID, orderID st
 	if order.BuyerUserID != buyerUserID {
 		return apiorder.Order{}, apiOrderNotFound()
 	}
-	return order, nil
+	return apiorder.WithAfterSalesProjection(order, now), nil
 }
 
 func (s *Store) ReadAPIOrderPaymentInstructions(ctx context.Context, buyerUserID, orderID, requestID string, now time.Time) (apiorder.PaymentInstructionsView, *domain.AppError) {
@@ -163,14 +163,14 @@ func (s *Store) ListAPIOrdersBySeller(ctx context.Context, sellerUserID string, 
 	if appErr := s.MaterializeExpiredAPIOrders(ctx, now); appErr != nil {
 		return nil, appErr
 	}
-	return s.listAPIOrders(ctx, `WHERE seller_user_id = $1`, []any{sellerUserID})
+	return s.listAPIOrders(ctx, `WHERE seller_user_id = $1`, []any{sellerUserID}, now)
 }
 
 func (s *Store) ListAdminAPIOrders(ctx context.Context, now time.Time) ([]apiorder.Order, *domain.AppError) {
 	if appErr := s.MaterializeExpiredAPIOrders(ctx, now); appErr != nil {
 		return nil, appErr
 	}
-	return s.listAPIOrders(ctx, "", nil)
+	return s.listAPIOrders(ctx, "", nil, now)
 }
 
 func (s *Store) GetAdminAPIOrder(ctx context.Context, orderID string, now time.Time) (apiorder.Order, *domain.AppError) {
@@ -185,7 +185,7 @@ func (s *Store) GetAdminAPIOrder(ctx context.Context, orderID string, now time.T
 		return apiorder.Order{}, internalStoreError()
 	}
 	order.DeliveryCredential = nil
-	return order, nil
+	return apiorder.WithAfterSalesProjection(order, now), nil
 }
 
 func (s *Store) GetAPIOrderForSeller(ctx context.Context, sellerUserID, orderID string, now time.Time) (apiorder.Order, *domain.AppError) {
@@ -202,7 +202,7 @@ func (s *Store) GetAPIOrderForSeller(ctx context.Context, sellerUserID, orderID 
 	if order.SellerUserID != sellerUserID {
 		return apiorder.Order{}, apiOrderNotFound()
 	}
-	return order, nil
+	return apiorder.WithAfterSalesProjection(order, now), nil
 }
 
 func (s *Store) getAPIOrderWithCredentialLifecycleLock(ctx context.Context, orderID string) (apiorder.Order, error) {
@@ -283,7 +283,7 @@ func (s *Store) createAPIOrderInTx(ctx context.Context, tx pgx.Tx, input apiorde
 	if appErr := insertAPIOrderDomainEventAndNotificationInTx(ctx, tx, order, input.BuyerUserID, apiorder.EventCreated, input.RequestID, now); appErr != nil {
 		return apiorder.Order{}, appErr
 	}
-	return order, nil
+	return apiorder.WithAfterSalesProjection(order, now), nil
 }
 
 func loadReadyProbeTargetInTx(ctx context.Context, tx pgx.Tx, service *apimarket.Service) *domain.AppError {
@@ -354,6 +354,11 @@ func (s *Store) updateAPIOrderInTx(ctx context.Context, tx pgx.Tx, input apiorde
 	}
 	if input.ExpectedVersion > 0 && order.Version != input.ExpectedVersion {
 		return apiorder.Order{}, domain.NewError(http.StatusPreconditionFailed, domain.CodeVersionConflict, "Version conflict", "资源版本已变化，请刷新后重试。")
+	}
+	if action == "open_dispute" {
+		if _, appErr := apiorder.ValidateDisputeOccurrence(order, input.IssueOccurredAt, now); appErr != nil {
+			return apiorder.Order{}, appErr
+		}
 	}
 	if !storeCanTransitionAPIOrder(order, action, now) {
 		return apiorder.Order{}, domain.NewError(http.StatusConflict, domain.CodeInvalidStateTransition, "Invalid state transition", "当前订单状态不能执行该操作。")
@@ -459,7 +464,7 @@ func (s *Store) updateAPIOrderInTx(ctx context.Context, tx pgx.Tx, input apiorde
 			return apiorder.Order{}, appErr
 		}
 	}
-	return order, nil
+	return apiorder.WithAfterSalesProjection(order, now), nil
 }
 
 func (s *Store) MaterializeExpiredAPIOrders(ctx context.Context, now time.Time) *domain.AppError {
@@ -906,7 +911,7 @@ const apiOrderColumns = `
 	order_no, prompt_audit_enabled_snapshot
 `
 
-func (s *Store) listAPIOrders(ctx context.Context, whereClause string, args []any) ([]apiorder.Order, *domain.AppError) {
+func (s *Store) listAPIOrders(ctx context.Context, whereClause string, args []any, now time.Time) ([]apiorder.Order, *domain.AppError) {
 	query := `SELECT ` + apiOrderColumns + ` FROM api_orders `
 	if strings.TrimSpace(whereClause) != "" {
 		query += whereClause
@@ -923,7 +928,7 @@ func (s *Store) listAPIOrders(ctx context.Context, whereClause string, args []an
 		if err := rows.Scan(apiOrderScanTargets(&order)...); err != nil {
 			return nil, internalStoreError()
 		}
-		orders = append(orders, order)
+		orders = append(orders, apiorder.WithAfterSalesProjection(order, now))
 	}
 	if err := rows.Err(); err != nil {
 		return nil, internalStoreError()
@@ -1397,6 +1402,10 @@ func (s *Store) getAPIOrderDeliveryCredential(ctx context.Context, q queryer, or
 }
 
 func openDisputeFromAPIOrderInTx(ctx context.Context, tx pgx.Tx, order apiorder.Order, input apiorder.ActionInput, now time.Time) (report.DisputeCase, *domain.AppError) {
+	issueOccurredAt, appErr := apiorder.ValidateDisputeOccurrence(order, input.IssueOccurredAt, now)
+	if appErr != nil {
+		return report.DisputeCase{}, appErr
+	}
 	counterpartyID := order.SellerUserID
 	if input.ActorUserID == order.SellerUserID {
 		counterpartyID = order.BuyerUserID
@@ -1405,14 +1414,14 @@ func openDisputeFromAPIOrderInTx(ctx context.Context, tx pgx.Tx, order apiorder.
 		INSERT INTO dispute_cases (
 			report_id, target_type, target_id, target_label, primary_user_id, counterparty_user_id,
 			subject_user_id,
-			status, issue_code, requested_resolution, requested_amount_cny,
+			status, issue_code, requested_resolution, requested_amount_cny, issue_occurred_at,
 			public_summary, public_result_code, public_result, admin_reason, opened_by_admin_id, opened_at,
 			created_at, updated_at, version
 		)
-		VALUES (NULL, $1, $2, $3, $4, $5, $5, 'negotiating', $6, $7, $8, $9, $10, $11, $12, $4, $13, $13, $13, 1)
+		VALUES (NULL, $1, $2, $3, $4, $5, $5, 'negotiating', $6, $7, $8, $9, $10, $11, $12, $13, $4, $14, $14, $14, 1)
 		RETURNING `+disputeReturningColumns+`
 	`, report.TargetAPIOrder, order.ID, strings.TrimSpace(order.ServiceTitleSnapshot), input.ActorUserID, counterpartyID,
-		strings.TrimSpace(input.IssueCode), strings.TrimSpace(input.RequestedResolution), nullNumeric(input.RequestedAmountCNY),
+		strings.TrimSpace(input.IssueCode), strings.TrimSpace(input.RequestedResolution), nullNumeric(input.RequestedAmountCNY), issueOccurredAt,
 		"API 订单纠纷", report.PublicResultNoAction, "双方协商中", "", now)
 	if err != nil {
 		return report.DisputeCase{}, internalStoreError()
@@ -1485,7 +1494,7 @@ func storeCanTransitionAPIOrder(order apiorder.Order, action string, now time.Ti
 	case "confirm_complete":
 		return order.Status == apiorder.StatusDeliverySubmitted && !apiorder.IsDisputeActive(order.DisputeStatus)
 	case "open_dispute":
-		return order.Status != apiorder.StatusCancelled && order.Status != apiorder.StatusCompleted && order.DisputeStatus == apiorder.DisputeStatusNone
+		return apiorder.WithAfterSalesProjection(order, now).CanOpenDispute
 	default:
 		return false
 	}

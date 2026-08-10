@@ -64,8 +64,8 @@ func (s *Manager) Create(ctx context.Context, user auth.User, input CreateServic
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if _, _, ok := s.contact.VersionForOwner(service.OwnerContactMethodID, user.ID); !ok {
-		return Service{}, domain.NewError(http.StatusUnprocessableEntity, domain.CodeContactMethodNotOwned, "Contact method not owned", "商户联系方式不可用或不属于当前用户。")
+	if appErr := s.validateOwnerContacts(service, user.ID); appErr != nil {
+		return Service{}, appErr
 	}
 	s.services[service.ID] = service
 	s.serviceOrder = append(s.serviceOrder, service.ID)
@@ -106,6 +106,7 @@ func (s *Manager) Update(ctx context.Context, user auth.User, input UpdateServic
 		MerchantProfileID:                input.MerchantProfileID,
 		MerchantIdentityMode:             input.MerchantIdentityMode,
 		OwnerContactMethodID:             input.OwnerContactMethodID,
+		OwnerContactMethodIDs:            append([]string(nil), input.OwnerContactMethodIDs...),
 		ProbeConnectionID:                input.ProbeConnectionID,
 		Title:                            input.Title,
 		ShortDescription:                 input.ShortDescription,
@@ -160,8 +161,8 @@ func (s *Manager) Update(ctx context.Context, user auth.User, input UpdateServic
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if _, _, ok := s.contact.VersionForOwner(service.OwnerContactMethodID, user.ID); !ok {
-		return Service{}, domain.NewError(http.StatusUnprocessableEntity, domain.CodeContactMethodNotOwned, "Contact method not owned", "商户联系方式不可用或不属于当前用户。")
+	if appErr := s.validateOwnerContacts(service, user.ID); appErr != nil {
+		return Service{}, appErr
 	}
 	s.services[service.ID] = service
 	return WithOrderability(service), nil
@@ -484,8 +485,8 @@ func (s *Manager) SubmitForReview(ctx context.Context, user auth.User, input Ser
 	if appErr := requireEarlyAutoApprovalEligibility(user); appErr != nil {
 		return Service{}, appErr
 	}
-	if _, _, ok := s.contact.VersionForOwner(service.OwnerContactMethodID, user.ID); !ok {
-		return Service{}, domain.NewError(http.StatusUnprocessableEntity, domain.CodeContactMethodNotOwned, "Contact method not owned", "商户联系方式不可用或不属于当前用户。")
+	if appErr := s.validateOwnerContacts(service, user.ID); appErr != nil {
+		return Service{}, appErr
 	}
 
 	service = applyEarlyAutoApprovalPolicy(service, s.now())
@@ -515,10 +516,10 @@ func (s *Manager) UpdatePublication(ctx context.Context, user auth.User, input S
 		if strings.TrimSpace(service.ProbeConnectionID) == "" || !service.ProbeReady {
 			return Service{}, domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Probe connection required", "上线 API 服务前必须绑定已启用且验证通过的探针连接。", "probeConnectionId", "not_ready", "请选择已启用且验证通过的探针连接。")
 		}
-		if strings.TrimSpace(service.OwnerContactMethodID) == "" {
+		if len(service.OwnerContactMethodIDs) == 0 {
 			return Service{}, domain.NewError(http.StatusUnprocessableEntity, domain.CodeMerchantContactRequired, "Merchant contact required", "上线 API 服务必须配置商户联系方式。")
 		}
-		if _, _, ok := s.contact.VersionForOwner(service.OwnerContactMethodID, user.ID); !ok {
+		if appErr := s.validateOwnerContacts(service, user.ID); appErr != nil {
 			return Service{}, domain.NewError(http.StatusConflict, domain.CodeMerchantContactUnavailable, "Merchant contact unavailable", "商户联系方式当前不可用。")
 		}
 	}
@@ -598,6 +599,12 @@ func (s *Manager) UpdateOrderSettings(ctx context.Context, user auth.User, input
 func (s *Manager) buildFromInput(ctx context.Context, current Service, input CreateServiceInput) (Service, *domain.AppError) {
 	now := s.now()
 	isCreating := current.ID == ""
+	ownerContactMethodIDs, appErr := normalizeOwnerContactMethodIDs(input.OwnerContactMethodID, input.OwnerContactMethodIDs)
+	if appErr != nil {
+		return Service{}, appErr
+	}
+	input.OwnerContactMethodIDs = ownerContactMethodIDs
+	input.OwnerContactMethodID = ownerContactMethodIDs[0]
 	if strings.TrimSpace(input.BillingMode) == ServiceBillingModeMetered && strings.TrimSpace(input.AvailableUSDAllowance) == "" {
 		// 兼容迁移期客户端：旧字段只提供单笔上限时，以该值初始化真实可售额度。
 		input.AvailableUSDAllowance = input.DeclaredMaxUSDAllowancePerIntent
@@ -649,6 +656,7 @@ func (s *Manager) buildFromInput(ctx context.Context, current Service, input Cre
 		MerchantProfileID:                strings.TrimSpace(input.MerchantProfileID),
 		MerchantIdentityMode:             strings.TrimSpace(input.MerchantIdentityMode),
 		OwnerContactMethodID:             strings.TrimSpace(input.OwnerContactMethodID),
+		OwnerContactMethodIDs:            append([]string(nil), input.OwnerContactMethodIDs...),
 		ProbeConnectionID:                probeConnectionID,
 		ProbeReady:                       probeReady,
 		ProbeBaseURL:                     probeBaseURL,
@@ -819,8 +827,8 @@ func (s *Manager) buildFromInput(ctx context.Context, current Service, input Cre
 }
 
 func validateCreateInput(input CreateServiceInput, now time.Time) *domain.AppError {
-	if strings.TrimSpace(input.OwnerContactMethodID) == "" {
-		return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeContactMethodRequired, "Contact method required", "发布 API 服务必须选择商户联系方式。", "ownerContactMethodId", "required", "必须选择商户联系方式。")
+	if _, appErr := normalizeOwnerContactMethodIDs(input.OwnerContactMethodID, input.OwnerContactMethodIDs); appErr != nil {
+		return appErr
 	}
 	if strings.TrimSpace(input.MerchantIdentityMode) == "" {
 		input.MerchantIdentityMode = "public_profile"
@@ -1015,6 +1023,39 @@ func validateCreateInput(input CreateServiceInput, now time.Time) *domain.AppErr
 		}
 		if err := validateNonSecretText(field+".description", pack.Description); err != nil {
 			return err
+		}
+	}
+	return nil
+}
+
+func normalizeOwnerContactMethodIDs(primary string, values []string) ([]string, *domain.AppError) {
+	if len(values) == 0 && strings.TrimSpace(primary) != "" {
+		values = []string{primary}
+	}
+	result := make([]string, 0, len(values))
+	seen := make(map[string]struct{}, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			return nil, domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeContactMethodRequired, "Contact method required", "发布 API 服务必须选择有效的商户联系方式。", "ownerContactMethodIds", "invalid", "联系方式不能为空。")
+		}
+		if _, exists := seen[value]; exists {
+			return nil, domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Contact method duplicated", "商户联系方式不能重复选择。", "ownerContactMethodIds", "duplicate", "联系方式不能重复。")
+		}
+		seen[value] = struct{}{}
+		result = append(result, value)
+	}
+	if len(result) == 0 {
+		return nil, domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeContactMethodRequired, "Contact method required", "发布 API 服务必须至少选择一种商户联系方式。", "ownerContactMethodIds", "required", "请至少选择一种联系方式。")
+	}
+	return result, nil
+}
+
+func (s *Manager) validateOwnerContacts(service Service, ownerUserID string) *domain.AppError {
+	for _, methodID := range service.OwnerContactMethodIDs {
+		method, _, ok := s.contact.VersionForOwner(methodID, ownerUserID)
+		if !ok || !method.Enabled {
+			return domain.NewError(http.StatusUnprocessableEntity, domain.CodeContactMethodNotOwned, "Contact method not owned", "商户联系方式不可用或不属于当前用户。")
 		}
 	}
 	return nil

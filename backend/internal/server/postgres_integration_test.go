@@ -322,9 +322,18 @@ func TestPostgresAPIPurchaseIntentFlow(t *testing.T) {
 	buyerSession := createSession(t, server, "pg-api-intent-buyer-"+suffix, false)
 	adminSession := createSession(t, server, "pg-api-intent-admin-"+suffix, true)
 	ownerContact := createContactMethod(t, server, ownerSession, "telegram", "PG API Intent Owner "+suffix, "@pg_api_intent_owner_"+suffix)
+	ownerWechat := createContactMethod(t, server, ownerSession, "wechat", "PG API Intent WeChat "+suffix, "pg_api_intent_wechat_"+suffix)
 	buyerContact := createContactMethod(t, server, buyerSession, "telegram", "PG API Intent Buyer "+suffix, "@pg_api_intent_buyer_"+suffix)
 
 	service := createPostgresAPIService(t, databaseURL, server, ownerSession, ownerContact.ID, "pg-api-intent-service-create-"+suffix)
+	servicePayload := apiServicePayloadWithProbeConnection(apiServicePayload(ownerContact.ID, "1.0000"), service.ProbeConnectionID)
+	servicePayload = strings.Replace(servicePayload,
+		`"ownerContactMethodId":"`+ownerContact.ID+`"`,
+		`"ownerContactMethodId":"`+ownerContact.ID+`","ownerContactMethodIds":["`+ownerContact.ID+`","`+ownerWechat.ID+`"]`, 1)
+	service = updateAPIService(t, server, ownerSession, service.ID, service.Version, servicePayload, "pg-api-intent-service-contacts-"+suffix)
+	if len(service.OwnerContactMethodIDs) != 2 || service.OwnerContactMethodIDs[0] != ownerContact.ID || service.OwnerContactMethodIDs[1] != ownerWechat.ID {
+		t.Fatalf("expected ordered owner contact selection, got %+v", service.OwnerContactMethodIDs)
+	}
 	submitted := ownerAPIServiceAction(t, server, ownerSession, service.ID, "submit-review", service.Version, "pg-api-intent-service-submit-"+suffix)
 	published := ownerAPIServiceAction(t, server, ownerSession, submitted.ID, "publish", submitted.Version, "pg-api-intent-service-publish-"+suffix)
 	published = updateAPIServiceOrderSettings(t, server, ownerSession, published.ID, published.Version, true, "pg-api-intent-service-settings-"+suffix)
@@ -345,6 +354,9 @@ func TestPostgresAPIPurchaseIntentFlow(t *testing.T) {
 	if first.MerchantContact == nil || first.MerchantContact.Value != "@pg_api_intent_owner_"+suffix {
 		t.Fatalf("expected merchant contact in postgres API intent create: %+v", first.MerchantContact)
 	}
+	if len(first.MerchantContacts) != 2 || first.MerchantContacts[0].Value != "@pg_api_intent_owner_"+suffix || first.MerchantContacts[1].Value != "pg_api_intent_wechat_"+suffix {
+		t.Fatalf("expected ordered frozen merchant contacts in postgres API intent create: %+v", first.MerchantContacts)
+	}
 	if first.SelectedAccessMode != "buyer_dedicated_sub_key" || first.OwnerUserID != "" || first.OwnerContactMethodID != "" || first.MerchantContact.Type != "telegram" {
 		t.Fatalf("postgres create response leaked owner identity or missed frozen access/contact data: %+v", first)
 	}
@@ -355,7 +367,7 @@ func TestPostgresAPIPurchaseIntentFlow(t *testing.T) {
 	assertAPIPurchaseIntentIdempotencyCache(t, databaseURL, buyerSession.userID, published.ID, first.ID, "create", "pg-api-intent-create-"+suffix, app.APIPurchaseIntentStatusOpen, "@pg_api_intent_owner_"+suffix)
 
 	buyerDetail := getAPIPurchaseIntent(t, server, buyerSession, "me", first.ID)
-	if buyerDetail.ID != first.ID || buyerDetail.MerchantContact == nil || buyerDetail.MerchantContact.Value != "@pg_api_intent_owner_"+suffix {
+	if buyerDetail.ID != first.ID || buyerDetail.MerchantContact == nil || buyerDetail.MerchantContact.Value != "@pg_api_intent_owner_"+suffix || len(buyerDetail.MerchantContacts) != 2 {
 		t.Fatalf("unexpected buyer API purchase intent detail: %+v", buyerDetail)
 	}
 	ownerDetail := getAPIPurchaseIntent(t, server, ownerSession, "owner", first.ID)
@@ -366,8 +378,8 @@ func TestPostgresAPIPurchaseIntentFlow(t *testing.T) {
 	if _, err := poolExec(databaseURL, `
 		UPDATE contact_methods
 		SET label = label || ' changed after intent'
-		WHERE id IN ($1, $2)
-	`, ownerContact.ID, buyerContact.ID); err != nil {
+		WHERE id IN ($1, $2, $3)
+	`, ownerContact.ID, ownerWechat.ID, buyerContact.ID); err != nil {
 		t.Fatalf("mutate contact labels after API intent: %v", err)
 	}
 	labelReplay := createAPIPurchaseIntent(t, server, buyerSession, published.ID, buyerContact.ID, "pg-api-intent-create-"+suffix)
@@ -376,11 +388,14 @@ func TestPostgresAPIPurchaseIntentFlow(t *testing.T) {
 	if labelReplay.MerchantContact.Label != first.MerchantContact.Label || labelBuyerDetail.MerchantContact.Label != first.MerchantContact.Label {
 		t.Fatalf("merchant contact label drifted after mutable method edit: create=%+v replay=%+v detail=%+v", first.MerchantContact, labelReplay.MerchantContact, labelBuyerDetail.MerchantContact)
 	}
+	if len(labelBuyerDetail.MerchantContacts) != 2 || labelBuyerDetail.MerchantContacts[1].Label != first.MerchantContacts[1].Label {
+		t.Fatalf("secondary merchant contact label drifted after mutable method edit: create=%+v detail=%+v", first.MerchantContacts, labelBuyerDetail.MerchantContacts)
+	}
 	if labelOwnerDetail.BuyerContact.Label != ownerDetail.BuyerContact.Label {
 		t.Fatalf("buyer contact label drifted after mutable method edit: before=%+v after=%+v", ownerDetail.BuyerContact, labelOwnerDetail.BuyerContact)
 	}
 	adminDetail := getAPIPurchaseIntent(t, server, adminSession, "admin", first.ID)
-	if adminDetail.ID != first.ID || adminDetail.MerchantContact != nil || adminDetail.BuyerContact != nil {
+	if adminDetail.ID != first.ID || adminDetail.MerchantContact != nil || len(adminDetail.MerchantContacts) != 0 || adminDetail.BuyerContact != nil {
 		t.Fatalf("unexpected admin API purchase intent detail: %+v", adminDetail)
 	}
 

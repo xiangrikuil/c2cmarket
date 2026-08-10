@@ -3389,6 +3389,7 @@ type createdCarpoolMembership struct {
 
 type createdAPIService struct {
 	ID                     string                          `json:"id"`
+	OwnerContactMethodIDs  []string                        `json:"ownerContactMethodIds"`
 	ProbeConnectionID      string                          `json:"probeConnectionId"`
 	SourceURL              string                          `json:"sourceUrl"`
 	ReviewStatus           string                          `json:"reviewStatus"`
@@ -3422,34 +3423,35 @@ type createdAPIService struct {
 }
 
 type createdAPIPurchaseIntent struct {
-	ID                                       string           `json:"id"`
-	APIServiceID                             string           `json:"apiServiceId"`
-	BuyerUserID                              string           `json:"buyerUserId"`
-	OwnerUserID                              string           `json:"ownerUserId"`
-	BuyerContactMethodID                     string           `json:"buyerContactMethodId"`
-	OwnerContactMethodID                     string           `json:"ownerContactMethodId"`
-	Status                                   string           `json:"status"`
-	RequestedCNYAmount                       string           `json:"requestedCnyAmount"`
-	RequestedUSDAllowance                    string           `json:"requestedUsdAllowance"`
-	SelectedAccessMode                       string           `json:"selectedAccessMode"`
-	ServiceVersionSnapshot                   int64            `json:"serviceVersionSnapshot"`
-	ServiceTitleSnapshot                     string           `json:"serviceTitleSnapshot"`
-	DistributionSystemSnapshot               string           `json:"distributionSystemSnapshot"`
-	BillingModeSnapshot                      string           `json:"billingModeSnapshot"`
-	DeclaredCNYPerUSDAllowanceSnapshot       string           `json:"declaredCnyPerUsdAllowanceSnapshot"`
-	DeclaredMaxUSDAllowancePerIntentSnapshot string           `json:"declaredMaxUsdAllowancePerIntentSnapshot"`
-	MinimumIntentCNYSnapshot                 string           `json:"minimumIntentCnySnapshot"`
-	MaximumIntentCNYSnapshot                 string           `json:"maximumIntentCnySnapshot"`
-	PricingSnapshot                          string           `json:"pricingSnapshot"`
-	BuyerNote                                string           `json:"buyerNote"`
-	ContactedAt                              *string          `json:"contactedAt"`
-	BuyerCancelledAt                         *string          `json:"buyerCancelledAt"`
-	BuyerCancelReason                        string           `json:"buyerCancelReason"`
-	OwnerClosedAt                            *string          `json:"ownerClosedAt"`
-	OwnerCloseReason                         string           `json:"ownerCloseReason"`
-	Version                                  int64            `json:"version"`
-	MerchantContact                          *testContactItem `json:"merchantContact"`
-	BuyerContact                             *testContactItem `json:"buyerContact"`
+	ID                                       string            `json:"id"`
+	APIServiceID                             string            `json:"apiServiceId"`
+	BuyerUserID                              string            `json:"buyerUserId"`
+	OwnerUserID                              string            `json:"ownerUserId"`
+	BuyerContactMethodID                     string            `json:"buyerContactMethodId"`
+	OwnerContactMethodID                     string            `json:"ownerContactMethodId"`
+	Status                                   string            `json:"status"`
+	RequestedCNYAmount                       string            `json:"requestedCnyAmount"`
+	RequestedUSDAllowance                    string            `json:"requestedUsdAllowance"`
+	SelectedAccessMode                       string            `json:"selectedAccessMode"`
+	ServiceVersionSnapshot                   int64             `json:"serviceVersionSnapshot"`
+	ServiceTitleSnapshot                     string            `json:"serviceTitleSnapshot"`
+	DistributionSystemSnapshot               string            `json:"distributionSystemSnapshot"`
+	BillingModeSnapshot                      string            `json:"billingModeSnapshot"`
+	DeclaredCNYPerUSDAllowanceSnapshot       string            `json:"declaredCnyPerUsdAllowanceSnapshot"`
+	DeclaredMaxUSDAllowancePerIntentSnapshot string            `json:"declaredMaxUsdAllowancePerIntentSnapshot"`
+	MinimumIntentCNYSnapshot                 string            `json:"minimumIntentCnySnapshot"`
+	MaximumIntentCNYSnapshot                 string            `json:"maximumIntentCnySnapshot"`
+	PricingSnapshot                          string            `json:"pricingSnapshot"`
+	BuyerNote                                string            `json:"buyerNote"`
+	ContactedAt                              *string           `json:"contactedAt"`
+	BuyerCancelledAt                         *string           `json:"buyerCancelledAt"`
+	BuyerCancelReason                        string            `json:"buyerCancelReason"`
+	OwnerClosedAt                            *string           `json:"ownerClosedAt"`
+	OwnerCloseReason                         string            `json:"ownerCloseReason"`
+	Version                                  int64             `json:"version"`
+	MerchantContact                          *testContactItem  `json:"merchantContact"`
+	MerchantContacts                         []testContactItem `json:"merchantContacts"`
+	BuyerContact                             *testContactItem  `json:"buyerContact"`
 }
 
 type createdAPIOrder struct {

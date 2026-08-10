@@ -16,6 +16,7 @@ import { beijingDateTimeInputToISOString } from '@/lib/apiQuotaExpiration'
 test('applies simplified API quota publish defaults', () => {
   const form: ApiServicePublishForm = {
     probeConnectionId: 'probe-connection-1',
+		ownerContactMethodIds: ['contact-1'],
     merchantIdentityMode: 'store_alias',
     merchantDisplayName: '小葵 API',
     distributionSystem: 'other',

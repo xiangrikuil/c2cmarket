@@ -87,6 +87,91 @@ appendEvent(order, EventDisputeClosed, order.Status, order.Status)
 
 The event kind records the dispute transition while transaction status fields retain their original meaning.
 
+## Scenario: Completed API Orders Have A Frozen 24-Hour Reporting Grace Period
+
+### 1. Scope / Trigger
+
+- Trigger: changing API-order validity snapshots, completed-order dispute creation, dispute occurrence evidence, participant/admin order DTOs, or frontend dispute eligibility.
+- The grace period permits reporting a failure that occurred during purchased service validity. It does not extend API validity and does not promise, execute, or guarantee a refund.
+
+### 2. Signatures
+
+```text
+POST /api/v1/me/api-orders/{id}/dispute
+POST /api/v1/owner/api-orders/{id}/dispute
+  { issueCode, requestedResolution, requestedAmountCny?, reason, issueOccurredAt? }
+
+ApiOrder:
+  afterSalesExpiresAt?: RFC3339 timestamp
+  canOpenDispute: boolean
+  disputeEligibilityReason:
+    eligible | order_cancelled | dispute_exists |
+    after_sales_expired | completed_validity_unknown
+
+dispute_cases.issue_occurred_at timestamptz NULL
+
+apiorder.ValidityExpiresAt(order) *time.Time
+apiorder.WithAfterSalesProjection(order, now) Order
+apiorder.ValidateDisputeOccurrence(order, raw, now) (*time.Time, *domain.AppError)
+```
+
+### 3. Contracts
+
+- The authoritative frozen validity end is `packageExpiresAt`, then `quotaExpiresAtSnapshot`, then `pricingSnapshot.serviceValidityExpiresAt`.
+- When a validity end exists, `afterSalesExpiresAt = validityEnd + exactly 24 hours`. Eligibility is open only while `now < afterSalesExpiresAt`; the exact boundary is expired.
+- Cancelled orders and orders with any dispute projection other than `none` are always ineligible. A completed historical order without a usable frozen validity end remains ineligible instead of receiving an invented deadline.
+- A completed eligible order requires `issueOccurredAt`. It must be RFC 3339, no later than the authoritative validity end, and no later than the server's current time. Non-completed orders may omit it for compatibility.
+- Opening the completed-order dispute writes `issue_occurred_at`, creates the existing negotiation record, and updates only the dispute projection. The completed transaction status, completion source, credential, payment, delivery, and validity facts remain unchanged.
+- In-memory and PostgreSQL mutations use one authoritative `now` for timeout materialization, eligibility, occurrence validation, dispute persistence, and the response projection.
+- Buyer, seller, and administrator order DTOs return the same server-derived deadline, eligibility, and stable reason. Participant responses obtain frozen contact evidence through the authorized intent read; administrator responses contain no raw contacts or credentials.
+
+### 4. Validation & Error Matrix
+
+| Condition | Required result |
+| --- | --- |
+| `now < validityEnd + 24h`, no dispute, not cancelled | `canOpenDispute=true`, reason `eligible` |
+| `now >= validityEnd + 24h` | `canOpenDispute=false`, reason `after_sales_expired`; dispute mutation returns `409 INVALID_STATE_TRANSITION` |
+| Completed order has no usable frozen validity end | `canOpenDispute=false`, reason `completed_validity_unknown` |
+| Order is cancelled | `canOpenDispute=false`, reason `order_cancelled` |
+| Any dispute projection already exists | `canOpenDispute=false`, reason `dispute_exists` |
+| Completed eligible order omits `issueOccurredAt` | `422 VALIDATION_FAILED`, field `issueOccurredAt`, reason `required` |
+| Occurrence time is malformed or in the future | `422 VALIDATION_FAILED`, field `issueOccurredAt`, reason `invalid` or `future` |
+| Occurrence time is later than frozen validity | `422 VALIDATION_FAILED`, field `issueOccurredAt`, reason `after_validity` |
+
+### 5. Good / Base / Bad Cases
+
+- Good: validity ends at T, the buyer reports at `T+23h`, and `issueOccurredAt=T-1m`; the dispute opens while the order remains completed.
+- Base: an incomplete, non-cancelled legacy order without a validity snapshot retains the existing dispute path and may omit occurrence time.
+- Base: a completed historical order without validity facts remains readable but has no dispute action or fabricated deadline.
+- Bad: accepting a report at exactly `T+24h`, extending credential/API usability until that time, or describing the grace period as guaranteed compensation.
+- Bad: reconstructing validity from the current mutable service, browser time, or a later merchant edit.
+
+### 6. Tests Required
+
+- Unit tests cover validity-source priority, `T+24h-epsilon`, exact `T+24h`, cancellation, existing disputes, unknown completed validity, missing/malformed/future/post-validity occurrence time, and one-clock in-memory mutation behavior.
+- Router/OpenAPI tests assert participant/admin projection parity, conditional occurrence validation, persistence in dispute detail, and no administrator contact/credential leakage.
+- PostgreSQL integration covers completed-order dispute creation before the deadline, atomic rollback after the deadline or invalid occurrence, and unchanged order completion/credential facts.
+- Frontend adapter tests assert real and Mock paths carry server-equivalent projection fields; order-detail tests assert the occurrence input and grace-period copy.
+- Gates: full Go test/vet, full Vitest, OpenAPI generated-type check, Nuxt typecheck/build, migration upgrade/rollback/re-upgrade, desktop/mobile browser checks, and `git diff --check`.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```ts
+const canOpenDispute = order.status !== 'completed'
+const deadline = addHours(new Date(), 24)
+```
+
+#### Correct
+
+```ts
+const canOpenDispute = order.canOpenDispute
+const deadline = order.afterSalesExpiresAt
+```
+
+The backend computes eligibility from frozen order facts; the browser renders it and never starts a new validity or grace clock.
+
 ## Scenario: Structured Participant Negotiation Requires Bilateral Confirmation
 
 ### 1. Scope / Trigger

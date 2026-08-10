@@ -20,6 +20,7 @@ import AccountPaymentSummarySection from '@/components/api-service-publish/Accou
 import ApiPaymentSettingsDialog from '@/components/contact-payment/ApiPaymentSettingsDialog.vue'
 import ApiAccessSourceSection from '@/components/api-service-publish/ApiAccessSourceSection.vue'
 import MerchantNoteSection from '@/components/api-service-publish/MerchantNoteSection.vue'
+import MerchantContactMethodsSection from '@/components/api-service-publish/MerchantContactMethodsSection.vue'
 import ModelMultiSelect from '@/components/api-service-publish/ModelMultiSelect.vue'
 import ProviderCategorySelector from '@/components/api-service-publish/ProviderCategorySelector.vue'
 import ProbeConnectionSection from '@/components/api-service-publish/ProbeConnectionSection.vue'
@@ -80,6 +81,7 @@ import {
   useCreateApiQuotaRushOfferMutation,
   useModelCatalog,
   useMyApiServices,
+	useMyContactMethodsQuery,
   useMyProfileQuery,
 } from '@/queries/useMarketQueries'
 import { useUnsavedChangesGuard } from '@/composables/useUnsavedChangesGuard'
@@ -110,6 +112,7 @@ const publishSteps = [
 ]
 
 const myServicesQuery = useMyApiServices('all')
+const contactMethodsQuery = useMyContactMethodsQuery()
 const probeConnectionsQuery = useOwnerAPIProbeConnections()
 const slotQuery = useApiQuotaSaleSlots()
 const { data: modelCatalog, isLoading: catalogLoading } = useModelCatalog()
@@ -162,6 +165,7 @@ watch([eligibleServices, requestedServiceId, () => myServicesQuery.isSuccess.val
 
 const baseForm = reactive<ApiServicePublishForm>({
   probeConnectionId: '',
+	ownerContactMethodIds: [],
   merchantIdentityMode: 'public_profile',
   merchantDisplayName: '',
   distributionSystem: 'sub2api',
@@ -216,6 +220,9 @@ const catalogById = computed(() => new Map(catalog.value.map(item => [item.id, i
 const filteredCatalog = computed(() => catalog.value.filter(item => modelProviderCategory(item.provider) === baseForm.providerCategory))
 const selectedModels = computed(() => selectedCatalogItems(baseForm, catalogById.value))
 const probeConnections = computed(() => probeConnectionsQuery.data.value ?? [])
+const availableOwnerContacts = computed(() => (contactMethodsQuery.data.value ?? []).filter(contact => (
+  contact.enabled && contact.usageScopes.includes('api_merchant')
+)))
 const selectedProbeConnection = computed(() => probeConnections.value.find(connection => connection.id === baseForm.probeConnectionId) ?? null)
 const probeConnectionReady = computed(() => Boolean(
   selectedProbeConnection.value?.enabled && selectedProbeConnection.value.verificationStatus === 'verified',
@@ -233,6 +240,15 @@ const profileErrorMessage = computed(() =>
 
 watch(() => myProfile.value, profile => {
   baseForm.merchantDisplayName = profile?.displayName.trim() || profile?.username.trim() || ''
+}, { immediate: true })
+
+watch(availableOwnerContacts, contacts => {
+  const availableIds = new Set(contacts.map(contact => contact.id))
+  baseForm.ownerContactMethodIds = baseForm.ownerContactMethodIds.filter(id => availableIds.has(id))
+  if (baseForm.ownerContactMethodIds.length || !contacts.length) return
+  const recommended = contacts.filter(contact => contact.type === 'wechat' || contact.type === 'linuxdo')
+  const fallback = contacts.find(contact => contact.isDefault) ?? contacts[0]
+  baseForm.ownerContactMethodIds = recommended.length ? recommended.map(contact => contact.id) : fallback ? [fallback.id] : []
 }, { immediate: true })
 
 watch(accountSettingsValue, settings => {
@@ -420,6 +436,7 @@ function validateBaseService() {
     return false
   }
   if (!baseForm.merchantDisplayName.trim()) baseErrors.merchantDisplayName = '请先设置个人资料显示名称。'
+	if (!baseForm.ownerContactMethodIds.length) baseErrors.ownerContactMethods = '请至少选择一种订单联系方式。'
   if (!baseForm.probeConnectionId) baseErrors.probeConnection = '请选择已验证且启用的探针连接。'
   else if (!probeConnectionReady.value) baseErrors.probeConnection = '所选探针连接当前不可用，请重新选择。'
   if (!baseForm.selectedModels.some(item => item.enabled)) baseErrors.selectedModels = '至少选择一个模型。'
@@ -691,6 +708,12 @@ function preview() {
                   :settings="accountSettingsValue"
                   :loading="paymentSettingsLoading"
                   @edit="paymentSettingsDialogOpen = true"
+                />
+                <MerchantContactMethodsSection
+                  :form="baseForm"
+                  :contacts="availableOwnerContacts"
+                  :loading="contactMethodsQuery.isLoading.value"
+                  :error="baseErrors.ownerContactMethods"
                 />
                 <ProviderCategorySelector :model-value="baseForm.providerCategory" :selected-count="selectedModels.length" @update:model-value="setProviderCategory" />
                 <Card class="api-publish-card"><div class="api-publish-card-header"><div class="flex items-start gap-2"><Bot class="mt-0.5 h-4 w-4 text-primary" /><div><h2>具体模型</h2><p>选择这个 API 服务支持的模型。</p></div></div></div><div class="api-publish-card-body"><div v-if="catalogLoading" class="text-sm text-muted-foreground">正在加载模型目录...</div><ModelMultiSelect v-else :form="baseForm" :provider-category="baseForm.providerCategory" :catalog="filteredCatalog" :errors="baseErrors" @toggle-model="toggleModel" /></div></Card>
