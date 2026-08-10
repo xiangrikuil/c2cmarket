@@ -2763,6 +2763,164 @@ order credentialSource:
 {"kind":"order","orderId":"00000000-0000-0000-0000-000000000802","acknowledgeInsecureHttp":false}
 ```
 
+## Scenario: Bounded Public Profile Aggregation
+
+### 1. Scope / Trigger
+
+- Trigger: changing `GET /api/v1/users/{username}/public-profile`, public merchant profiles, or any profile activity projection.
+- The contract spans PostgreSQL-backed business modules, the core aggregation service, HTTP/OpenAPI DTOs, generated TypeScript, and `/u/:username`.
+
+### 2. Signatures
+
+```text
+GET /api/v1/users/{username}/public-profile
+  -> PublicUserProfileBundle
+
+GET /api/v1/merchant-profiles/{slug}
+  -> PublicMerchantProfile
+```
+
+```go
+PublicProfileBundle(context.Context, username string) (profile.PublicUserProfileBundle, *domain.AppError)
+```
+
+```text
+PublicUserProfileBundle collections:
+  carpools:    PublicProfileCarpool[]      max 6
+  services:    PublicProfileAPIService[]   max 6
+  completions: PublicProfileCompletion[]   max 10
+  reviews:     PublicReview[]              max 10
+  disputes:    PublicDispute[]             max 10
+```
+
+### 3. Contracts
+
+- Public profile aggregation uses authoritative business queries and typed allowlist DTOs; it never returns `[]any`, `items: {}`, or hard-coded empty success for a failed dependency.
+- Carpools include active public listings only. API services use the existing public/orderable projection. Both collections use stable `updatedAt DESC, id DESC` ordering.
+- Completion records contain only kind, title, role, completion time, and a stable public projection ID. They omit counterpart IDs, amount/payment detail, contact data, order numbers, and credentials.
+- Completion records are sorted by `completedAt DESC, id DESC`. Carpool and API completion groups obey their corresponding profile privacy flags.
+- Reviews and disputes reuse their existing public-safe projections, remain bounded, and preserve their own visibility/redaction rules.
+- Any authoritative aggregate dependency failure returns a problem response. A successful profile with no public activity returns non-null empty arrays.
+- The public merchant-profile endpoint returns the profile DTO directly. It does not promise empty `services`, `completions`, `reviews`, or `disputes` bundles when no consumer exists.
+
+### 4. Validation & Error Matrix
+
+| Condition | Expected behavior |
+| --- | --- |
+| Public user or merchant slug does not exist | `404 OBJECT_NOT_FOUND`. |
+| User has no public activity | Typed empty arrays in the user bundle. |
+| Carpool completion privacy is disabled | Omit carpool completions; keep allowed API completions. |
+| API completion privacy is disabled | Omit API completions; keep allowed carpool completions. |
+| Aggregate repository/service fails | Return a problem response; do not replace the failed collection with fake emptiness. |
+| Merchant profile is found | Return `PublicMerchantProfile` directly. |
+
+### 5. Good / Base / Bad Cases
+
+- Good: one profile response contains an active carpool, an online API service, recent completions, published reviews, and sanitized disputes in their bounded order.
+- Base: a new user has no activity, so all five user collections are typed empty arrays.
+- Bad: the handler initializes `carpools: []any{}` or returns complete order/listing domain objects containing private fields.
+
+### 6. Tests Required
+
+- Core/service tests for each collection, bounds, stable ordering, mixed completion kinds, privacy pruning, and dependency failures.
+- HTTP/OpenAPI tests for strong item schemas, non-null arrays, merchant response contraction, and sensitive-field absence.
+- PostgreSQL-backed tests for real public records and owner/public visibility predicates.
+- Frontend adapter/page tests for the single aggregate request, typed mapping, unified empty state, and linux.do link behavior.
+- Browser checks with populated and empty public profiles at desktop and mobile widths.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```go
+response.Carpools = []any{}
+response.Services = []any{}
+```
+
+#### Correct
+
+```go
+bundle, appErr := s.core.PublicProfileBundle(r.Context(), username)
+if appErr != nil {
+    writeProblem(w, r, appErr)
+    return
+}
+writeJSON(w, http.StatusOK, toPublicProfileBundle(bundle))
+```
+
+## Scenario: Owner Carpool Views And Optimistic Editing
+
+### 1. Scope / Trigger
+
+- Trigger: changing `/my/carpools`, owner list status grouping, owner detail reads, or carpool edit/save behavior.
+
+### 2. Signatures
+
+```text
+GET   /api/v1/me/carpools?view=recruiting|serving|history|needs_edit&limit&cursor
+GET   /api/v1/me/carpools/{id}
+PATCH /api/v1/carpools/{id}
+Cookie: c2c_session=<owner session>
+If-Match: "<listing version>"        # PATCH
+```
+
+```ts
+type OwnerCarpoolView = 'recruiting' | 'serving' | 'history' | 'needs_edit'
+function backendOwnerCarpoolForEdit(id: string): Promise<OwnerCarpoolEditData>
+function backendUpdateOwnerCarpool(id, payload, version, contactId, submit): Promise<CarpoolWithMeta>
+```
+
+### 3. Contracts
+
+- The repository applies the owner and view predicates before keyset pagination.
+- `recruiting` means active with no active buyer members; `serving` means active with at least one active buyer member; `history` means rejected or removed; `needs_edit` means draft, pending review, changes requested, or paused.
+- Owner detail returns only a listing owned by the current session user and emits its current version as ETag. Missing and cross-owner IDs both return not found.
+- Only draft and changes-requested records expose an edit action. The edit page reuses the publish form and maps every persisted field back into form state.
+- Save reuses the existing PATCH contract with `If-Match`. Submit-after-save uses the returned version, never the stale pre-patch version.
+- A `412 VERSION_CONFLICT` stops the mutation, tells the user the record changed, and refetches owner detail before another save.
+- The owner list renders explicit backend-state labels such as draft, pending review, changes requested, paused, rejected, and removed; it must not collapse every non-public state into `paused`.
+
+### 4. Validation & Error Matrix
+
+| Condition | Expected behavior |
+| --- | --- |
+| View value is unsupported | `422 VALIDATION_FAILED`. |
+| Listing is missing or owned by another user | `404 OBJECT_NOT_FOUND`. |
+| Edit status is not draft or changes requested | `409 INVALID_STATE_TRANSITION`. |
+| Missing `If-Match` | `428 PRECONDITION_REQUIRED`. |
+| Stale version | `412 VERSION_CONFLICT`; refetch without overwriting. |
+| Save succeeds | Invalidate owner/public/detail queries and return to `/my/carpools`. |
+
+### 5. Good / Base / Bad Cases
+
+- Good: a draft appears under `needs_edit` with the label `草稿`, opens a prefilled form, saves with version 1, and persists as version 2.
+- Base: each owner view has zero records and shows its own contextual empty state.
+- Bad: tabs only change visual selection, filter the current page after pagination, or show every draft/removed row as `暂停`.
+
+### 6. Tests Required
+
+- Repository/service tests for all four mutually exclusive views, stable cursor paging, and owner isolation.
+- HTTP tests for owner detail, ETag, not-found isolation, PATCH preconditions, and version conflict.
+- Frontend tests for query serialization, form reverse mapping, status labels, save/submit versions, cache invalidation, and conflict recovery.
+- Authenticated browser checks for all four tabs, draft edit/save, explicit owner status labels, and mobile overflow.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```ts
+const visible = currentPage.items.filter(matchesSelectedTab)
+if (backendStatus !== 'active') label = '暂停'
+```
+
+#### Correct
+
+```ts
+const page = await backendOwnerCarpoolsPage(selectedView, { limit, cursor })
+const label = ownerStatusLabels[item.backendStatus] ?? item.status
+await backendUpdateOwnerCarpool(item.id, payload, item.version, contactId, submit)
+```
+
 ## Scenario: Public API Market Cursor Pagination
 
 ### 1. Scope / Trigger

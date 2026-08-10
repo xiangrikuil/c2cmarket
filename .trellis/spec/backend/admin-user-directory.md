@@ -102,3 +102,73 @@ if request.IsAdmin == nil {
 }
 input.Grant = *request.IsAdmin
 ```
+
+## Scenario: Persistent Global Administrator Audit Log
+
+### 1. Scope / Trigger
+
+- Trigger: adding or changing `/admin/logs`, administrator dashboard recent actions, or global reads from `admin_audit_logs`.
+- This read model is distinct from the user-detail governance audit projection above.
+
+### 2. Signatures
+
+```text
+GET /api/v1/admin/audit-logs?limit&cursor&search&action&targetType&actorUserId&targetId
+```
+
+```go
+ListAdminAuditLogs(context.Context, auth.AdminAuditLogFilter, domain.PageRequest) (domain.Page[auth.AdminAuditLog], *domain.AppError)
+```
+
+```ts
+function backendAdminAuditLogRowsPage(filters, page): Promise<CursorPage<AdminRow>>
+```
+
+### 3. Contracts
+
+- The endpoint requires an authenticated administrator and is read-only.
+- PostgreSQL applies all filters before `LIMIT`, orders by `created_at DESC, id DESC`, and returns an opaque keyset cursor. Limit defaults to 20 and remains bounded by the shared page parser.
+- The safe DTO exposes actor ID/username, action, target type/ID, reason, request ID, optional before/after status summaries, and creation time.
+- Raw `before_json` / `after_json`, credentials, contacts, payment data, and unrelated internal payload fields never leave the server.
+- `/admin/logs` and dashboard recent actions consume this endpoint in real mode. Backend failure is visible and never falls back to an in-memory Mock audit store.
+
+### 4. Validation & Error Matrix
+
+| Condition | Expected behavior |
+| --- | --- |
+| Caller is not an administrator | `403 PERMISSION_DENIED`. |
+| Cursor is malformed | `422 VALIDATION_FAILED`. |
+| Actor or target filter is not a UUID | `422 VALIDATION_FAILED` or the shared invalid-filter response before SQL execution. |
+| No rows match | `items=[]`, `nextCursor=null`. |
+| More than `limit` rows match | Return `limit` rows and a non-empty opaque `nextCursor`. |
+| PostgreSQL read fails | Return a problem response; real UI shows an error state. |
+
+### 5. Good / Base / Bad Cases
+
+- Good: a persisted price-maintenance action remains visible after page refresh and can be found by actor, action, target, or request trace.
+- Base: an audit entry has no recognized status fields, so both status summaries are null while the row remains useful.
+- Bad: the real admin page reads `adminAuditLogStore`, exposes raw JSON, or filters only the current frontend page.
+
+### 6. Tests Required
+
+- Auth/service tests for authorization and filter forwarding.
+- PostgreSQL integration for stable two-page cursor traversal and SQL-side filtering.
+- HTTP/OpenAPI tests for safe DTO shape, auth failure, and pagination.
+- Frontend adapter/page tests for filter serialization, cursor propagation, read-only actions, and no real-to-Mock fallback.
+- Authenticated desktop/mobile browser checks for search, next/previous pagination, and table overflow containment.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```ts
+if (section === 'logs') return adminAuditLogStore
+```
+
+#### Correct
+
+```ts
+if (shouldUseRealBackend() && section === 'logs') {
+  return backendAdminAuditLogRowsPage(filters, page)
+}
+```

@@ -224,3 +224,75 @@ if (!isAuthenticated.value) return [browseGroup]
 
 const groups = [browseGroup, transactionGroup, publishGroup, accountGroup]
 ```
+
+## Scenario: Real Avatar Reset And Linux.do Profile Actions
+
+### 1. Scope / Trigger
+
+- Trigger: changing profile avatar shortcuts, linux.do profile links, or user-facing identity synchronization actions.
+- The contract spans the profile API, the frontend facade/query cache, and public/account profile pages.
+
+### 2. Signatures
+
+```text
+GET   /api/v1/me/profile
+PATCH /api/v1/me/profile
+```
+
+```ts
+function deleteCustomAvatar(): Promise<UserProfile>
+function useLinuxDoAvatar(): Promise<UserProfile>
+function linuxDoProfileSummaryUrl(username: string): string
+```
+
+### 3. Contracts
+
+- In real API mode, both avatar shortcuts first read the current profile and then reuse `PATCH /api/v1/me/profile`; the patch preserves all editable profile and privacy fields while setting `avatarMode="linuxdo"` and clearing the custom avatar URL.
+- A successful mutation replaces `['my-profile']` with the server response. A failed request must not mutate the query cache or any Mock store.
+- Mock-only profile mutation remains confined to explicitly selected Mock mode.
+- Public profile pages show the shared `https://linux.do/u/{username}/summary` link only when a linux.do username exists.
+- OAuth login/binding remains the identity synchronization boundary. Do not add a button that reports a successful linux.do sync without a backend request.
+
+### 4. Validation & Error Matrix
+
+| Condition | Expected behavior |
+| --- | --- |
+| Real profile GET or PATCH fails | Surface the error; keep the previous cache value. |
+| Profile has a custom avatar | Reset through the real PATCH and return the server projection. |
+| linux.do username is blank | Omit the external profile link. |
+| Account page displays `lastSyncedAt` | Render it as read-only provider state; do not expose a fake refresh action. |
+
+### 5. Good / Base / Bad Cases
+
+- Good: resetting a custom avatar sends GET plus PATCH and the account shell immediately renders the returned linux.do avatar.
+- Base: a user has no linux.do username, so the public page renders no provider link.
+- Bad: a real-mode shortcut mutates `mockProfileStore`, writes optimistic success into the query cache, or shows a sync-success toast without network activity.
+
+### 6. Tests Required
+
+- Frontend adapter tests for real GET/PATCH payload preservation, success mapping, and failed-request cache isolation.
+- Mock-mode regression for the retained local shortcut behavior.
+- Source/component assertions for the shared summary URL helper, conditional link visibility, and removal of fake synchronization controls.
+- Full Vitest, typecheck, real-mode build, and authenticated browser checks.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```ts
+profile.avatarUrl = null
+queryClient.setQueryData(['my-profile'], profile)
+toast.success('linux.do information synchronized')
+```
+
+#### Correct
+
+```ts
+const current = await backendMyProfile()
+const updated = await backendUpdateMyProfile({
+  ...editableProfilePayload(current),
+  avatarMode: 'linuxdo',
+  avatarUrl: null,
+})
+queryClient.setQueryData(['my-profile'], updated)
+```
