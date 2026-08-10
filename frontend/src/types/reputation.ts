@@ -141,6 +141,17 @@ export type ReputationScopeResponse = {
 export type MyReputationResponse = {
   ruleVersion: string
   items: ReputationSnapshot[]
+  activeRestrictions: PublicActiveReputationRestriction[]
+}
+
+export type PublicActiveReputationRestriction = {
+  restrictionType: string
+  roleScope: ReputationRole | 'all'
+  actionCode: string
+  reasonCode: string
+  publicReason: string
+  startsAt: string
+  endsAt: string | null
 }
 
 export type ReputationHistory = {
@@ -169,6 +180,7 @@ export type UserReputationRestriction = {
   startsAt: string
   endsAt: string | null
   sourceDisputeOutcomeId?: string
+  sourceDisputeRemedyId?: string
   createdByAdminId: string
   revokedAt: string | null
   revokedByAdminId?: string
@@ -312,6 +324,26 @@ export type CreateDisputeOutcomeInput = {
   publicReason: string
   internalReason: string
   expectedVersion: number
+}
+
+export type APIOrderSanctionRecommendation = {
+  eligible: boolean
+  reasonCode: string
+  remedyId?: string
+  outcomeId?: string
+  subjectUserId?: string
+  confirmedBreaches180Days: number
+  recommendedDays: 0 | 7 | 30 | 90
+  alreadyApplied: boolean
+  existingRestriction?: UserReputationRestriction
+  subjectUserVersion?: number
+}
+
+export type ApplyAPIOrderSanctionInput = {
+  disputeCaseId: string
+  subjectUserId?: string
+  internalReason: string
+  expectedUserVersion: number
 }
 
 export type UpdateSourceAuthorVerificationInput = {

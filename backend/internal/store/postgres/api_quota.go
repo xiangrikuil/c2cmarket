@@ -646,11 +646,27 @@ func (s *Store) ListPublicAPIQuotaOffers(ctx context.Context, filter apiquota.Pu
 		      AND (o.delivery_mode = 'manual' OR credentials.available_copies >= stock.available_copies)
 		    )
 		  )
+		  AND (
+		    $8 = '' OR o.name ILIKE '%' || $8 || '%'
+		    OR s.title ILIKE '%' || $8 || '%'
+		    OR (CASE WHEN s.merchant_identity_mode = 'store_alias' THEN COALESCE(mp.display_name, u.display_name) ELSE u.display_name END) ILIKE '%' || $8 || '%'
+		    OR replace(o.distribution_system, '_', ' ') ILIKE '%' || $8 || '%'
+		  )
+		  AND (
+		    NOT $9 OR NOT EXISTS (
+		      SELECT 1
+		      FROM api_quota_allocations system_allocation
+		      JOIN api_quota_sale_rounds system_round ON system_round.id = system_allocation.sale_round_id
+		      WHERE system_allocation.offer_id = o.id
+		        AND system_allocation.status = 'active'
+		        AND system_round.system_slot_key IS NOT NULL
+		    )
+		  )
 		ORDER BY o.updated_at DESC, o.id DESC
-		LIMIT $8
+		LIMIT $10
 	`, now, strings.TrimSpace(filter.DistributionSystem), filter.OnlyOneMultiplier,
 		strings.TrimSpace(filter.SystemSlotKey), nullTime(position.Time), nullUUID(position.ID),
-		filter.OnlyOrderable, page.Limit+1)
+		filter.OnlyOrderable, strings.TrimSpace(filter.Search), filter.ExcludeSystemSlots, page.Limit+1)
 	if err != nil {
 		return domain.Page[apiquota.OfferCard]{}, internalStoreError()
 	}
@@ -1117,6 +1133,9 @@ func (s *Store) CreateAPIQuotaOrderWithIdempotency(ctx context.Context, entry id
 	if orderContext.OwnerUserID == input.BuyerUserID {
 		return apiorder.Order{}, idempotency.Completion{}, invalidQuotaState("不能购买自己发布的额度包。")
 	}
+	if appErr := ensureAPIServicePublishAllowedInTx(ctx, tx, orderContext.OwnerUserID, now); appErr != nil {
+		return apiorder.Order{}, idempotency.Completion{}, appErr
+	}
 	buyerMethod, buyerVersion, appErr := lockContactVersionForOwner(ctx, tx, input.BuyerContactMethodID, input.BuyerUserID, "买家联系方式不可用或不属于当前用户。")
 	if appErr != nil {
 		return apiorder.Order{}, idempotency.Completion{}, appErr
@@ -1264,6 +1283,9 @@ func (s *Store) CreateAPIQuotaOrderWithIdempotency(ctx context.Context, entry id
 		RequestedUSDAllowanceSnapshot: orderContext.USDAllowance,
 		CNYPerUSDAllowanceSnapshot:    orderContext.CNYPerUSD,
 		PricingSnapshot:               snapshot,
+		ProbeConnectionIDSnapshot:     orderContext.ProbeConnectionID,
+		APIBaseURLSnapshot:            orderContext.ProbeBaseURL,
+		NormalizedAPIBaseURLSnapshot:  orderContext.NormalizedProbeBaseURL,
 		QuotaUsagePolicySnapshot:      orderContext.QuotaUsagePolicy,
 		PromptAuditEnabledSnapshot:    orderContext.PromptAuditEnabled,
 		APIQuotaBatchID:               orderContext.BatchID,
@@ -1319,8 +1341,9 @@ func (s *Store) CreateAPIQuotaOrderWithIdempotency(ctx context.Context, entry id
 			quota_distribution_system_snapshot, quota_ttft_band_snapshot,
 			quota_declared_max_concurrency_snapshot, quota_performance_confirmed_at_snapshot,
 			quota_performance_unverified_snapshot, quota_delivery_eta_minutes_snapshot,
-			quota_delivery_mode_snapshot,
-			five_hour_limit_mode_snapshot, five_hour_limit_usd_snapshot,
+				quota_delivery_mode_snapshot,
+				probe_connection_id_snapshot, api_base_url_snapshot, normalized_api_base_url_snapshot,
+				five_hour_limit_mode_snapshot, five_hour_limit_usd_snapshot,
 			daily_limit_mode_snapshot, daily_limit_usd_snapshot,
 			amount, currency, selected_payment_method, payment_window_minutes_snapshot,
 			payment_expires_at, payment_instructions_snapshot, payment_qr_code_data_url_snapshot,
@@ -1330,8 +1353,9 @@ func (s *Store) CreateAPIQuotaOrderWithIdempotency(ctx context.Context, entry id
 			$9, $10, $11, $12, $13, $14::jsonb,
 			$15, $16, $17, $18, $19, $20,
 			$14::jsonb, $21, $12, $22, $13, $23, $24, $25,
-			$26, $27, $28, $29, $30, $31, $32, true, $33, $34,
-			$35, $36, $37, $38,
+				$26, $27, $28, $29, $30, $31, $32, true, $33, $34,
+				$47, $48, $49,
+				$35, $36, $37, $38,
 				$22, 'CNY', $39, $40, $41, $42, $43, $44, $44, 1, $45, $46
 		)
 		ON CONFLICT ON CONSTRAINT ux_api_orders_order_no DO NOTHING
@@ -1350,7 +1374,8 @@ func (s *Store) CreateAPIQuotaOrderWithIdempotency(ctx context.Context, entry id
 			order.QuotaUsagePolicySnapshot.Daily.Mode, nullNumeric(order.QuotaUsagePolicySnapshot.Daily.AmountUSD),
 			order.SelectedPaymentMethod,
 			order.PaymentWindowMinutesSnapshot, order.PaymentExpiresAt, order.PaymentInstructionsSnapshot,
-			nullText(order.PaymentQRCodeDataURLSnapshot), now, order.OrderNo, order.PromptAuditEnabledSnapshot)
+			nullText(order.PaymentQRCodeDataURLSnapshot), now, order.OrderNo, order.PromptAuditEnabledSnapshot,
+			nullUUID(order.ProbeConnectionIDSnapshot), nullText(order.APIBaseURLSnapshot), nullText(order.NormalizedAPIBaseURLSnapshot))
 		if insertErr != nil {
 			return insertErr
 		}
@@ -1440,6 +1465,9 @@ type apiQuotaOrderContext struct {
 	DeclaredMaxConcurrency   int
 	PerformanceConfirmedAt   *time.Time
 	PromptAuditEnabled       *bool
+	ProbeConnectionID        string
+	ProbeBaseURL             string
+	NormalizedProbeBaseURL   string
 	ServiceOrderable         bool
 }
 
@@ -1460,12 +1488,16 @@ func getAPIQuotaOrderContext(ctx context.Context, tx pgx.Tx, input apiquota.Crea
 		       COALESCE(s.account_pool_type, ''), COALESCE(s.account_pool_custom_name, ''), s.merchant_refund_commitment,
 		       COALESCE(s.declared_ttft_band, ''), COALESCE(s.declared_max_concurrency, 0),
 			       s.performance_confirmed_at, s.prompt_audit_enabled,
+			       probe_connection.id::text, probe_connection.base_url, probe_connection.normalized_base_url,
 			       (`+publicAPIServiceOrderablePredicate("s")+`)
 		FROM api_quota_offers o
 		JOIN api_quota_batches b ON b.id = o.batch_id AND b.api_service_id = o.api_service_id AND b.owner_user_id = o.owner_user_id
-		JOIN api_services s ON s.id = o.api_service_id AND s.owner_user_id = o.owner_user_id
+			JOIN api_services s ON s.id = o.api_service_id AND s.owner_user_id = o.owner_user_id
+			JOIN api_probe_connections probe_connection
+			  ON probe_connection.id = s.probe_connection_id
+			 AND probe_connection.owner_user_id = s.owner_user_id
 		WHERE o.id = $1
-		FOR SHARE OF o, b, s
+			FOR SHARE OF o, b, s, probe_connection
 	`, input.OfferID).Scan(
 		&item.OfferID, &item.BatchID, &item.APIServiceID, &item.OwnerUserID,
 		&item.OwnerContactMethodID, &item.OfferName, &item.USDAllowance, &item.PriceCNY,
@@ -1479,6 +1511,7 @@ func getAPIQuotaOrderContext(ctx context.Context, tx pgx.Tx, input apiquota.Crea
 		&item.AccountPoolType, &item.AccountPoolCustomName, &item.MerchantRefundCommitment,
 		&item.DeclaredTTFTBand, &item.DeclaredMaxConcurrency, &item.PerformanceConfirmedAt,
 		&item.PromptAuditEnabled,
+		&item.ProbeConnectionID, &item.ProbeBaseURL, &item.NormalizedProbeBaseURL,
 		&item.ServiceOrderable,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {

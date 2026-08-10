@@ -11,6 +11,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -72,7 +73,7 @@ func insertCarpoolListingInTx(ctx context.Context, tx pgx.Tx, listing carpool.Li
 			id, owner_user_id, product_plan_id, owner_contact_method_id, title, summary, access_arrangement,
 			distribution_method, distribution_method_note, provides_admin_account,
 			region_code, region_name, source_url, price_monthly_cny, service_multiplier,
-			weekly_quota_amount, monthly_quota_amount, follows_official_quota_reset, vps_region,
+			daily_quota_amount, weekly_quota_amount, follows_official_quota_reset, vps_region,
 			supports_mainland_china_direct_connection, opening_channel_code, custom_opening_channel,
 			payment_method_code, custom_payment_method, quota_label, quota_unit, quota_period,
 			buyer_seat_capacity, active_buyer_members,
@@ -91,7 +92,7 @@ func insertCarpoolListingInTx(ctx context.Context, tx pgx.Tx, listing carpool.Li
 	`, listing.ID, listing.OwnerUserID, listing.ProductPlanID, listing.OwnerContactMethodID, listing.Title, listing.Summary, listing.AccessArrangement,
 		listing.DistributionMethod, listing.DistributionMethodNote, listing.ProvidesAdminAccount,
 		listing.RegionCode, listing.RegionName, nullText(listing.SourceURL), listing.PriceMonthlyCNY, listing.ServiceMultiplier,
-		listing.WeeklyQuotaAmount, listing.MonthlyQuotaAmount, listing.FollowsOfficialQuotaReset, listing.VPSRegion,
+		listing.DailyQuotaAmount, listing.WeeklyQuotaAmount, listing.FollowsOfficialQuotaReset, listing.VPSRegion,
 		listing.SupportsMainlandChinaDirectConnection, listing.OpeningChannelCode, listing.CustomOpeningChannel,
 		listing.PaymentMethodCode, listing.CustomPaymentMethod, listing.QuotaLabel, listing.QuotaUnit, listing.QuotaPeriod,
 		listing.BuyerSeatCapacity, listing.ActiveBuyerMembers,
@@ -124,45 +125,8 @@ func insertCarpoolListingInTx(ctx context.Context, tx pgx.Tx, listing carpool.Li
 	return nil
 }
 
-func (s *Store) ListPublicCarpoolListings(ctx context.Context, page domain.PageRequest) (domain.Page[carpool.Listing], *domain.AppError) {
-	if s == nil || s.pool == nil {
-		return domain.Page[carpool.Listing]{}, internalStoreError()
-	}
-	page = normalizePageRequest(page)
-	position, appErr := decodeKeysetCursor(page.Cursor)
-	if appErr != nil {
-		return domain.Page[carpool.Listing]{}, appErr
-	}
-	limit := page.Limit + 1
-	var rows pgx.Rows
-	var err error
-	if page.Cursor == "" {
-		rows, err = s.pool.Query(ctx, `
-			SELECT `+carpoolListingColumns+`
-			FROM `+carpoolListingViewSource+`
-			WHERE `+publicCarpoolListingPredicate("listing_view")+`
-			ORDER BY updated_at DESC, id DESC
-			LIMIT $1
-		`, limit)
-	} else {
-		rows, err = s.pool.Query(ctx, `
-			SELECT `+carpoolListingColumns+`
-			FROM `+carpoolListingViewSource+`
-			WHERE `+publicCarpoolListingPredicate("listing_view")+`
-			  AND (updated_at, id) < ($1, $2::uuid)
-			ORDER BY updated_at DESC, id DESC
-			LIMIT $3
-		`, position.Time, position.ID, limit)
-	}
-	if err != nil {
-		return domain.Page[carpool.Listing]{}, internalStoreError()
-	}
-	defer rows.Close()
-	listings, appErr := scanCarpoolListings(rows)
-	if appErr != nil {
-		return domain.Page[carpool.Listing]{}, appErr
-	}
-	return pageFromItems(listings, page, func(item carpool.Listing) (time.Time, string) { return item.UpdatedAt, item.ID }), nil
+func (s *Store) ListPublicCarpoolListings(ctx context.Context, filter carpool.ListingFilter, page domain.PageRequest) (domain.Page[carpool.Listing], *domain.AppError) {
+	return s.listCarpoolListingsPage(ctx, filter, page, true)
 }
 
 func (s *Store) GetPublicCarpoolListing(ctx context.Context, listingID string) (carpool.Listing, *domain.AppError) {
@@ -213,34 +177,113 @@ func (s *Store) ListCarpoolListingsByOwner(ctx context.Context, ownerUserID stri
 	return scanCarpoolListings(rows)
 }
 
-func (s *Store) ListAdminCarpoolListings(ctx context.Context, page domain.PageRequest) (domain.Page[carpool.Listing], *domain.AppError) {
+func (s *Store) ListAdminCarpoolListings(ctx context.Context, filter carpool.ListingFilter, page domain.PageRequest) (domain.Page[carpool.Listing], *domain.AppError) {
+	return s.listCarpoolListingsPage(ctx, filter, page, false)
+}
+
+func (s *Store) listCarpoolListingsPage(ctx context.Context, filter carpool.ListingFilter, page domain.PageRequest, publicOnly bool) (domain.Page[carpool.Listing], *domain.AppError) {
 	if s == nil || s.pool == nil {
 		return domain.Page[carpool.Listing]{}, internalStoreError()
 	}
 	page = normalizePageRequest(page)
-	position, appErr := decodeKeysetCursor(page.Cursor)
+	sortMode := filter.NormalizedSort()
+	var timePosition keysetPosition
+	var scalarPosition scalarKeysetPosition
+	var appErr *domain.AppError
+	if sortMode == carpool.ListingSortUpdatedDesc {
+		timePosition, appErr = decodeKeysetCursor(page.Cursor)
+	} else {
+		scalarPosition, appErr = decodeScalarKeysetCursor(page.Cursor, sortMode)
+	}
 	if appErr != nil {
 		return domain.Page[carpool.Listing]{}, appErr
 	}
-	limit := page.Limit + 1
-	var rows pgx.Rows
-	var err error
-	if page.Cursor == "" {
-		rows, err = s.pool.Query(ctx, `
-			SELECT `+carpoolListingColumns+`
-			FROM `+carpoolListingViewSource+`
-			ORDER BY updated_at DESC, id DESC
-			LIMIT $1
-		`, limit)
-	} else {
-		rows, err = s.pool.Query(ctx, `
-			SELECT `+carpoolListingColumns+`
-			FROM `+carpoolListingViewSource+`
-			WHERE (updated_at, id) < ($1, $2::uuid)
-			ORDER BY updated_at DESC, id DESC
-			LIMIT $3
-		`, position.Time, position.ID, limit)
+	if page.Cursor != "" && sortMode == carpool.ListingSortPriceAsc {
+		if appErr := validateNonNegativeDecimalCursor(scalarPosition); appErr != nil {
+			return domain.Page[carpool.Listing]{}, appErr
+		}
 	}
+
+	conditions := make([]string, 0, 8)
+	args := make([]any, 0, 10)
+	addArgument := func(value any) string {
+		args = append(args, value)
+		return "$" + strconv.Itoa(len(args))
+	}
+	if publicOnly {
+		conditions = append(conditions, "("+publicCarpoolListingPredicate("listing_view")+")")
+	}
+	if filter.None {
+		conditions = append(conditions, "FALSE")
+	}
+	if len(filter.ProductPlanIDs) > 0 {
+		placeholder := addArgument(filter.ProductPlanIDs)
+		conditions = append(conditions, "product_plan_id::text = ANY("+placeholder+"::text[])")
+	}
+	if len(filter.Statuses) > 0 {
+		placeholder := addArgument(filter.Statuses)
+		conditions = append(conditions, "status = ANY("+placeholder+"::text[])")
+	}
+	if region := strings.TrimSpace(filter.Region); region != "" {
+		placeholder := addArgument(region)
+		conditions = append(conditions, "(region_code = "+placeholder+" OR region_name = "+placeholder+")")
+	}
+	switch strings.TrimSpace(filter.View) {
+	case carpool.ListingViewPublic:
+		conditions = append(conditions, "status = 'active'")
+	case carpool.ListingViewExceptions:
+		conditions = append(conditions, "status <> 'active'")
+	}
+	if strings.TrimSpace(filter.Risk) == carpool.ListingRiskHigh {
+		conditions = append(conditions, "(risk_ack_required = true OR strpos(lower(COALESCE(review_reason, '')), '风险') > 0)")
+	}
+	if query := strings.TrimSpace(filter.Query); query != "" {
+		placeholder := addArgument(strings.ToLower(query))
+		conditions = append(conditions, `(
+			strpos(lower(id::text), `+placeholder+`) > 0 OR
+			strpos(lower(title), `+placeholder+`) > 0 OR
+			strpos(lower(summary), `+placeholder+`) > 0 OR
+			strpos(lower(region_name), `+placeholder+`) > 0 OR
+			strpos(lower(owner_user_id::text), `+placeholder+`) > 0 OR
+			strpos(lower(COALESCE(review_reason, '')), `+placeholder+`) > 0
+		)`)
+	}
+	if page.Cursor != "" {
+		switch sortMode {
+		case carpool.ListingSortPriceAsc:
+			valuePlaceholder := addArgument(scalarPosition.Value)
+			idPlaceholder := addArgument(scalarPosition.ID)
+			conditions = append(conditions, "(price_monthly_cny, id) > ("+valuePlaceholder+"::numeric, "+idPlaceholder+"::uuid)")
+		case carpool.ListingSortSeatsDesc:
+			availableSeats, err := strconv.Atoi(scalarPosition.Value)
+			if err != nil || availableSeats < 0 {
+				return domain.Page[carpool.Listing]{}, invalidPageCursorError()
+			}
+			valuePlaceholder := addArgument(availableSeats)
+			idPlaceholder := addArgument(scalarPosition.ID)
+			conditions = append(conditions, "("+carpoolAvailableSeatsExpression+", id) < ("+valuePlaceholder+", "+idPlaceholder+"::uuid)")
+		default:
+			timePlaceholder := addArgument(timePosition.Time)
+			idPlaceholder := addArgument(timePosition.ID)
+			conditions = append(conditions, "(updated_at, id) < ("+timePlaceholder+", "+idPlaceholder+"::uuid)")
+		}
+	}
+
+	query := "SELECT " + carpoolListingColumns + " FROM " + carpoolListingViewSource
+	if len(conditions) > 0 {
+		query += " WHERE " + strings.Join(conditions, " AND ")
+	}
+	switch sortMode {
+	case carpool.ListingSortPriceAsc:
+		query += " ORDER BY price_monthly_cny ASC, id ASC"
+	case carpool.ListingSortSeatsDesc:
+		query += " ORDER BY " + carpoolAvailableSeatsExpression + " DESC, id DESC"
+	default:
+		query += " ORDER BY updated_at DESC, id DESC"
+	}
+	args = append(args, page.Limit+1)
+	query += " LIMIT $" + strconv.Itoa(len(args))
+	rows, err := s.pool.Query(ctx, query, args...)
 	if err != nil {
 		return domain.Page[carpool.Listing]{}, internalStoreError()
 	}
@@ -249,7 +292,18 @@ func (s *Store) ListAdminCarpoolListings(ctx context.Context, page domain.PageRe
 	if appErr != nil {
 		return domain.Page[carpool.Listing]{}, appErr
 	}
-	return pageFromItems(listings, page, func(item carpool.Listing) (time.Time, string) { return item.UpdatedAt, item.ID }), nil
+	switch sortMode {
+	case carpool.ListingSortPriceAsc:
+		return pageFromScalarItems(listings, page, sortMode, func(item carpool.Listing) (string, string) {
+			return item.PriceMonthlyCNY, item.ID
+		}), nil
+	case carpool.ListingSortSeatsDesc:
+		return pageFromScalarItems(listings, page, sortMode, func(item carpool.Listing) (string, string) {
+			return strconv.Itoa(item.AvailableSeats), item.ID
+		}), nil
+	default:
+		return pageFromItems(listings, page, func(item carpool.Listing) (time.Time, string) { return item.UpdatedAt, item.ID }), nil
+	}
 }
 
 func (s *Store) GetAdminCarpoolListing(ctx context.Context, listingID string) (carpool.Listing, *domain.AppError) {
@@ -341,8 +395,8 @@ func (s *Store) UpdateCarpoolListing(ctx context.Context, input carpool.UpdateLi
 	listing.SourceURL = strings.TrimSpace(input.SourceURL)
 	listing.PriceMonthlyCNY = strings.TrimSpace(input.PriceMonthlyCNY)
 	listing.ServiceMultiplier = strings.TrimSpace(input.ServiceMultiplier)
-	listing.WeeklyQuotaAmount = nullStringPointer(input.WeeklyQuotaAmount)
-	listing.MonthlyQuotaAmount = strings.TrimSpace(input.MonthlyQuotaAmount)
+	listing.DailyQuotaAmount = nullStringPointer(input.DailyQuotaAmount)
+	listing.WeeklyQuotaAmount = strings.TrimSpace(input.WeeklyQuotaAmount)
 	listing.FollowsOfficialQuotaReset = input.FollowsOfficialQuotaReset
 	listing.VPSRegion = nullStringPointer(input.VPSRegion)
 	listing.SupportsMainlandChinaDirectConnection = input.SupportsMainlandChinaDirectConnection
@@ -375,8 +429,8 @@ func (s *Store) UpdateCarpoolListing(ctx context.Context, input carpool.UpdateLi
 		    source_url = $12,
 		    price_monthly_cny = $13,
 		    service_multiplier = $14,
-		    weekly_quota_amount = $15,
-		    monthly_quota_amount = $16,
+		    daily_quota_amount = $15,
+		    weekly_quota_amount = $16,
 		    follows_official_quota_reset = $17,
 		    vps_region = $18,
 		    supports_mainland_china_direct_connection = $19,
@@ -399,7 +453,7 @@ func (s *Store) UpdateCarpoolListing(ctx context.Context, input carpool.UpdateLi
 		listing.DistributionMethod, listing.DistributionMethodNote, listing.ProvidesAdminAccount,
 		listing.RegionCode, listing.RegionName,
 		nullText(listing.SourceURL), listing.PriceMonthlyCNY, listing.ServiceMultiplier,
-		listing.WeeklyQuotaAmount, listing.MonthlyQuotaAmount, listing.FollowsOfficialQuotaReset, listing.VPSRegion,
+		listing.DailyQuotaAmount, listing.WeeklyQuotaAmount, listing.FollowsOfficialQuotaReset, listing.VPSRegion,
 		listing.SupportsMainlandChinaDirectConnection, listing.OpeningChannelCode, listing.CustomOpeningChannel,
 		listing.PaymentMethodCode, listing.CustomPaymentMethod, listing.QuotaLabel, listing.QuotaUnit, listing.QuotaPeriod,
 		listing.BuyerSeatCapacity, listing.ActiveBuyerMembers,
@@ -959,6 +1013,8 @@ func (s *Store) EndCarpoolMembershipWithIdempotency(ctx context.Context, entry i
 	return membership, completion, nil
 }
 
+const carpoolAvailableSeatsExpression = `GREATEST(buyer_seat_capacity - active_buyer_members - reserved_seats, 0)`
+
 const carpoolListingColumns = `
 	id::text, owner_user_id::text, product_plan_id::text, owner_contact_method_id::text, title, summary, access_arrangement,
 	distribution_method, distribution_method_note, provides_admin_account,
@@ -1013,13 +1069,13 @@ const carpoolListingColumns = `
 	    AND verification.status = 'verified'
 	),
 	price_monthly_cny::text, service_multiplier::text,
-	weekly_quota_amount::text, monthly_quota_amount::text, follows_official_quota_reset, vps_region,
+	daily_quota_amount::text, weekly_quota_amount::text, follows_official_quota_reset, vps_region,
 	supports_mainland_china_direct_connection, opening_channel_code, custom_opening_channel,
 	payment_method_code, custom_payment_method,
 	quota_label, quota_unit, quota_period, buyer_seat_capacity, active_buyer_members,
 	status, COALESCE(reviewed_by_admin_id::text, ''), reviewed_at, COALESCE(review_reason, ''),
 	policy_version, COALESCE(risk_notice_code, ''), risk_ack_required, reserved_seats::int,
-	GREATEST(buyer_seat_capacity - active_buyer_members - reserved_seats, 0)::int AS available_seats,
+	` + carpoolAvailableSeatsExpression + `::int AS available_seats,
 	created_at, updated_at, version
 `
 
@@ -1090,7 +1146,7 @@ func scanCarpoolListings(rows pgx.Rows) ([]carpool.Listing, *domain.AppError) {
 func scanCarpoolListing(row scanner, listing *carpool.Listing) error {
 	var cycleTermID string
 	var cycleTerm carpool.CycleTerm
-	var weeklyQuotaAmount *string
+	var dailyQuotaAmount *string
 	var followsOfficialQuotaReset *bool
 	var vpsRegion *string
 	var supportsMainlandChinaDirectConnection *bool
@@ -1126,8 +1182,8 @@ func scanCarpoolListing(row scanner, listing *carpool.Listing) error {
 		&listing.SourceAuthorVerification.ExpiresAt,
 		&listing.PriceMonthlyCNY,
 		&listing.ServiceMultiplier,
-		&weeklyQuotaAmount,
-		&listing.MonthlyQuotaAmount,
+		&dailyQuotaAmount,
+		&listing.WeeklyQuotaAmount,
 		&followsOfficialQuotaReset,
 		&vpsRegion,
 		&supportsMainlandChinaDirectConnection,
@@ -1155,7 +1211,7 @@ func scanCarpoolListing(row scanner, listing *carpool.Listing) error {
 	); err != nil {
 		return err
 	}
-	listing.WeeklyQuotaAmount = weeklyQuotaAmount
+	listing.DailyQuotaAmount = dailyQuotaAmount
 	listing.FollowsOfficialQuotaReset = followsOfficialQuotaReset
 	listing.VPSRegion = vpsRegion
 	listing.SupportsMainlandChinaDirectConnection = supportsMainlandChinaDirectConnection
@@ -2056,7 +2112,7 @@ func canUpdateCarpoolListingStatus(currentStatus, nextStatus, action string) boo
 	case "reject":
 		return nextStatus == carpool.ListingStatusRejected && currentStatus == carpool.ListingStatusPendingReview
 	case "request_changes":
-		return nextStatus == carpool.ListingStatusChangesRequested && currentStatus == carpool.ListingStatusPendingReview
+		return nextStatus == carpool.ListingStatusChangesRequested && (currentStatus == carpool.ListingStatusPendingReview || currentStatus == carpool.ListingStatusActive)
 	case "pause":
 		return nextStatus == carpool.ListingStatusPaused && currentStatus == carpool.ListingStatusActive
 	case "restore":
@@ -2068,7 +2124,7 @@ func canUpdateCarpoolListingStatus(currentStatus, nextStatus, action string) boo
 	case carpool.ListingStatusRejected:
 		return currentStatus == carpool.ListingStatusPendingReview
 	case carpool.ListingStatusChangesRequested:
-		return currentStatus == carpool.ListingStatusPendingReview
+		return currentStatus == carpool.ListingStatusPendingReview || currentStatus == carpool.ListingStatusActive
 	case carpool.ListingStatusPaused:
 		return currentStatus == carpool.ListingStatusActive
 	default:

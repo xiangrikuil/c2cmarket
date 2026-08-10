@@ -1,6 +1,7 @@
 import type { AdminRow, Carpool } from '@/lib/api'
 
 const normalPublicCarpoolStatuses = new Set(['可上车', '已满', '已通过', '已验证', '已恢复'])
+const adminActionCarpoolStatuses = new Set(['待处理', '审核中', '暂停'])
 
 export type CarpoolModerationSource = Pick<
   Carpool,
@@ -9,6 +10,10 @@ export type CarpoolModerationSource = Pick<
 
 export function isCarpoolExceptionStatus(status: string) {
   return !normalPublicCarpoolStatuses.has(status.trim())
+}
+
+export function isCarpoolAdminActionStatus(status: string) {
+  return adminActionCarpoolStatuses.has(status.trim())
 }
 
 export function createCarpoolModerationRow(carpool: CarpoolModerationSource): AdminRow {

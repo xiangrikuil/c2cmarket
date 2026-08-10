@@ -257,7 +257,13 @@ func (s *Store) createAPIOrderInTx(ctx context.Context, tx pgx.Tx, input apiorde
 	if err != nil {
 		return apiorder.Order{}, internalStoreError()
 	}
+	if appErr := loadReadyProbeTargetInTx(ctx, tx, &service); appErr != nil {
+		return apiorder.Order{}, appErr
+	}
 	service = apimarket.WithOrderability(service)
+	if appErr := ensureAPIServicePublishAllowedInTx(ctx, tx, service.OwnerUserID, now); appErr != nil {
+		return apiorder.Order{}, appErr
+	}
 	order, appErr := newStoreAPIOrder(input, intent, service, now)
 	if appErr != nil {
 		return apiorder.Order{}, appErr
@@ -278,6 +284,29 @@ func (s *Store) createAPIOrderInTx(ctx context.Context, tx pgx.Tx, input apiorde
 		return apiorder.Order{}, appErr
 	}
 	return order, nil
+}
+
+func loadReadyProbeTargetInTx(ctx context.Context, tx pgx.Tx, service *apimarket.Service) *domain.AppError {
+	if service == nil || strings.TrimSpace(service.ProbeConnectionID) == "" {
+		return domain.NewError(http.StatusConflict, domain.CodeInvalidStateTransition, "Probe connection required", "当前 API 服务未绑定可用探针连接。")
+	}
+	err := tx.QueryRow(ctx, `
+		SELECT base_url, normalized_base_url
+		FROM api_probe_connections
+		WHERE id = $1
+		  AND owner_user_id = $2
+		  AND enabled = true
+		  AND verification_status = 'verified'
+		FOR SHARE
+	`, service.ProbeConnectionID, service.OwnerUserID).Scan(&service.ProbeBaseURL, &service.NormalizedProbeBaseURL)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return domain.NewError(http.StatusConflict, domain.CodeInvalidStateTransition, "Probe connection unavailable", "当前 API 服务绑定的探针连接不可用。")
+	}
+	if err != nil {
+		return internalStoreError()
+	}
+	service.ProbeReady = true
+	return nil
 }
 
 func markAPIPurchaseIntentOrderedInTx(ctx context.Context, tx pgx.Tx, intentID string, now time.Time) *domain.AppError {
@@ -328,6 +357,11 @@ func (s *Store) updateAPIOrderInTx(ctx context.Context, tx pgx.Tx, input apiorde
 	}
 	if !storeCanTransitionAPIOrder(order, action, now) {
 		return apiorder.Order{}, domain.NewError(http.StatusConflict, domain.CodeInvalidStateTransition, "Invalid state transition", "当前订单状态不能执行该操作。")
+	}
+	if action == "open_dispute" {
+		if appErr := apiorder.ValidateRequestedDisputeAmount(input.RequestedResolution, input.RequestedAmountCNY, order.Amount); appErr != nil {
+			return apiorder.Order{}, appErr
+		}
 	}
 	if action == "submit_delivery" {
 		expiresAt, appErr := apiorder.PackageExpiryFromSnapshot(order.SelectedPackageSnapshot, now)
@@ -438,7 +472,7 @@ func (s *Store) MaterializeExpiredAPIOrders(ctx context.Context, now time.Time) 
 		WHERE (status = 'pending_payment' AND payment_expires_at <= $1)
 		   OR (
 		     status = 'delivery_submitted'
-		     AND dispute_status <> 'open'
+		     AND dispute_status IN ('none', 'closed')
 		     AND delivery_review_expires_at <= $2
 		   )
 	`, now, now.Add(apiorder.DeliveryReviewReminderLead))
@@ -522,7 +556,7 @@ func (s *Store) materializeExpiredAPIOrderInTx(ctx context.Context, tx pgx.Tx, o
 		}
 		return apiOrderMaterializationResult{PaymentTimeoutCancelled: true}, nil
 	}
-	if order.Status != apiorder.StatusDeliverySubmitted || order.DisputeStatus == apiorder.DisputeStatusOpen || order.DeliveryReviewExpiresAt == nil {
+	if order.Status != apiorder.StatusDeliverySubmitted || apiorder.IsDisputeActive(order.DisputeStatus) || order.DeliveryReviewExpiresAt == nil {
 		return apiOrderMaterializationResult{}, nil
 	}
 	if !now.Before(*order.DeliveryReviewExpiresAt) {
@@ -845,8 +879,10 @@ const apiOrderColumns = `
 	COALESCE(dispute_case_id::text, ''), service_title_snapshot,
 	service_version_snapshot, billing_mode_snapshot, COALESCE(selected_package_id::text, ''),
 	COALESCE(selected_package_snapshot::text, ''), COALESCE(quote_version_snapshot, 0),
-	COALESCE(requested_usd_allowance_snapshot::text, ''), COALESCE(cny_per_usd_allowance_snapshot::text, ''), pricing_snapshot::text,
-	five_hour_limit_mode_snapshot, COALESCE(five_hour_limit_usd_snapshot::text, ''),
+		COALESCE(requested_usd_allowance_snapshot::text, ''), COALESCE(cny_per_usd_allowance_snapshot::text, ''), pricing_snapshot::text,
+		COALESCE(probe_connection_id_snapshot::text, ''), COALESCE(api_base_url_snapshot, ''),
+		COALESCE(normalized_api_base_url_snapshot, ''),
+		five_hour_limit_mode_snapshot, COALESCE(five_hour_limit_usd_snapshot::text, ''),
 	daily_limit_mode_snapshot, COALESCE(daily_limit_usd_snapshot::text, ''),
 	package_stock_reserved, package_expires_at,
 	COALESCE(api_quota_batch_id::text, ''), COALESCE(api_quota_offer_id::text, ''),
@@ -930,6 +966,9 @@ func apiOrderScanTargets(order *apiorder.Order) []any {
 		&order.RequestedUSDAllowanceSnapshot,
 		&order.CNYPerUSDAllowanceSnapshot,
 		&order.PricingSnapshot,
+		&order.ProbeConnectionIDSnapshot,
+		&order.APIBaseURLSnapshot,
+		&order.NormalizedAPIBaseURLSnapshot,
 		&order.QuotaUsagePolicySnapshot.FiveHour.Mode,
 		&order.QuotaUsagePolicySnapshot.FiveHour.AmountUSD,
 		&order.QuotaUsagePolicySnapshot.Daily.Mode,
@@ -993,6 +1032,9 @@ func newStoreAPIOrder(input apiorder.CreateInput, intent apiintent.Intent, servi
 	if !apimarket.WithOrderabilityAt(service, now).IsOrderable {
 		return apiorder.Order{}, domain.NewError(http.StatusConflict, domain.CodeInvalidStateTransition, "Service not orderable", "当前 API 服务不可下单。")
 	}
+	if strings.TrimSpace(service.ProbeConnectionID) == "" || strings.TrimSpace(service.ProbeBaseURL) == "" || strings.TrimSpace(service.NormalizedProbeBaseURL) == "" {
+		return apiorder.Order{}, domain.NewError(http.StatusConflict, domain.CodeInvalidStateTransition, "Probe target unavailable", "当前 API 服务缺少可冻结的探针连接目标。")
+	}
 	method := strings.TrimSpace(input.PaymentMethod)
 	option, ok := storeFindPaymentOption(service, method)
 	if !ok {
@@ -1019,6 +1061,9 @@ func newStoreAPIOrder(input apiorder.CreateInput, intent apiintent.Intent, servi
 		RequestedUSDAllowanceSnapshot: intent.RequestedUSDAllowance,
 		CNYPerUSDAllowanceSnapshot:    intent.DeclaredCNYPerUSDAllowanceSnapshot,
 		PricingSnapshot:               intent.PricingSnapshot,
+		ProbeConnectionIDSnapshot:     service.ProbeConnectionID,
+		APIBaseURLSnapshot:            service.ProbeBaseURL,
+		NormalizedAPIBaseURLSnapshot:  service.NormalizedProbeBaseURL,
 		QuotaUsagePolicySnapshot:      intent.QuotaUsagePolicySnapshot,
 		PromptAuditEnabledSnapshot:    intent.PromptAuditEnabledSnapshot,
 		PackageStockReserved:          service.BillingMode == apimarket.ServiceBillingModeFixedPackage,
@@ -1043,7 +1088,8 @@ func insertAPIOrderInTx(ctx context.Context, tx pgx.Tx, order *apiorder.Order) *
 			status, dispute_status, dispute_case_id, service_title_snapshot,
 			service_version_snapshot, billing_mode_snapshot, selected_package_id,
 				selected_package_snapshot, quote_version_snapshot,
-				requested_usd_allowance_snapshot, cny_per_usd_allowance_snapshot, pricing_snapshot,
+					requested_usd_allowance_snapshot, cny_per_usd_allowance_snapshot, pricing_snapshot,
+					probe_connection_id_snapshot, api_base_url_snapshot, normalized_api_base_url_snapshot,
 				five_hour_limit_mode_snapshot, five_hour_limit_usd_snapshot,
 				daily_limit_mode_snapshot, daily_limit_usd_snapshot,
 				package_stock_reserved, package_expires_at,
@@ -1061,14 +1107,15 @@ func insertAPIOrderInTx(ctx context.Context, tx pgx.Tx, order *apiorder.Order) *
 			$10, $11, $12,
 			$13, $14,
 			$15, $16, $17,
-				$18, $19, $20, $21,
-				$22, $23,
-				$24, $25,
-				$26, $27, $28,
-				$29, $30, $31, $32,
-				$33, $34, $35,
-				$36, $37, $38, $39,
-					$40, $41, $42, $43, $44, $45, $46
+					$18, $19, $20,
+					$21, $22, $23, $24,
+					$25, $26,
+					$27, $28,
+					$29, $30, $31,
+					$32, $33, $34, $35,
+					$36, $37, $38,
+					$39, $40, $41, $42,
+						$43, $44, $45, $46, $47, $48, $49
 		)
 		ON CONFLICT ON CONSTRAINT ux_api_orders_order_no DO NOTHING
 	`, order.ID, order.APIPurchaseIntentID, order.APIServiceID, order.BuyerUserID, order.SellerUserID,
@@ -1076,6 +1123,7 @@ func insertAPIOrderInTx(ctx context.Context, tx pgx.Tx, order *apiorder.Order) *
 			order.ServiceVersionSnapshot, order.BillingModeSnapshot, nullUUID(order.SelectedPackageID),
 			nullJSON(order.SelectedPackageSnapshot), nullInt64(order.QuoteVersionSnapshot),
 			nullNumeric(order.RequestedUSDAllowanceSnapshot), nullNumeric(order.CNYPerUSDAllowanceSnapshot), nullJSON(order.PricingSnapshot),
+			nullUUID(order.ProbeConnectionIDSnapshot), nullText(order.APIBaseURLSnapshot), nullText(order.NormalizedAPIBaseURLSnapshot),
 			order.QuotaUsagePolicySnapshot.FiveHour.Mode, nullNumeric(order.QuotaUsagePolicySnapshot.FiveHour.AmountUSD),
 			order.QuotaUsagePolicySnapshot.Daily.Mode, nullNumeric(order.QuotaUsagePolicySnapshot.Daily.AmountUSD),
 			order.PackageStockReserved, order.PackageExpiresAt,
@@ -1357,14 +1405,24 @@ func openDisputeFromAPIOrderInTx(ctx context.Context, tx pgx.Tx, order apiorder.
 		INSERT INTO dispute_cases (
 			report_id, target_type, target_id, target_label, primary_user_id, counterparty_user_id,
 			subject_user_id,
-			status, public_summary, public_result_code, public_result, admin_reason, opened_by_admin_id, opened_at,
+			status, issue_code, requested_resolution, requested_amount_cny,
+			public_summary, public_result_code, public_result, admin_reason, opened_by_admin_id, opened_at,
 			created_at, updated_at, version
 		)
-		VALUES (NULL, $1, $2, $3, $4, $5, $5, 'open', $6, $7, $8, $9, $10, $11, $11, $11, 1)
+		VALUES (NULL, $1, $2, $3, $4, $5, $5, 'negotiating', $6, $7, $8, $9, $10, $11, $12, $4, $13, $13, $13, 1)
 		RETURNING `+disputeReturningColumns+`
 	`, report.TargetAPIOrder, order.ID, strings.TrimSpace(order.ServiceTitleSnapshot), input.ActorUserID, counterpartyID,
-		"API 订单纠纷", report.PublicResultNoAction, "已进入人工处理中", strings.TrimSpace(input.Reason), input.ActorUserID, now)
+		strings.TrimSpace(input.IssueCode), strings.TrimSpace(input.RequestedResolution), nullNumeric(input.RequestedAmountCNY),
+		"API 订单纠纷", report.PublicResultNoAction, "双方协商中", "", now)
 	if err != nil {
+		return report.DisputeCase{}, internalStoreError()
+	}
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO api_order_dispute_messages (
+			id, dispute_case_id, sender_user_id, body, request_id, created_at
+		)
+		VALUES ($1, $2, $3, $4, $5, $6)
+	`, uuid.NewString(), item.ID, input.ActorUserID, strings.TrimSpace(input.Reason), strings.TrimSpace(input.RequestID), now); err != nil {
 		return report.DisputeCase{}, internalStoreError()
 	}
 	return item, nil
@@ -1425,7 +1483,7 @@ func storeCanTransitionAPIOrder(order apiorder.Order, action string, now time.Ti
 	case "submit_delivery":
 		return order.Status == apiorder.StatusPaidConfirmed
 	case "confirm_complete":
-		return order.Status == apiorder.StatusDeliverySubmitted && order.DisputeStatus != apiorder.DisputeStatusOpen
+		return order.Status == apiorder.StatusDeliverySubmitted && !apiorder.IsDisputeActive(order.DisputeStatus)
 	case "open_dispute":
 		return order.Status != apiorder.StatusCancelled && order.Status != apiorder.StatusCompleted && order.DisputeStatus == apiorder.DisputeStatusNone
 	default:
@@ -1493,7 +1551,7 @@ func storeApplyAPIOrderAction(order apiorder.Order, input apiorder.ActionInput, 
 		order.CompletionSource = apiorder.CompletionSourceBuyerConfirmed
 		order.CompletedAt = &now
 	case "open_dispute":
-		order.DisputeStatus = apiorder.DisputeStatusOpen
+		order.DisputeStatus = apiorder.DisputeStatusNegotiating
 	}
 	order.UpdatedAt = now
 	order.Version++

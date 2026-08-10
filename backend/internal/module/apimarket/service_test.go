@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"c2c-market/backend/internal/domain"
+	"c2c-market/backend/internal/module/auth"
 	"c2c-market/backend/internal/module/catalog"
 )
 
@@ -87,6 +88,8 @@ func TestSalesSummaryForMeteredServiceUsesAuthoritativeExpiryBoundary(t *testing
 	expiresAt := now.Add(time.Hour)
 	service := Service{
 		OwnerContactMethodID:  "contact-1",
+		ProbeConnectionID:     "probe-connection-1",
+		ProbeReady:            true,
 		BillingMode:           ServiceBillingModeMetered,
 		AvailableUSDAllowance: "420.000000",
 		QuotaExpiresAt:        &expiresAt,
@@ -193,6 +196,8 @@ func TestOrderableReasonsIncludesExpiredQuota(t *testing.T) {
 	expiredAt := now.Add(-time.Minute)
 	service := Service{
 		OwnerContactMethodID:  "contact-1",
+		ProbeConnectionID:     "probe-connection-1",
+		ProbeReady:            true,
 		BillingMode:           ServiceBillingModeMetered,
 		AvailableUSDAllowance: "20.000000",
 		QuotaExpiresAt:        &expiredAt,
@@ -218,6 +223,8 @@ func TestOrderableReasonsRejectUnsupportedHistoricalBillingModes(t *testing.T) {
 	for _, billingMode := range []string{ServiceBillingModeManual, "legacy_unknown_mode"} {
 		service := Service{
 			OwnerContactMethodID: "contact-1",
+			ProbeConnectionID:    "probe-connection-1",
+			ProbeReady:           true,
 			BillingMode:          billingMode,
 			AcceptingOrders:      true,
 			PaymentWindowMinutes: 10,
@@ -235,6 +242,140 @@ func TestOrderableReasonsRejectUnsupportedHistoricalBillingModes(t *testing.T) {
 			t.Fatalf("expected %q to be non-orderable, got %#v", billingMode, reasons)
 		}
 	}
+}
+
+func TestUpdateProbeConnectionRebindsAndUnbindsWithoutRebuildingService(t *testing.T) {
+	now := time.Date(2026, 8, 8, 8, 0, 0, 0, time.UTC)
+	manager := NewManager(nil, nil, nil, func() time.Time { return now })
+	manager.services["service-1"] = Service{
+		ID:                     "service-1",
+		OwnerUserID:            "owner-1",
+		OwnerContactMethodID:   "contact-1",
+		ProbeConnectionID:      "probe-1",
+		ProbeReady:             true,
+		ProbeBaseURL:           "https://old.example.com/v1",
+		NormalizedProbeBaseURL: "https://old.example.com/v1",
+		AcceptingOrders:        true,
+		ReviewStatus:           ServiceReviewStatusApproved,
+		PublicationStatus:      ServicePublicationStatusOnline,
+		ModerationStatus:       ServiceModerationStatusClear,
+		Version:                3,
+	}
+	user := auth.User{ID: "owner-1"}
+
+	rebound, appErr := manager.UpdateProbeConnection(context.Background(), user, UpdateProbeConnectionInput{
+		ServiceID:         "service-1",
+		ProbeConnectionID: " probe-2 ",
+		ExpectedVersion:   3,
+	})
+	if appErr != nil {
+		t.Fatalf("rebind probe connection: %v", appErr)
+	}
+	if rebound.ProbeConnectionID != "probe-2" || !rebound.ProbeReady || rebound.Version != 4 {
+		t.Fatalf("unexpected rebound service: %+v", rebound)
+	}
+
+	unbound, appErr := manager.UpdateProbeConnection(context.Background(), user, UpdateProbeConnectionInput{
+		ServiceID:         "service-1",
+		ProbeConnectionID: "",
+		ExpectedVersion:   4,
+	})
+	if appErr != nil {
+		t.Fatalf("unbind probe connection: %v", appErr)
+	}
+	if unbound.ProbeConnectionID != "" || unbound.ProbeReady || unbound.IsOrderable || unbound.Version != 5 {
+		t.Fatalf("unexpected unbound service: %+v", unbound)
+	}
+	if len(unbound.OrderableReasons) == 0 || unbound.OrderableReasons[0] != "probe_connection_required" {
+		t.Fatalf("expected probe binding orderability reason, got %#v", unbound.OrderableReasons)
+	}
+}
+
+func TestPublicServicesPaginatesFilteredOrderableServices(t *testing.T) {
+	now := time.Date(2026, 8, 9, 8, 0, 0, 0, time.UTC)
+	manager := NewManager(nil, nil, nil, func() time.Time { return now })
+	manager.serviceOrder = []string{"wechat-1", "alipay-1", "wechat-2"}
+	manager.services["wechat-1"] = testPublicService("wechat-1", PaymentMethodWechat, now.Add(3*time.Minute))
+	manager.services["alipay-1"] = testPublicService("alipay-1", PaymentMethodAlipay, now.Add(2*time.Minute))
+	manager.services["wechat-2"] = testPublicService("wechat-2", PaymentMethodWechat, now.Add(time.Minute))
+
+	first, appErr := manager.PublicServices(context.Background(), PublicServiceFilter{PaymentMethod: PaymentMethodWechat}, domain.PageRequest{Limit: 1})
+	if appErr != nil {
+		t.Fatalf("list first public service page: %v", appErr)
+	}
+	if len(first.Items) != 1 || first.Items[0].ID != "wechat-1" || first.NextCursor == nil {
+		t.Fatalf("unexpected first page: %+v", first)
+	}
+
+	second, appErr := manager.PublicServices(context.Background(), PublicServiceFilter{PaymentMethod: PaymentMethodWechat}, domain.PageRequest{Limit: 1, Cursor: *first.NextCursor})
+	if appErr != nil {
+		t.Fatalf("list second public service page: %v", appErr)
+	}
+	if len(second.Items) != 1 || second.Items[0].ID != "wechat-2" || second.NextCursor != nil {
+		t.Fatalf("unexpected second page: %+v", second)
+	}
+}
+
+func TestPublicServicesFiltersPackagesBeforePagination(t *testing.T) {
+	now := time.Date(2026, 8, 9, 8, 0, 0, 0, time.UTC)
+	manager := NewManager(nil, nil, nil, func() time.Time { return now })
+	manager.serviceOrder = []string{"metered-newer", "package-other", "package-match"}
+	manager.services["metered-newer"] = testPublicService("metered-newer", PaymentMethodWechat, now.Add(3*time.Minute))
+	manager.services["package-other"] = testPublicPackageService("package-other", "model-other", 30, now.Add(2*time.Minute))
+	manager.services["package-match"] = testPublicPackageService("package-match", "model-target", 7, now.Add(time.Minute))
+
+	page, appErr := manager.PublicServices(context.Background(), PublicServiceFilter{
+		BillingMode:           ServiceBillingModeFixedPackage,
+		PackageModelCatalogID: "model-target",
+		PackageDurationDays:   7,
+	}, domain.PageRequest{Limit: 1})
+	if appErr != nil {
+		t.Fatalf("list filtered package services: %v", appErr)
+	}
+	if len(page.Items) != 1 || page.Items[0].ID != "package-match" || page.NextCursor != nil {
+		t.Fatalf("package filters must run before pagination: %+v", page)
+	}
+}
+
+func testPublicService(id, paymentMethod string, updatedAt time.Time) Service {
+	expiresAt := updatedAt.Add(24 * time.Hour)
+	return Service{
+		ID:                    id,
+		OwnerContactMethodID:  "contact-1",
+		ProbeConnectionID:     "probe-1",
+		ProbeReady:            true,
+		BillingMode:           ServiceBillingModeMetered,
+		AvailableUSDAllowance: "100.000000",
+		QuotaExpiresAt:        &expiresAt,
+		AcceptingOrders:       true,
+		PaymentWindowMinutes:  10,
+		ReviewStatus:          ServiceReviewStatusApproved,
+		PublicationStatus:     ServicePublicationStatusOnline,
+		ModerationStatus:      ServiceModerationStatusClear,
+		PaymentOptions: []PaymentOption{{
+			PaymentMethod: paymentMethod,
+			Enabled:       true,
+		}},
+		UpdatedAt: updatedAt,
+	}
+}
+
+func testPublicPackageService(id, modelCatalogID string, durationDays int, updatedAt time.Time) Service {
+	service := testPublicService(id, PaymentMethodWechat, updatedAt)
+	service.BillingMode = ServiceBillingModeFixedPackage
+	service.AvailableUSDAllowance = ""
+	service.QuotaExpiresAt = nil
+	service.Packages = []ServicePackage{{
+		ID:             id + "-package",
+		Enabled:        true,
+		StockAvailable: 2,
+		DurationDays:   &durationDays,
+		Models: []ServicePackageModel{{
+			ServiceModelID: id + "-model",
+			ModelCatalogID: modelCatalogID,
+		}},
+	}}
+	return service
 }
 
 func TestValidateOrderSettingsRejectsUSDTPaymentMethod(t *testing.T) {
@@ -292,6 +433,8 @@ func TestOrderableReasonsIgnoreLegacyUSDTPaymentOption(t *testing.T) {
 	expiresAt := now.Add(time.Hour)
 	service := Service{
 		OwnerContactMethodID:  "contact-1",
+		ProbeConnectionID:     "probe-connection-1",
+		ProbeReady:            true,
 		BillingMode:           ServiceBillingModeMetered,
 		AvailableUSDAllowance: "20.000000",
 		QuotaExpiresAt:        &expiresAt,
@@ -317,7 +460,7 @@ func TestLimitedPackageBuildIgnoresCreateIDAndRetainsUpdateIDs(t *testing.T) {
 	resolver := staticAPIModelResolver{models: map[string]catalog.APIModelCatalog{
 		"model-1": {
 			ID:                         "model-1",
-			DisplayName:                "GPT-5.6",
+			ModelKey:                   "gpt-5.6",
 			Provider:                   "OpenAI",
 			Capabilities:               []string{"text"},
 			CurrentPriceVersionID:      "price-version-1",
@@ -337,7 +480,7 @@ func TestLimitedPackageBuildIgnoresCreateIDAndRetainsUpdateIDs(t *testing.T) {
 	if created.Packages[0].ID == "client-supplied-id" || created.Packages[0].ID == "" {
 		t.Fatalf("expected a server-generated package id, got %q", created.Packages[0].ID)
 	}
-	if created.Models[0].MerchantMultiplier != "0.0100" || created.Packages[0].Models[0].ModelNameSnapshot != "GPT-5.6" {
+	if created.Models[0].MerchantMultiplier != "0.0100" || created.Packages[0].Models[0].ModelKey != "gpt-5.6" {
 		t.Fatalf("expected exact model snapshot and declared multiplier, got %+v", created.Packages[0].Models)
 	}
 
@@ -431,7 +574,7 @@ func TestBuildFromInputPreservesHistoricalPerformanceFactsOnUpdate(t *testing.T)
 	resolver := staticAPIModelResolver{models: map[string]catalog.APIModelCatalog{
 		"model-1": {
 			ID:                         "model-1",
-			DisplayName:                "GPT-5.6",
+			ModelKey:                   "gpt-5.6",
 			Provider:                   "OpenAI",
 			Capabilities:               []string{"text"},
 			CurrentPriceVersionID:      "price-version-1",
@@ -458,6 +601,7 @@ func validMeteredCreateInput() CreateServiceInput {
 	promptAuditEnabled := false
 	return CreateServiceInput{
 		OwnerContactMethodID:             "contact-1",
+		ProbeConnectionID:                "probe-connection-1",
 		MerchantIdentityMode:             "public_profile",
 		Title:                            "GPT API quota",
 		ShortDescription:                 "GPT API quota",
@@ -492,6 +636,7 @@ func validLimitedPackageCreateInput() CreateServiceInput {
 	promptAuditEnabled := true
 	return CreateServiceInput{
 		OwnerContactMethodID:     "contact-1",
+		ProbeConnectionID:        "probe-connection-1",
 		MerchantIdentityMode:     "public_profile",
 		Title:                    "GPT 限时套餐",
 		ShortDescription:         "按固定价格购买限时面板额度。",

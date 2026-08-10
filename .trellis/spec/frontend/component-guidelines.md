@@ -37,6 +37,30 @@ pnpm dlx shadcn-vue@latest add button badge card input select table dropdown-men
 
 Business components may compose official primitives, but they must not replace them.
 
+### Primitive Dependency Boundary
+
+- Direct `reka-ui` imports and re-exports belong only in generated shadcn-vue source under `frontend/src/components/ui/**`.
+- Business components, pages, composables, and libraries import UI primitives through `@/components/ui/<component>` and must not depend on Reka component types or implementation details.
+- `frontend/src/App.vue` is the only production-layer exception: it owns the application-scoped Reka `ConfigProvider` required for deterministic Nuxt SSR IDs.
+- When a shadcn-vue event exposes a broad primitive value, accept `unknown` at the business boundary and narrow it to the existing domain union before emitting or assigning it. Do not import Reka's `AcceptableValue` into the feature component.
+- `frontend/src/lib/__tests__/shadcnDependencyBoundary.test.ts` scans production source and must fail when a direct Reka dependency appears outside the two allowed locations.
+
+```ts
+// Wrong: leaks the primitive implementation into product code.
+import type { AcceptableValue } from 'reka-ui'
+
+function setDistribution(value: AcceptableValue) {
+  // ...
+}
+
+// Correct: keep the product boundary framework-independent and narrow explicitly.
+function setDistribution(value: unknown) {
+  if (value === 'sub2api' || value === 'other') emit('setDistribution', value)
+}
+```
+
+This keeps Reka UI as the supported shadcn-vue runtime foundation without coupling feature code to that foundation's public API.
+
 ### Product identity icons
 
 - 公开车源与 API 服务的品牌图标必须复用 `productCategoryIcon.ts` 和套餐目录分类的 `iconDataUrl`，页面不得各自维护品牌图片映射。
@@ -69,8 +93,18 @@ Treat generated shadcn-vue files as vendor-style project source.
 
 Current documented exception:
 
-- `frontend/src/components/ui/sonner/Sonner.vue` uses `CheckCircledIcon`, `InfoCircledIcon`, `CrossCircledIcon`, and `ExclamationTriangleIcon` because the generated shadcn-vue template referenced icon names that are not exported by the installed official `@radix-icons/vue@1.0.0` package.
+- The current `new-york-v4` registry imports icons from `@lucide/vue`. This project uses the already-established `lucide-vue-next` package instead, while keeping the same Lucide glyphs, sizes, and primitive composition. Do not add a second Lucide package or restore the removed `@radix-icons/vue` dependency only to match an upstream import path.
 - `frontend/src/components/ui/badge/index.ts` keeps product semantic badge variants (`identity`, `verified`, `trust`, `capability`, `model`, `status`) in the generated badge variant map so every market tag shares one Aqua Console color contract instead of duplicating per-page badge classes.
+
+## Official Consistency Review
+
+When adding or refreshing shadcn-vue primitives:
+
+- Resolve the official baseline from `frontend/components.json` and compare against the corresponding structured `new-york-v4` registry JSON. A CLI `diff` result alone is not sufficient evidence because it may report no updates while registry templates have changed.
+- Classify every local difference as official parity, a documented product or package exception, a required fix, or an explicitly deferred item. Keep business positioning and sizing exceptions at the call site.
+- For Tooltip, Popover, DropdownMenu, Select, and Dialog, review Portal usage, Arrow where the official component provides one, default alignment, collision bounds, state classes, and keyboard dismissal.
+- Keep scroll overflow on an inner body when a floating Arrow extends outside the positioned content. Do not clip the Arrow from the outer content node.
+- Preserve dependency-boundary and official-composition tests when refreshing generated files. Tests must reject direct business-layer `reka-ui` imports and removed icon dependencies.
 
 ---
 
@@ -166,6 +200,7 @@ Avoid:
 - Did the change check shadcn-vue for steppers, alerts, checkboxes, radios, switches, tabs, and disclosure controls before adding custom markup?
 - Did the change avoid local `Base*` UI components and compatibility wrappers?
 - Are business components composing official primitives instead of reimplementing them?
+- Are direct `reka-ui` imports confined to `components/ui/**` and the root `App.vue` provider?
 - Are product-specific styles outside generated shadcn-vue files?
 - Are toasts using official `sonner` instead of local store/host code?
 - Do filter/status controls expose selected state to the page when rows or cards depend on that state?

@@ -7,6 +7,7 @@ import (
 	"math/big"
 	"net/http"
 	"net/url"
+	"regexp"
 	"sort"
 	"strings"
 	"sync"
@@ -17,11 +18,14 @@ import (
 	"c2c-market/backend/internal/module/apimarket"
 	"c2c-market/backend/internal/module/auth"
 	"c2c-market/backend/internal/module/idempotency"
+	"c2c-market/backend/internal/module/reputation"
 
 	"github.com/google/uuid"
 )
 
 const resourceType = "api_order"
+
+var disputeAmountPattern = regexp.MustCompile(`^[0-9]+(\.[0-9]{1,2})?$`)
 
 type BuyerIntentResolver interface {
 	BuyerIntent(ctx context.Context, user auth.User, intentID, requestID string) (apiintent.Intent, *domain.AppError)
@@ -47,12 +51,22 @@ type Service struct {
 	services              PublicServiceResolver
 	disputes              DisputeCaseCreator
 	idempotency           *idempotency.Service
+	deliveryVerifier      DeliveryCredentialVerifier
 	orders                map[string]Order
 	credentials           map[string]DeliveryCredential
 	availableAllowances   map[string]*big.Rat
 	availablePackageStock map[string]int
 	events                []Event
 	accessLogs            []PaymentInstructionAccessLog
+	actionChecker         interface {
+		CheckActionAllowed(context.Context, string, string, string) *domain.AppError
+	}
+}
+
+func (s *Service) SetActionChecker(checker interface {
+	CheckActionAllowed(context.Context, string, string, string) *domain.AppError
+}) {
+	s.actionChecker = checker
 }
 
 func NewService(repo Repository, intentResolver BuyerIntentResolver, serviceResolver PublicServiceResolver, disputeCreator DisputeCaseCreator, idempotencyService *idempotency.Service, now func() time.Time) *Service {
@@ -269,6 +283,76 @@ func (s *Service) OpenDisputeWithIdempotency(ctx context.Context, userID, routeK
 	return s.createOrUpdateWithIdempotency(ctx, userID, routeKey, key, requestHash, CreateInput{}, input, buildCompletion, "open_dispute")
 }
 
+func (s *Service) CloseDisputeProjection(_ context.Context, disputeCaseID, actorUserID, requestID string) *domain.AppError {
+	return s.SetDisputeProjection(context.Background(), disputeCaseID, DisputeStatusClosed, actorUserID, requestID)
+}
+
+func (s *Service) SetDisputeProjection(_ context.Context, disputeCaseID, status, actorUserID, requestID string) *domain.AppError {
+	if s.repo != nil {
+		return domain.NewError(http.StatusInternalServerError, domain.CodeInternalError, "Internal error", "数据库纠纷投影必须在管理员事务中更新。")
+	}
+	if status != DisputeStatusOpen && status != DisputeStatusAwaitingFulfillment && status != DisputeStatusFulfillmentConfirmation && status != DisputeStatusClosed {
+		return domain.NewError(http.StatusConflict, domain.CodeInvalidStateTransition, "Invalid state transition", "纠纷投影目标状态不支持。")
+	}
+	disputeCaseID = strings.TrimSpace(disputeCaseID)
+	if disputeCaseID == "" {
+		return domain.NewError(http.StatusConflict, domain.CodeInvalidStateTransition, "Invalid state transition", "纠纷未关联 API 订单。")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for id, order := range s.orders {
+		if order.DisputeCaseID != disputeCaseID {
+			continue
+		}
+		if order.DisputeStatus == status {
+			return nil
+		}
+		if !IsDisputeActive(order.DisputeStatus) {
+			return domain.NewError(http.StatusConflict, domain.CodeInvalidStateTransition, "Invalid state transition", "纠纷关联的 API 订单状态不一致，无法结案。")
+		}
+		previousDisputeStatus := order.DisputeStatus
+		order.DisputeStatus = status
+		order.UpdatedAt = s.now()
+		order.Version++
+		s.orders[id] = order
+		eventType := EventDisputeOpened
+		note := "已申请平台介入"
+		switch status {
+		case DisputeStatusAwaitingFulfillment:
+			eventType = EventDisputeRemedyAwaiting
+			note = "平台已裁决，等待责任方履行"
+		case DisputeStatusFulfillmentConfirmation:
+			eventType = EventDisputeRemedyClaimed
+			note = "责任方已声明履行，等待对方确认"
+		case DisputeStatusOpen:
+			if previousDisputeStatus == DisputeStatusFulfillmentConfirmation {
+				eventType = EventDisputeRemedyContested
+				note = "对方对履行结果有异议，平台重新审核"
+			}
+		case DisputeStatusClosed:
+			eventType = EventDisputeClosed
+			note = "纠纷整改流程已结案"
+		}
+		s.appendEventLocked(order, actorUserID, eventType, order.Status, order.Status, note, requestID)
+		return nil
+	}
+	return domain.NewError(http.StatusConflict, domain.CodeInvalidStateTransition, "Invalid state transition", "纠纷关联的 API 订单不存在或关联不一致。")
+}
+
+func (s *Service) ValidateDisputeProposalAmount(_ context.Context, disputeCaseID, resolution, amount string) *domain.AppError {
+	if s.repo != nil {
+		return nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, order := range s.orders {
+		if order.DisputeCaseID == strings.TrimSpace(disputeCaseID) {
+			return ValidateRequestedDisputeAmount(resolution, amount, order.Amount)
+		}
+	}
+	return domain.NewError(http.StatusConflict, domain.CodeInvalidStateTransition, "Invalid state transition", "纠纷关联的 API 订单不存在或关联不一致。")
+}
+
 func (s *Service) ConfirmPaymentWithIdempotency(ctx context.Context, userID, routeKey, key, requestHash string, input ActionInput, buildCompletion CompletionBuilder) (idempotency.Completion, *domain.AppError) {
 	input.ActorUserID = userID
 	if err := validateActionInput(input, "confirm_payment"); err != nil {
@@ -326,6 +410,12 @@ func (s *Service) createOrUpdateWithIdempotencyResult(ctx context.Context, userI
 			return order, completion, false, completionErr
 		}
 		return Order{}, idempotency.CompletionFromEntry(entry), false, nil
+	}
+	if action == "submit_delivery" && actionInput.DeliveryCredential.DeliveryKind == DeliveryKindAPIKeyEndpoint {
+		if appErr := s.verifyAPIKeyDelivery(ctx, userID, actionInput); appErr != nil {
+			s.idempotency.Cancel(ctx, entry)
+			return Order{}, idempotency.Completion{}, false, appErr
+		}
 	}
 
 	if s.repo != nil {
@@ -412,6 +502,11 @@ func (s *Service) createInMemory(ctx context.Context, input CreateInput) (Order,
 	if appErr != nil {
 		return Order{}, appErr
 	}
+	if s.actionChecker != nil {
+		if appErr := s.actionChecker.CheckActionAllowed(ctx, intent.OwnerUserID, reputation.RoleSeller, reputation.ActionAPIServicePublish); appErr != nil {
+			return Order{}, appErr
+		}
+	}
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -455,6 +550,11 @@ func (s *Service) updateInMemory(ctx context.Context, input ActionInput, action 
 	if !canTransition(order, action, s.now()) {
 		return Order{}, domain.NewError(http.StatusConflict, domain.CodeInvalidStateTransition, "Invalid state transition", "当前订单状态不能执行该操作。")
 	}
+	if action == "open_dispute" {
+		if appErr := ValidateRequestedDisputeAmount(input.RequestedResolution, input.RequestedAmountCNY, order.Amount); appErr != nil {
+			return Order{}, appErr
+		}
+	}
 	from := order.Status
 	if action == "cancel" {
 		s.releaseInventoryLocked(&order)
@@ -497,14 +597,17 @@ func (s *Service) registerDisputeCaseLocked(ctx context.Context, order Order, in
 		return "", domain.NewError(http.StatusInternalServerError, domain.CodeInternalError, "Internal error", "订单纠纷登记依赖不可用。")
 	}
 	return s.disputes.RegisterAPIOrderDispute(ctx, DisputeCaseInput{
-		OrderID:      order.ID,
-		ServiceTitle: order.ServiceTitleSnapshot,
-		BuyerUserID:  order.BuyerUserID,
-		SellerUserID: order.SellerUserID,
-		ActorUserID:  input.ActorUserID,
-		Reason:       input.Reason,
-		RequestID:    input.RequestID,
-		Now:          s.now(),
+		OrderID:             order.ID,
+		ServiceTitle:        order.ServiceTitleSnapshot,
+		BuyerUserID:         order.BuyerUserID,
+		SellerUserID:        order.SellerUserID,
+		ActorUserID:         input.ActorUserID,
+		Reason:              input.Reason,
+		IssueCode:           strings.TrimSpace(input.IssueCode),
+		RequestedResolution: strings.TrimSpace(input.RequestedResolution),
+		RequestedAmountCNY:  strings.TrimSpace(input.RequestedAmountCNY),
+		RequestID:           input.RequestID,
+		Now:                 s.now(),
 	})
 }
 
@@ -523,7 +626,7 @@ func (s *Service) materializeTimeoutLocked(orderID string) Order {
 		s.appendEventLocked(order, "", EventPaymentTimeoutCancelled, from, order.Status, "", "payment-timeout")
 		return order
 	}
-	if order.Status != StatusDeliverySubmitted || order.DisputeStatus == DisputeStatusOpen || order.DeliveryReviewExpiresAt == nil {
+	if order.Status != StatusDeliverySubmitted || IsDisputeActive(order.DisputeStatus) || order.DeliveryReviewExpiresAt == nil {
 		return order
 	}
 	if !now.Before(*order.DeliveryReviewExpiresAt) {
@@ -658,6 +761,9 @@ func NewOrder(input CreateInput, intent apiintent.Intent, service apimarket.Serv
 	if !apimarket.WithOrderabilityAt(service, now).IsOrderable {
 		return Order{}, domain.NewError(http.StatusConflict, domain.CodeInvalidStateTransition, "Service not orderable", "当前 API 服务不可下单。")
 	}
+	if strings.TrimSpace(service.ProbeConnectionID) == "" || strings.TrimSpace(service.ProbeBaseURL) == "" || strings.TrimSpace(service.NormalizedProbeBaseURL) == "" {
+		return Order{}, domain.NewError(http.StatusConflict, domain.CodeInvalidStateTransition, "Probe target unavailable", "当前 API 服务缺少可冻结的探针连接目标。")
+	}
 	method := strings.TrimSpace(input.PaymentMethod)
 	option, ok := findPaymentOption(service, method)
 	if !ok {
@@ -690,6 +796,9 @@ func NewOrder(input CreateInput, intent apiintent.Intent, service apimarket.Serv
 		RequestedUSDAllowanceSnapshot: decimalStringOptional(intent.RequestedUSDAllowance, 6),
 		CNYPerUSDAllowanceSnapshot:    decimalStringOptional(intent.DeclaredCNYPerUSDAllowanceSnapshot, 4),
 		PricingSnapshot:               intent.PricingSnapshot,
+		ProbeConnectionIDSnapshot:     service.ProbeConnectionID,
+		APIBaseURLSnapshot:            service.ProbeBaseURL,
+		NormalizedAPIBaseURLSnapshot:  service.NormalizedProbeBaseURL,
 		PromptAuditEnabledSnapshot:    intent.PromptAuditEnabledSnapshot,
 		PackageStockReserved:          service.BillingMode == apimarket.ServiceBillingModeFixedPackage,
 		Amount:                        amount,
@@ -795,10 +904,51 @@ func validateActionInput(input ActionInput, action string) *domain.AppError {
 		if strings.TrimSpace(input.Reason) == "" {
 			return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Reason required", "必须填写纠纷说明。", "reason", "required", "必须填写纠纷说明。")
 		}
+		if len(strings.TrimSpace(input.Reason)) > 500 {
+			return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Reason too long", "纠纷说明不能超过 500 个字符。", "reason", "too_long", "纠纷说明不能超过 500 个字符。")
+		}
+		if !IsDisputeIssueCode(strings.TrimSpace(input.IssueCode)) {
+			return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Issue invalid", "请选择有效的问题类型。", "issueCode", "invalid", "请选择有效的问题类型。")
+		}
+		if !IsDisputeResolution(strings.TrimSpace(input.RequestedResolution)) {
+			return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Resolution invalid", "请选择有效的处理诉求。", "requestedResolution", "invalid", "请选择有效的处理诉求。")
+		}
+		if appErr := validateRequestedDisputeAmount(input.RequestedResolution, input.RequestedAmountCNY, ""); appErr != nil {
+			return appErr
+		}
 		return validateNonSecretText("reason", input.Reason)
 	default:
 		return nil
 	}
+}
+
+func validateRequestedDisputeAmount(resolution, amount, orderAmount string) *domain.AppError {
+	resolution = strings.TrimSpace(resolution)
+	amount = strings.TrimSpace(amount)
+	if resolution != DisputeResolutionPartialRefund {
+		if amount != "" {
+			return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Amount not allowed", "只有部分退款可以填写诉求金额。", "requestedAmountCny", "not_allowed", "只有部分退款可以填写诉求金额。")
+		}
+		return nil
+	}
+	if !disputeAmountPattern.MatchString(amount) {
+		return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Amount invalid", "部分退款金额必须是最多两位小数的正数。", "requestedAmountCny", "invalid", "部分退款金额必须是最多两位小数的正数。")
+	}
+	value, ok := new(big.Rat).SetString(amount)
+	if !ok || value.Sign() <= 0 {
+		return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Amount invalid", "部分退款金额必须是最多两位小数的正数。", "requestedAmountCny", "invalid", "部分退款金额必须是最多两位小数的正数。")
+	}
+	if strings.TrimSpace(orderAmount) != "" {
+		limit, ok := new(big.Rat).SetString(strings.TrimSpace(orderAmount))
+		if !ok || value.Cmp(limit) > 0 {
+			return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Amount exceeds order", "部分退款金额不能超过订单金额。", "requestedAmountCny", "too_large", "部分退款金额不能超过订单金额。")
+		}
+	}
+	return nil
+}
+
+func ValidateRequestedDisputeAmount(resolution, amount, orderAmount string) *domain.AppError {
+	return validateRequestedDisputeAmount(resolution, amount, orderAmount)
 }
 
 func normalizeSubmitDeliveryInput(input ActionInput) (ActionInput, *domain.AppError) {
@@ -1032,7 +1182,7 @@ func canTransition(order Order, action string, now time.Time) bool {
 	case "submit_delivery":
 		return order.Status == StatusPaidConfirmed
 	case "confirm_complete":
-		return order.Status == StatusDeliverySubmitted && order.DisputeStatus != DisputeStatusOpen
+		return order.Status == StatusDeliverySubmitted && !IsDisputeActive(order.DisputeStatus)
 	case "open_dispute":
 		return order.Status != StatusCancelled && order.Status != StatusCompleted && order.DisputeStatus == DisputeStatusNone
 	default:
@@ -1073,7 +1223,7 @@ func applyAction(order Order, input ActionInput, action string, now time.Time) O
 		order.CompletionSource = CompletionSourceBuyerConfirmed
 		order.CompletedAt = &now
 	case "open_dispute":
-		order.DisputeStatus = DisputeStatusOpen
+		order.DisputeStatus = DisputeStatusNegotiating
 	}
 	order.UpdatedAt = now
 	order.Version++

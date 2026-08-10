@@ -1,4 +1,5 @@
 import type { CreateAppealRequest, MyAppeal, MyDispute, MyReport } from '@/lib/reportBackend'
+import { getDisputeCaseStatusLabel } from '@/lib/disputeCase'
 
 export type ModerationRecordKind = 'report' | 'dispute' | 'appeal'
 export type ModerationRecordFilter = 'all' | ModerationRecordKind
@@ -37,13 +38,6 @@ const reportStatusLabels: Record<MyReport['status'], string> = {
   needs_info: '需要补充信息',
   rejected: '未受理',
   dispute_opened: '已转为纠纷',
-  closed: '已关闭',
-}
-
-const disputeStatusLabels: Record<MyDispute['status'], string> = {
-  open: '处理中',
-  waiting_info: '需要补充信息',
-  resolved: '已处理',
   closed: '已关闭',
 }
 
@@ -108,7 +102,7 @@ function disputeRecord(item: MyDispute): ModerationDisputeRecord {
     title: item.publicSummary || item.targetLabel || '关联纠纷',
     targetLabel: item.targetLabel || moderationTargetTypeLabel(item.targetType),
     status: item.status,
-    statusLabel: disputeStatusLabels[item.status],
+    statusLabel: getDisputeCaseStatusLabel(item.status),
     createdAt: item.createdAt,
     updatedAt: item.updatedAt,
     source: item,

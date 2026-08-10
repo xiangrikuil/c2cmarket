@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { test } from 'vitest'
-import { createCarpoolModerationRow, isCarpoolExceptionStatus } from '../carpoolModeration.ts'
+import { createCarpoolModerationRow, isCarpoolAdminActionStatus, isCarpoolExceptionStatus } from '../carpoolModeration.ts'
 
 test('keeps normal public listings out of the admin exception queue', () => {
   assert.equal(isCarpoolExceptionStatus('可上车'), false)
@@ -10,6 +10,10 @@ test('keeps normal public listings out of the admin exception queue', () => {
   assert.equal(isCarpoolExceptionStatus('暂停'), true)
   assert.equal(isCarpoolExceptionStatus('待复核'), true)
   assert.equal(isCarpoolExceptionStatus('待处理'), true)
+  assert.equal(isCarpoolAdminActionStatus('可上车'), false)
+  assert.equal(isCarpoolAdminActionStatus('待复核'), false)
+  assert.equal(isCarpoolAdminActionStatus('待处理'), true)
+  assert.equal(isCarpoolAdminActionStatus('暂停'), true)
 })
 
 test('maps a public carpool to the existing admin moderation contract', () => {
@@ -52,8 +56,11 @@ test('wires public patrol, detail moderation, and admin exception handling', () 
   assert.match(detailSource, /queryKey: \['admin-section'\]/)
 
   assert.match(adminSectionSource, /isCarpoolExceptionStatus/)
-  assert.match(adminSectionSource, /车源异常处理/)
+  assert.match(adminSectionSource, /车源管理/)
+  assert.match(adminSectionSource, /TabsTrigger value="public">公开车源/)
+  assert.match(adminSectionSource, /TabsTrigger value="exceptions">异常车源/)
   assert.match(adminOverviewSource, /useAdminSectionRows\('carpools'\)/)
+  assert.match(adminOverviewSource, /isCarpoolAdminActionStatus/)
   assert.match(adminOverviewSource, /sectionLabel: '车源异常'/)
   assert.doesNotMatch(adminOverviewSource, /carpoolPagination/)
 })

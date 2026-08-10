@@ -1,11 +1,10 @@
 <script setup lang="ts">
-import { computed, reactive, ref } from 'vue'
-import { Building2, FilePenLine, Plus, RotateCcw, Save, ToggleLeft, ToggleRight, TriangleAlert } from 'lucide-vue-next'
+import { computed, reactive, ref, watch } from 'vue'
+import { CloudDownload, FilePenLine, Plus, Power, PowerOff, RotateCcw, Save, Search, TriangleAlert, X } from 'lucide-vue-next'
 import { toast } from 'vue-sonner'
+import AdminApiModelSyncDialog from '@/components/admin/AdminApiModelSyncDialog.vue'
 import PageTitle from '@/components/market/PageTitle.vue'
-import CompactStats from '@/components/market/CompactStats.vue'
-import StatusTabs from '@/components/market/StatusTabs.vue'
-import { Badge } from '@/components/ui/badge'
+import SkeletonTable from '@/components/market/SkeletonTable.vue'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import { Checkbox } from '@/components/ui/checkbox'
@@ -25,11 +24,14 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
+import { Switch } from '@/components/ui/switch'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import {
   useAdminAPIModelProviders,
   useAdminAPIModels,
   useCreateAPIModel,
   useCreateAPIModelProvider,
+  useSetAPIModelsBulkStatus,
   useSetAPIModelActive,
   useSetAPIModelProviderActive,
   useUpdateAPIModel,
@@ -46,13 +48,19 @@ import {
   type ApiModelProviderInput,
 } from '@/types/apiModelCatalog'
 
-type StatusFilter = '全部' | '启用' | '停用'
+type CatalogTab = 'models' | 'providers'
+type StatusFilter = 'all' | 'active' | 'inactive'
 
-const statusFilter = ref<StatusFilter>('全部')
+const activeCatalogTab = ref<CatalogTab>('models')
+const statusFilter = ref<StatusFilter>('all')
+const modelSearch = ref('')
+const providerFilter = ref('all')
 const editingModelId = ref('')
 const editingProviderId = ref('')
 const isModelFormOpen = ref(false)
 const isProviderFormOpen = ref(false)
+const isSyncDialogOpen = ref(false)
+const selectedModelIds = ref<string[]>([])
 
 const providersQuery = useAdminAPIModelProviders()
 const modelsQuery = useAdminAPIModels()
@@ -62,16 +70,26 @@ const providerActiveMutation = useSetAPIModelProviderActive()
 const createModelMutation = useCreateAPIModel()
 const updateModelMutation = useUpdateAPIModel()
 const modelActiveMutation = useSetAPIModelActive()
+const bulkStatusMutation = useSetAPIModelsBulkStatus()
 
 const providers = computed(() => providersQuery.data.value ?? [])
 const activeProviders = computed(() => providers.value.filter(item => item.active))
 const rows = computed(() => modelsQuery.data.value ?? [])
 const providerForm = reactive<ApiModelProviderInput>(emptyProviderForm())
 const modelForm = reactive<ApiModelInput>(emptyModelForm())
-const visibleRows = computed(() => rows.value.filter(matchesStatusFilter))
-const activeCount = computed(() => rows.value.filter(item => item.active && item.providerActive).length)
-const inactiveCount = computed(() => rows.value.length - activeCount.value)
-const providerCount = computed(() => providers.value.length)
+const visibleRows = computed(() => {
+  const search = modelSearch.value.trim().toLowerCase()
+  return rows.value.filter((item) => {
+    if (!matchesStatusFilter(item)) return false
+    if (providerFilter.value !== 'all' && item.providerId !== providerFilter.value) return false
+    if (!search) return true
+    return [item.modelKey, item.provider, item.providerCode]
+      .some(value => value.toLowerCase().includes(search))
+  })
+})
+const selectedModels = computed(() => rows.value.filter(item => selectedModelIds.value.includes(item.id)))
+const allVisibleSelected = computed(() => visibleRows.value.length > 0 && visibleRows.value.every(item => selectedModelIds.value.includes(item.id)))
+const someVisibleSelected = computed(() => visibleRows.value.some(item => selectedModelIds.value.includes(item.id)))
 const isSavingProvider = computed(() => createProviderMutation.isPending.value || updateProviderMutation.isPending.value)
 const isSavingModel = computed(() => createModelMutation.isPending.value || updateModelMutation.isPending.value)
 const isLoading = computed(() => providersQuery.isLoading.value || modelsQuery.isLoading.value)
@@ -85,8 +103,12 @@ const modelFormTitle = computed(() => editingModelId.value ? '编辑 API 模型'
 const editingProvider = computed(() => providers.value.find(item => item.id === editingProviderId.value) ?? null)
 const editingModel = computed(() => rows.value.find(item => item.id === editingModelId.value) ?? null)
 
+watch(rows, currentRows => {
+  const validIds = new Set(currentRows.map(item => item.id))
+  selectedModelIds.value = selectedModelIds.value.filter(id => validIds.has(id))
+})
+
 const providerLabelMap = Object.fromEntries(apiModelProviderCategories.map(item => [item.value, item.label])) as Record<ApiModelProviderCategory, string>
-const capabilityLabelMap = Object.fromEntries(apiModelCapabilities.map(item => [item.value, item.label])) as Record<ApiModelCapability, string>
 
 function openCreateProvider() {
   editingProviderId.value = ''
@@ -134,7 +156,6 @@ function emptyModelForm(): ApiModelInput {
   return {
     providerId: activeProviders.value[0]?.id ?? '',
     modelKey: '',
-    displayName: '',
     capabilities: ['chat'],
     inputTokenPrice: '',
     cachedInputTokenPrice: '',
@@ -168,7 +189,6 @@ function inputFromModel(model: AdminApiModel): ApiModelInput {
   return {
     providerId: model.providerId,
     modelKey: model.modelKey,
-    displayName: model.displayName,
     capabilities: [...model.capabilities],
     inputTokenPrice: model.inputPricePerMillion ?? '',
     cachedInputTokenPrice: model.cachedInputPricePerMillion ?? '',
@@ -190,7 +210,6 @@ function validateModelForm() {
   if (!modelForm.providerId.trim()) return '请选择 API 提供商。'
   if (!activeProviders.value.some(item => item.id === modelForm.providerId)) return '请选择启用中的 API 提供商。'
   if (!modelForm.modelKey.trim()) return '请填写模型标识。'
-  if (!modelForm.displayName.trim()) return '请填写展示名。'
   if (modelForm.capabilities.length === 0) return '至少选择一种能力。'
   for (const field of [modelForm.inputTokenPrice, modelForm.cachedInputTokenPrice, modelForm.outputTokenPrice]) {
     if (!field.trim()) continue
@@ -253,12 +272,37 @@ async function setProviderActive(provider: AdminApiModelProvider, active: boolea
 }
 
 async function setModelActive(model: AdminApiModel, active: boolean) {
-  if (!active && !window.confirm(`停用模型“${model.displayName}”会将其从新服务发布选择中移除，已有订单仍使用快照。确认继续？`)) return
+  if (!active && !window.confirm(`停用模型“${model.modelKey}”会将其从新服务发布选择中移除，已有订单仍使用快照。确认继续？`)) return
   try {
     await modelActiveMutation.mutateAsync({ id: model.id, active })
     toast.success(active ? 'API 模型已启用。' : 'API 模型已停用。')
   } catch (error) {
     toast.error(error instanceof Error ? error.message : '模型状态更新失败')
+  }
+}
+
+function toggleModelSelection(modelId: string, checked: boolean) {
+  selectedModelIds.value = checked
+    ? Array.from(new Set([...selectedModelIds.value, modelId]))
+    : selectedModelIds.value.filter(id => id !== modelId)
+}
+
+function toggleVisibleModels(checked: boolean) {
+  const visibleIds = new Set(visibleRows.value.map(item => item.id))
+  selectedModelIds.value = checked
+    ? Array.from(new Set([...selectedModelIds.value, ...visibleIds]))
+    : selectedModelIds.value.filter(id => !visibleIds.has(id))
+}
+
+async function setSelectedModelsActive(active: boolean) {
+  if (selectedModelIds.value.length === 0) return
+  if (!active && !window.confirm(`停用选中的 ${selectedModelIds.value.length} 个模型后，它们将从新服务发布选择中移除。确认继续？`)) return
+  try {
+    const result = await bulkStatusMutation.mutateAsync({ modelIds: [...selectedModelIds.value], active })
+    toast.success(active ? `已启用 ${result.changed} 个模型。` : `已停用 ${result.changed} 个模型。`)
+    selectedModelIds.value = []
+  } catch (error) {
+    toast.error(error instanceof Error ? error.message : '批量更新模型状态失败')
   }
 }
 
@@ -269,9 +313,8 @@ function setCapability(capability: ApiModelCapability, checked: boolean) {
 }
 
 function matchesStatusFilter(item: AdminApiModel) {
-  if (statusFilter.value === '全部') return true
-  const effectiveActive = item.active && item.providerActive
-  return statusFilter.value === '启用' ? effectiveActive : !effectiveActive
+  if (statusFilter.value === 'all') return true
+  return statusFilter.value === 'active' ? item.active : !item.active
 }
 
 function nextProviderSortOrder() {
@@ -284,93 +327,43 @@ function nextModelSortOrder() {
   return max + 10
 }
 
-function priceText(model: AdminApiModel) {
-  const input = model.inputPricePerMillion || '-'
-  const cached = model.cachedInputPricePerMillion || '-'
-  const output = model.outputPricePerMillion || '-'
-  return `输入 ${input} · 缓存 ${cached} · 输出 ${output}`
-}
-
-function capabilityText(model: AdminApiModel) {
-  return model.capabilities.map(item => capabilityLabelMap[item] ?? item).join(' / ')
-}
 </script>
 
 <template>
-  <div class="space-y-5">
-    <PageTitle
-      title="API 模型目录"
-      description="维护 API 提供商、具体模型、能力标签和官网公开价格版本。"
-    />
-
-    <CompactStats :items="[{ label: '全部模型', value: rows.length, hint: '含停用模型' }, { label: '可发布模型', value: activeCount, hint: `不可用 ${inactiveCount}` }, { label: '提供商', value: providerCount, hint: `启用 ${activeProviders.length}` }, { label: '当前筛选', value: visibleRows.length, hint: statusFilter }]" :loading="isLoading" />
-
-    <section class="space-y-4">
-      <div class="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <h2 class="text-lg font-semibold">API 提供商</h2>
-          <p class="text-sm text-muted-foreground">模型从这里选择提供商，分类和展示名由提供商目录统一维护。</p>
+  <div class="min-w-0 space-y-4">
+    <PageTitle title="API 模型目录">
+      <template #action>
+        <div class="flex w-full flex-wrap items-center gap-2 md:w-auto md:justify-end">
+          <template v-if="activeCatalogTab === 'models'">
+            <Button size="sm" variant="outline" title="从 models.dev 同步价格" :disabled="providers.length === 0" @click="isSyncDialogOpen = true">
+              <CloudDownload class="h-4 w-4" />同步价格
+            </Button>
+            <Button size="sm" :disabled="activeProviders.length === 0" @click="openCreateModel">
+              <Plus class="h-4 w-4" />新建模型
+            </Button>
+          </template>
+          <Button v-else size="sm" @click="openCreateProvider">
+            <Plus class="h-4 w-4" />新建提供商
+          </Button>
         </div>
-        <Button size="sm" @click="openCreateProvider">
-          <Building2 class="h-4 w-4" />新建提供商
-        </Button>
+      </template>
+    </PageTitle>
+
+    <Tabs v-model="activeCatalogTab" class="min-w-0 gap-0">
+      <div class="overflow-x-auto border-b border-border">
+        <TabsList class="h-auto min-w-max rounded-none bg-transparent p-0">
+          <TabsTrigger value="models" class="rounded-none border-0 border-b-2 border-transparent px-4 py-2.5 shadow-none data-[state=active]:border-primary data-[state=active]:bg-transparent data-[state=active]:text-primary data-[state=active]:shadow-none">
+            模型 <span class="font-mono text-xs">{{ rows.length }}</span>
+          </TabsTrigger>
+          <TabsTrigger value="providers" class="rounded-none border-0 border-b-2 border-transparent px-4 py-2.5 shadow-none data-[state=active]:border-primary data-[state=active]:bg-transparent data-[state=active]:text-primary data-[state=active]:shadow-none">
+            提供商 <span class="font-mono text-xs">{{ providers.length }}</span>
+          </TabsTrigger>
+        </TabsList>
       </div>
 
-      <Card class="overflow-hidden p-0">
-        <div class="overflow-x-auto">
-          <table class="c2c-table w-full min-w-[760px] text-sm">
-            <thead>
-              <tr class="border-b border-border text-left text-xs text-muted-foreground">
-                <th class="px-3 py-2 font-medium">提供商</th>
-                <th class="px-3 py-2 font-medium">分类</th>
-                <th class="px-3 py-2 font-medium">状态</th>
-                <th class="px-3 py-2 font-medium">排序</th>
-                <th class="px-3 py-2 text-right font-medium">操作</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr v-for="provider in providers" :key="provider.id" class="border-b border-border/70 last:border-0">
-                <td class="px-3 py-3">
-                  <div class="font-medium">{{ provider.displayName }}</div>
-                  <div class="mt-1 text-xs text-muted-foreground">{{ provider.code }}</div>
-                </td>
-                <td class="px-3 py-3"><Badge variant="model">{{ providerLabelMap[provider.providerCategory] }}</Badge></td>
-                <td class="px-3 py-3"><Badge :variant="provider.active ? 'verified' : 'secondary'">{{ provider.active ? '启用' : '停用' }}</Badge></td>
-                <td class="px-3 py-3 text-sm text-muted-foreground">{{ provider.sortOrder }}</td>
-                <td class="px-3 py-3">
-                  <div class="flex flex-wrap justify-end gap-1.5">
-                    <Button size="sm" variant="outline" @click="openEditProvider(provider)">
-                      <FilePenLine class="h-4 w-4" />编辑
-                    </Button>
-                    <Button size="sm" variant="outline" :disabled="providerActiveMutation.isPending.value" @click="setProviderActive(provider, !provider.active)">
-                      <component :is="provider.active ? ToggleLeft : ToggleRight" class="h-4 w-4" />
-                      {{ provider.active ? '停用' : '启用' }}
-                    </Button>
-                  </div>
-                </td>
-              </tr>
-              <tr v-if="providers.length === 0">
-                <td colspan="5" class="px-3 py-8 text-center text-sm text-muted-foreground">暂无 API 提供商。</td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-      </Card>
-    </section>
+      <SkeletonTable v-if="isLoading" class="mt-4" :rows="8" :columns="activeCatalogTab === 'models' ? 6 : 4" />
 
-    <section class="space-y-4">
-      <div class="flex flex-wrap items-center justify-between gap-3">
-        <StatusTabs v-model="statusFilter" :items="['全部', '启用', '停用']" class="mb-0" />
-        <Button size="sm" :disabled="activeProviders.length === 0" @click="openCreateModel">
-          <Plus class="h-4 w-4" />新建模型
-        </Button>
-      </div>
-
-      <div v-if="isLoading" class="rounded-md border border-border p-8 text-center text-sm text-muted-foreground">
-        API 模型目录加载中...
-      </div>
-
-      <Card v-else-if="hasError" class="border-destructive/30 p-5">
+      <Card v-else-if="hasError" class="mt-4 border-destructive/30 p-5">
         <div class="flex flex-col gap-4 sm:flex-row sm:items-start">
           <div class="grid h-10 w-10 shrink-0 place-items-center rounded-lg bg-destructive/10 text-destructive">
             <TriangleAlert class="h-5 w-5" />
@@ -383,66 +376,163 @@ function capabilityText(model: AdminApiModel) {
         </div>
       </Card>
 
-      <Card v-else class="overflow-hidden p-0">
-        <div class="overflow-x-auto">
-          <table class="c2c-table w-full min-w-[980px] text-sm">
-            <thead>
-              <tr class="border-b border-border text-left text-xs text-muted-foreground">
-                <th class="px-3 py-2 font-medium">模型</th>
-                <th class="px-3 py-2 font-medium">提供商</th>
-                <th class="px-3 py-2 font-medium">能力</th>
-                <th class="px-3 py-2 font-medium">官网公开价格（每百万 tokens）</th>
-                <th class="px-3 py-2 font-medium">来源版本</th>
-                <th class="px-3 py-2 font-medium">状态</th>
-                <th class="px-3 py-2 font-medium">排序</th>
-                <th class="px-3 py-2 text-right font-medium">操作</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr v-for="model in visibleRows" :key="model.id" class="border-b border-border/70 last:border-0">
-                <td class="max-w-[260px] px-3 py-3">
-                  <div class="font-medium">{{ model.displayName }}</div>
-                  <div class="mt-1 truncate text-xs text-muted-foreground">{{ model.modelKey }}</div>
-                </td>
-                <td class="px-3 py-3">
-                  <div class="font-medium">{{ model.provider }}</div>
-                  <div class="mt-1 flex flex-wrap gap-1">
-                    <Badge variant="model">{{ providerLabelMap[model.providerCategory] }}</Badge>
-                    <Badge v-if="!model.providerActive" variant="secondary">提供商停用</Badge>
-                  </div>
-                </td>
-                <td class="max-w-[180px] px-3 py-3 text-xs text-muted-foreground">{{ capabilityText(model) }}</td>
-                <td class="px-3 py-3 text-xs text-muted-foreground">{{ priceText(model) }}</td>
-                <td class="max-w-[180px] px-3 py-3 text-xs text-muted-foreground">
-                  <div class="truncate">{{ model.currentPriceSourceVersion || '-' }}</div>
-                  <div class="truncate">{{ model.currentPriceSourceUrl || '' }}</div>
-                </td>
-                <td class="px-3 py-3">
-                  <Badge :variant="model.active && model.providerActive ? 'verified' : 'secondary'">{{ model.active && model.providerActive ? '启用' : '停用' }}</Badge>
-                </td>
-                <td class="px-3 py-3 text-sm text-muted-foreground">{{ model.sortOrder }}</td>
-                <td class="px-3 py-3">
-                  <div class="flex flex-wrap justify-end gap-1.5">
-                    <Button size="sm" variant="outline" @click="openEditModel(model)">
-                      <FilePenLine class="h-4 w-4" />编辑
-                    </Button>
-                    <Button size="sm" variant="outline" :disabled="modelActiveMutation.isPending.value" @click="setModelActive(model, !model.active)">
-                      <component :is="model.active ? ToggleLeft : ToggleRight" class="h-4 w-4" />
-                      {{ model.active ? '停用' : '启用' }}
-                    </Button>
-                  </div>
-                </td>
-              </tr>
-              <tr v-if="visibleRows.length === 0">
-                <td colspan="8" class="px-3 py-10 text-center text-sm text-muted-foreground">
-                  当前筛选下暂无 API 模型。
-                </td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-      </Card>
-    </section>
+      <template v-else>
+        <TabsContent value="models" class="mt-4 min-w-0 space-y-3">
+          <div class="grid min-w-0 gap-2 lg:grid-cols-[minmax(240px,1fr)_auto_minmax(180px,220px)]">
+            <div class="relative min-w-0">
+              <Search class="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+              <Input v-model="modelSearch" class="pl-9" aria-label="搜索模型" placeholder="搜索模型" />
+            </div>
+
+            <div class="flex w-fit max-w-full items-center gap-1 overflow-x-auto rounded-lg border border-border bg-muted/40 p-1" aria-label="模型状态筛选">
+              <Button size="sm" class="shrink-0" :variant="statusFilter === 'all' ? 'default' : 'ghost'" @click="statusFilter = 'all'">全部</Button>
+              <Button size="sm" class="shrink-0" :variant="statusFilter === 'active' ? 'default' : 'ghost'" @click="statusFilter = 'active'">已启用</Button>
+              <Button size="sm" class="shrink-0" :variant="statusFilter === 'inactive' ? 'default' : 'ghost'" @click="statusFilter = 'inactive'">已停用</Button>
+            </div>
+
+            <Select v-model="providerFilter">
+              <SelectTrigger class="w-full" aria-label="按提供商筛选">
+                <SelectValue placeholder="全部提供商" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">全部提供商</SelectItem>
+                <SelectItem v-for="provider in providers" :key="provider.id" :value="provider.id">{{ provider.displayName }}</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+
+          <div v-if="selectedModels.length > 0" class="sticky top-[4.5rem] z-20 flex flex-col gap-2 rounded-lg border border-primary/30 bg-background/95 px-3 py-2 shadow-sm backdrop-blur sm:flex-row sm:items-center sm:justify-between">
+            <span class="text-sm font-medium">已选择 {{ selectedModels.length }} 项</span>
+            <div class="flex flex-wrap items-center gap-2">
+              <Button size="sm" variant="outline" :disabled="bulkStatusMutation.isPending.value" @click="setSelectedModelsActive(true)">
+                <Power class="h-4 w-4" />批量启用
+              </Button>
+              <Button size="sm" variant="outline" :disabled="bulkStatusMutation.isPending.value" @click="setSelectedModelsActive(false)">
+                <PowerOff class="h-4 w-4" />批量停用
+              </Button>
+              <Button size="icon" variant="ghost" title="清除选择" aria-label="清除选择" :disabled="bulkStatusMutation.isPending.value" @click="selectedModelIds = []">
+                <X class="h-4 w-4" />
+              </Button>
+            </div>
+          </div>
+
+          <div class="min-w-0 overflow-hidden rounded-lg border border-border bg-card">
+            <div class="max-w-full overflow-x-auto">
+              <table class="c2c-table w-full min-w-[920px] text-sm">
+                <thead class="sticky top-0 z-10 bg-muted/95">
+                  <tr class="border-b border-border text-left text-xs text-muted-foreground">
+                    <th class="w-12 px-3 py-2.5 font-medium">
+                      <Checkbox
+                        :model-value="allVisibleSelected ? true : someVisibleSelected ? 'indeterminate' : false"
+                        aria-label="选择当前筛选的全部模型"
+                        @update:model-value="value => toggleVisibleModels(Boolean(value))"
+                      />
+                    </th>
+                    <th class="px-3 py-2.5 font-medium">模型</th>
+                    <th class="px-3 py-2.5 font-medium">提供商</th>
+                    <th class="px-3 py-2.5 font-medium">官网价格</th>
+                    <th class="px-3 py-2.5 font-medium">状态</th>
+                    <th class="w-24 px-3 py-2.5 text-right font-medium">操作</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr v-for="model in visibleRows" :key="model.id" class="border-b border-border/70 last:border-0">
+                    <td class="px-3 py-2.5">
+                      <Checkbox
+                        :model-value="selectedModelIds.includes(model.id)"
+                        :aria-label="`选择 ${model.modelKey}`"
+                        @update:model-value="value => toggleModelSelection(model.id, Boolean(value))"
+                      />
+                    </td>
+                    <td class="max-w-[280px] px-3 py-2.5">
+                      <div class="truncate font-mono font-medium" :title="model.modelKey">{{ model.modelKey }}</div>
+                    </td>
+                    <td class="px-3 py-2.5">
+                      <div class="font-medium">{{ model.provider }}</div>
+                      <div class="mt-0.5 text-xs text-muted-foreground">{{ model.providerCode }}</div>
+                    </td>
+                    <td class="min-w-[340px] px-3 py-2.5">
+                      <div class="grid grid-cols-3 gap-3 text-xs">
+                        <span><span class="text-muted-foreground">输入</span> <span class="font-mono">{{ model.inputPricePerMillion || '-' }}</span></span>
+                        <span><span class="text-muted-foreground">缓存</span> <span class="font-mono">{{ model.cachedInputPricePerMillion || '-' }}</span></span>
+                        <span><span class="text-muted-foreground">输出</span> <span class="font-mono">{{ model.outputPricePerMillion || '-' }}</span></span>
+                      </div>
+                    </td>
+                    <td class="px-3 py-2.5">
+                      <div class="flex items-start gap-2">
+                        <Switch
+                          :model-value="model.active"
+                          :disabled="modelActiveMutation.isPending.value"
+                          :aria-label="`${model.active ? '停用' : '启用'} ${model.modelKey}`"
+                          @update:model-value="value => setModelActive(model, Boolean(value))"
+                        />
+                        <div class="leading-none">
+                          <div class="text-sm font-medium">{{ model.active ? '已启用' : '已停用' }}</div>
+                          <div v-if="!model.providerActive" class="mt-1 text-xs text-warning">提供商已停用</div>
+                        </div>
+                      </div>
+                    </td>
+                    <td class="px-3 py-2.5 text-right">
+                      <Button size="sm" variant="outline" @click="openEditModel(model)">
+                        <FilePenLine class="h-4 w-4" />编辑
+                      </Button>
+                    </td>
+                  </tr>
+                  <tr v-if="visibleRows.length === 0">
+                    <td colspan="6" class="px-3 py-10 text-center text-sm text-muted-foreground">当前筛选下暂无 API 模型。</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </TabsContent>
+
+        <TabsContent value="providers" class="mt-4 min-w-0">
+          <div class="min-w-0 overflow-hidden rounded-lg border border-border bg-card">
+            <div class="max-w-full overflow-x-auto">
+              <table class="c2c-table w-full min-w-[680px] text-sm">
+                <thead class="sticky top-0 z-10 bg-muted/95">
+                  <tr class="border-b border-border text-left text-xs text-muted-foreground">
+                    <th class="px-3 py-2.5 font-medium">提供商</th>
+                    <th class="px-3 py-2.5 font-medium">分类</th>
+                    <th class="px-3 py-2.5 font-medium">状态</th>
+                    <th class="w-24 px-3 py-2.5 text-right font-medium">操作</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr v-for="provider in providers" :key="provider.id" class="border-b border-border/70 last:border-0">
+                    <td class="px-3 py-2.5">
+                      <div class="font-medium">{{ provider.displayName }}</div>
+                      <div class="mt-0.5 font-mono text-xs text-muted-foreground">{{ provider.code }}</div>
+                    </td>
+                    <td class="px-3 py-2.5 text-muted-foreground">{{ providerLabelMap[provider.providerCategory] }}</td>
+                    <td class="px-3 py-2.5">
+                      <div class="flex items-center gap-2">
+                        <Switch
+                          :model-value="provider.active"
+                          :disabled="providerActiveMutation.isPending.value"
+                          :aria-label="`${provider.active ? '停用' : '启用'} ${provider.displayName}`"
+                          @update:model-value="value => setProviderActive(provider, Boolean(value))"
+                        />
+                        <span class="text-sm font-medium">{{ provider.active ? '已启用' : '已停用' }}</span>
+                      </div>
+                    </td>
+                    <td class="px-3 py-2.5 text-right">
+                      <Button size="sm" variant="outline" @click="openEditProvider(provider)">
+                        <FilePenLine class="h-4 w-4" />编辑
+                      </Button>
+                    </td>
+                  </tr>
+                  <tr v-if="providers.length === 0">
+                    <td colspan="4" class="px-3 py-10 text-center text-sm text-muted-foreground">暂无 API 提供商。</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </TabsContent>
+      </template>
+    </Tabs>
 
     <Dialog v-model:open="isProviderFormOpen">
       <DialogContent class="sm:max-w-xl">
@@ -521,16 +611,10 @@ function capabilityText(model: AdminApiModel) {
             </Select>
           </label>
 
-          <div class="grid gap-3 sm:grid-cols-2">
-            <label class="space-y-2">
-              <span class="text-sm font-medium">模型标识</span>
-              <Input v-model="modelForm.modelKey" placeholder="gpt-4o-mini" />
-            </label>
-            <label class="space-y-2">
-              <span class="text-sm font-medium">展示名</span>
-              <Input v-model="modelForm.displayName" placeholder="GPT-4o mini" />
-            </label>
-          </div>
+          <label class="block max-w-md space-y-2">
+            <span class="text-sm font-medium">模型标识</span>
+            <Input v-model="modelForm.modelKey" placeholder="gpt-4.1-mini" />
+          </label>
 
           <div class="space-y-2">
             <span class="text-sm font-medium">能力</span>
@@ -593,5 +677,10 @@ function capabilityText(model: AdminApiModel) {
         </div>
       </DialogContent>
     </Dialog>
+
+    <AdminApiModelSyncDialog
+      v-model:open="isSyncDialogOpen"
+      :providers="providers"
+    />
   </div>
 </template>

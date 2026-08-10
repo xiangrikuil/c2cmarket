@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from 'vue'
-import type { AcceptableValue } from 'reka-ui'
 import { ArrowDown, ArrowUp, Boxes, Clock3, GripVertical, Package, Pencil, Plus, Trash2 } from 'lucide-vue-next'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -25,7 +24,8 @@ const dragOverPackageId = ref<string | null>(null)
 const selectedPackageIndex = computed(() => props.form.packages.findIndex(item => item.id === selectedPackageId.value))
 const selectedPackage = computed(() => props.form.packages[selectedPackageIndex.value] ?? null)
 
-const setDurationDays = (value: AcceptableValue) => {
+const setDurationDays = (value: unknown) => {
+  if (typeof value !== 'string' && typeof value !== 'number') return
   const durationDays = Number(value)
   if ([1, 3, 7, 30].includes(durationDays)) {
     selectedPackage.value!.durationDays = durationDays as 1 | 3 | 7 | 30

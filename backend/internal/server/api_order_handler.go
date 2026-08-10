@@ -37,6 +37,13 @@ type apiOrderReasonRequest struct {
 	Reason string `json:"reason"`
 }
 
+type apiOrderDisputeRequest struct {
+	IssueCode           string `json:"issueCode"`
+	RequestedResolution string `json:"requestedResolution"`
+	RequestedAmountCNY  string `json:"requestedAmountCny"`
+	Reason              string `json:"reason"`
+}
+
 type apiOrderPaymentIssueRequest struct {
 	Reason string `json:"reason"`
 	Note   string `json:"note"`
@@ -64,6 +71,8 @@ type apiOrderResponse struct {
 	RequestedUSDAllowanceSnapshot string                              `json:"requestedUsdAllowanceSnapshot,omitempty"`
 	CNYPerUSDAllowanceSnapshot    string                              `json:"cnyPerUsdAllowanceSnapshot,omitempty"`
 	PricingSnapshot               string                              `json:"pricingSnapshot"`
+	ProbeConnectionIDSnapshot     string                              `json:"probeConnectionIdSnapshot,omitempty"`
+	APIBaseURLSnapshot            string                              `json:"apiBaseUrlSnapshot,omitempty"`
 	QuotaUsagePolicySnapshot      apiQuotaUsagePolicyResponse         `json:"quotaUsagePolicySnapshot"`
 	PromptAuditEnabledSnapshot    *bool                               `json:"promptAuditEnabledSnapshot"`
 	PackageStockReserved          bool                                `json:"packageStockReserved"`
@@ -178,7 +187,7 @@ func (s *Server) handleMyAPIOrders(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, r, appErr)
 		return
 	}
-	writePaginatedJSON(w, r, toAPIOrderResponses(orders, false))
+	writePaginatedJSON(w, r, toAPIOrderResponses(filterAPIOrders(r, orders), false))
 }
 
 func (s *Server) handleAdminAPIOrder(w http.ResponseWriter, r *http.Request) {
@@ -208,7 +217,7 @@ func (s *Server) handleAdminAPIOrders(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, r, appErr)
 		return
 	}
-	writePaginatedJSON(w, r, toAdminAPIOrderResponses(orders))
+	writePaginatedJSON(w, r, toAdminAPIOrderResponses(filterAPIOrders(r, orders)))
 }
 
 func (s *Server) handleMyAPIOrder(w http.ResponseWriter, r *http.Request) {
@@ -315,7 +324,7 @@ func (s *Server) handleOwnerAPIOrders(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, r, appErr)
 		return
 	}
-	writePaginatedJSON(w, r, toAPIOrderResponses(orders, true))
+	writePaginatedJSON(w, r, toAPIOrderResponses(filterAPIOrders(r, orders), true))
 }
 
 func (s *Server) handleOwnerAPIOrder(w http.ResponseWriter, r *http.Request) {
@@ -405,9 +414,17 @@ func (s *Server) decodeAPIOrderAction(r *http.Request, action string) ([]byte, a
 	case "report-payment-issue":
 		body, req, appErr := decodeStrictJSON[apiOrderPaymentIssueRequest](r)
 		return body, apiorder.ActionInput{PaymentIssueReason: req.Reason, PaymentIssueNote: req.Note}, appErr
-	case "cancel", "dispute":
+	case "cancel":
 		body, req, appErr := decodeStrictJSON[apiOrderReasonRequest](r)
 		return body, apiorder.ActionInput{Reason: req.Reason}, appErr
+	case "dispute":
+		body, req, appErr := decodeStrictJSON[apiOrderDisputeRequest](r)
+		return body, apiorder.ActionInput{
+			IssueCode:           req.IssueCode,
+			RequestedResolution: req.RequestedResolution,
+			RequestedAmountCNY:  req.RequestedAmountCNY,
+			Reason:              req.Reason,
+		}, appErr
 	default:
 		body, _, appErr := decodeStrictJSON[emptyRequest](r)
 		return body, apiorder.ActionInput{}, appErr
@@ -459,6 +476,8 @@ func toAPIOrderResponse(order apiorder.Order, ownerView bool, includeCredential 
 		RequestedUSDAllowanceSnapshot: order.RequestedUSDAllowanceSnapshot,
 		CNYPerUSDAllowanceSnapshot:    order.CNYPerUSDAllowanceSnapshot,
 		PricingSnapshot:               order.PricingSnapshot,
+		ProbeConnectionIDSnapshot:     order.ProbeConnectionIDSnapshot,
+		APIBaseURLSnapshot:            order.APIBaseURLSnapshot,
 		QuotaUsagePolicySnapshot:      toAPIQuotaUsagePolicyResponse(order.QuotaUsagePolicySnapshot),
 		PromptAuditEnabledSnapshot:    order.PromptAuditEnabledSnapshot,
 		PackageStockReserved:          order.PackageStockReserved,

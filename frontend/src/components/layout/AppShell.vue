@@ -5,11 +5,13 @@ import { useQueryClient } from '@tanstack/vue-query'
 import BadgeCheck from 'lucide-vue-next/dist/esm/icons/badge-check.js'
 import Bell from 'lucide-vue-next/dist/esm/icons/bell.js'
 import CarFront from 'lucide-vue-next/dist/esm/icons/car-front.js'
+import Cable from 'lucide-vue-next/dist/esm/icons/cable.js'
 import ChevronDown from 'lucide-vue-next/dist/esm/icons/chevron-down.js'
 import CircleHelp from 'lucide-vue-next/dist/esm/icons/circle-question-mark.js'
 import Code2 from 'lucide-vue-next/dist/esm/icons/code-xml.js'
 import ExternalLink from 'lucide-vue-next/dist/esm/icons/external-link.js'
 import Gift from 'lucide-vue-next/dist/esm/icons/gift.js'
+import FlaskConical from 'lucide-vue-next/dist/esm/icons/flask-conical.js'
 import Home from 'lucide-vue-next/dist/esm/icons/house.js'
 import LogIn from 'lucide-vue-next/dist/esm/icons/log-in.js'
 import LogOut from 'lucide-vue-next/dist/esm/icons/log-out.js'
@@ -52,6 +54,7 @@ import { usePersistentSidebar } from '@/composables/usePersistentSidebar'
 import { logoutBackendSession } from '@/lib/backendClient'
 import { loginRoute } from '@/lib/authNavigation'
 import { usePromotionRewardPublicConfig } from '@/queries/usePromotionRewardQueries'
+import { useOwnerAPIProbeConnections } from '@/queries/useApiHealthQueries'
 
 const route = useRoute()
 const router = useRouter()
@@ -69,6 +72,7 @@ const { data: notifications } = useNotifications(isAuthenticated)
 const workspaceQueriesEnabled = computed(() => Boolean(myProfile.value))
 const { data: ownedCarpools } = useMyCarpools(workspaceQueriesEnabled)
 const { data: ownedApiServices } = useMyApiServices('all', workspaceQueriesEnabled)
+const { data: probeConnections } = useOwnerAPIProbeConnections(workspaceQueriesEnabled)
 const { data: navigationBadges } = useNavigationBadges(computed(() => Boolean(myProfile.value)))
 const { data: promotionRewardConfig } = usePromotionRewardPublicConfig()
 useRealtimeSync(computed(() => Boolean(myProfile.value)))
@@ -94,6 +98,7 @@ const accountRecoveryRequired = computed(() => myProfile.value ? !isAccountRecov
 const hasMerchantWorkspace = computed(() => Boolean(
   (ownedCarpools.value?.length ?? 0) > 0
   || (ownedApiServices.value?.length ?? 0) > 0
+  || (probeConnections.value?.length ?? 0) > 0
   || ownerCarpoolActionCount.value > 0
   || merchantApiActionCount.value > 0,
 ))
@@ -122,6 +127,7 @@ const navGroups = computed(() => {
       { label: 'API 购买订单', to: '/my/api-orders', count: buyerApiActionCount.value, icon: ShoppingBag },
       { label: '收藏', to: '/my/favorites', count: null, icon: Star },
       { label: '通知', to: '/my/notifications', count: unreadBusinessCount.value, icon: Bell },
+      { label: '平台公告', to: announcementCenterTo, count: importantAnnouncementUnreadCount.value, icon: Megaphone },
     ],
   }
   const merchantGroup = {
@@ -130,7 +136,14 @@ const navGroups = computed(() => {
       { label: '我的车源', to: '/my/carpools', count: null, icon: CarFront },
       { label: '上车申请', to: '/merchant/carpool-applications', count: ownerCarpoolActionCount.value, icon: UserCog },
       { label: '我的 API 服务', to: '/my/api-services', count: null, icon: Code2 },
+      { label: '探针连接', to: '/my/api-probe-connections', count: null, icon: Cable },
       { label: 'API 销售订单', to: '/merchant/api-orders', count: merchantApiActionCount.value, icon: PackageSearch },
+    ],
+  }
+  const toolsGroup = {
+    title: '工具',
+    items: [
+      { label: 'API 模型测试', to: '/tools/api-model-tester', count: null, icon: FlaskConical },
     ],
   }
   const accountGroup = {
@@ -154,6 +167,7 @@ const navGroups = computed(() => {
 
   const groups = [browseGroup, publishGroup, userGroup]
   if (hasMerchantWorkspace.value) groups.push(merchantGroup)
+  groups.push(toolsGroup)
   groups.push(accountGroup)
   if (canViewAdminNav.value) groups.push(adminEntryGroup)
   return groups
@@ -177,6 +191,8 @@ function isActive(to: string) {
 function matchesRoute(to: string) {
   if (to === '/') return route.path === '/'
   if (to === '/my/profile') return accountSettingsPaths.includes(route.path as typeof accountSettingsPaths[number])
+  if (to === announcementCenterTo) return route.path === '/my/notifications' && route.query.tab === 'announcements'
+  if (to === '/my/notifications') return route.path === to && route.query.tab !== 'announcements'
   return route.path === to || route.path.startsWith(`${to}/`)
 }
 
@@ -290,18 +306,6 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onNavigationKeydown)
         </section>
       </nav>
       <div class="border-t border-sidebar-border p-2">
-        <RouterLink
-          v-if="isAuthenticated && !sidebarCollapsed"
-          :to="announcementCenterTo"
-          class="mb-3 flex items-center justify-between rounded-md border border-sidebar-border bg-sidebar-accent/45 px-3 py-3 text-xs leading-5 text-sidebar-foreground/75 shadow-sm transition hover:border-sidebar-primary/30 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
-        >
-          <div>
-            <div class="font-medium text-sidebar-primary">平台公告</div>
-            <div class="mt-1">查看公告与更新</div>
-          </div>
-          <Badge v-if="importantAnnouncementUnreadCount" variant="secondary">{{ formatBadgeCount(importantAnnouncementUnreadCount) }}</Badge>
-          <ChevronDown class="h-4 w-4 -rotate-90 text-sidebar-foreground/45" />
-        </RouterLink>
         <Button
           variant="ghost"
           size="sm"
@@ -368,16 +372,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onNavigationKeydown)
           </div>
         </section>
       </nav>
-      <RouterLink
-        v-if="isAuthenticated"
-        :to="announcementCenterTo"
-        class="border-t border-border p-4 text-xs leading-5 text-muted-foreground transition hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
-        @click="closeMenu"
-      >
-        <span>平台公告 · 查看公告与更新</span>
-        <Badge v-if="importantAnnouncementUnreadCount" variant="secondary" class="ml-2">{{ formatBadgeCount(importantAnnouncementUnreadCount) }}</Badge>
-      </RouterLink>
-      <div v-else-if="showLoginAction" class="grid gap-2 border-t border-border p-4">
+      <div v-if="showLoginAction" class="grid gap-2 border-t border-border p-4">
         <Button as-child class="w-full">
           <RouterLink :to="currentLoginTo" @click="closeMenu">
             <LogIn class="h-4 w-4" />登录

@@ -1,230 +1,328 @@
-# API Health And Quota Policy Contract
+# API Probe Connections, Real-Model Health, And Quota Policy
 
-Date: 2026-08-04
+Date: 2026-08-08
 Author: Codex
 
-## Scenario: Platform Probe Health And SKU Quota Rules
+## Scenario: Reusable Real-Model Probes, Frozen Delivery Targets, And Temporary Buyer Tests
 
 ### 1. Scope / Trigger
 
-- Trigger: changes to API health configuration, target authorization, probe execution,
-  public API-market health projection, 5h/daily quota rules, or API intent/order snapshots.
+- Trigger: changes to seller probe connections, probe preflight/save behavior, scheduled probe
+  execution, public health projection, latency calibration, API delivery validation, the buyer API
+  model tester, model-key snapshots, or 5h/daily quota rules.
 - Primary owners are `internal/module/apihealth`, `internal/apihealthrunner`,
-  `internal/store/postgres/api_health.go`, the API-market/quota stores and handlers,
-  migrations `000079` and `000080`, the OpenAPI contract, and the shared frontend
-  health/quota components.
-- Health is a service-level platform measurement. Quota policy is a SKU-level seller contract.
-  They are separate facts and must not share persistence or fallback rules.
+  `internal/platform/openaiapi`, `internal/module/apiorder`, `internal/module/apimodeltest`, the
+  PostgreSQL API-market stores, migration `000082`, OpenAPI, and the matching frontend adapters.
+- A seller probe, an order delivery credential, and a temporary buyer test are separate facts.
+  They may reuse the stateless OpenAI-compatible adapter, but never share credentials, samples, or
+  persistence lifecycles.
 
 ### 2. Signatures
 
 ```text
-GET|PUT|DELETE /api/v1/owner/api-services/{id}/health-probe
-POST /api/v1/owner/api-services/{id}/health-probe/challenges
-POST /api/v1/owner/api-services/{id}/health-probe/verify
+POST   /api/v1/owner/api-probe-connections/preflight
+GET    /api/v1/owner/api-probe-connections
+POST   /api/v1/owner/api-probe-connections
+GET    /api/v1/owner/api-probe-connections/{id}
+PUT    /api/v1/owner/api-probe-connections/{id}
+DELETE /api/v1/owner/api-probe-connections/{id}
+POST   /api/v1/owner/api-probe-connections/{id}/verify
+POST   /api/v1/owner/api-probe-connections/{id}/preflight
 
-GET  /api/v1/admin/api-service-health-probes
-POST /api/v1/admin/api-service-health-probes/{id}/approve
-POST /api/v1/admin/api-service-health-probes/{id}/reject
+PATCH  /api/v1/owner/api-services/{id}/probe-connection
+
+GET    /api/v1/admin/api-health/latency-calibration
+POST   /api/v1/admin/api-health/latency-rules/preview
+GET    /api/v1/admin/api-health/latency-rules
+POST   /api/v1/admin/api-health/latency-rules
+
+GET    /api/v1/tools/api-model-tester/order-sources
+POST   /api/v1/tools/api-model-tester/discover
+POST   /api/v1/tools/api-model-tester/test
 ```
 
 ```text
-QuotaUsageLimitInput { mode: limited|unlimited, amountUsd? }
-QuotaUsageLimit      { mode: limited|unlimited|unspecified, amountUsd: DecimalString|null }
-QuotaUsagePolicy     { fiveHour, daily, scope: per_buyer_credential,
-                       dailyReset: utc_plus_8_calendar_day }
+APIProbeConnectionRequest:
+  name, baseUrl, credential?, probeModel?, preflightToken?, enabled,
+  acknowledgeInsecureHttp
 
-ServiceHealthSummary { state, availabilityReason, successRatePercent,
-                       successfulSamples, totalSamples, medianTtftMs,
-                       probeModel, transportSecurity, lastSampledAt, samples[12] }
+APIProbeConnectionPreflight:
+  errorCode, availableModels[], probeModel, probeProtocol, probeEnvironment,
+  dailyBaseCostUpperBoundUsd, priceUnavailable, preflightToken
+
+OwnerAPIProbeConnection:
+  id, name, baseUrl, credentialConfigured, enabled, verificationStatus,
+  verifiedAt, lastVerificationErrorCode, probeModel, probeProtocol,
+  availableModels[], probeEnvironment, probeModelChangedAt,
+  dailyBaseCostUpperBoundUsd, priceUnavailable, measurementVersion, version,
+  referencedServices[], healthSummary, createdAt, updatedAt
+
+ServiceHealthSummary:
+  state, availabilityReason, transportSecurity,
+  stabilityPercent, finalSuccessPercent, coveragePercent,
+  completedCycles, theoreticalSlots,
+  firstAttemptSuccesses, retryRecoveries, finalFailures,
+  averageTtftMs, p50TtftMs, p95TtftMs, lastSampledAt,
+  probeModel, probeProtocol, probeEnvironment, probeEnvironmentLabel,
+  probeModelChangedAt, accumulatingSamples, hourlyBuckets[24], cost
+
+APIProbeLatencyCalibration:
+  model, protocol, environment, environmentLabel,
+  observationStartedAt, observationEndedAt, completeCalendarDays,
+  connectionCount, sampleCount, p50TtftMs, p90TtftMs, p95TtftMs,
+  p99TtftMs, ready
 ```
 
 ```text
-api_service_probe_configs
-api_service_probe_authorization_events
-api_service_probe_samples
+api_probe_connections
+api_probe_connection_samples
+api_probe_connection_attempts
+api_probe_connection_model_changes
+api_probe_latency_rules
 
-api_services/api_service_packages/api_quota_offers:
-  five_hour_limit_mode, five_hour_limit_usd,
-  daily_limit_mode, daily_limit_usd
-
-api_purchase_intents/api_orders:
-  five_hour_limit_mode_snapshot, five_hour_limit_usd_snapshot,
-  daily_limit_mode_snapshot, daily_limit_usd_snapshot,
-  prompt_audit_enabled_snapshot
-
-api_services:
-  prompt_audit_enabled boolean|null
+api_services.probe_connection_id
+api_purchase_intents:
+  probe_connection_id_snapshot, api_base_url_snapshot,
+  normalized_api_base_url_snapshot
+api_orders:
+  probe_connection_id_snapshot, api_base_url_snapshot,
+  normalized_api_base_url_snapshot
 ```
 
 Runtime environment:
 
 ```text
-API_HEALTH_RUNNER_ENABLED
-API_HEALTH_SCAN_INTERVAL
-API_HEALTH_PROBE_TIMEOUT
-API_HEALTH_MAX_CONCURRENCY
-API_HEALTH_CLAIM_BATCH_SIZE
-API_HEALTH_SAMPLE_RETENTION
-API_HEALTH_CHALLENGE_TTL
+API_HEALTH_RUNNER_ENABLED=true
+API_HEALTH_SCAN_INTERVAL=1m
+API_HEALTH_PROBE_TIMEOUT=30s
+API_HEALTH_MAX_CONCURRENCY=4
+API_HEALTH_CLAIM_BATCH_SIZE=50
+API_HEALTH_SAMPLE_RETENTION=192h
 ```
+
+The 192-hour retention preserves at least seven complete UTC calendar days for calibration even
+when the current partial day is also present. There is no DNS TXT or HTTP ownership challenge.
 
 ### 3. Contracts
 
-- The probe protocol is fixed to OpenAI-compatible streaming chat completions. The platform
-  joins `chat/completions`, sends one bounded canary prompt, records the first non-empty content
-  TTFT, and never persists response content.
-- A root-only base URL such as `https://api.example.com` is normalized to
-  `https://api.example.com/v1` before persistence. Existing non-root paths such as `/v1`,
-  `/api/v1`, and `/openai/v1` are preserved, preventing accidental `/v1/v1` composition.
-- HTTPS remains the default and recommended transport. API health alone may accept a public HTTP
-  target when every owner PUT explicitly sends `acknowledgeInsecureHttp=true`. The acknowledgement
-  is request-only; the persisted URL scheme is the runtime fact. HTTPS PUTs send or behave as false.
-- HTTP probe traffic is unencrypted: the dedicated API key and request/response may be read or
-  modified in transit. The owner UI must state this and require a dedicated low-quota,
-  low-privilege key restricted to the probe model.
-- Probe credentials are dedicated low-quota, low-privilege secrets restricted to the probe model
-  and encrypted with the contact codec under
-  a probe-specific field/AAD. Owner responses expose only `credentialConfigured`; challenge
-  tokens are returned once and only hashes are stored.
-- Owner and administrator mutations require session, CSRF, `If-Match`, and private no-store
-  responses. Initial owner PUT uses `If-Match: "0"`; stale versions return
-  `412 VERSION_CONFLICT`. Challenge creation, challenge verification, administrator approval,
-  and administrator rejection also require `Idempotency-Key`; replay restores the cached status,
-  body, and ETag without repeating the authorization transition.
-- Both accepted schemes disable proxy and redirects, re-resolve DNS for the actual dial, and reject
-  private, loopback, link-local, metadata, special-use, or mixed public/private results. The shared
-  `outboundhttp` HTTPS-only default remains unchanged; API health owns the narrow HTTP exception.
-  Public-address validation does not prove target ownership.
-- Ownership is established by an exact-host DNS TXT challenge on the default 443 origin, an
-  unauthenticated HTTP challenge at the exact origin's fixed well-known path, or administrator
-  approval of the current exact origin. HTTP verification never sends the probe credential.
-- Authorization binds protocol, normalized base URL including base path, model, scheme,
-  hostname, and effective port. Any measurement-identity change increments
-  `measurement_version`, resets authorization, clears a live challenge, and appends an
-  `origin_invalidated` authorization event in the same transaction.
-- The runner claims only enabled, credentialed, authorized configs whose verified origin equals
-  the normalized origin. It creates at most one sample per service/five-minute slot, performs
-  HTTP outside the claim transaction, finalizes only a running sample, and converges abandoned
-  running samples to `internal_timeout`.
-- Public summaries use the current measurement version and model, exclude running samples, and
-  always return 12 ascending five-minute slots. Fewer than three final samples, data older than
-  ten minutes, disabled/unauthorized/unconfigured probes, and health-query failures have explicit
-  `no_sample` reasons.
-- Public summaries derive `transportSecurity` from the private config without exposing the URL:
-  `secure_https`, `insecure_http`, or `null` when unconfigured. Buyer UI shows a compact
-  `HTTP 未加密` disclosure for `insecure_http` even when the summary has no final samples.
-- Public health enrichment batches distinct service IDs. A health read failure degrades only the
-  health field to `temporarily_unavailable`; it cannot block listing, detail, publication,
-  purchase, fulfillment, dispute handling, or recommendation order.
-- Current public cards and service details use platform `healthSummary` for TTFT. They do not
-  expose seller-declared TTFT or `performanceDisclaimer`. Historical orders retain the frozen
-  seller declaration for transaction explanation only.
-- 5h and daily limits are seller-declared USD amounts after the SKU's model multiplier. They are
-  not token counts, upstream list-price amounts, or platform-enforced usage meters. Each buyer
-  credential has its own limits, and daily means the UTC+8 calendar day.
-- New service/package/offer writes require each limit to be explicitly `limited` with a strictly
-  positive decimal amount or `unlimited` without an amount. `unspecified` exists only for
-  historical reads and renders as `未说明`, never `不限`.
-- New service creates and edits require an explicit `promptAuditEnabled` true or false value.
-  Historical service rows remain null and are returned as `promptAuditEnabled: null`; false is a
-  seller declaration rather than a platform privacy guarantee.
-- Standard purchase intents freeze the service declaration in
-  `prompt_audit_enabled_snapshot` and the pricing JSON. Standard orders copy that intent snapshot,
-  never the current service. Limited-offer order creation freezes the same value in its intent,
-  order column, and self-describing quota JSON. Historical null remains explicit and is never
-  inferred from the current service.
-- Free-amount services own one policy, each fixed package owns one policy, and each limited quota
-  offer owns one policy. Intent creation freezes the selected SKU policy; order creation copies
-  the intent snapshot. Limited-offer inventory transactions freeze the same policy into the
-  intent, order, and self-describing JSON snapshot atomically.
+#### 3.1 Reusable seller connections and preflight
+
+- A probe connection belongs to one seller and can be bound to any number of that seller's API
+  services. A service binds at most one connection. Scheduling is connection-scoped, so shared
+  services do not duplicate paid model calls.
+- Create and measurement-changing updates use a two-step contract. Preflight first calls
+  `GET {BaseURL}/models`, requires an exact model ID from that response, then sends one fixed real
+  model request to select a protocol. Responses is preferred; Chat Completions is tried only when
+  Responses is definitively unsupported.
+- If no model is requested, preflight selects `gpt-5.6-luna` only when that exact ID exists. It does
+  not guess aliases. Otherwise the seller must choose from `availableModels` and preflight again.
+- A successful preflight issues a random, short-lived, one-time `preflightToken`. The token is bound
+  to the owner, connection and expected version when updating, canonical Base URL, credential
+  fingerprint, selected model, and selected protocol. Create/update consumes it instead of issuing
+  a second paid verification request. Missing, expired, reused, or mismatched tokens return a
+  recoverable `preflightToken` field error.
+- Preflight tokens and credentials are private, `no-store`, never projected publicly, and never
+  persisted into analytics or probe samples. An explicit `verify` action may execute a fresh
+  verification without exposing the stored credential.
+- Base URLs are trimmed but otherwise preserved for display and order snapshots. Never append
+  `/v1`, change case, or rewrite the business path. A separate canonical value normalizes only the
+  scheme, host, default port, and trailing slash for strict target comparison.
+- A measurement identity change means Base URL, credential, model, protocol, or probe environment
+  changed. It increments `measurementVersion`. Model/protocol changes also append permanent change
+  history and keep old samples isolated from current statistics.
+- The owner UI shows exact model IDs, such as `gpt-5.6-luna`. It shows the conservative 1.00x daily
+  base-cost upper bound for 288 scheduled requests when the model catalog has a current price;
+  missing pricing is explicitly unknown.
+
+#### 3.2 Scheduled real-model runner
+
+- Every enabled, verified, credentialed connection is claimed at most once per five-minute slot.
+  HTTP execution happens outside the claim transaction; finalization updates only running rows.
+- Each cycle sends exactly one protocol chosen at preflight. It never probes both protocols and
+  never silently changes protocol at runtime.
+- The request is fixed by the platform: `Reply with OK.`, no additional system/instructions,
+  streaming enabled, storage disabled, and at most 32 output tokens. Seller input cannot change the
+  request shape.
+- TTFT is measured from request dispatch to the first non-empty visible text delta. A probe succeeds
+  only after a valid stream completes. The output need not equal `OK`; response text is never stored.
+- Each cycle retries at most once. Network/connect failures, first-text timeout, HTTP 429,
+  HTTP 500/502/503/504, and interrupted valid streams are retryable. Authentication, model,
+  parameter, protocol, malformed-response, and other deterministic failures are not retried.
+- Retry delay uses a valid `Retry-After` capped at three seconds; otherwise it is randomized between
+  one and three seconds. Each attempt is bounded by the configured timeout or the active rule's
+  lower hard-timeout limit.
+- Every attempt stores HTTP status, error code, TTFT, total duration, retryability, and available
+  usage counters without storing the response body. Unknown usage remains unknown. Base and retry
+  cost are tracked separately using the connection's price snapshot.
+- Every network dial re-resolves and validates all DNS answers. Redirects and environment proxies
+  remain disabled. HTTP requires the seller's explicit risk acknowledgement.
+- Runtime configuration defaults the runner to enabled. Health summaries receive the runner's
+  enabled and last-successful-scan facts. An enabled connection reports `runner_disabled` when the
+  runner is off and `stale` when both scheduling and samples stop advancing; it must not remain
+  silently grey.
+
+#### 3.3 Twenty-four-hour health projection
+
+- Current health includes only the connection's active `measurementVersion` and the 24-hour window.
+  It exposes 24 ascending UTC hourly buckets and a theoretical maximum of 288 five-minute cycles.
+- `stabilityPercent` is first-attempt successes divided by completed cycles. Retry recovery does not
+  inflate stability. `finalSuccessPercent` includes first successes and retry recoveries and is used
+  only for severe hourly-health decisions.
+- Average, P50, and P95 TTFT include only first-attempt successes, including first successes marked
+  slow by a published fixed rule. Retry recovery duration is separate and never enters TTFT
+  distributions.
+- Hour state is grey with no completed sample; green when every sample succeeds first try with no
+  fixed-rule slow result; yellow for retry recovery, a limited final failure, or fixed-rule slow
+  success; red when final success is below 80% or the current sequence contains two consecutive
+  final failures. Consecutive failure detection crosses hour boundaries.
+- Color never uses relative seller ranking or a live percentile. No published latency rule means a
+  slow but successful first attempt remains green while its TTFT is still recorded.
+- Public cards show stability, average TTFT, coverage, and the 24-hour strip. Details/tooltip show
+  model, protocol fallback, US West environment, detection counts, P50/P95, recovery/failure counts,
+  cost facts, and per-hour detail.
+- Fewer than three current-version samples is `accumulatingSamples` and stays grey. A model change is
+  disclosed for 24 hours, and old/new samples never mix.
+- Public wording describes end-to-end measurements from the platform's US West VPS. It does not
+  claim official model identity, an SLA, or equal latency for every buyer region.
+
+#### 3.4 Fixed latency calibration and rules
+
+- Calibration dimensions are exact `(model, protocol, environment)` tuples. V1 environment is
+  `us-west-v1`; changing the outbound region requires a new environment/version and fresh data.
+- Calibration uses only successful first-attempt TTFT. Retry recoveries and failures remain health
+  facts but do not enter P50/P90/P95/P99.
+- A dimension is ready only after at least seven complete UTC calendar days and five independent
+  connections. Insufficient data keeps observation mode active and cannot make successful calls
+  yellow for speed.
+- Readiness never publishes a rule automatically. An administrator supplies `0 < X < Y <= 30000`,
+  previews slow/over-timeout impact, and explicitly publishes an immutable version with the exact
+  observation window, counts, percentiles, actor, and timestamp.
+- Publishing supersedes the prior active rule for the same dimension transactionally. A new sample
+  snapshots the active rule ID; historical samples are never recolored.
+- With a published rule, TTFT `<= X` is normal, `X < TTFT <= Y` is a successful slow result, and an
+  attempt exceeding `Y` is cancelled and enters the normal failure/retry policy.
+
+#### 3.5 Service and order target snapshots
+
+- A service can be published or accept new standard/package/quota orders only while its bound
+  connection is enabled and verified. Publication and order creation use the same persisted
+  readiness predicate.
+- Standard purchase-intent creation and limited-quota order creation freeze the connection ID,
+  seller-entered Base URL, and canonical comparison value. Standard order creation copies the
+  intent snapshot instead of rereading the current service.
+- Seller `api_key_endpoint` delivery must provide a Base URL canonically equal to the frozen order
+  target. A domain and one of its resolved IPs are intentionally different targets; neither is
+  rewritten or granted an automatic `/v1`.
+- Before accepting delivery, the backend calls `/models` with the delivered buyer key. This checks
+  current authentication and list compatibility only; it does not copy the buyer key into the
+  seller probe or claim every listed model works.
+
+#### 3.6 Temporary buyer model tester and quota policy
+
+- The tester accepts manual credentials or one of the current buyer's eligible delivered orders.
+  An order source exposes metadata and Base URL only; the key remains server-side and is reauthorized
+  and decrypted for each request.
+- `discover` returns every unique non-empty model ID from `/models`. `test` accepts a discovered ID
+  and independently tests Responses and Chat Completions. Results and manual keys stay in page
+  memory and never change order, dispute, completion, or public-health state.
+- The frontend supports one-model, selected-model, and all-model actions with at most three model
+  tests in flight. There is no product cooldown because the buyer owns the credential and quota.
+- `modelKey` is the canonical catalog and request identifier. Service/package DTOs expose
+  `modelKeySnapshot`; intent/order pricing snapshots use `models[].modelKey`. Decorative model names
+  and compatibility aliases must not return.
+- New 5h/daily quota limits must be explicitly `limited` with a positive decimal amount or
+  `unlimited` without an amount. Intent/order creation freezes the selected quota policy and prompt
+  audit declaration.
 
 ### 4. Validation & Error Matrix
 
 | Condition | Result |
 | --- | --- |
-| HTTP/HTTPS target contains only an origin or trailing root slash | Persist and return the origin with `/v1` appended |
-| HTTP/HTTPS target already contains a non-root path | Preserve the normalized path; never append another `/v1` |
-| HTTP target omits `acknowledgeInsecureHttp=true` | `422 VALIDATION_FAILED` on `acknowledgeInsecureHttp` |
-| Non-HTTP(S), private, mixed-DNS, redirecting, or malformed target | `422 VALIDATION_FAILED` on `baseUrl` |
-| Enabling without a configured credential | `422 VALIDATION_FAILED` on `credential` |
-| DNS challenge for a non-443 origin | `422 VALIDATION_FAILED`, `port_not_supported` |
-| Empty or expired/mismatched challenge | Remain unauthorized; never execute a probe |
-| Owner/admin version is stale or initial PUT omits version zero | `412 VERSION_CONFLICT` or `428` |
-| Administrator decision references a missing probe config | `404 OBJECT_NOT_FOUND`; do not report a version conflict |
-| Administrator decision omits a reason | `422 VALIDATION_FAILED` on `reason` |
-| Health repository/enrichment fails | Return product with `no_sample/temporarily_unavailable` |
-| New policy uses `unspecified` | `422 VALIDATION_FAILED` on the limit mode |
-| `limited` omits or supplies a non-positive amount | `422 VALIDATION_FAILED` on `amountUsd` |
-| `unlimited` includes an amount | `422 VALIDATION_FAILED` on `amountUsd` |
-| Historical mode is `unspecified` | Return `{ mode: unspecified, amountUsd: null }` |
-| New service create/update omits `promptAuditEnabled` | `422 VALIDATION_FAILED`, field `promptAuditEnabled`, reason `required` |
-| Historical service/intent/order has no prompt-audit declaration | Return the applicable field as explicit JSON `null` |
+| HTTP target lacks current acknowledgement | `422 VALIDATION_FAILED` on `acknowledgeInsecureHttp` |
+| Preflight lacks a credential on create | `422 VALIDATION_FAILED` on `credential` |
+| Requested model is not an exact `/models` ID | Preflight returns `model_unavailable`; no token is issued |
+| Responses is explicitly unsupported, Chat works | Fix `openai_chat_completions_v1`; disclose Chat fallback |
+| Responses gets auth, rate, network, or upstream failure | Do not hide it by falling back to Chat |
+| Save omits, reuses, expires, or mutates a preflight token binding | `422 VALIDATION_FAILED` on `preflightToken` |
+| Target is malformed, private, mixed-DNS, or redirecting | Stable target/network error; never dial the rejected address |
+| Referenced connection delete | `409 INVALID_STATE_TRANSITION` with service references |
+| Stale connection mutation or preflight version | `412 VERSION_CONFLICT`; missing `If-Match` is `428` |
+| Runner is configured off for an enabled verified connection | `availabilityReason=runner_disabled` |
+| Runner scan and latest sample are both stale | `availabilityReason=stale` |
+| Retryable first attempt recovers | `retry_recovered`, yellow, stability still counts first attempt as failed |
+| Deterministic 400/401/403/model/protocol error | One attempt, `final_failure`, no second paid request |
+| Rule calibration has fewer than 7 complete days or 5 connections | `ready=false`; publish rejected with `calibration_incomplete` |
+| Thresholds do not satisfy `0 < X < Y <= 30000` | `422 VALIDATION_FAILED` |
+| Delivery swaps domain/IP, scheme, port, or business path | `422 VALIDATION_FAILED` on delivery Base URL |
+| Tester order is missing/foreign | `404`; do not reveal existence |
+| New quota mode/amount is inconsistent | `422 VALIDATION_FAILED` |
 
 ### 5. Good / Base / Bad Cases
 
-- Good: one service has three paid SKUs with different policies; all cards share one measured
-  health summary while each order freezes its own policy.
-- Good: changing `/v1` to `/proxy/v1` invalidates an approved target and records the invalidation
-  atomically before any new sample can be claimed.
-- Good: entering `https://api.example.com` saves `https://api.example.com/v1`, while entering
-  `https://api.example.com/openai/v1` preserves the existing path.
-- Good: entering `http://api.example.com` with explicit acknowledgement saves
-  `http://api.example.com/v1`, derives origin port 80, and discloses `insecure_http` publicly.
-- Base: an unconfigured service remains purchasable and displays 12 no-sample slots with the
-  `unconfigured` reason.
-- Bad: treating SSRF validation as ownership proof, sending `Authorization` during HTTP challenge,
-  or authorizing a host suffix/wildcard.
-- Bad: returning unlimited for a historical null, recomputing an old order from the current SKU,
-  or using platform probe TTFT in the package recommendation score.
+- Good: one seller preflights `gpt-5.6-luna`, saves with the returned token, and binds the same
+  connection to three services. One real Responses request is scheduled per slot and all three
+  services display the same health strip.
+- Good: Responses is explicitly unsupported during preflight, Chat succeeds, and all later cycles
+  use only the fixed Chat protocol until the seller revalidates a new measurement version.
+- Good: 288 planned requests are shown as the base daily estimate; a rare 429 retry is separately
+  visible as recovery and retry cost.
+- Base: calibration has eight retained days but only four independent connections. TTFT percentiles
+  remain visible, `ready=false`, and slow successful calls are not colored yellow.
+- Base: a verified connection is disabled. Existing orders remain intact, runner claims stop, and
+  bound services cannot receive new orders until re-enabled and freshly verified.
+- Bad: save repeats the paid protocol verification after a successful preflight, runs both protocols
+  every five minutes, or creates one probe row per bound service.
+- Bad: dynamically color the slowest sellers yellow, mix TTFT from different model/protocol/environment
+  versions, infer domain/IP equality from DNS, or persist buyer tester keys/results.
 
 ### 6. Tests Required
 
-- Domain: root-only `/v1` completion, existing-path preservation, target normalization,
-  base-path/model invalidation, credential retention/rotation,
-  DNS multi-TXT/expiry/non-443, HTTP fixed path/no-auth, SSE chunking/limits/error classes,
-  12-slot order, minimum samples, stale data, thresholds, and odd/even median.
-- Runner/store: same-slot concurrency, authorization claim filters, credential decrypt failure,
-  running timeout convergence, conditional finalize, atomic invalidation event, exact-origin
-  administrator reject/approve, owner isolation, and retention of final samples only.
-- Quota/order: limited/unlimited/unspecified validation, explicit true/false prompt-audit writes,
-  historical prompt-audit nulls, all three SKU locations, source-SKU mutation after purchase, and
-  immutable dedicated plus JSON snapshots.
-- HTTP/OpenAPI: route/type parity, CSRF, ETag/If-Match, request-only insecure acknowledgement,
-  no-store, write-only credential, one-time challenge token, secret leakage scan, public transport
-  disclosure, public seller-TTFT absence, and fail-open enrichment.
-- Frontend: generated-type adapters, owner/admin mutations, policy controls, snapshot rendering,
-  three card variants, no merchant-TTFT copy, fixed 12-slot layout, and desktop/mobile overflow.
-- Required gates: `go test ./...`, relevant race tests, `go vet ./...`, OpenAPI/migration guards,
-  full Vitest/typecheck/build, and `scripts/ci-postgres-integration.sh`.
+- Domain/service: default Luna selection, exact model matching, Responses-first fixed fallback,
+  preflight token issue/binding/expiry/one-time use, measurement version changes, retry classification,
+  fixed request contract, TTFT distribution, 24-hour buckets, cross-hour consecutive failures,
+  cost/unknown usage, and runner disabled/stale projection.
+- OpenAI adapter: Base URL preservation, `/models` deduplication, Responses and Chat SSE parsing,
+  first visible text, normal completion, stream interruption, usage extraction, response bounds,
+  error mapping, and no redirect/proxy behavior.
+- PostgreSQL: owner isolation, same-slot claim deduplication, attempts/finalization atomicity, rule
+  snapshotting, model history, seven-complete-day calibration, five-connection readiness, empty
+  calibration count, threshold preview, immutable publication, advisory-lock types, and 192-hour
+  retention.
+- Handlers/contracts: CSRF, idempotency, `If-Match`, private/no-store preflight, no credential
+  projection, admin authorization, OpenAPI route/status/type parity, and generated frontend types.
+- Frontend: preflight then save without duplicate verification, model selection, default Luna,
+  price unknown state, Chat disclosure, 24-hour strip and tooltip, runner warnings, calibration
+  preview/publish, responsive desktop/mobile layout, and no mock fallback in real mode.
+- Full gates: `go test ./...`, `go vet ./...`, PostgreSQL migration/integration, full Vitest,
+  frontend typecheck and production build, OpenAPI checks, migration-doc guard, browser QA, and
+  `git diff --check`.
 
 ### 7. Wrong vs Correct
 
-#### Wrong
-
 ```go
-if publicIP(target) {
-    config.AuthorizationStatus = "approved"
-}
+// Wrong: save pays for the same protocol check again.
+preflight := verifier.Verify(baseURL, key, model)
+connection := service.Create(input) // verifier.Verify runs again
 
-baseURL = strings.TrimRight(baseURL, "/") + "/v1"
-
-order.QuotaUsagePolicySnapshot = currentOffer.QuotaUsagePolicy
+// Correct: a bound, one-time token carries the successful preflight fact into save.
+preflight := service.Preflight(input)
+input.PreflightToken = preflight.PreflightToken
+connection := service.Create(input)
 ```
 
-#### Correct
-
 ```go
-if apihealth.IsAuthorized(config) && config.VerifiedOrigin == config.NormalizedOrigin {
-    jobs = claimCurrentFiveMinuteSlot(config)
+// Wrong: issue one real-model probe for every service that references a connection.
+for _, service := range services {
+	probe(service.ProbeConnectionID)
 }
 
-if parsed.Path == "" || parsed.Path == "/" {
-    parsed.Path = "/v1"
+// Correct: claim the reusable connection once per five-minute slot.
+for _, job := range claimDueConnections(slot) {
+	probeFixedModelAndProtocol(job)
 }
-
-order.QuotaUsagePolicySnapshot = intent.QuotaUsagePolicySnapshot
 ```
 
-Public-address validation limits where the platform connects; DNS/HTTP/admin verification proves
-the exact target authorization. Orders copy frozen intent facts rather than mutable current SKUs.
+```text
+Wrong:  full-site P95 changes every seller's color dynamically
+Correct: full-site percentiles only inform an explicitly published, immutable X/Y rule version
+```

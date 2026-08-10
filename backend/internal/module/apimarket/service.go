@@ -59,7 +59,7 @@ func (s *Manager) Create(ctx context.Context, user auth.User, input CreateServic
 		if appErr := s.repo.CreateAPIService(ctx, service); appErr != nil {
 			return Service{}, appErr
 		}
-		return WithOrderability(service), nil
+		return s.repo.GetAPIServiceForOwner(ctx, user.ID, service.ID)
 	}
 
 	s.mu.Lock()
@@ -106,6 +106,7 @@ func (s *Manager) Update(ctx context.Context, user auth.User, input UpdateServic
 		MerchantProfileID:                input.MerchantProfileID,
 		MerchantIdentityMode:             input.MerchantIdentityMode,
 		OwnerContactMethodID:             input.OwnerContactMethodID,
+		ProbeConnectionID:                input.ProbeConnectionID,
 		Title:                            input.Title,
 		ShortDescription:                 input.ShortDescription,
 		SourceURL:                        input.SourceURL,
@@ -166,12 +167,48 @@ func (s *Manager) Update(ctx context.Context, user auth.User, input UpdateServic
 	return WithOrderability(service), nil
 }
 
-func (s *Manager) PublicServices(ctx context.Context, filter PublicServiceFilter) ([]Service, *domain.AppError) {
-	if err := validatePublicServiceFilter(filter); err != nil {
-		return nil, err
+func (s *Manager) UpdateProbeConnection(ctx context.Context, user auth.User, input UpdateProbeConnectionInput) (Service, *domain.AppError) {
+	input.OwnerUserID = user.ID
+	input.ServiceID = strings.TrimSpace(input.ServiceID)
+	input.ProbeConnectionID = strings.TrimSpace(input.ProbeConnectionID)
+	if input.ServiceID == "" {
+		return Service{}, domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "API service required", "必须提供 API 服务。", "serviceId", "required", "必须提供 API 服务。")
 	}
 	if s.repo != nil {
-		return s.repo.ListPublicAPIServices(ctx, filter)
+		return s.repo.UpdateAPIServiceProbeConnection(ctx, input, s.now())
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	service, ok := s.services[input.ServiceID]
+	if !ok || service.OwnerUserID != user.ID {
+		return Service{}, domain.NewError(http.StatusNotFound, domain.CodeObjectNotFound, "API service not found", "API 服务不存在。")
+	}
+	if input.ExpectedVersion > 0 && service.Version != input.ExpectedVersion {
+		return Service{}, domain.NewError(http.StatusPreconditionFailed, domain.CodeVersionConflict, "Version conflict", "资源版本已变化，请刷新后重试。")
+	}
+	service.ProbeConnectionID = input.ProbeConnectionID
+	service.ProbeReady = input.ProbeConnectionID != ""
+	service.ProbeBaseURL = ""
+	service.NormalizedProbeBaseURL = ""
+	if service.ProbeReady {
+		// 内存运行切片没有探针持久化层，只为本地流程测试提供固定目标快照。
+		service.ProbeBaseURL = "https://api.example.com/v1"
+		service.NormalizedProbeBaseURL = "https://api.example.com/v1"
+	}
+	service.UpdatedAt = s.now()
+	service.Version++
+	service = WithOrderability(service)
+	s.services[service.ID] = service
+	return service, nil
+}
+
+func (s *Manager) PublicServices(ctx context.Context, filter PublicServiceFilter, page domain.PageRequest) (domain.Page[Service], *domain.AppError) {
+	if err := validatePublicServiceFilter(filter); err != nil {
+		return domain.Page[Service]{}, err
+	}
+	if s.repo != nil {
+		return s.repo.ListPublicAPIServices(ctx, filter, page)
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -179,11 +216,11 @@ func (s *Manager) PublicServices(ctx context.Context, filter PublicServiceFilter
 	services := []Service{}
 	for _, id := range s.serviceOrder {
 		service := WithOrderability(s.services[id])
-		if IsOrderableService(service) && matchesPaymentMethod(service, filter.PaymentMethod) {
+		if IsOrderableService(service) && matchesPublicServiceFilter(service, filter) {
 			services = append(services, service)
 		}
 	}
-	return services, nil
+	return domain.PageItems(services, page)
 }
 
 func (s *Manager) PublicService(ctx context.Context, serviceID string) (Service, *domain.AppError) {
@@ -220,7 +257,7 @@ func (s *Manager) OwnerServices(ctx context.Context, user auth.User, filter Owne
 			services = append(services, service)
 		}
 	}
-	return domain.PageItems(services, page), nil
+	return domain.PageItems(services, page)
 }
 
 func NormalizeOwnerServiceFilter(filter OwnerServiceFilter) (OwnerServiceFilter, *domain.AppError) {
@@ -389,12 +426,12 @@ func (s *Manager) OwnerService(ctx context.Context, user auth.User, serviceID st
 	return WithOrderability(service), nil
 }
 
-func (s *Manager) AdminServices(ctx context.Context, user auth.User, page domain.PageRequest) (domain.Page[Service], *domain.AppError) {
+func (s *Manager) AdminServices(ctx context.Context, user auth.User, filter AdminServiceFilter, page domain.PageRequest) (domain.Page[Service], *domain.AppError) {
 	if !user.IsAdmin {
 		return domain.Page[Service]{}, domain.NewError(http.StatusForbidden, domain.CodePermissionDenied, "Permission denied", "需要管理员权限。")
 	}
 	if s.repo != nil {
-		return s.repo.ListAdminAPIServices(ctx, page)
+		return s.repo.ListAdminAPIServices(ctx, filter, page)
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -403,7 +440,7 @@ func (s *Manager) AdminServices(ctx context.Context, user auth.User, page domain
 	for _, id := range s.serviceOrder {
 		services = append(services, WithOrderability(s.services[id]))
 	}
-	return domain.PageItems(services, page), nil
+	return domain.PageItems(filterAdminServices(services, filter), page)
 }
 
 func (s *Manager) AdminService(ctx context.Context, user auth.User, serviceID string) (Service, *domain.AppError) {
@@ -475,6 +512,9 @@ func (s *Manager) UpdatePublication(ctx context.Context, user auth.User, input S
 		return Service{}, domain.NewError(http.StatusConflict, domain.CodeInvalidStateTransition, "Invalid state transition", "当前 API 服务状态不能执行该操作。")
 	}
 	if action == "publish" || action == "resume" {
+		if strings.TrimSpace(service.ProbeConnectionID) == "" || !service.ProbeReady {
+			return Service{}, domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Probe connection required", "上线 API 服务前必须绑定已启用且验证通过的探针连接。", "probeConnectionId", "not_ready", "请选择已启用且验证通过的探针连接。")
+		}
 		if strings.TrimSpace(service.OwnerContactMethodID) == "" {
 			return Service{}, domain.NewError(http.StatusUnprocessableEntity, domain.CodeMerchantContactRequired, "Merchant contact required", "上线 API 服务必须配置商户联系方式。")
 		}
@@ -585,12 +625,34 @@ func (s *Manager) buildFromInput(ctx context.Context, current Service, input Cre
 	if strings.TrimSpace(input.BillingMode) == ServiceBillingModeMetered {
 		quotaUsagePolicy = NormalizeQuotaUsagePolicy(input.QuotaUsagePolicy)
 	}
+	probeConnectionID := strings.TrimSpace(input.ProbeConnectionID)
+	probeReady := current.ProbeReady && current.ProbeConnectionID == probeConnectionID
+	probeBaseURL := current.ProbeBaseURL
+	normalizedProbeBaseURL := current.NormalizedProbeBaseURL
+	if s.repo == nil && probeConnectionID != "" {
+		probeReady = true
+		// 内存运行切片没有探针持久化层，只为本地流程测试提供固定目标快照。
+		probeBaseURL = "https://api.example.com/v1"
+		normalizedProbeBaseURL = "https://api.example.com/v1"
+	}
+	if current.ProbeConnectionID != probeConnectionID {
+		probeBaseURL = ""
+		normalizedProbeBaseURL = ""
+		if s.repo == nil && probeConnectionID != "" {
+			probeBaseURL = "https://api.example.com/v1"
+			normalizedProbeBaseURL = "https://api.example.com/v1"
+		}
+	}
 	service := Service{
 		ID:                               serviceID,
 		OwnerUserID:                      input.OwnerUserID,
 		MerchantProfileID:                strings.TrimSpace(input.MerchantProfileID),
 		MerchantIdentityMode:             strings.TrimSpace(input.MerchantIdentityMode),
 		OwnerContactMethodID:             strings.TrimSpace(input.OwnerContactMethodID),
+		ProbeConnectionID:                probeConnectionID,
+		ProbeReady:                       probeReady,
+		ProbeBaseURL:                     probeBaseURL,
+		NormalizedProbeBaseURL:           normalizedProbeBaseURL,
 		Title:                            strings.TrimSpace(input.Title),
 		ShortDescription:                 strings.TrimSpace(input.ShortDescription),
 		SourceURL:                        strings.TrimSpace(input.SourceURL),
@@ -674,7 +736,7 @@ func (s *Manager) buildFromInput(ctx context.Context, current Service, input Cre
 			DistributionSystem:                  service.DistributionSystem,
 			ModelCatalogID:                      model.ID,
 			ModelPriceVersionID:                 priceVersionID,
-			ModelNameSnapshot:                   model.DisplayName,
+			ModelKey:                            model.ModelKey,
 			ProviderSnapshot:                    model.Provider,
 			CapabilitiesSnapshot:                append([]string(nil), model.Capabilities...),
 			MerchantMultiplier:                  normalizeDecimalText(multiplier, 4),
@@ -972,7 +1034,7 @@ func servicePackageModelFromServiceModel(model ServiceModel) ServicePackageModel
 		ServiceModelID:      model.ID,
 		ModelCatalogID:      model.ModelCatalogID,
 		ModelPriceVersionID: model.ModelPriceVersionID,
-		ModelNameSnapshot:   model.ModelNameSnapshot,
+		ModelKey:            model.ModelKey,
 		ProviderSnapshot:    model.ProviderSnapshot,
 		MerchantMultiplier:  model.MerchantMultiplier,
 	}
@@ -1132,6 +1194,11 @@ func OrderableReasonsAt(service Service, now time.Time) []string {
 	if !service.AcceptingOrders {
 		reasons = append(reasons, "not_accepting_orders")
 	}
+	if strings.TrimSpace(service.ProbeConnectionID) == "" {
+		reasons = append(reasons, "probe_connection_required")
+	} else if !service.ProbeReady {
+		reasons = append(reasons, "probe_connection_not_ready")
+	}
 	if service.ReviewStatus != ServiceReviewStatusApproved {
 		reasons = append(reasons, "review_not_approved")
 	}
@@ -1202,6 +1269,37 @@ func matchesPaymentMethod(service Service, paymentMethod string) bool {
 	for _, option := range service.PaymentOptions {
 		if option.Enabled && IsSupportedPaymentMethod(option.PaymentMethod) && option.PaymentMethod == paymentMethod {
 			return true
+		}
+	}
+	return false
+}
+
+func matchesPublicServiceFilter(service Service, filter PublicServiceFilter) bool {
+	if !matchesPaymentMethod(service, filter.PaymentMethod) {
+		return false
+	}
+	billingMode := strings.TrimSpace(filter.BillingMode)
+	if billingMode != "" && service.BillingMode != billingMode {
+		return false
+	}
+	modelCatalogID := strings.TrimSpace(filter.PackageModelCatalogID)
+	if modelCatalogID == "" && filter.PackageDurationDays == 0 {
+		return true
+	}
+	for _, item := range service.Packages {
+		if !item.Enabled || item.StockAvailable <= 0 {
+			continue
+		}
+		if filter.PackageDurationDays > 0 && (item.DurationDays == nil || *item.DurationDays != filter.PackageDurationDays) {
+			continue
+		}
+		if modelCatalogID == "" {
+			return true
+		}
+		for _, model := range item.Models {
+			if model.ModelCatalogID == modelCatalogID {
+				return true
+			}
 		}
 	}
 	return false
@@ -1321,11 +1419,14 @@ func applyAdminAction(service Service, input ServiceAdminActionInput, now time.T
 }
 
 func validatePublicServiceFilter(filter PublicServiceFilter) *domain.AppError {
-	if strings.TrimSpace(filter.PaymentMethod) == "" {
-		return nil
-	}
-	if !IsSupportedPaymentMethod(filter.PaymentMethod) {
+	if paymentMethod := strings.TrimSpace(filter.PaymentMethod); paymentMethod != "" && !IsSupportedPaymentMethod(paymentMethod) {
 		return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Payment method invalid", "付款方式不支持。", "paymentMethod", "invalid", "付款方式不支持。")
+	}
+	if billingMode := strings.TrimSpace(filter.BillingMode); billingMode != "" && billingMode != ServiceBillingModeMetered && billingMode != ServiceBillingModeFixedPackage {
+		return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Billing mode invalid", "计费模式筛选无效。", "billingMode", "invalid", "计费模式筛选无效。")
+	}
+	if filter.PackageDurationDays != 0 && filter.PackageDurationDays != 1 && filter.PackageDurationDays != 3 && filter.PackageDurationDays != 7 && filter.PackageDurationDays != 30 {
+		return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Package duration invalid", "套餐有效期筛选无效。", "packageDurationDays", "invalid", "套餐有效期仅支持 1、3、7 或 30 天。")
 	}
 	return nil
 }

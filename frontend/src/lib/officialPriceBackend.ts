@@ -1,8 +1,21 @@
 import type { AdminRow, OfficialPrice } from '@/lib/api'
 import { backendMutation, backendRequest, ensureBackendSession } from '@/lib/backendClient'
 import { backendCarpoolProductCatalog } from '@/lib/carpoolBackend'
+import { collectCursorPages, normalizeNextCursor, type CursorPage, type CursorPageRequest } from '@/lib/cursorPagination'
 
-type ListResponse<T> = { items: T[] }
+type ListResponse<T> = { items: T[], nextCursor?: string | null }
+
+export type OfficialPricePageFilters = {
+  q?: string
+  productPlanIds?: string[]
+  region?: string
+  channel?: string
+  openingMethod?: string
+  source?: string
+  status?: string
+  sort?: string
+  none?: boolean
+}
 
 type BackendOfficialPriceRecord = {
   id: string
@@ -323,9 +336,33 @@ async function mapLeadAsOfficialPrice(lead: BackendOfficialPriceLeadSummary): Pr
   }
 }
 
+function officialPricePageQuery(filters: OfficialPricePageFilters, page: CursorPageRequest) {
+  const params = new URLSearchParams()
+  if (filters.q?.trim()) params.set('q', filters.q.trim())
+  if (filters.productPlanIds?.length) params.set('productPlanIds', filters.productPlanIds.join(','))
+  if (filters.region) params.set('region', filters.region)
+  if (filters.channel) params.set('channel', filters.channel)
+  if (filters.openingMethod) params.set('openingMethod', filters.openingMethod)
+  if (filters.source) params.set('source', filters.source)
+  if (filters.status) params.set('status', filters.status)
+  if (filters.sort) params.set('sort', filters.sort)
+  if (filters.none) params.set('none', '1')
+  if (page.limit) params.set('limit', String(page.limit))
+  if (page.cursor) params.set('cursor', page.cursor)
+  const query = params.toString()
+  return query ? `?${query}` : ''
+}
+
+export async function backendOfficialPricesPage(filters: OfficialPricePageFilters = {}, page: CursorPageRequest = {}): Promise<CursorPage<OfficialPrice>> {
+  const response = await backendRequest<ListResponse<BackendOfficialPriceRecord>>(`/api/v1/official-prices${officialPricePageQuery(filters, page)}`)
+  return {
+    items: await Promise.all(response.items.map(mapOfficialPriceRecord)),
+    nextCursor: normalizeNextCursor(response.nextCursor),
+  }
+}
+
 export async function backendOfficialPrices() {
-  const response = await backendRequest<ListResponse<BackendOfficialPriceRecord>>('/api/v1/official-prices')
-  return Promise.all(response.items.map(mapOfficialPriceRecord))
+  return collectCursorPages(page => backendOfficialPricesPage({}, page))
 }
 
 export async function backendOfficialPriceById(id: string) {
@@ -355,10 +392,17 @@ function toAdminRecordRequest(payload: OfficialPriceAdminRecordPayload) {
   }
 }
 
-export async function backendAdminOfficialPriceRecords() {
+export async function backendAdminOfficialPriceRecordsPage(filters: OfficialPricePageFilters = {}, page: CursorPageRequest = {}): Promise<CursorPage<OfficialPriceAdminRecord>> {
   await ensureBackendSession('admin', true)
-  const response = await backendRequest<ListResponse<BackendOfficialPriceRecord>>('/api/v1/admin/official-price-records')
-  return Promise.all(response.items.map(mapAdminOfficialPriceRecord))
+  const response = await backendRequest<ListResponse<BackendOfficialPriceRecord>>(`/api/v1/admin/official-price-records${officialPricePageQuery(filters, page)}`)
+  return {
+    items: await Promise.all(response.items.map(mapAdminOfficialPriceRecord)),
+    nextCursor: normalizeNextCursor(response.nextCursor),
+  }
+}
+
+export async function backendAdminOfficialPriceRecords() {
+  return collectCursorPages(page => backendAdminOfficialPriceRecordsPage({}, page))
 }
 
 export async function backendCreateAdminOfficialPriceRecord(payload: OfficialPriceAdminRecordPayload) {
@@ -492,10 +536,17 @@ function recordAdminRowFromDetail(detail: OfficialPriceAdminRecord): AdminRow {
   }
 }
 
-export async function backendAdminOfficialPriceRows() {
+export async function backendAdminOfficialPriceRowsPage(filters: OfficialPricePageFilters = {}, page: CursorPageRequest = {}): Promise<CursorPage<AdminRow>> {
   await ensureBackendSession('admin', true)
-  const response = await backendRequest<ListResponse<BackendOfficialPriceRecord>>('/api/v1/admin/official-price-records')
-  return Promise.all(response.items.map(recordAdminRow))
+  const response = await backendRequest<ListResponse<BackendOfficialPriceRecord>>(`/api/v1/admin/official-price-records${officialPricePageQuery(filters, page)}`)
+  return {
+    items: await Promise.all(response.items.map(recordAdminRow)),
+    nextCursor: normalizeNextCursor(response.nextCursor),
+  }
+}
+
+export async function backendAdminOfficialPriceRows() {
+  return collectCursorPages(page => backendAdminOfficialPriceRowsPage({}, page))
 }
 
 async function adminLead(id: string) {

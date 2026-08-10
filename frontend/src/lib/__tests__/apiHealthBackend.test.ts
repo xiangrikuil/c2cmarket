@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 function jsonResponse(body: unknown, status = 200) {
@@ -8,54 +9,56 @@ function jsonResponse(body: unknown, status = 200) {
   })
 }
 
-function adminSession(admin = false) {
+function ownerSession() {
   return {
-    csrfToken: admin ? 'csrf-admin' : 'csrf-owner',
+    csrfToken: 'csrf-owner',
     expiresAt: '2999-01-01T00:00:00Z',
     user: {
-      id: admin ? 'admin-1' : 'owner-1',
-      username: admin ? 'admin' : 'owner',
-      displayName: admin ? 'Admin' : 'Owner',
-      isAdmin: admin,
-      permissions: admin ? ['admin'] : [],
+      id: 'owner-1',
+      username: 'owner',
+      displayName: 'Owner',
+      isAdmin: false,
+      permissions: [],
       linuxDoBinding: { bound: false },
     },
   }
 }
 
-function ownerProbe(overrides: Record<string, unknown> = {}) {
+function connection(overrides: Record<string, unknown> = {}) {
   return {
-    id: 'probe-1',
-    apiServiceId: 'service-1',
-    protocol: 'openai_chat_completions_v1',
+    id: 'connection-1',
+    name: '主 Sub2API',
     baseUrl: 'https://api.example.test/v1',
-    normalizedOrigin: 'https://api.example.test:443',
-    model: 'gpt-5-mini',
+    normalizedBaseUrl: 'https://api.example.test/v1',
     credentialConfigured: true,
     enabled: true,
-    authorizationStatus: 'pending',
-    authorizationMethod: null,
-    verifiedOrigin: null,
-    verifiedAt: null,
-    approvedAt: null,
-    rejectionReason: null,
-    challengeExpiresAt: null,
+    verificationStatus: 'verified',
+    verifiedAt: '2026-08-08T00:00:00Z',
+    lastVerificationErrorCode: null,
     measurementVersion: 1,
-    lastConfigErrorCode: null,
     version: 8,
-    createdAt: '2026-08-04T00:00:00Z',
-    updatedAt: '2026-08-04T01:00:00Z',
+    referencedServices: [{ id: 'service-1', title: '示例 API' }],
+    healthSummary: {
+      state: 'no_sample',
+      availabilityReason: 'insufficient',
+      successRatePercent: null,
+      successfulSamples: 0,
+      totalSamples: 0,
+      transportSecurity: 'secure_https',
+      lastSampledAt: null,
+      samples: [],
+    },
+    createdAt: '2026-08-08T00:00:00Z',
+    updatedAt: '2026-08-08T01:00:00Z',
     ...overrides,
   }
 }
 
-async function loadBackend(fetchMock: ReturnType<typeof vi.fn>, admin = false) {
+async function loadBackend(fetchMock: ReturnType<typeof vi.fn>) {
   vi.resetModules()
   vi.stubGlobal('fetch', fetchMock)
   const client = await import('../backendClient')
   client.setBackendRuntimeConfig({ apiMode: 'real', apiBaseUrl: 'https://api.example.test/' })
-  const sessionFetch = fetchMock.mock.calls.length === 0
-  if (sessionFetch) fetchMock.mockResolvedValueOnce(jsonResponse(adminSession(admin)))
   const backend = await import('../apiHealthBackend')
   return { backend, client }
 }
@@ -66,203 +69,186 @@ afterEach(() => {
   vi.resetModules()
 })
 
-describe('API 健康探针真实请求', () => {
-  it('Owner 保存使用 CSRF 与 If-Match，留空 credential 时不发送该字段', async () => {
-    const fetchMock = vi.fn()
-      .mockResolvedValueOnce(jsonResponse(adminSession()))
-      .mockResolvedValueOnce(jsonResponse(ownerProbe({ version: 9 })))
-    const { backend } = await loadBackend(fetchMock)
-
-    await backend.backendSaveOwnerAPIHealthProbe({
-      apiServiceId: 'service-1',
-      version: 8,
-      baseUrl: ' https://api.example.test/v1 ',
-      model: ' gpt-5-mini ',
-      credential: '   ',
-      enabled: true,
-      acknowledgeInsecureHttp: false,
-    })
-
-    const [url, init] = fetchMock.mock.calls[1] as [string, RequestInit]
-    const headers = new Headers(init.headers)
-    expect(url).toBe('https://api.example.test/api/v1/owner/api-services/service-1/health-probe')
-    expect(init.method).toBe('PUT')
-    expect(headers.get('X-CSRF-Token')).toBe('csrf-owner')
-    expect(headers.get('If-Match')).toBe('"8"')
-    expect(JSON.parse(String(init.body))).toEqual({
-      baseUrl: 'https://api.example.test/v1',
-      model: 'gpt-5-mini',
-      enabled: true,
-      acknowledgeInsecureHttp: false,
-    })
+describe('共享探针连接真实请求', () => {
+  it('快捷重新启用先预检已存凭据，再携带一次性 token 更新', () => {
+    const page = readFileSync(new URL('../../pages/MyApiProbeConnectionsPage.vue', import.meta.url), 'utf8')
+    const toggleFlow = page.slice(page.indexOf('async function setEnabled'), page.indexOf('async function removeConnection'))
+    expect(toggleFlow).toContain('await preflightMutation.mutateAsync')
+    expect(toggleFlow).toContain('preflightToken = verification.preflightToken')
+    expect(toggleFlow).toContain('preflightToken,')
   })
 
-  it('Owner 轮换 credential 只在当前 PUT 请求中发送', async () => {
+  it('预检读取模型并固定协议，不使用创建幂等键', async () => {
     const fetchMock = vi.fn()
-      .mockResolvedValueOnce(jsonResponse(adminSession()))
-      .mockResolvedValueOnce(jsonResponse(ownerProbe({ version: 9 })))
+      .mockResolvedValueOnce(jsonResponse(ownerSession()))
+      .mockResolvedValueOnce(jsonResponse({
+        errorCode: null,
+        availableModels: ['gpt-5.6-luna', 'gpt-5.6-sol'],
+        probeModel: 'gpt-5.6-luna',
+        probeProtocol: 'openai_responses_v1',
+        probeEnvironment: 'us-west-v1',
+        dailyBaseCostUpperBoundUsd: '0.0123000000',
+        priceUnavailable: false,
+        preflightToken: 'preflight-token',
+      }))
     const { backend } = await loadBackend(fetchMock)
 
-    const saved = await backend.backendSaveOwnerAPIHealthProbe({
-      apiServiceId: 'service-1',
-      version: 8,
+    const result = await backend.backendPreflightOwnerAPIProbeConnection({
+      name: '主 Sub2API',
       baseUrl: 'https://api.example.test/v1',
-      model: 'gpt-5-mini',
       credential: 'probe-key-once',
+      probeModel: 'gpt-5.6-luna',
       enabled: true,
       acknowledgeInsecureHttp: false,
     })
 
-    const body = JSON.parse(String((fetchMock.mock.calls[1]?.[1] as RequestInit).body))
-    expect(body.credential).toBe('probe-key-once')
-    expect(saved).not.toHaveProperty('credential')
-    expect(fetchMock).toHaveBeenCalledTimes(2)
+    const [url, init] = fetchMock.mock.calls[1] as [string, RequestInit]
+    const headers = new Headers(init.headers)
+    expect(url).toBe('https://api.example.test/api/v1/owner/api-probe-connections/preflight')
+    expect(init.method).toBe('POST')
+    expect(headers.get('X-CSRF-Token')).toBe('csrf-owner')
+    expect(headers.get('Idempotency-Key')).toBeNull()
+    expect(result.probeProtocol).toBe('openai_responses_v1')
+    expect(result.availableModels).toEqual(['gpt-5.6-luna', 'gpt-5.6-sol'])
+    expect(result.preflightToken).toBe('preflight-token')
   })
 
-  it('Admin 审批只提交理由并携带 CSRF、幂等键和 If-Match', async () => {
+  it('创建连接携带 CSRF 和幂等键，Key 只出现在当前请求体', async () => {
     const fetchMock = vi.fn()
-      .mockResolvedValueOnce(jsonResponse(adminSession(true)))
-      .mockResolvedValueOnce(jsonResponse({
-        ...ownerProbe({ authorizationStatus: 'approved', version: 9 }),
-        ownerUserId: 'owner-1',
-        serviceTitle: 'Example API',
-        ownerDisplayName: 'Owner',
-        ownerUsername: 'owner',
-      }))
-    const { backend } = await loadBackend(fetchMock, true)
+      .mockResolvedValueOnce(jsonResponse(ownerSession()))
+      .mockResolvedValueOnce(jsonResponse(connection(), 201))
+    const { backend } = await loadBackend(fetchMock)
 
-    await backend.backendReviewAPIHealthProbe({
-      id: 'probe-1',
-      version: 8,
-      decision: 'approve',
-      reason: '  已核对精确域名归属  ',
+    const saved = await backend.backendCreateOwnerAPIProbeConnection({
+      name: ' 主 Sub2API ',
+      baseUrl: ' https://api.example.test/v1 ',
+      credential: ' probe-key-once ',
+      probeModel: 'gpt-5.6-luna',
+      preflightToken: 'preflight-token',
+      enabled: true,
+      acknowledgeInsecureHttp: false,
     })
 
     const [url, init] = fetchMock.mock.calls[1] as [string, RequestInit]
     const headers = new Headers(init.headers)
-    expect(url).toBe('https://api.example.test/api/v1/admin/api-service-health-probes/probe-1/approve')
-    expect(headers.get('X-CSRF-Token')).toBe('csrf-admin')
-    expect(headers.get('If-Match')).toBe('"8"')
-    expect(headers.get('Idempotency-Key')).toMatch(/^api-health-approve-/)
-    expect(JSON.parse(String(init.body))).toEqual({ reason: '已核对精确域名归属' })
-  })
-
-  it('Admin 列表只映射页面所需的精确 Origin 信息', async () => {
-    const fetchMock = vi.fn()
-      .mockResolvedValueOnce(jsonResponse(adminSession(true)))
-      .mockResolvedValueOnce(jsonResponse({
-        items: [{
-          id: 'probe-1',
-          apiServiceId: 'service-1',
-          serviceTitle: 'Example API',
-          ownerUserId: 'owner-1',
-          ownerUsername: 'owner',
-          ownerDisplayName: 'Owner',
-          protocol: 'openai_chat_completions_v1',
-          normalizedOrigin: 'https://api.example.test:443',
-          model: 'private-review-model',
-          enabled: true,
-          authorizationStatus: 'pending',
-          authorizationMethod: null,
-          verifiedOrigin: null,
-          verifiedAt: null,
-          approvedAt: null,
-          rejectionReason: null,
-          version: 8,
-          updatedAt: '2026-08-04T01:00:00Z',
-        }],
-        nextCursor: null,
-      }))
-    const { backend } = await loadBackend(fetchMock, true)
-
-    const result = await backend.backendAdminAPIHealthProbes('pending')
-
-    expect(fetchMock.mock.calls[1]?.[0]).toBe('https://api.example.test/api/v1/admin/api-service-health-probes?status=pending&limit=100')
-    expect(result.items[0]).toEqual({
-      id: 'probe-1',
-      apiServiceId: 'service-1',
-      serviceTitle: 'Example API',
-      ownerUserId: 'owner-1',
-      ownerDisplayName: 'Owner',
-      ownerUsername: 'owner',
-      normalizedOrigin: 'https://api.example.test:443',
-      authorizationStatus: 'pending',
-      version: 8,
-      updatedAt: '2026-08-04T01:00:00Z',
+    expect(url).toBe('https://api.example.test/api/v1/owner/api-probe-connections')
+    expect(init.method).toBe('POST')
+    expect(headers.get('X-CSRF-Token')).toBe('csrf-owner')
+    expect(headers.get('Idempotency-Key')).toMatch(/^api-probe-connection-create-/)
+    expect(JSON.parse(String(init.body))).toEqual({
+      name: '主 Sub2API',
+      baseUrl: 'https://api.example.test/v1',
+      credential: 'probe-key-once',
+      probeModel: 'gpt-5.6-luna',
+      preflightToken: 'preflight-token',
+      enabled: true,
+      acknowledgeInsecureHttp: false,
     })
-    expect(result.items[0]).not.toHaveProperty('model')
-    expect(result.items[0]).not.toHaveProperty('credentialConfigured')
+    expect(JSON.stringify(saved)).not.toContain('probe-key-once')
   })
 
-  it('Owner GET 的 404 映射为未配置，其余错误继续抛出', async () => {
+  it('更新连接留空 Key 时不发送 credential，并携带 If-Match', async () => {
     const fetchMock = vi.fn()
-      .mockResolvedValueOnce(jsonResponse(adminSession()))
-      .mockResolvedValueOnce(new Response(JSON.stringify({ status: 404, code: 'OBJECT_NOT_FOUND' }), {
-        status: 404,
-        headers: { 'content-type': 'application/problem+json' },
-      }))
+      .mockResolvedValueOnce(jsonResponse(ownerSession()))
+      .mockResolvedValueOnce(jsonResponse(connection({ version: 9 })))
     const { backend } = await loadBackend(fetchMock)
-    await expect(backend.backendOwnerAPIHealthProbe('service-1')).resolves.toBeNull()
 
-    const failingFetch = vi.fn()
-      .mockResolvedValueOnce(jsonResponse(adminSession()))
-      .mockResolvedValueOnce(new Response(JSON.stringify({ status: 503, code: 'BACKEND_UNAVAILABLE' }), {
-        status: 503,
-        headers: { 'content-type': 'application/problem+json' },
-      }))
-    const loaded = await loadBackend(failingFetch)
-    await assert.rejects(() => loaded.backend.backendOwnerAPIHealthProbe('service-1'))
+    await backend.backendUpdateOwnerAPIProbeConnection({
+      id: 'connection-1',
+      version: 8,
+      name: '主 Sub2API',
+      baseUrl: 'https://api.example.test/v1',
+      credential: '   ',
+      enabled: false,
+      acknowledgeInsecureHttp: false,
+    })
+
+    const [url, init] = fetchMock.mock.calls[1] as [string, RequestInit]
+    const headers = new Headers(init.headers)
+    expect(url).toBe('https://api.example.test/api/v1/owner/api-probe-connections/connection-1')
+    expect(init.method).toBe('PUT')
+    expect(headers.get('If-Match')).toBe('"8"')
+    expect(JSON.parse(String(init.body))).not.toHaveProperty('credential')
+  })
+
+  it('重新验证使用版本与幂等键，删除使用 DELETE', async () => {
+    const verifyFetch = vi.fn()
+      .mockResolvedValueOnce(jsonResponse(ownerSession()))
+      .mockResolvedValueOnce(jsonResponse(connection({ version: 9 })))
+    const { backend } = await loadBackend(verifyFetch)
+    await backend.backendVerifyOwnerAPIProbeConnection({ id: 'connection-1', version: 8 })
+
+    const verifyInit = verifyFetch.mock.calls[1]?.[1] as RequestInit
+    expect(verifyFetch.mock.calls[1]?.[0]).toBe('https://api.example.test/api/v1/owner/api-probe-connections/connection-1/verify')
+    expect(new Headers(verifyInit.headers).get('If-Match')).toBe('"8"')
+    expect(new Headers(verifyInit.headers).get('Idempotency-Key')).toMatch(/^api-probe-connection-verify-/)
+
+    const deleteFetch = vi.fn()
+      .mockResolvedValueOnce(jsonResponse(ownerSession()))
+      .mockResolvedValueOnce(new Response(null, { status: 204 }))
+    const loaded = await loadBackend(deleteFetch)
+    await loaded.backend.backendDeleteOwnerAPIProbeConnection({ id: 'connection-1', version: 9 })
+    expect((deleteFetch.mock.calls[1]?.[1] as RequestInit).method).toBe('DELETE')
+  })
+
+  it('列表补齐引用数组并把未知上游错误收敛为 internal', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse(ownerSession()))
+      .mockResolvedValueOnce(jsonResponse({ items: [connection({ referencedServices: undefined, lastVerificationErrorCode: 'raw-provider-message' })] }))
+    const { backend } = await loadBackend(fetchMock)
+    const result = await backend.backendOwnerAPIProbeConnections()
+    expect(result[0]?.referencedServices).toEqual([])
+    expect(result[0]?.lastVerificationErrorCode).toBe('internal')
   })
 })
 
-describe('API 健康探针 Mock facade', () => {
-  it('只保存 credentialConfigured，不持久化 credential 内容', async () => {
+describe('共享探针连接 Mock facade', () => {
+  it('保留卖家输入的完整 Base URL，不自动补 /v1，也不保存明文 Key', async () => {
     vi.resetModules()
     const client = await import('../backendClient')
     client.setBackendRuntimeConfig({ apiMode: 'mock', apiBaseUrl: 'https://api.example.test/' })
     const facade = await import('../apiHealthFacade')
-    facade.resetMockAPIHealthProbes()
+    facade.resetMockAPIProbeConnections()
 
-    const saved = await facade.saveOwnerAPIHealthProbe({
-      apiServiceId: 'service-1',
-      version: 0,
+    const createInput = {
+      name: '低额度探针',
       baseUrl: 'https://api.example.test',
-      model: 'gpt-5-mini',
       credential: 'probe-key-once',
+      probeModel: 'gpt-5.6-luna',
       enabled: true,
       acknowledgeInsecureHttp: false,
-    })
-    const loaded = await facade.getOwnerAPIHealthProbe('service-1')
+    }
+    const preflight = await facade.preflightOwnerAPIProbeConnection(createInput)
+    const saved = await facade.createOwnerAPIProbeConnection({ ...createInput, preflightToken: preflight.preflightToken ?? undefined })
+    const loaded = await facade.getOwnerAPIProbeConnection(saved.id)
 
-    expect(saved.credentialConfigured).toBe(true)
-    expect(saved.baseUrl).toBe('https://api.example.test/v1')
-    expect(saved.baseUrl).not.toContain('/v1/v1')
-    expect(JSON.stringify(saved)).not.toContain('probe-key-once')
+    expect(saved.baseUrl).toBe('https://api.example.test')
+    expect(saved.normalizedBaseUrl).toBe('https://api.example.test')
+    expect(saved.verificationStatus).toBe('verified')
     expect(JSON.stringify(loaded)).not.toContain('probe-key-once')
-    facade.resetMockAPIHealthProbes()
+    facade.resetMockAPIProbeConnections()
   })
 
-  it('HTTP Mock 配置要求确认风险并使用 80 端口 Origin', async () => {
+  it('HTTP 必须显式确认，仍被服务引用的连接不能删除', async () => {
     vi.resetModules()
     const client = await import('../backendClient')
     client.setBackendRuntimeConfig({ apiMode: 'mock', apiBaseUrl: 'https://api.example.test/' })
     const facade = await import('../apiHealthFacade')
-    facade.resetMockAPIHealthProbes()
+    facade.resetMockAPIProbeConnections()
 
     const input = {
-      apiServiceId: 'service-http',
-      version: 0,
-      baseUrl: 'http://api.example.test',
-      model: 'gpt-5-mini',
+      name: 'HTTP 探针',
+      baseUrl: 'http://api.example.test:31238',
       credential: 'probe-key-once',
       enabled: true,
       acknowledgeInsecureHttp: false,
     }
-    await expect(facade.saveOwnerAPIHealthProbe(input)).rejects.toThrow('确认未加密传输风险')
-
-    const saved = await facade.saveOwnerAPIHealthProbe({ ...input, acknowledgeInsecureHttp: true })
-    expect(saved.baseUrl).toBe('http://api.example.test/v1')
-    expect(saved.normalizedOrigin).toBe('http://api.example.test:80')
-    facade.resetMockAPIHealthProbes()
+    await expect(facade.createOwnerAPIProbeConnection(input)).rejects.toThrow('HTTP 未加密传输风险')
+    const acknowledged = { ...input, probeModel: 'gpt-5.6-luna', acknowledgeInsecureHttp: true }
+    const preflight = await facade.preflightOwnerAPIProbeConnection(acknowledged)
+    const saved = await facade.createOwnerAPIProbeConnection({ ...acknowledged, preflightToken: preflight.preflightToken ?? undefined })
+    facade.updateMockAPIProbeConnectionReference({ connectionId: saved.id, serviceId: 'service-1', serviceTitle: '示例 API' })
+    await assert.rejects(() => facade.deleteOwnerAPIProbeConnection({ id: saved.id, version: saved.version }), /仍被 API 服务引用/)
+    facade.resetMockAPIProbeConnections()
   })
 })

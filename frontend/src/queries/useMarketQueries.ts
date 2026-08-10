@@ -1,5 +1,5 @@
 import { computed, type Ref } from 'vue'
-import { useMutation, useQuery, useQueryClient } from '@tanstack/vue-query'
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/vue-query'
 import type { CreateApiServicePromotionRequest } from '@/api/generated/openapi'
 import {
   backendAdminAPIPromotions,
@@ -32,6 +32,7 @@ import {
   getAdminApiOrderById,
   getAdminOverview,
   getAdminSectionRows,
+  getAdminSectionRowsPage,
   getApiPurchaseIntentById,
   getApiPurchaseIntentEvents,
   getApiPaymentAccountSettings,
@@ -40,6 +41,7 @@ import {
   getApiQuotaCredentialSummary,
   getApiQuotaOfferById,
   getApiQuotaOffers,
+  getApiQuotaOffersPage,
   getApiQuotaSaleSlots,
   getCarpoolApplicationById,
   getCarpoolApplicationEligibility,
@@ -48,20 +50,25 @@ import {
   getCarpoolNotifications,
   getMerchantApiPurchaseIntents,
   getMerchantApiOrders,
+  getMerchantApiOrdersPage,
   getMerchantCarpoolApplications,
+  getMerchantCarpoolApplicationsPage,
   getMyContactMethods,
   getMyFeedbackTicket,
   getMyFeedbackTickets,
   getMyOfficialPriceLeads,
   getMyApiPurchaseIntents,
   getMyApiOrders,
+  getMyApiOrdersPage,
   getMyApiServiceById,
   getOwnerApiQuotaBatches,
   getOwnerApiQuotaOffers,
   getOwnerApiQuotaRounds,
   getMyCarpoolApplications,
+  getMyCarpoolApplicationsPage,
   getApiServiceById,
   getApiServices,
+  getApiServicesPage,
   getOtherApiMarketServices,
   getSub2ApiMarketServices,
   getCarpoolById,
@@ -70,14 +77,19 @@ import {
   getCarpoolProductCatalog,
   getCarpoolRegions,
   getCarpools,
+  getCarpoolsPage,
   getFavorites,
   getFeedbackUnreadCount,
   getModelCatalog,
   getOfficialPriceById,
   getOfficialPrices,
+  getOfficialPricesPage,
   getPublicMerchantProfile,
   getPublicUserProfile,
   getReviewCenterRows,
+  getReviewCenterPage,
+  getMyCarpoolsPage,
+  getMyApiServicesPage,
   getTransactionTrendSummary,
   handleFeedbackTicket,
   isFavorite,
@@ -98,6 +110,7 @@ import {
   submitFeedback,
   submitReview,
   resumeApiService,
+  updateApiServiceProbeConnection,
   updateContactMethod,
   updateApiPaymentAccountSettings,
   updateApiQuotaBatchStatus,
@@ -106,6 +119,7 @@ import {
   useLinuxDoAvatar,
   verifyContactMethod,
   type AdminSection,
+  type AdminSectionPageFilters,
   type ApiOrderFilters,
   type ApiOrderPaymentIssueReason,
   type ApiOrderDeliveryKind,
@@ -115,6 +129,8 @@ import {
   type ApiPaymentAccountSettings,
   type ApiPurchaseIntentFilters,
   type ApiServiceFilters,
+  type ApiServiceSalesView,
+  type CarpoolListPageFilters,
   type CreateApiQuotaBatchPayload,
   type CreateApiQuotaOfferPayload,
   type CreateApiQuotaOrderPayload,
@@ -135,7 +151,11 @@ import {
   type TransactionTrendRange,
   type UpdateMyProfileRequest,
   type UserProfile,
+  type OfficialPriceListPageFilters,
+  type ReviewCenterRow,
 } from '@/lib/api'
+import type { OpenApiOrderDisputeInput } from '@/lib/apiOrderDispute'
+import { nextUnseenCursor, type CursorPageRequest } from '@/lib/cursorPagination'
 import { myProfileQueryKey } from '@/queries/useAppShellQueries'
 
 export { useHomeMarket } from '@/queries/useHomeMarketQuery'
@@ -163,6 +183,13 @@ export function useOfficialPrices() {
   return useQuery({ queryKey: ['official-prices'], queryFn: getOfficialPrices })
 }
 
+export function useOfficialPricesPage(filters: Ref<OfficialPriceListPageFilters> | OfficialPriceListPageFilters, page: Ref<CursorPageRequest> | CursorPageRequest) {
+  return useQuery({
+    queryKey: computed(() => ['official-prices', 'page', valueOf(filters), valueOf(page)]),
+    queryFn: () => getOfficialPricesPage(valueOf(filters), valueOf(page)),
+  })
+}
+
 export function useOfficialPrice(id: Ref<string> | string) {
   return useQuery({
     queryKey: computed(() => ['official-prices', valueOf(id)]),
@@ -180,6 +207,13 @@ export function useMyOfficialPriceLeads() {
 
 export function useCarpools() {
   return useQuery({ queryKey: ['carpools'], queryFn: getCarpools })
+}
+
+export function useCarpoolsPage(filters: Ref<CarpoolListPageFilters> | CarpoolListPageFilters, page: Ref<CursorPageRequest> | CursorPageRequest) {
+  return useQuery({
+    queryKey: computed(() => ['carpools', 'page', valueOf(filters), valueOf(page)]),
+    queryFn: () => getCarpoolsPage(valueOf(filters), valueOf(page)),
+  })
 }
 
 export function useCarpool(id: Ref<string> | string) {
@@ -206,10 +240,26 @@ export function useMyCarpoolApplications(filters: Ref<CarpoolApplicationFilters>
   })
 }
 
+export function useMyCarpoolApplicationsPage(filters: Ref<CarpoolApplicationFilters> | CarpoolApplicationFilters, page: Ref<CursorPageRequest> | CursorPageRequest) {
+  return useQuery({
+    queryKey: computed(() => ['my-carpool-applications', 'page', valueOf(filters), valueOf(page)]),
+    queryFn: () => getMyCarpoolApplicationsPage(valueOf(filters), valueOf(page)),
+    refetchOnMount: 'always',
+  })
+}
+
 export function useMerchantCarpoolApplications(filters: Ref<CarpoolApplicationFilters> | CarpoolApplicationFilters = {}) {
   return useQuery({
     queryKey: computed(() => ['merchant-carpool-applications', valueOf(filters)]),
     queryFn: () => getMerchantCarpoolApplications(valueOf(filters)),
+    refetchOnMount: 'always',
+  })
+}
+
+export function useMerchantCarpoolApplicationsPage(filters: Ref<CarpoolApplicationFilters> | CarpoolApplicationFilters, page: Ref<CursorPageRequest> | CursorPageRequest) {
+  return useQuery({
+    queryKey: computed(() => ['merchant-carpool-applications', 'page', valueOf(filters), valueOf(page)]),
+    queryFn: () => getMerchantCarpoolApplicationsPage(valueOf(filters), valueOf(page)),
     refetchOnMount: 'always',
   })
 }
@@ -252,6 +302,20 @@ export function useApiServices(filters: Ref<ApiServiceFilters> | ApiServiceFilte
   return useQuery({
     queryKey: computed(() => ['api-services', valueOf(filters)]),
     queryFn: () => getApiServices(valueOf(filters)),
+  })
+}
+
+export function useInfiniteApiServices(
+  filters: Ref<ApiServiceFilters> | ApiServiceFilters = {},
+  enabled: Ref<boolean> | boolean = true,
+  scope: Ref<string> | string = '',
+) {
+  return useInfiniteQuery({
+    queryKey: computed(() => ['api-services', 'infinite', valueOf(scope), valueOf(filters)]),
+    queryFn: ({ pageParam }) => getApiServicesPage(valueOf(filters), { limit: 20, cursor: pageParam || undefined }),
+    initialPageParam: '',
+    getNextPageParam: (lastPage, _pages, _lastPageParam, pageParams) => nextUnseenCursor(lastPage.nextCursor, pageParams),
+    enabled: computed(() => valueOf(enabled)),
   })
 }
 
@@ -373,6 +437,19 @@ export function useApiQuotaOffers(
     queryKey: computed(() => ['api-quota-offers', valueOf(filters)]),
     queryFn: () => getApiQuotaOffers(valueOf(filters)),
     placeholderData: previousData => previousData,
+    enabled: computed(() => valueOf(enabled)),
+  })
+}
+
+export function useInfiniteApiQuotaOffers(
+  filters: Ref<ApiQuotaOfferFilters> | ApiQuotaOfferFilters = {},
+  enabled: Ref<boolean> | boolean = true,
+) {
+  return useInfiniteQuery({
+    queryKey: computed(() => ['api-quota-offers', 'infinite', valueOf(filters)]),
+    queryFn: ({ pageParam }) => getApiQuotaOffersPage(valueOf(filters), { limit: 20, cursor: pageParam || undefined }),
+    initialPageParam: '',
+    getNextPageParam: (lastPage, _pages, _lastPageParam, pageParams) => nextUnseenCursor(lastPage.nextCursor, pageParams),
     enabled: computed(() => valueOf(enabled)),
   })
 }
@@ -772,10 +849,26 @@ export function useMyApiOrders(filters: Ref<ApiOrderFilters> | ApiOrderFilters =
   })
 }
 
+export function useMyApiOrdersPage(filters: Ref<ApiOrderFilters> | ApiOrderFilters, page: Ref<CursorPageRequest> | CursorPageRequest) {
+  return useQuery({
+    queryKey: computed(() => ['my-api-orders', 'page', valueOf(filters), valueOf(page)]),
+    queryFn: () => getMyApiOrdersPage(valueOf(filters), valueOf(page)),
+    refetchOnMount: 'always',
+  })
+}
+
 export function useMerchantApiOrders(filters: Ref<ApiOrderFilters> | ApiOrderFilters = {}) {
   return useQuery({
     queryKey: computed(() => ['merchant-api-orders', valueOf(filters)]),
     queryFn: () => getMerchantApiOrders(valueOf(filters)),
+    refetchOnMount: 'always',
+  })
+}
+
+export function useMerchantApiOrdersPage(filters: Ref<ApiOrderFilters> | ApiOrderFilters, page: Ref<CursorPageRequest> | CursorPageRequest) {
+  return useQuery({
+    queryKey: computed(() => ['merchant-api-orders', 'page', valueOf(filters), valueOf(page)]),
+    queryFn: () => getMerchantApiOrdersPage(valueOf(filters), valueOf(page)),
     refetchOnMount: 'always',
   })
 }
@@ -853,7 +946,7 @@ export function useConfirmApiOrderCompleteMutation() {
 export function useOpenApiOrderDisputeMutation() {
   const queryClient = useQueryClient()
   return useMutation({
-    mutationFn: ({ id, reason, version, perspective }: { id: string, reason: string, version: number, perspective: 'buyer' | 'merchant' }) => openApiOrderDispute(id, reason, version, perspective),
+    mutationFn: ({ id, input, version, perspective }: { id: string, input: OpenApiOrderDisputeInput, version: number, perspective: 'buyer' | 'merchant' }) => openApiOrderDispute(id, input, version, perspective),
     onSuccess(data, variables) {
       queryClient.setQueryData(['api-orders', variables.perspective, data.id], data)
       invalidateApiOrderQueries(queryClient, data.id)
@@ -943,6 +1036,20 @@ export function useResumeApiServiceMutation() {
       queryClient.invalidateQueries({ queryKey: ['api-market'] })
       queryClient.invalidateQueries({ queryKey: ['home-market'] })
       queryClient.invalidateQueries({ queryKey: ['admin-section'] })
+    },
+  })
+}
+
+export function useUpdateApiServiceProbeConnectionMutation() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: updateApiServiceProbeConnection,
+    onSuccess(data) {
+      queryClient.setQueryData(['my-api-services', data.id], data)
+      queryClient.invalidateQueries({ queryKey: ['my-api-services'] })
+      queryClient.invalidateQueries({ queryKey: ['api-services'] })
+      queryClient.invalidateQueries({ queryKey: ['api-market'] })
+      queryClient.invalidateQueries({ queryKey: ['api-probe-connections'] })
     },
   })
 }
@@ -1133,6 +1240,14 @@ export function useReviewCenterRows() {
   })
 }
 
+export function useReviewCenterPage(direction: Ref<ReviewCenterRow['direction'] | undefined> | ReviewCenterRow['direction'] | undefined, page: Ref<CursorPageRequest> | CursorPageRequest) {
+  return useQuery({
+    queryKey: computed(() => ['review-center', 'page', valueOf(direction), valueOf(page)]),
+    queryFn: () => getReviewCenterPage(valueOf(direction), valueOf(page)),
+    refetchOnMount: 'always',
+  })
+}
+
 export function useSubmitReviewMutation() {
   const queryClient = useQueryClient()
   return useMutation({
@@ -1164,10 +1279,36 @@ export function useAdminApiOrder(id: Ref<string> | string) {
   })
 }
 
-export function useAdminSectionRows(section: Ref<AdminSection> | AdminSection) {
+export function useAdminSectionRows(section: Ref<AdminSection> | AdminSection, enabled: Ref<boolean> | boolean = true) {
   return useQuery({
     queryKey: computed(() => ['admin-section', valueOf(section)]),
     queryFn: () => getAdminSectionRows(valueOf(section)),
+    enabled: computed(() => valueOf(enabled)),
+    refetchOnMount: 'always',
+  })
+}
+
+export function useAdminSectionRowsPage(section: Ref<AdminSection> | AdminSection, filters: Ref<AdminSectionPageFilters> | AdminSectionPageFilters, page: Ref<CursorPageRequest> | CursorPageRequest, enabled: Ref<boolean> | boolean = true) {
+  return useQuery({
+    queryKey: computed(() => ['admin-section', valueOf(section), 'page', valueOf(filters), valueOf(page)]),
+    queryFn: () => getAdminSectionRowsPage(valueOf(section), valueOf(filters), valueOf(page)),
+    enabled: computed(() => valueOf(enabled)),
+    refetchOnMount: 'always',
+  })
+}
+
+export function usePagedMyCarpools(page: Ref<CursorPageRequest> | CursorPageRequest) {
+  return useQuery({
+    queryKey: computed(() => ['my-carpools', 'page', valueOf(page)]),
+    queryFn: () => getMyCarpoolsPage(valueOf(page)),
+    refetchOnMount: 'always',
+  })
+}
+
+export function usePagedMyApiServices(salesView: Ref<ApiServiceSalesView> | ApiServiceSalesView, page: Ref<CursorPageRequest> | CursorPageRequest) {
+  return useQuery({
+    queryKey: computed(() => ['my-api-services', valueOf(salesView), 'page', valueOf(page)]),
+    queryFn: () => getMyApiServicesPage(valueOf(salesView), valueOf(page)),
     refetchOnMount: 'always',
   })
 }

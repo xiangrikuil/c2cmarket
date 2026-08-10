@@ -34,7 +34,7 @@ func TestSourceAuthorVerificationPostgresLifecycleAndAudit(t *testing.T) {
 	buyerContactID := uuid.NewString()
 	serviceID := uuid.NewString()
 	adminID := uuid.NewString()
-	seedQuotaServiceForTest(t, ctx, pool, sellerID, sellerContactID, buyerID, buyerContactID, serviceID, now)
+	seedOrderableQuotaServiceForTest(t, ctx, pool, sellerID, sellerContactID, buyerID, buyerContactID, serviceID, now)
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO users (id, username, display_name, account_status, created_at, updated_at)
 		VALUES ($1, $2, '原帖核验管理员', 'active', $3, $3)

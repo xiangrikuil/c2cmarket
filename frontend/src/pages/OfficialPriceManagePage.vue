@@ -4,7 +4,7 @@ import { Archive, ExternalLink, Pencil, Plus, RefreshCw, Save } from 'lucide-vue
 import { useMutation, useQuery, useQueryClient } from '@tanstack/vue-query'
 import { toast } from 'vue-sonner'
 import SoftTable from '@/components/market/SoftTable.vue'
-import TablePagination from '@/components/market/TablePagination.vue'
+import CursorTablePagination from '@/components/market/CursorTablePagination.vue'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import {
@@ -24,9 +24,10 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { Textarea } from '@/components/ui/textarea'
-import { usePagination } from '@/composables/usePagination'
+import { useCursorPagination } from '@/composables/useCursorPagination'
 import {
   backendAdminOfficialPriceRecords,
+  backendAdminOfficialPriceRecordsPage,
   backendCreateAdminOfficialPriceRecord,
   backendTakeDownAdminOfficialPriceRecord,
   backendUpdateAdminOfficialPriceRecord,
@@ -76,9 +77,24 @@ const form = reactive({
 const records = computed(() => recordsQuery.data.value ?? [])
 const productPlans = computed(() => productCatalogQuery.data.value ?? [])
 const activeProductPlans = computed(() => productPlans.value.filter(item => item.active !== false))
-const isLoading = computed(() => recordsQuery.isLoading.value)
+const backendStatus = computed(() => {
+  if (statusFilter.value === '生效中') return 'active'
+  if (statusFilter.value === '历史记录') return 'superseded'
+  if (statusFilter.value === '已下架') return 'taken_down'
+  return undefined
+})
+const pagination = useCursorPagination([search, statusFilter])
+const pageRequest = computed(() => ({ limit: pagination.pageSize, cursor: pagination.cursor.value }))
+const pageFilters = computed(() => ({ q: search.value.trim() || undefined, status: backendStatus.value }))
+const recordsPageQuery = useQuery({
+  queryKey: computed(() => ['admin-official-price-records', 'page', pageFilters.value, pageRequest.value]),
+  queryFn: () => backendAdminOfficialPriceRecordsPage(pageFilters.value, pageRequest.value),
+  refetchOnMount: 'always',
+})
+const filteredRows = computed(() => recordsPageQuery.data.value?.items ?? [])
+const isLoading = computed(() => recordsPageQuery.isLoading.value || recordsPageQuery.isFetching.value)
 const errorMessage = computed(() => {
-  const error = recordsQuery.error.value
+  const error = recordsPageQuery.error.value
   return error instanceof Error ? error.message : '官网价格记录读取失败。'
 })
 const activeCount = computed(() => records.value.filter(item => item.status === 'active').length)
@@ -91,28 +107,6 @@ const lowestCny = computed(() => {
   if (!prices.length) return '暂无'
   return `¥${Math.min(...prices).toFixed(2)}`
 })
-const filteredRows = computed(() => {
-  const keyword = search.value.trim().toLowerCase()
-  return records.value.filter(item => {
-    const statusMatched = statusFilter.value === '全部'
-      || (statusFilter.value === '生效中' && item.status === 'active')
-      || (statusFilter.value === '历史记录' && item.status === 'superseded')
-      || (statusFilter.value === '已下架' && item.status === 'taken_down')
-    if (!statusMatched) return false
-    if (!keyword) return true
-    return [
-      item.product,
-      item.plan,
-      item.productName,
-      item.region,
-      item.regionCode,
-      item.channel,
-      item.currency,
-      item.sourceUrl,
-    ].some(value => value.toLowerCase().includes(keyword))
-  })
-})
-const pagination = usePagination(filteredRows)
 const saveMutation = useMutation({
   mutationFn: async () => {
     const payload = formPayload()
@@ -256,7 +250,7 @@ async function invalidateOfficialPriceQueries() {
         <p class="mt-2 text-muted-foreground">由管理员维护产品、地区、渠道、官网公开价、折合人民币和来源。</p>
       </div>
       <div class="flex gap-2">
-        <Button variant="outline" :disabled="recordsQuery.isFetching.value" @click="recordsQuery.refetch()">
+        <Button variant="outline" :disabled="recordsPageQuery.isFetching.value" @click="recordsPageQuery.refetch()">
           <RefreshCw class="h-4 w-4" />刷新
         </Button>
         <Button @click="openCreateForm">
@@ -293,7 +287,7 @@ async function invalidateOfficialPriceQueries() {
       </Select>
     </div>
 
-    <div v-if="recordsQuery.isError.value" class="rounded-md border border-destructive/20 bg-destructive/5 px-4 py-3 text-sm text-destructive">
+    <div v-if="recordsPageQuery.isError.value" class="rounded-md border border-destructive/20 bg-destructive/5 px-4 py-3 text-sm text-destructive">
       {{ errorMessage }}
     </div>
 
@@ -301,10 +295,10 @@ async function invalidateOfficialPriceQueries() {
       <tr v-if="isLoading">
         <td colspan="8" class="px-4 py-8 text-center text-sm text-muted-foreground">正在读取官网价格记录</td>
       </tr>
-      <tr v-else-if="pagination.paginatedRows.value.length === 0">
+      <tr v-else-if="filteredRows.length === 0">
         <td colspan="8" class="px-4 py-8 text-center text-sm text-muted-foreground">暂无记录</td>
       </tr>
-      <tr v-for="item in pagination.paginatedRows.value" v-else :key="item.id">
+      <tr v-for="item in filteredRows" v-else :key="item.id">
         <td>
           <div class="font-medium">{{ item.product }} {{ item.plan }}</div>
           <div class="mt-1 text-xs text-muted-foreground">{{ item.productName }}</div>
@@ -339,12 +333,13 @@ async function invalidateOfficialPriceQueries() {
         </td>
       </tr>
       <template #footer>
-        <TablePagination
-          v-model:page="pagination.page.value"
-          :page-count="pagination.pageCount.value"
-          :total="pagination.total.value"
-          :start-item="pagination.startItem.value"
-          :end-item="pagination.endItem.value"
+        <CursorTablePagination
+          :page="pagination.page.value"
+          :item-count="filteredRows.length"
+          :has-next-page="Boolean(recordsPageQuery.data.value?.nextCursor)"
+          :loading="recordsPageQuery.isFetching.value"
+          @previous="pagination.previous"
+          @next="pagination.next(recordsPageQuery.data.value?.nextCursor)"
         />
       </template>
     </SoftTable>

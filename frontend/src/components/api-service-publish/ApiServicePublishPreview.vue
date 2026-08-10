@@ -48,7 +48,7 @@ const previewRows = computed(() => {
   const rows = [
     {
       label: '支持模型',
-      value: selectedModels.value.map(item => item.displayName).join(' / ') || '待选择',
+      value: selectedModels.value.map(item => item.name).join(' / ') || '待选择',
       icon: Bot,
     },
   ]
@@ -74,7 +74,7 @@ const previewRows = computed(() => {
 const freeServiceCard = computed<ApiFreeServiceCardData>(() => ({
   title: title.value,
   delivery: distributionLabels[props.form.distributionSystem],
-  models: selectedModels.value.map(item => item.displayName),
+  models: selectedModels.value.map(item => item.name),
   category: props.form.providerCategory,
   categoryLabel: providerCategoryLabels[props.form.providerCategory],
   iconSrc: providerIconSrc.value,
@@ -151,7 +151,7 @@ const freeServiceCard = computed<ApiFreeServiceCardData>(() => ({
         <dl class="api-publish-preview-list px-3 pb-3 text-xs">
           <div><dt>套餐有效期</dt><dd>{{ previewPackage.durationDays }} 天，交付后开始</dd></div>
           <div><dt>套餐库存</dt><dd>{{ previewPackage.stockTotal }} 份</dd></div>
-          <div><dt>套餐模型</dt><dd>{{ previewPackage.modelCatalogIds.map(id => catalogById.get(id)?.displayName ?? id).join(' / ') || '待选择' }}</dd></div>
+          <div><dt>套餐模型</dt><dd>{{ previewPackage.modelCatalogIds.map(id => catalogById.get(id)?.name ?? id).join(' / ') || '待选择' }}</dd></div>
           <div><dt>收款方式</dt><dd>{{ paymentSummary }}</dd></div>
 		  <div><dt>接入类型</dt><dd>{{ distributionLabels[form.distributionSystem] }}</dd></div>
 		  <div><dt>号池</dt><dd>{{ accountPoolLabel(form) }}</dd></div>

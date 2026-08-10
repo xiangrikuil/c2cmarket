@@ -10,6 +10,8 @@ import SkeletonTable from '@/components/market/SkeletonTable.vue'
 import StatusBadge from '@/components/market/StatusBadge.vue'
 import { useAdminSectionRows } from '@/queries/useMarketQueries'
 import type { AdminRow, AdminSection } from '@/lib/api'
+import { isCarpoolAdminActionStatus } from '@/lib/carpoolModeration'
+import { isApiServiceAdminActionStatus } from '@/lib/apiServiceModeration'
 
 type TaskRow = AdminRow & { section: AdminSection, sectionLabel: string }
 
@@ -36,10 +38,13 @@ function riskRank(row: AdminRow) {
   return 2
 }
 
+const carpoolActionRows = computed(() => (carpoolsQuery.data.value ?? []).filter(row => isCarpoolAdminActionStatus(row.status)))
+const apiServiceActionRows = computed(() => (apiServicesQuery.data.value ?? []).filter(row => isApiServiceAdminActionStatus(row.status)))
+
 const actionableRows = computed<TaskRow[]>(() => [
   ...(reportsQuery.data.value ?? []).filter(actionable).map(row => ({ ...row, section: 'reports' as const, sectionLabel: '举报纠纷' })),
-  ...(carpoolsQuery.data.value ?? []).filter(actionable).map(row => ({ ...row, section: 'carpools' as const, sectionLabel: '车源异常' })),
-  ...(apiServicesQuery.data.value ?? []).filter(actionable).map(row => ({ ...row, section: 'api-services' as const, sectionLabel: '服务审核' })),
+  ...carpoolActionRows.value.map(row => ({ ...row, section: 'carpools' as const, sectionLabel: '车源异常' })),
+  ...apiServiceActionRows.value.map(row => ({ ...row, section: 'api-services' as const, sectionLabel: '服务异常' })),
   ...(ordersQuery.data.value ?? []).filter(actionable).map(row => ({ ...row, section: 'trade-intents' as const, sectionLabel: '订单追踪' })),
   ...(feedbackQuery.data.value ?? []).filter(actionable).map(row => ({ ...row, section: 'feedback' as const, sectionLabel: '问题反馈' })),
 ].sort((a, b) => riskRank(a) - riskRank(b)))
@@ -57,7 +62,7 @@ const overviewStats = computed(() => [
   { label: '全部待处理', value: actionableRows.value.length, hint: '五类工作队列', icon: ListChecks, tone: 'blue' },
   { label: '高风险举报/纠纷', value: actionableRows.value.filter(highRisk).length, hint: '优先进入处理', icon: MessageSquareWarning, tone: 'red' },
   { label: '即将/已经超时', value: actionableRows.value.filter(row => /超时|SLA|临近/i.test(`${row.risk} ${row.secondary}`)).length, hint: '来自队列上下文', icon: Clock3, tone: 'amber' },
-  { label: '待审核服务', value: (apiServicesQuery.data.value ?? []).filter(actionable).length, hint: 'API 服务审核', icon: Code2, tone: 'cyan' },
+  { label: '异常服务', value: apiServiceActionRows.value.length, hint: '待处理与已下架', icon: Code2, tone: 'cyan' },
   { label: '最近管理动作', value: recentLogs.value.length, hint: '只读审计记录', icon: ScrollText, tone: 'violet' },
   { label: '当前查询记录', value: allRows.value.length, hint: '非平台经营总量', icon: BarChart3, tone: 'emerald' },
 ])
@@ -69,12 +74,18 @@ const marketHealth = computed(() => [
 ])
 const queueDistribution = computed(() => [
   { label: '举报纠纷', value: (reportsQuery.data.value ?? []).filter(actionable).length, tone: 'red' },
-  { label: '车源异常', value: (carpoolsQuery.data.value ?? []).filter(actionable).length, tone: 'amber' },
-  { label: '服务审核', value: (apiServicesQuery.data.value ?? []).filter(actionable).length, tone: 'cyan' },
+  { label: '车源异常', value: carpoolActionRows.value.length, tone: 'amber' },
+  { label: '服务异常', value: apiServiceActionRows.value.length, tone: 'cyan' },
   { label: '订单追踪', value: (ordersQuery.data.value ?? []).filter(actionable).length, tone: 'blue' },
   { label: '问题反馈', value: (feedbackQuery.data.value ?? []).filter(actionable).length, tone: 'violet' },
 ])
 const maxQueueValue = computed(() => Math.max(1, ...queueDistribution.value.map(item => item.value)))
+
+function taskTo(row: TaskRow) {
+  if (row.section === 'carpools') return '/admin/carpools?view=exceptions'
+  if (row.section === 'api-services') return '/admin/api-services?view=exceptions'
+  return `/admin/${row.section}`
+}
 </script>
 
 <template>
@@ -91,7 +102,7 @@ const maxQueueValue = computed(() => Math.max(1, ...queueDistribution.value.map(
         <SkeletonTable v-if="isLoading" :rows="6" :columns="4" class="rounded-none border-0" />
         <EmptyState v-else-if="tasks.length === 0" title="当前没有管理待办" description="新的审核、举报、纠纷或异常交易会进入这里。" />
         <div v-else class="divide-y divide-border">
-          <RouterLink v-for="row in tasks" :key="`${row.section}-${row.id}`" :to="`/admin/${row.section}`" class="admin-task-row grid gap-3 px-5 py-4 transition hover:bg-accent/60 md:grid-cols-[110px_minmax(0,1fr)_160px_auto] md:items-center" :class="highRisk(row) ? 'admin-task-row--risk' : 'admin-task-row--normal'">
+          <RouterLink v-for="row in tasks" :key="`${row.section}-${row.id}`" :to="taskTo(row)" class="admin-task-row grid gap-3 px-5 py-4 transition hover:bg-accent/60 md:grid-cols-[110px_minmax(0,1fr)_160px_auto] md:items-center" :class="highRisk(row) ? 'admin-task-row--risk' : 'admin-task-row--normal'">
             <div><Badge :variant="highRisk(row) ? 'destructive' : 'secondary'">{{ row.sectionLabel }}</Badge></div>
             <div class="min-w-0"><div class="truncate font-medium">{{ row.primary }}</div><div class="mt-1 truncate text-xs text-muted-foreground">{{ row.secondary }} · {{ row.owner }}</div></div>
             <div><StatusBadge :status="row.status" :label="row.status" /><div class="mt-1 truncate text-xs text-muted-foreground">{{ row.risk }}</div></div>
@@ -102,7 +113,7 @@ const maxQueueValue = computed(() => Math.max(1, ...queueDistribution.value.map(
 
       <div class="space-y-5">
         <Card class="p-5"><div class="flex items-center gap-2 font-semibold"><FileCheck2 class="h-4 w-4 text-primary" />平台记录概况</div><dl class="mt-4 grid grid-cols-2 gap-3"><div v-for="item in marketHealth" :key="item.label" class="rounded-lg bg-muted/40 p-3"><dt class="text-xs text-muted-foreground">{{ item.label }}</dt><dd class="mt-1 text-xl font-semibold">{{ item.value }}</dd></div></dl><p class="mt-4 text-xs leading-5 text-muted-foreground">以上仅为当前管理查询返回的记录，不等同平台经营指标。</p></Card>
-        <Card class="p-5"><div class="flex items-center gap-2 font-semibold"><Gauge class="h-4 w-4 text-primary" />快捷入口</div><div class="admin-reference-shortcuts"><RouterLink to="/admin/carpools"><CarFront /><span>车源复核</span></RouterLink><RouterLink to="/admin/api-services"><Code2 /><span>服务审核</span></RouterLink><RouterLink to="/admin/api-promotions"><Megaphone /><span>API 推广</span></RouterLink><RouterLink to="/admin/reports"><MessageSquareWarning /><span>举报纠纷</span></RouterLink><RouterLink to="/admin/logs"><ScrollText /><span>审计日志</span></RouterLink></div></Card>
+        <Card class="p-5"><div class="flex items-center gap-2 font-semibold"><Gauge class="h-4 w-4 text-primary" />快捷入口</div><div class="admin-reference-shortcuts"><RouterLink to="/admin/carpools"><CarFront /><span>车源管理</span></RouterLink><RouterLink to="/admin/api-services"><Code2 /><span>服务管理</span></RouterLink><RouterLink to="/admin/api-promotions"><Megaphone /><span>API 推广</span></RouterLink><RouterLink to="/admin/reports"><MessageSquareWarning /><span>举报纠纷</span></RouterLink><RouterLink to="/admin/logs"><ScrollText /><span>审计日志</span></RouterLink></div></Card>
         <Card class="p-5"><div class="flex items-center gap-2 font-semibold"><Clock3 class="h-4 w-4 text-primary" />最近审计动作</div><div v-if="recentLogs.length" class="mt-4 space-y-3"><RouterLink v-for="row in recentLogs" :key="row.id" to="/admin/logs" class="block border-b border-border pb-3 last:border-0 last:pb-0"><div class="text-sm font-medium">{{ row.primary }}</div><div class="mt-1 text-xs text-muted-foreground">{{ row.secondary }} · {{ row.owner }}</div></RouterLink></div><p v-else class="mt-4 text-sm text-muted-foreground">暂无审计记录。</p></Card>
         <Card v-if="allRows.some(highRisk)" class="border-destructive/25 p-5"><div class="flex gap-3"><TriangleAlert class="mt-0.5 h-5 w-5 shrink-0 text-destructive" /><div><h2 class="font-semibold">最近异常</h2><p class="mt-2 text-sm text-muted-foreground">检测到 {{ allRows.filter(highRisk).length }} 条高风险或异常上下文，请优先从待办队列进入处理。</p></div></div></Card>
       </div>

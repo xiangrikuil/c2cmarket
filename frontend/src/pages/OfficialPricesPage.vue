@@ -9,12 +9,12 @@ import { Input } from '@/components/ui/input'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import SoftTable from '@/components/market/SoftTable.vue'
-import TablePagination from '@/components/market/TablePagination.vue'
-import { usePagination } from '@/composables/usePagination'
+import CursorTablePagination from '@/components/market/CursorTablePagination.vue'
+import { useCursorPagination } from '@/composables/useCursorPagination'
 import { shouldUseRealBackend } from '@/lib/backendClient'
 import { getProductCategory } from '@/lib/productCategories'
 import { getProductCategoryIconSrc } from '@/lib/productCategoryIcon'
-import { useOfficialPrices } from '@/queries/useMarketQueries'
+import { useCarpoolProductCatalog, useOfficialPrices, useOfficialPricesPage } from '@/queries/useMarketQueries'
 import { prefetchQueriesOnServer } from '@/queries/prefetchQueriesOnServer'
 import type { OfficialPrice } from '@/lib/api'
 
@@ -25,8 +25,9 @@ const route = useRoute()
 const router = useRouter()
 const isRealBackend = shouldUseRealBackend()
 const officialPricesQuery = useOfficialPrices()
+const productCatalogQuery = useCarpoolProductCatalog()
 const { data } = officialPricesQuery
-prefetchQueriesOnServer(officialPricesQuery)
+prefetchQueriesOnServer(officialPricesQuery, productCatalogQuery)
 
 const q = ref(typeof route.query.q === 'string' ? route.query.q : '')
 const product = ref(typeof route.query.product === 'string' ? route.query.product : '全部')
@@ -90,38 +91,52 @@ function trustFloor(value: string) {
   return match ? Number(match[0]) : 0
 }
 
-const rows = computed(() => {
-  const keyword = q.value.trim().toLowerCase()
-  const filtered = (data.value ?? []).filter(row => {
-    const keywordMatched = !keyword || [
-      row.product,
-      row.plan,
-      row.region,
-      row.channel,
-      row.submitter,
-      row.source,
-    ].some(value => value.toLowerCase().includes(keyword))
-
-    return keywordMatched
-      && (product.value === '全部' || row.product.includes(product.value))
-      && (region.value === '全部' || row.region.includes(region.value))
-      && (channel.value === '全部' || row.channel.includes(normalizeChannel(channel.value)))
-      && (status.value === '全部' || row.status === status.value)
-      && (plan.value === '全部' || row.plan.includes(plan.value))
-      && (openingMethod.value === '全部' || row.openingMethod.includes(openingMethod.value.replace('Apple Store', 'Apple')))
-      && (source.value === '全部' || row.source.includes(source.value.replace('linux.do 原帖', 'linux.do').replace('管理员录入', '管理员')))
-      && (trust.value === '不限' || row.submitterTrust >= trustFloor(trust.value))
-  })
-
-  return [...filtered].sort((a, b) => {
-    if (sort.value === 'cny_asc') return (a.cny ?? Number.POSITIVE_INFINITY) - (b.cny ?? Number.POSITIVE_INFINITY)
-    if (sort.value === 'trust_desc') return b.submitterTrust - a.submitterTrust
-    if (sort.value === 'verified_recent' || sort.value === 'submitted_desc') return a.updatedAt.localeCompare(b.updatedAt)
-    return Number(b.isLowest) - Number(a.isLowest) || a.updatedAt.localeCompare(b.updatedAt)
-  })
+const selectedProductCategory = computed(() => {
+  if (product.value === 'ChatGPT') return 'gpt'
+  if (product.value === 'Claude') return 'claude'
+  if (product.value === 'Cursor') return 'cursor'
+  if (product.value === 'Gemini') return 'gemini'
+  if (product.value === '其他') return 'other'
+  return undefined
+})
+const matchingProductPlanIds = computed(() => {
+  if (product.value === '全部' && plan.value === '全部') return undefined
+  return (productCatalogQuery.data.value ?? [])
+    .filter(item => !selectedProductCategory.value || item.categoryCode === selectedProductCategory.value)
+    .filter(item => plan.value === '全部' || item.displayName.toLowerCase().includes(plan.value.toLowerCase()))
+    .map(item => item.id)
 })
 
-const pagination = usePagination(rows)
+function officialRegionCode(value: string) {
+  const codes: Record<string, string> = { 菲律宾: 'ph', 土耳其: 'tr', 香港: 'hk', 日本: 'jp', 美国: 'us', 其他: 'other' }
+  return codes[value]
+}
+
+const pageFilters = computed(() => {
+  const selectedPlanFilter = product.value !== '全部' || plan.value !== '全部'
+  return {
+    q: q.value.trim() || undefined,
+    product: product.value === '全部' ? undefined : product.value,
+    plan: plan.value === '全部' ? undefined : plan.value,
+    productPlanIds: matchingProductPlanIds.value,
+    region: region.value === '全部' ? undefined : officialRegionCode(region.value),
+    regionLabel: region.value === '全部' ? undefined : region.value,
+    channel: channel.value === '全部' ? undefined : normalizeChannel(channel.value),
+    channelLabel: channel.value === '全部' ? undefined : normalizeChannel(channel.value),
+    status: status.value === '全部' || isRealBackend ? undefined : status.value,
+    openingMethod: openingMethod.value === '全部' ? undefined : openingMethod.value.replace('Apple Store', 'Apple'),
+    openingMethodLabel: openingMethod.value === '全部' ? undefined : openingMethod.value.replace('Apple Store', 'Apple'),
+    source: source.value === '全部' ? undefined : source.value.replace('linux.do 原帖', 'linux.do').replace('管理员录入', '管理员'),
+    sourceLabel: source.value === '全部' ? undefined : source.value.replace('linux.do 原帖', 'linux.do').replace('管理员录入', '管理员'),
+    trustFloor: trust.value === '不限' ? undefined : trustFloor(trust.value),
+    sort: sort.value,
+    none: (selectedPlanFilter && matchingProductPlanIds.value?.length === 0) || (isRealBackend && trust.value !== '不限'),
+  }
+})
+const pagination = useCursorPagination([q, product, region, channel, status, plan, openingMethod, source, trust, sort])
+const pageRequest = computed(() => ({ limit: pagination.pageSize, cursor: pagination.cursor.value }))
+const pageQuery = useOfficialPricesPage(pageFilters, pageRequest)
+const rows = computed(() => pageQuery.data.value?.items ?? [])
 
 const contributorCount = computed(() => new Set((data.value ?? []).map(item => item.submitter)).size)
 
@@ -284,10 +299,10 @@ function openPrice(event: MouseEvent | KeyboardEvent, id: string) {
           </Badge>
         </div>
         <Button class="h-7 shrink-0 px-2 text-xs" variant="ghost" size="sm" @click="clearAll">清除全部</Button>
-        <span class="shrink-0 text-xs text-muted-foreground">共 {{ rows.length }} 条价格记录</span>
+        <span class="shrink-0 text-xs text-muted-foreground">本页 {{ rows.length }} 条价格记录</span>
       </div>
       <div v-else class="mt-2 flex justify-end border-t border-border pt-2 text-xs text-muted-foreground">
-        共 {{ rows.length }} 条价格记录
+        本页 {{ rows.length }} 条价格记录
       </div>
         </div>
 
@@ -295,7 +310,7 @@ function openPrice(event: MouseEvent | KeyboardEvent, id: string) {
           {{ isRealBackend ? '当前筛选条件下暂无已验证官网公开价格记录。' : '当前筛选条件下暂无官网公开价格记录。' }}
         </div>
         <SoftTable v-else class="official-price-table" :columns="['产品', '地区 / 渠道', '官网公开价', '折合人民币', '状态', '来源 / 维护', '更新时间']">
-      <tr v-for="row in pagination.paginatedRows.value" :key="row.id" class="cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" role="link" tabindex="0" :aria-label="`查看 ${row.product} ${row.plan} 官网价格`" @click="openPrice($event, row.id)" @keydown.enter="openPrice($event, row.id)">
+      <tr v-for="row in rows" :key="row.id" class="cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" role="link" tabindex="0" :aria-label="`查看 ${row.product} ${row.plan} 官网价格`" @click="openPrice($event, row.id)" @keydown.enter="openPrice($event, row.id)">
         <td><div class="flex items-center gap-3"><span class="official-price-product-icon" :class="productToneClass(row.product)"><img v-if="productIconSrc(row.product)" :src="productIconSrc(row.product)!" alt="" /><Package v-else class="h-4 w-4" /></span><div class="min-w-0"><div class="font-medium">{{ row.product }} {{ row.plan }}</div><div class="text-xs text-muted-foreground">{{ row.openingMethod }}</div></div></div></td>
         <td><div>{{ row.region }}</div><div class="text-xs text-muted-foreground">{{ row.channel }}</div></td>
         <td>{{ row.originalPrice }}</td>
@@ -305,12 +320,13 @@ function openPrice(event: MouseEvent | KeyboardEvent, id: string) {
         <td class="text-muted-foreground">{{ row.updatedAt }}</td>
       </tr>
       <template #footer>
-        <TablePagination
-          v-model:page="pagination.page.value"
-          :page-count="pagination.pageCount.value"
-          :total="pagination.total.value"
-          :start-item="pagination.startItem.value"
-          :end-item="pagination.endItem.value"
+        <CursorTablePagination
+          :page="pagination.page.value"
+          :item-count="rows.length"
+          :has-next-page="Boolean(pageQuery.data.value?.nextCursor)"
+          :loading="pageQuery.isFetching.value"
+          @previous="pagination.previous"
+          @next="pagination.next(pageQuery.data.value?.nextCursor)"
         />
       </template>
         </SoftTable>

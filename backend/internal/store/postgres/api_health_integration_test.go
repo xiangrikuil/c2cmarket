@@ -2,10 +2,7 @@ package postgres
 
 import (
 	"context"
-	"crypto/sha256"
 	"net/http"
-	"os"
-	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -15,7 +12,6 @@ import (
 	"c2c-market/backend/internal/module/apihealth"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 func TestAPIHealthPostgresVersionConflictUsesPreconditionFailed(t *testing.T) {
@@ -26,258 +22,174 @@ func TestAPIHealthPostgresVersionConflictUsesPreconditionFailed(t *testing.T) {
 	}
 }
 
-func TestAPIHealthPostgresConfigAuthorizationAndProbeLifecycle(t *testing.T) {
-	databaseURL := strings.TrimSpace(os.Getenv("C2C_TEST_DATABASE_URL"))
-	if databaseURL == "" {
-		t.Skip("C2C_TEST_DATABASE_URL is not configured")
-	}
+func TestPostgresAPIProbeConnectionLifecycle(t *testing.T) {
+	store := connectLifecycleTestStore(t)
 	ctx := context.Background()
-	pool, err := pgxpool.New(ctx, databaseURL)
-	if err != nil {
-		t.Fatalf("connect test database: %v", err)
-	}
-	t.Cleanup(pool.Close)
-	var databaseName string
-	if err := pool.QueryRow(ctx, "select current_database()").Scan(&databaseName); err != nil {
-		t.Fatalf("read test database name: %v", err)
-	}
-	if !strings.HasSuffix(databaseName, "_quota_test") {
-		t.Fatalf("refusing to run probe integration test against non-dedicated database %q", databaseName)
-	}
-
-	now := time.Date(2026, 8, 4, 4, 0, 0, 0, time.UTC)
+	now := time.Date(2026, 8, 8, 10, 0, 0, 0, time.UTC)
 	sellerID := uuid.NewString()
-	contactID := uuid.NewString()
+	sellerContactID := uuid.NewString()
 	buyerID := uuid.NewString()
 	buyerContactID := uuid.NewString()
 	serviceID := uuid.NewString()
-	adminID := uuid.NewString()
-	seedQuotaServiceForTest(t, ctx, pool, sellerID, contactID, buyerID, buyerContactID, serviceID, now)
-	if _, err := pool.Exec(ctx, `
-		INSERT INTO users (id, username, display_name, account_status, created_at, updated_at)
-		VALUES ($1, $2, '探针管理员', 'active', $3, $3)
-	`, adminID, "probe-admin-"+adminID[:8], now); err != nil {
-		t.Fatalf("seed probe admin: %v", err)
-	}
-	if _, err := pool.Exec(ctx, `
-		INSERT INTO user_permissions (user_id, permission) VALUES ($1, 'admin')
-	`, adminID); err != nil {
-		t.Fatalf("seed probe admin permission: %v", err)
-	}
+	connectionID := ""
 	t.Cleanup(func() {
-		_, _ = pool.Exec(ctx, `DELETE FROM api_service_probe_authorization_events WHERE api_service_id = $1`, serviceID)
-		_, _ = pool.Exec(ctx, `DELETE FROM user_permissions WHERE user_id = $1`, adminID)
-		_, _ = pool.Exec(ctx, `DELETE FROM users WHERE id = $1`, adminID)
-		cleanupQuotaServiceForTest(t, ctx, pool, sellerID, buyerID)
+		_, _ = store.pool.Exec(context.Background(), `UPDATE api_services SET probe_connection_id = NULL WHERE owner_user_id = $1`, sellerID)
+		if connectionID != "" {
+			_, _ = store.pool.Exec(context.Background(), `DELETE FROM api_probe_connections WHERE id = $1`, connectionID)
+		}
+		_, _ = store.pool.Exec(context.Background(), `DELETE FROM api_probe_connection_model_changes WHERE changed_by_user_id = $1`, sellerID)
+		cleanupLifecycleCredentialFixtures(t, context.Background(), store, sellerID, buyerID, "")
 	})
+	seedQuotaServiceForTest(t, ctx, store.pool, sellerID, sellerContactID, buyerID, buyerContactID, serviceID, now)
 
-	codec, err := newContactCodec(ContactCryptoConfig{
-		EncryptionKey: "probe-integration-encryption", FingerprintKey: "probe-integration-fingerprint",
-		EncryptionKeyVersion: "probe-v1", FingerprintKeyVersion: "probe-v1",
-	})
-	if err != nil {
-		t.Fatalf("create probe codec: %v", err)
-	}
-	store := &Store{pool: pool, contactCodec: codec}
-	credential := "sk-probe-dedicated"
-	mutation, err := apihealth.BuildConfigMutation(nil, serviceID, sellerID, apihealth.ConfigInput{
-		BaseURL: "https://example.com/v1", Model: "gpt-5", Credential: &credential, Enabled: true,
-	}, now)
-	if err != nil {
-		t.Fatalf("build config: %v", err)
-	}
-	config, appErr := store.UpsertOwnerProbeConfig(ctx, mutation, &credential, 0)
+	verifiedAt := now
+	connection, appErr := store.CreateOwnerProbeConnection(ctx, apihealth.Connection{
+		OwnerUserID:        sellerID,
+		Name:               "主 Sub2API",
+		BaseURL:            "https://api.example.com/v1",
+		NormalizedBaseURL:  "https://api.example.com/v1",
+		Enabled:            true,
+		VerificationStatus: apihealth.VerificationVerified,
+		VerifiedAt:         &verifiedAt,
+		ProbeModel:         apihealth.DefaultGPTProbeModel,
+		ProbeProtocol:      apihealth.ProtocolResponsesV1,
+		AvailableModels:    []string{apihealth.DefaultGPTProbeModel},
+		ProbeEnvironment:   apihealth.ProbeEnvironmentUSWestV1,
+		MeasurementVersion: 1,
+		Version:            1,
+		CreatedAt:          now,
+		UpdatedAt:          now,
+	}, "probe-secret-v1")
 	if appErr != nil {
-		t.Fatalf("create config: %v", appErr)
+		t.Fatalf("create probe connection: %v", appErr)
 	}
-	if config.Version != 1 || config.MeasurementVersion != 1 || !config.CredentialConfigured {
-		t.Fatalf("unexpected created config: %+v", config)
+	connectionID = connection.ID
+	if connection.Version != 1 || !connection.CredentialConfigured {
+		t.Fatalf("unexpected created connection: %+v", connection)
 	}
-	if _, appErr := store.AdminDecideProbeConfig(ctx, adminID, uuid.NewString(), 1, true, "", now); appErr == nil || appErr.Status != http.StatusNotFound || appErr.Code != domain.CodeObjectNotFound {
-		t.Fatalf("missing admin probe decision did not return not found: %v", appErr)
+	if _, found, readErr := store.GetOwnerProbeConnection(ctx, buyerID, connection.ID); readErr != nil || found {
+		t.Fatalf("cross-owner connection read was not isolated: found=%t error=%v", found, readErr)
 	}
-	if _, appErr := store.AdminDecideProbeConfig(ctx, adminID, config.ID, config.Version+1, true, "", now); appErr == nil || appErr.Status != http.StatusPreconditionFailed || appErr.Code != domain.CodeVersionConflict {
-		t.Fatalf("stale admin probe decision did not return version conflict: %v", appErr)
-	}
-	if _, found, appErr := store.GetOwnerProbeConfig(ctx, buyerID, serviceID); appErr != nil || found {
-		t.Fatalf("cross-owner config read was not isolated: found=%t err=%v", found, appErr)
-	}
-	pending, appErr := store.ListAdminProbeConfigs(ctx, apihealth.AuthorizationPending, domain.PageRequest{Limit: 10})
-	if appErr != nil || len(pending.Items) != 1 {
-		t.Fatalf("list pending probe configs: %+v %v", pending, appErr)
-	}
-	if item := pending.Items[0]; item.ServiceTitle != "Sub2API 短期额度" || item.OwnerDisplayName != "额度卖家" || !strings.HasPrefix(item.OwnerUsername, "quota-seller-") {
-		t.Fatalf("admin probe projection missing service/owner labels: %+v", item)
-	}
-	token := "one-time-challenge-token"
-	hash := apiHealthChallengeHash(token)
-	if _, appErr := store.CreateProbeChallenge(ctx, sellerID, serviceID, apihealth.AuthorizationMethodDNSTXT, hash, now.Add(15*time.Minute), config.Version+1, now); appErr == nil || appErr.Status != http.StatusPreconditionFailed || appErr.Code != domain.CodeVersionConflict {
-		t.Fatalf("stale challenge version did not fail with precondition: %v", appErr)
-	}
-	config, appErr = store.CreateProbeChallenge(ctx, sellerID, serviceID, apihealth.AuthorizationMethodDNSTXT, hash, now.Add(15*time.Minute), config.Version, now)
-	if appErr != nil {
-		t.Fatalf("create challenge: %v", appErr)
-	}
-	challenge, appErr := store.GetProbeChallenge(ctx, sellerID, serviceID)
-	if appErr != nil || string(challenge.TokenHash) != string(hash) {
-		t.Fatalf("read challenge: %+v %v", challenge, appErr)
-	}
-	config, appErr = store.CompleteProbeVerification(ctx, sellerID, serviceID, apihealth.AuthorizationMethodDNSTXT, config.Version, true, "", now.Add(time.Minute))
-	if appErr != nil || !apihealth.IsAuthorized(config) {
-		t.Fatalf("verify config: %+v %v", config, appErr)
-	}
-	rotatedCredential := "sk-probe-rotated"
-	metadataMutation, err := apihealth.BuildConfigMutation(&config, serviceID, sellerID, apihealth.ConfigInput{
-		BaseURL: config.BaseURL, Model: config.Model, Credential: &rotatedCredential, Enabled: true,
-	}, now.Add(2*time.Minute))
-	if err != nil {
-		t.Fatalf("build metadata update: %v", err)
-	}
-	if metadataMutation.MeasurementInvalidated || metadataMutation.AuthorizationInvalidated {
-		t.Fatalf("metadata update unexpectedly invalidated measurement identity: %+v", metadataMutation)
-	}
-	config, appErr = store.UpsertOwnerProbeConfig(ctx, metadataMutation, &rotatedCredential, config.Version)
-	if appErr != nil || !apihealth.IsAuthorized(config) || config.MeasurementVersion != 1 {
-		t.Fatalf("update probe credential: %+v %v", config, appErr)
-	}
-	var invalidationEventCount int
-	if err := pool.QueryRow(ctx, `
-		SELECT count(*) FROM api_service_probe_authorization_events
-		WHERE probe_config_id = $1 AND action = $2
-	`, config.ID, apihealth.AuthorizationActionOriginInvalidated).Scan(&invalidationEventCount); err != nil || invalidationEventCount != 0 {
-		t.Fatalf("metadata update appended invalidation event: count=%d err=%v", invalidationEventCount, err)
+	stored, credential, found, readErr := store.GetOwnerProbeConnectionCredential(ctx, sellerID, connection.ID)
+	if readErr != nil || !found || credential != "probe-secret-v1" || stored.ID != connection.ID {
+		t.Fatalf("read connection credential: connection=%+v credential=%q found=%t error=%v", stored, credential, found, readErr)
 	}
 
-	slot := apihealth.SlotStart(now.Add(5 * time.Minute))
+	updated := connection
+	updated.Name = "主 Sub2API 已更新"
+	updated.Version = 2
+	updated.UpdatedAt = now.Add(time.Minute)
+	rotatedCredential := "probe-secret-v2"
+	if _, staleErr := store.UpdateOwnerProbeConnection(ctx, updated, &rotatedCredential, connection.Version+1); staleErr == nil || staleErr.Status != http.StatusPreconditionFailed || staleErr.Code != domain.CodeVersionConflict {
+		t.Fatalf("stale update did not return version conflict: %+v", staleErr)
+	}
+	connection, appErr = store.UpdateOwnerProbeConnection(ctx, updated, &rotatedCredential, connection.Version)
+	if appErr != nil || connection.Version != 2 || connection.Name != updated.Name {
+		t.Fatalf("update probe connection: connection=%+v error=%v", connection, appErr)
+	}
+	_, credential, found, readErr = store.GetOwnerProbeConnectionCredential(ctx, sellerID, connection.ID)
+	if readErr != nil || !found || credential != rotatedCredential {
+		t.Fatalf("rotated credential was not readable: credential=%q found=%t error=%v", credential, found, readErr)
+	}
+
+	if _, err := store.pool.Exec(ctx, `UPDATE api_services SET probe_connection_id = $2 WHERE id = $1`, serviceID, connection.ID); err != nil {
+		t.Fatalf("bind service to probe connection: %v", err)
+	}
+	connection, found, appErr = store.GetOwnerProbeConnection(ctx, sellerID, connection.ID)
+	if appErr != nil || !found || len(connection.References) != 1 || connection.References[0].ID != serviceID {
+		t.Fatalf("connection reference projection: connection=%+v found=%t error=%v", connection, found, appErr)
+	}
+	if deleteErr := store.DeleteOwnerProbeConnection(ctx, sellerID, connection.ID, connection.Version); deleteErr == nil || deleteErr.Status != http.StatusConflict || deleteErr.Code != domain.CodeInvalidStateTransition {
+		t.Fatalf("referenced connection delete was not rejected: %+v", deleteErr)
+	}
+
+	slot := apihealth.SlotStart(now.Add(apihealth.ProbeSlotDuration))
 	type claimResult struct {
 		jobs []apihealth.ProbeJob
 		err  *domain.AppError
 	}
-	claimResults := make(chan claimResult, 2)
-	startClaims := make(chan struct{})
-	var claimWait sync.WaitGroup
+	results := make(chan claimResult, 2)
+	start := make(chan struct{})
+	var wait sync.WaitGroup
 	for range 2 {
-		claimWait.Add(1)
+		wait.Add(1)
 		go func() {
-			defer claimWait.Done()
-			<-startClaims
+			defer wait.Done()
+			<-start
 			jobs, claimErr := store.ClaimDueProbes(ctx, slot, slot, 10, 10*time.Second)
-			claimResults <- claimResult{jobs: jobs, err: claimErr}
+			results <- claimResult{jobs: jobs, err: claimErr}
 		}()
 	}
-	close(startClaims)
-	claimWait.Wait()
-	close(claimResults)
-	var jobs []apihealth.ProbeJob
-	for result := range claimResults {
+	close(start)
+	wait.Wait()
+	close(results)
+	jobs := make([]apihealth.ProbeJob, 0, 1)
+	for result := range results {
 		if result.err != nil {
 			t.Fatalf("concurrent claim failed: %v", result.err)
 		}
 		jobs = append(jobs, result.jobs...)
 	}
-	if len(jobs) != 1 || jobs[0].Credential != rotatedCredential {
-		t.Fatalf("concurrent same-slot claim did not produce exactly one job: %+v", jobs)
+	if len(jobs) != 1 || jobs[0].Connection.ID != connection.ID || jobs[0].Credential != rotatedCredential || jobs[0].CredentialError {
+		t.Fatalf("same-slot claim was not deduplicated: %+v", jobs)
 	}
-	duplicate, appErr := store.ClaimDueProbes(ctx, slot, slot.Add(time.Second), 10, 10*time.Second)
-	if appErr != nil || len(duplicate) != 0 {
-		t.Fatalf("duplicate slot was claimed: %+v %v", duplicate, appErr)
-	}
+	ttft := 120
+	firstTextAt := slot.Add(120 * time.Millisecond)
+	firstDuration := 321
 	finalized, appErr := store.FinalizeProbe(ctx, jobs[0].Sample.ID, apihealth.ProbeResult{
-		TTFTMS: 750, TotalDurationMS: 900, HTTPStatusClass: 2,
-	}, slot.Add(2*time.Second))
+		Outcome: apihealth.OutcomeFirstSuccess,
+		Attempts: []apihealth.ProbeAttempt{{
+			AttemptNumber: 1, StartedAt: slot, FirstTextAt: &firstTextAt, FinishedAt: slot.Add(321 * time.Millisecond),
+			HTTPStatus: http.StatusOK, TTFTMS: &ttft, TotalDurationMS: firstDuration, Succeeded: true,
+		}},
+		TotalDurationMS: firstDuration, HTTPStatus: http.StatusOK, HTTPStatusClass: 2,
+		FirstAttemptTTFTMS: &ttft, FirstAttemptTotalDurationMS: &firstDuration,
+	}, slot.Add(time.Second))
 	if appErr != nil || !finalized {
-		t.Fatalf("finalize probe: finalized=%v err=%v", finalized, appErr)
+		t.Fatalf("finalize successful probe: finalized=%t error=%v", finalized, appErr)
 	}
 	inputs, appErr := store.LoadProbeSummaryInputs(ctx, []string{serviceID}, slot.Add(-time.Hour))
-	if appErr != nil || len(inputs[serviceID].Samples) != 1 {
-		t.Fatalf("load summary inputs: %+v %v", inputs, appErr)
+	if appErr != nil || inputs[serviceID].Connection == nil || inputs[serviceID].Connection.ID != connection.ID || len(inputs[serviceID].Samples) != 1 {
+		t.Fatalf("shared service summary input: %+v error=%v", inputs, appErr)
 	}
 
-	updatedMutation, err := apihealth.BuildConfigMutation(&config, serviceID, sellerID, apihealth.ConfigInput{
-		BaseURL: config.BaseURL, Model: "gpt-5.1", Enabled: true,
-	}, slot.Add(time.Minute))
-	if err != nil {
-		t.Fatalf("build model update: %v", err)
+	timeoutSlot := slot.Add(apihealth.ProbeSlotDuration)
+	timeoutJobs, appErr := store.ClaimDueProbes(ctx, timeoutSlot, timeoutSlot, 10, 10*time.Second)
+	if appErr != nil || len(timeoutJobs) != 1 {
+		t.Fatalf("claim timeout probe: jobs=%+v error=%v", timeoutJobs, appErr)
 	}
-	config, appErr = store.UpsertOwnerProbeConfig(ctx, updatedMutation, nil, config.Version)
-	if appErr != nil || config.MeasurementVersion != 2 || config.AuthorizationStatus != apihealth.AuthorizationPending {
-		t.Fatalf("update measurement identity: %+v %v", config, appErr)
+	if duplicate, claimErr := store.ClaimDueProbes(ctx, timeoutSlot, timeoutSlot.Add(11*time.Second), 10, 10*time.Second); claimErr != nil || len(duplicate) != 0 {
+		t.Fatalf("timeout convergence reclaimed same slot: jobs=%+v error=%v", duplicate, claimErr)
 	}
-	var eventAction, eventActorUserID, eventMethod, eventOrigin, eventReason, persistedAuthorizationStatus string
-	var persistedMeasurementVersion int64
-	if err := pool.QueryRow(ctx, `
-		SELECT c.authorization_status, c.measurement_version, e.action,
-		       COALESCE(e.actor_user_id::text, ''), COALESCE(e.method, ''),
-		       e.origin_snapshot, COALESCE(e.reason, '')
-		FROM api_service_probe_configs c
-		JOIN api_service_probe_authorization_events e ON e.probe_config_id = c.id
-		WHERE c.id = $1 AND e.action = $2
-	`, config.ID, apihealth.AuthorizationActionOriginInvalidated).Scan(
-		&persistedAuthorizationStatus, &persistedMeasurementVersion, &eventAction,
-		&eventActorUserID, &eventMethod, &eventOrigin, &eventReason,
-	); err != nil {
-		t.Fatalf("read updated config with invalidation event: %v", err)
-	}
-	if persistedAuthorizationStatus != apihealth.AuthorizationPending || persistedMeasurementVersion != 2 ||
-		eventAction != apihealth.AuthorizationActionOriginInvalidated || eventActorUserID != sellerID || eventMethod != "" ||
-		eventOrigin != config.NormalizedOrigin || eventReason != apihealth.AuthorizationReasonMeasurementChanged {
-		t.Fatalf("unexpected persisted invalidation transition: status=%s measurement=%d action=%s actor=%s method=%s origin=%s reason=%s",
-			persistedAuthorizationStatus, persistedMeasurementVersion, eventAction, eventActorUserID, eventMethod, eventOrigin, eventReason)
-	}
-	if err := pool.QueryRow(ctx, `
-		SELECT count(*) FROM api_service_probe_authorization_events
-		WHERE probe_config_id = $1 AND action = $2
-	`, config.ID, apihealth.AuthorizationActionOriginInvalidated).Scan(&invalidationEventCount); err != nil || invalidationEventCount != 1 {
-		t.Fatalf("measurement update invalidation event count: count=%d err=%v", invalidationEventCount, err)
-	}
-	jobs, appErr = store.ClaimDueProbes(ctx, slot.Add(apihealth.ProbeSlotDuration), slot.Add(apihealth.ProbeSlotDuration), 10, 10*time.Second)
-	if appErr != nil || len(jobs) != 0 {
-		t.Fatalf("unauthorized config was claimed: %+v %v", jobs, appErr)
-	}
-	config, appErr = store.AdminDecideProbeConfig(ctx, adminID, config.ID, config.Version, false, "未能确认当前精确公网 origin。", slot.Add(2*time.Minute))
-	if appErr != nil || config.AuthorizationStatus != apihealth.AuthorizationRejected || apihealth.IsAuthorized(config) || config.RejectionReason == "" {
-		t.Fatalf("reject config: %+v %v", config, appErr)
-	}
-	nextSlot := slot.Add(apihealth.ProbeSlotDuration)
-	jobs, appErr = store.ClaimDueProbes(ctx, nextSlot, nextSlot, 10, 10*time.Second)
-	if appErr != nil || len(jobs) != 0 {
-		t.Fatalf("rejected config was claimed: %+v %v", jobs, appErr)
-	}
-	config, appErr = store.AdminDecideProbeConfig(ctx, adminID, config.ID, config.Version, true, "已核对精确公网 origin。", slot.Add(3*time.Minute))
-	if appErr != nil || config.AuthorizationStatus != apihealth.AuthorizationApproved || !apihealth.IsAuthorized(config) {
-		t.Fatalf("approve config: %+v %v", config, appErr)
-	}
-	jobs, appErr = store.ClaimDueProbes(ctx, nextSlot, nextSlot, 10, 10*time.Second)
-	if appErr != nil || len(jobs) != 1 || jobs[0].Sample.MeasurementVersion != 2 {
-		t.Fatalf("claim approved measurement: %+v %v", jobs, appErr)
-	}
-	timeoutSweepAt := nextSlot.Add(11 * time.Second)
-	if sameSlot, sweepErr := store.ClaimDueProbes(ctx, nextSlot, timeoutSweepAt, 10, 10*time.Second); sweepErr != nil || len(sameSlot) != 0 {
-		t.Fatalf("timeout sweep reclaimed the same slot: %+v %v", sameSlot, sweepErr)
-	}
-	var timedOutStatus, timedOutCode string
-	var timedOutDuration int
-	if err := pool.QueryRow(ctx, `
+	var timeoutStatus, timeoutCode string
+	var timeoutDuration int
+	if err := store.pool.QueryRow(ctx, `
 		SELECT status, COALESCE(error_code, ''), COALESCE(total_duration_ms, -1)
-		FROM api_service_probe_samples WHERE id = $1
-	`, jobs[0].Sample.ID).Scan(&timedOutStatus, &timedOutCode, &timedOutDuration); err != nil {
+		FROM api_probe_connection_samples WHERE id = $1
+	`, timeoutJobs[0].Sample.ID).Scan(&timeoutStatus, &timeoutCode, &timeoutDuration); err != nil {
 		t.Fatalf("read timed-out sample: %v", err)
 	}
-	if timedOutStatus != apihealth.SampleStatusFailed || timedOutCode != apihealth.ErrorInternalTimeout || timedOutDuration != 10000 {
-		t.Fatalf("unexpected timeout convergence: status=%s code=%s duration=%d", timedOutStatus, timedOutCode, timedOutDuration)
+	if timeoutStatus != apihealth.SampleStatusFailed || timeoutCode != apihealth.ErrorInternalTimeout || timeoutDuration != 10000 {
+		t.Fatalf("unexpected timeout state: status=%s code=%s duration=%d", timeoutStatus, timeoutCode, timeoutDuration)
 	}
-	if _, err := pool.Exec(ctx, `UPDATE api_service_probe_configs SET credential_ciphertext = $2 WHERE id = $1`, config.ID, []byte{0}); err != nil {
-		t.Fatalf("corrupt probe credential for integration boundary: %v", err)
+
+	if _, err := store.pool.Exec(ctx, `UPDATE api_probe_connections SET credential_ciphertext = $2 WHERE id = $1`, connection.ID, []byte{0}); err != nil {
+		t.Fatalf("corrupt probe credential: %v", err)
 	}
-	decryptSlot := nextSlot.Add(apihealth.ProbeSlotDuration)
-	decryptJobs, decryptErr := store.ClaimDueProbes(ctx, decryptSlot, decryptSlot, 10, 10*time.Second)
-	if decryptErr != nil || len(decryptJobs) != 1 || !decryptJobs[0].CredentialError || decryptJobs[0].Credential != "" {
-		t.Fatalf("corrupt credential was not surfaced as a claim error: %+v %v", decryptJobs, decryptErr)
+	decryptSlot := timeoutSlot.Add(apihealth.ProbeSlotDuration)
+	decryptJobs, appErr := store.ClaimDueProbes(ctx, decryptSlot, decryptSlot, 10, 10*time.Second)
+	if appErr != nil || len(decryptJobs) != 1 || !decryptJobs[0].CredentialError || decryptJobs[0].Credential != "" {
+		t.Fatalf("credential decryption failure was not surfaced: jobs=%+v error=%v", decryptJobs, appErr)
 	}
-	if finalized, finalizeErr := store.FinalizeProbe(ctx, decryptJobs[0].Sample.ID, apihealth.ProbeResult{ErrorCode: apihealth.ErrorDecryptFailed}, decryptSlot.Add(time.Second)); finalizeErr != nil || !finalized {
-		t.Fatalf("finalize decrypt failure: finalized=%t err=%v", finalized, finalizeErr)
+	if finalized, finalizeErr := store.FinalizeProbe(ctx, decryptJobs[0].Sample.ID, apihealth.ProbeResult{
+		TotalDurationMS: 0,
+		ErrorCode:       apihealth.ErrorDecryptFailed,
+	}, decryptSlot.Add(time.Second)); finalizeErr != nil || !finalized {
+		t.Fatalf("finalize decrypt failure: finalized=%t error=%v", finalized, finalizeErr)
 	}
-	maintenanceResult, appErr := store.RunDataLifecycle(ctx, nextSlot.Add(8*24*time.Hour), 10, maintenance.Policy{
+
+	lifecycleAt := decryptSlot.Add(8 * 24 * time.Hour)
+	lifecycleResult, appErr := store.RunDataLifecycle(ctx, lifecycleAt, 10, maintenance.Policy{
 		SessionRetention:               365 * 24 * time.Hour,
 		EmailVerificationRetention:     365 * 24 * time.Hour,
 		ReadNotificationRetention:      365 * 24 * time.Hour,
@@ -286,26 +198,27 @@ func TestAPIHealthPostgresConfigAuthorizationAndProbeLifecycle(t *testing.T) {
 		APIDeliveryCredentialRetention: 365 * 24 * time.Hour,
 		APIProbeSampleRetention:        7 * 24 * time.Hour,
 	})
-	if appErr != nil || maintenanceResult.APIProbeSamplesDeleted != 3 {
-		t.Fatalf("delete retained probe samples: %+v %v", maintenanceResult, appErr)
+	if appErr != nil || lifecycleResult.APIProbeSamplesDeleted != 3 {
+		t.Fatalf("probe sample retention: result=%+v error=%v", lifecycleResult, appErr)
 	}
-	var remainingRunning int
-	if err := pool.QueryRow(ctx, `
-		SELECT count(*) FROM api_service_probe_samples
-		WHERE api_service_id = $1 AND status = 'running'
-	`, serviceID).Scan(&remainingRunning); err != nil || remainingRunning != 0 {
-		t.Fatalf("maintenance changed running sample: count=%d err=%v", remainingRunning, err)
-	}
-	if appErr := store.DeleteOwnerProbeConfig(ctx, sellerID, serviceID, config.Version, nextSlot.Add(time.Minute)); appErr != nil {
-		t.Fatalf("delete probe config: %v", appErr)
-	}
-	var sampleCount int
-	if err := pool.QueryRow(ctx, `SELECT count(*) FROM api_service_probe_samples WHERE api_service_id = $1`, serviceID).Scan(&sampleCount); err != nil || sampleCount != 0 {
-		t.Fatalf("probe samples did not cascade: count=%d err=%v", sampleCount, err)
-	}
-}
 
-func apiHealthChallengeHash(token string) []byte {
-	hash := sha256.Sum256([]byte(token))
-	return hash[:]
+	cascadeSlot := apihealth.SlotStart(lifecycleAt.Add(apihealth.ProbeSlotDuration))
+	cascadeJobs, appErr := store.ClaimDueProbes(ctx, cascadeSlot, cascadeSlot, 10, 10*time.Second)
+	if appErr != nil || len(cascadeJobs) != 1 {
+		t.Fatalf("claim cascade sample: jobs=%+v error=%v", cascadeJobs, appErr)
+	}
+	if finalized, finalizeErr := store.FinalizeProbe(ctx, cascadeJobs[0].Sample.ID, apihealth.ProbeResult{TotalDurationMS: 0, ErrorCode: apihealth.ErrorDecryptFailed}, cascadeSlot.Add(time.Second)); finalizeErr != nil || !finalized {
+		t.Fatalf("finalize cascade sample: finalized=%t error=%v", finalized, finalizeErr)
+	}
+	if _, err := store.pool.Exec(ctx, `UPDATE api_services SET probe_connection_id = NULL WHERE id = $1`, serviceID); err != nil {
+		t.Fatalf("unbind service: %v", err)
+	}
+	if deleteErr := store.DeleteOwnerProbeConnection(ctx, sellerID, connection.ID, connection.Version); deleteErr != nil {
+		t.Fatalf("delete unreferenced connection: %v", deleteErr)
+	}
+	connectionID = ""
+	var remainingSamples int
+	if err := store.pool.QueryRow(ctx, `SELECT count(*) FROM api_probe_connection_samples WHERE connection_id = $1`, connection.ID).Scan(&remainingSamples); err != nil || remainingSamples != 0 {
+		t.Fatalf("connection samples did not cascade: count=%d error=%v", remainingSamples, err)
+	}
 }

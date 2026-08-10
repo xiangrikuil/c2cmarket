@@ -251,7 +251,7 @@ func (s *Server) handleOfficialPrices(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, r, appErr)
 		return
 	}
-	writePaginatedJSON(w, r, toPriceRecordResponses(records))
+	writePaginatedJSON(w, r, toPriceRecordResponses(filterOfficialPriceRecords(r, records)))
 }
 
 func (s *Server) handleOfficialPrice(w http.ResponseWriter, r *http.Request) {
@@ -274,7 +274,7 @@ func (s *Server) handleAdminOfficialPriceRecords(w http.ResponseWriter, r *http.
 		writeProblem(w, r, appErr)
 		return
 	}
-	writePaginatedJSON(w, r, toPriceRecordResponses(records))
+	writePaginatedJSON(w, r, toPriceRecordResponses(filterOfficialPriceRecords(r, records)))
 }
 
 func (s *Server) handleAdminOfficialPriceRecord(w http.ResponseWriter, r *http.Request) {

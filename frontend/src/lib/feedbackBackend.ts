@@ -6,6 +6,7 @@ import type {
   SubmitFeedbackPayload,
 } from '@/lib/api'
 import { backendMutation, backendRequest, ensureBackendSession } from '@/lib/backendClient'
+import { collectCursorPages } from '@/lib/cursorPagination'
 
 type ListResponse<T> = {
   items: T[]
@@ -17,6 +18,15 @@ type CountResponse = {
 }
 
 type BackendFeedbackTicket = FeedbackTicket
+
+function backendFeedbackPages(path: string) {
+  return collectCursorPages<BackendFeedbackTicket>(async (page) => {
+    const params = new URLSearchParams({ limit: String(page.limit ?? 100) })
+    if (page.cursor) params.set('cursor', page.cursor)
+    const response = await backendRequest<ListResponse<BackendFeedbackTicket>>(`${path}?${params.toString()}`)
+    return { items: response.items, nextCursor: response.nextCursor?.trim() || undefined }
+  })
+}
 
 async function ensureUserSession() {
   return ensureBackendSession('buyer', false)
@@ -35,8 +45,7 @@ export async function backendCreateFeedbackTicket(payload: SubmitFeedbackPayload
 
 export async function backendMyFeedbackTickets(): Promise<FeedbackTicket[]> {
   await ensureUserSession()
-  const response = await backendRequest<ListResponse<BackendFeedbackTicket>>('/api/v1/me/feedback-tickets')
-  return response.items
+  return backendFeedbackPages('/api/v1/me/feedback-tickets')
 }
 
 export async function backendMyFeedbackTicket(id: string): Promise<FeedbackTicket> {
@@ -64,8 +73,7 @@ export async function backendMarkFeedbackRead(id: string): Promise<FeedbackTicke
 
 export async function backendAdminFeedbackTickets(): Promise<FeedbackTicket[]> {
   await ensureAdminSession()
-  const response = await backendRequest<ListResponse<BackendFeedbackTicket>>('/api/v1/admin/feedback-tickets')
-  return response.items
+  return backendFeedbackPages('/api/v1/admin/feedback-tickets')
 }
 
 export async function backendAdminFeedbackTicket(id: string): Promise<FeedbackTicket> {

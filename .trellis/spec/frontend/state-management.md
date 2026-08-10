@@ -795,3 +795,306 @@ const disabled = paused || risky || hasApplication || seats === 0
 const disabled = !eligibility.canApply
 const reason = eligibility.reason
 ```
+
+## Scenario: API Market Infinite Cursor Queries
+
+All real-backend business lists follow the same ownership rule: the browser may retain opaque cursors for previous/next navigation, but it must not slice, filter, or sort a fetched array to manufacture pages. Every visible search, filter, and sort value belongs in the query key and backend request. Array pagination helpers are Mock-only and real mode must fail visibly when a server pagination adapter is missing.
+
+### 1. Scope / Trigger
+
+- Trigger: changes to API market service/offer lists, cursor adapters, market
+  filters or tabs, SSR prefetch, or the infinite-scroll sentinel.
+
+### 2. Signatures
+
+```ts
+type CursorPage<T> = { items: T[]; nextCursor?: string }
+
+useInfiniteApiServices(filters, enabled, scope)
+useInfiniteApiQuotaOffers(filters, enabled)
+flattenUniqueCursorPages(pages)
+```
+
+### 3. Contracts
+
+- Infinite queries request 20 rows per page, pass `nextCursor` back unchanged,
+  and stop when it is absent. Query keys contain every server filter plus the
+  market-view scope when two tabs share one endpoint.
+- Hidden market views keep their query disabled. Filter, slot, or view changes
+  create a new cursor chain from the first page rather than reusing stale data.
+- API package/free tabs send the billing mode to the backend. Once a package
+  model and duration are selected, both values are server filters; limited
+  quota search and system-slot exclusion are also server filters. Components
+  may defensively project returned DTOs, but must not use current-page array
+  filtering as the source of visible matching results.
+- Flattened pages are deduplicated by business ID; a later copy replaces the
+  stale record without changing the first-seen card position.
+- Each visible product source owns one sentinel. Intersection loads the next
+  page only when it exists and no load/error is active. A next-page error keeps
+  prior cards visible and exposes retry; the final page shows a terminal state.
+- SSR prefetches only the first page of the currently visible top-level market
+  view. Dependent sale-slot offers still await the slot list, select the same
+  slot as the client, and then prefetch that slot's first page.
+- Existing facade reads that promise a complete array may collect every page,
+  but must fail on a repeated cursor.
+
+### 4. Validation & Error Matrix
+
+| Condition | Required UI behavior |
+| --- | --- |
+| First page has no cursor | Render rows/empty state and `已加载全部`; no extra request |
+| Sentinel enters the 400px preload margin | Fetch one next page |
+| Next page fails | Preserve loaded cards and show `重试加载` |
+| Search/filter/view/slot changes | New query key and first-page cursor; matching is applied before backend pagination |
+| Adjacent pages repeat an ID | Render one card using the later record |
+| Hidden tab | No background page requests |
+| SSR route uses `view=free` | Prefetch service page only, not limited offers |
+
+### 5. Good / Base / Bad Cases
+
+- Good: scrolling loads later cards, a transient failure leaves existing cards
+  usable, and retry continues from the same cursor.
+- Base: one short page naturally ends without a second request.
+- Bad: `useQuery` discards `nextCursor`, both tabs prefetch on every SSR request,
+  or a filter change appends new results to the old cursor chain.
+
+### 6. Tests Required
+
+- Cursor adapter serialization and null/blank cursor normalization.
+- Mock paging, page-boundary deduplication, and repeated-cursor rejection.
+- Query-key, enabled-state, visible-view SSR prefetch, and four-sentinel source
+  regressions.
+- Full Vitest, Nuxt typecheck, real-mode production build, and browser checks
+  for incremental loading, retry, tab isolation, and horizontal overflow.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```ts
+const query = useQuery({ queryFn: () => getApiServices(filters.value) })
+prefetchQueriesOnServer(quotaQuery, servicesQuery)
+```
+
+#### Correct
+
+```ts
+const query = useInfiniteQuery({
+  queryKey: computed(() => ['api-services', 'infinite', view.value, filters.value]),
+  queryFn: ({ pageParam }) => getApiServicesPage(filters.value, { limit: 20, cursor: pageParam || undefined }),
+  getNextPageParam: page => page.nextCursor,
+})
+
+const visibleQuery = view.value === 'limited' ? quotaQuery : servicesQuery
+prefetchQueriesOnServer(visibleQuery)
+```
+
+## Scenario: 通知与平台公告查询页签隔离
+
+### 1. Scope / Trigger
+
+- 触发条件：修改 `/my/notifications` 的 URL 页签、通知分类、公告列表或 `AppShell` 中指向同一路径的导航项。
+- 目标：业务通知与平台公告可以共享路由页面，但不能共享活动状态或混排内容。
+
+### 2. Signatures
+
+```ts
+type NotificationTab = 'todo' | 'transactions' | 'system' | 'announcements'
+
+const announcementCenterTo = '/my/notifications?tab=announcements'
+```
+
+### 3. Contracts
+
+- `tab=announcements` 必须直接映射到 `announcements`，不得降级成 `system`。
+- `todo`、`transactions`、`system` 只渲染站内业务通知；`announcements` 只渲染公告查询结果。
+- “系统通知”计数不包含公告未读数；公告未读数只属于“平台公告”。
+- 待办、交易和系统页签数字必须复用渲染列表的同一个分类函数，不能用另一组业务类型汇总近似计算。
+- 同一路径存在普通通知和公告两个侧栏入口时，活动态必须同时判断 `route.path` 与 `route.query.tab`。
+- 公告入口属于认证用户的正常导航项，不得再用侧栏底部卡片重复表达同一目的地。
+- 切换页签继续使用 URL 查询状态，使刷新、返回和深链接保持一致。
+
+### 4. Validation & Error Matrix
+
+| URL / 操作 | 必须结果 |
+| --- | --- |
+| `/my/notifications` | 选中“通知”和默认待办页签 |
+| `?tab=system` | 只显示系统通知，公告行数为 0 |
+| `?tab=announcements` | 选中“平台公告”，只显示公告列表 |
+| 点击“平台公告”页签 | URL 更新为 `tab=announcements`，标题和侧栏活动态同步 |
+| 未知 `tab` | 规范化回默认待办，不静默合并到其他业务页签 |
+| 任一通知页签 | 页签数字等于该页签实际可见行数 |
+
+### 5. Good / Base / Bad Cases
+
+- Good：公告页显示“平台公告”标题、公告导航选中，系统通知不会出现在公告列表上方。
+- Base：通知与公告继续复用现有路由、查询 hooks 和 shadcn-vue `Tabs`。
+- Bad：为了复用模板把 `announcements` 映射成 `system`，再在系统通知卡片后追加公告卡片。
+
+### 6. Tests Required
+
+- 源契约测试断言四项 `NotificationTab`、独立查询映射、独立模板分支和查询感知的侧栏匹配。
+- 浏览器分别打开 `tab=system` 与 `tab=announcements`，断言标题、选中页签、侧栏活动态和两类行数互斥。
+- 运行全量 Vitest、Nuxt typecheck、real-mode production build，并在 390px 与 1440px 检查横向溢出。
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```ts
+if (route.query.tab === 'system' || route.query.tab === 'announcements') return 'system'
+```
+
+#### Correct
+
+```ts
+if (route.query.tab === 'system') return 'system'
+if (route.query.tab === 'announcements') return 'announcements'
+```
+
+## Scenario: 公告详情阅读层级与 Smoke 数据边界
+
+### 1. Scope / Trigger
+
+- 触发条件：修改用户公告详情布局、公告 Markdown 渲染、真实后端浏览器验证或 `announcement-smoke.mjs`。
+- 目标：用户详情只呈现公告本身，自动化测试数据不得借助前端过滤隐藏，也不得在验证后继续出现在用户公告列表。
+
+### 2. Signatures
+
+```text
+GET /api/v1/announcements
+GET /api/v1/announcements/{slug}
+POST /api/v1/admin/announcements/{id}/offline
+```
+
+```vue
+<Card class="announcement-reference-article mx-auto max-w-4xl">
+  <article><!-- metadata + Markdown + optional CTA --></article>
+</Card>
+```
+
+### 3. Contracts
+
+- 用户公告详情采用一个受限宽度的单栏文章容器；分类、标题、摘要、发布时间、条件更新时间、正文和 CTA 构成连续阅读顺序。
+- 页面不得增加通用“阅读说明”侧栏，也不得在正文旁重复提供与底部返回按钮相同的公告列表动作。
+- `AnnouncementDetailContent` 必须忠实渲染后端返回的 `contentMarkdown`。生产前端不得根据 `Smoke 公告`、`发布后编辑` 或其他测试关键词删除标题、摘要或正文。
+- 真实后端 smoke 记录在验证期间可以短暂发布，但验证结束后原记录必须下线，复制记录必须保持草稿或下线。
+- 浏览器手动发布 smoke 副本完成验证后必须恢复为下线；若本地记录已跨过 `expireAt` 而管理 API 不再允许下线，使用精确限定标题/ID 的本地数据修复，并保留记录而不是删除审计历史。
+- 验证结束后，用户公告列表中标题以 `Smoke 公告` 开头的记录数必须为 0。
+
+### 4. Validation & Error Matrix
+
+| 条件 | 必须结果 |
+| --- | --- |
+| 正常公告详情 | 单栏文章，无右侧说明卡 |
+| 公告正文包含“发布后编辑” | 按正文正常显示，不做前端关键词过滤 |
+| smoke 原记录验证完成 | 状态为 `offline`，用户接口不可见 |
+| smoke 复制记录未参与发布验证 | 状态保持 `draft`，用户接口不可见 |
+| 手动发布 smoke 副本后结束验证 | 恢复为 `offline`，用户接口不可见 |
+| 公告不存在或不可见 | 保留明确空状态和一个返回公告列表动作 |
+
+### 5. Good / Base / Bad Cases
+
+- Good：详情页只保留一篇文章和底部返回动作，真实用户列表没有 smoke 记录。
+- Base：Markdown 内容、CTA、自动已读和条件更新时间继续复用现有组件与查询契约。
+- Bad：因为测试正文难看就在 Vue 模板中判断标题前缀，或在详情右侧加入与正文无关的固定阅读说明。
+
+### 6. Tests Required
+
+- 源契约测试断言 `announcement-reference-article` 的宽度约束，并拒绝 `announcement-reference-aside`、“阅读说明”和“查看全部公告”。
+- 全量 Vitest、Nuxt typecheck、real-mode production build。
+- 真实后端验证后请求 `GET /api/v1/announcements`，断言 `title.startsWith('Smoke 公告')` 的结果数为 0。
+- 浏览器在 390px 与 1440px 打开正常公告详情，断言无横向溢出、无空白侧栏、CTA 和返回动作可达。
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```ts
+const visible = announcements.filter(item => !item.title.startsWith('Smoke 公告'))
+```
+
+#### Correct
+
+```ts
+const visible = announcements
+// Smoke data is restored to draft/offline at the backend lifecycle boundary.
+```
+
+## Scenario: 共享缓存首页中的用户级公告状态
+
+日期：2026-08-10
+
+执行者：Codex
+
+### 1. Scope / Trigger
+
+- 触发条件：在首页或其他带共享 SSR/SWR 缓存的公开页面中读取公告、已读、关闭、收藏、资格等用户级状态。
+- 目标：公开页面继续使用匿名 SSR 数据，同时确保用户级公告候选和关闭记录只在客户端确认登录后读取，不进入共享响应缓存。
+
+### 2. Signatures
+
+```ts
+useMyProfileQuery(enabled: Ref<boolean> | boolean): UseQueryReturnType<UserProfile, Error>
+useActiveHomeAnnouncement(enabled: Ref<boolean> | boolean): UseQueryReturnType<Announcement | null, Error>
+prefetchQueriesOnServer(...queries: QueryObserverResult[]): Promise<void>
+```
+
+```text
+GET  /api/v1/announcements/home
+POST /api/v1/me/announcements/{announcementId}/dismiss
+```
+
+### 3. Contracts
+
+- `/` 的服务端预取集合只能包含匿名用户共享的市场和目录查询；不得加入首页公告、公告回执或其他用户级查询。
+- 首页在客户端通过 `useMyProfileQuery(import.meta.client)` 确认登录态，并把 `Boolean(myProfile)` 作为 `useActiveHomeAnnouncement` 的 `enabled` 条件。
+- 匿名访问不得请求需要登录的首页公告接口，也不得把预期的未登录状态渲染成公告加载错误。
+- 已登录用户的公告查询必须保留加载占位、独立失败重试、详情跳转和关闭反馈；公告失败不得阻塞公开市场内容。
+- 公告渲染条件必须同时检查当前登录态和查询数据，避免退出登录后短暂显示旧缓存。退出登录或会话失效继续通过全局 `queryClient.clear()` 清除用户级缓存。
+- 关闭成功后失效首页公告查询，由后端或 Mock 候选排序返回下一条未关闭公告；关闭失败必须保留当前公告并显示错误反馈。
+
+### 4. Validation & Error Matrix
+
+| 条件 | 必须结果 |
+| --- | --- |
+| 首页 SSR 或匿名首屏 | 只预取公开查询，不调用 `/api/v1/announcements/home` |
+| 客户端确认已登录 | 启用首页公告查询并展示加载占位 |
+| 没有有效候选 | 不渲染空公告容器，不影响市场概览 |
+| 公告查询失败 | 显示局部错误与重试，市场内容保持可用 |
+| `isDismissible=false` | 不渲染关闭按钮 |
+| 关闭成功 | 失效查询并显示下一候选或隐藏公告条 |
+| 关闭失败 | 公告保持可见并显示错误提示 |
+| 退出登录或会话失效 | 清空查询缓存并立即隐藏用户级公告 |
+
+### 5. Good / Base / Bad Cases
+
+- Good：已登录用户在首页看到当前有效公告，关闭后只影响自己的候选结果，其他首页数据保持稳定。
+- Base：匿名用户直接看到公开市场首页，没有公告请求、401 提示或多余占位。
+- Bad：把 `homeAnnouncementQuery` 传给 `prefetchQueriesOnServer`，导致共享首页 HTML 或水合缓存携带某个用户的公告与关闭状态。
+
+### 6. Tests Required
+
+- 源契约测试断言首页公告查询由 `Boolean(myProfile)` 启停，并拒绝把它加入服务端预取集合。
+- 组件契约测试覆盖加载、失败重试、公告展示、允许关闭判断、关闭 mutation 和有效详情链接语义。
+- 浏览器分别验证匿名首页与已登录首页；已登录场景覆盖不可关闭、可关闭、候选切换和全部关闭后的隐藏状态。
+- 运行全量 Vitest、Nuxt typecheck、real-mode build，并检查首页无横向溢出。
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```ts
+const homeAnnouncementQuery = useActiveHomeAnnouncement()
+prefetchQueriesOnServer(homeMarketQuery, homeAnnouncementQuery)
+```
+
+#### Correct
+
+```ts
+const { data: myProfile } = useMyProfileQuery(import.meta.client)
+const homeAnnouncementEnabled = computed(() => Boolean(myProfile.value))
+const homeAnnouncementQuery = useActiveHomeAnnouncement(homeAnnouncementEnabled)
+
+prefetchQueriesOnServer(homeMarketQuery, productCategoriesQuery)
+```

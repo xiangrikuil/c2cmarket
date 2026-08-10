@@ -67,6 +67,10 @@ type Service struct {
 	MerchantProfileSlug              string
 	MerchantAvatarURL                string
 	OwnerContactMethodID             string
+	ProbeConnectionID                string
+	ProbeReady                       bool
+	ProbeBaseURL                     string
+	NormalizedProbeBaseURL           string
 	Title                            string
 	ShortDescription                 string
 	SourceURL                        string
@@ -127,7 +131,7 @@ type ServiceModel struct {
 	DistributionSystem                  string
 	ModelCatalogID                      string
 	ModelPriceVersionID                 string
-	ModelNameSnapshot                   string
+	ModelKey                            string
 	ProviderSnapshot                    string
 	CapabilitiesSnapshot                []string
 	MerchantMultiplier                  string
@@ -161,7 +165,7 @@ type ServicePackageModel struct {
 	ServiceModelID      string
 	ModelCatalogID      string
 	ModelPriceVersionID string
-	ModelNameSnapshot   string
+	ModelKey            string
 	ProviderSnapshot    string
 	MerchantMultiplier  string
 }
@@ -183,6 +187,7 @@ type CreateServiceInput struct {
 	MerchantProfileID                string
 	MerchantIdentityMode             string
 	OwnerContactMethodID             string
+	ProbeConnectionID                string
 	Title                            string
 	ShortDescription                 string
 	SourceURL                        string
@@ -214,6 +219,7 @@ type UpdateServiceInput struct {
 	MerchantProfileID                string
 	MerchantIdentityMode             string
 	OwnerContactMethodID             string
+	ProbeConnectionID                string
 	Title                            string
 	ShortDescription                 string
 	SourceURL                        string
@@ -239,6 +245,14 @@ type UpdateServiceInput struct {
 	Packages                         []ServicePackageInput
 	ExpectedVersion                  int64
 	RequestID                        string
+}
+
+type UpdateProbeConnectionInput struct {
+	ServiceID         string
+	OwnerUserID       string
+	ProbeConnectionID string
+	ExpectedVersion   int64
+	RequestID         string
 }
 
 type ServiceAccessModeInput struct {
@@ -284,7 +298,10 @@ type ServiceAdminActionInput struct {
 }
 
 type PublicServiceFilter struct {
-	PaymentMethod string
+	PaymentMethod         string
+	BillingMode           string
+	PackageModelCatalogID string
+	PackageDurationDays   int
 }
 
 type OwnerServiceFilter struct {

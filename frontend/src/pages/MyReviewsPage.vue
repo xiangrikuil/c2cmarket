@@ -12,7 +12,7 @@ import SkeletonBlock from '@/components/market/SkeletonBlock.vue'
 import SkeletonTable from '@/components/market/SkeletonTable.vue'
 import SoftTable from '@/components/market/SoftTable.vue'
 import StatusTabs from '@/components/market/StatusTabs.vue'
-import TablePagination from '@/components/market/TablePagination.vue'
+import CursorTablePagination from '@/components/market/CursorTablePagination.vue'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -21,10 +21,10 @@ import { Checkbox } from '@/components/ui/checkbox'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Textarea } from '@/components/ui/textarea'
 import ReputationSummaryCard from '@/components/reputation/ReputationSummaryCard.vue'
-import { usePagination } from '@/composables/usePagination'
+import { useCursorPagination } from '@/composables/useCursorPagination'
 import { snapshotToSummary } from '@/lib/reputationPresentation'
 import type { ReviewCenterRow, SubmitReviewPayload } from '@/lib/api'
-import { useReviewCenterRows, useSubmitReviewMutation } from '@/queries/useMarketQueries'
+import { useReviewCenterPage, useReviewCenterRows, useSubmitReviewMutation } from '@/queries/useMarketQueries'
 import { usePublicUserReputationQuery } from '@/queries/useReputationQueries'
 import type { ReputationRole, ReputationScope } from '@/types/reputation'
 
@@ -32,7 +32,7 @@ const route = useRoute()
 const activeStatus = ref('待评价')
 const selectedRow = ref<ReviewCenterRow | null>(null)
 const querySelectionApplied = ref(false)
-const { data, isLoading, error, refetch } = useReviewCenterRows()
+const { data } = useReviewCenterRows()
 const submitReviewMutation = useSubmitReviewMutation()
 const form = reactive({
   rating: '5',
@@ -58,13 +58,19 @@ const counterpartyReputation = computed(() => {
   )
   return snapshot ? snapshotToSummary(snapshot) : null
 })
-const rows = computed(() => center.value.items.filter((item) => {
-  if (activeStatus.value === '待评价') return item.direction === 'pending'
-  if (activeStatus.value === '我发出的') return item.direction === 'sent'
-  if (activeStatus.value === '我收到的') return item.direction === 'received'
-  return true
-}))
-const pagination = usePagination(rows)
+const direction = computed<ReviewCenterRow['direction'] | undefined>(() => {
+  if (activeStatus.value === '待评价') return 'pending'
+  if (activeStatus.value === '我发出的') return 'sent'
+  if (activeStatus.value === '我收到的') return 'received'
+  return undefined
+})
+const pagination = useCursorPagination([activeStatus])
+const pageRequest = computed(() => ({ limit: pagination.pageSize, cursor: pagination.cursor.value }))
+const pageQuery = useReviewCenterPage(direction, pageRequest)
+const rows = computed(() => pageQuery.data.value?.items ?? [])
+const isLoading = computed(() => pageQuery.isLoading.value || pageQuery.isFetching.value)
+const error = pageQuery.error
+const refetch = pageQuery.refetch
 const selectedCanSubmit = computed(() => Boolean(selectedRow.value?.canCreate || selectedRow.value?.canEdit))
 const selectedContentVisible = computed(() => selectedRow.value?.rating !== null && selectedRow.value?.note !== null)
 const selectedHiddenMessage = computed(() => {
@@ -275,7 +281,7 @@ function actionLabel(row: ReviewCenterRow) {
       description="已完成且仍在评价窗口内的交易会显示在这里。"
     />
     <SoftTable v-else class="[&_table]:min-w-[760px]" :columns="['交易', '对方', '方向', '状态', '截止时间', '操作']">
-      <tr v-for="item in pagination.paginatedRows.value" :key="item.id">
+      <tr v-for="item in rows" :key="item.id">
         <td>
           <div class="font-medium">{{ item.target }}</div>
           <div class="mt-1 flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
@@ -311,12 +317,13 @@ function actionLabel(row: ReviewCenterRow) {
         </td>
       </tr>
       <template #footer>
-        <TablePagination
-          v-model:page="pagination.page.value"
-          :page-count="pagination.pageCount.value"
-          :total="pagination.total.value"
-          :start-item="pagination.startItem.value"
-          :end-item="pagination.endItem.value"
+        <CursorTablePagination
+          :page="pagination.page.value"
+          :item-count="rows.length"
+          :has-next-page="Boolean(pageQuery.data.value?.nextCursor)"
+          :loading="pageQuery.isFetching.value"
+          @previous="pagination.previous"
+          @next="pagination.next(pageQuery.data.value?.nextCursor)"
         />
       </template>
     </SoftTable>

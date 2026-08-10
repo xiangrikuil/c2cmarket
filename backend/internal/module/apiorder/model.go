@@ -21,9 +21,26 @@ const (
 	StatusCompleted         = "completed"
 	StatusCancelled         = "cancelled"
 
-	DisputeStatusNone   = "none"
-	DisputeStatusOpen   = "open"
-	DisputeStatusClosed = "closed"
+	DisputeStatusNone                    = "none"
+	DisputeStatusNegotiating             = "negotiating"
+	DisputeStatusOpen                    = "open"
+	DisputeStatusAwaitingFulfillment     = "awaiting_fulfillment"
+	DisputeStatusFulfillmentConfirmation = "fulfillment_confirmation"
+	DisputeStatusClosed                  = "closed"
+
+	DisputeIssueServiceUnavailable  = "service_unavailable"
+	DisputeIssueDescriptionMismatch = "description_mismatch"
+	DisputeIssueQuotaShortage       = "quota_shortage"
+	DisputeIssueExpiredEarly        = "expired_early"
+	DisputeIssueNotDelivered        = "not_delivered"
+	DisputeIssueRefundNotReceived   = "refund_not_received"
+	DisputeIssuePaymentDispute      = "payment_dispute"
+	DisputeIssueOther               = "other"
+
+	DisputeResolutionFullRefund          = "full_refund"
+	DisputeResolutionPartialRefund       = "partial_refund"
+	DisputeResolutionContinueFulfillment = "continue_fulfillment"
+	DisputeResolutionOther               = "other"
 
 	CompletionSourceBuyerConfirmed = "buyer_confirmed"
 	CompletionSourceAutoCompleted  = "auto_completed"
@@ -41,6 +58,10 @@ const (
 	EventCancelled               = "api_order.cancelled"
 	EventPaymentTimeoutCancelled = "api_order.payment_timeout_cancelled"
 	EventDisputeOpened           = "api_order.dispute_opened"
+	EventDisputeRemedyAwaiting   = "api_order.dispute_remedy_awaiting"
+	EventDisputeRemedyClaimed    = "api_order.dispute_remedy_claimed"
+	EventDisputeRemedyContested  = "api_order.dispute_remedy_contested"
+	EventDisputeClosed           = "api_order.dispute_closed"
 	EventDeliveryReviewReminder  = "api_order.delivery_review_reminder_sent"
 	EventAutoCompleted           = "api_order.auto_completed"
 
@@ -54,6 +75,36 @@ const (
 	DeliveryReviewWindow       = 24 * time.Hour
 	DeliveryReviewReminderLead = 2 * time.Hour
 )
+
+func IsDisputeActive(status string) bool {
+	switch status {
+	case DisputeStatusNegotiating, DisputeStatusOpen, DisputeStatusAwaitingFulfillment, DisputeStatusFulfillmentConfirmation:
+		return true
+	default:
+		return false
+	}
+}
+
+func IsDisputeIssueCode(value string) bool {
+	switch value {
+	case DisputeIssueServiceUnavailable, DisputeIssueDescriptionMismatch, DisputeIssueQuotaShortage,
+		DisputeIssueExpiredEarly, DisputeIssueNotDelivered, DisputeIssueRefundNotReceived,
+		DisputeIssuePaymentDispute, DisputeIssueOther:
+		return true
+	default:
+		return false
+	}
+}
+
+func IsDisputeResolution(value string) bool {
+	switch value {
+	case DisputeResolutionFullRefund, DisputeResolutionPartialRefund,
+		DisputeResolutionContinueFulfillment, DisputeResolutionOther:
+		return true
+	default:
+		return false
+	}
+}
 
 type Order struct {
 	ID                            string
@@ -75,6 +126,9 @@ type Order struct {
 	RequestedUSDAllowanceSnapshot string
 	CNYPerUSDAllowanceSnapshot    string
 	PricingSnapshot               string
+	ProbeConnectionIDSnapshot     string
+	APIBaseURLSnapshot            string
+	NormalizedAPIBaseURLSnapshot  string
 	QuotaUsagePolicySnapshot      apimarket.QuotaUsagePolicy
 	PromptAuditEnabledSnapshot    *bool
 	PackageStockReserved          bool
@@ -178,16 +232,19 @@ type CreateInput struct {
 }
 
 type ActionInput struct {
-	OrderID            string
-	ActorUserID        string
-	PaymentSummary     string
-	PaymentIssueReason string
-	PaymentIssueNote   string
-	DeliveryNote       string
-	DeliveryCredential DeliveryCredentialInput
-	Reason             string
-	ExpectedVersion    int64
-	RequestID          string
+	OrderID             string
+	ActorUserID         string
+	PaymentSummary      string
+	PaymentIssueReason  string
+	PaymentIssueNote    string
+	DeliveryNote        string
+	DeliveryCredential  DeliveryCredentialInput
+	Reason              string
+	IssueCode           string
+	RequestedResolution string
+	RequestedAmountCNY  string
+	ExpectedVersion     int64
+	RequestID           string
 }
 
 type DeliveryCredentialInput struct {
@@ -209,14 +266,17 @@ type PaymentInstructionsView struct {
 }
 
 type DisputeCaseInput struct {
-	OrderID      string
-	ServiceTitle string
-	BuyerUserID  string
-	SellerUserID string
-	ActorUserID  string
-	Reason       string
-	RequestID    string
-	Now          time.Time
+	OrderID             string
+	ServiceTitle        string
+	BuyerUserID         string
+	SellerUserID        string
+	ActorUserID         string
+	Reason              string
+	IssueCode           string
+	RequestedResolution string
+	RequestedAmountCNY  string
+	RequestID           string
+	Now                 time.Time
 }
 
 type CompletionBuilder func(Order) (idempotency.Completion, *domain.AppError)

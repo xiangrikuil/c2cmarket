@@ -43,6 +43,7 @@ export type Announcement = {
   ctaUrl?: string
   publishAt: string
   expireAt?: string
+  contentUpdatedAt: string
   version: number
   createdBy: string
   updatedBy: string

@@ -16,7 +16,7 @@ const { data: announcement, isLoading } = useAdminAnnouncement(announcementId)
 const pageTitle = computed(() => isCreate.value ? '新建公告' : '编辑公告')
 const pageDescription = computed(() => isCreate.value
   ? '创建平台公告草稿，预览后可以立即发布或设置未来发布时间。'
-  : '编辑公告内容、展示位置、发布时间和 CTA；编辑发布中公告会写入审计记录。')
+  : '编辑公告内容、展示位置、发布时间和可选跳转按钮；编辑发布中公告会写入审计记录。')
 </script>
 
 <template>

@@ -146,7 +146,7 @@ func TestPostgresAPIServiceFlow(t *testing.T) {
 	adminSession := createSession(t, server, "pg-api-admin-"+suffix, true)
 	ownerContact := createContactMethod(t, server, ownerSession, "telegram", "PG API Owner "+suffix, "@pg_api_owner_"+suffix)
 
-	service := createAPIService(t, server, ownerSession, ownerContact.ID, "pg-api-create-"+suffix)
+	service := createPostgresAPIService(t, databaseURL, server, ownerSession, ownerContact.ID, "pg-api-create-"+suffix)
 	if service.ReviewStatus != app.APIServiceReviewStatusDraft || service.Version != 1 {
 		t.Fatalf("unexpected postgres API service draft: %+v", service)
 	}
@@ -155,7 +155,7 @@ func TestPostgresAPIServiceFlow(t *testing.T) {
 	}
 	assertAPIServiceChildren(t, databaseURL, service.ID, 1, 1, 0)
 
-	updated := updateAPIService(t, server, ownerSession, service.ID, service.Version, apiServicePayloadWithModel(ownerContact.ID, "00000000-0000-0000-0000-000000000a02"), "pg-api-update-"+suffix)
+	updated := updateAPIService(t, server, ownerSession, service.ID, service.Version, apiServicePayloadWithProbeConnection(apiServicePayloadWithModel(ownerContact.ID, "00000000-0000-0000-0000-000000000a02"), service.ProbeConnectionID), "pg-api-update-"+suffix)
 	if updated.Version != 2 || len(updated.Models) != 2 {
 		t.Fatalf("unexpected updated API service: %+v", updated)
 	}
@@ -192,7 +192,7 @@ func TestPostgresAPIServiceFlow(t *testing.T) {
 	assertPublicAPIServiceVisible(t, server, published.ID, ownerContact.ID, true)
 	assertAPIServicePublicPredicateCount(t, databaseURL, published.ID, 1)
 
-	reviewService := createAPIService(t, server, ownerSession, ownerContact.ID, "pg-api-manual-review-create-"+suffix)
+	reviewService := createPostgresAPIService(t, databaseURL, server, ownerSession, ownerContact.ID, "pg-api-manual-review-create-"+suffix)
 	forcedPendingVersion := forceAPIServicePendingReview(t, databaseURL, reviewService.ID)
 	changesRequested := adminAPIServiceAction(t, server, adminSession, reviewService.ID, "request-changes", forcedPendingVersion, "pg-api-request-changes-"+suffix)
 	if changesRequested.ReviewStatus != app.APIServiceReviewStatusChangesRequested {
@@ -234,7 +234,7 @@ func TestPostgresAPIServiceFlow(t *testing.T) {
 	assertPublicAPIServiceVisible(t, server, removed.ID, ownerContact.ID, false)
 	assertAPIServiceIdempotencyCache(t, databaseURL, ownerSession.userID, published.ID, "publish", "pg-api-publish-"+suffix, app.APIServicePublicationStatusOnline)
 
-	rejectedService := createAPIService(t, server, ownerSession, ownerContact.ID, "pg-api-reject-create-"+suffix)
+	rejectedService := createPostgresAPIService(t, databaseURL, server, ownerSession, ownerContact.ID, "pg-api-reject-create-"+suffix)
 	forcedRejectedVersion := forceAPIServicePendingReview(t, databaseURL, rejectedService.ID)
 	rejected := adminAPIServiceAction(t, server, adminSession, rejectedService.ID, "reject", forcedRejectedVersion, "pg-api-reject-"+suffix)
 	if rejected.ReviewStatus != app.APIServiceReviewStatusRejected || rejected.PublicationStatus != app.APIServicePublicationStatusOffline {
@@ -242,7 +242,7 @@ func TestPostgresAPIServiceFlow(t *testing.T) {
 	}
 	assertPublicAPIServiceVisible(t, server, rejected.ID, ownerContact.ID, false)
 
-	revisionService := createAPIService(t, server, ownerSession, ownerContact.ID, "pg-api-revision-create-"+suffix)
+	revisionService := createPostgresAPIService(t, databaseURL, server, ownerSession, ownerContact.ID, "pg-api-revision-create-"+suffix)
 	revisionSubmitted := ownerAPIServiceAction(t, server, ownerSession, revisionService.ID, "submit-review", revisionService.Version, "pg-api-revision-submit-"+suffix)
 	revisionPublished := ownerAPIServiceAction(t, server, ownerSession, revisionSubmitted.ID, "publish", revisionSubmitted.Version, "pg-api-revision-publish-"+suffix)
 	revision := ownerAPIServiceAction(t, server, ownerSession, revisionPublished.ID, "start-revision", revisionPublished.Version, "pg-api-start-revision-"+suffix)
@@ -273,14 +273,14 @@ func TestPostgresAPIServiceIntegrityConstraints(t *testing.T) {
 	ownerContact := createContactMethod(t, server, ownerSession, "telegram", "PG API Integrity Owner "+suffix, "@pg_api_integrity_owner_"+suffix)
 	otherContact := createContactMethod(t, server, otherSession, "telegram", "PG API Integrity Other "+suffix, "@pg_api_integrity_other_"+suffix)
 
-	service := createAPIService(t, server, ownerSession, ownerContact.ID, "pg-api-integrity-create-"+suffix)
+	service := createPostgresAPIService(t, databaseURL, server, ownerSession, ownerContact.ID, "pg-api-integrity-create-"+suffix)
 	pool := openTestPool(t, databaseURL)
 	defer pool.Close()
 
 	var customMultiplier string
 	err = pool.QueryRow(ctx, `
 		INSERT INTO api_service_models (
-			api_service_id, distribution_system, model_catalog_id, model_name_snapshot,
+			api_service_id, distribution_system, model_catalog_id, model_key_snapshot,
 			provider_snapshot, capabilities_snapshot, merchant_multiplier, enabled
 		)
 		VALUES ($1, 'sub2api', '00000000-0000-0000-0000-000000000a02',
@@ -324,7 +324,7 @@ func TestPostgresAPIPurchaseIntentFlow(t *testing.T) {
 	ownerContact := createContactMethod(t, server, ownerSession, "telegram", "PG API Intent Owner "+suffix, "@pg_api_intent_owner_"+suffix)
 	buyerContact := createContactMethod(t, server, buyerSession, "telegram", "PG API Intent Buyer "+suffix, "@pg_api_intent_buyer_"+suffix)
 
-	service := createAPIService(t, server, ownerSession, ownerContact.ID, "pg-api-intent-service-create-"+suffix)
+	service := createPostgresAPIService(t, databaseURL, server, ownerSession, ownerContact.ID, "pg-api-intent-service-create-"+suffix)
 	submitted := ownerAPIServiceAction(t, server, ownerSession, service.ID, "submit-review", service.Version, "pg-api-intent-service-submit-"+suffix)
 	published := ownerAPIServiceAction(t, server, ownerSession, submitted.ID, "publish", submitted.Version, "pg-api-intent-service-publish-"+suffix)
 	published = updateAPIServiceOrderSettings(t, server, ownerSession, published.ID, published.Version, true, "pg-api-intent-service-settings-"+suffix)
@@ -432,7 +432,7 @@ func TestPostgresAPIOrderReleasesPurchaseIntent(t *testing.T) {
 	ownerContact := createContactMethod(t, server, ownerSession, "telegram", "PG API Order Release Owner "+suffix, "@pg_api_order_release_owner_"+suffix)
 	buyerContact := createContactMethod(t, server, buyerSession, "telegram", "PG API Order Release Buyer "+suffix, "@pg_api_order_release_buyer_"+suffix)
 
-	service := createAPIService(t, server, ownerSession, ownerContact.ID, "pg-api-order-release-service-create-"+suffix)
+	service := createPostgresAPIService(t, databaseURL, server, ownerSession, ownerContact.ID, "pg-api-order-release-service-create-"+suffix)
 	submitted := ownerAPIServiceAction(t, server, ownerSession, service.ID, "submit-review", service.Version, "pg-api-order-release-service-submit-"+suffix)
 	published := ownerAPIServiceAction(t, server, ownerSession, submitted.ID, "publish", submitted.Version, "pg-api-order-release-service-publish-"+suffix)
 	orderable := updateAPIServiceOrderSettings(t, server, ownerSession, published.ID, published.Version, true, "pg-api-order-release-service-settings-"+suffix)
@@ -510,7 +510,7 @@ func TestPostgresAPIPurchaseIntentIntegrityConstraints(t *testing.T) {
 	buyerContact := createContactMethod(t, server, buyerSession, "telegram", "PG API Intent Integrity Buyer "+suffix, "@pg_api_intent_integrity_buyer_"+suffix)
 	otherContact := createContactMethod(t, server, otherSession, "telegram", "PG API Intent Integrity Other "+suffix, "@pg_api_intent_integrity_other_"+suffix)
 
-	service := createAPIService(t, server, ownerSession, ownerContact.ID, "pg-api-intent-integrity-service-create-"+suffix)
+	service := createPostgresAPIService(t, databaseURL, server, ownerSession, ownerContact.ID, "pg-api-intent-integrity-service-create-"+suffix)
 	pausedIntent := newJSONRequest(http.MethodPost, "/api/v1/api-services/"+service.ID+"/purchase-intents", apiPurchaseIntentPayload(buyerContact.ID))
 	addAuth(pausedIntent, buyerSession, "pg-api-intent-paused-"+suffix)
 	pausedResponse := httptest.NewRecorder()
@@ -577,7 +577,7 @@ func TestPostgresAPIPurchaseIntentIntegrityConstraints(t *testing.T) {
 
 	secondOwnerSession := createLinuxDoSession(t, server, "pg-api-intent-integrity-owner-two-"+suffix)
 	secondOwnerContact := createContactMethod(t, server, secondOwnerSession, "telegram", "PG API Intent Integrity Owner Two "+suffix, "@pg_api_intent_integrity_owner_two_"+suffix)
-	secondService := createAPIService(t, server, secondOwnerSession, secondOwnerContact.ID, "pg-api-intent-integrity-second-service-create-"+suffix)
+	secondService := createPostgresAPIService(t, databaseURL, server, secondOwnerSession, secondOwnerContact.ID, "pg-api-intent-integrity-second-service-create-"+suffix)
 	secondSubmitted := ownerAPIServiceAction(t, server, secondOwnerSession, secondService.ID, "submit-review", secondService.Version, "pg-api-intent-integrity-second-submit-"+suffix)
 	secondPublished := ownerAPIServiceAction(t, server, secondOwnerSession, secondSubmitted.ID, "publish", secondSubmitted.Version, "pg-api-intent-integrity-second-publish-"+suffix)
 	reusedKey := newJSONRequest(http.MethodPost, "/api/v1/api-services/"+secondPublished.ID+"/purchase-intents", apiPurchaseIntentPayload(buyerContact.ID))
@@ -947,7 +947,7 @@ func TestPostgresCarpoolApplicationFlow(t *testing.T) {
 	if published.Status != app.CarpoolListingStatusActive || published.AvailableSeats != 1 {
 		t.Fatalf("expected one available seat after publish, got %+v", published)
 	}
-	if published.ServiceMultiplier != "1.0000" || published.WeeklyQuotaAmount == nil || *published.WeeklyQuotaAmount != "50.00" || published.MonthlyQuotaAmount != "200.00" || published.QuotaLabel != "额度" || published.QuotaUnit != "USD" || published.QuotaPeriod != "monthly" {
+	if published.ServiceMultiplier != "1.0000" || published.DailyQuotaAmount == nil || *published.DailyQuotaAmount != "50.00" || published.WeeklyQuotaAmount != "200.00" || published.QuotaLabel != "额度" || published.QuotaUnit != "USD" || published.QuotaPeriod != "monthly" {
 		t.Fatalf("expected postgres multiplier and quota fields after publish, got %+v", published)
 	}
 	if published.RegionCode != "other" || published.RegionName != "印度区" {
@@ -1190,6 +1190,40 @@ func poolExec(databaseURL, sql string, args ...any) (int64, error) {
 	return tag.RowsAffected(), err
 }
 
+func createPostgresAPIService(t *testing.T, databaseURL string, server http.Handler, session testSession, ownerContactID, idempotencyKey string) createdAPIService {
+	t.Helper()
+	connectionID := seedVerifiedAPIProbeConnection(t, databaseURL, session.userID)
+	payload := apiServicePayloadWithProbeConnection(apiServicePayload(ownerContactID, "1.0000"), connectionID)
+	return createAPIServiceWithPayload(t, server, session, payload, idempotencyKey)
+}
+
+func seedVerifiedAPIProbeConnection(t *testing.T, databaseURL, ownerUserID string) string {
+	t.Helper()
+	connectionID := uuid.NewString()
+	_, err := poolExec(databaseURL, `
+		INSERT INTO api_probe_connections (
+			id, owner_user_id, name, base_url, normalized_base_url,
+			credential_ciphertext, credential_nonce, credential_key_version,
+			credential_cipher_format, credential_fingerprint,
+			probe_model, probe_protocol,
+			enabled, verification_status, verified_at
+		) VALUES (
+			$1, $2, 'PostgreSQL test probe', 'https://api.example.com/v1', 'https://api.example.com/v1',
+			$3, $4, 'test-key', 'test-format', $5,
+			'gpt-5-mini', 'openai_responses_v1',
+			true, 'verified', now()
+		)
+	`, connectionID, ownerUserID, []byte("test-ciphertext"), []byte("test-nonce"), []byte("test-fingerprint"))
+	if err != nil {
+		t.Fatalf("seed verified API probe connection: %v", err)
+	}
+	return connectionID
+}
+
+func apiServicePayloadWithProbeConnection(payload, connectionID string) string {
+	return strings.Replace(payload, `"probeConnectionId":"00000000-0000-0000-0000-000000000811"`, `"probeConnectionId":"`+connectionID+`"`, 1)
+}
+
 func assertPublicAPIServiceVisible(t *testing.T, server http.Handler, serviceID, ownerContactID string, wantVisible bool) {
 	t.Helper()
 	request := httptest.NewRequest(http.MethodGet, "/api/v1/api-services/"+serviceID, nil)
@@ -1251,8 +1285,16 @@ func assertAPIServicePublicPredicateCount(t *testing.T, databaseURL, serviceID s
 		  AND review_status = 'approved'
 		  AND publication_status = 'online'
 		  AND moderation_status = 'clear'
-		  AND accepting_orders = true
-		  AND payment_window_minutes BETWEEN 3 AND 15
+			  AND accepting_orders = true
+			  AND EXISTS (
+			    SELECT 1
+			    FROM api_probe_connections connection
+			    WHERE connection.id = api_services.probe_connection_id
+			      AND connection.owner_user_id = api_services.owner_user_id
+			      AND connection.enabled = true
+			      AND connection.verification_status = 'verified'
+			  )
+			  AND payment_window_minutes BETWEEN 3 AND 15
 		  AND (billing_mode <> 'metered_usd_quota' OR available_usd_allowance > 0)
 		  AND (billing_mode <> 'metered_usd_quota' OR quota_expires_at > now())
 		  AND EXISTS (

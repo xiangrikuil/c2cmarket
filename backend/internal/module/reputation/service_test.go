@@ -136,6 +136,176 @@ func TestAggregateFactsWithoutRepositoryReturnsUnknown(t *testing.T) {
 	}
 }
 
+func TestAPIOrderFaultOutcomeAndSourceRestrictionRequireOverdueRemedy(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 8, 9, 16, 0, 0, 0, time.UTC)
+	service := NewService(nil, func() time.Time { return now })
+	base := CreateOutcomeInput{
+		DisputeCaseID:   "11111111-1111-4111-8111-111111111111",
+		SubjectUserID:   "22222222-2222-4222-8222-222222222222",
+		Responsibility:  ResponsibilityResponsible,
+		Severity:        SeverityLow,
+		RoleScope:       RoleSeller,
+		ReasonCode:      "confirmed_overdue",
+		PublicReason:    "平台确认责任方逾期未履行。",
+		InternalReason:  "管理员已核对整改期限和履行记录。",
+		AdminUserID:     "admin-1",
+		ExpectedVersion: 1,
+		APIOrderDispute: true,
+	}
+	if appErr := validateCreateOutcomeInput(base); appErr == nil || appErr.Code != domain.CodeInvalidStateTransition {
+		t.Fatalf("API-order fault outcome without overdue remedy must be rejected, got %+v", appErr)
+	}
+
+	base.Responsibility = ResponsibilityNotResponsible
+	base.Severity = SeverityNone
+	base.ReasonCode = "invalid_claim"
+	nonFault, appErr := service.createDisputeOutcomeInMemory(base)
+	if appErr != nil || nonFault.Outcome == nil {
+		t.Fatalf("non-fault API-order outcome should remain available: result=%+v err=%+v", nonFault, appErr)
+	}
+	_, appErr = service.createUserRestrictionInMemory(CreateRestrictionInput{
+		UserID:                 base.SubjectUserID,
+		RestrictionType:        "dispute_follow_up",
+		RoleScope:              RoleSeller,
+		ActionCode:             ActionAPIServicePublish,
+		ReasonCode:             "invalid_claim",
+		PublicReason:           "测试限制。",
+		InternalReason:         "测试非逾期来源不能创建限制。",
+		StartsAt:               now,
+		SourceDisputeOutcomeID: nonFault.Outcome.ID,
+		AdminUserID:            "admin-1",
+	})
+	if appErr == nil || appErr.Code != domain.CodeInvalidStateTransition {
+		t.Fatalf("non-overdue API-order outcome must not source a restriction, got %+v", appErr)
+	}
+
+	base.DisputeCaseID = "33333333-3333-4333-8333-333333333333"
+	base.Responsibility = ResponsibilityResponsible
+	base.Severity = SeverityLow
+	base.ReasonCode = "confirmed_overdue"
+	base.RemedyOverdueFact = true
+	if appErr := validateCreateOutcomeInput(base); appErr != nil {
+		t.Fatalf("confirmed overdue remedy should allow fault outcome: %+v", appErr)
+	}
+	overdue, appErr := service.createDisputeOutcomeInMemory(base)
+	if appErr != nil || overdue.Outcome == nil {
+		t.Fatalf("create overdue API-order outcome: result=%+v err=%+v", overdue, appErr)
+	}
+	if _, appErr := service.createUserRestrictionInMemory(CreateRestrictionInput{
+		UserID:                 base.SubjectUserID,
+		RestrictionType:        "dispute_overdue",
+		RoleScope:              RoleSeller,
+		ActionCode:             ActionAPIServicePublish,
+		ReasonCode:             "confirmed_overdue",
+		PublicReason:           "整改逾期限制。",
+		InternalReason:         "管理员确认整改逾期。",
+		StartsAt:               now,
+		SourceDisputeOutcomeID: overdue.Outcome.ID,
+		AdminUserID:            "admin-1",
+	}); appErr == nil || appErr.Code != domain.CodeInvalidStateTransition {
+		t.Fatalf("generic API-order restriction must use the dedicated sanction flow: %+v", appErr)
+	}
+}
+
+func TestAPIOrderSanctionInMemoryCountsRemedyFactsAtExactWindowBoundary(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 8, 9, 12, 0, 0, 0, time.UTC)
+	service := NewService(nil, func() time.Time { return now })
+	disputeID := "11111111-1111-4111-8111-111111111111"
+	currentRemedyID := "22222222-2222-4222-8222-222222222222"
+	sellerID := "33333333-3333-4333-8333-333333333333"
+
+	service.RecordAPIOrderRemedyOverdueFact(
+		"44444444-4444-4444-8444-444444444444",
+		"55555555-5555-4555-8555-555555555555",
+		sellerID,
+		sellerID,
+		now.AddDate(0, 0, -APIOrderSanctionWindowDays),
+	)
+	service.RecordAPIOrderRemedyOverdueFact(
+		"66666666-6666-4666-8666-666666666666",
+		"77777777-7777-4777-8777-777777777777",
+		sellerID,
+		sellerID,
+		now.AddDate(0, 0, -APIOrderSanctionWindowDays).Add(-time.Nanosecond),
+	)
+	service.RecordAPIOrderRemedyOverdueFact(
+		"88888888-8888-4888-8888-888888888888",
+		"99999999-9999-4999-8999-999999999999",
+		sellerID,
+		"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+		now.Add(-24*time.Hour),
+	)
+
+	currentOverdueAt := now.Add(-24 * time.Hour)
+	created, appErr := service.createDisputeOutcomeInMemory(CreateOutcomeInput{
+		DisputeCaseID:     disputeID,
+		SubjectUserID:     sellerID,
+		Responsibility:    ResponsibilityResponsible,
+		Severity:          SeverityMedium,
+		RoleScope:         RoleSeller,
+		ReasonCode:        "api_order_remedy_overdue",
+		PublicReason:      "整改逾期。",
+		InternalReason:    "管理员确认整改逾期。",
+		AdminUserID:       "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+		ExpectedVersion:   3,
+		APIOrderDispute:   true,
+		RemedyOverdueFact: true,
+		RemedyID:          currentRemedyID,
+		RemedyResponsible: sellerID,
+		RemedyOverdueAt:   &currentOverdueAt,
+		APIOrderSellerID:  sellerID,
+	})
+	if appErr != nil || created.Outcome == nil {
+		t.Fatalf("create current overdue outcome: result=%+v err=%+v", created, appErr)
+	}
+
+	recommendation, appErr := service.APIOrderSanctionRecommendation(context.Background(), AdminActor{UserID: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", IsAdmin: true}, disputeID)
+	if appErr != nil {
+		t.Fatalf("recommend sanction: %v", appErr)
+	}
+	if !recommendation.Eligible || recommendation.ConfirmedBreaches180Days != 2 || recommendation.RecommendedDays != 30 {
+		t.Fatalf("unexpected exact-boundary recommendation: %+v", recommendation)
+	}
+
+	result, appErr := service.applyAPIOrderSanctionInMemory(ApplyAPIOrderSanctionInput{
+		DisputeCaseID:       disputeID,
+		InternalReason:      "管理员显式确认处罚。",
+		AdminUserID:         "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+		ExpectedUserVersion: recommendation.SubjectUserVersion,
+	})
+	if appErr != nil || result.Restriction == nil {
+		t.Fatalf("apply sanction: result=%+v err=%+v", result, appErr)
+	}
+	if result.Restriction.SourceDisputeRemedyID != currentRemedyID || result.Restriction.EndsAt == nil || !result.Restriction.EndsAt.Equal(now.AddDate(0, 0, 30)) {
+		t.Fatalf("unexpected applied restriction: %+v", result.Restriction)
+	}
+	if _, appErr := service.applyAPIOrderSanctionInMemory(ApplyAPIOrderSanctionInput{
+		DisputeCaseID:       disputeID,
+		InternalReason:      "不得重复处罚同一整改。",
+		AdminUserID:         "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+		ExpectedUserVersion: result.Restriction.UserVersion,
+	}); appErr == nil || appErr.Code != domain.CodeInvalidStateTransition {
+		t.Fatalf("same remedy must not create a second restriction: %+v", appErr)
+	}
+	if len(service.restrictions) != 1 {
+		t.Fatalf("same remedy created duplicate restrictions: %+v", service.restrictions)
+	}
+}
+
+func TestRecommendedAPIOrderSanctionDaysUsesFixedTiers(t *testing.T) {
+	t.Parallel()
+
+	for breaches, want := range map[int]int{0: 0, 1: 7, 2: 30, 3: 90, 8: 90} {
+		if got := RecommendedAPIOrderSanctionDays(breaches); got != want {
+			t.Fatalf("breaches=%d got %d days, want %d", breaches, got, want)
+		}
+	}
+}
+
 func TestExclusionMutationsRequireAdminAndValidateInput(t *testing.T) {
 	t.Parallel()
 

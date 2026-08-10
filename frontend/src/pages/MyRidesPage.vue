@@ -6,21 +6,21 @@ import { Badge } from '@/components/ui/badge'
 import { Card } from '@/components/ui/card'
 import PageTitle from '@/components/market/PageTitle.vue'
 import StatusTabs from '@/components/market/StatusTabs.vue'
-import TablePagination from '@/components/market/TablePagination.vue'
+import CursorTablePagination from '@/components/market/CursorTablePagination.vue'
 import EmptyState from '@/components/market/EmptyState.vue'
 import LocalTime from '@/components/market/LocalTime.vue'
 import ShortId from '@/components/market/ShortId.vue'
 import SkeletonTable from '@/components/market/SkeletonTable.vue'
-import { usePagination } from '@/composables/usePagination'
+import { useCursorPagination } from '@/composables/useCursorPagination'
 import { getCarpoolApplicationNextAction, getCarpoolApplicationStatusLabel, type CarpoolApplication } from '@/lib/api'
 import { getProductCategory } from '@/lib/productCategories'
 import { functionalMotion } from '@/lib/motion'
 import { getProductCategoryIconSrc } from '@/lib/productCategoryIcon'
-import { useMyCarpoolApplications } from '@/queries/useMarketQueries'
+import { useMyCarpoolApplications, useMyCarpoolApplicationsPage } from '@/queries/useMarketQueries'
 
 const activeStatus = ref('全部')
 const router = useRouter()
-const { data: applications, isLoading } = useMyCarpoolApplications({ sort: 'default_buyer' })
+const { data: applications } = useMyCarpoolApplications({ sort: 'default_buyer' })
 
 const statusGroups: Record<string, CarpoolApplication['status'][]> = {
   待车主处理: ['pending_owner'],
@@ -32,13 +32,15 @@ const statusGroups: Record<string, CarpoolApplication['status'][]> = {
   纠纷: ['disputed'],
 }
 
-const rows = computed(() => {
-  const all = applications.value ?? []
-  if (activeStatus.value === '全部') return all
-  return all.filter(item => statusGroups[activeStatus.value]?.includes(item.status))
-})
-
-const pagination = usePagination(rows)
+const pageFilters = computed(() => ({
+  status: activeStatus.value === '全部' ? undefined : statusGroups[activeStatus.value],
+  sort: 'default_buyer' as const,
+}))
+const pagination = useCursorPagination([activeStatus])
+const pageRequest = computed(() => ({ limit: pagination.pageSize, cursor: pagination.cursor.value }))
+const pageQuery = useMyCarpoolApplicationsPage(pageFilters, pageRequest)
+const rows = computed(() => pageQuery.data.value?.items ?? [])
+const isLoading = computed(() => pageQuery.isLoading.value || pageQuery.isFetching.value)
 const builtInProductIcons = new Map<string, string>()
 const stats = computed(() => {
   const all = applications.value ?? []
@@ -91,7 +93,7 @@ function openApplication(event: MouseEvent | KeyboardEvent, id: string) {
     <EmptyState v-else-if="rows.length === 0" title="当前筛选下暂无上车申请" description="可以继续浏览车源，或切换状态查看历史申请。" />
     <div v-else v-auto-animate="functionalMotion" class="my-transaction-list">
       <Card
-        v-for="item in pagination.paginatedRows.value"
+        v-for="item in rows"
         :key="item.id"
         class="my-transaction-row my-ride-row"
         tabindex="0"
@@ -114,7 +116,7 @@ function openApplication(event: MouseEvent | KeyboardEvent, id: string) {
         <div class="my-transaction-state"><Badge :variant="statusVariant(item.status)">{{ getCarpoolApplicationStatusLabel(item.status) }}</Badge><span>{{ getCarpoolApplicationNextAction(item, 'buyer') }}</span></div>
         <ArrowRight class="my-transaction-arrow" />
       </Card>
-      <div class="my-transaction-pagination"><TablePagination v-model:page="pagination.page.value" :page-count="pagination.pageCount.value" :total="pagination.total.value" :start-item="pagination.startItem.value" :end-item="pagination.endItem.value" /></div>
+      <div class="my-transaction-pagination"><CursorTablePagination :page="pagination.page.value" :item-count="rows.length" :has-next-page="Boolean(pageQuery.data.value?.nextCursor)" :loading="pageQuery.isFetching.value" @previous="pagination.previous" @next="pagination.next(pageQuery.data.value?.nextCursor)" /></div>
     </div>
   </div>
 </template>

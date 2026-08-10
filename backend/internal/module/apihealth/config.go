@@ -4,83 +4,91 @@ import (
 	"errors"
 	"strings"
 	"time"
+
+	"c2c-market/backend/internal/platform/openaiapi"
 )
 
 var (
-	ErrInvalidModel                = errors.New("probe model is required")
-	ErrCredentialRequired          = errors.New("probe credential is required before enabling")
+	ErrInvalidName                 = errors.New("probe connection name is required")
+	ErrCredentialRequired          = errors.New("probe credential is required")
 	ErrCredentialInvalid           = errors.New("probe credential is invalid")
+	ErrProbeModelRequired          = errors.New("probe model is required")
+	ErrProbeModelUnavailable       = errors.New("probe model is unavailable")
+	ErrPreflightRequired           = errors.New("probe preflight token is required")
+	ErrPreflightInvalid            = errors.New("probe preflight token is invalid or expired")
 	ErrInsecureHTTPNotAcknowledged = errors.New("insecure HTTP probe risk must be acknowledged")
-	ErrInvalidExpectedVersion      = errors.New("probe config version is invalid")
 )
 
-type ConfigMutation struct {
-	Config                   Config
-	MeasurementInvalidated   bool
-	AuthorizationInvalidated bool
+func NewConnection(ownerID string, input ConnectionInput, target openaiapi.BaseURL, result VerificationResult, price PriceSnapshot, now time.Time) (Connection, error) {
+	name := strings.TrimSpace(input.Name)
+	if name == "" || len([]rune(name)) > 80 {
+		return Connection{}, ErrInvalidName
+	}
+	if input.Credential == nil || strings.TrimSpace(*input.Credential) == "" {
+		return Connection{}, ErrCredentialRequired
+	}
+	connection := Connection{
+		OwnerUserID: ownerID, Name: name, BaseURL: target.Raw, NormalizedBaseURL: target.Canonical,
+		CredentialConfigured: true, ProbeEnvironment: ProbeEnvironmentUSWestV1, Price: price,
+		MeasurementVersion: 1, Version: 1, CreatedAt: now, UpdatedAt: now,
+	}
+	applyVerification(&connection, input.Enabled, result, now)
+	return connection, nil
 }
 
-func BuildConfigMutation(existing *Config, serviceID, ownerID string, input ConfigInput, now time.Time) (ConfigMutation, error) {
-	if UsesInsecureHTTP(input.BaseURL) && !input.AcknowledgeInsecureHTTP {
-		return ConfigMutation{}, ErrInsecureHTTPNotAcknowledged
-	}
-	target, err := normalizeTarget(input.BaseURL, input.AcknowledgeInsecureHTTP)
-	if err != nil {
-		return ConfigMutation{}, err
-	}
-	model := strings.TrimSpace(input.Model)
-	if model == "" {
-		return ConfigMutation{}, ErrInvalidModel
+func UpdateConnection(existing Connection, input ConnectionInput, target openaiapi.BaseURL, result *VerificationResult, price *PriceSnapshot, now time.Time) (Connection, error) {
+	name := strings.TrimSpace(input.Name)
+	if name == "" || len([]rune(name)) > 80 {
+		return Connection{}, ErrInvalidName
 	}
 	if input.Credential != nil && strings.TrimSpace(*input.Credential) == "" {
-		return ConfigMutation{}, ErrCredentialInvalid
+		return Connection{}, ErrCredentialInvalid
 	}
-	credentialConfigured := input.Credential != nil
-	if existing != nil && existing.CredentialConfigured {
-		credentialConfigured = true
-	}
-	if input.Enabled && !credentialConfigured {
-		return ConfigMutation{}, ErrCredentialRequired
-	}
-	if existing == nil {
-		return ConfigMutation{Config: Config{
-			APIServiceID: serviceID, OwnerUserID: ownerID,
-			Protocol: ProtocolOpenAIChatCompletionsV1, BaseURL: target.BaseURL,
-			NormalizedOrigin: target.Origin, Model: model,
-			CredentialConfigured: credentialConfigured, Enabled: input.Enabled,
-			AuthorizationStatus: AuthorizationPending,
-			MeasurementVersion:  1, Version: 1, CreatedAt: now, UpdatedAt: now,
-		}}, nil
-	}
-	updated := *existing
-	measurementChanged := MeasurementIdentityChanged(*existing, target, model)
-	updated.Protocol = ProtocolOpenAIChatCompletionsV1
-	updated.BaseURL = target.BaseURL
-	updated.NormalizedOrigin = target.Origin
-	updated.Model = model
-	updated.CredentialConfigured = credentialConfigured
+	updated := existing
+	updated.Name = name
+	updated.BaseURL = target.Raw
+	updated.NormalizedBaseURL = target.Canonical
 	updated.Enabled = input.Enabled
 	updated.UpdatedAt = now
 	updated.Version++
-	if measurementChanged {
-		updated.MeasurementVersion++
-		updated.AuthorizationStatus = AuthorizationPending
-		updated.AuthorizationMethod = ""
-		updated.VerifiedOrigin = ""
-		updated.VerifiedAt = nil
-		updated.ApprovedByAdminID = ""
-		updated.ApprovedAt = nil
-		updated.RejectionReason = ""
-		updated.ChallengeExpiresAt = nil
-		updated.LastConfigErrorCode = ""
+	if result != nil {
+		oldModel := updated.ProbeModel
+		oldProtocol := updated.ProbeProtocol
+		measurementChanged := target.Canonical != existing.NormalizedBaseURL || input.Credential != nil ||
+			result.ProbeModel != existing.ProbeModel || result.ProbeProtocol != existing.ProbeProtocol ||
+			existing.ProbeEnvironment != ProbeEnvironmentUSWestV1
+		if measurementChanged {
+			updated.MeasurementVersion++
+		}
+		updated.CredentialConfigured = true
+		if price != nil {
+			updated.Price = *price
+		}
+		applyVerification(&updated, input.Enabled, *result, now)
+		if oldModel != "" && (oldModel != updated.ProbeModel || oldProtocol != updated.ProbeProtocol) {
+			updated.ProbeModelChangedAt = timePointer(now)
+		}
 	}
-	return ConfigMutation{
-		Config: updated, MeasurementInvalidated: measurementChanged,
-		AuthorizationInvalidated: measurementChanged,
-	}, nil
+	return updated, nil
 }
 
-func IsAuthorized(config Config) bool {
-	return (config.AuthorizationStatus == AuthorizationVerified || config.AuthorizationStatus == AuthorizationApproved) &&
-		config.VerifiedOrigin == config.NormalizedOrigin && config.VerifiedAt != nil
+func applyVerification(connection *Connection, enableRequested bool, result VerificationResult, now time.Time) {
+	connection.Enabled = false
+	connection.VerifiedAt = nil
+	connection.LastVerificationErrorCode = result.ErrorCode
+	connection.AvailableModels = append([]string(nil), result.AvailableModels...)
+	if result.ErrorCode == "" {
+		connection.VerificationStatus = VerificationVerified
+		connection.VerifiedAt = timePointer(now)
+		connection.ProbeModel = result.ProbeModel
+		connection.ProbeProtocol = result.ProbeProtocol
+		connection.Enabled = enableRequested
+		return
+	}
+	connection.VerificationStatus = VerificationFailed
+}
+
+func timePointer(value time.Time) *time.Time {
+	copy := value
+	return &copy
 }

@@ -1,13 +1,19 @@
 import { modelCatalog, type ModelCatalogItem } from '@/data/mock'
-import { backendMutation, backendRequest, ensureBackendSession, shouldUseRealBackend } from '@/lib/backendClient'
+import { backendJSON, backendMutation, backendRequest, ensureBackendSession, shouldUseRealBackend } from '@/lib/backendClient'
 import {
   apiModelCapabilities,
   type AdminApiModel,
   type AdminApiModelProvider,
   type ApiModelCapability,
+  type ApiModelBulkMutationResult,
+  type ApiModelBulkStatusInput,
   type ApiModelInput,
   type ApiModelProviderCategory,
   type ApiModelProviderInput,
+  type ApiModelSyncItem,
+  type ApiModelSyncPreview,
+  type ApiModelSyncSelection,
+  type ModelsDevProviderCode,
 } from '@/types/apiModelCatalog'
 
 type ListResponse<T> = { items: T[] }
@@ -130,6 +136,47 @@ export async function setAPIModelActive(id: string, active: boolean): Promise<Ad
   return updated
 }
 
+export async function previewAPIModelsDevSync(providerIds: string[]): Promise<ApiModelSyncPreview> {
+  if (shouldUseRealBackend()) {
+    await ensureBackendSession('admin', true)
+    return backendJSON<ApiModelSyncPreview>('/api/v1/admin/api-models/models-dev/preview', { providerIds })
+  }
+  return buildMockModelsDevPreview(providerIds)
+}
+
+export async function applyAPIModelsDevSync(items: ApiModelSyncSelection[]): Promise<ApiModelBulkMutationResult> {
+  if (shouldUseRealBackend()) {
+    await ensureBackendSession('admin', true)
+    return backendMutation<ApiModelBulkMutationResult>('/api/v1/admin/api-models/models-dev/apply', { items }, {
+      idempotencyPrefix: 'api-model-models-dev-apply',
+    })
+  }
+  return applyMockModelsDevSync(items)
+}
+
+export async function setAPIModelsBulkStatus(input: ApiModelBulkStatusInput): Promise<ApiModelBulkMutationResult> {
+  if (shouldUseRealBackend()) {
+    await ensureBackendSession('admin', true)
+    return backendMutation<ApiModelBulkMutationResult>('/api/v1/admin/api-models/bulk-status', input, {
+      idempotencyPrefix: 'api-model-bulk-status',
+    })
+  }
+  const rows = readMockAdminAPIModels()
+  const ids = Array.from(new Set(input.modelIds))
+  if (ids.length === 0 || ids.some(id => !rows.some(item => item.id === id))) {
+    throw new Error('部分 API 模型不存在，请刷新目录后重试。')
+  }
+  const now = new Date().toISOString()
+  let changed = 0
+  const nextRows = rows.map((item) => {
+    if (!ids.includes(item.id) || item.active === input.active) return item
+    changed += 1
+    return { ...item, active: input.active, updatedAt: now }
+  })
+  writeMockAdminAPIModels(nextRows)
+  return { created: 0, updated: 0, changed, ids }
+}
+
 export function getMockPublicAPIModels(): ModelCatalogItem[] {
   return readMockAdminAPIModels()
     .filter(item => item.active && item.providerActive)
@@ -202,7 +249,6 @@ function seedAdminAPIModels(providers: AdminApiModelProvider[]): AdminApiModel[]
       provider: provider.displayName,
       providerActive: provider.active,
       modelKey: item.name,
-      displayName: item.displayName,
       capabilities: normalizeCapabilities(item.capabilities),
       active: item.active,
       currentPriceVersionId: item.officialInputPricePerMillion !== null || item.officialCachedInputPricePerMillion !== null || item.officialOutputPricePerMillion !== null ? `mock-price-${item.id}-seed` : undefined,
@@ -216,6 +262,211 @@ function seedAdminAPIModels(providers: AdminApiModelProvider[]): AdminApiModel[]
       createdAt: now,
       updatedAt: now,
     }, provider)
+  }))
+}
+
+type MockModelsDevModel = {
+  providerCode: ModelsDevProviderCode
+  modelKey: string
+  capabilities: Array<'text' | 'vision' | 'reasoning'>
+  inputPricePerMillion: string
+  cachedInputPricePerMillion: string
+  outputPricePerMillion: string
+  sourceVersion: string
+  unavailableReason?: string
+}
+
+const mockModelsDevModels: MockModelsDevModel[] = [
+  { providerCode: 'openai', modelKey: 'gpt-5-mini', capabilities: ['text', 'vision', 'reasoning'], inputPricePerMillion: '0.250000', cachedInputPricePerMillion: '0.025000', outputPricePerMillion: '2.100000', sourceVersion: 'models.dev:2026-08-08' },
+  { providerCode: 'openai', modelKey: 'gpt-4.1-mini', capabilities: ['text', 'vision'], inputPricePerMillion: '0.400000', cachedInputPricePerMillion: '0.100000', outputPricePerMillion: '1.600000', sourceVersion: 'models.dev:2026-08-08' },
+  { providerCode: 'openai', modelKey: 'gpt-audio-preview', capabilities: ['text'], inputPricePerMillion: '', cachedInputPricePerMillion: '', outputPricePerMillion: '', sourceVersion: '', unavailableReason: '当前目录不支持音频模型计价。' },
+  { providerCode: 'anthropic', modelKey: 'claude-sonnet', capabilities: ['text', 'vision'], inputPricePerMillion: '3.000000', cachedInputPricePerMillion: '', outputPricePerMillion: '15.000000', sourceVersion: 'models.dev:2026-08-08' },
+  { providerCode: 'anthropic', modelKey: 'claude-3-5-haiku', capabilities: ['text', 'vision'], inputPricePerMillion: '0.800000', cachedInputPricePerMillion: '0.080000', outputPricePerMillion: '4.000000', sourceVersion: 'models.dev:2026-08-08' },
+  { providerCode: 'google', modelKey: 'gemini-flash', capabilities: ['text', 'vision'], inputPricePerMillion: '0.100000', cachedInputPricePerMillion: '0.025000', outputPricePerMillion: '0.400000', sourceVersion: 'models.dev:2026-08-08' },
+  { providerCode: 'google', modelKey: 'gemini-2.5-pro', capabilities: ['text', 'vision', 'reasoning'], inputPricePerMillion: '1.250000', cachedInputPricePerMillion: '0.125000', outputPricePerMillion: '10.000000', sourceVersion: 'models.dev:2026-08-08' },
+  { providerCode: 'perplexity', modelKey: 'sonar', capabilities: ['text'], inputPricePerMillion: '1.000000', cachedInputPricePerMillion: '', outputPricePerMillion: '1.000000', sourceVersion: 'models.dev:2026-08-08' },
+]
+
+function buildMockModelsDevPreview(providerIds: string[]): ApiModelSyncPreview {
+  const providers = readMockAPIModelProviders()
+  const uniqueProviderIds = Array.from(new Set(providerIds))
+  const selectedProviders = uniqueProviderIds.map(id => providers.find(item => item.id === id))
+  if (selectedProviders.length === 0 || selectedProviders.some(provider => !provider || !isModelsDevProviderCode(provider.code))) {
+    throw new Error('请至少选择一个支持 models.dev 的官方提供商。')
+  }
+  const localModels = readMockAdminAPIModels()
+  const items: ApiModelSyncItem[] = []
+  for (const provider of selectedProviders as AdminApiModelProvider[]) {
+    const externalModels = mockModelsDevModels.filter(item => item.providerCode === provider.code)
+    const externalKeys = new Set(externalModels.map(item => item.modelKey))
+    for (const external of externalModels) {
+      const local = localModels.find(item => item.modelKey === external.modelKey)
+      if (external.unavailableReason) {
+        items.push(mockSyncItem(provider, external, 'unavailable', undefined, 'UNSUPPORTED_MODEL_TYPE', external.unavailableReason))
+        continue
+      }
+      if (local && local.providerId !== provider.id) {
+        items.push(mockSyncItem(provider, external, 'unavailable', undefined, 'MODEL_KEY_PROVIDER_CONFLICT', '该模型标识已属于其他提供商。'))
+        continue
+      }
+      const status = !local ? 'new' : mockPriceChanged(local, external) ? 'price_changed' : 'unchanged'
+      items.push(mockSyncItem(provider, external, status, local))
+    }
+    for (const local of localModels.filter(item => item.providerId === provider.id && !externalKeys.has(item.modelKey))) {
+      items.push({
+        candidateKey: `${provider.code}:${local.modelKey}`,
+        fingerprint: '', status: 'source_missing', reasonCode: 'SOURCE_MISSING',
+        reason: 'models.dev 本次未返回该模型，本地数据保持不变。',
+        providerId: provider.id, providerCode: provider.code, provider: provider.displayName,
+        modelKey: local.modelKey, capabilities: local.capabilities,
+        localModelId: local.id, localPriceVersionId: local.currentPriceVersionId,
+        localInputPricePerMillion: local.inputPricePerMillion,
+        localCachedInputPricePerMillion: local.cachedInputPricePerMillion,
+        localOutputPricePerMillion: local.outputPricePerMillion,
+        localSourceUrl: local.currentPriceSourceUrl, localSourceVersion: local.currentPriceSourceVersion,
+      })
+    }
+  }
+  const statusOrder = ['new', 'price_changed', 'unchanged', 'source_missing', 'unavailable']
+  items.sort((left, right) => statusOrder.indexOf(left.status) - statusOrder.indexOf(right.status) || left.candidateKey.localeCompare(right.candidateKey))
+  return {
+    fingerprint: mockFingerprint(`preview:${uniqueProviderIds.join(',')}:${items.map(item => item.fingerprint).join(',')}`),
+    fetchedAt: new Date().toISOString(),
+    counts: {
+      new: items.filter(item => item.status === 'new').length,
+      priceChanged: items.filter(item => item.status === 'price_changed').length,
+      unchanged: items.filter(item => item.status === 'unchanged').length,
+      sourceMissing: items.filter(item => item.status === 'source_missing').length,
+      unavailable: items.filter(item => item.status === 'unavailable').length,
+    },
+    items,
+  }
+}
+
+function mockSyncItem(provider: AdminApiModelProvider, external: MockModelsDevModel, status: ApiModelSyncItem['status'], local?: AdminApiModel, reasonCode?: string, reason?: string): ApiModelSyncItem {
+  const candidateKey = `${provider.code}:${external.modelKey}`
+  const item: ApiModelSyncItem = {
+    candidateKey, fingerprint: '', status, reasonCode, reason,
+    providerId: provider.id, providerCode: provider.code, provider: provider.displayName,
+    modelKey: external.modelKey, capabilities: external.capabilities,
+    sourceUrl: status === 'unavailable' ? undefined : 'https://models.dev/api.json',
+    sourceVersion: external.sourceVersion || undefined,
+    inputPricePerMillion: external.inputPricePerMillion || undefined,
+    cachedInputPricePerMillion: external.cachedInputPricePerMillion || undefined,
+    outputPricePerMillion: external.outputPricePerMillion || undefined,
+    localModelId: local?.id, localPriceVersionId: local?.currentPriceVersionId,
+    localInputPricePerMillion: local?.inputPricePerMillion,
+    localCachedInputPricePerMillion: local?.cachedInputPricePerMillion,
+    localOutputPricePerMillion: local?.outputPricePerMillion,
+    localSourceUrl: local?.currentPriceSourceUrl, localSourceVersion: local?.currentPriceSourceVersion,
+  }
+  if (status === 'new' || status === 'price_changed') item.fingerprint = mockSyncSelectionFingerprint(item)
+  return item
+}
+
+function applyMockModelsDevSync(items: ApiModelSyncSelection[]): ApiModelBulkMutationResult {
+  if (items.length === 0) throw new Error('请至少选择一个模型变化。')
+  const rows = readMockAdminAPIModels()
+  const providers = readMockAPIModelProviders()
+  const seen = new Set<string>()
+  for (const item of items) {
+    const provider = providers.find(candidate => candidate.id === item.providerId)
+    const key = `${item.providerCode}:${item.modelKey}`
+    if (!provider || provider.code !== item.providerCode || seen.has(key)) throw new Error('同步候选项已变化，请重新获取预览。')
+    const currentCandidate = buildMockModelsDevPreview([provider.id]).items.find(candidate => candidate.candidateKey === key)
+    if (!currentCandidate
+      || currentCandidate.fingerprint !== item.fingerprint
+      || currentCandidate.status !== item.status
+      || mockSyncSelectionFingerprint(item) !== item.fingerprint) {
+      throw new Error('同步候选项已变化，请重新获取预览。')
+    }
+    seen.add(key)
+    const local = rows.find(candidate => candidate.id === item.localModelId)
+    if (item.status === 'new' && rows.some(candidate => candidate.modelKey === item.modelKey)) throw new Error('模型目录已变化，请重新获取预览。')
+    if (item.status === 'price_changed' && (!local || local.providerId !== item.providerId || local.modelKey !== item.modelKey || (local.currentPriceVersionId ?? '') !== item.localPriceVersionId)) {
+      throw new Error('模型价格已变化，请重新获取预览。')
+    }
+  }
+  const now = new Date().toISOString()
+  let nextSortOrder = Math.max(0, ...rows.map(item => item.sortOrder)) + 10
+  let nextRows = [...rows]
+  const ids: string[] = []
+  let created = 0
+  let updated = 0
+  for (const item of items) {
+    const provider = providers.find(candidate => candidate.id === item.providerId)!
+    if (item.status === 'new') {
+      const id = stableModelId(item.modelKey, nextRows)
+      const createdModel = withProvider({
+        id, providerId: provider.id, providerCategory: provider.providerCategory,
+        providerCode: provider.code, provider: provider.displayName, providerActive: provider.active,
+        modelKey: item.modelKey, capabilities: item.capabilities, active: item.active,
+        currentPriceVersionId: `mock-price-${id}-${Date.now()}`,
+        currentPriceSourceUrl: item.sourceUrl, currentPriceSourceVersion: item.sourceVersion,
+        currentPriceValidFrom: now, inputPricePerMillion: item.inputPricePerMillion,
+        cachedInputPricePerMillion: item.cachedInputPricePerMillion,
+        outputPricePerMillion: item.outputPricePerMillion, sortOrder: nextSortOrder,
+        createdAt: now, updatedAt: now,
+      }, provider)
+      nextRows.push(createdModel)
+      nextSortOrder += 10
+      ids.push(id)
+      created += 1
+      continue
+    }
+    nextRows = nextRows.map(local => local.id === item.localModelId ? {
+      ...local,
+      currentPriceVersionId: `mock-price-${local.id}-${Date.now()}`,
+      currentPriceSourceUrl: item.sourceUrl,
+      currentPriceSourceVersion: item.sourceVersion,
+      currentPriceValidFrom: now,
+      inputPricePerMillion: item.inputPricePerMillion,
+      cachedInputPricePerMillion: item.cachedInputPricePerMillion,
+      outputPricePerMillion: item.outputPricePerMillion,
+      updatedAt: now,
+    } : local)
+    ids.push(item.localModelId)
+    updated += 1
+  }
+  writeMockAdminAPIModels(nextRows)
+  return { created, updated, changed: 0, ids }
+}
+
+function mockPriceChanged(local: AdminApiModel, external: MockModelsDevModel) {
+  return (local.currentPriceSourceUrl ?? '') !== 'https://models.dev/api.json'
+    || (local.currentPriceSourceVersion ?? '') !== external.sourceVersion
+    || (local.inputPricePerMillion ?? '') !== external.inputPricePerMillion
+    || (local.cachedInputPricePerMillion ?? '') !== external.cachedInputPricePerMillion
+    || (local.outputPricePerMillion ?? '') !== external.outputPricePerMillion
+}
+
+function isModelsDevProviderCode(value: string): value is ModelsDevProviderCode {
+  return value === 'openai' || value === 'anthropic' || value === 'google' || value === 'perplexity'
+}
+
+function mockFingerprint(value: string) {
+  let hash = 2166136261
+  for (let index = 0; index < value.length; index += 1) {
+    hash ^= value.charCodeAt(index)
+    hash = Math.imul(hash, 16777619)
+  }
+  return Math.abs(hash >>> 0).toString(16).padStart(8, '0').repeat(8).slice(0, 64)
+}
+
+function mockSyncSelectionFingerprint(item: Pick<ApiModelSyncSelection, 'status' | 'providerId' | 'providerCode' | 'modelKey' | 'capabilities' | 'sourceUrl' | 'sourceVersion' | 'inputPricePerMillion' | 'cachedInputPricePerMillion' | 'outputPricePerMillion' | 'localModelId' | 'localPriceVersionId'> | ApiModelSyncItem) {
+  return mockFingerprint(JSON.stringify({
+    status: item.status,
+    providerId: item.providerId,
+    providerCode: item.providerCode,
+    modelKey: item.modelKey,
+    capabilities: item.capabilities,
+    sourceUrl: item.sourceUrl ?? '',
+    sourceVersion: item.sourceVersion ?? '',
+    inputPricePerMillion: item.inputPricePerMillion ?? '',
+    cachedInputPricePerMillion: item.cachedInputPricePerMillion ?? '',
+    outputPricePerMillion: item.outputPricePerMillion ?? '',
+    localModelId: item.localModelId ?? '',
+    localPriceVersionId: item.localPriceVersionId ?? '',
   }))
 }
 
@@ -233,7 +484,6 @@ function normalizeModelInput(input: ApiModelInput): ApiModelInput {
   return {
     providerId: input.providerId.trim(),
     modelKey: input.modelKey.trim(),
-    displayName: input.displayName.trim(),
     capabilities: normalizeCapabilities(input.capabilities),
     inputTokenPrice: normalizePriceInput(input.inputTokenPrice),
     cachedInputTokenPrice: normalizePriceInput(input.cachedInputTokenPrice),
@@ -279,7 +529,6 @@ function fromModelInput(id: string, input: ApiModelInput, previous?: AdminApiMod
     provider: previous?.provider ?? '',
     providerActive: previous?.providerActive ?? true,
     modelKey: input.modelKey,
-    displayName: input.displayName,
     capabilities: input.capabilities,
     active: input.active,
     currentPriceVersionId: priceVersionId,
@@ -311,7 +560,6 @@ function toPublicModel(item: AdminApiModel): ModelCatalogItem {
     id: item.id,
     provider: publicProvider(item),
     name: item.modelKey,
-    displayName: item.displayName,
     capabilities: item.capabilities.filter(isPublicCapability),
     officialInputPricePerMillion: priceToNumber(item.inputPricePerMillion),
     officialCachedInputPricePerMillion: priceToNumber(item.cachedInputPricePerMillion),
@@ -413,6 +661,6 @@ function sortAdminAPIModels(items: AdminApiModel[]) {
     const providerDelta = providerOrder.indexOf(left.providerCategory) - providerOrder.indexOf(right.providerCategory)
     if (providerDelta !== 0) return providerDelta
     if (left.sortOrder !== right.sortOrder) return left.sortOrder - right.sortOrder
-    return left.displayName.localeCompare(right.displayName)
+    return left.modelKey.localeCompare(right.modelKey)
   })
 }

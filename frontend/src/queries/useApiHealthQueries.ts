@@ -1,114 +1,107 @@
 import { computed, type Ref } from 'vue'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/vue-query'
 import {
-  createAPIHealthChallenge,
-  deleteOwnerAPIHealthProbe,
-  getAdminAPIHealthProbes,
-  getOwnerAPIHealthProbe,
-  reviewAPIHealthProbe,
-  saveOwnerAPIHealthProbe,
-  verifyAPIHealthChallenge,
+  createOwnerAPIProbeConnection,
+  deleteOwnerAPIProbeConnection,
+  getOwnerAPIProbeConnection,
+  getOwnerAPIProbeConnections,
+  preflightOwnerAPIProbeConnection,
+  updateOwnerAPIProbeConnection,
+  verifyOwnerAPIProbeConnection,
 } from '@/lib/apiHealthFacade'
-import type { ApiHealthAuthorizationStatus } from '@/types/apiHealth'
 
 function valueOf<T>(value: Ref<T> | T): T {
   return typeof value === 'object' && value !== null && 'value' in value ? value.value : value
 }
 
 export const apiHealthQueryKeys = {
-  all: ['api-health-probes'] as const,
-  owner: (apiServiceId: string) => ['api-health-probes', 'owner', apiServiceId] as const,
-  admin: (status: ApiHealthAuthorizationStatus) => ['api-health-probes', 'admin', status] as const,
+  all: ['api-probe-connections'] as const,
+  list: () => ['api-probe-connections', 'owner'] as const,
+  detail: (id: string) => ['api-probe-connections', 'owner', id] as const,
 }
 
-export function useOwnerAPIHealthProbe(apiServiceId: Ref<string> | string) {
+export function useOwnerAPIProbeConnections(enabled: Ref<boolean> | boolean = true) {
   return useQuery({
-    queryKey: computed(() => apiHealthQueryKeys.owner(valueOf(apiServiceId))),
-    queryFn: () => getOwnerAPIHealthProbe(valueOf(apiServiceId)),
-    enabled: computed(() => Boolean(valueOf(apiServiceId))),
+    queryKey: apiHealthQueryKeys.list(),
+    queryFn: getOwnerAPIProbeConnections,
+    enabled: computed(() => valueOf(enabled)),
     retry: false,
     refetchOnMount: 'always',
   })
 }
 
-function invalidateOwnerProbe(queryClient: ReturnType<typeof useQueryClient>, apiServiceId: string) {
-  return Promise.all([
-    queryClient.invalidateQueries({ queryKey: apiHealthQueryKeys.owner(apiServiceId) }),
-    queryClient.invalidateQueries({ queryKey: ['my-api-services', apiServiceId] }),
-    queryClient.invalidateQueries({ queryKey: ['api-services', apiServiceId] }),
-    queryClient.invalidateQueries({ queryKey: apiHealthQueryKeys.all }),
-  ])
-}
-
-export function useSaveOwnerAPIHealthProbeMutation() {
-  const queryClient = useQueryClient()
-  return useMutation({
-    mutationFn: saveOwnerAPIHealthProbe,
-    onSuccess(config) {
-      queryClient.setQueryData(apiHealthQueryKeys.owner(config.apiServiceId), config)
-      return invalidateOwnerProbe(queryClient, config.apiServiceId)
-    },
-    onError(_error, input) {
-      return invalidateOwnerProbe(queryClient, input.apiServiceId)
-    },
-  })
-}
-
-export function useDeleteOwnerAPIHealthProbeMutation() {
-  const queryClient = useQueryClient()
-  return useMutation({
-    mutationFn: deleteOwnerAPIHealthProbe,
-    onSuccess(_data, input) {
-      queryClient.setQueryData(apiHealthQueryKeys.owner(input.apiServiceId), null)
-      return invalidateOwnerProbe(queryClient, input.apiServiceId)
-    },
-    onError(_error, input) {
-      return invalidateOwnerProbe(queryClient, input.apiServiceId)
-    },
-  })
-}
-
-export function useCreateAPIHealthChallengeMutation() {
-  const queryClient = useQueryClient()
-  return useMutation({
-    mutationFn: createAPIHealthChallenge,
-    onSettled(_data, _error, input) {
-      return invalidateOwnerProbe(queryClient, input.apiServiceId)
-    },
-  })
-}
-
-export function useVerifyAPIHealthChallengeMutation() {
-  const queryClient = useQueryClient()
-  return useMutation({
-    mutationFn: verifyAPIHealthChallenge,
-    onSuccess(config) {
-      queryClient.setQueryData(apiHealthQueryKeys.owner(config.apiServiceId), config)
-      return invalidateOwnerProbe(queryClient, config.apiServiceId)
-    },
-    onError(_error, input) {
-      return invalidateOwnerProbe(queryClient, input.apiServiceId)
-    },
-  })
-}
-
-export function useAdminAPIHealthProbes(status: Ref<ApiHealthAuthorizationStatus> | ApiHealthAuthorizationStatus) {
+export function useOwnerAPIProbeConnection(id: Ref<string> | string) {
   return useQuery({
-    queryKey: computed(() => apiHealthQueryKeys.admin(valueOf(status))),
-    queryFn: () => getAdminAPIHealthProbes(valueOf(status)),
-    refetchOnMount: 'always',
+    queryKey: computed(() => apiHealthQueryKeys.detail(valueOf(id))),
+    queryFn: () => getOwnerAPIProbeConnection(valueOf(id)),
+    enabled: computed(() => Boolean(valueOf(id))),
+    retry: false,
   })
 }
 
-export function useReviewAPIHealthProbeMutation() {
+function invalidateConnections(queryClient: ReturnType<typeof useQueryClient>, id?: string) {
+  const requests = [
+    queryClient.invalidateQueries({ queryKey: apiHealthQueryKeys.all }),
+    queryClient.invalidateQueries({ queryKey: ['my-api-services'] }),
+    queryClient.invalidateQueries({ queryKey: ['api-services'] }),
+  ]
+  if (id) requests.push(queryClient.invalidateQueries({ queryKey: apiHealthQueryKeys.detail(id) }))
+  return Promise.all(requests)
+}
+
+export function useCreateOwnerAPIProbeConnectionMutation() {
   const queryClient = useQueryClient()
   return useMutation({
-    mutationFn: reviewAPIHealthProbe,
-    onSettled() {
-      return Promise.all([
-        queryClient.invalidateQueries({ queryKey: apiHealthQueryKeys.all }),
-        queryClient.invalidateQueries({ queryKey: ['api-services'] }),
-      ])
+    mutationFn: createOwnerAPIProbeConnection,
+    onSuccess(connection) {
+      queryClient.setQueryData(apiHealthQueryKeys.detail(connection.id), connection)
+      return invalidateConnections(queryClient, connection.id)
+    },
+  })
+}
+
+export function usePreflightOwnerAPIProbeConnectionMutation() {
+  return useMutation({ mutationFn: preflightOwnerAPIProbeConnection })
+}
+
+export function useUpdateOwnerAPIProbeConnectionMutation() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: updateOwnerAPIProbeConnection,
+    onSuccess(connection) {
+      queryClient.setQueryData(apiHealthQueryKeys.detail(connection.id), connection)
+      return invalidateConnections(queryClient, connection.id)
+    },
+    onError(_error, input) {
+      return invalidateConnections(queryClient, input.id)
+    },
+  })
+}
+
+export function useDeleteOwnerAPIProbeConnectionMutation() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: deleteOwnerAPIProbeConnection,
+    onSuccess(_data, input) {
+      queryClient.removeQueries({ queryKey: apiHealthQueryKeys.detail(input.id) })
+      return invalidateConnections(queryClient)
+    },
+    onError(_error, input) {
+      return invalidateConnections(queryClient, input.id)
+    },
+  })
+}
+
+export function useVerifyOwnerAPIProbeConnectionMutation() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: verifyOwnerAPIProbeConnection,
+    onSuccess(connection) {
+      queryClient.setQueryData(apiHealthQueryKeys.detail(connection.id), connection)
+      return invalidateConnections(queryClient, connection.id)
+    },
+    onError(_error, input) {
+      return invalidateConnections(queryClient, input.id)
     },
   })
 }

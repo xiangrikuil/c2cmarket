@@ -30,8 +30,8 @@ type createCarpoolRequest struct {
 	SourceURL                             string                      `json:"sourceUrl"`
 	PriceMonthlyCNY                       string                      `json:"priceMonthlyCny"`
 	ServiceMultiplier                     string                      `json:"serviceMultiplier"`
+	DailyQuotaAmount                      string                      `json:"dailyQuotaAmount"`
 	WeeklyQuotaAmount                     string                      `json:"weeklyQuotaAmount"`
-	MonthlyQuotaAmount                    string                      `json:"monthlyQuotaAmount"`
 	FollowsOfficialQuotaReset             *bool                       `json:"followsOfficialQuotaReset"`
 	VPSRegion                             string                      `json:"vpsRegion"`
 	SupportsMainlandChinaDirectConnection *bool                       `json:"supportsMainlandChinaDirectConnection"`
@@ -81,8 +81,8 @@ type carpoolListingResponse struct {
 	SourceURL                             string                                `json:"sourceUrl,omitempty"`
 	PriceMonthlyCNY                       string                                `json:"priceMonthlyCny"`
 	ServiceMultiplier                     string                                `json:"serviceMultiplier"`
-	WeeklyQuotaAmount                     *string                               `json:"weeklyQuotaAmount"`
-	MonthlyQuotaAmount                    string                                `json:"monthlyQuotaAmount"`
+	DailyQuotaAmount                      *string                               `json:"dailyQuotaAmount"`
+	WeeklyQuotaAmount                     string                                `json:"weeklyQuotaAmount"`
 	FollowsOfficialQuotaReset             *bool                                 `json:"followsOfficialQuotaReset"`
 	VPSRegion                             *string                               `json:"vpsRegion"`
 	SupportsMainlandChinaDirectConnection *bool                                 `json:"supportsMainlandChinaDirectConnection"`
@@ -251,8 +251,8 @@ func (s *Server) handleUpdateCarpool(w http.ResponseWriter, r *http.Request) {
 		SourceURL:                             req.SourceURL,
 		PriceMonthlyCNY:                       req.PriceMonthlyCNY,
 		ServiceMultiplier:                     req.ServiceMultiplier,
+		DailyQuotaAmount:                      req.DailyQuotaAmount,
 		WeeklyQuotaAmount:                     req.WeeklyQuotaAmount,
-		MonthlyQuotaAmount:                    req.MonthlyQuotaAmount,
 		FollowsOfficialQuotaReset:             req.FollowsOfficialQuotaReset,
 		VPSRegion:                             req.VPSRegion,
 		SupportsMainlandChinaDirectConnection: req.SupportsMainlandChinaDirectConnection,
@@ -290,8 +290,8 @@ func toAppCreateCarpoolInput(req createCarpoolRequest) carpool.CreateListingInpu
 		SourceURL:                             req.SourceURL,
 		PriceMonthlyCNY:                       req.PriceMonthlyCNY,
 		ServiceMultiplier:                     req.ServiceMultiplier,
+		DailyQuotaAmount:                      req.DailyQuotaAmount,
 		WeeklyQuotaAmount:                     req.WeeklyQuotaAmount,
-		MonthlyQuotaAmount:                    req.MonthlyQuotaAmount,
 		FollowsOfficialQuotaReset:             req.FollowsOfficialQuotaReset,
 		VPSRegion:                             req.VPSRegion,
 		SupportsMainlandChinaDirectConnection: req.SupportsMainlandChinaDirectConnection,
@@ -343,7 +343,7 @@ func (s *Server) handlePublicCarpools(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, r, appErr)
 		return
 	}
-	listings, appErr := s.carpools.PublicCarpoolListings(r.Context(), pageRequest)
+	listings, appErr := s.carpools.PublicCarpoolListings(r.Context(), carpoolListingFilter(r), pageRequest)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
@@ -403,7 +403,7 @@ func (s *Server) handleAdminCarpools(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, r, appErr)
 		return
 	}
-	listings, appErr := s.carpools.AdminCarpoolListings(r.Context(), user, pageRequest)
+	listings, appErr := s.carpools.AdminCarpoolListings(r.Context(), user, carpoolListingFilter(r), pageRequest)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
@@ -522,7 +522,12 @@ func (s *Server) handleMyCarpoolApplications(w http.ResponseWriter, r *http.Requ
 		writeProblem(w, r, appErr)
 		return
 	}
-	writePaginatedJSON(w, r, toCarpoolApplicationResponses(applications))
+	memberships, appErr := s.carpools.MyCarpoolMemberships(r.Context(), user)
+	if appErr != nil {
+		writeProblem(w, r, appErr)
+		return
+	}
+	writePaginatedJSON(w, r, toCarpoolApplicationResponses(filterCarpoolApplications(r, applications, memberships)))
 }
 
 func (s *Server) handleMyCarpoolApplication(w http.ResponseWriter, r *http.Request) {
@@ -627,7 +632,12 @@ func (s *Server) handleOwnerCarpoolApplications(w http.ResponseWriter, r *http.R
 		writeProblem(w, r, appErr)
 		return
 	}
-	writePaginatedJSON(w, r, toCarpoolApplicationResponses(applications))
+	memberships, appErr := s.carpools.OwnerCarpoolMemberships(r.Context(), user)
+	if appErr != nil {
+		writeProblem(w, r, appErr)
+		return
+	}
+	writePaginatedJSON(w, r, toCarpoolApplicationResponses(filterCarpoolApplications(r, applications, memberships)))
 }
 
 func (s *Server) handleOwnerCarpoolApplication(w http.ResponseWriter, r *http.Request) {
@@ -1040,8 +1050,8 @@ func toCarpoolListingResponse(listing carpool.Listing) carpoolListingResponse {
 		SourceURL:                             listing.SourceURL,
 		PriceMonthlyCNY:                       listing.PriceMonthlyCNY,
 		ServiceMultiplier:                     listing.ServiceMultiplier,
+		DailyQuotaAmount:                      listing.DailyQuotaAmount,
 		WeeklyQuotaAmount:                     listing.WeeklyQuotaAmount,
-		MonthlyQuotaAmount:                    listing.MonthlyQuotaAmount,
 		FollowsOfficialQuotaReset:             listing.FollowsOfficialQuotaReset,
 		VPSRegion:                             listing.VPSRegion,
 		SupportsMainlandChinaDirectConnection: listing.SupportsMainlandChinaDirectConnection,

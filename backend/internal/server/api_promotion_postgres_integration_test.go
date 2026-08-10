@@ -40,7 +40,7 @@ func TestPostgresAPIPromotionCapacityAndLifecycle(t *testing.T) {
 	services := make([]createdAPIService, 0, 4)
 	for index := 0; index < 4; index++ {
 		keyPrefix := fmt.Sprintf("pg-promotion-%s-%d", suffix, index)
-		service := createAPIService(t, server, ownerSession, ownerContact.ID, keyPrefix+"-create")
+		service := createPostgresAPIService(t, databaseURL, server, ownerSession, ownerContact.ID, keyPrefix+"-create")
 		service = ownerAPIServiceAction(t, server, ownerSession, service.ID, "submit-review", service.Version, keyPrefix+"-submit")
 		service = ownerAPIServiceAction(t, server, ownerSession, service.ID, "publish", service.Version, keyPrefix+"-publish")
 		service = updateAPIServiceOrderSettings(t, server, ownerSession, service.ID, service.Version, true, keyPrefix+"-orders")

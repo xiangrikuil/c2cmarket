@@ -48,6 +48,7 @@ type EditorField =
   | 'channels'
   | 'publishAt'
   | 'expireAt'
+  | 'ctaLabel'
   | 'ctaUrl'
   | 'preview'
 
@@ -61,6 +62,7 @@ const createMutation = useCreateAnnouncement()
 const updateMutation = useUpdateAnnouncement()
 const publishMutation = usePublishAnnouncement()
 const previewVisible = ref(false)
+const hasActionButton = ref(false)
 const lastSavedId = ref('')
 const initialSnapshot = ref('')
 const errors = reactive<Partial<Record<EditorField, string>>>({})
@@ -114,6 +116,7 @@ function resetForm(input: AnnouncementFormInput) {
   form.expireAtLocal = toDateTimeLocalValue(input.expireAt)
   form.ctaLabel = input.ctaLabel ?? ''
   form.ctaUrl = input.ctaUrl ?? ''
+  hasActionButton.value = Boolean(input.ctaLabel || input.ctaUrl)
   previewVisible.value = false
   clearErrors()
   initialSnapshot.value = serializeForm()
@@ -133,15 +136,18 @@ function buildInput(): AnnouncementFormInput {
     isDismissible: form.isDismissible,
     publishAt: fromDateTimeLocalValue(form.publishAtLocal),
     expireAt: form.expireAtLocal ? fromDateTimeLocalValue(form.expireAtLocal) : undefined,
-    ctaLabel: form.ctaLabel.trim() || undefined,
-    ctaUrl: form.ctaUrl.trim() || undefined,
+    ctaLabel: hasActionButton.value ? form.ctaLabel.trim() || undefined : undefined,
+    ctaUrl: hasActionButton.value ? form.ctaUrl.trim() || undefined : undefined,
   }
 }
 
 function validateForm(requirePreview: boolean) {
   clearErrors()
-  const result = validateAnnouncementFormInput(buildInput())
+  const input = buildInput()
+  const result = validateAnnouncementFormInput(input)
   Object.assign(errors, result.errors)
+  if (hasActionButton.value && !input.ctaLabel) errors.ctaLabel = '请输入按钮文案。'
+  if (hasActionButton.value && !input.ctaUrl) errors.ctaUrl = '请输入跳转链接。'
   if (requirePreview && !previewVisible.value) {
     errors.preview = '发布前必须先打开预览并核对内容。'
   }
@@ -213,6 +219,15 @@ function clearErrors() {
   for (const key of Object.keys(errors) as EditorField[]) delete errors[key]
 }
 
+function setHasActionButton(value: boolean) {
+  hasActionButton.value = value
+  if (value) return
+  form.ctaLabel = ''
+  form.ctaUrl = ''
+  delete errors.ctaLabel
+  delete errors.ctaUrl
+}
+
 function serializeForm() {
   return JSON.stringify({
     title: form.title,
@@ -225,6 +240,7 @@ function serializeForm() {
     isDismissible: form.isDismissible,
     publishAtLocal: form.publishAtLocal,
     expireAtLocal: form.expireAtLocal,
+    hasActionButton: hasActionButton.value,
     ctaLabel: form.ctaLabel,
     ctaUrl: form.ctaUrl,
   })
@@ -344,17 +360,31 @@ onBeforeRouteLeave(() => {
           </label>
         </div>
 
-        <div class="grid gap-4 md:grid-cols-2">
-          <label class="space-y-2">
-            <span class="text-sm font-medium">CTA 文案</span>
-            <Input v-model="form.ctaLabel" placeholder="查看 API 集市" />
-          </label>
+        <div class="rounded-md border border-border bg-muted/30 p-4">
+          <div class="flex items-center justify-between gap-4">
+            <label for="announcement-action-button" class="cursor-pointer text-sm font-medium">添加跳转按钮</label>
+            <Switch
+              id="announcement-action-button"
+              :model-value="hasActionButton"
+              :aria-expanded="hasActionButton"
+              aria-controls="announcement-action-button-fields"
+              @update:model-value="value => setHasActionButton(Boolean(value))"
+            />
+          </div>
 
-          <label class="space-y-2">
-            <span class="text-sm font-medium">CTA URL</span>
-            <Input v-model="form.ctaUrl" placeholder="/api-market 或 https://linux.do/..." />
-            <p v-if="errors.ctaUrl" class="text-xs text-destructive">{{ errors.ctaUrl }}</p>
-          </label>
+          <div v-if="hasActionButton" id="announcement-action-button-fields" class="mt-4 grid gap-4 border-t border-border pt-4 md:grid-cols-2">
+            <label class="space-y-2">
+              <span class="text-sm font-medium">按钮文案</span>
+              <Input v-model="form.ctaLabel" placeholder="查看 API 集市" />
+              <p v-if="errors.ctaLabel" class="text-xs text-destructive">{{ errors.ctaLabel }}</p>
+            </label>
+
+            <label class="space-y-2">
+              <span class="text-sm font-medium">跳转链接</span>
+              <Input v-model="form.ctaUrl" inputmode="url" placeholder="/api-market 或 https://linux.do/..." />
+              <p v-if="errors.ctaUrl" class="text-xs text-destructive">{{ errors.ctaUrl }}</p>
+            </label>
+          </div>
         </div>
 
         <label class="space-y-2">

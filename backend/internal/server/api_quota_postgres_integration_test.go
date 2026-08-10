@@ -44,7 +44,7 @@ func TestPostgresAPIQuotaHTTPFlow(t *testing.T) {
 	secondBuyerContact := createContactMethod(t, server, secondBuyer, "telegram", "额度包买家二 "+suffix, "@pg_quota_buyer_two_"+strings.ReplaceAll(suffix, ".", "_"))
 
 	now := time.Now().UTC()
-	service := createAPIServiceWithPayload(t, server, owner, apiServicePayload(ownerContact.ID, "1.0000"), "pg-quota-service-create-"+suffix)
+	service := createPostgresAPIService(t, databaseURL, server, owner, ownerContact.ID, "pg-quota-service-create-"+suffix)
 	submitted := ownerAPIServiceAction(t, server, owner, service.ID, "submit-review", service.Version, "pg-quota-service-submit-"+suffix)
 	publishedService := ownerAPIServiceAction(t, server, owner, submitted.ID, "publish", submitted.Version, "pg-quota-service-publish-"+suffix)
 	orderableService := updateAPIServiceOrderSettings(t, server, owner, publishedService.ID, publishedService.Version, true, "pg-quota-service-settings-"+suffix)

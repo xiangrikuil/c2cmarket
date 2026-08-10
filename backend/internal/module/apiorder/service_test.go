@@ -15,6 +15,7 @@ import (
 	"c2c-market/backend/internal/module/apimarket"
 	"c2c-market/backend/internal/module/auth"
 	"c2c-market/backend/internal/module/idempotency"
+	"c2c-market/backend/internal/platform/openaiapi"
 )
 
 func TestSubmitDeliveryAcceptsStructuredCredentialAndRejectsUnsafeFields(t *testing.T) {
@@ -27,6 +28,9 @@ func TestSubmitDeliveryAcceptsStructuredCredentialAndRejectsUnsafeFields(t *test
 		SellerUserID:                 "seller-1",
 		Status:                       StatusPaidConfirmed,
 		DisputeStatus:                DisputeStatusNone,
+		ProbeConnectionIDSnapshot:    "probe-connection-1",
+		APIBaseURLSnapshot:           "https://api.example.com/v1",
+		NormalizedAPIBaseURLSnapshot: "https://api.example.com/v1",
 		PaymentWindowMinutesSnapshot: 10,
 		PaymentExpiresAt:             now.Add(10 * time.Minute),
 		CreatedAt:                    now,
@@ -108,18 +112,21 @@ func TestDeliveryReviewWindowSupportsBuyerConfirmationReminderAndAutoCompletion(
 	service := NewService(nil, nil, nil, nil, nil, func() time.Time { return now })
 	newPaidOrder := func(id string) Order {
 		return Order{
-			ID:                 id,
-			BuyerUserID:        "buyer-1",
-			SellerUserID:       "seller-1",
-			Status:             StatusPaidConfirmed,
-			DisputeStatus:      DisputeStatusNone,
-			PaymentExpiresAt:   now.Add(-time.Hour),
-			PaymentSummary:     "已付款",
-			PaymentSubmittedAt: timePointer(now.Add(-2 * time.Hour)),
-			PaidConfirmedAt:    timePointer(now.Add(-time.Hour)),
-			CreatedAt:          now.Add(-3 * time.Hour),
-			UpdatedAt:          now.Add(-time.Hour),
-			Version:            3,
+			ID:                           id,
+			BuyerUserID:                  "buyer-1",
+			SellerUserID:                 "seller-1",
+			Status:                       StatusPaidConfirmed,
+			DisputeStatus:                DisputeStatusNone,
+			ProbeConnectionIDSnapshot:    "probe-connection-1",
+			APIBaseURLSnapshot:           "https://api.example.com/v1",
+			NormalizedAPIBaseURLSnapshot: "https://api.example.com/v1",
+			PaymentExpiresAt:             now.Add(-time.Hour),
+			PaymentSummary:               "已付款",
+			PaymentSubmittedAt:           timePointer(now.Add(-2 * time.Hour)),
+			PaidConfirmedAt:              timePointer(now.Add(-time.Hour)),
+			CreatedAt:                    now.Add(-3 * time.Hour),
+			UpdatedAt:                    now.Add(-time.Hour),
+			Version:                      3,
 		}
 	}
 	submit := func(id, key string) Order {
@@ -188,6 +195,98 @@ func TestDeliveryReviewWindowSupportsBuyerConfirmationReminderAndAutoCompletion(
 	}
 }
 
+func TestAPIKeyDeliveryVerifiesFrozenTargetAndSkipsVerifierOnReplay(t *testing.T) {
+	now := time.Date(2026, 8, 8, 12, 0, 0, 0, time.UTC)
+	service := NewService(nil, nil, nil, nil, nil, func() time.Time { return now })
+	verifier := &deliveryCredentialVerifier{result: openaiapi.Result{HTTPStatusClass: 2}}
+	service.SetDeliveryCredentialVerifier(verifier)
+	order := Order{
+		ID: "delivery-verification-order", BuyerUserID: "buyer-1", SellerUserID: "seller-1",
+		Status: StatusPaidConfirmed, DisputeStatus: DisputeStatusNone,
+		ProbeConnectionIDSnapshot: "probe-connection-1", APIBaseURLSnapshot: "https://api.example.com/v1",
+		NormalizedAPIBaseURLSnapshot: "https://api.example.com/v1",
+		PaymentExpiresAt:             now.Add(-time.Hour), Version: 2, CreatedAt: now.Add(-2 * time.Hour), UpdatedAt: now,
+	}
+	service.orders[order.ID] = order
+
+	mismatched := ActionInput{
+		OrderID: order.ID, ExpectedVersion: order.Version, RequestID: "mismatch",
+		DeliveryCredential: DeliveryCredentialInput{DeliveryKind: DeliveryKindAPIKeyEndpoint, APIBaseURL: "https://155.103.116.134/v1", APIKey: "buyer-key"},
+	}
+	if _, appErr := service.SubmitDeliveryWithIdempotency(context.Background(), order.SellerUserID, "submit-delivery", "mismatch", "mismatch-hash", mismatched, testAPIOrderCompletion); appErr == nil || len(appErr.FieldErrors) == 0 || appErr.FieldErrors[0].Code != "target_mismatch" {
+		t.Fatalf("unexpected mismatch error: %+v", appErr)
+	}
+	if verifier.calls != 0 || service.orders[order.ID].DeliveryCredential != nil {
+		t.Fatalf("mismatch called verifier or stored credential: calls=%d order=%+v", verifier.calls, service.orders[order.ID])
+	}
+
+	input := ActionInput{
+		OrderID: order.ID, ExpectedVersion: order.Version, RequestID: "verified",
+		DeliveryCredential: DeliveryCredentialInput{DeliveryKind: DeliveryKindAPIKeyEndpoint, APIBaseURL: "https://API.example.com:443/v1/", APIKey: "buyer-key"},
+	}
+	first, appErr := service.SubmitDeliveryWithIdempotency(context.Background(), order.SellerUserID, "submit-delivery", "verified", "verified-hash", input, testAPIOrderCompletion)
+	if appErr != nil {
+		t.Fatalf("verified delivery error: %v", appErr)
+	}
+	second, appErr := service.SubmitDeliveryWithIdempotency(context.Background(), order.SellerUserID, "submit-delivery", "verified", "verified-hash", input, testAPIOrderCompletion)
+	if appErr != nil {
+		t.Fatalf("delivery replay error: %v", appErr)
+	}
+	if verifier.calls != 1 || verifier.baseURL != order.APIBaseURLSnapshot || verifier.apiKey != "buyer-key" {
+		t.Fatalf("verifier calls=%d baseURL=%q key=%q", verifier.calls, verifier.baseURL, verifier.apiKey)
+	}
+	if string(first.Body) != string(second.Body) || service.orders[order.ID].DeliveryCredential == nil {
+		t.Fatalf("replay mismatch first=%s second=%s order=%+v", first.Body, second.Body, service.orders[order.ID])
+	}
+}
+
+func TestAPIKeyDeliveryVerificationFailureCancelsIdempotencyAndDoesNotStoreCredential(t *testing.T) {
+	now := time.Date(2026, 8, 8, 12, 0, 0, 0, time.UTC)
+	service := NewService(nil, nil, nil, nil, nil, func() time.Time { return now })
+	verifier := &deliveryCredentialVerifier{result: openaiapi.Result{HTTPStatusClass: 4, ErrorCode: openaiapi.ErrorAuthentication}}
+	service.SetDeliveryCredentialVerifier(verifier)
+	order := Order{
+		ID: "failed-delivery-verification", BuyerUserID: "buyer-1", SellerUserID: "seller-1",
+		Status: StatusPaidConfirmed, DisputeStatus: DisputeStatusNone,
+		ProbeConnectionIDSnapshot: "probe-connection-1", APIBaseURLSnapshot: "https://api.example.com/v1",
+		NormalizedAPIBaseURLSnapshot: "https://api.example.com/v1",
+		PaymentExpiresAt:             now.Add(-time.Hour), Version: 1, CreatedAt: now.Add(-2 * time.Hour), UpdatedAt: now,
+	}
+	service.orders[order.ID] = order
+	input := ActionInput{
+		OrderID: order.ID, ExpectedVersion: order.Version, RequestID: "retry-verification",
+		DeliveryCredential: DeliveryCredentialInput{DeliveryKind: DeliveryKindAPIKeyEndpoint, APIBaseURL: order.APIBaseURLSnapshot, APIKey: "buyer-key"},
+	}
+	if _, appErr := service.SubmitDeliveryWithIdempotency(context.Background(), order.SellerUserID, "submit-delivery", "retry-verification", "retry-hash", input, testAPIOrderCompletion); appErr == nil || len(appErr.FieldErrors) == 0 || appErr.FieldErrors[0].Code != string(openaiapi.ErrorAuthentication) {
+		t.Fatalf("unexpected verification error: %+v", appErr)
+	}
+	if service.orders[order.ID].DeliveryCredential != nil {
+		t.Fatalf("failed verification stored credential: %+v", service.orders[order.ID])
+	}
+
+	verifier.result = openaiapi.Result{HTTPStatusClass: 2}
+	if _, appErr := service.SubmitDeliveryWithIdempotency(context.Background(), order.SellerUserID, "submit-delivery", "retry-verification", "retry-hash", input, testAPIOrderCompletion); appErr != nil {
+		t.Fatalf("retry after cancelled reservation error: %v", appErr)
+	}
+	if verifier.calls != 2 || service.orders[order.ID].DeliveryCredential == nil {
+		t.Fatalf("retry calls=%d order=%+v", verifier.calls, service.orders[order.ID])
+	}
+}
+
+type deliveryCredentialVerifier struct {
+	result  openaiapi.Result
+	calls   int
+	baseURL string
+	apiKey  string
+}
+
+func (verifier *deliveryCredentialVerifier) Verify(_ context.Context, baseURL, apiKey string, _ bool) openaiapi.Result {
+	verifier.calls++
+	verifier.baseURL = baseURL
+	verifier.apiKey = apiKey
+	return verifier.result
+}
+
 func TestOpenDisputePausesDeliveryReviewAutoCompletion(t *testing.T) {
 	now := time.Date(2026, 8, 3, 12, 0, 0, 0, time.UTC)
 	expiresAt := now.Add(-time.Minute)
@@ -211,6 +310,70 @@ func TestOpenDisputePausesDeliveryReviewAutoCompletion(t *testing.T) {
 	}
 	if order.Status != StatusDeliverySubmitted || order.CompletedAt != nil || order.CompletionSource != "" {
 		t.Fatalf("open dispute must pause auto completion, got %+v", order)
+	}
+}
+
+func TestCloseDisputeProjectionConvergesOnceAndPreservesOrderLifecycle(t *testing.T) {
+	now := time.Date(2026, 8, 9, 8, 0, 0, 0, time.UTC)
+	service := NewService(nil, nil, nil, nil, nil, func() time.Time { return now })
+	order := Order{
+		ID:               "order-dispute-projection",
+		BuyerUserID:      "buyer-1",
+		SellerUserID:     "seller-1",
+		Status:           StatusPaymentSubmitted,
+		DisputeStatus:    DisputeStatusOpen,
+		DisputeCaseID:    "dispute-1",
+		PaymentSummary:   "已站外付款。",
+		PaymentExpiresAt: now.Add(time.Hour),
+		CreatedAt:        now.Add(-time.Hour),
+		UpdatedAt:        now.Add(-time.Minute),
+		Version:          3,
+	}
+	service.orders[order.ID] = order
+
+	if appErr := service.CloseDisputeProjection(context.Background(), "dispute-1", "admin-1", "resolve-1"); appErr != nil {
+		t.Fatalf("close dispute projection: %v", appErr)
+	}
+	closed := service.orders[order.ID]
+	if closed.DisputeStatus != DisputeStatusClosed || closed.Version != 4 {
+		t.Fatalf("expected closed projection and one version increment, got %+v", closed)
+	}
+	if closed.Status != order.Status || closed.PaymentSummary != order.PaymentSummary || closed.DisputeCaseID != order.DisputeCaseID {
+		t.Fatalf("projection update changed order lifecycle facts: before=%+v after=%+v", order, closed)
+	}
+
+	if appErr := service.CloseDisputeProjection(context.Background(), "dispute-1", "admin-1", "close-2"); appErr != nil {
+		t.Fatalf("repeat close dispute projection: %v", appErr)
+	}
+	if replayed := service.orders[order.ID]; replayed.Version != closed.Version {
+		t.Fatalf("closed projection must be idempotent, got version %d want %d", replayed.Version, closed.Version)
+	}
+	if len(service.events) != 1 || service.events[0].EventType != EventDisputeClosed {
+		t.Fatalf("expected one dispute closed event, got %+v", service.events)
+	}
+	if event := service.events[0]; event.FromStatus != order.Status || event.ToStatus != order.Status {
+		t.Fatalf("dispute event must preserve transaction status fields, got %+v", event)
+	}
+
+	if appErr := service.CloseDisputeProjection(context.Background(), "missing", "admin-1", "missing"); appErr == nil || appErr.Code != domain.CodeInvalidStateTransition {
+		t.Fatalf("mismatched dispute relation must fail explicitly, got %v", appErr)
+	}
+}
+
+func TestValidateRequestedDisputeAmountRequiresPlainDecimalSyntax(t *testing.T) {
+	for _, amount := range []string{"", "0", "0.00", "1/2", "1e2", "+1", "-1", ".5", "1.", "1.001"} {
+		t.Run(amount, func(t *testing.T) {
+			appErr := ValidateRequestedDisputeAmount(DisputeResolutionPartialRefund, amount, "100.00")
+			if appErr == nil || appErr.Code != domain.CodeValidationFailed {
+				t.Fatalf("amount %q must be rejected as a non-positive or non-decimal value, got %v", amount, appErr)
+			}
+		})
+	}
+	if appErr := ValidateRequestedDisputeAmount(DisputeResolutionPartialRefund, "25.50", "100.00"); appErr != nil {
+		t.Fatalf("plain decimal amount must be accepted: %v", appErr)
+	}
+	if appErr := ValidateRequestedDisputeAmount(DisputeResolutionPartialRefund, "100.01", "100.00"); appErr == nil || appErr.Code != domain.CodeValidationFailed {
+		t.Fatalf("amount above the order total must be rejected, got %v", appErr)
 	}
 }
 
@@ -709,6 +872,10 @@ func testOrderableService(now time.Time) apimarket.Service {
 		ID:                               "service-1",
 		OwnerUserID:                      "seller-1",
 		OwnerContactMethodID:             "owner-contact-1",
+		ProbeConnectionID:                "probe-connection-1",
+		ProbeReady:                       true,
+		ProbeBaseURL:                     "https://api.example.com/v1",
+		NormalizedProbeBaseURL:           "https://api.example.com/v1",
 		Title:                            "测试 API 服务",
 		DistributionSystem:               apimarket.ServiceDistributionSub2API,
 		BillingMode:                      apimarket.ServiceBillingModeMetered,
@@ -748,7 +915,7 @@ func fixedPackageIntent(id string) apiintent.Intent {
 		RequestedCNYAmount:      "9.90",
 		SelectedAccessMode:      "fixed_package_offsite",
 		SelectedPackageID:       "package-1",
-		SelectedPackageSnapshot: `{"id":"package-1","name":"3 天套餐","priceCny":"9.90","panelAllowance":"5.000000","durationDays":3,"models":[{"serviceModelId":"service-model-1","modelCatalogId":"model-1","modelPriceVersionId":"price-version-1","modelNameSnapshot":"GPT-5.6","merchantMultiplier":"0.0100"}]}`,
+		SelectedPackageSnapshot: `{"id":"package-1","name":"3 天套餐","priceCny":"9.90","panelAllowance":"5.000000","durationDays":3,"models":[{"serviceModelId":"service-model-1","modelCatalogId":"model-1","modelPriceVersionId":"price-version-1","modelKey":"GPT-5.6","merchantMultiplier":"0.0100"}]}`,
 		BillingModeSnapshot:     apimarket.ServiceBillingModeFixedPackage,
 	}
 }
@@ -775,7 +942,7 @@ func testFixedPackageService(now time.Time, stock int) apimarket.Service {
 			ServiceModelID:      "service-model-1",
 			ModelCatalogID:      "model-1",
 			ModelPriceVersionID: "price-version-1",
-			ModelNameSnapshot:   "GPT-5.6",
+			ModelKey:            "GPT-5.6",
 			ProviderSnapshot:    "OpenAI",
 			MerchantMultiplier:  "0.0100",
 		}},

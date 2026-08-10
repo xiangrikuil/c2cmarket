@@ -7,7 +7,8 @@ const reportBackendSource = readFileSync(new URL('../reportBackend.ts', import.m
 
 describe('管理列表数据状态', () => {
   it('在请求失败时显示错误而不是空记录，并移除固定演示统计', () => {
-    expect(adminSectionSource).toContain('const { data, error, isFetching, isLoading, refetch } = useAdminSectionRows(section)')
+    expect(adminSectionSource).toContain('const pageRowsQuery = useAdminSectionRowsPage(section, pageFilters, pageRequest, supportsServerPagination)')
+    expect(adminSectionSource).toContain('const fullRowsQuery = useAdminSectionRows(section, computed(() => !supportsServerPagination.value))')
     expect(adminSectionSource).toContain('v-else-if="error"')
     expect(adminSectionSource).toContain('管理数据读取失败')
     expect(adminSectionSource).toContain('@click="refetch()"')
@@ -21,7 +22,8 @@ describe('管理列表数据状态', () => {
 
   it('举报纠纷队列包含角标统计覆盖的待处理申诉', () => {
     expect(reportBackendSource).toContain('const [reports, disputes, appeals] = await Promise.all([')
-    expect(reportBackendSource).toContain('...appeals.items.map(mapAppealRow)')
+    expect(reportBackendSource).toContain('...appeals.map(mapAppealRow)')
+    expect(reportBackendSource).toContain("backendAllPages<BackendAppeal>('/api/v1/admin/appeals')")
     expect(reportBackendSource).toContain("item.status !== 'dispute_opened' && !disputeReportIds.has(item.id)")
   })
 
@@ -52,11 +54,13 @@ describe('管理列表数据状态', () => {
     expect(adminSectionSource).not.toContain("if (row?.targetType === 'dispute') return '标记处理'")
     expect(disputeDialogSource).toContain('backendResolveAdminDispute')
     expect(disputeDialogSource).toContain('useCreateDisputeReputationOutcomeMutation')
-    expect(disputeDialogSource).toContain('基础裁决已保存，请继续责任认定。')
+    expect(disputeDialogSource).toContain('基础裁决已保存，等待责任方履行。')
+    expect(disputeDialogSource).toContain('基础裁决已保存，纠纷已结案。')
     expect(disputeDialogSource).toContain("['VERSION_CONFLICT', 'INVALID_STATE_TRANSITION'].includes(error.code)")
     expect(disputeDialogSource).toContain('resolutionSubmitting')
     expect(disputeDialogSource).toContain('根据脱敏参与方快照派生；无法可靠判断时使用全部角色。')
-    expect(disputeDialogSource).toContain('账号限制仍在独立的用户信誉治理入口处理。')
+    expect(disputeDialogSource).toContain('保存后系统会根据当前逾期事实重新计算处罚建议，不会自动创建限制。')
+    expect(disputeDialogSource).toContain('useApplyAPIOrderSanctionMutation')
     expect(disputeDialogSource).not.toContain('createReputationRestriction')
   })
 

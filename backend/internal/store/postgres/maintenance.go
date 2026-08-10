@@ -8,6 +8,7 @@ import (
 	"c2c-market/backend/internal/domain"
 	"c2c-market/backend/internal/maintenance"
 	"c2c-market/backend/internal/module/apiorder"
+	"c2c-market/backend/internal/module/report"
 
 	"github.com/jackc/pgx/v5"
 )
@@ -35,6 +36,10 @@ func (s *Store) RunDataLifecycle(ctx context.Context, now time.Time, batchSize i
 			return maintenance.Result{}, internalStoreError()
 		}
 		return result, nil
+	}
+	result.DisputeRemedyConfirmationsExpired, err = expireDisputeRemedyConfirmationsInTx(ctx, tx, now, batchSize)
+	if err != nil {
+		return maintenance.Result{}, internalStoreError()
 	}
 
 	result.APIOrdersPaymentExpired, result.APIOrderReviewReminders, result.APIOrdersAutoCompleted, err = s.materializeAPIOrdersForMaintenanceInTx(ctx, tx, now, batchSize)
@@ -137,14 +142,14 @@ func (s *Store) RunDataLifecycle(ctx context.Context, now time.Time, batchSize i
 	result.APIProbeSamplesDeleted, err = execMaintenanceBatch(ctx, tx, `
 		WITH candidates AS (
 			SELECT id
-			FROM api_service_probe_samples
+			FROM api_probe_connection_samples
 			WHERE status IN ('succeeded', 'failed')
 			  AND finished_at < $1
 			ORDER BY finished_at, id
 			LIMIT $2
 			FOR UPDATE SKIP LOCKED
 		)
-		DELETE FROM api_service_probe_samples target
+		DELETE FROM api_probe_connection_samples target
 		USING candidates
 		WHERE target.id = candidates.id
 	`, now.Add(-policy.APIProbeSampleRetention), batchSize)
@@ -217,6 +222,102 @@ func (s *Store) RunDataLifecycle(ctx context.Context, now time.Time, batchSize i
 	return result, nil
 }
 
+type expiredDisputeRemedyCandidate struct {
+	RemedyID      string
+	DisputeID     string
+	OrderID       string
+	OrderStatus   string
+	ResponsibleID string
+	BeneficiaryID string
+}
+
+func expireDisputeRemedyConfirmationsInTx(ctx context.Context, tx pgx.Tx, now time.Time, batchSize int) (int64, error) {
+	rows, err := tx.Query(ctx, `
+		SELECT remedy.id::text, dispute.id::text, api_order.id::text, api_order.status,
+		       remedy.responsible_user_id::text, remedy.beneficiary_user_id::text
+		FROM api_order_dispute_remedies remedy
+		JOIN dispute_cases dispute ON dispute.id = remedy.dispute_case_id
+		JOIN api_orders api_order
+		  ON api_order.id::text = dispute.target_id
+		 AND api_order.dispute_case_id = dispute.id
+		WHERE remedy.status = 'claimed_fulfilled'
+		  AND remedy.confirmation_due_at <= $1
+		  AND dispute.status = 'resolved'
+		  AND api_order.dispute_status = 'fulfillment_confirmation'
+		ORDER BY remedy.confirmation_due_at, remedy.id
+		LIMIT $2
+		FOR UPDATE OF remedy, dispute, api_order SKIP LOCKED
+	`, now, batchSize)
+	if err != nil {
+		return 0, err
+	}
+	candidates := make([]expiredDisputeRemedyCandidate, 0)
+	for rows.Next() {
+		var candidate expiredDisputeRemedyCandidate
+		if err := rows.Scan(&candidate.RemedyID, &candidate.DisputeID, &candidate.OrderID, &candidate.OrderStatus, &candidate.ResponsibleID, &candidate.BeneficiaryID); err != nil {
+			rows.Close()
+			return 0, err
+		}
+		candidates = append(candidates, candidate)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return 0, err
+	}
+	rows.Close()
+
+	for _, candidate := range candidates {
+		requestID := "remedy-confirmation-timeout:" + candidate.RemedyID
+		if _, err := tx.Exec(ctx, `
+			UPDATE api_order_dispute_remedies
+			SET status = 'confirmation_expired', confirmation_expired_at = $2,
+			    response_note = $3,
+			    response_request_id = $4, updated_at = $2, version = version + 1
+			WHERE id = $1 AND status = 'claimed_fulfilled'
+		`, candidate.RemedyID, now, report.RemedyConfirmationExpiredNote, requestID); err != nil {
+			return 0, err
+		}
+		if _, err := tx.Exec(ctx, `
+			UPDATE dispute_cases
+			SET status = 'closed', public_result = $2,
+			    closed_at = $3, updated_at = $3, version = version + 1
+			WHERE id = $1 AND status = 'resolved'
+		`, candidate.DisputeID, report.RemedyConfirmationExpiredPublicResult, now); err != nil {
+			return 0, err
+		}
+		if _, err := tx.Exec(ctx, `
+			UPDATE api_orders
+			SET dispute_status = 'closed', updated_at = $2, version = version + 1
+			WHERE id = $1 AND dispute_status = 'fulfillment_confirmation'
+		`, candidate.OrderID, now); err != nil {
+			return 0, err
+		}
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO dispute_events (
+				entity_type, entity_id, action, actor_user_id, actor_role, reason, public, request_id, created_at
+			)
+			VALUES ('dispute', $1, 'remedy_confirmation_expired', NULL, 'system',
+			        '对方未在确认期限内反馈；平台未核验到账或履约事实。', true, $2, $3)
+		`, candidate.DisputeID, requestID, now); err != nil {
+			return 0, err
+		}
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO api_order_events (
+				id, api_order_id, actor_user_id, event_type, from_status, to_status, note, request_id, created_at
+			)
+			VALUES (gen_random_uuid(), $1, NULL, $2, $3, $3,
+			        '确认期限已到，流程中性结案；平台未核验到账或履约事实。', $4, $5)
+			ON CONFLICT (api_order_id, event_type, request_id) DO NOTHING
+		`, candidate.OrderID, apiorder.EventDisputeClosed, candidate.OrderStatus, requestID, now); err != nil {
+			return 0, err
+		}
+		if appErr := insertDisputeNotifications(ctx, tx, candidate.DisputeID, "dispute.remedy_confirmation_expired", "整改确认期已结束", "对方未在期限内反馈，流程已中性结案；平台未核验到账或履约事实。", candidate.RemedyID+":confirmation_expired", now, candidate.ResponsibleID, candidate.BeneficiaryID); appErr != nil {
+			return 0, errors.New(appErr.Detail)
+		}
+	}
+	return int64(len(candidates)), nil
+}
+
 func destroyCompletedAPIOrderCredentialsInTx(ctx context.Context, tx pgx.Tx, now, cutoff time.Time, batchSize int) (int64, int64, error) {
 	var orderCredentialsDestroyed int64
 	var quotaCredentialsDestroyed int64
@@ -245,7 +346,7 @@ func destroyCompletedAPIOrderCredentialsInTx(ctx context.Context, tx pgx.Tx, now
 			    FROM dispute_cases dispute
 			    WHERE dispute.target_type = 'api_order'
 			      AND dispute.target_id = order_row.id::text
-			      AND dispute.status IN ('open', 'waiting_info')
+			      AND dispute.status IN ('negotiating', 'open', 'waiting_info')
 			  )
 			  AND NOT EXISTS (
 			    SELECT 1
@@ -294,7 +395,7 @@ func destroyCompletedAPIOrderCredentialsInTx(ctx context.Context, tx pgx.Tx, now
 			    FROM dispute_cases dispute
 			    WHERE dispute.target_type = 'api_order'
 			      AND dispute.target_id = locked_candidates.api_order_id::text
-			      AND dispute.status IN ('open', 'waiting_info')
+			      AND dispute.status IN ('negotiating', 'open', 'waiting_info')
 			  )
 			  AND NOT EXISTS (
 			    SELECT 1
@@ -409,7 +510,7 @@ func (s *Store) materializeAPIOrdersForMaintenanceInTx(ctx context.Context, tx p
 		WHERE (status = 'pending_payment' AND payment_expires_at <= $1)
 		   OR (
 		     status = 'delivery_submitted'
-		     AND dispute_status <> 'open'
+		     AND dispute_status IN ('none', 'closed')
 		     AND delivery_review_expires_at <= $2
 		   )
 		ORDER BY COALESCE(delivery_review_expires_at, payment_expires_at), id

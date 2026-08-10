@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
-import { Activity, BadgeCheck, Info } from 'lucide-vue-next'
+import { Activity, BadgeCheck, Info, ShieldAlert } from 'lucide-vue-next'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
@@ -28,6 +28,21 @@ const snapshot = computed(() => data.value?.items.find(item =>
   item.role === role.value && item.scope === scope.value,
 ) ?? null)
 const summary = computed(() => snapshot.value ? snapshotToSummary(snapshot.value) : null)
+const activeRestrictions = computed(() => data.value?.activeRestrictions ?? [])
+
+function restrictionImpactLabel(actionCode: string) {
+  const labels: Record<string, string> = {
+    api_service_publish: 'API 服务新接单、发布与恢复',
+    api_order_create: '创建 API 订单',
+    carpool_publish: '发布订阅拼车',
+    carpool_apply: '申请加入拼车',
+    carpool_accept: '接受拼车申请',
+    contact_view: '查看联系方式',
+    review_submit: '提交评价',
+    all: '全部受限动作',
+  }
+  return labels[actionCode] ?? actionCode
+}
 </script>
 
 <template>
@@ -36,6 +51,34 @@ const summary = computed(() => snapshot.value ? snapshotToSummary(snapshot.value
       title="信誉与成长"
       description="查看买家和卖家在不同交易范围内的可验证履约事实、风险状态与成长进度。"
     />
+
+    <section v-if="activeRestrictions.length" class="border-y border-destructive/30 py-5" aria-labelledby="active-restrictions-title">
+      <div class="flex flex-wrap items-center justify-between gap-3">
+        <div class="flex items-center gap-2">
+          <ShieldAlert class="h-5 w-5 text-destructive" />
+          <h2 id="active-restrictions-title" class="text-lg font-semibold">当前有效限制</h2>
+        </div>
+        <Badge variant="destructive">{{ activeRestrictions.length }} 项</Badge>
+      </div>
+      <div class="mt-4 space-y-4">
+        <article v-for="item in activeRestrictions" :key="`${item.reasonCode}:${item.startsAt}`" class="border-l-2 border-destructive pl-4">
+          <div class="flex flex-wrap items-start justify-between gap-2">
+            <div>
+              <h3 class="text-sm font-semibold">{{ restrictionImpactLabel(item.actionCode) }}</h3>
+              <p class="mt-1 text-sm leading-6 text-muted-foreground">{{ item.publicReason }}</p>
+            </div>
+            <Badge variant="outline">{{ item.roleScope === 'seller' ? '卖家范围' : item.roleScope === 'buyer' ? '买家范围' : '全部角色' }}</Badge>
+          </div>
+          <p v-if="item.actionCode === 'api_service_publish' && item.reasonCode === 'api_order_remedy_overdue'" class="mt-3 text-sm font-medium">
+            当前暂停 API 服务新接单、发布和恢复。已成立订单仍可继续付款、交付、完成、售后和纠纷处理。
+          </p>
+          <div class="mt-3 flex flex-wrap gap-x-5 gap-y-1 text-xs text-muted-foreground">
+            <span>生效：<LocalTime :value="item.startsAt" /></span>
+            <span>截止：<LocalTime v-if="item.endsAt" :value="item.endsAt" /><template v-else>长期有效</template></span>
+          </div>
+        </article>
+      </div>
+    </section>
 
     <div class="flex flex-col gap-3 border-b pb-5 lg:flex-row lg:items-center lg:justify-between">
       <Tabs v-model="role">

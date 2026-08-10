@@ -19,6 +19,8 @@ const CarpoolApplicationDetailPage = () => import('@/pages/CarpoolApplicationDet
 const MyApiOrdersPage = () => import('@/pages/MyApiOrdersPage.vue')
 const MyApiServicesPage = () => import('@/pages/MyApiServicesPage.vue')
 const MyApiServiceDetailPage = () => import('@/pages/MyApiServiceDetailPage.vue')
+const MyApiProbeConnectionsPage = () => import('@/pages/MyApiProbeConnectionsPage.vue')
+const ApiModelTesterPage = () => import('@/pages/ApiModelTesterPage.vue')
 const ApiPurchaseOrderDetailPage = () => import('@/pages/ApiPurchaseOrderDetailPage.vue')
 const LegacyApiIntentRedirectPage = () => import('@/pages/LegacyApiIntentRedirectPage.vue')
 const MerchantApiOrdersPage = () => import('@/pages/MerchantApiOrdersPage.vue')
@@ -42,11 +44,11 @@ const AdminAnnouncementsPage = () => import('@/pages/AdminAnnouncementsPage.vue'
 const AdminAnnouncementEditorPage = () => import('@/pages/AdminAnnouncementEditorPage.vue')
 const AdminProductPlansPage = () => import('@/pages/AdminProductPlansPage.vue')
 const AdminApiModelsPage = () => import('@/pages/AdminApiModelsPage.vue')
+const AdminApiHealthCalibrationPage = () => import('@/pages/AdminApiHealthCalibrationPage.vue')
 const AdminModelAuditPage = () => import('@/pages/AdminModelAuditPage.vue')
 const AdminUsersPage = () => import('@/pages/AdminUsersPage.vue')
 const AdminApiOrderDetailPage = () => import('@/pages/AdminApiOrderDetailPage.vue')
 const AdminApiPromotionsPage = () => import('@/pages/AdminApiPromotionsPage.vue')
-const AdminAPIHealthProbeReviewPage = () => import('@/pages/AdminAPIHealthProbeReviewPage.vue')
 const AdminSectionPage = () => import('@/pages/AdminSectionPage.vue')
 const NotFoundPage = () => import('@/pages/NotFoundPage.vue')
 
@@ -54,8 +56,8 @@ const userAuthMeta = { auth: 'user' } as const
 const adminAuthMeta = { auth: 'admin' } as const
 
 const adminChildren = [
-  ['carpools', '车源异常处理', '处理暂停、下架、待复核和遗留审核车源；公开在售车源直接在普通列表巡查。'],
-  ['api-services', 'API 服务审核', '审核模型价格、最低订单金额、交易说明和商户承诺规则。'],
+  ['carpools', '车源管理', '集中巡查公开车源，并处理暂停、待复核和遗留审核记录。'],
+  ['api-services', 'API 服务管理', '巡查公开服务，并处理遗留待审、下架和其他异常记录。'],
   ['trade-intents', 'API 订单追踪', '查看 API 订单、参与方、金额快照、完成和取消状态。'],
   ['reports', '举报纠纷', '处理举报、纠纷和未解决记录。'],
   ['appeals', '申诉处理', '处理用户对限制、下架和封禁的申诉。'],
@@ -94,6 +96,8 @@ export const routes: RouteRecordRaw[] = [
     { path: '/my/api-orders/:id', name: 'my-api-order-detail', component: ApiPurchaseOrderDetailPage, meta: userAuthMeta },
     { path: '/my/api-services', name: 'my-api-services', component: MyApiServicesPage, meta: userAuthMeta },
     { path: '/my/api-services/:id', name: 'my-api-service-detail', component: MyApiServiceDetailPage, meta: userAuthMeta },
+    { path: '/my/api-probe-connections', name: 'my-api-probe-connections', component: MyApiProbeConnectionsPage, meta: userAuthMeta },
+    { path: '/tools/api-model-tester', name: 'api-model-tester', component: ApiModelTesterPage, meta: userAuthMeta },
     { path: '/api-intents/:id', name: 'legacy-api-intent-detail', component: LegacyApiIntentRedirectPage, meta: userAuthMeta },
     { path: '/merchant/carpool-applications', name: 'merchant-carpool-applications', component: MerchantCarpoolApplicationsPage, meta: userAuthMeta },
     { path: '/merchant/carpool-applications/:id', name: 'merchant-carpool-application-detail', component: CarpoolApplicationDetailPage, meta: userAuthMeta },
@@ -118,6 +122,7 @@ export const routes: RouteRecordRaw[] = [
     { path: '/admin/announcements/:id/edit', name: 'admin-announcement-edit', component: AdminAnnouncementEditorPage, meta: adminAuthMeta },
     { path: '/admin/product-plans', name: 'admin-product-plans', component: AdminProductPlansPage, meta: adminAuthMeta },
     { path: '/admin/api-models', name: 'admin-api-models', component: AdminApiModelsPage, meta: adminAuthMeta },
+    { path: '/admin/api-health', name: 'admin-api-health', component: AdminApiHealthCalibrationPage, meta: adminAuthMeta },
     { path: '/admin/model-audit', name: 'admin-model-audit', component: AdminModelAuditPage, meta: adminAuthMeta },
     { path: '/admin/feedback', name: 'admin-feedback', component: AdminFeedbackPage, meta: adminAuthMeta },
     { path: '/admin/feedback/:id', name: 'admin-feedback-detail', component: AdminFeedbackPage, meta: adminAuthMeta },
@@ -126,7 +131,6 @@ export const routes: RouteRecordRaw[] = [
     { path: '/admin/users', name: 'admin-users', component: AdminUsersPage, meta: adminAuthMeta },
     { path: '/admin/api-orders/:id', name: 'admin-api-order-detail', component: AdminApiOrderDetailPage, meta: adminAuthMeta },
     { path: '/admin/api-promotions', name: 'admin-api-promotions', component: AdminApiPromotionsPage, meta: adminAuthMeta },
-    { path: '/admin/api-health-probes', name: 'admin-api-health-probes', component: AdminAPIHealthProbeReviewPage, meta: adminAuthMeta },
     { path: '/admin/restrictions', redirect: '/admin/users', meta: adminAuthMeta },
     { path: '/admin/api-merchants', redirect: '/admin/api-services', meta: adminAuthMeta },
     { path: '/admin/audit-logs', redirect: '/admin/logs', meta: adminAuthMeta },

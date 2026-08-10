@@ -10,6 +10,7 @@ import (
 
 	"c2c-market/backend/internal/domain"
 	"c2c-market/backend/internal/module/idempotency"
+	"c2c-market/backend/internal/module/report"
 	"c2c-market/backend/internal/module/reputation"
 
 	"github.com/jackc/pgx/v5"
@@ -247,7 +248,7 @@ dispute_facts AS (
   JOIN dispute_cases dispute
     ON dispute.subject_user_id = requested.user_id
    AND dispute.target_type = 'carpool_membership'
-   AND dispute.status IN ('open', 'waiting_info')
+	AND dispute.status IN ('negotiating', 'open', 'waiting_info')
   JOIN carpool_memberships membership
     ON dispute.target_id = membership.id::text
   LEFT JOIN reputation_transaction_exclusions exclusion
@@ -274,7 +275,7 @@ dispute_facts AS (
   JOIN dispute_cases dispute
     ON dispute.subject_user_id = requested.user_id
    AND dispute.target_type = 'carpool_application'
-   AND dispute.status IN ('open', 'waiting_info')
+	AND dispute.status IN ('negotiating', 'open', 'waiting_info')
   JOIN carpool_applications application
     ON dispute.target_id = application.id::text
   LEFT JOIN reputation_transaction_exclusions exclusion
@@ -301,7 +302,7 @@ dispute_facts AS (
   JOIN dispute_cases dispute
     ON dispute.subject_user_id = requested.user_id
    AND dispute.target_type = 'api_order'
-   AND dispute.status IN ('open', 'waiting_info')
+	AND dispute.status IN ('negotiating', 'open', 'waiting_info')
   JOIN api_orders api_order
     ON dispute.target_id = api_order.id::text
   LEFT JOIN reputation_transaction_exclusions exclusion
@@ -328,7 +329,7 @@ dispute_facts AS (
   JOIN dispute_cases dispute
     ON dispute.subject_user_id = requested.user_id
    AND dispute.target_type = 'api_purchase_intent'
-   AND dispute.status IN ('open', 'waiting_info')
+	AND dispute.status IN ('negotiating', 'open', 'waiting_info')
   JOIN api_purchase_intents intent
     ON dispute.target_id = intent.id::text
   LEFT JOIN reputation_transaction_exclusions exclusion
@@ -709,6 +710,16 @@ outcome_candidates AS (
   ) AS scopes
   WHERE outcome.status = 'active'
     AND outcome.responsibility IN ('responsible', 'shared')
+    AND (
+      dispute.target_type <> 'api_order'
+      OR (
+        SELECT remedy.status
+        FROM api_order_dispute_remedies remedy
+        WHERE remedy.dispute_case_id = dispute.id
+        ORDER BY remedy.created_at DESC, remedy.id DESC
+        LIMIT 1
+      ) = 'overdue'
+    )
     AND outcome.decided_at >= $2 - interval '365 days'
 ),
 outcome_stats AS (
@@ -1143,6 +1154,24 @@ func (s *Store) CreateDisputeOutcomeWithIdempotency(ctx context.Context, entry i
 	if status != "resolved" && status != "closed" {
 		return reputation.GovernanceMutationResult{}, idempotency.Completion{}, domain.NewError(http.StatusConflict, domain.CodeInvalidStateTransition, "Dispute unresolved", "未解决纠纷只能形成提醒，不能创建责任裁定。")
 	}
+	if targetType == report.TargetAPIOrder && (input.Responsibility == reputation.ResponsibilityResponsible || input.Responsibility == reputation.ResponsibilityShared) {
+		var remedyStatus string
+		if err := tx.QueryRow(ctx, `
+			SELECT status
+			FROM api_order_dispute_remedies
+			WHERE dispute_case_id = $1
+			ORDER BY created_at DESC, id DESC
+			LIMIT 1
+			FOR UPDATE
+		`, input.DisputeCaseID).Scan(&remedyStatus); errors.Is(err, pgx.ErrNoRows) {
+			return reputation.GovernanceMutationResult{}, idempotency.Completion{}, apiOrderRemedyOutcomeUnavailable()
+		} else if err != nil {
+			return reputation.GovernanceMutationResult{}, idempotency.Completion{}, internalStoreError()
+		}
+		if remedyStatus != report.RemedyStatusOverdue {
+			return reputation.GovernanceMutationResult{}, idempotency.Completion{}, apiOrderRemedyOutcomeUnavailable()
+		}
+	}
 	var appealBlocksOutcome bool
 	if err := tx.QueryRow(ctx, `
 		SELECT EXISTS (
@@ -1231,19 +1260,26 @@ func (s *Store) CreateUserRestrictionWithIdempotency(ctx context.Context, entry 
 		return reputation.GovernanceMutationResult{}, idempotency.Completion{}, reputationVersionConflict()
 	}
 	if input.SourceDisputeOutcomeID != "" {
-		var subjectUserID, roleScope, outcomeStatus string
+		var subjectUserID, roleScope, outcomeStatus, targetType string
 		if err := tx.QueryRow(ctx, `
-			SELECT subject_user_id::text, role_scope, status
-			FROM dispute_reputation_outcomes
-			WHERE id = $1
-			FOR UPDATE
-		`, input.SourceDisputeOutcomeID).Scan(&subjectUserID, &roleScope, &outcomeStatus); errors.Is(err, pgx.ErrNoRows) {
+			SELECT outcome.subject_user_id::text,
+			       outcome.role_scope,
+			       outcome.status,
+			       dispute.target_type
+			FROM dispute_reputation_outcomes outcome
+			JOIN dispute_cases dispute ON dispute.id = outcome.dispute_case_id
+			WHERE outcome.id = $1
+			FOR UPDATE OF outcome, dispute
+		`, input.SourceDisputeOutcomeID).Scan(&subjectUserID, &roleScope, &outcomeStatus, &targetType); errors.Is(err, pgx.ErrNoRows) {
 			return reputation.GovernanceMutationResult{}, idempotency.Completion{}, domain.NewError(http.StatusNotFound, domain.CodeObjectNotFound, "Outcome not found", "关联信誉裁定不存在。")
 		} else if err != nil {
 			return reputation.GovernanceMutationResult{}, idempotency.Completion{}, internalStoreError()
 		}
 		if outcomeStatus != reputation.OutcomeStatusActive || subjectUserID != input.UserID {
 			return reputation.GovernanceMutationResult{}, idempotency.Completion{}, domain.NewError(http.StatusConflict, domain.CodeInvalidStateTransition, "Outcome unavailable", "关联信誉裁定已反转或主体不匹配。")
+		}
+		if targetType == report.TargetAPIOrder {
+			return reputation.GovernanceMutationResult{}, idempotency.Completion{}, apiOrderRestrictionRequiresDedicatedSanction()
 		}
 		if roleScope != reputation.RoleAll && input.RoleScope != roleScope {
 			return reputation.GovernanceMutationResult{}, idempotency.Completion{}, domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Role scope invalid", "限制角色不能超出关联裁定角色。", "roleScope", "invalid", "限制角色不能超出关联裁定角色。")
@@ -1288,6 +1324,14 @@ func (s *Store) CreateUserRestrictionWithIdempotency(ctx context.Context, entry 
 		return reputation.GovernanceMutationResult{}, idempotency.Completion{}, internalStoreError()
 	}
 	return result, completion, nil
+}
+
+func apiOrderRemedyOutcomeUnavailable() *domain.AppError {
+	return domain.NewError(http.StatusConflict, domain.CodeInvalidStateTransition, "Overdue remedy required", "API 订单责任裁定只能基于管理员已确认的逾期未履行事实。")
+}
+
+func apiOrderRestrictionRequiresDedicatedSanction() *domain.AppError {
+	return domain.NewError(http.StatusConflict, domain.CodeInvalidStateTransition, "Dedicated sanction required", "API 订单逾期限制必须通过纠纷处罚流程创建。")
 }
 
 func (s *Store) RevokeUserRestrictionWithIdempotency(ctx context.Context, entry idempotency.Entry, input reputation.RevokeRestrictionInput, now time.Time, buildCompletion reputation.GovernanceCompletionBuilder) (reputation.GovernanceMutationResult, idempotency.Completion, *domain.AppError) {
@@ -1373,6 +1417,41 @@ func (s *Store) FindActiveRestriction(ctx context.Context, userID, role, action 
 		return nil, internalStoreError()
 	}
 	return &item, nil
+}
+
+func ensureAPIServicePublishAllowedInTx(ctx context.Context, tx pgx.Tx, sellerUserID string, now time.Time) *domain.AppError {
+	var userExists bool
+	if err := tx.QueryRow(ctx, `SELECT true FROM users WHERE id = $1 FOR SHARE`, sellerUserID).Scan(&userExists); err != nil {
+		return internalStoreError()
+	}
+	var publicReason string
+	err := tx.QueryRow(ctx, `
+		SELECT public_reason
+		FROM user_restrictions
+		WHERE user_id = $1
+		  AND revoked_at IS NULL
+		  AND starts_at <= $2
+		  AND (ends_at IS NULL OR $2 < ends_at)
+		  AND role_scope IN ('seller', 'all')
+		  AND action_code IN ('api_service_publish', 'all')
+		ORDER BY
+		  CASE WHEN role_scope = 'seller' THEN 0 ELSE 1 END,
+		  CASE WHEN action_code = 'api_service_publish' THEN 0 ELSE 1 END,
+		  starts_at DESC,
+		  id DESC
+		LIMIT 1
+		FOR SHARE
+	`, sellerUserID, now).Scan(&publicReason)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return internalStoreError()
+	}
+	if strings.TrimSpace(publicReason) == "" {
+		publicReason = "当前信誉限制不允许执行该操作。"
+	}
+	return domain.NewError(http.StatusForbidden, domain.CodeReputationActionRestricted, "Reputation action restricted", publicReason)
 }
 
 func disputeSubjectRole(ctx context.Context, tx pgx.Tx, targetType, targetID, subjectUserID string) (string, *domain.AppError) {
@@ -1484,6 +1563,7 @@ func scanUserRestriction(row pgx.Row) (reputation.UserRestriction, error) {
 		&item.StartsAt,
 		&item.EndsAt,
 		&item.SourceDisputeOutcomeID,
+		&item.SourceDisputeRemedyID,
 		&item.CreatedByAdminID,
 		&item.RevokedAt,
 		&item.RevokedByAdminID,
@@ -1554,6 +1634,7 @@ const userRestrictionColumns = `
 	starts_at,
 	ends_at,
 	COALESCE(source_dispute_outcome_id::text, ''),
+	COALESCE(source_dispute_remedy_id::text, ''),
 	created_by_admin_id::text,
 	revoked_at,
 	COALESCE(revoked_by_admin_id::text, ''),
@@ -1574,6 +1655,7 @@ const userRestrictionReturningColumns = `
 	user_restrictions.starts_at,
 	user_restrictions.ends_at,
 	COALESCE(user_restrictions.source_dispute_outcome_id::text, ''),
+	COALESCE(user_restrictions.source_dispute_remedy_id::text, ''),
 	user_restrictions.created_by_admin_id::text,
 	user_restrictions.revoked_at,
 	COALESCE(user_restrictions.revoked_by_admin_id::text, ''),

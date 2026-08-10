@@ -14,6 +14,8 @@ import (
 
 	"c2c-market/backend/internal/domain"
 	"c2c-market/backend/internal/module/auth"
+	"c2c-market/backend/internal/module/idempotency"
+	"c2c-market/backend/internal/platform/modelsdev"
 
 	"github.com/google/uuid"
 )
@@ -22,6 +24,8 @@ type Service struct {
 	mu            sync.Mutex
 	now           func() time.Time
 	repo          Repository
+	idempotency   *idempotency.Service
+	modelsDev     modelsdev.Source
 	categories    map[string]ProductCategory
 	productPlans  map[string]ProductPlan
 	apiProviders  map[string]APIModelProvider
@@ -30,13 +34,15 @@ type Service struct {
 	apiModelOrder []string
 }
 
-func NewService(repo Repository, now func() time.Time) *Service {
+func NewService(repo Repository, idempotencyService *idempotency.Service, modelsDevSource modelsdev.Source, now func() time.Time) *Service {
 	if now == nil {
 		now = time.Now
 	}
 	service := &Service{
 		now:          now,
 		repo:         repo,
+		idempotency:  idempotencyService,
+		modelsDev:    modelsDevSource,
 		categories:   make(map[string]ProductCategory),
 		productPlans: make(map[string]ProductPlan),
 		apiProviders: make(map[string]APIModelProvider),
@@ -47,6 +53,15 @@ func NewService(repo Repository, now func() time.Time) *Service {
 	service.seedAPIModelProviders()
 	service.seedAPIModels()
 	return service
+}
+
+func (s *Service) SetModelsDevSource(source modelsdev.Source) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.modelsDev = source
 }
 
 func (s *Service) ProductCategories(ctx context.Context) ([]ProductCategory, *domain.AppError) {
@@ -414,7 +429,7 @@ func (s *Service) APIModels(ctx context.Context) ([]APIModelCatalog, *domain.App
 	}
 	sort.Slice(models, func(i, j int) bool {
 		if models[i].SortOrder == models[j].SortOrder {
-			return models[i].DisplayName < models[j].DisplayName
+			return models[i].ModelKey < models[j].ModelKey
 		}
 		return models[i].SortOrder < models[j].SortOrder
 	})
@@ -641,7 +656,6 @@ func (s *Service) CreateAPIModel(ctx context.Context, user auth.User, input APIM
 		Provider:                   provider.DisplayName,
 		ProviderActive:             provider.Active,
 		ModelKey:                   normalized.ModelKey,
-		DisplayName:                normalized.DisplayName,
 		Capabilities:               append([]string(nil), normalized.Capabilities...),
 		Active:                     normalized.Active,
 		SortOrder:                  normalized.SortOrder,
@@ -696,7 +710,6 @@ func (s *Service) UpdateAPIModel(ctx context.Context, user auth.User, modelID st
 	model.Provider = provider.DisplayName
 	model.ProviderActive = provider.Active
 	model.ModelKey = normalized.ModelKey
-	model.DisplayName = normalized.DisplayName
 	model.Capabilities = append([]string(nil), normalized.Capabilities...)
 	model.Active = normalized.Active
 	model.SortOrder = normalized.SortOrder
@@ -901,7 +914,6 @@ func normalizeAPIModelProviderInput(input APIModelProviderInput) (APIModelProvid
 func normalizeAPIModelInput(input APIModelInput) (APIModelInput, *domain.AppError) {
 	input.ProviderID = strings.TrimSpace(input.ProviderID)
 	input.ModelKey = strings.TrimSpace(input.ModelKey)
-	input.DisplayName = strings.TrimSpace(input.DisplayName)
 	input.SourceURL = strings.TrimSpace(input.SourceURL)
 	input.SourceVersion = strings.TrimSpace(input.SourceVersion)
 
@@ -910,9 +922,6 @@ func normalizeAPIModelInput(input APIModelInput) (APIModelInput, *domain.AppErro
 	}
 	if utf8.RuneCountInString(input.ModelKey) < 1 || utf8.RuneCountInString(input.ModelKey) > 120 {
 		return APIModelInput{}, fieldError(http.StatusUnprocessableEntity, "modelKey", "模型标识需为 1 至 120 个字符。")
-	}
-	if utf8.RuneCountInString(input.DisplayName) < 1 || utf8.RuneCountInString(input.DisplayName) > 80 {
-		return APIModelInput{}, fieldError(http.StatusUnprocessableEntity, "displayName", "展示名需为 1 至 80 个字符。")
 	}
 	capabilities, appErr := normalizeAPIModelCapabilities(input.Capabilities)
 	if appErr != nil {
@@ -1189,8 +1198,8 @@ func sortAPIModels(models []APIModelCatalog) {
 		if models[i].SortOrder != models[j].SortOrder {
 			return models[i].SortOrder < models[j].SortOrder
 		}
-		if models[i].DisplayName != models[j].DisplayName {
-			return models[i].DisplayName < models[j].DisplayName
+		if models[i].ModelKey != models[j].ModelKey {
+			return models[i].ModelKey < models[j].ModelKey
 		}
 		return models[i].ID < models[j].ID
 	})

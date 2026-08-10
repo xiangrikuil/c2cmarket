@@ -2,12 +2,15 @@ import type { AdminRow } from '@/lib/api'
 import type {
   Appeal,
   DisputeCase,
+  DisputeRemedyRequest,
   SelfDispute,
+  DisputeSettlementProposalRequest,
   SelfModerationSupplementMutation,
   SelfReport,
 } from '@/api/generated/openapi'
 import type { CreateContactReportRequest, PublicDisputeRecord } from '@/data/mock'
 import { backendMutation, backendRequest, ensureBackendSession } from '@/lib/backendClient'
+import { getDisputeCaseStatusLabel } from '@/lib/disputeCase'
 
 type ListResponse<T> = {
   items: T[]
@@ -67,6 +70,13 @@ export type ResolveAdminDisputeInput = {
   publicSummary: string
   publicResultCode: BackendPublicResultCode
   publicResult: string
+  remedy?: DisputeRemedyRequest | null
+}
+
+export type MarkAdminDisputeRemedyOverdueInput = {
+  disputeId: string
+  expectedVersion: number
+  reason: string
 }
 
 type BackendAppeal = {
@@ -123,6 +133,7 @@ export type CreateManualInterventionReportRequest = {
 
 export type MyReport = SelfReport
 export type MyDispute = SelfDispute
+export type CreateDisputeSettlementProposalRequest = DisputeSettlementProposalRequest
 export type MyAppeal = Appeal
 export type SubmitInfoSupplementRequest = {
   entityType: 'report' | 'dispute'
@@ -190,16 +201,6 @@ function reportStatusLabel(value: BackendReport['status']) {
     needs_info: '需要补充信息',
     rejected: '已拒绝',
     dispute_opened: '处理中',
-    closed: '已关闭',
-  }
-  return labels[value]
-}
-
-function disputeStatusLabel(value: BackendDispute['status']) {
-  const labels: Record<BackendDispute['status'], string> = {
-    open: '处理中',
-    waiting_info: '需要补充信息',
-    resolved: '已处理',
     closed: '已关闭',
   }
   return labels[value]
@@ -300,7 +301,7 @@ export function mapAdminDisputeRow(item: AdminDisputeDetail): AdminRow {
     primary: item.publicSummary || item.targetLabel,
     secondary: `${targetTypeLabel(item.targetType)} · ${item.publicResult || '等待处理结果'}`,
     owner: `${item.primaryDisplayName || item.primaryUsername}${item.counterpartyUsername ? ` / @${item.counterpartyUsername}` : ''}`,
-    status: disputeStatusLabel(item.status),
+    status: getDisputeCaseStatusLabel(item.status),
     risk: item.adminReason || `公开摘要：${item.publicSummary || '未填写'}`,
     targetType: 'dispute',
     backendKind: 'dispute',
@@ -434,6 +435,68 @@ export async function backendMyDisputes() {
   return backendAllPages<MyDispute>('/api/v1/me/disputes')
 }
 
+export async function backendMyDispute(id: string) {
+  await ensureBackendSession('buyer', false)
+  return backendRequest<MyDispute>(`/api/v1/me/disputes/${encodeURIComponent(id)}`)
+}
+
+export async function backendAppendDisputeMessage(disputeId: string, body: string) {
+  await ensureBackendSession('buyer', false)
+  return backendMutation<MyDispute>(`/api/v1/me/disputes/${encodeURIComponent(disputeId)}/messages`, { body }, {
+    idempotencyPrefix: 'dispute-message',
+  })
+}
+
+export async function backendCreateDisputeSettlementProposal(disputeId: string, input: CreateDisputeSettlementProposalRequest) {
+  await ensureBackendSession('buyer', false)
+  return backendMutation<MyDispute>(`/api/v1/me/disputes/${encodeURIComponent(disputeId)}/settlement-proposals`, input, {
+    idempotencyPrefix: 'dispute-settlement-proposal',
+  })
+}
+
+export async function backendConfirmDisputeSettlementProposal(disputeId: string, proposalId: string) {
+  await ensureBackendSession('buyer', false)
+  return backendMutation<MyDispute>(`/api/v1/me/disputes/${encodeURIComponent(disputeId)}/settlement-proposals/${encodeURIComponent(proposalId)}/confirm`, {}, {
+    idempotencyPrefix: 'dispute-settlement-confirm',
+  })
+}
+
+export async function backendRejectDisputeSettlementProposal(disputeId: string, proposalId: string, reason: string) {
+  await ensureBackendSession('buyer', false)
+  return backendMutation<MyDispute>(`/api/v1/me/disputes/${encodeURIComponent(disputeId)}/settlement-proposals/${encodeURIComponent(proposalId)}/reject`, { reason }, {
+    idempotencyPrefix: 'dispute-settlement-reject',
+  })
+}
+
+export async function backendEscalateDispute(disputeId: string, reason: string) {
+  await ensureBackendSession('buyer', false)
+  return backendMutation<MyDispute>(`/api/v1/me/disputes/${encodeURIComponent(disputeId)}/escalate`, { reason }, {
+    idempotencyPrefix: 'dispute-escalate',
+  })
+}
+
+export async function backendClaimDisputeRemedy(disputeId: string, note: string) {
+  await ensureBackendSession('buyer', false)
+  return backendMutation<MyDispute>(`/api/v1/me/disputes/${encodeURIComponent(disputeId)}/remedy/claim`, { note }, {
+    idempotencyPrefix: 'dispute-remedy-claim',
+  })
+}
+
+export async function backendConfirmDisputeRemedy(disputeId: string, reason = '') {
+  await ensureBackendSession('buyer', false)
+  const trimmedReason = reason.trim()
+  return backendMutation<MyDispute>(`/api/v1/me/disputes/${encodeURIComponent(disputeId)}/remedy/confirm`, trimmedReason ? { reason: trimmedReason } : {}, {
+    idempotencyPrefix: 'dispute-remedy-confirm',
+  })
+}
+
+export async function backendContestDisputeRemedy(disputeId: string, reason: string) {
+  await ensureBackendSession('buyer', false)
+  return backendMutation<MyDispute>(`/api/v1/me/disputes/${encodeURIComponent(disputeId)}/remedy/contest`, { reason }, {
+    idempotencyPrefix: 'dispute-remedy-contest',
+  })
+}
+
 export async function backendMyAppeals() {
   await ensureBackendSession('buyer', false)
   return backendAllPages<MyAppeal>('/api/v1/me/appeals')
@@ -468,22 +531,21 @@ export async function backendCreateAppeal(payload: CreateAppealRequest) {
 export async function backendAdminReportRows() {
   await ensureBackendSession('admin', true)
   const [reports, disputes, appeals] = await Promise.all([
-    backendRequest<ListResponse<BackendReport>>('/api/v1/admin/reports'),
-    backendRequest<ListResponse<BackendDispute>>('/api/v1/admin/disputes'),
-    backendRequest<ListResponse<BackendAppeal>>('/api/v1/admin/appeals'),
+    backendAllPages<BackendReport>('/api/v1/admin/reports'),
+    backendAllPages<BackendDispute>('/api/v1/admin/disputes'),
+    backendAllPages<BackendAppeal>('/api/v1/admin/appeals'),
   ])
-  const disputeReportIds = new Set(disputes.items.map(item => item.reportId).filter(Boolean))
+  const disputeReportIds = new Set(disputes.map(item => item.reportId).filter(Boolean))
   return [
-    ...reports.items.filter(item => item.status !== 'dispute_opened' && !disputeReportIds.has(item.id)).map(mapReportRow),
-    ...disputes.items.map(mapAdminDisputeRow),
-    ...appeals.items.map(mapAppealRow),
+    ...reports.filter(item => item.status !== 'dispute_opened' && !disputeReportIds.has(item.id)).map(mapReportRow),
+    ...disputes.map(mapAdminDisputeRow),
+    ...appeals.map(mapAppealRow),
   ]
 }
 
 export async function backendAdminAppealRows() {
   await ensureBackendSession('admin', true)
-  const response = await backendRequest<ListResponse<BackendAppeal>>('/api/v1/admin/appeals')
-  return response.items.map(mapAppealRow)
+  return (await backendAllPages<BackendAppeal>('/api/v1/admin/appeals')).map(mapAppealRow)
 }
 
 export async function backendAdminReportDetail(id: string) {
@@ -511,6 +573,7 @@ export async function backendResolveAdminDispute(input: ResolveAdminDisputeInput
       publicSummary: input.publicSummary,
       publicResultCode: input.publicResultCode,
       publicResult: input.publicResult,
+      remedy: input.remedy ?? null,
     },
     {
       idempotencyPrefix: 'dispute-admin-resolve',
@@ -518,6 +581,20 @@ export async function backendResolveAdminDispute(input: ResolveAdminDisputeInput
     },
   )
   if (!result.dispute) throw new Error('纠纷裁决响应缺少最新案件数据。')
+  return result.dispute
+}
+
+export async function backendMarkAdminDisputeRemedyOverdue(input: MarkAdminDisputeRemedyOverdueInput) {
+  await ensureBackendSession('admin', true)
+  const result = await backendMutation<BackendAdminMutation>(
+    `/api/v1/admin/disputes/${encodeURIComponent(input.disputeId)}/remedy/mark-overdue`,
+    { reason: input.reason },
+    {
+      idempotencyPrefix: 'dispute-remedy-mark-overdue',
+      ifMatch: input.expectedVersion,
+    },
+  )
+  if (!result.dispute) throw new Error('整改逾期确认响应缺少最新案件数据。')
   return result.dispute
 }
 

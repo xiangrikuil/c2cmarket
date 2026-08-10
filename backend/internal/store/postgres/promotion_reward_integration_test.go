@@ -351,6 +351,7 @@ func seedPromotionRewardService(t *testing.T, store *Store, ownerUserID, service
 	t.Helper()
 	ctx := context.Background()
 	contactID := uuid.NewString()
+	connectionID := uuid.NewString()
 	if _, err := store.pool.Exec(ctx, `
 		INSERT INTO contact_methods (id, user_id, type, label, is_default, enabled, created_at, updated_at)
 		VALUES ($1, $2, 'linuxdo', 'linux.do', true, true, $3, $3)
@@ -359,8 +360,25 @@ func seedPromotionRewardService(t *testing.T, store *Store, ownerUserID, service
 	}
 	seedContactVersionForTest(t, ctx, store.pool, contactID, ownerUserID, now)
 	if _, err := store.pool.Exec(ctx, `
+		INSERT INTO api_probe_connections (
+			id, owner_user_id, name, base_url, normalized_base_url,
+			credential_ciphertext, credential_nonce, credential_key_version,
+			credential_cipher_format, credential_fingerprint,
+			probe_model, probe_protocol,
+			enabled, verification_status, verified_at,
+			created_at, updated_at
+		) VALUES (
+			$1, $2, '推广权益测试探针', 'https://api.example.com/v1', 'https://api.example.com/v1',
+			$3, $4, 'test-key', 'test-format', $5,
+			'gpt-5-mini', 'openai_responses_v1',
+			true, 'verified', $6, $6, $6
+		)
+	`, connectionID, ownerUserID, []byte("test-ciphertext"), []byte("test-nonce"), []byte("test-fingerprint"), now); err != nil {
+		t.Fatalf("seed promotion probe connection: %v", err)
+	}
+	if _, err := store.pool.Exec(ctx, `
 		INSERT INTO api_services (
-			id, owner_user_id, merchant_identity_mode, owner_contact_method_id,
+			id, owner_user_id, merchant_identity_mode, owner_contact_method_id, probe_connection_id,
 			title, short_description, distribution_system, billing_mode,
 			declared_cny_per_usd_allowance, declared_max_usd_allowance_per_intent,
 			available_usd_allowance, quota_expires_at,
@@ -370,12 +388,12 @@ func seedPromotionRewardService(t *testing.T, store *Store, ownerUserID, service
 			declared_ttft_band, declared_max_concurrency, performance_confirmed_at,
 			approved_at, created_at, updated_at, version
 		) VALUES (
-			$1, $2, 'public_profile', $3, '推广权益测试服务', 'PostgreSQL integration service',
+			$1, $2, 'public_profile', $3, $6, '推广权益测试服务', 'PostgreSQL integration service',
 			'sub2api', 'metered_usd_quota', 1, 1000, 1000, $5, 1, 1000, 'offsite_panel_readonly',
 			'approved', 'online', 'clear', true, 10,
 			'under_1s', 20, $4, $4, $4, $4, 1
 		)
-	`, serviceID, ownerUserID, contactID, now, now.AddDate(0, 1, 0)); err != nil {
+	`, serviceID, ownerUserID, contactID, now, now.AddDate(0, 1, 0), connectionID); err != nil {
 		t.Fatalf("seed promotion API service: %v", err)
 	}
 	if _, err := store.pool.Exec(ctx, `
@@ -437,6 +455,7 @@ func cleanupPromotionRewardIntegrationFixture(t *testing.T, store *Store, userID
 		`DELETE FROM api_service_payment_options WHERE api_service_id IN (SELECT id FROM api_services WHERE owner_user_id = ANY($1::uuid[]))`,
 		`DELETE FROM api_service_access_modes WHERE api_service_id IN (SELECT id FROM api_services WHERE owner_user_id = ANY($1::uuid[]))`,
 		`DELETE FROM api_services WHERE owner_user_id = ANY($1::uuid[])`,
+		`DELETE FROM api_probe_connections WHERE owner_user_id = ANY($1::uuid[])`,
 		`UPDATE contact_methods SET current_version_id = NULL WHERE user_id = ANY($1::uuid[])`,
 		`DELETE FROM contact_method_versions WHERE owner_user_id = ANY($1::uuid[])`,
 		`DELETE FROM contact_methods WHERE user_id = ANY($1::uuid[])`,

@@ -211,6 +211,86 @@ func TestPostgresDataLifecycleSkipsWhenAdvisoryLockIsHeld(t *testing.T) {
 	}
 }
 
+func TestPostgresDataLifecycleClosesExpiredRemedyConfirmationNeutrally(t *testing.T) {
+	store := connectLifecycleTestStore(t)
+	ctx := context.Background()
+	now := time.Date(2026, 8, 9, 18, 0, 0, 0, time.UTC)
+	sellerID := uuid.NewString()
+	sellerContactID := uuid.NewString()
+	buyerID := uuid.NewString()
+	buyerContactID := uuid.NewString()
+	serviceID := uuid.NewString()
+	seedQuotaServiceForTest(t, ctx, store.pool, sellerID, sellerContactID, buyerID, buyerContactID, serviceID, now.Add(-24*time.Hour))
+	order := insertLifecycleCompletedCredentialOrder(t, store, serviceID, sellerID, sellerContactID, buyerID, buyerContactID, now.Add(-2*time.Hour), now.Add(-3*time.Hour), "", nil)
+	disputeID := insertLifecycleDispute(t, store, order.OrderID, buyerID, sellerID, report.DisputeStatusResolved, now.Add(-72*time.Hour))
+	remedyID := uuid.NewString()
+	t.Cleanup(func() {
+		_, _ = store.pool.Exec(context.Background(), `DELETE FROM notifications WHERE target_id = $1`, disputeID)
+		_, _ = store.pool.Exec(context.Background(), `DELETE FROM dispute_events WHERE entity_id = $1`, disputeID)
+		cleanupLifecycleCredentialFixtures(t, context.Background(), store, sellerID, buyerID, "")
+	})
+	if _, err := store.pool.Exec(ctx, `
+		UPDATE api_orders
+		SET dispute_status = 'fulfillment_confirmation', dispute_case_id = $2, updated_at = $3
+		WHERE id = $1
+	`, order.OrderID, disputeID, now.Add(-49*time.Hour)); err != nil {
+		t.Fatalf("attach lifecycle remedy dispute: %v", err)
+	}
+	if _, err := store.pool.Exec(ctx, `
+		INSERT INTO api_order_dispute_remedies (
+			id, dispute_case_id, action, responsible_user_id, beneficiary_user_id,
+			instructions, status, due_at, claimed_at, confirmation_due_at,
+			claim_note, created_by_admin_id, created_request_id, claim_request_id,
+			created_at, updated_at, version
+		)
+		VALUES ($1, $2, 'continue_fulfillment', $3, $4,
+		        '请继续完成订单交付。', 'claimed_fulfilled', $5, $6, $7,
+		        '已声明继续履行。', $3, $8, $9, $10, $6, 2)
+	`, remedyID, disputeID, sellerID, buyerID, now.Add(24*time.Hour), now.Add(-49*time.Hour), now,
+		"remedy-created-"+remedyID, "remedy-claimed-"+remedyID, now.Add(-72*time.Hour)); err != nil {
+		t.Fatalf("seed claimed remedy: %v", err)
+	}
+
+	result, appErr := store.RunDataLifecycle(ctx, now, 10, lifecycleCredentialPolicy())
+	if appErr != nil {
+		t.Fatalf("run remedy confirmation lifecycle: %v", appErr)
+	}
+	if result.DisputeRemedyConfirmationsExpired != 1 {
+		t.Fatalf("expected one expired remedy confirmation, got %+v", result)
+	}
+	var remedyStatus, responseNote, disputeStatus, publicResult, orderDisputeStatus string
+	if err := store.pool.QueryRow(ctx, `SELECT status, response_note FROM api_order_dispute_remedies WHERE id = $1`, remedyID).Scan(&remedyStatus, &responseNote); err != nil {
+		t.Fatalf("read expired remedy: %v", err)
+	}
+	if err := store.pool.QueryRow(ctx, `SELECT status, public_result FROM dispute_cases WHERE id = $1`, disputeID).Scan(&disputeStatus, &publicResult); err != nil {
+		t.Fatalf("read closed remedy dispute: %v", err)
+	}
+	if err := store.pool.QueryRow(ctx, `SELECT dispute_status FROM api_orders WHERE id = $1`, order.OrderID).Scan(&orderDisputeStatus); err != nil {
+		t.Fatalf("read closed order projection: %v", err)
+	}
+	if remedyStatus != report.RemedyStatusConfirmationExpired || responseNote != report.RemedyConfirmationExpiredNote ||
+		disputeStatus != report.DisputeStatusClosed || publicResult != report.RemedyConfirmationExpiredPublicResult ||
+		orderDisputeStatus != apiorder.DisputeStatusClosed {
+		t.Fatalf("unexpected neutral timeout state remedy=%q note=%q dispute=%q result=%q order=%q", remedyStatus, responseNote, disputeStatus, publicResult, orderDisputeStatus)
+	}
+	var notificationCount int
+	if err := store.pool.QueryRow(ctx, `
+		SELECT COUNT(*)::int
+		FROM notifications
+		WHERE target_id = $1 AND source_event_type = 'dispute.remedy_confirmation_expired'
+	`, disputeID).Scan(&notificationCount); err != nil {
+		t.Fatalf("count remedy timeout notifications: %v", err)
+	}
+	if notificationCount != 2 {
+		t.Fatalf("expected both participants to receive neutral timeout notification, got %d", notificationCount)
+	}
+
+	second, appErr := store.RunDataLifecycle(ctx, now, 10, lifecycleCredentialPolicy())
+	if appErr != nil || second.DisputeRemedyConfirmationsExpired != 0 {
+		t.Fatalf("remedy timeout rerun must be idempotent: result=%+v err=%v", second, appErr)
+	}
+}
+
 func TestPostgresDataLifecycleDestroysAPICredentialsAfterTrustedHoldsAndLatestAnchor(t *testing.T) {
 	store := connectLifecycleTestStore(t)
 	ctx := context.Background()

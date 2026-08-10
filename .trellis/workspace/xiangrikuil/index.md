@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 38
-- **Last Active**: 2026-08-06
+- **Total Sessions**: 48
+- **Last Active**: 2026-08-10
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~1327 | Active |
+| `journal-1.md` | ~1570 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,16 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 48 | 2026-08-10 | 公告体验与首页公告条收口 | `72c5967`, `3b2fbbb`, `82f9a9c`, `6490c09` | `codex/api-health-probe-repeat-prompts` |
+| 47 | 2026-08-10 | 全仓半成品功能审计 | - | `codex/api-health-probe-repeat-prompts` |
+| 46 | 2026-08-09 | 工作区剩余改动原子提交整理 | `332bd00`…`a7fc49e` | `codex/api-health-probe-repeat-prompts` |
+| 45 | 2026-08-09 | API 订单纠纷处罚治理 | `68be0c5` | `codex/api-health-probe-repeat-prompts` |
+| 44 | 2026-08-09 | 收紧前端 Reka UI 依赖边界 | `523e44e` | `codex/api-health-probe-repeat-prompts` |
+| 43 | 2026-08-08 | 真实模型探针与 24 小时健康度 | `fd7e1e1` | `codex/api-health-probe-repeat-prompts` |
+| 42 | 2026-08-08 | API 模型目录同步修复与紧凑界面改版 | `3beccd9`, `110d11e` | `codex/api-health-probe-repeat-prompts` |
+| 41 | 2026-08-08 | API model catalog models.dev pricing sync | `7d79e8d` | `codex/api-health-probe-repeat-prompts` |
+| 40 | 2026-08-08 | API probe sharing and model tester | `e9bc73d` | `codex/api-health-probe-repeat-prompts` |
+| 39 | 2026-08-07 | 修复健康探针重复授权与 HTTP 确认 | `ba6c07c` | `codex/api-health-probe-repeat-prompts` |
 | 38 | 2026-08-06 | README product positioning | `3155d11` | `codex/readme-official-rewrite` |
 | 37 | 2026-08-06 | README official rewrite | `4174eb8` | `codex/readme-official-rewrite` |
 | 36 | 2026-08-04 | P1 first transaction guidance | `04e6bae` | `codex/p0-p1-launch-closure` |

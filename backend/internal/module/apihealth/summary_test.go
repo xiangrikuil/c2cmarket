@@ -5,115 +5,161 @@ import (
 	"time"
 )
 
-func TestBuildSummaryThresholdsAndMedian(t *testing.T) {
-	t.Parallel()
-	now := time.Date(2026, 8, 4, 12, 4, 0, 0, time.UTC)
-	config := authorizedConfig(now)
-	tests := []struct {
-		name      string
-		samples   []Sample
-		state     string
-		reason    string
-		rate      string
-		median    int
-		hasMedian bool
-	}{
-		{name: "insufficient", samples: finalSamples(now, []sampleValue{{true, 900}, {true, 1100}}), state: HealthStateNoSample, reason: AvailabilityInsufficient},
-		{name: "normal even median rounds", samples: finalSamples(now, []sampleValue{{true, 1000}, {true, 1001}, {true, 1200}, {true, 1300}}), state: HealthStateNormal, rate: "100.0", median: 1101, hasMedian: true},
-		{name: "slow fluctuates", samples: finalSamples(now, []sampleValue{{true, 3001}, {true, 3200}, {true, 3400}}), state: HealthStateFluctuating, rate: "100.0", median: 3200, hasMedian: true},
-		{name: "rate fluctuates", samples: finalSamples(now, []sampleValue{{true, 900}, {true, 1000}, {true, 1100}, {true, 1200}, {true, 1300}, {true, 1400}, {true, 1500}, {true, 1600}, {true, 1700}, {false, 0}}), state: HealthStateFluctuating, rate: "90.0", median: 1300, hasMedian: true},
-		{name: "two recent failures abnormal", samples: finalSamples(now, []sampleValue{{true, 900}, {true, 1000}, {true, 1100}, {true, 1200}, {true, 1300}, {true, 1400}, {true, 1500}, {true, 1600}, {false, 0}, {false, 0}}), state: HealthStateAbnormal, rate: "80.0", median: 1250, hasMedian: true},
+func TestBuildSummaryUsesFirstAttemptSuccesses(t *testing.T) {
+	now := time.Date(2026, 8, 8, 10, 4, 0, 0, time.UTC)
+	connection := verifiedConnection(now.Add(-time.Hour))
+	connection.MeasurementVersion = 2
+	samples := []Sample{
+		finalSample(connection, SlotStart(now).Add(-10*time.Minute), SampleStatusSucceeded),
+		finalSample(connection, SlotStart(now).Add(-5*time.Minute), SampleStatusSucceeded),
+		finalSample(connection, SlotStart(now), SampleStatusSucceeded),
 	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			t.Parallel()
-			summary := BuildSummary(&config, test.samples, now)
-			if summary.State != test.state || summary.AvailabilityReason != test.reason || len(summary.Samples) != SummarySlotCount {
-				t.Fatalf("unexpected summary: %+v", summary)
-			}
-			if test.rate != "" && (summary.SuccessRatePercent == nil || *summary.SuccessRatePercent != test.rate) {
-				t.Fatalf("unexpected success rate: %+v", summary.SuccessRatePercent)
-			}
-			if test.hasMedian && (summary.MedianTTFTMS == nil || *summary.MedianTTFTMS != test.median) {
-				t.Fatalf("unexpected median: %+v", summary.MedianTTFTMS)
-			}
-		})
+	summary := BuildSummary(&connection, samples, now)
+	if summary.State != HealthStateNormal || summary.SuccessRatePercent == nil || *summary.SuccessRatePercent != "100.0" {
+		t.Fatalf("summary=%+v", summary)
+	}
+	if len(summary.Samples) != SummarySlotCount || summary.Samples[len(summary.Samples)-1].State != SlotStateSmooth {
+		t.Fatalf("unexpected slots: %+v", summary.Samples)
 	}
 }
 
-func TestBuildSummaryAvailabilityAndFiltering(t *testing.T) {
-	t.Parallel()
-	now := time.Date(2026, 8, 4, 12, 4, 0, 0, time.UTC)
-	if summary := BuildSummary(nil, nil, now); summary.AvailabilityReason != AvailabilityUnconfigured || summary.TransportSecurity != TransportSecurityUnknown {
-		t.Fatalf("unexpected unconfigured summary: %+v", summary)
+func TestBuildSummaryIgnoresOldMeasurementVersionAndDetectsRecentFailures(t *testing.T) {
+	now := time.Date(2026, 8, 8, 10, 4, 0, 0, time.UTC)
+	connection := verifiedConnection(now.Add(-time.Hour))
+	connection.MeasurementVersion = 3
+	old := finalSample(connection, SlotStart(now).Add(-15*time.Minute), SampleStatusSucceeded)
+	old.MeasurementVersion = 2
+	samples := []Sample{
+		old,
+		finalSample(connection, SlotStart(now).Add(-10*time.Minute), SampleStatusSucceeded),
+		finalSample(connection, SlotStart(now).Add(-5*time.Minute), SampleStatusFailed),
+		finalSample(connection, SlotStart(now), SampleStatusFailed),
 	}
-	config := authorizedConfig(now)
-	config.Enabled = false
-	if summary := BuildSummary(&config, nil, now); summary.AvailabilityReason != AvailabilityDisabled || summary.TransportSecurity != TransportSecurityHTTPS {
-		t.Fatalf("unexpected disabled summary: %+v", summary)
-	}
-	config.Enabled = true
-	config.AuthorizationStatus = AuthorizationPending
-	if summary := BuildSummary(&config, nil, now); summary.AvailabilityReason != AvailabilityUnauthorized {
-		t.Fatalf("unexpected unauthorized summary: %+v", summary)
-	}
-	config = authorizedConfig(now)
-	samples := finalSamples(now.Add(-15*time.Minute), []sampleValue{{true, 1000}, {true, 1100}, {true, 1200}})
-	if summary := BuildSummary(&config, samples, now); summary.AvailabilityReason != AvailabilityStale || summary.SuccessRatePercent != nil {
-		t.Fatalf("unexpected stale summary: %+v", summary)
-	}
-	wrongVersion := finalSamples(now, []sampleValue{{true, 1000}, {true, 1100}, {true, 1200}})
-	for index := range wrongVersion {
-		wrongVersion[index].MeasurementVersion++
-	}
-	if summary := BuildSummary(&config, wrongVersion, now); summary.TotalSamples != 0 || summary.AvailabilityReason != AvailabilityInsufficient {
-		t.Fatalf("wrong measurement version entered summary: %+v", summary)
-	}
-	config.BaseURL = "http://api.example.com/v1"
-	config.NormalizedOrigin = "http://api.example.com:80"
-	config.VerifiedOrigin = config.NormalizedOrigin
-	if summary := BuildSummary(&config, nil, now); summary.TransportSecurity != TransportSecurityHTTP {
-		t.Fatalf("HTTP summary omitted transport security: %+v", summary)
+	summary := BuildSummary(&connection, samples, now)
+	if summary.TotalSamples != 3 || summary.State != HealthStateAbnormal {
+		t.Fatalf("summary=%+v", summary)
 	}
 }
 
-type sampleValue struct {
-	succeeded bool
-	ttft      int
-}
+func TestBuildSummarySeparatesStabilityFinalSuccessAndFirstAttemptTTFT(t *testing.T) {
+	now := time.Date(2026, 8, 8, 10, 49, 0, 0, time.UTC)
+	connection := verifiedConnection(now.Add(-time.Hour))
+	samples := make([]Sample, 0, 10)
+	for index := 0; index < 8; index++ {
+		ttft := 100 + index*10
+		samples = append(samples, outcomeSample(connection, SlotStart(now).Add(time.Duration(index-9)*ProbeSlotDuration), OutcomeFirstSuccess, &ttft))
+	}
+	samples = append(samples,
+		outcomeSample(connection, SlotStart(now).Add(-ProbeSlotDuration), OutcomeRetryRecovered, nil),
+		outcomeSample(connection, SlotStart(now), OutcomeFinalFailure, nil),
+	)
 
-func authorizedConfig(now time.Time) Config {
-	verifiedAt := now.Add(-time.Hour)
-	return Config{
-		ID: "config", APIServiceID: "service", Protocol: ProtocolOpenAIChatCompletionsV1,
-		BaseURL: "https://api.example.com/v1", NormalizedOrigin: "https://api.example.com:443",
-		Model: "gpt-5", Enabled: true, AuthorizationStatus: AuthorizationVerified,
-		AuthorizationMethod: AuthorizationMethodDNSTXT, VerifiedOrigin: "https://api.example.com:443",
-		VerifiedAt: &verifiedAt, MeasurementVersion: 1,
+	summary := BuildSummary(&connection, samples, now)
+
+	if summary.StabilityPercent == nil || *summary.StabilityPercent != "80.0" || summary.FinalSuccessPercent == nil || *summary.FinalSuccessPercent != "90.0" {
+		t.Fatalf("unexpected success rates: %+v", summary)
+	}
+	if summary.RetryRecoveries != 1 || summary.FinalFailures != 1 || summary.AverageTTFTMS == nil || *summary.AverageTTFTMS != 135 {
+		t.Fatalf("unexpected counts/TTFT: %+v", summary)
+	}
+	if len(summary.HourlyBuckets) != 24 || summary.TheoreticalSlots != 286 {
+		t.Fatalf("unexpected 24-hour shape: buckets=%d slots=%d", len(summary.HourlyBuckets), summary.TheoreticalSlots)
 	}
 }
 
-func finalSamples(latest time.Time, values []sampleValue) []Sample {
-	result := make([]Sample, 0, len(values))
-	firstSlot := SlotStart(latest).Add(-time.Duration(len(values)-1) * ProbeSlotDuration)
-	for index, value := range values {
-		slot := firstSlot.Add(time.Duration(index) * ProbeSlotDuration)
-		finished := slot.Add(time.Minute)
-		total := 1500
-		sample := Sample{
-			ID: string(rune('a' + index)), APIServiceID: "service", ProbeConfigID: "config",
-			MeasurementVersion: 1, ProbeModelSnapshot: "gpt-5", SlotStartedAt: slot,
-			TotalDurationMS: &total, FinishedAt: &finished, CreatedAt: finished,
-		}
-		if value.succeeded {
-			ttft := value.ttft
-			sample.Status = SampleStatusSucceeded
-			sample.TTFTMS = &ttft
-		} else {
-			sample.Status = SampleStatusFailed
-			sample.ErrorCode = ErrorConnectFailed
-		}
-		result = append(result, sample)
+func TestBuildSummaryCoverageUsesOnlyReachedSlotsInCurrentHour(t *testing.T) {
+	now := time.Date(2026, 8, 8, 10, 4, 0, 0, time.UTC)
+	connection := verifiedConnection(now.Add(-time.Hour))
+	summary := BuildSummary(&connection, []Sample{
+		outcomeSample(connection, SlotStart(now), OutcomeFirstSuccess, intPointer(100)),
+	}, now)
+
+	if summary.TheoreticalSlots != 277 || summary.CoveragePercent != "0.4" {
+		t.Fatalf("unexpected reached-slot coverage: slots=%d coverage=%s", summary.TheoreticalSlots, summary.CoveragePercent)
 	}
-	return result
 }
+
+func TestBuildSummaryMarksCurrentHourRedForConsecutiveFailuresAcrossHourBoundary(t *testing.T) {
+	now := time.Date(2026, 8, 8, 11, 4, 0, 0, time.UTC)
+	connection := verifiedConnection(now.Add(-time.Hour))
+	samples := make([]Sample, 0, 13)
+	for minute := 0; minute <= 50; minute += 5 {
+		ttft := 100
+		samples = append(samples, outcomeSample(connection, time.Date(2026, 8, 8, 10, minute, 0, 0, time.UTC), OutcomeFirstSuccess, &ttft))
+	}
+	samples = append(samples,
+		outcomeSample(connection, time.Date(2026, 8, 8, 10, 55, 0, 0, time.UTC), OutcomeFinalFailure, nil),
+		outcomeSample(connection, time.Date(2026, 8, 8, 11, 0, 0, 0, time.UTC), OutcomeFinalFailure, nil),
+	)
+
+	summary := BuildSummary(&connection, samples, now)
+	previous := summary.HourlyBuckets[len(summary.HourlyBuckets)-2]
+	current := summary.HourlyBuckets[len(summary.HourlyBuckets)-1]
+	if previous.State != SlotStateFluctuating || current.State != SlotStateAbnormal {
+		t.Fatalf("unexpected cross-hour states: previous=%+v current=%+v", previous, current)
+	}
+}
+
+func TestBuildSummaryKeepsSlowSuccessGreenWithoutPublishedRuleOutcome(t *testing.T) {
+	now := time.Date(2026, 8, 8, 10, 14, 0, 0, time.UTC)
+	connection := verifiedConnection(now.Add(-time.Hour))
+	ttft := 9000
+	samples := []Sample{
+		outcomeSample(connection, SlotStart(now).Add(-10*time.Minute), OutcomeFirstSuccess, &ttft),
+		outcomeSample(connection, SlotStart(now).Add(-5*time.Minute), OutcomeFirstSuccess, &ttft),
+		outcomeSample(connection, SlotStart(now), OutcomeFirstSuccess, &ttft),
+	}
+
+	summary := BuildSummary(&connection, samples, now)
+	if summary.State != HealthStateNormal || summary.HourlyBuckets[len(summary.HourlyBuckets)-1].State != SlotStateSmooth {
+		t.Fatalf("unpublished slow threshold changed health color: %+v", summary)
+	}
+}
+
+func TestBuildSummaryKeepsKnownCostWhenRetryUsageIsUnknown(t *testing.T) {
+	now := time.Date(2026, 8, 8, 10, 14, 0, 0, time.UTC)
+	connection := verifiedConnection(now.Add(-time.Hour))
+	sample := outcomeSample(connection, SlotStart(now), OutcomeRetryRecovered, nil)
+	sample.AttemptCount = 2
+	sample.BaseCostUSD = "0.0010000000"
+	sample.RetryCostUSD = ""
+	sample.UsageComplete = false
+
+	summary := BuildSummary(&connection, []Sample{sample}, now)
+	if summary.Cost.KnownBaseCostUSD != "0.0010000000" || summary.Cost.KnownRetryCostUSD != "0.0000000000" ||
+		!summary.Cost.HasUnknownUsage || summary.Cost.KnownUsageSamples != 0 || summary.Cost.ProjectedDailyCostUSD != "" {
+		t.Fatalf("unexpected mixed known/unknown cost summary: %+v", summary.Cost)
+	}
+}
+
+func finalSample(connection Connection, slot time.Time, status string) Sample {
+	finished := slot.Add(time.Second)
+	duration := 25
+	outcome := OutcomeFirstSuccess
+	if status == SampleStatusFailed {
+		outcome = OutcomeFinalFailure
+	}
+	return Sample{
+		ID: slot.String(), ConnectionID: connection.ID, MeasurementVersion: connection.MeasurementVersion,
+		SlotStartedAt: slot, Status: status, Outcome: outcome, AttemptCount: 1,
+		FirstAttemptTTFTMS: &duration, FirstAttemptTotalDurationMS: &duration, TotalDurationMS: &duration,
+		StartedAt: slot, FinishedAt: &finished, CreatedAt: slot,
+	}
+}
+
+func outcomeSample(connection Connection, slot time.Time, outcome string, ttft *int) Sample {
+	status := SampleStatusSucceeded
+	if outcome == OutcomeFinalFailure {
+		status = SampleStatusFailed
+	}
+	finished := slot.Add(time.Second)
+	duration := 1000
+	return Sample{
+		ID: slot.String(), ConnectionID: connection.ID, MeasurementVersion: connection.MeasurementVersion,
+		SlotStartedAt: slot, Status: status, Outcome: outcome, AttemptCount: 1,
+		FirstAttemptTTFTMS: ttft, FirstAttemptTotalDurationMS: &duration, TotalDurationMS: &duration,
+		StartedAt: slot, FinishedAt: &finished, CreatedAt: slot,
+	}
+}
+
+func intPointer(value int) *int { return &value }

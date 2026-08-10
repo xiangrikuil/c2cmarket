@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { useQueryClient } from '@tanstack/vue-query'
 import { CheckCircle2, Eye, Gavel, MoreHorizontal, ShieldAlert } from 'lucide-vue-next'
 import { Badge } from '@/components/ui/badge'
@@ -25,31 +25,35 @@ import {
 import { Textarea } from '@/components/ui/textarea'
 import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import PageTitle from '@/components/market/PageTitle.vue'
 import SoftTable from '@/components/market/SoftTable.vue'
 import StatusTabs from '@/components/market/StatusTabs.vue'
-import TablePagination from '@/components/market/TablePagination.vue'
+import CursorTablePagination from '@/components/market/CursorTablePagination.vue'
 import EmptyState from '@/components/market/EmptyState.vue'
 import SkeletonTable from '@/components/market/SkeletonTable.vue'
 import CompactStats from '@/components/market/CompactStats.vue'
 import AdminDisputeResolutionDialog from '@/components/admin/AdminDisputeResolutionDialog.vue'
-import { usePagination } from '@/composables/usePagination'
+import { useCursorPagination } from '@/composables/useCursorPagination'
 import { runAdminModerationAction, updateAdminRowStatus, type AdminRow, type AdminSection } from '@/lib/api'
 import { backendAdminModerationDetailRow } from '@/lib/reportBackend'
-import { isCarpoolExceptionStatus } from '@/lib/carpoolModeration'
+import { isCarpoolAdminActionStatus, isCarpoolExceptionStatus } from '@/lib/carpoolModeration'
+import { isApiServiceAdminActionStatus, isApiServiceExceptionStatus, isApiServicePublicStatus } from '@/lib/apiServiceModeration'
 import { matchesApiOrderSearch } from '@/lib/apiOrderUi'
-import { useAdminSectionRows } from '@/queries/useMarketQueries'
+import { useAdminSectionRows, useAdminSectionRowsPage } from '@/queries/useMarketQueries'
 import { toast } from 'vue-sonner'
 
 const route = useRoute()
+const router = useRouter()
 const queryClient = useQueryClient()
 
 const title = computed(() => String(route.meta.title ?? '管理页面'))
 const description = computed(() => String(route.meta.description ?? '管理当前模块的数据、状态和审核记录。'))
 const section = computed(() => String(route.meta.section ?? 'official-prices') as AdminSection)
-const { data, error, isFetching, isLoading, refetch } = useAdminSectionRows(section)
 const localRows = ref<AdminRow[]>([])
 const activeStatus = ref('全部')
+const carpoolView = ref<CarpoolView>(route.query.view === 'exceptions' ? 'exceptions' : 'public')
+const apiServiceView = ref<ApiServiceView>(route.query.view === 'exceptions' ? 'exceptions' : 'public')
 const keyword = ref('')
 const riskFilter = ref<'all' | 'high' | 'has_note'>('all')
 const reason = ref('')
@@ -68,12 +72,32 @@ const disputeDialogId = ref('')
 type ModerationAction = 'request_info' | 'take_down' | 'restore' | 'restrict' | 'warn' | 'suspend' | 'ban'
 type DrawerMode = 'detail' | ModerationAction
 type QuickAction = 'approve' | 'recheck'
+type CarpoolView = 'public' | 'exceptions'
+type ApiServiceView = 'public' | 'exceptions'
 type ModerationActionItem = {
   action: ModerationAction
   label: string
   disabled: boolean
   danger?: boolean
 }
+
+const serverPagedSections: AdminSection[] = ['carpools', 'api-services', 'official-prices', 'price-leads', 'trade-intents']
+const supportsServerPagination = computed(() => serverPagedSections.includes(section.value))
+const pageFilters = computed(() => ({
+  q: keyword.value.trim() || undefined,
+  view: section.value === 'carpools' ? carpoolView.value : section.value === 'api-services' ? apiServiceView.value : undefined,
+  activeStatus: activeStatus.value,
+  risk: riskFilter.value,
+}))
+const pagination = useCursorPagination([section, activeStatus, keyword, riskFilter, carpoolView, apiServiceView])
+const pageRequest = computed(() => ({ limit: pagination.pageSize, cursor: pagination.cursor.value }))
+const fullRowsQuery = useAdminSectionRows(section, computed(() => !supportsServerPagination.value))
+const pageRowsQuery = useAdminSectionRowsPage(section, pageFilters, pageRequest, supportsServerPagination)
+const data = computed(() => supportsServerPagination.value ? pageRowsQuery.data.value?.items : fullRowsQuery.data.value)
+const error = computed(() => supportsServerPagination.value ? pageRowsQuery.error.value : fullRowsQuery.error.value)
+const isFetching = computed(() => supportsServerPagination.value ? pageRowsQuery.isFetching.value : fullRowsQuery.isFetching.value)
+const isLoading = computed(() => supportsServerPagination.value ? pageRowsQuery.isLoading.value : fullRowsQuery.isLoading.value)
+const refetch = () => supportsServerPagination.value ? pageRowsQuery.refetch() : fullRowsQuery.refetch()
 
 watch(data, rows => {
   localRows.value = rows ? [...rows] : []
@@ -95,11 +119,45 @@ watch(drawerOpen, open => {
   }
 })
 
-const sectionRows = computed(() => section.value === 'carpools'
-  ? localRows.value.filter(row => isCarpoolExceptionStatus(row.status))
-  : localRows.value)
+watch(() => route.query.view, value => {
+  if (section.value === 'carpools') carpoolView.value = value === 'exceptions' ? 'exceptions' : 'public'
+  if (section.value === 'api-services') apiServiceView.value = value === 'exceptions' ? 'exceptions' : 'public'
+  activeStatus.value = '全部'
+})
+
+function setCarpoolView(value: string | number) {
+  if (value !== 'public' && value !== 'exceptions') return
+  carpoolView.value = value
+  activeStatus.value = '全部'
+  void router.replace({ query: { ...route.query, view: value === 'exceptions' ? 'exceptions' : undefined } })
+}
+
+function setApiServiceView(value: string | number) {
+  if (value !== 'public' && value !== 'exceptions') return
+  apiServiceView.value = value
+  activeStatus.value = '全部'
+  void router.replace({ query: { ...route.query, view: value === 'exceptions' ? 'exceptions' : undefined } })
+}
+
+const exceptionRows = computed(() => localRows.value.filter(row => isCarpoolExceptionStatus(row.status)))
+const apiServiceExceptionRows = computed(() => localRows.value.filter(row => isApiServiceExceptionStatus(row.status)))
+const sectionRows = computed(() => {
+  if (section.value === 'carpools') {
+    return carpoolView.value === 'exceptions'
+      ? exceptionRows.value
+      : localRows.value.filter(row => !isCarpoolExceptionStatus(row.status))
+  }
+  if (section.value === 'api-services') {
+    return apiServiceView.value === 'exceptions'
+      ? apiServiceExceptionRows.value
+      : localRows.value.filter(row => isApiServicePublicStatus(row.status))
+  }
+  return localRows.value
+})
 
 function requiresAdminAction(row: AdminRow) {
+  if (row.targetType === 'carpool') return isCarpoolAdminActionStatus(row.status)
+  if (row.targetType === 'api-service' || row.targetType === 'api-merchant') return isApiServiceAdminActionStatus(row.status)
   if (section.value === 'reports') {
     if (row.targetType === 'report') return ['待处理', '已分诊', '需要补充信息'].includes(row.status)
     if (row.targetType === 'dispute') return ['处理中', '需要补充信息'].includes(row.status)
@@ -110,6 +168,7 @@ function requiresAdminAction(row: AdminRow) {
 }
 
 const visibleRows = computed(() => {
+  if (supportsServerPagination.value) return localRows.value
   let rows = sectionRows.value
   if (activeStatus.value === '待处理') {
     rows = rows.filter(requiresAdminAction)
@@ -127,17 +186,45 @@ const visibleRows = computed(() => {
 
 const pendingCount = computed(() => sectionRows.value.filter(requiresAdminAction).length)
 const reviewCount = computed(() => sectionRows.value.filter(row => row.status.includes('复核')).length)
-const summaryStats = computed(() => [
-  { label: '待处理', value: pendingCount.value },
-  { label: '需复核', value: reviewCount.value },
-  { label: '本页记录', value: sectionRows.value.length },
-  { label: '当前筛选', value: visibleRows.value.length },
-])
+const summaryStats = computed(() => {
+  if (supportsServerPagination.value) {
+    return [
+      { label: '本页记录', value: localRows.value.length },
+      { label: '待处理', value: localRows.value.filter(requiresAdminAction).length },
+      { label: '需复核', value: localRows.value.filter(row => row.status.includes('复核')).length },
+      { label: '当前筛选', value: visibleRows.value.length },
+    ]
+  }
+  if (section.value === 'carpools' && carpoolView.value === 'public') {
+    return [
+      { label: '公开车源', value: sectionRows.value.length },
+      { label: '异常车源', value: exceptionRows.value.length },
+      { label: '管理记录', value: localRows.value.length },
+      { label: '当前筛选', value: visibleRows.value.length },
+    ]
+  }
+  if (section.value === 'api-services' && apiServiceView.value === 'public') {
+    return [
+      { label: '公开服务', value: sectionRows.value.length },
+      { label: '异常服务', value: apiServiceExceptionRows.value.length },
+      { label: '管理记录', value: localRows.value.length },
+      { label: '当前筛选', value: visibleRows.value.length },
+    ]
+  }
+  return [
+    { label: '待处理', value: pendingCount.value },
+    { label: '需复核', value: reviewCount.value },
+    { label: '本页记录', value: sectionRows.value.length },
+    { label: '当前筛选', value: visibleRows.value.length },
+  ]
+})
 const errorMessage = computed(() => error.value instanceof Error ? error.value.message : '管理数据读取失败，请稍后重试。')
-const statusTabs = computed(() => section.value === 'carpools'
-  ? ['全部', '待处理', '需复核']
-  : ['全部', '待处理', '已通过', '需复核', '已关闭'])
-const pagination = usePagination(visibleRows)
+const statusTabs = computed(() => {
+  if (section.value === 'carpools') return carpoolView.value === 'exceptions' ? ['全部', '待处理', '需复核'] : ['全部']
+  if (section.value === 'api-services') return apiServiceView.value === 'exceptions' ? ['全部', '待处理', '需复核'] : ['全部']
+  if (['official-prices', 'price-leads', 'trade-intents'].includes(section.value)) return ['全部']
+  return ['全部', '待处理', '已通过', '需复核', '已关闭']
+})
 const selectedRow = computed(() => localRows.value.find(row => row.id === selectedRowId.value) ?? null)
 const drawerRow = computed(() => selectedRow.value)
 const drawerAction = computed(() => drawerMode.value === 'detail' ? null : drawerMode.value)
@@ -147,8 +234,8 @@ const panelCopy = computed(() => {
   const map: Partial<Record<AdminSection, { title: string, description: string }>> = {
     'official-prices': { title: '官网价格维护', description: '维护地区、渠道、原币价格、折合人民币和来源记录，再决定通过、复核或下架。' },
     'price-leads': { title: '价格记录维护', description: '维护地区、渠道、原币价格、折合人民币和来源记录，再决定通过、复核或下架。' },
-    carpools: { title: '车源异常处理', description: '这里只处理暂停、下架、待复核和遗留审核记录；公开车源日常巡查请直接前往车源列表。' },
-    'api-services': { title: 'API 服务审核', description: '核对模型价格、最低订单金额、交易说明和商户身份展示。' },
+    carpools: { title: '车源管理', description: '集中巡查公开车源，并处理暂停、待复核和遗留审核记录。' },
+    'api-services': { title: 'API 服务管理', description: '集中巡查公开服务，并处理遗留待审、下架和其他异常记录。' },
     'trade-intents': { title: 'API 订单追踪', description: '查看 API 订单状态、参与方、金额快照、取消责任与纠纷标记；管理摘要不展示联系方式或原始交付凭证。' },
     reports: { title: '举报纠纷处理', description: '只展示脱敏上下文；必要联系方式仍限制在联系快照流程内。' },
     appeals: { title: '申诉处理', description: '结合关联记录和未解决纠纷判断是否恢复能力。' },
@@ -256,6 +343,7 @@ async function setRowStatus(row: AdminRow, status: string, auditReason: string) 
   localRows.value = localRows.value.map(item => item.id === row.id ? updated : item)
   selectedRowId.value = updated.id
   await queryClient.invalidateQueries({ queryKey: ['admin-section'] })
+  await queryClient.invalidateQueries({ queryKey: ['navigation-badges'] })
   status === '已通过'
     ? toast.success(`${row.primary} 已标记通过。`)
     : toast.warning(`${row.primary} 已执行：${updated.status}`)
@@ -264,6 +352,7 @@ async function setRowStatus(row: AdminRow, status: string, auditReason: string) 
 function canRestore(row: AdminRow | null) {
   if (!row) return false
   if (['report', 'dispute', 'appeal'].includes(row.targetType ?? '')) return false
+  if (row.targetType === 'api-service' || row.targetType === 'api-merchant') return row.status === '已下架'
   return ['已下架', '已限制', '暂停', '离线', '临时封禁', '永久封禁', '申诉复核中', '需要补充信息', 'partially_restricted', 'temporarily_suspended', 'permanently_banned', 'under_review'].some(status => row.status.includes(status))
 }
 
@@ -272,11 +361,14 @@ function canTakeDown(row: AdminRow | null) {
   if (row.targetType === 'report') return ['待处理', '已分诊'].includes(row.status)
   if (row.targetType === 'dispute') return ['处理中', '需要补充信息'].includes(row.status)
   if (row.targetType === 'appeal') return row.status === '申诉复核中'
+  if (row.targetType === 'api-service' || row.targetType === 'api-merchant') return row.status === '在线'
   return ['已验证', '已通过', '可上车', '已满', '在线', '匹配中', 'normal'].some(status => row.status.includes(status))
 }
 
 function canApprove(row: AdminRow | null) {
   if (!row) return false
+  if (row.targetType === 'carpool') return ['待处理', '审核中'].includes(row.status)
+  if (row.targetType === 'api-service' || row.targetType === 'api-merchant') return row.status === '待处理'
   if (row.targetType === 'report') return row.status === '待处理'
   if (row.targetType === 'dispute') return false
   if (row.targetType === 'appeal') return row.status === '申诉复核中'
@@ -285,6 +377,8 @@ function canApprove(row: AdminRow | null) {
 
 function canRequestRecheck(row: AdminRow | null) {
   if (!row) return false
+  if (row.targetType === 'carpool') return ['待处理', '审核中', '可上车', '已满', '已通过', '已验证', '已恢复'].includes(row.status)
+  if (row.targetType === 'api-service' || row.targetType === 'api-merchant') return row.status === '待处理'
   if (row.targetType === 'report') return ['待处理', '已分诊', '需要补充信息'].includes(row.status)
   if (row.targetType === 'dispute') return row.status === '处理中'
   if (row.targetType === 'appeal') return row.status === '申诉复核中'
@@ -347,6 +441,10 @@ function moderationActionItems(row: AdminRow | null): ModerationActionItem[] {
     )
   }
   return items
+}
+
+function hasModerationAction(row: AdminRow) {
+  return moderationActionItems(row).some(item => !item.disabled)
 }
 
 async function approveRow(row: AdminRow) {
@@ -431,6 +529,7 @@ async function runAction(row: AdminRow, action: ModerationAction) {
     selectedRowId.value = updated.id
     confirmedRiskAction.value = false
     await queryClient.invalidateQueries({ queryKey: ['admin-section'] })
+    await queryClient.invalidateQueries({ queryKey: ['navigation-badges'] })
     toast.success(`${row.primary} 已执行：${updated.status}`)
     return true
   } catch (error) {
@@ -459,10 +558,18 @@ const showContentActions = computed(() => !['logs', 'trade-intents'].includes(se
   <div>
     <PageTitle :title="title" :description="description" />
     <CompactStats class="mb-5" :items="summaryStats" :loading="isLoading" />
-    <div v-if="section === 'carpools'" class="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border bg-muted/30 px-4 py-3 text-sm">
-      <span class="text-muted-foreground">公开在售车源不在这里重复展示，管理员可直接使用普通车源列表巡查。</span>
-      <Button size="sm" variant="outline" as-child><RouterLink to="/carpools">巡查公开车源</RouterLink></Button>
-    </div>
+    <Tabs v-if="section === 'carpools'" :model-value="carpoolView" class="mb-4" @update:model-value="setCarpoolView">
+      <TabsList class="grid h-10 w-full max-w-sm grid-cols-2" aria-label="车源管理视图">
+        <TabsTrigger value="public">公开车源</TabsTrigger>
+        <TabsTrigger value="exceptions">异常车源</TabsTrigger>
+      </TabsList>
+    </Tabs>
+    <Tabs v-else-if="section === 'api-services'" :model-value="apiServiceView" class="mb-4" @update:model-value="setApiServiceView">
+      <TabsList class="grid h-10 w-full max-w-sm grid-cols-2" aria-label="API 服务管理视图">
+        <TabsTrigger value="public">公开服务</TabsTrigger>
+        <TabsTrigger value="exceptions">异常服务</TabsTrigger>
+      </TabsList>
+    </Tabs>
     <div class="mb-4 grid gap-2 md:grid-cols-[minmax(0,1fr)_180px]">
       <Input v-model="keyword" placeholder="搜索对象、管理员、动作、状态或请求追踪" />
       <Select v-model="riskFilter">
@@ -474,7 +581,7 @@ const showContentActions = computed(() => !['logs', 'trade-intents'].includes(se
         </SelectContent>
       </Select>
     </div>
-    <StatusTabs v-model="activeStatus" :items="statusTabs" />
+    <StatusTabs v-if="statusTabs.length > 1" v-model="activeStatus" :items="statusTabs" />
     <SkeletonTable v-if="isLoading" :rows="6" :columns="6" />
     <Alert v-else-if="error" variant="destructive" class="mb-4">
       <ShieldAlert class="h-4 w-4" />
@@ -485,9 +592,9 @@ const showContentActions = computed(() => !['logs', 'trade-intents'].includes(se
       </AlertDescription>
     </Alert>
     <EmptyState v-else-if="visibleRows.length === 0" title="当前筛选下暂无记录" description="调整状态筛选，或等待新的管理记录进入队列。" />
-    <SoftTable v-else :columns="['对象', '详情', '提交 / 关联人', '状态', '风险 / 备注', '操作']">
+    <SoftTable v-else class="[&_table]:min-w-[760px]" :columns="['对象', '详情', '提交 / 关联人', '状态', '风险 / 备注', '操作']">
       <tr
-        v-for="row in pagination.paginatedRows.value"
+        v-for="row in visibleRows"
         :key="row.id"
         :class="row.id === selectedRow?.id ? 'bg-accent/60' : ''"
       >
@@ -506,14 +613,14 @@ const showContentActions = computed(() => !['logs', 'trade-intents'].includes(se
               <Gavel class="h-4 w-4" />
               {{ disputeActionLabel(row) }}
             </Button>
-            <Button v-else size="sm" :disabled="!canApprove(row) || actionBusy === `${row.id}-approve`" @click="openQuickConfirm(row, 'approve')">
+            <Button v-else-if="!['carpools', 'api-services'].includes(section) || canApprove(row)" size="sm" :disabled="!canApprove(row) || actionBusy === `${row.id}-approve`" @click="openQuickConfirm(row, 'approve')">
               <CheckCircle2 class="h-4 w-4" />
               {{ primaryActionLabel(row) }}
             </Button>
-            <Button size="sm" variant="outline" :disabled="!canRequestRecheck(row) || actionBusy === `${row.id}-recheck`" @click="openQuickConfirm(row, 'recheck')">
+            <Button v-if="!['carpools', 'api-services'].includes(section) || canRequestRecheck(row)" size="sm" variant="outline" :disabled="!canRequestRecheck(row) || actionBusy === `${row.id}-recheck`" @click="openQuickConfirm(row, 'recheck')">
               {{ secondaryActionLabel(row) }}
             </Button>
-            <DropdownMenu>
+            <DropdownMenu v-if="!['carpools', 'api-services'].includes(section) || hasModerationAction(row)">
               <DropdownMenuTrigger as-child>
                 <Button size="sm" variant="outline">
                   <MoreHorizontal class="h-4 w-4" />
@@ -542,13 +649,14 @@ const showContentActions = computed(() => !['logs', 'trade-intents'].includes(se
           </div>
         </td>
       </tr>
-      <template #footer>
-        <TablePagination
-          v-model:page="pagination.page.value"
-          :page-count="pagination.pageCount.value"
-          :total="pagination.total.value"
-          :start-item="pagination.startItem.value"
-          :end-item="pagination.endItem.value"
+      <template v-if="supportsServerPagination" #footer>
+        <CursorTablePagination
+          :page="pagination.page.value"
+          :item-count="visibleRows.length"
+          :has-next-page="Boolean(pageRowsQuery.data.value?.nextCursor)"
+          :loading="pageRowsQuery.isFetching.value"
+          @previous="pagination.previous"
+          @next="pagination.next(pageRowsQuery.data.value?.nextCursor)"
         />
       </template>
     </SoftTable>
@@ -609,7 +717,7 @@ const showContentActions = computed(() => !['logs', 'trade-intents'].includes(se
               </div>
             </section>
 
-            <section v-if="!drawerAction && showContentActions" class="space-y-3">
+            <section v-if="!drawerAction && showContentActions && (section !== 'api-services' || hasModerationAction(drawerRow))" class="space-y-3">
               <div>
                 <h2 class="text-sm font-semibold">{{ panelCopy.title }}</h2>
                 <p class="mt-1 text-sm text-muted-foreground">{{ panelCopy.description }}</p>

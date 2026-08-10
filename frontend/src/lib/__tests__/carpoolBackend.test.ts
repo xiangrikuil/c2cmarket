@@ -56,8 +56,8 @@ test('real carpool adapter leaves unavailable owner reputation facts null', asyn
     },
     priceMonthlyCny: '100.00',
     serviceMultiplier: '1.0000',
-    weeklyQuotaAmount: null,
-    monthlyQuotaAmount: '100.000000',
+    dailyQuotaAmount: null,
+    weeklyQuotaAmount: '100.000000',
     followsOfficialQuotaReset: null,
     vpsRegion: null,
     supportsMainlandChinaDirectConnection: null,
@@ -129,8 +129,8 @@ test('real carpool adapter never treats a source URL as author verification', as
     },
     priceMonthlyCny: '100.00',
     serviceMultiplier: '1.0000',
-    weeklyQuotaAmount: '25.000000',
-    monthlyQuotaAmount: '100.000000',
+    dailyQuotaAmount: '25.000000',
+    weeklyQuotaAmount: '100.000000',
     followsOfficialQuotaReset: true,
     vpsRegion: '香港',
     supportsMainlandChinaDirectConnection: true,
@@ -155,7 +155,7 @@ test('real carpool adapter never treats a source URL as author verification', as
 
   assert.equal(listing.sourceUrl, 'https://linux.do/t/example/2')
   assert.equal(listing.sourceAuthorVerification?.status, 'not_submitted')
-  assert.equal(listing.weeklyQuotaAmount, 25)
+  assert.equal(listing.dailyQuotaAmount, 25)
   assert.equal(listing.followsOfficialQuotaReset, true)
   assert.equal(listing.vpsRegion, '香港')
   assert.equal(listing.supportsMainlandChinaDirectConnection, true)
@@ -184,7 +184,8 @@ test('contact reveal analytics fires only after authoritative disclosure succeed
         },
       })
     }
-    if (path.endsWith('/api/v1/me/carpool-memberships')) return jsonResponse({ items: [] })
+    if (path.includes('/api/v1/me/carpool-memberships?limit=100')) return jsonResponse({ items: [] })
+    if (path.includes('/api/v1/owner/carpool-memberships?limit=100')) return jsonResponse({ items: [] })
     if (path.endsWith('/api/v1/me/carpool-applications/application-id')) {
       return jsonResponse({
         id: 'application-id',
@@ -255,6 +256,7 @@ test('contact reveal analytics fires only after authoritative disclosure succeed
 
   const contacts = await backendCarpoolApplicationContacts('application-id')
   assert.equal(contacts.canView, true)
+  assert.equal(contacts.sellerContacts[0]?.actionUrl, 'https://linux.do/u/seller/summary')
   assert.deepEqual(track.mock.calls, [[
     'contact_window_reveal',
     {

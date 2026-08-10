@@ -2,6 +2,7 @@
 
 Date: 2026-06-21
 Author: Codex
+Updated: 2026-08-08
 
 ## Scenario: Backend Contract Foundation And Current Real Business Slices
 
@@ -46,6 +47,9 @@ GET  /api/v1/api-models/{id}
 GET  /api/v1/api-services
 GET  /api/v1/api-services/{id}
 GET  /api/v1/api-service-promotions
+GET  /api/v1/tools/api-model-tester/order-sources
+POST /api/v1/tools/api-model-tester/discover
+POST /api/v1/tools/api-model-tester/test
 POST /api/v1/api-services/{id}/purchase-intents
 GET  /api/v1/official-prices
 GET  /api/v1/official-prices/{id}
@@ -114,8 +118,15 @@ POST /api/v1/owner/carpool-memberships/{id}/confirm-complete
 POST /api/v1/owner/carpool-memberships/{id}/remove
 GET  /api/v1/owner/api-services
 POST /api/v1/owner/api-services
+GET  /api/v1/owner/api-probe-connections
+POST /api/v1/owner/api-probe-connections
+GET  /api/v1/owner/api-probe-connections/{id}
+PATCH /api/v1/owner/api-probe-connections/{id}
+DELETE /api/v1/owner/api-probe-connections/{id}
+POST /api/v1/owner/api-probe-connections/{id}/verify
 GET  /api/v1/owner/api-services/{id}
 PATCH /api/v1/owner/api-services/{id}
+PATCH /api/v1/owner/api-services/{id}/probe-connection
 POST /api/v1/owner/api-services/{id}/submit-review
 POST /api/v1/owner/api-services/{id}/publish
 POST /api/v1/owner/api-services/{id}/pause
@@ -229,9 +240,15 @@ If-Match: "<version>"                            # required for versioned admin 
 - `GET/POST/PATCH /api/v1/me/merchant-profile` owns the current user's store alias profile. Self responses may include the owner ID; public merchant profile responses must not expose owner user ID or contact values.
 - API services with `merchantIdentityMode=store_alias` must reference a merchant profile owned by the service owner. Public API service DTOs may expose `merchantDisplayName` and `merchantProfileSlug`, but not the backing owner user ID or contact method IDs.
 - Public API service reads and API purchase-intent creation use the orderable service predicate, not only the public status triple. A public/orderable API service must be approved, online, clear, accepting orders, have `paymentWindowMinutes` between 3 and 15, and have at least one enabled payment option. Apply this same predicate to list, detail, search, favorite validation/listing, and purchase-intent creation.
+- API services additionally require an enabled, verified seller-owned `probeConnectionId` before
+  publication and new-order creation. Owner responses may expose the connection ID/name and
+  management state; public responses expose only the derived `healthSummary`, never Base URL,
+  connection ID, credential metadata, or model-list contents.
+- API catalog and service model DTOs use `modelKey` and `modelKeySnapshot` as their sole visible
+  model names and request identifiers. Do not reintroduce `displayName` or `modelNameSnapshot`.
 - Product catalog read endpoints return active categories/plans and publish-policy fields from PostgreSQL. Frontend and backend must use `publishPolicy`, `accessMode`, `providerPolicyStatus`, `riskLevel`, `riskAckRequired`, and `policyVersion` instead of hard-coded Plus/Pro or Business branches.
 - Carpool listing creation must resolve `productPlanId` from the product catalog. `publishPolicy=blocked` and `publishPolicy=info_only` cannot enter the listing/application flow. Plans with `riskAckRequired=true` require matching `riskNoticeCode` and `policyVersion` on both listing creation and application creation.
-- Carpool listing creation creates `draft`; owners may edit only `draft` or `changes_requested` listings. The retained owner `submit-review` route is now the publish compatibility route: a linux.do-bound owner publishes directly to `active` after re-checking current `publishPolicy` and owner contact availability. Create/update requests must include structured `cycleTerm` fields for billing period, exit policy, and usage rules so applicants can review rules before applying. They must send the system-fixed `serviceMultiplier="1"`, required positive `weeklyQuotaAmount` and `monthlyQuotaAmount`, and required reset, VPS-region, mainland-direct, opening-channel, payment-method, distribution, and administrator-account declarations. The multiplier is not owner-editable or user-facing. Nullable response fields support development data created before Version 68 and must render as `未声明`; new writes must pass service validation. Admin approve remains only for legacy `pending_review -> active`; request-changes remains only `pending_review -> changes_requested`; reject remains only `pending_review -> rejected`; pause is `active -> paused`; restore is `paused -> active`.
+- Carpool listing creation creates `draft`; owners may edit only `draft` or `changes_requested` listings. The retained owner `submit-review` route is now the publish compatibility route: a linux.do-bound owner publishes directly to `active` after re-checking current `publishPolicy` and owner contact availability. Create/update requests must include structured `cycleTerm` fields for billing period, exit policy, and usage rules so applicants can review rules before applying. They must send the system-fixed `serviceMultiplier="1"`, required positive `dailyQuotaAmount` and `weeklyQuotaAmount`, and required reset, VPS-region, mainland-direct, opening-channel, payment-method, distribution, and administrator-account declarations. The multiplier is not owner-editable or user-facing. Nullable response fields support development data created before Version 68 and must render as `未声明`; new writes must pass service validation. Admin approve remains only for legacy `pending_review -> active`; request-changes remains only `pending_review -> changes_requested`; reject remains only `pending_review -> rejected`; pause is `active -> paused`; restore is `paused -> active`.
 - Carpool listing requests use `buyerSeatCapacity` and `activeBuyerMembers`; both count buyer seats only and exclude the listing owner.
 - Carpool public listing endpoints return `active` listings only. Owner/admin views may return non-public statuses.
 - `/owner/*` carpool endpoints are a resource perspective for the current authenticated user as listing owner, not a separate merchant account role. Do not branch permissions on an independent merchant role for these routes.
@@ -257,8 +274,8 @@ Create/update JSON fields:
   regionCode: string       # required, max 64; custom regions use "other"
   regionName: string       # required, max 64; owner-facing display text
   serviceMultiplier: "1"  # required system-fixed compatibility value
+  dailyQuotaAmount: DecimalString
   weeklyQuotaAmount: DecimalString
-  monthlyQuotaAmount: DecimalString
   followsOfficialQuotaReset: boolean
   vpsRegion: string
   supportsMainlandChinaDirectConnection: boolean
@@ -278,8 +295,8 @@ PostgreSQL:
 
 - Frontend `SaveCarpoolDraftPayload.paymentMethodCode` is a single required value. Opening channel and payment method use single-select controls; selecting `other` requires the matching custom text. `u_card` is a supported payment method code.
 - The publish UI must not expose a multiplier input. Frontend mapping always sends `serviceMultiplier=1`, and backend validation rejects any other value.
-- Weekly/monthly quota, official-reset choice, free-text VPS region, mainland-direct choice, distribution method, and administrator-account choice are all required for new writes. VPS region is display-only free text and is not a list filter.
-- The public market keeps six columns: `车源 | 价格 | 车位 | 额度 / 接入 | 车主 | 状态`. The quota/access cell shows weekly/monthly quota, official-reset and administrator-account signals, then reveals channel/payment/distribution/network detail with a shadcn popover.
+- Daily/weekly quota, official-reset choice, free-text VPS region, mainland-direct choice, distribution method, and administrator-account choice are all required for new writes. VPS region is display-only free text and is not a list filter.
+- The public market keeps six columns: `车源 | 价格 | 车位 | 额度 / 接入 | 车主 | 状态`. The quota/access cell shows daily/weekly quota, official-reset and administrator-account signals, then reveals channel/payment/distribution/network detail with a shadcn popover.
 - Frontend custom region state is `regionCode="other"` plus `customRegionName`; the real backend adapter sends `regionCode` and the final trimmed `regionName`.
 - Backend create/update responses return `regionCode` and `regionName`. Public, owner, and admin listing reads must preserve these values without remapping custom regions to a fixed fallback.
 - The publish page must not expose a writable billing-period control. The backend request still writes `cycleTerm.billingPeriod="monthly"` so applicants can review monthly-cycle rules.
@@ -297,7 +314,7 @@ PostgreSQL:
 | Region/title/summary/access-arrangement contains credential-shaped text or NUL | 422 | `SECRET_CONTENT_DETECTED`, field-specific |
 | Frontend custom region selected with empty `customRegionName` | Block submit | `region` field error |
 | Frontend missing `paymentMethodCode`, or `other` without custom text | Block submit | `paymentMethodCode` field error |
-| Missing weekly/monthly quota, reset, VPS, mainland-direct, channel, payment, distribution, or admin declaration | 422 / block submit | field-specific validation error |
+| Missing daily/weekly quota, reset, VPS, mainland-direct, channel, payment, distribution, or admin declaration | 422 / block submit | field-specific validation error |
 | `serviceMultiplier` is not exactly `1` | 422 | `VALIDATION_FAILED`, `serviceMultiplier` |
 | High-risk product without current risk acknowledgement | 422 / block submit | `RISK_ACK_REQUIRED` or `accessArrangement` field error |
 
@@ -759,7 +776,8 @@ legacy pending_review -> admin approve/request-changes/reject
 - Expired `accepted_reserved` reservations must not consume capacity and should read as `expired` even before a scheduler materializes the row.
 - API model catalog endpoints return active model catalog rows and current price snapshots.
 - API service creation and update store service root fields, access modes, supported model snapshots, and package rows. API service owner create/action POST endpoints require `Idempotency-Key`; update and state-changing owner/admin actions require `If-Match`.
-- API service review state is `draft -> pending_review -> approved|changes_requested|rejected`; owner publication state is `offline -> online -> owner_paused -> online` plus `online|owner_paused -> offline/changes_requested` for revision; admin moderation is `clear -> admin_suspended -> clear` or `clear|admin_suspended -> removed`.
+- The retained API service `submit-review` action requires a current linux.do binding and auto-approves `draft|changes_requested -> approved/offline`; it does not create new `pending_review` rows. Existing `pending_review` rows are legacy data and remain actionable through admin approve/request-changes/reject. Owner publication is `offline -> online -> owner_paused -> online` plus `online|owner_paused -> offline/changes_requested` for revision; admin moderation is `clear -> admin_suspended -> clear` or `clear|admin_suspended -> removed`.
+- The administrator API service surface is management, not a new-submission review queue. Its public view contains `approved/online/clear` services; its exception view retains legacy `pending_review`, `changes_requested`, `rejected`, `admin_suspended`, and `removed` records. Administrator action counts and navigation badges include only legacy `pending_review` and `admin_suspended` services; owner-paused, draft, and approved-offline services are not administrator tasks.
 - Public API service reads return only services where `reviewStatus=approved`, `publicationStatus=online`, and `moderationStatus=clear`. Public DTOs must not expose owner contact method IDs, owner user IDs, review/admin internals, moderation reasons, or merchant internal notes.
 - API service model `merchantMultiplier` is a positive merchant declaration for every `distributionSystem`; an omitted value defaults to `1.0000`, but Sub2API does not force that value. Limited quota offers own a separate positive `modelMultiplier` with the same default-only meaning; see `api-quota-offers.md`.
 - API service rows and DTOs must not store or return passwords, API keys, Sub2API keys, sessions, cookies, third-party tokens, panel owner credentials, payment proofs, or platform verification artifacts.
@@ -1673,7 +1691,7 @@ MAIL_FROM_NAME=C2CMarket
 - Rate limits return HTTP `429`, Problem Details `code=RATE_LIMITED`, and `Retry-After` when available.
 - Pagination `limit` defaults to 20, maxes at 100, and invalid values return `422 VALIDATION_FAILED`. `cursor` is opaque; clients must only pass through `nextCursor` and must not depend on whether a route currently uses offset or keyset internals.
 - List responses using pagination return `{ "items": [...], "nextCursor": "..." }` with `nextCursor` omitted/null when there are no more results.
-- Database-backed list repositories should accept `domain.PageRequest` and return `domain.Page[T]`; high-volume lists must use repository-level pagination rather than loading all rows for `server.paginateSlice`.
+- Database-backed list repositories should accept `domain.PageRequest` and return `domain.Page[T]`; high-volume lists must apply search, filters, and sorting before repository-level pagination rather than loading all rows for `server.paginateSlice` or filtering one already-bounded page.
 - API purchase intent create, buyer detail, and owner detail responses that include full contact values must set `Cache-Control: no-store` and write API purchase intent contact access audit rows without plaintext contact values.
 
 ### 4. Validation & Error Matrix
@@ -2503,7 +2521,7 @@ Backend:
 Database:
   000065_remove_demands.up.sql
   000065_remove_demands.down.sql
-  ExpectedMigrationVersion = 80 (current repository target)
+  ExpectedMigrationVersion = 88 (current repository target)
 ```
 
 ### 3. Contracts
@@ -2631,4 +2649,202 @@ order.payment_settings_id   -> mutable service payment row
 account settings
   -> copied into new service payment snapshot
   -> copied into new order payment snapshot
+```
+
+## Scenario: Reusable API Probe And Temporary Model Tester Contracts
+
+### 1. Scope / Trigger
+
+- Trigger: route, DTO, session, CSRF, OpenAPI, or generated-type changes for reusable probe
+  connections, service binding, delivery target snapshots, or the API model tester.
+- The behavioral source of truth is
+  [API Probe Connections, Model Testing, And Quota Policy](./api-health-quota-policy.md).
+
+### 2. Signatures
+
+```text
+APIProbeConnectionRequest:
+  name, baseUrl, credential?, enabled, acknowledgeInsecureHttp?
+
+APIServiceProbeConnectionRequest:
+  probeConnectionId
+
+APIModelTesterDiscoverRequest:
+  credentialSource
+
+APIModelTesterTestRequest:
+  credentialSource, model[1..512]
+```
+
+```text
+manual credentialSource:
+  kind=manual, baseUrl, apiKey(writeOnly), acknowledgeInsecureHttp
+
+order credentialSource:
+  kind=order, orderId, acknowledgeInsecureHttp
+```
+
+### 3. Contracts
+
+- Probe connection list/detail/create/update/delete/verify routes are owner-private and use
+  `Cache-Control: private, no-store`. Credential input is write-only. PATCH/DELETE require
+  `If-Match`; create/verify require `Idempotency-Key`; every mutation requires session and CSRF.
+- The service binding request contains only `probeConnectionId`. The backend verifies ownership,
+  enabled state, completed `/models` verification, and service version. It never accepts Base URL
+  or Key through the service DTO.
+- Removed service-level health-probe and administrator approval routes remain unregistered. Do not
+  retain compatibility handlers for DNS TXT, HTTP challenge, target ownership, configured model,
+  or TTFT fields.
+- Model tester credential sources are a strict tagged union. Manual sources contain `baseUrl`,
+  write-only `apiKey`, and `acknowledgeInsecureHttp`; order sources contain only `orderId` and the
+  acknowledgement. Unknown or mixed fields fail strict JSON decoding/validation.
+- Model tester POST routes require session plus CSRF, reject HTTP without explicit current-request
+  acknowledgement, and return `private, no-store`. They do not use idempotency because each click
+  intentionally makes new third-party calls.
+- `discover` may return stable `401`, `403`, `404`, `409`, `422`, `429`, `502`, and `504` problems.
+  `test` may return `401`, `403`, `404`, `409`, or `422`; protocol failures after a valid request
+  are represented independently in the successful response.
+- `test.model` accepts one non-empty identifier up to 512 Unicode code points without control
+  characters. It is not restricted to the platform model catalog; the UI restricts selection to
+  the current `/models` discovery result.
+- Neither tester endpoint returns the API key, provider response body, full third-party error,
+  prompt, or internal resolved address. Order sources never contain the key.
+
+### 4. Validation & Error Matrix
+
+| Condition | Result |
+| --- | --- |
+| Probe mutation lacks session/CSRF | `401` or `403` before business decoding |
+| Probe PATCH/DELETE lacks or has stale `If-Match` | `428` or `412 VERSION_CONFLICT` |
+| Service binds a missing, foreign, disabled, or unverified connection | `422 VALIDATION_FAILED` on `probeConnectionId` |
+| Referenced connection delete | `409 INVALID_STATE_TRANSITION` with owner-safe service references |
+| Tester manual/order fields are mixed or malformed | `422 VALIDATION_FAILED` |
+| Tester HTTP source omits acknowledgement | `422 VALIDATION_FAILED` on `credentialSource.acknowledgeInsecureHttp` |
+| Tester order is foreign/missing or credential unavailable | `404` or `409` without key/existence leakage |
+| `test.model` is empty, over 512 code points, or contains controls | `422 VALIDATION_FAILED` on `model` |
+
+### 5. Good / Base / Bad Cases
+
+- Good: owner creates one connection, receives no key in the response, binds it to two services,
+  and both owner DTOs reference the connection while public DTOs expose health only.
+- Good: buyer selects an authorized order source and the POST body contains only order ID plus the
+  current HTTP acknowledgement; the server resolves the key after authorization.
+- Base: an HTTPS tester request sends `acknowledgeInsecureHttp=false`; the field does not enable any
+  broader outbound policy and the request proceeds through normal target validation.
+- Bad: putting the key in a query string, returning it from order sources, accepting body-level
+  `expectedVersion`, or registering compatibility challenge/admin routes.
+
+### 6. Tests Required
+
+- Route/OpenAPI parity for all connection, binding, and tester paths and response statuses.
+- Strict request tests for manual/order unions, HTTP acknowledgement, model length, session/CSRF,
+  no-store headers, key non-disclosure, owner/buyer isolation, and destroyed order credentials.
+- Generated frontend types must be regenerated from OpenAPI and `openapi:check` must remain clean.
+
+### 7. Wrong vs Correct
+
+```json
+// Wrong: service-scoped target and secret duplication.
+{"probeBaseUrl":"https://api.example.com/v1","probeKey":"sk-secret","probeModel":"gpt-4.1-mini"}
+```
+
+```json
+// Correct: service binds a separately managed reusable connection.
+{"probeConnectionId":"00000000-0000-0000-0000-000000000801"}
+```
+
+```json
+// Wrong: order import leaks or resubmits the delivered key.
+{"kind":"order","orderId":"...","apiKey":"sk-secret"}
+```
+
+```json
+// Correct: the backend authorizes and resolves the order credential.
+{"kind":"order","orderId":"00000000-0000-0000-0000-000000000802","acknowledgeInsecureHttp":false}
+```
+
+## Scenario: Public API Market Cursor Pagination
+
+### 1. Scope / Trigger
+
+- Trigger: changes to the public API service list, repository pagination, API
+  market infinite queries, health enrichment, or search aggregation.
+
+### 2. Signatures
+
+```text
+GET /api/v1/api-services?limit=20&cursor=<opaque>&paymentMethod=wechat&billingMode=fixed_package&packageModelCatalogId=<id>&packageDurationDays=7
+-> { items: PublicAPIService[], nextCursor: string | null }
+
+GET /api/v1/api-quota-offers?limit=20&cursor=<opaque>&search=<query>&excludeSystemSlots=true
+-> { items: PublicAPIQuotaOffer[], nextCursor: string | null }
+```
+
+```go
+ListPublicAPIServices(ctx, filter, domain.PageRequest) (domain.Page[Service], *domain.AppError)
+PublicAPIServices(ctx, filter, domain.PageRequest) (domain.Page[APIService], *domain.AppError)
+```
+
+### 3. Contracts
+
+- PostgreSQL applies the public orderable predicate, payment method, billing
+  mode, matching package model/duration, quota-offer search, and system-slot
+  exclusion before keyset pagination, ordered by `(updated_at DESC, id DESC)`.
+- Repository, manager, core, and HTTP projections preserve `NextCursor` without
+  parsing or replacing it. Enrichment loads merchant profile, reputation, and
+  health facts for the current page only.
+- The in-memory implementation may use the shared offset cursor helper, but it
+  must expose the same `domain.Page` behavior.
+- Global search follows every API service page so moving pagination into the
+  repository cannot make later services unsearchable.
+- Compatibility callers that require a complete list may traverse pages, but
+  must reject a repeated cursor instead of looping forever.
+
+### 4. Validation & Error Matrix
+
+| Condition | Required result |
+| --- | --- |
+| Missing `limit` | Default to 20 |
+| `limit < 1` or `limit > 100` | `422 VALIDATION_FAILED` |
+| Invalid keyset cursor | `422 VALIDATION_FAILED` on `cursor` |
+| No later row | `nextCursor` is null/omitted |
+| Payment method has no matching rows | Empty page with no cursor |
+| Package model/duration match exists after page one | It appears on the first filtered page |
+| Quota search match exists after page one | It appears on the first filtered page |
+| Search match exists after page one | Search still returns the service |
+| Full-list adapter receives a repeated cursor | Visible error; no infinite loop |
+
+### 5. Good / Base / Bad Cases
+
+- Good: page one returns 20 enriched services and one opaque cursor; the next
+  request returns only rows after that stable keyset position.
+- Base: 12 services return in one page and no second database query is needed.
+- Bad: load all services, enrich all rows, then slice them in the HTTP handler.
+
+### 6. Tests Required
+
+- Manager pagination after public/payment/package filtering, including
+  final-page stop.
+- Handler pass-through for `limit`, `cursor`, filter, response cursor, and
+  invalid pagination.
+- Search regression where the only matching API service is on page two.
+- PostgreSQL keyset helper tests for stable order and invalid cursors.
+- Frontend adapter tests for opaque cursor serialization and repeated-cursor
+  rejection in complete-list compatibility reads.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```go
+services, _ := repo.ListPublicAPIServices(ctx, filter)
+writePaginatedJSON(w, r, enrichAll(services))
+```
+
+#### Correct
+
+```go
+page, _ := repo.ListPublicAPIServices(ctx, filter, pageRequest)
+items := enrich(page.Items)
+writePageJSON(w, domain.Page[Response]{Items: items, NextCursor: page.NextCursor})
 ```

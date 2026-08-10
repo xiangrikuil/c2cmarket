@@ -57,6 +57,7 @@ export type WarrantyConfig = {
 }
 
 export type ApiServicePublishForm = {
+  probeConnectionId: string
   merchantIdentityMode: ApiMerchantIdentityMode
   merchantDisplayName: string
   distributionSystem: DistributionSystem

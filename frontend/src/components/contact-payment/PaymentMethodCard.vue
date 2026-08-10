@@ -125,13 +125,13 @@ const methodHint = apiPaymentMethods.find(item => item.value === props.option.pa
       </div>
 
       <label class="block space-y-2">
-        <span class="text-sm font-medium">付款说明（选填）</span>
+        <span class="text-sm font-medium">收款核对说明（选填）</span>
         <Textarea
           :model-value="option.paymentInstructions"
           class="min-h-16 text-sm"
           maxlength="160"
           :disabled="disabled"
-          placeholder="填写收款码备注、核对口径或站外确认节奏。"
+          placeholder="例如：扫码后请核对收款方“李*”，付款时备注订单号后 6 位。"
           @update:model-value="value => emit('update:instructions', String(value))"
         />
       </label>

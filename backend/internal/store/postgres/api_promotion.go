@@ -239,7 +239,7 @@ func getAPIPromotionEligibility(ctx context.Context, q queryer, serviceID string
 		         SELECT count(*)::int
 		         FROM api_orders orders
 		         WHERE orders.api_service_id = service.id
-		           AND orders.dispute_status = 'open'
+		           AND orders.dispute_status NOT IN ('none', 'closed')
 		       )
 		FROM api_services service
 		JOIN users owner ON owner.id = service.owner_user_id

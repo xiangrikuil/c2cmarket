@@ -1,5 +1,7 @@
 import { shouldUseRealBackend } from '@/lib/backendClient'
 import {
+  backendAPIOrderSanctionRecommendation,
+  backendApplyAPIOrderSanction,
   backendAdminUserReputation,
   backendCreateDisputeReputationOutcome,
   backendCreateReputationRestriction,
@@ -20,6 +22,7 @@ import {
   mockReputationRules,
 } from '@/lib/reputationMock'
 import type {
+  ApplyAPIOrderSanctionInput,
   CreateDisputeOutcomeInput,
   CreateReputationRestrictionInput,
   ReputationScope,
@@ -38,6 +41,16 @@ export async function getPublicUserReputation(username: string, scope: Reputatio
 
 export async function getMyReputation() {
   return shouldUseRealBackend() ? backendMyReputation() : mockMyReputation()
+}
+
+export async function getAPIOrderSanctionRecommendation(disputeCaseId: string) {
+  if (shouldUseRealBackend()) return backendAPIOrderSanctionRecommendation(disputeCaseId)
+  throw new Error('本地演示模式没有 API 订单处罚建议。')
+}
+
+export async function applyAPIOrderSanction(input: ApplyAPIOrderSanctionInput) {
+  if (shouldUseRealBackend()) return backendApplyAPIOrderSanction(input)
+  throw new Error('本地演示模式不创建 API 订单处罚。')
 }
 
 export async function getAdminUserReputation(userId: string, historyLimit = 50) {

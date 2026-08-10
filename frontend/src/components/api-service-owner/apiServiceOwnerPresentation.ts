@@ -32,19 +32,20 @@ export type ApiServiceProbeStatus = {
 }
 
 const probeAvailabilityPresentation: Record<Exclude<ApiHealthAvailabilityReason, null>, ApiServiceProbeStatus> = {
-  unconfigured: { label: '未配置', description: '尚未配置平台探针', tone: 'neutral' },
-  disabled: { label: '已停用', description: '平台探针已停用', tone: 'warning' },
-  unauthorized: { label: '待授权', description: '探针目标尚未完成授权', tone: 'waiting' },
+  unconfigured: { label: '未绑定', description: '尚未绑定探针连接', tone: 'neutral' },
+  disabled: { label: '已停用', description: '探针连接已停用', tone: 'warning' },
+  unverified: { label: '待验证', description: '探针连接尚未通过鉴权验证', tone: 'waiting' },
   insufficient: { label: '样本不足', description: '最近一小时样本不足', tone: 'waiting' },
   stale: { label: '样本过期', description: '最近样本已过期', tone: 'warning' },
-  temporarily_unavailable: { label: '暂不可用', description: '探针系统暂时不可用', tone: 'risk' },
+  temporarily_unavailable: { label: '暂不可用', description: '探针连接暂时不可用', tone: 'risk' },
+  runner_disabled: { label: '任务未运行', description: '平台周期探针任务未运行', tone: 'risk' },
 }
 
 const probeStatePresentation: Record<ApiHealthState, ApiServiceProbeStatus> = {
-  normal: { label: '正常', description: '平台探针正常', tone: 'success' },
-  fluctuating: { label: '波动', description: '平台探针近期存在波动', tone: 'warning' },
-  abnormal: { label: '异常', description: '平台探针近期异常', tone: 'risk' },
-  no_sample: { label: '暂无数据', description: '平台探针暂无有效数据', tone: 'neutral' },
+  normal: { label: '正常', description: '探针连接鉴权正常', tone: 'success' },
+  fluctuating: { label: '波动', description: '探针连接近期存在波动', tone: 'warning' },
+  abnormal: { label: '异常', description: '探针连接近期异常', tone: 'risk' },
+  no_sample: { label: '暂无数据', description: '探针连接暂无有效数据', tone: 'neutral' },
 }
 
 export function getApiServiceProbeStatus(

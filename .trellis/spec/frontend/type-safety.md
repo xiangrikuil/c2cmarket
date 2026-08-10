@@ -323,7 +323,7 @@ isApiOrderReceiptConfirmed(status: ApiOrderStatus): boolean
 - Buyer/seller order detail may render `deliveryCredential` with copy buttons and long-term visibility. Lists, public API service pages, notifications, reports, admin summaries, and search rows must not render raw API keys or passwords.
 - UI wording should say `交付凭证`, `买家专属`, and `提交后不可修改`; do not claim platform revocation support, and avoid `自动发货`, `平台担保`, `平台验真`, and `主账号密码`.
 - Real backend mode must call API order endpoints through `apiMarketBackend.ts` and must not catch failures to return mock orders.
-- Intent creation freezes `pricingSnapshot.models[].modelNameSnapshot`, each model's `merchantMultiplier`, `usageVisibility`, `merchantNote`, and seller-authored `merchantSupportNote`. Order creation copies that JSON unchanged.
+- Intent creation freezes `pricingSnapshot.models[].modelKey`, each model's `merchantMultiplier`, `usageVisibility`, `merchantNote`, and seller-authored `merchantSupportNote`. Order creation copies that JSON unchanged. Service/package API DTOs separately use `modelKeySnapshot`; neither contract uses the removed `modelNameSnapshot`.
 - `mapBackendAPIOrder` must project `order.pricingSnapshot`, not a current service response, `serviceTitleSnapshot`, or the separately fetched intent projection. The order record is the authority after creation even when the intent usually contains the same bytes.
 - Order detail renders every non-empty frozen model name in snapshot order with duplicates removed. A missing snapshot shows explicit historical-missing copy; malformed JSON shows an explicit unavailable state. Neither path may substitute the service title or current service models.
 - Order information labels seller-authored frozen content as `商户售后说明`. The fixed platform copy is a separate `平台交易边界` field and must not be written into or presented as seller input.
@@ -346,7 +346,7 @@ isApiOrderReceiptConfirmed(status: ApiOrderStatus): boolean
 | Order list receives a delivered order | It may show status and submitted time, but must not render raw `apiKey` or `password`. |
 | `pricingSnapshot` is empty on a historical order | Render historical-missing model/usage/seller-support copy; do not query mutable service values as a fallback. |
 | `pricingSnapshot` is malformed JSON | Render snapshot-unavailable model/multiplier/seller-support copy; do not display `serviceTitleSnapshot` as a model. |
-| `pricingSnapshot.models` contains several valid models | Render all unique `modelNameSnapshot` values and show one multiplier or `按模型分别计算` as appropriate. |
+| `pricingSnapshot.models` contains several valid models | Render all unique `modelKey` values and show one multiplier or `按模型分别计算` as appropriate. |
 | Merchant opens the cancelled status tab | Table rows show only cancelled orders; operating metrics retain the same search/time/service population. |
 | Merchant cancelled an unpaid order | `已取消订单` increments, while `已确认收款金额` remains unchanged. |
 | Merchant confirms receipt, delivers, or completes | The order amount is counted exactly once in `已确认收款金额`. |
@@ -355,7 +355,7 @@ isApiOrderReceiptConfirmed(status: ApiOrderStatus): boolean
 
 - Good: buyer detail in `pending_payment` calls `readApiOrderPaymentInstructions()` and renders the frozen WeChat QR code plus merchant contact snapshot.
 - Good: seller detail in `paid_confirmed` submits `{ deliveryKind: 'api_key_endpoint', apiBaseUrl, apiKey, instructions }`, receives `deliveryCredential`, and the form becomes read-only.
-- Good: an order frozen with `GPT-4.1`, `GPT-4.1 mini`, and `GPT-4o` shows those three names even after the merchant edits the service title or enabled models.
+- Good: an order frozen with `gpt-4.1`, `gpt-4.1-mini`, and `gpt-4o` shows those exact canonical keys even after the merchant edits the service title or enabled models.
 - Base: a delivered order list row shows `已交付` and `deliverySubmittedAt`, but no raw `apiKey` or `password` text.
 - Base: an older order without seller-support fields says `历史订单未冻结商户售后说明` beside the separate fixed platform boundary.
 - Good: one cancelled `¥10.00` order shows `已取消订单 1` and `已确认收款金额 ¥0.00`, including while the cancelled tab is active.
@@ -561,4 +561,153 @@ const layout = route.meta.standalone
   : route.path.startsWith('/admin')
     ? AdminShell
     : AppShell
+```
+
+## Scenario: API Probe Connections And Model Tester State
+
+### 1. Scope / Trigger
+
+- Trigger: frontend types, adapters, queries, routes, forms, or tests for seller probe connections,
+  service binding, public health, order credential import, or `/tools/api-model-tester`.
+- Backend/OpenAPI fields remain the authority. Handwritten UI types must mirror generated DTO
+  names and must not restore deleted service-level probe fields.
+
+### 2. Signatures
+
+```ts
+type ApiModelTesterCredentialSource =
+  | { kind: 'manual'; baseUrl: string; apiKey: string; acknowledgeInsecureHttp: boolean }
+  | { kind: 'order'; orderId: string; acknowledgeInsecureHttp: boolean }
+
+type ApiModelTesterRowState = {
+  state: 'pending' | 'completed' | 'cancelled' | 'failed'
+  result?: ApiModelTesterModelResult
+  message?: string
+}
+
+type ApiProbeConnectionPreflight = {
+  errorCode: string | null
+  availableModels: string[]
+  probeModel: string | null
+  probeProtocol: 'openai_responses_v1' | 'openai_chat_completions_v1' | null
+  probeEnvironment: 'us-west-v1'
+  dailyBaseCostUpperBoundUsd: string | null
+  priceUnavailable: boolean
+  preflightToken: string | null
+}
+```
+
+```text
+/my/api-probe-connections
+/tools/api-model-tester
+/admin/api-health
+```
+
+### 3. Contracts
+
+- `/my/api-probe-connections` owns reusable seller connection management. Connection forms send
+  name, Base URL, optional write-only credential, exact probe model, enabled state, and HTTP
+  acknowledgement. Measurement-changing writes first use the create/existing preflight endpoint,
+  then send its one-time `preflightToken`; save must not repeat the paid real-model verification.
+- Preflight model options are only the current `/models` IDs. The form defaults to exact
+  `gpt-5.6-luna` when the backend selected it, shows the fixed Responses/Chat result and the 1.00x
+  daily estimate, and invalidates its token when Base URL, credential, or model changes.
+- The connection table and public market card reuse the same 24-hour health component. The compact
+  surface shows 24 fixed-size hourly cells, stability, average TTFT, coverage, and runner warnings;
+  the tooltip owns protocol, environment, P50/P95, retry/failure, and cost detail.
+- Re-enabling a disabled connection is measurement-changing: the quick switch first performs an
+  existing-credential preflight, then updates with its token. Disabling remains a direct update.
+- API service create/edit sends `probeConnectionId`; it never duplicates Base URL or key in the
+  service form. The selector shows only the current seller's connections and explains unavailable
+  binding state without exposing credentials.
+- Public market types contain only `healthSummary`. Owner connection ID/name/readiness fields must
+  not leak into public DTO adapters or cards.
+- `/admin/api-health` reads exact model/protocol/environment calibration facts, allows X/Y preview,
+  and enables publication only when the backend reports at least seven complete UTC days and five
+  independent connections. The page never derives or auto-publishes thresholds from percentiles.
+- Model tester `ApiModelTesterCredentialSource` is a strict manual/order union. Both variants carry
+  `acknowledgeInsecureHttp`; manual carries Base URL and Key, order carries only order ID.
+- The HTTP warning is conditional on the current manual or selected-order Base URL. It starts
+  unchecked, resets when the target changes, and blocks discovery until checked. The acknowledgement
+  travels with discover and every subsequent model-test request but is not persisted.
+- Discovery results, selected models, per-row protocol results, cancellation controllers, and the
+  manual key are component-memory state. Source changes and unmount cancel work and clear all
+  transient data. Never use route query, local/session storage, analytics, or a global store for keys.
+- The UI renders every unique `/models` ID exactly as returned. It does not title-case or map IDs to
+  catalog display names. Single, selected, and all-model tests operate only on the current discovery
+  list; at most three model requests run concurrently and each row has stable Responses/Chat columns.
+- Order import uses only backend-authorized order-source items. The frontend never receives or
+  reconstructs the delivered key. Opening from an order detail may preselect an order ID only when
+  that ID exists in the authorized source list.
+
+### 4. Validation & Error Matrix
+
+| Condition | Expected behavior |
+| --- | --- |
+| Manual Base URL or Key missing | Disable/get-model action and retain no test state |
+| Current target is HTTP and acknowledgement is false | Show warning and block discover/test |
+| Probe preflight did not return a usable one-time token | Keep connection save disabled |
+| Probe Base URL, credential, or model changes after preflight | Invalidate token and require preflight again |
+| Disabled probe connection is switched on | Preflight stored credential, then update with returned token |
+| Health runner is disabled or stale | Show the backend `runner_disabled`/`stale` explanation, not silent grey |
+| Fewer than three current-version health samples | Show sample accumulation and grey cells |
+| Calibration readiness is false | Disable rule publication while retaining observed percentiles |
+| Source Base URL/order changes | Cancel active work, clear discovery/results, reset HTTP acknowledgement |
+| `/models` returns zero IDs | Show an empty discovered state; do not invent catalog models |
+| One protocol fails while the other succeeds | Render two independent cells for the same model |
+| User cancels an all-model run | Abort active requests and mark unfinished rows cancelled |
+| User leaves the page | Abort requests and clear the manual Key from memory |
+
+### 5. Good / Base / Bad Cases
+
+- Good: seller selects one existing verified connection on several publish forms; no form asks for
+  the endpoint or key again and public cards expose only the shared health result.
+- Good: seller preflights `gpt-5.6-luna`, receives a one-time token, saves once, and the connection
+  plus every bound service display the same 24-hour health strip without duplicate model calls.
+- Base: the runner is disabled. The enabled connection displays a clear operational warning while
+  retaining its configuration and old immutable samples.
+- Good: buyer selects an HTTP order, checks the warning, discovers `gpt-4.1-mini`, then runs either
+  one row or all rows with separate Responses and Chat results.
+- Base: an HTTPS source keeps acknowledgement false and performs the same discovery/test workflow
+  without showing an HTTP warning.
+- Base: a source change during an all-model run aborts active requests and returns the page to an
+  empty discovery state.
+- Bad: storing the manual key, allowing free-form probe/test model IDs, title-casing model IDs,
+  saving without a matching preflight token, dynamically ranking health colors, or showing seller
+  connection IDs/Base URLs on public service cards.
+
+### 6. Tests Required
+
+- Adapter request-body tests for both credential-source variants, trimming, HTTP acknowledgement,
+  cancellation signal, CSRF-backed mutation, and absence of keys in URLs.
+- Probe adapter/component tests for preflight token transport, token invalidation, default Luna,
+  re-enable preflight, exact model IDs, 24 fixed cells, coverage, runner warnings, Chat fallback,
+  cost unknown state, and no public connection internals.
+- Calibration tests for dimension queries, invalid X/Y, not-ready publication, preview, published
+  immutable rule history, and generated OpenAPI type parity.
+- Component/source tests for conditional HTTP warning, target-change reset, authorized order
+  preselection, discovery-only model selection, three-worker concurrency, cancellation, and unmount
+  cleanup.
+- Projection scans that reject `modelNameSnapshot`, public probe connection internals, challenge
+  copy, local/session storage, and tester analytics.
+- Run OpenAPI generation/check, full Vitest, Nuxt typecheck, and production build.
+
+### 7. Wrong vs Correct
+
+```ts
+// Wrong: persistent secret and a model name rewritten for display.
+localStorage.setItem('testerKey', apiKey)
+const visibleModel = titleCase(modelId)
+
+// Correct: component-memory secret and provider-returned ID.
+const manual = reactive({ baseUrl: '', apiKey: '' })
+const visibleModel = modelId
+```
+
+```ts
+// Wrong: order import reconstructs credentials in the browser.
+const source = { kind: 'manual', baseUrl: order.baseUrl, apiKey: order.apiKey }
+
+// Correct: submit the authorized order reference only.
+const source = { kind: 'order', orderId: order.orderId, acknowledgeInsecureHttp }
 ```

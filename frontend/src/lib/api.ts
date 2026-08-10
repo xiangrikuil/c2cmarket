@@ -97,11 +97,12 @@ import {
   type UserProfile,
 } from '@/data/mock'
 import type { ReputationSummary } from '@/types/reputation'
-import type { ApiServiceHealthSummary } from '@/types/apiHealth'
+import type { ApiServiceHealthHourlyBucket, ApiServiceHealthSample, ApiServiceHealthSummary } from '@/types/apiHealth'
+import { getOwnerAPIProbeConnections, updateMockAPIProbeConnectionReference } from '@/lib/apiHealthFacade'
 import type { ApiQuotaUsagePolicy, ApiQuotaUsagePolicyInput } from '@/types/apiQuota'
 export type { ApiQuotaLimitMode, ApiQuotaUsageLimit, ApiQuotaUsageLimitInput, ApiQuotaUsagePolicy, ApiQuotaUsagePolicyInput, ApiWritableQuotaLimitMode } from '@/types/apiQuota'
 import { mockPublicUserReputation } from '@/lib/reputationMock'
-import { getPricingDisplay } from '@/lib/pricing'
+import { compareByTradablePrice, getPricingDisplay } from '@/lib/pricing'
 import {
   getApiMerchantDisplayName,
   isApiServicePubliclyOrderable,
@@ -111,6 +112,9 @@ import {
 export { getApiMerchantDisplayName, isApiServicePubliclyOrderable } from '@/lib/apiServicePresentation'
 import { evaluateCarpoolApplicationEligibility, hasCredentialSharingLanguage } from '@/lib/carpoolEligibility'
 import { matchesApiOrderSearch } from '@/lib/apiOrderUi'
+import { isApiOrderDisputeActive, normalizeApiOrderDisputeStatus, type ApiOrderDisputeStatus, type OpenApiOrderDisputeInput } from '@/lib/apiOrderDispute'
+export { canOpenApiOrderDispute, getApiOrderDisputeStatusDescription, getApiOrderDisputeStatusLabel, isApiOrderDisputeActive, normalizeApiOrderDisputeStatus } from '@/lib/apiOrderDispute'
+export type { ApiOrderDisputeStatus } from '@/lib/apiOrderDispute'
 export { evaluateCarpoolApplicationEligibility } from '@/lib/carpoolEligibility'
 import { defaultQuotaLabel, defaultQuotaPeriod, defaultQuotaUnit } from '@/lib/quota'
 import { beijingDateTimeInputToISOString, formatBeijingDateTimeInput, formatQuotaExpiresAtLabel } from '@/lib/apiQuotaExpiration'
@@ -132,6 +136,7 @@ import {
 import {
   backendAcceptCarpoolApplication,
   backendAdminCarpoolRows,
+  backendAdminCarpoolRowsPage,
   backendBuyerLeaveCarpool,
   backendCancelCarpoolApplication,
   backendBuyerConfirmCarpoolCompleted,
@@ -147,9 +152,13 @@ import {
   backendCreateCarpoolApplication,
   backendGetCarpoolById,
   backendGetCarpools,
+  backendGetCarpoolsPage,
   backendOwnerCarpools,
+  backendOwnerCarpoolsPage,
   backendMerchantCarpoolApplications,
+  backendMerchantCarpoolApplicationsPage,
   backendMyCarpoolApplications,
+  backendMyCarpoolApplicationsPage,
   backendOwnerRemoveCarpool,
   backendOwnerConfirmCarpoolCompleted,
   backendOwnerConfirmCarpoolJoined,
@@ -159,6 +168,7 @@ import {
   backendUpdateAdminCarpoolStatus,
   backendWithdrawCarpoolAcceptance,
 } from '@/lib/carpoolBackend'
+import type { CarpoolPageFilters } from '@/lib/carpoolBackend'
 import {
   backendAPIIntentById,
   backendAPIIntentEvents,
@@ -166,9 +176,12 @@ import {
   backendAPIQuotaCredentialSummary,
   backendAdminAPIOrder,
   backendAdminAPIOrderRows,
+  backendAdminAPIOrderRowsPage,
   backendAPIServiceById,
   backendAPIServices,
+  backendAPIServicesPage,
   backendAdminAPIServiceRows,
+  backendAdminAPIServiceRowsPage,
   backendCancelAPIOrder,
   backendConfirmAPIOrderComplete,
   backendConfirmAPIOrderPayment,
@@ -186,6 +199,7 @@ import {
   backendImportAPIQuotaCredentials,
   backendMyAPIOrder,
   backendMyAPIOrders,
+  backendMyAPIOrdersPage,
   backendMyAPIIntents,
   backendOtherAPIServices,
   backendOwnerAPIQuotaBatches,
@@ -193,14 +207,17 @@ import {
   backendOwnerAPIQuotaRounds,
   backendOwnerAPIOrder,
   backendOwnerAPIOrders,
+  backendOwnerAPIOrdersPage,
   backendOwnerAPIIntents,
   backendOwnerAPIServiceById,
   backendOwnerAPIServices,
+  backendOwnerAPIServicesPage,
   backendOpenAPIOrderDispute,
   backendPauseAPIService,
   backendPublishAPIService,
   backendPublicAPIQuotaOffer,
   backendPublicAPIQuotaOffers,
+  backendPublicAPIQuotaOffersPage,
   backendAPIQuotaSaleSlots,
   backendReadAPIOrderPaymentInstructions,
   backendReportAPIOrderPaymentIssue,
@@ -211,7 +228,13 @@ import {
   backendSub2APIServices,
   backendSubmitAPIService,
   backendUpdateAdminAPIServiceStatus,
+  backendUpdateAPIServiceProbeConnection,
 } from '@/lib/apiMarketBackend'
+import type { AdminAPIServicePageFilters } from '@/lib/apiMarketBackend'
+import { paginateCursorItems, type CursorPage, type CursorPageRequest } from '@/lib/cursorPagination'
+import { productMatchesCategory, productMatchesPlan, type ProductCategoryKey } from '@/lib/productCategories'
+import { isCarpoolAdminActionStatus, isCarpoolExceptionStatus } from '@/lib/carpoolModeration'
+import { isApiServiceAdminActionStatus, isApiServiceExceptionStatus, isApiServicePublicStatus } from '@/lib/apiServiceModeration'
 import {
   backendCreateContact,
   backendDeleteContact,
@@ -230,17 +253,20 @@ import {
   backendVerifyContact,
   type BackendMerchantProfile,
 } from '@/lib/profileBackend'
-import { backendReviewCenterRows, backendSubmitReview } from '@/lib/reviewBackend'
+import { backendReviewCenterPage, backendReviewCenterRows, backendSubmitReview } from '@/lib/reviewBackend'
 import { backendSearchMarket } from '@/lib/searchBackend'
 import {
   backendAdminOfficialPriceRows,
+  backendAdminOfficialPriceRowsPage,
   backendMyOfficialPriceLeads,
   backendOfficialPriceById,
   backendOfficialPrices,
+  backendOfficialPricesPage,
   backendRunOfficialPriceAdminAction,
   backendSubmitOfficialPriceLead,
   backendUpdateOfficialPriceAdminStatus,
 } from '@/lib/officialPriceBackend'
+import type { OfficialPricePageFilters } from '@/lib/officialPriceBackend'
 import {
   backendFavoriteStatus,
   backendFavorites,
@@ -294,6 +320,7 @@ import {
   type AdminUserStatus,
 } from '@/lib/adminUserBackend'
 import { shouldUseRealBackend } from '@/lib/backendClient'
+import { linuxDoProfileSummaryUrl } from '@/lib/linuxDo'
 import {
   backendGetApiPaymentAccountSettings,
   backendUpdateApiPaymentAccountSettings,
@@ -583,7 +610,7 @@ export type ApiOrder = {
   buyerReputation?: ReputationSummary | null
   sellerReputation?: ReputationSummary | null
   status: ApiOrderStatus
-  disputeStatus?: string
+  disputeStatus?: ApiOrderDisputeStatus
   disputeCaseId?: string
   serviceTitle: string
   amount: number
@@ -592,6 +619,7 @@ export type ApiOrder = {
   selectedPaymentMethod: ApiPaymentOption['paymentMethod']
   paymentWindowMinutes: number
   paymentExpiresAt: string
+  buyerNote?: string
   paymentSummary?: string
   paymentSubmittedAt?: string
   paymentIssueReason?: ApiOrderPaymentIssueReason
@@ -632,7 +660,7 @@ export type AdminApiOrderDetail = {
   buyerUserId: string
   sellerUserId: string
   status: ApiOrderStatus
-  disputeStatus?: string
+  disputeStatus?: ApiOrderDisputeStatus
   disputeCaseId?: string
   serviceTitleSnapshot: string
   billingModeSnapshot?: string
@@ -666,6 +694,8 @@ export type ApiQuotaOfferFilters = {
   oneMultiplier?: boolean
   onlyOrderable?: boolean
   slotKey?: string
+  search?: string
+  excludeSystemSlots?: boolean
 }
 
 export type CreateApiQuotaOrderPayload = {
@@ -789,8 +819,8 @@ export type SaveCarpoolDraftPayload = {
   customRegionName: string | null
   monthlyPriceCny: number | null
   serviceMultiplier: number | null
+  dailyQuotaAmount: number | null
   weeklyQuotaAmount: number | null
-  monthlyQuotaAmount: number | null
   followsOfficialQuotaReset: boolean | null
   vpsRegion: string
   supportsMainlandChinaDirectConnection: boolean | null
@@ -934,7 +964,8 @@ function normalizeApiOrderStore(orders: ApiOrder[]): ApiOrder[] {
   return orders.map(order => ({
     ...order,
     orderNo: order.orderNo || createMockApiOrderNo(order.createdAt),
-    purchaseKind: order.purchaseKind ?? 'api_service',
+		purchaseKind: order.purchaseKind ?? 'api_service',
+		disputeStatus: normalizeApiOrderDisputeStatus(order.disputeStatus),
     completionSource: order.completionSource ?? (order.status === 'completed' ? 'buyer_confirmed' : undefined),
     deliveryReviewExpiresAt: order.deliveryReviewExpiresAt
       ?? (order.status === 'delivery_submitted' ? mockDeliveryReviewDeadline(order.deliverySubmittedAt) : undefined),
@@ -952,7 +983,7 @@ function normalizeApiQuotaOfferStore(offers: PublicApiQuotaOffer[]): PublicApiQu
 function materializeMockApiOrderReviews(currentTime = Date.now()) {
   let changed = false
   for (const order of apiOrderStore) {
-    if (order.status !== 'delivery_submitted' || order.disputeStatus === 'open' || !order.deliveryReviewExpiresAt) continue
+		if (order.status !== 'delivery_submitted' || isApiOrderDisputeActive(order.disputeStatus) || !order.deliveryReviewExpiresAt) continue
     const deadline = Date.parse(order.deliveryReviewExpiresAt)
     if (!Number.isFinite(deadline) || deadline > currentTime) continue
     const completedAt = new Date(deadline).toISOString()
@@ -1304,7 +1335,7 @@ export function apiIntentMerchantContactSnapshot(intent: ApiPurchaseIntent): Ord
       displayValue: channel.value,
       verified: channel.type === 'linuxdo',
       usageScope: 'api_merchant',
-      actionUrl: channel.type === 'linuxdo' ? `https://linux.do/u/${channel.value.replace(/^@/, '')}/messages/new` : undefined,
+      actionUrl: channel.type === 'linuxdo' ? linuxDoProfileSummaryUrl(channel.value) : undefined,
     })) : [],
     buyerContacts: [],
     contactWindowEndsAt: null,
@@ -1328,7 +1359,7 @@ export function apiIntentBuyerContactSnapshot(intent: ApiPurchaseIntent): OrderC
       displayValue: channel.value,
       verified: channel.type === 'linuxdo',
       usageScope: 'buyer',
-      actionUrl: channel.type === 'linuxdo' ? `https://linux.do/u/${channel.value.replace(/^@/, '')}/messages/new` : undefined,
+      actionUrl: channel.type === 'linuxdo' ? linuxDoProfileSummaryUrl(channel.value) : undefined,
     })) : [],
     contactWindowEndsAt: null,
     canView,
@@ -1345,7 +1376,7 @@ function contactChannelsToSnapshotItems(channels: ApiContactChannel[], usageScop
     displayValue: channel.value,
     verified: channel.type === 'linuxdo',
     usageScope,
-    actionUrl: channel.type === 'linuxdo' ? `https://linux.do/u/${channel.value.replace(/^@/, '')}/messages/new` : undefined,
+    actionUrl: channel.type === 'linuxdo' ? linuxDoProfileSummaryUrl(channel.value) : undefined,
   }))
 }
 
@@ -1577,7 +1608,15 @@ export function getApiOrderNextAction(order: ApiOrder, role: 'buyer' | 'merchant
     if (order.status === 'payment_submitted') return '等待商户确认收款'
     if (order.status === 'payment_issue') return '补充付款信息并重新提交'
     if (order.status === 'paid_confirmed') return '等待商户交付'
-    if (order.status === 'delivery_submitted') return order.disputeStatus === 'open' ? '等待平台处理凭证问题' : '核验凭证，或报告问题'
+    if (order.status === 'delivery_submitted') {
+      switch (normalizeApiOrderDisputeStatus(order.disputeStatus)) {
+        case 'negotiating': return '继续协商订单问题'
+        case 'open': return '等待平台处理凭证问题'
+        case 'awaiting_fulfillment': return '等待裁决要求履行'
+        case 'fulfillment_confirmation': return '确认履行结果'
+        default: return '核验凭证，或报告问题'
+      }
+    }
     if (order.status === 'completed') return order.completionSource === 'auto_completed' ? '订单已自动完成' : '凭证已确认可用'
     if (order.status === 'cancelled') return '查看取消原因'
   }
@@ -1680,7 +1719,7 @@ function buildCarpoolSnapshot(carpool: Carpool): CarpoolApplication['snapshot'] 
     regionName: carpool.region,
     monthlyPriceCny: pricing.primaryPrice,
     serviceMultiplier: carpool.serviceMultiplier,
-    monthlyQuotaAmount: carpool.monthlyQuotaAmount,
+    weeklyQuotaAmount: carpool.weeklyQuotaAmount,
     quotaLabel: carpool.quotaLabel,
     quotaUnit: carpool.quotaUnit,
     quotaPeriod: carpool.quotaPeriod,
@@ -1998,6 +2037,7 @@ export type ApiOrderFilters = {
   search?: string
   dateRange?: 'all' | 'today' | '7d' | '30d'
   sort?: 'default_buyer' | 'default_merchant' | 'updated_desc' | 'created_desc' | 'amount_desc' | 'amount_asc'
+  risk?: 'all' | 'high' | 'has_note'
 }
 
 export type ApiServiceFilters = {
@@ -2016,6 +2056,9 @@ export type ApiServiceFilters = {
   minBalance?: number
   sort?: 'recommended' | 'multiplier_asc' | 'response_fast' | 'recent'
   search?: string
+  billingMode?: ApiBillingMode
+  packageModelCatalogId?: string
+  packageDurationDays?: number
 }
 
 export type MinimumPurchaseFilter = 'all' | 'lte_20' | 'between_21_50' | 'gt_50'
@@ -2216,6 +2259,40 @@ export async function getOfficialPrices() {
   return clone(officialPriceStore)
 }
 
+export type OfficialPriceListPageFilters = OfficialPricePageFilters & {
+  product?: string
+  plan?: string
+  regionLabel?: string
+  channelLabel?: string
+  openingMethodLabel?: string
+  sourceLabel?: string
+  trustFloor?: number
+}
+
+export async function getOfficialPricesPage(filters: OfficialPriceListPageFilters = {}, page: CursorPageRequest = {}): Promise<CursorPage<OfficialPrice>> {
+  if (shouldUseRealBackend()) return backendOfficialPricesPage(filters, page)
+  await wait()
+  const query = filters.q?.trim().toLowerCase()
+  const rows = officialPriceStore.filter(item => {
+    return (!query || [item.product, item.plan, item.region, item.channel, item.submitter, item.source].some(value => value.toLowerCase().includes(query)))
+      && (!filters.product || item.product.includes(filters.product))
+      && (!filters.plan || item.plan.includes(filters.plan))
+      && (!filters.regionLabel || item.region.includes(filters.regionLabel))
+      && (!filters.channelLabel || item.channel.includes(filters.channelLabel))
+      && (!filters.status || item.status === filters.status)
+      && (!filters.openingMethodLabel || item.openingMethod.includes(filters.openingMethodLabel))
+      && (!filters.sourceLabel || item.source.includes(filters.sourceLabel))
+      && (filters.trustFloor === undefined || item.submitterTrust >= filters.trustFloor)
+  })
+  rows.sort((a, b) => {
+    if (filters.sort === 'cny_asc') return (a.cny ?? Number.POSITIVE_INFINITY) - (b.cny ?? Number.POSITIVE_INFINITY)
+    if (filters.sort === 'trust_desc') return b.submitterTrust - a.submitterTrust
+    if (filters.sort === 'verified_recent' || filters.sort === 'submitted_desc' || filters.sort === 'updated_desc') return b.updatedAt.localeCompare(a.updatedAt)
+    return Number(b.isLowest) - Number(a.isLowest) || b.updatedAt.localeCompare(a.updatedAt)
+  })
+  return paginateCursorItems(clone(rows), page)
+}
+
 export async function getOfficialPriceById(id: string) {
   if (shouldUseRealBackend()) return backendOfficialPriceById(id)
   await wait()
@@ -2232,6 +2309,35 @@ export async function getCarpools() {
   if (shouldUseRealBackend()) return backendGetCarpools()
   await wait()
   return clone(carpoolStore.map(item => ({ ...item, seatSummary: getCarpoolSeatSummary(item) })))
+}
+
+export type CarpoolListPageFilters = CarpoolPageFilters & {
+  category?: ProductCategoryKey
+  plan?: string
+  openingMethod?: string
+}
+
+export async function getCarpoolsPage(filters: CarpoolListPageFilters = {}, page: CursorPageRequest = {}): Promise<CursorPage<CarpoolWithMeta>> {
+  if (shouldUseRealBackend()) return backendGetCarpoolsPage(filters, page)
+  await wait()
+  if (filters.none) return { items: [] }
+  const rows = carpoolStore
+    .filter(item => (!filters.category || productMatchesCategory(item.product, filters.category)))
+    .filter(item => (!filters.plan || productMatchesPlan(item.product, filters.plan)))
+    .filter(item => (!filters.region || item.region === filters.region))
+    .filter(item => (!filters.ownerType || item.ownerType === filters.ownerType))
+    .filter(item => (!filters.warranty || item.warranty === filters.warranty))
+    .filter(item => (!filters.openingMethod || item.openingMethod === filters.openingMethod))
+    .map(item => ({ ...item, seatSummary: getCarpoolSeatSummary(item) }))
+  rows.sort((a, b) => {
+    if (filters.sort === 'price_asc') return compareByTradablePrice(a, b)
+    if (filters.sort === 'updated_desc') return b.confirmedAt.localeCompare(a.confirmedAt)
+    if (filters.sort === 'seats_desc') return getCarpoolSeatSummary(b).availableSeats - getCarpoolSeatSummary(a).availableSeats
+    return Number(b.confirmedWithin48h) - Number(a.confirmedWithin48h)
+      || Number(a.ownerType !== '商户车源') - Number(b.ownerType !== '商户车源')
+      || compareByTradablePrice(a, b)
+  })
+  return paginateCursorItems(clone(rows), page)
 }
 
 export async function getCarpoolById(id: string) {
@@ -2258,6 +2364,11 @@ export async function getMyCarpools() {
   return clone(carpoolStore
     .filter(item => item.owner === currentOwnerName)
     .map(item => ({ ...item, seatSummary: getCarpoolSeatSummary(item) })))
+}
+
+export async function getMyCarpoolsPage(page: CursorPageRequest = {}): Promise<CursorPage<CarpoolWithMeta>> {
+  if (shouldUseRealBackend()) return backendOwnerCarpoolsPage(page)
+  return paginateCursorItems(await getMyCarpools(), page)
 }
 
 export async function getCarpoolProductCatalog() {
@@ -2308,6 +2419,13 @@ function filterApiServices(filters: ApiServiceFilters = {}) {
         && (!filters.minimumPurchaseCnyMax || item.minimumPurchaseCny <= filters.minimumPurchaseCnyMax)
         && (!filters.minBalance || item.balance >= filters.minBalance)
         && (!keyword || apiServicePublicSearchTerms(item).some(value => value.toLowerCase().includes(keyword)))
+        && (!filters.billingMode || item.billingMode === filters.billingMode)
+        && ((!filters.packageModelCatalogId && !filters.packageDurationDays) || (item.packages ?? []).some(packageItem => {
+          return packageItem.enabled
+            && packageItem.stockAvailable > 0
+            && (!filters.packageDurationDays || packageItem.durationDays === filters.packageDurationDays)
+            && (!filters.packageModelCatalogId || packageItem.models.some(model => model.modelCatalogId === filters.packageModelCatalogId))
+        }))
     })
     .sort((a, b) => {
       if (filters.sort === 'multiplier_asc') return a.defaultMultiplier - b.defaultMultiplier || compareNullableNumberAsc(a.responseMedianMinutes, b.responseMedianMinutes)
@@ -2391,6 +2509,12 @@ export async function getApiServices(filters: ApiServiceFilters = {}) {
   return clone(filterApiServices(filters))
 }
 
+export async function getApiServicesPage(filters: ApiServiceFilters = {}, page: CursorPageRequest = {}): Promise<CursorPage<ApiService>> {
+  if (shouldUseRealBackend()) return backendAPIServicesPage(filters, page)
+  await wait()
+  return clone(paginateCursorItems(filterApiServices(filters), page))
+}
+
 export async function getSub2ApiMarketServices(filters: Sub2ApiMarketFilters = {}) {
   if (shouldUseRealBackend()) return backendSub2APIServices(filters)
   await wait()
@@ -2404,10 +2528,14 @@ export async function getOtherApiMarketServices(filters: OtherApiMarketFilters =
 }
 
 function matchesApiQuotaOfferFilters(item: PublicApiQuotaOffer, filters: ApiQuotaOfferFilters) {
+  const keyword = filters.search?.trim().toLowerCase()
   return item.status === 'published'
     && (filters.distributionSystem === undefined || filters.distributionSystem === 'all' || item.distributionSystem === filters.distributionSystem)
     && (!filters.oneMultiplier || item.modelMultiplier === '1.0000')
     && (!filters.onlyOrderable || item.isOrderable)
+    && (!filters.excludeSystemSlots || !item.currentRound?.systemSlotKey && !item.nextRound?.systemSlotKey)
+    && (!keyword || [item.name, item.serviceTitle, item.sellerDisplayName, item.distributionSystem]
+      .some(value => value.toLowerCase().includes(keyword)))
 }
 
 function mockApiQuotaSaleSlots(now = new Date()): ApiQuotaSystemSaleSlotList {
@@ -2506,6 +2634,22 @@ export async function getApiQuotaOffers(filters: ApiQuotaOfferFilters = {}) {
     }
     return matchesApiQuotaOfferFilters(item, filters)
   }))
+}
+
+export async function getApiQuotaOffersPage(filters: ApiQuotaOfferFilters = {}, page: CursorPageRequest = {}): Promise<CursorPage<PublicApiQuotaOffer>> {
+  if (shouldUseRealBackend()) return backendPublicAPIQuotaOffersPage(filters, page)
+  await wait()
+  const rows = apiQuotaOfferStore.map(item => projectMockSystemRushOffer(item))
+  const filtered = rows.filter(item => {
+    if (filters.slotKey) {
+      const round = apiQuotaRoundStore.find(candidate => candidate.systemSlotKey === filters.slotKey && candidate.allocations.some(allocation => allocation.offerId === item.id))
+      if (!round) return false
+      item.currentRound = Date.now() >= Date.parse(round.startsAt) && Date.now() < Date.parse(round.endsAt) ? clone(round) : item.currentRound
+      item.nextRound = Date.now() < Date.parse(round.startsAt) ? clone(round) : item.nextRound
+    }
+    return matchesApiQuotaOfferFilters(item, filters)
+  })
+  return clone(paginateCursorItems(filtered, page))
 }
 
 export async function getApiQuotaOfferById(id: string) {
@@ -2946,35 +3090,57 @@ function mockOwnerApiService(service: ApiService): OwnerApiService {
 }
 
 function mockUnconfiguredAPIHealthSummary(): ApiServiceHealthSummary {
-  const slot = (minute: number): ApiServiceHealthSummary['samples'][number] => ({
-    slotStartedAt: new Date(Date.UTC(2026, 7, 4, 0, minute)).toISOString(),
-    state: 'no_sample',
-  })
-  return {
-    state: 'no_sample',
-    availabilityReason: 'unconfigured',
-    successRatePercent: null,
-    successfulSamples: 0,
-    totalSamples: 0,
-    medianTtftMs: null,
-    probeModel: null,
-    transportSecurity: null,
-    lastSampledAt: null,
-    samples: [
-      slot(0),
-      slot(5),
-      slot(10),
-      slot(15),
-      slot(20),
-      slot(25),
-      slot(30),
-      slot(35),
-      slot(40),
-      slot(45),
-      slot(50),
-      slot(55),
-    ],
-  }
+	const slot = (hour: number): ApiServiceHealthSample => ({
+		slotStartedAt: new Date(Date.UTC(2026, 7, 4, hour)).toISOString(),
+		state: 'no_sample',
+	})
+	const bucket = (hour: number): ApiServiceHealthHourlyBucket => ({
+		hourStartedAt: new Date(Date.UTC(2026, 7, 4, hour)).toISOString(),
+		state: 'no_sample',
+		completedCycles: 0,
+		firstAttemptSuccesses: 0,
+		retryRecoveries: 0,
+		finalFailures: 0,
+		slowSuccesses: 0,
+		finalSuccessPercent: null,
+		averageTtftMs: null,
+	})
+	const hours = Array.from({ length: 24 }, (_, index) => index)
+	return {
+		state: 'no_sample',
+		availabilityReason: 'unconfigured',
+		transportSecurity: null,
+		stabilityPercent: null,
+		finalSuccessPercent: null,
+		coveragePercent: '0.0',
+		completedCycles: 0,
+		theoreticalSlots: 288,
+		firstAttemptSuccesses: 0,
+		retryRecoveries: 0,
+		finalFailures: 0,
+		averageTtftMs: null,
+		p50TtftMs: null,
+		p95TtftMs: null,
+		lastSampledAt: null,
+		probeModel: null,
+		probeProtocol: null,
+		probeEnvironment: null,
+		probeEnvironmentLabel: null,
+		probeModelChangedAt: null,
+		accumulatingSamples: false,
+		hourlyBuckets: hours.map(bucket),
+		cost: {
+			knownBaseCostUsd: '0',
+			knownRetryCostUsd: '0',
+			projectedDailyCostUsd: '',
+			hasUnknownUsage: false,
+			knownUsageSamples: 0,
+		},
+		successRatePercent: null,
+		successfulSamples: 0,
+		totalSamples: 0,
+		samples: hours.map(slot),
+	}
 }
 
 export async function getMyApiServices(salesView: ApiServiceSalesView = 'active') {
@@ -2986,6 +3152,11 @@ export async function getMyApiServices(salesView: ApiServiceSalesView = 'active'
       .map(item => mockOwnerApiService(item))
       .filter(item => matchesApiServiceSalesView(item.salesSummary.overallState, salesView)),
   )
+}
+
+export async function getMyApiServicesPage(salesView: ApiServiceSalesView = 'active', page: CursorPageRequest = {}): Promise<CursorPage<OwnerApiService>> {
+  if (shouldUseRealBackend()) return backendOwnerAPIServicesPage(salesView, page)
+  return paginateCursorItems(await getMyApiServices(salesView), page)
 }
 
 export async function getMyApiServiceById(id: string) {
@@ -3273,7 +3444,7 @@ export async function getCarpoolApplicationContacts(applicationId: string): Prom
     orderType: 'carpool_application',
     orderId: applicationId,
     sellerContacts: [
-      { type: 'linuxdo', label: 'linux.do 私信', maskedValue: `@${application.ownerUsername}`, displayValue: `@${application.ownerUsername}`, verified: true, usageScope: 'carpool_owner', actionUrl: `https://linux.do/u/${application.ownerUsername}/messages/new` },
+      { type: 'linuxdo', label: 'linux.do 私信', maskedValue: `@${application.ownerUsername}`, displayValue: `@${application.ownerUsername}`, verified: true, usageScope: 'carpool_owner', actionUrl: linuxDoProfileSummaryUrl(application.ownerUsername) },
     ],
     buyerContacts: [],
     contactWindowEndsAt: application.reservedUntil,
@@ -3761,7 +3932,11 @@ export async function getAdminSectionRows(section: AdminSection): Promise<AdminR
       owner: canOpenApiMerchantProfile(item)
         ? `${getApiMerchantDisplayName(item)} · ${item.trustLevel === null ? '信任等级暂无数据' : `信任等级${item.trustLevel}`}`
         : `${getApiMerchantDisplayName(item)} → ${item.merchantUsername} · ${item.trustLevel === null ? '信任等级暂无数据' : `信任等级${item.trustLevel}`}`,
-      status: item.online ? '在线' : '离线',
+      status: item.state === 'reviewing'
+        ? '待处理'
+        : item.state === 'paused'
+          ? item.warning === '已下架' ? '已下架' : '暂停'
+          : item.online ? '在线' : '已通过',
       risk: item.unresolvedDisputes === null ? '纠纷数据暂无' : item.unresolvedDisputes > 0 ? `${item.unresolvedDisputes} 个未解决纠纷` : item.warranty,
       targetType: 'api-service',
       targetTo: apiServiceAdminTargetLink(item),
@@ -3835,6 +4010,69 @@ export async function getAdminSectionRows(section: AdminSection): Promise<AdminR
   })))
 }
 
+export type AdminSectionPageFilters = {
+  q?: string
+  view?: 'public' | 'exceptions'
+  activeStatus?: string
+  risk?: 'all' | 'high' | 'has_note'
+}
+
+function adminSectionBackendStatuses(section: AdminSection, activeStatus: string | undefined) {
+  if (!activeStatus || activeStatus === '全部') return undefined
+  if (section === 'carpools') {
+    if (activeStatus === '待处理') return ['pending_review', 'paused']
+    if (activeStatus === '需复核') return ['changes_requested']
+  }
+  if (section === 'api-services') {
+    if (activeStatus === '待处理') return ['pending', 'suspended']
+    if (activeStatus === '需复核') return ['changes_requested']
+  }
+  return undefined
+}
+
+function filterAdminSectionPageRows(rows: AdminRow[], filters: AdminSectionPageFilters) {
+  const query = filters.q?.trim().toLowerCase()
+  return rows.filter((row) => {
+    const viewMatched = !filters.view
+      || (filters.view === 'public' && (row.targetType === 'carpool' ? !isCarpoolExceptionStatus(row.status) : isApiServicePublicStatus(row.status)))
+      || (filters.view === 'exceptions' && (row.targetType === 'carpool' ? isCarpoolExceptionStatus(row.status) : isApiServiceExceptionStatus(row.status)))
+    const statusMatched = !filters.activeStatus || filters.activeStatus === '全部'
+      || (filters.activeStatus === '待处理' && (row.targetType === 'carpool' ? isCarpoolAdminActionStatus(row.status) : isApiServiceAdminActionStatus(row.status)))
+      || (filters.activeStatus === '需复核' && row.status.includes('复核'))
+      || row.status === filters.activeStatus
+    const riskText = `${row.risk} ${row.status}`
+    const riskMatched = !filters.risk || filters.risk === 'all'
+      || filters.risk === 'has_note' && Boolean(row.risk.trim())
+      || filters.risk === 'high' && /高风险|纠纷|举报|封禁|异常|超时|未解决|危险/i.test(riskText)
+    return viewMatched && statusMatched && riskMatched
+      && (!query || [row.id, row.primary, row.secondary, row.owner, row.status, row.risk, ...(row.detailItems ?? []).flatMap(item => [item.label, item.value])]
+        .some(value => value.toLowerCase().includes(query)))
+  })
+}
+
+export async function getAdminSectionRowsPage(section: AdminSection, filters: AdminSectionPageFilters = {}, page: CursorPageRequest = {}): Promise<CursorPage<AdminRow>> {
+  const statuses = adminSectionBackendStatuses(section, filters.activeStatus)
+  if (shouldUseRealBackend() && section === 'carpools') {
+    return backendAdminCarpoolRowsPage({ q: filters.q, view: filters.view, statuses, risk: filters.risk }, page)
+  }
+  if (shouldUseRealBackend() && section === 'api-services') {
+    return backendAdminAPIServiceRowsPage({ q: filters.q, view: filters.view, statuses, risk: filters.risk }, page)
+  }
+  if (shouldUseRealBackend() && (section === 'official-prices' || section === 'price-leads')) {
+    return backendAdminOfficialPriceRowsPage({
+      q: filters.q,
+      none: filters.risk === 'high' || Boolean(filters.activeStatus && filters.activeStatus !== '全部'),
+    }, page)
+  }
+  if (shouldUseRealBackend() && section === 'trade-intents') {
+    return backendAdminAPIOrderRowsPage({ search: filters.q, risk: filters.risk }, page)
+  }
+  if (shouldUseRealBackend()) {
+    throw new Error(`管理模块 ${section} 未配置服务端分页适配器。`)
+  }
+  return paginateCursorItems(filterAdminSectionPageRows(await getAdminSectionRows(section), filters), page)
+}
+
 function stringValue(value: unknown, fallback = '') {
   return typeof value === 'string' ? value.trim() : fallback
 }
@@ -3891,8 +4129,8 @@ function assertCarpoolAccessArrangement(payload: SaveCarpoolDraftPayload, produc
   if (typeof payload.providesAdminAccount !== 'boolean') {
     throw new Error('请选择是否提供管理员账号。')
   }
-  if (!payload.weeklyQuotaAmount || payload.weeklyQuotaAmount <= 0 || !payload.monthlyQuotaAmount || payload.monthlyQuotaAmount <= 0) {
-    throw new Error('请填写有效的每周额度与每月额度。')
+  if (!payload.dailyQuotaAmount || payload.dailyQuotaAmount <= 0 || !payload.weeklyQuotaAmount || payload.weeklyQuotaAmount <= 0) {
+    throw new Error('请填写有效的每天额度与每周额度。')
   }
   if (typeof payload.followsOfficialQuotaReset !== 'boolean') throw new Error('请选择额度是否跟随官方重置。')
   if (!payload.vpsRegion.trim()) throw new Error('请填写 VPS 区域。')
@@ -3938,7 +4176,7 @@ function buildModelPriceRowsFromPayload(payload: Record<string, unknown>, defaul
       const model = modelCatalog.find(row => row.id === item.modelId)
       return {
         modelId: model?.id ?? item.modelId ?? 'custom-model',
-        modelName: model?.displayName ?? item.modelId ?? '自定义模型',
+        modelName: model?.name ?? item.modelId ?? '自定义模型',
         provider: model?.provider === 'openai' ? 'OpenAI' : model?.provider === 'anthropic' ? 'Anthropic' : 'Other',
         officialInputPricePerMillion: model?.officialInputPricePerMillion ?? 0,
         officialCachedInputPricePerMillion: model?.officialCachedInputPricePerMillion ?? null,
@@ -3996,16 +4234,16 @@ export async function submitCarpool(payload: SaveCarpoolDraftPayload) {
   assertCarpoolAccessArrangement(payload, product)
   const id = `carpool-${Date.now()}`
   const monthly = payload.monthlyPriceCny ?? 0
+  const dailyQuotaAmount = payload.dailyQuotaAmount ?? 0
   const weeklyQuotaAmount = payload.weeklyQuotaAmount ?? 0
-  const monthlyQuotaAmount = payload.monthlyQuotaAmount ?? 0
   const carpool: Carpool = {
     id,
     product: product?.displayName ?? payload.customProductName?.trim() ?? '自定义产品',
     region: regionName,
     monthly,
     serviceMultiplier: 1,
+    dailyQuotaAmount,
     weeklyQuotaAmount,
-    monthlyQuotaAmount,
     followsOfficialQuotaReset: payload.followsOfficialQuotaReset,
     vpsRegion: payload.vpsRegion.trim() || null,
     supportsMainlandChinaDirectConnection: payload.supportsMainlandChinaDirectConnection,
@@ -4060,6 +4298,13 @@ export async function submitCarpool(payload: SaveCarpoolDraftPayload) {
 export async function submitApiService(payload: Record<string, unknown>) {
   if (shouldUseRealBackend()) return backendSubmitAPIService(payload)
   await wait()
+  const billing = requireSupportedApiServiceBillingMode(payload.billingMode)
+  const isPublish = payload.status === 'reviewing'
+  const probeConnectionId = stringValue(payload.probeConnectionId, '')
+  const probeConnection = (await getOwnerAPIProbeConnections()).find(connection => connection.id === probeConnectionId)
+  if (isPublish && (!probeConnection || !probeConnection.enabled || probeConnection.verificationStatus !== 'verified')) {
+    throw new Error('请选择已验证且启用的探针连接。')
+  }
   const id = `api-${Date.now()}`
   const normalized = normalizeMerchantDisplayName(payload)
   const gateway = apiGatewayFromDistribution(payload.distributionSystem)
@@ -4068,15 +4313,13 @@ export async function submitApiService(payload: Record<string, unknown>) {
   const selectedModels = Array.isArray(payload.selectedModels) ? payload.selectedModels as Array<{ modelId?: string, enabled?: boolean }> : []
   const models = selectedModels
     .filter(item => item.enabled !== false)
-    .map(item => modelCatalog.find(model => model.id === item.modelId)?.displayName ?? item.modelId ?? '自定义模型')
+    .map(item => modelCatalog.find(model => model.id === item.modelId)?.name ?? item.modelId ?? '自定义模型')
     .filter(Boolean)
   const merchantIdentityMode = apiMerchantIdentityMode(normalized.merchantIdentityMode)
   const deliveryModes = apiDeliveryModes(payload.deliveryModes)
-  const billing = requireSupportedApiServiceBillingMode(payload.billingMode)
   const rawPackages = Array.isArray(payload.packages)
     ? payload.packages as Array<{ id?: string, name?: string, priceCny?: number, panelAllowance?: number, quotaUsagePolicy?: unknown, durationDays?: number, stockTotal?: number, description?: string, enabled?: boolean, modelCatalogIds?: string[] }>
     : []
-  const isPublish = payload.status === 'reviewing'
   const paymentOptions = Array.isArray(payload.paymentOptions)
     ? payload.paymentOptions as Array<{ paymentMethod?: string, enabled?: boolean, paymentInstructions?: string, paymentQrCodeDataUrl?: string | null }>
     : []
@@ -4103,6 +4346,9 @@ export async function submitApiService(payload: Record<string, unknown>) {
   const quotaUsagePolicy = apiQuotaUsagePolicyFromInput(payload.quotaUsagePolicy)
   const service: ApiService = {
     id,
+    version: 1,
+    probeConnectionId,
+    probeReady: Boolean(probeConnection?.enabled && probeConnection.verificationStatus === 'verified'),
     title: stringValue(payload.generatedTitle, models.length ? `${models[0]} API 服务` : '新 API 服务'),
     sourceUrl: stringValue(payload.sourceUrl, ''),
     quotaUsagePolicy,
@@ -4186,7 +4432,7 @@ export async function submitApiService(payload: Record<string, unknown>) {
           serviceModelId: `service-${modelId}`,
           modelCatalogId: modelId,
           modelPriceVersionId: '',
-          modelName: model?.displayName ?? modelId,
+          modelName: model?.name ?? modelId,
           provider: model?.provider ?? 'other',
           merchantMultiplier: defaultMultiplier,
         }
@@ -4202,6 +4448,11 @@ export async function submitApiService(payload: Record<string, unknown>) {
     paymentOptions: normalizedPaymentOptions,
   }).paymentOptions
   apiServiceStore.unshift(service)
+  updateMockAPIProbeConnectionReference({
+    connectionId: probeConnectionId,
+    serviceId: service.id,
+    serviceTitle: service.title,
+  })
   persistMarketStores()
   appendAdminAuditLog({
     actorType: 'system',
@@ -4224,11 +4475,46 @@ export async function publishApiService(id: string) {
   if (!target) throw new Error('API 服务不存在。')
   if (target.state !== 'offline') throw new Error('当前 API 服务不能上线。')
   requireSupportedApiServiceBillingMode(target.billingMode)
+  if (!target.probeConnectionId || !target.probeReady) throw new Error('上线前必须绑定已验证且启用的探针连接。')
   target.state = 'online'
   target.online = true
   target.publiclyOrderable = true
   target.warning = undefined
   target.lastOnlineConfirmedAt = nowText()
+  persistMarketStores()
+  return clone(target)
+}
+
+export async function updateApiServiceProbeConnection(input: {
+  id: string
+  probeConnectionId: string
+  version: number
+}) {
+  if (shouldUseRealBackend()) return backendUpdateAPIServiceProbeConnection(input)
+  await wait()
+  const target = apiServiceStore.find(item => item.id === input.id)
+  if (!target) throw new Error('API 服务不存在。')
+  const currentVersion = target.version ?? 1
+  if (currentVersion !== input.version) throw new Error('API 服务已更新，请刷新后重试。')
+  const connection = input.probeConnectionId
+    ? (await getOwnerAPIProbeConnections()).find(item => item.id === input.probeConnectionId)
+    : null
+  if (input.probeConnectionId && (!connection || !connection.enabled || connection.verificationStatus !== 'verified')) {
+    throw new Error('只能绑定已验证且启用的探针连接。')
+  }
+  const previousConnectionId = target.probeConnectionId
+  target.probeConnectionId = connection?.id
+  target.probeReady = Boolean(connection)
+  target.version = currentVersion + 1
+  target.publiclyOrderable = Boolean(connection) && target.online
+  target.warning = connection ? undefined : '未绑定可用探针连接'
+  target.serviceUpdatedAt = nowText()
+  updateMockAPIProbeConnectionReference({
+    previousConnectionId,
+    connectionId: connection?.id,
+    serviceId: target.id,
+    serviceTitle: target.title,
+  })
   persistMarketStores()
   return clone(target)
 }
@@ -4255,6 +4541,7 @@ export async function resumeApiService(id: string) {
   if (!target) throw new Error('API 服务不存在。')
   if (target.state !== 'paused') throw new Error('当前 API 服务不能恢复。')
   requireSupportedApiServiceBillingMode(target.billingMode)
+  if (!target.probeConnectionId || !target.probeReady) throw new Error('恢复接单前必须绑定已验证且启用的探针连接。')
   target.state = 'online'
   target.online = true
   target.publiclyOrderable = true
@@ -4676,8 +4963,8 @@ export async function getNavigationBadges(): Promise<NavigationBadgeSummary> {
   if (myUserProfileStore.permissions.includes('admin')) {
     const admin = {
       officialPrices: officialPriceStore.filter(item => item.status === '待验证').length,
-      carpools: carpoolStore.filter(item => item.status === '审核中').length,
-      apiServices: apiServiceStore.filter(item => item.state === 'reviewing').length,
+      carpools: carpoolStore.filter(item => item.status === '审核中' || item.status === '暂停').length,
+      apiServices: apiServiceStore.filter(item => item.state === 'reviewing' || (item.state === 'paused' && item.warning === '已下架')).length,
       feedbackTickets: feedbackTicketStore.filter(item => item.status === 'submitted' || item.status === 'following_up').length,
       reports: reportRows.filter(item => !item.status.includes('关闭') && !item.status.includes('需要补充')).length
         + appealRows.filter(item => item.status === '申诉复核中').length,
@@ -4947,6 +5234,15 @@ export async function getReviewCenterRows(): Promise<ReviewCenterData> {
   }
 }
 
+export async function getReviewCenterPage(direction: ReviewCenterRow['direction'] | undefined, page: CursorPageRequest = {}): Promise<CursorPage<ReviewCenterRow> & { presetTags: string[] }> {
+  if (shouldUseRealBackend()) return backendReviewCenterPage(direction, page)
+  const center = await getReviewCenterRows()
+  return {
+    ...paginateCursorItems(center.items.filter(item => !direction || item.direction === direction), page),
+    presetTags: center.presetTags,
+  }
+}
+
 export async function submitReview(payload: SubmitReviewPayload) {
   if (shouldUseRealBackend()) return backendSubmitReview(payload)
   await wait()
@@ -4972,10 +5268,20 @@ export async function getMyCarpoolApplications(filters: CarpoolApplicationFilter
   return clone(filterCarpoolApplications({ ...filters, buyerId: currentBuyerId, sort: filters.sort ?? 'default_buyer' }))
 }
 
+export async function getMyCarpoolApplicationsPage(filters: CarpoolApplicationFilters = {}, page: CursorPageRequest = {}) {
+  if (shouldUseRealBackend()) return backendMyCarpoolApplicationsPage(filters, page)
+  return paginateCursorItems(filterCarpoolApplications({ ...filters, buyerId: currentBuyerId, sort: filters.sort ?? 'default_buyer' }), page)
+}
+
 export async function getMerchantCarpoolApplications(filters: CarpoolApplicationFilters = {}) {
   if (shouldUseRealBackend()) return backendMerchantCarpoolApplications(filters)
   await wait()
   return clone(filterCarpoolApplications({ ...filters, ownerId: currentOwnerId, sort: filters.sort ?? 'default_owner' }))
+}
+
+export async function getMerchantCarpoolApplicationsPage(filters: CarpoolApplicationFilters = {}, page: CursorPageRequest = {}) {
+  if (shouldUseRealBackend()) return backendMerchantCarpoolApplicationsPage(filters, page)
+  return paginateCursorItems(filterCarpoolApplications({ ...filters, ownerId: currentOwnerId, sort: filters.sort ?? 'default_owner' }), page)
 }
 
 export async function getCarpoolApplicationById(id: string): Promise<CarpoolApplicationWithMeta | null> {
@@ -5512,6 +5818,7 @@ export async function createApiOrderFromIntent(intentId: string, paymentMethod: 
     selectedPaymentMethod: paymentMethod,
     paymentWindowMinutes: 10,
     paymentExpiresAt: minutesFromNow(10),
+    buyerNote: intent.buyerNote,
     version: 1,
     intentSnapshot: clone(intent.snapshot),
     selectedDeliveryMode: intent.selectedDeliveryMode,
@@ -5615,6 +5922,7 @@ export async function createApiQuotaOrder(payload: CreateApiQuotaOrderPayload) {
     selectedPaymentMethod: paymentMethod,
     paymentWindowMinutes,
     paymentExpiresAt: minutesFromNow(paymentWindowMinutes),
+    buyerNote: intent.buyerNote,
     version: 1,
     intentSnapshot: clone(intentSnapshot),
     selectedDeliveryMode,
@@ -5691,10 +5999,20 @@ export async function getMyApiOrders(filters: ApiOrderFilters = {}) {
   return clone(filterApiOrders({ ...filters, buyerId: currentBuyerId }))
 }
 
+export async function getMyApiOrdersPage(filters: ApiOrderFilters = {}, page: CursorPageRequest = {}) {
+  if (shouldUseRealBackend()) return backendMyAPIOrdersPage(filters, page)
+  return paginateCursorItems(filterApiOrders({ ...filters, buyerId: currentBuyerId }), page)
+}
+
 export async function getMerchantApiOrders(filters: ApiOrderFilters = {}) {
   if (shouldUseRealBackend()) return backendOwnerAPIOrders(filters)
   await wait()
   return clone(filterApiOrders({ ...filters, sellerId: currentMerchantId }))
+}
+
+export async function getMerchantApiOrdersPage(filters: ApiOrderFilters = {}, page: CursorPageRequest = {}) {
+  if (shouldUseRealBackend()) return backendOwnerAPIOrdersPage(filters, page)
+  return paginateCursorItems(filterApiOrders({ ...filters, sellerId: currentMerchantId }), page)
 }
 
 export async function getApiOrderById(id: string, perspective: 'buyer' | 'merchant' = 'buyer') {
@@ -5782,25 +6100,25 @@ export async function confirmApiOrderComplete(id: string, version: number) {
   return updateApiOrder(id, order => {
     if (order.version !== version) throw new Error('订单已更新，请刷新后重试。')
     if (order.status !== 'delivery_submitted') throw new Error('只有待核验凭证的订单可以确认可用。')
-    if (order.disputeStatus === 'open') throw new Error('订单问题正在处理中，暂时不能确认凭证可用。')
+		if (isApiOrderDisputeActive(order.disputeStatus)) throw new Error('订单问题正在处理中，暂时不能确认凭证可用。')
     order.status = 'completed'
     order.completionSource = 'buyer_confirmed'
     order.completedAt = nowText()
   })
 }
 
-export async function openApiOrderDispute(id: string, reason: string, version: number, perspective: 'buyer' | 'merchant') {
-  if (shouldUseRealBackend()) return backendOpenAPIOrderDispute(id, reason, version, perspective)
+export async function openApiOrderDispute(id: string, input: OpenApiOrderDisputeInput, version: number, perspective: 'buyer' | 'merchant') {
+  if (shouldUseRealBackend()) return backendOpenAPIOrderDispute(id, input, version, perspective)
   await wait()
   return updateApiOrder(id, order => {
     if (order.version !== version) throw new Error('订单已更新，请刷新后重试。')
     if (perspective === 'buyer' && order.buyerId !== currentBuyerId) throw new Error('无权操作该订单。')
     if (perspective === 'merchant' && order.sellerId !== currentMerchantId) throw new Error('无权操作该订单。')
-    if (order.status === 'cancelled' || order.status === 'completed' || order.disputeStatus === 'open') {
+		if (order.status === 'cancelled' || order.status === 'completed' || normalizeApiOrderDisputeStatus(order.disputeStatus) !== 'none') {
       throw new Error('当前订单不能再次申请平台介入。')
     }
-    if (!reason.trim()) throw new Error('请填写订单问题说明。')
-    order.disputeStatus = 'open'
+    if (!input.reason.trim()) throw new Error('请填写订单问题说明。')
+    order.disputeStatus = 'negotiating'
   })
 }
 

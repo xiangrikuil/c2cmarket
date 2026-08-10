@@ -18,7 +18,7 @@ import { Button } from '@/components/ui/button'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import PageTitle from '@/components/market/PageTitle.vue'
 import SoftTable from '@/components/market/SoftTable.vue'
-import TablePagination from '@/components/market/TablePagination.vue'
+import CursorTablePagination from '@/components/market/CursorTablePagination.vue'
 import EmptyState from '@/components/market/EmptyState.vue'
 import ErrorState from '@/components/market/ErrorState.vue'
 import LocalTime from '@/components/market/LocalTime.vue'
@@ -35,7 +35,7 @@ import {
   getApiServiceSalesTimeSummary,
   getInitialApiServiceSalesView,
 } from '@/components/api-service-owner/apiServiceOwnerPresentation'
-import { usePagination } from '@/composables/usePagination'
+import { useCursorPagination } from '@/composables/useCursorPagination'
 import {
   getApiServicePublicDetailUrl,
   type ApiServiceSalesChannel,
@@ -44,7 +44,7 @@ import {
 } from '@/lib/api'
 import { getApiServiceProductIconSrc } from '@/lib/productCategoryIcon'
 import {
-  useMyApiServices,
+  usePagedMyApiServices,
   usePauseApiServiceMutation,
   usePublishApiServiceMutation,
   useResumeApiServiceMutation,
@@ -55,14 +55,17 @@ const route = useRoute()
 const quotaPublishIntent = computed(() => route.query.intent === 'quota')
 // 筛选只按首次入口设置，后续查询参数变化不覆盖卖家手动选择。
 const salesView = ref<ApiServiceSalesView>(getInitialApiServiceSalesView(route.query.intent))
-const { data: apiServices, error, isLoading, refetch } = useMyApiServices(salesView)
+const pagination = useCursorPagination([salesView])
+const pageRequest = computed(() => ({ limit: pagination.pageSize, cursor: pagination.cursor.value }))
+const pageQuery = usePagedMyApiServices(salesView, pageRequest)
+const { error, refetch } = pageQuery
 const { data: catalogCategories } = useProductCategories()
 const publishMutation = usePublishApiServiceMutation()
 const pauseMutation = usePauseApiServiceMutation()
 const resumeMutation = useResumeApiServiceMutation()
-const rows = computed(() => apiServices.value ?? [])
+const rows = computed(() => pageQuery.data.value?.items ?? [])
+const isLoading = computed(() => pageQuery.isLoading.value || pageQuery.isFetching.value)
 const publishServiceRoute = computed(() => quotaPublishIntent.value ? '/api-market/quota/new' : '/api-market/new')
-const pagination = usePagination(rows)
 const categoryIconByCode = computed(() => new Map((catalogCategories.value ?? []).map(category => [category.code, category.iconDataUrl])))
 const selectedSalesView = computed(() => (
   apiServiceSalesViewOptions.find(option => option.value === salesView.value)
@@ -211,7 +214,7 @@ function resumeService(id: string) {
 
     <template v-else>
       <SoftTable class="hidden md:block" :columns="['服务', '销售方式', '销售状态', '销售时间', '服务状态', '操作']">
-        <tr v-for="item in pagination.paginatedRows.value" :key="item.id">
+        <tr v-for="item in rows" :key="item.id">
           <td class="align-top">
           <div class="flex min-w-0 items-center gap-2.5">
             <span class="grid h-9 w-9 shrink-0 place-items-center rounded-md border border-border bg-white">
@@ -284,7 +287,7 @@ function resumeService(id: string) {
             <div class="mt-2 flex flex-wrap items-center gap-1.5">
               <span class="flex items-center gap-1 text-xs text-muted-foreground">
                 <Activity class="h-3.5 w-3.5" aria-hidden="true" />
-                探针
+                探针连接
               </span>
               <StatusBadge
                 :status="item.healthSummary.availabilityReason ?? item.healthSummary.state"
@@ -332,9 +335,9 @@ function resumeService(id: string) {
                 </RouterLink>
               </Button>
               <Button v-if="!quotaPublishIntent" size="sm" variant="outline" as-child>
-                <RouterLink :to="`/my/api-services/${item.id}#health-probe`">
+                <RouterLink to="/my/api-probe-connections">
                   <Activity class="h-4 w-4" />
-                  配置探针
+                  管理探针连接
                 </RouterLink>
               </Button>
               <Button v-if="!quotaPublishIntent" size="sm" as-child>
@@ -359,19 +362,20 @@ function resumeService(id: string) {
           </td>
         </tr>
         <template #footer>
-          <TablePagination
-            v-model:page="pagination.page.value"
-            :page-count="pagination.pageCount.value"
-            :total="pagination.total.value"
-            :start-item="pagination.startItem.value"
-            :end-item="pagination.endItem.value"
+          <CursorTablePagination
+            :page="pagination.page.value"
+            :item-count="rows.length"
+            :has-next-page="Boolean(pageQuery.data.value?.nextCursor)"
+            :loading="pageQuery.isFetching.value"
+            @previous="pagination.previous"
+            @next="pagination.next(pageQuery.data.value?.nextCursor)"
           />
         </template>
       </SoftTable>
 
       <div class="divide-y divide-border border-y border-border md:hidden">
         <article
-          v-for="item in pagination.paginatedRows.value"
+          v-for="item in rows"
           :key="item.id"
           class="min-w-0 space-y-4 py-4"
         >
@@ -429,7 +433,7 @@ function resumeService(id: string) {
           <div class="flex flex-wrap items-center gap-1.5">
             <span class="flex items-center gap-1 text-xs text-muted-foreground">
               <Activity class="h-3.5 w-3.5" aria-hidden="true" />
-              探针
+              探针连接
             </span>
             <StatusBadge
               :status="item.healthSummary.availabilityReason ?? item.healthSummary.state"
@@ -476,9 +480,9 @@ function resumeService(id: string) {
               </RouterLink>
             </Button>
             <Button v-if="!quotaPublishIntent" size="sm" variant="outline" as-child>
-              <RouterLink :to="`/my/api-services/${item.id}#health-probe`">
+              <RouterLink to="/my/api-probe-connections">
                 <Activity class="h-4 w-4" />
-                配置探针
+                管理探针连接
               </RouterLink>
             </Button>
             <Button v-if="!quotaPublishIntent" size="sm" as-child>
@@ -501,12 +505,13 @@ function resumeService(id: string) {
             </Button>
           </div>
         </article>
-        <TablePagination
-          v-model:page="pagination.page.value"
-          :page-count="pagination.pageCount.value"
-          :total="pagination.total.value"
-          :start-item="pagination.startItem.value"
-          :end-item="pagination.endItem.value"
+        <CursorTablePagination
+          :page="pagination.page.value"
+          :item-count="rows.length"
+          :has-next-page="Boolean(pageQuery.data.value?.nextCursor)"
+          :loading="pageQuery.isFetching.value"
+          @previous="pagination.previous"
+          @next="pagination.next(pageQuery.data.value?.nextCursor)"
         />
       </div>
     </template>

@@ -46,6 +46,7 @@ type reviewCenterRowDTO struct {
 type reviewCenterResponse struct {
 	Items      []reviewCenterRowDTO `json:"items"`
 	PresetTags []string             `json:"presetTags"`
+	NextCursor *string              `json:"nextCursor,omitempty"`
 }
 
 type submitReviewRequest struct {
@@ -83,9 +84,15 @@ func (s *Server) handleMyReviewCenter(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, r, appErr)
 		return
 	}
+	page, appErr := paginateSlice(r, filterReviewCenterRows(r, rows))
+	if appErr != nil {
+		writeProblem(w, r, appErr)
+		return
+	}
 	writeJSON(w, http.StatusOK, reviewCenterResponse{
-		Items:      toReviewCenterRowDTOs(rows),
+		Items:      toReviewCenterRowDTOs(page.Items),
 		PresetTags: append([]string{}, review.PresetTags...),
+		NextCursor: page.NextCursor,
 	})
 }
 

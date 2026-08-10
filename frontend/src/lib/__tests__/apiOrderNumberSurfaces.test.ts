@@ -19,9 +19,12 @@ describe('API order number surfaces', () => {
   })
 
   it('uses normalized order search in buyer, merchant, and administrator views', () => {
-    expect(buyerList).toContain('matchesApiOrderSearch(q, [item.orderNo')
-    expect(merchantList).toContain('matchesApiOrderSearch(q, [item.orderNo')
-    expect(adminList).toContain('matchesApiOrderSearch(q, [row.id')
+    expect(buyerList).toContain('search: keyword.value.trim() || undefined')
+    expect(merchantList).toContain('search: keyword.value.trim() || undefined')
+    expect(adminList).toContain('q: keyword.value.trim() || undefined')
+    expect(buyerList).toContain('useMyApiOrdersPage(pageFilters, pageRequest)')
+    expect(merchantList).toContain('useMerchantApiOrdersPage(pageFilters, pageRequest)')
+    expect(adminList).toContain('useAdminSectionRowsPage(section, pageFilters, pageRequest, supportsServerPagination)')
   })
 
   it('persists public numbers assigned to legacy mock orders', () => {

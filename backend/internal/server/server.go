@@ -14,6 +14,7 @@ import (
 	"c2c-market/backend/internal/module/apihealth"
 	"c2c-market/backend/internal/module/apiintent"
 	"c2c-market/backend/internal/module/apimarket"
+	"c2c-market/backend/internal/module/apimodeltest"
 	"c2c-market/backend/internal/module/apiorder"
 	"c2c-market/backend/internal/module/apipromotion"
 	"c2c-market/backend/internal/module/apiquota"
@@ -51,6 +52,8 @@ type ServerOptions struct {
 	EnableDevAuth      bool
 	ReadinessChecker   health.Checker
 	APIHealth          APIHealthService
+	AdminAPIHealth     AdminAPIHealthService
+	APIModelTester     APIModelTesterService
 	NavigationBadges   NavigationBadgeService
 	RealtimeHub        *realtime.Hub
 	AppEnv             string
@@ -85,14 +88,28 @@ type APIPaymentSettingsService interface {
 }
 
 type APIHealthService interface {
-	OwnerConfig(ctx context.Context, user auth.User, serviceID string) (apihealth.Config, bool, *domain.AppError)
-	PutOwnerConfig(ctx context.Context, user auth.User, serviceID string, input apihealth.ConfigInput, expectedVersion int64) (apihealth.Config, *domain.AppError)
-	DeleteOwnerConfig(ctx context.Context, user auth.User, serviceID string, expectedVersion int64) *domain.AppError
-	CreateChallenge(ctx context.Context, user auth.User, serviceID, method string, expectedVersion int64) (apihealth.Challenge, *domain.AppError)
-	VerifyChallenge(ctx context.Context, user auth.User, serviceID string, expectedVersion int64) (apihealth.Config, *domain.AppError)
-	AdminConfigs(ctx context.Context, user auth.User, status string, page domain.PageRequest) (domain.Page[apihealth.Config], *domain.AppError)
-	AdminDecision(ctx context.Context, user auth.User, configID string, expectedVersion int64, approve bool, reason string) (apihealth.Config, *domain.AppError)
+	OwnerConnections(ctx context.Context, user auth.User) ([]apihealth.Connection, *domain.AppError)
+	OwnerConnection(ctx context.Context, user auth.User, connectionID string) (apihealth.Connection, bool, *domain.AppError)
+	PreflightOwnerConnection(ctx context.Context, user auth.User, input apihealth.ConnectionInput) (apihealth.PreflightResult, *domain.AppError)
+	PreflightExistingOwnerConnection(ctx context.Context, user auth.User, connectionID string, input apihealth.ConnectionInput, expectedVersion int64) (apihealth.PreflightResult, *domain.AppError)
+	CreateOwnerConnection(ctx context.Context, user auth.User, input apihealth.ConnectionInput) (apihealth.Connection, *domain.AppError)
+	UpdateOwnerConnection(ctx context.Context, user auth.User, connectionID string, input apihealth.ConnectionInput, expectedVersion int64) (apihealth.Connection, *domain.AppError)
+	VerifyOwnerConnection(ctx context.Context, user auth.User, connectionID string, expectedVersion int64) (apihealth.Connection, *domain.AppError)
+	DeleteOwnerConnection(ctx context.Context, user auth.User, connectionID string, expectedVersion int64) *domain.AppError
 	Summaries(ctx context.Context, serviceIDs []string) (map[string]apihealth.Summary, *domain.AppError)
+}
+
+type AdminAPIHealthService interface {
+	ProbeCalibration(ctx context.Context, model, protocol, environment string) (apihealth.Calibration, *domain.AppError)
+	PreviewLatencyRule(ctx context.Context, model, protocol, environment string, slowTTFTMS, hardTimeoutMS int) (apihealth.LatencyRulePreview, *domain.AppError)
+	PublishLatencyRule(ctx context.Context, admin auth.User, model, protocol, environment string, slowTTFTMS, hardTimeoutMS int) (apihealth.LatencyRule, *domain.AppError)
+	LatencyRules(ctx context.Context) ([]apihealth.LatencyRule, *domain.AppError)
+}
+
+type APIModelTesterService interface {
+	OrderSources(ctx context.Context, user auth.User) ([]apimodeltest.OrderSource, *domain.AppError)
+	Discover(ctx context.Context, user auth.User, source apimodeltest.CredentialSource) (apimodeltest.Discovery, *domain.AppError)
+	Test(ctx context.Context, user auth.User, source apimodeltest.CredentialSource, model string) (apimodeltest.ModelTest, *domain.AppError)
 }
 
 type AdminUserService interface {
@@ -175,6 +192,9 @@ type Service interface {
 	CreateAPIModel(ctx context.Context, user auth.User, input catalog.APIModelInput) (catalog.APIModelCatalog, *domain.AppError)
 	UpdateAPIModel(ctx context.Context, user auth.User, modelID string, input catalog.APIModelInput) (catalog.APIModelCatalog, *domain.AppError)
 	SetAPIModelActive(ctx context.Context, user auth.User, modelID string, active bool) (catalog.APIModelCatalog, *domain.AppError)
+	PreviewAPIModelSync(ctx context.Context, user auth.User, input catalog.APIModelSyncPreviewInput) (catalog.APIModelSyncPreview, *domain.AppError)
+	ApplyAPIModelSyncWithIdempotency(ctx context.Context, user auth.User, routeKey, key, requestHash string, input catalog.APIModelSyncApplyInput, buildCompletion catalog.APIModelSyncCompletionBuilder) (idempotency.Completion, *domain.AppError)
+	SetAPIModelsActiveWithIdempotency(ctx context.Context, user auth.User, routeKey, key, requestHash string, input catalog.APIModelBulkStatusInput, buildCompletion catalog.APIModelSyncCompletionBuilder) (idempotency.Completion, *domain.AppError)
 
 	AdminModelAuditTargets(ctx context.Context, user auth.User) ([]modelaudit.Target, *domain.AppError)
 	AdminModelAuditTarget(ctx context.Context, user auth.User, targetID string) (modelaudit.Target, *domain.AppError)
@@ -233,6 +253,8 @@ type Service interface {
 	AdminReportActionWithIdempotency(ctx context.Context, user auth.User, routeKey, key, requestHash string, input report.AdminActionInput, buildCompletion report.AdminCompletionBuilder) (idempotency.Completion, *domain.AppError)
 	SubmitInfoSupplementWithIdempotency(ctx context.Context, user auth.User, routeKey, key, requestHash string, input report.SupplementInput, buildCompletion report.SupplementCompletionBuilder) (idempotency.Completion, *domain.AppError)
 	MyDisputes(ctx context.Context, user auth.User) ([]report.DisputeCase, *domain.AppError)
+	MyDispute(ctx context.Context, user auth.User, id string) (report.DisputeCase, *domain.AppError)
+	DisputeParticipantActionWithIdempotency(ctx context.Context, user auth.User, routeKey, key, requestHash string, input report.DisputeParticipantActionInput, buildCompletion report.DisputeParticipantCompletionBuilder) (idempotency.Completion, *domain.AppError)
 	AdminDisputes(ctx context.Context, user auth.User) ([]report.DisputeCase, *domain.AppError)
 	AdminDispute(ctx context.Context, user auth.User, id string) (report.DisputeCase, *domain.AppError)
 	AdminDisputeActionWithIdempotency(ctx context.Context, user auth.User, routeKey, key, requestHash string, input report.AdminActionInput, buildCompletion report.AdminCompletionBuilder) (idempotency.Completion, *domain.AppError)
@@ -246,11 +268,12 @@ type Service interface {
 
 	CreateAPIService(ctx context.Context, user auth.User, input apimarket.CreateServiceInput) (apimarket.Service, *domain.AppError)
 	UpdateAPIService(ctx context.Context, user auth.User, input apimarket.UpdateServiceInput) (apimarket.Service, *domain.AppError)
-	PublicAPIServices(ctx context.Context, filter apimarket.PublicServiceFilter) ([]apimarket.Service, *domain.AppError)
+	UpdateAPIServiceProbeConnection(ctx context.Context, user auth.User, input apimarket.UpdateProbeConnectionInput) (apimarket.Service, *domain.AppError)
+	PublicAPIServices(ctx context.Context, filter apimarket.PublicServiceFilter, page domain.PageRequest) (domain.Page[apimarket.Service], *domain.AppError)
 	PublicAPIService(ctx context.Context, serviceID string) (apimarket.Service, *domain.AppError)
 	OwnerAPIServices(ctx context.Context, user auth.User, filter apimarket.OwnerServiceFilter, page domain.PageRequest) (domain.Page[apimarket.Service], *domain.AppError)
 	OwnerAPIService(ctx context.Context, user auth.User, serviceID string) (apimarket.Service, *domain.AppError)
-	AdminAPIServices(ctx context.Context, user auth.User, page domain.PageRequest) (domain.Page[apimarket.Service], *domain.AppError)
+	AdminAPIServices(ctx context.Context, user auth.User, filter apimarket.AdminServiceFilter, page domain.PageRequest) (domain.Page[apimarket.Service], *domain.AppError)
 	AdminAPIService(ctx context.Context, user auth.User, serviceID string) (apimarket.Service, *domain.AppError)
 	SubmitAPIServiceForReview(ctx context.Context, user auth.User, input apimarket.ServiceOwnerActionInput) (apimarket.Service, *domain.AppError)
 	UpdateAPIServicePublication(ctx context.Context, user auth.User, input apimarket.ServiceOwnerActionInput, action string) (apimarket.Service, *domain.AppError)
@@ -331,11 +354,11 @@ type CarpoolService interface {
 	PublishCarpoolListing(ctx context.Context, user auth.User, input carpool.PublishListingInput) (carpool.Listing, *domain.AppError)
 	UpdateCarpoolListing(ctx context.Context, user auth.User, input carpool.UpdateListingInput) (carpool.Listing, *domain.AppError)
 	SubmitCarpoolListingForReview(ctx context.Context, user auth.User, input carpool.SubmitListingReviewInput) (carpool.Listing, *domain.AppError)
-	PublicCarpoolListings(ctx context.Context, page domain.PageRequest) (domain.Page[carpool.Listing], *domain.AppError)
+	PublicCarpoolListings(ctx context.Context, filter carpool.ListingFilter, page domain.PageRequest) (domain.Page[carpool.Listing], *domain.AppError)
 	PublicCarpoolListing(ctx context.Context, listingID string) (carpool.Listing, *domain.AppError)
 	CarpoolApplicationEligibility(ctx context.Context, user auth.User, listingID string) (carpool.ApplicationEligibility, *domain.AppError)
 	MyCarpoolListings(ctx context.Context, user auth.User) ([]carpool.Listing, *domain.AppError)
-	AdminCarpoolListings(ctx context.Context, user auth.User, page domain.PageRequest) (domain.Page[carpool.Listing], *domain.AppError)
+	AdminCarpoolListings(ctx context.Context, user auth.User, filter carpool.ListingFilter, page domain.PageRequest) (domain.Page[carpool.Listing], *domain.AppError)
 	AdminCarpoolListing(ctx context.Context, user auth.User, listingID string) (carpool.Listing, *domain.AppError)
 	UpdateCarpoolListingReviewStatus(ctx context.Context, user auth.User, input carpool.ReviewInput) (carpool.Listing, *domain.AppError)
 	CreateCarpoolApplication(ctx context.Context, user auth.User, input carpool.CreateApplicationInput) (carpool.Application, *domain.AppError)
@@ -383,6 +406,9 @@ type ReputationGovernanceService interface {
 	AdminSourceAuthorVerification(ctx context.Context, user auth.User, resourceType, resourceID string) (reputation.SourceAuthorVerificationAudit, *domain.AppError)
 	AdminUpdateSourceAuthorVerification(ctx context.Context, user auth.User, input reputation.UpdateSourceAuthorVerificationInput) (reputation.SourceAuthorVerificationAudit, *domain.AppError)
 	AdminCreateDisputeOutcomeWithIdempotency(ctx context.Context, user auth.User, routeKey, key, requestHash string, input reputation.CreateOutcomeInput, buildCompletion reputation.GovernanceCompletionBuilder) (idempotency.Completion, *domain.AppError)
+	AdminAPIOrderSanctionRecommendation(ctx context.Context, user auth.User, disputeCaseID string) (reputation.APIOrderSanctionRecommendation, *domain.AppError)
+	AdminApplyAPIOrderSanctionWithIdempotency(ctx context.Context, user auth.User, routeKey, key, requestHash string, input reputation.ApplyAPIOrderSanctionInput, buildCompletion reputation.GovernanceCompletionBuilder) (idempotency.Completion, *domain.AppError)
+	MyActiveReputationRestrictions(ctx context.Context, user auth.User) ([]reputation.UserRestriction, *domain.AppError)
 	AdminCreateUserRestrictionWithIdempotency(ctx context.Context, user auth.User, routeKey, key, requestHash string, input reputation.CreateRestrictionInput, buildCompletion reputation.GovernanceCompletionBuilder) (idempotency.Completion, *domain.AppError)
 	AdminRevokeUserRestrictionWithIdempotency(ctx context.Context, user auth.User, routeKey, key, requestHash string, input reputation.RevokeRestrictionInput, buildCompletion reputation.GovernanceCompletionBuilder) (idempotency.Completion, *domain.AppError)
 	CheckReputationActionAllowed(ctx context.Context, userID, role, action string) *domain.AppError
@@ -408,6 +434,8 @@ type Server struct {
 	apiQuotas        APIQuotaService
 	apiPayment       APIPaymentSettingsService
 	apiHealth        APIHealthService
+	adminAPIHealth   AdminAPIHealthService
+	apiModelTester   APIModelTesterService
 	adminUsers       AdminUserService
 	apiPromotions    APIPromotionService
 	growth           GrowthService
@@ -442,6 +470,10 @@ func NewServer(service ApplicationService, options ...ServerOptions) http.Handle
 	if navigationBadges == nil {
 		navigationBadges = navigationbadge.NewService(nil, time.Now)
 	}
+	apiModelTester := option.APIModelTester
+	if apiModelTester == nil {
+		apiModelTester = apimodeltest.NewService(nil, 15*time.Second, time.Now)
+	}
 	realtimeHub := option.RealtimeHub
 	if realtimeHub == nil {
 		realtimeHub = realtime.NewHub()
@@ -460,6 +492,8 @@ func NewServer(service ApplicationService, options ...ServerOptions) http.Handle
 		apiQuotas:        service,
 		apiPayment:       service,
 		apiHealth:        option.APIHealth,
+		adminAPIHealth:   option.AdminAPIHealth,
+		apiModelTester:   apiModelTester,
 		adminUsers:       service,
 		apiPromotions:    service,
 		growth:           service,

@@ -2,7 +2,6 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
 import TriangleAlert from 'lucide-vue-next/dist/esm/icons/triangle-alert.js'
-import Activity from 'lucide-vue-next/dist/esm/icons/activity.js'
 import ArrowLeft from 'lucide-vue-next/dist/esm/icons/arrow-left.js'
 import Bell from 'lucide-vue-next/dist/esm/icons/bell.js'
 import BookOpen from 'lucide-vue-next/dist/esm/icons/book-open.js'
@@ -12,6 +11,7 @@ import ClipboardList from 'lucide-vue-next/dist/esm/icons/clipboard-list.js'
 import Code2 from 'lucide-vue-next/dist/esm/icons/code-xml.js'
 import FileText from 'lucide-vue-next/dist/esm/icons/file-text.js'
 import Gauge from 'lucide-vue-next/dist/esm/icons/gauge.js'
+import Activity from 'lucide-vue-next/dist/esm/icons/activity.js'
 import Gift from 'lucide-vue-next/dist/esm/icons/gift.js'
 import Menu from 'lucide-vue-next/dist/esm/icons/menu.js'
 import MessageSquareWarning from 'lucide-vue-next/dist/esm/icons/message-square-warning.js'
@@ -51,9 +51,8 @@ const navGroups = computed(() => [
   ] },
   { title: '待办与治理', items: [
     { label: '官网价格维护', to: '/admin/official-prices', icon: ShieldCheck, count: badges.value?.admin?.officialPrices ?? null },
-    { label: '车源异常', to: '/admin/carpools', icon: CarFront, count: badges.value?.admin?.carpools ?? null },
-    { label: 'API 服务审核', to: '/admin/api-services', icon: Code2, count: badges.value?.admin?.apiServices ?? null },
-    { label: 'API 探针授权', to: '/admin/api-health-probes', icon: Activity, count: null },
+    { label: '车源管理', to: '/admin/carpools', icon: CarFront, count: badges.value?.admin?.carpools ?? null },
+    { label: 'API 服务管理', to: '/admin/api-services', icon: Code2, count: badges.value?.admin?.apiServices ?? null },
     { label: '问题反馈', to: '/admin/feedback', icon: ClipboardList, count: badges.value?.admin?.feedbackTickets ?? null },
     { label: '举报纠纷', to: '/admin/reports', icon: MessageSquareWarning, count: badges.value?.admin?.reports ?? null },
     { label: '申诉处理', to: '/admin/appeals', icon: TriangleAlert, count: null },
@@ -61,6 +60,7 @@ const navGroups = computed(() => [
   { title: '市场目录', items: [
     { label: '套餐目录', to: '/admin/product-plans', icon: Boxes, count: null },
     { label: 'API 模型目录', to: '/admin/api-models', icon: PackageSearch, count: null },
+    { label: '探针校准', to: '/admin/api-health', icon: Activity, count: null },
     { label: '模型审计', to: '/admin/model-audit', icon: BookOpen, count: null },
   ] },
   { title: '交易与用户', items: [

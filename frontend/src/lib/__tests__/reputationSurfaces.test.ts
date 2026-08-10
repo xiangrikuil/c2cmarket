@@ -134,9 +134,12 @@ describe('信誉页面接线', () => {
   const reviewCenter = source('../../pages/MyReviewsPage.vue')
   const adminUsers = source('../../pages/AdminUsersPage.vue')
   const adminAudit = source('../../components/reputation/AdminReputationAuditPanel.vue')
+  const disputeDialog = source('../../components/admin/AdminDisputeResolutionDialog.vue')
+  const myReputation = source('../../pages/MyReputationPage.vue')
   const privacy = source('../../pages/MyCenterPage.vue')
   const router = source('../../router.ts')
   const reputationBackend = source('../reputationBackend.ts')
+  const reputationQueries = source('../../queries/useReputationQueries.ts')
 
   it('风险状态先于等级与徽章表达', () => {
     expect(summaryCard.indexOf('<Alert v-if="summary.state === \'restricted\'"')).toBeLessThan(summaryCard.indexOf('{{ reputationTierLabel(summary.tier) }}'))
@@ -207,6 +210,37 @@ describe('信誉页面接线', () => {
   it('真实治理请求使用后端注册的单数裁定路径', () => {
     expect(reputationBackend).toContain('/reputation-outcome`')
     expect(reputationBackend).not.toContain('/reputation-outcomes`')
+  })
+
+  it('API 订单逾期处罚使用专用建议、主体版本和跨界面失效', () => {
+    expect(reputationBackend).toContain('/sanction-recommendation`')
+    expect(reputationBackend).toContain('/sanction`')
+    expect(reputationBackend).toContain("ifMatch: input.expectedUserVersion")
+    expect(reputationQueries).toContain('useAPIOrderSanctionRecommendationQuery')
+    expect(reputationQueries).toContain('useApplyAPIOrderSanctionMutation')
+    expect(reputationQueries).toContain("reputationQueryKeys.my()")
+    expect(reputationQueries).toContain("['admin-dispute-resolution', input.disputeCaseId]")
+    expect(disputeDialog).toContain('近 180 天确认逾期')
+    expect(disputeDialog).toContain('暂停新接单、发布和恢复')
+    expect(disputeDialog).toContain('expectedUserVersion: recommendation.subjectUserVersion')
+    expect(disputeDialog).toContain('sanctionConfirmed.value = false')
+    expect(disputeDialog).toContain("['VERSION_CONFLICT', 'INVALID_STATE_TRANSITION']")
+    const conflictHandler = disputeDialog.slice(
+      disputeDialog.indexOf("if (error instanceof BackendProblemError && ['VERSION_CONFLICT', 'INVALID_STATE_TRANSITION'].includes(error.code))"),
+      disputeDialog.indexOf("sanctionSubmitError.value = errorMessage(error, 'API 服务限制创建失败。')"),
+    )
+    expect(conflictHandler).toContain('sanctionConfirmed.value = false')
+    expect(conflictHandler).toContain('await sanctionQuery.refetch()')
+  })
+
+  it('个人信誉页只使用公开限制投影并准确说明存量订单边界', () => {
+    expect(myReputation).toContain('data.value?.activeRestrictions')
+    expect(myReputation).toContain('当前暂停 API 服务新接单、发布和恢复')
+    expect(myReputation).toContain('已成立订单仍可继续付款、交付、完成、售后和纠纷处理')
+    expect(myReputation).not.toContain('internalReason')
+    expect(myReputation).not.toContain('createdByAdminId')
+    expect(myReputation).not.toContain('sourceDisputeOutcomeId')
+    expect(myReputation).not.toContain('sourceDisputeRemedyId')
   })
 
   it('隐私设置说明公共最小信誉不可隐藏', () => {

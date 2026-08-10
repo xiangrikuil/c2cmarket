@@ -102,10 +102,10 @@ APIServicePackage:
 
 APIServicePackageModel:
   serviceModelId, modelCatalogId, modelPriceVersionId
-  modelNameSnapshot, providerSnapshot, merchantMultiplier
+  modelKeySnapshot, providerSnapshot, merchantMultiplier
 ```
 
-- Exact model names and versions are displayed from snapshots, including names such as `GPT-5.5` and `GPT-5.6`.
+- Exact canonical model keys are displayed from snapshots, including values such as `gpt-5.5` and `gpt-5.6`.
 - Package results are not shown until both an exact `modelCatalogId` and a duration in `1 | 3 | 7 | 30` are selected.
 - Candidates must be publicly orderable `fixed_package` services with an enabled, in-stock package matching the exact model and duration.
 - Declared unit cost for the selected model is:

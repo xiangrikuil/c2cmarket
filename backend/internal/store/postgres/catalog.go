@@ -17,10 +17,10 @@ func (s *Store) ListProductCategories(ctx context.Context) ([]catalog.ProductCat
 	}
 	rows, err := s.pool.Query(ctx, `
 		SELECT id::text, code, display_name, icon_data_url, sort_order, active
-		FROM product_categories
-		WHERE active = true
-		ORDER BY sort_order ASC, display_name ASC
-	`)
+			FROM product_categories
+			WHERE active = true
+			ORDER BY sort_order ASC, display_name ASC
+		`)
 	if err != nil {
 		return nil, internalStoreError()
 	}
@@ -501,7 +501,7 @@ func (s *Store) ListAPIModels(ctx context.Context) ([]catalog.APIModelCatalog, *
 		SELECT `+apiModelColumns+`
 		FROM `+apiModelViewSource+`
 		WHERE active = true AND provider_active = true
-		ORDER BY sort_order ASC, display_name ASC
+		ORDER BY sort_order ASC, model_key ASC
 	`)
 	if err != nil {
 		return nil, internalStoreError()
@@ -536,7 +536,7 @@ func (s *Store) AdminListAPIModels(ctx context.Context) ([]catalog.APIModelCatal
 	rows, err := s.pool.Query(ctx, `
 		SELECT `+apiModelColumns+`
 		FROM `+apiModelViewSource+`
-		ORDER BY provider_category ASC, sort_order ASC, display_name ASC, id ASC
+		ORDER BY provider_category ASC, sort_order ASC, model_key ASC, id ASC
 	`)
 	if err != nil {
 		return nil, internalStoreError()
@@ -577,12 +577,12 @@ func (s *Store) AdminCreateAPIModel(ctx context.Context, input catalog.APIModelM
 	var modelID string
 	err = tx.QueryRow(ctx, `
 		INSERT INTO api_model_catalog (
-		  provider_id, model_key, display_name, capabilities,
+		  provider_id, model_key, capabilities,
 		  active, sort_order, updated_at
 		)
-		VALUES ($1, $2, $3, $4, $5, $6, now())
+		VALUES ($1, $2, $3, $4, $5, now())
 		RETURNING id::text
-	`, input.Form.ProviderID, input.Form.ModelKey, input.Form.DisplayName,
+	`, input.Form.ProviderID, input.Form.ModelKey,
 		input.Form.Capabilities, input.Form.Active, input.Form.SortOrder).Scan(&modelID)
 	if err != nil {
 		if isUniqueViolation(err) {
@@ -638,14 +638,13 @@ func (s *Store) AdminUpdateAPIModel(ctx context.Context, input catalog.APIModelM
 		UPDATE api_model_catalog
 		SET provider_id = $2,
 		    model_key = $3,
-		    display_name = $4,
-		    capabilities = $5,
-		    active = $6,
-		    sort_order = $7,
+		    capabilities = $4,
+		    active = $5,
+		    sort_order = $6,
 		    updated_at = now()
 		WHERE id = $1
 	`, input.ID, input.Form.ProviderID, input.Form.ModelKey,
-		input.Form.DisplayName, input.Form.Capabilities, input.Form.Active, input.Form.SortOrder)
+		input.Form.Capabilities, input.Form.Active, input.Form.SortOrder)
 	if err != nil {
 		if isUniqueViolation(err) {
 			return catalog.APIModelCatalog{}, domain.NewFieldError(http.StatusConflict, domain.CodeValidationFailed, "API model key unavailable", "模型标识已被占用。", "modelKey", "unavailable", "模型标识已被占用。")
@@ -689,22 +688,30 @@ func (s *Store) AdminSetAPIModelActive(ctx context.Context, input catalog.APIMod
 	if s == nil || s.pool == nil {
 		return catalog.APIModelCatalog{}, internalStoreError()
 	}
-	var model catalog.APIModelCatalog
-	err := scanAPIModel(s.pool.QueryRow(ctx, `
-		WITH changed AS (
-			UPDATE api_model_catalog
-			SET active = $2, updated_at = now()
-			WHERE id = $1
-			RETURNING id
-		)
-		SELECT `+apiModelColumns+`
-		FROM `+apiModelViewSource+`
-		JOIN changed ON changed.id = api_model_view.id
-	`, input.ID, active), &model)
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return catalog.APIModelCatalog{}, internalStoreError()
+	}
+	defer rollback(ctx, tx)
+
+	var modelID string
+	err = tx.QueryRow(ctx, `
+		UPDATE api_model_catalog
+		SET active = $2, updated_at = now()
+		WHERE id = $1
+		RETURNING id::text
+	`, input.ID, active).Scan(&modelID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return catalog.APIModelCatalog{}, apiModelNotFound()
 	}
 	if err != nil {
+		return catalog.APIModelCatalog{}, internalStoreError()
+	}
+	model, appErr := getAPIModelInTx(ctx, tx, modelID)
+	if appErr != nil {
+		return catalog.APIModelCatalog{}, appErr
+	}
+	if err := tx.Commit(ctx); err != nil {
 		return catalog.APIModelCatalog{}, internalStoreError()
 	}
 	return model, nil
@@ -731,7 +738,7 @@ const apiModelProviderColumns = `
 `
 
 const apiModelColumns = `
-	id::text, provider_id::text, provider_category, provider_code, provider, provider_active, model_key, display_name, capabilities, active,
+	id::text, provider_id::text, provider_category, provider_code, provider, provider_active, model_key, capabilities, active,
 	sort_order, COALESCE(current_price_version_id::text, ''), COALESCE(current_price_source_url, ''),
 	COALESCE(current_price_source_version, ''), current_price_valid_from,
 	COALESCE(input_price_per_million::text, ''), COALESCE(cached_input_price_per_million::text, ''),
@@ -937,7 +944,6 @@ func scanAPIModel(row scanner, model *catalog.APIModelCatalog) error {
 		&model.Provider,
 		&model.ProviderActive,
 		&model.ModelKey,
-		&model.DisplayName,
 		&model.Capabilities,
 		&model.Active,
 		&model.SortOrder,

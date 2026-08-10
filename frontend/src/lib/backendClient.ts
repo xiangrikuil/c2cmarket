@@ -360,11 +360,13 @@ export async function backendMutation<T>(path: string, body: unknown, options: {
   method?: 'POST' | 'PATCH' | 'PUT' | 'DELETE'
   idempotencyPrefix?: string
   ifMatch?: number | string
+  signal?: AbortSignal
 } = {}) {
   try {
     return await backendJSON<T>(path, body ?? {}, {
       method: options.method ?? 'POST',
       headers: backendMutationHeaders(options),
+      signal: options.signal,
     })
   } catch (error) {
     if (!isCSRFTokenInvalidError(error)) throw error
@@ -372,6 +374,7 @@ export async function backendMutation<T>(path: string, body: unknown, options: {
     return backendJSON<T>(path, body ?? {}, {
       method: options.method ?? 'POST',
       headers: backendMutationHeaders(options),
+      signal: options.signal,
     })
   }
 }

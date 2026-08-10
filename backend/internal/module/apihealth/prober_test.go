@@ -2,271 +2,171 @@ package apihealth
 
 import (
 	"context"
-	"crypto/tls"
-	"encoding/json"
 	"errors"
-	"io"
-	"net"
-	"net/http"
-	"strings"
-	"sync"
 	"testing"
 	"time"
 
-	"c2c-market/backend/internal/platform/outboundhttp"
+	"c2c-market/backend/internal/platform/openaiapi"
 )
 
-func TestOpenAIStreamingProberMeasuresFirstContentDelta(t *testing.T) {
-	startedAt := time.Date(2026, time.August, 4, 12, 0, 0, 0, time.UTC)
-	clock := newSequenceClock(startedAt, startedAt.Add(250*time.Millisecond), startedAt.Add(400*time.Millisecond))
-	target, err := NormalizeTarget("https://api.example.com")
-	if err != nil {
-		t.Fatalf("normalize target: %v", err)
+func TestMapOpenAIErrorUsesStableLowCardinalityCodes(t *testing.T) {
+	tests := map[openaiapi.ErrorCode]string{
+		openaiapi.ErrorNone:                "",
+		openaiapi.ErrorAuthentication:      ErrorAuthorizationInvalid,
+		openaiapi.ErrorBlockedTarget:       ErrorBlockedTarget,
+		openaiapi.ErrorDNS:                 ErrorDNSFailed,
+		openaiapi.ErrorConnect:             ErrorConnectFailed,
+		openaiapi.ErrorTLS:                 ErrorTLSFailed,
+		openaiapi.ErrorTimeout:             ErrorTimeout,
+		openaiapi.ErrorRateLimited:         ErrorRateLimited,
+		openaiapi.ErrorUpstream:            ErrorHTTP5xx,
+		openaiapi.ErrorInvalidResponse:     ErrorInvalidResponse,
+		openaiapi.ErrorResponseTooLarge:    ErrorResponseTooLarge,
+		openaiapi.ErrorProtocolUnsupported: ErrorProtocolUnavailable,
+		openaiapi.ErrorRequestRejected:     ErrorHTTP4xx,
+		openaiapi.ErrorStreamInterrupted:   ErrorStreamInterrupted,
 	}
-	var captured *http.Request
-	client := &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
-		captured = request
-		body := &chunkReader{chunks: []string{
-			": keep-alive\n",
-			"data: {\"choices\":[{\"delta\":{\"content\":\"\"}}]}\n\n",
-			"data: {\"choices\":[{\"delta\":{\"content\":\"O",
-			"K\"}}]}\n\n",
-		}}
-		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(body), Header: make(http.Header)}, nil
-	})}
-	prober := NewOpenAIStreamingProber(client, clock.Now)
-
-	result := prober.Probe(context.Background(), ProbeJob{
-		Config:     Config{BaseURL: target.BaseURL, Model: "gpt-5-mini"},
-		Credential: "probe-secret",
-	})
-
-	if result.ErrorCode != "" || result.TTFTMS != 250 || result.TotalDurationMS != 400 || result.HTTPStatusClass != 2 {
-		t.Fatalf("unexpected result: %+v", result)
-	}
-	if captured == nil || captured.URL.String() != "https://api.example.com/v1/chat/completions" {
-		t.Fatalf("unexpected request target: %v", captured)
-	}
-	if got := captured.Header.Get("Authorization"); got != "Bearer probe-secret" {
-		t.Fatalf("unexpected authorization header: %q", got)
-	}
-	var payload struct {
-		Model    string `json:"model"`
-		Messages []struct {
-			Role    string `json:"role"`
-			Content string `json:"content"`
-		} `json:"messages"`
-		Stream    bool `json:"stream"`
-		MaxTokens int  `json:"max_tokens"`
-	}
-	if err := json.NewDecoder(captured.Body).Decode(&payload); err != nil {
-		t.Fatalf("decode request: %v", err)
-	}
-	if payload.Model != "gpt-5-mini" || !payload.Stream || payload.MaxTokens != 8 || len(payload.Messages) != 1 ||
-		payload.Messages[0].Role != "user" || payload.Messages[0].Content != "Reply with exactly OK." {
-		t.Fatalf("unexpected request payload: %+v", payload)
-	}
-}
-
-func TestOpenAIStreamingProberUsesAcknowledgedHTTPBaseWithoutDuplicatingV1(t *testing.T) {
-	t.Parallel()
-	target, err := normalizeTarget("http://api.example.com", true)
-	if err != nil {
-		t.Fatalf("normalize HTTP target: %v", err)
-	}
-	var captured *http.Request
-	client := &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
-		captured = request
-		return &http.Response{
-			StatusCode: http.StatusOK,
-			Body: io.NopCloser(strings.NewReader(
-				"data: {\"choices\":[{\"delta\":{\"content\":\"OK\"}}]}\n\n",
-			)),
-			Header: make(http.Header),
-		}, nil
-	})}
-	prober := NewOpenAIStreamingProber(client, time.Now)
-	result := prober.Probe(context.Background(), ProbeJob{
-		Config:     Config{BaseURL: target.BaseURL, NormalizedOrigin: target.Origin, Model: "gpt-5-mini"},
-		Credential: "low-quota-probe-key",
-	})
-	if result.ErrorCode != "" {
-		t.Fatalf("probe HTTP target: %+v", result)
-	}
-	if captured == nil || captured.URL.String() != "http://api.example.com/v1/chat/completions" {
-		t.Fatalf("unexpected HTTP probe endpoint: %v", captured)
-	}
-}
-
-func TestOutboundHTTPClientFactoryBindsExactInsecureOrigin(t *testing.T) {
-	t.Parallel()
-	factory := NewOutboundHTTPClientFactory(time.Second)
-	client, err := factory.ClientFor(Config{
-		BaseURL: "http://1.1.1.1/v1", NormalizedOrigin: "http://1.1.1.1:80",
-	})
-	if err != nil || client == nil {
-		t.Fatalf("create explicit HTTP client: client=%v err=%v", client, err)
-	}
-	for _, config := range []Config{
-		{BaseURL: "http://1.1.1.1/v1", NormalizedOrigin: "https://1.1.1.1:443"},
-		{BaseURL: "https://1.1.1.1/v1", NormalizedOrigin: "http://1.1.1.1:80"},
-		{BaseURL: "http://1.1.1.1/v1", NormalizedOrigin: "http://1.0.0.1:80"},
-	} {
-		if _, err := factory.ClientFor(config); !errors.Is(err, ErrTargetIdentityMismatch) {
-			t.Fatalf("factory accepted mismatched scheme/origin: config=%+v err=%v", config, err)
+	for input, expected := range tests {
+		if actual := mapOpenAIError(input); actual != expected {
+			t.Fatalf("mapOpenAIError(%q)=%q, want %q", input, actual, expected)
 		}
 	}
 }
 
-func TestOpenAIStreamingProberClassifiesResponses(t *testing.T) {
-	t.Parallel()
-	tests := []struct {
-		name       string
-		statusCode int
-		body       string
-		wantCode   string
-		wantClass  int
-	}{
-		{name: "unauthorized", statusCode: http.StatusUnauthorized, wantCode: ErrorAuthorizationInvalid, wantClass: 4},
-		{name: "forbidden", statusCode: http.StatusForbidden, wantCode: ErrorAuthorizationInvalid, wantClass: 4},
-		{name: "other client error", statusCode: http.StatusTooManyRequests, wantCode: ErrorHTTP4xx, wantClass: 4},
-		{name: "server error", statusCode: http.StatusBadGateway, wantCode: ErrorHTTP5xx, wantClass: 5},
-		{name: "invalid json", statusCode: http.StatusOK, body: "data: not-json\n\n", wantCode: ErrorInvalidStream, wantClass: 2},
-		{name: "done without content", statusCode: http.StatusOK, body: "data: [DONE]\n\n", wantCode: ErrorEmptyResponse, wantClass: 2},
-		{name: "empty delta", statusCode: http.StatusOK, body: "data: {\"choices\":[{\"delta\":{\"content\":\"\"}}]}\n\n", wantCode: ErrorEmptyResponse, wantClass: 2},
-		{name: "non sse body", statusCode: http.StatusOK, body: "plain text\n", wantCode: ErrorInvalidStream, wantClass: 2},
-		{name: "oversized stream", statusCode: http.StatusOK, body: "data: " + strings.Repeat("x", probeResponseLimit) + "\n", wantCode: ErrorResponseTooLarge, wantClass: 2},
+func TestVerifyPrefersResponsesAndFallsBackOnlyWhenProtocolUnavailable(t *testing.T) {
+	client := &fakeOpenAIProbeClient{
+		models:          []string{DefaultGPTProbeModel},
+		discoveryResult: openaiapi.Result{HTTPStatus: 200},
+		streamResults: []openaiapi.StreamResult{
+			{Result: openaiapi.Result{HTTPStatus: 404, ErrorCode: openaiapi.ErrorProtocolUnsupported}},
+			streamSuccess(25),
+		},
 	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			t.Parallel()
-			client := responseClient(test.statusCode, test.body)
-			prober := NewOpenAIStreamingProber(client, func() time.Time { return time.Unix(0, 0) })
-			result := prober.Probe(context.Background(), ProbeJob{
-				Config: Config{BaseURL: "https://api.example.com/v1", Model: "gpt"}, Credential: "key",
-			})
-			if result.ErrorCode != test.wantCode || result.HTTPStatusClass != test.wantClass {
-				t.Fatalf("unexpected result: %+v", result)
-			}
-		})
+	prober := testRealModelProber(client)
+
+	result := prober.Verify(context.Background(), "https://api.example.test/v1", "key", "", false)
+
+	if result.ErrorCode != "" || result.ProbeModel != DefaultGPTProbeModel || result.ProbeProtocol != ProtocolChatCompletionsV1 {
+		t.Fatalf("unexpected verification: %+v", result)
+	}
+	if len(client.protocols) != 2 || client.protocols[0] != ProtocolResponsesV1 || client.protocols[1] != ProtocolChatCompletionsV1 {
+		t.Fatalf("unexpected protocol order: %v", client.protocols)
 	}
 }
 
-func TestOpenAIStreamingProberHonorsContextTimeout(t *testing.T) {
-	t.Parallel()
-	client := &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
-		<-request.Context().Done()
-		return nil, request.Context().Err()
-	})}
-	prober := NewOpenAIStreamingProber(client, time.Now)
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
-	defer cancel()
+func TestVerifyDoesNotFallbackForDeterministicRequestError(t *testing.T) {
+	client := &fakeOpenAIProbeClient{
+		models:          []string{DefaultGPTProbeModel},
+		discoveryResult: openaiapi.Result{HTTPStatus: 200},
+		streamResults: []openaiapi.StreamResult{{
+			Result: openaiapi.Result{HTTPStatus: 400, ErrorCode: openaiapi.ErrorRequestRejected},
+		}},
+	}
+	prober := testRealModelProber(client)
 
-	result := prober.Probe(ctx, ProbeJob{Config: Config{BaseURL: "https://api.example.com", Model: "gpt"}, Credential: "key"})
+	result := prober.Verify(context.Background(), "https://api.example.test/v1", "key", DefaultGPTProbeModel, false)
 
-	if result.ErrorCode != ErrorTimeout {
-		t.Fatalf("unexpected result: %+v", result)
+	if result.ErrorCode != ErrorHTTP4xx || len(client.protocols) != 1 {
+		t.Fatalf("unexpected verification/fallback: result=%+v protocols=%v", result, client.protocols)
 	}
 }
 
-func TestOpenAIStreamingProberRejectsMissingDependenciesAndCredential(t *testing.T) {
-	t.Parallel()
-	job := ProbeJob{Config: Config{BaseURL: "https://api.example.com", Model: "gpt"}}
-	jobWithCredential := job
-	jobWithCredential.Credential = "key"
-	var nilProber *OpenAIStreamingProber
-	if result := nilProber.Probe(context.Background(), jobWithCredential); result.ErrorCode != ErrorInternal {
-		t.Fatalf("nil prober result: %+v", result)
+func TestProbeRetriesTransientFailureOnceAndKeepsRecoverySeparate(t *testing.T) {
+	client := &fakeOpenAIProbeClient{streamResults: []openaiapi.StreamResult{
+		{Result: openaiapi.Result{HTTPStatus: 429, RetryAfterMS: 2500, ErrorCode: openaiapi.ErrorRateLimited}},
+		streamSuccess(40),
+	}}
+	prober := testRealModelProber(client)
+	var waits []time.Duration
+	prober.sleep = func(_ context.Context, duration time.Duration) error {
+		waits = append(waits, duration)
+		return nil
 	}
-	if result := NewOpenAIStreamingProber(nil, nil).Probe(context.Background(), jobWithCredential); result.ErrorCode != ErrorInternal {
-		t.Fatalf("nil client result: %+v", result)
+
+	result := prober.Probe(context.Background(), probeJob())
+
+	if result.Outcome != OutcomeRetryRecovered || result.ErrorCode != "" || len(result.Attempts) != 2 || result.RecoveryDurationMS == nil {
+		t.Fatalf("unexpected retry result: %+v", result)
 	}
-	if result := NewOpenAIStreamingProber(responseClient(http.StatusOK, ""), nil).Probe(context.Background(), job); result.ErrorCode != ErrorAuthorizationInvalid {
-		t.Fatalf("missing credential result: %+v", result)
+	if result.FirstAttemptTTFTMS != nil || len(waits) != 1 || waits[0] != 2500*time.Millisecond {
+		t.Fatalf("retry contaminated TTFT or wait: ttft=%v waits=%v", result.FirstAttemptTTFTMS, waits)
 	}
 }
 
-func TestOpenAIStreamingProberRejectsChangedAuthorizedTarget(t *testing.T) {
-	t.Parallel()
-	prober := NewOpenAIStreamingProberWithClientFactory(NewOutboundHTTPClientFactory(time.Second), nil)
-	result := prober.Probe(context.Background(), ProbeJob{
-		Config: Config{
-			BaseURL: "https://api.example.com/v1", NormalizedOrigin: "https://other.example.com:443", Model: "gpt",
+func TestProbeDoesNotRetryDeterministicFailure(t *testing.T) {
+	client := &fakeOpenAIProbeClient{streamResults: []openaiapi.StreamResult{{
+		Result: openaiapi.Result{HTTPStatus: 401, ErrorCode: openaiapi.ErrorAuthentication},
+	}}}
+	prober := testRealModelProber(client)
+	prober.sleep = func(context.Context, time.Duration) error { return errors.New("must not sleep") }
+
+	result := prober.Probe(context.Background(), probeJob())
+
+	if result.Outcome != OutcomeFinalFailure || result.ErrorCode != ErrorAuthorizationInvalid || len(result.Attempts) != 1 || len(client.protocols) != 1 {
+		t.Fatalf("unexpected deterministic result: %+v protocols=%v", result, client.protocols)
+	}
+}
+
+func TestProbeAppliesPublishedSlowThresholdOnlyToFirstSuccess(t *testing.T) {
+	client := &fakeOpenAIProbeClient{streamResults: []openaiapi.StreamResult{streamSuccess(5100)}}
+	prober := testRealModelProber(client)
+	job := probeJob()
+	job.LatencyRule = &LatencyRule{SlowTTFTMS: 5000, HardTimeoutMS: 10000}
+
+	result := prober.Probe(context.Background(), job)
+
+	if result.Outcome != OutcomeFirstSuccessSlow || result.FirstAttemptTTFTMS == nil || *result.FirstAttemptTTFTMS != 5100 || len(result.Attempts) != 1 {
+		t.Fatalf("unexpected slow result: %+v", result)
+	}
+}
+
+type fakeOpenAIProbeClient struct {
+	models          []string
+	discoveryResult openaiapi.Result
+	streamResults   []openaiapi.StreamResult
+	protocols       []string
+}
+
+func (client *fakeOpenAIProbeClient) DiscoverModels(context.Context) ([]string, openaiapi.Result) {
+	return append([]string(nil), client.models...), client.discoveryResult
+}
+
+func (client *fakeOpenAIProbeClient) StreamProbe(_ context.Context, protocol, _ string) openaiapi.StreamResult {
+	client.protocols = append(client.protocols, protocol)
+	if len(client.streamResults) == 0 {
+		return openaiapi.StreamResult{Result: openaiapi.Result{ErrorCode: openaiapi.ErrorInternal}}
+	}
+	result := client.streamResults[0]
+	client.streamResults = client.streamResults[1:]
+	return result
+}
+
+func testRealModelProber(client openAIProbeClient) *OpenAIRealModelProber {
+	prober := NewOpenAIRealModelProber(30 * time.Second)
+	prober.newClient = func(string, string, openaiapi.Options) (openAIProbeClient, error) { return client, nil }
+	current := time.Date(2026, 8, 8, 0, 0, 0, 0, time.UTC)
+	prober.now = func() time.Time {
+		current = current.Add(10 * time.Millisecond)
+		return current
+	}
+	prober.randomWait = func() time.Duration { return time.Second }
+	return prober
+}
+
+func probeJob() ProbeJob {
+	return ProbeJob{
+		Connection: Connection{
+			BaseURL: "https://api.example.test/v1", ProbeModel: DefaultGPTProbeModel,
+			ProbeProtocol: ProtocolResponsesV1, ProbeEnvironment: ProbeEnvironmentUSWestV1,
 		},
 		Credential: "key",
-	})
-	if result.ErrorCode != ErrorBlockedTarget {
-		t.Fatalf("unexpected result: %+v", result)
 	}
 }
 
-func TestClassifyRequestError(t *testing.T) {
-	t.Parallel()
-	tests := []struct {
-		name string
-		err  error
-		want string
-	}{
-		{name: "blocked", err: outboundhttp.ErrUnsafeAddress, want: ErrorBlockedTarget},
-		{name: "dns", err: &net.DNSError{Err: "missing", Name: "api.example.com"}, want: ErrorDNSFailed},
-		{name: "connect", err: outboundhttp.ErrDialFailed, want: ErrorConnectFailed},
-		{name: "tls", err: tls.RecordHeaderError{Msg: "invalid record"}, want: ErrorTLSFailed},
-		{name: "oversized", err: outboundhttp.ErrResponseTooLarge, want: ErrorResponseTooLarge},
-		{name: "unknown", err: errors.New("unknown"), want: ErrorInternal},
+func streamSuccess(ttft int) openaiapi.StreamResult {
+	input, output := int64(6), int64(2)
+	return openaiapi.StreamResult{
+		Result: openaiapi.Result{HTTPStatus: 200, HTTPStatusClass: 2, DurationMS: ttft + 10},
+		TTFTMS: &ttft, Usage: openaiapi.Usage{InputTokens: &input, OutputTokens: &output},
 	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			t.Parallel()
-			if got := classifyRequestError(context.Background(), test.err); got != test.want {
-				t.Fatalf("classifyRequestError() = %q, want %q", got, test.want)
-			}
-		})
-	}
-}
-
-type roundTripFunc func(*http.Request) (*http.Response, error)
-
-func (function roundTripFunc) RoundTrip(request *http.Request) (*http.Response, error) {
-	return function(request)
-}
-
-func responseClient(statusCode int, body string) *http.Client {
-	return &http.Client{Transport: roundTripFunc(func(_ *http.Request) (*http.Response, error) {
-		return &http.Response{StatusCode: statusCode, Body: io.NopCloser(strings.NewReader(body)), Header: make(http.Header)}, nil
-	})}
-}
-
-type chunkReader struct {
-	chunks []string
-}
-
-func (reader *chunkReader) Read(buffer []byte) (int, error) {
-	if len(reader.chunks) == 0 {
-		return 0, io.EOF
-	}
-	chunk := reader.chunks[0]
-	reader.chunks = reader.chunks[1:]
-	return copy(buffer, chunk), nil
-}
-
-type sequenceClock struct {
-	mu    sync.Mutex
-	times []time.Time
-}
-
-func newSequenceClock(times ...time.Time) *sequenceClock {
-	return &sequenceClock{times: times}
-}
-
-func (clock *sequenceClock) Now() time.Time {
-	clock.mu.Lock()
-	defer clock.mu.Unlock()
-	if len(clock.times) == 0 {
-		return time.Time{}
-	}
-	value := clock.times[0]
-	if len(clock.times) > 1 {
-		clock.times = clock.times[1:]
-	}
-	return value
 }

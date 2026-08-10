@@ -7,13 +7,13 @@ import { Button } from '@/components/ui/button'
 import PageTitle from '@/components/market/PageTitle.vue'
 import SoftTable from '@/components/market/SoftTable.vue'
 import StatusTabs from '@/components/market/StatusTabs.vue'
-import TablePagination from '@/components/market/TablePagination.vue'
+import CursorTablePagination from '@/components/market/CursorTablePagination.vue'
 import CompactStats from '@/components/market/CompactStats.vue'
 import EmptyState from '@/components/market/EmptyState.vue'
 import LocalTime from '@/components/market/LocalTime.vue'
 import ShortId from '@/components/market/ShortId.vue'
 import SkeletonTable from '@/components/market/SkeletonTable.vue'
-import { usePagination } from '@/composables/usePagination'
+import { useCursorPagination } from '@/composables/useCursorPagination'
 import {
   acceptCarpoolApplication,
   getCarpoolApplicationNextAction,
@@ -21,11 +21,11 @@ import {
   rejectCarpoolApplication,
   type CarpoolApplication,
 } from '@/lib/api'
-import { useMerchantCarpoolApplications } from '@/queries/useMarketQueries'
+import { useMerchantCarpoolApplications, useMerchantCarpoolApplicationsPage } from '@/queries/useMarketQueries'
 
 const activeStatus = ref('待处理')
 const queryClient = useQueryClient()
-const { data: applications, isLoading } = useMerchantCarpoolApplications({ sort: 'default_owner' })
+const { data: applications } = useMerchantCarpoolApplications({ sort: 'default_owner' })
 const actionId = ref('')
 
 const statusGroups: Record<string, CarpoolApplication['status'][]> = {
@@ -38,12 +38,15 @@ const statusGroups: Record<string, CarpoolApplication['status'][]> = {
   纠纷: ['disputed'],
 }
 
-const rows = computed(() => {
-  const all = applications.value ?? []
-  return all.filter(item => statusGroups[activeStatus.value]?.includes(item.status))
-})
-
-const pagination = usePagination(rows)
+const pageFilters = computed(() => ({
+  status: statusGroups[activeStatus.value],
+  sort: 'default_owner' as const,
+}))
+const pagination = useCursorPagination([activeStatus])
+const pageRequest = computed(() => ({ limit: pagination.pageSize, cursor: pagination.cursor.value }))
+const pageQuery = useMerchantCarpoolApplicationsPage(pageFilters, pageRequest)
+const rows = computed(() => pageQuery.data.value?.items ?? [])
+const isLoading = computed(() => pageQuery.isLoading.value || pageQuery.isFetching.value)
 const pendingCount = computed(() => (applications.value ?? []).filter(item => item.status === 'pending_owner').length)
 const urgentCount = computed(() => (applications.value ?? []).filter(item => {
   if (!item.reservedUntil) return false
@@ -98,7 +101,7 @@ function rejectApplication(item: CarpoolApplication) {
     <SkeletonTable v-if="isLoading" :rows="5" :columns="7" />
     <EmptyState v-else-if="rows.length === 0" title="当前筛选下暂无申请" description="新的上车申请到达后会显示在待处理队列。" />
     <SoftTable v-else animate-rows :columns="['申请人', '车源', '价格快照', '用户摘要', '状态', '申请时间', '操作']">
-      <tr v-for="item in pagination.paginatedRows.value" :key="item.id">
+      <tr v-for="item in rows" :key="item.id">
         <td>
           <RouterLink :to="`/u/${item.applicantUsername}`" class="font-medium hover:underline">{{ item.applicantUsername }}</RouterLink>
           <div class="text-xs text-muted-foreground">{{ item.applicantStats.linuxdoBound === true ? '已绑定 linux.do' : item.applicantStats.linuxdoBound === false ? '未绑定 linux.do' : 'linux.do 绑定暂无数据' }} · {{ item.applicantStats.trustLevel === null ? '信任等级暂无数据' : `信任等级${item.applicantStats.trustLevel}` }}</div>
@@ -121,12 +124,13 @@ function rejectApplication(item: CarpoolApplication) {
         </td>
       </tr>
       <template #footer>
-        <TablePagination
-          v-model:page="pagination.page.value"
-          :page-count="pagination.pageCount.value"
-          :total="pagination.total.value"
-          :start-item="pagination.startItem.value"
-          :end-item="pagination.endItem.value"
+        <CursorTablePagination
+          :page="pagination.page.value"
+          :item-count="rows.length"
+          :has-next-page="Boolean(pageQuery.data.value?.nextCursor)"
+          :loading="pageQuery.isFetching.value"
+          @previous="pagination.previous"
+          @next="pagination.next(pageQuery.data.value?.nextCursor)"
         />
       </template>
     </SoftTable>

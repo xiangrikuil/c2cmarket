@@ -1,6 +1,8 @@
 import { backendMutation, backendRequest } from '@/lib/backendClient'
 import type {
   AdminReputationAudit,
+  APIOrderSanctionRecommendation,
+  ApplyAPIOrderSanctionInput,
   CreateDisputeOutcomeInput,
   CreateReputationRestrictionInput,
   DisputeReputationOutcome,
@@ -132,7 +134,31 @@ export async function backendMyReputation() {
   return {
     ruleVersion: response.ruleVersion,
     items: response.items.map(mapBackendReputationSnapshot),
+    activeRestrictions: response.activeRestrictions.map(item => ({ ...item })),
   }
+}
+
+export async function backendAPIOrderSanctionRecommendation(disputeCaseId: string) {
+  const response = await backendRequest<APIOrderSanctionRecommendation>(
+    `/api/v1/admin/disputes/${encodeURIComponent(disputeCaseId)}/sanction-recommendation`,
+  )
+  return {
+    ...response,
+    ...(response.existingRestriction ? { existingRestriction: { ...response.existingRestriction } } : {}),
+  }
+}
+
+export async function backendApplyAPIOrderSanction(input: ApplyAPIOrderSanctionInput) {
+  const response = await backendMutation<ReputationGovernanceMutation>(
+    `/api/v1/admin/disputes/${encodeURIComponent(input.disputeCaseId)}/sanction`,
+    { internalReason: input.internalReason },
+    {
+      idempotencyPrefix: 'api-order-sanction',
+      ifMatch: input.expectedUserVersion,
+    },
+  )
+  if (!response.restriction) throw new Error('API-order sanction response is missing the created restriction.')
+  return response.restriction
 }
 
 export async function backendAdminUserReputation(userId: string, historyLimit = 50) {

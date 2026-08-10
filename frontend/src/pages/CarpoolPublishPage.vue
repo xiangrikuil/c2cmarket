@@ -55,15 +55,14 @@ import {
   useCarpoolRegions,
   useMyProfileQuery,
 } from '@/queries/useMarketQueries'
-import { quotaFieldLabel } from '@/lib/quota'
 import { useUnsavedChangesGuard } from '@/composables/useUnsavedChangesGuard'
 
 type Field =
   | 'product'
   | 'region'
   | 'monthlyPriceCny'
+  | 'dailyQuota'
   | 'weeklyQuota'
-  | 'monthlyQuota'
   | 'quotaReset'
   | 'connection'
   | 'seats'
@@ -106,8 +105,8 @@ const form = reactive<CarpoolPublishForm>({
   customRegionName: null,
   monthlyPriceCny: null,
   serviceMultiplier: 1,
+  dailyQuotaAmount: null,
   weeklyQuotaAmount: null,
-  monthlyQuotaAmount: null,
   followsOfficialQuotaReset: null,
   vpsRegion: '',
   supportsMainlandChinaDirectConnection: null,
@@ -228,8 +227,8 @@ const publishTaskFieldIds: Record<PublishTaskKey, string> = {
   product: 'carpool-task-product',
   region: 'carpool-task-region',
   monthlyPrice: 'carpool-task-monthlyPrice',
+  dailyQuota: 'carpool-task-dailyQuota',
   weeklyQuota: 'carpool-task-weeklyQuota',
-  monthlyQuota: 'carpool-task-monthlyQuota',
   quotaReset: 'carpool-task-quotaReset',
   connection: 'carpool-task-vpsRegion',
   openingChannel: 'carpool-task-openingChannel',
@@ -243,8 +242,8 @@ function fieldErrorForTask(key: PublishTaskKey) {
   if (key === 'product') return errors.product ?? ''
   if (key === 'region') return errors.region ?? ''
   if (key === 'monthlyPrice') return errors.monthlyPriceCny ?? ''
+  if (key === 'dailyQuota') return errors.dailyQuota ?? ''
   if (key === 'weeklyQuota') return errors.weeklyQuota ?? ''
-  if (key === 'monthlyQuota') return errors.monthlyQuota ?? ''
   if (key === 'quotaReset') return errors.quotaReset ?? ''
   if (key === 'connection') return errors.connection ?? ''
   if (key === 'openingChannel') return errors.openingChannelCode ?? ''
@@ -258,8 +257,8 @@ function taskComplete(key: PublishTaskKey) {
   if (key === 'product') return Boolean(form.productId && (form.productId !== 'other-custom' || form.customProductName?.trim()))
   if (key === 'region') return Boolean(form.regionCode && finalRegionName.value)
   if (key === 'monthlyPrice') return Boolean(form.monthlyPriceCny && form.monthlyPriceCny > 0)
+  if (key === 'dailyQuota') return Boolean(form.dailyQuotaAmount && form.dailyQuotaAmount > 0)
   if (key === 'weeklyQuota') return Boolean(form.weeklyQuotaAmount && form.weeklyQuotaAmount > 0)
-  if (key === 'monthlyQuota') return Boolean(form.monthlyQuotaAmount && form.monthlyQuotaAmount > 0)
   if (key === 'quotaReset') return form.followsOfficialQuotaReset !== null
   if (key === 'connection') return Boolean(form.vpsRegion.trim() && form.supportsMainlandChinaDirectConnection !== null)
   if (key === 'openingChannel') return Boolean(form.openingChannelCode && (form.openingChannelCode !== 'other' || form.customOpeningChannel.trim()))
@@ -301,24 +300,24 @@ const publishTasks = computed<PublishTask[]>(() => [
     error: fieldErrorForTask('monthlyPrice'),
   },
   {
+    key: 'dailyQuota',
+    label: `填写每天${selectedProductForValidation.value?.quotaLabel || '额度'}`,
+    shortLabel: `每天${selectedProductForValidation.value?.quotaLabel || '额度'}`,
+    section: 'basic',
+    fieldId: publishTaskFieldIds.dailyQuota,
+    description: '额度与重置',
+    complete: taskComplete('dailyQuota'),
+    error: fieldErrorForTask('dailyQuota'),
+  },
+  {
     key: 'weeklyQuota',
     label: `填写每周${selectedProductForValidation.value?.quotaLabel || '额度'}`,
     shortLabel: `每周${selectedProductForValidation.value?.quotaLabel || '额度'}`,
     section: 'basic',
     fieldId: publishTaskFieldIds.weeklyQuota,
-    description: '额度与重置',
+    description: '车源基础信息',
     complete: taskComplete('weeklyQuota'),
     error: fieldErrorForTask('weeklyQuota'),
-  },
-  {
-    key: 'monthlyQuota',
-    label: `填写${quotaFieldLabel(selectedProductForValidation.value)}`,
-    shortLabel: quotaFieldLabel(selectedProductForValidation.value),
-    section: 'basic',
-    fieldId: publishTaskFieldIds.monthlyQuota,
-    description: '车源基础信息',
-    complete: taskComplete('monthlyQuota'),
-    error: fieldErrorForTask('monthlyQuota'),
   },
   {
     key: 'quotaReset',
@@ -427,8 +426,8 @@ const basicFieldStates = computed<Partial<Record<string, PublishFieldState>>>(()
   product: stateForTask('product'),
   region: stateForTask('region'),
   monthlyPrice: stateForTask('monthlyPrice'),
+  dailyQuota: stateForTask('dailyQuota'),
   weeklyQuota: stateForTask('weeklyQuota'),
-  monthlyQuota: stateForTask('monthlyQuota'),
   quotaReset: stateForTask('quotaReset'),
   connection: stateForTask('connection'),
   distribution: stateForTask('distribution'),
@@ -464,8 +463,8 @@ function taskFromErrorKey(key: Field): PublishTaskKey | null {
   if (key === 'product') return 'product'
   if (key === 'region') return 'region'
   if (key === 'monthlyPriceCny') return 'monthlyPrice'
+  if (key === 'dailyQuota') return 'dailyQuota'
   if (key === 'weeklyQuota') return 'weeklyQuota'
-  if (key === 'monthlyQuota') return 'monthlyQuota'
   if (key === 'quotaReset') return 'quotaReset'
   if (key === 'connection') return 'connection'
   if (key === 'openingChannelCode') return 'openingChannel'
@@ -535,12 +534,12 @@ watch(() => form.monthlyPriceCny, () => {
   if (taskComplete('monthlyPrice')) clearError('monthlyPriceCny')
 })
 
-watch(() => form.monthlyQuotaAmount, () => {
-  if (taskComplete('monthlyQuota')) clearError('monthlyQuota')
-})
-
 watch(() => form.weeklyQuotaAmount, () => {
   if (taskComplete('weeklyQuota')) clearError('weeklyQuota')
+})
+
+watch(() => form.dailyQuotaAmount, () => {
+  if (taskComplete('dailyQuota')) clearError('dailyQuota')
 })
 
 watch(() => form.followsOfficialQuotaReset, () => {
@@ -600,9 +599,9 @@ function validate(requireComplete: boolean) {
   if (!form.regionCode) next.region = '请选择开通区。'
   else if (!finalRegionName.value) next.region = '请填写自定义开通区。'
   if (!Number.isFinite(form.monthlyPriceCny) || !form.monthlyPriceCny || form.monthlyPriceCny <= 0) next.monthlyPriceCny = '月费必须大于 0。'
-  if (!Number.isFinite(form.weeklyQuotaAmount) || !form.weeklyQuotaAmount || form.weeklyQuotaAmount <= 0) next.weeklyQuota = `每周${selectedProductForValidation.value?.quotaLabel || '额度'}必须大于 0。`
-  if (!Number.isFinite(form.monthlyQuotaAmount) || !form.monthlyQuotaAmount || form.monthlyQuotaAmount <= 0) {
-    next.monthlyQuota = `${quotaFieldLabel(selectedProductForValidation.value)}必须大于 0。`
+  if (!Number.isFinite(form.dailyQuotaAmount) || !form.dailyQuotaAmount || form.dailyQuotaAmount <= 0) next.dailyQuota = `每天${selectedProductForValidation.value?.quotaLabel || '额度'}必须大于 0。`
+  if (!Number.isFinite(form.weeklyQuotaAmount) || !form.weeklyQuotaAmount || form.weeklyQuotaAmount <= 0) {
+    next.weeklyQuota = `每周${selectedProductForValidation.value?.quotaLabel || '额度'}必须大于 0。`
   }
   if (form.followsOfficialQuotaReset === null) next.quotaReset = '请选择额度是否跟随官方重置。'
   if (!form.vpsRegion.trim()) next.connection = '请填写 VPS 区域。'
@@ -649,8 +648,8 @@ function validate(requireComplete: boolean) {
     delete next.product
     delete next.region
     delete next.monthlyPriceCny
+    delete next.dailyQuota
     delete next.weeklyQuota
-    delete next.monthlyQuota
     delete next.quotaReset
     delete next.connection
     delete next.openingChannelCode
@@ -679,8 +678,8 @@ function toPayload(status: 'draft' | 'reviewing') {
     customRegionName: form.regionCode === 'other' ? form.customRegionName?.trim() || null : null,
     monthlyPriceCny: form.monthlyPriceCny,
     serviceMultiplier: 1,
+    dailyQuotaAmount: form.dailyQuotaAmount,
     weeklyQuotaAmount: form.weeklyQuotaAmount,
-    monthlyQuotaAmount: form.monthlyQuotaAmount,
     followsOfficialQuotaReset: form.followsOfficialQuotaReset,
     vpsRegion: form.vpsRegion.trim(),
     supportsMainlandChinaDirectConnection: form.supportsMainlandChinaDirectConnection,
@@ -729,7 +728,7 @@ const completeness = computed<CompletenessItem[]>(() => [
   form.productId && (form.productId !== 'other-custom' || form.customProductName?.trim()) ? { label: '产品', status: 'done' } : { label: '产品', status: 'pending' },
   taskComplete('region') ? { label: '地区', status: 'done' } : { label: '地区', status: 'pending' },
   form.monthlyPriceCny && form.monthlyPriceCny > 0 ? { label: '月费', status: 'done' } : { label: '月费', status: 'pending' },
-  taskComplete('weeklyQuota') && taskComplete('monthlyQuota') ? { label: '每周 / 每月额度', status: 'done' } : { label: '每周 / 每月额度', status: 'pending' },
+  taskComplete('dailyQuota') && taskComplete('weeklyQuota') ? { label: '每天 / 每周额度', status: 'done' } : { label: '每天 / 每周额度', status: 'pending' },
   taskComplete('quotaReset') ? { label: '额度重置', status: 'done' } : { label: '额度重置', status: 'pending' },
   taskComplete('connection') ? { label: 'VPS 与国内直连', status: 'done' } : { label: 'VPS 与国内直连', status: 'pending' },
   form.totalSeats >= 1 && form.totalSeats <= 20 && form.occupiedSeats >= 0 && form.occupiedSeats < form.totalSeats ? { label: '名额', status: 'done' } : { label: '名额', status: 'conflict' },

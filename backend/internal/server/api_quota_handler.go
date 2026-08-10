@@ -210,11 +210,18 @@ func (s *Server) handlePublicAPIQuotaOffers(w http.ResponseWriter, r *http.Reque
 		writeProblem(w, r, appErr)
 		return
 	}
+	excludeSystemSlots, appErr := parseOptionalQueryBool(r, "excludeSystemSlots")
+	if appErr != nil {
+		writeProblem(w, r, appErr)
+		return
+	}
 	result, appErr := s.apiQuotas.PublicAPIQuotaOffers(r.Context(), apiquota.PublicOfferFilter{
 		DistributionSystem: r.URL.Query().Get("distributionSystem"),
 		OnlyOneMultiplier:  oneMultiplier,
 		OnlyOrderable:      onlyOrderable,
 		SystemSlotKey:      r.URL.Query().Get("slotKey"),
+		Search:             r.URL.Query().Get("search"),
+		ExcludeSystemSlots: excludeSystemSlots,
 	}, page)
 	if appErr != nil {
 		writeProblem(w, r, appErr)

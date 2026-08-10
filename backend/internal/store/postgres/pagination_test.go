@@ -72,3 +72,31 @@ func TestPageFromItemsReturnsNextCursorAndLastPage(t *testing.T) {
 		t.Fatalf("last page next cursor = %q, want nil", *last.NextCursor)
 	}
 }
+
+func TestScalarKeysetCursorBindsSortAndValue(t *testing.T) {
+	cursor := encodeScalarKeysetCursor("price_asc", "19.90", "00000000-0000-0000-0000-000000000001")
+
+	position, appErr := decodeScalarKeysetCursor(cursor, "price_asc")
+	if appErr != nil {
+		t.Fatalf("decode scalar cursor: %v", appErr)
+	}
+	if position.Value != "19.90" || position.ID != "00000000-0000-0000-0000-000000000001" {
+		t.Fatalf("unexpected scalar cursor: %+v", position)
+	}
+	if _, appErr := decodeScalarKeysetCursor(cursor, "seats_desc"); appErr == nil || appErr.Code != domain.CodeValidationFailed {
+		t.Fatalf("expected sort mismatch validation error, got %v", appErr)
+	}
+}
+
+func TestValidateNonNegativeDecimalCursorRejectsInvalidValues(t *testing.T) {
+	for _, value := range []string{"not-a-number", "-0.01", "1/2", "NaN", "Infinity"} {
+		if appErr := validateNonNegativeDecimalCursor(scalarKeysetPosition{Value: value}); appErr == nil || appErr.Code != domain.CodeValidationFailed {
+			t.Fatalf("expected validation error for decimal cursor %q, got %v", value, appErr)
+		}
+	}
+	for _, value := range []string{"0", "19.90", "1e2"} {
+		if appErr := validateNonNegativeDecimalCursor(scalarKeysetPosition{Value: value}); appErr != nil {
+			t.Fatalf("expected decimal cursor %q to be valid, got %v", value, appErr)
+		}
+	}
+}

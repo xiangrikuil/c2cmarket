@@ -87,6 +87,14 @@ versions:
 | `000078_account_appeal_sessions` | dedicated account-governance appeal sessions for suspended or banned users |
 | `000079_api_market_probe_and_quota_limits` | API SKU quota usage policies, immutable purchase snapshots, authorized platform probes, and probe samples |
 | `000080_api_prompt_audit_and_publish_contract` | nullable seller prompt-audit declarations and immutable purchase/order snapshots, plus independent historical performance fields |
+| `000081_api_probe_connections_and_model_keys` | reusable seller probe connections, frozen order delivery targets, and canonical API model keys |
+| `000082_api_probe_real_model_health` | real streaming model probes, attempt and usage facts, model-change history, and immutable latency rules |
+| `000083_carpool_daily_weekly_quota` | renames carpool weekly/monthly quota fields to daily/weekly while preserving existing values |
+| `000084_api_order_dispute_status_projection` | adds negotiation and remediation phases while keeping API-order dispute state as a synchronized projection |
+| `000085_api_order_dispute_negotiation` | adds structured API-order requests, immutable participant messages, and bilateral settlement proposals |
+| `000086_announcement_content_updated_at` | separates user-visible announcement content updates from general record mutation time |
+| `000087_api_order_dispute_remedies` | adds auditable post-ruling remedy requirements, claims, beneficiary responses, neutral timeouts, and administrator-confirmed overdue facts |
+| `000088_api_order_dispute_sanctions` | links seller restrictions to overdue remedies and indexes the 180-day confirmed-breach window |
 
 The current runnable Go slice supports both in-memory tests and PostgreSQL runtime.
 When `DATABASE_URL` is configured, users, auth sessions, idempotency, product
@@ -386,6 +394,44 @@ false value while historical rows remain null. It also removes the grouped
 performance-declaration constraint so new writes can keep maximum concurrency
 without inventing seller TTFT or confirmation timestamps; the historical
 columns and their existing values remain intact.
+
+Version 81 (`000081_api_probe_connections_and_model_keys`) replaces
+service-scoped probe configuration with reusable seller-owned connections.
+Services and orders retain exact Base URL snapshots, while API model catalog,
+service, package, and order projections use canonical model keys without
+decorative display-name variants.
+
+Version 82 (`000082_api_probe_real_model_health`) upgrades connection checks
+from `/models`-only samples to real streaming model probes. It records
+per-attempt TTFT, retry, usage, and cost facts, preserves model-change history,
+and adds immutable model/protocol/environment latency-rule versions. Existing
+local probe connections are disabled for explicit revalidation and incompatible
+legacy samples are cleared before the new schema constraints apply.
+
+Version 83 (`000083_carpool_daily_weekly_quota`) corrects the carpool quota
+period contract. The former weekly value becomes the daily value, and the
+former monthly value becomes the weekly value without rewriting amounts.
+
+Version 84 (`000084_api_order_dispute_status_projection`) extends dispute-case
+and API-order dispute status constraints for the V1 negotiation and remediation
+workflow. Existing rows are not rewritten; the API-order status remains a
+projection of the linked dispute lifecycle.
+
+Version 85 (`000085_api_order_dispute_negotiation`) adds structured API-order
+requests, immutable participant messages, and bilateral settlement proposals.
+Existing dispute rows are not rewritten, and a proposal can close a dispute
+only after the counterparty confirms the same pending proposal.
+
+Version 87 (`000087_api_order_dispute_remedies`) adds auditable post-ruling
+remedy records for API-order disputes. Responsibility, action, amount, due
+dates, fulfillment claims, counterparty responses, neutral confirmation
+timeouts, and administrator-confirmed overdue facts remain separate from the
+dispute case status and API-order lifecycle.
+
+Version 88 (`000088_api_order_dispute_sanctions`) links an administrator-applied
+API-order seller restriction directly to its overdue remedy, prevents a second
+restriction from consuming the same overdue fact, and indexes confirmed seller
+breaches for the rolling 180-day recommendation window.
 
 ## Contact Retention And Destruction
 

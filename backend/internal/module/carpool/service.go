@@ -123,8 +123,8 @@ func newListing(ownerUserID string, input CreateListingInput, plan catalog.Produ
 		SourceURL:                             strings.TrimSpace(input.SourceURL),
 		PriceMonthlyCNY:                       strings.TrimSpace(input.PriceMonthlyCNY),
 		ServiceMultiplier:                     strings.TrimSpace(input.ServiceMultiplier),
-		WeeklyQuotaAmount:                     optionalString(input.WeeklyQuotaAmount),
-		MonthlyQuotaAmount:                    strings.TrimSpace(input.MonthlyQuotaAmount),
+		DailyQuotaAmount:                      optionalString(input.DailyQuotaAmount),
+		WeeklyQuotaAmount:                     strings.TrimSpace(input.WeeklyQuotaAmount),
 		FollowsOfficialQuotaReset:             input.FollowsOfficialQuotaReset,
 		VPSRegion:                             optionalString(input.VPSRegion),
 		SupportsMainlandChinaDirectConnection: input.SupportsMainlandChinaDirectConnection,
@@ -209,8 +209,8 @@ func (s *Service) UpdateListing(ctx context.Context, user auth.User, input Updat
 		SourceURL:                             input.SourceURL,
 		PriceMonthlyCNY:                       input.PriceMonthlyCNY,
 		ServiceMultiplier:                     input.ServiceMultiplier,
+		DailyQuotaAmount:                      input.DailyQuotaAmount,
 		WeeklyQuotaAmount:                     input.WeeklyQuotaAmount,
-		MonthlyQuotaAmount:                    input.MonthlyQuotaAmount,
 		FollowsOfficialQuotaReset:             input.FollowsOfficialQuotaReset,
 		VPSRegion:                             input.VPSRegion,
 		SupportsMainlandChinaDirectConnection: input.SupportsMainlandChinaDirectConnection,
@@ -278,8 +278,8 @@ func (s *Service) UpdateListing(ctx context.Context, user auth.User, input Updat
 	listing.SourceURL = strings.TrimSpace(input.SourceURL)
 	listing.PriceMonthlyCNY = strings.TrimSpace(input.PriceMonthlyCNY)
 	listing.ServiceMultiplier = strings.TrimSpace(input.ServiceMultiplier)
-	listing.WeeklyQuotaAmount = optionalString(input.WeeklyQuotaAmount)
-	listing.MonthlyQuotaAmount = strings.TrimSpace(input.MonthlyQuotaAmount)
+	listing.DailyQuotaAmount = optionalString(input.DailyQuotaAmount)
+	listing.WeeklyQuotaAmount = strings.TrimSpace(input.WeeklyQuotaAmount)
 	listing.FollowsOfficialQuotaReset = input.FollowsOfficialQuotaReset
 	listing.VPSRegion = optionalString(input.VPSRegion)
 	listing.SupportsMainlandChinaDirectConnection = input.SupportsMainlandChinaDirectConnection
@@ -346,9 +346,9 @@ func (s *Service) SubmitListingForReview(ctx context.Context, user auth.User, in
 	return s.withSeatSummaryLocked(listing), nil
 }
 
-func (s *Service) PublicListings(ctx context.Context, page domain.PageRequest) (domain.Page[Listing], *domain.AppError) {
+func (s *Service) PublicListings(ctx context.Context, filter ListingFilter, page domain.PageRequest) (domain.Page[Listing], *domain.AppError) {
 	if s.repo != nil {
-		return s.repo.ListPublicCarpoolListings(ctx, page)
+		return s.repo.ListPublicCarpoolListings(ctx, filter, page)
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -360,7 +360,7 @@ func (s *Service) PublicListings(ctx context.Context, page domain.PageRequest) (
 			listings = append(listings, listing)
 		}
 	}
-	return domain.PageItems(listings, page), nil
+	return domain.PageItems(filterListings(listings, filter), page)
 }
 
 func (s *Service) PublicListing(ctx context.Context, listingID string) (Listing, *domain.AppError) {
@@ -394,12 +394,12 @@ func (s *Service) MyListings(ctx context.Context, user auth.User) ([]Listing, *d
 	return listings, nil
 }
 
-func (s *Service) AdminListings(ctx context.Context, user auth.User, page domain.PageRequest) (domain.Page[Listing], *domain.AppError) {
+func (s *Service) AdminListings(ctx context.Context, user auth.User, filter ListingFilter, page domain.PageRequest) (domain.Page[Listing], *domain.AppError) {
 	if !user.IsAdmin {
 		return domain.Page[Listing]{}, domain.NewError(http.StatusForbidden, domain.CodePermissionDenied, "Permission denied", "需要管理员权限。")
 	}
 	if s.repo != nil {
-		return s.repo.ListAdminCarpoolListings(ctx, page)
+		return s.repo.ListAdminCarpoolListings(ctx, filter, page)
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -408,7 +408,7 @@ func (s *Service) AdminListings(ctx context.Context, user auth.User, page domain
 	for _, id := range s.listingOrder {
 		listings = append(listings, s.withSeatSummaryLocked(s.listings[id]))
 	}
-	return domain.PageItems(listings, page), nil
+	return domain.PageItems(filterListings(listings, filter), page)
 }
 
 func (s *Service) AdminListing(ctx context.Context, user auth.User, listingID string) (Listing, *domain.AppError) {
@@ -1377,11 +1377,11 @@ func validateCreateListingInput(input CreateListingInput, plan catalog.ProductPl
 	if multiplier, ok := parseNonNegativeDecimal(input.ServiceMultiplier); !ok || multiplier.Cmp(big.NewRat(1, 1)) != 0 {
 		return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Service multiplier invalid", "拼车倍率固定为 1。", "serviceMultiplier", "fixed_value", "拼车倍率必须为 1。")
 	}
+	if quota, ok := parseNonNegativeDecimal(input.DailyQuotaAmount); !ok || quota.Sign() <= 0 {
+		return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Daily quota invalid", "每天额度格式不正确。", "dailyQuotaAmount", "invalid", "每天额度必须是大于 0 的数字。")
+	}
 	if quota, ok := parseNonNegativeDecimal(input.WeeklyQuotaAmount); !ok || quota.Sign() <= 0 {
 		return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Weekly quota invalid", "每周额度格式不正确。", "weeklyQuotaAmount", "invalid", "每周额度必须是大于 0 的数字。")
-	}
-	if quota, ok := parseNonNegativeDecimal(input.MonthlyQuotaAmount); !ok || quota.Sign() <= 0 {
-		return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Monthly quota invalid", "每月额度格式不正确。", "monthlyQuotaAmount", "invalid", "每月额度必须是大于 0 的数字。")
 	}
 	if input.FollowsOfficialQuotaReset == nil {
 		return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Official quota reset selection required", "必须选择额度是否跟随官方重置。", "followsOfficialQuotaReset", "required", "请选择额度是否跟随官方重置。")
@@ -1610,7 +1610,7 @@ func canUpdateListingStatus(currentStatus, nextStatus, action string) bool {
 	case "reject":
 		return nextStatus == ListingStatusRejected && currentStatus == ListingStatusPendingReview
 	case "request_changes":
-		return nextStatus == ListingStatusChangesRequested && currentStatus == ListingStatusPendingReview
+		return nextStatus == ListingStatusChangesRequested && (currentStatus == ListingStatusPendingReview || currentStatus == ListingStatusActive)
 	case "pause":
 		return nextStatus == ListingStatusPaused && currentStatus == ListingStatusActive
 	case "restore":
@@ -1622,7 +1622,7 @@ func canUpdateListingStatus(currentStatus, nextStatus, action string) bool {
 	case ListingStatusRejected:
 		return currentStatus == ListingStatusPendingReview
 	case ListingStatusChangesRequested:
-		return currentStatus == ListingStatusPendingReview
+		return currentStatus == ListingStatusPendingReview || currentStatus == ListingStatusActive
 	case ListingStatusPaused:
 		return currentStatus == ListingStatusActive
 	default:
