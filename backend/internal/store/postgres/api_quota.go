@@ -6,6 +6,7 @@ import (
 	"errors"
 	"math/big"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -31,7 +32,7 @@ var apiQuotaBatchColumns = `
 `
 
 const apiQuotaOfferColumns = `
-	o.id::text, o.batch_id::text, o.api_service_id::text, o.owner_user_id::text,
+		o.id::text, o.batch_id::text, o.api_service_id::text, o.owner_user_id::text,
 	COALESCE(o.previous_version_id::text, ''), o.distribution_system, o.name,
 	o.usd_allowance::text, o.price_cny::text,
 	(price_cny / usd_allowance)::numeric(18,6)::text,
@@ -40,8 +41,10 @@ const apiQuotaOfferColumns = `
 	o.daily_limit_mode, COALESCE(o.daily_limit_usd::text, ''),
 	o.delivery_mode, o.delivery_eta_minutes,
 	o.sale_mode, o.status, o.sort_order, o.published_at,
-	o.created_at, o.updated_at, o.version
+		o.created_at, o.updated_at, o.version
 `
+
+const apiQuotaUnitPriceExpression = `(o.price_cny / o.usd_allowance)`
 
 func (s *Store) CreateAPIQuotaBatch(ctx context.Context, batch apiquota.Batch) (apiquota.Batch, *domain.AppError) {
 	if s == nil || s.pool == nil {
@@ -618,9 +621,48 @@ func (s *Store) ListPublicAPIQuotaOffers(ctx context.Context, filter apiquota.Pu
 		return domain.Page[apiquota.OfferCard]{}, appErr
 	}
 	page = normalizePageRequest(page)
-	position, appErr := decodeKeysetCursor(page.Cursor)
+	sortMode := filter.NormalizedSort()
+	var position keysetPosition
+	var scalarPosition scalarKeysetPosition
+	var appErr *domain.AppError
+	if sortMode == apiquota.PublicOfferSortUpdatedDesc {
+		position, appErr = decodeKeysetCursor(page.Cursor)
+	} else {
+		scalarPosition, appErr = decodeScalarKeysetCursor(page.Cursor, sortMode)
+	}
 	if appErr != nil {
 		return domain.Page[apiquota.OfferCard]{}, appErr
+	}
+	if page.Cursor != "" {
+		switch sortMode {
+		case apiquota.PublicOfferSortUnitPriceAsc, apiquota.PublicOfferSortAllowanceDesc:
+			if appErr := validateNonNegativeDecimalCursor(scalarPosition); appErr != nil {
+				return domain.Page[apiquota.OfferCard]{}, appErr
+			}
+		case apiquota.PublicOfferSortDeliveryAsc:
+			value, err := strconv.Atoi(scalarPosition.Value)
+			if err != nil || value < 0 {
+				return domain.Page[apiquota.OfferCard]{}, invalidPageCursorError()
+			}
+		}
+	}
+	cursorCondition := `($5::timestamptz IS NULL OR (o.updated_at, o.id) < ($5::timestamptz, $6::uuid))`
+	cursorValue := any(nullTime(position.Time))
+	cursorID := any(nullUUID(position.ID))
+	orderBy := `ORDER BY o.updated_at DESC, o.id DESC`
+	switch sortMode {
+	case apiquota.PublicOfferSortUnitPriceAsc:
+		cursorCondition = `($5 = '' OR (` + apiQuotaUnitPriceExpression + `, o.id) > ($5::numeric, $6::uuid))`
+		cursorValue, cursorID = scalarPosition.Value, nullUUID(scalarPosition.ID)
+		orderBy = `ORDER BY ` + apiQuotaUnitPriceExpression + ` ASC, o.id ASC`
+	case apiquota.PublicOfferSortAllowanceDesc:
+		cursorCondition = `($5 = '' OR (o.usd_allowance, o.id) < ($5::numeric, $6::uuid))`
+		cursorValue, cursorID = scalarPosition.Value, nullUUID(scalarPosition.ID)
+		orderBy = `ORDER BY o.usd_allowance DESC, o.id DESC`
+	case apiquota.PublicOfferSortDeliveryAsc:
+		cursorCondition = `($5 = '' OR (o.delivery_eta_minutes, o.id) > ($5::integer, $6::uuid))`
+		cursorValue, cursorID = scalarPosition.Value, nullUUID(scalarPosition.ID)
+		orderBy = `ORDER BY o.delivery_eta_minutes ASC, o.id ASC`
 	}
 	rows, err := s.pool.Query(ctx, publicAPIQuotaOffersQuery+`
 		  AND ($2 = '' OR o.distribution_system = $2)
@@ -635,7 +677,7 @@ func (s *Store) ListPublicAPIQuotaOffers(ctx context.Context, filter apiquota.Pu
 		        AND slot_round.system_slot_key = $4
 		    )
 		  )
-		  AND ($5::timestamptz IS NULL OR (o.updated_at, o.id) < ($5::timestamptz, $6::uuid))
+		  AND `+cursorCondition+`
 		  AND (
 		    NOT $7 OR (
 		      b.status = 'published' AND o.status = 'published'
@@ -662,11 +704,22 @@ func (s *Store) ListPublicAPIQuotaOffers(ctx context.Context, filter apiquota.Pu
 		        AND system_round.system_slot_key IS NOT NULL
 		    )
 		  )
-		ORDER BY o.updated_at DESC, o.id DESC
-		LIMIT $10
+		  AND (
+		    $10 = '' OR EXISTS (
+		      SELECT 1 FROM api_service_models selected_model
+		      WHERE selected_model.api_service_id = s.id
+		        AND selected_model.enabled = true
+		        AND selected_model.model_catalog_id::text = $10
+		    )
+		  )
+		  AND ($11 = '' OR o.model_multiplier <= $11::numeric)
+		  AND ($12 = '' OR o.sale_mode = $12)
+		`+orderBy+`
+		LIMIT $13
 	`, now, strings.TrimSpace(filter.DistributionSystem), filter.OnlyOneMultiplier,
-		strings.TrimSpace(filter.SystemSlotKey), nullTime(position.Time), nullUUID(position.ID),
-		filter.OnlyOrderable, strings.TrimSpace(filter.Search), filter.ExcludeSystemSlots, page.Limit+1)
+		strings.TrimSpace(filter.SystemSlotKey), cursorValue, cursorID,
+		filter.OnlyOrderable, strings.TrimSpace(filter.Search), filter.ExcludeSystemSlots,
+		strings.TrimSpace(filter.ModelCatalogID), strings.TrimSpace(filter.MaxMultiplier), strings.TrimSpace(filter.SaleMode), page.Limit+1)
 	if err != nil {
 		return domain.Page[apiquota.OfferCard]{}, internalStoreError()
 	}
@@ -682,9 +735,20 @@ func (s *Store) ListPublicAPIQuotaOffers(ctx context.Context, filter apiquota.Pu
 	if rows.Err() != nil {
 		return domain.Page[apiquota.OfferCard]{}, internalStoreError()
 	}
-	return pageFromItems(items, page, func(item apiquota.OfferCard) (time.Time, string) {
-		return item.UpdatedAt, item.ID
-	}), nil
+	switch sortMode {
+	case apiquota.PublicOfferSortUnitPriceAsc:
+		return pageFromScalarItems(items, page, sortMode, func(item apiquota.OfferCard) (string, string) { return item.CNYPerUSD, item.ID }), nil
+	case apiquota.PublicOfferSortAllowanceDesc:
+		return pageFromScalarItems(items, page, sortMode, func(item apiquota.OfferCard) (string, string) { return item.USDAllowance, item.ID }), nil
+	case apiquota.PublicOfferSortDeliveryAsc:
+		return pageFromScalarItems(items, page, sortMode, func(item apiquota.OfferCard) (string, string) {
+			return strconv.Itoa(item.DeliveryETAMinutes), item.ID
+		}), nil
+	default:
+		return pageFromItems(items, page, func(item apiquota.OfferCard) (time.Time, string) {
+			return item.UpdatedAt, item.ID
+		}), nil
+	}
 }
 
 func (s *Store) GetPublicAPIQuotaOffer(ctx context.Context, offerID string, now time.Time) (apiquota.OfferCard, *domain.AppError) {

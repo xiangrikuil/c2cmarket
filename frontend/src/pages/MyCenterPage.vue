@@ -351,19 +351,19 @@ const accountRecoveryReturnTo = computed(() => sanitizeAccountRecoveryReturnTo(r
 const quotaPublishRecovery = computed(() => accountRecoveryReturnTo.value === '/api-market/quota/new' || accountRecoveryReturnTo.value === '/my/api-services?intent=quota')
 const accountRecoveryDialogTitle = computed(() => {
   if (accountRecoveryComplete.value) return quotaPublishRecovery.value ? '账号设置完成' : '账号设置'
-  return quotaPublishRecovery.value ? '发布限时额度包前先完成账号设置' : '完善账号安全'
+  return quotaPublishRecovery.value ? '发布限量额度包前先完成账号设置' : '完善账号安全'
 })
 const accountRecoveryDialogDescription = computed(() => {
   if (accountRecoveryComplete.value) {
-    if (quotaPublishRecovery.value) return '继续选择 API 服务并发布限时额度包。'
+    if (quotaPublishRecovery.value) return '继续选择 API 服务并发布限量额度包。'
     return canConfigureBackupPassword.value ? '可以在这里更新邮箱或备用密码。' : '可以在这里更新验证邮箱。'
   }
   if (quotaPublishRecovery.value) {
-    return canConfigureBackupPassword.value ? '完成邮箱验证和备用密码设置后，会继续进入限时额度包发布流程。' : '完成邮箱验证后，会继续进入限时额度包发布流程。'
+    return canConfigureBackupPassword.value ? '完成邮箱验证和备用密码设置后，会继续进入限量额度包发布流程。' : '完成邮箱验证后，会继续进入限量额度包发布流程。'
   }
   return '补全后即可访问个人中心其他页面和业务页。'
 })
-const accountRecoveryContinueLabel = computed(() => quotaPublishRecovery.value ? '继续发布限时额度包' : '继续访问原页面')
+const accountRecoveryContinueLabel = computed(() => quotaPublishRecovery.value ? '继续发布限量额度包' : '继续访问原页面')
 const accountRecoveryDialogOpen = ref(false)
 const dismissedAccountRecoveryDialogKey = ref('')
 const accountSetupDialogMode = ref<AccountSetupDialogMode>('required')
@@ -831,7 +831,7 @@ function goToLogin() {
               <ShieldCheck class="h-8 w-8" />
             </div>
             <div class="account-security-side-copy mt-6">
-              <h2 class="text-2xl font-semibold tracking-tight">{{ quotaPublishRecovery ? '发布限时额度包' : '完善账号安全' }}</h2>
+              <h2 class="text-2xl font-semibold tracking-tight">{{ quotaPublishRecovery ? '发布限量额度包' : '完善账号安全' }}</h2>
               <p class="mt-3 text-sm leading-6 text-muted-foreground">
                 {{ accountSecuritySideDescription }}
               </p>
@@ -1049,7 +1049,7 @@ function goToLogin() {
                 <div>
                   <h3 class="text-lg font-semibold">账号安全设置完成</h3>
                   <p class="mt-2 text-sm leading-6 text-muted-foreground">
-                    {{ quotaPublishRecovery ? '现在可以继续选择 API 服务并发布限时额度包。' : '现在可以继续访问原页面，或留在账号页检查其他设置。' }}
+                    {{ quotaPublishRecovery ? '现在可以继续选择 API 服务并发布限量额度包。' : '现在可以继续访问原页面，或留在账号页检查其他设置。' }}
                   </p>
                 </div>
                 <dl class="grid gap-3 rounded-lg border border-border bg-card/70 p-4 text-left text-sm" :class="canConfigureBackupPassword ? 'sm:grid-cols-2' : ''">

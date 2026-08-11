@@ -76,7 +76,7 @@ const emptyTitle = computed(() => quotaPublishIntent.value && salesView.value ==
   : `没有${selectedSalesView.value.label}的服务`)
 const emptyDescription = computed(() => {
   if (quotaPublishIntent.value && salesView.value === 'all') {
-    return '限时额度包需要关联 API 服务，以复用接入方式、收款规则和卖家资料。'
+    return '限量额度包需要关联 API 服务，以复用接入方式、收款规则和卖家资料。'
   }
   if (salesView.value === 'active') {
     return '已过期、暂停、草稿和离线服务仍会保留，可切换筛选继续管理。'
@@ -132,7 +132,7 @@ function resumeService(id: string) {
   <div class="min-w-0 space-y-4">
     <PageTitle
       :title="quotaPublishIntent ? '选择 API 服务' : '我的 API 服务'"
-      :description="quotaPublishIntent ? '选择一个可复用的 API 服务，继续发布限时额度包。' : '默认查看仍在销售或即将开售的服务，历史状态可通过筛选继续管理。'"
+      :description="quotaPublishIntent ? '选择一个可复用的 API 服务，继续发布限量额度包。' : '默认查看仍在销售或即将开售的服务，历史状态可通过筛选继续管理。'"
     >
       <template #action>
         <Button as-child class="w-full md:w-auto">

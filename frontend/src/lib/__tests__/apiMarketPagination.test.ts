@@ -93,8 +93,12 @@ describe('API 市场分页适配', () => {
 
     const quotaPage = await backend.backendPublicAPIQuotaOffersPage({
       distributionSystem: 'sub2api',
+      modelCatalogId: 'model-1',
       oneMultiplier: true,
+      maxMultiplier: 1.2,
       onlyOrderable: true,
+      saleMode: 'scheduled',
+      sort: 'allowance_desc',
       slotKey: '2026-08-09@13:00',
       search: 'target service',
       excludeSystemSlots: true,
@@ -102,16 +106,24 @@ describe('API 市场分页适配', () => {
     const servicePage = await backend.backendAPIServicesPage({
       online: true,
       billingMode: 'fixed_package',
+      search: 'target seller',
       packageModelCatalogId: 'model-1',
       packageDurationDays: 7,
+      packagePriceCnyMax: 20,
+      packageMultiplierMax: 1.2,
+      sort: 'package_price_asc',
     }, { limit: 20, cursor: 'service-next' })
 
     const [quotaPath, quotaQuery = ''] = String(fetchMock.mock.calls[0]?.[0]).split('?')
     assert.equal(quotaPath, '/api/v1/api-quota-offers')
     assert.deepEqual(Object.fromEntries(new URLSearchParams(quotaQuery)), {
       distributionSystem: 'sub2api',
+      modelCatalogId: 'model-1',
       oneMultiplier: 'true',
+      maxMultiplier: '1.2',
       onlyOrderable: 'true',
+      saleMode: 'scheduled',
+      sort: 'allowance_desc',
       slotKey: '2026-08-09@13:00',
       search: 'target service',
       excludeSystemSlots: 'true',
@@ -126,6 +138,10 @@ describe('API 市场分页适配', () => {
       billingMode: 'fixed_package',
       packageModelCatalogId: 'model-1',
       packageDurationDays: '7',
+      search: 'target seller',
+      packagePriceCnyMax: '20',
+      packageMultiplierMax: '1.2',
+      sort: 'package_price_asc',
       limit: '20',
       cursor: 'service-next',
     })
@@ -140,7 +156,10 @@ describe('API 市场无限滚动接线', () => {
     assert.match(marketPageSource, /useInfiniteApiServices\(serviceFilters, serviceViewEnabled, activeView\)/)
     assert.match(marketPageSource, /billingMode: activeView\.value === 'packages' \? 'fixed_package' : 'metered_credit'/)
     assert.match(marketPageSource, /packageModelCatalogId: activeView\.value === 'packages' && packageReady\.value \? packageModel\.value : undefined/)
-    assert.match(marketPageSource, /search: quotaSearch\.value\.trim\(\) \|\| undefined/)
+    assert.match(marketPageSource, /search: debouncedSearch\.value\.trim\(\) \|\| undefined/)
+    assert.match(marketPageSource, /modelCatalogId: packageModel\.value \|\| undefined/)
+    assert.match(marketPageSource, /packagePriceCnyMax:/)
+    assert.match(marketPageSource, /minimumPurchaseCnyMax:/)
     assert.match(marketPageSource, /excludeSystemSlots: true/)
     assert.match(marketQueriesSource, /queryKey: computed\(\(\) => \['api-quota-offers', 'infinite', valueOf\(filters\)\]\)/)
     assert.equal((marketQueriesSource.match(/getNextPageParam: \(lastPage, _pages, _lastPageParam, pageParams\) => nextUnseenCursor\(lastPage\.nextCursor, pageParams\)/g) ?? []).length, 2)

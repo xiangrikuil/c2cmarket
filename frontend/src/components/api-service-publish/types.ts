@@ -7,9 +7,9 @@ export type ApiProviderCategory = 'gpt' | 'claude' | 'other'
 export type BillingMode = 'metered_credit' | 'fixed_package'
 export type SellingMode = 'free' | 'package' | 'limited'
 export const sellingModeLabels = {
-  free: '自由额度',
-  package: '限时流量包',
-  limited: '限时额度包',
+  free: '自选额度',
+  package: '短期流量包',
+  limited: '限量额度包',
 } as const satisfies Record<SellingMode, string>
 export type PublishDeliveryMode = 'api_key_endpoint' | 'sub2api_panel_account'
 export type PublishPaymentMethod = ApiPaymentMethod

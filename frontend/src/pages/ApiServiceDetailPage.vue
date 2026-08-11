@@ -133,7 +133,7 @@ const createOrderMutation = useMutation({
     if (!service.value) throw new Error('API 服务不存在。')
     const paymentMethod = getApiServiceDefaultPaymentMethod(service.value)
     if (!paymentMethod) throw new Error('商户尚未配置可用的微信或支付宝收款方式。')
-    if (service.value.billingMode === 'fixed_package' && !selectedPackage.value) throw new Error('请选择有库存的限时流量包。')
+    if (service.value.billingMode === 'fixed_package' && !selectedPackage.value) throw new Error('请选择有库存的短期流量包。')
     const intent = await createApiPurchaseIntent({
       serviceId: service.value.id,
       purchaseAmountCny: amount.value,

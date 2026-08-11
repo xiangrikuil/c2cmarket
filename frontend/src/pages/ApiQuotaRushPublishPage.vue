@@ -96,7 +96,7 @@ const previewOpen = ref(false)
 const paymentSettingsDialogOpen = ref(false)
 const paymentPromptedForCreate = ref(false)
 const formDirty = ref(false)
-useUnsavedChangesGuard(formDirty, '限时额度包配置尚未发布，确认离开当前页面？')
+useUnsavedChangesGuard(formDirty, '限量额度包配置尚未发布，确认离开当前页面？')
 const serviceMode = ref<ServiceMode>('existing')
 const selectedServiceId = ref('')
 const serviceError = ref('')
@@ -322,7 +322,7 @@ const minimumExpiry = computed(() => selectedSlot.value
 const serviceStepSummary = computed(() => selectedService.value
   ? `${selectedService.value.title} · ${selectedService.value.models.slice(0, 3).join(' / ')}`
   : serviceMode.value === 'create' ? '正在新建 API 服务' : '待选择可接单服务')
-const packageStepSummary = computed(() => `${rush.name || '限时额度包'} · $${formatDecimal(rush.usdAllowance || '0', 0, 6)} / ¥${formatDecimal(rush.priceCny || '0', 2, 2)} · ${rush.copies} 份 · 手工 ≤ ${rush.deliveryEtaMinutes} 分钟`)
+const packageStepSummary = computed(() => `${rush.name || '限量额度包'} · $${formatDecimal(rush.usdAllowance || '0', 0, 6)} / ¥${formatDecimal(rush.priceCny || '0', 2, 2)} · ${rush.copies} 份 · 手工 ≤ ${rush.deliveryEtaMinutes} 分钟`)
 const slotStepSummary = computed(() => selectedSlot.value
   ? `${formatSlotDate(selectedSlot.value.startsAt)} ${formatSlotTime(selectedSlot.value.startsAt)} · ${rush.expiresAt ? `失效于 ${rush.expiresAt.replace('T', ' ')}` : '待填写失效时间'}`
   : '待选择开放场次')
@@ -548,7 +548,7 @@ async function publishRushOffer() {
       sourceConfirmedAt: rush.sourceConfirmedAt,
     })
     formDirty.value = false
-    toast.success('限时额度包已发布。')
+    toast.success('限量额度包已发布。')
     await router.replace(`/my/api-services/${selectedService.value.id}#quota-offers`)
     void publication
   } catch (error) {
@@ -606,7 +606,7 @@ function preview() {
   <div class="api-publish-page space-y-5 pb-20" @input="formDirty = true" @change="formDirty = true">
     <header class="flex flex-col gap-2 border-b border-border pb-4 sm:flex-row sm:items-end sm:justify-between">
       <div>
-        <div class="flex items-center gap-2 text-sm font-medium text-primary"><CalendarClock class="h-4 w-4" />限时额度包</div>
+        <div class="flex items-center gap-2 text-sm font-medium text-primary"><CalendarClock class="h-4 w-4" />限量额度包</div>
         <h1 class="mt-1 text-2xl font-semibold">发布到固定抢购场次</h1>
         <p class="mt-1 text-sm text-muted-foreground">选择服务、设置单份额度与库存，再选择北京时间 09:00、13:00 或 20:00 场次。</p>
       </div>
@@ -620,13 +620,13 @@ function preview() {
 
     <div class="api-publish-layout grid min-w-0 gap-3 lg:items-start">
       <section class="api-publish-editor min-w-0 space-y-3">
-        <PublishStepSection :step="1" title="选择要发布额度的 API 服务" description="限时额度包会归属到当前选中的服务。" :status="publishStepStatus(1, step, completedSteps)" :summary="serviceStepSummary" @edit="selectStep">
+        <PublishStepSection :step="1" title="选择要发布额度的 API 服务" description="限量额度包会归属到当前选中的服务。" :status="publishStepStatus(1, step, completedSteps)" :summary="serviceStepSummary" @edit="selectStep">
           <div class="space-y-4">
             <template v-if="serviceMode === 'existing'">
               <div class="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                 <div>
                   <h2 class="text-sm font-semibold">我的 API 服务</h2>
-                  <p class="mt-0.5 text-xs text-muted-foreground">请选择这次限时额度包所属的服务。</p>
+                  <p class="mt-0.5 text-xs text-muted-foreground">请选择这次限量额度包所属的服务。</p>
                 </div>
                 <Button type="button" size="sm" variant="outline" @click="openNewServiceForm">
                   <Plus class="h-4 w-4" />新建 API 服务
@@ -644,7 +644,7 @@ function preview() {
                   </div>
                 </AlertDescription>
               </Alert>
-              <EmptyState v-else-if="eligibleServices.length === 0" title="暂无可用的 API 服务" description="新建一个 API 服务后，再为它发布限时额度包。" />
+              <EmptyState v-else-if="eligibleServices.length === 0" title="暂无可用的 API 服务" description="新建一个 API 服务后，再为它发布限量额度包。" />
               <RadioGroup v-else v-model="selectedServiceId" class="grid max-h-72 gap-2 overflow-y-auto pr-1 md:grid-cols-2">
                 <label v-for="service in eligibleServices" :key="service.id" class="flex min-h-24 cursor-pointer gap-3 rounded-md border border-border p-3 hover:border-primary/50 has-[[data-state=checked]]:border-primary has-[[data-state=checked]]:bg-primary/5">
                   <RadioGroupItem :value="service.id" class="mt-1" />
@@ -727,7 +727,7 @@ function preview() {
             <div class="space-y-1.5 text-sm sm:col-span-2"><span class="font-medium">交付方式</span>
               <div class="flex items-start gap-3 rounded-md border border-primary/25 bg-primary/5 p-3">
                 <PackageCheck class="mt-0.5 h-4 w-4 shrink-0 text-primary" />
-                <span><strong>卖家手工交付</strong><span class="mt-1 block text-xs leading-5 text-muted-foreground">确认收款后由卖家发放 API Key 与请求地址。新发布的限时额度包不再使用预导入凭据。</span></span>
+                <span><strong>卖家手工交付</strong><span class="mt-1 block text-xs leading-5 text-muted-foreground">确认收款后由卖家发放 API Key 与请求地址。新发布的限量额度包不再使用预导入凭据。</span></span>
               </div>
             </div>
             <label class="space-y-1.5 text-sm"><span class="font-medium">最长交付分钟数</span><Input v-model.number="rush.deliveryEtaMinutes" type="number" min="1" max="10" /></label>
@@ -770,7 +770,7 @@ function preview() {
         </PublishStepSection>
       </section>
 
-      <ResponsivePublishPreview v-model:open="previewOpen" title="限时额度包预览" description="根据当前服务、额度包和场次实时生成。">
+      <ResponsivePublishPreview v-model:open="previewOpen" title="限量额度包预览" description="根据当前服务、额度包和场次实时生成。">
         <ApiQuotaRushPublishPreview :step="step" :service-title="selectedService?.title" :slot-label="selectedSlotLabel" :default-multiplier="serviceDefaultMultiplier" :declared-max-concurrency="serviceDeclaredMaxConcurrency" :prompt-audit-enabled="servicePromptAuditEnabled" :draft="rush" />
       </ResponsivePublishPreview>
     </div>

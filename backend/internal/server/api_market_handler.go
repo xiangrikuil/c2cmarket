@@ -388,8 +388,16 @@ func (s *Server) handlePublicAPIServices(w http.ResponseWriter, r *http.Request)
 	services, appErr := s.app.PublicAPIServices(r.Context(), apimarket.PublicServiceFilter{
 		PaymentMethod:         r.URL.Query().Get("paymentMethod"),
 		BillingMode:           r.URL.Query().Get("billingMode"),
+		Search:                r.URL.Query().Get("search"),
+		ModelCatalogID:        r.URL.Query().Get("modelCatalogId"),
+		DistributionSystem:    r.URL.Query().Get("distributionSystem"),
+		MaxCNYPerUSD:          r.URL.Query().Get("maxCnyPerUsd"),
+		MinimumIntentCNYMax:   r.URL.Query().Get("minimumIntentCnyMax"),
 		PackageModelCatalogID: r.URL.Query().Get("packageModelCatalogId"),
 		PackageDurationDays:   packageDurationDays,
+		PackagePriceCNYMax:    r.URL.Query().Get("packagePriceCnyMax"),
+		PackageMultiplierMax:  r.URL.Query().Get("packageMultiplierMax"),
+		Sort:                  r.URL.Query().Get("sort"),
 	}, pageRequest)
 	if appErr != nil {
 		writeProblem(w, r, appErr)

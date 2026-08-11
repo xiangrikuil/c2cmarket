@@ -37,6 +37,11 @@ const (
 	PaymentMethodWechat = "wechat"
 	PaymentMethodAlipay = "alipay"
 
+	PublicServiceSortUpdatedDesc        = "updated_desc"
+	PublicServiceSortPriceAsc           = "price_asc"
+	PublicServiceSortMinimumPurchaseAsc = "minimum_purchase_asc"
+	PublicServiceSortPackagePriceAsc    = "package_price_asc"
+
 	DefaultPaymentWindowMinutes = 10
 
 	OwnerSalesViewActive  = "active"
@@ -300,8 +305,16 @@ type ServiceAdminActionInput struct {
 type PublicServiceFilter struct {
 	PaymentMethod         string
 	BillingMode           string
+	Search                string
+	ModelCatalogID        string
+	DistributionSystem    string
+	MaxCNYPerUSD          string
+	MinimumIntentCNYMax   string
 	PackageModelCatalogID string
 	PackageDurationDays   int
+	PackagePriceCNYMax    string
+	PackageMultiplierMax  string
+	Sort                  string
 }
 
 type OwnerServiceFilter struct {

@@ -202,8 +202,9 @@ func TestPostgresBusinessListFiltersAndSortsBeforePagination(t *testing.T) {
 	}
 
 	fixedServiceID := serviceIDs[24]
-	modelCatalogID := seedPublicServicePaginationFilters(t, store, owner.ID, serviceIDs, fixedServiceID, now)
+	modelCatalogID := seedPublicServicePaginationFilters(t, store, owner.ID, serviceIDs, now)
 	assertPublicServiceFiltersBeforePagination(t, store, fixedServiceID, modelCatalogID)
+	assertPublicServiceSortPagination(t, store, serviceIDs[:20], serviceIDs[20:25], modelCatalogID)
 	assertPublicQuotaFiltersBeforePagination(t, store, owner.ID, serviceIDs[0], now)
 	assertAdminAPIOrderFiltersAndPagination(t, store, owner.ID, contactID, serviceIDs[0], now)
 }
@@ -408,9 +409,12 @@ func assertAdminAPIOrderPageCoverage(t *testing.T, items []apiorder.Order, expec
 	}
 }
 
-func seedPublicServicePaginationFilters(t *testing.T, store *Store, ownerID string, serviceIDs []string, fixedServiceID string, now time.Time) string {
+func seedPublicServicePaginationFilters(t *testing.T, store *Store, ownerID string, serviceIDs []string, now time.Time) string {
 	t.Helper()
 	ctx := context.Background()
+	if len(serviceIDs) < 25 {
+		t.Fatal("pagination service fixture requires at least 25 services")
+	}
 	connectionID := uuid.NewString()
 	if _, err := store.pool.Exec(ctx, `
 		INSERT INTO api_probe_connections (
@@ -456,43 +460,44 @@ func seedPublicServicePaginationFilters(t *testing.T, store *Store, ownerID stri
 	`).Scan(&modelCatalogID, &modelKey, &provider); err != nil {
 		t.Fatalf("read pagination model catalog: %v", err)
 	}
-	serviceModelID := uuid.NewString()
-	packageID := uuid.NewString()
+	fixedServiceIDs := serviceIDs[20:25]
 	if _, err := store.pool.Exec(ctx, `
 		UPDATE api_services
 		SET billing_mode = 'fixed_package',
 		    usage_visibility = 'fixed_package_only',
 		    available_usd_allowance = NULL
-		WHERE id = $1
-	`, fixedServiceID); err != nil {
-		t.Fatalf("mark pagination fixed-package service: %v", err)
+		WHERE id = ANY($1::uuid[])
+	`, fixedServiceIDs); err != nil {
+		t.Fatalf("mark pagination fixed-package services: %v", err)
 	}
-	if _, err := store.pool.Exec(ctx, `
-		INSERT INTO api_service_models (
-			id, api_service_id, distribution_system, model_catalog_id,
-			model_key_snapshot, provider_snapshot, merchant_multiplier,
-			enabled, created_at, updated_at
-		) VALUES ($1, $2, 'sub2api', $3, $4, $5, 1, true, $6, $6)
-	`, serviceModelID, fixedServiceID, modelCatalogID, modelKey, provider, now); err != nil {
-		t.Fatalf("seed pagination service model: %v", err)
-	}
-	if _, err := store.pool.Exec(ctx, `
-		INSERT INTO api_service_packages (
-			id, api_service_id, name, price_cny, duration_days, description,
-			panel_allowance, stock_total, stock_available, enabled, created_at, updated_at
-		) VALUES ($1, $2, '深页固定套餐', 20, 7, '分页筛选回归', 10, 2, 2, true, $3, $3)
-	`, packageID, fixedServiceID, now); err != nil {
-		t.Fatalf("seed pagination package: %v", err)
-	}
-	if _, err := store.pool.Exec(ctx, `
-		INSERT INTO api_service_package_models (
-			api_service_package_id, api_service_model_id, api_service_id, created_at
-		) VALUES ($1, $2, $3, $4)
-	`, packageID, serviceModelID, fixedServiceID, now); err != nil {
-		t.Fatalf("seed pagination package model: %v", err)
-	}
-	if len(serviceIDs) < 25 {
-		t.Fatal("pagination service fixture requires at least 25 services")
+	packagePrices := []string{"10", "10", "20", "30", "5"}
+	for index, serviceID := range fixedServiceIDs {
+		serviceModelID := uuid.NewString()
+		packageID := uuid.NewString()
+		if _, err := store.pool.Exec(ctx, `
+			INSERT INTO api_service_models (
+				id, api_service_id, distribution_system, model_catalog_id,
+				model_key_snapshot, provider_snapshot, merchant_multiplier,
+				enabled, created_at, updated_at
+			) VALUES ($1, $2, 'sub2api', $3, $4, $5, 1, true, $6, $6)
+		`, serviceModelID, serviceID, modelCatalogID, modelKey, provider, now); err != nil {
+			t.Fatalf("seed pagination service model %d: %v", index, err)
+		}
+		if _, err := store.pool.Exec(ctx, `
+			INSERT INTO api_service_packages (
+				id, api_service_id, name, price_cny, duration_days, description,
+				panel_allowance, stock_total, stock_available, enabled, created_at, updated_at
+			) VALUES ($1, $2, $3, $4, 7, '分页筛选回归', 10, 2, 2, true, $5, $5)
+		`, packageID, serviceID, fmt.Sprintf("分页固定套餐 %02d", index), packagePrices[index], now); err != nil {
+			t.Fatalf("seed pagination package %d: %v", index, err)
+		}
+		if _, err := store.pool.Exec(ctx, `
+			INSERT INTO api_service_package_models (
+				api_service_package_id, api_service_model_id, api_service_id, created_at
+			) VALUES ($1, $2, $3, $4)
+		`, packageID, serviceModelID, serviceID, now); err != nil {
+			t.Fatalf("seed pagination package model %d: %v", index, err)
+		}
 	}
 	return modelCatalogID
 }
@@ -503,9 +508,66 @@ func assertPublicServiceFiltersBeforePagination(t *testing.T, store *Store, fixe
 		BillingMode:           apimarket.ServiceBillingModeFixedPackage,
 		PackageModelCatalogID: modelCatalogID,
 		PackageDurationDays:   7,
+		PackagePriceCNYMax:    "5",
 	}, domain.PageRequest{Limit: 1})
 	if appErr != nil || len(page.Items) != 1 || page.Items[0].ID != fixedServiceID || page.NextCursor != nil {
 		t.Fatalf("fixed-package filters must run before pagination: page=%+v error=%v", page, appErr)
+	}
+}
+
+func assertPublicServiceSortPagination(t *testing.T, store *Store, meteredServiceIDs, fixedServiceIDs []string, modelCatalogID string) {
+	t.Helper()
+	tests := []struct {
+		name        string
+		filter      apimarket.PublicServiceFilter
+		expectedIDs []string
+		value       func(apimarket.Service) string
+	}{
+		{
+			name: "metered unit price",
+			filter: apimarket.PublicServiceFilter{
+				BillingMode: apimarket.ServiceBillingModeMetered,
+				Sort:        apimarket.PublicServiceSortPriceAsc,
+			},
+			expectedIDs: meteredServiceIDs,
+			value:       func(item apimarket.Service) string { return item.DeclaredCNYPerUSDAllowance },
+		},
+		{
+			name: "metered minimum purchase",
+			filter: apimarket.PublicServiceFilter{
+				BillingMode: apimarket.ServiceBillingModeMetered,
+				Sort:        apimarket.PublicServiceSortMinimumPurchaseAsc,
+			},
+			expectedIDs: meteredServiceIDs,
+			value:       func(item apimarket.Service) string { return item.MinimumIntentCNY },
+		},
+		{
+			name: "fixed package price",
+			filter: apimarket.PublicServiceFilter{
+				BillingMode:           apimarket.ServiceBillingModeFixedPackage,
+				PackageModelCatalogID: modelCatalogID,
+				PackageDurationDays:   7,
+				Sort:                  apimarket.PublicServiceSortPackagePriceAsc,
+			},
+			expectedIDs: fixedServiceIDs,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			value := test.value
+			if value == nil {
+				value = func(item apimarket.Service) string { return minimumPackagePriceForFilter(item, test.filter) }
+			}
+			items := collectPublicAPIServiceIntegrationPages(t, store, test.filter, 2)
+			assertPublicAPIServicePageCoverage(t, items, test.expectedIDs)
+			for index := 1; index < len(items); index++ {
+				left := integrationDecimal(t, value(items[index-1]))
+				right := integrationDecimal(t, value(items[index]))
+				if comparison := left.Cmp(right); comparison > 0 || comparison == 0 && items[index-1].ID >= items[index].ID {
+					t.Fatalf("scalar keyset order broke at %d: %+v then %+v", index, items[index-1], items[index])
+				}
+			}
+		})
 	}
 }
 
@@ -532,8 +594,10 @@ func assertPublicQuotaFiltersBeforePagination(t *testing.T, store *Store, ownerI
 	`, roundID, batchID, serviceID, ownerID, now.Add(-time.Minute), now.Add(30*time.Minute), now); err != nil {
 		t.Fatalf("seed pagination quota round: %v", err)
 	}
+	offerIDs := make([]string, 0, 22)
 	for index := 0; index < 21; index++ {
 		offerID := uuid.NewString()
+		offerIDs = append(offerIDs, offerID)
 		updatedAt := now.Add(-time.Duration(index) * time.Second)
 		if _, err := store.pool.Exec(ctx, `
 			INSERT INTO api_quota_offers (
@@ -557,6 +621,7 @@ func assertPublicQuotaFiltersBeforePagination(t *testing.T, store *Store, ownerI
 	}
 
 	continuousOfferID := uuid.NewString()
+	offerIDs = append(offerIDs, continuousOfferID)
 	continuousUpdatedAt := now.Add(-time.Minute)
 	if _, err := store.pool.Exec(ctx, `
 		INSERT INTO api_quota_offers (
@@ -589,6 +654,36 @@ func assertPublicQuotaFiltersBeforePagination(t *testing.T, store *Store, ownerI
 	excludedPage, appErr := store.ListPublicAPIQuotaOffers(ctx, apiquota.PublicOfferFilter{ExcludeSystemSlots: true}, domain.PageRequest{Limit: 1}, now)
 	if appErr != nil || len(excludedPage.Items) != 1 || excludedPage.Items[0].ID != continuousOfferID || excludedPage.NextCursor != nil {
 		t.Fatalf("system-slot exclusion must run before pagination: page=%+v error=%v", excludedPage, appErr)
+	}
+	for _, sortMode := range []string{
+		apiquota.PublicOfferSortUnitPriceAsc,
+		apiquota.PublicOfferSortAllowanceDesc,
+		apiquota.PublicOfferSortDeliveryAsc,
+	} {
+		t.Run(sortMode, func(t *testing.T) {
+			items := collectPublicAPIQuotaIntegrationPages(t, store, apiquota.PublicOfferFilter{Search: "额度包", Sort: sortMode}, 5, now)
+			assertPublicAPIQuotaPageCoverage(t, items, offerIDs)
+			for index := 1; index < len(items); index++ {
+				previous := items[index-1]
+				current := items[index]
+				switch sortMode {
+				case apiquota.PublicOfferSortUnitPriceAsc:
+					comparison := integrationDecimal(t, previous.CNYPerUSD).Cmp(integrationDecimal(t, current.CNYPerUSD))
+					if comparison > 0 || comparison == 0 && previous.ID >= current.ID {
+						t.Fatalf("unit-price keyset order broke at %d: %+v then %+v", index, previous, current)
+					}
+				case apiquota.PublicOfferSortAllowanceDesc:
+					comparison := integrationDecimal(t, previous.USDAllowance).Cmp(integrationDecimal(t, current.USDAllowance))
+					if comparison < 0 || comparison == 0 && previous.ID <= current.ID {
+						t.Fatalf("allowance keyset order broke at %d: %+v then %+v", index, previous, current)
+					}
+				case apiquota.PublicOfferSortDeliveryAsc:
+					if previous.DeliveryETAMinutes > current.DeliveryETAMinutes || previous.DeliveryETAMinutes == current.DeliveryETAMinutes && previous.ID >= current.ID {
+						t.Fatalf("delivery keyset order broke at %d: %+v then %+v", index, previous, current)
+					}
+				}
+			}
+		})
 	}
 }
 
@@ -632,6 +727,46 @@ func collectAPIServiceIntegrationPages(t *testing.T, store *Store, filter apimar
 	}
 }
 
+func collectPublicAPIServiceIntegrationPages(t *testing.T, store *Store, filter apimarket.PublicServiceFilter, limit int) []apimarket.Service {
+	t.Helper()
+	var items []apimarket.Service
+	var cursor string
+	for {
+		page, appErr := store.ListPublicAPIServices(context.Background(), filter, domain.PageRequest{Limit: limit, Cursor: cursor})
+		if appErr != nil {
+			t.Fatalf("collect public API service page: %v", appErr)
+		}
+		items = append(items, page.Items...)
+		if page.NextCursor == nil {
+			return items
+		}
+		if *page.NextCursor == cursor {
+			t.Fatalf("public API service cursor repeated: %q", cursor)
+		}
+		cursor = *page.NextCursor
+	}
+}
+
+func collectPublicAPIQuotaIntegrationPages(t *testing.T, store *Store, filter apiquota.PublicOfferFilter, limit int, now time.Time) []apiquota.OfferCard {
+	t.Helper()
+	var items []apiquota.OfferCard
+	var cursor string
+	for {
+		page, appErr := store.ListPublicAPIQuotaOffers(context.Background(), filter, domain.PageRequest{Limit: limit, Cursor: cursor}, now)
+		if appErr != nil {
+			t.Fatalf("collect public API quota page: %v", appErr)
+		}
+		items = append(items, page.Items...)
+		if page.NextCursor == nil {
+			return items
+		}
+		if *page.NextCursor == cursor {
+			t.Fatalf("public API quota cursor repeated: %q", cursor)
+		}
+		cursor = *page.NextCursor
+	}
+}
+
 func assertCarpoolPageCoverage(t *testing.T, items []carpool.Listing, expectedIDs []string) {
 	t.Helper()
 	if len(items) != len(expectedIDs) {
@@ -647,6 +782,44 @@ func assertCarpoolPageCoverage(t *testing.T, items []carpool.Listing, expectedID
 	for _, id := range expectedIDs {
 		if _, exists := seen[id]; !exists {
 			t.Fatalf("carpool listing omitted across page boundaries: %s", id)
+		}
+	}
+}
+
+func assertPublicAPIServicePageCoverage(t *testing.T, items []apimarket.Service, expectedIDs []string) {
+	t.Helper()
+	if len(items) != len(expectedIDs) {
+		t.Fatalf("public API service page coverage = %d, want %d", len(items), len(expectedIDs))
+	}
+	seen := make(map[string]struct{}, len(items))
+	for _, item := range items {
+		if _, exists := seen[item.ID]; exists {
+			t.Fatalf("duplicate public API service across page boundary: %s", item.ID)
+		}
+		seen[item.ID] = struct{}{}
+	}
+	for _, id := range expectedIDs {
+		if _, exists := seen[id]; !exists {
+			t.Fatalf("public API service omitted across page boundaries: %s", id)
+		}
+	}
+}
+
+func assertPublicAPIQuotaPageCoverage(t *testing.T, items []apiquota.OfferCard, expectedIDs []string) {
+	t.Helper()
+	if len(items) != len(expectedIDs) {
+		t.Fatalf("public API quota page coverage = %d, want %d", len(items), len(expectedIDs))
+	}
+	seen := make(map[string]struct{}, len(items))
+	for _, item := range items {
+		if _, exists := seen[item.ID]; exists {
+			t.Fatalf("duplicate public API quota offer across page boundary: %s", item.ID)
+		}
+		seen[item.ID] = struct{}{}
+	}
+	for _, id := range expectedIDs {
+		if _, exists := seen[id]; !exists {
+			t.Fatalf("public API quota offer omitted across page boundaries: %s", id)
 		}
 	}
 }

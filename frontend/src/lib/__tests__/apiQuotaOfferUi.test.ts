@@ -53,21 +53,25 @@ const wechatMarkSource = readFileSync(new URL('../../../public/wechat-mark.svg',
 const alipayMarkSource = readFileSync(new URL('../../../public/alipay-mark.svg', import.meta.url), 'utf8')
 
 describe('API 额度包市场视图', () => {
-  test('默认进入限时额度包并把同级视图写回 URL', () => {
+  test('默认进入限量额度包并用侧栏子菜单与移动端分段切换视图', () => {
     assert.equal(apiMarketViewFromQuery(undefined), 'limited')
     assert.equal(apiMarketViewFromQuery('unknown'), 'limited')
     assert.equal(apiMarketViewFromQuery('packages'), 'packages')
     assert.equal(apiMarketViewFromQuery('free'), 'free')
     assert.deepEqual(withApiMarketViewQuery({ category: 'api' }, 'free'), { category: 'api', view: 'free' })
-    assert.match(marketPageSource, /<TabsTrigger[^>]*value="limited"[^>]*>限时额度包<\/TabsTrigger>/)
-    assert.match(marketPageSource, /<TabsTrigger[^>]*value="packages"[^>]*>限时流量包<\/TabsTrigger>/)
-    assert.match(marketPageSource, /<TabsTrigger[^>]*value="free"[^>]*>自由额度<\/TabsTrigger>/)
-    assert.match(marketPageSource, /router\.replace\(\{ query: withApiMarketViewQuery\(route\.query, value\) \}\)/)
+    assert.match(marketPageSource, /<TabsList[^>]*lg:hidden[^>]*>/)
+    assert.match(marketPageSource, /<TabsTrigger[^>]*value="limited"[^>]*>限量额度包<\/TabsTrigger>/)
+    assert.match(marketPageSource, /<TabsTrigger[^>]*value="packages"[^>]*>短期流量包<\/TabsTrigger>/)
+    assert.match(marketPageSource, /<TabsTrigger[^>]*value="free"[^>]*>自选额度<\/TabsTrigger>/)
+    assert.match(marketPageSource, /router\.replace\(\{ query \}\)/)
+    assert.match(appShellSource, /apiMarketNavItems[\s\S]*?限量额度包[\s\S]*?短期流量包[\s\S]*?自选额度/)
+    assert.match(appShellSource, /isApiMarketViewActive\(child\.view\)/)
   })
 
   test('市场入口进入可复用已有服务的固定场次发布向导', () => {
-    assert.match(marketPageSource, /<RouterLink to="\/api-market\/quota\/new">[\s\S]*?发布限时额度包/)
-    assert.match(marketPageSource, /卖家也可以发布自己的限时额度包/)
+    assert.match(marketPageSource, /publishTo: '\/api-market\/quota\/new'/)
+    assert.match(marketPageSource, /发布限量额度包/)
+    assert.match(marketPageSource, /卖家也可以发布自己的限量额度包/)
     assert.match(myApiServicesPageSource, /quotaPublishIntent \? '选择 API 服务'/)
     assert.match(myApiServicesPageSource, /\/api-market\/quota\/new/)
     assert.match(myApiServicesPageSource, /选择并发布额度包/)
@@ -97,7 +101,7 @@ describe('API 额度包市场视图', () => {
 
   test('发布页先选择三种同级销售模式', () => {
     assert.match(apiServicePublishPageSource, /apiPublishModeFromQuery\(route\.query\.mode, route\.query\.after\)/)
-    assert.deepEqual(sellingModeLabels, { free: '自由额度', package: '限时流量包', limited: '限时额度包' })
+    assert.deepEqual(sellingModeLabels, { free: '自选额度', package: '短期流量包', limited: '限量额度包' })
     assert.match(sellingModeSelectorSource, /value: 'free'[\s\S]*?title: sellingModeLabels\.free/)
     assert.match(sellingModeSelectorSource, /value: 'package'[\s\S]*?title: sellingModeLabels\.package/)
     assert.match(sellingModeSelectorSource, /value: 'limited'[\s\S]*?title: sellingModeLabels\.limited/)
@@ -146,7 +150,7 @@ describe('API 额度包市场视图', () => {
     assert.doesNotMatch(apiMarketBackendSource, /multiplierOverride/)
   })
 
-  test('限时额度包预览披露体验与真实买家流程', () => {
+  test('限量额度包预览披露体验与真实买家流程', () => {
     assert.match(publishPreviewSource, /<ApiQuotaPolicyStrip[\s\S]*?:policy="previewPackage\.quotaUsagePolicy"/)
     assert.match(apiServicePublishPageSource, /选择额度包 → 创建订单 → 站外付款 → 卖家确认收款 → 获取交付凭证/)
     assert.doesNotMatch(publishPreviewSource, /grid-cols-5[\s\S]*?买家购买流程/)
@@ -270,10 +274,10 @@ describe('API 额度包市场视图', () => {
     assert.doesNotMatch(marketPageSource, /自动交付|安全可靠|平台担保|虚构原价/)
   })
 
-  test('账号完善后保留限时额度包发布意图', () => {
+  test('账号完善后保留限量额度包发布意图', () => {
     assert.match(myCenterPageSource, /accountRecoveryReturnTo\.value === '\/api-market\/quota\/new'/)
-    assert.match(myCenterPageSource, /发布限时额度包前先完成账号设置/)
-    assert.match(myCenterPageSource, /继续发布限时额度包/)
+    assert.match(myCenterPageSource, /发布限量额度包前先完成账号设置/)
+    assert.match(myCenterPageSource, /继续发布限量额度包/)
   })
 
   test('固定场次使用服务端时钟并直接创建额度包订单', () => {
@@ -286,7 +290,7 @@ describe('API 额度包市场视图', () => {
     assert.match(marketPageSource, /onServerPrefetch\(async \(\) => \{[\s\S]*?await slotQuery\.suspense\(\)[\s\S]*?await rushQuery\.suspense\(\)/)
     assert.match(marketPageSource, /`明日 \$\{slotTime\(selectedSlot\)\} 场预告`/)
     assert.match(quotaOfferCardSource, /立即抢购 ¥\$\{formatDecimal\(props\.offer\.priceCny/)
-    assert.doesNotMatch(marketPageSource, /selectedOffer|confirmPurchase|<Dialog/)
+    assert.doesNotMatch(marketPageSource, /selectedOffer|confirmPurchase/)
   })
 
   test('订单详情只展示购买时冻结的额度规则与到期语义', () => {
@@ -301,7 +305,7 @@ describe('API 额度包市场视图', () => {
     assert.match(quotaRushPublishPageSource, /slot\.state === 'registration_open'/)
     assert.match(quotaRushPublishPageSource, /useCreateApiQuotaRushOfferMutation/)
     assert.match(quotaRushPublishPageSource, /deliveryMode: 'manual'/)
-    assert.match(quotaRushPublishPageSource, /新发布的限时额度包不再使用预导入凭据/)
+    assert.match(quotaRushPublishPageSource, /新发布的限量额度包不再使用预导入凭据/)
     assert.doesNotMatch(quotaRushPublishPageSource, /type="file"|凭据 CSV|deliveryMode === 'preimported'/)
     assert.match(quotaRushPublishPageSource, /<Tabs v-model="selectedSlotDate"[\s\S]*?<TabsContent v-for="group in groupedSlots"/)
     assert.match(quotaRushPublishPageSource, /24 小时后[\s\S]*?3 天后[\s\S]*?7 天后/)

@@ -695,11 +695,15 @@ export type AdminApiOrderDetail = {
 
 export type ApiQuotaOfferFilters = {
   distributionSystem?: ApiQuotaDistributionSystem | 'all'
+  modelCatalogId?: string
   oneMultiplier?: boolean
+  maxMultiplier?: number
   onlyOrderable?: boolean
+  saleMode?: ApiQuotaSaleMode | 'all'
   slotKey?: string
   search?: string
   excludeSystemSlots?: boolean
+  sort?: 'updated_desc' | 'unit_price_asc' | 'allowance_desc' | 'delivery_asc'
 }
 
 export type CreateApiQuotaOrderPayload = {
@@ -2058,6 +2062,7 @@ export type ApiOrderFilters = {
 
 export type ApiServiceFilters = {
   model?: string
+  modelCatalogId?: string
   maxMultiplier?: number
   deliveryMode?: ApiDeliveryMode
   usageVisibility?: ApiUsageVisibility
@@ -2070,8 +2075,12 @@ export type ApiServiceFilters = {
   trustLevel?: number
   minimumPurchaseCnyMax?: number
   minBalance?: number
-  sort?: 'recommended' | 'multiplier_asc' | 'response_fast' | 'recent'
+  sort?: 'recommended' | 'multiplier_asc' | 'response_fast' | 'recent' | 'updated_desc' | 'price_asc' | 'minimum_purchase_asc' | 'package_price_asc'
   search?: string
+  distributionSystem?: ApiQuotaDistributionSystem | 'all'
+  maxCnyPerUsd?: number
+  packagePriceCnyMax?: number
+  packageMultiplierMax?: number
   billingMode?: ApiBillingMode
   packageModelCatalogId?: string
   packageDurationDays?: number
@@ -2542,9 +2551,15 @@ export async function getModelCatalog() {
 
 function filterApiServices(filters: ApiServiceFilters = {}) {
   const keyword = filters.search?.trim().toLowerCase()
+  const packagePrice = (item: ApiService) => Math.min(...(item.packages ?? [])
+    .filter(packageItem => packageItem.enabled && packageItem.stockAvailable > 0)
+    .filter(packageItem => !filters.packageDurationDays || packageItem.durationDays === filters.packageDurationDays)
+    .filter(packageItem => !filters.packageModelCatalogId || packageItem.models.some(model => model.modelCatalogId === filters.packageModelCatalogId))
+    .map(packageItem => packageItem.priceCny))
   return apiServiceStore
     .filter(item => {
       return (!filters.model || item.models.some(model => model.toLowerCase().includes(filters.model!.toLowerCase())))
+        && (!filters.modelCatalogId || item.modelPriceRows.some(model => model.modelId === filters.modelCatalogId))
         && (!filters.maxMultiplier || item.defaultMultiplier <= filters.maxMultiplier)
         && (!filters.deliveryMode || item.deliveryModes.includes(filters.deliveryMode))
         && (!filters.usageVisibility || item.usageVisibility === filters.usageVisibility)
@@ -2558,15 +2573,25 @@ function filterApiServices(filters: ApiServiceFilters = {}) {
         && (!filters.minimumPurchaseCnyMax || item.minimumPurchaseCny <= filters.minimumPurchaseCnyMax)
         && (!filters.minBalance || item.balance >= filters.minBalance)
         && (!keyword || apiServicePublicSearchTerms(item).some(value => value.toLowerCase().includes(keyword)))
+        && (!filters.distributionSystem || filters.distributionSystem === 'all' || (
+          filters.distributionSystem === 'sub2api' ? item.delivery === 'Sub2API' : item.delivery !== 'Sub2API'
+        ))
+        && (filters.maxCnyPerUsd === undefined || Number(item.cnyPerUsdAllowance) <= filters.maxCnyPerUsd)
         && (!filters.billingMode || item.billingMode === filters.billingMode)
-        && ((!filters.packageModelCatalogId && !filters.packageDurationDays) || (item.packages ?? []).some(packageItem => {
+        && ((!filters.packageModelCatalogId && !filters.packageDurationDays && filters.packagePriceCnyMax === undefined && filters.packageMultiplierMax === undefined) || (item.packages ?? []).some(packageItem => {
           return packageItem.enabled
             && packageItem.stockAvailable > 0
             && (!filters.packageDurationDays || packageItem.durationDays === filters.packageDurationDays)
-            && (!filters.packageModelCatalogId || packageItem.models.some(model => model.modelCatalogId === filters.packageModelCatalogId))
+            && (filters.packagePriceCnyMax === undefined || packageItem.priceCny <= filters.packagePriceCnyMax)
+            && packageItem.models.some(model => (!filters.packageModelCatalogId || model.modelCatalogId === filters.packageModelCatalogId)
+              && (filters.packageMultiplierMax === undefined || model.merchantMultiplier <= filters.packageMultiplierMax))
         }))
     })
     .sort((a, b) => {
+      if (filters.sort === 'updated_desc') return compareTimeDesc(a.lastOnlineConfirmedAt, b.lastOnlineConfirmedAt) || b.id.localeCompare(a.id)
+      if (filters.sort === 'price_asc') return Number(a.cnyPerUsdAllowance) - Number(b.cnyPerUsdAllowance) || a.id.localeCompare(b.id)
+      if (filters.sort === 'minimum_purchase_asc') return a.minimumPurchaseCny - b.minimumPurchaseCny || a.id.localeCompare(b.id)
+      if (filters.sort === 'package_price_asc') return packagePrice(a) - packagePrice(b) || a.id.localeCompare(b.id)
       if (filters.sort === 'multiplier_asc') return a.defaultMultiplier - b.defaultMultiplier || compareNullableNumberAsc(a.responseMedianMinutes, b.responseMedianMinutes)
       if (filters.sort === 'response_fast') return compareNullableNumberAsc(a.responseMedianMinutes, b.responseMedianMinutes) || a.defaultMultiplier - b.defaultMultiplier
       if (filters.sort === 'recent') return compareTimeDesc(a.lastOnlineConfirmedAt, b.lastOnlineConfirmedAt)
@@ -2670,11 +2695,22 @@ function matchesApiQuotaOfferFilters(item: PublicApiQuotaOffer, filters: ApiQuot
   const keyword = filters.search?.trim().toLowerCase()
   return item.status === 'published'
     && (filters.distributionSystem === undefined || filters.distributionSystem === 'all' || item.distributionSystem === filters.distributionSystem)
+    && (!filters.modelCatalogId || (apiServiceStore.find(service => service.id === item.apiServiceId)?.modelPriceRows ?? []).some(model => model.modelId === filters.modelCatalogId))
     && (!filters.oneMultiplier || item.modelMultiplier === '1.0000')
+    && (filters.maxMultiplier === undefined || Number(item.modelMultiplier) <= filters.maxMultiplier)
     && (!filters.onlyOrderable || item.isOrderable)
+    && (!filters.saleMode || filters.saleMode === 'all' || item.saleMode === filters.saleMode)
     && (!filters.excludeSystemSlots || !item.currentRound?.systemSlotKey && !item.nextRound?.systemSlotKey)
     && (!keyword || [item.name, item.serviceTitle, item.sellerDisplayName, item.distributionSystem]
       .some(value => value.toLowerCase().includes(keyword)))
+}
+
+function sortApiQuotaOffers(items: PublicApiQuotaOffer[], filters: ApiQuotaOfferFilters) {
+  const rows = [...items]
+  if (filters.sort === 'unit_price_asc') return rows.sort((left, right) => Number(left.cnyPerUsd) - Number(right.cnyPerUsd) || left.id.localeCompare(right.id))
+  if (filters.sort === 'allowance_desc') return rows.sort((left, right) => Number(right.usdAllowance) - Number(left.usdAllowance) || right.id.localeCompare(left.id))
+  if (filters.sort === 'delivery_asc') return rows.sort((left, right) => left.deliveryEtaMinutes - right.deliveryEtaMinutes || left.id.localeCompare(right.id))
+  return rows
 }
 
 function mockApiQuotaSaleSlots(now = new Date()): ApiQuotaSystemSaleSlotList {
@@ -2764,7 +2800,7 @@ export async function getApiQuotaOffers(filters: ApiQuotaOfferFilters = {}) {
   if (shouldUseRealBackend()) return backendPublicAPIQuotaOffers(filters)
   await wait()
   const rows = apiQuotaOfferStore.map(item => projectMockSystemRushOffer(item))
-  return clone(rows.filter(item => {
+  return clone(sortApiQuotaOffers(rows.filter(item => {
     if (filters.slotKey) {
       const round = apiQuotaRoundStore.find(candidate => candidate.systemSlotKey === filters.slotKey && candidate.allocations.some(allocation => allocation.offerId === item.id))
       if (!round) return false
@@ -2772,14 +2808,14 @@ export async function getApiQuotaOffers(filters: ApiQuotaOfferFilters = {}) {
       item.nextRound = Date.now() < Date.parse(round.startsAt) ? clone(round) : item.nextRound
     }
     return matchesApiQuotaOfferFilters(item, filters)
-  }))
+  }), filters))
 }
 
 export async function getApiQuotaOffersPage(filters: ApiQuotaOfferFilters = {}, page: CursorPageRequest = {}): Promise<CursorPage<PublicApiQuotaOffer>> {
   if (shouldUseRealBackend()) return backendPublicAPIQuotaOffersPage(filters, page)
   await wait()
   const rows = apiQuotaOfferStore.map(item => projectMockSystemRushOffer(item))
-  const filtered = rows.filter(item => {
+  const filtered = sortApiQuotaOffers(rows.filter(item => {
     if (filters.slotKey) {
       const round = apiQuotaRoundStore.find(candidate => candidate.systemSlotKey === filters.slotKey && candidate.allocations.some(allocation => allocation.offerId === item.id))
       if (!round) return false
@@ -2787,7 +2823,7 @@ export async function getApiQuotaOffersPage(filters: ApiQuotaOfferFilters = {}, 
       item.nextRound = Date.now() < Date.parse(round.startsAt) ? clone(round) : item.nextRound
     }
     return matchesApiQuotaOfferFilters(item, filters)
-  })
+  }), filters)
   return clone(paginateCursorItems(filtered, page))
 }
 
@@ -6143,7 +6179,7 @@ export async function createApiQuotaOrder(payload: CreateApiQuotaOrderPayload) {
       selectedDeliveryMode,
       status: 'closed',
       requiresFirstLoginPasswordReset: selectedDeliveryMode === 'sub2api_panel_account' && service.panelRequiresPasswordReset,
-      note: '限时额度包已直接生成订单。',
+      note: '限量额度包已直接生成订单。',
     },
     contactChannels: clone(service.contactChannels),
     buyerContactChannels: [{ type: 'linuxdo', label: 'linux.do 私信', value: '@buyer' }],

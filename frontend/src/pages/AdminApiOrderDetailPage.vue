@@ -92,7 +92,7 @@ const errorMessage = computed(() => error.value instanceof Error ? error.value.m
           <dl class="mt-4 grid gap-x-6 gap-y-4 text-sm sm:grid-cols-2">
             <div><dt class="text-xs text-muted-foreground">服务</dt><dd class="mt-1 font-medium">{{ order.serviceTitleSnapshot }}</dd></div>
             <div><dt class="text-xs text-muted-foreground">订单金额</dt><dd class="mt-1 text-lg font-semibold">¥{{ formatDecimal(order.amount, 2, 2) }}</dd></div>
-            <div><dt class="text-xs text-muted-foreground">购买类型</dt><dd class="mt-1">{{ order.purchaseKind === 'limited_quota_offer' ? '限时额度包' : 'API 服务' }}</dd></div>
+            <div><dt class="text-xs text-muted-foreground">购买类型</dt><dd class="mt-1">{{ order.purchaseKind === 'limited_quota_offer' ? '限量额度包' : 'API 服务' }}</dd></div>
             <div><dt class="text-xs text-muted-foreground">购买额度</dt><dd class="mt-1">{{ order.requestedUsdAllowanceSnapshot ? `${formatDecimal(order.requestedUsdAllowanceSnapshot, 2, 6)} 美元额度` : '不适用' }}</dd></div>
             <div><dt class="text-xs text-muted-foreground">付款方式</dt><dd class="mt-1 inline-flex items-center gap-2"><ApiPaymentMethodIcon :method="order.selectedPaymentMethod" size="sm" />{{ apiPaymentMethodLabels[order.selectedPaymentMethod] }}</dd></div>
             <div><dt class="text-xs text-muted-foreground">定价快照</dt><dd class="mt-1">{{ order.cnyPerUsdAllowanceSnapshot ? `¥${formatDecimal(order.cnyPerUsdAllowanceSnapshot, 3, 6)} / $1` : '按套餐快照' }}</dd></div>

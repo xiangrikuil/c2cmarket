@@ -969,6 +969,38 @@ paths:
           schema:
             type: string
             enum: [metered_usd_quota, fixed_package]
+        - name: search
+          in: query
+          required: false
+          schema:
+            type: string
+            maxLength: 100
+        - name: modelCatalogId
+          in: query
+          required: false
+          description: Exact enabled model supported by the service.
+          schema:
+            type: string
+        - name: distributionSystem
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [sub2api, new_api_proxy, other]
+        - name: maxCnyPerUsd
+          in: query
+          required: false
+          description: Maximum accepted CNY price per USD allowance for metered services.
+          schema:
+            type: string
+            pattern: '^\d+(\.\d+)?$'
+        - name: minimumIntentCnyMax
+          in: query
+          required: false
+          description: Maximum accepted minimum purchase amount in CNY.
+          schema:
+            type: string
+            pattern: '^\d+(\.\d+)?$'
         - name: packageModelCatalogId
           in: query
           required: false
@@ -980,6 +1012,27 @@ paths:
           schema:
             type: integer
             enum: [1, 3, 7, 30]
+        - name: packagePriceCnyMax
+          in: query
+          required: false
+          description: Maximum total price for an enabled package with stock.
+          schema:
+            type: string
+            pattern: '^\d+(\.\d+)?$'
+        - name: packageMultiplierMax
+          in: query
+          required: false
+          description: Maximum merchant multiplier for the selected package model.
+          schema:
+            type: string
+            pattern: '^\d+(\.\d+)?$'
+        - name: sort
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [updated_desc, price_asc, minimum_purchase_asc, package_price_asc]
+            default: updated_desc
       responses:
         "200":
           description: Public API services.
@@ -1204,16 +1257,42 @@ paths:
           schema:
             type: string
             enum: [sub2api, new_api_proxy, other]
+        - name: modelCatalogId
+          in: query
+          required: false
+          description: Exact enabled model supported by the offer's API service.
+          schema:
+            type: string
         - name: oneMultiplier
           in: query
           required: false
           schema:
             type: boolean
+        - name: maxMultiplier
+          in: query
+          required: false
+          description: Maximum model multiplier accepted by the buyer.
+          schema:
+            type: string
+            pattern: '^\d+(\.\d+)?$'
         - name: onlyOrderable
           in: query
           required: false
           schema:
             type: boolean
+        - name: saleMode
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [continuous, scheduled]
+        - name: sort
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [updated_desc, unit_price_asc, allowance_desc, delivery_asc]
+            default: updated_desc
         - name: slotKey
           in: query
           required: false

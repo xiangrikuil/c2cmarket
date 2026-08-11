@@ -5738,8 +5738,31 @@ export type ListPublicApiServicesData = {
         cursor?: string;
         paymentMethod?: 'wechat' | 'alipay';
         billingMode?: 'metered_usd_quota' | 'fixed_package';
+        search?: string;
+        /**
+         * Exact enabled model supported by the service.
+         */
+        modelCatalogId?: string;
+        distributionSystem?: 'sub2api' | 'new_api_proxy' | 'other';
+        /**
+         * Maximum accepted CNY price per USD allowance for metered services.
+         */
+        maxCnyPerUsd?: string;
+        /**
+         * Maximum accepted minimum purchase amount in CNY.
+         */
+        minimumIntentCnyMax?: string;
         packageModelCatalogId?: string;
         packageDurationDays?: 1 | 3 | 7 | 30;
+        /**
+         * Maximum total price for an enabled package with stock.
+         */
+        packagePriceCnyMax?: string;
+        /**
+         * Maximum merchant multiplier for the selected package model.
+         */
+        packageMultiplierMax?: string;
+        sort?: 'updated_desc' | 'price_asc' | 'minimum_purchase_asc' | 'package_price_asc';
     };
     url: '/api/v1/api-services';
 };
@@ -5993,8 +6016,18 @@ export type ListPublicApiQuotaOffersData = {
          */
         cursor?: string;
         distributionSystem?: 'sub2api' | 'new_api_proxy' | 'other';
+        /**
+         * Exact enabled model supported by the offer's API service.
+         */
+        modelCatalogId?: string;
         oneMultiplier?: boolean;
+        /**
+         * Maximum model multiplier accepted by the buyer.
+         */
+        maxMultiplier?: string;
         onlyOrderable?: boolean;
+        saleMode?: 'continuous' | 'scheduled';
+        sort?: 'updated_desc' | 'unit_price_asc' | 'allowance_desc' | 'delivery_asc';
         /**
          * Stable Beijing slot key returned by `/api/v1/api-quota-sale-slots`.
          */
