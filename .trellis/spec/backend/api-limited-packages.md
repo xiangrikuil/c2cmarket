@@ -106,7 +106,7 @@ APIServicePackageModel:
 ```
 
 - Exact canonical model keys are displayed from snapshots, including values such as `gpt-5.5` and `gpt-5.6`.
-- Package results are not shown until both an exact `modelCatalogId` and a duration in `1 | 3 | 7 | 30` are selected.
+- Package results are not shown until both an exact `modelCatalogId` and a duration in `1 | 3 | 7 | 30` are selected. When the buyer first opens the package view with both filters empty, the frontend selects the first publicly orderable, enabled, in-stock package/model pair from the loaded results so a published package is immediately discoverable; this default must not mix models or durations in one ranking.
 - Candidates must be publicly orderable `fixed_package` services with an enabled, in-stock package matching the exact model and duration.
 - Declared unit cost for the selected model is:
 

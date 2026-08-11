@@ -35,7 +35,7 @@ import {
   withApiMarketViewQuery,
   type ApiMarketView,
 } from '@/lib/apiQuotaOfferUi'
-import { rankApiPackages } from '@/lib/apiPackageRecommendation'
+import { getDefaultApiPackageFilter, rankApiPackages } from '@/lib/apiPackageRecommendation'
 import { getApiMerchantBadges } from '@/lib/apiMerchantBadges'
 import type { ApiServicePromotion } from '@/lib/apiMarketBackend'
 import { flattenUniqueCursorPages } from '@/lib/cursorPagination'
@@ -68,6 +68,7 @@ const selectedSlotKey = ref('')
 const pendingOfferId = ref('')
 let refreshedBoundary = ''
 let timer: ReturnType<typeof setInterval> | undefined
+let stopPackageDefaultWatch: (() => void) | undefined
 
 watch(
   () => route.query.view,
@@ -127,6 +128,7 @@ const packageModelOptions = computed(() => {
     .map(item => ({ id: item.id, name: item.name }))
     .sort((left, right) => left.name.localeCompare(right.name))
 })
+
 const packageRows = computed(() => rankApiPackages(packageServices.value, packageModel.value, Number(packageDuration.value)))
 const fixedPackagePromotions = computed(() => promotionsForBillingMode(
   promotionQuery.data.value ?? [],
@@ -335,6 +337,13 @@ function refreshAtSlotBoundary() {
 }
 
 onMounted(() => {
+  stopPackageDefaultWatch = watch([activeView, packageServices, packageModelOptions], ([view, services, modelOptions]) => {
+    if (view !== 'packages' || packageModel.value || packageDuration.value) return
+    const selection = getDefaultApiPackageFilter(services, new Set(modelOptions.map(model => model.id)))
+    if (!selection) return
+    packageModel.value = selection.modelCatalogId
+    packageDuration.value = String(selection.durationDays)
+  }, { immediate: true })
   timer = setInterval(() => {
     now.value = Date.now() + serverClockOffset.value
     refreshAtSlotBoundary()
@@ -342,6 +351,7 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
+  stopPackageDefaultWatch?.()
   if (timer) clearInterval(timer)
 })
 </script>
