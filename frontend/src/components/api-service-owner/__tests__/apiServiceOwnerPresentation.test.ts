@@ -36,8 +36,8 @@ describe('API 服务销售生命周期展示', () => {
   })
 
   test('区分销售渠道与全部生命周期状态', () => {
-    assert.equal(getApiServiceSalesChannelLabel('flexible_quota'), '自由额度')
-    assert.equal(getApiServiceSalesChannelLabel('limited_quota'), '限时额度包')
+    assert.equal(getApiServiceSalesChannelLabel('flexible_quota'), '自选额度')
+    assert.equal(getApiServiceSalesChannelLabel('limited_quota'), '限量额度包')
     assert.deepEqual(
       ['selling', 'upcoming', 'paused', 'sold_out', 'expired', 'draft', 'offline', 'archived']
         .map(state => getApiServiceSalesStatus(state as Parameters<typeof getApiServiceSalesStatus>[0]).label),
@@ -45,7 +45,7 @@ describe('API 服务销售生命周期展示', () => {
     )
   })
 
-  test('展示自由额度和限时包可售余量', () => {
+  test('展示自选额度和限量包可售余量', () => {
     assert.equal(getApiServiceSalesAvailabilitySummary({
       kind: 'flexible_quota',
       state: 'selling',

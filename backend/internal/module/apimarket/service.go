@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math/big"
 	"net/http"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -214,12 +215,14 @@ func (s *Manager) PublicServices(ctx context.Context, filter PublicServiceFilter
 	defer s.mu.Unlock()
 
 	services := []Service{}
+	now := s.now()
 	for _, id := range s.serviceOrder {
-		service := WithOrderability(s.services[id])
-		if IsOrderableService(service) && matchesPublicServiceFilter(service, filter) {
+		service := WithOrderabilityAt(s.services[id], now)
+		if service.IsOrderable && matchesPublicServiceFilter(service, filter) {
 			services = append(services, service)
 		}
 	}
+	sortPublicServices(services, filter)
 	return domain.PageItems(services, page)
 }
 
@@ -1282,8 +1285,47 @@ func matchesPublicServiceFilter(service Service, filter PublicServiceFilter) boo
 	if billingMode != "" && service.BillingMode != billingMode {
 		return false
 	}
-	modelCatalogID := strings.TrimSpace(filter.PackageModelCatalogID)
-	if modelCatalogID == "" && filter.PackageDurationDays == 0 {
+	distributionSystem := strings.TrimSpace(filter.DistributionSystem)
+	if distributionSystem != "" && service.DistributionSystem != distributionSystem {
+		return false
+	}
+	search := strings.ToLower(strings.TrimSpace(filter.Search))
+	if search != "" {
+		values := []string{service.Title, service.ShortDescription, service.MerchantDisplayName}
+		for _, model := range service.Models {
+			values = append(values, model.ModelKey, model.ProviderSnapshot)
+		}
+		matched := false
+		for _, value := range values {
+			if strings.Contains(strings.ToLower(value), search) {
+				matched = true
+				break
+			}
+		}
+		if !matched {
+			return false
+		}
+	}
+	modelCatalogID := strings.TrimSpace(filter.ModelCatalogID)
+	if modelCatalogID != "" {
+		matched := false
+		for _, model := range service.Models {
+			if model.Enabled && model.ModelCatalogID == modelCatalogID {
+				matched = true
+				break
+			}
+		}
+		if !matched {
+			return false
+		}
+	}
+	if !decimalFilterAtMost(service.DeclaredCNYPerUSDAllowance, filter.MaxCNYPerUSD) ||
+		!decimalFilterAtMost(service.MinimumIntentCNY, filter.MinimumIntentCNYMax) {
+		return false
+	}
+	packageModelCatalogID := strings.TrimSpace(filter.PackageModelCatalogID)
+	if packageModelCatalogID == "" && filter.PackageDurationDays == 0 &&
+		strings.TrimSpace(filter.PackagePriceCNYMax) == "" && strings.TrimSpace(filter.PackageMultiplierMax) == "" {
 		return true
 	}
 	for _, item := range service.Packages {
@@ -1293,11 +1335,15 @@ func matchesPublicServiceFilter(service Service, filter PublicServiceFilter) boo
 		if filter.PackageDurationDays > 0 && (item.DurationDays == nil || *item.DurationDays != filter.PackageDurationDays) {
 			continue
 		}
-		if modelCatalogID == "" {
+		if !decimalFilterAtMost(item.PriceCNY, filter.PackagePriceCNYMax) {
+			continue
+		}
+		if packageModelCatalogID == "" && strings.TrimSpace(filter.PackageMultiplierMax) == "" {
 			return true
 		}
 		for _, model := range item.Models {
-			if model.ModelCatalogID == modelCatalogID {
+			if (packageModelCatalogID == "" || model.ModelCatalogID == packageModelCatalogID) &&
+				decimalFilterAtMost(model.MerchantMultiplier, filter.PackageMultiplierMax) {
 				return true
 			}
 		}
@@ -1428,7 +1474,127 @@ func validatePublicServiceFilter(filter PublicServiceFilter) *domain.AppError {
 	if filter.PackageDurationDays != 0 && filter.PackageDurationDays != 1 && filter.PackageDurationDays != 3 && filter.PackageDurationDays != 7 && filter.PackageDurationDays != 30 {
 		return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Package duration invalid", "套餐有效期筛选无效。", "packageDurationDays", "invalid", "套餐有效期仅支持 1、3、7 或 30 天。")
 	}
+	if distributionSystem := strings.TrimSpace(filter.DistributionSystem); distributionSystem != "" && distributionSystem != ServiceDistributionSub2API && distributionSystem != "new_api_proxy" && distributionSystem != "other" {
+		return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Distribution system invalid", "接入系统筛选无效。", "distributionSystem", "invalid", "接入系统筛选无效。")
+	}
+	filter.Search = strings.TrimSpace(filter.Search)
+	if len([]rune(filter.Search)) > 100 {
+		return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Search query too long", "搜索关键词不能超过 100 个字符。", "search", "max_length", "搜索关键词不能超过 100 个字符。")
+	}
+	decimalFields := []struct {
+		field string
+		value string
+	}{
+		{field: "maxCnyPerUsd", value: filter.MaxCNYPerUSD},
+		{field: "minimumIntentCnyMax", value: filter.MinimumIntentCNYMax},
+		{field: "packagePriceCnyMax", value: filter.PackagePriceCNYMax},
+		{field: "packageMultiplierMax", value: filter.PackageMultiplierMax},
+	}
+	for _, item := range decimalFields {
+		if strings.TrimSpace(item.value) == "" {
+			continue
+		}
+		if _, ok := parseNonNegativeDecimal(item.value); !ok {
+			return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Decimal filter invalid", "数值筛选必须是非负数字。", item.field, "invalid", "请输入非负数字。")
+		}
+	}
+	if sortMode := strings.TrimSpace(filter.Sort); sortMode != "" && sortMode != PublicServiceSortUpdatedDesc &&
+		sortMode != PublicServiceSortPriceAsc && sortMode != PublicServiceSortMinimumPurchaseAsc && sortMode != PublicServiceSortPackagePriceAsc {
+		return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Sort invalid", "排序方式无效。", "sort", "invalid", "排序方式无效。")
+	}
+	if strings.TrimSpace(filter.Sort) == PublicServiceSortPriceAsc && strings.TrimSpace(filter.BillingMode) != ServiceBillingModeMetered {
+		return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Sort incompatible", "单价排序只适用于自选额度。", "sort", "incompatible", "单价排序只适用于自选额度。")
+	}
+	if strings.TrimSpace(filter.Sort) == PublicServiceSortPackagePriceAsc && strings.TrimSpace(filter.BillingMode) != ServiceBillingModeFixedPackage {
+		return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Sort incompatible", "套餐价格排序只适用于短期流量包。", "sort", "incompatible", "套餐价格排序只适用于短期流量包。")
+	}
 	return nil
+}
+
+func (filter PublicServiceFilter) NormalizedSort() string {
+	switch strings.TrimSpace(filter.Sort) {
+	case PublicServiceSortPriceAsc, PublicServiceSortMinimumPurchaseAsc, PublicServiceSortPackagePriceAsc:
+		return strings.TrimSpace(filter.Sort)
+	default:
+		return PublicServiceSortUpdatedDesc
+	}
+}
+
+func sortPublicServices(services []Service, filter PublicServiceFilter) {
+	sortMode := filter.NormalizedSort()
+	sort.Slice(services, func(i, j int) bool {
+		left := services[i]
+		right := services[j]
+		if sortMode == PublicServiceSortUpdatedDesc {
+			if left.UpdatedAt.Equal(right.UpdatedAt) {
+				return left.ID > right.ID
+			}
+			return left.UpdatedAt.After(right.UpdatedAt)
+		}
+
+		leftValue, leftOK := publicServiceSortValue(left, filter)
+		rightValue, rightOK := publicServiceSortValue(right, filter)
+		if leftOK != rightOK {
+			return leftOK
+		}
+		if leftOK {
+			if comparison := leftValue.Cmp(rightValue); comparison != 0 {
+				return comparison < 0
+			}
+		}
+		return left.ID < right.ID
+	})
+}
+
+func publicServiceSortValue(service Service, filter PublicServiceFilter) (*big.Rat, bool) {
+	switch filter.NormalizedSort() {
+	case PublicServiceSortPriceAsc:
+		return parseNonNegativeDecimal(service.DeclaredCNYPerUSDAllowance)
+	case PublicServiceSortMinimumPurchaseAsc:
+		return parseNonNegativeDecimal(service.MinimumIntentCNY)
+	case PublicServiceSortPackagePriceAsc:
+		return minimumPackagePriceForPublicFilter(service, filter)
+	default:
+		return nil, false
+	}
+}
+
+func minimumPackagePriceForPublicFilter(service Service, filter PublicServiceFilter) (*big.Rat, bool) {
+	modelCatalogID := strings.TrimSpace(filter.PackageModelCatalogID)
+	var minimum *big.Rat
+	for _, item := range service.Packages {
+		if !item.Enabled || item.StockAvailable <= 0 ||
+			(filter.PackageDurationDays > 0 && (item.DurationDays == nil || *item.DurationDays != filter.PackageDurationDays)) ||
+			!decimalFilterAtMost(item.PriceCNY, filter.PackagePriceCNYMax) {
+			continue
+		}
+		price, ok := parseNonNegativeDecimal(item.PriceCNY)
+		if !ok {
+			continue
+		}
+		matchesModel := false
+		for _, model := range item.Models {
+			if (modelCatalogID == "" || model.ModelCatalogID == modelCatalogID) &&
+				decimalFilterAtMost(model.MerchantMultiplier, filter.PackageMultiplierMax) {
+				matchesModel = true
+				break
+			}
+		}
+		if matchesModel && (minimum == nil || price.Cmp(minimum) < 0) {
+			minimum = price
+		}
+	}
+	return minimum, minimum != nil
+}
+
+func decimalFilterAtMost(actual, maximum string) bool {
+	maximum = strings.TrimSpace(maximum)
+	if maximum == "" {
+		return true
+	}
+	actualValue, actualOK := parseNonNegativeDecimal(actual)
+	maximumValue, maximumOK := parseNonNegativeDecimal(maximum)
+	return actualOK && maximumOK && actualValue.Cmp(maximumValue) <= 0
 }
 
 func validateOrderSettingsInput(input UpdateOrderSettingsInput) *domain.AppError {

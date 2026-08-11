@@ -38,6 +38,12 @@ export type BackendSession = {
   expiresAt: string
 }
 
+export type DevPersona = 'buyer' | 'seller' | 'admin'
+
+export type DevPersonaSession = BackendSession & {
+  persona: DevPersona
+}
+
 export type OAuthStartResponse = {
   authorizationUrl: string
 }
@@ -83,6 +89,7 @@ let csrfToken: string | null = null
 let accountAppealCSRFToken: string | null = null
 let cachedSession: BackendSession | null = null
 let sessionRequest: Promise<BackendSession> | null = null
+let sessionGeneration = 0
 const pendingGetRequests = new Map<string, Promise<unknown>>()
 const sessionInvalidationHandlers = new Set<(error: BackendProblemError) => void>()
 
@@ -118,7 +125,18 @@ function cacheBackendSession(session: BackendSession) {
   return session
 }
 
+function invalidateInFlightSessionRequests() {
+  sessionGeneration += 1
+  sessionRequest = null
+}
+
+function replaceBackendSession(session: BackendSession) {
+  invalidateInFlightSessionRequests()
+  return cacheBackendSession(session)
+}
+
 function clearBackendSessionCache() {
+  sessionGeneration += 1
   cachedSession = null
   sessionRequest = null
   setBackendCSRFToken(null)
@@ -165,9 +183,9 @@ function shouldCoalesceRequest(init: RequestInit) {
   return requestMethod(init) === 'GET' && init.body === undefined
 }
 
-function coalesceKey(path: string, init: RequestInit) {
+function coalesceKey(path: string, init: RequestInit, generation = sessionGeneration) {
   const headers = new Headers(init.headers)
-  return `${backendBaseURL()}${path}|${headers.get('accept') ?? ''}`
+  return `${generation}|${backendBaseURL()}${path}|${headers.get('accept') ?? ''}`
 }
 
 export async function getCurrentBackendSession(options: {
@@ -181,18 +199,28 @@ export async function getCurrentBackendSession(options: {
     return sessionRequest
   }
 
-  sessionRequest = backendRequest<BackendSession>('/api/v1/auth/session', {}, {
-    notifySessionInvalidation: options.notifySessionInvalidation,
+  const requestGeneration = sessionGeneration
+  const request = backendRequest<BackendSession>('/api/v1/auth/session', {}, {
+    affectsSessionCache: false,
   })
-    .then(cacheBackendSession)
+    .then((session) => {
+      if (requestGeneration !== sessionGeneration) {
+        if (cachedSession) return cachedSession
+        throw new Error('Backend session changed while the session request was in flight.')
+      }
+      return cacheBackendSession(session)
+    })
     .catch(error => {
+      if (requestGeneration !== sessionGeneration && cachedSession) return cachedSession
+      clearBackendSessionCacheOnAuthError(error, options.notifySessionInvalidation !== false)
       clearBackendSessionCache()
       throw error
     })
     .finally(() => {
-      sessionRequest = null
+      if (sessionRequest === request) sessionRequest = null
     })
-  return sessionRequest
+  sessionRequest = request
+  return request
 }
 
 export async function startOAuthLogin(returnTo = '/', inviteCode = getReferralCapture()) {
@@ -273,7 +301,16 @@ export async function submitAccountGovernanceAppeal(statement: string) {
 
 export async function loginWithPassword(payload: PasswordLoginRequest) {
   const session = await backendJSON<BackendSession>('/api/v1/auth/password/login', payload)
-  return cacheBackendSession(session)
+  return replaceBackendSession(session)
+}
+
+export async function createDevPersonaSession(persona: DevPersona) {
+  if (!shouldUseRealBackend()) {
+    throw new Error('Development persona switching requires real API mode.')
+  }
+  invalidateInFlightSessionRequests()
+  const session = await backendJSON<DevPersonaSession>('/api/v1/auth/dev-persona-session', { persona })
+  return replaceBackendSession(session)
 }
 
 export async function logoutBackendSession() {
@@ -315,6 +352,7 @@ export async function backendRequest<T>(
   init: RequestInit = {},
   options: { notifySessionInvalidation?: boolean, affectsSessionCache?: boolean } = {},
 ) {
+  const requestGeneration = sessionGeneration
   const requestInit = {
     ...init,
     credentials: 'include' as const,
@@ -325,7 +363,7 @@ export async function backendRequest<T>(
   }
   try {
     if (shouldCoalesceRequest(requestInit)) {
-      const key = coalesceKey(path, requestInit)
+      const key = coalesceKey(path, requestInit, requestGeneration)
       const pending = pendingGetRequests.get(key)
       if (pending) return await pending as T
       const request = fetch(`${backendBaseURL()}${path}`, requestInit)
@@ -340,7 +378,7 @@ export async function backendRequest<T>(
     const response = await fetch(`${backendBaseURL()}${path}`, requestInit)
     return await decodeResponse<T>(response)
   } catch (error) {
-    if (options.affectsSessionCache !== false) {
+    if (options.affectsSessionCache !== false && requestGeneration === sessionGeneration) {
       clearBackendSessionCacheOnAuthError(error, options.notifySessionInvalidation !== false)
     }
     throw error
@@ -362,6 +400,7 @@ export async function backendMutation<T>(path: string, body: unknown, options: {
   ifMatch?: number | string
   signal?: AbortSignal
 } = {}) {
+  const mutationGeneration = sessionGeneration
   try {
     return await backendJSON<T>(path, body ?? {}, {
       method: options.method ?? 'POST',
@@ -370,6 +409,7 @@ export async function backendMutation<T>(path: string, body: unknown, options: {
     })
   } catch (error) {
     if (!isCSRFTokenInvalidError(error)) throw error
+    if (mutationGeneration !== sessionGeneration && cachedSession) throw error
     await getCurrentBackendSession({ forceRefresh: true })
     return backendJSON<T>(path, body ?? {}, {
       method: options.method ?? 'POST',
@@ -383,6 +423,7 @@ export async function backendFormDataMutation<T>(path: string, body: FormData, o
   idempotencyPrefix?: string
   ifMatch?: number | string
 } = {}) {
+  const mutationGeneration = sessionGeneration
   const request = () => backendRequest<T>(path, {
     method: 'POST',
     headers: backendMutationHeaders(options),
@@ -392,6 +433,7 @@ export async function backendFormDataMutation<T>(path: string, body: FormData, o
     return await request()
   } catch (error) {
     if (!isCSRFTokenInvalidError(error)) throw error
+    if (mutationGeneration !== sessionGeneration && cachedSession) throw error
     await getCurrentBackendSession({ forceRefresh: true })
     return request()
   }
@@ -422,7 +464,7 @@ export async function ensureBackendSession(
     if (shouldUseRealBackend()) throw error
   }
   const created = await backendJSON<BackendSession>('/api/v1/auth/dev-session', { username, admin })
-  return cacheBackendSession(created)
+  return replaceBackendSession(created)
 }
 
 function backendMutationHeaders(options: {

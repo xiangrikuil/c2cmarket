@@ -24,7 +24,7 @@ func TestPublicAPIServiceListPassesCursorAndFilterThrough(t *testing.T) {
 	}}
 	handler := NewServer(service)
 
-	firstRequest := httptest.NewRequest(http.MethodGet, "/api/v1/api-services?limit=1&paymentMethod=wechat&billingMode=fixed_package&packageModelCatalogId=model-1&packageDurationDays=7", nil)
+	firstRequest := httptest.NewRequest(http.MethodGet, "/api/v1/api-services?limit=1&paymentMethod=wechat&billingMode=fixed_package&search=gpt&modelCatalogId=model-common&distributionSystem=sub2api&packageModelCatalogId=model-1&packageDurationDays=7&packagePriceCnyMax=20&packageMultiplierMax=1.2&maxCnyPerUsd=0.9&minimumIntentCnyMax=50&sort=package_price_asc", nil)
 	firstResponse := httptest.NewRecorder()
 	handler.ServeHTTP(firstResponse, firstRequest)
 	if firstResponse.Code != http.StatusOK {
@@ -53,7 +53,12 @@ func TestPublicAPIServiceListPassesCursorAndFilterThrough(t *testing.T) {
 	}
 	if len(service.requests) != 2 || service.requests[0].Filter.PaymentMethod != apimarket.PaymentMethodWechat ||
 		service.requests[0].Filter.BillingMode != apimarket.ServiceBillingModeFixedPackage ||
+		service.requests[0].Filter.Search != "gpt" || service.requests[0].Filter.ModelCatalogID != "model-common" ||
+		service.requests[0].Filter.DistributionSystem != apimarket.ServiceDistributionSub2API ||
+		service.requests[0].Filter.MaxCNYPerUSD != "0.9" || service.requests[0].Filter.MinimumIntentCNYMax != "50" ||
 		service.requests[0].Filter.PackageModelCatalogID != "model-1" || service.requests[0].Filter.PackageDurationDays != 7 ||
+		service.requests[0].Filter.PackagePriceCNYMax != "20" || service.requests[0].Filter.PackageMultiplierMax != "1.2" ||
+		service.requests[0].Filter.Sort != apimarket.PublicServiceSortPackagePriceAsc ||
 		service.requests[0].Page.Limit != 1 || service.requests[1].Page.Cursor != next {
 		t.Fatalf("unexpected application requests: %+v", service.requests)
 	}

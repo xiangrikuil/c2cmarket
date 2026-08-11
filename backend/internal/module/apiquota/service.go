@@ -265,6 +265,20 @@ func (m *Manager) PublicOffers(ctx context.Context, filter PublicOfferFilter, pa
 	if len([]rune(filter.Search)) > 100 {
 		return domain.Page[OfferCard]{}, domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Search query too long", "搜索关键词不能超过 100 个字符。", "search", "max_length", "搜索关键词不能超过 100 个字符。")
 	}
+	filter.MaxMultiplier = strings.TrimSpace(filter.MaxMultiplier)
+	if filter.MaxMultiplier != "" {
+		if _, ok := positiveDecimal(filter.MaxMultiplier); !ok {
+			return domain.Page[OfferCard]{}, domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Multiplier filter invalid", "倍率上限必须是大于 0 的数字。", "maxMultiplier", "invalid", "请输入大于 0 的数字。")
+		}
+	}
+	filter.SaleMode = strings.TrimSpace(filter.SaleMode)
+	if filter.SaleMode != "" && filter.SaleMode != SaleModeContinuous && filter.SaleMode != SaleModeScheduled {
+		return domain.Page[OfferCard]{}, domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Sale mode filter invalid", "销售方式筛选无效。", "saleMode", "invalid", "销售方式筛选无效。")
+	}
+	if sortMode := strings.TrimSpace(filter.Sort); sortMode != "" && sortMode != PublicOfferSortUpdatedDesc &&
+		sortMode != PublicOfferSortUnitPriceAsc && sortMode != PublicOfferSortAllowanceDesc && sortMode != PublicOfferSortDeliveryAsc {
+		return domain.Page[OfferCard]{}, domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Sort invalid", "排序方式无效。", "sort", "invalid", "排序方式无效。")
+	}
 	if strings.TrimSpace(filter.SystemSlotKey) != "" {
 		slot, appErr := ResolveSystemSaleSlot(filter.SystemSlotKey, m.now())
 		if appErr != nil {
@@ -280,6 +294,15 @@ func (m *Manager) PublicOffers(ctx context.Context, filter PublicOfferFilter, pa
 		result.Items[index] = WithOrderability(result.Items[index], m.now())
 	}
 	return result, nil
+}
+
+func (filter PublicOfferFilter) NormalizedSort() string {
+	switch strings.TrimSpace(filter.Sort) {
+	case PublicOfferSortUnitPriceAsc, PublicOfferSortAllowanceDesc, PublicOfferSortDeliveryAsc:
+		return strings.TrimSpace(filter.Sort)
+	default:
+		return PublicOfferSortUpdatedDesc
+	}
 }
 
 func (m *Manager) SystemSaleSlots() []SystemSaleSlot {

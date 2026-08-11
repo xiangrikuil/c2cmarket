@@ -51,6 +51,11 @@ const (
 	OrderabilitySoldOut            = "sold_out"
 	OrderabilityBatchExpired       = "batch_expired"
 	OrderabilityCredentialShortage = "credential_unavailable"
+
+	PublicOfferSortUpdatedDesc   = "updated_desc"
+	PublicOfferSortUnitPriceAsc  = "unit_price_asc"
+	PublicOfferSortAllowanceDesc = "allowance_desc"
+	PublicOfferSortDeliveryAsc   = "delivery_asc"
 )
 
 type Batch struct {
@@ -230,11 +235,15 @@ type BatchActionInput struct {
 
 type PublicOfferFilter struct {
 	DistributionSystem string
+	ModelCatalogID     string
 	OnlyOneMultiplier  bool
+	MaxMultiplier      string
 	OnlyOrderable      bool
+	SaleMode           string
 	SystemSlotKey      string
 	Search             string
 	ExcludeSystemSlots bool
+	Sort               string
 }
 
 type CredentialSummary struct {

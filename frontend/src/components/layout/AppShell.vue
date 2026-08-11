@@ -55,6 +55,7 @@ import { logoutBackendSession } from '@/lib/backendClient'
 import { loginRoute } from '@/lib/authNavigation'
 import { usePromotionRewardPublicConfig } from '@/queries/usePromotionRewardQueries'
 import { useOwnerAPIProbeConnections } from '@/queries/useApiHealthQueries'
+import DevPersonaSwitcher from '@/components/layout/DevPersonaSwitcher.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -95,6 +96,11 @@ const currentLoginTo = computed(() => loginRoute(route.fullPath))
 const anonymousCarpoolPublishTo = loginRoute('/carpools/new')
 const anonymousApiPublishTo = loginRoute('/api-market/new')
 const accountRecoveryRequired = computed(() => myProfile.value ? !isAccountRecoveryComplete(myProfile.value) : false)
+const apiMarketNavItems = [
+  { label: '限量额度包', view: 'limited' },
+  { label: '短期流量包', view: 'packages' },
+  { label: '自选额度', view: 'free' },
+] as const
 const hasMerchantWorkspace = computed(() => Boolean(
   (ownedCarpools.value?.length ?? 0) > 0
   || (ownedApiServices.value?.length ?? 0) > 0
@@ -182,7 +188,13 @@ const activeNavItem = computed(() => {
     .sort((a, b) => b.to.length - a.to.length)[0]
 })
 
-const currentTitle = computed(() => activeNavItem.value?.label ?? String(route.meta.title ?? 'C2CMarket'))
+const currentTitle = computed(() => {
+  if (route.path === '/api-market') {
+    const currentView = route.query.view === 'packages' || route.query.view === 'free' ? route.query.view : 'limited'
+    return `API 市场 / ${apiMarketNavItems.find(item => item.view === currentView)?.label ?? '限量额度包'}`
+  }
+  return activeNavItem.value?.label ?? String(route.meta.title ?? 'C2CMarket')
+})
 
 function isActive(to: string) {
   return activeNavItem.value?.to === to
@@ -194,6 +206,12 @@ function matchesRoute(to: string) {
   if (to === announcementCenterTo) return route.path === '/my/notifications' && route.query.tab === 'announcements'
   if (to === '/my/notifications') return route.path === to && route.query.tab !== 'announcements'
   return route.path === to || route.path.startsWith(`${to}/`)
+}
+
+function isApiMarketViewActive(view: typeof apiMarketNavItems[number]['view']) {
+  if (route.path !== '/api-market') return false
+  const currentView = route.query.view === 'packages' || route.query.view === 'free' ? route.query.view : 'limited'
+  return currentView === view
 }
 
 watch(
@@ -285,23 +303,37 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onNavigationKeydown)
             <span v-else>{{ group.title }}</span>
           </h2>
           <div class="mt-2 grid gap-1">
-            <RouterLink
-              v-for="item in group.items"
-              :key="item.to"
-              :to="item.to"
-              class="flex h-9 items-center rounded-md text-[14px] font-semibold text-sidebar-foreground/80 transition hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
-              :title="sidebarCollapsed ? item.label : undefined"
-              :class="isActive(item.to) ? 'bg-sidebar-accent text-sidebar-accent-foreground shadow-sm' : ''"
-            >
-              <span
-                class="flex min-w-0 items-center"
-                :class="sidebarCollapsed ? 'w-full justify-center' : 'gap-3 px-3'"
+            <div v-for="item in group.items" :key="item.to">
+              <RouterLink
+                :to="item.to"
+                class="flex h-9 items-center rounded-md text-[14px] font-semibold text-sidebar-foreground/80 transition hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
+                :title="sidebarCollapsed ? item.label : undefined"
+                :class="isActive(item.to) ? 'bg-sidebar-accent text-sidebar-accent-foreground shadow-sm' : ''"
               >
-                <component :is="item.icon" class="h-[18px] w-[18px] shrink-0" />
-                <span v-if="!sidebarCollapsed" class="truncate">{{ item.label }}</span>
-              </span>
-              <Badge v-if="item.count && !sidebarCollapsed" variant="secondary" class="mr-2 h-5 px-1.5 text-[11px]">{{ formatBadgeCount(item.count) }}</Badge>
-            </RouterLink>
+                <span
+                  class="flex min-w-0 items-center"
+                  :class="sidebarCollapsed ? 'w-full justify-center' : 'gap-3 px-3'"
+                >
+                  <component :is="item.icon" class="h-[18px] w-[18px] shrink-0" />
+                  <span v-if="!sidebarCollapsed" class="truncate">{{ item.label }}</span>
+                </span>
+                <Badge v-if="item.count && !sidebarCollapsed" variant="secondary" class="mr-2 h-5 px-1.5 text-[11px]">{{ formatBadgeCount(item.count) }}</Badge>
+              </RouterLink>
+              <div
+                v-if="item.to === '/api-market' && matchesRoute('/api-market') && !sidebarCollapsed"
+                class="ml-5 mt-1 grid gap-0.5 border-l border-sidebar-border pl-3"
+              >
+                <RouterLink
+                  v-for="child in apiMarketNavItems"
+                  :key="child.view"
+                  :to="{ path: '/api-market', query: { view: child.view } }"
+                  class="flex h-8 items-center rounded-md px-2 text-[13px] font-medium text-sidebar-foreground/65 transition hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
+                  :class="isApiMarketViewActive(child.view) ? 'bg-sidebar-accent text-sidebar-accent-foreground' : ''"
+                >
+                  {{ child.label }}
+                </RouterLink>
+              </div>
+            </div>
           </div>
         </section>
       </nav>
@@ -355,20 +387,32 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onNavigationKeydown)
         <section v-for="group in navGroups" :key="group.title">
           <h2 class="px-2 text-xs font-medium text-muted-foreground">{{ group.title }}</h2>
           <div class="mt-2 grid gap-1">
-            <RouterLink
-              v-for="item in group.items"
-              :key="item.to"
-              :to="item.to"
-              class="flex items-center justify-between rounded-md px-3 py-2.5 text-sm font-medium text-sidebar-foreground/80 transition hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
-              :class="isActive(item.to) ? 'bg-sidebar-accent text-sidebar-accent-foreground' : ''"
-              @click="closeMenu"
-            >
-              <span class="flex min-w-0 items-center gap-2">
-                <component :is="item.icon" class="h-[18px] w-[18px] shrink-0" />
-                <span class="truncate">{{ item.label }}</span>
-              </span>
-              <Badge v-if="item.count" variant="secondary">{{ formatBadgeCount(item.count) }}</Badge>
-            </RouterLink>
+            <div v-for="item in group.items" :key="item.to">
+              <RouterLink
+                :to="item.to"
+                class="flex items-center justify-between rounded-md px-3 py-2.5 text-sm font-medium text-sidebar-foreground/80 transition hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
+                :class="isActive(item.to) ? 'bg-sidebar-accent text-sidebar-accent-foreground' : ''"
+                @click="closeMenu"
+              >
+                <span class="flex min-w-0 items-center gap-2">
+                  <component :is="item.icon" class="h-[18px] w-[18px] shrink-0" />
+                  <span class="truncate">{{ item.label }}</span>
+                </span>
+                <Badge v-if="item.count" variant="secondary">{{ formatBadgeCount(item.count) }}</Badge>
+              </RouterLink>
+              <div v-if="item.to === '/api-market'" class="ml-6 mt-1 grid gap-0.5 border-l border-border pl-3">
+                <RouterLink
+                  v-for="child in apiMarketNavItems"
+                  :key="child.view"
+                  :to="{ path: '/api-market', query: { view: child.view } }"
+                  class="rounded-md px-3 py-2 text-[13px] font-medium text-sidebar-foreground/65 transition hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
+                  :class="isApiMarketViewActive(child.view) ? 'bg-sidebar-accent text-sidebar-accent-foreground' : ''"
+                  @click="closeMenu"
+                >
+                  {{ child.label }}
+                </RouterLink>
+              </div>
+            </div>
           </div>
         </section>
       </nav>
@@ -418,6 +462,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onNavigationKeydown)
             </div>
           </div>
           <div class="flex-1" />
+          <DevPersonaSwitcher :current-username="currentUsername" />
           <DropdownMenu v-if="appThemes.length > 1">
             <DropdownMenuTrigger as-child>
               <Button variant="ghost" size="icon" aria-label="切换主题">

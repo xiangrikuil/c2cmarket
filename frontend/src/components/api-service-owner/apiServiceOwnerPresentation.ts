@@ -72,8 +72,8 @@ const salesStatePresentation: Record<ApiServiceSalesState, ApiServiceSalesStatus
 }
 
 const salesChannelLabels: Record<ApiServiceSalesChannelKind, string> = {
-  flexible_quota: '自由额度',
-  limited_quota: '限时额度包',
+  flexible_quota: '自选额度',
+  limited_quota: '限量额度包',
 }
 
 export const apiServiceSalesViewOptions: Array<{

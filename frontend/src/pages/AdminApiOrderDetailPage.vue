@@ -63,12 +63,12 @@ const errorMessage = computed(() => error.value instanceof Error ? error.value.m
   <SkeletonBlock v-if="isLoading" :lines="10" />
   <ErrorState v-else-if="error" :description="errorMessage" @retry="refetch()" />
   <EmptyState v-else-if="!order" title="未找到 API 订单" description="订单不存在或当前管理员无权查看。">
-    <template #action><Button variant="outline" @click="router.push('/admin/trade-intents')">返回订单追踪</Button></template>
+    <template #action><Button variant="outline" @click="router.push('/admin/trade-intents')">返回订单监管</Button></template>
   </EmptyState>
   <div v-else class="space-y-4">
     <div class="flex flex-col gap-3 border-b border-border pb-4 md:flex-row md:items-start md:justify-between">
       <div class="min-w-0">
-        <Button class="-ml-3 mb-2" variant="ghost" size="sm" @click="router.push('/admin/trade-intents')"><ArrowLeft class="h-4 w-4" />返回订单追踪</Button>
+        <Button class="-ml-3 mb-2" variant="ghost" size="sm" @click="router.push('/admin/trade-intents')"><ArrowLeft class="h-4 w-4" />返回订单监管</Button>
         <div class="flex flex-wrap items-center gap-2">
           <h1 class="text-2xl font-semibold">API 订单监管详情</h1>
           <StatusBadge :status="order.status" :label="getApiOrderStatusLabel(order.status, 'admin')" />
@@ -92,7 +92,7 @@ const errorMessage = computed(() => error.value instanceof Error ? error.value.m
           <dl class="mt-4 grid gap-x-6 gap-y-4 text-sm sm:grid-cols-2">
             <div><dt class="text-xs text-muted-foreground">服务</dt><dd class="mt-1 font-medium">{{ order.serviceTitleSnapshot }}</dd></div>
             <div><dt class="text-xs text-muted-foreground">订单金额</dt><dd class="mt-1 text-lg font-semibold">¥{{ formatDecimal(order.amount, 2, 2) }}</dd></div>
-            <div><dt class="text-xs text-muted-foreground">购买类型</dt><dd class="mt-1">{{ order.purchaseKind === 'limited_quota_offer' ? '限时额度包' : 'API 服务' }}</dd></div>
+            <div><dt class="text-xs text-muted-foreground">购买类型</dt><dd class="mt-1">{{ order.purchaseKind === 'limited_quota_offer' ? '限量额度包' : 'API 服务' }}</dd></div>
             <div><dt class="text-xs text-muted-foreground">购买额度</dt><dd class="mt-1">{{ order.requestedUsdAllowanceSnapshot ? `${formatDecimal(order.requestedUsdAllowanceSnapshot, 2, 6)} 美元额度` : '不适用' }}</dd></div>
             <div><dt class="text-xs text-muted-foreground">付款方式</dt><dd class="mt-1 inline-flex items-center gap-2"><ApiPaymentMethodIcon :method="order.selectedPaymentMethod" size="sm" />{{ apiPaymentMethodLabels[order.selectedPaymentMethod] }}</dd></div>
             <div><dt class="text-xs text-muted-foreground">定价快照</dt><dd class="mt-1">{{ order.cnyPerUsdAllowanceSnapshot ? `¥${formatDecimal(order.cnyPerUsdAllowanceSnapshot, 3, 6)} / $1` : '按套餐快照' }}</dd></div>

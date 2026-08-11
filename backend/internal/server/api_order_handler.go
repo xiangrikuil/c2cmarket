@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"c2c-market/backend/internal/domain"
@@ -13,6 +14,7 @@ import (
 	"c2c-market/backend/internal/module/idempotency"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/google/uuid"
 )
 
 type createAPIOrderRequest struct {
@@ -212,12 +214,85 @@ func (s *Server) handleAdminAPIOrders(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, r, appErr)
 		return
 	}
-	orders, appErr := s.app.AdminAPIOrders(r.Context(), user)
+	pageRequest, appErr := parsePageRequest(r)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
 	}
-	writePaginatedJSON(w, r, toAdminAPIOrderResponses(filterAPIOrders(r, orders)))
+	filter, appErr := parseAdminAPIOrderFilter(r)
+	if appErr != nil {
+		writeProblem(w, r, appErr)
+		return
+	}
+	page, appErr := s.app.AdminAPIOrders(r.Context(), user, filter, pageRequest)
+	if appErr != nil {
+		writeProblem(w, r, appErr)
+		return
+	}
+	writePageJSON(w, domain.Page[apiOrderResponse]{
+		Items:      toAdminAPIOrderResponses(page.Items),
+		NextCursor: page.NextCursor,
+	})
+}
+
+func parseAdminAPIOrderFilter(r *http.Request) (apiorder.AdminOrderFilter, *domain.AppError) {
+	values := r.URL.Query()
+	filter := apiorder.AdminOrderFilter{
+		Query:        strings.TrimSpace(values.Get("q")),
+		Statuses:     queryValues(r, "statuses"),
+		DateRange:    strings.TrimSpace(values.Get("dateRange")),
+		BuyerUserID:  strings.TrimSpace(values.Get("buyerId")),
+		SellerUserID: strings.TrimSpace(values.Get("sellerId")),
+		APIServiceID: strings.TrimSpace(values.Get("serviceId")),
+		Dispute:      strings.TrimSpace(values.Get("dispute")),
+		Sort:         strings.TrimSpace(values.Get("sort")),
+	}
+	for _, status := range filter.Statuses {
+		if !apiorder.IsStatus(status) {
+			return apiorder.AdminOrderFilter{}, invalidAdminAPIOrderQuery("statuses", "订单状态筛选无效。")
+		}
+	}
+	if !apiorder.IsAdminOrderDateRange(filter.DateRange) {
+		return apiorder.AdminOrderFilter{}, invalidAdminAPIOrderQuery("dateRange", "创建时间筛选无效。")
+	}
+	if !apiorder.IsAdminOrderDispute(filter.Dispute) {
+		return apiorder.AdminOrderFilter{}, invalidAdminAPIOrderQuery("dispute", "纠纷筛选无效。")
+	}
+	if !apiorder.IsAdminOrderSort(filter.Sort) {
+		return apiorder.AdminOrderFilter{}, invalidAdminAPIOrderQuery("sort", "订单排序无效。")
+	}
+	for _, item := range []struct {
+		field string
+		value string
+	}{
+		{field: "buyerId", value: filter.BuyerUserID},
+		{field: "sellerId", value: filter.SellerUserID},
+		{field: "serviceId", value: filter.APIServiceID},
+	} {
+		if item.value == "" {
+			continue
+		}
+		if _, err := uuid.Parse(item.value); err != nil {
+			return apiorder.AdminOrderFilter{}, invalidAdminAPIOrderQuery(item.field, item.field+" 必须是有效 UUID。")
+		}
+	}
+	var ok bool
+	filter.MinAmount, ok = apiorder.NormalizeAdminOrderAmount(values.Get("minAmount"))
+	if !ok {
+		return apiorder.AdminOrderFilter{}, invalidAdminAPIOrderQuery("minAmount", "最小金额必须是非负十进制数。")
+	}
+	filter.MaxAmount, ok = apiorder.NormalizeAdminOrderAmount(values.Get("maxAmount"))
+	if !ok {
+		return apiorder.AdminOrderFilter{}, invalidAdminAPIOrderQuery("maxAmount", "最大金额必须是非负十进制数。")
+	}
+	if filter.MinAmount != "" && filter.MaxAmount != "" && apiorder.CompareAdminOrderAmounts(filter.MinAmount, filter.MaxAmount) > 0 {
+		return apiorder.AdminOrderFilter{}, invalidAdminAPIOrderQuery("maxAmount", "最大金额不能小于最小金额。")
+	}
+	return filter, nil
+}
+
+func invalidAdminAPIOrderQuery(field, detail string) *domain.AppError {
+	return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "API order query invalid", detail, field, "invalid", detail)
 }
 
 func (s *Server) handleMyAPIOrder(w http.ResponseWriter, r *http.Request) {

@@ -19,7 +19,7 @@ defineProps<{
           <CircleDollarSign class="h-4 w-4" />
         </span>
         <div>
-          <h2>自由额度与定价</h2>
+          <h2>自选额度与定价</h2>
           <p>填写售价、可售额度和有效时间。</p>
         </div>
       </div>

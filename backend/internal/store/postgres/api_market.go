@@ -72,7 +72,51 @@ func (s *Store) ListPublicAPIServices(ctx context.Context, filter apimarket.Publ
 	if strings.TrimSpace(filter.BillingMode) != "" {
 		where += ` AND api_services.billing_mode = ` + addArgument(strings.TrimSpace(filter.BillingMode))
 	}
-	if strings.TrimSpace(filter.PackageModelCatalogID) != "" || filter.PackageDurationDays > 0 {
+	if search := strings.TrimSpace(filter.Search); search != "" {
+		placeholder := addArgument(search)
+		where += ` AND (
+		  api_services.title ILIKE '%' || ` + placeholder + ` || '%'
+		  OR api_services.short_description ILIKE '%' || ` + placeholder + ` || '%'
+		  OR EXISTS (
+		    SELECT 1 FROM api_service_models search_model
+		    WHERE search_model.api_service_id = api_services.id
+		      AND search_model.enabled = true
+		      AND (search_model.model_key_snapshot ILIKE '%' || ` + placeholder + ` || '%'
+		        OR search_model.provider_snapshot ILIKE '%' || ` + placeholder + ` || '%')
+		  )
+		  OR EXISTS (
+		    SELECT 1 FROM users search_owner
+		    WHERE search_owner.id = api_services.owner_user_id
+		      AND search_owner.display_name ILIKE '%' || ` + placeholder + ` || '%'
+		  )
+		  OR EXISTS (
+		    SELECT 1 FROM merchant_profiles search_merchant
+		    WHERE search_merchant.id = api_services.merchant_profile_id
+		      AND search_merchant.owner_user_id = api_services.owner_user_id
+		      AND search_merchant.display_name ILIKE '%' || ` + placeholder + ` || '%'
+		  )
+		)`
+	}
+	if distributionSystem := strings.TrimSpace(filter.DistributionSystem); distributionSystem != "" {
+		where += ` AND api_services.distribution_system = ` + addArgument(distributionSystem)
+	}
+	if modelCatalogID := strings.TrimSpace(filter.ModelCatalogID); modelCatalogID != "" {
+		placeholder := addArgument(modelCatalogID)
+		where += ` AND EXISTS (
+		  SELECT 1 FROM api_service_models selected_model
+		  WHERE selected_model.api_service_id = api_services.id
+		    AND selected_model.enabled = true
+		    AND selected_model.model_catalog_id::text = ` + placeholder + `
+		)`
+	}
+	if maximum := strings.TrimSpace(filter.MaxCNYPerUSD); maximum != "" {
+		where += ` AND api_services.declared_cny_per_usd_allowance <= ` + addArgument(maximum) + `::numeric`
+	}
+	if maximum := strings.TrimSpace(filter.MinimumIntentCNYMax); maximum != "" {
+		where += ` AND api_services.minimum_intent_cny <= ` + addArgument(maximum) + `::numeric`
+	}
+	if strings.TrimSpace(filter.PackageModelCatalogID) != "" || filter.PackageDurationDays > 0 ||
+		strings.TrimSpace(filter.PackagePriceCNYMax) != "" || strings.TrimSpace(filter.PackageMultiplierMax) != "" {
 		where += `
 		  AND EXISTS (
 		    SELECT 1
@@ -83,23 +127,106 @@ func (s *Store) ListPublicAPIServices(ctx context.Context, filter apimarket.Publ
 		if filter.PackageDurationDays > 0 {
 			where += ` AND package_row.duration_days = ` + addArgument(filter.PackageDurationDays)
 		}
-		if strings.TrimSpace(filter.PackageModelCatalogID) != "" {
+		if maximum := strings.TrimSpace(filter.PackagePriceCNYMax); maximum != "" {
+			where += ` AND package_row.price_cny <= ` + addArgument(maximum) + `::numeric`
+		}
+		if strings.TrimSpace(filter.PackageModelCatalogID) != "" || strings.TrimSpace(filter.PackageMultiplierMax) != "" {
 			where += `
-		      AND EXISTS (
-		        SELECT 1
-		        FROM api_service_package_models package_model
-		        JOIN api_service_models service_model
-		          ON service_model.id = package_model.api_service_model_id
-		         AND service_model.api_service_id = package_model.api_service_id
-		        WHERE package_model.api_service_package_id = package_row.id
-		          AND package_model.api_service_id = package_row.api_service_id
-		          AND service_model.model_catalog_id::text = ` + addArgument(strings.TrimSpace(filter.PackageModelCatalogID)) + `
-		      )`
+              AND EXISTS (
+                SELECT 1
+                FROM api_service_package_models package_model
+                JOIN api_service_models service_model
+                  ON service_model.id = package_model.api_service_model_id
+                 AND service_model.api_service_id = package_model.api_service_id
+                WHERE package_model.api_service_package_id = package_row.id
+                  AND package_model.api_service_id = package_row.api_service_id
+                  AND service_model.enabled = true`
+			if modelCatalogID := strings.TrimSpace(filter.PackageModelCatalogID); modelCatalogID != "" {
+				where += ` AND service_model.model_catalog_id::text = ` + addArgument(modelCatalogID)
+			}
+			if maximum := strings.TrimSpace(filter.PackageMultiplierMax); maximum != "" {
+				where += ` AND service_model.merchant_multiplier <= ` + addArgument(maximum) + `::numeric`
+			}
+			where += `
+			  )`
 		}
 		where += `
 		  )`
 	}
-	return s.listAPIServicesPage(ctx, where, args, page)
+	sortMode := filter.NormalizedSort()
+	sortExpression := ""
+	var scalarValue func(apimarket.Service) string
+	switch sortMode {
+	case apimarket.PublicServiceSortPriceAsc:
+		sortExpression = "api_services.declared_cny_per_usd_allowance"
+		scalarValue = func(item apimarket.Service) string { return item.DeclaredCNYPerUSDAllowance }
+	case apimarket.PublicServiceSortMinimumPurchaseAsc:
+		sortExpression = "api_services.minimum_intent_cny"
+		scalarValue = func(item apimarket.Service) string { return item.MinimumIntentCNY }
+	case apimarket.PublicServiceSortPackagePriceAsc:
+		durationPlaceholder := addArgument(filter.PackageDurationDays)
+		modelPlaceholder := addArgument(strings.TrimSpace(filter.PackageModelCatalogID))
+		pricePlaceholder := addArgument(strings.TrimSpace(filter.PackagePriceCNYMax))
+		multiplierPlaceholder := addArgument(strings.TrimSpace(filter.PackageMultiplierMax))
+		sortExpression = `(SELECT MIN(sort_package.price_cny)
+		  FROM api_service_packages sort_package
+		  WHERE sort_package.api_service_id = api_services.id
+		    AND sort_package.enabled = true
+		    AND sort_package.stock_available > 0
+		    AND (` + durationPlaceholder + `::integer = 0 OR sort_package.duration_days = ` + durationPlaceholder + `::integer)
+		    AND (` + pricePlaceholder + ` = '' OR sort_package.price_cny <= NULLIF(` + pricePlaceholder + `, '')::numeric)
+		    AND EXISTS (
+		      SELECT 1
+		      FROM api_service_package_models sort_package_model
+		      JOIN api_service_models sort_service_model ON sort_service_model.id = sort_package_model.api_service_model_id
+		      WHERE sort_package_model.api_service_package_id = sort_package.id
+		        AND sort_package_model.api_service_id = sort_package.api_service_id
+		        AND sort_service_model.enabled = true
+		        AND (` + modelPlaceholder + ` = '' OR sort_service_model.model_catalog_id::text = ` + modelPlaceholder + `)
+		        AND (` + multiplierPlaceholder + ` = '' OR sort_service_model.merchant_multiplier <= NULLIF(` + multiplierPlaceholder + `, '')::numeric)
+		    )
+		)`
+		scalarValue = func(item apimarket.Service) string { return minimumPackagePriceForFilter(item, filter) }
+	}
+	return s.listAPIServicesPage(ctx, where, args, page, sortMode, sortExpression, scalarValue)
+}
+
+func minimumPackagePriceForFilter(service apimarket.Service, filter apimarket.PublicServiceFilter) string {
+	modelCatalogID := strings.TrimSpace(filter.PackageModelCatalogID)
+	maximumPrice, hasMaximumPrice := new(big.Rat).SetString(strings.TrimSpace(filter.PackagePriceCNYMax))
+	maximumMultiplier, hasMaximumMultiplier := new(big.Rat).SetString(strings.TrimSpace(filter.PackageMultiplierMax))
+	var minimum *big.Rat
+	minimumText := "0"
+	for _, item := range service.Packages {
+		if !item.Enabled || item.StockAvailable <= 0 ||
+			(filter.PackageDurationDays > 0 && (item.DurationDays == nil || *item.DurationDays != filter.PackageDurationDays)) {
+			continue
+		}
+		price, ok := new(big.Rat).SetString(strings.TrimSpace(item.PriceCNY))
+		if !ok || price.Sign() < 0 || hasMaximumPrice && price.Cmp(maximumPrice) > 0 {
+			continue
+		}
+		matchesModel := false
+		for _, model := range item.Models {
+			if modelCatalogID != "" && model.ModelCatalogID != modelCatalogID {
+				continue
+			}
+			multiplier, ok := new(big.Rat).SetString(strings.TrimSpace(model.MerchantMultiplier))
+			if hasMaximumMultiplier && (!ok || multiplier.Cmp(maximumMultiplier) > 0) {
+				continue
+			}
+			matchesModel = true
+			break
+		}
+		if !matchesModel {
+			continue
+		}
+		if minimum == nil || price.Cmp(minimum) < 0 {
+			minimum = price
+			minimumText = item.PriceCNY
+		}
+	}
+	return minimumText
 }
 
 func (s *Store) GetPublicAPIService(ctx context.Context, serviceID string) (apimarket.Service, *domain.AppError) {
@@ -238,7 +365,7 @@ func (s *Store) ListAdminAPIServices(ctx context.Context, filter apimarket.Admin
 	if len(conditions) > 0 {
 		whereClause = "WHERE " + strings.Join(conditions, " AND ")
 	}
-	return s.listAPIServicesPage(ctx, whereClause, args, page)
+	return s.listAPIServicesPage(ctx, whereClause, args, page, apimarket.PublicServiceSortUpdatedDesc, "", nil)
 }
 
 func apiServiceAdminStatusSQL(alias string) string {
@@ -880,14 +1007,34 @@ func (s *Store) listAPIServices(ctx context.Context, whereClause string, args []
 	return services, nil
 }
 
-func (s *Store) listAPIServicesPage(ctx context.Context, whereClause string, args []any, page domain.PageRequest) (domain.Page[apimarket.Service], *domain.AppError) {
+func (s *Store) listAPIServicesPage(
+	ctx context.Context,
+	whereClause string,
+	args []any,
+	page domain.PageRequest,
+	sortMode string,
+	sortExpression string,
+	scalarValue func(apimarket.Service) string,
+) (domain.Page[apimarket.Service], *domain.AppError) {
 	if s == nil || s.pool == nil {
 		return domain.Page[apimarket.Service]{}, internalStoreError()
 	}
 	page = normalizePageRequest(page)
-	position, appErr := decodeKeysetCursor(page.Cursor)
+	var position keysetPosition
+	var scalarPosition scalarKeysetPosition
+	var appErr *domain.AppError
+	if sortMode == apimarket.PublicServiceSortUpdatedDesc {
+		position, appErr = decodeKeysetCursor(page.Cursor)
+	} else {
+		scalarPosition, appErr = decodeScalarKeysetCursor(page.Cursor, sortMode)
+	}
 	if appErr != nil {
 		return domain.Page[apimarket.Service]{}, appErr
+	}
+	if page.Cursor != "" && sortMode != apimarket.PublicServiceSortUpdatedDesc {
+		if appErr := validateNonNegativeDecimalCursor(scalarPosition); appErr != nil {
+			return domain.Page[apimarket.Service]{}, appErr
+		}
 	}
 	query := `SELECT ` + apiServiceColumns + ` FROM api_services `
 	whereClause = strings.TrimSpace(whereClause)
@@ -901,11 +1048,21 @@ func (s *Store) listAPIServicesPage(ctx context.Context, whereClause string, arg
 		} else {
 			query += ` AND `
 		}
-		args = append(args, position.Time, position.ID)
-		query += `(updated_at, id) < ($` + strconv.Itoa(len(args)-1) + `, $` + strconv.Itoa(len(args)) + `::uuid)`
+		if sortMode == apimarket.PublicServiceSortUpdatedDesc {
+			args = append(args, position.Time, position.ID)
+			query += `(api_services.updated_at, api_services.id) < ($` + strconv.Itoa(len(args)-1) + `, $` + strconv.Itoa(len(args)) + `::uuid)`
+		} else {
+			args = append(args, scalarPosition.Value, scalarPosition.ID)
+			query += `(` + sortExpression + `, api_services.id) > ($` + strconv.Itoa(len(args)-1) + `::numeric, $` + strconv.Itoa(len(args)) + `::uuid)`
+		}
 	}
 	args = append(args, page.Limit+1)
-	query += ` ORDER BY updated_at DESC, id DESC LIMIT $` + strconv.Itoa(len(args))
+	if sortMode == apimarket.PublicServiceSortUpdatedDesc {
+		query += ` ORDER BY api_services.updated_at DESC, api_services.id DESC`
+	} else {
+		query += ` ORDER BY ` + sortExpression + ` ASC, api_services.id ASC`
+	}
+	query += ` LIMIT $` + strconv.Itoa(len(args))
 	rows, err := s.pool.Query(ctx, query, args...)
 	if err != nil {
 		return domain.Page[apimarket.Service]{}, internalStoreError()
@@ -919,6 +1076,11 @@ func (s *Store) listAPIServicesPage(ctx context.Context, whereClause string, arg
 		if appErr := s.loadAPIServiceChildren(ctx, s.pool, &services[i]); appErr != nil {
 			return domain.Page[apimarket.Service]{}, appErr
 		}
+	}
+	if sortMode != apimarket.PublicServiceSortUpdatedDesc && scalarValue != nil {
+		return pageFromScalarItems(services, page, sortMode, func(item apimarket.Service) (string, string) {
+			return scalarValue(item), item.ID
+		}), nil
 	}
 	return pageFromItems(services, page, func(item apimarket.Service) (time.Time, string) { return item.UpdatedAt, item.ID }), nil
 }

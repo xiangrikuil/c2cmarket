@@ -586,7 +586,7 @@ onBeforeUnmount(() => {
         <div v-auto-animate="functionalMotion" class="flex flex-wrap items-center gap-2">
           <h1 class="text-2xl font-semibold">{{ pageTitle }}</h1>
           <StatusBadge :key="order.status" :status="order.status" :label="getApiOrderDisplayStatus(order, perspective)" />
-          <Badge v-if="order.purchaseKind === 'limited_quota_offer'" variant="capability">限时额度包</Badge>
+          <Badge v-if="order.purchaseKind === 'limited_quota_offer'" variant="capability">限量额度包</Badge>
         </div>
         <p class="mt-1.5 flex min-w-0 flex-wrap items-center gap-x-1 gap-y-1 text-sm text-muted-foreground" :title="order.serviceTitle">
           <span class="min-w-0 truncate">{{ order.serviceTitle }}</span>

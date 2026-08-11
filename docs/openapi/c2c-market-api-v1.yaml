@@ -110,6 +110,34 @@ paths:
                 $ref: "#/components/schemas/SessionResponse"
         "429":
           $ref: "#/components/responses/RateLimited"
+  /api/v1/auth/dev-persona-session:
+    post:
+      x-dev-only: true
+      operationId: createDevPersonaSession
+      tags: [DevAuth]
+      security: []
+      summary: Prepare and sign in as a fixed local development persona.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DevPersonaSessionRequest"
+      responses:
+        "200":
+          description: Prepared development persona and normal session.
+          headers:
+            Set-Cookie:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DevPersonaSessionResponse"
+        "422":
+          $ref: "#/components/responses/Problem"
+        "429":
+          $ref: "#/components/responses/RateLimited"
   /api/v1/auth/session:
     get:
       operationId: getSession
@@ -941,6 +969,38 @@ paths:
           schema:
             type: string
             enum: [metered_usd_quota, fixed_package]
+        - name: search
+          in: query
+          required: false
+          schema:
+            type: string
+            maxLength: 100
+        - name: modelCatalogId
+          in: query
+          required: false
+          description: Exact enabled model supported by the service.
+          schema:
+            type: string
+        - name: distributionSystem
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [sub2api, new_api_proxy, other]
+        - name: maxCnyPerUsd
+          in: query
+          required: false
+          description: Maximum accepted CNY price per USD allowance for metered services.
+          schema:
+            type: string
+            pattern: '^\d+(\.\d+)?$'
+        - name: minimumIntentCnyMax
+          in: query
+          required: false
+          description: Maximum accepted minimum purchase amount in CNY.
+          schema:
+            type: string
+            pattern: '^\d+(\.\d+)?$'
         - name: packageModelCatalogId
           in: query
           required: false
@@ -952,6 +1012,27 @@ paths:
           schema:
             type: integer
             enum: [1, 3, 7, 30]
+        - name: packagePriceCnyMax
+          in: query
+          required: false
+          description: Maximum total price for an enabled package with stock.
+          schema:
+            type: string
+            pattern: '^\d+(\.\d+)?$'
+        - name: packageMultiplierMax
+          in: query
+          required: false
+          description: Maximum merchant multiplier for the selected package model.
+          schema:
+            type: string
+            pattern: '^\d+(\.\d+)?$'
+        - name: sort
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [updated_desc, price_asc, minimum_purchase_asc, package_price_asc]
+            default: updated_desc
       responses:
         "200":
           description: Public API services.
@@ -1176,16 +1257,42 @@ paths:
           schema:
             type: string
             enum: [sub2api, new_api_proxy, other]
+        - name: modelCatalogId
+          in: query
+          required: false
+          description: Exact enabled model supported by the offer's API service.
+          schema:
+            type: string
         - name: oneMultiplier
           in: query
           required: false
           schema:
             type: boolean
+        - name: maxMultiplier
+          in: query
+          required: false
+          description: Maximum model multiplier accepted by the buyer.
+          schema:
+            type: string
+            pattern: '^\d+(\.\d+)?$'
         - name: onlyOrderable
           in: query
           required: false
           schema:
             type: boolean
+        - name: saleMode
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [continuous, scheduled]
+        - name: sort
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [updated_desc, unit_price_asc, allowance_desc, delivery_asc]
+            default: updated_desc
         - name: slotKey
           in: query
           required: false
@@ -5452,17 +5559,80 @@ paths:
     get:
       operationId: listAdminAPIOrders
       tags: [APIOrders]
+      summary: Supervise API orders with server-side filters and stable cursor pagination.
       parameters:
+        - name: q
+          in: query
+          description: Match an order number, order ID, API service ID or title, buyer ID, or seller ID.
+          schema:
+            type: string
+        - name: statuses
+          in: query
+          description: API order statuses encoded as a comma-separated query value.
+          style: form
+          explode: false
+          schema:
+            type: array
+            items:
+              type: string
+              enum: [pending_payment, payment_submitted, payment_issue, paid_confirmed, delivery_submitted, completed, cancelled]
+        - name: dateRange
+          in: query
+          schema:
+            type: string
+            enum: [all, today, 7d, 30d]
+            default: all
+        - name: buyerId
+          in: query
+          schema:
+            type: string
+            format: uuid
+        - name: sellerId
+          in: query
+          schema:
+            type: string
+            format: uuid
+        - name: serviceId
+          in: query
+          schema:
+            type: string
+            format: uuid
+        - name: dispute
+          in: query
+          schema:
+            type: string
+            enum: [all, active, none]
+            default: all
+        - name: minAmount
+          in: query
+          description: Inclusive non-negative CNY amount lower bound.
+          schema:
+            type: string
+            pattern: '^[0-9]+(?:\.[0-9]+)?$'
+        - name: maxAmount
+          in: query
+          description: Inclusive non-negative CNY amount upper bound.
+          schema:
+            type: string
+            pattern: '^[0-9]+(?:\.[0-9]+)?$'
+        - name: sort
+          in: query
+          schema:
+            type: string
+            enum: [updated_desc, created_desc, amount_desc, amount_asc]
+            default: updated_desc
         - $ref: "#/components/parameters/Limit"
         - $ref: "#/components/parameters/Cursor"
       responses:
         "200":
-          description: Administrator API order tracking list with decimal pricing snapshots and without contacts or raw delivery credentials.
+          description: Administrator API order supervision list with decimal pricing snapshots and without contacts or raw delivery credentials.
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/APIOrderList"
         "403":
+          $ref: "#/components/responses/Problem"
+        "422":
           $ref: "#/components/responses/Problem"
   /api/v1/admin/api-orders/{id}:
     get:
@@ -10063,6 +10233,29 @@ components:
       type: object
       required: [user, csrfToken, expiresAt]
       properties:
+        user:
+          $ref: "#/components/schemas/User"
+        csrfToken:
+          type: string
+        expiresAt:
+          type: string
+          format: date-time
+    DevPersonaSessionRequest:
+      type: object
+      additionalProperties: false
+      required: [persona]
+      properties:
+        persona:
+          type: string
+          enum: [buyer, seller, admin]
+    DevPersonaSessionResponse:
+      type: object
+      additionalProperties: false
+      required: [persona, user, csrfToken, expiresAt]
+      properties:
+        persona:
+          type: string
+          enum: [buyer, seller, admin]
         user:
           $ref: "#/components/schemas/User"
         csrfToken:

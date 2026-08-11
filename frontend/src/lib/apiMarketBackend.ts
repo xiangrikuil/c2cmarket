@@ -841,11 +841,15 @@ function mapAPIQuotaBatch(item: ApiQuotaBatch): ApiQuotaBatch {
 function quotaOfferQuery(filters: ApiQuotaOfferFilters, page: CursorPageRequest = {}) {
   const params = new URLSearchParams()
   if (filters.distributionSystem && filters.distributionSystem !== 'all') params.set('distributionSystem', filters.distributionSystem)
+  if (filters.modelCatalogId?.trim()) params.set('modelCatalogId', filters.modelCatalogId.trim())
   if (filters.oneMultiplier) params.set('oneMultiplier', 'true')
+  if (filters.maxMultiplier !== undefined) params.set('maxMultiplier', String(filters.maxMultiplier))
   if (filters.onlyOrderable) params.set('onlyOrderable', 'true')
+  if (filters.saleMode && filters.saleMode !== 'all') params.set('saleMode', filters.saleMode)
   if (filters.slotKey) params.set('slotKey', filters.slotKey)
   if (filters.search?.trim()) params.set('search', filters.search.trim())
   if (filters.excludeSystemSlots) params.set('excludeSystemSlots', 'true')
+  if (filters.sort && filters.sort !== 'updated_desc') params.set('sort', filters.sort)
   if (page.limit) params.set('limit', String(page.limit))
   if (page.cursor) params.set('cursor', page.cursor)
   const query = params.toString()
@@ -1001,6 +1005,14 @@ export async function backendAPIServicesPage(filters: ApiServiceFilters = {}, pa
   }
   if (filters.packageModelCatalogId?.trim()) params.set('packageModelCatalogId', filters.packageModelCatalogId.trim())
   if (filters.packageDurationDays) params.set('packageDurationDays', String(filters.packageDurationDays))
+  if (filters.search?.trim()) params.set('search', filters.search.trim())
+  if (filters.modelCatalogId?.trim()) params.set('modelCatalogId', filters.modelCatalogId.trim())
+  if (filters.distributionSystem && filters.distributionSystem !== 'all') params.set('distributionSystem', filters.distributionSystem)
+  if (filters.maxCnyPerUsd !== undefined) params.set('maxCnyPerUsd', String(filters.maxCnyPerUsd))
+  if (filters.minimumPurchaseCnyMax !== undefined) params.set('minimumIntentCnyMax', String(filters.minimumPurchaseCnyMax))
+  if (filters.packagePriceCnyMax !== undefined) params.set('packagePriceCnyMax', String(filters.packagePriceCnyMax))
+  if (filters.packageMultiplierMax !== undefined) params.set('packageMultiplierMax', String(filters.packageMultiplierMax))
+  if (filters.sort && filters.sort !== 'recommended' && filters.sort !== 'updated_desc') params.set('sort', filters.sort)
   if (page.limit) params.set('limit', String(page.limit))
   if (page.cursor) params.set('cursor', page.cursor)
   const query = params.toString()
@@ -1012,7 +1024,7 @@ export async function backendAPIServicesPage(filters: ApiServiceFilters = {}, pa
 }
 
 export async function backendAPIServices(filters: ApiServiceFilters = {}) {
-  return filterServices(await collectCursorPages(page => backendAPIServicesPage({}, page)), filters)
+  return collectCursorPages(page => backendAPIServicesPage(filters, page))
 }
 
 export async function backendPublicAPIPromotions(): Promise<ApiServicePromotion[]> {
@@ -1333,14 +1345,19 @@ function adminOrderStatusLabel(value: string) {
 	return labels[value] ?? value
 }
 
-function apiOrderPageQuery(filters: ApiOrderFilters, page: CursorPageRequest) {
+export function apiOrderPageQuery(filters: ApiOrderFilters, page: CursorPageRequest) {
   const params = new URLSearchParams()
   const statuses = Array.isArray(filters.status) ? filters.status : filters.status ? [filters.status] : []
   if (statuses.length) params.set('statuses', statuses.join(','))
-  if (filters.serviceId) params.set('serviceId', filters.serviceId)
+  if (filters.buyerId?.trim()) params.set('buyerId', filters.buyerId.trim())
+  if (filters.sellerId?.trim()) params.set('sellerId', filters.sellerId.trim())
+  if (filters.serviceId?.trim()) params.set('serviceId', filters.serviceId.trim())
   if (filters.search?.trim()) params.set('q', filters.search.trim())
   if (filters.dateRange && filters.dateRange !== 'all') params.set('dateRange', filters.dateRange)
   if (filters.sort) params.set('sort', filters.sort)
+  if (filters.dispute && filters.dispute !== 'all') params.set('dispute', filters.dispute)
+  if (filters.minAmount?.trim()) params.set('minAmount', filters.minAmount.trim())
+  if (filters.maxAmount?.trim()) params.set('maxAmount', filters.maxAmount.trim())
   if (filters.risk && filters.risk !== 'all') params.set('risk', filters.risk)
   if (page.limit) params.set('limit', String(page.limit))
   if (page.cursor) params.set('cursor', page.cursor)

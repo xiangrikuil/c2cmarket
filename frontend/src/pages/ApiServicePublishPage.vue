@@ -101,7 +101,7 @@ const currentStep = ref<ApiServicePublishStep>(1)
 const completedSteps = ref<ApiServicePublishStep[]>([])
 const publishSteps = computed(() => isLimitedQuotaMode.value
   ? [
-      { title: '销售模式', description: '限时额度包' },
+      { title: '销售模式', description: '限量额度包' },
       { title: '配置基础服务', description: '接入、模型与体验' },
       { title: '设置额度包', description: '定价、库存与放量' },
     ]
@@ -513,13 +513,13 @@ const paymentSummary = computed(() => {
   return labels.length ? `${labels.join(' / ')} · ${form.paymentWindowMinutes} 分钟确认` : '收款方式待配置'
 })
 const stepOneSummary = computed(() => {
-  if (isLimitedQuotaMode.value) return '限时额度包 · 当前先配置可复用基础服务'
+  if (isLimitedQuotaMode.value) return '限量额度包 · 当前先配置可复用基础服务'
   if (isFixedPackageMode.value) {
     const totalStock = enabledPackages.value.reduce((sum, item) => sum + item.stockTotal, 0)
     return `${sellingModeLabels.package} · ${enabledPackages.value.length} 个套餐 · 总库存 ${totalStock}`
   }
   const expiry = form.quotaExpiresAt ? form.quotaExpiresAt.slice(0, 10).replaceAll('-', '/') : '待填写有效期'
-  return `自由额度 · ¥${form.cnyPerUsdCredit ?? 0} / $1 · 可售 $${form.availableCreditUsd ?? 0} · 有效至 ${expiry}`
+  return `自选额度 · ¥${form.cnyPerUsdCredit ?? 0} / $1 · 可售 $${form.availableCreditUsd ?? 0} · 有效至 ${expiry}`
 })
 const stepTwoSummary = computed(() => {
   const multiplier = form.distributionSystem === 'sub2api' ? '1.00x' : `${form.defaultMultiplier.toFixed(2)}x`
@@ -782,7 +782,7 @@ function confirmProviderCategoryChange() {
         <PublishStepSection
           :step="1"
           :title="isLimitedQuotaMode ? '销售模式' : `配置${sellingModeLabels[isFixedPackageMode ? 'package' : 'free']}`"
-          :description="isLimitedQuotaMode ? '已选择限时额度包。' : isFixedPackageMode ? '设置买家可选择的固定规格、价格与库存。' : '设置美元额度售价、可售额度和有效期。'"
+          :description="isLimitedQuotaMode ? '已选择限量额度包。' : isFixedPackageMode ? '设置买家可选择的固定规格、价格与库存。' : '设置美元额度售价、可售额度和有效期。'"
           :status="publishStepStatus(1, currentStep, completedSteps)"
           :summary="stepOneSummary"
           @edit="selectStep"

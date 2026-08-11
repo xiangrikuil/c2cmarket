@@ -19,6 +19,7 @@ import (
 	"c2c-market/backend/internal/module/carpool"
 	"c2c-market/backend/internal/module/catalog"
 	contactmodule "c2c-market/backend/internal/module/contact"
+	"c2c-market/backend/internal/module/devpersona"
 	"c2c-market/backend/internal/module/favorite"
 	"c2c-market/backend/internal/module/feedback"
 	"c2c-market/backend/internal/module/growth"
@@ -114,6 +115,7 @@ type Service struct {
 	announcement       *announcement.Service
 	notification       *notification.Service
 	contactService     *contactmodule.Service
+	devPersonaService  *devpersona.Service
 	profileService     *profile.Service
 	emailSender        profile.EmailSender
 	feedbackService    *feedback.Service
@@ -185,6 +187,7 @@ func newServiceWithOptions(now func() time.Time, repositories Repositories, emai
 	s.officialPrice = officialprice.NewService(repositories.OfficialPrice, s.idempotencyService, now)
 	s.carpoolService = carpool.NewService(repositories.Carpool, s.catalogService, s.contactService, s.idempotencyService, now)
 	s.apiMarket = apimarket.NewManager(repositories.APIService, s.catalogService, s.contactService, now)
+	s.devPersonaService = devpersona.NewService(s.authService, s.profileService, s.contactService, s.apiMarket)
 	s.apiIntent = apiintent.NewManager(repositories.APIPurchaseIntent, s.apiMarket, s.contactService, s.idempotencyService, now)
 	s.reportService = report.NewServiceWithNotifications(repositories.Report, s.idempotencyService, s.notification, now)
 	s.apiOrder = apiorder.NewService(repositories.APIOrder, s.apiIntent, s.apiMarket, s.reportService, s.idempotencyService, now)
@@ -220,6 +223,12 @@ func (s *Service) CreateDevSession(ctx context.Context, username string, isAdmin
 	user, session, appErr := s.authService.CreateDevSession(ctx, username, isAdmin)
 	s.recordAuthenticatedActivity(ctx, user, appErr)
 	return user, session, appErr
+}
+
+func (s *Service) PrepareDevPersonaSession(ctx context.Context, persona string) (devpersona.Result, *domain.AppError) {
+	result, appErr := s.devPersonaService.PrepareSession(ctx, persona)
+	s.recordAuthenticatedActivity(ctx, result.User, appErr)
+	return result, appErr
 }
 
 func (s *Service) LoginWithOAuthProfile(ctx context.Context, profile OAuthProfile) (User, Session, *domain.AppError) {
@@ -1094,12 +1103,16 @@ func (s *Service) OwnerAPIOrders(ctx context.Context, user User) ([]APIOrder, *d
 	return s.withAPIOrderReputations(ctx, orders)
 }
 
-func (s *Service) AdminAPIOrders(ctx context.Context, user User) ([]APIOrder, *domain.AppError) {
-	orders, appErr := s.apiOrder.AdminOrders(ctx, user)
+func (s *Service) AdminAPIOrders(ctx context.Context, user User, filter apiorder.AdminOrderFilter, pageRequest domain.PageRequest) (domain.Page[APIOrder], *domain.AppError) {
+	page, appErr := s.apiOrder.AdminOrders(ctx, user, filter, pageRequest)
 	if appErr != nil {
-		return nil, appErr
+		return domain.Page[APIOrder]{}, appErr
 	}
-	return s.withAPIOrderReputations(ctx, orders)
+	orders, appErr := s.withAPIOrderReputations(ctx, page.Items)
+	if appErr != nil {
+		return domain.Page[APIOrder]{}, appErr
+	}
+	return domain.Page[APIOrder]{Items: orders, NextCursor: page.NextCursor}, nil
 }
 
 func (s *Service) AdminAPIOrder(ctx context.Context, user User, orderID string) (APIOrder, *domain.AppError) {

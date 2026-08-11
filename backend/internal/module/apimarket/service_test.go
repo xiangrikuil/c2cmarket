@@ -294,10 +294,13 @@ func TestUpdateProbeConnectionRebindsAndUnbindsWithoutRebuildingService(t *testi
 func TestPublicServicesPaginatesFilteredOrderableServices(t *testing.T) {
 	now := time.Date(2026, 8, 9, 8, 0, 0, 0, time.UTC)
 	manager := NewManager(nil, nil, nil, func() time.Time { return now })
-	manager.serviceOrder = []string{"wechat-1", "alipay-1", "wechat-2"}
+	manager.serviceOrder = []string{"wechat-2", "alipay-1", "wechat-1"}
 	manager.services["wechat-1"] = testPublicService("wechat-1", PaymentMethodWechat, now.Add(3*time.Minute))
 	manager.services["alipay-1"] = testPublicService("alipay-1", PaymentMethodAlipay, now.Add(2*time.Minute))
 	manager.services["wechat-2"] = testPublicService("wechat-2", PaymentMethodWechat, now.Add(time.Minute))
+	if !matchesPublicServiceFilter(manager.services["wechat-1"], PublicServiceFilter{PaymentMethod: PaymentMethodWechat}) {
+		t.Fatal("wechat service must match the payment-only public filter")
+	}
 
 	first, appErr := manager.PublicServices(context.Background(), PublicServiceFilter{PaymentMethod: PaymentMethodWechat}, domain.PageRequest{Limit: 1})
 	if appErr != nil {
@@ -337,6 +340,78 @@ func TestPublicServicesFiltersPackagesBeforePagination(t *testing.T) {
 	}
 }
 
+func TestPublicServicesSortsBeforePagination(t *testing.T) {
+	now := time.Date(2026, 8, 9, 8, 0, 0, 0, time.UTC)
+	manager := NewManager(nil, nil, nil, func() time.Time { return now })
+	manager.serviceOrder = []string{"price-high", "price-low-b", "price-low-a"}
+	manager.services["price-high"] = testPublicService("price-high", PaymentMethodWechat, now.Add(3*time.Minute))
+	manager.services["price-low-b"] = testPublicService("price-low-b", PaymentMethodWechat, now.Add(2*time.Minute))
+	manager.services["price-low-a"] = testPublicService("price-low-a", PaymentMethodWechat, now.Add(time.Minute))
+	manager.services["price-high"] = withPublicServicePricing(manager.services["price-high"], "3.000000", "1.000000")
+	manager.services["price-low-b"] = withPublicServicePricing(manager.services["price-low-b"], "1.000000", "3.000000")
+	manager.services["price-low-a"] = withPublicServicePricing(manager.services["price-low-a"], "1.000000", "2.000000")
+
+	filter := PublicServiceFilter{BillingMode: ServiceBillingModeMetered, Sort: PublicServiceSortPriceAsc}
+	first, appErr := manager.PublicServices(context.Background(), filter, domain.PageRequest{Limit: 2})
+	if appErr != nil {
+		t.Fatalf("list first sorted public service page: %v", appErr)
+	}
+	if len(first.Items) != 2 || first.Items[0].ID != "price-low-a" || first.Items[1].ID != "price-low-b" || first.NextCursor == nil {
+		t.Fatalf("sort must run before first page: %+v", first)
+	}
+
+	second, appErr := manager.PublicServices(context.Background(), filter, domain.PageRequest{Limit: 2, Cursor: *first.NextCursor})
+	if appErr != nil {
+		t.Fatalf("list second sorted public service page: %v", appErr)
+	}
+	if len(second.Items) != 1 || second.Items[0].ID != "price-high" || second.NextCursor != nil {
+		t.Fatalf("sort must remain stable across pages: %+v", second)
+	}
+
+	minimumFilter := PublicServiceFilter{BillingMode: ServiceBillingModeMetered, Sort: PublicServiceSortMinimumPurchaseAsc}
+	minimumPage, appErr := manager.PublicServices(context.Background(), minimumFilter, domain.PageRequest{Limit: 2})
+	if appErr != nil {
+		t.Fatalf("list minimum-purchase sorted services: %v", appErr)
+	}
+	if len(minimumPage.Items) != 2 || minimumPage.Items[0].ID != "price-high" || minimumPage.Items[1].ID != "price-low-a" || minimumPage.NextCursor == nil {
+		t.Fatalf("minimum purchase sort must run before pagination: %+v", minimumPage)
+	}
+}
+
+func TestPublicServicesSortsPackagePricesBeforePagination(t *testing.T) {
+	now := time.Date(2026, 8, 9, 8, 0, 0, 0, time.UTC)
+	manager := NewManager(nil, nil, nil, func() time.Time { return now })
+	manager.serviceOrder = []string{"package-high", "package-low-b", "package-low-a"}
+	manager.services["package-high"] = testPublicPackageService("package-high", "model-target", 7, now.Add(3*time.Minute))
+	manager.services["package-low-b"] = testPublicPackageService("package-low-b", "model-target", 7, now.Add(2*time.Minute))
+	manager.services["package-low-a"] = testPublicPackageService("package-low-a", "model-target", 7, now.Add(time.Minute))
+	manager.services["package-high"] = withPublicPackagePrice(manager.services["package-high"], "30.000000")
+	manager.services["package-low-b"] = withPublicPackagePrice(manager.services["package-low-b"], "10.000000")
+	manager.services["package-low-a"] = withPublicPackagePrice(manager.services["package-low-a"], "10.000000")
+
+	filter := PublicServiceFilter{
+		BillingMode:           ServiceBillingModeFixedPackage,
+		PackageModelCatalogID: "model-target",
+		PackageDurationDays:   7,
+		Sort:                  PublicServiceSortPackagePriceAsc,
+	}
+	first, appErr := manager.PublicServices(context.Background(), filter, domain.PageRequest{Limit: 2})
+	if appErr != nil {
+		t.Fatalf("list package-price sorted services: %v", appErr)
+	}
+	if len(first.Items) != 2 || first.Items[0].ID != "package-low-a" || first.Items[1].ID != "package-low-b" || first.NextCursor == nil {
+		t.Fatalf("package price sort must run before pagination: %+v", first)
+	}
+
+	second, appErr := manager.PublicServices(context.Background(), filter, domain.PageRequest{Limit: 2, Cursor: *first.NextCursor})
+	if appErr != nil {
+		t.Fatalf("list second package-price sorted page: %v", appErr)
+	}
+	if len(second.Items) != 1 || second.Items[0].ID != "package-high" || second.NextCursor != nil {
+		t.Fatalf("package price sort must remain stable across pages: %+v", second)
+	}
+}
+
 func testPublicService(id, paymentMethod string, updatedAt time.Time) Service {
 	expiresAt := updatedAt.Add(24 * time.Hour)
 	return Service{
@@ -358,6 +433,17 @@ func testPublicService(id, paymentMethod string, updatedAt time.Time) Service {
 		}},
 		UpdatedAt: updatedAt,
 	}
+}
+
+func withPublicServicePricing(service Service, priceCNYPerUSD, minimumIntentCNY string) Service {
+	service.DeclaredCNYPerUSDAllowance = priceCNYPerUSD
+	service.MinimumIntentCNY = minimumIntentCNY
+	return service
+}
+
+func withPublicPackagePrice(service Service, priceCNY string) Service {
+	service.Packages[0].PriceCNY = priceCNY
+	return service
 }
 
 func testPublicPackageService(id, modelCatalogID string, durationDays int, updatedAt time.Time) Service {

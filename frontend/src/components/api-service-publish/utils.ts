@@ -194,7 +194,7 @@ export function generatedTitle(form: ApiServicePublishForm, catalogById: Catalog
   const providerSummary = providerCategoryLabels[form.providerCategory]
   if (form.billingMode === 'fixed_package') return `${providerSummary} · ${sellingModeLabels.package}`
   if (form.distributionSystem === 'sub2api') return `${providerSummary} · API 美元额度`
-  return `${providerSummary} · 其他 API 接入 自由额度`
+  return `${providerSummary} · 其他 API 接入 自选额度`
 }
 
 export function warrantyLabel(warranty: WarrantyConfig) {

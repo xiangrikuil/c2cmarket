@@ -217,11 +217,15 @@ func (s *Server) handlePublicAPIQuotaOffers(w http.ResponseWriter, r *http.Reque
 	}
 	result, appErr := s.apiQuotas.PublicAPIQuotaOffers(r.Context(), apiquota.PublicOfferFilter{
 		DistributionSystem: r.URL.Query().Get("distributionSystem"),
+		ModelCatalogID:     r.URL.Query().Get("modelCatalogId"),
 		OnlyOneMultiplier:  oneMultiplier,
+		MaxMultiplier:      r.URL.Query().Get("maxMultiplier"),
 		OnlyOrderable:      onlyOrderable,
+		SaleMode:           r.URL.Query().Get("saleMode"),
 		SystemSlotKey:      r.URL.Query().Get("slotKey"),
 		Search:             r.URL.Query().Get("search"),
 		ExcludeSystemSlots: excludeSystemSlots,
+		Sort:               r.URL.Query().Get("sort"),
 	}, page)
 	if appErr != nil {
 		writeProblem(w, r, appErr)

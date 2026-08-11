@@ -32,7 +32,7 @@ const props = defineProps<{
 const isLimitedQuotaMode = computed(() => props.sellingMode === 'limited')
 const providerIconSrc = computed(() => getProductCategoryIconSrc(props.form.providerCategory, new Map()))
 const title = computed(() => isLimitedQuotaMode.value
-  ? `${providerCategoryLabels[props.form.providerCategory]} API · 限时额度包`
+  ? `${providerCategoryLabels[props.form.providerCategory]} API · 限量额度包`
   : generatedTitle(props.form, props.catalogById))
 const merchantDisplayName = computed(() => props.form.merchantIdentityMode === 'store_alias' ? props.form.merchantDisplayName.trim() || '待设置商家展示名' : '公开个人身份')
 const selectedModels = computed(() => selectedCatalogItems(props.form, props.catalogById))

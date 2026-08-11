@@ -96,10 +96,10 @@ describe('公开市场与交易页面一致性', () => {
     expect(carpools).not.toContain('<dt>当前筛选</dt>')
     expect(carpools).toContain('@keydown.enter="openCarpool')
     expect(carpools).not.toContain('carpool-view-button')
-    expect(apiMarket).toContain('限时额度包')
+    expect(apiMarket).toContain('限量额度包')
     expect(apiMarket).toContain('@purchase="purchaseOffer"')
     expect(apiMarket).toContain('<ApiQuotaOfferCard')
-    expect(apiMarket).not.toContain('<Dialog')
+    expect(apiMarket).not.toContain('confirmPurchase')
     expect(apiMarket).not.toContain('api-market-intent-button')
   })
 

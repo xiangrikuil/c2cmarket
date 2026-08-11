@@ -48,6 +48,39 @@ func TestAPIQuotaSystemSaleSlotsResponseAndSlotFilter(t *testing.T) {
 	assertProblemCode(t, invalidResponse, domain.CodeValidationFailed)
 }
 
+func TestPublicAPIQuotaOfferListPassesMarketFiltersThrough(t *testing.T) {
+	service := &quotaFilterRouteService{ApplicationService: app.NewServiceWithClock(time.Now)}
+	server := NewServer(service)
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/api-quota-offers?limit=7&cursor=next&distributionSystem=sub2api&modelCatalogId=model-1&maxMultiplier=1.2&onlyOrderable=true&saleMode=scheduled&search=gpt&excludeSystemSlots=true&sort=unit_price_asc", nil)
+	response := httptest.NewRecorder()
+
+	server.ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("quota filter status %d body %s", response.Code, response.Body.String())
+	}
+	if service.page.Limit != 7 || service.page.Cursor != "next" {
+		t.Fatalf("unexpected page request: %+v", service.page)
+	}
+	if service.filter.DistributionSystem != apiquota.DistributionSub2API || service.filter.ModelCatalogID != "model-1" ||
+		service.filter.MaxMultiplier != "1.2" || !service.filter.OnlyOrderable || service.filter.SaleMode != apiquota.SaleModeScheduled ||
+		service.filter.Search != "gpt" || !service.filter.ExcludeSystemSlots || service.filter.Sort != apiquota.PublicOfferSortUnitPriceAsc {
+		t.Fatalf("unexpected quota filters: %+v", service.filter)
+	}
+}
+
+type quotaFilterRouteService struct {
+	ApplicationService
+	filter apiquota.PublicOfferFilter
+	page   domain.PageRequest
+}
+
+func (s *quotaFilterRouteService) PublicAPIQuotaOffers(_ context.Context, filter apiquota.PublicOfferFilter, page domain.PageRequest) (domain.Page[apiquota.OfferCard], *domain.AppError) {
+	s.filter = filter
+	s.page = page
+	return domain.Page[apiquota.OfferCard]{Items: []apiquota.OfferCard{}}, nil
+}
+
 func TestAPIQuotaRushOfferManualPublication(t *testing.T) {
 	now := time.Date(2026, 7, 23, 23, 0, 0, 0, time.UTC)
 	base := app.NewServiceWithClock(func() time.Time { return now })

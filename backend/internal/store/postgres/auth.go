@@ -77,6 +77,52 @@ func (s *Store) EnsureUser(ctx context.Context, username string, isAdmin bool, n
 	return user, nil
 }
 
+func (s *Store) SetDevAdminPermission(ctx context.Context, userID string, isAdmin bool, now time.Time) *domain.AppError {
+	if s == nil || s.pool == nil {
+		return internalStoreError()
+	}
+	userID = strings.TrimSpace(userID)
+	if userID == "" {
+		return domain.NewError(http.StatusNotFound, domain.CodeObjectNotFound, "Development persona not found", "开发身份不存在。")
+	}
+
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return internalStoreError()
+	}
+	defer rollback(ctx, tx)
+
+	var exists bool
+	if err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM users WHERE id = $1)`, userID).Scan(&exists); err != nil {
+		return internalStoreError()
+	}
+	if !exists {
+		return domain.NewError(http.StatusNotFound, domain.CodeObjectNotFound, "Development persona not found", "开发身份不存在。")
+	}
+	if isAdmin {
+		_, err = tx.Exec(ctx, `
+			INSERT INTO user_permissions (user_id, permission)
+			VALUES ($1, 'admin')
+			ON CONFLICT DO NOTHING
+		`, userID)
+	} else {
+		_, err = tx.Exec(ctx, `
+			DELETE FROM user_permissions
+			WHERE user_id = $1 AND permission = 'admin'
+		`, userID)
+	}
+	if err != nil {
+		return internalStoreError()
+	}
+	if _, err = tx.Exec(ctx, `UPDATE users SET updated_at = $2 WHERE id = $1`, userID, now); err != nil {
+		return internalStoreError()
+	}
+	if err = tx.Commit(ctx); err != nil {
+		return internalStoreError()
+	}
+	return nil
+}
+
 func (s *Store) UserByID(ctx context.Context, userID string) (auth.User, *domain.AppError) {
 	if s == nil || s.pool == nil {
 		return auth.User{}, internalStoreError()

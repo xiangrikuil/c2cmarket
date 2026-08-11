@@ -45,7 +45,7 @@ const actionableRows = computed<TaskRow[]>(() => [
   ...(reportsQuery.data.value ?? []).filter(actionable).map(row => ({ ...row, section: 'reports' as const, sectionLabel: '举报纠纷' })),
   ...carpoolActionRows.value.map(row => ({ ...row, section: 'carpools' as const, sectionLabel: '车源异常' })),
   ...apiServiceActionRows.value.map(row => ({ ...row, section: 'api-services' as const, sectionLabel: '服务异常' })),
-  ...(ordersQuery.data.value ?? []).filter(actionable).map(row => ({ ...row, section: 'trade-intents' as const, sectionLabel: '订单追踪' })),
+  ...(ordersQuery.data.value ?? []).filter(actionable).map(row => ({ ...row, section: 'trade-intents' as const, sectionLabel: '订单监管' })),
   ...(feedbackQuery.data.value ?? []).filter(actionable).map(row => ({ ...row, section: 'feedback' as const, sectionLabel: '问题反馈' })),
 ].sort((a, b) => riskRank(a) - riskRank(b)))
 const tasks = computed(() => actionableRows.value.slice(0, 10))
@@ -76,7 +76,7 @@ const queueDistribution = computed(() => [
   { label: '举报纠纷', value: (reportsQuery.data.value ?? []).filter(actionable).length, tone: 'red' },
   { label: '车源异常', value: carpoolActionRows.value.length, tone: 'amber' },
   { label: '服务异常', value: apiServiceActionRows.value.length, tone: 'cyan' },
-  { label: '订单追踪', value: (ordersQuery.data.value ?? []).filter(actionable).length, tone: 'blue' },
+  { label: '订单监管', value: (ordersQuery.data.value ?? []).filter(actionable).length, tone: 'blue' },
   { label: '问题反馈', value: (feedbackQuery.data.value ?? []).filter(actionable).length, tone: 'violet' },
 ])
 const maxQueueValue = computed(() => Math.max(1, ...queueDistribution.value.map(item => item.value)))

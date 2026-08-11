@@ -158,6 +158,56 @@ func TestDevSessionCanBeDisabled(t *testing.T) {
 	}
 }
 
+func TestDevPersonaSessionCanBeDisabled(t *testing.T) {
+	server := NewServer(app.NewService(), ServerOptions{EnableDevAuth: false})
+	request := newJSONRequest(http.MethodPost, "/api/v1/auth/dev-persona-session", `{"persona":"buyer"}`)
+	response := httptest.NewRecorder()
+
+	server.ServeHTTP(response, request)
+
+	if response.Code != http.StatusNotFound {
+		t.Fatalf("expected dev persona session disabled as not found, got %d body %s", response.Code, response.Body.String())
+	}
+}
+
+func TestDevPersonaSessionPreparesStrictFixedPersonas(t *testing.T) {
+	server := NewServer(app.NewService(), ServerOptions{EnableDevAuth: true})
+	tests := []struct {
+		persona string
+		admin   bool
+	}{
+		{persona: "buyer"},
+		{persona: "seller"},
+		{persona: "admin", admin: true},
+		{persona: "buyer"},
+	}
+	for _, test := range tests {
+		request := newJSONRequest(http.MethodPost, "/api/v1/auth/dev-persona-session", `{"persona":"`+test.persona+`"}`)
+		response := httptest.NewRecorder()
+		server.ServeHTTP(response, request)
+		if response.Code != http.StatusOK {
+			t.Fatalf("prepare %s status %d body %s", test.persona, response.Code, response.Body.String())
+		}
+		var payload devPersonaSessionResponse
+		if err := json.NewDecoder(response.Body).Decode(&payload); err != nil {
+			t.Fatalf("decode %s persona session: %v", test.persona, err)
+		}
+		if string(payload.Persona) != test.persona || payload.User.Username != "dev-"+test.persona || payload.User.IsAdmin != test.admin {
+			t.Fatalf("unexpected %s persona session: %+v", test.persona, payload)
+		}
+		if payload.CSRFToken == "" || responseSessionCookie(response) == nil {
+			t.Fatalf("persona %s did not receive a normal session", test.persona)
+		}
+	}
+
+	request := newJSONRequest(http.MethodPost, "/api/v1/auth/dev-persona-session", `{"persona":"buyer","admin":true}`)
+	response := httptest.NewRecorder()
+	server.ServeHTTP(response, request)
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf("expected strict persona payload rejection, got %d body %s", response.Code, response.Body.String())
+	}
+}
+
 func TestProductionRoutesMatchOpenAPI(t *testing.T) {
 	server := &Server{
 		app:           app.NewService(),
@@ -170,7 +220,7 @@ func TestProductionRoutesMatchOpenAPI(t *testing.T) {
 
 	assertRouteSetsEqual(t, runtimeRoutes, openAPIRoutes)
 	for route := range runtimeRoutes {
-		if strings.Contains(route, "/dev/") || strings.Contains(route, "/auth/dev-session") {
+		if strings.Contains(route, "/dev/") || strings.Contains(route, "/auth/dev-session") || strings.Contains(route, "/auth/dev-persona-session") {
 			t.Fatalf("production route must not include dev endpoint: %s", route)
 		}
 	}

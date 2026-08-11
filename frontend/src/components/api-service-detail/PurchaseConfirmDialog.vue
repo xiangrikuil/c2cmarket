@@ -55,7 +55,7 @@ function updateOpen(open: boolean) {
           <dd class="font-semibold">{{ formatCny(amount) }}</dd>
         </div>
         <div v-if="selectedPackage" class="flex justify-between gap-4">
-          <dt class="text-muted-foreground">限时流量包</dt>
+          <dt class="text-muted-foreground">短期流量包</dt>
           <dd class="text-right font-semibold">{{ selectedPackage.name }} · {{ selectedPackage.durationDays }} 天</dd>
         </div>
         <div v-if="!selectedPackage" class="flex justify-between gap-4">

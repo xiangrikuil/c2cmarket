@@ -680,6 +680,17 @@ export type SessionResponse = {
     expiresAt: string;
 };
 
+export type DevPersonaSessionRequest = {
+    persona: 'buyer' | 'seller' | 'admin';
+};
+
+export type DevPersonaSessionResponse = {
+    persona: 'buyer' | 'seller' | 'admin';
+    user: User;
+    csrfToken: string;
+    expiresAt: string;
+};
+
 export type PasswordLoginRequest = {
     username: string;
     password: string;
@@ -4717,6 +4728,35 @@ export type CreateDevSessionResponses = {
 
 export type CreateDevSessionResponse = CreateDevSessionResponses[keyof CreateDevSessionResponses];
 
+export type CreateDevPersonaSessionData = {
+    body: DevPersonaSessionRequest;
+    path?: never;
+    query?: never;
+    url: '/api/v1/auth/dev-persona-session';
+};
+
+export type CreateDevPersonaSessionErrors = {
+    /**
+     * Problem Details error.
+     */
+    422: ProblemDetails;
+    /**
+     * Rate limit exceeded. Problem Details `code` is `RATE_LIMITED`.
+     */
+    429: ProblemDetails;
+};
+
+export type CreateDevPersonaSessionError = CreateDevPersonaSessionErrors[keyof CreateDevPersonaSessionErrors];
+
+export type CreateDevPersonaSessionResponses = {
+    /**
+     * Prepared development persona and normal session.
+     */
+    200: DevPersonaSessionResponse;
+};
+
+export type CreateDevPersonaSessionResponse = CreateDevPersonaSessionResponses[keyof CreateDevPersonaSessionResponses];
+
 export type GetSessionData = {
     body?: never;
     path?: never;
@@ -5698,8 +5738,31 @@ export type ListPublicApiServicesData = {
         cursor?: string;
         paymentMethod?: 'wechat' | 'alipay';
         billingMode?: 'metered_usd_quota' | 'fixed_package';
+        search?: string;
+        /**
+         * Exact enabled model supported by the service.
+         */
+        modelCatalogId?: string;
+        distributionSystem?: 'sub2api' | 'new_api_proxy' | 'other';
+        /**
+         * Maximum accepted CNY price per USD allowance for metered services.
+         */
+        maxCnyPerUsd?: string;
+        /**
+         * Maximum accepted minimum purchase amount in CNY.
+         */
+        minimumIntentCnyMax?: string;
         packageModelCatalogId?: string;
         packageDurationDays?: 1 | 3 | 7 | 30;
+        /**
+         * Maximum total price for an enabled package with stock.
+         */
+        packagePriceCnyMax?: string;
+        /**
+         * Maximum merchant multiplier for the selected package model.
+         */
+        packageMultiplierMax?: string;
+        sort?: 'updated_desc' | 'price_asc' | 'minimum_purchase_asc' | 'package_price_asc';
     };
     url: '/api/v1/api-services';
 };
@@ -5953,8 +6016,18 @@ export type ListPublicApiQuotaOffersData = {
          */
         cursor?: string;
         distributionSystem?: 'sub2api' | 'new_api_proxy' | 'other';
+        /**
+         * Exact enabled model supported by the offer's API service.
+         */
+        modelCatalogId?: string;
         oneMultiplier?: boolean;
+        /**
+         * Maximum model multiplier accepted by the buyer.
+         */
+        maxMultiplier?: string;
         onlyOrderable?: boolean;
+        saleMode?: 'continuous' | 'scheduled';
+        sort?: 'updated_desc' | 'unit_price_asc' | 'allowance_desc' | 'delivery_asc';
         /**
          * Stable Beijing slot key returned by `/api/v1/api-quota-sale-slots`.
          */
@@ -11555,6 +11628,28 @@ export type ListAdminApiOrdersData = {
     path?: never;
     query?: {
         /**
+         * Match an order number, order ID, API service ID or title, buyer ID, or seller ID.
+         */
+        q?: string;
+        /**
+         * API order statuses encoded as a comma-separated query value.
+         */
+        statuses?: Array<'pending_payment' | 'payment_submitted' | 'payment_issue' | 'paid_confirmed' | 'delivery_submitted' | 'completed' | 'cancelled'>;
+        dateRange?: 'all' | 'today' | '7d' | '30d';
+        buyerId?: string;
+        sellerId?: string;
+        serviceId?: string;
+        dispute?: 'all' | 'active' | 'none';
+        /**
+         * Inclusive non-negative CNY amount lower bound.
+         */
+        minAmount?: string;
+        /**
+         * Inclusive non-negative CNY amount upper bound.
+         */
+        maxAmount?: string;
+        sort?: 'updated_desc' | 'created_desc' | 'amount_desc' | 'amount_asc';
+        /**
          * Page size. Defaults to 20 and must be between 1 and 100.
          */
         limit?: number;
@@ -11571,13 +11666,17 @@ export type ListAdminApiOrdersErrors = {
      * Problem Details error.
      */
     403: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    422: ProblemDetails;
 };
 
 export type ListAdminApiOrdersError = ListAdminApiOrdersErrors[keyof ListAdminApiOrdersErrors];
 
 export type ListAdminApiOrdersResponses = {
     /**
-     * Administrator API order tracking list with decimal pricing snapshots and without contacts or raw delivery credentials.
+     * Administrator API order supervision list with decimal pricing snapshots and without contacts or raw delivery credentials.
      */
     200: ApiOrderList;
 };

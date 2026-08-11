@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { ApiService, ApiServicePackage } from '@/lib/api'
-import { rankApiPackages } from '@/lib/apiPackageRecommendation'
+import { getDefaultApiPackageFilter, rankApiPackages } from '@/lib/apiPackageRecommendation'
 
 const packageRow = (overrides: Partial<ApiServicePackage> = {}): ApiServicePackage => ({
   id: 'package-1',
@@ -125,5 +125,34 @@ describe('rankApiPackages', () => {
     ], 'model-1', 3, new Date('2026-07-16T00:00:00Z'))
 
     expect(rows[0].fulfillmentScore).toBe(50)
+  })
+})
+
+describe('getDefaultApiPackageFilter', () => {
+  it('selects the first available package combination so the package view is not initially empty', () => {
+    const soldOut = packageRow({ id: 'sold-out', stockAvailable: 0 })
+    const available = packageRow({
+      id: 'available',
+      durationDays: 7,
+      models: [
+        { ...packageRow().models[0], modelCatalogId: 'inactive-model' },
+        { ...packageRow().models[0], modelCatalogId: 'active-model' },
+      ],
+    })
+
+    expect(getDefaultApiPackageFilter([
+      service('sold-out', soldOut),
+      service('available', available),
+    ], new Set(['active-model']))).toEqual({
+      modelCatalogId: 'active-model',
+      durationDays: 7,
+    })
+  })
+
+  it('does not default to packages that buyers cannot order', () => {
+    expect(getDefaultApiPackageFilter([
+      service('offline', packageRow(), { publiclyOrderable: false }),
+      service('metered', packageRow(), { billingMode: 'metered_credit' }),
+    ], new Set(['model-1']))).toBeNull()
   })
 })

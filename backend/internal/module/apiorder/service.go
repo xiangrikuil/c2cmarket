@@ -197,12 +197,12 @@ func (s *Service) SellerOrders(ctx context.Context, user auth.User) ([]Order, *d
 	return orders, nil
 }
 
-func (s *Service) AdminOrders(ctx context.Context, user auth.User) ([]Order, *domain.AppError) {
+func (s *Service) AdminOrders(ctx context.Context, user auth.User, filter AdminOrderFilter, page domain.PageRequest) (domain.Page[Order], *domain.AppError) {
 	if !user.IsAdmin {
-		return nil, domain.NewError(http.StatusForbidden, domain.CodePermissionDenied, "Permission denied", "需要管理员权限。")
+		return domain.Page[Order]{}, domain.NewError(http.StatusForbidden, domain.CodePermissionDenied, "Permission denied", "需要管理员权限。")
 	}
 	if s.repo != nil {
-		return s.repo.ListAdminAPIOrders(ctx, s.now())
+		return s.repo.ListAdminAPIOrders(ctx, filter, page, s.now())
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -212,10 +212,7 @@ func (s *Service) AdminOrders(ctx context.Context, user auth.User) ([]Order, *do
 		order.DeliveryCredential = nil
 		orders = append(orders, order)
 	}
-	sort.Slice(orders, func(i, j int) bool {
-		return orders[i].UpdatedAt.After(orders[j].UpdatedAt)
-	})
-	return orders, nil
+	return PageAdminOrders(orders, filter, page, s.now())
 }
 
 func (s *Service) AdminOrder(ctx context.Context, user auth.User, orderID string) (Order, *domain.AppError) {

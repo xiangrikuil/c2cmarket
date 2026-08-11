@@ -112,6 +112,33 @@ pnpm --dir frontend dev
 
 打开 `http://127.0.0.1:5173`。开发命令通过 Nuxt 同源代理连接本地后端；如需纯前端演示，运行 `pnpm --dir frontend dev:mock`。
 
+### 开发账号与快速切换
+
+本地后端启用开发认证后，可以一次准备三个固定账号：
+
+```bash
+node scripts/dev-personas.mjs
+```
+
+| 身份 | 用户名 | 预置状态 |
+| --- | --- | --- |
+| 买家 | `dev-buyer` | 已绑定 linux.do、已验证邮箱、备份密码、linux.do 与微信联系方式 |
+| 卖家 | `dev-seller` | 买家状态加可用商户资料和微信收款方式 |
+| 管理员 | `dev-admin` | 已绑定 linux.do、已验证邮箱、备份密码、真实管理员权限 |
+
+表中的用户名是首选值。如果本地数据库已有同名账号，开发身份不会接管该账号，而会使用带稳定后缀的隔离用户名；之后的切换仍会复用同一个开发身份。
+
+三个账号的本地备份密码都是 `DevPersona#2026`。也可以只准备一个身份，或指定其他本地后端：
+
+```bash
+node scripts/dev-personas.mjs seller
+node scripts/dev-personas.mjs admin --base-url http://127.0.0.1:18090
+```
+
+脚本把 Cookie、CSRF token 和会话响应写入被 Git 忽略的 `output/dev-sessions/*.json`：目录权限为 `0700`，文件权限为 `0600`，终端不会输出原始凭据。真实 API 模式的开发页面顶部也会显示账号切换按钮，切换后使用后端签发的正常会话并刷新用户数据。
+
+这些入口只用于本地开发：后端关闭开发认证时不会注册 `/api/v1/auth/dev-persona-session`，生产构建也不会显示账号切换器。不要把开发会话文件复制到共享目录或提交到仓库。
+
 停止本地服务：
 
 ```bash
