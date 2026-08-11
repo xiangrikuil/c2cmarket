@@ -194,7 +194,7 @@ if (import.meta.server) {
   onServerPrefetch(async () => {
     await slotQuery.suspense()
     selectDisplayedSlot(displayedSlots.value)
-    if (selectedSlotKey.value) await rushQuery.suspense()
+    if (limitedViewEnabled.value && selectedSlotKey.value) await rushQuery.suspense()
   })
 }
 

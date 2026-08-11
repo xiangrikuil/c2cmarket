@@ -225,7 +225,8 @@ onServerPrefetch(async () => {
   forbidden because request order would affect rendered IDs.
 - A dependent child query stays disabled until its authoritative parent
   selection exists. During SSR, await the parent, assign the same default
-  selection used by the client, then await the child.
+  selection used by the client, then await the child only when the same full
+  enable guard is true, including any active-view condition.
 - Server HTML and the client's first render must use the same selected key,
   loading branch, and data branch. Do not rely on a watcher scheduled after
   server prefetch to establish hydration-critical state.
