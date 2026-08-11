@@ -49,6 +49,7 @@ api_orders.quota_expires_at_snapshot
 - `sale_cutoff_at <= expires_at - interval '1 hour'`. No new order may be created at or after either boundary.
 - `model_multiplier` must be positive and remains in offers and orders as an immutable pricing snapshot. First-party publication clients derive it from the selected API service's default multiplier and do not expose an offer-level override. The persistence contract remains independent of seller identity and distribution system.
 - Publishing locks the batch, validates all planned USD and credential capacity, reserves the full planned USD allowance, creates one inventory row per copy, and activates allocations in one transaction.
+- A seller with any active API-order dispute cannot publish or resume a quota batch, create an atomic rush offer, submit/publish/restore the base API service, or receive a new normal/quota order. All write paths return `409 ACTIVE_API_ORDER_DISPUTE` before contact, inventory, intent, order, or publication side effects. Closing every active dispute immediately restores eligibility unless an independent reputation restriction remains.
 - Purchase claims one available inventory row with `FOR UPDATE SKIP LOCKED`. A scheduled purchase also inserts the unique `(sale_round_id, buyer_user_id)` claim. The intent, order, snapshots, inventory/credential reservation, events, notifications, and completed idempotency record commit together.
 - The same purchase transaction locks every ordered contact configured on the base API service and freezes each immutable merchant contact version on the generated intent. The first frozen contact continues populating legacy single-contact fields; no current profile value is read to repair historical orders.
 - Scheduled orders freeze a five-minute payment window. Continuous limited offers and legacy free-amount orders freeze ten minutes.
@@ -84,6 +85,7 @@ api_orders.quota_expires_at_snapshot
 | Same idempotency key with another body | Existing `IDEMPOTENCY_KEY_REUSED` contract |
 | New standard or rush offer uses `deliveryMode=preimported` | `422 VALIDATION_FAILED`, field `deliveryMode`, reason `new_preimported_not_allowed` |
 | Any configured merchant contact is missing, disabled, or no longer owned when buying | `409 MERCHANT_CONTACT_UNAVAILABLE`; inventory, claim, intent, and order writes roll back |
+| Seller has any active API-order dispute | `409 ACTIVE_API_ORDER_DISPUTE`; publication/restoration/new-order writes leave no business residue |
 | Completed limited-quota report is at or after frozen expiry plus 24 hours | `409 INVALID_STATE_TRANSITION`, reason `after_sales_expired` |
 | Completed limited-quota report occurrence is after frozen expiry | `422 VALIDATION_FAILED`, field `issueOccurredAt`, reason `after_validity` |
 

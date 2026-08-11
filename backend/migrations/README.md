@@ -96,6 +96,7 @@ versions:
 | `000087_api_order_dispute_remedies` | adds auditable post-ruling remedy requirements, claims, beneficiary responses, neutral timeouts, and administrator-confirmed overdue facts |
 | `000088_api_order_dispute_sanctions` | links seller restrictions to overdue remedies and indexes the 180-day confirmed-breach window |
 | `000089_api_order_after_sales_contacts` | freezes ordered API-service contact selections and records after-sales issue occurrence time |
+| `000090_linuxdo_contact_single_mapping` | consolidates enabled linux.do contacts to the identity-bound account mapping while preserving historical transaction snapshots |
 
 The current runnable Go slice supports both in-memory tests and PostgreSQL runtime.
 When `DATABASE_URL` is configured, users, auth sessions, idempotency, product
@@ -439,6 +440,12 @@ contact associations, immutable purchase-intent contact-version snapshots, and
 an optional API-order dispute issue occurrence time. Existing services and
 intents are backfilled from their legacy single-contact fields without exposing
 plaintext contact values.
+
+Version 90 (`000090_linuxdo_contact_single_mapping`) makes the account's
+linux.do binding the single enabled linux.do transaction-contact mapping. It
+repoints mutable API-service and carpool references, disables deterministic
+duplicates, and adds a per-user partial unique index while preserving frozen
+purchase-intent contact versions and historical snapshots.
 
 ## Contact Retention And Destruction
 

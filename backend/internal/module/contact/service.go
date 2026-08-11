@@ -90,6 +90,61 @@ func (s *Service) ListMethods(ctx context.Context, userID string) ([]ContactMeth
 	return methods, nil
 }
 
+// EnsureLinuxDoMethod 将权威 linux.do 身份绑定投影为交易快照使用的版本化联系方式。
+func (s *Service) EnsureLinuxDoMethod(ctx context.Context, userID, username string) (ContactMethod, *domain.AppError) {
+	userID = strings.TrimSpace(userID)
+	username = strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(username), "@"))
+	if userID == "" || username == "" {
+		return ContactMethod{}, domain.NewError(http.StatusConflict, domain.CodeLinuxDoBindingRequired, "linux.do binding required", "当前账号尚未完成 linux.do 身份绑定。")
+	}
+
+	methods, appErr := s.ListMethods(ctx, userID)
+	if appErr != nil {
+		return ContactMethod{}, appErr
+	}
+	var current *ContactMethod
+	hasDefault := false
+	for index := range methods {
+		method := methods[index]
+		if !method.Enabled {
+			continue
+		}
+		hasDefault = hasDefault || method.IsDefault
+		if method.Type == "linuxdo" && (current == nil || (!current.IsDefault && method.IsDefault)) {
+			copy := method
+			current = &copy
+		}
+	}
+	expectedValue := "@" + username
+	if current != nil {
+		if strings.EqualFold(strings.TrimSpace(current.DisplayValue), expectedValue) && strings.TrimSpace(current.Label) == "linux.do 私信" {
+			return *current, nil
+		}
+		return s.UpdateMethod(ctx, UpdateContactMethodInput{
+			UserID: userID, MethodID: current.ID, Type: "linuxdo", Label: "linux.do 私信",
+			Value: expectedValue, IsDefault: current.IsDefault, Enabled: true,
+		})
+	}
+
+	created, appErr := s.CreateMethod(ctx, ContactMethodInput{
+		UserID: userID, Type: "linuxdo", Label: "linux.do 私信", Value: expectedValue,
+		IsDefault: !hasDefault, Enabled: true,
+	})
+	if appErr == nil {
+		return created, nil
+	}
+	// 数据库唯一索引负责并发收敛；竞争失败后读取胜出的映射。
+	methods, retryErr := s.ListMethods(ctx, userID)
+	if retryErr == nil {
+		for _, method := range methods {
+			if method.Enabled && method.Type == "linuxdo" {
+				return method, nil
+			}
+		}
+	}
+	return ContactMethod{}, appErr
+}
+
 func (s *Service) UpdateMethod(ctx context.Context, input UpdateContactMethodInput) (ContactMethod, *domain.AppError) {
 	if appErr := validateMethodInput(input.Type, input.Value); appErr != nil {
 		return ContactMethod{}, appErr

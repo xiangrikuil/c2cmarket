@@ -139,7 +139,7 @@ func (s *Store) ReadAPIOrderPaymentInstructions(ctx context.Context, buyerUserID
 	if err != nil {
 		return apiorder.PaymentInstructionsView{}, internalStoreError()
 	}
-	if order.Status != apiorder.StatusPendingPayment || !now.Before(order.PaymentExpiresAt) {
+	if apiorder.IsDisputeActive(order.DisputeStatus) || order.Status != apiorder.StatusPendingPayment || !now.Before(order.PaymentExpiresAt) {
 		return apiorder.PaymentInstructionsView{}, domain.NewError(http.StatusConflict, domain.CodeInvalidStateTransition, "Invalid state transition", "当前订单不再是有效付款入口。")
 	}
 	if appErr := insertAPIOrderPaymentInstructionAccessLogInTx(ctx, tx, order.ID, buyerUserID, requestID, now); appErr != nil {
@@ -165,6 +165,24 @@ func (s *Store) ListAPIOrdersBySeller(ctx context.Context, sellerUserID string, 
 		return nil, appErr
 	}
 	return s.listAPIOrders(ctx, `WHERE seller_user_id = $1`, []any{sellerUserID}, now)
+}
+
+func (s *Store) HasActiveAPIOrderDisputeForSeller(ctx context.Context, sellerUserID string) (bool, *domain.AppError) {
+	if s == nil || s.pool == nil {
+		return false, internalStoreError()
+	}
+	var exists bool
+	if err := s.pool.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1
+			FROM api_orders
+			WHERE seller_user_id = $1
+			  AND dispute_status IN ('negotiating', 'open', 'awaiting_fulfillment', 'fulfillment_confirmation')
+		)
+	`, sellerUserID).Scan(&exists); err != nil {
+		return false, internalStoreError()
+	}
+	return exists, nil
 }
 
 func (s *Store) ListAdminAPIOrders(ctx context.Context, filter apiorder.AdminOrderFilter, page domain.PageRequest, now time.Time) (domain.Page[apiorder.Order], *domain.AppError) {
@@ -475,7 +493,7 @@ func (s *Store) MaterializeExpiredAPIOrders(ctx context.Context, now time.Time) 
 	rows, err := s.pool.Query(ctx, `
 		SELECT id::text
 		FROM api_orders
-		WHERE (status = 'pending_payment' AND payment_expires_at <= $1)
+		WHERE (status = 'pending_payment' AND dispute_status IN ('none', 'closed') AND payment_expires_at <= $1)
 		   OR (
 		     status = 'delivery_submitted'
 		     AND dispute_status IN ('none', 'closed')
@@ -541,7 +559,7 @@ func (s *Store) materializeExpiredAPIOrderInTx(ctx context.Context, tx pgx.Tx, o
 	if err != nil {
 		return apiOrderMaterializationResult{}, internalStoreError()
 	}
-	if order.Status == apiorder.StatusPendingPayment && !order.PaymentExpiresAt.After(now) {
+	if order.Status == apiorder.StatusPendingPayment && !apiorder.IsDisputeActive(order.DisputeStatus) && !order.PaymentExpiresAt.After(now) {
 		if appErr := releaseAPIOrderReservationInTx(ctx, tx, order, now); appErr != nil {
 			return apiOrderMaterializationResult{}, appErr
 		}
@@ -1637,6 +1655,9 @@ func storeCanActorAccessAPIOrder(order apiorder.Order, actorUserID, action strin
 }
 
 func storeCanTransitionAPIOrder(order apiorder.Order, action string, now time.Time) bool {
+	if action != "open_dispute" && apiorder.IsDisputeActive(order.DisputeStatus) {
+		return false
+	}
 	switch action {
 	case "submit_payment":
 		return (order.Status == apiorder.StatusPendingPayment && now.Before(order.PaymentExpiresAt)) || order.Status == apiorder.StatusPaymentIssue
@@ -1649,7 +1670,7 @@ func storeCanTransitionAPIOrder(order apiorder.Order, action string, now time.Ti
 	case "submit_delivery":
 		return order.Status == apiorder.StatusPaidConfirmed
 	case "confirm_complete":
-		return order.Status == apiorder.StatusDeliverySubmitted && !apiorder.IsDisputeActive(order.DisputeStatus)
+		return order.Status == apiorder.StatusDeliverySubmitted
 	case "open_dispute":
 		return apiorder.WithAfterSalesProjection(order, now).CanOpenDispute
 	default:

@@ -63,7 +63,7 @@ import type {
 import { backendFormDataMutation, backendMutation, backendRequest, ensureBackendSession } from '@/lib/backendClient'
 import { apiPaymentMethodRequiresQrCode, isApiPaymentMethod, normalizeQrCodeDataUrl } from '@/lib/apiPaymentSettings'
 import { beijingDateTimeInputToISOString, formatQuotaExpiresAtLabel } from '@/lib/apiQuotaExpiration'
-import { backendMyMerchantProfile, backendUpsertMerchantProfile } from '@/lib/profileBackend'
+import { backendMyContactMethods, backendMyMerchantProfile, backendUpsertMerchantProfile } from '@/lib/profileBackend'
 import { compareDecimal, divideDecimal, normalizeDecimal, normalizeDecimalTrimmed } from '@/lib/decimal'
 import { mapBackendReputationSummary } from '@/lib/reputationBackend'
 import { matchesApiOrderSearch } from '@/lib/apiOrderUi'
@@ -887,14 +887,7 @@ export async function backendCreateAPIQuotaOrder(payload: CreateApiQuotaOrderPay
   const selectedAccessMode = service.deliveryModes[0]
   if (!paymentMethod) throw new Error('商户尚未配置可用的微信或支付宝收款方式。')
   if (!selectedAccessMode) throw new Error('商户尚未配置可用接入方式。')
-  const contact = await backendCreateContactMethod({
-    type: 'linuxdo',
-    label: 'linux.do 私信',
-    displayValue: '@buyer',
-    usageScopes: ['buyer'],
-    isDefault: true,
-    enabled: true,
-  })
+	const contact = await backendBoundLinuxDoContactMethod()
   const response = await backendMutation<BackendAPIOrder>(`/api/v1/api-quota-offers/${payload.offerId}/orders`, {
     ...(payload.saleRoundId ? { saleRoundId: payload.saleRoundId } : {}),
     buyerContactMethodId: contact.id,
@@ -1517,17 +1510,19 @@ export async function backendCreateContactMethod(payload: SaveContactMethodReque
   }
 }
 
+export async function backendBoundLinuxDoContactMethod(): Promise<UserContactMethod> {
+	const methods = await backendMyContactMethods()
+	const contact = methods.find(method => method.enabled && method.type === 'linuxdo')
+	if (!contact) {
+		throw new Error('当前账号的 linux.do 绑定联系方式尚未同步，请重新登录后再试。')
+	}
+	return contact
+}
+
 export async function backendCreateAPIPurchaseIntent(payload: CreateApiPurchaseIntentPayload) {
   await ensureBackendSession('buyer', false)
   const service = await backendAPIServiceById(payload.serviceId)
-  const contact = await backendCreateContactMethod({
-    type: 'linuxdo',
-    label: 'linux.do 私信',
-    displayValue: '@buyer',
-    usageScopes: ['buyer'],
-    isDefault: true,
-    enabled: true,
-  })
+	const contact = await backendBoundLinuxDoContactMethod()
   const requestedCnyAmount = normalizeDecimal(String(payload.purchaseAmountCny), 2)
   const requestedUsdAllowance = service.billingMode === 'fixed_package'
     ? ''

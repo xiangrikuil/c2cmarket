@@ -211,6 +211,23 @@ func (s *Service) resolveOAuthUser(ctx context.Context, provider, subject string
 	return user, found, nil
 }
 
+func (s *Service) UserByID(ctx context.Context, userID string) (User, *domain.AppError) {
+	userID = strings.TrimSpace(userID)
+	if userID == "" {
+		return User{}, adminUserNotFound()
+	}
+	if s.repo != nil {
+		return s.repo.UserByID(ctx, userID)
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	user, ok := s.users[userID]
+	if !ok {
+		return User{}, adminUserNotFound()
+	}
+	return user, nil
+}
+
 func (s *Service) LoginWithOAuthProfile(ctx context.Context, profile OAuthProfile) (User, Session, *domain.AppError) {
 	profile.Provider = CanonicalOAuthProvider(profile.Provider)
 	profile.Subject = CanonicalOAuthSubject(profile.Subject)

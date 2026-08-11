@@ -90,3 +90,41 @@ func TestReadSessionChecksRoleBeforeWritingAccessLog(t *testing.T) {
 		t.Fatalf("unexpected seller action check: %#v", checker.calls)
 	}
 }
+
+func TestEnsureLinuxDoMethodReusesIdentityManagedMapping(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 8, 12, 8, 0, 0, 0, time.UTC)
+	service := NewService(nil, func() time.Time { return now })
+	if _, appErr := service.CreateMethod(context.Background(), ContactMethodInput{
+		UserID: "user-1", Type: "wechat", Label: "微信", Value: "wechat-user-1", Enabled: true, IsDefault: true,
+	}); appErr != nil {
+		t.Fatalf("create manual contact: %v", appErr)
+	}
+
+	first, appErr := service.EnsureLinuxDoMethod(context.Background(), "user-1", "bound-user")
+	if appErr != nil {
+		t.Fatalf("ensure linux.do mapping: %v", appErr)
+	}
+	second, appErr := service.EnsureLinuxDoMethod(context.Background(), "user-1", "@renamed-user")
+	if appErr != nil {
+		t.Fatalf("refresh linux.do mapping: %v", appErr)
+	}
+	if first.ID != second.ID || second.DisplayValue != "@renamed-user" || second.Type != "linuxdo" {
+		t.Fatalf("identity mapping was not reused: first=%+v second=%+v", first, second)
+	}
+
+	methods, appErr := service.ListMethods(context.Background(), "user-1")
+	if appErr != nil {
+		t.Fatalf("list contacts: %v", appErr)
+	}
+	linuxDoCount := 0
+	for _, method := range methods {
+		if method.Type == "linuxdo" && method.Enabled {
+			linuxDoCount++
+		}
+	}
+	if linuxDoCount != 1 {
+		t.Fatalf("expected one enabled linux.do mapping, got %d methods=%+v", linuxDoCount, methods)
+	}
+}

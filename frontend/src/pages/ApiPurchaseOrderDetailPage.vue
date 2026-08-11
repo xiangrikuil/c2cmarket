@@ -84,10 +84,11 @@ const id = computed(() => String(route.params.id ?? ''))
 const perspective = computed<'buyer' | 'merchant'>(() => route.name === 'merchant-api-order-detail' ? 'merchant' : 'buyer')
 const isMerchantView = computed(() => perspective.value === 'merchant')
 const { data: order, isLoading, error: orderError, refetch: refetchOrder } = useApiOrder(id, perspective)
+const ordinaryActionsPaused = computed(() => Boolean(order.value && isApiOrderDisputeActive(order.value.disputeStatus)))
 const paymentInstructionsQuery = useQuery({
   queryKey: computed(() => ['api-order-payment-instructions', id.value]),
   queryFn: () => readApiOrderPaymentInstructions(id.value),
-  enabled: computed(() => Boolean(order.value && !isMerchantView.value && order.value.status === 'pending_payment')),
+	enabled: computed(() => Boolean(order.value && !isMerchantView.value && order.value.status === 'pending_payment' && !ordinaryActionsPaused.value)),
   retry: false,
 })
 
@@ -136,12 +137,12 @@ const submitDeliveryMutation = useSubmitApiOrderDeliveryCredentialMutation()
 
 const backPath = computed(() => isMerchantView.value ? '/merchant/api-orders' : '/my/api-orders')
 const backLabel = computed(() => isMerchantView.value ? '返回 API 销售订单' : '返回 API 购买订单')
-const canSubmitPayment = computed(() => !isMerchantView.value && order.value?.status === 'pending_payment')
-const canResubmitPayment = computed(() => !isMerchantView.value && order.value?.status === 'payment_issue')
-const canConfirmPayment = computed(() => isMerchantView.value && order.value?.status === 'payment_submitted')
-const canReportPaymentIssue = computed(() => isMerchantView.value && order.value?.status === 'payment_submitted')
-const canSubmitDelivery = computed(() => isMerchantView.value && order.value?.status === 'paid_confirmed' && !order.value.deliveryCredential)
-const canConfirmComplete = computed(() => !isMerchantView.value && order.value?.status === 'delivery_submitted' && !isApiOrderDisputeActive(order.value.disputeStatus))
+const canSubmitPayment = computed(() => !ordinaryActionsPaused.value && !isMerchantView.value && order.value?.status === 'pending_payment')
+const canResubmitPayment = computed(() => !ordinaryActionsPaused.value && !isMerchantView.value && order.value?.status === 'payment_issue')
+const canConfirmPayment = computed(() => !ordinaryActionsPaused.value && isMerchantView.value && order.value?.status === 'payment_submitted')
+const canReportPaymentIssue = computed(() => !ordinaryActionsPaused.value && isMerchantView.value && order.value?.status === 'payment_submitted')
+const canSubmitDelivery = computed(() => !ordinaryActionsPaused.value && isMerchantView.value && order.value?.status === 'paid_confirmed' && !order.value.deliveryCredential)
+const canConfirmComplete = computed(() => !ordinaryActionsPaused.value && !isMerchantView.value && order.value?.status === 'delivery_submitted')
 const canReportCredentialProblem = computed(() => canConfirmComplete.value)
 const canOpenDispute = computed(() => Boolean(
   order.value
@@ -306,7 +307,7 @@ const countdownTitle = computed(() => {
 })
 const pageTitle = computed(() => isMerchantView.value ? 'API 销售订单' : 'API 购买订单')
 const selectedCancelOption = computed(() => API_ORDER_CANCEL_OPTIONS.find(item => item.value === cancelReason.value))
-const canCancelOrder = computed(() => !isMerchantView.value && order.value?.status === 'pending_payment')
+const canCancelOrder = computed(() => !ordinaryActionsPaused.value && !isMerchantView.value && order.value?.status === 'pending_payment')
 const cancelSubmitDisabled = computed(() => {
   if (!selectedCancelOption.value || !cancelUnpaidConfirmed.value) return true
   return Boolean(selectedCancelOption.value.requiresNote && !cancelNote.value.trim())
@@ -318,6 +319,7 @@ const showMerchantTimeout = computed(() => Boolean(
 const currentActionDescription = computed(() => {
   if (!order.value) return ''
   if (order.value.status === 'cancelled') return '订单已取消，无需继续操作。'
+	if (ordinaryActionsPaused.value) return '订单纠纷处理中，付款、取消、核款、交付、确认完成及自动超时流程均已暂停；请在下方纠纷区继续协商或等待处理。'
   if (isMerchantView.value) {
     if (order.value.status === 'pending_payment') return '买家尚未标记付款，当前无需操作。'
     if (order.value.status === 'payment_submitted') return '买家已标记付款，请核对收款账户实际到账后确认。'

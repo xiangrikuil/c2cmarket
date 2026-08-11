@@ -100,10 +100,10 @@ export function getApiOrderDisputeStatusLabel(value: unknown): string {
 export function getApiOrderDisputeStatusDescription(value: unknown): string {
   const descriptions: Record<ApiOrderDisputeStatus, string> = {
     none: '',
-    negotiating: '双方正在订单内协商处理，请围绕同一诉求补充脱敏事实。',
-    open: '纠纷已提交平台审核。平台由管理员非实时处理，请勿重复提交。',
-    awaiting_fulfillment: '平台已经作出裁决，正在等待责任方按裁决要求履行。',
-    fulfillment_confirmation: '责任方已提交履行结果，正在等待整改受益方反馈。',
+	negotiating: '双方正在订单内协商处理。订单的付款、取消、核款、交付、完成和自动超时流程已暂停，请围绕同一诉求补充脱敏事实。',
+	open: '纠纷已提交平台审核，订单普通交易流程已暂停。平台由管理员非实时处理，请勿重复提交。',
+	awaiting_fulfillment: '平台已经作出裁决，订单普通交易流程保持暂停，正在等待责任方按裁决要求履行。',
+	fulfillment_confirmation: '责任方已提交履行结果，订单普通交易流程保持暂停，正在等待整改受益方反馈。',
     closed: '该订单纠纷已经处理完毕，纠纷记录已结案。',
   }
   return descriptions[normalizeApiOrderDisputeStatus(value)]

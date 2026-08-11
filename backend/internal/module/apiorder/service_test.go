@@ -313,6 +313,51 @@ func TestOpenDisputePausesDeliveryReviewAutoCompletion(t *testing.T) {
 	}
 }
 
+func TestActiveDisputePausesOrdinaryActionsPaymentTimeoutAndSellerPublicationProjection(t *testing.T) {
+	now := time.Date(2026, 8, 12, 8, 0, 0, 0, time.UTC)
+	service := NewService(nil, nil, nil, nil, nil, func() time.Time { return now })
+	order := Order{
+		ID: "disputed-pending-payment", BuyerUserID: "buyer-1", SellerUserID: "seller-1",
+		Status: StatusPendingPayment, DisputeStatus: DisputeStatusNegotiating,
+		PaymentExpiresAt: now.Add(-time.Minute), CreatedAt: now.Add(-time.Hour), UpdatedAt: now.Add(-time.Hour), Version: 2,
+	}
+	service.orders[order.ID] = order
+
+	ordinaryTransitions := []struct {
+		action string
+		status string
+	}{
+		{action: "submit_payment", status: StatusPendingPayment},
+		{action: "cancel", status: StatusPendingPayment},
+		{action: "confirm_payment", status: StatusPaymentSubmitted},
+		{action: "report_payment_issue", status: StatusPaymentSubmitted},
+		{action: "submit_delivery", status: StatusPaidConfirmed},
+		{action: "confirm_complete", status: StatusDeliverySubmitted},
+	}
+	for _, test := range ordinaryTransitions {
+		candidate := order
+		candidate.Status = test.status
+		if canTransition(candidate, test.action, now) {
+			t.Fatalf("active dispute must block %s", test.action)
+		}
+	}
+
+	materialized, appErr := service.BuyerOrder(context.Background(), auth.User{ID: order.BuyerUserID}, order.ID)
+	if appErr != nil {
+		t.Fatalf("read disputed order: %v", appErr)
+	}
+	if materialized.Status != StatusPendingPayment || materialized.CancelledAt != nil || materialized.Version != order.Version {
+		t.Fatalf("active dispute must pause payment timeout, got %+v", materialized)
+	}
+	if _, appErr := service.ReadPaymentInstructions(context.Background(), auth.User{ID: order.BuyerUserID}, order.ID, "paused-payment"); appErr == nil || appErr.Code != domain.CodeInvalidStateTransition {
+		t.Fatalf("active dispute must pause payment instructions, got %+v", appErr)
+	}
+	active, appErr := service.HasActiveDisputeForSeller(context.Background(), order.SellerUserID)
+	if appErr != nil || !active {
+		t.Fatalf("expected active seller dispute projection, active=%v err=%v", active, appErr)
+	}
+}
+
 func TestCloseDisputeProjectionConvergesOnceAndPreservesOrderLifecycle(t *testing.T) {
 	now := time.Date(2026, 8, 9, 8, 0, 0, 0, time.UTC)
 	service := NewService(nil, nil, nil, nil, nil, func() time.Time { return now })

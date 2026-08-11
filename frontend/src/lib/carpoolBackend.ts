@@ -16,7 +16,7 @@ import type {
 	OwnerCarpoolView,
 } from '@/lib/api'
 import { backendMutation, backendRequest, ensureBackendSession } from '@/lib/backendClient'
-import { backendCreateContactMethod } from '@/lib/apiMarketBackend'
+import { backendBoundLinuxDoContactMethod } from '@/lib/apiMarketBackend'
 import { carpoolOpeningChannels, carpoolPaymentMethods, carpoolRegions } from '@/data/mock'
 import { defaultQuotaLabel, defaultQuotaPeriod, defaultQuotaUnit } from '@/lib/quota'
 import { linuxDoProfileSummaryUrl } from '@/lib/linuxDo'
@@ -819,14 +819,7 @@ function toListingRequest(payload: SaveCarpoolDraftPayload, ownerContactMethodId
 export async function backendSubmitCarpool(payload: SaveCarpoolDraftPayload) {
   await ensureBackendSession('owner', false)
   const plan = await productPlan(payload.productId)
-  const ownerContact = await backendCreateContactMethod({
-    type: 'linuxdo',
-    label: 'linux.do 私信',
-    displayValue: '@owner',
-    usageScopes: ['carpool_owner'],
-    isDefault: true,
-    enabled: true,
-  })
+	const ownerContact = await backendBoundLinuxDoContactMethod()
   const publish = payload.status === 'reviewing'
   const listing = await backendMutation<BackendCarpoolListing>(publish ? '/api/v1/carpools/publish' : '/api/v1/carpools', toListingRequest(payload, ownerContact.id, plan), {
     idempotencyPrefix: publish ? 'carpool-publish' : 'carpool-listing',
@@ -864,14 +857,7 @@ export async function backendCreateCarpoolApplication(carpoolId: string, payload
   const listing = await backendRequest<BackendCarpoolListing>(`/api/v1/carpools/${carpoolId}`)
   backendCarpoolListings.set(listing.id, listing)
   const plan = await productPlan(listing.productPlanId)
-  const buyerContact = await backendCreateContactMethod({
-    type: 'linuxdo',
-    label: 'linux.do 私信',
-    displayValue: '@buyer',
-    usageScopes: ['buyer'],
-    isDefault: true,
-    enabled: true,
-  })
+	const buyerContact = await backendBoundLinuxDoContactMethod()
   const response = await backendMutation<BackendCarpoolApplication>(`/api/v1/carpools/${carpoolId}/applications`, {
     buyerContactMethodId: buyerContact.id,
     riskAcknowledgement: riskAcknowledgement(plan, listing.riskNoticeCode, listing.policyVersion, true),

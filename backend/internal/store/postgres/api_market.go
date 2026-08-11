@@ -576,6 +576,9 @@ func (s *Store) SubmitAPIServiceForReview(ctx context.Context, user auth.User, i
 	if input.ExpectedVersion > 0 && service.Version != input.ExpectedVersion {
 		return apimarket.Service{}, domain.NewError(http.StatusPreconditionFailed, domain.CodeVersionConflict, "Version conflict", "资源版本已变化，请刷新后重试。")
 	}
+	if appErr := ensureAPIServicePublishAllowedInTx(ctx, tx, service.OwnerUserID, now); appErr != nil {
+		return apimarket.Service{}, appErr
+	}
 	if service.ReviewStatus != apimarket.ServiceReviewStatusDraft && service.ReviewStatus != apimarket.ServiceReviewStatusChangesRequested {
 		return apimarket.Service{}, domain.NewError(http.StatusConflict, domain.CodeInvalidStateTransition, "Invalid state transition", "当前 API 服务状态不能提交审核。")
 	}
@@ -624,6 +627,9 @@ func (s *Store) UpdateAPIServicePublication(ctx context.Context, input apimarket
 		return apimarket.Service{}, domain.NewError(http.StatusConflict, domain.CodeInvalidStateTransition, "Invalid state transition", "当前 API 服务状态不能执行该操作。")
 	}
 	if action == "publish" || action == "resume" {
+		if appErr := ensureAPIServicePublishAllowedInTx(ctx, tx, service.OwnerUserID, now); appErr != nil {
+			return apimarket.Service{}, appErr
+		}
 		if strings.TrimSpace(service.ProbeConnectionID) == "" || !service.ProbeReady {
 			return apimarket.Service{}, domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Probe connection required", "上线 API 服务前必须绑定已启用且验证通过的探针连接。", "probeConnectionId", "not_ready", "请选择已启用且验证通过的探针连接。")
 		}
@@ -1374,6 +1380,9 @@ func (s *Store) createAPIPurchaseIntentInTx(ctx context.Context, tx pgx.Tx, inpu
 	}
 	if validateErr := validateCreateAPIPurchaseIntentForStore(input, service); validateErr != nil {
 		return apiintent.Intent{}, validateErr
+	}
+	if appErr := ensureAPIServicePublishAllowedInTx(ctx, tx, service.OwnerUserID, now); appErr != nil {
+		return apiintent.Intent{}, appErr
 	}
 
 	buyerMethod, buyerVersion, appErr := lockContactVersionForOwner(ctx, tx, input.BuyerContactMethodID, input.BuyerUserID, "买家联系方式不可用或不属于当前用户。")

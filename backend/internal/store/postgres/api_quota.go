@@ -368,6 +368,9 @@ func publishAPIQuotaBatchInTx(ctx context.Context, tx pgx.Tx, input apiquota.Bat
 	if input.ExpectedVersion > 0 && batch.Version != input.ExpectedVersion {
 		return apiquota.Batch{}, quotaVersionConflict()
 	}
+	if appErr := ensureAPIServicePublishAllowedInTx(ctx, tx, batch.OwnerUserID, now); appErr != nil {
+		return apiquota.Batch{}, appErr
+	}
 	if batch.Status != apiquota.BatchStatusDraft {
 		return apiquota.Batch{}, invalidQuotaState("当前额度批次不能发布。")
 	}
@@ -495,6 +498,11 @@ func (s *Store) UpdateAPIQuotaBatchStatus(ctx context.Context, input apiquota.Ba
 	}
 	if input.ExpectedVersion > 0 && batch.Version != input.ExpectedVersion {
 		return apiquota.Batch{}, quotaVersionConflict()
+	}
+	if action == "resume" {
+		if appErr := ensureAPIServicePublishAllowedInTx(ctx, tx, batch.OwnerUserID, now); appErr != nil {
+			return apiquota.Batch{}, appErr
+		}
 	}
 	next := ""
 	switch action {
@@ -909,6 +917,9 @@ func (s *Store) CreateSystemRushOfferWithIdempotency(ctx context.Context, entry 
 	}
 	if !serviceOrderable {
 		return apiquota.RushOfferPublication{}, idempotency.Completion{}, invalidQuotaState("关联 API 服务当前不可接单。")
+	}
+	if appErr := ensureAPIServicePublishAllowedInTx(ctx, tx, publication.Batch.OwnerUserID, now); appErr != nil {
+		return apiquota.RushOfferPublication{}, idempotency.Completion{}, appErr
 	}
 	if declaredTTFTBand == "" || declaredMaxConcurrency < 1 || performanceConfirmedAt == nil {
 		return apiquota.RushOfferPublication{}, idempotency.Completion{}, domain.NewError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Performance declaration required", "发布额度包前必须完善商户自报首字响应、商户声明最大并发和最近确认时间。")

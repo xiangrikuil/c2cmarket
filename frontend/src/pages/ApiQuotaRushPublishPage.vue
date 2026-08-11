@@ -79,6 +79,7 @@ import {
   useApiPaymentAccountSettingsQuery,
   useApiQuotaSaleSlots,
   useCreateApiQuotaRushOfferMutation,
+	useMerchantApiOrders,
   useModelCatalog,
   useMyApiServices,
 	useMyContactMethodsQuery,
@@ -113,6 +114,7 @@ const publishSteps = [
 
 const myServicesQuery = useMyApiServices('all')
 const contactMethodsQuery = useMyContactMethodsQuery()
+const activeDisputesQuery = useMerchantApiOrders({ dispute: 'active' })
 const probeConnectionsQuery = useOwnerAPIProbeConnections()
 const slotQuery = useApiQuotaSaleSlots()
 const { data: modelCatalog, isLoading: catalogLoading } = useModelCatalog()
@@ -345,6 +347,16 @@ const slotStepSummary = computed(() => selectedSlot.value
 const selectedSlotLabel = computed(() => selectedSlot.value
   ? `${formatSlotDate(selectedSlot.value.startsAt)} ${formatSlotTime(selectedSlot.value.startsAt)}`
   : '')
+const activeDisputeCount = computed(() => activeDisputesQuery.data.value?.length ?? 0)
+const disputePublishBlocked = computed(() => (
+	activeDisputesQuery.isLoading.value || activeDisputesQuery.isError.value || activeDisputeCount.value > 0
+))
+const disputeRuleText = computed(() => {
+	if (activeDisputesQuery.isLoading.value) return '正在检查当前账号是否存在未解决的 API 订单纠纷，检查完成前不能提交发布。'
+	if (activeDisputesQuery.isError.value) return '暂时无法确认纠纷状态，为避免违规接单，当前不能提交发布。请重试。'
+	if (activeDisputeCount.value > 0) return `当前有 ${activeDisputeCount.value} 个未解决的 API 订单纠纷。处理完成前不能发布或恢复 API 服务与额度，也不会接收新订单。`
+	return '发布规则：账号存在未解决的 API 订单纠纷时，不能发布或恢复 API 服务与额度，也不会接收新订单。'
+})
 const primaryActionLabel = computed(() => {
   if (createBaseServiceMutation.isPending.value) return '创建中...'
   if (createRushMutation.isPending.value) return '发布中...'
@@ -357,6 +369,7 @@ const primaryActionLabel = computed(() => {
 const primaryActionDisabled = computed(() =>
   createBaseServiceMutation.isPending.value
   || createRushMutation.isPending.value
+	|| (step.value === 3 && disputePublishBlocked.value)
   || (step.value === 1 && serviceMode.value === 'create' && (profileLoading.value || profileIsError.value)),
 )
 
@@ -526,7 +539,11 @@ function formatSlotTime(value: string) {
 }
 
 async function publishRushOffer() {
-  if (!selectedService.value) {
+	if (disputePublishBlocked.value) {
+		toast.warning(disputeRuleText.value)
+		return
+	}
+	if (!selectedService.value) {
     serviceError.value = '原服务已不可用，请重新选择一个已上线且可接单的 API 服务。'
     step.value = 1
     void focusStep(1)
@@ -632,6 +649,15 @@ function preview() {
         <RouterLink to="/api-market"><Button variant="outline"><ArrowLeft class="h-4 w-4" />返回市场</Button></RouterLink>
       </div>
     </header>
+
+    <Alert :variant="activeDisputeCount > 0 || activeDisputesQuery.isError.value ? 'destructive' : 'default'">
+      <CalendarClock />
+      <AlertTitle>发布前纠纷规则</AlertTitle>
+      <AlertDescription>
+        {{ disputeRuleText }}
+        <Button v-if="activeDisputesQuery.isError.value" type="button" size="sm" variant="outline" class="mt-3" @click="activeDisputesQuery.refetch()">重新检查</Button>
+      </AlertDescription>
+    </Alert>
 
     <PublishWorkflowStepper :steps="publishSteps" :current-step="step" :completed-steps="completedSteps" @select="selectStep" />
 

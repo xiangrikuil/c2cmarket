@@ -35,7 +35,7 @@ ApiOrder.disputeStatus:
 - `api_orders.status` continues to represent payment, delivery, completion, and cancellation only. A dispute projection update must not change that field or any payment, delivery, credential, completion, or cancellation fact.
 - Buyer, seller, and administrator order reads return the same `disputeStatus` for the same order.
 - `open` means platform review. `closed` means the dispute record has reached a final closed projection. Reserved remediation phases must not be rendered as platform review.
-- Only `dispute_status=none` permits opening the current dispute workflow. Every active dispute phase pauses buyer completion and delivery-review auto-completion.
+- Only `dispute_status=none` permits opening the current dispute workflow. Every active dispute phase pauses every ordinary transaction mutation on that order: payment submission/instruction reads, buyer cancellation, seller payment confirmation or issue reporting, delivery submission, buyer completion, payment-timeout cancellation, delivery reminder, and delivery-review auto-completion. Dispute negotiation, remedy, and closure mutations remain available.
 - Administrator resolution or closure of an API order dispute that has no pending remediation converges the linked order projection to `closed` in the same PostgreSQL transaction and increments the order version once.
 - In-memory mode performs the same projection through the report-to-apiorder callback. PostgreSQL mode updates it only inside the administrator dispute transaction.
 - `api_order.dispute_closed` is an order audit event, but its `from_status` and `to_status` remain the unchanged order transaction status. The event kind and note carry the dispute meaning.
@@ -49,7 +49,7 @@ ApiOrder.disputeStatus:
 | Linked order is missing or references another dispute | `409 INVALID_STATE_TRANSITION`; administrator mutation rolls back in PostgreSQL |
 | Order projection is `none` during close convergence | `409 INVALID_STATE_TRANSITION` |
 | Order projection is already `closed` | Idempotent success; no new version or event |
-| Active dispute exists during buyer completion or auto-completion | Action remains blocked and order fulfillment status stays unchanged |
+| Active dispute exists during an ordinary order action or timeout materialization | Action remains blocked and order transaction status, inventory, event, and notification state stay unchanged |
 | Frontend receives an unknown dispute projection | Fail explicitly instead of presenting a misleading phase |
 
 ### 5. Good / Base / Bad Cases
@@ -65,7 +65,7 @@ ApiOrder.disputeStatus:
 - API order unit test: close convergence changes only projection metadata, increments once, and keeps event transaction statuses unchanged.
 - Route regression: after administrator resolution, buyer and seller detail DTOs both return `closed` with the unchanged order status.
 - PostgreSQL store test: projection convergence occurs inside the administrator transaction and locks the linked order relationship.
-- Frontend helper tests: all six labels are exhaustive, only `none` permits opening, active phases block completion, and unknown values fail.
+- Frontend/helper tests: all six labels are exhaustive, only `none` permits opening, active phases block every ordinary action and timeout, and unknown values fail.
 - Page regression: buyer, seller, and administrator details use the shared label and description helpers.
 - Gates: full Go test/vet, focused Vitest, Nuxt typecheck, OpenAPI generated-type check, route parity, migration documentation, and `git diff --check`.
 
@@ -217,7 +217,7 @@ api_order_dispute_settlement_proposals:
 - A seller may reject a proposal or request platform review. Only an administrator may decide that the original request is invalid or close a platform-reviewed dispute without participant agreement.
 - Participant reads return `404 OBJECT_NOT_FOUND` to outsiders and for non-API disputes submitted to these negotiation mutation routes. Mutations authenticate and validate CSRF before decoding JSON.
 - Participant mutations lock the idempotency row, dispute case, linked order, and affected proposal in that order. Business writes and the completed idempotency record commit together.
-- Future enforcement that reuses `api_service_publish` must be described as limiting new orders, publishing, and restoring. Existing orders continue fulfillment, delivery, after-sales work, and disputes and must not consult that restriction.
+- Administrator-created enforcement that reuses `api_service_publish` must be described as limiting new orders, publishing, and restoring. Existing orders continue unless that specific order independently has an active dispute; an active dispute pauses its ordinary transaction flow under the separate projection contract.
 
 ### 4. Validation & Error Matrix
 
@@ -320,7 +320,7 @@ reputation.RecommendedAPIOrderSanctionDays(count int) int
 - A remedy evidence link is immutable audit ownership. Upstream deletion is restricted, and the partial unique index prevents a second sanction even after expiry or revocation.
 - Generic administrator restriction creation must reject API-order outcome sources. It must not accept or write `sourceDisputeRemedyId`; the dedicated sanction endpoint owns this evidence.
 - Active `api_service_publish|all` restrictions for seller/all roles block new normal API orders and limited-quota API orders inside their PostgreSQL transactions before contact locking, inventory reservation, intent advancement, or order insertion.
-- The same restriction continues to block API-service submission, publication, restoration, public visibility, and promotion. Existing orders do not consult this gate and continue payment, delivery, completion, after-sales, and dispute actions.
+- The same administrator-created restriction continues to block API-service submission, publication, restoration, public visibility, and promotion. Existing orders do not consult the restriction gate; only an independently active dispute pauses the affected order's ordinary transaction actions.
 - `/me/reputation.activeRestrictions` is a public-safe projection: restriction type, role, action, reason code, public reason, start, and optional end only. It must not expose IDs, internal reasons, administrator IDs, source evidence IDs, versions, or governance records.
 - Product copy must name all three limited abilities: new orders, publishing, and restoring. It must also state that existing orders continue; copy that says the restriction only stops new orders is false.
 - After `412 VERSION_CONFLICT` or a state conflict, the administrator UI refetches the recommendation and clears explicit confirmation before another apply attempt.

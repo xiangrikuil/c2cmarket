@@ -2421,25 +2421,40 @@ func TestAPIServiceInstantOrderFlow(t *testing.T) {
 	}
 	assertProblemCode(t, outsiderAppealResponse, domain.CodeObjectNotFound)
 
-	merchantDisputeIntent := createAPIPurchaseIntent(t, server, buyerSession, orderable.ID, buyerContact.ID, "api-order-merchant-dispute-intent")
+	blockedIntentRequest := newJSONRequest(http.MethodPost, "/api/v1/api-services/"+orderable.ID+"/purchase-intents", apiPurchaseIntentPayload(buyerContact.ID))
+	addAuth(blockedIntentRequest, buyerSession, "api-order-active-dispute-blocks-new-intent")
+	blockedIntentResponse := httptest.NewRecorder()
+	server.ServeHTTP(blockedIntentResponse, blockedIntentRequest)
+	if blockedIntentResponse.Code != http.StatusConflict {
+		t.Fatalf("expected active seller dispute to block new purchase intent, got %d body %s", blockedIntentResponse.Code, blockedIntentResponse.Body.String())
+	}
+	assertProblemCode(t, blockedIntentResponse, domain.CodeActiveAPIOrderDispute)
+
+	merchantOwnerSession := createLinuxDoSession(t, server, "api-order-merchant-dispute-owner")
+	merchantOwnerContact := createContactMethod(t, server, merchantOwnerSession, "telegram", "Merchant Dispute Owner TG", "@merchant_dispute_owner")
+	merchantService := createAPIService(t, server, merchantOwnerSession, merchantOwnerContact.ID, "api-order-merchant-dispute-service-create")
+	merchantSubmitted := ownerAPIServiceAction(t, server, merchantOwnerSession, merchantService.ID, "submit-review", merchantService.Version, "api-order-merchant-dispute-service-submit")
+	merchantPublished := ownerAPIServiceAction(t, server, merchantOwnerSession, merchantSubmitted.ID, "publish", merchantSubmitted.Version, "api-order-merchant-dispute-service-publish")
+	merchantOrderable := updateAPIServiceOrderSettings(t, server, merchantOwnerSession, merchantPublished.ID, merchantPublished.Version, true, "api-order-merchant-dispute-service-settings")
+	merchantDisputeIntent := createAPIPurchaseIntent(t, server, buyerSession, merchantOrderable.ID, buyerContact.ID, "api-order-merchant-dispute-intent")
 	merchantDisputeOrder := createAPIOrder(t, server, buyerSession, merchantDisputeIntent.ID, "wechat", "api-order-merchant-dispute-create")
 	merchantDisputePaid := apiOrderAction(t, server, buyerSession, "me", merchantDisputeOrder.ID, "submit-payment", merchantDisputeOrder.Version, "api-order-merchant-dispute-submit-payment", `{"paymentSummary":"已付款，等待商户核对。"}`)
 	merchantDisputeBody := `{"issueCode":"payment_dispute","requestedResolution":"other","requestedAmountCny":"","reason":"收款记录与买家提交的信息不一致，需要双方协商核对。"}`
-	merchantDisputed := apiOrderAction(t, server, ownerSession, "owner", merchantDisputePaid.ID, "dispute", merchantDisputePaid.Version, "api-order-merchant-open-dispute", merchantDisputeBody)
+	merchantDisputed := apiOrderAction(t, server, merchantOwnerSession, "owner", merchantDisputePaid.ID, "dispute", merchantDisputePaid.Version, "api-order-merchant-open-dispute", merchantDisputeBody)
 	if merchantDisputed.DisputeStatus != "negotiating" || merchantDisputed.DisputeCaseID == "" || merchantDisputed.BuyerUserID != buyerSession.userID {
 		t.Fatalf("unexpected merchant-opened API order dispute: %+v", merchantDisputed)
 	}
-	merchantDisputeReplay := apiOrderAction(t, server, ownerSession, "owner", merchantDisputePaid.ID, "dispute", merchantDisputePaid.Version, "api-order-merchant-open-dispute", merchantDisputeBody)
+	merchantDisputeReplay := apiOrderAction(t, server, merchantOwnerSession, "owner", merchantDisputePaid.ID, "dispute", merchantDisputePaid.Version, "api-order-merchant-open-dispute", merchantDisputeBody)
 	if merchantDisputeReplay.DisputeCaseID != merchantDisputed.DisputeCaseID || merchantDisputeReplay.Version != merchantDisputed.Version {
 		t.Fatalf("expected idempotent merchant dispute replay, got %+v and %+v", merchantDisputed, merchantDisputeReplay)
 	}
-	merchantProposal := disputeParticipantAction(t, server, ownerSession, merchantDisputed.DisputeCaseID, "settlement-proposals", "api-order-merchant-proposal", `{"resolution":"continue_fulfillment","amountCny":"","terms":"商户将在约定时间内继续完成交付。"}`)
-	if len(merchantProposal.SettlementProposals) != 1 || merchantProposal.SettlementProposals[0].ProposedByUserID != ownerSession.userID {
+	merchantProposal := disputeParticipantAction(t, server, merchantOwnerSession, merchantDisputed.DisputeCaseID, "settlement-proposals", "api-order-merchant-proposal", `{"resolution":"continue_fulfillment","amountCny":"","terms":"商户将在约定时间内继续完成交付。"}`)
+	if len(merchantProposal.SettlementProposals) != 1 || merchantProposal.SettlementProposals[0].ProposedByUserID != merchantOwnerSession.userID {
 		t.Fatalf("expected seller proposal, got %+v", merchantProposal.SettlementProposals)
 	}
 	merchantProposalID := merchantProposal.SettlementProposals[0].ID
 	selfConfirm := newJSONRequest(http.MethodPost, "/api/v1/me/disputes/"+merchantDisputed.DisputeCaseID+"/settlement-proposals/"+merchantProposalID+"/confirm", `{}`)
-	addAuth(selfConfirm, ownerSession, "api-order-merchant-self-confirm")
+	addAuth(selfConfirm, merchantOwnerSession, "api-order-merchant-self-confirm")
 	selfConfirmResponse := httptest.NewRecorder()
 	server.ServeHTTP(selfConfirmResponse, selfConfirm)
 	if selfConfirmResponse.Code != http.StatusConflict {
@@ -2450,7 +2465,7 @@ func TestAPIServiceInstantOrderFlow(t *testing.T) {
 	if merchantAgreement.Status != "closed" || len(merchantAgreement.SettlementProposals) != 1 || merchantAgreement.SettlementProposals[0].Status != "accepted" {
 		t.Fatalf("counterparty confirmation must close the agreed dispute, got %+v", merchantAgreement)
 	}
-	merchantAgreedOrder := getAPIOrder(t, server, ownerSession, "owner", merchantDisputed.ID)
+	merchantAgreedOrder := getAPIOrder(t, server, merchantOwnerSession, "owner", merchantDisputed.ID)
 	if merchantAgreedOrder.DisputeStatus != "closed" || merchantAgreedOrder.Status != merchantDisputed.Status || merchantAgreedOrder.Version != merchantDisputed.Version+1 {
 		t.Fatalf("agreement must only close the dispute projection: before=%+v after=%+v", merchantDisputed, merchantAgreedOrder)
 	}

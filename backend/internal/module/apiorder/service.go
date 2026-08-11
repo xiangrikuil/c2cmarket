@@ -162,6 +162,9 @@ func (s *Service) ReadPaymentInstructions(ctx context.Context, user auth.User, o
 		return PaymentInstructionsView{}, notFound()
 	}
 	order = s.materializeTimeoutLocked(order.ID)
+	if IsDisputeActive(order.DisputeStatus) {
+		return PaymentInstructionsView{}, domain.NewError(http.StatusConflict, domain.CodeInvalidStateTransition, "Invalid state transition", "订单纠纷处理中，付款入口已暂停。")
+	}
 	if order.Status != StatusPendingPayment || !s.now().Before(order.PaymentExpiresAt) {
 		return PaymentInstructionsView{}, domain.NewError(http.StatusConflict, domain.CodeInvalidStateTransition, "Invalid state transition", "当前订单不再是有效付款入口。")
 	}
@@ -195,6 +198,41 @@ func (s *Service) SellerOrders(ctx context.Context, user auth.User) ([]Order, *d
 		return orders[i].UpdatedAt.After(orders[j].UpdatedAt)
 	})
 	return orders, nil
+}
+
+// HasActiveDisputeForSeller 判断卖家是否存在尚未结案的 API 订单纠纷。
+// 发布与新接单入口复用该投影，避免门禁口径和订单状态漂移。
+func (s *Service) HasActiveDisputeForSeller(ctx context.Context, sellerUserID string) (bool, *domain.AppError) {
+	sellerUserID = strings.TrimSpace(sellerUserID)
+	if sellerUserID == "" {
+		return false, nil
+	}
+	if s.repo != nil {
+		if repo, ok := s.repo.(interface {
+			HasActiveAPIOrderDisputeForSeller(context.Context, string) (bool, *domain.AppError)
+		}); ok {
+			return repo.HasActiveAPIOrderDisputeForSeller(ctx, sellerUserID)
+		}
+		orders, appErr := s.repo.ListAPIOrdersBySeller(ctx, sellerUserID, s.now())
+		if appErr != nil {
+			return false, appErr
+		}
+		for _, order := range orders {
+			if IsDisputeActive(order.DisputeStatus) {
+				return true, nil
+			}
+		}
+		return false, nil
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, order := range s.orders {
+		if order.SellerUserID == sellerUserID && IsDisputeActive(order.DisputeStatus) {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 func (s *Service) AdminOrders(ctx context.Context, user auth.User, filter AdminOrderFilter, page domain.PageRequest) (domain.Page[Order], *domain.AppError) {
@@ -625,7 +663,7 @@ func (s *Service) materializeTimeoutLocked(orderID string) Order {
 
 func (s *Service) materializeTimeoutLockedAt(orderID string, now time.Time) Order {
 	order := s.orders[orderID]
-	if order.Status == StatusPendingPayment && !now.Before(order.PaymentExpiresAt) {
+	if order.Status == StatusPendingPayment && !IsDisputeActive(order.DisputeStatus) && !now.Before(order.PaymentExpiresAt) {
 		from := order.Status
 		order.Status = StatusCancelled
 		order.CancelReason = CancelReasonPaymentTimeout
@@ -1182,6 +1220,9 @@ func canActorAccess(order Order, actorUserID, action string) bool {
 }
 
 func canTransition(order Order, action string, now time.Time) bool {
+	if action != "open_dispute" && IsDisputeActive(order.DisputeStatus) {
+		return false
+	}
 	switch action {
 	case "submit_payment":
 		return (order.Status == StatusPendingPayment && now.Before(order.PaymentExpiresAt)) || order.Status == StatusPaymentIssue
@@ -1194,7 +1235,7 @@ func canTransition(order Order, action string, now time.Time) bool {
 	case "submit_delivery":
 		return order.Status == StatusPaidConfirmed
 	case "confirm_complete":
-		return order.Status == StatusDeliverySubmitted && !IsDisputeActive(order.DisputeStatus)
+		return order.Status == StatusDeliverySubmitted
 	case "open_dispute":
 		return WithAfterSalesProjection(order, now).CanOpenDispute
 	default:

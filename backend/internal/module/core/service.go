@@ -124,6 +124,7 @@ type Service struct {
 	searchService      *search.Service
 	reportService      *report.Service
 	reputationService  *reputation.Service
+	sellerPublishCheck *sellerPublishActionChecker
 	modelAudit         *modelaudit.Service
 	growthService      *growth.Service
 	promotionRewards   *promotionreward.Service
@@ -191,11 +192,12 @@ func newServiceWithOptions(now func() time.Time, repositories Repositories, emai
 	s.apiIntent = apiintent.NewManager(repositories.APIPurchaseIntent, s.apiMarket, s.contactService, s.idempotencyService, now)
 	s.reportService = report.NewServiceWithNotifications(repositories.Report, s.idempotencyService, s.notification, now)
 	s.apiOrder = apiorder.NewService(repositories.APIOrder, s.apiIntent, s.apiMarket, s.reportService, s.idempotencyService, now)
-	s.apiOrder.SetActionChecker(s.reputationService)
+	s.sellerPublishCheck = &sellerPublishActionChecker{reputation: s.reputationService, orders: s.apiOrder}
+	s.apiOrder.SetActionChecker(s.sellerPublishCheck)
 	s.reportService.SetDisputeProjectionCloser(s.apiOrder)
 	s.apiPromotion = apipromotion.NewService(repositories.APIPromotion, s.idempotencyService, now)
 	s.apiQuota = apiquota.NewManager(repositories.APIQuota, now)
-	s.apiQuota.SetActionChecker(s.reputationService)
+	s.apiQuota.SetActionChecker(s.sellerPublishCheck)
 	s.apiIntent.SetOrderExistenceChecker(s.apiOrder)
 	s.feedbackService = feedback.NewService(repositories.Feedback, s.notification, s.idempotencyService, now)
 	s.favoriteService = favorite.NewService(repositories.Favorite, s.idempotencyService, s, now)
@@ -751,7 +753,7 @@ func (s *Service) AdminAPIService(ctx context.Context, user User, serviceID stri
 }
 
 func (s *Service) SubmitAPIServiceForReview(ctx context.Context, user User, input APIServiceOwnerActionInput) (APIService, *domain.AppError) {
-	if appErr := s.reputationService.CheckActionAllowed(ctx, user.ID, reputation.RoleSeller, reputation.ActionAPIServicePublish); appErr != nil {
+	if appErr := s.sellerPublishCheck.CheckActionAllowed(ctx, user.ID, reputation.RoleSeller, reputation.ActionAPIServicePublish); appErr != nil {
 		return APIService{}, appErr
 	}
 	service, appErr := s.apiMarket.SubmitForReview(ctx, user, input)
@@ -763,7 +765,7 @@ func (s *Service) SubmitAPIServiceForReview(ctx context.Context, user User, inpu
 
 func (s *Service) UpdateAPIServicePublication(ctx context.Context, user User, input APIServiceOwnerActionInput, action string) (APIService, *domain.AppError) {
 	if action == "publish" || action == "resume" {
-		if appErr := s.reputationService.CheckActionAllowed(ctx, user.ID, reputation.RoleSeller, reputation.ActionAPIServicePublish); appErr != nil {
+		if appErr := s.sellerPublishCheck.CheckActionAllowed(ctx, user.ID, reputation.RoleSeller, reputation.ActionAPIServicePublish); appErr != nil {
 			return APIService{}, appErr
 		}
 	}
@@ -988,6 +990,13 @@ func (s *Service) CreateAPIQuotaRushOfferWithIdempotency(ctx context.Context, us
 
 func (s *Service) CreateAPIPurchaseIntentWithIdempotency(ctx context.Context, userID, routeKey, key, requestHash string, input CreateAPIPurchaseIntentInput, buildCompletion APIPurchaseIntentCompletionBuilder) (IdempotencyCompletion, *domain.AppError) {
 	if appErr := s.reputationService.CheckActionAllowed(ctx, userID, reputation.RoleBuyer, reputation.ActionContactView); appErr != nil {
+		return IdempotencyCompletion{}, appErr
+	}
+	service, appErr := s.apiMarket.PublicService(ctx, input.APIServiceID)
+	if appErr != nil {
+		return IdempotencyCompletion{}, appErr
+	}
+	if appErr := s.sellerPublishCheck.CheckActionAllowed(ctx, service.OwnerUserID, reputation.RoleSeller, reputation.ActionAPIServicePublish); appErr != nil {
 		return IdempotencyCompletion{}, appErr
 	}
 	_, completion, _, appErr := s.apiIntent.CreateWithIdempotency(ctx, userID, routeKey, key, requestHash, input, buildCompletion)
@@ -1362,19 +1371,62 @@ func (s *Service) EndCarpoolMembershipWithIdempotency(ctx context.Context, userI
 }
 
 func (s *Service) CreateContactMethod(ctx context.Context, input ContactMethodInput) (ContactMethod, *domain.AppError) {
+	if strings.TrimSpace(input.Type) == "linuxdo" {
+		return ContactMethod{}, identityManagedContactError()
+	}
 	return s.contactService.CreateMethod(ctx, input)
 }
 
 func (s *Service) ListContactMethods(ctx context.Context, userID string) ([]ContactMethod, *domain.AppError) {
+	user, appErr := s.authService.UserByID(ctx, userID)
+	if appErr != nil {
+		return nil, appErr
+	}
+	if user.LinuxDoBinding != nil && user.LinuxDoBinding.Bound {
+		if _, appErr := s.contactService.EnsureLinuxDoMethod(ctx, user.ID, user.LinuxDoBinding.LinuxDoUsername); appErr != nil {
+			return nil, appErr
+		}
+	}
 	return s.contactService.ListMethods(ctx, userID)
 }
 
 func (s *Service) UpdateContactMethod(ctx context.Context, input contactmodule.UpdateContactMethodInput) (ContactMethod, *domain.AppError) {
+	isLinuxDo, appErr := s.isLinuxDoContactMethod(ctx, input.UserID, input.MethodID)
+	if appErr != nil {
+		return ContactMethod{}, appErr
+	}
+	if strings.TrimSpace(input.Type) == "linuxdo" || isLinuxDo {
+		return ContactMethod{}, identityManagedContactError()
+	}
 	return s.contactService.UpdateMethod(ctx, input)
 }
 
 func (s *Service) DeleteContactMethod(ctx context.Context, userID, methodID string) (ContactMethod, *domain.AppError) {
+	isLinuxDo, appErr := s.isLinuxDoContactMethod(ctx, userID, methodID)
+	if appErr != nil {
+		return ContactMethod{}, appErr
+	}
+	if isLinuxDo {
+		return ContactMethod{}, identityManagedContactError()
+	}
 	return s.contactService.DeleteMethod(ctx, userID, methodID)
+}
+
+func (s *Service) isLinuxDoContactMethod(ctx context.Context, userID, methodID string) (bool, *domain.AppError) {
+	methods, appErr := s.contactService.ListMethods(ctx, userID)
+	if appErr != nil {
+		return false, appErr
+	}
+	for _, method := range methods {
+		if method.ID == methodID {
+			return method.Type == "linuxdo", nil
+		}
+	}
+	return false, nil
+}
+
+func identityManagedContactError() *domain.AppError {
+	return domain.NewError(http.StatusConflict, domain.CodeInvalidStateTransition, "Identity-managed contact method", "linux.do 联系方式来自当前账号绑定，只能随身份绑定同步，不能手动新增、修改或删除。")
 }
 
 func (s *Service) SetDefaultContactMethod(ctx context.Context, userID, methodID string) (ContactMethod, *domain.AppError) {

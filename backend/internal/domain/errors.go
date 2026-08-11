@@ -44,6 +44,7 @@ const (
 	CodeAccountAppealIneligible           = "ACCOUNT_APPEAL_INELIGIBLE"
 	CodeActiveApplicationExists           = "ACTIVE_APPLICATION_EXISTS"
 	CodeActiveAPIIntentExists             = "ACTIVE_API_INTENT_EXISTS"
+	CodeActiveAPIOrderDispute             = "ACTIVE_API_ORDER_DISPUTE"
 	CodeActiveReportExists                = "ACTIVE_REPORT_EXISTS"
 	CodeAdminBootstrapConflict            = "ADMIN_BOOTSTRAP_CONFLICT"
 	CodeAdminBootstrapInconsistent        = "ADMIN_BOOTSTRAP_INCONSISTENT"

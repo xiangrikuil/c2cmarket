@@ -221,6 +221,9 @@ func (m *Manager) OwnerRounds(ctx context.Context, user auth.User, batchID strin
 
 func (m *Manager) PublishBatch(ctx context.Context, user auth.User, input BatchActionInput) (Batch, *domain.AppError) {
 	input.OwnerUserID = user.ID
+	if appErr := m.checkSellerPublishAllowed(ctx, user.ID); appErr != nil {
+		return Batch{}, appErr
+	}
 	batch, appErr := m.repo.GetAPIQuotaBatchForOwner(ctx, user.ID, strings.TrimSpace(input.BatchID))
 	if appErr != nil {
 		return Batch{}, appErr
@@ -236,6 +239,11 @@ func (m *Manager) UpdateBatchStatus(ctx context.Context, user auth.User, input B
 	action = strings.TrimSpace(action)
 	if action != "pause" && action != "resume" && action != "archive" {
 		return Batch{}, domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Invalid action", "额度批次操作无效。", "action", "invalid", "额度批次操作无效。")
+	}
+	if action == "resume" {
+		if appErr := m.checkSellerPublishAllowed(ctx, user.ID); appErr != nil {
+			return Batch{}, appErr
+		}
 	}
 	if action == "pause" || action == "archive" {
 		rounds, appErr := m.repo.ListAPIQuotaSaleRoundsForBatch(ctx, user.ID, strings.TrimSpace(input.BatchID))
@@ -392,12 +400,23 @@ func (m *Manager) CreateRushOfferWithIdempotency(ctx context.Context, user auth.
 	if entry.State == "completed" {
 		return idempotency.CompletionFromEntry(entry), nil
 	}
+	if appErr := m.checkSellerPublishAllowed(ctx, user.ID); appErr != nil {
+		m.idempotency.Cancel(ctx, entry)
+		return idempotency.Completion{}, appErr
+	}
 	_, completion, appErr := m.repo.CreateSystemRushOfferWithIdempotency(ctx, *entry, publication, input.CredentialRows, nowUTC, buildCompletion)
 	if appErr != nil {
 		m.idempotency.Cancel(ctx, entry)
 		return idempotency.Completion{}, appErr
 	}
 	return completion, nil
+}
+
+func (m *Manager) checkSellerPublishAllowed(ctx context.Context, userID string) *domain.AppError {
+	if m.actionChecker == nil {
+		return nil
+	}
+	return m.actionChecker.CheckActionAllowed(ctx, userID, reputation.RoleSeller, reputation.ActionAPIServicePublish)
 }
 
 func (m *Manager) PublicOffer(ctx context.Context, offerID string) (OfferCard, *domain.AppError) {

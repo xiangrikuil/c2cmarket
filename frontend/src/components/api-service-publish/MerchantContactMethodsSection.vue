@@ -69,10 +69,10 @@ function toggleContact(id: string, checked: boolean) {
         </span>
       </label>
       <div v-if="!loading && !contacts.length" class="rounded-md border border-dashed border-border px-3 py-3 text-sm text-muted-foreground">
-        暂无可用于 API 订单的联系方式，请先在个人中心添加微信或启用 linux.do 联系方式。
+        暂无可用于 API 订单的联系方式，请先确认当前账号已绑定 linux.do，或在个人中心添加微信。
       </div>
       <p v-if="error" class="text-xs text-destructive" role="alert">{{ error }}</p>
-      <p v-else class="text-xs leading-5 text-muted-foreground">建议同时选择微信和 linux.do，买家可按方便的渠道联系你。</p>
+      <p v-else class="text-xs leading-5 text-muted-foreground">linux.do 来自当前账号绑定且只显示一项；建议同时选择微信和 linux.do，方便买家联系。</p>
     </div>
   </Card>
 </template>

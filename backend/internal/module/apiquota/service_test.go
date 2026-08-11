@@ -195,6 +195,40 @@ func TestCreateRushOfferPublishesOneManualDeliverySlot(t *testing.T) {
 	}
 }
 
+type rejectingPublishChecker struct {
+	calls int
+}
+
+func (c *rejectingPublishChecker) CheckActionAllowed(_ context.Context, _, _, _ string) *domain.AppError {
+	c.calls++
+	return domain.NewError(http.StatusConflict, domain.CodeActiveAPIOrderDispute, "Active API order dispute", "存在未解决纠纷。")
+}
+
+func TestActiveDisputeBlocksBatchPublishResumeAndRushPublication(t *testing.T) {
+	now := beijingTime(t, "2026-07-24T07:00:00+08:00")
+	repo := &fakeRepository{batch: validBatch(now)}
+	checker := &rejectingPublishChecker{}
+	manager := NewManager(repo, func() time.Time { return now })
+	manager.SetActionChecker(checker)
+	user := auth.User{ID: "seller-1"}
+
+	if _, appErr := manager.PublishBatch(context.Background(), user, BatchActionInput{BatchID: repo.batch.ID}); appErr == nil || appErr.Code != domain.CodeActiveAPIOrderDispute {
+		t.Fatalf("expected batch publish dispute block, got %v", appErr)
+	}
+	if _, appErr := manager.UpdateBatchStatus(context.Background(), user, BatchActionInput{BatchID: repo.batch.ID}, "resume"); appErr == nil || appErr.Code != domain.CodeActiveAPIOrderDispute {
+		t.Fatalf("expected batch resume dispute block, got %v", appErr)
+	}
+	if _, appErr := manager.CreateRushOfferWithIdempotency(
+		context.Background(), user, "rush-route", "rush-dispute", "rush-dispute-body",
+		validRushOfferInput(t, now), testRushOfferCompletion,
+	); appErr == nil || appErr.Code != domain.CodeActiveAPIOrderDispute {
+		t.Fatalf("expected rush publication dispute block, got %v", appErr)
+	}
+	if checker.calls != 3 || repo.publishCalls != 0 || repo.updateStatusCalls != 0 || repo.rushCreateCalls != 0 {
+		t.Fatalf("blocked publication reached repository: checker=%d publish=%d resume=%d rush=%d", checker.calls, repo.publishCalls, repo.updateStatusCalls, repo.rushCreateCalls)
+	}
+}
+
 func TestCreateRushOfferRejectsNewPreimportedDeliveryWithStableFieldReason(t *testing.T) {
 	now := beijingTime(t, "2026-07-24T07:00:00+08:00")
 	repo := &fakeRepository{}
@@ -367,6 +401,7 @@ type fakeRepository struct {
 	rushPublication     *RushOfferPublication
 	rounds              []SaleRound
 	updateStatusCalls   int
+	publishCalls        int
 	rushCredentials     []CredentialImportRow
 	rushCreateCalls     int
 	idempotencyEntry    *idempotency.Entry
@@ -409,6 +444,7 @@ func (f *fakeRepository) ListAPIQuotaSaleRoundsForBatch(_ context.Context, _, _ 
 }
 
 func (f *fakeRepository) PublishAPIQuotaBatch(_ context.Context, _ BatchActionInput, _ time.Time) (Batch, *domain.AppError) {
+	f.publishCalls++
 	return f.batch, nil
 }
 
