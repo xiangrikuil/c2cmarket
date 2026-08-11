@@ -131,6 +131,7 @@ type DisputeCase struct {
 	IssueCode            string
 	RequestedResolution  string
 	RequestedAmountCNY   string
+	IssueOccurredAt      *time.Time
 	PublicSummary        string
 	PublicResultCode     string
 	PublicResult         string

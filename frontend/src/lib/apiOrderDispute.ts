@@ -19,10 +19,16 @@ export type ApiOrderDisputeIssueCode =
 export type ApiOrderDisputeResolution = 'full_refund' | 'partial_refund' | 'continue_fulfillment' | 'other'
 export type ApiOrderDisputeRemedyStatus = 'pending' | 'claimed_fulfilled' | 'confirmed' | 'contested' | 'confirmation_expired' | 'overdue' | 'cancelled'
 
+export const apiMerchantRefundPolicyVersion = 'api-merchant-refund-v1'
+export const apiMerchantRefundPolicyApplicability = '服务有效期内未交付、订单事实（号池、模型或额度）不符，或交付后连续不可用超过 1 小时。'
+export const apiMerchantRefundPolicyExclusions = '买家违规、超出商户声明最大并发、额度正常耗尽、正常上游限流或买家网络问题不适用。'
+export const apiOrderPlatformTradeBoundary = '售后由双方站外确认；平台不代收、不托管、不担保、不代赔。'
+
 export type OpenApiOrderDisputeInput = {
   issueCode: ApiOrderDisputeIssueCode
   requestedResolution: ApiOrderDisputeResolution
   requestedAmountCny: string | null
+	issueOccurredAt?: string | null
   reason: string
 }
 

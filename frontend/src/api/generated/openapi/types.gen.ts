@@ -1596,10 +1596,14 @@ export type QuotaUsagePolicy = {
     dailyReset: 'utc_plus_8_calendar_day';
 };
 
-export type ApiServiceRequest = {
+export type ApiServiceRequest = unknown & {
     merchantProfileId?: string;
     merchantIdentityMode?: 'public_profile' | 'store_alias';
-    ownerContactMethodId: string;
+    ownerContactMethodId?: string;
+    /**
+     * Ordered merchant contacts to freeze for each purchase intent. The first item is also returned through ownerContactMethodId for compatibility.
+     */
+    ownerContactMethodIds?: Array<string>;
     /**
      * Optional while saving a draft. Publication and order acceptance require an enabled, verified connection owned by the seller.
      */
@@ -1883,6 +1887,10 @@ export type ApiService = {
      * Owner/admin view only. Public clients must create purchase intents instead of reading contact values from service detail.
      */
     ownerContactMethodId?: string;
+    /**
+     * Owner/admin view only. Ordered contact-method identifiers; public service projections omit this field.
+     */
+    ownerContactMethodIds?: Array<string>;
     /**
      * Owner/admin-only reusable probe connection binding. Public service DTOs never expose it.
      */
@@ -2439,6 +2447,10 @@ export type CreateApiPurchaseIntentResponse = ApiPurchaseIntentCore & {
      * Frozen merchant contact disclosed immediately after successful intent creation. Never includes subject/user identifiers.
      */
     merchantContact: ContactDisclosure;
+    /**
+     * Ordered frozen merchant contacts. The first item is also returned as merchantContact for compatibility.
+     */
+    merchantContacts: Array<ContactDisclosure>;
 };
 
 export type BuyerApiPurchaseIntentDetail = ApiPurchaseIntentCore & {
@@ -2446,6 +2458,10 @@ export type BuyerApiPurchaseIntentDetail = ApiPurchaseIntentCore & {
      * Frozen merchant contact for the buyer. Never includes owner user ID, owner contact method ID, subject ID, username, or public profile URL.
      */
     merchantContact: ContactDisclosure;
+    /**
+     * Ordered frozen merchant contacts for the buyer.
+     */
+    merchantContacts: Array<ContactDisclosure>;
 };
 
 export type OwnerApiPurchaseIntentDetail = ApiPurchaseIntentCore & {
@@ -2588,6 +2604,10 @@ export type ApiOrderDisputeRequest = {
      */
     requestedAmountCny?: string | null;
     /**
+     * Required for completed orders. The issue must have occurred during the frozen purchased-service validity period.
+     */
+    issueOccurredAt?: string | null;
+    /**
      * Immutable credential-free initial message.
      */
     reason: string;
@@ -2621,6 +2641,15 @@ export type ApiOrder = {
      */
     disputeStatus: 'none' | 'negotiating' | 'open' | 'awaiting_fulfillment' | 'fulfillment_confirmation' | 'closed';
     disputeCaseId?: string;
+    /**
+     * Frozen validity expiry plus the 24-hour reporting grace period. This does not extend service validity.
+     */
+    afterSalesExpiresAt?: string | null;
+    /**
+     * Server-authoritative eligibility for opening the first dispute at response time.
+     */
+    canOpenDispute: boolean;
+    disputeEligibilityReason: 'eligible' | 'order_cancelled' | 'dispute_exists' | 'after_sales_expired' | 'completed_validity_unknown';
     serviceTitleSnapshot: string;
     serviceVersionSnapshot: number;
     billingModeSnapshot: string;
@@ -3414,6 +3443,7 @@ export type DisputeCase = {
     issueCode?: 'service_unavailable' | 'description_mismatch' | 'quota_shortage' | 'expired_early' | 'not_delivered' | 'refund_not_received' | 'payment_dispute' | 'other';
     requestedResolution?: 'full_refund' | 'partial_refund' | 'continue_fulfillment' | 'other';
     requestedAmountCny?: DecimalString;
+    issueOccurredAt?: string | null;
     publicSummary: string;
     publicResultCode: 'no_action' | 'contact_invalid' | 'impersonation_confirmed' | 'description_mismatch' | 'rule_or_seat_issue' | 'api_delivery_issue' | 'other_resolved';
     publicResult: string;
@@ -3867,6 +3897,7 @@ export type SelfDispute = {
     issueCode?: 'service_unavailable' | 'description_mismatch' | 'quota_shortage' | 'expired_early' | 'not_delivered' | 'refund_not_received' | 'payment_dispute' | 'other';
     requestedResolution?: 'full_refund' | 'partial_refund' | 'continue_fulfillment' | 'other';
     requestedAmountCny?: DecimalString;
+    issueOccurredAt?: string | null;
     publicSummary: string;
     publicResultCode: 'no_action' | 'contact_invalid' | 'impersonation_confirmed' | 'description_mismatch' | 'rule_or_seat_issue' | 'api_delivery_issue' | 'other_resolved';
     publicResult: string;
@@ -4484,6 +4515,7 @@ export type DisputeCaseWritable = {
     issueCode?: 'service_unavailable' | 'description_mismatch' | 'quota_shortage' | 'expired_early' | 'not_delivered' | 'refund_not_received' | 'payment_dispute' | 'other';
     requestedResolution?: 'full_refund' | 'partial_refund' | 'continue_fulfillment' | 'other';
     requestedAmountCny?: DecimalString;
+    issueOccurredAt?: string | null;
     publicSummary: string;
     publicResultCode: 'no_action' | 'contact_invalid' | 'impersonation_confirmed' | 'description_mismatch' | 'rule_or_seat_issue' | 'api_delivery_issue' | 'other_resolved';
     publicResult: string;
@@ -4530,6 +4562,7 @@ export type SelfDisputeWritable = {
     issueCode?: 'service_unavailable' | 'description_mismatch' | 'quota_shortage' | 'expired_early' | 'not_delivered' | 'refund_not_received' | 'payment_dispute' | 'other';
     requestedResolution?: 'full_refund' | 'partial_refund' | 'continue_fulfillment' | 'other';
     requestedAmountCny?: DecimalString;
+    issueOccurredAt?: string | null;
     publicSummary: string;
     publicResultCode: 'no_action' | 'contact_invalid' | 'impersonation_confirmed' | 'description_mismatch' | 'rule_or_seat_issue' | 'api_delivery_issue' | 'other_resolved';
     publicResult: string;

@@ -43,6 +43,7 @@ type apiOrderDisputeRequest struct {
 	IssueCode           string `json:"issueCode"`
 	RequestedResolution string `json:"requestedResolution"`
 	RequestedAmountCNY  string `json:"requestedAmountCny"`
+	IssueOccurredAt     string `json:"issueOccurredAt"`
 	Reason              string `json:"reason"`
 }
 
@@ -118,6 +119,9 @@ type apiOrderResponse struct {
 	CompletedAt                   *string                             `json:"completedAt,omitempty"`
 	CancelledAt                   *string                             `json:"cancelledAt,omitempty"`
 	CancelReason                  string                              `json:"cancelReason,omitempty"`
+	AfterSalesExpiresAt           *string                             `json:"afterSalesExpiresAt,omitempty"`
+	CanOpenDispute                bool                                `json:"canOpenDispute"`
+	DisputeEligibilityReason      string                              `json:"disputeEligibilityReason"`
 	Version                       int64                               `json:"version"`
 	CreatedAt                     string                              `json:"createdAt"`
 	UpdatedAt                     string                              `json:"updatedAt"`
@@ -498,6 +502,7 @@ func (s *Server) decodeAPIOrderAction(r *http.Request, action string) ([]byte, a
 			IssueCode:           req.IssueCode,
 			RequestedResolution: req.RequestedResolution,
 			RequestedAmountCNY:  req.RequestedAmountCNY,
+			IssueOccurredAt:     req.IssueOccurredAt,
 			Reason:              req.Reason,
 		}, appErr
 	default:
@@ -595,6 +600,9 @@ func toAPIOrderResponse(order apiorder.Order, ownerView bool, includeCredential 
 		CompletedAt:                   formatOptionalTime(order.CompletedAt),
 		CancelledAt:                   formatOptionalTime(order.CancelledAt),
 		CancelReason:                  order.CancelReason,
+		AfterSalesExpiresAt:           formatOptionalTime(order.AfterSalesExpiresAt),
+		CanOpenDispute:                order.CanOpenDispute,
+		DisputeEligibilityReason:      order.DisputeEligibilityReason,
 		Version:                       order.Version,
 		CreatedAt:                     order.CreatedAt.UTC().Format(time.RFC3339),
 		UpdatedAt:                     order.UpdatedAt.UTC().Format(time.RFC3339),

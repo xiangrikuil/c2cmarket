@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"c2c-market/backend/internal/domain"
+	"c2c-market/backend/internal/module/apiintent"
 	"c2c-market/backend/internal/module/apimarket"
 	"c2c-market/backend/internal/module/apiorder"
 	"c2c-market/backend/internal/module/apiquota"
@@ -1204,10 +1205,11 @@ func (s *Store) CreateAPIQuotaOrderWithIdempotency(ctx context.Context, entry id
 	if appErr != nil {
 		return apiorder.Order{}, idempotency.Completion{}, appErr
 	}
-	ownerMethod, ownerVersion, appErr := lockContactVersionForOwner(ctx, tx, orderContext.OwnerContactMethodID, orderContext.OwnerUserID, "卖家联系方式当前不可用。")
+	ownerSnapshots, appErr := lockAPIServiceOwnerContactSnapshots(ctx, tx, orderContext.APIServiceID, orderContext.OwnerUserID, orderContext.OwnerContactMethodID, nil, "卖家联系方式当前不可用。")
 	if appErr != nil {
 		return apiorder.Order{}, idempotency.Completion{}, appErr
 	}
+	primaryOwnerContact := ownerSnapshots[0]
 	var accessModeExists bool
 	if err := tx.QueryRow(ctx, `
 		SELECT EXISTS (
@@ -1318,10 +1320,10 @@ func (s *Store) CreateAPIQuotaOrderWithIdempotency(ctx context.Context, entry id
 				$34, $34, 1, $35
 		)
 	`, intentID, orderContext.APIServiceID, orderContext.OwnerUserID, input.BuyerUserID,
-		buyerMethod.ID, buyerVersion.ID, ownerMethod.ID, ownerVersion.ID,
+		buyerMethod.ID, buyerVersion.ID, primaryOwnerContact.ContactMethodID, primaryOwnerContact.ContactMethodVersionID,
 		orderContext.PriceCNY, orderContext.USDAllowance, strings.TrimSpace(input.SelectedAccessMode),
 		orderContext.ServiceVersion, orderContext.ServiceTitle, orderContext.DistributionSystem, orderContext.BillingMode,
-		buyerMethod.Type, buyerMethod.Label, ownerMethod.Type, ownerMethod.Label,
+		buyerMethod.Type, buyerMethod.Label, primaryOwnerContact.Type, primaryOwnerContact.Label,
 		orderContext.CNYPerUSD, orderContext.MinimumIntentCNY, nullNumeric(orderContext.MaximumIntentCNY),
 		snapshot,
 		orderContext.QuotaUsagePolicy.FiveHour.Mode, nullNumeric(orderContext.QuotaUsagePolicy.FiveHour.AmountUSD),
@@ -1330,6 +1332,14 @@ func (s *Store) CreateAPIQuotaOrderWithIdempotency(ctx context.Context, entry id
 		allocationID, inventoryUnitID, now, orderContext.PromptAuditEnabled)
 	if err != nil {
 		return apiorder.Order{}, idempotency.Completion{}, mapAPIQuotaWriteError(err)
+	}
+	if appErr := insertAPIPurchaseIntentOwnerContactSnapshotsInTx(ctx, tx, apiintent.Intent{
+		ID:                    intentID,
+		OwnerUserID:           orderContext.OwnerUserID,
+		CreatedAt:             now,
+		OwnerContactSnapshots: ownerSnapshots,
+	}); appErr != nil {
+		return apiorder.Order{}, idempotency.Completion{}, appErr
 	}
 
 	order := apiorder.Order{
@@ -1484,6 +1494,7 @@ func (s *Store) CreateAPIQuotaOrderWithIdempotency(ctx context.Context, entry id
 	if appErr := insertAPIOrderDomainEventAndNotificationInTx(ctx, tx, order, input.BuyerUserID, apiorder.EventCreated, input.RequestID, now); appErr != nil {
 		return apiorder.Order{}, idempotency.Completion{}, appErr
 	}
+	order = apiorder.WithAfterSalesProjection(order, now)
 	completion, appErr := buildCompletion(order)
 	if appErr != nil {
 		return apiorder.Order{}, idempotency.Completion{}, appErr

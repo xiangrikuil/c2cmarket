@@ -8,7 +8,7 @@
 
 ### 1. Scope / Trigger
 
-- Trigger: any change to `fixed_package` API services, package publishing, package-model associations, package inventory, purchase-intent/order snapshots, package expiry, or package recommendation UI.
+- Trigger: any change to `fixed_package` API services, package publishing, merchant contact selection, package-model associations, package inventory, purchase-intent/order snapshots, package expiry, after-sales eligibility, or package recommendation UI.
 - One API service has exactly one billing mode. Existing `metered_usd_quota` behavior remains independent from `fixed_package`.
 - A marketplace row/card represents one package, not one service or merchant.
 - Limited packages remain inside `/api-market`; publishing remains inside `/api-market/new`. Do not add a separate top-level marketplace route.
@@ -47,6 +47,12 @@ api_service_package_models:
 api_orders:
   package_stock_reserved boolean NOT NULL DEFAULT false
   package_expires_at     timestamptz NULL
+
+api_service_contact_methods:
+  ordered owner contact-method IDs for each service
+
+api_purchase_intent_owner_contact_snapshots:
+  ordered immutable merchant contact-method version IDs and labels
 ```
 
 `api_service_models.merchant_multiplier` is a positive decimal string and stores the service-level multiplier snapshot for each model row. All models created through one first-party publish form receive the same value. It is not globally forced to `1.0000`; values such as `0.0100`, `1.0000`, and `1.2000` remain valid service defaults.
@@ -55,7 +61,7 @@ api_orders:
 
 #### Publish Request And Stable Updates
 
-`APIServiceRequest.billingMode` is `fixed_package`. The request includes service-level `models[]` and one or more `packages[]`.
+`APIServiceRequest.billingMode` is `fixed_package`. The request includes service-level `models[]` and one or more `packages[]`. `ownerContactMethodIds` is a non-empty ordered list of unique, enabled contact methods owned by the merchant; legacy `ownerContactMethodId` remains the first item for compatibility.
 
 ```text
 models[]:
@@ -133,6 +139,7 @@ score       = 0.60 * value + 0.25 * fulfillment + 0.10 * response + 0.05 * fresh
 #### Inventory, Snapshots, And Expiry
 
 - Intent creation freezes `selectedPackageSnapshot` with package ID, name, price, panel allowance, duration, description, enabled/sort order, and every package model's service-model ID, catalog ID, price-version ID, model name/provider snapshots, and merchant multiplier.
+- Intent creation also locks and freezes every selected merchant contact version in service order. Later profile, contact, service, package, or model edits must not change intent/order contact evidence.
 - The intent pricing snapshot also freezes account-pool code/label, merchant-declared maximum concurrency, merchant refund commitment, fixed refund-rule version, and the service validity fact. A package order additionally freezes the delivery-relative duration and later persists its absolute `package_expires_at` when delivery starts the validity window.
 - Historical nullable pool/concurrency facts are encoded as explicit JSON `null`, not empty strings, zero sentinels, or inferred labels.
 - Order creation copies the intent snapshot. Later package/model edits must not reprice or rewrite existing intents/orders.
@@ -157,6 +164,8 @@ packageExpiresAt = deliverySubmittedAt + durationDays calendar days
 ```
 
   Package validity never starts at intent creation, order creation, or payment time.
+- For a delivered package, `packageExpiresAt` is the authoritative after-sales validity end. A first dispute may be reported only while `now < packageExpiresAt + 24h`; a completed-order report must record an occurrence time no later than `packageExpiresAt`.
+- The extra 24 hours is reporting grace only. It must never increase `durationDays`, `packageExpiresAt`, credential validity, inventory, or refund entitlement.
 
 ### 4. Validation & Error Matrix
 
@@ -176,24 +185,31 @@ packageExpiresAt = deliverySubmittedAt + durationDays calendar days
 | Delivery snapshot is missing/invalid for a fixed package | 409 | `INVALID_STATE_TRANSITION`; delivery is rejected |
 | Package expiry is set without fixed-package delivery | Database rejection | `ck_api_orders_package_expiry` |
 | Reserved flag is true outside an unpaid fixed-package state | Database rejection | `ck_api_orders_package_stock_reservation` |
+| Owner contact list is empty, duplicated, disabled, missing, or foreign | 422 | field-level contact validation; service write does not commit |
+| Completed package report is at or after `packageExpiresAt + 24h` | 409 | `INVALID_STATE_TRANSITION`, reason `after_sales_expired` |
+| Completed package report occurred after `packageExpiresAt` | 422 | `VALIDATION_FAILED`, `issueOccurredAt` / `after_validity` |
 
 ### 5. Good/Base/Bad Cases
 
 - Good: a merchant publishes 1-, 3-, 7-, and 30-day packages and enables exact models; every package/model row inherits that service's `0.0100` default while another self-hosted service keeps `1.0000`.
 - Good: two buyers race for the last unit; exactly one order commits and the other receives a stock conflict.
 - Good: a 3-day package is delivered at time T; its frozen expiry is T plus 3 calendar days even if the merchant edits or disables the package later.
+- Good: the service selected WeChat then linux.do; the intent preserves both frozen versions in that order, and a completed dispute reported before `packageExpiresAt+24h` records an occurrence during package validity.
 - Base: a package with total 12 and available 8 is edited to total 10; available becomes 6, preserving four reserved/consumed units.
 - Base: missing response history receives neutral response score 50; no fabricated response time is persisted or returned.
 - Bad: recreate every package on edit, changing IDs and breaking existing intent/order references.
 - Bad: restore package stock after payment confirmation, delivery, completion, or dispute.
 - Bad: rank different models or durations together, or present the declared multiplier as platform-verified value.
+- Bad: read the merchant's current contact profile for an old order, extend package validity by 24 hours, or treat the refund-rule label as an automatic refund promise.
 
 ### 6. Tests Required
 
 - Migration checks: version 51 is documented; package stock/allowance/duration constraints and package-model ownership foreign keys exist; non-1 multipliers such as `1.2000` insert successfully.
 - API-market domain tests: allowed durations, positive decimals, exact model subsets, duplicate/foreign IDs, stable package/model IDs, disabled omissions, and stock-delta rejection.
 - Intent tests: package availability and a full immutable snapshot containing exact model name, multiplier, model price-version ID, commercial facts, and historical explicit-null behavior.
+- Contact tests: non-empty unique ownership validation, stable selected order, all frozen immutable versions, legacy first-contact compatibility, and no placeholder contact creation.
 - Order tests: last-unit reservation, cancellation and timeout release exactly once, payment-confirmation consumption, no later release, and delivery-based expiry from the frozen snapshot.
+- After-sales tests: `packageExpiresAt` wins validity priority, exact 24-hour reporting boundary, required completed-order occurrence time, and rejection after package validity.
 - PostgreSQL integration: reservation/update/release occurs in the order transaction and cannot oversell under competing writes.
 - OpenAPI/router checks: publish/public response fields, snapshot/order lifecycle fields, route parity, and strict YAML parsing.
 - Frontend unit tests: uniform service-default multiplier mapping with no model/package override, adapter mapping, mock lifecycle parity, exact model/duration filtering, all score components, deterministic tie breakers, and sold-out exclusion.
