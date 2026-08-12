@@ -59,13 +59,27 @@ func TestPostgresAPIProbeConnectionLifecycle(t *testing.T) {
 		Version:            1,
 		CreatedAt:          now,
 		UpdatedAt:          now,
-	}, "probe-secret-v1")
+	}, "probe-secret-v1", apihealth.ProbeAuditMutation{Action: apihealth.ProbeAuditCreated, RequestID: "probe-integration-create"})
 	if appErr != nil {
 		t.Fatalf("create probe connection: %v", appErr)
 	}
 	connectionID = connection.ID
 	if connection.Version != 1 || !connection.CredentialConfigured {
 		t.Fatalf("unexpected created connection: %+v", connection)
+	}
+	var auditAction, auditRequestID, toVerificationStatus string
+	var changedFields []string
+	if err := store.pool.QueryRow(ctx, `
+		SELECT action, request_id, changed_fields, COALESCE(to_verification_status, '')
+		FROM api_probe_connection_events
+		WHERE target_connection_id = $1
+		ORDER BY occurred_at, id
+		LIMIT 1
+	`, connection.ID).Scan(&auditAction, &auditRequestID, &changedFields, &toVerificationStatus); err != nil {
+		t.Fatalf("read created probe audit event: %v", err)
+	}
+	if auditAction != apihealth.ProbeAuditCreated || auditRequestID != "probe-integration-create" || toVerificationStatus != apihealth.VerificationVerified || len(changedFields) == 0 {
+		t.Fatalf("unexpected created probe audit action=%q request=%q fields=%v status=%q", auditAction, auditRequestID, changedFields, toVerificationStatus)
 	}
 	if _, found, readErr := store.GetOwnerProbeConnection(ctx, buyerID, connection.ID); readErr != nil || found {
 		t.Fatalf("cross-owner connection read was not isolated: found=%t error=%v", found, readErr)
@@ -80,16 +94,26 @@ func TestPostgresAPIProbeConnectionLifecycle(t *testing.T) {
 	updated.Version = 2
 	updated.UpdatedAt = now.Add(time.Minute)
 	rotatedCredential := "probe-secret-v2"
-	if _, staleErr := store.UpdateOwnerProbeConnection(ctx, updated, &rotatedCredential, connection.Version+1); staleErr == nil || staleErr.Status != http.StatusPreconditionFailed || staleErr.Code != domain.CodeVersionConflict {
+	if _, staleErr := store.UpdateOwnerProbeConnection(ctx, updated, &rotatedCredential, connection.Version+1, apihealth.ProbeAuditMutation{Action: apihealth.ProbeAuditUpdated, RequestID: "probe-integration-stale"}); staleErr == nil || staleErr.Status != http.StatusPreconditionFailed || staleErr.Code != domain.CodeVersionConflict {
 		t.Fatalf("stale update did not return version conflict: %+v", staleErr)
 	}
-	connection, appErr = store.UpdateOwnerProbeConnection(ctx, updated, &rotatedCredential, connection.Version)
+	connection, appErr = store.UpdateOwnerProbeConnection(ctx, updated, &rotatedCredential, connection.Version, apihealth.ProbeAuditMutation{Action: apihealth.ProbeAuditUpdated, RequestID: "probe-integration-update"})
 	if appErr != nil || connection.Version != 2 || connection.Name != updated.Name {
 		t.Fatalf("update probe connection: connection=%+v error=%v", connection, appErr)
 	}
 	_, credential, found, readErr = store.GetOwnerProbeConnectionCredential(ctx, sellerID, connection.ID)
 	if readErr != nil || !found || credential != rotatedCredential {
 		t.Fatalf("rotated credential was not readable: credential=%q found=%t error=%v", credential, found, readErr)
+	}
+	if err := store.pool.QueryRow(ctx, `
+		SELECT action, changed_fields
+		FROM api_probe_connection_events
+		WHERE target_connection_id = $1 AND request_id = 'probe-integration-update'
+	`, connection.ID).Scan(&auditAction, &changedFields); err != nil {
+		t.Fatalf("read updated probe audit event: %v", err)
+	}
+	if auditAction != apihealth.ProbeAuditUpdated || !containsString(changedFields, "name") || !containsString(changedFields, "credential") {
+		t.Fatalf("unexpected updated probe audit action=%q fields=%v", auditAction, changedFields)
 	}
 
 	if _, err := store.pool.Exec(ctx, `UPDATE api_services SET probe_connection_id = $2 WHERE id = $1`, serviceID, connection.ID); err != nil {
@@ -99,7 +123,7 @@ func TestPostgresAPIProbeConnectionLifecycle(t *testing.T) {
 	if appErr != nil || !found || len(connection.References) != 1 || connection.References[0].ID != serviceID {
 		t.Fatalf("connection reference projection: connection=%+v found=%t error=%v", connection, found, appErr)
 	}
-	if deleteErr := store.DeleteOwnerProbeConnection(ctx, sellerID, connection.ID, connection.Version); deleteErr == nil || deleteErr.Status != http.StatusConflict || deleteErr.Code != domain.CodeInvalidStateTransition {
+	if deleteErr := store.DeleteOwnerProbeConnection(ctx, sellerID, connection.ID, connection.Version, apihealth.ProbeAuditMutation{Action: apihealth.ProbeAuditDeleted, RequestID: "probe-integration-blocked-delete"}); deleteErr == nil || deleteErr.Status != http.StatusConflict || deleteErr.Code != domain.CodeInvalidStateTransition {
 		t.Fatalf("referenced connection delete was not rejected: %+v", deleteErr)
 	}
 
@@ -213,12 +237,32 @@ func TestPostgresAPIProbeConnectionLifecycle(t *testing.T) {
 	if _, err := store.pool.Exec(ctx, `UPDATE api_services SET probe_connection_id = NULL WHERE id = $1`, serviceID); err != nil {
 		t.Fatalf("unbind service: %v", err)
 	}
-	if deleteErr := store.DeleteOwnerProbeConnection(ctx, sellerID, connection.ID, connection.Version); deleteErr != nil {
+	if deleteErr := store.DeleteOwnerProbeConnection(ctx, sellerID, connection.ID, connection.Version, apihealth.ProbeAuditMutation{Action: apihealth.ProbeAuditDeleted, RequestID: "probe-integration-delete"}); deleteErr != nil {
 		t.Fatalf("delete unreferenced connection: %v", deleteErr)
+	}
+	var preservedTargetID string
+	if err := store.pool.QueryRow(ctx, `
+		SELECT action, target_connection_id::text
+		FROM api_probe_connection_events
+		WHERE request_id = 'probe-integration-delete'
+	`).Scan(&auditAction, &preservedTargetID); err != nil {
+		t.Fatalf("read deleted probe audit event: %v", err)
+	}
+	if auditAction != apihealth.ProbeAuditDeleted || preservedTargetID != connection.ID {
+		t.Fatalf("unexpected deleted probe audit action=%q target=%q", auditAction, preservedTargetID)
 	}
 	connectionID = ""
 	var remainingSamples int
 	if err := store.pool.QueryRow(ctx, `SELECT count(*) FROM api_probe_connection_samples WHERE connection_id = $1`, connection.ID).Scan(&remainingSamples); err != nil || remainingSamples != 0 {
 		t.Fatalf("connection samples did not cascade: count=%d error=%v", remainingSamples, err)
 	}
+}
+
+func containsString(values []string, wanted string) bool {
+	for _, value := range values {
+		if value == wanted {
+			return true
+		}
+	}
+	return false
 }

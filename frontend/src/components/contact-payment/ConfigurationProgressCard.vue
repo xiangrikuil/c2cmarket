@@ -1,25 +1,28 @@
 <script setup lang="ts">
+import { computed } from 'vue'
 import { CheckCircle2, Circle, Eye } from 'lucide-vue-next'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 
-defineProps<{
+const props = withDefaults(defineProps<{
   completedCount: number
   wechatComplete: boolean
   emailComplete: boolean
   paymentComplete: boolean
-}>()
+  showPayment?: boolean
+}>(), { showPayment: true })
 
 const emit = defineEmits<{
   preview: []
 }>()
 
-const items = [
+const items = computed(() => [
   { key: 'wechat', label: '微信' },
   { key: 'email', label: '验证邮箱' },
-  { key: 'payment', label: 'API 收款' },
-] as const
+  ...(props.showPayment ? [{ key: 'payment' as const, label: 'API 收款' }] : []),
+])
+const totalCount = computed(() => items.value.length)
 </script>
 
 <template>
@@ -27,10 +30,10 @@ const items = [
     <div class="flex items-center justify-between gap-3">
       <div>
         <h2 class="font-semibold">配置完成度</h2>
-        <p class="mt-1 text-xs text-muted-foreground">{{ completedCount }} / 3 项已完成</p>
+        <p class="mt-1 text-xs text-muted-foreground">{{ completedCount }} / {{ totalCount }} 项已完成</p>
       </div>
-      <Badge :variant="completedCount === 3 ? 'verified' : 'secondary'">
-        {{ completedCount === 3 ? '已完成' : '待完善' }}
+      <Badge :variant="completedCount === totalCount ? 'verified' : 'secondary'">
+        {{ completedCount === totalCount ? '已完成' : '待完善' }}
       </Badge>
     </div>
 

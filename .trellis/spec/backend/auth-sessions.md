@@ -54,7 +54,7 @@ type Verification struct {
 ### 5. Good / Base / Bad Cases
 
 - Good: the browser obtains a `password_login` token, login succeeds or fails normally, and the widget resets in both cases.
-- Base: student-registration start verifies `student_signup` and then preserves the current `EMAIL_REGISTRATION_DISABLED` behavior until registration is enabled.
+- Base: student-registration start verifies `student_signup`, then checks the persistent global switch and exact enabled institution domain before sending a code. The migration-created switch remains disabled until an administrator explicitly enables it.
 - Bad: trust a non-empty browser token without server-side Siteverify.
 - Bad: accept `success=true` while ignoring action or hostname, allowing a token minted for another flow or host to cross the boundary.
 
@@ -257,5 +257,121 @@ await queryClient.cancelQueries()
 await queryClient.resetQueries({ type: 'active' })
 await router.replace('/my')
 ```
+
+## Scenario: Student Registration, Deterministic Capabilities, And Linux.do Linking
+
+### 1. Scope / Trigger
+
+- Trigger: changing student-email registration, institution-domain administration, usernames, session/profile capability projection, seller/probe authorization, or authenticated linux.do linking.
+- Owners: `internal/module/auth`, `internal/store/postgres/auth*.go`, server capability guards, migration `000091`, OpenAPI auth/profile schemas, and capability-aware frontend navigation/query guards.
+- Goal: create one durable buyer-only account per verified institution email, derive authority from current identity facts, and allow an explicit in-place linux.do link without account merging.
+
+### 2. Signatures
+
+```http
+GET  /api/v1/auth/email-registration/config
+POST /api/v1/auth/email-registration/start
+POST /api/v1/auth/email-registration/confirm
+POST /api/v1/auth/password/reauthenticate
+GET  /api/v1/auth/oauth/start?purpose=link_linuxdo
+
+GET   /api/v1/admin/student-registration
+PATCH /api/v1/admin/student-registration
+GET   /api/v1/admin/student-institution-domains
+POST  /api/v1/admin/student-institution-domains
+PATCH /api/v1/admin/student-institution-domains/{id}
+```
+
+```go
+ProjectCapabilities(user auth.User) []string
+HasCapability(user auth.User, capability string) bool
+RequireCapability(user auth.User, capability string) *domain.AppError
+
+VerificationCodeHash(
+    pepper []byte,
+    purpose, subject, normalizedEmail, code string,
+) string
+```
+
+```text
+Canonical capabilities:
+  api_order.create
+  carpool.apply
+  carpool.publish
+  api_service.publish
+  api_quota.publish
+  api_probe.manage
+  admin.access
+```
+
+### 3. Contracts
+
+- Migration `000091` creates the global registration switch disabled. Start and confirm both re-read it; no deployment or frontend flag implicitly enables registration.
+- Institution eligibility is an exact, lowercase ASCII domain match against an enabled immutable row. There is no `.edu` suffix, subdomain, wildcard, or mutable-domain shortcut.
+- Confirmation accepts a caller-selected username matching `^[a-z0-9_-]{3,24}$`; public flows reject rather than repair case, whitespace, reserved words, or conflicts.
+- A six-digit code expires after 15 minutes, permits at most five failed attempts, invalidates prior active challenges on resend, and is stored as a purpose/subject/email-bound HMAC. Confirmation atomically creates the user, password, immutable `student_email_claim`, attribution, session, and safe identity event.
+- `student_email_claims.normalized_email` is permanent and unique. Changing `users.email`, disabling an account, or linking linux.do never releases the claimed institution email.
+- Capability authority is `ProjectCapabilities` over freshly loaded durable `StudentClaim`, `LinuxDoBinding`, and `IsAdmin` facts. `User.Capabilities` is a response projection only and must never authorize a request.
+- A student claim without linux.do gets only `api_order.create`. A bound linux.do identity gets the six non-admin business capabilities. `admin.access` is derived independently from the existing administrator grant.
+- Buyer after-sales, disputes, reviews, contacts with buyer/dispute scope, and eligible model tests remain governed by participant/order state rather than a new global capability.
+- Every seller/probe HTTP boundary rejects a missing capability before idempotency acquisition, persistence, or outbound work; reusable service methods repeat the durable-fact guard.
+- Probe navigation is visible whenever `api_probe.manage` is present, including with zero owned probes or services. Resource counts are never authorization or menu authority.
+- Linking linux.do requires a password reauthentication recorded on the current session within ten minutes and a one-time OAuth state bound to that session/user/purpose. A foreign identity returns `OAUTH_IDENTITY_CONFLICT`; no user merge or identity transfer occurs.
+- Successful linking keeps the same user, immutable student claim, password login, orders, and history, while atomically rotating the current session and CSRF token. V1 has no unlink operation.
+
+### 4. Validation & Error Matrix
+
+| Condition | Result |
+| --- | --- |
+| Registration switch disabled at start or confirm | `403 EMAIL_REGISTRATION_DISABLED` |
+| Domain is not an exact enabled institution row | `422 STUDENT_EMAIL_NOT_ELIGIBLE` |
+| Institution email already has a durable claim | `409 STUDENT_EMAIL_CLAIMED` |
+| Username has invalid syntax | `422 USERNAME_INVALID` |
+| Username is reserved or occupied | `409 USERNAME_UNAVAILABLE`; valid code remains retryable with another username |
+| Code is wrong, expired, exhausted, consumed, superseded, or wrong-purpose | `422 VERIFICATION_CODE_INVALID` |
+| Business capability is absent | `403 CAPABILITY_REQUIRED` before side effects |
+| Link start lacks recent password reauthentication | `403 RECENT_REAUTHENTICATION_REQUIRED` |
+| linux.do identity belongs to another user | `409 OAUTH_IDENTITY_CONFLICT`; neither account changes |
+| Domain/admin setting version is stale or `If-Match` is missing | `412 VERSION_CONFLICT` or `428 PRECONDITION_REQUIRED` |
+
+### 5. Good / Base / Bad Cases
+
+- Good: an administrator explicitly enables one exact institution domain, a student registers once, logs in by username or claimed email, and sees buyer functions without carpool, merchant, or probe actions.
+- Good: the student reauthenticates, links an unused linux.do identity, keeps the same user/order history, receives seller/probe capabilities on the next read, and the old current-session token is revoked.
+- Base: a linux.do seller owns no resources but still sees the probe page and first-create state.
+- Bad: free an institution email by editing `users.email`, then register a second account with the same claimed email.
+- Bad: trust a stale session `capabilities` slice, a frontend route flag, or an owned-resource count as authorization.
+- Bad: auto-merge two users because their display email, username, or claimed real person appears to match.
+
+### 6. Tests Required
+
+- Auth unit tests assert switch/domain checks at start and confirm, exact username rules, HMAC purpose isolation, resend invalidation, attempt exhaustion, single use, permanent claim ownership, and atomic confirmation.
+- Capability contract tests assert exactly seven OpenAPI/backend/frontend values, deterministic sorted projection for student/linux.do/admin combinations, and that a forged `User.Capabilities` slice never grants authority.
+- Handler/service tests assert missing capabilities fail before idempotency, storage, and outbound probes while valid buyer after-sales/model-test paths remain available.
+- PostgreSQL integration tests assert concurrent username/email claims, session hydration after identity/admin changes, raw-cookie logout revocation, recent-auth/state single use, conflict rollback, and session rotation.
+- Frontend tests assert capability-based menus/routes/queries, zero-resource probe visibility, explicit anonymous/student/linux.do/admin mock states, and logout cache clearing without real-to-mock fallback.
+- Release gates include OpenAPI generation/drift checks, full Go/Vitest/typecheck, production frontend build, migration `1 -> latest`, and `git diff --check`; the registration switch stays disabled after those tests.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```go
+func HasCapability(user User, required string) bool {
+    return slices.Contains(user.Capabilities, required)
+}
+```
+
+This trusts a transport/cache projection that may be stale or forged after identity or administrator facts change.
+
+#### Correct
+
+```go
+func HasCapability(user User, required string) bool {
+    return slices.Contains(ProjectCapabilities(user), required)
+}
+```
+
+Load current durable identity facts, project the fixed vocabulary, reject before side effects, and expose the resulting slice only for clients to render the same boundary.
 
 The replacement session is authoritative before active user state is refetched, and navigation sees the new profile.

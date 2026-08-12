@@ -1,4 +1,5 @@
 import type { RouteRecordRaw } from 'vue-router'
+import { CAPABILITY, type Capability } from './lib/capabilities'
 
 const HomePage = () => import('@/pages/HomePage.vue')
 const OfficialPricesPage = () => import('@/pages/OfficialPricesPage.vue')
@@ -49,11 +50,15 @@ const AdminModelAuditPage = () => import('@/pages/AdminModelAuditPage.vue')
 const AdminUsersPage = () => import('@/pages/AdminUsersPage.vue')
 const AdminApiOrderDetailPage = () => import('@/pages/AdminApiOrderDetailPage.vue')
 const AdminApiPromotionsPage = () => import('@/pages/AdminApiPromotionsPage.vue')
+const AdminStudentRegistrationPage = () => import('@/pages/AdminStudentRegistrationPage.vue')
+const AdminAuditLogsPage = () => import('@/pages/AdminAuditLogsPage.vue')
 const AdminSectionPage = () => import('@/pages/AdminSectionPage.vue')
 const NotFoundPage = () => import('@/pages/NotFoundPage.vue')
+const ForbiddenPage = () => import('@/pages/ForbiddenPage.vue')
 
 const userAuthMeta = { auth: 'user' } as const
-const adminAuthMeta = { auth: 'admin' } as const
+const capabilityAuthMeta = (capability: Capability) => ({ auth: 'user', capability } as const)
+const adminAuthMeta = { auth: 'admin', capability: CAPABILITY.adminAccess } as const
 
 const adminChildren = [
   ['carpools', '车源管理', '集中巡查公开车源，并处理暂停、待复核和遗留审核记录。'],
@@ -61,7 +66,6 @@ const adminChildren = [
   ['trade-intents', 'API 订单监管', '查看 API 订单、参与方、金额快照、完成和取消状态。'],
   ['reports', '举报纠纷', '处理举报、纠纷和未解决记录。'],
   ['appeals', '申诉处理', '处理用户对限制、下架和封禁的申诉。'],
-  ['logs', '审计日志', '查看系统与管理员操作记录。'],
 ] as const
 
 export const routes: RouteRecordRaw[] = [
@@ -69,6 +73,7 @@ export const routes: RouteRecordRaw[] = [
     { path: '/search', name: 'search', component: SearchPage },
     { path: '/login', name: 'login', component: LoginPage, meta: { standalone: true } },
     { path: '/account-appeal', name: 'account-appeal', component: AccountAppealPage, meta: { standalone: true } },
+    { path: '/forbidden', name: 'forbidden', component: ForbiddenPage },
     { path: '/auth/mock', redirect: '/login' },
     { path: '/official-prices', name: 'official-prices', component: OfficialPricesPage },
     { path: '/official-prices/detail', redirect: '/official-prices/p1' },
@@ -77,33 +82,33 @@ export const routes: RouteRecordRaw[] = [
     { path: '/official-prices/:id', name: 'official-prices-detail', component: OfficialPriceDetailPage },
     { path: '/carpools', name: 'carpools', component: CarpoolsPage },
     { path: '/carpools/detail', redirect: '/carpools/c1' },
-    { path: '/carpools/new', name: 'carpool-new', component: CarpoolPublishPage, meta: userAuthMeta },
+    { path: '/carpools/new', name: 'carpool-new', component: CarpoolPublishPage, meta: capabilityAuthMeta(CAPABILITY.carpoolPublish) },
     { path: '/carpools/:id', name: 'carpool-detail', component: CarpoolDetailPage },
     { path: '/api-market', name: 'api-market', component: ApiMarketPage },
-    { path: '/api-market/quota/new', name: 'api-quota-rush-new', component: ApiQuotaRushPublishPage, meta: userAuthMeta },
+    { path: '/api-market/quota/new', name: 'api-quota-rush-new', component: ApiQuotaRushPublishPage, meta: capabilityAuthMeta(CAPABILITY.apiQuotaPublish) },
     { path: '/api-market/detail', redirect: '/api-market/a1' },
-    { path: '/api-market/new', name: 'api-new', component: ApiServicePublishPage, meta: userAuthMeta },
+    { path: '/api-market/new', name: 'api-new', component: ApiServicePublishPage, meta: capabilityAuthMeta(CAPABILITY.apiServicePublish) },
     { path: '/api-market/:id', name: 'api-detail', component: ApiServiceDetailPage },
     { path: '/my', name: 'my', component: MyCenterPage, meta: userAuthMeta },
     { path: '/my/profile', name: 'my-profile', component: MyCenterPage, meta: userAuthMeta },
     { path: '/my/contacts', name: 'my-contacts', component: MyCenterPage, meta: userAuthMeta },
     { path: '/my/account', name: 'my-account', component: MyCenterPage, meta: userAuthMeta },
     { path: '/my/privacy', name: 'my-privacy', component: MyCenterPage, meta: userAuthMeta },
-    { path: '/my/carpools', name: 'my-carpools', component: MyCarpoolsPage, meta: userAuthMeta },
-	{ path: '/my/carpools/:id/edit', name: 'my-carpool-edit', component: CarpoolPublishPage, meta: userAuthMeta },
+    { path: '/my/carpools', name: 'my-carpools', component: MyCarpoolsPage, meta: capabilityAuthMeta(CAPABILITY.carpoolPublish) },
+    { path: '/my/carpools/:id/edit', name: 'my-carpool-edit', component: CarpoolPublishPage, meta: capabilityAuthMeta(CAPABILITY.carpoolPublish) },
     { path: '/my/rides', name: 'my-rides', component: MyRidesPage, meta: userAuthMeta },
     { path: '/my/rides/:id', name: 'my-ride-detail', component: CarpoolApplicationDetailPage, meta: userAuthMeta },
     { path: '/my/api-orders', name: 'my-api-orders', component: MyApiOrdersPage, meta: userAuthMeta },
     { path: '/my/api-orders/:id', name: 'my-api-order-detail', component: ApiPurchaseOrderDetailPage, meta: userAuthMeta },
-    { path: '/my/api-services', name: 'my-api-services', component: MyApiServicesPage, meta: userAuthMeta },
-    { path: '/my/api-services/:id', name: 'my-api-service-detail', component: MyApiServiceDetailPage, meta: userAuthMeta },
-    { path: '/my/api-probe-connections', name: 'my-api-probe-connections', component: MyApiProbeConnectionsPage, meta: userAuthMeta },
+    { path: '/my/api-services', name: 'my-api-services', component: MyApiServicesPage, meta: capabilityAuthMeta(CAPABILITY.apiServicePublish) },
+    { path: '/my/api-services/:id', name: 'my-api-service-detail', component: MyApiServiceDetailPage, meta: capabilityAuthMeta(CAPABILITY.apiServicePublish) },
+    { path: '/my/api-probe-connections', name: 'my-api-probe-connections', component: MyApiProbeConnectionsPage, meta: capabilityAuthMeta(CAPABILITY.apiProbeManage) },
     { path: '/tools/api-model-tester', name: 'api-model-tester', component: ApiModelTesterPage, meta: userAuthMeta },
     { path: '/api-intents/:id', name: 'legacy-api-intent-detail', component: LegacyApiIntentRedirectPage, meta: userAuthMeta },
-    { path: '/merchant/carpool-applications', name: 'merchant-carpool-applications', component: MerchantCarpoolApplicationsPage, meta: userAuthMeta },
-    { path: '/merchant/carpool-applications/:id', name: 'merchant-carpool-application-detail', component: CarpoolApplicationDetailPage, meta: userAuthMeta },
-    { path: '/merchant/api-orders', name: 'merchant-api-orders', component: MerchantApiOrdersPage, meta: userAuthMeta },
-    { path: '/merchant/api-orders/:id', name: 'merchant-api-order-detail', component: ApiPurchaseOrderDetailPage, meta: userAuthMeta },
+    { path: '/merchant/carpool-applications', name: 'merchant-carpool-applications', component: MerchantCarpoolApplicationsPage, meta: capabilityAuthMeta(CAPABILITY.carpoolPublish) },
+    { path: '/merchant/carpool-applications/:id', name: 'merchant-carpool-application-detail', component: CarpoolApplicationDetailPage, meta: capabilityAuthMeta(CAPABILITY.carpoolPublish) },
+    { path: '/merchant/api-orders', name: 'merchant-api-orders', component: MerchantApiOrdersPage, meta: capabilityAuthMeta(CAPABILITY.apiServicePublish) },
+    { path: '/merchant/api-orders/:id', name: 'merchant-api-order-detail', component: ApiPurchaseOrderDetailPage, meta: capabilityAuthMeta(CAPABILITY.apiServicePublish) },
     { path: '/my/favorites', name: 'my-favorites', component: MyFavoritesPage, meta: userAuthMeta },
     { path: '/my/reviews', name: 'my-reviews', component: MyReviewsPage, meta: userAuthMeta },
     { path: '/my/reputation', alias: '/me/reputation', name: 'my-reputation', component: MyReputationPage, meta: userAuthMeta },
@@ -132,6 +137,8 @@ export const routes: RouteRecordRaw[] = [
     { path: '/admin/users', name: 'admin-users', component: AdminUsersPage, meta: adminAuthMeta },
     { path: '/admin/api-orders/:id', name: 'admin-api-order-detail', component: AdminApiOrderDetailPage, meta: adminAuthMeta },
     { path: '/admin/api-promotions', name: 'admin-api-promotions', component: AdminApiPromotionsPage, meta: adminAuthMeta },
+    { path: '/admin/student-registration', name: 'admin-student-registration', component: AdminStudentRegistrationPage, meta: adminAuthMeta },
+    { path: '/admin/logs', name: 'admin-logs', component: AdminAuditLogsPage, meta: adminAuthMeta },
     { path: '/admin/restrictions', redirect: '/admin/users', meta: adminAuthMeta },
     { path: '/admin/api-merchants', redirect: '/admin/api-services', meta: adminAuthMeta },
     { path: '/admin/audit-logs', redirect: '/admin/logs', meta: adminAuthMeta },

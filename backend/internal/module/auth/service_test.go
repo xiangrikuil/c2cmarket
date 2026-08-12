@@ -23,10 +23,9 @@ type fakeAuthRepository struct {
 	adminAuditLogs       domain.Page[AdminAuditLog]
 	lastOAuthProfile     OAuthProfile
 
-	ensureUserCalls                  int
-	createEmailRegistrationCodeCalls int
-	confirmEmailRegistrationCalls    int
-	createSessionCalls               int
+	ensureUserCalls         int
+	createSessionCalls      int
+	revokedSessionTokenHash string
 }
 
 func (f *fakeAuthRepository) EnsureUser(context.Context, string, bool, time.Time) (User, *domain.AppError) {
@@ -136,16 +135,6 @@ func (f *fakeAuthRepository) UpsertPasswordCredential(_ context.Context, credent
 	return nil
 }
 
-func (f *fakeAuthRepository) CreateEmailRegistrationCode(context.Context, EmailRegistrationStartInput, string, time.Time, time.Time) *domain.AppError {
-	f.createEmailRegistrationCodeCalls++
-	return domain.NewError(500, domain.CodeInternalError, "not implemented", "not implemented")
-}
-
-func (f *fakeAuthRepository) ConfirmEmailRegistration(context.Context, EmailRegistrationConfirmInput, string, string, string, time.Time, time.Time, time.Time) (User, *domain.AppError) {
-	f.confirmEmailRegistrationCalls++
-	return User{}, domain.NewError(500, domain.CodeInternalError, "not implemented", "not implemented")
-}
-
 func (f *fakeAuthRepository) CreateSession(_ context.Context, userID, sessionTokenHash, csrfTokenHash string, expiresAt, absoluteExpiresAt, now time.Time) *domain.AppError {
 	f.createSessionCalls++
 	f.session = Session{
@@ -175,8 +164,21 @@ func (f *fakeAuthRepository) RefreshSessionCSRF(context.Context, string, string,
 	return domain.NewError(500, domain.CodeInternalError, "not implemented", "not implemented")
 }
 
-func (f *fakeAuthRepository) RevokeSession(context.Context, string, time.Time) *domain.AppError {
+func (f *fakeAuthRepository) RevokeSession(_ context.Context, sessionTokenHash string, _ time.Time) *domain.AppError {
+	f.revokedSessionTokenHash = sessionTokenHash
 	return nil
+}
+
+func TestLogoutHashesRawSessionTokenExactlyOnce(t *testing.T) {
+	repo := &fakeAuthRepository{}
+	service := NewService(repo, time.Now)
+	service.Logout(context.Background(), "raw-session-token")
+	if repo.revokedSessionTokenHash != hashOpaqueToken("raw-session-token") {
+		t.Fatalf("RevokeSession token hash = %q, want one hash", repo.revokedSessionTokenHash)
+	}
+	if repo.revokedSessionTokenHash == hashOpaqueToken(hashOpaqueToken("raw-session-token")) {
+		t.Fatal("Logout double-hashed the raw session token")
+	}
 }
 
 func (f *fakeAuthRepository) CreateAccountAppealSession(_ context.Context, userID, sessionTokenHash, csrfTokenHash string, expiresAt, now time.Time) (User, *domain.AppError) {
@@ -510,6 +512,44 @@ func TestAdminUserGovernanceRejectsSelfInvalidTransitionAndStaleVersion(t *testi
 	}
 }
 
+func TestAdminUserPermissionRejectsStudentOnlyAccount(t *testing.T) {
+	service := NewService(nil, time.Now)
+	admin, _, _ := service.CreateDevSession(context.Background(), "student-admin-guard", true)
+	student, _, _ := service.CreateDevSession(context.Background(), "student-admin-target", false)
+	student.LinuxDoBinding = nil
+	student.StudentClaim = &StudentEmailClaim{
+		ID:                "student-admin-claim",
+		InstitutionDomain: "students.example.edu",
+		InstitutionName:   "Example Students",
+		ClaimedAt:         time.Now(),
+	}
+	service.mu.Lock()
+	service.users[student.ID] = student
+	service.mu.Unlock()
+
+	detail, appErr := service.AdminUser(context.Background(), admin, student.ID)
+	if appErr != nil {
+		t.Fatalf("load student account: %v", appErr)
+	}
+	if _, appErr := service.UpdateAdminUserPermissionWithIdempotency(
+		context.Background(), admin, "permission", "student-grant-key", "student-grant-hash",
+		AdminUserPermissionInput{
+			TargetUserID: student.ID, Grant: true, ExpectedVersion: detail.User.Version,
+			Reason: "验证高校邮箱账号权限边界", RequestID: "student-admin-request",
+		}, adminUserCompletionForTest,
+	); appErr == nil || appErr.Code != domain.CodeInvalidStateTransition {
+		t.Fatalf("expected student-only admin grant rejection, got %v", appErr)
+	}
+
+	stored := HydrateCapabilities(service.users[student.ID])
+	if stored.IsAdmin || HasCapability(stored, CapabilityAdminAccess) {
+		t.Fatalf("student-only account gained admin authority: %+v", stored)
+	}
+	if len(service.adminAuditEntries[student.ID]) != 0 {
+		t.Fatalf("rejected admin grant emitted audit mutation: %+v", service.adminAuditEntries[student.ID])
+	}
+}
+
 func TestAdminUserPermissionMutationProtectsLastActiveAdministrator(t *testing.T) {
 	service := NewService(nil, time.Now)
 	admin, _, _ := service.CreateDevSession(context.Background(), "permission-admin", true)
@@ -772,7 +812,7 @@ func TestEmailRegistrationIsDisabled(t *testing.T) {
 	if sender.codeTo != "" || sender.calls != 0 {
 		t.Fatalf("disabled email registration must not send email: %+v", sender)
 	}
-	if repo.createEmailRegistrationCodeCalls != 0 || repo.confirmEmailRegistrationCalls != 0 || repo.ensureUserCalls != 0 || repo.createSessionCalls != 0 {
+	if repo.ensureUserCalls != 0 || repo.createSessionCalls != 0 {
 		t.Fatalf("disabled email registration must not write repo side effects: %+v", repo)
 	}
 	if repo.session.ID != "" {

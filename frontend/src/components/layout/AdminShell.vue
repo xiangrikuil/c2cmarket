@@ -13,6 +13,7 @@ import FileText from 'lucide-vue-next/dist/esm/icons/file-text.js'
 import Gauge from 'lucide-vue-next/dist/esm/icons/gauge.js'
 import Activity from 'lucide-vue-next/dist/esm/icons/activity.js'
 import Gift from 'lucide-vue-next/dist/esm/icons/gift.js'
+import GraduationCap from 'lucide-vue-next/dist/esm/icons/graduation-cap.js'
 import Menu from 'lucide-vue-next/dist/esm/icons/menu.js'
 import MessageSquareWarning from 'lucide-vue-next/dist/esm/icons/message-square-warning.js'
 import PackageSearch from 'lucide-vue-next/dist/esm/icons/package-search.js'
@@ -34,6 +35,7 @@ import { usePersistentSidebar } from '@/composables/usePersistentSidebar'
 import { useRealtimeSync } from '@/composables/useRealtimeSync'
 import { ACCOUNT_RECOVERY_PATH, isAccountRecoveryAllowedPath, isAccountRecoveryComplete } from '@/lib/accountRecovery'
 import DevPersonaSwitcher from '@/components/layout/DevPersonaSwitcher.vue'
+import { CAPABILITY, hasCapability } from '@/lib/capabilities'
 
 const route = useRoute()
 const router = useRouter()
@@ -67,6 +69,7 @@ const navGroups = computed(() => [
   { title: '交易与用户', items: [
     { label: 'API 订单监管', to: '/admin/trade-intents', icon: FileText, count: null },
     { label: '用户目录', to: '/admin/users', icon: Users, count: null },
+    { label: '学生注册管理', to: '/admin/student-registration', icon: GraduationCap, count: null },
   ] },
   { title: '内容与系统', items: [
     { label: '公告管理', to: '/admin/announcements', icon: Bell, count: null },
@@ -101,7 +104,7 @@ watch(
   () => [profile.value, route.fullPath] as const,
   ([currentProfile]) => {
     if (!currentProfile) return
-    if (!currentProfile.permissions.includes('admin')) {
+    if (!hasCapability(currentProfile, CAPABILITY.adminAccess)) {
       router.replace('/')
       return
     }

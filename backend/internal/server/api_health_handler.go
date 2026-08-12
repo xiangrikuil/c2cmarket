@@ -8,6 +8,7 @@ import (
 
 	"c2c-market/backend/internal/domain"
 	"c2c-market/backend/internal/module/apihealth"
+	"c2c-market/backend/internal/module/auth"
 	"c2c-market/backend/internal/module/idempotency"
 
 	"github.com/go-chi/chi/v5"
@@ -71,6 +72,9 @@ func (server *Server) handlePreflightOwnerAPIProbeConnection(w http.ResponseWrit
 		writeProblem(w, request, appErr)
 		return
 	}
+	if !requireCapability(w, request, user, auth.CapabilityAPIProbeManage) {
+		return
+	}
 	input, appErr := decodeStrictJSONOnly[apiProbeConnectionRequest](request)
 	if appErr != nil {
 		writeProblem(w, request, appErr)
@@ -93,6 +97,9 @@ func (server *Server) handlePreflightExistingOwnerAPIProbeConnection(w http.Resp
 	user, _, appErr := server.requireSessionAndCSRF(w, request)
 	if appErr != nil {
 		writeProblem(w, request, appErr)
+		return
+	}
+	if !requireCapability(w, request, user, auth.CapabilityAPIProbeManage) {
 		return
 	}
 	input, appErr := decodeStrictJSONOnly[apiProbeConnectionRequest](request)
@@ -124,6 +131,9 @@ func (server *Server) handleOwnerAPIProbeConnections(w http.ResponseWriter, requ
 		writeProblem(w, request, appErr)
 		return
 	}
+	if !requireCapability(w, request, user, auth.CapabilityAPIProbeManage) {
+		return
+	}
 	if appErr = server.requireAPIHealthService(); appErr != nil {
 		writeProblem(w, request, appErr)
 		return
@@ -145,6 +155,9 @@ func (server *Server) handleOwnerAPIProbeConnection(w http.ResponseWriter, reque
 	user, _, appErr := server.requireSession(w, request)
 	if appErr != nil {
 		writeProblem(w, request, appErr)
+		return
+	}
+	if !requireCapability(w, request, user, auth.CapabilityAPIProbeManage) {
 		return
 	}
 	if appErr = server.requireAPIHealthService(); appErr != nil {
@@ -171,6 +184,9 @@ func (server *Server) handleCreateOwnerAPIProbeConnection(w http.ResponseWriter,
 		writeProblem(w, request, appErr)
 		return
 	}
+	if !requireCapability(w, request, user, auth.CapabilityAPIProbeManage) {
+		return
+	}
 	body, input, appErr := decodeStrictJSON[apiProbeConnectionRequest](request)
 	if appErr != nil {
 		writeProblem(w, request, appErr)
@@ -184,13 +200,19 @@ func (server *Server) handleCreateOwnerAPIProbeConnection(w http.ResponseWriter,
 		writeProblem(w, request, appErr)
 		return
 	}
-	server.withAPIHealthIdempotency(w, request, user.ID, "POST /api/v1/owner/api-probe-connections", body, func() (idempotency.Completion, *domain.AppError) {
-		connection, appErr := server.apiHealth.CreateOwnerConnection(request.Context(), user, toAPIProbeConnectionInput(input))
-		if appErr != nil {
-			return idempotency.Completion{}, appErr
-		}
-		return apiHealthIdempotencyCompletion(http.StatusCreated, toOwnerAPIProbeConnectionResponse(connection), connection.Version, connection.ID)
-	})
+	routeKey := "POST /api/v1/owner/api-probe-connections"
+	completion, appErr := server.apiHealth.CreateOwnerConnectionWithIdempotency(
+		request.Context(), user, routeKey, request.Header.Get("Idempotency-Key"),
+		requestHash(request.Method, routeKey, body), toAPIProbeConnectionInput(input), requestIDFrom(request),
+		func(connection apihealth.Connection) (idempotency.Completion, *domain.AppError) {
+			return apiHealthIdempotencyCompletion(http.StatusCreated, toOwnerAPIProbeConnectionResponse(connection), connection.Version, connection.ID)
+		},
+	)
+	if appErr != nil {
+		writeProblem(w, request, appErr)
+		return
+	}
+	writeAPIHealthMutationCompletion(w, completion)
 }
 
 func (server *Server) handleUpdateOwnerAPIProbeConnection(w http.ResponseWriter, request *http.Request) {
@@ -200,7 +222,10 @@ func (server *Server) handleUpdateOwnerAPIProbeConnection(w http.ResponseWriter,
 		writeProblem(w, request, appErr)
 		return
 	}
-	input, appErr := decodeStrictJSONOnly[apiProbeConnectionRequest](request)
+	if !requireCapability(w, request, user, auth.CapabilityAPIProbeManage) {
+		return
+	}
+	body, input, appErr := decodeStrictJSON[apiProbeConnectionRequest](request)
 	if appErr != nil {
 		writeProblem(w, request, appErr)
 		return
@@ -218,13 +243,21 @@ func (server *Server) handleUpdateOwnerAPIProbeConnection(w http.ResponseWriter,
 		writeProblem(w, request, appErr)
 		return
 	}
-	connection, appErr := server.apiHealth.UpdateOwnerConnection(request.Context(), user, chi.URLParam(request, "id"), toAPIProbeConnectionInput(input), version)
+	connectionID := chi.URLParam(request, "id")
+	routeKey := "PUT /api/v1/owner/api-probe-connections/{id}"
+	completion, appErr := server.apiHealth.UpdateOwnerConnectionWithIdempotency(
+		request.Context(), user, routeKey, request.Header.Get("Idempotency-Key"),
+		apiHealthMutationRequestHash(request, routeKey, body, connectionID, version), connectionID,
+		toAPIProbeConnectionInput(input), version, requestIDFrom(request),
+		func(connection apihealth.Connection) (idempotency.Completion, *domain.AppError) {
+			return apiHealthIdempotencyCompletion(http.StatusOK, toOwnerAPIProbeConnectionResponse(connection), connection.Version, connection.ID)
+		},
+	)
 	if appErr != nil {
 		writeProblem(w, request, appErr)
 		return
 	}
-	setETag(w, connection.Version)
-	writeJSON(w, http.StatusOK, toOwnerAPIProbeConnectionResponse(connection))
+	writeAPIHealthMutationCompletion(w, completion)
 }
 
 func (server *Server) handleDeleteOwnerAPIProbeConnection(w http.ResponseWriter, request *http.Request) {
@@ -234,27 +267,7 @@ func (server *Server) handleDeleteOwnerAPIProbeConnection(w http.ResponseWriter,
 		writeProblem(w, request, appErr)
 		return
 	}
-	version, appErr := requireIfMatchVersion(request)
-	if appErr != nil {
-		writeProblem(w, request, appErr)
-		return
-	}
-	if appErr = server.requireAPIHealthService(); appErr != nil {
-		writeProblem(w, request, appErr)
-		return
-	}
-	if appErr := server.apiHealth.DeleteOwnerConnection(request.Context(), user, chi.URLParam(request, "id"), version); appErr != nil {
-		writeProblem(w, request, appErr)
-		return
-	}
-	w.WriteHeader(http.StatusNoContent)
-}
-
-func (server *Server) handleVerifyOwnerAPIProbeConnection(w http.ResponseWriter, request *http.Request) {
-	setAPIHealthPrivateHeaders(w)
-	user, _, appErr := server.requireSessionAndCSRF(w, request)
-	if appErr != nil {
-		writeProblem(w, request, appErr)
+	if !requireCapability(w, request, user, auth.CapabilityAPIProbeManage) {
 		return
 	}
 	version, appErr := requireIfMatchVersion(request)
@@ -267,14 +280,73 @@ func (server *Server) handleVerifyOwnerAPIProbeConnection(w http.ResponseWriter,
 		return
 	}
 	connectionID := chi.URLParam(request, "id")
-	routeKey := "POST /api/v1/owner/api-probe-connections/{id}/verify:" + connectionID
-	server.withAPIHealthIdempotency(w, request, user.ID, routeKey, nil, func() (idempotency.Completion, *domain.AppError) {
-		connection, appErr := server.apiHealth.VerifyOwnerConnection(request.Context(), user, connectionID, version)
-		if appErr != nil {
-			return idempotency.Completion{}, appErr
-		}
-		return apiHealthIdempotencyCompletion(http.StatusOK, toOwnerAPIProbeConnectionResponse(connection), connection.Version, connection.ID)
-	})
+	routeKey := "DELETE /api/v1/owner/api-probe-connections/{id}"
+	completion, appErr := server.apiHealth.DeleteOwnerConnectionWithIdempotency(
+		request.Context(), user, routeKey, request.Header.Get("Idempotency-Key"),
+		apiHealthMutationRequestHash(request, routeKey, nil, connectionID, version), connectionID,
+		version, requestIDFrom(request), func(connection apihealth.Connection) (idempotency.Completion, *domain.AppError) {
+			return idempotency.Completion{
+				Status: http.StatusNoContent, ResourceType: "api_probe_connection", ResourceID: connection.ID,
+			}, nil
+		},
+	)
+	if appErr != nil {
+		writeProblem(w, request, appErr)
+		return
+	}
+	writeAPIHealthMutationCompletion(w, completion)
+}
+
+func (server *Server) handleVerifyOwnerAPIProbeConnection(w http.ResponseWriter, request *http.Request) {
+	setAPIHealthPrivateHeaders(w)
+	user, _, appErr := server.requireSessionAndCSRF(w, request)
+	if appErr != nil {
+		writeProblem(w, request, appErr)
+		return
+	}
+	if !requireCapability(w, request, user, auth.CapabilityAPIProbeManage) {
+		return
+	}
+	version, appErr := requireIfMatchVersion(request)
+	if appErr != nil {
+		writeProblem(w, request, appErr)
+		return
+	}
+	if appErr = server.requireAPIHealthService(); appErr != nil {
+		writeProblem(w, request, appErr)
+		return
+	}
+	connectionID := chi.URLParam(request, "id")
+	routeKey := "POST /api/v1/owner/api-probe-connections/{id}/verify"
+	completion, appErr := server.apiHealth.VerifyOwnerConnectionWithIdempotency(
+		request.Context(), user, routeKey, request.Header.Get("Idempotency-Key"),
+		apiHealthMutationRequestHash(request, routeKey, nil, connectionID, version), connectionID,
+		version, requestIDFrom(request), func(connection apihealth.Connection) (idempotency.Completion, *domain.AppError) {
+			return apiHealthIdempotencyCompletion(http.StatusOK, toOwnerAPIProbeConnectionResponse(connection), connection.Version, connection.ID)
+		},
+	)
+	if appErr != nil {
+		writeProblem(w, request, appErr)
+		return
+	}
+	writeAPIHealthMutationCompletion(w, completion)
+}
+
+func apiHealthMutationRequestHash(request *http.Request, routeKey string, body []byte, connectionID string, version int64) string {
+	prefix := []byte(connectionID + "\n" + strconv.FormatInt(version, 10) + "\n")
+	payload := make([]byte, 0, len(prefix)+len(body))
+	payload = append(payload, prefix...)
+	payload = append(payload, body...)
+	return requestHash(request.Method, routeKey, payload)
+}
+
+func writeAPIHealthMutationCompletion(w http.ResponseWriter, completion idempotency.Completion) {
+	if completion.Status == http.StatusNoContent {
+		completion.ContentType = ""
+		completion.Body = nil
+	}
+	restoreAPIHealthETag(&completion)
+	writeNoStoreIdempotencyCompletion(w, completion)
 }
 
 func (server *Server) withAPIHealthIdempotency(

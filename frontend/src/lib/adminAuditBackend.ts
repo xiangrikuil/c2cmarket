@@ -1,56 +1,152 @@
-import type { AdminAuditLog, AdminAuditLogList, ListAdminAuditLogsData } from '@/api/generated/openapi'
+import type {
+  AdminOperationAuditEntry,
+  AdminOperationAuditEntryList,
+  ListAdminAuditLogsData,
+} from '@/api/generated/openapi'
 import type { AdminRow } from '@/lib/api'
-import { backendRequest, ensureBackendSession } from '@/lib/backendClient'
-import { normalizeNextCursor, type CursorPage, type CursorPageRequest } from '@/lib/cursorPagination'
+import { backendRequest, ensureBackendSession, shouldUseRealBackend } from '@/lib/backendClient'
+import { normalizeNextCursor, paginateCursorItems, type CursorPage, type CursorPageRequest } from '@/lib/cursorPagination'
 
+export type AdminAuditLogEntry = AdminOperationAuditEntry
 export type AdminAuditLogFilters = Omit<NonNullable<ListAdminAuditLogsData['query']>, 'limit' | 'cursor'>
 
-function adminAuditLogQuery(filters: AdminAuditLogFilters, page: CursorPageRequest) {
+const mockAuditEntries: AdminAuditLogEntry[] = [
+  {
+    id: 'admin:00000000-0000-4000-8000-000000000092',
+    sourceKind: 'admin',
+    domain: 'institution',
+    actorKind: 'admin',
+    actorUserId: '00000000-0000-4000-8000-000000000001',
+    actorUsername: 'admin',
+    action: 'student_registration.updated',
+    actionLabel: '调整学生注册开关',
+    targetType: 'student_registration_setting',
+    targetId: '00000000-0000-4000-8000-000000000091',
+    targetLabel: '学生邮箱注册',
+    outcome: 'status_changed',
+    summary: '学生邮箱注册开关已更新。',
+    detailPath: '/admin/student-registration',
+    requestId: 'mock-request-audit-2',
+    createdAt: '2026-08-12T03:20:00Z',
+  },
+  {
+    id: 'admin:00000000-0000-4000-8000-000000000093',
+    sourceKind: 'admin',
+    domain: 'account',
+    actorKind: 'admin',
+    actorUserId: '00000000-0000-4000-8000-000000000001',
+    actorUsername: 'admin',
+    action: 'user.account_status_changed',
+    actionLabel: '调整账号状态',
+    targetType: 'user',
+    targetId: '00000000-0000-4000-8000-000000000002',
+    targetLabel: 'orbit',
+    outcome: 'status_changed',
+    summary: '管理员完成账号状态调整。',
+    detailPath: null,
+    requestId: 'mock-request-audit-1',
+    createdAt: '2026-08-11T10:10:00Z',
+  },
+]
+
+function normalizedFilter(value: string | undefined) {
+  return value?.trim() || undefined
+}
+
+export function adminAuditLogQuery(filters: AdminAuditLogFilters, page: CursorPageRequest) {
   const params = new URLSearchParams()
-  if (filters.search?.trim()) params.set('search', filters.search.trim())
-  if (filters.action?.trim()) params.set('action', filters.action.trim())
-  if (filters.targetType?.trim()) params.set('targetType', filters.targetType.trim())
-  if (filters.actorUserId?.trim()) params.set('actorUserId', filters.actorUserId.trim())
-  if (filters.targetId?.trim()) params.set('targetId', filters.targetId.trim())
+  const fields: Array<keyof AdminAuditLogFilters> = [
+    'sourceKind',
+    'domain',
+    'action',
+    'actorKind',
+    'actorUserId',
+    'targetType',
+    'targetId',
+    'outcome',
+    'from',
+    'to',
+    'search',
+  ]
+  for (const field of fields) {
+    const value = normalizedFilter(filters[field])
+    if (value) params.set(field, value)
+  }
   if (page.limit) params.set('limit', String(page.limit))
   if (page.cursor) params.set('cursor', page.cursor)
   const query = params.toString()
   return query ? `?${query}` : ''
 }
 
-function statusSummary(item: AdminAuditLog) {
-  if (item.beforeStatus && item.afterStatus) return `${item.beforeStatus} → ${item.afterStatus}`
-  if (item.afterStatus) return `当前状态 ${item.afterStatus}`
-  if (item.beforeStatus) return `原状态 ${item.beforeStatus}`
-  return '无状态变更摘要'
+function matchesMockEntry(item: AdminAuditLogEntry, filters: AdminAuditLogFilters) {
+  const exactFields: Array<keyof Pick<AdminAuditLogFilters,
+    'sourceKind' | 'domain' | 'action' | 'actorKind' | 'actorUserId' | 'targetType' | 'targetId' | 'outcome'
+  >> = ['sourceKind', 'domain', 'action', 'actorKind', 'actorUserId', 'targetType', 'targetId', 'outcome']
+  for (const field of exactFields) {
+    const expected = normalizedFilter(filters[field])
+    if (expected && item[field] !== expected) return false
+  }
+  if (filters.from && item.createdAt < filters.from) return false
+  if (filters.to && item.createdAt > filters.to) return false
+  const search = normalizedFilter(filters.search)?.toLocaleLowerCase()
+  if (!search) return true
+  return [
+    item.action,
+    item.actionLabel,
+    item.actorUsername,
+    item.targetId,
+    item.targetLabel,
+    item.summary,
+    item.requestId,
+  ].some(value => value?.toLocaleLowerCase().includes(search))
 }
 
-function adminAuditLogRow(item: AdminAuditLog): AdminRow {
+export async function backendAdminAuditLogsPage(
+  filters: AdminAuditLogFilters = {},
+  page: CursorPageRequest = {},
+): Promise<CursorPage<AdminAuditLogEntry>> {
+  await ensureBackendSession('admin', true)
+  if (!shouldUseRealBackend()) {
+    return paginateCursorItems(mockAuditEntries.filter(item => matchesMockEntry(item, filters)), page)
+  }
+  const response = await backendRequest<AdminOperationAuditEntryList>(`/api/v1/admin/audit-logs${adminAuditLogQuery(filters, page)}`)
+  return {
+    items: response.items,
+    nextCursor: normalizeNextCursor(response.nextCursor),
+  }
+}
+
+function adminAuditLogRow(item: AdminAuditLogEntry): AdminRow {
   return {
     id: item.id,
-    primary: item.action,
-    secondary: `${item.targetType} · ${item.targetId} · ${statusSummary(item)}`,
-    owner: item.actorUsername || item.actorUserId,
-    status: '已记录',
-    risk: item.reason || item.createdAt,
+    primary: item.actionLabel || item.action,
+    secondary: `${item.domain} · ${item.summary}`,
+    owner: item.actorUsername || item.actorUserId || item.actorKind,
+    status: item.outcome,
+    risk: item.createdAt,
     targetType: 'audit-log',
     backendKind: 'admin-audit-log',
+    targetTo: item.detailPath || null,
     detailItems: [
-      { label: '目标类型', value: item.targetType },
-      { label: '目标 ID', value: item.targetId },
-      { label: '管理员 ID', value: item.actorUserId },
+      { label: '来源', value: item.sourceKind },
+      { label: '领域', value: item.domain },
+      { label: '动作', value: item.action },
+      { label: '对象', value: item.targetLabel || `${item.targetType} · ${item.targetId}` },
+      { label: '结果', value: item.outcome },
       { label: '操作时间', value: item.createdAt },
       { label: '请求追踪', value: item.requestId },
     ],
   }
 }
 
-export async function backendAdminAuditLogRowsPage(filters: AdminAuditLogFilters = {}, page: CursorPageRequest = {}): Promise<CursorPage<AdminRow>> {
-  await ensureBackendSession('admin', true)
-  const response = await backendRequest<AdminAuditLogList>(`/api/v1/admin/audit-logs${adminAuditLogQuery(filters, page)}`)
+export async function backendAdminAuditLogRowsPage(
+  filters: AdminAuditLogFilters = {},
+  page: CursorPageRequest = {},
+): Promise<CursorPage<AdminRow>> {
+  const response = await backendAdminAuditLogsPage(filters, page)
   return {
     items: response.items.map(adminAuditLogRow),
-    nextCursor: normalizeNextCursor(response.nextCursor),
+    nextCursor: response.nextCursor,
   }
 }
 

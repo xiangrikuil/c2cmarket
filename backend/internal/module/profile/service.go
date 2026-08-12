@@ -4,8 +4,6 @@ import (
 	"context"
 	"crypto/hmac"
 	"crypto/rand"
-	"crypto/sha256"
-	"encoding/hex"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -89,7 +87,12 @@ func NewServiceWithOptions(repo Repository, now func() time.Time, emailSender Em
 
 func (s *Service) MyProfile(ctx context.Context, user auth.User) (UserProfile, *domain.AppError) {
 	if s.repo != nil {
-		return s.repo.GetUserProfile(ctx, user.ID, s.now())
+		value, appErr := s.repo.GetUserProfile(ctx, user.ID, s.now())
+		if appErr != nil {
+			return UserProfile{}, appErr
+		}
+		value.Capabilities = append([]string(nil), user.Capabilities...)
+		return value, nil
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -102,18 +105,23 @@ func (s *Service) UpdateMyProfile(ctx context.Context, user auth.User, input Upd
 		return UserProfile{}, appErr
 	}
 	if s.repo != nil {
-		return s.repo.UpdateUserProfile(ctx, input, s.now())
+		value, appErr := s.repo.UpdateUserProfile(ctx, input, s.now())
+		if appErr != nil {
+			return UserProfile{}, appErr
+		}
+		value.Capabilities = append([]string(nil), user.Capabilities...)
+		return value, nil
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	profile := s.ensureProfileLocked(user)
-	username := normalizeUsername(input.Username)
+	username := strings.TrimSpace(input.Username)
 	if username == "" {
 		username = profile.Username
 	}
 	if existingID := s.profilesByName[username]; existingID != "" && existingID != user.ID {
-		return UserProfile{}, domain.NewFieldError(http.StatusConflict, domain.CodeValidationFailed, "Username unavailable", "站内用户名已被占用。", "username", "unavailable", "站内用户名已被占用。")
+		return UserProfile{}, domain.NewFieldError(http.StatusConflict, domain.CodeUsernameUnavailable, "Username unavailable", "站内用户名已被占用。", "username", "unavailable", "站内用户名已被占用。")
 	}
 	delete(s.profilesByName, profile.Username)
 	profile.Username = username
@@ -335,6 +343,22 @@ func (s *Service) emailChallengeResponse(email string, expiresAt time.Time, code
 
 func (s *Service) ensureProfileLocked(user auth.User) UserProfile {
 	if profile, ok := s.profiles[user.ID]; ok {
+		profile.AccountStatus = user.Status
+		profile.IsAdmin = user.IsAdmin
+		profile.Capabilities = append([]string(nil), user.Capabilities...)
+		if user.LinuxDoBinding != nil && user.LinuxDoBinding.Bound {
+			profile.LinuxDoBound = true
+			profile.LinuxDoUserID = user.LinuxDoBinding.LinuxDoUserID
+			profile.LinuxDoUsername = user.LinuxDoBinding.LinuxDoUsername
+			profile.LinuxDoAvatarURL = user.LinuxDoBinding.AvatarURL
+			profile.LinuxDoLastSyncedAt = &user.LinuxDoBinding.LastSyncedAt
+			trust := user.LinuxDoBinding.TrustLevel
+			profile.LinuxDoTrustLevel = &trust
+			if profile.AvatarMode == "linuxdo" {
+				profile.AvatarURL = user.LinuxDoBinding.AvatarURL
+			}
+		}
+		s.profiles[user.ID] = profile
 		return profile
 	}
 	now := s.now()
@@ -344,19 +368,15 @@ func (s *Service) ensureProfileLocked(user auth.User) UserProfile {
 		DisplayName:       user.DisplayName,
 		AccountStatus:     user.Status,
 		IsAdmin:           user.IsAdmin,
+		Capabilities:      append([]string(nil), user.Capabilities...),
 		AvatarMode:        "linuxdo",
 		Privacy:           defaultPrivacy(),
 		CreatedAt:         now,
 		UpdatedAt:         now,
 		LastActiveAt:      &now,
 		Version:           1,
-		LinuxDoBound:      true,
-		LinuxDoUsername:   user.Username,
-		LinuxDoAvatarURL:  "",
 		UsernameCanChange: true,
 	}
-	trust := 3
-	profile.LinuxDoTrustLevel = &trust
 	if user.LinuxDoBinding != nil && user.LinuxDoBinding.Bound {
 		profile.LinuxDoBound = true
 		profile.LinuxDoUserID = user.LinuxDoBinding.LinuxDoUserID
@@ -364,7 +384,7 @@ func (s *Service) ensureProfileLocked(user auth.User) UserProfile {
 		profile.LinuxDoAvatarURL = user.LinuxDoBinding.AvatarURL
 		profile.AvatarURL = user.LinuxDoBinding.AvatarURL
 		profile.LinuxDoLastSyncedAt = &user.LinuxDoBinding.LastSyncedAt
-		trust = user.LinuxDoBinding.TrustLevel
+		trust := user.LinuxDoBinding.TrustLevel
 		profile.LinuxDoTrustLevel = &trust
 	}
 	s.profiles[user.ID] = profile
@@ -379,9 +399,11 @@ func validateProfileInput(input UpdateUserProfileInput) *domain.AppError {
 	if utf8.RuneCountInString(strings.TrimSpace(input.DisplayName)) > 32 {
 		return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Display name too long", "显示名称最多 32 字。", "displayName", "too_long", "显示名称最多 32 字。")
 	}
-	username := normalizeUsername(input.Username)
-	if username != "" && !usernamePattern.MatchString(username) {
-		return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Username invalid", "站内用户名只允许 3-24 位字母、数字、下划线和短横线。", "username", "invalid", "站内用户名格式不正确。")
+	username := strings.TrimSpace(input.Username)
+	if username != "" {
+		if appErr := auth.ValidatePublicUsername(input.Username); appErr != nil {
+			return appErr
+		}
 	}
 	if utf8.RuneCountInString(strings.TrimSpace(input.Bio)) > 160 {
 		return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Bio too long", "个人简介最多 160 字。", "bio", "too_long", "个人简介最多 160 字。")
@@ -525,9 +547,7 @@ func leftPadCode(value int, width int) string {
 }
 
 func emailCodeHash(pepper []byte, userID, email, code string) string {
-	mac := hmac.New(sha256.New, pepper)
-	_, _ = mac.Write([]byte(strings.TrimSpace(userID) + ":" + normalizeEmail(email) + ":" + strings.TrimSpace(code)))
-	return hex.EncodeToString(mac.Sum(nil))
+	return auth.VerificationCodeHash(pepper, "bind_email", userID, email, code)
 }
 
 func emailChallengeKey(userID string) string {

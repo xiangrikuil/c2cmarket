@@ -39,6 +39,6 @@ func setETag(w http.ResponseWriter, version int64) {
 }
 
 func writeProblem(w http.ResponseWriter, r *http.Request, err error) {
-	observability.RecordProblem(r.Context(), err)
+	observability.RecordProblem(r, err)
 	httpresponse.WriteProblem(w, r, err, requestIDFrom(r))
 }

@@ -60,26 +60,31 @@ import {
   useUseLinuxDoAvatarMutation,
   useVerifyContactMethodMutation,
 } from '@/queries/useMarketQueries'
+import { CAPABILITY, hasCapability } from '@/lib/capabilities'
+import { backendErrorMessage, reauthenticatePassword, startLinuxDoLink } from '@/lib/backendClient'
 
 const route = useRoute()
 const router = useRouter()
 const profileQuery = useMyProfileQuery()
 const profile = profileQuery.data
+const canPublishCarpool = computed(() => hasCapability(profile.value, CAPABILITY.carpoolPublish))
+const canPublishApiService = computed(() => hasCapability(profile.value, CAPABILITY.apiServicePublish))
+const canPublishAnything = computed(() => canPublishCarpool.value || canPublishApiService.value)
 const contactsQuery = useMyContactMethodsQuery()
 const contacts = contactsQuery.data
-const apiPaymentSettingsQuery = useApiPaymentAccountSettingsQuery()
+const apiPaymentSettingsQuery = useApiPaymentAccountSettingsQuery(canPublishApiService)
 const apiPaymentSettings = apiPaymentSettingsQuery.data
-const carpoolsQuery = useMyCarpools()
+const carpoolsQuery = useMyCarpools(canPublishCarpool)
 const carpools = carpoolsQuery.data
-const apiServicesQuery = useMyApiServices('all')
+const apiServicesQuery = useMyApiServices('all', canPublishApiService)
 const apiServices = apiServicesQuery.data
 const buyerRideApplicationsQuery = useMyCarpoolApplications({ sort: 'default_buyer' })
 const rideApplications = buyerRideApplicationsQuery.data
-const ownerRideApplicationsQuery = useMerchantCarpoolApplications({ sort: 'default_owner' })
+const ownerRideApplicationsQuery = useMerchantCarpoolApplications({ sort: 'default_owner' }, canPublishCarpool)
 const ownerRideApplications = ownerRideApplicationsQuery.data
 const buyerApiOrdersQuery = useMyApiOrders({ sort: 'default_buyer' })
 const apiOrders = buyerApiOrdersQuery.data
-const merchantApiOrdersQuery = useMerchantApiOrders({ sort: 'default_merchant' })
+const merchantApiOrdersQuery = useMerchantApiOrders({ sort: 'default_merchant' }, canPublishApiService)
 const merchantApiOrders = merchantApiOrdersQuery.data
 
 const updateProfileMutation = useUpdateMyProfileMutation()
@@ -94,15 +99,15 @@ const deleteContactMutation = useDeleteContactMethodMutation()
 const setDefaultContactMutation = useSetDefaultContactMethodMutation()
 const verifyContactMutation = useVerifyContactMethodMutation()
 
-const sectionLinks = [
+const sectionLinks = computed(() => [
   { label: '账户概览', to: '/my', key: 'overview' },
   { label: '个人资料', to: '/my/profile', key: 'profile' },
-  { label: '联系方式与收款设置', to: '/my/contacts', key: 'contacts' },
+  { label: canPublishApiService.value ? '联系方式与收款设置' : '联系方式', to: '/my/contacts', key: 'contacts' },
   { label: '账号与认证', to: '/my/account', key: 'account' },
   { label: '隐私设置', to: '/my/privacy', key: 'privacy' },
   { label: '我的收藏', to: '/my/favorites', key: 'favorites' },
   { label: '通知设置', to: '/my/notifications', key: 'notifications' },
-] as const
+] as const)
 
 type AccountSetupDialogMode = 'required' | 'password' | 'email'
 type AccountSetupStep = 'email' | 'password' | 'complete'
@@ -171,7 +176,12 @@ const loadedContactDraftKeys = reactive({
   email: '',
 })
 
-const defaultContactUsageScopes: ContactUsageScope[] = ['carpool_owner', 'api_merchant', 'buyer', 'dispute']
+const defaultContactUsageScopes = computed<ContactUsageScope[]>(() => [
+  ...(canPublishCarpool.value ? ['carpool_owner' as const] : []),
+  ...(canPublishApiService.value ? ['api_merchant' as const] : []),
+  'buyer',
+  'dispute',
+])
 
 const wechatContact = computed(() => (contacts.value ?? []).find(item => item.type === 'wechat') ?? null)
 const emailContact = computed(() => (contacts.value ?? []).find(item => item.type === 'email') ?? null)
@@ -184,15 +194,15 @@ const dashboardPendingTasks = computed(() => buildPendingTasks({
 }))
 const dashboardTasksLoading = computed(() => (
   buyerRideApplicationsQuery.isPending.value
-  || ownerRideApplicationsQuery.isPending.value
+  || (canPublishCarpool.value && ownerRideApplicationsQuery.isPending.value)
   || buyerApiOrdersQuery.isPending.value
-  || merchantApiOrdersQuery.isPending.value
+  || (canPublishApiService.value && merchantApiOrdersQuery.isPending.value)
 ))
 const dashboardTasksError = computed(() => (
   buyerRideApplicationsQuery.isError.value
-  || ownerRideApplicationsQuery.isError.value
+  || (canPublishCarpool.value && ownerRideApplicationsQuery.isError.value)
   || buyerApiOrdersQuery.isError.value
-  || merchantApiOrdersQuery.isError.value
+  || (canPublishApiService.value && merchantApiOrdersQuery.isError.value)
 ))
 const dashboardTasksUnavailable = computed(() => (
   buyerRideApplicationsQuery.isError.value && rideApplications.value === undefined
@@ -205,12 +215,12 @@ const dashboardPublishedItems = computed(() => buildPublishedContent({
   apiServices: apiServices.value ?? [],
 }))
 const dashboardPublishedLoading = computed(() => (
-  carpoolsQuery.isPending.value
-  || apiServicesQuery.isPending.value
+  (canPublishCarpool.value && carpoolsQuery.isPending.value)
+  || (canPublishApiService.value && apiServicesQuery.isPending.value)
 ))
 const dashboardPublishedError = computed(() => (
-  carpoolsQuery.isError.value
-  || apiServicesQuery.isError.value
+  (canPublishCarpool.value && carpoolsQuery.isError.value)
+  || (canPublishApiService.value && apiServicesQuery.isError.value)
 ))
 const dashboardPublishedUnavailable = computed(() => (
   carpoolsQuery.isError.value && carpools.value === undefined
@@ -218,16 +228,16 @@ const dashboardPublishedUnavailable = computed(() => (
 ))
 const showFirstTransactionGuide = computed(() => shouldShowFirstTransactionGuide({
   ownedCarpools: {
-    data: carpools.value,
-    isSuccess: carpoolsQuery.isSuccess.value,
-    isFetchedAfterMount: carpoolsQuery.isFetchedAfterMount.value,
-    isFetching: carpoolsQuery.isFetching.value,
+    data: canPublishCarpool.value ? carpools.value : [],
+    isSuccess: !canPublishCarpool.value || carpoolsQuery.isSuccess.value,
+    isFetchedAfterMount: !canPublishCarpool.value || carpoolsQuery.isFetchedAfterMount.value,
+    isFetching: canPublishCarpool.value && carpoolsQuery.isFetching.value,
   },
   ownedApiServices: {
-    data: apiServices.value,
-    isSuccess: apiServicesQuery.isSuccess.value,
-    isFetchedAfterMount: apiServicesQuery.isFetchedAfterMount.value,
-    isFetching: apiServicesQuery.isFetching.value,
+    data: canPublishApiService.value ? apiServices.value : [],
+    isSuccess: !canPublishApiService.value || apiServicesQuery.isSuccess.value,
+    isFetchedAfterMount: !canPublishApiService.value || apiServicesQuery.isFetchedAfterMount.value,
+    isFetching: canPublishApiService.value && apiServicesQuery.isFetching.value,
   },
   buyerCarpoolApplications: {
     data: rideApplications.value,
@@ -236,10 +246,10 @@ const showFirstTransactionGuide = computed(() => shouldShowFirstTransactionGuide
     isFetching: buyerRideApplicationsQuery.isFetching.value,
   },
   ownerCarpoolApplications: {
-    data: ownerRideApplications.value,
-    isSuccess: ownerRideApplicationsQuery.isSuccess.value,
-    isFetchedAfterMount: ownerRideApplicationsQuery.isFetchedAfterMount.value,
-    isFetching: ownerRideApplicationsQuery.isFetching.value,
+    data: canPublishCarpool.value ? ownerRideApplications.value : [],
+    isSuccess: !canPublishCarpool.value || ownerRideApplicationsQuery.isSuccess.value,
+    isFetchedAfterMount: !canPublishCarpool.value || ownerRideApplicationsQuery.isFetchedAfterMount.value,
+    isFetching: canPublishCarpool.value && ownerRideApplicationsQuery.isFetching.value,
   },
   buyerApiOrders: {
     data: apiOrders.value,
@@ -248,10 +258,10 @@ const showFirstTransactionGuide = computed(() => shouldShowFirstTransactionGuide
     isFetching: buyerApiOrdersQuery.isFetching.value,
   },
   merchantApiOrders: {
-    data: merchantApiOrders.value,
-    isSuccess: merchantApiOrdersQuery.isSuccess.value,
-    isFetchedAfterMount: merchantApiOrdersQuery.isFetchedAfterMount.value,
-    isFetching: merchantApiOrdersQuery.isFetching.value,
+    data: canPublishApiService.value ? merchantApiOrders.value : [],
+    isSuccess: !canPublishApiService.value || merchantApiOrdersQuery.isSuccess.value,
+    isFetchedAfterMount: !canPublishApiService.value || merchantApiOrdersQuery.isFetchedAfterMount.value,
+    isFetching: canPublishApiService.value && merchantApiOrdersQuery.isFetching.value,
   },
 }))
 const hasApiServices = computed(() => (apiServices.value?.length ?? 0) > 0)
@@ -263,13 +273,13 @@ const apiPaymentSettingsValue = computed(() => (
 ))
 const dashboardCompletenessLoading = computed(() => (
   contactsQuery.isPending.value
-  || apiServicesQuery.isPending.value
-  || (hasApiServices.value && apiPaymentSettingsQuery.isPending.value)
+  || (canPublishApiService.value && apiServicesQuery.isPending.value)
+  || (canPublishApiService.value && hasApiServices.value && apiPaymentSettingsQuery.isPending.value)
 ))
 const dashboardCompletenessError = computed(() => (
   contactsQuery.isError.value
-  || apiServicesQuery.isError.value
-  || (hasApiServices.value && apiPaymentSettingsQuery.isError.value)
+  || (canPublishApiService.value && apiServicesQuery.isError.value)
+  || (canPublishApiService.value && hasApiServices.value && apiPaymentSettingsQuery.isError.value)
 ))
 const dashboardCompleteness = computed(() => {
   if (!profile.value || dashboardCompletenessLoading.value || dashboardCompletenessError.value) return null
@@ -283,10 +293,10 @@ const dashboardCompleteness = computed(() => {
 const dashboardAccountAlert = computed(() => dashboardCompleteness.value
   ? getPrimaryAccountAlert(dashboardCompleteness.value)
   : null)
-const dashboardApiOrdersLoading = computed(() => buyerApiOrdersQuery.isPending.value || merchantApiOrdersQuery.isPending.value)
-const dashboardApiOrdersError = computed(() => buyerApiOrdersQuery.isError.value || merchantApiOrdersQuery.isError.value)
-const dashboardMetrics = computed<PersonalCenterMetric[]>(() => [
-  {
+const dashboardApiOrdersLoading = computed(() => buyerApiOrdersQuery.isPending.value || (canPublishApiService.value && merchantApiOrdersQuery.isPending.value))
+const dashboardApiOrdersError = computed(() => buyerApiOrdersQuery.isError.value || (canPublishApiService.value && merchantApiOrdersQuery.isError.value))
+const dashboardMetrics = computed<PersonalCenterMetric[]>(() => {
+  const metrics: PersonalCenterMetric[] = [{
     id: 'pending',
     label: '待处理',
     value: dashboardPendingTasks.value.length,
@@ -317,8 +327,9 @@ const dashboardMetrics = computed<PersonalCenterMetric[]>(() => [
     hint: dashboardCompleteness.value?.missingCount ? '项账户任务' : '资料已完成',
     loading: dashboardCompletenessLoading.value,
     available: Boolean(dashboardCompleteness.value),
-  },
-])
+  }]
+  return metrics.filter(metric => canPublishAnything.value || metric.id !== 'published')
+})
 const profileCompleteness = computed(() => dashboardCompleteness.value?.percentage ?? null)
 const wechatBound = computed(() => Boolean(wechatContact.value?.enabled && wechatContact.value.displayValue))
 const emailBound = computed(() => Boolean(emailContact.value?.enabled && emailContact.value.verified))
@@ -337,13 +348,31 @@ const hasContactDraftChanges = computed(() => (
 ))
 const contactSettingsDirty = computed(() => activeSection.value === 'contacts' && hasContactDraftChanges.value)
 const completedContactSettingsCount = computed(() => (
-  Number(wechatBound.value) + Number(emailBound.value) + Number(savedApiPaymentComplete.value)
+  Number(wechatBound.value) + Number(emailBound.value) + (canPublishApiService.value ? Number(savedApiPaymentComplete.value) : 0)
 ))
+const linuxDoLinkPassword = ref('')
+const linuxDoReauthLoading = ref(false)
+const linuxDoLinkLoading = ref(false)
+const linuxDoRecentlyReauthenticated = ref(false)
+const linuxDoLinkSuccessHandled = ref(false)
 const savedApiPaymentOptions = computed(() => (
   (apiPaymentSettings.value?.paymentOptions ?? []).filter(option => option.enabled && isApiPaymentOptionComplete(option))
 ))
 const buyerPreviewOpen = ref(false)
 useUnsavedChangesGuard(contactSettingsDirty, '联系方式与收款设置尚未保存，确认离开当前页面？')
+
+watch(
+  [profile, () => route.query.linuxdoLinked],
+  ([currentProfile, linked]) => {
+    if (linked !== '1' || !currentProfile?.linuxDoBinding.bound || linuxDoLinkSuccessHandled.value) return
+    linuxDoLinkSuccessHandled.value = true
+    toast.success('linux.do 已绑定，当前会话已更新。')
+    const query = { ...route.query }
+    delete query.linuxdoLinked
+    void router.replace({ path: route.path, query })
+  },
+  { immediate: true },
+)
 const accountRecoveryMissingItems = computed(() => profile.value ? accountRecoveryRequirements(profile.value).filter(item => !item.completed) : [])
 const accountRecoveryComplete = computed(() => profile.value ? isAccountRecoveryComplete(profile.value) : false)
 const canConfigureBackupPassword = computed(() => Boolean(profile.value?.linuxDoBinding.bound))
@@ -676,7 +705,7 @@ function buildContactPayload(type: ContactMethodType, label: string, displayValu
     type,
     label,
     displayValue: displayValue.trim(),
-    usageScopes: current?.usageScopes.length ? [...current.usageScopes] : [...defaultContactUsageScopes],
+    usageScopes: current?.usageScopes.length ? [...current.usageScopes] : [...defaultContactUsageScopes.value],
     isDefault: current?.isDefault ?? false,
     enabled: true,
   }
@@ -772,27 +801,60 @@ function setDefaultContact(contact: UserContactMethod) {
 }
 
 async function retryDashboardTasks() {
-  await Promise.allSettled([
+  const requests: Array<Promise<unknown>> = [
     buyerRideApplicationsQuery.refetch(),
-    ownerRideApplicationsQuery.refetch(),
     buyerApiOrdersQuery.refetch(),
-    merchantApiOrdersQuery.refetch(),
-  ])
+  ]
+  if (canPublishCarpool.value) requests.push(ownerRideApplicationsQuery.refetch())
+  if (canPublishApiService.value) requests.push(merchantApiOrdersQuery.refetch())
+  await Promise.allSettled(requests)
 }
 
 async function retryDashboardPublished() {
-  await Promise.allSettled([
-    carpoolsQuery.refetch(),
-    apiServicesQuery.refetch(),
-  ])
+  const requests: Array<Promise<unknown>> = []
+  if (canPublishCarpool.value) requests.push(carpoolsQuery.refetch())
+  if (canPublishApiService.value) requests.push(apiServicesQuery.refetch())
+  await Promise.allSettled(requests)
 }
 
 async function retryDashboardCompleteness() {
-  await Promise.allSettled([
-    contactsQuery.refetch(),
-    apiServicesQuery.refetch(),
-    apiPaymentSettingsQuery.refetch(),
-  ])
+  const requests: Array<Promise<unknown>> = [contactsQuery.refetch()]
+  if (canPublishApiService.value) requests.push(apiServicesQuery.refetch(), apiPaymentSettingsQuery.refetch())
+  await Promise.allSettled(requests)
+}
+
+async function confirmRecentPassword() {
+  if (!linuxDoLinkPassword.value) {
+    toast.warning('请输入当前密码。')
+    return
+  }
+  linuxDoReauthLoading.value = true
+  try {
+    await reauthenticatePassword(linuxDoLinkPassword.value)
+    linuxDoLinkPassword.value = ''
+    linuxDoRecentlyReauthenticated.value = true
+    toast.success('身份验证完成，可继续绑定 linux.do。')
+  } catch (error) {
+    linuxDoRecentlyReauthenticated.value = false
+    toast.error(backendErrorMessage(error, '当前密码验证失败。'))
+  } finally {
+    linuxDoReauthLoading.value = false
+  }
+}
+
+async function linkLinuxDoIdentity() {
+  if (!linuxDoRecentlyReauthenticated.value) {
+    toast.warning('请先使用当前密码完成身份验证。')
+    return
+  }
+  linuxDoLinkLoading.value = true
+  try {
+    const { authorizationUrl } = await startLinuxDoLink('/my/account?linuxdoLinked=1')
+    window.location.assign(authorizationUrl)
+  } catch (error) {
+    toast.error(backendErrorMessage(error, '启动 linux.do 绑定失败。'))
+    linuxDoLinkLoading.value = false
+  }
 }
 
 function goToLogin() {
@@ -1099,6 +1161,7 @@ function goToLogin() {
       :saved-wechat="wechatContact?.enabled ? wechatContact.displayValue : ''"
       :saved-email="emailContact?.enabled && emailContact.verified ? emailContact.displayValue : ''"
       :saved-payment-options="savedApiPaymentOptions"
+      :show-payment="canPublishApiService"
       :has-unsaved-changes="hasContactDraftChanges"
       @update:open="buyerPreviewOpen = $event"
     />
@@ -1107,7 +1170,7 @@ function goToLogin() {
       <div>
         <p>个人中心 / {{ sectionLinks.find(item => item.key === activeSection)?.label }}</p>
         <h1>{{ sectionLinks.find(item => item.key === activeSection)?.label }}</h1>
-        <p v-if="activeSection === 'contacts'" class="my-center-page-subtitle">完善联系方式与 API 收款信息，只向有效交易参与方展示必要资料。</p>
+        <p v-if="activeSection === 'contacts'" class="my-center-page-subtitle">{{ canPublishApiService ? '完善联系方式与 API 收款信息，只向有效交易参与方展示必要资料。' : '完善联系方式，只向有效交易参与方展示必要资料。' }}</p>
       </div>
       <Button v-if="activeSection === 'contacts'" variant="outline" @click="buyerPreviewOpen = true">
         <Eye class="h-4 w-4" />预览买家看到的信息
@@ -1138,6 +1201,8 @@ function goToLogin() {
       :contacts-error="contactsQuery.isError.value"
       :buyer-ride-count="buyerRideApplicationsQuery.isSuccess.value ? (rideApplications?.length ?? 0) : null"
       :related-api-order-count="dashboardApiOrdersError || dashboardApiOrdersLoading ? null : uniqueRelatedApiOrderCount(apiOrders ?? [], merchantApiOrders ?? [])"
+      :can-publish-carpool="canPublishCarpool"
+      :can-publish-api-service="canPublishApiService"
       @retry-tasks="retryDashboardTasks"
       @retry-published="retryDashboardPublished"
       @retry-completeness="retryDashboardCompleteness"
@@ -1223,6 +1288,7 @@ function goToLogin() {
           :wechat-complete="wechatBound"
           :email-complete="emailBound"
           :payment-complete="savedApiPaymentComplete"
+          :show-payment="canPublishApiService"
           @preview="buyerPreviewOpen = true"
         />
       </aside>
@@ -1348,6 +1414,7 @@ function goToLogin() {
         </ContactMethodCard>
 
         <ApiPaymentSettingsEditor
+          v-if="canPublishApiService"
           :settings="apiPaymentSettingsValue"
           @dirty-change="apiPaymentEditorDirty = $event"
         />
@@ -1379,9 +1446,9 @@ function goToLogin() {
           <div class="space-y-3 text-sm">
             <h3 class="text-sm font-semibold">linux.do 身份</h3>
             <div class="flex justify-between gap-4"><span class="text-muted-foreground">绑定状态</span><span>{{ profile.linuxDoBinding.bound ? '已绑定 linux.do' : '未绑定' }}</span></div>
-            <div class="flex justify-between gap-4"><span class="text-muted-foreground">用户名</span><span>@{{ profile.linuxDoBinding.linuxDoUsername }}</span></div>
-            <div class="flex justify-between gap-4"><span class="text-muted-foreground">用户 ID</span><span>{{ profile.linuxDoBinding.linuxDoUserId }}</span></div>
-            <div class="flex justify-between gap-4"><span class="text-muted-foreground">信任等级</span><span>{{ profile.linuxDoBinding.trustLevel }}</span></div>
+            <div class="flex justify-between gap-4"><span class="text-muted-foreground">用户名</span><span>{{ profile.linuxDoBinding.linuxDoUsername ? `@${profile.linuxDoBinding.linuxDoUsername}` : '—' }}</span></div>
+            <div class="flex justify-between gap-4"><span class="text-muted-foreground">用户 ID</span><span>{{ profile.linuxDoBinding.linuxDoUserId ?? '—' }}</span></div>
+            <div class="flex justify-between gap-4"><span class="text-muted-foreground">信任等级</span><span>{{ profile.linuxDoBinding.trustLevel ?? '—' }}</span></div>
             <div class="flex justify-between gap-4"><span class="text-muted-foreground">头像同步</span><span>{{ profile.avatarMode === 'linuxdo' ? '跟随 linux.do' : '自定义头像' }}</span></div>
             <div class="flex justify-between gap-4"><span class="text-muted-foreground">最近同步</span><span>{{ profile.linuxDoBinding.lastSyncedAt }}</span></div>
           </div>
@@ -1396,6 +1463,28 @@ function goToLogin() {
               <span class="block text-muted-foreground">系统铭牌</span>
               <div class="flex flex-wrap gap-2"><Badge v-for="badge in profile.badges" :key="badge.id" variant="secondary">{{ badge.label }}</Badge></div>
             </div>
+          </div>
+        </div>
+
+        <div v-if="!profile.linuxDoBinding.bound" class="mt-5 rounded-lg border border-border bg-muted/20 p-4">
+          <h3 class="font-semibold">绑定 linux.do 身份</h3>
+          <p class="mt-1 text-sm leading-6 text-muted-foreground">先使用当前密码完成近期身份验证，再前往 linux.do 授权。绑定会保留当前账号、邮箱、密码和交易历史。</p>
+          <div class="mt-4 grid gap-3 md:grid-cols-[minmax(0,1fr)_auto_auto] md:items-end">
+            <div class="space-y-2">
+              <label for="linuxdo-link-password" class="text-sm font-medium">当前密码</label>
+              <PasswordVisibilityInput
+                id="linuxdo-link-password"
+                v-model="linuxDoLinkPassword"
+                label="当前密码"
+                autocomplete="current-password"
+              />
+            </div>
+            <Button variant="outline" :disabled="linuxDoReauthLoading || !linuxDoLinkPassword" @click="confirmRecentPassword">
+              <KeyRound class="h-4 w-4" />{{ linuxDoReauthLoading ? '验证中…' : linuxDoRecentlyReauthenticated ? '已验证' : '验证密码' }}
+            </Button>
+            <Button :disabled="linuxDoLinkLoading || !linuxDoRecentlyReauthenticated" @click="linkLinuxDoIdentity">
+              <Link2 class="h-4 w-4" />{{ linuxDoLinkLoading ? '跳转中…' : '绑定 linux.do' }}
+            </Button>
           </div>
         </div>
 

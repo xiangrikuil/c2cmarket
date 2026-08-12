@@ -1,10 +1,37 @@
 import { requireApiMode, type ApiMode } from '@/lib/apiMode'
 import { clearAnalyticsIdentity, identifyAnalyticsUser } from '@/lib/analytics'
-import { captureRegistrationAttribution, getRegistrationAttribution } from '@/lib/registrationAttribution'
+import {
+  captureRegistrationAttribution,
+  clearRegistrationAttribution,
+  getRegistrationAttribution,
+  type RegistrationAttribution,
+} from '@/lib/registrationAttribution'
 import { getReferralCapture } from '@/lib/referralCapture'
+import { CAPABILITY, hasCapability } from '@/lib/capabilities'
+import {
+  MockAuthProblem,
+  confirmMockEmailRegistration,
+  getMockIdentity,
+  linkMockLinuxDo,
+  loginMockWithPassword,
+  mockEmailRegistrationConfig,
+  reauthenticateMockPassword,
+  requireMockIdentity,
+  setMockPersona,
+  startMockEmailRegistration,
+  type MockIdentity,
+  type MockPersona,
+} from '@/lib/mockAuth'
 import type {
   AccountAppealSessionResponse,
   AccountGovernanceAppeal as AccountGovernanceAppealResponse,
+  EmailRegistrationConfirmRequest,
+  EmailRegistrationStartResponse,
+  OAuthStartResponse,
+  PasswordLoginRequest,
+  SessionResponse,
+  StudentRegistrationPublicConfig,
+  User,
 } from '@/api/generated/openapi'
 
 type ProblemDetails = {
@@ -16,27 +43,8 @@ type ProblemDetails = {
   requestId?: string
 }
 
-export type BackendSessionUser = {
-  id: string
-  analyticsUserId: string
-  username: string
-  displayName: string
-  isAdmin: boolean
-  permissions: string[]
-  linuxDoBinding: {
-    bound: boolean
-    linuxDoUserId?: string
-    linuxDoUsername?: string
-    trustLevel?: number
-    avatarUrl?: string
-  }
-}
-
-export type BackendSession = {
-  user: BackendSessionUser
-  csrfToken: string
-  expiresAt: string
-}
+export type BackendSessionUser = User
+export type BackendSession = SessionResponse
 
 export type DevPersona = 'buyer' | 'seller' | 'admin'
 
@@ -44,18 +52,13 @@ export type DevPersonaSession = BackendSession & {
   persona: DevPersona
 }
 
-export type OAuthStartResponse = {
-  authorizationUrl: string
-}
+export type { OAuthStartResponse, PasswordLoginRequest }
 
 export type AccountAppealSession = AccountAppealSessionResponse
 export type AccountGovernanceAppeal = AccountGovernanceAppealResponse
 
-export type PasswordLoginRequest = {
-  username: string
-  password: string
-  turnstileToken: string
-}
+export type EmailRegistrationConfig = StudentRegistrationPublicConfig
+export type EmailRegistrationChallenge = EmailRegistrationStartResponse
 
 export class BackendProblemError extends Error {
   status: number
@@ -144,6 +147,43 @@ function clearBackendSessionCache() {
   clearAnalyticsIdentity()
 }
 
+function backendProblemFromMock(error: unknown): never {
+  if (error instanceof MockAuthProblem) {
+    throw new BackendProblemError({
+      status: error.status,
+      code: error.code,
+      detail: error.detail,
+    }, error.status)
+  }
+  throw error
+}
+
+function mockSession(identity: MockIdentity): BackendSession {
+  return {
+    csrfToken: `mock-csrf-${identity.persona}`,
+    expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+    user: {
+      id: identity.id,
+      analyticsUserId: identity.analyticsUserId,
+      username: identity.username,
+      displayName: identity.displayName,
+      isAdmin: hasCapability(identity, CAPABILITY.adminAccess),
+      permissions: [...identity.permissions],
+      capabilities: [...identity.capabilities],
+      studentClaim: identity.studentClaim ? { ...identity.studentClaim } : null,
+      linuxDoBinding: { ...identity.linuxDoBinding },
+    },
+  }
+}
+
+function currentMockSession() {
+  try {
+    return mockSession(requireMockIdentity())
+  } catch (error) {
+    return backendProblemFromMock(error)
+  }
+}
+
 function hasUsableCachedSession(now = Date.now()) {
   if (!cachedSession) return false
   const expiresAt = Date.parse(cachedSession.expiresAt)
@@ -193,6 +233,10 @@ export async function getCurrentBackendSession(options: {
   forceRefresh?: boolean
   notifySessionInvalidation?: boolean
 } = {}) {
+  if (!shouldUseRealBackend()) {
+    if (!options.forceRefresh && hasUsableCachedSession()) return cachedSession!
+    return cacheBackendSession(currentMockSession())
+  }
   if (!options.forceRefresh && hasUsableCachedSession()) {
     return cachedSession!
   }
@@ -225,6 +269,11 @@ export async function getCurrentBackendSession(options: {
 }
 
 export async function startOAuthLogin(returnTo = '/', inviteCode = getReferralCapture()) {
+  if (!shouldUseRealBackend()) {
+    setMockPersona('linuxdo')
+    replaceBackendSession(currentMockSession())
+    return { authorizationUrl: returnTo || '/' }
+  }
   const params = new URLSearchParams()
   if (returnTo) params.set('returnTo', returnTo)
   if (inviteCode) params.set('inviteCode', inviteCode)
@@ -301,8 +350,92 @@ export async function submitAccountGovernanceAppeal(statement: string) {
 }
 
 export async function loginWithPassword(payload: PasswordLoginRequest) {
+  if (!shouldUseRealBackend()) {
+    try {
+      return replaceBackendSession(mockSession(loginMockWithPassword(payload.username, payload.password)))
+    } catch (error) {
+      return backendProblemFromMock(error)
+    }
+  }
   const session = await backendJSON<BackendSession>('/api/v1/auth/password/login', payload)
   return replaceBackendSession(session)
+}
+
+export async function getEmailRegistrationConfig(): Promise<EmailRegistrationConfig> {
+  if (!shouldUseRealBackend()) return mockEmailRegistrationConfig()
+  return backendRequest<EmailRegistrationConfig>('/api/v1/auth/email-registration/config', {}, {
+    affectsSessionCache: false,
+  })
+}
+
+export async function startEmailRegistration(payload: {
+  email: string
+  turnstileToken: string
+}): Promise<EmailRegistrationChallenge> {
+  if (!shouldUseRealBackend()) {
+    try {
+      return startMockEmailRegistration(payload.email, payload.turnstileToken)
+    } catch (error) {
+      return backendProblemFromMock(error)
+    }
+  }
+  return backendJSON<EmailRegistrationChallenge>('/api/v1/auth/email-registration/start', payload)
+}
+
+export async function confirmEmailRegistration(
+  payload: Omit<EmailRegistrationConfirmRequest, 'attribution'>,
+): Promise<BackendSession> {
+  if (!shouldUseRealBackend()) {
+    try {
+      const session = replaceBackendSession(mockSession(confirmMockEmailRegistration(payload)))
+      clearRegistrationAttribution()
+      return session
+    } catch (error) {
+      return backendProblemFromMock(error)
+    }
+  }
+  const attribution = getRegistrationAttribution() ?? captureRegistrationAttribution()
+  const request: EmailRegistrationConfirmRequest = {
+    ...payload,
+    attribution: attribution ?? {},
+  }
+  const session = await backendJSON<BackendSession>('/api/v1/auth/email-registration/confirm', request)
+  clearRegistrationAttribution()
+  return replaceBackendSession(session)
+}
+
+export async function reauthenticatePassword(password: string): Promise<void> {
+  if (!shouldUseRealBackend()) {
+    try {
+      reauthenticateMockPassword(password)
+      return
+    } catch (error) {
+      return backendProblemFromMock(error)
+    }
+  }
+  await backendMutation<void>('/api/v1/auth/password/reauthenticate', { password })
+}
+
+export async function startLinuxDoLink(returnTo = '/my/account'): Promise<OAuthStartResponse> {
+  if (!shouldUseRealBackend()) {
+    try {
+      linkMockLinuxDo()
+      clearBackendSessionCache()
+      return { authorizationUrl: returnTo }
+    } catch (error) {
+      return backendProblemFromMock(error)
+    }
+  }
+  const params = new URLSearchParams({ purpose: 'link_linuxdo', returnTo })
+  return backendRequest<OAuthStartResponse>(`/api/v1/auth/oauth/start?${params.toString()}`)
+}
+
+export async function createMockPersonaSession(persona: MockPersona) {
+  if (shouldUseRealBackend()) throw new Error('Mock persona switching requires mock API mode.')
+  setMockPersona(persona)
+  clearBackendSessionCache()
+  const identity = getMockIdentity()
+  return identity ? replaceBackendSession(mockSession(identity)) : null
 }
 
 export async function createDevPersonaSession(persona: DevPersona) {
@@ -315,6 +448,11 @@ export async function createDevPersonaSession(persona: DevPersona) {
 }
 
 export async function logoutBackendSession() {
+  if (!shouldUseRealBackend()) {
+    setMockPersona('anonymous')
+    clearBackendSessionCache()
+    return
+  }
   await backendMutation<void>('/api/v1/auth/logout', {}, { method: 'POST' })
   clearBackendSessionCache()
 }
@@ -445,27 +583,17 @@ export async function ensureBackendSession(
   admin = false,
   options: { notifySessionInvalidation?: boolean } = {},
 ) {
-  try {
-    const current = await getCurrentBackendSession({
-      notifySessionInvalidation: options.notifySessionInvalidation,
-    })
-    if (shouldUseRealBackend()) {
-      if (!admin || current.user.isAdmin) return current
-      throw new BackendProblemError({
-        title: 'Session role mismatch',
-        status: 403,
-        code: 'PERMISSION_DENIED',
-        detail: admin ? '当前账号没有管理权限，请使用管理员账号登录。' : '当前登录账号与操作要求不匹配。',
-      }, 403)
-    }
-    if (current.user.username === username && current.user.isAdmin === admin) {
-      return current
-    }
-  } catch (error) {
-    if (shouldUseRealBackend()) throw error
-  }
-  const created = await backendJSON<BackendSession>('/api/v1/auth/dev-session', { username, admin })
-  return replaceBackendSession(created)
+  void username
+  const current = await getCurrentBackendSession({
+    notifySessionInvalidation: options.notifySessionInvalidation,
+  })
+  if (!admin || hasCapability(current.user, CAPABILITY.adminAccess)) return current
+  throw new BackendProblemError({
+    title: 'Session role mismatch',
+    status: 403,
+    code: 'PERMISSION_DENIED',
+    detail: '当前账号没有管理权限，请使用管理员账号登录。',
+  }, 403)
 }
 
 function backendMutationHeaders(options: {
@@ -480,12 +608,7 @@ function backendMutationHeaders(options: {
 }
 
 export async function requireBackendSession() {
-  try {
-    return await getCurrentBackendSession()
-  } catch (error) {
-    if (shouldUseRealBackend()) throw error
-    return ensureBackendSession()
-  }
+  return getCurrentBackendSession()
 }
 
 export function backendErrorMessage(error: unknown, fallback: string) {

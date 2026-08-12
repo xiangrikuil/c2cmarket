@@ -509,6 +509,7 @@ test('owner carpool update uses If-Match and submits with the patched version', 
   assert.equal(patchPath, '/api/v1/carpools/listing%2Fid')
   assert.equal(patchInit?.method, 'PATCH')
   assert.equal(new Headers(patchInit?.headers).get('If-Match'), '"11"')
+  assert.match(new Headers(patchInit?.headers).get('Idempotency-Key') ?? '', /^carpool-update-/)
   assert.equal(new Headers(patchInit?.headers).get('X-CSRF-Token'), 'csrf-carpool')
   const patchBody = JSON.parse(String(patchInit?.body))
   assert.equal(patchBody.serviceMultiplier, '1.25')

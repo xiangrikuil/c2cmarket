@@ -58,7 +58,7 @@ describe('transaction motion feedback', () => {
     expect(purchaseDialog).toContain('<DialogContent')
     expect(purchaseDialog).toContain('<Checkbox v-model="acknowledged"')
     expect(purchaseDialog).not.toContain('<Teleport')
-    expect(carpoolDetail).toContain('<Dialog v-model:open="applyDialogOpen">')
+    expect(carpoolDetail).toContain('<Dialog v-if="canApplyToCarpool" v-model:open="applyDialogOpen">')
     expect(carpoolDetail).toContain('<Checkbox v-model="rulesAccepted"')
     expect(carpoolDetail).not.toContain('v-if="applyDialogOpen" class="fixed inset-0')
   })

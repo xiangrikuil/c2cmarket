@@ -63,7 +63,7 @@ import type {
 import { backendFormDataMutation, backendMutation, backendRequest, ensureBackendSession } from '@/lib/backendClient'
 import { apiPaymentMethodRequiresQrCode, isApiPaymentMethod, normalizeQrCodeDataUrl } from '@/lib/apiPaymentSettings'
 import { beijingDateTimeInputToISOString, formatQuotaExpiresAtLabel } from '@/lib/apiQuotaExpiration'
-import { backendMyContactMethods, backendMyMerchantProfile, backendUpsertMerchantProfile } from '@/lib/profileBackend'
+import { backendCreateContact, backendMyContactMethods, backendMyMerchantProfile, backendUpsertMerchantProfile } from '@/lib/profileBackend'
 import { compareDecimal, divideDecimal, normalizeDecimal, normalizeDecimalTrimmed } from '@/lib/decimal'
 import { mapBackendReputationSummary } from '@/lib/reputationBackend'
 import { matchesApiOrderSearch } from '@/lib/apiOrderUi'
@@ -1483,31 +1483,7 @@ export async function backendAPIIntentEvents(id: string): Promise<ApiPurchaseInt
 }
 
 export async function backendCreateContactMethod(payload: SaveContactMethodRequest): Promise<UserContactMethod> {
-  const response = await backendMutation<{
-    id: string
-    type: ContactMethodType
-    label: string
-    maskedValue: string
-    createdAt: string
-  }>('/api/v1/contact-methods', {
-    type: payload.type,
-    label: payload.label,
-    value: payload.displayValue,
-  }, { idempotencyPrefix: 'contact-method' })
-  return {
-    id: response.id,
-    userId: 'backend',
-    type: response.type,
-    label: response.label,
-    maskedValue: response.maskedValue,
-    displayValue: payload.displayValue,
-    usageScopes: payload.usageScopes,
-    isDefault: payload.isDefault,
-    enabled: payload.enabled,
-    verified: false,
-    createdAt: response.createdAt,
-    updatedAt: response.createdAt,
-  }
+	return backendCreateContact(payload)
 }
 
 export async function backendBoundLinuxDoContactMethod(): Promise<UserContactMethod> {
@@ -1945,7 +1921,7 @@ export async function backendUpdateAPIServiceProbeConnection(input: {
   const response = await backendMutation<BackendAPIService>(
     `/api/v1/owner/api-services/${encodeURIComponent(input.id)}/probe-connection`,
     { probeConnectionId: input.probeConnectionId },
-    { method: 'PATCH', ifMatch: input.version },
+    { method: 'PATCH', ifMatch: input.version, idempotencyPrefix: 'api-service-probe-connection' },
   )
   return mapBackendAPIService(response)
 }

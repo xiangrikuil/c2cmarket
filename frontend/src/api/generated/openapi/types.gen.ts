@@ -221,12 +221,39 @@ export type RegistrationAttribution = {
 export type EmailRegistrationConfirmRequest = {
     email: string;
     code: string;
-    attribution?: RegistrationAttribution;
+    /**
+     * Exact lowercase public username. The server never silently normalizes or replaces it.
+     */
+    username: string;
+    password: string;
+    attribution: RegistrationAttribution;
 };
 
 export type EmailRegistrationStartRequest = {
     email: string;
     turnstileToken: string;
+};
+
+export type EmailRegistrationStartResponse = {
+    email: string;
+    expiresAt: string;
+    /**
+     * Present only when the configured local/test mail sender explicitly exposes the code.
+     */
+    devCode?: string;
+};
+
+export type StudentRegistrationInstitution = {
+    /**
+     * Exact lowercase institution email domain; suffix and wildcard matching are never used.
+     */
+    domain: string;
+    institutionName: string;
+};
+
+export type StudentRegistrationPublicConfig = {
+    enabled: boolean;
+    institutions: Array<StudentRegistrationInstitution>;
 };
 
 export type MyProfile = {
@@ -245,6 +272,7 @@ export type MyProfile = {
     avatarMode: 'linuxdo' | 'custom_url';
     accountStatus: string;
     permissions: Array<string>;
+    capabilities: Array<Capability>;
     linuxDoBinding: {
         [key: string]: unknown;
     };
@@ -710,6 +738,10 @@ export type SetPasswordRequest = {
     newPassword: string;
 };
 
+export type PasswordReauthenticateRequest = {
+    password: string;
+};
+
 export type OAuthStartResponse = {
     authorizationUrl: string;
 };
@@ -722,6 +754,17 @@ export type LinuxDoBinding = {
     avatarUrl?: string;
 };
 
+/**
+ * Safe session projection of the authenticated user's immutable institution-email claim. Internal IDs and the canonical email are never exposed here.
+ */
+export type StudentClaim = {
+    institutionDomain: string;
+    institutionName: string;
+    claimedAt: string;
+};
+
+export type Capability = 'admin.access' | 'api_order.create' | 'api_probe.manage' | 'api_quota.publish' | 'api_service.publish' | 'carpool.apply' | 'carpool.publish';
+
 export type User = {
     id: string;
     analyticsUserId: string;
@@ -729,6 +772,8 @@ export type User = {
     displayName: string;
     isAdmin: boolean;
     permissions: Array<string>;
+    capabilities: Array<Capability>;
+    studentClaim: StudentClaim | null;
     linuxDoBinding: LinuxDoBinding;
 };
 
@@ -3020,10 +3065,10 @@ export type CarpoolCycleTerm = CarpoolCycleTermInput & {
 };
 
 export type CarpoolApplicationEligibility = {
-    code: 'eligible' | 'sold_out' | 'paused' | 'credential_risk' | 'owner_action_required' | 'already_applied' | 'already_member' | 'self_owned';
+    code: 'eligible' | 'capability_required' | 'sold_out' | 'paused' | 'credential_risk' | 'owner_action_required' | 'already_applied' | 'already_member' | 'self_owned';
     canApply: boolean;
     reason: string;
-    resolutionAction: 'apply' | 'wait_for_owner_correction' | 'browse_other_listings' | 'manage_own_listing' | 'view_application' | 'view_membership';
+    resolutionAction: 'apply' | 'link_linuxdo' | 'wait_for_owner_correction' | 'browse_other_listings' | 'manage_own_listing' | 'view_application' | 'view_membership';
 };
 
 export type CarpoolListing = {
@@ -3744,6 +3789,48 @@ export type AdminUserDirectorySummary = {
     archivedUsers: number;
 };
 
+export type AdminStudentRegistrationSetting = {
+    enabled: boolean;
+    version: number;
+};
+
+export type AdminStudentRegistrationUpdateRequest = {
+    enabled: boolean;
+    expectedVersion: number;
+    reason: string;
+};
+
+export type AdminStudentInstitutionDomain = {
+    id: string;
+    /**
+     * Immutable exact lowercase domain; URLs, wildcards, suffix rules and Unicode forms are rejected.
+     */
+    domain: string;
+    institutionName: string;
+    enabled: boolean;
+    version: number;
+    createdAt: string;
+    updatedAt: string;
+};
+
+export type AdminStudentInstitutionDomainList = {
+    items: Array<AdminStudentInstitutionDomain>;
+};
+
+export type AdminStudentInstitutionDomainCreateRequest = {
+    domain: string;
+    institutionName: string;
+    enabled: boolean;
+    reason: string;
+};
+
+export type AdminStudentInstitutionDomainUpdateRequest = {
+    institutionName: string;
+    enabled: boolean;
+    expectedVersion: number;
+    reason: string;
+};
+
 export type AdminLinuxDoBinding = {
     bound: boolean;
     username?: string;
@@ -3777,22 +3864,40 @@ export type AdminAccountAuditEntry = {
     createdAt: string;
 };
 
-export type AdminAuditLog = {
+export type OperationAuditSourceKind = 'admin' | 'moderation' | 'domain' | 'api_order' | 'contact_session_access' | 'api_intent_contact_access' | 'api_order_access' | 'probe';
+
+export type OperationAuditDomain = 'identity' | 'account' | 'institution' | 'contact' | 'carpool' | 'api_service' | 'api_quota' | 'api_order' | 'moderation' | 'probe';
+
+export type AdminOperationAuditEntry = {
+    /**
+     * Opaque source-kind and source-event identifier.
+     */
     id: string;
-    actorUserId: string;
-    actorUsername: string;
+    sourceKind: OperationAuditSourceKind;
+    domain: OperationAuditDomain;
+    actorKind: 'user' | 'admin' | 'system';
+    actorUserId: string | null;
+    actorUsername: string | null;
     action: string;
+    actionLabel: string;
     targetType: string;
     targetId: string;
-    reason: string;
+    targetLabel: string | null;
+    outcome: 'succeeded' | 'status_changed' | 'accessed';
+    /**
+     * Server-built allowlisted summary without raw reason, note, arbitrary JSON or sensitive values.
+     */
+    summary: string;
+    /**
+     * Server-owned relative administrator route, or null when no safe detail exists.
+     */
+    detailPath: string | null;
     requestId: string;
-    beforeStatus: string | null;
-    afterStatus: string | null;
     createdAt: string;
 };
 
-export type AdminAuditLogList = {
-    items: Array<AdminAuditLog>;
+export type AdminOperationAuditEntryList = {
+    items: Array<AdminOperationAuditEntry>;
     nextCursor: string | null;
 };
 
@@ -4293,7 +4398,7 @@ export type CreateContactMethodRequest = {
     label: string;
     value?: string;
     displayValue?: string;
-    usageScopes?: Array<string>;
+    usageScopes: Array<ContactUsageScope>;
     isDefault?: boolean;
     enabled?: boolean;
 };
@@ -4308,7 +4413,7 @@ export type ContactMethod = {
      * Returned only in authorized self/contact-window contexts when implemented.
      */
     displayValue?: string;
-    usageScopes: Array<string>;
+    usageScopes: Array<ContactUsageScope>;
     isDefault: boolean;
     enabled: boolean;
     verified: boolean;
@@ -4316,6 +4421,8 @@ export type ContactMethod = {
     updatedAt: string;
     version: number;
 };
+
+export type ContactUsageScope = 'carpool_owner' | 'api_merchant' | 'buyer' | 'dispute';
 
 export type ContactMethodList = {
     items: Array<ContactMethod>;
@@ -4854,6 +4961,43 @@ export type LoginWithPasswordResponses = {
 
 export type LoginWithPasswordResponse = LoginWithPasswordResponses[keyof LoginWithPasswordResponses];
 
+export type ReauthenticatePasswordData = {
+    body: PasswordReauthenticateRequest;
+    path?: never;
+    query?: never;
+    url: '/api/v1/auth/password/reauthenticate';
+};
+
+export type ReauthenticatePasswordErrors = {
+    /**
+     * Problem Details error.
+     */
+    401: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    403: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    422: ProblemDetails;
+    /**
+     * Rate limit exceeded. Problem Details `code` is `RATE_LIMITED`.
+     */
+    429: ProblemDetails;
+};
+
+export type ReauthenticatePasswordError = ReauthenticatePasswordErrors[keyof ReauthenticatePasswordErrors];
+
+export type ReauthenticatePasswordResponses = {
+    /**
+     * Current session recently reauthenticated.
+     */
+    204: void;
+};
+
+export type ReauthenticatePasswordResponse = ReauthenticatePasswordResponses[keyof ReauthenticatePasswordResponses];
+
 export type SetBackupPasswordData = {
     body: SetPasswordRequest;
     path?: never;
@@ -4891,6 +5035,22 @@ export type SetBackupPasswordResponses = {
 
 export type SetBackupPasswordResponse = SetBackupPasswordResponses[keyof SetBackupPasswordResponses];
 
+export type GetStudentEmailRegistrationConfigData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/v1/auth/email-registration/config';
+};
+
+export type GetStudentEmailRegistrationConfigResponses = {
+    /**
+     * Public registration configuration. The backend still rechecks the switch and exact domain at both start and confirmation.
+     */
+    200: StudentRegistrationPublicConfig;
+};
+
+export type GetStudentEmailRegistrationConfigResponse = GetStudentEmailRegistrationConfigResponses[keyof GetStudentEmailRegistrationConfigResponses];
+
 export type StartEmailRegistrationData = {
     body: EmailRegistrationStartRequest;
     path?: never;
@@ -4906,6 +5066,10 @@ export type StartEmailRegistrationErrors = {
     /**
      * Problem Details error.
      */
+    409: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
     422: ProblemDetails;
     /**
      * Rate limit exceeded. Problem Details `code` is `RATE_LIMITED`.
@@ -4914,6 +5078,15 @@ export type StartEmailRegistrationErrors = {
 };
 
 export type StartEmailRegistrationError = StartEmailRegistrationErrors[keyof StartEmailRegistrationErrors];
+
+export type StartEmailRegistrationResponses = {
+    /**
+     * Verification challenge created and sent.
+     */
+    200: EmailRegistrationStartResponse;
+};
+
+export type StartEmailRegistrationResponse = StartEmailRegistrationResponses[keyof StartEmailRegistrationResponses];
 
 export type ConfirmEmailRegistrationData = {
     body: EmailRegistrationConfirmRequest;
@@ -4930,6 +5103,10 @@ export type ConfirmEmailRegistrationErrors = {
     /**
      * Problem Details error.
      */
+    409: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
     422: ProblemDetails;
     /**
      * Rate limit exceeded. Problem Details `code` is `RATE_LIMITED`.
@@ -4939,10 +5116,23 @@ export type ConfirmEmailRegistrationErrors = {
 
 export type ConfirmEmailRegistrationError = ConfirmEmailRegistrationErrors[keyof ConfirmEmailRegistrationErrors];
 
+export type ConfirmEmailRegistrationResponses = {
+    /**
+     * Student buyer account and session created.
+     */
+    200: SessionResponse;
+};
+
+export type ConfirmEmailRegistrationResponse = ConfirmEmailRegistrationResponses[keyof ConfirmEmailRegistrationResponses];
+
 export type StartOAuthLoginData = {
     body?: never;
     path?: never;
     query?: {
+        /**
+         * `link_linuxdo` starts a current-session identity-link flow and requires a recent password reauthentication; omitted starts ordinary login or registration.
+         */
+        purpose?: 'link_linuxdo';
         returnTo?: string;
         utmSource?: string;
         utmMedium?: string;
@@ -6377,6 +6567,7 @@ export type UpdateCarpoolData = {
     body: CreateCarpoolListingRequest;
     headers: {
         'If-Match': string;
+        'Idempotency-Key': string;
     };
     path: {
         id: string;
@@ -9120,6 +9311,7 @@ export type UpdateOwnerApiServiceData = {
     body: ApiServiceRequest;
     headers: {
         'If-Match': string;
+        'Idempotency-Key': string;
     };
     path: {
         id: string;
@@ -9248,6 +9440,7 @@ export type DeleteOwnerApiProbeConnectionData = {
     body?: never;
     headers: {
         'If-Match': string;
+        'Idempotency-Key': string;
     };
     path: {
         id: string;
@@ -9317,6 +9510,7 @@ export type UpdateOwnerApiProbeConnectionData = {
     body: ApiProbeConnectionRequestWritable;
     headers: {
         'If-Match': string;
+        'Idempotency-Key': string;
     };
     path: {
         id: string;
@@ -9444,6 +9638,7 @@ export type UpdateOwnerApiServiceProbeConnectionData = {
     body: ApiServiceProbeConnectionRequest;
     headers: {
         'If-Match': string;
+        'Idempotency-Key': string;
     };
     path: {
         id: string;
@@ -9641,6 +9836,7 @@ export type UpdateOwnerApiServiceOrderSettingsData = {
     body: ApiServiceOrderSettingsRequest;
     headers: {
         'If-Match': string;
+        'Idempotency-Key': string;
     };
     path: {
         id: string;
@@ -11757,6 +11953,188 @@ export type GetAdminApiOrderResponses = {
 
 export type GetAdminApiOrderResponse = GetAdminApiOrderResponses[keyof GetAdminApiOrderResponses];
 
+export type GetAdminStudentRegistrationData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/v1/admin/student-registration';
+};
+
+export type GetAdminStudentRegistrationErrors = {
+    /**
+     * Problem Details error.
+     */
+    403: ProblemDetails;
+};
+
+export type GetAdminStudentRegistrationError = GetAdminStudentRegistrationErrors[keyof GetAdminStudentRegistrationErrors];
+
+export type GetAdminStudentRegistrationResponses = {
+    /**
+     * Current audited registration setting.
+     */
+    200: AdminStudentRegistrationSetting;
+};
+
+export type GetAdminStudentRegistrationResponse = GetAdminStudentRegistrationResponses[keyof GetAdminStudentRegistrationResponses];
+
+export type UpdateAdminStudentRegistrationData = {
+    body: AdminStudentRegistrationUpdateRequest;
+    headers: {
+        'Idempotency-Key': string;
+        'If-Match': string;
+    };
+    path?: never;
+    query?: never;
+    url: '/api/v1/admin/student-registration';
+};
+
+export type UpdateAdminStudentRegistrationErrors = {
+    /**
+     * Problem Details error.
+     */
+    403: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    412: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    422: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    428: ProblemDetails;
+};
+
+export type UpdateAdminStudentRegistrationError = UpdateAdminStudentRegistrationErrors[keyof UpdateAdminStudentRegistrationErrors];
+
+export type UpdateAdminStudentRegistrationResponses = {
+    /**
+     * Registration setting updated and audited in the mutation transaction.
+     */
+    200: AdminStudentRegistrationSetting;
+};
+
+export type UpdateAdminStudentRegistrationResponse = UpdateAdminStudentRegistrationResponses[keyof UpdateAdminStudentRegistrationResponses];
+
+export type ListAdminStudentInstitutionDomainsData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/v1/admin/student-institution-domains';
+};
+
+export type ListAdminStudentInstitutionDomainsErrors = {
+    /**
+     * Problem Details error.
+     */
+    403: ProblemDetails;
+};
+
+export type ListAdminStudentInstitutionDomainsError = ListAdminStudentInstitutionDomainsErrors[keyof ListAdminStudentInstitutionDomainsErrors];
+
+export type ListAdminStudentInstitutionDomainsResponses = {
+    /**
+     * Complete bounded institution-domain configuration list.
+     */
+    200: AdminStudentInstitutionDomainList;
+};
+
+export type ListAdminStudentInstitutionDomainsResponse = ListAdminStudentInstitutionDomainsResponses[keyof ListAdminStudentInstitutionDomainsResponses];
+
+export type CreateAdminStudentInstitutionDomainData = {
+    body: AdminStudentInstitutionDomainCreateRequest;
+    headers: {
+        'Idempotency-Key': string;
+        /**
+         * Use `"0"` when creating a resource whose operation explicitly supports first-write optimistic locking; otherwise use the current ETag version.
+         */
+        'If-Match': string;
+    };
+    path?: never;
+    query?: never;
+    url: '/api/v1/admin/student-institution-domains';
+};
+
+export type CreateAdminStudentInstitutionDomainErrors = {
+    /**
+     * Problem Details error.
+     */
+    403: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    409: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    422: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    428: ProblemDetails;
+};
+
+export type CreateAdminStudentInstitutionDomainError = CreateAdminStudentInstitutionDomainErrors[keyof CreateAdminStudentInstitutionDomainErrors];
+
+export type CreateAdminStudentInstitutionDomainResponses = {
+    /**
+     * Exact institution domain created and audited.
+     */
+    201: AdminStudentInstitutionDomain;
+};
+
+export type CreateAdminStudentInstitutionDomainResponse = CreateAdminStudentInstitutionDomainResponses[keyof CreateAdminStudentInstitutionDomainResponses];
+
+export type UpdateAdminStudentInstitutionDomainData = {
+    body: AdminStudentInstitutionDomainUpdateRequest;
+    headers: {
+        'Idempotency-Key': string;
+        'If-Match': string;
+    };
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/api/v1/admin/student-institution-domains/{id}';
+};
+
+export type UpdateAdminStudentInstitutionDomainErrors = {
+    /**
+     * Problem Details error.
+     */
+    403: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    404: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    412: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    422: ProblemDetails;
+    /**
+     * Problem Details error.
+     */
+    428: ProblemDetails;
+};
+
+export type UpdateAdminStudentInstitutionDomainError = UpdateAdminStudentInstitutionDomainErrors[keyof UpdateAdminStudentInstitutionDomainErrors];
+
+export type UpdateAdminStudentInstitutionDomainResponses = {
+    /**
+     * Institution-domain display name or state updated and audited.
+     */
+    200: AdminStudentInstitutionDomain;
+};
+
+export type UpdateAdminStudentInstitutionDomainResponse = UpdateAdminStudentInstitutionDomainResponses[keyof UpdateAdminStudentInstitutionDomainResponses];
+
 export type ListAdminUsersData = {
     body?: never;
     path?: never;
@@ -11812,11 +12190,23 @@ export type ListAdminAuditLogsData = {
          * Opaque pagination cursor returned as nextCursor. Clients must pass it back unchanged and must not inspect its internal encoding.
          */
         cursor?: string;
+        sourceKind?: OperationAuditSourceKind;
+        domain?: OperationAuditDomain;
         search?: string;
         action?: string;
         targetType?: string;
         actorUserId?: string;
         targetId?: string;
+        actorKind?: 'user' | 'admin' | 'system';
+        outcome?: 'succeeded' | 'status_changed' | 'accessed';
+        /**
+         * Inclusive RFC3339 lower bound. The maximum query window is 90 days.
+         */
+        from?: string;
+        /**
+         * Inclusive RFC3339 upper bound.
+         */
+        to?: string;
     };
     url: '/api/v1/admin/audit-logs';
 };
@@ -11836,9 +12226,9 @@ export type ListAdminAuditLogsError = ListAdminAuditLogsErrors[keyof ListAdminAu
 
 export type ListAdminAuditLogsResponses = {
     /**
-     * Stable cursor page of persisted global administrator audit entries.
+     * Stable composite-cursor page of allowlisted operation-audit entries.
      */
-    200: AdminAuditLogList;
+    200: AdminOperationAuditEntryList;
 };
 
 export type ListAdminAuditLogsResponse = ListAdminAuditLogsResponses[keyof ListAdminAuditLogsResponses];
@@ -14885,6 +15275,9 @@ export type CreateContactMethodResponse = CreateContactMethodResponses[keyof Cre
 
 export type DeleteContactMethodData = {
     body?: never;
+    headers: {
+        'Idempotency-Key': string;
+    };
     path: {
         id: string;
     };
@@ -14903,6 +15296,9 @@ export type DeleteContactMethodResponse = DeleteContactMethodResponses[keyof Del
 
 export type UpdateContactMethodData = {
     body: CreateContactMethodRequest;
+    headers: {
+        'Idempotency-Key': string;
+    };
     path: {
         id: string;
     };
@@ -14921,6 +15317,9 @@ export type UpdateContactMethodResponse = UpdateContactMethodResponses[keyof Upd
 
 export type SetDefaultContactMethodData = {
     body?: never;
+    headers: {
+        'Idempotency-Key': string;
+    };
     path: {
         id: string;
     };
@@ -14939,6 +15338,9 @@ export type SetDefaultContactMethodResponse = SetDefaultContactMethodResponses[k
 
 export type VerifyContactMethodData = {
     body?: never;
+    headers: {
+        'Idempotency-Key': string;
+    };
     path: {
         id: string;
     };

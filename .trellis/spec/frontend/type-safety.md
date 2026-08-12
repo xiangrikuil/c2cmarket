@@ -525,14 +525,14 @@ Selection is explicit, historical disclosure is frozen, and eligibility comes fr
 
 ---
 
-## Scenario: Permission-Driven User/Admin Shells And Progressive Navigation
+## Scenario: Capability-Driven Student, Seller, And Administrator Navigation
 
 ### 1. Scope / Trigger
 
-- Trigger: frontend mock exposes user, merchant-workspace, and admin routes before real auth and permissions exist.
+- Trigger: changing authenticated navigation, route metadata, query enablement, student/linux.do mock identities, merchant workspaces, probe entry points, or administrator routes.
 - The UI shell must not make ordinary users feel that full admin tooling is part of their normal workspace.
-- User and merchant are the same account permission class: a normal user can be a buyer, carpool owner, and API service merchant at the same time.
-- Sidebar visibility must be derived from the current user profile returned by the API facade, not a manual role switch in the shell.
+- Student-email and linux.do users are different identity facts with different deterministic capabilities; neither is a frontend-selectable role.
+- Sidebar, route, mutation, and owner-query visibility derive from the canonical capability array returned by the profile API, never from owned-resource or pending-count heuristics.
 - Admin moderation rows must provide enough context for local mock review before backend integration.
 
 ### 2. Signatures
@@ -540,7 +540,17 @@ Selection is explicit, historical disclosure is frozen, and eligibility comes fr
 ```ts
 type UserProfile = {
   permissions: Array<'admin'>
+  capabilities: Capability[]
 }
+
+type Capability =
+  | 'api_order.create'
+  | 'carpool.apply'
+  | 'carpool.publish'
+  | 'api_service.publish'
+  | 'api_quota.publish'
+  | 'api_probe.manage'
+  | 'admin.access'
 
 export type AdminRow = {
   id: string
@@ -567,10 +577,13 @@ export function initialSidebarCollapsed(
 ### 3. Contracts
 
 - `App.vue` selects exactly one layout: standalone routes render directly, `/admin/**` uses `AdminShell`, and all other authenticated pages use `AppShell`.
-- `AppShell` always shows browse, transaction, publish, and account entry points for normal users.
-- Merchant workspace links are normal user-permission links, not a separate account role.
-- Owner/merchant management links are progressive: show the management group only when the account owns a carpool/API service or has a real owner/merchant pending count. Publish entry points remain visible without ownership records.
-- When `getMyProfile()` / `useMyProfileQuery()` returns `permissions` containing `admin`, `AppShell` exposes one `进入管理台` link only; it must not append the administration directory.
+- `AppShell` always shows public browse, authenticated buyer transactions, notifications, and account settings. It shows carpool apply/publish, API service/quota publishing, merchant workspaces, and probes only for their exact capabilities.
+- A student profile has only `api_order.create`; it can buy quota/API service offers and use order-scoped after-sales, dispute, review, buyer contacts, and eligible model testing, but it must not trigger carpool/seller/probe owner queries.
+- A linux.do-bound profile has all six non-admin business capabilities even with zero owned resources. In particular, `api_probe.manage` always exposes `/my/api-probe-connections` and its first-create empty state.
+- `admin.access` controls one `进入管理台` entry plus `/admin/**`; legacy `permissions: ['admin']` remains a displayed identity fact but is not a second route authority.
+- Route records use typed `meta.capability`; global middleware loads the current profile, rejects missing capability to `/forbidden`, and cannot authorize from stale mock/resource state.
+- TanStack owner/merchant/probe queries use `enabled: hasCapability(...)`. A hidden component with an active query is still a capability leak and is not acceptable.
+- Real backend failures remain visible and never fall back to mock authorization/data. Mock mode has explicit anonymous, student, linux.do, and administrator sessions and uses the same capability helper.
 - `AdminShell` owns the grouped administration directory, global search, pending total, administrator identity, and a clear return-to-user-side action.
 - Both shells persist desktop collapse state independently. With no stored preference, widths below 1024 pixels default to collapsed.
 - Mobile navigation is a modal drawer with dialog semantics, a close action, Escape support, and enough width/scrolling to avoid obscuring navigation content.
@@ -590,10 +603,11 @@ export function initialSidebarCollapsed(
 
 | Condition | Expected behavior |
 | --- | --- |
-| Profile has no `admin` permission | User routes remain in `AppShell`; the management-console entry is hidden |
-| Profile has `admin` permission | `AppShell` shows one management-console entry; `/admin/**` switches to `AdminShell` |
-| Profile owns no listing and has no owner pending work | Management group stays hidden; publish links remain visible |
-| Profile owns a carpool or API service | Relevant owner/merchant links appear in the management group |
+| Student has only `api_order.create` | Buyer/order/account links remain; carpool, publish, merchant, payment, and probe links/queries stay absent |
+| Linux.do seller has zero owned resources | All applicable publish/merchant/probe entries remain visible, including probe first-create |
+| Route has `meta.capability` absent from profile | Redirect to `/forbidden`; do not start its owner query |
+| Profile has `admin.access` | `AppShell` shows one management-console entry; `/admin/**` switches to `AdminShell` |
+| Profile lacks `admin.access` even if local state says admin | Administration route and API query remain blocked |
 | No stored collapse preference and viewport is below 1024px | Desktop shell initializes collapsed |
 | Mobile drawer is open and user presses Escape | Drawer closes and page content remains unobscured |
 | User opens `/merchant/api-orders` | Sidebar still shows personal plus merchant workspace groups |
@@ -604,14 +618,16 @@ export function initialSidebarCollapsed(
 
 ### 5. Good/Base/Bad Cases
 
-- Good: profile with `permissions: ['admin']` sees one `进入管理台` entry in `AppShell`, then the complete grouped directory inside `AdminShell`.
-- Good: a first-time profile sees publish actions but no permanently empty management group.
-- Good: a carpool owner or API merchant sees only the relevant progressive management links.
+- Good: a student sees API buying and order after-sales but no carpool, publish, payment settings, merchant order, or probe request.
+- Good: a first-time linux.do seller sees publish actions and the zero-resource probe onboarding without manufacturing a resource first.
+- Good: a profile with `admin.access` sees one `进入管理台` entry in `AppShell`, then the complete grouped directory inside `AdminShell`.
 - Good: admin official-price panel shows `来源`, `历史价格`, `汇率时间`, `重复 offer`, `地区限制`, and `操作记录`.
 - Base: direct `/admin/price-leads` redirects to `/admin/official-prices` for compatibility.
 - Bad: ordinary user sidebar always lists `用户管理`, `低价线索审核`, and `举报纠纷`.
 - Bad: administration pages render inside the ordinary user shell.
 - Bad: hiding publish actions until the account already owns a listing.
+- Bad: use listing/service/order counts, pending badges, or `permissions` as a replacement for the matching business capability.
+- Bad: hide a link but let its query execute, or catch a real `403` and substitute mock owner data.
 - Bad: ordinary user sidebar hides merchant workspace links behind a separate `商户` role switch.
 - Bad: sidebar has a manual `用户 / 管理员` role toggle.
 
@@ -622,9 +638,11 @@ export function initialSidebarCollapsed(
 - Product-boundary scan for official-price and API-intent wording drift.
 - Browser/DOM smoke:
   - sidebar has no manual role switch,
-  - profile-driven admin permission exposes exactly one management-console entry,
+  - student has no seller/carpool/probe links or owner requests,
+  - zero-resource linux.do profile still exposes probe/publish workspaces,
+  - profile-driven `admin.access` exposes exactly one management-console entry,
   - `/admin/**` renders the independent admin layout,
-  - publish actions remain visible while owner/merchant groups are progressive,
+  - route metadata and query `enabled` predicates use the same typed capability helper,
   - `/merchant/...` keeps the user permission sidebar,
   - persisted collapse preference overrides the viewport default,
   - mobile drawers expose dialog semantics and close with Escape,
@@ -645,9 +663,10 @@ const navGroups = [
 #### Correct
 
 ```ts
-const userShellGroups = [browseGroup, transactionGroup, publishGroup, accountGroup]
-if (hasOwnerObjectsOrPendingWork.value) userShellGroups.splice(3, 0, managementGroup)
-if (myProfile.value?.permissions.includes('admin')) userShellGroups.push(managementConsoleEntry)
+const userShellGroups = [browseGroup, buyerTransactionGroup, accountGroup]
+if (hasCapability(profile, CAPABILITY.apiServicePublish)) userShellGroups.push(merchantGroup)
+if (hasCapability(profile, CAPABILITY.apiProbeManage)) userShellGroups.push(probeEntry)
+if (hasCapability(profile, CAPABILITY.adminAccess)) userShellGroups.push(managementConsoleEntry)
 
 const layout = route.meta.standalone
   ? null
@@ -710,6 +729,9 @@ type ApiProbeConnectionPreflight = {
   the tooltip owns protocol, environment, P50/P95, retry/failure, and cost detail.
 - Re-enabling a disabled connection is measurement-changing: the quick switch first performs an
   existing-credential preflight, then updates with its token. Disabling remains a direct update.
+- Create, update, verify, and delete send a fresh `Idempotency-Key`. Completed replay returns the
+  stored response; frontend retry must reuse the same key for the same submitted mutation and must
+  not start another preflight/verify call.
 - API service create/edit sends `probeConnectionId`; it never duplicates Base URL or key in the
   service form. The selector shows only the current seller's connections and explains unavailable
   binding state without exposing credentials.

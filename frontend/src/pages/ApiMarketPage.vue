@@ -47,9 +47,10 @@ import {
   type ConcreteProductCategoryKey,
 } from '@/lib/productCategories'
 import { getApiServiceProductCategory, getApiServiceProductIconSrc, getProductIconSrc } from '@/lib/productCategoryIcon'
-import { useApiPromotions, useApiQuotaSaleSlots, useCreateApiQuotaOrderMutation, useInfiniteApiQuotaOffers, useInfiniteApiServices, useModelCatalog } from '@/queries/useMarketQueries'
+import { useApiPromotions, useApiQuotaSaleSlots, useCreateApiQuotaOrderMutation, useInfiniteApiQuotaOffers, useInfiniteApiServices, useModelCatalog, useMyProfileQuery } from '@/queries/useMarketQueries'
 import { useProductCategories } from '@/queries/useProductCatalogQueries'
 import { prefetchQueriesOnServer } from '@/queries/prefetchQueriesOnServer'
+import { CAPABILITY, hasCapability } from '@/lib/capabilities'
 
 type AvailabilityFilter = 'all' | 'available'
 type SaleModeFilter = ApiQuotaSaleMode | 'all'
@@ -60,7 +61,11 @@ type FreeSort = 'updated_desc' | 'price_asc' | 'minimum_purchase_asc'
 
 const route = useRoute()
 const router = useRouter()
+const { data: myProfile } = useMyProfileQuery(import.meta.client)
 const activeView = ref<ApiMarketView>(apiMarketViewFromQuery(route.query.view))
+const canPublishQuota = computed(() => hasCapability(myProfile.value, CAPABILITY.apiQuotaPublish))
+const canPublishApiService = computed(() => hasCapability(myProfile.value, CAPABILITY.apiServicePublish))
+const canPublishCurrentView = computed(() => activeView.value === 'limited' ? canPublishQuota.value : canPublishApiService.value)
 const marketSearch = ref('')
 const distributionSystem = ref<ApiQuotaDistributionSystem | 'all'>('all')
 const availability = ref<AvailabilityFilter>('available')
@@ -638,7 +643,7 @@ onBeforeUnmount(() => {
         <h1 class="mt-2 text-2xl font-semibold tracking-normal md:text-3xl">{{ viewMeta.title }}</h1>
         <p class="mt-2 max-w-3xl text-sm leading-6 text-muted-foreground">{{ viewMeta.description }} 额度来自卖家实际控制的站外中转系统，平台不代理 API 流量，也不验证上游余额。</p>
       </div>
-      <RouterLink :to="viewMeta.publishTo" class="w-full sm:w-auto">
+      <RouterLink v-if="canPublishCurrentView" :to="viewMeta.publishTo" class="w-full sm:w-auto">
         <Button class="h-11 w-full gap-2 sm:h-9"><PackagePlus class="h-4 w-4" /><span class="hidden sm:inline">{{ viewMeta.publishLabel }}</span><span class="sm:hidden">发布</span></Button>
       </RouterLink>
     </header>
@@ -686,7 +691,7 @@ onBeforeUnmount(() => {
                 <p class="mt-1 text-sm text-muted-foreground">可以切换其他场次，或发布自己的限量额度包。</p>
                 <div class="mt-3 flex flex-wrap justify-center gap-2">
                   <Button class="h-11 sm:h-9" size="sm" variant="outline" @click="activeView = 'free'">查看自选额度</Button>
-                  <RouterLink to="/api-market/quota/new"><Button class="h-11 sm:h-9" size="sm">发布额度包</Button></RouterLink>
+                  <RouterLink v-if="canPublishQuota" to="/api-market/quota/new"><Button class="h-11 sm:h-9" size="sm">发布额度包</Button></RouterLink>
                 </div>
               </div>
               <div v-else class="api-product-card-grid mt-4">
@@ -789,7 +794,7 @@ onBeforeUnmount(() => {
         <EmptyState v-else-if="quotaRows.length === 0 && !quotaQuery.hasNextPage.value" class="min-h-32 p-5" title="暂无匹配的额度包" description="可以调整筛选、查看自选额度，卖家也可以发布自己的限量额度包。">
           <template #action>
             <div class="flex flex-wrap justify-center gap-2">
-              <RouterLink to="/api-market/quota/new"><Button class="h-11 gap-2 sm:h-9"><PackagePlus class="h-4 w-4" />发布限量额度包</Button></RouterLink>
+              <RouterLink v-if="canPublishQuota" to="/api-market/quota/new"><Button class="h-11 gap-2 sm:h-9"><PackagePlus class="h-4 w-4" />发布限量额度包</Button></RouterLink>
               <Button class="h-11 sm:h-9" variant="outline" @click="activeView = 'free'">查看自选额度</Button>
             </div>
           </template>

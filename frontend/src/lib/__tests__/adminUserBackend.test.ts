@@ -30,6 +30,7 @@ function adminSession() {
       displayName: 'Admin',
       isAdmin: true,
       permissions: ['admin'],
+      capabilities: ['admin.access'],
       linuxDoBinding: { bound: false },
     },
   }

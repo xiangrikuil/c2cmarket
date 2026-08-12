@@ -150,6 +150,7 @@ POST /api/v1/auth/email-registration/confirm
 {
   "email": "user@student.example.edu.cn",
   "code": "123456",
+  "username": "campus_user",
   "password": "用户设置的密码"
 }
 ```
@@ -159,7 +160,10 @@ POST /api/v1/auth/email-registration/confirm
 - 验证码正确且未过期。
 - 院校域名仍然启用。
 - 学生邮箱仍未被其他账号认领。
+- 用户名是 3～24 位小写字母、数字、下划线或连字符，不在保留词中且全局唯一。
 - 密码符合现有密码强度要求。
+
+用户名不会被自动转小写、替换空格或生成备用名称；格式不合规返回 `USERNAME_INVALID`，保留词或占用冲突返回 `USERNAME_UNAVAILABLE`。用户名冲突时不会消耗仍然有效的验证码，用户可以换一个用户名重试。
 
 以下操作必须在同一个数据库事务内完成：
 
@@ -176,7 +180,7 @@ POST /api/v1/auth/email-registration/confirm
 
 任何一步失败，整个注册都回滚，不能产生半注册账号。
 
-## 5. 登录和密码找回
+## 5. 登录
 
 学生账号注册成功后，可以通过以下任一方式登录：
 
@@ -187,27 +191,7 @@ POST /api/v1/auth/email-registration/confirm
 
 邮箱登录必须查询永久的学生邮箱记录，不能依赖可修改的资料邮箱。
 
-### 5.1 密码找回
-
-新增接口：
-
-```http
-POST /api/v1/auth/password-reset/start
-POST /api/v1/auth/password-reset/confirm
-```
-
-申请重置验证码时需要：
-
-- Turnstile action 为 `password_reset`。
-- 保留 IP 和邮箱目标限流。
-- 返回统一提示，避免暴露邮箱是否注册。
-
-重置成功后：
-
-- 更新 Argon2id 密码凭据。
-- 原密码立即失效。
-- 注销该账号此前的全部登录会话。
-- 记录安全的密码重置事实，但不记录验证码或密码。
+密码找回不在本次实现范围内。未来新增找回流程时，必须复用同一套 purpose 隔离、HMAC 验证码和 Turnstile 约束，不能复用学生注册验证码。
 
 ## 6. 权限模型
 
@@ -218,14 +202,14 @@ POST /api/v1/auth/password-reset/confirm
 | Capability | linux.do 用户 | 学生账号 |
 | --- | ---: | ---: |
 | `api_order.create` | ✅ | ✅ |
-| `api_order.after_sales` | ✅ | ✅ |
-| `api_model_tester.use_owned_order` | ✅ | ✅ |
 | `carpool.apply` | ✅ | ❌ |
 | `carpool.publish` | ✅ | ❌ |
 | `api_service.publish` | ✅ | ❌ |
 | `api_quota.publish` | ✅ | ❌ |
 | `api_probe.manage` | ✅ | ❌ |
 | `admin.access` | 单独授权 | ❌ |
+
+不创建 `api_order.after_sales` 或 `api_model_tester.use_owned_order` 这类全局 capability。订单售后、纠纷、评价、联系方式读取和已购订单模型测试，完全按照具体订单的参与方、资源归属、订单状态、时限和既有资格规则授权。
 
 ### 6.2 学生账号可以执行的操作
 
@@ -292,6 +276,8 @@ code: CAPABILITY_REQUIRED
 - 能力从学生买家升级为普通 linux.do 用户能力。
 - 获得拼车、售卖和探针管理权限。
 
+绑定开始前必须在当前会话中重新验证密码；OAuth state 绑定当前用户、当前会话和 `link_linuxdo` purpose。成功绑定后轮换当前 Session 与 CSRF，其他已有会话会在下一次请求时根据新的持久身份事实重新投影能力。V1 不允许解绑。
+
 如果该 linux.do 身份已经属于另一个账号：
 
 ```text
@@ -311,8 +297,9 @@ V1 不提供自动合并或管理员强制合并。
 - 学生账号绑定 linux.do 后的能力升级。
 - 院校域名新增、修改、启用和停用。
 - 注册总开关修改。
-- 管理员调整账号能力。
-- 密码成功重置。
+- 管理员权限的真实授予或撤销。
+
+普通业务能力由学生邮箱认领、linux.do 绑定和管理员权限这些持久事实确定，不提供任意 `capability.granted` / `capability.revoked` 管理接口，也不伪造这类操作日志。
 
 日志中不能包含：
 
@@ -330,39 +317,37 @@ V1 不提供自动合并或管理员强制合并。
 
 ### 10.1 当前分支已经完成
 
-- 密码登录 Turnstile。
-- 学生注册申请入口 Turnstile。
-- 服务端 Siteverify。
-- action 精确校验。
-- hostname 精确校验。
-- 失败时统一返回 `TURNSTILE_VERIFICATION_FAILED`。
-- 前端登录组件和一次性 token 重置。
-- 生产、测试环境配置及 CSP。
+- 密码登录与学生注册申请的 Cloudflare Turnstile 校验、一次性 token 重置、action/hostname 精确校验及 CSP。
+- 默认关闭的学生注册总开关，以及院校域名的新增、改名、启停和乐观并发管理页面。
+- 学生邮箱永久认领、资料邮箱隔离和数据库级跨账号占用保护；修改资料邮箱不会释放注册邮箱。
+- 六位、十五分钟、最多五次尝试、重发作废且按 purpose 隔离的 HMAC 验证码。
+- 学生邮箱注册、邮箱或用户名密码登录，以及注册事务内的用户、身份、密码、来源、会话和安全事件写入。
+- 七项 canonical capability 的后端确定性投影、服务层校验、路由/menu/query 守卫和 OpenAPI/前端类型同步。
+- 学生保留购买、订单售后、纠纷、评价和已购订单模型测试；拼车、售卖、探针与商家工作台被拒绝。
+- 探针菜单改为只依赖 `api_probe.manage`，符合条件的新用户即使没有任何探针或服务也能看见入口。
+- 学生账号经近期密码验证后原地绑定 linux.do；冲突不合并，成功后轮换 Session/CSRF，V1 不允许解绑。
+- 联系方式真实 `usageScopes` 持久化；学生只能创建 `buyer` / `dispute` 用途，卖家用途在幂等开始和业务写入前被后端拒绝。
+- 管理员统一操作日志页面、数据库筛选、混合来源复合游标、安全 action registry，以及探针操作专属追加式账本。
 
-对应提交：
+原 Turnstile 实现提交及迁入当前分支后的提交：
 
 ```text
 f8ae8b3 feat(auth): integrate Cloudflare Turnstile
+e92d21e feat(auth): integrate Cloudflare Turnstile
 ```
 
-### 10.2 尚未实现
+### 10.2 激活前检查
 
-- 真正开放学生邮箱注册。
-- 注册总开关与院校域名管理页面。
-- 学生邮箱永久认领。
-- capability 权限体系。
-- 密码找回。
-- linux.do 原账号升级。
-- 探针菜单按 capability 展示。
-- 对应的统一操作日志扩展。
+- 保持学生注册总开关关闭，直到目标环境配置至少一个真实院校域名并完成迁移、邮件发送和 Turnstile 冒烟测试。
+- 使用隔离 PostgreSQL 完成从空库到当前版本的全链迁移、并发认领、审计游标和幂等故障注入验证。
+- 完成前后端全量测试、类型检查、生产构建及真实浏览器桌面/移动端验收。
 
-## 11. 推荐实施顺序
+密码找回仍是后续独立任务，不属于本次实现。
 
-1. 添加注册总开关、院校域名和学生邮箱永久认领表。
-2. 建立统一 capability 投影并更新会话、用户资料和 OpenAPI。
-3. 开放学生邮箱注册、邮箱/用户名登录和密码找回。
-4. 在所有购买、拼车、售卖、探针和商家操作前执行后端 capability 校验。
-5. 改造前端导航和空状态。
-6. 实现学生账号原地绑定 linux.do。
-7. 补齐管理员操作日志与混合来源审计页面。
-8. 完成 PostgreSQL 并发测试、前后端测试及真实浏览器验收后，再启用院校域名。
+## 11. 上线顺序
+
+1. 部署数据库迁移与后端，保持学生注册总开关关闭。
+2. 部署 OpenAPI 对齐后的前端和管理员配置页面。
+3. 管理员录入并复核精确院校域名。
+4. 在 staging 完成验证码、重复认领、学生权限、linux.do 绑定和审计日志冒烟测试。
+5. 确认邮件发送、Turnstile、限流与监控正常后，再由管理员显式开启学生注册。

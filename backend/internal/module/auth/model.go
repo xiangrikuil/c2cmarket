@@ -43,6 +43,8 @@ type User struct {
 	IsAdmin         bool
 	Status          string
 	LinuxDoBinding  *LinuxDoBinding
+	StudentClaim    *StudentEmailClaim
+	Capabilities    []string
 }
 
 type AdminUser struct {
@@ -213,14 +215,19 @@ type AdminUserMutationResult struct {
 type AdminUserCompletionBuilder func(AdminUserMutationResult) (idempotency.Completion, *domain.AppError)
 
 type Session struct {
-	ID                string
-	UserID            string
-	CSRFToken         string
-	ExpiresAt         time.Time
-	RenewedAt         time.Time
-	AbsoluteExpiresAt time.Time
-	RevokedAt         *time.Time
-	NewRegistration   bool
+	ID                        string
+	UserID                    string
+	CSRFToken                 string
+	ExpiresAt                 time.Time
+	RenewedAt                 time.Time
+	AbsoluteExpiresAt         time.Time
+	RevokedAt                 *time.Time
+	NewRegistration           bool
+	PasswordReauthenticatedAt *time.Time
+	OAuthLinkStateHash        string
+	OAuthLinkStatePurpose     string
+	OAuthLinkStateExpiresAt   *time.Time
+	OAuthLinkStateConsumedAt  *time.Time
 }
 
 type AccountAppealSession struct {
@@ -240,6 +247,16 @@ type LinuxDoBinding struct {
 	AvatarURL       string
 	BoundAt         time.Time
 	LastSyncedAt    time.Time
+}
+
+type StudentEmailClaim struct {
+	ID                  string
+	UserID              string
+	NormalizedEmail     string
+	InstitutionDomainID string
+	InstitutionDomain   string
+	InstitutionName     string
+	ClaimedAt           time.Time
 }
 
 type OAuthProfile struct {
@@ -296,10 +313,63 @@ type EmailRegistrationChallenge struct {
 }
 
 type EmailRegistrationConfirmInput struct {
-	Email              string
-	Code               string
-	UsernameCandidates []string
-	Attribution        RegistrationAttribution
+	Email       string
+	Code        string
+	Username    string
+	Password    string
+	Attribution RegistrationAttribution
+}
+
+type StudentRegistrationConfig struct {
+	Enabled      bool
+	Version      int64
+	Institutions []StudentInstitutionDomain
+}
+
+type StudentInstitutionDomain struct {
+	ID              string
+	Domain          string
+	InstitutionName string
+	Enabled         bool
+	Version         int64
+	CreatedAt       time.Time
+	UpdatedAt       time.Time
+}
+
+type StudentRegistrationSettingUpdate struct {
+	Enabled         bool
+	ExpectedVersion int64
+	AdminUserID     string
+	Reason          string
+	RequestID       string
+}
+
+type StudentInstitutionDomainCreateInput struct {
+	Domain          string
+	InstitutionName string
+	Enabled         bool
+	AdminUserID     string
+	Reason          string
+	RequestID       string
+}
+
+type StudentInstitutionDomainUpdateInput struct {
+	ID              string
+	InstitutionName string
+	Enabled         bool
+	ExpectedVersion int64
+	AdminUserID     string
+	Reason          string
+	RequestID       string
+}
+
+type StudentRegistrationCompletionBuilder func(StudentRegistrationConfig) (idempotency.Completion, *domain.AppError)
+
+type StudentInstitutionDomainCompletionBuilder func(StudentInstitutionDomain) (idempotency.Completion, *domain.AppError)
+
+type OAuthLinkResult struct {
+	User    User
+	Session Session
 }
 
 type RegistrationAttribution struct {

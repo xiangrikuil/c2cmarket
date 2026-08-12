@@ -24,6 +24,7 @@ import (
 const oauthStateCookieName = "c2c_oauth_state"
 const oauthMaxResponseBodyBytes = 1 << 20
 const oauthPurposeAccountAppeal = "account_appeal"
+const oauthPurposeLinkLinuxDo = auth.OAuthPurposeLinkLinuxDo
 const accountAppealFrontendPath = "/account-appeal"
 
 type devSessionRequest struct {
@@ -55,7 +56,23 @@ type emailRegistrationStartResponse struct {
 type emailRegistrationConfirmRequest struct {
 	Email       string                         `json:"email"`
 	Code        string                         `json:"code"`
+	Username    string                         `json:"username"`
+	Password    string                         `json:"password"`
 	Attribution registrationAttributionRequest `json:"attribution"`
+}
+
+type passwordReauthenticateRequest struct {
+	Password string `json:"password"`
+}
+
+type emailRegistrationConfigResponse struct {
+	Enabled      bool                                   `json:"enabled"`
+	Institutions []emailRegistrationInstitutionResponse `json:"institutions"`
+}
+
+type emailRegistrationInstitutionResponse struct {
+	Domain          string `json:"domain"`
+	InstitutionName string `json:"institutionName"`
 }
 
 type registrationAttributionRequest struct {
@@ -138,7 +155,18 @@ type userDTO struct {
 	DisplayName     string                   `json:"displayName"`
 	IsAdmin         bool                     `json:"isAdmin"`
 	Permissions     []string                 `json:"permissions"`
+	Capabilities    []string                 `json:"capabilities"`
+	StudentClaim    *sessionStudentClaimDTO  `json:"studentClaim"`
 	LinuxDo         sessionLinuxDoBindingDTO `json:"linuxDoBinding"`
+}
+
+// sessionStudentClaimDTO intentionally omits the canonical email and internal
+// identifiers. Session consumers only need the safe institution proof and its
+// timestamp; authorization always reloads the durable claim on the backend.
+type sessionStudentClaimDTO struct {
+	InstitutionDomain string `json:"institutionDomain"`
+	InstitutionName   string `json:"institutionName"`
+	ClaimedAt         string `json:"claimedAt"`
 }
 
 type sessionLinuxDoBindingDTO struct {
@@ -256,6 +284,47 @@ func (s *Server) handlePasswordLogin(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func (s *Server) handlePasswordReauthenticate(w http.ResponseWriter, r *http.Request) {
+	sessionToken, ok := middleware.SessionToken(r)
+	if !ok {
+		writeProblem(w, r, domain.NewError(http.StatusUnauthorized, domain.CodeSessionExpired, "Session required", "请先登录。"))
+		return
+	}
+	_, _, appErr := s.requireSessionAndCSRF(w, r)
+	if appErr != nil {
+		writeProblem(w, r, appErr)
+		return
+	}
+	req, appErr := decodeStrictJSONOnly[passwordReauthenticateRequest](r)
+	if appErr != nil {
+		writeProblem(w, r, appErr)
+		return
+	}
+	if appErr := s.app.ReauthenticatePassword(r.Context(), sessionToken, middleware.CSRFToken(r), req.Password); appErr != nil {
+		writeProblem(w, r, appErr)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) handleEmailRegistrationConfig(w http.ResponseWriter, r *http.Request) {
+	config, appErr := s.app.StudentRegistrationConfig(r.Context())
+	if appErr != nil {
+		writeProblem(w, r, appErr)
+		return
+	}
+	institutions := make([]emailRegistrationInstitutionResponse, 0, len(config.Institutions))
+	for _, institution := range config.Institutions {
+		if !institution.Enabled {
+			continue
+		}
+		institutions = append(institutions, emailRegistrationInstitutionResponse{
+			Domain: institution.Domain, InstitutionName: institution.InstitutionName,
+		})
+	}
+	writeJSON(w, http.StatusOK, emailRegistrationConfigResponse{Enabled: config.Enabled, Institutions: institutions})
+}
+
 func (s *Server) handleStartEmailRegistration(w http.ResponseWriter, r *http.Request) {
 	req, appErr := decodeStrictJSONOnly[emailRegistrationStartRequest](r)
 	if appErr != nil {
@@ -293,6 +362,8 @@ func (s *Server) handleConfirmEmailRegistration(w http.ResponseWriter, r *http.R
 	user, session, appErr := s.app.ConfirmEmailRegistration(r.Context(), auth.EmailRegistrationConfirmInput{
 		Email:       req.Email,
 		Code:        req.Code,
+		Username:    req.Username,
+		Password:    req.Password,
 		Attribution: req.Attribution.model(),
 	})
 	if appErr != nil {
@@ -330,7 +401,25 @@ func (s *Server) handleSetPassword(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleOAuthStart(w http.ResponseWriter, r *http.Request) {
+	purpose := strings.TrimSpace(r.URL.Query().Get("purpose"))
 	state := newOAuthState()
+	if purpose != "" && purpose != oauthPurposeLinkLinuxDo {
+		writeProblem(w, r, domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "OAuth purpose invalid", "OAuth purpose 无效。", "purpose", "invalid", "OAuth purpose 无效。"))
+		return
+	}
+	if purpose == oauthPurposeLinkLinuxDo {
+		sessionToken, ok := middleware.SessionToken(r)
+		if !ok {
+			writeProblem(w, r, domain.NewError(http.StatusUnauthorized, domain.CodeSessionExpired, "Session required", "请先登录。"))
+			return
+		}
+		var appErr *domain.AppError
+		state, appErr = s.app.StartLinuxDoLink(r.Context(), sessionToken)
+		if appErr != nil {
+			writeProblem(w, r, appErr)
+			return
+		}
+	}
 	returnTo := cleanReturnTo(r.URL.Query().Get("returnTo"))
 	attribution := auth.NormalizeRegistrationAttribution(auth.RegistrationAttribution{
 		Source:       r.URL.Query().Get("utmSource"),
@@ -342,6 +431,7 @@ func (s *Server) handleOAuthStart(w http.ResponseWriter, r *http.Request) {
 	s.setOAuthStateCookie(w, encodeOAuthStateCookie(oauthStateCookiePayload{
 		State:       state,
 		ReturnTo:    returnTo,
+		Purpose:     purpose,
 		Attribution: attribution,
 		InviteCode:  promotionreward.CanonicalReferralCode(r.URL.Query().Get("inviteCode")),
 	}))
@@ -372,7 +462,7 @@ func (s *Server) handleOAuthCallback(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, r, domain.NewError(http.StatusForbidden, domain.CodeCSRFTokenInvalid, "OAuth state invalid", "登录 state 无效或已过期。"))
 		return
 	}
-	if payload.Purpose != "" && payload.Purpose != oauthPurposeAccountAppeal {
+	if payload.Purpose != "" && payload.Purpose != oauthPurposeAccountAppeal && payload.Purpose != oauthPurposeLinkLinuxDo {
 		writeProblem(w, r, domain.NewError(http.StatusForbidden, domain.CodeCSRFTokenInvalid, "OAuth state invalid", "登录 state 无效或已过期。"))
 		return
 	}
@@ -388,6 +478,23 @@ func (s *Server) handleOAuthCallback(w http.ResponseWriter, r *http.Request) {
 	}
 	if payload.Purpose == oauthPurposeAccountAppeal {
 		s.handleAccountAppealOAuthCallback(w, r, profile)
+		return
+	}
+	if payload.Purpose == oauthPurposeLinkLinuxDo {
+		sessionToken, ok := middleware.SessionToken(r)
+		if !ok {
+			writeProblem(w, r, domain.NewError(http.StatusUnauthorized, domain.CodeSessionExpired, "Session required", "请先登录。"))
+			return
+		}
+		user, session, appErr := s.app.CompleteLinuxDoLink(r.Context(), sessionToken, state, profile)
+		if appErr != nil {
+			writeProblem(w, r, appErr)
+			return
+		}
+		s.setSessionCookie(w, session)
+		s.clearOAuthStateCookie(w)
+		_ = user
+		http.Redirect(w, r, s.oauthRedirectTarget(appendAuthOutcome(payload.ReturnTo, "linked")), http.StatusFound)
 		return
 	}
 	profile.Attribution = payload.Attribution
@@ -449,12 +556,17 @@ func (s *Server) handleGetSession(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
-	_, session, appErr := s.requireSessionAndCSRF(w, r)
+	sessionToken, ok := middleware.SessionToken(r)
+	if !ok {
+		writeProblem(w, r, domain.NewError(http.StatusUnauthorized, domain.CodeSessionExpired, "Session required", "请先登录。"))
+		return
+	}
+	_, _, appErr := s.requireSessionAndCSRF(w, r)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
 	}
-	s.app.Logout(r.Context(), session.ID)
+	s.app.Logout(r.Context(), sessionToken)
 	s.clearSessionCookie(w)
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -471,7 +583,20 @@ func toUserDTO(user auth.User) userDTO {
 		DisplayName:     user.DisplayName,
 		IsAdmin:         user.IsAdmin,
 		Permissions:     permissions,
+		Capabilities:    append([]string(nil), auth.ProjectCapabilities(user)...),
+		StudentClaim:    toStudentClaimDTO(user.StudentClaim),
 		LinuxDo:         toLinuxDoBindingDTO(user.LinuxDoBinding),
+	}
+}
+
+func toStudentClaimDTO(claim *auth.StudentEmailClaim) *sessionStudentClaimDTO {
+	if claim == nil {
+		return nil
+	}
+	return &sessionStudentClaimDTO{
+		InstitutionDomain: claim.InstitutionDomain,
+		InstitutionName:   claim.InstitutionName,
+		ClaimedAt:         claim.ClaimedAt.UTC().Format(time.RFC3339),
 	}
 }
 

@@ -447,6 +447,28 @@ repoints mutable API-service and carpool references, disables deterministic
 duplicates, and adds a per-user partial unique index while preserving frozen
 purchase-intent contact versions and historical snapshots.
 
+Version 91 (`000091_student_identity_and_auth_link`) adds the default-off
+student-registration singleton, immutable exact institution domains,
+append-only lifetime student-email claims, purpose-isolated registration
+challenge constraints, recent password reauthentication, and one-time
+session-bound linux.do link state. Its down migration refuses to remove a
+durable student identity after any claim exists.
+
+Version 92 (`000092_operation_audit_projection`) evolves the existing probe
+model-change history into one append-only probe operation ledger while
+preserving legacy model facts and compatibility writes. It also adds cursor
+indexes for the eight allowlisted authorities consumed by the administrator-only
+unified operation-history projection. The projection never copies source rows
+into a second universal audit table and does not expose raw metadata, reasons,
+credentials, contact values, or request bodies.
+
+Version 93 (`000093_contact_usage_scopes`) persists canonical contact-method
+usage scopes. Existing methods retain all four historical scopes
+(`carpool_owner`, `api_merchant`, `buyer`, and `dispute`), while newly inserted
+rows default to the buyer/dispute pair. A database check enforces a non-empty,
+deduplicated, allowlisted, canonically ordered scope array. The guarded down
+migration refuses to erase policy once a row carries a post-migration scope set.
+
 ## Contact Retention And Destruction
 
 Contact method deletion retires the mutable contact method surface. Historical

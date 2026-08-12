@@ -143,7 +143,7 @@ func TestPostgresAPIServiceProbeConnectionBindingEnforcesOwnerAndReadiness(t *te
 			ProbeProtocol: apihealth.ProtocolResponsesV1, AvailableModels: []string{apihealth.DefaultGPTProbeModel},
 			ProbeEnvironment:   apihealth.ProbeEnvironmentUSWestV1,
 			MeasurementVersion: 1, Version: 1, CreatedAt: now, UpdatedAt: now,
-		}, "probe-secret")
+		}, "probe-secret", apihealth.ProbeAuditMutation{Action: apihealth.ProbeAuditCreated, RequestID: "model-tester-create-" + name})
 		if appErr != nil {
 			t.Fatalf("create %s connection: %v", name, appErr)
 		}

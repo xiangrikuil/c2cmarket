@@ -249,18 +249,27 @@ export function useMyCarpoolApplicationsPage(filters: Ref<CarpoolApplicationFilt
   })
 }
 
-export function useMerchantCarpoolApplications(filters: Ref<CarpoolApplicationFilters> | CarpoolApplicationFilters = {}) {
+export function useMerchantCarpoolApplications(
+  filters: Ref<CarpoolApplicationFilters> | CarpoolApplicationFilters = {},
+  enabled: Ref<boolean> | boolean = true,
+) {
   return useQuery({
     queryKey: computed(() => ['merchant-carpool-applications', valueOf(filters)]),
     queryFn: () => getMerchantCarpoolApplications(valueOf(filters)),
+    enabled: computed(() => valueOf(enabled)),
     refetchOnMount: 'always',
   })
 }
 
-export function useMerchantCarpoolApplicationsPage(filters: Ref<CarpoolApplicationFilters> | CarpoolApplicationFilters, page: Ref<CursorPageRequest> | CursorPageRequest) {
+export function useMerchantCarpoolApplicationsPage(
+  filters: Ref<CarpoolApplicationFilters> | CarpoolApplicationFilters,
+  page: Ref<CursorPageRequest> | CursorPageRequest,
+  enabled: Ref<boolean> | boolean = true,
+) {
   return useQuery({
     queryKey: computed(() => ['merchant-carpool-applications', 'page', valueOf(filters), valueOf(page)]),
     queryFn: () => getMerchantCarpoolApplicationsPage(valueOf(filters), valueOf(page)),
+    enabled: computed(() => valueOf(enabled)),
     refetchOnMount: 'always',
   })
 }
@@ -747,10 +756,11 @@ export function useVerifyContactMethodMutation() {
   })
 }
 
-export function useApiPaymentAccountSettingsQuery() {
+export function useApiPaymentAccountSettingsQuery(enabled: Ref<boolean> | boolean = true) {
   return useQuery({
     queryKey: apiPaymentAccountSettingsQueryKey(),
     queryFn: getApiPaymentAccountSettings,
+    enabled: computed(() => valueOf(enabled)),
     staleTime: 30_000,
     refetchOnWindowFocus: false,
   })
@@ -858,18 +868,27 @@ export function useMyApiOrdersPage(filters: Ref<ApiOrderFilters> | ApiOrderFilte
   })
 }
 
-export function useMerchantApiOrders(filters: Ref<ApiOrderFilters> | ApiOrderFilters = {}) {
+export function useMerchantApiOrders(
+  filters: Ref<ApiOrderFilters> | ApiOrderFilters = {},
+  enabled: Ref<boolean> | boolean = true,
+) {
   return useQuery({
     queryKey: computed(() => ['merchant-api-orders', valueOf(filters)]),
     queryFn: () => getMerchantApiOrders(valueOf(filters)),
+    enabled: computed(() => valueOf(enabled)),
     refetchOnMount: 'always',
   })
 }
 
-export function useMerchantApiOrdersPage(filters: Ref<ApiOrderFilters> | ApiOrderFilters, page: Ref<CursorPageRequest> | CursorPageRequest) {
+export function useMerchantApiOrdersPage(
+  filters: Ref<ApiOrderFilters> | ApiOrderFilters,
+  page: Ref<CursorPageRequest> | CursorPageRequest,
+  enabled: Ref<boolean> | boolean = true,
+) {
   return useQuery({
     queryKey: computed(() => ['merchant-api-orders', 'page', valueOf(filters), valueOf(page)]),
     queryFn: () => getMerchantApiOrdersPage(valueOf(filters), valueOf(page)),
+    enabled: computed(() => valueOf(enabled)),
     refetchOnMount: 'always',
   })
 }

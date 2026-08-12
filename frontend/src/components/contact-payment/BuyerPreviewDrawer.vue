@@ -16,6 +16,7 @@ defineProps<{
   savedWechat: string
   savedEmail: string
   savedPaymentOptions: ApiPaymentOption[]
+  showPayment?: boolean
   hasUnsavedChanges: boolean
 }>()
 
@@ -69,7 +70,7 @@ const emit = defineEmits<{
         </section>
       </div>
 
-      <section class="buyer-preview-section">
+      <section v-if="showPayment" class="buyer-preview-section">
         <div class="flex items-center gap-2">
           <CreditCard class="h-4 w-4 text-success" />
           <h3 class="text-sm font-semibold">API 收款方式</h3>
@@ -94,7 +95,7 @@ const emit = defineEmits<{
       </section>
 
       <p class="text-xs leading-5 text-muted-foreground">
-        联系方式只在有效联系窗口中展示；收款方式只在买家创建 API 订单后展示。
+        {{ showPayment ? '联系方式只在有效联系窗口中展示；收款方式只在买家创建 API 订单后展示。' : '联系方式只在有效联系窗口中展示。' }}
       </p>
     </DialogContent>
   </Dialog>

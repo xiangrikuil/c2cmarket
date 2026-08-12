@@ -407,10 +407,15 @@ type fakeRepository struct {
 	idempotencyEntry    *idempotency.Entry
 }
 
-func (f *fakeRepository) CreateAPIQuotaBatch(_ context.Context, batch Batch) (Batch, *domain.AppError) {
+func (f *fakeRepository) CreateAPIQuotaBatch(_ context.Context, batch Batch, _ string) (Batch, *domain.AppError) {
 	f.createdBatch = &batch
 	f.batch = batch
 	return batch, nil
+}
+
+func (f *fakeRepository) CreateAPIQuotaBatchWithIdempotency(_ context.Context, _ idempotency.Entry, batch Batch, _ string, _ time.Time, build BatchCompletionBuilder) (Batch, idempotency.Completion, *domain.AppError) {
+	completion, appErr := build(batch)
+	return batch, completion, appErr
 }
 
 func (f *fakeRepository) GetAPIQuotaBatchForOwner(_ context.Context, _, _ string) (Batch, *domain.AppError) {
@@ -421,9 +426,14 @@ func (f *fakeRepository) ListAPIQuotaBatchesForOwner(_ context.Context, _, _ str
 	return domain.Page[Batch]{Items: []Batch{f.batch}}, nil
 }
 
-func (f *fakeRepository) CreateAPIQuotaOffer(_ context.Context, offer Offer, _ int, _ time.Time) (Offer, *domain.AppError) {
+func (f *fakeRepository) CreateAPIQuotaOffer(_ context.Context, offer Offer, _ int, _ string, _ time.Time) (Offer, *domain.AppError) {
 	f.createdOffer = &offer
 	return offer, nil
+}
+
+func (f *fakeRepository) CreateAPIQuotaOfferWithIdempotency(_ context.Context, _ idempotency.Entry, offer Offer, _ int, _ string, _ time.Time, build OfferCompletionBuilder) (Offer, idempotency.Completion, *domain.AppError) {
+	completion, appErr := build(offer)
+	return offer, completion, appErr
 }
 
 func (f *fakeRepository) GetAPIQuotaOfferForOwner(_ context.Context, _, _ string) (Offer, *domain.AppError) {
@@ -434,9 +444,15 @@ func (f *fakeRepository) ListAPIQuotaOffersForBatch(_ context.Context, _, _ stri
 	return f.offers, nil
 }
 
-func (f *fakeRepository) CreateAPIQuotaSaleRound(_ context.Context, round SaleRound, requested []RoundOfferInput, _ time.Time) (SaleRound, *domain.AppError) {
+func (f *fakeRepository) CreateAPIQuotaSaleRound(_ context.Context, round SaleRound, requested []RoundOfferInput, _ string, _ time.Time) (SaleRound, *domain.AppError) {
 	f.createdRoundRequest = append([]RoundOfferInput(nil), requested...)
 	return round, nil
+}
+
+func (f *fakeRepository) CreateAPIQuotaSaleRoundWithIdempotency(_ context.Context, _ idempotency.Entry, round SaleRound, requested []RoundOfferInput, _ string, _ time.Time, build SaleRoundCompletionBuilder) (SaleRound, idempotency.Completion, *domain.AppError) {
+	f.createdRoundRequest = append([]RoundOfferInput(nil), requested...)
+	completion, appErr := build(round)
+	return round, completion, appErr
 }
 
 func (f *fakeRepository) ListAPIQuotaSaleRoundsForBatch(_ context.Context, _, _ string) ([]SaleRound, *domain.AppError) {
@@ -448,9 +464,19 @@ func (f *fakeRepository) PublishAPIQuotaBatch(_ context.Context, _ BatchActionIn
 	return f.batch, nil
 }
 
+func (f *fakeRepository) PublishAPIQuotaBatchWithIdempotency(_ context.Context, _ idempotency.Entry, _ BatchActionInput, _ time.Time, build BatchCompletionBuilder) (Batch, idempotency.Completion, *domain.AppError) {
+	completion, appErr := build(f.batch)
+	return f.batch, completion, appErr
+}
+
 func (f *fakeRepository) UpdateAPIQuotaBatchStatus(_ context.Context, _ BatchActionInput, _ string, _ time.Time) (Batch, *domain.AppError) {
 	f.updateStatusCalls++
 	return f.batch, nil
+}
+
+func (f *fakeRepository) UpdateAPIQuotaBatchStatusWithIdempotency(_ context.Context, _ idempotency.Entry, _ BatchActionInput, _ string, _ time.Time, build BatchCompletionBuilder) (Batch, idempotency.Completion, *domain.AppError) {
+	completion, appErr := build(f.batch)
+	return f.batch, completion, appErr
 }
 
 func (f *fakeRepository) ListPublicAPIQuotaOffers(_ context.Context, _ PublicOfferFilter, _ domain.PageRequest, _ time.Time) (domain.Page[OfferCard], *domain.AppError) {
@@ -469,8 +495,14 @@ func (f *fakeRepository) GetAPIQuotaOrderForBuyer(_ context.Context, _, _ string
 	return apiorder.Order{}, nil
 }
 
-func (f *fakeRepository) ImportAPIQuotaCredentials(_ context.Context, _, offerID string, rows []CredentialImportRow, _ time.Time) (CredentialSummary, *domain.AppError) {
+func (f *fakeRepository) ImportAPIQuotaCredentials(_ context.Context, _, offerID, _ string, rows []CredentialImportRow, _ time.Time) (CredentialSummary, *domain.AppError) {
 	return CredentialSummary{OfferID: offerID, Available: len(rows)}, nil
+}
+
+func (f *fakeRepository) ImportAPIQuotaCredentialsWithIdempotency(_ context.Context, _ idempotency.Entry, _, offerID, _ string, rows []CredentialImportRow, _ time.Time, build CredentialImportCompletionBuilder) (CredentialImportResult, idempotency.Completion, *domain.AppError) {
+	result := CredentialImportResult{Imported: len(rows), Summary: CredentialSummary{OfferID: offerID, Available: len(rows)}}
+	completion, appErr := build(result)
+	return result, completion, appErr
 }
 
 func (f *fakeRepository) GetAPIQuotaCredentialSummary(_ context.Context, _, offerID string) (CredentialSummary, *domain.AppError) {

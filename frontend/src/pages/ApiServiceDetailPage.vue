@@ -24,10 +24,12 @@ import {
 import { trackAnalytics } from '@/lib/analytics'
 import { getApiServiceProductIconSrc } from '@/lib/productCategoryIcon'
 import { useDetailVisibleAnalytics } from '@/composables/useDetailVisibleAnalytics'
-import { useApiService, useFavoriteStatus, useMyApiServices, useToggleFavoriteMutation } from '@/queries/useMarketQueries'
+import { useApiService, useFavoriteStatus, useMyApiServices, useMyProfileQuery, useToggleFavoriteMutation } from '@/queries/useMarketQueries'
 import { markMissingQueryAsNotFoundOnServer, prefetchQueriesOnServer } from '@/queries/prefetchQueriesOnServer'
 import { useEntitySeo } from '@/composables/useEntitySeo'
 import { useProductCategories } from '@/queries/useProductCatalogQueries'
+import { CAPABILITY, hasCapability } from '@/lib/capabilities'
+import { loginRoute } from '@/lib/authNavigation'
 
 const route = useRoute()
 const router = useRouter()
@@ -40,7 +42,10 @@ const { data: service, isLoading, error: serviceError, refetch: refetchService }
 const { data: catalogCategories } = productCategoriesQuery
 prefetchQueriesOnServer(apiServiceQuery, productCategoriesQuery)
 markMissingQueryAsNotFoundOnServer(apiServiceQuery, () => Boolean(service.value))
-const { data: ownedServices, isLoading: ownershipLoading } = useMyApiServices('all', import.meta.client)
+const { data: myProfile } = useMyProfileQuery(import.meta.client)
+const canPublishApiService = computed(() => hasCapability(myProfile.value, CAPABILITY.apiServicePublish))
+const canCreateApiOrder = computed(() => hasCapability(myProfile.value, CAPABILITY.apiOrderCreate))
+const { data: ownedServices, isLoading: ownershipLoading } = useMyApiServices('all', canPublishApiService)
 const amount = ref(10)
 const selectedPackageId = ref('')
 const selectedDeliveryMode = ref<ApiDeliveryMode>('api_key_endpoint')
@@ -218,6 +223,12 @@ function createOrder() {
         <RouterLink :to="`/my/api-services/${service.id}`">
           <Button class="mt-4 w-full">返回服务管理</Button>
         </RouterLink>
+      </Card>
+
+      <Card v-else-if="!canCreateApiOrder" class="p-5">
+        <h2 class="font-semibold">登录后创建订单</h2>
+        <p class="mt-2 text-sm leading-6 text-muted-foreground">使用符合条件的账号登录后，可以创建 API 购买订单并查看付款方式。</p>
+        <Button as-child class="mt-4 w-full"><RouterLink :to="loginRoute(route.fullPath)">前往登录</RouterLink></Button>
       </Card>
 
       <ApiPurchasePanel

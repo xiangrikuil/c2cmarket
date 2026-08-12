@@ -839,7 +839,7 @@ export async function backendUpdateOwnerCarpool(
 	let listing = await backendMutation<BackendCarpoolListing>(
 		`/api/v1/carpools/${encodeURIComponent(id)}`,
 		toListingRequest(payload, ownerContactMethodId, plan),
-		{ method: 'PATCH', ifMatch: version },
+		{ method: 'PATCH', ifMatch: version, idempotencyPrefix: 'carpool-update' },
 	)
 	if (submitForReview) {
 		listing = await backendMutation<BackendCarpoolListing>(

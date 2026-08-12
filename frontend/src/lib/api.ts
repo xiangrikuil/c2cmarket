@@ -330,6 +330,8 @@ import {
   backendUpdateApiPaymentAccountSettings,
 } from '@/lib/apiPaymentSettingsBackend'
 import { getBackupPasswordValidationMessage } from '@/lib/passwordPolicy'
+import { CAPABILITY, hasCapability } from '@/lib/capabilities'
+import { requireMockIdentity } from '@/lib/mockAuth'
 import { compareDecimal, divideDecimal, normalizeDecimal, normalizeDecimalTrimmed } from '@/lib/decimal'
 export type AdminSection =
   | 'official-prices'
@@ -924,6 +926,34 @@ let notificationReadStore = readSessionStore<string[]>(notificationReadStorageKe
 let favoriteStore = readSessionStore<FavoriteRecord[]>(favoriteStorageKey, [])
 let myUserProfileStore = clone(myUserProfile)
 let myContactMethodStore = clone(myContactMethods)
+
+function syncMockProfileIdentity() {
+  const identity = requireMockIdentity()
+  const linuxDo = identity.linuxDoBinding
+  myUserProfileStore = {
+    ...myUserProfileStore,
+    id: identity.id,
+    username: identity.username,
+    displayName: identity.displayName,
+    email: identity.email,
+    emailVerified: Boolean(identity.email),
+    emailVerifiedAt: identity.email ? (myUserProfileStore.emailVerifiedAt ?? nowText()) : null,
+    passwordConfigured: identity.persona === 'student' || Boolean(identity.email),
+    avatarMode: linuxDo.bound ? 'linuxdo' : 'custom_url',
+    avatarUrl: linuxDo.avatarUrl ?? null,
+    linuxDoBinding: {
+      bound: linuxDo.bound,
+      linuxDoUserId: linuxDo.linuxDoUserId ?? null,
+      linuxDoUsername: linuxDo.linuxDoUsername ?? null,
+      linuxDoAvatarUrl: linuxDo.avatarUrl ?? null,
+      trustLevel: linuxDo.trustLevel ?? null,
+      lastSyncedAt: linuxDo.bound ? nowText() : null,
+    },
+    permissions: identity.permissions.filter((permission): permission is 'admin' => permission === 'admin'),
+    capabilities: [...identity.capabilities],
+  }
+  return myUserProfileStore
+}
 
 function clone<T>(value: T): T {
   return structuredClone(value)
@@ -3384,7 +3414,7 @@ export async function getMyApiServiceById(id: string) {
 export async function getMyProfile() {
   if (shouldUseRealBackend()) return backendMyProfile()
   await wait()
-  return clone(myUserProfileStore)
+  return clone(syncMockProfileIdentity())
 }
 
 export async function updateMyProfile(payload: UpdateMyProfileRequest) {
@@ -5295,7 +5325,7 @@ export async function getNavigationBadges(): Promise<NavigationBadgeSummary> {
     admin: null,
   }
 
-  if (myUserProfileStore.permissions.includes('admin')) {
+  if (hasCapability(syncMockProfileIdentity(), CAPABILITY.adminAccess)) {
     const admin = {
       officialPrices: officialPriceStore.filter(item => item.status === '待验证').length,
       carpools: carpoolStore.filter(item => item.status === '审核中' || item.status === '暂停').length,

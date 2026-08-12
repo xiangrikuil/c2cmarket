@@ -27,6 +27,7 @@ import (
 	"c2c-market/backend/internal/module/modelaudit"
 	"c2c-market/backend/internal/module/notification"
 	"c2c-market/backend/internal/module/officialprice"
+	"c2c-market/backend/internal/module/operationaudit"
 	"c2c-market/backend/internal/module/profile"
 	"c2c-market/backend/internal/module/promotionreward"
 	"c2c-market/backend/internal/module/report"
@@ -128,6 +129,7 @@ type Service struct {
 	modelAudit         *modelaudit.Service
 	growthService      *growth.Service
 	promotionRewards   *promotionreward.Service
+	operationAudit     *operationaudit.Service
 }
 
 type ServiceOptions struct {
@@ -183,16 +185,27 @@ func newServiceWithOptions(now func() time.Time, repositories Repositories, emai
 		emailSender: emailSender,
 		now:         now,
 	}
+	s.authService.SetEmailVerificationPepper(options.EmailVerificationPepper)
+	s.operationAudit = operationaudit.NewService(repositories.OperationAudit, s.authService, now)
 	s.reputationService = reputation.NewService(repositories.Reputation, now, s.idempotencyService)
 	s.contactService.SetActionChecker(s.reputationService)
 	s.officialPrice = officialprice.NewService(repositories.OfficialPrice, s.idempotencyService, now)
 	s.carpoolService = carpool.NewService(repositories.Carpool, s.catalogService, s.contactService, s.idempotencyService, now)
+	s.carpoolService.SetApplicationCreateGuard(func(ctx context.Context, user authmodule.User) *domain.AppError {
+		return s.reputationService.CheckActionAllowed(ctx, user.ID, reputation.RoleBuyer, reputation.ActionCarpoolApply)
+	})
 	s.apiMarket = apimarket.NewManager(repositories.APIService, s.catalogService, s.contactService, now)
 	s.devPersonaService = devpersona.NewService(s.authService, s.profileService, s.contactService, s.apiMarket)
 	s.apiIntent = apiintent.NewManager(repositories.APIPurchaseIntent, s.apiMarket, s.contactService, s.idempotencyService, now)
 	s.reportService = report.NewServiceWithNotifications(repositories.Report, s.idempotencyService, s.notification, now)
 	s.apiOrder = apiorder.NewService(repositories.APIOrder, s.apiIntent, s.apiMarket, s.reportService, s.idempotencyService, now)
 	s.sellerPublishCheck = &sellerPublishActionChecker{reputation: s.reputationService, orders: s.apiOrder}
+	s.apiIntent.SetCreateGuard(func(ctx context.Context, buyerUserID string, service apimarket.Service) *domain.AppError {
+		if appErr := s.reputationService.CheckActionAllowed(ctx, buyerUserID, reputation.RoleBuyer, reputation.ActionContactView); appErr != nil {
+			return appErr
+		}
+		return s.sellerPublishCheck.CheckActionAllowed(ctx, service.OwnerUserID, reputation.RoleSeller, reputation.ActionAPIServicePublish)
+	})
 	s.apiOrder.SetActionChecker(s.sellerPublishCheck)
 	s.reportService.SetDisputeProjectionCloser(s.apiOrder)
 	s.apiPromotion = apipromotion.NewService(repositories.APIPromotion, s.idempotencyService, now)
@@ -255,6 +268,42 @@ func (s *Service) LoginWithPassword(ctx context.Context, username, password stri
 	user, session, appErr := s.authService.LoginWithPassword(ctx, username, password)
 	s.recordAuthenticatedActivity(ctx, user, appErr)
 	return user, session, appErr
+}
+
+func (s *Service) StudentRegistrationConfig(ctx context.Context) (authmodule.StudentRegistrationConfig, *domain.AppError) {
+	return s.authService.StudentRegistrationConfig(ctx)
+}
+
+func (s *Service) AdminStudentRegistration(ctx context.Context, user authmodule.User) (authmodule.StudentRegistrationConfig, *domain.AppError) {
+	return s.authService.AdminStudentRegistration(ctx, user)
+}
+
+func (s *Service) UpdateAdminStudentRegistrationWithIdempotency(ctx context.Context, user authmodule.User, routeKey, key, requestHash string, input authmodule.StudentRegistrationSettingUpdate, build authmodule.StudentRegistrationCompletionBuilder) (idempotencymodule.Completion, *domain.AppError) {
+	return s.authService.UpdateAdminStudentRegistrationWithIdempotency(ctx, user, routeKey, key, requestHash, input, build)
+}
+
+func (s *Service) AdminStudentInstitutionDomains(ctx context.Context, user authmodule.User) ([]authmodule.StudentInstitutionDomain, *domain.AppError) {
+	return s.authService.AdminStudentInstitutionDomains(ctx, user)
+}
+
+func (s *Service) CreateStudentInstitutionDomainWithIdempotency(ctx context.Context, user authmodule.User, routeKey, key, requestHash string, input authmodule.StudentInstitutionDomainCreateInput, build authmodule.StudentInstitutionDomainCompletionBuilder) (idempotencymodule.Completion, *domain.AppError) {
+	return s.authService.CreateStudentInstitutionDomainWithIdempotency(ctx, user, routeKey, key, requestHash, input, build)
+}
+
+func (s *Service) UpdateStudentInstitutionDomainWithIdempotency(ctx context.Context, user authmodule.User, routeKey, key, requestHash string, input authmodule.StudentInstitutionDomainUpdateInput, build authmodule.StudentInstitutionDomainCompletionBuilder) (idempotencymodule.Completion, *domain.AppError) {
+	return s.authService.UpdateStudentInstitutionDomainWithIdempotency(ctx, user, routeKey, key, requestHash, input, build)
+}
+
+func (s *Service) ReauthenticatePassword(ctx context.Context, sessionID, csrfToken, password string) *domain.AppError {
+	return s.authService.ReauthenticatePassword(ctx, sessionID, csrfToken, password)
+}
+
+func (s *Service) StartLinuxDoLink(ctx context.Context, sessionID string) (string, *domain.AppError) {
+	return s.authService.StartLinuxDoLink(ctx, sessionID)
+}
+
+func (s *Service) CompleteLinuxDoLink(ctx context.Context, sessionID, state string, profile authmodule.OAuthProfile) (User, Session, *domain.AppError) {
+	return s.authService.CompleteLinuxDoLink(ctx, sessionID, state, profile)
 }
 
 func (s *Service) BootstrapAdmin(ctx context.Context, input BootstrapAdminInput) (BootstrapAdminResult, *domain.AppError) {
@@ -524,6 +573,9 @@ func (s *Service) ConfigureModelsDevSource(source modelsdev.Source) {
 }
 
 func (s *Service) CreateAPIService(ctx context.Context, user User, input CreateAPIServiceInput) (APIService, *domain.AppError) {
+	if appErr := authmodule.RequireCapability(user, authmodule.CapabilityAPIServicePublish); appErr != nil {
+		return APIService{}, appErr
+	}
 	service, appErr := s.apiMarket.Create(ctx, user, input)
 	if appErr != nil {
 		return APIService{}, appErr
@@ -531,7 +583,17 @@ func (s *Service) CreateAPIService(ctx context.Context, user User, input CreateA
 	return s.withAPIMerchantProfile(ctx, service)
 }
 
+func (s *Service) CreateAPIServiceWithIdempotency(ctx context.Context, user User, routeKey, key, requestHash string, input CreateAPIServiceInput, buildCompletion apimarket.ServiceCompletionBuilder) (IdempotencyCompletion, *domain.AppError) {
+	if appErr := authmodule.RequireCapability(user, authmodule.CapabilityAPIServicePublish); appErr != nil {
+		return IdempotencyCompletion{}, appErr
+	}
+	return s.apiMarket.CreateWithIdempotency(ctx, user, routeKey, key, requestHash, input, s.apiServiceCompletionWithProfile(ctx, buildCompletion))
+}
+
 func (s *Service) UpdateAPIService(ctx context.Context, user User, input UpdateAPIServiceInput) (APIService, *domain.AppError) {
+	if appErr := authmodule.RequireCapability(user, authmodule.CapabilityAPIServicePublish); appErr != nil {
+		return APIService{}, appErr
+	}
 	service, appErr := s.apiMarket.Update(ctx, user, input)
 	if appErr != nil {
 		return APIService{}, appErr
@@ -539,12 +601,35 @@ func (s *Service) UpdateAPIService(ctx context.Context, user User, input UpdateA
 	return s.withAPIMerchantProfile(ctx, service)
 }
 
+func (s *Service) UpdateAPIServiceWithIdempotency(ctx context.Context, user User, routeKey, key, requestHash string, input UpdateAPIServiceInput, buildCompletion apimarket.ServiceCompletionBuilder) (IdempotencyCompletion, *domain.AppError) {
+	if appErr := authmodule.RequireCapability(user, authmodule.CapabilityAPIServicePublish); appErr != nil {
+		return IdempotencyCompletion{}, appErr
+	}
+	return s.apiMarket.UpdateWithIdempotency(ctx, user, routeKey, key, requestHash, input, s.apiServiceCompletionWithProfile(ctx, buildCompletion))
+}
+
 func (s *Service) UpdateAPIServiceProbeConnection(ctx context.Context, user User, input apimarket.UpdateProbeConnectionInput) (APIService, *domain.AppError) {
+	if appErr := authmodule.RequireCapability(user, authmodule.CapabilityAPIServicePublish); appErr != nil {
+		return APIService{}, appErr
+	}
+	if appErr := authmodule.RequireCapability(user, authmodule.CapabilityAPIProbeManage); appErr != nil {
+		return APIService{}, appErr
+	}
 	service, appErr := s.apiMarket.UpdateProbeConnection(ctx, user, input)
 	if appErr != nil {
 		return APIService{}, appErr
 	}
 	return s.withAPIMerchantProfile(ctx, service)
+}
+
+func (s *Service) UpdateAPIServiceProbeConnectionWithIdempotency(ctx context.Context, user User, routeKey, key, requestHash string, input apimarket.UpdateProbeConnectionInput, buildCompletion apimarket.ServiceCompletionBuilder) (IdempotencyCompletion, *domain.AppError) {
+	if appErr := authmodule.RequireCapability(user, authmodule.CapabilityAPIServicePublish); appErr != nil {
+		return IdempotencyCompletion{}, appErr
+	}
+	if appErr := authmodule.RequireCapability(user, authmodule.CapabilityAPIProbeManage); appErr != nil {
+		return IdempotencyCompletion{}, appErr
+	}
+	return s.apiMarket.UpdateProbeConnectionWithIdempotency(ctx, user, routeKey, key, requestHash, input, s.apiServiceCompletionWithProfile(ctx, buildCompletion))
 }
 
 func (s *Service) PublicAPIServices(ctx context.Context, filter apimarket.PublicServiceFilter, page domain.PageRequest) (domain.Page[APIService], *domain.AppError) {
@@ -596,10 +681,16 @@ func (s *Service) AdminAPIPromotions(ctx context.Context, user User) ([]apipromo
 }
 
 func (s *Service) APIPromotionAvailability(ctx context.Context, user User, input apipromotion.AvailabilityInput) (apipromotion.Availability, *domain.AppError) {
+	if appErr := authmodule.RequireCapability(user, authmodule.CapabilityAdminAccess); appErr != nil {
+		return apipromotion.Availability{}, appErr
+	}
 	return s.apiPromotion.Availability(ctx, user, input)
 }
 
 func (s *Service) CreateAPIPromotion(ctx context.Context, user User, input apipromotion.CreateInput) (apipromotion.Promotion, *domain.AppError) {
+	if appErr := authmodule.RequireCapability(user, authmodule.CapabilityAdminAccess); appErr != nil {
+		return apipromotion.Promotion{}, appErr
+	}
 	item, appErr := s.apiPromotion.Create(ctx, user, input)
 	if appErr != nil {
 		return apipromotion.Promotion{}, appErr
@@ -612,10 +703,16 @@ func (s *Service) CreateAPIPromotion(ctx context.Context, user User, input apipr
 }
 
 func (s *Service) CreateAPIPromotionWithIdempotency(ctx context.Context, user User, routeKey, key, requestHash string, input apipromotion.CreateInput, buildCompletion apipromotion.CompletionBuilder) (idempotencymodule.Completion, *domain.AppError) {
+	if appErr := authmodule.RequireCapability(user, authmodule.CapabilityAdminAccess); appErr != nil {
+		return idempotencymodule.Completion{}, appErr
+	}
 	return s.apiPromotion.CreateWithIdempotency(ctx, user, routeKey, key, requestHash, input, buildCompletion)
 }
 
 func (s *Service) StopAPIPromotion(ctx context.Context, user User, input apipromotion.StopInput) (apipromotion.Promotion, *domain.AppError) {
+	if appErr := authmodule.RequireCapability(user, authmodule.CapabilityAdminAccess); appErr != nil {
+		return apipromotion.Promotion{}, appErr
+	}
 	item, appErr := s.apiPromotion.Stop(ctx, user, input)
 	if appErr != nil {
 		return apipromotion.Promotion{}, appErr
@@ -628,6 +725,9 @@ func (s *Service) StopAPIPromotion(ctx context.Context, user User, input apiprom
 }
 
 func (s *Service) StopAPIPromotionWithIdempotency(ctx context.Context, user User, routeKey, key, requestHash string, input apipromotion.StopInput, buildCompletion apipromotion.CompletionBuilder) (idempotencymodule.Completion, *domain.AppError) {
+	if appErr := authmodule.RequireCapability(user, authmodule.CapabilityAdminAccess); appErr != nil {
+		return idempotencymodule.Completion{}, appErr
+	}
 	return s.apiPromotion.StopWithIdempotency(ctx, user, routeKey, key, requestHash, input, buildCompletion)
 }
 
@@ -713,6 +813,9 @@ func (s *Service) withAPIPromotionServiceContext(ctx context.Context, items []ap
 }
 
 func (s *Service) OwnerAPIServices(ctx context.Context, user User, filter apimarket.OwnerServiceFilter, page domain.PageRequest) (domain.Page[APIService], *domain.AppError) {
+	if appErr := authmodule.RequireCapability(user, authmodule.CapabilityAPIServicePublish); appErr != nil {
+		return domain.Page[APIService]{}, appErr
+	}
 	services, appErr := s.apiMarket.OwnerServices(ctx, user, filter, page)
 	if appErr != nil {
 		return domain.Page[APIService]{}, appErr
@@ -725,6 +828,9 @@ func (s *Service) OwnerAPIServices(ctx context.Context, user User, filter apimar
 }
 
 func (s *Service) OwnerAPIService(ctx context.Context, user User, serviceID string) (APIService, *domain.AppError) {
+	if appErr := authmodule.RequireCapability(user, authmodule.CapabilityAPIServicePublish); appErr != nil {
+		return APIService{}, appErr
+	}
 	service, appErr := s.apiMarket.OwnerService(ctx, user, serviceID)
 	if appErr != nil {
 		return APIService{}, appErr
@@ -753,6 +859,9 @@ func (s *Service) AdminAPIService(ctx context.Context, user User, serviceID stri
 }
 
 func (s *Service) SubmitAPIServiceForReview(ctx context.Context, user User, input APIServiceOwnerActionInput) (APIService, *domain.AppError) {
+	if appErr := authmodule.RequireCapability(user, authmodule.CapabilityAPIServicePublish); appErr != nil {
+		return APIService{}, appErr
+	}
 	if appErr := s.sellerPublishCheck.CheckActionAllowed(ctx, user.ID, reputation.RoleSeller, reputation.ActionAPIServicePublish); appErr != nil {
 		return APIService{}, appErr
 	}
@@ -763,7 +872,20 @@ func (s *Service) SubmitAPIServiceForReview(ctx context.Context, user User, inpu
 	return s.withAPIMerchantProfile(ctx, service)
 }
 
+func (s *Service) SubmitAPIServiceForReviewWithIdempotency(ctx context.Context, user User, routeKey, key, requestHash string, input APIServiceOwnerActionInput, buildCompletion apimarket.ServiceCompletionBuilder) (IdempotencyCompletion, *domain.AppError) {
+	if appErr := authmodule.RequireCapability(user, authmodule.CapabilityAPIServicePublish); appErr != nil {
+		return IdempotencyCompletion{}, appErr
+	}
+	if appErr := s.sellerPublishCheck.CheckActionAllowed(ctx, user.ID, reputation.RoleSeller, reputation.ActionAPIServicePublish); appErr != nil {
+		return IdempotencyCompletion{}, appErr
+	}
+	return s.apiMarket.SubmitForReviewWithIdempotency(ctx, user, routeKey, key, requestHash, input, s.apiServiceCompletionWithProfile(ctx, buildCompletion))
+}
+
 func (s *Service) UpdateAPIServicePublication(ctx context.Context, user User, input APIServiceOwnerActionInput, action string) (APIService, *domain.AppError) {
+	if appErr := authmodule.RequireCapability(user, authmodule.CapabilityAPIServicePublish); appErr != nil {
+		return APIService{}, appErr
+	}
 	if action == "publish" || action == "resume" {
 		if appErr := s.sellerPublishCheck.CheckActionAllowed(ctx, user.ID, reputation.RoleSeller, reputation.ActionAPIServicePublish); appErr != nil {
 			return APIService{}, appErr
@@ -776,6 +898,18 @@ func (s *Service) UpdateAPIServicePublication(ctx context.Context, user User, in
 	return s.withAPIMerchantProfile(ctx, service)
 }
 
+func (s *Service) UpdateAPIServicePublicationWithIdempotency(ctx context.Context, user User, routeKey, key, requestHash string, input APIServiceOwnerActionInput, action string, buildCompletion apimarket.ServiceCompletionBuilder) (IdempotencyCompletion, *domain.AppError) {
+	if appErr := authmodule.RequireCapability(user, authmodule.CapabilityAPIServicePublish); appErr != nil {
+		return IdempotencyCompletion{}, appErr
+	}
+	if action == "publish" || action == "resume" {
+		if appErr := s.sellerPublishCheck.CheckActionAllowed(ctx, user.ID, reputation.RoleSeller, reputation.ActionAPIServicePublish); appErr != nil {
+			return IdempotencyCompletion{}, appErr
+		}
+	}
+	return s.apiMarket.UpdatePublicationWithIdempotency(ctx, user, routeKey, key, requestHash, input, action, s.apiServiceCompletionWithProfile(ctx, buildCompletion))
+}
+
 func (s *Service) UpdateAPIServiceAdminStatus(ctx context.Context, user User, input APIServiceAdminActionInput) (APIService, *domain.AppError) {
 	service, appErr := s.apiMarket.UpdateAdminStatus(ctx, user, input)
 	if appErr != nil {
@@ -784,12 +918,39 @@ func (s *Service) UpdateAPIServiceAdminStatus(ctx context.Context, user User, in
 	return s.withAPIMerchantProfile(ctx, service)
 }
 
+func (s *Service) UpdateAPIServiceAdminStatusWithIdempotency(ctx context.Context, user User, routeKey, key, requestHash string, input APIServiceAdminActionInput, buildCompletion apimarket.ServiceCompletionBuilder) (IdempotencyCompletion, *domain.AppError) {
+	return s.apiMarket.UpdateAdminStatusWithIdempotency(ctx, user, routeKey, key, requestHash, input, s.apiServiceCompletionWithProfile(ctx, buildCompletion))
+}
+
 func (s *Service) UpdateAPIServiceOrderSettings(ctx context.Context, user User, input apimarket.UpdateOrderSettingsInput) (APIService, *domain.AppError) {
+	if appErr := authmodule.RequireCapability(user, authmodule.CapabilityAPIServicePublish); appErr != nil {
+		return APIService{}, appErr
+	}
 	service, appErr := s.apiMarket.UpdateOrderSettings(ctx, user, input)
 	if appErr != nil {
 		return APIService{}, appErr
 	}
 	return s.withAPIMerchantProfile(ctx, service)
+}
+
+func (s *Service) UpdateAPIServiceOrderSettingsWithIdempotency(ctx context.Context, user User, routeKey, key, requestHash string, input apimarket.UpdateOrderSettingsInput, buildCompletion apimarket.ServiceCompletionBuilder) (IdempotencyCompletion, *domain.AppError) {
+	if appErr := authmodule.RequireCapability(user, authmodule.CapabilityAPIServicePublish); appErr != nil {
+		return IdempotencyCompletion{}, appErr
+	}
+	return s.apiMarket.UpdateOrderSettingsWithIdempotency(ctx, user, routeKey, key, requestHash, input, s.apiServiceCompletionWithProfile(ctx, buildCompletion))
+}
+
+func (s *Service) apiServiceCompletionWithProfile(ctx context.Context, buildCompletion apimarket.ServiceCompletionBuilder) apimarket.ServiceCompletionBuilder {
+	if buildCompletion == nil {
+		return nil
+	}
+	return func(service APIService) (IdempotencyCompletion, *domain.AppError) {
+		service, appErr := s.withAPIMerchantProfile(ctx, service)
+		if appErr != nil {
+			return IdempotencyCompletion{}, appErr
+		}
+		return buildCompletion(service)
+	}
 }
 
 func (s *Service) withAPIMerchantProfiles(ctx context.Context, services []APIService) ([]APIService, *domain.AppError) {
@@ -941,65 +1102,136 @@ func (s *Service) PublicAPIQuotaOffer(ctx context.Context, offerID string) (apiq
 }
 
 func (s *Service) OwnerAPIQuotaBatches(ctx context.Context, user User, apiServiceID string, page domain.PageRequest) (domain.Page[apiquota.Batch], *domain.AppError) {
+	if appErr := authmodule.RequireCapability(user, authmodule.CapabilityAPIQuotaPublish); appErr != nil {
+		return domain.Page[apiquota.Batch]{}, appErr
+	}
 	return s.apiQuota.OwnerBatches(ctx, user, apiServiceID, page)
 }
 
 func (s *Service) CreateAPIQuotaBatch(ctx context.Context, user User, input apiquota.CreateBatchInput) (apiquota.Batch, *domain.AppError) {
+	if appErr := authmodule.RequireCapability(user, authmodule.CapabilityAPIQuotaPublish); appErr != nil {
+		return apiquota.Batch{}, appErr
+	}
 	return s.apiQuota.CreateBatch(ctx, user, input)
 }
 
+func (s *Service) CreateAPIQuotaBatchWithIdempotency(ctx context.Context, user User, routeKey, key, requestHash string, input apiquota.CreateBatchInput, buildCompletion apiquota.BatchCompletionBuilder) (IdempotencyCompletion, *domain.AppError) {
+	if appErr := authmodule.RequireCapability(user, authmodule.CapabilityAPIQuotaPublish); appErr != nil {
+		return IdempotencyCompletion{}, appErr
+	}
+	return s.apiQuota.CreateBatchWithIdempotency(ctx, user, routeKey, key, requestHash, input, buildCompletion)
+}
+
 func (s *Service) OwnerAPIQuotaOffers(ctx context.Context, user User, batchID string) ([]apiquota.Offer, *domain.AppError) {
+	if appErr := authmodule.RequireCapability(user, authmodule.CapabilityAPIQuotaPublish); appErr != nil {
+		return nil, appErr
+	}
 	return s.apiQuota.OwnerOffers(ctx, user, batchID)
 }
 
 func (s *Service) CreateAPIQuotaOffer(ctx context.Context, user User, input apiquota.CreateOfferInput) (apiquota.Offer, *domain.AppError) {
+	if appErr := authmodule.RequireCapability(user, authmodule.CapabilityAPIQuotaPublish); appErr != nil {
+		return apiquota.Offer{}, appErr
+	}
 	return s.apiQuota.CreateOffer(ctx, user, input)
 }
 
+func (s *Service) CreateAPIQuotaOfferWithIdempotency(ctx context.Context, user User, routeKey, key, requestHash string, input apiquota.CreateOfferInput, buildCompletion apiquota.OfferCompletionBuilder) (IdempotencyCompletion, *domain.AppError) {
+	if appErr := authmodule.RequireCapability(user, authmodule.CapabilityAPIQuotaPublish); appErr != nil {
+		return IdempotencyCompletion{}, appErr
+	}
+	return s.apiQuota.CreateOfferWithIdempotency(ctx, user, routeKey, key, requestHash, input, buildCompletion)
+}
+
 func (s *Service) OwnerAPIQuotaRounds(ctx context.Context, user User, batchID string) ([]apiquota.SaleRound, *domain.AppError) {
+	if appErr := authmodule.RequireCapability(user, authmodule.CapabilityAPIQuotaPublish); appErr != nil {
+		return nil, appErr
+	}
 	return s.apiQuota.OwnerRounds(ctx, user, batchID)
 }
 
 func (s *Service) CreateAPIQuotaRound(ctx context.Context, user User, input apiquota.CreateRoundInput) (apiquota.SaleRound, *domain.AppError) {
+	if appErr := authmodule.RequireCapability(user, authmodule.CapabilityAPIQuotaPublish); appErr != nil {
+		return apiquota.SaleRound{}, appErr
+	}
 	return s.apiQuota.CreateRound(ctx, user, input)
 }
 
+func (s *Service) CreateAPIQuotaRoundWithIdempotency(ctx context.Context, user User, routeKey, key, requestHash string, input apiquota.CreateRoundInput, buildCompletion apiquota.SaleRoundCompletionBuilder) (IdempotencyCompletion, *domain.AppError) {
+	if appErr := authmodule.RequireCapability(user, authmodule.CapabilityAPIQuotaPublish); appErr != nil {
+		return IdempotencyCompletion{}, appErr
+	}
+	return s.apiQuota.CreateRoundWithIdempotency(ctx, user, routeKey, key, requestHash, input, buildCompletion)
+}
+
 func (s *Service) PublishAPIQuotaBatch(ctx context.Context, user User, input apiquota.BatchActionInput) (apiquota.Batch, *domain.AppError) {
+	if appErr := authmodule.RequireCapability(user, authmodule.CapabilityAPIQuotaPublish); appErr != nil {
+		return apiquota.Batch{}, appErr
+	}
 	return s.apiQuota.PublishBatch(ctx, user, input)
 }
 
+func (s *Service) PublishAPIQuotaBatchWithIdempotency(ctx context.Context, user User, routeKey, key, requestHash string, input apiquota.BatchActionInput, buildCompletion apiquota.BatchCompletionBuilder) (IdempotencyCompletion, *domain.AppError) {
+	if appErr := authmodule.RequireCapability(user, authmodule.CapabilityAPIQuotaPublish); appErr != nil {
+		return IdempotencyCompletion{}, appErr
+	}
+	return s.apiQuota.PublishBatchWithIdempotency(ctx, user, routeKey, key, requestHash, input, buildCompletion)
+}
+
 func (s *Service) UpdateAPIQuotaBatchStatus(ctx context.Context, user User, input apiquota.BatchActionInput, action string) (apiquota.Batch, *domain.AppError) {
+	if appErr := authmodule.RequireCapability(user, authmodule.CapabilityAPIQuotaPublish); appErr != nil {
+		return apiquota.Batch{}, appErr
+	}
 	return s.apiQuota.UpdateBatchStatus(ctx, user, input, action)
 }
 
-func (s *Service) CreateAPIQuotaOrderWithIdempotency(ctx context.Context, userID, routeKey, key, requestHash string, input apiquota.CreateOrderInput, buildCompletion apiorder.CompletionBuilder) (IdempotencyCompletion, *domain.AppError) {
-	return s.apiQuota.CreateOrderWithIdempotency(ctx, userID, routeKey, key, requestHash, input, buildCompletion)
+func (s *Service) UpdateAPIQuotaBatchStatusWithIdempotency(ctx context.Context, user User, routeKey, key, requestHash string, input apiquota.BatchActionInput, action string, buildCompletion apiquota.BatchCompletionBuilder) (IdempotencyCompletion, *domain.AppError) {
+	if appErr := authmodule.RequireCapability(user, authmodule.CapabilityAPIQuotaPublish); appErr != nil {
+		return IdempotencyCompletion{}, appErr
+	}
+	return s.apiQuota.UpdateBatchStatusWithIdempotency(ctx, user, routeKey, key, requestHash, input, action, buildCompletion)
+}
+
+func (s *Service) CreateAPIQuotaOrderWithIdempotency(ctx context.Context, user User, routeKey, key, requestHash string, input apiquota.CreateOrderInput, buildCompletion apiorder.CompletionBuilder) (IdempotencyCompletion, *domain.AppError) {
+	if appErr := authmodule.RequireCapability(user, authmodule.CapabilityAPIOrderCreate); appErr != nil {
+		return IdempotencyCompletion{}, appErr
+	}
+	return s.apiQuota.CreateOrderWithIdempotency(ctx, user.ID, routeKey, key, requestHash, input, buildCompletion)
 }
 
 func (s *Service) ImportAPIQuotaCredentials(ctx context.Context, user User, input apiquota.CredentialImportInput) (apiquota.CredentialImportResult, *domain.AppError) {
+	if appErr := authmodule.RequireCapability(user, authmodule.CapabilityAPIQuotaPublish); appErr != nil {
+		return apiquota.CredentialImportResult{}, appErr
+	}
 	return s.apiQuota.ImportCredentials(ctx, user, input)
 }
 
+func (s *Service) ImportAPIQuotaCredentialsWithIdempotency(ctx context.Context, user User, routeKey, key, requestHash string, input apiquota.CredentialImportInput, buildCompletion apiquota.CredentialImportCompletionBuilder) (IdempotencyCompletion, *domain.AppError) {
+	if appErr := authmodule.RequireCapability(user, authmodule.CapabilityAPIQuotaPublish); appErr != nil {
+		return IdempotencyCompletion{}, appErr
+	}
+	return s.apiQuota.ImportCredentialsWithIdempotency(ctx, user, routeKey, key, requestHash, input, buildCompletion)
+}
+
 func (s *Service) APIQuotaCredentialSummary(ctx context.Context, user User, offerID string) (apiquota.CredentialSummary, *domain.AppError) {
+	if appErr := authmodule.RequireCapability(user, authmodule.CapabilityAPIQuotaPublish); appErr != nil {
+		return apiquota.CredentialSummary{}, appErr
+	}
 	return s.apiQuota.CredentialSummary(ctx, user, offerID)
 }
 
 func (s *Service) CreateAPIQuotaRushOfferWithIdempotency(ctx context.Context, user User, routeKey, key, requestHash string, input apiquota.CreateRushOfferInput, buildCompletion apiquota.RushOfferCompletionBuilder) (IdempotencyCompletion, *domain.AppError) {
+	if appErr := authmodule.RequireCapability(user, authmodule.CapabilityAPIQuotaPublish); appErr != nil {
+		return IdempotencyCompletion{}, appErr
+	}
 	return s.apiQuota.CreateRushOfferWithIdempotency(ctx, user, routeKey, key, requestHash, input, buildCompletion)
 }
 
-func (s *Service) CreateAPIPurchaseIntentWithIdempotency(ctx context.Context, userID, routeKey, key, requestHash string, input CreateAPIPurchaseIntentInput, buildCompletion APIPurchaseIntentCompletionBuilder) (IdempotencyCompletion, *domain.AppError) {
-	if appErr := s.reputationService.CheckActionAllowed(ctx, userID, reputation.RoleBuyer, reputation.ActionContactView); appErr != nil {
+func (s *Service) CreateAPIPurchaseIntentWithIdempotency(ctx context.Context, user User, routeKey, key, requestHash string, input CreateAPIPurchaseIntentInput, buildCompletion APIPurchaseIntentCompletionBuilder) (IdempotencyCompletion, *domain.AppError) {
+	if appErr := authmodule.RequireCapability(user, authmodule.CapabilityAPIOrderCreate); appErr != nil {
 		return IdempotencyCompletion{}, appErr
 	}
-	service, appErr := s.apiMarket.PublicService(ctx, input.APIServiceID)
-	if appErr != nil {
-		return IdempotencyCompletion{}, appErr
-	}
-	if appErr := s.sellerPublishCheck.CheckActionAllowed(ctx, service.OwnerUserID, reputation.RoleSeller, reputation.ActionAPIServicePublish); appErr != nil {
-		return IdempotencyCompletion{}, appErr
-	}
-	_, completion, _, appErr := s.apiIntent.CreateWithIdempotency(ctx, userID, routeKey, key, requestHash, input, buildCompletion)
+	_, completion, _, appErr := s.apiIntent.CreateWithIdempotency(ctx, user.ID, routeKey, key, requestHash, input, buildCompletion)
 	if appErr != nil {
 		return IdempotencyCompletion{}, appErr
 	}
@@ -1018,10 +1250,16 @@ func (s *Service) MyAPIPurchaseIntent(ctx context.Context, user User, intentID, 
 }
 
 func (s *Service) OwnerAPIPurchaseIntents(ctx context.Context, user User) ([]APIPurchaseIntent, *domain.AppError) {
+	if appErr := authmodule.RequireCapability(user, authmodule.CapabilityAPIServicePublish); appErr != nil {
+		return nil, appErr
+	}
 	return s.apiIntent.OwnerIntents(ctx, user)
 }
 
 func (s *Service) OwnerAPIPurchaseIntent(ctx context.Context, user User, intentID, requestID string) (APIPurchaseIntent, *domain.AppError) {
+	if appErr := authmodule.RequireCapability(user, authmodule.CapabilityAPIServicePublish); appErr != nil {
+		return APIPurchaseIntent{}, appErr
+	}
 	if appErr := s.reputationService.CheckActionAllowed(ctx, user.ID, reputation.RoleSeller, reputation.ActionContactView); appErr != nil {
 		return APIPurchaseIntent{}, appErr
 	}
@@ -1040,20 +1278,29 @@ func (s *Service) CancelAPIPurchaseIntentWithIdempotency(ctx context.Context, us
 	return s.apiIntent.CancelWithIdempotency(ctx, userID, routeKey, key, requestHash, input, buildCompletion)
 }
 
-func (s *Service) MarkAPIPurchaseIntentContactedWithIdempotency(ctx context.Context, userID, routeKey, key, requestHash string, input APIPurchaseIntentActionInput, buildCompletion APIPurchaseIntentCompletionBuilder) (IdempotencyCompletion, *domain.AppError) {
-	return s.apiIntent.MarkContactedWithIdempotency(ctx, userID, routeKey, key, requestHash, input, buildCompletion)
-}
-
-func (s *Service) CloseAPIPurchaseIntentWithIdempotency(ctx context.Context, userID, routeKey, key, requestHash string, input APIPurchaseIntentActionInput, buildCompletion APIPurchaseIntentCompletionBuilder) (IdempotencyCompletion, *domain.AppError) {
-	return s.apiIntent.CloseWithIdempotency(ctx, userID, routeKey, key, requestHash, input, buildCompletion)
-}
-
-func (s *Service) CreateAPIOrderWithIdempotency(ctx context.Context, userID, routeKey, key, requestHash string, input APIOrderActionInput, createInput CreateAPIOrderInput, buildCompletion APIOrderCompletionBuilder) (IdempotencyCompletion, *domain.AppError) {
-	_ = input
-	if appErr := s.reputationService.CheckActionAllowed(ctx, userID, reputation.RoleBuyer, reputation.ActionAPIOrderCreate); appErr != nil {
+func (s *Service) MarkAPIPurchaseIntentContactedWithIdempotency(ctx context.Context, user User, routeKey, key, requestHash string, input APIPurchaseIntentActionInput, buildCompletion APIPurchaseIntentCompletionBuilder) (IdempotencyCompletion, *domain.AppError) {
+	if appErr := authmodule.RequireCapability(user, authmodule.CapabilityAPIServicePublish); appErr != nil {
 		return IdempotencyCompletion{}, appErr
 	}
-	order, completion, created, appErr := s.apiOrder.CreateWithIdempotencyResult(ctx, userID, routeKey, key, requestHash, createInput, buildCompletion)
+	return s.apiIntent.MarkContactedWithIdempotency(ctx, user.ID, routeKey, key, requestHash, input, buildCompletion)
+}
+
+func (s *Service) CloseAPIPurchaseIntentWithIdempotency(ctx context.Context, user User, routeKey, key, requestHash string, input APIPurchaseIntentActionInput, buildCompletion APIPurchaseIntentCompletionBuilder) (IdempotencyCompletion, *domain.AppError) {
+	if appErr := authmodule.RequireCapability(user, authmodule.CapabilityAPIServicePublish); appErr != nil {
+		return IdempotencyCompletion{}, appErr
+	}
+	return s.apiIntent.CloseWithIdempotency(ctx, user.ID, routeKey, key, requestHash, input, buildCompletion)
+}
+
+func (s *Service) CreateAPIOrderWithIdempotency(ctx context.Context, user User, routeKey, key, requestHash string, input APIOrderActionInput, createInput CreateAPIOrderInput, buildCompletion APIOrderCompletionBuilder) (IdempotencyCompletion, *domain.AppError) {
+	if appErr := authmodule.RequireCapability(user, authmodule.CapabilityAPIOrderCreate); appErr != nil {
+		return IdempotencyCompletion{}, appErr
+	}
+	_ = input
+	if appErr := s.reputationService.CheckActionAllowed(ctx, user.ID, reputation.RoleBuyer, reputation.ActionAPIOrderCreate); appErr != nil {
+		return IdempotencyCompletion{}, appErr
+	}
+	order, completion, created, appErr := s.apiOrder.CreateWithIdempotencyResult(ctx, user.ID, routeKey, key, requestHash, createInput, buildCompletion)
 	if appErr != nil {
 		return IdempotencyCompletion{}, appErr
 	}
@@ -1105,6 +1352,9 @@ func (s *Service) ReadAPIOrderPaymentInstructions(ctx context.Context, user User
 }
 
 func (s *Service) OwnerAPIOrders(ctx context.Context, user User) ([]APIOrder, *domain.AppError) {
+	if appErr := authmodule.RequireCapability(user, authmodule.CapabilityAPIServicePublish); appErr != nil {
+		return nil, appErr
+	}
 	orders, appErr := s.apiOrder.SellerOrders(ctx, user)
 	if appErr != nil {
 		return nil, appErr
@@ -1137,6 +1387,9 @@ func (s *Service) AdminAPIOrder(ctx context.Context, user User, orderID string) 
 }
 
 func (s *Service) OwnerAPIOrder(ctx context.Context, user User, orderID string) (APIOrder, *domain.AppError) {
+	if appErr := authmodule.RequireCapability(user, authmodule.CapabilityAPIServicePublish); appErr != nil {
+		return APIOrder{}, appErr
+	}
 	order, appErr := s.apiOrder.SellerOrder(ctx, user, orderID)
 	if appErr != nil {
 		return APIOrder{}, appErr
@@ -1164,38 +1417,104 @@ func (s *Service) OpenAPIOrderDisputeWithIdempotency(ctx context.Context, userID
 	return s.apiOrder.OpenDisputeWithIdempotency(ctx, userID, routeKey, key, requestHash, input, buildCompletion)
 }
 
-func (s *Service) ConfirmAPIOrderPaymentWithIdempotency(ctx context.Context, userID, routeKey, key, requestHash string, input APIOrderActionInput, buildCompletion APIOrderCompletionBuilder) (IdempotencyCompletion, *domain.AppError) {
-	return s.apiOrder.ConfirmPaymentWithIdempotency(ctx, userID, routeKey, key, requestHash, input, buildCompletion)
+func (s *Service) OpenOwnerAPIOrderDisputeWithIdempotency(ctx context.Context, user User, routeKey, key, requestHash string, input APIOrderActionInput, buildCompletion APIOrderCompletionBuilder) (IdempotencyCompletion, *domain.AppError) {
+	if appErr := authmodule.RequireCapability(user, authmodule.CapabilityAPIServicePublish); appErr != nil {
+		return IdempotencyCompletion{}, appErr
+	}
+	return s.apiOrder.OpenDisputeWithIdempotency(ctx, user.ID, routeKey, key, requestHash, input, buildCompletion)
 }
 
-func (s *Service) ReportAPIOrderPaymentIssueWithIdempotency(ctx context.Context, userID, routeKey, key, requestHash string, input APIOrderActionInput, buildCompletion APIOrderCompletionBuilder) (IdempotencyCompletion, *domain.AppError) {
-	return s.apiOrder.ReportPaymentIssueWithIdempotency(ctx, userID, routeKey, key, requestHash, input, buildCompletion)
+func (s *Service) ConfirmAPIOrderPaymentWithIdempotency(ctx context.Context, user User, routeKey, key, requestHash string, input APIOrderActionInput, buildCompletion APIOrderCompletionBuilder) (IdempotencyCompletion, *domain.AppError) {
+	if appErr := authmodule.RequireCapability(user, authmodule.CapabilityAPIServicePublish); appErr != nil {
+		return IdempotencyCompletion{}, appErr
+	}
+	return s.apiOrder.ConfirmPaymentWithIdempotency(ctx, user.ID, routeKey, key, requestHash, input, buildCompletion)
 }
 
-func (s *Service) SubmitAPIOrderDeliveryWithIdempotency(ctx context.Context, userID, routeKey, key, requestHash string, input APIOrderActionInput, buildCompletion APIOrderCompletionBuilder) (IdempotencyCompletion, *domain.AppError) {
-	return s.apiOrder.SubmitDeliveryWithIdempotency(ctx, userID, routeKey, key, requestHash, input, buildCompletion)
+func (s *Service) ReportAPIOrderPaymentIssueWithIdempotency(ctx context.Context, user User, routeKey, key, requestHash string, input APIOrderActionInput, buildCompletion APIOrderCompletionBuilder) (IdempotencyCompletion, *domain.AppError) {
+	if appErr := authmodule.RequireCapability(user, authmodule.CapabilityAPIServicePublish); appErr != nil {
+		return IdempotencyCompletion{}, appErr
+	}
+	return s.apiOrder.ReportPaymentIssueWithIdempotency(ctx, user.ID, routeKey, key, requestHash, input, buildCompletion)
+}
+
+func (s *Service) SubmitAPIOrderDeliveryWithIdempotency(ctx context.Context, user User, routeKey, key, requestHash string, input APIOrderActionInput, buildCompletion APIOrderCompletionBuilder) (IdempotencyCompletion, *domain.AppError) {
+	if appErr := authmodule.RequireCapability(user, authmodule.CapabilityAPIServicePublish); appErr != nil {
+		return IdempotencyCompletion{}, appErr
+	}
+	return s.apiOrder.SubmitDeliveryWithIdempotency(ctx, user.ID, routeKey, key, requestHash, input, buildCompletion)
 }
 
 func (s *Service) CreateCarpoolListing(ctx context.Context, user User, input CreateCarpoolListingInput) (CarpoolListing, *domain.AppError) {
+	if appErr := authmodule.RequireCapability(user, authmodule.CapabilityCarpoolPublish); appErr != nil {
+		return CarpoolListing{}, appErr
+	}
 	return s.carpoolService.CreateListing(ctx, user, input)
 }
 
+func (s *Service) CreateCarpoolListingWithIdempotency(ctx context.Context, user User, routeKey, key, requestHash string, input CreateCarpoolListingInput, buildCompletion carpool.ListingCompletionBuilder) (IdempotencyCompletion, *domain.AppError) {
+	if appErr := authmodule.RequireCapability(user, authmodule.CapabilityCarpoolPublish); appErr != nil {
+		return IdempotencyCompletion{}, appErr
+	}
+	_, completion, _, appErr := s.carpoolService.CreateListingWithIdempotency(ctx, user, routeKey, key, requestHash, input, buildCompletion)
+	return completion, appErr
+}
+
 func (s *Service) PublishCarpoolListing(ctx context.Context, user User, input PublishCarpoolListingInput) (CarpoolListing, *domain.AppError) {
+	if appErr := authmodule.RequireCapability(user, authmodule.CapabilityCarpoolPublish); appErr != nil {
+		return CarpoolListing{}, appErr
+	}
 	if appErr := s.reputationService.CheckActionAllowed(ctx, user.ID, reputation.RoleSeller, reputation.ActionCarpoolPublish); appErr != nil {
 		return CarpoolListing{}, appErr
 	}
 	return s.carpoolService.PublishListing(ctx, user, input)
 }
 
+func (s *Service) PublishCarpoolListingWithIdempotency(ctx context.Context, user User, routeKey, key, requestHash string, input PublishCarpoolListingInput, buildCompletion carpool.ListingCompletionBuilder) (IdempotencyCompletion, *domain.AppError) {
+	if appErr := authmodule.RequireCapability(user, authmodule.CapabilityCarpoolPublish); appErr != nil {
+		return IdempotencyCompletion{}, appErr
+	}
+	if appErr := s.reputationService.CheckActionAllowed(ctx, user.ID, reputation.RoleSeller, reputation.ActionCarpoolPublish); appErr != nil {
+		return IdempotencyCompletion{}, appErr
+	}
+	_, completion, _, appErr := s.carpoolService.PublishListingWithIdempotency(ctx, user, routeKey, key, requestHash, input, buildCompletion)
+	return completion, appErr
+}
+
 func (s *Service) UpdateCarpoolListing(ctx context.Context, user User, input UpdateCarpoolListingInput) (CarpoolListing, *domain.AppError) {
+	if appErr := authmodule.RequireCapability(user, authmodule.CapabilityCarpoolPublish); appErr != nil {
+		return CarpoolListing{}, appErr
+	}
 	return s.carpoolService.UpdateListing(ctx, user, input)
 }
 
+func (s *Service) UpdateCarpoolListingWithIdempotency(ctx context.Context, user User, routeKey, key, requestHash string, input UpdateCarpoolListingInput, buildCompletion carpool.ListingCompletionBuilder) (IdempotencyCompletion, *domain.AppError) {
+	if appErr := authmodule.RequireCapability(user, authmodule.CapabilityCarpoolPublish); appErr != nil {
+		return IdempotencyCompletion{}, appErr
+	}
+	_, completion, _, appErr := s.carpoolService.UpdateListingWithIdempotency(ctx, user, routeKey, key, requestHash, input, buildCompletion)
+	return completion, appErr
+}
+
 func (s *Service) SubmitCarpoolListingForReview(ctx context.Context, user User, input SubmitCarpoolListingReviewInput) (CarpoolListing, *domain.AppError) {
+	if appErr := authmodule.RequireCapability(user, authmodule.CapabilityCarpoolPublish); appErr != nil {
+		return CarpoolListing{}, appErr
+	}
 	if appErr := s.reputationService.CheckActionAllowed(ctx, user.ID, reputation.RoleSeller, reputation.ActionCarpoolPublish); appErr != nil {
 		return CarpoolListing{}, appErr
 	}
 	return s.carpoolService.SubmitListingForReview(ctx, user, input)
+}
+
+func (s *Service) SubmitCarpoolListingForReviewWithIdempotency(ctx context.Context, user User, routeKey, key, requestHash string, input SubmitCarpoolListingReviewInput, buildCompletion carpool.ListingCompletionBuilder) (IdempotencyCompletion, *domain.AppError) {
+	if appErr := authmodule.RequireCapability(user, authmodule.CapabilityCarpoolPublish); appErr != nil {
+		return IdempotencyCompletion{}, appErr
+	}
+	if appErr := s.reputationService.CheckActionAllowed(ctx, user.ID, reputation.RoleSeller, reputation.ActionCarpoolPublish); appErr != nil {
+		return IdempotencyCompletion{}, appErr
+	}
+	_, completion, _, appErr := s.carpoolService.SubmitListingForReviewWithIdempotency(ctx, user, routeKey, key, requestHash, input, buildCompletion)
+	return completion, appErr
 }
 
 func (s *Service) PublicCarpoolListings(ctx context.Context, filter carpool.ListingFilter, page domain.PageRequest) (domain.Page[CarpoolListing], *domain.AppError) {
@@ -1227,10 +1546,16 @@ func (s *Service) CarpoolApplicationEligibility(ctx context.Context, user User, 
 }
 
 func (s *Service) MyCarpoolListings(ctx context.Context, user User, view string, page domain.PageRequest) (domain.Page[CarpoolListing], *domain.AppError) {
+	if appErr := authmodule.RequireCapability(user, authmodule.CapabilityCarpoolPublish); appErr != nil {
+		return domain.Page[CarpoolListing]{}, appErr
+	}
 	return s.carpoolService.MyListings(ctx, user, view, page)
 }
 
 func (s *Service) MyCarpoolListing(ctx context.Context, user User, listingID string) (CarpoolListing, *domain.AppError) {
+	if appErr := authmodule.RequireCapability(user, authmodule.CapabilityCarpoolPublish); appErr != nil {
+		return CarpoolListing{}, appErr
+	}
 	return s.carpoolService.MyListing(ctx, user, listingID)
 }
 
@@ -1246,7 +1571,15 @@ func (s *Service) UpdateCarpoolListingReviewStatus(ctx context.Context, user Use
 	return s.carpoolService.UpdateListingReviewStatus(ctx, user, input)
 }
 
+func (s *Service) UpdateCarpoolListingReviewStatusWithIdempotency(ctx context.Context, user User, routeKey, key, requestHash string, input CarpoolReviewInput, buildCompletion carpool.ListingCompletionBuilder) (IdempotencyCompletion, *domain.AppError) {
+	_, completion, _, appErr := s.carpoolService.UpdateListingReviewStatusWithIdempotency(ctx, user, routeKey, key, requestHash, input, buildCompletion)
+	return completion, appErr
+}
+
 func (s *Service) CreateCarpoolApplication(ctx context.Context, user User, input CreateCarpoolApplicationInput) (CarpoolApplication, *domain.AppError) {
+	if appErr := authmodule.RequireCapability(user, authmodule.CapabilityCarpoolApply); appErr != nil {
+		return CarpoolApplication{}, appErr
+	}
 	if appErr := s.reputationService.CheckActionAllowed(ctx, user.ID, reputation.RoleBuyer, reputation.ActionCarpoolApply); appErr != nil {
 		return CarpoolApplication{}, appErr
 	}
@@ -1256,6 +1589,20 @@ func (s *Service) CreateCarpoolApplication(ctx context.Context, user User, input
 	}
 	s.sendCarpoolApplicationEmailIfNeeded(ctx, application)
 	return application, nil
+}
+
+func (s *Service) CreateCarpoolApplicationWithIdempotency(ctx context.Context, user User, routeKey, key, requestHash string, input CreateCarpoolApplicationInput, buildCompletion CarpoolApplicationCompletionBuilder) (IdempotencyCompletion, *domain.AppError) {
+	if appErr := authmodule.RequireCapability(user, authmodule.CapabilityCarpoolApply); appErr != nil {
+		return IdempotencyCompletion{}, appErr
+	}
+	application, completion, created, appErr := s.carpoolService.CreateApplicationWithIdempotency(ctx, user, routeKey, key, requestHash, input, buildCompletion)
+	if appErr != nil {
+		return IdempotencyCompletion{}, appErr
+	}
+	if created {
+		s.sendCarpoolApplicationEmailIfNeeded(ctx, application)
+	}
+	return completion, nil
 }
 
 func (s *Service) sendCarpoolApplicationEmailIfNeeded(ctx context.Context, application CarpoolApplication) {
@@ -1284,6 +1631,9 @@ func (s *Service) MyCarpoolApplication(ctx context.Context, user User, applicati
 }
 
 func (s *Service) OwnerCarpoolApplications(ctx context.Context, user User) ([]CarpoolApplication, *domain.AppError) {
+	if appErr := authmodule.RequireCapability(user, authmodule.CapabilityCarpoolPublish); appErr != nil {
+		return nil, appErr
+	}
 	applications, appErr := s.carpoolService.OwnerApplications(ctx, user)
 	if appErr != nil {
 		return nil, appErr
@@ -1292,6 +1642,9 @@ func (s *Service) OwnerCarpoolApplications(ctx context.Context, user User) ([]Ca
 }
 
 func (s *Service) OwnerCarpoolApplication(ctx context.Context, user User, applicationID string) (CarpoolApplication, *domain.AppError) {
+	if appErr := authmodule.RequireCapability(user, authmodule.CapabilityCarpoolPublish); appErr != nil {
+		return CarpoolApplication{}, appErr
+	}
 	application, appErr := s.carpoolService.OwnerApplication(ctx, user, applicationID)
 	if appErr != nil {
 		return CarpoolApplication{}, appErr
@@ -1303,11 +1656,14 @@ func (s *Service) OwnerCarpoolApplication(ctx context.Context, user User, applic
 	return items[0], nil
 }
 
-func (s *Service) AcceptCarpoolApplicationWithIdempotency(ctx context.Context, userID, routeKey, key, requestHash string, input AcceptCarpoolApplicationInput, buildCompletion CarpoolApplicationCompletionBuilder) (IdempotencyCompletion, *domain.AppError) {
-	if appErr := s.reputationService.CheckActionAllowed(ctx, userID, reputation.RoleSeller, reputation.ActionCarpoolAccept); appErr != nil {
+func (s *Service) AcceptCarpoolApplicationWithIdempotency(ctx context.Context, user User, routeKey, key, requestHash string, input AcceptCarpoolApplicationInput, buildCompletion CarpoolApplicationCompletionBuilder) (IdempotencyCompletion, *domain.AppError) {
+	if appErr := authmodule.RequireCapability(user, authmodule.CapabilityCarpoolPublish); appErr != nil {
 		return IdempotencyCompletion{}, appErr
 	}
-	application, completion, accepted, appErr := s.carpoolService.AcceptApplicationWithIdempotency(ctx, userID, routeKey, key, requestHash, input, buildCompletion)
+	if appErr := s.reputationService.CheckActionAllowed(ctx, user.ID, reputation.RoleSeller, reputation.ActionCarpoolAccept); appErr != nil {
+		return IdempotencyCompletion{}, appErr
+	}
+	application, completion, accepted, appErr := s.carpoolService.AcceptApplicationWithIdempotency(ctx, user.ID, routeKey, key, requestHash, input, buildCompletion)
 	if appErr != nil {
 		return IdempotencyCompletion{}, appErr
 	}
@@ -1334,20 +1690,40 @@ func (s *Service) sendCarpoolApplicationAcceptedEmailIfNeeded(ctx context.Contex
 	}
 }
 
-func (s *Service) RejectCarpoolApplication(ctx context.Context, input RejectCarpoolApplicationInput) (CarpoolApplication, *domain.AppError) {
+func (s *Service) RejectCarpoolApplication(ctx context.Context, user User, input RejectCarpoolApplicationInput) (CarpoolApplication, *domain.AppError) {
+	if appErr := authmodule.RequireCapability(user, authmodule.CapabilityCarpoolPublish); appErr != nil {
+		return CarpoolApplication{}, appErr
+	}
+	input.OwnerUserID = user.ID
 	return s.carpoolService.RejectApplication(ctx, input)
+}
+
+func (s *Service) RejectCarpoolApplicationWithIdempotency(ctx context.Context, user User, routeKey, key, requestHash string, input RejectCarpoolApplicationInput, buildCompletion CarpoolApplicationCompletionBuilder) (IdempotencyCompletion, *domain.AppError) {
+	if appErr := authmodule.RequireCapability(user, authmodule.CapabilityCarpoolPublish); appErr != nil {
+		return IdempotencyCompletion{}, appErr
+	}
+	_, completion, _, appErr := s.carpoolService.RejectApplicationWithIdempotency(ctx, user.ID, routeKey, key, requestHash, input, buildCompletion)
+	return completion, appErr
 }
 
 func (s *Service) CancelCarpoolApplicationWithIdempotency(ctx context.Context, userID, routeKey, key, requestHash string, input CancelCarpoolApplicationInput, buildCompletion CarpoolApplicationCompletionBuilder) (IdempotencyCompletion, *domain.AppError) {
 	return s.carpoolService.CancelApplicationWithIdempotency(ctx, userID, routeKey, key, requestHash, input, buildCompletion)
 }
 
-func (s *Service) WithdrawCarpoolAcceptanceWithIdempotency(ctx context.Context, userID, routeKey, key, requestHash string, input WithdrawCarpoolAcceptanceInput, buildCompletion CarpoolApplicationCompletionBuilder) (IdempotencyCompletion, *domain.AppError) {
-	return s.carpoolService.WithdrawAcceptanceWithIdempotency(ctx, userID, routeKey, key, requestHash, input, buildCompletion)
+func (s *Service) WithdrawCarpoolAcceptanceWithIdempotency(ctx context.Context, user User, routeKey, key, requestHash string, input WithdrawCarpoolAcceptanceInput, buildCompletion CarpoolApplicationCompletionBuilder) (IdempotencyCompletion, *domain.AppError) {
+	if appErr := authmodule.RequireCapability(user, authmodule.CapabilityCarpoolPublish); appErr != nil {
+		return IdempotencyCompletion{}, appErr
+	}
+	return s.carpoolService.WithdrawAcceptanceWithIdempotency(ctx, user.ID, routeKey, key, requestHash, input, buildCompletion)
 }
 
-func (s *Service) ConfirmCarpoolApplicationJoinWithIdempotency(ctx context.Context, userID, routeKey, key, requestHash string, input ConfirmCarpoolApplicationJoinInput, buildCompletion CarpoolApplicationCompletionBuilder) (IdempotencyCompletion, *domain.AppError) {
-	return s.carpoolService.ConfirmApplicationJoinWithIdempotency(ctx, userID, routeKey, key, requestHash, input, buildCompletion)
+func (s *Service) ConfirmCarpoolApplicationJoinWithIdempotency(ctx context.Context, user User, routeKey, key, requestHash string, input ConfirmCarpoolApplicationJoinInput, buildCompletion CarpoolApplicationCompletionBuilder) (IdempotencyCompletion, *domain.AppError) {
+	if input.ActorRole == CarpoolJoinActorOwner {
+		if appErr := authmodule.RequireCapability(user, authmodule.CapabilityCarpoolPublish); appErr != nil {
+			return IdempotencyCompletion{}, appErr
+		}
+	}
+	return s.carpoolService.ConfirmApplicationJoinWithIdempotency(ctx, user.ID, routeKey, key, requestHash, input, buildCompletion)
 }
 
 func (s *Service) MyCarpoolMemberships(ctx context.Context, user User) ([]CarpoolMembership, *domain.AppError) {
@@ -1359,22 +1735,50 @@ func (s *Service) MyCarpoolMembershipsByUserID(ctx context.Context, userID strin
 }
 
 func (s *Service) OwnerCarpoolMemberships(ctx context.Context, user User) ([]CarpoolMembership, *domain.AppError) {
+	if appErr := authmodule.RequireCapability(user, authmodule.CapabilityCarpoolPublish); appErr != nil {
+		return nil, appErr
+	}
 	return s.carpoolService.OwnerMemberships(ctx, user)
 }
 
-func (s *Service) ConfirmCarpoolMembershipCompleteWithIdempotency(ctx context.Context, userID, routeKey, key, requestHash string, input ConfirmCarpoolMembershipCompleteInput, buildCompletion CarpoolMembershipCompletionBuilder) (IdempotencyCompletion, *domain.AppError) {
-	return s.carpoolService.ConfirmMembershipCompleteWithIdempotency(ctx, userID, routeKey, key, requestHash, input, buildCompletion)
+func (s *Service) ConfirmCarpoolMembershipCompleteWithIdempotency(ctx context.Context, user User, routeKey, key, requestHash string, input ConfirmCarpoolMembershipCompleteInput, buildCompletion CarpoolMembershipCompletionBuilder) (IdempotencyCompletion, *domain.AppError) {
+	if input.ActorRole == CarpoolJoinActorOwner {
+		if appErr := authmodule.RequireCapability(user, authmodule.CapabilityCarpoolPublish); appErr != nil {
+			return IdempotencyCompletion{}, appErr
+		}
+	}
+	return s.carpoolService.ConfirmMembershipCompleteWithIdempotency(ctx, user.ID, routeKey, key, requestHash, input, buildCompletion)
 }
 
-func (s *Service) EndCarpoolMembershipWithIdempotency(ctx context.Context, userID, routeKey, key, requestHash string, input EndCarpoolMembershipInput, buildCompletion CarpoolMembershipCompletionBuilder) (IdempotencyCompletion, *domain.AppError) {
-	return s.carpoolService.EndMembershipWithIdempotency(ctx, userID, routeKey, key, requestHash, input, buildCompletion)
+func (s *Service) EndCarpoolMembershipWithIdempotency(ctx context.Context, user User, routeKey, key, requestHash string, input EndCarpoolMembershipInput, buildCompletion CarpoolMembershipCompletionBuilder) (IdempotencyCompletion, *domain.AppError) {
+	if input.ActorRole == CarpoolJoinActorOwner {
+		if appErr := authmodule.RequireCapability(user, authmodule.CapabilityCarpoolPublish); appErr != nil {
+			return IdempotencyCompletion{}, appErr
+		}
+	}
+	return s.carpoolService.EndMembershipWithIdempotency(ctx, user.ID, routeKey, key, requestHash, input, buildCompletion)
 }
 
 func (s *Service) CreateContactMethod(ctx context.Context, input ContactMethodInput) (ContactMethod, *domain.AppError) {
 	if strings.TrimSpace(input.Type) == "linuxdo" {
 		return ContactMethod{}, identityManagedContactError()
 	}
+	if appErr := s.requireContactUsageScopeCapabilities(ctx, input.UserID, input.UsageScopes); appErr != nil {
+		return ContactMethod{}, appErr
+	}
 	return s.contactService.CreateMethod(ctx, input)
+}
+
+func (s *Service) CreateContactMethodWithIdempotency(ctx context.Context, user User, routeKey, key, requestHash string, input ContactMethodInput, buildCompletion contactmodule.MethodCompletionBuilder) (IdempotencyCompletion, *domain.AppError) {
+	input.UserID = user.ID
+	if strings.TrimSpace(input.Type) == "linuxdo" {
+		return IdempotencyCompletion{}, identityManagedContactError()
+	}
+	if appErr := s.requireContactUsageScopeCapabilities(ctx, user.ID, input.UsageScopes); appErr != nil {
+		return IdempotencyCompletion{}, appErr
+	}
+	_, completion, _, appErr := s.contactService.CreateMethodWithIdempotency(ctx, user.ID, routeKey, key, requestHash, input, buildCompletion)
+	return completion, appErr
 }
 
 func (s *Service) ListContactMethods(ctx context.Context, userID string) ([]ContactMethod, *domain.AppError) {
@@ -1398,7 +1802,83 @@ func (s *Service) UpdateContactMethod(ctx context.Context, input contactmodule.U
 	if strings.TrimSpace(input.Type) == "linuxdo" || isLinuxDo {
 		return ContactMethod{}, identityManagedContactError()
 	}
+	effectiveScopes := input.UsageScopes
+	if effectiveScopes == nil {
+		methods, listErr := s.contactService.ListMethods(ctx, input.UserID)
+		if listErr != nil {
+			return ContactMethod{}, listErr
+		}
+		for _, method := range methods {
+			if method.ID == input.MethodID {
+				effectiveScopes = method.UsageScopes
+				break
+			}
+		}
+	}
+	if appErr := s.requireContactUsageScopeCapabilities(ctx, input.UserID, effectiveScopes); appErr != nil {
+		return ContactMethod{}, appErr
+	}
 	return s.contactService.UpdateMethod(ctx, input)
+}
+
+func (s *Service) UpdateContactMethodWithIdempotency(ctx context.Context, user User, routeKey, key, requestHash string, input contactmodule.UpdateContactMethodInput, buildCompletion contactmodule.MethodCompletionBuilder) (IdempotencyCompletion, *domain.AppError) {
+	input.UserID = user.ID
+	isLinuxDo, appErr := s.isLinuxDoContactMethod(ctx, user.ID, input.MethodID)
+	if appErr != nil {
+		return IdempotencyCompletion{}, appErr
+	}
+	if strings.TrimSpace(input.Type) == "linuxdo" || isLinuxDo {
+		return IdempotencyCompletion{}, identityManagedContactError()
+	}
+	effectiveScopes := input.UsageScopes
+	if effectiveScopes == nil {
+		methods, listErr := s.contactService.ListMethods(ctx, user.ID)
+		if listErr != nil {
+			return IdempotencyCompletion{}, listErr
+		}
+		for _, method := range methods {
+			if method.ID == input.MethodID {
+				effectiveScopes = method.UsageScopes
+				break
+			}
+		}
+	}
+	if appErr := s.requireContactUsageScopeCapabilities(ctx, user.ID, effectiveScopes); appErr != nil {
+		return IdempotencyCompletion{}, appErr
+	}
+	_, completion, _, appErr := s.contactService.UpdateMethodWithIdempotency(ctx, user.ID, routeKey, key, requestHash, input, buildCompletion)
+	return completion, appErr
+}
+
+func (s *Service) requireContactUsageScopeCapabilities(ctx context.Context, userID string, usageScopes []string) *domain.AppError {
+	requiresCarpoolPublish := false
+	requiresAPIServicePublish := false
+	for _, scope := range usageScopes {
+		switch scope {
+		case contactmodule.UsageScopeCarpoolOwner:
+			requiresCarpoolPublish = true
+		case contactmodule.UsageScopeAPIMerchant:
+			requiresAPIServicePublish = true
+		}
+	}
+	if !requiresCarpoolPublish && !requiresAPIServicePublish {
+		return nil
+	}
+	user, appErr := s.authService.UserByID(ctx, userID)
+	if appErr != nil {
+		return appErr
+	}
+	if requiresCarpoolPublish {
+		if appErr := authmodule.RequireCapability(user, authmodule.CapabilityCarpoolPublish); appErr != nil {
+			return appErr
+		}
+	}
+	if requiresAPIServicePublish {
+		if appErr := authmodule.RequireCapability(user, authmodule.CapabilityAPIServicePublish); appErr != nil {
+			return appErr
+		}
+	}
+	return nil
 }
 
 func (s *Service) DeleteContactMethod(ctx context.Context, userID, methodID string) (ContactMethod, *domain.AppError) {
@@ -1410,6 +1890,18 @@ func (s *Service) DeleteContactMethod(ctx context.Context, userID, methodID stri
 		return ContactMethod{}, identityManagedContactError()
 	}
 	return s.contactService.DeleteMethod(ctx, userID, methodID)
+}
+
+func (s *Service) DeleteContactMethodWithIdempotency(ctx context.Context, user User, routeKey, key, requestHash, methodID, requestID string, buildCompletion contactmodule.MethodCompletionBuilder) (IdempotencyCompletion, *domain.AppError) {
+	isLinuxDo, appErr := s.isLinuxDoContactMethod(ctx, user.ID, methodID)
+	if appErr != nil {
+		return IdempotencyCompletion{}, appErr
+	}
+	if isLinuxDo {
+		return IdempotencyCompletion{}, identityManagedContactError()
+	}
+	_, completion, _, appErr := s.contactService.DeleteMethodWithIdempotency(ctx, user.ID, routeKey, key, requestHash, methodID, requestID, buildCompletion)
+	return completion, appErr
 }
 
 func (s *Service) isLinuxDoContactMethod(ctx context.Context, userID, methodID string) (bool, *domain.AppError) {
@@ -1433,8 +1925,18 @@ func (s *Service) SetDefaultContactMethod(ctx context.Context, userID, methodID 
 	return s.contactService.SetDefaultMethod(ctx, userID, methodID)
 }
 
+func (s *Service) SetDefaultContactMethodWithIdempotency(ctx context.Context, user User, routeKey, key, requestHash, methodID, requestID string, buildCompletion contactmodule.MethodCompletionBuilder) (IdempotencyCompletion, *domain.AppError) {
+	_, completion, _, appErr := s.contactService.SetDefaultMethodWithIdempotency(ctx, user.ID, routeKey, key, requestHash, methodID, requestID, buildCompletion)
+	return completion, appErr
+}
+
 func (s *Service) VerifyContactMethod(ctx context.Context, userID, methodID string) (ContactMethod, *domain.AppError) {
 	return s.contactService.VerifyMethod(ctx, userID, methodID)
+}
+
+func (s *Service) VerifyContactMethodWithIdempotency(ctx context.Context, user User, routeKey, key, requestHash, methodID, requestID string, buildCompletion contactmodule.MethodCompletionBuilder) (IdempotencyCompletion, *domain.AppError) {
+	_, completion, _, appErr := s.contactService.VerifyMethodWithIdempotency(ctx, user.ID, routeKey, key, requestHash, methodID, requestID, buildCompletion)
+	return completion, appErr
 }
 
 func (s *Service) CreateContactSession(ctx context.Context, input CreateContactSessionInput) (ContactSession, *domain.AppError) {
@@ -1702,10 +2204,16 @@ func limitSlice[T any](items []T, limit int) []T {
 }
 
 func (s *Service) MyMerchantProfile(ctx context.Context, user User) (MerchantProfile, *domain.AppError) {
+	if appErr := authmodule.RequireCapability(user, authmodule.CapabilityAPIServicePublish); appErr != nil {
+		return MerchantProfile{}, appErr
+	}
 	return s.profileService.MyMerchantProfile(ctx, user)
 }
 
 func (s *Service) UpsertMyMerchantProfile(ctx context.Context, user User, input UpsertMerchantProfileInput) (MerchantProfile, *domain.AppError) {
+	if appErr := authmodule.RequireCapability(user, authmodule.CapabilityAPIServicePublish); appErr != nil {
+		return MerchantProfile{}, appErr
+	}
 	return s.profileService.UpsertMyMerchantProfile(ctx, user, input)
 }
 

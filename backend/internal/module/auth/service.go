@@ -6,7 +6,9 @@ import (
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/hex"
+	"fmt"
 	"log"
+	"math/big"
 	"net/http"
 	"net/mail"
 	"regexp"
@@ -25,16 +27,24 @@ import (
 )
 
 const (
-	PasswordAlgorithmArgon2IDV1            = "argon2id_v1"
-	PasswordAlgorithmSHA256SaltedV1        = "sha256_salted_v1"
-	argon2idV1MemoryKB              uint32 = 64 * 1024
-	argon2idV1Iterations            uint32 = 3
-	argon2idV1Parallelism           uint8  = 1
-	argon2idV1KeyLength             uint32 = 32
-	SessionIdleLifetime                    = 7 * 24 * time.Hour
-	SessionRenewalInterval                 = 24 * time.Hour
-	SessionAbsoluteLifetime                = 30 * 24 * time.Hour
-	AccountAppealSessionLifetime           = 15 * time.Minute
+	PasswordAlgorithmArgon2IDV1                    = "argon2id_v1"
+	PasswordAlgorithmSHA256SaltedV1                = "sha256_salted_v1"
+	argon2idV1MemoryKB                      uint32 = 64 * 1024
+	argon2idV1Iterations                    uint32 = 3
+	argon2idV1Parallelism                   uint8  = 1
+	argon2idV1KeyLength                     uint32 = 32
+	SessionIdleLifetime                            = 7 * 24 * time.Hour
+	SessionRenewalInterval                         = 24 * time.Hour
+	SessionAbsoluteLifetime                        = 30 * 24 * time.Hour
+	AccountAppealSessionLifetime                   = 15 * time.Minute
+	EmailRegistrationCodeLifetime                  = 15 * time.Minute
+	EmailRegistrationMaxAttempts                   = 5
+	RecentPasswordReauthenticationWindow           = 10 * time.Minute
+	OAuthLinkStateLifetime                         = 10 * time.Minute
+	localEmailVerificationPepper                   = "c2cmarket-local-email-verification-pepper-v1"
+	EmailRegistrationPurpose                       = "email_registration"
+	OAuthPurposeLinkLinuxDo                        = "link_linuxdo"
+	studentRegistrationSettingAuditTargetID        = "00000000-0000-0000-0000-000000000091"
 )
 
 type Service struct {
@@ -43,6 +53,7 @@ type Service struct {
 	repo                        Repository
 	idempotency                 *idempotency.Service
 	registrationEmailSender     RegistrationEmailSender
+	emailVerificationPepper     []byte
 	users                       map[string]User
 	adminUsers                  map[string]AdminUser
 	adminAuditEntries           map[string][]AdminAccountAuditEntry
@@ -54,6 +65,10 @@ type Service struct {
 	sessions                    map[string]Session
 	accountAppealSessions       map[string]AccountAppealSession
 	emailRegistrationCodes      map[string]emailRegistrationChallenge
+	studentRegistrationSetting  StudentRegistrationConfig
+	studentInstitutionDomains   map[string]StudentInstitutionDomain
+	studentClaimsByEmail        map[string]StudentEmailClaim
+	studentClaimsByUserID       map[string]StudentEmailClaim
 	passwordCredentialsByUserID map[string]PasswordCredential
 }
 
@@ -64,9 +79,13 @@ type RegistrationEmailSender interface {
 }
 
 type emailRegistrationChallenge struct {
+	ID        string
 	Email     string
 	CodeHash  string
+	Purpose   string
+	CreatedAt time.Time
 	ExpiresAt time.Time
+	Attempts  int
 	Consumed  bool
 }
 
@@ -90,6 +109,7 @@ func NewServiceWithRegistrationEmailSenderAndIdempotency(repo Repository, now fu
 		repo:                        repo,
 		idempotency:                 idempotencyService,
 		registrationEmailSender:     registrationEmailSender,
+		emailVerificationPepper:     []byte(localEmailVerificationPepper),
 		users:                       make(map[string]User),
 		adminUsers:                  make(map[string]AdminUser),
 		adminAuditEntries:           make(map[string][]AdminAccountAuditEntry),
@@ -101,9 +121,26 @@ func NewServiceWithRegistrationEmailSenderAndIdempotency(repo Repository, now fu
 		sessions:                    make(map[string]Session),
 		accountAppealSessions:       make(map[string]AccountAppealSession),
 		emailRegistrationCodes:      make(map[string]emailRegistrationChallenge),
+		studentRegistrationSetting:  StudentRegistrationConfig{Enabled: false, Version: 1, Institutions: []StudentInstitutionDomain{}},
+		studentInstitutionDomains:   make(map[string]StudentInstitutionDomain),
+		studentClaimsByEmail:        make(map[string]StudentEmailClaim),
+		studentClaimsByUserID:       make(map[string]StudentEmailClaim),
 		passwordCredentialsByUserID: make(map[string]PasswordCredential),
 	}
 	return service
+}
+
+// SetEmailVerificationPepper injects the purpose-bound challenge HMAC key.
+// Production configuration already enforces a non-empty value of sufficient
+// length; the explicit local value keeps deterministic test/dev construction.
+func (s *Service) SetEmailVerificationPepper(value string) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		value = localEmailVerificationPepper
+	}
+	s.mu.Lock()
+	s.emailVerificationPepper = []byte(value)
+	s.mu.Unlock()
 }
 
 func (s *Service) CreateDevSession(ctx context.Context, username string, isAdmin bool) (User, Session, *domain.AppError) {
@@ -457,19 +494,384 @@ func (s *Service) sendRegistrationSuccessIfNeeded(ctx context.Context, created b
 }
 
 func (s *Service) StartEmailRegistration(ctx context.Context, input EmailRegistrationStartInput) (EmailRegistrationChallenge, *domain.AppError) {
-	_ = ctx
-	_ = input
-	return EmailRegistrationChallenge{}, emailRegistrationDisabledError()
+	email, domainValue, appErr := normalizeStudentEmail(input.Email)
+	if appErr != nil {
+		return EmailRegistrationChallenge{}, appErr
+	}
+	now := s.now()
+	config, appErr := s.StudentRegistrationConfig(ctx)
+	if appErr != nil {
+		return EmailRegistrationChallenge{}, appErr
+	}
+	if !config.Enabled {
+		return EmailRegistrationChallenge{}, emailRegistrationDisabledError()
+	}
+	if _, found := enabledInstitution(config.Institutions, domainValue); !found {
+		return EmailRegistrationChallenge{}, studentEmailNotEligibleError()
+	}
+
+	code := newVerificationCode()
+	codeHash := s.registrationCodeHash(EmailRegistrationPurpose, "", email, code)
+	expiresAt := now.Add(EmailRegistrationCodeLifetime)
+	input.Email = email
+	if repo, ok := s.repo.(StudentRegistrationRepository); ok {
+		if appErr := repo.StartStudentEmailRegistration(ctx, input, codeHash, expiresAt, now); appErr != nil {
+			return EmailRegistrationChallenge{}, appErr
+		}
+	} else if s.repo != nil {
+		return EmailRegistrationChallenge{}, internalAuthDependencyError()
+	} else {
+		s.mu.Lock()
+		if _, claimed := s.studentClaimsByEmail[email]; claimed {
+			s.mu.Unlock()
+			return EmailRegistrationChallenge{}, studentEmailClaimedError()
+		}
+		for key, challenge := range s.emailRegistrationCodes {
+			if challenge.Email == email && challenge.Purpose == EmailRegistrationPurpose && !challenge.Consumed {
+				challenge.Consumed = true
+				s.emailRegistrationCodes[key] = challenge
+			}
+		}
+		challengeID := uuid.NewString()
+		s.emailRegistrationCodes[challengeID] = emailRegistrationChallenge{
+			ID: challengeID, Email: email, CodeHash: codeHash, Purpose: EmailRegistrationPurpose,
+			CreatedAt: now, ExpiresAt: expiresAt,
+		}
+		s.mu.Unlock()
+	}
+
+	if s.registrationEmailSender != nil {
+		if appErr := s.registrationEmailSender.SendVerificationCode(ctx, email, code, expiresAt); appErr != nil {
+			return EmailRegistrationChallenge{}, appErr
+		}
+	}
+	result := EmailRegistrationChallenge{Email: email, ExpiresAt: expiresAt}
+	if s.registrationEmailSender != nil && s.registrationEmailSender.ExposeDevCode() {
+		result.DevCode = code
+	}
+	return result, nil
 }
 
 func (s *Service) ConfirmEmailRegistration(ctx context.Context, input EmailRegistrationConfirmInput) (User, Session, *domain.AppError) {
-	_ = ctx
-	_ = input
-	return User{}, Session{}, emailRegistrationDisabledError()
+	config, appErr := s.StudentRegistrationConfig(ctx)
+	if appErr != nil {
+		return User{}, Session{}, appErr
+	}
+	if !config.Enabled {
+		return User{}, Session{}, emailRegistrationDisabledError()
+	}
+	email, domainValue, appErr := normalizeStudentEmail(input.Email)
+	if appErr != nil {
+		return User{}, Session{}, verificationCodeInvalidError()
+	}
+	input.Email = email
+	if appErr := ValidatePublicUsername(input.Username); appErr != nil {
+		return User{}, Session{}, appErr
+	}
+	if appErr := validateNewPassword(input.Password); appErr != nil {
+		return User{}, Session{}, appErr
+	}
+	if !verificationCodePattern.MatchString(input.Code) {
+		return User{}, Session{}, verificationCodeInvalidError()
+	}
+	if _, found := enabledInstitution(config.Institutions, domainValue); !found {
+		return User{}, Session{}, studentEmailNotEligibleError()
+	}
+
+	now := s.now()
+	codeHash := s.registrationCodeHash(EmailRegistrationPurpose, "", email, input.Code)
+	credential := newPasswordCredential(User{Username: input.Username}, input.Password)
+	session := newSession("", now)
+	if repo, ok := s.repo.(StudentRegistrationRepository); ok {
+		user, appErr := repo.ConfirmStudentEmailRegistration(
+			ctx, input, codeHash, credential,
+			hashOpaqueToken(session.ID), hashOpaqueToken(session.CSRFToken),
+			session.ExpiresAt, session.AbsoluteExpiresAt, now,
+		)
+		if appErr != nil {
+			return User{}, Session{}, appErr
+		}
+		session.UserID = user.ID
+		session.NewRegistration = true
+		s.sendRegistrationSuccessIfNeeded(ctx, true, user, email, now)
+		return HydrateCapabilities(user), session, nil
+	}
+	if s.repo != nil {
+		return User{}, Session{}, internalAuthDependencyError()
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if !s.studentRegistrationSetting.Enabled {
+		return User{}, Session{}, emailRegistrationDisabledError()
+	}
+	if _, found := enabledInstitution(s.studentRegistrationSetting.Institutions, domainValue); !found {
+		return User{}, Session{}, studentEmailNotEligibleError()
+	}
+	if _, claimed := s.studentClaimsByEmail[email]; claimed {
+		return User{}, Session{}, studentEmailClaimedError()
+	}
+	challengeID, challenge, found := s.latestRegistrationChallengeLocked(email)
+	if !found || challenge.Consumed || !now.Before(challenge.ExpiresAt) || challenge.Attempts >= EmailRegistrationMaxAttempts {
+		return User{}, Session{}, verificationCodeInvalidError()
+	}
+	if subtle.ConstantTimeCompare([]byte(challenge.CodeHash), []byte(codeHash)) != 1 {
+		challenge.Attempts++
+		if challenge.Attempts >= EmailRegistrationMaxAttempts {
+			challenge.Consumed = true
+		}
+		s.emailRegistrationCodes[challengeID] = challenge
+		return User{}, Session{}, verificationCodeInvalidError()
+	}
+	if s.usersByUsername[input.Username] != "" {
+		return User{}, Session{}, UsernameUnavailableError()
+	}
+	institution, _ := enabledInstitution(s.studentRegistrationSetting.Institutions, domainValue)
+	user := User{
+		ID: uuid.NewString(), AnalyticsUserID: uuid.NewString(), Username: input.Username,
+		DisplayName: input.Username, Status: AccountStatusActive,
+	}
+	claim := StudentEmailClaim{
+		ID: uuid.NewString(), UserID: user.ID, NormalizedEmail: email,
+		InstitutionDomainID: institution.ID, InstitutionDomain: institution.Domain,
+		InstitutionName: institution.InstitutionName, ClaimedAt: now,
+	}
+	user.StudentClaim = &claim
+	user = HydrateCapabilities(user)
+	credential.User = user
+	session.UserID = user.ID
+	session.NewRegistration = true
+	challenge.Consumed = true
+	s.emailRegistrationCodes[challengeID] = challenge
+	s.users[user.ID] = user
+	s.usersByUsername[user.Username] = user.ID
+	s.usersByVerifiedEmail[email] = user.ID
+	s.studentClaimsByEmail[email] = claim
+	s.studentClaimsByUserID[user.ID] = claim
+	s.passwordCredentialsByUserID[user.ID] = credential
+	s.sessions[session.ID] = session
+	go s.sendRegistrationSuccessIfNeeded(ctx, true, user, email, now)
+	return user, session, nil
+}
+
+func (s *Service) StudentRegistrationConfig(ctx context.Context) (StudentRegistrationConfig, *domain.AppError) {
+	if repo, ok := s.repo.(StudentRegistrationRepository); ok {
+		return repo.StudentRegistrationConfig(ctx)
+	}
+	if s.repo != nil {
+		// Repositories compiled against the pre-student contract remain closed
+		// by default; production PostgreSQL implements the focused interface.
+		return StudentRegistrationConfig{Enabled: false, Version: 1, Institutions: []StudentInstitutionDomain{}}, nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	config := s.studentRegistrationSetting
+	config.Institutions = append([]StudentInstitutionDomain(nil), config.Institutions...)
+	return config, nil
+}
+
+func (s *Service) AdminStudentRegistration(ctx context.Context, user User) (StudentRegistrationConfig, *domain.AppError) {
+	if appErr := RequireCapability(user, CapabilityAdminAccess); appErr != nil {
+		return StudentRegistrationConfig{}, appErr
+	}
+	if repo, ok := s.repo.(StudentRegistrationAdminRepository); ok {
+		return repo.AdminStudentRegistration(ctx)
+	}
+	if s.repo != nil {
+		return StudentRegistrationConfig{}, internalAuthDependencyError()
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return StudentRegistrationConfig{Enabled: s.studentRegistrationSetting.Enabled, Version: s.studentRegistrationSetting.Version}, nil
+}
+
+func (s *Service) UpdateAdminStudentRegistrationWithIdempotency(ctx context.Context, user User, routeKey, key, requestHash string, input StudentRegistrationSettingUpdate, build StudentRegistrationCompletionBuilder) (idempotency.Completion, *domain.AppError) {
+	if appErr := RequireCapability(user, CapabilityAdminAccess); appErr != nil {
+		return idempotency.Completion{}, appErr
+	}
+	input.AdminUserID = strings.TrimSpace(user.ID)
+	input.Reason = strings.TrimSpace(input.Reason)
+	if appErr := validateStudentAdminMutation(input.ExpectedVersion, input.Reason); appErr != nil {
+		return idempotency.Completion{}, appErr
+	}
+	if build == nil {
+		return idempotency.Completion{}, adminUserInternalError()
+	}
+	entry, appErr := s.idempotency.Begin(ctx, input.AdminUserID, routeKey, strings.TrimSpace(key), requestHash)
+	if appErr != nil {
+		return idempotency.Completion{}, appErr
+	}
+	if entry.State == "completed" {
+		return idempotency.CompletionFromEntry(entry), nil
+	}
+	if repo, ok := s.repo.(StudentRegistrationAdminRepository); ok {
+		_, completion, appErr := repo.UpdateAdminStudentRegistrationWithIdempotency(ctx, *entry, input, s.now(), build)
+		if appErr != nil {
+			s.idempotency.Cancel(ctx, entry)
+			return idempotency.Completion{}, appErr
+		}
+		return completion, nil
+	}
+	if s.repo != nil {
+		s.idempotency.Cancel(ctx, entry)
+		return idempotency.Completion{}, internalAuthDependencyError()
+	}
+	s.mu.Lock()
+	current := s.studentRegistrationSetting
+	if current.Version != input.ExpectedVersion {
+		s.mu.Unlock()
+		s.idempotency.Cancel(ctx, entry)
+		return idempotency.Completion{}, studentAdminVersionConflict()
+	}
+	current.Enabled = input.Enabled
+	current.Version++
+	s.studentRegistrationSetting = current
+	s.adminAuditLogs = append(s.adminAuditLogs, newStudentAdminAudit(input.AdminUserID, "student_registration.updated", "student_registration_setting", studentRegistrationSettingAuditTargetID, input.Reason, input.RequestID, s.now()))
+	s.mu.Unlock()
+	completion, appErr := build(StudentRegistrationConfig{Enabled: current.Enabled, Version: current.Version})
+	return s.completeStudentAdminMemoryMutation(ctx, entry, completion, appErr)
+}
+
+func (s *Service) AdminStudentInstitutionDomains(ctx context.Context, user User) ([]StudentInstitutionDomain, *domain.AppError) {
+	if appErr := RequireCapability(user, CapabilityAdminAccess); appErr != nil {
+		return nil, appErr
+	}
+	if repo, ok := s.repo.(StudentRegistrationAdminRepository); ok {
+		return repo.AdminStudentInstitutionDomains(ctx)
+	}
+	if s.repo != nil {
+		return nil, internalAuthDependencyError()
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	items := make([]StudentInstitutionDomain, 0, len(s.studentInstitutionDomains))
+	for _, item := range s.studentInstitutionDomains {
+		items = append(items, item)
+	}
+	sort.Slice(items, func(i, j int) bool { return items[i].Domain < items[j].Domain })
+	return items, nil
+}
+
+func (s *Service) CreateStudentInstitutionDomainWithIdempotency(ctx context.Context, user User, routeKey, key, requestHash string, input StudentInstitutionDomainCreateInput, build StudentInstitutionDomainCompletionBuilder) (idempotency.Completion, *domain.AppError) {
+	if appErr := RequireCapability(user, CapabilityAdminAccess); appErr != nil {
+		return idempotency.Completion{}, appErr
+	}
+	input.AdminUserID = strings.TrimSpace(user.ID)
+	input.Domain = strings.TrimSpace(input.Domain)
+	input.InstitutionName = strings.TrimSpace(input.InstitutionName)
+	input.Reason = strings.TrimSpace(input.Reason)
+	if appErr := validateStudentInstitutionCreate(input); appErr != nil {
+		return idempotency.Completion{}, appErr
+	}
+	if build == nil {
+		return idempotency.Completion{}, adminUserInternalError()
+	}
+	entry, appErr := s.idempotency.Begin(ctx, input.AdminUserID, routeKey, strings.TrimSpace(key), requestHash)
+	if appErr != nil {
+		return idempotency.Completion{}, appErr
+	}
+	if entry.State == "completed" {
+		return idempotency.CompletionFromEntry(entry), nil
+	}
+	if repo, ok := s.repo.(StudentRegistrationAdminRepository); ok {
+		_, completion, appErr := repo.CreateStudentInstitutionDomainWithIdempotency(ctx, *entry, input, s.now(), build)
+		if appErr != nil {
+			s.idempotency.Cancel(ctx, entry)
+			return idempotency.Completion{}, appErr
+		}
+		return completion, nil
+	}
+	if s.repo != nil {
+		s.idempotency.Cancel(ctx, entry)
+		return idempotency.Completion{}, internalAuthDependencyError()
+	}
+	now := s.now()
+	s.mu.Lock()
+	if _, exists := s.studentInstitutionDomains[input.Domain]; exists {
+		s.mu.Unlock()
+		s.idempotency.Cancel(ctx, entry)
+		return idempotency.Completion{}, studentInstitutionDomainConflict()
+	}
+	item := StudentInstitutionDomain{ID: uuid.NewString(), Domain: input.Domain, InstitutionName: input.InstitutionName, Enabled: input.Enabled, Version: 1, CreatedAt: now, UpdatedAt: now}
+	s.studentInstitutionDomains[item.Domain] = item
+	s.refreshStudentInstitutionsLocked()
+	s.adminAuditLogs = append(s.adminAuditLogs, newStudentAdminAudit(input.AdminUserID, "student_institution_domain.created", "student_institution_domain", item.ID, input.Reason, input.RequestID, now))
+	s.mu.Unlock()
+	completion, appErr := build(item)
+	return s.completeStudentAdminMemoryMutation(ctx, entry, completion, appErr)
+}
+
+func (s *Service) UpdateStudentInstitutionDomainWithIdempotency(ctx context.Context, user User, routeKey, key, requestHash string, input StudentInstitutionDomainUpdateInput, build StudentInstitutionDomainCompletionBuilder) (idempotency.Completion, *domain.AppError) {
+	if appErr := RequireCapability(user, CapabilityAdminAccess); appErr != nil {
+		return idempotency.Completion{}, appErr
+	}
+	input.AdminUserID = strings.TrimSpace(user.ID)
+	input.ID = strings.TrimSpace(input.ID)
+	input.InstitutionName = strings.TrimSpace(input.InstitutionName)
+	input.Reason = strings.TrimSpace(input.Reason)
+	if _, err := uuid.Parse(input.ID); err != nil {
+		return idempotency.Completion{}, studentAdminValidationError("id", "院校域名 ID 格式不正确。")
+	}
+	if appErr := validateStudentInstitutionName(input.InstitutionName); appErr != nil {
+		return idempotency.Completion{}, appErr
+	}
+	if appErr := validateStudentAdminMutation(input.ExpectedVersion, input.Reason); appErr != nil {
+		return idempotency.Completion{}, appErr
+	}
+	if build == nil {
+		return idempotency.Completion{}, adminUserInternalError()
+	}
+	entry, appErr := s.idempotency.Begin(ctx, input.AdminUserID, routeKey, strings.TrimSpace(key), requestHash)
+	if appErr != nil {
+		return idempotency.Completion{}, appErr
+	}
+	if entry.State == "completed" {
+		return idempotency.CompletionFromEntry(entry), nil
+	}
+	if repo, ok := s.repo.(StudentRegistrationAdminRepository); ok {
+		_, completion, appErr := repo.UpdateStudentInstitutionDomainWithIdempotency(ctx, *entry, input, s.now(), build)
+		if appErr != nil {
+			s.idempotency.Cancel(ctx, entry)
+			return idempotency.Completion{}, appErr
+		}
+		return completion, nil
+	}
+	if s.repo != nil {
+		s.idempotency.Cancel(ctx, entry)
+		return idempotency.Completion{}, internalAuthDependencyError()
+	}
+	s.mu.Lock()
+	var item StudentInstitutionDomain
+	var domainKey string
+	for key, candidate := range s.studentInstitutionDomains {
+		if candidate.ID == input.ID {
+			item, domainKey = candidate, key
+			break
+		}
+	}
+	if item.ID == "" {
+		s.mu.Unlock()
+		s.idempotency.Cancel(ctx, entry)
+		return idempotency.Completion{}, studentInstitutionDomainNotFound()
+	}
+	if item.Version != input.ExpectedVersion {
+		s.mu.Unlock()
+		s.idempotency.Cancel(ctx, entry)
+		return idempotency.Completion{}, studentAdminVersionConflict()
+	}
+	previouslyEnabled := item.Enabled
+	item.InstitutionName, item.Enabled, item.Version, item.UpdatedAt = input.InstitutionName, input.Enabled, item.Version+1, s.now()
+	s.studentInstitutionDomains[domainKey] = item
+	s.refreshStudentInstitutionsLocked()
+	action := studentInstitutionDomainAuditAction(previouslyEnabled, item.Enabled)
+	s.adminAuditLogs = append(s.adminAuditLogs, newStudentAdminAudit(input.AdminUserID, action, "student_institution_domain", item.ID, input.Reason, input.RequestID, item.UpdatedAt))
+	s.mu.Unlock()
+	completion, appErr := build(item)
+	return s.completeStudentAdminMemoryMutation(ctx, entry, completion, appErr)
 }
 
 func (s *Service) LoginWithPassword(ctx context.Context, username, password string) (User, Session, *domain.AppError) {
-	username = normalizeUsername(username)
+	username = strings.TrimSpace(strings.ToLower(username))
 	password = strings.TrimSpace(password)
 	if username == "" || password == "" {
 		return User{}, Session{}, domain.NewError(http.StatusUnauthorized, domain.CodeInvalidCredentials, "Invalid credentials", "用户名或密码不正确。")
@@ -484,6 +886,9 @@ func (s *Service) LoginWithPassword(ctx context.Context, username, password stri
 	} else {
 		s.mu.Lock()
 		userID := s.usersByUsername[username]
+		if strings.Contains(username, "@") {
+			userID = s.studentClaimsByEmail[username].UserID
+		}
 		credential = s.passwordCredentialsByUserID[userID]
 		user := s.users[userID]
 		if user.ID == "" || credential.User.ID == "" {
@@ -520,7 +925,7 @@ func (s *Service) LoginWithPassword(ctx context.Context, username, password stri
 		s.sessions[session.ID] = session
 		s.mu.Unlock()
 	}
-	return credential.User, session, nil
+	return HydrateCapabilities(credential.User), session, nil
 }
 
 func (s *Service) BootstrapAdmin(ctx context.Context, input BootstrapAdminInput) (BootstrapAdminResult, *domain.AppError) {
@@ -679,9 +1084,153 @@ func (s *Service) PasswordConfigured(ctx context.Context, userID string) (bool, 
 	return credential.User.ID != "", nil
 }
 
+func (s *Service) ReauthenticatePassword(ctx context.Context, sessionID, csrfToken, password string) *domain.AppError {
+	user, session, appErr := s.GetSessionWithCSRF(ctx, sessionID, csrfToken)
+	if appErr != nil {
+		return appErr
+	}
+	if password == "" {
+		return domain.NewError(http.StatusUnauthorized, domain.CodeInvalidCredentials, "Invalid credentials", "当前密码不正确。")
+	}
+	var credential PasswordCredential
+	if s.repo != nil {
+		credential, appErr = s.repo.PasswordCredentialByUserID(ctx, user.ID)
+		if appErr != nil {
+			return domain.NewError(http.StatusUnauthorized, domain.CodeInvalidCredentials, "Invalid credentials", "当前密码不正确。")
+		}
+	} else {
+		s.mu.Lock()
+		credential = s.passwordCredentialsByUserID[user.ID]
+		credential.User = user
+		s.mu.Unlock()
+	}
+	matched, needsRehash := passwordCredentialMatches(credential, password)
+	if !matched {
+		return domain.NewError(http.StatusUnauthorized, domain.CodeInvalidCredentials, "Invalid credentials", "当前密码不正确。")
+	}
+	now := s.now()
+	if needsRehash {
+		if appErr := s.rehashPasswordCredential(ctx, credential, password, now); appErr != nil {
+			return appErr
+		}
+	}
+	if repo, ok := s.repo.(OAuthLinkRepository); ok {
+		return repo.MarkSessionPasswordReauthenticated(ctx, hashOpaqueToken(sessionID), now)
+	}
+	if s.repo != nil {
+		return internalAuthDependencyError()
+	}
+	s.mu.Lock()
+	session.PasswordReauthenticatedAt = &now
+	s.sessions[sessionID] = session
+	s.mu.Unlock()
+	return nil
+}
+
+func (s *Service) StartLinuxDoLink(ctx context.Context, sessionID string) (string, *domain.AppError) {
+	_, session, appErr := s.GetSession(ctx, sessionID)
+	if appErr != nil {
+		return "", appErr
+	}
+	now := s.now()
+	if session.PasswordReauthenticatedAt == nil || session.PasswordReauthenticatedAt.Before(now.Add(-RecentPasswordReauthenticationWindow)) {
+		return "", recentReauthenticationRequiredError()
+	}
+	state := newSecret("oauth_link")
+	expiresAt := now.Add(OAuthLinkStateLifetime)
+	stateHash := hashOpaqueToken(state)
+	if repo, ok := s.repo.(OAuthLinkRepository); ok {
+		if appErr := repo.StartOAuthLink(ctx, hashOpaqueToken(sessionID), stateHash, OAuthPurposeLinkLinuxDo, expiresAt, now); appErr != nil {
+			return "", appErr
+		}
+		return state, nil
+	}
+	if s.repo != nil {
+		return "", internalAuthDependencyError()
+	}
+	s.mu.Lock()
+	session.OAuthLinkStateHash = stateHash
+	session.OAuthLinkStatePurpose = OAuthPurposeLinkLinuxDo
+	session.OAuthLinkStateExpiresAt = &expiresAt
+	session.OAuthLinkStateConsumedAt = nil
+	s.sessions[sessionID] = session
+	s.mu.Unlock()
+	return state, nil
+}
+
+func (s *Service) CompleteLinuxDoLink(ctx context.Context, sessionID, state string, profile OAuthProfile) (User, Session, *domain.AppError) {
+	profile.Provider = CanonicalOAuthProvider(profile.Provider)
+	profile.Subject = CanonicalOAuthSubject(profile.Subject)
+	if !IsLinuxDoProvider(profile.Provider) || profile.Subject == "" {
+		return User{}, Session{}, oauthLinkStateInvalidError()
+	}
+	now := s.now()
+	replacement := newSession("", now)
+	if repo, ok := s.repo.(OAuthLinkRepository); ok {
+		user, appErr := repo.CompleteOAuthLink(
+			ctx, hashOpaqueToken(sessionID), hashOpaqueToken(state), profile,
+			hashOpaqueToken(replacement.ID), hashOpaqueToken(replacement.CSRFToken),
+			replacement.ExpiresAt, replacement.AbsoluteExpiresAt, now,
+		)
+		if appErr != nil {
+			return User{}, Session{}, appErr
+		}
+		replacement.UserID = user.ID
+		return HydrateCapabilities(user), replacement, nil
+	}
+	if s.repo != nil {
+		return User{}, Session{}, internalAuthDependencyError()
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	session, ok := s.sessions[sessionID]
+	if !ok || session.RevokedAt != nil || session.OAuthLinkStateConsumedAt != nil ||
+		session.OAuthLinkStatePurpose != OAuthPurposeLinkLinuxDo || session.OAuthLinkStateExpiresAt == nil ||
+		!now.Before(*session.OAuthLinkStateExpiresAt) || subtle.ConstantTimeCompare([]byte(session.OAuthLinkStateHash), []byte(hashOpaqueToken(state))) != 1 {
+		return User{}, Session{}, oauthLinkStateInvalidError()
+	}
+	session.OAuthLinkStateConsumedAt = &now
+	s.sessions[sessionID] = session
+	identityKey := OAuthIdentityKey(profile.Provider, profile.Subject)
+	if ownerID := s.oauthUserIDs[identityKey]; ownerID != "" && ownerID != session.UserID {
+		return User{}, Session{}, oauthIdentityConflictError()
+	}
+	user := s.users[session.UserID]
+	if user.ID == "" || user.Status != AccountStatusActive {
+		return User{}, Session{}, oauthLinkStateInvalidError()
+	}
+	boundAt := now
+	if user.LinuxDoBinding != nil && !user.LinuxDoBinding.BoundAt.IsZero() {
+		boundAt = user.LinuxDoBinding.BoundAt
+	}
+	user.LinuxDoBinding = &LinuxDoBinding{
+		Bound: true, LinuxDoUserID: valueOrDefault(profile.LinuxDoUserID, profile.Subject),
+		LinuxDoUsername: valueOrDefault(profile.LinuxDoUsername, profile.Username),
+		TrustLevel:      profile.TrustLevel, AvatarURL: valueOrDefault(profile.LinuxDoAvatarURL, profile.AvatarURL),
+		BoundAt: boundAt, LastSyncedAt: now,
+	}
+	if user.LinuxDoBinding.TrustLevel <= 0 {
+		user.LinuxDoBinding.TrustLevel = 1
+	}
+	user = HydrateCapabilities(user)
+	s.users[user.ID] = user
+	s.oauthUserIDs[identityKey] = user.ID
+	session.RevokedAt = &now
+	s.sessions[sessionID] = session
+	replacement.UserID = user.ID
+	s.sessions[replacement.ID] = replacement
+	return user, replacement, nil
+}
+
 func (s *Service) GetSession(ctx context.Context, sessionID string) (User, Session, *domain.AppError) {
 	if s.repo != nil {
-		return s.repo.GetSession(ctx, hashOpaqueToken(sessionID), s.now())
+		user, session, appErr := s.repo.GetSession(ctx, hashOpaqueToken(sessionID), s.now())
+		if appErr != nil {
+			return User{}, Session{}, appErr
+		}
+		session.ID = sessionID
+		return HydrateCapabilities(user), session, nil
 	}
 
 	s.mu.Lock()
@@ -702,7 +1251,7 @@ func (s *Service) GetSession(ctx context.Context, sessionID string) (User, Sessi
 	if !ok || user.Status != "active" {
 		return User{}, Session{}, domain.NewError(http.StatusForbidden, domain.CodeAccountRestricted, "Account restricted", "当前账号不可执行该操作。")
 	}
-	return user, session, nil
+	return HydrateCapabilities(user), session, nil
 }
 
 func (s *Service) RenewSession(ctx context.Context, sessionID string) (Session, bool, *domain.AppError) {
@@ -737,7 +1286,12 @@ func (s *Service) RenewSession(ctx context.Context, sessionID string) (Session, 
 
 func (s *Service) GetSessionWithCSRF(ctx context.Context, sessionID, csrfToken string) (User, Session, *domain.AppError) {
 	if s.repo != nil {
-		return s.repo.GetSessionWithCSRF(ctx, hashOpaqueToken(sessionID), hashOpaqueToken(csrfToken), s.now())
+		user, session, appErr := s.repo.GetSessionWithCSRF(ctx, hashOpaqueToken(sessionID), hashOpaqueToken(csrfToken), s.now())
+		if appErr != nil {
+			return User{}, Session{}, appErr
+		}
+		session.ID = sessionID
+		return HydrateCapabilities(user), session, nil
 	}
 	user, session, appErr := s.GetSession(ctx, sessionID)
 	if appErr != nil {
@@ -1008,8 +1562,9 @@ func (s *Service) ensureUserLocked(username string, isAdmin bool) User {
 			user.IsAdmin = true
 			s.users[id] = user
 		}
-		return user
+		return s.ensureDevLinuxDoIdentityLocked(user)
 	}
+	now := s.now()
 	user := User{
 		ID:              uuid.NewString(),
 		AnalyticsUserID: uuid.NewString(),
@@ -1018,9 +1573,54 @@ func (s *Service) ensureUserLocked(username string, isAdmin bool) User {
 		IsAdmin:         isAdmin,
 		Status:          "active",
 	}
+	user = s.ensureDevLinuxDoIdentityLockedAt(user, now)
 	s.users[user.ID] = user
 	s.usersByUsername[username] = user.ID
 	return user
+}
+
+func (s *Service) ensureDevLinuxDoIdentityLocked(user User) User {
+	return s.ensureDevLinuxDoIdentityLockedAt(user, s.now())
+}
+
+func (s *Service) ensureDevLinuxDoIdentityLockedAt(user User, now time.Time) User {
+	if user.LinuxDoBinding == nil || !user.LinuxDoBinding.Bound {
+		subject := "dev-session:" + user.ID
+		user.LinuxDoBinding = &LinuxDoBinding{
+			Bound:           true,
+			LinuxDoUserID:   subject,
+			LinuxDoUsername: user.Username,
+			TrustLevel:      1,
+			BoundAt:         now,
+			LastSyncedAt:    now,
+		}
+		s.oauthUserIDs[OAuthIdentityKey("linux_do", subject)] = user.ID
+	}
+	user = HydrateCapabilities(user)
+	s.users[user.ID] = user
+	return user
+}
+
+func (s *Service) latestRegistrationChallengeLocked(email string) (string, emailRegistrationChallenge, bool) {
+	var selected emailRegistrationChallenge
+	var selectedID string
+	for id, challenge := range s.emailRegistrationCodes {
+		if challenge.Email != email || challenge.Purpose != EmailRegistrationPurpose || challenge.Consumed {
+			continue
+		}
+		if selectedID == "" || challenge.CreatedAt.After(selected.CreatedAt) {
+			selectedID = id
+			selected = challenge
+		}
+	}
+	return selectedID, selected, selectedID != ""
+}
+
+func (s *Service) registrationCodeHash(purpose, subject, email, code string) string {
+	s.mu.Lock()
+	pepper := append([]byte(nil), s.emailVerificationPepper...)
+	s.mu.Unlock()
+	return VerificationCodeHash(pepper, purpose, subject, email, code)
 }
 
 func normalizeAdminUserDirectoryQuery(query AdminUserDirectoryQuery) (AdminUserDirectoryQuery, *domain.AppError) {
@@ -1370,6 +1970,9 @@ func (s *Service) updateAdminUserPermissionMemory(input AdminUserPermissionInput
 	if input.Grant && current.Status != AccountStatusActive {
 		return AdminUserMutationResult{}, adminUserInvalidTransition("只能向有效账号授予管理员权限。")
 	}
+	if input.Grant && isStudentOnlyIdentity(user) {
+		return AdminUserMutationResult{}, adminUserInvalidTransition("高校邮箱账号绑定 Linux.do 后才能获得管理员权限。")
+	}
 	if !input.Grant && current.Status == AccountStatusActive && s.activeAdminCountLocked() <= 1 {
 		return AdminUserMutationResult{}, adminUserInvalidTransition("不能撤销最后一个有效管理员的权限。")
 	}
@@ -1610,6 +2213,97 @@ func adminUserInternalError() *domain.AppError {
 	return domain.NewError(http.StatusInternalServerError, domain.CodeInternalError, "Internal error", "账号治理响应编码失败。")
 }
 
+func validateStudentAdminMutation(expectedVersion int64, reason string) *domain.AppError {
+	if expectedVersion < 1 {
+		return studentAdminValidationError("version", "必须提供有效版本。")
+	}
+	if strings.TrimSpace(reason) == "" {
+		return studentAdminValidationError("reason", "管理操作必须填写原因。")
+	}
+	if utf8.RuneCountInString(reason) > 500 {
+		return studentAdminValidationError("reason", "操作原因最多 500 字。")
+	}
+	return nil
+}
+
+func validateStudentInstitutionCreate(input StudentInstitutionDomainCreateInput) *domain.AppError {
+	if input.AdminUserID == "" {
+		return domain.NewError(http.StatusUnauthorized, domain.CodeSessionExpired, "Session required", "请先登录。")
+	}
+	if len(input.Domain) < 3 || len(input.Domain) > 253 || input.Domain != strings.ToLower(input.Domain) || !canonicalInstitutionDomainPattern.MatchString(input.Domain) {
+		return studentAdminValidationError("domain", "必须提供不含通配符、路径或子域匹配规则的小写 ASCII 精确域名。")
+	}
+	if appErr := validateStudentInstitutionName(input.InstitutionName); appErr != nil {
+		return appErr
+	}
+	return validateStudentAdminMutation(1, input.Reason)
+}
+
+func validateStudentInstitutionName(value string) *domain.AppError {
+	count := utf8.RuneCountInString(strings.TrimSpace(value))
+	if count < 1 || count > 120 {
+		return studentAdminValidationError("institutionName", "院校名称长度必须为 1 至 120 字。")
+	}
+	return nil
+}
+
+func studentAdminValidationError(field, detail string) *domain.AppError {
+	return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeValidationFailed, "Student registration validation failed", detail, field, "invalid", detail)
+}
+
+func studentAdminVersionConflict() *domain.AppError {
+	return domain.NewError(http.StatusPreconditionFailed, domain.CodeVersionConflict, "Version conflict", "学生注册配置已更新，请刷新后重试。")
+}
+
+func studentInstitutionDomainConflict() *domain.AppError {
+	return domain.NewError(http.StatusConflict, domain.CodeInvalidStateTransition, "Institution domain already exists", "该院校精确域名已存在。")
+}
+
+func studentInstitutionDomainNotFound() *domain.AppError {
+	return domain.NewError(http.StatusNotFound, domain.CodeObjectNotFound, "Institution domain not found", "院校域名不存在。")
+}
+
+func studentInstitutionDomainAuditAction(beforeEnabled, afterEnabled bool) string {
+	if beforeEnabled != afterEnabled {
+		if afterEnabled {
+			return "student_institution_domain.enabled"
+		}
+		return "student_institution_domain.disabled"
+	}
+	return "student_institution_domain.updated"
+}
+
+func (s *Service) refreshStudentInstitutionsLocked() {
+	institutions := make([]StudentInstitutionDomain, 0, len(s.studentInstitutionDomains))
+	for _, item := range s.studentInstitutionDomains {
+		if item.Enabled {
+			institutions = append(institutions, item)
+		}
+	}
+	sort.Slice(institutions, func(i, j int) bool { return institutions[i].Domain < institutions[j].Domain })
+	s.studentRegistrationSetting.Institutions = institutions
+}
+
+func newStudentAdminAudit(adminUserID, action, targetType, targetID, reason, requestID string, now time.Time) AdminAuditLog {
+	return AdminAuditLog{
+		ID: uuid.NewString(), ActorUserID: adminUserID, Action: action,
+		TargetType: targetType, TargetID: targetID, Reason: reason,
+		RequestID: requestID, CreatedAt: now,
+	}
+}
+
+func (s *Service) completeStudentAdminMemoryMutation(ctx context.Context, entry *idempotency.Entry, completion idempotency.Completion, appErr *domain.AppError) (idempotency.Completion, *domain.AppError) {
+	if appErr != nil {
+		s.idempotency.Cancel(ctx, entry)
+		return idempotency.Completion{}, appErr
+	}
+	if appErr := s.idempotency.Complete(ctx, entry, completion.Status, completion.ContentType, completion.Body, completion.ResourceType, completion.ResourceID); appErr != nil {
+		s.idempotency.Cancel(ctx, entry)
+		return idempotency.Completion{}, appErr
+	}
+	return completion, nil
+}
+
 func normalizeUsername(value string) string {
 	value = strings.ToLower(strings.TrimSpace(value))
 	value = strings.ReplaceAll(value, " ", "-")
@@ -1626,6 +2320,32 @@ func normalizeRegistrationEmail(value string) string {
 		return ""
 	}
 	return strings.ToLower(strings.TrimSpace(address.Address))
+}
+
+func normalizeStudentEmail(value string) (string, string, *domain.AppError) {
+	value = strings.TrimSpace(value)
+	if value == "" || strings.Count(value, "@") != 1 {
+		return "", "", studentEmailNotEligibleError()
+	}
+	address, err := mail.ParseAddress(value)
+	if err != nil || address.Address != value {
+		return "", "", studentEmailNotEligibleError()
+	}
+	email := strings.ToLower(address.Address)
+	parts := strings.Split(email, "@")
+	if len(parts) != 2 || parts[0] == "" || !canonicalInstitutionDomainPattern.MatchString(parts[1]) {
+		return "", "", studentEmailNotEligibleError()
+	}
+	return email, parts[1], nil
+}
+
+func enabledInstitution(institutions []StudentInstitutionDomain, domainValue string) (StudentInstitutionDomain, bool) {
+	for _, institution := range institutions {
+		if institution.Enabled && institution.Domain == domainValue {
+			return institution, true
+		}
+	}
+	return StudentInstitutionDomain{}, false
 }
 
 func hashOpaqueToken(value string) string {
@@ -1730,11 +2450,66 @@ func requireNativePasswordUser(user User) *domain.AppError {
 	if user.IsAdmin {
 		return nil
 	}
+	if user.StudentClaim != nil {
+		return nil
+	}
 	return requireLinuxDoBoundUser(user)
 }
 
 func emailRegistrationDisabledError() *domain.AppError {
-	return domain.NewError(http.StatusForbidden, domain.CodeEmailRegistrationDisabled, "Email registration disabled", "第一版本仅支持 linux.do OAuth 注册和登录。")
+	return domain.NewError(http.StatusForbidden, domain.CodeEmailRegistrationDisabled, "Email registration disabled", "学生邮箱注册当前未开放。")
+}
+
+func studentEmailNotEligibleError() *domain.AppError {
+	return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeStudentEmailNotEligible, "Student email not eligible", "该邮箱不属于当前开放注册的院校域名。", "email", "not_eligible", "该邮箱不属于当前开放注册的院校域名。")
+}
+
+func StudentEmailNotEligibleError() *domain.AppError {
+	return studentEmailNotEligibleError()
+}
+
+func studentEmailClaimedError() *domain.AppError {
+	return domain.NewError(http.StatusConflict, domain.CodeStudentEmailClaimed, "Student email claimed", "该学生邮箱已属于现有账号，请直接登录或使用账号恢复。")
+}
+
+func StudentEmailClaimedError() *domain.AppError {
+	return studentEmailClaimedError()
+}
+
+func verificationCodeInvalidError() *domain.AppError {
+	return domain.NewFieldError(http.StatusUnprocessableEntity, domain.CodeVerificationCodeInvalid, "Verification code invalid", "验证码无效或已过期。", "code", "invalid", "验证码无效或已过期。")
+}
+
+func VerificationCodeInvalidError() *domain.AppError {
+	return verificationCodeInvalidError()
+}
+
+func internalAuthDependencyError() *domain.AppError {
+	return domain.NewError(http.StatusInternalServerError, domain.CodeInternalError, "Authentication dependency unavailable", "认证服务依赖未正确配置。")
+}
+
+func recentReauthenticationRequiredError() *domain.AppError {
+	return domain.NewError(http.StatusForbidden, domain.CodeRecentReauthenticationRequired, "Recent reauthentication required", "请先使用当前密码重新验证身份。")
+}
+
+func RecentReauthenticationRequiredError() *domain.AppError {
+	return recentReauthenticationRequiredError()
+}
+
+func oauthIdentityConflictError() *domain.AppError {
+	return domain.NewError(http.StatusConflict, domain.CodeOAuthIdentityConflict, "OAuth identity conflict", "该 linux.do 身份已属于另一个账号。")
+}
+
+func OAuthIdentityConflictError() *domain.AppError {
+	return oauthIdentityConflictError()
+}
+
+func oauthLinkStateInvalidError() *domain.AppError {
+	return domain.NewError(http.StatusForbidden, domain.CodeCSRFTokenInvalid, "OAuth link state invalid", "绑定 state 无效或已过期。")
+}
+
+func OAuthLinkStateInvalidError() *domain.AppError {
+	return oauthLinkStateInvalidError()
 }
 
 func eligibleAccountAppealStatus(status string) bool {
@@ -1777,6 +2552,14 @@ func newSecret(prefix string) string {
 	return prefix + "_" + hex.EncodeToString(buf[:])
 }
 
+func newVerificationCode() string {
+	value, err := rand.Int(rand.Reader, big.NewInt(1_000_000))
+	if err != nil {
+		panic(err)
+	}
+	return fmt.Sprintf("%06d", value.Int64())
+}
+
 func valueOrDefault(value, fallback string) string {
 	value = strings.TrimSpace(value)
 	if value == "" {
@@ -1786,3 +2569,5 @@ func valueOrDefault(value, fallback string) string {
 }
 
 var usernamePattern = regexp.MustCompile(`^[a-zA-Z0-9_-]{3,24}$`)
+var verificationCodePattern = regexp.MustCompile(`^[0-9]{6}$`)
+var canonicalInstitutionDomainPattern = regexp.MustCompile(`^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$`)

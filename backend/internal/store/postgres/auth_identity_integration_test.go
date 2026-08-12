@@ -37,6 +37,13 @@ func TestPostgresOAuthIdentityOwnershipAndConcurrency(t *testing.T) {
 	if appErr != nil {
 		t.Fatalf("create ordinary collision fixture: %v", appErr)
 	}
+	if ordinary.LinuxDoBinding == nil || !ordinary.LinuxDoBinding.Bound || !auth.HasCapability(ordinary, auth.CapabilityCarpoolPublish) {
+		t.Fatalf("development user must retain its synthetic LinuxDo identity: %+v", ordinary)
+	}
+	reloadedOrdinary, appErr := store.UserByID(ctx, ordinary.ID)
+	if appErr != nil || reloadedOrdinary.LinuxDoBinding == nil || !reloadedOrdinary.LinuxDoBinding.Bound || !auth.HasCapability(reloadedOrdinary, auth.CapabilityAPIProbeManage) {
+		t.Fatalf("development LinuxDo identity was not durable: user=%+v error=%v", reloadedOrdinary, appErr)
+	}
 	admin, appErr := store.EnsureUser(ctx, adminHandle, true, now)
 	if appErr != nil {
 		t.Fatalf("create admin collision fixture: %v", appErr)

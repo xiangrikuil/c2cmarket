@@ -2,11 +2,13 @@ package server
 
 import (
 	"c2c-market/backend/internal/domain"
+	"c2c-market/backend/internal/module/auth"
 	"c2c-market/backend/internal/module/carpool"
 	"c2c-market/backend/internal/module/idempotency"
 	"encoding/json"
 	"github.com/go-chi/chi/v5"
 	"net/http"
+	"strconv"
 	"time"
 )
 
@@ -181,20 +183,28 @@ func (s *Server) handleCreateCarpool(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, r, appErr)
 		return
 	}
+	if !requireCapability(w, r, user, auth.CapabilityCarpoolPublish) {
+		return
+	}
 	body, req, appErr := decodeStrictJSON[createCarpoolRequest](r)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
 	}
 
-	s.withIdempotency(w, r, user.ID, "POST /api/v1/carpools", body, func() (int, any, string, string, *domain.AppError) {
-		listing, errApp := s.carpools.CreateCarpoolListing(r.Context(), user, toAppCreateCarpoolInput(req))
-		if errApp != nil {
-			return 0, nil, "", "", errApp
-		}
-		setETag(w, listing.Version)
-		return http.StatusCreated, toCarpoolListingResponse(listing), "carpool_listing", listing.ID, nil
-	})
+	routeKey := "POST /api/v1/carpools"
+	input := toAppCreateCarpoolInput(req)
+	input.RequestID = requestIDFrom(r)
+	completion, appErr := s.carpools.CreateCarpoolListingWithIdempotency(
+		r.Context(), user, routeKey, r.Header.Get("Idempotency-Key"), requestHash(http.MethodPost, routeKey, body), input,
+		carpoolListingCompletionBuilder(http.StatusCreated),
+	)
+	if appErr != nil {
+		writeProblem(w, r, appErr)
+		return
+	}
+	restoreCarpoolListingETag(&completion)
+	writeIdempotencyCompletion(w, completion)
 }
 
 func (s *Server) handlePublishCarpool(w http.ResponseWriter, r *http.Request) {
@@ -203,20 +213,28 @@ func (s *Server) handlePublishCarpool(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, r, appErr)
 		return
 	}
+	if !requireCapability(w, r, user, auth.CapabilityCarpoolPublish) {
+		return
+	}
 	body, req, appErr := decodeStrictJSON[createCarpoolRequest](r)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
 	}
 
-	s.withIdempotency(w, r, user.ID, "POST /api/v1/carpools/publish", body, func() (int, any, string, string, *domain.AppError) {
-		listing, errApp := s.carpools.PublishCarpoolListing(r.Context(), user, toAppCreateCarpoolInput(req))
-		if errApp != nil {
-			return 0, nil, "", "", errApp
-		}
-		setETag(w, listing.Version)
-		return http.StatusCreated, toCarpoolListingResponse(listing), "carpool_listing", listing.ID, nil
-	})
+	routeKey := "POST /api/v1/carpools/publish"
+	input := toAppCreateCarpoolInput(req)
+	input.RequestID = requestIDFrom(r)
+	completion, appErr := s.carpools.PublishCarpoolListingWithIdempotency(
+		r.Context(), user, routeKey, r.Header.Get("Idempotency-Key"), requestHash(http.MethodPost, routeKey, body), input,
+		carpoolListingCompletionBuilder(http.StatusCreated),
+	)
+	if appErr != nil {
+		writeProblem(w, r, appErr)
+		return
+	}
+	restoreCarpoolListingETag(&completion)
+	writeIdempotencyCompletion(w, completion)
 }
 
 func (s *Server) handleUpdateCarpool(w http.ResponseWriter, r *http.Request) {
@@ -225,7 +243,7 @@ func (s *Server) handleUpdateCarpool(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, r, appErr)
 		return
 	}
-	req, appErr := decodeStrictJSONOnly[createCarpoolRequest](r)
+	body, req, appErr := decodeStrictJSON[createCarpoolRequest](r)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
@@ -235,8 +253,10 @@ func (s *Server) handleUpdateCarpool(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, r, appErr)
 		return
 	}
-	listing, appErr := s.carpools.UpdateCarpoolListing(r.Context(), user, carpool.UpdateListingInput{
-		ListingID:                             chi.URLParam(r, "id"),
+	listingID := chi.URLParam(r, "id")
+	routeKey := "PATCH /api/v1/carpools/{id}:" + listingID
+	completion, appErr := s.carpools.UpdateCarpoolListingWithIdempotency(r.Context(), user, routeKey, r.Header.Get("Idempotency-Key"), requestHash(http.MethodPatch, routeKey, body), carpool.UpdateListingInput{
+		ListingID:                             listingID,
 		ProductPlanID:                         req.ProductPlanID,
 		OwnerContactMethodID:                  req.OwnerContactMethodID,
 		CycleTerm:                             toAppCarpoolCycleTerm(req.CycleTerm),
@@ -265,13 +285,13 @@ func (s *Server) handleUpdateCarpool(w http.ResponseWriter, r *http.Request) {
 		RiskAcknowledgement:                   toAppRiskAck(req.RiskAcknowledgement),
 		ExpectedVersion:                       version,
 		RequestID:                             requestIDFrom(r),
-	})
+	}, carpoolListingCompletionBuilder(http.StatusOK))
 	if appErr != nil {
 		writeProblem(w, r, appErr)
 		return
 	}
-	setETag(w, listing.Version)
-	writeJSON(w, http.StatusOK, toCarpoolListingResponse(listing))
+	restoreCarpoolListingETag(&completion)
+	writeIdempotencyCompletion(w, completion)
 }
 
 func toAppCreateCarpoolInput(req createCarpoolRequest) carpool.CreateListingInput {
@@ -311,6 +331,9 @@ func (s *Server) handleSubmitCarpoolReview(w http.ResponseWriter, r *http.Reques
 		writeProblem(w, r, appErr)
 		return
 	}
+	if !requireCapability(w, r, user, auth.CapabilityCarpoolPublish) {
+		return
+	}
 	body, _, appErr := decodeStrictJSON[emptyRequest](r)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
@@ -323,18 +346,20 @@ func (s *Server) handleSubmitCarpoolReview(w http.ResponseWriter, r *http.Reques
 	}
 	listingID := chi.URLParam(r, "id")
 	routeKey := "POST /api/v1/carpools/{id}/submit-review:" + listingID
-	s.withIdempotency(w, r, user.ID, routeKey, body, func() (int, any, string, string, *domain.AppError) {
-		listing, errApp := s.carpools.SubmitCarpoolListingForReview(r.Context(), user, carpool.SubmitListingReviewInput{
+	completion, appErr := s.carpools.SubmitCarpoolListingForReviewWithIdempotency(
+		r.Context(), user, routeKey, r.Header.Get("Idempotency-Key"), requestHash(http.MethodPost, routeKey, body),
+		carpool.SubmitListingReviewInput{
 			ListingID:       listingID,
 			ExpectedVersion: version,
 			RequestID:       requestIDFrom(r),
-		})
-		if errApp != nil {
-			return 0, nil, "", "", errApp
-		}
-		setETag(w, listing.Version)
-		return http.StatusOK, toCarpoolListingResponse(listing), "carpool_listing", listing.ID, nil
-	})
+		}, carpoolListingCompletionBuilder(http.StatusOK),
+	)
+	if appErr != nil {
+		writeProblem(w, r, appErr)
+		return
+	}
+	restoreCarpoolListingETag(&completion)
+	writeIdempotencyCompletion(w, completion)
 }
 
 func (s *Server) handlePublicCarpools(w http.ResponseWriter, r *http.Request) {
@@ -490,27 +515,32 @@ func (s *Server) handleCarpoolReviewStatus(w http.ResponseWriter, r *http.Reques
 	}
 	listingID := chi.URLParam(r, "id")
 	routeKey := "POST /api/v1/admin/carpools/{id}/" + action + ":" + listingID
-	s.withIdempotency(w, r, user.ID, routeKey, body, func() (int, any, string, string, *domain.AppError) {
-		listing, errApp := s.carpools.UpdateCarpoolListingReviewStatus(r.Context(), user, carpool.ReviewInput{
+	completion, appErr := s.carpools.UpdateCarpoolListingReviewStatusWithIdempotency(
+		r.Context(), user, routeKey, r.Header.Get("Idempotency-Key"), requestHash(http.MethodPost, routeKey, body),
+		carpool.ReviewInput{
 			ListingID:       listingID,
 			Action:          action,
 			Status:          status,
 			Reason:          req.Reason,
 			ExpectedVersion: version,
 			RequestID:       requestIDFrom(r),
-		})
-		if errApp != nil {
-			return 0, nil, "", "", errApp
-		}
-		setETag(w, listing.Version)
-		return http.StatusOK, toCarpoolListingResponse(listing), "carpool_listing", listing.ID, nil
-	})
+		}, carpoolListingCompletionBuilder(http.StatusOK),
+	)
+	if appErr != nil {
+		writeProblem(w, r, appErr)
+		return
+	}
+	restoreCarpoolListingETag(&completion)
+	writeIdempotencyCompletion(w, completion)
 }
 
 func (s *Server) handleCreateCarpoolApplication(w http.ResponseWriter, r *http.Request) {
 	user, _, appErr := s.requireSessionAndCSRF(w, r)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
+		return
+	}
+	if !requireCapability(w, r, user, auth.CapabilityCarpoolApply) {
 		return
 	}
 	body, req, appErr := decodeStrictJSON[createCarpoolApplicationRequest](r)
@@ -520,18 +550,21 @@ func (s *Server) handleCreateCarpoolApplication(w http.ResponseWriter, r *http.R
 	}
 	listingID := chi.URLParam(r, "id")
 	routeKey := "POST /api/v1/carpools/{id}/applications:" + listingID
-	s.withIdempotency(w, r, user.ID, routeKey, body, func() (int, any, string, string, *domain.AppError) {
-		application, errApp := s.carpools.CreateCarpoolApplication(r.Context(), user, carpool.CreateApplicationInput{
+	completion, appErr := s.carpools.CreateCarpoolApplicationWithIdempotency(
+		r.Context(), user, routeKey, r.Header.Get("Idempotency-Key"), requestHash(r.Method, routeKey, body),
+		carpool.CreateApplicationInput{
 			ListingID:            listingID,
 			BuyerContactMethodID: req.BuyerContactMethodID,
 			RiskAcknowledgement:  toAppRiskAck(req.RiskAcknowledgement),
-		})
-		if errApp != nil {
-			return 0, nil, "", "", errApp
-		}
-		setETag(w, application.Version)
-		return http.StatusCreated, toCarpoolApplicationResponse(application), "carpool_application", application.ID, nil
-	})
+			RequestID:            requestIDFrom(r),
+		}, carpoolApplicationCompletionBuilder(http.StatusCreated),
+	)
+	if appErr != nil {
+		writeProblem(w, r, appErr)
+		return
+	}
+	restoreCarpoolApplicationETag(&completion)
+	writeIdempotencyCompletion(w, completion)
 }
 
 func (s *Server) handleMyCarpoolApplications(w http.ResponseWriter, r *http.Request) {
@@ -620,6 +653,7 @@ func (s *Server) handleCancelCarpoolApplication(w http.ResponseWriter, r *http.R
 		writeProblem(w, r, appErr)
 		return
 	}
+	restoreCarpoolApplicationETag(&completion)
 	writeIdempotencyCompletion(w, completion)
 }
 
@@ -684,6 +718,9 @@ func (s *Server) handleAcceptCarpoolApplication(w http.ResponseWriter, r *http.R
 		writeProblem(w, r, appErr)
 		return
 	}
+	if !requireCapability(w, r, user, auth.CapabilityCarpoolPublish) {
+		return
+	}
 	body, _, appErr := decodeStrictJSON[emptyRequest](r)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
@@ -698,7 +735,7 @@ func (s *Server) handleAcceptCarpoolApplication(w http.ResponseWriter, r *http.R
 	routeKey := "POST /api/v1/owner/carpool-applications/{id}/accept:" + applicationID
 	completion, appErr := s.carpools.AcceptCarpoolApplicationWithIdempotency(
 		r.Context(),
-		user.ID,
+		user,
 		routeKey,
 		r.Header.Get("Idempotency-Key"),
 		requestHash(r.Method, routeKey, body),
@@ -734,6 +771,9 @@ func (s *Server) handleRejectCarpoolApplication(w http.ResponseWriter, r *http.R
 		writeProblem(w, r, appErr)
 		return
 	}
+	if !requireCapability(w, r, user, auth.CapabilityCarpoolPublish) {
+		return
+	}
 	body, req, appErr := decodeStrictJSON[reviewActionRequest](r)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
@@ -746,26 +786,30 @@ func (s *Server) handleRejectCarpoolApplication(w http.ResponseWriter, r *http.R
 	}
 	applicationID := chi.URLParam(r, "id")
 	routeKey := "POST /api/v1/owner/carpool-applications/{id}/reject:" + applicationID
-	s.withIdempotency(w, r, user.ID, routeKey, body, func() (int, any, string, string, *domain.AppError) {
-		application, errApp := s.carpools.RejectCarpoolApplication(r.Context(), carpool.RejectApplicationInput{
+	completion, appErr := s.carpools.RejectCarpoolApplicationWithIdempotency(
+		r.Context(), user, routeKey, r.Header.Get("Idempotency-Key"), requestHash(r.Method, routeKey, body),
+		carpool.RejectApplicationInput{
 			ApplicationID:   applicationID,
 			OwnerUserID:     user.ID,
 			Reason:          req.Reason,
 			ExpectedVersion: version,
 			RequestID:       requestIDFrom(r),
-		})
-		if errApp != nil {
-			return 0, nil, "", "", errApp
-		}
-		setETag(w, application.Version)
-		return http.StatusOK, toCarpoolApplicationResponse(application), "carpool_application", application.ID, nil
-	})
+		}, carpoolApplicationCompletionBuilder(http.StatusOK),
+	)
+	if appErr != nil {
+		writeProblem(w, r, appErr)
+		return
+	}
+	writeIdempotencyCompletion(w, completion)
 }
 
 func (s *Server) handleWithdrawCarpoolAcceptance(w http.ResponseWriter, r *http.Request) {
 	user, _, appErr := s.requireSessionAndCSRF(w, r)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
+		return
+	}
+	if !requireCapability(w, r, user, auth.CapabilityCarpoolPublish) {
 		return
 	}
 	body, req, appErr := decodeStrictJSON[membershipEndRequest](r)
@@ -782,7 +826,7 @@ func (s *Server) handleWithdrawCarpoolAcceptance(w http.ResponseWriter, r *http.
 	routeKey := "POST /api/v1/owner/carpool-applications/{id}/withdraw-acceptance:" + applicationID
 	completion, appErr := s.carpools.WithdrawCarpoolAcceptanceWithIdempotency(
 		r.Context(),
-		user.ID,
+		user,
 		routeKey,
 		r.Header.Get("Idempotency-Key"),
 		requestHash(r.Method, routeKey, body),
@@ -844,6 +888,9 @@ func (s *Server) handleConfirmCarpoolJoin(w http.ResponseWriter, r *http.Request
 		writeProblem(w, r, appErr)
 		return
 	}
+	if actorRole == carpool.JoinActorOwner && !requireCapability(w, r, user, auth.CapabilityCarpoolPublish) {
+		return
+	}
 	body, _, appErr := decodeStrictJSON[emptyRequest](r)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
@@ -862,7 +909,7 @@ func (s *Server) handleConfirmCarpoolJoin(w http.ResponseWriter, r *http.Request
 	routeKey := routePrefix + ":" + applicationID
 	completion, appErr := s.carpools.ConfirmCarpoolApplicationJoinWithIdempotency(
 		r.Context(),
-		user.ID,
+		user,
 		routeKey,
 		r.Header.Get("Idempotency-Key"),
 		requestHash(r.Method, routeKey, body),
@@ -899,6 +946,9 @@ func (s *Server) handleConfirmCarpoolMembershipComplete(w http.ResponseWriter, r
 		writeProblem(w, r, appErr)
 		return
 	}
+	if actorRole == carpool.JoinActorOwner && !requireCapability(w, r, user, auth.CapabilityCarpoolPublish) {
+		return
+	}
 	body, _, appErr := decodeStrictJSON[emptyRequest](r)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
@@ -917,7 +967,7 @@ func (s *Server) handleConfirmCarpoolMembershipComplete(w http.ResponseWriter, r
 	routeKey := routePrefix + ":" + membershipID
 	completion, appErr := s.carpools.ConfirmCarpoolMembershipCompleteWithIdempotency(
 		r.Context(),
-		user.ID,
+		user,
 		routeKey,
 		r.Header.Get("Idempotency-Key"),
 		requestHash(r.Method, routeKey, body),
@@ -954,6 +1004,9 @@ func (s *Server) handleEndCarpoolMembership(w http.ResponseWriter, r *http.Reque
 		writeProblem(w, r, appErr)
 		return
 	}
+	if actorRole == carpool.JoinActorOwner && !requireCapability(w, r, user, auth.CapabilityCarpoolPublish) {
+		return
+	}
 	body, req, appErr := decodeStrictJSON[membershipEndRequest](r)
 	if appErr != nil {
 		writeProblem(w, r, appErr)
@@ -972,7 +1025,7 @@ func (s *Server) handleEndCarpoolMembership(w http.ResponseWriter, r *http.Reque
 	routeKey := routePrefix + ":" + membershipID
 	completion, appErr := s.carpools.EndCarpoolMembershipWithIdempotency(
 		r.Context(),
-		user.ID,
+		user,
 		routeKey,
 		r.Header.Get("Idempotency-Key"),
 		requestHash(r.Method, routeKey, body),
@@ -1022,6 +1075,66 @@ func toAppCarpoolCycleTerm(req carpoolCycleTermRequest) carpool.CycleTermInput {
 		ExitPolicy:    req.ExitPolicy,
 		UsageRules:    req.UsageRules,
 	}
+}
+
+func carpoolListingCompletionBuilder(status int) carpool.ListingCompletionBuilder {
+	return func(listing carpool.Listing) (idempotency.Completion, *domain.AppError) {
+		body, err := json.Marshal(toCarpoolListingResponse(listing))
+		if err != nil {
+			return idempotency.Completion{}, domain.NewError(http.StatusInternalServerError, domain.CodeInternalError, "Internal error", "车源响应编码失败。")
+		}
+		return idempotency.Completion{
+			Status: status, ContentType: "application/json; charset=utf-8", Body: body,
+			ResourceType: "carpool_listing", ResourceID: listing.ID,
+			Headers: map[string]string{"ETag": `"` + strconv.FormatInt(listing.Version, 10) + `"`},
+		}, nil
+	}
+}
+
+func carpoolApplicationCompletionBuilder(status int) carpool.ApplicationCompletionBuilder {
+	return func(application carpool.Application) (idempotency.Completion, *domain.AppError) {
+		body, err := json.Marshal(toCarpoolApplicationResponse(application))
+		if err != nil {
+			return idempotency.Completion{}, domain.NewError(http.StatusInternalServerError, domain.CodeInternalError, "Internal error", "拼车申请响应编码失败。")
+		}
+		return idempotency.Completion{
+			Status: status, ContentType: "application/json; charset=utf-8", Body: body,
+			ResourceType: "carpool_application", ResourceID: application.ID,
+			Headers: map[string]string{"ETag": `"` + strconv.FormatInt(application.Version, 10) + `"`},
+		}, nil
+	}
+}
+
+func restoreCarpoolApplicationETag(completion *idempotency.Completion) {
+	if completion == nil || len(completion.Body) == 0 || completion.Headers != nil && completion.Headers["ETag"] != "" {
+		return
+	}
+	var payload struct {
+		Version int64 `json:"version"`
+	}
+	if err := json.Unmarshal(completion.Body, &payload); err != nil || payload.Version <= 0 {
+		return
+	}
+	if completion.Headers == nil {
+		completion.Headers = make(map[string]string)
+	}
+	completion.Headers["ETag"] = `"` + strconv.FormatInt(payload.Version, 10) + `"`
+}
+
+func restoreCarpoolListingETag(completion *idempotency.Completion) {
+	if completion == nil || len(completion.Body) == 0 || completion.Headers != nil && completion.Headers["ETag"] != "" {
+		return
+	}
+	var payload struct {
+		Version int64 `json:"version"`
+	}
+	if err := json.Unmarshal(completion.Body, &payload); err != nil || payload.Version <= 0 {
+		return
+	}
+	if completion.Headers == nil {
+		completion.Headers = make(map[string]string)
+	}
+	completion.Headers["ETag"] = `"` + strconv.FormatInt(payload.Version, 10) + `"`
 }
 
 func toCarpoolListingResponses(listings []carpool.Listing) []carpoolListingResponse {

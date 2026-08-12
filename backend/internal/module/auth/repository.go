@@ -23,8 +23,6 @@ type Repository interface {
 	PasswordCredential(ctx context.Context, username string) (PasswordCredential, *domain.AppError)
 	PasswordCredentialByUserID(ctx context.Context, userID string) (PasswordCredential, *domain.AppError)
 	UpsertPasswordCredential(ctx context.Context, credential PasswordCredential, now time.Time) *domain.AppError
-	CreateEmailRegistrationCode(ctx context.Context, input EmailRegistrationStartInput, codeHash string, expiresAt, now time.Time) *domain.AppError
-	ConfirmEmailRegistration(ctx context.Context, input EmailRegistrationConfirmInput, codeHash, sessionTokenHash, csrfTokenHash string, sessionExpiresAt, sessionAbsoluteExpiresAt, now time.Time) (User, *domain.AppError)
 	CreateSession(ctx context.Context, userID, sessionTokenHash, csrfTokenHash string, expiresAt, absoluteExpiresAt, now time.Time) *domain.AppError
 	GetSession(ctx context.Context, sessionTokenHash string, now time.Time) (User, Session, *domain.AppError)
 	GetSessionWithCSRF(ctx context.Context, sessionTokenHash, csrfTokenHash string, now time.Time) (User, Session, *domain.AppError)
@@ -34,4 +32,28 @@ type Repository interface {
 	CreateAccountAppealSession(ctx context.Context, userID, sessionTokenHash, csrfTokenHash string, expiresAt, now time.Time) (User, *domain.AppError)
 	RotateAccountAppealSessionCSRF(ctx context.Context, sessionTokenHash, csrfTokenHash string, now time.Time) (User, AccountAppealSession, *domain.AppError)
 	GetAccountAppealSessionWithCSRF(ctx context.Context, sessionTokenHash, csrfTokenHash string, now time.Time) (User, AccountAppealSession, *domain.AppError)
+}
+
+// StudentRegistrationRepository is a focused durable boundary so existing
+// auth repository test doubles do not need to implement registration writes.
+type StudentRegistrationRepository interface {
+	StudentRegistrationConfig(ctx context.Context) (StudentRegistrationConfig, *domain.AppError)
+	StartStudentEmailRegistration(ctx context.Context, input EmailRegistrationStartInput, codeHash string, expiresAt, now time.Time) *domain.AppError
+	ConfirmStudentEmailRegistration(ctx context.Context, input EmailRegistrationConfirmInput, codeHash string, credential PasswordCredential, sessionTokenHash, csrfTokenHash string, sessionExpiresAt, sessionAbsoluteExpiresAt, now time.Time) (User, *domain.AppError)
+}
+
+// StudentRegistrationAdminRepository owns the audited, optimistic and
+// idempotent administration boundary for the persistent registration policy.
+type StudentRegistrationAdminRepository interface {
+	AdminStudentRegistration(ctx context.Context) (StudentRegistrationConfig, *domain.AppError)
+	UpdateAdminStudentRegistrationWithIdempotency(ctx context.Context, entry idempotency.Entry, input StudentRegistrationSettingUpdate, now time.Time, buildCompletion StudentRegistrationCompletionBuilder) (StudentRegistrationConfig, idempotency.Completion, *domain.AppError)
+	AdminStudentInstitutionDomains(ctx context.Context) ([]StudentInstitutionDomain, *domain.AppError)
+	CreateStudentInstitutionDomainWithIdempotency(ctx context.Context, entry idempotency.Entry, input StudentInstitutionDomainCreateInput, now time.Time, buildCompletion StudentInstitutionDomainCompletionBuilder) (StudentInstitutionDomain, idempotency.Completion, *domain.AppError)
+	UpdateStudentInstitutionDomainWithIdempotency(ctx context.Context, entry idempotency.Entry, input StudentInstitutionDomainUpdateInput, now time.Time, buildCompletion StudentInstitutionDomainCompletionBuilder) (StudentInstitutionDomain, idempotency.Completion, *domain.AppError)
+}
+
+type OAuthLinkRepository interface {
+	MarkSessionPasswordReauthenticated(ctx context.Context, sessionTokenHash string, reauthenticatedAt time.Time) *domain.AppError
+	StartOAuthLink(ctx context.Context, sessionTokenHash, stateHash, purpose string, expiresAt, now time.Time) *domain.AppError
+	CompleteOAuthLink(ctx context.Context, sessionTokenHash, stateHash string, profile OAuthProfile, replacementSessionTokenHash, replacementCSRFTokenHash string, replacementExpiresAt, replacementAbsoluteExpiresAt, now time.Time) (User, *domain.AppError)
 }

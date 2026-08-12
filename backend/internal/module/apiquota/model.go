@@ -184,6 +184,7 @@ type CreateBatchInput struct {
 	SaleCutoffAt              time.Time
 	ExpiresAt                 time.Time
 	SourceConfirmedAt         time.Time
+	RequestID                 string
 }
 
 type CreateOfferInput struct {
@@ -199,6 +200,7 @@ type CreateOfferInput struct {
 	SaleMode           string
 	ContinuousCopies   int
 	SortOrder          int
+	RequestID          string
 }
 
 type RoundOfferInput struct {
@@ -213,6 +215,7 @@ type CreateRoundInput struct {
 	StartsAt    time.Time
 	EndsAt      time.Time
 	Offers      []RoundOfferInput
+	RequestID   string
 }
 
 type CreateOrderInput struct {
@@ -258,6 +261,7 @@ type CredentialImportInput struct {
 	OfferID      string
 	DeliveryKind string
 	CSV          io.Reader
+	RequestID    string
 }
 
 type CredentialImportRow struct {
@@ -292,6 +296,7 @@ type CreateRushOfferInput struct {
 	SourceConfirmedAt  time.Time
 	DeliveryKind       string
 	CredentialRows     []CredentialImportRow
+	RequestID          string
 }
 
 type RushOfferPublication struct {
@@ -300,6 +305,12 @@ type RushOfferPublication struct {
 	Round              SaleRound
 	CredentialSummary  CredentialSummary
 	CredentialImported int
+	RequestID          string
 }
 
 type RushOfferCompletionBuilder func(RushOfferPublication) (idempotency.Completion, *domain.AppError)
+
+type BatchCompletionBuilder func(Batch) (idempotency.Completion, *domain.AppError)
+type OfferCompletionBuilder func(Offer) (idempotency.Completion, *domain.AppError)
+type SaleRoundCompletionBuilder func(SaleRound) (idempotency.Completion, *domain.AppError)
+type CredentialImportCompletionBuilder func(CredentialImportResult) (idempotency.Completion, *domain.AppError)

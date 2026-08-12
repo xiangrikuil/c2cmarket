@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch, type Component } from 'vue'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
 import { useQueryClient } from '@tanstack/vue-query'
 import BadgeCheck from 'lucide-vue-next/dist/esm/icons/badge-check.js'
@@ -45,17 +45,17 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
-import { useMyApiServices, useMyCarpools, useMyProfileQuery, useNotifications } from '@/queries/useAppShellQueries'
+import { useMyProfileQuery, useNotifications } from '@/queries/useAppShellQueries'
 import { useNavigationBadges } from '@/queries/useRealtimeQueries'
 import { useRealtimeSync } from '@/composables/useRealtimeSync'
 import { appThemes, applyAppTheme, getInitialAppTheme, isAppTheme } from '@/theme/appThemes'
 import { ACCOUNT_RECOVERY_PATH, isAccountRecoveryComplete, shouldRedirectToAccountRecovery } from '@/lib/accountRecovery'
 import { usePersistentSidebar } from '@/composables/usePersistentSidebar'
-import { logoutBackendSession } from '@/lib/backendClient'
 import { loginRoute } from '@/lib/authNavigation'
 import { usePromotionRewardPublicConfig } from '@/queries/usePromotionRewardQueries'
-import { useOwnerAPIProbeConnections } from '@/queries/useApiHealthQueries'
 import DevPersonaSwitcher from '@/components/layout/DevPersonaSwitcher.vue'
+import { CAPABILITY, hasAnyCapability, hasCapability } from '@/lib/capabilities'
+import { logoutCurrentSession } from '@/lib/sessionActions'
 
 const route = useRoute()
 const router = useRouter()
@@ -70,10 +70,6 @@ const isAuthenticated = computed(() => Boolean(myProfile.value))
 const authResolved = computed(() => import.meta.client && !profilePending.value)
 const showLoginAction = computed(() => authResolved.value && !isAuthenticated.value)
 const { data: notifications } = useNotifications(isAuthenticated)
-const workspaceQueriesEnabled = computed(() => Boolean(myProfile.value))
-const { data: ownedCarpools } = useMyCarpools(workspaceQueriesEnabled)
-const { data: ownedApiServices } = useMyApiServices('all', workspaceQueriesEnabled)
-const { data: probeConnections } = useOwnerAPIProbeConnections(workspaceQueriesEnabled)
 const { data: navigationBadges } = useNavigationBadges(computed(() => Boolean(myProfile.value)))
 const { data: promotionRewardConfig } = usePromotionRewardPublicConfig()
 useRealtimeSync(computed(() => Boolean(myProfile.value)))
@@ -89,7 +85,11 @@ const currentUsername = computed(() => myProfile.value?.username ?? '')
 const currentDisplayName = computed(() => myProfile.value?.displayName ?? myProfile.value?.username ?? '未登录')
 const currentAvatarURL = computed(() => myProfile.value?.avatarUrl ?? '')
 const currentAvatarText = computed(() => currentDisplayName.value.slice(0, 1).toUpperCase())
-const canViewAdminNav = computed(() => myProfile.value?.permissions.includes('admin') ?? false)
+const canPublishCarpool = computed(() => hasCapability(myProfile.value, CAPABILITY.carpoolPublish))
+const canPublishApiService = computed(() => hasCapability(myProfile.value, CAPABILITY.apiServicePublish))
+const canManageApiProbe = computed(() => hasCapability(myProfile.value, CAPABILITY.apiProbeManage))
+const canViewAdminNav = computed(() => hasCapability(myProfile.value, CAPABILITY.adminAccess))
+const canPublishAnything = computed(() => canPublishCarpool.value || canPublishApiService.value)
 const announcementCenterTo = '/my/notifications?tab=announcements'
 const accountSettingsPaths = ['/my/profile', '/my/contacts', '/my/account'] as const
 const currentLoginTo = computed(() => loginRoute(route.fullPath))
@@ -101,13 +101,16 @@ const apiMarketNavItems = [
   { label: '短期流量包', view: 'packages' },
   { label: '自选额度', view: 'free' },
 ] as const
-const hasMerchantWorkspace = computed(() => Boolean(
-  (ownedCarpools.value?.length ?? 0) > 0
-  || (ownedApiServices.value?.length ?? 0) > 0
-  || (probeConnections.value?.length ?? 0) > 0
-  || ownerCarpoolActionCount.value > 0
-  || merchantApiActionCount.value > 0,
-))
+const canViewMerchantWorkspace = computed(() => hasAnyCapability(myProfile.value, [
+  CAPABILITY.carpoolPublish,
+  CAPABILITY.apiServicePublish,
+  CAPABILITY.apiProbeManage,
+]))
+
+type NavigationGroup = {
+  title: string
+  items: Array<{ label: string, to: string, count: number | null, icon: Component }>
+}
 
 const navGroups = computed(() => {
   const browseGroup = {
@@ -122,8 +125,8 @@ const navGroups = computed(() => {
   const publishGroup = {
     title: '发布入口',
     items: [
-      { label: '发布车源', to: '/carpools/new', count: null, icon: CarFront },
-      { label: '发布 API 服务', to: '/api-market/new', count: null, icon: PackageSearch },
+      ...(canPublishCarpool.value ? [{ label: '发布车源', to: '/carpools/new', count: null, icon: CarFront }] : []),
+      ...(canPublishApiService.value ? [{ label: '发布 API 服务', to: '/api-market/new', count: null, icon: PackageSearch }] : []),
     ],
   }
   const userGroup = {
@@ -139,11 +142,15 @@ const navGroups = computed(() => {
   const merchantGroup = {
     title: '经营中心',
     items: [
-      { label: '我的车源', to: '/my/carpools', count: null, icon: CarFront },
-      { label: '上车申请', to: '/merchant/carpool-applications', count: ownerCarpoolActionCount.value, icon: UserCog },
-      { label: '我的 API 服务', to: '/my/api-services', count: null, icon: Code2 },
-      { label: '探针连接', to: '/my/api-probe-connections', count: null, icon: Cable },
-      { label: 'API 销售订单', to: '/merchant/api-orders', count: merchantApiActionCount.value, icon: PackageSearch },
+      ...(canPublishCarpool.value ? [
+        { label: '我的车源', to: '/my/carpools', count: null, icon: CarFront },
+        { label: '上车申请', to: '/merchant/carpool-applications', count: ownerCarpoolActionCount.value, icon: UserCog },
+      ] : []),
+      ...(canPublishApiService.value ? [
+        { label: '我的 API 服务', to: '/my/api-services', count: null, icon: Code2 },
+        { label: 'API 销售订单', to: '/merchant/api-orders', count: merchantApiActionCount.value, icon: PackageSearch },
+      ] : []),
+      ...(canManageApiProbe.value ? [{ label: '探针连接', to: '/my/api-probe-connections', count: null, icon: Cable }] : []),
     ],
   }
   const toolsGroup = {
@@ -156,7 +163,7 @@ const navGroups = computed(() => {
     title: '账户',
     items: [
       { label: '个人中心', to: '/my', count: null, icon: UserRound },
-      { label: '联系与收款', to: '/my/contacts', count: null, icon: MessageSquarePlus },
+      { label: canPublishApiService.value ? '联系与收款' : '联系方式', to: '/my/contacts', count: null, icon: MessageSquarePlus },
       { label: '信誉与成长', to: '/my/reputation', count: null, icon: BadgeCheck },
       ...(promotionRewardConfig.value?.programEnabled ? [{ label: '推广权益', to: '/my/promotion-benefits', count: null, icon: Gift }] : []),
       { label: '安全设置', to: '/my/account', count: null, icon: ShieldCheck },
@@ -171,8 +178,10 @@ const navGroups = computed(() => {
 
   if (!isAuthenticated.value) return [browseGroup]
 
-  const groups = [browseGroup, publishGroup, userGroup]
-  if (hasMerchantWorkspace.value) groups.push(merchantGroup)
+  const groups: NavigationGroup[] = [browseGroup]
+  if (publishGroup.items.length > 0) groups.push(publishGroup)
+  groups.push(userGroup)
+  if (canViewMerchantWorkspace.value) groups.push(merchantGroup)
   groups.push(toolsGroup)
   groups.push(accountGroup)
   if (canViewAdminNav.value) groups.push(adminEntryGroup)
@@ -248,8 +257,7 @@ async function logout() {
   if (logoutLoading.value) return
   logoutLoading.value = true
   try {
-    await logoutBackendSession()
-    queryClient.clear()
+    await logoutCurrentSession(queryClient)
     toast.success('已退出登录。')
     await router.replace('/login')
   } catch (error) {
@@ -505,7 +513,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onNavigationKeydown)
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
-          <DropdownMenu v-if="isAuthenticated">
+          <DropdownMenu v-if="canPublishAnything">
             <DropdownMenuTrigger as-child>
               <Button size="sm" class="hidden md:inline-flex">
                 发布
@@ -513,19 +521,19 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onNavigationKeydown)
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" class="w-48">
-              <DropdownMenuItem as-child>
+              <DropdownMenuItem v-if="canPublishCarpool" as-child>
                 <RouterLink to="/carpools/new" class="flex items-center gap-2">
                   <Upload class="h-4 w-4" />导入 / 发布车源
                 </RouterLink>
               </DropdownMenuItem>
-              <DropdownMenuItem as-child>
+              <DropdownMenuItem v-if="canPublishApiService" as-child>
                 <RouterLink to="/api-market/new" class="flex items-center gap-2">
                   <Code2 class="h-4 w-4" />发布 API 服务
                 </RouterLink>
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
-          <DropdownMenu v-else-if="authResolved">
+          <DropdownMenu v-else-if="showLoginAction">
             <DropdownMenuTrigger as-child>
               <Button size="sm" class="hidden md:inline-flex">
                 登录后发布

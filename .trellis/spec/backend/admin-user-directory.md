@@ -48,7 +48,7 @@ WHERE target_type = 'user';
 - JSON fields marked required in OpenAPI must be distinguishable from Go zero values. In particular, decode `isAdmin` as `*bool`, reject `nil`, then project to the service's explicit grant/revoke boolean.
 - A successful mutation increments `users.version`. Leaving `active` revokes all live target sessions.
 - User/permission changes, session revocation, domain event, safe administrator audit, target notification, response encoding, and idempotency completion commit in one transaction.
-- Self-target changes are forbidden. A table-level transaction lock plus an active-administrator count prevents concurrent removal of the last active administrator.
+- Self-target changes are forbidden. A dedicated transaction-scoped advisory lock serializes administrator status/permission governance before the target row lock; the active-administrator count then prevents concurrent removal of the last active administrator. Do not use a strong `users`/`user_permissions` table lock here: it can deadlock with ordinary profile, authentication, or linux.do-link writes that already hold PostgreSQL's normal `RowExclusive` table lock.
 - Real frontend mode surfaces backend failure. Deterministic mock behavior is allowed only when `NUXT_PUBLIC_API_MODE=mock` was explicitly selected.
 
 ### 4. Validation & Error Matrix

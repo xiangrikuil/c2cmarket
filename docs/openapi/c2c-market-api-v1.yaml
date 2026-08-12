@@ -184,6 +184,32 @@ paths:
           $ref: "#/components/responses/Problem"
         "429":
           $ref: "#/components/responses/RateLimited"
+  /api/v1/auth/password/reauthenticate:
+    post:
+      operationId: reauthenticatePassword
+      tags: [Auth]
+      summary: Reauthenticate the current session before linking linux.do.
+      description: Verifies the current native password and records a ten-minute, session-bound recent-authentication fact. It does not create another session or expose credential material.
+      security:
+        - sessionCookie: []
+          csrfToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PasswordReauthenticateRequest"
+      responses:
+        "204":
+          description: Current session recently reauthenticated.
+        "401":
+          $ref: "#/components/responses/Problem"
+        "403":
+          $ref: "#/components/responses/Problem"
+        "422":
+          $ref: "#/components/responses/Problem"
+        "429":
+          $ref: "#/components/responses/RateLimited"
   /api/v1/auth/password:
     post:
       operationId: setBackupPassword
@@ -211,14 +237,27 @@ paths:
           $ref: "#/components/responses/Problem"
         "429":
           $ref: "#/components/responses/RateLimited"
+  /api/v1/auth/email-registration/config:
+    get:
+      operationId: getStudentEmailRegistrationConfig
+      tags: [Auth]
+      security: []
+      summary: Return the public student-email registration switch and enabled exact institution domains.
+      responses:
+        "200":
+          description: Public registration configuration. The backend still rechecks the switch and exact domain at both start and confirmation.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StudentRegistrationPublicConfig"
   /api/v1/auth/email-registration/start:
     post:
       operationId: startEmailRegistration
       tags: [Auth]
       security: []
-      summary: Disabled native email registration entry.
+      summary: Start student-email registration.
       description: |
-        Requires a fresh Turnstile token with action `student_signup`. After successful verification, the current release returns `EMAIL_REGISTRATION_DISABLED`; it does not send email, create a challenge, account, or session.
+        Requires a fresh Turnstile token with action `student_signup`, the persistent global switch to be enabled, and an exact enabled institution domain. A new six-digit challenge invalidates any earlier active registration challenge for the same canonical email.
       requestBody:
         required: true
         content:
@@ -226,8 +265,16 @@ paths:
             schema:
               $ref: "#/components/schemas/EmailRegistrationStartRequest"
       responses:
+        "200":
+          description: Verification challenge created and sent.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EmailRegistrationStartResponse"
         "403":
-          description: Turnstile verification failed or email registration is disabled.
+          description: Turnstile verification failed or student registration is disabled.
+          $ref: "#/components/responses/Problem"
+        "409":
           $ref: "#/components/responses/Problem"
         "422":
           $ref: "#/components/responses/Problem"
@@ -238,9 +285,9 @@ paths:
       operationId: confirmEmailRegistration
       tags: [Auth]
       security: []
-      summary: Disabled native email registration confirmation.
+      summary: Confirm student-email registration and create a restricted buyer account.
       description: |
-        First release only supports linux.do OAuth registration and login. This route is retained as a stable compatibility boundary and always returns `EMAIL_REGISTRATION_DISABLED`; it never creates a native email account or session.
+        Rechecks the persistent switch and exact enabled institution domain, consumes a purpose-bound single-use verification challenge, and atomically creates the user, immutable student-email claim, Argon2id password credential, registration attribution, safe identity event, and cookie session. The resulting account receives only `api_order.create` until linux.do is explicitly linked after password reauthentication.
       requestBody:
         required: true
         content:
@@ -248,8 +295,20 @@ paths:
             schema:
               $ref: "#/components/schemas/EmailRegistrationConfirmRequest"
       responses:
+        "200":
+          description: Student buyer account and session created.
+          headers:
+            Set-Cookie:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SessionResponse"
         "403":
-          description: Email registration disabled. Problem `code` is `EMAIL_REGISTRATION_DISABLED`.
+          description: Student registration is disabled or the exact institution domain is no longer eligible.
+          $ref: "#/components/responses/Problem"
+        "409":
           $ref: "#/components/responses/Problem"
         "422":
           $ref: "#/components/responses/Problem"
@@ -262,6 +321,13 @@ paths:
       security: []
       summary: Start OAuth login.
       parameters:
+        - name: purpose
+          in: query
+          required: false
+          description: "`link_linuxdo` starts a current-session identity-link flow and requires a recent password reauthentication; omitted starts ordinary login or registration."
+          schema:
+            type: string
+            enum: [link_linuxdo]
         - name: returnTo
           in: query
           required: false
@@ -1562,6 +1628,7 @@ paths:
       parameters:
         - $ref: "#/components/parameters/ResourceId"
         - $ref: "#/components/parameters/IfMatch"
+        - $ref: "#/components/parameters/IdempotencyKey"
       requestBody:
         required: true
         content:
@@ -3568,6 +3635,7 @@ paths:
       parameters:
         - $ref: "#/components/parameters/ResourceId"
         - $ref: "#/components/parameters/IfMatch"
+        - $ref: "#/components/parameters/IdempotencyKey"
       requestBody:
         required: true
         content:
@@ -3706,6 +3774,7 @@ paths:
       parameters:
         - $ref: "#/components/parameters/ResourceId"
         - $ref: "#/components/parameters/IfMatch"
+        - $ref: "#/components/parameters/IdempotencyKey"
       requestBody:
         required: true
         content:
@@ -3745,6 +3814,7 @@ paths:
       parameters:
         - $ref: "#/components/parameters/ResourceId"
         - $ref: "#/components/parameters/IfMatch"
+        - $ref: "#/components/parameters/IdempotencyKey"
       responses:
         "204":
           description: Probe connection and its dependent samples deleted.
@@ -3844,6 +3914,7 @@ paths:
       parameters:
         - $ref: "#/components/parameters/ResourceId"
         - $ref: "#/components/parameters/IfMatch"
+        - $ref: "#/components/parameters/IdempotencyKey"
       requestBody:
         required: true
         content:
@@ -4011,6 +4082,7 @@ paths:
       parameters:
         - $ref: "#/components/parameters/ResourceId"
         - $ref: "#/components/parameters/IfMatch"
+        - $ref: "#/components/parameters/IdempotencyKey"
       requestBody:
         required: true
         content:
@@ -5658,6 +5730,147 @@ paths:
           $ref: "#/components/responses/Problem"
         "404":
           $ref: "#/components/responses/Problem"
+  /api/v1/admin/student-registration:
+    get:
+      operationId: getAdminStudentRegistration
+      tags: [AdminUsers]
+      summary: Read the persistent student-email registration switch.
+      responses:
+        "200":
+          description: Current audited registration setting.
+          headers:
+            ETag:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminStudentRegistrationSetting"
+        "403":
+          $ref: "#/components/responses/Problem"
+    patch:
+      operationId: updateAdminStudentRegistration
+      tags: [AdminUsers]
+      summary: Enable or disable student-email registration with optimistic locking and an audit reason.
+      security:
+        - sessionCookie: []
+          csrfToken: []
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+        - $ref: "#/components/parameters/IfMatch"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AdminStudentRegistrationUpdateRequest"
+      responses:
+        "200":
+          description: Registration setting updated and audited in the mutation transaction.
+          headers:
+            ETag:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminStudentRegistrationSetting"
+        "403":
+          $ref: "#/components/responses/Problem"
+        "412":
+          $ref: "#/components/responses/Problem"
+        "422":
+          $ref: "#/components/responses/Problem"
+        "428":
+          $ref: "#/components/responses/Problem"
+  /api/v1/admin/student-institution-domains:
+    get:
+      operationId: listAdminStudentInstitutionDomains
+      tags: [AdminUsers]
+      summary: List exact institution-domain eligibility records.
+      responses:
+        "200":
+          description: Complete bounded institution-domain configuration list.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminStudentInstitutionDomainList"
+        "403":
+          $ref: "#/components/responses/Problem"
+    post:
+      operationId: createAdminStudentInstitutionDomain
+      tags: [AdminUsers]
+      summary: Add one immutable exact institution domain.
+      security:
+        - sessionCookie: []
+          csrfToken: []
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+        - $ref: "#/components/parameters/IfMatchAllowZero"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AdminStudentInstitutionDomainCreateRequest"
+      responses:
+        "201":
+          description: Exact institution domain created and audited.
+          headers:
+            ETag:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminStudentInstitutionDomain"
+        "403":
+          $ref: "#/components/responses/Problem"
+        "409":
+          $ref: "#/components/responses/Problem"
+        "422":
+          $ref: "#/components/responses/Problem"
+        "428":
+          $ref: "#/components/responses/Problem"
+  /api/v1/admin/student-institution-domains/{id}:
+    patch:
+      operationId: updateAdminStudentInstitutionDomain
+      tags: [AdminUsers]
+      summary: Update only the institution name or enabled state; the exact domain is immutable.
+      security:
+        - sessionCookie: []
+          csrfToken: []
+      parameters:
+        - $ref: "#/components/parameters/ResourceId"
+        - $ref: "#/components/parameters/IdempotencyKey"
+        - $ref: "#/components/parameters/IfMatch"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AdminStudentInstitutionDomainUpdateRequest"
+      responses:
+        "200":
+          description: Institution-domain display name or state updated and audited.
+          headers:
+            ETag:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminStudentInstitutionDomain"
+        "403":
+          $ref: "#/components/responses/Problem"
+        "404":
+          $ref: "#/components/responses/Problem"
+        "412":
+          $ref: "#/components/responses/Problem"
+        "422":
+          $ref: "#/components/responses/Problem"
+        "428":
+          $ref: "#/components/responses/Problem"
   /api/v1/admin/users:
     get:
       operationId: listAdminUsers
@@ -5714,10 +5927,20 @@ paths:
     get:
       operationId: listAdminAuditLogs
       tags: [AdminUsers]
-      description: Return persisted administrator actions without exposing raw before/after JSON payloads.
+      description: Return a safe allowlisted projection across administrator, moderation, domain, API-order, contact-access and probe ledgers. Raw reasons, notes, before/after JSON, credentials, contacts, email addresses and request bodies are never returned or searched.
       parameters:
         - $ref: "#/components/parameters/Limit"
         - $ref: "#/components/parameters/Cursor"
+        - name: sourceKind
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/OperationAuditSourceKind"
+        - name: domain
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/OperationAuditDomain"
         - name: search
           in: query
           required: false
@@ -5748,13 +5971,39 @@ paths:
           schema:
             type: string
             format: uuid
+        - name: actorKind
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [user, admin, system]
+        - name: outcome
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [succeeded, status_changed, accessed]
+        - name: from
+          in: query
+          required: false
+          description: Inclusive RFC3339 lower bound. The maximum query window is 90 days.
+          schema:
+            type: string
+            format: date-time
+        - name: to
+          in: query
+          required: false
+          description: Inclusive RFC3339 upper bound.
+          schema:
+            type: string
+            format: date-time
       responses:
         "200":
-          description: Stable cursor page of persisted global administrator audit entries.
+          description: Stable composite-cursor page of allowlisted operation-audit entries.
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/AdminAuditLogList"
+                $ref: "#/components/schemas/AdminOperationAuditEntryList"
         "403":
           $ref: "#/components/responses/Problem"
         "422":
@@ -7993,6 +8242,7 @@ paths:
           csrfToken: []
       parameters:
         - $ref: "#/components/parameters/ResourceId"
+        - $ref: "#/components/parameters/IdempotencyKey"
       requestBody:
         required: true
         content:
@@ -8014,6 +8264,7 @@ paths:
           csrfToken: []
       parameters:
         - $ref: "#/components/parameters/ResourceId"
+        - $ref: "#/components/parameters/IdempotencyKey"
       responses:
         "200":
           description: Contact method disabled.
@@ -8030,6 +8281,7 @@ paths:
           csrfToken: []
       parameters:
         - $ref: "#/components/parameters/ResourceId"
+        - $ref: "#/components/parameters/IdempotencyKey"
       responses:
         "200":
           description: Contact method set as default.
@@ -8046,6 +8298,7 @@ paths:
           csrfToken: []
       parameters:
         - $ref: "#/components/parameters/ResourceId"
+        - $ref: "#/components/parameters/IdempotencyKey"
       responses:
         "200":
           description: Contact method marked verified.
@@ -9013,7 +9266,7 @@ components:
     EmailRegistrationConfirmRequest:
       type: object
       additionalProperties: false
-      required: [email, code]
+      required: [email, code, username, password, attribution]
       properties:
         email:
           type: string
@@ -9022,6 +9275,16 @@ components:
         code:
           type: string
           pattern: '^[0-9]{6}$'
+        username:
+          type: string
+          minLength: 3
+          maxLength: 24
+          pattern: '^[a-z0-9_-]{3,24}$'
+          description: Exact lowercase public username. The server never silently normalizes or replaces it.
+        password:
+          type: string
+          minLength: 8
+          maxLength: 128
         attribution:
           $ref: "#/components/schemas/RegistrationAttribution"
     EmailRegistrationStartRequest:
@@ -9037,9 +9300,45 @@ components:
           type: string
           minLength: 1
           maxLength: 2048
+    EmailRegistrationStartResponse:
+      type: object
+      additionalProperties: false
+      required: [email, expiresAt]
+      properties:
+        email:
+          type: string
+          format: email
+        expiresAt:
+          type: string
+          format: date-time
+        devCode:
+          type: string
+          pattern: '^[0-9]{6}$'
+          description: Present only when the configured local/test mail sender explicitly exposes the code.
+    StudentRegistrationInstitution:
+      type: object
+      additionalProperties: false
+      required: [domain, institutionName]
+      properties:
+        domain:
+          type: string
+          description: Exact lowercase institution email domain; suffix and wildcard matching are never used.
+        institutionName:
+          type: string
+    StudentRegistrationPublicConfig:
+      type: object
+      additionalProperties: false
+      required: [enabled, institutions]
+      properties:
+        enabled:
+          type: boolean
+        institutions:
+          type: array
+          items:
+            $ref: "#/components/schemas/StudentRegistrationInstitution"
     MyProfile:
       type: object
-      required: [id, username, displayName, emailVerified, passwordConfigured, avatarMode, accountStatus, permissions, linuxDoBinding, badges, restrictions, usernameChangePolicy, privacy, createdAt, updatedAt, version]
+      required: [id, username, displayName, emailVerified, passwordConfigured, avatarMode, accountStatus, permissions, capabilities, linuxDoBinding, badges, restrictions, usernameChangePolicy, privacy, createdAt, updatedAt, version]
       properties:
         id:
           type: string
@@ -9077,6 +9376,11 @@ components:
           type: array
           items:
             type: string
+        capabilities:
+          type: array
+          uniqueItems: true
+          items:
+            $ref: "#/components/schemas/Capability"
         linuxDoBinding:
           type: object
         badges:
@@ -10309,6 +10613,15 @@ components:
           type: string
           minLength: 8
           maxLength: 128
+    PasswordReauthenticateRequest:
+      type: object
+      additionalProperties: false
+      required: [password]
+      properties:
+        password:
+          type: string
+          minLength: 1
+          maxLength: 256
     OAuthStartResponse:
       type: object
       required: [authorizationUrl]
@@ -10331,9 +10644,32 @@ components:
         avatarUrl:
           type: string
           format: uri
+    StudentClaim:
+      type: object
+      additionalProperties: false
+      required: [institutionDomain, institutionName, claimedAt]
+      description: Safe session projection of the authenticated user's immutable institution-email claim. Internal IDs and the canonical email are never exposed here.
+      properties:
+        institutionDomain:
+          type: string
+        institutionName:
+          type: string
+        claimedAt:
+          type: string
+          format: date-time
+    Capability:
+      type: string
+      enum:
+        - admin.access
+        - api_order.create
+        - api_probe.manage
+        - api_quota.publish
+        - api_service.publish
+        - carpool.apply
+        - carpool.publish
     User:
       type: object
-      required: [id, analyticsUserId, username, displayName, isAdmin, permissions, linuxDoBinding]
+      required: [id, analyticsUserId, username, displayName, isAdmin, permissions, capabilities, studentClaim, linuxDoBinding]
       properties:
         id:
           type: string
@@ -10351,6 +10687,15 @@ components:
           type: array
           items:
             type: string
+        capabilities:
+          type: array
+          uniqueItems: true
+          items:
+            $ref: "#/components/schemas/Capability"
+        studentClaim:
+          anyOf:
+            - $ref: "#/components/schemas/StudentClaim"
+            - type: "null"
         linuxDoBinding:
           $ref: "#/components/schemas/LinuxDoBinding"
     GrowthSummary:
@@ -14832,14 +15177,14 @@ components:
       properties:
         code:
           type: string
-          enum: [eligible, sold_out, paused, credential_risk, owner_action_required, already_applied, already_member, self_owned]
+          enum: [eligible, capability_required, sold_out, paused, credential_risk, owner_action_required, already_applied, already_member, self_owned]
         canApply:
           type: boolean
         reason:
           type: string
         resolutionAction:
           type: string
-          enum: [apply, wait_for_owner_correction, browse_other_listings, manage_own_listing, view_application, view_membership]
+          enum: [apply, link_linuxdo, wait_for_owner_correction, browse_other_listings, manage_own_listing, view_application, view_membership]
     CarpoolListing:
       type: object
       required:
@@ -16199,6 +16544,100 @@ components:
         archivedUsers:
           type: integer
           minimum: 0
+    AdminStudentRegistrationSetting:
+      type: object
+      additionalProperties: false
+      required: [enabled, version]
+      properties:
+        enabled:
+          type: boolean
+        version:
+          type: integer
+          minimum: 1
+    AdminStudentRegistrationUpdateRequest:
+      type: object
+      additionalProperties: false
+      required: [enabled, expectedVersion, reason]
+      properties:
+        enabled:
+          type: boolean
+        expectedVersion:
+          type: integer
+          minimum: 1
+        reason:
+          type: string
+          minLength: 1
+          maxLength: 500
+    AdminStudentInstitutionDomain:
+      type: object
+      additionalProperties: false
+      required: [id, domain, institutionName, enabled, version, createdAt, updatedAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        domain:
+          type: string
+          description: Immutable exact lowercase domain; URLs, wildcards, suffix rules and Unicode forms are rejected.
+        institutionName:
+          type: string
+          minLength: 1
+          maxLength: 120
+        enabled:
+          type: boolean
+        version:
+          type: integer
+          minimum: 1
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+    AdminStudentInstitutionDomainList:
+      type: object
+      additionalProperties: false
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/AdminStudentInstitutionDomain"
+    AdminStudentInstitutionDomainCreateRequest:
+      type: object
+      additionalProperties: false
+      required: [domain, institutionName, enabled, reason]
+      properties:
+        domain:
+          type: string
+        institutionName:
+          type: string
+          minLength: 1
+          maxLength: 120
+        enabled:
+          type: boolean
+        reason:
+          type: string
+          minLength: 1
+          maxLength: 500
+    AdminStudentInstitutionDomainUpdateRequest:
+      type: object
+      additionalProperties: false
+      required: [institutionName, enabled, expectedVersion, reason]
+      properties:
+        institutionName:
+          type: string
+          minLength: 1
+          maxLength: 120
+        enabled:
+          type: boolean
+        expectedVersion:
+          type: integer
+          minimum: 1
+        reason:
+          type: string
+          minLength: 1
+          maxLength: 500
     AdminLinuxDoBinding:
       type: object
       required: [bound]
@@ -16269,45 +16708,83 @@ components:
         createdAt:
           type: string
           format: date-time
-    AdminAuditLog:
+    OperationAuditSourceKind:
+      type: string
+      enum:
+        - admin
+        - moderation
+        - domain
+        - api_order
+        - contact_session_access
+        - api_intent_contact_access
+        - api_order_access
+        - probe
+    OperationAuditDomain:
+      type: string
+      enum:
+        - identity
+        - account
+        - institution
+        - contact
+        - carpool
+        - api_service
+        - api_quota
+        - api_order
+        - moderation
+        - probe
+    AdminOperationAuditEntry:
       type: object
       additionalProperties: false
-      required: [id, actorUserId, actorUsername, action, targetType, targetId, reason, requestId, beforeStatus, afterStatus, createdAt]
+      required: [id, sourceKind, domain, actorKind, actorUserId, actorUsername, action, actionLabel, targetType, targetId, targetLabel, outcome, summary, detailPath, requestId, createdAt]
       properties:
         id:
           type: string
-          format: uuid
-        actorUserId:
+          description: Opaque source-kind and source-event identifier.
+        sourceKind:
+          $ref: "#/components/schemas/OperationAuditSourceKind"
+        domain:
+          $ref: "#/components/schemas/OperationAuditDomain"
+        actorKind:
           type: string
+          enum: [user, admin, system]
+        actorUserId:
+          type: [string, "null"]
           format: uuid
         actorUsername:
-          type: string
+          type: [string, "null"]
         action:
+          type: string
+        actionLabel:
           type: string
         targetType:
           type: string
         targetId:
           type: string
-          format: uuid
-        reason:
+        targetLabel:
+          type: [string, "null"]
+        outcome:
           type: string
+          enum: [succeeded, status_changed, accessed]
+        summary:
+          type: string
+          description: Server-built allowlisted summary without raw reason, note, arbitrary JSON or sensitive values.
+        detailPath:
+          type: [string, "null"]
+          description: Server-owned relative administrator route, or null when no safe detail exists.
         requestId:
           type: string
-        beforeStatus:
-          type: [string, "null"]
-        afterStatus:
-          type: [string, "null"]
         createdAt:
           type: string
           format: date-time
-    AdminAuditLogList:
+    AdminOperationAuditEntryList:
       type: object
+      additionalProperties: false
       required: [items, nextCursor]
       properties:
         items:
           type: array
           items:
-            $ref: "#/components/schemas/AdminAuditLog"
+            $ref: "#/components/schemas/AdminOperationAuditEntry"
         nextCursor:
           type: [string, "null"]
     AdminUserGovernanceAction:
@@ -17394,7 +17871,7 @@ components:
     CreateContactMethodRequest:
       type: object
       additionalProperties: false
-      required: [type, label]
+      required: [type, label, usageScopes]
       properties:
         type:
           type: string
@@ -17407,8 +17884,10 @@ components:
           type: string
         usageScopes:
           type: array
+          minItems: 1
+          uniqueItems: true
           items:
-            type: string
+            $ref: "#/components/schemas/ContactUsageScope"
         isDefault:
           type: boolean
         enabled:
@@ -17435,7 +17914,7 @@ components:
         usageScopes:
           type: array
           items:
-            type: string
+            $ref: "#/components/schemas/ContactUsageScope"
         isDefault:
           type: boolean
         enabled:
@@ -17450,6 +17929,9 @@ components:
           format: date-time
         version:
           type: integer
+    ContactUsageScope:
+      type: string
+      enum: [carpool_owner, api_merchant, buyer, dispute]
     ContactMethodList:
       type: object
       required: [items]

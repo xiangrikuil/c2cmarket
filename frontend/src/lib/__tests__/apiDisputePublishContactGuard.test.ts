@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest'
 
 const apiMarketBackendSource = readFileSync(new URL('../apiMarketBackend.ts', import.meta.url), 'utf8')
 const carpoolBackendSource = readFileSync(new URL('../carpoolBackend.ts', import.meta.url), 'utf8')
+const profileBackendSource = readFileSync(new URL('../profileBackend.ts', import.meta.url), 'utf8')
 const servicePublishSource = readFileSync(new URL('../../pages/ApiServicePublishPage.vue', import.meta.url), 'utf8')
 const rushPublishSource = readFileSync(new URL('../../pages/ApiQuotaRushPublishPage.vue', import.meta.url), 'utf8')
 const orderDetailSource = readFileSync(new URL('../../pages/ApiPurchaseOrderDetailPage.vue', import.meta.url), 'utf8')
@@ -44,5 +45,18 @@ describe('API 纠纷发布与身份联系方式约束', () => {
       expect(orderDetailSource).toContain(`const ${action} = computed(() => !ordinaryActionsPaused.value`)
     }
     expect(orderDetailSource).toContain('付款、取消、核款、交付、确认完成及自动超时流程均已暂停')
+  })
+
+  it('车源更新和联系方式配置为每次命令生成幂等键', () => {
+    expect(sourceBetween(carpoolBackendSource, 'export async function backendUpdateOwnerCarpool', 'export async function backendCreateCarpoolApplication'))
+      .toContain("idempotencyPrefix: 'carpool-update'")
+    for (const prefix of [
+      'profile-contact-update',
+      'profile-contact-delete',
+      'profile-contact-default',
+      'profile-contact-verify',
+    ]) {
+      expect(profileBackendSource).toContain(`idempotencyPrefix: '${prefix}'`)
+    }
   })
 })

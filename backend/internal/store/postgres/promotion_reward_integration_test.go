@@ -353,8 +353,8 @@ func seedPromotionRewardService(t *testing.T, store *Store, ownerUserID, service
 	contactID := uuid.NewString()
 	connectionID := uuid.NewString()
 	if _, err := store.pool.Exec(ctx, `
-		INSERT INTO contact_methods (id, user_id, type, label, is_default, enabled, created_at, updated_at)
-		VALUES ($1, $2, 'linuxdo', 'linux.do', true, true, $3, $3)
+		INSERT INTO contact_methods (id, user_id, type, label, usage_scopes, is_default, enabled, created_at, updated_at)
+		VALUES ($1, $2, 'linuxdo', 'linux.do', ARRAY['api_merchant']::text[], true, true, $3, $3)
 	`, contactID, ownerUserID, now); err != nil {
 		t.Fatalf("seed promotion contact: %v", err)
 	}

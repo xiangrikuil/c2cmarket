@@ -2,14 +2,18 @@ package postgres
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
+	"strings"
 	"time"
 
 	"c2c-market/backend/internal/domain"
 	"c2c-market/backend/internal/module/contact"
+	"c2c-market/backend/internal/module/idempotency"
 	"c2c-market/backend/internal/module/reputation"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -28,16 +32,25 @@ func (s *Store) CreateContactMethod(ctx context.Context, input contact.ContactMe
 	}
 	defer rollback(ctx, tx)
 
-	_, err = tx.Exec(ctx, `
+	if appErr := createContactMethodInTx(ctx, tx, input, method, version, encoded); appErr != nil {
+		return appErr
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return internalStoreError()
+	}
+	return nil
+}
+
+func createContactMethodInTx(ctx context.Context, tx pgx.Tx, input contact.ContactMethodInput, method contact.ContactMethod, version contact.ContactMethodVersion, encoded encodedContactValue) *domain.AppError {
+	_, err := tx.Exec(ctx, `
 		INSERT INTO contact_methods (
-			id, user_id, type, label, current_version_id, is_default, enabled, created_at, updated_at, version
+			id, user_id, type, label, usage_scopes, current_version_id, is_default, enabled, created_at, updated_at, version
 		)
-		VALUES ($1, $2, $3, $4, NULL, $5, $6, $7, $8, $9)
-	`, method.ID, method.UserID, method.Type, method.Label, false, method.Enabled, method.CreatedAt, method.UpdatedAt, method.Version)
+		VALUES ($1, $2, $3, $4, $5, NULL, $6, $7, $8, $9, $10)
+	`, method.ID, method.UserID, method.Type, method.Label, method.UsageScopes, false, method.Enabled, method.CreatedAt, method.UpdatedAt, method.Version)
 	if err != nil {
 		return internalStoreError()
 	}
-
 	_, err = tx.Exec(ctx, `
 		INSERT INTO contact_method_versions (
 			id, contact_method_id, owner_user_id, value_ciphertext, value_nonce,
@@ -51,37 +64,52 @@ func (s *Store) CreateContactMethod(ctx context.Context, input contact.ContactMe
 	if err != nil {
 		return internalStoreError()
 	}
-
-	_, err = tx.Exec(ctx, `
-		UPDATE contact_methods
-		SET current_version_id = $2
-		WHERE id = $1
-	`, method.ID, version.ID)
+	_, err = tx.Exec(ctx, `UPDATE contact_methods SET current_version_id = $2 WHERE id = $1`, method.ID, version.ID)
 	if err != nil {
 		return internalStoreError()
 	}
 	if method.IsDefault {
-		_, err = tx.Exec(ctx, `
-			UPDATE contact_methods
-			SET is_default = false, updated_at = $2, version = version + 1
-			WHERE user_id = $1 AND is_default = true
-		`, method.UserID, method.UpdatedAt)
-		if err != nil {
+		if appErr := clearContactDefaultsInTx(ctx, tx, method.UserID, method.ID, method.UpdatedAt, input.RequestID); appErr != nil {
+			return appErr
+		}
+		if _, err = tx.Exec(ctx, `UPDATE contact_methods SET is_default = true WHERE id = $1 AND user_id = $2`, method.ID, method.UserID); err != nil {
 			return internalStoreError()
 		}
-		_, err = tx.Exec(ctx, `
-			UPDATE contact_methods
-			SET is_default = true
-			WHERE id = $1 AND user_id = $2
-		`, method.ID, method.UserID)
-		if err != nil {
-			return internalStoreError()
-		}
+	}
+	return insertContactMethodEvent(ctx, tx, method, "contact_method.created", input.RequestID, []string{"type", "label", "value", "usageScopes", "isDefault", "enabled"}, method.UpdatedAt)
+}
+
+func (s *Store) CreateContactMethodWithIdempotency(ctx context.Context, entry idempotency.Entry, input contact.ContactMethodInput, method contact.ContactMethod, version contact.ContactMethodVersion, buildCompletion contact.MethodCompletionBuilder) (contact.ContactMethod, idempotency.Completion, *domain.AppError) {
+	if s == nil || s.pool == nil || s.contactCodec == nil {
+		return contact.ContactMethod{}, idempotency.Completion{}, internalStoreError()
+	}
+	encoded, err := s.contactCodec.encode(input.Value, version.ID, contactFieldMethodValue)
+	if err != nil {
+		return contact.ContactMethod{}, idempotency.Completion{}, internalStoreError()
+	}
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return contact.ContactMethod{}, idempotency.Completion{}, internalStoreError()
+	}
+	defer rollback(ctx, tx)
+	existing, appErr := lockProcessingIdempotencyInTx(ctx, tx, entry)
+	if appErr != nil {
+		return contact.ContactMethod{}, idempotency.Completion{}, appErr
+	}
+	if appErr := createContactMethodInTx(ctx, tx, input, method, version, encoded); appErr != nil {
+		return contact.ContactMethod{}, idempotency.Completion{}, appErr
+	}
+	completion, appErr := buildCompletion(method)
+	if appErr != nil {
+		return contact.ContactMethod{}, idempotency.Completion{}, appErr
+	}
+	if appErr := completeIdempotencyInTx(ctx, tx, existing, completion, method.UpdatedAt); appErr != nil {
+		return contact.ContactMethod{}, idempotency.Completion{}, appErr
 	}
 	if err := tx.Commit(ctx); err != nil {
-		return internalStoreError()
+		return contact.ContactMethod{}, idempotency.Completion{}, internalStoreError()
 	}
-	return nil
+	return method, completion, nil
 }
 
 func (s *Store) ListContactMethods(ctx context.Context, userID string) ([]contact.ContactMethod, *domain.AppError) {
@@ -89,7 +117,7 @@ func (s *Store) ListContactMethods(ctx context.Context, userID string) ([]contac
 		return nil, internalStoreError()
 	}
 	rows, err := s.pool.Query(ctx, `
-		SELECT m.id::text, m.user_id::text, m.type, m.label, COALESCE(v.masked_value, ''),
+		SELECT m.id::text, m.user_id::text, m.type, m.label, m.usage_scopes, COALESCE(v.masked_value, ''),
 		       v.value_ciphertext, v.value_nonce, COALESCE(v.encryption_key_version, ''),
 		       COALESCE(v.encryption_format, ''), m.enabled, m.is_default, m.verified_at,
 		       COALESCE(m.current_version_id::text, ''), m.created_at, m.updated_at, m.version
@@ -118,10 +146,54 @@ func (s *Store) UpdateContactMethod(ctx context.Context, input contact.UpdateCon
 		return contact.ContactMethod{}, internalStoreError()
 	}
 	defer rollback(ctx, tx)
+	method, appErr := s.updateContactMethodInTx(ctx, tx, input, method, version, encoded)
+	if appErr != nil {
+		return contact.ContactMethod{}, appErr
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return contact.ContactMethod{}, internalStoreError()
+	}
+	return method, nil
+}
 
+func (s *Store) UpdateContactMethodWithIdempotency(ctx context.Context, entry idempotency.Entry, input contact.UpdateContactMethodInput, method contact.ContactMethod, version contact.ContactMethodVersion, buildCompletion contact.MethodCompletionBuilder) (contact.ContactMethod, idempotency.Completion, *domain.AppError) {
+	if s == nil || s.pool == nil || s.contactCodec == nil {
+		return contact.ContactMethod{}, idempotency.Completion{}, internalStoreError()
+	}
+	encoded, err := s.contactCodec.encode(input.Value, version.ID, contactFieldMethodValue)
+	if err != nil {
+		return contact.ContactMethod{}, idempotency.Completion{}, internalStoreError()
+	}
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return contact.ContactMethod{}, idempotency.Completion{}, internalStoreError()
+	}
+	defer rollback(ctx, tx)
+	existing, appErr := lockProcessingIdempotencyInTx(ctx, tx, entry)
+	if appErr != nil {
+		return contact.ContactMethod{}, idempotency.Completion{}, appErr
+	}
+	method, appErr = s.updateContactMethodInTx(ctx, tx, input, method, version, encoded)
+	if appErr != nil {
+		return contact.ContactMethod{}, idempotency.Completion{}, appErr
+	}
+	completion, appErr := buildCompletion(method)
+	if appErr != nil {
+		return contact.ContactMethod{}, idempotency.Completion{}, appErr
+	}
+	if appErr := completeIdempotencyInTx(ctx, tx, existing, completion, method.UpdatedAt); appErr != nil {
+		return contact.ContactMethod{}, idempotency.Completion{}, appErr
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return contact.ContactMethod{}, idempotency.Completion{}, internalStoreError()
+	}
+	return method, completion, nil
+}
+
+func (s *Store) updateContactMethodInTx(ctx context.Context, tx pgx.Tx, input contact.UpdateContactMethodInput, method contact.ContactMethod, version contact.ContactMethodVersion, encoded encodedContactValue) (contact.ContactMethod, *domain.AppError) {
 	var current contact.ContactMethod
-	err = tx.QueryRow(ctx, `
-		SELECT id::text, user_id::text, type, label, enabled, is_default, verified_at,
+	err := tx.QueryRow(ctx, `
+		SELECT id::text, user_id::text, type, label, usage_scopes, enabled, is_default, verified_at,
 		       COALESCE(current_version_id::text, ''), created_at, updated_at, version
 		FROM contact_methods
 		WHERE id = $1 AND user_id = $2 AND enabled = true
@@ -131,6 +203,7 @@ func (s *Store) UpdateContactMethod(ctx context.Context, input contact.UpdateCon
 		&current.UserID,
 		&current.Type,
 		&current.Label,
+		&current.UsageScopes,
 		&current.Enabled,
 		&current.IsDefault,
 		&current.VerifiedAt,
@@ -149,6 +222,9 @@ func (s *Store) UpdateContactMethod(ctx context.Context, input contact.UpdateCon
 	method.ID = current.ID
 	method.UserID = current.UserID
 	method.CreatedAt = current.CreatedAt
+	if input.UsageScopes == nil {
+		method.UsageScopes = append([]string(nil), current.UsageScopes...)
+	}
 	method.Version = current.Version + 1
 	method.DisplayValue = input.Value
 	version.ContactMethodID = current.ID
@@ -183,25 +259,43 @@ func (s *Store) UpdateContactMethod(ctx context.Context, input contact.UpdateCon
 		return contact.ContactMethod{}, internalStoreError()
 	}
 	if method.IsDefault {
-		_, err = tx.Exec(ctx, `
-			UPDATE contact_methods
-			SET is_default = false, updated_at = $3, version = version + 1
-			WHERE user_id = $1 AND id <> $2 AND is_default = true
-		`, method.UserID, method.ID, method.UpdatedAt)
-		if err != nil {
-			return contact.ContactMethod{}, internalStoreError()
+		if appErr := clearContactDefaultsInTx(ctx, tx, method.UserID, method.ID, method.UpdatedAt, input.RequestID); appErr != nil {
+			return contact.ContactMethod{}, appErr
 		}
 	}
 
 	_, err = tx.Exec(ctx, `
 		UPDATE contact_methods
-		SET type = $3, label = $4, current_version_id = $5, is_default = $6,
-		    enabled = $7, verified_at = $8, updated_at = $9, version = $10
+		SET type = $3, label = $4, usage_scopes = $5, current_version_id = $6, is_default = $7,
+		    enabled = $8, verified_at = $9, updated_at = $10, version = $11
 		WHERE id = $1 AND user_id = $2
-	`, method.ID, method.UserID, method.Type, method.Label, method.CurrentVersionID, method.IsDefault,
+	`, method.ID, method.UserID, method.Type, method.Label, method.UsageScopes, method.CurrentVersionID, method.IsDefault,
 		method.Enabled, method.VerifiedAt, method.UpdatedAt, method.Version)
 	if err != nil {
 		return contact.ContactMethod{}, internalStoreError()
+	}
+	eventType := "contact_method.updated"
+	if current.Enabled && !method.Enabled {
+		eventType = "contact_method.disabled"
+	}
+	if appErr := insertContactMethodEvent(ctx, tx, method, eventType, input.RequestID, []string{"type", "label", "value", "usageScopes", "isDefault", "enabled"}, method.UpdatedAt); appErr != nil {
+		return contact.ContactMethod{}, appErr
+	}
+	return method, nil
+}
+
+func (s *Store) DeleteContactMethod(ctx context.Context, userID, methodID, requestID string, now time.Time) (contact.ContactMethod, *domain.AppError) {
+	if s == nil || s.pool == nil {
+		return contact.ContactMethod{}, internalStoreError()
+	}
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return contact.ContactMethod{}, internalStoreError()
+	}
+	defer rollback(ctx, tx)
+	method, appErr := deleteContactMethodInTx(ctx, tx, userID, methodID, requestID, now)
+	if appErr != nil {
+		return contact.ContactMethod{}, appErr
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return contact.ContactMethod{}, internalStoreError()
@@ -209,22 +303,50 @@ func (s *Store) UpdateContactMethod(ctx context.Context, input contact.UpdateCon
 	return method, nil
 }
 
-func (s *Store) DeleteContactMethod(ctx context.Context, userID, methodID string) (contact.ContactMethod, *domain.AppError) {
+func (s *Store) DeleteContactMethodWithIdempotency(ctx context.Context, entry idempotency.Entry, userID, methodID, requestID string, now time.Time, buildCompletion contact.MethodCompletionBuilder) (contact.ContactMethod, idempotency.Completion, *domain.AppError) {
 	if s == nil || s.pool == nil {
-		return contact.ContactMethod{}, internalStoreError()
+		return contact.ContactMethod{}, idempotency.Completion{}, internalStoreError()
 	}
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return contact.ContactMethod{}, idempotency.Completion{}, internalStoreError()
+	}
+	defer rollback(ctx, tx)
+	existing, appErr := lockProcessingIdempotencyInTx(ctx, tx, entry)
+	if appErr != nil {
+		return contact.ContactMethod{}, idempotency.Completion{}, appErr
+	}
+	method, appErr := deleteContactMethodInTx(ctx, tx, userID, methodID, requestID, now)
+	if appErr != nil {
+		return contact.ContactMethod{}, idempotency.Completion{}, appErr
+	}
+	completion, appErr := buildCompletion(method)
+	if appErr != nil {
+		return contact.ContactMethod{}, idempotency.Completion{}, appErr
+	}
+	if appErr := completeIdempotencyInTx(ctx, tx, existing, completion, now); appErr != nil {
+		return contact.ContactMethod{}, idempotency.Completion{}, appErr
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return contact.ContactMethod{}, idempotency.Completion{}, internalStoreError()
+	}
+	return method, completion, nil
+}
+
+func deleteContactMethodInTx(ctx context.Context, tx pgx.Tx, userID, methodID, requestID string, now time.Time) (contact.ContactMethod, *domain.AppError) {
 	var method contact.ContactMethod
-	err := s.pool.QueryRow(ctx, `
+	err := tx.QueryRow(ctx, `
 		UPDATE contact_methods
-		SET enabled = false, is_default = false, updated_at = now(), version = version + 1
+		SET enabled = false, is_default = false, updated_at = $3, version = version + 1
 		WHERE id = $1 AND user_id = $2 AND enabled = true
-		RETURNING id::text, user_id::text, type, label, '', enabled, is_default, verified_at,
+		RETURNING id::text, user_id::text, type, label, usage_scopes, '', enabled, is_default, verified_at,
 		          COALESCE(current_version_id::text, ''), created_at, updated_at, version
-	`, methodID, userID).Scan(
+	`, methodID, userID, now).Scan(
 		&method.ID,
 		&method.UserID,
 		&method.Type,
 		&method.Label,
+		&method.UsageScopes,
 		&method.MaskedValue,
 		&method.Enabled,
 		&method.IsDefault,
@@ -240,10 +362,13 @@ func (s *Store) DeleteContactMethod(ctx context.Context, userID, methodID string
 	if err != nil {
 		return contact.ContactMethod{}, internalStoreError()
 	}
+	if appErr := insertContactMethodEvent(ctx, tx, method, "contact_method.disabled", requestID, []string{"enabled", "isDefault"}, method.UpdatedAt); appErr != nil {
+		return contact.ContactMethod{}, appErr
+	}
 	return method, nil
 }
 
-func (s *Store) SetDefaultContactMethod(ctx context.Context, userID, methodID string) (contact.ContactMethod, *domain.AppError) {
+func (s *Store) SetDefaultContactMethod(ctx context.Context, userID, methodID, requestID string, now time.Time) (contact.ContactMethod, *domain.AppError) {
 	if s == nil || s.pool == nil || s.contactCodec == nil {
 		return contact.ContactMethod{}, internalStoreError()
 	}
@@ -252,25 +377,7 @@ func (s *Store) SetDefaultContactMethod(ctx context.Context, userID, methodID st
 		return contact.ContactMethod{}, internalStoreError()
 	}
 	defer rollback(ctx, tx)
-
-	var exists bool
-	err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM contact_methods WHERE id = $1 AND user_id = $2 AND enabled = true)`, methodID, userID).Scan(&exists)
-	if err != nil {
-		return contact.ContactMethod{}, internalStoreError()
-	}
-	if !exists {
-		return contact.ContactMethod{}, domain.NewError(http.StatusNotFound, domain.CodeObjectNotFound, "Contact method not found", "联系方式不存在。")
-	}
-	_, err = tx.Exec(ctx, `
-		UPDATE contact_methods
-		SET is_default = (id = $2), updated_at = CASE WHEN id = $2 THEN now() ELSE updated_at END,
-		    version = CASE WHEN id = $2 THEN version + 1 ELSE version END
-		WHERE user_id = $1 AND enabled = true
-	`, userID, methodID)
-	if err != nil {
-		return contact.ContactMethod{}, internalStoreError()
-	}
-	method, appErr := s.getContactMethodWithValue(ctx, tx, userID, methodID)
+	method, appErr := s.setDefaultContactMethodInTx(ctx, tx, userID, methodID, requestID, now)
 	if appErr != nil {
 		return contact.ContactMethod{}, appErr
 	}
@@ -280,11 +387,117 @@ func (s *Store) SetDefaultContactMethod(ctx context.Context, userID, methodID st
 	return method, nil
 }
 
-func (s *Store) VerifyContactMethod(ctx context.Context, userID, methodID string, verifiedAt time.Time) (contact.ContactMethod, *domain.AppError) {
+func (s *Store) SetDefaultContactMethodWithIdempotency(ctx context.Context, entry idempotency.Entry, userID, methodID, requestID string, now time.Time, buildCompletion contact.MethodCompletionBuilder) (contact.ContactMethod, idempotency.Completion, *domain.AppError) {
+	if s == nil || s.pool == nil || s.contactCodec == nil {
+		return contact.ContactMethod{}, idempotency.Completion{}, internalStoreError()
+	}
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return contact.ContactMethod{}, idempotency.Completion{}, internalStoreError()
+	}
+	defer rollback(ctx, tx)
+	existing, appErr := lockProcessingIdempotencyInTx(ctx, tx, entry)
+	if appErr != nil {
+		return contact.ContactMethod{}, idempotency.Completion{}, appErr
+	}
+	method, appErr := s.setDefaultContactMethodInTx(ctx, tx, userID, methodID, requestID, now)
+	if appErr != nil {
+		return contact.ContactMethod{}, idempotency.Completion{}, appErr
+	}
+	completion, appErr := buildCompletion(method)
+	if appErr != nil {
+		return contact.ContactMethod{}, idempotency.Completion{}, appErr
+	}
+	if appErr := completeIdempotencyInTx(ctx, tx, existing, completion, now); appErr != nil {
+		return contact.ContactMethod{}, idempotency.Completion{}, appErr
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return contact.ContactMethod{}, idempotency.Completion{}, internalStoreError()
+	}
+	return method, completion, nil
+}
+
+func (s *Store) setDefaultContactMethodInTx(ctx context.Context, tx pgx.Tx, userID, methodID, requestID string, now time.Time) (contact.ContactMethod, *domain.AppError) {
+	var exists bool
+	err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM contact_methods WHERE id = $1 AND user_id = $2 AND enabled = true)`, methodID, userID).Scan(&exists)
+	if err != nil {
+		return contact.ContactMethod{}, internalStoreError()
+	}
+	if !exists {
+		return contact.ContactMethod{}, domain.NewError(http.StatusNotFound, domain.CodeObjectNotFound, "Contact method not found", "联系方式不存在。")
+	}
+	if appErr := clearContactDefaultsInTx(ctx, tx, userID, methodID, now, requestID); appErr != nil {
+		return contact.ContactMethod{}, appErr
+	}
+	_, err = tx.Exec(ctx, `
+		UPDATE contact_methods
+		SET is_default = true, updated_at = $3, version = version + 1
+		WHERE user_id = $1 AND id = $2 AND enabled = true
+	`, userID, methodID, now)
+	if err != nil {
+		return contact.ContactMethod{}, internalStoreError()
+	}
+	method, appErr := s.getContactMethodWithValue(ctx, tx, userID, methodID)
+	if appErr != nil {
+		return contact.ContactMethod{}, appErr
+	}
+	if appErr := insertContactMethodEvent(ctx, tx, method, "contact_method.default_changed", requestID, []string{"isDefault"}, method.UpdatedAt); appErr != nil {
+		return contact.ContactMethod{}, appErr
+	}
+	return method, nil
+}
+
+func (s *Store) VerifyContactMethod(ctx context.Context, userID, methodID, requestID string, verifiedAt time.Time) (contact.ContactMethod, *domain.AppError) {
 	if s == nil || s.pool == nil || s.contactCodec == nil {
 		return contact.ContactMethod{}, internalStoreError()
 	}
-	_, err := s.pool.Exec(ctx, `
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return contact.ContactMethod{}, internalStoreError()
+	}
+	defer rollback(ctx, tx)
+	method, appErr := s.verifyContactMethodInTx(ctx, tx, userID, methodID, requestID, verifiedAt)
+	if appErr != nil {
+		return contact.ContactMethod{}, appErr
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return contact.ContactMethod{}, internalStoreError()
+	}
+	return method, nil
+}
+
+func (s *Store) VerifyContactMethodWithIdempotency(ctx context.Context, entry idempotency.Entry, userID, methodID, requestID string, verifiedAt time.Time, buildCompletion contact.MethodCompletionBuilder) (contact.ContactMethod, idempotency.Completion, *domain.AppError) {
+	if s == nil || s.pool == nil || s.contactCodec == nil {
+		return contact.ContactMethod{}, idempotency.Completion{}, internalStoreError()
+	}
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return contact.ContactMethod{}, idempotency.Completion{}, internalStoreError()
+	}
+	defer rollback(ctx, tx)
+	existing, appErr := lockProcessingIdempotencyInTx(ctx, tx, entry)
+	if appErr != nil {
+		return contact.ContactMethod{}, idempotency.Completion{}, appErr
+	}
+	method, appErr := s.verifyContactMethodInTx(ctx, tx, userID, methodID, requestID, verifiedAt)
+	if appErr != nil {
+		return contact.ContactMethod{}, idempotency.Completion{}, appErr
+	}
+	completion, appErr := buildCompletion(method)
+	if appErr != nil {
+		return contact.ContactMethod{}, idempotency.Completion{}, appErr
+	}
+	if appErr := completeIdempotencyInTx(ctx, tx, existing, completion, verifiedAt); appErr != nil {
+		return contact.ContactMethod{}, idempotency.Completion{}, appErr
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return contact.ContactMethod{}, idempotency.Completion{}, internalStoreError()
+	}
+	return method, completion, nil
+}
+
+func (s *Store) verifyContactMethodInTx(ctx context.Context, tx pgx.Tx, userID, methodID, requestID string, verifiedAt time.Time) (contact.ContactMethod, *domain.AppError) {
+	commandTag, err := tx.Exec(ctx, `
 		UPDATE contact_methods
 		SET verified_at = $3, updated_at = $3, version = version + 1
 		WHERE id = $1 AND user_id = $2 AND enabled = true
@@ -292,7 +505,17 @@ func (s *Store) VerifyContactMethod(ctx context.Context, userID, methodID string
 	if err != nil {
 		return contact.ContactMethod{}, internalStoreError()
 	}
-	return s.getContactMethodWithValue(ctx, s.pool, userID, methodID)
+	if commandTag.RowsAffected() != 1 {
+		return contact.ContactMethod{}, domain.NewError(http.StatusNotFound, domain.CodeObjectNotFound, "Contact method not found", "联系方式不存在。")
+	}
+	method, appErr := s.getContactMethodWithValue(ctx, tx, userID, methodID)
+	if appErr != nil {
+		return contact.ContactMethod{}, appErr
+	}
+	if appErr := insertContactMethodEvent(ctx, tx, method, "contact_method.verified", requestID, []string{"verifiedAt"}, method.UpdatedAt); appErr != nil {
+		return contact.ContactMethod{}, appErr
+	}
+	return method, nil
 }
 
 func (s *Store) CreateContactSession(ctx context.Context, input contact.CreateContactSessionInput, session contact.ContactSession, now time.Time) (contact.ContactSession, *domain.AppError) {
@@ -305,11 +528,11 @@ func (s *Store) CreateContactSession(ctx context.Context, input contact.CreateCo
 	}
 	defer rollback(ctx, tx)
 
-	_, buyerVersion, appErr := lockContactVersionForOwner(ctx, tx, input.BuyerContactMethodID, input.BuyerUserID, "买家联系方式不可用或不属于当前用户。")
+	_, buyerVersion, appErr := lockContactVersionForOwnerAndScope(ctx, tx, input.BuyerContactMethodID, input.BuyerUserID, contact.UsageScopeBuyer, "买家联系方式不可用、不属于当前用户或未允许买家用途。")
 	if appErr != nil {
 		return contact.ContactSession{}, appErr
 	}
-	_, sellerVersion, appErr := lockContactVersionForOwner(ctx, tx, input.SellerContactMethodID, input.SellerUserID, "商户联系方式不可用或归属不正确。")
+	_, sellerVersion, appErr := lockContactVersionForOwnerAndScope(ctx, tx, input.SellerContactMethodID, input.SellerUserID, contact.UsageScopeCarpoolOwner, "车主联系方式不可用、归属不正确或未允许拼车用途。")
 	if appErr != nil {
 		return contact.ContactSession{}, appErr
 	}
@@ -464,11 +687,70 @@ func (s *Store) ContactAccessLogCount(ctx context.Context, sessionID string) (in
 	}
 	return count, nil
 }
+
+func clearContactDefaultsInTx(ctx context.Context, tx pgx.Tx, userID, exceptMethodID string, now time.Time, requestID string) *domain.AppError {
+	rows, err := tx.Query(ctx, `
+		UPDATE contact_methods
+		SET is_default = false, updated_at = $3, version = version + 1
+		WHERE user_id = $1 AND id <> $2 AND is_default = true
+		RETURNING id::text, user_id::text, version, updated_at
+	`, userID, exceptMethodID, now)
+	if err != nil {
+		return internalStoreError()
+	}
+	methods := make([]contact.ContactMethod, 0, 1)
+	for rows.Next() {
+		method := contact.ContactMethod{}
+		if err := rows.Scan(&method.ID, &method.UserID, &method.Version, &method.UpdatedAt); err != nil {
+			rows.Close()
+			return internalStoreError()
+		}
+		methods = append(methods, method)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return internalStoreError()
+	}
+	rows.Close()
+	for _, method := range methods {
+		if appErr := insertContactMethodEvent(ctx, tx, method, "contact_method.default_changed", requestID, []string{"isDefault"}, now); appErr != nil {
+			return appErr
+		}
+	}
+	return nil
+}
+
+func insertContactMethodEvent(ctx context.Context, tx pgx.Tx, method contact.ContactMethod, eventType, requestID string, changedFields []string, now time.Time) *domain.AppError {
+	requestID = strings.TrimSpace(requestID)
+	if requestID == "" {
+		requestID = "unknown"
+	}
+	metadata, err := json.Marshal(map[string]any{"changedFields": changedFields})
+	if err != nil {
+		return internalStoreError()
+	}
+	_, err = tx.Exec(ctx, `
+		INSERT INTO domain_events (
+			id, aggregate_type, aggregate_id, event_type, actor_user_id, actor_kind,
+			aggregate_version, request_id, metadata_json, created_at
+		)
+		VALUES ($1, 'contact_method', $2, $3, $4, 'user', $5, $6, $7, $8)
+	`, uuid.NewString(), method.ID, eventType, method.UserID, method.Version, requestID, metadata, now)
+	if err != nil {
+		return internalStoreError()
+	}
+	return nil
+}
+
 func lockContactVersionForOwner(ctx context.Context, q queryer, methodID, ownerID, detail string) (contact.ContactMethod, contact.ContactMethodVersion, *domain.AppError) {
+	return lockContactVersionForOwnerAndScope(ctx, q, methodID, ownerID, "", detail)
+}
+
+func lockContactVersionForOwnerAndScope(ctx context.Context, q queryer, methodID, ownerID, requiredScope, detail string) (contact.ContactMethod, contact.ContactMethodVersion, *domain.AppError) {
 	var method contact.ContactMethod
 	var version contact.ContactMethodVersion
 	err := q.QueryRow(ctx, `
-		SELECT m.id::text, m.user_id::text, m.type, m.label, m.enabled,
+		SELECT m.id::text, m.user_id::text, m.type, m.label, m.usage_scopes, m.enabled,
 		       m.is_default, m.verified_at, m.created_at, m.updated_at, m.version,
 		       v.id::text, v.contact_method_id::text, v.owner_user_id::text, v.masked_value
 		FROM contact_methods m
@@ -482,12 +764,14 @@ func lockContactVersionForOwner(ctx context.Context, q queryer, methodID, ownerI
 		  AND m.current_version_id IS NOT NULL
 		  AND v.retired_at IS NULL
 		  AND v.destroyed_at IS NULL
+		  AND ($3 = '' OR $3 = ANY(m.usage_scopes))
 		FOR UPDATE
-	`, methodID, ownerID).Scan(
+	`, methodID, ownerID, strings.TrimSpace(requiredScope)).Scan(
 		&method.ID,
 		&method.UserID,
 		&method.Type,
 		&method.Label,
+		&method.UsageScopes,
 		&method.Enabled,
 		&method.IsDefault,
 		&method.VerifiedAt,
@@ -512,7 +796,7 @@ func lockContactVersionForOwner(ctx context.Context, q queryer, methodID, ownerI
 func getContactMethod(ctx context.Context, q queryer, userID, methodID string) (contact.ContactMethod, *domain.AppError) {
 	var method contact.ContactMethod
 	err := q.QueryRow(ctx, `
-		SELECT m.id::text, m.user_id::text, m.type, m.label, COALESCE(v.masked_value, ''), m.enabled,
+		SELECT m.id::text, m.user_id::text, m.type, m.label, m.usage_scopes, COALESCE(v.masked_value, ''), m.enabled,
 		       m.is_default, m.verified_at, COALESCE(m.current_version_id::text, ''), m.created_at, m.updated_at, m.version
 		FROM contact_methods m
 		LEFT JOIN contact_method_versions v ON v.id = m.current_version_id
@@ -522,6 +806,7 @@ func getContactMethod(ctx context.Context, q queryer, userID, methodID string) (
 		&method.UserID,
 		&method.Type,
 		&method.Label,
+		&method.UsageScopes,
 		&method.MaskedValue,
 		&method.Enabled,
 		&method.IsDefault,
@@ -545,7 +830,7 @@ func (s *Store) getContactMethodWithValue(ctx context.Context, q queryer, userID
 	var ciphertext, nonce []byte
 	var keyVersion, cipherFormat string
 	err := q.QueryRow(ctx, `
-		SELECT m.id::text, m.user_id::text, m.type, m.label, COALESCE(v.masked_value, ''),
+		SELECT m.id::text, m.user_id::text, m.type, m.label, m.usage_scopes, COALESCE(v.masked_value, ''),
 		       v.value_ciphertext, v.value_nonce, COALESCE(v.encryption_key_version, ''),
 		       COALESCE(v.encryption_format, ''), m.enabled, m.is_default, m.verified_at,
 		       COALESCE(m.current_version_id::text, ''), m.created_at, m.updated_at, m.version
@@ -557,6 +842,7 @@ func (s *Store) getContactMethodWithValue(ctx context.Context, q queryer, userID
 		&method.UserID,
 		&method.Type,
 		&method.Label,
+		&method.UsageScopes,
 		&method.MaskedValue,
 		&ciphertext,
 		&nonce,
@@ -595,6 +881,7 @@ func scanContactMethods(rows pgx.Rows) ([]contact.ContactMethod, *domain.AppErro
 			&method.UserID,
 			&method.Type,
 			&method.Label,
+			&method.UsageScopes,
 			&method.MaskedValue,
 			&method.Enabled,
 			&method.IsDefault,
@@ -625,6 +912,7 @@ func (s *Store) scanContactMethodsWithValues(rows pgx.Rows) ([]contact.ContactMe
 			&method.UserID,
 			&method.Type,
 			&method.Label,
+			&method.UsageScopes,
 			&method.MaskedValue,
 			&ciphertext,
 			&nonce,

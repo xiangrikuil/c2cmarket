@@ -23,6 +23,7 @@ import type {
 } from '@/lib/api'
 import type { ReputationSnapshot } from '@/types/reputation'
 import { mapBackendReputationSnapshot } from '@/lib/reputationBackend'
+import { normalizeCapabilities } from '@/lib/capabilities'
 
 type ListResponse<T> = {
   items: T[]
@@ -55,6 +56,7 @@ type BackendProfile = {
   avatarMode: 'linuxdo' | 'custom_url'
   accountStatus: string
   permissions: Array<'admin'>
+  capabilities: string[]
   linuxDoBinding: {
     bound: boolean
     linuxDoUserId: string | null
@@ -187,20 +189,28 @@ export async function backendCreateContact(payload: SaveContactMethodRequest): P
 export async function backendUpdateContact(contactId: string, payload: SaveContactMethodRequest): Promise<UserContactMethod> {
   const response = await backendMutation<BackendContact>(`/api/v1/contact-methods/${contactId}`, toContactPayload(payload), {
     method: 'PATCH',
+    idempotencyPrefix: 'profile-contact-update',
   })
   return mapContact(response, payload.displayValue)
 }
 
 export async function backendDeleteContact(contactId: string): Promise<UserContactMethod> {
-  return mapContact(await backendMutation<BackendContact>(`/api/v1/contact-methods/${contactId}`, {}, { method: 'DELETE' }))
+  return mapContact(await backendMutation<BackendContact>(`/api/v1/contact-methods/${contactId}`, {}, {
+    method: 'DELETE',
+    idempotencyPrefix: 'profile-contact-delete',
+  }))
 }
 
 export async function backendSetDefaultContact(contactId: string): Promise<UserContactMethod> {
-  return mapContact(await backendMutation<BackendContact>(`/api/v1/contact-methods/${contactId}/set-default`, {}))
+  return mapContact(await backendMutation<BackendContact>(`/api/v1/contact-methods/${contactId}/set-default`, {}, {
+    idempotencyPrefix: 'profile-contact-default',
+  }))
 }
 
 export async function backendVerifyContact(contactId: string): Promise<UserContactMethod> {
-  return mapContact(await backendMutation<BackendContact>(`/api/v1/contact-methods/${contactId}/verify`, {}))
+  return mapContact(await backendMutation<BackendContact>(`/api/v1/contact-methods/${contactId}/verify`, {}, {
+    idempotencyPrefix: 'profile-contact-verify',
+  }))
 }
 
 export async function backendMyMerchantProfile(): Promise<BackendMerchantProfile | null> {
@@ -282,6 +292,7 @@ function mapProfile(value: BackendProfile): UserProfile {
     badges: (value.badges ?? []).map(code => ({ id: `backend-${code}`, code, label: code, type: code === 'admin' ? 'system' : 'identity' })),
     accountStatus: value.accountStatus as UserProfile['accountStatus'],
     permissions: value.permissions,
+    capabilities: normalizeCapabilities(value.capabilities),
     restrictions: value.restrictions ?? [],
     usernameChangePolicy: value.usernameChangePolicy,
     privacy: {

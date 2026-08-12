@@ -943,6 +943,7 @@ func cleanupLifecycleCredentialFixtures(t *testing.T, ctx context.Context, store
 		{`UPDATE contact_methods SET current_version_id = NULL WHERE user_id IN ($1, $2)`, []any{sellerID, buyerID}},
 		{`DELETE FROM contact_method_versions WHERE owner_user_id IN ($1, $2)`, []any{sellerID, buyerID}},
 		{`DELETE FROM contact_methods WHERE user_id IN ($1, $2)`, []any{sellerID, buyerID}},
+		{`DELETE FROM domain_events WHERE actor_user_id IN ($1, $2)`, []any{sellerID, buyerID}},
 		{`DELETE FROM users WHERE id IN ($1, $2)`, []any{sellerID, buyerID}},
 	}
 	for _, statement := range statements {

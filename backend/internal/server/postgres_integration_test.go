@@ -2,12 +2,13 @@ package server
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
-	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -25,6 +26,70 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
+
+func TestPostgresHTTPLogoutRevokesRawSessionToken(t *testing.T) {
+	databaseURL := strings.TrimSpace(os.Getenv("C2C_TEST_DATABASE_URL"))
+	if databaseURL == "" {
+		t.Skip("C2C_TEST_DATABASE_URL is not set")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	store, err := postgres.Connect(ctx, databaseURL)
+	if err != nil {
+		t.Fatalf("connect postgres: %v", err)
+	}
+	defer store.Close()
+	pool := openTestPool(t, databaseURL)
+	defer pool.Close()
+
+	handler := NewServer(app.NewServiceWithPersistence(store), ServerOptions{EnableDevAuth: true})
+	session := createSession(t, handler, "pg-http-logout-"+strings.ToLower(uuid.NewString()[:8]), false)
+	onceHash := postgresSessionTokenHash(session.cookie)
+	doubleHash := postgresSessionTokenHash(onceHash)
+
+	logout := httptest.NewRequest(http.MethodPost, "/api/v1/auth/logout", nil)
+	addAuth(logout, session, "pg-http-logout")
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, logout)
+	if response.Code != http.StatusNoContent {
+		t.Fatalf("logout status %d body %s", response.Code, response.Body.String())
+	}
+
+	var onceHashedRows int
+	var revokedAt *time.Time
+	if err := pool.QueryRow(ctx, `
+		SELECT count(*), max(revoked_at)
+		FROM auth_sessions
+		WHERE session_token_hash = $1
+	`, onceHash).Scan(&onceHashedRows, &revokedAt); err != nil {
+		t.Fatalf("inspect once-hashed logout row: %v", err)
+	}
+	if onceHashedRows != 1 || revokedAt == nil {
+		t.Fatalf("HTTP logout missed the once-hashed row: count=%d revoked_at=%v", onceHashedRows, revokedAt)
+	}
+	var doubleHashedRows int
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM auth_sessions WHERE session_token_hash = $1`, doubleHash).Scan(&doubleHashedRows); err != nil {
+		t.Fatalf("inspect double-hashed logout token: %v", err)
+	}
+	if doubleHashedRows != 0 {
+		t.Fatalf("HTTP logout addressed a double-hashed row: count=%d", doubleHashedRows)
+	}
+
+	oldSession := httptest.NewRequest(http.MethodGet, "/api/v1/auth/session", nil)
+	addCookie(oldSession, session.cookie)
+	oldSessionResponse := httptest.NewRecorder()
+	handler.ServeHTTP(oldSessionResponse, oldSession)
+	if oldSessionResponse.Code != http.StatusUnauthorized {
+		t.Fatalf("revoked token remained readable: status=%d body=%s", oldSessionResponse.Code, oldSessionResponse.Body.String())
+	}
+	assertProblemCode(t, oldSessionResponse, domain.CodeSessionRevoked)
+}
+
+func postgresSessionTokenHash(value string) string {
+	sum := sha256.Sum256([]byte(value))
+	return hex.EncodeToString(sum[:])
+}
 
 func TestPostgresAdminOfficialPriceRecordFlow(t *testing.T) {
 	databaseURL := os.Getenv("C2C_TEST_DATABASE_URL")
@@ -123,10 +188,11 @@ func TestPostgresDevPersonaSessionReadinessAndIdempotency(t *testing.T) {
 	buyerAgain := prepare("buyer")
 	seller := prepare("seller")
 	sellerUser := auth.User{
-		ID:          seller.User.ID,
-		Username:    seller.User.Username,
-		DisplayName: seller.User.DisplayName,
-		Status:      auth.AccountStatusActive,
+		ID:             seller.User.ID,
+		Username:       seller.User.Username,
+		DisplayName:    seller.User.DisplayName,
+		Status:         auth.AccountStatusActive,
+		LinuxDoBinding: &auth.LinuxDoBinding{Bound: seller.User.LinuxDo.Bound},
 	}
 	methods, appErr := service.ListContactMethods(ctx, seller.User.ID)
 	if appErr != nil {
@@ -435,7 +501,7 @@ func TestPostgresAPIServiceFlow(t *testing.T) {
 		t.Fatalf("unexpected removed API service: %+v", removed)
 	}
 	assertPublicAPIServiceVisible(t, server, removed.ID, ownerContact.ID, false)
-	assertAPIServiceIdempotencyCache(t, databaseURL, ownerSession.userID, published.ID, "publish", "pg-api-publish-"+suffix, app.APIServicePublicationStatusOnline)
+	assertAPIServiceIdempotencyCache(t, databaseURL, ownerSession.userID, published.ID, "publish", "pg-api-publish-"+suffix)
 
 	rejectedService := createPostgresAPIService(t, databaseURL, server, ownerSession, ownerContact.ID, "pg-api-reject-create-"+suffix)
 	forcedRejectedVersion := forceAPIServicePendingReview(t, databaseURL, rejectedService.ID)
@@ -1140,25 +1206,28 @@ func TestPostgresCarpoolApplicationFlow(t *testing.T) {
 	}
 	defer store.Close()
 
-	server := NewServer(app.NewServiceWithPersistence(store))
+	server := NewServer(app.NewServiceWithPersistence(store), ServerOptions{
+		EnableDevAuth:     true,
+		TurnstileVerifier: &recordingTurnstileVerifier{},
+	})
 	suffix := time.Now().Format("150405.000000000")
 	ownerSession := createLinuxDoSession(t, server, "pg-carpool-owner-"+suffix)
 	buyerSession := createSession(t, server, "pg-carpool-buyer-"+suffix, false)
 	ownerContact := createContactMethod(t, server, ownerSession, "telegram", "PG Owner Carpool TG "+suffix, "@pg_owner_carpool_"+suffix)
 	buyerContact := createContactMethod(t, server, buyerSession, "telegram", "PG Buyer Carpool TG "+suffix, "@pg_buyer_carpool_"+suffix)
 
-	unboundOwner := createSession(t, server, "pg-carpool-unbound-owner-"+suffix, false)
-	unboundContact := createContactMethod(t, server, unboundOwner, "telegram", "PG Unbound Carpool Owner "+suffix, "@pg_unbound_carpool_owner_"+suffix)
-	unboundListing := createCarpool(t, server, unboundOwner, unboundContact.ID, "pg-carpool-unbound-create-"+suffix)
-	unboundPublish := newJSONRequest(http.MethodPost, "/api/v1/carpools/"+unboundListing.ID+"/submit-review", `{}`)
-	addAuth(unboundPublish, unboundOwner, "pg-carpool-unbound-publish-"+suffix)
-	unboundPublish.Header.Set("If-Match", `"`+strconv.FormatInt(unboundListing.Version, 10)+`"`)
-	unboundResponse := httptest.NewRecorder()
-	server.ServeHTTP(unboundResponse, unboundPublish)
-	if unboundResponse.Code != http.StatusUnprocessableEntity {
-		t.Fatalf("expected postgres unbound linux.do publish failure, got %d body %s", unboundResponse.Code, unboundResponse.Body.String())
+	studentUsername := "pgstudent" + strings.ReplaceAll(suffix, ".", "")
+	student := createStudentSession(t, server, studentUsername)
+	studentCreateKey := "pg-carpool-student-create-" + suffix
+	studentCreate := newJSONRequest(http.MethodPost, "/api/v1/carpools", carpoolPayloadWithRiskAck(uuid.NewString()))
+	addAuth(studentCreate, student, studentCreateKey)
+	studentCreateResponse := httptest.NewRecorder()
+	server.ServeHTTP(studentCreateResponse, studentCreate)
+	if studentCreateResponse.Code != http.StatusForbidden {
+		t.Fatalf("expected postgres student carpool create denial, got %d body %s", studentCreateResponse.Code, studentCreateResponse.Body.String())
 	}
-	assertProblemCode(t, unboundResponse, "VALIDATION_FAILED")
+	assertProblemCode(t, studentCreateResponse, "CAPABILITY_REQUIRED")
+	assertPostgresStudentCarpoolCreateHasNoSideEffects(t, databaseURL, student.userID, studentCreateKey)
 
 	listing := createCarpool(t, server, ownerSession, ownerContact.ID, "pg-carpool-create-"+suffix)
 	published := submitCarpoolReview(t, server, ownerSession, listing.ID, listing.Version, "pg-carpool-submit-review-"+suffix)
@@ -1574,7 +1643,7 @@ func forceCarpoolPendingReview(t *testing.T, databaseURL, listingID string) int6
 	return version
 }
 
-func assertAPIServiceIdempotencyCache(t *testing.T, databaseURL, userID, serviceID, action, key, expectedStatus string) {
+func assertAPIServiceIdempotencyCache(t *testing.T, databaseURL, userID, serviceID, action, key string) {
 	t.Helper()
 	pool := openTestPool(t, databaseURL)
 	defer pool.Close()
@@ -1584,18 +1653,20 @@ func assertAPIServiceIdempotencyCache(t *testing.T, databaseURL, userID, service
 	var resourceType string
 	var resourceID string
 	var bodyText string
+	var cacheAllowed bool
 	if err := pool.QueryRow(context.Background(), `
-		SELECT status, resource_type, resource_id::text, response_body_json::text
+		SELECT status, resource_type, resource_id::text,
+		       COALESCE(response_body_json::text, ''), response_body_cache_allowed
 		FROM idempotency_keys
 		WHERE user_id = $1 AND route_key = $2 AND idempotency_key = $3
-	`, userID, routeKey, key).Scan(&status, &resourceType, &resourceID, &bodyText); err != nil {
+	`, userID, routeKey, key).Scan(&status, &resourceType, &resourceID, &bodyText, &cacheAllowed); err != nil {
 		t.Fatalf("query API service idempotency cache: %v", err)
 	}
 	if status != "completed" || resourceType != "api_service" || resourceID != serviceID {
 		t.Fatalf("unexpected API service idempotency cache: status=%s resource=%s %s", status, resourceType, resourceID)
 	}
-	if !strings.Contains(bodyText, expectedStatus) {
-		t.Fatalf("cached API service response does not include status %s: %s", expectedStatus, bodyText)
+	if cacheAllowed || bodyText != "" {
+		t.Fatalf("API service idempotency cache retained private owner response: cacheAllowed=%v body=%s", cacheAllowed, bodyText)
 	}
 }
 
@@ -1964,6 +2035,38 @@ func assertCarpoolApplicationSideEffects(t *testing.T, databaseURL, applicationI
 		if count != want {
 			t.Fatalf("expected %d %s side effects, got %d", want, name, count)
 		}
+	}
+}
+
+func assertPostgresStudentCarpoolCreateHasNoSideEffects(t *testing.T, databaseURL, studentUserID, key string) {
+	t.Helper()
+	pool := openTestPool(t, databaseURL)
+	defer pool.Close()
+
+	var listingCount int
+	if err := pool.QueryRow(context.Background(), `
+		SELECT count(*)::int
+		FROM carpool_listings
+		WHERE owner_user_id = $1
+	`, studentUserID).Scan(&listingCount); err != nil {
+		t.Fatalf("count denied student carpool listings: %v", err)
+	}
+	if listingCount != 0 {
+		t.Fatalf("expected denied student carpool create to leave no listing, got %d", listingCount)
+	}
+
+	var idempotencyCount int
+	if err := pool.QueryRow(context.Background(), `
+		SELECT count(*)::int
+		FROM idempotency_keys
+		WHERE user_id = $1
+		  AND route_key = 'POST /api/v1/carpools'
+		  AND idempotency_key = $2
+	`, studentUserID, key).Scan(&idempotencyCount); err != nil {
+		t.Fatalf("count denied student carpool idempotency rows: %v", err)
+	}
+	if idempotencyCount != 0 {
+		t.Fatalf("expected capability denial before idempotency begin, got %d row(s)", idempotencyCount)
 	}
 }
 

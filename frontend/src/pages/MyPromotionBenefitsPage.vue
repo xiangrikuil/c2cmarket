@@ -38,15 +38,18 @@ import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import type { PromotionCoupon, PromotionCouponFilter, ReferralStatus } from '@/lib/promotionRewardBackend'
 import { defaultPromotionCouponQuery } from '@/lib/promotionRewardBackend'
 import { trackAnalytics } from '@/lib/analytics'
+import { CAPABILITY, hasCapability } from '@/lib/capabilities'
 import {
   useApplyPromotionCouponMutation,
   useMyPromotionCoupons,
   useMyReferralSummary,
   usePromotionRewardPublicConfig,
 } from '@/queries/usePromotionRewardQueries'
-import { useMyApiServices } from '@/queries/useMarketQueries'
+import { useMyApiServices, useMyProfileQuery } from '@/queries/useMarketQueries'
 
 const publicConfigQuery = usePromotionRewardPublicConfig()
+const profileQuery = useMyProfileQuery()
+const canPublishApiService = computed(() => hasCapability(profileQuery.data.value, CAPABILITY.apiServicePublish))
 const programEnabled = computed(() => publicConfigQuery.data.value?.programEnabled === true)
 const referralQuery = useMyReferralSummary(programEnabled)
 const couponStatus = ref<PromotionCouponFilter>('all')
@@ -57,7 +60,8 @@ const couponQueryInput = computed(() => ({
   status: couponStatus.value,
 }))
 const couponQuery = useMyPromotionCoupons(couponQueryInput)
-const ownerServicesQuery = useMyApiServices('all', programEnabled)
+const canLoadOwnerServices = computed(() => programEnabled.value && canPublishApiService.value)
+const ownerServicesQuery = useMyApiServices('all', canLoadOwnerServices)
 const applyMutation = useApplyPromotionCouponMutation()
 const applyingCoupon = ref<PromotionCoupon | null>(null)
 const selectedServiceId = ref('')
@@ -215,6 +219,10 @@ async function downloadPoster() {
 }
 
 function openApplyDialog(coupon: PromotionCoupon) {
+  if (!canPublishApiService.value) {
+    toast.info('绑定 linux.do 身份后，才可将推广券用于 API 服务。')
+    return
+  }
   applyingCoupon.value = coupon
   selectedServiceId.value = orderableServices.value[0]?.id ?? ''
 }
@@ -226,6 +234,10 @@ function closeApplyDialog() {
 }
 
 function applyCoupon() {
+  if (!canPublishApiService.value) {
+    toast.warning('当前账号没有发布 API 服务的权限。')
+    return
+  }
   if (!applyingCoupon.value || !selectedServiceId.value) {
     toast.warning('请选择一个当前可接单的 API 服务。')
     return
@@ -361,7 +373,10 @@ function applyCoupon() {
               </dl>
               <div class="mt-4 flex items-center justify-between gap-3 border-t border-border pt-3">
                 <Badge variant="outline">API 服务</Badge>
-                <Button v-if="coupon.status === 'available'" size="sm" @click="openApplyDialog(coupon)"><Megaphone class="h-4 w-4" />立即使用</Button>
+                <Button v-if="coupon.status === 'available' && canPublishApiService" size="sm" @click="openApplyDialog(coupon)"><Megaphone class="h-4 w-4" />立即使用</Button>
+                <Button v-else-if="coupon.status === 'available'" as-child size="sm" variant="outline">
+                  <RouterLink to="/my/account">绑定 linux.do 后使用</RouterLink>
+                </Button>
                 <span v-else-if="coupon.usedApiServiceTitle" class="min-w-0 truncate text-xs text-muted-foreground">{{ coupon.usedApiServiceTitle }}</span>
               </div>
             </Card>
@@ -379,7 +394,7 @@ function applyCoupon() {
       </section>
     </template>
 
-    <Dialog :open="Boolean(applyingCoupon)" @update:open="open => { if (!open) closeApplyDialog() }">
+    <Dialog :open="canPublishApiService && Boolean(applyingCoupon)" @update:open="open => { if (!open) closeApplyDialog() }">
       <DialogContent class="sm:max-w-lg">
         <DialogHeader>
           <DialogTitle>使用推广券</DialogTitle>

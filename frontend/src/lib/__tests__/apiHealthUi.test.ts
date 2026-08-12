@@ -78,9 +78,10 @@ describe('共享探针连接前端边界', () => {
   })
 
   it('Owner mutation 使用 If-Match/幂等键并失效连接和服务查询', () => {
-    expect(backend).toContain("{ method: 'PUT', ifMatch: input.version }")
-    expect(backend).toContain("{ method: 'DELETE', ifMatch: input.version }")
+    expect(backend).toContain("{ method: 'PUT', ifMatch: input.version, idempotencyPrefix: 'api-probe-connection-update' }")
+    expect(backend).toContain("{ method: 'DELETE', ifMatch: input.version, idempotencyPrefix: 'api-probe-connection-delete' }")
     expect(backend).toContain("idempotencyPrefix: 'api-probe-connection-verify'")
+    expect(source('../apiMarketBackend.ts')).toContain("idempotencyPrefix: 'api-service-probe-connection'")
     expect(query).toContain('apiHealthQueryKeys.all')
     expect(query).toContain("queryKey: ['api-services']")
   })

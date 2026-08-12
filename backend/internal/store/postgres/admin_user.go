@@ -380,6 +380,8 @@ type adminAccountAuditProjection struct {
 	IsAdmin       *bool  `json:"isAdmin"`
 }
 
+const adminUserGovernanceAdvisoryLockName = "admin_user_governance"
+
 func applyAdminAccountAuditProjection(entry *auth.AdminAccountAuditEntry, beforeJSON, afterJSON []byte) {
 	var before adminAccountAuditProjection
 	var after adminAccountAuditProjection
@@ -404,10 +406,10 @@ func (s *Store) UpdateAdminUserStatusWithIdempotency(ctx context.Context, entry 
 	if appErr != nil {
 		return auth.AdminUserMutationResult{}, idempotency.Completion{}, appErr
 	}
-	if appErr := lockAccountGovernanceUser(ctx, tx, input.TargetUserID); appErr != nil {
+	if appErr := lockAdminUserGovernance(ctx, tx); appErr != nil {
 		return auth.AdminUserMutationResult{}, idempotency.Completion{}, appErr
 	}
-	if appErr := lockAdminUserGovernanceTables(ctx, tx); appErr != nil {
+	if appErr := lockAccountGovernanceUser(ctx, tx, input.TargetUserID); appErr != nil {
 		return auth.AdminUserMutationResult{}, idempotency.Completion{}, appErr
 	}
 	current, appErr := lockAdminUserForGovernance(ctx, tx, input.TargetUserID)
@@ -486,7 +488,7 @@ func (s *Store) UpdateAdminUserPermissionWithIdempotency(ctx context.Context, en
 	if appErr != nil {
 		return auth.AdminUserMutationResult{}, idempotency.Completion{}, appErr
 	}
-	if appErr := lockAdminUserGovernanceTables(ctx, tx); appErr != nil {
+	if appErr := lockAdminUserGovernance(ctx, tx); appErr != nil {
 		return auth.AdminUserMutationResult{}, idempotency.Completion{}, appErr
 	}
 	current, appErr := lockAdminUserForGovernance(ctx, tx, input.TargetUserID)
@@ -501,6 +503,15 @@ func (s *Store) UpdateAdminUserPermissionWithIdempotency(ctx context.Context, en
 	}
 	if input.Grant && current.Status != auth.AccountStatusActive {
 		return auth.AdminUserMutationResult{}, idempotency.Completion{}, adminUserStoreInvalidTransition("只能向有效账号授予管理员权限。")
+	}
+	if input.Grant {
+		studentOnly, appErr := studentOnlyAdminTargetInTx(ctx, tx, current.ID)
+		if appErr != nil {
+			return auth.AdminUserMutationResult{}, idempotency.Completion{}, appErr
+		}
+		if studentOnly {
+			return auth.AdminUserMutationResult{}, idempotency.Completion{}, adminUserStoreInvalidTransition("高校邮箱账号绑定 Linux.do 后才能获得管理员权限。")
+		}
 	}
 	if !input.Grant && current.Status == auth.AccountStatusActive {
 		activeAdmins, appErr := activeAdminCountInTx(ctx, tx)
@@ -559,8 +570,8 @@ func (s *Store) UpdateAdminUserPermissionWithIdempotency(ctx context.Context, en
 	return result, completion, nil
 }
 
-func lockAdminUserGovernanceTables(ctx context.Context, tx pgx.Tx) *domain.AppError {
-	if _, err := tx.Exec(ctx, `LOCK TABLE users, user_permissions IN SHARE ROW EXCLUSIVE MODE`); err != nil {
+func lockAdminUserGovernance(ctx context.Context, tx pgx.Tx) *domain.AppError {
+	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, adminUserGovernanceAdvisoryLockName); err != nil {
 		return internalStoreError()
 	}
 	return nil
@@ -617,6 +628,21 @@ func activeAdminCountInTx(ctx context.Context, tx pgx.Tx) (int, *domain.AppError
 		return 0, internalStoreError()
 	}
 	return count, nil
+}
+
+func studentOnlyAdminTargetInTx(ctx context.Context, tx pgx.Tx, userID string) (bool, *domain.AppError) {
+	var studentOnly bool
+	if err := tx.QueryRow(ctx, `
+		SELECT EXISTS (
+		         SELECT 1 FROM student_email_claims claim WHERE claim.user_id = $1
+		       )
+		   AND NOT EXISTS (
+		         SELECT 1 FROM linux_do_bindings binding WHERE binding.user_id = $1
+		       )
+	`, userID).Scan(&studentOnly); err != nil {
+		return false, internalStoreError()
+	}
+	return studentOnly, nil
 }
 
 func insertAdminUserGovernanceSideEffects(ctx context.Context, tx pgx.Tx, user auth.AdminUser, adminUserID, eventType, reason, requestID string, before, after adminAccountAuditProjection, now time.Time) *domain.AppError {

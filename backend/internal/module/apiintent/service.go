@@ -26,11 +26,15 @@ type OrderExistenceChecker interface {
 	HasOrderForIntent(intentID string) bool
 }
 
+// CreateGuard 在幂等记录确认本次请求需要执行后、写入购买意向前校验当前买卖双方是否仍可交易。
+type CreateGuard func(ctx context.Context, buyerUserID string, service apimarket.Service) *domain.AppError
+
 type Manager struct {
 	mu          sync.Mutex
 	now         func() time.Time
 	repo        Repository
 	services    PublicServiceResolver
+	createGuard CreateGuard
 	orders      OrderExistenceChecker
 	contact     *contact.Service
 	idempotency *idempotency.Service
@@ -60,6 +64,11 @@ func NewManager(repo Repository, serviceResolver PublicServiceResolver, contactS
 
 func (s *Manager) SetOrderExistenceChecker(checker OrderExistenceChecker) {
 	s.orders = checker
+}
+
+// SetCreateGuard 注入只针对全新购买意向执行的动态交易资格校验。
+func (s *Manager) SetCreateGuard(guard CreateGuard) {
+	s.createGuard = guard
 }
 
 // MarkOrdered 将已生成订单的意向移出活动意向集合，后续履约由订单生命周期负责。
@@ -117,6 +126,12 @@ func (s *Manager) CreateWithIdempotency(ctx context.Context, userID, routeKey, k
 	if appErr != nil {
 		s.idempotency.Cancel(ctx, entry)
 		return Intent{}, idempotency.Completion{}, false, appErr
+	}
+	if s.createGuard != nil {
+		if appErr := s.createGuard(ctx, userID, service); appErr != nil {
+			s.idempotency.Cancel(ctx, entry)
+			return Intent{}, idempotency.Completion{}, false, appErr
+		}
 	}
 	if err := validateCreateInput(input, service); err != nil {
 		s.idempotency.Cancel(ctx, entry)

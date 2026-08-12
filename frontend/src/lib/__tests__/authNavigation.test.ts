@@ -109,10 +109,11 @@ describe('route authentication contract', () => {
     const source = readFileSync(new URL('../../middleware/auth.global.ts', import.meta.url), 'utf8')
 
     expect(source).toContain('authAccessFromMeta(to.meta)')
-    expect(source).toContain("ensureBackendSession('orbit', access === 'admin'")
+    expect(source).toContain("ensureBackendSession('orbit', false")
+    expect(source).toContain('capabilityFromRouteMeta(to.meta)')
+    expect(source).toContain('!hasCapability(session.user, requiredCapability)')
     expect(source).toContain('notifySessionInvalidation: false')
     expect(source).toContain('navigateTo(loginRoute(to.fullPath), { replace: true })')
-    expect(source).toContain("error.code === 'PERMISSION_DENIED'")
+    expect(source).toContain("error.code === 'PERMISSION_DENIED' || error.code === 'CAPABILITY_REQUIRED'")
   })
 })
-
