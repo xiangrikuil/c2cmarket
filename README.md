@@ -166,6 +166,7 @@ node scripts/check-compose-exposure.mjs
 NUXT_PUBLIC_API_MODE=real \
 NUXT_PUBLIC_SITE_URL=https://c2cmarket.shop \
 NUXT_PUBLIC_API_BASE_URL=https://api.c2cmarket.shop \
+NUXT_PUBLIC_TURNSTILE_SITE_KEY=0x4AAAAAAENOJxBZnePMzh-y \
 NUXT_API_BASE_URL=https://api.c2cmarket.shop \
 pnpm --dir frontend build
 ```

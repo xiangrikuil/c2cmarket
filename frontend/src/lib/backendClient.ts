@@ -54,6 +54,7 @@ export type AccountGovernanceAppeal = AccountGovernanceAppealResponse
 export type PasswordLoginRequest = {
   username: string
   password: string
+  turnstileToken: string
 }
 
 export class BackendProblemError extends Error {

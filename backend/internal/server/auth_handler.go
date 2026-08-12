@@ -36,12 +36,14 @@ type devPersonaSessionRequest struct {
 }
 
 type passwordLoginRequest struct {
-	Username string `json:"username"`
-	Password string `json:"password"`
+	Username       string `json:"username"`
+	Password       string `json:"password"`
+	TurnstileToken string `json:"turnstileToken"`
 }
 
 type emailRegistrationStartRequest struct {
-	Email string `json:"email"`
+	Email          string `json:"email"`
+	TurnstileToken string `json:"turnstileToken"`
 }
 
 type emailRegistrationStartResponse struct {
@@ -235,6 +237,10 @@ func (s *Server) handlePasswordLogin(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, r, err)
 		return
 	}
+	if appErr := s.verifyTurnstile(r, req.TurnstileToken, turnstileActionPasswordLogin); appErr != nil {
+		writeProblem(w, r, appErr)
+		return
+	}
 
 	user, session, appErr := s.app.LoginWithPassword(r.Context(), req.Username, req.Password)
 	if appErr != nil {
@@ -257,6 +263,10 @@ func (s *Server) handleStartEmailRegistration(w http.ResponseWriter, r *http.Req
 		return
 	}
 	if !s.allowTarget(w, r, emailRegistrationStartRateLimit, "email", req.Email) {
+		return
+	}
+	if appErr := s.verifyTurnstile(r, req.TurnstileToken, turnstileActionStudentSignup); appErr != nil {
+		writeProblem(w, r, appErr)
 		return
 	}
 	challenge, appErr := s.app.StartEmailRegistration(r.Context(), auth.EmailRegistrationStartInput{Email: req.Email})

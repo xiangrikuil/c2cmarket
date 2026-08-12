@@ -11,6 +11,7 @@ import {
   UserRound,
 } from 'lucide-vue-next'
 import { toast } from 'vue-sonner'
+import TurnstileWidget from '@/components/auth/TurnstileWidget.vue'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
@@ -28,6 +29,7 @@ import { captureReferralCode, getReferralCapture } from '@/lib/referralCapture'
 
 const route = useRoute()
 const router = useRouter()
+const runtimeConfig = useRuntimeConfig()
 const session = ref<BackendSession | null>(null)
 const loadingSession = ref(true)
 const oauthLoading = ref(false)
@@ -36,12 +38,15 @@ const passwordVisible = ref(false)
 const username = ref('')
 const password = ref('')
 const showPasswordLogin = ref(false)
+const turnstileToken = ref('')
+const turnstileWidget = ref<{ reset: () => void } | null>(null)
 
 const loggedIn = computed(() => Boolean(session.value))
 const displayName = computed(() => session.value?.user.displayName ?? session.value?.user.username ?? '未登录')
 const linuxDo = computed(() => session.value?.user.linuxDoBinding)
 const isAdmin = computed(() => session.value?.user.permissions.includes('admin') ?? false)
 const returnTo = computed(() => normalizeReturnTo(route.query.returnTo))
+const turnstileSiteKey = computed(() => String(runtimeConfig.public.turnstileSiteKey ?? '').trim())
 
 onMounted(async () => {
   const referral = Array.isArray(route.query.ref) ? route.query.ref[0] : route.query.ref
@@ -84,11 +89,16 @@ async function submitPasswordLogin() {
     toast.warning('请输入用户名和密码')
     return
   }
+  if (!turnstileToken.value) {
+    toast.warning('请先完成人机验证')
+    return
+  }
   passwordLoading.value = true
   try {
     session.value = await loginWithPassword({
       username: trimmedUsername,
       password: password.value,
+      turnstileToken: turnstileToken.value,
     })
     trackAnalytics('login_success', {
       method: 'password',
@@ -100,6 +110,7 @@ async function submitPasswordLogin() {
   } catch (error) {
     toast.error(error instanceof Error ? error.message : '用户名或密码不正确')
   } finally {
+    turnstileWidget.value?.reset()
     passwordLoading.value = false
   }
 }
@@ -242,7 +253,14 @@ async function logout() {
               </div>
             </div>
 
-            <Button class="h-11 w-full rounded-lg text-base" :disabled="passwordLoading" type="submit">
+            <TurnstileWidget
+              ref="turnstileWidget"
+              :site-key="turnstileSiteKey"
+              action="password_login"
+              @update:token="turnstileToken = $event"
+            />
+
+            <Button class="h-11 w-full rounded-lg text-base" :disabled="passwordLoading || !turnstileToken" type="submit">
               <Loader2 v-if="passwordLoading" class="h-4 w-4 animate-spin" />
               <LogIn v-else class="h-4 w-4" />
               密码登录

@@ -66,6 +66,7 @@ Mock 数据不写入 PostgreSQL，不能作为账号、订单或交易持久化�
 NUXT_PUBLIC_API_MODE=real \
 NUXT_PUBLIC_SITE_URL=https://c2cmarket.shop \
 NUXT_PUBLIC_API_BASE_URL=https://api.c2cmarket.shop \
+NUXT_PUBLIC_TURNSTILE_SITE_KEY=0x4AAAAAAENOJxBZnePMzh-y \
 NUXT_API_BASE_URL=https://api.c2cmarket.shop \
 pnpm build
 ```

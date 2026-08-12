@@ -12,6 +12,7 @@ const serverApiBaseURL = process.env.NUXT_API_BASE_URL
   || publicApiBaseURL
   || devApiProxyTarget
 const siteURL = process.env.NUXT_PUBLIC_SITE_URL ?? 'https://c2cmarket.shop'
+const turnstileSiteKey = process.env.NUXT_PUBLIC_TURNSTILE_SITE_KEY ?? ''
 const isProductionBuild = process.env.NODE_ENV === 'production' && process.argv.includes('build')
 const privateRouteRule = {
   cache: false,
@@ -44,6 +45,10 @@ if (isProductionBuild && !publicApiBaseURL) {
 
 if (isProductionBuild && !process.env.NUXT_API_BASE_URL) {
   throw new Error('Production frontend builds must set NUXT_API_BASE_URL.')
+}
+
+if (isProductionBuild && !turnstileSiteKey) {
+  throw new Error('Production frontend builds must set NUXT_PUBLIC_TURNSTILE_SITE_KEY.')
 }
 
 export default defineNuxtConfig({
@@ -93,6 +98,7 @@ export default defineNuxtConfig({
       apiMode,
       apiBaseUrl: publicApiBaseURL,
       siteUrl: siteURL,
+      turnstileSiteKey,
       umamiEnabled: false,
       umamiScriptUrl: '',
       umamiWebsiteId: '',

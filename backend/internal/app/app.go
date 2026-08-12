@@ -20,6 +20,7 @@ import (
 	"c2c-market/backend/internal/module/profile"
 	"c2c-market/backend/internal/observability"
 	"c2c-market/backend/internal/platform/outboundhttp"
+	"c2c-market/backend/internal/platform/turnstile"
 	"c2c-market/backend/internal/realtime"
 	"c2c-market/backend/internal/server"
 	"c2c-market/backend/internal/store/postgres"
@@ -43,6 +44,14 @@ type App struct {
 }
 
 func New(ctx context.Context, cfg config.Config) (*App, error) {
+	var turnstileVerifier turnstile.Verifier
+	if strings.TrimSpace(cfg.TurnstileSecret) != "" {
+		configuredVerifier, err := turnstile.New(cfg.TurnstileSecret, cfg.TurnstileHostnames, turnstile.Options{})
+		if err != nil {
+			return nil, fmt.Errorf("初始化 Turnstile 验证器失败: %w", err)
+		}
+		turnstileVerifier = configuredVerifier
+	}
 	modelAuditPolicy, err := outboundhttp.NewPolicy(cfg.ModelAuditAllowedHosts)
 	if err != nil {
 		return nil, fmt.Errorf("初始化模型审计安全出站策略失败: %w", err)
@@ -199,6 +208,7 @@ func New(ctx context.Context, cfg config.Config) (*App, error) {
 		RateLimiter:        rateLimiter,
 		Metrics:            runtimeMetrics,
 		MetricsBearerToken: cfg.MetricsBearerToken,
+		TurnstileVerifier:  turnstileVerifier,
 		OAuth: server.OAuthOptions{
 			ProviderMode: cfg.OAuthProviderMode,
 			ClientID:     cfg.OAuthClientID,

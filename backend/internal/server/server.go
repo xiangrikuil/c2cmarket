@@ -38,6 +38,7 @@ import (
 	"c2c-market/backend/internal/module/review"
 	"c2c-market/backend/internal/module/search"
 	"c2c-market/backend/internal/observability"
+	"c2c-market/backend/internal/platform/turnstile"
 	"c2c-market/backend/internal/realtime"
 	"github.com/go-chi/chi/v5"
 	"net/http"
@@ -66,6 +67,7 @@ type ServerOptions struct {
 	RateLimiter        *middleware.RateLimiter
 	Metrics            *observability.Metrics
 	MetricsBearerToken string
+	TurnstileVerifier  turnstile.Verifier
 }
 
 type OAuthOptions struct {
@@ -471,6 +473,7 @@ type Server struct {
 	metrics          *observability.Metrics
 	metricsToken     string
 	metricsAuth      bool
+	turnstile        turnstile.Verifier
 }
 
 func NewServer(service ApplicationService, options ...ServerOptions) http.Handler {
@@ -531,6 +534,7 @@ func NewServer(service ApplicationService, options ...ServerOptions) http.Handle
 		metrics:          metrics,
 		metricsToken:     strings.TrimSpace(option.MetricsBearerToken),
 		metricsAuth:      option.AppEnv == config.EnvProduction || strings.TrimSpace(option.MetricsBearerToken) != "",
+		turnstile:        option.TurnstileVerifier,
 	}
 	server.routes()
 	return middleware.WithRequestID(

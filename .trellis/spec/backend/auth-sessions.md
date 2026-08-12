@@ -1,7 +1,86 @@
 # Authentication Sessions
 
-Date: 2026-07-21
+Date: 2026-08-12
 Author: Codex
+
+## Scenario: Turnstile Gates For Password Login And Student Signup
+
+### 1. Scope / Trigger
+
+- Trigger: adding or changing native password login, student-email registration start, their frontend forms, or their deployment configuration.
+- Owners: `internal/platform/turnstile`, `internal/server/auth_handler.go`, `internal/app/app.go`, the OpenAPI auth request schemas, `TurnstileWidget.vue`, `LoginPage.vue`, Compose, Wrangler, and the Pages CSP.
+- Goal: reject automated abuse at the HTTP boundary before password verification, email delivery, or account creation without treating frontend widget state as authorization.
+
+### 2. Signatures
+
+```http
+POST /api/v1/auth/password/login
+{"username":"...","password":"...","turnstileToken":"..."}
+
+POST /api/v1/auth/email-registration/start
+{"email":"...","turnstileToken":"..."}
+```
+
+```go
+Verify(ctx context.Context, input turnstile.Verification) error
+
+type Verification struct {
+    Token    string
+    Action   string
+    RemoteIP string
+}
+```
+
+### 3. Contracts
+
+- Password login requires action `password_login`; email-registration start requires action `student_signup`. OAuth, development personas, and registration confirmation are not implicitly covered.
+- The server submits `secret`, `response`, and the middleware-derived client IP to Cloudflare's canonical Siteverify endpoint. It accepts only `success=true`, the exact endpoint action, and a normalized exact hostname in `TURNSTILE_HOSTNAMES`.
+- `TURNSTILE_SECRET` and `TURNSTILE_HOSTNAMES` are required in production. Production accepts `c2cmarket.shop`; staging accepts `staging.c2cmarket.shop`. The browser receives only `NUXT_PUBLIC_TURNSTILE_SITE_KEY`.
+- The verifier uses a bounded response, a fixed timeout, no redirects, no environment proxy, and sanitized failures. Tokens are at most 2048 bytes and must never be logged or returned.
+- The password form submits only after receiving a token and resets the widget after every request attempt. Expiry, timeout, widget error, and unmount clear the token.
+- Pages CSP adds only `https://challenges.cloudflare.com` to `script-src`, `connect-src`, and `frame-src` for this integration.
+
+### 4. Validation & Error Matrix
+
+| Condition | Result |
+| --- | --- |
+| Missing, blank, expired, duplicate, or oversized token | `403 TURNSTILE_VERIFICATION_FAILED`; do not call the auth/registration service |
+| Provider returns `success=false`, non-2xx, malformed JSON, trailing JSON, or an oversized response | Same sanitized `403`; do not expose provider detail |
+| Returned action differs from the endpoint action | Same sanitized `403` |
+| Returned hostname is outside the exact environment allowlist | Same sanitized `403` |
+| Verifier is absent because runtime configuration is incomplete | Fail closed with the same `403`; production configuration rejects startup earlier |
+| Verification succeeds | Continue into the existing password-login or registration-start behavior |
+
+### 5. Good / Base / Bad Cases
+
+- Good: the browser obtains a `password_login` token, login succeeds or fails normally, and the widget resets in both cases.
+- Base: student-registration start verifies `student_signup` and then preserves the current `EMAIL_REGISTRATION_DISABLED` behavior until registration is enabled.
+- Bad: trust a non-empty browser token without server-side Siteverify.
+- Bad: accept `success=true` while ignoring action or hostname, allowing a token minted for another flow or host to cross the boundary.
+
+### 6. Tests Required
+
+- Verifier unit tests assert the canonical form fields, success path, action/hostname mismatch, provider rejection, transport error, non-2xx response, malformed/trailing JSON, and request/response size bounds.
+- Handler tests inject a fake verifier and assert rejection happens before the application service while valid verification preserves existing downstream responses.
+- Config tests assert local hostname defaults plus production secret/hostname requirements and invalid hostname rejection.
+- Frontend tests assert official explicit rendering, one-time-token clearing/reset, login request propagation, production site-key guards, Compose/Wrangler wiring, and exact CSP origin additions.
+- The hosted acceptance check uses one fresh browser token successfully and then proves replay of that same token fails.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```go
+if req.TurnstileToken != "" {
+    return app.LoginWithPassword(ctx, req.Username, req.Password)
+}
+```
+
+This treats attacker-controlled frontend state as proof and does not bind the token to the endpoint or hostname.
+
+#### Correct
+
+Call the injected verifier before the existing service, require `success=true` plus exact action and hostname, map every verifier failure to the stable sanitized problem, and reset the browser widget after the attempt.
 
 ## Scenario: Throttled Sliding Session Renewal
 

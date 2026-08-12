@@ -94,6 +94,7 @@ const (
 	CodeSeatUnavailable                   = "SEAT_UNAVAILABLE"
 	CodeSessionExpired                    = "SESSION_EXPIRED"
 	CodeSessionRevoked                    = "SESSION_REVOKED"
+	CodeTurnstileVerificationFailed       = "TURNSTILE_VERIFICATION_FAILED"
 	CodeURLNotAllowed                     = "URL_NOT_ALLOWED"
 	CodeValidationFailed                  = "VALIDATION_FAILED"
 	CodeVersionConflict                   = "VERSION_CONFLICT"

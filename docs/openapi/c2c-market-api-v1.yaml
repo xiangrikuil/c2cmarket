@@ -159,7 +159,7 @@ paths:
       security: []
       summary: Log in with a native C2CMarket username and password.
       description: |
-        Creates the same cookie-backed session as OAuth login. Password credentials are stored as salted hashes and are intended to support native website accounts alongside linux.do OAuth.
+        Requires a fresh Turnstile token with action `password_login`, then creates the same cookie-backed session as OAuth login. Password credentials are stored as salted hashes and are intended to support native website accounts alongside linux.do OAuth.
       requestBody:
         required: true
         content:
@@ -178,6 +178,9 @@ paths:
               schema:
                 $ref: "#/components/schemas/SessionResponse"
         "401":
+          $ref: "#/components/responses/Problem"
+        "403":
+          description: Turnstile verification failed.
           $ref: "#/components/responses/Problem"
         "429":
           $ref: "#/components/responses/RateLimited"
@@ -215,16 +218,16 @@ paths:
       security: []
       summary: Disabled native email registration entry.
       description: |
-        First release only supports linux.do OAuth registration and login. This route is retained as a stable compatibility boundary and always returns `EMAIL_REGISTRATION_DISABLED`; it does not send email, create a challenge, account, or session.
+        Requires a fresh Turnstile token with action `student_signup`. After successful verification, the current release returns `EMAIL_REGISTRATION_DISABLED`; it does not send email, create a challenge, account, or session.
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/StartEmailVerificationRequest"
+              $ref: "#/components/schemas/EmailRegistrationStartRequest"
       responses:
         "403":
-          description: Email registration disabled. Problem `code` is `EMAIL_REGISTRATION_DISABLED`.
+          description: Turnstile verification failed or email registration is disabled.
           $ref: "#/components/responses/Problem"
         "422":
           $ref: "#/components/responses/Problem"
@@ -9021,6 +9024,19 @@ components:
           pattern: '^[0-9]{6}$'
         attribution:
           $ref: "#/components/schemas/RegistrationAttribution"
+    EmailRegistrationStartRequest:
+      type: object
+      additionalProperties: false
+      required: [email, turnstileToken]
+      properties:
+        email:
+          type: string
+          format: email
+          maxLength: 254
+        turnstileToken:
+          type: string
+          minLength: 1
+          maxLength: 2048
     MyProfile:
       type: object
       required: [id, username, displayName, emailVerified, passwordConfigured, avatarMode, accountStatus, permissions, linuxDoBinding, badges, restrictions, usernameChangePolicy, privacy, createdAt, updatedAt, version]
@@ -10266,7 +10282,7 @@ components:
     PasswordLoginRequest:
       type: object
       additionalProperties: false
-      required: [username, password]
+      required: [username, password, turnstileToken]
       properties:
         username:
           type: string
@@ -10276,6 +10292,10 @@ components:
           type: string
           minLength: 1
           maxLength: 256
+        turnstileToken:
+          type: string
+          minLength: 1
+          maxLength: 2048
     SetPasswordRequest:
       type: object
       additionalProperties: false

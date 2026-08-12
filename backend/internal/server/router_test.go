@@ -3633,7 +3633,10 @@ type testContactItem struct {
 }
 
 func newTestServer(now time.Time) http.Handler {
-	return NewServer(app.NewServiceWithClock(func() time.Time { return now }))
+	return NewServer(
+		app.NewServiceWithClock(func() time.Time { return now }),
+		ServerOptions{EnableDevAuth: true, TurnstileVerifier: &recordingTurnstileVerifier{}},
+	)
 }
 
 func createSession(t *testing.T, server http.Handler, username string, admin bool) testSession {

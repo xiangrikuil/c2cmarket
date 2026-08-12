@@ -224,6 +224,11 @@ export type EmailRegistrationConfirmRequest = {
     attribution?: RegistrationAttribution;
 };
 
+export type EmailRegistrationStartRequest = {
+    email: string;
+    turnstileToken: string;
+};
+
 export type MyProfile = {
     id: string;
     username: string;
@@ -694,6 +699,7 @@ export type DevPersonaSessionResponse = {
 export type PasswordLoginRequest = {
     username: string;
     password: string;
+    turnstileToken: string;
 };
 
 export type SetPasswordRequest = {
@@ -4828,6 +4834,10 @@ export type LoginWithPasswordErrors = {
      */
     401: ProblemDetails;
     /**
+     * Problem Details error.
+     */
+    403: ProblemDetails;
+    /**
      * Rate limit exceeded. Problem Details `code` is `RATE_LIMITED`.
      */
     429: ProblemDetails;
@@ -4882,7 +4892,7 @@ export type SetBackupPasswordResponses = {
 export type SetBackupPasswordResponse = SetBackupPasswordResponses[keyof SetBackupPasswordResponses];
 
 export type StartEmailRegistrationData = {
-    body: StartEmailVerificationRequest;
+    body: EmailRegistrationStartRequest;
     path?: never;
     query?: never;
     url: '/api/v1/auth/email-registration/start';

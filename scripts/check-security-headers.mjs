@@ -45,10 +45,10 @@ const requiredDirectives = [
   "object-src 'none'",
   "frame-ancestors 'none'",
   "form-action 'self'",
-  "script-src 'self'",
+  "script-src 'self' https://challenges.cloudflare.com",
   "style-src 'self' 'unsafe-inline'",
-  "connect-src 'self' https://api.c2cmarket.shop https://api-staging.c2cmarket.shop",
-  "frame-src 'none'",
+  "connect-src 'self' https://api.c2cmarket.shop https://api-staging.c2cmarket.shop https://challenges.cloudflare.com",
+  'frame-src https://challenges.cloudflare.com',
   'upgrade-insecure-requests',
 ]
 for (const directive of requiredDirectives) {
