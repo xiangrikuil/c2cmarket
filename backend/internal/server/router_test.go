@@ -1661,9 +1661,14 @@ func TestTransactionReviewRoutesSealPublishAndAdminRemove(t *testing.T) {
 	}
 
 	ownerCenter := listTransactionReviewsHTTP(t, server, ownerSession)
-	sealedReceived := findReviewDTO(t, ownerCenter.Items, "received", membership.ID)
-	if sealedReceived.Visibility != "sealed" || sealedReceived.Rating != nil || sealedReceived.Note != nil || len(sealedReceived.Tags) != 0 {
-		t.Fatalf("sealed review leaked through HTTP response: %+v", sealedReceived)
+	ownerPending := findReviewDTO(t, ownerCenter.Items, "pending", membership.ID)
+	if !ownerPending.CanCreate || !containsReviewTagDTO(ownerPending.AllowedTags, "quick_payment") {
+		t.Fatalf("owner pending row did not include seller-to-buyer tags: %+v", ownerPending)
+	}
+	for _, item := range ownerCenter.Items {
+		if item.TransactionID == membership.ID && item.Direction == "received" {
+			t.Fatalf("sealed counterparty submission must not be observable through HTTP: %+v", item)
+		}
 	}
 
 	ownerReview := submitTransactionReviewHTTP(
@@ -1729,6 +1734,15 @@ func TestTransactionReviewRoutesSealPublishAndAdminRemove(t *testing.T) {
 	if removedReceived.Visibility != "removed" || removedReceived.Rating != nil || removedReceived.Note != nil || len(removedReceived.Tags) != 0 {
 		t.Fatalf("removed review content remained visible: %+v", removedReceived)
 	}
+}
+
+func containsReviewTagDTO(items []reviewTagDTO, code string) bool {
+	for _, item := range items {
+		if item.Code == code {
+			return true
+		}
+	}
+	return false
 }
 
 func TestCarpoolApplicationCancelAndWithdrawLifecycle(t *testing.T) {

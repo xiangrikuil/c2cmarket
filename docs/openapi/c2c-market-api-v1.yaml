@@ -15400,7 +15400,7 @@ components:
         - revieweeRole
         - status
         - visibility
-        - counterpartySubmitted
+        - allowedTags
         - canCreate
         - canEdit
         - rating
@@ -15450,8 +15450,11 @@ components:
         visibility:
           type: string
           enum: [none, sealed, published, removed]
-        counterpartySubmitted:
-          type: boolean
+        allowedTags:
+          type: array
+          description: Tags allowed for this transaction type and review direction.
+          items:
+            $ref: "#/components/schemas/ReviewTag"
         canCreate:
           type: boolean
         canEdit:
@@ -15505,12 +15508,25 @@ components:
         presetTags:
           type: array
           items:
-            type: string
-            maxLength: 16
+            $ref: "#/components/schemas/ReviewTag"
+    ReviewTag:
+      type: object
+      required: [code, label, polarity]
+      properties:
+        code:
+          type: string
+          maxLength: 32
+        label:
+          type: string
+          maxLength: 16
+        polarity:
+          type: string
+          enum: [positive, negative, neutral]
     SubmitReviewRequest:
       type: object
       additionalProperties: false
       required: [rating, tags, note]
+      description: Rating is required. At least one tag or a non-empty note must be supplied.
       properties:
         rating:
           type: integer
@@ -15524,9 +15540,8 @@ components:
             maxLength: 16
         note:
           type: string
-          minLength: 1
           maxLength: 600
-          description: Must not contain contact values, passwords, API keys, tokens, sessions, cookies, or recovery codes.
+          description: May be empty when at least one tag is supplied. Must not contain contact values, passwords, API keys, tokens, sessions, cookies, or recovery codes.
     RemoveReviewRequest:
       type: object
       additionalProperties: false

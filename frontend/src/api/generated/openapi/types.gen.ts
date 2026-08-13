@@ -3163,7 +3163,10 @@ export type ReviewCenterRow = {
     revieweeRole: 'buyer' | 'seller';
     status: 'reviewable' | 'expired' | 'sealed' | 'published' | 'removed';
     visibility: 'none' | 'sealed' | 'published' | 'removed';
-    counterpartySubmitted: boolean;
+    /**
+     * Tags allowed for this transaction type and review direction.
+     */
+    allowedTags: Array<ReviewTag>;
     canCreate: boolean;
     canEdit: boolean;
     /**
@@ -3187,14 +3190,23 @@ export type ReviewCenterRow = {
 
 export type ReviewCenterRowList = {
     items: Array<ReviewCenterRow>;
-    presetTags: Array<string>;
+    presetTags: Array<ReviewTag>;
 };
 
+export type ReviewTag = {
+    code: string;
+    label: string;
+    polarity: 'positive' | 'negative' | 'neutral';
+};
+
+/**
+ * Rating is required. At least one tag or a non-empty note must be supplied.
+ */
 export type SubmitReviewRequest = {
     rating: number;
     tags: Array<string>;
     /**
-     * Must not contain contact values, passwords, API keys, tokens, sessions, cookies, or recovery codes.
+     * May be empty when at least one tag is supplied. Must not contain contact values, passwords, API keys, tokens, sessions, cookies, or recovery codes.
      */
     note: string;
 };

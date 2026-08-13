@@ -30,16 +30,16 @@ function backendReviewRow(overrides: Record<string, unknown> = {}) {
     id: '22222222-2222-4222-8222-222222222222',
     transactionType: 'api_order',
     transactionId: '33333333-3333-4333-8333-333333333333',
-    direction: 'received',
+    direction: 'pending',
     target: 'API 额度订单',
     counterpartyUsername: 'seller',
     counterpartyName: '卖家',
     reviewerRole: 'seller',
     revieweeRole: 'buyer',
-    status: 'sealed',
-    visibility: 'sealed',
-    counterpartySubmitted: true,
-    canCreate: false,
+    status: 'reviewable',
+    visibility: 'none',
+    allowedTags: [{ code: 'quick_payment', label: '付款及时', polarity: 'positive' }],
+    canCreate: true,
     canEdit: false,
     rating: null,
     tags: [],
@@ -70,22 +70,24 @@ afterEach(() => {
   vi.resetModules()
 })
 
-test('real review center preserves sealed content and backend preset tags', async () => {
+test('real review center preserves structured scenario tags without a counterparty submission signal', async () => {
   const fetchMock = vi.fn()
     .mockResolvedValueOnce(sessionResponse())
     .mockResolvedValueOnce(jsonResponse({
       items: [backendReviewRow()],
-      presetTags: ['沟通顺畅', '付款及时'],
+      presetTags: [{ code: 'smooth_comm', label: '沟通顺畅', polarity: 'positive' }],
     }))
   vi.stubGlobal('fetch', fetchMock)
 
   const { backendReviewCenterRows } = await loadReviewBackend()
   const result = await backendReviewCenterRows()
 
-  assert.deepEqual(result.presetTags, ['沟通顺畅', '付款及时'])
+  assert.equal(result.presetTags[0]?.code, 'smooth_comm')
   assert.equal(result.items[0]?.transactionType, 'api_order')
-  assert.equal(result.items[0]?.direction, 'received')
-  assert.equal(result.items[0]?.visibility, 'sealed')
+  assert.equal(result.items[0]?.direction, 'pending')
+  assert.equal(result.items[0]?.visibility, 'none')
+  assert.equal(result.items[0]?.allowedTags[0]?.code, 'quick_payment')
+  assert.equal('counterpartySubmitted' in (result.items[0] ?? {}), false)
   assert.equal(result.items[0]?.rating, null)
   assert.equal(result.items[0]?.note, null)
   assert.deepEqual(result.items[0]?.tags, [])

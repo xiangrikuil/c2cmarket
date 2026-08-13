@@ -432,7 +432,7 @@ export type ReviewCenterRow = {
   revieweeRole: 'buyer' | 'seller'
   status: 'reviewable' | 'expired' | 'sealed' | 'published' | 'removed'
   visibility: 'none' | 'sealed' | 'published' | 'removed'
-  counterpartySubmitted: boolean
+  allowedTags: ReviewTag[]
   canCreate: boolean
   canEdit: boolean
   rating: number | null
@@ -450,8 +450,31 @@ export type ReviewCenterRow = {
 
 export type ReviewCenterData = {
   items: ReviewCenterRow[]
-  presetTags: string[]
+  presetTags: ReviewTag[]
 }
+
+export type ReviewTag = {
+  code: string
+  label: string
+  polarity: 'positive' | 'negative' | 'neutral'
+}
+
+const mockReviewTags: ReviewTag[] = [
+  { code: 'smooth_comm', label: '沟通顺畅', polarity: 'positive' },
+  { code: 'quick_response', label: '响应及时', polarity: 'positive' },
+  { code: 'clear_rules', label: '规则清晰', polarity: 'positive' },
+  { code: 'good_coop', label: '合作愉快', polarity: 'positive' },
+  { code: 'slow_response', label: '响应较慢', polarity: 'negative' },
+  { code: 'hard_to_comm', label: '沟通困难', polarity: 'negative' },
+  { code: 'late_change', label: '临时变更', polarity: 'negative' },
+  { code: 'true_desc', label: '描述真实', polarity: 'positive' },
+  { code: 'good_aftercare', label: '售后响应及时', polarity: 'positive' },
+  { code: 'desc_diff', label: '实际体验与描述有差异', polarity: 'negative' },
+  { code: 'quick_payment', label: '付款及时', polarity: 'positive' },
+  { code: 'quick_confirm', label: '确认及时', polarity: 'positive' },
+  { code: 'clear_needs', label: '需求清晰', polarity: 'positive' },
+  { code: 'kept_agreement', label: '遵守约定', polarity: 'positive' },
+]
 
 export type FeedbackTicketType = 'function_issue' | 'data_correction' | 'experience_suggestion' | 'publish_contact_block'
 export type FeedbackImpact = 'general' | 'blocks_operation' | 'cannot_continue'
@@ -2067,6 +2090,7 @@ function buildPublicReviewFromCarpoolApplication(application: CarpoolApplication
     username: application.ownerUsername,
     date: dateFromDateTime(application.buyerReview.createdAt ?? application.completedAt ?? application.updatedAt),
     serviceType: application.snapshot.productName,
+    rating: application.buyerReview.rating,
     tags: application.buyerReview.tags,
     note: application.buyerReview.note,
     verified: true,
@@ -5503,6 +5527,11 @@ export async function getReviewCenterRows(): Promise<ReviewCenterData> {
       const ownReviewerRole = currentIsBuyer ? 'buyer' as const : 'seller' as const
       const ownRevieweeRole = currentIsBuyer ? 'seller' as const : 'buyer' as const
       const rows: ReviewCenterRow[] = []
+      const allowedTags = mockReviewTags.filter(tag => (
+        ['smooth_comm', 'quick_response', 'clear_rules', 'good_coop', 'slow_response', 'hard_to_comm', 'late_change'].includes(tag.code)
+        || (ownReviewerRole === 'buyer' && ['true_desc', 'good_aftercare', 'desc_diff'].includes(tag.code))
+        || (ownReviewerRole === 'seller' && ['quick_payment', 'quick_confirm', 'clear_needs', 'kept_agreement'].includes(tag.code))
+      ))
 
       if (ownReview) {
         rows.push({
@@ -5517,7 +5546,7 @@ export async function getReviewCenterRows(): Promise<ReviewCenterData> {
           revieweeRole: ownRevieweeRole,
           status: published ? 'published' : 'sealed',
           visibility: published ? 'published' : 'sealed',
-          counterpartySubmitted: Boolean(counterpartyReview),
+          allowedTags,
           canCreate: false,
           canEdit: !published,
           rating: ownReview.rating,
@@ -5545,7 +5574,7 @@ export async function getReviewCenterRows(): Promise<ReviewCenterData> {
           revieweeRole: ownRevieweeRole,
           status: deadlinePassed ? 'expired' : 'reviewable',
           visibility: 'none',
-          counterpartySubmitted: Boolean(counterpartyReview),
+          allowedTags,
           canCreate: !deadlinePassed,
           canEdit: false,
           rating: null,
@@ -5562,7 +5591,7 @@ export async function getReviewCenterRows(): Promise<ReviewCenterData> {
         })
       }
 
-      if (counterpartyReview) {
+      if (counterpartyReview && published) {
         rows.push({
           id: `review-carpool-${item.id}-received`,
           transactionType: 'carpool_membership',
@@ -5575,7 +5604,7 @@ export async function getReviewCenterRows(): Promise<ReviewCenterData> {
           revieweeRole: ownReviewerRole,
           status: published ? 'published' : 'sealed',
           visibility: published ? 'published' : 'sealed',
-          counterpartySubmitted: true,
+          allowedTags: [],
           canCreate: false,
           canEdit: false,
           rating: published ? counterpartyReview.rating : null,
@@ -5595,11 +5624,11 @@ export async function getReviewCenterRows(): Promise<ReviewCenterData> {
     })
   return {
     items: clone(carpoolRows.sort((a, b) => compareTimeDesc(a.createdAt, b.createdAt))),
-    presetTags: ['沟通顺畅', '描述真实', '响应及时', '规则清晰', '付款及时', '确认及时', '交付清晰', '合作愉快', '响应较慢', '与描述不符'],
+    presetTags: mockReviewTags,
   }
 }
 
-export async function getReviewCenterPage(direction: ReviewCenterRow['direction'] | undefined, page: CursorPageRequest = {}): Promise<CursorPage<ReviewCenterRow> & { presetTags: string[] }> {
+export async function getReviewCenterPage(direction: ReviewCenterRow['direction'] | undefined, page: CursorPageRequest = {}): Promise<CursorPage<ReviewCenterRow> & { presetTags: ReviewTag[] }> {
   if (shouldUseRealBackend()) return backendReviewCenterPage(direction, page)
   const center = await getReviewCenterRows()
   return {

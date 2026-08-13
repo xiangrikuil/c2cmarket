@@ -55,7 +55,7 @@ function statusLabel(item: ReputationProgressItem) {
           <MinusCircle class="h-4 w-4 shrink-0 text-muted-foreground" />
           <div class="min-w-0 flex-1">
             <div class="font-medium">{{ item.label }}</div>
-            <p class="mt-1 text-xs text-muted-foreground">{{ reputationProgressValue(item) }} · 由已验证交易自然形成</p>
+            <p class="mt-1 text-xs text-muted-foreground">{{ reputationProgressValue(item) }} · 由平台内已完成交易自然形成</p>
           </div>
           <Badge variant="secondary">{{ statusLabel(item) }}</Badge>
         </div>

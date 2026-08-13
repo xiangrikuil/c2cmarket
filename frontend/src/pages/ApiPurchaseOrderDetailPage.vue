@@ -9,6 +9,7 @@ import ApiPaymentMethodIcon from '@/components/api-payment/ApiPaymentMethodIcon.
 import ApiOrderDisputePanel from '@/components/api-order/ApiOrderDisputePanel.vue'
 import ApiRefundPolicyEvidence from '@/components/api-order/ApiRefundPolicyEvidence.vue'
 import OrderContactCard from '@/components/profile/OrderContactCard.vue'
+import ReviewDialog from '@/components/review/ReviewDialog.vue'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -73,6 +74,7 @@ import {
   useConfirmApiOrderPaymentMutation,
   useOpenApiOrderDisputeMutation,
   useReportApiOrderPaymentIssueMutation,
+  useReviewCenterRows,
   useSubmitApiOrderDeliveryCredentialMutation,
   useSubmitApiOrderPaymentMutation,
 } from '@/queries/useMarketQueries'
@@ -84,6 +86,7 @@ const id = computed(() => String(route.params.id ?? ''))
 const perspective = computed<'buyer' | 'merchant'>(() => route.name === 'merchant-api-order-detail' ? 'merchant' : 'buyer')
 const isMerchantView = computed(() => perspective.value === 'merchant')
 const { data: order, isLoading, error: orderError, refetch: refetchOrder } = useApiOrder(id, perspective)
+const { data: reviewCenter } = useReviewCenterRows()
 const ordinaryActionsPaused = computed(() => Boolean(order.value && isApiOrderDisputeActive(order.value.disputeStatus)))
 const paymentInstructionsQuery = useQuery({
   queryKey: computed(() => ['api-order-payment-instructions', id.value]),
@@ -159,6 +162,11 @@ const canSubmitDispute = computed(() => Boolean(
 	&& (order.value?.status !== 'completed' || disputeIssueOccurredAt.value),
 ))
 const canOpenReviewCenter = computed(() => order.value?.status === 'completed')
+const reviewRow = computed(() => {
+  const matches = reviewCenter.value?.items.filter(item => item.transactionType === 'api_order' && item.transactionId === id.value) ?? []
+  return matches.find(item => item.direction === 'pending') ?? matches.find(item => item.direction === 'sent') ?? matches[0] ?? null
+})
+const reviewDialogOpen = computed(() => route.query.review === 'open')
 const counterpartyReputation = computed(() => {
   if (!order.value) return null
   return isMerchantView.value ? order.value.buyerReputation : order.value.sellerReputation
@@ -501,14 +509,14 @@ async function submitCredentialProblem() {
 }
 
 function openReviewCenter() {
-  if (!order.value) return
-  router.push({
-    path: '/my/reviews',
-    query: {
-      transactionType: 'api_order',
-      transactionId: order.value.id,
-    },
-  })
+  router.push({ query: { ...route.query, review: 'open' } })
+}
+
+function setReviewDialogOpen(open: boolean) {
+  if (open) return router.push({ query: { ...route.query, review: 'open' } })
+  const query = { ...route.query }
+  delete query.review
+  router.push({ query })
 }
 
 function scrollToDeliveryForm() {
@@ -589,6 +597,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
+  <ReviewDialog :open="reviewDialogOpen && Boolean(reviewRow)" :row="reviewRow" @update:open="setReviewDialogOpen" />
   <SkeletonBlock v-if="isLoading" :lines="9" />
   <ErrorState v-else-if="orderError" description="API 订单暂时无法加载，或当前账号无权查看。" @retry="refetchOrder()" />
   <EmptyState v-else-if="!order" title="未找到 API 订单" description="该订单不存在或暂不可见。"><template #action><Button variant="outline" @click="router.push(backPath)">{{ backLabel }}</Button></template></EmptyState>

@@ -108,6 +108,7 @@ type ReviewCenterRow = {
   revieweeRole: 'buyer' | 'seller'
   status: 'reviewable' | 'expired' | 'sealed' | 'published' | 'removed'
   visibility: 'none' | 'sealed' | 'published' | 'removed'
+  allowedTags: Array<{ code: string; label: string; polarity: 'positive' | 'negative' | 'neutral' }>
   canCreate: boolean
   canEdit: boolean
   rating: number | null
@@ -127,13 +128,16 @@ type SubmitReviewPayload = {
 
 ### 3. Contracts
 
-- `GET /api/v1/me/reviews` supplies the row list and the only selectable preset tags. The frontend must not offer free-form tag input.
+- `GET /api/v1/me/reviews` supplies each row's scenario-filtered `allowedTags`. The frontend submits tag codes and renders labels; it must not offer free-form tags or duplicate scenario rules in real mode.
 - Tabs/filters distinguish pending, sent, and received rows without deriving visibility from a missing rating.
-- A received sealed row shows that the counterparty submitted and explains when content will appear, but renders no rating, tags, or note.
+- Before publication, the UI must not tell users whether the counterparty submitted. The API omits received sealed rows and the frontend must not derive a signal from other row differences.
 - A sent sealed row may show the author's own content and edit action only when `canEdit=true`. Create uses generic `POST`; edit uses generic `PUT`.
 - Published rows show content and cannot expose an edit action. Removed rows do not render hidden content or removal internals.
-- Completed carpool and API-order detail pages navigate to the review center with `transactionType` and the backend transaction ID so the matching row can open.
+- New reviews start with `rating=null`. Five visible stars use radio semantics, mouse/keyboard input, and show a number in read-only mode. Submit requires a rating and either one tag or a non-empty note.
+- A shared `ReviewDialog` owns create/edit/read-only states and keeps form state after a failed mutation. Detail pages drive it with `?review=open`; the review center includes transaction type, transaction ID, and direction so refresh/back and duplicate transaction rows resolve exactly.
+- On mobile, the Dialog stays within the dynamic viewport and scrolls internally. Closing deletes only review-owned query keys and preserves unrelated query parameters.
 - Public profiles render only backend-returned verified reviews. They must not reconstruct received reviews from local orders or combine real results with mock review arrays.
+- Public review presentation computes raw average, count, and 1-5 distribution from the same visible list, shows each review's stars plus number, and labels evidence `来自平台内已完成交易`. Public reputation summaries must not present weighted/Bayesian rating as a second ordinary average.
 - Real backend failures remain visible. The adapter must not catch them and return mock review rows or locally invented preset tags.
 
 ### 4. Validation & Error Matrix
@@ -142,24 +146,29 @@ type SubmitReviewPayload = {
 | --- | --- |
 | `direction=pending`, `canCreate=true` | Create-review action |
 | `direction=sent`, `visibility=sealed`, `canEdit=true` | Own content plus edit action |
-| `direction=received`, `visibility=sealed` | Sealed placeholder; no content |
+| Counterparty submitted before publication | No received row, field, or differentiated message |
 | `visibility=published` | Read-only rating, tags, note, and publication time |
 | `status=expired` with no review | No submit action |
 | `visibility=removed` | Removed state without content |
+| `rating=null` | Five unselected stars and disabled submit |
+| Rating selected, tags and trimmed note empty | Disabled submit and backend `422` if bypassed |
+| Mutation fails | Keep rating, tags, and note in the open Dialog |
 | Real request failure | Error state and retry; no mock fallback |
 
 ### 5. Good/Base/Bad Cases
 
-- Good: an API seller completes an order, opens the review center from order detail, selects backend preset tags, and creates a seller-to-buyer review.
-- Good: a buyer sees that the seller submitted but sees no stars or text until the buyer submits or the deadline passes.
+- Good: an API seller opens `?review=open`, chooses four stars and the `付款及时` label, and submits `quick_payment` without leaving the detail page.
+- Good: a buyer sees the same conditional publication rule before submission regardless of whether the seller already submitted.
 - Base: the author edits a sealed review, then loses the edit action immediately after both reviews publish.
-- Bad: use `rating ?? 0`, show arbitrary tag text input, post every mutation to the legacy carpool route, or show a mock success after a real backend error.
+- Bad: default to five stars, use a score dropdown, show `counterpartySubmitted`, select a review row only by transaction ID when multiple directions exist, or show mock success after a real backend error.
 
 ### 6. Tests Required
 
-- Adapter tests must assert sealed nullable content and backend preset tags survive mapping.
+- Adapter tests must assert structured `allowedTags` survive mapping and `counterpartySubmitted` is absent.
 - Mutation tests must assert create uses `POST`, edit uses `PUT`, and both send CSRF plus idempotency through `backendClient`.
-- Source/component tests must cover pending, sent sealed, received sealed, published, expired, and removed actions.
+- Component tests must cover unselected stars, click/arrow/Home/End behavior, ARIA, tag-or-note validation, failed-mutation state retention, sent sealed edit, published, expired, and removed states.
+- Route tests must cover `?review=open`, exact direction selection, refresh/back behavior, and preserving unrelated query parameters.
+- Public-profile tests must cover raw average/count/distribution, per-review stars, and completed-transaction wording.
 - Run full Vitest, Vue typecheck, real-mode Vite build, and browser checks at `1440x900` plus a mobile width.
 
 ### 7. Wrong vs Correct
@@ -167,15 +176,16 @@ type SubmitReviewPayload = {
 #### Wrong
 
 ```ts
-const rating = row.rating ?? 0
-const tags = row.tags.length ? row.tags : ['沟通顺畅']
+const dialogOpen = ref(false)
+const tags = globalPresetTags
 ```
 
 #### Correct
 
 ```ts
-const rating = row.rating ?? null
-const presetTags = response.presetTags
+const dialogOpen = computed(() => route.query.review === 'open')
+const tags = row.allowedTags
+const rating = ref<number | null>(row.canEdit ? row.rating : null)
 ```
 
 ## Scenario: Source-Author Verification Presentation
