@@ -1680,3 +1680,25 @@ Added multi-contact merchant snapshots, completed-order 24-hour dispute reportin
 ### Status
 
 [OK] **Completed**
+
+
+## Session 54: API order and rush-sale launch hardening
+
+**Date**: 2026-08-14
+**Task**: API order and rush-sale launch hardening
+**Package**: frontend
+**Branch**: `codex/transaction-review-dialog`
+
+### Summary
+
+Added authoritative seller deadlines, late-payment recovery facts, pending-order capacity, daily 20:00 rush confirmation and copy limits, flexible/limited channel exclusion, updated OpenAPI/frontend flows, and passed local quality gates.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `38333b6` | (see git log) |
+
+### Status
+
+[OK] **Completed**
